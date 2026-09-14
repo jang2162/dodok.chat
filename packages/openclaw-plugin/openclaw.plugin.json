@@ -65,6 +65,10 @@
                   "type": "string",
                   "maxLength": 20000
                 },
+                "inboundChannelPrompt": {
+                  "type": "string",
+                  "enum": ["prefix", "context"]
+                },
                 "botLoopProtection": {
                   "type": "object",
                   "properties": {

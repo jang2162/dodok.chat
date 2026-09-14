@@ -1,6 +1,6 @@
 import type { InboundDeliver } from "@dodok/shared";
 import { describe, expect, it } from "vitest";
-import { buildInboundText, formatInboundContext } from "../src/context";
+import { buildInboundText, formatInboundContext, placeChannelPrompt } from "../src/context";
 
 const CH = "01a09fc9-d204-7551-89d6-38544d07a102";
 const deliver: InboundDeliver = {
@@ -79,5 +79,25 @@ describe("buildInboundText", () => {
   it("헤더 다음 줄에 본문", () => {
     const out = buildInboundText(deliver);
     expect(out.endsWith("---\n@researcher 이 버그 원인 찾아줘")).toBe(true);
+  });
+});
+
+describe("placeChannelPrompt", () => {
+  it("모드가 없으면 채널 프롬프트를 인바운드에 싣지 않는다 (Gateway 설정 systemPrompt 경로만)", () => {
+    expect(placeChannelPrompt(deliver, undefined)).toEqual({ contextOptions: {} });
+  });
+  it("prefix 면 컨텍스트 헤더에 채널 프롬프트 줄을 넣는다 (계획서 5.2 (b))", () => {
+    expect(placeChannelPrompt(deliver, "prefix")).toEqual({ contextOptions: { includeChannelPrompt: true } });
+  });
+  it("context 면 헤더 대신 ChannelPromptContext 항목 한 줄로 넘긴다", () => {
+    expect(placeChannelPrompt(deliver, "context")).toEqual({
+      contextOptions: {},
+      channelPromptContext: ["채널 프롬프트: 이 채널은 버그 분류용입니다."],
+    });
+  });
+  it("인바운드에 channelPrompt 가 없으면 모드와 무관하게 싣지 않는다", () => {
+    const bare = { ...deliver, context: { ...deliver.context, channelPrompt: undefined } };
+    expect(placeChannelPrompt(bare, "prefix")).toEqual({ contextOptions: {} });
+    expect(placeChannelPrompt(bare, "context")).toEqual({ contextOptions: {} });
   });
 });

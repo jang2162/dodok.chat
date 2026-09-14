@@ -29,6 +29,7 @@ import {
   type ResolvedDodokAccount,
 } from "./config";
 import { writeChannelConfig } from "./config-writer";
+import { placeChannelPrompt } from "./context";
 import { toInboundFacts } from "./inbound";
 import {
   buildOutboundMessage,
@@ -81,12 +82,16 @@ async function dispatchInbound(params: {
   logger: BridgeLogger;
 }): Promise<InboundDeliverResult> {
   const { delivery, account, channelRuntime, bridge, logger } = params;
-  const factsResult = toInboundFacts(delivery, { accountId: account.accountId });
-  if (!factsResult.ok) throw new Error(factsResult.error);
-  const facts = factsResult.facts;
   // 계정 재시작 없이 채널 항목(systemPrompt 등)을 갱신할 수 있게 디스패치마다 현재 설정을 읽는다
   const cfg = getDodokRuntime().config.current() as OpenClawConfig;
-  const entry = resolveDodokChannelEntry(sectionOf(cfg), facts.channelId);
+  const entry = resolveDodokChannelEntry(sectionOf(cfg), delivery.channelId);
+  const promptPlacement = placeChannelPrompt(delivery, entry.inboundChannelPrompt);
+  const factsResult = toInboundFacts(delivery, {
+    accountId: account.accountId,
+    context: promptPlacement.contextOptions,
+  });
+  if (!factsResult.ok) throw new Error(factsResult.error);
+  const facts = factsResult.facts;
 
   const ingress = await resolveStableChannelMessageIngress({
     channelId: DODOK_CHANNEL_ID,
@@ -110,6 +115,10 @@ async function dispatchInbound(params: {
       deliveryId: facts.correlation.deliveryId,
       admission: ingress.ingress.admission,
       decision: ingress.ingress.decision,
+      sessionKey: facts.sessionKey,
+      groupSystemPromptChars: entry.systemPrompt?.length ?? 0,
+      inboundChannelPrompt: entry.inboundChannelPrompt ?? null,
+      channelPromptContextItems: promptPlacement.channelPromptContext?.length ?? 0,
     }),
   );
 
@@ -139,6 +148,9 @@ async function dispatchInbound(params: {
     extra: {
       CommandInterpretationSuppressed: true,
       ...(entry.systemPrompt ? { GroupSystemPrompt: entry.systemPrompt } : {}),
+      ...(promptPlacement.channelPromptContext
+        ? { ChannelPromptContext: promptPlacement.channelPromptContext }
+        : {}),
     },
   });
 

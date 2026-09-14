@@ -40,6 +40,29 @@ export function formatInboundContext(d: InboundDeliver, opts: ContextFormatOptio
   return lines.join("\n");
 }
 
+/** 채널 항목 `inboundChannelPrompt` — 인바운드가 실어 온 `context.channelPrompt` 를 어디에 넣는가 */
+export type InboundChannelPromptMode = "prefix" | "context";
+
+export type ChannelPromptPlacement = {
+  contextOptions: ContextFormatOptions;
+  /** OpenClaw `MsgContext.ChannelPromptContext` (시스템 지시가 아닌 채널 메타데이터로 현재 턴에 붙는다) */
+  channelPromptContext?: string[];
+};
+
+/**
+ * 계획서 5.2 주입 경로 선택. 모드가 없으면 인바운드에 싣지 않고 Gateway 설정 `systemPrompt`(GroupSystemPrompt)만 쓴다.
+ * `prefix` = (b) 컨텍스트 헤더 줄(전사에 사용자 발화로 남는다), `context` = ChannelPromptContext.
+ */
+export function placeChannelPrompt(
+  d: InboundDeliver,
+  mode: InboundChannelPromptMode | undefined,
+): ChannelPromptPlacement {
+  const prompt = d.context.channelPrompt;
+  if (!mode || !prompt) return { contextOptions: {} };
+  if (mode === "prefix") return { contextOptions: { includeChannelPrompt: true } };
+  return { contextOptions: {}, channelPromptContext: [`채널 프롬프트: ${prompt}`] };
+}
+
 /** 컨텍스트 헤더 + 인바운드 본문. 플러그인이 Gateway 인바운드로 넣는 최종 텍스트 */
 export function buildInboundText(d: InboundDeliver, opts: ContextFormatOptions = {}): string {
   return `${formatInboundContext(d, opts)}\n${d.message.text}`;

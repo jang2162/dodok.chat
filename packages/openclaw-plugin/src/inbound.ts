@@ -6,9 +6,21 @@ import type { InboundDeliver } from "@dodok/shared";
 import { buildInboundText, type ContextFormatOptions } from "./context";
 import { formatDodokTarget } from "./outbound";
 
-/** 계획서 5.8 — 채널당 에이전트별 1세션 */
-export function dodokSessionKey(agentId: string, channelId: string): string {
-  return `agent:${agentId}:dodok:channel:${channelId}`;
+/**
+ * 계획서 5.8 — 채널당 에이전트별 1세션. `generation` ≥ 2 면 `:g<N>` 을 붙여 새 세션으로 회전한다
+ * (채널 프롬프트가 바뀌었을 때 기존 claude-cli 세션을 버리는 대안 — 스파이크 3 P6).
+ */
+export function dodokSessionKey(agentId: string, channelId: string, generation = 1): string {
+  if (!Number.isInteger(generation) || generation < 1) throw new Error(`세대는 1 이상의 정수: ${generation}`);
+  const base = `agent:${agentId}:dodok:channel:${channelId}`;
+  return generation === 1 ? base : `${base}:g${generation}`;
+}
+
+const GENERATION_SUFFIX_RE = /^:g([2-9]|[1-9]\d+)$/;
+
+function matchesSessionKey(sessionKey: string, base: string): boolean {
+  if (sessionKey === base) return true;
+  return sessionKey.startsWith(base) && GENERATION_SUFFIX_RE.test(sessionKey.slice(base.length));
 }
 
 export type DodokInboundFacts = {
@@ -43,7 +55,7 @@ export function toInboundFacts(
   opts: { accountId: string; context?: ContextFormatOptions },
 ): InboundFactsResult {
   const expected = dodokSessionKey(d.agentId, d.channelId);
-  if (d.sessionKey !== expected) {
+  if (!matchesSessionKey(d.sessionKey, expected)) {
     return { ok: false, error: `sessionKey 불일치: 기대 ${expected}, 받음 ${d.sessionKey}` };
   }
   const author = d.message.author;

@@ -39,6 +39,8 @@ export const DodokChannelEntryConfig = z
   .object({
     requireMention: z.boolean().optional(),
     systemPrompt: z.string().max(20_000).optional(),
+    /** 인바운드 `context.channelPrompt` 를 싣는 자리(스파이크 3). 없으면 싣지 않는다 — context.ts `placeChannelPrompt` */
+    inboundChannelPrompt: z.enum(["prefix", "context"]).optional(),
     botLoopProtection: BotLoopProtectionConfig.optional(),
   })
   .strict();
@@ -102,6 +104,7 @@ export function resolveDodokAccount(
 export type ResolvedDodokChannelEntry = {
   requireMention: boolean;
   systemPrompt?: string;
+  inboundChannelPrompt?: "prefix" | "context";
   botLoopProtection?: BotLoopProtectionConfig;
   sectionBotLoopProtection?: BotLoopProtectionConfig;
 };
@@ -111,6 +114,7 @@ export function resolveDodokChannelEntry(section: unknown, channelId: string): R
   const entry = data?.channels?.[channelId];
   const resolved: ResolvedDodokChannelEntry = { requireMention: entry?.requireMention ?? true };
   if (entry?.systemPrompt !== undefined) resolved.systemPrompt = entry.systemPrompt;
+  if (entry?.inboundChannelPrompt) resolved.inboundChannelPrompt = entry.inboundChannelPrompt;
   if (entry?.botLoopProtection) resolved.botLoopProtection = entry.botLoopProtection;
   if (data?.botLoopProtection) resolved.sectionBotLoopProtection = data.botLoopProtection;
   return resolved;

@@ -117,6 +117,15 @@ describe("listDodokAccountIds / resolveDodokChannelEntry", () => {
   it("설정이 없는 채널은 requireMention 기본 true", () => {
     expect(resolveDodokChannelEntry({}, CH)).toEqual({ requireMention: true });
   });
+
+  it("inboundChannelPrompt(prefix|context)를 채널 항목에서 읽는다 — 그 밖의 값은 섹션 검증에서 거부", () => {
+    expect(resolveDodokChannelEntry({ channels: { [CH]: { inboundChannelPrompt: "context" } } }, CH)).toEqual(
+      { requireMention: true, inboundChannelPrompt: "context" },
+    );
+    expect(
+      DodokChannelSection.safeParse({ channels: { [CH]: { inboundChannelPrompt: "system" } } }).success,
+    ).toBe(false);
+  });
 });
 
 describe("applyChannelConfigSet", () => {

@@ -37,6 +37,16 @@ describe("dodokSessionKey", () => {
   it("계획서 5.8 형식", () => {
     expect(dodokSessionKey("main", CH)).toBe(`agent:main:dodok:channel:${CH}`);
   });
+
+  it("세대 2 이상이면 :g<N> 을 붙인다 (채널 프롬프트가 바뀌면 새 세션으로 회전 — 스파이크 3 P6)", () => {
+    expect(dodokSessionKey("main", CH, 1)).toBe(`agent:main:dodok:channel:${CH}`);
+    expect(dodokSessionKey("main", CH, 2)).toBe(`agent:main:dodok:channel:${CH}:g2`);
+  });
+
+  it("세대는 1 이상의 정수여야 한다", () => {
+    expect(() => dodokSessionKey("main", CH, 0)).toThrow();
+    expect(() => dodokSessionKey("main", CH, 1.5)).toThrow();
+  });
 });
 
 describe("toInboundFacts", () => {
@@ -102,6 +112,22 @@ describe("toInboundFacts", () => {
       ok: false,
       error: `sessionKey 불일치: 기대 agent:main:dodok:channel:${CH}, 받음 agent:other:dodok:channel:${CH}`,
     });
+  });
+
+  it("세대 회전 키(:g<N>)는 받아들이고 facts.sessionKey 에 그대로 싣는다", () => {
+    const res = toInboundFacts(deliver({ sessionKey: `agent:main:dodok:channel:${CH}:g3` }), {
+      accountId: "default",
+    });
+    expect(res.ok && res.facts.sessionKey).toBe(`agent:main:dodok:channel:${CH}:g3`);
+  });
+
+  it("세대 접미사가 :g<N>(N≥2) 모양이 아니면 거부한다", () => {
+    for (const suffix of [":g1", ":g0", ":gx", ":thread:1", ":g2:extra"]) {
+      const res = toInboundFacts(deliver({ sessionKey: `agent:main:dodok:channel:${CH}${suffix}` }), {
+        accountId: "default",
+      });
+      expect(res.ok).toBe(false);
+    }
   });
 
   it("컨텍스트 포맷 옵션을 buildInboundText 로 넘긴다", () => {
