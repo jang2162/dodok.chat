@@ -714,7 +714,7 @@ export interface ServerToClientEvents {
 
 ### 8.1 접속
 
-플러그인이 `io(BRIDGE_PUBLIC_URL, { auth: { token: BRIDGE_TOKEN, protocol: BRIDGE_PROTOCOL, pluginVersion } })`로 접속한다. 토큰은 상수 시간 비교. 계정당 활성 연결은 1개이며 **새 연결이 이긴다**: 서버는 기존 소켓에 `system.notice { reason: "replaced" }`를 보내고 끊는다. 접속 직후 플러그인은 `hello`를 보내야 하며, 10초 안에 오지 않으면 끊는다.
+플러그인이 `io(BRIDGE_PUBLIC_URL, { auth: { token: BRIDGE_TOKEN, protocol: BRIDGE_PROTOCOL, pluginVersion } })`로 접속한다. 토큰은 상수 시간 비교(스파이크 2 구현은 `auth: { token }` 만 보내고 버전·프로토콜은 `hello`/`BridgeHelloResult` 로 오간다 — ADR 0002 10절; 아래 hello 10초 타임아웃은 스파이크 브리지 서버에 미구현, Phase 1 서버 과제). 계정당 활성 연결은 1개이며 **새 연결이 이긴다**: 서버는 기존 소켓에 `system.notice { reason: "replaced" }`를 보내고 끊는다. 접속 직후 플러그인은 `hello`를 보내야 하며, 10초 안에 오지 않으면 끊는다.
 
 ### 8.2 이벤트 맵
 
@@ -752,7 +752,7 @@ export const InboundDeliver = z.object({
   context: InboundContext,
   options: z.object({ queueMode: z.enum(["steer", "followup", "collect", "interrupt"]).optional() }).default({}),
 });
-export const InboundDeliverResult = z.object({ providerRunId: z.string().optional() });
+export const InboundDeliverResult = z.object({ providerRunId: z.string().optional() });  // ADR 0002 4.3: 값은 우리 runId 와 같다(replyOptions.runId)
 
 export const ConfigSet = z.object({
   channelId: Id,
@@ -940,13 +940,13 @@ export type ComponentsV1 = z.infer<typeof ComponentsV1>;
 
 | # | 항목 | 이 문서의 기본값 | 확정 시점 |
 | --- | --- | --- | --- |
-| 1 | 플러그인 아웃바운드에 우리 `runId`/Gateway `runId`가 실리는가 | 인바운드 `runId`를 되돌려 받는다고 가정, 불가하면 `sessionKey` 폴백 | 스파이크 2 |
-| 2 | 인바운드 ingress가 Gateway `runId`를 돌려주는가 | `InboundDeliverResult.providerRunId` optional | 스파이크 2 |
-| 3 | `agent` 이벤트 `stream` 값과 툴 이벤트의 실제 모양 | `CUSTOM`으로 보존 | 스파이크 1 (`hello-ok.features.events`) |
-| 4 | capability 이름(`tool-events` 등) | 문서 이름 그대로 선언 | 스파이크 1 (`features.capabilities`) |
-| 5 | `config.set`이 재시작 없이 반영되는가 | `applied: "restart_required"`도 허용 | 스파이크 3 |
-| 6 | 채널 봇 루프 보호가 릴레이를 막는가 | 막으면 채널 설정으로 끄고 우리 `relayPolicy`만 사용 | 스파이크 2 |
-| 7 | `chat.send` + `originatingChannel: "dodok"` 대체 경로 | 미사용 | 스파이크 1 |
+| 1 | 플러그인 아웃바운드에 우리 `runId`/Gateway `runId`가 실리는가 | 인바운드 `runId`를 되돌려 받는다고 가정, 불가하면 `sessionKey` 폴백 | **확정(ADR 0002 4.3)**: `replyOptions.runId` 로 Gateway runId = 우리 runId. 아웃바운드에 `runId` 실림 |
+| 2 | 인바운드 ingress가 Gateway `runId`를 돌려주는가 | `InboundDeliverResult.providerRunId` optional | **확정(ADR 0002 4.3)**: 돌려주며 값은 우리 `runId` 와 같다. 필드는 존치하되 의미는 「같다」. drop(봇 루프 보호) 시 ack 는 `{}` — `admission`/`reason` 추가 여부는 결정 필요(ADR 0002 12절 4) |
+| 3 | `agent` 이벤트 `stream` 값과 툴 이벤트의 실제 모양 | `CUSTOM`으로 보존 | **확정(ADR 0001 5.3·6.5)**: 툴 진행은 `agent` `stream:"tool"` phase `start`/`result`(`toolCallId`·`name`·`args`·`isError`·`result`). `session.tool` 은 tool-events 선언 연결에 오지 않음 |
+| 4 | capability 이름(`tool-events` 등) | 문서 이름 그대로 선언 | **확정(ADR 0001 5.3)**: 정본은 `GATEWAY_CLIENT_CAPS`, 세 이름 모두 존재. `features.capabilities` 는 서버 플래그라 에코되지 않음 |
+| 5 | `config.set`이 재시작 없이 반영되는가 | `applied: "restart_required"`도 허용 | 부분 확정(ADR 0002 8절): `applied: "live"`, 새 세션엔 반영. **claude-cli 기존 세션 미반영** — 스파이크 3에서 확정 |
+| 6 | 채널 봇 루프 보호가 릴레이를 막는가 | 막으면 채널 설정으로 끄고 우리 `relayPolicy`만 사용 | **확정(ADR 0002 7절)**: 플러그인이 사실을 넘길 때만 동작(기본 20회/60초·쿨다운 60초, 초과 시 `admission: drop`). 권고: 사실을 넘기되 코어 예산을 `maxRelayTurns` 보다 느슨하게(결정 필요, ADR 0002 12절 3) |
+| 7 | `chat.send` + `originatingChannel: "dodok"` 대체 경로 | 미사용 | 미확인(ADR 0001 8절 5) — 플러그인이 있는 지금 스파이크 3에 얹을 수 있다 |
 
 확정되면 이 문서의 해당 절과 `docs/plan.md` 10장을 갱신하고 `docs/adr/`에 기록한다.
 

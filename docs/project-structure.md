@@ -17,7 +17,7 @@ dodok.chat/
 │  └─ openclaw-adapter/       # @dodok/openclaw-adapter — 서버 측 OpenClaw 어댑터 (브리지 서버 + Gateway WS 클라이언트)
 ├─ infra/
 │  ├─ docker-compose.yml      # server + web(정적) + caddy, `--profile gateway`로 로컬 OpenClaw 동반 기동
-│  └─ caddy/Caddyfile         # /, /api, /socket.io, /bridge 를 TLS로 노출
+│  └─ caddy/Caddyfile         # /, /api, /socket.io 를 TLS로 노출 (브리지는 Socket.IO 네임스페이스라 /socket.io 하나로 충분)
 ├─ docs/
 │  ├─ plan.md                 # 계획서
 │  ├─ project-structure.md    # 이 문서
@@ -66,7 +66,7 @@ src/
 
 ```
 src/
-├─ app.ts                 Fastify 부트스트랩, Socket.IO 부착, 브리지 WSS 라우트(/bridge) 마운트
+├─ app.ts                 Fastify 부트스트랩, Socket.IO 부착, 브리지 네임스페이스 /bridge 부착(attachBridge — 별도 HTTP 라우트 없음)
 ├─ config.ts              env 로드 (zod로 검증)
 ├─ db/
 │  ├─ schema.sqlite.ts    Drizzle 스키마 (계획서 6장 테이블 + push_subscriptions)
@@ -105,8 +105,8 @@ src/
 │  │                      session.tool 은 쓰지 않는다 — tool-events 를 선언한 연결은 수신 대상에서 제외된다(ADR 0001)
 │  └─ approvals.ts        approval.get/resolve
 ├─ bridge/
-│  ├─ server.ts           플러그인이 아웃바운드로 붙는 WSS 엔드포인트 (Fastify 앱에 /bridge로 마운트; 토큰 인증,
-│  │                      인바운드 전달, 아웃바운드 수신, 컴포넌트 결과 전달, 헬스)
+│  ├─ server.ts           플러그인이 아웃바운드로 붙는 Socket.IO 네임스페이스 /bridge (HTTP 경로는 /socket.io/; 토큰 인증,
+│  │                      인바운드 전달, 아웃바운드 수신, 컴포넌트 결과 전달, 헬스) — 최소 표면은 스파이크 2에서 구현
 │  └─ session.ts          플러그인 연결 1개의 상태 (연결/재연결, 미응답 요청, 중복 제거)
 └─ config-sync.ts         채널 프롬프트 변경 → 브리지로 플러그인에 "설정 변경" 전달 → 플러그인이 Gateway 설정 갱신 → 반영 확인
 ```
@@ -115,18 +115,21 @@ src/
 
 ```
 src/
-├─ index.ts               definePluginEntry({ id: "dodok", register(api) { api.registerChannel(...) } })
+├─ index.ts               defineChannelPluginEntry({ plugin, setRuntime }) — id "dodok". 매니페스트 channels·channelConfigs, package.json openclaw.channel,
+│                         런타임 dependencies 없는 단일 번들(esbuild) (ADR 0002 3.1·3.2)
 ├─ channel.ts             채널 정의: 인바운드 ingress, 아웃바운드 액션 어댑터(describeMessageTool),
-│                         채널별 설정 스키마(requireMention, systemPrompt, users, 봇 루프 보호 조정)
+│                         채널별 설정 스키마(requireMention, systemPrompt, users, botLoopProtection). 코어 봇 루프 보호는
+│                         플러그인이 에이전트 작성 인바운드에 사실을 넘길 때만 동작한다 (ADR 0002 7절)
 ├─ components-schema.ts   message 툴에 끼울 components 스키마 조각 (shared/components를 그대로 노출)
 ├─ bridge-client.ts       서버 브리지 WSS 아웃바운드 접속(BRIDGE_URL·토큰)·지수 백오프 재연결·아웃바운드 큐
-├─ config-writer.ts       브리지에서 받은 채널 설정 변경을 SDK(config-mutation / channel-config-writes)로 Gateway 설정에 반영
+├─ config-writer.ts       브리지에서 받은 채널 설정 변경을 runtime.config.mutateConfigFile 로 Gateway 설정에 반영(channel-config-writes 는 권한 판정).
+│                         반영은 live 이나 claude-cli 기존 세션엔 미반영 — 스파이크 3 과제 (ADR 0002 8절)
 └─ context.ts             인바운드에 동봉할 최근 채널 메시지 N개 + 참여자 목록 + 릴레이 규칙 요약
 ```
 
 SDK import 경로: `openclaw/plugin-sdk/plugin-entry`, `openclaw/plugin-sdk/channel-message`, `openclaw/plugin-sdk/channel-config-schema` 등 서브패스만 사용한다. `openclaw`는 devDependency이며 번들 시 external로 두어 Gateway가 제공하는 런타임을 쓴다.
 
-배포: Gateway 호스트에서 `openclaw plugins install <tarball 또는 git URL>`(초기), 안정화 후 npm `@dodok/openclaw-plugin` 퍼블리시. Gateway 설정에 우리 채널 계정(브리지 URL·토큰)을 넣는다. 플러그인이 **아웃바운드**로 접속하므로 Gateway 호스트에 인바운드 포트를 열 필요는 없다.
+배포: Gateway 호스트에서 `openclaw plugins install <tarball> --force --accept-capabilities`(초기; tarball 은 `pnpm pack`, `openclaw plugins pack` 은 채널 플러그인 거부, RPC `plugins.install` 은 clawhub/official 만 — ADR 0002 9절), 안정화 후 npm `@dodok/openclaw-plugin` 퍼블리시. Gateway 설정에 우리 채널 계정(브리지 URL·토큰)을 넣는다. 플러그인이 **아웃바운드**로 접속하므로 Gateway 호스트에 인바운드 포트를 열 필요는 없다.
 
 ### 2.5 `apps/web`
 
@@ -152,7 +155,7 @@ src/
 
 ```
 [브라우저/PWA] ⇄ Socket.IO/HTTP ⇄ [Caddy] ⇄ [apps/server (+openclaw-adapter)]   ← 본인 서버 A (Compose)
-                                                   ├─ /bridge (WSS, 토큰)  ⇐ 아웃바운드 접속 ⇐ [openclaw-plugin @ Gateway]
+                                                   ├─ Socket.IO 네임스페이스 /bridge (토큰)  ⇐ 아웃바운드 접속 ⇐ [openclaw-plugin @ Gateway]
                                                    └─ operator 클라이언트 ⇒ wss:// ⇒ [OpenClaw Gateway]   ← 본인 서버 B (원격)
 ```
 
@@ -173,6 +176,8 @@ OPENCLAW_GATEWAY_TOKEN=
 OPENCLAW_DEVICE_IDENTITY_PATH=./data/openclaw-device.json
 BRIDGE_PUBLIC_URL=wss://dodok.example.com/bridge   # 플러그인이 접속할 공개 주소 (설정 마법사가 표시)
 BRIDGE_TOKEN=                              # 플러그인 계정 설정에 넣을 공유 토큰 (마법사가 발급)
+# 주의(ADR 0002 10절): 플러그인은 env 가 아니라 Gateway 계정 설정 channels.dodok.accounts.<id>.bridgeUrl(오리진+/bridge)로 접속한다.
+# 스파이크용 .env.example 의 BRIDGE_URL 은 브리지가 리슨할 오리진(/bridge 없음)이라 뜻이 다르다 — Phase 1 서버에서 BRIDGE_PUBLIC_URL 하나로 정리할 것.
 VAPID_PUBLIC_KEY= / VAPID_PRIVATE_KEY= / VAPID_SUBJECT=mailto:...
 UPLOAD_DIR=./data/uploads
 ```
@@ -181,8 +186,7 @@ UPLOAD_DIR=./data/uploads
 
 ```json5
 {
-  tools: { agentToAgent: { enabled: false } },
-  sessions: { visibility: "tree" },
+  tools: { agentToAgent: { enabled: false }, sessions: { visibility: "tree" } },   // 루트 sessions 키는 거부된다 (ADR 0002)
   channels: {
     dodok: {
       accounts: { default: { bridgeUrl: "wss://dodok.example.com/bridge", token: "<BRIDGE_TOKEN>" } },
@@ -196,10 +200,10 @@ UPLOAD_DIR=./data/uploads
 
 ## 5. 개발 순서 (Phase 0 → 1 착수 순서)
 
-0. ~~원격 Gateway를 2026.9.4로 업그레이드~~(스파이크 1 시점에 이미 2026.9.4), 세 패키지를 같은 버전으로 핀(adapter 완료, plugin 은 스파이크 2에서). `agentToAgent`·`visibility` 설정 적용은 사용자 몫 — 미확인.
+0. ~~원격 Gateway를 2026.9.4로 업그레이드~~(스파이크 1 시점에 이미 2026.9.4), 세 패키지를 같은 버전으로 핀(**3종 모두 완료** — adapter 는 스파이크 1, plugin 의 `openclaw` devDependency 는 스파이크 2). `agentToAgent`·`visibility` 설정 적용은 사용자 몫 — 미확인.
 1. 모노레포 스캐폴드, `shared` 타입·스키마부터 (계획서 5.4 components v1, 6장 테이블, wire·bridge 계약).
 2. ~~`openclaw-adapter/gateway/client.ts` — wss 접속·페어링·`hello-ok.features` 덤프·`chat.send`·`chat` 델타·`session.tool` 콘솔 출력까지 (스파이크 1)~~ **완료** → `docs/adr/0001-gateway-client-spike.md`. 페어링은 공유 토큰이면 자동 승인, 툴 진행은 `session.tool` 이 아니라 `agent` `stream:"tool"`, `features` 는 참고 목록.
-3. `openclaw-plugin` 스켈레톤 — 원격 Gateway에 tarball 설치, 터널로 브리지 접속, 인바운드 수신·`message` 툴 아웃바운드·components 스키마 노출 확인, 봇 루프 보호 상호작용 확인 (스파이크 2). **여기서 막히면 대안:** `registerTool("ui_render")`.
+3. ~~`openclaw-plugin` 스켈레톤 — 원격 Gateway에 tarball 설치, 터널로 브리지 접속, 인바운드 수신·`message` 툴 아웃바운드·components 스키마 노출 확인, 봇 루프 보호 상호작용 확인 (스파이크 2)~~ **완료** → `docs/adr/0002-channel-plugin-spike.md` (로컬 dev Gateway 로 실측; 원격 호스트 설치는 9절 사람 절차). `ui_render` 대안은 불필요했으나 components 조각의 SDK 방침 충돌은 결정 필요(ADR 12절).
 4. 채널 프롬프트 설정 갱신을 플러그인 내부 쓰기로 반영·확인 (스파이크 3). 실패 시 Gateway 설정 메서드 또는 인바운드 프리픽스.
 5. 스파이크 통과 후 `server` 모듈 → `web` 순으로 MVP 코어(Phase 1).
 

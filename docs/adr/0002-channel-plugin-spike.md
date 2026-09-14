@@ -367,7 +367,7 @@ openclaw config patch --file /tmp/dodok.patch.json5 && rm /tmp/dodok.patch.json5
 | 원안 | `구성.md:20` | `infra/caddy`: `/bridge` 를 TLS 로 노출 | 브리지는 Socket.IO **네임스페이스** `/bridge` — HTTP 경로는 `/socket.io/`. `wss://host/bridge` 는 클라이언트 URL(오리진+네임스페이스)로 맞고, 프록시 라우트는 `/socket.io` 하나로 충분 | 브리지 구현 |
 | 원안 | `plan.md:291·459` | WS 델타를 미리보기로 중계 | message 툴로 답한 런은 `terminalReply.disposition:"silent"` 인데 `chat` delta `"N"` 이 먼저 나간다 — `final`/lifecycle 로 silent 가 확정되면 미리보기 버블을 지워야 한다 | 5.2 |
 | 원안 | `스펙.md:248`(`Run.providerRunId`)·`:755`·`:769` | Gateway 런 id 를 따로 싣는다 | `replyOptions.runId` 로 `providerRunId === runId`. 필드는 남겨도 되지만 의미가 「같다」로 바뀐다 | 4.3 |
-| 원안 | `CLAUDE.md:21` | 「OpenClaw 패키지 3종 정확 핀」 | 규칙은 그대로. 이번에 `openclaw` 2026.9.4 devDependency 핀 완료(`packages/openclaw-plugin/package.json:21`) | — |
+| 원안 | `CLAUDE.md:20` | 「OpenClaw 패키지 3종 정확 핀」 | 규칙은 그대로. 이번에 `openclaw` 2026.9.4 devDependency 핀 완료(`packages/openclaw-plugin/package.json:21`) | — |
 | 추가 | `plan.md:102` | 3.2 진입점 `definePluginEntry({ id, register(api) { api.registerChannel({...}) } })` | `구성.md:118` 행과 같다 — `defineChannelPluginEntry` | 3.1 |
 | 추가 | `plan.md:105`·`:460`(위험표) | 봇 루프 보호 「Phase 0 에서 확인한다」·「Phase 0 에서 기본값 확인, 채널 설정으로 조정」 | 확인 끝 — 기본값은 릴레이를 막지 않는다(20/60초). 조정은 채널 설정 **과** 플러그인의 사실 전달 여부. 결정은 12.3 | 7 |
 | 추가 | `plan.md:413`, `구성.md:202` | 스파이크 2 = 원격 호스트에 tarball 설치 + 터널로 브리지 접속 | 실제는 **로컬 dev Gateway** 에서 쟀다. 원격은 9절 절차(사람)로 넘겼다 | 2·9 |

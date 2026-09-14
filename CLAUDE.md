@@ -38,5 +38,6 @@ docker compose -f infra/docker-compose.yml up [--profile gateway]
 
 ## 현재 단계
 shared 계약·DB 스키마·순수 로직 구현 완료 (docs/superpowers/plans/2026-09-14-shared-contracts.md).
-Phase 0 스파이크 1 완료 — docs/adr/0001-gateway-client-spike.md (Gateway WS 실물: 페어링 자동 승인, runId=idempotencyKey, 툴 진행은 agent stream:tool).
-다음: 스파이크 2(채널 플러그인, 원격 Gateway 설치 + 터널)·3(채널 프롬프트 설정 쓰기). 스파이크마다 docs/adr/에 결과 기록.
+Phase 0 스파이크 1·2 완료 — docs/adr/0001(Gateway WS 실물), docs/adr/0002(채널 플러그인: 로컬 dev Gateway 로 실측, 인바운드·message 툴·components 동작, 봇 루프 보호는 플러그인이 사실을 넘길 때만).
+로컬 dev Gateway: OpenClaw.app 번들 CLI(`openclaw --dev`, Node 24 번들, 상태 ~/.openclaw-dev, 에이전트 dev·fin). 원격 호스트 플러그인 설치는 사람 절차(ADR 0002 9절).
+다음: 스파이크 3(채널 systemPrompt 갱신이 claude-cli 기존 세션에 반영되는 경로). ADR 0002 12절 결정 6건(Node 24 전환, components 노출 방식, 봇 루프 보호와 relayPolicy, 브리지 계약 보강, 프롬프트 주입 경로, 첫 에이전트 id)은 사용자 판정 대기.
