@@ -8,7 +8,8 @@
     "typecheck": "tsc -p tsconfig.json",
     "spike:gateway": "tsx src/spike/gateway-spike.ts",
     "spike:bridge": "tsx src/spike/bridge-spike.ts",
-    "spike:bridge-serve": "tsx src/spike/bridge-serve.ts"
+    "spike:bridge-serve": "tsx src/spike/bridge-serve.ts",
+    "spike:prompt": "tsx src/spike/prompt-spike.ts"
   },
   "dependencies": {
     "@dodok/shared": "workspace:*",
