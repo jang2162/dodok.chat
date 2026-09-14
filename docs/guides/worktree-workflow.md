@@ -22,7 +22,7 @@ IDE, 실행 중인 `pnpm dev`(Vite 개발 서버·서버 프로세스), 다른 �
   **Orca 가 살아 있는 동안 구현 경로로 쓰지 않는다** — 서브에이전트는 컨텍스트가 조율자 안에 숨어 사람이 볼 수
   없고, `EnterWorktree` 가 만드는 `.claude/worktrees/` 는 이 저장소의 워크트리 규약(`.worktrees/dodok.chat/<슬러그>`)
   밖이라 `status`·`reap`·훅이 알지 못한다.
-- **Orca 가 없거나 죽어 있거나, 살아 있어도 이 저장소의 워크트리를 다룰 수 없으면**(`worktreeBasePath` 미설정 — 2절)
+- **Orca 가 없거나 죽어 있거나, 살아 있어도 이 저장소의 워크트리를 다룰 수 없으면**(Orca 가 만드는 자리가 `.worktrees/dodok.chat/<슬러그>` 가 아닐 때 — 2절)
   그때만 superpowers 의 실행 경로(`subagent-driven-development`, 필요하면 `EnterWorktree`, 또는 손으로 만든
   `.worktrees/dodok.chat/<슬러그>` 안에서 도는 서브에이전트)로 내려간다. 내려갈 때는 그 이유를 사용자에게 말한다. 그 경우에도 5절(커밋)과 0절(판단)은 그대로 적용된다.
 - 구현계획(`docs/superpowers/plans/*.md`)이 있으면 **브리프는 그 계획의 태스크를 가리키고**, 워커가 계획 문서를
@@ -148,11 +148,13 @@ scripts/orca-worker.sh spawn <슬러그> <역할> [--model opus|sonnet] [--brief
 `worker-release` 로 회수할 터미널 자원이 없다.
 
 **⚠ spawn 이 재지 않는 것이 하나 있다 — 워크트리가 생기는 자리.** 스크립트는 워크트리 경로를
-`<최상위>/.worktrees/dodok.chat/<슬러그>` 로 알고 그 자리에서 id 를 되찾는다. 그 자리는 Orca 의 repo 설정
-`worktreeBasePath` 가 정하는데, **그 값이 비어 있으면 Orca 는 다른 자리에 만들고 스크립트는 아무것도 찾지
-못해 `spawn: 워크트리 생성 실패` 로 끝난다 — 워크트리는 실제로 만들어졌고 엉뚱한 자리에 잔해로 남는다.**
-이 메시지를 만나면 생성이 아니라 **설정을 의심한다.** 아래 「만드는 방법」의 경로 항목대로 재고 고친 뒤,
-`orca worktree list --json` 으로 잘못된 자리의 잔해를 찾아 `orca worktree rm` 으로 지우고 다시 spawn 한다.
+`<최상위>/.worktrees/dodok.chat/<슬러그>` 로 알고 그 자리에서 id 를 되찾는다. 그 자리는 Orca 의 worktree 경로 설정이
+정한다 — **앱의 글로벌 설정이 기본이고 repo 별 `worktreeBasePath` 가 있으면 그것이 덮는다.** 이 머신은 글로벌 설정이
+`.worktrees` 라 repo 별 값이 비어 있어도 `.worktrees/dodok.chat/<슬러그>` 에 만들어진다(실측: `orca worktree create` 의
+반환 `path`). 둘 다 다른 값이면 Orca 는 다른 자리에 만들고 스크립트는 아무것도 찾지 못해 `spawn: 워크트리 생성 실패` 로
+끝난다 — 워크트리는 실제로 만들어졌고 엉뚱한 자리에 잔해로 남는다. 이 메시지를 만나면 생성이 아니라 **설정을 의심한다.**
+아래 「만드는 방법」의 경로 항목대로 재고 고친 뒤, `orca worktree list --json` 으로 잘못된 자리의 잔해를 찾아
+`orca worktree rm` 으로 지우고 다시 spawn 한다.
 
 ### 붙이기 — 터미널을 직접 만들지 않는 이유
 
@@ -382,24 +384,29 @@ orca worktree create --name <슬러그> --repo path:/Users/jang2162/IdeaProjects
     | jq -r '.result.repo.hookSettings.scripts.setup'
   ```
 
-  ⚠ **이 훅은 CLI 로는 못 바꾼다** — 바로 아래 `worktreeBasePath` 와 같이 **Orca 앱의 repo 설정**에서 고친다.
-- **경로는 Orca 가 정한다 — 그 설정이 비어 있으면 `.worktrees/` 규약을 벗어난 자리에 만들어진다.**
-  워크트리 위치는 repo 설정의 `worktreeBasePath` 가 정하는데, **repo 를 Orca 에 등록해도 이 값은 자동으로
-  채워지지 않는다.** 비어 있는 채로 만들면 워크트리가 저장소 루트 밖으로 나갈 수 있고, 그렇게 생긴
-  워크트리는 **다른 에이전트가 찾지 못하고 `.gitignore` 도 덮지 못한다**(아래 「Orca 가 없을 때」의 위치 규약).
+  ⚠ **이 훅은 CLI 로는 못 바꾼다** — **Orca 앱의 repo 설정**에서 고친다.
+- **경로는 Orca 가 정한다 — 글로벌 설정 또는 repo 별 `worktreeBasePath`.** 워크트리 위치는 앱의 글로벌 worktree 경로
+  설정이 기본이고, repo 설정의 `worktreeBasePath` 가 있으면 그것이 덮는다. **repo 를 Orca 에 등록해도 repo 별 값은 자동으로
+  채워지지 않으며, 글로벌 값은 CLI 로 보이지 않는다**(`repo show` 에는 repo 별 값만 나온다). 어느 쪽도 `.worktrees` 가
+  아니면 워크트리가 저장소 루트 밖으로 나갈 수 있고, 그렇게 생긴 워크트리는 **다른 에이전트가 찾지 못하고 `.gitignore` 도
+  덮지 못한다**(아래 「Orca 가 없을 때」의 위치 규약).
 
-  **만들기 전에 잰다.**
+  **설정을 읽지 말고 실물로 잰다** — 일회용 워크트리를 만들어 반환 `path` 를 보고 바로 지운다.
 
   ```bash
-  orca repo show --repo path:/Users/jang2162/IdeaProjects/dodok.chat --json | grep worktreeBasePath
-  # "worktreeBasePath": ".worktrees"   ← 이 줄이 나와야 한다. 안 나오면 값이 비어 있는 것이다
+  orca worktree create --name probe-path --repo path:/Users/jang2162/IdeaProjects/dodok.chat \
+      --base-branch main --setup skip --no-parent --json | jq -r '.result.worktree.path // .result.path'
+  # /Users/jang2162/IdeaProjects/dodok.chat/.worktrees/dodok.chat/probe-path   ← 이 자리여야 한다
+  orca worktree rm --worktree "id:<repoId>::<위 path>" --json && git worktree prune
   ```
 
-  **비어 있으면 Orca 앱의 그 repo 설정에서 worktree 경로를 `.worktrees` 로 지정하고 위 명령으로 다시 잰다.**
-  ⚠ **CLI 로는 이 값을 쓸 수 없다** — `repo add` 는 경로만 받고, `repo set-base-ref` 는 기준 ref 를,
-  `worktree set` 은 이름·이슈·부모 같은 메타데이터만 바꾼다. `worktree create` 에도 생성 위치를 받는
-  옵션이 없다(`--name` 은 이름이지 경로가 아니다). **고칠 수 있는 자리는 앱 설정뿐이므로, 값이 비어 있으면
-  거기서 멈추고 사람에게 설정을 바꿔 달라고 알린다** — CLI 로 우회하려다 엉뚱한 자리에 만들지 마라.
+  이 머신의 글로벌 설정은 `.worktrees` 이고 위 실측이 그 자리를 냈다. 다른 자리가 나오면 **Orca 앱 설정**(글로벌 또는
+  그 repo 의 worktree 경로)에서 `.worktrees` 로 맞추고 다시 잰다. ⚠ **CLI 로는 이 값을 쓸 수 없다** — `repo add` 는
+  경로만 받고, `repo set-base-ref` 는 기준 ref 를, `worktree set` 은 이름·이슈·부모 같은 메타데이터만 바꾼다.
+  `worktree create` 에도 생성 위치를 받는 옵션이 없다(`--name` 은 이름이지 경로가 아니다). **고칠 수 있는 자리는 앱 설정뿐이므로,
+  자리가 틀리면 거기서 멈추고 사람에게 설정을 바꿔 달라고 알린다** — CLI 로 우회하려다 엉뚱한 자리에 만들지 마라.
+
+  `rm` 뒤에는 `.worktrees/dodok.chat/.orca-worktree-trash/` 가 남을 수 있다 — Orca 의 휴지통이지 잔해가 아니다.
 
   설정이 맞더라도 **만든 뒤 반환 JSON 의 `path` 를 보고** 그 자리가
   `<최상위>/.worktrees/dodok.chat/<슬러그>` 인지 확인한다 — `scripts/orca-worker.sh` 가 아는 자리가 여기다.
@@ -414,10 +421,10 @@ git worktree add -b feat/<작업명> .worktrees/dodok.chat/<슬러그>
 
 - **위치**: `.worktrees/dodok.chat/<슬러그>/` (저장소 루트 하위, gitignore 됨). Orca 가 만드는 자리와 같은 규약을 쓴다 —
   그래야 `status`·`reap`·훅이 손으로 만든 것도 다룬다. 저장소 바깥이나 임의 경로에 만들지 않는다.
-- ⚠ **`worktreeBasePath` 가 비어 있는 동안은 손으로 만든 워크트리도 `orca worktree list --json` 에 나오지 않는다**(이 저장소에서 실측).
-  그러면 `attach` 도 「Orca 가 워크트리로 모른다」로 실패한다. 즉 설정이 비어 있으면 **Orca 워커 경로가 통째로 막힌 것**이고,
-  그때는 문서 첫머리의 폴백(superpowers 실행 경로)으로 가되 **사용자에게 설정을 채워 달라고 함께 알린다.**
-  설정이 채워진 뒤 `git worktree add` 로 만든 것이 목록에 나오는지는 다시 재서 이 줄을 갱신한다.
+- ⚠ **손으로(`git worktree add`) 만든 워크트리는 Orca 가 목록에 올리지 않는다**(이 저장소에서 실측 — 글로벌 설정이
+  `.worktrees` 이고 자리도 규약대로였는데 `orca worktree list --json` 에 나오지 않았다). 그러면 `attach` 도
+  「Orca 가 워크트리로 모른다」로 실패한다. **Orca 워커를 붙일 워크트리는 Orca 로 만든다(= `spawn`).** 손으로 만든
+  워크트리에서 일해야 하면 그 안의 실행 주체는 문서 첫머리의 폴백(서브에이전트)이고, 그 이유를 사용자에게 말한다.
 - 기준 브랜치를 명시해야 하면 마지막 인자로 준다(`... .worktrees/dodok.chat/x base2`). 기본은 현재 `HEAD` 다.
 - superpowers 의 `EnterWorktree` 가 만드는 `.claude/worktrees/` 도 gitignore 돼 있지만 **Orca 가 살아 있을 때는 쓰지 않는다**
   (문서 첫머리 「Orca 워커가 우선이다」).
@@ -488,8 +495,8 @@ pnpm typecheck && pnpm test               # 기준선 확인 — Turbo 캐시는
   그 값, 없으면 macOS·일반은 `orca`, **Linux 는 `orca-ide`** — 리눅스에서 bare `orca` 는 GNOME 스크린리더로 붙는다.)
   오케스트레이션 experimental 기능이 켜져 있어야 한다.
 - **방식은 외우지 말고** `orca skills get orchestration` 으로 버전 맞춤 가이드를 읽는다(플래그·서브커맨드가 릴리스마다 바뀐다). 요지:
-  - `git worktree add` 로 만든 `.worktrees/*` 는 **`worktreeBasePath` 가 채워져 있을 때만** Orca 가 인식할 가능성이 있다 —
-    비어 있는 동안은 목록에 나오지 않는다(2절 「Orca 가 없을 때」).
+  - `git worktree add` 로 만든 `.worktrees/*` 는 Orca 가 **인식하지 않는다**(실측). Orca 워커를 붙일 워크트리는
+    `spawn`(= `orca worktree create`)으로 만든다(2절 「Orca 가 없을 때」).
   - **붙이기는 `worker-start` 가 에이전트까지 띄우게 한다** — `orca orchestration worker-start
     --task <id> --worktree id:<fullId> --agent claude --model <모델> --timeout-ms 180000`.
     **`terminal create` 로 먼저 띄우고 `terminal wait --for tui-idle` 뒤에 붙이지 마라** —
