@@ -58,6 +58,34 @@ importers:
         specifier: 4.1.11
         version: 4.1.11(@types/node@22.20.2)(vite@8.3.0(@types/node@22.20.2)(esbuild@0.28.2)(tsx@4.23.13))
 
+  packages/openclaw-adapter:
+    dependencies:
+      '@dodok/shared':
+        specifier: workspace:*
+        version: link:../shared
+      '@openclaw/gateway-client':
+        specifier: 2026.9.4
+        version: 2026.9.4
+      '@openclaw/gateway-protocol':
+        specifier: 2026.9.4
+        version: 2026.9.4
+      zod:
+        specifier: 4.6.5
+        version: 4.6.5
+    devDependencies:
+      '@types/node':
+        specifier: ^22.19.0
+        version: 22.20.2
+      tsx:
+        specifier: 4.23.13
+        version: 4.23.13
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 4.1.11
+        version: 4.1.11(@types/node@22.20.2)(vite@8.3.0(@types/node@22.20.2)(esbuild@0.28.2)(tsx@4.23.13))
+
   packages/openclaw-plugin:
     dependencies:
       '@dodok/shared':
@@ -549,6 +577,14 @@ packages:
 
   '@jridgewell/sourcemap-codec@1.6.0':
     resolution: {integrity: sha512-T7jf+5zgsZHwNJ4lvQ7/aezbyk0nNX+zJVWpmHA7VYsEx7a7qr5Rg5IbtJFqkgze5Y2sruq1RUY8Q837Od7iFw==}
+
+  '@openclaw/gateway-client@2026.9.4':
+    resolution: {integrity: sha512-MQSj/agWzPMvPbWIyh5azarYYJvxcrc9TVdPn22zdGAfW7SAOpocpa/ImOi8YcIDk6IILXvv0nRDFKXQnjMS6A==}
+    engines: {node: '>=22.19.0'}
+
+  '@openclaw/gateway-protocol@2026.9.4':
+    resolution: {integrity: sha512-arnDRQV4d7yP1veI0i3UWJSrRk7ehgM0N8n0kQoVc0yP6/cy40GZmshh10RD/ZASrhGeZGDXbVQBjSHIHgrtDg==}
+    engines: {node: '>=22.19.0'}
 
   '@oxc-project/types@0.149.0':
     resolution: {integrity: sha512-Efcc+iF0j3Bf67YjEqIqWXbX5XddXoK/Mw4K1/JuXwRCZ8N16VR7iT23nlCc9XrveFVh/E5Rqs2StT0V8v9LdA==}
@@ -1133,6 +1169,10 @@ packages:
   get-tsconfig@4.14.3:
     resolution: {integrity: sha512-++QEw4DIY7WGoukz+/+A/8dGYPT9l9yIadnmSgZ8Rjr3YVSVDipQSO9CdnJo9ePqFqUUqh+wk9uIaoiAwsiPkA==}
 
+  ipaddr.js@2.5.0:
+    resolution: {integrity: sha512-aq+t5NAc+cS6rZQQVWC2x98CPqGtKKTMDd4Gaodv0wShnItdKg/51djkGJ1hqH+Oy0ivDftCbSLCQob8zso01w==}
+    engines: {node: '>= 10'}
+
   lightningcss-android-arm64@1.33.0:
     resolution: {integrity: sha512-gEpRTalKdosp4Bb8qWtc2iOgE5SeIHlpS1up9bFq2wAyYhl1UdTObYiHe98zEM9SQvSoqQZ1IQD0JNpg3Ml5pg==}
     engines: {node: '>= 12.0.0'}
@@ -1319,6 +1359,9 @@ packages:
     resolution: {integrity: sha512-AswgMPnpOoaVZHrrSBejETzEbuIA69OVGwfkHwfrY0A23VjWXBANzgq9+OymWOHAIArB7D1+1z498WY8fGg1Jw==}
     hasBin: true
 
+  typebox@1.3.18:
+    resolution: {integrity: sha512-/wYPoDqxWZSxV/XD8Eskzr3YluXC9CaWJOuUYMkj+lLVLkyeEIQKzHvMuS/IRc3OLTIBC32LAtHgXo/WFEOMHQ==}
+
   typescript@5.9.3:
     resolution: {integrity: sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==}
     engines: {node: '>=14.17'}
@@ -1419,6 +1462,18 @@ packages:
     resolution: {integrity: sha512-hUrmaWBdVDcxvYqnyh09zunKzROWjbZTiNy8dBEjkS7ehEDQibXJ7XvlmtbwuTclUiIyN+CyXQD4Vmko8fNm8w==}
     engines: {node: '>=8'}
     hasBin: true
+
+  ws@8.21.3:
+    resolution: {integrity: sha512-201TZ/kPWxoPr/OKWjquZR1SWKXcvxdH+e1xrx89b3YbmzLMFCLfnaG1HFIgWzJOEWZ7MvpK++odZufgYR50Rw==}
+    engines: {node: '>=10.0.0'}
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: '>=5.0.2'
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
 
   zod@4.6.5:
     resolution: {integrity: sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q==}
@@ -1660,6 +1715,19 @@ snapshots:
     optional: true
 
   '@jridgewell/sourcemap-codec@1.6.0': {}
+
+  '@openclaw/gateway-client@2026.9.4':
+    dependencies:
+      '@openclaw/gateway-protocol': 2026.9.4
+      ipaddr.js: 2.5.0
+      ws: 8.21.3
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
+
+  '@openclaw/gateway-protocol@2026.9.4':
+    dependencies:
+      typebox: 1.3.18
 
   '@oxc-project/types@0.149.0': {}
 
@@ -2030,6 +2098,8 @@ snapshots:
     dependencies:
       resolve-pkg-maps: 1.0.0
 
+  ipaddr.js@2.5.0: {}
+
   lightningcss-android-arm64@1.33.0:
     optional: true
 
@@ -2213,6 +2283,8 @@ snapshots:
       '@turbo/windows-64': 2.10.12
       '@turbo/windows-arm64': 2.10.12
 
+  typebox@1.3.18: {}
+
   typescript@5.9.3: {}
 
   undici-types@6.21.0: {}
@@ -2263,5 +2335,7 @@ snapshots:
     dependencies:
       siginfo: 2.0.0
       stackback: 0.0.2
+
+  ws@8.21.3: {}
 
   zod@4.6.5: {}

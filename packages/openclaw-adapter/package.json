@@ -1,0 +1,23 @@
+{
+  "name": "@dodok/openclaw-adapter",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json",
+    "spike:gateway": "tsx src/spike/gateway-spike.ts"
+  },
+  "dependencies": {
+    "@dodok/shared": "workspace:*",
+    "@openclaw/gateway-client": "2026.9.4",
+    "@openclaw/gateway-protocol": "2026.9.4",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "tsx": "4.23.13",
+    "typescript": "5.9.3",
+    "vitest": "4.1.11"
+  }
+}
