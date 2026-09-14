@@ -1,0 +1,94 @@
+import { z } from "zod";
+import { Id } from "./common";
+
+/** 저장 본문의 멘션 토큰. 그룹1: a|u, 그룹2: uuid */
+export const MENTION_TOKEN_RE = /<@(a|u):([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})>/g;
+
+/** 평문 멘션. 그룹1: 앞 문맥(문장 시작/공백/구두점), 그룹2: 핸들. 뒤는 단어 경계. 대소문자 무시. */
+export const PLAIN_MENTION_RE = /(^|[^\w@])@([a-z0-9_-]{2,32})(?![\w-])/gi;
+
+export const MentionSet = z.object({ agents: z.array(Id), users: z.array(Id) });
+export type MentionSet = z.infer<typeof MentionSet>;
+
+export type Participant = {
+  type: "agent" | "user";
+  id: string;
+  handle: string;
+  aliases?: string[];
+  displayName: string;
+};
+
+export type Segment =
+  | { kind: "text"; text: string }
+  | { kind: "mention"; type: "agent" | "user"; id: string };
+
+export function parseMentions(bodyMd: string): MentionSet {
+  const agents: string[] = [];
+  const users: string[] = [];
+  for (const m of bodyMd.matchAll(MENTION_TOKEN_RE)) {
+    const kind = m[1];
+    const id = m[2] as string;
+    const list = kind === "a" ? agents : users;
+    if (!list.includes(id)) list.push(id);
+  }
+  return { agents, users };
+}
+
+export function segment(bodyMd: string): Segment[] {
+  const out: Segment[] = [];
+  let last = 0;
+  for (const m of bodyMd.matchAll(MENTION_TOKEN_RE)) {
+    const idx = m.index as number;
+    if (idx > last) out.push({ kind: "text", text: bodyMd.slice(last, idx) });
+    out.push({ kind: "mention", type: m[1] === "a" ? "agent" : "user", id: m[2] as string });
+    last = idx + m[0].length;
+  }
+  if (last < bodyMd.length) out.push({ kind: "text", text: bodyMd.slice(last) });
+  return out;
+}
+
+export function renderForAgent(bodyMd: string, participants: Participant[]): string {
+  const byKey = new Map(participants.map((p) => [`${p.type === "agent" ? "a" : "u"}:${p.id}`, p]));
+  return bodyMd.replace(MENTION_TOKEN_RE, (_whole, kind: string, id: string) => {
+    const p = byKey.get(`${kind}:${id}`);
+    return p ? `@${p.handle}` : "@unknown";
+  });
+}
+
+export function tokenize(
+  text: string,
+  participants: Participant[],
+): { bodyMd: string; mentions: MentionSet } {
+  const byHandle = new Map<string, Participant>();
+  for (const p of participants) {
+    byHandle.set(p.handle.toLowerCase(), p);
+    for (const a of p.aliases ?? []) byHandle.set(a.toLowerCase(), p);
+  }
+  const bodyMd = splitCode(text)
+    .map((part) =>
+      part.code
+        ? part.text
+        : part.text.replace(PLAIN_MENTION_RE, (whole: string, pre: string, handle: string) => {
+            const p = byHandle.get(handle.toLowerCase());
+            if (!p) return whole;
+            return `${pre}<@${p.type === "agent" ? "a" : "u"}:${p.id}>`;
+          }),
+    )
+    .join("");
+  return { bodyMd, mentions: parseMentions(bodyMd) };
+}
+
+/** 펜스 코드 블록(```...```)과 인라인 코드(`...`)를 분리한다. */
+function splitCode(text: string): Array<{ text: string; code: boolean }> {
+  const re = /```[\s\S]*?```|`[^`\n]*`/g;
+  const out: Array<{ text: string; code: boolean }> = [];
+  let last = 0;
+  for (const m of text.matchAll(re)) {
+    const idx = m.index as number;
+    if (idx > last) out.push({ text: text.slice(last, idx), code: false });
+    out.push({ text: m[0], code: true });
+    last = idx + m[0].length;
+  }
+  if (last < text.length) out.push({ text: text.slice(last), code: false });
+  return out;
+}
