@@ -288,13 +288,6 @@ export type Ack<T> = (res: Result<T>) => void;
 /** 핸드셰이크 협상용. wire와 bridge 각각 독립적으로 올린다. */
 export const WIRE_PROTOCOL = 1 as const;
 export const BRIDGE_PROTOCOL = 1 as const;
-
-export function ok<T>(data: T): Result<T> {
-  return { ok: true, data };
-}
-export function fail(code: ErrorCode, message: string, details?: Record<string, unknown>): Result<never> {
-  return { ok: false, error: details ? { code, message, details } : { code, message } };
-}
 ```
 
 - [ ] **Step 6: 테스트·타입체크·린트 통과 확인**
