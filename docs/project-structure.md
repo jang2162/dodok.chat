@@ -99,7 +99,7 @@ src/
 │  │                      hello-ok(features·policy) 캐시, caps 선언(정본 GATEWAY_CLIENT_CAPS), 첫 connect 의 NOT_PAIRED 를
 │  │                      정상 경로로 보고 2~5초 재시도(자동 승인), 재접속 시 프로젝션 재구축
 │  ├─ device-identity.ts  Ed25519 아이덴티티 생성·저장(0600)·서명·raw base64url 공개키 (스파이크 1에서 확정)
-│  ├─ sessions.ts         채널·에이전트 → sessionKey 매핑 (agent:<agentId>:dodok:channel:<channelId>)
+│  ├─ sessions.ts         채널·에이전트 → sessionKey 매핑 (agent:<agentId>:dodok:channel:<channelId>; 키 회전을 채택하면 :g<N> 세대 접미사 — ADR 0003 7.1 결정 대기)
 │  ├─ events.ts           chat(delta/final/status/error/aborted)/agent(stream:"tool" 포함)/session.message(usage·stopReason·비용)/
 │  │                      session.approval → RunEvent 정규화. runId = chat.send 의 idempotencyKey. seq 는 순서용이며 연속이 아니다.
 │  │                      session.tool 은 쓰지 않는다 — tool-events 를 선언한 연결은 수신 대상에서 제외된다(ADR 0001)
@@ -108,7 +108,8 @@ src/
 │  ├─ server.ts           플러그인이 아웃바운드로 붙는 Socket.IO 네임스페이스 /bridge (HTTP 경로는 /socket.io/; 토큰 인증,
 │  │                      인바운드 전달, 아웃바운드 수신, 컴포넌트 결과 전달, 헬스) — 최소 표면은 스파이크 2에서 구현
 │  └─ session.ts          플러그인 연결 1개의 상태 (연결/재연결, 미응답 요청, 중복 제거)
-└─ config-sync.ts         채널 프롬프트 변경 → 브리지로 플러그인에 "설정 변경" 전달 → 플러그인이 Gateway 설정 갱신 → 반영 확인
+└─ config-sync.ts         채널 프롬프트 변경 → 브리지로 플러그인에 "설정 변경" 전달 → 플러그인이 Gateway 설정 갱신 → 설정 스냅샷 반영 확인.
+                          세션 반영은 별개 — 서버가 세션별 프롬프트 리비전을 추적해 불일치 시 ChannelPromptContext 동봉 또는 리셋 (ADR 0003 7.1)
 ```
 
 ### 2.4 `packages/openclaw-plugin` (원격 OpenClaw Gateway 프로세스 안에서 실행)
@@ -118,13 +119,13 @@ src/
 ├─ index.ts               defineChannelPluginEntry({ plugin, setRuntime }) — id "dodok". 매니페스트 channels·channelConfigs, package.json openclaw.channel,
 │                         런타임 dependencies 없는 단일 번들(esbuild) (ADR 0002 3.1·3.2)
 ├─ channel.ts             채널 정의: 인바운드 ingress, 아웃바운드 액션 어댑터(describeMessageTool),
-│                         채널별 설정 스키마(requireMention, systemPrompt, users, botLoopProtection). 코어 봇 루프 보호는
+│                         채널별 설정 스키마(requireMention, systemPrompt, botLoopProtection, inboundChannelPrompt[스파이크 3 추가 — 존치 여부 결정 대기]). 코어 봇 루프 보호는
 │                         플러그인이 에이전트 작성 인바운드에 사실을 넘길 때만 동작한다 (ADR 0002 7절)
 ├─ components-schema.ts   message 툴에 끼울 components 스키마 조각 (shared/components를 그대로 노출)
 ├─ bridge-client.ts       서버 브리지 WSS 아웃바운드 접속(BRIDGE_URL·토큰)·지수 백오프 재연결·아웃바운드 큐
 ├─ config-writer.ts       브리지에서 받은 채널 설정 변경을 runtime.config.mutateConfigFile 로 Gateway 설정에 반영(channel-config-writes 는 권한 판정).
-│                         반영은 live 이나 claude-cli 기존 세션엔 미반영 — 스파이크 3 과제 (ADR 0002 8절)
-└─ context.ts             인바운드에 동봉할 최근 채널 메시지 N개 + 참여자 목록 + 릴레이 규칙 요약
+│                         반영은 설정 스냅샷 기준 live. claude-cli 기존 세션은 리셋·새 키에서만 반영, 드리프트·재시작으로는 미반영 (ADR 0003 3절)
+└─ context.ts             인바운드에 동봉할 최근 채널 메시지 N개 + 참여자 목록 + 릴레이 규칙 요약 + 채널 프롬프트 배치(헤더 줄 또는 ChannelPromptContext, ADR 0003)
 ```
 
 SDK import 경로: `openclaw/plugin-sdk/plugin-entry`, `openclaw/plugin-sdk/channel-message`, `openclaw/plugin-sdk/channel-config-schema` 등 서브패스만 사용한다. `openclaw`는 devDependency이며 번들 시 external로 두어 Gateway가 제공하는 런타임을 쓴다.
@@ -204,7 +205,7 @@ UPLOAD_DIR=./data/uploads
 1. 모노레포 스캐폴드, `shared` 타입·스키마부터 (계획서 5.4 components v1, 6장 테이블, wire·bridge 계약).
 2. ~~`openclaw-adapter/gateway/client.ts` — wss 접속·페어링·`hello-ok.features` 덤프·`chat.send`·`chat` 델타·`session.tool` 콘솔 출력까지 (스파이크 1)~~ **완료** → `docs/adr/0001-gateway-client-spike.md`. 페어링은 공유 토큰이면 자동 승인, 툴 진행은 `session.tool` 이 아니라 `agent` `stream:"tool"`, `features` 는 참고 목록.
 3. ~~`openclaw-plugin` 스켈레톤 — 원격 Gateway에 tarball 설치, 터널로 브리지 접속, 인바운드 수신·`message` 툴 아웃바운드·components 스키마 노출 확인, 봇 루프 보호 상호작용 확인 (스파이크 2)~~ **완료** → `docs/adr/0002-channel-plugin-spike.md` (로컬 dev Gateway 로 실측; 원격 호스트 설치는 9절 사람 절차). `ui_render` 대안은 불필요했으나 components 조각의 SDK 방침 충돌은 결정 필요(ADR 12절).
-4. 채널 프롬프트 설정 갱신을 플러그인 내부 쓰기로 반영·확인 (스파이크 3). 실패 시 Gateway 설정 메서드 또는 인바운드 프리픽스.
+4. ~~채널 프롬프트 설정 갱신을 플러그인 내부 쓰기로 반영·확인 (스파이크 3)~~ **완료** → `docs/adr/0003-channel-prompt-spike.md`: 설정 쓰기는 live 이나 claude-cli 기존 세션은 리셋·새 키에서만 반영, 인바운드 경로(프리픽스·ChannelPromptContext)는 매 턴 반영. Gateway 설정 메서드(a-2)는 같은 문제를 풀지 못한다.
 5. 스파이크 통과 후 `server` 모듈 → `web` 순으로 MVP 코어(Phase 1).
 
 각 스파이크 결과는 `docs/adr/`에 한 장씩 남긴다.

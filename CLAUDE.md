@@ -38,6 +38,6 @@ docker compose -f infra/docker-compose.yml up [--profile gateway]
 
 ## 현재 단계
 shared 계약·DB 스키마·순수 로직 구현 완료 (docs/superpowers/plans/2026-09-14-shared-contracts.md).
-Phase 0 스파이크 1·2 완료 — docs/adr/0001(Gateway WS 실물), docs/adr/0002(채널 플러그인: 로컬 dev Gateway 로 실측, 인바운드·message 툴·components 동작, 봇 루프 보호는 플러그인이 사실을 넘길 때만).
+Phase 0 스파이크 1·2·3 완료 — docs/adr/0001(Gateway WS 실물), 0002(채널 플러그인: 인바운드·message 툴·components 동작, 봇 루프 보호는 플러그인이 사실을 넘길 때만), 0003(채널 프롬프트: claude-cli 기존 세션은 리셋·새 키에서만 반영, ChannelPromptContext 는 매 턴 반영; deltaCursor 는 claude-cli 세션에 없음; chat.send 대체 경로는 MVP 미사용).
 로컬 dev Gateway: OpenClaw.app 번들 CLI(`openclaw --dev`, Node 24 번들, 상태 ~/.openclaw-dev, 에이전트 dev·fin). 원격 호스트 플러그인 설치는 사람 절차(ADR 0002 9절).
-다음: 스파이크 3(채널 systemPrompt 갱신이 claude-cli 기존 세션에 반영되는 경로). ADR 0002 12절 결정 6건(Node 24 전환, components 노출 방식, 봇 루프 보호와 relayPolicy, 브리지 계약 보강, 프롬프트 주입 경로, 첫 에이전트 id)은 사용자 판정 대기.
+Phase 0 종료. 다음: 사용자 결정(ADR 0002 12절 6건 + ADR 0003 10절 7건 — 프롬프트 주입 경로·admin 스코프·재접속 복구·대체 경로·inboundChannelPrompt 존치·업스트림 보고·:g<N> 회전) → 계획서 10장 확정 → Phase 1 MVP 코어(서버 모듈 → 웹).

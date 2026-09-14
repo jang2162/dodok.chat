@@ -214,7 +214,7 @@ Do not expose unapproved provider-native UI escape hatches from the generic mess
 | R — c01 에 한 번 더(드리프트 다음 턴) | **여전히 반영 안 됨**. 로그 `reuse=reusable`. 원래 계획한 `sessions.reset` 은 `missing scope: operator.admin` 으로 실패해 리셋 없이 돌았다 — 리셋 효과는 미확인 |
 
 즉 **(a-1) 쓰기 경로 자체는 live 로 되지만, claude-cli 백엔드의 재개된 세션에는 바뀐 채널 프롬프트가 들어가지 않았다**(두 턴 연속).
-코어는 드리프트 턴에 시스템 프롬프트를 다시 보내도록 짜여 있다(`resendSystemPromptForSoftResume`) — 그런데도 안 보였으므로 warm subprocess 재사용 쪽 문제로 추정한다(미확정).
+코어는 드리프트 턴에 시스템 프롬프트를 다시 보내도록 짜여 있다(`resendSystemPromptForSoftResume`) — 그런데도 안 보였으므로 warm subprocess 재사용 쪽 문제로 추정한다(미확정). → **스파이크 3에서 반증**: Gateway 재시작 뒤에도 미반영이었고, 원인은 Claude CLI 가 `--resume` 시 세션 생성 때의 `prompt_snapshot` 으로 재개하는 쪽(ADR 0003 3.2, 추정).
 스파이크 3은 이 조건(기존 세션·백엔드별)부터 잰다. 플러그인은 `ChannelPromptContext`(비신뢰 메타데이터)·인바운드 프리픽스(b)라는 대안 주입 자리도 갖고 있다.
 
 ## 9. 원격 배포 절차 (사람이 할 것)

@@ -54,13 +54,13 @@
 | 채널 항목 `inboundChannelPrompt: "prefix" \| "context"` (매니페스트 스키마 포함). `context.ts` `placeChannelPrompt` 가 인바운드 `context.channelPrompt` 를 헤더 줄(`채널 프롬프트: …`) 또는 `MsgContext.ChannelPromptContext` 로 싣는다. 없으면 지금처럼 싣지 않는다 | P4·P5 를 계정 재시작 없이 전환. 브리지 계약(`InboundDeliver`)은 바꾸지 않았다 |
 | ingress 로그에 `sessionKey`·`groupSystemPromptChars`·`inboundChannelPrompt`·`channelPromptContextItems` | 턴마다 어떤 주입이 실렸는지의 근거 |
 
-단위 테스트는 `test/{inbound,context,config}.test.ts` 에 8건 추가(구현 전 8건 실패 확인 → 구현 후 57/57 통과).
+단위 테스트는 `test/{inbound,context,config}.test.ts` 에 9건 추가(main 48 → 57; `config` +1·`context` +4·`inbound` +4. 구현 전 8건 실패 확인 — 「`:g<N>` 모양 아니면 거부」 가드는 정확 일치 코드에서도 통과한다 → 구현 후 57/57 통과).
 
 ### 2.2 러너 결함과 재실행 (정직하게 적는다)
 
 - **H 1차 실행의 커서 판정은 무효다.** 러너가 관찰 기록용으로 마스킹한 응답에서 커서를 꺼내 다음 호출에 넣었다 — 커서(187자)가 base64 모양이라
   `<masked:187>` 로 가려진 문자열이 넘어가 `{kind:"reset"}` 이 나왔다. 원문을 쓰도록 고쳐(`observerRequestRaw`) **런 없이 H 만 다시 돌렸고**(`q2ti-q3h`) 5절은 그 결과다.
-  claude-cli 세션 3개의 「첫 응답에 `deltaCursor` 가 없다」는 1차·2차 모두 같았다(마스킹과 무관).
+  「첫 응답에 `deltaCursor` 가 없다」는 1차 실행에서 claude-cli 세션 3개 모두 그랬다(`q2q3q4.json` `firstHasDeltaCursor:false` ×3). 2차 실행에서는 base·`:g2` 둘만 그렇고, c04 는 1차 H 가 이미 리셋해 CLI 바인딩이 없었으므로 **`deltaCursor`(187자)가 있고 `completeSnapshot` 이 없다**(`q2ti-q3h.json` `.history.tool.first`) — 5절의 「바인딩 없는 세션」 관찰이 그것이다(마스킹과 무관).
 - T1 이 툴을 부르지 않아 모델 경로의 `ToolInputError` 는 볼 수 없었고, 런 예산이 없어 재시도(T2)는 돌지 않았다. 대신 런이 들지 않는 `tools.invoke` 재현(TI)을 추가했다.
 
 ## 3. 질문 1 — 채널 프롬프트가 기존 세션에 반영되는 조건
@@ -121,7 +121,7 @@ P3 에는 교란 요인이 하나 있다 — 전사에 P2 의 답 `AMBER` 가 �
 
 ### 3.4 세부 실물
 
-- **`sessions.reset` 응답**: `{ ok:true, key, entry:{ sessionId:<새 값>, lifecycleRevision, sessionStartedAt, systemSent:false, compactionCount:0, createdVia:"channel", createdActor, delivery:{kind:"external", route, context, origin}, … } }`.
+- **`sessions.reset` 응답**: `{ ok:true, key, entry:{ sessionId, lifecycleRevision, sessionStartedAt, systemSent:false, compactionCount:0, createdVia:"channel", createdActor, delivery:{kind:"external", route, context, origin}, … } }`. **`sessionId` 는 리셋 전후 같다**(c03 base 는 P0·P2·H 전부 동일, c04 도 두 번의 리셋 전후 동일 — `q1-p2p3.json` `.turns[0].setup[0].sessionsReset.response.entry.sessionId`, `q2ti-q3h.json` `sessions.list`). 바뀌는 것은 `sessionStartedAt`(리셋 시각; `createdAt` 과 다름)·`lifecycleRevision`·`systemSent:false` → 서버의 리셋 판별과 7.1 의 「세션이 시작될 때의 리비전」 추적은 `sessionId` 가 아니라 `sessionStartedAt`/`lifecycleRevision` 으로 한다.
   메서드 스코프는 `operator.admin`(`method-scopes-*.mjs`). 리셋 뒤 OpenClaw 전사 첫 항목은 `role:"system"` `"Reset"`(`__openclaw.seq:1`)이고 이전 메시지는 표시 전사에서 빠진다.
   CLI 바인딩이 비어 다음 턴이 새 CLI 세션이 된다(P2 `session=none`).
 - **dev CLI 대체 경로**: `openclaw sessions` 에는 `reset` 하위 명령이 없다(`archive`·`cleanup`·`compact`·`delete`·`export-trajectory`·`list`·`tail`). 러너는 WS 가 거절되면
@@ -288,7 +288,7 @@ API 프로바이더 백엔드는 드리프트 재전송이 실제로 먹힐 수 
 6. `inFlightRun` 실물(진행 중 런이 있을 때의 `chat.history`), 그리고 CLI 바인딩 없는 세션이 claude-cli 런을 한 번 돌면 커서가 끊기는지(코드상 reset) — 실측 안 함.
 7. `deliver` 에 admin 이 필요 없는지(코드상 불필요) — admin 연결로만 보냈다. `sendText` 의 `identity` 필드로 에이전트를 식별할 수 있는지.
 8. 코어 시스템 프롬프트의 「Inline buttons OFF for dodok」 힌트가 components 사용률에 주는 영향 — B1(스파이크 2)은 첫 시도에 채웠지만 이번 T1 은 그 힌트까지 언급했다.
-9. `~/.openclaw-dev` 에 이번 흔적이 남아 있다: `channels.dodok.channels.<c03>.systemPrompt`(FJORD 문구), 세션 c03·`c03:g2`·c04(c04 는 리셋 + `chat.inject` 2줄), Claude CLI 전사 파일들. 다음에 이 dev 프로필을 쓸 때 채널 설정을 `config unset` 으로 지우고 시작한다.
+9. `~/.openclaw-dev` 에 이번 흔적이 남아 있다: `channels.dodok.channels.<c03>.systemPrompt`(FJORD 문구), 세션 c03·`c03:g2`·c04(c04 는 리셋 2회 + `chat.inject` 3회 — 1차 H 1회, 2차 H 2회; 표시 전사에는 마지막 리셋 뒤 2줄만 보인다), Claude CLI 전사 파일들. 다음에 이 dev 프로필을 쓸 때 채널 설정을 `config unset` 으로 지우고 시작한다.
 
 ## 10. 결정 필요
 
