@@ -51,7 +51,41 @@ export type OutboundAcceptance =
   | { kind: "duplicate"; messageId: string }
   | { kind: "reject"; code: ErrorCode };
 
-/** 플러그인 연결 1개. hello 전에는 아무것도 받지 않고, outboundId 로 재전송을 흡수한다 */
+/**
+ * 플러그인이 보낸 `outboundId` → 서버 messageId 기억. `attachBridge` 하나(= 플러그인 id 하나)가 연결을 넘어 공유하고,
+ * 최근 `max` 개만 남긴다(LRU — 조회해도 최근으로 올린다). 창 밖으로 밀린 id·서버 재시작 전 id 는 잊는다.
+ */
+export class OutboundDedupe {
+  readonly #seen = new Map<string, string>();
+  readonly #max: number;
+
+  constructor(opts: { max?: number } = {}) {
+    this.#max = opts.max ?? 1000;
+  }
+
+  get size(): number {
+    return this.#seen.size;
+  }
+
+  lookup(outboundId: string): string | undefined {
+    const messageId = this.#seen.get(outboundId);
+    if (messageId === undefined) return undefined;
+    this.#seen.delete(outboundId);
+    this.#seen.set(outboundId, messageId);
+    return messageId;
+  }
+
+  record(outboundId: string, messageId: string): void {
+    this.#seen.delete(outboundId);
+    this.#seen.set(outboundId, messageId);
+    while (this.#seen.size > this.#max) {
+      const oldest = this.#seen.keys().next().value as string;
+      this.#seen.delete(oldest);
+    }
+  }
+}
+
+/** 플러그인 연결 1개. hello 전에는 아무것도 받지 않는다. 중복 판정은 넘겨받은(연결을 넘어 공유되는) `OutboundDedupe` 로 한다 */
 export class BridgeSessionState {
   readonly connectionId: string;
   readonly connectedAt = new Date();
@@ -59,12 +93,11 @@ export class BridgeSessionState {
   hello: BridgeHello | undefined;
   closeReason: BridgeCloseReason | undefined;
   lastStatus: BridgeStatus | undefined;
-  readonly #seen = new Map<string, string>();
-  readonly #dedupeWindow: number;
+  readonly #dedupe: OutboundDedupe;
 
-  constructor(connectionId: string, opts: { dedupeWindow?: number } = {}) {
+  constructor(connectionId: string, opts: { dedupe?: OutboundDedupe } = {}) {
     this.connectionId = connectionId;
-    this.#dedupeWindow = opts.dedupeWindow ?? 1000;
+    this.#dedupe = opts.dedupe ?? new OutboundDedupe();
   }
 
   onHello(hello: BridgeHello): void {
@@ -75,16 +108,12 @@ export class BridgeSessionState {
 
   acceptOutbound(outboundId: string): OutboundAcceptance {
     if (this.phase !== "ready") return { kind: "reject", code: "PROTOCOL_MISMATCH" };
-    const messageId = this.#seen.get(outboundId);
+    const messageId = this.#dedupe.lookup(outboundId);
     return messageId ? { kind: "duplicate", messageId } : { kind: "new" };
   }
 
   recordOutbound(outboundId: string, messageId: string): void {
-    this.#seen.set(outboundId, messageId);
-    while (this.#seen.size > this.#dedupeWindow) {
-      const oldest = this.#seen.keys().next().value as string;
-      this.#seen.delete(oldest);
-    }
+    this.#dedupe.record(outboundId, messageId);
   }
 
   close(reason: BridgeCloseReason): void {

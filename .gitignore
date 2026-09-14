@@ -8,6 +8,7 @@ data/
 node_modules/
 dist/
 .turbo/
+*.tgz
 
 # 로컬 워크트리·에디터
 .worktrees/

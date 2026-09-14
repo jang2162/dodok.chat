@@ -4,7 +4,7 @@
 - 날짜: 2026-09-15
 - 대상: `docs/plan.md` 3.2절(채널 플러그인)·3.3절(components 규약)·5.2절(채널 프롬프트)·5.3절(릴레이·봇 루프 보호)·5.4절(components v1)·8장 Phase 0 스파이크 2
 - 산출 코드: `packages/openclaw-plugin/{openclaw.plugin.json,scripts/build.mjs,src/*}`,
-  `packages/openclaw-adapter/src/bridge/{server.ts,session.ts}`, `src/spike/bridge-spike.ts`
+  `packages/openclaw-adapter/src/bridge/{server.ts,session.ts}`, `src/spike/{bridge-spike.ts,bridge-serve.ts}`
 - 원본 관찰(커밋하지 않음 — `data/` 는 ignored): `data/spike-2-observations-main.json`(A·T·B·C·D),
   `data/spike-2-observations-d2-fresh-session.json`(D2), `data/spike-2-observations-r-reset.json`(R),
   `data/spike-2-observations-tool-invoke-dryrun.json`, `data/dev-gateway.log`, `data/spike-2-run.log`
@@ -87,7 +87,7 @@ SDK 문서가 채널 플러그인에 권하는 형태는 그것을 감싼 **`def
 | 단계 | 명령·결과 |
 | --- | --- |
 | 빌드 | `pnpm -F @dodok/openclaw-plugin build` → `dist/index.js` |
-| 패킹 | **`openclaw plugins pack`/`validate`/`build` 는 채널 플러그인을 거부**: `plugin entry does not expose tool or feature authoring metadata` (feature/tool 플러그인 전용). → **`pnpm pack --pack-destination dist`** 로 `dodok-openclaw-plugin-0.0.0.tgz`(dist/index.js·openclaw.plugin.json·package.json) |
+| 패킹 | **`openclaw plugins pack`/`validate`/`build` 는 채널 플러그인을 거부**: `plugin entry does not expose tool or feature authoring metadata` (feature/tool 플러그인 전용). → **`pnpm -F @dodok/openclaw-plugin run pack:plugin`**(빌드 → `pnpm pack --pack-destination dist`)로 `packages/openclaw-plugin/dist/dodok-openclaw-plugin-0.0.0.tgz`(dist/index.js·openclaw.plugin.json·package.json). 스크립트 이름을 `pack` 으로 두면 `pnpm -F … pack` 이 pnpm 내장 `pack` 을 불러 빌드 없이 워크스페이스 루트에 떨군다(수정 라운드 1에서 이름 변경) |
 | 설치 | `openclaw --dev plugins install <tgz> --force --accept-capabilities`. `--force` 없으면 경고(ClawHub 밖 소스), **`--accept-capabilities` 없으면 `Plugin "dodok" requires capability consent. The plugin was not installed.`** 설치 위치 `~/.openclaw-dev/extensions/dodok` |
 | 로드 | `plugins inspect dodok`: `status: "loaded"`, `channelIds: ["dodok"]`, `capabilities: [{kind:"channel", ids:["dodok"]}]`, `activationReason: "enabled in config"`, **`trust.reason: "provenance-invalid"`**(archive 설치) |
 | RPC `plugins.list` | `{ id:"dodok", installed:true, enabled:true, state:"enabled", origin:"global", category:"channel" }` — `restartRequired` 필드는 없다 |
@@ -219,58 +219,184 @@ Do not expose unapproved provider-native UI escape hatches from the generic mess
 
 ## 9. 원격 배포 절차 (사람이 할 것)
 
-Gateway RPC `plugins.install` 은 `source: "clawhub" | "official"` 만 받고, 로컬 CLI 의 `plugins install` 은 **CLI 가 도는 머신**에 설치한다. 원격 Gateway 에 올리려면 호스트 셸이 필요하다.
+Gateway RPC `plugins.install` 은 `source: "clawhub" | "official"` 만 받고, CLI `plugins install` 은 **CLI 가 도는 머신**에 설치한다. 원격 Gateway 에 올리려면 호스트 셸이 필요하다.
 
-1. 개발 PC: `pnpm -F @dodok/openclaw-plugin pack` → `packages/openclaw-plugin/dist/dodok-openclaw-plugin-0.0.0.tgz`
-2. 호스트로 복사: `scp packages/openclaw-plugin/dist/dodok-openclaw-plugin-0.0.0.tgz <gateway-host>:/tmp/`
-3. 호스트에서(Gateway 와 같은 사용자·Node 24):
-   ```bash
-   openclaw plugins install /tmp/dodok-openclaw-plugin-0.0.0.tgz --force --accept-capabilities
-   openclaw plugins inspect dodok --json | jq '.plugin.status, .plugin.channelIds'   # "loaded", ["dodok"]
-   ```
-4. 개발 PC 에서 브리지를 띄우고(`DODOK_SPIKE_MAX_RUNS=0 pnpm -F @dodok/openclaw-adapter spike:bridge`), 터널을 연다:
-   ```bash
-   cloudflared tunnel --url http://127.0.0.1:19100   # OpenClaw.app 번들 사본(스파이크 스크래치패드 bin/cloudflared). 출력의 https://<random>.trycloudflare.com
-   ```
-   Socket.IO 는 `/socket.io/` 경로로 붙으므로 터널은 오리진 전체를 넘기면 된다.
-5. 호스트에서 계정 설정(토큰은 파일로 넘기고 셸 기록에 남기지 않는다):
+**원격에서는 스파이크 러너(`spike:bridge`)를 쓰지 않는다.** 러너는 로컬 dev Gateway 에 묶여 있다 — `.env` 의 `OPENCLAW_DEV_GATEWAY_*` 가 필수이고,
+관찰 WS 도 dev URL 로 붙고, C 의 설정 변경은 `openclaw --dev config` 로 **이 PC 의 `~/.openclaw-dev`** 를 바꾸고, 완료 판정은 로컬 `data/dev-gateway.log` 를 읽는다.
+원격 확인은 **브리지만 띄우는 `spike:bridge-serve`**(`packages/openclaw-adapter/src/spike/bridge-serve.ts`)로 하고, 판정은 그 콘솔의 `inbound.deliver` ack 와 `outbound.message` 로만,
+설정 변경(C·D)은 **호스트 CLI `openclaw config patch --file <json5>`** 로 한다.
+
+표기: **[PC]** 개발 PC(이 저장소 루트), **[호스트]** Gateway 호스트 셸(Gateway 를 돌리는 사용자, Node 24).
+
+### 9.1 준비 [PC]
+
+1. `.env` 에 `BRIDGE_URL=ws://127.0.0.1:19100`(브리지가 리슨할 오리진)과 `BRIDGE_TOKEN`(예: `openssl rand -hex 32` 출력)이 있는지 본다. 형식은 `.env.example`.
+2. cloudflared — 둘 중 하나.
+   - 공식 설치: `brew install cloudflared` → `cloudflared --version`.
+   - OpenClaw.app 번들 사본(설치 없이): 앱 안의 원본을 직접 실행하지 않고, 실행 권한을 준 사본을 쓴다.
+     ```bash
+     mkdir -p ~/.local/bin
+     install -m 0755 /Applications/OpenClaw.app/Contents/Resources/cloudflared/arm64/cloudflared ~/.local/bin/cloudflared
+     ~/.local/bin/cloudflared --version
+     ```
+
+### 9.2 빌드·패킹 [PC]
+
+```bash
+pnpm -F @dodok/openclaw-plugin run pack:plugin
+tar tzf packages/openclaw-plugin/dist/dodok-openclaw-plugin-0.0.0.tgz   # package/dist/index.js, package/openclaw.plugin.json, package/package.json
+```
+
+`pack:plugin` 은 빌드(esbuild 번들) 뒤 `pnpm pack --pack-destination dist` 를 돈다. **`pnpm -F @dodok/openclaw-plugin pack` 은 쓰지 않는다** —
+pnpm 내장 `pack` 이 불려 빌드 없이 워크스페이스 루트에 tgz 를 떨군다(`*.tgz` 는 ignored).
+
+### 9.3 호스트에 설치 [PC → 호스트]
+
+[PC]:
+
+```bash
+scp packages/openclaw-plugin/dist/dodok-openclaw-plugin-0.0.0.tgz <gateway-host>:/tmp/
+```
+
+[호스트]:
+
+```bash
+openclaw plugins install /tmp/dodok-openclaw-plugin-0.0.0.tgz --force --accept-capabilities
+openclaw plugins inspect dodok --json | jq '.plugin.status, .plugin.channelIds'   # "loaded", ["dodok"]
+```
+
+- `--accept-capabilities` 가 없으면 `requires capability consent` 로 설치되지 않는다. `--force` 는 ClawHub 밖 소스 경고를 넘긴다.
+- archive 설치라 `trust.reason: "provenance-invalid"` 다. 호스트에 `security.installPolicy` 가 있으면 여기서 막힐 수 있다(11.3) — 막히면 출력을 그대로 남기고 멈춘다.
+- 플러그인 코드는 Gateway 가 다시 뜰 때 바뀐다. **첫 설치**는 9.5 의 계정 추가가 재시작을 부르므로 따로 재시작하지 않는다. **재설치(업데이트)** 는 설치 뒤 `openclaw gateway restart`.
+
+### 9.4 브리지와 터널 [PC, 터미널 두 개]
+
+터미널 1 — 브리지(저장소 루트):
+
+```bash
+pnpm -F @dodok/openclaw-adapter spike:bridge-serve
+# 브리지 127.0.0.1:19100 네임스페이스 /bridge, 채널 0199a6c0-0000-7000-8000-000000000c01, 기본 에이전트 main
+```
+
+원격 첫 에이전트 id 가 `main` 이 아니면 `DODOK_SPIKE_AGENT=<id>` 를, 다른 채널로 보내려면 `DODOK_SPIKE_CHANNEL_ID=<uuid>` 를 앞에 붙인다.
+이 명령은 Gateway·모델에 스스로 아무것도 보내지 않는다 — 콘솔에 입력한 줄만 인바운드로 나간다(9.6).
+관찰은 콘솔 출력뿐이라 기록을 남기려면 처음부터 `pnpm -F @dodok/openclaw-adapter spike:bridge-serve 2>&1 | tee data/spike-2-remote.log` 로 띄운다(`data/` 는 ignored, 토큰은 찍지 않는다).
+
+터미널 2 — 터널:
+
+```bash
+cloudflared tunnel --url http://127.0.0.1:19100     # 번들 사본이면 ~/.local/bin/cloudflared
+# 출력의 https://<random>.trycloudflare.com 을 적어 둔다
+```
+
+Socket.IO 는 HTTP 경로 `/socket.io/` 로 붙고 `/bridge` 는 네임스페이스라 터널은 오리진 전체를 넘기면 된다.
+quick tunnel 주소는 cloudflared 를 다시 띄울 때마다 바뀐다 — 그때는 9.5 를 다시 한다. 브리지(터미널 1)만 다시 띄우는 것은 플러그인이 백오프로 다시 붙으므로 괜찮다.
+
+### 9.5 계정 설정 [호스트]
+
+토큰은 파일로 넘기고 셸 기록에 남기지 않는다.
+
+```bash
+install -m 600 /dev/null /tmp/dodok.patch.json5 && ${EDITOR:-vi} /tmp/dodok.patch.json5
+```
+
+```json5
+{ channels: { dodok: { accounts: { default: { bridgeUrl: "wss://<random>.trycloudflare.com/bridge", token: "<BRIDGE_TOKEN>" } } } } }
+```
+
+```bash
+openclaw config patch --file /tmp/dodok.patch.json5 && rm /tmp/dodok.patch.json5
+```
+
+`channels.dodok` 계정 변경은 Gateway 재시작을 요구한다 — dev 실측에서는 in-process restart 가 자동으로 돌았다(3.4). 자동 재시작이 안 보이면 `openclaw gateway restart`.
+원격에 계획서 설정 조각을 적용할 때는 `tools.sessions.visibility`(10절)로 쓴다.
+
+### 9.6 확인과 시나리오 [PC 브리지 콘솔, 설정은 호스트]
+
+1. **연결**: 터미널 1 에 `플러그인 hello: {"pluginId":"dodok",…,"gatewayVersion":"2026.9.4",…}` 가 찍힌다. 안 찍히면 [호스트] Gateway 로그의 `dodok bridge:` 줄(재연결 지연·hello 실패 원인)을 본다.
+   hello 전에 입력한 줄은 `ADAPTER_UNAVAILABLE` 로 끝난다.
+2. **시나리오**: 터미널 1 에 한 줄씩 입력한다. **한 줄 = 인바운드 1건 = 원격 모델 런 1회**(루프 보호로 막히면 런 없음). 입력 문법은
+   `@<agentId> 본문`(사람 `operator` 작성), `<handle>> @<agentId> 본문`(에이전트 `<handle>` 작성 — 봇 루프 보호 사실이 붙는다).
+   판정은 콘솔의 `→ inbound.deliver … ack`(`providerRunId` 있음 = 런 시작, `{}` = 런 없이 끝남)와 `← outbound.message` 로만 한다.
+
+   | 시나리오 | 설정 [호스트] | 입력 [PC] | 기대 |
+   | --- | --- | --- | --- |
+   | A 평문 | — | `@main Reply with exactly: PONG` | ack 에 `providerRunId`, `outbound.message` `text:"PONG"`, `runId` 가 ack 의 `providerRunId` 와 같다 |
+   | B components | — | `@main Send me a message with one button labeled OK using the components field.` | `outbound.message` 에 `components.blocks[0].type:"actions"` (최종 텍스트 응답은 억제될 수 있다, 5.2) |
+   | C1 릴레이 | — | `main> @<두 번째 에이전트> Reply with exactly: ACK` | 통과 — ack 에 `providerRunId`, `ACK` |
+   | C2 막힘 | 아래 `c2.json5` patch (C1 뒤 10분 안에) | `main> @<두 번째 에이전트> Reply with exactly: ACK2` | ack `{"ok":true,"data":{}}`, `outbound.message` 없음 |
+   | C3 끄기 | 아래 `c3.json5` patch | `main> @<두 번째 에이전트> Reply with exactly: ACK3` | 통과 — `ACK3` |
+   | D 채널 프롬프트(선택, 스파이크 3과 겹침) | 아래 `d.json5` patch(새 채널 id) | 브리지를 `DODOK_SPIKE_CHANNEL_ID=<그 id>` 로 다시 띄운 뒤 `@main What is the code word? Reply with only the word.` | `TANGERINE` |
+
+   설정 파일(호스트, `<id>` 는 채널 uuid — 기본 `0199a6c0-0000-7000-8000-000000000c01`, D 는 새 uuid). `channels.dodok.channels.*` 는 재시작 없이 반영된다(3.4).
+
    ```json5
-   // /tmp/dodok.patch.json5 (0600)
-   { channels: { dodok: { accounts: { default: { bridgeUrl: "wss://<random>.trycloudflare.com/bridge", token: "<BRIDGE_TOKEN>" } } } } }
+   // c2.json5
+   { channels: { dodok: { channels: { "<id>": { botLoopProtection: { maxEventsPerWindow: 1, windowSeconds: 600, cooldownSeconds: 600 } } } } } }
+   // c3.json5
+   { channels: { dodok: { channels: { "<id>": { botLoopProtection: { enabled: false } } } } } }
+   // d.json5
+   { channels: { dodok: { channels: { "<새 id>": { systemPrompt: "In this channel the secret code word is TANGERINE. When anyone asks for the code word, answer with exactly that word." } } } } }
    ```
-   `openclaw config patch --file /tmp/dodok.patch.json5 && rm /tmp/dodok.patch.json5` — `channels.dodok` 변경은 Gateway 재시작을 요구한다(3.4). 서비스로 돌면 `openclaw gateway restart`.
-6. 확인: 브리지 콘솔에 `플러그인 hello: {"pluginId":"dodok",…}`. 그 뒤 `DODOK_SPIKE_MAX_RUNS=<n>` 로 시나리오를 돌린다(원격 에이전트 id 는 `DODOK_SPIKE_AGENT=main DODOK_SPIKE_AGENT2=<다른 id>`).
-7. 원격에 계획서 설정 조각을 적용할 때는 `tools.sessions.visibility`(10절)로 쓴다.
+
+   ```bash
+   openclaw config patch --file c2.json5    # C3·D 도 같은 방식
+   ```
+
+3. **정리**: [호스트] 채널 설정을 되돌릴 때는 `openclaw config unset channels.dodok.channels`(dev 에서 쓴 명령). [PC] 브리지는 Ctrl+D, 터널은 Ctrl+C.
 
 안정화 뒤에는 npm 퍼블리시(`openclaw plugins install @dodok/openclaw-plugin`, 호스트 CLI) 또는 ClawHub 게시(그때는 RPC `plugins.install {source:"clawhub"}` 로 원격 설치 가능)를 검토한다.
 
 ## 10. 계획서·스펙·구성 문서에서 고쳐야 할 것
 
-| 위치 | 지금 | 실측 | 원인 |
-| --- | --- | --- | --- |
-| plan 5.8, 8장 Phase 0 준비, 구성 가이드 4장 설정 조각 | `sessions: { visibility: "tree" }` | **`tools.sessions.visibility`**. 루트 `sessions` 는 `Unrecognized key: "sessions"` 로 거부 | 설정 스키마(`config schema`) |
-| plan 3.2·8장, 구성 가이드 2.4 배포 | 호스트에서 `plugins install <tarball \| git URL>` | 가능하나 `--force --accept-capabilities` 필요, tarball 은 `pnpm pack`(`openclaw plugins pack` 은 채널 플러그인 거부). RPC 원격 설치는 clawhub/official 만 | 3.3 |
-| 구성 가이드 2.4 `index.ts` | `definePluginEntry({ register(api) { api.registerChannel(...) } })` | 동작하는 형태지만 권장은 `defineChannelPluginEntry({ plugin, setRuntime })`. 매니페스트에 `channels`·`channelConfigs`, 패키지에 `openclaw.channel`, **런타임 dependencies 없음(번들)** | 3.1·3.2 |
-| 구성 가이드 2.4 `channel.ts` 설명 | 「채널별 설정 스키마(… 봇 루프 보호 조정)」 | 봇 루프 보호는 설정만으로 동작하지 않는다 — 플러그인이 인바운드에서 `botLoopProtection` 사실을 넘겨야 한다 | 7.1 |
-| plan 3.2 인바운드 스코프 목록 | `accountId, currentChannelId, …` 를 「코어가 넘겨준다」 | 그 목록은 **message 툴 디스커버리·실행 컨텍스트** 쪽이다. 인바운드는 플러그인이 `buildContext`·`dispatch` 에 `route`·`reply`·`sender` 를 **넘기는** 쪽 | 4.1·5.2 |
-| plan 5.3 봇 루프 보호 문단 | 「Gateway 가 자체 차단할 수 있다」 | 플러그인이 사실을 넘길 때만. 기본 예산 20/60초/쿨다운 60초, drop 사유 `bot-loop-protection`, `enabled:false` 로 즉시 해제 | 7 |
-| plan 3.2·3.3·5.4 components | 「우리 채널만의 UI 스키마를 message 툴에 끼워 넣을 수 있다」 | 기술적으로 된다(실측). 단 SDK 방침은 provider-native 스키마를 막고 `presentation` 을 권한다 — 리스크로 명시 | 6 |
-| plan 5.2 (a-1) | 플러그인이 `channel-config-writes`/`config-mutation` 으로 갱신 | 쓰기는 `runtime.config.mutateConfigFile`(`openclaw/plugin-sdk/config-mutation` 도 같은 이름을 export). `channel-config-writes` 는 **쓰기 권한 판정**(`authorizeConfigWrite`·`resolveChannelConfigWrites`)이지 쓰기가 아니다. 반영은 live 이나 claude-cli 기존 세션에 안 들어감 | 8 |
-| 구성 가이드 3장·`infra/caddy` 설명 | `/bridge` 를 TLS 로 노출 | 브리지는 Socket.IO **네임스페이스** `/bridge` — HTTP 경로는 `/socket.io/`. `BRIDGE_PUBLIC_URL=wss://host/bridge` 는 클라이언트 URL(오리진+네임스페이스)로 맞고, 프록시 라우트는 `/socket.io` 하나로 충분 | 브리지 구현 |
-| plan 4.2·5.5, 스펙 스트리밍 | WS 델타를 미리보기로 중계 | message 툴로 답한 런은 `terminalReply.disposition:"silent"` 인데 `chat` delta `"N"` 이 먼저 나간다 — `final`/lifecycle 로 silent 가 확정되면 미리보기 버블을 지워야 한다 | 5.2 |
-| 브리지 계약 `InboundDeliverResult.providerRunId`·`OutboundMessage.providerRunId` | Gateway 런 id 를 따로 싣는다 | `replyOptions.runId` 로 `providerRunId === runId`. 필드는 남겨도 되지만 의미가 「같다」로 바뀐다 | 4.3 |
-| CLAUDE.md 불변 규칙 「OpenClaw 패키지 3종 정확 핀」 | — | 이번에 `openclaw` 2026.9.4 devDependency 핀 완료(3종 모두 핀) | — |
+위치는 `파일:줄` — 줄 번호는 **이 브랜치(main 기준) 파일**로 쟀다. `plan.md` = `docs/plan.md`, `구성.md` = `docs/project-structure.md`,
+`스펙.md` = `docs/superpowers/specs/2026-09-14-shared-contracts-design.md`.
+**구분**: `원안` = 이 표의 첫 판(조율자가 최상위 체크아웃에 반영한 분량), `추가` = 리뷰 B-7·수정 라운드 1에서 찾은 것 — **최상위 반영 시점 이후 추가로 고칠 것**.
+최상위 파일은 이미 바뀌었으므로 줄 번호는 문장을 찾는 출발점으로만 쓴다(반영 여부는 조율자가 병합 뒤 대조).
+
+| 구분 | 위치 | 지금 | 실측 | 근거 |
+| --- | --- | --- | --- | --- |
+| 원안 | `구성.md:185`, `plan.md:324`(기본값 `sessions.visibility: "all"` 문장 포함)·`:411` | `sessions: { visibility: "tree" }` | **`tools.sessions.visibility`**. 루트 `sessions` 는 `Unrecognized key: "sessions"` 로 거부 | 설정 스키마(`config schema`) |
+| 원안 | `plan.md:107`, `구성.md:129` | 호스트에서 `plugins install <tarball \| git URL>` | 가능하나 `--force --accept-capabilities` 필요, tarball 은 `pnpm -F @dodok/openclaw-plugin run pack:plugin`(`openclaw plugins pack` 은 채널 플러그인 거부). RPC 원격 설치는 clawhub/official 만 | 3.3·9 |
+| 원안 | `구성.md:118` | `index.ts`: `definePluginEntry({ register(api) { api.registerChannel(...) } })` | 동작하는 형태지만 권장은 `defineChannelPluginEntry({ plugin, setRuntime })`. 매니페스트에 `channels`·`channelConfigs`, 패키지에 `openclaw.channel`, **런타임 dependencies 없음(번들)** | 3.1·3.2 |
+| 원안 | `구성.md:120` | `channel.ts`: 「채널별 설정 스키마(… 봇 루프 보호 조정)」 | 봇 루프 보호는 설정만으로 동작하지 않는다 — 플러그인이 인바운드에서 `botLoopProtection` 사실을 넘겨야 한다 | 7.1 |
+| 원안 | `plan.md:104` | 인바운드 스코프 `accountId, currentChannelId, …` 를 「코어가 넘겨준다」 | 그 목록은 **message 툴 디스커버리·실행 컨텍스트** 쪽이다. 인바운드는 플러그인이 `buildContext`·`dispatch` 에 `route`·`reply`·`sender` 를 **넘기는** 쪽 | 4.1·5.2 |
+| 원안 | `plan.md:244` | 봇 루프 보호: 「Gateway 가 자체 차단할 수 있다」 | 플러그인이 사실을 넘길 때만. 기본 예산 20/60초/쿨다운 60초, drop 사유 `bot-loop-protection`, `enabled:false` 로 즉시 해제 | 7 |
+| 원안 | `plan.md:103` | 「우리 채널만의 UI 스키마를 message 툴에 끼워 넣을 수 있다」 | 기술적으로 된다(실측). 단 SDK 방침은 provider-native 스키마를 막고 `presentation` 을 권한다 — 리스크로 명시 | 6 |
+| 원안 | `plan.md:236` | (a-1) 플러그인이 `channel-config-writes`/`config-mutation` 으로 갱신 | 쓰기는 `runtime.config.mutateConfigFile`(`openclaw/plugin-sdk/config-mutation` 도 같은 이름을 export). `channel-config-writes` 는 **쓰기 권한 판정**(`authorizeConfigWrite`·`resolveChannelConfigWrites`)이지 쓰기가 아니다. 반영은 live 이나 claude-cli 기존 세션에 안 들어감 | 8 |
+| 원안 | `구성.md:20` | `infra/caddy`: `/bridge` 를 TLS 로 노출 | 브리지는 Socket.IO **네임스페이스** `/bridge` — HTTP 경로는 `/socket.io/`. `wss://host/bridge` 는 클라이언트 URL(오리진+네임스페이스)로 맞고, 프록시 라우트는 `/socket.io` 하나로 충분 | 브리지 구현 |
+| 원안 | `plan.md:291·459` | WS 델타를 미리보기로 중계 | message 툴로 답한 런은 `terminalReply.disposition:"silent"` 인데 `chat` delta `"N"` 이 먼저 나간다 — `final`/lifecycle 로 silent 가 확정되면 미리보기 버블을 지워야 한다 | 5.2 |
+| 원안 | `스펙.md:248`(`Run.providerRunId`)·`:755`·`:769` | Gateway 런 id 를 따로 싣는다 | `replyOptions.runId` 로 `providerRunId === runId`. 필드는 남겨도 되지만 의미가 「같다」로 바뀐다 | 4.3 |
+| 원안 | `CLAUDE.md:21` | 「OpenClaw 패키지 3종 정확 핀」 | 규칙은 그대로. 이번에 `openclaw` 2026.9.4 devDependency 핀 완료(`packages/openclaw-plugin/package.json:21`) | — |
+| 추가 | `plan.md:102` | 3.2 진입점 `definePluginEntry({ id, register(api) { api.registerChannel({...}) } })` | `구성.md:118` 행과 같다 — `defineChannelPluginEntry` | 3.1 |
+| 추가 | `plan.md:105`·`:460`(위험표) | 봇 루프 보호 「Phase 0 에서 확인한다」·「Phase 0 에서 기본값 확인, 채널 설정으로 조정」 | 확인 끝 — 기본값은 릴레이를 막지 않는다(20/60초). 조정은 채널 설정 **과** 플러그인의 사실 전달 여부. 결정은 12.3 | 7 |
+| 추가 | `plan.md:413`, `구성.md:202` | 스파이크 2 = 원격 호스트에 tarball 설치 + 터널로 브리지 접속 | 실제는 **로컬 dev Gateway** 에서 쟀다. 원격은 9절 절차(사람)로 넘겼다 | 2·9 |
+| 추가 | `CLAUDE.md:42` | 「다음: 스파이크 2(채널 플러그인, 원격 Gateway 설치 + 터널)」 | 스파이크 2 완료(ADR 0002, 로컬 dev) — 현재 단계 갱신 | — |
+| 추가 | `구성.md:69·108`, `plan.md:207·482` | 「Fastify 앱에 브리지 WSS 라우트 `/bridge` 마운트」·「Caddy 가 `/bridge` 노출」 | `구성.md:20` 행과 같다 — `attachBridge(io)` 가 Socket.IO 네임스페이스를 붙인다. 별도 HTTP 라우트 없음 | 브리지 구현 |
+| 추가 | `구성.md:123`, `plan.md:106` | `config-writer.ts` 가 「SDK(config-mutation / channel-config-writes)로」 반영·「플러그인 내부에서 Gateway 설정 갱신」 | `plan.md:236` 행과 같다 — `mutateConfigFile` 로 쓰고, `channel-config-writes` 는 권한 판정 | 8 |
+| 추가 | `구성.md:199` | 핀 「plugin 은 스파이크 2에서」 | 완료(`openclaw` 2026.9.4 devDependency) | 3.2 |
+| 추가 | `구성.md:122·159·160·174`, `plan.md:209`, `스펙.md:717` | 플러그인 접속 주소 `BRIDGE_PUBLIC_URL=wss://…/bridge`, `bridge-client.ts` 가 `BRIDGE_URL` 로 접속 | 플러그인은 env 가 아니라 **계정 설정 `channels.dodok.accounts.<id>.bridgeUrl`**(오리진+`/bridge`)로 접속한다. 이번 `.env.example` 의 `BRIDGE_URL` 은 **브리지가 리슨할 오리진**(스파이크 전용, `/bridge` 없음)이라 이름만 비슷하고 뜻이 다르다 — Phase 1 서버에서 `BRIDGE_PUBLIC_URL`(공개 주소, 설정 마법사 표시) 하나로 정리할지 정할 것 | 3.2·9 |
+| 추가 | `스펙.md:717` | 접속 `auth: { token, protocol, pluginVersion }`, 접속 뒤 10초 안에 `hello` 가 없으면 끊는다 | 구현은 `auth: { token }` 만 — 버전·프로토콜은 `hello`/`BridgeHelloResult` 로 오간다. **hello 10초 타임아웃은 구현하지 않았다**(Phase 1 서버 과제) | 브리지 구현 |
+| 추가 | `스펙.md:943·944·948` (11절 확정 항목 1·2·6) | 「스파이크 2 에서 확정」 | 1·2: `replyOptions.runId` 로 인바운드 runId 가 Gateway runId·아웃바운드 runId 가 된다(4.3). 6: 기본값은 막지 않고 사실 전달 시에만 동작(7) — 표를 확정값으로 갱신 | 4.3·7 |
+| 추가 | `plan.md:474`(10장 결정 #2) | `sessions.visibility: "tree"` | `tools.sessions.visibility` — 첫 행과 같다 | 설정 스키마 |
+| 추가 | `plan.md:91` | `chat.history` `deltaCursor` 증분 「스파이크 2에 얹는다」 | 스파이크 2 에서 재지 않았다 — **스파이크 3 으로 이월**(조율자 판정, 11.9) | — |
 
 ## 11. 남은 질문
 
-1. **모델 런에서 툴 검증 실패 원문이 모델에게 보이는가.** `tools.invoke` 는 `tool execution failed` 로 뭉갰다. 에이전트 턴의 MCP 툴 결과에 원문이 실리는지 한 런으로 잴 것.
+1. **모델 런에서 툴 검증 실패 원문이 모델에게 보이는가.** `tools.invoke` 는 `tool execution failed` 로 뭉갰다 — 코어는 `err.name === "ToolInputError"` 일 때만 400 + 원문을 돌려준다.
+   수정 라운드 1에서 `handleAction` 의 인자 검증 실패(components·target·본문)를 **`name = "ToolInputError"` 로 던지게 했다**(`outbound.ts` `toolInputError`, 단위 테스트는 이름만 확인).
+   `tools.invoke` T2 재현과 모델 경로(claude-cli → MCP 루프백) 노출은 **스파이크 3에서 잰다**.
 2. **claude-cli 기존 세션의 시스템 프롬프트 갱신**: `sessions.reset`(operator.admin 필요) 뒤, Gateway 재시작 뒤, 다른 백엔드(API 프로바이더)에서 각각 반영되는가 — 스파이크 3의 첫 과제.
 3. 원격(Gateway 호스트 → 터널 → 개발 PC 브리지)에서 같은 결과인가 — 9절 절차로 사람이 확인. 특히 `trust.reason: provenance-invalid` 인 archive 설치가 원격 `security.installPolicy` 에서 막히는지.
 4. `message` 툴을 **다른 dodok 채널**(`target` 이 현재 채널이 아님)로 보낼 때 코어가 `resolveOutboundSessionRoute` 를 거쳐 어떤 세션에 기록하는가, `outbound.sendText` 폴백이 언제 불리는가(스파이크 중 0회).
 5. 인바운드 컨텍스트 헤더(참여자·릴레이 규칙·최근 대화)를 본문 프리픽스 대신 `ChannelPromptContext`/`SupplementalContext` 로 넣으면 모델 행동·전사가 어떻게 달라지는가.
 6. 번들 1.0MB(zod 전체) — `zod/mini` 나 공유 스키마 분리로 줄일 가치가 있는가. Gateway 의 플러그인 로드 시간 영향은 미측정.
 7. `inbound.deliver` 를 같은 세션에 연속으로 넣을 때(`queueMode`) ack 시점·순서 — 이번엔 직렬 시나리오만 돌렸다.
-8. 플러그인 연결이 끊긴 동안 도착한 최종 응답(큐 적재 → 재연결 flush)의 실제 동작 — 큐는 단위 테스트만 했다.
+8. 플러그인 연결이 끊긴 동안 도착한 최종 응답(큐 적재 → 재연결 flush)의 실제 동작 — 실제 Gateway 단절로는 재지 않았다.
+   수정 라운드 1에서 두 결함을 고치고 테스트로만 확인했다: flush 중 ack 타임아웃이면 플러그인이 끊고 재연결 뒤 같은 head 부터 다시 보낸다(가짜 소켓 테스트),
+   브리지 서버는 `outboundId` 를 연결이 아니라 `attachBridge` 단위 LRU(최근 1,000개)로 기억하고 처리 중인 id 의 재전송은 그 결과에 합류한다(소켓 통합 테스트).
+9. **`chat.history` `deltaCursor` 증분**(계획서 `plan.md:91` 이 스파이크 2에 얹었던 것)은 이번에 재지 않았다 — **스파이크 3으로 이월**(조율자 판정).
+10. **`~/.openclaw-dev` 에 스파이크 흔적이 남아 있다** — `channels.dodok.channels.<c01|c02>.systemPrompt`(TANGERINE 문구)와 계정 `default` 의 브리지 토큰. 스파이크 3이 이어 쓰므로 지우지 않았고, **스파이크 3 브리프에 명시한다**(조율자 판정).
 
 ## 12. 결정 필요
 

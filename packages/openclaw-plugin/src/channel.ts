@@ -36,6 +36,7 @@ import {
   formatDodokTarget,
   messageToolSendToOutbound,
   parseDodokTarget,
+  toolInputError,
   type OutboundCorrelation,
 } from "./outbound";
 import { getDodokRuntime } from "./runtime";
@@ -385,7 +386,7 @@ export const dodokChannelPlugin = createChatChannelPlugin<ResolvedDodokAccount>(
             error: built.ok ? undefined : built.error,
           }),
         );
-        if (!built.ok) throw new Error(built.error);
+        if (!built.ok) throw toolInputError(built.error);
         if (!bridge) throw new Error(`dodok: account "${accountId}" bridge is not running`);
         const ack = await bridge.sendOutbound(built.message);
         return {

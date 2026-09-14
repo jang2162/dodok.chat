@@ -40,6 +40,16 @@ export type OutboundCorrelation = {
 
 export type OutboundResult = { ok: true; message: OutboundMessage } | { ok: false; error: string };
 
+/**
+ * 툴 인자 오류. 코어 `tools.invoke` 는 `err.name === "ToolInputError"` 면 400 + 원문을 돌려주고, 아니면
+ * `tool execution failed` 로 뭉갠다(ADR 0002 6·11.1). 클래스는 plugin-sdk 에서 export 되지 않아 이름으로 맞춘다.
+ */
+export function toolInputError(message: string): Error {
+  const error = new Error(message);
+  error.name = "ToolInputError";
+  return error;
+}
+
 function coerceComponents(
   raw: unknown,
 ): { ok: true; value: OutboundMessage["components"] } | { ok: false; error: string } {

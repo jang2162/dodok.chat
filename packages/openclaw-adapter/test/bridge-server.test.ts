@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { BridgeSessionState, parseBridgeClientEvent, verifyBridgeToken } from "../src/bridge/session";
+import {
+  BridgeSessionState,
+  OutboundDedupe,
+  parseBridgeClientEvent,
+  verifyBridgeToken,
+} from "../src/bridge/session";
 
 const CH = "01a09fc9-d204-7551-89d6-38544d07a102";
 
@@ -76,15 +81,23 @@ describe("BridgeSessionState", () => {
   });
 
   it("같은 outboundId 는 처음 발급한 messageId 로 중복 처리한다", () => {
-    const state = new BridgeSessionState("sock-1", { dedupeWindow: 2 });
+    const state = new BridgeSessionState("sock-1");
     state.onHello(hello as never);
     expect(state.acceptOutbound("o1")).toEqual({ kind: "new" });
     state.recordOutbound("o1", "m1");
     expect(state.acceptOutbound("o1")).toEqual({ kind: "duplicate", messageId: "m1" });
-    state.recordOutbound("o2", "m2");
-    state.recordOutbound("o3", "m3");
-    // 창 크기 2 — 가장 오래된 o1 은 잊는다
-    expect(state.acceptOutbound("o1")).toEqual({ kind: "new" });
+  });
+
+  it("연결이 바뀌어도 같은 OutboundDedupe 를 나눠 쓰면 이전 연결이 기록한 outboundId 를 중복으로 본다", () => {
+    const dedupe = new OutboundDedupe();
+    const before = new BridgeSessionState("sock-1", { dedupe });
+    before.onHello(hello as never);
+    before.recordOutbound("o1", "m1");
+    before.close("disconnect");
+
+    const after = new BridgeSessionState("sock-2", { dedupe });
+    after.onHello(hello as never);
+    expect(after.acceptOutbound("o1")).toEqual({ kind: "duplicate", messageId: "m1" });
   });
 
   it("끊기거나 교체되면 closed, 이후 outbound 거부", () => {
@@ -94,5 +107,20 @@ describe("BridgeSessionState", () => {
     expect(state.phase).toBe("closed");
     expect(state.closeReason).toBe("replaced");
     expect(state.acceptOutbound("o9")).toEqual({ kind: "reject", code: "PROTOCOL_MISMATCH" });
+  });
+});
+
+describe("OutboundDedupe", () => {
+  it("상한을 넘으면 가장 오래 안 쓴 outboundId 부터 잊는다 (LRU)", () => {
+    const dedupe = new OutboundDedupe({ max: 2 });
+    dedupe.record("o1", "m1");
+    dedupe.record("o2", "m2");
+    // o1 을 조회해 최근으로 올린다 — 다음 기록 때 밀려나는 것은 o2
+    expect(dedupe.lookup("o1")).toBe("m1");
+    dedupe.record("o3", "m3");
+    expect(dedupe.lookup("o2")).toBeUndefined();
+    expect(dedupe.lookup("o1")).toBe("m1");
+    expect(dedupe.lookup("o3")).toBe("m3");
+    expect(dedupe.size).toBe(2);
   });
 });

@@ -4,6 +4,7 @@
  * - URL 은 `<origin>/bridge` — 오리진 + 네임스페이스 `/bridge`. HTTP 경로는 Socket.IO 기본값 `/socket.io/` 다.
  * - 토큰은 handshake `auth.token`.
  * - 연결 → `hello` ack(`BridgeHelloResult`) → ready → 큐 flush. 재연결은 지수 백오프(`bridge-queue.ts`).
+ *   flush 중 ack 타임아웃이면 끊고 같은 경로(재연결 → hello → flush)로 head 부터 다시 보낸다 — 서버는 `outboundId` 로 중복을 흡수한다.
  * - 경계 입력(서버가 보낸 이벤트)은 shared Zod 스키마로 파싱한다.
  *
  * `openclaw` 를 import 하지 않는다.
@@ -22,7 +23,7 @@ import {
   type InboundDeliverResult,
   type Result,
 } from "@dodok/shared";
-import { io, type Socket } from "socket.io-client";
+import { io, type ManagerOptions, type Socket, type SocketOptions } from "socket.io-client";
 import { DEFAULT_BACKOFF, OutboundQueue, backoffDelayMs, type BackoffOptions } from "./bridge-queue";
 
 export type BridgeLogger = {
@@ -48,6 +49,8 @@ export type BridgeClientOptions = {
   ackTimeoutMs?: number;
   maxQueue?: number;
   backoff?: BackoffOptions;
+  /** 테스트용 — 기본은 socket.io-client `io()` */
+  connectSocket?: (url: string, options: Partial<ManagerOptions & SocketOptions>) => BridgeSocket;
 };
 
 export type BridgeClientState = "idle" | "connecting" | "ready" | "stopped";
@@ -82,7 +85,7 @@ export function createBridgeClient(opts: BridgeClientOptions) {
   let attempt = 0;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
 
-  const socket: BridgeSocket = io(opts.url, {
+  const socket: BridgeSocket = (opts.connectSocket ?? io)(opts.url, {
     autoConnect: false,
     reconnection: false, // 재연결은 아래에서 직접 — 미들웨어 거부(UNAUTHORIZED) 뒤에도 같은 백오프로 다시 시도한다
     transports: ["websocket"],
@@ -109,11 +112,20 @@ export function createBridgeClient(opts: BridgeClientOptions) {
     else item.reject(new BridgeRequestError(res.error));
   }
 
+  /**
+   * ack 가 안 온 head(타임아웃·끊김)에서 멈추면 연결을 끊는다. 재시도 경로는 재연결 → hello → flush 하나뿐이라
+   * 같은 head 부터 순서대로 다시 나간다. 연결을 살려 두면 이후 전송이 모두 큐에만 쌓여 영구 정지한다.
+   */
   async function flushQueue(): Promise<void> {
     try {
       await queue.flush(emitOutbound);
     } catch (error) {
-      opts.logger.warn(`dodok bridge: 큐 flush 중단 (${errorMessage(error)}), 남은 ${queue.depth}건`);
+      if (state === "stopped") return;
+      opts.logger.warn(
+        `dodok bridge: 큐 flush 중단 (${errorMessage(error)}), 남은 ${queue.depth}건 — 끊고 재연결 뒤 다시 보낸다`,
+      );
+      socket.disconnect(); // 연결돼 있으면 disconnect 핸들러가 재연결을 건다
+      scheduleReconnect("flush"); // 이미 끊겨 있었다면 여기서 건다(이미 걸려 있으면 무시)
     }
   }
 

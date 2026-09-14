@@ -22,7 +22,7 @@ import {
   type Result,
 } from "@dodok/shared";
 import type { Namespace, Server, Socket } from "socket.io";
-import { BridgeSessionState, parseBridgeClientEvent, verifyBridgeToken } from "./session";
+import { BridgeSessionState, OutboundDedupe, parseBridgeClientEvent, verifyBridgeToken } from "./session";
 
 export const BRIDGE_NAMESPACE = "/bridge";
 
@@ -30,7 +30,12 @@ export type BridgeSocket = Socket<BridgeClientToServerEvents, BridgeServerToClie
 
 export type BridgeServerCallbacks = {
   onHello?: (session: BridgeSessionState, hello: BridgeHello) => void;
-  /** 저장하고 서버 메시지 id 를 돌려준다. 같은 outboundId 재전송은 여기까지 오지 않는다 */
+  /**
+   * 저장하고 서버 메시지 id 를 돌려준다. 같은 `outboundId` 는 이 `attachBridge` 가 기억하는 최근 1,000개 안에서
+   * 연결이 바뀌어도 한 번만 온다 — 성공한 id 의 재전송은 기록한 messageId 로, 처리 중인 id 의 재전송은 그 결과를 기다려 ack 한다.
+   * 실패(reject)한 id 는 기록하지 않아 재전송이 다시 온다. 창 밖으로 밀린 id·서버 재시작 전 id 는 다시 올 수 있으므로
+   * 최종 방어선은 저장소 유니크(`messages.external_id`)다.
+   */
   onOutboundMessage: (
     session: BridgeSessionState,
     message: OutboundMessage,
@@ -70,6 +75,9 @@ export function attachBridge(io: Server, opts: BridgeServerOptions): BridgeHandl
   const ackTimeoutMs = opts.ackTimeoutMs ?? 15_000;
   let active: { socket: BridgeSocket; session: BridgeSessionState } | undefined;
   const readyWaiters = new Set<(session: BridgeSessionState) => void>();
+  // 중복 흡수는 연결이 아니라 이 브리지(플러그인 id) 단위 — 플러그인은 ack 를 못 받은 head 를 재연결 뒤 같은 outboundId 로 다시 보낸다
+  const dedupe = new OutboundDedupe();
+  const inflight = new Map<string, Promise<{ messageId: string }>>();
 
   namespace.use((socket, next) => {
     const token = (socket.handshake.auth as { token?: unknown } | undefined)?.token;
@@ -79,7 +87,7 @@ export function attachBridge(io: Server, opts: BridgeServerOptions): BridgeHandl
   });
 
   namespace.on("connection", (socket) => {
-    const session = new BridgeSessionState(randomUUID());
+    const session = new BridgeSessionState(randomUUID(), { dedupe });
 
     socket.on("hello", (payload, ack) => {
       const parsed = parseBridgeClientEvent("hello", payload);
@@ -111,11 +119,20 @@ export function attachBridge(io: Server, opts: BridgeServerOptions): BridgeHandl
       }
       if (acceptance.kind === "duplicate")
         return ack({ ok: true, data: { messageId: acceptance.messageId } });
-      opts.onOutboundMessage(session, parsed.data).then(
-        (data) => {
-          session.recordOutbound(parsed.data.outboundId, data.messageId);
-          ack({ ok: true, data });
-        },
+      const { outboundId } = parsed.data;
+      let pending = inflight.get(outboundId);
+      if (!pending) {
+        pending = opts
+          .onOutboundMessage(session, parsed.data)
+          .then((data) => {
+            session.recordOutbound(outboundId, data.messageId);
+            return data;
+          })
+          .finally(() => inflight.delete(outboundId));
+        inflight.set(outboundId, pending);
+      }
+      pending.then(
+        (data) => ack({ ok: true, data }),
         (error: unknown) => ack({ ok: false, error: { code: "INTERNAL", message: String(error) } }),
       );
     });

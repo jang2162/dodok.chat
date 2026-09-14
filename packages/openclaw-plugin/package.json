@@ -10,7 +10,7 @@
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs",
-    "pack": "pnpm build && pnpm pack --pack-destination dist",
+    "pack:plugin": "pnpm build && pnpm pack --pack-destination dist",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json"
   },

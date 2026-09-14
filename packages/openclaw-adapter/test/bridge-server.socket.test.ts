@@ -22,6 +22,7 @@ let ioServer: Server;
 let bridge: BridgeHandle;
 let url: string;
 let received: OutboundMessage[];
+let storeDelayMs: number;
 const clients: Socket[] = [];
 
 function client(token: string): Socket {
@@ -34,8 +35,27 @@ function waitFor(socket: Socket, event: "connect" | "connect_error"): Promise<un
   return new Promise((resolve) => socket.once(event, resolve));
 }
 
+async function readyClient(): Promise<Socket> {
+  const socket = client(TOKEN);
+  await waitFor(socket, "connect");
+  await socket.emitWithAck("hello", hello);
+  return socket;
+}
+
+function outbound(outboundId: string) {
+  return {
+    outboundId,
+    channelId: CH,
+    agentId: "main",
+    sessionKey: `agent:main:dodok:channel:${CH}`,
+    text: "PONG",
+    ts: new Date().toISOString(),
+  };
+}
+
 beforeEach(async () => {
   received = [];
+  storeDelayMs = 0;
   app = Fastify({ logger: false });
   ioServer = new Server(app.server, { transports: ["websocket"] });
   bridge = attachBridge(ioServer, {
@@ -43,6 +63,7 @@ beforeEach(async () => {
     serverVersion: "test",
     onOutboundMessage: async (_session, message) => {
       received.push(message);
+      if (storeDelayMs > 0) await new Promise((done) => setTimeout(done, storeDelayMs));
       return { messageId: randomUUID() };
     },
   });
@@ -84,6 +105,33 @@ describe("attachBridge (실제 Socket.IO)", () => {
     expect(first.ok).toBe(true);
     expect(second).toEqual(first);
     expect(received).toHaveLength(1);
+  });
+
+  it("재연결 뒤 같은 outboundId 를 다시 보내면 onOutboundMessage 는 한 번만 불리고 두 번째도 같은 ack 를 받는다", async () => {
+    const before = await readyClient();
+    const first = await before.emitWithAck("outbound.message", outbound("o-reconnect"));
+    expect(first.ok).toBe(true);
+    before.disconnect();
+
+    const after = await readyClient();
+    const second = await after.emitWithAck("outbound.message", outbound("o-reconnect"));
+    expect(second).toEqual(first);
+    expect(received).toHaveLength(1);
+  });
+
+  it("처리 중인 outboundId 가 다른 연결로 다시 오면 기다렸다가 같은 결과를 받는다 (저장 한 번)", async () => {
+    storeDelayMs = 100;
+    const before = await readyClient();
+    // 새 연결의 hello 가 이전 연결을 교체해 끊으므로 이 ack 는 클라이언트에서 reject 된다
+    const abandoned = before.emitWithAck("outbound.message", outbound("o-inflight")).catch((e: Error) => e);
+    await new Promise((done) => setTimeout(done, 20));
+
+    // 플러그인이 ack 타임아웃으로 끊고 재연결해 head 를 다시 보낸 모양
+    const after = await readyClient();
+    const retried = await after.emitWithAck("outbound.message", outbound("o-inflight"));
+    expect(retried.ok).toBe(true);
+    expect(received).toHaveLength(1);
+    expect(await abandoned).toBeInstanceOf(Error);
   });
 
   it("hello 전 outbound 는 PROTOCOL_MISMATCH", async () => {

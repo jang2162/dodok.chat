@@ -7,7 +7,8 @@
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json",
     "spike:gateway": "tsx src/spike/gateway-spike.ts",
-    "spike:bridge": "tsx src/spike/bridge-spike.ts"
+    "spike:bridge": "tsx src/spike/bridge-spike.ts",
+    "spike:bridge-serve": "tsx src/spike/bridge-serve.ts"
   },
   "dependencies": {
     "@dodok/shared": "workspace:*",

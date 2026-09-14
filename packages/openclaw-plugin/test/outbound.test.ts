@@ -6,6 +6,7 @@ import {
   formatDodokTarget,
   messageToolSendToOutbound,
   parseDodokTarget,
+  toolInputError,
 } from "../src/outbound";
 
 const CH = "01a09fc9-d204-7551-89d6-38544d07a102";
@@ -184,5 +185,23 @@ describe("messageToolSendToOutbound", () => {
       now: NOW,
     });
     expect(res).toEqual({ ok: false, error: "message: 본문이나 components 중 하나는 있어야 한다" });
+  });
+});
+
+describe("toolInputError", () => {
+  it("코어 tools.invoke 가 400 + 원문으로 돌려주도록 이름을 ToolInputError 로 붙인다", () => {
+    const res = messageToolSendToOutbound({
+      params: { to: CH, message: "x", components: "{" },
+      agentId: "main",
+      sessionKey: SESSION,
+      outboundId: "o11",
+      now: NOW,
+    });
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    const error = toolInputError(res.error);
+    expect(error).toBeInstanceOf(Error);
+    expect(error.name).toBe("ToolInputError");
+    expect(error.message).toBe("components: JSON 문자열을 파싱할 수 없다");
   });
 });
