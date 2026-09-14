@@ -1,0 +1,16 @@
+# 런타임 데이터·시크릿 (docs/project-structure.md 6장)
+data/
+.env
+.env.*
+!.env.example
+
+# 의존성·빌드
+node_modules/
+dist/
+.turbo/
+
+# 로컬 워크트리·에디터
+.worktrees/
+.idea/
+.vscode/
+.DS_Store
