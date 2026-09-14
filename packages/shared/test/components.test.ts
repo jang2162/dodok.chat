@@ -88,12 +88,19 @@ describe("ComponentsV1", () => {
     });
     expect(r.success).toBe(false);
   });
-  it("셀렉트 옵션 26개 거부", () => {
-    const options = Array.from({ length: 26 }, (_, i) => ({ value: `v${i}`, label: `L${i}` }));
+  it("셀렉트 옵션 26개 거부, 25개 허용", () => {
+    const options26 = Array.from({ length: 26 }, (_, i) => ({ value: `v${i}`, label: `L${i}` }));
     expect(
-      ComponentsV1.safeParse({ blocks: [{ type: "actions", items: [{ type: "select", id: "s", options }] }] })
-        .success,
+      ComponentsV1.safeParse({
+        blocks: [{ type: "actions", items: [{ type: "select", id: "s", options: options26 }] }],
+      }).success,
     ).toBe(false);
+    const options25 = Array.from({ length: 25 }, (_, i) => ({ value: `v${i}`, label: `L${i}` }));
+    expect(
+      ComponentsV1.safeParse({
+        blocks: [{ type: "actions", items: [{ type: "select", id: "s", options: options25 }] }],
+      }).success,
+    ).toBe(true);
   });
   it("모달 필드 6개 거부, 5개 허용", () => {
     const fields = (n: number) =>
@@ -104,9 +111,11 @@ describe("ComponentsV1", () => {
     expect(ComponentsV1.safeParse(modal(6)).success).toBe(false);
     expect(ComponentsV1.safeParse(modal(5)).success).toBe(true);
   });
-  it("TTL 범위 밖 거부", () => {
+  it("TTL 범위 밖 거부, 경계값 허용", () => {
     expect(ComponentsV1.safeParse({ ttlMs: 500 }).success).toBe(false);
     expect(ComponentsV1.safeParse({ ttlMs: 86_400_001 }).success).toBe(false);
+    expect(ComponentsV1.safeParse({ ttlMs: 1_000 }).success).toBe(true);
+    expect(ComponentsV1.safeParse({ ttlMs: 86_400_000 }).success).toBe(true);
   });
   it("id 중복 거부 (블록·아이템·모달·필드 통틀어)", () => {
     const r = ComponentsV1.safeParse({
@@ -127,9 +136,11 @@ describe("ComponentsV1", () => {
       ComponentsV1.safeParse({ blocks: [{ type: "file", url: "artifact://abc", name: "f" }] }).success,
     ).toBe(true);
   });
-  it("블록 11개 거부", () => {
-    const blocks = Array.from({ length: 11 }, () => ({ type: "separator" }));
-    expect(ComponentsV1.safeParse({ blocks }).success).toBe(false);
+  it("블록 11개 거부, 10개 허용", () => {
+    const blocks11 = Array.from({ length: 11 }, () => ({ type: "separator" }));
+    expect(ComponentsV1.safeParse({ blocks: blocks11 }).success).toBe(false);
+    const blocks10 = Array.from({ length: 10 }, () => ({ type: "separator" }));
+    expect(ComponentsV1.safeParse({ blocks: blocks10 }).success).toBe(true);
   });
 });
 
