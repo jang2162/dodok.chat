@@ -1,0 +1,145 @@
+{
+  "id": "dodok",
+  "name": "dodok",
+  "description": "dodok.chat channel — bridges OpenClaw agents to dodok channels over an outbound WebSocket.",
+  "categories": ["channels"],
+  "activation": {
+    "onStartup": false
+  },
+  "channels": ["dodok"],
+  "channelConfigs": {
+    "dodok": {
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "configWrites": {
+            "type": "boolean"
+          },
+          "accounts": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"
+            },
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "name": {
+                  "type": "string",
+                  "maxLength": 80
+                },
+                "bridgeUrl": {
+                  "type": "string",
+                  "format": "uri"
+                },
+                "token": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": ["bridgeUrl", "token"],
+              "additionalProperties": false
+            }
+          },
+          "channels": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "requireMention": {
+                  "type": "boolean"
+                },
+                "systemPrompt": {
+                  "type": "string",
+                  "maxLength": 20000
+                },
+                "botLoopProtection": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "maxEventsPerWindow": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    },
+                    "windowSeconds": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    },
+                    "cooldownSeconds": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "botLoopProtection": {
+            "type": "object",
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "maxEventsPerWindow": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "windowSeconds": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "cooldownSeconds": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "label": "dodok",
+      "description": "dodok bridge accounts (bridgeUrl, token) and per-channel settings.",
+      "uiHints": {
+        "accounts.*.bridgeUrl": {
+          "label": "dodok bridge URL",
+          "help": "wss://<dodok server>/bridge"
+        },
+        "accounts.*.token": {
+          "label": "dodok bridge token",
+          "sensitive": true
+        },
+        "channels.*.systemPrompt": {
+          "label": "Channel system prompt"
+        }
+      }
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

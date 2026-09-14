@@ -2,18 +2,42 @@
   "name": "@dodok/openclaw-plugin",
   "version": "0.0.0",
   "private": true,
+  "description": "OpenClaw channel plugin for dodok.chat (bundled; runs inside the Gateway)",
+  "files": [
+    "dist/index.js",
+    "openclaw.plugin.json"
+  ],
   "type": "module",
   "scripts": {
+    "build": "node scripts/build.mjs",
+    "pack": "pnpm build && pnpm pack --pack-destination dist",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json"
   },
-  "dependencies": {
+  "devDependencies": {
     "@dodok/shared": "workspace:*",
+    "@types/node": "^22.19.0",
+    "esbuild": "0.28.2",
+    "openclaw": "2026.9.4",
+    "socket.io-client": "4.8.3",
+    "typescript": "5.9.3",
+    "vitest": "4.1.11",
     "zod": "4.6.5"
   },
-  "devDependencies": {
-    "@types/node": "^22.19.0",
-    "typescript": "5.9.3",
-    "vitest": "4.1.11"
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ],
+    "channel": {
+      "id": "dodok",
+      "label": "dodok",
+      "blurb": "Agent-native team messenger (dodok.chat) bridge."
+    },
+    "compat": {
+      "pluginApi": ">=2026.9.4"
+    },
+    "build": {
+      "openclawVersion": "2026.9.4"
+    }
   }
 }
