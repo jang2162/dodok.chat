@@ -165,5 +165,5 @@ export type ComponentState = z.infer<typeof ComponentState>;
 
 /** 에이전트에게 노출하는 message 툴 스키마 조각 (서버 부여 id 제외) */
 export function componentsToolJsonSchema(): Record<string, unknown> {
-  return z.toJSONSchema(ComponentsV1Base.omit({ id: true })) as Record<string, unknown>;
+  return z.toJSONSchema(ComponentsV1Base.omit({ id: true }), { io: "input" }) as Record<string, unknown>;
 }

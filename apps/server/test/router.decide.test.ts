@@ -128,6 +128,29 @@ describe("decideRuns — 사람 메시지", () => {
   it("멘션 없음 + autoRespond 없음 → 런 없음", () => {
     expect(decideRuns(input({})).runs).toEqual([]);
   });
+  it("joinedAt은 시각(오프셋 포함)으로 비교한다, 문자열 비교가 아니라", () => {
+    const r = decideRuns(
+      input({
+        members: [
+          member(A, { autoRespond: true, joinedAt: "2026-09-14T10:00:00+09:00" }), // 01:00Z
+          member(B, { autoRespond: true, joinedAt: "2026-09-14T02:00:00Z" }), // 02:00Z
+        ],
+      }),
+    );
+    expect(r.runs).toEqual([
+      { agentId: A, triggerKind: "auto_respond", rootMessageId: ID(30), relayDepth: 0 },
+    ]);
+  });
+  it("멘션이 전부 비활성이면 autoRespond로 폴백하지 않는다", () => {
+    const r = decideRuns(
+      input({
+        message: userMsg([A]),
+        agents: [agent(A, "a", false), agent(B, "b")],
+        members: [member(A), member(B, { autoRespond: true })],
+      }),
+    );
+    expect(r.runs).toEqual([]);
+  });
 });
 
 describe("decideRuns — 에이전트 메시지(릴레이)", () => {

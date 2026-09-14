@@ -168,11 +168,40 @@ describe("ComponentState", () => {
   });
 });
 
+/** js 트리를 훑으며 모든 "required" 배열의 원소를 모은다. */
+function collectRequired(node: unknown, out: string[] = []): string[] {
+  if (Array.isArray(node)) {
+    for (const item of node) collectRequired(item, out);
+    return out;
+  }
+  if (node && typeof node === "object") {
+    for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+      if (key === "required" && Array.isArray(value)) {
+        for (const v of value) if (typeof v === "string") out.push(v);
+      }
+      collectRequired(value, out);
+    }
+  }
+  return out;
+}
+
 describe("componentsToolJsonSchema", () => {
   it("에이전트용 JSON Schema에는 blocks/modal이 있고 서버 부여 id는 없다", () => {
     const js = componentsToolJsonSchema() as { properties: Record<string, unknown> };
     expect(js.properties.blocks).toBeDefined();
     expect(js.properties.modal).toBeDefined();
     expect(js.properties.id).toBeUndefined();
+  });
+  it("io: input 모드라 top-level required에 default 필드(reusable/ttlMs/blocks)가 없다", () => {
+    const js = componentsToolJsonSchema() as { required?: string[] };
+    expect(js.required ?? []).not.toContain("reusable");
+    expect(js.required ?? []).not.toContain("ttlMs");
+    expect(js.required ?? []).not.toContain("blocks");
+  });
+  it("default가 있는 하위 필드(버튼 style 등)도 어떤 required 배열에도 나타나지 않는다", () => {
+    const js = componentsToolJsonSchema();
+    const required = collectRequired(js);
+    expect(required).not.toContain("style");
+    expect(required).not.toContain("multi");
   });
 });

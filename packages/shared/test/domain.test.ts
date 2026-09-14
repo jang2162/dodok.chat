@@ -85,6 +85,14 @@ describe("Message", () => {
       true,
     );
   });
+  it("componentState는 만료 시각과 소비 목록을 담는다", () => {
+    const m = Message.parse({
+      ...base,
+      components: { blocks: [{ type: "separator" }] },
+      componentState: { expiresAt: NOW, consumed: [] },
+    });
+    expect(m.componentState?.consumed).toEqual([]);
+  });
   it("시스템 메시지는 systemMeta를 가진다", () => {
     const m = Message.parse({
       ...base,

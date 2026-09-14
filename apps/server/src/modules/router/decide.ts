@@ -64,9 +64,10 @@ export function decideRuns(input: RoutingInput): { runs: RunPlan[]; blocked: Blo
         blocked: [],
       };
     }
+    if (message.mentions.agents.length > 0) return { runs: [], blocked: [] }; // 멘션이 전부 비활성: 폴백 없음
     const auto = agentMembers
       .filter((m) => m.autoRespond && isActive(m.memberId))
-      .sort((a, b) => a.joinedAt.localeCompare(b.joinedAt));
+      .sort((a, b) => Date.parse(a.joinedAt) - Date.parse(b.joinedAt));
     const first = auto[0];
     if (!first) return { runs: [], blocked: [] };
     return {

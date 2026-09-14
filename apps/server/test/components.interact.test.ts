@@ -150,6 +150,10 @@ describe("validateInteraction — 실패 순서", () => {
       ok: false,
       error: { code: "VALIDATION" },
     });
+    expect(call("details", { fields: { title: "" } })).toMatchObject({
+      ok: false,
+      error: { code: "VALIDATION" },
+    });
   });
 });
 
@@ -165,6 +169,9 @@ describe("validateInteraction — 성공", () => {
     expect(
       call("details", { fields: { title: "t", priority: ["p1"], notify: true, hours: 3 } }),
     ).toMatchObject({ ok: true });
+  });
+  it("선택 textarea는 빈 문자열을 허용한다", () => {
+    expect(call("details", { fields: { title: "t", desc: "" } })).toMatchObject({ ok: true });
   });
 });
 

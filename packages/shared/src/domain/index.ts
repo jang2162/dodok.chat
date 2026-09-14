@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { Id, IsoDateTime } from "../common";
-import { ComponentsV1 } from "../components";
+import { ComponentState, ComponentsV1 } from "../components";
 import { MentionSet } from "../mention"; // MentionSet은 mention.ts가 소유. 루트 index가 export하므로 여기서 재export하지 않는다(export * 충돌 방지).
 
 export const Handle = z.string().regex(/^[a-z0-9_-]{2,32}$/);
@@ -111,6 +111,7 @@ export const Message = z.object({
   mentions: MentionSet,
   attachments: z.array(Attachment).max(10).default([]),
   components: ComponentsV1.optional(),
+  componentState: ComponentState.optional(), // components가 있을 때 서버가 부여 (만료 시각·소비된 아이템)
   systemMeta: SystemMeta.optional(), // kind === "system"일 때
   replyTo: Id.optional(),
   runId: Id.optional(), // agent 메시지: 만들어 낸 런

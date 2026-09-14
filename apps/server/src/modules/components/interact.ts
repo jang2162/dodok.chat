@@ -36,11 +36,14 @@ function fieldSchema(f: Field): z.ZodType {
     case "text":
       s = z
         .string()
-        .min(f.minLength ?? 0)
+        .min(f.minLength ?? (f.required ? 1 : 0))
         .max(f.maxLength ?? 4000);
       break;
     case "textarea":
-      s = z.string().max(f.maxLength ?? 4000);
+      s = z
+        .string()
+        .min(f.required ? 1 : 0)
+        .max(f.maxLength ?? 4000);
       break;
     case "number": {
       let n = z.number();
