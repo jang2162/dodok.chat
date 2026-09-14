@@ -23,4 +23,5 @@ pnpm i · pnpm dev(전체) · pnpm -F @dodok/server dev · pnpm -F @dodok/web de
 docker compose -f infra/docker-compose.yml up [--profile gateway]
 
 ## 현재 단계
-Phase 0 스파이크 (docs/project-structure.md 5장 순서대로). 스파이크마다 docs/adr/에 결과 기록.
+shared 계약·DB 스키마·순수 로직 구현 완료 (docs/superpowers/plans/2026-09-14-shared-contracts.md).
+다음: Phase 0 스파이크 (docs/project-structure.md 5장 0·2·3·4단계). 스파이크마다 docs/adr/에 결과 기록.

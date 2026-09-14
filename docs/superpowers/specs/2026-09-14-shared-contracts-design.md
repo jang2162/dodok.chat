@@ -599,7 +599,7 @@ export const RunEvent = z.discriminatedUnion("type", [
   ev("APPROVAL_REQUESTED", { approvalId: Id, kind: ApprovalKind, summary: z.string(), expiresAt: IsoDateTime.optional() }),
   ev("APPROVAL_RESOLVED",  { approvalId: Id, decision: z.enum(["approved", "denied", "expired"]), decidedBy: Id.optional() }),
   // 미분류
-  ev("CUSTOM", { name: z.string(), value: z.unknown() }),
+  ev("CUSTOM", { name: z.string(), value: z.unknown().optional() }),
 ]);
 export type RunEvent = z.infer<typeof RunEvent>;
 ```
