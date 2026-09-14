@@ -22,8 +22,9 @@ IDE, 실행 중인 `pnpm dev`(Vite 개발 서버·서버 프로세스), 다른 �
   **Orca 가 살아 있는 동안 구현 경로로 쓰지 않는다** — 서브에이전트는 컨텍스트가 조율자 안에 숨어 사람이 볼 수
   없고, `EnterWorktree` 가 만드는 `.claude/worktrees/` 는 이 저장소의 워크트리 규약(`.worktrees/dodok.chat/<슬러그>`)
   밖이라 `status`·`reap`·훅이 알지 못한다.
-- **Orca 가 없거나 죽어 있으면** 그때만 superpowers 의 실행 경로(`subagent-driven-development`, 필요하면
-  `EnterWorktree`)로 내려간다. 그 경우에도 5절(커밋)과 0절(판단)은 그대로 적용된다.
+- **Orca 가 없거나 죽어 있거나, 살아 있어도 이 저장소의 워크트리를 다룰 수 없으면**(`worktreeBasePath` 미설정 — 2절)
+  그때만 superpowers 의 실행 경로(`subagent-driven-development`, 필요하면 `EnterWorktree`, 또는 손으로 만든
+  `.worktrees/dodok.chat/<슬러그>` 안에서 도는 서브에이전트)로 내려간다. 내려갈 때는 그 이유를 사용자에게 말한다. 그 경우에도 5절(커밋)과 0절(판단)은 그대로 적용된다.
 - 구현계획(`docs/superpowers/plans/*.md`)이 있으면 **브리프는 그 계획의 태스크를 가리키고**, 워커가 계획 문서를
   읽는다. 계획 본문을 브리프에 붙여 넣지 않는다.
 
@@ -413,7 +414,10 @@ git worktree add -b feat/<작업명> .worktrees/dodok.chat/<슬러그>
 
 - **위치**: `.worktrees/dodok.chat/<슬러그>/` (저장소 루트 하위, gitignore 됨). Orca 가 만드는 자리와 같은 규약을 쓴다 —
   그래야 `status`·`reap`·훅이 손으로 만든 것도 다룬다. 저장소 바깥이나 임의 경로에 만들지 않는다.
-  (`git worktree add` 로 만든 것도 Orca 는 인식한다 — `orca worktree list --json` 에 id 로 나온다.)
+- ⚠ **`worktreeBasePath` 가 비어 있는 동안은 손으로 만든 워크트리도 `orca worktree list --json` 에 나오지 않는다**(이 저장소에서 실측).
+  그러면 `attach` 도 「Orca 가 워크트리로 모른다」로 실패한다. 즉 설정이 비어 있으면 **Orca 워커 경로가 통째로 막힌 것**이고,
+  그때는 문서 첫머리의 폴백(superpowers 실행 경로)으로 가되 **사용자에게 설정을 채워 달라고 함께 알린다.**
+  설정이 채워진 뒤 `git worktree add` 로 만든 것이 목록에 나오는지는 다시 재서 이 줄을 갱신한다.
 - 기준 브랜치를 명시해야 하면 마지막 인자로 준다(`... .worktrees/dodok.chat/x base2`). 기본은 현재 `HEAD` 다.
 - superpowers 의 `EnterWorktree` 가 만드는 `.claude/worktrees/` 도 gitignore 돼 있지만 **Orca 가 살아 있을 때는 쓰지 않는다**
   (문서 첫머리 「Orca 워커가 우선이다」).
@@ -484,7 +488,8 @@ pnpm typecheck && pnpm test               # 기준선 확인 — Turbo 캐시는
   그 값, 없으면 macOS·일반은 `orca`, **Linux 는 `orca-ide`** — 리눅스에서 bare `orca` 는 GNOME 스크린리더로 붙는다.)
   오케스트레이션 experimental 기능이 켜져 있어야 한다.
 - **방식은 외우지 말고** `orca skills get orchestration` 으로 버전 맞춤 가이드를 읽는다(플래그·서브커맨드가 릴리스마다 바뀐다). 요지:
-  - `git worktree add` 로 만든 `.worktrees/*` 도 Orca 가 인식한다 — `orca worktree list --json` 에 id 로 나온다.
+  - `git worktree add` 로 만든 `.worktrees/*` 는 **`worktreeBasePath` 가 채워져 있을 때만** Orca 가 인식할 가능성이 있다 —
+    비어 있는 동안은 목록에 나오지 않는다(2절 「Orca 가 없을 때」).
   - **붙이기는 `worker-start` 가 에이전트까지 띄우게 한다** — `orca orchestration worker-start
     --task <id> --worktree id:<fullId> --agent claude --model <모델> --timeout-ms 180000`.
     **`terminal create` 로 먼저 띄우고 `terminal wait --for tui-idle` 뒤에 붙이지 마라** —
