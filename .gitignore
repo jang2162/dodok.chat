@@ -14,3 +14,7 @@ dist/
 .idea/
 .vscode/
 .DS_Store
+
+# SDD 작업 디렉터리·네이티브 워크트리
+.superpowers/
+.claude/worktrees/
