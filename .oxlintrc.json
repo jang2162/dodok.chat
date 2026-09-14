@@ -1,10 +1,6 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": [
-    "typescript",
-    "unicorn",
-    "oxc"
-  ],
+  "plugins": ["typescript", "unicorn", "oxc"],
   "categories": {
     "correctness": "error"
   },
@@ -12,11 +8,5 @@
   "env": {
     "builtin": true
   },
-  "ignorePatterns": [
-    "**/drizzle/**",
-    "**/dist/**",
-    "**/.turbo/**",
-    "**/data/**",
-    ".worktrees/**"
-  ]
+  "ignorePatterns": ["**/drizzle/**", "**/dist/**", "**/.turbo/**", "**/data/**", ".worktrees/**"]
 }
