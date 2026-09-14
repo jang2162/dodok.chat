@@ -1,3 +1,4 @@
+export * from "./bridge";
 export * from "./common";
 export * from "./components";
 export * from "./domain";
