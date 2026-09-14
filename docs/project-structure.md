@@ -43,7 +43,7 @@ src/
 ├─ domain/        workspace, user, agent, channel, message, run, approval 타입 + Zod
 ├─ components/    components v1 스키마 (blocks/actions/button/select/modal/media/file) + 제약 검증
 ├─ events/        RunEvent 유니온 (AG-UI 이벤트명 채택: TEXT_MESSAGE_START/CONTENT/END,
-│                 TOOL_CALL_START/ARGS/END, RUN_STARTED/FINISHED/ERROR, STATE_DELTA, CUSTOM)
+│                 TOOL_CALL_START/ARGS/END, RUN_STARTED/FINISHED/ERROR, STATE_SNAPSHOT, CUSTOM)
 ├─ wire/          클라이언트↔서버 Socket.IO 이벤트 계약 (server→client, client→server 타입 맵)
 ├─ bridge/        플러그인↔서버 브리지 메시지 계약 (인바운드 전달, 아웃바운드 수신, 컴포넌트 결과, 설정 변경, 헬스)
 └─ mention.ts     @멘션 파싱 (사람/에이전트 별칭 → id), 릴레이 감지에 공용
@@ -58,8 +58,8 @@ src/
 ├─ app.ts                 Fastify 부트스트랩, Socket.IO 부착, 브리지 WSS 라우트(/bridge) 마운트
 ├─ config.ts              env 로드 (zod로 검증)
 ├─ db/
-│  ├─ schema.ts           Drizzle 스키마 (계획서 6장 테이블 + push_subscriptions)
-│  └─ migrate.ts
+│  ├─ schema.sqlite.ts    Drizzle 스키마 (계획서 6장 테이블 + push_subscriptions)
+│  └─ client.ts           createDb: 연결 + 마이그레이션
 ├─ auth/                  Better Auth 설정 (MVP: 단일 owner, 로컬 토큰; org 플러그인은 꺼둠)
 ├─ modules/
 │  ├─ channels/           CRUD, 멤버(사람/에이전트), 채널 프롬프트·오버라이드 (변경 시 어댑터 config-sync 호출)

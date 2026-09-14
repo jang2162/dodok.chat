@@ -125,7 +125,8 @@ export function tokenize(text: string, participants: Participant[]): { bodyMd: s
 ```ts
 import { z } from "zod";
 import { Id, IsoDateTime } from "../common";
-import { ComponentsV1 } from "../components";
+import { ComponentState, ComponentsV1 } from "../components";
+import { MentionSet } from "../mention";
 
 export const Handle = z.string().regex(/^[a-z0-9_-]{2,32}$/);
 
@@ -196,7 +197,7 @@ export const Attachment = z.object({
   thumbUrl: z.string().regex(/^(https:\/\/|artifact:\/\/)\S+$/).optional(),
 });
 
-export const MentionSet = z.object({ agents: z.array(Id), users: z.array(Id) });
+// MentionSet은 mention.ts가 정의하고 여기서는 import만 한다(루트 export * 충돌 방지)
 
 export const SystemKind = z.enum(["relay_limit", "relay_denied", "run_error", "info"]);
 export const SystemMeta = z.object({
@@ -216,6 +217,7 @@ export const Message = z.object({
   mentions: MentionSet,
   attachments: z.array(Attachment).max(10).default([]),
   components: ComponentsV1.optional(),
+  componentState: ComponentState.optional(), // components가 있을 때 서버가 부여 (만료 시각·소비된 아이템)
   systemMeta: SystemMeta.optional(),      // kind === "system"일 때
   replyTo: Id.optional(),
   runId: Id.optional(),                   // agent 메시지: 만들어 낸 런
@@ -297,7 +299,7 @@ export type Workspace = z.infer<typeof Workspace>;
 // SystemMeta, Message, Run, RunState, ComponentInteraction, Approval, PushSubscription)는 같은 이름의 타입을 z.infer로 export한다.
 ```
 
-주의: `Message.components`는 저장 시 서버가 `id`와 `expiresAt`을 채운 형태(9장)이다.
+주의: `Message.components.id`는 저장 시 서버가 부여하고, 만료 시각과 소비된 아이템은 `Message.componentState`에 담는다(9장).
 
 ---
 
@@ -521,6 +523,7 @@ export function transition(run: Pick<Run, "status" | "hasCanonical">, s: RunSign
 ¹ `gateway_final` 시 `hasCanonical`이면 곧바로 `done(finalSource=plugin)`, 아니면 `finalizing`.
 ² 타임아웃 채택 시 WS 스냅샷 본문이 비어 있지 않으면 에이전트 메시지로 저장하고, 비어 있으면 메시지 없이 `done`.
 ³ 종료 후 도착한 정본은 런 없는 에이전트 메시지로 저장하지 않고, 해당 `runId`를 달아 저장한다(늦은 도착 허용). 상태는 바뀌지 않는다.
+⁴ `queue_timeout`은 `queued`에서만 유효하다(스트리밍 중 늦게 도착한 큐 타이머가 런을 죽이지 않도록). 표의 다른 상태에서는 ignored.
 
 타임아웃 기본값(채널 설정으로 조정 가능): queued 120초, 런 전체 600초, finalizing 10초. `abort_requested`는 어댑터 `abort(runId)`(→ `chat.abort`)를 호출한 뒤 상태를 바꾼다.
 
@@ -549,7 +552,7 @@ export function decideRuns(input: RoutingInput): { runs: RunPlan[]; blocked: Blo
 ```
 
 규칙:
-1. **사람 메시지**: 대상 = `mentions.agents ∩ 채널 소속 활성 에이전트`. 비어 있으면 `autoRespond=true`인 멤버 1개(여럿이면 `joinedAt`이 가장 이른 것 하나, 나머지는 설정 오류로 경고). 각 대상에 `triggerKind: mention | auto_respond`, `rootMessageId = message.id`, `relayDepth = 0`.
+1. **사람 메시지**: 대상 = `mentions.agents ∩ 채널 소속 활성 에이전트`. 멘션 자체가 없을 때만 `autoRespond=true`인 멤버 1개(멘션이 있었으나 전부 비활성이면 런 없음)(여럿이면 `joinedAt`이 가장 이른 것 하나, 나머지는 설정 오류로 경고). 각 대상에 `triggerKind: mention | auto_respond`, `rootMessageId = message.id`, `relayDepth = 0`.
 2. **에이전트 메시지**(`sourceRun` 필수, 런 없이 저장된 에이전트 메시지는 릴레이하지 않는다): 대상 = `mentions.agents − {sourceRun.agentId}` ∩ 활성 에이전트. autoRespond는 **적용하지 않는다**. 각 대상에 대해 순서대로 검사하고 첫 실패 사유로 `blocked`:
    - `allowPairs === "all"` 또는 `{from: sourceRun.agentId, to}` 포함 → 아니면 `pair_not_allowed`
    - `depth = sourceRun.relayDepth + 1`, `depth <= maxRelayTurns` → 아니면 `max_turns`
