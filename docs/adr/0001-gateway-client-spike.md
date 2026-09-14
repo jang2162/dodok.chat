@@ -33,7 +33,8 @@
 | 협상된 `hello-ok.protocol` | `4` (요청 `minProtocol: 4, maxProtocol: 4`) |
 | 클라이언트 | `@openclaw/gateway-client` `2026.9.4`, `@openclaw/gateway-protocol` `2026.9.4` (정확 핀) |
 | Node / pnpm | 22.23.1 / 11.16.0 |
-| 에이전트 | `openclaw agents list` 기준 `main` 1개 (기본). 워크스페이스 `~/.openclaw/workspace` |
+| 에이전트 | **6개** — `hello-ok.snapshot.health.agents` 기준 (2.1) |
+| 기본 에이전트 | `snapshot.sessionDefaults.defaultAgentId = "main"` |
 | 모델 | `provider: "claude-cli"`, `model: "claude-opus-5"` (관찰된 값) |
 | 측정일 | 2026-09-15 (UTC 2026-09-14T15:27~15:29) |
 
@@ -42,9 +43,58 @@
 
 `pnpm 11` 의 `minimumReleaseAge` 는 두 패키지 설치를 막지 않았다(2026-09-11 게시, 4일 경과). `pnpm-workspace.yaml` 변경 없음.
 
+### 2.1 에이전트 6개 — 멘션 릴레이 설계의 전제
+
+`openclaw agents list` 는 `main (default)` 하나만 보여 주지만(라우팅 규칙 0개라 나머지를 안 띄운다),
+**`hello-ok.snapshot.health.agents` 는 6개를 싣는다.**
+
+| `agentId` | `name` | `sessions.count` | `sessions.recent` | `heartbeat.enabled` |
+| --- | --- | --- | --- | --- |
+| `main` | (없음) | 14 | 5 | `true` (30분) |
+| `fin` | 핀 | 14 | 5 | `false` |
+| `moby` | 모비 | 7 | 5 | `false` |
+| `booky` | 부기 | 4 | 4 | `false` |
+| `mini` | 미니 | 3 | 3 | `false` |
+| `mail_reader` | (없음) | 1 | 1 | `false` |
+
+- **`isDefault` 는 6개 전부 `false` 다.** 기본 에이전트는 이 필드가 아니라 `snapshot.sessionDefaults.defaultAgentId`(= `"main"`)로 정해진다.
+  에이전트 목록에서 기본을 고를 때 `isDefault` 를 믿으면 안 된다.
+- `name` 은 있는 것과 없는 것이 섞인다(`main`·`mail_reader` 는 없음) → UI 표시명은 `name ?? agentId` 로 폴백해야 한다.
+- 계획서 8장 Phase 0 「준비」는 「에이전트 2개 구성」을 전제했는데 **실제 배포에는 이미 6개**가 있다.
+  에이전트 등록 UI(Phase 1)와 멘션 릴레이는 「2개」가 아니라 **임의 개수**를 전제로 설계해야 하고,
+  채널에 어떤 에이전트를 붙일지 사용자가 고르는 화면이 MVP 에 필요하다.
+- `agentId` 에 `_`(`mail_reader`)가 들어간다 → 세션 키 규약 `agent:<agentId>:dodok:channel:<channelId>` 의
+  파서는 `:` 로만 쪼개야 하고 `agentId` 에 영숫자 외 문자가 온다고 가정해야 한다.
+
 ## 3. 페어링 실측 — **사람 승인이 필요 없었다**
 
 계획서는 「`connect` → 호스트에서 `openclaw devices approve <requestId>` → 토큰 발급」을 전제했다. 실측은 다르다.
+
+> **근거의 출처 — 이 절만 저장된 산출물로 재현되지 않는다.**
+> 3.1·3.2 의 값은 **일회용 진단 프로브의 콘솔 출력**에서 왔고 그 stdout 은 저장되지 않았다.
+> `data/spike-1-observations.json` 에는 `connectAttempts: []`, `pairing: null` 만 남아 있다 —
+> 스파이크 본 실행이 **두 번째 실행**이었고 그때는 이미 페어링이 끝나 첫 접속부터 성공했기 때문이다.
+> 3.2 표의 「20초」 한 줄은 스파이크 본 실행의 **첫 번째 실행**(`PAIRING_POLL_INTERVAL_MS = 20_000`)에서 나왔고,
+> 「2초」·「15초」 두 줄은 임시 디렉터리에 새 아이덴티티를 만드는 프로브에서 나왔다. 총 3회다.
+> 다시 재려면 새 디바이스 아이덴티티가 필요하고, 그러면 3.0 의 부작용이 또 생긴다.
+
+### 3.0 이 스파이크가 사용자 Gateway 에 남긴 것
+
+「Gateway 설정·에이전트·디바이스 목록을 바꾸지 않는다」가 브리프의 제약이었다. 설정과 에이전트는 건드리지 않았으나
+**페어링을 재려면 디바이스 아이덴티티를 만들 수밖에 없고, 승인된 아이덴티티는 Gateway 의 paired-devices 에 남는다.**
+실제로 남은 것은 다음과 같다.
+
+| 남은 것 | 식별자 | 개인키 위치 | 상태 |
+| --- | --- | --- | --- |
+| 디바이스 1 (스파이크 본체) | `deviceId c1a55c00089b…`, `dodok-spike` | 워크트리 `data/openclaw-device.json` (0600) | 재사용 가능 |
+| 디바이스 2 (프로브) | `deviceId bd20c8b1775f…`, `dodok-spike-probe` | `$TMPDIR/dodok-pairprobe-qTahPO/device.json` | **회수 불가** |
+| 디바이스 3 (프로브) | `deviceId 8d5b9f0277b0…`, `dodok-spike-probe` | `$TMPDIR/dodok-pairprobe-XbCtZ4/device.json` | **회수 불가** |
+| 세션 1개 | `agent:main:dodok:spike:20260915-0029` | — | 메시지 4개, 모델 런 2회, 관찰된 `usage.cost.total = 0` |
+
+- 디바이스 2·3 은 임시 디렉터리에만 개인키가 있어 다시 붙을 수 없다 — 사용자 Gateway 목록에 **죽은 항목 2개**로 남는다.
+- 이 머신에는 `operator.pairing` 스코프가 없어(`devices.list` 도 `FORBIDDEN`) 목록 확인·정리를 여기서 할 수 없다.
+  정리하려면 Gateway 호스트에서 `openclaw devices list` 로 `dodok-spike-probe` 두 개를 찾아 제거해야 한다.
+- **다음에 페어링을 잴 때는 영구 아이덴티티 하나를 재사용한다.** 프로브가 매번 새로 만든 것이 항목을 늘린 원인이다.
 
 ### 3.1 거절의 모양
 
@@ -140,7 +190,18 @@ Phase 2 의 이미지 첨부 상한은 여기서 읽는다: **이미지 6 MiB, �
 `suspension`, `presence`, `health`, `stateVersion`, `uptimeMs`, `appliedConfigHash`, `sessionDefaults`, `updateSchedule`.
 
 스키마가 허용하는 `configPath`·`stateDir`·`controlUiIdentityUrl`·`authMode`·`updateAvailable` 는 **오지 않았다**(원격 연결이라 경로류를 감춘 것으로 보인다).
-`snapshot` 에 **세션 로스터는 없다.**
+
+**`snapshot` 에 부분 세션 로스터가 있다.** `snapshot.health.agents[].sessions` 가 에이전트마다
+`{ path, count, recent }` 를 싣고, `recent` 는 `{ key, updatedAt, age }` 최대 5개다
+(`main` 은 `count: 14` + `recent` 5개: `agent:main:main`, `agent:main:dashboard:<uuid>` 2개,
+`agent:main:mattermost:group:<id>`, `agent:main:cron:<uuid>`). `snapshot.health.sessions` 에도 `main` 것이 한 번 더 온다.
+
+- 전체 로스터는 아니다(에이전트당 5개 상한) → **첫 화면을 `hello-ok` 만으로 그릴 수는 없고** `sessions.list` 가 여전히 필요하다(6.4).
+  다만 재접속 직후 「최근 세션」 정도는 추가 왕복 없이 그릴 수 있다.
+- **이 스냅샷을 그대로 웹으로 흘리면 안 된다.** `sessions.path` 는 호스트 절대경로
+  (`/Users/<user>/.openclaw/agents/*/agent/openclaw-agent.sqlite`)이고, `snapshot.presence`(9개 항목)는
+  `host`·`ip`(LAN 주소)·`platform`·`modelIdentifier` 를 싣는다. 어댑터가 `hello-ok` 를 UI 로 중계할 때는
+  **필요한 필드만 뽑아 올리는 화이트리스트**를 둔다.
 
 ### 4.4 `features.methods` — 443개
 
@@ -237,24 +298,53 @@ openclaw-setup-model-ref, taskSuggestions.acceptModes
 | `chat` | 있음 | **왔다** (8회) | `state`: `status`/`delta`/`final` 관찰. `error`·`aborted` 는 미관찰 |
 | `agent` | 있음 | **왔다** (15회) | `stream`: `lifecycle`/`run_status`/`thinking`/`tool`/`assistant` |
 | `session.message` | 있음 | **왔다** (4회) | `usage`·`stopReason`·`model` 이 여기 실린다 (6.3) |
-| `session.tool` | 있음 | **안 왔다 (0회)** | 원인은 5.3 |
+| `session.tool` | 있음 | **안 왔다 (0회)** | 원인은 5.4 |
 | `session.operation` | 있음 | 안 왔다 | compact 를 안 돌렸으니 예상대로 |
 | `session.approval` | 있음 | 안 왔다 | 승인 요구가 발생하지 않았다 (6.5) |
 | `session.observer` | 있음 | 안 왔다 | 관찰자 없음 |
 | `presence`/`tick`/`health`/`heartbeat`/`shutdown` | 있음 | 안 왔다 | 연결이 ~15초로 짧았다(`tickIntervalMs` 30초) |
 | (계획서 없음) | 있음 | **왔다** | `sessions.changed`(8회), `node.hostStats`(3회 — 전역 브로드캐스트) |
 
-### 5.3 `session.tool` 이 안 온 이유 — **`tool-events` 를 선언했기 때문이다**
+### 5.3 capability
 
-Gateway 소스(`server-chat-BP_fmUto.mjs`, 툴 이벤트 분배)를 읽어 확인했다.
+계획서 3.1절은 「문서상 `tool-events`·`approvals`·`session-scoped-events`. 스키마에서 enum 으로 강제되지 않으므로
+`hello-ok.features.capabilities` 로 이름을 확정한다」고 적었다. **확정 수단이 틀렸다** — `features.capabilities` 는 서버 기능 플래그다(4.6).
 
-- `chat.send` 를 보낸 연결이 `tool-events` cap 을 선언했으면 그 런의 **`toolEventRecipients` 로 등록**된다
-  (`principal-*.mjs`: `hasGatewayClientCap(caps, TOOL_EVENTS) ? registerToolEventRecipient(runId, connId) : undefined`).
-- 툴 이벤트는 먼저 `toolEventRecipients` 에게 **`agent`** 로 나간다.
-- 그 다음 `session.tool` 은 `sessionEventSubscribers` **에서 `toolEventRecipients` 를 뺀 집합**에만 나간다.
+| 계획서 3.1절이 댄 이름 | `GATEWAY_CLIENT_CAPS` 상수 (정본) | `connect.caps` 로 선언 | `hello-ok.features.capabilities` 에 에코 | 선언의 실제 효과 |
+| --- | --- | --- | --- | --- |
+| `tool-events` | 있음 (`TOOL_EVENTS`) | 했다 | **없음** | **확인됨** — 툴 phase 가 `agent`/`stream:"tool"` 로 왔고 `session.tool` 은 오지 않았다 (5.4) |
+| `approvals` | 있음 (`APPROVALS`) | 했다 | **없음** | 미확인 — 이번 런에서 승인 요구가 발생하지 않았다 (6.5) |
+| `session-scoped-events` | 있음 (`SESSION_SCOPED_EVENTS`) | 했다 | **없음** | 미확인 — 세션 범위 필터링을 분리 검증하지 않았다 |
+
+세 이름 모두 **유효한 값**이다. `GATEWAY_CLIENT_CAPS`(`@openclaw/gateway-protocol/client-info`) 전체 14개는
+`agent-kind`, `approvals`, `exec-approvals`, `inline-widgets`, `run-tool-bindings`, `session-scoped-events`,
+`plugin-approvals`, `task-suggestions`, `terminal-offset-seq`, `terminal-session-metadata`,
+`terminal-upload-path-style`, `tool-events`, `ui-commands`, `usage-refreshing` 이다.
+우리가 앞으로 쓸 만한 미선언 항목: `exec-approvals`, `plugin-approvals`(승인 종류별 이벤트),
+`inline-widgets`(components v1 렌더러), `run-tool-bindings`.
+
+**선언한 것은 반드시 구현한다**는 계획서 규칙은 그대로 유효하고, 오히려 더 중요해졌다 —
+에코백이 없으므로 **선언의 효과는 행동으로만 드러나고**, 잘못 선언하면 조용히 이벤트 경로가 바뀐다. 5.4가 그 실례다.
+
+### 5.4 `session.tool` 이 안 온 이유 — **`tool-events` 를 선언했기 때문이다**
+
+Gateway 번들 소스를 읽어 확인했다
+(`/Applications/OpenClaw.app/Contents/Resources/node-worker/arm64/lib/node_modules/openclaw/dist/`).
+
+- `principal-CweFVZNq.mjs:4228` — `chat.send` 를 보낸 연결이 `tool-events` cap 을 선언했으면 그 런의 **`toolEventRecipients` 로 등록**된다:
+  `connId && hasGatewayClientCap(principal?.connect?.caps, GATEWAY_CLIENT_CAPS.TOOL_EVENTS) ? (runId) => registerToolEventRecipient(runId, connId) : void 0`.
+- `server-chat-BP_fmUto.mjs:916-923` — 툴 이벤트는 먼저 `toolEventRecipients` 에게 **`agent`** 로 나간다.
+- `server-chat-BP_fmUto.mjs:932-939` — 그 다음 `session.tool` 은
+  `excludeConnIds(sessionEventSubscribers.getAll(), runToolRecipients)`, 즉 **`toolEventRecipients` 를 뺀 집합**에만 나간다.
 
 즉 **`session.tool` 과 `agent`(stream `tool`)는 같은 정보의 두 배달 경로이고, 우리는 전자에서 명시적으로 제외된 쪽**이다.
 `session.tool` 은 「런을 띄우지 않았지만 세션을 보고 있는 다른 연결」용이다.
+
+**조건이 하나 더 있다.** 두 분기 모두 앞에 **`isControlUiVisible`** 가 걸려 있고,
+`session.tool` 분기는 `isControlUiVisible && sessionKey && !suppressHeartbeatToolEvents` 다.
+`isControlUiVisible` 이 아닐 때는 `hasSessionMessageSubscribers` 인 경우에 한해 `agent` 가 나가고 `session.tool` 은 아예 안 나간다.
+따라서 **`tool-events` 를 끄기만 하면 `session.tool` 이 온다고 단정할 수 없다** —
+Phase 1 에서 `session.tool` 을 폴백 경로로 붙일 생각이라면 그 전에 이 조건부터 실측해야 한다.
 
 **그래서 달라지는 것**: 계획서 3.1절의 「툴 실행 진행 상황은 `session.tool` 과 `agent` 이벤트에 의존한다」를
 「**우리 어댑터는 `agent` 의 `stream: "tool"` 하나만 정규화한다. `session.tool` 은 우리가 `tool-events` 를 선언하는 한 오지 않는다**」로 고친다.
@@ -413,9 +503,18 @@ sessions.messages.subscribe({ key, agentId, includeApprovals: true })
 | 13 | (없음) | `policy.attachments.maxImageBytes = 6 MiB` | Phase 2 첨부 정책의 실제 상한 |
 | 14 | (없음) | `mentions.changed` 이벤트 존재 | 멘션 릴레이 설계에서 확인할 것 |
 
-`docs/project-structure.md` 2.3절의 `events.ts` 설명
-(`chat(delta/final/status/error/aborted)/agent/session.tool/session.approval → RunEvent 정규화`)도
-`session.tool` 을 빼고 `session.message`(usage·stopReason)를 넣는 쪽으로 고쳐야 한다.
+### 7.1 계획서 3.1절 밖에서도 같은 이유로 틀린 문장
+
+**이 표가 「고칠 곳의 목록」으로 쓰이므로 3.1절 바깥의 세 곳도 함께 적는다.** 빠뜨리면 병합 뒤 수정에서 그대로 새어 나간다.
+
+| 위치 | 현재 문장 | 왜 틀렸나 | 고칠 내용 |
+| --- | --- | --- | --- |
+| `docs/plan.md:411` (8장 Phase 0, 스파이크 1 정의) | 「디바이스 페어링(`openclaw devices approve`) → `hello-ok.features` 덤프 → `chat.send` → `chat` 델타 수신 → **`session.tool` 이벤트 수신** 콘솔 출력」 | 표 6행·10행과 같은 이유 — 페어링은 자동 승인됐고(3.2), `session.tool` 은 `tool-events` 선언 때문에 오지 않는다(5.4) | 「페어링(보통 자동, 필요하면 `devices approve`) → … → **`agent` `stream:"tool"`** 수신」 |
+| `docs/project-structure.md:197` (5장 2단계) | 「`openclaw-adapter/gateway/client.ts` — wss 접속·페어링·`hello-ok.features` 덤프·`chat.send`·`chat` 델타·**`session.tool` 콘솔 출력**까지 (스파이크 1)」 | 위와 같음 | `session.tool` → `agent`(`stream:"tool"`) |
+| `docs/project-structure.md:101` (2.3절 `events.ts`) | 「`chat(delta/final/status/error/aborted)/agent/**session.tool**/session.approval → RunEvent 정규화 (runId+seq 정합)」 | `session.tool` 은 오지 않고(5.4), `usage`·`stopReason` 은 `session.message` 에 있다(6.3) | `session.tool` 을 빼고 `session.message` 를 넣는다. 「runId+seq 정합」은 **seq 가 연속이 아니라는 전제**(6.3)로 고친다 |
+
+덧붙여 `docs/plan.md` 8장 Phase 0 「준비」의 **「에이전트 2개(`agents.entries`) 구성」**도 사실과 다르다 —
+배포에는 이미 6개가 있다(2.1). 「임의 개수」로 고친다.
 
 ## 8. 남은 질문
 
@@ -428,3 +527,26 @@ sessions.messages.subscribe({ key, agentId, includeApprovals: true })
 6. **`features` 에 없는데 호출되는 메서드가 왜 광고에서 빠지는지** 모른다. 플러그인/설정 조건부 등록으로 보이나 확인하지 않았다.
 7. **자동 페어링 승인의 조건**(공유 토큰만으로 충분한지, 설정 항목이 따로 있는지)을 Gateway 설정에서 확인하지 않았다 — 설정을 바꾸지 않기로 했기 때문이다.
 8. **`sessions.subscribe` 를 부르지 않아도 `chat`/`agent` 가 오는지** 분리 검증하지 않았다(둘 다 부른 뒤 관찰했다).
+
+### 8.1 이월 — 스파이크 코드에 남은 것 (리뷰 지적, 이 스파이크에서 고치지 않음)
+
+스파이크의 산출은 답이지 프로덕션 코드가 아니므로 아래는 **Phase 1 에서 이 코드를 이어받을 때** 처리한다.
+「Phase 1 전 필요」로 표시한 것은 상시 연결로 바꾸는 순간 바로 문제가 되는 것들이다.
+
+| 위치 | 내용 | 언제 |
+| --- | --- | --- |
+| `src/spike/gateway-spike.ts:283` | `await Promise.race([finished, sleep(RUN_TIMEOUT_MS)])` 가 **진 타이머를 끄지 않는다.** 런이 3초에 끝나도 120초짜리 타이머가 이벤트 루프에 남아 프로세스가 최대 2분 더 매달린다. 핸들을 잡아 `clearTimeout` 하면 된다 | 이 패턴이 서버로 복사되기 전 |
+| `src/spike/gateway-spike.ts:56` | 마스킹 정규식 `/^[A-Za-z0-9+/_-]{40,}={0,2}$/` 가 `.`·`:` 를 포함한 토큰(JWT 모양, `prefix:secret`)을 **못 잡는다.** 키 이름이 `SECRET_KEYS` 에 없으면 평문으로 400자까지 기록된다 — 길이 임계만으로 가리는 설계가 fail-open 이다 | 이 마스킹을 재사용하기 전 |
+| `src/spike/gateway-spike.ts:64` | 배열 원소에 `keyHint` 를 넘기지 않는다(`value.map((entry) => maskValue(entry))`). `SECRET_KEYS` 의 키 아래 문자열 배열(예: 스키마의 `deviceTokens: [...]`)이 오면 키 기반 마스킹이 무력화된다. `maskValue(entry, keyHint)` 로 넘기면 끝난다 | 위와 같이 |
+| `src/spike/gateway-spike.ts:35` | `MAX_CHAT_SENDS` 는 **프로세스당 상한이지 누적 예산이 아니다.** `pnpm -F @dodok/openclaw-adapter spike:gateway` 를 다시 돌리면 사용자 Gateway 에서 모델 런이 2회 더 돈다. 브리프의 3회 상한은 사람이 지킨 것이지 코드가 강제하지 않았다 | 재실행 전 인지 |
+| `src/spike/gateway-spike.ts:319` | `agentId` 기본값이 `"main"` 리터럴 — `snapshot.sessionDefaults.defaultAgentId` 를 읽으면 하드코딩이 필요 없다 (2.1) | Phase 1 |
+| `src/gateway/client.ts:219-233` | `GatewayClientOptions` 의 **`onClose`·`onReconnectPaused`·`onGap` 이 배선돼 있지 않다.** `hello-ok` 이후 끊기면 `onConnectError` → 이미 확정된 프로미스로 흘러 무시되고 호출자는 끊김을 알 방법이 없다. `onGap({expected, received})` 를 버리는 것은 6.3 의 결론(「seq 는 순서용」)과 정면으로 맞물리는 자리다 | **Phase 1 전 필요** |
+| `src/gateway/client.ts:65-72` | 토큰 저장소 `read()` 가 **모든 오류를 `{}` 로 삼킨다.** 손상된 토큰 파일이면 조용히 토큰을 잃고 재페어링한다 — 같은 상황에서 던지는 `device-identity.ts` 와 정책이 어긋난다. 최소한 `logError` 로 흘려야 한다 | **Phase 1 전 필요** |
+| `src/gateway/client.ts:77-78` | 토큰 파일은 `renameSync` 뒤 `chmodSync(0o600)` 을 하지 않는다(`device-identity.ts:127` 은 한다). 실측 권한은 0600 이지만 umask 에 의존하는 형태다 | Phase 1 |
+| `src/gateway/client.ts:57,68` | `StoredDeviceTokens` 를 캐스팅만 하고 검증하지 않는다. 손상 입력이 그대로 통과한다 (경계에서 Zod 파싱 규칙과 어긋남) | Phase 1 |
+| `test/device-identity.test.ts` | `parseStoredDeviceIdentity` 의 **손상 파일 6갈래 분기와 0600 권한에 테스트가 없다.** 조용히 넘어가면 페어링이 날아가는, 이 모듈에서 가장 값비싼 로직이다 | Phase 1 에서 이 모듈을 실제로 쓸 때 |
+
+**설계 판단이 필요한 자리**(리뷰가 8절 항목으로 올리라고 지적한 것): 지금 래퍼는 「첫 connect 실패 = 거절 + 클라이언트 폐기」라
+라이브러리 재접속과 충돌하지 않는다. 스파이크에는 이게 맞다. 그러나 **상시 연결(Phase 1)에서는 라이브러리 재접속을 쓰고
+`onClose`/`onGap` 을 `GatewayConnection` 의 수명 신호로 노출하는 쪽**으로 뒤집어야 한다 — 그때 3.4 의 「짧은 재시도」를
+어느 층이 책임지는지도 함께 정해야 한다.
