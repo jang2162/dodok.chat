@@ -38,4 +38,5 @@ docker compose -f infra/docker-compose.yml up [--profile gateway]
 
 ## 현재 단계
 shared 계약·DB 스키마·순수 로직 구현 완료 (docs/superpowers/plans/2026-09-14-shared-contracts.md).
-다음: Phase 0 스파이크 (docs/project-structure.md 5장 0·2·3·4단계). 스파이크마다 docs/adr/에 결과 기록.
+Phase 0 스파이크 1 완료 — docs/adr/0001-gateway-client-spike.md (Gateway WS 실물: 페어링 자동 승인, runId=idempotencyKey, 툴 진행은 agent stream:tool).
+다음: 스파이크 2(채널 플러그인, 원격 Gateway 설치 + 터널)·3(채널 프롬프트 설정 쓰기). 스파이크마다 docs/adr/에 결과 기록.

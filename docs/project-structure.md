@@ -23,7 +23,7 @@ dodok.chat/
 │  ├─ project-structure.md    # 이 문서
 │  ├─ guides/                 # 작업 지침 (worktree-workflow.md, browser-verification.md)
 │  ├─ superpowers/            # 스펙·구현계획 (specs/, plans/)
-│  └─ adr/                    # 결정 기록 (스파이크 결과마다 한 장; 계획서 10장의 결정은 코드 착수 시 옮김)
+│  └─ adr/                    # 결정 기록 (스파이크 결과마다 한 장; 0001 = Gateway 클라이언트 스파이크)
 ├─ scripts/
 │  ├─ orca-worker.sh          # Orca 워커 수명주기 (spawn/attach/wait/status/reap/stop/keep/sync-config)
 │  └─ test/                   # 위 스크립트의 테스트 하네스 + Orca CLI 스텁
@@ -96,9 +96,13 @@ src/
 ├─ index.ts               AgentAdapter 구현 (openclaw)
 ├─ gateway/
 │  ├─ client.ts           @openclaw/gateway-client 래퍼: wss 접속, 디바이스 아이덴티티·토큰을 hostDeps로 data/에 저장,
-│  │                      hello-ok(features·policy) 캐시, caps 선언, 재접속 시 프로젝션 재구축
+│  │                      hello-ok(features·policy) 캐시, caps 선언(정본 GATEWAY_CLIENT_CAPS), 첫 connect 의 NOT_PAIRED 를
+│  │                      정상 경로로 보고 2~5초 재시도(자동 승인), 재접속 시 프로젝션 재구축
+│  ├─ device-identity.ts  Ed25519 아이덴티티 생성·저장(0600)·서명·raw base64url 공개키 (스파이크 1에서 확정)
 │  ├─ sessions.ts         채널·에이전트 → sessionKey 매핑 (agent:<agentId>:dodok:channel:<channelId>)
-│  ├─ events.ts           chat(delta/final/status/error/aborted)/agent/session.tool/session.approval → RunEvent 정규화 (runId+seq 정합)
+│  ├─ events.ts           chat(delta/final/status/error/aborted)/agent(stream:"tool" 포함)/session.message(usage·stopReason·비용)/
+│  │                      session.approval → RunEvent 정규화. runId = chat.send 의 idempotencyKey. seq 는 순서용이며 연속이 아니다.
+│  │                      session.tool 은 쓰지 않는다 — tool-events 를 선언한 연결은 수신 대상에서 제외된다(ADR 0001)
 │  └─ approvals.ts        approval.get/resolve
 ├─ bridge/
 │  ├─ server.ts           플러그인이 아웃바운드로 붙는 WSS 엔드포인트 (Fastify 앱에 /bridge로 마운트; 토큰 인증,
@@ -192,9 +196,9 @@ UPLOAD_DIR=./data/uploads
 
 ## 5. 개발 순서 (Phase 0 → 1 착수 순서)
 
-0. 원격 Gateway를 2026.9.4로 업그레이드, 세 패키지를 같은 버전으로 핀. `agentToAgent`·`visibility` 설정 적용.
+0. ~~원격 Gateway를 2026.9.4로 업그레이드~~(스파이크 1 시점에 이미 2026.9.4), 세 패키지를 같은 버전으로 핀(adapter 완료, plugin 은 스파이크 2에서). `agentToAgent`·`visibility` 설정 적용은 사용자 몫 — 미확인.
 1. 모노레포 스캐폴드, `shared` 타입·스키마부터 (계획서 5.4 components v1, 6장 테이블, wire·bridge 계약).
-2. `openclaw-adapter/gateway/client.ts` — wss 접속·페어링·`hello-ok.features` 덤프·`chat.send`·`chat` 델타·`session.tool` 콘솔 출력까지 (스파이크 1). 산출: 프로토콜 매핑 표.
+2. ~~`openclaw-adapter/gateway/client.ts` — wss 접속·페어링·`hello-ok.features` 덤프·`chat.send`·`chat` 델타·`session.tool` 콘솔 출력까지 (스파이크 1)~~ **완료** → `docs/adr/0001-gateway-client-spike.md`. 페어링은 공유 토큰이면 자동 승인, 툴 진행은 `session.tool` 이 아니라 `agent` `stream:"tool"`, `features` 는 참고 목록.
 3. `openclaw-plugin` 스켈레톤 — 원격 Gateway에 tarball 설치, 터널로 브리지 접속, 인바운드 수신·`message` 툴 아웃바운드·components 스키마 노출 확인, 봇 루프 보호 상호작용 확인 (스파이크 2). **여기서 막히면 대안:** `registerTool("ui_render")`.
 4. 채널 프롬프트 설정 갱신을 플러그인 내부 쓰기로 반영·확인 (스파이크 3). 실패 시 Gateway 설정 메서드 또는 인바운드 프리픽스.
 5. 스파이크 통과 후 `server` 모듈 → `web` 순으로 MVP 코어(Phase 1).

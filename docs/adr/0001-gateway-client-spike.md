@@ -45,7 +45,7 @@
 
 ### 2.1 에이전트 6개 — 멘션 릴레이 설계의 전제
 
-`openclaw agents list` 는 `main (default)` 하나만 보여 주지만(라우팅 규칙 0개라 나머지를 안 띄운다),
+`openclaw agents list` 는 `main (default)` 하나만 보여 주지만(원인은 미확인 — CLI 번들의 `buildAgentSummaries` 는 `cfg.agents.entries` 를 그대로 싣고 바인딩은 개수 열에만 쓰므로, `agents.entries` 가 비어 있었을 가능성이 크다. 8절 9번),
 **`hello-ok.snapshot.health.agents` 는 6개를 싣는다.**
 
 | `agentId` | `name` | `sessions.count` | `sessions.recent` | `heartbeat.enabled` |
@@ -527,6 +527,7 @@ sessions.messages.subscribe({ key, agentId, includeApprovals: true })
 6. **`features` 에 없는데 호출되는 메서드가 왜 광고에서 빠지는지** 모른다. 플러그인/설정 조건부 등록으로 보이나 확인하지 않았다.
 7. **자동 페어링 승인의 조건**(공유 토큰만으로 충분한지, 설정 항목이 따로 있는지)을 Gateway 설정에서 확인하지 않았다 — 설정을 바꾸지 않기로 했기 때문이다.
 8. **`sessions.subscribe` 를 부르지 않아도 `chat`/`agent` 가 오는지** 분리 검증하지 않았다(둘 다 부른 뒤 관찰했다).
+9. **`snapshot.health.agents` 의 6개가 `agents.entries` 소속인지 확인하지 않았다.** `openclaw agents list` 가 `main (default)` 하나만 보인 원인이 `cfg.agents.entries` 가 비어 있어서라면, 6개는 다른 경로(워크스페이스·세션 기록)로 잡힌 것일 수 있고 2.1절의 「계획서의 『에이전트 2개 구성』은 사실과 다르다」는 결론의 전제가 흔들린다. 스파이크 2 에서 Gateway 설정을 읽어 확정한다.
 
 ### 8.1 이월 — 스파이크 코드에 남은 것 (리뷰 지적, 이 스파이크에서 고치지 않음)
 

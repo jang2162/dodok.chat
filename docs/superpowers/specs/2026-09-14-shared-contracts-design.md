@@ -620,7 +620,7 @@ export type RunEvent = z.infer<typeof RunEvent>;
 | `chat` `state: final` | `TEXT_MESSAGE_END` (+ usage는 런에 기록) | gateway_final |
 | `chat` `state: error` | `RUN_ERROR` (`errorKind`, `errorDetail`) | gateway_error |
 | `chat` `state: aborted` | `RUN_ABORTED { by: "gateway" }` | gateway_aborted |
-| `session.tool` 시작/인자/종료/결과 | `TOOL_CALL_START/ARGS/END/RESULT` | tool_start / tool_end |
+| `agent` `stream:"tool"` phase `start`/`result` (계획서가 말한 `session.tool`은 `tool-events`를 선언한 연결에 오지 않는다 — ADR 0001) | `TOOL_CALL_START/ARGS/END/RESULT` | tool_start / tool_end |
 | `session.operation` (`compact`) | `STEP_STARTED/FINISHED` (stepName=`compact`) | — |
 | `session.approval`, `exec.approval.request` | `APPROVAL_REQUESTED` (+ `approvals` 행) | approval_requested |
 | `approval.resolve` 결과 / 승인 만료 | `APPROVAL_RESOLVED` | approval_resolved |
