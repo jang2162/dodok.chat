@@ -21,9 +21,20 @@ dodok.chat/
 ├─ docs/
 │  ├─ plan.md                 # 계획서
 │  ├─ project-structure.md    # 이 문서
+│  ├─ guides/                 # 작업 지침 (worktree-workflow.md, browser-verification.md)
+│  ├─ superpowers/            # 스펙·구현계획 (specs/, plans/)
 │  └─ adr/                    # 결정 기록 (스파이크 결과마다 한 장; 계획서 10장의 결정은 코드 착수 시 옮김)
+├─ scripts/
+│  ├─ orca-worker.sh          # Orca 워커 수명주기 (spawn/attach/wait/status/reap/stop/keep/sync-config)
+│  └─ test/                   # 위 스크립트의 테스트 하네스 + Orca CLI 스텁
+├─ .claude/
+│  ├─ settings.json           # SessionStart·UserPromptSubmit 훅 등록
+│  └─ hooks/orca-worker-check.sh   # 미정리 워커·워크트리 현황을 세션에 알림
+├─ .worktrees/dodok.chat/     # Orca 워크트리 자리 — git 제외 (docs/guides/worktree-workflow.md)
 ├─ data/                      # 런타임 데이터 (SQLite, 업로드, 디바이스 아이덴티티) — git 제외
-├─ CLAUDE.md                  # 7장 초안 사용
+├─ CLAUDE.md                  # 에이전트 지침 (정본)
+├─ .mcp.json                  # 프로젝트 MCP — playwright-neo (BrowserOS neo 의 CDP 에 붙는 Playwright)
+├─ .oxlintrc.json / .oxfmtrc.json
 ├─ package.json / pnpm-workspace.yaml / turbo.json
 └─ .env.example
 ```
@@ -194,7 +205,10 @@ UPLOAD_DIR=./data/uploads
 
 ## 6. 컨벤션
 
-- TypeScript strict, ESM only, `pnpm`, Biome(린트+포맷), Vitest, Playwright.
+- TypeScript strict, ESM only, `pnpm`, oxlint(린트)+oxfmt(포맷), Vitest, Playwright. 커밋 전 `pnpm lint`·`pnpm fmt:check` 통과. oxfmt 는 `*.md`·`pnpm-lock.yaml`·`drizzle/meta`·`*.sql` 을 제외한다(`.oxfmtrc.json`).
+- Turbo: `test`·`typecheck` 는 `cache: false`. 검증 태스크는 캐시 재생으로 「통과」가 찍히면 안 된다 — 새 검증 태스크도 같은 설정.
+- 코드 변경은 워크트리에서, 실행 주체는 Orca 워커 — `docs/guides/worktree-workflow.md`. 화면 확인은 `docs/guides/browser-verification.md`.
+- 커밋할 파일은 경로를 명시해 stage. `git add -A`·`git commit -a` 금지(최상위 체크아웃은 공유 자원).
 - 모든 외부 입력(HTTP, Socket.IO, 브리지, Gateway 이벤트)은 경계에서 Zod 파싱 후 내부로.
 - 커밋: Conventional Commits. 패키지 스코프 사용(`feat(plugin): …`).
 - OpenClaw 패키지 버전은 정확히 핀(`--save-exact`), Gateway와 같은 버전. 업그레이드는 Gateway와 같은 PR에서, 업그레이드 전 `@openclaw/gateway-protocol` CHANGELOG의 보류 항목 확인.
@@ -203,33 +217,8 @@ UPLOAD_DIR=./data/uploads
 
 ---
 
-## 7. `CLAUDE.md` 초안 (저장소 루트에 넣을 것)
+## 7. `CLAUDE.md`
 
-```md
-# dodok.chat
-
-사람과 AI 에이전트가 같은 채널에서 대화하는 에이전트 네이티브 메신저. 1차 연동은 OpenClaw.
-계획: docs/plan.md · 구성: docs/project-structure.md · 결정: docs/plan.md 10장, docs/adr/
-
-## 구조
-pnpm 모노레포, npm 스코프 @dodok. apps/web(React+Vite PWA), apps/server(Fastify+Socket.IO+브리지 엔드포인트),
-packages/shared(타입·Zod·components 규약·wire/bridge 계약), packages/openclaw-plugin(원격 Gateway 안 채널 플러그인, id "dodok"),
-packages/openclaw-adapter(서버 측 브리지 서버+Gateway WS 클라이언트).
-
-## 불변 규칙
-- 에이전트 간 소통은 채널 @멘션 릴레이로만. OpenClaw agentToAgent는 꺼둔다.
-- 세션 키는 채널당 에이전트별 1개: agent:<agentId>:dodok:channel:<channelId>
-- 응답 정본은 플러그인 경로, Gateway WS는 델타/툴 이벤트/승인. runId로 dedupe.
-- Gateway는 원격이 기본. 플러그인이 서버 /bridge 로 아웃바운드 WSS 접속. Gateway 쪽 포트를 열지 않는다.
-- OpenClaw 패키지 3종은 배포 Gateway와 같은 버전으로 정확 핀(현재 2026.9.4, 프로토콜 v4).
-- components v1 제약(액션 로우 버튼≤5 또는 셀렉트 1, 옵션≤25, 모달 필드≤5)은 shared 스키마가 강제.
-- 외부 입력은 경계에서 Zod 파싱. shared는 Node 전용 API 금지.
-- 시크릿·디바이스 아이덴티티·브리지 토큰은 data/ 와 .env 에만. 커밋 금지.
-
-## 명령
-pnpm i · pnpm dev(전체) · pnpm -F @dodok/server dev · pnpm -F @dodok/web dev · pnpm test · pnpm lint
-docker compose -f infra/docker-compose.yml up [--profile gateway]
-
-## 현재 단계
-Phase 0 스파이크 (docs/project-structure.md 5장 순서대로). 스파이크마다 docs/adr/에 결과 기록.
-```
+저장소 루트의 `CLAUDE.md` 가 정본이다. 초안은 코드 착수 때 그 파일로 옮겼고, 같은 내용을 두 곳에 두지 않는다 —
+가르치는 자리가 둘이면 둘 다 맞아야 하므로 한 곳만 남긴다. 작업 방식(워크트리·Orca 워커·커밋 규칙)은
+`docs/guides/worktree-workflow.md` 가 정본이고 `CLAUDE.md` 는 그 요약이다.

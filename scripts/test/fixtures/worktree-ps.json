@@ -1,0 +1,82 @@
+{
+  "ok": true,
+  "result": {
+    "worktrees": [
+      {
+        "worktreeId": "repo1::REPO",
+        "repoId": "repo1",
+        "path": "REPO",
+        "branch": "refs/heads/main",
+        "isMainWorktree": true,
+        "displayName": "lms-base",
+        "liveTerminalCount": 1,
+        "agents": []
+      },
+      {
+        "worktreeId": "repo1::REPO/.worktrees/lms-base/w-recover",
+        "repoId": "repo1",
+        "path": "REPO/.worktrees/lms-base/w-recover",
+        "branch": "refs/heads/w-recover",
+        "isMainWorktree": false,
+        "displayName": "w-recover",
+        "liveTerminalCount": 3,
+        "agents": [
+          {
+            "state": "done",
+            "agentType": "claude"
+          }
+        ]
+      },
+      {
+        "worktreeId": "repo1::REPO/.worktrees/lms-base/w-reap",
+        "repoId": "repo1",
+        "path": "REPO/.worktrees/lms-base/w-reap",
+        "branch": "refs/heads/w-reap",
+        "isMainWorktree": false,
+        "displayName": "w-reap",
+        "liveTerminalCount": 0,
+        "agents": []
+      },
+      {
+        "worktreeId": "repo1::REPO/.worktrees/lms-base/w-dirty",
+        "repoId": "repo1",
+        "path": "REPO/.worktrees/lms-base/w-dirty",
+        "branch": "refs/heads/w-dirty",
+        "isMainWorktree": false,
+        "displayName": "w-dirty",
+        "liveTerminalCount": 0,
+        "agents": []
+      },
+      {
+        "worktreeId": "other::/tmp/other-project",
+        "repoId": "other",
+        "path": "/tmp/other-project",
+        "branch": "refs/heads/main",
+        "isMainWorktree": true,
+        "displayName": "other-project",
+        "liveTerminalCount": 5,
+        "agents": [
+          {
+            "state": "done",
+            "agentType": "claude"
+          }
+        ]
+      },
+      {
+        "worktreeId": "other::/tmp/other-project/.worktrees/other-project/other-wt",
+        "repoId": "other",
+        "path": "/tmp/other-project/.worktrees/other-project/other-wt",
+        "branch": "refs/heads/other-wt",
+        "isMainWorktree": false,
+        "displayName": "other-wt",
+        "liveTerminalCount": 2,
+        "agents": [
+          {
+            "state": "done",
+            "agentType": "claude"
+          }
+        ]
+      }
+    ]
+  }
+}

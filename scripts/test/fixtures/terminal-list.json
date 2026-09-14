@@ -1,0 +1,80 @@
+{
+  "ok": true,
+  "result": {
+    "hostScope": { "hostIds": ["local"] },
+    "terminals": [
+      {
+        "handle": "term_reap_1",
+        "ptyId": "repo1::REPO/.worktrees/lms-base/w-reap@@aaaaaaaa",
+        "incarnationId": "inc-reap-1",
+        "orphaned": false,
+        "worktreeId": "repo1::REPO/.worktrees/lms-base/w-reap",
+        "worktreePath": "REPO/.worktrees/lms-base/w-reap",
+        "branch": "",
+        "tabId": "tab-reap-1",
+        "leafId": "leaf-reap-1",
+        "title": "chore:w-reap",
+        "connected": true,
+        "writable": true,
+        "lastOutputAt": 1,
+        "preview": "지어낸 위험이다(실물 미리보기에서 관측된 적은 없다) — 화면에 term_foreign term_nowhere 가 찍힌 상황",
+        "executionHostId": "local",
+        "agentIdentity": "claude"
+      },
+      {
+        "handle": "term_reap_2",
+        "ptyId": "repo1::REPO/.worktrees/lms-base/w-reap@@bbbbbbbb",
+        "incarnationId": "inc-reap-2",
+        "orphaned": false,
+        "worktreeId": "repo1::REPO/.worktrees/lms-base/w-reap",
+        "worktreePath": "",
+        "branch": "",
+        "tabId": "tab-reap-2",
+        "leafId": "leaf-reap-2",
+        "title": "(untitled)",
+        "connected": true,
+        "writable": true,
+        "lastOutputAt": 2,
+        "preview": "<empty>",
+        "executionHostId": "local",
+        "agentIdentity": null
+      },
+      {
+        "handle": "term_live",
+        "ptyId": "repo1::REPO/.worktrees/lms-base/w-live@@cccccccc",
+        "incarnationId": "inc-live",
+        "orphaned": false,
+        "worktreeId": "repo1::REPO/.worktrees/lms-base/w-live",
+        "worktreePath": "REPO/.worktrees/lms-base/w-live",
+        "branch": "",
+        "tabId": "tab-live",
+        "leafId": "leaf-live",
+        "title": "implement:w-live",
+        "connected": true,
+        "writable": true,
+        "lastOutputAt": 3,
+        "preview": "<empty>",
+        "executionHostId": "local",
+        "agentIdentity": "claude"
+      },
+      {
+        "handle": "term_foreign",
+        "ptyId": "other::/tmp/other-project/.worktrees/other-project/other-wt@@dddddddd",
+        "incarnationId": "inc-foreign",
+        "orphaned": false,
+        "worktreeId": "other::/tmp/other-project/.worktrees/other-project/other-wt",
+        "worktreePath": "/tmp/other-project/.worktrees/other-project/other-wt",
+        "branch": "",
+        "tabId": "tab-foreign",
+        "leafId": "leaf-foreign",
+        "title": "(untitled)",
+        "connected": true,
+        "writable": true,
+        "lastOutputAt": 4,
+        "preview": "term_reap_1 을 grep 으로 주웠던 자리다",
+        "executionHostId": "local",
+        "agentIdentity": "claude"
+      }
+    ]
+  }
+}

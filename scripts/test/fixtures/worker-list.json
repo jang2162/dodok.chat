@@ -1,0 +1,189 @@
+{
+  "ok": true,
+  "result": {
+    "counts": { "retained": 4, "reclaimable": 2, "released": 2, "active": 1 },
+    "workers": [
+      {
+        "dispatchId": "ctx_recover",
+        "taskId": "task_recover",
+        "runId": "run_a",
+        "workerState": "succeeded",
+        "dispatchStatus": "completed",
+        "agentTerminalHandle": "term_recover_dead",
+        "terminalState": "reclaimable",
+        "resource": {
+          "id": "wtr_recover",
+          "ownershipState": "owned",
+          "releaseState": "not_requested",
+          "retainedReason": null,
+          "terminalHandle": "term_recover_dead",
+          "worktreeId": "repo1::REPO/.worktrees/lms-base/w-recover",
+          "originDispatchId": "ctx_recover",
+          "ownerDispatchId": "ctx_recover",
+          "releaseRequestedAt": null,
+          "releaseCompletedAt": null,
+          "releaseError": null,
+          "archive": { "source": null, "status": null }
+        }
+      },
+      {
+        "dispatchId": "ctx_recover_done",
+        "taskId": "task_recover_done",
+        "runId": "run_a",
+        "workerState": "succeeded",
+        "dispatchStatus": "completed",
+        "agentTerminalHandle": "term_recover_older",
+        "terminalState": "released",
+        "resource": {
+          "id": "wtr_recover_done",
+          "ownershipState": "released",
+          "releaseState": "released",
+          "retainedReason": null,
+          "terminalHandle": "term_recover_older",
+          "worktreeId": "repo1::REPO/.worktrees/lms-base/w-recover",
+          "originDispatchId": "ctx_recover_done",
+          "ownerDispatchId": "ctx_recover_done",
+          "releaseRequestedAt": "2026-01-01 00:00:00",
+          "releaseCompletedAt": "2026-01-01 00:00:00",
+          "releaseError": null,
+          "archive": { "source": "transcript", "status": "captured" }
+        }
+      },
+      {
+        "dispatchId": "ctx_reap",
+        "taskId": "task_reap",
+        "runId": "run_a",
+        "workerState": "succeeded",
+        "dispatchStatus": "completed",
+        "agentTerminalHandle": "term_reap_1",
+        "terminalState": "reclaimable",
+        "resource": {
+          "id": "wtr_reap",
+          "ownershipState": "owned",
+          "releaseState": "not_requested",
+          "retainedReason": null,
+          "terminalHandle": "term_reap_1",
+          "worktreeId": "repo1::REPO/.worktrees/lms-base/w-reap",
+          "originDispatchId": "ctx_reap",
+          "ownerDispatchId": "ctx_reap",
+          "releaseRequestedAt": null,
+          "releaseCompletedAt": null,
+          "releaseError": null,
+          "archive": { "source": null, "status": null }
+        }
+      },
+      {
+        "dispatchId": "ctx_unsupervised",
+        "taskId": "task_unsupervised",
+        "runId": "run_a",
+        "workerState": "unsupervised",
+        "dispatchStatus": "dispatched",
+        "agentTerminalHandle": "term_reap_2",
+        "terminalState": "retained",
+        "resource": null
+      },
+      {
+        "dispatchId": "ctx_taken",
+        "taskId": "task_taken",
+        "runId": "run_a",
+        "workerState": "succeeded",
+        "dispatchStatus": "completed",
+        "agentTerminalHandle": "term_reap_taken",
+        "terminalState": "retained",
+        "resource": {
+          "id": "wtr_taken",
+          "ownershipState": "user_owned",
+          "releaseState": "retained",
+          "retainedReason": "user_takeover",
+          "terminalHandle": "term_reap_taken",
+          "worktreeId": "repo1::REPO/.worktrees/lms-base/w-reap",
+          "originDispatchId": "ctx_taken",
+          "ownerDispatchId": "ctx_taken",
+          "releaseRequestedAt": "2026-01-01 00:00:00",
+          "releaseCompletedAt": null,
+          "releaseError": null,
+          "archive": { "source": null, "status": null }
+        }
+      },
+      {
+        "dispatchId": "ctx_live",
+        "taskId": "task_live",
+        "runId": "run_a",
+        "workerState": "ready",
+        "dispatchStatus": "dispatched",
+        "agentTerminalHandle": "term_live",
+        "terminalState": "active",
+        "resource": {
+          "id": "wtr_live",
+          "ownershipState": "owned",
+          "releaseState": "not_requested",
+          "retainedReason": null,
+          "terminalHandle": "term_live",
+          "worktreeId": "repo1::REPO/.worktrees/lms-base/w-live",
+          "originDispatchId": "ctx_live",
+          "ownerDispatchId": "ctx_live",
+          "releaseRequestedAt": null,
+          "releaseCompletedAt": null,
+          "releaseError": null,
+          "archive": { "source": null, "status": null }
+        }
+      },
+      {
+        "dispatchId": "ctx_foreign",
+        "taskId": "task_foreign",
+        "runId": "run_b",
+        "workerState": "succeeded",
+        "dispatchStatus": "completed",
+        "agentTerminalHandle": "term_foreign",
+        "terminalState": "retained",
+        "resource": {
+          "id": "wtr_foreign",
+          "ownershipState": "external",
+          "releaseState": "retained",
+          "retainedReason": "external_terminal",
+          "terminalHandle": "term_foreign",
+          "worktreeId": "other::/tmp/other-project/.worktrees/other-project/other-wt",
+          "originDispatchId": "ctx_foreign",
+          "ownerDispatchId": "ctx_foreign",
+          "releaseRequestedAt": null,
+          "releaseCompletedAt": null,
+          "releaseError": null,
+          "archive": { "source": null, "status": null }
+        }
+      },
+      {
+        "dispatchId": "ctx_nowhere",
+        "taskId": "task_nowhere",
+        "runId": "run_b",
+        "workerState": "unsupervised",
+        "dispatchStatus": "dispatched",
+        "agentTerminalHandle": "term_nowhere",
+        "terminalState": "retained",
+        "resource": null
+      },
+      {
+        "dispatchId": "ctx_released",
+        "taskId": "task_released",
+        "runId": "run_b",
+        "workerState": "succeeded",
+        "dispatchStatus": "completed",
+        "agentTerminalHandle": "term_gone",
+        "terminalState": "released",
+        "resource": {
+          "id": "wtr_released",
+          "ownershipState": "released",
+          "releaseState": "released",
+          "terminalHandle": "term_gone",
+          "retainedReason": null,
+          "worktreeId": "other::/tmp/other-project",
+          "originDispatchId": "ctx_released",
+          "ownerDispatchId": "ctx_released",
+          "releaseRequestedAt": "2026-01-01 00:00:00",
+          "releaseCompletedAt": "2026-01-01 00:00:00",
+          "releaseError": null,
+          "archive": { "source": "transcript", "status": "captured" }
+        }
+      }
+    ]
+  }
+}
