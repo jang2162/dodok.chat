@@ -1,0 +1,27 @@
+{
+  "name": "@dodok/shared",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./common": "./src/common.ts",
+    "./mention": "./src/mention.ts",
+    "./domain": "./src/domain/index.ts",
+    "./components": "./src/components/index.ts",
+    "./events": "./src/events/index.ts",
+    "./wire": "./src/wire/index.ts",
+    "./bridge": "./src/bridge/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "vitest": "4.1.11"
+  }
+}
