@@ -283,6 +283,17 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
     async send(input) {
       // 플러그인은 런이 시작될 때(onAgentRunStart) ack 하므로 Gateway 이벤트가 ack 보다 먼저 올 수 있다 — 전송 전에 등록한다
       knownRunIds.add(input.runId);
+      // 접속 뒤 새로 생긴 세션은 재접속 복구 구독에 없다 — 전송 전에 구독해야 Gateway 델타·툴 이벤트가 온다(Phase 1 실연에서 발견).
+      // Gateway 가 끊겨 있으면 건너뛴다(정본은 플러그인 경로) — 다시 붙을 때 recover 가 agent_sessions 로 구독한다.
+      try {
+        await manager.subscribeSession(input.sessionKey, input.agentId);
+      } catch (error) {
+        const unavailable = (error as { code?: unknown }).code === "ADAPTER_UNAVAILABLE";
+        logger[unavailable ? "debug" : "warn"](
+          { err: error, sessionKey: input.sessionKey },
+          "gateway session subscribe before send failed",
+        );
+      }
       try {
         const result = await deliver(input);
         if (result.admission === "drop") forgetRun(input.runId);

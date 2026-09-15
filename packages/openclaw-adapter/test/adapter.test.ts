@@ -718,3 +718,37 @@ describe("createOpenClawAdapter — Gateway 요청·브리지 설정", () => {
     });
   });
 });
+
+describe("send 전 세션 구독", () => {
+  it("접속 뒤 새로 생긴 세션은 전송 전에 sessions.messages.subscribe 한다 — 같은 키는 연결당 한 번", async () => {
+    await adapter.connect();
+    await until(() => adapter.status().gateway === "connected", "gateway connected");
+    const subscribesAtDeliver: number[] = [];
+    await plugin({
+      "inbound.deliver": (payload: InboundDeliver, ack: Ack) => {
+        subscribesAtDeliver.push(
+          gatewayCalls.filter((c) => c.method === "sessions.messages.subscribe").length,
+        );
+        dispatchAck(payload, ack);
+      },
+    });
+
+    await adapter.send(delivery());
+    await adapter.send(delivery(randomUUID()));
+
+    expect(gatewayCalls.filter((c) => c.method === "sessions.messages.subscribe")).toEqual([
+      { method: "sessions.messages.subscribe", params: { key: f.SESSION_KEY, agentId: f.PROVIDER_AGENT_ID } },
+    ]);
+    expect(subscribesAtDeliver).toEqual([1, 1]); // 구독이 전송보다 먼저다
+  });
+
+  it("Gateway 가 끊겨 있으면 구독 없이 전송한다(정본은 플러그인 경로) — 붙을 때 recover 가 agent_sessions 로 구독한다", async () => {
+    await plugin({ "inbound.deliver": dispatchAck });
+    await expect(adapter.send(delivery())).resolves.toMatchObject({ admission: "dispatch" });
+    expect(gatewayCalls.filter((c) => c.method === "sessions.messages.subscribe")).toEqual([]);
+    expect(logger.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionKey: f.SESSION_KEY }),
+      "gateway session subscribe before send failed",
+    );
+  });
+});

@@ -34,7 +34,13 @@ describe("가짜 Gateway — 실제 connectGateway 로 붙는다", () => {
   });
 
   async function connect(
-    opts: { grantAdmin?: boolean; scopes?: string[]; onClose?: (info: { code: number }) => void } = {},
+    opts: {
+      grantAdmin?: boolean;
+      scopes?: string[];
+      onClose?: (info: { code: number }) => void;
+      /** 기본 true — 실물처럼 세션 이벤트는 구독한 연결에만 오므로 SESSION_KEY 를 구독한다 */
+      subscribe?: boolean;
+    } = {},
   ) {
     gateway ??= await startFakeGateway(opts.grantAdmin === undefined ? {} : { grantAdmin: opts.grantAdmin });
     const frames: Frame[] = [];
@@ -48,8 +54,25 @@ describe("가짜 Gateway — 실제 connectGateway 로 붙는다", () => {
       onEvent: (frame) => frames.push(frame as Frame),
     });
     connections.push(connection);
+    if (opts.subscribe !== false) {
+      await connection.request("sessions.messages.subscribe", { key: SESSION_KEY, agentId: "dev" });
+    }
     return { gateway, connection, frames };
   }
+
+  it("세션 이벤트는 sessions.messages.subscribe 한 연결에만 간다(실물) — 키 없는 이벤트는 모두에게", async () => {
+    const { gateway, frames: subscribed } = await connect();
+    const { frames: silent } = await connect({ subscribe: false });
+
+    await gateway.chatDelta(RUN_ID, SESSION_KEY, "dev", "안");
+    await vi.waitFor(() => expect(subscribed).toHaveLength(1));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(silent).toHaveLength(0);
+
+    await gateway.emitEvent("sessions.changed", { reason: "test" });
+    await vi.waitFor(() => expect(silent).toHaveLength(1));
+    expect(subscribed).toHaveLength(2);
+  });
 
   it("connect.challenge → connect → hello-ok: protocol 4, 요청한 scopes 를 에코하고, 우리가 쓰는 메서드를 광고한다", async () => {
     const scopes = ["operator.read", "operator.write"];

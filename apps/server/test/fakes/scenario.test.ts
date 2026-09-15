@@ -63,6 +63,13 @@ describe("시나리오 — 인바운드 대본을 Gateway 이벤트와 플러그
       connectTimeoutMs: 5_000,
       onEvent: (frame) => frames.push(frame),
     });
+    // 실물처럼 세션 이벤트는 구독한 연결에만 온다 — 대본이 쓰는 두 에이전트의 세션을 구독한다
+    for (const agentId of ["dev", "fin"]) {
+      await connection.request("sessions.messages.subscribe", {
+        key: `agent:${agentId}:dodok:channel:${CHANNEL_ID}`,
+        agentId,
+      });
+    }
     const http = createServer();
     io = new Server(http);
     bridge = attachBridge(io, {

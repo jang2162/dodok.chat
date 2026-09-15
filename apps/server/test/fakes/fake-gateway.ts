@@ -37,7 +37,7 @@ export type FakeGateway = {
   readonly requests: RequestFrame[];
   /** `chat.send` 응답을 보낸 뒤 부른다. 다시 부르면 교체. handler 의 reject 는 잡지 않는다 — 처리되지 않은 reject 로 테스트를 깨뜨린다 */
   onChatSend(handler: (params: ChatSendParams) => void | Promise<void>): void;
-  /** 연결된(hello 를 받은) 모든 클라이언트에 이벤트 프레임을 보낸다. 쓰기가 끝나면 resolve */
+  /** 이벤트 프레임을 보낸다 — payload.sessionKey 가 있으면 그 키를 구독한 연결에만, 없으면 hello 를 받은 모두에게. 쓰기가 끝나면 resolve */
   emitEvent(event: string, payload: unknown): Promise<void>;
   lifecycleStart(runId: string, sessionKey: string, agentId: string): Promise<void>;
   /** 누적 스냅샷(`message`)은 이 런에서 보낸 델타를 이어 붙인 것 */
@@ -154,6 +154,8 @@ export async function startFakeGateway(opts: FakeGatewayOptions = {}): Promise<F
   const requests: RequestFrame[] = [];
   /** connect 에 hello-ok 로 답한 연결 — 이벤트는 여기로만 간다 */
   const connected = new Set<WebSocket>();
+  /** 연결별 `sessions.messages.subscribe` 한 세션 키 — 실물처럼 세션 이벤트는 구독한 연결에만 간다 */
+  const subscriptions = new Map<WebSocket, Set<string>>();
   const sessionIds = new Map<string, string>();
   const deltaSnapshots = new Map<string, string>();
   const toolStarts = new Map<string, { name: string; args: Record<string, unknown> }>();
@@ -178,7 +180,12 @@ export async function startFakeGateway(opts: FakeGatewayOptions = {}): Promise<F
   }
 
   async function broadcast(frame: EventFrame): Promise<void> {
-    await Promise.all([...connected].map((socket) => write(socket, frame)));
+    // payload 에 sessionKey 가 있는 세션 이벤트는 그 키를 구독한 연결에만, 그 밖은 연결된 모두에게
+    const key = str(record(frame.payload).sessionKey);
+    const targets = [...connected].filter(
+      (socket) => key === undefined || subscriptions.get(socket)?.has(key),
+    );
+    await Promise.all(targets.map((socket) => write(socket, frame)));
   }
 
   const nextSeq = () => ++seq;
@@ -276,6 +283,14 @@ export async function startFakeGateway(opts: FakeGatewayOptions = {}): Promise<F
       reply({ ok: true, payload: helloOk(frame.params) });
       return;
     }
+    if (frame.method === "sessions.messages.subscribe") {
+      const key = str(record(frame.params).key);
+      if (key !== undefined) {
+        const keys = subscriptions.get(socket) ?? new Set<string>();
+        keys.add(key);
+        subscriptions.set(socket, keys);
+      }
+    }
     const handler = (methods as Record<string, (params: Record<string, unknown>, reply: Reply) => void>)[
       frame.method
     ];
@@ -286,7 +301,10 @@ export async function startFakeGateway(opts: FakeGatewayOptions = {}): Promise<F
 
   wss.on("connection", (socket) => {
     socket.on("message", (data) => onMessage(socket, data.toString()));
-    socket.on("close", () => connected.delete(socket));
+    socket.on("close", () => {
+      connected.delete(socket);
+      subscriptions.delete(socket);
+    });
     // 실제 클라이언트는 이 챌린지의 nonce 를 서명해 connect 를 보낸다 — 없으면 connect 를 보내지 않고 타임아웃한다
     void write(socket, {
       type: "event",

@@ -53,6 +53,12 @@ export type ConnectionManager = {
   stop(): Promise<void>;
   state(): GatewayState;
   request<T = unknown>(method: string, params: unknown, timeoutMs?: number): Promise<T>;
+  /**
+   * 현재 연결에서 아직 구독하지 않은 세션이면 `sessions.messages.subscribe { key, agentId }` 를 보낸다(연결당 한 번).
+   * 실물 Gateway 는 구독한 세션의 chat·agent·session.message 만 보낸다 — 접속 뒤 새로 생긴 세션은 recover() 가 모르므로 전송 전에 부른다.
+   * 연결이 없으면 ADAPTER_UNAVAILABLE.
+   */
+  subscribeSession(sessionKey: string, agentId: string): Promise<void>;
 };
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
@@ -73,6 +79,8 @@ export function createConnectionManager(opts: ConnectionManagerOptions): Connect
   let failures = 0;
   let link: GatewayLink | undefined;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
+  // 현재 연결에서 sessions.messages.subscribe 를 보낸 세션 키. 새 연결·stop 에서 비운다
+  const subscribed = new Set<string>();
 
   function setState(next: GatewayState) {
     if (state === next) return;
@@ -154,6 +162,7 @@ export function createConnectionManager(opts: ConnectionManagerOptions): Connect
   async function recover(current: GatewayLink, gen: number) {
     const call = <T>(method: string, params: unknown) =>
       current.request<T>(method, params, { timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS });
+    subscribed.clear();
     try {
       await call("sessions.subscribe", {});
     } catch (error) {
@@ -171,6 +180,7 @@ export function createConnectionManager(opts: ConnectionManagerOptions): Connect
       const { sessionKey, agentId } = target;
       try {
         await call("sessions.messages.subscribe", { key: sessionKey, agentId });
+        subscribed.add(sessionKey);
         const cursor = target.cursor ?? historyCursors.get(sessionKey);
         const base = { sessionKey, agentId, limit: HISTORY_LIMIT };
         let history = parseChatHistory(await call("chat.history", cursor ? { ...base, cursor } : base));
@@ -205,10 +215,30 @@ export function createConnectionManager(opts: ConnectionManagerOptions): Connect
       retryTimer = undefined;
       const current = link;
       link = undefined;
+      subscribed.clear();
       setState("down");
       if (current) await current.stop();
     },
     state: () => state,
+    async subscribeSession(sessionKey, agentId) {
+      const current = link;
+      if (!current) {
+        throw new AdapterError("ADAPTER_UNAVAILABLE", "sessions.messages.subscribe: gateway not connected");
+      }
+      if (subscribed.has(sessionKey)) return;
+      try {
+        await current.request(
+          "sessions.messages.subscribe",
+          { key: sessionKey, agentId },
+          {
+            timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
+          },
+        );
+      } catch (error) {
+        throw toAdapterError("sessions.messages.subscribe", error);
+      }
+      subscribed.add(sessionKey);
+    },
     async request<T = unknown>(
       method: string,
       params: unknown,
