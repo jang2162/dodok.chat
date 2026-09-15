@@ -41,4 +41,5 @@ docker compose -f infra/docker-compose.yml up [--profile gateway]
 shared 계약·DB 스키마·순수 로직 구현 완료 (docs/superpowers/plans/2026-09-14-shared-contracts.md).
 Phase 0 스파이크 1·2·3 완료 — docs/adr/0001(Gateway WS 실물), 0002(채널 플러그인: 인바운드·message 툴·components 동작, 봇 루프 보호는 플러그인이 사실을 넘길 때만), 0003(채널 프롬프트: claude-cli 기존 세션은 리셋·새 키에서만 반영, ChannelPromptContext 는 매 턴 반영; deltaCursor 는 claude-cli 세션에 없음; chat.send 대체 경로는 MVP 미사용).
 로컬 dev Gateway: OpenClaw.app 번들 CLI(`openclaw --dev`, Node 24 번들, 상태 ~/.openclaw-dev, 에이전트 dev·fin). 원격 호스트 플러그인 설치는 사람 절차(ADR 0002 9절).
-Phase 0 종료, 결정 13건 확정(계획서 10장 #1·#11~#21), Node 24 전환. 다음: 플러그인 스파이크 흔적 정리(:g<N>·inboundChannelPrompt 제거, admission 계약, ChannelPromptContext) → Phase 1 MVP 코어 브레인스토밍·스펙(서버 모듈 → 웹).
+Phase 0 종료, 결정 13건 확정(계획서 10장 #1·#11~#21), Node 24 전환, 플러그인 스파이크 흔적 정리 병합(cd572af — InboundDeliverResult.admission, ChannelPromptContext 고정).
+Phase 1 ① 서버 코어 스펙 docs/superpowers/specs/2026-09-15-server-core-design.md 작성 — 사용자 검토 대기. 다음: 스펙 승인 → writing-plans(구현 계획) → Orca 워커 구현(첫 작업: 원격 Gateway 의 operator.admin 부여 확인). 그 뒤 ② 웹.

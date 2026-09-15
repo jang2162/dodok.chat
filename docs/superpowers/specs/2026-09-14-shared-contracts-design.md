@@ -754,7 +754,7 @@ export const InboundDeliver = z.object({
 });
 export const InboundDeliverResult = z.object({
   admission: z.enum(["dispatch", "drop"]),   // 계획서 10장 #14 — drop 은 런 없이 끝났다는 뜻(봇 루프 보호 등)
-  reason: z.string().optional(),            // drop 사유 (예: "bot-loop-protection", "unknown-channel")
+  reason: z.string().optional(),            // drop 사유: 코어가 준 값 그대로("bot-loop-protection", "outbound-echo"), 런 없이 끝난 다른 kind 는 "<kind>:<reason>", 비면 "unknown". 플러그인 자체 거절(검증 실패 등)은 drop 이 아니라 Result 의 ok:false
   providerRunId: z.string().optional(),     // ADR 0002 4.3: 값은 우리 runId 와 같다(replyOptions.runId)
 });
 
