@@ -1,3 +1,6 @@
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { type App, createApp } from "../src/app";
 import { loadConfig } from "../src/config";
@@ -28,5 +31,32 @@ describe("createApp", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.name).toBe("dodok");
     expect(rows[0]?.id).toBe(app.workspaceId);
+  });
+  it("Fastify 의 4xx(잘못된 JSON)는 500 이 아니라 그 상태 코드와 ApiError 로 답한다", async () => {
+    app = await createApp(loadConfig(testEnv), {});
+    const res = await app.fastify.inject({
+      method: "POST",
+      url: "/healthz",
+      headers: { "content-type": "application/json" },
+      payload: "{bad",
+    });
+    expect(res.statusCode).toBeGreaterThanOrEqual(400);
+    expect(res.statusCode).toBeLessThan(500);
+    expect(res.json()).toEqual({
+      code: expect.stringMatching(/^(VALIDATION|NOT_FOUND)$/),
+      message: expect.any(String),
+    });
+  });
+  it("DATA_DIR 이 없으면 부팅 때 만든다", async () => {
+    const base = mkdtempSync(join(tmpdir(), "dodok-app-"));
+    const dbPath = join(base, "nested", "dodok.sqlite");
+    try {
+      app = await createApp(loadConfig({ ...testEnv, DB_PATH: dbPath }), {});
+      expect(existsSync(dbPath)).toBe(true);
+    } finally {
+      await app?.close();
+      app = undefined;
+      rmSync(base, { recursive: true, force: true });
+    }
   });
 });

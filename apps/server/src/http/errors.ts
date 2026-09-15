@@ -29,3 +29,25 @@ const STATUS: Record<ErrorCode, number> = {
 export function apiError(code: ErrorCode, message: string, details?: Record<string, unknown>): HttpError {
   return new HttpError(STATUS[code], { code, message, ...(details ? { details } : {}) });
 }
+
+/** Fastify 가 낸 4xx 상태를 계약 ErrorCode 로. 표에 없는 4xx 는 VALIDATION. */
+export function httpStatusToErrorCode(status: number): ErrorCode {
+  switch (status) {
+    case 401:
+      return "UNAUTHORIZED";
+    case 403:
+      return "FORBIDDEN";
+    case 404:
+      return "NOT_FOUND";
+    case 408:
+      return "TIMEOUT";
+    case 409:
+      return "CONFLICT";
+    case 410:
+      return "EXPIRED";
+    case 429:
+      return "RATE_LIMITED";
+    default:
+      return "VALIDATION";
+  }
+}

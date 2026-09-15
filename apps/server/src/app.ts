@@ -1,12 +1,14 @@
 import type { AdapterStatus } from "@dodok/shared";
 import cookie from "@fastify/cookie";
 import Fastify, { type FastifyBaseLogger, type FastifyInstance } from "fastify";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import { Server } from "socket.io";
 import { v7 as uuidv7 } from "uuid";
 import type { ServerConfig } from "./config";
 import { createDb, type Db } from "./db/client";
 import { workspaces } from "./db/schema.sqlite";
-import { HttpError } from "./http/errors";
+import { HttpError, httpStatusToErrorCode } from "./http/errors";
 import { createLogger, type Logger } from "./logger";
 import { ServerBus } from "./realtime/bus";
 
@@ -27,6 +29,8 @@ export type App = {
 
 export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promise<App> {
   const logger = deps.logger ?? createLogger(config.LOG_LEVEL);
+  // DATA_DIR 은 gitignore 라 새 클론·워크트리에 없다 — better-sqlite3 는 디렉터리를 만들지 않는다(리뷰 sc-t1 지적 2)
+  if (config.dbPath !== ":memory:") mkdirSync(dirname(config.dbPath), { recursive: true });
   const db = createDb(config.dbPath);
   const workspaceId = ensureWorkspace(db, config.DODOK_WORKSPACE_NAME);
   const bus = new ServerBus();
@@ -36,6 +40,12 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
   await fastify.register(cookie);
   fastify.setErrorHandler((error, _req, reply) => {
     if (error instanceof HttpError) return reply.status(error.status).send(error.body);
+    // Fastify 자체 4xx(잘못된 JSON·미지원 content-type·404·429)는 클라이언트 오류다 — 500 으로 바꾸지 않는다(리뷰 sc-t1 지적 1)
+    const status = typeof error.statusCode === "number" ? error.statusCode : 500;
+    if (status >= 400 && status < 500) {
+      logger.warn({ err: error, status }, "client error");
+      return reply.status(status).send({ code: httpStatusToErrorCode(status), message: error.message });
+    }
     logger.error({ err: error }, "unhandled");
     return reply.status(500).send({ code: "INTERNAL", message: "internal error" });
   });
