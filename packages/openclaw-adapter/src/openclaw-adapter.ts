@@ -311,5 +311,7 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
         handlers.delete(handler);
       };
     },
+
+    forgetRun,
   };
 }

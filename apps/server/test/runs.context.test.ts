@@ -1,4 +1,4 @@
-import { FakeAdapter } from "@dodok/openclaw-adapter";
+import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
 import { InboundDeliver, type Run } from "@dodok/shared";
 import { eq } from "drizzle-orm";
 import { v7 as uuid, version } from "uuid";

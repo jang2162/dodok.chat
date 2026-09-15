@@ -114,7 +114,9 @@ describe("FakeAdapter", () => {
       applied: "live",
     });
     await adapter.abort(RUN, key);
+    adapter.forgetRun(RUN);
 
+    expect(adapter.calls.forget).toEqual([RUN]);
     expect(adapter.calls.reset).toEqual([key]);
     expect(adapter.calls.syncChannelConfig).toEqual([{ channelId: CH, config: { requireMention: true } }]);
     expect(adapter.calls.abort).toEqual([{ runId: RUN, sessionKey: key }]);

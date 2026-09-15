@@ -1,5 +1,8 @@
+import type { OpenClawAdapterOptions } from "@dodok/openclaw-adapter";
+import { eq } from "drizzle-orm";
 import type { AgentAdapter } from "./adapters/types";
-import type { Db } from "./db/client";
+import type { Db, DbOrTx } from "./db/client";
+import { agentSessions, agents } from "./db/schema.sqlite";
 import { apiError } from "./http/errors";
 import type { Logger } from "./logger";
 import { interact } from "./modules/components/service";
@@ -20,6 +23,24 @@ export type ServicesDeps = {
 };
 
 export type Services = { router: Router; orchestrator: Orchestrator; runs: RunsFacade };
+
+export type SessionRecoverTarget = ReturnType<
+  NonNullable<OpenClawAdapterOptions["sessionKeysToRecover"]>
+>[number];
+
+/** 어댑터 재접속 복구 대상 — agent_sessions 전부. agentId 는 Gateway 쪽 id(providerAgentId), 커서는 저장된 것만 싣는다. */
+export function sessionRecoverTargets(db: DbOrTx): SessionRecoverTarget[] {
+  return db
+    .select({
+      sessionKey: agentSessions.sessionKey,
+      agentId: agents.providerAgentId,
+      cursor: agentSessions.historyCursor,
+    })
+    .from(agentSessions)
+    .innerJoin(agents, eq(agents.id, agentSessions.agentId))
+    .all()
+    .map(({ cursor, ...target }) => (cursor === null ? target : { ...target, cursor }));
+}
 
 /**
  * 라우터 ↔ 오케스트레이터 상호 참조를 묶는다 — 라우터는 enqueue 로 오케스트레이터를 부르고,

@@ -1,4 +1,5 @@
-import { AdapterError, FakeAdapter } from "@dodok/openclaw-adapter";
+import { AdapterError } from "@dodok/openclaw-adapter";
+import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
 import type { AdapterStatus, Message, OutboundMessage, Run, RunEvent, RunState } from "@dodok/shared";
 import { eq } from "drizzle-orm";
 import { v7 as uuid } from "uuid";
@@ -414,6 +415,76 @@ describe("orchestrator", () => {
     t.orch.stop();
   });
 
+  it.each([
+    ["queue_timeout", 120_000, false],
+    ["run_timeout", 600_000, true],
+  ])(
+    "%s 로 닫은 런은 Gateway 런을 멈추고(abort, best-effort) 어댑터 추적을 버린다(forgetRun)",
+    async (_kind, ms, started) => {
+      const t = setup();
+      const run = await t.enqueue();
+      await t.flush();
+      if (started) await t.orch.signal(run.id, { kind: "gateway_started" });
+      const order: string[] = [];
+      vi.spyOn(t.adapter, "abort").mockImplementation(async (runId, sessionKey) => {
+        order.push("abort");
+        t.adapter.calls.abort.push({ runId, sessionKey });
+        throw new AdapterError("ADAPTER_UNAVAILABLE", "chat.abort: gateway not connected");
+      });
+      vi.spyOn(t.adapter, "forgetRun").mockImplementation((runId) => {
+        order.push("forget");
+        t.adapter.calls.forget.push(runId);
+      });
+
+      await vi.advanceTimersByTimeAsync(ms);
+
+      expect(t.runOf(run.id)).toMatchObject({ status: "error", error: { code: "TIMEOUT" } });
+      expect(t.adapter.calls.abort).toEqual([{ runId: run.id, sessionKey: t.sessionKey }]);
+      expect(t.adapter.calls.forget).toEqual([run.id]);
+      expect(order).toEqual(["abort", "forget"]);
+      // abort 실패는 warn 으로만 — 런은 이미 닫혔다
+      expect(t.logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ runId: run.id }),
+        "adapter abort after timeout failed",
+      );
+      t.orch.stop();
+    },
+  );
+
+  it.each([
+    ["drop 으로 resolve", "drop"],
+    ["reject", "reject"],
+  ])(
+    "stop() 뒤 늦게 끝난 send(%s)는 런을 건드리지 않는다 — 다음 부팅의 SERVER_RESTART 몫",
+    async (_label, outcome) => {
+      const t = setup();
+      let settle: () => void = () => undefined;
+      t.adapter.script(
+        () =>
+          new Promise((resolve, reject) => {
+            settle = () =>
+              outcome === "drop"
+                ? resolve({ admission: "drop", reason: "bot-loop-protection" })
+                : reject(new AdapterError("ADAPTER_UNAVAILABLE", "adapter closed"));
+          }),
+      );
+      const run = await t.enqueue();
+      await t.flush();
+      expect(t.adapter.calls.send).toHaveLength(1);
+      const eventsBefore = t.eventsOf(run.id);
+
+      t.orch.stop();
+      settle();
+      await t.flush();
+
+      expect(t.runOf(run.id)).toMatchObject({ status: "queued" });
+      expect(t.runOf(run.id).error).toBeUndefined();
+      expect(t.eventsOf(run.id)).toEqual(eventsBefore);
+      expect(systemMessages(t.db)).toEqual([]);
+      expect(t.logger.error).not.toHaveBeenCalled();
+    },
+  );
+
   it("어댑터가 drop 을 돌려주면 error(DROPPED:bot-loop-protection) 과 run_error 시스템 메시지", async () => {
     const t = setup();
     t.adapter.script(() => ({ admission: "drop", reason: "bot-loop-protection" }));
@@ -627,10 +698,11 @@ describe("orchestrator", () => {
     const open = [mine, make("queued"), make("streaming"), make("finalizing")];
     const closed = make("done");
 
+    const rebootAdapter = new FakeAdapter();
     const rebooted = createOrchestrator({
       db: t.db,
       bus: t.bus,
-      adapter: new FakeAdapter(),
+      adapter: rebootAdapter,
       logger: t.logger as unknown as OrchestratorLogger,
       onAgentMessage: t.onAgentMessage,
     });
@@ -651,6 +723,9 @@ describe("orchestrator", () => {
     }
     expect(t.runOf(closed.id).status).toBe("done");
     expect(systemMessages(t.db)).toEqual([]);
+    // 부팅 정리는 어댑터 연결 전이다 — Gateway abort·forgetRun 을 부르지 않는다
+    expect(rebootAdapter.calls.abort).toEqual([]);
+    expect(rebootAdapter.calls.forget).toEqual([]);
     expect(rebooted.activeRuns(t.channelId)).toEqual([]);
     expect(await rebooted.recoverOnBoot()).toBe(0);
     rebooted.stop();

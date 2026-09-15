@@ -47,6 +47,8 @@ export interface AgentAdapter {
   resetSession(sessionKey: string): Promise<{ sessionStartedAt?: string; lifecycleRevision?: string }>;
   syncChannelConfig(channelId: string, config: ConfigSet["config"]): Promise<ConfigSetResult>;
   onEvent(handler: (e: AdapterEvent) => void): () => void;
+  /** 서버가 종료 신호 없이 닫은 런(타임아웃)의 추적 상태를 버린다 — 그 뒤 그 런의 Gateway 프레임은 무시한다 */
+  forgetRun?(runId: string): void;
 }
 
 export class AdapterError extends Error {

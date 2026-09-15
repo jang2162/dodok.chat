@@ -1,4 +1,4 @@
-import { FakeAdapter } from "@dodok/openclaw-adapter";
+import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
 import { type Agent, Run, RunEventsReplayResult, type RunState } from "@dodok/shared";
 import { v7 as uuid } from "uuid";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -314,9 +314,12 @@ describe("app.close — 배선된 오케스트레이터", () => {
     adapter.emit({ kind: "run_signal", runId: run.id, signal: { kind: "gateway_started" } });
     await vi.waitFor(() => expect(getRun(app.db, run.id)?.status).toBe("streaming"));
 
+    // close() 는 DB 도 닫는다 — 런 행 대신 오케스트레이터에 신호가 닿는지를 본다
+    const signal = vi.spyOn(app.orchestrator, "signal");
     await app.close();
     adapter.emit({ kind: "run_signal", runId: run.id, signal: { kind: "abort_requested" } });
     await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(getRun(app.db, run.id)?.status).toBe("streaming");
+    expect(signal).not.toHaveBeenCalled();
+    expect(app.db.$client.open).toBe(false);
   });
 });

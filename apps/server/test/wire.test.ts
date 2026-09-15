@@ -66,7 +66,7 @@ function fakeLogger() {
   return { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn(), trace: vi.fn() };
 }
 
-describe("wire (앱 부팅, runs: null)", () => {
+describe("wire (앱 부팅, FakeAdapter)", () => {
   let app: App;
   let token: string;
   const sockets: WireClient[] = [];
@@ -345,30 +345,6 @@ describe("wire (앱 부팅, runs: null)", () => {
     expect(seenOutsider).toEqual([]);
   });
 
-  it("런 핸들러 — runs 가 없으면 ADAPTER_UNAVAILABLE, 입력이 틀리면 VALIDATION", async () => {
-    const socket = await connect();
-    const unavailable = { ok: false, error: { code: "ADAPTER_UNAVAILABLE" } };
-    expect(await socket.emitWithAck("run.abort", { runId: uuid() })).toMatchObject(unavailable);
-    expect(await socket.emitWithAck("run.events.replay", { runId: uuid(), afterSeq: 0 })).toMatchObject(
-      unavailable,
-    );
-    expect(
-      await socket.emitWithAck("component.interact", {
-        messageId: uuid(),
-        componentId: "cmp",
-        itemId: "ok",
-        values: {},
-      }),
-    ).toMatchObject(unavailable);
-    expect(
-      await socket.emitWithAck("approval.resolve", { approvalId: uuid(), decision: "approve" }),
-    ).toMatchObject(unavailable);
-    expect(await socket.emitWithAck("run.abort", { runId: "x" } as never)).toMatchObject({
-      ok: false,
-      error: { code: "VALIDATION" },
-    });
-  });
-
   it("ack 콜백 없이 보내도 서버가 죽지 않는다", async () => {
     const socket = await connect();
     const channel = newChannel("wire-noack");
@@ -420,6 +396,30 @@ describe("wire (attachWire 단독 — route·runs 주입)", () => {
   }
   const newChannel = (name: string) =>
     createChannel(app.db, { workspaceId: app.workspaceId, createdBy: app.ownerUserId, name });
+
+  it("런 핸들러 — runs 가 없으면 ADAPTER_UNAVAILABLE, 입력이 틀리면 VALIDATION", async () => {
+    const socket = await start({});
+    const unavailable = { ok: false, error: { code: "ADAPTER_UNAVAILABLE" } };
+    expect(await socket.emitWithAck("run.abort", { runId: uuid() })).toMatchObject(unavailable);
+    expect(await socket.emitWithAck("run.events.replay", { runId: uuid(), afterSeq: 0 })).toMatchObject(
+      unavailable,
+    );
+    expect(
+      await socket.emitWithAck("component.interact", {
+        messageId: uuid(),
+        componentId: "cmp",
+        itemId: "ok",
+        values: {},
+      }),
+    ).toMatchObject(unavailable);
+    expect(
+      await socket.emitWithAck("approval.resolve", { approvalId: uuid(), decision: "approve" }),
+    ).toMatchObject(unavailable);
+    expect(await socket.emitWithAck("run.abort", { runId: "x" } as never)).toMatchObject({
+      ok: false,
+      error: { code: "VALIDATION" },
+    });
+  });
 
   it("message.send — 저장 뒤 ack 가 route 를 기다리지 않고, route 는 새 메시지에만 한 번", async () => {
     const route = vi.fn((_message: Message) => new Promise<void>(() => {}));

@@ -6,6 +6,8 @@ const Raw = z.object({
   HOST: z.string().default("127.0.0.1"),
   PORT: z.coerce.number().int().min(0).max(65535).default(3000),
   APP_ORIGIN: z.url(),
+  // 리버스 프록시 뒤면 "true" — 레이트리밋 키(request.ip)가 X-Forwarded-For 를 따른다
+  TRUST_PROXY: z.enum(["true", "false"]).default("false"),
   DATA_DIR: z.string().default("./data"),
   DB_PATH: z.string().optional(),
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),

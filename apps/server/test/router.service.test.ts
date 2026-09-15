@@ -1,4 +1,4 @@
-import { FakeAdapter } from "@dodok/openclaw-adapter";
+import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
 import { type Agent, ComponentsV1, type Message, type RelayPolicy, type Run } from "@dodok/shared";
 import { v7 as uuid } from "uuid";
 import { describe, expect, it, vi } from "vitest";

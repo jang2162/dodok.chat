@@ -524,6 +524,30 @@ describe("createOpenClawAdapter — Gateway 이벤트", () => {
     expect(events).toEqual([]);
   });
 
+  it("forgetRun 뒤 그 런의 chat 프레임은 무시하고, final 뒤 걸린 60s 잊기 타이머도 지운다", async () => {
+    await sentRun();
+    gatewayEvent(f.lifecycleStart());
+    expect(ofKind("run_signal").map((e) => e.signal.kind)).toEqual(["gateway_started"]);
+
+    // 서버가 타임아웃으로 닫은 런 — 종료 신호가 끝내 오지 않았다
+    events = [];
+    adapter.forgetRun?.(f.RUN_ID);
+    gatewayEvent(f.chatDelta("late"));
+    gatewayEvent(f.sessionMessage());
+    expect(events).toEqual([]);
+
+    // final 로 잊기 타이머가 걸린 런도 곧바로 잊는다
+    await adapter.send(delivery());
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    gatewayEvent(f.chatFinal("PONG"));
+    expect(vi.getTimerCount()).toBe(1);
+    adapter.forgetRun?.(f.RUN_ID);
+    expect(vi.getTimerCount()).toBe(0);
+    events = [];
+    gatewayEvent(f.sessionMessage());
+    expect(events).toEqual([]);
+  });
+
   it("핸들러 하나가 던져도 다른 핸들러는 받고 오류는 로그로 남긴다", async () => {
     await sentRun();
     adapter.onEvent(() => {

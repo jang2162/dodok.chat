@@ -1,4 +1,5 @@
-import { FakeAdapter } from "@dodok/openclaw-adapter";
+import { AdapterError } from "@dodok/openclaw-adapter";
+import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
 import { Agent, Channel, ChannelMember, Message } from "@dodok/shared";
 import { eq } from "drizzle-orm";
 import { v7 as uuid } from "uuid";
@@ -251,9 +252,17 @@ describe("REST /api/v1 (FakeAdapter)", () => {
   });
 });
 
-describe("REST /api/v1 (어댑터 없음)", () => {
+describe("REST /api/v1 (Gateway 미연결 어댑터)", () => {
   it("GET /agents/discover 는 503 ADAPTER_UNAVAILABLE, 채널 프롬프트 변경은 그대로 된다", async () => {
-    const app = await bootTestApp();
+    const adapter = new FakeAdapter();
+    adapter.setStatus({ provider: "openclaw", gateway: "reconnecting", bridge: "down" });
+    vi.spyOn(adapter, "listAgents").mockRejectedValue(
+      new AdapterError("ADAPTER_UNAVAILABLE", "agents.list: gateway not connected"),
+    );
+    vi.spyOn(adapter, "syncChannelConfig").mockRejectedValue(
+      new AdapterError("ADAPTER_UNAVAILABLE", "plugin not connected"),
+    );
+    const app = await bootTestApp({}, { adapter });
     try {
       const api = await authed(app);
       const res = await api("GET", "/agents/discover");

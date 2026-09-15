@@ -18,7 +18,8 @@ export class FakeAdapter implements AgentAdapter {
     syncChannelConfig: Array<{ channelId: string; config: ConfigSet["config"] }>;
     reset: string[];
     abort: Array<{ runId: string; sessionKey: string }>;
-  } = { send: [], syncChannelConfig: [], reset: [], abort: [] };
+    forget: string[];
+  } = { send: [], syncChannelConfig: [], reset: [], abort: [], forget: [] };
 
   private sendScript: SendScript = (input) => ({ admission: "dispatch", providerRunId: input.runId });
   private handlers = new Set<(e: AdapterEvent) => void>();
@@ -89,5 +90,9 @@ export class FakeAdapter implements AgentAdapter {
     return () => {
       this.handlers.delete(handler);
     };
+  }
+
+  forgetRun(runId: string): void {
+    this.calls.forget.push(runId);
   }
 }

@@ -214,8 +214,29 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     } else if (prev === "queued" && next !== "queued") {
       timers.clear(runId, "queued");
       timers.set(runId, "run", timeouts.runMs, () => {
-        void api.signal(runId, { kind: "run_timeout" });
+        void timeOut(runId, { kind: "run_timeout" });
       });
+    }
+  }
+
+  /**
+   * 타임아웃으로 닫힌 런에는 Gateway 종료 신호가 오지 않았다 — Gateway 런을 멈추고(best-effort) 어댑터가 쥔 추적 상태를 버린다
+   * (sc-t8 걱정 1·sc-t11 걱정 3). recoverOnBoot 의 SERVER_RESTART 는 어댑터 연결 전이라 여기로 오지 않는다.
+   */
+  async function timeOut(runId: string, s: Extract<RunSignal, { kind: "queue_timeout" | "run_timeout" }>) {
+    try {
+      const before = store.getRun(db, runId);
+      await api.signal(runId, s);
+      if (!before || TERMINAL_STATUSES.has(before.status)) return;
+      if (!TERMINAL_STATUSES.has(store.getRun(db, runId)?.status ?? before.status)) return;
+      try {
+        await adapter.abort(runId, before.sessionKey);
+      } catch (err) {
+        logger.warn({ err, runId }, "adapter abort after timeout failed");
+      }
+      adapter.forgetRun?.(runId);
+    } catch (err) {
+      logger.error({ err, runId, signal: s.kind }, "run timeout handling failed");
     }
   }
 
@@ -360,6 +381,9 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       });
       const inbound = buildInboundDeliver(db, { run, trigger, session, needsPromptContext, now: now() });
       const result = await adapter.send(inbound);
+      // 종료 중(stop 뒤 어댑터 close 가 대기를 끊었거나 ack 가 늦게 왔다) — 닫히는 DB 에 쓰지 않는다.
+      // 이 런은 다음 부팅의 recoverOnBoot 가 SERVER_RESTART 로 닫는다(스펙 2장).
+      if (stopped) return;
 
       const current = store.getRun(db, runId);
       if (!current || TERMINAL_STATUSES.has(current.status)) return; // 기다리는 사이 abort·Gateway 오류로 끝났다
@@ -371,12 +395,16 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       if (result.providerRunId !== undefined && current.providerRunId === undefined) {
         store.updateRun(db, runId, { providerRunId: result.providerRunId });
       }
-      if (current.status === "queued" && !stopped) {
+      if (current.status === "queued") {
         timers.set(runId, "queued", timeouts.queuedMs, () => {
-          void api.signal(runId, { kind: "queue_timeout" });
+          void timeOut(runId, { kind: "queue_timeout" });
         });
       }
     } catch (err) {
+      if (stopped) {
+        logger.debug({ err, runId }, "run dispatch settled after stop");
+        return;
+      }
       // 어댑터는 runId 를 전송 전에 등록하므로 gateway_started 뒤에 거부될 수 있다 — 상태와 무관하게 닫는다
       const error = dispatchError(err);
       if (error.code === "INTERNAL") logger.error({ err, runId }, "run dispatch failed");

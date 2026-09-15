@@ -1,10 +1,14 @@
+import { createOpenClawAdapter } from "@dodok/openclaw-adapter";
+import type { AdapterStatus, ApiError } from "@dodok/shared";
 import cookie from "@fastify/cookie";
 import rateLimit from "@fastify/rate-limit";
+import { sql } from "drizzle-orm";
 import Fastify, { type FastifyBaseLogger, type FastifyInstance } from "fastify";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { Server } from "socket.io";
 import { v7 as uuidv7 } from "uuid";
+import packageJson from "../package.json" with { type: "json" };
 import type { AgentAdapter } from "./adapters/types";
 import { type Auth, createAuth } from "./auth";
 import { bootstrapOwner } from "./auth/owner";
@@ -14,28 +18,33 @@ import { createDb, type Db } from "./db/client";
 import { workspaces } from "./db/schema.sqlite";
 import { HttpError, httpStatusToErrorCode } from "./http/errors";
 import { createLogger, type Logger } from "./logger";
+import { registerAdapterRoutes } from "./modules/adapter/routes";
 import { registerAgentRoutes } from "./modules/agents/routes";
 import { registerChannelRoutes } from "./modules/channels/routes";
 import { registerMessageRoutes } from "./modules/messages/routes";
-import type { RunTimeouts } from "./modules/runs/orchestrator";
+import type { Orchestrator, RunTimeouts } from "./modules/runs/orchestrator";
 import { registerRunRoutes } from "./modules/runs/routes";
 import { ServerBus } from "./realtime/bus";
 import { attachWireFanout } from "./realtime/events";
 import { attachWire } from "./realtime/socket";
 import type { WireServer } from "./realtime/types";
-import { createServices } from "./wiring";
+import { createServices, type Services, sessionRecoverTargets } from "./wiring";
 
-/**
- * adapter 가 있으면 라우터·오케스트레이터를 배선한다(wiring.ts). 없으면 헬스는 down, REST 의 어댑터 경로(discover)는
- * ADAPTER_UNAVAILABLE, 메시지는 라우팅하지 않고 wire 런 핸들러도 ADAPTER_UNAVAILABLE. 실제 어댑터 기본값은 태스크 12.
- */
+/** 스펙 2장 — 종료 전체 상한. 넘기면 warn 을 남기고 close() 를 끝낸다(남은 단계는 뒤에서 이어진다). */
+export const APP_CLOSE_TIMEOUT_MS = 10_000;
+/** Gateway 가 이만큼 reconnecting 이면 운영자에게 알린다 — 토큰 불일치처럼 스스로 풀리지 않는 실패(sc-t11 걱정 2) */
+export const GATEWAY_RECONNECTING_NOTICE_MS = 60_000;
+
 export type AppDeps = {
+  /** 없으면 설정으로 실제 어댑터(createOpenClawAdapter — Gateway WS·/bridge)를 만든다. 테스트는 FakeAdapter 를 준다. */
   adapter?: AgentAdapter | undefined;
   logger?: Logger;
   /** wire 소켓별 미전송 큐 상한(기본 500) — 테스트가 낮춘다 */
   wireMaxPending?: number;
   /** 런 타임아웃·코얼레싱·동시 런 상한(기본 DEFAULT_RUN_TIMEOUTS) — 테스트가 낮춘다 */
   timeouts?: Partial<RunTimeouts>;
+  /** close() 상한(기본 APP_CLOSE_TIMEOUT_MS) — 테스트가 낮춘다 */
+  closeTimeoutMs?: number;
 };
 
 export type App = {
@@ -48,101 +57,226 @@ export type App = {
   auth: Auth;
   /** 부팅 때 보장한 owner 의 id (= Better Auth user.id = users.id) */
   ownerUserId: string;
+  adapter: AgentAdapter;
+  orchestrator: Orchestrator;
+  services: Services;
   /** listen 뒤에만 채워진다. 그 전에는 빈 문자열. */
   readonly url: string;
+  /** 한 번만 실행한다 — 다시 부르면 같은 프로미스. 닫힌 어댑터를 다시 쓰지 않는다(sc-t11 재리뷰 이월). */
   close(): Promise<void>;
 };
 
+/**
+ * 스펙 2장 부팅 순서: db → auth·owner → bus → Fastify → Socket.IO → 어댑터 생성 → 서비스 배선 → 라우트·wire →
+ * 부팅 정리(recoverOnBoot) → ready → adapter.connect(). 도중에 실패하면 만든 것을 역순으로 닫고 그 오류를 다시 던진다.
+ */
 export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promise<App> {
   const logger = deps.logger ?? createLogger(config.LOG_LEVEL);
-  // DATA_DIR 은 gitignore 라 새 클론·워크트리에 없다 — better-sqlite3 는 디렉터리를 만들지 않는다(리뷰 sc-t1 지적 2)
-  if (config.dbPath !== ":memory:") mkdirSync(dirname(config.dbPath), { recursive: true });
-  const db = createDb(config.dbPath);
-  const workspaceId = ensureWorkspace(db, config.DODOK_WORKSPACE_NAME);
-  const auth = createAuth(db, config, logger);
-  const { userId: ownerUserId } = await bootstrapOwner(db, auth, config, workspaceId);
-  const bus = new ServerBus();
-  // 기본 제네릭(FastifyBaseLogger)으로 추론되게 한다 — pino Logger 로 추론되면 FastifyInstance·플러그인 타입과 어긋난다
-  const loggerInstance: FastifyBaseLogger = logger;
-  const fastify = Fastify({ loggerInstance });
-  await fastify.register(cookie);
-  // 라우트가 config.rateLimit 로 켠 곳에만 건다(/api/v1/auth/local)
-  await fastify.register(rateLimit, { global: false });
-  fastify.setErrorHandler((error, _req, reply) => {
-    if (error instanceof HttpError) {
-      // INTERNAL HttpError(저장값 계약 위반 등)는 서버 버그다 — 원인(cause)과 함께 남긴다
-      if (error.body.code === "INTERNAL") logger.error({ err: error, cause: error.cause }, "internal error");
-      return reply.status(error.status).send(error.body);
-    }
-    // Fastify 자체 4xx(잘못된 JSON·미지원 content-type·404·429)는 클라이언트 오류다 — 500 으로 바꾸지 않는다(리뷰 sc-t1 지적 1)
-    const { statusCode, message } = error as { statusCode?: unknown; message?: unknown };
-    const status = typeof statusCode === "number" ? statusCode : 500;
-    if (status >= 400 && status < 500) {
-      logger.warn({ err: error, status }, "client error");
-      return reply.status(status).send({
-        code: httpStatusToErrorCode(status),
-        message: typeof message === "string" ? message : "bad request",
+  const undo: Array<{ step: string; run: () => unknown }> = [];
+  try {
+    // DATA_DIR 은 gitignore 라 새 클론·워크트리에 없다 — better-sqlite3 는 디렉터리를 만들지 않는다(리뷰 sc-t1 지적 2)
+    if (config.dbPath !== ":memory:") mkdirSync(dirname(config.dbPath), { recursive: true });
+    const db = createDb(config.dbPath);
+    undo.push({ step: "db", run: () => db.$client.close() });
+    const workspaceId = ensureWorkspace(db, config.DODOK_WORKSPACE_NAME);
+    const auth = createAuth(db, config, logger);
+    const { userId: ownerUserId } = await bootstrapOwner(db, auth, config, workspaceId);
+    const bus = new ServerBus();
+
+    // 기본 제네릭(FastifyBaseLogger)으로 추론되게 한다 — pino Logger 로 추론되면 FastifyInstance·플러그인 타입과 어긋난다
+    const loggerInstance: FastifyBaseLogger = logger;
+    // 리버스 프록시 뒤면 request.ip(레이트리밋 키)가 X-Forwarded-For 를 따르게 한다(리뷰 sc-t3 이월 4)
+    const fastify = Fastify({ loggerInstance, trustProxy: config.TRUST_PROXY === "true" });
+    undo.push({ step: "fastify", run: () => fastify.close() });
+    await fastify.register(cookie);
+    // 라우트가 config.rateLimit 로 켠 곳에만 건다(/api/v1/auth/local)
+    await fastify.register(rateLimit, { global: false });
+    fastify.setErrorHandler((error, _req, reply) => {
+      if (error instanceof HttpError) {
+        // INTERNAL HttpError(저장값 계약 위반 등)는 서버 버그다 — 원인(cause)과 함께 남긴다
+        if (error.body.code === "INTERNAL")
+          logger.error({ err: error, cause: error.cause }, "internal error");
+        return reply.status(error.status).send(error.body);
+      }
+      // Fastify 자체 4xx(잘못된 JSON·미지원 content-type·404·429)는 클라이언트 오류다 — 500 으로 바꾸지 않는다(리뷰 sc-t1 지적 1)
+      const { statusCode, message } = error as { statusCode?: unknown; message?: unknown };
+      const status = typeof statusCode === "number" ? statusCode : 500;
+      if (status >= 400 && status < 500) {
+        logger.warn({ err: error, status }, "client error");
+        return reply.status(status).send({
+          code: httpStatusToErrorCode(status),
+          message: typeof message === "string" ? message : "bad request",
+        });
+      }
+      logger.error({ err: error }, "unhandled");
+      return reply.status(500).send({ code: "INTERNAL", message: "internal error" });
+    });
+
+    const io: WireServer = new Server(fastify.server, {
+      cors: { origin: config.APP_ORIGIN, credentials: true },
+    });
+    undo.push({ step: "io", run: () => io.close() });
+
+    // 정본 훅은 오케스트레이터를 부르는데 오케스트레이터는 어댑터를 받아 뒤에 만들어진다 — 브리지 연결은 listen 뒤라 그때는 있다
+    let orchestrator: Orchestrator;
+    const adapter =
+      deps.adapter ??
+      createOpenClawAdapter({
+        gateway: {
+          url: config.gateway.url,
+          token: config.gateway.token,
+          deviceIdentityPath: config.deviceIdentityPath,
+        },
+        bridge: { io, token: config.BRIDGE_TOKEN, serverVersion: packageJson.version },
+        logger: logger.child({ mod: "adapter" }),
+        onCanonical: (message) => orchestrator.onCanonical(message),
+        sessionKeysToRecover: () => sessionRecoverTargets(db),
       });
+    undo.push({ step: "adapter", run: () => adapter.close() });
+    const services = createServices({ db, bus, logger, adapter, workspaceId, timeouts: deps.timeouts });
+    orchestrator = services.orchestrator;
+    undo.push({ step: "orchestrator", run: () => services.orchestrator.stop() });
+
+    registerAuthRoutes(fastify, {
+      auth,
+      db,
+      logger,
+      workspaceId,
+      secureCookie: new URL(config.APP_ORIGIN).protocol === "https:",
+    });
+    const routeContext = { auth, db, bus, logger, workspaceId, adapter, orchestrator: services.orchestrator };
+    registerChannelRoutes(fastify, routeContext);
+    registerAgentRoutes(fastify, routeContext);
+    registerMessageRoutes(fastify, routeContext);
+    registerRunRoutes(fastify, routeContext);
+    registerAdapterRoutes(fastify, routeContext);
+    fastify.get("/healthz", async (_request, reply) => {
+      const dbOk = pingDb(db, logger);
+      return reply.status(dbOk ? 200 : 503).send({
+        ok: dbOk,
+        db: dbOk ? "ok" : "error",
+        workspace: workspaceId,
+        adapter: adapter.status(),
+      });
+    });
+
+    // 종료 ①: close() 가 켜면 새 wire 연결을 인증보다 먼저 거부한다. 기존 연결·/bridge 는 어댑터가 닫힐 때까지 둔다
+    let shuttingDown = false;
+    io.use((_socket, next) => (shuttingDown ? next(shuttingDownError()) : next()));
+    attachWire(io, {
+      auth,
+      db,
+      bus,
+      logger,
+      workspaceId,
+      route: (message) => services.router.routeMessage(message),
+      runs: services.runs,
+    });
+    const fanout = attachWireFanout(io, bus, { logger, maxPending: deps.wireMaxPending });
+    undo.push({ step: "fanout", run: () => fanout.close() });
+    const watch = watchGatewayReconnecting(adapter, bus, logger);
+    undo.push({ step: "watch", run: () => watch.close() });
+
+    await services.orchestrator.recoverOnBoot();
+    await fastify.ready();
+    // Gateway 접속 실패는 부팅을 막지 않는다(스펙 2장) — connect() 는 던지지 않는 계약이지만 방어한다
+    try {
+      await adapter.connect();
+    } catch (err) {
+      logger.warn({ err }, "adapter connect failed");
     }
-    logger.error({ err: error }, "unhandled");
-    return reply.status(500).send({ code: "INTERNAL", message: "internal error" });
-  });
-  registerAuthRoutes(fastify, {
-    auth,
-    db,
-    logger,
-    workspaceId,
-    secureCookie: new URL(config.APP_ORIGIN).protocol === "https:",
-  });
-  const routeContext = { auth, db, bus, logger, workspaceId, adapter: deps.adapter };
-  registerChannelRoutes(fastify, routeContext);
-  registerAgentRoutes(fastify, routeContext);
-  registerMessageRoutes(fastify, routeContext);
-  registerRunRoutes(fastify, routeContext);
-  fastify.get("/healthz", async () => ({
-    ok: true,
-    db: "ok",
-    workspace: workspaceId,
-    adapter: deps.adapter?.status() ?? { provider: "openclaw", gateway: "down", bridge: "down" },
-  }));
-  const io: WireServer = new Server(fastify.server, {
-    cors: { origin: config.APP_ORIGIN, credentials: true },
-  });
-  const services = deps.adapter
-    ? createServices({ db, bus, logger, adapter: deps.adapter, workspaceId, timeouts: deps.timeouts })
-    : undefined;
-  if (!services) {
-    logger.warn("no agent adapter — messages are not routed and run handlers answer ADAPTER_UNAVAILABLE");
+
+    const closeTimeoutMs = deps.closeTimeoutMs ?? APP_CLOSE_TIMEOUT_MS;
+    const step = async (name: string, run: () => unknown) => {
+      try {
+        await run();
+      } catch (err) {
+        logger.warn({ err, step: name }, "app close step failed");
+      }
+    };
+    /** 스펙 2장 종료 순서. 진행 중 런은 그대로 두고 다음 부팅의 recoverOnBoot 가 닫는다. */
+    const shutdown = async () => {
+      shuttingDown = true; // ① 새 wire 연결 거부
+      await step("watch", () => watch.close());
+      await step("orchestrator", () => services.orchestrator.stop()); // ② 타이머·어댑터 구독 해제
+      // ③ 브리지 system.notice shutdown → Gateway stop. io.close() 가 /bridge 소켓까지 끊으므로 그보다 먼저
+      await step("adapter", () => adapter.close());
+      await step("fanout", () => fanout.close());
+      await step("io", () => io.close()); // ④ 남은 wire·브리지 소켓
+      await step("fastify", () => fastify.close()); // ⑤
+      await step("db", () => db.$client.close()); // ⑥ (리뷰 sc-t1 이월 1)
+    };
+    let closing: Promise<void> | undefined;
+
+    return {
+      fastify,
+      io,
+      db,
+      bus,
+      logger,
+      workspaceId,
+      auth,
+      ownerUserId,
+      adapter,
+      orchestrator: services.orchestrator,
+      services,
+      get url() {
+        const addr = fastify.server.address();
+        return typeof addr === "object" && addr ? `http://127.0.0.1:${addr.port}` : "";
+      },
+      close() {
+        closing ??= withDeadline(shutdown(), closeTimeoutMs, () =>
+          logger.warn({ timeoutMs: closeTimeoutMs }, "app close timed out"),
+        );
+        return closing;
+      },
+    };
+  } catch (err) {
+    for (const { step, run } of undo.reverse()) {
+      try {
+        await run();
+      } catch (cleanupErr) {
+        logger.warn({ err: cleanupErr, step }, "cleanup after failed boot failed");
+      }
+    }
+    throw err;
   }
-  attachWire(io, {
-    auth,
-    db,
-    bus,
-    logger,
-    workspaceId,
-    route: services ? (message) => services.router.routeMessage(message) : async () => {},
-    runs: services?.runs ?? null,
+}
+
+/**
+ * 어댑터 status 이벤트로 Gateway 상태를 본다. reconnecting 이 delayMs 동안 이어지면 system.notice warn 을 한 번 보낸다.
+ * reconnecting 을 벗어나면 다시 잰다. 타이머는 unref — 프로세스를 붙잡지 않는다.
+ */
+export function watchGatewayReconnecting(
+  adapter: Pick<AgentAdapter, "status" | "onEvent">,
+  bus: ServerBus,
+  logger: Pick<Logger, "warn">,
+  delayMs = GATEWAY_RECONNECTING_NOTICE_MS,
+): { close(): void } {
+  let gateway: AdapterStatus["gateway"] | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const observe = (next: AdapterStatus["gateway"]) => {
+    if (next === gateway) return;
+    gateway = next;
+    clearTimeout(timer);
+    timer = undefined;
+    if (next !== "reconnecting") return;
+    timer = setTimeout(() => {
+      timer = undefined;
+      logger.warn({ delayMs }, "gateway still reconnecting");
+      bus.emit("system.notice", { level: "warn", message: "OpenClaw Gateway 에 연결하지 못하고 있습니다" });
+    }, delayMs);
+    timer.unref();
+  };
+  const off = adapter.onEvent((e) => {
+    if (e.kind === "status") observe(e.status.gateway);
   });
-  const fanout = attachWireFanout(io, bus, { logger, maxPending: deps.wireMaxPending });
-  await fastify.ready();
+  observe(adapter.status().gateway);
   return {
-    fastify,
-    io,
-    db,
-    bus,
-    logger,
-    workspaceId,
-    auth,
-    ownerUserId,
-    get url() {
-      const addr = fastify.server.address();
-      return typeof addr === "object" && addr ? `http://127.0.0.1:${addr.port}` : "";
-    },
-    async close() {
-      services?.orchestrator.stop();
-      fanout.close();
-      io.close();
-      await fastify.close();
+    close() {
+      off();
+      clearTimeout(timer);
+      timer = undefined;
     },
   };
 }
@@ -153,4 +287,33 @@ function ensureWorkspace(db: Db, name: string): string {
   const id = uuidv7();
   db.insert(workspaces).values({ id, name, createdAt: new Date() }).run();
   return id;
+}
+
+/** /healthz — 상수 대신 실제로 한 번 읽는다(리뷰 sc-t1 이월 6) */
+function pingDb(db: Db, logger: Logger): boolean {
+  try {
+    db.get(sql`select 1`);
+    return true;
+  } catch (err) {
+    logger.error({ err }, "healthz db check failed");
+    return false;
+  }
+}
+
+function shuttingDownError(): Error & { data: ApiError } {
+  return Object.assign(new Error("ADAPTER_UNAVAILABLE"), {
+    data: { code: "ADAPTER_UNAVAILABLE" as const, message: "server shutting down" },
+  });
+}
+
+function withDeadline(work: Promise<void>, ms: number, onTimeout: () => void): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<void>((resolve) => {
+    timer = setTimeout(() => {
+      onTimeout();
+      resolve();
+    }, ms);
+    timer.unref();
+  });
+  return Promise.race([work, deadline]).finally(() => clearTimeout(timer));
 }

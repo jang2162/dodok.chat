@@ -1,4 +1,4 @@
-import { FakeAdapter } from "@dodok/openclaw-adapter";
+import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { agentSessions, agents } from "../src/db/schema.sqlite";

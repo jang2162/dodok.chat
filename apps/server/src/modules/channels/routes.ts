@@ -9,6 +9,7 @@ import { apiError } from "../../http/errors";
 import { parseBody, parseParams } from "../../http/validate";
 import type { Logger } from "../../logger";
 import type { ServerBus } from "../../realtime/bus";
+import type { Orchestrator } from "../runs/orchestrator";
 import {
   addMember,
   type ChannelRecord,
@@ -17,6 +18,7 @@ import {
   listChannels,
   listMembers,
   removeMember,
+  resetAgentSession,
   updateAgentMember,
   updateChannel,
 } from "./service";
@@ -27,11 +29,14 @@ export type ChannelRouteContext = {
   bus: ServerBus;
   logger: Logger;
   workspaceId: string;
-  adapter: AgentAdapter | undefined;
+  adapter: AgentAdapter;
+  /** 「새 대화」가 그 세션의 진행 런을 멈출 때 */
+  orchestrator: Pick<Orchestrator, "activeRuns" | "abort">;
 };
 
 const ChannelParams = z.object({ id: Id });
 const MemberParams = z.object({ id: Id, memberId: Id });
+const AgentParams = z.object({ id: Id, agentId: Id });
 
 const CreateChannelBody = Channel.pick({
   name: true,
@@ -134,10 +139,17 @@ export function registerChannelRoutes(fastify: FastifyInstance, ctx: ChannelRout
     ctx.bus.emit("channel.member.changed", { channelId: id, members });
     return { members };
   });
+
+  /** 「새 대화」(스펙 3.4) — 409 CONFLICT(ADAPTER_CAPABILITY_MISSING)·503 ADAPTER_UNAVAILABLE 등은 서비스가 정한다 */
+  fastify.post("/api/v1/channels/:id/agents/:agentId/reset", authed, async (request) => {
+    const { id, agentId } = parseParams(AgentParams, request.params);
+    loadChannel(sessionUser(request).workspaceId, id);
+    await resetAgentSession(ctx, { channelId: id, agentId });
+    return { ok: true };
+  });
 }
 
 function syncChannelPrompt(ctx: ChannelRouteContext, channel: ChannelRecord): void {
-  if (!ctx.adapter) return;
   void ctx.adapter
     .syncChannelConfig(channel.id, { systemPrompt: channel.prompt ?? "" })
     .catch((err: unknown) => {
