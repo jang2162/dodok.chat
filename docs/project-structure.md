@@ -10,7 +10,7 @@
 dodok.chat/
 ├─ apps/
 │  ├─ web/                    # @dodok/web — React 19 + Vite PWA
-│  └─ server/                 # @dodok/server — Node 22 + Fastify + Socket.IO (+ 플러그인 브리지 엔드포인트)
+│  └─ server/                 # @dodok/server — Node 24 + Fastify + Socket.IO (+ 플러그인 브리지 엔드포인트)
 ├─ packages/
 │  ├─ shared/                 # @dodok/shared — 도메인 타입·Zod 스키마·components v1 규약·RunEvent(AG-UI 매핑)·wire 계약
 │  ├─ openclaw-plugin/        # @dodok/openclaw-plugin — OpenClaw 채널 플러그인 (원격 Gateway 안에서 실행)
@@ -29,12 +29,14 @@ dodok.chat/
 │  └─ test/                   # 위 스크립트의 테스트 하네스 + Orca CLI 스텁
 ├─ .claude/
 │  ├─ settings.json           # SessionStart·UserPromptSubmit 훅 등록
+│  ├─ hooks/node-env.sh       # SessionStart: mise 가 핀한 Node·pnpm 을 Bash 도구 PATH 앞에 (비대화형 셸은 mise activate 훅이 안 돈다)
 │  └─ hooks/orca-worker-check.sh   # 미정리 워커·워크트리 현황을 세션에 알림
 ├─ .worktrees/dodok.chat/     # Orca 워크트리 자리 — git 제외 (docs/guides/worktree-workflow.md)
 ├─ data/                      # 런타임 데이터 (SQLite, 업로드, 디바이스 아이덴티티) — git 제외
 ├─ CLAUDE.md                  # 에이전트 지침 (정본)
 ├─ .mcp.json                  # 프로젝트 MCP — playwright-neo (BrowserOS neo 의 CDP 에 붙는 Playwright)
 ├─ .oxlintrc.json / .oxfmtrc.json
+├─ mise.toml / .npmrc         # Node 24.21.0 · pnpm 11.16.0 핀(openclaw engines >=24.16 <25) · engine-strict
 ├─ package.json / pnpm-workspace.yaml / turbo.json
 └─ .env.example
 ```
@@ -99,7 +101,7 @@ src/
 │  │                      hello-ok(features·policy) 캐시, caps 선언(정본 GATEWAY_CLIENT_CAPS), 첫 connect 의 NOT_PAIRED 를
 │  │                      정상 경로로 보고 2~5초 재시도(자동 승인), 재접속 시 프로젝션 재구축
 │  ├─ device-identity.ts  Ed25519 아이덴티티 생성·저장(0600)·서명·raw base64url 공개키 (스파이크 1에서 확정)
-│  ├─ sessions.ts         채널·에이전트 → sessionKey 매핑 (agent:<agentId>:dodok:channel:<channelId>; 키 회전을 채택하면 :g<N> 세대 접미사 — ADR 0003 7.1 결정 대기)
+│  ├─ sessions.ts         채널·에이전트 → sessionKey 매핑 (agent:<agentId>:dodok:channel:<channelId> 원형 고정 — 「새 대화」는 sessions.reset, 세대 접미사 없음: 계획서 10장 #15·#19)
 │  ├─ events.ts           chat(delta/final/status/error/aborted)/agent(stream:"tool" 포함)/session.message(usage·stopReason·비용)/
 │  │                      session.approval → RunEvent 정규화. runId = chat.send 의 idempotencyKey. seq 는 순서용이며 연속이 아니다.
 │  │                      session.tool 은 쓰지 않는다 — tool-events 를 선언한 연결은 수신 대상에서 제외된다(ADR 0001)
@@ -119,7 +121,7 @@ src/
 ├─ index.ts               defineChannelPluginEntry({ plugin, setRuntime }) — id "dodok". 매니페스트 channels·channelConfigs, package.json openclaw.channel,
 │                         런타임 dependencies 없는 단일 번들(esbuild) (ADR 0002 3.1·3.2)
 ├─ channel.ts             채널 정의: 인바운드 ingress, 아웃바운드 액션 어댑터(describeMessageTool),
-│                         채널별 설정 스키마(requireMention, systemPrompt, botLoopProtection, inboundChannelPrompt[스파이크 3 추가 — 존치 여부 결정 대기]). 코어 봇 루프 보호는
+│                         채널별 설정 스키마(requireMention, systemPrompt, botLoopProtection, inboundChannelPrompt 는 제거[계획서 10장 #18]). 코어 봇 루프 보호는
 │                         플러그인이 에이전트 작성 인바운드에 사실을 넘길 때만 동작한다 (ADR 0002 7절)
 ├─ components-schema.ts   message 툴에 끼울 components 스키마 조각 (shared/components를 그대로 노출)
 ├─ bridge-client.ts       서버 브리지 WSS 아웃바운드 접속(BRIDGE_URL·토큰)·지수 백오프 재연결·아웃바운드 큐

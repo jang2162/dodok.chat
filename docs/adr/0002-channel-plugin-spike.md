@@ -409,3 +409,14 @@ openclaw config patch --file /tmp/dodok.patch.json5 && rm /tmp/dodok.patch.json5
 4. **브리지 계약 보강.** `InboundDeliverResult` 에 `{ admission: "dispatch" | "drop", reason? }` 추가 여부(3번), `providerRunId` 존치 여부(4.3).
 5. **채널 프롬프트 주입 경로**(스파이크 3 결과를 보고): `GroupSystemPrompt`(설정 쓰기, 새 세션만 확인) / 인바운드 프리픽스 / 둘 병행.
 6. **첫 에이전트 id.** 원격은 `main` 이 있으나 dev 프로필은 `main` 을 만들 수 없었다 — 로컬 개발 문서에 `dev` 를 쓰라고 적을지, `doctor --fix` 절차를 적을지.
+
+### 확정 (2026-09-15, `docs/plan.md` 10장)
+
+| 항목 | 결정 | 계획서 |
+| --- | --- | --- |
+| 1 Node 24 | 전환 — `mise.toml` 핀 24.21.0, `engines >=24.16 <25` | #11 |
+| 2 components | Phase 1 은 (a) 스키마 조각, (b) `presentation` 매핑 병행 설계 | #12 |
+| 3 봇 루프 보호 | (2) 사실 전달 + 코어 예산은 `maxRelayTurns` 보다 느슨하게 | #13 |
+| 4 브리지 계약 | `InboundDeliverResult` 에 `admission`·`reason` 추가, `providerRunId` 존치 | #14 |
+| 5 프롬프트 주입 | (a) 기준선 + 리비전 불일치 시 `ChannelPromptContext`(ADR 0003 7.1) | #1 |
+| 6 첫 에이전트 id | 로컬 문서는 `dev` | #21 |

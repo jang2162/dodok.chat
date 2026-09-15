@@ -752,7 +752,11 @@ export const InboundDeliver = z.object({
   context: InboundContext,
   options: z.object({ queueMode: z.enum(["steer", "followup", "collect", "interrupt"]).optional() }).default({}),
 });
-export const InboundDeliverResult = z.object({ providerRunId: z.string().optional() });  // ADR 0002 4.3: 값은 우리 runId 와 같다(replyOptions.runId)
+export const InboundDeliverResult = z.object({
+  admission: z.enum(["dispatch", "drop"]),   // 계획서 10장 #14 — drop 은 런 없이 끝났다는 뜻(봇 루프 보호 등)
+  reason: z.string().optional(),            // drop 사유 (예: "bot-loop-protection", "unknown-channel")
+  providerRunId: z.string().optional(),     // ADR 0002 4.3: 값은 우리 runId 와 같다(replyOptions.runId)
+});
 
 export const ConfigSet = z.object({
   channelId: Id,
@@ -800,7 +804,7 @@ export interface BridgeServerToClientEvents {   // 서버 → 플러그인
   [09:13] @planner: ...
   ---
   ```
-  `promptOverride`는 컨텍스트 헤더 다음 줄에 "채널 지시:"로 붙인다. `channelPrompt`는 `config.set`으로 Gateway 설정에 들어가 있어도 **claude-cli 기존 세션에는 반영되지 않으므로**(ADR 0003 3절), 세션이 시작될 때의 리비전과 현재 리비전이 다르면 `ChannelPromptContext`로 동봉한다(ADR 0003 7.1 권고 — 결정 뒤 문구 확정; `InboundContext`에 리비전 필드가 필요할 수 있다).
+  `promptOverride`와 `channelPrompt`는 헤더 줄이 아니라 OpenClaw `MsgContext.ChannelPromptContext`로 싣는다(표시 전사를 오염시키지 않는다 — 계획서 10장 #1·#18). `channelPrompt`는 `config.set`으로 Gateway 설정에 들어가 있어도 **claude-cli 기존 세션에는 반영되지 않으므로**(ADR 0003 3절) **서버가** 「세션 시작 시점의 채널 프롬프트 리비전 ≠ 현재 리비전」일 때만 채운다. 리비전은 서버 내부 상태라 `InboundContext`에 필드를 두지 않는다. 플러그인은 값이 있으면 항상 싣는다(스파이크용 `inboundChannelPrompt` 설정 키는 제거).
 - 전달 보장: 서버는 `inbound.deliver` ack가 10초 안에 없으면 최대 3회(1s·4s·16s) 재시도한다. 플러그인이 끊겨 있으면 런의 queued 상한(120초) 동안 서버 큐에 보관하고, 넘기면 런을 `error(ADAPTER_UNAVAILABLE)`로 끝낸다. 플러그인은 아웃바운드 큐(메모리, 최대 1000건)를 갖고 재접속 후 재전송한다.
 - 중복 제거: 서버는 `outboundId`(`messages.external_id` UNIQUE), 플러그인은 `deliveryId`(메모리 LRU 24시간)로 중복을 버리고 **같은 ack를 다시 돌려준다**.
 - 정본 상관관계는 5.1 규칙을 따른다. `runId`는 인바운드에 실어 보내므로 플러그인이 아웃바운드에 되돌려 주는 것이 기본이고(`run_id_in_outbound` capability), 되돌려 줄 수 없는 SDK 경로면 `sessionKey` 폴백을 쓴다.
@@ -941,11 +945,11 @@ export type ComponentsV1 = z.infer<typeof ComponentsV1>;
 | # | 항목 | 이 문서의 기본값 | 확정 시점 |
 | --- | --- | --- | --- |
 | 1 | 플러그인 아웃바운드에 우리 `runId`/Gateway `runId`가 실리는가 | 인바운드 `runId`를 되돌려 받는다고 가정, 불가하면 `sessionKey` 폴백 | **확정(ADR 0002 4.3)**: `replyOptions.runId` 로 Gateway runId = 우리 runId. 아웃바운드에 `runId` 실림 |
-| 2 | 인바운드 ingress가 Gateway `runId`를 돌려주는가 | `InboundDeliverResult.providerRunId` optional | **확정(ADR 0002 4.3)**: 돌려주며 값은 우리 `runId` 와 같다. 필드는 존치하되 의미는 「같다」. drop(봇 루프 보호) 시 ack 는 `{}` — `admission`/`reason` 추가 여부는 결정 필요(ADR 0002 12절 4) |
+| 2 | 인바운드 ingress가 Gateway `runId`를 돌려주는가 | `InboundDeliverResult.providerRunId` optional | **확정(ADR 0002 4.3, 계획서 10장 #14)**: 돌려주며 값은 우리 `runId` 와 같다. 필드는 존치하되 의미는 「같다」. drop(봇 루프 보호) 시에는 `admission: "drop"` + `reason` 을 돌려준다(8.2) |
 | 3 | `agent` 이벤트 `stream` 값과 툴 이벤트의 실제 모양 | `CUSTOM`으로 보존 | **확정(ADR 0001 5.3·6.5)**: 툴 진행은 `agent` `stream:"tool"` phase `start`/`result`(`toolCallId`·`name`·`args`·`isError`·`result`). `session.tool` 은 tool-events 선언 연결에 오지 않음 |
 | 4 | capability 이름(`tool-events` 등) | 문서 이름 그대로 선언 | **확정(ADR 0001 5.3)**: 정본은 `GATEWAY_CLIENT_CAPS`, 세 이름 모두 존재. `features.capabilities` 는 서버 플래그라 에코되지 않음 |
 | 5 | `config.set`이 재시작 없이 반영되는가 | `applied: "restart_required"`도 허용 | **확정(ADR 0003 3절)**: `applied: "live"`는 설정 스냅샷 기준. claude-cli 기존 세션은 드리프트·Gateway 재시작으로도 미반영, `sessions.reset`·새 키에서만 반영. 인바운드 경로(프리픽스·`ChannelPromptContext`)는 매 턴 반영 |
-| 6 | 채널 봇 루프 보호가 릴레이를 막는가 | 막으면 채널 설정으로 끄고 우리 `relayPolicy`만 사용 | **확정(ADR 0002 7절)**: 플러그인이 사실을 넘길 때만 동작(기본 20회/60초·쿨다운 60초, 초과 시 `admission: drop`). 권고: 사실을 넘기되 코어 예산을 `maxRelayTurns` 보다 느슨하게(결정 필요, ADR 0002 12절 3) |
+| 6 | 채널 봇 루프 보호가 릴레이를 막는가 | 막으면 채널 설정으로 끄고 우리 `relayPolicy`만 사용 | **확정(ADR 0002 7절, 계획서 10장 #13)**: 플러그인이 사실을 넘길 때만 동작(기본 20회/60초·쿨다운 60초, 초과 시 `admission: drop`). 사실을 넘기되 코어 예산은 `maxRelayTurns` 보다 느슨하게 두어 안전망으로만 쓴다 |
 | 7 | `chat.send` + `originatingChannel: "dodok"` 대체 경로 | 미사용 | **확정(ADR 0003 6절)**: `deliver:true`면 배달되지만 `sendText`(agentId·runId 없음)이고 `originating*`는 admin 필요 — 기본값 「미사용」 유지 |
 
 확정되면 이 문서의 해당 절과 `docs/plan.md` 10장을 갱신하고 `docs/adr/`에 기록한다.
