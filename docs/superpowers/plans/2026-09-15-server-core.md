@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Node `24.21.0`·pnpm `11.16.0` — `mise.toml` 핀. Bash 에서 `node -v` 가 24 가 아니면 `export PATH="$(mise where node)/bin:$PATH"`.
-- 새 의존성은 **정확 핀**(`^`·`~` 금지): `better-auth 1.7.5`, `@better-auth/cli 1.4.21`(dev), `pino 10.3.1`, `@fastify/cookie 11.1.2`, `@fastify/rate-limit 11.2.0`, `fastify 5.12.4`, `socket.io 4.8.3`, `socket.io-client 4.8.3`(dev), `ws 8.21.3`(dev), `@types/ws 8.18.1`(dev). pnpm 11 의 최소 배포 경과 시간 보호에 걸리면 `pnpm-workspace.yaml` `minimumReleaseAgeExclude` 에 그 버전을 추가한다(기존 항목과 같은 방식).
+- 새 의존성은 **정확 핀**(`^`·`~` 금지): `better-auth 1.7.5`, `pino 10.3.1`, `@fastify/cookie 11.1.2`, `@fastify/rate-limit 11.2.0`, `fastify 5.12.4`, `socket.io 4.8.3`, `socket.io-client 4.8.3`(dev), `ws 8.21.3`(dev), `@types/ws 8.18.1`(dev). pnpm 11 의 최소 배포 경과 시간 보호에 걸리면 `pnpm-workspace.yaml` `minimumReleaseAgeExclude` 에 그 버전을 추가한다(기존 항목과 같은 방식).
 - OpenClaw 패키지는 `2026.9.4` 정확 핀 유지. `shared` 는 Node 전용 API 금지. 외부 입력은 경계에서 Zod 파싱(계약 스펙 1.3).
 - 시크릿·디바이스 아이덴티티·브리지 토큰은 `data/` 와 `.env` 에만. 로그에 토큰을 찍지 않는다. `.env`·`~/.openclaw*/openclaw.json` 은 읽지 않는다.
 - 세션 키는 `agent:<providerAgentId>:dodok:channel:<channelId>` 원형(접미사 없음). 에이전트 간 소통은 채널 릴레이로만.
@@ -28,7 +28,7 @@
 
 ```
 apps/server/
-├─ package.json                 scripts: dev(tsx watch src/main.ts), start, test, typecheck, db:generate, auth:generate
+├─ package.json                 scripts: dev(tsx watch src/main.ts), test, typecheck, db:generate (auth:generate·@better-auth/cli 는 deprecated 라 쓰지 않음 — auth-schema.ts 는 손으로 작성)
 ├─ drizzle.config.ts            schema: ["./src/db/schema.sqlite.ts", "./src/db/auth-schema.ts"]
 ├─ drizzle/0001_*.sql           promptRevision·agent_sessions·Better Auth 테이블
 ├─ src/main.ts                  process.loadEnvFile → loadConfig → createApp → listen, 시그널 처리
