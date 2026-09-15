@@ -3,6 +3,7 @@ packages:
   - "packages/*"
 allowBuilds:
   "@google/genai": false
+  "@prisma/client": false
   better-sqlite3: true
   esbuild: true
   koffi: false
@@ -52,3 +53,11 @@ minimumReleaseAgeExclude:
   - "@oxlint/binding-win32-x64-msvc@1.83.0"
   - oxfmt@0.68.0
   - oxlint@1.83.0
+  - "@better-auth/core@1.7.5"
+  - "@better-auth/drizzle-adapter@1.7.5"
+  - "@better-auth/kysely-adapter@1.7.5"
+  - "@better-auth/memory-adapter@1.7.5"
+  - "@better-auth/mongo-adapter@1.7.5"
+  - "@better-auth/prisma-adapter@1.7.5"
+  - "@better-auth/telemetry@1.7.5"
+  - better-auth@1.7.5
