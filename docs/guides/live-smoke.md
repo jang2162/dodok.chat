@@ -160,7 +160,7 @@ oc --dev plugins inspect dodok --json | jq .plugin.status     # 여전히 "loade
 | 브리지 | 서버 listen 뒤 21.5s 에 `ready`(플러그인 백오프 7번째 시도). 재기동 때는 10.6s |
 | 모델 | `anthropic/claude-opus-5` + claude-cli(Claude Code CLI 로그인 재사용), thinking high |
 
-### 5.2 런 표 (상한 8, 실제 6)
+### 5.2 런 표 (계획 상한 8 → 사용률 경고로 조율자 판정 6, 실제 6)
 
 | # | 시나리오 | 트리거 | 에이전트·depth | 소요(created→ended) | 결과 |
 | --- | --- | --- | --- | --- | --- |
@@ -231,7 +231,7 @@ oc --dev plugins inspect dodok --json | jq .plugin.status     # 여전히 "loade
 
 - 플러그인은 **사용자가 Gateway 호스트에 설치**한다(ADR 0002 9.2~9.5: `pack:plugin` → tarball 복사 → `openclaw plugins install … --force --accept-capabilities` → 계정 설정은 패치 파일). 워커는 원격 호스트를 만지지 않는다.
 - 서버 env: `OPENCLAW_TARGET=remote`(기본), `OPENCLAW_GATEWAY_URL=wss://…`·`OPENCLAW_GATEWAY_TOKEN`, 디바이스 파일은 기본 `data/openclaw-device.json`(dev 와 따로).
-  원격이 공유 토큰에 `operator.admin` 을 주는지는 계획서 10장 #15 대로 확인 — 안 주면 `capabilities.sessionReset=false`, 「새 대화」는 409.
+  원격 공유 토큰은 `operator.admin` 을 부여한다(계획서 10장 #15, 2026-09-15 원격 실측 — 스코프 승급 자동 승인). 부여가 없어지면 `capabilities.sessionReset=false` 가 되고 「새 대화」는 409.
 - 브리지: 플러그인이 **아웃바운드로** 서버에 붙는다. 개발 PC 서버면 터널(cloudflared 등)로 `wss://…/bridge` 를 만들고, 그 주소를 `BRIDGE_PUBLIC_URL` 에 적고 호스트의 계정 `bridgeUrl` 에 넣는다. 토큰은 `BRIDGE_TOKEN` 과 같게.
 - 원격은 루프백이 아니므로 페어링 자동 승인·지연 수치가 다를 수 있다. ①~③ 을 다시 재고 이 문서에 표를 더한다.
 - dev 프로필 전용 주의(내장 cron·`~/.openclaw-dev` 잔여물)는 원격 호스트의 설정·예정 작업으로 바뀐다 — 호스트에서 `openclaw cron list` 로 본다.
