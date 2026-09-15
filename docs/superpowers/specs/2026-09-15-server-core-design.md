@@ -83,7 +83,7 @@ export const agentSessions = sqliteTable("agent_sessions", {
   sessionKey: text("session_key").notNull(),               // agent:<providerAgentId>:dodok:channel:<channelId>
   promptRevisionAtStart: integer("prompt_revision_at_start").notNull(),
   sessionStartedAt: ts("session_started_at"),              // Gateway sessions.list 의 sessionStartedAt (리셋 판별)
-  lifecycleRevision: integer("lifecycle_revision"),
+  lifecycleRevision: text("lifecycle_revision"),             // 실측값은 uuid 문자열 (sessions.reset 응답 entry)
   providerSessionId: text("provider_session_id"),          // sessionId (리셋 뒤에도 유지되므로 식별용으로만)
   historyCursor: text("history_cursor"),                   // chat.history deltaCursor (오면 저장, 최적화용)
   lastSyncedAt: ts("last_synced_at"),
