@@ -54,3 +54,34 @@ export function recordEvents(
     socket.on(event, ((payload: unknown) => seen.push({ event, payload })) as never);
   return seen;
 }
+
+/** 한 서버 이벤트의 payload 를 도착 순서대로 모은다. `stop()` 이 리스너를 뗀다. */
+export function collect<E extends keyof ServerToClientEvents>(
+  socket: WireClient,
+  event: E,
+): { items: WirePayload<E>[]; stop(): void } {
+  const items: WirePayload<E>[] = [];
+  const listener = (payload: WirePayload<E>) => {
+    items.push(payload);
+  };
+  socket.on(event, listener as never);
+  return { items, stop: () => void socket.off(event, listener as never) };
+}
+
+/** 끊긴 소켓을 같은 인증으로 다시 붙이고 connect 를 기다린다. 채널 룸은 끊길 때 사라지므로 구독은 호출자가 다시 한다. */
+export function reconnectWire(socket: WireClient): Promise<void> {
+  if (socket.connected) return Promise.reject(new Error("이미 연결돼 있다 — disconnect() 를 먼저 부른다"));
+  return new Promise((resolve, reject) => {
+    const onConnect = () => {
+      socket.off("connect_error", onError);
+      resolve();
+    };
+    const onError = (err: Error) => {
+      socket.off("connect", onConnect);
+      reject(err);
+    };
+    socket.once("connect", onConnect);
+    socket.once("connect_error", onError);
+    socket.connect();
+  });
+}

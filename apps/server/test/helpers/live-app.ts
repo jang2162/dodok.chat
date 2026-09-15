@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type App, type AppDeps, createApp } from "../../src/app";
 import { loadConfig } from "../../src/config";
+import type { RunTimeouts } from "../../src/modules/runs/orchestrator";
 import { type FakeGateway, type FakeGatewayOptions, startFakeGateway } from "../fakes/fake-gateway";
 import { type FakePlugin, startFakePlugin } from "../fakes/fake-plugin";
 import { login } from "./app";
@@ -23,6 +24,10 @@ export type LiveApp = {
 export type LiveAppOptions = FakeGatewayOptions & {
   /** 어댑터는 항상 실제 OpenClawAdapter 다 */
   deps?: Omit<AppDeps, "adapter">;
+  /** loadConfig env 덮어쓰기(마지막에 펼친다) — 예: 파일 DB 로 재부팅을 잴 때 `{ DB_PATH }` */
+  env?: Record<string, string>;
+  /** 오케스트레이터 상한을 실제 시계로 잴 만큼 줄인다 — `deps.timeouts` 위에 덮는다 */
+  timeouts?: Partial<RunTimeouts>;
 };
 
 const CONNECT_TIMEOUT_MS = 5_000;
@@ -64,8 +69,11 @@ export async function bootLiveApp(opts: LiveAppOptions = {}): Promise<LiveApp> {
         OPENCLAW_DEVICE_IDENTITY_PATH: join(dir, "openclaw-device.json"),
         DATA_DIR: dir,
         DB_PATH: ":memory:",
+        ...opts.env,
       }),
-      opts.deps ?? {},
+      opts.timeouts === undefined
+        ? (opts.deps ?? {})
+        : { ...opts.deps, timeouts: { ...opts.deps?.timeouts, ...opts.timeouts } },
     );
     await app.fastify.listen({ host: "127.0.0.1", port: 0 });
     plugin = await startFakePlugin({ bridgeUrl: app.url, token: testEnv.BRIDGE_TOKEN as string });

@@ -18,6 +18,8 @@ export type ScenarioScript = {
   tool?: { name: string; args: Record<string, unknown>; result: unknown };
   /** 있으면 런 없이 `{ admission: "drop", reason }` 만 ack 한다(봇 루프 보호 등) */
   drop?: string;
+  /** true 면 lifecycle·툴·델타까지만 흘리고 멈춘다 — chat final 도 정본도 없어 런이 진행 중으로 남는다(재시작 복구를 잴 때) */
+  holdFinal?: boolean;
 };
 
 /** `index` 는 그 에이전트가 받은 인바운드 순번(0부터) */
@@ -51,6 +53,7 @@ export function createScenario(opts: {
       await gateway.toolResult(runId, sessionKey, agentId, { toolCallId, result });
     }
     for (const delta of script.deltas ?? []) await gateway.chatDelta(runId, sessionKey, agentId, delta);
+    if (script.holdFinal) return;
     await gateway.chatFinal(runId, sessionKey, agentId, script.reply);
     await plugin.sendOutbound({
       channelId,
