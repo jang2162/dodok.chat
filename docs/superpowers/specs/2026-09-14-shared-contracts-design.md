@@ -613,7 +613,7 @@ export type RunEvent = z.infer<typeof RunEvent>;
 
 | OpenClaw | RunEvent | 상태 신호(5.1) |
 | --- | --- | --- |
-| `chat.send` 응답(`runStarted`) 또는 첫 `agent` 이벤트 | `RUN_STARTED` | gateway_started |
+| 첫 `agent lifecycle start` 또는 첫 `chat` 이벤트(런당 1회) | `RUN_STARTED` — **어댑터 매퍼가 아니라 오케스트레이터가** `gateway_started` 전이 때 런 행(channelId·agentId·sessionKey·providerRunId)으로 만든다(매퍼는 Gateway `agentId` 가 providerAgentId 라 우리 uuid 를 모른다; 2026-09-15 판정) | gateway_started |
 | `chat` `state: status` (`phase`, `retry`) | `STEP_STARTED`/`STEP_FINISHED` (stepName=phase) | — |
 | `chat` `state: delta` `deltaText` | `TEXT_MESSAGE_START`(첫 델타) + `TEXT_MESSAGE_CONTENT` | text_delta |
 | `chat` `state: delta` `replace: true` | `TEXT_MESSAGE_REPLACE` (`message` 스냅샷) | text_delta |
