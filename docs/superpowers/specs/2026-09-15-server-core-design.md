@@ -207,28 +207,34 @@ export type Orchestrator = {
 ### 6.1 인터페이스 (`apps/server/src/adapters/types.ts`)
 
 ```ts
+// 정본: packages/openclaw-adapter/src/adapter-types.ts (서버는 apps/server/src/adapters/types.ts 에서 re-export)
 export type AdapterCapabilities = { sessionReset: boolean; agentsList: boolean; configSet: boolean };
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
+export type RunEventBody = DistributiveOmit<RunEvent, "seq" | "ts">;   // 판별 유니온을 유지한 채 seq·ts 만 뺀다 (단순 Omit 은 공통 키만 남긴다)
 export type AdapterEvent =
-  | { kind: "run_event"; runId: Id; event: Omit<RunEvent, "seq" | "ts"> }       // seq·ts 는 오케스트레이터가 부여
-  | { kind: "run_signal"; runId: Id; signal: RunSignal }
-  | { kind: "canonical"; message: OutboundMessage }                                // 브리지 정본
+  | { kind: "run_event"; runId: Id; event: RunEventBody }                        // seq·ts 는 오케스트레이터가 부여
+  | { kind: "run_signal"; runId: Id; signal: RunSignal }                          // RunSignal 은 @dodok/shared 로 이동
+  | { kind: "canonical"; message: OutboundMessage }                                // 브리지 정본(알림용 — 저장 결과는 onCanonical 훅이 돌려준다)
   | { kind: "status"; status: AdapterStatus; capabilities: AdapterCapabilities };
 
 export interface AgentAdapter {
   readonly provider: "openclaw";
   connect(): Promise<void>;                       // 실패해도 throw 하지 않고 status 로 알린다
   close(): Promise<void>;
+  status(): AdapterStatus;
+  capabilities(): AdapterCapabilities;
   listAgents(): Promise<Array<{ providerAgentId: string; name?: string }>>;
   sessionKeyFor(providerAgentId: string, channelId: Id): string;
-  send(input: InboundDeliver): Promise<InboundDeliverResult>;   // 브리지 inbound.deliver (재시도 포함)
+  send(input: InboundDeliver): Promise<InboundDeliverResult>;   // 브리지 inbound.deliver (재시도 포함). 실패는 AdapterError(code) throw
   abort(runId: Id, sessionKey: string): Promise<void>;          // chat.abort
-  resetSession(sessionKey: string): Promise<void>;              // sessions.reset (admin 필요)
+  resetSession(sessionKey: string): Promise<{ sessionStartedAt?: string; lifecycleRevision?: string }>;   // sessions.reset (admin 필요)
   syncChannelConfig(channelId: Id, config: ConfigSet["config"]): Promise<ConfigSetResult>;   // 브리지 config.set
   onEvent(handler: (e: AdapterEvent) => void): () => void;
 }
+export class AdapterError extends Error { readonly code: ErrorCode }
 ```
 
-`packages/openclaw-adapter/src/index.ts` 의 `OpenClawAdapter` 가 구현한다. 생성 인자: Gateway URL·토큰·디바이스 아이덴티티 경로·브리지 토큰·Socket.IO `Server`(`/bridge` 부착용)·로거.
+`packages/openclaw-adapter/src/index.ts` 의 `createOpenClawAdapter()` 가 구현한다. 생성 인자: Gateway URL·토큰·디바이스 아이덴티티 경로·브리지 토큰·Socket.IO `Server`(`/bridge` 부착용)·로거·`onCanonical`(서버가 정본을 저장하고 `{ messageId }` 를 돌려주는 훅)·`sessionKeysToRecover`(재접속 복구 대상). 테스트 대역 `FakeAdapter` 도 같은 패키지에 있다(태스크 6 에서 위치 결정 — 어댑터 패키지는 서버를 import 할 수 없다).
 
 ### 6.2 Gateway 클라이언트(`gateway/client.ts` 프로덕션화)
 
