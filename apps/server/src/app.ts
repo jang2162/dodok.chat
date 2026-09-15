@@ -18,13 +18,21 @@ import { registerAgentRoutes } from "./modules/agents/routes";
 import { registerChannelRoutes } from "./modules/channels/routes";
 import { registerMessageRoutes } from "./modules/messages/routes";
 import { ServerBus } from "./realtime/bus";
+import { attachWireFanout } from "./realtime/events";
+import { attachWire } from "./realtime/socket";
+import type { WireServer } from "./realtime/types";
 
 /** adapter 가 없으면 헬스는 down, REST 의 어댑터 경로(discover)는 ADAPTER_UNAVAILABLE. 실제 배선은 태스크 12. */
-export type AppDeps = { adapter?: AgentAdapter | undefined; logger?: Logger };
+export type AppDeps = {
+  adapter?: AgentAdapter | undefined;
+  logger?: Logger;
+  /** wire 소켓별 미전송 큐 상한(기본 500) — 테스트가 낮춘다 */
+  wireMaxPending?: number;
+};
 
 export type App = {
   fastify: FastifyInstance;
-  io: Server;
+  io: WireServer;
   db: Db;
   bus: ServerBus;
   logger: Logger;
@@ -88,8 +96,12 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     workspace: workspaceId,
     adapter: deps.adapter?.status() ?? { provider: "openclaw", gateway: "down", bridge: "down" },
   }));
-  const io = new Server(fastify.server, { cors: { origin: config.APP_ORIGIN, credentials: true } });
-  // wire·어댑터 배선은 태스크 5/12 가 여기에 register 한다
+  const io: WireServer = new Server(fastify.server, {
+    cors: { origin: config.APP_ORIGIN, credentials: true },
+  });
+  // route·runs 는 태스크 9 가 라우터·오케스트레이터로 바꾼다. 어댑터 배선은 태스크 12
+  attachWire(io, { auth, db, bus, logger, workspaceId, route: async () => {}, runs: null });
+  const fanout = attachWireFanout(io, bus, { logger, maxPending: deps.wireMaxPending });
   await fastify.ready();
   return {
     fastify,
@@ -105,6 +117,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       return typeof addr === "object" && addr ? `http://127.0.0.1:${addr.port}` : "";
     },
     async close() {
+      fanout.close();
       io.close();
       await fastify.close();
     },

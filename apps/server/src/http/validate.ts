@@ -15,6 +15,11 @@ export function parseParams<S extends z.ZodType>(schema: S, params: unknown): z.
   return parseInput(schema, params, "params");
 }
 
+/** Socket.IO 이벤트 페이로드 — 실패는 VALIDATION (wire 가 ack 오류로 싣는다) */
+export function parsePayload<S extends z.ZodType>(schema: S, payload: unknown): z.output<S> {
+  return parseInput(schema, payload, "payload");
+}
+
 /**
  * DB 에서 읽은 행을 도메인 계약으로 확인한다. 어기면 서버 버그라 500 INTERNAL —
  * 원인(ZodError)은 cause 로 붙여 에러 핸들러가 로그에 남긴다(응답에는 싣지 않는다).

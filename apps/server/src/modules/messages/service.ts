@@ -191,6 +191,16 @@ export function getMessage(db: DbOrTx, id: string): Message | undefined {
   return row ? rowToMessage(row) : undefined;
 }
 
+/** (authorId, clientMsgId) 멱등 키로 이미 저장된 사람 메시지 — wire 가 재전송을 다시 라우팅하지 않으려고 본다 */
+export function findUserMessage(db: DbOrTx, authorId: string, clientMsgId: string): Message | undefined {
+  const row = db
+    .select()
+    .from(messages)
+    .where(and(eq(messages.authorId, authorId), eq(messages.clientMsgId, clientMsgId)))
+    .get();
+  return row ? rowToMessage(row) : undefined;
+}
+
 /** 채널 확인 → allocateSeq → 본문 조립(토큰화) → INSERT. 호출자의 트랜잭션 안에서. 계약 위반이면 throw 해 롤백된다. */
 function storeMessage(tx: DbOrTx, channelId: string, build: () => MessageFields): Message {
   const channel = tx.select({ id: channels.id }).from(channels).where(eq(channels.id, channelId)).get();
