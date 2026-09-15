@@ -1,6 +1,6 @@
 # 서버 코어 설계 (Phase 1 ①)
 
-작성일: 2026-09-15 · 상태: 사용자 검토 대기 · 근거: `docs/plan.md` v0.6(8장 Phase 1, 10장 결정), 계약 스펙 `2026-09-14-shared-contracts-design.md`, ADR 0001~0003
+작성일: 2026-09-15 · 상태: 승인(2026-09-15), 구현 계획 `docs/superpowers/plans/2026-09-15-server-core.md` · 근거: `docs/plan.md` v0.6(8장 Phase 1, 10장 결정), 계약 스펙 `2026-09-14-shared-contracts-design.md`, ADR 0001~0003
 
 ## 0. 목적과 범위
 
@@ -161,7 +161,7 @@ export type Orchestrator = {
 `agent_sessions` 유지·조회. 디스패치 직전 `ensureSession(channelId, agentId)`:
 - 행이 없으면 만든다(`promptRevisionAtStart = channels.promptRevision` — 첫 턴은 (a) 설정 경로가 이미 프롬프트를 담으므로 동봉하지 않는다).
 - `needsPromptContext = promptRevisionAtStart !== channels.promptRevision` — 참이면 인바운드 `context.channelPrompt` 를 채운다(7장). 세션은 리셋·재시작 전까지 옛 시스템 프롬프트를 갖고 있으므로 매 턴 동봉한다.
-- 어댑터가 재접속 시 `sessions.list` 로 `sessionStartedAt`/`lifecycleRevision` 이 바뀐 것을 알리면(6.2) 세션이 밖에서 리셋된 것이므로 `promptRevisionAtStart = 현재` 로 되돌린다.
+- 외부(Control UI 등)에서 일어난 리셋은 MVP 에서 감지하지 않는다 — `sessions.list` 항목과 `chat.history.sessionInfo` 에는 `sessionStartedAt`·`lifecycleRevision` 이 없고 `sessions.reset` 응답 `entry` 에만 있다(스파이크 3 관찰 파일 실측). 우리 `resetSession` 의 응답으로만 갱신한다.
 
 ### 3.10 `components/`
 
@@ -212,7 +212,6 @@ export type AdapterEvent =
   | { kind: "run_event"; runId: Id; event: Omit<RunEvent, "seq" | "ts"> }       // seq·ts 는 오케스트레이터가 부여
   | { kind: "run_signal"; runId: Id; signal: RunSignal }
   | { kind: "canonical"; message: OutboundMessage }                                // 브리지 정본
-  | { kind: "session_changed"; sessionKey: string; sessionStartedAt?: string; lifecycleRevision?: number }
   | { kind: "status"; status: AdapterStatus; capabilities: AdapterCapabilities };
 
 export interface AgentAdapter {
@@ -235,7 +234,7 @@ export interface AgentAdapter {
 
 - 스코프 `["operator.read", "operator.write", "operator.approvals", "operator.admin"]` 로 접속(계획서 #15). `hello-ok` 뒤 `sessions.list` 를 한 번 호출해 `operator.admin` 부여 여부를 판정할 수 없으므로(없는 메서드와 스코프 부족이 같은 오류 — ADR 0001) **`sessions.reset` 을 실제 세션에 처음 호출할 때** `MISSING_SCOPE` 면 `capabilities.sessionReset=false` 로 내리고 `status` 로 알린다. 원격이 admin 을 주는지 확인하는 것은 구현 계획의 첫 작업(dev 루프백은 준다 — ADR 0003 2절).
 - 재접속: 지수 백오프(1s→30s 상한) + 페어링 `PAIRING_REQUIRED` 재시도(ADR 0001). 접속마다 `status`.
-- **재접속 복구**(계획서 #16): 접속 뒤 `agent_sessions` 의 세션 각각에 `sessions.subscribe` → `chat.history({ sessionKey, limit: 50 })` 전체 응답(커서가 저장돼 있으면 `cursor` 로 먼저, `kind:"reset"` 이면 전체) → `sessionStartedAt`/`lifecycleRevision` 이 저장값과 다르면 `session_changed` 이벤트. 히스토리 본문으로 **메시지를 만들지 않는다**(정본은 플러그인 경로·서버 DB). `inFlightRun` 이 있고 우리 `runs` 에 진행 중 런이 있으면 그 런에 다시 붙이고, 없으면 무시.
+- **재접속 복구**(계획서 #16): 접속 뒤 `agent_sessions` 의 세션 각각에 `sessions.subscribe` → `chat.history({ sessionKey, limit: 50 })` 전체 응답(커서가 저장돼 있으면 `cursor` 로 먼저, `kind:"reset"` 이면 전체) . 히스토리 본문으로 **메시지를 만들지 않는다**(정본은 플러그인 경로·서버 DB). `inFlightRun` 이 있고 우리 `runs` 에 진행 중 런이 있으면 그 런에 다시 붙이고, 없으면 무시.
 - `events.ts` **[신규]**: 계약 스펙 6.1 표를 그대로 구현. `runId` 로 우리 런을 찾을 수 없는 이벤트(Gateway 안에서 사람이 직접 띄운 세션 등)는 `CUSTOM` 으로도 저장하지 않고 debug 로그만.
 - `agents.list`, `chat.abort`, `sessions.reset` 래퍼. 모든 호출은 `FORBIDDEN`/`MISSING_SCOPE` 를 「기능 없음」으로 바꾸고 연결은 유지한다.
 
