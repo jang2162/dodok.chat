@@ -305,7 +305,7 @@ API 프로바이더 백엔드는 드리프트 재전송이 실제로 먹힐 수 
 | 항목 | 결정 | 계획서 |
 | --- | --- | --- |
 | 1 주입 경로 | (a) 기준선 + 서버가 리비전 불일치 때만 `context.channelPrompt` 를 채우고 플러그인은 `ChannelPromptContext` 로. `promptOverride` 도 같은 자리 | #1 |
-| 2 리셋 정책 | 서버 연결에 `operator.admin` 요청, 「새 대화」= `sessions.reset`. 원격 부여 여부는 Phase 1 첫 작업에서 확인, 거부 시 회전 폴백 | #15 |
+| 2 리셋 정책 | 서버 연결에 `operator.admin` 요청, 「새 대화」= `sessions.reset`. 원격 부여 여부는 Phase 1 첫 작업에서 확인, 거부 시 회전 폴백 → **원격 실측(2026-09-15): 부여**(`grantedScopes` 에 `operator.admin` 포함, `sessions.reset` → `resetOutcome: ok`) | #15 |
 | 3 재접속 복구 | 전체 치환 기본 + 커서 최적화(7.2) | #16 |
 | 4 대체 경로 | MVP 미사용(7.3) | #17 |
 | 5 `inboundChannelPrompt` | 제거 — 값이 있으면 항상 `ChannelPromptContext` | #18 |

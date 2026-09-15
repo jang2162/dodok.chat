@@ -9,7 +9,8 @@
     "spike:gateway": "tsx src/spike/gateway-spike.ts",
     "spike:bridge": "tsx src/spike/bridge-spike.ts",
     "spike:bridge-serve": "tsx src/spike/bridge-serve.ts",
-    "spike:prompt": "tsx src/spike/prompt-spike.ts"
+    "spike:prompt": "tsx src/spike/prompt-spike.ts",
+    "spike:admin-scope": "tsx src/spike/admin-scope-probe.ts"
   },
   "dependencies": {
     "@dodok/shared": "workspace:*",
