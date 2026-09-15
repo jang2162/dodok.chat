@@ -77,3 +77,20 @@ export type RunEvent = z.infer<typeof RunEvent>;
 export type RunEventType = RunEvent["type"];
 
 export const RUN_EVENT_TYPES = RunEvent.options.map((o) => o.shape.type.value) as RunEventType[];
+
+// 계약 스펙 5.1 — 런 상태머신 입력 신호. 서버 오케스트레이터(machine.ts)와 어댑터(AdapterEvent)가 함께 쓴다.
+export type RunSignal =
+  | { kind: "gateway_started" } // chat.send 응답 runStarted 또는 첫 agent 이벤트
+  | { kind: "text_delta" }
+  | { kind: "tool_start" }
+  | { kind: "tool_end"; openTools: number }
+  | { kind: "approval_requested" }
+  | { kind: "approval_resolved" }
+  | { kind: "gateway_final" } // chat state: final
+  | { kind: "canonical_received" } // 브리지 outbound.message 도착
+  | { kind: "final_timeout" } // finalizing 상한(기본 10s)
+  | { kind: "gateway_error"; code: string; message: string }
+  | { kind: "gateway_aborted" }
+  | { kind: "abort_requested" }
+  | { kind: "queue_timeout" }
+  | { kind: "run_timeout" };

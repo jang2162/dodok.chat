@@ -1,20 +1,6 @@
-import type { Run, RunStatus } from "@dodok/shared";
+import type { Run, RunSignal, RunStatus } from "@dodok/shared";
 
-export type RunSignal =
-  | { kind: "gateway_started" } // chat.send 응답 runStarted 또는 첫 agent 이벤트
-  | { kind: "text_delta" }
-  | { kind: "tool_start" }
-  | { kind: "tool_end"; openTools: number }
-  | { kind: "approval_requested" }
-  | { kind: "approval_resolved" }
-  | { kind: "gateway_final" } // chat state: final
-  | { kind: "canonical_received" } // 브리지 outbound.message 도착
-  | { kind: "final_timeout" } // finalizing 상한(기본 10s)
-  | { kind: "gateway_error"; code: string; message: string }
-  | { kind: "gateway_aborted" }
-  | { kind: "abort_requested" }
-  | { kind: "queue_timeout" }
-  | { kind: "run_timeout" };
+export type { RunSignal };
 
 export type RunPatch = Partial<Pick<Run, "hasCanonical" | "finalSource" | "error">>;
 
