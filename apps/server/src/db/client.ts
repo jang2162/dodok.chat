@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
+import * as authSchema from "./auth-schema";
 import * as schema from "./schema.sqlite";
 
 /** 파일 경로 또는 ":memory:". 연결 후 마이그레이션까지 적용한다. */
@@ -9,7 +10,7 @@ export function createDb(file: string) {
   const sqlite = new Database(file);
   sqlite.pragma("journal_mode = WAL");
   sqlite.pragma("foreign_keys = ON");
-  const db = drizzle(sqlite, { schema });
+  const db = drizzle(sqlite, { schema: { ...schema, ...authSchema } });
   migrate(db, { migrationsFolder: fileURLToPath(new URL("../../drizzle", import.meta.url)) });
   return db;
 }

@@ -87,8 +87,30 @@ export const channels = sqliteTable("channels", {
     .notNull()
     .references(() => users.id),
   lastSeq: integer("last_seq").notNull().default(0), // 메시지 seq 카운터
+  promptRevision: integer("prompt_revision").notNull().default(1), // prompt·promptOverride·relayPolicy 가 바뀔 때마다 +1
   createdAt: ts("created_at").notNull(),
 });
+
+export const agentSessions = sqliteTable(
+  "agent_sessions",
+  {
+    id: text("id").primaryKey(),
+    channelId: text("channel_id")
+      .notNull()
+      .references(() => channels.id),
+    agentId: text("agent_id")
+      .notNull()
+      .references(() => agents.id),
+    sessionKey: text("session_key").notNull(), // agent:<providerAgentId>:dodok:channel:<channelId>
+    promptRevisionAtStart: integer("prompt_revision_at_start").notNull(), // 세션이 마지막으로 새로 시작됐을 때(첫 턴·리셋 뒤)의 채널 프롬프트 리비전
+    sessionStartedAt: ts("session_started_at"), // Gateway sessions.list 의 sessionStartedAt (리셋 판별)
+    lifecycleRevision: text("lifecycle_revision"), // 실측값은 uuid 문자열 (sessions.reset 응답 entry)
+    providerSessionId: text("provider_session_id"), // sessionId (리셋 뒤에도 유지되므로 식별용으로만)
+    historyCursor: text("history_cursor"), // chat.history deltaCursor (오면 저장, 최적화용)
+    lastSyncedAt: ts("last_synced_at"),
+  },
+  (t) => [uniqueIndex("agent_sessions_channel_agent").on(t.channelId, t.agentId)],
+);
 
 export const channelMembers = sqliteTable(
   "channel_members",

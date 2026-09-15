@@ -7,8 +7,7 @@
     "dev": "tsx watch src/main.ts",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json",
-    "db:generate": "drizzle-kit generate",
-    "auth:generate": "better-auth generate --config src/auth/index.ts --output src/db/auth-schema.ts"
+    "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
     "@dodok/openclaw-adapter": "workspace:*",
@@ -25,7 +24,6 @@
     "zod": "4.6.5"
   },
   "devDependencies": {
-    "@better-auth/cli": "1.4.21",
     "@types/better-sqlite3": "9.6.0",
     "@types/node": "^24.13.4",
     "@types/ws": "8.18.1",

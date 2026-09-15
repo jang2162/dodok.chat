@@ -46,7 +46,7 @@ const msg = (ch: string, seq: number, extra: Partial<typeof messages.$inferInser
 });
 
 describe("db", () => {
-  it("마이그레이션이 12개 테이블을 만든다", () => {
+  it("마이그레이션이 17개 테이블을 만든다", () => {
     const db = createDb(":memory:");
     const rows = db.all<{ name: string }>(sql`select name from sqlite_master where type = 'table'`);
     const names = rows
@@ -54,6 +54,8 @@ describe("db", () => {
       .filter((n) => !n.startsWith("__") && !n.startsWith("sqlite_"))
       .sort();
     expect(names).toEqual([
+      "account",
+      "agent_sessions",
       "agents",
       "approvals",
       "channel_members",
@@ -64,7 +66,10 @@ describe("db", () => {
       "push_subscriptions",
       "run_events",
       "runs",
+      "session",
+      "user",
       "users",
+      "verification",
       "workspaces",
     ]);
   });
