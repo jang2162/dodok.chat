@@ -66,53 +66,82 @@ src/
 
 ### 2.2 `apps/server`
 
+Phase 1 ① 서버 코어 실물(스펙 `docs/superpowers/specs/2026-09-15-server-core-design.md`, 계획 `docs/superpowers/plans/2026-09-15-server-core.md`). 한 프로세스 안에 REST·wire·브리지·어댑터가 같이 뜬다.
+
 ```
 src/
-├─ app.ts                 Fastify 부트스트랩, Socket.IO 부착, 브리지 네임스페이스 /bridge 부착(attachBridge — 별도 HTTP 라우트 없음)
-├─ config.ts              env 로드 (zod로 검증)
+├─ main.ts                프로세스 진입점: cwd 를 저장소 루트로 옮기고 루트 .env 로드(이미 있는 env 는 덮지 않음) → createApp → listen, SIGINT/SIGTERM → close
+├─ app.ts                 createApp: 부팅 순서(DB → 워크스페이스 → 인증·owner → Fastify → Socket.IO → 어댑터 → 서비스 → 라우트 → wire → 부팅 정리 → adapter.connect),
+│                         종료 순서(새 wire 거부 → 오케스트레이터 stop → adapter.close → io.close → Fastify → DB, 10s 상한), /healthz, Gateway 재접속 60s 알림
+├─ config.ts              env 를 zod 로 검증한 ServerConfig. OPENCLAW_TARGET 이 원격/dev Gateway 쌍과 디바이스 파일을 고른다
+├─ logger.ts              pino, 토큰·비밀 키 redact
+├─ wiring.ts              createServices(라우터 ⇄ 오케스트레이터 상호 참조, RunsFacade), sessionRecoverTargets(재접속 복구 대상)
 ├─ db/
-│  ├─ schema.sqlite.ts    Drizzle 스키마 (계획서 6장 테이블 + push_subscriptions)
-│  └─ client.ts           createDb: 연결 + 마이그레이션
-├─ auth/                  Better Auth 설정 (MVP: 단일 owner, 로컬 토큰; org 플러그인은 꺼둠)
+│  ├─ schema.sqlite.ts    Drizzle 스키마 (계획서 6장 테이블 + agent_sessions)
+│  ├─ auth-schema.ts      Better Auth 테이블
+│  └─ client.ts           createDb: better-sqlite3 연결 + 마이그레이션(apps/server/drizzle)
+├─ auth/
+│  ├─ index.ts            Better Auth(이메일 로그인·가입 비활성), 세션 토큰 검증
+│  ├─ owner.ts            부팅 때 owner 보장 — LOCAL_AUTH_TOKEN 이 owner 비밀번호, 바뀌면 기존 세션을 끊는다
+│  └─ routes.ts           POST /api/v1/auth/local(5회/분)·GET me·POST logout, requireSession(Bearer 또는 dodok.session 쿠키)
+├─ http/
+│  ├─ errors.ts           HttpError·apiError — ApiError { code, message, details? } ↔ HTTP 상태
+│  └─ validate.ts         경계 Zod 파싱(body·query·params·wire payload·저장값)
 ├─ modules/
-│  ├─ channels/           CRUD, 멤버(사람/에이전트), 채널 프롬프트·오버라이드 (변경 시 어댑터 config-sync 호출)
-│  ├─ messages/           저장·seq 발급·브로드캐스트·히스토리 페이징
-│  ├─ router/             멘션 라우터 + 릴레이 정책 (maxRelayTurns, allowPairs, 반복 해시 가드)
-│  ├─ runs/               Run/RunEvent 저장, 스트리밍 버퍼(50ms 코얼레싱), 활동 패널용 조회
-│  ├─ components/         상호작용 수신 → 저장 → 인바운드 텍스트 변환 → 어댑터 전달, TTL/allowedUsers 검사
-│  ├─ approvals/          승인 카드 상태 미러, resolve 위임
-│  ├─ push/               web-push 구독 저장·발송 (멘션/승인/릴레이 한도)
-│  └─ uploads/            multipart 저장 + sharp 썸네일
+│  ├─ channels/           CRUD·멤버(에이전트 promptOverride·autoRespond·aliases)·프롬프트 리비전, 프롬프트 변경 시 어댑터 config.set, 「새 대화」(resetAgentSession)
+│  ├─ agents/             에이전트 등록·수정, GET /agents/discover(Gateway agents.list)
+│  ├─ messages/           seq 발급(seq.ts)·사람/에이전트/시스템 메시지 저장·bus 통지·히스토리 페이징
+│  ├─ router/             decide.ts(순수: 멘션·릴레이 판정, maxRelayTurns·allowPairs·반복 해시·일일 상한) + service.ts(런 enqueue, relay_limit·relay_denied 시스템 메시지와 continue_relay 버튼)
+│  ├─ runs/               orchestrator.ts(세션 직렬화·타이머·신호 → 상태 전이·run_events·정본 상관·부팅 정리), machine.ts(순수 상태머신),
+│  │                      store.ts(runs·run_events), context.ts(인바운드 InboundDeliver 조립), timers.ts, routes.ts(런 목록·상세·이벤트 REST)
+│  ├─ sessions/           agent_sessions — 채널×에이전트 세션 키 보장, 리셋 뒤 프롬프트 리비전 갱신
+│  ├─ components/         interact.ts(순수: 검사 순서·값 스키마·인바운드 텍스트) + service.ts(저장·소비·continue/interaction 런)
+│  └─ adapter/            GET /api/v1/adapter/status
 ├─ adapters/
-│  ├─ types.ts            AgentAdapter 인터페이스 (계획서 5.7)
-│  └─ registry.ts         provider → adapter 인스턴스
+│  └─ types.ts            AgentAdapter 계열 타입 재수출(구현은 packages/openclaw-adapter)
 └─ realtime/
-   ├─ socket.ts           Socket.IO 네임스페이스·룸(채널=룸)·재접속 시 lastSeq 이후 재전송
-   └─ events.ts           wire 계약 구현
+   ├─ bus.ts              ServerBus — 모듈 → realtime 타입드 이벤트
+   ├─ socket.ts           wire 인증(세션 토큰·프로토콜)·룸(channel:<id>, user:<id>)·클라이언트 → 서버 핸들러(subscribe 는 lastSeq 이후 ≤200)
+   ├─ events.ts           bus → 룸 팬아웃, 소켓별 미전송 500 초과 시 run.event 버림 + run.state { resync }
+   └─ types.ts            WireServer·RunsFacade 타입
 ```
+
+아직 없는 것(Phase 2 이후): `approvals/`(승인 카드 미러), `push/`, `uploads/`, 어댑터 `registry.ts`(MVP 는 openclaw 하나).
+
+테스트(`apps/server/test/`): 모듈 단위(인메모리 SQLite), `fakes/`(가짜 Gateway·가짜 플러그인·시나리오 대본), `integration/`(시나리오 1~8, 실제 어댑터 + 가짜 둘), `helpers/`(`bootLiveApp`·wire 클라이언트·시나리오 단계).
+손으로 두드리는 실연 도구는 루트 `scripts/wire-cli.ts`(`pnpm wire-cli`, `docs/guides/live-smoke.md`).
 
 ### 2.3 `packages/openclaw-adapter` (서버 프로세스 안에서 실행)
 
 ```
 src/
-├─ index.ts               AgentAdapter 구현 (openclaw)
+├─ index.ts               배럴: adapter-types · createOpenClawAdapter · FakeAdapter
+├─ adapter-types.ts       AgentAdapter 인터페이스(스펙 6.1), AdapterEvent·RunEventBody, AdapterCapabilities(sessionReset·agentsList·configSet), AdapterError
+├─ openclaw-adapter.ts    createOpenClawAdapter: 연결 관리자 + 브리지 + 매퍼 조립. send = 런 id 등록 → 세션 구독 → inbound.deliver(플러그인 미접속 120s 대기,
+│                         ack 타임아웃 10s·재시도 1s·4s·16s) → admission. 정본 outbound.message → onCanonical. abort(chat.abort)·resetSession(sessions.reset,
+│                         FORBIDDEN 이면 capability 내림)·listAgents·syncChannelConfig·forgetRun·status 이벤트
+├─ fake-adapter.ts        FakeAdapter — 서버 단위 테스트용(`@dodok/openclaw-adapter/fake` 서브패스), calls 기록·이벤트 주입
+├─ config-sync.ts         채널 설정 → 브리지 config.set(10s). 플러그인이 없으면 기다리지 않고 ADAPTER_UNAVAILABLE
 ├─ gateway/
-│  ├─ client.ts           @openclaw/gateway-client 래퍼: wss 접속, 디바이스 아이덴티티·토큰을 hostDeps로 data/에 저장,
-│  │                      hello-ok(features·policy) 캐시, caps 선언(정본 GATEWAY_CLIENT_CAPS), 첫 connect 의 NOT_PAIRED 를
-│  │                      정상 경로로 보고 2~5초 재시도(자동 승인), 재접속 시 프로젝션 재구축
-│  ├─ device-identity.ts  Ed25519 아이덴티티 생성·저장(0600)·서명·raw base64url 공개키 (스파이크 1에서 확정)
-│  ├─ sessions.ts         채널·에이전트 → sessionKey 매핑 (agent:<agentId>:dodok:channel:<channelId> 원형 고정 — 「새 대화」는 sessions.reset, 세대 접미사 없음: 계획서 10장 #15·#19)
-│  ├─ events.ts           chat(delta/final/status/error/aborted)/agent(stream:"tool" 포함)/session.message(usage·stopReason·비용)/
-│  │                      session.approval → RunEvent 정규화. runId = chat.send 의 idempotencyKey. seq 는 순서용이며 연속이 아니다.
-│  │                      session.tool 은 쓰지 않는다 — tool-events 를 선언한 연결은 수신 대상에서 제외된다(ADR 0001)
-│  └─ approvals.ts        approval.get/resolve
+│  ├─ client.ts           @openclaw/gateway-client 래퍼: connect.challenge → connect(디바이스 서명·공유 토큰, scopes 에 operator.admin 포함,
+│  │                      caps DEFAULT_GATEWAY_CAPS) → hello-ok. 실패(PAIRING_REQUIRED 포함)는 그대로 올리고 재시도는 연결 관리자 몫
+│  ├─ connection-manager.ts  접속 루프·지수 백오프·상태(down/reconnecting/connected)·요청 타임아웃, 접속마다 복구(sessions.subscribe →
+│  │                      대상 세션별 sessions.messages.subscribe → chat.history, 커서 reset 이면 꼬리 페이지 다시).
+│  │                      subscribeSession: 접속 뒤 새로 생긴 세션은 send 전에 연결당 한 번 구독 — 실물 Gateway 는 구독한 세션의 이벤트만 보낸다(실연에서 발견, live-smoke 5.4)
+│  ├─ device-identity.ts  Ed25519 아이덴티티 생성·저장(0600)·서명 (스파이크 1에서 확정)
+│  ├─ events.ts           chat(delta/final/error/aborted)·agent(lifecycle·stream:"tool")·session.message(usage) → RunEvent + RunSignal.
+│  │                      우리 런(runId = 우리 런 uuid, ADR 0002 4.3)만. deltaText → TEXT_MESSAGE_CONTENT(replace 면 TEXT_MESSAGE_REPLACE), final 스냅샷은 정본 대체용
+│  └─ sessions.ts         sessionKeyFor(agent:<agentId>:dodok:channel:<channelId> 원형 고정 — 「새 대화」는 sessions.reset, 세대 접미사 없음: 계획서 10장 #15·#19),
+│                         sessions.reset·chat.history 응답 파싱
 ├─ bridge/
-│  ├─ server.ts           플러그인이 아웃바운드로 붙는 Socket.IO 네임스페이스 /bridge (HTTP 경로는 /socket.io/; 토큰 인증,
-│  │                      인바운드 전달, 아웃바운드 수신, 컴포넌트 결과 전달, 헬스) — 최소 표면은 스파이크 2에서 구현
-│  └─ session.ts          플러그인 연결 1개의 상태 (연결/재연결, 미응답 요청, 중복 제거)
-└─ config-sync.ts         채널 프롬프트 변경 → 브리지로 플러그인에 "설정 변경" 전달 → 플러그인이 Gateway 설정 갱신 → 설정 스냅샷 반영 확인.
-                          세션 반영은 별개 — 서버가 세션별 프롬프트 리비전을 추적해 불일치 시 ChannelPromptContext 동봉 또는 리셋 (ADR 0003 7.1)
+│  ├─ server.ts           attachBridge: Socket.IO 네임스페이스 /bridge(HTTP 경로는 /socket.io/). 토큰 인증 → hello → inbound.deliver·config.set·agents.list 요청,
+│  │                      outbound.message·status 수신, close 때 system.notice { reason: "shutdown" }
+│  └─ session.ts          토큰 비교(상수 시간)·클라이언트 이벤트 Zod 파싱·연결 단계·outboundId 중복 제거
+└─ spike/                 Phase 0 스파이크 러너(gateway-spike·bridge-spike·prompt-spike·admin-scope-probe·bridge-serve) — 서버는 쓰지 않는다
 ```
+
+테스트(`test/`): 모듈별 단위 + `fixtures/gateway-events.ts`(ADR 0001·0002 관찰에서 뽑은 Gateway 이벤트 팩토리). `./testing` 서브패스는 없다 — 서버 통합 하네스
+(`apps/server/test/fakes/`)가 픽스처·`connectGateway`·`attachBridge`·`createGatewayEventMapper` 를 상대 경로로 가져간다(어댑터 파일을 옮기면 서버 typecheck 가 잡는다).
 
 ### 2.4 `packages/openclaw-plugin` (원격 OpenClaw Gateway 프로세스 안에서 실행)
 
@@ -170,20 +199,31 @@ src/
 
 ## 4. 환경 변수 (`.env.example`)
 
-```
-DATABASE_URL=file:./data/app.db            # 이후 postgres://
-AUTH_SECRET=
-APP_ORIGIN=https://dodok.example.com       # 로컬: http://localhost:5173
-OPENCLAW_GATEWAY_URL=wss://gateway.example.com   # 원격 기본. 로컬 동반 기동 시 ws://gateway:18789
-OPENCLAW_GATEWAY_TOKEN=
-OPENCLAW_DEVICE_IDENTITY_PATH=./data/openclaw-device.json
-BRIDGE_PUBLIC_URL=wss://dodok.example.com/bridge   # 플러그인이 접속할 공개 주소 (설정 마법사가 표시)
-BRIDGE_TOKEN=                              # 플러그인 계정 설정에 넣을 공유 토큰 (마법사가 발급)
-# 주의(ADR 0002 10절): 플러그인은 env 가 아니라 Gateway 계정 설정 channels.dodok.accounts.<id>.bridgeUrl(오리진+/bridge)로 접속한다.
-# 스파이크용 .env.example 의 BRIDGE_URL 은 브리지가 리슨할 오리진(/bridge 없음)이라 뜻이 다르다 — Phase 1 서버에서 BRIDGE_PUBLIC_URL 하나로 정리할 것.
-VAPID_PUBLIC_KEY= / VAPID_PRIVATE_KEY= / VAPID_SUBJECT=mailto:...
-UPLOAD_DIR=./data/uploads
-```
+정본은 `apps/server/src/config.ts`(zod). 서버는 저장소 루트를 작업 디렉터리로 삼고 루트 `.env` 를 읽는다 — **이미 설정된 환경 변수는 `.env` 가 덮지 않는다**(`process.loadEnvFile`, 실연에서 확인). 빈 값(`KEY=`)은 설정하지 않은 것으로 보고 기본값을 쓴다.
+
+| 변수 | 기본값 | 뜻 |
+| --- | --- | --- |
+| `HOST` | `127.0.0.1` | 리슨 주소 |
+| `PORT` | `3000` | 리슨 포트. REST `/api/v1`·wire(기본 네임스페이스)·브리지 `/bridge` 가 모두 여기 |
+| `APP_ORIGIN` | (필수) | 웹 앱 오리진 — Socket.IO CORS·Better Auth `baseURL`/`trustedOrigins`·세션 쿠키 Secure(https 일 때). 로컬 `http://localhost:5173` |
+| `TRUST_PROXY` | `false` | 리버스 프록시 뒤면 `true` — 로그인 레이트리밋이 X-Forwarded-For 의 클라이언트 IP 로 걸린다 |
+| `DATA_DIR` | `./data` | 런타임 데이터(DB·디바이스 아이덴티티) |
+| `DB_PATH` | `<DATA_DIR>/dodok.sqlite` | SQLite 파일 |
+| `LOG_LEVEL` | `info` | `fatal`~`trace` (pino, 토큰 키는 redact) |
+| `DODOK_WORKSPACE_NAME` | `dodok` | 부팅 때 워크스페이스가 없으면 이 이름으로 만든다 |
+| `OWNER_HANDLE` | `owner` | owner 핸들 |
+| `LOCAL_AUTH_TOKEN` | (필수, ≥16자) | 로컬 로그인 토큰 = owner 비밀번호. 바꾸면 기존 세션이 끊긴다 |
+| `BETTER_AUTH_SECRET` | (필수, ≥32자) | Better Auth 서명 비밀 |
+| `OPENCLAW_TARGET` | `remote` | `remote` \| `dev` — 어댑터가 붙을 Gateway 쌍과 디바이스 파일을 고른다 |
+| `OPENCLAW_GATEWAY_URL` · `OPENCLAW_GATEWAY_TOKEN` | — | 원격 Gateway(`wss://…`). `remote` 면 둘 다 필수 |
+| `OPENCLAW_DEV_GATEWAY_URL` · `OPENCLAW_DEV_GATEWAY_TOKEN` | — | 로컬 dev Gateway(`ws://127.0.0.1:19001`, `openclaw --dev gateway run`). `dev` 면 둘 다 필수 |
+| `OPENCLAW_DEVICE_IDENTITY_PATH` | `<DATA_DIR>/openclaw-device.json` (dev: `openclaw-device-dev.json`) | Ed25519 디바이스 아이덴티티 — 원격·dev 페어링이 섞이지 않게 대상별로 나뉜다 |
+| `BRIDGE_TOKEN` | (필수, ≥16자) | 플러그인 계정 설정 `channels.dodok.accounts.<id>.token` 과 같은 공유 토큰 |
+| `BRIDGE_PUBLIC_URL` | — | 플러그인 계정 설정 `bridgeUrl` 에 적을 공개 주소(정보용 — 서버는 이 값으로 리슨하지 않는다). 예 `wss://dodok.example.com/bridge` |
+| `BRIDGE_URL` | — | **스파이크 러너 전용**(서버는 읽지 않음) — 러너가 브리지를 리슨할 오리진(`/bridge` 없음) |
+
+플러그인은 env 가 아니라 Gateway 계정 설정 `channels.dodok.accounts.<id>.bridgeUrl`(오리진 + `/bridge`)로 접속한다(ADR 0002 10절). 서버 쪽 공개 주소는 `BRIDGE_PUBLIC_URL` 하나로 정리됐고, 스파이크의 `BRIDGE_URL` 은 러너 전용으로 남았다.
+Phase 2 이후에 더할 것: `VAPID_PUBLIC_KEY`·`VAPID_PRIVATE_KEY`·`VAPID_SUBJECT`(푸시), `UPLOAD_DIR`(업로드). Postgres 전환 시 `DB_PATH` 대신 연결 문자열.
 
 우리가 관리하는 OpenClaw 설정 조각(설정 마법사가 만들어 주고, 사용자가 Gateway 호스트에 적용):
 

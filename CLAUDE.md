@@ -35,6 +35,7 @@ pnpm i · pnpm dev(전체) · pnpm -F @dodok/server dev · pnpm -F @dodok/web de
 pnpm test · pnpm typecheck · pnpm lint · pnpm lint:fix · pnpm fmt · pnpm fmt:check (oxlint / oxfmt · test·typecheck 는 Turbo 캐시 off)
 Node 24.21.0 · pnpm 11.16.0 은 mise.toml 핀(`mise install`). Bash 도구는 SessionStart 훅(.claude/hooks/node-env.sh)이 PATH 를 잡는다. `node -v` 가 24 가 아니면 `export PATH="$(mise where node)/bin:$PATH"`.
 scripts/orca-worker.sh status|spawn|attach|wait|reap|stop|keep|sync-config · bash scripts/test/orca-worker.test.sh
+서버 단독: pnpm -F @dodok/server dev(루트 .env, 이미 있는 env 는 안 덮음) · pnpm wire-cli <origin> [localToken] <명령>(REST·wire 손 점검) · dev Gateway 실연 절차·결과 docs/guides/live-smoke.md
 docker compose -f infra/docker-compose.yml up [--profile gateway]
 
 ## 현재 단계
@@ -42,4 +43,4 @@ shared 계약·DB 스키마·순수 로직 구현 완료 (docs/superpowers/plans
 Phase 0 스파이크 1·2·3 완료 — docs/adr/0001(Gateway WS 실물), 0002(채널 플러그인: 인바운드·message 툴·components 동작, 봇 루프 보호는 플러그인이 사실을 넘길 때만), 0003(채널 프롬프트: claude-cli 기존 세션은 리셋·새 키에서만 반영, ChannelPromptContext 는 매 턴 반영; deltaCursor 는 claude-cli 세션에 없음; chat.send 대체 경로는 MVP 미사용).
 로컬 dev Gateway: OpenClaw.app 번들 CLI(`openclaw --dev`, Node 24 번들, 상태 ~/.openclaw-dev, 에이전트 dev·fin). 원격 호스트 플러그인 설치는 사람 절차(ADR 0002 9절).
 Phase 0 종료, 결정 13건 확정(계획서 10장 #1·#11~#21), Node 24 전환, 플러그인 스파이크 흔적 정리 병합(cd572af — InboundDeliverResult.admission, ChannelPromptContext 고정).
-Phase 1 ① 서버 코어 스펙 docs/superpowers/specs/2026-09-15-server-core-design.md 작성 — 사용자 검토 대기. 다음: 스펙 승인 → writing-plans(구현 계획) → Orca 워커 구현(첫 작업: 원격 Gateway 의 operator.admin 부여 확인). 그 뒤 ② 웹.
+Phase 1 ① 서버 코어 완료 — 스펙 docs/superpowers/specs/2026-09-15-server-core-design.md, 계획 docs/superpowers/plans/2026-09-15-server-core.md(태스크 0~15). 통합 시나리오 1~8(가짜 Gateway·플러그인) 통과, dev Gateway 실연(런 6: 멘션·릴레이·상한·이어가기·리셋 뒤 프롬프트·Gateway 재기동 복구) 통과 — 실연이 찾은 「새 세션 미구독」은 38fa0f1 로 고침, usage 값·진단 로그는 남음(docs/guides/live-smoke.md 5.4). 다음: ② 웹.
