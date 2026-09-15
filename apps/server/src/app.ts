@@ -41,10 +41,14 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
   fastify.setErrorHandler((error, _req, reply) => {
     if (error instanceof HttpError) return reply.status(error.status).send(error.body);
     // Fastify 자체 4xx(잘못된 JSON·미지원 content-type·404·429)는 클라이언트 오류다 — 500 으로 바꾸지 않는다(리뷰 sc-t1 지적 1)
-    const status = typeof error.statusCode === "number" ? error.statusCode : 500;
+    const { statusCode, message } = error as { statusCode?: unknown; message?: unknown };
+    const status = typeof statusCode === "number" ? statusCode : 500;
     if (status >= 400 && status < 500) {
       logger.warn({ err: error, status }, "client error");
-      return reply.status(status).send({ code: httpStatusToErrorCode(status), message: error.message });
+      return reply.status(status).send({
+        code: httpStatusToErrorCode(status),
+        message: typeof message === "string" ? message : "bad request",
+      });
     }
     logger.error({ err: error }, "unhandled");
     return reply.status(500).send({ code: "INTERNAL", message: "internal error" });
