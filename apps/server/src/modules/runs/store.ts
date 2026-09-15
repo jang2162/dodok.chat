@@ -3,7 +3,7 @@ import { and, asc, count, desc, eq, gt, gte, isNotNull, max, notInArray } from "
 import { v7 as uuidv7 } from "uuid";
 import type { RunEventBody } from "../../adapters/types";
 import type { DbOrTx } from "../../db/client";
-import { messages, runEvents, runs } from "../../db/schema.sqlite";
+import { channels, messages, runEvents, runs } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
 import { parseStored } from "../../http/validate";
 import { TERMINAL_STATUSES } from "./machine";
@@ -103,6 +103,17 @@ export function getRun(db: DbOrTx, id: string): Run | undefined {
   return row ? rowToRun(row) : undefined;
 }
 
+/** 채널이 그 워크스페이스에 있는 런 — REST·wire 가 다른 워크스페이스 런을 NOT_FOUND 로 가린다 */
+export function getRunInWorkspace(db: DbOrTx, id: string, workspaceId: string): Run | undefined {
+  const row = db
+    .select({ run: runs })
+    .from(runs)
+    .innerJoin(channels, eq(channels.id, runs.channelId))
+    .where(and(eq(runs.id, id), eq(channels.workspaceId, workspaceId)))
+    .get();
+  return row ? rowToRun(row.run) : undefined;
+}
+
 /** 그 세션의 종료되지 않은 런 중 가장 먼저 만든 것 — FIFO 직렬화라 디스패치된 런이 맨 앞이다. */
 export function findOpenRunBySession(db: DbOrTx, sessionKey: string): Run | undefined {
   const row = db
@@ -113,6 +124,18 @@ export function findOpenRunBySession(db: DbOrTx, sessionKey: string): Run | unde
     .limit(1)
     .get();
   return row ? rowToRun(row) : undefined;
+}
+
+/** 채널의 런을 최근 것부터(createdAt·id 내림차순) limit 개 — REST 런 목록 */
+export function listChannelRuns(db: DbOrTx, channelId: string, limit: number): Run[] {
+  return db
+    .select()
+    .from(runs)
+    .where(eq(runs.channelId, channelId))
+    .orderBy(desc(runs.createdAt), desc(runs.id))
+    .limit(limit)
+    .all()
+    .map(rowToRun);
 }
 
 /** 트리거 메시지로 만든 가장 최근 런. 한 메시지가 여러 에이전트를 부를 수 있어 agentId 로 좁힌다. */

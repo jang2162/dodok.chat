@@ -17,17 +17,25 @@ import { createLogger, type Logger } from "./logger";
 import { registerAgentRoutes } from "./modules/agents/routes";
 import { registerChannelRoutes } from "./modules/channels/routes";
 import { registerMessageRoutes } from "./modules/messages/routes";
+import type { RunTimeouts } from "./modules/runs/orchestrator";
+import { registerRunRoutes } from "./modules/runs/routes";
 import { ServerBus } from "./realtime/bus";
 import { attachWireFanout } from "./realtime/events";
 import { attachWire } from "./realtime/socket";
 import type { WireServer } from "./realtime/types";
+import { createServices } from "./wiring";
 
-/** adapter 가 없으면 헬스는 down, REST 의 어댑터 경로(discover)는 ADAPTER_UNAVAILABLE. 실제 배선은 태스크 12. */
+/**
+ * adapter 가 있으면 라우터·오케스트레이터를 배선한다(wiring.ts). 없으면 헬스는 down, REST 의 어댑터 경로(discover)는
+ * ADAPTER_UNAVAILABLE, 메시지는 라우팅하지 않고 wire 런 핸들러도 ADAPTER_UNAVAILABLE. 실제 어댑터 기본값은 태스크 12.
+ */
 export type AppDeps = {
   adapter?: AgentAdapter | undefined;
   logger?: Logger;
   /** wire 소켓별 미전송 큐 상한(기본 500) — 테스트가 낮춘다 */
   wireMaxPending?: number;
+  /** 런 타임아웃·코얼레싱·동시 런 상한(기본 DEFAULT_RUN_TIMEOUTS) — 테스트가 낮춘다 */
+  timeouts?: Partial<RunTimeouts>;
 };
 
 export type App = {
@@ -90,6 +98,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
   registerChannelRoutes(fastify, routeContext);
   registerAgentRoutes(fastify, routeContext);
   registerMessageRoutes(fastify, routeContext);
+  registerRunRoutes(fastify, routeContext);
   fastify.get("/healthz", async () => ({
     ok: true,
     db: "ok",
@@ -99,8 +108,21 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
   const io: WireServer = new Server(fastify.server, {
     cors: { origin: config.APP_ORIGIN, credentials: true },
   });
-  // route·runs 는 태스크 9 가 라우터·오케스트레이터로 바꾼다. 어댑터 배선은 태스크 12
-  attachWire(io, { auth, db, bus, logger, workspaceId, route: async () => {}, runs: null });
+  const services = deps.adapter
+    ? createServices({ db, bus, logger, adapter: deps.adapter, workspaceId, timeouts: deps.timeouts })
+    : undefined;
+  if (!services) {
+    logger.warn("no agent adapter — messages are not routed and run handlers answer ADAPTER_UNAVAILABLE");
+  }
+  attachWire(io, {
+    auth,
+    db,
+    bus,
+    logger,
+    workspaceId,
+    route: services ? (message) => services.router.routeMessage(message) : async () => {},
+    runs: services?.runs ?? null,
+  });
   const fanout = attachWireFanout(io, bus, { logger, maxPending: deps.wireMaxPending });
   await fastify.ready();
   return {
@@ -117,6 +139,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       return typeof addr === "object" && addr ? `http://127.0.0.1:${addr.port}` : "";
     },
     async close() {
+      services?.orchestrator.stop();
       fanout.close();
       io.close();
       await fastify.close();
