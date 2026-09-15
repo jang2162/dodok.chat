@@ -11,8 +11,11 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 command -v mise >/dev/null 2>&1 || exit 0
 [ -n "${CLAUDE_ENV_FILE:-}" ] || exit 0
 
-node_dir="$(cd "$ROOT" && mise where node 2>/dev/null)" || exit 0
-pnpm_dir="$(cd "$ROOT" && mise where npm:pnpm 2>/dev/null)" || pnpm_dir=""
+# 워크트리의 mise.toml 은 `mise trust` 목록에 없을 수 있다(신뢰는 경로 단위). 그러면 mise 가 아예 실행을 거부하므로
+# MISE_TRUSTED_CONFIG_PATHS 로 이 디렉터리를 이 호출에 한해 신뢰한다(2026-09-15 phase1-prep 워커 실측: 훅이 조용히 실패해 Node 22).
+# spawn 도 워크트리를 만들 때 `mise trust` 를 한다(대화형 셸의 mise activate 용).
+node_dir="$(cd "$ROOT" && MISE_TRUSTED_CONFIG_PATHS="$ROOT" mise where node 2>/dev/null)" || exit 0
+pnpm_dir="$(cd "$ROOT" && MISE_TRUSTED_CONFIG_PATHS="$ROOT" mise where npm:pnpm 2>/dev/null)" || pnpm_dir=""
 prefix="$node_dir/bin"
 [ -n "$pnpm_dir" ] && prefix="$prefix:$pnpm_dir/bin"
 printf 'export PATH="%s:$PATH"\n' "$prefix" >> "$CLAUDE_ENV_FILE"

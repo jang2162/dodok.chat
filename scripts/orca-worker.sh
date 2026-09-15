@@ -1044,8 +1044,22 @@ ensure_browser() {
 
 # --setup run 이 무엇을 했는지 믿지 않고 직접 잰다.
 # 사용: verify_setup <경로> [overwrite|preserve]  — 두 번째 인자는 .env 정책이다
+# 워크트리의 mise.toml 을 신뢰 목록에 올린다. mise 의 신뢰는 경로 단위라 최상위를 신뢰해도
+# 워크트리 사본은 「not trusted」로 남고, 그러면 워커의 대화형 셸(mise activate)과 Bash 도구 훅이
+# 핀한 Node 24 대신 PATH 의 다른 node(22)를 잡는다 — 2026-09-15 phase1-prep 워커가 실측.
+# mise 가 없거나 mise.toml 이 없으면 조용히 통과한다.
+trust_mise_config() {
+  local path="$1"
+  [ -f "$path/mise.toml" ] || return 0
+  command -v mise >/dev/null 2>&1 || return 0
+  mise trust "$path/mise.toml" >/dev/null 2>&1 \
+    && printf 'mise.toml 을 신뢰 목록에 올렸다\n' >&2 \
+    || printf '경고: mise trust 실패 — 워커 셸의 node 가 24 가 아닐 수 있다\n' >&2
+}
+
 verify_setup() {
   local path="$1" mode="${2:-overwrite}"
+  trust_mise_config "$path"
   if [ ! -d "$path/node_modules" ]; then
     printf 'node_modules 가 없다. pnpm install 을 돌린다\n' >&2
     (cd "$path" && pnpm install >/dev/null 2>&1) \
@@ -1903,6 +1917,7 @@ cmd_sync_config() {
     printf 'sync-config: 그런 경로가 없다: %s\n' "$path" >&2
     return 1
   }
+  trust_mise_config "$path"
   sync_local_config "$path"
 }
 

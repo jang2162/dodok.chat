@@ -124,7 +124,7 @@ scripts/orca-worker.sh spawn <슬러그> <역할> [--model opus|sonnet] [--brief
 4. `orca worktree create --base-branch <base> --setup run`
 5. `git rev-list --count <새브랜치>..<base>` 가 0 인지 검증 → 아니면 `reset --hard`
 6. `node_modules` 가 있는지 확인 → 없으면 `pnpm install`. Node 는 `mise.toml` 핀(24.21.0) — Orca 터미널은 대화형 zsh 라 `mise activate` 가 잡고,
-   워커의 Bash 도구는 SessionStart 훅 `.claude/hooks/node-env.sh` 가 잡는다. `node -v` 가 22 면 `export PATH="$(mise where node)/bin:$PATH"`(`.npmrc engine-strict` 라 22 에서는 `pnpm install` 이 실패한다).
+   워커의 Bash 도구는 SessionStart 훅 `.claude/hooks/node-env.sh` 가 잡는다(mise 신뢰는 경로 단위라 spawn·sync-config 가 워크트리의 `mise.toml` 을 `mise trust` 한다). `node -v` 가 22 면 `export PATH="$(mise where node)/bin:$PATH"`(`.npmrc engine-strict` 라 22 에서는 `pnpm install` 이 실패한다).
    이어서 **최상위의 `.env` 를 워크트리로 복사한다**(`sync_local_config`) — gitignore 라 워크트리에 따라오지 않는다(아래 「생성 직후 세팅」).
    마지막으로 **BrowserOS neo 가 떠 있는지 확인하고 꺼져 있으면 켠다**(`ensure_browser`) — 워커는 `/mcp` 를 못 누르므로
    워커가 뜨기 전에 브라우저가 떠 있어야 한다(4절 「예외」)
