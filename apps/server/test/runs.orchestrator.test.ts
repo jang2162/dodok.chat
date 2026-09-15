@@ -482,7 +482,7 @@ describe("orchestrator", () => {
     ["늦은 dispatch ack", "resolve"],
     ["어댑터의 forgotten 거부", "reject"],
   ])(
-    "ack 전(send 대기 — 플러그인 없음 등)에 queuedMs 가 지나면 error(ADAPTER_UNAVAILABLE) + run_error, 어댑터 전송은 버리고(forgetRun, abort 없음) 세션의 다음 런을 보낸다 — 첫 send 는 %s 로 끝난다",
+    "ack 전(send 대기 — 플러그인 없음 등)에 queuedMs 가 지나면 error(ADAPTER_UNAVAILABLE) + run_error, Gateway abort(best-effort) 뒤 어댑터 전송을 버리고(forgetRun) 세션의 다음 런을 보낸다 — 첫 send 는 %s 로 끝난다",
     async (_label, late) => {
       const t = setup();
       const acks = new Map<string, () => void>();
@@ -510,9 +510,9 @@ describe("orchestrator", () => {
       expect(systemMessages(t.db).map((m) => m.bodyMd)).toEqual([
         "@dev 실행이 실패했습니다: ADAPTER_UNAVAILABLE",
       ]);
-      // 전달되지 않은 런이라 Gateway abort 는 없고, 어댑터가 기다리던 전송은 버린다(플러그인이 늦게 붙어도 보내지 않게)
+      // 전달 도중 상한이 울렸을 수 있어 Gateway abort 는 best-effort 로 보내고, 어댑터가 기다리던 전송은 버린다(플러그인이 늦게 붙어도 보내지 않게)
       expect(t.adapter.calls.forget).toEqual([first.id]);
-      expect(t.adapter.calls.abort).toEqual([]);
+      expect(t.adapter.calls.abort).toEqual([{ runId: first.id, sessionKey: t.sessionKey }]);
       expect(t.adapter.calls.send.map((s) => s.runId)).toEqual([first.id, second.id]);
 
       // 늦게 끝난 첫 send 는 닫힌 런을 건드리지 않는다
@@ -531,7 +531,10 @@ describe("orchestrator", () => {
       expect(t.runOf(second.id).status).toBe("queued");
       await vi.advanceTimersByTimeAsync(1);
       expect(t.runOf(second.id)).toMatchObject({ status: "error", error: { code: "TIMEOUT" } });
-      expect(t.adapter.calls.abort).toEqual([{ runId: second.id, sessionKey: t.sessionKey }]);
+      expect(t.adapter.calls.abort).toEqual([
+        { runId: first.id, sessionKey: t.sessionKey },
+        { runId: second.id, sessionKey: t.sessionKey },
+      ]);
       expect(t.logger.error).not.toHaveBeenCalled();
       expect(t.logger.warn).not.toHaveBeenCalledWith(expect.anything(), "run dispatch failed");
       t.orch.stop();
@@ -756,6 +759,32 @@ describe("orchestrator", () => {
     expect(t.runOf(waiting.id).status).toBe("aborted");
     expect(t.adapter.calls.abort).toHaveLength(1);
     expect(t.adapter.calls.send.map((s) => s.runId)).toEqual([run.id, head.id]);
+    t.orch.stop();
+  });
+
+  it("ack 전(send 대기 중)에 abort 하면 어댑터가 쥔 전송을 버린다(forgetRun) — 플러그인이 늦게 붙어도 보내지 않는다", async () => {
+    const t = setup();
+    let ack: () => void = () => undefined;
+    t.adapter.script(
+      (input) =>
+        new Promise((resolve) => {
+          ack = () => resolve({ admission: "dispatch", providerRunId: input.runId });
+        }),
+    );
+    const run = await t.enqueue();
+    await t.flush();
+    expect(t.adapter.calls.send.map((s) => s.runId)).toEqual([run.id]);
+
+    await t.orch.abort(run.id);
+
+    expect(t.runOf(run.id).status).toBe("aborted");
+    expect(t.adapter.calls.forget).toEqual([run.id]);
+    // 늦게 온 ack 는 닫힌 런을 건드리지 않는다
+    const eventsBefore = t.eventsOf(run.id);
+    ack();
+    await t.flush();
+    expect(t.runOf(run.id)).toMatchObject({ status: "aborted" });
+    expect(t.eventsOf(run.id)).toEqual(eventsBefore);
     t.orch.stop();
   });
 

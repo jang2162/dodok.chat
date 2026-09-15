@@ -249,13 +249,17 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
   }
 
   /**
-   * ack 전 상한 — 플러그인에 전달되지 않은 런이라 Gateway abort 는 없다. 어댑터가 쥔 전송을 먼저 버리고(플러그인이 늦게 붙어도
+   * ack 전 상한 — 대개 플러그인에 전달되지 않은 런이다. 그래도 전달 도중(플러그인엔 도착했고 ack 만 오는 중)에 울렸을 수 있으니
+   * Gateway 에 best-effort abort 를 먼저 보내고(sc-t14 리뷰 R1; 모르는 runId 면 무해), 어댑터가 쥔 전송을 버린 뒤(플러그인이 늦게 붙어도
    * 닫힌 런을 보내지 않게) ADAPTER_UNAVAILABLE 로 닫는다. 닫히면 release → pump 가 같은 세션의 다음 런을 보낸다.
    */
   function undelivered(runId: string): void {
     try {
       const run = store.getRun(db, runId);
       if (!awaitingAck.has(runId) || run?.status !== "queued") return;
+      void adapter
+        .abort(runId, run.sessionKey)
+        .catch((err: unknown) => logger.debug({ err, runId }, "adapter abort after undelivered failed"));
       adapter.forgetRun?.(runId);
       applySignal(runId, {
         kind: "gateway_error",
@@ -634,6 +638,8 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
           logger.warn({ err, runId }, "adapter abort failed");
         }
       }
+      // ack 전(플러그인 대기·재시도 중)이면 어댑터가 쥔 전송을 버린다 — 플러그인이 늦게 붙어도 중단한 런을 보내지 않게(sc-t14 리뷰 이월 A)
+      if (awaitingAck.has(runId)) adapter.forgetRun?.(runId);
       await api.signal(runId, { kind: "abort_requested" });
     },
 
