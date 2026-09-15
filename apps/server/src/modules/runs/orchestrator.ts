@@ -509,9 +509,16 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
 
     async signal(runId, s, ctx) {
       try {
-        if (s.kind === "gateway_final" && ctx?.message !== undefined) snapshots.set(runId, ctx.message);
-        if (s.kind === "final_timeout") await finalizeFromSnapshot(runId);
-        else applySignal(runId, s);
+        if (s.kind === "final_timeout") {
+          await finalizeFromSnapshot(runId);
+          return;
+        }
+        const updated = applySignal(runId, s);
+        // 스냅샷은 실제로 finalizing 에 있을 때만 보관한다 — 종료된 런에 늦게 온 final 이 맵에 남지 않게(sc-t8 리뷰 R1).
+        // finalizing 타이머는 다음 틱 이후에 울리므로 전이 뒤에 넣어도 늦지 않다.
+        if (s.kind === "gateway_final" && ctx?.message !== undefined && updated?.status === "finalizing") {
+          snapshots.set(runId, ctx.message);
+        }
       } catch (err) {
         failRun(runId, err);
       }
