@@ -267,11 +267,12 @@ describe("createGatewayEventMapper — 런별 상태", () => {
     ["final", () => f.chatFinal("PONG")],
     ["error", () => f.chatError({ errorKind: "timeout" })],
     ["aborted", () => f.chatAborted()],
-  ])("chat %s 로 런이 끝나면 그 런의 상태를 지운다", (_state, terminal) => {
+  ])("chat %s 로 런이 끝나면 그 런의 상태를 지운다 (종료 표시는 forget 이 푼다)", (_state, terminal) => {
     const m = mapper();
     run(m, f.chatDelta("P"));
     run(m, f.toolStart());
     run(m, terminal());
+    m.forget(f.RUN_ID);
     const again = run(m, f.chatDelta("P"));
     const orphanResult = run(m, f.toolResult());
 
@@ -339,6 +340,57 @@ describe("createGatewayEventMapper — 런별 상태", () => {
   });
 });
 
+describe("createGatewayEventMapper — forget·종료 표시", () => {
+  it("forget(runId) 은 런 상태를 지워, 다음 이벤트가 새 런처럼 gateway_started·TEXT_MESSAGE_START 를 다시 낸다", () => {
+    const m = started();
+    run(m, f.chatDelta("P"));
+    run(m, f.toolStart("a"));
+
+    m.forget(f.RUN_ID);
+    const after = run(m, f.chatDelta("Q"));
+
+    expect(signals(after)).toEqual([{ kind: "gateway_started" }, { kind: "text_delta" }]);
+    expect(types(after)).toEqual(["TEXT_MESSAGE_START", "TEXT_MESSAGE_CONTENT"]);
+  });
+
+  it.each([
+    ["final", () => f.chatFinal("PONG")],
+    ["error", () => f.chatError({ errorKind: "timeout" })],
+    ["aborted", () => f.chatAborted()],
+  ])("chat %s 뒤에는 forget 전까지 chat·agent 프레임이 [] 이고 usage CUSTOM 만 통과한다", (_state, end) => {
+    const m = started();
+    run(m, f.chatDelta("P"));
+    run(m, end());
+
+    expect(run(m, f.chatDelta("late"))).toEqual([]);
+    expect(run(m, f.chatStatus())).toEqual([]);
+    expect(run(m, f.lifecycleStart())).toEqual([]);
+    expect(run(m, f.lifecycleEnd())).toEqual([]);
+    expect(run(m, f.toolStart("late"))).toEqual([]);
+    expect(types(run(m, f.sessionMessage()))).toEqual(["CUSTOM"]);
+
+    m.forget(f.RUN_ID);
+    expect(signals(run(m, f.chatDelta("again")))).toEqual([
+      { kind: "gateway_started" },
+      { kind: "text_delta" },
+    ]);
+  });
+
+  it("forget 은 다른 런의 상태·종료 표시를 건드리지 않는다", () => {
+    const m = mapper();
+    run(m, f.chatDelta("P", { runId: OTHER_RUN }));
+    run(m, f.chatFinal("PONG"));
+
+    m.forget(OTHER_RUN);
+
+    expect(run(m, f.chatDelta("late"))).toEqual([]);
+    expect(signals(run(m, f.chatDelta("x", { runId: OTHER_RUN })))).toEqual([
+      { kind: "gateway_started" },
+      { kind: "text_delta" },
+    ]);
+  });
+});
+
 describe("createGatewayEventMapper — 경계", () => {
   it("chat error 에 errorMessage·errorKind 가 없으면 기본값을 쓴다", () => {
     const onlyKind = run(started(), f.chatError({ errorKind: "timeout" }));
@@ -354,15 +406,31 @@ describe("createGatewayEventMapper — 경계", () => {
     expect(signals(bare)).toEqual([{ kind: "gateway_error", code: "unknown", message: "gateway error" }]);
   });
 
-  it("session.message: idempotencyKey 가 cli-assistant: 꼴이 아니면 payload runId, 둘 다 없으면 []", () => {
-    const fallback = run(
+  it("session.message runId 순서: __openclaw.runId → payload runId → idempotencyKey, 모두 없으면 []", () => {
+    const fromPayload = run(
       mapper(),
       f.sessionMessage({ idempotencyKey: "other-key", payloadRunId: OTHER_RUN }),
     );
     const none = run(mapper(), f.sessionMessage({ idempotencyKey: null }));
 
-    expect(fallback.map((item) => item.runId)).toEqual([OTHER_RUN]);
+    expect(fromPayload.map((item) => item.runId)).toEqual([OTHER_RUN]);
     expect(none).toEqual([]);
+  });
+
+  it("session.message: __openclaw.runId 만 있어도 그 런으로 CUSTOM 을 낸다(가장 먼저 본다)", () => {
+    const onlyMeta = run(mapper(), f.sessionMessage({ idempotencyKey: null, openclawRunId: OTHER_RUN }));
+    const metaWins = run(mapper(), f.sessionMessage({ openclawRunId: OTHER_RUN, payloadRunId: f.RUN_ID }));
+
+    expect(onlyMeta.map((item) => item.runId)).toEqual([OTHER_RUN]);
+    expect(metaWins.map((item) => item.runId)).toEqual([OTHER_RUN]);
+  });
+
+  it("session.message: cli-assistant: 접두사가 없는 idempotencyKey 는 키 전체를 runId 로 쓴다", () => {
+    const out = run(mapper(), f.sessionMessage({ idempotencyKey: OTHER_RUN }));
+    const emptySuffix = run(mapper(), f.sessionMessage({ idempotencyKey: "cli-assistant:" }));
+
+    expect(out.map((item) => item.runId)).toEqual([OTHER_RUN]);
+    expect(emptySuffix).toEqual([]);
   });
 
   it("session.message: assistant 가 아니거나 usage 가 없으면 []", () => {

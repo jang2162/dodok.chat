@@ -10,7 +10,11 @@ import type { RunEventBody } from "../adapter-types";
 /** 항목마다 event 나 signal 중 하나만 싣는다. snapshotText 는 gateway_final 항목에만 있다. */
 export type MappedEvent = { runId: string; event?: RunEventBody; signal?: RunSignal; snapshotText?: string };
 
-export type GatewayEventMapper = { map(frame: EventFrame): MappedEvent[] };
+export type GatewayEventMapper = {
+  map(frame: EventFrame): MappedEvent[];
+  /** 런 상태와 종료 표시를 지운다. 어댑터가 런을 잊을 때(`knownRunIds` 에서 뺄 때) 함께 부른다. */
+  forget(runId: string): void;
+};
 
 const TOOL_RESULT_MAX = 2000;
 const USAGE_KEY_PREFIX = "cli-assistant:";
@@ -58,6 +62,7 @@ const SessionMessagePayload = z.looseObject({
     role: z.string().optional(),
     model: z.string().optional(),
     idempotencyKey: z.string().optional(),
+    __openclaw: z.looseObject({ runId: z.string().optional() }).optional(),
     usage: z
       .looseObject({
         input: z.number().optional(),
@@ -72,6 +77,9 @@ type RunTrack = { started: boolean; textStarted: boolean; openToolIds: Set<strin
 
 export function createGatewayEventMapper(opts: { isOurRun: (runId: string) => boolean }): GatewayEventMapper {
   const runs = new Map<string, RunTrack>();
+  // chat final·error·aborted 를 본 런. forget 전까지 늦게 온 chat·agent 프레임이 gateway_started 를 다시 내거나
+  // 툴 상태를 새로 만들지 않게 막는다. usage(session.message)는 final 과 순서가 정해져 있지 않아 막지 않는다.
+  const ended = new Set<string>();
 
   function track(runId: string): RunTrack {
     let t = runs.get(runId);
@@ -90,9 +98,14 @@ export function createGatewayEventMapper(opts: { isOurRun: (runId: string) => bo
     out.push({ runId, signal: { kind: "gateway_started" } });
   }
 
+  function end(runId: string) {
+    runs.delete(runId);
+    ended.add(runId);
+  }
+
   function mapChat(payload: unknown): MappedEvent[] {
     const parsed = ChatPayload.safeParse(payload);
-    if (!parsed.success || !opts.isOurRun(parsed.data.runId)) return [];
+    if (!parsed.success || ended.has(parsed.data.runId) || !opts.isOurRun(parsed.data.runId)) return [];
     const p = parsed.data;
     const runId = p.runId;
     const out: MappedEvent[] = [];
@@ -122,7 +135,7 @@ export function createGatewayEventMapper(opts: { isOurRun: (runId: string) => bo
       case "final":
         if (t.textStarted) out.push({ runId, event: { type: "TEXT_MESSAGE_END", runId, messageId: runId } });
         out.push({ runId, signal: { kind: "gateway_final" }, snapshotText: messageText(p.message) });
-        runs.delete(runId);
+        end(runId);
         break;
       case "error": {
         const code = p.errorKind ?? "unknown";
@@ -140,7 +153,7 @@ export function createGatewayEventMapper(opts: { isOurRun: (runId: string) => bo
           },
           { runId, signal: { kind: "gateway_error", code, message } },
         );
-        runs.delete(runId);
+        end(runId);
         break;
       }
       case "aborted":
@@ -148,7 +161,7 @@ export function createGatewayEventMapper(opts: { isOurRun: (runId: string) => bo
           { runId, event: { type: "RUN_ABORTED", runId, by: "gateway" } },
           { runId, signal: { kind: "gateway_aborted" } },
         );
-        runs.delete(runId);
+        end(runId);
         break;
     }
     return out;
@@ -156,7 +169,7 @@ export function createGatewayEventMapper(opts: { isOurRun: (runId: string) => bo
 
   function mapAgent(payload: unknown): MappedEvent[] {
     const parsed = AgentPayload.safeParse(payload);
-    if (!parsed.success || !opts.isOurRun(parsed.data.runId)) return [];
+    if (!parsed.success || ended.has(parsed.data.runId) || !opts.isOurRun(parsed.data.runId)) return [];
     const { runId, stream, data } = parsed.data;
 
     if (stream === "lifecycle") {
@@ -205,11 +218,10 @@ export function createGatewayEventMapper(opts: { isOurRun: (runId: string) => bo
     if (!parsed.success) return [];
     const { message } = parsed.data;
     if (message.role !== "assistant" || !message.usage) return [];
+    // OpenClaw 정규 순서: 전사 메타 runId → payload runId → idempotencyKey(`cli-assistant:` 접두사는 뗀다).
     const key = message.idempotencyKey;
-    const runId =
-      key?.startsWith(USAGE_KEY_PREFIX) && key.length > USAGE_KEY_PREFIX.length
-        ? key.slice(USAGE_KEY_PREFIX.length)
-        : parsed.data.runId;
+    const keyRunId = key?.startsWith(USAGE_KEY_PREFIX) ? key.slice(USAGE_KEY_PREFIX.length) : key;
+    const runId = message.__openclaw?.runId || parsed.data.runId || keyRunId;
     if (!runId || !opts.isOurRun(runId)) return [];
     const value = {
       inputTokens: message.usage.input,
@@ -232,6 +244,10 @@ export function createGatewayEventMapper(opts: { isOurRun: (runId: string) => bo
         default:
           return []; // sessions.changed·node.*·health·tick 등 — 런이 없다
       }
+    },
+    forget(runId) {
+      runs.delete(runId);
+      ended.delete(runId);
     },
   };
 }

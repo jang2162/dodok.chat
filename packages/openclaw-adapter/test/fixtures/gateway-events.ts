@@ -143,6 +143,8 @@ export function sessionMessage(
     idempotencyKey?: string | null;
     usage?: Record<string, unknown> | null;
     payloadRunId?: string;
+    /** `message.__openclaw.runId` — OpenClaw 가 전사 메시지에 붙이는 런 id */
+    openclawRunId?: string;
     seq?: number;
   } = {},
 ): EventFrame {
@@ -169,7 +171,11 @@ export function sessionMessage(
     ...(usage === null ? {} : { usage }),
     timestamp: TS,
     ...(idempotencyKey === null ? {} : { idempotencyKey }),
-    __openclaw: { id: "fixture-message-id", seq: 4 },
+    __openclaw: {
+      id: "fixture-message-id",
+      seq: 4,
+      ...(o.openclawRunId === undefined ? {} : { runId: o.openclawRunId }),
+    },
   };
   const seq = o.seq ?? 7;
   return frame(

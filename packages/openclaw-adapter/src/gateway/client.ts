@@ -7,7 +7,7 @@
  *  (b) 연결 — `hello-ok` 를 기다려 돌려준다. 페어링 미승인은 `GatewayPairingRequiredError` 로 올린다.
  *  (c) 이벤트 구독·요청 호출 통로.
  *
- * 재접속·세션 프로젝션·승인 처리는 여기서 하지 않는다(Phase 1 이후 `events.ts`·`approvals.ts` 몫).
+ * 재접속·세션 프로젝션·승인 처리는 여기서 하지 않는다 — 재접속 루프는 `connection-manager.ts`, 이벤트 매핑은 `events.ts`.
  */
 import { GatewayClient } from "@openclaw/gateway-client";
 import type {
@@ -111,6 +111,16 @@ export function createGatewayHostDeps(params: {
   };
 }
 
+/** 서버 코어 스펙 6.2(계획서 #15). sessions.reset 은 operator.admin 이 필요하다. */
+export const DEFAULT_GATEWAY_SCOPES = [
+  "operator.read",
+  "operator.write",
+  "operator.approvals",
+  "operator.admin",
+];
+/** `tool-events` 를 선언해야 agent tool 스트림이 온다(ADR 0001 5.4). */
+export const DEFAULT_GATEWAY_CAPS = ["tool-events", "approvals", "session-scoped-events"];
+
 export type GatewayConnectOptions = {
   caps?: string[];
   clientDisplayName?: string;
@@ -120,6 +130,11 @@ export type GatewayConnectOptions = {
   deviceIdentityPath: string;
   deviceTokenStorePath?: string;
   instanceId?: string;
+  /**
+   * `hello-ok` 뒤 연결이 끊겼을 때 한 번. 라이브러리는 스스로 재접속하려 하지만 호출자가 `stop()` 하고 새로 붙는 것을 전제로 한다.
+   * 우리가 `stop()` 한 뒤의 종료와 hello 전 종료(연결 실패는 `connectGateway` 의 reject 로 간다)는 전달하지 않는다.
+   */
+  onClose?: (info: { code: number; reason: string }) => void;
   onEvent?: (event: EventFrame) => void;
   role?: string;
   scopes?: string[];
@@ -133,17 +148,20 @@ export class GatewayConnection {
   readonly identity: DeviceIdentity;
   private readonly client: GatewayClient;
   private readonly listeners: Set<(event: EventFrame) => void>;
+  private readonly onStop: (() => void) | undefined;
 
   constructor(params: {
     client: GatewayClient;
     hello: HelloOk;
     identity: DeviceIdentity;
     listeners: Set<(event: EventFrame) => void>;
+    onStop?: () => void;
   }) {
     this.client = params.client;
     this.hello = params.hello;
     this.identity = params.identity;
     this.listeners = params.listeners;
+    this.onStop = params.onStop;
   }
 
   /** hello-ok 이후에만 부른다. `timeoutMs: null` 이면 무기한. */
@@ -164,6 +182,7 @@ export class GatewayConnection {
   }
 
   async stop(): Promise<void> {
+    this.onStop?.();
     this.listeners.clear();
     await this.client.stopAndWait({ timeoutMs: 5_000 });
   }
@@ -198,6 +217,7 @@ export async function connectGateway(options: GatewayConnectOptions): Promise<Ga
     ...(options.deviceTokenStorePath ? { deviceTokenStorePath: options.deviceTokenStorePath } : {}),
   });
   const identity = loadOrCreateDeviceIdentity(options.deviceIdentityPath);
+  let stopRequested = false;
   let resolveHello: (hello: HelloOk) => void = () => undefined;
   let rejectHello: (error: unknown) => void = () => undefined;
   // lib 은 ES2022 라 Promise.withResolvers 를 쓸 수 없다.
@@ -207,7 +227,7 @@ export async function connectGateway(options: GatewayConnectOptions): Promise<Ga
   });
 
   const client = new GatewayClient({
-    caps: options.caps ?? [],
+    caps: options.caps ?? DEFAULT_GATEWAY_CAPS,
     clientDisplayName: options.clientDisplayName ?? "dodok",
     clientName: "gateway-client",
     clientVersion: options.clientVersion ?? "0.0.0",
@@ -216,6 +236,10 @@ export async function connectGateway(options: GatewayConnectOptions): Promise<Ga
     maxProtocol: PROTOCOL_VERSION,
     minProtocol: PROTOCOL_VERSION,
     mode: "backend",
+    // notifyStoppedClose 라 우리가 stop 해도 불린다 — stopRequested 로 거른다.
+    onClose: (code, reason, info) => {
+      if (!stopRequested && info?.phase === "post-hello") options.onClose?.({ code, reason });
+    },
     onConnectError: (error) => {
       rejectHello(toPairingError(error) ?? error);
     },
@@ -227,7 +251,7 @@ export async function connectGateway(options: GatewayConnectOptions): Promise<Ga
     },
     platform: process.platform,
     role: options.role ?? "operator",
-    scopes: options.scopes ?? ["operator.read", "operator.write"],
+    scopes: options.scopes ?? DEFAULT_GATEWAY_SCOPES,
     ...(options.token ? { token: options.token } : {}),
     url: options.url,
   });
@@ -240,8 +264,17 @@ export async function connectGateway(options: GatewayConnectOptions): Promise<Ga
   client.start();
   try {
     const hello = await helloPromise;
-    return new GatewayConnection({ client, hello, identity, listeners });
+    return new GatewayConnection({
+      client,
+      hello,
+      identity,
+      listeners,
+      onStop: () => {
+        stopRequested = true;
+      },
+    });
   } catch (error) {
+    stopRequested = true;
     await client.stopAndWait({ timeoutMs: 5_000 }).catch(() => undefined);
     throw error;
   } finally {

@@ -166,4 +166,45 @@ describe("attachBridge (실제 Socket.IO)", () => {
       data: { admission: "dispatch", providerRunId: delivery.deliveryId },
     });
   });
+
+  it.each([
+    ["data 가 InboundDeliverResult 가 아님(옛 번들의 {})", { ok: true, data: {} }],
+    ["Result 봉투가 아님", {}],
+    ["ok:false 인데 error 코드가 ErrorCode 가 아님", { ok: false, error: { code: "WEIRD", message: "x" } }],
+  ])("플러그인 ack 를 경계에서 파싱한다 — %s → INTERNAL ADAPTER_PROTOCOL", async (_name, raw) => {
+    const socket = client(TOKEN);
+    socket.on("inbound.deliver", (_payload: InboundDeliver, ack: (res: unknown) => void) => ack(raw));
+    await waitFor(socket, "connect");
+    await socket.emitWithAck("hello", hello);
+
+    const res = await bridge.deliverInbound({ deliveryId: randomUUID() } as InboundDeliver, 1_000);
+    expect(res).toMatchObject({ ok: false, error: { code: "INTERNAL" } });
+    expect(res.ok ? "" : res.error.message).toMatch(/^ADAPTER_PROTOCOL: /);
+  });
+
+  it("플러그인 ok:false 는 코드·메시지 그대로, config.set·agents.list ack 도 파싱한다", async () => {
+    const socket = client(TOKEN);
+    socket.on("inbound.deliver", (_payload: InboundDeliver, ack: (res: unknown) => void) =>
+      ack({ ok: false, error: { code: "VALIDATION", message: "bad" } }),
+    );
+    socket.on("config.set", (_payload: unknown, ack: (res: unknown) => void) =>
+      ack({ ok: true, data: { applied: "sometimes" } }),
+    );
+    socket.on("agents.list", (_payload: unknown, ack: (res: unknown) => void) =>
+      ack({ ok: true, data: { agents: [{ agentId: "dev", name: "Dev" }] } }),
+    );
+    await waitFor(socket, "connect");
+    await socket.emitWithAck("hello", hello);
+
+    expect(await bridge.deliverInbound({ deliveryId: randomUUID() } as InboundDeliver, 1_000)).toEqual({
+      ok: false,
+      error: { code: "VALIDATION", message: "bad" },
+    });
+    const config = await bridge.setConfig({ channelId: CH, config: { requireMention: true } }, 1_000);
+    expect(config).toMatchObject({ ok: false, error: { code: "INTERNAL" } });
+    expect(await bridge.listAgents(1_000)).toEqual({
+      ok: true,
+      data: { agents: [{ agentId: "dev", name: "Dev" }] },
+    });
+  });
 });

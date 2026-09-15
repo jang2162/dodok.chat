@@ -4,24 +4,27 @@
  * Phase 1 이 이어받을 최소 표면: 토큰 인증(handshake `auth.token`), 플러그인 → 서버 이벤트
  * (`hello`·`outbound.message`·`outbound.typing`·`status`) 수신, 서버 → 플러그인 요청
  * (`inbound.deliver`·`config.set`·`agents.list`) 송신. 저장·라우팅 같은 런타임 로직은 콜백으로 밖에 둔다.
+ * 플러그인 ack 는 외부 입력이라 Result 봉투와 data 를 Zod 로 파싱한다 — 틀리면 `INTERNAL` + `ADAPTER_PROTOCOL: …`.
  *
  * HTTP 경로는 Socket.IO 기본 `/socket.io/` 이고 `/bridge` 는 네임스페이스다 — 리버스 프록시는 `/socket.io` 를 넘기면 된다.
  */
 import { randomUUID } from "node:crypto";
 import {
+  ApiError,
   BRIDGE_PROTOCOL,
   type BridgeClientToServerEvents,
   type BridgeHello,
   type BridgeServerToClientEvents,
   type BridgeStatus,
   type ConfigSet,
-  type ConfigSetResult,
+  ConfigSetResult,
   type InboundDeliver,
-  type InboundDeliverResult,
+  InboundDeliverResult,
   type OutboundMessage,
   type Result,
 } from "@dodok/shared";
 import type { Namespace, Server, Socket } from "socket.io";
+import { z } from "zod";
 import { BridgeSessionState, OutboundDedupe, parseBridgeClientEvent, verifyBridgeToken } from "./session";
 
 export const BRIDGE_NAMESPACE = "/bridge";
@@ -63,8 +66,30 @@ export type BridgeHandle = {
   close(): void;
 };
 
-function errorResult(code: "TIMEOUT" | "ADAPTER_UNAVAILABLE", message: string): Result<never> {
+function errorResult(code: "TIMEOUT" | "ADAPTER_UNAVAILABLE" | "INTERNAL", message: string): Result<never> {
   return { ok: false, error: { code, message } };
+}
+
+const AckEnvelope = z.discriminatedUnion("ok", [
+  z.object({ ok: z.literal(true), data: z.unknown() }),
+  z.object({ ok: z.literal(false), error: ApiError }),
+]);
+const AgentsListAck = z.object({
+  agents: z.array(z.object({ agentId: z.string(), name: z.string().optional() })),
+});
+
+function protocolError(error: z.ZodError): Result<never> {
+  const issues = error.issues.map((i) => `${i.path.join(".") || "<root>"}: ${i.message}`).join("; ");
+  return errorResult("INTERNAL", `ADAPTER_PROTOCOL: ${issues}`);
+}
+
+/** 플러그인 ack(unknown)를 Result<T> 로. 봉투·data 가 계약과 다르면 INTERNAL ADAPTER_PROTOCOL. */
+function parseAck<T>(schema: z.ZodType<T>, raw: unknown): Result<T> {
+  const envelope = AckEnvelope.safeParse(raw);
+  if (!envelope.success) return protocolError(envelope.error);
+  if (!envelope.data.ok) return { ok: false, error: envelope.data.error };
+  const data = schema.safeParse(envelope.data.data);
+  return data.success ? { ok: true, data: data.data } : protocolError(data.error);
 }
 
 export function attachBridge(io: Server, opts: BridgeServerOptions): BridgeHandle {
@@ -161,16 +186,19 @@ export function attachBridge(io: Server, opts: BridgeServerOptions): BridgeHandl
   }
 
   async function request<T>(
-    emit: (socket: BridgeSocket, timeoutMs: number) => Promise<Result<T>>,
+    schema: z.ZodType<T>,
+    emit: (socket: BridgeSocket, timeoutMs: number) => Promise<unknown>,
     timeoutMs: number,
-  ) {
+  ): Promise<Result<T>> {
     const target = requireActive();
     if (!target) return errorResult("ADAPTER_UNAVAILABLE", "plugin not connected");
+    let raw: unknown;
     try {
-      return await emit(target.socket, timeoutMs);
+      raw = await emit(target.socket, timeoutMs);
     } catch (error) {
       return errorResult("TIMEOUT", String(error));
     }
+    return parseAck(schema, raw);
   }
 
   return {
@@ -193,24 +221,18 @@ export function attachBridge(io: Server, opts: BridgeServerOptions): BridgeHandl
     },
     deliverInbound: (payload, timeoutMs = ackTimeoutMs) =>
       request(
-        (socket, ms) =>
-          socket.timeout(ms).emitWithAck("inbound.deliver", payload) as Promise<Result<InboundDeliverResult>>,
+        InboundDeliverResult,
+        (socket, ms) => socket.timeout(ms).emitWithAck("inbound.deliver", payload),
         timeoutMs,
       ),
     setConfig: (payload, timeoutMs = ackTimeoutMs) =>
       request(
-        (socket, ms) =>
-          socket.timeout(ms).emitWithAck("config.set", payload) as Promise<Result<ConfigSetResult>>,
+        ConfigSetResult,
+        (socket, ms) => socket.timeout(ms).emitWithAck("config.set", payload),
         timeoutMs,
       ),
     listAgents: (timeoutMs = ackTimeoutMs) =>
-      request(
-        (socket, ms) =>
-          socket.timeout(ms).emitWithAck("agents.list", {}) as Promise<
-            Result<{ agents: Array<{ agentId: string; name?: string }> }>
-          >,
-        timeoutMs,
-      ),
+      request(AgentsListAck, (socket, ms) => socket.timeout(ms).emitWithAck("agents.list", {}), timeoutMs),
     close() {
       if (active) {
         active.session.close("shutdown");
