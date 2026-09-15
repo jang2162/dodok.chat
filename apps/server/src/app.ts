@@ -1,4 +1,3 @@
-import type { AdapterStatus } from "@dodok/shared";
 import cookie from "@fastify/cookie";
 import rateLimit from "@fastify/rate-limit";
 import Fastify, { type FastifyBaseLogger, type FastifyInstance } from "fastify";
@@ -6,6 +5,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { Server } from "socket.io";
 import { v7 as uuidv7 } from "uuid";
+import type { AgentAdapter } from "./adapters/types";
 import { type Auth, createAuth } from "./auth";
 import { bootstrapOwner } from "./auth/owner";
 import { registerAuthRoutes } from "./auth/routes";
@@ -14,10 +14,13 @@ import { createDb, type Db } from "./db/client";
 import { workspaces } from "./db/schema.sqlite";
 import { HttpError, httpStatusToErrorCode } from "./http/errors";
 import { createLogger, type Logger } from "./logger";
+import { registerAgentRoutes } from "./modules/agents/routes";
+import { registerChannelRoutes } from "./modules/channels/routes";
+import { registerMessageRoutes } from "./modules/messages/routes";
 import { ServerBus } from "./realtime/bus";
 
-/** 태스크 6 이 AgentAdapter 로 넓힌다. 지금은 헬스에 필요한 status() 만. */
-export type AppDeps = { adapter?: { status(): AdapterStatus } | undefined; logger?: Logger };
+/** adapter 가 없으면 헬스는 down, REST 의 어댑터 경로(discover)는 ADAPTER_UNAVAILABLE. 실제 배선은 태스크 12. */
+export type AppDeps = { adapter?: AgentAdapter | undefined; logger?: Logger };
 
 export type App = {
   fastify: FastifyInstance;
@@ -50,7 +53,11 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
   // 라우트가 config.rateLimit 로 켠 곳에만 건다(/api/v1/auth/local)
   await fastify.register(rateLimit, { global: false });
   fastify.setErrorHandler((error, _req, reply) => {
-    if (error instanceof HttpError) return reply.status(error.status).send(error.body);
+    if (error instanceof HttpError) {
+      // INTERNAL HttpError(저장값 계약 위반 등)는 서버 버그다 — 원인(cause)과 함께 남긴다
+      if (error.body.code === "INTERNAL") logger.error({ err: error, cause: error.cause }, "internal error");
+      return reply.status(error.status).send(error.body);
+    }
     // Fastify 자체 4xx(잘못된 JSON·미지원 content-type·404·429)는 클라이언트 오류다 — 500 으로 바꾸지 않는다(리뷰 sc-t1 지적 1)
     const { statusCode, message } = error as { statusCode?: unknown; message?: unknown };
     const status = typeof statusCode === "number" ? statusCode : 500;
@@ -71,6 +78,10 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     workspaceId,
     secureCookie: new URL(config.APP_ORIGIN).protocol === "https:",
   });
+  const routeContext = { auth, db, bus, logger, workspaceId, adapter: deps.adapter };
+  registerChannelRoutes(fastify, routeContext);
+  registerAgentRoutes(fastify, routeContext);
+  registerMessageRoutes(fastify, routeContext);
   fastify.get("/healthz", async () => ({
     ok: true,
     db: "ok",
@@ -78,7 +89,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     adapter: deps.adapter?.status() ?? { provider: "openclaw", gateway: "down", bridge: "down" },
   }));
   const io = new Server(fastify.server, { cors: { origin: config.APP_ORIGIN, credentials: true } });
-  // wire·어댑터·REST 배선은 태스크 4/5/12 가 여기에 register 한다
+  // wire·어댑터 배선은 태스크 5/12 가 여기에 register 한다
   await fastify.ready();
   return {
     fastify,
