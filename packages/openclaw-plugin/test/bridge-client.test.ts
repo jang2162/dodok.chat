@@ -89,7 +89,7 @@ function clientWith(socket: FakeSocket) {
     url: "ws://bridge.test/bridge",
     token: "t0k",
     hello,
-    handlers: { onInbound: async () => ({}) },
+    handlers: { onInbound: async () => ({ admission: "dispatch" }) },
     logger: silent,
     backoff: { baseMs: 1, maxMs: 1, jitter: 0 },
     connectSocket: (() => socket) as unknown as BridgeClientOptions["connectSocket"],

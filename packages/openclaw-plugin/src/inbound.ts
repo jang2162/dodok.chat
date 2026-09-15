@@ -2,25 +2,13 @@
  * 서버 → 에이전트 방향 변환. 브리지 `inbound.deliver` 를 OpenClaw 인바운드 디스패치에 넣을 사실(facts)로 만든다.
  * `openclaw` 를 import 하지 않는다 — 단위 테스트 대상. SDK 호출은 `channel.ts` 가 한다.
  */
-import type { InboundDeliver } from "@dodok/shared";
+import type { InboundDeliver, InboundDeliverResult } from "@dodok/shared";
 import { buildInboundText, type ContextFormatOptions } from "./context";
 import { formatDodokTarget } from "./outbound";
 
-/**
- * 계획서 5.8 — 채널당 에이전트별 1세션. `generation` ≥ 2 면 `:g<N>` 을 붙여 새 세션으로 회전한다
- * (채널 프롬프트가 바뀌었을 때 기존 claude-cli 세션을 버리는 대안 — 스파이크 3 P6).
- */
-export function dodokSessionKey(agentId: string, channelId: string, generation = 1): string {
-  if (!Number.isInteger(generation) || generation < 1) throw new Error(`세대는 1 이상의 정수: ${generation}`);
-  const base = `agent:${agentId}:dodok:channel:${channelId}`;
-  return generation === 1 ? base : `${base}:g${generation}`;
-}
-
-const GENERATION_SUFFIX_RE = /^:g([2-9]|[1-9]\d+)$/;
-
-function matchesSessionKey(sessionKey: string, base: string): boolean {
-  if (sessionKey === base) return true;
-  return sessionKey.startsWith(base) && GENERATION_SUFFIX_RE.test(sessionKey.slice(base.length));
+/** 계획서 5.8 — 채널당 에이전트별 1세션. 접미사(세대·스레드)는 두지 않는다(계획서 10장 #19) */
+export function dodokSessionKey(agentId: string, channelId: string): string {
+  return `agent:${agentId}:dodok:channel:${channelId}`;
 }
 
 export type DodokInboundFacts = {
@@ -55,7 +43,7 @@ export function toInboundFacts(
   opts: { accountId: string; context?: ContextFormatOptions },
 ): InboundFactsResult {
   const expected = dodokSessionKey(d.agentId, d.channelId);
-  if (!matchesSessionKey(d.sessionKey, expected)) {
+  if (d.sessionKey !== expected) {
     return { ok: false, error: `sessionKey 불일치: 기대 ${expected}, 받음 ${d.sessionKey}` };
   }
   const author = d.message.author;
@@ -85,4 +73,26 @@ export function toInboundFacts(
     };
   }
   return { ok: true, facts };
+}
+
+/**
+ * OpenClaw `ChannelTurnAdmission`(`channelRuntime.inbound.dispatch` 결과의 `admission`) 중 ack 에 쓰는 만큼.
+ * `openclaw` 를 import 하지 않으려고 모양만 옮겨 둔다 — 코어가 kind 를 늘리면 `channel.ts` 타입 검사가 깨진다.
+ */
+export type CoreTurnAdmission = {
+  kind: "dispatch" | "observeOnly" | "handled" | "drop";
+  reason?: string;
+};
+
+/**
+ * 계획서 10장 #14 — 브리지 `inbound.deliver` ack. 런이 시작되면 `onAgentRunStart` 의 runId 를 실어 `dispatch`,
+ * 런 없이 디스패치가 끝나면 코어 admission 을 옮긴다. 코어의 `dispatch` 밖 kind 는 에이전트 런이 없으므로
+ * 우리 계약에서는 전부 `drop` 이다. 봇 루프 보호 drop 은 코어가 `reason: "bot-loop-protection"` 을 준다(ADR 0002 7.2).
+ */
+export function toDeliverResult(admission: CoreTurnAdmission, runId?: string): InboundDeliverResult {
+  if (admission.kind === "dispatch")
+    return runId ? { admission: "dispatch", providerRunId: runId } : { admission: "dispatch" };
+  const reason = admission.reason?.trim();
+  if (admission.kind === "drop") return { admission: "drop", reason: reason || "unknown" };
+  return { admission: "drop", reason: reason ? `${admission.kind}:${reason}` : admission.kind };
 }

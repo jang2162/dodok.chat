@@ -3,8 +3,6 @@ import type { InboundDeliver } from "@dodok/shared";
 export type ContextFormatOptions = {
   /** 최근 대화 시각 표기 시간대 (IANA). 기본 UTC */
   timeZone?: string;
-  /** 채널 프롬프트가 Gateway 설정 경로로 못 들어갈 때만 true (스파이크 3 결과에 따라) */
-  includeChannelPrompt?: boolean;
 };
 
 function hhmm(iso: string, timeZone: string): string {
@@ -16,7 +14,7 @@ function hhmm(iso: string, timeZone: string): string {
   }).format(new Date(iso));
 }
 
-/** 스펙 8.3: 인바운드 앞에 붙는 컨텍스트 헤더 */
+/** 스펙 8.3: 인바운드 앞에 붙는 컨텍스트 헤더. 채널 프롬프트·오버라이드는 여기가 아니라 `channelPromptContext` 로 */
 export function formatInboundContext(d: InboundDeliver, opts: ContextFormatOptions = {}): string {
   const tz = opts.timeZone ?? "UTC";
   const self = d.context.participants.find((p) => p.isSelf);
@@ -28,9 +26,6 @@ export function formatInboundContext(d: InboundDeliver, opts: ContextFormatOptio
       .join(", ")}`,
   );
   lines.push(`릴레이 규칙: ${d.context.relayRules}`);
-  if (opts.includeChannelPrompt && d.context.channelPrompt)
-    lines.push(`채널 프롬프트: ${d.context.channelPrompt}`);
-  if (d.context.promptOverride) lines.push(`채널 지시: ${d.context.promptOverride}`);
   if (d.context.recentMessages.length > 0) {
     lines.push("최근 대화:");
     for (const m of d.context.recentMessages)
@@ -40,27 +35,15 @@ export function formatInboundContext(d: InboundDeliver, opts: ContextFormatOptio
   return lines.join("\n");
 }
 
-/** 채널 항목 `inboundChannelPrompt` — 인바운드가 실어 온 `context.channelPrompt` 를 어디에 넣는가 */
-export type InboundChannelPromptMode = "prefix" | "context";
-
-export type ChannelPromptPlacement = {
-  contextOptions: ContextFormatOptions;
-  /** OpenClaw `MsgContext.ChannelPromptContext` (시스템 지시가 아닌 채널 메타데이터로 현재 턴에 붙는다) */
-  channelPromptContext?: string[];
-};
-
 /**
- * 계획서 5.2 주입 경로 선택. 모드가 없으면 인바운드에 싣지 않고 Gateway 설정 `systemPrompt`(GroupSystemPrompt)만 쓴다.
- * `prefix` = (b) 컨텍스트 헤더 줄(전사에 사용자 발화로 남는다), `context` = ChannelPromptContext.
+ * 스펙 8.3·계획서 10장 #1·#18 — OpenClaw `MsgContext.ChannelPromptContext` 항목. 헤더 줄로 넣으면 표시 전사에
+ * 사용자 발화로 남으므로 채널 메타데이터로 현재 턴에 붙인다. 채울지(리비전 불일치)는 서버가 정하고, 값이 있으면 항상 싣는다.
  */
-export function placeChannelPrompt(
-  d: InboundDeliver,
-  mode: InboundChannelPromptMode | undefined,
-): ChannelPromptPlacement {
-  const prompt = d.context.channelPrompt;
-  if (!mode || !prompt) return { contextOptions: {} };
-  if (mode === "prefix") return { contextOptions: { includeChannelPrompt: true } };
-  return { contextOptions: {}, channelPromptContext: [`채널 프롬프트: ${prompt}`] };
+export function channelPromptContext(d: InboundDeliver): string[] | undefined {
+  const items: string[] = [];
+  if (d.context.channelPrompt) items.push(`채널 프롬프트: ${d.context.channelPrompt}`);
+  if (d.context.promptOverride) items.push(`채널 지시: ${d.context.promptOverride}`);
+  return items.length > 0 ? items : undefined;
 }
 
 /** 컨텍스트 헤더 + 인바운드 본문. 플러그인이 Gateway 인바운드로 넣는 최종 텍스트 */

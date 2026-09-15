@@ -114,7 +114,7 @@ for await (const line of rl) {
   const delivery = toDelivery(line);
   if (!delivery) continue;
   const res = await bridge.deliverInbound(delivery);
-  // ack {providerRunId} = 런 시작, {} = 런 없이 끝남(봇 루프 보호 drop 등), 오류 = 플러그인 미연결·타임아웃
+  // ack {admission:"dispatch", providerRunId} = 런 시작, {admission:"drop", reason} = 런 없이 끝남(봇 루프 보호 등), 오류 = 플러그인 미연결·타임아웃·디스패치 실패
   console.log(
     `→ inbound.deliver [${delivery.message.author.handle} → ${delivery.agentId}] ack ${JSON.stringify(res)}`,
   );

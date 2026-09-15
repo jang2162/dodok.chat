@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BridgeHello, InboundDeliver, OutboundMessage } from "../src/bridge";
+import { BridgeHello, InboundDeliver, InboundDeliverResult, OutboundMessage } from "../src/bridge";
 
 const ID = (n: number) => `01a09fc9-d204-7551-89d6-38544d07a1${n.toString(16).padStart(2, "0")}`;
 const NOW = "2026-09-14T00:00:00Z";
@@ -57,6 +57,23 @@ describe("bridge schemas", () => {
     const ok = InboundDeliver.parse(deliver(20));
     expect(ok.options).toEqual({});
     expect(InboundDeliver.safeParse(deliver(21)).success).toBe(false);
+  });
+
+  it("InboundDeliverResult: dispatch 는 providerRunId, drop 은 reason 을 싣는다", () => {
+    expect(InboundDeliverResult.parse({ admission: "dispatch", providerRunId: ID(3) })).toEqual({
+      admission: "dispatch",
+      providerRunId: ID(3),
+    });
+    expect(InboundDeliverResult.parse({ admission: "drop", reason: "bot-loop-protection" })).toEqual({
+      admission: "drop",
+      reason: "bot-loop-protection",
+    });
+  });
+
+  it("InboundDeliverResult: admission 이 없거나 닫힌 목록 밖이면 거부", () => {
+    expect(InboundDeliverResult.safeParse({}).success).toBe(false);
+    expect(InboundDeliverResult.safeParse({ providerRunId: ID(3) }).success).toBe(false);
+    expect(InboundDeliverResult.safeParse({ admission: "observeOnly" }).success).toBe(false);
   });
 
   it("OutboundMessage: attachments 기본값 [], components는 스키마 검증", () => {

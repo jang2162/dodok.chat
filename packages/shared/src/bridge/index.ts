@@ -64,7 +64,11 @@ export const InboundDeliver = z.object({
     .default({}),
 });
 export type InboundDeliver = z.infer<typeof InboundDeliver>;
-export const InboundDeliverResult = z.object({ providerRunId: z.string().optional() });
+export const InboundDeliverResult = z.object({
+  admission: z.enum(["dispatch", "drop"]), // 계획서 10장 #14 — drop 은 런 없이 끝났다는 뜻(봇 루프 보호 등)
+  reason: z.string().optional(), // drop 사유 (예: "bot-loop-protection")
+  providerRunId: z.string().optional(), // ADR 0002 4.3: 값은 우리 runId 와 같다(replyOptions.runId)
+});
 export type InboundDeliverResult = z.infer<typeof InboundDeliverResult>;
 
 export const ConfigSet = z.object({

@@ -157,13 +157,13 @@ describe("attachBridge (실제 Socket.IO)", () => {
 
     const socket = client(TOKEN);
     socket.on("inbound.deliver", (payload: InboundDeliver, ack: (res: unknown) => void) => {
-      ack({ ok: true, data: { providerRunId: payload.deliveryId } });
+      ack({ ok: true, data: { admission: "dispatch", providerRunId: payload.deliveryId } });
     });
     await waitFor(socket, "connect");
     await socket.emitWithAck("hello", hello);
     expect(await bridge.deliverInbound(delivery, 1_000)).toEqual({
       ok: true,
-      data: { providerRunId: delivery.deliveryId },
+      data: { admission: "dispatch", providerRunId: delivery.deliveryId },
     });
   });
 });

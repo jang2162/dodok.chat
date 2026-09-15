@@ -29,8 +29,8 @@ import {
   type ResolvedDodokAccount,
 } from "./config";
 import { writeChannelConfig } from "./config-writer";
-import { placeChannelPrompt } from "./context";
-import { toInboundFacts } from "./inbound";
+import { channelPromptContext } from "./context";
+import { toDeliverResult, toInboundFacts } from "./inbound";
 import {
   buildOutboundMessage,
   channelIdFromSessionKey,
@@ -85,11 +85,8 @@ async function dispatchInbound(params: {
   // 계정 재시작 없이 채널 항목(systemPrompt 등)을 갱신할 수 있게 디스패치마다 현재 설정을 읽는다
   const cfg = getDodokRuntime().config.current() as OpenClawConfig;
   const entry = resolveDodokChannelEntry(sectionOf(cfg), delivery.channelId);
-  const promptPlacement = placeChannelPrompt(delivery, entry.inboundChannelPrompt);
-  const factsResult = toInboundFacts(delivery, {
-    accountId: account.accountId,
-    context: promptPlacement.contextOptions,
-  });
+  const promptContext = channelPromptContext(delivery);
+  const factsResult = toInboundFacts(delivery, { accountId: account.accountId });
   if (!factsResult.ok) throw new Error(factsResult.error);
   const facts = factsResult.facts;
 
@@ -117,8 +114,7 @@ async function dispatchInbound(params: {
       decision: ingress.ingress.decision,
       sessionKey: facts.sessionKey,
       groupSystemPromptChars: entry.systemPrompt?.length ?? 0,
-      inboundChannelPrompt: entry.inboundChannelPrompt ?? null,
-      channelPromptContextItems: promptPlacement.channelPromptContext?.length ?? 0,
+      channelPromptContextItems: promptContext?.length ?? 0,
     }),
   );
 
@@ -148,9 +144,7 @@ async function dispatchInbound(params: {
     extra: {
       CommandInterpretationSuppressed: true,
       ...(entry.systemPrompt ? { GroupSystemPrompt: entry.systemPrompt } : {}),
-      ...(promptPlacement.channelPromptContext
-        ? { ChannelPromptContext: promptPlacement.channelPromptContext }
-        : {}),
+      ...(promptContext ? { ChannelPromptContext: promptContext } : {}),
     },
   });
 
@@ -160,9 +154,12 @@ async function dispatchInbound(params: {
   };
   correlations.set(facts.sessionKey, correlation);
 
-  let resolveStarted: (runId: string | undefined) => void = () => {};
-  const started = new Promise<string | undefined>((resolve) => {
-    resolveStarted = resolve;
+  // ack 는 먼저 오는 쪽으로 한 번만 정해진다 — 런 시작(onAgentRunStart) 또는 런 없이 끝난 디스패치 결과
+  let resolveAck: (result: InboundDeliverResult) => void = () => {};
+  let rejectAck: (error: unknown) => void = () => {};
+  const ack = new Promise<InboundDeliverResult>((resolve, reject) => {
+    resolveAck = resolve;
+    rejectAck = reject;
   });
 
   const dispatch = channelRuntime.inbound
@@ -179,7 +176,7 @@ async function dispatchInbound(params: {
         onAgentRunStart: (runId: string) => {
           correlation.providerRunId = runId;
           logger.info(logLine("run-start", { deliveryId: facts.correlation.deliveryId, runId }));
-          resolveStarted(runId);
+          resolveAck(toDeliverResult({ kind: "dispatch" }, runId));
         },
       },
       ...(facts.botLoopProtection
@@ -232,20 +229,19 @@ async function dispatchInbound(params: {
           routeSessionKey: result.routeSessionKey,
         }),
       );
-      resolveStarted(undefined);
+      resolveAck(toDeliverResult(result.admission));
       return result;
     })
     .catch((error: unknown) => {
       logger.error(
         logLine("dispatch-error", { deliveryId: facts.correlation.deliveryId, error: String(error) }),
       );
-      resolveStarted(undefined);
+      // 런 시작 전 실패면 ack 를 오류(Result ok:false)로 — drop 은 「런 없이 정상 종료」만 뜻한다
+      rejectAck(error);
     });
   void dispatch;
 
-  // ack 는 런이 시작되거나(Gateway 런 id 확보) 디스패치가 런 없이 끝났을 때(루프 보호 등) 보낸다
-  const providerRunId = await started;
-  return providerRunId ? { providerRunId } : {};
+  return await ack;
 }
 
 async function startDodokAccount(ctx: {

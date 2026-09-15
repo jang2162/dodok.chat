@@ -1,8 +1,10 @@
 /**
  * Phase 0 스파이크 3 — 채널 프롬프트 갱신 경로 + 이월 측정 러너 (ADR 0003).
  *
+ * 회전(P6 `:g2`)·inboundChannelPrompt(P4 prefix·P5 context) 시나리오는 계획서 10장 #18·#19 로 제거 — 전체 재현은 커밋 752e7f9 시점 코드.
+ *
  * 스파이크 2 러너(`bridge-spike.ts`)의 브리지 서버·시나리오 뼈대를 복사해 넓혔다(스파이크 코드라 중복 허용).
- *   질문 1 P0~P6  채널 systemPrompt 갱신이 이미 도는(재개되는) claude-cli 세션에 언제 반영되는가
+ *   질문 1 P0~P3  채널 systemPrompt 갱신이 이미 도는(재개되는) claude-cli 세션에 언제 반영되는가
  *   질문 2 T·TI   components v1 위반(ToolInputError)이 모델 런(T)·직접 호출(TI, 런 없음)에서 어떻게 보이는가
  *   질문 3 H      chat.history 커서 증분({kind:"delta"} / {kind:"reset"})
  *   질문 4 W      chat.send + originatingChannel "dodok" 대체 경로의 응답 배달
@@ -13,7 +15,7 @@
  *
  * 실행: `DODOK_SPIKE_MAX_RUNS=10 pnpm -F @dodok/openclaw-adapter spike:prompt`
  *   DODOK_SPIKE_MAX_RUNS      **누적** 모델 런 상한(기본 0). 사용 기록은 `data/spike-3-run-ledger.json` 이라 다시 띄워도 이어서 센다
- *   DODOK_SPIKE_SCENARIOS     쉼표 목록(기본 P0,P1,P2,P3,P4,P5,P6,T,TI,W,H). SETUP(플러그인 재설치·채널 설정 초기화)은 적을 때만
+ *   DODOK_SPIKE_SCENARIOS     쉼표 목록(기본 P0,P1,P2,P3,T,TI,W,H). SETUP(플러그인 재설치·채널 설정 초기화)은 적을 때만
  *   DODOK_SPIKE_LABEL         관찰 파일 접미사(기본 main)
  *   DODOK_SPIKE_AGENT         에이전트 id(기본 dev)
  *   DODOK_SPIKE_STOP_GATEWAY  1 이면 끝날 때 dev Gateway 를 내린다
@@ -36,7 +38,7 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { parseEnv } from "node:util";
-import type { InboundDeliver, OutboundMessage, Result } from "@dodok/shared";
+import type { InboundDeliver, InboundDeliverResult, OutboundMessage, Result } from "@dodok/shared";
 import type { EventFrame } from "@openclaw/gateway-protocol";
 import Fastify from "fastify";
 import { Server } from "socket.io";
@@ -77,7 +79,7 @@ const TOOL_CHANNEL_ID = process.env["DODOK_SPIKE_TOOL_CHANNEL_ID"] ?? "0199a6c0-
 const AGENT = process.env["DODOK_SPIKE_AGENT"] ?? "dev";
 const MAX_RUNS = Number(process.env["DODOK_SPIKE_MAX_RUNS"] ?? "0");
 const SCENARIOS = new Set(
-  (process.env["DODOK_SPIKE_SCENARIOS"] ?? "P0,P1,P2,P3,P4,P5,P6,T,TI,W,H")
+  (process.env["DODOK_SPIKE_SCENARIOS"] ?? "P0,P1,P2,P3,T,TI,W,H")
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean),
@@ -100,9 +102,8 @@ const GATEWAY_PORT = Number(new URL(DEV_GATEWAY_URL).port);
 const SECRETS = [DEV_GATEWAY_TOKEN, BRIDGE_TOKEN];
 
 const BASE_KEY = `agent:${AGENT}:dodok:channel:${CHANNEL_ID}`;
-const ROTATED_KEY = `${BASE_KEY}:g2`;
 const TOOL_KEY = `agent:${AGENT}:dodok:channel:${TOOL_CHANNEL_ID}`;
-const WORDS = { P1: "AMBER", P3: "COBALT", P4: "DAHLIA", P5: "EMBER", P6: "FJORD" } as const;
+const WORDS = { P1: "AMBER", P3: "COBALT" } as const;
 const ALL_WORDS = Object.values(WORDS);
 const ASK = `@${AGENT} What is the code word? Reply with just the word.`;
 const codePrompt = (word: string): string =>
@@ -350,7 +351,7 @@ const observations = {
   channelId: CHANNEL_ID,
   toolChannelId: TOOL_CHANNEL_ID,
   agent: AGENT,
-  keys: { base: BASE_KEY, rotated: ROTATED_KEY, tool: TOOL_KEY },
+  keys: { base: BASE_KEY, tool: TOOL_KEY },
   setup: null as Json,
   gatewayLifecycle: [] as Json[],
   hello: [] as Json[],
@@ -461,12 +462,7 @@ async function observerRequestRaw(
 }
 
 // ── 턴 실행 ─────────────────────────────────────────────────────────────────────
-function deliverFor(params: {
-  channelId: string;
-  sessionKey: string;
-  text: string;
-  channelPrompt?: string;
-}): InboundDeliver {
+function deliverFor(params: { channelId: string; sessionKey: string; text: string }): InboundDeliver {
   const now = new Date().toISOString();
   return {
     deliveryId: randomUUID(),
@@ -489,7 +485,6 @@ function deliverFor(params: {
         { type: "agent", handle: AGENT, displayName: AGENT, isSelf: true },
       ],
       relayRules: "다른 에이전트를 @멘션하면 그 에이전트가 이어받는다. 최대 4턴.",
-      ...(params.channelPrompt ? { channelPrompt: params.channelPrompt } : {}),
     },
     options: {},
   };
@@ -625,7 +620,7 @@ async function inboundTurn(
     request: maskValue(deliver),
     dispatchMarker: deliver.deliveryId,
     start: async () => {
-      const ack: Result<{ providerRunId?: string }> = await bridge.deliverInbound(deliver, RUN_TIMEOUT_MS);
+      const ack: Result<InboundDeliverResult> = await bridge.deliverInbound(deliver, RUN_TIMEOUT_MS);
       return { runId: ack.ok ? ack.data.providerRunId : undefined, response: ack };
     },
   });
@@ -714,24 +709,6 @@ async function setSystemPrompt(bridge: BridgeHandle, channelId: string, prompt: 
   return { bridgeConfigSet: { channelId, systemPromptChars: prompt.length, prompt }, result, afterMs };
 }
 
-async function lastUserTranscript(sessionKey: string): Promise<Json> {
-  const history = (await observerRequest("chat.history", { sessionKey, agentId: AGENT, limit: 6 })) as {
-    messages?: Json[];
-    error?: Json;
-  };
-  if (!history.messages) return history;
-  return history.messages.slice(-6).map((m) => {
-    const message = m as Record<string, Json>;
-    return {
-      role: message["role"],
-      messageSeq:
-        message["messageSeq"] ?? (message["__openclaw"] as Record<string, Json> | undefined)?.["seq"],
-      keys: Object.keys(message),
-      text: textOfMessage(message).slice(0, 1500),
-    };
-  });
-}
-
 async function resetSession(key: string): Promise<Json> {
   const ws = await observerRequest("sessions.reset", { key, agentId: AGENT, reason: "reset" });
   const wsError = (ws as { error?: Json }).error;
@@ -792,26 +769,12 @@ async function runSetup(): Promise<void> {
   }
   setup["inspect"] = { ...inspect.record, summary };
   setup["unsetChannels"] = cli(["config", "unset", "channels.dodok.channels"]).record;
-  // 매니페스트 스키마가 새 번들 것인지(inboundChannelPrompt enum) 거부로 확인한다
+  // 매니페스트 채널 항목 스키마가 strict 인지 모르는 키 거부로 확인한다
   setup["rejectUnknownKey"] = cli([
     "config",
     "set",
     `channels.dodok.channels.${CHANNEL_ID}.bogusKey`,
     "true",
-    "--strict-json",
-  ]).record;
-  setup["rejectBadMode"] = cli([
-    "config",
-    "set",
-    `channels.dodok.channels.${CHANNEL_ID}.inboundChannelPrompt`,
-    '"system"',
-    "--strict-json",
-  ]).record;
-  setup["acceptMode"] = cli([
-    "config",
-    "set",
-    `channels.dodok.channels.${CHANNEL_ID}.inboundChannelPrompt`,
-    '"prefix"',
     "--strict-json",
   ]).record;
   setup["cleanup"] = cli(["config", "unset", "channels.dodok.channels"]).record;
@@ -914,43 +877,6 @@ async function main(): Promise<void> {
         deliver: deliverFor({ channelId: CHANNEL_ID, sessionKey: BASE_KEY, text: ASK }),
       });
       p3.verdict = promptVerdict(p3, WORDS.P3);
-    }
-
-    const modeKey = `channels.dodok.channels.${CHANNEL_ID}.inboundChannelPrompt`;
-    for (const [name, mode, word] of [
-      ["P4", "prefix", WORDS.P4],
-      ["P5", "context", WORDS.P5],
-    ] as const) {
-      if (!SCENARIOS.has(name) || budgetLeft() < 1) continue;
-      const setup: Json[] = [cli(["config", "set", modeKey, JSON.stringify(mode), "--strict-json"]).record];
-      await sleep(3_000);
-      const turn = await inboundTurn(bridge, {
-        name,
-        description: `채널 설정(systemPrompt)은 그대로, 인바운드 channelPrompt(${word})를 ${mode} 로`,
-        setup,
-        deliver: deliverFor({
-          channelId: CHANNEL_ID,
-          sessionKey: BASE_KEY,
-          text: ASK,
-          channelPrompt: codePrompt(word),
-        }),
-      });
-      turn.verdict = { ...promptVerdict(turn, word), transcriptAfter: await lastUserTranscript(BASE_KEY) };
-      turn.verdict["cleanup"] = cli(["config", "unset", modeKey]).record;
-    }
-
-    if (SCENARIOS.has("P6") && budgetLeft() >= 1) {
-      const setup: Json[] = [await setSystemPrompt(bridge, CHANNEL_ID, codePrompt(WORDS.P6))];
-      setup.push({
-        subscribe: await observerRequest("sessions.messages.subscribe", { agentId: AGENT, key: ROTATED_KEY }),
-      });
-      const p6 = await inboundTurn(bridge, {
-        name: "P6",
-        description: `config.set(${WORDS.P6}) 뒤 세션 키 세대 회전(:g2)에 같은 질문`,
-        setup,
-        deliver: deliverFor({ channelId: CHANNEL_ID, sessionKey: ROTATED_KEY, text: ASK }),
-      });
-      p6.verdict = promptVerdict(p6, WORDS.P6);
     }
 
     // 질문 2 ─ ToolInputError
@@ -1139,7 +1065,6 @@ async function main(): Promise<void> {
       };
       for (const [label, key] of [
         ["base", BASE_KEY],
-        ["rotated", ROTATED_KEY],
         ["tool", TOOL_KEY],
       ] as const) {
         const first = await observerRequestRaw("chat.history", { sessionKey: key, agentId: AGENT, limit: 3 });

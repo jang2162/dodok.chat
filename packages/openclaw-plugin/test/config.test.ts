@@ -118,13 +118,17 @@ describe("listDodokAccountIds / resolveDodokChannelEntry", () => {
     expect(resolveDodokChannelEntry({}, CH)).toEqual({ requireMention: true });
   });
 
-  it("inboundChannelPrompt(prefix|context)를 채널 항목에서 읽는다 — 그 밖의 값은 섹션 검증에서 거부", () => {
+  it("모르는 키 inboundChannelPrompt 는 섹션 검증에서 거부한다 (계획서 10장 #18 로 제거)", () => {
+    for (const value of ["prefix", "context"]) {
+      expect(
+        DodokChannelSection.safeParse({ channels: { [CH]: { inboundChannelPrompt: value } } }).success,
+      ).toBe(false);
+    }
     expect(resolveDodokChannelEntry({ channels: { [CH]: { inboundChannelPrompt: "context" } } }, CH)).toEqual(
-      { requireMention: true, inboundChannelPrompt: "context" },
+      {
+        requireMention: true,
+      },
     );
-    expect(
-      DodokChannelSection.safeParse({ channels: { [CH]: { inboundChannelPrompt: "system" } } }).success,
-    ).toBe(false);
   });
 });
 

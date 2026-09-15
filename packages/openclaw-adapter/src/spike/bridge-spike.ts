@@ -30,7 +30,7 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { parseEnv } from "node:util";
-import type { InboundDeliver, OutboundMessage, Result } from "@dodok/shared";
+import type { InboundDeliver, InboundDeliverResult, OutboundMessage, Result } from "@dodok/shared";
 import type { EventFrame } from "@openclaw/gateway-protocol";
 import Fastify from "fastify";
 import { Server } from "socket.io";
@@ -294,7 +294,7 @@ async function runScenario(params: {
   const eventStart = gatewayEvents.length;
   const lineStart = pluginLines.length;
 
-  const ack: Result<{ providerRunId?: string }> = await bridge.deliverInbound(deliver, RUN_TIMEOUT_MS);
+  const ack: Result<InboundDeliverResult> = await bridge.deliverInbound(deliver, RUN_TIMEOUT_MS);
   record.ack = maskValue(ack);
   record.ackAfterMs = Date.now() - t0;
   const providerRunId = ack.ok ? ack.data.providerRunId : undefined;
