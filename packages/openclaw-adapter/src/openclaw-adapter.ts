@@ -188,6 +188,10 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
     let waitedForPlugin = false;
     for (;;) {
       if (closed) throw adapterClosed();
+      // 플러그인·재시도를 기다리는 사이 서버가 런을 닫고 forgetRun 했다(queued 상한) — 닫힌 런을 늦게 보내지 않는다
+      if (!knownRunIds.has(input.runId)) {
+        throw new AdapterError("ADAPTER_UNAVAILABLE", "run forgotten before delivery");
+      }
       const res = await bridge.deliverInbound(input, DELIVER_ACK_TIMEOUT_MS);
       if (res.ok) return res.data;
       if (closed) throw adapterClosed();

@@ -288,6 +288,48 @@ describe("createOpenClawAdapter — send", () => {
     expect(spy).toHaveBeenCalledTimes(2);
   });
 
+  it("플러그인을 기다리는 동안 forgetRun 된 런은 플러그인이 붙어도 보내지 않고 ADAPTER_UNAVAILABLE 로 끝난다", async () => {
+    const deliverSpy = vi.spyOn(adapter.bridge, "deliverInbound");
+    const waitSpy = vi.spyOn(adapter.bridge, "waitForReady");
+    const result = adapter.send(delivery()).catch((e: unknown) => e);
+    await until(() => waitSpy.mock.calls.length === 1, "waitForReady");
+
+    // 서버 오케스트레이터가 queued 상한으로 런을 닫았다
+    adapter.forgetRun?.(f.RUN_ID);
+    const received: InboundDeliver[] = [];
+    await plugin({
+      "inbound.deliver": (payload: InboundDeliver, ack) => {
+        received.push(payload);
+        dispatchAck(payload, ack);
+      },
+    });
+
+    expect(await result).toMatchObject({ name: "AdapterError", code: "ADAPTER_UNAVAILABLE" });
+    expect(deliverSpy).toHaveBeenCalledTimes(1); // 플러그인이 없던 첫 시도뿐
+    expect(received).toEqual([]);
+  });
+
+  it("ack 타임아웃 재시도 대기 중 forgetRun 된 런은 다시 보내지 않는다", async () => {
+    let received = 0;
+    await plugin({
+      "inbound.deliver": () => {
+        received += 1;
+      },
+    });
+    const deliverSpy = vi.spyOn(adapter.bridge, "deliverInbound");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const result = adapter.send(delivery()).catch((e: unknown) => e);
+    await until(() => received === 1, "first delivery");
+    await vi.advanceTimersByTimeAsync(10_000); // ack 타임아웃 → 1s 재시도 대기
+
+    adapter.forgetRun?.(f.RUN_ID);
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(await result).toMatchObject({ name: "AdapterError", code: "ADAPTER_UNAVAILABLE" });
+    expect(deliverSpy).toHaveBeenCalledTimes(1);
+    expect(received).toBe(1);
+  });
+
   it("플러그인이 120s 안에 붙지 않으면 AdapterError(ADAPTER_UNAVAILABLE)", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const result = adapter.send(delivery()).catch((e: unknown) => e);

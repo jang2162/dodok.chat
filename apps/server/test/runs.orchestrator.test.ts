@@ -479,6 +479,92 @@ describe("orchestrator", () => {
   );
 
   it.each([
+    ["늦은 dispatch ack", "resolve"],
+    ["어댑터의 forgotten 거부", "reject"],
+  ])(
+    "ack 전(send 대기 — 플러그인 없음 등)에 queuedMs 가 지나면 error(ADAPTER_UNAVAILABLE) + run_error, 어댑터 전송은 버리고(forgetRun, abort 없음) 세션의 다음 런을 보낸다 — 첫 send 는 %s 로 끝난다",
+    async (_label, late) => {
+      const t = setup();
+      const acks = new Map<string, () => void>();
+      const lates = new Map<string, () => void>();
+      t.adapter.script(
+        (input) =>
+          new Promise((resolve, reject) => {
+            acks.set(input.runId, () => resolve({ admission: "dispatch", providerRunId: input.runId }));
+            lates.set(input.runId, () =>
+              reject(new AdapterError("ADAPTER_UNAVAILABLE", "run forgotten before delivery")),
+            );
+          }),
+      );
+      const first = await t.enqueue(t.say("@dev 하나"));
+      const second = await t.enqueue(t.say("@dev 둘"));
+      await t.flush();
+      expect(t.adapter.calls.send.map((s) => s.runId)).toEqual([first.id]);
+
+      await vi.advanceTimersByTimeAsync(119_999);
+      expect(t.runOf(first.id).status).toBe("queued");
+      await vi.advanceTimersByTimeAsync(1);
+
+      expect(t.runOf(first.id)).toMatchObject({ status: "error", error: { code: "ADAPTER_UNAVAILABLE" } });
+      expect(t.eventsOf(first.id).at(-1)).toMatchObject({ type: "RUN_ERROR", code: "ADAPTER_UNAVAILABLE" });
+      expect(systemMessages(t.db).map((m) => m.bodyMd)).toEqual([
+        "@dev 실행이 실패했습니다: ADAPTER_UNAVAILABLE",
+      ]);
+      // 전달되지 않은 런이라 Gateway abort 는 없고, 어댑터가 기다리던 전송은 버린다(플러그인이 늦게 붙어도 보내지 않게)
+      expect(t.adapter.calls.forget).toEqual([first.id]);
+      expect(t.adapter.calls.abort).toEqual([]);
+      expect(t.adapter.calls.send.map((s) => s.runId)).toEqual([first.id, second.id]);
+
+      // 늦게 끝난 첫 send 는 닫힌 런을 건드리지 않는다
+      const eventsBefore = t.eventsOf(first.id);
+      (late === "resolve" ? acks : lates).get(first.id)?.();
+      await t.flush();
+      expect(t.runOf(first.id)).toMatchObject({ status: "error", error: { code: "ADAPTER_UNAVAILABLE" } });
+      expect(t.runOf(first.id).providerRunId).toBeUndefined();
+      expect(t.eventsOf(first.id)).toEqual(eventsBefore);
+
+      // 두 번째 런은 자기 전송부터 잰다 — 60s 뒤 ack 되면 그때부터 Gateway 시작 상한(queue_timeout → TIMEOUT)
+      await vi.advanceTimersByTimeAsync(60_000);
+      acks.get(second.id)?.();
+      await t.flush();
+      await vi.advanceTimersByTimeAsync(119_999);
+      expect(t.runOf(second.id).status).toBe("queued");
+      await vi.advanceTimersByTimeAsync(1);
+      expect(t.runOf(second.id)).toMatchObject({ status: "error", error: { code: "TIMEOUT" } });
+      expect(t.adapter.calls.abort).toEqual([{ runId: second.id, sessionKey: t.sessionKey }]);
+      expect(t.logger.error).not.toHaveBeenCalled();
+      expect(t.logger.warn).not.toHaveBeenCalledWith(expect.anything(), "run dispatch failed");
+      t.orch.stop();
+    },
+  );
+
+  it("ack 가 queuedMs 안에 오면 ack 전 상한은 풀리고, gateway_started 가 ack 보다 먼저 와도 런은 닫히지 않는다", async () => {
+    const t = setup();
+    let ack: () => void = () => undefined;
+    t.adapter.script(
+      (input) =>
+        new Promise((resolve) => {
+          ack = () => resolve({ admission: "dispatch", providerRunId: input.runId });
+        }),
+    );
+    const run = await t.enqueue();
+    await t.flush();
+    await vi.advanceTimersByTimeAsync(100_000);
+    // 플러그인은 런이 시작될 때 ack 한다 — Gateway 프레임이 먼저 올 수 있다
+    await t.orch.signal(run.id, { kind: "gateway_started" });
+    await vi.advanceTimersByTimeAsync(100_000);
+    ack();
+    await t.flush();
+    await vi.advanceTimersByTimeAsync(100_000);
+
+    expect(t.runOf(run.id)).toMatchObject({ status: "streaming", providerRunId: run.id });
+    expect(t.runOf(run.id).error).toBeUndefined();
+    expect(t.adapter.calls.forget).toEqual([]);
+    expect(systemMessages(t.db)).toEqual([]);
+    t.orch.stop();
+  });
+
+  it.each([
     ["drop 으로 resolve", "drop"],
     ["reject", "reject"],
   ])(

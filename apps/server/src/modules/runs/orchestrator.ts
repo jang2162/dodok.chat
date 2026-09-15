@@ -105,6 +105,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
   const sessionQueues = new Map<string, string[]>(); // sessionKey → FIFO runId (맨 앞이 디스패치 대상)
   const pending = new Map<string, Pending>(); // 이 프로세스가 enqueue 한 미종료 런
   const inflight = new Set<string>();
+  const awaitingAck = new Set<string>(); // adapter.send 를 기다리는 런(플러그인 대기·ack 재시도 중)
   const buffers = new Map<string, DeltaBuffer>();
   const snapshots = new Map<string, string>();
   let order = 0;
@@ -244,6 +245,25 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       adapter.forgetRun?.(runId);
     } catch (err) {
       logger.error({ err, runId, signal: s.kind }, "run timeout handling failed");
+    }
+  }
+
+  /**
+   * ack 전 상한 — 플러그인에 전달되지 않은 런이라 Gateway abort 는 없다. 어댑터가 쥔 전송을 먼저 버리고(플러그인이 늦게 붙어도
+   * 닫힌 런을 보내지 않게) ADAPTER_UNAVAILABLE 로 닫는다. 닫히면 release → pump 가 같은 세션의 다음 런을 보낸다.
+   */
+  function undelivered(runId: string): void {
+    try {
+      const run = store.getRun(db, runId);
+      if (!awaitingAck.has(runId) || run?.status !== "queued") return;
+      adapter.forgetRun?.(runId);
+      applySignal(runId, {
+        kind: "gateway_error",
+        code: "ADAPTER_UNAVAILABLE",
+        message: `inbound not delivered within ${timeouts.queuedMs}ms`,
+      });
+    } catch (err) {
+      failRun(runId, err);
     }
   }
 
@@ -387,7 +407,18 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         agentId: run.agentId,
       });
       const inbound = buildInboundDeliver(db, { run, trigger, session, needsPromptContext, now: now() });
-      const result = await adapter.send(inbound);
+      // ack 전 상한 — 어댑터는 플러그인이 없으면 120s, ack 가 없으면 재시도로 더 기다린다. 그동안에도 런은 queued 이므로
+      // queuedMs 안에 전달되지 않으면 닫는다(스펙 8장 「브리지 단절·ack 없음 → ADAPTER_UNAVAILABLE」). ack 뒤에는 아래에서 다시 건다.
+      awaitingAck.add(runId);
+      timers.set(runId, "queued", timeouts.queuedMs, () => {
+        undelivered(runId);
+      });
+      let result: Awaited<ReturnType<AgentAdapter["send"]>>;
+      try {
+        result = await adapter.send(inbound);
+      } finally {
+        awaitingAck.delete(runId);
+      }
       // 종료 중(stop 뒤 어댑터 close 가 대기를 끊었거나 ack 가 늦게 왔다) — 닫히는 DB 에 쓰지 않는다.
       // 이 런은 다음 부팅의 recoverOnBoot 가 SERVER_RESTART 로 닫는다(스펙 2장).
       if (stopped) return;
@@ -410,6 +441,12 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     } catch (err) {
       if (stopped) {
         logger.debug({ err, runId }, "run dispatch settled after stop");
+        return;
+      }
+      const ended = store.getRun(db, runId);
+      if (ended && TERMINAL_STATUSES.has(ended.status)) {
+        // 기다리는 사이 상한·abort 로 이미 닫혔다(어댑터는 forgetRun 된 전송을 거부한다) — 알릴 것이 없다
+        logger.debug({ err, runId, status: ended.status }, "run dispatch settled after run ended");
         return;
       }
       // 어댑터는 runId 를 전송 전에 등록하므로 gateway_started 뒤에 거부될 수 있다 — 상태와 무관하게 닫는다
