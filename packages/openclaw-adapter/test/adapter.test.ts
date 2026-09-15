@@ -30,6 +30,7 @@ let canonicalResult: { messageId?: string };
 let gatewayResponses: Record<string, Responder>;
 let gatewayCalls: Array<{ method: string; params: unknown }>;
 let connectOptions: GatewayConnectOptions | undefined;
+let gatewayStop: () => Promise<void>;
 const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
 const clients: Socket[] = [];
 
@@ -40,6 +41,7 @@ beforeEach(async () => {
   gatewayResponses = {};
   gatewayCalls = [];
   connectOptions = undefined;
+  gatewayStop = async () => undefined;
   app = Fastify({ logger: false });
   ioServer = new Server(app.server, { transports: ["websocket"] });
   adapter = createOpenClawAdapter({
@@ -62,7 +64,7 @@ beforeEach(async () => {
           const respond = gatewayResponses[method];
           return (respond ? await respond(params as Record<string, unknown>) : {}) as never;
         },
-        stop: async () => undefined,
+        stop: () => gatewayStop(),
       };
     },
   });
@@ -72,11 +74,16 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  vi.useRealTimers();
-  for (const socket of clients.splice(0)) socket.disconnect();
-  await adapter.close();
-  ioServer.close();
-  await app.close();
+  try {
+    for (const socket of clients.splice(0)) socket.disconnect();
+    await adapter.close();
+    // 가짜 타이머를 버리기 전에 잰다 — close() 뒤에 어댑터·브리지가 건 대기 타이머가 남으면 안 된다
+    if (vi.isFakeTimers()) await expectNoTimersLeft();
+  } finally {
+    vi.useRealTimers();
+    ioServer.close();
+    await app.close();
+  }
 });
 
 async function plugin(handlers: Record<string, (payload: never, ack: Ack) => void> = {}): Promise<Socket> {
@@ -119,6 +126,15 @@ async function until(condition: () => boolean, label = "condition"): Promise<voi
     if (performance.now() > deadline) throw new Error(`timed out waiting for ${label}`);
     await new Promise((resolve) => setImmediate(resolve));
   }
+}
+
+/**
+ * close() 뒤 가짜 타이머가 남지 않았는지 잰다. 가짜 시계는 멈춰 있으므로 어댑터·브리지의 대기 타이머(재시도·waitForReady)는
+ * 스스로 사라지지 않는다. 브리지 소켓을 닫을 때 ws 가 거는 closeTimer(30s)만 TCP 가 닫히면서 지워지므로 그때까지 실제 I/O 를 돌린다.
+ */
+async function expectNoTimersLeft() {
+  await until(() => vi.getTimerCount() === 0, "fake timers cleared").catch(() => undefined);
+  expect(vi.getTimerCount(), "fake timers left after close()").toBe(0);
 }
 
 async function connectedGateway() {
@@ -280,6 +296,98 @@ describe("createOpenClawAdapter — send", () => {
     await vi.advanceTimersByTimeAsync(1);
 
     expect(await result).toMatchObject({ name: "AdapterError", code: "ADAPTER_UNAVAILABLE" });
+  });
+
+  it("플러그인을 기다리는 중 close() 하면 send 는 곧바로 ADAPTER_UNAVAILABLE(adapter closed)로 끝나고 타이머가 남지 않는다", async () => {
+    const deliverSpy = vi.spyOn(adapter.bridge, "deliverInbound");
+    const waitSpy = vi.spyOn(adapter.bridge, "waitForReady");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let settled = false;
+    const result = adapter
+      .send(delivery())
+      .catch((e: unknown) => e)
+      .finally(() => {
+        settled = true;
+      });
+    await until(() => waitSpy.mock.calls.length === 1, "waitForReady");
+    expect(vi.getTimerCount()).toBe(1); // waitForReady 120s
+
+    await adapter.close();
+    await until(() => settled, "send settled after close");
+
+    expect(await result).toMatchObject({
+      name: "AdapterError",
+      code: "ADAPTER_UNAVAILABLE",
+      message: "adapter closed",
+    });
+    await expectNoTimersLeft();
+    // 닫힌 어댑터의 새 send 는 브리지에 가지 않고 거부된다
+    await expect(adapter.send(delivery())).rejects.toMatchObject({
+      code: "ADAPTER_UNAVAILABLE",
+      message: "adapter closed",
+    });
+    expect(deliverSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("ack 타임아웃 뒤 1s 재시도 대기 중 close() 하면 send 는 곧바로 끝나고, 타이머가 남지 않고, 닫힌 브리지로 다시 보내지 않는다", async () => {
+    let received = 0;
+    await plugin({
+      "inbound.deliver": () => {
+        received += 1;
+      },
+    });
+    const deliverSpy = vi.spyOn(adapter.bridge, "deliverInbound");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let settled = false;
+    const result = adapter
+      .send(delivery())
+      .catch((e: unknown) => e)
+      .finally(() => {
+        settled = true;
+      });
+    await until(() => received === 1, "first delivery");
+    await vi.advanceTimersByTimeAsync(10_000); // ack TIMEOUT → 1s 재시도 대기
+    await vi.advanceTimersByTimeAsync(500);
+    expect(deliverSpy).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(1); // 재시도 대기 1s
+
+    await adapter.close();
+    await until(() => settled, "send settled after close");
+
+    expect(await result).toMatchObject({
+      name: "AdapterError",
+      code: "ADAPTER_UNAVAILABLE",
+      message: "adapter closed",
+    });
+    await expectNoTimersLeft();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(deliverSpy).toHaveBeenCalledTimes(1);
+    expect(received).toBe(1);
+  });
+});
+
+describe("createOpenClawAdapter — close", () => {
+  it("브리지를 먼저 닫아(system.notice shutdown) 플러그인에 알린 뒤 Gateway 를 닫고, Gateway stop 이 실패해도 resolve 한다", async () => {
+    const stopError = new Error("gateway stopAndWait timed out after 5000ms");
+    const stop = vi.fn(async () => {
+      throw stopError;
+    });
+    gatewayStop = stop;
+    await connectedGateway();
+    const socket = await plugin();
+    const notices: unknown[] = [];
+    socket.on("system.notice", (notice: unknown) => notices.push(notice));
+    const bridgeClose = vi.spyOn(adapter.bridge, "close");
+
+    await expect(adapter.close()).resolves.toBeUndefined();
+
+    expect(bridgeClose).toHaveBeenCalledTimes(1);
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(bridgeClose.mock.invocationCallOrder[0]).toBeLessThan(stop.mock.invocationCallOrder[0] ?? 0);
+    expect(logger.warn).toHaveBeenCalledWith(expect.objectContaining({ err: stopError }), expect.any(String));
+    await until(() => notices.length === 1 && socket.disconnected, "shutdown notice and disconnect");
+    expect(notices).toEqual([{ reason: "shutdown", message: "server shutting down" }]);
+    expect(adapter.status()).toMatchObject({ gateway: "down" });
   });
 });
 

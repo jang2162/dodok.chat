@@ -64,13 +64,14 @@ const AgentsListResult = z.looseObject({
   agents: z.array(z.looseObject({ id: z.string().min(1), name: z.string().optional().catch(undefined) })),
 });
 
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
-
 export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAdapter {
   const { logger } = opts;
   const handlers = new Set<(e: AdapterEvent) => void>();
   const knownRunIds = new Set<string>();
   const forgetTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  // send 재시도 대기 — close() 가 타이머를 지우고 기다리는 send 를 끝낸다
+  const retryWaits = new Map<ReturnType<typeof setTimeout>, (error: AdapterError) => void>();
+  let closed = false;
   const capabilities: AdapterCapabilities = { sessionReset: true, agentsList: true, configSet: true };
   let gatewayState: GatewayState = "down";
   let bridgeState: AdapterStatus["bridge"] = "down";
@@ -170,12 +171,26 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
     onRejected: (reason) => logger.warn({ reason }, "bridge connection rejected"),
   });
 
+  const adapterClosed = () => new AdapterError("ADAPTER_UNAVAILABLE", "adapter closed");
+
+  function retryDelay(ms: number): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        retryWaits.delete(timer);
+        resolve();
+      }, ms);
+      retryWaits.set(timer, reject);
+    });
+  }
+
   async function deliver(input: InboundDeliver): Promise<InboundDeliverResult> {
     let timeoutRetries = 0;
     let waitedForPlugin = false;
     for (;;) {
+      if (closed) throw adapterClosed();
       const res = await bridge.deliverInbound(input, DELIVER_ACK_TIMEOUT_MS);
       if (res.ok) return res.data;
+      if (closed) throw adapterClosed();
       const { code, message } = res.error;
       const delayMs = DELIVER_RETRY_DELAYS_MS[timeoutRetries];
       if (code === "TIMEOUT" && delayMs !== undefined) {
@@ -184,7 +199,7 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
           { runId: input.runId, deliveryId: input.deliveryId, retry: timeoutRetries, delayMs },
           "inbound.deliver ack timeout; retrying",
         );
-        await sleep(delayMs);
+        await retryDelay(delayMs);
         continue;
       }
       if (code === "ADAPTER_UNAVAILABLE" && !waitedForPlugin) {
@@ -193,6 +208,8 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
         try {
           await bridge.waitForReady(PLUGIN_READY_WAIT_MS);
         } catch {
+          // 브리지 close() 도 대기자를 reject 한다
+          if (closed) throw adapterClosed();
           throw new AdapterError(
             "ADAPTER_UNAVAILABLE",
             `plugin not connected within ${PLUGIN_READY_WAIT_MS}ms`,
@@ -214,10 +231,22 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
     },
 
     async close() {
+      closed = true;
       for (const timer of forgetTimers.values()) clearTimeout(timer);
       forgetTimers.clear();
-      await manager.stop();
+      for (const [timer, reject] of retryWaits) {
+        clearTimeout(timer);
+        reject(adapterClosed());
+      }
+      retryWaits.clear();
+      // 스펙 2장 종료 순서 — 플러그인에 system.notice shutdown(대기 중인 waitForReady 도 끝낸다) → Gateway 연결 종료
       bridge.close();
+      try {
+        await manager.stop();
+      } catch (error) {
+        // stopAndWait 5s 초과 등 — 종료는 계속한다
+        logger.warn({ err: error }, "gateway stop failed during close");
+      }
     },
 
     status,

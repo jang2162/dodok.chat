@@ -99,7 +99,11 @@ export function attachBridge(io: Server, opts: BridgeServerOptions): BridgeHandl
   >;
   const ackTimeoutMs = opts.ackTimeoutMs ?? 15_000;
   let active: { socket: BridgeSocket; session: BridgeSessionState } | undefined;
-  const readyWaiters = new Set<(session: BridgeSessionState) => void>();
+  // close() 가 끊을 수 있도록 resolve 와 reject 를 함께 둔다(둘 다 자기 타이머를 지운다)
+  const readyWaiters = new Set<{
+    resolve: (session: BridgeSessionState) => void;
+    reject: (error: Error) => void;
+  }>();
   // 중복 흡수는 연결이 아니라 이 브리지(플러그인 id) 단위 — 플러그인은 ack 를 못 받은 head 를 재연결 뒤 같은 outboundId 로 다시 보낸다
   const dedupe = new OutboundDedupe();
   const inflight = new Map<string, Promise<{ messageId: string }>>();
@@ -131,7 +135,7 @@ export function attachBridge(io: Server, opts: BridgeServerOptions): BridgeHandl
       active = { socket, session };
       ack({ ok: true, data: { serverVersion: opts.serverVersion, protocol: BRIDGE_PROTOCOL } });
       opts.onHello?.(session, parsed.data);
-      for (const resolve of readyWaiters) resolve(session);
+      for (const waiter of readyWaiters) waiter.resolve(session);
       readyWaiters.clear();
     });
 
@@ -208,15 +212,21 @@ export function attachBridge(io: Server, opts: BridgeServerOptions): BridgeHandl
       const existing = requireActive();
       if (existing) return Promise.resolve(existing.session);
       return new Promise((resolve, reject) => {
+        const waiter = {
+          resolve: (session: BridgeSessionState) => {
+            clearTimeout(timer);
+            resolve(session);
+          },
+          reject: (error: Error) => {
+            clearTimeout(timer);
+            reject(error);
+          },
+        };
         const timer = setTimeout(() => {
-          readyWaiters.delete(onReady);
+          readyWaiters.delete(waiter);
           reject(new Error(`plugin hello not received within ${timeoutMs}ms`));
         }, timeoutMs);
-        const onReady = (session: BridgeSessionState) => {
-          clearTimeout(timer);
-          resolve(session);
-        };
-        readyWaiters.add(onReady);
+        readyWaiters.add(waiter);
       });
     },
     deliverInbound: (payload, timeoutMs = ackTimeoutMs) =>
@@ -234,6 +244,8 @@ export function attachBridge(io: Server, opts: BridgeServerOptions): BridgeHandl
     listAgents: (timeoutMs = ackTimeoutMs) =>
       request(AgentsListAck, (socket, ms) => socket.timeout(ms).emitWithAck("agents.list", {}), timeoutMs),
     close() {
+      for (const waiter of readyWaiters) waiter.reject(new Error("bridge closed"));
+      readyWaiters.clear();
       if (active) {
         active.session.close("shutdown");
         active.socket.emit("system.notice", { reason: "shutdown", message: "server shutting down" });
