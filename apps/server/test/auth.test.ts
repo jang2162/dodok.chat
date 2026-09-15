@@ -52,6 +52,9 @@ describe("auth", () => {
     expect(res.json()).toEqual({ user: me, workspaceId: app.workspaceId });
     expect(await verifySessionToken(app.auth, sessionToken)).toEqual({ userId: me.id });
     expect(await verifySessionToken(app.auth, "nope")).toBeNull();
+    // 헤더 값이 될 수 없는 입력도 예외가 아니라 null (wire auth.token 은 임의 유니코드)
+    expect(await verifySessionToken(app.auth, "토큰")).toBeNull();
+    expect(await verifySessionToken(app.auth, "a\nb")).toBeNull();
   });
 
   it("owner 는 Better Auth user·credential account 와 users·memberships(owner) 에 같은 id 로 한 번만 생긴다", async () => {
@@ -170,6 +173,19 @@ describe("auth", () => {
     expect(signIn.statusCode).toBe(404);
   });
 
+  it("Better Auth 의 비밀번호·프로필 변경 경로는 HTTP 로 열려 있지 않다", async () => {
+    app = await bootTestApp();
+    const { headers } = await login(app);
+    for (const url of ["/api/auth/change-password", "/api/auth/update-user"]) {
+      const res = await app.fastify.inject({
+        method: "POST",
+        url,
+        headers: { ...headers, "content-type": "application/json" },
+        payload: { currentPassword: TEST_LOCAL_TOKEN, newPassword: "y".repeat(20), name: "x" },
+      });
+      expect(res.statusCode, url).toBe(404);
+    }
+  });
   it("/api/v1/auth/local 은 1분에 5회까지, 6번째는 429 RATE_LIMITED", async () => {
     app = await bootTestApp();
     for (let i = 0; i < 5; i++) expect((await local(app, `wrong-token-${i}-xxxxxx`)).statusCode).toBe(401);

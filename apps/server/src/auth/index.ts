@@ -28,8 +28,16 @@ export function createAuth(
       minPasswordLength: 16,
       maxPasswordLength: 256,
     },
-    // 비밀번호 사인인은 레이트리밋이 걸린 /api/v1/auth/local 로만 — 서버 API(auth.api.signInEmail)는 영향 없음
-    disabledPaths: ["/sign-in/email"],
+    // 비밀번호 사인인은 레이트리밋이 걸린 /api/v1/auth/local 로만 — 서버 API(auth.api.signInEmail)는 영향 없음.
+    // 비밀번호·프로필 변경 경로도 닫는다: 「로컬 토큰 = owner 비밀번호」 불변식과 users 행 동기화를 지키기 위해(리뷰 sc-t3 지적 2)
+    disabledPaths: [
+      "/sign-in/email",
+      "/change-password",
+      "/set-password",
+      "/update-user",
+      "/change-email",
+      "/delete-user",
+    ],
     session: { expiresIn: SESSION_MAX_AGE_S, updateAge: 60 * 60 * 24 },
     plugins: [bearer()],
     telemetry: { enabled: false },
@@ -48,10 +56,18 @@ export function createAuth(
 export type Auth = ReturnType<typeof createAuth>;
 
 /** 세션 토큰(= /auth/local 응답 sessionToken)을 검증한다. Better Auth 자체 쿠키는 보지 않는다. */
+/** 헤더 값이 될 수 있는 토큰만(가시 ASCII). wire 의 auth.token 은 임의 유니코드가 올 수 있다 — Headers 가 던지지 않게 먼저 거른다 */
+const TOKEN_RE = /^[\x21-\x7e]+$/;
+
 export async function verifySessionToken(auth: Auth, token: string): Promise<{ userId: string } | null> {
-  if (!token) return null;
-  const session = await auth.api.getSession({
-    headers: new Headers({ authorization: `Bearer ${token}` }),
-  });
-  return session ? { userId: session.user.id } : null;
+  if (typeof token !== "string" || !TOKEN_RE.test(token)) return null;
+  try {
+    const session = await auth.api.getSession({
+      headers: new Headers({ authorization: `Bearer ${token}` }),
+    });
+    return session ? { userId: session.user.id } : null;
+  } catch {
+    // 무효 토큰은 예외가 아니라 null 이다(리뷰 sc-t3 지적 1)
+    return null;
+  }
 }
