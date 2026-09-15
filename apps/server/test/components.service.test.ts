@@ -3,8 +3,8 @@ import { v7 as uuid } from "uuid";
 import { describe, expect, it, vi } from "vitest";
 import type { z } from "zod";
 import { componentInteractions } from "../src/db/schema.sqlite";
-import { createAgent } from "../src/modules/agents/service";
-import { addMember, createChannel } from "../src/modules/channels/service";
+import { createAgent, updateAgent } from "../src/modules/agents/service";
+import { addMember, createChannel, removeMember } from "../src/modules/channels/service";
 import { type InteractInput, interact } from "../src/modules/components/service";
 import { createAgentMessage, getMessage } from "../src/modules/messages/service";
 import type { RunPlan } from "../src/modules/router/decide";
@@ -118,6 +118,49 @@ function setup(relayPolicy?: z.input<typeof RelayPolicy>) {
 }
 
 describe("components service — interact", () => {
+  it("이어가기 대상이 비활성이면 VALIDATION — 저장·소비·런 없음(대상을 되살리면 다시 누를 수 있다)", async () => {
+    const t = setup({ maxRelayTurns: 1 });
+    const created: Message[] = [];
+    t.bus.on("message.created", (p) => created.push(p.message));
+    const router = createRouter({ db: t.db, bus: t.bus, logger: t.logger, enqueue: t.enqueue });
+    const source = t.runOf(t.dev, 1);
+    await router.routeMessage(
+      createAgentMessage(t.db, t.bus, {
+        channelId: t.channel.id,
+        agentId: t.dev.id,
+        runId: source.id,
+        externalId: "out-relay",
+        bodyMd: "@fin 계속",
+      }),
+    );
+    const system = created.find((m) => m.systemMeta?.kind === "relay_limit");
+    if (!system?.components?.id) throw new Error("relay_limit 시스템 메시지가 없다");
+
+    updateAgent(t.db, t.fin.id, { enabled: false });
+    await expect(interact(t.deps, t.click(system, "continue_relay"))).rejects.toMatchObject({
+      body: { code: "VALIDATION" },
+    });
+    expect(t.enqueue).not.toHaveBeenCalled();
+    expect(t.interactionRows()).toHaveLength(0);
+    expect(t.updated).toHaveLength(0);
+    expect(getMessage(t.db, system.id)?.componentState?.consumed ?? []).toEqual([]);
+
+    updateAgent(t.db, t.fin.id, { enabled: true });
+    await interact(t.deps, t.click(system, "continue_relay"));
+    expect(t.enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it("카드 대상 에이전트가 채널에서 빠지면 VALIDATION — 저장·소비 없음", async () => {
+    const t = setup();
+    const message = t.card(t.dev);
+    removeMember(t.db, t.channel.id, t.dev.id);
+    await expect(interact(t.deps, t.click(message, "go"))).rejects.toMatchObject({
+      body: { code: "VALIDATION" },
+    });
+    expect(t.enqueue).not.toHaveBeenCalled();
+    expect(t.interactionRows()).toHaveLength(0);
+    expect(t.updated).toHaveLength(0);
+  });
   it("continue_relay 클릭 → continue 런(relay.toAgentId, rootMessageId = 시스템 메시지, depth 0) + 소비 + message.updated", async () => {
     const t = setup({ maxRelayTurns: 1 });
     const created: Message[] = [];

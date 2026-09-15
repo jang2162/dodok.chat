@@ -5,7 +5,8 @@ import type { Db, DbOrTx } from "../../db/client";
 import { componentInteractions, messages, users } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
 import type { ServerBus } from "../../realtime/bus";
-import { getChannel } from "../channels/service";
+import { getAgent } from "../agents/service";
+import { getChannel, listMembers } from "../channels/service";
 import { getMessage, rowToMessage } from "../messages/service";
 import { CONTINUE_RELAY_ITEM } from "../router/service";
 import type { Orchestrator } from "../runs/orchestrator";
@@ -105,6 +106,12 @@ export async function interact(deps: InteractDeps, input: InteractInput): Promis
 
 /** 시스템 메시지의 continue_relay → systemMeta.relay.toAgentId, 그 밖 → 컴포넌트를 쓴 에이전트(메시지 runId 의 런, 없으면 작성자) */
 function targetOf(tx: DbOrTx, message: Message, itemId: string): Target {
+  const target = resolveTarget(tx, message, itemId);
+  assertDeliverable(tx, message.channelId, target.agentId);
+  return target;
+}
+
+function resolveTarget(tx: DbOrTx, message: Message, itemId: string): Target {
   if (message.authorType === "system") {
     const relay = message.systemMeta?.relay;
     if (itemId !== CONTINUE_RELAY_ITEM || !relay) {
@@ -116,4 +123,15 @@ function targetOf(tx: DbOrTx, message: Message, itemId: string): Target {
   const agentId = run?.agentId ?? (message.authorType === "agent" ? message.authorId : undefined);
   if (!agentId) throw apiError("VALIDATION", "component message has no agent to deliver to");
   return { agentId, triggerKind: "interaction" };
+}
+
+/**
+ * 카드가 만들어진 뒤 대상이 비활성됐거나 채널에서 빠졌을 수 있다 — 라우터를 거치지 않는 경로라 여기서 다시 본다(sc-t9 리뷰 R1).
+ * 저장·소비 전에 던지므로 버튼은 살아 있고, 대상을 되살리면 다시 누를 수 있다.
+ */
+function assertDeliverable(tx: DbOrTx, channelId: string, agentId: string): void {
+  const isMember = listMembers(tx, channelId).some((m) => m.memberType === "agent" && m.memberId === agentId);
+  if (!isMember || !getAgent(tx, agentId)?.enabled) {
+    throw apiError("VALIDATION", "target agent is disabled or not in the channel");
+  }
 }
