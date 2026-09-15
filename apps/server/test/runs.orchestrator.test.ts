@@ -415,6 +415,33 @@ describe("orchestrator", () => {
     t.orch.stop();
   });
 
+  it("run_timeout 은 같은 세션의 다음 런을 보내기 전에 Gateway abort 를 먼저 보낸다", async () => {
+    const t = setup({ timeouts: { runMs: 50 } });
+    const first = await t.enqueue();
+    const second = await t.enqueue(); // 같은 세션 — 대기
+    await t.flush();
+    await t.orch.signal(first.id, { kind: "gateway_started" });
+    expect(t.adapter.calls.send.map((s) => s.runId)).toEqual([first.id]);
+    const order: string[] = [];
+    const send = t.adapter.send.bind(t.adapter);
+    vi.spyOn(t.adapter, "send").mockImplementation((input, ...rest) => {
+      order.push(`send:${input.runId}`);
+      return send(input, ...rest);
+    });
+    vi.spyOn(t.adapter, "abort").mockImplementation(async (runId, sessionKey) => {
+      order.push(`abort:${runId}`);
+      t.adapter.calls.abort.push({ runId, sessionKey });
+    });
+
+    await vi.advanceTimersByTimeAsync(50);
+
+    expect(order).toEqual([`abort:${first.id}`, `send:${second.id}`]);
+    expect(t.runOf(first.id)).toMatchObject({ status: "error", error: { code: "TIMEOUT" } });
+    expect(t.adapter.calls.forget).toEqual([first.id]);
+    expect(t.logger.warn).not.toHaveBeenCalledWith(expect.anything(), "adapter abort after timeout failed");
+    t.orch.stop();
+  });
+
   it.each([
     ["queue_timeout", 120_000, false],
     ["run_timeout", 600_000, true],

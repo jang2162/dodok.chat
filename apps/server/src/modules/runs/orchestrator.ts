@@ -226,14 +226,21 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
   async function timeOut(runId: string, s: Extract<RunSignal, { kind: "queue_timeout" | "run_timeout" }>) {
     try {
       const before = store.getRun(db, runId);
-      await api.signal(runId, s);
-      if (!before || TERMINAL_STATUSES.has(before.status)) return;
-      if (!TERMINAL_STATUSES.has(store.getRun(db, runId)?.status ?? before.status)) return;
-      try {
-        await adapter.abort(runId, before.sessionKey);
-      } catch (err) {
-        logger.warn({ err, runId }, "adapter abort after timeout failed");
+      // 종료 신호는 release → pump 로 같은 세션의 다음 런을 곧바로 보낸다. 그 전에 Gateway 에 abort 를 먼저 보내고(sc-t12 리뷰 R2),
+      // 결과는 신호를 적용한 뒤에 기다린다 — 타임아웃 코드가 Gateway 의 aborted 이벤트에 덮이지 않게.
+      let aborting: Promise<unknown> | undefined;
+      if (before && !TERMINAL_STATUSES.has(before.status) && transition(before, s).next !== null) {
+        aborting = adapter.abort(runId, before.sessionKey).then(
+          () => undefined,
+          (err: unknown) => err ?? new Error("adapter abort failed"),
+        );
       }
+      await api.signal(runId, s);
+      if (!aborting) return;
+      const failure = await aborting;
+      if (failure !== undefined) logger.warn({ err: failure, runId }, "adapter abort after timeout failed");
+      const after = store.getRun(db, runId);
+      if (!after || !TERMINAL_STATUSES.has(after.status)) return;
       adapter.forgetRun?.(runId);
     } catch (err) {
       logger.error({ err, runId, signal: s.kind }, "run timeout handling failed");

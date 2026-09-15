@@ -354,10 +354,10 @@ export async function resetAgentSession(
   if (!adapter.capabilities().sessionReset) throw capabilityMissing();
   // markSessionReset 이 행을 만들며 키를 따로 조립하지 않게, 세션 행을 먼저 보장하고 그 키로 리셋한다(sc-t7 걱정 1)
   const { session } = ensureSession(db, adapter, input);
-  // 세션은 (채널, 에이전트)당 하나 — 그 에이전트의 미종료 런이 곧 이 세션의 런이다. 옛 세션에서 먼저 멈춘다
-  for (const run of orchestrator.activeRuns(input.channelId)) {
-    if (run.agentId === input.agentId) await orchestrator.abort(run.id);
-  }
+  // 세션은 (채널, 에이전트)당 하나 — 그 에이전트의 미종료 런이 곧 이 세션의 런이다. 옛 세션에서 먼저 멈춘다.
+  // 대기 런(뒤)부터 거꾸로 닫는다 — 진행 런을 먼저 닫으면 pump 가 다음 대기 런을 Gateway 로 보내 버린다(sc-t12 리뷰 R1)
+  const mine = orchestrator.activeRuns(input.channelId).filter((run) => run.agentId === input.agentId);
+  for (const run of mine.reverse()) await orchestrator.abort(run.id);
   let reset: Awaited<ReturnType<AgentAdapter["resetSession"]>>;
   try {
     reset = await adapter.resetSession(session.sessionKey);

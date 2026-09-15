@@ -278,6 +278,24 @@ describe("REST·wire 배선 (FakeAdapter)", () => {
     expect(systemMessages(app, channelId)).toHaveLength(2);
   });
 
+  it("reset — 같은 에이전트의 대기 런은 진행 런보다 먼저 닫아 Gateway 로 나가지 않는다(대기 런은 adapter.abort 없이)", async () => {
+    const { channelId } = seedAgentChannel(app, "reset-queue", dev);
+    const first = await startRun(app, channelId, dev);
+    const second = await startRun(app, channelId, dev); // 같은 세션 — 대기
+    await vi.waitFor(() => expect(adapter.calls.send.some((s) => s.runId === first.id)).toBe(true));
+    expect(adapter.calls.send.some((s) => s.runId === second.id)).toBe(false);
+    const abortSpy = vi.spyOn(adapter, "abort");
+    const sendsBefore = adapter.calls.send.length;
+
+    expect((await api("POST", `/channels/${channelId}/agents/${dev}/reset`)).statusCode).toBe(200);
+
+    expect(adapter.calls.send).toHaveLength(sendsBefore); // 대기 런이 Gateway 로 나가지 않았다
+    expect(getRun(app.db, first.id)?.status).toBe("aborted");
+    expect(getRun(app.db, second.id)?.status).toBe("aborted");
+    expect(abortSpy).toHaveBeenCalledTimes(1);
+    expect(abortSpy).toHaveBeenCalledWith(first.id, expect.any(String));
+  });
+
   it("reset — sessionReset capability 가 없으면 409 CONFLICT(ADAPTER_CAPABILITY_MISSING), 어댑터·세션·메시지를 건드리지 않는다", async () => {
     const { channelId } = seedAgentChannel(app, "reset-cap", dev);
     adapter.setCapabilities({ sessionReset: false, agentsList: true, configSet: true });
