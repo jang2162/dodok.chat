@@ -17,6 +17,12 @@
         "hooks": [
           {
             "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/node-env.sh",
+            "timeout": 15,
+            "statusMessage": "mise 의 Node·pnpm 을 PATH 앞에 배치"
+          },
+          {
+            "type": "command",
             "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/orca-worker-check.sh SessionStart",
             "timeout": 15,
             "statusMessage": "Orca 워커 현황 확인"

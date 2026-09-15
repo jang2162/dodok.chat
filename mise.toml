@@ -1,0 +1,5 @@
+# 저장소 도구 버전 — openclaw 2026.9.4 의 engines(>=24.16 <25)에 맞춘다(계획서 10장 결정 #11).
+# `mise install` 로 설치. 터미널에서 `node -v` 가 24 가 아니면 `eval "$(mise env)"` 또는 `mise x -- <명령>`.
+[tools]
+node = "24.21.0"
+"npm:pnpm" = "11.16.0"

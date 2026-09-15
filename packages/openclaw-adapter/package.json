@@ -20,7 +20,7 @@
     "zod": "4.6.5"
   },
   "devDependencies": {
-    "@types/node": "^22.19.0",
+    "@types/node": "^24.13.4",
     "socket.io-client": "4.8.3",
     "tsx": "4.23.13",
     "typescript": "5.9.3",
