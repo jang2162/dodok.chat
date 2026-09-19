@@ -16,4 +16,7 @@ if (typeof window.matchMedia !== "function") {
   });
 }
 
+// jsdom 의 scrollTo 는 「Not implemented」만 찍는다 — 라우터의 스크롤 복원이 이동마다 부른다
+window.scrollTo = () => {};
+
 afterEach(() => cleanup());
