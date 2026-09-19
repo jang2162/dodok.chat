@@ -8,6 +8,7 @@ import { qk } from "@/api/queries";
 import { App } from "@/app/App";
 import { type AppClient, createApp } from "@/app/createApp";
 import { registerSessionReset } from "@/app/session";
+import { shellGet } from "../../../test/shellApi";
 import { useLogout } from "./mutations";
 
 // 등록한 정리는 단언이 실패해도 다음 테스트로 새지 않게 여기서 푼다
@@ -26,7 +27,7 @@ async function loggedInAt(path: string, logout: () => Response) {
   let loggedOut = false;
   vi.stubGlobal(
     "fetch",
-    vi.fn<typeof fetch>(async (input) => {
+    vi.fn<typeof fetch>(async (input, init) => {
       const url = String(input);
       if (url === "/api/v1/auth/logout") {
         loggedOut = true;
@@ -34,6 +35,9 @@ async function loggedInAt(path: string, logout: () => Response) {
       }
       if (url === "/api/v1/auth/me")
         return loggedOut ? json(401, { code: "UNAUTHORIZED", message: "x" }) : json(200, ME);
+      // 셸(사이드바·배너)이 부르는 조회는 기본 응답
+      const shell = shellGet(input, init);
+      if (shell) return shell;
       throw new Error(`예상 밖 요청 ${url}`);
     }),
   );

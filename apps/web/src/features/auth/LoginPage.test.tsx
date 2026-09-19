@@ -6,6 +6,8 @@ import { toast } from "sonner";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createQueryClient } from "@/app/queryClient";
 import { createAppRouter } from "@/app/router";
+import { TooltipProvider } from "@/ui/tooltip";
+import { shellGet } from "../../../test/shellApi";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -32,6 +34,9 @@ function stubServer(
       if (res.ok && cookieSticks) loggedIn = true;
       return res;
     }
+    // 로그인 뒤 셸(사이드바·배너)이 부르는 조회는 기본 응답
+    const shell = shellGet(input, init);
+    if (shell) return shell;
     throw new Error(`예상 밖 요청 ${url}`);
   });
   vi.stubGlobal("fetch", fetch);
@@ -42,7 +47,10 @@ function renderAt(path: string, queryClient: QueryClient = createQueryClient(() 
   const router = createAppRouter(queryClient, createMemoryHistory({ initialEntries: [path] }));
   render(
     <QueryClientProvider client={queryClient}>
-      <RouterProvider router={router} />
+      {/* App 과 같은 Provider — 로그인 뒤 셸의 연결 상태 점이 Tooltip 을 쓴다 */}
+      <TooltipProvider>
+        <RouterProvider router={router} />
+      </TooltipProvider>
     </QueryClientProvider>,
   );
   return router;

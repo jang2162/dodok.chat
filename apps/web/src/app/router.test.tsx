@@ -4,6 +4,8 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { qk } from "@/api/queries";
+import { TooltipProvider } from "@/ui/tooltip";
+import { shellGet } from "../../test/shellApi";
 import { RouteError } from "./RouteError";
 import { createQueryClient } from "./queryClient";
 import { createAppRouter, safeNext } from "./router";
@@ -20,7 +22,10 @@ function renderAt(path: string, queryClient: QueryClient = createQueryClient(() 
   const router = createAppRouter(queryClient, createMemoryHistory({ initialEntries: [path] }));
   render(
     <QueryClientProvider client={queryClient}>
-      <RouterProvider router={router} />
+      {/* App 과 같은 Provider — 셸의 연결 상태 점이 Tooltip 을 쓴다 */}
+      <TooltipProvider>
+        <RouterProvider router={router} />
+      </TooltipProvider>
     </QueryClientProvider>,
   );
   return router;
@@ -40,7 +45,8 @@ it("/auth/me 가 401 이면 /login?next= 로 보낸다", async () => {
 it("로그인돼 있으면 앱 레이아웃 안의 페이지가 뜬다", async () => {
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () => json(200, ME)),
+    // 셸(사이드바·배너·채널 헤더)이 부르는 조회는 기본 응답, 그 밖은 me
+    vi.fn<typeof fetch>(async (input, init) => shellGet(input, init) ?? json(200, ME)),
   );
   renderAt("/agents");
   expect(await screen.findByTestId("page-agents")).toBeInTheDocument();
@@ -50,7 +56,8 @@ it("로그인돼 있으면 앱 레이아웃 안의 페이지가 뜬다", async (
 it("/c/$channelId/settings 는 채널 화면의 Outlet 자리에 설정 패널을 둔다", async () => {
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () => json(200, ME)),
+    // 셸(사이드바·배너·채널 헤더)이 부르는 조회는 기본 응답, 그 밖은 me
+    vi.fn<typeof fetch>(async (input, init) => shellGet(input, init) ?? json(200, ME)),
   );
   renderAt("/c/abc/settings");
   const settings = await screen.findByTestId("page-channel-settings");
@@ -59,9 +66,9 @@ it("/c/$channelId/settings 는 채널 화면의 Outlet 자리에 설정 패널�
 
 it("/auth/me 가 네트워크 실패면 재시도 뒤 오류 화면 — 「다시 시도」로 복구한다", async () => {
   let up = false;
-  const fetch = vi.fn(async () => {
+  const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
     if (!up) throw new TypeError("Failed to fetch");
-    return json(200, ME);
+    return shellGet(input, init) ?? json(200, ME);
   });
   vi.stubGlobal("fetch", fetch);
   // React 오류 경계·라우터가 잡은 오류를 console 에 찍는다 — 예상한 것이라 조용히
@@ -120,7 +127,8 @@ it("next 의 제어문자 변형(/\\t/evil.example)은 safeNext 가 버린다 �
   // 걸러 두지 않으면 @tanstack/history 의 parseHref 가 탭을 지우고 `//` 머리를 접어 앱 안 `/evil.example`(Not Found)로 간다
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () => json(200, ME)),
+    // 셸(사이드바·배너·채널 헤더)이 부르는 조회는 기본 응답, 그 밖은 me
+    vi.fn<typeof fetch>(async (input, init) => shellGet(input, init) ?? json(200, ME)),
   );
   const router = renderAt(`/login?next=${encodeURIComponent("/\t/evil.example")}`);
   expect(await screen.findByTestId("page-home")).toBeInTheDocument();

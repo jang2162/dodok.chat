@@ -6,6 +6,7 @@ import { api } from "@/api/http";
 import { qk } from "@/api/queries";
 import { useWireStatus } from "@/realtime/wire";
 import { createdSockets } from "../../test/fakeSocket";
+import { shellGet } from "../../test/shellApi";
 import { App } from "./App";
 import { createApp } from "./createApp";
 import { registerSessionReset } from "./session";
@@ -66,10 +67,10 @@ it("앱 안 쿼리의 401 은 상태를 비우고 /login?next=<지금 경로> �
   let expired = false;
   vi.stubGlobal(
     "fetch",
-    vi.fn<typeof fetch>(async (input) => {
+    vi.fn<typeof fetch>(async (input, init) => {
       if (expired) return json(401, UNAUTHORIZED);
       if (String(input) === "/api/v1/auth/me") return json(200, ME);
-      return json(200, { channels: [] });
+      return shellGet(input, init) ?? json(200, { channels: [] });
     }),
   );
   const { app, history, moves } = renderApp("/c/abc");
@@ -107,9 +108,11 @@ it("여러 쿼리가 함께 네트워크 실패해도 화면의 토스트는 「
   let down = false;
   vi.stubGlobal(
     "fetch",
-    vi.fn<typeof fetch>(async (input) => {
+    vi.fn<typeof fetch>(async (input, init) => {
       if (down) throw new TypeError("Failed to fetch");
       if (String(input) === "/api/v1/auth/me") return json(200, ME);
+      const shell = shellGet(input, init);
+      if (shell) return shell;
       throw new Error(`예상 밖 요청 ${String(input)}`);
     }),
   );
@@ -135,10 +138,10 @@ it("wire UNAUTHORIZED 이고 세션도 끝났으면(me 401) 상태를 비우고 
   let expired = false;
   vi.stubGlobal(
     "fetch",
-    vi.fn<typeof fetch>(async (input) => {
+    vi.fn<typeof fetch>(async (input, init) => {
       if (expired) return json(401, UNAUTHORIZED);
       if (String(input) === "/api/v1/auth/me") return json(200, ME);
-      return json(200, { channels: [] });
+      return shellGet(input, init) ?? json(200, { channels: [] });
     }),
   );
   const { history, moves } = renderApp("/c/abc");
@@ -158,9 +161,9 @@ it("wire UNAUTHORIZED 이고 세션도 끝났으면(me 401) 상태를 비우고 
 });
 
 it("wire UNAUTHORIZED 인데 REST 세션이 살아 있으면(me 200) 로그인으로 보내지 않고 wire 상태만 rejected", async () => {
-  const fetchMock = vi.fn<typeof fetch>(async (input) => {
+  const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
     if (String(input) === "/api/v1/auth/me") return json(200, ME);
-    return json(200, { channels: [] });
+    return shellGet(input, init) ?? json(200, { channels: [] });
   });
   vi.stubGlobal("fetch", fetchMock);
   const { moves } = renderApp("/c/abc");
