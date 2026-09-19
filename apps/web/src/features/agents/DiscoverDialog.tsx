@@ -1,10 +1,14 @@
+import { useQueryClient } from "@tanstack/react-query";
+import { XIcon } from "lucide-react";
 import { type FormEvent, type ReactNode, useId, useState } from "react";
 import { ApiRequestError, NetworkError } from "@/api/http";
+import { qk } from "@/api/queries";
 import { Alert, AlertDescription } from "@/ui/alert";
 import { Button } from "@/ui/button";
 import { Checkbox } from "@/ui/checkbox";
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -30,20 +34,37 @@ function discoverErrorText(e: Error): string {
 /**
  * 「Gateway 에서 가져오기」 버튼과 대화상자. 열 때마다 discover 를 새로 부르고, 실패하면 직접 입력 폼을 보인다.
  * 등록된 목록은 페이지가 넘긴다 — 여기서 `useAgents()` 를 새로 붙이면 열 때마다 목록을 다시 불러오고,
- * 그 응답이 등록(POST) 응답보다 늦게 오면 방금 넣은 에이전트를 옛 목록으로 덮는다
+ * 그 응답이 등록(POST) 응답보다 늦게 오면 방금 넣은 에이전트를 옛 목록으로 덮는다.
+ * 페이지가 목록을 받기 전엔 `disabled` — 등록된 것을 가를 수 없고, 등록한 것을 넣을 캐시도 없다
  */
-export function DiscoverDialog({ registeredIds }: { registeredIds: ReadonlySet<string> }) {
+export function DiscoverDialog({
+  registeredIds,
+  disabled = false,
+}: {
+  registeredIds: ReadonlySet<string>;
+  disabled?: boolean;
+}) {
+  const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [manual, setManual] = useState(false);
+  // 일괄 등록 중. 이 동안엔 닫지 않는다 — 닫아도 루프는 남은 POST 를 보내고, 그 폼 오류는 보일 곳이 없다
+  const [busy, setBusy] = useState(false);
   const discover = useDiscover(open);
 
   function onOpenChange(next: boolean) {
+    if (!next && busy) return;
+    if (next) {
+      // 닫을 때가 아니라 열 때 되돌린다 — 닫히는 애니메이션 동안 목록 화면이 비치지 않게
+      setManual(false);
+      // 지난번에 받은 목록은 버린다 — 열 때마다 「불러오는 중」부터, 목록은 이번에 받은 것만 그린다
+      void qc.resetQueries({ queryKey: qk.discover, exact: true });
+    }
     setOpen(next);
-    // 닫을 때가 아니라 열 때 되돌린다 — 닫히는 애니메이션 동안 목록 화면이 비치지 않게
-    if (next) setManual(false);
   }
-  const close = () => onOpenChange(false);
+  const close = () => setOpen(false);
 
+  // 이번에 받은 목록이 있으면 다시 불러오는 중에도(재조회 실패여도) 목록을 둔다 — 고른 항목·편집이 사라지지 않게.
+  // 로딩은 isPending — 오프라인이라 멈춘(paused) 첫 조회도 여기 든다
   let body: ReactNode = null;
   if (manual) {
     body = (
@@ -54,11 +75,22 @@ export function DiscoverDialog({ registeredIds }: { registeredIds: ReadonlySet<s
         </Button>
       </div>
     );
-  } else if (discover.isFetching) {
+  } else if (discover.isPending) {
     body = (
       <p role="status" className="text-sm text-muted-foreground">
         Gateway 에서 불러오는 중…
       </p>
+    );
+  } else if (discover.data) {
+    body = (
+      <DiscoverList
+        discovered={discover.data}
+        registeredIds={registeredIds}
+        busy={busy}
+        onBusy={setBusy}
+        onDone={close}
+        onManual={() => setManual(true)}
+      />
     );
   } else if (discover.isError) {
     body = (
@@ -75,23 +107,15 @@ export function DiscoverDialog({ registeredIds }: { registeredIds: ReadonlySet<s
         <ManualAgentForm registeredIds={registeredIds} onCreated={close} />
       </div>
     );
-  } else if (discover.data) {
-    body = (
-      <DiscoverList
-        discovered={discover.data}
-        registeredIds={registeredIds}
-        onDone={close}
-        onManual={() => setManual(true)}
-      />
-    );
   }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTrigger asChild>
-        <Button>Gateway 에서 가져오기</Button>
+        <Button disabled={disabled}>Gateway 에서 가져오기</Button>
       </DialogTrigger>
-      <DialogContent className="max-h-[85svh] overflow-y-auto">
+      {/* 기본 닫기 버튼은 잠글 수 없어 직접 둔다 — 등록 중엔 비활성(Esc·바깥 클릭은 onOpenChange 가 무시) */}
+      <DialogContent showCloseButton={false} className="max-h-[85svh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Gateway 에서 가져오기</DialogTitle>
           <DialogDescription>
@@ -99,6 +123,12 @@ export function DiscoverDialog({ registeredIds }: { registeredIds: ReadonlySet<s
           </DialogDescription>
         </DialogHeader>
         {body}
+        <DialogClose asChild>
+          <Button variant="ghost" size="icon-sm" className="absolute top-2 right-2" disabled={busy}>
+            <XIcon />
+            <span className="sr-only">닫기</span>
+          </Button>
+        </DialogClose>
       </DialogContent>
     </Dialog>
   );
@@ -110,22 +140,25 @@ type Draft = { handle: string; name: string; error?: string };
 /**
  * 등록 안 된 것(같은 providerAgentId 가 없는 것)만 체크 목록으로. 고른 것을 하나씩 POST 하고, 등록된 것은 목록에서 빠진다.
  * 폼 오류는 그 항목 핸들 칸 아래에 두고 다음 항목을 계속한다. 그 밖의 오류는 전역 토스트가 알리니 거기서 멈춘다.
- * 모두 등록되면 닫는다
+ * 모두 등록되면 닫는다. busy 는 대화상자가 든다 — 도는 동안 닫지 못하게
  */
 function DiscoverList({
   discovered,
   registeredIds,
+  busy,
+  onBusy,
   onDone,
   onManual,
 }: {
   discovered: DiscoveredAgent[];
   registeredIds: ReadonlySet<string>;
+  busy: boolean;
+  onBusy: (busy: boolean) => void;
   onDone: () => void;
   onManual: () => void;
 }) {
   const create = useCreateAgent();
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
-  const [busy, setBusy] = useState(false);
   const baseId = useId();
 
   const candidates = discovered.filter((d) => !registeredIds.has(d.providerAgentId));
@@ -160,7 +193,7 @@ function DiscoverList({
   async function register(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!ready || busy) return;
-    setBusy(true);
+    onBusy(true);
     let failed = false;
     for (const { agent, draft } of chosen) {
       try {
@@ -176,7 +209,7 @@ function DiscoverList({
         update(agent.providerAgentId, { error: message });
       }
     }
-    setBusy(false);
+    onBusy(false);
     if (!failed) onDone();
   }
 

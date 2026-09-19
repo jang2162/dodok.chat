@@ -1,6 +1,6 @@
 import type { Agent } from "@dodok/shared";
-import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { onlineManager, type QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
@@ -100,8 +100,11 @@ function gate() {
   return { opened, open };
 }
 
+/** 목록을 받기 전엔 가져오기 버튼이 잠겨 있다 — 풀리길 기다려 누른다 */
 async function openDiscover() {
-  await userEvent.click(await screen.findByRole("button", { name: "Gateway 에서 가져오기" }));
+  const trigger = await screen.findByRole("button", { name: "Gateway 에서 가져오기" });
+  await waitFor(() => expect(trigger).toBeEnabled());
+  await userEvent.click(trigger);
   return screen.findByRole("dialog");
 }
 
@@ -119,6 +122,7 @@ beforeEach(() => {
   );
 });
 afterEach(() => {
+  onlineManager.setOnline(true);
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -189,11 +193,33 @@ describe("목록", () => {
       },
     });
     renderPage();
+    const trigger = screen.getByRole("button", { name: "Gateway 에서 가져오기" });
+    expect(trigger).toBeDisabled(); // 목록을 받기 전엔 등록된 것을 가를 수 없다
     expect(await screen.findByText("에이전트 목록을 불러오지 못했습니다")).toBeInTheDocument();
     expect(toastError).toHaveBeenCalledTimes(1);
     expect(toastError).toHaveBeenCalledWith("권한이 없다");
+    expect(trigger).toBeDisabled();
     await userEvent.click(screen.getByRole("button", { name: "다시 시도" }));
     expect(await screen.findByText("@dev")).toBeInTheDocument();
+    expect(trigger).toBeEnabled();
+  });
+
+  it("다시 불러오기가 실패해도 이미 받은 목록은 그대로 — 원인은 전역 토스트", async () => {
+    let n = 0;
+    const server = stubServer({
+      agents: [dev()],
+      list: (fallback) => (++n === 1 ? fallback() : apiErr(403, "FORBIDDEN", "권한이 없다")),
+    });
+    const qc = renderPage();
+    expect(await screen.findByText("@dev")).toBeInTheDocument();
+    // 화면에 다시 들어온다 — 같은 캐시로 새로 붙어 다시 불러온다(staleTime 0)
+    cleanup();
+    renderPage(qc);
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith("권한이 없다"));
+    expect(server.count("GET", "/api/v1/agents")).toBe(2);
+    expect(screen.getByText("@dev")).toBeInTheDocument();
+    expect(screen.queryByText("에이전트 목록을 불러오지 못했습니다")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Gateway 에서 가져오기" })).toBeEnabled();
   });
 });
 
@@ -318,16 +344,102 @@ describe("Gateway 에서 가져오기", () => {
     expect(within(dialog).getAllByText("qa")).toHaveLength(1);
   });
 
-  it("다시 열면 discover 를 새로 부른다", async () => {
-    const server = stubServer({ agents: [dev()], discover: () => json(200, { agents: discovered }) });
+  it("다시 열면 discover 를 새로 부른다 — 받기 전엔 지난 목록 대신 「불러오는 중」", async () => {
+    const g = gate();
+    let n = 0;
+    const server = stubServer({
+      agents: [dev()],
+      discover: async () => {
+        if (++n === 2) await g.opened;
+        return json(200, { agents: discovered });
+      },
+    });
     renderPage();
     let dialog = await openDiscover();
     await within(dialog).findByRole("checkbox", { name: "Fin" });
     await userEvent.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     dialog = await openDiscover();
+    expect(within(dialog).getByRole("status")).toHaveTextContent("Gateway 에서 불러오는 중…");
+    expect(within(dialog).queryByRole("checkbox")).not.toBeInTheDocument();
+    g.open();
     await within(dialog).findByRole("checkbox", { name: "Fin" });
     expect(server.count("GET", "/api/v1/agents/discover")).toBe(2);
+  });
+
+  it("열려 있는 동안 다시 불러와도 고른 항목·편집은 그대로 — 재연결로는 부르지 않고, 오프라인에서 열면 「불러오는 중」", async () => {
+    const g = gate();
+    let n = 0;
+    const server = stubServer({
+      agents: [dev()],
+      discover: async () => {
+        if (++n === 2) await g.opened;
+        return json(200, { agents: discovered });
+      },
+    });
+    const qc = renderPage();
+    await screen.findByText("@dev");
+    onlineManager.setOnline(false);
+    const dialog = await openDiscover();
+    expect(within(dialog).getByRole("status")).toHaveTextContent("Gateway 에서 불러오는 중…");
+    expect(server.count("GET", "/api/v1/agents/discover")).toBe(0);
+    onlineManager.setOnline(true);
+
+    await userEvent.click(await within(dialog).findByRole("checkbox", { name: "Fin" }));
+    const finHandle = within(dialog).getByRole("textbox", { name: "Fin 핸들" });
+    // 재연결 — 다시 부르지 않는다(부르면 편집 중인 목록이 흔들린다)
+    onlineManager.setOnline(false);
+    onlineManager.setOnline(true);
+    await userEvent.clear(finHandle);
+    await userEvent.type(finHandle, "fin2");
+    expect(server.count("GET", "/api/v1/agents/discover")).toBe(1);
+
+    // 누가 ["agents"] 를 무효화해 discover 가 다시 불려도 목록은 그대로 둔다
+    void qc.invalidateQueries({ queryKey: qk.agents });
+    await waitFor(() => expect(server.count("GET", "/api/v1/agents/discover")).toBe(2));
+    expect(within(dialog).queryByRole("status")).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("checkbox", { name: "Fin" })).toBeChecked();
+    expect(finHandle).toHaveValue("fin2");
+    g.open();
+    await waitFor(() => expect(qc.isFetching({ queryKey: qk.discover })).toBe(0));
+    expect(within(dialog).getByRole("textbox", { name: "Fin 핸들" })).toHaveValue("fin2");
+    expect(within(dialog).getByRole("button", { name: "1개 등록" })).toBeEnabled();
+  });
+
+  it("등록하는 동안엔 닫을 수 없다(닫기 버튼·Esc·바깥 클릭) — 끝나면 실패 항목을 대화상자 안에 보이고 닫을 수 있다", async () => {
+    const g = gate();
+    const server = stubServer({
+      agents: [dev()],
+      discover: () => json(200, { agents: discovered }),
+      create: async (body, fallback) => {
+        await g.opened;
+        return body.handle === "ops"
+          ? apiErr(409, "CONFLICT", "handle @ops 는 이미 쓰이고 있다")
+          : fallback(body);
+      },
+    });
+    renderPage();
+    const dialog = await openDiscover();
+    await userEvent.click(await within(dialog).findByRole("checkbox", { name: "Fin" }));
+    await userEvent.click(within(dialog).getByRole("checkbox", { name: "ops" }));
+    await userEvent.click(within(dialog).getByRole("button", { name: "2개 등록" }));
+
+    const closeButton = within(dialog).getByRole("button", { name: "닫기" });
+    await waitFor(() => expect(closeButton).toBeDisabled());
+    await userEvent.keyboard("{Escape}");
+    const overlay = document.querySelector<HTMLElement>('[data-slot="dialog-overlay"]');
+    if (!overlay) throw new Error("오버레이가 없다");
+    await userEvent.click(overlay);
+    expect(screen.getByRole("dialog")).toBe(dialog);
+
+    g.open();
+    const opsHandle = within(dialog).getByRole("textbox", { name: "ops 핸들" });
+    await waitFor(() => expect(opsHandle).toHaveAccessibleDescription("handle @ops 는 이미 쓰이고 있다"));
+    expect(server.bodies("POST")).toHaveLength(2);
+    expect(screen.getByText("@fin-bot")).toBeInTheDocument();
+    expect(closeButton).toBeEnabled();
+    await userEvent.click(closeButton);
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
 
   it.each([

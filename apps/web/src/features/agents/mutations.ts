@@ -47,7 +47,8 @@ export function usePatchAgent() {
 
 /**
  * Gateway agents.list. 대화상자가 열렸을 때만(`enabled`), 열 때마다 새로(`staleTime: 0`).
- * 503·403 은 대화상자 안에 그리므로 전역 토스트를 끄고(`silent`), 재시도하지 않는다 — 다시 부르기는 사용자가 누른다
+ * 503·403 은 대화상자 안에 그리므로 전역 토스트를 끄고(`silent`), 재시도하지 않는다 — 다시 부르기는 사용자가 누른다.
+ * 네트워크가 돌아와도 다시 부르지 않는다 — 열려 있는 동안엔 고르고 고치는 중이다
  */
 export function useDiscover(enabled: boolean) {
   return useQuery({
@@ -56,6 +57,7 @@ export function useDiscover(enabled: boolean) {
     enabled,
     staleTime: 0,
     retry: false,
+    refetchOnReconnect: false,
     meta: { silent: true },
   });
 }

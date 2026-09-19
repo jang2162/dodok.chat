@@ -5,7 +5,8 @@ import { DiscoverDialog } from "./DiscoverDialog";
 
 /**
  * 에이전트 관리(스펙 6.1): 목록·사용 토글·기본 프롬프트, 「Gateway 에서 가져오기」·직접 입력.
- * 목록 조회 실패의 원인은 전역 토스트가 알린다 — 여기는 그 자리에 「다시 시도」만 둔다
+ * 목록 조회 실패의 원인은 전역 토스트가 알린다 — 여기는 받은 목록이 없을 때만 그 자리에 「다시 시도」를 둔다.
+ * 이미 받은 목록은 다시 불러오기가 실패해도 그대로 그린다
  */
 export function AgentsPage() {
   const agents = useAgents();
@@ -18,7 +19,8 @@ export function AgentsPage() {
         불러오는 중…
       </p>
     );
-  } else if (agents.isError) {
+  } else if (!agents.data) {
+    // 받은 목록 없이 실패했을 때만(isError). 다시 불러오기 실패는 아래에서 받은 목록을 그린다
     content = (
       <div className="flex flex-col items-start gap-3">
         <p className="text-sm text-muted-foreground">에이전트 목록을 불러오지 못했습니다</p>
@@ -57,7 +59,7 @@ export function AgentsPage() {
             OpenClaw 에이전트를 등록하고 사용 여부·기본 프롬프트를 정합니다.
           </p>
         </div>
-        <DiscoverDialog registeredIds={registeredIds} />
+        <DiscoverDialog registeredIds={registeredIds} disabled={!agents.data} />
       </header>
       {content}
     </section>
