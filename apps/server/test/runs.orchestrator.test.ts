@@ -719,6 +719,43 @@ describe("orchestrator", () => {
     },
   );
 
+  it.each([
+    ["AdapterError", new AdapterError("ADAPTER_UNAVAILABLE", "run forgotten before delivery"), false],
+    ["그 밖의 예외", new TypeError("boom"), true],
+  ])(
+    "종료된 런의 늦은 send 거부 — %s 면 상태는 그대로 두고, 예상 밖 예외만 error 로그",
+    async (_label, err, logsError) => {
+      const t = setup();
+      let fail: () => void = () => undefined;
+      t.adapter.script(
+        () =>
+          new Promise((_resolve, reject) => {
+            fail = () => reject(err);
+          }),
+      );
+      const run = await t.enqueue();
+      await t.flush();
+      await t.orch.abort(run.id);
+      const eventsBefore = t.eventsOf(run.id);
+
+      fail();
+      await t.flush();
+
+      expect(t.runOf(run.id)).toMatchObject({ status: "aborted" });
+      expect(t.runOf(run.id).error).toBeUndefined();
+      expect(t.eventsOf(run.id)).toEqual(eventsBefore);
+      const errorLines = t.logger.error.mock.calls.filter(
+        (c) => c[1] === "run dispatch failed after run ended",
+      );
+      expect(errorLines).toEqual(
+        logsError ? [[{ err, runId: run.id, status: "aborted" }, "run dispatch failed after run ended"]] : [],
+      );
+      if (!logsError) expect(t.logger.error).not.toHaveBeenCalled();
+      expect(t.logger.debug).toHaveBeenCalledTimes(logsError ? 0 : 1);
+      t.orch.stop();
+    },
+  );
+
   it("어댑터가 drop 을 돌려주면 error(DROPPED:bot-loop-protection) 과 run_error 시스템 메시지", async () => {
     const t = setup();
     t.adapter.script(() => ({ admission: "drop", reason: "bot-loop-protection" }));

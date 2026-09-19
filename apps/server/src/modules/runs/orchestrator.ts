@@ -485,8 +485,13 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       }
       const ended = store.getRun(db, runId);
       if (ended && TERMINAL_STATUSES.has(ended.status)) {
-        // 기다리는 사이 상한·abort 로 이미 닫혔다(어댑터는 forgetRun 된 전송을 거부한다) — 알릴 것이 없다
-        logger.debug({ err, runId, status: ended.status }, "run dispatch settled after run ended");
+        // 기다리는 사이 상한·abort 로 이미 닫혔다 — 상태는 건드리지 않는다. 어댑터 거부(forgetRun 된 전송 등)는 예상한 것이라 debug,
+        // 그 밖의 예외는 버그일 수 있어 error 로 남긴다(sc-t14 리뷰 이월 B)
+        if (isAdapterError(err)) {
+          logger.debug({ err, runId, status: ended.status }, "run dispatch settled after run ended");
+        } else {
+          logger.error({ err, runId, status: ended.status }, "run dispatch failed after run ended");
+        }
         return;
       }
       // 어댑터는 runId 를 전송 전에 등록하므로 gateway_started 뒤에 거부될 수 있다 — 상태와 무관하게 닫는다
@@ -770,11 +775,16 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
   return api;
 }
 
+/** 패키지 경계를 넘어 클래스가 둘일 수 있어 이름도 본다 */
+function isAdapterError(err: unknown): err is AdapterError {
+  return err instanceof AdapterError || (err instanceof Error && err.name === "AdapterError");
+}
+
 /** 스펙 8장 — send 거부 코드를 런 오류 코드로 */
 function dispatchError(err: unknown): { code: string; message: string } {
   const message = errorMessage(err);
-  if (err instanceof AdapterError || (err instanceof Error && err.name === "AdapterError")) {
-    const code = (err as AdapterError).code;
+  if (isAdapterError(err)) {
+    const code = err.code;
     if (code === "TIMEOUT" || code === "ADAPTER_UNAVAILABLE") return { code, message };
     if (code === "INTERNAL" && message.startsWith("ADAPTER_PROTOCOL:"))
       return { code: "ADAPTER_PROTOCOL", message };

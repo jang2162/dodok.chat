@@ -1,18 +1,24 @@
 import { describe, expect, it } from "vitest";
-import { OutboundQueue, backoffDelayMs } from "../src/bridge-queue";
+import { DEFAULT_BACKOFF, OutboundQueue, backoffDelayMs } from "../src/bridge-queue";
 
 describe("backoffDelayMs", () => {
   it("지수로 늘고 상한에서 멈춘다 (지터 0)", () => {
-    const opts = { baseMs: 500, maxMs: 30_000, jitter: 0 };
-    expect([0, 1, 2, 3, 10].map((attempt) => backoffDelayMs(attempt, opts, () => 0.5))).toEqual([
-      500, 1000, 2000, 4000, 30_000,
+    const opts = { baseMs: 500, maxMs: 10_000, jitter: 0 };
+    expect([0, 1, 2, 3, 4, 5, 10].map((attempt) => backoffDelayMs(attempt, opts, () => 0.5))).toEqual([
+      500, 1000, 2000, 4000, 8000, 10_000, 10_000,
     ]);
   });
 
   it("지터는 ±비율 안에 머문다", () => {
-    const opts = { baseMs: 1000, maxMs: 30_000, jitter: 0.2 };
+    const opts = { baseMs: 1000, maxMs: 10_000, jitter: 0.2 };
     expect(backoffDelayMs(0, opts, () => 0)).toBe(800);
     expect(backoffDelayMs(0, opts, () => 1)).toBe(1200);
+    expect(backoffDelayMs(10, opts, () => 1)).toBe(12_000);
+  });
+
+  it("기본 상한은 10s(지터 포함 12s) — 서버를 늦게 띄워도 첫 연결이 오래 밀리지 않는다(실연 21.5s, live-smoke 5.1)", () => {
+    expect(DEFAULT_BACKOFF).toEqual({ baseMs: 500, maxMs: 10_000, jitter: 0.2 });
+    expect(backoffDelayMs(20, DEFAULT_BACKOFF, () => 1)).toBe(12_000);
   });
 });
 
