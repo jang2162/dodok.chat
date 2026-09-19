@@ -54,12 +54,14 @@ async function submitToken(token: string) {
   return input;
 }
 
-/** 뮤테이션 캐시에 남은 모든 variables */
-const mutationVariables = (qc: QueryClient) =>
-  qc
-    .getMutationCache()
-    .getAll()
-    .map((m) => m.state.variables);
+/** 뮤테이션 캐시에 남은 모든 상태(variables·data 포함)를 문자열로 */
+const mutationStates = (qc: QueryClient) =>
+  JSON.stringify(
+    qc
+      .getMutationCache()
+      .getAll()
+      .map((m) => m.state),
+  );
 
 describe("LoginPage", () => {
   it("토큰 입력은 password 이고, 틀린 토큰(401)이면 「토큰이 맞지 않습니다」", async () => {
@@ -147,12 +149,13 @@ describe("LoginPage", () => {
 
   describe("토큰은 끝난 뮤테이션 상태에 남지 않는다", () => {
     it("성공 — next 로 간 뒤 뮤테이션 캐시 어디에도 토큰이 없다", async () => {
-      stubServer(() => json(200, { sessionToken: "s", user: ME.user }));
+      stubServer(() => json(200, { sessionToken: "session-secret", user: ME.user }));
       const queryClient = createQueryClient(() => {});
       renderAt("/login?next=%2Fagents", queryClient);
       await submitToken("secret-token");
       expect(await screen.findByTestId("page-agents")).toBeInTheDocument();
-      await waitFor(() => expect(mutationVariables(queryClient)).not.toContain("secret-token"));
+      await waitFor(() => expect(mutationStates(queryClient)).not.toContain("secret-token"));
+      expect(mutationStates(queryClient)).not.toContain("session-secret");
     });
 
     it("실패(401) — 로그인 화면에 머문 채로도 뮤테이션 캐시 어디에도 토큰이 없다", async () => {
@@ -161,7 +164,7 @@ describe("LoginPage", () => {
       renderAt("/login", queryClient);
       await submitToken("secret-token");
       expect(await screen.findByText("토큰이 맞지 않습니다")).toBeInTheDocument();
-      await waitFor(() => expect(mutationVariables(queryClient)).not.toContain("secret-token"));
+      await waitFor(() => expect(mutationStates(queryClient)).not.toContain("secret-token"));
       expect(screen.getByText("토큰이 맞지 않습니다")).toBeInTheDocument(); // 비운 뒤에도 문구는 남는다
     });
   });

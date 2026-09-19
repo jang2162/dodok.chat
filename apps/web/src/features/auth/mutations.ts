@@ -13,7 +13,10 @@ import { resetClientState } from "@/app/session";
 export function useLogin() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (token: string) => api<unknown>("POST", "/auth/local", { token }),
+    // 본문({ sessionToken, user })은 버린다 — 세션 자격이 뮤테이션 state.data 에 실리지 않게
+    mutationFn: async (token: string) => {
+      await api<unknown>("POST", "/auth/local", { token });
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.me }),
     gcTime: 0,
     meta: { silent: true },

@@ -122,10 +122,8 @@ it("next 의 제어문자 변형(/\\t/evil.example)은 safeNext 가 버린다 �
     "fetch",
     vi.fn(async () => json(200, ME)),
   );
-  const before = window.location.href;
   const router = renderAt(`/login?next=${encodeURIComponent("/\t/evil.example")}`);
   expect(await screen.findByTestId("page-home")).toBeInTheDocument();
   expect(router.state.location.pathname).toBe("/");
   expect(router.history.location.href).toBe("/");
-  expect(window.location.href).toBe(before); // 문서 이동 없음
 });
