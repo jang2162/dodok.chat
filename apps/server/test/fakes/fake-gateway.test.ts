@@ -289,6 +289,34 @@ describe("가짜 Gateway — 실제 connectGateway 로 붙는다", () => {
     await expect(connection.request("dodok.no.such.method", {})).rejects.toMatchObject(missingScope);
   });
 
+  it("tickIntervalMs 면 구독 없는 연결에도 tick 을 보내 실제 클라이언트가 무활동으로 끊지 않고, close() 가 그 타이머를 치운다", async () => {
+    const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
+    gateway = await startFakeGateway({ tickIntervalMs: 30 });
+    const tickTimer = setIntervalSpy.mock.results[setIntervalSpy.mock.calls.findIndex(([, ms]) => ms === 30)]
+      ?.value as ReturnType<typeof setInterval> | undefined;
+    setIntervalSpy.mockRestore();
+    expect(tickTimer).toBeDefined();
+
+    const closes: number[] = [];
+    const { frames } = await connect({ subscribe: false, onClose: (info) => closes.push(info.code) });
+    // 실제 시계 — 30ms 간격이면 100ms 안에 2개 이상
+    await vi.waitFor(
+      () => expect(frames.filter((f) => f.event === "tick").length).toBeGreaterThanOrEqual(2),
+      { timeout: 100, interval: 5 },
+    );
+    expect(frames.every((f) => f.event === "tick")).toBe(true);
+    expect(frames[0]?.payload).toEqual({ ts: expect.any(Number) });
+    expect(closes).toEqual([]);
+
+    const clearIntervalSpy = vi.spyOn(globalThis, "clearInterval");
+    try {
+      await gateway.close();
+      expect(clearIntervalSpy).toHaveBeenCalledWith(tickTimer);
+    } finally {
+      clearIntervalSpy.mockRestore();
+    }
+  });
+
   it("close() 는 열린 연결을 끊고(post-hello onClose) 포트를 닫는다", async () => {
     const closes: number[] = [];
     const { gateway } = await connect({ onClose: (info) => closes.push(info.code) });

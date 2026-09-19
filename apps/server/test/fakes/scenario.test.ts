@@ -194,6 +194,102 @@ describe("시나리오 — 인바운드 대본을 Gateway 이벤트와 플러그
     await vi.waitFor(() => expect(frames.filter((f) => f.event === "chat")).toHaveLength(3));
   });
 
+  it("fail 이면 lifecycle start 뒤 chat error(errorMessage)로 끝내고 툴·델타·final·정본을 내지 않는다", async () => {
+    const scenario = createScenario({
+      gateway,
+      plugin,
+      agents: {
+        dev: () => ({
+          deltas: ["안 보냄"],
+          reply: "안 보냄",
+          tool: { name: "Read", args: {}, result: "" },
+          fail: "boom",
+        }),
+      },
+    });
+    const failed = delivery("dev", "@dev 실패");
+    await expect(bridge.deliverInbound(failed, 2_000)).resolves.toMatchObject({
+      ok: true,
+      data: { admission: "dispatch" },
+    });
+    await scenario.idle();
+    // 같은 연결로 요청 한 번을 왕복시켜 앞서 쓴 프레임이 도착했을 시점까지 기다린다
+    await connection.request("sessions.list", {});
+
+    expect(
+      frames.map((f) => {
+        const p = f.payload as { stream?: string; state?: string };
+        return `${f.event}:${p.stream ?? p.state}`;
+      }),
+    ).toEqual(["agent:lifecycle", "chat:error"]);
+    expect(frames[1]?.payload).toMatchObject({ runId: failed.runId, state: "error", errorMessage: "boom" });
+    expect(outbound).toEqual([]);
+    expect(scenario.errors).toEqual([]);
+  });
+
+  it("deltaDelayMs 면 델타마다 그만큼 기다렸다 보낸다(실제 시계)", async () => {
+    const arrivals: Array<{ event: string; at: number }> = [];
+    connection.subscribe((frame) => arrivals.push({ event: frame.event, at: performance.now() }));
+    createScenario({
+      gateway,
+      plugin,
+      agents: { dev: () => ({ deltas: ["느", "리게"], reply: "느리게", deltaDelayMs: 50 }) },
+    });
+    await bridge.deliverInbound(delivery("dev", "@dev 느리게"), 2_000);
+    await vi.waitFor(() => expect(outbound).toHaveLength(1));
+
+    const deltas = arrivals.filter((a) => a.event === "chat").slice(0, 2);
+    const [start] = arrivals;
+    expect(start?.event).toBe("agent");
+    expect(deltas).toHaveLength(2);
+    // 타이머는 루프 시각(ms 단위 캐시)으로 재므로 performance.now 로는 1ms 안팎 일찍 보일 수 있다
+    expect((deltas[0]?.at ?? 0) - (start?.at ?? 0)).toBeGreaterThanOrEqual(48);
+    expect((deltas[1]?.at ?? 0) - (deltas[0]?.at ?? 0)).toBeGreaterThanOrEqual(48);
+  });
+
+  it("재생 중 chat.abort 를 받으면 그 런은 거기서 멈춘다 — 남은 델타·final·정본 없음(실물처럼)", async () => {
+    const scenario = createScenario({
+      gateway,
+      plugin,
+      agents: { dev: () => ({ deltas: ["하", "나", "둘"], reply: "하나둘", deltaDelayMs: 30 }) },
+    });
+    const stopped = delivery("dev", "@dev 느리게");
+    // 첫 델타를 받자마자 중지한다(폴링 없이) — 둘째 델타(30ms 뒤)보다 먼저 닿는다
+    const aborting = new Promise<unknown>((resolve) => {
+      const off = connection.subscribe((frame) => {
+        if (frame.event !== "chat") return;
+        off();
+        resolve(connection.request("chat.abort", { sessionKey: stopped.sessionKey, runId: stopped.runId }));
+      });
+    });
+    await bridge.deliverInbound(stopped, 2_000);
+    await expect(aborting).resolves.toEqual({ ok: true });
+    await scenario.idle();
+    await connection.request("sessions.list", {});
+
+    const states = frames
+      .filter((f) => f.event === "chat" && (f.payload as { runId?: string }).runId === stopped.runId)
+      .map((f) => (f.payload as { state?: string }).state);
+    expect(states).toContain("aborted");
+    expect(states).not.toContain("final");
+    expect(states.filter((s) => s === "delta").length).toBeLessThan(3);
+    expect(outbound).toEqual([]);
+    expect(scenario.errors).toEqual([]);
+  });
+
+  it("idle() 은 재생 중인 런이 모두 끝나야 resolve 한다", async () => {
+    const scenario = createScenario({
+      gateway,
+      plugin,
+      agents: { dev: () => ({ deltas: ["a", "b"], reply: "ab", deltaDelayMs: 20 }) },
+    });
+    await scenario.idle(); // 재생 중인 것이 없으면 곧바로
+    await bridge.deliverInbound(delivery("dev", "하나"), 2_000);
+    await bridge.deliverInbound(delivery("dev", "둘"), 2_000);
+    await scenario.idle();
+    expect(outbound.map((m) => m.text)).toEqual(["ab", "ab"]);
+  });
+
   it("대본이 없는 에이전트면 INTERNAL 로 ack 한다", async () => {
     createScenario({ gateway, plugin, agents: {} });
     await expect(bridge.deliverInbound(delivery("ghost", "누구"), 2_000)).resolves.toMatchObject({

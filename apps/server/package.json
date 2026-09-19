@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/main.ts",
+    "dev:fake": "tsx scripts/dev-fake.ts",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json",
     "db:generate": "drizzle-kit generate"

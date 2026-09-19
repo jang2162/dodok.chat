@@ -86,8 +86,8 @@ export async function bootLiveApp(opts: LiveAppOptions = {}): Promise<LiveApp> {
   }
 }
 
-/** 어댑터 status 이벤트로 gateway·bridge 가 모두 connected 가 될 때까지 기다린다. */
-function waitForAdapterConnected(app: App, timeoutMs = CONNECT_TIMEOUT_MS): Promise<void> {
+/** 어댑터 status 이벤트로 gateway·bridge 가 모두 connected 가 될 때까지 기다린다. dev:fake(scripts/dev-fake.ts)도 쓴다. */
+export function waitForAdapterConnected(app: App, timeoutMs = CONNECT_TIMEOUT_MS): Promise<void> {
   const up = () => {
     const status = app.adapter.status();
     return status.gateway === "connected" && status.bridge === "connected";

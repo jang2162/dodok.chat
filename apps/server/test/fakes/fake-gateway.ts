@@ -28,6 +28,11 @@ export type ChatSendParams = { sessionKey: string; agentId: string; message: str
 export type FakeGatewayOptions = {
   /** false 면 `sessions.reset` 이 FORBIDDEN/MISSING_SCOPE(operator.admin 없음). 기본 true */
   grantAdmin?: boolean;
+  /**
+   * 주면 이 간격으로 hello 를 받은 모든 연결에 `tick` 이벤트를 보낸다(payload 에 sessionKey 가 없어 구독과 무관).
+   * 실제 클라이언트는 프레임 없이 hello 의 `policy.tickIntervalMs`(30s)×2 가 지나면 끊으므로 오래 띄우는 개발 모드에 필요하다
+   */
+  tickIntervalMs?: number;
 };
 
 export type FakeGateway = {
@@ -209,6 +214,14 @@ export async function startFakeGateway(opts: FakeGatewayOptions = {}): Promise<F
   }
 
   const nextSeq = () => ++seq;
+  const tickTimer =
+    opts.tickIntervalMs === undefined
+      ? undefined
+      : setInterval(() => {
+          void broadcast({ type: "event", event: "tick", payload: { ts: Date.now() }, seq: nextSeq() });
+        }, opts.tickIntervalMs);
+  // 타이머가 프로세스를 붙잡지 않게 — 닫는 건 close()
+  tickTimer?.unref();
   const common = (runId: string, sessionKey: string, agentId: string) => ({
     runId,
     sessionKey,
@@ -399,6 +412,7 @@ export async function startFakeGateway(opts: FakeGatewayOptions = {}): Promise<F
       await Promise.all([...connected].map(pingPong));
     },
     close() {
+      clearInterval(tickTimer);
       closing ??= new Promise<void>((resolve) => {
         for (const socket of wss.clients) socket.terminate();
         connected.clear();
