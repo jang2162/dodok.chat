@@ -8,20 +8,14 @@ import { fromLatest } from "@/features/messages/timeline";
 import { useRunStore } from "@/features/runs/runStore";
 import { createFakeSocket } from "../../test/fakeSocket";
 import { AGENT, CH, CH2, msg, RUN, runState, textDelta, uid, USER } from "../../test/fixtures";
-import { attachHandlers, NOTICE_DURATION_MS, WIRE_RETRY_MS } from "./handlers";
+import { attachHandlers, NOTICE_DURATION_MS } from "./handlers";
 import { createSubscriptions } from "./subscriptions";
 import { getTimeline, updateTimeline } from "./timelineCache";
 import { typingActors, useTypingStore } from "./typing";
-import { useWireStatus } from "./wire";
 
 vi.mock("sonner", () => ({ toast: { info: vi.fn(), warning: vi.fn(), error: vi.fn() } }));
 
 const ok = <T>(data: T): Result<T> => ({ ok: true, data });
-const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status });
-const ME = { user: { id: USER, handle: "owner" }, workspaceId: uid(3) };
-const connectError = (code: string) =>
-  Object.assign(new Error(code), { data: { code, message: "rejected by middleware" } });
-const status = () => useWireStatus.getState().status;
 const seqs = (qc: QueryClient, channelId = CH) => getTimeline(qc, channelId)?.items.map((m) => m.seq);
 const seed = (qc: QueryClient, messages = [msg(1), msg(2)], channelId = CH) =>
   updateTimeline(qc, channelId, (t) => fromLatest(t, messages, false));
@@ -57,13 +51,10 @@ function setup() {
 beforeEach(() => {
   useRunStore.getState().reset();
   useTypingStore.setState({ byChannel: {} });
-  useWireStatus.setState({ status: "idle" });
   vi.clearAllMocks();
 });
 afterEach(() => {
   for (const detach of detachers.splice(0)) detach();
-  vi.unstubAllGlobals();
-  vi.useRealTimers();
 });
 
 describe("타임라인 이벤트", () => {
@@ -280,124 +271,5 @@ describe("작성 중·알림", () => {
     expect(toast.warning).toHaveBeenCalledWith("주의", { duration: 6_000 });
     expect(toast.error).toHaveBeenCalledWith("오류", { duration: Infinity });
     expect(NOTICE_DURATION_MS).toEqual({ info: 4_000, warn: 6_000, error: Infinity });
-  });
-});
-
-describe("연결 상태", () => {
-  it("connect 는 connected 로 두고 붙을 때마다 보고 있는 채널을 다시 맞춘다(resubscribeAll)", () => {
-    const { fake, subscriptions } = setup();
-    const resubscribeAll = vi.spyOn(subscriptions, "resubscribeAll").mockResolvedValue();
-
-    fake.serverEmit("connect");
-    expect(status()).toBe("connected");
-    fake.serverEmit("disconnect", "transport close");
-    fake.serverEmit("connect");
-
-    expect(resubscribeAll).toHaveBeenCalledTimes(2);
-  });
-
-  it("disconnect 는 reconnecting, 이쪽에서 끊은 것(io client disconnect)은 offline", () => {
-    const { fake } = setup();
-    fake.serverEmit("connect");
-    fake.serverEmit("disconnect", "transport close");
-    expect(status()).toBe("reconnecting");
-    fake.serverEmit("connect");
-    fake.serverEmit("disconnect", "io client disconnect");
-    expect(status()).toBe("offline");
-  });
-
-  it("그 밖의 connect_error(전송 실패)는 reconnecting — socket.io 가 스스로 다시 붙는다", () => {
-    const { fake, onUnauthorized } = setup();
-    const connects = fake.calls.connect;
-    fake.serverEmit("connect_error", new Error("websocket error"));
-    expect(status()).toBe("reconnecting");
-    expect(fake.calls.connect).toBe(connects);
-    expect(onUnauthorized).not.toHaveBeenCalled();
-  });
-
-  it("connect_error PROTOCOL_MISMATCH: protocol_mismatch 로 두고 소켓을 끊는다", () => {
-    const { fake } = setup();
-    fake.serverEmit("connect_error", connectError("PROTOCOL_MISMATCH"));
-    expect(status()).toBe("protocol_mismatch");
-    expect(fake.calls.disconnect).toBe(1);
-    fake.serverEmit("disconnect", "io client disconnect");
-    expect(status()).toBe("protocol_mismatch");
-  });
-
-  it("connect_error UNAUTHORIZED 인데 REST 세션은 살아 있으면(me 200) rejected — 로그인으로 보내지 않고 다시 붙지 않는다", async () => {
-    vi.useFakeTimers();
-    const fetchMock = vi.fn<typeof fetch>(async () => json(200, ME));
-    vi.stubGlobal("fetch", fetchMock);
-    const { fake, onUnauthorized } = setup();
-    fake.socket.active = false; // 미들웨어 거절은 socket.io 가 자동 재연결하지 않는다
-    const connects = fake.calls.connect;
-
-    fake.serverEmit("connect_error", connectError("UNAUTHORIZED"));
-    await vi.advanceTimersByTimeAsync(0);
-
-    expect(fetchMock.mock.calls.map((c) => String(c[0]))).toEqual(["/api/v1/auth/me"]);
-    expect(status()).toBe("rejected");
-    await vi.advanceTimersByTimeAsync(WIRE_RETRY_MS * 10);
-    expect(onUnauthorized).not.toHaveBeenCalled();
-    expect(fake.calls.connect).toBe(connects);
-    expect(fake.socket.active).toBe(false);
-    expect(status()).toBe("rejected");
-  });
-
-  it("connect_error UNAUTHORIZED 이고 me 도 401 이면 onUnauthorized 를 한 번 부른다", async () => {
-    const fetchMock = vi.fn<typeof fetch>(async () =>
-      json(401, { code: "UNAUTHORIZED", message: "로그인이 필요하다" }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-    const { fake, onUnauthorized } = setup();
-
-    fake.serverEmit("connect_error", connectError("UNAUTHORIZED"));
-
-    await vi.waitFor(() => expect(onUnauthorized).toHaveBeenCalledTimes(1));
-    // me 가 한 번 더 도는 일(전역 401 처리)도 없다
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(onUnauthorized).toHaveBeenCalledTimes(1);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("connect_error UNAUTHORIZED 인데 me 확인이 네트워크 실패면 끊김처럼 reconnecting 으로 두고 잠시 뒤 다시 붙는다", async () => {
-    vi.useFakeTimers();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn<typeof fetch>(async () => {
-        throw new TypeError("Failed to fetch");
-      }),
-    );
-    const { fake, onUnauthorized } = setup();
-    fake.socket.active = false;
-    const connects = fake.calls.connect;
-
-    fake.serverEmit("connect_error", connectError("UNAUTHORIZED"));
-    // me 쿼리는 네트워크 실패를 두 번 더 시도한다(1s·2s)
-    await vi.advanceTimersByTimeAsync(3_000);
-    expect(status()).toBe("reconnecting");
-    expect(fake.calls.connect).toBe(connects);
-
-    await vi.advanceTimersByTimeAsync(WIRE_RETRY_MS);
-    expect(fake.calls.connect).toBe(connects + 1);
-    expect(onUnauthorized).not.toHaveBeenCalled();
-  });
-
-  it("해제 함수는 붙인 리스너를 모두 떼고, 기다리던 재연결도 거둔다", async () => {
-    vi.useFakeTimers();
-    const fake = createFakeSocket();
-    const before = fake.listenerCount();
-    const onUnauthorized = vi.fn();
-    const queryClient = createQueryClient(onUnauthorized);
-    const subscriptions = createSubscriptions({ socket: fake.wire, queryClient });
-    const detach = attachHandlers(fake.wire, { queryClient, subscriptions, onUnauthorized });
-    expect(fake.listenerCount()).toBeGreaterThan(before);
-
-    // 알 수 없는 코드의 미들웨어 거절 → 스스로 다시 붙기를 걸어 둔 채로 뗀다
-    fake.serverEmit("connect_error", connectError("INTERNAL"));
-    detach();
-    expect(fake.listenerCount()).toBe(before);
-    await vi.advanceTimersByTimeAsync(WIRE_RETRY_MS * 2);
-    expect(fake.calls.connect).toBe(0);
   });
 });

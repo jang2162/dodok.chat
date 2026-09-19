@@ -12,7 +12,7 @@ import { useWireStatus, type WireSocket, type WireStatus } from "./wire";
 
 /** system.notice 토스트 지속시간(스펙 8장) */
 export const NOTICE_DURATION_MS = { info: 4_000, warn: 6_000, error: Infinity } as const;
-/** socket.io 가 스스로 다시 붙지 않는 거절(미들웨어 connect_error) 뒤, 직접 다시 붙기까지 */
+/** socket.io 가 스스로 다시 붙지 않는 거절(미들웨어 connect_error)·서버 끊김 뒤, 직접 다시 붙기까지 */
 export const WIRE_RETRY_MS = 2_000;
 
 /** 재연결을 멈춘 상태 — 끊김·전송 실패가 덮어쓰지 않는다 */
@@ -108,6 +108,8 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
   const onDisconnect = (reason: string) => {
     if (STOPPED.has(useWireStatus.getState().status)) return;
     setStatus(reason === "io client disconnect" ? "offline" : "reconnecting");
+    // 서버가 끊은 소켓은 socket.io 가 다시 붙지 않는다. 세션이 폐기됐으면 다시 붙을 때 UNAUTHORIZED → verifySession
+    if (reason === "io server disconnect") retryLater();
   };
   const onConnectError = (err: Error) => {
     const code = (err as Error & { data?: { code?: unknown } }).data?.code;
