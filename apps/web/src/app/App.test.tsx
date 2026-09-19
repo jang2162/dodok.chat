@@ -4,6 +4,8 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { api } from "@/api/http";
 import { qk } from "@/api/queries";
+import { useWireStatus } from "@/realtime/wire";
+import { createdSockets } from "../../test/fakeSocket";
 import { App } from "./App";
 import { createApp } from "./createApp";
 import { registerSessionReset } from "./session";
@@ -124,4 +126,54 @@ it("여러 쿼리가 함께 네트워크 실패해도 화면의 토스트는 「
   await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
 
   expect(screen.getAllByText("서버에 연결할 수 없습니다")).toHaveLength(1);
+});
+
+const wireUnauthorized = () =>
+  Object.assign(new Error("UNAUTHORIZED"), { data: { code: "UNAUTHORIZED", message: "invalid session" } });
+
+it("wire UNAUTHORIZED 이고 세션도 끝났으면(me 401) 상태를 비우고 /login?next=<지금 경로> 로 한 번 보낸다", async () => {
+  let expired = false;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn<typeof fetch>(async (input) => {
+      if (expired) return json(401, UNAUTHORIZED);
+      if (String(input) === "/api/v1/auth/me") return json(200, ME);
+      return json(200, { channels: [] });
+    }),
+  );
+  const { history, moves } = renderApp("/c/abc");
+  expect(await screen.findByTestId("page-channel")).toBeInTheDocument();
+  await waitFor(() => expect(createdSockets).toHaveLength(1));
+  const reset = spyReset();
+
+  expired = true;
+  act(() => createdSockets[0]?.serverEmit("connect_error", wireUnauthorized()));
+
+  expect(await screen.findByRole("heading", { name: "로그인" })).toBeInTheDocument();
+  expect(history.location.pathname).toBe("/login");
+  expect(new URLSearchParams(history.location.search).get("next")).toBe("/c/abc");
+  expect(moves).toHaveLength(1);
+  expect(reset).toHaveBeenCalled();
+  expect(createdSockets[0]?.calls.disconnect).toBeGreaterThanOrEqual(1);
+});
+
+it("wire UNAUTHORIZED 인데 REST 세션이 살아 있으면(me 200) 로그인으로 보내지 않고 wire 상태만 rejected", async () => {
+  const fetchMock = vi.fn<typeof fetch>(async (input) => {
+    if (String(input) === "/api/v1/auth/me") return json(200, ME);
+    return json(200, { channels: [] });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const { moves } = renderApp("/c/abc");
+  expect(await screen.findByTestId("page-channel")).toBeInTheDocument();
+  await waitFor(() => expect(createdSockets).toHaveLength(1));
+  const meCalls = () => fetchMock.mock.calls.filter((c) => String(c[0]) === "/api/v1/auth/me").length;
+  const before = meCalls();
+
+  act(() => createdSockets[0]?.serverEmit("connect_error", wireUnauthorized()));
+
+  await waitFor(() => expect(useWireStatus.getState().status).toBe("rejected"));
+  expect(meCalls()).toBe(before + 1);
+  expect(moves).toHaveLength(0);
+  expect(screen.getByTestId("page-channel")).toBeInTheDocument();
+  expect(createdSockets).toHaveLength(1);
 });

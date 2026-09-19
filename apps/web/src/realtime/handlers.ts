@@ -1,0 +1,147 @@
+import type { AdapterStatus, Channel, ServerToClientEvents } from "@dodok/shared";
+import type { QueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { ApiRequestError } from "@/api/http";
+import { type AdapterStatusResponse, meQuery, qk } from "@/api/queries";
+import { hasGap, upsert } from "@/features/messages/timeline";
+import { useRunStore } from "@/features/runs/runStore";
+import type { Subscriptions } from "./subscriptions";
+import { getTimeline, updateTimeline } from "./timelineCache";
+import { useTypingStore } from "./typing";
+import { useWireStatus, type WireSocket, type WireStatus } from "./wire";
+
+/** system.notice 토스트 지속시간(스펙 8장) */
+export const NOTICE_DURATION_MS = { info: 4_000, warn: 6_000, error: Infinity } as const;
+/** socket.io 가 스스로 다시 붙지 않는 거절(미들웨어 connect_error) 뒤, 직접 다시 붙기까지 */
+export const WIRE_RETRY_MS = 2_000;
+
+/** 재연결을 멈춘 상태 — 끊김·전송 실패가 덮어쓰지 않는다 */
+const STOPPED: ReadonlySet<WireStatus> = new Set(["protocol_mismatch", "rejected"]);
+
+type Deps = { queryClient: QueryClient; subscriptions: Subscriptions; onUnauthorized: () => void };
+type MessageEvent = Parameters<ServerToClientEvents["message.created"]>[0];
+
+/** 서버 이벤트를 Query 캐시·런 스토어·작성 중 저장소·연결 상태에 반영한다(스펙 4장). 해제 함수를 돌려준다 */
+export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
+  const { queryClient: qc, subscriptions, onUnauthorized } = deps;
+  const setStatus = (s: WireStatus) => useWireStatus.getState().setStatus(s);
+  let detached = false;
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /** 새 메시지·수정. 구독한 적 없는 채널(캐시 없음)은 무시, 빈틈이면 넣지 않고 lastSeq 로 이어 받는다(스펙 4.3-3·4) */
+  function applyMessage({ message: m }: MessageEvent, updated: boolean): void {
+    const t = getTimeline(qc, m.channelId);
+    if (!t) return;
+    // 적재 범위 밖(더 옛것)의 수정은 넣지 않는다 — 과거 페이지(beforeSeq)가 가장 옛 seq 를 기준으로 삼는다
+    if (updated && m.seq <= t.lastSeq && !t.items.some((x) => x.id === m.id)) return;
+    // 빈 채널(lastSeq 0)은 hasGap 이 빈틈으로 보지 않는다 — 구독 경합으로 앞 메시지를 놓쳤을 수 있다(web-t3 리뷰 Ruling)
+    if (hasGap(t, m) || (t.lastSeq === 0 && m.seq > 1)) {
+      void subscriptions.catchUp(m.channelId).catch(() => undefined);
+      return;
+    }
+    updateTimeline(qc, m.channelId, (prev) => upsert(prev, m));
+  }
+
+  function retryLater(): void {
+    clearTimeout(retryTimer);
+    retryTimer = setTimeout(() => {
+      retryTimer = undefined;
+      if (!detached) socket.connect();
+    }, WIRE_RETRY_MS);
+  }
+
+  /**
+   * wire `UNAUTHORIZED` 는 먼저 REST 세션을 확인한다(web-t4 리뷰 Ruling). 핸드셰이크 Origin 이 APP_ORIGIN 과 다르면
+   * 세션이 살아 있어도 wire 만 거부되는데, 그때 로그인으로 보내면 로그인 ↔ 앱을 끝없이 오간다.
+   * me 401 → onUnauthorized, me 200 → `rejected`(다시 붙어도 같다), 그 밖(네트워크 등) → 끊김처럼 다시 붙는다.
+   */
+  async function verifySession(): Promise<void> {
+    try {
+      await qc.fetchQuery({ ...meQuery, staleTime: 0 });
+    } catch (e) {
+      if (detached) return;
+      if (e instanceof ApiRequestError && e.status === 401) {
+        onUnauthorized();
+        return;
+      }
+      setStatus("reconnecting");
+      retryLater();
+      return;
+    }
+    if (detached) return;
+    setStatus("rejected");
+    socket.disconnect();
+  }
+
+  const on: Partial<ServerToClientEvents> = {
+    "message.created": (p) => applyMessage(p, false),
+    "message.updated": (p) => applyMessage(p, true),
+    "run.state": ({ run, resync }) => {
+      useRunStore.getState().applyState(run);
+      if (resync) void subscriptions.runReplay.resync(run);
+    },
+    "run.event": ({ event }) => subscriptions.runReplay.live(event),
+    "channel.updated": ({ channel }) => {
+      qc.setQueryData<Channel[]>(qk.channels, (list) =>
+        list?.map((c) => (c.id === channel.id ? channel : c)),
+      );
+      qc.setQueryData<Channel>(qk.channel(channel.id), channel);
+    },
+    "channel.member.changed": ({ channelId, members }) => qc.setQueryData(qk.members(channelId), members),
+    "adapter.status": (status: AdapterStatus) =>
+      qc.setQueryData<AdapterStatusResponse>(qk.adapter, (prev) => prev && { ...prev, ...status }),
+    typing: (p) => useTypingStore.getState().note(p),
+    "system.notice": ({ level, message }) => {
+      const opts = { duration: NOTICE_DURATION_MS[level] };
+      if (level === "info") toast.info(message, opts);
+      else if (level === "warn") toast.warning(message, opts);
+      else toast.error(message, opts);
+    },
+  };
+
+  const onConnect = () => {
+    clearTimeout(retryTimer);
+    setStatus("connected");
+    // 처음 붙을 때도 — 연결 전에 들어간 채널은 enter 가 보내지 않고 기억만 한다
+    void subscriptions.resubscribeAll().catch(() => undefined);
+  };
+  const onDisconnect = (reason: string) => {
+    if (STOPPED.has(useWireStatus.getState().status)) return;
+    setStatus(reason === "io client disconnect" ? "offline" : "reconnecting");
+  };
+  const onConnectError = (err: Error) => {
+    const code = (err as Error & { data?: { code?: unknown } }).data?.code;
+    if (code === "PROTOCOL_MISMATCH") {
+      setStatus("protocol_mismatch");
+      socket.disconnect();
+      return;
+    }
+    if (code === "UNAUTHORIZED") {
+      void verifySession();
+      return;
+    }
+    setStatus("reconnecting");
+    // 전송 실패는 socket.io 가 다시 붙는다(active). 미들웨어 거절은 소켓을 닫으므로 직접 다시 붙는다
+    if (!socket.active) retryLater();
+  };
+
+  const entries = Object.entries(on) as Array<[keyof ServerToClientEvents, (...args: never[]) => void]>;
+  // socket.io 의 이벤트 이름·리스너 제네릭은 표에서 좁혀지지 않는다 — 위 표가 ServerToClientEvents 로 타입을 맞춘다
+  const untyped = socket as unknown as {
+    on(e: string, fn: (...args: never[]) => void): void;
+    off(e: string, fn: (...args: never[]) => void): void;
+  };
+  for (const [event, fn] of entries) untyped.on(event, fn);
+  socket.on("connect", onConnect);
+  socket.on("disconnect", onDisconnect);
+  socket.on("connect_error", onConnectError);
+
+  return () => {
+    detached = true;
+    clearTimeout(retryTimer);
+    for (const [event, fn] of entries) untyped.off(event, fn);
+    socket.off("connect", onConnect);
+    socket.off("disconnect", onDisconnect);
+    socket.off("connect_error", onConnectError);
+  };
+}
