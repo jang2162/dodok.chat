@@ -1,6 +1,6 @@
 import { Navigate, type RegisteredRouter, getRouteApi } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
-import { ApiRequestError } from "@/api/http";
+import { ApiRequestError, NetworkError } from "@/api/http";
 import { useMe } from "@/api/queries";
 import { Alert, AlertDescription } from "@/ui/alert";
 import { Button } from "@/ui/button";
@@ -11,12 +11,13 @@ import { useLogin } from "./mutations";
 const route = getRouteApi("/login");
 
 function loginErrorText(error: Error): string {
+  if (error instanceof NetworkError) return "서버에 연결할 수 없습니다";
   if (error instanceof ApiRequestError) {
     if (error.status === 401) return "토큰이 맞지 않습니다";
     if (error.status === 429) return "잠시 뒤 다시 시도하세요(1분 5회)";
     return error.message;
   }
-  return "서버에 연결할 수 없습니다";
+  return "로그인하지 못했습니다";
 }
 
 export function LoginPage() {
@@ -24,6 +25,8 @@ export function LoginPage() {
   const me = useMe();
   const login = useLogin();
   const [token, setToken] = useState("");
+  // 문구는 뮤테이션 상태가 아니라 여기 둔다 — 뮤테이션은 끝나자마자 비운다(토큰이 variables 로 남지 않게)
+  const [error, setError] = useState<string>();
 
   // 이미 로그인했거나 방금 로그인해 me 가 풀리면 원래 가려던 곳으로 — 이동은 이 한 곳에서만.
   // next 는 검색 문자열까지 담은 앱 안 경로라 `to` 가 아니라 `href` 로 간다(제네릭은 `to` 를 선택으로 만든다)
@@ -32,7 +35,13 @@ export function LoginPage() {
   function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (token === "" || login.isPending) return;
-    login.mutate(token);
+    setError(undefined);
+    login.mutate(token, {
+      // me 가 풀렸으면 위에서 이미 이동한다 — 여기 남았다면 쿠키가 안 구워진 것(http 에서 secureCookie 등)
+      onSuccess: () => setError("로그인했지만 세션을 확인하지 못했습니다"),
+      onError: (err) => setError(loginErrorText(err)),
+      onSettled: () => login.reset(),
+    });
     // 토큰은 제출 뒤 들고 있지 않는다(저장 금지 — Global Constraints)
     setToken("");
   }
@@ -53,9 +62,9 @@ export function LoginPage() {
             disabled={login.isPending}
           />
         </div>
-        {login.error && (
+        {error && (
           <Alert variant="destructive">
-            <AlertDescription>{loginErrorText(login.error)}</AlertDescription>
+            <AlertDescription>{error}</AlertDescription>
           </Alert>
         )}
         <Button type="submit" disabled={login.isPending || token === ""}>

@@ -1,9 +1,10 @@
 import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
-import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
-import { render, screen } from "@testing-library/react";
+import { RouterProvider, createMemoryHistory, createRootRoute, createRouter } from "@tanstack/react-router";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { qk } from "@/api/queries";
+import { RouteError } from "./RouteError";
 import { createQueryClient } from "./queryClient";
 import { createAppRouter, safeNext } from "./router";
 
@@ -79,6 +80,19 @@ it("/auth/me 가 네트워크 실패면 재시도 뒤 오류 화면 — 「다�
   expect(await screen.findByTestId("page-agents")).toBeInTheDocument();
 });
 
+it("오류 화면은 코드 오류(TypeError)를 서버 연결 문제로 보지 않는다", async () => {
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  const root = createRootRoute({
+    beforeLoad: () => {
+      throw new TypeError("Cannot read properties of undefined");
+    },
+    errorComponent: RouteError,
+  });
+  render(<RouterProvider router={createRouter({ routeTree: root, history: createMemoryHistory() })} />);
+  expect(await screen.findByText("화면을 표시할 수 없습니다")).toBeInTheDocument();
+});
+
 it("safeNext 는 앱 안 경로만 받는다", () => {
   expect(safeNext("/c/abc/settings")).toBe("/c/abc/settings");
   expect(safeNext("/agents?x=1#y")).toBe("/agents?x=1#y");
@@ -87,6 +101,7 @@ it("safeNext 는 앱 안 경로만 받는다", () => {
     "//evil.example",
     "/\\evil.example",
     "https://evil.example",
+    "javascript:alert(1)",
     "agents",
     "",
     "/login",
@@ -96,4 +111,23 @@ it("safeNext 는 앱 안 경로만 받는다", () => {
     expect(safeNext(bad)).toBeUndefined();
   }
   expect(safeNext("/loginx")).toBe("/loginx");
+});
+
+it("next 의 제어문자 변형(/\\t/evil.example)은 safeNext 를 지나도 라우터가 앱 안 경로로 푼다 — 다른 출처로 가지 않는다", async () => {
+  // @tanstack/history 의 parseHref 가 탭·개행을 지우고 겹친 슬래시 머리를 "/" 하나로 접는다(이중 방어) —
+  // 결과는 `/` 가 아니라 앱 안 `/evil.example`(Not Found)이다
+  const next = "/\t/evil.example";
+  expect(safeNext(next)).toBe(next);
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => json(200, ME)),
+  );
+  // 앱에 그 경로가 없어 라우터가 notFoundComponent 미설정 경고를 찍는다 — 예상한 것이라 조용히
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  const before = window.location.href;
+  const router = renderAt(`/login?next=${encodeURIComponent(next)}`);
+  await waitFor(() => expect(router.state.location.pathname).not.toBe("/login"));
+  expect(router.history.location.href).toMatch(/^\/(?![/\\])/); // 프로토콜 상대(//host)가 아닌 앱 안 경로
+  expect(router.state.location.pathname).toBe("/evil.example");
+  expect(window.location.href).toBe(before); // 문서 이동 없음
 });

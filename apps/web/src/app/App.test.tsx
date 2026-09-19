@@ -1,5 +1,5 @@
 import { createMemoryHistory } from "@tanstack/react-router";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { api } from "@/api/http";
@@ -8,7 +8,19 @@ import { App } from "./App";
 import { createApp } from "./createApp";
 import { registerSessionReset } from "./session";
 
-afterEach(() => vi.unstubAllGlobals());
+// 등록한 정리는 단언이 실패해도 다음 테스트로 새지 않게 여기서 푼다
+const unregisters: Array<() => void> = [];
+afterEach(() => {
+  for (const unregister of unregisters.splice(0)) unregister();
+  vi.unstubAllGlobals();
+});
+
+/** 세션 정리 스파이를 등록한다(해제는 afterEach) */
+function spyReset() {
+  const reset = vi.fn();
+  unregisters.push(registerSessionReset(reset));
+  return reset;
+}
 
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status });
 const UNAUTHORIZED = { code: "UNAUTHORIZED", message: "로그인이 필요하다" };
@@ -38,8 +50,7 @@ it("가드의 me 401 은 가드 한 곳이 로그인 화면으로 한 번만 보
     "fetch",
     vi.fn(async () => json(401, UNAUTHORIZED)),
   );
-  const reset = vi.fn();
-  const unregister = registerSessionReset(reset);
+  const reset = spyReset();
   const { history, moves } = renderApp("/agents");
   expect(await screen.findByRole("heading", { name: "로그인" })).toBeInTheDocument();
   expect(history.location.pathname).toBe("/login");
@@ -47,7 +58,6 @@ it("가드의 me 401 은 가드 한 곳이 로그인 화면으로 한 번만 보
   expect(moves).toHaveLength(1);
   // onUnauthorized(상태 비우기·이동)는 타지 않는다 — 가드의 redirect 만
   expect(reset).not.toHaveBeenCalled();
-  unregister();
 });
 
 it("앱 안 쿼리의 401 은 상태를 비우고 /login?next=<지금 경로> 로 한 번 보낸다", async () => {
@@ -62,8 +72,7 @@ it("앱 안 쿼리의 401 은 상태를 비우고 /login?next=<지금 경로> �
   );
   const { app, history, moves } = renderApp("/c/abc");
   expect(await screen.findByTestId("page-channel")).toBeInTheDocument();
-  const reset = vi.fn();
-  const unregister = registerSessionReset(reset);
+  const reset = spyReset();
 
   expired = true;
   await app.queryClient
@@ -76,7 +85,6 @@ it("앱 안 쿼리의 401 은 상태를 비우고 /login?next=<지금 경로> �
   expect(moves).toHaveLength(1);
   expect(reset).toHaveBeenCalledTimes(1);
   expect(app.queryClient.getQueryData(qk.me)).toBeUndefined();
-  unregister();
 });
 
 it("로그인 화면에서 틀린 토큰(401)은 이동하지 않는다 — next 를 덮지 않는다", async () => {
@@ -91,4 +99,29 @@ it("로그인 화면에서 틀린 토큰(401)은 이동하지 않는다 — next
   expect(history.location.pathname).toBe("/login");
   expect(new URLSearchParams(history.location.search).get("next")).toBe("/agents");
   expect(moves).toHaveLength(0);
+});
+
+it("여러 쿼리가 함께 네트워크 실패해도 화면의 토스트는 「서버에 연결할 수 없습니다」 하나", async () => {
+  let down = false;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn<typeof fetch>(async (input) => {
+      if (down) throw new TypeError("Failed to fetch");
+      if (String(input) === "/api/v1/auth/me") return json(200, ME);
+      throw new Error(`예상 밖 요청 ${String(input)}`);
+    }),
+  );
+  const { app } = renderApp("/agents");
+  expect(await screen.findByTestId("page-agents")).toBeInTheDocument();
+
+  down = true;
+  const fail = (key: string) =>
+    app.queryClient
+      .fetchQuery({ queryKey: [key], queryFn: () => api("GET", `/${key}`), retryDelay: 0 })
+      .catch(() => {});
+  await Promise.all([fail("channels"), fail("agents"), fail("adapter")]);
+  // sonner 는 토스트 호출마다 setTimeout 뒤에 그린다 — 큐에 쌓인 것이 다 그려진 뒤에 센다
+  await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+
+  expect(screen.getAllByText("서버에 연결할 수 없습니다")).toHaveLength(1);
 });

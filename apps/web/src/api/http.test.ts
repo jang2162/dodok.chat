@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiRequestError, api } from "./http";
+import { ApiRequestError, NetworkError, api } from "./http";
 
 const reply = (status: number, body?: unknown) =>
   vi.fn<typeof fetch>(
@@ -52,5 +52,27 @@ describe("api", () => {
     const err = await api("GET", "/channels").catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApiRequestError);
     expect(err).toMatchObject({ status: 502, code: "INTERNAL", message: "Bad Gateway" });
+  });
+
+  it("fetch 가 던지면(응답 없음) NetworkError — 원래 오류는 cause", async () => {
+    const cause = new TypeError("Failed to fetch");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Promise.reject(cause)),
+    );
+    const err = await api("GET", "/channels").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(NetworkError);
+    expect(err).not.toBeInstanceOf(ApiRequestError);
+    expect(err).toMatchObject({ name: "NetworkError", cause });
+  });
+
+  it("본문을 받다 끊겨도 NetworkError", async () => {
+    const cause = new TypeError("network error");
+    const broken = new ReadableStream({ start: (c) => c.error(cause) });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(broken, { status: 200 })),
+    );
+    await expect(api("GET", "/channels")).rejects.toMatchObject({ name: "NetworkError", cause });
   });
 });
