@@ -20,6 +20,16 @@ if (typeof window.matchMedia !== "function") {
 // jsdom 의 scrollTo 는 「Not implemented」만 찍는다 — 라우터의 스크롤 복원이 이동마다 부른다
 window.scrollTo = () => {};
 
+// jsdom 에는 ResizeObserver 가 없다 — Radix Switch·Checkbox(useSize)가 부른다. 관찰만 받고 아무것도 알리지 않는다.
+// 테스트가 vi.stubGlobal 로 바꿨다가 vi.unstubAllGlobals() 하면 이 값으로 돌아온다
+if (typeof globalThis.ResizeObserver !== "function") {
+  globalThis.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+}
+
 afterEach(() => cleanup());
 
 // 테스트는 실제 소켓을 열지 않는다(네트워크 없음) — createWireSocket 은 가짜 소켓을 만들어 createdSockets 에 남긴다.

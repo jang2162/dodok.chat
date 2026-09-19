@@ -111,15 +111,6 @@ async function openDiscover() {
 let toastError: MockInstance<typeof toast.error>;
 beforeEach(() => {
   toastError = vi.spyOn(toast, "error");
-  // jsdom 에는 ResizeObserver 가 없다 — Radix Checkbox(useSize)가 부른다
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    },
-  );
 });
 afterEach(() => {
   onlineManager.setOnline(true);
