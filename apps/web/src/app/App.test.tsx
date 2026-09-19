@@ -9,7 +9,7 @@ import { createdSockets } from "../../test/fakeSocket";
 import { shellGet } from "../../test/shellApi";
 import { App } from "./App";
 import { createApp } from "./createApp";
-import { registerSessionReset } from "./session";
+import { notifyUnauthorized, registerSessionReset } from "./session";
 
 // 등록한 정리는 단언이 실패해도 다음 테스트로 새지 않게 여기서 푼다
 const unregisters: Array<() => void> = [];
@@ -88,6 +88,26 @@ it("앱 안 쿼리의 401 은 상태를 비우고 /login?next=<지금 경로> �
   expect(moves).toHaveLength(1);
   expect(reset).toHaveBeenCalledTimes(1);
   expect(app.queryClient.getQueryData(qk.me)).toBeUndefined();
+});
+
+it("Query 밖 REST 401(notifyUnauthorized)도 같은 곳 — 상태를 비우고 /login?next=<지금 경로> 로 한 번", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn<typeof fetch>(async (input, init) => {
+      if (String(input) === "/api/v1/auth/me") return json(200, ME);
+      return shellGet(input, init) ?? json(200, { channels: [] });
+    }),
+  );
+  const { history, moves } = renderApp("/c/abc");
+  expect(await screen.findByTestId("page-channel")).toBeInTheDocument();
+  const reset = spyReset();
+
+  act(() => notifyUnauthorized());
+
+  expect(await screen.findByRole("heading", { name: "로그인" })).toBeInTheDocument();
+  expect(new URLSearchParams(history.location.search).get("next")).toBe("/c/abc");
+  expect(moves).toHaveLength(1);
+  expect(reset).toHaveBeenCalled();
 });
 
 it("로그인 화면에서 틀린 토큰(401)은 이동하지 않는다 — next 를 덮지 않는다", async () => {

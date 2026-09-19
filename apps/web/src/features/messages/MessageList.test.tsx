@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { qk } from "@/api/queries";
+import { registerUnauthorized } from "@/app/session";
 import { updateTimeline } from "@/realtime/timelineCache";
 import { AGENT, CH, CH2, msg, RUN } from "../../../test/fixtures";
 import { authorsClient, renderWithClient } from "../../../test/messages";
@@ -175,6 +176,25 @@ describe("MessageList", () => {
     await scrollTo(800);
     await scrollTo(100);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+  });
+
+  it("과거 페이지 401 은 토스트 없이 앱의 401 처리(로그인)를 한 번 부른다", async () => {
+    const error = vi.spyOn(toast, "error");
+    const onUnauthorized = vi.fn();
+    const unregister = registerUnauthorized(onUnauthorized);
+    fetchMock.mockImplementation(
+      async () =>
+        new Response(JSON.stringify({ code: "UNAUTHORIZED", message: "로그인이 필요하다" }), { status: 401 }),
+    );
+    const { scrollTo, scroller } = setup(timelineOf(range(51, 80), true));
+    await waitFor(() => expect(scroller().scrollTop).toBeGreaterThan(0));
+    await scrollTo(100);
+    await waitFor(() => expect(onUnauthorized).toHaveBeenCalledTimes(1));
+    await scrollTo(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(onUnauthorized).toHaveBeenCalledTimes(1);
+    expect(error).not.toHaveBeenCalled();
+    unregister();
   });
 
   it("과거 페이지 네트워크 실패는 공용 id 「network」 토스트", async () => {

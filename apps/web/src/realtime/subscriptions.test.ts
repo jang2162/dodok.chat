@@ -2,6 +2,8 @@ import type { ChannelSubscribeResult, Message, Result } from "@dodok/shared";
 import { QueryClient } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fromLatest } from "@/features/messages/timeline";
+import { ApiRequestError } from "@/api/http";
+import { registerUnauthorized } from "@/app/session";
 import { useRunStore } from "@/features/runs/runStore";
 import { createFakeSocket } from "../../test/fakeSocket";
 import { CH, CH2, msg, RUN, RUN2, runState, textDelta, uid } from "../../test/fixtures";
@@ -81,6 +83,20 @@ describe("createSubscriptions", () => {
       [CH, { afterSeq: 4, limit: 200 }],
     ]);
     expect(seqs(queryClient)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it("catchUp: REST 이어 받기가 401 이면 앱의 401 처리(로그인)를 한 번 부르고 실패로 끝난다", async () => {
+    const { fake, queryClient, fetchPage, subs } = setup();
+    const onUnauthorized = vi.fn();
+    const unregister = registerUnauthorized(onUnauthorized);
+    seed(queryClient, [msg(1), msg(2)]);
+    fake.onAck("channel.subscribe", () => subscribed([msg(3)], { hasMore: true }));
+    fetchPage.mockRejectedValue(new ApiRequestError(401, "UNAUTHORIZED", "로그인이 필요하다"));
+
+    await expect(subs.catchUp(CH)).rejects.toBeInstanceOf(ApiRequestError);
+
+    expect(onUnauthorized).toHaveBeenCalledTimes(1);
+    unregister();
   });
 
   it("catchUp: 5쪽(구독 1 + REST 4)을 넘기면 타임라인을 버리고 lastSeq 없이 처음부터 다시 구독한다", async () => {

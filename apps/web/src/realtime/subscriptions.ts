@@ -1,6 +1,7 @@
 import type { ChannelSubscribeResult, Message, RunState } from "@dodok/shared";
 import type { QueryClient } from "@tanstack/react-query";
-import { api } from "@/api/http";
+import { ApiRequestError, api } from "@/api/http";
+import { notifyUnauthorized } from "@/app/session";
 import { fromLatest, upsertMany } from "@/features/messages/timeline";
 import { TERMINAL, useRunStore } from "@/features/runs/runStore";
 import { createRunReplay } from "./runReplay";
@@ -30,6 +31,12 @@ export const restFetchPage: FetchPage = (channelId, q) => {
   if (q.beforeSeq !== undefined) params.set("beforeSeq", String(q.beforeSeq));
   return api("GET", `/channels/${channelId}/messages?${params}`);
 };
+
+/** REST 직접 호출이라 Query 의 전역 401 처리를 타지 않는다 — 401 이면 로그인으로(스펙 8장) 보내고 오류는 그대로 올린다 */
+function toLoginOn401(e: unknown): never {
+  if (e instanceof ApiRequestError && e.status === 401) notifyUnauthorized();
+  throw e;
+}
 
 export type Subscriptions = ReturnType<typeof createSubscriptions>;
 
@@ -76,7 +83,7 @@ export function createSubscriptions(deps: {
     for (let pages = 1; hasMore; pages += 1) {
       if (pages >= MAX_PAGES) return fresh(channelId);
       const lastSeq = getTimeline(qc, channelId)?.lastSeq ?? 0;
-      const page = await fetchPage(channelId, { afterSeq: lastSeq, limit: PAGE });
+      const page = await fetchPage(channelId, { afterSeq: lastSeq, limit: PAGE }).catch(toLoginOn401);
       updateTimeline(qc, channelId, (prev) => upsertMany(prev, page.messages));
       hasMore = page.hasMore;
     }

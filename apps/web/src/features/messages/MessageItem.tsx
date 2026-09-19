@@ -48,7 +48,8 @@ export function AuthorLine({ author, children }: { author: Author; children: Rea
 
 /**
  * 사람·에이전트 메시지(스펙 5.3): 머리(아바타·이름·「AI」·시각) + 본문 + 버튼.
- * 같은 작성자의 연속(`head: false`)은 머리를 생략하고 시각은 마우스를 올릴 때만 보인다
+ * 같은 작성자의 연속(`head: false`)은 머리를 생략하고 시각은 마우스를 올리거나 행 안에 초점이 있을 때만 보인다 —
+ * 투명도로만 숨겨 스크린 리더는 늘 읽는다(visibility:hidden 은 접근성 트리에서도 빠진다, web-t7 리뷰 m6)
  */
 export function MessageItem({ message, head }: { message: Message; head: boolean }) {
   const author = useAuthors().author(message);
@@ -62,7 +63,7 @@ export function MessageItem({ message, head }: { message: Message; head: boolean
         ) : (
           <MessageTime
             iso={message.createdAt}
-            className="invisible pt-1 text-[10px] whitespace-nowrap text-muted-foreground group-hover:visible"
+            className="pt-1 text-[10px] whitespace-nowrap text-muted-foreground opacity-0 group-focus-within:opacity-100 group-hover:opacity-100"
           />
         )}
       </div>

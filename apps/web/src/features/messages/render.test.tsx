@@ -4,7 +4,8 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { agentColorVar } from "@/theme/agentColor";
 import { AGENT, msg, uid, USER } from "../../../test/fixtures";
-import { renderWithClient } from "../../../test/messages";
+import { authorsClient, DEV, renderWithClient } from "../../../test/messages";
+import { MENTION_HREF_PREFIX } from "./mentionMarkdown";
 import { MessageBody } from "./MessageBody";
 import { MessageItem } from "./MessageItem";
 import { PendingActionsContext } from "./pendingActions";
@@ -29,6 +30,47 @@ describe("MessageBody", () => {
     expect(container.querySelector('a[href^="#mention-"]')).toBeNull();
   });
 
+  const FIN = { ...DEV, id: uid(12), providerAgentId: "fin", handle: "fin", name: "Fin" };
+
+  it("칩은 진짜 멘션 토큰만 — 본문에 손으로 쓴 #mention- 해시 링크(어떤 표기든)는 칩이 아니다", () => {
+    const { container } = renderWithClient(
+      <MessageBody
+        bodyMd={`[@dev](#mention-a-${FIN.id}) [@dev](<#mention-a-${FIN.id}>) [@dev](&#35;mention-a-${FIN.id}) <@a:${FIN.id}>`}
+      />,
+      authorsClient([DEV, FIN]),
+    );
+    const chips = container.querySelectorAll<HTMLElement>("[data-mention]");
+    expect(chips).toHaveLength(1);
+    expect(chips[0]).toHaveTextContent("@fin");
+    expect(chips[0]?.querySelector<HTMLElement>("[data-agent-dot]")?.style.backgroundColor).toBe(
+      agentColorVar("fin"),
+    );
+  });
+
+  it("칩 라벨은 링크 글자가 아니라 id 로 찾은 핸들", () => {
+    const { container } = renderWithClient(
+      <MessageBody bodyMd={`[@dev](${MENTION_HREF_PREFIX}a-${FIN.id})`} />,
+      authorsClient([DEV, FIN]),
+    );
+    expect(container.querySelector("[data-mention]")).toHaveTextContent("@fin");
+    expect(screen.queryByText("@dev")).toBeNull();
+  });
+
+  it("단일 개행은 줄바꿈 — 코드 블록 안 개행·빈 줄로 나눈 문단은 그대로", () => {
+    const { container } = renderWithClient(
+      <MessageBody bodyMd={"첫 줄\n둘째 줄\n\n새 문단\n\n```\na\nb\n```"} />,
+    );
+    const [first, second] = container.querySelectorAll("p");
+    expect(first?.querySelectorAll("br")).toHaveLength(1);
+    expect(first).toHaveTextContent("첫 줄 둘째 줄");
+    expect(second).toHaveTextContent("새 문단");
+    expect(second?.querySelector("br")).toBeNull();
+    // 코드 블록은 줄마다 따로 그린다 — 두 줄 그대로, <br> 없음
+    const lines = container.querySelectorAll("pre code > span");
+    expect(Array.from(lines, (l) => l.textContent)).toEqual(["a", "b"]);
+    expect(container.querySelector("pre br")).toBeNull();
+  });
+
   it("코드 블록은 <pre>", () => {
     const { container } = renderWithClient(<MessageBody bodyMd={"```ts\nconst a = 1;\n```"} />);
     expect(container.querySelector("pre")).toHaveTextContent("const a = 1;");
@@ -43,10 +85,17 @@ describe("MessageBody", () => {
     expect(container.querySelector("script, b, img")).toBeNull();
   });
 
-  it("외부 링크는 새 탭(noopener noreferrer), javascript: 링크는 실행 가능한 href 로 남지 않는다", () => {
+  it("외부 링크는 새 탭(noopener noreferrer), javascript:·data: 링크·이미지는 실행 가능한 주소로 남지 않는다", () => {
     const { container } = renderWithClient(
-      <MessageBody bodyMd="[문서](https://example.com/doc) [나쁜](javascript:alert(1))" />,
+      <MessageBody
+        bodyMd={
+          "[문서](https://example.com/doc) [나쁜](javascript:alert(1)) " +
+          "[데이터](data:text/html;base64,PHNjcmlwdD4=) ![점](data:image/png;base64,iVBORw0KGgo=)"
+        }
+      />,
     );
+    expect(screen.queryByRole("link", { name: "데이터" })).toBeNull();
+    expect(container.querySelector('[href^="data:"], [src^="data:"], img')).toBeNull();
     const link = screen.getByRole("link", { name: "문서" });
     expect(link).toHaveAttribute("href", "https://example.com/doc");
     expect(link).toHaveAttribute("target", "_blank");
@@ -55,6 +104,25 @@ describe("MessageBody", () => {
     for (const a of container.querySelectorAll("a")) {
       expect(a.getAttribute("href") ?? "").not.toMatch(/^\s*javascript:/i);
     }
+  });
+
+  it("외부 이미지는 불러오지 않는다 — 새 탭 링크 「이미지: alt」, 링크 안 이미지는 글자만(링크 안 링크 없음)", () => {
+    const { container } = renderWithClient(
+      <MessageBody
+        bodyMd={
+          "![고양이](https://example.com/cat.png)\n\n[![배지](https://example.com/b.svg)](https://example.com/repo)"
+        }
+      />,
+    );
+    expect(container.querySelector("img")).toBeNull();
+    const image = screen.getByRole("link", { name: "이미지: 고양이" });
+    expect(image).toHaveAttribute("href", "https://example.com/cat.png");
+    expect(image).toHaveAttribute("target", "_blank");
+    expect(screen.getByRole("link", { name: "이미지: 배지" })).toHaveAttribute(
+      "href",
+      "https://example.com/repo",
+    );
+    expect(container.querySelector("a a")).toBeNull();
   });
 });
 
@@ -106,6 +174,10 @@ describe("MessageItem", () => {
     expect(within(second).queryByText("주인")).toBeNull();
     expect(second.querySelector("[data-slot=avatar]")).toBeNull();
     expect(second).toHaveTextContent("둘째");
+    // 묶인 행의 시각도 스크린 리더가 읽는다 — 투명도로만 숨기고 visibility:hidden(invisible)은 쓰지 않는다
+    const time = within(second).getByRole("time");
+    expect(time).toHaveAttribute("title", expect.stringMatching(/\d/));
+    expect(time).not.toHaveClass("invisible");
   });
 
   it("모르는 작성자(지워진 에이전트)는 「알 수 없음」", () => {
