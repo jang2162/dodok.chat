@@ -1113,6 +1113,180 @@ describe("orchestrator", () => {
     t.orch.stop();
   });
 
+  describe("진단 로그 — 본문·토큰 없이 런 종료 한 줄, 상한으로 닫힐 때 한 줄", () => {
+    type Spy = ReturnType<typeof vi.fn>;
+    const lines = (spy: Spy, msg: string) =>
+      spy.mock.calls.filter((call) => call[1] === msg).map((call) => call[0] as Record<string, unknown>);
+    /** 로그 객체의 키가 정확히 이것뿐이고, 어느 값에도 메시지 본문이 없다 */
+    const expectOnlyKeys = (line: Record<string, unknown> | undefined, keys: string[], bodies: string[]) => {
+      expect(Object.keys(line ?? {}).sort()).toEqual([...keys].sort());
+      for (const body of bodies) expect(JSON.stringify(line)).not.toContain(body);
+    };
+    const ENDED_KEYS = ["runId", "channelId", "agentId", "status", "durationMs"];
+    const TIMEOUT_KEYS = ["runId", "reason", "statusBefore", "elapsedMs"];
+
+    it("done(plugin) — info 「run ended」 한 줄(finalSource·durationMs), 상한 줄 없음", async () => {
+      const t = setup();
+      const run = await t.enqueue(t.say("@dev 비밀 질문"));
+      await t.flush();
+      await t.orch.signal(run.id, { kind: "gateway_started" });
+      await vi.advanceTimersByTimeAsync(3_000);
+      await t.orch.onCanonical(t.outbound({ runId: run.id, text: "비밀 답" }));
+      await t.orch.signal(run.id, { kind: "gateway_final" }, { message: "비밀 답" });
+
+      const ended = lines(t.logger.info, "run ended");
+      expect(ended).toEqual([
+        {
+          runId: run.id,
+          channelId: t.channelId,
+          agentId: t.agentId,
+          status: "done",
+          finalSource: "plugin",
+          durationMs: 3_000,
+        },
+      ]);
+      expectOnlyKeys(ended[0], [...ENDED_KEYS, "finalSource"], ["비밀 질문", "비밀 답"]);
+      expect(lines(t.logger.warn, "run closed by timeout")).toEqual([]);
+      expect(lines(t.logger.info, "run closed by timeout")).toEqual([]);
+      t.orch.stop();
+    });
+
+    it("queue_timeout — warn 「run closed by timeout」(queued·120s) 뒤 info 「run ended」(error·TIMEOUT)", async () => {
+      const t = setup();
+      const run = await t.enqueue(t.say("@dev 비밀 질문"));
+      await t.flush();
+      await vi.advanceTimersByTimeAsync(120_000);
+
+      const closed = lines(t.logger.warn, "run closed by timeout");
+      expect(closed).toEqual([
+        { runId: run.id, reason: "queue_timeout", statusBefore: "queued", elapsedMs: 120_000 },
+      ]);
+      expectOnlyKeys(closed[0], TIMEOUT_KEYS, ["비밀 질문"]);
+      const ended = lines(t.logger.info, "run ended");
+      expect(ended).toEqual([
+        {
+          runId: run.id,
+          channelId: t.channelId,
+          agentId: t.agentId,
+          status: "error",
+          errorCode: "TIMEOUT",
+          durationMs: 120_000,
+        },
+      ]);
+      expectOnlyKeys(ended[0], [...ENDED_KEYS, "errorCode"], ["비밀 질문", "queued timeout"]);
+      // 원인(상한)이 결과(종료)보다 먼저 찍힌다
+      const warnAt = t.logger.warn.mock.invocationCallOrder[
+        t.logger.warn.mock.calls.findIndex((c) => c[1] === "run closed by timeout")
+      ] as number;
+      const infoAt = t.logger.info.mock.invocationCallOrder[
+        t.logger.info.mock.calls.findIndex((c) => c[1] === "run ended")
+      ] as number;
+      expect(warnAt).toBeLessThan(infoAt);
+      t.orch.stop();
+    });
+
+    it("run_timeout — warn(reason run_timeout, statusBefore tool)", async () => {
+      const t = setup();
+      const run = await t.enqueue();
+      await t.flush();
+      await vi.advanceTimersByTimeAsync(1_000);
+      await t.orch.signal(run.id, { kind: "tool_start" });
+      await vi.advanceTimersByTimeAsync(600_000);
+
+      expect(lines(t.logger.warn, "run closed by timeout")).toEqual([
+        { runId: run.id, reason: "run_timeout", statusBefore: "tool", elapsedMs: 601_000 },
+      ]);
+      expect(lines(t.logger.info, "run ended")).toEqual([
+        expect.objectContaining({
+          runId: run.id,
+          status: "error",
+          errorCode: "TIMEOUT",
+          durationMs: 601_000,
+        }),
+      ]);
+      t.orch.stop();
+    });
+
+    it("ack 전 상한 — warn(reason undelivered, statusBefore queued)", async () => {
+      const t = setup();
+      t.adapter.script(() => new Promise(() => undefined)); // ack 가 오지 않는다
+      const run = await t.enqueue();
+      await t.flush();
+      await vi.advanceTimersByTimeAsync(120_000);
+
+      expect(lines(t.logger.warn, "run closed by timeout")).toEqual([
+        { runId: run.id, reason: "undelivered", statusBefore: "queued", elapsedMs: 120_000 },
+      ]);
+      expect(lines(t.logger.info, "run ended")).toEqual([
+        expect.objectContaining({ runId: run.id, status: "error", errorCode: "ADAPTER_UNAVAILABLE" }),
+      ]);
+      t.orch.stop();
+    });
+
+    it("final_timeout 은 정상 경로일 수 있어 info — 정본이 먼저 온 queued 런도, 스냅샷 경로도", async () => {
+      const t = setup();
+      const early = await t.enqueue(t.say("@dev 하나"));
+      await t.flush();
+      await t.orch.onCanonical(t.outbound({ runId: early.id, text: "비밀 답" }));
+      await vi.advanceTimersByTimeAsync(10_000);
+      const late = await t.enqueue(t.say("@dev 둘"));
+      await t.flush();
+      await t.orch.signal(late.id, { kind: "gateway_started" });
+      await t.orch.signal(late.id, { kind: "gateway_final" }, { message: "비밀 스냅샷" });
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      const closed = lines(t.logger.info, "run closed by timeout");
+      expect(closed).toEqual([
+        { runId: early.id, reason: "final_timeout", statusBefore: "finalizing", elapsedMs: 10_000 },
+        { runId: late.id, reason: "final_timeout", statusBefore: "finalizing", elapsedMs: 10_000 },
+      ]);
+      for (const line of closed) expectOnlyKeys(line, TIMEOUT_KEYS, ["비밀 답", "비밀 스냅샷"]);
+      expect(lines(t.logger.warn, "run closed by timeout")).toEqual([]);
+      const ended = lines(t.logger.info, "run ended");
+      expect(ended).toEqual([
+        expect.objectContaining({
+          runId: early.id,
+          status: "done",
+          finalSource: "plugin",
+          durationMs: 10_000,
+        }),
+        expect.objectContaining({
+          runId: late.id,
+          status: "done",
+          finalSource: "gateway",
+          durationMs: 10_000,
+        }),
+      ]);
+      for (const line of ended)
+        expectOnlyKeys(line, [...ENDED_KEYS, "finalSource"], ["비밀 답", "비밀 스냅샷"]);
+      t.orch.stop();
+    });
+
+    it("abort·Gateway 오류로 끝나도 「run ended」 한 줄, 상한 줄은 없다", async () => {
+      const t = setup();
+      const aborted = await t.enqueue(t.say("@dev 하나"));
+      await t.flush();
+      await t.orch.abort(aborted.id);
+      const errored = await t.enqueue(t.say("@dev 둘"));
+      await t.flush();
+      await t.orch.signal(errored.id, {
+        kind: "gateway_error",
+        code: "provider_error",
+        message: "비밀 오류 본문",
+      });
+
+      const ended = lines(t.logger.info, "run ended");
+      expect(ended).toEqual([
+        expect.objectContaining({ runId: aborted.id, status: "aborted" }),
+        expect.objectContaining({ runId: errored.id, status: "error", errorCode: "provider_error" }),
+      ]);
+      expectOnlyKeys(ended[0], ENDED_KEYS, []);
+      expectOnlyKeys(ended[1], [...ENDED_KEYS, "errorCode"], ["비밀 오류 본문"]);
+      expect(lines(t.logger.warn, "run closed by timeout")).toEqual([]);
+      t.orch.stop();
+    });
+  });
+
   it("usage CUSTOM 은 저장하지 않고 runs.usage 를 갱신하고, 어댑터 status 는 bus adapter.status 로", async () => {
     const t = setup();
     const statuses: AdapterStatus[] = [];

@@ -287,6 +287,7 @@ export class AdapterError extends Error { readonly code: ErrorCode }
 | 오케스트레이터 신호 처리 중 예외 | 런을 `error(INTERNAL)` 로 닫고 로그. 다른 런에 전파하지 않는다 |
 
 로깅은 pino. 런마다 `runId`·`channelId`·`agentId` 를 바인딩한 자식 로거를 쓴다. 토큰은 절대 로그에 찍지 않는다(설정 로더가 `***` 로 가린다).
+진단 줄(Phase 1 실연 뒤): 어댑터 `inbound delivered`(info), 오케스트레이터 `run ended`(info, 종료 전이마다)·`run closed by timeout`(warn, `final_timeout` 만 info) — 메시지 본문·토큰은 싣지 않는다(필드는 live-smoke 5.4-3).
 
 ## 9. 검증
 

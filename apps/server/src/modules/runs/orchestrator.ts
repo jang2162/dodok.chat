@@ -164,6 +164,38 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     store.updateRun(db, run.id, { usage: { ...run.usage, ...fields } });
   }
 
+  // ── 진단 로그(본문·토큰 없이) ────────────────────────────────
+
+  /** createdAt → at. 세션 큐 대기도 들어간다 */
+  function sinceCreated(run: Pick<Run, "createdAt">, at: Date): number {
+    return at.getTime() - Date.parse(run.createdAt);
+  }
+
+  /** 상한이 런을 닫을 때 — 전이를 적용하기 전에 찍어 「run ended」 보다 먼저 남긴다. final_timeout 은 정상 경로일 수 있어 info */
+  function logClosedByTimeout(
+    run: Run,
+    reason: "queue_timeout" | "run_timeout" | "undelivered" | "final_timeout",
+  ) {
+    const line = { runId: run.id, reason, statusBefore: run.status, elapsedMs: sinceCreated(run, now()) };
+    if (reason === "final_timeout") logger.info(line, "run closed by timeout");
+    else logger.warn(line, "run closed by timeout");
+  }
+
+  function logRunEnded(run: Run, endedAt: Date) {
+    logger.info(
+      {
+        runId: run.id,
+        channelId: run.channelId,
+        agentId: run.agentId,
+        status: run.status,
+        ...(run.finalSource === undefined ? {} : { finalSource: run.finalSource }),
+        ...(run.error === undefined ? {} : { errorCode: run.error.code }),
+        durationMs: sinceCreated(run, endedAt),
+      },
+      "run ended",
+    );
+  }
+
   // ── 상태 전이 ───────────────────────────────────────────────
 
   function terminalEvents(tx: DbOrTx, run: Run, s: RunSignal): RunEventBody[] {
@@ -231,6 +263,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       // 결과는 신호를 적용한 뒤에 기다린다 — 타임아웃 코드가 Gateway 의 aborted 이벤트에 덮이지 않게.
       let aborting: Promise<unknown> | undefined;
       if (before && !TERMINAL_STATUSES.has(before.status) && transition(before, s).next !== null) {
+        logClosedByTimeout(before, s.kind);
         aborting = adapter.abort(runId, before.sessionKey).then(
           () => undefined,
           (err: unknown) => err ?? new Error("adapter abort failed"),
@@ -257,6 +290,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     try {
       const run = store.getRun(db, runId);
       if (!awaitingAck.has(runId) || run?.status !== "queued") return;
+      logClosedByTimeout(run, "undelivered");
       void adapter
         .abort(runId, run.sessionKey)
         .catch((err: unknown) => logger.debug({ err, runId }, "adapter abort after undelivered failed"));
@@ -357,8 +391,10 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       return { updated, events: bodies.map((b) => store.appendRunEvent(tx, runId, b, ts)) };
     });
 
-    if (terminal) release(runId);
-    else rearmTimers(runId, prev, next);
+    if (terminal) {
+      release(runId);
+      logRunEnded(updated, ts);
+    } else rearmTimers(runId, prev, next);
     try {
       emitEvents(updated.channelId, events);
       bus.emit("run.state", { run: store.toRunState(updated) });
@@ -518,6 +554,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
   /** finalizing 상한 — 정본이 없으면 WS 스냅샷(비어 있지 않을 때)을 에이전트 메시지로 저장하고 done(gateway). */
   async function finalizeFromSnapshot(runId: string): Promise<void> {
     const run = store.getRun(db, runId);
+    if (run?.status === "finalizing") logClosedByTimeout(run, "final_timeout");
     let message: Message | undefined;
     const text = snapshots.get(runId) ?? "";
     // 라우팅을 기다리는 사이 정본이 이미 저장됐으면 스냅샷으로 겹쳐 쓰지 않는다

@@ -147,6 +147,21 @@ function gatewayEvent(frame: EventFrame) {
   connectOptions.onEvent(frame);
 }
 
+/** 그 전송의 「inbound delivered」 info 로그 — 키는 정확히 이것뿐이고 메시지 본문이 없어야 한다 */
+function deliveredLines(input: InboundDeliver) {
+  const lines = logger.info.mock.calls
+    .filter((call) => call[1] === "inbound delivered")
+    .map((call) => call[0] as Record<string, unknown>)
+    .filter((line) => line.deliveryId === input.deliveryId);
+  for (const line of lines) {
+    expect(Object.keys(line).sort()).toEqual(
+      ["ackMs", "admission", "deliveryId", "retries", "runId", "waitedForPlugin"].sort(),
+    );
+    expect(JSON.stringify(line)).not.toContain(input.message.text);
+  }
+  return lines;
+}
+
 const ofKind = <K extends AdapterEvent["kind"]>(kind: K) =>
   events.filter((e): e is Extract<AdapterEvent, { kind: K }> => e.kind === kind);
 
@@ -198,6 +213,16 @@ describe("createOpenClawAdapter — send", () => {
 
     await expect(adapter.send(input)).resolves.toEqual({ admission: "dispatch", providerRunId: input.runId });
     expect(received).toEqual([input]);
+    expect(deliveredLines(input)).toEqual([
+      {
+        runId: input.runId,
+        deliveryId: input.deliveryId,
+        admission: "dispatch",
+        ackMs: expect.any(Number),
+        retries: 0,
+        waitedForPlugin: false,
+      },
+    ]);
   });
 
   it("ack { ok: true, data: {} } 는 재시도 없이 AdapterError(INTERNAL, ADAPTER_PROTOCOL: …)", async () => {
@@ -233,9 +258,10 @@ describe("createOpenClawAdapter — send", () => {
       },
     });
     const spy = vi.spyOn(adapter.bridge, "deliverInbound");
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
 
-    const sending = adapter.send(delivery());
+    const input = delivery();
+    const sending = adapter.send(input);
     await until(() => deliveries === 1, "first delivery");
     await vi.advanceTimersByTimeAsync(10_000);
     await vi.advanceTimersByTimeAsync(999);
@@ -246,6 +272,10 @@ describe("createOpenClawAdapter — send", () => {
 
     await expect(sending).resolves.toEqual({ admission: "dispatch", providerRunId: f.RUN_ID });
     expect(deliveries).toBe(2);
+    // ackMs 는 첫 전송 시도부터 — ack 타임아웃 10s + 재시도 대기 1s
+    expect(deliveredLines(input)).toEqual([
+      expect.objectContaining({ admission: "dispatch", ackMs: 11_000, retries: 1, waitedForPlugin: false }),
+    ]);
   });
 
   it("ack 가 끝내 오지 않으면 1s·4s·16s 로 3회 재시도한 뒤 AdapterError(TIMEOUT)", async () => {
@@ -279,13 +309,43 @@ describe("createOpenClawAdapter — send", () => {
 
   it("플러그인이 없으면 waitForReady 로 기다렸다가 붙으면 보낸다", async () => {
     const spy = vi.spyOn(adapter.bridge, "deliverInbound");
-    const sending = adapter.send(delivery());
+    const input = delivery();
+    const sending = adapter.send(input);
     await until(() => spy.mock.calls.length === 1, "first attempt");
 
     await plugin({ "inbound.deliver": dispatchAck });
 
     await expect(sending).resolves.toEqual({ admission: "dispatch", providerRunId: f.RUN_ID });
     expect(spy).toHaveBeenCalledTimes(2);
+    expect(deliveredLines(input)).toEqual([
+      expect.objectContaining({ admission: "dispatch", retries: 0, waitedForPlugin: true }),
+    ]);
+  });
+
+  it("drop ack 도 「inbound delivered」(admission drop) 한 줄, 거부·실패는 찍지 않는다", async () => {
+    await plugin({
+      "inbound.deliver": (_payload: InboundDeliver, ack) =>
+        ack({ ok: true, data: { admission: "drop", reason: "bot-loop-protection" } }),
+    });
+    const dropped = delivery();
+    await expect(adapter.send(dropped)).resolves.toMatchObject({ admission: "drop" });
+    expect(deliveredLines(dropped)).toEqual([
+      expect.objectContaining({
+        runId: dropped.runId,
+        admission: "drop",
+        retries: 0,
+        waitedForPlugin: false,
+      }),
+    ]);
+
+    for (const socket of clients.splice(0)) socket.disconnect();
+    await plugin({
+      "inbound.deliver": (_payload: InboundDeliver, ack) =>
+        ack({ ok: false, error: { code: "VALIDATION", message: "bad" } }),
+    });
+    const rejected = delivery();
+    await expect(adapter.send(rejected)).rejects.toMatchObject({ code: "VALIDATION" });
+    expect(deliveredLines(rejected)).toEqual([]);
   });
 
   it("플러그인을 기다리는 동안 forgetRun 된 런은 플러그인이 붙어도 보내지 않고 ADAPTER_UNAVAILABLE 로 끝난다", async () => {
