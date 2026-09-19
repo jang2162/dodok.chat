@@ -7,6 +7,8 @@ import { OpenSidebarButton, useOpenSidebar } from "@/app/layout/sidebarSheet";
 import { Composer } from "@/features/composer/Composer";
 import { TypingIndicator } from "@/features/composer/TypingIndicator";
 import { useSendMessage } from "@/features/composer/useSendMessage";
+import { StreamingBubble } from "@/features/runs/StreamingBubble";
+import { useChannelBubbles } from "@/features/runs/useChannelBubbles";
 import { useChannelSubscription } from "@/realtime/WireProvider";
 import { Button } from "@/ui/button";
 import { MessageList } from "./MessageList";
@@ -22,6 +24,7 @@ export function ChannelPage() {
   const { channelId } = useParams({ strict: false }) as { channelId: string };
   useChannelSubscription(channelId);
   const channel = useChannel(channelId);
+  const bubbleRunIds = useChannelBubbles(channelId);
   const { retry, discard } = useSendMessage(channelId);
   // 보내는 중 항목의 「다시 보내기」·「삭제」(태스크 7 PendingItem 이 읽는다). 실패는 항목 상태(failed)로 보인다
   const pendingActions = useMemo<PendingActions>(
@@ -49,7 +52,11 @@ export function ChannelPage() {
       <PendingActionsContext.Provider value={pendingActions}>
         <section className="flex min-w-0 flex-1 flex-col">
           <ChannelHeader channelId={channelId} />
-          <MessageList channelId={channelId} />
+          <MessageList
+            channelId={channelId}
+            bubbleRunIds={bubbleRunIds}
+            bubbles={(runId) => <StreamingBubble runId={runId} />}
+          />
           <div data-slot="composer">
             <TypingIndicator channelId={channelId} />
             <Composer channelId={channelId} />

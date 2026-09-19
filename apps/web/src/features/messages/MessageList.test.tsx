@@ -2,6 +2,7 @@ import type { Message } from "@dodok/shared";
 import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
+import { useMemo } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { qk } from "@/api/queries";
 import { registerUnauthorized } from "@/app/session";
@@ -10,6 +11,7 @@ import { AGENT, CH, CH2, msg, RUN } from "../../../test/fixtures";
 import { authorsClient, renderWithClient } from "../../../test/messages";
 import { stubScrollLayout } from "../../../test/scrollLayout";
 import { MessageList } from "./MessageList";
+import { useTimeline } from "./useTimeline";
 import { addPending, emptyTimeline, type Timeline, upsert } from "./timeline";
 
 const RECT = { width: 800, height: 600 };
@@ -240,6 +242,65 @@ describe("MessageList", () => {
     const text = container.textContent ?? "";
     expect(text.indexOf("본문 2")).toBeLessThan(text.indexOf(`버블 ${RUN}`));
     expect(text.indexOf(`버블 ${RUN}`)).toBeLessThan(text.indexOf("내 말"));
+  });
+
+  it("끝에 붙은 채 마지막 행이 다른 key 로 바뀌면(버블 → 확정 메시지, 보내는 중 → 확정) 끝에 그대로 붙는다", async () => {
+    // 행 높이를 추정(64)과 다르게 — 새 key 행이 추정으로 먼저 잡혔다 재어지는 경로
+    restore();
+    restore = stubScrollLayout({ ...RECT, rowHeight: 55 });
+    // 앱처럼 버블 목록을 타임라인에서 끌어낸다 — 확정 답이 들어오는 커밋에서 버블이 함께 빠진다
+    function Harness() {
+      const t = useTimeline(CH);
+      const answered = t?.items.some((m) => m.runId === RUN) ?? false;
+      const ids = useMemo(() => (answered ? [] : [RUN]), [answered]);
+      return (
+        <MessageList
+          channelId={CH}
+          initialRect={RECT}
+          bubbleRunIds={ids}
+          bubbles={(runId) => <div data-testid="bubble">버블 {runId}</div>}
+        />
+      );
+    }
+    const qc = authorsClient();
+    qc.setQueryData(qk.timeline(CH), timelineOf(range(1, 40)));
+    const { container } = renderWithClient(<Harness />, qc);
+    const scroller = container.querySelector("[data-scroller]") as HTMLElement;
+    const gap = () => scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+    // 앞선 스크롤이 멎은 뒤에 바꾼다 — virtual-core 는 스크롤 직후(150ms)에는 새 행을 재지 않고, 앞선 끝 맞추기가
+    // 아직 돌고 있으면 어긋남을 대신 메워 결함이 가려진다(실물에서는 답이 오기 한참 전에 멎어 있다)
+    const settle = () => act(() => new Promise((r) => setTimeout(r, 300)));
+    // 바뀐 뒤 몇 프레임
+    const frames = () => act(() => new Promise((r) => setTimeout(r, 100)));
+    await screen.findByTestId("bubble");
+    await waitFor(() => expect(gap()).toBe(0));
+
+    await settle();
+    act(() => updateTimeline(qc, CH, (t) => upsert(t, range(41, 41, { runId: RUN })[0] as Message)));
+    await frames();
+    expect(screen.queryByTestId("bubble")).toBeNull();
+    expect(screen.getByText("본문 41")).toBeInTheDocument();
+    expect(gap()).toBe(0);
+
+    // 보내는 중 항목이 확정되는 교체도 같은 경로
+    const clientMsgId = "c-last";
+    act(() =>
+      updateTimeline(qc, CH, (t) =>
+        addPending(t, {
+          clientMsgId,
+          channelId: CH,
+          bodyMd: "내 말",
+          createdAt: new Date().toISOString(),
+          state: "sending",
+        }),
+      ),
+    );
+    await waitFor(() => expect(gap()).toBe(0));
+    await settle();
+    act(() => updateTimeline(qc, CH, (t) => upsert(t, msg(42, { clientMsgId, bodyMd: "내 말" }))));
+    await frames();
+    expect(screen.queryByRole("status", { name: "보내는 중" })).toBeNull();
+    expect(gap()).toBe(0);
   });
 
   it("채널을 옮기면 칩·스크롤 상태를 새로 시작한다", async () => {

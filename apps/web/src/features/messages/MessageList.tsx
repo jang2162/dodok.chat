@@ -80,6 +80,17 @@ function ChannelMessages({ channelId, bubbleRunIds = NO_RUNS, bubbles, initialRe
     virtualizer.scrollToEnd();
   }, [lastPending, virtualizer]);
 
+  // 끝에 붙은 채 마지막 행이 다른 key 로 바뀌면(버블 → 확정 메시지, 보내는 중 → 확정) 끝으로. 행 수가 같아 followOnAppend 가
+  // 걸리지 않고, 새 행이 추정 높이로 먼저 잡혔다 재어지면 virtual-core 는 끝까지 남은 거리를 그대로 둔다.
+  // scrollToEnd 는 다시 그려진 뒤에도 끝이 맞을 때까지 프레임마다 다시 겨눈다
+  const lastKey = rows.at(-1)?.key;
+  const prevLastKey = useRef(lastKey);
+  useLayoutEffect(() => {
+    if (lastKey === prevLastKey.current) return;
+    prevLastKey.current = lastKey;
+    if (stuck) virtualizer.scrollToEnd();
+  }, [lastKey, stuck, virtualizer]);
+
   const onScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
