@@ -18,6 +18,10 @@ const is401 = (e: unknown) => e instanceof ApiRequestError && e.status === 401;
 const isFormError = (e: unknown) =>
   e instanceof ApiRequestError && (e.code === "VALIDATION" || e.code === "CONFLICT");
 
+/** 스펙 8장 「네트워크 실패 → 재시도 2회」: 네트워크 실패·5xx 만. 4xx·코드 오류는 되풀이해도 같다 — 필요한 쿼리는 자기 `retry` 를 준다 */
+const isRetryable = (e: unknown) =>
+  e instanceof NetworkError || (e instanceof ApiRequestError && e.status >= 500);
+
 /** 스펙 8장: 네트워크 실패는 한 id 로 모아 하나만, API 오류는 서버 message. 그 밖(코드 오류)은 토스트하지 않는다 */
 function toastError(e: unknown) {
   if (e instanceof NetworkError) toast.error("서버에 연결할 수 없습니다", { id: "network" });
@@ -47,7 +51,7 @@ export function createQueryClient(onUnauthorized: () => void): QueryClient {
     }),
     defaultOptions: {
       queries: {
-        retry: (count, e) => !(e instanceof ApiRequestError && e.status < 500) && count < 2,
+        retry: (count, e) => isRetryable(e) && count < 2,
         refetchOnWindowFocus: false,
       },
     },

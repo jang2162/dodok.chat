@@ -19,9 +19,16 @@ import { AppShell } from "./layout/AppShell";
 
 type Ctx = { queryClient: QueryClient };
 
-/** `next` 는 앱 안 경로만 받는다 — `//x`·`/\x`·`https:` 같은 다른 출처와 로그인 화면 자신은 버린다 */
+/**
+ * `next` 는 앱 안 경로만 받는다 — `//x`·`/\x`·`https:` 같은 다른 출처와 로그인 화면 자신은 버린다.
+ * 제어문자가 섞인 값도 버린다: 브라우저·라우터가 탭·개행을 지우면 `/\t/x` 가 `//x` 로 읽힌다
+ */
 export function safeNext(value: unknown): string | undefined {
-  return typeof value === "string" && /^\/(?![/\\])/.test(value) && !/^\/login(?:[/?#]|$)/.test(value)
+  return typeof value === "string" &&
+    /^\/(?![/\\])/.test(value) &&
+    // oxlint-disable-next-line no-control-regex -- 제어문자를 찾는 것이 목적이다
+    !/[\x00-\x1f\x7f]/.test(value) &&
+    !/^\/login(?:[/?#]|$)/.test(value)
     ? value
     : undefined;
 }

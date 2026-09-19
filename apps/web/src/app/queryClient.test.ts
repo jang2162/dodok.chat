@@ -57,7 +57,7 @@ describe("createQueryClient", () => {
     expect(onUnauthorized).not.toHaveBeenCalled();
   });
 
-  it("4xx 는 재시도하지 않고, 5xx·네트워크 실패(NetworkError)는 두 번 더 시도한다", async () => {
+  it("재시도는 네트워크 실패(NetworkError)·5xx 만 두 번 더 — 4xx·코드 오류는 한 번으로 끝낸다", async () => {
     const qc = createQueryClient(() => {});
     const clientError = vi.fn(async () => Promise.reject(new ApiRequestError(404, "NOT_FOUND", "x")));
     await expect(
@@ -65,9 +65,17 @@ describe("createQueryClient", () => {
     ).rejects.toBeInstanceOf(ApiRequestError);
     expect(clientError).toHaveBeenCalledTimes(1);
 
-    const serverError = vi.fn(async () => Promise.reject(new ApiRequestError(502, "INTERNAL", "x")));
+    const codeError = vi.fn(async () => Promise.reject(new TypeError("x is undefined")));
     await expect(
-      qc.fetchQuery({ queryKey: ["b"], queryFn: serverError, retryDelay: 0 }),
+      qc.fetchQuery({ queryKey: ["b"], queryFn: codeError, retryDelay: 0 }),
+    ).rejects.toBeInstanceOf(TypeError);
+    expect(codeError).toHaveBeenCalledTimes(1);
+
+    const serverError = vi.fn(async () =>
+      Promise.reject(new ApiRequestError(503, "ADAPTER_UNAVAILABLE", "x")),
+    );
+    await expect(
+      qc.fetchQuery({ queryKey: ["c"], queryFn: serverError, retryDelay: 0 }),
     ).rejects.toBeInstanceOf(ApiRequestError);
     expect(serverError).toHaveBeenCalledTimes(3);
 
@@ -75,7 +83,7 @@ describe("createQueryClient", () => {
     const fetch = vi.fn(async () => Promise.reject(new TypeError("Failed to fetch")));
     vi.stubGlobal("fetch", fetch);
     await expect(
-      qc.fetchQuery({ queryKey: ["c"], queryFn: () => api("GET", "/c"), retryDelay: 0 }),
+      qc.fetchQuery({ queryKey: ["d"], queryFn: () => api("GET", "/d"), retryDelay: 0 }),
     ).rejects.toBeInstanceOf(NetworkError);
     expect(fetch).toHaveBeenCalledTimes(3);
   });
