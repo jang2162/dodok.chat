@@ -14,8 +14,8 @@ type MentionListProps = {
 };
 
 /**
- * @ 후보 팝업(스펙 5.1): 핸들·이름·「AI」 배지, 꺼진 에이전트는 흐리게 + 「꺼짐」. ↑↓ 이동, Enter·Tab 선택
- * (Esc 는 suggestion 플러그인이 닫는다). 후보가 없으면 그리지 않는다
+ * @ 후보 팝업(스펙 5.1): 핸들·이름·「AI」 배지, 꺼진 에이전트는 흐리게 + 「꺼짐」(고를 수 있으므로 aria-disabled 는 달지 않는다).
+ * ↑↓ 이동, Enter·Tab 선택(Esc 는 suggestion 플러그인이 닫는다). 후보가 없으면 그리지 않는다
  */
 export function MentionList({ items, command, ref }: MentionListProps) {
   const [active, setActive] = useState({ items, index: 0 });
@@ -50,7 +50,6 @@ export function MentionList({ items, command, ref }: MentionListProps) {
           key={c.id}
           role="option"
           aria-selected={i === index}
-          aria-disabled={!c.enabled || undefined}
           // 누르는 동안 편집기 포커스를 뺏지 않는다
           onMouseDown={(e) => e.preventDefault()}
           onClick={() => select(i)}

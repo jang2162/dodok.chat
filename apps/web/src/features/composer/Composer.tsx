@@ -35,7 +35,8 @@ const EDITOR_CLASS = [
   "[&_pre]:my-1 [&_pre]:rounded [&_pre]:bg-muted [&_pre]:p-2 [&_pre_code]:bg-transparent [&_pre_code]:p-0",
 ].join(" ");
 
-type ResetTarget = { agentId: string; handle: string };
+/** 「새 대화」 대상 — 연 채널에 묶는다. 열린 채 채널이 바뀌어도 요청은 그 채널로만 간다 */
+type ResetTarget = { channelId: string; agentId: string; handle: string };
 
 /**
  * 작성기(스펙 5.1·4.4): Tiptap + @멘션. Enter 전송(토큰 본문 `toBodyMd`), `/stop`·`/new @에이전트` 는 메시지로 보내지 않는다.
@@ -51,6 +52,8 @@ export function Composer({ channelId }: { channelId: string }) {
   const me = useMe();
   const hintId = useId();
   const [reset, setReset] = useState<{ target?: ResetTarget; open: boolean }>({ open: false });
+  // 연 채널을 떠나면(대화상자 너머 뒤로 가기 등) 닫는다 — 되돌릴 수 없는 리셋을 옮겨 간 채널에서 묻지 않게
+  if (reset.open && reset.target?.channelId !== channelId) setReset((r) => ({ ...r, open: false }));
 
   const candidates = useMemo(
     () => mentionCandidates(members.data, agents.data, me.data),
@@ -128,7 +131,7 @@ export function Composer({ channelId }: { channelId: string }) {
     if (cmd?.kind === "new") {
       const label = doc.content?.[0]?.content?.find((n) => n.attrs?.id === `a:${cmd.agentId}`)?.attrs?.label;
       const handle = agents.data?.find((a) => a.id === cmd.agentId)?.handle ?? String(label ?? "");
-      setReset({ target: { agentId: cmd.agentId, handle }, open: true });
+      setReset({ target: { channelId, agentId: cmd.agentId, handle }, open: true });
       editor.commands.clearContent();
       return;
     }
@@ -168,7 +171,7 @@ export function Composer({ channelId }: { channelId: string }) {
       )}
       {reset.target && (
         <ResetSessionDialog
-          channelId={channelId}
+          channelId={reset.target.channelId}
           agentId={reset.target.agentId}
           handle={reset.target.handle}
           open={reset.open}

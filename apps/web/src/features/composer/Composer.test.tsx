@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Editor, JSONContent } from "@tiptap/core";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ComponentProps } from "react";
 import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 import { qk } from "@/api/queries";
@@ -21,6 +22,17 @@ vi.mock("@/realtime/WireProvider", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/realtime/WireProvider")>()),
   useWire: () => ({ socket: wire.socket, subscriptions: undefined }),
 }));
+// 「새 대화」 대화상자는 실물이다. `holdOpen` 이면 한 번 열린 뒤 닫히지 않는다 — 「채널이 바뀌면 닫기」를 뺀 상황을 흉내 낸다
+const resetDialog = vi.hoisted(() => ({ holdOpen: false }));
+vi.mock("@/features/agents/ResetSessionDialog", async (importOriginal) => {
+  const { ResetSessionDialog: Real } =
+    await importOriginal<typeof import("@/features/agents/ResetSessionDialog")>();
+  return {
+    ResetSessionDialog: (props: ComponentProps<typeof Real>) => (
+      <Real {...props} open={props.open || resetDialog.holdOpen} />
+    ),
+  };
+});
 
 const W = uid(900);
 const TS = "2026-09-19T00:00:00.000Z";
@@ -78,6 +90,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   wire.socket = undefined;
   useWireStatus.getState().setStatus("idle");
+  resetDialog.holdOpen = false;
 });
 
 /** 캐시를 채운 채 띄운다(조회 없음). 편집기는 ProseMirror 요소에 붙은 Tiptap 인스턴스 */
@@ -109,6 +122,8 @@ const setDoc = (editor: Editor, content: JSONContent, at: "end" | number = "end"
     editor.commands.setContent(content);
     editor.commands.focus(at);
   });
+/** 가짜 ack 은 마이크로태스크로만 돈다 — 매크로태스크 한 번을 기다리면 `.catch` 의 토스트까지 끝나 있다 */
+const settleAcks = () => act(() => new Promise<void>((resolve) => setTimeout(resolve, 0)));
 const confirmed = (payload: unknown): Result<{ message: Message }> => {
   const { clientMsgId, bodyMd } = payload as { clientMsgId: string; bodyMd: string };
   return { ok: true, data: { message: msg(1, { clientMsgId, bodyMd }) } };
@@ -215,7 +230,8 @@ describe("(e) /stop", () => {
     expect(fake.sentOf("run.abort")).toEqual([{ runId: RUN }, { runId: RUN2 }]);
     expect(fake.sentOf("message.send")).toEqual([]);
     expect(editor.isEmpty).toBe(true);
-    await Promise.resolve();
+    // 실패 토스트는 아래 테스트가 같은 기다림으로 잰다 — 여기서 없으면 정말 없다
+    await settleAcks();
     expect(toastError).not.toHaveBeenCalled();
   });
 
@@ -233,9 +249,8 @@ describe("(e) /stop", () => {
     const { box, editor } = renderComposer();
     setDoc(editor, doc(p(t("/stop"))));
     fireEvent.keyDown(box, { key: "Enter" });
-    await waitFor(() =>
-      expect(toastError).toHaveBeenCalledWith("이미 끝났거나 없는 실행입니다", expect.anything()),
-    );
+    await settleAcks();
+    expect(toastError).toHaveBeenCalledWith("이미 끝났거나 없는 실행입니다", expect.anything());
   });
 });
 
@@ -254,6 +269,39 @@ describe("(f) /new", () => {
 
     await userEvent.click(within(dialog).getByRole("button", { name: "새 대화 시작" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(fetch.mock.calls.map(([url, init]) => [url, init?.method])).toEqual([
+      [`/api/v1/channels/${CH}/agents/${AGENT}/reset`, "POST"],
+    ]);
+  });
+
+  it("열린 채 채널이 바뀌면 닫는다 — 돌아와도 다시 열리지 않고, 요청도 없다", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => json(200, { ok: true }));
+    vi.stubGlobal("fetch", fetch);
+    const { box, editor, rerender } = renderComposer(CH);
+    setDoc(editor, doc(p(t("/new "), mention(`a:${AGENT}`, "dev"))));
+    fireEvent.keyDown(box, { key: "Enter" });
+    await screen.findByRole("dialog", { name: "새 대화" });
+
+    act(() => rerender(CH2));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    act(() => rerender(CH));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("대상은 연 채널이다 — 닫기가 없어도(열린 채 옮겨 가 확인해도) 요청은 연 채널로", async () => {
+    resetDialog.holdOpen = true;
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => json(200, { ok: true }));
+    vi.stubGlobal("fetch", fetch);
+    const { box, editor, rerender } = renderComposer(CH);
+    setDoc(editor, doc(p(t("/new "), mention(`a:${AGENT}`, "dev"))));
+    fireEvent.keyDown(box, { key: "Enter" });
+    await screen.findByRole("dialog", { name: "새 대화" });
+
+    act(() => rerender(CH2));
+    const dialog = screen.getByRole("dialog", { name: "새 대화" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "새 대화 시작" }));
+    await waitFor(() => expect(fetch).toHaveBeenCalled());
     expect(fetch.mock.calls.map(([url, init]) => [url, init?.method])).toEqual([
       [`/api/v1/channels/${CH}/agents/${AGENT}/reset`, "POST"],
     ]);
@@ -326,7 +374,7 @@ describe("멘션", () => {
     render(<MentionList items={candidates()} command={command} ref={ref} />);
     const options = within(screen.getByRole("listbox", { name: "멘션 후보" })).getAllByRole("option");
     expect(options.map((o) => o.textContent)).toEqual(["@dev개발봇AI", "@finFinanceAI꺼짐", "@owner주인"]);
-    expect(options[1]).toHaveAttribute("aria-disabled", "true");
+    expect(options[1]).not.toHaveAttribute("aria-disabled"); // 꺼져 있어도 고를 수 있다
     expect(options[1]).toHaveClass("opacity-50");
     expect(options[0]).toHaveAttribute("aria-selected", "true");
 

@@ -19,17 +19,17 @@ export function TypingIndicator({ channelId }: { channelId: string }) {
   const entries = byChannel[channelId];
   useEffect(() => setNow(Date.now()), [entries]);
 
-  const handles = typingActors({ byChannel }, channelId, now)
-    .filter((a) => !(a.actorType === "user" && a.actorId === me?.id))
-    .flatMap((a) => {
-      const handle =
-        a.actorType === "agent"
-          ? agents?.find((x) => x.id === a.actorId)?.handle
-          : a.actorId === me?.id
-            ? me.handle
-            : undefined;
-      return handle ? [`@${handle}`] : [];
-    });
+  const handles = typingActors({ byChannel }, channelId, now).flatMap((a) => {
+    const handle =
+      a.actorType === "agent"
+        ? agents?.find((x) => x.id === a.actorId)?.handle
+        : a.actorId === me?.id
+          ? me.handle
+          : undefined;
+    // 이름을 알아도 자기 자신은 숨긴다
+    const self = a.actorType === "user" && a.actorId === me?.id;
+    return handle && !self ? [`@${handle}`] : [];
+  });
   const active = handles.length > 0;
 
   useEffect(() => {
