@@ -210,7 +210,7 @@ describe("채널 프롬프트 오버라이드", () => {
     const list = await agentList();
     expect(within(list).getByText("채널 프롬프트 오버라이드 없음")).toBeInTheDocument();
     await userEvent.click(within(list).getByRole("button", { name: "@dev 채널 프롬프트 편집" }));
-    const box = within(list).getByRole("textbox", { name: "@dev 채널 프롬프트" });
+    const box = within(list).getByRole("textbox", { name: "@dev 채널 프롬프트 오버라이드" });
     expect(box).toHaveAttribute("maxLength", "20000");
     await userEvent.type(box, "숫자는 표로");
     await userEvent.click(within(list).getByRole("button", { name: "저장" }));
@@ -218,7 +218,7 @@ describe("채널 프롬프트 오버라이드", () => {
     expect(within(list).queryByRole("textbox")).not.toBeInTheDocument();
 
     await userEvent.click(within(list).getByRole("button", { name: "@dev 채널 프롬프트 편집" }));
-    await userEvent.clear(within(list).getByRole("textbox", { name: "@dev 채널 프롬프트" }));
+    await userEvent.clear(within(list).getByRole("textbox", { name: "@dev 채널 프롬프트 오버라이드" }));
     await userEvent.click(within(list).getByRole("button", { name: "저장" }));
     expect(await within(list).findByText("채널 프롬프트 오버라이드 없음")).toBeInTheDocument();
     expect(server.writes().map((c) => c.body)).toEqual([
@@ -228,10 +228,10 @@ describe("채널 프롬프트 오버라이드", () => {
 
     reply = apiErr(400, "VALIDATION", "promptOverride: too long");
     await userEvent.click(within(list).getByRole("button", { name: "@dev 채널 프롬프트 편집" }));
-    await userEvent.type(within(list).getByRole("textbox", { name: "@dev 채널 프롬프트" }), "x");
+    await userEvent.type(within(list).getByRole("textbox", { name: "@dev 채널 프롬프트 오버라이드" }), "x");
     await userEvent.click(within(list).getByRole("button", { name: "저장" }));
     expect(await within(list).findByRole("alert")).toHaveTextContent("promptOverride: too long");
-    expect(within(list).getByRole("textbox", { name: "@dev 채널 프롬프트" })).toHaveAttribute(
+    expect(within(list).getByRole("textbox", { name: "@dev 채널 프롬프트 오버라이드" })).toHaveAttribute(
       "aria-invalid",
       "true",
     );

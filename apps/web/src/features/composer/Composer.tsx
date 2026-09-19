@@ -70,7 +70,7 @@ export function Composer({ channelId }: { channelId: string }) {
         StarterKit.configure({ heading: false, horizontalRule: false, link: false, underline: false }),
         Placeholder.configure({ placeholder: PLACEHOLDER }),
         Mention.configure({
-          HTMLAttributes: { class: "rounded bg-accent px-0.5 font-medium text-accent-foreground" },
+          HTMLAttributes: { class: "rounded bg-primary/10 px-0.5 font-medium text-primary" },
           renderText: ({ node }) => `@${String(node.attrs.label ?? "")}`,
           suggestion: mentionSuggestion(() => live.current.candidates, menu),
         }),
@@ -150,7 +150,7 @@ export function Composer({ channelId }: { channelId: string }) {
 
   return (
     <div className="px-4 pb-4">
-      <div className="flex items-end gap-2 rounded-lg border bg-background px-3 py-1.5 focus-within:ring-2 focus-within:ring-ring/50">
+      <div className="flex items-end gap-2 rounded-lg border border-input bg-card px-3 py-1.5 shadow-xs focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/30">
         <EditorContent editor={editor} className="min-w-0 flex-1" />
         <Button
           type="button"

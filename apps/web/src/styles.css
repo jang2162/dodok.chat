@@ -10,6 +10,34 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background font-sans text-foreground antialiased;
+    /* 한국어는 어절 단위로 줄을 바꾼다. 긴 주소·코드처럼 한 어절이 넘치면 그 안에서 끊는다 */
+    word-break: keep-all;
+    overflow-wrap: break-word;
+  }
+  ::selection {
+    @apply bg-primary/20;
+  }
+}
+
+/*
+ * 코드 13px(스펙 7.1) — Streamdown 은 인라인 코드·코드 블록에 text-sm(14px) 유틸리티를 단다.
+ * 레이어 밖 규칙이라 유틸리티보다 앞선다
+ */
+[data-streamdown="inline-code"],
+[data-streamdown="code-block-body"],
+[data-streamdown="code-block-body"] :is(pre, code) {
+  font-size: 13px;
+}
+
+/* 모션 줄이기(스펙 7.2): 커서 깜빡임·대기 점(motion-safe: 로만 움직인다) 밖의 여닫기 애니메이션·전환도 거의 없앤다 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

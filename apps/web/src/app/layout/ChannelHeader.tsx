@@ -58,7 +58,7 @@ export function ChannelHeader({ channelId }: { channelId: string }) {
             </Avatar>
           ))}
           {hidden > 0 && (
-            <AvatarGroupCount className="size-6 text-xs" aria-label={`에이전트 ${hidden}명 더`}>
+            <AvatarGroupCount role="img" className="size-6 text-xs" aria-label={`에이전트 ${hidden}명 더`}>
               +{hidden}
             </AvatarGroupCount>
           )}

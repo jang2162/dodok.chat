@@ -226,7 +226,7 @@ function DiscoverList({
             const draft = drafts[c.providerAgentId];
             const checkboxId = `${baseId}-${i}`;
             return (
-              <li key={c.providerAgentId} className="rounded-md border p-3">
+              <li key={c.providerAgentId} className="rounded-md border bg-card p-3">
                 <div className="flex items-center gap-3">
                   <Checkbox
                     id={checkboxId}

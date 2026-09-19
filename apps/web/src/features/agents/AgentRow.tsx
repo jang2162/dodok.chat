@@ -15,7 +15,7 @@ export function AgentRow({ agent }: { agent: Agent }) {
   const toggle = usePatchAgent();
   const handle = `@${agent.handle}`;
   return (
-    <li className="flex flex-col gap-3 rounded-lg border p-4">
+    <li className="flex flex-col gap-3 rounded-lg border bg-card p-4">
       <div className="flex items-start gap-3">
         <span
           aria-hidden

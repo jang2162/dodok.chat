@@ -33,7 +33,7 @@ export const StreamingBubble = memo(function StreamingBubble({ runId }: { runId:
       <span
         data-agent-bar
         aria-hidden
-        className="absolute inset-y-0 left-0 w-0.5 bg-border"
+        className="absolute inset-y-1 left-1.5 w-[3px] rounded-full bg-border"
         style={agent.colorVar ? { backgroundColor: agent.colorVar } : undefined}
       />
       <MessageErrorBoundary resetKey={`${status}:${view.lastEventSeq}`}>

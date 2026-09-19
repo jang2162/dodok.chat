@@ -7,8 +7,8 @@ type Tone = "ok" | "warn" | "down" | "unknown";
 type DotState = { label: string; tone: Tone };
 
 const TONE: Record<Tone, string> = {
-  ok: "bg-emerald-500",
-  warn: "bg-amber-500",
+  ok: "bg-success",
+  warn: "bg-warning",
   down: "bg-destructive",
   unknown: "bg-muted-foreground/40",
 };

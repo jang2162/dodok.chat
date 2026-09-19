@@ -38,7 +38,7 @@ export function ChannelList({ onNavigate }: { onNavigate?: () => void }) {
             to="/c/$channelId"
             params={{ channelId: channel.id }}
             onClick={onNavigate}
-            className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-sidebar-foreground/80 outline-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring aria-[current=page]:bg-sidebar-accent aria-[current=page]:font-medium aria-[current=page]:text-sidebar-accent-foreground"
+            className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-sidebar-foreground/80 outline-none hover:not-aria-[current=page]:bg-sidebar-accent hover:not-aria-[current=page]:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:ring-offset-1 focus-visible:ring-offset-sidebar aria-[current=page]:bg-sidebar-primary aria-[current=page]:font-medium aria-[current=page]:text-sidebar-primary-foreground"
           >
             <HashIcon className="size-3.5 shrink-0 opacity-60" aria-hidden />
             <span className="truncate">{channel.name}</span>

@@ -49,7 +49,7 @@ export function AgentMemberRow({
 
   const turnedOff = (switching ?? []).filter((s) => !s.autoRespond).map((s) => `@${handleOf(s.memberId)}`);
   return (
-    <li className="flex flex-col gap-3 rounded-lg border p-3">
+    <li className="flex flex-col gap-3 rounded-lg border bg-card p-3">
       <div className="flex items-start gap-2">
         <span
           aria-hidden
@@ -184,7 +184,7 @@ function OverrideEditor({
       <Label htmlFor={id}>채널 프롬프트 오버라이드</Label>
       <Textarea
         id={id}
-        aria-label={`${handle} 채널 프롬프트`}
+        aria-label={`${handle} 채널 프롬프트 오버라이드`}
         aria-describedby={describedBy}
         aria-invalid={error !== undefined || undefined}
         value={draft}

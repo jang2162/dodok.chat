@@ -12,15 +12,15 @@ export function MentionChip({ kind, id }: { kind: "a" | "u"; id: string }) {
     <span
       data-mention={kind}
       className={cn(
-        "inline-flex items-center gap-1 rounded bg-accent px-1 align-baseline font-medium text-accent-foreground",
-        !handle && "text-muted-foreground",
+        "rounded bg-primary/10 px-1 font-medium whitespace-nowrap text-primary",
+        !handle && "bg-muted text-muted-foreground",
       )}
     >
       {kind === "a" && handle && (
         <span
           data-agent-dot
           aria-hidden
-          className="size-1.5 shrink-0 rounded-full"
+          className="mr-1 inline-block size-1.5 rounded-full align-middle"
           style={{ backgroundColor: agentColorVar(handle) }}
         />
       )}
