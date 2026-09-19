@@ -1,10 +1,15 @@
 import { Link, Outlet, useParams } from "@tanstack/react-router";
+import { useMemo } from "react";
 import { ApiRequestError, NetworkError } from "@/api/http";
 import { useChannel } from "@/api/queries";
 import { ChannelHeader } from "@/app/layout/ChannelHeader";
 import { OpenSidebarButton, useOpenSidebar } from "@/app/layout/sidebarSheet";
+import { Composer } from "@/features/composer/Composer";
+import { TypingIndicator } from "@/features/composer/TypingIndicator";
+import { useSendMessage } from "@/features/composer/useSendMessage";
 import { useChannelSubscription } from "@/realtime/WireProvider";
 import { Button } from "@/ui/button";
+import { type PendingActions, PendingActionsContext } from "./pendingActions";
 
 /**
  * 채널 화면: 헤더 · 메시지 목록 자리(태스크 7) · 작성기 자리(태스크 9) · 오른쪽 `<Outlet/>`(설정 패널, 태스크 11).
@@ -16,6 +21,12 @@ export function ChannelPage() {
   const { channelId } = useParams({ strict: false }) as { channelId: string };
   useChannelSubscription(channelId);
   const channel = useChannel(channelId);
+  const { retry, discard } = useSendMessage(channelId);
+  // 보내는 중 항목의 「다시 보내기」·「삭제」(태스크 7 PendingItem 이 읽는다). 실패는 항목 상태(failed)로 보인다
+  const pendingActions = useMemo<PendingActions>(
+    () => ({ retry: (id) => void retry(id).catch(() => undefined), discard }),
+    [retry, discard],
+  );
 
   if (!channel.data) {
     return (
@@ -34,11 +45,16 @@ export function ChannelPage() {
   }
   return (
     <div data-testid="page-channel" className="flex min-h-0 flex-1">
-      <section className="flex min-w-0 flex-1 flex-col">
-        <ChannelHeader channelId={channelId} />
-        <div data-slot="messages" className="min-h-0 flex-1" />
-        <div data-slot="composer" />
-      </section>
+      <PendingActionsContext.Provider value={pendingActions}>
+        <section className="flex min-w-0 flex-1 flex-col">
+          <ChannelHeader channelId={channelId} />
+          <div data-slot="messages" className="min-h-0 flex-1" />
+          <div data-slot="composer">
+            <TypingIndicator channelId={channelId} />
+            <Composer channelId={channelId} />
+          </div>
+        </section>
+      </PendingActionsContext.Provider>
       <Outlet />
     </div>
   );
