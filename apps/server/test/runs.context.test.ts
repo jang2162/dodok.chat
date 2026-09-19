@@ -13,7 +13,9 @@ import { ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
 import { seedChannelWithAgent } from "./helpers/seed";
 
-const BASE_RULE = "다른 에이전트를 @멘션하면 그 에이전트가 이어받습니다.";
+/** 서술 속 @핸들도 릴레이가 된다(live-smoke 5.4-5) — 부를 때만 @ 를 쓰게 한다 */
+const rule = (turns: number) =>
+  `다른 에이전트에게 일을 넘길 때만 @핸들을 쓰세요 — @멘션하면 그 에이전트가 이어받습니다(최대 ${turns}턴). 언급만 할 때는 @ 없이 이름만 쓰세요.`;
 
 function setup() {
   const db = newTestDb();
@@ -111,7 +113,7 @@ describe("buildInboundDeliver", () => {
       context: {
         recentMessages: [],
         participants: expect.any(Array),
-        relayRules: `${BASE_RULE} 최대 4턴.`,
+        relayRules: rule(4),
       },
       options: {},
     });
@@ -176,10 +178,10 @@ describe("buildInboundDeliver", () => {
   it("relayRules — allowPairs 가 all 이면 최대 턴만", () => {
     const { db, channelId, say, deliver } = setup();
     expect(deliver({ message: say("@dev") }).inbound.context.relayRules).toBe(
-      "다른 에이전트를 @멘션하면 그 에이전트가 이어받습니다. 최대 4턴.",
+      "다른 에이전트에게 일을 넘길 때만 @핸들을 쓰세요 — @멘션하면 그 에이전트가 이어받습니다(최대 4턴). 언급만 할 때는 @ 없이 이름만 쓰세요.",
     );
     updateChannel(db, channelId, { relayPolicy: { maxRelayTurns: 7 } });
-    expect(deliver({ message: say("@dev 다시") }).inbound.context.relayRules).toBe(`${BASE_RULE} 최대 7턴.`);
+    expect(deliver({ message: say("@dev 다시") }).inbound.context.relayRules).toBe(rule(7));
   });
 
   it("relayRules — allowPairs 제한이면 이 에이전트가 부를 수 있는 채널 에이전트 핸들을 나열한다", () => {
@@ -204,13 +206,13 @@ describe("buildInboundDeliver", () => {
     const trigger = say("@dev @fin @ops");
 
     expect(deliver({ message: trigger }).inbound.context.relayRules).toBe(
-      `${BASE_RULE} 최대 2턴. 당신이 부를 수 있는 에이전트: @fin, @ops.`,
+      `${rule(2)} 당신이 부를 수 있는 에이전트: @fin, @ops.`,
     );
     expect(deliver({ message: trigger }, { run: { agentId: finId } }).inbound.context.relayRules).toBe(
-      `${BASE_RULE} 최대 2턴. 당신이 부를 수 있는 에이전트: @dev.`,
+      `${rule(2)} 당신이 부를 수 있는 에이전트: @dev.`,
     );
     expect(deliver({ message: trigger }, { run: { agentId: ops.id } }).inbound.context.relayRules).toBe(
-      `${BASE_RULE} 최대 2턴. 당신은 다른 에이전트를 부를 수 없습니다.`,
+      `${rule(2)} 당신은 다른 에이전트를 부를 수 없습니다.`,
     );
   });
 

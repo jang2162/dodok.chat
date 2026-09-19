@@ -35,7 +35,8 @@ const deliver: InboundDeliver = {
       { type: "agent", handle: "researcher", displayName: "Researcher", isSelf: true },
       { type: "agent", handle: "planner", displayName: "Planner", isSelf: false },
     ],
-    relayRules: "다른 에이전트를 @멘션하면 그 에이전트가 이어받습니다. 최대 4턴.",
+    relayRules:
+      "다른 에이전트에게 일을 넘길 때만 @핸들을 쓰세요 — @멘션하면 그 에이전트가 이어받습니다(최대 4턴). 언급만 할 때는 @ 없이 이름만 쓰세요.",
     channelPrompt: "이 채널은 버그 분류용입니다.",
     promptOverride: "간결하게 답하세요.",
   },
@@ -48,7 +49,7 @@ describe("formatInboundContext", () => {
       [
         `[dodok context] channel=${CH} you=@researcher`,
         "참여자: @jang(사람), @researcher(에이전트, 나), @planner(에이전트)",
-        "릴레이 규칙: 다른 에이전트를 @멘션하면 그 에이전트가 이어받습니다. 최대 4턴.",
+        "릴레이 규칙: 다른 에이전트에게 일을 넘길 때만 @핸들을 쓰세요 — @멘션하면 그 에이전트가 이어받습니다(최대 4턴). 언급만 할 때는 @ 없이 이름만 쓰세요.",
         "최근 대화:",
         "[09:12] @jang: 로그인이 가끔 실패해",
         "[09:13] @planner: 재현 조건을 모아보죠",

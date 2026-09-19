@@ -262,7 +262,7 @@ export class AdapterError extends Error { readonly code: ErrorCode }
 
 - `recentMessages`: 트리거 메시지 이전 채널 메시지 최근 20개(시스템 메시지 제외, 트리거 메시지 자체는 `message` 필드로 따로 간다). `text` 는 `renderForAgent`(@handle 평문).
 - `participants`: 채널 멤버 전부(사람 `handle`·`displayName`, 에이전트 `handle`·`name`, `isSelf`).
-- `relayRules`: 한 문단 — "다른 에이전트를 @멘션하면 그 에이전트가 이어받습니다. 최대 N턴." + `allowPairs` 가 제한이면 이 에이전트가 부를 수 있는 핸들 목록.
+- `relayRules`: 한 문단 — "다른 에이전트에게 일을 넘길 때만 @핸들을 쓰세요 — @멘션하면 그 에이전트가 이어받습니다(최대 N턴). 언급만 할 때는 @ 없이 이름만 쓰세요." + `allowPairs` 가 제한이면 이 에이전트가 부를 수 있는 핸들 목록. 라우터는 멘션 = 호출이라 서술 속 @핸들도 릴레이가 된다(live-smoke 5.4-5) — 그래서 부를 때만 @ 를 쓰게 한다.
 - `channelPrompt`: 3.9 `needsPromptContext` 일 때만 채널 `prompt`. 아니면 생략.
 - `promptOverride`: 에이전트 멤버의 `promptOverride` 가 있으면 항상.
 - `message.text`: 트리거 메시지 `renderForAgent`. `interaction`/`continue` 런은 `formatInteractionText` 결과. 첨부는 Phase 2.

@@ -799,7 +799,7 @@ export interface BridgeServerToClientEvents {   // 서버 → 플러그인
   ```
   [dodok context] channel=<channelId> you=@<handle>
   참여자: @jang(사람), @researcher(에이전트, 나), @planner(에이전트)
-  릴레이 규칙: 다른 에이전트를 @멘션하면 그 에이전트가 이어받습니다. 최대 4턴.
+  릴레이 규칙: 다른 에이전트에게 일을 넘길 때만 @핸들을 쓰세요 — @멘션하면 그 에이전트가 이어받습니다(최대 4턴). 언급만 할 때는 @ 없이 이름만 쓰세요.
   최근 대화:
   [09:12] @jang: ...
   [09:13] @planner: ...
