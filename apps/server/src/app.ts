@@ -174,6 +174,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       workspaceId,
       route: (message) => services.router.routeMessage(message),
       runs: services.runs,
+      appOrigin: config.APP_ORIGIN,
     });
     const fanout = attachWireFanout(io, bus, { logger, maxPending: deps.wireMaxPending });
     undo.push({ step: "fanout", run: () => fanout.close() });

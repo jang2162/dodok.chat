@@ -26,6 +26,7 @@ import {
   MESSAGE_PAGE_MAX,
 } from "../modules/messages/service";
 import type { ServerBus } from "./bus";
+import { cookieSessionToken } from "./cookie-auth";
 import type { RunsFacade, WireServer } from "./types";
 
 export type WireContext = {
@@ -38,6 +39,8 @@ export type WireContext = {
   route: (message: Message) => Promise<void>;
   /** 없으면 런 핸들러는 ADAPTER_UNAVAILABLE */
   runs: RunsFacade | null;
+  /** 쿠키 인증을 받을 출처(APP_ORIGIN). 핸드셰이크 Origin 이 같을 때만 쿠키를 읽는다 */
+  appOrigin: string;
 };
 
 const ChannelUnsubscribe = z.object({ channelId: Id });
@@ -53,7 +56,10 @@ export function attachWire(io: WireServer, ctx: WireContext): void {
     if (protocol !== WIRE_PROTOCOL) {
       return next(connectError("PROTOCOL_MISMATCH", `wire protocol ${String(protocol)} != ${WIRE_PROTOCOL}`));
     }
-    const user = typeof token === "string" ? await verifySessionToken(ctx.auth, token) : null;
+    // 토큰이 오면 토큰(wire-cli·테스트), 없으면 같은 출처 쿠키(브라우저 — 토큰을 보관하지 않는다)
+    const sessionToken =
+      typeof token === "string" ? token : cookieSessionToken(socket.handshake.headers, ctx.appOrigin);
+    const user = sessionToken ? await verifySessionToken(ctx.auth, sessionToken) : null;
     if (!user) return next(connectError("UNAUTHORIZED", "invalid session"));
     socket.data.userId = user.userId;
     next();

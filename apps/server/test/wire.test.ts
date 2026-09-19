@@ -386,6 +386,7 @@ describe("wire (attachWire 단독 — route·runs 주입)", () => {
       workspaceId: app.workspaceId,
       route: async () => {},
       runs: null,
+      appOrigin: "http://localhost:5173",
       ...over,
     });
     await new Promise<void>((resolve) => http.listen(0, "127.0.0.1", resolve));

@@ -448,7 +448,59 @@ describe("orchestrator", () => {
       expect(systemMessages(t.db)).toEqual([]);
       t.orch.stop();
     });
+
+    it("정본만 오고 final_timeout 으로 done(plugin) 이 된 런은 60s 뒤 forgetRun, stop() 이 대기 타이머를 지운다", async () => {
+      const t = setup();
+      const run = await t.enqueue();
+      await t.flush();
+      await t.orch.onCanonical(t.outbound({ runId: run.id }));
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(t.runOf(run.id)).toMatchObject({ status: "done", finalSource: "plugin" });
+      expect(t.adapter.calls.forget).toEqual([]);
+      // 늦은 session.message usage 를 받을 만큼 기다린다
+      await vi.advanceTimersByTimeAsync(59_999);
+      expect(t.adapter.calls.forget).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(t.adapter.calls.forget).toEqual([run.id]);
+
+      const second = await t.enqueue(t.say("@dev 둘"));
+      await t.flush();
+      await t.orch.onCanonical(t.outbound({ runId: second.id }));
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(t.runOf(second.id)).toMatchObject({ status: "done", finalSource: "plugin" });
+      t.orch.stop();
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(t.adapter.calls.forget).toEqual([run.id]);
+    });
   });
+
+  it.each([
+    ["final → 정본 없음 → 10s", "gateway", ["started", "final", "wait"]],
+    ["정본 → final(finalizing 에서)", "plugin", ["canonical", "final"]],
+    // 이미 닫힌 런에 늦게 온 final_timeout 은 무시된다 — applySignal 이 그 런을 돌려줘도 걸지 않는다
+    ["정본 → final → 늦은 final_timeout", "plugin", ["canonical", "final", "late_timeout"]],
+  ] as const)(
+    "Gateway final 을 본 런(%s → done(%s))은 오케스트레이터가 forgetRun 하지 않는다 — 어댑터가 gateway_final 에서 이미 60s 지연 해제한다",
+    async (_label, finalSource, steps) => {
+      const t = setup();
+      const run = await t.enqueue();
+      await t.flush();
+      for (const step of steps) {
+        if (step === "started") await t.orch.signal(run.id, { kind: "gateway_started" });
+        else if (step === "canonical") await t.orch.onCanonical(t.outbound({ runId: run.id }));
+        else if (step === "final")
+          await t.orch.signal(run.id, { kind: "gateway_final" }, { message: "스냅샷" });
+        else if (step === "late_timeout") await t.orch.signal(run.id, { kind: "final_timeout" });
+        else await vi.advanceTimersByTimeAsync(10_000);
+      }
+      expect(t.runOf(run.id)).toMatchObject({ status: "done", finalSource });
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(t.adapter.calls.forget).toEqual([]);
+      expect(vi.getTimerCount()).toBe(0);
+      t.orch.stop();
+    },
+  );
 
   it.each([
     // streaming 에서 정본은 hasCanonical 만 바꾼다(같은 상태의 run.state 가 한 번 더 나간다)

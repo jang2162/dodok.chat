@@ -40,6 +40,9 @@ export const DEFAULT_RUN_TIMEOUTS: RunTimeouts = {
   maxInflight: 32,
 };
 
+/** final_timeout 으로 done(plugin) 이 된 런은 어댑터가 gateway_final 을 못 봤다 — 늦은 usage 를 받을 만큼 기다렸다 잊는다 */
+const FORGET_AFTER_FINAL_TIMEOUT_MS = 60_000;
+
 export type EnqueueTrigger = {
   message?: Message;
   /** interaction·continue 런: component_interactions.id — runs.triggerInteractionId 로 저장 */
@@ -108,6 +111,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
   const awaitingAck = new Set<string>(); // adapter.send 를 기다리는 런(플러그인 대기·ack 재시도 중)
   const buffers = new Map<string, DeltaBuffer>();
   const snapshots = new Map<string, string>();
+  const forgetTimers = new Set<ReturnType<typeof setTimeout>>();
   let order = 0;
   let stopped = false;
 
@@ -556,6 +560,20 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     }
   }
 
+  /**
+   * Gateway 경로(gateway_final 을 본 런)는 어댑터가 스스로 지연 해제한다 — 여기는 정본만 온 퇴화 경로 전용이다.
+   * 타이머는 unref, stop() 이 지운다.
+   */
+  function forgetLater(runId: string): void {
+    if (stopped) return;
+    const timer = setTimeout(() => {
+      forgetTimers.delete(timer);
+      adapter.forgetRun?.(runId);
+    }, FORGET_AFTER_FINAL_TIMEOUT_MS);
+    timer.unref?.();
+    forgetTimers.add(timer);
+  }
+
   /** finalizing 상한 — 정본이 없으면 WS 스냅샷(비어 있지 않을 때)을 에이전트 메시지로 저장하고 done(gateway). */
   async function finalizeFromSnapshot(runId: string): Promise<void> {
     const run = store.getRun(db, runId);
@@ -582,6 +600,10 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       }
     }
     const updated = applySignal(runId, { kind: "final_timeout" });
+    // 무시된 신호도 applySignal 은 그 런을 돌려준다 — 이 신호로 finalizing 을 닫았을 때만 건다
+    if (run?.status === "finalizing" && updated?.status === "done" && updated.finalSource === "plugin") {
+      forgetLater(runId);
+    }
     if (message && updated) await routeAgentMessage(message, updated);
   }
 
@@ -749,6 +771,8 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         }
       }
       timers.clearAll();
+      for (const timer of forgetTimers) clearTimeout(timer);
+      forgetTimers.clear();
     },
   };
 
