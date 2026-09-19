@@ -21,6 +21,8 @@ const Raw = z.object({
   OPENCLAW_DEV_GATEWAY_URL: z.url().optional(),
   OPENCLAW_DEV_GATEWAY_TOKEN: z.string().min(1).optional(),
   OPENCLAW_DEVICE_IDENTITY_PATH: z.string().optional(),
+  // 진단용 — 있으면 어댑터가 받은 Gateway chat·agent·session.message 프레임을 이 파일에 JSONL 로 append(본문 포함)
+  OPENCLAW_FRAME_DUMP_PATH: z.string().optional(),
   BRIDGE_TOKEN: z.string().min(16),
   BRIDGE_PUBLIC_URL: z.url().optional(),
 });

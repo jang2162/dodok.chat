@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { InboundDeliver, OutboundMessage } from "@dodok/shared";
 import type { EventFrame } from "@openclaw/gateway-protocol";
 import Fastify, { type FastifyInstance } from "fastify";
@@ -776,6 +779,49 @@ describe("createOpenClawAdapter — Gateway 요청·브리지 설정", () => {
     await expect(adapter.syncChannelConfig(CH, { requireMention: true })).rejects.toMatchObject({
       code: "ADAPTER_UNAVAILABLE",
     });
+  });
+});
+
+describe("Gateway 프레임 덤프(frameDumpPath)", () => {
+  it("받은 chat·agent·session.message 프레임을 JSONL 로 남기고 close() 에서 닫는다", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "dodok-adapter-dump-"));
+    const path = join(dir, "frames.jsonl");
+    // 공유 ioServer 에는 이미 기본 어댑터의 /bridge 가 붙어 있다 — 덤프 어댑터는 HTTP 에 붙지 않은 따로 된 서버를 쓴다
+    const io = new Server();
+    let onEvent: ((frame: EventFrame) => void) | undefined;
+    const dumping = createOpenClawAdapter({
+      gateway: {
+        url: "wss://gateway.example.test",
+        token: "gw-token",
+        deviceIdentityPath: "/data/device.json",
+      },
+      bridge: { io, token: TOKEN, serverVersion: "test" },
+      logger,
+      onCanonical: async () => ({}),
+      frameDumpPath: path,
+      connector: async (options) => {
+        onEvent = options.onEvent;
+        return { request: async () => ({}) as never, stop: async () => undefined };
+      },
+    });
+    try {
+      await dumping.connect();
+      await until(() => dumping.status().gateway === "connected", "dump adapter connected");
+      onEvent?.(f.lifecycleStart());
+      onEvent?.(f.sessionsChanged());
+      onEvent?.(f.chatDelta("안"));
+      onEvent?.(f.sessionMessage());
+      await dumping.close();
+
+      const events = readFileSync(path, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => (JSON.parse(line) as { frame: EventFrame }).frame.event);
+      expect(events).toEqual(["agent", "chat", "session.message"]);
+    } finally {
+      await dumping.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

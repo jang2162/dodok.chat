@@ -32,6 +32,7 @@ import {
   type RecoverTarget,
 } from "./gateway/connection-manager";
 import { createGatewayEventMapper } from "./gateway/events";
+import { type FrameDump, openFrameDump } from "./gateway/frame-dump";
 import { parseSessionsReset, sessionKeyFor } from "./gateway/sessions";
 
 export type OpenClawAdapterOptions = {
@@ -45,6 +46,8 @@ export type OpenClawAdapterOptions = {
   /** 기본 `connectGateway` (테스트 주입) */
   connector?: GatewayConnector;
   backoff?: { initialMs?: number; maxMs?: number; pairingRetryMs?: number };
+  /** 있으면 받은 `chat`·`agent`·`session.message` 프레임을 이 파일에 JSONL 로 append 한다(진단용, 본문 포함 — data/ 아래에) */
+  frameDumpPath?: string;
 };
 
 export type OpenClawAdapter = AgentAdapter & {
@@ -104,6 +107,8 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
   }
 
   const mapper = createGatewayEventMapper({ isOurRun: (runId) => knownRunIds.has(runId) });
+  const frameDump: FrameDump | undefined =
+    opts.frameDumpPath === undefined ? undefined : openFrameDump(opts.frameDumpPath, logger);
 
   function forgetRun(runId: string) {
     clearTimeout(forgetTimers.get(runId));
@@ -120,6 +125,7 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
   }
 
   function onGatewayEvent(frame: EventFrame) {
+    frameDump?.write(frame);
     for (const item of mapper.map(frame)) {
       if (item.event) emit({ kind: "run_event", runId: item.runId, event: item.event });
       if (!item.signal) continue;
@@ -266,6 +272,7 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
         // stopAndWait 5s 초과 등 — 종료는 계속한다
         logger.warn({ err: error }, "gateway stop failed during close");
       }
+      await frameDump?.close(); // Gateway 가 닫힌 뒤 — 마지막 프레임까지 남긴다
     },
 
     status,

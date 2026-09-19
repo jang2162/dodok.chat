@@ -197,7 +197,21 @@ oc --dev plugins inspect dodok --json | jq .plugin.status     # 여전히 "loade
 1. **[고침 `38fa0f1`] 접속 뒤 생긴 세션의 Gateway 이벤트를 받지 못했다.** 실물 Gateway 는 `sessions.messages.subscribe` 한 세션의 `chat`·`agent`·`session.message` 만 보낸다.
    어댑터는 접속 때 복구 대상(부팅 시 있던 `agent_sessions`)만 구독해서, 새 채널의 첫 런은 델타·`RUN_STARTED` 없이 queued 상한(120s)으로 `TIMEOUT` 이 됐다(정본은 도착).
    가짜 Gateway 가 구독과 무관하게 모든 연결에 보내 통합 테스트가 놓쳤다 — 수정은 `send` 전에 연결당 한 번 구독하고, 가짜도 구독한 연결에만 보낸다. 런 4(fin 새 세션)로 실물 확인.
-2. **[남음] usage 값.** 5.3 ⑤. `session.message` 원본을 덤프해 Gateway 가 스냅샷만 싣는지, 매퍼가 첫 값을 고르는지 가려야 한다(이번에는 원본을 기록하지 않았다). 활동 패널의 비용·토큰 표시는 이대로 쓸 수 없다.
+2. **[조사함·남음] usage 값.** 5.3 ⑤. 모델 런 없이 이번 로그로 조사했다(2026-09-19, sv-residual).
+   - **어디서 온 값인가**: 서버 값(`data/phase1-live-20260915-cli.log` 의 `RUN_FINISHED.usage`·런 행) `inputTokens 2`·`outputTokens 1`(런 5 만 `5`)·`costUsd 0` 은
+     `data/phase1-dev-gateway-20260915.log` 의 claude-cli stream-json 에서 각 턴 `stream_event` `message_start` 의 `message.usage`, 그리고 그 스냅샷을 그대로 실은 `assistant` 이벤트의
+     `message.usage`(`input_tokens 2`·`output_tokens 1`, 런 5 는 `5`)와 **런마다 같다**. 최종 값은 `message_delta` 의 `usage.output_tokens`(런 1~6: 27·28·75·43·148·37)와
+     `result`(`usage` 같은 값 + `cache_creation_input_tokens` 11063~53174·`cache_read_input_tokens` 0~42679, `total_cost_usd` 0.53·0.13·0.27·0.18·0.43·0.22)에만 있다.
+     매퍼는 `session.message` 의 `message.usage.{input,output,cost.total}` 을 옮기고 오케스트레이터는 온 값으로 덮어쓰므로(마지막 값이 남는다), **Gateway 가 `session.message` 에
+     `assistant` 스냅샷 usage 를 싣는다**고 본다 — 매퍼가 첫 값을 고르는 것이 아니다. 원본 프레임이 없어 확정은 아니다. 구독이 빠져 `chat`·`agent` 가 0건이던 런 1 에도 같은 usage 가 실렸다
+     (`session.message` 는 `sessions.subscribe` 만으로 온 것으로 보인다 — 확인 필요).
+   - **프로토콜 선언**: `@openclaw/gateway-protocol` 2026.9.4 `schema-modules-*.d.mts` 의 `ChatEventSchema` 는 `delta`·`final`·`error` 에 `usage?: unknown`(모양 없음),
+     `AgentEventSchema` 는 `data: Record<string, unknown>`, `session.message` 이벤트 페이로드는 스키마가 없다(catch-up 응답만). 스파이크 1 에서 `final` 에는 `usage` 가 없었고(ADR 0001 6.3),
+     `session.message` 최상위의 `inputTokens`·`outputTokens`·`estimatedCostUsd` 는 세션 누계다. 더 정확한 값을 싣는 이벤트의 근거가 없어 **매퍼·오케스트레이터는 바꾸지 않았다**.
+     claude-cli 백엔드의 `cost.total` 은 스파이크 1 부터 늘 0 이다.
+   - **다음 확인**: 다음 실연에서 `OPENCLAW_FRAME_DUMP_PATH=data/frames-<날짜>.jsonl` 로 원본을 남긴다(본문 포함 — `data/` 밖으로 옮기지 않는다). ① 턴마다 `session.message` 가 몇 번 오고 `message.usage` 가
+     스냅샷뿐인지 ② `chat` `final` 에 `usage` 가 실리는지 ③ `agent` `lifecycle` `end` 의 `data` 에 usage 가 있는지 ④ 최상위 세션 누계의 턴 전후 차이가 CLI `result` 와 맞는지.
+     맞는 출처가 있으면 매퍼를 옮기고(픽스처 테스트), 없으면 OpenClaw 쪽 문제로 올린다. 그때까지 활동 패널의 비용·토큰 표시는 쓸 수 없다.
 3. **[고침] 서버 로그로 진단이 안 된다.** `inbound.deliver` ack(admission·걸린 시간)와 런 타임아웃(`queued timeout`)이 서버 로그에 한 줄도 남지 않았다 — 런 1 원인은 Gateway 로그로 찾았다.
    이제 어댑터 `inbound delivered`(info: `runId`·`deliveryId`·`admission`·`ackMs`(첫 시도부터)·`retries`·`waitedForPlugin`), 오케스트레이터 `run ended`(info: `status`·`finalSource`·`errorCode`·`durationMs`(created→ended))·
    `run closed by timeout`(warn: `reason` = `queue_timeout`·`run_timeout`·`undelivered`(ack 전 상한), `statusBefore`·`elapsedMs`(created 부터); `final_timeout` 은 info). 본문·토큰은 싣지 않는다. 정상 런은 info 2줄.

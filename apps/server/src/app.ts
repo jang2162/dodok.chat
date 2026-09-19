@@ -131,6 +131,9 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
         logger: logger.child({ mod: "adapter" }),
         onCanonical: (message) => orchestrator.onCanonical(message),
         sessionKeysToRecover: () => sessionRecoverTargets(db),
+        ...(config.OPENCLAW_FRAME_DUMP_PATH === undefined
+          ? {}
+          : { frameDumpPath: config.OPENCLAW_FRAME_DUMP_PATH }),
       });
     undo.push({ step: "adapter", run: () => adapter.close() });
     const services = createServices({ db, bus, logger, adapter, workspaceId, timeouts: deps.timeouts });

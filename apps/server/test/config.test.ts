@@ -21,6 +21,13 @@ describe("loadConfig", () => {
     expect(c.dbPath).toBe("test-data-unused/dodok.sqlite");
     expect(c.OPENCLAW_GATEWAY_TOKEN).toBeUndefined();
   });
+  it("OPENCLAW_FRAME_DUMP_PATH 는 선택 — 없거나 빈 값이면 undefined, 있으면 그대로", () => {
+    expect(loadConfig(testEnv).OPENCLAW_FRAME_DUMP_PATH).toBeUndefined();
+    expect(loadConfig({ ...testEnv, OPENCLAW_FRAME_DUMP_PATH: "" }).OPENCLAW_FRAME_DUMP_PATH).toBeUndefined();
+    expect(
+      loadConfig({ ...testEnv, OPENCLAW_FRAME_DUMP_PATH: "data/frames.jsonl" }).OPENCLAW_FRAME_DUMP_PATH,
+    ).toBe("data/frames.jsonl");
+  });
   it("LOCAL_AUTH_TOKEN 이 16자 미만이면 실패한다", () => {
     expect(() => loadConfig({ ...testEnv, LOCAL_AUTH_TOKEN: "short" })).toThrow(/LOCAL_AUTH_TOKEN/);
   });

@@ -131,6 +131,7 @@ src/
 │  ├─ device-identity.ts  Ed25519 아이덴티티 생성·저장(0600)·서명 (스파이크 1에서 확정)
 │  ├─ events.ts           chat(delta/final/error/aborted)·agent(lifecycle·stream:"tool")·session.message(usage) → RunEvent + RunSignal.
 │  │                      우리 런(runId = 우리 런 uuid, ADR 0002 4.3)만. deltaText → TEXT_MESSAGE_CONTENT(replace 면 TEXT_MESSAGE_REPLACE), final 스냅샷은 정본 대체용
+│  ├─ frame-dump.ts       OPENCLAW_FRAME_DUMP_PATH — 받은 chat·agent·session.message 프레임 JSONL append(스트림, 쓰기 오류면 warn 뒤 끔, close 에서 닫음)
 │  └─ sessions.ts         sessionKeyFor(agent:<agentId>:dodok:channel:<channelId> 원형 고정 — 「새 대화」는 sessions.reset, 세대 접미사 없음: 계획서 10장 #15·#19),
 │                         sessions.reset·chat.history 응답 파싱
 ├─ bridge/
@@ -218,6 +219,7 @@ src/
 | `OPENCLAW_GATEWAY_URL` · `OPENCLAW_GATEWAY_TOKEN` | — | 원격 Gateway(`wss://…`). `remote` 면 둘 다 필수 |
 | `OPENCLAW_DEV_GATEWAY_URL` · `OPENCLAW_DEV_GATEWAY_TOKEN` | — | 로컬 dev Gateway(`ws://127.0.0.1:19001`, `openclaw --dev gateway run`). `dev` 면 둘 다 필수 |
 | `OPENCLAW_DEVICE_IDENTITY_PATH` | `<DATA_DIR>/openclaw-device.json` (dev: `openclaw-device-dev.json`) | Ed25519 디바이스 아이덴티티 — 원격·dev 페어링이 섞이지 않게 대상별로 나뉜다 |
+| `OPENCLAW_FRAME_DUMP_PATH` | — | 진단용 — 어댑터가 받은 Gateway `chat`·`agent`·`session.message` 프레임을 이 파일에 JSONL(`{ receivedAt, frame }`)로 append. 본문이 들어가므로 `data/` 아래에. usage 출처 확인용(live-smoke 5.4) |
 | `BRIDGE_TOKEN` | (필수, ≥16자) | 플러그인 계정 설정 `channels.dodok.accounts.<id>.token` 과 같은 공유 토큰 |
 | `BRIDGE_PUBLIC_URL` | — | 플러그인 계정 설정 `bridgeUrl` 에 적을 공개 주소(정보용 — 서버는 이 값으로 리슨하지 않는다). 예 `wss://dodok.example.com/bridge` |
 | `BRIDGE_URL` | — | **스파이크 러너 전용**(서버는 읽지 않음) — 러너가 브리지를 리슨할 오리진(`/bridge` 없음) |

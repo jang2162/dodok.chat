@@ -1,5 +1,6 @@
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { bootLiveApp, type LiveApp } from "../helpers/live-app";
@@ -44,5 +45,32 @@ describe("서버 통합 스모크 — 실제 OpenClawAdapter + 가짜 Gateway + 
     expect(existsSync(dir)).toBe(false);
     expect(plugin.notices).toEqual([{ reason: "shutdown", message: "server shutting down" }]);
     expect(app.adapter.status().gateway).toBe("down");
+  });
+
+  it("OPENCLAW_FRAME_DUMP_PATH 를 주면 어댑터가 받은 Gateway 프레임을 그 파일에 남기고 앱 close() 에서 닫는다", async () => {
+    const dumpDir = mkdtempSync(join(tmpdir(), "dodok-live-dump-"));
+    const path = join(dumpDir, "frames.jsonl");
+    try {
+      live = await bootLiveApp({ env: { OPENCLAW_FRAME_DUMP_PATH: path } });
+      // sessionKey 가 없는 프레임은 구독과 무관하게 모든 연결에 간다
+      await live.gateway.emitEvent("agent", {
+        runId: "not-ours",
+        stream: "lifecycle",
+        data: { phase: "start" },
+      });
+      await live.gateway.flush();
+      await live.close();
+      live = undefined;
+
+      const frames = readFileSync(path, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => (JSON.parse(line) as { frame: { event: string; payload: { runId?: string } } }).frame);
+      expect(frames).toEqual([
+        expect.objectContaining({ event: "agent", payload: expect.objectContaining({ runId: "not-ours" }) }),
+      ]);
+    } finally {
+      rmSync(dumpDir, { recursive: true, force: true });
+    }
   });
 });
