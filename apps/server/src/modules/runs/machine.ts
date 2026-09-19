@@ -45,14 +45,19 @@ export function transition(run: Pick<Run, "status" | "hasCanonical">, s: RunSign
     case "approval_resolved":
       return st === "awaiting_approval" ? go("streaming") : IGNORED;
     case "gateway_final":
+      // finalizing 은 정본이 먼저 와 들어온 경우에만 final 이 끝을 뜻한다(아래 queued + canonical_received)
+      if (st === "finalizing") return run.hasCanonical ? go("done", { finalSource: "plugin" }) : IGNORED;
       if (!ACTIVE.has(st)) return IGNORED;
       return run.hasCanonical ? go("done", { finalSource: "plugin" }) : go("finalizing");
     case "canonical_received":
+      // Gateway 이벤트 없이 정본이 먼저 왔다(구독 누락·WS 단절 — Phase 1 실연) — finalizing 상한 안에 final 이 없으면 done(plugin)
+      if (st === "queued") return go("finalizing", { hasCanonical: true });
       if (ACTIVE.has(st)) return go(st, { hasCanonical: true });
       if (st === "finalizing") return go("done", { hasCanonical: true, finalSource: "plugin" });
       return IGNORED;
     case "final_timeout":
-      return st === "finalizing" ? go("done", { finalSource: "gateway" }) : IGNORED;
+      if (st !== "finalizing") return IGNORED;
+      return go("done", { finalSource: run.hasCanonical ? "plugin" : "gateway" });
     case "gateway_error":
       return go("error", { error: { code: s.code, message: s.message } });
     case "queue_timeout":

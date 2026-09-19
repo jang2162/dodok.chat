@@ -279,6 +279,7 @@ export class AdapterError extends Error { readonly code: ErrorCode }
 | ack `ok:false`(플러그인 예외·검증 실패) | 재시도하지 않고 `error(ADAPTER_ERROR:<code>)` + `run_error`. 재시도는 「ack 없음」에만(계약 스펙 8.3) |
 | ack 가 `InboundDeliverResult` 로 파싱되지 않음(옛 플러그인 번들의 `{}` 등) | 어댑터가 경계에서 Zod 파싱해 `error(ADAPTER_PROTOCOL)`. dev·원격 플러그인은 `admission` 을 싣는 번들(커밋 phase1-prep 이후)로 재설치한다 |
 | 정본 없이 `final` | `finalizing` 10s → WS 스냅샷으로 확정(`finalSource=gateway`), 비어 있으면 메시지 없이 `done` |
+| Gateway 이벤트 없이 정본(구독 누락·WS 단절 — Phase 1 실연) | `queued` → `finalizing`(`hasCanonical`) → `final` 이 오면 곧바로, 안 오면 10s 뒤 `done(finalSource=plugin)`. `run_error` 없음(계약 스펙 5.1 ⁵) |
 | 종료된 런에 늦은 정본 | `runId` 달아 저장, 라우팅은 한다(늦어도 릴레이는 유효) |
 | 서버 재시작 | 2장 7단계. 클라이언트는 `channel.subscribe { lastSeq }` 로 빈틈을 메운다 |
 | `sessions.reset` 스코프 부족 | `capabilities.sessionReset=false`, REST `409`. 폴백(키 회전)은 계획서 #15 의 후속 결정 |

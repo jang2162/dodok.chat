@@ -71,6 +71,12 @@ export type FakeGateway = {
   ): Promise<void>;
   /** usage 는 final 이 아니라 `session.message` 에 실린다(ADR 0001 6.3) */
   sessionMessageUsage(runId: string, sessionKey: string): Promise<void>;
+  /**
+   * 지금까지 보낸 프레임을 연결된 클라이언트가 모두 처리할 때까지 기다린다 — 연결마다 ping 을 보내 pong 을 받는다
+   * (ws 는 프레임을 순서대로 읽어 앞 프레임의 onEvent 를 부른 뒤 pong 을 낸다). 쓰기가 끝나도 서버 이벤트 루프가 다른 소켓(브리지)을
+   * 먼저 읽을 수 있어서, 실물처럼 Gateway 이벤트를 정본보다 먼저 처리시키려면 정본 앞에서 부른다.
+   */
+  flush(): Promise<void>;
   /** 열린 연결을 모두 끊고 포트를 닫는다. 두 번 불러도 된다 */
   close(): Promise<void>;
 };
@@ -176,6 +182,20 @@ export async function startFakeGateway(opts: FakeGatewayOptions = {}): Promise<F
     return new Promise((resolve) => {
       // 닫히는 중인 소켓의 쓰기 오류는 무시한다 — 그 연결은 close 로 정리된다
       socket.send(JSON.stringify(frame), () => resolve());
+    });
+  }
+
+  function pingPong(socket: WebSocket): Promise<void> {
+    if (socket.readyState !== socket.OPEN) return Promise.resolve();
+    return new Promise((resolve) => {
+      const done = () => {
+        socket.off("pong", done);
+        socket.off("close", done);
+        resolve();
+      };
+      socket.on("pong", done);
+      socket.on("close", done);
+      socket.ping();
     });
   }
 
@@ -374,6 +394,9 @@ export async function startFakeGateway(opts: FakeGatewayOptions = {}): Promise<F
         ...frame,
         payload: { ...record(frame.payload), sessionKey, sessionId: sessionIdFor(sessionKey) },
       });
+    },
+    async flush() {
+      await Promise.all([...connected].map(pingPong));
     },
     close() {
       closing ??= new Promise<void>((resolve) => {

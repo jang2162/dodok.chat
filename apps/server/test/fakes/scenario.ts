@@ -3,7 +3,7 @@
  *
  * 실제 플러그인은 런이 시작될 때 dispatch 를 ack 하고(ADR 0002), 그 뒤 Gateway WS 에 lifecycle·툴·델타·final 이 흐르며,
  * 정본 답은 플러그인 `outbound.message` 로 온다. 여기서는 ack 를 먼저 보낸 뒤(`setImmediate`) 가짜 Gateway 이벤트를 쓰고,
- * 그 쓰기가 끝난 뒤 정본을 보낸다.
+ * 서버가 그 이벤트를 처리한 뒤(`gateway.flush`) 정본을 보낸다 — 실물은 첫 델타와 정본 사이가 수백 ms 이상이다(live-smoke 5.3).
  */
 import type { InboundDeliver } from "@dodok/shared";
 import type { FakeGateway } from "./fake-gateway";
@@ -20,6 +20,8 @@ export type ScenarioScript = {
   drop?: string;
   /** true 면 lifecycle·툴·델타까지만 흘리고 멈춘다 — chat final 도 정본도 없어 런이 진행 중으로 남는다(재시작 복구를 잴 때) */
   holdFinal?: boolean;
+  /** true 면 Gateway 이벤트를 하나도 보내지 않고 정본만 보낸다 — 구독 누락·WS 단절(Phase 1 실연)을 잴 때 */
+  silentGateway?: boolean;
 };
 
 /** `index` 는 그 에이전트가 받은 인바운드 순번(0부터) */
@@ -45,16 +47,19 @@ export function createScenario(opts: {
 
   async function play(delivery: InboundDeliver, script: ScenarioScript): Promise<void> {
     const { runId, sessionKey, agentId, channelId } = delivery;
-    await gateway.lifecycleStart(runId, sessionKey, agentId);
-    if (script.tool) {
-      const toolCallId = `toolu_${runId}`;
-      const { name, args, result } = script.tool;
-      await gateway.toolStart(runId, sessionKey, agentId, { toolCallId, name, args });
-      await gateway.toolResult(runId, sessionKey, agentId, { toolCallId, result });
+    if (!script.silentGateway) {
+      await gateway.lifecycleStart(runId, sessionKey, agentId);
+      if (script.tool) {
+        const toolCallId = `toolu_${runId}`;
+        const { name, args, result } = script.tool;
+        await gateway.toolStart(runId, sessionKey, agentId, { toolCallId, name, args });
+        await gateway.toolResult(runId, sessionKey, agentId, { toolCallId, result });
+      }
+      for (const delta of script.deltas ?? []) await gateway.chatDelta(runId, sessionKey, agentId, delta);
+      if (script.holdFinal) return;
+      await gateway.chatFinal(runId, sessionKey, agentId, script.reply);
+      await gateway.flush();
     }
-    for (const delta of script.deltas ?? []) await gateway.chatDelta(runId, sessionKey, agentId, delta);
-    if (script.holdFinal) return;
-    await gateway.chatFinal(runId, sessionKey, agentId, script.reply);
     await plugin.sendOutbound({
       channelId,
       agentId,

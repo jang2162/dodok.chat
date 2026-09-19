@@ -126,6 +126,45 @@ describe("통합 시나리오 6·7 — 드롭·끊김·재접속·재시작", ()
       });
       expect(live.plugin.received).toEqual([]);
     });
+
+    it("6(c) — Gateway 이벤트 없이 정본만 온다(구독 누락·WS 단절) → finalizing 을 거쳐 done(plugin), 시스템 메시지 없음", async () => {
+      const { channel, dev } = await setupRelayChannel(live, RELAY_POLICY);
+      const log = await openChannelWire(live, channel.id, sockets);
+      const scenario = createScenario({
+        gateway: live.gateway,
+        plugin: live.plugin,
+        agents: { dev: () => ({ reply: "정본만 왔어요", silentGateway: true }) },
+      });
+
+      await sendMessage(log.socket, channel.id, "@dev 안녕");
+      const queued = await log.until(() => log.states.find((s) => s.agentId === dev.id), "dev 런");
+      const final = await log.terminal(queued.id);
+      const reply = await log.until(
+        () => log.created.find((m) => m.authorType === "agent" && m.runId === queued.id),
+        "dev 정본 message.created",
+      );
+      // queuedMs(500) 가 지나도록 기다린 뒤 ack 왕복 — 늦은 TIMEOUT·run_error 가 붙지 않는다
+      await new Promise((resolve) => setTimeout(resolve, SHORT_TIMEOUTS.queuedMs + 100));
+      await subscribe(log.socket, channel.id, reply.seq);
+
+      const states = log.statesOf(queued.id);
+      expect(states.map((s) => s.status)).toEqual(["queued", "finalizing", "done"]);
+      expect(states.at(-1)).toMatchObject({ status: "done", finalSource: "plugin" });
+      expect(final).toMatchObject({ status: "done", finalSource: "plugin" });
+      expect(final.error).toBeUndefined();
+      expect(reply.bodyMd).toBe("정본만 왔어요");
+      expect(log.created.filter((m) => m.kind === "system")).toEqual([]);
+      expect(log.eventsOf(queued.id).map((e) => e.type)).toEqual([
+        "RUN_QUEUED",
+        "RUN_STARTED",
+        "STATE_SNAPSHOT",
+        "STATE_SNAPSHOT",
+        "RUN_FINISHED",
+      ]);
+      expect(log.eventsOf(queued.id).at(-1)).toMatchObject({ type: "RUN_FINISHED", messageIds: [reply.id] });
+      expect(await getRunRest(live, queued.id)).toMatchObject({ status: "done", finalSource: "plugin" });
+      expect(scenario.errors).toEqual([]);
+    });
   });
 
   describe("시나리오 7(a) — wire 재접속", () => {

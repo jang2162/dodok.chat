@@ -18,12 +18,16 @@ const cases: Case[] = [
   ["tool", false, { kind: "text_delta" }, "tool"],
   ["awaiting_approval", false, { kind: "text_delta" }, null],
   ["finalizing", false, { kind: "text_delta" }, null],
+  // 정본으로 finalizing 에 간 뒤 늦게 온 Gateway 시작·델타는 상태를 되돌리지 않는다
+  ["finalizing", true, { kind: "gateway_started" }, null],
+  ["finalizing", true, { kind: "text_delta" }, null],
   // tool_start
   ["queued", false, { kind: "tool_start" }, "tool"],
   ["streaming", false, { kind: "tool_start" }, "tool"],
   ["tool", false, { kind: "tool_start" }, "tool"],
   ["awaiting_approval", false, { kind: "tool_start" }, null],
   ["finalizing", false, { kind: "tool_start" }, null],
+  ["finalizing", true, { kind: "tool_start" }, null],
   // tool_end
   ["tool", false, { kind: "tool_end", openTools: 0 }, "streaming"],
   ["tool", false, { kind: "tool_end", openTools: 1 }, "tool"],
@@ -33,6 +37,7 @@ const cases: Case[] = [
   ["streaming", false, { kind: "approval_requested" }, "awaiting_approval"],
   ["tool", false, { kind: "approval_requested" }, "awaiting_approval"],
   ["finalizing", false, { kind: "approval_requested" }, null],
+  ["finalizing", true, { kind: "approval_requested" }, null],
   ["awaiting_approval", false, { kind: "approval_resolved" }, "streaming"],
   ["streaming", false, { kind: "approval_resolved" }, null],
   // gateway_final
@@ -42,8 +47,10 @@ const cases: Case[] = [
   ["tool", true, { kind: "gateway_final" }, "done", { finalSource: "plugin" }],
   ["awaiting_approval", true, { kind: "gateway_final" }, "done", { finalSource: "plugin" }],
   ["finalizing", false, { kind: "gateway_final" }, null],
-  // canonical_received
-  ["queued", false, { kind: "canonical_received" }, "queued", { hasCanonical: true }],
+  // 정본이 먼저 와 finalizing 에 있으면 final 이 곧 끝 — 10s 를 기다리지 않는다(Phase 1 실연)
+  ["finalizing", true, { kind: "gateway_final" }, "done", { finalSource: "plugin" }],
+  // canonical_received — queued 에서는 Gateway 이벤트 없이 정본이 먼저 온 것(구독 누락·WS 단절)
+  ["queued", false, { kind: "canonical_received" }, "finalizing", { hasCanonical: true }],
   ["streaming", false, { kind: "canonical_received" }, "streaming", { hasCanonical: true }],
   ["tool", false, { kind: "canonical_received" }, "tool", { hasCanonical: true }],
   ["awaiting_approval", false, { kind: "canonical_received" }, "awaiting_approval", { hasCanonical: true }],
@@ -54,8 +61,10 @@ const cases: Case[] = [
     "done",
     { hasCanonical: true, finalSource: "plugin" },
   ],
+  ["finalizing", true, { kind: "canonical_received" }, "done", { hasCanonical: true, finalSource: "plugin" }],
   // final_timeout
   ["finalizing", false, { kind: "final_timeout" }, "done", { finalSource: "gateway" }],
+  ["finalizing", true, { kind: "final_timeout" }, "done", { finalSource: "plugin" }],
   ["streaming", false, { kind: "final_timeout" }, null],
   // errors
   [
@@ -92,6 +101,14 @@ const cases: Case[] = [
   ["queued", false, { kind: "abort_requested" }, "aborted"],
   ["streaming", false, { kind: "abort_requested" }, "aborted"],
   ["finalizing", false, { kind: "gateway_aborted" }, "aborted"],
+  ["finalizing", true, { kind: "abort_requested" }, "aborted"],
+  [
+    "finalizing",
+    true,
+    { kind: "gateway_error", code: "provider", message: "x" },
+    "error",
+    { error: { code: "provider", message: "x" } },
+  ],
   // terminal: 모두 무시
   ["done", false, { kind: "text_delta" }, null],
   ["done", false, { kind: "canonical_received" }, null],

@@ -513,17 +513,18 @@ export function transition(run: Pick<Run, "status" | "hasCanonical">, s: RunSign
 
 | 현재 | gateway_started / text_delta | tool_start | tool_end(openTools=0) | approval_requested | approval_resolved | gateway_final | canonical_received | final_timeout | gateway_error / queue_timeout / run_timeout | gateway_aborted / abort_requested |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| queued | streaming | tool | — | awaiting_approval | — | finalizing 또는 done¹ | queued (hasCanonical=true) | — | error | aborted |
+| queued | streaming | tool | — | awaiting_approval | — | finalizing 또는 done¹ | finalizing (hasCanonical=true)⁵ | — | error | aborted |
 | streaming | streaming | tool | — | awaiting_approval | — | finalizing 또는 done¹ | streaming (hasCanonical=true) | — | error | aborted |
 | tool | tool | tool | streaming | awaiting_approval | — | finalizing 또는 done¹ | tool (hasCanonical=true) | — | error | aborted |
 | awaiting_approval | — | — | — | — | streaming | finalizing 또는 done¹ | awaiting_approval (hasCanonical=true) | — | error | aborted |
-| finalizing | — | — | — | — | — | — | done (finalSource=plugin) | done (finalSource=gateway)² | error | aborted |
+| finalizing | — | — | — | — | — | hasCanonical 이면 done (finalSource=plugin)⁵, 아니면 — | done (finalSource=plugin) | hasCanonical 이면 done (finalSource=plugin)⁵, 아니면 done (finalSource=gateway)² | error | aborted |
 | done / error / aborted | ignored | ignored | ignored | ignored | ignored | ignored | ignored³ | ignored | ignored | ignored |
 
 ¹ `gateway_final` 시 `hasCanonical`이면 곧바로 `done(finalSource=plugin)`, 아니면 `finalizing`.
 ² 타임아웃 채택 시 WS 스냅샷 본문이 비어 있지 않으면 에이전트 메시지로 저장하고, 비어 있으면 메시지 없이 `done`.
 ³ 종료 후 도착한 정본은 런 없는 에이전트 메시지로 저장하지 않고, 해당 `runId`를 달아 저장한다(늦은 도착 허용). 상태는 바뀌지 않는다.
 ⁴ `queue_timeout`은 `queued`에서만 유효하다(스트리밍 중 늦게 도착한 큐 타이머가 런을 죽이지 않도록). 표의 다른 상태에서는 ignored.
+⁵ Gateway 이벤트 없이 정본이 먼저 오는 경우 — Phase 1 실연(구독 누락·WS 단절). `queued`에서 정본을 받으면 `finalizing`으로 가고(Gateway 가 시작한 것으로 보아 `RUN_STARTED`·`startedAt`, queued·런 상한 대신 finalizing 상한), `gateway_final`이 오면 곧바로, 안 오면 finalizing 상한에 `done(finalSource=plugin)`. 스냅샷 메시지는 만들지 않는다(정본이 있다). 전에는 `queued`에 남아 queued 상한에 `error(TIMEOUT)`이 됐다.
 
 타임아웃 기본값(채널 설정으로 조정 가능): queued 120초, 런 전체 600초, finalizing 10초. `abort_requested`는 어댑터 `abort(runId)`(→ `chat.abort`)를 호출한 뒤 상태를 바꾼다.
 

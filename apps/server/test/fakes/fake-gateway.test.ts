@@ -74,6 +74,19 @@ describe("가짜 Gateway — 실제 connectGateway 로 붙는다", () => {
     expect(subscribed).toHaveLength(2);
   });
 
+  it("flush() 가 resolve 되면 앞서 보낸 프레임은 연결된 클라이언트가 이미 받아 처리했다", async () => {
+    const { gateway, frames } = await connect();
+    const { frames: other } = await connect();
+
+    await gateway.lifecycleStart(RUN_ID, SESSION_KEY, "dev");
+    await gateway.chatDelta(RUN_ID, SESSION_KEY, "dev", "안");
+    await gateway.chatFinal(RUN_ID, SESSION_KEY, "dev", "안");
+    await gateway.flush();
+
+    expect(frames.map((f) => f.event)).toEqual(["agent", "chat", "chat"]);
+    expect(other.map((f) => f.event)).toEqual(["agent", "chat", "chat"]);
+  });
+
   it("connect.challenge → connect → hello-ok: protocol 4, 요청한 scopes 를 에코하고, 우리가 쓰는 메서드를 광고한다", async () => {
     const scopes = ["operator.read", "operator.write"];
     const { gateway, connection } = await connect({ scopes });

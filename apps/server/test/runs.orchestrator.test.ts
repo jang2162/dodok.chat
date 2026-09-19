@@ -377,6 +377,124 @@ describe("orchestrator", () => {
     t.orch.stop();
   });
 
+  describe("Gateway 이벤트 없이 정본이 먼저 온 queued 런(Phase 1 실연 — 구독 누락·WS 단절)", () => {
+    it("finalizing(RUN_STARTED·startedAt) 을 거쳐 10초 뒤 done(plugin) — run_error·스냅샷 메시지 없이 정본 1개", async () => {
+      const t = setup();
+      const trigger = t.say("@dev 요약해줘");
+      const run = await t.enqueue(trigger);
+      await t.flush();
+
+      const ack = await t.orch.onCanonical(
+        t.outbound({ runId: run.id, text: "정본", replyToInboundId: trigger.id }),
+      );
+      expect(t.runOf(run.id)).toMatchObject({ status: "finalizing", hasCanonical: true });
+      expect(t.runOf(run.id).startedAt).toEqual(expect.any(String));
+      expect(t.eventsOf(run.id).map((e) => e.type)).toEqual(["RUN_QUEUED", "RUN_STARTED", "STATE_SNAPSHOT"]);
+
+      await vi.advanceTimersByTimeAsync(9_999);
+      expect(t.runOf(run.id).status).toBe("finalizing");
+      await vi.advanceTimersByTimeAsync(1);
+
+      expect(t.runOf(run.id)).toMatchObject({
+        status: "done",
+        finalSource: "plugin",
+        endedAt: expect.any(String),
+      });
+      expect(t.runOf(run.id).error).toBeUndefined();
+      expect(t.states.map((s) => s.status)).toEqual(["queued", "finalizing", "done"]);
+      expect(t.states.at(-1)).toMatchObject({ status: "done", finalSource: "plugin" });
+      expect(t.eventsOf(run.id).at(-1)).toMatchObject({ type: "RUN_FINISHED", messageIds: [ack.messageId] });
+      const bodies = t.db
+        .select()
+        .from(messages)
+        .where(eq(messages.runId, run.id))
+        .all()
+        .map((m) => m.bodyMd);
+      expect(bodies).toEqual(["정본"]);
+      expect(systemMessages(t.db)).toEqual([]);
+      expect(t.onAgentMessage).toHaveBeenCalledTimes(1);
+      // queued·run 타이머는 finalizing 에서 풀렸다 — 뒤에 TIMEOUT 이 붙지 않는다
+      await vi.advanceTimersByTimeAsync(600_000);
+      expect(t.runOf(run.id)).toMatchObject({ status: "done", finalSource: "plugin" });
+      expect(systemMessages(t.db)).toEqual([]);
+      t.orch.stop();
+    });
+
+    it("그 사이 gateway_final 이 오면 10초를 기다리지 않고 곧바로 done(plugin), 스냅샷은 버린다", async () => {
+      const t = setup();
+      const run = await t.enqueue();
+      await t.flush();
+      const ack = await t.orch.onCanonical(t.outbound({ runId: run.id, text: "정본" }));
+      expect(t.runOf(run.id).status).toBe("finalizing");
+
+      // 늦게 온 Gateway 시작·델타는 finalizing 을 되돌리지 않는다
+      await t.orch.signal(run.id, { kind: "gateway_started" });
+      await t.orch.signal(run.id, { kind: "text_delta" });
+      expect(t.runOf(run.id).status).toBe("finalizing");
+
+      await t.orch.signal(run.id, { kind: "gateway_final" }, { message: "스냅샷" });
+      expect(t.runOf(run.id)).toMatchObject({ status: "done", finalSource: "plugin" });
+      expect(t.states.map((s) => s.status)).toEqual(["queued", "finalizing", "done"]);
+      expect(t.eventsOf(run.id).at(-1)).toMatchObject({ type: "RUN_FINISHED", messageIds: [ack.messageId] });
+
+      await vi.advanceTimersByTimeAsync(10_000);
+      const bodies = t.db
+        .select()
+        .from(messages)
+        .where(eq(messages.runId, run.id))
+        .all()
+        .map((m) => m.bodyMd);
+      expect(bodies).toEqual(["정본"]);
+      expect(systemMessages(t.db)).toEqual([]);
+      t.orch.stop();
+    });
+  });
+
+  it.each([
+    // streaming 에서 정본은 hasCanonical 만 바꾼다(같은 상태의 run.state 가 한 번 더 나간다)
+    [
+      "정본 → final",
+      "plugin",
+      ["canonical", "final"],
+      ["queued", "streaming", "streaming", "done"],
+      ["정본"],
+    ],
+    [
+      "final → 정본",
+      "plugin",
+      ["final", "canonical"],
+      ["queued", "streaming", "finalizing", "done"],
+      ["정본"],
+    ],
+    ["final → 10초", "gateway", ["final", "wait"], ["queued", "streaming", "finalizing", "done"], ["스냅샷"]],
+  ] as const)(
+    "streaming 경로(%s)는 그대로 — done(%s)",
+    async (_label, finalSource, steps, statuses, bodies) => {
+      const t = setup();
+      const run = await t.enqueue();
+      await t.flush();
+      await t.orch.signal(run.id, { kind: "gateway_started" });
+      for (const step of steps) {
+        if (step === "canonical") await t.orch.onCanonical(t.outbound({ runId: run.id, text: "정본" }));
+        else if (step === "final")
+          await t.orch.signal(run.id, { kind: "gateway_final" }, { message: "스냅샷" });
+        else await vi.advanceTimersByTimeAsync(10_000);
+      }
+      expect(t.runOf(run.id)).toMatchObject({ status: "done", finalSource });
+      expect(t.states.map((s) => s.status)).toEqual(statuses);
+      expect(
+        t.db
+          .select()
+          .from(messages)
+          .where(eq(messages.runId, run.id))
+          .all()
+          .map((m) => m.bodyMd),
+      ).toEqual(bodies);
+      expect(systemMessages(t.db)).toEqual([]);
+      t.orch.stop();
+    },
+  );
+
   it("queued 120초 안에 gateway_started 가 없으면 error(TIMEOUT)", async () => {
     const t = setup();
     const run = await t.enqueue();
