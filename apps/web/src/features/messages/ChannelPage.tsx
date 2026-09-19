@@ -9,6 +9,7 @@ import { TypingIndicator } from "@/features/composer/TypingIndicator";
 import { useSendMessage } from "@/features/composer/useSendMessage";
 import { useChannelSubscription } from "@/realtime/WireProvider";
 import { Button } from "@/ui/button";
+import { MessageList } from "./MessageList";
 import { type PendingActions, PendingActionsContext } from "./pendingActions";
 
 /**
@@ -48,7 +49,7 @@ export function ChannelPage() {
       <PendingActionsContext.Provider value={pendingActions}>
         <section className="flex min-w-0 flex-1 flex-col">
           <ChannelHeader channelId={channelId} />
-          <div data-slot="messages" className="min-h-0 flex-1" />
+          <MessageList channelId={channelId} />
           <div data-slot="composer">
             <TypingIndicator channelId={channelId} />
             <Composer channelId={channelId} />

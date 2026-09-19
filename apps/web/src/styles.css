@@ -2,6 +2,9 @@
 @import "tw-animate-css";
 @import "./theme/tokens.css";
 
+/* Streamdown(메시지 마크다운)이 쓰는 유틸리티 클래스를 Tailwind 가 찾게 한다 */
+@source "../node_modules/streamdown/dist/*.js";
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

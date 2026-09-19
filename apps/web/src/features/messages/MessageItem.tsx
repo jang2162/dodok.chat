@@ -1,0 +1,81 @@
+import type { Message } from "@dodok/shared";
+import type { ReactNode } from "react";
+import { Avatar, AvatarFallback, AvatarImage } from "@/ui/avatar";
+import { Badge } from "@/ui/badge";
+import { ActionButtons } from "./ActionButtons";
+import { MessageBody } from "./MessageBody";
+import { type Author, useAuthors } from "./useAuthors";
+
+const TIME = new Intl.DateTimeFormat("ko-KR", { hour: "numeric", minute: "2-digit" });
+const FULL = new Intl.DateTimeFormat("ko-KR", { dateStyle: "full", timeStyle: "short" });
+
+export function MessageTime({ iso, className }: { iso: string; className?: string }) {
+  const d = new Date(iso);
+  return (
+    <time dateTime={iso} title={FULL.format(d)} className={className}>
+      {TIME.format(d)}
+    </time>
+  );
+}
+
+/** 아바타 36px(스펙 7.1). 에이전트는 테두리 2px 에이전트 색, 사람은 테두리 없음(스펙 7.2) */
+export function AuthorAvatar({ author }: { author: Author }) {
+  return (
+    <Avatar
+      className={author.isAgent ? "size-9 border-2" : "size-9"}
+      style={author.colorVar ? { borderColor: author.colorVar } : undefined}
+    >
+      {author.avatarUrl && <AvatarImage src={author.avatarUrl} alt="" />}
+      <AvatarFallback>{author.name.slice(0, 1)}</AvatarFallback>
+    </Avatar>
+  );
+}
+
+/** 머리 줄: 이름 · 에이전트면 「AI」 배지 · 시각(또는 상태) */
+export function AuthorLine({ author, children }: { author: Author; children: ReactNode }) {
+  return (
+    <div className="flex items-baseline gap-2">
+      <span className="truncate font-semibold">{author.name}</span>
+      {author.isAgent && (
+        <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
+          AI
+        </Badge>
+      )}
+      <span className="text-xs text-muted-foreground">{children}</span>
+    </div>
+  );
+}
+
+/**
+ * 사람·에이전트 메시지(스펙 5.3): 머리(아바타·이름·「AI」·시각) + 본문 + 버튼.
+ * 같은 작성자의 연속(`head: false`)은 머리를 생략하고 시각은 마우스를 올릴 때만 보인다
+ */
+export function MessageItem({ message, head }: { message: Message; head: boolean }) {
+  const author = useAuthors().author(message);
+  return (
+    <article className="group flex gap-3 px-4 py-0.5 hover:bg-accent/40" data-head={head || undefined}>
+      <div className="flex w-9 shrink-0 justify-end">
+        {head ? (
+          <div className="pt-1">
+            <AuthorAvatar author={author} />
+          </div>
+        ) : (
+          <MessageTime
+            iso={message.createdAt}
+            className="invisible pt-1 text-[10px] whitespace-nowrap text-muted-foreground group-hover:visible"
+          />
+        )}
+      </div>
+      <div className={head ? "min-w-0 flex-1 pt-1" : "min-w-0 flex-1"}>
+        {head && (
+          <AuthorLine author={author}>
+            <MessageTime iso={message.createdAt} />
+          </AuthorLine>
+        )}
+        <MessageBody bodyMd={message.bodyMd} />
+        {message.editedAt && <span className="text-xs text-muted-foreground">(수정됨)</span>}
+        <ActionButtons message={message} />
+      </div>
+    </article>
+  );
+}
