@@ -12,7 +12,7 @@ import { getRun, insertRun, listRunEvents } from "../src/modules/runs/store";
 import { bootTestApp, login } from "./helpers/app";
 import { newTestDb } from "./helpers/db";
 import { seedChannelWithAgent } from "./helpers/seed";
-import { connectWire, type WireClient, waitFor } from "./helpers/wire";
+import { connectWire, recordEvents, type WireClient, waitFor } from "./helpers/wire";
 
 const MINUTE = 60_000;
 
@@ -223,6 +223,30 @@ describe("승인 저장·런 상관·wire 중계 (앱 부팅, FakeAdapter)", () 
     expect((await requested).approval.channelId).toBe(channel.id);
   });
 
+  it("승인은 그 채널 구독자에게만 간다 — 다른 채널 소켓은 요구도 해결도 못 받는다", async () => {
+    // detail 에는 파일 내용이 실린다 — 룸 범위가 무너지면 그대로 새는 자리라 회귀를 여기서 잠근다
+    const other = newChannel();
+    const mine = await connect();
+    const theirs = await connect(other.id);
+    const leaked = recordEvents(theirs, ["approval.requested", "approval.resolved"]);
+    const a = providerApproval(sessionKeyOf("dev", channel.id), { detail: "secret-file-body" });
+
+    const requested = waitFor(mine, "approval.requested");
+    adapter.emitApproval(a);
+    expect((await requested).approval.detail).toBe("secret-file-body");
+    const resolved = waitFor(mine, "approval.resolved");
+    adapter.emitApproval({ ...a, status: "denied", decision: "deny", reason: "user" });
+    await resolved;
+
+    await roundTrip(theirs);
+    expect(leaked).toEqual([]);
+
+    // 비어 있는 게 이 소켓이 죽어서가 아니다 — 자기 채널 승인은 받는다
+    const ours = waitFor(theirs, "approval.requested");
+    adapter.emitApproval(providerApproval(sessionKeyOf("dev", other.id)));
+    expect((await ours).approval.channelId).toBe(other.id);
+  });
+
   it("구독 응답이 그 채널의 미해결 승인을 준다 — 만료된 것·해결된 것·다른 채널 것은 뺀다", async () => {
     const socket = await connect();
     const alive = providerApproval(sessionKeyOf("dev", channel.id));
@@ -230,14 +254,20 @@ describe("승인 저장·런 상관·wire 중계 (앱 부팅, FakeAdapter)", () 
       expiresAt: new Date(Date.now() - MINUTE).toISOString(),
     });
     const elsewhere = providerApproval(sessionKeyOf("dev", newChannel().id));
-    for (const a of [alive, expiring, elsewhere]) adapter.emitApproval(a);
-    await vi.waitFor(() => expect(stored(elsewhere)).toBeDefined());
+    // 만료 시각은 아직 남았는데 이미 해결된 것 — 재접속·채널 전환마다 죽은 카드가 되살아나면 안 된다
+    const decided = providerApproval(sessionKeyOf("dev", channel.id));
+    for (const a of [alive, expiring, elsewhere, decided]) adapter.emitApproval(a);
+    await vi.waitFor(() => expect(stored(decided)?.status).toBe("pending"));
+    adapter.emitApproval({ ...decided, status: "denied", decision: "deny", reason: "user" });
+    await vi.waitFor(() => expect(stored(decided)?.status).toBe("denied"));
+    expect(stored(elsewhere)).toBeDefined();
 
     const res = await socket.emitWithAck("channel.subscribe", { channelId: channel.id });
     if (!res.ok) throw new Error(res.error.code);
     const ids = res.data.pendingApprovals.map((p) => p.providerApprovalId);
     expect(ids).toContain(alive.providerApprovalId);
     expect(ids).not.toContain(expiring.providerApprovalId);
+    expect(ids).not.toContain(decided.providerApprovalId);
     expect(ids).not.toContain(elsewhere.providerApprovalId);
     expect(res.data.pendingApprovals.every((p) => p.channelId === channel.id)).toBe(true);
   });
@@ -553,13 +583,25 @@ describe("승인 store (메모리 DB)", () => {
       expiresAt: new Date("2026-09-20T00:00:30.000Z"),
     }).approval;
     const channelOnly = approvalStore.upsertApproval(db, input()).approval;
+    // 만료 시각은 아직 남았는데 이미 해결된 것 — 미해결 조회 둘에서 빠지는 것은 오직 status 조건 덕이다
+    const decided = approvalStore.upsertApproval(db, {
+      ...input({ runId: run.id }),
+      status: "denied",
+      decision: "deny",
+      reason: "user",
+      decidedAt: new Date("2026-09-20T00:00:40.000Z"),
+    }).approval;
     const at = new Date("2026-09-20T00:01:00.000Z");
 
     expect(approvalStore.listPendingApprovals(db, channelId, at).map((p) => p.id)).toEqual([
       live.id,
       channelOnly.id,
     ]);
-    expect(approvalStore.listRunApprovals(db, run.id).map((p) => p.id)).toEqual([live.id, dead.id]);
+    expect(approvalStore.listRunApprovals(db, run.id).map((p) => p.id)).toEqual([
+      live.id,
+      dead.id,
+      decided.id,
+    ]);
     // 만료 시각이 지났어도 아직 pending 이면 런이 닫을 대상이다
     expect(approvalStore.listPendingApprovalsByRun(db, run.id).map((p) => p.id)).toEqual([live.id, dead.id]);
   });
