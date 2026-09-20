@@ -15,10 +15,7 @@ it.each([
   ["queued", { visible: true, label: "대기 중", stoppable: true, textVisible: false }],
   ["streaming", { visible: true, label: null, stoppable: true, textVisible: true }],
   ["tool", { visible: true, label: "도구 사용 중", stoppable: true, textVisible: true }],
-  [
-    "awaiting_approval",
-    { visible: true, label: "승인 대기 — Phase 2 에서 지원", stoppable: true, textVisible: true },
-  ],
+  ["awaiting_approval", { visible: true, label: "승인 대기 중", stoppable: true, textVisible: true }],
   ["finalizing", { visible: true, label: null, stoppable: false, textVisible: true }],
 ] as const)("%s", (status, expected) => {
   expect(bubblePhase(view(status), { hasMessage: false, now: 0 })).toEqual(expected);

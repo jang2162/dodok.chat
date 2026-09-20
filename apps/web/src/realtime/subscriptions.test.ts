@@ -211,6 +211,22 @@ describe("createSubscriptions", () => {
     expect(Object.keys(useApprovalStore.getState().byChannel[CH] ?? {})).toEqual([APPROVAL, APPROVAL2]);
   });
 
+  it("재구독 ack 는 미해결의 정본이다 — 끊긴 동안 확정된 승인은 옛 탭에서도 닫힌다(D8)", async () => {
+    const { fake, queryClient, subs } = setup();
+    seed(queryClient, [msg(1)]);
+    // 끊기기 전에 보고 있던 미해결 카드 둘
+    useApprovalStore.getState().apply(approval());
+    useApprovalStore.getState().apply(approval({ id: APPROVAL2 }));
+    // 끊긴 사이 APPROVAL 이 확정됐다 — 다시 붙은 ack 에는 남은 것만 온다
+    fake.onAck("channel.subscribe", () =>
+      subscribed([], { pendingApprovals: [approval({ id: APPROVAL2 })] }),
+    );
+
+    await subs.enter(CH);
+
+    expect(Object.keys(useApprovalStore.getState().byChannel[CH] ?? {})).toEqual([APPROVAL2]);
+  });
+
   it("이어 받기(lastSeq) 구독에서도 pendingApprovals 를 반영한다 — 끊긴 사이 온 승인", async () => {
     const { fake, queryClient, subs } = setup();
     seed(queryClient, [msg(1)]);

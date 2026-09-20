@@ -27,7 +27,7 @@ export function bubblePhase(view: RunView, ctx: { hasMessage: boolean; now: numb
     case "tool":
       return { visible: true, label: "도구 사용 중", stoppable: true, textVisible: true };
     case "awaiting_approval":
-      return { visible: true, label: "승인 대기 — Phase 2 에서 지원", stoppable: true, textVisible: true };
+      return { visible: true, label: "승인 대기 중", stoppable: true, textVisible: true };
     case "finalizing":
       return { visible: true, label: null, stoppable: false, textVisible: true };
     case "done":

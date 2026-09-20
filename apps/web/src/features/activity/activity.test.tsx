@@ -1,4 +1,5 @@
 import type { Run, RunEvent } from "@dodok/shared";
+import type { QueryClient } from "@tanstack/react-query";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
@@ -15,6 +16,8 @@ import {
   APPROVAL,
   approval,
   CH,
+  CH2,
+  iso,
   msg,
   RUN,
   RUN2,
@@ -25,7 +28,7 @@ import {
 } from "../../../test/fixtures";
 import { stubMedia } from "../../../test/media";
 import { stubScrollLayout } from "../../../test/scrollLayout";
-import { json, ME, renderRoute, shellGet } from "../../../test/shellApi";
+import { channelOf, json, ME, renderRoute, shellGet } from "../../../test/shellApi";
 import { agentOf } from "../../../test/settingsServer";
 
 // 활동 패널은 실시간 run.event 를 소켓에서 곧바로 받는다 — 테스트는 가짜 소켓을 끼운다
@@ -105,6 +108,12 @@ afterEach(() => {
 });
 
 const panel = () => screen.findByTestId("page-channel-settings");
+/** 지금 고른 런의 id — 목록 줄의 `aria-current` 가 정본이다 */
+const pickedRun = (aside: HTMLElement) =>
+  aside.querySelector<HTMLElement>('[data-run-id][aria-current="true"]')?.dataset.runId;
+const runIds = (aside: HTMLElement) =>
+  [...aside.querySelectorAll<HTMLElement>("[data-run-id]")].map((el) => el.dataset.runId);
+const timelineBox = (aside: HTMLElement) => aside.querySelector('[data-slot="run-timeline"]');
 
 it("활동 탭은 런 목록을 보이고 고르면 타임라인을 그린다", async () => {
   stubServer({ runs: [runOf(RUN)], events: TOOL_EVENTS });
@@ -264,6 +273,38 @@ it("설정 탭으로 가도 같은 틀(패널·시트)이 유지된다", async (
   media.setNarrow(false);
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   expect(await screen.findByTestId("page-channel-settings")).toHaveAttribute("data-panel-tab", "settings");
+});
+
+/**
+ * 브라우저 검증 D3 — 탭을 옮기면 초점이 `<body>` 로 떨어지던 것. 탭 머리를 부모(ChannelPage)가 그려
+ * 링크가 언마운트되지 않으므로, 누른 링크에 초점이 그대로 남는다(키보드 이동이 처음부터 다시 시작되지 않는다)
+ */
+it("탭을 옮겨도 초점이 <body> 로 떨어지지 않는다(D3)", async () => {
+  stubServer({ runs: [runOf(RUN)], events: TOOL_EVENTS });
+  const { router } = renderRoute(`/c/${CH}/activity`);
+  const aside = await panel();
+
+  const settingsTab = within(aside).getByRole("link", { name: "설정" });
+  await userEvent.click(settingsTab);
+  await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/settings`));
+  // 화면이 실제로 설정 탭을 그린 뒤에 본다 — 주소만 바뀐 사이를 재면 아무것도 잠그지 못한다
+  await waitFor(() =>
+    expect(screen.getByTestId("page-channel-settings")).toHaveAttribute("data-panel-tab", "settings"),
+  );
+  // 누른 링크가 화면에 살아 있고 초점도 거기 있다 — 링크가 언마운트되면 초점은 `<body>` 로 떨어진다
+  expect(document.body).toContainElement(settingsTab);
+  expect(document.activeElement).toBe(settingsTab);
+
+  // 반대 방향도, 키보드로도
+  const activityTab = within(aside).getByRole("link", { name: "활동" });
+  activityTab.focus();
+  await userEvent.keyboard("{Enter}");
+  await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/activity`));
+  await waitFor(() =>
+    expect(screen.getByTestId("page-channel-settings")).toHaveAttribute("data-panel-tab", "activity"),
+  );
+  expect(document.body).toContainElement(activityTab);
+  expect(document.activeElement).toBe(activityTab);
 });
 
 it("「활동 닫기」는 채널 화면으로 돌아간다", async () => {
@@ -599,6 +640,177 @@ it("런 목록은 한 번에 50개까지 받는다", async () => {
   await within(await panel()).findByText("Read");
   expect(calls).toContain(`GET /api/v1/channels/${CH}/runs?limit=50`);
   expect(calls).toContain(`GET /api/v1/runs/${RUN}/events`);
+});
+
+/**
+ * 브라우저 검증 D2·D9 — 런이 끝나는 순간(스토어에서 빠지고 REST 재조회는 아직)에도 고른 런은 그대로다.
+ * 옛 런으로 넘어가면 `key={selected.id}` 가 타임라인을 새로 세워 펼침·스크롤이 날아간다
+ */
+const OTHER_RUN = [
+  runEvent({ type: "TOOL_CALL_START", runId: RUN, seq: 1, toolCallId: "t9", toolCallName: "옛도구" }),
+];
+
+/** RUN(옛 런, REST 에만) + RUN2(실시간으로 시작해 끝나는 런). 고른 런은 최근 것인 RUN2 */
+async function endingRun(opts: ServerOpts = {}, queryClient?: QueryClient) {
+  const { state } = stubServer({
+    runs: [runOf(RUN)],
+    events: { [RUN]: OTHER_RUN, [RUN2]: TOOL_EVENTS },
+    ...opts,
+  });
+  const { router } = renderRoute(`/c/${CH}/activity`, queryClient);
+  const aside = await panel();
+  act(() => useRunStore.getState().applyState(runState({ id: RUN2, status: "tool" })));
+  await within(aside).findByText("Read");
+  expect(pickedRun(aside)).toBe(RUN2);
+
+  const end = () => {
+    act(() => useRunStore.getState().applyState(runState({ id: RUN2, status: "done" })));
+    // 버블 정리가 끝난 런을 스토어에서 뺀다(스펙 4.5) — REST 목록은 아직 그 런을 모른다
+    act(() => useRunStore.getState().remove(RUN2));
+  };
+  return { aside, state, end, router };
+}
+
+it("런이 끝나도 타임라인이 옛 런으로 넘어가지 않는다(D2)", async () => {
+  const { aside, end } = await endingRun();
+  const before = timelineBox(aside);
+
+  end();
+
+  expect(pickedRun(aside)).toBe(RUN2);
+  expect(within(aside).getByText("Read")).toBeInTheDocument();
+  expect(within(aside).queryByText("옛도구")).not.toBeInTheDocument();
+  // 타임라인이 새로 서지 않았다 — 스크롤 위치가 끝으로 튀지 않는 까닭이다
+  expect(timelineBox(aside)).toBe(before);
+  await waitFor(() => expect(pickedRun(aside)).toBe(RUN2));
+});
+
+it("런이 끝나도 펼쳐 둔 인자가 접히지 않는다(D2)", async () => {
+  const { aside, end } = await endingRun();
+  await userEvent.click(within(aside).getByRole("button", { name: "Read 인자 보기" }));
+  expect(screen.getByText('{"path":"README.md"}')).toBeInTheDocument();
+
+  end();
+
+  expect(screen.getByText('{"path":"README.md"}')).toBeInTheDocument();
+});
+
+it("목록 조회가 실패해도 방금 끝난 런은 목록에서 사라지지 않는다(D9)", async () => {
+  const { aside, end } = await endingRun({
+    override: (method, url) =>
+      method === "GET" && /\/runs\?/.test(url)
+        ? json(500, { code: "INTERNAL", message: "터졌다" })
+        : undefined,
+  });
+
+  end();
+
+  await within(aside).findByText("런 목록을 불러오지 못했습니다.");
+  expect(runIds(aside)).toEqual([RUN2]);
+  expect(pickedRun(aside)).toBe(RUN2);
+  expect(within(aside).getByText("Read")).toBeInTheDocument();
+});
+
+it("아무것도 안 골랐으면 가장 최근 런을 잡는다", async () => {
+  stubServer({ runs: [runOf(RUN), runOf(RUN2)], events: { [RUN]: OTHER_RUN, [RUN2]: TOOL_EVENTS } });
+  renderRoute(`/c/${CH}/activity`);
+  const aside = await panel();
+
+  await within(aside).findByText("Read");
+  // id 가 uuid v7 이라 문자열 순이 생성 순 — 최신이 맨 위이고 그것이 잡힌다
+  expect(runIds(aside)).toEqual([RUN2, RUN]);
+  expect(pickedRun(aside)).toBe(RUN2);
+});
+
+const OTHER_CH_RUN = uid(103);
+
+it("채널을 옮기면 선택도 목록도 옮겨 간 채널 것으로 새로 잡는다", async () => {
+  // 옮겨 갈 채널을 미리 캐시에 둔다 — 그래야 ChannelPage 가 패널을 내렸다 올리지 않고 같은 패널이 채널만 바꾼다
+  const queryClient = createQueryClient(() => {});
+  queryClient.setQueryData(qk.channel(CH2), channelOf(CH2));
+  const { aside, end, router } = await endingRun(
+    {
+      override: (method, url) =>
+        method === "GET" && url.startsWith(`/api/v1/channels/${CH2}/runs`)
+          ? json(200, { runs: [runOf(OTHER_CH_RUN, { channelId: CH2 })] })
+          : method === "GET" && url.startsWith(`/api/v1/runs/${OTHER_CH_RUN}/events`)
+            ? json(200, {
+                events: [
+                  runEvent({
+                    type: "TOOL_CALL_START",
+                    runId: OTHER_CH_RUN,
+                    seq: 1,
+                    toolCallId: "t8",
+                    toolCallName: "저쪽도구",
+                  }),
+                ],
+              })
+            : undefined,
+    },
+    queryClient,
+  );
+  // 이 채널에서 끝난 런을 기억한 채로 옮긴다 — 그 기억이 옮겨 간 채널 목록에 섞이면 안 된다
+  end();
+  expect(runIds(aside)).toContain(RUN2);
+
+  await act(() => router.navigate({ to: "/c/$channelId/activity", params: { channelId: CH2 } }));
+
+  const moved = await panel();
+  await within(moved).findByText("저쪽도구");
+  // 같은 패널이 그대로 있고(내렸다 올린 것이 아니다) 안쪽만 새 채널로 바뀌었다
+  expect(moved).toBe(aside);
+  expect(runIds(moved)).toEqual([OTHER_CH_RUN]);
+  expect(pickedRun(moved)).toBe(OTHER_CH_RUN);
+});
+
+/**
+ * 브라우저 검증 D7 — 진행 중인 런의 소요가 렌더 시점에 멈춰 있었다(「승인 대기 · 0초」가 몇 초째 그대로).
+ * 타이머 자체(켜고 끄기)는 `useNowTick` 테스트가 잠근다 — 여기서는 목록이 그 시계를 쓰는지를 본다
+ */
+it("진행 중인 런의 소요는 1초마다 갱신되고 끝나면 고정된다(D7)", async () => {
+  const START = Date.parse("2027-01-15T08:00:01.000Z");
+  vi.useFakeTimers({ shouldAdvanceTime: true, now: START });
+  try {
+    stubServer({ runs: [runOf(RUN, { status: "tool", startedAt: iso(START), endedAt: undefined })] });
+    renderRoute(`/c/${CH}/activity`);
+    const aside = await panel();
+    const row = () => within(aside).getByRole("button", { name: /@dev/ });
+    await waitFor(() => expect(row()).toHaveTextContent("0초"));
+
+    act(() => void vi.advanceTimersByTime(3_000));
+    expect(row()).toHaveTextContent("3초");
+
+    // 끝난 런의 소요는 끝난 시각으로 고정 — 시간이 더 흘러도 그대로다
+    act(() =>
+      useRunStore
+        .getState()
+        .applyState(
+          runState({ id: RUN, status: "done", startedAt: iso(START), endedAt: iso(START + 4_000) }),
+        ),
+    );
+    await waitFor(() => expect(row()).toHaveTextContent("4초"));
+    act(() => void vi.advanceTimersByTime(30_000));
+    expect(row()).toHaveTextContent("4초");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+/**
+ * 브라우저 검증 D10 — 높이 420px 창에서 카드와 런 목록이 먼저 자리를 잡아 타임라인이 54px 로 눌렸다.
+ * jsdom 은 배치를 재지 않으므로 그 자리를 만드는 규칙을 잠근다(실제 높이는 브라우저에서 잰다)
+ */
+it("짧은 창에서는 런 목록이 먼저 줄고 타임라인은 최소 높이를 지킨다(D10)", async () => {
+  stubServer({ runs: [runOf(RUN)], events: TOOL_EVENTS });
+  renderRoute(`/c/${CH}/activity`);
+  const aside = await panel();
+  await within(aside).findByText("Read");
+
+  const list = within(aside).getByRole("list", { name: "런 목록" });
+  // 목록은 최대 40% 까지 쓰되, 자리가 모자라면 줄어든다 — 줄지 않으면(shrink-0) 타임라인이 대신 눌린다
+  expect(list).toHaveClass("max-h-[40%]", "overflow-y-auto");
+  expect(list.className.split(/\s+/)).not.toContain("shrink-0");
+  expect(timelineBox(aside)).toHaveClass("min-h-32");
 });
 
 it("끝난 런이 런 스토어에서 빠져도 목록에 남는다", async () => {

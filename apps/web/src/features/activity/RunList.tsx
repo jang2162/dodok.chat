@@ -1,4 +1,5 @@
 import { useAgents } from "@/api/queries";
+import { useNowTick } from "@/hooks/useNowTick";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/ui/badge";
 import { Notice } from "./Notice";
@@ -29,7 +30,9 @@ export function RunList({
 }) {
   const agents = useAgents().data;
   const handleOf = (agentId: string) => agents?.find((a) => a.id === agentId)?.handle;
-  const now = Date.now();
+  // 아직 안 끝난 런의 소요만 흐른다 — 그런 런이 있을 때만 1초 틱을 돌린다.
+  // 끝난 런은 endedAt 으로 고정이라 다시 그려도 값이 같다
+  const now = useNowTick(runs.some((r) => r.startedAt !== undefined && r.endedAt === undefined));
 
   const failure = error && (
     <Notice onRetry={onRetry} retrying={retrying}>
@@ -45,7 +48,11 @@ export function RunList({
   return (
     <>
       {failure}
-      <ul aria-label="런 목록" className="max-h-[40%] shrink-0 divide-y overflow-y-auto border-b">
+      {/*
+       * 높이는 최대 40% — 다만 자리가 모자라면 줄어든다(shrink-0 없음). 짧은 창에서 목록이 제 몫을 먼저 가져가면
+       * 아래 타임라인이 읽을 수 없게 눌린다(브라우저 검증 D10). 자리가 넉넉하면 줄어들 일이 없어 넓은 화면은 그대로다
+       */}
+      <ul aria-label="런 목록" className="max-h-[40%] divide-y overflow-y-auto border-b">
         {runs.map((run) => {
           const selected = run.id === selectedId;
           const handle = handleOf(run.agentId);
@@ -54,6 +61,7 @@ export function RunList({
             <li key={run.id}>
               <button
                 type="button"
+                data-run-id={run.id}
                 aria-current={selected ? "true" : undefined}
                 onClick={() => onSelect(run.id)}
                 className={cn(

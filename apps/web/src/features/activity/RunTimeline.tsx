@@ -73,7 +73,8 @@ export function RunTimeline({
         const el = scrollRef.current;
         if (el) stuck.current = el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_PX;
       }}
-      className="min-h-0 flex-1 overflow-y-auto"
+      /* 짧은 창에서도 몇 행은 읽을 수 있어야 한다(브라우저 검증 D10) — 자리가 모자라면 위 런 목록이 먼저 줄어든다 */
+      className="min-h-32 flex-1 overflow-y-auto"
     >
       {rows.length === 0 ? (
         <Notice>{running ? "아직 도구를 쓰지 않았습니다." : "도구 기록이 없습니다."}</Notice>

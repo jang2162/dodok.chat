@@ -46,7 +46,7 @@ type ApprovalStore = {
   /** channelId → approvalId → 카드 */
   byChannel: Record<string, Record<string, ApprovalView>>;
   apply(approval: Approval): void;
-  applyMany(approvals: readonly Approval[]): void;
+  syncPending(channelId: string, approvals: readonly Approval[]): void;
   setSending(approvalId: string, decision?: ApprovalDecision): void;
   reset(): void;
 };
@@ -62,13 +62,32 @@ function put(byChannel: ApprovalStore["byChannel"], approval: Approval): Approva
 
 /**
  * 채널별 승인(설계 5.5). 들어오는 길 셋: 구독 ack 의 `pendingApprovals`, wire `approval.requested`/`resolved`,
- * 카드의 잠금. 확정된 카드도 지우지 않는다 — 기록으로 남는다(설계 5.3)
+ * 카드의 잠금. 확정된 카드도 지우지 않는다 — 기록으로 남는다(설계 5.3).
+ *
+ * `syncPending` 은 구독 ack 의 미해결 목록을 **그 채널 미해결 승인의 정본**으로 삼는다: 목록에 없는 로컬
+ * `pending` 은 지운다. 끊긴 동안 놓친 확정이 옛 탭에 미해결 카드로 영영 남아(버튼 활성·카운트다운, 끝나면
+ * 「만료됨」) 새 탭과 다른 것을 보이던 것을 막는다(브라우저 검증 D8). 확정된 카드는 건드리지 않는다 —
+ * 그 탭의 기록이고 ack 에는 원래 오지 않는다
  */
 export const useApprovalStore = create<ApprovalStore>()((set) => ({
   byChannel: {},
   apply: (approval) => set((s) => ({ byChannel: put(s.byChannel, approval) })),
-  applyMany: (approvals) =>
-    set((s) => ({ byChannel: approvals.reduce((acc, a) => put(acc, a), s.byChannel) })),
+  syncPending: (channelId, approvals) =>
+    set((s) => {
+      const ids = new Set(approvals.map((a) => a.id));
+      const channel = s.byChannel[channelId] ?? {};
+      const gone = Object.keys(channel).filter(
+        (id) => !ids.has(id) && !SETTLED.has(channel[id]?.approval.status ?? "pending"),
+      );
+      if (gone.length === 0 && approvals.length === 0) return s;
+      let byChannel = s.byChannel;
+      if (gone.length > 0) {
+        const kept = { ...channel };
+        for (const id of gone) delete kept[id];
+        byChannel = { ...byChannel, [channelId]: kept };
+      }
+      return { byChannel: approvals.reduce((acc, a) => put(acc, a), byChannel) };
+    }),
   setSending: (approvalId, decision) =>
     set((s) => {
       for (const [channelId, channel] of Object.entries(s.byChannel)) {

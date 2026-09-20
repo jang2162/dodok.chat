@@ -77,7 +77,7 @@ describe("StreamingBubble", () => {
   it.each([
     ["queued", "대기 중", false, true],
     ["tool", "도구 사용 중", true, true],
-    ["awaiting_approval", "승인 대기 — Phase 2 에서 지원", true, true],
+    ["awaiting_approval", "승인 대기 중", true, true],
     ["finalizing", null, true, false],
     ["done", null, true, false],
     ["aborted", "중지됨", false, false],

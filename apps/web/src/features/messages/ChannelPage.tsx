@@ -3,6 +3,7 @@ import { useMemo } from "react";
 import { ApiRequestError, NetworkError } from "@/api/http";
 import { useChannel } from "@/api/queries";
 import { ChannelHeader } from "@/app/layout/ChannelHeader";
+import { PanelTabs, usePanelTab } from "@/app/layout/PanelTabs";
 import { OpenSidebarButton, useOpenSidebar } from "@/app/layout/sidebarSheet";
 import { Composer } from "@/features/composer/Composer";
 import { TypingIndicator } from "@/features/composer/TypingIndicator";
@@ -15,13 +16,15 @@ import { MessageList } from "./MessageList";
 import { type PendingActions, PendingActionsContext } from "./pendingActions";
 
 /**
- * 채널 화면: 헤더 · 메시지 목록 자리(태스크 7) · 작성기 자리(태스크 9) · 오른쪽 `<Outlet/>`(설정 패널, 태스크 11).
+ * 채널 화면: 헤더 · 메시지 목록 · 작성기 · 오른쪽 패널(`PanelTabs` 틀 + 탭 내용 `<Outlet/>`).
  * 채널이 확인되기 전(목록의 자리값 포함)에는 그 안을 그리지 않는다 — 없는 채널에서 멤버·메시지 조회가 나가
  * 전역 토스트가 화면 안 문구와 겹치지 않게. 불러오지 못하면(없는 채널 등) 화면 안에 알린다(`useChannel` 은 silent)
  */
 export function ChannelPage() {
   // 라우트 id 문자열에 기대지 않는다(레이아웃 id 가 바뀌어도 안전)
   const { channelId } = useParams({ strict: false }) as { channelId: string };
+  // 오른쪽 패널의 탭 머리는 여기서 그린다 — 탭을 옮겨도 머리의 링크가 죽지 않아야 초점이 살아남는다(D3)
+  const tab = usePanelTab();
   useChannelSubscription(channelId);
   const channel = useChannel(channelId);
   const bubbleRunIds = useChannelBubbles(channelId);
@@ -63,7 +66,11 @@ export function ChannelPage() {
           </div>
         </section>
       </PendingActionsContext.Provider>
-      <Outlet />
+      {tab && (
+        <PanelTabs channelId={channelId} active={tab}>
+          <Outlet />
+        </PanelTabs>
+      )}
     </div>
   );
 }

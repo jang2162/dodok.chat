@@ -11,6 +11,8 @@ import {
 const store = () => useApprovalStore.getState();
 const cards = (channelId = CH) => store().byChannel[channelId] ?? {};
 const view = (id = APPROVAL, channelId = CH) => cards(channelId)[id];
+/** 스토어를 채워 두는 길 — 들어오는 길과 같게 하나씩 넣는다 */
+const seed = (...approvals: Approval[]) => approvals.forEach((a) => store().apply(a));
 
 beforeEach(() => store().reset());
 
@@ -78,8 +80,8 @@ describe("승인 스토어", () => {
     expect(mergeApproval(undefined, a)).toBe(a);
   });
 
-  it("applyMany 는 채널별로 나눠 담는다(구독 ack 의 pendingApprovals)", () => {
-    store().applyMany([approval(), approval({ id: APPROVAL2, channelId: CH2 })]);
+  it("syncPending 은 채널별로 나눠 담는다(구독 ack 의 pendingApprovals)", () => {
+    store().syncPending(CH, [approval(), approval({ id: APPROVAL2, channelId: CH2 })]);
 
     expect(Object.keys(cards())).toEqual([APPROVAL]);
     expect(Object.keys(cards(CH2))).toEqual([APPROVAL2]);
@@ -113,8 +115,47 @@ describe("승인 스토어", () => {
     expect(view()?.sending).toBe("allow-once");
   });
 
+  /**
+   * 재구독 ack 는 그 채널 미해결 승인의 정본이다(브라우저 검증 D8) — 끊긴 동안 놓친 확정이 옛 탭에
+   * 미해결 카드로 남으면 버튼이 살아 있고 시간이 다하면 「만료됨」을 거짓으로 보인다
+   */
+  it("syncPending: ack 에 없는 로컬 pending 은 닫는다", () => {
+    seed(approval(), approval({ id: APPROVAL2 }));
+
+    store().syncPending(CH, [approval({ id: APPROVAL2 })]);
+
+    expect(Object.keys(cards())).toEqual([APPROVAL2]);
+    expect(view(APPROVAL2)?.approval.status).toBe("pending");
+  });
+
+  it("syncPending: 확정된 카드는 남긴다 — 그 탭의 기록이고 ack 에는 오지 않는다", () => {
+    seed(approval({ status: "allowed", decision: "allow-once", reason: "user" }));
+    seed(approval({ id: APPROVAL2, status: "expired", reason: "timeout" }));
+
+    store().syncPending(CH, []);
+
+    expect(Object.keys(cards())).toEqual([APPROVAL, APPROVAL2]);
+    expect(view()?.approval.status).toBe("allowed");
+  });
+
+  it("syncPending: 다른 채널의 승인은 건드리지 않는다", () => {
+    seed(approval(), approval({ id: APPROVAL2, channelId: CH2 }));
+
+    store().syncPending(CH, []);
+
+    expect(Object.keys(cards())).toEqual([]);
+    expect(view(APPROVAL2, CH2)?.approval.status).toBe("pending");
+  });
+
+  it("syncPending: 바꿀 것이 없으면 스토어를 그대로 둔다", () => {
+    seed(approval({ status: "allowed", decision: "allow-once", reason: "user" }));
+    const before = store().byChannel;
+    store().syncPending(CH, []);
+    expect(store().byChannel).toBe(before);
+  });
+
   it("reset 은 모든 채널을 비운다", () => {
-    store().applyMany([approval(), approval({ id: APPROVAL2, channelId: CH2 })]);
+    seed(approval(), approval({ id: APPROVAL2, channelId: CH2 }));
     store().reset();
     expect(store().byChannel).toEqual({});
   });
@@ -125,7 +166,7 @@ describe("선택자", () => {
   const late = approval({ id: APPROVAL2, createdAt: "2027-01-15T08:00:05.000Z", runId: RUN2 });
 
   it("selectChannelApprovals: 그 채널의 승인을 이른 것부터, 확정된 것도 함께", () => {
-    store().applyMany([late, { ...early, status: "allowed" }, approval({ id: uid(203), channelId: CH2 })]);
+    seed(late, { ...early, status: "allowed" }, approval({ id: uid(203), channelId: CH2 }));
 
     expect(selectChannelApprovals(CH)(store()).map((v) => v.approval.id)).toEqual([APPROVAL, APPROVAL2]);
     expect(selectChannelApprovals(CH2)(store())).toHaveLength(1);
@@ -133,7 +174,7 @@ describe("선택자", () => {
   });
 
   it("selectPendingApproval: 가장 이른 미해결 하나. runId 를 주면 그 런의 것만", () => {
-    store().applyMany([early, late]);
+    seed(early, late);
     expect(selectPendingApproval(CH)(store())?.approval.id).toBe(APPROVAL);
     expect(selectPendingApproval(CH, RUN2)(store())?.approval.id).toBe(APPROVAL2);
 

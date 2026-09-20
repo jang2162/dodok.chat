@@ -57,7 +57,8 @@ export function createSubscriptions(deps: {
 
   /** 구독 응답의 스냅샷 — 진행 중 런과 미해결 승인. 재연결한 탭·늦게 연 탭이 여기서 카드를 다시 맞춘다(설계 5.5·6장) */
   async function applySubscribed(channelId: string, res: ChannelSubscribeResult): Promise<void> {
-    useApprovalStore.getState().applyMany(res.pendingApprovals);
+    // ack 의 미해결 목록이 그 채널의 정본이다 — 끊긴 동안 놓친 확정이 미해결 카드로 남지 않게(브라우저 검증 D8)
+    useApprovalStore.getState().syncPending(channelId, res.pendingApprovals);
     const store = useRunStore.getState();
     // 그 채널에서 진행 중이던 런이 activeRuns 에 없으면 끊긴 사이 끝난 것 — 버블이 남지 않게 뺀다(답은 메시지로 온다)
     const active = new Set(res.activeRuns.map((r) => r.id));

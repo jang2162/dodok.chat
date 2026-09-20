@@ -283,6 +283,25 @@ describe("승인 알림", () => {
     expect(screenNow.opened).toEqual([CH]);
   });
 
+  /**
+   * 브라우저 검증 D1 — 서버가 승인을 채널 룸에만 내보내 「다른 채널을 보고 있어도」(스펙 5.4)가 도달 불가였다.
+   * 서버 쪽 팬아웃은 서버가 고친다. 웹은 프레임만 닿으면 되므로 여기서 잠근다:
+   * 보고 있지 않은 채널의 요구도 **스토어에 들어가고**(사이드바·나중에 열 카드가 쓴다) **탭이 보여도 알린다**
+   */
+  it("보고 있지 않은 채널의 승인은 탭이 보여도 스토어에 들어가고 알린다(D1)", () => {
+    const { fake } = armed();
+    screenNow.channelId = CH2;
+    expect(document.visibilityState).toBe("visible");
+
+    fake.serverEmit("approval.requested", { approval: approval() });
+
+    expect(useApprovalStore.getState().byChannel[CH]?.[APPROVAL]?.approval).toMatchObject({
+      channelId: CH,
+      status: "pending",
+    });
+    expect(stub.made).toHaveLength(1);
+  });
+
   it("보고 있는 채널의 승인은 알리지 않는다 — 카드가 이미 화면에 있다", () => {
     const { fake } = armed();
     screenNow.channelId = CH;

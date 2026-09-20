@@ -1,8 +1,8 @@
+import type { RunState } from "@dodok/shared";
 import { useParams } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useChannelRuns } from "@/api/queries";
-import { PanelTabs } from "@/app/layout/PanelTabs";
 import { ApprovalCard } from "@/features/approvals/ApprovalCard";
 import { selectPendingApproval, useApprovalStore } from "@/features/approvals/approvalStore";
 import { selectChannelRuns, TERMINAL, useRunStore } from "@/features/runs/runStore";
@@ -11,32 +11,34 @@ import { RunTimeline } from "./RunTimeline";
 import { mergeRuns } from "./timeline";
 
 /**
- * 활동 탭(`/c/$channelId/activity`, 설계 5.1·5.2): 런 목록과 툴 타임라인. 바깥 틀은 `PanelTabs` 가 맡는다.
+ * 활동 탭(`/c/$channelId/activity`, 설계 5.1·5.2): 런 목록과 툴 타임라인. 바깥 틀(패널 ↔ 시트·탭 머리·닫기)은
+ * 부모인 ChannelPage 의 `PanelTabs` 가 맡는다 — 탭을 옮겨도 머리가 살아 있게(D3).
  * ChannelPage 가 채널을 확인한 뒤에만 마운트된다
  */
 export function ActivityPanel() {
   const { channelId } = useParams({ strict: false }) as { channelId: string };
-  return (
-    <PanelTabs channelId={channelId} active="activity" scroll={false}>
-      {/* 채널을 옮기면 고른 런을 버린다 */}
-      <ActivityBody key={channelId} channelId={channelId} />
-    </PanelTabs>
-  );
+  // 채널을 옮기면 고른 런을 버린다
+  return <ActivityBody key={channelId} channelId={channelId} />;
 }
 
 function ActivityBody({ channelId }: { channelId: string }) {
   const rest = useChannelRuns(channelId);
   const live = useRunStore(useShallow(selectChannelRuns(channelId)));
+
+  /**
+   * 종료 상태를 한 번이라도 본 런은 여기 적어 두고 목록에 계속 싣는다(브라우저 검증 D2·D9).
+   * 끝난 런은 몇 초 뒤 런 스토어에서 빠지는데(버블 정리, 스펙 4.5) REST 재조회는 그보다 늦다 —
+   * 그 사이 목록에서 사라지면 고른 런이 옛 런으로 넘어가고 타임라인이 새로 서서 펼침·스크롤이 날아간다.
+   * 종료는 마지막 사실이라(더 바뀌지 않는다) 남겨 둬도 낡지 않는다. 목록 조회가 실패해도 남는다.
+   * 렌더 중에 적는다 — 효과로 미루면 한 프레임 동안 목록에서 빠져 선택이 튄다. 채널을 옮기면 통째로 버린다(`key`)
+   */
+  const ended = useRef(new Map<string, RunState>());
+  for (const v of live) if (TERMINAL.has(v.state.status)) ended.current.set(v.state.id, v.state);
   const runs = useMemo(
-    () =>
-      mergeRuns(
-        rest.data ?? [],
-        live.map((v) => v.state),
-      ),
+    () => mergeRuns(rest.data ?? [], [...ended.current.values(), ...live.map((v) => v.state)]),
     [rest.data, live],
   );
-  // 끝난 런은 몇 초 뒤 런 스토어에서 빠진다(버블 정리, 스펙 4.5) — 그 전에 REST 목록을 다시 받아 둔다.
-  // 안 그러면 방금 끝난 런이 목록에서 사라진다. 스토어에서 빠질 때 한 번 더 받아 마지막 상태를 맞춘다
+  // 런이 끝나면 REST 목록을 다시 받아 둔다 — 서버가 쥔 마지막 값(끝난 시각 등)으로 줄을 맞춘다
   const endedKey = live
     .filter((v) => TERMINAL.has(v.state.status))
     .map((v) => v.state.id)
