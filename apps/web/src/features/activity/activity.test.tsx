@@ -3,11 +3,28 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { qk } from "@/api/queries";
+import { createQueryClient } from "@/app/queryClient";
+import { selectPendingApproval, useApprovalStore } from "@/features/approvals/approvalStore";
+import { emptyTimeline } from "@/features/messages/timeline";
 import { useRunStore } from "@/features/runs/runStore";
 import { useWireStatus } from "@/realtime/wire";
 import { createFakeSocket, type FakeSocket } from "../../../test/fakeSocket";
-import { AGENT, CH, RUN, RUN2, runEvent, runState, textDelta, uid } from "../../../test/fixtures";
+import {
+  AGENT,
+  APPROVAL,
+  approval,
+  CH,
+  msg,
+  RUN,
+  RUN2,
+  runEvent,
+  runState,
+  textDelta,
+  uid,
+} from "../../../test/fixtures";
 import { stubMedia } from "../../../test/media";
+import { stubScrollLayout } from "../../../test/scrollLayout";
 import { json, ME, renderRoute, shellGet } from "../../../test/shellApi";
 import { agentOf } from "../../../test/settingsServer";
 
@@ -76,6 +93,7 @@ beforeEach(() => {
   wire.socket = fake.wire;
   useWireStatus.getState().setStatus("connected");
   useRunStore.getState().reset();
+  useApprovalStore.getState().reset();
 });
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -83,6 +101,7 @@ afterEach(() => {
   wire.socket = undefined;
   useWireStatus.getState().setStatus("idle");
   useRunStore.getState().reset();
+  useApprovalStore.getState().reset();
 });
 
 const panel = () => screen.findByTestId("page-channel-settings");
@@ -256,20 +275,106 @@ it("「활동 닫기」는 채널 화면으로 돌아간다", async () => {
   expect(screen.queryByTestId("page-channel-settings")).not.toBeInTheDocument();
 });
 
-it("승인 카드 자리는 태스크 8 을 위해 패널 위쪽에 비워 둔다", async () => {
+it("미해결 승인이 없으면 카드도 없고, 오면 런 목록보다 위에 뜬다", async () => {
   stubServer({ runs: [runOf(RUN)], events: TOOL_EVENTS });
   renderRoute(`/c/${CH}/activity`);
   const aside = await panel();
-  const slot = await waitFor(() => {
+  await within(aside).findByText("Read");
+  expect(aside.querySelector('[data-slot="approval-card"]')).toBeNull();
+
+  act(() => useApprovalStore.getState().apply(approval()));
+  const card = await waitFor(() => {
     const el = aside.querySelector('[data-slot="approval-card"]');
-    if (!el) throw new Error("승인 카드 자리가 없다");
+    if (!el) throw new Error("승인 카드가 없다");
     return el;
   });
-  expect(slot).toBeEmptyDOMElement();
+  expect(card).toHaveAttribute("data-status", "pending");
   // 목록보다 위에 있다
-  expect(slot.compareDocumentPosition(within(aside).getByRole("list", { name: "런 목록" }))).toBe(
+  expect(card.compareDocumentPosition(within(aside).getByRole("list", { name: "런 목록" }))).toBe(
     Node.DOCUMENT_POSITION_FOLLOWING,
   );
+
+  // 확정되면 사라지지 않고 결과 한 줄로 남는다(설계 5.3) — 다만 「미해결 하나」 자리는 비워진다
+  act(() =>
+    useApprovalStore
+      .getState()
+      .apply(approval({ status: "allowed", decision: "allow-once", reason: "user" })),
+  );
+  await waitFor(() =>
+    expect(aside.querySelector('[data-slot="approval-card"]')).toHaveAttribute("data-status", "allowed"),
+  );
+});
+
+// 설계 5.3 — 자리 둘(메시지 흐름·활동 탭)이 **하나의 스토어**를 본다. 다른 화면이라 중복이 아니다
+it("승인 카드는 메시지 흐름과 활동 탭 양쪽에 하나씩 뜬다", async () => {
+  const restoreLayout = stubScrollLayout({ width: 800, height: 600, rowHeight: 64 });
+  try {
+    stubServer({ runs: [runOf(RUN)], events: TOOL_EVENTS });
+    const queryClient = createQueryClient(() => {});
+    queryClient.setQueryData(qk.timeline(CH), { ...emptyTimeline(), items: [msg(1)], lastSeq: 1 });
+    act(() => useApprovalStore.getState().apply(approval()));
+    renderRoute(`/c/${CH}/activity`, queryClient);
+
+    const aside = await panel();
+    await waitFor(() => expect(screen.getAllByRole("group", { name: /승인 요청/ })).toHaveLength(2));
+    expect(within(aside).getAllByRole("group", { name: /승인 요청/ })).toHaveLength(1);
+    // 한 스토어라 버튼도 두 벌이다 — 범위를 좁혀 눌러야 한다
+    expect(within(aside).getAllByRole("button", { name: "이번만 허용" })).toHaveLength(1);
+  } finally {
+    restoreLayout();
+  }
+});
+
+// 다른 채널의 승인이 새어 들어오면 안 된다 — 선택자 둘 다 channelId 를 받는다
+it("다른 채널의 승인은 이 채널 활동 탭에 뜨지 않는다", async () => {
+  stubServer({ runs: [runOf(RUN)], events: TOOL_EVENTS });
+  act(() => useApprovalStore.getState().apply(approval({ channelId: uid(77) })));
+  renderRoute(`/c/${CH}/activity`);
+  const aside = await panel();
+  await within(aside).findByText("Read");
+  expect(aside.querySelector('[data-slot="approval-card"]')).toBeNull();
+  expect(selectPendingApproval(CH)(useApprovalStore.getState())).toBeUndefined();
+});
+
+/**
+ * 타임라인 이벤트의 `toolCallId` 는 실물 프레임 도착 순서에 따라 비어 있을 수 있다(p2-t6 어긋남 C) —
+ * 승인 **레코드**가 정본이라 패널이 스토어를 넘겨 준다(Ruling 2)
+ */
+it("승인 레코드가 이벤트에 없는 toolCallId·제목을 메운다", async () => {
+  act(() => useApprovalStore.getState().apply(approval({ toolCallId: "t1", title: "쓰기 허락" })));
+  stubServer({
+    runs: [runOf(RUN, { status: "tool", endedAt: undefined })],
+    events: [
+      runEvent({ type: "TOOL_CALL_START", seq: 1, toolCallId: "t1", toolCallName: "Write" }),
+      runEvent({ type: "TOOL_CALL_START", seq: 2, toolCallId: "t2", toolCallName: "Read" }),
+      runEvent({
+        type: "APPROVAL_REQUESTED",
+        seq: 3,
+        approvalId: APPROVAL,
+        kind: "plugin",
+        title: "이벤트가 아는 제목",
+        severity: "warning",
+        allowedDecisions: ["allow-once", "deny"],
+        expiresAt: "2027-01-15T08:02:00.000Z",
+      }),
+    ],
+  });
+  renderRoute(`/c/${CH}/activity`);
+  const aside = await panel();
+  const list = await within(aside).findByRole("list", { name: "활동 기록" });
+  const toolRow = (name: string): HTMLElement => {
+    const hit = within(list)
+      .getAllByRole("listitem")
+      .find(
+        (li) => li.querySelector('[data-slot="approval-row"]') === null && li.textContent?.includes(name),
+      );
+    if (!hit) throw new Error(`${name} 툴 행이 없다`);
+    return hit;
+  };
+  expect(toolRow("Write")).toHaveTextContent("승인");
+  expect(toolRow("Read")).not.toHaveTextContent("승인");
+  expect(within(list).getByText("쓰기 허락")).toBeInTheDocument();
+  expect(within(list).queryByText("이벤트가 아는 제목")).not.toBeInTheDocument();
 });
 
 it("승인·오류·단계 행도 타임라인에 그려진다", async () => {
@@ -511,4 +616,27 @@ it("끝난 런이 런 스토어에서 빠져도 목록에 남는다", async () =
 
   act(() => useRunStore.getState().remove(RUN2));
   expect(await within(aside).findByRole("button", { name: /@dev/ })).toHaveTextContent("완료");
+});
+
+/**
+ * 태스크 7 리뷰 이월 6 — 목록 조회가 실패했다고 **실시간으로 이미 아는 런까지** 감추지 않는다.
+ * 잠깐 끊긴 사이에 진행 중인 런이 화면에서 사라지면 「멈춘 것」처럼 보인다
+ */
+it("런 목록 조회가 실패해도 실시간으로 아는 런은 그린다", async () => {
+  stubServer({
+    runs: [],
+    override: (method, url) =>
+      method === "GET" && /\/runs(\?|$)/.test(url)
+        ? json(500, { code: "INTERNAL", message: "터졌다" })
+        : undefined,
+  });
+  renderRoute(`/c/${CH}/activity`);
+  const aside = await panel();
+  await within(aside).findByText("런 목록을 불러오지 못했습니다.");
+
+  act(() => useRunStore.getState().applyState(runState({ id: RUN2, status: "streaming" })));
+
+  expect(await within(aside).findByRole("button", { name: /@dev/ })).toHaveTextContent("응답 중");
+  // 실패 문구도 함께 남는다 — 목록이 낡았다는 사실을 감추지 않는다
+  expect(within(aside).getByText("런 목록을 불러오지 못했습니다.")).toBeInTheDocument();
 });

@@ -1,10 +1,16 @@
 import type { QueryClient } from "@tanstack/react-query";
 import type { RouterHistory } from "@tanstack/react-router";
+import type { NotifyTarget } from "@/realtime/handlers";
 import { createQueryClient } from "./queryClient";
-import { type AppRouter, createAppRouter } from "./router";
+import { type AppRouter, channelIdOf, createAppRouter } from "./router";
 import { resetClientState } from "./session";
 
-export type AppClient = { queryClient: QueryClient; router: AppRouter; onUnauthorized: () => void };
+export type AppClient = {
+  queryClient: QueryClient;
+  router: AppRouter;
+  onUnauthorized: () => void;
+  notify: NotifyTarget;
+};
 
 /** 앱 하나의 QueryClient·Router 와 401 처리. App 이 한 번 만들고, 테스트는 메모리 히스토리를 넘긴다 */
 export function createApp(history?: RouterHistory): AppClient {
@@ -22,5 +28,16 @@ export function createApp(history?: RouterHistory): AppClient {
     void router.navigate({ to: "/login", search: { next: href }, replace: true });
   }
 
-  return { queryClient, router, onUnauthorized };
+  /**
+   * 승인 알림이 쓰는 화면 사정(설계 5.4) — 알림 코드가 라우터를 직접 들고 있지 않도록 여기서 묶는다.
+   * 정체성이 고정돼야 한다(WireProvider 의 효과 의존성)
+   */
+  const notify: NotifyTarget = {
+    currentChannelId: () => channelIdOf(router.latestLocation.pathname),
+    openActivity: (channelId) => {
+      void router.navigate({ to: "/c/$channelId/activity", params: { channelId } });
+    },
+  };
+
+  return { queryClient, router, onUnauthorized, notify };
 }

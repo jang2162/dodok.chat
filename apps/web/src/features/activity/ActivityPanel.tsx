@@ -1,8 +1,10 @@
 import { useParams } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useChannelRuns } from "@/api/queries";
 import { PanelTabs } from "@/app/layout/PanelTabs";
+import { ApprovalCard } from "@/features/approvals/ApprovalCard";
+import { selectPendingApproval, useApprovalStore } from "@/features/approvals/approvalStore";
 import { selectChannelRuns, TERMINAL, useRunStore } from "@/features/runs/runStore";
 import { RunList } from "./RunList";
 import { RunTimeline } from "./RunTimeline";
@@ -52,10 +54,30 @@ function ActivityBody({ channelId }: { channelId: string }) {
   const [picked, setPicked] = useState<string>();
   const selected = runs.find((r) => r.id === picked) ?? runs[0];
 
+  /**
+   * 승인은 채널 것을 본다 — 고른 런으로 거르지 않는다. 옛 런을 들여다보는 동안에도 답해야 할 카드는 맨 위에 남는다.
+   * 메시지 흐름의 카드와 **같은 스토어**라 잠금·확정 표시가 함께 움직인다(설계 5.3)
+   */
+  const pending = useApprovalStore(selectPendingApproval(channelId));
+  /**
+   * 한 번 띄운 카드는 확정된 뒤에도 결과 한 줄로 남긴다(설계 5.3 「사라지지 않는다 — 기록이다」) —
+   * 누른 자리에서 「허용됨」을 봐야 한다. 새 승인이 오면 그쪽으로 바뀌고, 채널을 옮기면 버린다(`key={channelId}`).
+   * 열기 전에 이미 끝나 있던 옛 승인은 띄우지 않는다 — 그 기록은 메시지 흐름과 타임라인 행에 있다
+   */
+  const [shown, setShown] = useState<string>();
+  const pendingId = pending?.approval.id;
+  useEffect(() => {
+    if (pendingId) setShown(pendingId);
+  }, [pendingId]);
+  const cardId = pendingId ?? shown;
+  const approvals = useApprovalStore((s) => s.byChannel[channelId]);
+  // 툴 행의 「승인」 칩이 승인 레코드를 찾는 길(Ruling 2) — 런 이벤트의 toolCallId 는 비어 있을 수 있다
+  const approvalOf = useCallback((approvalId: string) => approvals?.[approvalId]?.approval, [approvals]);
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {/* 승인 카드 자리 — 태스크 8 이 여기에 고정 카드를 넣는다(설계 5.3) */}
-      <div data-slot="approval-card" className="empty:hidden" />
+      {/* 승인 카드는 패널 맨 위에 고정(설계 5.3) */}
+      {cardId && <ApprovalCard approvalId={cardId} channelId={channelId} />}
       <RunList
         runs={runs}
         selectedId={selected?.id}
@@ -67,7 +89,12 @@ function ActivityBody({ channelId }: { channelId: string }) {
       />
       {/* 런을 바꾸면 타임라인을 새로 세운다 — 툴 행의 펼침 상태·「끝에 붙어 있다」가 앞 런에서 이어지지 않게 */}
       {selected && (
-        <RunTimeline key={selected.id} runId={selected.id} running={!TERMINAL.has(selected.status)} />
+        <RunTimeline
+          key={selected.id}
+          runId={selected.id}
+          running={!TERMINAL.has(selected.status)}
+          approval={approvalOf}
+        />
       )}
     </div>
   );

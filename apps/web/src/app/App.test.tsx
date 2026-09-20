@@ -211,3 +211,21 @@ it("앱은 파일 끌어 놓기를 창에서 막는다(로그인 화면에서도
   const files = { dataTransfer: { types: ["Files"], files: [new File(["x"], "a.png")], dropEffect: "copy" } };
   expect(fireEvent.drop(heading, files)).toBe(false);
 });
+
+// 설계 5.4 — 알림을 누르면 그 채널의 활동 탭으로. 알림 코드가 아니라 createApp 이 라우터를 안다
+it("알림이 보는 화면 사정은 지금 채널을 알고, 누르면 그 채널 활동 탭을 연다", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn<typeof fetch>(async (input, init) => {
+      if (String(input) === "/api/v1/auth/me") return json(200, ME);
+      return shellGet(input, init) ?? json(404, { code: "NOT_FOUND", message: "x" });
+    }),
+  );
+  const { app, history } = renderApp("/c/c1");
+  await screen.findByTestId("channel-header");
+  expect(app.notify.currentChannelId()).toBe("c1");
+
+  act(() => app.notify.openActivity("c2"));
+  await waitFor(() => expect(history.location.pathname).toBe("/c/c2/activity"));
+  expect(app.notify.currentChannelId()).toBe("c2");
+});

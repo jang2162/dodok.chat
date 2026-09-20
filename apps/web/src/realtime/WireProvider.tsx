@@ -11,8 +11,9 @@ import {
 import { qk, useMe } from "@/api/queries";
 import { registerSessionReset, resetClientState } from "@/app/session";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
+import { resetApprovalNotices } from "@/features/approvals/notify";
 import { useRunStore } from "@/features/runs/runStore";
-import { attachHandlers } from "./handlers";
+import { attachHandlers, type NotifyTarget } from "./handlers";
 import { createSubscriptions, type Subscriptions } from "./subscriptions";
 import { createWireSocket, useWireStatus, type WireSocket } from "./wire";
 
@@ -46,9 +47,12 @@ function useSignedIn(qc: QueryClient): boolean {
 export function WireProvider({
   children,
   onUnauthorized,
+  notify,
 }: {
   children: ReactNode;
   onUnauthorized: () => void;
+  /** 승인 알림이 쓰는 화면 사정(설계 5.4) — `createApp()` 이 만든, 정체성이 고정된 것 */
+  notify: NotifyTarget;
 }) {
   const qc = useQueryClient();
   useMe(); // 가드·로그인 화면과 같은 me 쿼리 — 없으면 불러 둔다
@@ -62,6 +66,7 @@ export function WireProvider({
     const detach = attachHandlers(socket, {
       queryClient: qc,
       subscriptions,
+      notify,
       // 겹쳐 불려도 멱등이다 — onUnauthorized(createApp)도 resetClientState 를 부른다
       onUnauthorized: () => {
         resetClientState(qc);
@@ -72,6 +77,8 @@ export function WireProvider({
       socket.disconnect();
       useRunStore.getState().reset();
       useApprovalStore.getState().reset();
+      // 이미 알린 승인 기록도 — 다른 사람으로 다시 로그인하면 같은 승인을 다시 알려야 한다
+      resetApprovalNotices();
       useWireStatus.getState().setStatus("idle");
     });
     useWireStatus.getState().setStatus("connecting");
@@ -84,7 +91,7 @@ export function WireProvider({
       useWireStatus.getState().setStatus("idle");
       setRuntime(NONE);
     };
-  }, [signedIn, qc, onUnauthorized]);
+  }, [signedIn, qc, onUnauthorized, notify]);
 
   return <WireContext.Provider value={runtime}>{children}</WireContext.Provider>;
 }

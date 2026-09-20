@@ -14,6 +14,9 @@ const status = () => useWireStatus.getState().status;
 
 const detachers: Array<() => void> = [];
 
+/** 이 파일은 연결만 본다 — 승인 알림 자리는 아무것도 하지 않는 것으로 채운다 */
+const noNotify = { currentChannelId: () => undefined, openActivity: () => {} };
+
 /** 붙어 있는 가짜 소켓에, 실제 QueryClient(createQueryClient)·구독 관리자로 핸들러를 붙인다. onUnauthorized 는 앱과 같은 하나 */
 function setup() {
   const fake = createFakeSocket();
@@ -22,7 +25,7 @@ function setup() {
   const onUnauthorized = vi.fn();
   const queryClient = createQueryClient(onUnauthorized);
   const subscriptions = createSubscriptions({ socket: fake.wire, queryClient });
-  detachers.push(attachHandlers(fake.wire, { queryClient, subscriptions, onUnauthorized }));
+  detachers.push(attachHandlers(fake.wire, { queryClient, subscriptions, onUnauthorized, notify: noNotify }));
   return { fake, subscriptions, onUnauthorized };
 }
 
@@ -194,7 +197,12 @@ describe("연결 상태", () => {
     const onUnauthorized = vi.fn();
     const queryClient = createQueryClient(onUnauthorized);
     const subscriptions = createSubscriptions({ socket: fake.wire, queryClient });
-    const detach = attachHandlers(fake.wire, { queryClient, subscriptions, onUnauthorized });
+    const detach = attachHandlers(fake.wire, {
+      queryClient,
+      subscriptions,
+      onUnauthorized,
+      notify: noNotify,
+    });
     expect(fake.listenerCount()).toBeGreaterThan(before);
 
     // 알 수 없는 코드의 미들웨어 거절 → 스스로 다시 붙기를 걸어 둔 채로 뗀다

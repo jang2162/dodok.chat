@@ -6,8 +6,11 @@ import { type AdapterStatusResponse, qk } from "@/api/queries";
 import { createQueryClient } from "@/app/queryClient";
 import { fromLatest } from "@/features/messages/timeline";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
+import { resetApprovalNotices } from "@/features/approvals/notify";
 import { useRunStore } from "@/features/runs/runStore";
+import { stubNotification } from "../../test/domStubs";
 import { createFakeSocket } from "../../test/fakeSocket";
+import { agentOf } from "../../test/settingsServer";
 import {
   AGENT,
   APPROVAL,
@@ -47,6 +50,16 @@ const channel = (over: Partial<Channel> = {}): Channel =>
 
 const detachers: Array<() => void> = [];
 
+/** 알림이 보는 화면 사정 — 테스트가 「지금 보고 있는 채널」을 정하고 「눌러서 연 채널」을 받아 본다 */
+const screenNow: { channelId: string | undefined; opened: string[] } = {
+  channelId: undefined,
+  opened: [],
+};
+const notify = {
+  currentChannelId: () => screenNow.channelId,
+  openActivity: (channelId: string) => screenNow.opened.push(channelId),
+};
+
 /** 실제 QueryClient(createQueryClient)·구독 관리자 위에 핸들러를 붙인다. onUnauthorized 는 앱과 같은 하나 */
 function setup() {
   const fake = createFakeSocket();
@@ -56,7 +69,7 @@ function setup() {
   const onUnauthorized = vi.fn();
   const queryClient = createQueryClient(onUnauthorized);
   const subscriptions = createSubscriptions({ socket: fake.wire, queryClient, fetchPage: vi.fn() });
-  const detach = attachHandlers(fake.wire, { queryClient, subscriptions, onUnauthorized });
+  const detach = attachHandlers(fake.wire, { queryClient, subscriptions, onUnauthorized, notify });
   detachers.push(detach);
   return { fake, queryClient, subscriptions, onUnauthorized, detach };
 }
@@ -64,6 +77,9 @@ function setup() {
 beforeEach(() => {
   useRunStore.getState().reset();
   useApprovalStore.getState().reset();
+  resetApprovalNotices();
+  screenNow.channelId = undefined;
+  screenNow.opened = [];
   useTypingStore.setState({ byChannel: {} });
   vi.clearAllMocks();
 });
@@ -232,6 +248,97 @@ describe("승인 이벤트", () => {
       toolCallId: "toolu_9",
       urlPath: "/a",
     });
+  });
+});
+
+describe("승인 알림", () => {
+  let stub: ReturnType<typeof stubNotification>;
+  /** 알림이 뜰 수 있는 판 — 권한 있음, 에이전트·채널 이름은 캐시에 */
+  function armed(permission: NotificationPermission = "granted") {
+    stub = stubNotification(permission);
+    const s = setup();
+    s.queryClient.setQueryData(qk.agents, [agentOf(AGENT, "dev")]);
+    s.queryClient.setQueryData(qk.channels, [channel({ name: "일반" })]);
+    return s;
+  }
+  afterEach(() => {
+    stub.restore();
+    // 이 묶음은 window.focus·document.visibilityState 를 흉내 낸다 — 다음 테스트로 새지 않게 되돌린다
+    vi.restoreAllMocks();
+  });
+
+  it("다른 채널을 보고 있으면 알림을 띄우고, 누르면 그 채널 활동 탭으로 간다", () => {
+    const { fake } = armed();
+    screenNow.channelId = CH2;
+
+    fake.serverEmit("approval.requested", { approval: approval() });
+
+    expect(stub.made).toHaveLength(1);
+    expect(stub.made[0]?.title).toBe("승인 필요 — @dev 가 Write 를 실행하려 합니다");
+    expect(stub.made[0]?.options?.body).toBe("일반 채널");
+    // jsdom 에는 창을 앞으로 내는 동작이 없다 — 가짜로 둬야 「구현되지 않음」 잡음이 나지 않는다
+    vi.spyOn(window, "focus").mockImplementation(() => {});
+    stub.made[0]?.click();
+    expect(screenNow.opened).toEqual([CH]);
+  });
+
+  it("보고 있는 채널의 승인은 알리지 않는다 — 카드가 이미 화면에 있다", () => {
+    const { fake } = armed();
+    screenNow.channelId = CH;
+    fake.serverEmit("approval.requested", { approval: approval() });
+    expect(stub.made).toHaveLength(0);
+    // 스토어에는 그대로 들어간다
+    expect(useApprovalStore.getState().byChannel[CH]?.[APPROVAL]).toBeDefined();
+  });
+
+  it("탭이 숨겨져 있으면 보고 있는 채널이어도 알린다", () => {
+    const { fake } = armed();
+    screenNow.channelId = CH;
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    fake.serverEmit("approval.requested", { approval: approval() });
+    expect(stub.made).toHaveLength(1);
+  });
+
+  it("이미 확정된 승인이 요구로 와도 알리지 않는다", () => {
+    const { fake } = armed();
+    screenNow.channelId = CH2;
+    fake.serverEmit("approval.requested", {
+      approval: approval({ status: "expired", reason: "timeout" }),
+    });
+    expect(stub.made).toHaveLength(0);
+  });
+
+  it("같은 승인이 프레임 둘로 와도 한 번만 울리고, 확정되면 기록을 지운다", () => {
+    const { fake } = armed();
+    screenNow.channelId = CH2;
+
+    fake.serverEmit("approval.requested", { approval: approval({ toolCallId: undefined }) });
+    fake.serverEmit("approval.requested", { approval: approval({ toolCallId: "toolu_9" }) });
+    expect(stub.made).toHaveLength(1);
+
+    // 확정되면 잊는다 — 집합이 끝없이 자라지 않게(승인 id 는 재사용되지 않는다)
+    fake.serverEmit("approval.resolved", {
+      approval: approval({ status: "allowed", decision: "allow-once", reason: "user" }),
+    });
+    fake.serverEmit("approval.requested", { approval: approval() });
+    expect(stub.made).toHaveLength(2);
+  });
+
+  it("권한을 안 줬으면 조용하다 — 카드가 정본이라 스토어는 그대로 채운다", () => {
+    const { fake } = armed("default");
+    screenNow.channelId = CH2;
+    fake.serverEmit("approval.requested", { approval: approval() });
+    expect(stub.made).toHaveLength(0);
+    expect(useApprovalStore.getState().byChannel[CH]?.[APPROVAL]?.approval.status).toBe("pending");
+  });
+
+  it("에이전트·채널을 아직 못 받았으면 일반 문구로 띄운다 — 알림 때문에 REST 를 부르지 않는다", () => {
+    stub = stubNotification("granted");
+    const { fake } = setup();
+    screenNow.channelId = CH2;
+    fake.serverEmit("approval.requested", { approval: approval({ toolName: undefined }) });
+    expect(stub.made[0]?.title).toBe("승인 필요 — 에이전트가 도구를 실행하려 합니다");
+    expect(stub.made[0]?.options?.body).toBeUndefined();
   });
 });
 

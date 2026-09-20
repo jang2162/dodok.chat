@@ -8,7 +8,7 @@ import { TooltipProvider } from "@/ui/tooltip";
 import { shellGet } from "../../test/shellApi";
 import { RouteError } from "./RouteError";
 import { createQueryClient } from "./queryClient";
-import { createAppRouter, safeNext } from "./router";
+import { channelIdOf, createAppRouter, safeNext } from "./router";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -98,6 +98,16 @@ it("오류 화면은 코드 오류(TypeError)를 서버 연결 문제로 보지 
   });
   render(<RouterProvider router={createRouter({ routeTree: root, history: createMemoryHistory() })} />);
   expect(await screen.findByText("화면을 표시할 수 없습니다")).toBeInTheDocument();
+});
+
+// 승인 알림이 「같은 채널을 보고 있는가」를 가리는 근거(설계 5.4)
+it("channelIdOf 는 채널 경로와 그 아래 탭에서만 채널 id 를 준다", () => {
+  expect(channelIdOf("/c/abc")).toBe("abc");
+  expect(channelIdOf("/c/abc/activity")).toBe("abc");
+  expect(channelIdOf("/c/abc/settings")).toBe("abc");
+  for (const other of ["/", "/agents", "/login", "/c", "/c/"]) {
+    expect(channelIdOf(other)).toBeUndefined();
+  }
 });
 
 it("safeNext 는 앱 안 경로만 받는다", () => {

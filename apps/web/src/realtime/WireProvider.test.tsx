@@ -7,7 +7,9 @@ import { meQuery, qk } from "@/api/queries";
 import { createQueryClient } from "@/app/queryClient";
 import { resetClientState } from "@/app/session";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
+import { notifyApproval, resetApprovalNotices } from "@/features/approvals/notify";
 import { useRunStore } from "@/features/runs/runStore";
+import { stubNotification } from "../../test/domStubs";
 import { createdSockets } from "../../test/fakeSocket";
 import { approval, CH, CH2, runState, USER, uid } from "../../test/fixtures";
 import { useWireStatus } from "./wire";
@@ -17,6 +19,8 @@ const json = (status: number, body: unknown) => new Response(JSON.stringify(body
 const ME = { user: { id: USER, handle: "owner" }, workspaceId: uid(3) };
 const ok = <T,>(data: T): Result<T> => ({ ok: true, data });
 const meQueryFresh = { ...meQuery, staleTime: 0 };
+/** 승인 알림이 보는 화면 사정 — 이 파일은 알림을 재지 않으므로 아무것도 하지 않는다 */
+const notify = { currentChannelId: () => undefined, openActivity: () => {} };
 
 let queryClient: QueryClient;
 const onUnauthorized = vi.fn();
@@ -25,6 +29,7 @@ beforeEach(() => {
   queryClient = createQueryClient(onUnauthorized);
   useRunStore.getState().reset();
   useApprovalStore.getState().reset();
+  resetApprovalNotices();
   useWireStatus.setState({ status: "idle" });
   onUnauthorized.mockClear();
 });
@@ -47,7 +52,7 @@ function Probe() {
 function Tree({ children }: { children?: ReactNode }) {
   return (
     <QueryClientProvider client={queryClient}>
-      <WireProvider onUnauthorized={onUnauthorized}>
+      <WireProvider onUnauthorized={onUnauthorized} notify={notify}>
         <Probe />
         {children}
       </WireProvider>
@@ -82,16 +87,23 @@ it("me 가 확인되면 소켓 하나를 만들어 연결하고, 다시 렌더�
 it("세션 정리(로그아웃·401)는 소켓을 끊고 런·승인 스토어를 비우며 상태를 idle 로", async () => {
   stubMe();
   const errors = vi.spyOn(console, "error");
+  const notifications = stubNotification("granted");
   render(<Tree />);
   await waitFor(() => expect(createdSockets).toHaveLength(1));
   useRunStore.getState().applyState(runState());
   useApprovalStore.getState().apply(approval());
+  const ring = () => notifyApproval(approval(), { visible: false, onClick: () => {} });
+  expect(ring()).toBe(true); // 한 번 알렸다 — 두 번째는 같은 id 라 막힌다
+  expect(ring()).toBe(false);
 
   resetClientState(queryClient);
 
   expect(createdSockets[0]?.calls.disconnect).toBeGreaterThanOrEqual(1);
   expect(useRunStore.getState().runs).toEqual({});
   expect(useApprovalStore.getState().byChannel).toEqual({});
+  // 이미 알린 승인 기록도 비운다 — 다른 사람으로 다시 로그인하면 같은 승인을 다시 알려야 한다
+  expect(ring()).toBe(true);
+  notifications.restore();
   expect(useWireStatus.getState().status).toBe("idle");
   // 비운 캐시에 me 를 다시 받아 새 소켓까지 — 그 사이 렌더 중 갱신 경고(캐시 알림을 렌더 안에서 받음)가 없다
   await waitFor(() => expect(createdSockets).toHaveLength(2));

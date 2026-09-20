@@ -1,9 +1,10 @@
-import type { AdapterStatus, Channel, ServerToClientEvents } from "@dodok/shared";
+import type { AdapterStatus, Agent, Channel, ServerToClientEvents } from "@dodok/shared";
 import type { QueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ApiRequestError } from "@/api/http";
 import { type AdapterStatusResponse, meQuery, qk } from "@/api/queries";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
+import { forgetApproval, notifyApproval } from "@/features/approvals/notify";
 import { hasGap, upsert } from "@/features/messages/timeline";
 import { useRunStore } from "@/features/runs/runStore";
 import type { Subscriptions } from "./subscriptions";
@@ -30,12 +31,28 @@ export function nextRetryDelay(attempt: number, random: () => number = Math.rand
 /** 재연결을 멈춘 상태 — 끊김·전송 실패가 덮어쓰지 않는다 */
 const STOPPED: ReadonlySet<WireStatus> = new Set(["protocol_mismatch", "rejected"]);
 
-type Deps = { queryClient: QueryClient; subscriptions: Subscriptions; onUnauthorized: () => void };
+/**
+ * 승인 알림이 쓰는 화면 사정(설계 5.4). 라우터를 realtime 안으로 들이지 않으려고 주입받는다 —
+ * 앱 하나에 하나이고 정체성이 고정돼야 한다(`createApp()` 의 것)
+ */
+export type NotifyTarget = {
+  /** 지금 보고 있는 채널 */
+  currentChannelId(): string | undefined;
+  /** 알림을 눌렀을 때 — 그 채널의 활동 탭 */
+  openActivity(channelId: string): void;
+};
+
+type Deps = {
+  queryClient: QueryClient;
+  subscriptions: Subscriptions;
+  onUnauthorized: () => void;
+  notify: NotifyTarget;
+};
 type MessageEvent = Parameters<ServerToClientEvents["message.created"]>[0];
 
 /** 서버 이벤트를 Query 캐시·런 스토어·작성 중 저장소·연결 상태에 반영한다(스펙 4장). 해제 함수를 돌려준다 */
 export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
-  const { queryClient: qc, subscriptions, onUnauthorized } = deps;
+  const { queryClient: qc, subscriptions, onUnauthorized, notify } = deps;
   const setStatus = (s: WireStatus) => useWireStatus.getState().setStatus(s);
   let detached = false;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -101,8 +118,23 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
      * 승인 요구·확정. 같은 승인이 프레임 둘로 와 두 번 발행될 수 있어(p2-t6 Ruling C) 스토어가 id 로 병합한다 —
      * 카드는 하나다. 확정 사실은 클라이언트 시계로 그린 「만료됨」을 덮는다
      */
-    "approval.requested": ({ approval }) => useApprovalStore.getState().apply(approval),
-    "approval.resolved": ({ approval }) => useApprovalStore.getState().apply(approval),
+    "approval.requested": ({ approval }) => {
+      useApprovalStore.getState().apply(approval);
+      // 이미 답한 승인은 알리지 않는다 — 재접속 되감기·늦게 온 프레임이 확정 뒤에 올 수 있다
+      if (approval.status !== "pending") return;
+      notifyApproval(approval, {
+        visible: document.visibilityState === "visible",
+        currentChannelId: notify.currentChannelId(),
+        onClick: () => notify.openActivity(approval.channelId),
+        // 캐시에 없으면(아직 못 받았다) 일반 문구로 — 알림 때문에 REST 를 부르지 않는다
+        handle: qc.getQueryData<Agent[]>(qk.agents)?.find((a) => a.id === approval.agentId)?.handle,
+        channelName: qc.getQueryData<Channel[]>(qk.channels)?.find((c) => c.id === approval.channelId)?.name,
+      });
+    },
+    "approval.resolved": ({ approval }) => {
+      useApprovalStore.getState().apply(approval);
+      forgetApproval(approval.id);
+    },
     /**
      * 새 채널 — 사이드바가 보는 목록 캐시에 덧붙인다(만든 사람은 useCreateChannel 이 먼저 넣는다).
      * 같은 id 가 이미 있으면 그대로 둔다 — 늦게 온 created 가 그새 바뀐 값(channel.updated)을 되돌리지 않게.

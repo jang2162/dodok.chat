@@ -31,6 +31,12 @@ export function safeNext(value: unknown): string | undefined {
 }
 
 /**
+ * 지금 보고 있는 채널 — `/c/<id>` 와 그 아래(설정·활동 탭). 승인 알림이 「같은 채널을 보고 있는가」를
+ * 가릴 때 쓴다(설계 5.4). 라우터 바깥(realtime)에서 부르므로 경로 모양만 본다
+ */
+export const channelIdOf = (pathname: string): string | undefined => /^\/c\/([^/]+)/.exec(pathname)?.[1];
+
+/**
  * 화면은 라우트 단위로 나눠 받는다 — 첫 화면(로그인)이 작성기(Tiptap)·마크다운 렌더러(Streamdown)까지 내려받지 않게.
  * 라우터가 화면을 그리기 전에 조각을 기다리므로(`preload`) 동작·순서는 같다
  */

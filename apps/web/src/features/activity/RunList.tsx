@@ -31,47 +31,52 @@ export function RunList({
   const handleOf = (agentId: string) => agents?.find((a) => a.id === agentId)?.handle;
   const now = Date.now();
 
-  if (error) {
-    return (
-      <Notice onRetry={onRetry} retrying={retrying}>
-        런 목록을 불러오지 못했습니다.
-      </Notice>
-    );
+  const failure = error && (
+    <Notice onRetry={onRetry} retrying={retrying}>
+      런 목록을 불러오지 못했습니다.
+    </Notice>
+  );
+  // 조회가 실패해도 실시간으로 아는 런은 그대로 그린다(태스크 7 리뷰 이월 6) —
+  // 잠깐 끊긴 사이에 진행 중인 런이 화면에서 사라지면 「멈춘 것」처럼 보인다
+  if (runs.length === 0) {
+    return failure || <Notice>{loading ? "불러오는 중…" : "아직 실행 기록이 없습니다."}</Notice>;
   }
-  if (runs.length === 0) return <Notice>{loading ? "불러오는 중…" : "아직 실행 기록이 없습니다."}</Notice>;
 
   return (
-    <ul aria-label="런 목록" className="max-h-[40%] shrink-0 divide-y overflow-y-auto border-b">
-      {runs.map((run) => {
-        const selected = run.id === selectedId;
-        const handle = handleOf(run.agentId);
-        const duration = runDurationMs(run, now);
-        return (
-          <li key={run.id}>
-            <button
-              type="button"
-              aria-current={selected ? "true" : undefined}
-              onClick={() => onSelect(run.id)}
-              className={cn(
-                "flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent",
-                "focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none focus-visible:-outline-offset-2",
-                selected && "bg-accent",
-              )}
-            >
-              <span className="min-w-0 flex-1 truncate font-medium">
-                {handle ? `@${handle}` : "알 수 없는 에이전트"}
-              </span>
-              <Badge variant={runStatusVariant(run.status)} className="shrink-0">
-                {runStatusLabel(run.status)}
-              </Badge>
-              <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                {run.startedAt ? TIME.format(new Date(run.startedAt)) : "—"}
-                {duration !== undefined && ` · ${Math.round(duration / 1000)}초`}
-              </span>
-            </button>
-          </li>
-        );
-      })}
-    </ul>
+    <>
+      {failure}
+      <ul aria-label="런 목록" className="max-h-[40%] shrink-0 divide-y overflow-y-auto border-b">
+        {runs.map((run) => {
+          const selected = run.id === selectedId;
+          const handle = handleOf(run.agentId);
+          const duration = runDurationMs(run, now);
+          return (
+            <li key={run.id}>
+              <button
+                type="button"
+                aria-current={selected ? "true" : undefined}
+                onClick={() => onSelect(run.id)}
+                className={cn(
+                  "flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent",
+                  "focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none focus-visible:-outline-offset-2",
+                  selected && "bg-accent",
+                )}
+              >
+                <span className="min-w-0 flex-1 truncate font-medium">
+                  {handle ? `@${handle}` : "알 수 없는 에이전트"}
+                </span>
+                <Badge variant={runStatusVariant(run.status)} className="shrink-0">
+                  {runStatusLabel(run.status)}
+                </Badge>
+                <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                  {run.startedAt ? TIME.format(new Date(run.startedAt)) : "—"}
+                  {duration !== undefined && ` · ${Math.round(duration / 1000)}초`}
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </>
   );
 }
