@@ -264,13 +264,22 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       armRunTimer(runId);
       return;
     }
+    watchApprovalExpiry(runId, expiresAt);
+  }
+
+  function watchApprovalExpiry(runId: string, expiresAt: Date): void {
     const ms = Math.max(0, expiresAt.getTime() + APPROVAL_WATCHDOG_GRACE_MS - now().getTime());
     timers.set(runId, "approval", ms, () => {
       expireApprovals(runId);
     });
   }
 
-  /** 감시 타이머가 울렸다 — 승인을 만료로 닫으면 그 신호가 런 시계를 다시 켠다. 닫을 게 없으면 여기서 켠다 */
+  /**
+   * 감시 타이머가 울렸다 — **실제로 만료된** 승인만 닫히고, 그 신호가 런 시계를 다시 켠다.
+   * 아직 살아 있는 승인이 남았으면(한 런에 승인이 둘) 그 만료 시각으로 다시 감시한다 —
+   * 대기에서 나오며 approval 슬롯이 지워지므로 여기서 다시 걸지 않으면 남은 승인이 감시 밖에 남는다.
+   * 만료 시각이 이미 지난 행이 남았다면 닫기가 실패한 것이다(markApproval 오류) — 다시 걸면 0ms 로 도니 런 시계에 맡긴다.
+   */
   function expireApprovals(runId: string): void {
     try {
       deps.approvals?.expireForRun(runId);
@@ -278,9 +287,14 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       logger.error({ err, runId }, "approval expiry failed");
     }
     if (stopped) return;
-    if (store.getRun(db, runId)?.status === "awaiting_approval" && !timers.has(runId, "run")) {
-      armRunTimer(runId);
+    const run = store.getRun(db, runId);
+    if (!run || TERMINAL_STATUSES.has(run.status)) return;
+    const remaining = deps.approvals?.earliestPendingExpiry(runId);
+    if (remaining && remaining.getTime() > now().getTime()) {
+      watchApprovalExpiry(runId, remaining);
+      return;
     }
+    if (run.status === "awaiting_approval" && !timers.has(runId, "run")) armRunTimer(runId);
   }
 
   function rearmTimers(runId: string, prev: RunStatus, next: RunStatus): void {

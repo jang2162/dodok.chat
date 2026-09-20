@@ -10,6 +10,7 @@ import { addMember, createChannel } from "../src/modules/channels/service";
 import { createUserMessage, getMessage, rowToMessage } from "../src/modules/messages/service";
 import type { RunPlan } from "../src/modules/router/decide";
 import {
+  type OrchestratorDeps,
   type OrchestratorLogger,
   type RunTimeouts,
   createOrchestrator,
@@ -25,7 +26,7 @@ function systemMessages(db: DbOrTx): Message[] {
   return db.select().from(messages).where(eq(messages.kind, "system")).all().map(rowToMessage);
 }
 
-function setup(opts: { timeouts?: Partial<RunTimeouts> } = {}) {
+function setup(opts: { timeouts?: Partial<RunTimeouts>; approvals?: OrchestratorDeps["approvals"] } = {}) {
   const db = newTestDb();
   const bus = new ServerBus();
   const adapter = new FakeAdapter();
@@ -43,6 +44,7 @@ function setup(opts: { timeouts?: Partial<RunTimeouts> } = {}) {
     logger: logger as unknown as OrchestratorLogger,
     onAgentMessage,
     timeouts: opts.timeouts,
+    ...(opts.approvals ? { approvals: opts.approvals } : {}),
   });
 
   let n = 0;
@@ -600,6 +602,39 @@ describe("orchestrator", () => {
     await vi.advanceTimersByTimeAsync(51);
 
     expect(t.runOf(run.id)).toMatchObject({ status: "error", error: { code: "TIMEOUT" } });
+    t.orch.stop();
+  });
+
+  it("승인 만료가 실패해 행이 그대로 남으면 감시를 다시 걸지 않고 평소 런 상한으로 돌아간다", async () => {
+    // expireForRun 이 던지면(markApproval 오류) 만료 시각이 지난 행이 pending 으로 남는다.
+    // 그 행으로 감시를 다시 걸면 0ms 로 무한히 돈다 — 런 시계가 상한을 맡는다(p2-t5 리뷰 이월 3)
+    const expiresAt = new Date(Date.now() + 20_000);
+    const approvals = {
+      ingest: vi.fn(),
+      cancelForRun: vi.fn(),
+      expireForRun: vi.fn(() => {
+        throw new Error("db is gone");
+      }),
+      earliestPendingExpiry: vi.fn(() => expiresAt),
+    };
+    const t = setup({ timeouts: { runMs: 50 }, approvals });
+    const run = await t.enqueue();
+    await t.flush();
+    await t.orch.signal(run.id, { kind: "approval_requested" });
+    expect(t.runOf(run.id).status).toBe("awaiting_approval");
+
+    await vi.advanceTimersByTimeAsync(25_000); // 만료 + 5초 — 감시 타이머가 울린다
+    expect(approvals.expireForRun).toHaveBeenCalledTimes(1);
+    expect(t.logger.error).toHaveBeenCalledWith(
+      { err: expect.any(Error), runId: run.id },
+      "approval expiry failed",
+    );
+    expect(t.runOf(run.id).status).toBe("awaiting_approval"); // 아무것도 닫히지 않았다
+
+    await vi.advanceTimersByTimeAsync(51);
+
+    expect(t.runOf(run.id)).toMatchObject({ status: "error", error: { code: "TIMEOUT" } });
+    expect(approvals.expireForRun).toHaveBeenCalledTimes(1); // 감시를 다시 걸지 않았다
     t.orch.stop();
   });
 

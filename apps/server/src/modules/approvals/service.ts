@@ -25,7 +25,10 @@ export type ApprovalsService = {
   resolve(input: ResolveInput): Promise<Approval>;
   /** 런이 끝났을 때 남은 승인을 닫는다. 런은 이미 끝나는 중이라 런 신호는 보내지 않는다 */
   cancelForRun(runId: string, reason: ApprovalReason): void;
-  /** 만료 감시 타이머가 부른다 — 남은 승인을 expired(timeout)로 닫고 런 신호로 시계를 다시 켠다 */
+  /**
+   * 만료 감시 타이머가 부른다 — 미해결 승인 중 **만료 시각이 지난 것만** expired(timeout)로 닫고
+   * 런 신호로 시계를 다시 켠다. 아직 살아 있는 승인은 Gateway 가 여전히 기다리므로 그대로 둔다.
+   */
   expireForRun(runId: string): void;
   /** 그 런의 미해결 승인 중 가장 이른 만료 시각 — 감시 타이머를 거는 근거 */
   earliestPendingExpiry(runId: string): Date | undefined;
@@ -105,19 +108,19 @@ export function createApprovalsService(deps: ApprovalsDeps): ApprovalsService {
     bus.emit(approval.status === "pending" ? "approval.requested" : "approval.resolved", { approval });
   }
 
-  /** 그 런의 미해결 승인을 한 상태로 닫고 중계한다. 한 건이 깨져도 나머지를 닫는다 */
-  function closePending(
-    runId: string,
+  /** 건네받은 미해결 승인들을 한 상태로 닫고 중계한다. 한 건이 깨져도 나머지를 닫는다 */
+  function close(
+    pending: Approval[],
     status: Extract<ApprovalStatus, "cancelled" | "expired">,
     reason: ApprovalReason,
     opts: { resumeRun: boolean },
   ): void {
     const at = now();
-    for (const pending of store.listPendingApprovalsByRun(db, runId)) {
+    for (const row of pending) {
       try {
-        publish(store.markApproval(db, pending.id, { status, reason, decidedAt: at }), opts);
+        publish(store.markApproval(db, row.id, { status, reason, decidedAt: at }), opts);
       } catch (err) {
-        logger.error({ err, approvalId: pending.id, runId, status }, "approval close failed");
+        logger.error({ err, approvalId: row.id, runId: row.runId, status }, "approval close failed");
       }
     }
   }
@@ -233,18 +236,25 @@ export function createApprovalsService(deps: ApprovalsDeps): ApprovalsService {
     },
 
     cancelForRun(runId, reason) {
-      // 런이 끝나는 중이다 — 런 신호를 보내면 상태가 awaiting_approval 에서 되돌아갔다가 다시 종료로 간다
-      closePending(runId, "cancelled", reason, { resumeRun: false });
+      // 런이 끝난다 — 만료 시각이 남았든 아니든 전부 닫는다.
+      // 런 신호를 보내면 상태가 awaiting_approval 에서 되돌아갔다가 다시 종료로 간다
+      close(store.listPendingApprovalsByRun(db, runId), "cancelled", reason, { resumeRun: false });
     },
 
     expireForRun(runId) {
-      for (const pending of store.listPendingApprovalsByRun(db, runId)) {
+      // 감시 타이머는 그 런의 **가장 이른** 만료 시각에 울린다 — 아직 만료되지 않은 승인은 Gateway 가 여전히
+      // 기다리는 것이라 그대로 둔다. 쓸어 닫으면 사용자는 살아 있는 카드를 「만료됨」으로 보고 다시 누를 수도 없다
+      const at = now().getTime();
+      const expired = store
+        .listPendingApprovalsByRun(db, runId)
+        .filter((pending) => Date.parse(pending.expiresAt) <= at);
+      for (const pending of expired) {
         logger.warn(
           { approvalId: pending.id, runId, expiresAt: pending.expiresAt },
           "approval expired without a gateway verdict",
         );
       }
-      closePending(runId, "expired", "timeout", { resumeRun: true });
+      close(expired, "expired", "timeout", { resumeRun: true });
     },
 
     earliestPendingExpiry(runId) {

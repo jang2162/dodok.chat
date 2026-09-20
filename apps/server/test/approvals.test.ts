@@ -1098,6 +1098,81 @@ describe("승인 대기 중 런 시계 (가짜 타이머, 메모리 DB)", () => 
     t.services.orchestrator.stop();
   });
 
+  /** 한 런에 승인이 둘 — 감시 타이머는 가장 이른 만료 시각에 한 번 울린다(p2-t5 리뷰 B-1 ①) */
+  async function twoApprovals(t: ReturnType<typeof setup>) {
+    const { run, a } = await t.awaitingApproval({
+      expiresAt: new Date(Date.now() + 20_000).toISOString(),
+    });
+    // 대기 중에 두 번째 승인이 왔다 — 수명이 세 배다. 첫 승인의 감시 타이머가 이것까지 닫아서는 안 된다
+    const long = providerApproval(t.sessionKey, {
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    });
+    t.adapter.emitApproval(long);
+    expect(approvalStore.getApprovalByProviderId(t.db, long.providerApprovalId)?.status).toBe("pending");
+    return { run, a, long };
+  }
+
+  it("감시 타이머가 울려도 아직 만료되지 않은 승인은 pending 으로 남고 그대로 해결할 수 있다", async () => {
+    const t = setup({ runMs: 300_000 });
+    const { run, a, long } = await twoApprovals(t);
+
+    await vi.advanceTimersByTimeAsync(25_100); // 첫 승인의 만료 + 5초
+
+    expect(approvalStore.getApprovalByProviderId(t.db, a.providerApprovalId)).toMatchObject({
+      status: "expired",
+      reason: "timeout",
+    });
+    // 두 번째는 Gateway 가 여전히 기다리고 있다 — 카드가 살아 있어야 하고 눌리면 Gateway 로 나가야 한다
+    const alive = approvalStore.getApprovalByProviderId(t.db, long.providerApprovalId);
+    expect(alive?.status).toBe("pending");
+    await t.services.runs.resolveApproval({
+      approvalId: alive?.id ?? "",
+      decision: "allow-once",
+      userId: t.userId,
+    });
+    expect(approvalStore.getApprovalByProviderId(t.db, long.providerApprovalId)).toMatchObject({
+      status: "allowed",
+      decision: "allow-once",
+      decidedBy: t.userId,
+    });
+    expect(t.adapter.calls.resolveApproval.at(-1)).toEqual({
+      providerApprovalId: long.providerApprovalId,
+      kind: "plugin",
+      decision: "allow-once",
+    });
+
+    // 다시 건 감시 타이머가 이미 해결된 승인을 덮어쓰지 않는다
+    await vi.advanceTimersByTimeAsync(40_000);
+    expect(approvalStore.getApprovalByProviderId(t.db, long.providerApprovalId)?.status).toBe("allowed");
+    expect(t.runOf(run.id).status).toBe("tool");
+    t.services.orchestrator.stop();
+  });
+
+  it("남은 승인은 그 만료 시각으로 다시 감시한다 — 첫 승인이 대기에서 나가며 슬롯을 지워도", async () => {
+    const t = setup({ runMs: 300_000 });
+    const { run, a, long } = await twoApprovals(t);
+
+    await vi.advanceTimersByTimeAsync(25_100);
+    expect(approvalStore.getApprovalByProviderId(t.db, a.providerApprovalId)?.status).toBe("expired");
+    expect(approvalStore.getApprovalByProviderId(t.db, long.providerApprovalId)?.status).toBe("pending");
+
+    await vi.advanceTimersByTimeAsync(40_000); // 두 번째 승인의 만료 + 5초 = 65초
+
+    expect(approvalStore.getApprovalByProviderId(t.db, long.providerApprovalId)).toMatchObject({
+      status: "expired",
+      reason: "timeout",
+    });
+    expect(listRunEvents(t.db, run.id, 0).filter((e) => e.type === "APPROVAL_RESOLVED")).toMatchObject([
+      { decision: "deny", reason: "timeout" },
+      { decision: "deny", reason: "timeout" },
+    ]);
+    // 런 시계는 첫 승인이 풀릴 때 다시 켜졌고 계속 돈다
+    expect(t.runOf(run.id).status).toBe("tool");
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(t.runOf(run.id)).toMatchObject({ status: "error", error: { code: "TIMEOUT" } });
+    t.services.orchestrator.stop();
+  });
+
   it("승인 하나를 해결해도 같은 런의 살아 있는 다른 승인이 만료로 휩쓸리지 않는다", async () => {
     const t = setup({ runMs: 600_000 });
     const { run, a } = await t.awaitingApproval({
