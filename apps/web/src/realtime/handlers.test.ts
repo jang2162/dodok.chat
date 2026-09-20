@@ -6,7 +6,7 @@ import { type AdapterStatusResponse, qk } from "@/api/queries";
 import { createQueryClient } from "@/app/queryClient";
 import { fromLatest } from "@/features/messages/timeline";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
-import { resetApprovalNotices } from "@/features/approvals/notify";
+import { notifyApproval, resetApprovalNotices } from "@/features/approvals/notify";
 import { useRunStore } from "@/features/runs/runStore";
 import { stubNotification } from "../../test/domStubs";
 import { createFakeSocket } from "../../test/fakeSocket";
@@ -14,6 +14,7 @@ import { agentOf } from "../../test/settingsServer";
 import {
   AGENT,
   APPROVAL,
+  APPROVAL2,
   approval,
   CH,
   CH2,
@@ -308,20 +309,32 @@ describe("승인 알림", () => {
     expect(stub.made).toHaveLength(0);
   });
 
-  it("같은 승인이 프레임 둘로 와도 한 번만 울리고, 확정되면 기록을 지운다", () => {
+  it("같은 승인이 프레임 둘로 와도 한 번만 울린다 — 다른 승인은 막히지 않는다", () => {
     const { fake } = armed();
     screenNow.channelId = CH2;
 
+    // 어댑터가 전역·세션 프레임을 병합해 다시 발행한다(p2-t6 Ruling C) — 같은 승인이 두 번 온다
     fake.serverEmit("approval.requested", { approval: approval({ toolCallId: undefined }) });
     fake.serverEmit("approval.requested", { approval: approval({ toolCallId: "toolu_9" }) });
     expect(stub.made).toHaveLength(1);
 
-    // 확정되면 잊는다 — 집합이 끝없이 자라지 않게(승인 id 는 재사용되지 않는다)
+    fake.serverEmit("approval.requested", { approval: approval({ id: APPROVAL2 }) });
+    expect(stub.made).toHaveLength(2);
+  });
+
+  it("확정 프레임은 알린 기록을 지운다 — 집합이 끝없이 자라지 않게", () => {
+    const { fake } = armed();
+    screenNow.channelId = CH2;
+    fake.serverEmit("approval.requested", { approval: approval() });
+    expect(stub.made).toHaveLength(1);
+
     fake.serverEmit("approval.resolved", {
       approval: approval({ status: "allowed", decision: "allow-once", reason: "user" }),
     });
-    fake.serverEmit("approval.requested", { approval: approval() });
-    expect(stub.made).toHaveLength(2);
+
+    // 서버는 확정된 승인에 requested 를 다시 내지 않으므로(approvals/service.ts 의 발행 이름은 병합된 행의
+    // 상태를 따른다) 프레임 순서로는 잴 수 없다 — 기록이 비었는지는 알림 문을 직접 두드려 확인한다
+    expect(notifyApproval(approval(), { visible: false, onClick: () => {} })).toBe(true);
   });
 
   it("권한을 안 줬으면 조용하다 — 카드가 정본이라 스토어는 그대로 채운다", () => {

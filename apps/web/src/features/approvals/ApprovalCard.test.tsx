@@ -167,6 +167,19 @@ describe("ApprovalCard", () => {
     else expect(screen.queryByText(/^선택:/)).not.toBeInTheDocument();
   });
 
+  it("확정·만료 안내 줄만 라이브 영역이다 — 매초 바뀌는 카운트다운은 아니다", () => {
+    // 만료 → 확정 순서로 본다(스토어는 확정된 행에 늦게 온 pending 을 덮지 않는다)
+    const timedOut = renderCard(approval({ expiresAt: iso(Date.now() - 1_000) }));
+    expect(screen.getByText("시간이 지나 답할 수 없습니다.")).toHaveAttribute("aria-live", "polite");
+    // 결과·남은 시간 문구는 같은 span 이다 — 거기에 라이브를 걸면 미해결 카드가 1초마다 읽힌다
+    expect(screen.getByText("만료됨").closest("[aria-live]")).toBeNull();
+    timedOut.unmount();
+
+    renderCard(approval({ status: "allowed", decision: "allow-always", reason: "user" }));
+    expect(screen.getByText("선택: 항상 허용")).toHaveAttribute("aria-live", "polite");
+    expect(screen.getByText("허용됨").closest("[aria-live]")).toBeNull();
+  });
+
   it("내 답이 아닌 것으로 닫히면 까닭을 덧붙인다 — 끊긴 동안 만료(no-route)", () => {
     renderCard(approval({ status: "expired", reason: "no-route" }));
     expect(screen.getByText("만료됨 (연결 끊김)")).toBeInTheDocument();

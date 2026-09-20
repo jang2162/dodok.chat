@@ -151,12 +151,20 @@ export function ApprovalCard({
               ))}
             </div>
           )}
-          {/* 「누가 무엇을 골랐는가」는 사람이 고른 경로에서만 — 만료의 decision 은 Gateway 가 채운 것이다(Ruling) */}
+          {/*
+            「누가 무엇을 골랐는가」는 사람이 고른 경로에서만 — 만료의 decision 은 Gateway 가 채운 것이다(Ruling).
+            승인은 시간 제한이 있는 요청이다. 확정·만료 안내는 한 번만 바뀌므로 라이브로 둬 스크린 리더가
+            카드를 다시 찾아가지 않아도 결말을 듣게 한다(카운트다운 span 은 매초 바뀌어 라이브가 아니다)
+          */}
           {(approval.status === "allowed" || approval.status === "denied") && approval.decision && (
-            <p className="text-xs text-muted-foreground">선택: {DECISION_LABEL[approval.decision]}</p>
+            <p aria-live="polite" className="text-xs text-muted-foreground">
+              선택: {DECISION_LABEL[approval.decision]}
+            </p>
           )}
           {pending && expired && (
-            <p className="text-xs text-muted-foreground">시간이 지나 답할 수 없습니다.</p>
+            <p aria-live="polite" className="text-xs text-muted-foreground">
+              시간이 지나 답할 수 없습니다.
+            </p>
           )}
         </div>
       </div>

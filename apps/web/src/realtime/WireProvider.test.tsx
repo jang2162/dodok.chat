@@ -24,6 +24,8 @@ const notify = { currentChannelId: () => undefined, openActivity: () => {} };
 
 let queryClient: QueryClient;
 const onUnauthorized = vi.fn();
+/** `Notification` 전역 스텁 — 단언이 터져도 같은 파일 뒤 테스트로 새지 않게 afterEach 가 벗긴다 */
+let notifications: ReturnType<typeof stubNotification> | undefined;
 
 beforeEach(() => {
   queryClient = createQueryClient(onUnauthorized);
@@ -33,7 +35,11 @@ beforeEach(() => {
   useWireStatus.setState({ status: "idle" });
   onUnauthorized.mockClear();
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  notifications?.restore();
+  notifications = undefined;
+  vi.unstubAllGlobals();
+});
 
 function stubMe(status = 200) {
   vi.stubGlobal(
@@ -87,7 +93,7 @@ it("me 가 확인되면 소켓 하나를 만들어 연결하고, 다시 렌더�
 it("세션 정리(로그아웃·401)는 소켓을 끊고 런·승인 스토어를 비우며 상태를 idle 로", async () => {
   stubMe();
   const errors = vi.spyOn(console, "error");
-  const notifications = stubNotification("granted");
+  notifications = stubNotification("granted");
   render(<Tree />);
   await waitFor(() => expect(createdSockets).toHaveLength(1));
   useRunStore.getState().applyState(runState());
@@ -103,7 +109,6 @@ it("세션 정리(로그아웃·401)는 소켓을 끊고 런·승인 스토어�
   expect(useApprovalStore.getState().byChannel).toEqual({});
   // 이미 알린 승인 기록도 비운다 — 다른 사람으로 다시 로그인하면 같은 승인을 다시 알려야 한다
   expect(ring()).toBe(true);
-  notifications.restore();
   expect(useWireStatus.getState().status).toBe("idle");
   // 비운 캐시에 me 를 다시 받아 새 소켓까지 — 그 사이 렌더 중 갱신 경고(캐시 알림을 렌더 안에서 받음)가 없다
   await waitFor(() => expect(createdSockets).toHaveLength(2));
