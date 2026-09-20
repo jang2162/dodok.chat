@@ -18,7 +18,7 @@ import { createServices } from "../src/wiring";
 import { bootTestApp, login } from "./helpers/app";
 import { newTestDb } from "./helpers/db";
 import { seedChannelWithAgent } from "./helpers/seed";
-import { connectWire, type WireClient, waitFor } from "./helpers/wire";
+import { connectWire, recordEvents, type WireClient, waitFor } from "./helpers/wire";
 
 const MINUTE = 60_000;
 
@@ -127,6 +127,24 @@ describe("승인 저장·런 상관·wire 중계 (앱 부팅, FakeAdapter)", () 
     if (!res.ok) throw new Error(res.error.code);
     return socket;
   };
+
+  /**
+   * 이 소켓이 `channelId` **밖**임을 관측으로 잠근다. 구독은 서버 쪽 룸이라 클라이언트에서 직접 볼 수 없지만
+   * 채널 룸 이벤트는 구독한 채널에만 가므로(wire.test.ts 「bus 팬아웃」) 그 채널에 메시지를 하나 흘리면 그림자가 잡힌다 —
+   * 보낸 사람도 그 채널 룸으로 되받으니 ack 가 돌아온 시점에 팬아웃은 이미 끝나 있다.
+   * 이게 없으면 「다른 채널이어도 승인이 닿는다」가 공허해진다: 받는 소켓을 같은 채널 구독으로 바꿔도 전부 초록이다.
+   */
+  async function expectOutside(socket: WireClient, channelId: string): Promise<void> {
+    const leaked = recordEvents(socket, ["message.created"]);
+    const sent = await socket.emitWithAck("message.send", {
+      channelId,
+      clientMsgId: `outside-${++n}`,
+      bodyMd: "구독 밖 확인 — 멘션 없음",
+    });
+    if (!sent.ok) throw new Error(sent.error.code);
+    await roundTrip(socket);
+    expect(leaked).toEqual([]);
+  }
 
   /** @dev 멘션 → 라우터 → 오케스트레이터 → adapter.send 까지 확인하고 그 런을 돌려준다 */
   async function mentionDev(socket: WireClient, channelId: string = channel.id): Promise<RunState> {
@@ -309,6 +327,7 @@ describe("승인 저장·런 상관·wire 중계 (앱 부팅, FakeAdapter)", () 
     const other = newChannel();
     const mine = await connect();
     const theirs = await connect(other.id);
+    await expectOutside(theirs, channel.id); // 제목의 「다른 채널을 구독한」을 실제로 잰다
 
     const atMine = waitFor(mine, "approval.requested");
     const atTheirs = waitFor(theirs, "approval.requested");
@@ -327,6 +346,7 @@ describe("승인 저장·런 상관·wire 중계 (앱 부팅, FakeAdapter)", () 
   it("확정도 다른 채널 소켓에 닿는다 — 보고 있지 않은 채널의 카드도 닫힌다", async () => {
     const other = newChannel();
     const theirs = await connect(other.id);
+    await expectOutside(theirs, channel.id); // 확정을 받는 소켓도 승인 채널 밖이어야 의미가 있다
     const a = providerApproval(sessionKeyOf("dev", channel.id));
 
     const requested = waitFor(theirs, "approval.requested");
