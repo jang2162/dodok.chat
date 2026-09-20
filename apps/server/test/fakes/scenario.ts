@@ -5,10 +5,37 @@
  * 정본 답은 플러그인 `outbound.message` 로 온다. 여기서는 ack 를 먼저 보낸 뒤(`setImmediate`) 가짜 Gateway 이벤트를 쓰고,
  * 서버가 그 이벤트를 처리한 뒤(`gateway.flush`) 정본을 보낸다 — 실물은 첫 델타와 정본 사이가 수백 ms 이상이다(live-smoke 5.3).
  * 재생 중 가짜 Gateway 가 그 런의 `chat.abort` 를 받으면(가짜 Gateway 가 chat aborted 를 낸다) 실물처럼 거기서 멈춘다 — 남은 델타·final·정본 없음.
+ * 대본에 `approval` 이 있으면 툴 start 뒤 승인을 띄우고(`plugin.approval.requested`) 결정이 날 때까지 툴 result 를 미룬다(승인 스파이크 4.2).
  */
-import type { InboundDeliver } from "@dodok/shared";
-import type { FakeGateway } from "./fake-gateway";
+import type { ApprovalDecision, InboundDeliver } from "@dodok/shared";
+import type { FakeApprovalOutcome, FakeGateway } from "./fake-gateway";
 import type { FakePlugin } from "./fake-plugin";
+
+/** 승인을 요구하는 툴의 인자 — 실물 프레임과 같은 꼴(승인 스파이크 3.2) */
+const APPROVAL_TOOL_ARGS = { file_path: "/tmp/dodok-approval.txt", content: "hello\n" };
+const DEFAULT_APPROVAL_TOOL = "Write";
+/** 거절·만료 뒤 실제로 오는 툴 결과 문구(승인 스파이크 4.3) */
+const deniedToolResult = (toolName: string) =>
+  `PreToolUse:${toolName} hook error: OpenClaw user denied native tool use (${toolName}).`;
+
+/**
+ * 툴이 요구하는 승인 하나. 대본은 툴 start 를 낸 **뒤** 승인을 띄우고(실물은 그 사이가 13ms, 4.2)
+ * 결정이 날 때까지 툴 result 를 내지 않는다 — 승인 대기는 「start 는 왔는데 result 가 안 오는 구간」이다.
+ */
+export type ScenarioApproval = {
+  /** 기본 `claude-cli native tool: Write` */
+  title?: string;
+  /** 기본 `Write` */
+  toolName?: string;
+  /** 기본 `["allow-once", "deny"]`(claude-cli 실물) */
+  allowedDecisions?: ApprovalDecision[];
+  /** 아무도 해결하지 않으면 이만큼 뒤 만료(실물 기본 120초) */
+  ttlMs: number;
+  /** 결정 뒤 이어갈 모양. 생략하면 결정대로 — 허용이면 툴 성공, 거절·만료면 툴 오류(4.2·4.3) */
+  onDecision?: "continue" | "toolError";
+  /** 만료 프레임을 Gateway 가 내는가. `"silent"` 면 서버의 만료 감시 타이머가 닫아야 한다 */
+  onTimeout?: "gateway" | "silent";
+};
 
 export type ScenarioTurn = { delivery: InboundDeliver; index: number };
 
@@ -17,6 +44,8 @@ export type ScenarioScript = {
   /** 정본 본문(`outbound.message.text`)이자 chat final 의 스냅샷 */
   reply: string;
   tool?: { name: string; args: Record<string, unknown>; result: unknown };
+  /** 툴이 승인을 요구한다. 배열이면 한 런에 **겹쳐** 띄운다(만료 시각이 다른 승인 둘) */
+  approval?: ScenarioApproval | ScenarioApproval[];
   /** 있으면 런 없이 `{ admission: "drop", reason }` 만 ack 한다(봇 루프 보호 등) */
   drop?: string;
   /** true 면 lifecycle·툴·델타까지만 흘리고 멈춘다 — chat final 도 정본도 없어 런이 진행 중으로 남는다(재시작 복구를 잴 때) */
@@ -59,6 +88,58 @@ export function createScenario(opts: {
       (r) => r.method === "chat.abort" && (r.params as { runId?: unknown } | undefined)?.runId === runId,
     );
 
+  /**
+   * 대본의 승인을 순서대로 띄우고(둘 이상이면 겹친다) 결정을 기다렸다가 툴 result 를 낸다.
+   * 재생을 이어가도 되면 true, 그 사이 런이 중지됐으면 false.
+   */
+  async function playApprovals(
+    delivery: InboundDeliver,
+    script: ScenarioScript,
+    stopped: () => boolean,
+  ): Promise<boolean> {
+    const { runId, sessionKey, agentId } = delivery;
+    const scripted = script.approval === undefined ? [] : [script.approval].flat();
+    const waiting: Array<{
+      approval: ScenarioApproval;
+      toolCallId: string;
+      outcome: Promise<FakeApprovalOutcome>;
+    }> = [];
+    for (const [index, approval] of scripted.entries()) {
+      const toolCallId = `toolu_${runId}_a${index}`;
+      await gateway.toolStart(runId, sessionKey, agentId, {
+        toolCallId,
+        name: approval.toolName ?? DEFAULT_APPROVAL_TOOL,
+        args: APPROVAL_TOOL_ARGS,
+      });
+      if (stopped()) return false;
+      // 결말을 기다리지 않고 다음으로 — 둘 이상이면 한 런에 승인이 겹친다
+      waiting.push({
+        approval,
+        toolCallId,
+        outcome: gateway.requestApproval(runId, sessionKey, agentId, {
+          toolCallId,
+          ttlMs: approval.ttlMs,
+          ...(approval.title === undefined ? {} : { title: approval.title }),
+          ...(approval.toolName === undefined ? {} : { toolName: approval.toolName }),
+          ...(approval.allowedDecisions === undefined ? {} : { allowedDecisions: approval.allowedDecisions }),
+          ...(approval.onTimeout === undefined ? {} : { onTimeout: approval.onTimeout }),
+        }),
+      });
+    }
+    for (const { approval, toolCallId, outcome } of waiting) {
+      const decided = await outcome;
+      if (stopped()) return false;
+      const toolName = approval.toolName ?? DEFAULT_APPROVAL_TOOL;
+      const failed =
+        (approval.onDecision ?? (decided.decision === "deny" ? "toolError" : "continue")) === "toolError";
+      await gateway.toolResult(runId, sessionKey, agentId, {
+        toolCallId,
+        ...(failed ? { result: deniedToolResult(toolName), isError: true } : { result: "ok" }),
+      });
+    }
+    return true;
+  }
+
   async function play(delivery: InboundDeliver, script: ScenarioScript): Promise<void> {
     const { runId, sessionKey, agentId, channelId } = delivery;
     const stopped = () => abortRequested(runId);
@@ -75,6 +156,7 @@ export function createScenario(opts: {
         await gateway.toolStart(runId, sessionKey, agentId, { toolCallId, name, args });
         await gateway.toolResult(runId, sessionKey, agentId, { toolCallId, result });
       }
+      if (!(await playApprovals(delivery, script, stopped))) return;
       for (const delta of script.deltas ?? []) {
         if (script.deltaDelayMs) await new Promise((resolve) => setTimeout(resolve, script.deltaDelayMs));
         if (stopped()) return;

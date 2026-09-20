@@ -4,7 +4,17 @@
  * 시간으로 기다리지 않는다: `WireLog.until` 은 이미 받은 것을 먼저 보고, 그 뒤로는 wire 이벤트가 올 때마다 조건을 다시 잰다.
  * 상한(WAIT_MS)은 실패를 드러내는 용도일 뿐이다.
  */
-import type { Agent, Channel, Message, RelayPolicy, Run, RunEvent, RunState } from "@dodok/shared";
+import type {
+  Agent,
+  Approval,
+  ApprovalDecision,
+  Channel,
+  Message,
+  RelayPolicy,
+  Run,
+  RunEvent,
+  RunState,
+} from "@dodok/shared";
 import { randomUUID } from "node:crypto";
 import { expect } from "vitest";
 import type { LiveApp } from "./live-app";
@@ -128,6 +138,16 @@ export async function sendMessage(socket: WireClient, channelId: string, bodyMd:
   return res.data.message;
 }
 
+/** 승인 카드의 버튼을 누른다 — ack 가 실패면 코드를 싣고 던진다 */
+export async function resolveApproval(
+  socket: WireClient,
+  approvalId: string,
+  decision: ApprovalDecision,
+): Promise<void> {
+  const res = await socket.emitWithAck("approval.resolve", { approvalId, decision });
+  if (!res.ok) throw new Error(`approval.resolve 실패: ${res.error.code} ${res.error.message}`);
+}
+
 export type WireLog = {
   readonly socket: WireClient;
   /** run.state 의 run, 도착 순서 */
@@ -136,6 +156,10 @@ export type WireLog = {
   readonly created: Message[];
   readonly updated: Message[];
   readonly adapterStatus: Array<{ gateway: string; bridge: string }>;
+  /** approval.requested 의 approval, 도착 순서 */
+  readonly approvals: Approval[];
+  /** approval.resolved 의 approval, 도착 순서(만료·취소도 여기로 온다) */
+  readonly resolvedApprovals: Approval[];
   statesOf(runId: string): RunState[];
   eventsOf(runId: string): RunEvent[];
   /** pick 이 undefined·false 가 아닌 값을 낼 때까지 — 받은 것부터 보고, 이후 wire 이벤트마다 다시 잰다 */
@@ -163,6 +187,8 @@ export function recordWire(socket: WireClient): WireLog {
   const created: Message[] = [];
   const updated: Message[] = [];
   const adapterStatus: WireLog["adapterStatus"] = [];
+  const approvals: Approval[] = [];
+  const resolvedApprovals: Approval[] = [];
   const waiters = new Set<() => void>();
   const record =
     <P>(push: (payload: P) => void) =>
@@ -191,6 +217,14 @@ export function recordWire(socket: WireClient): WireLog {
     "adapter.status",
     record((p) => adapterStatus.push({ gateway: p.gateway, bridge: p.bridge })),
   );
+  socket.on(
+    "approval.requested",
+    record((p) => approvals.push(p.approval)),
+  );
+  socket.on(
+    "approval.resolved",
+    record((p) => resolvedApprovals.push(p.approval)),
+  );
 
   const log: WireLog = {
     socket,
@@ -199,6 +233,8 @@ export function recordWire(socket: WireClient): WireLog {
     created,
     updated,
     adapterStatus,
+    approvals,
+    resolvedApprovals,
     statesOf: (runId) => states.filter((s) => s.id === runId),
     eventsOf: (runId) => events.filter((e) => e.runId === runId),
     until(pick, what, timeoutMs = WAIT_MS) {

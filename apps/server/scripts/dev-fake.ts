@@ -5,7 +5,7 @@
  * .env 를 읽지 않는다: 토큰·비밀은 아래 개발 전용 고정값이고(로그에 찍어도 된다), loadConfig 에는 여기서 정한 값만 넘긴다.
  * DB 는 <dataDir>/dev-fake.sqlite — 시작마다 새로, `--keep` 이면 유지. 실행: `PORT=0 pnpm -F @dodok/server dev:fake [--keep]`.
  */
-import type { InboundDeliver } from "@dodok/shared";
+import type { ApprovalDecision, InboundDeliver } from "@dodok/shared";
 import { mkdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -13,7 +13,12 @@ import { type App, createApp } from "../src/app";
 import { loadConfig } from "../src/config";
 import { type FakeGateway, startFakeGateway } from "../test/fakes/fake-gateway";
 import { type FakePlugin, startFakePlugin } from "../test/fakes/fake-plugin";
-import { createScenario, type ScenarioAgent, type ScenarioScript } from "../test/fakes/scenario";
+import {
+  createScenario,
+  type ScenarioAgent,
+  type ScenarioApproval,
+  type ScenarioScript,
+} from "../test/fakes/scenario";
 import { waitForAdapterConnected } from "../test/helpers/live-app";
 
 /** 개발 전용 고정 로그인 토큰(= owner 비밀번호). 시크릿이 아니다 — 로그에 찍는다 */
@@ -26,6 +31,8 @@ const AGENT_IDS = ["dev", "fin"] as const;
 const TICK_INTERVAL_MS = 15_000;
 const DELTA_PARTS = 4;
 const QUOTE_MAX = 40;
+/** 승인 대본의 TTL — 실물 plugin 승인은 120초지만, 만료까지 눈으로 볼 수 있게 줄였다 */
+const APPROVAL_TTL_MS = 20_000;
 
 export type DevFakeOptions = {
   /** 기본 3000. 0 이면 빈 포트 */
@@ -47,8 +54,33 @@ function splitDeltas(text: string, parts: number): string[] {
   return out;
 }
 
+/** dev:fake 승인 카드 하나 — 실물 claude-cli 승인과 같은 제목·툴 모양 */
+function devApproval(
+  toolName: string,
+  ttlMs: number,
+  allowedDecisions: ApprovalDecision[] = ["allow-once", "deny"],
+): ScenarioApproval {
+  return { title: `claude-cli native tool: ${toolName}`, toolName, allowedDecisions, ttlMs };
+}
+
 /**
- * 받은 글로 대본을 고른다 — 키워드: 드롭·실패·느리게·도구. 받은 글을 `@` 없이 인용해(멘션을 새로 만들지 않는다) 되받고,
+ * 「승인」 계열 키워드 → 승인 대본. 결정 뒤 이어갈 모양은 결정에 맡긴다 —
+ * 허용이면 툴이 성공하고, 거절·만료면 툴 오류 뒤에도 답이 이어진다(승인 스파이크 4.2·4.3).
+ */
+function approvalScript(text: string): ScenarioApproval | ScenarioApproval[] {
+  // 「승인 둘」 — 만료 시각이 다른 승인 둘이 한 런에 겹친다(앞엣것만 먼저 만료된다)
+  if (text.includes("승인 둘")) {
+    return [devApproval("Write", APPROVAL_TTL_MS), devApproval("Read", 3 * APPROVAL_TTL_MS)];
+  }
+  // 「승인 항상」 — 버튼 셋(이번만 허용·항상 허용·거절)
+  if (text.includes("승인 항상")) {
+    return devApproval("Write", APPROVAL_TTL_MS, ["allow-once", "allow-always", "deny"]);
+  }
+  return devApproval("Write", APPROVAL_TTL_MS);
+}
+
+/**
+ * 받은 글로 대본을 고른다 — 키워드: 드롭·실패·느리게·도구·승인(승인 둘·승인 항상). 받은 글을 `@` 없이 인용해(멘션을 새로 만들지 않는다) 되받고,
  * 글이 부른 채널의 다른 에이전트와 보낸 에이전트를 끝의 「@핸들 이어서 부탁해요」로만 불러 릴레이를 만든다.
  * 핸들은 채널 참여자(`context.participants`)에서 읽는다 — 등록한 핸들이 providerAgentId 와 달라도 된다.
  */
@@ -71,6 +103,7 @@ export function fakeAgentScript(self: string, d: InboundDeliver): ScenarioScript
     deltaDelayMs: text.includes("느리게") ? 1_500 : 150,
     ...(text.includes("실패") ? { fail: "fake failure" } : {}),
     ...(text.includes("도구") ? { tool: { name: "Read", args: { path: "README.md" }, result: "ok" } } : {}),
+    ...(text.includes("승인") ? { approval: approvalScript(text) } : {}),
   };
 }
 

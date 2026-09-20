@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { io, type Socket } from "socket.io-client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DEV_FAKE_LOCAL_TOKEN, type DevFake, fakeAgentScript, startDevFake } from "../scripts/dev-fake";
+import type { ScenarioApproval } from "./fakes/scenario";
 
 type Author = { type: "user" | "agent"; handle: string };
 
@@ -71,6 +72,30 @@ describe("fakeAgentScript", () => {
     const s = fakeAgentScript("dev", delivery(`@dev ${"😀".repeat(60)}`, owner));
     expect(s.reply).not.toMatch(loneSurrogate);
     for (const delta of s.deltas ?? []) expect(delta).not.toMatch(loneSurrogate);
+  });
+
+  it("승인 → 승인 대본 하나, 승인 둘 → 만료 시각이 다른 둘, 승인 항상 → 버튼 셋", () => {
+    const one = fakeAgentScript("dev", delivery("@dev 승인", owner)).approval as ScenarioApproval;
+    // TTL 20초는 브라우저 검증이 만료까지 볼 수 있게 줄인 값이다(실물 120초)
+    expect(one).toMatchObject({
+      title: "claude-cli native tool: Write",
+      toolName: "Write",
+      allowedDecisions: ["allow-once", "deny"],
+      ttlMs: 20_000,
+    });
+    // 이어갈 모양을 고정하지 않는다 — 허용이면 툴 성공, 거절·만료면 툴 오류
+    expect(one.onDecision).toBeUndefined();
+
+    const two = fakeAgentScript("dev", delivery("@dev 승인 둘", owner)).approval as ScenarioApproval[];
+    expect(two.map((a) => [a.toolName, a.ttlMs])).toEqual([
+      ["Write", 20_000],
+      ["Read", 60_000],
+    ]);
+
+    const always = fakeAgentScript("dev", delivery("@dev 승인 항상", owner)).approval as ScenarioApproval;
+    expect(always.allowedDecisions).toEqual(["allow-once", "allow-always", "deny"]);
+
+    expect(fakeAgentScript("dev", delivery("@dev 안녕", owner)).approval).toBeUndefined();
   });
 
   it("느리게 → 1.5s 간격, 실패 → fail, 드롭 → drop, 도구 → tool", () => {

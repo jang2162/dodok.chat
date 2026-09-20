@@ -216,21 +216,34 @@ const APPROVAL_EXPIRES_MS = 1_789_897_907_988; // +120s — Gateway plugin 승�
 const APPROVAL_RESOLVED_MS = 1_789_897_790_009;
 const APPROVAL_ARGS = '{"file_path":"/tmp/spike-approval.txt","content":"hello\\n"}';
 
-type ApprovalOpts = FrameOpts & { id?: string };
+/**
+ * 값은 전부 선택이고 기본값이 스파이크 원본이다 — 생략하면 3.2·3.3·3.4 프레임 그대로다.
+ * 실제 시계로 도는 하네스(서버 가짜 Gateway)는 시각·제목·툴을 자기 값으로 덮어 쓴다.
+ */
+type ApprovalOpts = FrameOpts & {
+  id?: string;
+  title?: string;
+  toolName?: string;
+  toolCallId?: string;
+  allowedDecisions?: string[];
+  createdAtMs?: number;
+  expiresAtMs?: number;
+  resolvedAtMs?: number;
+};
 
 /** `plugin.approval.requested`·`plugin.approval.resolved` 가 함께 싣는 `request` 블록(3.2). */
 function approvalRequest(o: ApprovalOpts) {
   const c = common(o);
   return {
     pluginId: "claude-cli",
-    title: "claude-cli native tool: Write",
+    title: o.title ?? "claude-cli native tool: Write",
     description: APPROVAL_ARGS,
     scope: null,
     detail: APPROVAL_ARGS,
     severity: "warning",
-    toolName: "Write",
-    toolCallId: APPROVAL_TOOL_CALL_ID,
-    allowedDecisions: ["allow-once", "deny"],
+    toolName: o.toolName ?? "Write",
+    toolCallId: o.toolCallId ?? APPROVAL_TOOL_CALL_ID,
+    allowedDecisions: o.allowedDecisions ?? ["allow-once", "deny"],
     agentId: c.agentId,
     sessionKey: c.sessionKey,
     runId: null, // 승인 페이로드에 런 id 는 오지 않는다(3.2)
@@ -248,8 +261,8 @@ export function pluginApprovalRequested(o: ApprovalOpts = {}): EventFrame {
       approvalKind: "plugin",
       id: o.id ?? APPROVAL_ID,
       request: approvalRequest(o),
-      createdAtMs: APPROVAL_CREATED_MS,
-      expiresAtMs: APPROVAL_EXPIRES_MS,
+      createdAtMs: o.createdAtMs ?? APPROVAL_CREATED_MS,
+      expiresAtMs: o.expiresAtMs ?? APPROVAL_EXPIRES_MS,
     },
     common(o).seq,
   );
@@ -265,7 +278,7 @@ export function pluginApprovalResolved(
       id: o.id ?? APPROVAL_ID,
       decision: o.decision ?? "allow-once",
       resolvedBy: o.resolvedBy === undefined ? "dodok" : o.resolvedBy,
-      ts: APPROVAL_RESOLVED_MS,
+      ts: o.resolvedAtMs ?? APPROVAL_RESOLVED_MS,
       request: approvalRequest(o),
     },
     common(o).seq,
@@ -284,21 +297,21 @@ function approvalSnapshot(
     status: o.status ?? (terminal ? "allowed" : "pending"),
     presentation: {
       kind: "plugin",
-      title: "claude-cli native tool: Write",
+      title: o.title ?? "claude-cli native tool: Write",
       description: APPROVAL_ARGS,
       detail: APPROVAL_ARGS,
       severity: "warning",
       pluginId: "claude-cli",
-      toolName: "Write",
+      toolName: o.toolName ?? "Write",
       agentId: c.agentId,
-      allowedDecisions: ["allow-once", "deny"],
+      allowedDecisions: o.allowedDecisions ?? ["allow-once", "deny"],
     },
     urlPath: `/approve/${encodeURIComponent(id)}`,
-    createdAtMs: APPROVAL_CREATED_MS,
-    expiresAtMs: APPROVAL_EXPIRES_MS,
+    createdAtMs: o.createdAtMs ?? APPROVAL_CREATED_MS,
+    expiresAtMs: o.expiresAtMs ?? APPROVAL_EXPIRES_MS,
     ...(terminal
       ? {
-          resolvedAtMs: APPROVAL_RESOLVED_MS,
+          resolvedAtMs: o.resolvedAtMs ?? APPROVAL_RESOLVED_MS,
           reason: o.reason ?? "user",
           decision: o.decision ?? "allow-once",
         }

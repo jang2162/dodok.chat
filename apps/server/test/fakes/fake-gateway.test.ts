@@ -8,8 +8,14 @@ import {
   DEFAULT_GATEWAY_SCOPES,
   type GatewayConnection,
 } from "../../../../packages/openclaw-adapter/src/gateway/client";
+import { parseApprovalFrame } from "../../../../packages/openclaw-adapter/src/gateway/approvals";
 import { createGatewayEventMapper } from "../../../../packages/openclaw-adapter/src/gateway/events";
-import { FAKE_GATEWAY_METHODS, type FakeGateway, startFakeGateway } from "./fake-gateway";
+import {
+  APPROVAL_RESOLVED_BY,
+  FAKE_GATEWAY_METHODS,
+  type FakeGateway,
+  startFakeGateway,
+} from "./fake-gateway";
 
 const RUN_ID = "01a09fc9-d204-7551-89d6-38544d07b001";
 const CHANNEL_ID = "01a09fc9-d204-7551-89d6-38544d07b002";
@@ -322,6 +328,196 @@ describe("가짜 Gateway — 실제 connectGateway 로 붙는다", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  // ── 승인 (승인 스파이크 3.2·3.4·4.1·4.4·5.2) ──────────────────
+
+  /** 승인 프레임 하나를 띄우고 그 payload 를 돌려준다 */
+  async function requestApproval(
+    gateway: FakeGateway,
+    frames: Frame[],
+    req: Parameters<FakeGateway["requestApproval"]>[3],
+  ) {
+    const outcome = gateway.requestApproval(RUN_ID, SESSION_KEY, "dev", req);
+    const frame = await vi.waitFor(() => {
+      const found = frames.find((f) => f.event === "plugin.approval.requested");
+      expect(found).toBeDefined();
+      return found as Frame;
+    });
+    return { outcome, payload: frame.payload as Record<string, unknown> };
+  }
+
+  it("승인: requested 는 실물 모양(3.2)이고 어댑터 정규화를 그대로 지난다", async () => {
+    const { gateway, frames } = await connect();
+    const { payload } = await requestApproval(gateway, frames, {
+      toolCallId: "toolu_fake_a",
+      title: "claude-cli native tool: Write",
+      toolName: "Write",
+      allowedDecisions: ["allow-once", "deny"],
+      ttlMs: 10_000,
+    });
+
+    expect(payload).toMatchObject({ approvalKind: "plugin", id: expect.stringMatching(/^plugin:/) });
+    // 시각은 실제 시계로 채운다 — TTL 이 그대로 만료 시각이 된다
+    expect((payload.expiresAtMs as number) - (payload.createdAtMs as number)).toBe(10_000);
+    expect(payload.request).toMatchObject({
+      sessionKey: SESSION_KEY,
+      agentId: "dev",
+      toolCallId: "toolu_fake_a",
+      toolName: "Write",
+      title: "claude-cli native tool: Write",
+      allowedDecisions: ["allow-once", "deny"],
+      pluginId: "claude-cli",
+      runId: null, // 승인 페이로드에 런 id 는 오지 않는다
+    });
+    // 전역 프레임이라 payload 최상위에 sessionKey 가 없다 — 구독과 무관하게 모든 연결로 간다
+    expect(payload.sessionKey).toBeUndefined();
+
+    // 실제 어댑터 정규화에 그대로 넣었을 때 우리 승인이 나온다 — 손으로 만든 모양이 어긋나면 여기서 깨진다
+    expect(parseApprovalFrame("plugin.approval.requested", payload)).toMatchObject({
+      providerApprovalId: payload.id,
+      kind: "plugin",
+      sessionKey: SESSION_KEY,
+      providerAgentId: "dev",
+      channelId: CHANNEL_ID,
+      toolCallId: "toolu_fake_a",
+      toolName: "Write",
+      status: "pending",
+      severity: "warning",
+      allowedDecisions: ["allow-once", "deny"],
+    });
+  });
+
+  it("승인: approval.resolve 는 terminal 스냅샷으로 답하고(4.1) 그 뒤 resolved 이벤트가 온다(3.4)", async () => {
+    const { gateway, connection, frames } = await connect();
+    const { outcome, payload } = await requestApproval(gateway, frames, {
+      toolCallId: "toolu_fake_a",
+      ttlMs: 10_000,
+    });
+
+    const res = await connection.request("approval.resolve", {
+      id: payload.id,
+      kind: "plugin",
+      decision: "allow-once",
+    });
+    expect(res).toMatchObject({
+      applied: true,
+      approval: {
+        id: payload.id,
+        status: "allowed",
+        decision: "allow-once",
+        reason: "user",
+        source: { agentId: "dev", sessionKey: SESSION_KEY },
+      },
+    });
+    await expect(outcome).resolves.toEqual({
+      approvalId: payload.id,
+      decision: "allow-once",
+      expired: false,
+    });
+
+    await vi.waitFor(() => expect(frames).toHaveLength(2));
+    expect(frames[1]?.event).toBe("plugin.approval.resolved");
+    expect(frames[1]?.payload).toMatchObject({
+      id: payload.id,
+      decision: "allow-once",
+      resolvedBy: APPROVAL_RESOLVED_BY,
+    });
+    expect(parseApprovalFrame("plugin.approval.resolved", frames[1]?.payload)).toMatchObject({
+      status: "allowed",
+      decision: "allow-once",
+    });
+
+    // 이미 확정된 승인에 다시 보내도 오류가 아니다 — applied:false 에 같은 스냅샷(4.4)
+    const again = await connection.request("approval.resolve", {
+      id: payload.id,
+      kind: "plugin",
+      decision: "deny",
+    });
+    expect(again).toMatchObject({ applied: false, approval: { status: "allowed", decision: "allow-once" } });
+    // 확정은 한 번뿐이다 — resolved 이벤트가 또 나가지 않는다
+    await gateway.flush();
+    expect(frames.filter((f) => f.event === "plugin.approval.resolved")).toHaveLength(1);
+  });
+
+  it("승인: 목록 밖 결정은 malformed-verdict 거절로 확정된다(4.4 의 fail-closed 함정)", async () => {
+    const { gateway, connection, frames } = await connect();
+    const { outcome, payload } = await requestApproval(gateway, frames, {
+      toolCallId: "toolu_fake_a",
+      allowedDecisions: ["allow-once", "deny"],
+      ttlMs: 10_000,
+    });
+
+    const res = await connection.request("approval.resolve", {
+      id: payload.id,
+      kind: "plugin",
+      decision: "allow-always",
+    });
+    expect(res).toMatchObject({
+      applied: true,
+      approval: { status: "denied", decision: "deny", reason: "malformed-verdict" },
+    });
+    await expect(outcome).resolves.toMatchObject({ decision: "deny", expired: false });
+  });
+
+  it("승인: 없는 id 는 approval not found 로 거절한다(4.4)", async () => {
+    const { connection } = await connect();
+    await expect(
+      connection.request("approval.resolve", { id: "plugin:nope", kind: "plugin", decision: "deny" }),
+    ).rejects.toMatchObject({ details: { reason: "APPROVAL_NOT_FOUND" } });
+  });
+
+  it("승인: TTL 이 지나면 만료 — decision deny + resolvedBy null 로 오고(5.2) 정규화하면 expired/timeout", async () => {
+    const { gateway, frames } = await connect();
+    const { outcome, payload } = await requestApproval(gateway, frames, {
+      toolCallId: "toolu_fake_a",
+      ttlMs: 20,
+    });
+
+    await expect(outcome).resolves.toEqual({ approvalId: payload.id, decision: "deny", expired: true });
+    await vi.waitFor(() => expect(frames).toHaveLength(2));
+    expect(frames[1]?.payload).toMatchObject({ id: payload.id, decision: "deny", resolvedBy: null });
+    expect(parseApprovalFrame("plugin.approval.resolved", frames[1]?.payload)).toMatchObject({
+      status: "expired",
+      reason: "timeout",
+      decision: "deny",
+    });
+  });
+
+  it("승인: onTimeout silent 면 만료 프레임을 보내지 않는다(서버 만료 감시를 재는 대본)", async () => {
+    const { gateway, frames } = await connect();
+    const { outcome } = await requestApproval(gateway, frames, {
+      toolCallId: "toolu_fake_a",
+      ttlMs: 20,
+      onTimeout: "silent",
+    });
+
+    await expect(outcome).resolves.toMatchObject({ decision: "deny", expired: true });
+    await gateway.flush();
+    expect(frames.map((f) => f.event)).toEqual(["plugin.approval.requested"]);
+  });
+
+  it("승인: chat.abort 는 그 런의 미해결 승인을 프레임 없이 버린다(대본이 거기서 멈춘다)", async () => {
+    const { gateway, connection, frames } = await connect();
+    const { outcome } = await requestApproval(gateway, frames, {
+      toolCallId: "toolu_fake_a",
+      ttlMs: 10_000,
+    });
+
+    await connection.request("chat.abort", { sessionKey: SESSION_KEY, runId: RUN_ID });
+    await expect(outcome).resolves.toMatchObject({ decision: "deny", expired: false });
+    await gateway.flush();
+    expect(frames.filter((f) => f.event === "plugin.approval.resolved")).toEqual([]);
+  });
+
+  it("승인: close() 는 기다리던 대본을 깨운다(프로미스가 남지 않는다)", async () => {
+    const { gateway, frames } = await connect();
+    const { outcome } = await requestApproval(gateway, frames, {
+      toolCallId: "toolu_fake_a",
+      ttlMs: 10_000,
+    });
+    await gateway.close();
+    await expect(outcome).resolves.toMatchObject({ decision: "deny", expired: false });
   });
 
   it("close() 는 열린 연결을 끊고(post-hello onClose) 포트를 닫는다", async () => {

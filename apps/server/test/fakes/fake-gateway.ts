@@ -5,6 +5,7 @@
  * 요청은 응답 표(서버 코어 태스크 13)대로 답하고, 모르는 메서드는 실물처럼 FORBIDDEN/MISSING_SCOPE 로 거절한다(ADR 0001 4.4).
  * 이벤트 페이로드는 태스크 10 픽스처 팩토리로 만든다 — 어댑터 매퍼 테스트와 같은 모양이다.
  */
+import type { ApprovalDecision, ApprovalReason, ApprovalStatus } from "@dodok/shared";
 import { randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import { type WebSocket, WebSocketServer } from "ws";
@@ -24,6 +25,59 @@ export type RequestFrame = {
 };
 
 export type ChatSendParams = { sessionKey: string; agentId: string; message: string; idempotencyKey: string };
+
+/** 툴이 요구하는 승인 하나(승인 스파이크 3.2). 시각은 가짜 Gateway 가 실제 시계로 채운다 */
+export type FakeApprovalRequest = {
+  /** 그 승인을 요구한 툴 호출 — `plugin.approval.requested` 의 `request.toolCallId` */
+  toolCallId: string;
+  /** 기본 `plugin:<uuid>` — 실물과 같은 모양 */
+  approvalId?: string;
+  title?: string;
+  toolName?: string;
+  /** 기본 `["allow-once", "deny"]`(claude-cli 실물) */
+  allowedDecisions?: ApprovalDecision[];
+  /** 이만큼 아무도 해결하지 않으면 만료된다(실물 plugin 기본 120초) */
+  ttlMs: number;
+  /**
+   * 만료됐을 때 — `"gateway"`(기본)는 실물처럼 `resolved(decision:"deny", resolvedBy:null)` 프레임을 보내고(5.2),
+   * `"silent"` 는 아무 프레임도 보내지 않는다(서버의 만료 감시 타이머를 재는 대본).
+   */
+  onTimeout?: "gateway" | "silent";
+};
+
+/** 승인 하나의 결말 — 대본은 이걸 보고 툴 결과를 고른다 */
+export type FakeApprovalOutcome = {
+  approvalId: string;
+  /** 만료·중지는 `"deny"` */
+  decision: ApprovalDecision;
+  /** TTL 이 지나 만료됐는가 */
+  expired: boolean;
+};
+
+/** 확정된 승인의 스냅샷 값 — RPC 응답과 `resolved` 프레임이 같은 값을 싣는다 */
+type ApprovalVerdict = {
+  status: Extract<ApprovalStatus, "allowed" | "denied" | "expired" | "cancelled">;
+  decision: ApprovalDecision;
+  reason: Extract<ApprovalReason, "user" | "timeout" | "malformed-verdict" | "run-aborted">;
+  resolvedAtMs: number;
+};
+
+type ApprovalState = FakeApprovalRequest & {
+  id: string;
+  runId: string;
+  sessionKey: string;
+  agentId: string;
+  title: string;
+  toolName: string;
+  allowedDecisions: ApprovalDecision[];
+  onTimeout: "gateway" | "silent";
+  createdAtMs: number;
+  expiresAtMs: number;
+  verdict?: ApprovalVerdict;
+  /** 결말을 기다리는 대본 — 확정되면 한 번 부르고 버린다 */
+  wake?: (outcome: FakeApprovalOutcome) => void;
+  timer?: ReturnType<typeof setTimeout>;
+};
 
 export type FakeGatewayOptions = {
   /** false 면 `sessions.reset` 이 FORBIDDEN/MISSING_SCOPE(operator.admin 없음). 기본 true */
@@ -77,6 +131,17 @@ export type FakeGateway = {
   /** usage 는 final 이 아니라 `session.message` 에 실린다(ADR 0001 6.3) */
   sessionMessageUsage(runId: string, sessionKey: string): Promise<void>;
   /**
+   * 툴이 승인을 요구한다 — `plugin.approval.requested` 를 실물 모양(3.2)으로 보내고 결말을 기다린다.
+   * 결말은 `approval.resolve` RPC·TTL 만료·그 런의 `chat.abort` 중 먼저 오는 것으로 난다.
+   * 돌려주는 프로미스는 프레임을 쓴 뒤가 아니라 **결말이 났을 때** resolve 한다 — 기다리지 않고 두 번 부르면 승인이 겹친다.
+   */
+  requestApproval(
+    runId: string,
+    sessionKey: string,
+    agentId: string,
+    approval: FakeApprovalRequest,
+  ): Promise<FakeApprovalOutcome>;
+  /**
    * 지금까지 보낸 프레임을 연결된 클라이언트가 모두 처리할 때까지 기다린다 — 연결마다 ping 을 보내 pong 을 받는다
    * (ws 는 프레임을 순서대로 읽어 앞 프레임의 onEvent 를 부른 뒤 pong 을 낸다). 쓰기가 끝나도 서버 이벤트 루프가 다른 소켓(브리지)을
    * 먼저 읽을 수 있어서, 실물처럼 Gateway 이벤트를 정본보다 먼저 처리시키려면 정본 앞에서 부른다.
@@ -87,6 +152,10 @@ export type FakeGateway = {
 };
 
 export const FAKE_GATEWAY_TOKEN = "fake-gateway-token";
+/** 해결한 클라이언트의 `clientDisplayName` — 우리는 "dodok" 으로 붙는다(승인 스파이크 3.4) */
+export const APPROVAL_RESOLVED_BY = "dodok";
+const DEFAULT_APPROVAL_TITLE = "claude-cli native tool: Write";
+const DEFAULT_APPROVAL_TOOL = "Write";
 
 /** 어댑터가 부르는 메서드 전부(`features.methods` 광고). `connect` 는 실물처럼 광고하지 않는다(ADR 0001 4.4). */
 export const FAKE_GATEWAY_METHODS = [
@@ -98,18 +167,33 @@ export const FAKE_GATEWAY_METHODS = [
   "sessions.list",
   "sessions.reset",
   "agents.list",
+  "approval.resolve",
 ] as const;
-export const FAKE_GATEWAY_EVENTS = ["chat", "agent", "session.message", "sessions.changed"] as const;
+export const FAKE_GATEWAY_EVENTS = [
+  "chat",
+  "agent",
+  "session.message",
+  "sessions.changed",
+  "plugin.approval.requested",
+  "plugin.approval.resolved",
+] as const;
 
-const MISSING_ADMIN_SCOPE = {
+type GatewayError = { code: string; message: string; details?: Record<string, unknown> };
+
+const MISSING_ADMIN_SCOPE: GatewayError = {
   code: "FORBIDDEN",
   message: "missing scope",
   details: { code: "MISSING_SCOPE", missingScope: "operator.admin", requiredScopes: ["operator.admin"] },
 };
 
-type Reply = (
-  result: { ok: true; payload: unknown } | { ok: false; error: typeof MISSING_ADMIN_SCOPE },
-) => void;
+/** 없는 승인에 resolve — 실물 모양(승인 스파이크 4.4) */
+const APPROVAL_NOT_FOUND: GatewayError = {
+  code: "INVALID_REQUEST",
+  message: "approval not found",
+  details: { reason: "APPROVAL_NOT_FOUND" },
+};
+
+type Reply = (result: { ok: true; payload: unknown } | { ok: false; error: GatewayError }) => void;
 
 function record(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
@@ -170,6 +254,8 @@ export async function startFakeGateway(opts: FakeGatewayOptions = {}): Promise<F
   const sessionIds = new Map<string, string>();
   const deltaSnapshots = new Map<string, string>();
   const toolStarts = new Map<string, { name: string; args: Record<string, unknown> }>();
+  /** 이 Gateway 가 낸 승인 — 확정된 것도 남긴다(실물처럼 다시 resolve 하면 applied:false 로 답한다) */
+  const approvals = new Map<string, ApprovalState>();
   let seq = 0;
   let chatSendHandler: ((params: ChatSendParams) => void | Promise<void>) | undefined;
   let closing: Promise<void> | undefined;
@@ -229,6 +315,67 @@ export async function startFakeGateway(opts: FakeGatewayOptions = {}): Promise<F
     seq: nextSeq(),
   });
 
+  /** 승인 픽스처가 읽는 값 — `seq` 는 프레임을 만들 때만 붙인다(RPC 응답은 프레임이 아니다) */
+  const approvalOpts = (a: ApprovalState) => ({
+    runId: a.runId,
+    sessionKey: a.sessionKey,
+    agentId: a.agentId,
+    id: a.id,
+    title: a.title,
+    toolName: a.toolName,
+    toolCallId: a.toolCallId,
+    allowedDecisions: a.allowedDecisions,
+    createdAtMs: a.createdAtMs,
+    expiresAtMs: a.expiresAtMs,
+  });
+
+  /** `approval.resolve` 응답의 terminal 스냅샷(4.1). 이미 확정된 승인에는 `applied:false` 로 같은 값을 돌려준다(4.4) */
+  const resolveResult = (a: ApprovalState, v: ApprovalVerdict, applied: boolean) =>
+    fixtures.approvalResolveResult({
+      ...approvalOpts(a),
+      applied,
+      status: v.status,
+      decision: v.decision,
+      reason: v.reason,
+      resolvedAtMs: v.resolvedAtMs,
+    });
+
+  /**
+   * 승인 하나를 확정한다. `emit` 이면 실물처럼 `plugin.approval.resolved` 를 낸다 —
+   * 만료는 `decision:"deny"` + `resolvedBy:null` 로만 구별된다(5.2). 기다리던 대본은 프레임을 쓴 **뒤에** 깨운다.
+   */
+  function settleApproval(a: ApprovalState, verdict: ApprovalVerdict, emit: boolean): Promise<void> {
+    if (a.verdict) return Promise.resolve();
+    clearTimeout(a.timer);
+    a.verdict = verdict;
+    const wake = a.wake;
+    a.wake = undefined;
+    const sent = emit
+      ? broadcast(
+          fixtures.pluginApprovalResolved({
+            ...approvalOpts(a),
+            seq: nextSeq(),
+            decision: verdict.decision,
+            // resolvedBy 는 해결한 클라이언트의 clientDisplayName — 만료·취소는 해결자가 없다(3.4·5.2)
+            resolvedBy: verdict.reason === "user" ? APPROVAL_RESOLVED_BY : null,
+            resolvedAtMs: verdict.resolvedAtMs,
+          }),
+        )
+      : Promise.resolve();
+    wake?.({ approvalId: a.id, decision: verdict.decision, expired: verdict.reason === "timeout" });
+    return sent;
+  }
+
+  /** 그 런의 미해결 승인을 프레임 없이 버린다(런 중지·포트 닫기) — 기다리던 대본이 영원히 멈추지 않게 */
+  function dropApprovals(
+    match: (a: ApprovalState) => boolean,
+    verdict: Omit<ApprovalVerdict, "resolvedAtMs">,
+  ) {
+    for (const a of approvals.values()) {
+      if (!a.verdict && match(a)) void settleApproval(a, { ...verdict, resolvedAtMs: Date.now() }, false);
+    }
+  }
+
   // 응답 표 — 서버 코어 태스크 13 + sc-t13 브리프 2
   const methods: Record<
     (typeof FAKE_GATEWAY_METHODS)[number],
@@ -251,7 +398,15 @@ export async function startFakeGateway(opts: FakeGatewayOptions = {}): Promise<F
       reply({ ok: true, payload: { ok: true } });
       const runId = str(params.runId);
       const sessionKey = str(params.sessionKey) ?? "";
-      if (runId) void gateway.chatAborted(runId, sessionKey, agentIdFromKey(sessionKey));
+      if (!runId) return;
+      // 중지된 런의 미해결 승인이 어떤 프레임으로 오는지는 미관측이다(스파이크 10.3) — 아무것도 보내지 않고
+      // 서버 쪽 `cancelForRun` 에 맡긴다. 대본만 깨워 거기서 멈추게 한다
+      dropApprovals((a) => a.runId === runId, {
+        status: "cancelled",
+        decision: "deny",
+        reason: "run-aborted",
+      });
+      void gateway.chatAborted(runId, sessionKey, agentIdFromKey(sessionKey));
     },
     "chat.history": (params, reply) => {
       if (params.cursor !== undefined) {
@@ -287,6 +442,35 @@ export async function startFakeGateway(opts: FakeGatewayOptions = {}): Promise<F
         },
       });
     },
+    "approval.resolve": (params, reply) => {
+      const a = approvals.get(str(params.id) ?? "");
+      if (!a) {
+        reply({ ok: false, error: APPROVAL_NOT_FOUND });
+        return;
+      }
+      // 이미 확정된 승인에 다시 보내도 오류가 아니다 — applied:false 로 그 스냅샷을 돌려준다(4.4)
+      if (a.verdict) {
+        reply({ ok: true, payload: resolveResult(a, a.verdict, false) });
+        return;
+      }
+      const decision = str(params.decision) as ApprovalDecision | undefined;
+      const resolvedAtMs = Date.now();
+      // ⚠ 목록 밖 결정은 거절로 확정된다(4.4 fail-closed 함정). 서버가 먼저 막지만 실물 모양을 그대로 흉내 낸다
+      const verdict: ApprovalVerdict =
+        decision && a.allowedDecisions.includes(decision)
+          ? {
+              status: decision === "deny" ? "denied" : "allowed",
+              decision,
+              reason: "user",
+              resolvedAtMs,
+            }
+          : { status: "denied", decision: "deny", reason: "malformed-verdict", resolvedAtMs };
+      reply({ ok: true, payload: resolveResult(a, verdict, true) });
+      // 응답을 클라이언트가 처리한 **뒤에** 이벤트를 낸다. 실물 순서(3.4)이기도 하고, 두 프레임이 한 청크로 뭉치면
+      // 서버가 이벤트를 먼저 적용해 「누가 해결했는가」(decidedBy)가 비는 경주가 난다
+      void gateway.flush().then(() => settleApproval(a, verdict, true));
+    },
+
     "agents.list": (_params, reply) =>
       reply({
         ok: true,
@@ -408,11 +592,49 @@ export async function startFakeGateway(opts: FakeGatewayOptions = {}): Promise<F
         payload: { ...record(frame.payload), sessionKey, sessionId: sessionIdFor(sessionKey) },
       });
     },
+    requestApproval(runId, sessionKey, agentId, req) {
+      const createdAtMs = Date.now();
+      const state: ApprovalState = {
+        ...req,
+        id: req.approvalId ?? `plugin:${randomUUID()}`,
+        runId,
+        sessionKey,
+        agentId,
+        title: req.title ?? DEFAULT_APPROVAL_TITLE,
+        toolName: req.toolName ?? DEFAULT_APPROVAL_TOOL,
+        allowedDecisions: req.allowedDecisions ?? ["allow-once", "deny"],
+        onTimeout: req.onTimeout ?? "gateway",
+        createdAtMs,
+        expiresAtMs: createdAtMs + Math.max(0, req.ttlMs),
+      };
+      approvals.set(state.id, state);
+      const outcome = new Promise<FakeApprovalOutcome>((resolve) => {
+        state.wake = resolve;
+      });
+      state.timer = setTimeout(
+        () => {
+          void settleApproval(
+            state,
+            { status: "expired", decision: "deny", reason: "timeout", resolvedAtMs: Date.now() },
+            state.onTimeout === "gateway",
+          );
+        },
+        Math.max(0, req.ttlMs),
+      );
+      // 타이머가 프로세스를 붙잡지 않게 — 닫는 건 close()
+      state.timer.unref();
+      // 프레임 쓰기를 기다리지 않고 결말 프로미스를 돌려준다 — socket.send 는 여기서 이미 예약돼 순서가 지켜진다
+      void broadcast(fixtures.pluginApprovalRequested({ ...approvalOpts(state), seq: nextSeq() }));
+      return outcome;
+    },
+
     async flush() {
       await Promise.all([...connected].map(pingPong));
     },
     close() {
       clearInterval(tickTimer);
+      // 기다리던 대본이 영원히 멈추지 않게 미해결 승인을 버린다(소켓이 곧 닫히므로 프레임은 보내지 않는다)
+      dropApprovals(() => true, { status: "cancelled", decision: "deny", reason: "run-aborted" });
       closing ??= new Promise<void>((resolve) => {
         for (const socket of wss.clients) socket.terminate();
         connected.clear();

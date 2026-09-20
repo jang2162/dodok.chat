@@ -283,6 +283,110 @@ describe("시나리오 — 인바운드 대본을 Gateway 이벤트와 플러그
     expect(scenario.errors).toEqual([]);
   });
 
+  it("대본의 approval — 툴 start 뒤 승인을 띄우고, 결정이 나야 툴 result·델타·정본이 이어진다", async () => {
+    const scenario = createScenario({
+      gateway,
+      plugin,
+      agents: {
+        dev: () => ({ approval: { ttlMs: 5_000, onDecision: "continue" }, deltas: ["끝"], reply: "끝" }),
+      },
+    });
+    const sent = delivery("dev", "@dev 승인");
+    await bridge.deliverInbound(sent, 2_000);
+    const requested = await vi.waitFor(() => {
+      const found = frames.find((f) => f.event === "plugin.approval.requested");
+      expect(found).toBeDefined();
+      return found as Frame;
+    });
+    // 승인 대기는 「툴 start 는 왔는데 result 가 안 오는 구간」이다(실물 4.2) — 델타도 정본도 아직 없다
+    expect(frames.map((f) => f.event)).toEqual(["agent", "agent", "plugin.approval.requested"]);
+    expect(outbound).toEqual([]);
+    const start = frames[1]?.payload as { data: { phase: string; name: string; toolCallId: string } };
+    expect(start.data).toMatchObject({ phase: "start", name: "Write" });
+    expect((requested.payload as { request: { toolCallId: string } }).request.toolCallId).toBe(
+      start.data.toolCallId,
+    );
+
+    const { id } = requested.payload as { id: string };
+    await connection.request("approval.resolve", { id, kind: "plugin", decision: "allow-once" });
+    await scenario.idle();
+
+    expect(frames.map((f) => f.event)).toEqual([
+      "agent",
+      "agent",
+      "plugin.approval.requested",
+      "plugin.approval.resolved",
+      "agent",
+      "chat",
+      "chat",
+    ]);
+    const result = frames[4]?.payload as { data: { phase: string; isError: boolean; result: unknown } };
+    expect(result.data).toMatchObject({ phase: "result", isError: false, result: "ok" });
+    expect(outbound.map((m) => m.text)).toEqual(["끝"]);
+    expect(scenario.errors).toEqual([]);
+  });
+
+  it("onDecision 을 주지 않으면 결정대로 — 거절·만료면 툴 결과가 실물 거절 문구로 나간다(4.3)", async () => {
+    const scenario = createScenario({
+      gateway,
+      plugin,
+      // TTL 이 짧고 아무도 누르지 않는다 → 만료 → 툴 오류
+      agents: { dev: () => ({ approval: { toolName: "Read", ttlMs: 20 }, reply: "그래도 답합니다" }) },
+    });
+    await bridge.deliverInbound(delivery("dev", "@dev 승인"), 2_000);
+    await scenario.idle();
+
+    const result = frames.find(
+      (f) => f.event === "agent" && (f.payload as { data: { phase: string } }).data.phase === "result",
+    );
+    const data = (result?.payload as { data: { isError: boolean; result: string } } | undefined)?.data;
+    expect(data).toMatchObject({
+      isError: true,
+      result: "PreToolUse:Read hook error: OpenClaw user denied native tool use (Read).",
+    });
+    // 거절·만료는 런을 죽이지 않는다 — 정본은 그대로 온다
+    expect(outbound.map((m) => m.text)).toEqual(["그래도 답합니다"]);
+    expect(scenario.errors).toEqual([]);
+  });
+
+  it("승인 둘이면 한 런에 겹쳐 뜨고, 둘 다 확정돼야 재생이 이어진다", async () => {
+    const scenario = createScenario({
+      gateway,
+      plugin,
+      agents: {
+        dev: () => ({
+          approval: [
+            { toolName: "Write", ttlMs: 200 },
+            { toolName: "Read", ttlMs: 5_000, onDecision: "continue" },
+          ],
+          reply: "둘 다 끝",
+        }),
+      },
+    });
+    await bridge.deliverInbound(delivery("dev", "@dev 승인 둘"), 2_000);
+    const requested = await vi.waitFor(() => {
+      const found = frames.filter((f) => f.event === "plugin.approval.requested");
+      expect(found).toHaveLength(2);
+      return found;
+    });
+    // 첫 승인이 만료돼도(200ms) 재생은 멈춰 있다 — 둘째가 살아 있다
+    await vi.waitFor(() =>
+      expect(frames.filter((f) => f.event === "plugin.approval.resolved")).toHaveLength(1),
+    );
+    expect(outbound).toEqual([]);
+    // 겹침의 정의 — 둘째 승인은 첫째가 확정되기 **전에** 떠 있었다(하나씩 기다렸다면 순서가 뒤집힌다)
+    const order = frames.map((f) => f.event);
+    expect(order.indexOf("plugin.approval.resolved")).toBeGreaterThan(
+      order.lastIndexOf("plugin.approval.requested"),
+    );
+
+    const alive = (requested[1]?.payload as { id: string } | undefined)?.id;
+    await connection.request("approval.resolve", { id: alive, kind: "plugin", decision: "allow-once" });
+    await scenario.idle();
+    expect(outbound.map((m) => m.text)).toEqual(["둘 다 끝"]);
+    expect(scenario.errors).toEqual([]);
+  });
+
   it("idle() 은 재생 중인 런이 모두 끝나야 resolve 한다", async () => {
     const scenario = createScenario({
       gateway,
