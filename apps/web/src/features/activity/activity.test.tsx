@@ -107,7 +107,7 @@ afterEach(() => {
   useApprovalStore.getState().reset();
 });
 
-const panel = () => screen.findByTestId("page-channel-settings");
+const panel = () => screen.findByTestId("page-channel-panel");
 /** 지금 고른 런의 id — 목록 줄의 `aria-current` 가 정본이다 */
 const pickedRun = (aside: HTMLElement) =>
   aside.querySelector<HTMLElement>('[data-run-id][aria-current="true"]')?.dataset.runId;
@@ -259,7 +259,7 @@ it("설정 탭으로 가도 같은 틀(패널·시트)이 유지된다", async (
   // 좁은 화면이면 같은 내용이 전체 화면 시트로
   media.setNarrow(true);
   const sheet = await screen.findByRole("dialog", { name: "활동" });
-  expect(sheet).toHaveAttribute("data-testid", "page-channel-settings");
+  expect(sheet).toHaveAttribute("data-testid", "page-channel-panel");
   expect(await within(sheet).findByRole("link", { name: "설정" })).toBeInTheDocument();
 
   // 설정 탭으로 — 같은 틀, 제목만 바뀐다
@@ -267,12 +267,12 @@ it("설정 탭으로 가도 같은 틀(패널·시트)이 유지된다", async (
   await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/settings`));
   expect(await screen.findByRole("dialog", { name: "채널 설정" })).toHaveAttribute(
     "data-testid",
-    "page-channel-settings",
+    "page-channel-panel",
   );
 
   media.setNarrow(false);
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-  expect(await screen.findByTestId("page-channel-settings")).toHaveAttribute("data-panel-tab", "settings");
+  expect(await screen.findByTestId("page-channel-panel")).toHaveAttribute("data-panel-tab", "settings");
 });
 
 /**
@@ -289,7 +289,7 @@ it("탭을 옮겨도 초점이 <body> 로 떨어지지 않는다(D3)", async () 
   await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/settings`));
   // 화면이 실제로 설정 탭을 그린 뒤에 본다 — 주소만 바뀐 사이를 재면 아무것도 잠그지 못한다
   await waitFor(() =>
-    expect(screen.getByTestId("page-channel-settings")).toHaveAttribute("data-panel-tab", "settings"),
+    expect(screen.getByTestId("page-channel-panel")).toHaveAttribute("data-panel-tab", "settings"),
   );
   // 누른 링크가 화면에 살아 있고 초점도 거기 있다 — 링크가 언마운트되면 초점은 `<body>` 로 떨어진다
   expect(document.body).toContainElement(settingsTab);
@@ -301,7 +301,7 @@ it("탭을 옮겨도 초점이 <body> 로 떨어지지 않는다(D3)", async () 
   await userEvent.keyboard("{Enter}");
   await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/activity`));
   await waitFor(() =>
-    expect(screen.getByTestId("page-channel-settings")).toHaveAttribute("data-panel-tab", "activity"),
+    expect(screen.getByTestId("page-channel-panel")).toHaveAttribute("data-panel-tab", "activity"),
   );
   expect(document.body).toContainElement(activityTab);
   expect(document.activeElement).toBe(activityTab);
@@ -313,7 +313,7 @@ it("「활동 닫기」는 채널 화면으로 돌아간다", async () => {
   const aside = await panel();
   await userEvent.click(within(aside).getByRole("link", { name: "활동 닫기" }));
   await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}`));
-  expect(screen.queryByTestId("page-channel-settings")).not.toBeInTheDocument();
+  expect(screen.queryByTestId("page-channel-panel")).not.toBeInTheDocument();
 });
 
 it("미해결 승인이 없으면 카드도 없고, 오면 런 목록보다 위에 뜬다", async () => {

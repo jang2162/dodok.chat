@@ -298,10 +298,10 @@ describe("새 대화", () => {
     await userEvent.click(within(list).getByRole("button", { name: "@dev 새 대화" }));
     expect(await screen.findByRole("dialog", { name: "새 대화" })).toBeInTheDocument();
 
-    const panel = screen.getByTestId("page-channel-settings");
+    const panel = screen.getByTestId("page-channel-panel");
     await router.navigate({ to: "/c/$channelId/settings", params: { channelId: CH2 } });
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "새 대화" })).not.toBeInTheDocument());
-    expect(screen.getByTestId("page-channel-settings")).toBe(panel);
+    expect(screen.getByTestId("page-channel-panel")).toBe(panel);
 
     router.history.back();
     await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/settings`));

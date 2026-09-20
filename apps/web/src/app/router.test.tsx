@@ -60,7 +60,7 @@ it("/c/$channelId/settings 는 채널 화면의 Outlet 자리에 설정 패널�
     vi.fn<typeof fetch>(async (input, init) => shellGet(input, init) ?? json(200, ME)),
   );
   renderAt("/c/abc/settings");
-  const settings = await screen.findByTestId("page-channel-settings");
+  const settings = await screen.findByTestId("page-channel-panel");
   expect(screen.getByTestId("page-channel")).toContainElement(settings);
 });
 

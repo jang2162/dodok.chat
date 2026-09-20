@@ -1,6 +1,6 @@
 # Phase 2 ① 활동 패널·승인 설계
 
-**상태**: 승인 대기 · 2026-09-20 작성
+**상태**: 구현 완료 · 2026-09-20 작성 · 2026-09-21 「구현과 맞춘 것」(11장) 추가
 **범위**: 툴 활동 패널, 에이전트 승인(approval) 왕복, 브라우저 알림, shared 계약 정정, Phase 1 이월 정리
 **앞선 근거**: 승인 스파이크 `.superpowers/sdd/2026-09-20-phase2-approval-spike/spike-report.md`(실물 프레임·RPC·TTL 실측, 모델 런 1회) · ADR 0001(Gateway WS) · ADR 0002(채널 플러그인) · 웹 MVP 스펙 `2026-09-19-web-mvp-design.md` · 서버 코어 스펙 `2026-09-15-server-core-design.md`
 
@@ -119,7 +119,8 @@ ChannelSubscribeResult.pendingApprovals: Approval[]                // 그대로,
 ### 4.2 상관과 저장
 
 1. `sessionKey` → `agent:<providerAgentId>:dodok:channel:<channelId>` 를 파싱해 채널·에이전트를 찾는다. 우리 규칙이 아니면 무시하고 `warn` 한 줄.
-2. 그 채널·에이전트의 **종료되지 않은 런**이 있으면 그 런에 붙인다. 여럿이면 가장 최근에 시작한 것.
+2. 그 채널·에이전트의 **종료되지 않은 런**이 있으면 그 런에 붙인다 — `findOpenRunBySession(db, sessionKey)`, 즉 그 세션의 **FIFO 맨 앞**(`createdAt`·`id` 오름차순 첫 행)이다.
+   「가장 최근」이 아니다: 세션은 직렬이라 대기 중인 앞 런이 먼저 끝나야 뒤 런이 시작하고, 지금 툴을 부르는 것도 그 앞 런이다(p2-t4 리뷰 판정).
 3. 런이 없으면 `runId` 없이 저장한다(채널 수준 승인). 카드는 뜬다.
 4. `providerApprovalId` 유일 인덱스로 upsert 한다. 이미 확정된 승인에 `pending` 이 늦게 오면 무시한다.
 5. 런에 붙은 승인은 `APPROVAL_REQUESTED`/`APPROVAL_RESOLVED` 런 이벤트로도 남긴다(활동 타임라인이 순서대로 읽을 수 있게).
@@ -144,11 +145,22 @@ ChannelSubscribeResult.pendingApprovals: Approval[]                // 그대로,
 | `decision` 이 그 승인의 `allowedDecisions` 안 | `VALIDATION` |
 | 어댑터 연결됨 | `ADAPTER_UNAVAILABLE` |
 
-통과하면 `approval.resolve` 를 호출하고, 응답의 terminal 스냅샷으로 행을 갱신한 뒤 `approval.resolved` 를 채널 룸에 보낸다. Gateway 가 `resolved` 이벤트도 따로 주므로 **id 로 중복 제거**한다(먼저 온 쪽이 이긴다).
+통과하면 `approval.resolve` 를 호출하고, 응답의 terminal 스냅샷으로 행을 갱신한 뒤 `approval.resolved` 를 **워크스페이스 룸**으로 보낸다(아래 4.6). Gateway 가 `resolved` 이벤트도 따로 주므로 **id 로 중복 제거**한다(먼저 온 쪽이 이긴다).
 
 ### 4.5 진단
 
 `frame-dump.ts` 의 `DUMPED_EVENTS` 에 `session.approval`·`plugin.approval.requested`·`plugin.approval.resolved`·`exec.approval.requested`·`exec.approval.resolved` 를 더한다. 지금은 승인이 덤프에 하나도 남지 않는다.
+
+### 4.6 팬아웃 범위 — 워크스페이스 룸
+
+`approval.requested`·`approval.resolved` 는 **채널 룸이 아니라 워크스페이스 룸**(`workspace:<id>`)으로 간다. 웹은 한 번에 한 채널만 구독하므로,
+채널 룸으로 보내면 5.4 의 「다른 채널을 보고 있어도 알림이 온다」와 9장 완료 기준 3 이 **도달 불가**가 된다(브라우저 검증 D1 이 실측).
+
+**노출 범위는 늘지 않는다**: `channel.subscribe` 는 **워크스페이스 소속만** 검사하고 채널 멤버십을 보지 않는다(저장소 전체에 사람 멤버십 검사가 없다).
+접속한 소켓은 이미 어느 채널이든 구독해 같은 페이로드(`detail` 포함)를 받을 수 있다 — 채널 룸은 프라이버시 경계가 아니다.
+워크스페이스에 사람이 여럿이 된 뒤에도 같은 경계라면 채널 멤버 `userRoom` 팬아웃으로 좁히면 된다(`userRoom` 은 이미 있고 접속 때 join 한다).
+
+**재접속 복구는 아직 채널 단위다.** 구독 ack 의 `pendingApprovals` 는 그 채널 것만 싣는다 — 다른 채널의 미해결 승인은 새로고침 뒤 돌아오지 않는다(`docs/plan.md` 8장 이월).
 
 ## 5. 웹
 
@@ -159,7 +171,10 @@ ChannelSubscribeResult.pendingApprovals: Approval[]                // 그대로,
 
 ### 5.2 런 목록과 타임라인
 
-- 목록: `GET /channels/:id/runs`(최근 50) + 실시간 `run.state` 병합. 한 줄에 에이전트 핸들·상태 배지·시작 시각·소요·툴 수.
+- 목록: `GET /channels/:id/runs`(최근 50) + 실시간 `run.state` 병합. 한 줄에 에이전트 핸들·상태 배지·시작 시각·소요.
+  **「툴 수」는 뺐다**(Ruling 6): `Run`·`RunState` 계약 어디에도 없고 REST 가 주지 않는다 — 세려면 목록의 런마다 `GET /runs/:id/events` 를 불러야 하고(최대 50회)
+  그 응답은 상한이 없어 텍스트 델타까지 통째로 온다. 정보는 타임라인의 툴 행이 이미 보여 주고, 390px 에서 런 한 줄은 이미 빽빽하다.
+  나중에 정말 필요하면 싼 길이 있다 — 서버에서 `run_events` 를 `type='TOOL_CALL_START'` 로 `group by run_id` 집계해 **목록 응답에만** 곁들인다(`Run` 계약 무변경) + 웹 한 줄.
 - 타임라인: `GET /runs/:id/events` + 실시간 `run.event`. 행은 툴 호출(이름·상태·소요), 단계(`STEP_*`), 서브에이전트(`SUBAGENT_*`), 승인, 오류. 텍스트 델타는 **타임라인에 넣지 않는다**(대화가 이미 보여 준다).
 - 툴 인자·결과는 **접힘이 기본**. 펼치면 `<pre>` 로 보여 주고, `[+N chars hidden]` 표시가 있으면 「잘렸습니다」 한 줄을 붙인다.
 - 런이 진행 중이면 맨 아래에 붙어 따라간다(메시지 목록과 같은 규칙).
@@ -170,6 +185,8 @@ ChannelSubscribeResult.pendingApprovals: Approval[]                // 그대로,
 - 내용: 제목(`title`), `severity` 색(info 회색·warning 주황·critical 빨강), 툴 이름, 접힌 인자, **남은 시간 카운트다운**(1초 간격, `expiresAt` 기준), 버튼은 `allowedDecisions` 에 있는 것만(`allow-once` 「이번만 허용」 · `allow-always` 「항상 허용」 · `deny` 「거절」).
 - 누르면 잠그고 ack 를 기다린다. 실패는 코드별 문구를 토스트로(`CONFLICT` 「이미 처리되었거나 만료되었습니다」 · `VALIDATION` 「이 승인이 받지 않는 선택입니다」 · `FORBIDDEN` · `ADAPTER_UNAVAILABLE` 「Gateway 에 연결되지 않았습니다」).
 - 확정되면 카드가 결과 한 줄로 바뀐다(「허용됨 · 방금」 / 「거절됨」 / 「만료됨」). 사라지지 않는다 — 기록이다.
+- **다만 그 탭이 살아 있는 동안만이다.** 구독 ack 의 `pendingApprovals` 에는 **미해결만** 실리므로, 새로 연 탭·새로고침 뒤에는 확정된 카드가 메시지 흐름에 없다.
+  기록은 **활동 탭 타임라인의 승인 행**(「허용됨」·「거절됨」·「만료됨」·「취소됨」)이 맡는다 — 그쪽은 런 이벤트라 서버에 남는다.
 
 ### 5.4 브라우저 알림
 
@@ -178,9 +195,21 @@ ChannelSubscribeResult.pendingApprovals: Approval[]                // 그대로,
 - 내용: 「승인 필요 — @dev 가 Write 를 실행하려 합니다」. 누르면 그 채널로 이동하고 활동 탭을 연다. 탭이 이미 보이는 상태(`document.visibilityState === "visible"`)이고 같은 채널을 보고 있으면 띄우지 않는다.
 - 권한·지원 여부가 없어도 앱은 그대로 돈다(카드가 정본).
 
+**알려진 동작(결함 아님)**
+
+- 중복 차단은 **한 탭 안**만이다 — 탭을 둘 열면 탭마다 1건씩 뜬다. `tag` 가 `approval:<id>` 로 같아 알림 센터에서는 겹치지만(`renotify` 기본 false) 소리는 브라우저에 달렸다.
+  Phase 2 ④ 웹푸시는 「탭당 1건, tag 동일」을 전제로 하면 된다.
+- 새로고침 직후 **이미 대기 중이던** 승인은 울리지 않는다. 구독 ack 의 `pendingApprovals` 는 카드를 되살리는 길이지 알림 경로가 아니다 — 알림은 `approval.requested` 프레임에만 달렸다.
+
 ### 5.5 상태
 
 승인은 런 스토어와 별도로 `approvalStore`(zustand)에 채널별로 둔다. 들어오는 길 셋: 구독 ack 의 `pendingApprovals`, wire `approval.requested`/`resolved`, 활동 탭의 REST 조회. 만료는 클라이언트 시계로 계산해 표시만 바꾸고, 서버 사실이 오면 덮어쓴다.
+
+그래서 **클라이언트 시계로 만료된 짧은 순간에는 화면 글(「만료됨」)과 `data-status`(아직 `pending`)가 어긋난다** — 서버가 정본이고 그 사실이 오면 맞춰진다.
+평상시에는 한 프레임 안에 따라잡히고, 서버가 끊긴 동안에는 오래 간다. **선택자·단언은 `data-status` 가 아니라 보이는 글로 짠다.**
+
+타임라인의 툴 행과 승인을 잇는 것은 **승인 레코드(스토어)** 다. 실물 요구 짝 순서에서는 런 이벤트 `APPROVAL_REQUESTED` 가 `toolCallId` 를 잃을 수 있어,
+런 이벤트만 보면 이음이 끊긴다(계약은 바꾸지 않았다 — 태스크 6 판정).
 
 ## 6. 오류 처리
 
@@ -199,7 +228,7 @@ ChannelSubscribeResult.pendingApprovals: Approval[]                // 그대로,
 - **브라우저 검증(워커)**: 활동 탭 런 목록·타임라인·접기, 승인 카드 두 자리·카운트다운·허용·거절·만료, 알림 권한 켜기와 도착, 390px, 콘솔 오류 0.
 - **실물(선택)**: 스파이크에서 실물 승인을 이미 한 번 봤다. 필요하면 모델 런 1회로 「승인 → 런 재개」만 다시 본다.
 
-## 8. Phase 1 이월 정리 (이 프로젝트에 끼워 넣는다)
+## 8. Phase 1 이월 정리 (이 프로젝트에 끼워 넣는다) — **완료**(태스크 0·1, 2026-09-20)
 
 **서버**: `channel.created` wire 이벤트 추가(다른 탭에 새 채널이 보이게) · 시스템 메시지 조사 병기형(「@dev 이(가)」) · `CONFLICT` 에 `details.field`(핸들 vs `providerAgentId`) · `GET /auth/me` 에 워크스페이스 이름.
 
@@ -210,12 +239,45 @@ ChannelSubscribeResult.pendingApprovals: Approval[]                // 그대로,
 ## 9. 완료 기준
 
 1. 에이전트가 승인이 필요한 툴을 부르면 카드가 뜨고, 허용하면 런이 이어지고 거절하면 오류로 이어지며, 120초가 지나면 만료로 바뀐다 — 가짜 Gateway 통합 테스트와 `dev:fake` 브라우저 검증 모두에서.
-2. 활동 탭에서 런 목록과 툴 타임라인을 보고, 인자·결과를 펼칠 수 있다.
-3. 알림을 켠 사용자는 다른 채널을 보고 있어도 승인 요구를 받는다.
-4. 8장 이월이 모두 정리되고 루트 네 검사가 통과한다.
+   → **확인**: 통합 시나리오 9a~9f(`apps/server/test/integration/approvals.test.ts`) · 브라우저 검증 시나리오 2·3·4(p2-t10). `dev:fake` 의 TTL 은 20초로 줄여 만료를 볼 수 있게 했다.
+2. 활동 탭에서 런 목록과 툴 타임라인을 보고, 인자·결과를 펼칠 수 있다. → **확인**: 브라우저 검증 시나리오 1.
+3. 알림을 켠 사용자는 다른 채널을 보고 있어도 승인 요구를 받는다. → **처음엔 도달 불가였다**(브라우저 검증 D1) — 팬아웃을 워크스페이스 룸으로 옮겨 고쳤다(4.6). 재검증은 p2-t13.
+4. 8장 이월이 모두 정리되고 루트 네 검사가 통과한다. → **확인**: 아홉 건 모두 정리, 루트 네 검사 exit 0(테스트 1380).
 
 ## 10. 열린 문제 (범위 밖 기록)
 
 - `exec`·`system-agent` 종류 승인과 `allow-always`·`cancelled` 는 아직 실물을 못 봤다(스파이크 9장). 모양이 같다고 보고 구현하되, 실연에서 보이면 확인한다.
 - 승인 정책(`ask`)을 앱에서 켜는 UI — 설정 자리가 셋이고 합성 규칙(`security=min, ask=max`)이 있다. 별도 설계.
 - 웹푸시(Phase 2 ④)가 들어오면 알림 트리거를 한곳으로 합친다.
+
+## 11. 구현과 맞춘 것 (2026-09-21)
+
+구현·리뷰·브라우저 검증에서 이 설계와 달라진 결정만 모았다. 정본 근거는 실행 원장(`.superpowers/sdd/2026-09-20-activity-approvals/ledger.md`)의 판정 기록이다.
+
+**계약·서버**
+
+- **중지 때 이벤트 순서는 보장되지 않는다**(Ruling A) — 로컬 abort 신호와 Gateway `aborted` 프레임이 경주한다. **순서에 기대는 화면을 만들지 않는다.** 통합 테스트는 모든 승인 프레임 순서를 전역으로 뒤집어도 같은 결과가 나오는 것으로 이 불변을 잠갔다.
+- **만료의 `decision`**(Ruling B) — 두 경로(Gateway 확정·서버 감시) 모두 `deny` + `reason: "timeout"` 이다. **취소(`cancelled`)는 `decision` 을 비운다** — 제공자가 보고한 결정만 담는다. 화면은 `status` 가 정본이다.
+- **승인 중복은 버리지 않고 병합한다**(Ruling C) — 같은 `providerApprovalId` 가 두 경로로 오므로, 나중에 온 프레임이 **빈 칸을 채우면** 행을 갱신하고 **다시 발행**한다(`toolCallId` 는 정본 프레임에만 있다). 「같으면 무시」로 두면 보조 프레임이 먼저 온 경우 툴 이음이 영영 안 생긴다.
+- **런 상관은 `findOpenRunBySession`**(세션 FIFO 맨 앞) — 설계 초안의 「가장 최근에 시작한 런」이 아니다(4.2).
+- **상한 초과 입력은 fail-open** — 계약 길이 상한을 넘는 문자열은 승인을 버리지 않고 잘라서 통과시킨다. 승인이 통째로 사라지면 사용자는 카드도 못 보고 TTL 이 끝난 뒤 만료만 본다.
+- **요구·확정은 워크스페이스 룸으로 낸다**(Ruling 7) — 4.6. 초안의 「채널 룸」으로는 5.4·완료 기준 3 이 도달 불가였다.
+- **`cancelForRun` 은 런의 terminal 전이 *전에*** 부른다 — 뒤에 부르면 `APPROVAL_RESOLVED` 신호가 드롭된다.
+- **런 없는 승인**도 저장한다(채널 수준). 서버 재기동 중 대기하던 승인은 메모리의 `resumeTo` 가 사라져 `tool` 로 가정한다 — 잘못 가정해도 다음 신호가 상태를 맞춘다.
+
+**웹**
+
+- **툴 행과 승인을 잇는 정본은 승인 레코드(스토어)** 다 — 런 이벤트가 아니다(5.5). 실물 요구 짝 순서에서 `APPROVAL_REQUESTED` 가 `toolCallId` 를 잃기 때문이고, 계약은 바꾸지 않았다.
+- **활동 패널의 바깥 틀은 `app/layout/PanelTabs`** 가 맡는다 — 설정 패널과 같은 셸을 나눠 쓴다. 탭을 옮겨도 머리가 살아 있어야 초점이 `<body>` 로 떨어지지 않는다(브라우저 검증 D3). 셸의 선택자는 `data-testid="page-channel-panel"`(두 탭 공용 — 옛 이름 `page-channel-settings` 는 활동 탭에도 붙어 오해를 샀다).
+- **종료를 한 번 본 런은 목록에 붙들어 둔다** — 끝난 런은 몇 초 뒤 런 스토어에서 빠지는데 REST 재조회는 그보다 늦어, 그 틈에 선택이 옛 런으로 넘어가고 `key` 리마운트로 펼침·스크롤이 날아갔다(D2·D9).
+- **재구독 ack 의 `pendingApprovals` 는 미해결의 정본**이다 — 목록에 없는 로컬 `pending` 은 닫는다(D8). 단 **ack 직전에 도착한 승인은 지우지 않는다**: 서버가 룸 join 뒤 스냅샷을 읽는 순서 때문에 방금 받은 요구가 ack 에 없을 수 있어, `emitAck` 전에 찍은 목록으로 지울 후보를 좁힌다.
+- **진행 중 런의 소요는 `useNowTick` 로 흐른다** — 흐르는 값이 하나도 없으면 타이머를 걸지 않는다(D7).
+- **확정·만료 안내에만 `aria-live="polite"`** 를 붙인다 — 카운트다운 span 에는 붙이지 않는다(1초마다 읽히면 못 쓴다).
+
+**범위에서 뺀 것**
+
+- **런 목록의 「툴 수」**(Ruling 6) — 5.2. 계약에 없고 세려면 런마다 REST 한 번이다.
+- **승인 정책(`ask`)을 앱에서 켜는 UI** — 10장 그대로 범위 밖. 실물에서 승인을 보려면 CLI 로 켠다(`docs/guides/live-smoke.md` 8절).
+
+**남긴 것** — `docs/plan.md` 8장 「이월」: D4(확정 순간 카드 점프) · D6(카운트다운 둘이 1초 어긋남) · D11(로그아웃 전이 401, Phase 1 유래) · 다른 채널의 미해결 승인이 새로고침 뒤 안 돌아옴(4.6).
+사람만 확인할 수 있는 것(소리·OS 알림 클릭·권한 팝업·잠금 화면·VoiceOver)은 `docs/guides/live-smoke.md` 9절.

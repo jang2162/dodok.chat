@@ -28,7 +28,7 @@ describe("패널", () => {
   it("넓은 화면: 채널 화면 오른쪽에 섹션 넷, 「설정 닫기」 → /c/:id", async () => {
     stubSettingsServer();
     const { router } = renderRoute(`/c/${CH}/settings`);
-    const panel = await screen.findByTestId("page-channel-settings");
+    const panel = await screen.findByTestId("page-channel-panel");
     expect(screen.getByTestId("page-channel")).toContainElement(panel);
     expect(within(panel).getByRole("heading", { name: "채널 설정" })).toBeInTheDocument();
     for (const name of ["기본", "채널 프롬프트", "릴레이 정책", "멤버"]) {
@@ -36,7 +36,7 @@ describe("패널", () => {
     }
     await userEvent.click(within(panel).getByRole("link", { name: "설정 닫기" }));
     await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}`));
-    expect(screen.queryByTestId("page-channel-settings")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("page-channel-panel")).not.toBeInTheDocument();
   });
 
   it("폭이 바뀌어도(오른쪽 패널 ↔ 전체 화면 시트) 고치던 초안은 그대로다", async () => {
@@ -54,7 +54,7 @@ describe("패널", () => {
 
     media.setNarrow(false);
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    const panel = screen.getByTestId("page-channel-settings");
+    const panel = screen.getByTestId("page-channel-panel");
     expect(within(panel).getByLabelText("이름")).toHaveValue("general-고침");
     expect(within(panel).getByRole("textbox", { name: "채널 프롬프트" })).toHaveValue("짧게");
   });
@@ -73,7 +73,7 @@ describe("패널", () => {
     stubSettingsServer();
     const { router } = renderRoute(`/c/${CH}/settings`);
     const sheet = await screen.findByRole("dialog", { name: "채널 설정" });
-    expect(sheet).toHaveAttribute("data-testid", "page-channel-settings");
+    expect(sheet).toHaveAttribute("data-testid", "page-channel-panel");
     expect(sheet).toHaveClass("w-full");
     expect(await within(sheet).findByRole("region", { name: "기본" })).toBeInTheDocument();
     await userEvent.click(within(sheet).getByRole("button", { name: "닫기" }));
@@ -95,16 +95,14 @@ describe("패널", () => {
     const { router } = renderRoute(`/c/${CH}/settings`, queryClient);
     const basic = await region("기본");
     await userEvent.type(within(basic).getByLabelText("이름"), "-초안");
-    const panel = screen.getByTestId("page-channel-settings");
+    const panel = screen.getByTestId("page-channel-panel");
 
     await router.navigate({ to: "/c/$channelId/settings", params: { channelId: CH2 } });
     await waitFor(() =>
-      expect(within(screen.getByTestId("page-channel-settings")).getByLabelText("이름")).toHaveValue(
-        "random",
-      ),
+      expect(within(screen.getByTestId("page-channel-panel")).getByLabelText("이름")).toHaveValue("random"),
     );
     // 라우트 컴포넌트는 그대로다 — 안쪽만 새로 그렸다
-    expect(screen.getByTestId("page-channel-settings")).toBe(panel);
+    expect(screen.getByTestId("page-channel-panel")).toBe(panel);
     expect(within(await region("기본")).getByRole("button", { name: "저장" })).toBeDisabled();
     expect(server.writes()).toEqual([]);
   });
@@ -121,7 +119,7 @@ describe("패널", () => {
     const queryClient = createQueryClient(() => {});
     queryClient.setQueryData<Channel[]>(qk.channels, [channelOf(CH, { name: "목록 이름" })]);
     renderRoute(`/c/${CH}/settings`, queryClient);
-    const panel = await screen.findByTestId("page-channel-settings");
+    const panel = await screen.findByTestId("page-channel-panel");
     // 헤더는 자리값으로 곧바로 그리지만, 패널은 기다린다
     expect(await within(screen.getByTestId("channel-header")).findByText("목록 이름")).toBeInTheDocument();
     expect(within(panel).getByRole("status")).toHaveTextContent("불러오는 중…");

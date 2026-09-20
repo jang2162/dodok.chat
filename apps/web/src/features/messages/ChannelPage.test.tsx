@@ -110,13 +110,13 @@ it("헤더: 이름·주제, 채널 에이전트 아바타(테두리 에이전트
   expect(settings).toHaveAttribute("href", "/c/a/settings");
   expect(settings).toHaveAttribute("aria-expanded", "false");
   await userEvent.click(settings);
-  expect(await screen.findByTestId("page-channel-settings")).toBeInTheDocument();
+  expect(await screen.findByTestId("page-channel-panel")).toBeInTheDocument();
   expect(router.state.location.pathname).toBe("/c/a/settings");
   expect(settings).toHaveAttribute("href", "/c/a");
   expect(settings).toHaveAttribute("aria-expanded", "true");
 
   await userEvent.click(settings);
-  await waitFor(() => expect(screen.queryByTestId("page-channel-settings")).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.queryByTestId("page-channel-panel")).not.toBeInTheDocument());
   expect(router.state.location.pathname).toBe("/c/a");
 });
 
@@ -127,7 +127,7 @@ it("메시지·작성기 자리를 비워 두고 오른쪽 Outlet 에 설정 패
   const page = screen.getByTestId("page-channel");
   expect(page.querySelector('[data-slot="messages"]')).toBeInTheDocument();
   expect(page.querySelector('[data-slot="composer"]')).toBeInTheDocument();
-  expect(page).toContainElement(await screen.findByTestId("page-channel-settings"));
+  expect(page).toContainElement(await screen.findByTestId("page-channel-panel"));
 });
 
 it("없는 채널(404)은 화면 안에 「채널을 찾을 수 없습니다」와 첫 화면 링크 — 토스트는 없다", async () => {
@@ -137,7 +137,7 @@ it("없는 채널(404)은 화면 안에 「채널을 찾을 수 없습니다」�
   expect(await within(page).findByText("채널을 찾을 수 없습니다")).toBeInTheDocument();
   expect(within(page).getByRole("link", { name: "첫 화면으로" })).toHaveAttribute("href", "/");
   expect(page.querySelector('[data-slot="messages"]')).not.toBeInTheDocument();
-  expect(screen.queryByTestId("page-channel-settings")).not.toBeInTheDocument();
+  expect(screen.queryByTestId("page-channel-panel")).not.toBeInTheDocument();
   expect(toastError).not.toHaveBeenCalled();
 });
 

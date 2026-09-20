@@ -197,7 +197,8 @@ export function nextRetryDelay(attempt: number, random = Math.random): number {
 
 - [ ] **Step 4: 나머지 셋**
 
-(a) `apps/web/vite.config.ts` 의 `build.rolldownOptions.output.advancedChunks` → `codeSplitting` 으로 옮기고 `pnpm -F @dodok/web build` 에 경고가 없는지 확인한다. 첫 화면 번들 크기를 보고서에 적는다(지금 0.47MB).
+(a) `apps/web/vite.config.ts` 의 `build.rolldownOptions.output.advancedChunks` → `codeSplitting` 으로 옮기고 `pnpm -F @dodok/web build` 에서 **`advancedChunks` 폐기 경고**가 사라지는지 확인한다. 첫 화면 번들 크기를 보고서에 적는다(지금 0.47MB).
+    ⚠ **「경고 0」이 되지는 않는다.** 청크 크기 경고(>500kB)가 하나 남는다 — `markdown` 청크. `chunkSizeWarningLimit` 은 기본값 500 그대로 둔다(태스크 1 리뷰 판정): 전역 임계값을 올리면 다른 청크의 경고까지 가린다.
 
 (b) `@streamdown/cjk` 를 **정확 핀**으로 설치하고 `MessageBody.tsx` 의 `REMARK` 배열에 더한다(`defaultRemarkPlugins` 뒤, `remarkSoftBreaks` 앞). 렌더 테스트 2개: `**"인용"**은` 이 굵게, `**중요**합니다` 가 그대로 굵게(회귀).
 
@@ -209,7 +210,8 @@ export function nextRetryDelay(attempt: number, random = Math.random): number {
 
 - [ ] **Step 5: 검증·커밋**
 
-루트 네 명령 exit 0 + `pnpm -F @dodok/web build` 경고 0.
+루트 네 명령 exit 0 + `pnpm -F @dodok/web build` 에서 `advancedChunks` 폐기 경고 0.
+**남는 경고는 청크 크기 하나**다 — 2026-09-21 실측 `dist/assets/markdown-*.js` **511.87 kB**(gzip 156.97 kB), 500 kB 임계값을 넘는 유일한 청크. 의도한 잔여물이다.
 
 ```bash
 git add apps/web/src apps/web/vite.config.ts apps/web/package.json pnpm-lock.yaml pnpm-workspace.yaml

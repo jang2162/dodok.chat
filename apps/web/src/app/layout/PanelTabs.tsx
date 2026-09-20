@@ -91,7 +91,7 @@ export function PanelTabs({
         >
           <SheetContent
             side="right"
-            data-testid="page-channel-settings"
+            data-testid="page-channel-panel"
             data-panel-tab={active}
             aria-describedby={undefined}
             className="w-full gap-0 p-0 sm:max-w-none"
@@ -110,7 +110,7 @@ export function PanelTabs({
     <>
       {body}
       <aside
-        data-testid="page-channel-settings"
+        data-testid="page-channel-panel"
         data-panel-tab={active}
         aria-labelledby={titleId}
         className="flex w-[360px] shrink-0 flex-col border-l"

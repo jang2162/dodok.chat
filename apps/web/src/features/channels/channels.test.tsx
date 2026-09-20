@@ -107,7 +107,7 @@ describe("CreateChannelDialog", () => {
       "aria-current",
       "page",
     );
-    expect(await screen.findByTestId("page-channel-settings")).toBeInTheDocument();
+    expect(await screen.findByTestId("page-channel-panel")).toBeInTheDocument();
     expect(server.count("GET", "/api/v1/channels")).toBe(1);
   });
 
@@ -190,7 +190,7 @@ describe("HomeRedirect", () => {
     const dialog = await screen.findByRole("dialog", { name: "채널 만들기" });
     await userEvent.type(within(dialog).getByLabelText("이름"), "general{Enter}");
 
-    expect(await screen.findByTestId("page-channel-settings")).toBeInTheDocument();
+    expect(await screen.findByTestId("page-channel-panel")).toBeInTheDocument();
     expect(router.state.location.pathname).toBe("/c/new-1/settings");
     expect(moves).toEqual(["PUSH /c/new-1/settings"]);
   });

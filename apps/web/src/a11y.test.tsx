@@ -154,7 +154,7 @@ describe("채널 설정 패널", () => {
       members: [memberOf("agent", DEV_AGENT.id), memberOf("agent", FIN_AGENT.id)],
     });
     renderRoute(`/c/${CH}/settings`);
-    const panel = await screen.findByTestId("page-channel-settings");
+    const panel = await screen.findByTestId("page-channel-panel");
     await within(panel).findByRole("list", { name: "채널 에이전트" });
     await userEvent.click(within(panel).getByRole("button", { name: "@dev 채널 프롬프트 편집" }));
     expect(within(panel).getByRole("textbox", { name: "@dev 채널 프롬프트 오버라이드" })).toBeInTheDocument();

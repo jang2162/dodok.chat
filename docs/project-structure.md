@@ -1,6 +1,6 @@
 # 프로젝트 구성 가이드 (Claude Code 인계용)
 
-작성일: 2026-09-14 · 계획서 v0.7 기준(2026-09-20 갱신: `apps/web` 실물) · 이 문서는 "어떻게 구성할지"만 다룬다. 배경·결정 근거는 `docs/plan.md` 참고.
+작성일: 2026-09-14 · 계획서 v0.8 기준(2026-09-21 갱신: Phase 2 ① 활동 패널·승인 실물) · 이 문서는 "어떻게 구성할지"만 다룬다. 배경·결정 근거는 `docs/plan.md` 참고.
 
 ---
 
@@ -57,7 +57,9 @@ src/
 ├─ components/    components v1 스키마 (blocks/actions/button/select/modal/media/file) + 제약 검증
 ├─ events/        RunEvent 유니온 (AG-UI 이벤트명 채택: TEXT_MESSAGE_START/CONTENT/END,
 │                 TOOL_CALL_START/ARGS/END, RUN_STARTED/FINISHED/ERROR, STATE_SNAPSHOT, CUSTOM)
-├─ wire/          클라이언트↔서버 Socket.IO 이벤트 계약 (server→client, client→server 타입 맵)
+├─ wire/          클라이언트↔서버 Socket.IO 이벤트 계약 (server→client, client→server 타입 맵).
+│                 승인: client→server `approval.resolve`, server→client `approval.requested`·`approval.resolved`,
+│                 구독 ack 의 `pendingApprovals`(그 채널의 **미해결**만)
 ├─ bridge/        플러그인↔서버 브리지 메시지 계약 (인바운드 전달, 아웃바운드 수신, 컴포넌트 결과, 설정 변경, 헬스)
 └─ mention.ts     @멘션 파싱 (사람/에이전트 별칭 → id), 릴레이 감지에 공용
 ```
@@ -66,7 +68,8 @@ src/
 
 ### 2.2 `apps/server`
 
-Phase 1 ① 서버 코어 실물(스펙 `docs/superpowers/specs/2026-09-15-server-core-design.md`, 계획 `docs/superpowers/plans/2026-09-15-server-core.md`). 한 프로세스 안에 REST·wire·브리지·어댑터가 같이 뜬다.
+Phase 1 ① 서버 코어 실물(스펙 `docs/superpowers/specs/2026-09-15-server-core-design.md`, 계획 `docs/superpowers/plans/2026-09-15-server-core.md`)에
+Phase 2 ① 승인(스펙 `docs/superpowers/specs/2026-09-20-activity-approvals-design.md`)이 얹혔다. 한 프로세스 안에 REST·wire·브리지·어댑터가 같이 뜬다.
 
 ```
 src/
@@ -77,7 +80,7 @@ src/
 ├─ logger.ts              pino, 토큰·비밀 키 redact
 ├─ wiring.ts              createServices(라우터 ⇄ 오케스트레이터 상호 참조, RunsFacade), sessionRecoverTargets(재접속 복구 대상)
 ├─ db/
-│  ├─ schema.sqlite.ts    Drizzle 스키마 (계획서 6장 테이블 + agent_sessions)
+│  ├─ schema.sqlite.ts    Drizzle 스키마 (계획서 6장 테이블 + agent_sessions + approvals)
 │  ├─ auth-schema.ts      Better Auth 테이블
 │  └─ client.ts           createDb: better-sqlite3 연결 + 마이그레이션(apps/server/drizzle)
 ├─ auth/
@@ -88,6 +91,9 @@ src/
 │  ├─ errors.ts           HttpError·apiError — ApiError { code, message, details? } ↔ HTTP 상태
 │  └─ validate.ts         경계 Zod 파싱(body·query·params·wire payload·저장값)
 ├─ modules/
+│  ├─ approvals/          store.ts(approvals 테이블 — providerApprovalId 유일 upsert, 중복은 병합 후 재발행, 채널 미해결 목록),
+│  │                      service.ts(상관 findOpenRunBySession → 저장 → APPROVAL_REQUESTED/RESOLVED 런 이벤트 → 버스, resolve 는 승인 설계 4.4 의 문지기 검사 뒤 어댑터 RPC).
+│  │                      REST 라우트는 없다 — 요구·확정은 wire 로만 오간다
 │  ├─ channels/           CRUD·멤버(에이전트 promptOverride·autoRespond·aliases)·프롬프트 리비전, 프롬프트 변경 시 어댑터 config.set, 「새 대화」(resetAgentSession)
 │  ├─ agents/             에이전트 등록·수정, GET /agents/discover(Gateway agents.list)
 │  ├─ messages/           seq 발급(seq.ts)·사람/에이전트/시스템 메시지 저장·bus 통지·히스토리 페이징
@@ -101,14 +107,17 @@ src/
 │  └─ types.ts            AgentAdapter 계열 타입 재수출(구현은 packages/openclaw-adapter)
 └─ realtime/
    ├─ bus.ts              ServerBus — 모듈 → realtime 타입드 이벤트
-   ├─ socket.ts           wire 인증(세션 토큰·프로토콜)·룸(channel:<id>, user:<id>)·클라이언트 → 서버 핸들러(subscribe 는 lastSeq 이후 ≤200)
-   ├─ events.ts           bus → 룸 팬아웃, 소켓별 미전송 500 초과 시 run.event 버림 + run.state { resync }
+   ├─ socket.ts           wire 인증(세션 토큰·프로토콜)·룸(channel:<id>, user:<id>, workspace:<id>)·클라이언트 → 서버 핸들러(subscribe 는 lastSeq 이후 ≤200,
+   │                      ack 에 그 채널의 **미해결** 승인 pendingApprovals · approval.resolve 는 승인 서비스로 넘긴다)
+   ├─ cookie-auth.ts      wire 핸드셰이크의 dodok.session 쿠키 파싱(웹은 토큰을 다루지 않는다)
+   ├─ events.ts           bus → 룸 팬아웃, 소켓별 미전송 500 초과 시 run.event 버림 + run.state { resync }.
+   │                      approval.requested·resolved 는 channel.created 와 함께 **워크스페이스 룸**으로 — 지금 구독 중이 아닌 채널의 승인도 닿아야 한다(설계 5.4·Ruling 7)
    └─ types.ts            WireServer·RunsFacade 타입
 ```
 
-아직 없는 것(Phase 2 이후): `approvals/`(승인 카드 미러), `push/`, `uploads/`, 어댑터 `registry.ts`(MVP 는 openclaw 하나).
+아직 없는 것(Phase 2 ② 이후): `push/`, `uploads/`, 어댑터 `registry.ts`(MVP 는 openclaw 하나).
 
-테스트(`apps/server/test/`): 모듈 단위(인메모리 SQLite), `fakes/`(가짜 Gateway·가짜 플러그인·시나리오 대본), `integration/`(시나리오 1~8, 실제 어댑터 + 가짜 둘), `helpers/`(`bootLiveApp`·wire 클라이언트·시나리오 단계).
+테스트(`apps/server/test/`): 모듈 단위(인메모리 SQLite), `fakes/`(가짜 Gateway·가짜 플러그인·시나리오 대본), `integration/`(시나리오 1~8 `relay`·`prompt`·`recovery`, 시나리오 9a~9f `approvals`, 실제 어댑터 + 가짜 둘), `helpers/`(`bootLiveApp`·wire 클라이언트·시나리오 단계).
 손으로 두드리는 실연 도구는 루트 `scripts/wire-cli.ts`(`pnpm wire-cli`, `docs/guides/live-smoke.md`).
 
 개발 모드 `apps/server/scripts/dev-fake.ts`(`pnpm -F @dodok/server dev:fake`, 웹 MVP 스펙 9.2): 위 `test/fakes/` 를 그대로 가져다 가짜 Gateway·가짜 플러그인·대본과 함께 서버를 띄운다 —
@@ -119,23 +128,30 @@ DB 는 `data/dev-fake.sqlite`(시작마다 새로, `--keep` 이면 유지), 기�
 
 ```
 src/
-├─ index.ts               배럴: adapter-types · createOpenClawAdapter · FakeAdapter
-├─ adapter-types.ts       AgentAdapter 인터페이스(스펙 6.1), AdapterEvent·RunEventBody, AdapterCapabilities(sessionReset·agentsList·configSet), AdapterError
+├─ index.ts               배럴: adapter-types · createOpenClawAdapter · FakeAdapter · ProviderApproval·parseSessionKey(서버 승인 상관이 쓴다)
+├─ adapter-types.ts       AgentAdapter 인터페이스(스펙 6.1), AdapterEvent(+ kind:"approval")·RunEventBody, AdapterCapabilities(sessionReset·agentsList·configSet),
+│                         resolveApproval(providerApprovalId, kind, decision), AdapterError
 ├─ openclaw-adapter.ts    createOpenClawAdapter: 연결 관리자 + 브리지 + 매퍼 조립. send = 런 id 등록 → 세션 구독 → inbound.deliver(플러그인 미접속 120s 대기,
 │                         ack 타임아웃 10s·재시도 1s·4s·16s) → admission. 정본 outbound.message → onCanonical. abort(chat.abort)·resetSession(sessions.reset,
 │                         FORBIDDEN 이면 capability 내림)·listAgents·syncChannelConfig·forgetRun·status 이벤트
 ├─ fake-adapter.ts        FakeAdapter — 서버 단위 테스트용(`@dodok/openclaw-adapter/fake` 서브패스), calls 기록·이벤트 주입
 ├─ config-sync.ts         채널 설정 → 브리지 config.set(10s). 플러그인이 없으면 기다리지 않고 ADAPTER_UNAVAILABLE
 ├─ gateway/
+│  ├─ approvals.ts        Gateway 승인 프레임 → ProviderApproval 정규화(순수). 정본 전역 plugin|exec|openclaw.approval.requested/resolved(request 블록·toolCallId 있음)와
+│  │                      보조 session.approval(presentation 블록·toolCallId 없음)·재접속 approvalReplay 를 한 모양으로 모으고, 만료의 비대칭
+│  │                      (plugin 은 deny+resolvedBy:null, session 은 expired)도 여기서 흡수한다. **우리 세션만** 거른다(전역 프레임이라 다른 채널·TUI 승인도 온다).
+│  │                      계약 상한 초과 문자열은 버리지 않고 잘라서 통과(fail-open) — 승인을 버리면 카드도 못 보고 TTL 만료만 보게 된다
 │  ├─ client.ts           @openclaw/gateway-client 래퍼: connect.challenge → connect(디바이스 서명·공유 토큰, scopes 에 operator.admin 포함,
 │  │                      caps DEFAULT_GATEWAY_CAPS) → hello-ok. 실패(PAIRING_REQUIRED 포함)는 그대로 올리고 재시도는 연결 관리자 몫
 │  ├─ connection-manager.ts  접속 루프·지수 백오프·상태(down/reconnecting/connected)·요청 타임아웃, 접속마다 복구(sessions.subscribe →
 │  │                      대상 세션별 sessions.messages.subscribe → chat.history, 커서 reset 이면 꼬리 페이지 다시).
-│  │                      subscribeSession: 접속 뒤 새로 생긴 세션은 send 전에 연결당 한 번 구독 — 실물 Gateway 는 구독한 세션의 이벤트만 보낸다(실연에서 발견, live-smoke 5.4)
+│  │                      subscribeSession: 접속 뒤 새로 생긴 세션은 send 전에 연결당 한 번 구독 — 실물 Gateway 는 구독한 세션의 이벤트만 보낸다(실연에서 발견, live-smoke 5.4).
+│  │                      세션 구독에 includeApprovals: true — 켜야 session.approval 과 응답의 approvalReplay(재접속 되감기)가 온다
 │  ├─ device-identity.ts  Ed25519 아이덴티티 생성·저장(0600)·서명 (스파이크 1에서 확정)
 │  ├─ events.ts           chat(delta/final/error/aborted)·agent(lifecycle·stream:"tool")·session.message(usage) → RunEvent + RunSignal.
 │  │                      우리 런(runId = 우리 런 uuid, ADR 0002 4.3)만. deltaText → TEXT_MESSAGE_CONTENT(replace 면 TEXT_MESSAGE_REPLACE), final 스냅샷은 정본 대체용
-│  ├─ frame-dump.ts       OPENCLAW_FRAME_DUMP_PATH — 받은 chat·agent·session.message 프레임 JSONL append(스트림, 쓰기 오류면 warn 뒤 끔, close 에서 닫음)
+│  ├─ frame-dump.ts       OPENCLAW_FRAME_DUMP_PATH — 받은 chat·agent·session.message·session.approval·plugin|exec.approval.requested/resolved 프레임 JSONL append
+│  │                      (스트림, 쓰기 오류면 warn 뒤 끔, close 에서 닫음)
 │  └─ sessions.ts         sessionKeyFor(agent:<agentId>:dodok:channel:<channelId> 원형 고정 — 「새 대화」는 sessions.reset, 세대 접미사 없음: 계획서 10장 #15·#19),
 │                         sessions.reset·chat.history 응답 파싱
 ├─ bridge/
@@ -170,7 +186,8 @@ SDK import 경로: `openclaw/plugin-sdk/plugin-entry`, `openclaw/plugin-sdk/chan
 
 ### 2.5 `apps/web`
 
-Phase 1 ② 웹 MVP 실물(스펙 `docs/superpowers/specs/2026-09-19-web-mvp-design.md`, 계획 `docs/superpowers/plans/2026-09-19-web-mvp.md`).
+Phase 1 ② 웹 MVP 실물(스펙 `docs/superpowers/specs/2026-09-19-web-mvp-design.md`, 계획 `docs/superpowers/plans/2026-09-19-web-mvp.md`)
+위에 Phase 2 ① 활동 패널·승인(스펙 `docs/superpowers/specs/2026-09-20-activity-approvals-design.md`)이 얹혔다.
 React 19 + Vite 8 + TanStack(Query·Router·Virtual) + Tiptap 작성기 + Streamdown 렌더 + Tailwind 4·shadcn. 의존성은 전부 정확 핀이고 태스크 2 에서 한 번에 넣었다 — 뒤 작업은 의존성을 더하지 않는다.
 서버 상태의 진실은 Query 캐시이고 wire 이벤트가 그것을 패치한다. 스트리밍 중인 런만 Zustand 스토어에 둔다(스펙 4장, 데이터 흐름 A).
 
@@ -185,7 +202,7 @@ src/
 ├─ app/
 │  ├─ App.tsx              Provider 조립(Query·Router·Wire·Tooltip·Toaster) + Query 밖 401 등록
 │  ├─ createApp.ts         앱 하나의 QueryClient·Router·onUnauthorized (테스트는 메모리 히스토리를 넘긴다)
-│  ├─ router.tsx           라우트(/login·가드 레이아웃·/·/c/$channelId(+/settings)·/agents), safeNext, 라우트 코드 분할
+│  ├─ router.tsx           라우트(/login·가드 레이아웃·/·/c/$channelId(+/settings·/activity)·/agents), safeNext, 라우트 코드 분할
 │  ├─ queryClient.ts       Query 기본값 — 전역 오류 토스트(`meta.silent` 로 끔, 폼 오류 VALIDATION·CONFLICT 제외), 재시도는 네트워크·5xx 만, 401 → 로그인
 │  ├─ session.ts           로그아웃·401 정리(resetClientState)와 Query 밖 REST 401 통지
 │  ├─ fileDrop.ts          앱 수준 파일 드롭 막기 + 「이미지는 Phase 2」 한 문구·한 토스트 id
@@ -197,6 +214,9 @@ src/
 │     ├─ ChannelHeader.tsx 채널 이름·주제, 에이전트 아바타 묶음(+N), 설정 패널 여닫기, 좁은 화면 메뉴 버튼
 │     ├─ Banners.tsx       wire 끊김·`rejected`·`protocol_mismatch` 배너 + OpenClaw 미연결 배너(둘은 함께 보일 수 있다)
 │     ├─ ConnectionDots.tsx Gateway·플러그인 점 — wire 가 끊기면 마지막 값을 믿지 않고 「알 수 없음」
+│     ├─ NotifyToggle.tsx  사이드바 하단 「알림 켜기」 — 아직 묻지 않은 `default` 일 때만 보인다(granted 면 할 일이 없고, denied·미지원이면 다시 묻지 않는다)
+│     ├─ PanelTabs.tsx     오른쪽 패널의 탭 셸(「설정」·「활동」, `data-testid="page-channel-panel"`). 넓은 화면은 360px `<aside>`, 좁은 화면은 전체 시트.
+│     │                    내용은 포털 하나로 옮겨 다녀 탭을 바꿔도 안쪽이 리마운트되지 않는다
 │     └─ sidebarSheet.tsx  좁은 화면 시트 열기 컨텍스트 + 지금 화면의 메뉴 버튼(초점 복귀 대상)
 ├─ api/
 │  ├─ http.ts              같은 출처 REST(`/api/v1`) — 인증은 httpOnly 쿠키, 토큰을 다루지 않는다. ApiRequestError·NetworkError
@@ -211,6 +231,15 @@ src/
 │  ├─ runReplay.ts         `run.events.replay` 와 실시간 `run.event` 의 경합(ack 전 이벤트는 버퍼)
 │  └─ typing.ts            받은 `typing` 저장(5초 TTL)과 작성 중 행위자 목록
 ├─ features/
+│  ├─ activity/            ActivityPanel.tsx(`/c/$channelId/activity` — 맨 위 미해결 승인 카드 1장 + 런 목록 + 타임라인. REST 목록과 런 스토어를 합치고,
+│  │                       종료를 한 번 본 런은 재조회가 늦어도 목록에 붙들어 둔다) · RunList.tsx(`max-h-[40%]`, 진행 중 소요는 `useNowTick`) ·
+│  │                       RunTimeline.tsx · ToolCallRow.tsx(인자·결과 접힘 기본, `[+N chars hidden]` 이면 「잘렸습니다」) · Notice.tsx(패널 안 상태 문구·「다시 시도」) ·
+│  │                       timeline.ts(순수: 런 이벤트 → 행. 텍스트 델타는 행이 되지 않는다. mergeRuns·mergeRunEvents 로 REST 바탕 + 실시간) ·
+│  │                       useLiveRunEvents.ts(고른 런의 `run.event` 를 소켓에서 직접 — 런 스토어는 텍스트와 마지막 seq 만 들고 있어 행을 못 만든다)
+│  ├─ approvals/           approvalStore.ts(Zustand, 채널별. 들어오는 길 셋: 구독 ack `pendingApprovals`·wire `approval.requested/resolved`·활동 탭 REST.
+│  │                       확정 뒤에 온 `pending` 은 늦은 프레임이라 무시) · ApprovalCard.tsx(제목·severity 색·툴 인자·카운트다운·`allowedDecisions` 버튼만,
+│  │                       누르면 잠그고 ack 대기, 확정되면 결과 한 줄로 남는다) · countdown.ts(1초 간격 남은 시간 문구) ·
+│  │                       notify.ts(브라우저 알림 — 권한·지원 여부를 한 자리에서 가르고, 중복은 `apply` **앞** 스토어 조회로 막는다. `tag` 는 `approval:<id>`)
 │  ├─ auth/                LoginPage · mutations(useLogin·useLogout — 응답 `sessionToken` 은 쓰지 않는다, gcTime 0)
 │  ├─ channels/            ChannelList · CreateChannelDialog(만들면 설정으로) · HomeRedirect(`/` → 첫 채널, 들어올 때 받은 목록으로만 판단) · mutations
 │  ├─ messages/            timeline.ts(입장·과거·upsert·낙관적 교체·빈틈)·groupRows.ts(날짜 구분선·묶음)·useTimeline·useOlderPages·useAuthors,
@@ -222,10 +251,12 @@ src/
 │  │                       submitKeys(Enter 전송·IME) · slash.ts(`/stop`·`/new`) · useSendMessage(ack·10s 타임아웃 → failed) · useTyping·TypingIndicator
 │  ├─ agents/              AgentsPage·AgentRow(사용 토글·기본 프롬프트) · DiscoverDialog(「Gateway 에서 가져오기」) · ManualAgentForm·handleFrom ·
 │  │                       resetSession·ResetSessionDialog(「새 대화」 — 작성기 `/new` 와 설정 패널이 함께 쓴다) · mutations
-│  └─ settings/            ChannelSettingsPanel(넓은 화면 오른쪽 360px ↔ 좁은 화면 전체 시트, 내용은 포털로 한 자리에서) ·
+│  └─ settings/            ChannelSettingsPanel(패널 셸은 `app/layout/PanelTabs` 가 맡고 여기는 안쪽만) ·
 │                          BasicSection·PromptSection·MembersSection·AgentMemberRow·RelayPolicySection(+relayPolicyForm)·autoRespond(채널당 하나 보장)·
 │                          Section·ConfirmDialog·mutations(응답은 보낸 필드만 캐시 병합 — 늦은 응답이 wire 값을 덮지 않게)
-├─ hooks/useIsNarrow.ts    768px 미만(사이드바 시트·설정 전체 화면)
+├─ hooks/
+│  ├─ useIsNarrow.ts       768px 미만(사이드바 시트·패널 전체 화면)
+│  └─ useNowTick.ts        「지금」을 1초마다 새로 읽는 시계 — 흐르는 값이 없으면 타이머를 걸지 않는다(진행 중 런의 소요)
 ├─ lib/                    josa.ts(받침에 따른 조사) · utils.ts(cn)
 ├─ theme/                  agentColor.ts(핸들 → 8색 색인) · tokens.css(중립 회색 램프·강조색 하나·상태색·에이전트 8색·모션 줄이기)
 └─ ui/                     17개 — shadcn 복사본(alert·avatar·badge·button·checkbox·dialog·dropdown-menu·input·label·scroll-area·
@@ -233,9 +264,9 @@ src/
                            손으로 두고 `@/lib/utils` 로 잇는다 — CLI 를 워크스페이스에서 돌리지 않는다
 ```
 
-아직 없는 것(Phase 2 이후): `features/components/` 의 셀렉트·모달·미디어 렌더러(MVP 는 `actions` 버튼만), `features/activity/`(런 타임라인·툴 카드·승인 카드), `features/setup/`(설정 마법사 — Phase 3), `pwa/`(서비스워커·푸시), 첨부·업로드.
+아직 없는 것(Phase 2 ② 이후): `features/components/` 의 셀렉트·모달·미디어 렌더러(지금은 `actions` 버튼만), `features/setup/`(설정 마법사 — Phase 3), `pwa/`(서비스워커·푸시), 첨부·업로드.
 
-테스트: 소스 옆 `*.test.ts(x)`(순수 로직 + jsdom 렌더·라우팅·wire 핸들러) + `apps/web/test/`(`setup.ts`, 공용 도우미 `shellApi`·`messages`·`composerHarness`·`fakeSocket`·`fixtures`·`scrollLayout`·`settingsServer`·`domStubs`·`media`, `ui.test.tsx`). E2E 파일은 두지 않는다 — 브라우저 검증은 워커가 `dev:fake` 위에서 한 번 돌고 보고서로 남긴다(스펙 10.2).
+테스트: 소스 옆 `*.test.ts(x)`(순수 로직 + jsdom 렌더·라우팅·wire 핸들러) + `apps/web/test/`(`setup.ts`, 공용 도우미 `shellApi`·`messages`·`composerHarness`·`fakeSocket`·`fixtures`·`scrollLayout`·`settingsServer`·`agentsPage`·`domStubs`·`media`, `ui.test.tsx`). E2E 파일은 두지 않는다 — 브라우저 검증은 워커가 `dev:fake` 위에서 한 번 돌고 보고서로 남긴다(스펙 10.2).
 
 ---
 

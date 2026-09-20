@@ -1,6 +1,6 @@
-# dodok.chat — 에이전트 네이티브 메신저 개발 계획서 (v0.7)
+# dodok.chat — 에이전트 네이티브 메신저 개발 계획서 (v0.8)
 
-작성일: 2026-09-14 · 상태: v0.7 (2026-09-20) — Phase 1 종료(① 서버 코어 · ② 웹 MVP). 8장 Phase 1 항목 완료 표시·완료 기준 확인, 「이월 — 남은 문제」 목록 추가
+작성일: 2026-09-14 · 상태: v0.8 (2026-09-21) — Phase 2 ① 종료(활동 패널·승인). 8장 Phase 2 「활동 패널·승인 카드」 완료 표시, 「이월」을 Phase 2 ① 기준으로 갱신
 
 ### 변경 이력
 
@@ -11,6 +11,7 @@
 | v0.5 | 스파이크 1(`docs/adr/0001-gateway-client-spike.md`) 실측 반영 — (1) `hello-ok.features`는 참고 목록, 가용성은 호출해 `FORBIDDEN`/`MISSING_SCOPE`로 판정 (2) caps 정본은 `GATEWAY_CLIENT_CAPS`, `features.capabilities`는 서버 플래그 (3) `chat.send`는 `idempotencyKey` 필수이고 `runId`가 그 값 (4) `final`에 `usage`·`stopReason` 없음 → `session.message` (5) 툴 진행은 `session.tool`이 아니라 `agent` `stream:"tool"` (6) `sessions.subscribe` 응답은 `{subscribed:true}`뿐 (7) `chat.abort`는 `sessionKey` (8) 디바이스 토큰은 단수 (9) 페어링은 공유 토큰이면 자동 승인 (10) `seq`는 순서용, 연속 아님 |
 | v0.6 | Phase 0 종료 — ADR 0002 12절(6건)·ADR 0003 10절(7건)의 결정을 10장에 확정: #1 채널 프롬프트 주입 재판정, #11 Node 24 전환, #12 components 노출, #13 봇 루프 보호, #14 브리지 계약 `admission`, #15 「새 대화」= `sessions.reset` + `operator.admin`, #16 재접속 복구, #17 대체 경로 미사용, #18 `inboundChannelPrompt` 제거, #19 `:g<N>` 제거, #20 업스트림 보고 보류, #21 로컬 첫 에이전트 `dev`. 7장 백엔드 Node 24, 8장 Phase 1 첫 작업 두 건 추가 |
 | v0.7 | Phase 1 종료 — 8장 Phase 1 의 웹 항목(마크다운 렌더, 스트리밍 버블·중지, 에이전트 등록 UI·채널 추가·프롬프트 편집)에 완료 표시와 실물 요약, 완료 기준에 확인 방법(통합 시나리오 1~8 · dev Gateway 실연 6런 · `dev:fake` 브라우저 검증 시나리오 5), Phase 2 에 마크다운 렌더 보강 한 줄, 8장 끝에 「이월 — 남은 문제」(웹 렌더·서버·웹·실물 확인) 추가 |
+| v0.8 | Phase 2 ① 종료(활동 패널·승인) — 8장 Phase 2 의 「활동 패널(툴 타임라인, 런 목록), 승인 카드」에 완료 표시와 실물 요약, 「이월」에서 Phase 2 ① 이 정리한 아홉(서버 넷·웹 넷·`wire-cli` typecheck) 제거와 「한국어 강조·구두점 경계」 해결 표시, 브라우저 검증이 남긴 셋(D4 카드 점프·D6 카운트다운 어긋남·D11 로그아웃 401)과 서버 하나(다른 채널 미해결 승인의 새로고침 복구)를 이월에 추가, Phase 1 「실물 확인」 줄을 실연 완료(2026-09-20)로 정정 |
 
 ---
 
@@ -428,13 +429,15 @@ SQLite(WAL)로 시작, Drizzle ORM으로 스키마 정의해 Postgres 전환 시
 - 스트리밍 버블, 중지 버튼. → **완료**(웹, 2026-09-20) — 런 상태별 버블(대기·스트리밍·종료 문구), 버블 안 중지 버튼과 작성기 `/stop`.
 - 에이전트 등록 UI(OpenClaw `agentId` 매핑), 채널에 에이전트 추가, 채널 프롬프트/오버라이드 편집. → **완료**(웹, 2026-09-20) — 「Gateway 에서 가져오기」·직접 입력, 채널 설정 패널(기본·프롬프트·멤버·에이전트별 오버라이드·자동 응답·릴레이 정책)·「새 대화」.
 - 멘션 파싱 + 자동 릴레이 + 루프 가드. → **완료**(서버, 2026-09-15).
-- **완료 기준**: 채널 하나에서 사람 1명 + 에이전트 2개가 멘션으로 3턴 이상 협업하는 시나리오가 E2E 테스트로 통과. → **확인**(2026-09-20): 서버는 통합 시나리오 1~8(실제 어댑터 + 가짜 Gateway·플러그인, `apps/server/test/integration/`)과 dev Gateway 실연 6런(`docs/guides/live-smoke.md` 5절), 웹은 `pnpm -F @dodok/server dev:fake` 위 브라우저 검증 시나리오 5(사람 → `@dev` → dev 답의 `@fin` 릴레이 → 턴 상한 → 「이어가기」로 이어짐)가 **결함 0** 으로 통과했다. 웹은 E2E 테스트 파일을 남기지 않는 것이 설계 결정이라(스펙 10.2) 근거는 워커 검증 보고서다(`.superpowers/sdd/2026-09-19-web-mvp/web-t13*.md`, git 제외). 실물 Gateway·모델로 같은 흐름을 한 번 도는 것은 남았다 — `docs/guides/live-smoke.md` 7절.
+- **완료 기준**: 채널 하나에서 사람 1명 + 에이전트 2개가 멘션으로 3턴 이상 협업하는 시나리오가 E2E 테스트로 통과. → **확인**(2026-09-20): 서버는 통합 시나리오 1~8(실제 어댑터 + 가짜 Gateway·플러그인, `apps/server/test/integration/`)과 dev Gateway 실연 6런(`docs/guides/live-smoke.md` 5절), 웹은 `pnpm -F @dodok/server dev:fake` 위 브라우저 검증 시나리오 5(사람 → `@dev` → dev 답의 `@fin` 릴레이 → 턴 상한 → 「이어가기」로 이어짐)가 **결함 0** 으로 통과했다. 웹은 E2E 테스트 파일을 남기지 않는 것이 설계 결정이라(스펙 10.2) 근거는 워커 검증 보고서다(`.superpowers/sdd/2026-09-19-web-mvp/web-t13*.md`, git 제외). 실물 dev Gateway·실제 플러그인·실제 모델로 같은 흐름을 도는 것도 **마쳤다**(2026-09-20, 런 4 — 멘션·릴레이·「이어가기」 카드 통과, 앱 결함 0. 중지만 계측 문제로 미확인: `docs/guides/live-smoke.md` 7절).
 
 ### Phase 2 — 인터랙티브 UI·작업 기록 (2~3주)
 
 - `components` v1 렌더러(버튼·셀렉트·모달·미디어·파일), 상호작용 → 인바운드 변환, TTL·reusable·allowedUsers. (Phase 1 은 `actions` 블록의 버튼만 그린다 — 나머지는 자리표시 한 줄.)
-- 마크다운 렌더 보강: 코드 하이라이트(`@streamdown/code`), 한국어 강조·구두점 경계(`@streamdown/cjk`) — 아래 「이월」의 웹 렌더 두 줄.
-- 활동 패널(툴 타임라인, 런 목록), 승인 카드(`approval.resolve`).
+- 마크다운 렌더 보강: 코드 하이라이트(`@streamdown/code`), 한국어 강조·구두점 경계(`@streamdown/cjk`) — 아래 「이월」의 웹 렌더. → **한국어 강조는 완료**(2026-09-20, Phase 2 ① 태스크 1). 코드 하이라이트는 번들 크기 판단이 남았다.
+- 활동 패널(툴 타임라인, 런 목록), 승인 카드(`approval.resolve`). → **완료**(2026-09-21) — 스펙 `docs/superpowers/specs/2026-09-20-activity-approvals-design.md`, 계획 `docs/superpowers/plans/2026-09-20-activity-approvals.md`.
+  오른쪽 패널의 「활동」 탭(런 목록 + 툴 타임라인, 인자·결과 펼치기), 승인 카드 두 자리(메시지 흐름·활동 탭 맨 위)와 카운트다운·허용·거절·만료, 승인 브라우저 알림.
+  근거는 승인 스파이크(`.superpowers/sdd/2026-09-20-phase2-approval-spike/`) — 실물 Gateway 승인 프레임을 한 번 받아 보고 계약을 맞췄다. 아래 「이월」의 서버 넷·웹 넷·`wire-cli` 도 이때 함께 정리했다.
 - 이미지 첨부(업로드 → 첨부 정책 검증 `hello-ok.policy`) 및 에이전트 생성 이미지(`artifacts.download` 단기 URL) 표시.
 - PWA: 설치, 오프라인 최근 채널 캐시, **푸시 알림(확정)** — 구독 저장(`push_subscriptions`), 멘션/승인 요청/릴레이 한도 이벤트에 발송, iOS 설치 안내.
 - **완료 기준**: 에이전트가 버튼/모달로 사용자 입력을 받아 작업을 이어가고, 툴 실행 로그가 UI에 실시간 표시.
@@ -452,36 +455,32 @@ SQLite(WAL)로 시작, Drizzle ORM으로 스키마 정의해 Postgres 전환 시
 - 앱: Tauri 데스크톱(트레이·알림), Capacitor 모바일 또는 네이티브.
 - 스레드, 검색, 에이전트 내부 위임 결과 요약 게시, 채널 템플릿.
 
-### 이월 — 남은 문제(Phase 1 종료 시점, 2026-09-20)
+### 이월 — 남은 문제(Phase 2 ① 종료 시점, 2026-09-21)
 
-Phase 1 ①·② 를 돌면서 「고치지 않고 알고 넘긴 것」을 한곳에 모았다. 상세 근거는 각 줄에 적은 문서에 있다. 위 Phase 2·3 항목과 겹치면 그쪽을 가리킨다.
+Phase 1 ①·② 와 Phase 2 ① 을 돌면서 「고치지 않고 알고 넘긴 것」을 한곳에 모았다. 상세 근거는 각 줄에 적은 문서에 있다. 위 Phase 2·3 항목과 겹치면 그쪽을 가리킨다.
+Phase 1 이 남긴 아홉(서버 넷·웹 넷·`wire-cli` typecheck)은 Phase 2 ① 태스크 0·1 에서 정리해 지웠다.
 
-**웹 렌더(Phase 2 의존성 — 의존성을 더해야 한다)**
+**웹 렌더(Phase 2 의존성 — 의존성을 더해야 한다)** — 「한국어 강조·구두점 경계」는 Phase 2 ① 태스크 1 에서 `@streamdown/cjk` 1.0.3 으로 해결했다.
 
 - **코드 하이라이트**: Streamdown 2.6 은 shiki 를 `@streamdown/code` 플러그인으로 뺐고 웹 MVP 의존성에 없다 — 지금 코드 블록은 틀·복사 버튼까지다(스펙 5.2). Phase 2 에서 번들 크기(첫 화면 0.47MB)와 함께 판단한다.
-- **한국어 강조·구두점 경계**: `**"인용"**은` 처럼 CJK·구두점이 붙은 강조가 풀려 별표가 글자로 보인다 — `@streamdown/cjk` 후보. 작성기(Tiptap)에서는 굵게 보이고 보낸 뒤 평문이 되어 WYSIWYG 이 어긋나는 것도 같이 해결된다.
 - 이미지·첨부는 위 Phase 2 「이미지 첨부」 항목이다. MVP 는 마크다운 이미지를 **불러오지 않고 새 탭 링크로** 보인다(추적 픽셀 차단).
 
 **서버**
 
-- `channel.created` wire 이벤트가 없다 — 다른 탭·다른 사람이 만든 새 채널이 목록에 들어오지 않고 새로고침해야 보인다(웹은 첫 화면 빈 상태도 그렇다).
-- 시스템 메시지의 조사가 한쪽으로 고정이다 — 「@dev 이(가)」 같은 병기형이 필요하다(웹 자기 문구는 `apps/web/src/lib/josa.ts` 로 푼다).
-- `CONFLICT` 응답에 `details.field` 가 없어 핸들 충돌과 `providerAgentId` 충돌을 폼이 가를 수 없다.
-- `GET /auth/me` 에 워크스페이스 이름이 없다 — 사이드바 제목이 「dodok」 고정이다.
 - usage 값이 틀리고(claude-cli `message_start` 스냅샷) 출처가 확정되지 않았다 — 다음 실연에서 `OPENCLAW_FRAME_DUMP_PATH` 로 원본 프레임을 남겨 가른다. 활동 패널의 비용·토큰 표시는 그때까지 쓸 수 없다. 상세 `docs/guides/live-smoke.md` 5.4 의 2번.
 - 정본이 먼저 오고 Gateway 이벤트가 없는 퇴화 경로에서 늦은 답이 다음 런에 붙을 수 있다 — `docs/guides/live-smoke.md` 5.4 의 4번(남음).
+- 재접속 구독 ack 의 `pendingApprovals` 는 **채널 단위**라, 다른 채널의 미해결 승인은 새로고침하면 돌아오지 않는다(요구·확정 실시간 팬아웃만 워크스페이스 룸이다 — 스펙 4.6). 출처: Phase 2 ① p2-t12s 리뷰. 미룬 까닭: 복구 경로를 워크스페이스 단위로 넓히면 ack 페이로드 상한·정렬을 다시 정해야 해서 범위가 커진다.
 
 **웹**
 
-- 목록 뷰포트 높이가 줄면(배너가 생길 때·창 크기 변화) 끝에 다시 붙지 않는다 — 줄어든 만큼 마지막 행이 가려진다. `STICK_PX`(80) 안이라 새 메시지는 계속 따라온다. 고친다면 스크롤러 `ResizeObserver` 에서 붙어 있을 때 다시 겨누는 한 줄.
-- 서버가 끊은 소켓의 직접 재연결이 고정 2초다(`WIRE_RETRY_MS`) — 백오프가 없다.
-- 빌드에 경고 한 줄: `advancedChunks option is deprecated, please use codeSplitting instead`(`apps/web/vite.config.ts` 의 `build.rolldownOptions.output.advancedChunks`) — `codeSplitting` 으로 옮긴다.
-- 큰 테스트 파일 둘(`features/agents/agents.test.tsx` 558줄, `features/settings/members.test.tsx` 527줄) 분할 후보.
-- `wire-cli` 는 루트 typecheck 밖이다 — 웹이 wire 계약을 타입으로 쓰므로 계약이 바뀌면 웹 typecheck 가 먼저 깨진다(웹 스펙 12장 3).
+- **D4 확정 순간 카드가 78px 뛴다** — 대기 카드는 목록 맨 아래에 있다가 확정되면 `createdAt` 자리로 돌아가므로, 승인 대기 중 **뒤에 다른 메시지가 끼었을 때만** 한 프레임에 자리가 바뀐다(카드는 화면 안에 남는다). 출처: Phase 2 ① 브라우저 검증. 미룬 까닭: 사소하고 조건이 좁으며, 고치려면 정렬 규칙이나 전이 애니메이션을 새로 들여야 한다.
+- **D6 같은 승인의 카운트다운 둘이 15% 프레임에서 1초 어긋난다** — 카드마다 `setInterval` 을 따로 돌려 패널 쪽이 ~150ms 늦게 틱한다(둘 다 1초 안, 정확성에는 영향 없음). 출처: Phase 2 ① 브라우저 검증. 미룬 까닭: 표시만의 문제라 공용 틱(`useNowTick` 류)으로 묶는 정리와 함께 해야 값이 있다.
+- **D11 로그아웃 전이에서 401 이 5건 더 난다** — 로그아웃 직후 마운트돼 있던 쿼리(`/channels`·`/channels/:id`·`/members`·`/agents`·`/adapter/status`)가 재조회된다. 출처: Phase 2 ① 브라우저 검증. 미룬 까닭: **Phase 1 유래**이고 Phase 2 ① 범위 밖이다 — 기능에는 영향이 없고 콘솔 오류로만 보인다.
 
 **실물 확인**
 
-- 웹을 실제 dev Gateway·실제 플러그인·실제 모델로 돌린 적이 아직 없다(모델 사용량 판단으로 분리). 절차·볼 것은 `docs/guides/live-smoke.md` 7절.
+- 승인을 실물 Gateway·실제 모델로 본 것은 스파이크 1회(`.superpowers/sdd/2026-09-20-phase2-approval-spike/`)뿐이다. 웹 화면까지 실물로 도는 절차는 `docs/guides/live-smoke.md` 8절.
+- 자동 검증이 원리상 못 재는 것들(실제 소리·OS 알림 클릭·권한 팝업·잠금 화면·VoiceOver)은 사람이 한 번 봐야 한다 — `docs/guides/live-smoke.md` 9절.
 
 ---
 
