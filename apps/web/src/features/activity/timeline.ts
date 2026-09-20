@@ -290,6 +290,13 @@ export function runDurationMs(
   return (run.endedAt === undefined ? now : Date.parse(run.endedAt)) - Date.parse(run.startedAt);
 }
 
+/**
+ * 소요가 아직 흐르는 런이 있는가 — 목록은 이때만 1초 틱을 돌린다(브라우저 검증 D7).
+ * 끝난 런은 `endedAt` 으로 고정이라 다시 그려도 값이 같다: 전부 끝났으면 틱은 멈춰야 한다
+ */
+export const hasFlowingDuration = (runs: readonly { startedAt?: string; endedAt?: string }[]): boolean =>
+  runs.some((r) => r.startedAt !== undefined && r.endedAt === undefined);
+
 const STATUS_LABEL: Record<RunStatus, string> = {
   queued: "대기 중",
   streaming: "응답 중",

@@ -3,7 +3,13 @@ import { useNowTick } from "@/hooks/useNowTick";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/ui/badge";
 import { Notice } from "./Notice";
-import { type ActivityRun, runDurationMs, runStatusLabel, runStatusVariant } from "./timeline";
+import {
+  type ActivityRun,
+  hasFlowingDuration,
+  runDurationMs,
+  runStatusLabel,
+  runStatusVariant,
+} from "./timeline";
 
 const TIME = new Intl.DateTimeFormat("ko-KR", { hour: "2-digit", minute: "2-digit" });
 
@@ -30,9 +36,8 @@ export function RunList({
 }) {
   const agents = useAgents().data;
   const handleOf = (agentId: string) => agents?.find((a) => a.id === agentId)?.handle;
-  // 아직 안 끝난 런의 소요만 흐른다 — 그런 런이 있을 때만 1초 틱을 돌린다.
-  // 끝난 런은 endedAt 으로 고정이라 다시 그려도 값이 같다
-  const now = useNowTick(runs.some((r) => r.startedAt !== undefined && r.endedAt === undefined));
+  // 아직 안 끝난 런의 소요만 흐른다 — 그런 런이 있을 때만 1초 틱을 돌린다(조건은 `hasFlowingDuration` 이 잠근다)
+  const now = useNowTick(hasFlowingDuration(runs));
 
   const failure = error && (
     <Notice onRetry={onRetry} retrying={retrying}>

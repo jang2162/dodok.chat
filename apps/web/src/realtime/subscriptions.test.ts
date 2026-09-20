@@ -227,6 +227,43 @@ describe("createSubscriptions", () => {
     expect(Object.keys(useApprovalStore.getState().byChannel[CH] ?? {})).toEqual([APPROVAL2]);
   });
 
+  /**
+   * 서버는 룸에 **먼저 들어간 뒤** 스냅샷을 읽는다(`apps/server/src/realtime/socket.ts` — 메시지가 빠지지 않게
+   * 일부러 그 순서다). 그래서 스냅샷을 읽은 뒤 ack 이 닿기 전에 새 `approval.requested` 가 먼저 도착할 수 있다.
+   * ack 의 정본화가 그 승인까지 지우면 카드가 조용히 사라지고 사용자는 요구를 못 본 채 런이 만료된다
+   */
+  it("ack 을 기다리는 사이에 온 승인은 ack 스냅샷에 없어도 남는다", async () => {
+    const { fake, subs } = setup();
+    fake.onAck("channel.subscribe", () => {
+      // 구독을 보낸 뒤·ack 이 오기 전에 닿은 프레임
+      useApprovalStore.getState().apply(approval({ id: APPROVAL2 }));
+      return subscribed([msg(1)], { pendingApprovals: [] });
+    });
+
+    await subs.enter(CH);
+
+    expect(useApprovalStore.getState().byChannel[CH]?.[APPROVAL2]?.approval.status).toBe("pending");
+  });
+
+  /**
+   * 재연결(이어 받기)에서도 같다 — 오히려 여기가 실물에서 더 잦다: 다시 붙는 순간 서버가 룸에 넣고,
+   * 그 룸에 새 승인이 방송되고, ack 은 그 뒤에 닿는다. 끊긴 동안 확정된 옛 카드는 여전히 닫혀야 한다
+   */
+  it("이어 받기에서도 ack 을 기다리는 사이에 온 승인은 남고, 끊긴 동안 확정된 옛 카드는 닫힌다", async () => {
+    const { fake, queryClient, subs } = setup();
+    seed(queryClient, [msg(1)]);
+    // 끊기기 전에 보고 있던 미해결 카드 — 그 사이 확정됐고 ack 에는 오지 않는다
+    useApprovalStore.getState().apply(approval());
+    fake.onAck("channel.subscribe", () => {
+      useApprovalStore.getState().apply(approval({ id: APPROVAL2 }));
+      return subscribed([msg(2)], { pendingApprovals: [] });
+    });
+
+    await subs.enter(CH);
+
+    expect(Object.keys(useApprovalStore.getState().byChannel[CH] ?? {})).toEqual([APPROVAL2]);
+  });
+
   it("이어 받기(lastSeq) 구독에서도 pendingApprovals 를 반영한다 — 끊긴 사이 온 승인", async () => {
     const { fake, queryClient, subs } = setup();
     seed(queryClient, [msg(1)]);

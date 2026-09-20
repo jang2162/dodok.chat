@@ -813,18 +813,30 @@ it("짧은 창에서는 런 목록이 먼저 줄고 타임라인은 최소 높�
   expect(timelineBox(aside)).toHaveClass("min-h-32");
 });
 
-it("끝난 런이 런 스토어에서 빠져도 목록에 남는다", async () => {
-  const { state } = stubServer({ runs: [] });
-  renderRoute(`/c/${CH}/activity`);
+/**
+ * 화면 값은 `ended` 기억만으로도 같다 — 재조회가 잠그는 것은 **캐시가 서버 사실을 쥐는 것**이다:
+ * 다음 마운트(탭·채널 복귀)에서 그 런이 첫 프레임부터 보이고, 그때 조회가 실패해도 목록에 남는다.
+ * 그래서 「남는가」와 함께 **호출 수**를 잰다 — 화면만 보면 재조회를 지워도 초록이라(리뷰 R10)
+ */
+it("끝난 런이 런 스토어에서 빠져도 목록에 남는다 — 끝날 때 REST 목록을 다시 받아 둔다", async () => {
+  const { state, calls } = stubServer({ runs: [] });
+  const { queryClient } = renderRoute(`/c/${CH}/activity`);
   const aside = await panel();
   await within(aside).findByText("아직 실행 기록이 없습니다.");
+  const listCalls = () => calls.filter((c) => /\/runs\?/.test(c)).length;
+  expect(listCalls()).toBe(1);
 
   // 실시간으로 시작한 런이 끝나면 REST 목록을 다시 받아 둔다(스토어는 곧 그 런을 지운다)
   act(() => useRunStore.getState().applyState(runState({ id: RUN2, status: "streaming" })));
   await within(aside).findByRole("button", { name: /@dev/ });
+  // 시작만으로는 다시 받지 않는다 — 끝날 때만
+  expect(listCalls()).toBe(1);
   state.runs = [runOf(RUN2, { status: "done" })];
   act(() => useRunStore.getState().applyState(runState({ id: RUN2, status: "done" })));
   await waitFor(() => expect(within(aside).getByRole("button", { name: /@dev/ })).toHaveTextContent("완료"));
+  await waitFor(() => expect(listCalls()).toBe(2));
+  // 그 재조회가 캐시에 남아 다음 마운트가 이 런을 곧바로 본다
+  expect(queryClient.getQueryData(qk.channelRuns(CH))).toMatchObject([{ id: RUN2, status: "done" }]);
 
   act(() => useRunStore.getState().remove(RUN2));
   expect(await within(aside).findByRole("button", { name: /@dev/ })).toHaveTextContent("완료");

@@ -55,10 +55,22 @@ export function createSubscriptions(deps: {
   const runReplay = createRunReplay(socket);
   let current: string | undefined;
 
+  /**
+   * 구독을 보내기 **전에** 아는 승인 id. 서버는 룸에 먼저 들어간 뒤 스냅샷을 읽으므로 ack 을 기다리는 사이에
+   * 새 `approval.requested` 가 닿을 수 있다 — 그것까지 ack 스냅샷으로 지우면 카드가 조용히 사라진다
+   */
+  const knownApprovals = (channelId: string): readonly string[] =>
+    Object.keys(useApprovalStore.getState().byChannel[channelId] ?? {});
+
   /** 구독 응답의 스냅샷 — 진행 중 런과 미해결 승인. 재연결한 탭·늦게 연 탭이 여기서 카드를 다시 맞춘다(설계 5.5·6장) */
-  async function applySubscribed(channelId: string, res: ChannelSubscribeResult): Promise<void> {
-    // ack 의 미해결 목록이 그 채널의 정본이다 — 끊긴 동안 놓친 확정이 미해결 카드로 남지 않게(브라우저 검증 D8)
-    useApprovalStore.getState().syncPending(channelId, res.pendingApprovals);
+  async function applySubscribed(
+    channelId: string,
+    res: ChannelSubscribeResult,
+    known: readonly string[],
+  ): Promise<void> {
+    // ack 의 미해결 목록이 그 채널의 정본이다 — 끊긴 동안 놓친 확정이 미해결 카드로 남지 않게(브라우저 검증 D8).
+    // 다만 정본으로 삼는 범위는 구독 전에 알던 것까지다(`known`)
+    useApprovalStore.getState().syncPending(channelId, res.pendingApprovals, known);
     const store = useRunStore.getState();
     // 그 채널에서 진행 중이던 런이 activeRuns 에 없으면 끊긴 사이 끝난 것 — 버블이 남지 않게 뺀다(답은 메시지로 온다)
     const active = new Set(res.activeRuns.map((r) => r.id));
@@ -71,18 +83,20 @@ export function createSubscriptions(deps: {
   }
 
   async function fresh(channelId: string): Promise<void> {
+    const known = knownApprovals(channelId);
     const res = await emitAck(socket, "channel.subscribe", { channelId });
     updateTimeline(qc, channelId, (prev) => fromLatest(prev, res.messages, res.hasMore));
-    await applySubscribed(channelId, res);
+    await applySubscribed(channelId, res, known);
   }
 
   /** 가진 것(lastSeq) 뒤를 받아 병합한다. 처음(캐시 없음·lastSeq 0)이면 최근 페이지로 새로 시작한다 */
   async function catchUp(channelId: string): Promise<void> {
     const t = getTimeline(qc, channelId);
     if (!t || t.lastSeq === 0) return fresh(channelId);
+    const known = knownApprovals(channelId);
     const res = await emitAck(socket, "channel.subscribe", { channelId, lastSeq: t.lastSeq });
     updateTimeline(qc, channelId, (prev) => upsertMany(prev, res.messages));
-    await applySubscribed(channelId, res);
+    await applySubscribed(channelId, res, known);
     let hasMore = res.hasMore;
     for (let pages = 1; hasMore; pages += 1) {
       if (pages >= MAX_PAGES) return fresh(channelId);

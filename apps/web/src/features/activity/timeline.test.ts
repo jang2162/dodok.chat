@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { AGENT, CH, RUN, RUN2, runEvent, runState, textDelta, uid } from "../../../test/fixtures";
 import {
   approvalOutcomeLabel,
+  hasFlowingDuration,
   isTimelineEvent,
   isTruncated,
   keepTimelineEvents,
@@ -374,6 +375,28 @@ describe("mergeRuns", () => {
     const live: RunState = runState({ id: RUN, status: "done" });
     const merged = mergeRuns([run(RUN, { endedAt: "2027-01-15T08:00:05.000Z" })], [live]);
     expect(merged[0]?.endedAt).toBe("2027-01-15T08:00:05.000Z");
+  });
+});
+
+describe("hasFlowingDuration", () => {
+  const started = { startedAt: "2027-01-15T08:00:00.000Z" };
+  const ended = { ...started, endedAt: "2027-01-15T08:00:12.000Z" };
+
+  it("아직 안 끝난 런이 있을 때만 참", () => {
+    expect(hasFlowingDuration([started])).toBe(true);
+    expect(hasFlowingDuration([ended, started])).toBe(true);
+  });
+
+  /** 전부 끝났으면 1초 틱이 돌 까닭이 없다 — 값이 더 안 바뀌는데 초마다 목록을 다시 그린다(브라우저 검증 D7) */
+  it("끝난 런만 있으면 거짓 — 목록이 비었을 때도", () => {
+    expect(hasFlowingDuration([ended])).toBe(false);
+    expect(hasFlowingDuration([ended, ended])).toBe(false);
+    expect(hasFlowingDuration([])).toBe(false);
+  });
+
+  /** 아직 시작 전인 런(대기 중)은 소요를 안 보인다 — 흐를 것이 없다 */
+  it("시작 전인 런만 있으면 거짓", () => {
+    expect(hasFlowingDuration([{}])).toBe(false);
   });
 });
 

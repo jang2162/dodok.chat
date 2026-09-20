@@ -46,7 +46,7 @@ type ApprovalStore = {
   /** channelId → approvalId → 카드 */
   byChannel: Record<string, Record<string, ApprovalView>>;
   apply(approval: Approval): void;
-  syncPending(channelId: string, approvals: readonly Approval[]): void;
+  syncPending(channelId: string, approvals: readonly Approval[], known?: readonly string[]): void;
   setSending(approvalId: string, decision?: ApprovalDecision): void;
   reset(): void;
 };
@@ -67,18 +67,23 @@ function put(byChannel: ApprovalStore["byChannel"], approval: Approval): Approva
  * `syncPending` 은 구독 ack 의 미해결 목록을 **그 채널 미해결 승인의 정본**으로 삼는다: 목록에 없는 로컬
  * `pending` 은 지운다. 끊긴 동안 놓친 확정이 옛 탭에 미해결 카드로 영영 남아(버튼 활성·카운트다운, 끝나면
  * 「만료됨」) 새 탭과 다른 것을 보이던 것을 막는다(브라우저 검증 D8). 확정된 카드는 건드리지 않는다 —
- * 그 탭의 기록이고 ack 에는 원래 오지 않는다
+ * 그 탭의 기록이고 ack 에는 원래 오지 않는다.
+ *
+ * `known` 은 **지울 후보**를 좁힌다 — 구독을 보내기 전에 이미 알고 있던 id 만. 서버는 룸에 먼저 들어간 뒤
+ * 스냅샷을 읽으므로(메시지가 빠지지 않게 일부러 그 순서다) 그 사이 생긴 승인이 `approval.requested` 로
+ * 먼저 닿을 수 있다 — 스냅샷에 없다고 지우면 카드가 조용히 사라진다. 안 주면 채널 전부가 후보다
  */
 export const useApprovalStore = create<ApprovalStore>()((set) => ({
   byChannel: {},
   apply: (approval) => set((s) => ({ byChannel: put(s.byChannel, approval) })),
-  syncPending: (channelId, approvals) =>
+  syncPending: (channelId, approvals, known) =>
     set((s) => {
       const ids = new Set(approvals.map((a) => a.id));
       const channel = s.byChannel[channelId] ?? {};
-      const gone = Object.keys(channel).filter(
-        (id) => !ids.has(id) && !SETTLED.has(channel[id]?.approval.status ?? "pending"),
-      );
+      const gone = (known ?? Object.keys(channel)).filter((id) => {
+        const status = channel[id]?.approval.status;
+        return status !== undefined && !ids.has(id) && !SETTLED.has(status);
+      });
       if (gone.length === 0 && approvals.length === 0) return s;
       let byChannel = s.byChannel;
       if (gone.length > 0) {

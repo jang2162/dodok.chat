@@ -128,6 +128,15 @@ describe("승인 스토어", () => {
     expect(view(APPROVAL2)?.approval.status).toBe("pending");
   });
 
+  it("syncPending: known 을 주면 그 밖의 pending 은 지울 후보가 아니다 — 구독 뒤에 온 요구", () => {
+    seed(approval(), approval({ id: APPROVAL2 }));
+
+    // 구독을 보낼 때 알던 것은 APPROVAL 뿐이었다 — APPROVAL2 는 ack 을 기다리는 사이에 닿았다
+    store().syncPending(CH, [], [APPROVAL]);
+
+    expect(Object.keys(cards())).toEqual([APPROVAL2]);
+  });
+
   it("syncPending: 확정된 카드는 남긴다 — 그 탭의 기록이고 ack 에는 오지 않는다", () => {
     seed(approval({ status: "allowed", decision: "allow-once", reason: "user" }));
     seed(approval({ id: APPROVAL2, status: "expired", reason: "timeout" }));

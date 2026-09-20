@@ -38,7 +38,11 @@ function ActivityBody({ channelId }: { channelId: string }) {
     () => mergeRuns(rest.data ?? [], [...ended.current.values(), ...live.map((v) => v.state)]),
     [rest.data, live],
   );
-  // 런이 끝나면 REST 목록을 다시 받아 둔다 — 서버가 쥔 마지막 값(끝난 시각 등)으로 줄을 맞춘다
+  /**
+   * 런이 끝나면 REST 목록을 다시 받아 둔다. 화면 값이 아니라 **캐시**를 위해서다 — 보이는 줄은 위의 `ended`
+   * 가 이미 서버 사실(끝난 시각까지)로 덮는다. 다시 받아 두지 않으면 캐시는 그 런을 모르는 채로 남아,
+   * 다음 마운트(탭·채널 복귀)가 첫 프레임에 그 런 없이 서고 그때 조회가 실패하면 아예 못 본다
+   */
   const endedKey = live
     .filter((v) => TERMINAL.has(v.state.status))
     .map((v) => v.state.id)
