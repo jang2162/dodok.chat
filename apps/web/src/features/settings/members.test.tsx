@@ -248,6 +248,15 @@ describe("제거 실패·초점·목록 상태", () => {
   });
 });
 describe("자동 응답", () => {
+  it("확인 문구의 조사는 핸들 받침을 따른다 — 받침 있는 @fin(핀) 은 「을」", async () => {
+    stubSettingsServer({ members: members([DEV, true], [FIN]) });
+    renderRoute(`/c/${CH}/settings`);
+    const list = await agentList();
+    await userEvent.click(within(list).getByRole("switch", { name: "@fin 자동 응답" }));
+    const dialog = await screen.findByRole("dialog", { name: "자동 응답 바꾸기" });
+    expect(dialog).toHaveTextContent("@dev 의 자동 응답을 끄고 @fin 을 켭니다");
+  });
+
   it("켜진 것이 없으면 확인 없이 그것만 켠다, 끄기도 그것만", async () => {
     const server = stubSettingsServer({ members: members([DEV], [FIN]) });
     renderRoute(`/c/${CH}/settings`);
@@ -280,6 +289,7 @@ describe("자동 응답", () => {
 
     await userEvent.click(dev);
     let dialog = await screen.findByRole("dialog", { name: "자동 응답 바꾸기" });
+    // 조사는 핸들의 받침을 따른다 — @dev(데브) 는 「를」, @fin(핀) 은 「을」
     expect(dialog).toHaveTextContent("@fin 의 자동 응답을 끄고 @dev 를 켭니다");
     await userEvent.click(within(dialog).getByRole("button", { name: "취소" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());

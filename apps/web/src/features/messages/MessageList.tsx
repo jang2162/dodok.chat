@@ -54,6 +54,11 @@ function ChannelMessages({ channelId, bubbleRunIds = NO_RUNS, bubbles, initialRe
     anchorTo: "end",
     followOnAppend: true,
     scrollEndThreshold: STICK_PX,
+    // 잰 크기를 ResizeObserver 콜백 안에서 바로 반영하면 같은 프레임에 또 배치가 바뀌어
+    // 「ResizeObserver loop completed with undelivered notifications」 가 난다(브라우저 검증 결함 4 — 개발 모드에서
+    // Vite 오버레이를 띄워 진짜 오류를 가린다). 한 프레임 미루면 사라진다. 끝에 붙어 있는 동안에는
+    // `scrollToEnd` 가 프레임마다 다시 겨누므로 한 프레임 늦은 반영이 보이지 않는다
+    useAnimationFrameWithResizeObserver: true,
     ...(initialRect ? { initialRect } : {}),
   });
 

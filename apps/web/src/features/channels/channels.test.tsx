@@ -1,5 +1,5 @@
 import type { Channel } from "@dodok/shared";
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
@@ -193,6 +193,23 @@ describe("HomeRedirect", () => {
     expect(await screen.findByTestId("page-channel-settings")).toBeInTheDocument();
     expect(router.state.location.pathname).toBe("/c/new-1/settings");
     expect(moves).toEqual(["PUSH /c/new-1/settings"]);
+  });
+
+  it("머무는 동안 목록에 채널이 생겨도 이동하지 않는다 — 「만들기」가 보낸 /settings 를 덮지 않게", async () => {
+    stubServer();
+    const { router, queryClient, history } = renderRoute("/");
+    const moves: string[] = [];
+    history.subscribe(({ location, action }) => moves.push(`${action.type} ${location.pathname}`));
+    await screen.findByText("채널이 없습니다");
+
+    // 만들기 mutation·다른 탭의 wire 갱신이 하는 일과 같다 — 목록 캐시에 새 채널이 들어온다
+    act(() => {
+      queryClient.setQueryData<Channel[]>(qk.channels, [channelOf("new-1", { name: "general" })]);
+    });
+    await waitFor(() => expect(screen.getByRole("link", { name: /general/ })).toBeInTheDocument());
+    expect(screen.getByTestId("page-home")).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/");
+    expect(moves).toEqual([]);
   });
 
   it("채널이 없으면 「채널이 없습니다」와 「채널 만들기」 — 누르면 대화상자", async () => {

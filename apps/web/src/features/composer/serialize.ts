@@ -30,9 +30,27 @@ function block(n: JSONContent): string {
         .map((l) => (l ? `> ${l}` : ">"))
         .join("\n");
     default:
-      return inline(n.content);
+      return escapeBlockStarts(inline(n.content));
   }
 }
+
+/**
+ * 줄 머리의 블록 시작 표시(`#`·`>`·`-`·`+`·`*`·`1.`·`1)`)를 이스케이프한다. 작성기는 제목 확장이 꺼져 있어
+ * 사용자가 친 `# 제목` 은 평문인데 받은 쪽에서 H1 로 커졌다(브라우저 검증 결함 3).
+ * 목록·인용·코드 블록은 실제 노드에서 나오므로(위 `block`) 여기를 지나지 않고, 인라인 코드는 백틱으로
+ * 시작해 줄 머리에 걸리지 않는다. 표시 문자 하나만 막으면 나머지 줄은 그대로 평문이 된다
+ */
+const BLOCK_START = /^([ \t]{0,3})(?:(#{1,6}(?=[ \t]|$)|>|[-+*](?=[ \t]|$))|(\d{1,9})([.)](?=[ \t]|$)))/;
+
+const escapeBlockStarts = (s: string): string =>
+  s
+    .split("\n")
+    .map((line) =>
+      line.replace(BLOCK_START, (_m, indent: string, mark?: string, num?: string, delim?: string) =>
+        mark === undefined ? `${indent}${num}\\${delim}` : `${indent}\\${mark}`,
+      ),
+    )
+    .join("\n");
 
 /** 목록 항목 안의 블록은 줄로 잇고, 둘째 줄부터 들여 쓴다(안에 든 목록 포함) */
 const item = (li: JSONContent) => (li.content ?? []).map(block).join("\n").replace(/\n/g, "\n  ");

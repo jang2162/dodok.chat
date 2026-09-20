@@ -30,6 +30,8 @@ function renderWithAdapter(ui: ReactNode, adapter: Pick<AdapterStatus, "gateway"
     ),
   );
   const queryClient: QueryClient = createQueryClient(() => {});
+  // 점은 wire 가 살아 있을 때만 값을 보인다 — 값 자체를 보는 테스트는 연결된 상태에서 본다
+  useWireStatus.getState().setStatus("connected");
   render(
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>{ui}</TooltipProvider>
@@ -64,6 +66,21 @@ describe("ConnectionDots", () => {
     await userEvent.tab();
     expect(screen.getByRole("img", { name: "플러그인 끊김" })).toHaveFocus();
     await waitFor(() => expect(screen.getByRole("tooltip")).toHaveTextContent("플러그인 끊김"));
+  });
+
+  it("wire 가 끊기면 마지막 값을 초록으로 두지 않는다 — 둘 다 「상태 모름」(회색), 다시 붙으면 돌아온다", async () => {
+    renderWithAdapter(<ConnectionDots />, { gateway: "connected", bridge: "connected" });
+    const gateway = await screen.findByRole("img", { name: "Gateway 연결됨" });
+    expect(gateway).toHaveClass("bg-success");
+
+    act(() => useWireStatus.getState().setStatus("reconnecting"));
+    const unknown = await screen.findByRole("img", { name: "Gateway 상태 모름" });
+    expect(unknown).toHaveClass("bg-muted-foreground/40");
+    expect(screen.getByRole("img", { name: "플러그인 상태 모름" })).toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: /연결됨/ })).toBeNull();
+
+    act(() => useWireStatus.getState().setStatus("connected"));
+    expect(await screen.findByRole("img", { name: "Gateway 연결됨" })).toBeInTheDocument();
   });
 });
 

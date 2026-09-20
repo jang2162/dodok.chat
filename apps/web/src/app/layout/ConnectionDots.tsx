@@ -1,6 +1,7 @@
 import type { AdapterStatus } from "@dodok/shared";
 import { useAdapterStatus } from "@/api/queries";
 import { cn } from "@/lib/utils";
+import { useWireStatus } from "@/realtime/wire";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/ui/tooltip";
 
 type Tone = "ok" | "warn" | "down" | "unknown";
@@ -23,22 +24,34 @@ const BRIDGE: Record<AdapterStatus["bridge"], DotState> = {
   down: { label: "플러그인 끊김", tone: "down" },
 };
 
+const UNKNOWN_HINT = "서버에 연결되지 않아 지금 상태를 알 수 없습니다";
+
 /**
  * 사이드바 하단 연결 상태 점 두 개(스펙 6.5) — OpenClaw Gateway, 그 안의 dodok 채널 플러그인.
- * 값은 `["adapter"]` 캐시(REST 로 불러오고 wire `adapter.status` 가 고친다). 마우스를 올리거나 초점을 주면 설명
+ * 값은 `["adapter"]` 캐시(REST 로 불러오고 wire `adapter.status` 가 고친다). 마우스를 올리거나 초점을 주면 설명.
+ * wire 가 끊기면 `adapter.status` 가 더는 오지 않아 마지막 값이 남는다 — 초록으로 두면 틀린 정보라
+ * 「알 수 없음」(회색)으로 바꾼다(브라우저 검증 결함 6). 살아 있는 값의 유일한 출처가 wire 이므로 기준도 wire 다
  */
 export function ConnectionDots() {
   const { data } = useAdapterStatus();
+  const live = useWireStatus((s) => s.status) === "connected";
+  const unknown = (what: string): DotState & { hint: string } => ({
+    label: `${what} 상태 모름`,
+    tone: "unknown",
+    hint: UNKNOWN_HINT,
+  });
   return (
     <div className="flex items-center gap-2">
-      <Dot
-        {...(data ? GATEWAY[data.gateway] : { label: "Gateway 상태 모름", tone: "unknown" })}
-        hint="에이전트를 실행하는 OpenClaw Gateway"
-      />
-      <Dot
-        {...(data ? BRIDGE[data.bridge] : { label: "플러그인 상태 모름", tone: "unknown" })}
-        hint="Gateway 안에서 에이전트 답을 서버로 보내는 dodok 플러그인"
-      />
+      {data && live ? (
+        <Dot {...GATEWAY[data.gateway]} hint="에이전트를 실행하는 OpenClaw Gateway" />
+      ) : (
+        <Dot {...unknown("Gateway")} />
+      )}
+      {data && live ? (
+        <Dot {...BRIDGE[data.bridge]} hint="Gateway 안에서 에이전트 답을 서버로 보내는 dodok 플러그인" />
+      ) : (
+        <Dot {...unknown("플러그인")} />
+      )}
     </div>
   );
 }

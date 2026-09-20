@@ -1,4 +1,5 @@
 import { type RefObject, useEffect } from "react";
+import { josa } from "@/lib/josa";
 import { Button } from "@/ui/button";
 import {
   Dialog,
@@ -56,7 +57,7 @@ export function ResetSessionDialog({
         <DialogHeader>
           <DialogTitle>새 대화</DialogTitle>
           <DialogDescription>
-            @{handle} 와의 대화 기록을 새로 시작합니다. 진행 중인 실행은 중지됩니다
+            @{handle} {josa(handle, "과", "와")}의 대화 기록을 새로 시작합니다. 진행 중인 실행은 중지됩니다
           </DialogDescription>
         </DialogHeader>
         {reset.isError && (

@@ -2,6 +2,7 @@ import type { Agent, ChannelMember } from "@dodok/shared";
 import { type FormEvent, useId, useRef, useState } from "react";
 import { formError } from "@/api/formErrors";
 import { ResetSessionDialog } from "@/features/agents/ResetSessionDialog";
+import { josa } from "@/lib/josa";
 import { cn } from "@/lib/utils";
 import { agentColorVar } from "@/theme/agentColor";
 import { Badge } from "@/ui/badge";
@@ -111,7 +112,7 @@ export function AgentMemberRow({
         open={switching !== undefined}
         onOpenChange={(open) => !open && setSwitching(undefined)}
         title="자동 응답 바꾸기"
-        description={`${turnedOff.join(", ")} 의 자동 응답을 끄고 ${handle} 를 켭니다`}
+        description={`${turnedOff.join(", ")} 의 자동 응답을 끄고 ${handle} ${josa(handle, "을", "를")} 켭니다`}
         confirmLabel="바꾸기"
         returnFocus={autoRef}
         onConfirm={() => {
@@ -124,7 +125,7 @@ export function AgentMemberRow({
         open={removing}
         onOpenChange={setRemoving}
         title="에이전트 제거"
-        description={`${handle} 를 이 채널에서 뺍니다. 채널 프롬프트 오버라이드와 자동 응답 설정도 사라집니다`}
+        description={`${handle} ${josa(handle, "을", "를")} 이 채널에서 뺍니다. 채널 프롬프트 오버라이드와 자동 응답 설정도 사라집니다`}
         confirmLabel="제거"
         pendingLabel="제거하는 중…"
         pending={remove.isPending}

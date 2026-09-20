@@ -103,6 +103,30 @@ it("결과 토큰은 shared MENTION_TOKEN_RE·parseMentions 가 받는다", () =
   expect(parseMentions(body)).toEqual({ agents: [A], users: [U] });
 });
 
+it("줄 머리에 친 블록 표시는 평문으로 — 작성기는 제목·목록 확장이 꺼져 있다", () => {
+  const one = (s: string) => toBodyMd({ type: "doc", content: [p(t(s))] });
+  expect(one("# 제목")).toBe("\\# 제목");
+  expect(one("### 작은 제목")).toBe("\\### 작은 제목");
+  expect(one("> 인용")).toBe("\\> 인용");
+  expect(one("- 항목")).toBe("\\- 항목");
+  expect(one("* 별")).toBe("\\* 별");
+  expect(one("+ 더하기")).toBe("\\+ 더하기");
+  expect(one("1. 첫째")).toBe("1\\. 첫째");
+  expect(one("10) 열째")).toBe("10\\) 열째");
+});
+
+it("블록 표시가 아닌 줄 머리는 건드리지 않는다 — 줄마다 따로 본다", () => {
+  const one = (s: string) => toBodyMd({ type: "doc", content: [p(t(s))] });
+  expect(one("#태그")).toBe("#태그"); // 뒤에 공백이 없으면 제목이 아니다
+  expect(one("-5도")).toBe("-5도");
+  expect(one("2026년")).toBe("2026년");
+  expect(one("값 - 1")).toBe("값 - 1"); // 줄 머리만 본다
+  expect(toBodyMd({ type: "doc", content: [p(t("굵게", [{ type: "bold" }]))] })).toBe("**굵게**");
+  expect(toBodyMd({ type: "doc", content: [p(t("가"), { type: "hardBreak" }, t("- 둘째 줄"))] })).toBe(
+    "가\n\\- 둘째 줄",
+  );
+});
+
 it("마크 앞뒤 공백은 표시 밖으로 — `**굵게 **` 는 마크다운에서 굵게가 아니다", () => {
   const bold = [{ type: "bold" }];
   expect(toBodyMd({ type: "doc", content: [p(t("가"), t(" 굵게 ", bold), t("나"))] })).toBe("가 **굵게** 나");

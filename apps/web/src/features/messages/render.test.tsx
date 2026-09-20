@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { agentColorVar } from "@/theme/agentColor";
 import { AGENT, msg, uid, USER } from "../../../test/fixtures";
 import { authorsClient, DEV, renderWithClient } from "../../../test/messages";
+import { toBodyMd } from "@/features/composer/serialize";
 import { MENTION_HREF_PREFIX } from "./mentionMarkdown";
 import { MessageBody } from "./MessageBody";
 import { MessageItem } from "./MessageItem";
@@ -123,6 +124,17 @@ describe("MessageBody", () => {
       "https://example.com/repo",
     );
     expect(container.querySelector("a a")).toBeNull();
+  });
+
+  it("작성기에 친 블록 표시는 받은 쪽에서도 평문 — 직렬화 이스케이프 왕복", () => {
+    const typed = ["# 제목", "> 인용", "- 항목", "1. 첫째"];
+    const bodyMd = toBodyMd({
+      type: "doc",
+      content: typed.map((text) => ({ type: "paragraph", content: [{ type: "text", text }] })),
+    });
+    const { container } = renderWithClient(<MessageBody bodyMd={bodyMd} />);
+    for (const text of typed) expect(screen.getByText(text)).toBeInTheDocument();
+    expect(container.querySelector("h1, h2, h3, blockquote, ul, ol")).toBeNull();
   });
 });
 

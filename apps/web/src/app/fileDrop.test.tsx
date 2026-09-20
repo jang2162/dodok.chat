@@ -33,6 +33,29 @@ it("앱 어디에 파일을 끌어 놓아도 브라우저가 파일을 열지 �
   expect(info).toHaveBeenCalledWith("이미지는 Phase 2 에서 지원합니다", { id: "files-later" });
 });
 
+it("drop 을 주지 않는 브라우저에서도 끌고 있는 동안 안내한다 — 커서는 「놓을 수 없음」", () => {
+  const info = vi.spyOn(toast, "info");
+  const { getByTestId } = render(<Page />);
+  const dragging = files();
+  expect(fireEvent.dragOver(getByTestId("list"), dragging)).toBe(false);
+  expect(info).toHaveBeenCalledTimes(1);
+  expect(info).toHaveBeenCalledWith("이미지는 Phase 2 에서 지원합니다", { id: "files-later" });
+  expect(dragging.dataTransfer.dropEffect).toBe("none");
+});
+
+it("한 번 끌 때 토스트는 하나 — 창을 벗어났다 다시 끌어 오면 다시 알린다", () => {
+  const info = vi.spyOn(toast, "info");
+  const { getByTestId } = render(<Page />);
+  const list = getByTestId("list");
+  fireEvent.dragOver(list, files());
+  fireEvent.dragOver(list, files());
+  expect(info).toHaveBeenCalledTimes(1);
+
+  fireEvent.dragLeave(list, { ...files(), relatedTarget: null });
+  fireEvent.dragOver(list, files());
+  expect(info).toHaveBeenCalledTimes(2);
+});
+
 it("글 끌어 놓기(입력 칸에 글 놓기)는 브라우저 기본 동작 그대로", () => {
   const info = vi.spyOn(toast, "info");
   const { getByLabelText } = render(<Page />);
