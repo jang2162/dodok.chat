@@ -290,30 +290,37 @@ describe("가짜 Gateway — 실제 connectGateway 로 붙는다", () => {
   });
 
   it("tickIntervalMs 면 구독 없는 연결에도 tick 을 보내 실제 클라이언트가 무활동으로 끊지 않고, close() 가 그 타이머를 치운다", async () => {
-    const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
-    gateway = await startFakeGateway({ tickIntervalMs: 30 });
-    const tickTimer = setIntervalSpy.mock.results[setIntervalSpy.mock.calls.findIndex(([, ms]) => ms === 30)]
-      ?.value as ReturnType<typeof setInterval> | undefined;
-    setIntervalSpy.mockRestore();
-    expect(tickTimer).toBeDefined();
-
-    const closes: number[] = [];
-    const { frames } = await connect({ subscribe: false, onClose: (info) => closes.push(info.code) });
-    // 실제 시계 — 30ms 간격이면 100ms 안에 2개 이상
-    await vi.waitFor(
-      () => expect(frames.filter((f) => f.event === "tick").length).toBeGreaterThanOrEqual(2),
-      { timeout: 100, interval: 5 },
-    );
-    expect(frames.every((f) => f.event === "tick")).toBe(true);
-    expect(frames[0]?.payload).toEqual({ ts: expect.any(Number) });
-    expect(closes).toEqual([]);
-
-    const clearIntervalSpy = vi.spyOn(globalThis, "clearInterval");
+    // 틱 타이머만 가짜 시계로 두고 시간 진행을 명시한다 — "100ms 안에 두 번" 같은 실시계 예산이 사라진다.
+    // setTimeout·Date 는 실물로 남긴다: WS 전송과 connectGateway 의 접속 시간제한이 그대로 돌아야 한다.
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
     try {
-      await gateway.close();
-      expect(clearIntervalSpy).toHaveBeenCalledWith(tickTimer);
+      const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
+      gateway = await startFakeGateway({ tickIntervalMs: 30 });
+      const tickTimer = setIntervalSpy.mock.results[
+        setIntervalSpy.mock.calls.findIndex(([, ms]) => ms === 30)
+      ]?.value as ReturnType<typeof setInterval> | undefined;
+      setIntervalSpy.mockRestore();
+      expect(tickTimer).toBeDefined();
+
+      const closes: number[] = [];
+      const { frames } = await connect({ subscribe: false, onClose: (info) => closes.push(info.code) });
+      // 30ms 간격이니 60ms 를 돌리면 정확히 두 번. 프레임이 닿았는지는 flush()(ping/pong)로 — 시계와 무관하다
+      await vi.advanceTimersByTimeAsync(60);
+      await gateway.flush();
+      expect(frames.filter((f) => f.event === "tick")).toHaveLength(2);
+      expect(frames.every((f) => f.event === "tick")).toBe(true);
+      expect(frames[0]?.payload).toEqual({ ts: expect.any(Number) });
+      expect(closes).toEqual([]);
+
+      const clearIntervalSpy = vi.spyOn(globalThis, "clearInterval");
+      try {
+        await gateway.close();
+        expect(clearIntervalSpy).toHaveBeenCalledWith(tickTimer);
+      } finally {
+        clearIntervalSpy.mockRestore();
+      }
     } finally {
-      clearIntervalSpy.mockRestore();
+      vi.useRealTimers();
     }
   });
 

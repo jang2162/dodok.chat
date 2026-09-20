@@ -228,13 +228,16 @@ describe("시나리오 — 인바운드 대본을 Gateway 이벤트와 플러그
   });
 
   it("deltaDelayMs 면 델타마다 그만큼 기다렸다 보낸다(실제 시계)", async () => {
+    const DELAY = 50;
     const arrivals: Array<{ event: string; at: number }> = [];
     connection.subscribe((frame) => arrivals.push({ event: frame.event, at: performance.now() }));
     createScenario({
       gateway,
       plugin,
-      agents: { dev: () => ({ deltas: ["느", "리게"], reply: "느리게", deltaDelayMs: 50 }) },
+      agents: { dev: () => ({ deltas: ["느", "리게"], reply: "느리게", deltaDelayMs: DELAY }) },
     });
+    // 재생은 이 시각 뒤에 시작하므로 n 번째 델타는 아무리 빨라도 여기서 n×DELAY 뒤에 나간다
+    const sentAt = performance.now();
     await bridge.deliverInbound(delivery("dev", "@dev 느리게"), 2_000);
     await vi.waitFor(() => expect(outbound).toHaveLength(1));
 
@@ -242,9 +245,12 @@ describe("시나리오 — 인바운드 대본을 Gateway 이벤트와 플러그
     const [start] = arrivals;
     expect(start?.event).toBe("agent");
     expect(deltas).toHaveLength(2);
-    // 타이머는 루프 시각(ms 단위 캐시)으로 재므로 performance.now 로는 1ms 안팎 일찍 보일 수 있다
-    expect((deltas[0]?.at ?? 0) - (start?.at ?? 0)).toBeGreaterThanOrEqual(48);
-    expect((deltas[1]?.at ?? 0) - (deltas[0]?.at ?? 0)).toBeGreaterThanOrEqual(48);
+    // 도착 시각은 보낸 시각의 하한일 뿐이다 — 이 쪽 루프가 밀리면 앞 프레임이 늦게 찍혀 프레임 사이 "간격"이 실제보다
+    // 줄어 보인다(부하에서 43ms 로 관측). 그래서 프레임끼리 빼지 않고, 재생 전 시각에 누적으로 건다 —
+    // 부하는 늦추기만 하므로 이 방향의 하한은 흔들리지 않는다.
+    // 타이머는 루프 시각(ms 단위 캐시)으로 재므로 performance.now 로는 타이머당 1ms 안팎 일찍 보일 수 있어 그만큼 뺀다.
+    expect((deltas[0]?.at ?? 0) - sentAt).toBeGreaterThanOrEqual(DELAY - 2);
+    expect((deltas[1]?.at ?? 0) - sentAt).toBeGreaterThanOrEqual(2 * DELAY - 4);
   });
 
   it("재생 중 chat.abort 를 받으면 그 런은 거기서 멈춘다 — 남은 델타·final·정본 없음(실물처럼)", async () => {
