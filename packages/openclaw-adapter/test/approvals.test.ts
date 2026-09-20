@@ -1,4 +1,4 @@
-import { Approval } from "@dodok/shared";
+import { Approval, ApprovalKind } from "@dodok/shared";
 import type { EventFrame } from "@openclaw/gateway-protocol";
 import { describe, expect, it } from "vitest";
 import {
@@ -450,10 +450,11 @@ describe("parseApprovalReplay — 재접속 되감기(5.3)", () => {
 });
 
 describe("resolveParams / parseResolveResult — approval.resolve 왕복(4.1)", () => {
-  it("resolveParams 는 저장된 행의 kind 를 그대로 싣는다", () => {
-    expect(resolveParams({ providerApprovalId: f.APPROVAL_ID, kind: "plugin" }, "allow-once")).toEqual({
+  // `kind` 는 wire 에 없어 저장된 행에서만 온다 — 한 값으로 굳으면 exec·system-agent 승인이 어긋난 kind 로 나간다.
+  it.each(ApprovalKind.options)("resolveParams 는 저장된 행의 kind(%s)를 그대로 싣는다", (kind) => {
+    expect(resolveParams({ providerApprovalId: f.APPROVAL_ID, kind }, "allow-once")).toEqual({
       id: f.APPROVAL_ID,
-      kind: "plugin",
+      kind,
       decision: "allow-once",
     });
   });

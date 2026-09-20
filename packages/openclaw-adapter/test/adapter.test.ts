@@ -934,6 +934,20 @@ describe("승인 — 수신·중복 제거·해결 RPC", () => {
     ]);
   });
 
+  // `kind` 는 저장된 행에서만 오므로 어댑터가 한 값으로 굳히면 exec·system-agent 승인이 어긋난 kind 로 나간다.
+  it("resolveApproval 은 받은 kind 를 그대로 인자에 싣는다 — plugin 으로 굳어 있지 않다", async () => {
+    gatewayResponses["approval.resolve"] = () => f.approvalResolveResult();
+    await connectedGateway();
+
+    await adapter.resolveApproval(f.APPROVAL_ID, "exec", "allow-once");
+    await adapter.resolveApproval(f.APPROVAL_ID, "system-agent", "deny");
+
+    expect(gatewayCalls.filter((c) => c.method === "approval.resolve").map((c) => c.params)).toEqual([
+      { id: f.APPROVAL_ID, kind: "exec", decision: "allow-once" },
+      { id: f.APPROVAL_ID, kind: "system-agent", decision: "deny" },
+    ]);
+  });
+
   it("Gateway 가 끊겨 있으면 ADAPTER_UNAVAILABLE, 응답 모양이 다르면 ADAPTER_PROTOCOL", async () => {
     await expect(adapter.resolveApproval(f.APPROVAL_ID, "plugin", "deny")).rejects.toMatchObject({
       name: "AdapterError",
