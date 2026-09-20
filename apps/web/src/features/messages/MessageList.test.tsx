@@ -7,9 +7,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { qk } from "@/api/queries";
 import { registerUnauthorized } from "@/app/session";
 import { updateTimeline } from "@/realtime/timelineCache";
-import { AGENT, CH, CH2, msg, RUN } from "../../../test/fixtures";
+import { AGENT, APPROVAL, APPROVAL2, approval, CH, CH2, msg, RUN } from "../../../test/fixtures";
 import { authorsClient, renderWithClient } from "../../../test/messages";
 import { remeasureRows, setViewportHeight, stubScrollLayout } from "../../../test/scrollLayout";
+import { useApprovalStore } from "@/features/approvals/approvalStore";
 import { MessageList } from "./MessageList";
 import { useTimeline } from "./useTimeline";
 import { addPending, emptyTimeline, type Timeline, upsert } from "./timeline";
@@ -401,6 +402,80 @@ describe("MessageList", () => {
     view.rerender(<MessageList channelId={CH2} initialRect={RECT} />);
     expect(screen.queryByRole("button", { name: /새 메시지/ })).toBeNull();
     await waitFor(() => expect(scroller().scrollTop).toBe(scroller().scrollHeight - scroller().clientHeight));
+  });
+});
+
+describe("MessageList 승인 카드", () => {
+  beforeEach(() => useApprovalStore.getState().reset());
+  afterEach(() => useApprovalStore.getState().reset());
+
+  /** 메시지 seq 1·2 는 08:00:01·08:00:02(msg 픽스처) — 승인 시각은 그 사이·그 뒤로 준다 */
+  const between = "2027-01-15T08:00:01.500Z";
+  const after = "2027-01-15T08:00:30.000Z";
+
+  it("미해결 승인은 메시지 흐름 맨 아래에 카드로 뜬다 — 같은 승인이 두 번 와도 하나", async () => {
+    act(() => {
+      useApprovalStore.getState().apply(approval({ createdAt: after, toolCallId: undefined }));
+      // 같은 승인의 둘째 프레임(p2-t6 Ruling C)
+      useApprovalStore.getState().apply(approval({ createdAt: after, toolCallId: "toolu_77" }));
+    });
+    const { container } = setup(timelineOf(range(1, 2)));
+
+    const cards = await screen.findAllByRole("group", { name: /승인 요청/ });
+    expect(cards).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "이번만 허용" })).toBeInTheDocument();
+    const text = container.textContent ?? "";
+    expect(text.indexOf("본문 2")).toBeLessThan(text.indexOf("claude-cli native tool: Write"));
+  });
+
+  it("확정된 승인 카드는 사라지지 않고 createdAt 자리에 결과로 남는다", async () => {
+    act(() =>
+      useApprovalStore
+        .getState()
+        .apply(approval({ createdAt: between, status: "allowed", decision: "allow-once", reason: "user" })),
+    );
+    const { container } = setup(timelineOf(range(1, 2)));
+
+    await screen.findByRole("group", { name: /승인 요청/ });
+    expect(screen.getByText("허용됨")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "이번만 허용" })).not.toBeInTheDocument();
+    // 두 메시지 사이 — 시간 순서 자리에 남는다
+    const text = container.textContent ?? "";
+    expect(text.indexOf("본문 1")).toBeLessThan(text.indexOf("claude-cli native tool: Write"));
+    expect(text.indexOf("claude-cli native tool: Write")).toBeLessThan(text.indexOf("본문 2"));
+  });
+
+  it("승인이 확정되면 카드가 맨 아래에서 시간 자리로 옮겨 간다", async () => {
+    act(() => useApprovalStore.getState().apply(approval({ createdAt: between })));
+    const { container } = setup(timelineOf(range(1, 2)));
+    await screen.findByRole("group", { name: /승인 요청/ });
+    const before = container.textContent ?? "";
+    expect(before.indexOf("본문 2")).toBeLessThan(before.indexOf("claude-cli native tool: Write"));
+
+    act(() =>
+      useApprovalStore
+        .getState()
+        .apply(approval({ createdAt: between, status: "denied", decision: "deny", reason: "user" })),
+    );
+    await waitFor(() => expect(screen.getByText("거절됨")).toBeInTheDocument());
+    const text = container.textContent ?? "";
+    expect(text.indexOf("claude-cli native tool: Write")).toBeLessThan(text.indexOf("본문 2"));
+  });
+
+  it("다른 채널의 승인은 행도 만들지 않는다 — 빈 행이 끼지 않게", async () => {
+    const { container } = setup(timelineOf(range(1, 2)));
+    await screen.findByText("본문 2");
+    // 구분선 + 메시지 둘
+    const rows = () => container.querySelectorAll("[data-index]").length;
+    expect(rows()).toBe(3);
+
+    act(() => useApprovalStore.getState().apply(approval({ id: APPROVAL2, channelId: CH2 })));
+    await waitFor(() => expect(rows()).toBe(3));
+    expect(screen.queryByRole("group", { name: /승인 요청/ })).not.toBeInTheDocument();
+
+    // 이 채널의 승인이면 행이 는다
+    act(() => useApprovalStore.getState().apply(approval({ id: APPROVAL })));
+    await waitFor(() => expect(rows()).toBe(4));
   });
 });
 

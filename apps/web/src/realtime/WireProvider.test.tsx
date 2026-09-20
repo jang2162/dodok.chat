@@ -6,9 +6,10 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { meQuery, qk } from "@/api/queries";
 import { createQueryClient } from "@/app/queryClient";
 import { resetClientState } from "@/app/session";
+import { useApprovalStore } from "@/features/approvals/approvalStore";
 import { useRunStore } from "@/features/runs/runStore";
 import { createdSockets } from "../../test/fakeSocket";
-import { CH, CH2, runState, USER, uid } from "../../test/fixtures";
+import { approval, CH, CH2, runState, USER, uid } from "../../test/fixtures";
 import { useWireStatus } from "./wire";
 import { useChannelSubscription, useWire, WireProvider } from "./WireProvider";
 
@@ -23,6 +24,7 @@ const onUnauthorized = vi.fn();
 beforeEach(() => {
   queryClient = createQueryClient(onUnauthorized);
   useRunStore.getState().reset();
+  useApprovalStore.getState().reset();
   useWireStatus.setState({ status: "idle" });
   onUnauthorized.mockClear();
 });
@@ -77,17 +79,19 @@ it("me 가 확인되면 소켓 하나를 만들어 연결하고, 다시 렌더�
   expect(useWireStatus.getState().status).toBe("connected");
 });
 
-it("세션 정리(로그아웃·401)는 소켓을 끊고 런 스토어를 비우며 상태를 idle 로", async () => {
+it("세션 정리(로그아웃·401)는 소켓을 끊고 런·승인 스토어를 비우며 상태를 idle 로", async () => {
   stubMe();
   const errors = vi.spyOn(console, "error");
   render(<Tree />);
   await waitFor(() => expect(createdSockets).toHaveLength(1));
   useRunStore.getState().applyState(runState());
+  useApprovalStore.getState().apply(approval());
 
   resetClientState(queryClient);
 
   expect(createdSockets[0]?.calls.disconnect).toBeGreaterThanOrEqual(1);
   expect(useRunStore.getState().runs).toEqual({});
+  expect(useApprovalStore.getState().byChannel).toEqual({});
   expect(useWireStatus.getState().status).toBe("idle");
   // 비운 캐시에 me 를 다시 받아 새 소켓까지 — 그 사이 렌더 중 갱신 경고(캐시 알림을 렌더 안에서 받음)가 없다
   await waitFor(() => expect(createdSockets).toHaveLength(2));

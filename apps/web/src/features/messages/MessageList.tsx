@@ -10,7 +10,10 @@ import {
   useRef,
   useState,
 } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { useMe } from "@/api/queries";
+import { ApprovalCard } from "@/features/approvals/ApprovalCard";
+import { selectChannelApprovals, useApprovalStore } from "@/features/approvals/approvalStore";
 import { Button } from "@/ui/button";
 import { groupRows, type Row } from "./groupRows";
 import { MessageErrorBoundary } from "./MessageErrorBoundary";
@@ -47,7 +50,13 @@ export function MessageList(props: MessageListProps) {
 
 function ChannelMessages({ channelId, bubbleRunIds = NO_RUNS, bubbles, initialRect }: MessageListProps) {
   const timeline = useTimeline(channelId);
-  const rows = useMemo(() => (timeline ? groupRows(timeline, bubbleRunIds) : []), [timeline, bubbleRunIds]);
+  // 승인 카드는 스토어에서 바로 읽는다(설계 5.3) — 카드 안은 `ApprovalCard` 가 스스로 구독하므로 여기는 행 자리만 본다
+  const approvals = useApprovalStore(useShallow(selectChannelApprovals(channelId)));
+  const approvalFacts = useMemo(() => approvals.map((v) => v.approval), [approvals]);
+  const rows = useMemo(
+    () => (timeline ? groupRows(timeline, bubbleRunIds, approvalFacts) : []),
+    [timeline, bubbleRunIds, approvalFacts],
+  );
   const scrollRef = useRef<HTMLDivElement>(null);
   const getItemKey = useCallback((i: number) => rows[i]?.key ?? i, [rows]);
   const virtualizer = useVirtualizer({
@@ -226,7 +235,11 @@ function ChannelMessages({ channelId, bubbleRunIds = NO_RUNS, bubbles, initialRe
                 style={{ transform: `translateY(${v.start}px)` }}
               >
                 <MessageErrorBoundary resetKey={resetKeyOf(row)}>
-                  <RowView row={row} bubble={row.kind === "bubble" ? bubbles?.(row.runId) : undefined} />
+                  <RowView
+                    row={row}
+                    channelId={channelId}
+                    bubble={row.kind === "bubble" ? bubbles?.(row.runId) : undefined}
+                  />
                 </MessageErrorBoundary>
               </div>
             );
@@ -262,12 +275,13 @@ function sameRow(a: Row, b: Row): boolean {
   if (a.kind !== b.kind || a.key !== b.key) return false;
   if (a.kind === "message" && b.kind === "message") return a.message === b.message && a.head === b.head;
   if (a.kind === "pending" && b.kind === "pending") return a.pending === b.pending;
-  return true; // 구분선(날짜)·버블(runId)은 key 에 다 들어 있다
+  // 구분선(날짜)·버블(runId)·승인(approvalId)은 key 에 다 들어 있다 — 카드 안은 저마다 스토어를 구독한다
+  return true;
 }
 
-type RowProps = { row: Row; bubble: ReactNode };
+type RowProps = { row: Row; channelId: string; bubble: ReactNode };
 const RowView = memo(
-  function RowView({ row, bubble }: RowProps) {
+  function RowView({ row, channelId, bubble }: RowProps) {
     switch (row.kind) {
       case "divider":
         return <DayDivider date={row.date} />;
@@ -281,9 +295,11 @@ const RowView = memo(
         return <PendingItem pending={row.pending} />;
       case "bubble":
         return bubble ?? null;
+      case "approval":
+        return <ApprovalCard approvalId={row.approvalId} channelId={channelId} />;
     }
   },
-  (a: RowProps, b: RowProps) => a.bubble === b.bubble && sameRow(a.row, b.row),
+  (a: RowProps, b: RowProps) => a.bubble === b.bubble && a.channelId === b.channelId && sameRow(a.row, b.row),
 );
 
 function DayDivider({ date }: { date: string }) {

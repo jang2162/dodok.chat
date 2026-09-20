@@ -10,6 +10,7 @@ import {
 } from "react";
 import { qk, useMe } from "@/api/queries";
 import { registerSessionReset, resetClientState } from "@/app/session";
+import { useApprovalStore } from "@/features/approvals/approvalStore";
 import { useRunStore } from "@/features/runs/runStore";
 import { attachHandlers } from "./handlers";
 import { createSubscriptions, type Subscriptions } from "./subscriptions";
@@ -70,6 +71,7 @@ export function WireProvider({
     const unregister = registerSessionReset(() => {
       socket.disconnect();
       useRunStore.getState().reset();
+      useApprovalStore.getState().reset();
       useWireStatus.getState().setStatus("idle");
     });
     useWireStatus.getState().setStatus("connecting");

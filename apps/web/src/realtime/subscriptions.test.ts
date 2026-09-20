@@ -4,9 +4,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fromLatest } from "@/features/messages/timeline";
 import { ApiRequestError } from "@/api/http";
 import { registerUnauthorized } from "@/app/session";
+import { useApprovalStore } from "@/features/approvals/approvalStore";
 import { useRunStore } from "@/features/runs/runStore";
 import { createFakeSocket } from "../../test/fakeSocket";
-import { CH, CH2, msg, RUN, RUN2, runState, textDelta, uid } from "../../test/fixtures";
+import {
+  APPROVAL,
+  APPROVAL2,
+  approval,
+  CH,
+  CH2,
+  msg,
+  RUN,
+  RUN2,
+  runState,
+  textDelta,
+  uid,
+} from "../../test/fixtures";
 import { createSubscriptions, type FetchPage, restFetchPage } from "./subscriptions";
 import { getTimeline, updateTimeline } from "./timelineCache";
 
@@ -29,7 +42,10 @@ function setup() {
 const seed = (qc: QueryClient, messages: Message[], channelId = CH) =>
   updateTimeline(qc, channelId, (t) => fromLatest(t, messages, false));
 
-beforeEach(() => useRunStore.getState().reset());
+beforeEach(() => {
+  useRunStore.getState().reset();
+  useApprovalStore.getState().reset();
+});
 
 describe("createSubscriptions", () => {
   it("처음 들어가면 lastSeq 없이 구독해 최근 페이지로 시작하고, 진행 중 런은 처음부터 재생해 텍스트를 쌓는다", async () => {
@@ -182,6 +198,28 @@ describe("createSubscriptions", () => {
     // 종료 상태 런은 버블 정리(태스크 8)가, 다른 채널 런은 그 채널이 맡는다
     expect(runs[DONE]?.state.status).toBe("done");
     expect(runs[RUN2]?.state.status).toBe("streaming");
+  });
+
+  it("구독 응답의 pendingApprovals 로 승인 카드를 맞춘다 — 늦게 연 탭·재연결한 탭이 카드를 본다", async () => {
+    const { fake, subs } = setup();
+    fake.onAck("channel.subscribe", () =>
+      subscribed([msg(1)], { pendingApprovals: [approval(), approval({ id: APPROVAL2 })] }),
+    );
+
+    await subs.enter(CH);
+
+    expect(Object.keys(useApprovalStore.getState().byChannel[CH] ?? {})).toEqual([APPROVAL, APPROVAL2]);
+  });
+
+  it("이어 받기(lastSeq) 구독에서도 pendingApprovals 를 반영한다 — 끊긴 사이 온 승인", async () => {
+    const { fake, queryClient, subs } = setup();
+    seed(queryClient, [msg(1)]);
+    fake.onAck("channel.subscribe", () => subscribed([msg(2)], { pendingApprovals: [approval()] }));
+
+    await subs.enter(CH);
+
+    expect(fake.sentOf("channel.subscribe")).toEqual([{ channelId: CH, lastSeq: 1 }]);
+    expect(useApprovalStore.getState().byChannel[CH]?.[APPROVAL]?.approval.status).toBe("pending");
   });
 });
 

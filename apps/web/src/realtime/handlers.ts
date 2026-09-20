@@ -3,6 +3,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ApiRequestError } from "@/api/http";
 import { type AdapterStatusResponse, meQuery, qk } from "@/api/queries";
+import { useApprovalStore } from "@/features/approvals/approvalStore";
 import { hasGap, upsert } from "@/features/messages/timeline";
 import { useRunStore } from "@/features/runs/runStore";
 import type { Subscriptions } from "./subscriptions";
@@ -96,6 +97,12 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
       if (resync) void subscriptions.runReplay.resync(run);
     },
     "run.event": ({ event }) => subscriptions.runReplay.live(event),
+    /**
+     * 승인 요구·확정. 같은 승인이 프레임 둘로 와 두 번 발행될 수 있어(p2-t6 Ruling C) 스토어가 id 로 병합한다 —
+     * 카드는 하나다. 확정 사실은 클라이언트 시계로 그린 「만료됨」을 덮는다
+     */
+    "approval.requested": ({ approval }) => useApprovalStore.getState().apply(approval),
+    "approval.resolved": ({ approval }) => useApprovalStore.getState().apply(approval),
     /**
      * 새 채널 — 사이드바가 보는 목록 캐시에 덧붙인다(만든 사람은 useCreateChannel 이 먼저 넣는다).
      * 같은 id 가 이미 있으면 그대로 둔다 — 늦게 온 created 가 그새 바뀐 값(channel.updated)을 되돌리지 않게.

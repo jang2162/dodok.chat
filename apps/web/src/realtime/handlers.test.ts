@@ -5,9 +5,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type AdapterStatusResponse, qk } from "@/api/queries";
 import { createQueryClient } from "@/app/queryClient";
 import { fromLatest } from "@/features/messages/timeline";
+import { useApprovalStore } from "@/features/approvals/approvalStore";
 import { useRunStore } from "@/features/runs/runStore";
 import { createFakeSocket } from "../../test/fakeSocket";
-import { AGENT, CH, CH2, msg, RUN, runState, textDelta, uid, USER } from "../../test/fixtures";
+import {
+  AGENT,
+  APPROVAL,
+  approval,
+  CH,
+  CH2,
+  msg,
+  RUN,
+  runState,
+  textDelta,
+  uid,
+  USER,
+} from "../../test/fixtures";
 import { attachHandlers, NOTICE_DURATION_MS } from "./handlers";
 import { createSubscriptions } from "./subscriptions";
 import { getTimeline, updateTimeline } from "./timelineCache";
@@ -50,6 +63,7 @@ function setup() {
 
 beforeEach(() => {
   useRunStore.getState().reset();
+  useApprovalStore.getState().reset();
   useTypingStore.setState({ byChannel: {} });
   vi.clearAllMocks();
 });
@@ -188,6 +202,36 @@ describe("런 이벤트", () => {
     await entering;
 
     expect(useRunStore.getState().runs[RUN]).toMatchObject({ text: "c", lastEventSeq: 3 });
+  });
+});
+
+describe("승인 이벤트", () => {
+  it("approval.requested·approval.resolved 는 승인 스토어에 넣는다 — 확정이 요구를 덮는다", () => {
+    const { fake } = setup();
+    fake.serverEmit("approval.requested", { approval: approval() });
+    expect(useApprovalStore.getState().byChannel[CH]?.[APPROVAL]?.approval.status).toBe("pending");
+
+    fake.serverEmit("approval.resolved", {
+      approval: approval({ status: "allowed", decision: "allow-once", reason: "user" }),
+    });
+    expect(useApprovalStore.getState().byChannel[CH]?.[APPROVAL]?.approval).toMatchObject({
+      status: "allowed",
+      decision: "allow-once",
+    });
+  });
+
+  it("같은 승인이 프레임 둘로 와도 카드는 하나 — 뒤엣것이 빈 자리를 채운다(p2-t6 Ruling C)", () => {
+    const { fake } = setup();
+    fake.serverEmit("approval.requested", { approval: approval({ toolCallId: undefined, urlPath: "/a" }) });
+    fake.serverEmit("approval.requested", {
+      approval: approval({ toolCallId: "toolu_9", urlPath: undefined }),
+    });
+
+    expect(Object.keys(useApprovalStore.getState().byChannel[CH] ?? {})).toEqual([APPROVAL]);
+    expect(useApprovalStore.getState().byChannel[CH]?.[APPROVAL]?.approval).toMatchObject({
+      toolCallId: "toolu_9",
+      urlPath: "/a",
+    });
   });
 });
 

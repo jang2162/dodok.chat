@@ -2,6 +2,7 @@ import type { ChannelSubscribeResult, Message, RunState } from "@dodok/shared";
 import type { QueryClient } from "@tanstack/react-query";
 import { ApiRequestError, api } from "@/api/http";
 import { notifyUnauthorized } from "@/app/session";
+import { useApprovalStore } from "@/features/approvals/approvalStore";
 import { fromLatest, upsertMany } from "@/features/messages/timeline";
 import { TERMINAL, useRunStore } from "@/features/runs/runStore";
 import { createRunReplay } from "./runReplay";
@@ -54,7 +55,9 @@ export function createSubscriptions(deps: {
   const runReplay = createRunReplay(socket);
   let current: string | undefined;
 
-  async function applyRuns(channelId: string, res: ChannelSubscribeResult): Promise<void> {
+  /** 구독 응답의 스냅샷 — 진행 중 런과 미해결 승인. 재연결한 탭·늦게 연 탭이 여기서 카드를 다시 맞춘다(설계 5.5·6장) */
+  async function applySubscribed(channelId: string, res: ChannelSubscribeResult): Promise<void> {
+    useApprovalStore.getState().applyMany(res.pendingApprovals);
     const store = useRunStore.getState();
     // 그 채널에서 진행 중이던 런이 activeRuns 에 없으면 끊긴 사이 끝난 것 — 버블이 남지 않게 뺀다(답은 메시지로 온다)
     const active = new Set(res.activeRuns.map((r) => r.id));
@@ -69,7 +72,7 @@ export function createSubscriptions(deps: {
   async function fresh(channelId: string): Promise<void> {
     const res = await emitAck(socket, "channel.subscribe", { channelId });
     updateTimeline(qc, channelId, (prev) => fromLatest(prev, res.messages, res.hasMore));
-    await applyRuns(channelId, res);
+    await applySubscribed(channelId, res);
   }
 
   /** 가진 것(lastSeq) 뒤를 받아 병합한다. 처음(캐시 없음·lastSeq 0)이면 최근 페이지로 새로 시작한다 */
@@ -78,7 +81,7 @@ export function createSubscriptions(deps: {
     if (!t || t.lastSeq === 0) return fresh(channelId);
     const res = await emitAck(socket, "channel.subscribe", { channelId, lastSeq: t.lastSeq });
     updateTimeline(qc, channelId, (prev) => upsertMany(prev, res.messages));
-    await applyRuns(channelId, res);
+    await applySubscribed(channelId, res);
     let hasMore = res.hasMore;
     for (let pages = 1; hasMore; pages += 1) {
       if (pages >= MAX_PAGES) return fresh(channelId);
