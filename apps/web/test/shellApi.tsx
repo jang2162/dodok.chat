@@ -38,6 +38,9 @@ export function shellGet(input: RequestInfo | URL, init?: RequestInit): Response
   if (url === "/api/v1/channels") return json(200, { channels: [] });
   if (url === "/api/v1/adapter/status") return json(200, ADAPTER_OK);
   if (url === "/api/v1/agents") return json(200, { agents: [] });
+  // 활동 패널(오른쪽 패널 「활동」 탭)이 부르는 조회 — 기본은 런도 이벤트도 없음
+  if (/^\/api\/v1\/channels\/[^/]+\/runs(\?|$)/.test(url)) return json(200, { runs: [] });
+  if (/^\/api\/v1\/runs\/[^/]+\/events(\?|$)/.test(url)) return json(200, { events: [] });
   const m = /^\/api\/v1\/channels\/([^/]+)(\/members)?$/.exec(url);
   if (m?.[1]) return m[2] ? json(200, { members: [] }) : json(200, { channel: channelOf(m[1]) });
   return undefined;

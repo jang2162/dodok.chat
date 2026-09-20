@@ -82,6 +82,11 @@ export const channelSettingsRoute = createRoute({
   path: "settings",
   component: lazyPage(() => import("@/features/settings/ChannelSettingsPanel"), "ChannelSettingsPanel"),
 });
+export const channelActivityRoute = createRoute({
+  getParentRoute: () => channelRoute,
+  path: "activity",
+  component: lazyPage(() => import("@/features/activity/ActivityPanel"), "ActivityPanel"),
+});
 export const agentsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/agents",
@@ -90,7 +95,11 @@ export const agentsRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([
   loginRoute,
-  appRoute.addChildren([indexRoute, channelRoute.addChildren([channelSettingsRoute]), agentsRoute]),
+  appRoute.addChildren([
+    indexRoute,
+    channelRoute.addChildren([channelSettingsRoute, channelActivityRoute]),
+    agentsRoute,
+  ]),
 ]);
 
 export function createAppRouter(queryClient: QueryClient, history?: RouterHistory) {

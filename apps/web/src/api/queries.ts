@@ -1,4 +1,13 @@
-import type { Agent, AdapterStatus, Channel, ChannelMember, User, Workspace } from "@dodok/shared";
+import type {
+  Agent,
+  AdapterStatus,
+  Channel,
+  ChannelMember,
+  Run,
+  RunEvent,
+  User,
+  Workspace,
+} from "@dodok/shared";
 import { queryOptions, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./http";
 
@@ -16,7 +25,12 @@ export const qk = {
   discover: ["agents", "discover"] as const,
   adapter: ["adapter"] as const,
   timeline: (id: string) => ["timeline", id] as const,
+  channelRuns: (channelId: string) => ["channels", channelId, "runs"] as const,
+  runEvents: (runId: string) => ["runs", runId, "events"] as const,
 };
+
+/** 활동 패널이 한 번에 받는 런 수(REST 상한 200) */
+export const RUNS_PAGE = 50;
 
 export const meQuery = queryOptions({
   queryKey: qk.me,
@@ -56,3 +70,24 @@ export const useAgents = () =>
   });
 export const useAdapterStatus = () =>
   useQuery({ queryKey: qk.adapter, queryFn: () => api<AdapterStatusResponse>("GET", "/adapter/status") });
+
+/**
+ * 활동 탭의 런 목록(설계 5.2). 실시간 `run.state` 는 런 스토어에서 덮는다(`mergeRuns`).
+ * 조회 실패는 패널 안에 상태 문구 + 「다시 시도」로 보인다 — 전역 토스트와 이중 표시하지 않는다(`silent`)
+ */
+export const useChannelRuns = (channelId: string) =>
+  useQuery({
+    queryKey: qk.channelRuns(channelId),
+    queryFn: async () =>
+      (await api<{ runs: Run[] }>("GET", `/channels/${channelId}/runs?limit=${RUNS_PAGE}`)).runs,
+    meta: { silent: true },
+  });
+
+/** 고른 런의 이벤트 전부(afterSeq 0). 실시간 `run.event` 는 `mergeRunEvents` 로 잇는다 */
+export const useRunEvents = (runId: string | undefined) =>
+  useQuery({
+    queryKey: qk.runEvents(runId ?? ""),
+    queryFn: async () => (await api<{ events: RunEvent[] }>("GET", `/runs/${runId}/events`)).events,
+    enabled: runId !== undefined,
+    meta: { silent: true },
+  });
