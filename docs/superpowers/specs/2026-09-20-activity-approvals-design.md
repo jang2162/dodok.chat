@@ -203,7 +203,7 @@ ChannelSubscribeResult.pendingApprovals: Approval[]                // 그대로,
 
 ### 5.5 상태
 
-승인은 런 스토어와 별도로 `approvalStore`(zustand)에 채널별로 둔다. 들어오는 길 셋: 구독 ack 의 `pendingApprovals`, wire `approval.requested`/`resolved`, 활동 탭의 REST 조회. 만료는 클라이언트 시계로 계산해 표시만 바꾸고, 서버 사실이 오면 덮어쓴다.
+승인은 런 스토어와 별도로 `approvalStore`(zustand)에 채널별로 둔다. 승인이 들어오는 길은 둘 — 구독 ack 의 `pendingApprovals`(`syncPending`)와 wire `approval.requested`/`resolved`(`apply`)다. 활동 탭은 스토어를 읽기만 한다. 만료는 클라이언트 시계로 계산해 표시만 바꾸고, 서버 사실이 오면 덮어쓴다.
 
 그래서 **클라이언트 시계로 만료된 짧은 순간에는 화면 글(「만료됨」)과 `data-status`(아직 `pending`)가 어긋난다** — 서버가 정본이고 그 사실이 오면 맞춰진다.
 평상시에는 한 프레임 안에 따라잡히고, 서버가 끊긴 동안에는 오래 간다. **선택자·단언은 `data-status` 가 아니라 보이는 글로 짠다.**
@@ -242,7 +242,7 @@ ChannelSubscribeResult.pendingApprovals: Approval[]                // 그대로,
    → **확인**: 통합 시나리오 9a~9f(`apps/server/test/integration/approvals.test.ts`) · 브라우저 검증 시나리오 2·3·4(p2-t10). `dev:fake` 의 TTL 은 20초로 줄여 만료를 볼 수 있게 했다.
 2. 활동 탭에서 런 목록과 툴 타임라인을 보고, 인자·결과를 펼칠 수 있다. → **확인**: 브라우저 검증 시나리오 1.
 3. 알림을 켠 사용자는 다른 채널을 보고 있어도 승인 요구를 받는다. → **처음엔 도달 불가였다**(브라우저 검증 D1) — 팬아웃을 워크스페이스 룸으로 옮겨 고쳤다(4.6). 재검증은 p2-t13.
-4. 8장 이월이 모두 정리되고 루트 네 검사가 통과한다. → **확인**: 아홉 건 모두 정리, 루트 네 검사 exit 0(테스트 1380).
+4. 8장 이월이 모두 정리되고 루트 네 검사가 통과한다. → **확인**: 아홉 건 모두 정리, 루트 네 검사 exit 0(테스트 1381).
 
 ## 10. 열린 문제 (범위 밖 기록)
 

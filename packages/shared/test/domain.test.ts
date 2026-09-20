@@ -225,6 +225,30 @@ describe("Approval", () => {
     expect(Approval.safeParse({ ...REQUESTED, status: "approved" }).success).toBe(false);
   });
 
+  /**
+   * 보여 주는 문자열의 길이 상한은 **어댑터가 잘라 맞추는 과녁**이다(`gateway/approvals.ts` 의 `MAX`).
+   * 상한 초과 입력을 버리지 않고 잘라서 통과시키는 fail-open 판정(p2-t2)이 성립하려면 자른 길이(=상한)가
+   * 여기서 통과해야 하고 한 자만 더 길면 막혀야 한다. 이 숫자를 바꾸면 어댑터 `MAX` 도 같이 바꾼다
+   */
+  it("보여 주는 문자열의 길이 상한 — 상한까지는 통과, 한 자 더는 거부", () => {
+    const CAPS = [
+      ["title", 200],
+      ["description", 512],
+      ["detail", 16_384],
+      ["toolName", 100],
+      ["pluginId", 100],
+      ["urlPath", 500],
+      ["toolCallId", 200],
+    ] as const;
+
+    for (const [field, max] of CAPS) {
+      const at = (length: number) =>
+        Approval.safeParse({ ...REQUESTED, [field]: "가".repeat(length) }).success;
+      expect(at(max), `${field} 는 ${max} 자까지 받아야 한다`).toBe(true);
+      expect(at(max + 1), `${field} 는 ${max + 1} 자를 막아야 한다`).toBe(false);
+    }
+  });
+
   it("열거값 목록은 Gateway 실물 그대로", () => {
     expect(ApprovalKind.options).toEqual(["exec", "plugin", "system-agent"]);
     expect(ApprovalStatus.options).toEqual(["pending", "allowed", "denied", "expired", "cancelled"]);

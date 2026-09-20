@@ -105,6 +105,8 @@ src/
 │  └─ adapter/            GET /api/v1/adapter/status
 ├─ adapters/
 │  └─ types.ts            AgentAdapter 계열 타입 재수출(구현은 packages/openclaw-adapter)
+├─ util/
+│  └─ josa.ts             받침에 따른 조사(시스템 메시지 병기형). 웹 `lib/josa.ts` 와 두 벌 — 한쪽만 고치면 어긋난다
 └─ realtime/
    ├─ bus.ts              ServerBus — 모듈 → realtime 타입드 이벤트
    ├─ socket.ts           wire 인증(세션 토큰·프로토콜)·룸(channel:<id>, user:<id>, workspace:<id>)·클라이언트 → 서버 핸들러(subscribe 는 lastSeq 이후 ≤200,
@@ -236,10 +238,11 @@ src/
 │  │                       RunTimeline.tsx · ToolCallRow.tsx(인자·결과 접힘 기본, `[+N chars hidden]` 이면 「잘렸습니다」) · Notice.tsx(패널 안 상태 문구·「다시 시도」) ·
 │  │                       timeline.ts(순수: 런 이벤트 → 행. 텍스트 델타는 행이 되지 않는다. mergeRuns·mergeRunEvents 로 REST 바탕 + 실시간) ·
 │  │                       useLiveRunEvents.ts(고른 런의 `run.event` 를 소켓에서 직접 — 런 스토어는 텍스트와 마지막 seq 만 들고 있어 행을 못 만든다)
-│  ├─ approvals/           approvalStore.ts(Zustand, 채널별. 들어오는 길 셋: 구독 ack `pendingApprovals`·wire `approval.requested/resolved`·활동 탭 REST.
+│  ├─ approvals/           approvalStore.ts(Zustand, 채널별. 승인이 들어오는 길 둘: 구독 ack 의 `pendingApprovals`(syncPending)·wire `approval.requested/resolved`(apply) — 활동 탭은 읽기만 한다.
 │  │                       확정 뒤에 온 `pending` 은 늦은 프레임이라 무시) · ApprovalCard.tsx(제목·severity 색·툴 인자·카운트다운·`allowedDecisions` 버튼만,
 │  │                       누르면 잠그고 ack 대기, 확정되면 결과 한 줄로 남는다) · countdown.ts(1초 간격 남은 시간 문구) ·
-│  │                       notify.ts(브라우저 알림 — 권한·지원 여부를 한 자리에서 가르고, 중복은 `apply` **앞** 스토어 조회로 막는다. `tag` 는 `approval:<id>`)
+│  │                       notify.ts(브라우저 알림 — 권한·지원 여부를 한 자리에서 가르고, 중복은 모듈 `Set` 으로 막는다(확정되면 `forgetApproval` 로 지운다 — 한 탭 안에서만 산다).
+│  │                       이미 답한 승인은 `handlers.ts` 가 `apply` **뒤** 들어온 페이로드의 `status` 로 거른다. `tag` 는 `approval:<id>`)
 │  ├─ auth/                LoginPage · mutations(useLogin·useLogout — 응답 `sessionToken` 은 쓰지 않는다, gcTime 0)
 │  ├─ channels/            ChannelList · CreateChannelDialog(만들면 설정으로) · HomeRedirect(`/` → 첫 채널, 들어올 때 받은 목록으로만 판단) · mutations
 │  ├─ messages/            timeline.ts(입장·과거·upsert·낙관적 교체·빈틈)·groupRows.ts(날짜 구분선·묶음)·useTimeline·useOlderPages·useAuthors,
