@@ -54,7 +54,7 @@ function setup(channelId = CH) {
 it("진행 중인 런은 버블 — 다른 채널 런은 빼고, 델타가 와도 다시 그리지 않고 같은 배열", () => {
   run({ id: RUN, status: "streaming" });
   run({ id: RUN2, channelId: CH2, status: "streaming" });
-  const { result, renders } = setup();
+  const { result, renders, rerender } = setup();
   expect(result.current).toEqual([RUN]);
 
   const first = result.current;
@@ -64,6 +64,10 @@ it("진행 중인 런은 버블 — 다른 채널 런은 빼고, 델타가 와�
   run({ id: RUN, status: "tool" });
   expect(result.current).toBe(first);
   expect(renders()).toBe(before);
+
+  // 부모가 다시 그려도(rerender) 새 배열을 만들지 않는다 — MessageList 가 groupRows 를 다시 돌지 않게
+  rerender({ ch: CH });
+  expect(result.current).toBe(first);
 });
 
 it("done: 같은 runId 의 에이전트 메시지가 오면 곧바로 빠지고 런 스토어에서도 지운다", async () => {

@@ -1,6 +1,6 @@
 import { useNavigate } from "@tanstack/react-router";
 import { type FormEvent, type ReactNode, useId, useState } from "react";
-import { ApiRequestError } from "@/api/http";
+import { formError as serverFormError, validationField } from "@/api/formErrors";
 import { Button } from "@/ui/button";
 import {
   Dialog,
@@ -15,9 +15,8 @@ import { Input } from "@/ui/input";
 import { Label } from "@/ui/label";
 import { useCreateChannel } from "./mutations";
 
-/** 폼 안에 그리는 오류(스펙 8장) — 이 둘은 전역 토스트에서 저절로 빠진다. 그 밖은 토스트가 알린다 */
-const isFormError = (e: unknown): e is ApiRequestError =>
-  e instanceof ApiRequestError && (e.code === "VALIDATION" || e.code === "CONFLICT");
+const FIELDS = ["name", "topic"] as const;
+type Field = (typeof FIELDS)[number];
 
 /**
  * 「채널 만들기」(스펙 6.2): 이름(필수)·주제 → `POST /channels` → `/c/<id>/settings`(곧바로 에이전트를 넣을 수 있게).
@@ -33,7 +32,7 @@ export function CreateChannelDialog({
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [topic, setTopic] = useState("");
-  const [formError, setFormError] = useState<string>();
+  const [formError, setFormError] = useState<{ message: string; field?: Field }>();
   const create = useCreateChannel();
   const navigate = useNavigate();
   const nameId = useId();
@@ -44,6 +43,12 @@ export function CreateChannelDialog({
   function clear() {
     setName("");
     setTopic("");
+    setFormError(undefined);
+  }
+
+  /** 칸을 고치면 지난 서버 오류는 내린다 — 다음 제출까지 남아 고친 값에 대한 오류처럼 보이지 않게 */
+  function edit(set: (value: string) => void, value: string) {
+    set(value);
     setFormError(undefined);
   }
 
@@ -69,7 +74,8 @@ export function CreateChannelDialog({
           onCreated?.();
         },
         onError: (err) => {
-          if (isFormError(err)) setFormError(err.message);
+          const message = serverFormError(err);
+          if (message !== undefined) setFormError({ message, field: validationField(message, FIELDS) });
         },
       },
     );
@@ -91,9 +97,9 @@ export function CreateChannelDialog({
               value={name}
               maxLength={80}
               autoComplete="off"
-              aria-invalid={formError ? true : undefined}
-              aria-describedby={formError ? errorId : undefined}
-              onChange={(e) => setName(e.target.value)}
+              aria-invalid={formError?.field === "name" || undefined}
+              aria-describedby={formError?.field === "name" ? errorId : undefined}
+              onChange={(e) => edit(setName, e.target.value)}
             />
           </div>
           <div className="grid gap-2">
@@ -104,12 +110,14 @@ export function CreateChannelDialog({
               maxLength={500}
               autoComplete="off"
               placeholder="선택"
-              onChange={(e) => setTopic(e.target.value)}
+              aria-invalid={formError?.field === "topic" || undefined}
+              aria-describedby={formError?.field === "topic" ? errorId : undefined}
+              onChange={(e) => edit(setTopic, e.target.value)}
             />
           </div>
           {formError && (
             <p id={errorId} role="alert" className="text-sm text-destructive">
-              {formError}
+              {formError.message}
             </p>
           )}
           <DialogFooter>

@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { type RefObject, useEffect } from "react";
 import { Button } from "@/ui/button";
 import {
   Dialog,
@@ -13,7 +13,8 @@ import { resetErrorMessage, useResetSession } from "./resetSession";
 /**
  * 「새 대화」 확인 대화상자(스펙 6.4·5.1 `/new`). 작성기와 채널 설정 패널(태스크 11)이 같이 쓴다 — 여는 버튼은 부르는 쪽 몫.
  * 성공하면 토스트 없이 닫는다(서버가 info 시스템 메시지를 채널에 보낸다). 실패는 대화상자 안에 알린다.
- * 시작하는 중에는 닫히지 않는다 — 결과를 잃지 않게
+ * 시작하는 중에는 닫히지 않는다 — 결과를 잃지 않게.
+ * `returnFocus` 를 주면 닫힐 때 초점을 그 요소로 돌려준다(제어형이라 Radix 는 되돌릴 곳을 모른다)
  */
 export function ResetSessionDialog({
   channelId,
@@ -21,12 +22,14 @@ export function ResetSessionDialog({
   handle,
   open,
   onOpenChange,
+  returnFocus,
 }: {
   channelId: string;
   agentId: string;
   handle: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  returnFocus?: RefObject<HTMLElement | null>;
 }) {
   const reset = useResetSession(channelId);
   const { reset: clear } = reset;
@@ -43,7 +46,13 @@ export function ResetSessionDialog({
 
   return (
     <Dialog open={open} onOpenChange={change}>
-      <DialogContent>
+      <DialogContent
+        onCloseAutoFocus={(e) => {
+          if (!returnFocus?.current?.isConnected) return;
+          e.preventDefault();
+          returnFocus.current.focus();
+        }}
+      >
         <DialogHeader>
           <DialogTitle>새 대화</DialogTitle>
           <DialogDescription>

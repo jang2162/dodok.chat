@@ -5,15 +5,12 @@ import {
   createRootRouteWithContext,
   createRoute,
   createRouter,
+  lazyRouteComponent,
   redirect,
 } from "@tanstack/react-router";
 import { ApiRequestError } from "@/api/http";
 import { meQuery } from "@/api/queries";
-import { AgentsPage } from "@/features/agents/AgentsPage";
-import { LoginPage } from "@/features/auth/LoginPage";
-import { HomeRedirect } from "@/features/channels/HomeRedirect";
-import { ChannelPage } from "@/features/messages/ChannelPage";
-import { ChannelSettingsPanel } from "@/features/settings/ChannelSettingsPanel";
+import { NotFound } from "./NotFound";
 import { RouteError } from "./RouteError";
 import { AppShell } from "./layout/AppShell";
 
@@ -33,6 +30,15 @@ export function safeNext(value: unknown): string | undefined {
     : undefined;
 }
 
+/**
+ * 화면은 라우트 단위로 나눠 받는다 — 첫 화면(로그인)이 작성기(Tiptap)·마크다운 렌더러(Streamdown)까지 내려받지 않게.
+ * 라우터가 화면을 그리기 전에 조각을 기다리므로(`preload`) 동작·순서는 같다
+ */
+const lazyPage = <M extends Record<string, unknown>, K extends keyof M & string>(
+  load: () => Promise<M>,
+  name: K,
+) => lazyRouteComponent(load, name);
+
 const rootRoute = createRootRouteWithContext<Ctx>()({ component: Outlet });
 
 export const loginRoute = createRoute({
@@ -40,7 +46,7 @@ export const loginRoute = createRoute({
   path: "/login",
   // 키를 빼면 라우터가 원래 검색값을 합쳐 버린 next 가 되살아난다 — undefined 로 덮는다
   validateSearch: (s: Record<string, unknown>): { next?: string } => ({ next: safeNext(s.next) }),
-  component: LoginPage,
+  component: lazyPage(() => import("@/features/auth/LoginPage"), "LoginPage"),
 });
 
 /** 로그인 가드 레이아웃. me 의 401 은 `/login?next=`, 그 밖의 실패(네트워크·5xx)는 오류 화면 */
@@ -61,21 +67,25 @@ const appRoute = createRoute({
   errorComponent: RouteError,
 });
 
-export const indexRoute = createRoute({ getParentRoute: () => appRoute, path: "/", component: HomeRedirect });
+export const indexRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/",
+  component: lazyPage(() => import("@/features/channels/HomeRedirect"), "HomeRedirect"),
+});
 export const channelRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/c/$channelId",
-  component: ChannelPage,
+  component: lazyPage(() => import("@/features/messages/ChannelPage"), "ChannelPage"),
 });
 export const channelSettingsRoute = createRoute({
   getParentRoute: () => channelRoute,
   path: "settings",
-  component: ChannelSettingsPanel,
+  component: lazyPage(() => import("@/features/settings/ChannelSettingsPanel"), "ChannelSettingsPanel"),
 });
 export const agentsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/agents",
-  component: AgentsPage,
+  component: lazyPage(() => import("@/features/agents/AgentsPage"), "AgentsPage"),
 });
 
 const routeTree = rootRoute.addChildren([
@@ -84,7 +94,12 @@ const routeTree = rootRoute.addChildren([
 ]);
 
 export function createAppRouter(queryClient: QueryClient, history?: RouterHistory) {
-  return createRouter({ routeTree, context: { queryClient }, ...(history ? { history } : {}) });
+  return createRouter({
+    routeTree,
+    context: { queryClient },
+    defaultNotFoundComponent: NotFound,
+    ...(history ? { history } : {}),
+  });
 }
 
 export type AppRouter = ReturnType<typeof createAppRouter>;

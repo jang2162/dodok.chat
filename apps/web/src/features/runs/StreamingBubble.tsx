@@ -1,5 +1,5 @@
 import { SquareIcon } from "lucide-react";
-import { memo, useState } from "react";
+import { memo, useLayoutEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { MessageBody } from "@/features/messages/MessageBody";
 import { MessageErrorBoundary } from "@/features/messages/MessageErrorBoundary";
@@ -29,7 +29,7 @@ export const StreamingBubble = memo(function StreamingBubble({ runId }: { runId:
   const streaming = status === "streaming";
 
   return (
-    <div data-run-id={runId} aria-busy={!TERMINAL.has(status)} className="relative py-0.5">
+    <div data-run-id={runId} className="relative py-0.5">
       <span
         data-agent-bar
         aria-hidden
@@ -45,20 +45,21 @@ export const StreamingBubble = memo(function StreamingBubble({ runId }: { runId:
             {/* 오른쪽 위 중지 버튼 자리 — 머리 줄만 비켜 준다(본문 줄바꿈은 확정 메시지와 같게) */}
             <div className={phase.stoppable ? "pr-20" : undefined}>
               <AuthorLine author={agent}>
-                {phase.label && <StatusLabel label={phase.label} queued={status === "queued"} />}
+                {/* 상태 문구만 라이브 영역이다 — 영역을 먼저 두고 안을 바꾼다. 델타(본문)는 밖이라 읽히지 않는다 */}
+                <span role="status">
+                  {phase.label && <StatusLabel label={phase.label} queued={status === "queued"} />}
+                </span>
               </AuthorLine>
             </div>
-            {phase.textVisible &&
-              (view.text ? (
-                <div
-                  data-cursor={streaming || undefined}
-                  className={streaming ? CARET_AFTER_LAST_BLOCK : undefined}
-                >
-                  <MessageBody bodyMd={view.text} streaming />
-                </div>
-              ) : (
-                streaming && <Cursor />
-              ))}
+            {phase.textVisible && (
+              <div data-cursor={streaming || undefined} aria-busy={!TERMINAL.has(status)}>
+                {view.text ? (
+                  <MessageBody bodyMd={view.text} caret={streaming} streaming />
+                ) : (
+                  streaming && <Cursor />
+                )}
+              </div>
+            )}
           </div>
         </article>
       </MessageErrorBoundary>
@@ -99,14 +100,9 @@ function Cursor() {
 }
 
 /**
- * 글이 있으면 커서를 본문 마지막 블록 끝에 붙인다(`::after`) — 따로 한 줄을 차지하면 버블이 확정 메시지보다 한 줄 커지고,
- * 바뀔 때 끝에 붙은 목록이 그만큼 밀린다. Streamdown 은 루트 div 아래에 블록(p·ul·pre …)을 둔다
- */
-const CARET_AFTER_LAST_BLOCK =
-  "[&>div>*:last-child]:after:ml-0.5 [&>div>*:last-child]:after:inline-block [&>div>*:last-child]:after:h-4 [&>div>*:last-child]:after:w-1.5 [&>div>*:last-child]:after:translate-y-0.5 [&>div>*:last-child]:after:rounded-[1px] [&>div>*:last-child]:after:bg-foreground/50 [&>div>*:last-child]:after:content-[''] motion-safe:[&>div>*:last-child]:after:animate-pulse";
-
-/**
  * `run.abort`(스펙 4.6). 누른 뒤에는 「중지 중」으로 잠그고, 런이 끝나 버튼이 내려갈 때까지 그대로 둔다.
+ * 잠금은 `disabled` 가 아니라 `aria-disabled` + 누름 무시다 — 키보드로 눌렀을 때 초점을 잃지 않게.
+ * 런이 끝나 버튼이 내려갈 때 초점이 이 버튼에 있었으면 메시지 목록으로 옮긴다(body 로 떨어지지 않게).
  * ack 실패는 작성기 `/stop` 과 같은 문구로 토스트(wire 오류는 REST 전역 토스트 밖, 스펙 8장)하고 다시 연다.
  * 소켓이 없거나 wire 가 connected 가 아니면 비활성
  */
@@ -114,9 +110,19 @@ function StopButton({ runId }: { runId: string }) {
   const { socket } = useWire();
   const connected = useWireStatus((s) => s.status === "connected");
   const [stopping, setStopping] = useState(false);
+  const ref = useRef<HTMLButtonElement>(null);
+
+  useLayoutEffect(() => {
+    const button = ref.current;
+    return () => {
+      if (document.activeElement !== button) return;
+      const list = button?.closest("[data-scroller]");
+      if (list instanceof HTMLElement) list.focus({ preventScroll: true });
+    };
+  }, []);
 
   function stop() {
-    if (!socket) return;
+    if (!socket || stopping) return;
     setStopping(true);
     emitAck(socket, "run.abort", { runId }).catch((e: unknown) => {
       const message = abortErrorMessage(e);
@@ -128,9 +134,11 @@ function StopButton({ runId }: { runId: string }) {
   return (
     <div className="absolute top-1.5 right-4">
       <Button
+        ref={ref}
         variant="outline"
         size="xs"
-        disabled={!socket || !connected || stopping}
+        disabled={!socket || !connected}
+        aria-disabled={stopping || undefined}
         aria-label={stopping ? "실행 중지 중" : "실행 중지"}
         onClick={stop}
       >

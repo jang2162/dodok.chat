@@ -223,3 +223,26 @@ describe("PendingItem", () => {
     expect(screen.queryByRole("button")).toBeNull();
   });
 });
+
+it("각주 같은 해시 링크는 새 탭이 아니라 이 메시지 안에서 그 자리로 옮긴다", async () => {
+  const scrolled: Element[] = [];
+  // jsdom 에는 scrollIntoView 가 없다
+  Element.prototype.scrollIntoView = function scrollIntoView(this: Element) {
+    scrolled.push(this);
+  };
+  const { container } = renderWithClient(
+    <article>
+      <MessageBody bodyMd={"본문[^1] 입니다.\n\n[^1]: 각주 내용"} />
+    </article>,
+  );
+  const ref = screen.getByRole("link", { name: "1" });
+  expect(ref).toHaveAttribute("href", "#user-content-fn-1");
+  expect(ref).not.toHaveAttribute("target");
+  expect(ref).not.toHaveAttribute("rel");
+
+  await userEvent.click(ref);
+  expect(scrolled).toHaveLength(1);
+  expect(scrolled[0]).toBe(container.querySelector("#user-content-fn-1"));
+  // 바깥 링크는 그대로 새 탭
+  expect(screen.queryAllByRole("link", { name: /↩/ })[0]).not.toHaveAttribute("target");
+});

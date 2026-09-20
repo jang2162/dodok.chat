@@ -8,6 +8,7 @@ import { type AdapterStatusResponse, qk } from "@/api/queries";
 import { createQueryClient } from "@/app/queryClient";
 import { type WireStatus, useWireStatus } from "@/realtime/wire";
 import { TooltipProvider } from "@/ui/tooltip";
+import { stubMedia } from "../../../test/media";
 import { ADAPTER_OK, ME, channelOf, json, renderRoute, shellGet } from "../../../test/shellApi";
 import { Banners } from "./Banners";
 import { ConnectionDots } from "./ConnectionDots";
@@ -53,6 +54,17 @@ describe("ConnectionDots", () => {
     push({ gateway: "down", bridge: "down" });
     expect(await screen.findByRole("img", { name: "Gateway 끊김" })).toBeInTheDocument();
   });
+
+  it("점은 색으로만 보이므로 키보드로도 닿는다 — Tab 으로 초점이 가면 상태 이름·설명 툴팁", async () => {
+    renderWithAdapter(<ConnectionDots />, { gateway: "connected", bridge: "down" });
+    const gateway = await screen.findByRole("img", { name: "Gateway 연결됨" });
+    await userEvent.tab();
+    expect(gateway).toHaveFocus();
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Gateway 연결됨");
+    await userEvent.tab();
+    expect(screen.getByRole("img", { name: "플러그인 끊김" })).toHaveFocus();
+    await waitFor(() => expect(screen.getByRole("tooltip")).toHaveTextContent("플러그인 끊김"));
+  });
 });
 
 describe("Banners", () => {
@@ -62,31 +74,50 @@ describe("Banners", () => {
 
   const setWire = (s: WireStatus) => act(() => useWireStatus.getState().setStatus(s));
 
-  it("wire 상태별 배너 — reconnecting·protocol_mismatch·rejected 만, 우리가 끊은 offline 은 없다", async () => {
+  it("wire 상태별 배너 — reconnecting 은 status, protocol_mismatch·rejected 는 alert, 우리가 끊은 offline 은 없다", async () => {
     const { queryClient } = renderWithAdapter(<Banners />, { gateway: "connected", bridge: "connected" });
     await waitFor(() => expect(queryClient.getQueryData(qk.adapter)).toBeDefined());
     setWire("connected");
-    expect(screen.queryByRole("status")).not.toBeInTheDocument();
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    // 라이브 영역은 비어 있는 채로 먼저 있다 — 배너 없음
+    const status = screen.getByRole("status");
+    const alert = screen.getByRole("alert");
+    expect(status).toBeEmptyDOMElement();
+    expect(alert).toBeEmptyDOMElement();
 
     setWire("reconnecting");
     expect(screen.getByRole("status")).toHaveTextContent(WIRE_RECONNECTING);
 
     setWire("offline");
     expect(screen.queryByText(WIRE_RECONNECTING)).not.toBeInTheDocument();
+    expect(status).toBeEmptyDOMElement();
 
     setWire("protocol_mismatch");
-    expect(screen.getByText("앱을 새로고침하세요")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "새로고침" })).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("서버가 새 버전입니다.");
+    expect(screen.getByRole("alert")).toHaveTextContent("앱을 새로고침하세요");
+    expect(within(screen.getByRole("alert")).getByRole("button", { name: "새로고침" })).toBeInTheDocument();
 
     setWire("rejected");
-    expect(screen.getByText(REJECTED)).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(REJECTED);
     expect(screen.queryByText("앱을 새로고침하세요")).not.toBeInTheDocument();
+    // 내용이 바뀌어도 영역은 처음 그 요소 그대로 — 스크린 리더는 새로 끼운 라이브 영역을 놓칠 수 있다
+    expect(screen.getByRole("status")).toBe(status);
+    expect(screen.getByRole("alert")).toBe(alert);
+  });
+
+  it("「새로고침」은 페이지를 다시 불러온다", async () => {
+    const reload = vi.fn();
+    renderWithAdapter(<Banners />, { gateway: "connected", bridge: "connected" });
+    // jsdom 의 location.reload 는 다시 정의할 수 없어 location 을 통째로 바꾼다(afterEach 가 되돌린다)
+    vi.stubGlobal("location", { ...window.location, reload });
+    setWire("protocol_mismatch");
+    await userEvent.click(screen.getByRole("button", { name: "새로고침" }));
+    expect(reload).toHaveBeenCalledTimes(1);
   });
 
   it("Gateway ≠ connected 또는 플러그인 down 이면 OpenClaw 배너 — wire 끊김과 함께면 둘 다", async () => {
     const { push } = renderWithAdapter(<Banners />, { gateway: "reconnecting", bridge: "connected" });
     expect(await screen.findByText(OPENCLAW_DOWN)).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(OPENCLAW_DOWN);
 
     push({ gateway: "connected", bridge: "connected" });
     await waitFor(() => expect(screen.queryByText(OPENCLAW_DOWN)).not.toBeInTheDocument());
@@ -100,6 +131,7 @@ describe("Banners", () => {
     setWire("reconnecting");
     expect(await screen.findByText(OPENCLAW_DOWN)).toBeInTheDocument();
     expect(screen.getByText(WIRE_RECONNECTING)).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(`${WIRE_RECONNECTING}${OPENCLAW_DOWN}`);
   });
 });
 
@@ -153,6 +185,59 @@ describe("AppShell", () => {
 
     await waitFor(() => expect(router.state.location.pathname).toBe("/c/b"));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "채널 목록" })).not.toBeInTheDocument());
+    expect(screen.queryByRole("navigation", { name: "채널" })).not.toBeInTheDocument();
+  });
+
+  it("시트가 링크로 닫히면 초점은 연 메뉴 버튼으로 돌아간다(Esc 로 닫아도)", async () => {
+    stubMedia(true);
+    stubChannels();
+    const { router } = renderRoute("/c/a");
+    const header = await screen.findByTestId("channel-header");
+    const menu = within(header).getByRole("button", { name: "채널 목록 열기" });
+
+    await userEvent.click(menu);
+    const sheet = await screen.findByRole("dialog", { name: "채널 목록" });
+    await userEvent.click(await within(sheet).findByRole("link", { name: /random/ }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/c/b"));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await waitFor(() => expect(menu).toHaveFocus());
+
+    await userEvent.click(menu);
+    await screen.findByRole("dialog", { name: "채널 목록" });
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await waitFor(() => expect(menu).toHaveFocus());
+  });
+
+  it("다른 화면으로 옮겨 가며 닫히면 그 화면의 메뉴 버튼으로 초점이 간다", async () => {
+    stubMedia(true);
+    stubChannels();
+    const { router } = renderRoute("/c/a");
+    const header = await screen.findByTestId("channel-header");
+    await userEvent.click(within(header).getByRole("button", { name: "채널 목록 열기" }));
+    const sheet = await screen.findByRole("dialog", { name: "채널 목록" });
+    await userEvent.click(within(sheet).getByRole("link", { name: "에이전트" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/agents"));
+    const page = await screen.findByTestId("page-agents");
+    await waitFor(() => expect(within(page).getByRole("button", { name: "채널 목록 열기" })).toHaveFocus());
+  });
+
+  it("폭이 바뀌면 시트를 닫아 둔다 — 넓어지면 사이드바가 늘 보이고, 다시 좁아져도 저절로 열려 있지 않다", async () => {
+    const media = stubMedia(true);
+    stubChannels();
+    renderRoute("/c/a");
+    const header = await screen.findByTestId("channel-header");
+    await userEvent.click(within(header).getByRole("button", { name: "채널 목록 열기" }));
+    await screen.findByRole("dialog", { name: "채널 목록" });
+
+    media.setNarrow(false);
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.getByRole("navigation", { name: "채널" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "채널 목록 열기" })).not.toBeInTheDocument();
+
+    media.setNarrow(true);
+    expect(await within(header).findByRole("button", { name: "채널 목록 열기" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.queryByRole("navigation", { name: "채널" })).not.toBeInTheDocument();
   });
 

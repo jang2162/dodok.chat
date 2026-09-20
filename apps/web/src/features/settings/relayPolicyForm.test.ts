@@ -94,3 +94,16 @@ describe("fromForm", () => {
     expect(policyOf(form({ allowAll: false, pairs: [] })).allowPairs).toEqual([]);
   });
 });
+
+describe("오류가 가리키는 칸", () => {
+  it("턴·일일 오류는 그 칸을 가리킨다(쌍 오류는 칸이 없다)", () => {
+    expect(fromForm(form({ maxRelayTurns: "33" }))).toMatchObject({ field: "maxRelayTurns" });
+    expect(fromForm(form({ dailyRunLimit: "0" }))).toMatchObject({ field: "dailyRunLimit" });
+    expect(fromForm(form({ allowAll: false, pairs: [{ from: A, to: A }] }))).not.toHaveProperty("field");
+  });
+
+  it("일일 상한은 999,999,999 까지 — 넘으면 칸을 자르지 않고 알린다", () => {
+    expect(policyOf(form({ dailyRunLimit: "999999999" })).dailyRunLimit).toBe(999_999_999);
+    expect(errorOf(form({ dailyRunLimit: "1000000000" }))).toMatch("일일 상한은 1~999,999,999");
+  });
+});

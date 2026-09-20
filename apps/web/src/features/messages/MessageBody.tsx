@@ -1,4 +1,5 @@
-import { createContext, memo, useContext, useMemo } from "react";
+import { type ReactNode, createContext, memo, useContext, useMemo } from "react";
+import { cn } from "@/lib/utils";
 import { type Components, defaultRehypePlugins, defaultRemarkPlugins, Streamdown } from "streamdown";
 import { MENTION_HREF_PREFIX, mentionsToMarkdown } from "./mentionMarkdown";
 import { MentionChip } from "./MentionChip";
@@ -36,39 +37,79 @@ function MarkdownImage({ src, alt }: { src?: unknown; alt?: string }) {
   );
 }
 
+/** 메시지 한 덩어리 — 해시 링크는 이 안에서 대상을 찾는다(각주는 메시지마다 같은 id 를 쓴다) */
+const MESSAGE_ROOT = "article, [role='note'], [data-run-id]";
+
+/**
+ * 같은 메시지 안을 가리키는 해시 링크(각주 `#user-content-fn-1`·되돌아가기 `#…-fnref-1`).
+ * 새 탭으로 열지 않고 그 자리로 옮긴다 — 주소(라우터 상태)는 건드리지 않는다. 대상이 없으면 브라우저에 맡긴다
+ */
+function HashLink({ href, children }: { href: string; children: ReactNode }) {
+  return (
+    <a
+      href={href}
+      className="text-primary underline"
+      onClick={(e) => {
+        const id = decodeURIComponent(href.slice(1));
+        const root = e.currentTarget.closest(MESSAGE_ROOT) ?? document;
+        const target = [...root.querySelectorAll("[id]")].find((el) => el.id === id);
+        if (!id || !target) return;
+        e.preventDefault();
+        target.scrollIntoView({ block: "center" });
+      }}
+    >
+      <InLink.Provider value>{children}</InLink.Provider>
+    </a>
+  );
+}
+
 const COMPONENTS: Components = {
-  a: ({ href, children }) =>
-    href?.startsWith(MENTION_HREF_PREFIX) ? (
-      <MentionChip
-        kind={href.slice(MENTION_HREF_PREFIX.length, MENTION_HREF_PREFIX.length + 1) as "a" | "u"}
-        id={href.slice(MENTION_HREF_PREFIX.length + 2)}
-      />
-    ) : (
+  a: ({ href, children }) => {
+    if (href?.startsWith(MENTION_HREF_PREFIX)) {
+      return (
+        <MentionChip
+          kind={href.slice(MENTION_HREF_PREFIX.length, MENTION_HREF_PREFIX.length + 1) as "a" | "u"}
+          id={href.slice(MENTION_HREF_PREFIX.length + 2)}
+        />
+      );
+    }
+    if (href?.startsWith("#")) return <HashLink href={href}>{children}</HashLink>;
+    return (
       <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary underline">
         <InLink.Provider value>{children}</InLink.Provider>
       </a>
-    ),
+    );
+  },
   img: ({ src, alt }) => <MarkdownImage src={src} alt={alt} />,
 };
 
 /**
  * 메시지 본문(스펙 5.2) — Streamdown 으로만 그린다. 멘션 토큰은 해시 링크로 바꿔 넣고, 그 링크를 MentionChip 으로 그린다.
  * 링크는 새 탭, 이미지는 불러오지 않고 링크로만, 단일 개행은 줄바꿈.
- * `streaming` 은 태스크 8 버블(미완성 마크다운 보정), 확정 메시지는 static
+ * `streaming` 은 태스크 8 버블(미완성 마크다운 보정), 확정 메시지는 static.
+ * `caret` 이면 Streamdown 이 마지막 블록 끝에 커서 글자를 붙인다(코드·표가 마지막이면 스스로 끈다) — 한 줄을 더 차지하지 않는다
  */
 export const MessageBody = memo(function MessageBody({
   bodyMd,
   streaming = false,
+  caret = false,
 }: {
   bodyMd: string;
   streaming?: boolean;
+  caret?: boolean;
 }) {
   const { mention } = useAuthors();
   const markdown = useMemo(() => mentionsToMarkdown(bodyMd, mention), [bodyMd, mention]);
   return (
     <Streamdown
-      className="text-[15px] leading-normal break-words"
+      className={cn(
+        "text-[15px] leading-normal break-words",
+        // 커서는 Streamdown 이 마지막 블록의 ::after 로 그린다 — 깜빡임만 우리가 얹는다(모션 허용일 때만)
+        caret &&
+          "[&>*:last-child]:after:text-muted-foreground motion-safe:[&>*:last-child]:after:animate-pulse",
+      )}
       mode={streaming ? "streaming" : "static"}
+      {...(caret ? { caret: "block" as const, isAnimating: true } : {})}
       remarkPlugins={REMARK}
       rehypePlugins={REHYPE}
       components={COMPONENTS}

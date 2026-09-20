@@ -1,5 +1,5 @@
 import type { Result } from "@dodok/shared";
-import { act, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -110,6 +110,50 @@ describe("StreamingBubble", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
+  it("상태 문구는 늘 있는 polite 라이브 영역 안에서 바뀐다 — 누적 텍스트(델타)는 그 밖이다", async () => {
+    run({ status: "queued" });
+    const { container } = renderWithClient(<StreamingBubble runId={RUN} />);
+    // role="status" 는 aria-live="polite" 인 영역이다
+    const live = within(container).getByRole("status");
+    expect(live).toHaveTextContent("대기 중");
+
+    run({ status: "streaming" });
+    delta(1, "쌓이는 글");
+    expect(within(container).getByRole("status")).toBe(live); // 영역은 그대로, 안만 바뀐다
+    expect(live).not.toHaveTextContent("쌓이는 글");
+
+    run({ status: "tool" });
+    expect(live).toHaveTextContent("도구 사용 중");
+    // 델타가 라이브 영역 안으로 들어오지 않는다(본문은 밖)
+    expect(screen.getByText("쌓이는 글")).toBeInTheDocument();
+  });
+
+  it("중지를 키보드로 눌러도 초점을 잃지 않고, 버튼이 내려가면 메시지 목록으로 옮긴다", async () => {
+    fake.onAck("run.abort", () => ({ ok: true, data: null }));
+    run({ status: "streaming" });
+    const { container } = renderWithClient(
+      <div>
+        <div data-scroller role="region" aria-label="메시지" tabIndex={0}>
+          <StreamingBubble runId={RUN} />
+        </div>
+      </div>,
+    );
+    const stop = stopButton() as HTMLElement;
+    stop.focus();
+    await userEvent.keyboard("{Enter}");
+    expect(fake.sentOf("run.abort")).toEqual([{ runId: RUN }]);
+    // 잠긴 동안에도 초점은 그 버튼에 남는다(disabled 면 body 로 떨어진다)
+    const locked = screen.getByRole("button", { name: /중지 중/ });
+    expect(locked).toHaveFocus();
+    expect(locked).toHaveAttribute("aria-disabled", "true");
+    await userEvent.keyboard("{Enter}");
+    expect(fake.sentOf("run.abort")).toHaveLength(1);
+
+    run({ status: "aborted" });
+    expect(stopButton()).toBeNull();
+    expect(container.querySelector("[data-scroller]")).toHaveFocus();
+  });
+
   it("중지 → run.abort { runId } 한 번, 상태가 바뀔 때까지 「중지 중」 잠금", async () => {
     let answer: (r: Result<null>) => void = () => {};
     fake.onAck("run.abort", () => new Promise<Result<null>>((r) => (answer = r)));
@@ -119,13 +163,13 @@ describe("StreamingBubble", () => {
     await userEvent.click(stopButton() as HTMLElement);
     expect(fake.sentOf("run.abort")).toEqual([{ runId: RUN }]);
     const locked = screen.getByRole("button", { name: /중지 중/ });
-    expect(locked).toBeDisabled();
+    expect(locked).toHaveAttribute("aria-disabled", "true");
     await userEvent.click(locked);
     expect(fake.sentOf("run.abort")).toHaveLength(1);
 
     // ack 이 와도 상태가 바뀌기 전에는 잠근 채
     await act(async () => answer({ ok: true, data: null }));
-    expect(screen.getByRole("button", { name: /중지 중/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /중지 중/ })).toHaveAttribute("aria-disabled", "true");
 
     run({ status: "aborted" });
     expect(stopButton()).toBeNull();

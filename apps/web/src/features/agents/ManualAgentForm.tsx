@@ -3,10 +3,12 @@ import { type ComponentProps, type FormEvent, useId, useState } from "react";
 import { ApiRequestError } from "@/api/http";
 import { Alert, AlertDescription } from "@/ui/alert";
 import { Button } from "@/ui/button";
+import { FieldError } from "@/ui/field-error";
 import { Input } from "@/ui/input";
 import { Label } from "@/ui/label";
 import { handleFrom } from "./handleFrom";
-import { formError, useCreateAgent } from "./mutations";
+import { formError } from "@/api/formErrors";
+import { useCreateAgent } from "./mutations";
 
 const NAME_MAX = 80;
 
@@ -20,7 +22,7 @@ export function nameProblem(name: string): string | undefined {
   return undefined;
 }
 
-/** 라벨·입력·오류 한 벌. 오류는 입력의 설명(aria-describedby)으로 잇는다 */
+/** 라벨·입력·오류 한 벌. 오류는 입력의 설명(aria-describedby)으로 잇고, 오류 자리는 늘 두는 라이브 영역이다 */
 function Field({
   label,
   error,
@@ -39,11 +41,7 @@ function Field({
         spellCheck={false}
         {...input}
       />
-      {error !== undefined && (
-        <p id={`${id}-error`} className="text-xs text-destructive">
-          {error}
-        </p>
-      )}
+      <FieldError id={`${id}-error`}>{error}</FieldError>
     </div>
   );
 }

@@ -7,6 +7,7 @@ import { SendHorizontalIcon } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useAgents, useMe, useMembers } from "@/api/queries";
+import { FILES_LATER, FILES_LATER_TOAST_ID } from "@/app/fileDrop";
 import { ResetSessionDialog } from "@/features/agents/ResetSessionDialog";
 import { abortErrorMessage } from "@/features/runs/abortError";
 import { selectChannelRuns, TERMINAL, useRunStore } from "@/features/runs/runStore";
@@ -22,7 +23,6 @@ import { useSendMessage } from "./useSendMessage";
 import { useTyping } from "./useTyping";
 
 const PLACEHOLDER = "메시지 보내기 — @로 에이전트 부르기";
-const FILES_LATER = "이미지는 Phase 2 에서 지원합니다";
 
 /** ProseMirror 요소 — 입력 영역 높이 제한, 자리표시(Placeholder 의 data-placeholder), 목록·코드·인용·멘션 모양 */
 const EDITOR_CLASS = [
@@ -81,13 +81,15 @@ export function Composer({ channelId }: { channelId: string }) {
           role: "textbox",
           "aria-multiline": "true",
           "aria-label": "메시지 입력",
+          // @ 후보 목록이 뜬다 — 열렸을 때 목록·지금 줄은 MentionList 가 가리킨다(aria-controls·aria-activedescendant)
+          "aria-autocomplete": "list",
           class: EDITOR_CLASS,
         },
         // 텍스트만(스펙 5.1). 파일만 온 붙여넣기·끌어 놓기는 막고 알린다. 글이 함께 오면 글만 들어간다
         handlePaste: (_view, event) => {
           const data = event.clipboardData;
           if (!data?.files.length || data.getData("text/plain")) return false;
-          toast.info(FILES_LATER, { id: "files-later" });
+          toast.info(FILES_LATER, { id: FILES_LATER_TOAST_ID });
           return true;
         },
         handleDOMEvents: {
@@ -95,7 +97,7 @@ export function Composer({ channelId }: { channelId: string }) {
           drop: (_view, event) => {
             if (!event.dataTransfer?.files.length) return false;
             event.preventDefault();
-            toast.info(FILES_LATER, { id: "files-later" });
+            toast.info(FILES_LATER, { id: FILES_LATER_TOAST_ID });
             return true;
           },
         },

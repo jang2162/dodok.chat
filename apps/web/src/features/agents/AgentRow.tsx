@@ -6,7 +6,8 @@ import { Button } from "@/ui/button";
 import { Label } from "@/ui/label";
 import { Switch } from "@/ui/switch";
 import { Textarea } from "@/ui/textarea";
-import { formError, usePatchAgent } from "./mutations";
+import { formError } from "@/api/formErrors";
+import { usePatchAgent } from "./mutations";
 
 const PROMPT_MAX = 20_000;
 
@@ -48,6 +49,8 @@ function BasePromptEditor({ agent }: { agent: Agent }) {
   const save = usePatchAgent();
   const [draft, setDraft] = useState<string>(); // undefined 면 접힘
   const [error, setError] = useState<string>();
+  // 편집을 닫으면(저장·취소) 다시 그려지는 편집 버튼에 초점 — 편집칸이 사라져 body 로 떨어지지 않게
+  const [refocus, setRefocus] = useState(false);
   const id = useId();
   const handle = `@${agent.handle}`;
 
@@ -66,6 +69,7 @@ function BasePromptEditor({ agent }: { agent: Agent }) {
           variant="outline"
           size="sm"
           aria-label={`${handle} 기본 프롬프트 편집`}
+          autoFocus={refocus}
           onClick={() => setDraft(agent.basePrompt ?? "")}
         >
           기본 프롬프트 편집
@@ -77,6 +81,7 @@ function BasePromptEditor({ agent }: { agent: Agent }) {
   function close() {
     setDraft(undefined);
     setError(undefined);
+    setRefocus(true);
   }
 
   function submit(e: FormEvent<HTMLFormElement>) {
@@ -109,7 +114,7 @@ function BasePromptEditor({ agent }: { agent: Agent }) {
         {(PROMPT_MAX - draft.length).toLocaleString("ko-KR")}자 남음
       </p>
       {error && (
-        <p id={`${id}-error`} className="text-sm text-destructive">
+        <p id={`${id}-error`} role="alert" className="text-sm text-destructive">
           {error}
         </p>
       )}

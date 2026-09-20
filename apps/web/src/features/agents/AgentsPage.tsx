@@ -1,4 +1,5 @@
 import { useAgents } from "@/api/queries";
+import { OpenSidebarButton } from "@/app/layout/sidebarSheet";
 import { Button } from "@/ui/button";
 import { AgentRow } from "./AgentRow";
 import { DiscoverDialog } from "./DiscoverDialog";
@@ -51,10 +52,13 @@ export function AgentsPage() {
   }
 
   return (
-    <section data-testid="page-agents" className="mx-auto flex w-full max-w-3xl flex-col gap-6 p-6">
+    <section data-testid="page-agents" className="mx-auto flex w-full max-w-3xl flex-col gap-6 p-4 sm:p-6">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-col gap-1">
-          <h1 className="text-xl font-semibold">에이전트</h1>
+          <div className="flex items-center gap-2">
+            <OpenSidebarButton />
+            <h1 className="text-xl font-semibold">에이전트</h1>
+          </div>
           <p className="text-sm text-muted-foreground">
             OpenClaw 에이전트를 등록하고 사용 여부·기본 프롬프트를 정합니다.
           </p>

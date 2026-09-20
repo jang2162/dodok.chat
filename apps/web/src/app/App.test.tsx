@@ -1,5 +1,5 @@
 import { createMemoryHistory } from "@tanstack/react-router";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { api } from "@/api/http";
@@ -199,4 +199,15 @@ it("wire UNAUTHORIZED 인데 REST 세션이 살아 있으면(me 200) 로그인�
   expect(moves).toHaveLength(0);
   expect(screen.getByTestId("page-channel")).toBeInTheDocument();
   expect(createdSockets).toHaveLength(1);
+});
+
+it("앱은 파일 끌어 놓기를 창에서 막는다(로그인 화면에서도) — 브라우저가 파일을 열어 앱을 떠나지 않게", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => json(401, UNAUTHORIZED)),
+  );
+  render(<App />);
+  const heading = await screen.findByRole("heading", { name: "로그인" });
+  const files = { dataTransfer: { types: ["Files"], files: [new File(["x"], "a.png")], dropEffect: "copy" } };
+  expect(fireEvent.drop(heading, files)).toBe(false);
 });

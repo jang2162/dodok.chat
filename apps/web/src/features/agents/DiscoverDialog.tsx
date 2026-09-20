@@ -1,5 +1,4 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { XIcon } from "lucide-react";
 import { type FormEvent, type ReactNode, useId, useState } from "react";
 import { ApiRequestError, NetworkError } from "@/api/http";
 import { qk } from "@/api/queries";
@@ -8,7 +7,6 @@ import { Button } from "@/ui/button";
 import { Checkbox } from "@/ui/checkbox";
 import {
   Dialog,
-  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -19,7 +17,8 @@ import {
 import { Label } from "@/ui/label";
 import { handleFrom } from "./handleFrom";
 import { AgentFields, ManualAgentForm, handleProblem, nameProblem } from "./ManualAgentForm";
-import { type DiscoveredAgent, formError, useCreateAgent, useDiscover } from "./mutations";
+import { formError } from "@/api/formErrors";
+import { type DiscoveredAgent, useCreateAgent, useDiscover } from "./mutations";
 
 /** 스펙 6.1: 503 은 Gateway 끊김, 403 은 agents.list 권한 없음 — 어느 쪽이든 직접 입력으로 안내한다 */
 function discoverErrorText(e: Error): string {
@@ -114,8 +113,8 @@ export function DiscoverDialog({
       <DialogTrigger asChild>
         <Button disabled={disabled}>Gateway 에서 가져오기</Button>
       </DialogTrigger>
-      {/* 기본 닫기 버튼은 잠글 수 없어 직접 둔다 — 등록 중엔 비활성(Esc·바깥 클릭은 onOpenChange 가 무시) */}
-      <DialogContent showCloseButton={false} className="max-h-[85svh] overflow-y-auto">
+      {/* 등록 중엔 기본 닫기(X)를 잠근다 — Esc·바깥 클릭은 onOpenChange 가 무시 */}
+      <DialogContent closeDisabled={busy} className="max-h-[85svh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Gateway 에서 가져오기</DialogTitle>
           <DialogDescription>
@@ -123,12 +122,6 @@ export function DiscoverDialog({
           </DialogDescription>
         </DialogHeader>
         {body}
-        <DialogClose asChild>
-          <Button variant="ghost" size="icon-sm" className="absolute top-2 right-2" disabled={busy}>
-            <XIcon />
-            <span className="sr-only">닫기</span>
-          </Button>
-        </DialogClose>
       </DialogContent>
     </Dialog>
   );

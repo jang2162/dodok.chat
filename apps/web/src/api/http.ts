@@ -50,7 +50,9 @@ export async function api<T>(method: HttpMethod, path: string, body?: unknown): 
   if (!res.ok) {
     const parsed = ApiError.safeParse(json);
     if (parsed.success) throw new ApiRequestError(res.status, parsed.data.code, parsed.data.message);
-    throw new ApiRequestError(res.status, "INTERNAL", res.statusText || `HTTP ${res.status}`);
+    // 봉투 없는 오류(프록시 502·504 등) — 영문 상태 문구 대신 한국어 일반 문구. 전역 토스트에 그대로 나간다
+    const what = res.status >= 500 ? "서버가 요청을 처리하지 못했습니다" : "요청을 처리하지 못했습니다";
+    throw new ApiRequestError(res.status, "INTERNAL", `${what} (${res.status})`);
   }
   return json as T;
 }

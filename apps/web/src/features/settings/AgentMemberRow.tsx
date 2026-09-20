@@ -1,6 +1,6 @@
 import type { Agent, ChannelMember } from "@dodok/shared";
-import { type FormEvent, useId, useState } from "react";
-import { formError } from "@/features/agents/mutations";
+import { type FormEvent, useId, useRef, useState } from "react";
+import { formError } from "@/api/formErrors";
 import { ResetSessionDialog } from "@/features/agents/ResetSessionDialog";
 import { cn } from "@/lib/utils";
 import { agentColorVar } from "@/theme/agentColor";
@@ -26,6 +26,7 @@ export function AgentMemberRow({
   handleOf,
   autoRespondBusy,
   onAutoRespond,
+  onRemoved,
 }: {
   channelId: string;
   member: ChannelMember;
@@ -34,11 +35,17 @@ export function AgentMemberRow({
   handleOf: (agentId: string) => string;
   autoRespondBusy: boolean;
   onAutoRespond: (steps: AutoRespondStep[]) => void;
+  /** 제거가 끝나 이 행이 사라진다 — 부르는 쪽이 초점을 옮긴다 */
+  onRemoved: () => void;
 }) {
   const remove = useRemoveMember(channelId);
+  // 확인이 필요한지 판단할 때의 계획 — 확인 때 지금 멤버로 다시 세운다(열린 사이 wire 로 다른 에이전트가 켜질 수 있다)
   const [switching, setSwitching] = useState<AutoRespondStep[]>();
   const [removing, setRemoving] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const autoRef = useRef<HTMLButtonElement>(null);
+  const resetRef = useRef<HTMLButtonElement>(null);
+  const removeRef = useRef<HTMLButtonElement>(null);
   const handle = `@${agent.handle}`;
 
   function toggleAutoRespond(on: boolean) {
@@ -70,6 +77,7 @@ export function AgentMemberRow({
           <span className="text-xs text-muted-foreground">멘션 없는 메시지에 답함</span>
         </Label>
         <Switch
+          ref={autoRef}
           id={`${member.id}-auto`}
           aria-label={`${handle} 자동 응답`}
           checked={member.autoRespond}
@@ -80,6 +88,7 @@ export function AgentMemberRow({
       <OverrideEditor channelId={channelId} member={member} handle={handle} />
       <div className="flex justify-end gap-2">
         <Button
+          ref={resetRef}
           variant="outline"
           size="sm"
           aria-label={`${handle} 새 대화`}
@@ -87,7 +96,13 @@ export function AgentMemberRow({
         >
           새 대화
         </Button>
-        <Button variant="ghost" size="sm" aria-label={`${handle} 제거`} onClick={() => setRemoving(true)}>
+        <Button
+          ref={removeRef}
+          variant="ghost"
+          size="sm"
+          aria-label={`${handle} 제거`}
+          onClick={() => setRemoving(true)}
+        >
           제거
         </Button>
       </div>
@@ -98,8 +113,10 @@ export function AgentMemberRow({
         title="자동 응답 바꾸기"
         description={`${turnedOff.join(", ")} 의 자동 응답을 끄고 ${handle} 를 켭니다`}
         confirmLabel="바꾸기"
+        returnFocus={autoRef}
         onConfirm={() => {
-          if (switching) onAutoRespond(switching);
+          // 대화상자가 열린 사이 멤버가 바뀌었을 수 있다 — 지금 멤버로 다시 세운 계획을 보낸다
+          if (switching) onAutoRespond(autoRespondPlan(members, agent.id, true));
           setSwitching(undefined);
         }}
       />
@@ -112,7 +129,15 @@ export function AgentMemberRow({
         pendingLabel="제거하는 중…"
         pending={remove.isPending}
         destructive
-        onConfirm={() => remove.mutate(agent.id, { onSuccess: () => setRemoving(false) })}
+        returnFocus={removeRef}
+        onConfirm={() =>
+          remove.mutate(agent.id, {
+            onSuccess: () => {
+              setRemoving(false);
+              onRemoved();
+            },
+          })
+        }
       />
       <ResetSessionDialog
         channelId={channelId}
@@ -120,6 +145,7 @@ export function AgentMemberRow({
         handle={agent.handle}
         open={resetting}
         onOpenChange={setResetting}
+        returnFocus={resetRef}
       />
     </li>
   );
@@ -138,6 +164,8 @@ function OverrideEditor({
   const save = usePatchMember(channelId);
   const [draft, setDraft] = useState<string>(); // undefined 면 접힘
   const [error, setError] = useState<string>();
+  // 편집을 닫으면(저장·취소) 다시 그려지는 편집 버튼으로 초점 — 편집칸이 사라져 body 로 떨어지지 않게
+  const [refocus, setRefocus] = useState(false);
   const id = useId();
 
   if (draft === undefined) {
@@ -155,6 +183,7 @@ function OverrideEditor({
           variant="outline"
           size="xs"
           aria-label={`${handle} 채널 프롬프트 편집`}
+          autoFocus={refocus}
           onClick={() => setDraft(member.promptOverride ?? "")}
         >
           편집
@@ -166,6 +195,7 @@ function OverrideEditor({
   function close() {
     setDraft(undefined);
     setError(undefined);
+    setRefocus(true);
   }
 
   function submit(e: FormEvent<HTMLFormElement>) {

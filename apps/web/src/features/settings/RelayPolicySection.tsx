@@ -1,13 +1,13 @@
 import type { Agent, Channel } from "@dodok/shared";
 import { type FormEvent, useId, useState } from "react";
-import { formError } from "@/features/agents/mutations";
+import { formError, validationField } from "@/api/formErrors";
 import { Button } from "@/ui/button";
 import { Checkbox } from "@/ui/checkbox";
 import { Input } from "@/ui/input";
 import { Label } from "@/ui/label";
 import { Switch } from "@/ui/switch";
 import { usePatchChannel } from "./mutations";
-import { type RelayForm, fromForm, toForm } from "./relayPolicyForm";
+import { type RelayForm, type RelayFormField, fromForm, toForm } from "./relayPolicyForm";
 import { Saved, Section } from "./Section";
 
 /**
@@ -17,7 +17,7 @@ import { Saved, Section } from "./Section";
 export function RelayPolicySection({ channel, agents }: { channel: Channel; agents: Agent[] }) {
   const save = usePatchChannel(channel.id);
   const [draft, setDraft] = useState<RelayForm>();
-  const [error, setError] = useState<string>();
+  const [error, setError] = useState<{ message: string; field?: RelayFormField }>();
   const [saved, setSaved] = useState(false);
   const id = useId();
   const form = draft ?? toForm(channel.relayPolicy);
@@ -38,7 +38,7 @@ export function RelayPolicySection({ channel, agents }: { channel: Channel; agen
     if (draft === undefined || save.isPending) return;
     const parsed = fromForm(draft);
     if (!parsed.ok) {
-      setError(parsed.error);
+      setError({ message: parsed.error, field: parsed.field });
       return;
     }
     setError(undefined);
@@ -49,10 +49,21 @@ export function RelayPolicySection({ channel, agents }: { channel: Channel; agen
           setDraft(undefined);
           setSaved(true);
         },
-        onError: (err) => setError(formError(err)),
+        onError: (err) => {
+          const message = formError(err);
+          if (message === undefined) return;
+          // 서버 VALIDATION 도 가리킨 칸이 있으면 그 칸에 표시한다(`body — relayPolicy.dailyRunLimit: …`)
+          setError({ message, field: validationField(message, ["dailyRunLimit", "maxRelayTurns"]) });
+        },
       },
     );
   }
+
+  /** 그 칸의 오류면 표시와 설명을 잇는다 */
+  const fieldProps = (field: RelayFormField, hintId: string) =>
+    error?.field === field
+      ? { "aria-invalid": true as const, "aria-describedby": `${hintId} ${id}-error` }
+      : { "aria-describedby": hintId };
 
   return (
     <Section title="릴레이 정책">
@@ -64,8 +75,7 @@ export function RelayPolicySection({ channel, agents }: { channel: Channel; agen
               id={`${id}-turns`}
               inputMode="numeric"
               value={form.maxRelayTurns}
-              maxLength={2}
-              aria-describedby={`${id}-turns-hint`}
+              {...fieldProps("maxRelayTurns", `${id}-turns-hint`)}
               disabled={save.isPending}
               onChange={(e) => edit({ maxRelayTurns: e.target.value })}
             />
@@ -79,9 +89,8 @@ export function RelayPolicySection({ channel, agents }: { channel: Channel; agen
               id={`${id}-daily`}
               inputMode="numeric"
               value={form.dailyRunLimit}
-              maxLength={9}
               placeholder="없음"
-              aria-describedby={`${id}-daily-hint`}
+              {...fieldProps("dailyRunLimit", `${id}-daily-hint`)}
               disabled={save.isPending}
               onChange={(e) => edit({ dailyRunLimit: e.target.value })}
             />
@@ -103,8 +112,8 @@ export function RelayPolicySection({ channel, agents }: { channel: Channel; agen
           <PairList agents={agents} form={form} disabled={save.isPending} onToggle={togglePair} />
         )}
         {error && (
-          <p role="alert" className="text-sm text-destructive">
-            {error}
+          <p id={`${id}-error`} role="alert" className="text-sm text-destructive">
+            {error.message}
           </p>
         )}
         <div className="flex items-center justify-end gap-3">

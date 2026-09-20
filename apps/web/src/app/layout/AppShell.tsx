@@ -1,14 +1,15 @@
 import { Outlet } from "@tanstack/react-router";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useIsNarrow } from "@/hooks/useIsNarrow";
 import { Sheet, SheetContent, SheetTitle } from "@/ui/sheet";
 import { Banners } from "./Banners";
 import { Sidebar } from "./Sidebar";
-import { OpenSidebarContext } from "./sidebarSheet";
+import { OpenSidebarContext, SidebarTriggerContext } from "./sidebarSheet";
 
 /**
  * 로그인 뒤 레이아웃(스펙 2.4): 사이드바 + 연결 배너 + 페이지. 768px 미만이면 사이드바를 왼쪽 시트로 접고,
- * 페이지 헤더가 `useOpenSidebar()` 로 여는 버튼을 그린다. 시트는 그 안에서 이동하면 닫힌다
+ * 페이지 헤더가 `useOpenSidebar()` 로 여는 버튼을 그린다. 시트는 그 안에서 이동하면 닫히고, 닫히면(이동·Esc·닫기)
+ * 초점은 지금 화면의 메뉴 버튼으로 돌아간다
  */
 export function AppShell() {
   const narrow = useIsNarrow();
@@ -19,29 +20,48 @@ export function AppShell() {
     setWasNarrow(narrow);
     setSheetOpen(false);
   }
-  const openSidebar = useCallback(() => setSheetOpen(true), []);
+  const openSidebar = useCallback(() => {
+    pendingFocus.current = false;
+    setSheetOpen(true);
+  }, []);
   const closeSidebar = useCallback(() => setSheetOpen(false), []);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const pendingFocus = useRef(false);
+  const [trigger] = useState(() => ({ ref: triggerRef, pendingFocus }));
 
   return (
     <OpenSidebarContext.Provider value={narrow ? openSidebar : undefined}>
-      <div data-testid="app-shell" className="flex h-dvh bg-background text-foreground">
-        {narrow ? (
-          <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
-            <SheetContent side="left" className="w-[260px] gap-0 p-0" aria-describedby={undefined}>
-              <SheetTitle className="sr-only">채널 목록</SheetTitle>
-              <Sidebar onNavigate={closeSidebar} />
-            </SheetContent>
-          </Sheet>
-        ) : (
-          <aside className="w-[260px] shrink-0 border-r">
-            <Sidebar />
-          </aside>
-        )}
-        <main className="flex min-w-0 flex-1 flex-col">
-          <Banners />
-          <Outlet />
-        </main>
-      </div>
+      <SidebarTriggerContext.Provider value={trigger}>
+        <div data-testid="app-shell" className="flex h-dvh bg-background text-foreground">
+          {narrow ? (
+            <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
+              <SheetContent
+                side="left"
+                className="w-[260px] gap-0 p-0"
+                aria-describedby={undefined}
+                onCloseAutoFocus={(e) => {
+                  e.preventDefault();
+                  // 링크로 닫혔으면 이동은 아직 끝나지 않았다 — 지금 버튼에 초점을 주고, 화면이 바뀌어 그 버튼이
+                  // 사라지면(초점을 잃으면) 새 화면의 버튼이 이어받게 표시해 둔다
+                  pendingFocus.current = true;
+                  triggerRef.current?.focus();
+                }}
+              >
+                <SheetTitle className="sr-only">채널 목록</SheetTitle>
+                <Sidebar onNavigate={closeSidebar} />
+              </SheetContent>
+            </Sheet>
+          ) : (
+            <aside className="w-[260px] shrink-0 border-r">
+              <Sidebar />
+            </aside>
+          )}
+          <main className="flex min-w-0 flex-1 flex-col">
+            <Banners />
+            <Outlet />
+          </main>
+        </div>
+      </SidebarTriggerContext.Provider>
     </OpenSidebarContext.Provider>
   );
 }

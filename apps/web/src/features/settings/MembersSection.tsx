@@ -1,10 +1,11 @@
 import type { Agent, ChannelMember } from "@dodok/shared";
 import { Link } from "@tanstack/react-router";
-import { type FormEvent, useId, useState } from "react";
+import { type FormEvent, type RefObject, useEffect, useId, useRef, useState } from "react";
 import { toast } from "sonner";
-import { formError } from "@/features/agents/mutations";
+import { formError } from "@/api/formErrors";
 import { cn } from "@/lib/utils";
 import { Button } from "@/ui/button";
+import { FieldError } from "@/ui/field-error";
 import { Label } from "@/ui/label";
 import { AgentMemberRow } from "./AgentMemberRow";
 import type { AutoRespondStep } from "./autoRespond";
@@ -32,16 +33,27 @@ export function MembersSection({
   agents,
   loadError,
   onRetry,
+  agentsError = false,
+  onRetryAgents,
 }: {
   channelId: string;
   members: ChannelMember[] | undefined;
   agents: Agent[] | undefined;
   loadError: boolean;
   onRetry: () => void;
+  /** 에이전트 목록 조회가 실패했나 — 「아직 에이전트가 없습니다」 대신 상태를 보인다 */
+  agentsError?: boolean;
+  onRetryAgents?: () => void;
 }) {
   const patch = usePatchMember(channelId);
   const [busy, setBusy] = useState(false);
   const rows = agentMembers(members, agents);
+  const addRef = useRef<HTMLSelectElement>(null);
+  // 행이 사라지면 초점을 「에이전트 추가」로 옮긴다 — 제거 뒤 body 로 떨어지지 않게
+  const [removedAt, setRemovedAt] = useState(0);
+  useEffect(() => {
+    if (removedAt > 0) addRef.current?.focus();
+  }, [removedAt]);
 
   /**
    * 차례로(병렬 아님) — 앞 걸음이 끝나야 다음을 보낸다. 중간에 실패하면 멈춘다: 이미 끈 것은 캐시에 반영된
@@ -66,7 +78,14 @@ export function MembersSection({
 
   return (
     <Section title="멤버">
-      <AddAgentForm channelId={channelId} members={members} agents={agents} />
+      <AddAgentForm
+        channelId={channelId}
+        members={members}
+        agents={agents}
+        agentsError={agentsError}
+        onRetryAgents={onRetryAgents}
+        selectRef={addRef}
+      />
       {members === undefined ? (
         loadError ? (
           <div className="flex items-center gap-3 text-sm text-muted-foreground">
@@ -80,7 +99,7 @@ export function MembersSection({
             불러오는 중…
           </p>
         )
-      ) : rows.length === 0 ? (
+      ) : agents === undefined ? null : rows.length === 0 ? ( // 에이전트 목록 상태는 위 폼이 보인다
         <p className="text-sm text-muted-foreground">아직 에이전트가 없습니다.</p>
       ) : (
         <ul aria-label="채널 에이전트" className="flex flex-col gap-2">
@@ -94,6 +113,7 @@ export function MembersSection({
               handleOf={handleOf}
               autoRespondBusy={busy}
               onAutoRespond={(steps) => void applyAutoRespond(steps)}
+              onRemoved={() => setRemovedAt((n) => n + 1)}
             />
           ))}
         </ul>
@@ -107,17 +127,40 @@ function AddAgentForm({
   channelId,
   members,
   agents,
+  agentsError,
+  onRetryAgents,
+  selectRef,
 }: {
   channelId: string;
   members: ChannelMember[] | undefined;
   agents: Agent[] | undefined;
+  agentsError: boolean;
+  onRetryAgents?: () => void;
+  selectRef: RefObject<HTMLSelectElement | null>;
 }) {
   const add = useAddMember(channelId);
   const [selected, setSelected] = useState("");
   const [error, setError] = useState<string>();
   const id = useId();
 
-  if (agents !== undefined && agents.length === 0) {
+  // 에이전트 목록을 아직 못 받았으면 상태를 보인다 — 「등록된 에이전트가 없습니다」와 섞이지 않게(원인은 전역 토스트)
+  if (agents === undefined) {
+    return agentsError ? (
+      <div className="flex items-center gap-3 text-sm text-muted-foreground">
+        에이전트 목록을 불러오지 못했습니다
+        {onRetryAgents && (
+          <Button variant="outline" size="sm" onClick={onRetryAgents}>
+            다시 시도
+          </Button>
+        )}
+      </div>
+    ) : (
+      <p role="status" className="text-sm text-muted-foreground">
+        에이전트 목록을 불러오는 중…
+      </p>
+    );
+  }
+  if (agents.length === 0) {
     return (
       <p className="text-sm text-muted-foreground">
         등록된 에이전트가 없습니다.{" "}
@@ -128,8 +171,8 @@ function AddAgentForm({
     );
   }
   const memberIds = new Set((members ?? []).filter((m) => m.memberType === "agent").map((m) => m.memberId));
-  const candidates = (agents ?? []).filter((a) => !memberIds.has(a.id));
-  const ready = agents !== undefined && members !== undefined;
+  const candidates = agents.filter((a) => !memberIds.has(a.id));
+  const ready = members !== undefined;
 
   function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -157,7 +200,10 @@ function AddAgentForm({
       <div className="flex gap-2">
         <select
           id={id}
+          ref={selectRef}
           value={selected}
+          aria-invalid={error !== undefined || undefined}
+          aria-describedby={error === undefined ? undefined : `${id}-error`}
           disabled={!ready || add.isPending}
           onChange={(e) => {
             setSelected(e.target.value);
@@ -179,11 +225,9 @@ function AddAgentForm({
           {add.isPending ? "추가하는 중…" : "추가"}
         </Button>
       </div>
-      {error && (
-        <p role="alert" className="text-sm text-destructive">
-          {error}
-        </p>
-      )}
+      <FieldError id={`${id}-error`} role="alert" className="text-sm empty:-mt-1.5">
+        {error}
+      </FieldError>
     </form>
   );
 }

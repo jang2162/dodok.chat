@@ -1,6 +1,6 @@
 import type { Channel } from "@dodok/shared";
 import { type FormEvent, useId, useState } from "react";
-import { formError } from "@/features/agents/mutations";
+import { formError, validationField } from "@/api/formErrors";
 import { Button } from "@/ui/button";
 import { Input } from "@/ui/input";
 import { Label } from "@/ui/label";
@@ -20,7 +20,7 @@ type Draft = { name: string; topic: string };
 export function BasicSection({ channel }: { channel: Channel }) {
   const save = usePatchChannel(channel.id);
   const [draft, setDraft] = useState<Draft>();
-  const [error, setError] = useState<string>();
+  const [error, setError] = useState<{ message: string; field?: "name" | "topic" }>();
   const [saved, setSaved] = useState(false);
   const id = useId();
   const value = draft ?? { name: channel.name, topic: channel.topic ?? "" };
@@ -44,7 +44,11 @@ export function BasicSection({ channel }: { channel: Channel }) {
           setDraft(undefined);
           setSaved(true);
         },
-        onError: (err) => setError(formError(err)),
+        onError: (err) => {
+          const message = formError(err);
+          if (message !== undefined)
+            setError({ message, field: validationField(message, ["name", "topic"]) });
+        },
       },
     );
   }
@@ -58,8 +62,10 @@ export function BasicSection({ channel }: { channel: Channel }) {
             id={`${id}-name`}
             value={value.name}
             maxLength={NAME_MAX}
-            aria-invalid={nameMissing || undefined}
-            aria-describedby={nameMissing ? `${id}-name-error` : undefined}
+            aria-invalid={nameMissing || error?.field === "name" || undefined}
+            aria-describedby={
+              nameMissing ? `${id}-name-error` : error?.field === "name" ? `${id}-error` : undefined
+            }
             disabled={save.isPending}
             onChange={(e) => edit({ name: e.target.value })}
           />
@@ -76,13 +82,15 @@ export function BasicSection({ channel }: { channel: Channel }) {
             value={value.topic}
             maxLength={TOPIC_MAX}
             placeholder="없음"
+            aria-invalid={error?.field === "topic" || undefined}
+            aria-describedby={error?.field === "topic" ? `${id}-error` : undefined}
             disabled={save.isPending}
             onChange={(e) => edit({ topic: e.target.value })}
           />
         </div>
         {error && (
-          <p role="alert" className="text-sm text-destructive">
-            {error}
+          <p id={`${id}-error`} role="alert" className="text-sm text-destructive">
+            {error.message}
           </p>
         )}
         <div className="flex items-center justify-end gap-3">

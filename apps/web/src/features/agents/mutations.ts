@@ -1,6 +1,6 @@
 import type { Agent } from "@dodok/shared";
 import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, ApiRequestError } from "@/api/http";
+import { api } from "@/api/http";
 import { qk } from "@/api/queries";
 
 /** 에이전트 화면의 서버 상태 — 등록·수정 뮤테이션과 Gateway 목록(discover) 쿼리 */
@@ -18,13 +18,6 @@ function putAgent(qc: QueryClient, agent: Agent) {
       ? prev.map((a) => (a.id === agent.id ? agent : a))
       : [...prev, agent];
   });
-}
-
-/** 폼 안에 그릴 서버 오류(VALIDATION·CONFLICT — 전역 토스트에서 빠지는 둘)의 message. 그 밖은 undefined — 전역 토스트가 알린다 */
-export function formError(e: unknown): string | undefined {
-  return e instanceof ApiRequestError && (e.code === "VALIDATION" || e.code === "CONFLICT")
-    ? e.message
-    : undefined;
 }
 
 export function useCreateAgent() {

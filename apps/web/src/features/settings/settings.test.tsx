@@ -7,6 +7,7 @@ import { qk } from "@/api/queries";
 import { createQueryClient } from "@/app/queryClient";
 import { CH2 } from "../../../test/fixtures";
 import { channelOf, json, renderRoute } from "../../../test/shellApi";
+import { stubMedia } from "../../../test/media";
 import { CH, DEV, FIN, OWNER, gate, memberOf, stubSettingsServer } from "../../../test/settingsServer";
 import { PROMPT_SAVED_NOTICE } from "./PromptSection";
 
@@ -36,6 +37,26 @@ describe("패널", () => {
     await userEvent.click(within(panel).getByRole("link", { name: "설정 닫기" }));
     await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}`));
     expect(screen.queryByTestId("page-channel-settings")).not.toBeInTheDocument();
+  });
+
+  it("폭이 바뀌어도(오른쪽 패널 ↔ 전체 화면 시트) 고치던 초안은 그대로다", async () => {
+    const media = stubMedia(false);
+    stubSettingsServer();
+    renderRoute(`/c/${CH}/settings`);
+    const basic = await region("기본");
+    await userEvent.type(within(basic).getByLabelText("이름"), "-고침");
+    await userEvent.type(within(await region("채널 프롬프트")).getByLabelText("채널 프롬프트"), "짧게");
+
+    media.setNarrow(true);
+    const sheet = await screen.findByRole("dialog", { name: "채널 설정" });
+    expect(within(sheet).getByLabelText("이름")).toHaveValue("general-고침");
+    expect(within(sheet).getByRole("textbox", { name: "채널 프롬프트" })).toHaveValue("짧게");
+
+    media.setNarrow(false);
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    const panel = screen.getByTestId("page-channel-settings");
+    expect(within(panel).getByLabelText("이름")).toHaveValue("general-고침");
+    expect(within(panel).getByRole("textbox", { name: "채널 프롬프트" })).toHaveValue("짧게");
   });
 
   it("좁은 화면: 전체 화면 시트, 닫기 → /c/:id", async () => {
@@ -156,13 +177,16 @@ describe("기본", () => {
   });
 
   it("VALIDATION·CONFLICT 는 섹션 안(토스트 없음), 그 밖(500)은 전역 토스트(섹션 안 없음)", async () => {
-    let reply = apiErr(400, "VALIDATION", "name 이 이상하다");
+    let reply = apiErr(400, "VALIDATION", "body — name: 이상하다");
     stubSettingsServer({ override: ({ method }) => (method === "PATCH" ? reply : undefined) });
     renderRoute(`/c/${CH}/settings`);
     const basic = await region("기본");
     await userEvent.type(within(basic).getByLabelText("이름"), "!");
     await userEvent.click(within(basic).getByRole("button", { name: "저장" }));
-    expect(await within(basic).findByRole("alert")).toHaveTextContent("name 이 이상하다");
+    expect(await within(basic).findByRole("alert")).toHaveTextContent("body — name: 이상하다");
+    // 서버 문구가 가리킨 칸에 표시가 붙는다
+    expect(within(basic).getByLabelText("이름")).toHaveAttribute("aria-invalid", "true");
+    expect(within(basic).getByLabelText("주제")).not.toHaveAttribute("aria-invalid");
     expect(toastError).not.toHaveBeenCalled();
 
     reply = apiErr(500, "INTERNAL", "서버가 넘어졌다");
@@ -207,24 +231,54 @@ describe("채널 프롬프트", () => {
 describe("릴레이 정책", () => {
   const withAgents = () => [memberOf("user", OWNER), memberOf("agent", DEV), memberOf("agent", FIN)];
 
-  it("검증 오류는 섹션 안 — 요청하지 않는다", async () => {
+  it("검증 오류는 섹션 안 + 그 칸에 표시(aria-invalid·설명) — 요청하지 않는다", async () => {
+    const server = stubSettingsServer();
+    renderRoute(`/c/${CH}/settings`);
+    const section = await region("릴레이 정책");
+    const turns = within(section).getByLabelText("턴 상한");
+    const daily = within(section).getByLabelText("일일 실행 상한");
+    await userEvent.clear(turns);
+    await userEvent.type(turns, "33");
+    await userEvent.click(within(section).getByRole("button", { name: "저장" }));
+    expect(within(section).getByRole("alert")).toHaveTextContent("턴 상한은 0~32");
+    expect(turns).toHaveAttribute("aria-invalid", "true");
+    expect(turns).toHaveAccessibleDescription(/턴 상한은 0~32/);
+    expect(daily).not.toHaveAttribute("aria-invalid");
+
+    await userEvent.clear(turns);
+    await userEvent.type(turns, "3");
+    expect(within(section).queryByRole("alert")).not.toBeInTheDocument();
+    expect(turns).not.toHaveAttribute("aria-invalid");
+    await userEvent.type(daily, "0");
+    await userEvent.click(within(section).getByRole("button", { name: "저장" }));
+    expect(within(section).getByRole("alert")).toHaveTextContent("일일 상한");
+    expect(daily).toHaveAttribute("aria-invalid", "true");
+    expect(daily).toHaveAccessibleDescription(/일일 상한/);
+    expect(turns).not.toHaveAttribute("aria-invalid");
+    expect(server.writes()).toEqual([]);
+    expect(toastError).not.toHaveBeenCalled();
+  });
+
+  it("숫자 칸은 붙여넣기를 자르지 않는다 — 넘치면 검증 문구로 알린다", async () => {
     const server = stubSettingsServer();
     renderRoute(`/c/${CH}/settings`);
     const section = await region("릴레이 정책");
     const turns = within(section).getByLabelText("턴 상한");
     await userEvent.clear(turns);
-    await userEvent.type(turns, "33");
+    await userEvent.paste("100");
+    expect(turns).toHaveValue("100"); // 「10」으로 잘려 조용히 유효값이 되지 않는다
     await userEvent.click(within(section).getByRole("button", { name: "저장" }));
     expect(within(section).getByRole("alert")).toHaveTextContent("턴 상한은 0~32");
 
+    const daily = within(section).getByLabelText("일일 실행 상한");
     await userEvent.clear(turns);
-    await userEvent.type(turns, "3");
-    expect(within(section).queryByRole("alert")).not.toBeInTheDocument();
-    await userEvent.type(within(section).getByLabelText("일일 실행 상한"), "0");
+    await userEvent.type(turns, "4");
+    daily.focus();
+    await userEvent.paste("12345678901");
+    expect(daily).toHaveValue("12345678901");
     await userEvent.click(within(section).getByRole("button", { name: "저장" }));
-    expect(within(section).getByRole("alert")).toHaveTextContent("일일 상한");
+    expect(within(section).getByRole("alert")).toHaveTextContent("일일 상한은 1~999,999,999");
     expect(server.writes()).toEqual([]);
-    expect(toastError).not.toHaveBeenCalled();
   });
 
   it("「모든 에이전트끼리 허용」을 끄면 from→to 체크 목록(자기 자신 없음) — 고른 쌍·상한으로 PATCH", async () => {

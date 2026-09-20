@@ -13,6 +13,14 @@ export type RelayForm = {
 /** shared RelayPolicy 와 같은 한계 — 서버 VALIDATION(영문 message)보다 먼저 막는다 */
 const MAX_TURNS = 32;
 const MAX_PAIRS = 64;
+/** 일일 상한의 실질 한계 — 계약에는 상한이 없지만 이보다 큰 값은 잘못 친 것으로 본다(칸은 자르지 않는다) */
+const MAX_DAILY = 999_999_999;
+
+/** 오류가 어느 칸의 것인가 — 그 칸에 aria-invalid·설명을 단다 */
+export type RelayFormField = "maxRelayTurns" | "dailyRunLimit";
+export type RelayFormResult =
+  | { ok: true; policy: RelayPolicy }
+  | { ok: false; error: string; field?: RelayFormField };
 
 export function toForm(policy: RelayPolicy): RelayForm {
   return {
@@ -29,16 +37,20 @@ function nonNegativeInt(text: string): number | undefined {
   return /^\d+$/.test(t) ? Number(t) : undefined;
 }
 
-export function fromForm(form: RelayForm): { ok: true; policy: RelayPolicy } | { ok: false; error: string } {
+export function fromForm(form: RelayForm): RelayFormResult {
   const turns = nonNegativeInt(form.maxRelayTurns);
   if (turns === undefined || turns > MAX_TURNS) {
-    return { ok: false, error: `턴 상한은 0~${MAX_TURNS} 사이 정수로 적어 주세요` };
+    return { ok: false, error: `턴 상한은 0~${MAX_TURNS} 사이 정수로 적어 주세요`, field: "maxRelayTurns" };
   }
   let daily: number | undefined;
   if (form.dailyRunLimit.trim() !== "") {
     daily = nonNegativeInt(form.dailyRunLimit);
-    if (daily === undefined || daily < 1) {
-      return { ok: false, error: "일일 상한은 1 이상 정수로 적거나 비워 두세요(비우면 상한 없음)" };
+    if (daily === undefined || daily < 1 || daily > MAX_DAILY) {
+      return {
+        ok: false,
+        error: `일일 상한은 1~${MAX_DAILY.toLocaleString("en-US")} 사이 정수로 적거나 비워 두세요(비우면 상한 없음)`,
+        field: "dailyRunLimit",
+      };
     }
   }
   let allowPairs: RelayPolicy["allowPairs"] = "all";

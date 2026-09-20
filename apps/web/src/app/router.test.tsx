@@ -135,3 +135,14 @@ it("next 의 제어문자 변형(/\\t/evil.example)은 safeNext 가 버린다 �
   expect(router.state.location.pathname).toBe("/");
   expect(router.history.location.href).toBe("/");
 });
+
+it("없는 경로는 한 줄 안내와 첫 화면 링크(defaultNotFoundComponent) — 로그인 여부와 상관없이 셸 밖", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn<typeof fetch>(async (input, init) => shellGet(input, init) ?? json(200, ME)),
+  );
+  renderAt("/nope/deeper");
+  expect(await screen.findByRole("heading", { name: "페이지를 찾을 수 없습니다" })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "첫 화면으로" })).toHaveAttribute("href", "/");
+  expect(screen.queryByTestId("app-shell")).not.toBeInTheDocument();
+});

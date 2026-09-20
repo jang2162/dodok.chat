@@ -270,17 +270,16 @@ describe("MessageList", () => {
     // 앞선 스크롤이 멎은 뒤에 바꾼다 — virtual-core 는 스크롤 직후(150ms)에는 새 행을 재지 않고, 앞선 끝 맞추기가
     // 아직 돌고 있으면 어긋남을 대신 메워 결함이 가려진다(실물에서는 답이 오기 한참 전에 멎어 있다)
     const settle = () => act(() => new Promise((r) => setTimeout(r, 300)));
-    // 바뀐 뒤 몇 프레임
-    const frames = () => act(() => new Promise((r) => setTimeout(r, 100)));
+
     await screen.findByTestId("bubble");
     await waitFor(() => expect(gap()).toBe(0));
 
     await settle();
     act(() => updateTimeline(qc, CH, (t) => upsert(t, range(41, 41, { runId: RUN })[0] as Message)));
-    await frames();
-    expect(screen.queryByTestId("bubble")).toBeNull();
+    await waitFor(() => expect(screen.queryByTestId("bubble")).toBeNull());
     expect(screen.getByText("본문 41")).toBeInTheDocument();
-    expect(gap()).toBe(0);
+    // 교체 뒤 끝에 그대로 — 고치기 전에는 9px 이 남는다(부하에서 늦어도 거짓 실패가 나지 않게 waitFor)
+    await waitFor(() => expect(gap()).toBe(0));
 
     // 보내는 중 항목이 확정되는 교체도 같은 경로
     const clientMsgId = "c-last";
@@ -298,9 +297,9 @@ describe("MessageList", () => {
     await waitFor(() => expect(gap()).toBe(0));
     await settle();
     act(() => updateTimeline(qc, CH, (t) => upsert(t, msg(42, { clientMsgId, bodyMd: "내 말" }))));
-    await frames();
-    expect(screen.queryByRole("status", { name: "보내는 중" })).toBeNull();
-    expect(gap()).toBe(0);
+    await waitFor(() => expect(screen.queryByRole("status", { name: "보내는 중" })).toBeNull());
+    // 이 경로는 jsdom 에서 고치기 전에도 0 이다 — 회귀 방지용(실물 확인은 태스크 13)
+    await waitFor(() => expect(gap()).toBe(0));
   });
 
   it("채널을 옮기면 칩·스크롤 상태를 새로 시작한다", async () => {

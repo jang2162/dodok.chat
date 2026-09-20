@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 import { qk } from "@/api/queries";
 import { createQueryClient } from "@/app/queryClient";
+import { Dialog, DialogContent, DialogTitle } from "@/ui/dialog";
 import { AgentsPage } from "./AgentsPage";
 
 type Body = Record<string, unknown>;
@@ -229,6 +230,8 @@ describe("기본 프롬프트", () => {
       expect(screen.queryByRole("textbox", { name: "@dev 기본 프롬프트" })).not.toBeInTheDocument(),
     );
     expect(screen.getByText("새 프롬프트")).toBeInTheDocument();
+    // 편집칸이 사라져도 초점은 body 로 떨어지지 않고 다시 편집 버튼으로
+    expect(screen.getByRole("button", { name: "@dev 기본 프롬프트 편집" })).toHaveFocus();
 
     await userEvent.click(screen.getByRole("button", { name: "@dev 기본 프롬프트 편집" }));
     await userEvent.clear(screen.getByRole("textbox", { name: "@dev 기본 프롬프트" }));
@@ -246,6 +249,7 @@ describe("기본 프롬프트", () => {
     await userEvent.click(screen.getByRole("button", { name: "취소" }));
     expect(screen.queryByRole("textbox", { name: "@dev 기본 프롬프트" })).not.toBeInTheDocument();
     expect(screen.getByText("기존 프롬프트")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "@dev 기본 프롬프트 편집" })).toHaveFocus();
     expect(server.bodies("PATCH")).toEqual([]);
   });
 });
@@ -397,7 +401,25 @@ describe("Gateway 에서 가져오기", () => {
     expect(within(dialog).getByRole("button", { name: "1개 등록" })).toBeEnabled();
   });
 
+  /** ui 대화상자 기본 닫기 버튼의 className — 따로 띄워 읽고 내린다 */
+  function defaultCloseClassName() {
+    const { unmount } = render(
+      <Dialog open>
+        <DialogContent aria-describedby={undefined}>
+          <DialogTitle>기준</DialogTitle>
+        </DialogContent>
+      </Dialog>,
+    );
+    const className = within(screen.getByRole("dialog", { name: "기준" })).getByRole("button", {
+      name: "닫기",
+    }).className;
+    if (!className) throw new Error("기준 닫기 버튼이 없다");
+    unmount();
+    return className;
+  }
+
   it("등록하는 동안엔 닫을 수 없다(닫기 버튼·Esc·바깥 클릭) — 끝나면 실패 항목을 대화상자 안에 보이고 닫을 수 있다", async () => {
+    const defaultClose = defaultCloseClassName();
     const g = gate();
     const server = stubServer({
       agents: [dev()],
@@ -416,6 +438,8 @@ describe("Gateway 에서 가져오기", () => {
     await userEvent.click(within(dialog).getByRole("button", { name: "2개 등록" }));
 
     const closeButton = within(dialog).getByRole("button", { name: "닫기" });
+    // 다른 대화상자와 같은 기본 닫기(X) 모양 — 잠금만 더했다
+    expect(closeButton.className).toBe(defaultClose);
     await waitFor(() => expect(closeButton).toBeDisabled());
     await userEvent.keyboard("{Escape}");
     const overlay = document.querySelector<HTMLElement>('[data-slot="dialog-overlay"]');
@@ -519,9 +543,14 @@ describe("직접 입력", () => {
 
     await userEvent.type(id, "2");
     const handle = within(dialog).getByRole("textbox", { name: "핸들" });
+    // 칸 아래 오류 자리는 비어 있는 채로 먼저 있는 polite 라이브 영역 — 오류가 생기면 그 자리에 글이 들어간다
+    const live = document.getElementById(`${handle.id}-error`);
+    expect(live).toHaveAttribute("aria-live", "polite");
+    expect(live).toBeEmptyDOMElement();
     await userEvent.clear(handle);
     await userEvent.type(handle, "Bad Handle");
     expect(handle).toHaveAccessibleDescription("영문 소문자·숫자·_·- 로 2~32자");
+    expect(document.getElementById(`${handle.id}-error`)).toBe(live);
     expect(submit).toBeDisabled();
     await userEvent.click(submit);
     expect(server.bodies("POST")).toEqual([]);

@@ -44,14 +44,36 @@ describe("api", () => {
     });
   });
 
-  it("오류 본문이 계약 밖이면 INTERNAL + 상태 문구", async () => {
+  it("오류 본문이 계약 밖이면 INTERNAL + 한국어 일반 문구(상태 코드만 덧붙임 — 영문 상태 문구는 토스트에 나가지 않는다)", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response("bad gateway", { status: 502, statusText: "Bad Gateway" })),
     );
     const err = await api("GET", "/channels").catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApiRequestError);
-    expect(err).toMatchObject({ status: 502, code: "INTERNAL", message: "Bad Gateway" });
+    expect(err).toMatchObject({
+      status: 502,
+      code: "INTERNAL",
+      message: "서버가 요청을 처리하지 못했습니다 (502)",
+    });
+
+    // 상태 문구가 없는 응답(HTTP/2 등)도 같은 문구, 5xx 밖이면 「요청을 처리하지 못했습니다」
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("", { status: 504 })),
+    );
+    await expect(api("GET", "/channels")).rejects.toMatchObject({
+      message: "서버가 요청을 처리하지 못했습니다 (504)",
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("<html>", { status: 413 })),
+    );
+    await expect(api("POST", "/channels", {})).rejects.toMatchObject({
+      status: 413,
+      code: "INTERNAL",
+      message: "요청을 처리하지 못했습니다 (413)",
+    });
   });
 
   it("fetch 가 던지면(응답 없음) NetworkError — 원래 오류는 cause", async () => {

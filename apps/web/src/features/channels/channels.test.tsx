@@ -132,6 +132,29 @@ describe("CreateChannelDialog", () => {
     expect(toastError).not.toHaveBeenCalled();
   });
 
+  it("서버 오류가 가리킨 칸(주제)에만 aria-invalid·설명이 붙고, 칸을 고치면 오류가 내려간다", async () => {
+    stubServer({
+      create: () => json(400, { code: "VALIDATION", message: "body — topic: Too big: expected string" }),
+    });
+    renderRoute("/");
+    await userEvent.click(await within(await channelNav()).findByRole("button", { name: "채널 만들기" }));
+    const dialog = await screen.findByRole("dialog", { name: "채널 만들기" });
+    const name = within(dialog).getByLabelText("이름");
+    const topic = within(dialog).getByLabelText("주제");
+    await userEvent.type(name, "general");
+    await userEvent.type(topic, "주제{Enter}");
+
+    const alert = await within(dialog).findByRole("alert");
+    expect(topic).toHaveAttribute("aria-invalid", "true");
+    expect(topic).toHaveAccessibleDescription(alert.textContent ?? "");
+    expect(name).not.toHaveAttribute("aria-invalid");
+
+    // 다음 제출까지 남지 않는다 — 어느 칸이든 고치면 내린다
+    await userEvent.type(name, "s");
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+    expect(topic).not.toHaveAttribute("aria-invalid");
+  });
+
   it("그 밖의 오류(500)는 전역 토스트에 맡기고 폼 안에 다시 보이지 않는다", async () => {
     stubServer({ create: () => json(500, { code: "INTERNAL", message: "서버 내부 오류" }) });
     renderRoute("/");
@@ -155,6 +178,21 @@ describe("HomeRedirect", () => {
     expect(await screen.findByTestId("page-channel")).toBeInTheDocument();
     expect(router.state.location.pathname).toBe("/c/a");
     expect(actions).toEqual(["REPLACE"]);
+  });
+
+  it("빈 상태에서 만들면 /c/<id>/settings 에 도착해 머문다(첫 채널로 가는 이동이 덮지 않는다)", async () => {
+    stubServer();
+    const { router, history } = renderRoute("/");
+    const moves: string[] = [];
+    history.subscribe(({ location, action }) => moves.push(`${action.type} ${location.pathname}`));
+    const home = await screen.findByTestId("page-home");
+    await userEvent.click(await within(home).findByRole("button", { name: "채널 만들기" }));
+    const dialog = await screen.findByRole("dialog", { name: "채널 만들기" });
+    await userEvent.type(within(dialog).getByLabelText("이름"), "general{Enter}");
+
+    expect(await screen.findByTestId("page-channel-settings")).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/c/new-1/settings");
+    expect(moves).toEqual(["PUSH /c/new-1/settings"]);
   });
 
   it("채널이 없으면 「채널이 없습니다」와 「채널 만들기」 — 누르면 대화상자", async () => {

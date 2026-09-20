@@ -1,6 +1,6 @@
 import type { Channel } from "@dodok/shared";
 import { type FormEvent, useId, useState } from "react";
-import { formError } from "@/features/agents/mutations";
+import { formError } from "@/api/formErrors";
 import { Button } from "@/ui/button";
 import { Textarea } from "@/ui/textarea";
 import { usePatchChannel } from "./mutations";
