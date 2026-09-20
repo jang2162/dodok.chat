@@ -47,6 +47,8 @@ const ChannelUnsubscribe = z.object({ channelId: Id });
 
 export const channelRoom = (channelId: string): string => `channel:${channelId}`;
 export const userRoom = (userId: string): string => `user:${userId}`;
+/** 채널 룸에 아직 아무도 없는 워크스페이스 단위 통지(channel.created)용 */
+export const workspaceRoom = (workspaceId: string): string => `workspace:${workspaceId}`;
 
 /** 기본 네임스페이스에 인증 미들웨어와 클라이언트 → 서버 핸들러를 붙인다(계약 스펙 7장). 팬아웃은 events.ts. */
 export function attachWire(io: WireServer, ctx: WireContext): void {
@@ -68,6 +70,8 @@ export function attachWire(io: WireServer, ctx: WireContext): void {
   io.on("connection", (socket) => {
     const { userId } = socket.data;
     void socket.join(userRoom(userId));
+    // 서버는 워크스페이스 하나만 섬긴다 — 접속한 소켓은 모두 그 워크스페이스 소속이다
+    void socket.join(workspaceRoom(ctx.workspaceId));
 
     const runs = (): RunsFacade => {
       if (!ctx.runs) throw apiError("ADAPTER_UNAVAILABLE", "runs are not available");

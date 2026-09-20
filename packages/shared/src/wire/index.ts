@@ -77,6 +77,7 @@ export interface ServerToClientEvents {
   "run.event": (p: { event: RunEvent }) => void;
   "approval.requested": (p: { approval: Approval }) => void;
   "approval.resolved": (p: { approval: Approval }) => void;
+  "channel.created": (p: { channel: Channel }) => void; // workspace 룸 — 채널 룸에는 아직 아무도 없다
   "channel.updated": (p: { channel: Channel }) => void;
   "channel.member.changed": (p: { channelId: Id; members: ChannelMember[] }) => void;
   typing: (p: { channelId: Id; actorType: "user" | "agent"; actorId: Id }) => void;

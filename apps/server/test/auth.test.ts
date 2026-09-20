@@ -49,7 +49,11 @@ describe("auth", () => {
       headers: { authorization: `Bearer ${sessionToken}` },
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ user: me, workspaceId: app.workspaceId });
+    expect(res.json()).toEqual({
+      user: me,
+      workspaceId: app.workspaceId,
+      workspace: { id: app.workspaceId, name: "dodok" },
+    });
     expect(await verifySessionToken(app.auth, sessionToken)).toEqual({ userId: me.id });
     expect(await verifySessionToken(app.auth, "nope")).toBeNull();
     // 헤더 값이 될 수 없는 입력도 예외가 아니라 null (wire auth.token 은 임의 유니코드)
@@ -214,6 +218,14 @@ describe("auth", () => {
     const res = await local(app, TEST_LOCAL_TOKEN);
     expect(res.statusCode).toBe(500);
     expect(res.json()).toEqual({ code: "INTERNAL", message: expect.any(String) });
+  });
+
+  it("GET /auth/me 의 workspace.name 은 설정한 워크스페이스 이름이다", async () => {
+    app = await bootTestApp({ DODOK_WORKSPACE_NAME: "우리 팀" });
+    const { headers } = await login(app);
+    const res = await app.fastify.inject({ method: "GET", url: "/api/v1/auth/me", headers });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().workspace).toEqual({ id: app.workspaceId, name: "우리 팀" });
   });
 
   it("APP_ORIGIN 이 https 면 세션 쿠키에 Secure 를 붙인다", async () => {

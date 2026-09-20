@@ -4,6 +4,7 @@ import type { Db } from "../../db/client";
 import { agents } from "../../db/schema.sqlite";
 import type { Logger } from "../../logger";
 import type { ServerBus } from "../../realtime/bus";
+import { josa } from "../../util/josa";
 import { getAgent, rowToAgent } from "../agents/service";
 import { type ChannelRecord, getChannel, listMembers } from "../channels/service";
 import { createSystemMessage } from "../messages/service";
@@ -71,12 +72,16 @@ export function createRouter(deps: RouterDeps): Router {
         return `릴레이 한도(${channel.relayPolicy.maxRelayTurns}턴)에 도달했습니다. ${CONTINUE_HINT}`;
       case "repeat":
         return `같은 내용의 릴레이가 반복되어 멈췄습니다. ${CONTINUE_HINT}`;
-      case "pair_not_allowed":
-        return `@${from} 은(는) ${targets.join(", ")} 을(를) 부를 수 없습니다(허용 목록 밖)`;
+      case "pair_not_allowed": {
+        const list = targets.join(", ");
+        return `@${from} ${josa(from, "은", "는")} ${list} ${josa(list, "을", "를")} 부를 수 없습니다(허용 목록 밖)`;
+      }
       case "daily_limit":
         return "채널의 일일 런 상한에 도달했습니다";
-      case "disabled":
-        return `${targets.join(", ")} 은(는) 비활성 상태입니다`;
+      case "disabled": {
+        const list = targets.join(", ");
+        return `${list} ${josa(list, "은", "는")} 비활성 상태입니다`;
+      }
     }
   }
 

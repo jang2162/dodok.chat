@@ -369,7 +369,7 @@ describe("통합 시나리오 1~5 — 릴레이·상한·이어가기·차단", 
 
     expect(denied).toMatchObject({
       kind: "system",
-      bodyMd: "@fin 은(는) @dev 을(를) 부를 수 없습니다(허용 목록 밖)",
+      bodyMd: "@fin 은 @dev 를 부를 수 없습니다(허용 목록 밖)",
       systemMeta: {
         kind: "relay_denied",
         relay: { fromAgentId: fin.id, toAgentId: dev.id, sourceRunId: finRun.id, rootMessageId: human.id },

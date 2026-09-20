@@ -24,6 +24,7 @@ describe("wire event maps", () => {
       | "run.event"
       | "approval.requested"
       | "approval.resolved"
+      | "channel.created"
       | "channel.updated"
       | "channel.member.changed"
       | "typing"

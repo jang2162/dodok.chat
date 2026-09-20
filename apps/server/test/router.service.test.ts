@@ -204,7 +204,7 @@ describe("router service", () => {
     const systems = t.systemMessages();
     expect(systems).toHaveLength(1);
     expect(systems[0]).toMatchObject({
-      bodyMd: "@dev 은(는) @fin, @ops 을(를) 부를 수 없습니다(허용 목록 밖)",
+      bodyMd: "@dev 는 @fin, @ops 를 부를 수 없습니다(허용 목록 밖)",
       systemMeta: {
         kind: "relay_denied",
         relay: { fromAgentId: t.dev.id, toAgentId: t.fin.id, sourceRunId: run.id, rootMessageId: root },
@@ -222,7 +222,7 @@ describe("router service", () => {
     expect(t.enqueue.mock.calls.map(([plan]) => plan.agentId)).toEqual([t.ops.id]);
     expect(t.systemMessages()).toEqual([
       expect.objectContaining({
-        bodyMd: "@fin 은(는) 비활성 상태입니다",
+        bodyMd: "@fin 은 비활성 상태입니다",
         systemMeta: expect.objectContaining({
           kind: "relay_denied",
           relay: expect.objectContaining({ toAgentId: t.fin.id }),

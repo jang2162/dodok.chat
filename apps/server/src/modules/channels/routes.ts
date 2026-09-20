@@ -88,6 +88,8 @@ export function registerChannelRoutes(fastify: FastifyInstance, ctx: ChannelRout
     const user = sessionUser(request);
     const body = parseBody(CreateChannelBody, request.body);
     const channel = createChannel(ctx.db, { ...body, workspaceId: user.workspaceId, createdBy: user.id });
+    // 채널 룸에는 아직 아무도 없다 — 워크스페이스 룸으로 알려 다른 탭의 목록에 바로 뜨게 한다(계획서 8장 이월)
+    ctx.bus.emit("channel.created", { channel });
     return reply.code(201).send({ channel });
   });
 

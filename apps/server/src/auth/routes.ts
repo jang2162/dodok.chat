@@ -5,7 +5,7 @@ import { eq } from "drizzle-orm";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { Db } from "../db/client";
-import { users } from "../db/schema.sqlite";
+import { users, workspaces } from "../db/schema.sqlite";
 import { apiError } from "../http/errors";
 import type { Logger } from "../logger";
 import { type Auth, OWNER_EMAIL, SESSION_COOKIE, SESSION_MAX_AGE_S, verifySessionToken } from "./index";
@@ -88,7 +88,9 @@ export function registerAuthRoutes(fastify: FastifyInstance, ctx: AuthRouteConte
 
   fastify.get("/api/v1/auth/me", { preHandler: requireSession(ctx) }, async (request) => ({
     user: loadUser(ctx.db, sessionUser(request).id),
+    // workspaceId 는 기존 클라이언트를 위해 남긴다 — 이름이 필요한 화면은 workspace 를 본다
     workspaceId: ctx.workspaceId,
+    workspace: loadWorkspace(ctx.db, ctx.workspaceId),
   }));
 
   fastify.post("/api/v1/auth/logout", { preHandler: requireSession(ctx) }, async (request, reply) => {
@@ -129,6 +131,17 @@ function sessionTokenOf(request: FastifyRequest): string | undefined {
 
 function bearerHeaders(token: string): Headers {
   return new Headers({ authorization: `Bearer ${token}` });
+}
+
+function loadWorkspace(db: Db, id: string): { id: string; name: string } {
+  const row = db
+    .select({ id: workspaces.id, name: workspaces.name })
+    .from(workspaces)
+    .where(eq(workspaces.id, id))
+    .get();
+  // 부팅이 ensureWorkspace 로 보장한다 — 없으면 DB 가 갈린 것이다
+  if (!row) throw apiError("INTERNAL", "workspace not found");
+  return row;
 }
 
 function loadUser(db: Db, id: string): User {

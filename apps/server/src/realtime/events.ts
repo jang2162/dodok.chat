@@ -2,7 +2,7 @@ import type { RunEvent, RunState } from "@dodok/shared";
 import type { Logger } from "../logger";
 import { TERMINAL_STATUSES } from "../modules/runs/machine";
 import type { BusEvents, ServerBus } from "./bus";
-import { channelRoom } from "./socket";
+import { channelRoom, workspaceRoom } from "./socket";
 import type { WireServer, WireSocket } from "./types";
 
 /** 소켓별 미전송 큐 상한(계약 스펙 7.3, 서버 코어 제약 「소켓 미전송 큐 상한 500 이벤트」) */
@@ -83,6 +83,7 @@ export function attachWireFanout(io: WireServer, bus: ServerBus, opts: WireFanou
       io.to(channelRoom(p.run.channelId)).emit("run.state", p);
     }),
     on("run.event", ({ event, channelId }) => fanoutRunEvent(event, channelId)),
+    on("channel.created", (p) => io.to(workspaceRoom(p.channel.workspaceId)).emit("channel.created", p)),
     on("channel.updated", (p) => io.to(channelRoom(p.channel.id)).emit("channel.updated", p)),
     on("channel.member.changed", (p) => io.to(channelRoom(p.channelId)).emit("channel.member.changed", p)),
     on("typing", (p) => io.to(channelRoom(p.channelId)).emit("typing", p)),

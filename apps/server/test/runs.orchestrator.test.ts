@@ -825,7 +825,7 @@ describe("orchestrator", () => {
     expect(systemMessages(t.db)).toEqual([
       expect.objectContaining({
         kind: "system",
-        bodyMd: "@dev 이(가) 봇 루프 보호로 메시지를 받지 않았습니다",
+        bodyMd: "@dev 가 봇 루프 보호로 메시지를 받지 않았습니다",
         systemMeta: { kind: "run_error", runId: run.id },
       }),
     ]);

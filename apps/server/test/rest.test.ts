@@ -86,6 +86,12 @@ describe("REST /api/v1 (FakeAdapter)", () => {
     expect(list.json().channels).toContainEqual(channel);
   });
 
+  it("POST /channels 는 channel.created 를 낸다", async () => {
+    const created = nextBusEvent(app, "channel.created");
+    const channel = await newChannel("rest-created");
+    expect((await created).channel).toMatchObject({ id: channel.id, name: "rest-created" });
+  });
+
   it("잘못된 본문·id 는 400 VALIDATION, 없는 채널은 404 NOT_FOUND", async () => {
     const bad = await api("POST", "/channels", { name: "" });
     expect(bad.statusCode).toBe(400);
@@ -174,6 +180,31 @@ describe("REST /api/v1 (FakeAdapter)", () => {
     expect(
       (await api("POST", "/agents", { handle: "Bad Handle", providerAgentId: "x", name: "x" })).statusCode,
     ).toBe(400);
+  });
+
+  it("핸들 충돌과 providerAgentId 충돌은 CONFLICT details.field 로 갈린다", async () => {
+    const agent = await newAgent("rest-field");
+    const dupHandle = await api("POST", "/agents", {
+      providerAgentId: "rest-field-other",
+      handle: agent.handle,
+      name: "x",
+    });
+    expect(dupHandle.statusCode).toBe(409);
+    expect(dupHandle.json()).toMatchObject({ code: "CONFLICT", details: { field: "handle" } });
+
+    const dupProvider = await api("POST", "/agents", {
+      providerAgentId: agent.providerAgentId,
+      handle: "rest-field-2",
+      name: "x",
+    });
+    expect(dupProvider.statusCode).toBe(409);
+    expect(dupProvider.json()).toMatchObject({ code: "CONFLICT", details: { field: "providerAgentId" } });
+
+    // PATCH 로 남의 핸들을 가져가도 같은 field
+    const other = await newAgent("rest-field-3");
+    const patched = await api("PATCH", `/agents/${other.id}`, { handle: agent.handle });
+    expect(patched.statusCode).toBe(409);
+    expect(patched.json()).toMatchObject({ code: "CONFLICT", details: { field: "handle" } });
   });
 
   it("GET /agents/discover 는 어댑터 listAgents 결과", async () => {

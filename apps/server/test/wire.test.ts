@@ -125,6 +125,29 @@ describe("wire (앱 부팅, FakeAdapter)", () => {
     expect(serverSocket?.rooms.has(`user:${app.ownerUserId}`)).toBe(true);
   });
 
+  it("(a) 접속하면 workspace:<workspaceId> 룸에 들어간다", async () => {
+    const socket = await connect();
+    const serverSocket = app.io.sockets.sockets.get(socket.id as string);
+    expect(serverSocket?.rooms.has(`workspace:${app.workspaceId}`)).toBe(true);
+  });
+
+  it("채널을 만들면 그 채널을 아직 구독하지 않은 다른 소켓에도 channel.created 가 간다", async () => {
+    const socket = await connect();
+    const created = waitFor(socket, "channel.created");
+    const res = await app.fastify.inject({
+      method: "POST",
+      url: "/api/v1/channels",
+      headers: { authorization: `Bearer ${token}` },
+      payload: { name: "wire-created" },
+    });
+    expect(res.statusCode).toBe(201);
+    expect((await created).channel).toMatchObject({
+      id: res.json().channel.id,
+      name: "wire-created",
+      workspaceId: app.workspaceId,
+    });
+  });
+
   it("(b) channel.subscribe — 빈 채널 ack, 없는 채널·다른 워크스페이스 채널 NOT_FOUND, 잘못된 입력 VALIDATION", async () => {
     const socket = await connect();
     const channel = newChannel("wire-b");

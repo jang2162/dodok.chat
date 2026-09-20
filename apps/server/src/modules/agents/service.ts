@@ -63,7 +63,9 @@ export function createAgent(db: Db, input: CreateAgentInput): Agent {
       )
       .get();
     if (sameProvider) {
-      throw apiError("CONFLICT", `providerAgentId ${input.providerAgentId} 는 이미 등록돼 있다`);
+      throw apiError("CONFLICT", `providerAgentId ${input.providerAgentId} 는 이미 등록돼 있다`, {
+        field: "providerAgentId",
+      });
     }
     const row = tx
       .insert(agents)
@@ -133,5 +135,5 @@ function assertHandleFree(db: DbOrTx, workspaceId: string, handle: string): void
     .from(agents)
     .where(and(eq(agents.workspaceId, workspaceId), eq(agents.handle, handle)))
     .get();
-  if (taken) throw apiError("CONFLICT", `handle @${handle} 는 이미 쓰이고 있다`);
+  if (taken) throw apiError("CONFLICT", `handle @${handle} 는 이미 쓰이고 있다`, { field: "handle" });
 }

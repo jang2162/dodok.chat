@@ -12,6 +12,7 @@ export type BusEvents = {
   "message.updated": Payload<"message.updated">;
   "run.state": Payload<"run.state">;
   "run.event": { event: RunEvent; channelId: Id };
+  "channel.created": Payload<"channel.created">;
   "channel.updated": Payload<"channel.updated">;
   "channel.member.changed": Payload<"channel.member.changed">;
   typing: Payload<"typing">;

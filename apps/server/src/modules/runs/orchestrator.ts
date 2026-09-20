@@ -14,6 +14,7 @@ import { agents, channels, messages } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
 import type { Logger } from "../../logger";
 import type { ServerBus } from "../../realtime/bus";
+import { josa } from "../../util/josa";
 import { getAgent } from "../agents/service";
 import { createAgentMessage, createSystemMessage } from "../messages/service";
 import type { RunPlan } from "../router/decide";
@@ -333,7 +334,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       const handle = getAgent(db, run.agentId)?.handle ?? "unknown";
       const bodyMd =
         code === "DROPPED:bot-loop-protection"
-          ? `@${handle} 이(가) 봇 루프 보호로 메시지를 받지 않았습니다`
+          ? `@${handle} ${josa(handle, "이", "가")} 봇 루프 보호로 메시지를 받지 않았습니다`
           : `@${handle} 실행이 실패했습니다: ${code}`;
       createSystemMessage(db, bus, {
         channelId: run.channelId,

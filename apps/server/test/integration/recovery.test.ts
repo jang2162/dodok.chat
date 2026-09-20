@@ -77,7 +77,7 @@ describe("통합 시나리오 6·7 — 드롭·끊김·재접속·재시작", ()
         systemMeta: { kind: "run_error", runId: queued.id },
       });
       expect(notice.bodyMd).toContain("봇 루프 보호");
-      expect(notice.bodyMd).toBe("@dev 이(가) 봇 루프 보호로 메시지를 받지 않았습니다");
+      expect(notice.bodyMd).toBe("@dev 가 봇 루프 보호로 메시지를 받지 않았습니다");
       expect(scenario.turns.map((t) => t.delivery.runId)).toEqual([queued.id]);
       expect(log.eventsOf(queued.id).find((e) => e.type === "RUN_ERROR")).toMatchObject({
         code: "DROPPED:bot-loop-protection",
