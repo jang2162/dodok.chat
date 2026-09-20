@@ -11,13 +11,14 @@ import * as approvalStore from "../src/modules/approvals/store";
 import { getRun, insertRun, listRunEvents } from "../src/modules/runs/store";
 import { createUserMessage } from "../src/modules/messages/service";
 import { ServerBus } from "../src/realtime/bus";
+import type { WireServer } from "../src/realtime/types";
 import type { Logger } from "../src/logger";
 import type { RunTimeouts } from "../src/modules/runs/orchestrator";
 import { createServices } from "../src/wiring";
 import { bootTestApp, login } from "./helpers/app";
 import { newTestDb } from "./helpers/db";
 import { seedChannelWithAgent } from "./helpers/seed";
-import { connectWire, recordEvents, type WireClient, waitFor } from "./helpers/wire";
+import { connectWire, type WireClient, waitFor } from "./helpers/wire";
 
 const MINUTE = 60_000;
 
@@ -48,6 +49,28 @@ function providerApproval(sessionKey: string, patch: Partial<ProviderApproval> =
     expiresAt: new Date(createdAt.getTime() + 2 * MINUTE).toISOString(),
     ...patch,
   };
+}
+
+type BroadcastScope = { event: string; rooms: string[] };
+
+/**
+ * 서버가 이벤트를 **어느 룸으로** 냈는지 기록한다. 받은 소켓만 세서는 워크스페이스 룸과 전역 방송(`io.emit`)이
+ * 구별되지 않는다 — 접속한 소켓은 모두 그 워크스페이스 룸에 있기 때문이다(socket.ts 의 「서버는 워크스페이스 하나」).
+ * Socket.IO 4.8.3 은 브로드캐스트를 어댑터로 내려보내고(`adapter.broadcast(packet, opts)`) `opts.rooms` 가 곧 그 범위다 —
+ * 전역이면 빈 셋이다. 스파이는 `vi.restoreAllMocks()`(afterEach)가 원복한다.
+ */
+function recordBroadcastScope(io: WireServer, events: string[]): BroadcastScope[] {
+  const seen: BroadcastScope[] = [];
+  const adapter = io.sockets.adapter as unknown as {
+    broadcast(packet: { data?: unknown }, opts: { rooms: Set<string> }): void;
+  };
+  const passthrough = adapter.broadcast.bind(adapter);
+  vi.spyOn(adapter, "broadcast").mockImplementation((packet, opts) => {
+    const name = Array.isArray(packet.data) ? String(packet.data[0]) : "";
+    if (events.includes(name)) seen.push({ event: name, rooms: [...opts.rooms] });
+    passthrough(packet, opts);
+  });
+  return seen;
 }
 
 describe("승인 저장·런 상관·wire 중계 (앱 부팅, FakeAdapter)", () => {
@@ -256,28 +279,69 @@ describe("승인 저장·런 상관·wire 중계 (앱 부팅, FakeAdapter)", () 
     expect((await requested).approval.channelId).toBe(channel.id);
   });
 
-  it("승인은 그 채널 구독자에게만 간다 — 다른 채널 소켓은 요구도 해결도 못 받는다", async () => {
-    // detail 에는 파일 내용이 실린다 — 룸 범위가 무너지면 그대로 새는 자리라 회귀를 여기서 잠근다
+  it("승인 팬아웃은 워크스페이스 룸까지다 — 아무 채널도 구독하지 않은 소켓도 받고, 그 너머로는 안 나간다", async () => {
+    // p2-t4 는 「그 채널 구독자에게만」을 잠갔다. 웹은 한 번에 한 채널만 구독해서 그러면 다른 채널을 보는 동안
+    // 승인이 아예 닿지 않는다(브라우저 검증 D1) — 판정 7 로 워크스페이스 룸까지 넓혔다. 노출은 늘지 않는다:
+    // channel.subscribe 는 워크스페이스 소속만 보므로(socket.ts) 접속한 소켓은 어느 채널이든 구독해 같은 값을 이미 받을 수 있다.
+    // 새 경계는 「워크스페이스 룸까지, 그 너머는 아니다」다. 받은 소켓만 세면 전역 방송과 구별되지 않아 룸 이름을 직접 잰다.
+    const idle = await connectWire(app, token); // 채널을 하나도 구독하지 않은 소켓 — 그래도 워크스페이스 룸에는 있다
+    sockets.push(idle);
+    const scope = recordBroadcastScope(app.io, ["approval.requested", "approval.resolved"]);
+    // detail 에는 파일 내용이 실린다 — 워크스페이스 밖으로 새면 안 되는 값이라 이 자리에서 같이 잠근다
+    const a = providerApproval(sessionKeyOf("dev", channel.id), { detail: "secret-file-body" });
+
+    const requested = waitFor(idle, "approval.requested");
+    adapter.emitApproval(a);
+    expect((await requested).approval.detail).toBe("secret-file-body");
+    const resolved = waitFor(idle, "approval.resolved");
+    adapter.emitApproval({ ...a, status: "denied", decision: "deny", reason: "user" });
+    expect((await resolved).approval.status).toBe("denied");
+
+    await roundTrip(idle);
+    // 룸 이름을 글자 그대로 — workspaceRoom() 을 다시 부르면 구현이 바뀔 때 테스트도 같이 따라간다
+    expect(scope).toEqual([
+      { event: "approval.requested", rooms: [`workspace:${app.workspaceId}`] },
+      { event: "approval.resolved", rooms: [`workspace:${app.workspaceId}`] },
+    ]);
+  });
+
+  it("다른 채널을 구독한 소켓도 승인 요구를 받는다 — 알림의 「다른 채널」 분기가 닿는다", async () => {
     const other = newChannel();
     const mine = await connect();
     const theirs = await connect(other.id);
-    const leaked = recordEvents(theirs, ["approval.requested", "approval.resolved"]);
-    const a = providerApproval(sessionKeyOf("dev", channel.id), { detail: "secret-file-body" });
 
-    const requested = waitFor(mine, "approval.requested");
+    const atMine = waitFor(mine, "approval.requested");
+    const atTheirs = waitFor(theirs, "approval.requested");
+    adapter.emitApproval(providerApproval(sessionKeyOf("dev", channel.id), { title: "Write 실행" }));
+
+    const { approval } = await atTheirs;
+    // 카드의 채널은 승인이 난 채널이다 — 받는 소켓이 구독 중인 채널이 아니다. 웹은 이 값으로 「지금 보는 채널인가」를 가린다
+    expect({ channelId: approval.channelId, title: approval.title }).toEqual({
+      channelId: channel.id,
+      title: "Write 실행",
+    });
+    expect(approval.channelId).not.toBe(other.id);
+    expect((await atMine).approval.id).toBe(approval.id);
+  });
+
+  it("확정도 다른 채널 소켓에 닿는다 — 보고 있지 않은 채널의 카드도 닫힌다", async () => {
+    const other = newChannel();
+    const theirs = await connect(other.id);
+    const a = providerApproval(sessionKeyOf("dev", channel.id));
+
+    const requested = waitFor(theirs, "approval.requested");
     adapter.emitApproval(a);
-    expect((await requested).approval.detail).toBe("secret-file-body");
-    const resolved = waitFor(mine, "approval.resolved");
+    const opened = (await requested).approval;
+
+    const resolved = waitFor(theirs, "approval.resolved");
     adapter.emitApproval({ ...a, status: "denied", decision: "deny", reason: "user" });
-    await resolved;
-
-    await roundTrip(theirs);
-    expect(leaked).toEqual([]);
-
-    // 비어 있는 게 이 소켓이 죽어서가 아니다 — 자기 채널 승인은 받는다
-    const ours = waitFor(theirs, "approval.requested");
-    adapter.emitApproval(providerApproval(sessionKeyOf("dev", other.id)));
-    expect((await ours).approval.channelId).toBe(other.id);
+    const closed = (await resolved).approval;
+    expect({
+      id: closed.id,
+      channelId: closed.channelId,
+      status: closed.status,
+      decision: closed.decision,
+    }).toEqual({ id: opened.id, channelId: channel.id, status: "denied", decision: "deny" });
   });
 
   it("구독 응답이 그 채널의 미해결 승인을 준다 — 만료된 것·해결된 것·다른 채널 것은 뺀다", async () => {

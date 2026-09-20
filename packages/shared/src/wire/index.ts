@@ -81,6 +81,7 @@ export interface ServerToClientEvents {
   "message.updated": (p: { message: Message }) => void; // 수정, 컴포넌트 소비/만료
   "run.state": (p: { run: RunState; resync?: boolean }) => void;
   "run.event": (p: { event: RunEvent }) => void;
+  // 승인 둘은 workspace 룸 — 구독하지 않은 채널의 승인도 받는다(다른 채널을 보고 있어도 알려야 한다)
   "approval.requested": (p: { approval: Approval }) => void;
   "approval.resolved": (p: { approval: Approval }) => void;
   "channel.created": (p: { channel: Channel }) => void; // workspace 룸 — 채널 룸에는 아직 아무도 없다

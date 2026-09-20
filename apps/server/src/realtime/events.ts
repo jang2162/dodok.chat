@@ -8,10 +8,16 @@ import type { WireServer, WireSocket } from "./types";
 /** 소켓별 미전송 큐 상한(계약 스펙 7.3, 서버 코어 제약 「소켓 미전송 큐 상한 500 이벤트」) */
 export const WIRE_MAX_PENDING = 500;
 
-export type WireFanoutOptions = { logger: Logger; maxPending?: number | undefined };
+export type WireFanoutOptions = {
+  logger: Logger;
+  /** 승인 팬아웃의 룸(`workspace:<id>`) — 서버가 섬기는 그 워크스페이스, attachWire 의 `ctx.workspaceId` 와 같은 값 */
+  workspaceId: string;
+  maxPending?: number | undefined;
+};
 
 /**
- * bus → Socket.IO 팬아웃. 채널 이벤트는 channel:<id> 룸, adapter.status·system.notice 는 전체(단일 사용자 MVP).
+ * bus → Socket.IO 팬아웃. 채널 이벤트는 channel:<id> 룸, 승인 둘은 workspace:<id> 룸,
+ * adapter.status·system.notice 는 전체(단일 사용자 MVP).
  * run.event 만 백프레셔를 본다: 소켓의 미전송 큐가 maxPending 이상이면 그 소켓엔 델타를 버리고
  * 런별로 한 번 run.state { resync: true } 를 보낸다. 큐가 풀리면 다시 델타를 보내고, 다음 막힘에 또 resync 한다.
  */
@@ -83,8 +89,11 @@ export function attachWireFanout(io: WireServer, bus: ServerBus, opts: WireFanou
       io.to(channelRoom(p.run.channelId)).emit("run.state", p);
     }),
     on("run.event", ({ event, channelId }) => fanoutRunEvent(event, channelId)),
-    on("approval.requested", (p) => io.to(channelRoom(p.approval.channelId)).emit("approval.requested", p)),
-    on("approval.resolved", (p) => io.to(channelRoom(p.approval.channelId)).emit("approval.resolved", p)),
+    // 승인만 워크스페이스 룸이다 — 웹은 한 번에 한 채널만 구독하므로 채널 룸이면 다른 채널을 보고 있을 때
+    // 승인 카드도 알림도 아예 닿지 않는다(브라우저 검증 D1·판정 7). 노출은 늘지 않는다: channel.subscribe 는
+    // 워크스페이스 소속만 보므로 접속한 소켓은 어느 채널이든 구독해 같은 페이로드를 이미 받을 수 있다.
+    on("approval.requested", (p) => io.to(workspaceRoom(opts.workspaceId)).emit("approval.requested", p)),
+    on("approval.resolved", (p) => io.to(workspaceRoom(opts.workspaceId)).emit("approval.resolved", p)),
     on("channel.created", (p) => io.to(workspaceRoom(p.channel.workspaceId)).emit("channel.created", p)),
     on("channel.updated", (p) => io.to(channelRoom(p.channel.id)).emit("channel.updated", p)),
     on("channel.member.changed", (p) => io.to(channelRoom(p.channelId)).emit("channel.member.changed", p)),

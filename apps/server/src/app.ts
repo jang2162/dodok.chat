@@ -176,7 +176,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       runs: services.runs,
       appOrigin: config.APP_ORIGIN,
     });
-    const fanout = attachWireFanout(io, bus, { logger, maxPending: deps.wireMaxPending });
+    const fanout = attachWireFanout(io, bus, { logger, workspaceId, maxPending: deps.wireMaxPending });
     undo.push({ step: "fanout", run: () => fanout.close() });
     const watch = watchGatewayReconnecting(adapter, bus, logger);
     undo.push({ step: "watch", run: () => watch.close() });

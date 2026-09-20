@@ -12,7 +12,7 @@ export type BusEvents = {
   "message.updated": Payload<"message.updated">;
   "run.state": Payload<"run.state">;
   "run.event": { event: RunEvent; channelId: Id };
-  // 승인은 채널 룸으로 — 룸은 approval.channelId 로 고른다(세션 키에서 푼 값이라 행과 늘 같다)
+  // 승인은 워크스페이스 룸으로 — 다른 채널을 보고 있어도 카드·알림이 닿아야 한다(판정 7, events.ts)
   "approval.requested": Payload<"approval.requested">;
   "approval.resolved": Payload<"approval.resolved">;
   "channel.created": Payload<"channel.created">;
