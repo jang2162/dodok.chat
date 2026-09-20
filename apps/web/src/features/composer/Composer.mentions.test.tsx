@@ -78,6 +78,9 @@ describe("멘션", () => {
       editor.commands.focus();
       editor.commands.insertContent("@co");
     });
+    // focus() 가 미룬 프레임을 돌려 편집기가 선택 영역을 실제로 잡게 한다 —
+    // 그 전에 후보를 확정하면 Tiptap 멘션이 부르는 collapseToEnd() 가 던진다(composerHarness 주석)
+    await flushEditorFrames();
     const list = await screen.findByRole("listbox", { name: "멘션 후보" });
     expect(
       within(list)
@@ -110,6 +113,7 @@ it("팝업이 열리면 편집기가 목록과 고른 줄을 가리킨다(aria-c
     editor.commands.focus();
     editor.commands.insertContent("@");
   });
+  await flushEditorFrames();
   const list = await screen.findByRole("listbox", { name: "멘션 후보" });
   expect(list.id).toBeTruthy();
   await waitFor(() => expect(box).toHaveAttribute("aria-controls", list.id));

@@ -81,13 +81,19 @@ export const setDoc = (editor: Editor, content: JSONContent, at: "end" | number 
   });
 
 /**
- * Tiptap 의 `focus()` 는 다음 프레임에 ProseMirror 의 선택 영역을 건드린다 — 화면을 내린 뒤에 그 프레임이 돌면
- * jsdom 이 「There is no selection to collapse」로 던진다(테스트 밖 비동기라 실행을 통째로 실패로 만든다).
- * 각 테스트 끝에서 흘려보낸다 — Testing Library 의 cleanup 보다 먼저 돌아야 하므로 테스트 파일에서 afterEach 로 등록한다
+ * Tiptap 의 `focus()` 는 ProseMirror 의 `view.focus()` 를 다음 프레임으로 미룬다. 그 프레임이 돌기 전에는
+ * jsdom 에 선택 영역이 없어(`getSelection().rangeCount === 0`) 멘션 확정이 부르는 `collapseToEnd()` 가
+ * 「There is no selection to collapse」로 던지고, 프레임이 화면을 내린 뒤에 돌아도 같은 예외가 난다.
+ * 둘 다 jsdom 이 리스너 예외를 삼켜 uncaughtException 으로 올리므로 단언은 통과한 채 실행만 실패한다.
+ * 그래서 시각(20ms)이 아니라 프레임 자체를 기다린다 — 부하로 프레임이 밀려도 결과가 같다.
+ * 프레임 안에서 다시 예약하는 몫(focus → scrollIntoView)까지 걷으려고 두 번 돌린다.
+ * 테스트 끝에서는 Testing Library 의 cleanup 보다 먼저 돌아야 하므로 테스트 파일에서 afterEach 로 등록한다
  */
 export const flushEditorFrames = () =>
   act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    for (let i = 0; i < 2; i += 1) {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    }
   });
 
 /** 가짜 ack 은 마이크로태스크로만 돈다 — 매크로태스크 한 번을 기다리면 `.catch` 의 토스트까지 끝나 있다 */

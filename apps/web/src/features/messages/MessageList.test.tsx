@@ -388,7 +388,10 @@ describe("MessageList", () => {
     qc.setQueryData(qk.timeline(CH2), timelineOf(range(1, 40, { channelId: CH2 })));
     const view = renderWithClient(<MessageList channelId={CH} initialRect={RECT} />, qc);
     const scroller = () => view.container.querySelector<HTMLElement>("[data-scroller]") as HTMLElement;
+    // 휠 = 사용자가 스크롤을 잡았다는 신호 — 이것 없이 scrollTop 만 옮기면 첫 붙임(settle)이 아직 살아 있을 때
+    // 다음 프레임에 끝으로 되돌려 칩이 뜨지 않는다(부하에서 20회 중 1회). 이 파일의 다른 scroll 과 같은 방식
     await act(async () => {
+      scroller().dispatchEvent(new Event("wheel"));
       scroller().scrollTop = 300;
       await new Promise((r) => setTimeout(r, 10));
     });

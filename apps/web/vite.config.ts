@@ -37,5 +37,9 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: ["./test/setup.ts"],
     include: ["src/**/*.test.{ts,tsx}", "test/**/*.test.{ts,tsx}"],
+    // waitFor 예산(5초, test/setup.ts)을 다 쓰고도 그 뒤 단언이 돌 자리가 있어야 한다 —
+    // 기본 5초는 예산과 똑같아, 늘린 예산이 테스트 시간초과로 되돌아온다
+    testTimeout: 20_000,
+    hookTimeout: 20_000,
   },
 });

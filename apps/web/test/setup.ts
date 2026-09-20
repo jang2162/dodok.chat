@@ -1,7 +1,13 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup } from "@testing-library/react";
+import { cleanup, configure } from "@testing-library/react";
 import { afterEach, vi } from "vitest";
 import { createdSockets } from "./fakeSocket";
+
+// findBy*·waitFor 의 기본 예산은 1초다. 루트 `pnpm test` 는 패키지 다섯을 한꺼번에 돌리고 vitest 는 저마다
+// 코어−1 개의 워커를 띄우므로 코어 수의 몇 배가 동시에 돈다 — 앱 셸을 통째로 띄우는 테스트의 첫 렌더가
+// 그 1초를 넘겨(웹 단독이면 수십 ms) 실행마다 다른 조합이 「Unable to find …」로 무너졌다.
+// 기다리는 조건은 그대로 두고 예산만 늘린다 — 단언은 그대로이고, 없는 것은 여전히 없다고 실패한다
+configure({ asyncUtilTimeout: 5000 });
 
 // jsdom 에는 matchMedia 가 없다 — Toaster(theme="system")와 prefers-* 확인이 부른다. 늘 불일치(라이트·모션 허용)로 답한다
 if (typeof window.matchMedia !== "function") {
