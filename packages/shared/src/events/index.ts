@@ -97,7 +97,8 @@ export type RunSignal =
   | { kind: "tool_start" }
   | { kind: "tool_end"; openTools: number }
   | { kind: "approval_requested" }
-  | { kind: "approval_resolved"; decision: ApprovalDecision } // 거절이면 곧바로 tool 로 돌아가 오류 결과를 기다린다
+  // 거절이면 곧바로 tool 로 돌아가 오류 결과를 기다린다. resumeTo 는 승인을 요구하기 직전의 런 상태(설계 4.3 「직전 상태로 복귀」)
+  | { kind: "approval_resolved"; decision: ApprovalDecision; resumeTo?: "streaming" | "tool" }
   | { kind: "gateway_final" } // chat state: final
   | { kind: "canonical_received" } // 브리지 outbound.message 도착
   | { kind: "final_timeout" } // finalizing 상한(기본 10s)

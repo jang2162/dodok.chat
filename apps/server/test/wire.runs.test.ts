@@ -195,11 +195,13 @@ describe("wire 런 핸들러·REST 런 조회 (앱 부팅, FakeAdapter 배선)",
     await socket.emitWithAck("run.abort", { runId: interactionRun?.id ?? "" });
   });
 
-  it("approval.resolve 는 어댑터가 있어도 ADAPTER_UNAVAILABLE(Phase 2), channel.subscribe 는 진행 중 런을 싣는다", async () => {
+  it("approval.resolve 는 없는 승인에 NOT_FOUND, channel.subscribe 는 진행 중 런을 싣는다", async () => {
     const socket = await connect();
+    // 실제 승인 서비스로 배선돼 있다 — 없는 승인은 Gateway 로 나가기 전에 막힌다(설계 4.4)
     expect(
       await socket.emitWithAck("approval.resolve", { approvalId: uuid(), decision: "allow-once" }),
-    ).toMatchObject({ ok: false, error: { code: "ADAPTER_UNAVAILABLE" } });
+    ).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
+    expect(adapter.calls.resolveApproval).toEqual([]);
 
     const run = await mentionDev(socket);
     try {

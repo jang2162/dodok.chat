@@ -1,6 +1,6 @@
-import type { ProviderApproval } from "@dodok/openclaw-adapter";
+import { AdapterError, type ProviderApproval } from "@dodok/openclaw-adapter";
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
-import { type Agent, Approval, type RunState } from "@dodok/shared";
+import { type Agent, Approval, type ApprovalDecision, type RunState } from "@dodok/shared";
 import { v7 as uuid } from "uuid";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { App } from "../src/app";
@@ -9,12 +9,46 @@ import { addMember, type ChannelRecord, createChannel } from "../src/modules/cha
 import { resolvedOutcome } from "../src/modules/approvals/service";
 import * as approvalStore from "../src/modules/approvals/store";
 import { getRun, insertRun, listRunEvents } from "../src/modules/runs/store";
+import { createUserMessage } from "../src/modules/messages/service";
+import { ServerBus } from "../src/realtime/bus";
+import type { Logger } from "../src/logger";
+import type { RunTimeouts } from "../src/modules/runs/orchestrator";
+import { createServices } from "../src/wiring";
 import { bootTestApp, login } from "./helpers/app";
 import { newTestDb } from "./helpers/db";
 import { seedChannelWithAgent } from "./helpers/seed";
 import { connectWire, recordEvents, type WireClient, waitFor } from "./helpers/wire";
 
 const MINUTE = 60_000;
+
+let seq = 0;
+
+/**
+ * 어댑터가 정규화해 올리는 승인 한 건. `channelId`·`providerAgentId` 는 세션 키에서 푼 값이라
+ * 기본값도 세션 키에서 만든다 — 그래야 「서버가 세션 키만 믿는가」를 따로 잴 수 있다.
+ */
+function providerApproval(sessionKey: string, patch: Partial<ProviderApproval> = {}): ProviderApproval {
+  const parts = sessionKey.split(":");
+  const createdAt = new Date();
+  return {
+    providerApprovalId: `plugin:${uuid()}`,
+    kind: "plugin",
+    sessionKey,
+    providerAgentId: parts[1] ?? "dev",
+    channelId: parts[4] ?? uuid(),
+    toolCallId: `toolu_${++seq}`,
+    toolName: "Write",
+    pluginId: "fs",
+    title: "Write 실행",
+    description: '{"path":"a.ts"}',
+    severity: "warning",
+    allowedDecisions: ["allow-once", "allow-always", "deny"],
+    status: "pending",
+    createdAt: createdAt.toISOString(),
+    expiresAt: new Date(createdAt.getTime() + 2 * MINUTE).toISOString(),
+    ...patch,
+  };
+}
 
 describe("승인 저장·런 상관·wire 중계 (앱 부팅, FakeAdapter)", () => {
   let app: App;
@@ -85,34 +119,8 @@ describe("승인 저장·런 상관·wire 중계 (앱 부팅, FakeAdapter)", () 
     return run;
   }
 
-  /**
-   * 어댑터가 정규화해 올리는 승인 한 건. `channelId`·`providerAgentId` 는 세션 키에서 푼 값이라
-   * 기본값도 세션 키에서 만든다 — 그래야 「서버가 세션 키만 믿는가」를 따로 잴 수 있다.
-   */
-  function providerApproval(sessionKey: string, patch: Partial<ProviderApproval> = {}): ProviderApproval {
-    const parts = sessionKey.split(":");
-    const createdAt = new Date();
-    return {
-      providerApprovalId: `plugin:${uuid()}`,
-      kind: "plugin",
-      sessionKey,
-      providerAgentId: parts[1] ?? "dev",
-      channelId: parts[4] ?? uuid(),
-      toolCallId: `toolu_${++n}`,
-      toolName: "Write",
-      pluginId: "fs",
-      title: "Write 실행",
-      description: '{"path":"a.ts"}',
-      severity: "warning",
-      allowedDecisions: ["allow-once", "allow-always", "deny"],
-      status: "pending",
-      createdAt: createdAt.toISOString(),
-      expiresAt: new Date(createdAt.getTime() + 2 * MINUTE).toISOString(),
-      ...patch,
-    };
-  }
-
-  const stored = (a: ProviderApproval) => approvalStore.getApprovalByProviderId(app.db, a.providerApprovalId);
+  const stored = (a: Pick<ProviderApproval, "providerApprovalId">) =>
+    approvalStore.getApprovalByProviderId(app.db, a.providerApprovalId);
   const eventTypes = (runId: string) => listRunEvents(app.db, runId, 0).map((e) => e.type);
 
   it("승인 요구를 런에 붙여 저장하고 wire 로 중계한다 — 런 이벤트·awaiting_approval 까지", async () => {
@@ -450,6 +458,305 @@ describe("승인 저장·런 상관·wire 중계 (앱 부팅, FakeAdapter)", () 
     });
   });
 
+  /** 런에 붙은 pending 승인 하나를 만들고(선택: 그 전에 툴을 열어 둔다) 저장된 행을 돌려준다 */
+  async function pendingApproval(
+    socket: WireClient,
+    opts: { patch?: Partial<ProviderApproval>; toolOpen?: boolean } = {},
+  ): Promise<{ run: RunState; approval: Approval }> {
+    const run = await mentionDev(socket);
+    if (opts.toolOpen !== false) {
+      adapter.emit({ kind: "run_signal", runId: run.id, signal: { kind: "tool_start" } });
+      await vi.waitFor(() => expect(getRun(app.db, run.id)?.status).toBe("tool"));
+    }
+    const requested = waitFor(socket, "approval.requested");
+    adapter.emitApproval(providerApproval(sessionKeyOf("dev", channel.id), opts.patch));
+    const { approval } = await requested;
+    await vi.waitFor(() => expect(getRun(app.db, run.id)?.status).toBe("awaiting_approval"));
+    return { run, approval };
+  }
+
+  const resolve = (socket: WireClient, approvalId: string, decision: ApprovalDecision) =>
+    socket.emitWithAck("approval.resolve", { approvalId, decision });
+
+  it("검사에 걸리면 Gateway 로 보내지 않는다 — 멤버·존재·pending·만료·allowedDecisions·어댑터 연결", async () => {
+    const socket = await connect();
+    const sent = adapter.calls.resolveApproval.length;
+
+    // 다른 워크스페이스의 승인 — 존재는 알리지 않는다
+    const other = seedChannelWithAgent(app.db, { channelName: "other-ws" });
+    const foreign = approvalStore.upsertApproval(app.db, {
+      providerApprovalId: `plugin:${uuid()}`,
+      kind: "plugin",
+      channelId: other.channelId,
+      agentId: other.agentId,
+      title: "남의 워크스페이스",
+      severity: "warning",
+      allowedDecisions: ["allow-once", "deny"],
+      status: "pending",
+      createdAt: new Date(),
+      expiresAt: new Date(Date.now() + MINUTE),
+    }).approval;
+    expect(await resolve(socket, foreign.id, "allow-once")).toMatchObject({
+      ok: false,
+      error: { code: "FORBIDDEN" },
+    });
+
+    expect(await resolve(socket, uuid(), "allow-once")).toMatchObject({
+      ok: false,
+      error: { code: "NOT_FOUND" },
+    });
+
+    // 이미 확정된 승인
+    const done = providerApproval(sessionKeyOf("dev", channel.id));
+    adapter.emitApproval(done);
+    await vi.waitFor(() => expect(stored(done)?.status).toBe("pending"));
+    adapter.emitApproval({ ...done, status: "denied", decision: "deny", reason: "user" });
+    await vi.waitFor(() => expect(stored(done)?.status).toBe("denied"));
+    expect(await resolve(socket, stored(done)?.id ?? "", "allow-once")).toMatchObject({
+      ok: false,
+      error: { code: "CONFLICT" },
+    });
+
+    // 만료 시각이 지난 승인 — 행은 아직 pending 이다
+    const stale = providerApproval(sessionKeyOf("dev", channel.id), {
+      expiresAt: new Date(Date.now() - MINUTE).toISOString(),
+    });
+    adapter.emitApproval(stale);
+    await vi.waitFor(() => expect(stored(stale)?.status).toBe("pending"));
+    expect(await resolve(socket, stored(stale)?.id ?? "", "allow-once")).toMatchObject({
+      ok: false,
+      error: { code: "CONFLICT" },
+    });
+
+    // allowedDecisions 밖 결정 — 보내면 Gateway 가 조용히 거절로 확정한다(스파이크 4.4)
+    const narrow = providerApproval(sessionKeyOf("dev", channel.id), {
+      allowedDecisions: ["allow-once", "deny"],
+    });
+    adapter.emitApproval(narrow);
+    await vi.waitFor(() => expect(stored(narrow)?.status).toBe("pending"));
+    expect(await resolve(socket, stored(narrow)?.id ?? "", "allow-always")).toMatchObject({
+      ok: false,
+      error: { code: "VALIDATION" },
+    });
+
+    // Gateway 가 끊겼다
+    const live = providerApproval(sessionKeyOf("dev", channel.id));
+    adapter.emitApproval(live);
+    await vi.waitFor(() => expect(stored(live)?.status).toBe("pending"));
+    adapter.setStatus({ provider: "openclaw", gateway: "down", bridge: "connected" });
+    try {
+      expect(await resolve(socket, stored(live)?.id ?? "", "allow-once")).toMatchObject({
+        ok: false,
+        error: { code: "ADAPTER_UNAVAILABLE" },
+      });
+    } finally {
+      adapter.setStatus({ provider: "openclaw", gateway: "connected", bridge: "connected" });
+    }
+
+    expect(adapter.calls.resolveApproval.slice(sent)).toEqual([]);
+    expect(stored(narrow)?.status).toBe("pending");
+    expect(stored(live)?.status).toBe("pending");
+  });
+
+  it("허용하면 Gateway 로 보내고 런이 대기 직전 상태로 돌아간다 — decidedBy 는 우리 사용자", async () => {
+    const socket = await connect();
+    const { run, approval } = await pendingApproval(socket);
+    const resolved = waitFor(socket, "approval.resolved");
+
+    expect(await resolve(socket, approval.id, "allow-once")).toEqual({ ok: true, data: null });
+
+    expect(adapter.calls.resolveApproval.at(-1)).toEqual({
+      providerApprovalId: approval.providerApprovalId,
+      kind: "plugin", // 저장된 행의 kind 다 — wire 에는 없다
+      decision: "allow-once",
+    });
+    expect((await resolved).approval).toMatchObject({
+      id: approval.id,
+      status: "allowed",
+      decision: "allow-once",
+      reason: "user",
+      decidedBy: app.ownerUserId,
+      decidedAt: expect.any(String),
+    });
+    expect(stored(approval)).toMatchObject({ status: "allowed", decidedBy: app.ownerUserId });
+    // 승인 전에 툴이 열려 있었다 — streaming 으로 되돌아가지 않는다
+    await vi.waitFor(() => expect(getRun(app.db, run.id)?.status).toBe("tool"));
+    expect(listRunEvents(app.db, run.id, 0).find((e) => e.type === "APPROVAL_RESOLVED")).toMatchObject({
+      decision: "allow-once",
+      reason: "user",
+      decidedBy: app.ownerUserId,
+    });
+  });
+
+  it("거절해도 런은 죽지 않는다 — denied 로 닫고 툴 오류를 기다린다", async () => {
+    const socket = await connect();
+    const { run, approval } = await pendingApproval(socket);
+    const resolved = waitFor(socket, "approval.resolved");
+
+    expect(await resolve(socket, approval.id, "deny")).toEqual({ ok: true, data: null });
+
+    expect((await resolved).approval).toMatchObject({ status: "denied", decision: "deny", reason: "user" });
+    await vi.waitFor(() => expect(getRun(app.db, run.id)?.status).toBe("tool"));
+  });
+
+  it("승인 전에 툴이 열려 있지 않았으면 streaming 으로 돌아간다", async () => {
+    const socket = await connect();
+    const { run, approval } = await pendingApproval(socket, { toolOpen: false });
+
+    expect(await resolve(socket, approval.id, "allow-once")).toEqual({ ok: true, data: null });
+
+    await vi.waitFor(() => expect(getRun(app.db, run.id)?.status).toBe("streaming"));
+  });
+
+  it("Gateway 이벤트가 먼저 오면 해결 경로는 같은 행을 다시 쓰지 않는다 — 먼저 온 쪽이 이긴다", async () => {
+    const socket = await connect();
+    const { approval } = await pendingApproval(socket);
+    const seen: Approval[] = [];
+    socket.on("approval.resolved", (p) => seen.push(p.approval));
+    // RPC 를 기다리는 사이 Gateway 가 같은 사실을 이벤트로 먼저 줬다(어댑터는 RPC 응답을 중복 제거에 넣지 않는다)
+    const spy = vi
+      .spyOn(adapter, "resolveApproval")
+      .mockImplementationOnce(async (providerApprovalId, kind, decision) => {
+        const terminal: ProviderApproval = {
+          ...providerApproval(sessionKeyOf("dev", channel.id)),
+          providerApprovalId,
+          kind,
+          status: "allowed",
+          decision,
+          reason: "user",
+          resolvedAt: new Date().toISOString(),
+        };
+        adapter.emitApproval(terminal);
+        return terminal;
+      });
+
+    expect(await resolve(socket, approval.id, "allow-once")).toEqual({ ok: true, data: null });
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    await roundTrip(socket);
+    expect(seen.map((a) => a.id)).toEqual([approval.id]); // 두 번 중계하지 않는다
+    // 먼저 온 쪽(Gateway 이벤트)이 적은 값 그대로다 — 다른 디바이스가 해결한 것처럼 해결자를 비운다
+    expect(stored(approval)).toMatchObject({ status: "allowed", decision: "allow-once" });
+    expect(stored(approval)?.decidedBy).toBeUndefined();
+  });
+
+  it("earliestPendingExpiry — 그 런의 미해결 승인 중 가장 이른 만료 시각(해결된 것은 세지 않는다)", async () => {
+    const socket = await connect();
+    const run = await mentionDev(socket);
+    const late = providerApproval(sessionKeyOf("dev", channel.id), {
+      expiresAt: new Date(Date.now() + 5 * MINUTE).toISOString(),
+    });
+    const soon = providerApproval(sessionKeyOf("dev", channel.id), {
+      expiresAt: new Date(Date.now() + MINUTE).toISOString(),
+    });
+    // 먼저 온 것이 늦게 만료된다 — 도착 순서가 아니라 만료 시각으로 골라야 한다
+    for (const a of [late, soon]) adapter.emitApproval(a);
+    await vi.waitFor(() => expect(stored(soon)?.status).toBe("pending"));
+
+    expect(app.services.approvals.earliestPendingExpiry(run.id)?.toISOString()).toBe(soon.expiresAt);
+
+    adapter.emitApproval({ ...soon, status: "denied", decision: "deny", reason: "user" });
+    await vi.waitFor(() => expect(stored(soon)?.status).toBe("denied"));
+    expect(app.services.approvals.earliestPendingExpiry(run.id)?.toISOString()).toBe(late.expiresAt);
+  });
+
+  it("Gateway 가 우리 결정과 다르게 확정하면 그대로 적고 해결자는 비운다", async () => {
+    const socket = await connect();
+    const { approval } = await pendingApproval(socket);
+    // 목록 안의 결정이라도 Gateway 가 거절로 확정할 수 있다(malformed-verdict) — 정본은 Gateway 스냅샷이다
+    vi.spyOn(adapter, "resolveApproval").mockImplementationOnce(async (providerApprovalId, kind) => ({
+      ...providerApproval(sessionKeyOf("dev", channel.id)),
+      providerApprovalId,
+      kind,
+      status: "denied",
+      decision: "deny",
+      reason: "malformed-verdict",
+      resolvedAt: new Date().toISOString(),
+    }));
+    const resolved = waitFor(socket, "approval.resolved");
+
+    expect(await resolve(socket, approval.id, "allow-once")).toEqual({ ok: true, data: null });
+
+    expect((await resolved).approval).toMatchObject({
+      status: "denied",
+      decision: "deny",
+      reason: "malformed-verdict",
+    });
+    expect(stored(approval)?.decidedBy).toBeUndefined(); // 우리가 누른 결정이 아니다
+  });
+
+  it("Gateway 가 거부하면 그 코드를 그대로 돌려주고 행은 pending 으로 남는다", async () => {
+    const socket = await connect();
+    const { approval } = await pendingApproval(socket);
+    vi.spyOn(adapter, "resolveApproval").mockRejectedValueOnce(
+      new AdapterError("ADAPTER_UNAVAILABLE", "no gateway connection"),
+    );
+
+    expect(await resolve(socket, approval.id, "allow-once")).toMatchObject({
+      ok: false,
+      error: { code: "ADAPTER_UNAVAILABLE" },
+    });
+
+    expect(stored(approval)?.status).toBe("pending"); // 다시 누를 수 있다
+  });
+
+  it("런을 중지하면 남은 승인을 cancelled 로 닫고 APPROVAL_RESOLVED 를 타임라인에 남긴다", async () => {
+    const socket = await connect();
+    const { run, approval } = await pendingApproval(socket);
+    const resolved = waitFor(socket, "approval.resolved");
+    const states: string[] = [];
+    socket.on("run.state", (p) => {
+      if (p.run.id === run.id) states.push(p.run.status);
+    });
+
+    expect(await socket.emitWithAck("run.abort", { runId: run.id })).toEqual({ ok: true, data: null });
+
+    expect((await resolved).approval).toMatchObject({
+      id: approval.id,
+      status: "cancelled",
+      reason: "run-aborted",
+    });
+    await vi.waitFor(() => expect(getRun(app.db, run.id)?.status).toBe("aborted"));
+    // 승인을 닫느라 런이 대기 직전 상태로 되돌아갔다가 끝나지 않는다 — 끝나는 런에는 런 신호를 보내지 않는다
+    await roundTrip(socket);
+    expect(states).toEqual(["aborted"]);
+    // 런을 먼저 종료로 박으면 이 이벤트가 드롭된다(applyRunEvent 의 terminal 가드) — 전이 전에 닫아야 한다
+    const types = eventTypes(run.id);
+    expect(types).toContain("APPROVAL_RESOLVED");
+    expect(types.indexOf("APPROVAL_RESOLVED")).toBeLessThan(types.indexOf("RUN_ABORTED"));
+    expect(listRunEvents(app.db, run.id, 0).find((e) => e.type === "APPROVAL_RESOLVED")).toMatchObject({
+      decision: "deny",
+      reason: "run-aborted",
+    });
+  });
+
+  it("해결 시각이 없는 해결 이벤트는 받은 시각을 decidedAt 으로 적는다", async () => {
+    const socket = await connect();
+    const a = providerApproval(sessionKeyOf("dev", channel.id));
+    const requested = waitFor(socket, "approval.requested");
+    adapter.emitApproval(a);
+    await requested;
+
+    const resolved = waitFor(socket, "approval.resolved");
+    adapter.emitApproval({ ...a, status: "denied", decision: "deny", reason: "user", resolvedAt: undefined });
+
+    // 계약상 decidedAt 은 선택이라 비워도 파싱은 통과한다 — 그래서 값이 있는지를 직접 잰다
+    expect((await resolved).approval.decidedAt).toEqual(expect.any(String));
+  });
+
+  it("다른 워크스페이스 채널의 승인은 받아 적지 않는다", async () => {
+    const socket = await connect();
+    const warn = vi.spyOn(app.logger, "warn");
+    const other = seedChannelWithAgent(app.db, { channelName: "other-ws-ingest" });
+    const foreign = providerApproval(sessionKeyOf("dev", other.channelId));
+
+    adapter.emitApproval(foreign);
+
+    await roundTrip(socket);
+    expect(stored(foreign)).toBeUndefined();
+    expect(warn).toHaveBeenCalledWith({ sessionKey: foreign.sessionKey }, "approval for unknown session");
+  });
+
   /** 같은 연결의 ack 왕복 — 그 전에 서버가 이 소켓에 보낸 이벤트는 모두 도착해 있다 */
   async function roundTrip(socket: WireClient): Promise<void> {
     const res = await socket.emitWithAck("channel.unsubscribe", { channelId: uuid() });
@@ -645,5 +952,173 @@ describe("승인 store (메모리 DB)", () => {
     expect(resolvedOutcome({ status: "cancelled" })).toEqual({ decision: "deny", reason: "run-aborted" });
     expect(resolvedOutcome({ status: "allowed" })).toEqual({ decision: "allow-once", reason: "user" });
     expect(resolvedOutcome({ status: "denied" })).toEqual({ decision: "deny", reason: "user" });
+  });
+});
+
+/**
+ * 타이머만 재는 자리 — 앱을 띄우지 않고(실소켓이 가짜 시계와 섞이지 않게) `createServices` 로 같은 배선을 만든다.
+ * 대기 중에는 Gateway 가 아무 신호도 보내지 않으므로(스파이크 6.3) 여기서 재는 것이 유일한 상한이다.
+ */
+describe("승인 대기 중 런 시계 (가짜 타이머, 메모리 DB)", () => {
+  const RUN_MS = 5_000;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function setup(timeouts: Partial<RunTimeouts> = {}) {
+    const db = newTestDb();
+    const bus = new ServerBus();
+    const adapter = new FakeAdapter();
+    const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const ids = seedChannelWithAgent(db);
+    const services = createServices({
+      db,
+      bus,
+      logger: logger as unknown as Logger,
+      adapter,
+      workspaceId: ids.workspaceId,
+      timeouts: { runMs: RUN_MS, ...timeouts },
+    });
+    const sessionKey = adapter.sessionKeyFor("dev", ids.channelId);
+    const runOf = (runId: string) => {
+      const run = getRun(db, runId);
+      if (!run) throw new Error(`run ${runId} missing`);
+      return run;
+    };
+
+    /** 멘션 런 하나를 띄워 툴을 연 뒤(= tool), 승인 하나를 요구해 awaiting_approval 로 만든다 */
+    async function awaitingApproval(patch: Partial<ProviderApproval> = {}) {
+      const message = createUserMessage(db, bus, {
+        channelId: ids.channelId,
+        authorId: ids.userId,
+        bodyMd: "@dev 파일 써줘",
+        clientMsgId: `c-${++seq}`,
+      });
+      const run = await services.orchestrator.enqueueRun(
+        {
+          agentId: ids.agentId,
+          channelId: ids.channelId,
+          triggerKind: "mention",
+          rootMessageId: message.id,
+          relayDepth: 0,
+        },
+        { message },
+      );
+      await vi.advanceTimersByTimeAsync(0); // adapter.send ack
+      adapter.emit({ kind: "run_signal", runId: run.id, signal: { kind: "tool_start" } });
+      expect(runOf(run.id).status).toBe("tool");
+      const a = providerApproval(sessionKey, patch);
+      adapter.emitApproval(a);
+      expect(runOf(run.id).status).toBe("awaiting_approval");
+      return { run, a };
+    }
+
+    return { db, adapter, services, logger, sessionKey, runOf, awaitingApproval, ...ids };
+  }
+
+  it("승인 대기 동안에는 런 무응답 타임아웃이 돌지 않는다", async () => {
+    const t = setup();
+    const { run } = await t.awaitingApproval(); // TTL 2분 — 감시 타이머는 아직 멀다
+
+    await vi.advanceTimersByTimeAsync(RUN_MS + 1_000);
+
+    expect(t.runOf(run.id).status).toBe("awaiting_approval"); // error 가 아니다
+    t.services.orchestrator.stop();
+  });
+
+  it("아무 해결도 오지 않으면 만료 시각 + 5초에 승인을 닫고 런 시계를 다시 켠다", async () => {
+    const t = setup();
+    const { run, a } = await t.awaitingApproval({
+      expiresAt: new Date(Date.now() + 20_000).toISOString(),
+    });
+
+    await vi.advanceTimersByTimeAsync(20_000 + 4_000);
+    expect(approvalStore.getApprovalByProviderId(t.db, a.providerApprovalId)?.status).toBe("pending");
+
+    await vi.advanceTimersByTimeAsync(1_100); // 만료 + 5초
+    const expired = approvalStore.getApprovalByProviderId(t.db, a.providerApprovalId);
+    expect(expired).toMatchObject({ status: "expired", reason: "timeout" });
+    expect(expired?.decision).toBeUndefined(); // 행에는 결정이 없다 — 런 이벤트에서만 deny 로 정규화한다
+    // 승인 대기에서 나왔으니 다시 툴을 기다린다 — 그리고 런 시계가 다시 돈다
+    expect(t.runOf(run.id).status).toBe("tool");
+    expect(listRunEvents(t.db, run.id, 0).find((e) => e.type === "APPROVAL_RESOLVED")).toMatchObject({
+      decision: "deny",
+      reason: "timeout",
+    });
+
+    await vi.advanceTimersByTimeAsync(RUN_MS + 1_000);
+    expect(t.runOf(run.id)).toMatchObject({ status: "error", error: { code: "TIMEOUT" } });
+    t.services.orchestrator.stop();
+  });
+
+  it("만료 시각이 이미 지난 pending 행도 감시 타이머가 닫는다", async () => {
+    const t = setup();
+    const { run, a } = await t.awaitingApproval({
+      expiresAt: new Date(Date.now() - MINUTE).toISOString(),
+    });
+
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(approvalStore.getApprovalByProviderId(t.db, a.providerApprovalId)).toMatchObject({
+      status: "expired",
+      reason: "timeout",
+    });
+    expect(t.runOf(run.id).status).toBe("tool");
+    t.services.orchestrator.stop();
+  });
+
+  it("사용자가 제때 허용하면 감시 타이머는 울리지 않고 런 시계가 다시 돈다", async () => {
+    const t = setup();
+    const { run, a } = await t.awaitingApproval({
+      expiresAt: new Date(Date.now() + 20_000).toISOString(),
+    });
+    const approval = approvalStore.getApprovalByProviderId(t.db, a.providerApprovalId);
+
+    await t.services.runs.resolveApproval({
+      approvalId: approval?.id ?? "",
+      decision: "allow-once",
+      userId: t.userId,
+    });
+
+    expect(approvalStore.getApprovalByProviderId(t.db, a.providerApprovalId)).toMatchObject({
+      status: "allowed",
+      decision: "allow-once",
+      decidedBy: t.userId,
+    });
+    expect(t.runOf(run.id).status).toBe("tool");
+
+    // 감시 타이머가 살아 있었다면 여기서 만료로 덮어썼을 것이다
+    await vi.advanceTimersByTimeAsync(25_100);
+    expect(approvalStore.getApprovalByProviderId(t.db, a.providerApprovalId)?.status).toBe("allowed");
+    expect(t.runOf(run.id)).toMatchObject({ status: "error", error: { code: "TIMEOUT" } }); // 런 시계는 다시 돌았다
+    t.services.orchestrator.stop();
+  });
+
+  it("승인 하나를 해결해도 같은 런의 살아 있는 다른 승인이 만료로 휩쓸리지 않는다", async () => {
+    const t = setup({ runMs: 600_000 });
+    const { run, a } = await t.awaitingApproval({
+      expiresAt: new Date(Date.now() + 20_000).toISOString(),
+    });
+    // 대기 중에 두 번째 승인이 왔다 — 수명이 훨씬 길다(첫 승인의 감시 타이머가 닫아서는 안 된다)
+    const long = providerApproval(t.sessionKey, {
+      expiresAt: new Date(Date.now() + 5 * MINUTE).toISOString(),
+    });
+    t.adapter.emitApproval(long);
+
+    await t.services.runs.resolveApproval({
+      approvalId: approvalStore.getApprovalByProviderId(t.db, a.providerApprovalId)?.id ?? "",
+      decision: "allow-once",
+      userId: t.userId,
+    });
+    expect(t.runOf(run.id).status).toBe("tool");
+
+    await vi.advanceTimersByTimeAsync(26_000);
+
+    expect(approvalStore.getApprovalByProviderId(t.db, long.providerApprovalId)?.status).toBe("pending");
+    t.services.orchestrator.stop();
   });
 });

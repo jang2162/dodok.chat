@@ -1,6 +1,7 @@
 import {
   ApiError,
   type Approval,
+  type ApprovalDecision,
   Message,
   type RunEvent,
   type RunEventsReplayResult,
@@ -528,6 +529,9 @@ describe("wire (attachWire 단독 — route·runs 주입)", () => {
     const runs = {
       activeRuns: vi.fn((_channelId: string) => [run]),
       pendingApprovals: vi.fn((_channelId: string) => [approval]),
+      resolveApproval: vi.fn(
+        async (_input: { approvalId: string; decision: ApprovalDecision; userId: string }) => {},
+      ),
       abort: vi.fn(async (_runId: string, _userId: string) => {}),
       replay: vi.fn(async (_runId: string, _afterSeq: number) => replay),
       interact: vi.fn(async () => ({ interactionId })),
@@ -555,9 +559,16 @@ describe("wire (attachWire 단독 — route·runs 주입)", () => {
     });
     expect(runs.interact).toHaveBeenCalledWith({ ...interact, userId: app.ownerUserId });
 
-    expect(
-      await socket.emitWithAck("approval.resolve", { approvalId: uuid(), decision: "deny" }),
-    ).toMatchObject({ ok: false, error: { code: "ADAPTER_UNAVAILABLE" } });
+    const approvalId = uuid();
+    expect(await socket.emitWithAck("approval.resolve", { approvalId, decision: "deny" })).toEqual({
+      ok: true,
+      data: null,
+    });
+    expect(runs.resolveApproval).toHaveBeenCalledWith({
+      approvalId,
+      decision: "deny",
+      userId: app.ownerUserId,
+    });
 
     runs.abort.mockRejectedValueOnce(apiError("NOT_FOUND", "run not found"));
     expect(await socket.emitWithAck("run.abort", { runId: run.id })).toEqual({

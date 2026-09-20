@@ -43,7 +43,9 @@ export function transition(run: Pick<Run, "status" | "hasCanonical">, s: RunSign
       if (st === "queued" || st === "streaming" || st === "tool") return go("awaiting_approval");
       return IGNORED;
     case "approval_resolved":
-      return st === "awaiting_approval" ? go("streaming") : IGNORED;
+      // 대기 직전 상태로 돌아간다(설계 4.3) — 툴 진행 중이었으면 tool. 기억이 없으면 streaming
+      if (st !== "awaiting_approval") return IGNORED;
+      return go(s.resumeTo ?? "streaming");
     case "gateway_final":
       // finalizing 은 정본이 먼저 와 들어온 경우에만 final 이 끝을 뜻한다(아래 queued + canonical_received)
       if (st === "finalizing") return run.hasCanonical ? go("done", { finalSource: "plugin" }) : IGNORED;

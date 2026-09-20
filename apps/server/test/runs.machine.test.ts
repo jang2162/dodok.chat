@@ -42,6 +42,21 @@ const cases: Case[] = [
   ["awaiting_approval", false, { kind: "approval_resolved", decision: "allow-once" }, "streaming"],
   ["awaiting_approval", false, { kind: "approval_resolved", decision: "deny" }, "streaming"],
   ["streaming", false, { kind: "approval_resolved", decision: "allow-once" }, null],
+  // resumeTo — 대기 직전 상태로 돌아간다(설계 4.3). 툴 진행 중이었으면 streaming 으로 되돌아가지 않는다
+  [
+    "awaiting_approval",
+    false,
+    { kind: "approval_resolved", decision: "allow-once", resumeTo: "tool" },
+    "tool",
+  ],
+  ["awaiting_approval", false, { kind: "approval_resolved", decision: "deny", resumeTo: "tool" }, "tool"],
+  [
+    "awaiting_approval",
+    false,
+    { kind: "approval_resolved", decision: "allow-once", resumeTo: "streaming" },
+    "streaming",
+  ],
+  ["tool", false, { kind: "approval_resolved", decision: "allow-once", resumeTo: "tool" }, null],
   // gateway_final
   ["queued", false, { kind: "gateway_final" }, "finalizing"],
   ["streaming", false, { kind: "gateway_final" }, "finalizing"],

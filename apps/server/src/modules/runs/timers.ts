@@ -1,5 +1,5 @@
-/** 런별 타이머 종류. coalesce 는 델타 코얼레싱 flush. */
-export type RunTimerKind = "queued" | "run" | "finalizing" | "coalesce";
+/** 런별 타이머 종류. coalesce 는 델타 코얼레싱 flush, approval 은 승인 만료 감시(설계 4.3). */
+export type RunTimerKind = "queued" | "run" | "finalizing" | "coalesce" | "approval";
 
 export type RunTimers = {
   /** 같은 (runId, kind) 의 이전 타이머는 지우고 새로 건다 */

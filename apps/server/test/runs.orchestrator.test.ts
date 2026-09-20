@@ -585,6 +585,24 @@ describe("orchestrator", () => {
     t.orch.stop();
   });
 
+  it("승인 서비스 없이 awaiting_approval 에 들어가면 평소 런 상한으로 돌아간다", async () => {
+    // deps.approvals 가 없으면 감시할 승인 행도 없다 — 시계를 아예 끄면 런이 영원히 산다
+    const t = setup({ timeouts: { runMs: 50 } });
+    const run = await t.enqueue();
+    await t.flush();
+    await t.orch.signal(run.id, { kind: "approval_requested" });
+    expect(t.runOf(run.id).status).toBe("awaiting_approval");
+    expect(t.logger.warn).toHaveBeenCalledWith(
+      { runId: run.id },
+      "awaiting approval without a pending approval row",
+    );
+
+    await vi.advanceTimersByTimeAsync(51);
+
+    expect(t.runOf(run.id)).toMatchObject({ status: "error", error: { code: "TIMEOUT" } });
+    t.orch.stop();
+  });
+
   it("run_timeout 은 같은 세션의 다음 런을 보내기 전에 Gateway abort 를 먼저 보낸다", async () => {
     const t = setup({ timeouts: { runMs: 50 } });
     const first = await t.enqueue();

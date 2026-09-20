@@ -161,10 +161,10 @@ export function attachWire(io: WireServer, ctx: WireContext): void {
     });
 
     socket.on("approval.resolve", async (raw: unknown, ack: unknown) => {
-      const res = await settle(ctx.logger, "approval.resolve", () => {
-        parsePayload(ApprovalResolve, raw);
-        // 승인은 Phase 2
-        throw apiError("ADAPTER_UNAVAILABLE", "approvals are not available yet");
+      const res = await settle(ctx.logger, "approval.resolve", async () => {
+        const { approvalId, decision } = parsePayload(ApprovalResolve, raw);
+        await runs().resolveApproval({ approvalId, decision, userId });
+        return null;
       });
       reply(ack, res);
     });

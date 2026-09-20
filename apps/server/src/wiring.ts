@@ -64,7 +64,8 @@ export function createServices(deps: ServicesDeps): Services {
     db,
     bus,
     logger,
-    provider: adapter.provider,
+    adapter,
+    workspaceId,
     onSignal: (runId, signal) => void orchestrator.signal(runId, signal),
     appendEvent: (runId, event) => void orchestrator.applyRunEvent(runId, event),
   });
@@ -87,6 +88,10 @@ export function createServices(deps: ServicesDeps): Services {
   const runs: RunsFacade = {
     activeRuns: (channelId) => orchestrator.activeRuns(channelId),
     pendingApprovals: (channelId) => approvals.pendingForChannel(channelId),
+    async resolveApproval({ approvalId, decision, userId }) {
+      logger.info({ approvalId, decision, userId }, "approval resolve requested");
+      await approvals.resolve({ approvalId, decision, userId });
+    },
     async abort(runId, userId) {
       visibleRun(runId);
       logger.info({ runId, userId }, "run abort requested");

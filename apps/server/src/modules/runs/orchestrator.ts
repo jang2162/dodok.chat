@@ -45,6 +45,9 @@ export const DEFAULT_RUN_TIMEOUTS: RunTimeouts = {
 /** final_timeout 으로 done(plugin) 이 된 런은 어댑터가 gateway_final 을 못 봤다 — 늦은 usage 를 받을 만큼 기다렸다 잊는다 */
 const FORGET_AFTER_FINAL_TIMEOUT_MS = 60_000;
 
+/** 승인 만료 감시의 여유(설계 4.3) — Gateway 가 먼저 resolved(timeout) 를 주므로 보통 이 타이머는 쓰이지 않는다 */
+const APPROVAL_WATCHDOG_GRACE_MS = 5_000;
+
 export type EnqueueTrigger = {
   message?: Message;
   /** interaction·continue 런: component_interactions.id — runs.triggerInteractionId 로 저장 */
@@ -78,7 +81,7 @@ export type OrchestratorDeps = {
   /** 라우터(태스크 9) — 정본 저장 직후, canonical_received 신호 전에 부른다 */
   onAgentMessage: (message: Message, run: Run) => Promise<void>;
   /** 어댑터 승인 이벤트를 넘길 곳(wiring.ts 가 잇는다). 없으면 승인 이벤트는 로그만 남기고 버린다 */
-  approvals?: Pick<ApprovalsService, "ingest">;
+  approvals?: Pick<ApprovalsService, "ingest" | "cancelForRun" | "expireForRun" | "earliestPendingExpiry">;
   now?: () => Date;
   timeouts?: Partial<RunTimeouts>;
 };
@@ -244,19 +247,75 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     );
   }
 
+  function armRunTimer(runId: string): void {
+    timers.set(runId, "run", timeouts.runMs, () => {
+      void timeOut(runId, { kind: "run_timeout" });
+    });
+  }
+
+  /**
+   * 승인 대기의 유일한 상한 — 그 런의 미해결 승인 중 가장 이른 만료 시각 + 5초(설계 4.3).
+   * 승인 행을 못 찾으면 시계를 아예 끄지 않는다 — 그러면 런이 영원히 산다.
+   */
+  function armApprovalWatchdog(runId: string): void {
+    const expiresAt = deps.approvals?.earliestPendingExpiry(runId);
+    if (!expiresAt) {
+      logger.warn({ runId }, "awaiting approval without a pending approval row");
+      armRunTimer(runId);
+      return;
+    }
+    const ms = Math.max(0, expiresAt.getTime() + APPROVAL_WATCHDOG_GRACE_MS - now().getTime());
+    timers.set(runId, "approval", ms, () => {
+      expireApprovals(runId);
+    });
+  }
+
+  /** 감시 타이머가 울렸다 — 승인을 만료로 닫으면 그 신호가 런 시계를 다시 켠다. 닫을 게 없으면 여기서 켠다 */
+  function expireApprovals(runId: string): void {
+    try {
+      deps.approvals?.expireForRun(runId);
+    } catch (err) {
+      logger.error({ err, runId }, "approval expiry failed");
+    }
+    if (stopped) return;
+    if (store.getRun(db, runId)?.status === "awaiting_approval" && !timers.has(runId, "run")) {
+      armRunTimer(runId);
+    }
+  }
+
   function rearmTimers(runId: string, prev: RunStatus, next: RunStatus): void {
     if (stopped) return;
+    if (prev === "awaiting_approval") timers.clear(runId, "approval");
     if (next === "finalizing") {
       timers.clear(runId, "queued");
       timers.clear(runId, "run");
       timers.set(runId, "finalizing", timeouts.finalizingMs, () => {
         void api.signal(runId, { kind: "final_timeout" });
       });
-    } else if (prev === "queued" && next !== "queued") {
+      return;
+    }
+    if (next === "awaiting_approval") {
+      // 대기 중에는 Gateway 가 아무 신호도 보내지 않는다(스파이크 6.3) — 무응답 시계를 멈추고 승인 만료만 감시한다
       timers.clear(runId, "queued");
-      timers.set(runId, "run", timeouts.runMs, () => {
-        void timeOut(runId, { kind: "run_timeout" });
-      });
+      timers.clear(runId, "run");
+      armApprovalWatchdog(runId);
+      return;
+    }
+    if ((prev === "queued" || prev === "awaiting_approval") && next !== "queued") {
+      timers.clear(runId, "queued");
+      armRunTimer(runId);
+    }
+  }
+
+  /**
+   * 런이 끝난다 — 남은 승인을 닫는다. **terminal 전이 전에** 불러야 APPROVAL_RESOLVED 가 타임라인에 남는다
+   * (applyRunEvent 가 종료된 런의 이벤트를 드롭한다 — p2-t4 리뷰 이월 5).
+   */
+  function cancelApprovals(runId: string): void {
+    try {
+      deps.approvals?.cancelForRun(runId, "run-aborted");
+    } catch (err) {
+      logger.error({ err, runId }, "approval cancel on run end failed");
     }
   }
 
@@ -376,6 +435,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     const ts = now();
     const started = prev === "queued" && STARTED.has(next);
     const terminal = TERMINAL_STATUSES.has(next);
+    if (terminal) cancelApprovals(runId); // 전이 전에 — 종료된 런의 이벤트는 드롭된다
     const { updated, events } = db.transaction((tx) => {
       const updated = store.updateRun(tx, runId, {
         status: next,
