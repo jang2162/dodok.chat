@@ -8,6 +8,8 @@ import { Button } from "@/ui/button";
  * 연결 문제 배너(스펙 6.5·8장) — wire 자체와 OpenClaw 연결, 둘은 함께 보일 수 있다.
  * wire 는 `reconnecting` 만 끊김으로 본다(`offline` 은 이쪽에서 끊은 것이라 머물지 않는다).
  * `protocol_mismatch`·`rejected` 는 재연결을 멈춘 상태라 사용자가 할 일을 알린다.
+ * OpenClaw 배너는 점(ConnectionDots)과 같은 규칙을 따른다 — wire 가 끊기면 `adapter.status` 가 더는 오지 않아
+ * 마지막 값이 남으므로 「모름」으로 보고 띄우지 않는다. 그 사정은 끊김 배너가 이미 알린다(브라우저 재검증 걱정 3).
  * 라이브 영역(alert — 할 일이 있는 것, status — 기다리면 되는 것)은 비어 있는 채로 늘 두고 안의 배너만 바꾼다 —
  * 새로 끼운 라이브 영역은 스크린 리더가 놓칠 수 있다. 두 wire 상태는 함께 올 수 없어 alert 를 위에 두어도 순서가 같다
  */
@@ -15,7 +17,9 @@ export function Banners() {
   const wire = useWireStatus((s) => s.status);
   const { data: adapter } = useAdapterStatus();
   const openclawDown =
-    adapter !== undefined && (adapter.gateway !== "connected" || adapter.bridge === "down");
+    wire === "connected" &&
+    adapter !== undefined &&
+    (adapter.gateway !== "connected" || adapter.bridge === "down");
 
   return (
     <>

@@ -131,7 +131,7 @@ describe("Banners", () => {
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
-  it("Gateway ≠ connected 또는 플러그인 down 이면 OpenClaw 배너 — wire 끊김과 함께면 둘 다", async () => {
+  it("Gateway ≠ connected 또는 플러그인 down 이면 OpenClaw 배너", async () => {
     const { push } = renderWithAdapter(<Banners />, { gateway: "reconnecting", bridge: "connected" });
     expect(await screen.findByText(OPENCLAW_DOWN)).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent(OPENCLAW_DOWN);
@@ -141,14 +141,22 @@ describe("Banners", () => {
 
     push({ gateway: "connected", bridge: "down" });
     expect(await screen.findByText(OPENCLAW_DOWN)).toBeInTheDocument();
+  });
 
-    push({ gateway: "connected", bridge: "connected" });
-    await waitFor(() => expect(screen.queryByText(OPENCLAW_DOWN)).not.toBeInTheDocument());
-    push({ gateway: "down", bridge: "connected" });
-    setWire("reconnecting");
+  it("wire 가 끊기면 OpenClaw 배너를 띄우지 않는다 — 마지막 값은 「모름」이고 끊김 배너가 사정을 알린다(점과 같은 규칙)", async () => {
+    const { push } = renderWithAdapter(<Banners />, { gateway: "down", bridge: "connected" });
     expect(await screen.findByText(OPENCLAW_DOWN)).toBeInTheDocument();
-    expect(screen.getByText(WIRE_RECONNECTING)).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent(`${WIRE_RECONNECTING}${OPENCLAW_DOWN}`);
+
+    setWire("reconnecting");
+    expect(screen.queryByText(OPENCLAW_DOWN)).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(WIRE_RECONNECTING);
+    // 끊긴 동안 들어온 값도 믿지 않는다
+    push({ gateway: "connected", bridge: "down" });
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(WIRE_RECONNECTING));
+    expect(screen.queryByText(OPENCLAW_DOWN)).not.toBeInTheDocument();
+
+    setWire("connected");
+    expect(await screen.findByText(OPENCLAW_DOWN)).toBeInTheDocument();
   });
 });
 

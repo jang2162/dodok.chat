@@ -22,6 +22,12 @@ import { useTimeline } from "./useTimeline";
 
 /** 하단에서 이만큼 안이면 「맨 아래에 붙어 있다」 — 새 행을 따라간다(스펙 5.5) */
 const STICK_PX = 80;
+/** 첫 붙임 — 총 높이가 이만큼 연속 프레임 그대로면 측정이 끝난 것으로 본다 */
+const SETTLE_FRAMES = 3;
+/** 그래도 이 시간을 넘기면 놓는다 — 끝없이 붙들지 않는다 */
+const SETTLE_MAX_MS = 1_000;
+/** 이 중 하나라도 오면 사용자가 스크롤을 잡은 것이다 — 첫 붙임을 그만둔다 */
+const HANDS_ON = ["wheel", "touchstart", "keydown", "pointerdown"] as const;
 const NO_RUNS: readonly string[] = [];
 const DAY = new Intl.DateTimeFormat("ko-KR", { dateStyle: "full" });
 
@@ -66,12 +72,56 @@ function ChannelMessages({ channelId, bubbleRunIds = NO_RUNS, bubbles, initialRe
   const unseen = useUnseen(timeline, stuck);
   const older = useOlderPages(channelId);
 
-  // 처음(캐시가 있으면 마운트 때, 없으면 첫 응답 때) 맨 아래로
+  // 처음(캐시가 있으면 마운트 때, 없으면 첫 응답 때) 맨 아래로.
+  // 한 번 겨누고 마는 것으로는 모자란다 — 행은 추정 높이(64)로 먼저 잡혔다가 그 뒤에 실제로 재어지는데,
+  // 겨누기는 맞게 되고 그 다음 프레임에 도로 맨 위로 떨어진다. 브라우저에서 잰 것(80건 채널, 뷰포트 658):
+  // scrollToEnd 직후 scrollTop 4526/총 5184 → 다음 프레임 0/4029. 줄어든 만큼(−1155)이 아니라 0 이 된다 —
+  // virtual-core 가 줄어든 총 높이를 보정할 때 아직 한 번도 못 본 스크롤 오프셋(0)에서 빼는 것으로 보인다.
+  // 그래서 총 높이가 잦아들 때까지 프레임마다 끝에 다시 붙인다. 사용자가 손을 대면 그 자리에서 멈춘다 —
+  // 스스로 위로 올린 사람을 끌어내리지 않는다(스펙 5.5: 맨 아래에 붙어 있을 때만 따라간다)
   const positioned = useRef(false);
+  /** 첫 붙임을 놓을 시각(performance.now 기준). 0 이면 끝났거나 사용자가 잡았다 — 효과가 다시 돌아도 되살아나지 않는다 */
+  const settleUntil = useRef(0);
   useLayoutEffect(() => {
-    if (positioned.current || rows.length === 0) return;
-    positioned.current = true;
-    virtualizer.scrollToEnd();
+    const el = scrollRef.current;
+    const win = el?.ownerDocument.defaultView;
+    if (!el || !win || rows.length === 0) return;
+    const pin = () => {
+      el.scrollTop = el.scrollHeight - el.clientHeight;
+    };
+    if (!positioned.current) {
+      positioned.current = true;
+      virtualizer.scrollToEnd();
+      pin();
+      settleUntil.current = win.performance.now() + SETTLE_MAX_MS;
+    }
+    if (settleUntil.current <= win.performance.now()) return;
+    let raf = 0;
+    let stableFrames = 0;
+    let lastHeight = el.scrollHeight;
+    const stop = () => {
+      win.cancelAnimationFrame(raf);
+      for (const type of HANDS_ON) el.removeEventListener(type, handsOn);
+    };
+    /** 사용자가 스크롤을 잡았다 — 다시 붙이지 않는다 */
+    function handsOn() {
+      settleUntil.current = 0;
+      stop();
+    }
+    const tick = () => {
+      if (win.performance.now() > settleUntil.current) return stop();
+      stableFrames = el.scrollHeight === lastHeight ? stableFrames + 1 : 0;
+      lastHeight = el.scrollHeight;
+      pin();
+      if (stableFrames >= SETTLE_FRAMES) {
+        settleUntil.current = 0;
+        return stop();
+      }
+      raf = win.requestAnimationFrame(tick);
+    };
+    raf = win.requestAnimationFrame(tick);
+    for (const type of HANDS_ON) el.addEventListener(type, handsOn, { passive: true });
+    return stop;
   }, [rows.length, virtualizer]);
 
   // 내가 보낸 항목이 붙으면 위를 보고 있었어도 끝으로

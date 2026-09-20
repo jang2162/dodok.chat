@@ -9,7 +9,7 @@ import { registerUnauthorized } from "@/app/session";
 import { updateTimeline } from "@/realtime/timelineCache";
 import { AGENT, CH, CH2, msg, RUN } from "../../../test/fixtures";
 import { authorsClient, renderWithClient } from "../../../test/messages";
-import { stubScrollLayout } from "../../../test/scrollLayout";
+import { remeasureRows, stubScrollLayout } from "../../../test/scrollLayout";
 import { MessageList } from "./MessageList";
 import { useTimeline } from "./useTimeline";
 import { addPending, emptyTimeline, type Timeline, upsert } from "./timeline";
@@ -46,9 +46,10 @@ function setup(t: Timeline | undefined, channelId = CH) {
   if (t) qc.setQueryData(qk.timeline(channelId), t);
   const view = renderWithClient(<MessageList channelId={channelId} initialRect={RECT} />, qc);
   const scroller = () => view.container.querySelector<HTMLElement>("[data-scroller]") as HTMLElement;
-  /** 사용자가 그 자리로 스크롤한 것처럼 — scrollTop 을 바꾸고 scroll 이벤트가 처리될 때까지 */
+  /** 사용자가 그 자리로 스크롤한 것처럼 — 손을 댔다는 신호(휠)와 scrollTop 을 함께, scroll 이벤트가 처리될 때까지 */
   const scrollTo = async (top: number) => {
     await act(async () => {
+      scroller().dispatchEvent(new Event("wheel"));
       scroller().scrollTop = top;
       await new Promise((r) => setTimeout(r, 10));
     });
@@ -79,6 +80,38 @@ describe("MessageList", () => {
     await waitFor(() => expect(atEnd()).toBe(true));
     expect(screen.queryByText("본문 1")).toBeNull();
     expect(screen.getAllByRole("article").length).toBeLessThan(40);
+  });
+
+  it("첫 진입에서 겨눈 뒤에 행이 다시 재어져 총 높이가 줄어도 맨 아래에 남는다", async () => {
+    // 행은 추정 높이(64)로 먼저 잡혔다 실제로 재어진다 — 실물에서는 그 순간 겨눈 자리가 맨 위로 떨어졌다
+    restore();
+    let measured = ROW;
+    restore = stubScrollLayout({ ...RECT, rowHeight: () => measured });
+    const { atEnd, scroller } = setup(timelineOf(range(1, 60)));
+    await waitFor(() => expect(atEnd()).toBe(true));
+    const tall = scroller().scrollHeight;
+
+    measured = 28;
+    await act(async () => {
+      remeasureRows();
+      await new Promise((r) => setTimeout(r, 200));
+    });
+    expect(scroller().scrollHeight).toBeLessThan(tall);
+    expect(atEnd()).toBe(true);
+    expect(screen.getByText("본문 60")).toBeInTheDocument();
+  });
+
+  it("첫 붙임 중에 사용자가 위로 올리면 다시 끌어내리지 않는다", async () => {
+    const { scroller, atEnd } = setup(timelineOf(range(1, 60)));
+    await waitFor(() => expect(atEnd()).toBe(true));
+    // 휠 = 사용자가 스크롤을 잡았다는 신호. 그 뒤로는 첫 붙임이 그 자리를 건드리지 않는다
+    await act(async () => {
+      scroller().dispatchEvent(new Event("wheel"));
+      scroller().scrollTop = 200;
+      await new Promise((r) => setTimeout(r, 200));
+    });
+    expect(scroller().scrollTop).toBe(200);
+    expect(atEnd()).toBe(false);
   });
 
   it("맨 아래에 붙어 있으면 새 메시지가 오면 끝으로 따라가고, 칩은 잠깐도 뜨지 않는다", async () => {
