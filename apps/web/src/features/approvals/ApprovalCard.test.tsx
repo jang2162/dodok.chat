@@ -185,8 +185,14 @@ describe("ApprovalCard", () => {
     expect(screen.getByText("시간이 지나 답할 수 없습니다.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "이번만 허용" })).not.toBeInTheDocument();
 
-    // 서버가 「취소됨」으로 닫으면 클라이언트 시계가 그린 「만료됨」을 덮는다
-    act(() => useApprovalStore.getState().apply(approval({ status: "cancelled", reason: "run-aborted" })));
+    // 서버가 「취소됨」으로 닫으면 클라이언트 시계가 그린 「만료됨」을 덮는다.
+    // expiresAt 을 같은 값으로 고정해 **클라이언트 시계로는 여전히 만료인 채**로 확정을 넣는다 —
+    // 픽스처 기본값(TS+120초)을 그대로 실으면 만료가 아니게 되어 「서버가 이긴다」를 재지 못한다
+    act(() =>
+      useApprovalStore
+        .getState()
+        .apply(approval({ status: "cancelled", reason: "run-aborted", expiresAt: iso(NOW + 3_000) })),
+    );
     expect(screen.getByText("취소됨 (실행 중지)")).toBeInTheDocument();
     expect(screen.queryByText("만료됨")).not.toBeInTheDocument();
   });
@@ -202,6 +208,18 @@ describe("ApprovalCard", () => {
 
     await user.click(button("인자 접기"));
     expect(screen.queryByText(/"path"/)).not.toBeInTheDocument();
+  });
+
+  it("인자는 글자 그대로 — 태그가 들어 있어도 HTML 로 해석하지 않는다", async () => {
+    const user = userEvent.setup();
+    const injected = '{"path":"<img src=x onerror=1>"}';
+    const { container } = renderCard(approval({ description: injected, detail: undefined }));
+
+    await user.click(button("인자 보기"));
+
+    // 태그 그대로 텍스트로 보이고, DOM 에 element 는 생기지 않는다
+    expect(screen.getByText(injected)).toBeInTheDocument();
+    expect(container.querySelector("img")).toBeNull();
   });
 
   it("긴 판(detail)이 있으면 그것을 펼치고, 인자가 아예 없으면 펼칠 것도 없다", async () => {

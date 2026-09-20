@@ -1,3 +1,4 @@
+import type { Approval, ApprovalStatus } from "@dodok/shared";
 import { beforeEach, describe, expect, it } from "vitest";
 import { AGENT, APPROVAL, APPROVAL2, CH, CH2, RUN, RUN2, approval, uid } from "../../../test/fixtures";
 import {
@@ -14,13 +15,18 @@ const view = (id = APPROVAL, channelId = CH) => cards(channelId)[id];
 beforeEach(() => store().reset());
 
 describe("승인 스토어", () => {
-  it("나중에 온 사실이 이긴다 — 확정 뒤 pending 은 무시", () => {
+  // 확정 넷 전부 — 늦게 온 요구 프레임이 어느 확정도 되살리지 못한다(SETTLED 전체를 잠근다)
+  it.each<[ApprovalStatus, Partial<Approval>]>([
+    ["allowed", { decision: "allow-once", reason: "user", decidedBy: AGENT }],
+    ["denied", { decision: "deny", reason: "user", decidedBy: AGENT }],
+    ["expired", { decision: "deny", reason: "timeout" }],
+    ["cancelled", { reason: "run-aborted" }],
+  ])("나중에 온 사실이 이긴다 — %s 로 확정된 뒤 온 pending 은 무시", (status, settled) => {
     store().apply(approval({ status: "pending" }));
-    store().apply(approval({ status: "allowed", decision: "allow-once", reason: "user", decidedBy: AGENT }));
+    store().apply(approval({ status, ...settled }));
     store().apply(approval({ status: "pending" }));
 
-    expect(view()?.approval.status).toBe("allowed");
-    expect(view()?.approval.decision).toBe("allow-once");
+    expect(view()?.approval).toMatchObject({ status, ...settled });
   });
 
   it("확정은 통째로 나중 것이 이긴다 — 허용 뒤 취소가 오면 앞 결정이 남지 않는다", () => {
@@ -40,11 +46,31 @@ describe("승인 스토어", () => {
     expect(view()?.approval).toMatchObject({ toolCallId: "toolu_77", urlPath: "/approve/abc" });
   });
 
-  it("병합은 이미 아는 값을 덮지 않는다 — 빈 자리만 메운다", () => {
-    store().apply(approval({ toolCallId: "toolu_first", runId: RUN, detail: "긴 인자" }));
-    store().apply(approval({ toolCallId: "toolu_second", runId: RUN2, detail: undefined }));
+  it("병합은 이미 아는 값을 덮지 않는다 — 빈 자리만 메운다(FILLABLE 전부)", () => {
+    // 뒤 프레임이 같은 자리에 **다른 값**을 싣고 와도 앞엣것이 남는다 — 확정 값(outcome)만 뒤엣것이 이긴다
+    const first = {
+      toolCallId: "toolu_first",
+      runId: RUN,
+      detail: "긴 인자",
+      description: "짧은 인자",
+      toolName: "Write",
+      pluginId: "claude-cli",
+      urlPath: "/approve/first",
+    };
+    store().apply(approval(first));
+    store().apply(
+      approval({
+        toolCallId: "toolu_second",
+        runId: RUN2,
+        detail: undefined,
+        description: "뒤에 온 인자",
+        toolName: "Bash",
+        pluginId: "other-plugin",
+        urlPath: "/approve/second",
+      }),
+    );
 
-    expect(view()?.approval).toMatchObject({ toolCallId: "toolu_first", runId: RUN, detail: "긴 인자" });
+    expect(view()?.approval).toMatchObject(first);
   });
 
   it("mergeApproval: 앞이 없으면 그대로", () => {

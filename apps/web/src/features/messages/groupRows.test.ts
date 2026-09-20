@@ -156,6 +156,19 @@ describe("groupRows 승인 행", () => {
     ]);
   });
 
+  it("확정 승인이 날짜 경계 사이에 있어도 그 날의 구분선은 남는다", () => {
+    // 승인 행이 묶음을 끊느라 prev 를 버리므로, 구분선 조건이 prev 를 보면 1/16 구분선이 통째로 사라진다
+    const items = [msg(5, at("2027-01-15T08:00:00Z")), msg(6, at("2027-01-16T08:00:00Z"))];
+    const between = approval({ status: "allowed", createdAt: "2027-01-15T09:00:00.000Z" });
+
+    expect(groupRows(timeline({ items, hasOlder: true }), [], [between], TZ).map((r) => r.key)).toEqual([
+      `msg:${items[0]?.id}`,
+      `approval:${APPROVAL}`,
+      "date:2027-01-16",
+      `msg:${items[1]?.id}`,
+    ]);
+  });
+
   it("승인이 없으면 행도 없다", () => {
     const items = [msg(1, at("2027-01-15T08:00:00Z"))];
     expect(kinds(groupRows(timeline({ items }), [], [], TZ))).toEqual(["divider", "message"]);

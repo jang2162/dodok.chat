@@ -8,7 +8,7 @@ import { emitAck, useWireStatus, WireAckError } from "@/realtime/wire";
 import { useWire } from "@/realtime/WireProvider";
 import { Button } from "@/ui/button";
 import { useApprovalStore } from "./approvalStore";
-import { useRemaining } from "./countdown";
+import { EXPIRED_LABEL, useRemaining } from "./countdown";
 
 /** 버튼 차례와 글. `allowedDecisions` 에 있는 것만 그린다 — 목록 밖 값은 Gateway 가 조용히 거절로 확정한다(스파이크 4.4) */
 const DECISIONS = [
@@ -131,7 +131,7 @@ export function ApprovalCard({
             </div>
             {/* 카운트다운은 1초마다 바뀐다 — 라이브 영역으로 두면 스크린 리더가 매초 읽는다 */}
             <span className="shrink-0 pt-0.5 text-xs text-muted-foreground tabular-nums">
-              {outcome ?? (expired ? "만료됨" : remaining && `${remaining} 남음`)}
+              {outcome ?? (expired ? EXPIRED_LABEL : remaining && `${remaining} 남음`)}
             </span>
           </div>
 
