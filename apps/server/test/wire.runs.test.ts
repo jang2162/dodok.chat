@@ -198,7 +198,7 @@ describe("wire 런 핸들러·REST 런 조회 (앱 부팅, FakeAdapter 배선)",
   it("approval.resolve 는 어댑터가 있어도 ADAPTER_UNAVAILABLE(Phase 2), channel.subscribe 는 진행 중 런을 싣는다", async () => {
     const socket = await connect();
     expect(
-      await socket.emitWithAck("approval.resolve", { approvalId: uuid(), decision: "approve" }),
+      await socket.emitWithAck("approval.resolve", { approvalId: uuid(), decision: "allow-once" }),
     ).toMatchObject({ ok: false, error: { code: "ADAPTER_UNAVAILABLE" } });
 
     const run = await mentionDev(socket);

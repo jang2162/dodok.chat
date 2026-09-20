@@ -1,6 +1,13 @@
 import { z } from "zod";
 import { Id, IsoDateTime } from "../common";
-import { ApprovalKind, RunState, RunUsage } from "../domain";
+import {
+  ApprovalDecision,
+  ApprovalKind,
+  ApprovalReason,
+  ApprovalSeverity,
+  RunState,
+  RunUsage,
+} from "../domain";
 
 const base = { runId: Id, seq: z.int().min(1), ts: IsoDateTime };
 
@@ -62,12 +69,17 @@ export const RunEvent = z.discriminatedUnion("type", [
   ev("APPROVAL_REQUESTED", {
     approvalId: Id,
     kind: ApprovalKind,
-    summary: z.string(),
-    expiresAt: IsoDateTime.optional(),
+    title: z.string().max(200),
+    severity: ApprovalSeverity,
+    allowedDecisions: z.array(ApprovalDecision).min(1),
+    toolCallId: z.string().max(200).optional(),
+    expiresAt: IsoDateTime,
   }),
+  // 만료는 따로 두지 않는다 — Gateway 가 주는 대로 decision "deny" + reason "timeout" 으로 정규화한다(스파이크 5.2)
   ev("APPROVAL_RESOLVED", {
     approvalId: Id,
-    decision: z.enum(["approved", "denied", "expired"]),
+    decision: ApprovalDecision,
+    reason: ApprovalReason,
     decidedBy: Id.optional(),
   }),
   // 미분류
@@ -85,7 +97,7 @@ export type RunSignal =
   | { kind: "tool_start" }
   | { kind: "tool_end"; openTools: number }
   | { kind: "approval_requested" }
-  | { kind: "approval_resolved" }
+  | { kind: "approval_resolved"; decision: ApprovalDecision } // 거절이면 곧바로 tool 로 돌아가 오류 결과를 기다린다
   | { kind: "gateway_final" } // chat state: final
   | { kind: "canonical_received" } // 브리지 outbound.message 도착
   | { kind: "final_timeout" } // finalizing 상한(기본 10s)

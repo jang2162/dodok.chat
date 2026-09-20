@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { RUN_EVENT_TYPES, RunEvent } from "../src/events";
 
 const RUN = "01a09fc9-d204-7551-89d6-38544d07a101";
+const AP = "01a09fc9-d204-7551-89d6-38544d07a105";
 const base = { runId: RUN, seq: 1, ts: "2026-09-14T00:00:00Z" };
 
 describe("RunEvent", () => {
@@ -57,12 +58,17 @@ describe("RunEvent", () => {
     { type: "SUBAGENT_FINISHED", subagentRunId: "01a09fc9-d204-7551-89d6-38544d07a104" },
     { type: "SUBAGENT_ERROR", subagentRunId: "01a09fc9-d204-7551-89d6-38544d07a104", message: "x" },
     {
+      // 승인 스파이크 3.2 의 원본 프레임 값
       type: "APPROVAL_REQUESTED",
-      approvalId: "01a09fc9-d204-7551-89d6-38544d07a105",
-      kind: "exec",
-      summary: "rm -rf",
+      approvalId: AP,
+      kind: "plugin",
+      title: "claude-cli native tool: Write",
+      severity: "warning",
+      allowedDecisions: ["allow-once", "deny"],
+      toolCallId: "toolu_018ohZoiNMZwidAe7fWsWSam",
+      expiresAt: "2026-09-20T09:51:47.988Z",
     },
-    { type: "APPROVAL_RESOLVED", approvalId: "01a09fc9-d204-7551-89d6-38544d07a105", decision: "approved" },
+    { type: "APPROVAL_RESOLVED", approvalId: AP, decision: "allow-once", reason: "user" },
     { type: "CUSTOM", name: "openclaw.agent.lifecycle", value: { phase: "start" } },
     { type: "CUSTOM", name: "openclaw.agent.lifecycle" },
   ])("$type 파싱", (payload) => {
@@ -79,6 +85,37 @@ describe("RunEvent", () => {
       hasCanonical: false,
     };
     expect(RunEvent.safeParse({ ...base, type: "STATE_SNAPSHOT", snapshot }).success).toBe(true);
+  });
+
+  it("APPROVAL_RESOLVED 는 decision 과 reason 을 함께 싣는다(만료는 deny + timeout)", () => {
+    const e = RunEvent.parse({
+      ...base,
+      type: "APPROVAL_RESOLVED",
+      approvalId: AP,
+      decision: "deny",
+      reason: "timeout",
+    });
+    expect(e.type === "APPROVAL_RESOLVED" && e.reason).toBe("timeout");
+  });
+
+  it("승인 이벤트는 옛 결정 값과 빠진 필드를 거부한다", () => {
+    const resolved = { ...base, type: "APPROVAL_RESOLVED", approvalId: AP };
+    expect(RunEvent.safeParse({ ...resolved, decision: "approved", reason: "user" }).success).toBe(false);
+    expect(RunEvent.safeParse({ ...resolved, decision: "deny" }).success).toBe(false); // reason 필수
+    const requested = {
+      ...base,
+      type: "APPROVAL_REQUESTED",
+      approvalId: AP,
+      kind: "plugin",
+      title: "claude-cli native tool: Write",
+      severity: "warning",
+      allowedDecisions: ["allow-once", "deny"],
+    };
+    expect(RunEvent.safeParse(requested).success).toBe(false); // expiresAt 필수
+    expect(
+      RunEvent.safeParse({ ...requested, expiresAt: "2026-09-20T09:51:47.988Z", allowedDecisions: [] })
+        .success,
+    ).toBe(false);
   });
 
   it("모르는 type, seq 0, 빈 delta는 거부", () => {

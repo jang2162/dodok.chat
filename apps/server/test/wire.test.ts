@@ -437,12 +437,16 @@ describe("wire (attachWire 단독 — route·runs 주입)", () => {
       }),
     ).toMatchObject(unavailable);
     expect(
-      await socket.emitWithAck("approval.resolve", { approvalId: uuid(), decision: "approve" }),
+      await socket.emitWithAck("approval.resolve", { approvalId: uuid(), decision: "allow-once" }),
     ).toMatchObject(unavailable);
     expect(await socket.emitWithAck("run.abort", { runId: "x" } as never)).toMatchObject({
       ok: false,
       error: { code: "VALIDATION" },
     });
+    // 옛 결정 값은 경계에서 막힌다 — Gateway 로 넘어가면 조용히 거절로 확정된다(승인 스파이크 4.4)
+    expect(
+      await socket.emitWithAck("approval.resolve", { approvalId: uuid(), decision: "approve" } as never),
+    ).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
   });
 
   it("message.send — 저장 뒤 ack 가 route 를 기다리지 않고, route 는 새 메시지에만 한 번", async () => {

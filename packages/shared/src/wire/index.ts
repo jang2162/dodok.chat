@@ -1,7 +1,15 @@
 import { z } from "zod";
 import type { Ack } from "../common";
 import { Id } from "../common";
-import { AgentProvider, Approval, type Channel, type ChannelMember, Message, RunState } from "../domain";
+import {
+  AgentProvider,
+  Approval,
+  ApprovalDecision,
+  type Channel,
+  type ChannelMember,
+  Message,
+  RunState,
+} from "../domain";
 import { RunEvent } from "../events";
 
 // ── 클라이언트 → 서버 (ack 있음) ──
@@ -41,11 +49,9 @@ export const ComponentInteract = z.object({
 });
 export type ComponentInteract = z.infer<typeof ComponentInteract>;
 
-export const ApprovalResolve = z.object({
-  approvalId: Id,
-  decision: z.enum(["approve", "deny"]),
-  note: z.string().max(500).optional(),
-});
+// 서버가 그 승인의 allowedDecisions 안인지 먼저 검증한 뒤에만 Gateway 로 보낸다(스파이크 4.4).
+// note 는 Gateway 가 받지 않는다 — 두지 않는다.
+export const ApprovalResolve = z.object({ approvalId: Id, decision: ApprovalDecision });
 export type ApprovalResolve = z.infer<typeof ApprovalResolve>;
 
 export const Typing = z.object({ channelId: Id });

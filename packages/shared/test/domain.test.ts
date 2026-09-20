@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   Approval,
+  ApprovalDecision,
+  ApprovalKind,
+  ApprovalReason,
+  ApprovalStatus,
   Channel,
   Handle,
   Message,
@@ -159,16 +163,80 @@ describe("Run", () => {
 });
 
 describe("Approval", () => {
-  it("pending 승인을 파싱한다", () => {
+  // 승인 스파이크 3.2 의 plugin.approval.requested 원본 프레임(런 1, Write 툴)에서 그대로 옮긴 값.
+  const REQUESTED = {
+    id: ID(1),
+    providerApprovalId: "plugin:533fe246-fa79-4f86-bcd0-3c08b549cb20",
+    kind: "plugin",
+    channelId: ID(2),
+    agentId: ID(3),
+    toolCallId: "toolu_018ohZoiNMZwidAe7fWsWSam",
+    toolName: "Write",
+    pluginId: "claude-cli",
+    title: "claude-cli native tool: Write",
+    description: '{"file_path":"/tmp/spike-approval.txt","content":"hello\\n"}',
+    detail: '{"file_path":"/tmp/spike-approval.txt","content":"hello\\n"}',
+    severity: "warning",
+    allowedDecisions: ["allow-once", "deny"],
+    urlPath: "/approve/plugin%3A533fe246-fa79-4f86-bcd0-3c08b549cb20",
+    status: "pending",
+    createdAt: "2026-09-20T09:49:47.988Z",
+    expiresAt: "2026-09-20T09:51:47.988Z", // createdAt + 120초 — Gateway plugin 승인 기본 TTL
+  };
+
+  it("실물 승인 프레임의 값을 받고, runId 는 없다(sessionKey+toolCallId 로 런에 붙인다)", () => {
+    const a = Approval.parse(REQUESTED);
+    expect(a.runId).toBeUndefined();
+    expect(a.allowedDecisions).toEqual(["allow-once", "deny"]);
+    expect(a.toolCallId).toBe("toolu_018ohZoiNMZwidAe7fWsWSam");
+    expect(a.severity).toBe("warning");
+  });
+
+  it("expiresAt 은 필수(카운트다운의 근거), allowedDecisions 는 1개 이상", () => {
+    expect(Approval.safeParse({ ...REQUESTED, expiresAt: undefined }).success).toBe(false);
+    expect(Approval.safeParse({ ...REQUESTED, allowedDecisions: [] }).success).toBe(false);
+  });
+
+  it("확정된 승인은 decision·reason·decidedBy·decidedAt 을 싣는다", () => {
     const a = Approval.parse({
-      id: ID(1),
-      runId: ID(2),
-      providerApprovalId: "ap_1",
-      kind: "exec",
-      summary: "rm -rf build",
-      status: "pending",
-      createdAt: NOW,
+      ...REQUESTED,
+      status: "allowed",
+      decision: "allow-once",
+      reason: "user",
+      decidedBy: ID(4),
+      decidedAt: "2026-09-20T09:49:50.009Z",
     });
-    expect(a.status).toBe("pending");
+    expect(a.status).toBe("allowed");
+    expect(a.decision).toBe("allow-once");
+    expect(a.reason).toBe("user");
+  });
+
+  it("만료는 expired+timeout, 런 중단은 cancelled+run-aborted", () => {
+    const expired = Approval.parse({ ...REQUESTED, status: "expired", decision: "deny", reason: "timeout" });
+    expect(expired.reason).toBe("timeout");
+    const cancelled = Approval.parse({ ...REQUESTED, status: "cancelled", reason: "run-aborted" });
+    expect(cancelled.status).toBe("cancelled");
+  });
+
+  it("Gateway 에 없는 옛 값은 거부한다", () => {
+    expect(ApprovalStatus.safeParse("approved").success).toBe(false); // → allowed
+    expect(ApprovalKind.safeParse("generic").success).toBe(false); // → system-agent
+    expect(ApprovalDecision.safeParse("approve").success).toBe(false); // → allow-once
+    expect(Approval.safeParse({ ...REQUESTED, status: "approved" }).success).toBe(false);
+  });
+
+  it("열거값 목록은 Gateway 실물 그대로", () => {
+    expect(ApprovalKind.options).toEqual(["exec", "plugin", "system-agent"]);
+    expect(ApprovalStatus.options).toEqual(["pending", "allowed", "denied", "expired", "cancelled"]);
+    expect(ApprovalDecision.options).toEqual(["allow-once", "allow-always", "deny"]);
+    expect(ApprovalReason.options).toEqual([
+      "user",
+      "timeout",
+      "malformed-verdict",
+      "no-route",
+      "run-aborted",
+      "gateway-restart",
+      "storage-corrupt",
+    ]);
   });
 });

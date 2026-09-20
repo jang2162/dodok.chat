@@ -38,8 +38,10 @@ const cases: Case[] = [
   ["tool", false, { kind: "approval_requested" }, "awaiting_approval"],
   ["finalizing", false, { kind: "approval_requested" }, null],
   ["finalizing", true, { kind: "approval_requested" }, null],
-  ["awaiting_approval", false, { kind: "approval_resolved" }, "streaming"],
-  ["streaming", false, { kind: "approval_resolved" }, null],
+  // decision 은 아직 전이를 가르지 않는다 — 거절도 런은 툴 오류로 이어진다(스파이크 4.3)
+  ["awaiting_approval", false, { kind: "approval_resolved", decision: "allow-once" }, "streaming"],
+  ["awaiting_approval", false, { kind: "approval_resolved", decision: "deny" }, "streaming"],
+  ["streaming", false, { kind: "approval_resolved", decision: "allow-once" }, null],
   // gateway_final
   ["queued", false, { kind: "gateway_final" }, "finalizing"],
   ["streaming", false, { kind: "gateway_final" }, "finalizing"],

@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { openFrameDump } from "../src/gateway/frame-dump";
+import { isDumpedEvent, openFrameDump } from "../src/gateway/frame-dump";
 import * as f from "./fixtures/gateway-events";
 
 const logger = () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() });
@@ -46,6 +46,43 @@ describe("openFrameDump — Gateway 원본 프레임 JSONL(usage 조사용, live
     dump.write(f.chatFinal("늦음"));
     await dump.close();
     expect(readLines(path)).toHaveLength(5);
+  });
+
+  it("승인 이벤트도 남긴다 — 정본(plugin.*)·세션 구독(session.approval) 양쪽 (스파이크 8.5)", async () => {
+    const path = join(dir, "frames.jsonl");
+    const dump = openFrameDump(path, logger());
+
+    dump.write(f.pluginApprovalRequested());
+    dump.write(f.sessionApproval()); // 같은 승인이 세션 경로로도 온다
+    dump.write(f.sessionsChanged()); // 승인과 무관한 이벤트는 여전히 거른다
+    dump.write(f.sessionApproval({ phase: "terminal" }));
+    dump.write(f.pluginApprovalResolved({ decision: "deny", resolvedBy: null })); // 만료의 모양
+    await dump.close();
+
+    const lines = readLines(path);
+    expect(lines.map((l) => l.frame.event)).toEqual([
+      "plugin.approval.requested",
+      "session.approval",
+      "session.approval",
+      "plugin.approval.resolved",
+    ]);
+    expect(lines[0]?.frame).toEqual(f.pluginApprovalRequested());
+    expect(lines[3]?.frame).toEqual(f.pluginApprovalResolved({ decision: "deny", resolvedBy: null }));
+  });
+
+  it("덤프 대상 판정 — 승인 이벤트 다섯은 참, 그 밖의 이벤트는 거짓", () => {
+    // exec 종류는 스파이크에서 관찰되지 않았지만(10.1) 이름은 같은 모양이라 미리 넣는다
+    for (const event of [
+      "session.approval",
+      "plugin.approval.requested",
+      "plugin.approval.resolved",
+      "exec.approval.requested",
+      "exec.approval.resolved",
+    ]) {
+      expect(isDumpedEvent(event)).toBe(true);
+    }
+    expect(isDumpedEvent("sessions.changed")).toBe(false);
+    expect(isDumpedEvent("approval")).toBe(false);
   });
 
   it("쓰기 오류(없는 디렉터리 등)는 warn 한 번 뒤 덤프를 끄고, write·close 는 던지지 않는다", async () => {

@@ -206,3 +206,117 @@ export function sessionsChanged(): EventFrame {
     1,
   );
 }
+
+// ── 승인 (승인 스파이크 3.2·3.3·3.4 의 원본 프레임. 워크스페이스 절대경로만 줄였다) ──
+
+export const APPROVAL_ID = "plugin:533fe246-fa79-4f86-bcd0-3c08b549cb20";
+export const APPROVAL_TOOL_CALL_ID = "toolu_018ohZoiNMZwidAe7fWsWSam";
+const APPROVAL_CREATED_MS = 1_789_897_787_988;
+const APPROVAL_EXPIRES_MS = 1_789_897_907_988; // +120s — Gateway plugin 승인 기본 TTL
+const APPROVAL_RESOLVED_MS = 1_789_897_790_009;
+const APPROVAL_ARGS = '{"file_path":"/tmp/spike-approval.txt","content":"hello\\n"}';
+
+type ApprovalOpts = FrameOpts & { id?: string };
+
+/** `plugin.approval.requested`·`plugin.approval.resolved` 가 함께 싣는 `request` 블록(3.2). */
+function approvalRequest(o: ApprovalOpts) {
+  const c = common(o);
+  return {
+    pluginId: "claude-cli",
+    title: "claude-cli native tool: Write",
+    description: APPROVAL_ARGS,
+    scope: null,
+    detail: APPROVAL_ARGS,
+    severity: "warning",
+    toolName: "Write",
+    toolCallId: APPROVAL_TOOL_CALL_ID,
+    allowedDecisions: ["allow-once", "deny"],
+    agentId: c.agentId,
+    sessionKey: c.sessionKey,
+    runId: null, // 승인 페이로드에 런 id 는 오지 않는다(3.2)
+    turnSourceChannel: null,
+    turnSourceTo: null,
+    turnSourceAccountId: null,
+    turnSourceThreadId: null,
+  };
+}
+
+export function pluginApprovalRequested(o: ApprovalOpts = {}): EventFrame {
+  return frame(
+    "plugin.approval.requested",
+    {
+      approvalKind: "plugin",
+      id: o.id ?? APPROVAL_ID,
+      request: approvalRequest(o),
+      createdAtMs: APPROVAL_CREATED_MS,
+      expiresAtMs: APPROVAL_EXPIRES_MS,
+    },
+    common(o).seq,
+  );
+}
+
+/** 만료는 `decision:"deny"` + `resolvedBy:null` 로 온다(5.2). */
+export function pluginApprovalResolved(
+  o: ApprovalOpts & { decision?: string; resolvedBy?: string | null } = {},
+): EventFrame {
+  return frame(
+    "plugin.approval.resolved",
+    {
+      id: o.id ?? APPROVAL_ID,
+      decision: o.decision ?? "allow-once",
+      resolvedBy: o.resolvedBy === undefined ? "dodok" : o.resolvedBy,
+      ts: APPROVAL_RESOLVED_MS,
+      request: approvalRequest(o),
+    },
+    common(o).seq,
+  );
+}
+
+/** 세션 구독(`includeApprovals`)에만 온다. `presentation` 에는 `toolCallId` 가 없다(3.3). */
+export function sessionApproval(
+  o: ApprovalOpts & {
+    phase?: "pending" | "terminal";
+    status?: string;
+    decision?: string;
+    reason?: string;
+  } = {},
+): EventFrame {
+  const c = common(o);
+  const id = o.id ?? APPROVAL_ID;
+  const terminal = (o.phase ?? "pending") === "terminal";
+  return frame(
+    "session.approval",
+    {
+      sessionKey: c.sessionKey,
+      sourceSessionKey: c.sessionKey,
+      updatedAtMs: terminal ? APPROVAL_RESOLVED_MS : APPROVAL_CREATED_MS,
+      phase: o.phase ?? "pending",
+      approval: {
+        id,
+        status: o.status ?? (terminal ? "allowed" : "pending"),
+        presentation: {
+          kind: "plugin",
+          title: "claude-cli native tool: Write",
+          description: APPROVAL_ARGS,
+          detail: APPROVAL_ARGS,
+          severity: "warning",
+          pluginId: "claude-cli",
+          toolName: "Write",
+          agentId: c.agentId,
+          allowedDecisions: ["allow-once", "deny"],
+        },
+        urlPath: `/approve/${encodeURIComponent(id)}`,
+        createdAtMs: APPROVAL_CREATED_MS,
+        expiresAtMs: APPROVAL_EXPIRES_MS,
+        ...(terminal
+          ? {
+              resolvedAtMs: APPROVAL_RESOLVED_MS,
+              reason: o.reason ?? "user",
+              decision: o.decision ?? "allow-once",
+            }
+          : {}),
+      },
+    },
+    c.seq,
+  );
+}

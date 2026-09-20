@@ -34,8 +34,15 @@ describe("wire schemas", () => {
       ComponentInteract.safeParse({ messageId: ID, componentId: "cmp_1", itemId: "go", values: "x" }).success,
     ).toBe(false);
   });
-  it("ApprovalResolve: approve|deny만", () => {
-    expect(ApprovalResolve.safeParse({ approvalId: ID, decision: "approve" }).success).toBe(true);
+  it("ApprovalResolve: Gateway 결정 값 셋만 받고 note 는 싣지 않는다", () => {
+    // Gateway 는 note 를 받지 않는다 — 넘어와도 버린다
+    expect(ApprovalResolve.parse({ approvalId: ID, decision: "allow-once", note: "무시" })).toEqual({
+      approvalId: ID,
+      decision: "allow-once",
+    });
+    expect(ApprovalResolve.safeParse({ approvalId: ID, decision: "allow-always" }).success).toBe(true);
+    expect(ApprovalResolve.safeParse({ approvalId: ID, decision: "deny" }).success).toBe(true);
+    expect(ApprovalResolve.safeParse({ approvalId: ID, decision: "approve" }).success).toBe(false);
     expect(ApprovalResolve.safeParse({ approvalId: ID, decision: "maybe" }).success).toBe(false);
   });
 });

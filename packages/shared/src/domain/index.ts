@@ -195,21 +195,50 @@ export const ComponentInteraction = z.object({
 });
 export type ComponentInteraction = z.infer<typeof ComponentInteraction>;
 
-export const ApprovalKind = z.enum(["exec", "plugin", "generic"]);
+// 승인 계약은 Gateway 실물에 맞춘다(승인 스파이크 3·4·5장, 설계 3.1). 값을 바꾸면 Gateway 가 조용히 거절로 확정한다.
+export const ApprovalKind = z.enum(["exec", "plugin", "system-agent"]);
 export type ApprovalKind = z.infer<typeof ApprovalKind>;
-export const ApprovalStatus = z.enum(["pending", "approved", "denied", "expired"]);
+/** `cancelled` 는 런 중단·Gateway 재기동. 만료는 `expired`(+ `reason: "timeout"`). */
+export const ApprovalStatus = z.enum(["pending", "allowed", "denied", "expired", "cancelled"]);
 export type ApprovalStatus = z.infer<typeof ApprovalStatus>;
+/** `approval.resolve` 가 받는 값 셋. 그 승인의 `allowedDecisions` 밖 값은 Gateway 가 `malformed-verdict` 거절로 확정한다(스파이크 4.4). */
+export const ApprovalDecision = z.enum(["allow-once", "allow-always", "deny"]);
+export type ApprovalDecision = z.infer<typeof ApprovalDecision>;
+export const ApprovalReason = z.enum([
+  "user",
+  "timeout",
+  "malformed-verdict",
+  "no-route",
+  "run-aborted",
+  "gateway-restart",
+  "storage-corrupt",
+]);
+export type ApprovalReason = z.infer<typeof ApprovalReason>;
+export const ApprovalSeverity = z.enum(["info", "warning", "critical"]);
+export type ApprovalSeverity = z.infer<typeof ApprovalSeverity>;
+
 export const Approval = z.object({
   id: Id,
-  runId: Id,
-  providerApprovalId: z.string(),
+  providerApprovalId: z.string().min(1).max(200), // "plugin:<uuid>" — 유일 인덱스
   kind: ApprovalKind,
-  summary: z.string().max(4000),
-  payload: z.record(z.string(), z.unknown()).optional(),
+  channelId: Id, // sessionKey 에서 푼다
+  agentId: Id,
+  runId: Id.optional(), // 승인 페이로드에 runId 가 없다 — sessionKey + toolCallId 로 런에 붙인다(스파이크 3.2)
+  toolCallId: z.string().max(200).optional(),
+  toolName: z.string().max(100).optional(),
+  pluginId: z.string().max(100).optional(),
+  title: z.string().min(1).max(200),
+  description: z.string().max(512).optional(), // 툴 인자 JSON 원문 — Gateway 가 380자 초과분을 잘라 준다
+  detail: z.string().max(16_384).optional(),
+  severity: ApprovalSeverity,
+  allowedDecisions: z.array(ApprovalDecision).min(1).max(3), // 이 목록대로만 버튼을 낸다
+  urlPath: z.string().max(500).optional(),
   status: ApprovalStatus,
-  decidedBy: Id.optional(),
+  decision: ApprovalDecision.optional(),
+  reason: ApprovalReason.optional(),
+  decidedBy: Id.optional(), // 우리 사용자 — 우리가 해결했을 때만
   decidedAt: IsoDateTime.optional(),
-  expiresAt: IsoDateTime.optional(),
+  expiresAt: IsoDateTime, // 카운트다운의 근거. plugin 기본 TTL 120초, 우리가 늘릴 수단이 없다
   createdAt: IsoDateTime,
 });
 export type Approval = z.infer<typeof Approval>;
