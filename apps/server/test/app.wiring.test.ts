@@ -214,6 +214,8 @@ describe("REST·wire 배선 (FakeAdapter)", () => {
     expect(app.orchestrator).toBe(app.services.orchestrator);
     expect(app.services.router.routeMessage).toEqual(expect.any(Function));
     expect(app.services.runs.activeRuns).toEqual(expect.any(Function));
+    expect(app.services.runs.pendingApprovals).toEqual(expect.any(Function));
+    expect(app.services.approvals.ingest).toEqual(expect.any(Function));
   });
 
   it("PATCH /channels/:id { prompt } 는 앱의 어댑터 syncChannelConfig 를 부른다", async () => {

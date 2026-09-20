@@ -5,6 +5,7 @@ import type { Db, DbOrTx } from "./db/client";
 import { agentSessions, agents } from "./db/schema.sqlite";
 import { apiError } from "./http/errors";
 import type { Logger } from "./logger";
+import { type ApprovalsService, createApprovalsService } from "./modules/approvals/service";
 import { interact } from "./modules/components/service";
 import { createRouter, type Router } from "./modules/router/service";
 import { createOrchestrator, type Orchestrator, type RunTimeouts } from "./modules/runs/orchestrator";
@@ -22,7 +23,12 @@ export type ServicesDeps = {
   timeouts?: Partial<RunTimeouts> | undefined;
 };
 
-export type Services = { router: Router; orchestrator: Orchestrator; runs: RunsFacade };
+export type Services = {
+  router: Router;
+  orchestrator: Orchestrator;
+  runs: RunsFacade;
+  approvals: ApprovalsService;
+};
 
 export type SessionRecoverTarget = ReturnType<
   NonNullable<OpenClawAdapterOptions["sessionKeysToRecover"]>
@@ -52,11 +58,22 @@ export function createServices(deps: ServicesDeps): Services {
   let orchestrator: Orchestrator;
   const enqueue: Orchestrator["enqueueRun"] = (plan, trigger) => orchestrator.enqueueRun(plan, trigger);
   const router = createRouter({ db, bus, logger, enqueue });
+  // 승인 서비스도 같은 방식으로 먼저 만든다 — 런 이벤트·신호를 오케스트레이터로 되돌려 보내고,
+  // 오케스트레이터는 어댑터 승인 이벤트를 이 서비스로 넘긴다(서로가 서로를 부른다)
+  const approvals = createApprovalsService({
+    db,
+    bus,
+    logger,
+    provider: adapter.provider,
+    onSignal: (runId, signal) => void orchestrator.signal(runId, signal),
+    appendEvent: (runId, event) => void orchestrator.applyRunEvent(runId, event),
+  });
   orchestrator = createOrchestrator({
     db,
     bus,
     adapter,
     logger,
+    approvals,
     timeouts: deps.timeouts,
     onAgentMessage: (message) => router.routeMessage(message),
   });
@@ -69,6 +86,7 @@ export function createServices(deps: ServicesDeps): Services {
 
   const runs: RunsFacade = {
     activeRuns: (channelId) => orchestrator.activeRuns(channelId),
+    pendingApprovals: (channelId) => approvals.pendingForChannel(channelId),
     async abort(runId, userId) {
       visibleRun(runId);
       logger.info({ runId, userId }, "run abort requested");
@@ -81,5 +99,5 @@ export function createServices(deps: ServicesDeps): Services {
     interact: (input) => interact({ db, bus, workspaceId, enqueue }, input),
   };
 
-  return { router, orchestrator, runs };
+  return { router, orchestrator, runs, approvals };
 }

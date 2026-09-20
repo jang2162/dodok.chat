@@ -1,4 +1,5 @@
 import type {
+  ApprovalDecision,
   Attachment,
   ComponentState,
   ComponentsV1,
@@ -232,24 +233,42 @@ export const componentInteractions = sqliteTable(
   (t) => [index("component_interactions_message").on(t.messageId)],
 );
 
+/** 승인 계약(shared `Approval`, 설계 3.1)에 맞춘다. `runId` 는 없을 수 있다 — 승인 페이로드에 runId 가 없어 sessionKey 로 상관한다(스파이크 3.2). */
 export const approvals = sqliteTable(
   "approvals",
   {
     id: text("id").primaryKey(),
-    runId: text("run_id")
-      .notNull()
-      .references(() => runs.id),
     providerApprovalId: text("provider_approval_id").notNull(),
     kind: text("kind").notNull(),
-    summary: text("summary").notNull(),
-    payload: json<Record<string, unknown>>("payload_json"),
+    channelId: text("channel_id")
+      .notNull()
+      .references(() => channels.id),
+    agentId: text("agent_id")
+      .notNull()
+      .references(() => agents.id),
+    runId: text("run_id").references(() => runs.id), // 열린 런이 없으면 채널 수준 승인
+    toolCallId: text("tool_call_id"),
+    toolName: text("tool_name"),
+    pluginId: text("plugin_id"),
+    title: text("title").notNull(),
+    description: text("description"),
+    detail: text("detail"),
+    severity: text("severity").notNull(),
+    allowedDecisions: json<ApprovalDecision[]>("allowed_decisions_json").notNull(),
+    urlPath: text("url_path"),
     status: text("status").notNull(),
-    decidedBy: text("decided_by"),
+    decision: text("decision"),
+    reason: text("reason"),
+    decidedBy: text("decided_by"), // 우리 사용자가 해결했을 때만 — 다른 디바이스가 해결하면 비운다
     decidedAt: ts("decided_at"),
-    expiresAt: ts("expires_at"),
+    expiresAt: ts("expires_at").notNull(), // 카운트다운의 근거
     createdAt: ts("created_at").notNull(),
   },
-  (t) => [uniqueIndex("approvals_provider").on(t.providerApprovalId)],
+  (t) => [
+    uniqueIndex("approvals_provider").on(t.providerApprovalId),
+    index("approvals_channel_status").on(t.channelId, t.status),
+    index("approvals_run").on(t.runId),
+  ],
 );
 
 export const pushSubscriptions = sqliteTable(

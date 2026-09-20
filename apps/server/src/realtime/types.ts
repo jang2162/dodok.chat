@@ -1,4 +1,5 @@
 import type {
+  Approval,
   ClientToServerEvents,
   ComponentInteract,
   RunEventsReplayResult,
@@ -28,6 +29,8 @@ export type WireSocket = Socket<
 export type RunsFacade = {
   /** 채널의 종료되지 않은 런 */
   activeRuns(channelId: string): RunState[];
+  /** 채널의 아직 살아 있는 승인(만료 시각이 지난 것은 뺀다) — 구독 ack */
+  pendingApprovals(channelId: string): Approval[];
   abort(runId: string, userId: string): Promise<void>;
   replay(runId: string, afterSeq: number): Promise<RunEventsReplayResult>;
   interact(input: ComponentInteract & { userId: string }): Promise<{ interactionId: string }>;

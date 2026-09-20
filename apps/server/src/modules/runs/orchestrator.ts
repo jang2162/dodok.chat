@@ -17,6 +17,7 @@ import type { ServerBus } from "../../realtime/bus";
 import { josa } from "../../util/josa";
 import { getAgent } from "../agents/service";
 import { createAgentMessage, createSystemMessage } from "../messages/service";
+import type { ApprovalsService } from "../approvals/service";
 import type { RunPlan } from "../router/decide";
 import { ensureSession } from "../sessions/service";
 import { buildInboundDeliver } from "./context";
@@ -76,6 +77,8 @@ export type OrchestratorDeps = {
   logger: OrchestratorLogger;
   /** 라우터(태스크 9) — 정본 저장 직후, canonical_received 신호 전에 부른다 */
   onAgentMessage: (message: Message, run: Run) => Promise<void>;
+  /** 어댑터 승인 이벤트를 넘길 곳(wiring.ts 가 잇는다). 없으면 승인 이벤트는 로그만 남기고 버린다 */
+  approvals?: Pick<ApprovalsService, "ingest">;
   now?: () => Date;
   timeouts?: Partial<RunTimeouts>;
 };
@@ -788,6 +791,11 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
           e.signal,
           e.snapshotText === undefined ? undefined : { message: e.snapshotText },
         );
+        return;
+      case "approval":
+        // 상관·저장·중계는 승인 서비스가 한다(설계 4.2). ingest 는 던지지 않는다 — 한 건이 이벤트 루프를 끊지 않게
+        if (deps.approvals) deps.approvals.ingest(e.approval);
+        else logger.warn({ providerApprovalId: e.approval.providerApprovalId }, "approval without service");
         return;
       case "canonical":
         return; // 저장은 어댑터가 onCanonical 훅으로 직접 부른다 — 이벤트는 알림용

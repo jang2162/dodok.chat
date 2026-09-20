@@ -83,6 +83,8 @@ export function attachWireFanout(io: WireServer, bus: ServerBus, opts: WireFanou
       io.to(channelRoom(p.run.channelId)).emit("run.state", p);
     }),
     on("run.event", ({ event, channelId }) => fanoutRunEvent(event, channelId)),
+    on("approval.requested", (p) => io.to(channelRoom(p.approval.channelId)).emit("approval.requested", p)),
+    on("approval.resolved", (p) => io.to(channelRoom(p.approval.channelId)).emit("approval.resolved", p)),
     on("channel.created", (p) => io.to(workspaceRoom(p.channel.workspaceId)).emit("channel.created", p)),
     on("channel.updated", (p) => io.to(channelRoom(p.channel.id)).emit("channel.updated", p)),
     on("channel.member.changed", (p) => io.to(channelRoom(p.channelId)).emit("channel.member.changed", p)),

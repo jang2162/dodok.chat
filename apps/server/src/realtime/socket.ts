@@ -97,7 +97,7 @@ export function attachWire(io: WireServer, ctx: WireContext): void {
           messages: page.messages,
           hasMore: page.hasMore,
           activeRuns: ctx.runs?.activeRuns(channel.id) ?? [],
-          pendingApprovals: [],
+          pendingApprovals: ctx.runs?.pendingApprovals(channel.id) ?? [],
         };
       });
       reply(ack, res);

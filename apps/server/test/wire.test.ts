@@ -1,5 +1,6 @@
 import {
   ApiError,
+  type Approval,
   Message,
   type RunEvent,
   type RunEventsReplayResult,
@@ -48,6 +49,22 @@ function runState(channelId: string, patch: Partial<RunState> = {}): RunState {
     relayDepth: 0,
     hasCanonical: false,
     ...patch,
+  };
+}
+
+function pendingApproval(channelId: string): Approval {
+  return {
+    id: uuid(),
+    providerApprovalId: `plugin:${uuid()}`,
+    kind: "plugin",
+    channelId,
+    agentId: uuid(),
+    title: "Write 실행",
+    severity: "warning",
+    allowedDecisions: ["allow-once", "deny"],
+    status: "pending",
+    expiresAt: new Date(Date.now() + 120_000).toISOString(),
+    createdAt: new Date().toISOString(),
   };
 }
 
@@ -507,8 +524,10 @@ describe("wire (attachWire 단독 — route·runs 주입)", () => {
     const run = runState(channel.id);
     const replay: RunEventsReplayResult = { events: [textDelta(run.id, 1)], run };
     const interactionId = uuid();
+    const approval = pendingApproval(channel.id);
     const runs = {
       activeRuns: vi.fn((_channelId: string) => [run]),
+      pendingApprovals: vi.fn((_channelId: string) => [approval]),
       abort: vi.fn(async (_runId: string, _userId: string) => {}),
       replay: vi.fn(async (_runId: string, _afterSeq: number) => replay),
       interact: vi.fn(async () => ({ interactionId })),
@@ -516,8 +535,9 @@ describe("wire (attachWire 단독 — route·runs 주입)", () => {
     const socket = await start({ runs, logger: logger as unknown as Logger });
 
     const sub = await socket.emitWithAck("channel.subscribe", { channelId: channel.id });
-    expect(sub).toMatchObject({ ok: true, data: { activeRuns: [run] } });
+    expect(sub).toMatchObject({ ok: true, data: { activeRuns: [run], pendingApprovals: [approval] } });
     expect(runs.activeRuns).toHaveBeenCalledWith(channel.id);
+    expect(runs.pendingApprovals).toHaveBeenCalledWith(channel.id);
 
     expect(await socket.emitWithAck("run.abort", { runId: run.id })).toEqual({ ok: true, data: null });
     expect(runs.abort).toHaveBeenCalledWith(run.id, app.ownerUserId);
