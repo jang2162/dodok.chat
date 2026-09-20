@@ -65,7 +65,10 @@ function ActivityBody({ channelId }: { channelId: string }) {
         onRetry={() => void rest.refetch()}
         retrying={rest.isFetching}
       />
-      {selected && <RunTimeline runId={selected.id} running={!TERMINAL.has(selected.status)} />}
+      {/* 런을 바꾸면 타임라인을 새로 세운다 — 툴 행의 펼침 상태·「끝에 붙어 있다」가 앞 런에서 이어지지 않게 */}
+      {selected && (
+        <RunTimeline key={selected.id} runId={selected.id} running={!TERMINAL.has(selected.status)} />
+      )}
     </div>
   );
 }

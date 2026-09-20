@@ -278,7 +278,8 @@ it("승인·오류·단계 행도 타임라인에 그려진다", async () => {
     runs: [runOf(RUN, { status: "error" })],
     events: [
       runEvent({ type: "STEP_STARTED", seq: 1, stepName: "계획" }),
-      runEvent({ type: "TOOL_CALL_START", seq: 2, toolCallId: "t1", toolCallName: "Write" }),
+      // 툴 이름을 승인 제목과 겹치지 않게 둔다 — 겹치면 이음을 끊어도 아래 단언이 통과한다
+      runEvent({ type: "TOOL_CALL_START", seq: 2, toolCallId: "t1", toolCallName: "Bash" }),
       runEvent({
         type: "APPROVAL_REQUESTED",
         seq: 3,
@@ -303,9 +304,119 @@ it("승인·오류·단계 행도 타임라인에 그려진다", async () => {
   });
   expect(row).toHaveTextContent("Write 실행");
   expect(row).toHaveTextContent("만료됨");
-  expect(row).toHaveTextContent("Write"); // 툴 행과 이어졌다
+  expect(row).toHaveTextContent("Bash"); // 툴 행과 이어졌다 — 제목에 없는 이름이라 이음이 끊기면 빨강
   expect(within(aside).getByText("계획")).toBeInTheDocument();
   expect(within(aside).getByText("도구가 실패했습니다")).toBeInTheDocument();
+});
+
+it("승인을 요구한 툴 행에만 「승인」이 붙는다", async () => {
+  stubServer({
+    runs: [runOf(RUN, { status: "tool", endedAt: undefined })],
+    events: [
+      runEvent({ type: "TOOL_CALL_START", seq: 1, toolCallId: "t1", toolCallName: "Write" }),
+      runEvent({ type: "TOOL_CALL_START", seq: 2, toolCallId: "t2", toolCallName: "Read" }),
+      runEvent({
+        type: "APPROVAL_REQUESTED",
+        seq: 3,
+        approvalId: uid(302),
+        kind: "plugin",
+        title: "쓰기 허락",
+        severity: "warning",
+        allowedDecisions: ["allow-once", "deny"],
+        toolCallId: "t1",
+        expiresAt: "2027-01-15T08:02:00.000Z",
+      }),
+    ],
+  });
+  renderRoute(`/c/${CH}/activity`);
+  const aside = await panel();
+  const list = await within(aside).findByRole("list", { name: "활동 기록" });
+  /** 이름으로 툴 행 하나 — 승인 행에도 툴 이름이 있어 그쪽은 뺀다 */
+  const toolRow = (name: string): HTMLElement => {
+    const hit = within(list)
+      .getAllByRole("listitem")
+      .find(
+        (li) => li.querySelector('[data-slot="approval-row"]') === null && li.textContent?.includes(name),
+      );
+    if (!hit) throw new Error(`${name} 툴 행이 없다`);
+    return hit;
+  };
+  expect(toolRow("Write")).toHaveTextContent("승인");
+  expect(toolRow("Read")).not.toHaveTextContent("승인");
+});
+
+it("서브에이전트 행은 상태를 글자로도 말한다", async () => {
+  stubServer({
+    runs: [runOf(RUN)],
+    events: [
+      runEvent({ type: "SUBAGENT_STARTED", seq: 1, subagentRunId: uid(401), label: "조사" }),
+      runEvent({ type: "SUBAGENT_STARTED", seq: 2, subagentRunId: uid(402), label: "정리" }),
+      runEvent({ type: "SUBAGENT_FINISHED", seq: 3, subagentRunId: uid(402) }),
+      runEvent({ type: "SUBAGENT_STARTED", seq: 4, subagentRunId: uid(403), label: "빌드" }),
+      runEvent({ type: "SUBAGENT_ERROR", seq: 5, subagentRunId: uid(403), message: "터졌다" }),
+    ],
+  });
+  renderRoute(`/c/${CH}/activity`);
+  const aside = await panel();
+  const subRow = async (label: string): Promise<HTMLElement> => {
+    const el = (await within(aside).findByText(new RegExp(`^서브에이전트.*${label}$`))).closest("li");
+    if (!el) throw new Error(`${label} 서브에이전트 행이 없다`);
+    return el;
+  };
+  expect(await subRow("조사")).toHaveTextContent("진행 중");
+  expect(await subRow("정리")).toHaveTextContent("완료");
+  const failed = await subRow("빌드");
+  expect(failed).toHaveTextContent("터졌다");
+  expect(failed).toHaveTextContent("실패");
+});
+
+it("도구를 안 쓴 런의 빈 타임라인은 진행 중과 끝남을 다르게 말한다", async () => {
+  stubServer({
+    runs: [
+      runOf(RUN2, { status: "tool", endedAt: undefined, createdAt: "2027-01-15T08:10:00.000Z" }),
+      runOf(RUN),
+    ],
+    events: [],
+  });
+  renderRoute(`/c/${CH}/activity`);
+  const aside = await panel();
+  // 기본 선택은 가장 최근 런 — 아직 진행 중이라 기다리는 문구
+  expect(await within(aside).findByText("아직 도구를 쓰지 않았습니다.")).toBeInTheDocument();
+  const buttons = await within(aside).findAllByRole("button", { name: /@dev/ });
+  await userEvent.click(buttons[1] as HTMLElement);
+  expect(await within(aside).findByText("도구 기록이 없습니다.")).toBeInTheDocument();
+});
+
+// 이월 5 — 런을 바꾸면 타임라인을 새로 세운다(`key={runId}`). 툴 id 가 겹치면 행 key 도 같아 펼침이 따라온다
+it("런을 바꾸면 앞 런에서 펼쳐 둔 인자가 따라오지 않는다", async () => {
+  stubServer({
+    runs: [runOf(RUN2, { createdAt: "2027-01-15T08:10:00.000Z" }), runOf(RUN)],
+    events: {
+      [RUN]: [
+        runEvent({ type: "TOOL_CALL_START", seq: 1, toolCallId: "t1", toolCallName: "Grep" }),
+        runEvent({ type: "TOOL_CALL_ARGS", seq: 2, toolCallId: "t1", delta: '{"앞":1}' }),
+      ],
+      [RUN2]: [
+        runEvent({ type: "TOOL_CALL_START", runId: RUN2, seq: 1, toolCallId: "t1", toolCallName: "Read" }),
+        runEvent({ type: "TOOL_CALL_ARGS", runId: RUN2, seq: 2, toolCallId: "t1", delta: '{"뒤":2}' }),
+      ],
+    },
+  });
+  renderRoute(`/c/${CH}/activity`);
+  const aside = await panel();
+  const runButtons = async () => await within(aside).findAllByRole("button", { name: /@dev/ });
+
+  // 옛 런으로 한 번 다녀와 두 이벤트 응답을 캐시에 올린다 — 되돌아올 때 「불러오는 중」으로 안 갈리게
+  await userEvent.click((await runButtons())[1] as HTMLElement);
+  await within(aside).findByText("Grep");
+  await userEvent.click(within(aside).getByRole("button", { name: "Grep 인자 보기" }));
+  expect(within(aside).getByText('{"앞":1}')).toBeInTheDocument();
+
+  await userEvent.click((await runButtons())[0] as HTMLElement);
+  await within(aside).findByText("Read");
+  expect(within(aside).getByRole("button", { name: "Read 인자 보기" })).toBeInTheDocument();
+  expect(within(aside).queryByText('{"뒤":2}')).not.toBeInTheDocument();
+  expect(within(aside).queryByText('{"앞":1}')).not.toBeInTheDocument();
 });
 
 it("고른 런이 바뀌면 그 런의 이벤트만 그린다", async () => {
@@ -344,11 +455,19 @@ it("실시간 텍스트 델타는 타임라인 행이 되지 않는다", async (
 
 // 스펙 7.3 — 아이콘만 있는 버튼·링크·그림에도 이름이 있어야 한다
 it("활동 탭의 버튼·링크·그림에 모두 이름이 있다", async () => {
-  stubServer({ runs: [runOf(RUN)], events: TOOL_EVENTS });
+  // 끝난 툴만 있으면 진행 중 아이콘(스피너)을 지나지 않는다 — 안 끝난 툴을 하나 섞는다
+  stubServer({
+    runs: [runOf(RUN, { status: "tool", endedAt: undefined })],
+    events: [
+      ...TOOL_EVENTS,
+      runEvent({ type: "TOOL_CALL_START", seq: 6, toolCallId: "t2", toolCallName: "Bash" }),
+    ],
+  });
   renderRoute(`/c/${CH}/activity`);
   const aside = await panel();
   await within(aside).findByText("Read");
   await userEvent.click(within(aside).getByRole("button", { name: "Read 인자 보기" }));
+  expect(within(aside).getByRole("img", { name: "실행 중" })).toBeInTheDocument();
   for (const role of ["button", "link", "img", "list"] as const) {
     expect(within(aside).queryAllByRole(role, { name: "" })).toEqual([]);
   }

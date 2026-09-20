@@ -1,8 +1,9 @@
-import type { Run, RunState } from "@dodok/shared";
+import { type Run, type RunEventType, type RunState, RUN_EVENT_TYPES } from "@dodok/shared";
 import { describe, expect, it } from "vitest";
 import { AGENT, CH, RUN, RUN2, runEvent, runState, textDelta, uid } from "../../../test/fixtures";
 import {
   approvalOutcomeLabel,
+  isTimelineEvent,
   isTruncated,
   keepTimelineEvents,
   mergeRunEvents,
@@ -217,6 +218,55 @@ describe("toActivityRows", () => {
         reason: "run-aborted",
       },
     ]);
+  });
+});
+
+// 종류 목록이 두 곳에 산다 — `TIMELINE_TYPES`(미리 거르기)와 `toActivityRows` 의 switch(행 만들기).
+// 새 이벤트 종류가 생겼을 때 한쪽만 고치면 여기서 깨진다
+describe("타임라인이 받는 종류", () => {
+  /** shared 가 종류를 늘리면 이 표가 타입으로 먼저 깨진다 — 그때 양쪽을 같이 보게 된다 */
+  const SAMPLE: Record<RunEventType, Record<string, unknown>> = {
+    RUN_QUEUED: {},
+    RUN_STARTED: { threadId: CH, agentId: AGENT, sessionKey: "agent:dev:dodok:channel:c" },
+    RUN_FINISHED: { messageIds: [] },
+    RUN_ERROR: { message: "터졌다" },
+    RUN_ABORTED: { by: "user" },
+    STATE_SNAPSHOT: { snapshot: runState() },
+    TEXT_MESSAGE_START: { messageId: "m", role: "assistant" },
+    TEXT_MESSAGE_CONTENT: { messageId: "m", delta: "가" },
+    TEXT_MESSAGE_REPLACE: { messageId: "m", text: "다시" },
+    TEXT_MESSAGE_END: { messageId: "m" },
+    TOOL_CALL_START: { toolCallId: "t1", toolCallName: "Read" },
+    TOOL_CALL_ARGS: { toolCallId: "t1", delta: "{}" },
+    TOOL_CALL_END: { toolCallId: "t1" },
+    TOOL_CALL_RESULT: { toolCallId: "t1", content: "ok" },
+    STEP_STARTED: { stepName: "계획" },
+    STEP_FINISHED: { stepName: "계획" },
+    SUBAGENT_STARTED: { subagentRunId: SUB },
+    SUBAGENT_FINISHED: { subagentRunId: SUB },
+    SUBAGENT_ERROR: { subagentRunId: SUB, message: "실패" },
+    APPROVAL_REQUESTED: {
+      approvalId: APPROVAL,
+      kind: "plugin",
+      title: "Write 실행",
+      severity: "warning",
+      allowedDecisions: ["allow-once", "deny"],
+      expiresAt: "2027-01-15T08:02:00.000Z",
+    },
+    APPROVAL_RESOLVED: { approvalId: APPROVAL, decision: "allow-once", reason: "user" },
+    CUSTOM: { name: "뭔가" },
+  };
+
+  it("미리 거르는 종류와 행이 되는 종류가 같다", () => {
+    const kept: RunEventType[] = [];
+    const rowed: RunEventType[] = [];
+    for (const type of RUN_EVENT_TYPES) {
+      const event = runEvent({ type, seq: 1, ...SAMPLE[type] });
+      if (isTimelineEvent(event)) kept.push(type);
+      if (toActivityRows([event]).length > 0) rowed.push(type);
+    }
+    expect(rowed).toEqual(kept);
+    expect(kept.length).toBeGreaterThan(0);
   });
 });
 
