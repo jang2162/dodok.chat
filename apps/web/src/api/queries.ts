@@ -1,8 +1,9 @@
-import type { Agent, AdapterStatus, Channel, ChannelMember, User } from "@dodok/shared";
+import type { Agent, AdapterStatus, Channel, ChannelMember, User, Workspace } from "@dodok/shared";
 import { queryOptions, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./http";
 
-export type MeResponse = { user: User; workspaceId: string };
+/** `workspace` 는 이름이 필요한 화면(사이드바 제목)이 본다 — 주지 않는 서버도 있어 선택이다(그때는 기본 이름) */
+export type MeResponse = { user: User; workspaceId: string; workspace?: Pick<Workspace, "id" | "name"> };
 export type AdapterCapabilities = { sessionReset: boolean; agentsList: boolean; configSet: boolean };
 export type AdapterStatusResponse = AdapterStatus & { capabilities: AdapterCapabilities };
 

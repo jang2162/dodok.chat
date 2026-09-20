@@ -10,9 +10,8 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
   build: {
-    // 기본값 500 은 첫 화면을 재는 눈금인데, 500 을 넘는 조각(markdown 512kB·gzip 157kB)은 채널 화면에서만 늦게 받는
-    // 라이브러리 뭉치다. 경고를 끄지 않고 지금 가장 큰 조각 바로 위로만 올린다 — 여기서 더 자라면 다시 알린다
-    chunkSizeWarningLimit: 530,
+    // chunkSizeWarningLimit 은 기본값 500 그대로 둔다 — 전역 임계값을 올리면 가장 큰 조각만이 아니라
+    // 그 아래 조각들(index·editor)의 경고까지 같이 가린다. 경고는 코드 분할을 다시 볼 눈금으로 남긴다
     rolldownOptions: {
       output: {
         // 라우트 조각(코드 분할) 위에, 잘 바뀌지 않는 큰 라이브러리를 따로 둔다 — 받는 양은 같고 캐시가 오래 간다.

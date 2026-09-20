@@ -178,6 +178,26 @@ describe("AppShell", () => {
     );
   }
 
+  it("사이드바 제목은 me 의 워크스페이스 이름 — 이름을 주지 않는 응답이면 「dodok」", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input, init) => {
+        const url = String(input);
+        if (url === "/api/v1/auth/me") return json(200, { ...ME, workspace: { id: "w", name: "두독 팀" } });
+        return shellGet(input, init) ?? json(404, { code: "NOT_FOUND", message: "x" });
+      }),
+    );
+    const { queryClient } = renderRoute("/agents");
+    expect(await screen.findByText("두독 팀")).toBeInTheDocument();
+
+    // workspace 없이 답하는 서버(ME 그대로)면 기본 이름으로 돌아간다
+    act(() => {
+      queryClient.setQueryData(qk.me, ME);
+    });
+    expect(await screen.findByText("dodok")).toBeInTheDocument();
+    expect(screen.queryByText("두독 팀")).not.toBeInTheDocument();
+  });
+
   it("넓은 화면은 사이드바를 늘 보이고 메뉴 버튼이 없다", async () => {
     stubChannels();
     renderRoute("/c/a");

@@ -96,6 +96,16 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
       if (resync) void subscriptions.runReplay.resync(run);
     },
     "run.event": ({ event }) => subscriptions.runReplay.live(event),
+    /**
+     * 새 채널 — 사이드바가 보는 목록 캐시에 덧붙인다(만든 사람은 useCreateChannel 이 먼저 넣는다).
+     * 같은 id 가 이미 있으면 그대로 둔다 — 늦게 온 created 가 그새 바뀐 값(channel.updated)을 되돌리지 않게.
+     * 목록을 아직 안 받았으면 만들지 않는다 — 한 채널짜리 목록을 완전한 것처럼 두지 않는다(useCreateChannel 과 같은 규칙)
+     */
+    "channel.created": ({ channel }) => {
+      qc.setQueryData<Channel[]>(qk.channels, (list) =>
+        list && !list.some((c) => c.id === channel.id) ? [...list, channel] : list,
+      );
+    },
     "channel.updated": ({ channel }) => {
       qc.setQueryData<Channel[]>(qk.channels, (list) =>
         list?.map((c) => (c.id === channel.id ? channel : c)),

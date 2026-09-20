@@ -192,6 +192,34 @@ describe("런 이벤트", () => {
 });
 
 describe("캐시 패치", () => {
+  it("channel.created: 사이드바가 보는 채널 목록 끝에 더한다 — 목록을 아직 안 받았으면 만들지 않는다", () => {
+    const { fake, queryClient } = setup();
+    const created = channel({ id: CH2, name: "random" });
+
+    // 목록을 받기 전(구독 전)에 온 것은 한 채널짜리 목록을 만들지 않는다 — 완전한 목록인 척하지 않게
+    fake.serverEmit("channel.created", { channel: created });
+    expect(queryClient.getQueryData(qk.channels)).toBeUndefined();
+
+    queryClient.setQueryData(qk.channels, [channel()]);
+    fake.serverEmit("channel.created", { channel: created });
+
+    expect(queryClient.getQueryData<Channel[]>(qk.channels)?.map((c) => c.name)).toEqual([
+      "general",
+      "random",
+    ]);
+  });
+
+  it("channel.created: 같은 id 가 두 번 와도 한 번만 — 늦게 온 것이 그새 바뀐 값을 되돌리지 않는다", () => {
+    const { fake, queryClient } = setup();
+    // 만든 사람 화면: useCreateChannel 이 넣은 뒤 이름이 바뀌었고, 그제야 created 가 닿는다
+    queryClient.setQueryData(qk.channels, [channel({ name: "renamed" })]);
+
+    fake.serverEmit("channel.created", { channel: channel({ name: "general" }) });
+    fake.serverEmit("channel.created", { channel: channel({ name: "general" }) });
+
+    expect(queryClient.getQueryData<Channel[]>(qk.channels)?.map((c) => c.name)).toEqual(["renamed"]);
+  });
+
   it("channel.updated: 채널 목록의 같은 id 를 교체하고 [channel, id] 를 채운다", () => {
     const { fake, queryClient } = setup();
     const other = channel({ id: CH2, name: "random" });
