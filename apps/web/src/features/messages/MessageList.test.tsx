@@ -9,7 +9,7 @@ import { registerUnauthorized } from "@/app/session";
 import { updateTimeline } from "@/realtime/timelineCache";
 import { AGENT, CH, CH2, msg, RUN } from "../../../test/fixtures";
 import { authorsClient, renderWithClient } from "../../../test/messages";
-import { remeasureRows, stubScrollLayout } from "../../../test/scrollLayout";
+import { remeasureRows, setViewportHeight, stubScrollLayout } from "../../../test/scrollLayout";
 import { MessageList } from "./MessageList";
 import { useTimeline } from "./useTimeline";
 import { addPending, emptyTimeline, type Timeline, upsert } from "./timeline";
@@ -58,6 +58,20 @@ function setup(t: Timeline | undefined, channelId = CH) {
   return { ...view, qc, scroller, scrollTo, atEnd };
 }
 
+/**
+ * virtual-core 는 `scrollToEnd` 뒤 5초 동안 프레임마다 목표를 다시 겨눈다(reconcile). 첫 붙임이 남긴 그 창 안에서는
+ * 뷰포트가 줄 때 목표가 바뀌어 가상 목록이 스스로 끝으로 옮겨 가고, 위로 올려 둔 사람도 함께 끌려간다.
+ * 시계를 앞당겨 그 창을 지나 보낸다 — 그래야 뒤이은 크기 변화가 우리 ResizeObserver 만 재게 된다.
+ * (돌려주는 값은 afterEach 의 restoreAllMocks 가 거둔다)
+ */
+async function pastVirtualizerReconcile() {
+  const real = performance.now.bind(performance);
+  vi.spyOn(performance, "now").mockImplementation(() => real() + 6_000);
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 60));
+  });
+}
+
 describe("MessageList", () => {
   it("타임라인이 아직 없으면 불러오는 중 자리표시, 비었으면 안내", async () => {
     const { qc } = setup(undefined);
@@ -99,6 +113,39 @@ describe("MessageList", () => {
     expect(scroller().scrollHeight).toBeLessThan(tall);
     expect(atEnd()).toBe(true);
     expect(screen.getByText("본문 60")).toBeInTheDocument();
+  });
+
+  it("끝에 붙어 있을 때 뷰포트가 줄면(배너가 생기면) 다시 끝으로 맞춘다", async () => {
+    const { scroller, atEnd } = setup(timelineOf(range(1, 40)));
+    await waitFor(() => expect(atEnd()).toBe(true));
+    await pastVirtualizerReconcile();
+    const before = scroller().scrollTop;
+
+    // 배너가 생긴 만큼 뷰포트가 줄어든다 — 브라우저는 scrollTop 을 그대로 둬 끝에서 그만큼 떨어진다
+    await act(async () => {
+      setViewportHeight(RECT.height - 44);
+      await new Promise((r) => setTimeout(r, 100));
+    });
+
+    expect(scroller().clientHeight).toBe(RECT.height - 44);
+    expect(scroller().scrollTop).toBe(before + 44);
+    expect(atEnd()).toBe(true);
+  });
+
+  it("사용자가 위로 올려 둔 자리는 뷰포트가 줄어도 그대로 — 끌어내리지 않는다", async () => {
+    const { scroller, scrollTo, atEnd } = setup(timelineOf(range(1, 40)));
+    await waitFor(() => expect(atEnd()).toBe(true));
+    await scrollTo(300);
+    expect(atEnd()).toBe(false);
+    await pastVirtualizerReconcile();
+
+    await act(async () => {
+      setViewportHeight(RECT.height - 44);
+      await new Promise((r) => setTimeout(r, 100));
+    });
+
+    expect(scroller().scrollTop).toBe(300);
+    expect(atEnd()).toBe(false);
   });
 
   it("첫 붙임 중에 사용자가 위로 올리면 다시 끌어내리지 않는다", async () => {

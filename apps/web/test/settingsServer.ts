@@ -1,4 +1,5 @@
 import type { Agent, Channel, ChannelMember } from "@dodok/shared";
+import { screen, within } from "@testing-library/react";
 import { vi } from "vitest";
 import { uid } from "./fixtures";
 import { ME, channelOf, json, shellGet } from "./shellApi";
@@ -45,7 +46,7 @@ export type Call = { method: string; url: string; body: Body | undefined };
 /** undefined 면 다음 처리기로 넘긴다 */
 type Reply = Response | undefined | Promise<Response | undefined>;
 
-const apiErr = (status: number, code: string, message: string) => json(status, { code, message });
+export const apiErr = (status: number, code: string, message: string) => json(status, { code, message });
 
 /**
  * `override` 가 Response 를 주면 그것을 쓰고, undefined 면 기본 처리(상태를 고친다).
@@ -138,4 +139,20 @@ export function gate() {
     open = resolve;
   });
   return { opened, open };
+}
+
+/** 소유자 한 명 + 준 에이전트들로 이뤄진 멤버 목록 */
+export const members = (...agents: Array<[id: string, autoRespond?: boolean]>) => [
+  memberOf("user", OWNER),
+  ...agents.map(([id, autoRespond = false]) => memberOf("agent", id, { autoRespond })),
+];
+export const membersUrl = `/api/v1/channels/${CH}/members`;
+export const memberUrl = (agentId: string) => `${membersUrl}/${agentId}`;
+
+export async function membersSection() {
+  return screen.findByRole("region", { name: "멤버" });
+}
+/** 멤버를 받아 에이전트 행이 뜬 뒤의 목록 */
+export async function agentList() {
+  return within(await membersSection()).findByRole("list", { name: "채널 에이전트" });
 }

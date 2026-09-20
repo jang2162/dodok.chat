@@ -68,7 +68,13 @@ function ChannelMessages({ channelId, bubbleRunIds = NO_RUNS, bubbles, initialRe
     ...(initialRect ? { initialRect } : {}),
   });
 
-  const [stuck, setStuck] = useState(true);
+  const [stuck, setStuckState] = useState(true);
+  // 끝에 붙어 있는지 — ResizeObserver 콜백은 다시 그려지길 기다리지 않으므로 지금 값을 ref 로도 들고 있는다
+  const stuckRef = useRef(true);
+  const setStuck = useCallback((next: boolean) => {
+    stuckRef.current = next;
+    setStuckState(next);
+  }, []);
   const unseen = useUnseen(timeline, stuck);
   const older = useOlderPages(channelId);
 
@@ -145,6 +151,32 @@ function ChannelMessages({ channelId, bubbleRunIds = NO_RUNS, bubbles, initialRe
     prevLastKey.current = lastKey;
     if (stuck) virtualizer.scrollToEnd();
   }, [lastKey, stuck, virtualizer]);
+
+  // 뷰포트가 줄면(연결 배너가 생기거나 창이 작아지면) 브라우저는 scrollTop 을 그대로 둬 끝에서 그만큼 떨어진다 —
+  // 붙어 있는 동안에만 다시 겨눈다. 스스로 위로 올린 사람은 끌어내리지 않는다(스펙 5.5, 태스크 13 수정 라운드 규칙).
+  // 반영은 한 프레임 미룬다 — ResizeObserver 콜백 안에서 배치를 또 바꾸면 「loop completed with undelivered notifications」 가 난다
+  // 타임라인을 받기 전에는 스크롤 영역 대신 자리표시를 그린다 — 붙을 때 다시 건다
+  const mounted = timeline !== undefined;
+  useEffect(() => {
+    const el = scrollRef.current;
+    const win = el?.ownerDocument.defaultView;
+    if (!mounted || !el || !win) return;
+    let raf = 0;
+    const observer = new win.ResizeObserver(() => {
+      if (!stuckRef.current) return;
+      win.cancelAnimationFrame(raf);
+      raf = win.requestAnimationFrame(() => {
+        if (!stuckRef.current) return;
+        virtualizer.scrollToEnd();
+        el.scrollTop = el.scrollHeight - el.clientHeight;
+      });
+    });
+    observer.observe(el);
+    return () => {
+      win.cancelAnimationFrame(raf);
+      observer.disconnect();
+    };
+  }, [mounted, virtualizer]);
 
   const onScroll = () => {
     const el = scrollRef.current;

@@ -12,8 +12,19 @@ import { useWireStatus, type WireSocket, type WireStatus } from "./wire";
 
 /** system.notice 토스트 지속시간(스펙 8장) */
 export const NOTICE_DURATION_MS = { info: 4_000, warn: 6_000, error: Infinity } as const;
-/** socket.io 가 스스로 다시 붙지 않는 거절(미들웨어 connect_error)·서버 끊김 뒤, 직접 다시 붙기까지 */
-export const WIRE_RETRY_MS = 2_000;
+/** socket.io 가 스스로 다시 붙지 않는 거절(미들웨어 connect_error)·서버 끊김 뒤, 직접 다시 붙기까지의 첫 간격 */
+export const WIRE_RETRY_BASE_MS = 2_000;
+/** 백오프 상한 — 서버가 오래 없어도 이보다 드물게 두드리지 않는다 */
+export const WIRE_RETRY_MAX_MS = 30_000;
+
+/**
+ * 직접 재연결 간격 — 2초에서 시작해 30초까지 두 배씩, 지터 ±20%(같은 순간 끊긴 탭들이 한꺼번에 몰리지 않게).
+ * `attempt` 는 0부터. 다시 붙으면(`connect`) 0 으로 돌아간다
+ */
+export function nextRetryDelay(attempt: number, random: () => number = Math.random): number {
+  const base = Math.min(WIRE_RETRY_BASE_MS * 2 ** attempt, WIRE_RETRY_MAX_MS);
+  return Math.round(base * (0.8 + 0.4 * random()));
+}
 
 /** 재연결을 멈춘 상태 — 끊김·전송 실패가 덮어쓰지 않는다 */
 const STOPPED: ReadonlySet<WireStatus> = new Set(["protocol_mismatch", "rejected"]);
@@ -27,6 +38,8 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
   const setStatus = (s: WireStatus) => useWireStatus.getState().setStatus(s);
   let detached = false;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
+  /** 이어진 직접 재연결 횟수 — 백오프 간격을 정한다. 다시 붙으면 0 으로 */
+  let retryAttempt = 0;
 
   /** 새 메시지·수정. 구독한 적 없는 채널(캐시 없음)은 무시, 빈틈이면 넣지 않고 lastSeq 로 이어 받는다(스펙 4.3-3·4) */
   function applyMessage({ message: m }: MessageEvent, updated: boolean): void {
@@ -44,10 +57,12 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
 
   function retryLater(): void {
     clearTimeout(retryTimer);
+    const delay = nextRetryDelay(retryAttempt);
+    retryAttempt += 1;
     retryTimer = setTimeout(() => {
       retryTimer = undefined;
       if (!detached) socket.connect();
-    }, WIRE_RETRY_MS);
+    }, delay);
   }
 
   /**
@@ -101,6 +116,7 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
 
   const onConnect = () => {
     clearTimeout(retryTimer);
+    retryAttempt = 0;
     setStatus("connected");
     // 처음 붙을 때도 — 연결 전에 들어간 채널은 enter 가 보내지 않고 기억만 한다
     void subscriptions.resubscribeAll().catch(() => undefined);

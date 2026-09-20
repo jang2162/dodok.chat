@@ -72,6 +72,36 @@ describe("MessageBody", () => {
     expect(container.querySelector("pre br")).toBeNull();
   });
 
+  /** Streamdown 은 굵은 글씨를 <strong> 이 아니라 data-streamdown="strong" 을 붙인 <span> 으로 그린다 */
+  const strongs = (container: HTMLElement) =>
+    Array.from(container.querySelectorAll('[data-streamdown="strong"]'), (e) => e.textContent);
+
+  it("한국어 강조는 조사가 붙어도 굵게 — 닫는 ** 뒤에 한글이 바로 오는 경우(@streamdown/cjk)", () => {
+    // CommonMark 의 좌우 플랭킹 규칙은 한글을 구두점도 공백도 아닌 글자로 보아 닫는 ** 를 닫는 표시로 치지 않는다.
+    // 플러그인을 빼면 '**"인용"**은' 은 별표째 글자로 남는다
+    const { container } = renderWithClient(
+      <MessageBody bodyMd={'**"인용"**은 그대로, *강조*와 ~~지움~~도'} />,
+    );
+    expect(strongs(container)).toEqual(['"인용"']);
+    expect(container.querySelector("em")).toHaveTextContent("강조");
+    expect(container.querySelector("del")).toHaveTextContent("지움");
+    expect(container).toHaveTextContent('"인용"은 그대로, 강조와 지움도');
+    expect(container.textContent).not.toContain("*");
+  });
+
+  it("영문 강조·취소선·자동 링크는 그대로(회귀)", () => {
+    const { container } = renderWithClient(
+      <MessageBody bodyMd={"**중요**합니다, **bold** and *em*, ~~gone~~, https://example.com/ko 를 보라"} />,
+    );
+    expect(strongs(container)).toEqual(["중요", "bold"]);
+    expect(container.querySelector("em")).toHaveTextContent("em");
+    expect(container.querySelector("del")).toHaveTextContent("gone");
+    expect(screen.getByRole("link", { name: "https://example.com/ko" })).toHaveAttribute(
+      "href",
+      "https://example.com/ko",
+    );
+  });
+
   it("코드 블록은 <pre>", () => {
     const { container } = renderWithClient(<MessageBody bodyMd={"```ts\nconst a = 1;\n```"} />);
     expect(container.querySelector("pre")).toHaveTextContent("const a = 1;");

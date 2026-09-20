@@ -1,5 +1,7 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": { "types": ["node"] },
-  "include": ["src", "test", "scripts", "drizzle.config.ts"]
+  // "../../scripts" 는 루트의 wire-cli — 어느 워크스페이스에도 속하지 않아 turbo 의 typecheck 밖이었다.
+  // 서버의 REST·wire 를 손으로 두드리는 CLI 라 서버 프로젝트가 같이 본다(웹 스펙 12장 3)
+  "include": ["src", "test", "scripts", "drizzle.config.ts", "../../scripts"]
 }

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createQueryClient } from "@/app/queryClient";
 import { createFakeSocket } from "../../test/fakeSocket";
 import { uid, USER } from "../../test/fixtures";
-import { attachHandlers, WIRE_RETRY_MS } from "./handlers";
+import { attachHandlers, nextRetryDelay, WIRE_RETRY_BASE_MS, WIRE_RETRY_MAX_MS } from "./handlers";
 import { createSubscriptions } from "./subscriptions";
 import { useWireStatus } from "./wire";
 
@@ -28,11 +28,14 @@ function setup() {
 
 beforeEach(() => {
   useWireStatus.setState({ status: "idle" });
+  // 지터를 가운데로 고정한다 — 간격이 정확히 base·base*2… 가 된다(afterEach 의 restoreAllMocks 가 거둔다)
+  vi.spyOn(Math, "random").mockReturnValue(0.5);
 });
 afterEach(() => {
   for (const detach of detachers.splice(0)) detach();
   vi.unstubAllGlobals();
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe("연결 상태", () => {
@@ -58,7 +61,7 @@ describe("연결 상태", () => {
     expect(status()).toBe("offline");
   });
 
-  it("서버가 끊은 것(io server disconnect)은 WIRE_RETRY_MS 뒤 직접 다시 붙는다 — 전송 끊김·이쪽에서 끊은 것은 아니다", async () => {
+  it("서버가 끊은 것(io server disconnect)은 WIRE_RETRY_BASE_MS 뒤 직접 다시 붙는다 — 전송 끊김·이쪽에서 끊은 것은 아니다", async () => {
     vi.useFakeTimers();
     const { fake } = setup();
     const connects = fake.calls.connect;
@@ -67,7 +70,7 @@ describe("연결 상태", () => {
     fake.socket.active = false; // 서버가 끊으면 socket.io 가 소켓을 닫는다(destroy) — 스스로 다시 붙지 않는다
     fake.serverEmit("disconnect", "io server disconnect");
     expect(status()).toBe("reconnecting");
-    await vi.advanceTimersByTimeAsync(WIRE_RETRY_MS - 1);
+    await vi.advanceTimersByTimeAsync(WIRE_RETRY_BASE_MS - 1);
     expect(fake.calls.connect).toBe(connects);
     await vi.advanceTimersByTimeAsync(1);
     expect(fake.calls.connect).toBe(connects + 1);
@@ -75,12 +78,12 @@ describe("연결 상태", () => {
     // 전송 끊김은 socket.io 가 다시 붙는다(active)
     fake.serverEmit("connect");
     fake.serverEmit("disconnect", "transport close");
-    await vi.advanceTimersByTimeAsync(WIRE_RETRY_MS * 2);
+    await vi.advanceTimersByTimeAsync(WIRE_RETRY_BASE_MS * 2);
     expect(fake.calls.connect).toBe(connects + 1);
 
     fake.serverEmit("connect");
     fake.serverEmit("disconnect", "io client disconnect");
-    await vi.advanceTimersByTimeAsync(WIRE_RETRY_MS * 2);
+    await vi.advanceTimersByTimeAsync(WIRE_RETRY_BASE_MS * 2);
     expect(fake.calls.connect).toBe(connects + 1);
     expect(status()).toBe("offline");
   });
@@ -91,12 +94,12 @@ describe("연결 상태", () => {
     const connects = fake.calls.connect;
     fake.serverEmit("connect_error", new Error("websocket error"));
     expect(status()).toBe("reconnecting");
-    await vi.advanceTimersByTimeAsync(WIRE_RETRY_MS * 2);
+    await vi.advanceTimersByTimeAsync(WIRE_RETRY_BASE_MS * 2);
     expect(fake.calls.connect).toBe(connects);
     expect(onUnauthorized).not.toHaveBeenCalled();
   });
 
-  it("알 수 없는 코드의 미들웨어 거절(active 거짓)은 WIRE_RETRY_MS 뒤 직접 다시 붙는다 — 그 전에 붙으면 걸어 둔 재연결을 거둔다", async () => {
+  it("알 수 없는 코드의 미들웨어 거절(active 거짓)은 WIRE_RETRY_BASE_MS 뒤 직접 다시 붙는다 — 그 전에 붙으면 걸어 둔 재연결을 거둔다", async () => {
     vi.useFakeTimers();
     const { fake, onUnauthorized } = setup();
     const connects = fake.calls.connect;
@@ -104,13 +107,13 @@ describe("연결 상태", () => {
     fake.socket.active = false; // 미들웨어 거절은 socket.io 가 소켓을 닫는다(destroy)
     fake.serverEmit("connect_error", connectError("INTERNAL"));
     expect(status()).toBe("reconnecting");
-    await vi.advanceTimersByTimeAsync(WIRE_RETRY_MS);
+    await vi.advanceTimersByTimeAsync(WIRE_RETRY_BASE_MS);
     expect(fake.calls.connect).toBe(connects + 1);
 
     fake.socket.active = false;
     fake.serverEmit("connect_error", connectError("INTERNAL"));
     fake.serverEmit("connect");
-    await vi.advanceTimersByTimeAsync(WIRE_RETRY_MS * 2);
+    await vi.advanceTimersByTimeAsync(WIRE_RETRY_BASE_MS * 2);
     expect(fake.calls.connect).toBe(connects + 1);
     expect(status()).toBe("connected");
     expect(onUnauthorized).not.toHaveBeenCalled();
@@ -138,7 +141,7 @@ describe("연결 상태", () => {
 
     expect(fetchMock.mock.calls.map((c) => String(c[0]))).toEqual(["/api/v1/auth/me"]);
     expect(status()).toBe("rejected");
-    await vi.advanceTimersByTimeAsync(WIRE_RETRY_MS * 10);
+    await vi.advanceTimersByTimeAsync(WIRE_RETRY_BASE_MS * 10);
     expect(onUnauthorized).not.toHaveBeenCalled();
     expect(fake.calls.connect).toBe(connects);
     expect(fake.socket.active).toBe(false);
@@ -179,7 +182,7 @@ describe("연결 상태", () => {
     expect(status()).toBe("reconnecting");
     expect(fake.calls.connect).toBe(connects);
 
-    await vi.advanceTimersByTimeAsync(WIRE_RETRY_MS);
+    await vi.advanceTimersByTimeAsync(WIRE_RETRY_BASE_MS);
     expect(fake.calls.connect).toBe(connects + 1);
     expect(onUnauthorized).not.toHaveBeenCalled();
   });
@@ -198,7 +201,50 @@ describe("연결 상태", () => {
     fake.serverEmit("connect_error", connectError("INTERNAL"));
     detach();
     expect(fake.listenerCount()).toBe(before);
-    await vi.advanceTimersByTimeAsync(WIRE_RETRY_MS * 2);
+    await vi.advanceTimersByTimeAsync(WIRE_RETRY_BASE_MS * 2);
     expect(fake.calls.connect).toBe(0);
+  });
+});
+
+describe("재연결 백오프", () => {
+  it("간격은 2초에서 두 배씩 — 지터 ±20%, 30초에서 멈춘다", () => {
+    const mid = () => 0.5;
+    expect(nextRetryDelay(0, mid)).toBe(WIRE_RETRY_BASE_MS);
+    expect(nextRetryDelay(1, mid)).toBe(WIRE_RETRY_BASE_MS * 2);
+    expect(nextRetryDelay(5, mid)).toBe(WIRE_RETRY_MAX_MS); // 2s*32 = 64s → 상한
+    expect(nextRetryDelay(40, mid)).toBe(WIRE_RETRY_MAX_MS); // 2 ** 40 도 넘치지 않는다
+
+    // 지터는 -20%~+20%
+    expect(nextRetryDelay(0, () => 0)).toBe(1_600);
+    expect(nextRetryDelay(0, () => 0.999_999)).toBe(2_400);
+    expect(nextRetryDelay(9, () => 0)).toBe(24_000);
+    expect(nextRetryDelay(9, () => 0.999_999)).toBe(36_000);
+  });
+
+  it("이어진 거절은 두 배씩 뜸해지고, 다시 붙으면(connect) 첫 간격으로 돌아간다", async () => {
+    vi.useFakeTimers();
+    const { fake } = setup();
+    let connects = fake.calls.connect;
+    const reject = () => {
+      fake.socket.active = false; // 미들웨어 거절은 소켓을 닫는다 — 직접 다시 붙는 길
+      fake.serverEmit("connect_error", connectError("INTERNAL"));
+    };
+    /** 그 간격 직전까지는 가만히 있다가 그 순간에 한 번 붙는다 */
+    const expectRetryAfter = async (delay: number) => {
+      await vi.advanceTimersByTimeAsync(delay - 1);
+      expect(fake.calls.connect).toBe(connects);
+      await vi.advanceTimersByTimeAsync(1);
+      connects += 1;
+      expect(fake.calls.connect).toBe(connects);
+    };
+
+    for (const factor of [1, 2, 4]) {
+      reject();
+      await expectRetryAfter(WIRE_RETRY_BASE_MS * factor);
+    }
+
+    fake.serverEmit("connect");
+    reject();
+    await expectRetryAfter(WIRE_RETRY_BASE_MS);
   });
 });

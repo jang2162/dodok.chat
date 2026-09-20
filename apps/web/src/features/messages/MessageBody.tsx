@@ -1,5 +1,6 @@
 import { type ReactNode, createContext, memo, useContext, useMemo } from "react";
 import { cn } from "@/lib/utils";
+import { cjk } from "@streamdown/cjk";
 import { type Components, defaultRehypePlugins, defaultRemarkPlugins, Streamdown } from "streamdown";
 import { MENTION_HREF_PREFIX, mentionsToMarkdown } from "./mentionMarkdown";
 import { MentionChip } from "./MentionChip";
@@ -15,6 +16,12 @@ const REHYPE = [defaultRehypePlugins.sanitize, defaultRehypePlugins.harden].filt
 );
 /** Streamdown 기본(gfm·코드 메타) 뒤에 단일 개행 → 줄바꿈 */
 const REMARK = [...Object.values(defaultRemarkPlugins), remarkSoftBreaks];
+/**
+ * 한국어 강조(`**"인용"**은`)를 살린다 — CommonMark 의 좌우 플랭킹 규칙은 한글을 「구두점도 공백도 아닌 글자」로 보아
+ * 닫는 `**` 뒤에 조사가 붙으면 강조를 풀어 버린다. remark-cjk-friendly 는 gfm 앞에, 취소선·자동 링크 보정은 gfm 뒤에
+ * 와야 해서 remarkPlugins 배열에 직접 끼우지 않고 Streamdown 의 plugins 로 넘긴다 — 그쪽이 앞뒤를 갈라 끼운다
+ */
+const PLUGINS = { cjk };
 const CONTROLS = { code: { copy: true, download: false }, table: false, mermaid: false, image: false };
 const TRANSLATIONS = { copyCode: "코드 복사", copied: "복사됨" };
 
@@ -112,6 +119,7 @@ export const MessageBody = memo(function MessageBody({
       {...(caret ? { caret: "block" as const, isAnimating: true } : {})}
       remarkPlugins={REMARK}
       rehypePlugins={REHYPE}
+      plugins={PLUGINS}
       components={COMPONENTS}
       controls={CONTROLS}
       translations={TRANSLATIONS}
