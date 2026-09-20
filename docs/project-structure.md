@@ -53,6 +53,7 @@ OpenClaw 패키지 버전은 세 곳(`openclaw-adapter`의 `@openclaw/gateway-cl
 
 ```
 src/
+├─ common.ts      Id(UUIDv7)·IsoDateTime·ErrorCode·ApiError·Result/Ack·WIRE_PROTOCOL/BRIDGE_PROTOCOL — 아래 전부가 쓰는 바닥
 ├─ domain/        workspace, user, agent, channel, message, run, approval 타입 + Zod
 ├─ components/    components v1 스키마 (blocks/actions/button/select/modal/media/file) + 제약 검증
 ├─ events/        RunEvent 유니온 (AG-UI 이벤트명 채택: TEXT_MESSAGE_START/CONTENT/END,
@@ -142,7 +143,9 @@ src/
 │  ├─ approvals.ts        Gateway 승인 프레임 → ProviderApproval 정규화(순수). 정본 전역 plugin|exec|openclaw.approval.requested/resolved(request 블록·toolCallId 있음)와
 │  │                      보조 session.approval(presentation 블록·toolCallId 없음)·재접속 approvalReplay 를 한 모양으로 모으고, 만료의 비대칭
 │  │                      (plugin 은 deny+resolvedBy:null, session 은 expired)도 여기서 흡수한다. **우리 세션만** 거른다(전역 프레임이라 다른 채널·TUI 승인도 온다).
-│  │                      계약 상한 초과 문자열은 버리지 않고 잘라서 통과(fail-open) — 승인을 버리면 카드도 못 보고 TTL 만료만 보게 된다
+│  │                      계약 상한 초과는 승인을 버리지 않는다(fail-open) — 승인을 버리면 카드도 못 보고 TTL 만료만 보게 된다.
+│  │                      보여 주는 값(title·description·detail·toolName·pluginId·urlPath)은 잘라서 끝에 … 를 붙이고,
+│  │                      상관 키 toolCallId 는 자르지 않고 통째로 버린다(자른 id 는 어느 툴 호출과도 안 맞는다 — 채널 수준 승인이 된다)
 │  ├─ client.ts           @openclaw/gateway-client 래퍼: connect.challenge → connect(디바이스 서명·공유 토큰, scopes 에 operator.admin 포함,
 │  │                      caps DEFAULT_GATEWAY_CAPS) → hello-ok. 실패(PAIRING_REQUIRED 포함)는 그대로 올리고 재시도는 연결 관리자 몫
 │  ├─ connection-manager.ts  접속 루프·지수 백오프·상태(down/reconnecting/connected)·요청 타임아웃, 접속마다 복구(sessions.subscribe →

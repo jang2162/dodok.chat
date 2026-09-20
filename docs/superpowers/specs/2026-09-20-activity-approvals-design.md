@@ -260,7 +260,7 @@ ChannelSubscribeResult.pendingApprovals: Approval[]                // 그대로,
 - **만료의 `decision`**(Ruling B) — 두 경로(Gateway 확정·서버 감시) 모두 `deny` + `reason: "timeout"` 이다. **취소(`cancelled`)는 `decision` 을 비운다** — 제공자가 보고한 결정만 담는다. 화면은 `status` 가 정본이다.
 - **승인 중복은 버리지 않고 병합한다**(Ruling C) — 같은 `providerApprovalId` 가 두 경로로 오므로, 나중에 온 프레임이 **빈 칸을 채우면** 행을 갱신하고 **다시 발행**한다(`toolCallId` 는 정본 프레임에만 있다). 「같으면 무시」로 두면 보조 프레임이 먼저 온 경우 툴 이음이 영영 안 생긴다.
 - **런 상관은 `findOpenRunBySession`**(세션 FIFO 맨 앞) — 설계 초안의 「가장 최근에 시작한 런」이 아니다(4.2).
-- **상한 초과 입력은 fail-open** — 계약 길이 상한을 넘는 문자열은 승인을 버리지 않고 잘라서 통과시킨다. 승인이 통째로 사라지면 사용자는 카드도 못 보고 TTL 이 끝난 뒤 만료만 본다.
+- **상한 초과 입력은 fail-open** — 계약 길이 상한을 넘어도 승인을 버리지 않는다. 승인이 통째로 사라지면 사용자는 카드도 못 보고 TTL 이 끝난 뒤 만료만 본다. 다만 **필드에 따라 다르다**: 보여 주는 값(`title`·`description`·`detail`·`toolName`·`pluginId`·`urlPath`)은 **잘라서** 끝에 `…` 를 붙이고, 상관 키 `toolCallId` 는 **자르지 않고 통째로 버린다** — 잘린 id 는 어느 툴 호출과도 안 맞으므로 없는 셈 치고 채널 수준 승인이 된다.
 - **요구·확정은 워크스페이스 룸으로 낸다**(Ruling 7) — 4.6. 초안의 「채널 룸」으로는 5.4·완료 기준 3 이 도달 불가였다.
 - **`cancelForRun` 은 런의 terminal 전이 *전에*** 부른다 — 뒤에 부르면 `APPROVAL_RESOLVED` 신호가 드롭된다.
 - **런 없는 승인**도 저장한다(채널 수준). 서버 재기동 중 대기하던 승인은 메모리의 `resumeTo` 가 사라져 `tool` 로 가정한다 — 잘못 가정해도 다음 신호가 상태를 맞춘다.

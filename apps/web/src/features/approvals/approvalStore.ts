@@ -61,8 +61,9 @@ function put(byChannel: ApprovalStore["byChannel"], approval: Approval): Approva
 }
 
 /**
- * 채널별 승인(설계 5.5). 들어오는 길 셋: 구독 ack 의 `pendingApprovals`, wire `approval.requested`/`resolved`,
- * 카드의 잠금. 확정된 카드도 지우지 않는다 — 기록으로 남는다(설계 5.3).
+ * 채널별 승인(설계 5.5). 승인이 들어오는 길 둘: 구독 ack 의 `pendingApprovals`(`syncPending`)와
+ * wire `approval.requested`/`resolved`(`apply`). `setSending` 은 들어오는 길이 아니라 카드의 로컬 잠금이다.
+ * 확정된 카드도 지우지 않는다 — 기록으로 남는다(설계 5.3).
  *
  * `syncPending` 은 구독 ack 의 미해결 목록을 **그 채널 미해결 승인의 정본**으로 삼는다: 목록에 없는 로컬
  * `pending` 은 지운다. 끊긴 동안 놓친 확정이 옛 탭에 미해결 카드로 영영 남아(버튼 활성·카운트다운, 끝나면

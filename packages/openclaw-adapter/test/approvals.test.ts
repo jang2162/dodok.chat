@@ -277,7 +277,7 @@ describe("parseApprovalFrame — kind 유도(resolved 에는 approvalKind 가 �
   });
 });
 
-describe("parseApprovalFrame — 상한 초과는 잘라서 통과(fail-open 판정)", () => {
+describe("parseApprovalFrame — 상한 초과는 fail-open: 보여 주는 값은 잘라서, 상관 키는 버려서 통과", () => {
   it("계약 상한을 넘는 값은 잘리고 끝에 … 가 붙는다 — 승인 자체는 살아남는다", () => {
     const base = payloadOf(f.pluginApprovalRequested()) as { request: Record<string, unknown> };
     const a = parsed("plugin.approval.requested", {
