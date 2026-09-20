@@ -1,6 +1,6 @@
-# dodok.chat — 에이전트 네이티브 메신저 개발 계획서 (v0.6)
+# dodok.chat — 에이전트 네이티브 메신저 개발 계획서 (v0.7)
 
-작성일: 2026-09-14 · 상태: v0.6 (2026-09-15) — Phase 0 종료. ADR 0002 12절·ADR 0003 10절의 결정 13건을 10장에 확정(#1 재판정, #11~#21), Node 24 전환
+작성일: 2026-09-14 · 상태: v0.7 (2026-09-20) — Phase 1 종료(① 서버 코어 · ② 웹 MVP). 8장 Phase 1 항목 완료 표시·완료 기준 확인, 「이월 — 남은 문제」 목록 추가
 
 ### 변경 이력
 
@@ -10,6 +10,7 @@
 | v0.4 | (1) 프로젝트·플러그인 id를 `dodok`으로 통일 (2) 기본 배포 형태를 "본인 운영 원격 Gateway + 플러그인의 아웃바운드 브리지 접속"으로 변경 (3) OpenClaw 패키지 기준을 2026.8.1 → 2026.9.4로 갱신, "Gateway와 동일 버전 핀" 규칙 명문화 (4) 실시간 전송을 Socket.IO로 확정 (5) 최신 `protocol.schema.json`·`gateway-client` README·공식 문서 대조로 3.1절 사실 보강 (6) 채널 봇 루프 보호 설정과 `relayPolicy`의 이중 동작 검증을 Phase 0에 추가 (7) 결정 사항 7~10 추가, 내보내기 아티팩트 링크·HTML 엔티티 정리 |
 | v0.5 | 스파이크 1(`docs/adr/0001-gateway-client-spike.md`) 실측 반영 — (1) `hello-ok.features`는 참고 목록, 가용성은 호출해 `FORBIDDEN`/`MISSING_SCOPE`로 판정 (2) caps 정본은 `GATEWAY_CLIENT_CAPS`, `features.capabilities`는 서버 플래그 (3) `chat.send`는 `idempotencyKey` 필수이고 `runId`가 그 값 (4) `final`에 `usage`·`stopReason` 없음 → `session.message` (5) 툴 진행은 `session.tool`이 아니라 `agent` `stream:"tool"` (6) `sessions.subscribe` 응답은 `{subscribed:true}`뿐 (7) `chat.abort`는 `sessionKey` (8) 디바이스 토큰은 단수 (9) 페어링은 공유 토큰이면 자동 승인 (10) `seq`는 순서용, 연속 아님 |
 | v0.6 | Phase 0 종료 — ADR 0002 12절(6건)·ADR 0003 10절(7건)의 결정을 10장에 확정: #1 채널 프롬프트 주입 재판정, #11 Node 24 전환, #12 components 노출, #13 봇 루프 보호, #14 브리지 계약 `admission`, #15 「새 대화」= `sessions.reset` + `operator.admin`, #16 재접속 복구, #17 대체 경로 미사용, #18 `inboundChannelPrompt` 제거, #19 `:g<N>` 제거, #20 업스트림 보고 보류, #21 로컬 첫 에이전트 `dev`. 7장 백엔드 Node 24, 8장 Phase 1 첫 작업 두 건 추가 |
+| v0.7 | Phase 1 종료 — 8장 Phase 1 의 웹 항목(마크다운 렌더, 스트리밍 버블·중지, 에이전트 등록 UI·채널 추가·프롬프트 편집)에 완료 표시와 실물 요약, 완료 기준에 확인 방법(통합 시나리오 1~8 · dev Gateway 실연 6런 · `dev:fake` 브라우저 검증 시나리오 5), Phase 2 에 마크다운 렌더 보강 한 줄, 8장 끝에 「이월 — 남은 문제」(웹 렌더·서버·웹·실물 확인) 추가 |
 
 ---
 
@@ -422,16 +423,17 @@ SQLite(WAL)로 시작, Drizzle ORM으로 스키마 정의해 Postgres 전환 시
 - **시작 전 정리**(10장 #14·#18·#19): 플러그인의 스파이크용 `:g<N>` 세대 회전·`inboundChannelPrompt` 설정 키 제거, `context.channelPrompt`·`promptOverride` 는 `ChannelPromptContext` 로, 브리지 계약 `InboundDeliverResult` 에 `admission`·`reason` 추가. → **완료**(서버, 2026-09-15).
 - **첫 작업**(10장 #15): Gateway 클라이언트가 `operator.admin` 을 포함해 접속했을 때 원격이 부여하는지 확인. 거부되면 「새 대화」는 키 세대 회전으로 폴백(ADR 0003 7.1 대안). → **완료**(서버, 2026-09-15).
 - 모노레포·DB 스키마·인증(로컬 토큰). → **완료**(서버, 2026-09-15).
-- 채널 CRUD, 메시지 저장/브로드캐스트, 마크다운 렌더. → 채널 CRUD·메시지 저장/브로드캐스트 **완료**(서버, 2026-09-15). 마크다운 렌더는 ② 웹.
+- 채널 CRUD, 메시지 저장/브로드캐스트, 마크다운 렌더. → 채널 CRUD·메시지 저장/브로드캐스트 **완료**(서버, 2026-09-15). 마크다운 렌더 → **완료**(웹, 2026-09-20) — Streamdown(원시 HTML 끔), 멘션 칩, 단일 개행은 줄바꿈, 마크다운 이미지는 불러오지 않고 링크로. 코드 하이라이트·CJK 강조 경계는 Phase 2(아래 「이월」).
 - OpenClaw 어댑터: 브리지 서버 + Gateway 클라이언트, 재접속 복구(서버↔Gateway, 플러그인↔브리지 양쪽). → **완료**(서버, 2026-09-15) — dev Gateway 실연 `docs/guides/live-smoke.md`.
-- 스트리밍 버블, 중지 버튼.
-- 에이전트 등록 UI(OpenClaw `agentId` 매핑), 채널에 에이전트 추가, 채널 프롬프트/오버라이드 편집.
+- 스트리밍 버블, 중지 버튼. → **완료**(웹, 2026-09-20) — 런 상태별 버블(대기·스트리밍·종료 문구), 버블 안 중지 버튼과 작성기 `/stop`.
+- 에이전트 등록 UI(OpenClaw `agentId` 매핑), 채널에 에이전트 추가, 채널 프롬프트/오버라이드 편집. → **완료**(웹, 2026-09-20) — 「Gateway 에서 가져오기」·직접 입력, 채널 설정 패널(기본·프롬프트·멤버·에이전트별 오버라이드·자동 응답·릴레이 정책)·「새 대화」.
 - 멘션 파싱 + 자동 릴레이 + 루프 가드. → **완료**(서버, 2026-09-15).
-- **완료 기준**: 채널 하나에서 사람 1명 + 에이전트 2개가 멘션으로 3턴 이상 협업하는 시나리오가 E2E 테스트로 통과.
+- **완료 기준**: 채널 하나에서 사람 1명 + 에이전트 2개가 멘션으로 3턴 이상 협업하는 시나리오가 E2E 테스트로 통과. → **확인**(2026-09-20): 서버는 통합 시나리오 1~8(실제 어댑터 + 가짜 Gateway·플러그인, `apps/server/test/integration/`)과 dev Gateway 실연 6런(`docs/guides/live-smoke.md` 5절), 웹은 `pnpm -F @dodok/server dev:fake` 위 브라우저 검증 시나리오 5(사람 → `@dev` → dev 답의 `@fin` 릴레이 → 턴 상한 → 「이어가기」로 이어짐)가 **결함 0** 으로 통과했다. 웹은 E2E 테스트 파일을 남기지 않는 것이 설계 결정이라(스펙 10.2) 근거는 워커 검증 보고서다(`.superpowers/sdd/2026-09-19-web-mvp/web-t13*.md`, git 제외). 실물 Gateway·모델로 같은 흐름을 한 번 도는 것은 남았다 — `docs/guides/live-smoke.md` 7절.
 
 ### Phase 2 — 인터랙티브 UI·작업 기록 (2~3주)
 
-- `components` v1 렌더러(버튼·셀렉트·모달·미디어·파일), 상호작용 → 인바운드 변환, TTL·reusable·allowedUsers.
+- `components` v1 렌더러(버튼·셀렉트·모달·미디어·파일), 상호작용 → 인바운드 변환, TTL·reusable·allowedUsers. (Phase 1 은 `actions` 블록의 버튼만 그린다 — 나머지는 자리표시 한 줄.)
+- 마크다운 렌더 보강: 코드 하이라이트(`@streamdown/code`), 한국어 강조·구두점 경계(`@streamdown/cjk`) — 아래 「이월」의 웹 렌더 두 줄.
 - 활동 패널(툴 타임라인, 런 목록), 승인 카드(`approval.resolve`).
 - 이미지 첨부(업로드 → 첨부 정책 검증 `hello-ok.policy`) 및 에이전트 생성 이미지(`artifacts.download` 단기 URL) 표시.
 - PWA: 설치, 오프라인 최근 채널 캐시, **푸시 알림(확정)** — 구독 저장(`push_subscriptions`), 멘션/승인 요청/릴레이 한도 이벤트에 발송, iOS 설치 안내.
@@ -449,6 +451,37 @@ SQLite(WAL)로 시작, Drizzle ORM으로 스키마 정의해 Postgres 전환 시
 - 어댑터: Claude Agent SDK 러너 → Codex app-server 러너 → Hermes(API 서버 경로).
 - 앱: Tauri 데스크톱(트레이·알림), Capacitor 모바일 또는 네이티브.
 - 스레드, 검색, 에이전트 내부 위임 결과 요약 게시, 채널 템플릿.
+
+### 이월 — 남은 문제(Phase 1 종료 시점, 2026-09-20)
+
+Phase 1 ①·② 를 돌면서 「고치지 않고 알고 넘긴 것」을 한곳에 모았다. 상세 근거는 각 줄에 적은 문서에 있다. 위 Phase 2·3 항목과 겹치면 그쪽을 가리킨다.
+
+**웹 렌더(Phase 2 의존성 — 의존성을 더해야 한다)**
+
+- **코드 하이라이트**: Streamdown 2.6 은 shiki 를 `@streamdown/code` 플러그인으로 뺐고 웹 MVP 의존성에 없다 — 지금 코드 블록은 틀·복사 버튼까지다(스펙 5.2). Phase 2 에서 번들 크기(첫 화면 0.47MB)와 함께 판단한다.
+- **한국어 강조·구두점 경계**: `**"인용"**은` 처럼 CJK·구두점이 붙은 강조가 풀려 별표가 글자로 보인다 — `@streamdown/cjk` 후보. 작성기(Tiptap)에서는 굵게 보이고 보낸 뒤 평문이 되어 WYSIWYG 이 어긋나는 것도 같이 해결된다.
+- 이미지·첨부는 위 Phase 2 「이미지 첨부」 항목이다. MVP 는 마크다운 이미지를 **불러오지 않고 새 탭 링크로** 보인다(추적 픽셀 차단).
+
+**서버**
+
+- `channel.created` wire 이벤트가 없다 — 다른 탭·다른 사람이 만든 새 채널이 목록에 들어오지 않고 새로고침해야 보인다(웹은 첫 화면 빈 상태도 그렇다).
+- 시스템 메시지의 조사가 한쪽으로 고정이다 — 「@dev 이(가)」 같은 병기형이 필요하다(웹 자기 문구는 `apps/web/src/lib/josa.ts` 로 푼다).
+- `CONFLICT` 응답에 `details.field` 가 없어 핸들 충돌과 `providerAgentId` 충돌을 폼이 가를 수 없다.
+- `GET /auth/me` 에 워크스페이스 이름이 없다 — 사이드바 제목이 「dodok」 고정이다.
+- usage 값이 틀리고(claude-cli `message_start` 스냅샷) 출처가 확정되지 않았다 — 다음 실연에서 `OPENCLAW_FRAME_DUMP_PATH` 로 원본 프레임을 남겨 가른다. 활동 패널의 비용·토큰 표시는 그때까지 쓸 수 없다. 상세 `docs/guides/live-smoke.md` 5.4 의 2번.
+- 정본이 먼저 오고 Gateway 이벤트가 없는 퇴화 경로에서 늦은 답이 다음 런에 붙을 수 있다 — `docs/guides/live-smoke.md` 5.4 의 4번(남음).
+
+**웹**
+
+- 목록 뷰포트 높이가 줄면(배너가 생길 때·창 크기 변화) 끝에 다시 붙지 않는다 — 줄어든 만큼 마지막 행이 가려진다. `STICK_PX`(80) 안이라 새 메시지는 계속 따라온다. 고친다면 스크롤러 `ResizeObserver` 에서 붙어 있을 때 다시 겨누는 한 줄.
+- 서버가 끊은 소켓의 직접 재연결이 고정 2초다(`WIRE_RETRY_MS`) — 백오프가 없다.
+- 빌드에 경고 한 줄: `advancedChunks option is deprecated, please use codeSplitting instead`(`apps/web/vite.config.ts` 의 `build.rolldownOptions.output.advancedChunks`) — `codeSplitting` 으로 옮긴다.
+- 큰 테스트 파일 둘(`features/agents/agents.test.tsx` 558줄, `features/settings/members.test.tsx` 527줄) 분할 후보.
+- `wire-cli` 는 루트 typecheck 밖이다 — 웹이 wire 계약을 타입으로 쓰므로 계약이 바뀌면 웹 typecheck 가 먼저 깨진다(웹 스펙 12장 3).
+
+**실물 확인**
+
+- 웹을 실제 dev Gateway·실제 플러그인·실제 모델로 돌린 적이 아직 없다(모델 사용량 판단으로 분리). 절차·볼 것은 `docs/guides/live-smoke.md` 7절.
 
 ---
 

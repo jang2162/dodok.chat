@@ -1,6 +1,6 @@
 # 프로젝트 구성 가이드 (Claude Code 인계용)
 
-작성일: 2026-09-14 · 계획서 v0.4 기준 · 이 문서는 "어떻게 구성할지"만 다룬다. 배경·결정 근거는 `docs/plan.md` 참고.
+작성일: 2026-09-14 · 계획서 v0.7 기준(2026-09-20 갱신: `apps/web` 실물) · 이 문서는 "어떻게 구성할지"만 다룬다. 배경·결정 근거는 `docs/plan.md` 참고.
 
 ---
 
@@ -9,7 +9,7 @@
 ```
 dodok.chat/
 ├─ apps/
-│  ├─ web/                    # @dodok/web — React 19 + Vite PWA
+│  ├─ web/                    # @dodok/web — React 19 + Vite (PWA 는 Phase 2)
 │  └─ server/                 # @dodok/server — Node 24 + Fastify + Socket.IO (+ 플러그인 브리지 엔드포인트)
 ├─ packages/
 │  ├─ shared/                 # @dodok/shared — 도메인 타입·Zod 스키마·components v1 규약·RunEvent(AG-UI 매핑)·wire 계약
@@ -21,7 +21,7 @@ dodok.chat/
 ├─ docs/
 │  ├─ plan.md                 # 계획서
 │  ├─ project-structure.md    # 이 문서
-│  ├─ guides/                 # 작업 지침 (worktree-workflow.md, browser-verification.md)
+│  ├─ guides/                 # 작업 지침 (worktree-workflow.md, browser-verification.md, live-smoke.md)
 │  ├─ superpowers/            # 스펙·구현계획 (specs/, plans/)
 │  └─ adr/                    # 결정 기록 (스파이크 결과마다 한 장; 0001 = Gateway 클라이언트 스파이크)
 ├─ scripts/
@@ -111,6 +111,10 @@ src/
 테스트(`apps/server/test/`): 모듈 단위(인메모리 SQLite), `fakes/`(가짜 Gateway·가짜 플러그인·시나리오 대본), `integration/`(시나리오 1~8, 실제 어댑터 + 가짜 둘), `helpers/`(`bootLiveApp`·wire 클라이언트·시나리오 단계).
 손으로 두드리는 실연 도구는 루트 `scripts/wire-cli.ts`(`pnpm wire-cli`, `docs/guides/live-smoke.md`).
 
+개발 모드 `apps/server/scripts/dev-fake.ts`(`pnpm -F @dodok/server dev:fake`, 웹 MVP 스펙 9.2): 위 `test/fakes/` 를 그대로 가져다 가짜 Gateway·가짜 플러그인·대본과 함께 서버를 띄운다 —
+실제 `OpenClawAdapter` 가 가짜 Gateway 에 `OPENCLAW_TARGET=dev` 로 붙으므로 모델 런·실제 Gateway 없이 웹 전체를 돌릴 수 있다. `.env` 를 읽지 않고 개발 전용 고정값을 쓴다(로그인 토큰 `dev-fake-local-token` — 시크릿이 아니라 로그에 찍는다),
+DB 는 `data/dev-fake.sqlite`(시작마다 새로, `--keep` 이면 유지), 기본 포트 3000(Vite 프록시 대상). 운영 코드(`src/`)는 건드리지 않는다.
+
 ### 2.3 `packages/openclaw-adapter` (서버 프로세스 안에서 실행)
 
 ```
@@ -166,21 +170,72 @@ SDK import 경로: `openclaw/plugin-sdk/plugin-entry`, `openclaw/plugin-sdk/chan
 
 ### 2.5 `apps/web`
 
+Phase 1 ② 웹 MVP 실물(스펙 `docs/superpowers/specs/2026-09-19-web-mvp-design.md`, 계획 `docs/superpowers/plans/2026-09-19-web-mvp.md`).
+React 19 + Vite 8 + TanStack(Query·Router·Virtual) + Tiptap 작성기 + Streamdown 렌더 + Tailwind 4·shadcn. 의존성은 전부 정확 핀이고 태스크 2 에서 한 번에 넣었다 — 뒤 작업은 의존성을 더하지 않는다.
+서버 상태의 진실은 Query 캐시이고 wire 이벤트가 그것을 패치한다. 스트리밍 중인 런만 Zustand 스토어에 둔다(스펙 4장, 데이터 흐름 A).
+
 ```
+index.html                 lang="ko", color-scheme light dark, /favicon.svg
+vite.config.ts             별칭 @ → src, dev 프록시(/api·/socket.io → DODOK_API_ORIGIN, 기본 http://127.0.0.1:3000 — 브라우저에게 같은 출처),
+                           빌드 청크(editor·markdown), Vitest(jsdom, test/setup.ts)
+components.json            shadcn 규약(new-york·neutral, 별칭 @/ui·@/lib/utils) — CLI 는 워크스페이스에서 돌리지 않는다(upstream 이 npm 패키지를 넣는다)
 src/
-├─ app/                   라우터(TanStack Router), 레이아웃(사이드바 채널 목록 / 메시지 영역 / 활동 패널)
+├─ main.tsx                진입점 — createRoot + <App/>
+├─ styles.css              Tailwind 진입(@import) + theme/tokens.css, Streamdown 클래스 @source, 한국어 줄바꿈(word-break: keep-all)
+├─ app/
+│  ├─ App.tsx              Provider 조립(Query·Router·Wire·Tooltip·Toaster) + Query 밖 401 등록
+│  ├─ createApp.ts         앱 하나의 QueryClient·Router·onUnauthorized (테스트는 메모리 히스토리를 넘긴다)
+│  ├─ router.tsx           라우트(/login·가드 레이아웃·/·/c/$channelId(+/settings)·/agents), safeNext, 라우트 코드 분할
+│  ├─ queryClient.ts       Query 기본값 — 전역 오류 토스트(`meta.silent` 로 끔, 폼 오류 VALIDATION·CONFLICT 제외), 재시도는 네트워크·5xx 만, 401 → 로그인
+│  ├─ session.ts           로그아웃·401 정리(resetClientState)와 Query 밖 REST 401 통지
+│  ├─ fileDrop.ts          앱 수준 파일 드롭 막기 + 「이미지는 Phase 2」 한 문구·한 토스트 id
+│  ├─ NotFound.tsx         없는 경로(defaultNotFoundComponent)
+│  ├─ RouteError.tsx       라우트 오류 화면(연결 문제 ↔ 코드 오류를 가른다)
+│  └─ layout/
+│     ├─ AppShell.tsx      사이드바 + 배너 + 페이지. 768px 미만은 사이드바를 왼쪽 시트로, 닫히면 초점 복귀
+│     ├─ Sidebar.tsx       워크스페이스 이름·채널 목록·「채널 만들기」·「에이전트」·연결 상태·로그아웃
+│     ├─ ChannelHeader.tsx 채널 이름·주제, 에이전트 아바타 묶음(+N), 설정 패널 여닫기, 좁은 화면 메뉴 버튼
+│     ├─ Banners.tsx       wire 끊김·`rejected`·`protocol_mismatch` 배너 + OpenClaw 미연결 배너(둘은 함께 보일 수 있다)
+│     ├─ ConnectionDots.tsx Gateway·플러그인 점 — wire 가 끊기면 마지막 값을 믿지 않고 「알 수 없음」
+│     └─ sidebarSheet.tsx  좁은 화면 시트 열기 컨텍스트 + 지금 화면의 메뉴 버튼(초점 복귀 대상)
+├─ api/
+│  ├─ http.ts              같은 출처 REST(`/api/v1`) — 인증은 httpOnly 쿠키, 토큰을 다루지 않는다. ApiRequestError·NetworkError
+│  ├─ queries.ts           쿼리 키 `qk` 와 공용 훅(me·channels·channel·members·agents·adapter)
+│  └─ formErrors.ts        VALIDATION·CONFLICT 를 폼 칸·문구로 잇는 도우미
+├─ realtime/
+│  ├─ wire.ts              Socket.IO 클라이언트(토큰 없음 — 쿠키 인증, `transports: ["websocket"]` 만: polling 첫 GET 에는 Origin 이 없다), WireStatus, WireAckError
+│  ├─ WireProvider.tsx     로그인(me 캐시)이 확인되면 소켓을 만들어 붙인다 + `useChannelSubscription`
+│  ├─ handlers.ts          서버 이벤트 → Query 캐시·런 스토어·작성 중 저장소·연결 상태. `system.notice` 토스트 지속시간
+│  ├─ subscriptions.ts     한 채널 구독·빈틈 이어 받기·과거 페이지 REST(5쪽 초과면 타임라인 리셋)
+│  ├─ timelineCache.ts     `["timeline", channelId]` 읽기·쓰기
+│  ├─ runReplay.ts         `run.events.replay` 와 실시간 `run.event` 의 경합(ack 전 이벤트는 버퍼)
+│  └─ typing.ts            받은 `typing` 저장(5초 TTL)과 작성 중 행위자 목록
 ├─ features/
-│  ├─ channels/           목록·생성·설정(프롬프트, 에이전트 멤버, 릴레이 정책)
-│  ├─ messages/           가상화 목록(TanStack Virtual), 스트리밍 버블, Streamdown 렌더
-│  ├─ composer/           Tiptap + Mention 확장, 슬래시 커맨드(/new, /stop), 이미지 붙여넣기
-│  ├─ components/         components v1 렌더러 (shadcn 프리미티브), 상호작용 전송
-│  ├─ activity/           런 타임라인(AI Elements Tool/Reasoning 조각), 승인 카드
-│  ├─ agents/             에이전트 등록(OpenClaw agentId 매핑), 상태 표시
-│  └─ setup/              설정 마법사(Gateway URL·토큰·페어링·플러그인 설치 안내·브리지 URL/토큰 발급), 연결 상태
-├─ realtime/              Socket.IO 클라이언트, lastSeq 복구, 델타 적용
-├─ pwa/                   서비스워커(vite-plugin-pwa), 푸시 구독, iOS 설치 안내
-└─ ui/                    shadcn 컴포넌트
+│  ├─ auth/                LoginPage · mutations(useLogin·useLogout — 응답 `sessionToken` 은 쓰지 않는다, gcTime 0)
+│  ├─ channels/            ChannelList · CreateChannelDialog(만들면 설정으로) · HomeRedirect(`/` → 첫 채널, 들어올 때 받은 목록으로만 판단) · mutations
+│  ├─ messages/            timeline.ts(입장·과거·upsert·낙관적 교체·빈틈)·groupRows.ts(날짜 구분선·묶음)·useTimeline·useOlderPages·useAuthors,
+│  │                       MessageList.tsx(TanStack Virtual, 끝 붙기·「새 메시지」 칩), MessageItem·MessageBody(Streamdown, 원시 HTML 끔,
+│  │                       단일 개행 → br, 마크다운 이미지는 링크로)·MentionChip·mentionMarkdown·SystemCard·ActionButtons(components 버튼)·
+│  │                       PendingItem·pendingActions·MessageErrorBoundary, ChannelPage.tsx(채널 확인 뒤에만 안을 그린다)
+│  ├─ runs/                runStore.ts(Zustand, seq 중복 제거·재생)·bubblePhase.ts(상태 → 버블 모양)·StreamingBubble.tsx·useChannelBubbles·abortError
+│  ├─ composer/            Composer.tsx(Tiptap) · mentions·MentionList(@ 후보) · serialize.ts(→ `<@a:id>` 토큰 bodyMd, 줄 머리 이스케이프) ·
+│  │                       submitKeys(Enter 전송·IME) · slash.ts(`/stop`·`/new`) · useSendMessage(ack·10s 타임아웃 → failed) · useTyping·TypingIndicator
+│  ├─ agents/              AgentsPage·AgentRow(사용 토글·기본 프롬프트) · DiscoverDialog(「Gateway 에서 가져오기」) · ManualAgentForm·handleFrom ·
+│  │                       resetSession·ResetSessionDialog(「새 대화」 — 작성기 `/new` 와 설정 패널이 함께 쓴다) · mutations
+│  └─ settings/            ChannelSettingsPanel(넓은 화면 오른쪽 360px ↔ 좁은 화면 전체 시트, 내용은 포털로 한 자리에서) ·
+│                          BasicSection·PromptSection·MembersSection·AgentMemberRow·RelayPolicySection(+relayPolicyForm)·autoRespond(채널당 하나 보장)·
+│                          Section·ConfirmDialog·mutations(응답은 보낸 필드만 캐시 병합 — 늦은 응답이 wire 값을 덮지 않게)
+├─ hooks/useIsNarrow.ts    768px 미만(사이드바 시트·설정 전체 화면)
+├─ lib/                    josa.ts(받침에 따른 조사) · utils.ts(cn)
+├─ theme/                  agentColor.ts(핸들 → 8색 색인) · tokens.css(중립 회색 램프·강조색 하나·상태색·에이전트 8색·모션 줄이기)
+└─ ui/                     17개 — shadcn 복사본(alert·avatar·badge·button·checkbox·dialog·dropdown-menu·input·label·scroll-area·
+                           separator·sheet·sonner·switch·textarea·tooltip)과 직접 만든 field-error(칸 아래 오류 라이브 영역).
+                           손으로 두고 `@/lib/utils` 로 잇는다 — CLI 를 워크스페이스에서 돌리지 않는다
 ```
+
+아직 없는 것(Phase 2 이후): `features/components/` 의 셀렉트·모달·미디어 렌더러(MVP 는 `actions` 버튼만), `features/activity/`(런 타임라인·툴 카드·승인 카드), `features/setup/`(설정 마법사 — Phase 3), `pwa/`(서비스워커·푸시), 첨부·업로드.
+
+테스트: 소스 옆 `*.test.ts(x)`(순수 로직 + jsdom 렌더·라우팅·wire 핸들러) + `apps/web/test/`(`setup.ts`, 공용 도우미 `shellApi`·`messages`·`composerHarness`·`fakeSocket`·`fixtures`·`scrollLayout`·`settingsServer`·`domStubs`·`media`, `ui.test.tsx`). E2E 파일은 두지 않는다 — 브라우저 검증은 워커가 `dev:fake` 위에서 한 번 돌고 보고서로 남긴다(스펙 10.2).
 
 ---
 
@@ -225,6 +280,8 @@ src/
 | `BRIDGE_URL` | — | **스파이크 러너 전용**(서버는 읽지 않음) — 러너가 브리지를 리슨할 오리진(`/bridge` 없음) |
 
 플러그인은 env 가 아니라 Gateway 계정 설정 `channels.dodok.accounts.<id>.bridgeUrl`(오리진 + `/bridge`)로 접속한다(ADR 0002 10절). 서버 쪽 공개 주소는 `BRIDGE_PUBLIC_URL` 하나로 정리됐고, 스파이크의 `BRIDGE_URL` 은 러너 전용으로 남았다.
+웹(`apps/web`)은 `.env` 를 읽지 않는다 — 브라우저에 들어가는 설정이 없다. dev 서버의 프록시 대상만 셸 환경 `DODOK_API_ORIGIN`(기본 `http://127.0.0.1:3000`)으로 받는다(`vite.config.ts`). 서버 포트를 바꾸면 `APP_ORIGIN`(서버)·`DODOK_API_ORIGIN`(Vite)·브라우저 주소를 함께 맞춘다 — wire 는 핸드셰이크 `Origin` 이 `APP_ORIGIN` 과 같을 때만 쿠키를 받는다.
+
 Phase 2 이후에 더할 것: `VAPID_PUBLIC_KEY`·`VAPID_PRIVATE_KEY`·`VAPID_SUBJECT`(푸시), `UPLOAD_DIR`(업로드). Postgres 전환 시 `DB_PATH` 대신 연결 문자열.
 
 우리가 관리하는 OpenClaw 설정 조각(설정 마법사가 만들어 주고, 사용자가 Gateway 호스트에 적용):

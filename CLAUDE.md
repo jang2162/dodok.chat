@@ -36,6 +36,8 @@ pnpm test · pnpm typecheck · pnpm lint · pnpm lint:fix · pnpm fmt · pnpm fm
 Node 24.21.0 · pnpm 11.16.0 은 mise.toml 핀(`mise install`). Bash 도구는 SessionStart 훅(.claude/hooks/node-env.sh)이 PATH 를 잡는다. `node -v` 가 24 가 아니면 `export PATH="$(mise where node)/bin:$PATH"`.
 scripts/orca-worker.sh status|spawn|attach|wait|reap|stop|keep|sync-config · bash scripts/test/orca-worker.test.sh
 서버 단독: pnpm -F @dodok/server dev(루트 .env, 이미 있는 env 는 안 덮음) · pnpm wire-cli <origin> [localToken] <명령>(REST·wire 손 점검) · dev Gateway 실연 절차·결과 docs/guides/live-smoke.md
+웹 손 확인: pnpm -F @dodok/server dev:fake(가짜 Gateway·플러그인·대본, 모델 런 없음. 기본 포트 3000, DB data/dev-fake.sqlite 는 시작마다 새로·--keep 이면 유지, 개발 전용 고정 로그인 토큰 dev-fake-local-token) + pnpm -F @dodok/web dev(5173).
+브라우저는 http://localhost:5173 으로 연다 — 127.0.0.1 이면 wire 핸드셰이크 Origin 이 APP_ORIGIN 과 달라 거부된다(rejected 배너). 포트를 바꿔 병행하려면 PORT·APP_ORIGIN·DODOK_API_ORIGIN·--port 를 함께 맞춘다.
 docker compose -f infra/docker-compose.yml up [--profile gateway]
 
 ## 현재 단계
@@ -43,4 +45,6 @@ shared 계약·DB 스키마·순수 로직 구현 완료 (docs/superpowers/plans
 Phase 0 스파이크 1·2·3 완료 — docs/adr/0001(Gateway WS 실물), 0002(채널 플러그인: 인바운드·message 툴·components 동작, 봇 루프 보호는 플러그인이 사실을 넘길 때만), 0003(채널 프롬프트: claude-cli 기존 세션은 리셋·새 키에서만 반영, ChannelPromptContext 는 매 턴 반영; deltaCursor 는 claude-cli 세션에 없음; chat.send 대체 경로는 MVP 미사용).
 로컬 dev Gateway: OpenClaw.app 번들 CLI(`openclaw --dev`, Node 24 번들, 상태 ~/.openclaw-dev, 에이전트 dev·fin). 원격 호스트 플러그인 설치는 사람 절차(ADR 0002 9절).
 Phase 0 종료, 결정 13건 확정(계획서 10장 #1·#11~#21), Node 24 전환, 플러그인 스파이크 흔적 정리 병합(cd572af — InboundDeliverResult.admission, ChannelPromptContext 고정).
-Phase 1 ① 서버 코어 완료 — 스펙 docs/superpowers/specs/2026-09-15-server-core-design.md, 계획 docs/superpowers/plans/2026-09-15-server-core.md(태스크 0~15). 통합 시나리오 1~8(가짜 Gateway·플러그인) 통과, dev Gateway 실연(런 6: 멘션·릴레이·상한·이어가기·리셋 뒤 프롬프트·Gateway 재기동 복구) 통과 — 실연이 찾은 「새 세션 미구독」은 38fa0f1 로 고침, usage 값·진단 로그는 남음(docs/guides/live-smoke.md 5.4). 다음: ② 웹.
+Phase 1 ① 서버 코어 완료 — 스펙 docs/superpowers/specs/2026-09-15-server-core-design.md, 계획 docs/superpowers/plans/2026-09-15-server-core.md(태스크 0~15). 통합 시나리오 1~8(가짜 Gateway·플러그인) 통과, dev Gateway 실연(런 6: 멘션·릴레이·상한·이어가기·리셋 뒤 프롬프트·Gateway 재기동 복구) 통과 — 실연이 찾은 「새 세션 미구독」은 38fa0f1 로 고침, usage 값·진단 로그는 남음(docs/guides/live-smoke.md 5.4).
+Phase 1 ② 웹 MVP 완료(2026-09-20) — 스펙 docs/superpowers/specs/2026-09-19-web-mvp-design.md, 계획 docs/superpowers/plans/2026-09-19-web-mvp.md(태스크 0~14). 로그인·채널·메시지 목록·@멘션 작성기·마크다운 렌더·스트리밍 버블·중지·에이전트 등록·채널 설정·「새 대화」. 구성은 docs/project-structure.md 2.5.
+dev:fake 위 브라우저 검증은 결함 0 으로 통과(시나리오 1~10, 수정 라운드 2회 뒤 재검증 2회). 남은 문제·후속은 docs/plan.md 8장 「이월」 한곳에. 실물 dev Gateway·모델로 웹을 돌린 적은 아직 없다(절차 docs/guides/live-smoke.md 7절). 다음: Phase 2.
