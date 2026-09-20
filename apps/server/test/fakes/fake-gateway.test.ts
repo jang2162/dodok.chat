@@ -443,6 +443,20 @@ describe("가짜 Gateway — 실제 connectGateway 로 붙는다", () => {
       status: "allowed",
       decision: "allow-once",
     });
+    // ⚠ 실측(3.4·5.2) — 확정도 짝이다. `session.approval(terminal)` 이 먼저 오고 정본이 뒤따른다
+    const events = frames.map((f) => f.event);
+    expect(events.filter((e) => e === "session.approval")).toHaveLength(2);
+    expect(events.lastIndexOf("session.approval")).toBeLessThan(events.indexOf("plugin.approval.resolved"));
+    const terminal = frames.filter((f) => f.event === "session.approval").at(-1) as Frame;
+    expect(terminal.payload).toMatchObject({
+      phase: "terminal",
+      approval: { id: payload.id, status: "allowed", decision: "allow-once", reason: "user" },
+    });
+    expect(parseApprovalFrame("session.approval", terminal.payload)).toMatchObject({
+      status: "allowed",
+      decision: "allow-once",
+      reason: "user",
+    });
 
     // 이미 확정된 승인에 다시 보내도 오류가 아니다 — applied:false 에 같은 스냅샷(4.4)
     const again = await connection.request("approval.resolve", {
@@ -498,6 +512,35 @@ describe("가짜 Gateway — 실제 connectGateway 로 붙는다", () => {
       reason: "timeout",
       decision: "deny",
     });
+
+    // ⚠ 실측(5.2) — 만료도 짝으로 온다. 먼저 오는 세션 스냅샷에는 `status`·`reason` 만 있고 **`decision` 이 없다**
+    const events = frames.map((f) => f.event);
+    expect(events.lastIndexOf("session.approval")).toBeLessThan(events.indexOf("plugin.approval.resolved"));
+    const terminal = frames.filter((f) => f.event === "session.approval").at(-1) as Frame;
+    const snapshot = (terminal.payload as { approval: Record<string, unknown> }).approval;
+    expect(terminal.payload).toMatchObject({ phase: "terminal" });
+    expect(snapshot).toMatchObject({ id: payload.id, status: "expired", reason: "timeout" });
+    expect(snapshot.decision).toBeUndefined();
+    expect(parseApprovalFrame("session.approval", terminal.payload)?.decision).toBeUndefined();
+    expect(parseApprovalFrame("session.approval", terminal.payload)).toMatchObject({
+      status: "expired",
+      reason: "timeout",
+    });
+  });
+
+  it("승인: settleFrameOrder 로 확정 짝의 순서를 뒤집는다(두 순서 모두 하네스로 잴 수 있게)", async () => {
+    const { gateway, frames } = await connect();
+    const { outcome } = await requestApproval(gateway, frames, {
+      toolCallId: "toolu_fake_a",
+      ttlMs: 20,
+      settleFrameOrder: "plugin-first",
+    });
+
+    await expect(outcome).resolves.toMatchObject({ decision: "deny", expired: true });
+    await waitForFrame(frames, "plugin.approval.resolved");
+    await vi.waitFor(() => expect(frames.filter((f) => f.event === "session.approval")).toHaveLength(2));
+    const events = frames.map((f) => f.event);
+    expect(events.indexOf("plugin.approval.resolved")).toBeLessThan(events.lastIndexOf("session.approval"));
   });
 
   it("승인: onTimeout silent 면 만료 프레임을 보내지 않는다(서버 만료 감시를 재는 대본)", async () => {

@@ -158,6 +158,18 @@ describe("parseApprovalFrame — session.approval(보조, 재접속·중복 경�
 
     expect(a).toMatchObject({ status: "expired", decision: "deny", reason: "timeout" });
   });
+
+  it("⚠ 실측(5.2) — 만료 스냅샷에는 `decision` 이 아예 없다. status·reason 만 읽고 비운 채로 둔다", () => {
+    const a = parsed(
+      "session.approval",
+      payloadOf(
+        f.sessionApproval({ phase: "terminal", status: "expired", decision: null, reason: "timeout" }),
+      ),
+    );
+
+    expect(a).toMatchObject({ status: "expired", reason: "timeout" });
+    expect(a.decision).toBeUndefined(); // 지어내지 않는다 — 그 값은 정본 프레임이 들고 온다
+  });
 });
 
 describe("parseApprovalFrame — 우리 세션만 거른다(전역 이벤트)", () => {
@@ -481,6 +493,50 @@ describe("mergeApproval — 같은 승인의 두 모양 합치기", () => {
     const merged = mergeApproval(expired, fromSession({ phase: "terminal" })); // 세션은 allowed/user 다
 
     expect(merged).toMatchObject({ status: "expired", decision: "deny", reason: "timeout" });
+  });
+
+  /**
+   * ⚠ 실측(3.4·5.2) — 확정도 짝으로 온다: `session.approval(terminal, expired)` 에는 `decision` 이 없고
+   * `plugin.approval.resolved` 에는 `deny`+`resolvedBy:null` 만 있다. 어느 쪽이 먼저 오든 같은 행이 남아야 한다(리뷰 F2).
+   */
+  describe("확정 짝 — 도착 순서가 행을 바꾸지 않는다", () => {
+    const expiredSession = () =>
+      parsed(
+        "session.approval",
+        payloadOf(
+          f.sessionApproval({ phase: "terminal", status: "expired", decision: null, reason: "timeout" }),
+        ),
+      );
+    const expiredPlugin = () =>
+      parsed(
+        "plugin.approval.resolved",
+        payloadOf(f.pluginApprovalResolved({ decision: "deny", resolvedBy: null })),
+      );
+    const outcome = { status: "expired", decision: "deny", reason: "timeout" };
+
+    it("session → plugin: 비어 있던 decision 을 같은 결말의 짝이 채운다", () => {
+      expect(mergeApproval(expiredSession(), expiredPlugin())).toMatchObject(outcome);
+    });
+
+    it("plugin → session: 뒤집어도 같다", () => {
+      expect(mergeApproval(expiredPlugin(), expiredSession())).toMatchObject(outcome);
+    });
+
+    it("두 순서의 결말 셋이 글자 그대로 같다", () => {
+      const pick = (a: ProviderApproval) => ({ status: a.status, decision: a.decision, reason: a.reason });
+      expect(pick(mergeApproval(expiredSession(), expiredPlugin()))).toEqual(
+        pick(mergeApproval(expiredPlugin(), expiredSession())),
+      );
+    });
+
+    it("다른 결말을 말하는 프레임은 빈 자리를 채우지 않는다 — 만료가 allow-once 를 얻지 않는다", () => {
+      const allowed = parsed("plugin.approval.resolved", payloadOf(f.pluginApprovalResolved()));
+
+      const merged = mergeApproval(expiredSession(), allowed);
+
+      expect(merged.status).toBe("expired");
+      expect(merged.decision).toBeUndefined();
+    });
   });
 
   it("sameApproval — 새로 채운 필드도 상태 변화도 없으면 같다고 본다", () => {

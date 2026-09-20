@@ -45,6 +45,16 @@ function distinctById(approvals: Approval[]): Approval[] {
   return [...new Map(approvals.map((a) => [a.id, a])).values()];
 }
 
+/** 그 승인의 **마지막** 중계 — 확정 짝의 뒤엣것이 빈 자리를 채우면 같은 승인이 두 번 실린다 */
+function lastRow(log: WireLog, id: string): Approval | undefined {
+  return log.resolvedApprovals.filter((a) => a.id === id).at(-1);
+}
+
+/** 두 경로가 같은 모양으로 모였는지 볼 때 쓰는 결말 셋 */
+function outcomeOf(approval: Approval | undefined) {
+  return { status: approval?.status, decision: approval?.decision, reason: approval?.reason };
+}
+
 describe("통합 시나리오 9 — 승인 허용·거절·만료·겹침", () => {
   let live: LiveApp;
   const sockets: WireClient[] = [];
@@ -242,15 +252,10 @@ describe("통합 시나리오 9 — 승인 허용·거절·만료·겹침", () =
     });
     const { run, card } = await askAndWaitForCard(log, setup);
 
+    // ⚠ 실측 — 확정도 **짝**으로 온다(3.4·5.2). 먼저 오는 `session.approval(terminal)` 에는 `status:"expired"`·
+    // `reason:"timeout"` 만 있고 `decision` 이 없다 — 첫 중계가 여기까지인 것은 실물 그대로다
     const expired = await log.until(() => log.resolvedApprovals.at(0), "만료된 approval.resolved");
-    // ⚠ 실측 — Gateway 경로의 만료는 `decision:"deny"` 를 그대로 싣고 온다(5.2 의 비대칭을 어댑터가 status 로만 흡수한다).
-    // 서버 감시가 닫은 만료(9c′)는 `decision` 이 빈다 — 두 경로가 다르므로 카드는 **status 로** 「만료됨」을 그려야 한다
-    expect(expired).toMatchObject({
-      id: card.id,
-      status: "expired",
-      reason: "timeout",
-      decision: "deny",
-    });
+    expect(expired).toMatchObject({ id: card.id, status: "expired", reason: "timeout" });
     expect(expired.decidedBy).toBeUndefined();
     // 런 이벤트에서만 계약이 요구하는 값으로 정규화된다(설계 3.2)
     expect(approvalEvents(log, run.id).at(-1)).toMatchObject({
@@ -264,6 +269,11 @@ describe("통합 시나리오 9 — 승인 허용·거절·만료·겹침", () =
     expect((await log.terminal(run.id)).status).toBe("done");
     const statuses = log.statesOf(run.id).map((s) => s.status);
     expect(statuses[statuses.indexOf("awaiting_approval") + 1]).toBe("tool");
+
+    // 짝의 뒤엣것(`plugin.approval.resolved`)이 빈 `decision` 을 채운다 — 서버 감시가 닫은 만료(9c′)와 글자 그대로 같은 행(p2-t6 B)
+    expect(lastRow(log, card.id)).toMatchObject({ status: "expired", decision: "deny", reason: "timeout" });
+    // 값만 늦게 찬 것이라 타임라인에 `APPROVAL_RESOLVED` 를 또 쌓지 않는다
+    expect(approvalEvents(log, run.id).filter((e) => e.type === "APPROVAL_RESOLVED")).toHaveLength(1);
 
     // 만료된 승인은 다시 누를 수 없다
     const late = await log.socket.emitWithAck("approval.resolve", {
@@ -303,6 +313,94 @@ describe("통합 시나리오 9 — 승인 허용·거절·만료·겹침", () =
 
     const terminal = await log.terminal(run.id);
     expect(terminal).toMatchObject({ status: "error", error: { code: "TIMEOUT" } });
+    expectNoScenarioErrors(scenario);
+  });
+
+  it("시나리오 9f — 확정 짝이 어느 순서로 와도 만료 행은 같다(실물 순서·뒤집은 순서)", async () => {
+    // ⚠ 실물은 확정도 짝으로 준다(3.4·5.2): `session.approval(terminal)` 에는 `decision` 이 없고
+    // `plugin.approval.resolved` 에만 `deny` 가 실린다. 어느 쪽이 먼저 닿든 저장된 행은 같아야 한다(리뷰 F2)
+    await boot();
+    const { setup, log, scenario } = await startTurn({
+      approval: [
+        // 실물 관측 순서 — 세션 스냅샷이 먼저
+        { ...WRITE_APPROVAL, toolName: "Write", ttlMs: 300, onDecision: "toolError" },
+        // 뒤집은 순서 — 정본이 먼저
+        {
+          ...WRITE_APPROVAL,
+          title: "claude-cli native tool: Read",
+          toolName: "Read",
+          ttlMs: 300,
+          onDecision: "toolError",
+          settleFrameOrder: "plugin-first",
+        },
+      ],
+    });
+    const { run } = await askAndWaitForCard(log, setup);
+    const [sessionFirst, pluginFirst] = await log.until(() => {
+      const cards = distinctById(log.approvals);
+      return cards.length === 2 ? cards : undefined;
+    }, "승인 카드 둘");
+
+    expect((await log.terminal(run.id)).status).toBe("done");
+    // 같은 만료가 같은 행으로 남는다 — 순서에 따라 `decision` 이 비는 일이 없다
+    const expired = { status: "expired", decision: "deny", reason: "timeout" };
+    expect(outcomeOf(lastRow(log, sessionFirst?.id as string))).toEqual(expired);
+    expect(outcomeOf(lastRow(log, pluginFirst?.id as string))).toEqual(expired);
+    expect(lastRow(log, sessionFirst?.id as string)?.decidedBy).toBeUndefined();
+    expect(lastRow(log, pluginFirst?.id as string)?.decidedBy).toBeUndefined();
+    // 타임라인은 어느 순서에서도 승인당 요구 하나·해결 하나다(짝의 뒤엣것이 카드를 또 쌓지 않는다)
+    expect(approvalEvents(log, run.id).map((e) => e.type)).toEqual([
+      "APPROVAL_REQUESTED",
+      "APPROVAL_REQUESTED",
+      "APPROVAL_RESOLVED",
+      "APPROVAL_RESOLVED",
+    ]);
+    for (const event of approvalEvents(log, run.id).filter((e) => e.type === "APPROVAL_RESOLVED")) {
+      expect(event).toMatchObject({ decision: "deny", reason: "timeout" });
+    }
+    expectNoScenarioErrors(scenario);
+  });
+
+  it("시나리오 9g — 사용자가 누른 뒤 늦게 오는 확정 짝은 어느 순서로 와도 그 결정을 덮지 않는다", async () => {
+    await boot();
+    const { setup, log, scenario } = await startTurn({
+      approval: [
+        { ...WRITE_APPROVAL, toolName: "Write" },
+        {
+          ...WRITE_APPROVAL,
+          title: "claude-cli native tool: Read",
+          toolName: "Read",
+          onDecision: "toolError",
+          settleFrameOrder: "plugin-first",
+        },
+      ],
+    });
+    const { run } = await askAndWaitForCard(log, setup);
+    const [allowed, denied] = await log.until(() => {
+      const cards = distinctById(log.approvals);
+      return cards.length === 2 ? cards : undefined;
+    }, "승인 카드 둘");
+
+    await resolveApproval(log.socket, allowed?.id as string, "allow-once");
+    await resolveApproval(log.socket, denied?.id as string, "deny");
+    expect((await log.terminal(run.id)).status).toBe("done");
+
+    // 런이 끝난 시점이면 두 승인의 확정 짝이 모두 도착해 처리됐다 — 그래도 행은 우리가 적은 그대로다
+    expect(lastRow(log, allowed?.id as string)).toMatchObject({
+      status: "allowed",
+      decision: "allow-once",
+      reason: "user",
+      decidedBy: live.app.ownerUserId,
+    });
+    expect(lastRow(log, denied?.id as string)).toMatchObject({
+      status: "denied",
+      decision: "deny",
+      reason: "user",
+      decidedBy: live.app.ownerUserId,
+    });
+    // 늦게 온 짝에는 채울 자리가 없다 — 승인마다 해결 중계도 한 번뿐이다
+    expect(log.resolvedApprovals.filter((a) => a.id === allowed?.id)).toHaveLength(1);
+    expect(log.resolvedApprovals.filter((a) => a.id === denied?.id)).toHaveLength(1);
     expectNoScenarioErrors(scenario);
   });
 
@@ -375,11 +473,13 @@ describe("통합 시나리오 9 — 승인 허용·거절·만료·겹침", () =
     const cancelled = await log.until(() => log.resolvedApprovals.at(0), "취소된 approval.resolved");
     expect(cancelled).toMatchObject({ id: card.id, status: "cancelled", reason: "run-aborted" });
     expect((await log.terminal(run.id)).status).toBe("aborted");
-    // ⚠ 실측 — `RUN_ABORTED` 가 **먼저** 들어간다. 중지는 Gateway 가 `chat aborted` 프레임으로 되돌려 주고
-    // 그 프레임이 런 이벤트(RUN_ABORTED)와 신호(gateway_aborted)를 함께 내는데, 승인을 닫는 것은 신호 쪽이기 때문이다.
-    // p2-t5 보고서 「태스크 6~8 이 알아야 할 것」 3 의 「APPROVAL_RESOLVED 가 먼저」는 이 경로에서 성립하지 않는다
+    // ⚠ 실측 — 이 둘은 **어느 쪽이 먼저인지 보장되지 않는다**. 로컬 abort 신호(`orchestrator.abort` 가 스스로 적용)와
+    // Gateway 의 `chat aborted` 프레임이 경주하고, 이긴 쪽에 따라 `RUN_ABORTED.by` 도 "user"/"gateway" 로 흔들린다
+    // (리뷰 F1 재현: 가짜 Gateway 의 aborted 프레임을 30ms 늦추면 100% 뒤집힌다).
+    // 그래서 여기서는 **둘 다 남는다**만 잰다 — 화면도 순서·`by` 가 아니라 「런이 aborted, 그 승인이 cancelled」만 써야 한다
     const types = log.eventsOf(run.id).map((e) => e.type);
-    expect(types.indexOf("RUN_ABORTED")).toBeLessThan(types.indexOf("APPROVAL_RESOLVED"));
+    expect(types).toContain("RUN_ABORTED");
+    expect(types).toContain("APPROVAL_RESOLVED");
     // 대기에서 aborted 로 한 번만 바뀐다(중간에 tool 로 되돌아가지 않는다)
     const statuses = log.statesOf(run.id).map((s) => s.status);
     expect(statuses[statuses.indexOf("awaiting_approval") + 1]).toBe("aborted");

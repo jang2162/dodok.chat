@@ -285,10 +285,25 @@ export function pluginApprovalResolved(
   );
 }
 
+/**
+ * terminal 스냅샷의 `decision`·`reason`. `undefined` 면 기본값, **`null` 이면 그 필드가 아예 없다** —
+ * 실물 만료 스냅샷에는 `status:"expired"`·`reason:"timeout"` 만 있고 `decision` 이 없다(5.2 의 `approval.get` 실측).
+ */
+export type SnapshotOutcome = {
+  phase?: "pending" | "terminal";
+  status?: string;
+  decision?: string | null;
+  reason?: string | null;
+};
+
+/** `undefined` 는 기본값으로, `null` 은 「그 필드를 싣지 않는다」로 — 실물이 안 싣는 자리를 픽스처가 표현할 수 있게. */
+function outcomeField(key: string, value: string | null | undefined, fallback: string) {
+  const resolved = value === undefined ? fallback : value;
+  return resolved === null ? {} : { [key]: resolved };
+}
+
 /** `session.approval`·`approvalReplay` 가 함께 싣는 승인 스냅샷(3.3·5.3). `presentation` 에는 `toolCallId` 가 없다. */
-function approvalSnapshot(
-  o: ApprovalOpts & { phase?: "pending" | "terminal"; status?: string; decision?: string; reason?: string },
-) {
+function approvalSnapshot(o: ApprovalOpts & SnapshotOutcome) {
   const c = common(o);
   const id = o.id ?? APPROVAL_ID;
   const terminal = (o.phase ?? "pending") === "terminal";
@@ -312,29 +327,26 @@ function approvalSnapshot(
     ...(terminal
       ? {
           resolvedAtMs: o.resolvedAtMs ?? APPROVAL_RESOLVED_MS,
-          reason: o.reason ?? "user",
-          decision: o.decision ?? "allow-once",
+          ...outcomeField("reason", o.reason, "user"),
+          ...outcomeField("decision", o.decision, "allow-once"),
         }
       : {}),
   };
 }
 
 /** 세션 구독(`includeApprovals`)에만 온다(3.3). */
-export function sessionApproval(
-  o: ApprovalOpts & {
-    phase?: "pending" | "terminal";
-    status?: string;
-    decision?: string;
-    reason?: string;
-  } = {},
-): EventFrame {
+export function sessionApproval(o: ApprovalOpts & SnapshotOutcome = {}): EventFrame {
   const c = common(o);
   return frame(
     "session.approval",
     {
       sessionKey: c.sessionKey,
       sourceSessionKey: c.sessionKey,
-      updatedAtMs: (o.phase ?? "pending") === "terminal" ? APPROVAL_RESOLVED_MS : APPROVAL_CREATED_MS,
+      // 스냅샷의 시각을 따라간다 — 하네스가 실제 시계로 덮어도 몇 달 어긋나지 않게(리뷰 이월 3)
+      updatedAtMs:
+        (o.phase ?? "pending") === "terminal"
+          ? (o.resolvedAtMs ?? APPROVAL_RESOLVED_MS)
+          : (o.createdAtMs ?? APPROVAL_CREATED_MS),
       phase: o.phase ?? "pending",
       approval: approvalSnapshot(o),
     },
@@ -365,7 +377,7 @@ export function approvalSubscribeResult(
 
 /** `approval.resolve` 응답(4.1). terminal 스냅샷에 `source`·`resolver` 가 더 붙는다. */
 export function approvalResolveResult(
-  o: ApprovalOpts & { applied?: boolean; status?: string; decision?: string; reason?: string } = {},
+  o: ApprovalOpts & SnapshotOutcome & { applied?: boolean } = {},
 ): Record<string, unknown> {
   const c = common(o);
   return {

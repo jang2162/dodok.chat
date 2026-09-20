@@ -95,13 +95,16 @@ export function rowToApproval(row: ApprovalRow): Approval {
  * `changed` 는 「새로 알게 된 사실」이다 — 새 행이거나 저장된 열이 실제로 바뀌었을 때만 참이다.
  * `created` 는 그중 **이 승인을 처음 본 것**인지다 — 어댑터가 같은 승인의 두 번째 프레임을 병합해 다시 주므로
  * (`plugin.approval.requested` 의 `toolCallId` + `session.approval` 의 `urlPath`) 값만 늦게 차는 갱신과 갈라야 한다.
- * **종료된 행은 더 바뀌지 않는다**: 늦게 온 `pending` 도, 같은 승인이 두 경로(RPC 응답·Gateway 이벤트)로 온 것도
- * 여기서 멈춘다(설계 4.4 「먼저 온 쪽이 이긴다」).
+ * **종료된 행은 더 바뀌지 않는다**: 늦게 온 `pending` 도, 다른 결말도 여기서 멈춘다(설계 4.4 「먼저 온 쪽이 이긴다」).
+ * 딱 하나 예외가 `filled` 다 — **같은 결말**을 말하는 확정 짝의 뒤엣것이 비어 있는 `decision`·`reason` 을 채운다.
+ * 실물은 확정도 짝으로 오고(`session.approval(terminal)` + `*.approval.resolved`) 만료의 `decision` 은 뒤엣것에만
+ * 실려 온다(스파이크 5.2) — 이 예외가 없으면 같은 만료가 프레임 도착 순서에 따라 다른 행으로 남는다(p2-t6 리뷰 F2).
+ * `filled` 면 타임라인에 `APPROVAL_RESOLVED` 를 또 쌓지 않는다 — 결말은 이미 알렸고 값만 늦게 찼다.
  */
 export function upsertApproval(
   db: DbOrTx,
   input: ApprovalRowInput,
-): { approval: Approval; changed: boolean; created: boolean } {
+): { approval: Approval; changed: boolean; created: boolean; filled: boolean } {
   const existing = db
     .select()
     .from(approvals)
@@ -114,22 +117,32 @@ export function upsertApproval(
       approval: rowToApproval(insertApproval(tx, input)),
       changed: true,
       created: true,
+      filled: false,
     }));
   }
 
-  if (existing.status !== "pending") {
-    return { approval: rowToApproval(existing), changed: false, created: false };
-  }
-
-  const patch = mergePatch(existing, input);
+  const filled = existing.status !== "pending";
+  const patch = filled ? fillOutcome(existing, input) : mergePatch(existing, input);
   if (Object.keys(patch).length === 0) {
-    return { approval: rowToApproval(existing), changed: false, created: false };
+    return { approval: rowToApproval(existing), changed: false, created: false, filled: false };
   }
   return db.transaction((tx) => {
     const row = tx.update(approvals).set(patch).where(eq(approvals.id, existing.id)).returning().get();
     if (!row) throw apiError("NOT_FOUND", "approval not found");
-    return { approval: rowToApproval(row), changed: true, created: false };
+    return { approval: rowToApproval(row), changed: true, created: false, filled };
   });
+}
+
+/**
+ * 종료된 행에 허락하는 유일한 갱신 — **같은 결말**을 말하는 프레임이 비어 있는 `decision`·`reason` 만 채운다.
+ * 결말이 다르면(`expired` 행에 `allowed` 가 온다) 아무것도 하지 않는다. 이미 찬 값도 덮지 않는다(해결자 판단이 흔들리지 않게).
+ */
+function fillOutcome(existing: ApprovalRow, input: ApprovalRowInput): Partial<ApprovalInsert> {
+  if (input.status !== existing.status) return {};
+  const patch: Partial<ApprovalInsert> = {};
+  if (existing.decision === null && input.decision !== undefined) patch.decision = input.decision;
+  if (existing.reason === null && input.reason !== undefined) patch.reason = input.reason;
+  return patch;
 }
 
 function insertApproval(db: DbOrTx, input: ApprovalRowInput): ApprovalRow {

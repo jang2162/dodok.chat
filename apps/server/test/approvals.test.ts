@@ -367,6 +367,35 @@ describe("승인 저장·런 상관·wire 중계 (앱 부팅, FakeAdapter)", () 
     });
   });
 
+  it("확정 짝의 뒤엣것이 빈 decision 을 채운다 — wire 로만 가고 타임라인은 한 줄 그대로", async () => {
+    // ⚠ 실측(5.2) — 만료는 짝으로 온다. 먼저 오는 세션 스냅샷에는 `decision` 이 없고 정본에만 `deny` 가 있다
+    const socket = await connect();
+    const run = await mentionDev(socket);
+    const a = providerApproval(sessionKeyOf("dev", channel.id));
+    const requested = waitFor(socket, "approval.requested");
+    adapter.emitApproval(a);
+    await requested;
+
+    const first = waitFor(socket, "approval.resolved");
+    adapter.emitApproval({ ...a, status: "expired", reason: "timeout", createdAt: undefined });
+    expect((await first).approval.decision).toBeUndefined();
+
+    const filled = waitFor(socket, "approval.resolved");
+    adapter.emitApproval({
+      ...a,
+      status: "expired",
+      decision: "deny",
+      reason: "timeout",
+      createdAt: undefined,
+    });
+
+    expect((await filled).approval).toMatchObject({ status: "expired", decision: "deny", reason: "timeout" });
+    expect(stored(a)).toMatchObject({ status: "expired", decision: "deny", reason: "timeout" });
+    // 결말은 이미 알렸다 — 값만 늦게 찼으므로 APPROVAL_RESOLVED 가 또 쌓이지 않는다
+    await roundTrip(socket);
+    expect(eventTypes(run.id).filter((t) => t === "APPROVAL_RESOLVED")).toHaveLength(1);
+  });
+
   it("이미 종료된 승인에 pending 이 늦게 와도 되살리지 않는다", async () => {
     const socket = await connect();
     const a = providerApproval(sessionKeyOf("dev", channel.id));
@@ -828,6 +857,7 @@ describe("승인 store (메모리 DB)", () => {
       approval: first.approval,
       changed: false,
       created: false,
+      filled: false,
     });
 
     const changed = approvalStore.upsertApproval(db, { ...a, title: "다른 제목" });
@@ -881,11 +911,51 @@ describe("승인 store (메모리 DB)", () => {
       approval: denied.approval,
       changed: false,
       created: false,
+      filled: false,
     });
     expect(approvalStore.upsertApproval(db, { ...a, status: "expired", reason: "timeout" })).toEqual({
       approval: denied.approval,
       changed: false,
       created: false,
+      filled: false,
+    });
+  });
+
+  it("종료된 행의 빈 decision·reason 은 같은 결말을 말하는 짝이 채운다 — 다른 결말은 못 채운다", () => {
+    const { db, input } = setup();
+    const a = input();
+    approvalStore.upsertApproval(db, a);
+    // 확정 짝의 앞엣것 — 실물 만료 세션 스냅샷에는 `decision` 이 없다(스파이크 5.2)
+    const expired = approvalStore.upsertApproval(db, {
+      ...a,
+      status: "expired",
+      reason: "timeout",
+      decidedAt: new Date("2026-09-20T00:01:00.000Z"),
+    });
+    expect(expired).toMatchObject({ changed: true, filled: false });
+    expect(expired.approval.decision).toBeUndefined();
+
+    // 뒤엣것(`plugin.approval.resolved`)이 그 자리를 채운다 — 타임라인에 또 쌓지 않게 filled 로 알린다
+    const late = approvalStore.upsertApproval(db, {
+      ...a,
+      status: "expired",
+      decision: "deny",
+      reason: "timeout",
+    });
+    expect(late).toMatchObject({ changed: true, created: false, filled: true });
+    expect(late.approval).toMatchObject({ status: "expired", decision: "deny", reason: "timeout" });
+
+    // 이미 찬 값은 덮지 않고, 다른 결말을 말하는 프레임은 아무것도 바꾸지 않는다
+    expect(
+      approvalStore.upsertApproval(db, { ...a, status: "expired", decision: "allow-once" }),
+    ).toMatchObject({ changed: false, filled: false });
+    expect(
+      approvalStore.upsertApproval(db, { ...a, status: "allowed", decision: "allow-once", reason: "user" }),
+    ).toMatchObject({ changed: false, filled: false });
+    expect(approvalStore.getApproval(db, late.approval.id)).toMatchObject({
+      status: "expired",
+      decision: "deny",
+      reason: "timeout",
     });
   });
 

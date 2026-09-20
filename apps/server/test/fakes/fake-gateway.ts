@@ -39,10 +39,17 @@ export type FakeApprovalRequest = {
   /** 이만큼 아무도 해결하지 않으면 만료된다(실물 plugin 기본 120초) */
   ttlMs: number;
   /**
-   * 만료됐을 때 — `"gateway"`(기본)는 실물처럼 `resolved(decision:"deny", resolvedBy:null)` 프레임을 보내고(5.2),
+   * 만료됐을 때 — `"gateway"`(기본)는 실물처럼 확정 짝(`session.approval(terminal)` + `resolved`)을 보내고(5.2),
    * `"silent"` 는 아무 프레임도 보내지 않는다(서버의 만료 감시 타이머를 재는 대본).
    */
   onTimeout?: "gateway" | "silent";
+  /**
+   * 확정 짝을 어느 순서로 내는가. 기본은 실물 관측 순서인 `"session-first"`(스파이크 3.5 의 caps 표·5.2 타임라인).
+   * 만료의 `decision` 은 뒤에 오는 `plugin.approval.resolved` 에만 있어서 순서가 저장된 행을 바꾸면 안 된다(리뷰 F2).
+   * ⚠ **요구 짝**은 아직 `plugin.approval.requested` 가 먼저다 — 실물은 그것도 세션이 먼저지만 뒤집으면
+   * 타임라인 카드가 `toolCallId` 를 잃는다(p2-t6 fix2 보고서 4절, 태스크 7·8 로 이월).
+   */
+  settleFrameOrder?: "session-first" | "plugin-first";
 };
 
 /** 승인 하나의 결말 — 대본은 이걸 보고 툴 결과를 고른다 */
@@ -71,6 +78,7 @@ type ApprovalState = FakeApprovalRequest & {
   toolName: string;
   allowedDecisions: ApprovalDecision[];
   onTimeout: "gateway" | "silent";
+  settleFrameOrder: "session-first" | "plugin-first";
   createdAtMs: number;
   expiresAtMs: number;
   verdict?: ApprovalVerdict;
@@ -341,8 +349,9 @@ export async function startFakeGateway(opts: FakeGatewayOptions = {}): Promise<F
     });
 
   /**
-   * 승인 하나를 확정한다. `emit` 이면 실물처럼 `plugin.approval.resolved` 를 낸다 —
-   * 만료는 `decision:"deny"` + `resolvedBy:null` 로만 구별된다(5.2). 기다리던 대본은 프레임을 쓴 **뒤에** 깨운다.
+   * 승인 하나를 확정한다. `emit` 이면 실물처럼 **짝으로** 낸다 — `session.approval(terminal)` + `plugin.approval.resolved`(3.4·5.2).
+   * 만료 스냅샷에는 `decision` 이 없고(`status:"expired"`·`reason:"timeout"` 뿐) 정본에만 `deny`+`resolvedBy:null` 이 실린다.
+   * 기다리던 대본은 프레임을 쓴 **뒤에** 깨운다(두 프레임 모두 이미 소켓에 예약돼 순서가 지켜진다).
    */
   function settleApproval(a: ApprovalState, verdict: ApprovalVerdict, emit: boolean): Promise<void> {
     if (a.verdict) return Promise.resolve();
@@ -350,20 +359,35 @@ export async function startFakeGateway(opts: FakeGatewayOptions = {}): Promise<F
     a.verdict = verdict;
     const wake = a.wake;
     a.wake = undefined;
-    const sent = emit
-      ? broadcast(
-          fixtures.pluginApprovalResolved({
-            ...approvalOpts(a),
-            seq: nextSeq(),
-            decision: verdict.decision,
-            // resolvedBy 는 해결한 클라이언트의 clientDisplayName — 만료·취소는 해결자가 없다(3.4·5.2)
-            resolvedBy: verdict.reason === "user" ? APPROVAL_RESOLVED_BY : null,
-            resolvedAtMs: verdict.resolvedAtMs,
-          }),
-        )
-      : Promise.resolve();
+    const sent = emit ? Promise.all(settleFrames(a, verdict).map((f) => broadcast(f))) : Promise.resolve();
     wake?.({ approvalId: a.id, decision: verdict.decision, expired: verdict.reason === "timeout" });
-    return sent;
+    return sent.then(() => undefined);
+  }
+
+  /** 확정 짝을 그 승인이 정한 순서로. 프레임은 만드는 순서대로 `seq` 를 받는다 */
+  function settleFrames(a: ApprovalState, verdict: ApprovalVerdict): EventFrame[] {
+    const expired = verdict.reason === "timeout";
+    const session = () =>
+      fixtures.sessionApproval({
+        ...approvalOpts(a),
+        seq: nextSeq(),
+        phase: "terminal",
+        status: verdict.status,
+        // ⚠ 실측(5.2) — 만료 스냅샷에는 `decision` 이 없다. 그 값은 정본 프레임에만 실려 온다
+        ...(expired ? { decision: null } : { decision: verdict.decision }),
+        reason: verdict.reason,
+        resolvedAtMs: verdict.resolvedAtMs,
+      });
+    const plugin = () =>
+      fixtures.pluginApprovalResolved({
+        ...approvalOpts(a),
+        seq: nextSeq(),
+        decision: verdict.decision,
+        // resolvedBy 는 해결한 클라이언트의 clientDisplayName — 만료·취소는 해결자가 없다(3.4·5.2)
+        resolvedBy: verdict.reason === "user" ? APPROVAL_RESOLVED_BY : null,
+        resolvedAtMs: verdict.resolvedAtMs,
+      });
+    return a.settleFrameOrder === "plugin-first" ? [plugin(), session()] : [session(), plugin()];
   }
 
   /** 그 런의 미해결 승인을 프레임 없이 버린다(런 중지·포트 닫기) — 기다리던 대본이 영원히 멈추지 않게 */
@@ -604,6 +628,7 @@ export async function startFakeGateway(opts: FakeGatewayOptions = {}): Promise<F
         toolName: req.toolName ?? DEFAULT_APPROVAL_TOOL,
         allowedDecisions: req.allowedDecisions ?? ["allow-once", "deny"],
         onTimeout: req.onTimeout ?? "gateway",
+        settleFrameOrder: req.settleFrameOrder ?? "session-first",
         createdAtMs,
         expiresAtMs: createdAtMs + Math.max(0, req.ttlMs),
       };
@@ -624,7 +649,9 @@ export async function startFakeGateway(opts: FakeGatewayOptions = {}): Promise<F
       // 타이머가 프로세스를 붙잡지 않게 — 닫는 건 close()
       state.timer.unref();
       // 프레임 쓰기를 기다리지 않고 결말 프로미스를 돌려준다 — socket.send 는 여기서 이미 예약돼 순서가 지켜진다.
-      // 실물은 같은 승인을 두 프레임으로 준다(⚠ 실측 p2-t6): 정본에는 `toolCallId` 가, 세션 스냅샷에는 `urlPath` 가 있다
+      // 실물은 같은 승인을 두 프레임으로 준다(⚠ 실측 p2-t6): 정본에는 `toolCallId` 가, 세션 스냅샷에는 `urlPath` 가 있다.
+      // ⚠ 실물 관측은 **요구 짝도 세션이 먼저**다(3.5) — 여기는 아직 정본이 먼저다. 뒤집으면 타임라인 카드가
+      // `toolCallId` 를 잃는다(첫 프레임에 없어서). 그 결정은 태스크 7·8 몫이다(p2-t6 fix2 보고서 4절)
       void broadcast(fixtures.pluginApprovalRequested({ ...approvalOpts(state), seq: nextSeq() }));
       void broadcast(fixtures.sessionApproval({ ...approvalOpts(state), seq: nextSeq() }));
       return outcome;

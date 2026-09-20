@@ -35,6 +35,8 @@ export type ScenarioApproval = {
   onDecision?: "continue" | "toolError";
   /** 만료 프레임을 Gateway 가 내는가. `"silent"` 면 서버의 만료 감시 타이머가 닫아야 한다 */
   onTimeout?: "gateway" | "silent";
+  /** 확정 짝(`session.approval(terminal)` + `plugin.approval.resolved`)의 순서. 기본은 실물 관측 순서(session 먼저) */
+  settleFrameOrder?: "session-first" | "plugin-first";
 };
 
 export type ScenarioTurn = { delivery: InboundDeliver; index: number };
@@ -123,6 +125,7 @@ export function createScenario(opts: {
           ...(approval.toolName === undefined ? {} : { toolName: approval.toolName }),
           ...(approval.allowedDecisions === undefined ? {} : { allowedDecisions: approval.allowedDecisions }),
           ...(approval.onTimeout === undefined ? {} : { onTimeout: approval.onTimeout }),
+          ...(approval.settleFrameOrder === undefined ? {} : { settleFrameOrder: approval.settleFrameOrder }),
         }),
       });
     }

@@ -71,9 +71,9 @@ export function createApprovalsService(deps: ApprovalsDeps): ApprovalsService {
   /**
    * 새 사실 하나를 활동 타임라인·wire 로 내보내고, 런 상태머신에 신호를 준다.
    * `resumeRun:false` 는 런이 끝나는 중일 때 — 대기 직전 상태로 되돌렸다가 다시 종료로 가는 깜빡임을 막는다.
-   * `announce:false` 는 같은 승인의 **대기 카드를 두 번째로 읽었을 때** — 어댑터가 두 프레임을 병합해 다시 주면
-   * `urlPath` 같은 값이 늦게 찬다. 카드 값은 wire 로 갱신하되 타임라인에 같은 카드를 또 쌓거나 런을 다시 깨우지
-   * 않는다. 해결은 언제나 알린다(종료된 행은 다시 안 바뀌므로 두 번 올 수 없다).
+   * `announce:false` 는 같은 승인을 **두 번째로 읽었을 때** — 어댑터가 두 프레임을 병합해 다시 주면 값이 늦게 찬다
+   * (대기 카드의 `urlPath`, 확정 짝 뒤엣것의 `decision`). 값은 wire 로 갱신하되 타임라인에 같은 카드를 또 쌓거나
+   * 런을 다시 깨우지 않는다 — 요구도 해결도 마찬가지다.
    */
   function publish(
     approval: Approval,
@@ -99,6 +99,10 @@ export function createApprovalsService(deps: ApprovalsDeps): ApprovalsService {
         });
         deps.onSignal(runId, { kind: "approval_requested" });
       } else {
+        if (opts.announce === false) {
+          bus.emit("approval.resolved", { approval });
+          return;
+        }
         const { decision, reason } = resolvedOutcome(approval);
         deps.appendEvent(runId, {
           type: "APPROVAL_RESOLVED",
@@ -168,7 +172,7 @@ export function createApprovalsService(deps: ApprovalsDeps): ApprovalsService {
         if (run && a.status === "pending" && run.status !== "awaiting_approval") {
           resumeTo.set(run.id, run.status === "tool" ? "tool" : "streaming");
         }
-        const { approval, changed, created } = store.upsertApproval(db, {
+        const { approval, changed, created, filled } = store.upsertApproval(db, {
           providerApprovalId: a.providerApprovalId,
           kind: a.kind,
           channelId: channel.id,
@@ -198,8 +202,9 @@ export function createApprovalsService(deps: ApprovalsDeps): ApprovalsService {
           );
           return;
         }
-        // 처음 본 승인만 타임라인 카드·런 신호까지 간다. 두 번째 프레임이 채운 값은 wire 로만 흘린다
-        publish(approval, { resumeRun: true, announce: created });
+        // 처음 본 승인·처음 알게 된 결말만 타임라인 카드·런 신호까지 간다.
+        // 두 번째 프레임이 채운 값(대기 카드의 `urlPath`·확정 짝 뒤엣것의 `decision`)은 wire 로만 흘린다
+        publish(approval, { resumeRun: true, announce: approval.status === "pending" ? created : !filled });
       } catch (err) {
         // 한 건이 깨져도 다음 승인·다음 이벤트를 막지 않는다(어댑터 이벤트 루프 안에서 불린다)
         logger.error({ err, providerApprovalId: a.providerApprovalId }, "approval ingest failed");

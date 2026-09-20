@@ -317,10 +317,12 @@ describe("시나리오 — 인바운드 대본을 Gateway 이벤트와 플러그
     await connection.request("approval.resolve", { id, kind: "plugin", decision: "allow-once" });
     await scenario.idle();
 
+    // 확정도 짝이다 — 실물 순서대로 `session.approval(terminal)` 이 먼저, `plugin.approval.resolved` 가 뒤(3.4·5.2)
     expect(frames.map((f) => f.event)).toEqual([
       "agent",
       "agent",
       "plugin.approval.requested",
+      "session.approval",
       "session.approval",
       "plugin.approval.resolved",
       "agent",

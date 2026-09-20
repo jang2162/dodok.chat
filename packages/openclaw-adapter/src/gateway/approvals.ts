@@ -227,14 +227,21 @@ export function parseApprovalReplay(response: unknown): ProviderApproval[] {
  * 실물은 같은 승인을 두 프레임으로 준다: `plugin.approval.requested` 에는 `toolCallId` 가 있고 `urlPath` 가 없으며,
  * `session.approval` 에는 `urlPath` 가 있고 `toolCallId` 가 없다. 먼저 온 쪽만 남기면 어느 순서든 한쪽 값을 잃는다.
  *
- * 규칙 둘:
+ * 규칙 셋:
  * - **표시 값은 빈 자리만 채운다** — 먼저 온 값은 덮지 않는다(같은 사실을 두 번 읽은 것이지 바뀐 것이 아니다).
- * - **결말(`status`·`decision`·`reason`·`resolvedAt`)은 먼저 확정된 쪽이 이긴다** — 서버 저장과 같은 규칙(설계 4.4).
+ * - **결말(`status`)은 먼저 확정된 쪽이 이긴다** — 서버 저장과 같은 규칙(설계 4.4).
  *   늦게 온 되감기 `pending` 이 이미 닫힌 승인을 되살리지 않는다.
+ * - **같은 결말을 말하는 짝은 빈 `decision`·`reason` 을 채운다** — 확정도 짝으로 온다(3.4·5.2):
+ *   만료는 `session.approval(terminal)` 에 `status:"expired"`·`reason:"timeout"` 만 있고 `decision` 이 없으며,
+ *   `plugin.approval.resolved` 에만 `deny` 가 실린다. 세션 쪽이 먼저 오면 그 자리가 영영 비어
+ *   같은 만료가 경로에 따라 다른 모양으로 남는다(p2-t6 리뷰 F2). **다른 결말**을 말하는 프레임은 채우지 않는다.
  */
 export function mergeApproval(previous: ProviderApproval, next: ProviderApproval): ProviderApproval {
   // 결말을 쥔 쪽 — 둘 다 pending 이면 값이 같으므로 previous 로 본다
   const outcome = previous.status !== "pending" ? previous : next.status !== "pending" ? next : previous;
+  // 같은 결말을 말하는 나머지 한쪽 — 빈 `decision`·`reason` 을 채울 수 있는 짝이다
+  const peer = outcome === previous ? next : previous;
+  const samePeer = peer.status === outcome.status ? peer : undefined;
   return {
     // 승인이 사는 동안 바뀌지 않는 값 — 먼저 읽은 것을 지킨다
     providerApprovalId: previous.providerApprovalId,
@@ -254,10 +261,10 @@ export function mergeApproval(previous: ProviderApproval, next: ProviderApproval
     ...opt("urlPath", previous.urlPath ?? next.urlPath),
     ...opt("createdAt", previous.createdAt ?? next.createdAt),
     ...opt("expiresAt", previous.expiresAt ?? next.expiresAt),
-    // 결말은 먼저 확정된 쪽 그대로 — 셋을 한 덩어리로 옮긴다(상태만 바뀌고 이유는 남는 일이 없게)
+    // 결말은 먼저 확정된 쪽 그대로 — 빈 자리는 같은 결말을 말하는 짝만 채운다(섞이지 않는다)
     status: outcome.status,
-    ...opt("decision", outcome.decision),
-    ...opt("reason", outcome.reason),
+    ...opt("decision", outcome.decision ?? samePeer?.decision),
+    ...opt("reason", outcome.reason ?? samePeer?.reason),
     ...opt("resolvedAt", outcome.resolvedAt ?? previous.resolvedAt ?? next.resolvedAt),
   };
 }
