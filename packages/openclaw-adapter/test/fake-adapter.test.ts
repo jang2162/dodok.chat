@@ -1,6 +1,12 @@
 import type { InboundDeliver } from "@dodok/shared";
 import { describe, expect, it } from "vitest";
-import { type AdapterEvent, AdapterError, FakeAdapter, type RunEventBody } from "../src";
+import {
+  type AdapterEvent,
+  AdapterError,
+  FakeAdapter,
+  type ProviderApproval,
+  type RunEventBody,
+} from "../src";
 
 const CH = "01a09fc9-d204-7551-89d6-38544d07a102";
 const RUN = "01a09fc9-d204-7551-89d6-38544d07a103";
@@ -120,5 +126,68 @@ describe("FakeAdapter", () => {
     expect(adapter.calls.reset).toEqual([key]);
     expect(adapter.calls.syncChannelConfig).toEqual([{ channelId: CH, config: { requireMention: true } }]);
     expect(adapter.calls.abort).toEqual([{ runId: RUN, sessionKey: key }]);
+  });
+});
+
+describe("FakeAdapter — 승인(서버 테스트용 대본)", () => {
+  const approval = (overrides: Partial<ProviderApproval> = {}): ProviderApproval => ({
+    providerApprovalId: "plugin:533fe246-fa79-4f86-bcd0-3c08b549cb20",
+    kind: "plugin",
+    sessionKey: `agent:dev:dodok:channel:${CH}`,
+    providerAgentId: "dev",
+    channelId: CH,
+    toolCallId: "toolu_018ohZoiNMZwidAe7fWsWSam",
+    toolName: "Write",
+    title: "claude-cli native tool: Write",
+    severity: "warning",
+    allowedDecisions: ["allow-once", "deny"],
+    status: "pending",
+    createdAt: "2026-09-20T09:49:47.988Z",
+    expiresAt: "2026-09-20T09:51:47.988Z",
+    ...overrides,
+  });
+
+  it("emitApproval 은 approval 이벤트를 낸다", () => {
+    const adapter = new FakeAdapter();
+    const seen: AdapterEvent[] = [];
+    adapter.onEvent((e) => seen.push(e));
+    const a = approval();
+
+    adapter.emitApproval(a);
+
+    expect(seen).toEqual([{ kind: "approval", approval: a }]);
+  });
+
+  it("resolveApproval 은 호출을 기록하고 emitApproval 한 승인의 terminal 스냅샷을 돌려준다", async () => {
+    const adapter = new FakeAdapter();
+    const a = approval();
+    adapter.emitApproval(a);
+
+    await expect(adapter.resolveApproval(a.providerApprovalId, "plugin", "deny")).resolves.toMatchObject({
+      providerApprovalId: a.providerApprovalId,
+      status: "denied",
+      decision: "deny",
+      reason: "user",
+      toolCallId: a.toolCallId,
+    });
+    expect(adapter.calls.resolveApproval).toEqual([
+      { providerApprovalId: a.providerApprovalId, kind: "plugin", decision: "deny" },
+    ]);
+  });
+
+  it("모르는 승인은 NOT_FOUND, scriptResolveApproval 로 응답을 바꿀 수 있다", async () => {
+    const adapter = new FakeAdapter();
+
+    await expect(adapter.resolveApproval("plugin:nope", "plugin", "allow-once")).rejects.toMatchObject({
+      name: "AdapterError",
+      code: "NOT_FOUND",
+    });
+
+    adapter.scriptResolveApproval(() => approval({ status: "expired", decision: "deny", reason: "timeout" }));
+    await expect(adapter.resolveApproval("plugin:nope", "plugin", "allow-once")).resolves.toMatchObject({
+      status: "expired",
+      reason: "timeout",
+    });
+    expect(adapter.calls.resolveApproval).toHaveLength(2);
   });
 });

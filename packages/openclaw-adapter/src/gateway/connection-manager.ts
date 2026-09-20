@@ -8,6 +8,7 @@
 import type { GatewayClientRequestOptions } from "@openclaw/gateway-client";
 import type { EventFrame } from "@openclaw/gateway-protocol";
 import { AdapterError, type AdapterLogger } from "../adapter-types";
+import { parseApprovalReplay, type ProviderApproval } from "./approvals";
 import {
   DEFAULT_GATEWAY_CAPS,
   DEFAULT_GATEWAY_SCOPES,
@@ -39,6 +40,8 @@ export type ConnectionManagerOptions = {
   onEvent: (frame: EventFrame) => void;
   onState: (state: GatewayState) => void;
   sessionKeysToRecover?: () => RecoverTarget[];
+  /** 세션 구독 응답의 `approvalReplay`(미해결 승인) — 재접속 되감기(스파이크 5.3). 없으면 부르지 않는다. */
+  onApprovalReplay?: (approvals: ProviderApproval[]) => void;
   historyCursors?: Map<string, string>;
   backoff?: { initialMs?: number; maxMs?: number; pairingRetryMs?: number };
   /** 지터용 [0,1) 난수 — 테스트 주입 */
@@ -54,7 +57,7 @@ export type ConnectionManager = {
   state(): GatewayState;
   request<T = unknown>(method: string, params: unknown, timeoutMs?: number): Promise<T>;
   /**
-   * 현재 연결에서 아직 구독하지 않은 세션이면 `sessions.messages.subscribe { key, agentId }` 를 보낸다(연결당 한 번).
+   * 현재 연결에서 아직 구독하지 않은 세션이면 `sessions.messages.subscribe { key, agentId, includeApprovals }` 를 보낸다(연결당 한 번).
    * 실물 Gateway 는 구독한 세션의 chat·agent·session.message 만 보낸다 — 접속 뒤 새로 생긴 세션은 recover() 가 모르므로 전송 전에 부른다.
    * 연결이 없으면 ADAPTER_UNAVAILABLE.
    */
@@ -81,6 +84,18 @@ export function createConnectionManager(opts: ConnectionManagerOptions): Connect
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
   // 현재 연결에서 sessions.messages.subscribe 를 보낸 세션 키. 새 연결·stop 에서 비운다
   const subscribed = new Set<string>();
+
+  /** `includeApprovals` 를 켜야 그 세션의 `session.approval` 과 구독 응답의 되감기가 온다(스파이크 3.1·5.3). */
+  function subscribeParams(sessionKey: string, agentId: string) {
+    return { key: sessionKey, agentId, includeApprovals: true };
+  }
+
+  /** 구독 응답에 미해결 승인이 있으면 흘린다. 없으면 조용히 지나간다. */
+  function replayApprovals(result: unknown) {
+    if (!opts.onApprovalReplay) return;
+    const approvals = parseApprovalReplay(result);
+    if (approvals.length > 0) opts.onApprovalReplay(approvals);
+  }
 
   function setState(next: GatewayState) {
     if (state === next) return;
@@ -179,7 +194,7 @@ export function createConnectionManager(opts: ConnectionManagerOptions): Connect
       if (!running || gen !== generation) return;
       const { sessionKey, agentId } = target;
       try {
-        await call("sessions.messages.subscribe", { key: sessionKey, agentId });
+        replayApprovals(await call("sessions.messages.subscribe", subscribeParams(sessionKey, agentId)));
         subscribed.add(sessionKey);
         const cursor = target.cursor ?? historyCursors.get(sessionKey);
         const base = { sessionKey, agentId, limit: HISTORY_LIMIT };
@@ -226,18 +241,16 @@ export function createConnectionManager(opts: ConnectionManagerOptions): Connect
         throw new AdapterError("ADAPTER_UNAVAILABLE", "sessions.messages.subscribe: gateway not connected");
       }
       if (subscribed.has(sessionKey)) return;
+      let result: unknown;
       try {
-        await current.request(
-          "sessions.messages.subscribe",
-          { key: sessionKey, agentId },
-          {
-            timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
-          },
-        );
+        result = await current.request("sessions.messages.subscribe", subscribeParams(sessionKey, agentId), {
+          timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
+        });
       } catch (error) {
         throw toAdapterError("sessions.messages.subscribe", error);
       }
       subscribed.add(sessionKey);
+      replayApprovals(result);
     },
     async request<T = unknown>(
       method: string,

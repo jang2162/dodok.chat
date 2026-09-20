@@ -1,13 +1,26 @@
 import type {
   AdapterStatus,
+  ApprovalDecision,
+  ApprovalKind,
   ConfigSet,
   ConfigSetResult,
   InboundDeliver,
   InboundDeliverResult,
 } from "@dodok/shared";
-import type { AdapterCapabilities, AdapterEvent, AgentAdapter } from "./adapter-types";
+import {
+  AdapterError,
+  type AdapterCapabilities,
+  type AdapterEvent,
+  type AgentAdapter,
+} from "./adapter-types";
+import type { ProviderApproval } from "./gateway/approvals";
 
 type SendScript = (input: InboundDeliver) => InboundDeliverResult | Promise<InboundDeliverResult>;
+type ResolveApprovalScript = (
+  providerApprovalId: string,
+  kind: ApprovalKind,
+  decision: ApprovalDecision,
+) => ProviderApproval | Promise<ProviderApproval>;
 
 /** 테스트·wire-cli 용 메모리 어댑터. 호출을 기록하고, 이벤트는 emit 으로 밀어 넣는다. */
 export class FakeAdapter implements AgentAdapter {
@@ -19,9 +32,13 @@ export class FakeAdapter implements AgentAdapter {
     reset: string[];
     abort: Array<{ runId: string; sessionKey: string }>;
     forget: string[];
-  } = { send: [], syncChannelConfig: [], reset: [], abort: [], forget: [] };
+    resolveApproval: Array<{ providerApprovalId: string; kind: ApprovalKind; decision: ApprovalDecision }>;
+  } = { send: [], syncChannelConfig: [], reset: [], abort: [], forget: [], resolveApproval: [] };
 
   private sendScript: SendScript = (input) => ({ admission: "dispatch", providerRunId: input.runId });
+  private resolveApprovalScript: ResolveApprovalScript | undefined;
+  /** emitApproval 로 흘린 승인 — 기본 resolveApproval 이 이것의 terminal 스냅샷을 돌려준다. */
+  private approvals = new Map<string, ProviderApproval>();
   private handlers = new Set<(e: AdapterEvent) => void>();
   private currentStatus: AdapterStatus = { provider: "openclaw", gateway: "connected", bridge: "connected" };
   private currentCapabilities: AdapterCapabilities = {
@@ -34,8 +51,18 @@ export class FakeAdapter implements AgentAdapter {
     this.sendScript = fn;
   }
 
+  scriptResolveApproval(fn: ResolveApprovalScript): void {
+    this.resolveApprovalScript = fn;
+  }
+
   emit(e: AdapterEvent): void {
     for (const handler of this.handlers) handler(e);
+  }
+
+  /** 승인 이벤트 하나를 흘린다(서버 승인 대본). 같은 승인을 두 번 부르면 두 번 간다 — 중복 제거는 서버가 잰다. */
+  emitApproval(approval: ProviderApproval): void {
+    this.approvals.set(approval.providerApprovalId, approval);
+    this.emit({ kind: "approval", approval });
   }
 
   setStatus(status: AdapterStatus): void {
@@ -83,6 +110,28 @@ export class FakeAdapter implements AgentAdapter {
   async syncChannelConfig(channelId: string, config: ConfigSet["config"]): Promise<ConfigSetResult> {
     this.calls.syncChannelConfig.push({ channelId, config });
     return { applied: "live" };
+  }
+
+  async resolveApproval(
+    providerApprovalId: string,
+    kind: ApprovalKind,
+    decision: ApprovalDecision,
+  ): Promise<ProviderApproval> {
+    this.calls.resolveApproval.push({ providerApprovalId, kind, decision });
+    if (this.resolveApprovalScript) return this.resolveApprovalScript(providerApprovalId, kind, decision);
+    const known = this.approvals.get(providerApprovalId);
+    // 실물 Gateway 는 없는 id 에 INVALID_REQUEST(APPROVAL_NOT_FOUND) 를 준다(스파이크 4.4)
+    if (!known) throw new AdapterError("NOT_FOUND", `approval not found: ${providerApprovalId}`);
+    const resolved: ProviderApproval = {
+      ...known,
+      kind,
+      status: decision === "deny" ? "denied" : "allowed",
+      decision,
+      reason: "user",
+      resolvedAt: new Date().toISOString(),
+    };
+    this.approvals.set(providerApprovalId, resolved);
+    return resolved;
   }
 
   onEvent(handler: (e: AdapterEvent) => void): () => void {

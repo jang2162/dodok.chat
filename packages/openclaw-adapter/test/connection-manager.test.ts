@@ -8,6 +8,7 @@ import {
   type GatewayLink,
   type GatewayState,
 } from "../src/gateway/connection-manager";
+import * as f from "./fixtures/gateway-events";
 
 const GW = {
   url: "wss://gateway.example.test",
@@ -238,9 +239,15 @@ describe("createConnectionManager — 재접속 복구", () => {
 
     expect(link.calls.map(({ method, params }) => ({ method, params }))).toEqual([
       { method: "sessions.subscribe", params: {} },
-      { method: "sessions.messages.subscribe", params: { key: KEY_A, agentId: "dev" } },
+      {
+        method: "sessions.messages.subscribe",
+        params: { key: KEY_A, agentId: "dev", includeApprovals: true },
+      },
       { method: "chat.history", params: { sessionKey: KEY_A, agentId: "dev", limit: 50 } },
-      { method: "sessions.messages.subscribe", params: { key: KEY_B, agentId: "fin" } },
+      {
+        method: "sessions.messages.subscribe",
+        params: { key: KEY_B, agentId: "fin", includeApprovals: true },
+      },
       { method: "chat.history", params: { sessionKey: KEY_B, agentId: "fin", limit: 50 } },
     ]);
     expect(manager.historyCursors.size).toBe(0);
@@ -327,6 +334,50 @@ describe("createConnectionManager — 재접속 복구", () => {
       expect.any(String),
     );
     expect(manager.state()).toBe("connected");
+  });
+});
+
+describe("createConnectionManager — 승인 되감기", () => {
+  it("구독 응답의 approvalReplay 를 onApprovalReplay 로 흘린다(스파이크 5.3)", async () => {
+    const link = fakeLink({
+      "sessions.messages.subscribe": (params) =>
+        params.key === KEY_A ? f.approvalSubscribeResult({ sessionKey: KEY_A }) : { subscribed: true },
+    });
+    const replayed: string[][] = [];
+    const { manager } = setup({
+      connector: scriptedConnector([link]).connector,
+      onApprovalReplay: (approvals) => replayed.push(approvals.map((a) => a.providerApprovalId)),
+      sessionKeysToRecover: () => [
+        { sessionKey: KEY_A, agentId: "dev" },
+        { sessionKey: KEY_B, agentId: "fin" },
+      ],
+    });
+
+    manager.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(replayed).toEqual([[f.APPROVAL_ID]]); // 되감을 것이 없는 세션은 부르지 않는다
+  });
+
+  it("subscribeSession(전송 전 구독)도 되감기를 흘린다", async () => {
+    const link = fakeLink({
+      "sessions.messages.subscribe": () => f.approvalSubscribeResult({ sessionKey: KEY_A }),
+    });
+    const replayed: string[][] = [];
+    const { manager } = setup({
+      connector: scriptedConnector([link]).connector,
+      onApprovalReplay: (approvals) => replayed.push(approvals.map((a) => a.providerApprovalId)),
+    });
+
+    manager.start();
+    await vi.advanceTimersByTimeAsync(0);
+    await manager.subscribeSession(KEY_A, "dev");
+
+    expect(link.calls.at(-1)).toMatchObject({
+      method: "sessions.messages.subscribe",
+      params: { key: KEY_A, agentId: "dev", includeApprovals: true },
+    });
+    expect(replayed).toEqual([[f.APPROVAL_ID]]);
   });
 });
 

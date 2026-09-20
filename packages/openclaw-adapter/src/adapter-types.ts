@@ -1,5 +1,7 @@
 import type {
   AdapterStatus,
+  ApprovalDecision,
+  ApprovalKind,
   ConfigSet,
   ConfigSetResult,
   ErrorCode,
@@ -9,6 +11,7 @@ import type {
   RunEvent,
   RunSignal,
 } from "@dodok/shared";
+import type { ProviderApproval } from "./gateway/approvals";
 
 // 서버 코어 스펙 6.1. 서버(apps/server/src/adapters)는 이 파일을 re-export 한다.
 
@@ -31,7 +34,9 @@ export type AdapterEvent =
   | { kind: "run_event"; runId: string; event: RunEventBody }
   | { kind: "run_signal"; runId: string; signal: RunSignal; snapshotText?: string } // snapshotText 는 gateway_final 에만
   | { kind: "canonical"; message: OutboundMessage }
-  | { kind: "status"; status: AdapterStatus; capabilities: AdapterCapabilities };
+  | { kind: "status"; status: AdapterStatus; capabilities: AdapterCapabilities }
+  // 승인은 런 이벤트가 아니다 — 런 상관(sessionKey + toolCallId)은 서버가 한다(설계 4.1·4.2)
+  | { kind: "approval"; approval: ProviderApproval };
 
 export interface AgentAdapter {
   readonly provider: "openclaw";
@@ -46,6 +51,15 @@ export interface AgentAdapter {
   abort(runId: string, sessionKey: string): Promise<void>;
   resetSession(sessionKey: string): Promise<{ sessionStartedAt?: string; lifecycleRevision?: string }>;
   syncChannelConfig(channelId: string, config: ConfigSet["config"]): Promise<ConfigSetResult>;
+  /**
+   * `approval.resolve` 래퍼. `kind` 는 wire 에 없으므로 저장된 행에서 받는다(스파이크 4.1).
+   * 돌아온 terminal 스냅샷을 같은 정규화로 돌려준다. ok:false 는 throw AdapterError.
+   */
+  resolveApproval(
+    providerApprovalId: string,
+    kind: ApprovalKind,
+    decision: ApprovalDecision,
+  ): Promise<ProviderApproval>;
   onEvent(handler: (e: AdapterEvent) => void): () => void;
   /** 서버가 종료 신호 없이 닫은 런(타임아웃)의 추적 상태를 버린다 — 그 뒤 그 런의 Gateway 프레임은 무시한다 */
   forgetRun?(runId: string): void;

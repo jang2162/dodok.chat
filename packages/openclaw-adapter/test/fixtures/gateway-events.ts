@@ -272,7 +272,41 @@ export function pluginApprovalResolved(
   );
 }
 
-/** 세션 구독(`includeApprovals`)에만 온다. `presentation` 에는 `toolCallId` 가 없다(3.3). */
+/** `session.approval`·`approvalReplay` 가 함께 싣는 승인 스냅샷(3.3·5.3). `presentation` 에는 `toolCallId` 가 없다. */
+function approvalSnapshot(
+  o: ApprovalOpts & { phase?: "pending" | "terminal"; status?: string; decision?: string; reason?: string },
+) {
+  const c = common(o);
+  const id = o.id ?? APPROVAL_ID;
+  const terminal = (o.phase ?? "pending") === "terminal";
+  return {
+    id,
+    status: o.status ?? (terminal ? "allowed" : "pending"),
+    presentation: {
+      kind: "plugin",
+      title: "claude-cli native tool: Write",
+      description: APPROVAL_ARGS,
+      detail: APPROVAL_ARGS,
+      severity: "warning",
+      pluginId: "claude-cli",
+      toolName: "Write",
+      agentId: c.agentId,
+      allowedDecisions: ["allow-once", "deny"],
+    },
+    urlPath: `/approve/${encodeURIComponent(id)}`,
+    createdAtMs: APPROVAL_CREATED_MS,
+    expiresAtMs: APPROVAL_EXPIRES_MS,
+    ...(terminal
+      ? {
+          resolvedAtMs: APPROVAL_RESOLVED_MS,
+          reason: o.reason ?? "user",
+          decision: o.decision ?? "allow-once",
+        }
+      : {}),
+  };
+}
+
+/** 세션 구독(`includeApprovals`)에만 온다(3.3). */
 export function sessionApproval(
   o: ApprovalOpts & {
     phase?: "pending" | "terminal";
@@ -282,41 +316,51 @@ export function sessionApproval(
   } = {},
 ): EventFrame {
   const c = common(o);
-  const id = o.id ?? APPROVAL_ID;
-  const terminal = (o.phase ?? "pending") === "terminal";
   return frame(
     "session.approval",
     {
       sessionKey: c.sessionKey,
       sourceSessionKey: c.sessionKey,
-      updatedAtMs: terminal ? APPROVAL_RESOLVED_MS : APPROVAL_CREATED_MS,
+      updatedAtMs: (o.phase ?? "pending") === "terminal" ? APPROVAL_RESOLVED_MS : APPROVAL_CREATED_MS,
       phase: o.phase ?? "pending",
-      approval: {
-        id,
-        status: o.status ?? (terminal ? "allowed" : "pending"),
-        presentation: {
-          kind: "plugin",
-          title: "claude-cli native tool: Write",
-          description: APPROVAL_ARGS,
-          detail: APPROVAL_ARGS,
-          severity: "warning",
-          pluginId: "claude-cli",
-          toolName: "Write",
-          agentId: c.agentId,
-          allowedDecisions: ["allow-once", "deny"],
-        },
-        urlPath: `/approve/${encodeURIComponent(id)}`,
-        createdAtMs: APPROVAL_CREATED_MS,
-        expiresAtMs: APPROVAL_EXPIRES_MS,
-        ...(terminal
-          ? {
-              resolvedAtMs: APPROVAL_RESOLVED_MS,
-              reason: o.reason ?? "user",
-              decision: o.decision ?? "allow-once",
-            }
-          : {}),
-      },
+      approval: approvalSnapshot(o),
     },
     c.seq,
   );
+}
+
+/**
+ * `sessions.messages.subscribe({ includeApprovals: true })` 응답(5.3). 미해결 승인만 담기고
+ * 1000건을 넘으면 `truncated: true`. 각 항목은 `session.approval` 의 승인 스냅샷 + `sourceSessionKey`.
+ */
+export function approvalSubscribeResult(
+  o: ApprovalOpts & { ids?: string[]; truncated?: boolean } = {},
+): Record<string, unknown> {
+  const c = common(o);
+  const ids = o.ids ?? [o.id ?? APPROVAL_ID];
+  return {
+    subscribed: true,
+    key: c.sessionKey,
+    approvalReplay: {
+      sessionKey: c.sessionKey,
+      updatedAtMs: APPROVAL_CREATED_MS,
+      approvals: ids.map((id) => ({ ...approvalSnapshot({ ...o, id }), sourceSessionKey: c.sessionKey })),
+      truncated: o.truncated ?? false,
+    },
+  };
+}
+
+/** `approval.resolve` 응답(4.1). terminal 스냅샷에 `source`·`resolver` 가 더 붙는다. */
+export function approvalResolveResult(
+  o: ApprovalOpts & { applied?: boolean; status?: string; decision?: string; reason?: string } = {},
+): Record<string, unknown> {
+  const c = common(o);
+  return {
+    applied: o.applied ?? true,
+    approval: {
+      ...approvalSnapshot({ ...o, phase: "terminal" }),
+      source: { agentId: c.agentId, sessionKey: c.sessionKey },
+      resolver: { kind: "device", id: "fixture-device" },
+    },
+  };
 }

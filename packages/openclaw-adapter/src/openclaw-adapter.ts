@@ -6,6 +6,8 @@
  */
 import type {
   AdapterStatus,
+  ApprovalDecision,
+  ApprovalKind,
   ConfigSet,
   ConfigSetResult,
   InboundDeliver,
@@ -24,6 +26,13 @@ import {
 } from "./adapter-types";
 import { attachBridge, type BridgeHandle } from "./bridge/server";
 import { syncChannelConfig } from "./config-sync";
+import {
+  isApprovalEvent,
+  parseApprovalFrame,
+  parseResolveResult,
+  resolveParams,
+  type ProviderApproval,
+} from "./gateway/approvals";
 import { connectGateway } from "./gateway/client";
 import {
   createConnectionManager,
@@ -62,6 +71,8 @@ const DELIVER_RETRY_DELAYS_MS = [1_000, 4_000, 16_000];
 const PLUGIN_READY_WAIT_MS = 120_000;
 // final 뒤에도 같은 런의 늦은 프레임(usage 등)이 온다 — 그동안은 우리 런으로 본다.
 const FORGET_AFTER_FINAL_MS = 60_000;
+// 승인 중복 제거 기억 상한. Gateway 의 세션 되감기 상한과 같은 1000 — 넘으면 오래된 것부터 버린다.
+const APPROVAL_DEDUPE_MAX = 1_000;
 
 const AgentsListResult = z.looseObject({
   agents: z.array(z.looseObject({ id: z.string().min(1), name: z.string().optional().catch(undefined) })),
@@ -71,6 +82,8 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
   const { logger } = opts;
   const handlers = new Set<(e: AdapterEvent) => void>();
   const knownRunIds = new Set<string>();
+  // 낸 승인의 `<providerApprovalId>\0<status>`. 같은 승인이 정본·세션·되감기 세 경로로 오므로 상태마다 한 번만 낸다(스파이크 3.1).
+  const emittedApprovals = new Set<string>();
   const forgetTimers = new Map<string, ReturnType<typeof setTimeout>>();
   // send 재시도 대기 — close() 가 타이머를 지우고 기다리는 send 를 끝낸다
   const retryWaits = new Map<ReturnType<typeof setTimeout>, (error: AdapterError) => void>();
@@ -124,8 +137,27 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
     forgetTimers.set(runId, timer);
   }
 
+  /** 상태가 바뀔 때만 발행한다. 기억은 가장 오래된 것부터 버려 무한히 자라지 않게 한다. */
+  function emitApproval(approval: ProviderApproval) {
+    const key = `${approval.providerApprovalId}\u0000${approval.status}`;
+    if (emittedApprovals.has(key)) return;
+    emittedApprovals.add(key);
+    for (const oldest of emittedApprovals) {
+      if (emittedApprovals.size <= APPROVAL_DEDUPE_MAX) break;
+      emittedApprovals.delete(oldest);
+    }
+    emit({ kind: "approval", approval });
+  }
+
   function onGatewayEvent(frame: EventFrame) {
     frameDump?.write(frame);
+    if (isApprovalEvent(frame.event)) {
+      const approval = parseApprovalFrame(frame.event, frame.payload);
+      // 우리 세션이 아닌 승인(다른 채널 플러그인·TUI)도 전역으로 온다 — 버린다. 세션 키·본문은 남기지 않는다.
+      if (approval) emitApproval(approval);
+      else logger.debug({ event: frame.event }, "gateway approval frame ignored");
+      return;
+    }
     for (const item of mapper.map(frame)) {
       if (item.event) emit({ kind: "run_event", runId: item.runId, event: item.event });
       if (!item.signal) continue;
@@ -149,6 +181,9 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
     onState: (next) => {
       gatewayState = next;
       emitStatus();
+    },
+    onApprovalReplay: (approvals) => {
+      for (const approval of approvals) emitApproval(approval);
     },
     ...(opts.sessionKeysToRecover ? { sessionKeysToRecover: opts.sessionKeysToRecover } : {}),
     ...(opts.backoff ? { backoff: opts.backoff } : {}),
@@ -257,6 +292,7 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
 
     async close() {
       closed = true;
+      emittedApprovals.clear();
       for (const timer of forgetTimers.values()) clearTimeout(timer);
       forgetTimers.clear();
       for (const [timer, reject] of retryWaits) {
@@ -341,6 +377,20 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
 
     syncChannelConfig: (channelId: string, config: ConfigSet["config"]): Promise<ConfigSetResult> =>
       syncChannelConfig(bridge, logger, channelId, config),
+
+    async resolveApproval(providerApprovalId: string, kind: ApprovalKind, decision: ApprovalDecision) {
+      // 연결이 없으면 manager 가 ADAPTER_UNAVAILABLE 을 던진다(다른 RPC 와 같은 규칙).
+      const res = await manager.request(
+        "approval.resolve",
+        resolveParams({ providerApprovalId, kind }, decision),
+      );
+      // 이미 확정된 승인은 `applied:false` 로 오지만 스냅샷은 그대로다 — 오류가 아니다(스파이크 4.4).
+      const approval = parseResolveResult(res, kind);
+      if (!approval) {
+        throw new AdapterError("INTERNAL", "ADAPTER_PROTOCOL: approval.resolve terminal snapshot unreadable");
+      }
+      return approval;
+    },
 
     onEvent(handler) {
       handlers.add(handler);

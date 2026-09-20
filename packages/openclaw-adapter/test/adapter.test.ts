@@ -843,7 +843,10 @@ describe("send 전 세션 구독", () => {
     await adapter.send(delivery(randomUUID()));
 
     expect(gatewayCalls.filter((c) => c.method === "sessions.messages.subscribe")).toEqual([
-      { method: "sessions.messages.subscribe", params: { key: f.SESSION_KEY, agentId: f.PROVIDER_AGENT_ID } },
+      {
+        method: "sessions.messages.subscribe",
+        params: { key: f.SESSION_KEY, agentId: f.PROVIDER_AGENT_ID, includeApprovals: true },
+      },
     ]);
     expect(subscribesAtDeliver).toEqual([1, 1]); // 구독이 전송보다 먼저다
   });
@@ -856,5 +859,93 @@ describe("send 전 세션 구독", () => {
       expect.objectContaining({ sessionKey: f.SESSION_KEY }),
       "gateway session subscribe before send failed",
     );
+  });
+});
+
+describe("승인 — 수신·중복 제거·해결 RPC", () => {
+  it("승인 프레임을 approval 이벤트로 내고, 같은 승인이 두 경로로 와도 상태마다 한 번만 낸다", async () => {
+    await connectedGateway();
+
+    // 요청: 정본(plugin.approval.requested) + 보조(session.approval pending) — 스파이크 3.1
+    gatewayEvent(f.pluginApprovalRequested());
+    gatewayEvent(f.sessionApproval());
+    expect(ofKind("approval")).toHaveLength(1);
+    expect(ofKind("approval")[0]?.approval).toMatchObject({
+      providerApprovalId: f.APPROVAL_ID,
+      kind: "plugin",
+      status: "pending",
+      toolCallId: f.APPROVAL_TOOL_CALL_ID,
+      channelId: CH,
+    });
+
+    // 해결: 상태가 바뀌었으므로 한 번 더 낸다. 그 뒤 같은 상태는 또 안 낸다
+    gatewayEvent(f.sessionApproval({ phase: "terminal" }));
+    gatewayEvent(f.pluginApprovalResolved());
+    expect(ofKind("approval").map((e) => e.approval.status)).toEqual(["pending", "allowed"]);
+  });
+
+  it("우리 세션 키가 아닌 전역 승인은 내지 않는다(다른 채널 플러그인·TUI)", async () => {
+    await connectedGateway();
+    const other = "agent:dev:discord:channel:01a09fc9-d204-7551-89d6-38544d07a2c1";
+
+    gatewayEvent(f.pluginApprovalRequested({ sessionKey: other }));
+
+    expect(ofKind("approval")).toHaveLength(0);
+    expect(logger.debug).toHaveBeenCalledWith(
+      { event: "plugin.approval.requested" },
+      "gateway approval frame ignored",
+    );
+    // 토큰·본문·남의 세션 키를 남기지 않는다
+    expect(JSON.stringify(logger.debug.mock.calls)).not.toContain(other);
+  });
+
+  it("세션 구독에 includeApprovals 를 넣고 응답의 approvalReplay 를 승인 이벤트로 흘린다", async () => {
+    gatewayResponses["sessions.messages.subscribe"] = () => f.approvalSubscribeResult();
+    await connectedGateway();
+    await plugin({ "inbound.deliver": dispatchAck });
+
+    await adapter.send(delivery());
+
+    expect(gatewayCalls.filter((c) => c.method === "sessions.messages.subscribe")).toEqual([
+      {
+        method: "sessions.messages.subscribe",
+        params: { key: f.SESSION_KEY, agentId: f.PROVIDER_AGENT_ID, includeApprovals: true },
+      },
+    ]);
+    expect(ofKind("approval").map((e) => e.approval.providerApprovalId)).toEqual([f.APPROVAL_ID]);
+    // 되감기로 이미 낸 승인은 정본 프레임이 뒤따라와도 다시 내지 않는다
+    gatewayEvent(f.pluginApprovalRequested());
+    expect(ofKind("approval")).toHaveLength(1);
+  });
+
+  it("resolveApproval 은 approval.resolve { id, kind, decision } 을 보내고 terminal 스냅샷을 돌려준다", async () => {
+    gatewayResponses["approval.resolve"] = () => f.approvalResolveResult();
+    await connectedGateway();
+
+    await expect(adapter.resolveApproval(f.APPROVAL_ID, "plugin", "allow-once")).resolves.toMatchObject({
+      providerApprovalId: f.APPROVAL_ID,
+      status: "allowed",
+      decision: "allow-once",
+      reason: "user",
+      channelId: CH,
+    });
+    expect(gatewayCalls.filter((c) => c.method === "approval.resolve")).toEqual([
+      { method: "approval.resolve", params: { id: f.APPROVAL_ID, kind: "plugin", decision: "allow-once" } },
+    ]);
+  });
+
+  it("Gateway 가 끊겨 있으면 ADAPTER_UNAVAILABLE, 응답 모양이 다르면 ADAPTER_PROTOCOL", async () => {
+    await expect(adapter.resolveApproval(f.APPROVAL_ID, "plugin", "deny")).rejects.toMatchObject({
+      name: "AdapterError",
+      code: "ADAPTER_UNAVAILABLE",
+    });
+
+    gatewayResponses["approval.resolve"] = () => ({ applied: true });
+    await connectedGateway();
+
+    await expect(adapter.resolveApproval(f.APPROVAL_ID, "plugin", "deny")).rejects.toMatchObject({
+      code: "INTERNAL",
+      message: expect.stringMatching(/^ADAPTER_PROTOCOL: approval\.resolve/),
+    });
   });
 });
