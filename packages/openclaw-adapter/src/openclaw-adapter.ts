@@ -28,9 +28,11 @@ import { attachBridge, type BridgeHandle } from "./bridge/server";
 import { syncChannelConfig } from "./config-sync";
 import {
   isApprovalEvent,
+  mergeApproval,
   parseApprovalFrame,
   parseResolveResult,
   resolveParams,
+  sameApproval,
   type ProviderApproval,
 } from "./gateway/approvals";
 import { connectGateway } from "./gateway/client";
@@ -71,7 +73,7 @@ const DELIVER_RETRY_DELAYS_MS = [1_000, 4_000, 16_000];
 const PLUGIN_READY_WAIT_MS = 120_000;
 // final 뒤에도 같은 런의 늦은 프레임(usage 등)이 온다 — 그동안은 우리 런으로 본다.
 const FORGET_AFTER_FINAL_MS = 60_000;
-// 승인 중복 제거 기억 상한. Gateway 의 세션 되감기 상한과 같은 1000 — 넘으면 오래된 것부터 버린다.
+// 승인 병합 기억 상한. Gateway 의 세션 되감기 상한과 같은 1000 — 넘으면 오래 손대지 않은 것부터 버린다.
 const APPROVAL_DEDUPE_MAX = 1_000;
 
 const AgentsListResult = z.looseObject({
@@ -82,8 +84,8 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
   const { logger } = opts;
   const handlers = new Set<(e: AdapterEvent) => void>();
   const knownRunIds = new Set<string>();
-  // 낸 승인의 `<providerApprovalId>\0<status>`. 같은 승인이 정본·세션·되감기 세 경로로 오므로 상태마다 한 번만 낸다(스파이크 3.1).
-  const emittedApprovals = new Set<string>();
+  // `providerApprovalId` → 마지막으로 낸 병합본. 같은 승인이 정본·세션·되감기 세 경로로, 경로마다 다른 필드를 채워 온다(스파이크 3.1).
+  const emittedApprovals = new Map<string, ProviderApproval>();
   const forgetTimers = new Map<string, ReturnType<typeof setTimeout>>();
   // send 재시도 대기 — close() 가 타이머를 지우고 기다리는 send 를 끝낸다
   const retryWaits = new Map<ReturnType<typeof setTimeout>, (error: AdapterError) => void>();
@@ -137,12 +139,23 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
     forgetTimers.set(runId, timer);
   }
 
-  /** 상태가 바뀔 때만 발행한다. 기억은 가장 오래된 것부터 버려 무한히 자라지 않게 한다. */
-  function emitApproval(approval: ProviderApproval) {
-    const key = `${approval.providerApprovalId}\u0000${approval.status}`;
-    if (emittedApprovals.has(key)) return;
-    emittedApprovals.add(key);
-    for (const oldest of emittedApprovals) {
+  /**
+   * 같은 승인의 여러 프레임을 **병합해서** 낸다 — 뒤엣것을 버리지 않는다(p2-t6 실측 C).
+   *
+   * 실물은 같은 승인을 `plugin.approval.requested`(`toolCallId` 있음·`urlPath` 없음)와
+   * `session.approval`(`urlPath` 있음·`toolCallId` 없음)로 나눠 준다. 먼저 온 쪽만 남기면 어느 순서든 한쪽 값을 잃는다.
+   * 상태도 그대로고 새로 채운 필드도 없으면 — 같은 사실을 또 읽은 것이라 — 내지 않는다.
+   * 기억은 오래 손대지 않은 것부터 버려 무한히 자라지 않게 한다.
+   */
+  function emitApproval(incoming: ProviderApproval) {
+    const id = incoming.providerApprovalId;
+    const previous = emittedApprovals.get(id);
+    const approval = previous ? mergeApproval(previous, incoming) : incoming;
+    if (previous && sameApproval(previous, approval)) return;
+    // 다시 넣어 맨 뒤로 보낸다 — 아직 오가는 승인이 먼저 밀려나지 않게
+    emittedApprovals.delete(id);
+    emittedApprovals.set(id, approval);
+    for (const oldest of emittedApprovals.keys()) {
       if (emittedApprovals.size <= APPROVAL_DEDUPE_MAX) break;
       emittedApprovals.delete(oldest);
     }

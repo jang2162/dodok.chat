@@ -623,8 +623,10 @@ export async function startFakeGateway(opts: FakeGatewayOptions = {}): Promise<F
       );
       // 타이머가 프로세스를 붙잡지 않게 — 닫는 건 close()
       state.timer.unref();
-      // 프레임 쓰기를 기다리지 않고 결말 프로미스를 돌려준다 — socket.send 는 여기서 이미 예약돼 순서가 지켜진다
+      // 프레임 쓰기를 기다리지 않고 결말 프로미스를 돌려준다 — socket.send 는 여기서 이미 예약돼 순서가 지켜진다.
+      // 실물은 같은 승인을 두 프레임으로 준다(⚠ 실측 p2-t6): 정본에는 `toolCallId` 가, 세션 스냅샷에는 `urlPath` 가 있다
       void broadcast(fixtures.pluginApprovalRequested({ ...approvalOpts(state), seq: nextSeq() }));
+      void broadcast(fixtures.sessionApproval({ ...approvalOpts(state), seq: nextSeq() }));
       return outcome;
     },
 

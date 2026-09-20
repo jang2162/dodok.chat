@@ -3,11 +3,13 @@ import type { EventFrame } from "@openclaw/gateway-protocol";
 import { describe, expect, it } from "vitest";
 import {
   isApprovalEvent,
+  mergeApproval,
   parseApprovalFrame,
   parseApprovalReplay,
   parseResolveResult,
   parseSessionKey,
   resolveParams,
+  sameApproval,
   type ProviderApproval,
 } from "../src/gateway/approvals";
 import * as f from "./fixtures/gateway-events";
@@ -414,6 +416,80 @@ describe("parseApprovalFrame — 모르는 모양(10.1 exec·system-agent 방어
     });
 
     expect(a.severity).toBe("warning");
+  });
+});
+
+/**
+ * ⚠ 실측(p2-t6) — 같은 승인이 필드가 어긋나는 두 프레임으로 온다. 뒤엣것을 버리면 순서에 따라 값을 잃는다.
+ * 병합 규칙 둘: 표시 값은 **빈 자리만** 채우고, 결말은 **먼저 확정된 쪽**이 이긴다(서버 저장과 같은 규칙).
+ */
+describe("mergeApproval — 같은 승인의 두 모양 합치기", () => {
+  const URL_PATH = `/approve/${encodeURIComponent(f.APPROVAL_ID)}`;
+  const fromPlugin = () => parsed("plugin.approval.requested", payloadOf(f.pluginApprovalRequested()));
+  const fromSession = (o: Parameters<typeof f.sessionApproval>[0] = {}) =>
+    parsed("session.approval", payloadOf(f.sessionApproval(o)));
+
+  it("plugin → session: toolCallId 와 urlPath 가 둘 다 남는다", () => {
+    const merged = mergeApproval(fromPlugin(), fromSession());
+
+    expect(merged).toMatchObject({
+      providerApprovalId: f.APPROVAL_ID,
+      status: "pending",
+      toolCallId: f.APPROVAL_TOOL_CALL_ID,
+      urlPath: URL_PATH,
+      createdAt: CREATED_AT,
+      expiresAt: EXPIRES_AT,
+    });
+    expect(fitsContract(merged).success).toBe(true);
+  });
+
+  it("session → plugin: 순서를 뒤집어도 같은 값이 나온다", () => {
+    const a = mergeApproval(fromSession(), fromPlugin());
+    const b = mergeApproval(fromPlugin(), fromSession());
+
+    expect(a.toolCallId).toBe(f.APPROVAL_TOOL_CALL_ID);
+    expect(a.urlPath).toBe(URL_PATH);
+    // 표시 값은 두 프레임이 같은 것을 싣고 있어 순서가 바뀌어도 결과가 같다
+    expect(a).toEqual(b);
+  });
+
+  it("먼저 온 값은 덮지 않는다 — 나중 프레임의 다른 제목·툴 이름은 무시한다", () => {
+    const first = fromPlugin();
+    const merged = mergeApproval(first, fromSession({ title: "다른 제목", toolName: "Bash" }));
+
+    expect(merged.title).toBe(first.title);
+    expect(merged.toolName).toBe(first.toolName);
+  });
+
+  it("결말은 먼저 확정된 쪽이 이긴다 — 뒤늦은 pending 이 닫힌 승인을 되살리지 않는다", () => {
+    const resolved = parsed("plugin.approval.resolved", payloadOf(f.pluginApprovalResolved()));
+
+    const late = mergeApproval(resolved, fromSession()); // 되감기 pending 이 뒤늦게
+    expect(late).toMatchObject({ status: "allowed", decision: "allow-once", reason: "user" });
+    expect(late.urlPath).toBe(URL_PATH); // 표시 값은 그래도 채운다
+
+    const first = mergeApproval(fromPlugin(), fromSession({ phase: "terminal" })); // pending 이 먼저
+    expect(first).toMatchObject({ status: "allowed", decision: "allow-once", resolvedAt: RESOLVED_AT });
+  });
+
+  it("결말이 둘이면 먼저 온 것만 쓴다 — status·decision·reason 이 섞이지 않는다", () => {
+    const expired = parsed(
+      "plugin.approval.resolved",
+      payloadOf(f.pluginApprovalResolved({ decision: "deny", resolvedBy: null })),
+    );
+
+    const merged = mergeApproval(expired, fromSession({ phase: "terminal" })); // 세션은 allowed/user 다
+
+    expect(merged).toMatchObject({ status: "expired", decision: "deny", reason: "timeout" });
+  });
+
+  it("sameApproval — 새로 채운 필드도 상태 변화도 없으면 같다고 본다", () => {
+    const plugin = fromPlugin();
+    expect(sameApproval(plugin, mergeApproval(plugin, fromPlugin()))).toBe(true);
+
+    const merged = mergeApproval(plugin, fromSession());
+    expect(sameApproval(plugin, merged)).toBe(false); // urlPath 가 새로 찼다
+    expect(sameApproval(merged, mergeApproval(merged, fromSession()))).toBe(true); // 더 채울 자리가 없다
   });
 });
 

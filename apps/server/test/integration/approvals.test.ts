@@ -40,6 +40,11 @@ const WRITE_APPROVAL: ScenarioApproval = {
   onDecision: "continue",
 };
 
+/** 같은 승인이 프레임 둘로 와 wire 에도 두 번 실린다 — 「카드」를 셀 때는 id 로 추린다(첫 도착 순서 유지) */
+function distinctById(approvals: Approval[]): Approval[] {
+  return [...new Map(approvals.map((a) => [a.id, a])).values()];
+}
+
 describe("통합 시나리오 9 — 승인 허용·거절·만료·겹침", () => {
   let live: LiveApp;
   const sockets: WireClient[] = [];
@@ -109,8 +114,21 @@ describe("통합 시나리오 9 — 승인 허용·거절·만료·겹침", () =
     });
     expect(card.providerApprovalId).toMatch(/^plugin:/);
     // ⚠ 실측 — 정본 경로(`plugin.approval.requested`)에는 `urlPath` 가 없다. Gateway 의 `/approve/...` 링크는
-    // 세션 경로(`session.approval`·되감기) 스냅샷에만 실린다. 카드에 그 링크를 늘 기대하면 안 된다
+    // 세션 경로(`session.approval`·되감기) 스냅샷에만 실린다 — 먼저 온 카드에는 아직 없다
     expect(card.urlPath).toBeUndefined();
+    // …그리고 뒤따라온 스냅샷이 그 자리를 채워 같은 행에 병합된다(p2-t6 C). 두 경로의 값이 한 승인에 다 남는다
+    const merged = await log.until(
+      () => log.approvals.find((a) => a.id === card.id && a.urlPath !== undefined),
+      "urlPath 가 채워진 같은 승인",
+    );
+    expect(merged).toMatchObject({
+      id: card.id,
+      status: "pending",
+      toolCallId: card.toolCallId,
+      urlPath: `/approve/${encodeURIComponent(card.providerApprovalId)}`,
+    });
+    // 값만 늦게 찬 것이므로 타임라인에는 카드가 하나뿐이다 — 런을 다시 깨우지도 않는다
+    expect(approvalEvents(log, run.id).filter((e) => e.type === "APPROVAL_REQUESTED")).toHaveLength(1);
     expect(Date.parse(card.expiresAt) - Date.parse(card.createdAt)).toBe(LONG_TTL_MS);
     expect(Date.parse(card.expiresAt)).toBeGreaterThan(Date.now());
     expect(card.decision).toBeUndefined();
@@ -118,10 +136,12 @@ describe("통합 시나리오 9 — 승인 허용·거절·만료·겹침", () =
     const toolStart = log.eventsOf(run.id).find((e) => e.type === "TOOL_CALL_START");
     expect(card.toolCallId).toBe(toolStart?.type === "TOOL_CALL_START" ? toolStart.toolCallId : undefined);
 
-    // 구독 ack 의 미해결 승인에도 같은 카드가 실린다(다른 탭이 뒤늦게 열어도 보인다)
+    // 구독 ack 의 미해결 승인에도 같은 카드가 실린다(다른 탭이 뒤늦게 열어도 보인다) — 병합한 값 그대로 저장돼 있다
     const late = await openChannelWire(live, setup.channel.id, sockets);
     const ack = await late.socket.emitWithAck("channel.subscribe", { channelId: setup.channel.id });
-    expect(ack.ok && ack.data.pendingApprovals.map((a: Approval) => a.id)).toEqual([card.id]);
+    expect(ack.ok && ack.data.pendingApprovals).toMatchObject([
+      { id: card.id, toolCallId: card.toolCallId, urlPath: merged.urlPath },
+    ]);
 
     await log.until(
       () => log.statesOf(run.id).some((s) => s.status === "awaiting_approval"),
@@ -271,9 +291,13 @@ describe("통합 시나리오 9 — 승인 허용·거절·만료·겹침", () =
       "서버 감시가 닫은 approval.resolved",
       EXPIRY_WAIT_MS,
     );
-    expect(expired).toMatchObject({ id: card.id, status: "expired", reason: "timeout" });
-    // 같은 「만료」인데 Gateway 경로(9c)와 달리 결정이 비어 있다
-    expect(expired.decision).toBeUndefined();
+    // 같은 「만료」는 어느 경로로 닫혀도 같은 모양이다 — Gateway 경로(9c)와 글자 그대로 같은 값(p2-t6 B)
+    expect(expired).toMatchObject({
+      id: card.id,
+      status: "expired",
+      decision: "deny",
+      reason: "timeout",
+    });
     // 대기 중에는 런 상한이 멈춰 있었다 — 안 멈췄으면 만료(5.3초)보다 먼저 죽는다
     expect(log.statesOf(run.id).filter((s) => s.status === "error")).toEqual([]);
 
@@ -293,10 +317,11 @@ describe("통합 시나리오 9 — 승인 허용·거절·만료·겹침", () =
       ],
     });
     const { run } = await askAndWaitForCard(log, setup);
-    const [first, second] = await log.until(
-      () => (log.approvals.length === 2 ? log.approvals : undefined),
-      "승인 카드 둘",
-    );
+    // `log.approvals` 는 도착 순서 그대로다 — 같은 승인이 두 프레임으로 와 두 번 실린다. 카드는 id 로 센다
+    const [first, second] = await log.until(() => {
+      const cards = distinctById(log.approvals);
+      return cards.length === 2 ? cards : undefined;
+    }, "승인 카드 둘");
     expect(first?.toolName).toBe("Write");
     expect(second?.toolName).toBe("Read");
     expect([first?.runId, second?.runId]).toEqual([run.id, run.id]);

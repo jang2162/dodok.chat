@@ -862,13 +862,16 @@ describe("send 전 세션 구독", () => {
   });
 });
 
-describe("승인 — 수신·중복 제거·해결 RPC", () => {
-  it("승인 프레임을 approval 이벤트로 내고, 같은 승인이 두 경로로 와도 상태마다 한 번만 낸다", async () => {
+describe("승인 — 수신·병합·해결 RPC", () => {
+  const APPROVAL_URL_PATH = `/approve/${encodeURIComponent(f.APPROVAL_ID)}`;
+
+  // ⚠ 실측(p2-t6) — 같은 승인이 필드가 다른 두 프레임으로 온다: 정본에는 `toolCallId` 가, 세션 스냅샷에는 `urlPath` 가 있다.
+  // 뒤엣것을 버리면 어느 순서로 오느냐에 따라 값 하나가 통째로 사라진다.
+  it("같은 승인의 두 프레임을 병합해서 낸다 — plugin → session 순서", async () => {
     await connectedGateway();
 
-    // 요청: 정본(plugin.approval.requested) + 보조(session.approval pending) — 스파이크 3.1
+    // 요청: 정본(plugin.approval.requested) — `toolCallId` 는 있고 `urlPath` 는 없다
     gatewayEvent(f.pluginApprovalRequested());
-    gatewayEvent(f.sessionApproval());
     expect(ofKind("approval")).toHaveLength(1);
     expect(ofKind("approval")[0]?.approval).toMatchObject({
       providerApprovalId: f.APPROVAL_ID,
@@ -877,11 +880,60 @@ describe("승인 — 수신·중복 제거·해결 RPC", () => {
       toolCallId: f.APPROVAL_TOOL_CALL_ID,
       channelId: CH,
     });
+    expect(ofKind("approval")[0]?.approval.urlPath).toBeUndefined();
 
-    // 해결: 상태가 바뀌었으므로 한 번 더 낸다. 그 뒤 같은 상태는 또 안 낸다
+    // 보조: 세션 스냅샷(session.approval pending) — `urlPath` 를 채워 한 번 더 낸다(스파이크 3.1)
+    gatewayEvent(f.sessionApproval());
+    expect(ofKind("approval")).toHaveLength(2);
+    expect(ofKind("approval")[1]?.approval).toMatchObject({
+      status: "pending",
+      toolCallId: f.APPROVAL_TOOL_CALL_ID,
+      urlPath: APPROVAL_URL_PATH,
+    });
+
+    // 해결: 상태가 바뀌었으므로 한 번 더. 병합한 값은 그대로 남는다
     gatewayEvent(f.sessionApproval({ phase: "terminal" }));
     gatewayEvent(f.pluginApprovalResolved());
-    expect(ofKind("approval").map((e) => e.approval.status)).toEqual(["pending", "allowed"]);
+    expect(ofKind("approval").map((e) => e.approval.status)).toEqual(["pending", "pending", "allowed"]);
+    expect(ofKind("approval").at(-1)?.approval).toMatchObject({
+      status: "allowed",
+      decision: "allow-once",
+      toolCallId: f.APPROVAL_TOOL_CALL_ID,
+      urlPath: APPROVAL_URL_PATH,
+    });
+  });
+
+  it("같은 승인의 두 프레임을 병합해서 낸다 — session → plugin 순서도 잃는 값이 없다", async () => {
+    await connectedGateway();
+
+    gatewayEvent(f.sessionApproval());
+    expect(ofKind("approval")[0]?.approval).toMatchObject({ status: "pending", urlPath: APPROVAL_URL_PATH });
+    expect(ofKind("approval")[0]?.approval.toolCallId).toBeUndefined();
+
+    gatewayEvent(f.pluginApprovalRequested());
+    expect(ofKind("approval")).toHaveLength(2);
+    expect(ofKind("approval")[1]?.approval).toMatchObject({
+      status: "pending",
+      toolCallId: f.APPROVAL_TOOL_CALL_ID,
+      urlPath: APPROVAL_URL_PATH,
+    });
+  });
+
+  it("상태도 그대로고 새로 채운 필드도 없으면 다시 내지 않는다", async () => {
+    await connectedGateway();
+
+    gatewayEvent(f.pluginApprovalRequested());
+    gatewayEvent(f.pluginApprovalRequested()); // 같은 프레임을 또 — 새 사실이 없다
+    expect(ofKind("approval")).toHaveLength(1);
+
+    gatewayEvent(f.sessionApproval());
+    gatewayEvent(f.sessionApproval()); // 병합은 이미 끝났다 — 두 번째는 채울 자리가 없다
+    expect(ofKind("approval")).toHaveLength(2);
+
+    // 먼저 확정된 결말이 이긴다 — 뒤늦은 pending 되감기가 닫힌 승인을 되살리지 않는다
+    gatewayEvent(f.pluginApprovalResolved());
+    gatewayEvent(f.sessionApproval());
+    expect(ofKind("approval").map((e) => e.approval.status)).toEqual(["pending", "pending", "allowed"]);
   });
 
   it("우리 세션 키가 아닌 전역 승인은 내지 않는다(다른 채널 플러그인·TUI)", async () => {
@@ -913,9 +965,15 @@ describe("승인 — 수신·중복 제거·해결 RPC", () => {
       },
     ]);
     expect(ofKind("approval").map((e) => e.approval.providerApprovalId)).toEqual([f.APPROVAL_ID]);
-    // 되감기로 이미 낸 승인은 정본 프레임이 뒤따라와도 다시 내지 않는다
+    // 되감기 스냅샷에도 `toolCallId` 가 없다 — 뒤따라온 정본이 그 자리를 채워 한 번 더 낸다
+    expect(ofKind("approval")[0]?.approval.toolCallId).toBeUndefined();
     gatewayEvent(f.pluginApprovalRequested());
-    expect(ofKind("approval")).toHaveLength(1);
+    expect(ofKind("approval")).toHaveLength(2);
+    expect(ofKind("approval")[1]?.approval).toMatchObject({
+      status: "pending",
+      toolCallId: f.APPROVAL_TOOL_CALL_ID,
+      urlPath: APPROVAL_URL_PATH,
+    });
   });
 
   it("resolveApproval 은 approval.resolve { id, kind, decision } 을 보내고 terminal 스냅샷을 돌려준다", async () => {

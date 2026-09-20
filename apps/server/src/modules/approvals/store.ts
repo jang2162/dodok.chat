@@ -93,13 +93,15 @@ export function rowToApproval(row: ApprovalRow): Approval {
  * `providerApprovalId` 유일 인덱스로 upsert 한다(설계 4.2 ④).
  *
  * `changed` 는 「새로 알게 된 사실」이다 — 새 행이거나 저장된 열이 실제로 바뀌었을 때만 참이다.
+ * `created` 는 그중 **이 승인을 처음 본 것**인지다 — 어댑터가 같은 승인의 두 번째 프레임을 병합해 다시 주므로
+ * (`plugin.approval.requested` 의 `toolCallId` + `session.approval` 의 `urlPath`) 값만 늦게 차는 갱신과 갈라야 한다.
  * **종료된 행은 더 바뀌지 않는다**: 늦게 온 `pending` 도, 같은 승인이 두 경로(RPC 응답·Gateway 이벤트)로 온 것도
  * 여기서 멈춘다(설계 4.4 「먼저 온 쪽이 이긴다」).
  */
 export function upsertApproval(
   db: DbOrTx,
   input: ApprovalRowInput,
-): { approval: Approval; changed: boolean } {
+): { approval: Approval; changed: boolean; created: boolean } {
   const existing = db
     .select()
     .from(approvals)
@@ -108,17 +110,25 @@ export function upsertApproval(
 
   if (!existing) {
     // 삽입과 계약 확인을 한 트랜잭션에 묶는다 — 읽을 수 없는 행을 남기면 그 채널의 pendingApprovals 가 통째로 막힌다
-    return db.transaction((tx) => ({ approval: rowToApproval(insertApproval(tx, input)), changed: true }));
+    return db.transaction((tx) => ({
+      approval: rowToApproval(insertApproval(tx, input)),
+      changed: true,
+      created: true,
+    }));
   }
 
-  if (existing.status !== "pending") return { approval: rowToApproval(existing), changed: false };
+  if (existing.status !== "pending") {
+    return { approval: rowToApproval(existing), changed: false, created: false };
+  }
 
   const patch = mergePatch(existing, input);
-  if (Object.keys(patch).length === 0) return { approval: rowToApproval(existing), changed: false };
+  if (Object.keys(patch).length === 0) {
+    return { approval: rowToApproval(existing), changed: false, created: false };
+  }
   return db.transaction((tx) => {
     const row = tx.update(approvals).set(patch).where(eq(approvals.id, existing.id)).returning().get();
     if (!row) throw apiError("NOT_FOUND", "approval not found");
-    return { approval: rowToApproval(row), changed: true };
+    return { approval: rowToApproval(row), changed: true, created: false };
   });
 }
 

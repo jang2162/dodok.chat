@@ -71,11 +71,21 @@ export function createApprovalsService(deps: ApprovalsDeps): ApprovalsService {
   /**
    * 새 사실 하나를 활동 타임라인·wire 로 내보내고, 런 상태머신에 신호를 준다.
    * `resumeRun:false` 는 런이 끝나는 중일 때 — 대기 직전 상태로 되돌렸다가 다시 종료로 가는 깜빡임을 막는다.
+   * `announce:false` 는 같은 승인의 **대기 카드를 두 번째로 읽었을 때** — 어댑터가 두 프레임을 병합해 다시 주면
+   * `urlPath` 같은 값이 늦게 찬다. 카드 값은 wire 로 갱신하되 타임라인에 같은 카드를 또 쌓거나 런을 다시 깨우지
+   * 않는다. 해결은 언제나 알린다(종료된 행은 다시 안 바뀌므로 두 번 올 수 없다).
    */
-  function publish(approval: Approval, opts: { resumeRun: boolean } = { resumeRun: true }): void {
+  function publish(
+    approval: Approval,
+    opts: { resumeRun: boolean; announce?: boolean } = { resumeRun: true },
+  ): void {
     if (approval.runId !== undefined) {
       const runId = approval.runId;
       if (approval.status === "pending") {
+        if (opts.announce === false) {
+          bus.emit("approval.requested", { approval });
+          return;
+        }
         deps.appendEvent(runId, {
           type: "APPROVAL_REQUESTED",
           runId,
@@ -108,7 +118,14 @@ export function createApprovalsService(deps: ApprovalsDeps): ApprovalsService {
     bus.emit(approval.status === "pending" ? "approval.requested" : "approval.resolved", { approval });
   }
 
-  /** 건네받은 미해결 승인들을 한 상태로 닫고 중계한다. 한 건이 깨져도 나머지를 닫는다 */
+  /**
+   * 건네받은 미해결 승인들을 한 상태로 닫고 중계한다. 한 건이 깨져도 나머지를 닫는다.
+   *
+   * 행의 `decision` 은 **제공자가 실제로 보고한 결정**만 담는다:
+   * - 만료는 Gateway 경로가 `deny`+`timeout` 으로 보고한다 — 우리 감시 타이머가 닫을 때도 같은 모양으로 적는다.
+   *   한쪽만 비워 두면 같은 사실이 어느 경로로 닫혔느냐에 따라 행이 달라진다(p2-t6 실측 B).
+   * - 취소는 런이 사라져 **우리가** 닫는 것이라 아무도 결정하지 않았다 — 비우고 `status`·`reason` 으로 말한다.
+   */
   function close(
     pending: Approval[],
     status: Extract<ApprovalStatus, "cancelled" | "expired">,
@@ -116,9 +133,10 @@ export function createApprovalsService(deps: ApprovalsDeps): ApprovalsService {
     opts: { resumeRun: boolean },
   ): void {
     const at = now();
+    const decision: ApprovalDecision | undefined = status === "expired" ? "deny" : undefined;
     for (const row of pending) {
       try {
-        publish(store.markApproval(db, row.id, { status, reason, decidedAt: at }), opts);
+        publish(store.markApproval(db, row.id, { status, decision, reason, decidedAt: at }), opts);
       } catch (err) {
         logger.error({ err, approvalId: row.id, runId: row.runId, status }, "approval close failed");
       }
@@ -150,7 +168,7 @@ export function createApprovalsService(deps: ApprovalsDeps): ApprovalsService {
         if (run && a.status === "pending" && run.status !== "awaiting_approval") {
           resumeTo.set(run.id, run.status === "tool" ? "tool" : "streaming");
         }
-        const { approval, changed } = store.upsertApproval(db, {
+        const { approval, changed, created } = store.upsertApproval(db, {
           providerApprovalId: a.providerApprovalId,
           kind: a.kind,
           channelId: channel.id,
@@ -180,7 +198,8 @@ export function createApprovalsService(deps: ApprovalsDeps): ApprovalsService {
           );
           return;
         }
-        publish(approval);
+        // 처음 본 승인만 타임라인 카드·런 신호까지 간다. 두 번째 프레임이 채운 값은 wire 로만 흘린다
+        publish(approval, { resumeRun: true, announce: created });
       } catch (err) {
         // 한 건이 깨져도 다음 승인·다음 이벤트를 막지 않는다(어댑터 이벤트 루프 안에서 불린다)
         logger.error({ err, providerApprovalId: a.providerApprovalId }, "approval ingest failed");

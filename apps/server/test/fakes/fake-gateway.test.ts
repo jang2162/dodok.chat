@@ -339,12 +339,17 @@ describe("가짜 Gateway — 실제 connectGateway 로 붙는다", () => {
     req: Parameters<FakeGateway["requestApproval"]>[3],
   ) {
     const outcome = gateway.requestApproval(RUN_ID, SESSION_KEY, "dev", req);
-    const frame = await vi.waitFor(() => {
-      const found = frames.find((f) => f.event === "plugin.approval.requested");
-      expect(found).toBeDefined();
+    const frame = await waitForFrame(frames, "plugin.approval.requested");
+    return { outcome, payload: frame.payload as Record<string, unknown> };
+  }
+
+  /** 프레임은 이름으로 찾는다 — 실물처럼 승인 하나가 여러 프레임(정본 + 세션 스냅샷)으로 나가서 자리가 밀린다 */
+  function waitForFrame(frames: Frame[], event: string): Promise<Frame> {
+    return vi.waitFor(() => {
+      const found = frames.find((f) => f.event === event);
+      expect(found, `${event} 프레임이 오지 않았다`).toBeDefined();
       return found as Frame;
     });
-    return { outcome, payload: frame.payload as Record<string, unknown> };
   }
 
   it("승인: requested 는 실물 모양(3.2)이고 어댑터 정규화를 그대로 지난다", async () => {
@@ -358,6 +363,18 @@ describe("가짜 Gateway — 실제 connectGateway 로 붙는다", () => {
     });
 
     expect(payload).toMatchObject({ approvalKind: "plugin", id: expect.stringMatching(/^plugin:/) });
+    // ⚠ 실측(p2-t6) — 같은 승인이 세션 스냅샷으로도 온다. 정본에는 `urlPath` 가 없고 스냅샷에는 `toolCallId` 가 없다
+    const snapshot = await waitForFrame(frames, "session.approval");
+    expect(snapshot.payload).toMatchObject({
+      sessionKey: SESSION_KEY,
+      approval: {
+        id: payload.id,
+        status: "pending",
+        urlPath: `/approve/${encodeURIComponent(payload.id as string)}`,
+      },
+    });
+    expect(payload.urlPath).toBeUndefined();
+    expect(parseApprovalFrame("session.approval", snapshot.payload)?.toolCallId).toBeUndefined();
     // 시각은 실제 시계로 채운다 — TTL 이 그대로 만료 시각이 된다
     expect((payload.expiresAtMs as number) - (payload.createdAtMs as number)).toBe(10_000);
     expect(payload.request).toMatchObject({
@@ -416,14 +433,13 @@ describe("가짜 Gateway — 실제 connectGateway 로 붙는다", () => {
       expired: false,
     });
 
-    await vi.waitFor(() => expect(frames).toHaveLength(2));
-    expect(frames[1]?.event).toBe("plugin.approval.resolved");
-    expect(frames[1]?.payload).toMatchObject({
+    const resolved = await waitForFrame(frames, "plugin.approval.resolved");
+    expect(resolved.payload).toMatchObject({
       id: payload.id,
       decision: "allow-once",
       resolvedBy: APPROVAL_RESOLVED_BY,
     });
-    expect(parseApprovalFrame("plugin.approval.resolved", frames[1]?.payload)).toMatchObject({
+    expect(parseApprovalFrame("plugin.approval.resolved", resolved.payload)).toMatchObject({
       status: "allowed",
       decision: "allow-once",
     });
@@ -475,9 +491,9 @@ describe("가짜 Gateway — 실제 connectGateway 로 붙는다", () => {
     });
 
     await expect(outcome).resolves.toEqual({ approvalId: payload.id, decision: "deny", expired: true });
-    await vi.waitFor(() => expect(frames).toHaveLength(2));
-    expect(frames[1]?.payload).toMatchObject({ id: payload.id, decision: "deny", resolvedBy: null });
-    expect(parseApprovalFrame("plugin.approval.resolved", frames[1]?.payload)).toMatchObject({
+    const resolved = await waitForFrame(frames, "plugin.approval.resolved");
+    expect(resolved.payload).toMatchObject({ id: payload.id, decision: "deny", resolvedBy: null });
+    expect(parseApprovalFrame("plugin.approval.resolved", resolved.payload)).toMatchObject({
       status: "expired",
       reason: "timeout",
       decision: "deny",
@@ -494,7 +510,7 @@ describe("가짜 Gateway — 실제 connectGateway 로 붙는다", () => {
 
     await expect(outcome).resolves.toMatchObject({ decision: "deny", expired: true });
     await gateway.flush();
-    expect(frames.map((f) => f.event)).toEqual(["plugin.approval.requested"]);
+    expect(frames.map((f) => f.event)).toEqual(["plugin.approval.requested", "session.approval"]);
   });
 
   it("승인: chat.abort 는 그 런의 미해결 승인을 프레임 없이 버린다(대본이 거기서 멈춘다)", async () => {

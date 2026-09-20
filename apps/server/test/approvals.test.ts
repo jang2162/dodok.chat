@@ -191,6 +191,31 @@ describe("승인 저장·런 상관·wire 중계 (앱 부팅, FakeAdapter)", () 
     expect(seen).toHaveLength(1);
   });
 
+  // 어댑터가 두 프레임을 병합해 같은 승인을 다시 준다(p2-t6 C) — 값은 채우되 카드는 하나여야 한다
+  it("같은 승인의 값이 뒤늦게 차면 wire 로만 갱신하고 타임라인 카드는 그대로 둔다", async () => {
+    const socket = await connect();
+    const run = await mentionDev(socket);
+    const seen: Approval[] = [];
+    socket.on("approval.requested", (p) => seen.push(p.approval));
+    const a = providerApproval(sessionKeyOf("dev", channel.id), { toolCallId: "toolu_run" });
+
+    adapter.emitApproval(a); // 정본 — toolCallId 만
+    await vi.waitFor(() => expect(seen).toHaveLength(1));
+    adapter.emitApproval({ ...a, urlPath: "/approve/plugin%3Aabc" }); // 병합본 — urlPath 가 찼다
+
+    await vi.waitFor(() => expect(seen).toHaveLength(2));
+    expect(seen[0]?.urlPath).toBeUndefined();
+    expect(seen[1]).toMatchObject({
+      id: seen[0]?.id,
+      toolCallId: "toolu_run",
+      urlPath: "/approve/plugin%3Aabc",
+    });
+    expect(stored(a)).toMatchObject({ toolCallId: "toolu_run", urlPath: "/approve/plugin%3Aabc" });
+    // 카드도 런 신호도 한 번뿐이다 — 같은 승인을 타임라인에 또 쌓지 않는다
+    await roundTrip(socket);
+    expect(eventTypes(run.id).filter((t) => t === "APPROVAL_REQUESTED")).toHaveLength(1);
+  });
+
   it("세션 키가 우리 모양이 아니거나 모르는 채널·에이전트면 warn 한 줄만 남기고 버린다", async () => {
     const socket = await connect();
     const warn = vi.spyOn(app.logger, "warn");
@@ -451,6 +476,9 @@ describe("승인 저장·런 상관·wire 중계 (앱 부팅, FakeAdapter)", () 
       decidedAt: expect.any(String),
     });
     expect(approvalStore.listRunApprovals(app.db, run.id).map((p) => p.status)).toEqual(["cancelled"]);
+    // 행의 decision 은 **제공자가 보고한 결정**만 담는다 — 런이 사라져 우리가 닫는 취소는 아무도 결정하지 않았다.
+    // (만료는 Gateway 가 deny 로 보고하므로 감시 경로도 deny 를 적는다 — 아래 만료 테스트)
+    expect((await resolved).approval.decision).toBeUndefined();
     await vi.waitFor(() => expect(eventTypes(run.id)).toContain("APPROVAL_RESOLVED"));
     expect(listRunEvents(app.db, run.id, 0).find((e) => e.type === "APPROVAL_RESOLVED")).toMatchObject({
       decision: "deny",
@@ -795,10 +823,15 @@ describe("승인 store (메모리 DB)", () => {
     expect(first.changed).toBe(true);
     expect(approvalStore.getApproval(db, first.approval.id)).toEqual(first.approval);
 
-    expect(approvalStore.upsertApproval(db, a)).toEqual({ approval: first.approval, changed: false });
+    expect(first.created).toBe(true); // 처음 본 승인 — 타임라인 카드는 여기서만 나간다
+    expect(approvalStore.upsertApproval(db, a)).toEqual({
+      approval: first.approval,
+      changed: false,
+      created: false,
+    });
 
     const changed = approvalStore.upsertApproval(db, { ...a, title: "다른 제목" });
-    expect(changed.changed).toBe(true);
+    expect(changed).toMatchObject({ changed: true, created: false });
     expect(changed.approval).toMatchObject({ id: first.approval.id, title: "다른 제목" });
   });
 
@@ -819,7 +852,7 @@ describe("승인 store (메모리 DB)", () => {
       expiresAt: undefined,
     });
 
-    expect(resolved.changed).toBe(true);
+    expect(resolved).toMatchObject({ changed: true, created: false });
     expect(resolved.approval).toMatchObject({
       id: approval.id,
       toolCallId: "toolu_1",
@@ -844,10 +877,15 @@ describe("승인 store (메모리 DB)", () => {
       decidedAt: new Date("2026-09-20T00:01:00.000Z"),
     });
 
-    expect(approvalStore.upsertApproval(db, a)).toEqual({ approval: denied.approval, changed: false });
+    expect(approvalStore.upsertApproval(db, a)).toEqual({
+      approval: denied.approval,
+      changed: false,
+      created: false,
+    });
     expect(approvalStore.upsertApproval(db, { ...a, status: "expired", reason: "timeout" })).toEqual({
       approval: denied.approval,
       changed: false,
+      created: false,
     });
   });
 
@@ -1041,8 +1079,8 @@ describe("승인 대기 중 런 시계 (가짜 타이머, 메모리 DB)", () => 
 
     await vi.advanceTimersByTimeAsync(1_100); // 만료 + 5초
     const expired = approvalStore.getApprovalByProviderId(t.db, a.providerApprovalId);
-    expect(expired).toMatchObject({ status: "expired", reason: "timeout" });
-    expect(expired?.decision).toBeUndefined(); // 행에는 결정이 없다 — 런 이벤트에서만 deny 로 정규화한다
+    // ⚠ 실측(p2-t6 B) — 같은 만료를 Gateway 경로는 `deny`+`timeout` 으로 준다. 감시 경로도 같은 모양으로 적는다
+    expect(expired).toMatchObject({ status: "expired", decision: "deny", reason: "timeout" });
     // 승인 대기에서 나왔으니 다시 툴을 기다린다 — 그리고 런 시계가 다시 돈다
     expect(t.runOf(run.id).status).toBe("tool");
     expect(listRunEvents(t.db, run.id, 0).find((e) => e.type === "APPROVAL_RESOLVED")).toMatchObject({

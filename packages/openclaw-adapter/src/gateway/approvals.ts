@@ -221,6 +221,60 @@ export function parseApprovalReplay(response: unknown): ProviderApproval[] {
   return out;
 }
 
+/**
+ * 같은 승인의 두 모양을 하나로 모은다 — 어느 쪽도 버리지 않는다(p2-t6 실측 C).
+ *
+ * 실물은 같은 승인을 두 프레임으로 준다: `plugin.approval.requested` 에는 `toolCallId` 가 있고 `urlPath` 가 없으며,
+ * `session.approval` 에는 `urlPath` 가 있고 `toolCallId` 가 없다. 먼저 온 쪽만 남기면 어느 순서든 한쪽 값을 잃는다.
+ *
+ * 규칙 둘:
+ * - **표시 값은 빈 자리만 채운다** — 먼저 온 값은 덮지 않는다(같은 사실을 두 번 읽은 것이지 바뀐 것이 아니다).
+ * - **결말(`status`·`decision`·`reason`·`resolvedAt`)은 먼저 확정된 쪽이 이긴다** — 서버 저장과 같은 규칙(설계 4.4).
+ *   늦게 온 되감기 `pending` 이 이미 닫힌 승인을 되살리지 않는다.
+ */
+export function mergeApproval(previous: ProviderApproval, next: ProviderApproval): ProviderApproval {
+  // 결말을 쥔 쪽 — 둘 다 pending 이면 값이 같으므로 previous 로 본다
+  const outcome = previous.status !== "pending" ? previous : next.status !== "pending" ? next : previous;
+  return {
+    // 승인이 사는 동안 바뀌지 않는 값 — 먼저 읽은 것을 지킨다
+    providerApprovalId: previous.providerApprovalId,
+    kind: previous.kind,
+    sessionKey: previous.sessionKey,
+    providerAgentId: previous.providerAgentId,
+    channelId: previous.channelId,
+    title: previous.title,
+    severity: previous.severity,
+    allowedDecisions: previous.allowedDecisions,
+    // 한쪽에만 있는 표시 값 — 빈 자리만 채운다
+    ...opt("toolCallId", previous.toolCallId ?? next.toolCallId),
+    ...opt("toolName", previous.toolName ?? next.toolName),
+    ...opt("pluginId", previous.pluginId ?? next.pluginId),
+    ...opt("description", previous.description ?? next.description),
+    ...opt("detail", previous.detail ?? next.detail),
+    ...opt("urlPath", previous.urlPath ?? next.urlPath),
+    ...opt("createdAt", previous.createdAt ?? next.createdAt),
+    ...opt("expiresAt", previous.expiresAt ?? next.expiresAt),
+    // 결말은 먼저 확정된 쪽 그대로 — 셋을 한 덩어리로 옮긴다(상태만 바뀌고 이유는 남는 일이 없게)
+    status: outcome.status,
+    ...opt("decision", outcome.decision),
+    ...opt("reason", outcome.reason),
+    ...opt("resolvedAt", outcome.resolvedAt ?? previous.resolvedAt ?? next.resolvedAt),
+  };
+}
+
+/** 두 승인이 같은 사실인가 — 「새로 채운 필드도 없고 상태도 그대로」면 다시 낼 것이 없다. */
+export function sameApproval(a: ProviderApproval, b: ProviderApproval): boolean {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)] as (keyof ProviderApproval)[]);
+  for (const key of keys) {
+    const left = a[key];
+    const right = b[key];
+    if (Array.isArray(left) || Array.isArray(right)) {
+      if (JSON.stringify(left) !== JSON.stringify(right)) return false;
+    } else if (left !== right) return false;
+  }
+  return true;
+}
+
 /** `approval.resolve` 인자(스파이크 4.1). `kind` 는 wire 에 없으므로 저장된 행에서 받는다. */
 export function resolveParams(
   approval: Pick<ProviderApproval, "providerApprovalId" | "kind">,

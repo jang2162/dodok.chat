@@ -299,7 +299,13 @@ describe("시나리오 — 인바운드 대본을 Gateway 이벤트와 플러그
       return found as Frame;
     });
     // 승인 대기는 「툴 start 는 왔는데 result 가 안 오는 구간」이다(실물 4.2) — 델타도 정본도 아직 없다
-    expect(frames.map((f) => f.event)).toEqual(["agent", "agent", "plugin.approval.requested"]);
+    // 승인 하나가 두 프레임으로 나간다 — 정본(`toolCallId`) + 세션 스냅샷(`urlPath`), 실물과 같은 짝(⚠ 실측 p2-t6)
+    expect(frames.map((f) => f.event)).toEqual([
+      "agent",
+      "agent",
+      "plugin.approval.requested",
+      "session.approval",
+    ]);
     expect(outbound).toEqual([]);
     const start = frames[1]?.payload as { data: { phase: string; name: string; toolCallId: string } };
     expect(start.data).toMatchObject({ phase: "start", name: "Write" });
@@ -315,13 +321,17 @@ describe("시나리오 — 인바운드 대본을 Gateway 이벤트와 플러그
       "agent",
       "agent",
       "plugin.approval.requested",
+      "session.approval",
       "plugin.approval.resolved",
       "agent",
       "chat",
       "chat",
     ]);
-    const result = frames[4]?.payload as { data: { phase: string; isError: boolean; result: unknown } };
-    expect(result.data).toMatchObject({ phase: "result", isError: false, result: "ok" });
+    // 자리(index)가 아니라 프레임을 보고 고른다 — 승인이 프레임 둘로 나가 뒤가 밀린다
+    const result = frames
+      .map((f) => (f.payload as { data?: { phase?: string } }).data)
+      .find((data) => data?.phase === "result");
+    expect(result).toMatchObject({ phase: "result", isError: false, result: "ok" });
     expect(outbound.map((m) => m.text)).toEqual(["끝"]);
     expect(scenario.errors).toEqual([]);
   });
