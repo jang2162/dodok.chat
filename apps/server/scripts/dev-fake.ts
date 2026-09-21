@@ -33,6 +33,13 @@ const DELTA_PARTS = 4;
 const QUOTE_MAX = 40;
 /** 승인 대본의 TTL — 실물 plugin 승인은 120초지만, 만료까지 눈으로 볼 수 있게 줄였다 */
 const APPROVAL_TTL_MS = 20_000;
+/** 「짧게」 카드의 TTL — 기본 30분 대신 만료를 눈으로 볼 수 있게 줄였다(승인 대본과 같은 까닭) */
+const SHORT_COMPONENTS_TTL_MS = 20_000;
+/**
+ * 「카드」의 https 그림·파일 주소. 바깥 네트워크를 타지 않게 이 기계(localhost:443, 보통 아무것도 안 듣는다)를 가리킨다 —
+ * 브라우저 검증이 오프라인이어도 요청은 곧바로 실패하고, img 요소·alt·링크로 물러난 모습은 그대로 확인할 수 있다.
+ */
+const LOCAL_HTTPS = "https://localhost/dodok-dev-fake";
 
 export type DevFakeOptions = {
   /** 기본 3000. 0 이면 빈 포트 */
@@ -79,8 +86,218 @@ function approvalScript(text: string): ScenarioApproval | ScenarioApproval[] {
   return devApproval("Write", APPROVAL_TTL_MS);
 }
 
+type FakeComponents = NonNullable<ScenarioScript["components"]>;
+
+/** 「폼」 — 모달 필드 5개(text·textarea·number·date·select). 모달 필드는 5개까지라 나머지 둘은 「폼 둘」이 낸다 */
+const FORM_CARD: FakeComponents = {
+  blocks: [{ type: "section", text: "**회의 잡기** — 아래 버튼으로 양식을 열어 주세요." }],
+  modal: {
+    id: "meeting",
+    title: "회의 잡기",
+    triggerLabel: "양식 열기",
+    fields: [
+      {
+        type: "text",
+        id: "topic",
+        label: "주제",
+        required: true,
+        placeholder: "무엇을 이야기하나요",
+        minLength: 2,
+        maxLength: 40,
+      },
+      { type: "textarea", id: "agenda", label: "안건", placeholder: "한 줄에 하나씩", maxLength: 500 },
+      {
+        type: "number",
+        id: "minutes",
+        label: "길이(분)",
+        required: true,
+        min: 15,
+        max: 120,
+        step: 15,
+        default: 30,
+      },
+      { type: "date", id: "day", label: "날짜", default: "2026-10-01" },
+      {
+        type: "select",
+        id: "rooms",
+        label: "회의실",
+        multi: true,
+        options: [
+          { value: "a", label: "A실", description: "6인" },
+          { value: "b", label: "B실", description: "10인" },
+          { value: "online", label: "온라인" },
+        ],
+        default: ["online"],
+      },
+    ],
+  },
+};
+
+/** 「폼 둘」 — 「폼」에 없는 checkbox·radio + 필수 text */
+const FORM_TWO_CARD: FakeComponents = {
+  blocks: [{ type: "section", text: "**만족도 설문** — 아래 버튼으로 답해 주세요." }],
+  modal: {
+    id: "survey",
+    title: "만족도 설문",
+    triggerLabel: "설문 열기",
+    fields: [
+      { type: "text", id: "name", label: "이름", required: true },
+      { type: "checkbox", id: "share", label: "결과 공유에 동의", default: true },
+      {
+        type: "radio",
+        id: "score",
+        label: "만족도",
+        required: true,
+        options: [
+          { value: "good", label: "좋음" },
+          { value: "ok", label: "보통" },
+          { value: "bad", label: "아쉬움" },
+        ],
+        default: "ok",
+      },
+    ],
+  },
+};
+
+/** 「고르기」 — 셀렉트 단일 1개 + 다중 1개. 액션 로우 하나에 셀렉트는 하나뿐이라 로우가 둘이다 */
+const PICK_CARD: FakeComponents = {
+  blocks: [
+    {
+      type: "actions",
+      items: [
+        {
+          type: "select",
+          id: "lunch",
+          placeholder: "점심 메뉴",
+          options: [
+            { value: "kimchi", label: "김치찌개", emoji: "🍲" },
+            { value: "ramen", label: "라멘", description: "돈코츠" },
+            { value: "salad", label: "샐러드" },
+          ],
+        },
+      ],
+    },
+    {
+      type: "actions",
+      items: [
+        {
+          type: "select",
+          id: "team",
+          placeholder: "함께 갈 사람(2~3명)",
+          multi: true,
+          minValues: 2,
+          maxValues: 3,
+          options: [
+            { value: "mina", label: "미나" },
+            { value: "jun", label: "준" },
+            { value: "sora", label: "소라" },
+            { value: "hoon", label: "훈" },
+            { value: "yuna", label: "유나" },
+          ],
+        },
+      ],
+    },
+  ],
+};
+
+/** 「카드」 — 블록 5종이 다 든 카드. media·file 은 https 하나 + artifact 하나(artifact 는 Phase 2 ③ 까지 자리표시) */
+const BLOCKS_CARD: FakeComponents = {
+  blocks: [
+    { type: "section", text: "**배포 요약** — `v1.2.0` 을 올렸어요.\n\n- 새 기능 셋\n- 고친 것 둘" },
+    { type: "separator" },
+    {
+      type: "actions",
+      id: "review",
+      items: [
+        { type: "button", id: "like", label: "좋아요", style: "primary", emoji: "👍" },
+        { type: "button", id: "later", label: "나중에" },
+        { type: "button", id: "rollback", label: "되돌리기", style: "danger" },
+      ],
+    },
+    {
+      type: "media",
+      items: [
+        { url: `${LOCAL_HTTPS}/error-rate.png`, alt: "배포 뒤 오류율 그래프" },
+        { url: "artifact://dev-fake/screen.png", alt: "새 화면 스크린숏" },
+      ],
+    },
+    { type: "file", url: `${LOCAL_HTTPS}/release-notes.pdf`, name: "release-notes.pdf", size: 48_213 },
+    { type: "file", url: "artifact://dev-fake/build.log", name: "build.log" },
+  ],
+};
+
+/** 「재사용」 — 몇 번이든 누를 수 있는 버튼 카드(결과 줄이 누를 때마다 는다) */
+const REUSABLE_CARD: FakeComponents = {
+  reusable: true,
+  blocks: [
+    { type: "section", text: "몇 번이든 누를 수 있어요." },
+    {
+      type: "actions",
+      items: [
+        { type: "button", id: "plus_one", label: "+1", style: "success" },
+        { type: "button", id: "ping", label: "다시 알려 주세요" },
+      ],
+    },
+  ],
+};
+
+/** 「짧게」 — 버튼·셀렉트·모달이 한 카드에 있어, 만료되면 셋이 함께 잠기는 것을 본다 */
+const SHORT_CARD: FakeComponents = {
+  blocks: [
+    { type: "section", text: "20초 뒤에 만료돼요." },
+    {
+      type: "actions",
+      items: [
+        { type: "button", id: "ok", label: "확인", style: "primary" },
+        { type: "button", id: "skip", label: "건너뛰기" },
+      ],
+    },
+    {
+      type: "actions",
+      items: [
+        {
+          type: "select",
+          id: "when",
+          placeholder: "언제 할까요",
+          options: [
+            { value: "now", label: "지금" },
+            { value: "tomorrow", label: "내일" },
+          ],
+        },
+      ],
+    },
+  ],
+  modal: {
+    id: "memo",
+    title: "메모 남기기",
+    triggerLabel: "메모 쓰기",
+    fields: [{ type: "textarea", id: "memo_text", label: "메모" }],
+  },
+};
+
 /**
- * 받은 글로 대본을 고른다 — 키워드: 드롭·실패·느리게·도구·승인(승인 둘·승인 항상). 받은 글을 `@` 없이 인용해(멘션을 새로 만들지 않는다) 되받고,
+ * components 키워드 → 카드, 앞에 있을수록 먼저 고른다(「폼 둘」이 「폼」보다 앞). 라벨·옵션·제목에는 키워드를 쓰지 않는다 —
+ * 누른 상호작용 글이 다음 런의 받은 글이 되므로, 거기에 키워드가 있으면 카드가 또 나온다.
+ */
+const COMPONENT_CARDS: ReadonlyArray<readonly [keyword: string, card: FakeComponents]> = [
+  ["폼 둘", FORM_TWO_CARD],
+  ["폼", FORM_CARD],
+  ["고르기", PICK_CARD],
+  ["카드", BLOCKS_CARD],
+  ["재사용", REUSABLE_CARD],
+  ["짧게", SHORT_CARD],
+];
+
+/** 받은 글의 components 키워드 → 카드. 「짧게」가 다른 키워드와 함께 오면 그 카드의 TTL 만 줄인다 */
+function componentsScript(text: string): FakeComponents | undefined {
+  const card = COMPONENT_CARDS.find(([keyword]) => text.includes(keyword))?.[1];
+  if (card === undefined) return undefined;
+  return text.includes("짧게") ? { ...card, ttlMs: SHORT_COMPONENTS_TTL_MS } : card;
+}
+
+/**
+ * 받은 글로 대본을 고른다 — 키워드: 드롭·실패·느리게·도구·승인(승인 둘·승인 항상)·폼(폼 둘)·고르기·카드·재사용·짧게.
+ * 받은 글을 `@` 없이 인용해(멘션을 새로 만들지 않는다) 되받고,
  * 글이 부른 채널의 다른 에이전트와 보낸 에이전트를 끝의 「@핸들 이어서 부탁해요」로만 불러 릴레이를 만든다.
  * 핸들은 채널 참여자(`context.participants`)에서 읽는다 — 등록한 핸들이 providerAgentId 와 달라도 된다.
  */
@@ -97,6 +314,7 @@ export function fakeAgentScript(self: string, d: InboundDeliver): ScenarioScript
   const quote = [...text.replaceAll("@", "").replace(/\s+/g, " ").trim()].slice(0, QUOTE_MAX).join("");
   const tail = calls.size > 0 ? ` ${[...calls].map((h) => `@${h}`).join(" ")} 이어서 부탁해요.` : "";
   const reply = `**${self}**: 「${quote}」 잘 받았어요.${tail}`;
+  const components = componentsScript(text);
   return {
     reply,
     deltas: splitDeltas(reply, DELTA_PARTS),
@@ -104,6 +322,7 @@ export function fakeAgentScript(self: string, d: InboundDeliver): ScenarioScript
     ...(text.includes("실패") ? { fail: "fake failure" } : {}),
     ...(text.includes("도구") ? { tool: { name: "Read", args: { path: "README.md" }, result: "ok" } } : {}),
     ...(text.includes("승인") ? { approval: approvalScript(text) } : {}),
+    ...(components ? { components } : {}),
   };
 }
 

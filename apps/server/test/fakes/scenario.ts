@@ -6,8 +6,13 @@
  * 서버가 그 이벤트를 처리한 뒤(`gateway.flush`) 정본을 보낸다 — 실물은 첫 델타와 정본 사이가 수백 ms 이상이다(live-smoke 5.3).
  * 재생 중 가짜 Gateway 가 그 런의 `chat.abort` 를 받으면(가짜 Gateway 가 chat aborted 를 낸다) 실물처럼 거기서 멈춘다 — 남은 델타·final·정본 없음.
  * 대본에 `approval` 이 있으면 툴 start 뒤 승인을 띄우고(`plugin.approval.requested`) 결정이 날 때까지 툴 result 를 미룬다(승인 스파이크 4.2).
+ * 정본은 실제 플러그인의 `buildOutboundMessage` 로 만든다 — `components` 가 플러그인 검증(`ComponentsV1`)을 실제로 지나고,
+ * 어기면 실물처럼 보내기 전에 거절된다(`errors` 에 남는다). 하네스가 실물보다 친절하면 결함이 숨는다(p2-t6 F2).
  */
-import type { ApprovalDecision, InboundDeliver } from "@dodok/shared";
+import type { ApprovalDecision, ComponentsV1, InboundDeliver } from "@dodok/shared";
+import { randomUUID } from "node:crypto";
+import type { z } from "zod";
+import { buildOutboundMessage } from "../../../../packages/openclaw-plugin/src/outbound";
 import type { FakeApprovalOutcome, FakeGateway } from "./fake-gateway";
 import type { FakePlugin } from "./fake-plugin";
 
@@ -58,6 +63,11 @@ export type ScenarioScript = {
   deltaDelayMs?: number;
   /** 있으면 lifecycle start 뒤 chat error(errorMessage 로 이 값)로 끝낸다 — 툴·델타·final·정본 없음. silentGateway 면 무시 */
   fail?: string;
+  /**
+   * 정본 메시지에 실을 components v1. 모델이 message 툴에 채우는 모양(기본값은 생략해도 된다)이고,
+   * 플러그인이 검증해 기본값을 채운 뒤 보낸다. 서버가 `id`·`componentState` 를 부여한다
+   */
+  components?: z.input<typeof ComponentsV1>;
 };
 
 /** `index` 는 그 에이전트가 받은 인바운드 순번(0부터) */
@@ -170,15 +180,19 @@ export function createScenario(opts: {
       await gateway.flush();
     }
     if (stopped()) return;
-    await plugin.sendOutbound({
+    const built = buildOutboundMessage({
+      outboundId: randomUUID(),
       channelId,
       agentId,
       sessionKey,
-      runId,
-      replyToInboundId: delivery.message.id,
       text: script.reply,
-      attachments: [],
+      components: script.components,
+      correlation: { runId, replyToInboundId: delivery.message.id },
+      now: new Date(),
     });
+    // 실제 플러그인도 여기서 던진다(channel.ts) — 스키마를 어긴 components 는 브리지에 닿지 않는다
+    if (!built.ok) throw new Error(built.error);
+    await plugin.sendOutbound(built.message);
   }
 
   plugin.onInbound = (delivery) => {
