@@ -1,4 +1,4 @@
-import { ComponentsV1, type Message } from "@dodok/shared";
+import { type Block, ComponentsV1, type Message } from "@dodok/shared";
 import { fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { msg } from "../../../../test/fixtures";
@@ -183,5 +183,37 @@ describe("file", () => {
       (r) => r.querySelector("[data-slot=file-size]")?.textContent ?? null,
     );
     expect(rows).toEqual(["0 B", "512 B", "1 KB", "10.3 MB", "3 GB", null]);
+  });
+});
+
+describe("media·file — 계약 밖 주소", () => {
+  it("https:// 만 img·링크가 된다 — javascript:·data:·http:·대문자 HTTPS:// 는 자리표시로", () => {
+    const OK_IMG = "https://example.com/ok.png";
+    const OK_FILE = "https://example.com/ok.pdf";
+    const BAD = [
+      "javascript:alert(1)",
+      "data:image/svg+xml,<svg onload=alert(1)>",
+      "http://example.com/x.png",
+      "HTTPS://example.com/x.png",
+    ];
+    // card() 의 ComponentsV1.parse 를 건너뛴다 — 계약이 먼저 거르면 렌더러의 허용목록이 안 잠긴다.
+    // 서버는 쓸 때만 검증하므로 옛 행·느슨해진 계약의 값은 여기까지 온다(url 의 TS 타입은 string 이라 캐스트 없이 들어간다)
+    const components: ComponentsV1 = {
+      id: "cmp_1",
+      reusable: false,
+      ttlMs: 1_800_000,
+      blocks: [
+        { type: "media", items: [{ url: OK_IMG, alt: "통과" }, ...BAD.map((url) => ({ url, alt: url }))] },
+        { type: "file", url: OK_FILE, name: "ok.pdf" },
+        ...BAD.map((url): Block => ({ type: "file", url, name: url })),
+      ],
+    };
+    const { container } = renderWithClient(<Components message={{ ...card([]), components }} />);
+    const attrs = (sel: string, attr: string) =>
+      Array.from(container.querySelectorAll(sel), (e) => e.getAttribute(attr));
+    expect(attrs("img", "src")).toEqual([OK_IMG]);
+    expect(attrs("a", "href")).toEqual([OK_FILE]);
+    // 막힌 넷은 media 칸·file 줄마다 자리표시 하나씩
+    expect(screen.getAllByText(ARTIFACT_PENDING)).toHaveLength(BAD.length * 2);
   });
 });
