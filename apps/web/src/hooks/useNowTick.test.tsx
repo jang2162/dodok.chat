@@ -1,6 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { TICK_MS, useNowTick } from "./useNowTick";
+import { TICK_MS, resetNowTick, useNowTick } from "./useNowTick";
 
 // 구독자가 떠 있는 채로 가짜 시계로 바꾸지 마라 — 공용 시계는 첫 구독 때의 시계에 묶여, 뒤에 붙은 쪽도 그 시계를 탄다
 beforeEach(() => vi.useFakeTimers({ now: 1_800_000_000_000 }));
@@ -115,5 +115,26 @@ it("하나가 꺼져도 남은 구독자의 시계는 흐르고, 마지막이 �
   expect(a.result.current).toBe(stopped);
 
   b.unmount();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+/**
+ * `test/setup.ts` 가 테스트마다 부르는 초기화 — 둘 중 하나라도 남으면 다음 테스트가 샌다. 타이머 id 가 남으면 새 구독자가
+ * 시계를 못 걸고, 구독자가 남으면 새 시계의 틱을 받아 가고 마지막 구독자가 떠나도 타이머가 거둬지지 않는다
+ */
+it("resetNowTick 은 남은 구독자와 타이머를 모두 거둔다 — 다음 구독자가 새 시계를 걸고, 내려가면 다시 거둔다", () => {
+  const left = renderHook(() => useNowTick(true)); // 내리지 않는다 — RTL 밖에 남은 구독자 대역
+  resetNowTick();
+  expect(vi.getTimerCount()).toBe(0);
+  const stale = left.result.current;
+
+  const next = renderHook(() => useNowTick(true));
+  expect(vi.getTimerCount()).toBe(1);
+  act(() => void vi.advanceTimersByTime(TICK_MS));
+  expect(next.result.current).toBe(Date.now());
+  // 구독자 집합도 비었다 — 남은 쪽은 새 시계의 틱을 받지 않는다
+  expect(left.result.current).toBe(stale);
+
+  next.unmount();
   expect(vi.getTimerCount()).toBe(0);
 });
