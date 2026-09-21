@@ -267,11 +267,12 @@ export function summarize(
 
 ## 7. 검증
 
-### 7.1 `dev:fake` 대본 키워드 다섯
+### 7.1 `dev:fake` 대본 키워드 여섯
 
 | 키워드 | 내는 것 |
 | --- | --- |
-| 「폼」 | 필드 7종이 다 든 모달 1개 |
+| 「폼」 | 모달 1개 — `text`·`textarea`·`number`·`date`·`select` |
+| 「폼 둘」 | 모달 1개 — `checkbox`·`radio` + 필수 `text` 1 |
 | 「고르기」 | 셀렉트 단일 1개 + 다중(`minValues`·`maxValues`) 1개 |
 | 「카드」 | `section`·`separator`·`actions`·`media`(https + artifact)·`file` 섞인 카드 |
 | 「재사용」 | `reusable: true` 버튼 카드 |
