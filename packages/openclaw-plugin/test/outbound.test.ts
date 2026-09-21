@@ -143,6 +143,46 @@ describe("messageToolSendToOutbound", () => {
     expect(res.message.components?.blocks).toHaveLength(1);
   });
 
+  it("components 는 이 carrier 로만 온다 — 툴 인자의 components 가 검증·기본값을 거쳐 OutboundMessage.components 로 나오고, 스키마 위반은 거절한다", () => {
+    // 실물에서 components 는 message 툴 send 로만 온다(deliver 는 싣지 않는다). 통합 하네스는 이 함수를 지나지 않는다
+    const send = (components: unknown) =>
+      messageToolSendToOutbound({
+        params: { action: "send", to: `channel:${CH}`, message: "골라 주세요", components },
+        agentId: "main",
+        sessionKey: SESSION,
+        correlation: { runId: RUN },
+        outboundId: "o12",
+        now: NOW,
+      });
+
+    const res = send({
+      text: "점심",
+      blocks: [
+        { type: "actions", items: [{ type: "select", id: "lunch", options: [{ value: "a", label: "A" }] }] },
+      ],
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(OutboundMessage.parse(res.message)).toEqual(res.message);
+    expect(res.message.components).toEqual({
+      reusable: false,
+      ttlMs: 1_800_000,
+      text: "점심",
+      blocks: [
+        {
+          type: "actions",
+          items: [{ type: "select", id: "lunch", options: [{ value: "a", label: "A" }], multi: false }],
+        },
+      ],
+    });
+
+    const items = Array.from({ length: 6 }, (_, i) => ({ type: "button", id: `b${i}`, label: `B${i}` }));
+    expect(send({ blocks: [{ type: "actions", items }] })).toEqual({
+      ok: false,
+      error: expect.stringMatching(/^components: v1 스키마 위반 — blocks\.0\.items /),
+    });
+  });
+
   it("to 가 없으면 세션 키의 현재 채널로 보낸다, agentId 가 없으면 세션 키에서 뽑는다", () => {
     const res = messageToolSendToOutbound({
       params: { action: "send", message: "hi" },

@@ -26,6 +26,10 @@ vi.setConfig({ testTimeout: 30_000, hookTimeout: 20_000 });
 const RELAY_POLICY = { maxRelayTurns: 2, allowPairs: "all" as const };
 /** 로컬 로그인 owner 의 핸들(auth.test 가 잰다) — 상호작용 글의 `user=@…` */
 const OWNER_HANDLE = "owner";
+/** 에이전트가 대본에 채워 보내는 components.id — `cmp_` 로 시작해 접두어만 보는 단언으로는 덮어쓰기를 가려내지 못한다 */
+const AGENT_COMPONENT_ID = "cmp_from_agent";
+/** 서버가 저장 시 부여하는 모양 `cmp_<uuidv7>` */
+const SERVER_COMPONENT_ID_RE = /^cmp_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 type CardComponents = NonNullable<ScenarioScript["components"]>;
 
@@ -107,6 +111,8 @@ describe("통합 시나리오 10 — components 상호작용이 그 에이전트
 
   it("시나리오 10a — 에이전트가 셀렉트를 낸 뒤 사람이 고르면 그 에이전트의 다음 런이 고른 값을 받는다", async () => {
     const { setup, log, scenario, card, ownerId } = await startCard({
+      // 모델은 id 를 채워 보낼 수 있고 플러그인 스키마는 그것을 통과시킨다 — 서버가 덮어써야 한다
+      id: AGENT_COMPONENT_ID,
       blocks: [
         {
           type: "actions",
@@ -126,8 +132,11 @@ describe("통합 시나리오 10 — components 상호작용이 그 에이전트
     });
 
     // 플러그인이 기본값을 채우고(1회용·30분·단일), 서버가 id·componentState 를 붙여 저장했다. 아직 결과 줄은 없다
+    expect(card.components?.id, "에이전트가 보낸 components.id 는 서버가 덮어쓴다").not.toBe(
+      AGENT_COMPONENT_ID,
+    );
     expect(card.components).toMatchObject({
-      id: expect.stringMatching(/^cmp_/),
+      id: expect.stringMatching(SERVER_COMPONENT_ID_RE),
       reusable: false,
       ttlMs: 1_800_000,
       blocks: [{ type: "actions", items: [{ type: "select", id: "lunch", multi: false }] }],
