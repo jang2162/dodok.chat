@@ -93,7 +93,7 @@ describe("Components — 버튼", () => {
     expect(fake?.sentOf("component.interact")).toEqual([]);
   });
 
-  it("링크 버튼은 https:// 로 시작해야만 링크가 된다 — javascript:·data:·http:·대문자 HTTPS://·가운데·앞 공백 https:// 는 링크 없이 비활성", () => {
+  it("링크 버튼은 https:// 로 시작해야만 링크가 된다 — javascript:·data:·http:·대문자 HTTPS://·가운데·앞 공백 https://·상대 주소 // 와 / 는 링크 없이 비활성", () => {
     const OK_URL = "https://example.com/ok";
     const BAD = [
       "javascript:alert(1)",
@@ -104,6 +104,10 @@ describe("Components — 버튼", () => {
       "http://evil.example/?next=https://ok.example",
       // 앞에 공백 — 검사 전에 trim 으로 느슨해지는 것을 잡는다(계약 SafeUrl 도 ^https:// 라 거절한다)
       " https://example.com/x",
+      // 프로토콜 상대 주소 — 「상대 주소는 같은 출처라 안전」으로 / 를 허용하는 것을 잡는다. //host 는 다른 출처다
+      "//evil.example/x",
+      // 같은 출처 경로 — // 만 막고 / 는 허용하는 것을 잡는다. 새 탭 링크가 쿠키 실린 같은 출처 GET 이 된다
+      "/api/me",
     ];
     // withButtons() 의 ComponentsV1.parse 를 건너뛴다 — 계약(SafeUrl)이 먼저 거르면 렌더러의 허용목록이 안 잠긴다.
     // 서버는 쓸 때만 검증하므로 옛 행·느슨해진 계약의 값은 여기까지 온다(url 의 TS 타입은 string 이라 캐스트 없이 들어간다)
