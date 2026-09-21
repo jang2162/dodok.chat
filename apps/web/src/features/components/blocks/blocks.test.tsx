@@ -187,7 +187,7 @@ describe("file", () => {
 });
 
 describe("media·file — 계약 밖 주소", () => {
-  it("https:// 만 img·링크가 된다 — javascript:·data:·http:·대문자 HTTPS:// 는 자리표시로", () => {
+  it("https:// 로 시작해야만 img·링크가 된다 — javascript:·data:·http:·대문자 HTTPS://·가운데·앞 공백 https:// 는 자리표시로", () => {
     const OK_IMG = "https://example.com/ok.png";
     const OK_FILE = "https://example.com/ok.pdf";
     const BAD = [
@@ -195,6 +195,10 @@ describe("media·file — 계약 밖 주소", () => {
       "data:image/svg+xml,<svg onload=alert(1)>",
       "http://example.com/x.png",
       "HTTPS://example.com/x.png",
+      // https:// 를 가운데 품은 값 — 접두사 검사가 includes·indexOf 로 느슨해지는 것을 잡는다
+      "http://evil.example/?next=https://ok.example",
+      // 앞에 공백 — 검사 전에 trim 으로 느슨해지는 것을 잡는다(계약 SafeUrl 도 ^https:// 라 거절한다)
+      " https://example.com/x.png",
     ];
     // card() 의 ComponentsV1.parse 를 건너뛴다 — 계약이 먼저 거르면 렌더러의 허용목록이 안 잠긴다.
     // 서버는 쓸 때만 검증하므로 옛 행·느슨해진 계약의 값은 여기까지 온다(url 의 TS 타입은 string 이라 캐스트 없이 들어간다)
