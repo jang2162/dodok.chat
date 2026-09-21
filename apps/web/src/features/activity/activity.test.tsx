@@ -215,6 +215,23 @@ it("실시간 run.state 로 시작한 런도 목록에 든다 — 그때 REST �
   }
   expect(await within(aside).findByRole("button", { name: /@dev/ })).toHaveTextContent("도구 사용 중");
   expect(listCalls()).toBe(1);
+
+  // 끝나면 한 번 받아 둔다 — 캐시가 그 런을 모르는 채 남지 않게(`ended`)
+  await act(async () => {
+    useRunStore.getState().applyState(runState({ id: RUN2, status: "done" }));
+  });
+  await waitFor(() => expect(listCalls()).toBe(2));
+
+  /**
+   * 그 뒤 버블 정리로 런 스토어에서 빠져도 **다시 부르지 않는다**: 종료를 본 런은 `ended` 가 맡으므로
+   * 「빠진 런」 자리값(D12)에 겹쳐 넣지 않는다. 겹치면 `settledKey` 가 한 번 더 바뀌어 런마다 재조회가
+   * 한 번 더 난다(리뷰 C.1 — 이 가드를 잠그는 테스트가 없었다)
+   */
+  await act(async () => {
+    useRunStore.getState().remove(RUN2);
+  });
+  expect(within(aside).getByRole("button", { name: /@dev/ })).toHaveTextContent("완료");
+  expect(listCalls()).toBe(2);
 });
 
 it("런 조회 실패는 패널 안에 알리고 「다시 시도」로 되살린다", async () => {

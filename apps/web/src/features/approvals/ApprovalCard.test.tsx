@@ -1,14 +1,15 @@
 import type { Approval, ErrorCode, Result } from "@dodok/shared";
 import { act, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { type ReactElement, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useWireStatus, WireAckError } from "@/realtime/wire";
 import { createFakeSocket, type FakeSocket } from "../../../test/fakeSocket";
-import { APPROVAL, CH, CH2, approval, iso } from "../../../test/fixtures";
+import { APPROVAL, APPROVAL2, CH, CH2, approval, iso } from "../../../test/fixtures";
 import { renderWithClient } from "../../../test/messages";
 import { ApprovalCard, resolveErrorMessage } from "./ApprovalCard";
-import { useApprovalStore } from "./approvalStore";
+import { selectPendingApproval, useApprovalStore } from "./approvalStore";
 
 // 소켓은 테스트가 쥔 가짜 — WireProvider 의 나머지는 원본(StreamingBubble 테스트와 같은 방식)
 const wire = vi.hoisted(() => ({ socket: undefined as unknown }));
@@ -45,6 +46,22 @@ function renderCard(a: Approval) {
   return renderWithClient(<ApprovalCard approvalId={a.id} channelId={a.channelId} />);
 }
 const button = (name: string) => screen.getByRole("button", { name });
+
+/**
+ * 활동 탭 맨 위의 카드 자리(`ActivityPanel` 의 `cardId` 그대로). 「가장 이른 미해결」을 따라가므로
+ * 승인이 확정되는 **그 렌더에 다음 승인으로 갈아탄다** — `key` 가 없어 같은 인스턴스가 이어진다.
+ * 확정된 뒤에도 마지막 카드를 결과 한 줄로 남긴다
+ */
+function PanelSlot(): ReactElement | null {
+  const pending = useApprovalStore(selectPendingApproval(CH));
+  const [shown, setShown] = useState<string>();
+  const pendingId = pending?.approval.id;
+  useEffect(() => {
+    if (pendingId) setShown(pendingId);
+  }, [pendingId]);
+  const cardId = pendingId ?? shown;
+  return cardId ? <ApprovalCard approvalId={cardId} channelId={CH} /> : null;
+}
 
 describe("ApprovalCard", () => {
   it("모르는 승인이면 아무것도 그리지 않는다", () => {
@@ -280,6 +297,61 @@ describe("ApprovalCard", () => {
 
     expect(screen.queryByRole("button", { name: "이번만 허용" })).not.toBeInTheDocument();
     expect(document.activeElement).toBe(args);
+  });
+
+  it("다른 탭이 확정한 승인은 초점을 가져가지 않는다 — 내가 누른 것이 아니다(D13)", () => {
+    renderCard(approval());
+    const args = button("인자 보기");
+    args.focus();
+
+    // 이 탭에서는 아무것도 누르지 않았다 — 확정 사실만 들어온다
+    act(() =>
+      useApprovalStore.getState().apply(approval({ status: "denied", decision: "deny", reason: "user" })),
+    );
+
+    expect(screen.getByText("거절됨")).toBeInTheDocument();
+    expect(screen.getByText("거절됨")).not.toHaveFocus();
+    expect(document.activeElement).toBe(args);
+  });
+
+  /**
+   * 리뷰 B.6 — 활동 탭 카드는 「가장 이른 미해결」을 따라가므로 A 가 확정되는 그 렌더에 **B 로 갈아탄다**.
+   * 표식(`acted`)이 승인 id 에 안 묶여 있으면 그 표식이 B 에게 따라가, 내가 손대지 않은 B 가 **다른 탭에서**
+   * 확정될 때 초점을 뺏는다. 「사용자가 한 일이 아닌데 초점을 뺏지 않는다」의 정면 위반이다
+   */
+  it("카드가 다음 승인으로 갈아탄 뒤 그 승인이 확정돼도 초점을 안 뺏는다(D13)", async () => {
+    const user = userEvent.setup();
+    fake.onAck("approval.resolve", () => ok(null));
+    const second = (over: Partial<Approval> = {}) =>
+      approval({ id: APPROVAL2, toolCallId: "toolu_02", ...over });
+    act(() => {
+      useApprovalStore.getState().apply(approval());
+      useApprovalStore.getState().apply(second());
+    });
+    const { container } = renderWithClient(<PanelSlot />);
+    const cardId = () =>
+      container.querySelector("[data-slot='approval-card']")?.getAttribute("data-approval-id");
+    expect(cardId()).toBe(APPROVAL);
+
+    // A 를 허용한다
+    const pressed = button("이번만 허용");
+    pressed.focus();
+    await user.keyboard("{Enter}");
+    act(() =>
+      useApprovalStore
+        .getState()
+        .apply(approval({ status: "allowed", decision: "allow-once", reason: "user" })),
+    );
+    // 카드가 B 로 갈아탔다 — 내가 누른 승인이 아니다
+    expect(cardId()).toBe(APPROVAL2);
+
+    // 다른 탭이 B 를 거절한다
+    act(() =>
+      useApprovalStore.getState().apply(second({ status: "denied", decision: "deny", reason: "user" })),
+    );
+
+    expect(screen.getByText("거절됨")).toBeInTheDocument();
+    expect(screen.getByText("거절됨")).not.toHaveFocus();
   });
 
   it("인자는 접혀 있고 펼칠 수 있다 — 잘린 표시가 있으면 알린다", async () => {

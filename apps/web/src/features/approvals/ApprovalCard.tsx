@@ -100,16 +100,20 @@ export function ApprovalCard({
    *
    * **이 카드에서 누른 때만** 옮긴다(`acted`): 카드는 메시지 흐름과 활동 탭 두 자리에 서는데 `sending` 은 스토어가
    * 함께 쥐므로, 그것만 보면 안 누른 쪽 카드가 초점을 빼앗아 간다. 카운트다운이 다 된 때도 옮기지 않는다 —
-   * 사용자가 한 일이 아닌데 초점을 뺏는 셈이다
+   * 사용자가 한 일이 아닌데 초점을 뺏는 셈이다.
+   *
+   * 표식은 불리언이 아니라 **내가 결정을 누른 승인 id** 다. 활동 탭 카드는 「가장 이른 미해결」을 따라가므로
+   * A 가 확정되는 그 렌더에 **B 로 갈아탄다**(`ActivityPanel` 의 `cardId`, `key` 없음) — 불리언이면 그 표식이
+   * B 에게 따라가 손대지도 않은 B 가 다른 탭에서 확정될 때 초점을 뺏었다(리뷰 B.6). id 가 안 맞으면 저절로 풀린다
    */
   const outcomeRef = useRef<HTMLSpanElement>(null);
-  const acted = useRef(false);
+  const acted = useRef<string | undefined>(undefined);
   const answerable = pending && !expired;
   useEffect(() => {
-    if (answerable || !acted.current) return;
-    acted.current = false;
+    if (answerable || acted.current !== approvalId) return;
+    acted.current = undefined;
     outcomeRef.current?.focus();
-  }, [answerable]);
+  }, [answerable, approvalId]);
   if (!view) return null;
 
   const { approval, sending } = view;
@@ -174,7 +178,7 @@ export function ApprovalCard({
                   variant={d.variant}
                   sending={sending}
                   onActed={(yes) => {
-                    acted.current = yes;
+                    acted.current = yes ? approvalId : undefined;
                   }}
                 />
               ))}
@@ -239,7 +243,10 @@ function DecisionButton({
   label: string;
   variant: "default" | "secondary" | "outline";
   sending?: ApprovalDecision;
-  /** 이 카드에서 눌렀는가 — 확정이 오면 카드가 초점을 결과 줄로 옮긴다(D13). 실패해 버튼이 다시 열리면 거짓 */
+  /**
+   * 이 카드에서 눌렀는가 — 부모가 **그 승인 id** 로 적어 둔다. 확정이 오면 카드가 초점을 결과 줄로
+   * 옮긴다(D13). 실패해 버튼이 다시 열리면 거짓
+   */
   onActed: (acted: boolean) => void;
 }) {
   const { socket } = useWire();
