@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { AGENT, CH, RUN, RUN2, runEvent, runState, textDelta, uid } from "../../../test/fixtures";
 import {
   approvalOutcomeLabel,
+  freezeDurations,
   hasFlowingDuration,
   isTimelineEvent,
   isTruncated,
@@ -398,6 +399,38 @@ describe("hasFlowingDuration", () => {
   it("시작 전인 런만 있으면 거짓", () => {
     expect(hasFlowingDuration([{}])).toBe(false);
   });
+
+  /**
+   * 더는 진행 중이 아닌 줄 아는 자리값(`frozenAt`)은 흐르지 않는다 — 그런 줄만 남으면 틱이 멈춘다(p2-t14 리뷰 §A.2:
+   * 자리값 하나 때문에 1초 `setInterval` 이 영원히 돌았다)
+   */
+  it("더 안 흐른다고 표시한 런은 끝난 시각이 없어도 흐르지 않는다", () => {
+    const frozen = { ...started, frozenAt: "2027-01-15T08:00:25.000Z" };
+    expect(hasFlowingDuration([frozen])).toBe(false);
+    expect(hasFlowingDuration([frozen, ended])).toBe(false);
+    // 진짜 진행 중인 런이 곁에 있으면 여전히 흐른다
+    expect(hasFlowingDuration([frozen, started])).toBe(true);
+  });
+});
+
+describe("freezeDurations", () => {
+  const STOPPED = "2027-01-15T08:00:25.000Z";
+  const live = (id: string, over: Partial<RunState> = {}) =>
+    runState({ id, status: "awaiting_approval", startedAt: "2027-01-15T08:00:00.000Z", ...over });
+
+  it("더는 진행 중이 아닌 줄 아는 런에 멈춘 시각을 단다 — 상태 글자는 마지막으로 본 그대로다", () => {
+    const [run] = freezeDurations([live(RUN)], new Map([[RUN, STOPPED]]));
+    expect(run).toMatchObject({ id: RUN, status: "awaiting_approval", frozenAt: STOPPED });
+    expect(run?.endedAt).toBeUndefined();
+  });
+
+  it("끝난 시각을 아는 줄(서버 사실이 덮었다)과 목록 밖 런은 그대로 둔다", () => {
+    const ended = live(RUN, { status: "done", endedAt: "2027-01-15T08:00:21.000Z" });
+    const other = live(RUN2);
+    const out = freezeDurations([ended, other], new Map([[RUN, STOPPED]]));
+    expect(out[0]).toBe(ended);
+    expect(out[1]).toBe(other);
+  });
 });
 
 describe("runDurationMs", () => {
@@ -412,5 +445,11 @@ describe("runDurationMs", () => {
       runDurationMs({ startedAt: "2027-01-15T08:00:00.000Z" }, Date.parse("2027-01-15T08:00:03.000Z")),
     ).toBe(3_000);
     expect(runDurationMs({}, 0)).toBeUndefined();
+  });
+
+  it("더 안 흐른다고 표시한 런은 시작~멈춘 시각 — 끝난 시각을 알면 그쪽이 이긴다", () => {
+    const frozen = { startedAt: "2027-01-15T08:00:00.000Z", frozenAt: "2027-01-15T08:00:25.000Z" };
+    expect(runDurationMs(frozen, Date.parse("2027-01-15T09:00:00.000Z"))).toBe(25_000);
+    expect(runDurationMs({ ...frozen, endedAt: "2027-01-15T08:00:21.000Z" }, 0)).toBe(21_000);
   });
 });

@@ -60,7 +60,7 @@ export function PanelTabs({
   channelId: string;
   active: PanelTab;
   children: ReactNode;
-  /** 시트를 연 자리(헤더의 「채널 설정」) — 좁은 화면에서 시트가 닫히면 초점을 여기로 돌려준다(D14) */
+  /** 패널을 여는 자리(헤더의 「채널 설정」) — 패널을 닫으면(좁은 화면 시트·넓은 화면 닫기 링크) 초점을 여기로 돌려준다(D14) */
   openerRef?: RefObject<HTMLAnchorElement | null>;
 }) {
   const narrow = useIsNarrow();
@@ -145,7 +145,17 @@ export function PanelTabs({
             {tab.title}
           </h2>
           <Button asChild variant="ghost" size="icon-sm">
-            <Link to="/c/$channelId" params={{ channelId }} aria-label={`${tab.label} 닫기`}>
+            {/*
+             * 이 링크는 누르면 패널과 함께 언마운트돼 초점이 `<body>` 로 떨어졌다(D3·D13·D14 와 같은 부류). 패널이 내려가기
+             * **전에** 헤더의 「채널 설정」 링크로 옮긴다 — 좁은 화면 시트가 닫힐 때 돌려주는 자리와 같다(D14).
+             * 활동 탭도 같은 자리다: 헤더에 활동을 여는 자리는 따로 없고, 탭 머리는 패널과 함께 사라진다
+             */}
+            <Link
+              to="/c/$channelId"
+              params={{ channelId }}
+              aria-label={`${tab.label} 닫기`}
+              onClick={() => openerRef?.current?.focus()}
+            >
               <XIcon />
             </Link>
           </Button>

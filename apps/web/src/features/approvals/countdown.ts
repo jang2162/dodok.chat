@@ -1,9 +1,8 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useNowTick } from "@/hooks/useNowTick";
 
 /** 이미 지난 승인의 남은 시간 문구 */
 export const EXPIRED_LABEL = "만료됨";
-/** 카운트다운 간격(설계 5.3) */
-export const TICK_MS = 1_000;
 
 /** 남은 밀리초. 음수면 이미 지났다 */
 export function remainingMs(expiresAt: string, now: number): number {
@@ -26,21 +25,16 @@ export function remainingLabel(expiresAt: string, now: number): string {
 /**
  * 1초마다 다시 세는 남은 시간(설계 5.3·5.5). 클라이언트 시계는 **표시용**이다 — 0 이 되면 「만료됨」으로 보이지만
  * 카드가 사라지지는 않고, 서버 사실(`approval.resolved`)이 오면 그쪽이 이긴다.
- * `active` 가 거짓이면(확정된 카드) 타이머를 걸지 않는다
+ * 카드마다 타이머를 따로 돌리지 않고 공용 틱(`useNowTick`)을 본다 — 같은 승인의 카드 둘(메시지 흐름·활동 탭)이
+ * 같은 틱에 같은 초로 넘어간다(브라우저 검증 D6).
+ * `active` 가 거짓이면(확정된 카드) 틱을 받지 않는다
  */
 export function useRemaining(expiresAt: string, active: boolean): { label: string; expired: boolean } {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!active) return;
-    setNow(Date.now());
-    // 다 센 뒤에는 멈춘다 — 서버가 만료 사실을 보낼 때까지 1초마다 헛되이 다시 그리지 않게
-    const timer = setInterval(() => {
-      const at = Date.now();
-      setNow(at);
-      if (remainingMs(expiresAt, at) <= 0) clearInterval(timer);
-    }, TICK_MS);
-    return () => clearInterval(timer);
-  }, [active, expiresAt]);
+  // 다 센 만료 시각 — 그 뒤에는 틱을 놓는다. 서버가 만료 사실을 보낼 때까지 1초마다 헛되이 다시 그리지 않게
+  const [counted, setCounted] = useState<string>();
+  const now = useNowTick(active && counted !== expiresAt);
   const label = remainingLabel(expiresAt, now);
-  return { label, expired: label === EXPIRED_LABEL };
+  const expired = label === EXPIRED_LABEL;
+  if (expired && counted !== expiresAt) setCounted(expiresAt);
+  return { label, expired };
 }

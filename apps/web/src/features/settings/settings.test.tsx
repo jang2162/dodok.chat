@@ -39,6 +39,36 @@ describe("패널", () => {
     expect(screen.queryByTestId("page-channel-panel")).not.toBeInTheDocument();
   });
 
+  /**
+   * 누른 「설정 닫기」 링크는 패널과 함께 언마운트돼 초점이 `<body>` 로 떨어졌다(p2-t14 걱정 6) — 좁은 화면 시트(D14)처럼
+   * 헤더의 「채널 설정」 링크로 돌려준다. 마우스로 눌러도 키보드로 눌러도
+   */
+  it("넓은 화면: 「설정 닫기」를 누르면 초점이 헤더의 「채널 설정」 링크로 간다 — <body> 가 아니다", async () => {
+    stubMedia(false);
+    stubSettingsServer();
+    const { router } = renderRoute(`/c/${CH}/settings`);
+    const header = await screen.findByTestId("channel-header");
+    const opener = within(header).getByRole("link", { name: "채널 설정" });
+
+    await userEvent.click(
+      within(await screen.findByTestId("page-channel-panel")).getByRole("link", { name: "설정 닫기" }),
+    );
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}`));
+    await waitFor(() => expect(screen.queryByTestId("page-channel-panel")).not.toBeInTheDocument());
+    expect(document.activeElement).not.toBe(document.body);
+    expect(opener).toHaveFocus();
+
+    // 다시 열어 키보드로 닫아도 같다
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/settings`));
+    within(await screen.findByTestId("page-channel-panel"))
+      .getByRole("link", { name: "설정 닫기" })
+      .focus();
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() => expect(screen.queryByTestId("page-channel-panel")).not.toBeInTheDocument());
+    expect(opener).toHaveFocus();
+  });
+
   it("폭이 바뀌어도(오른쪽 패널 ↔ 전체 화면 시트) 고치던 초안은 그대로다", async () => {
     const media = stubMedia(false);
     stubSettingsServer();

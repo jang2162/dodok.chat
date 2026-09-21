@@ -228,6 +228,34 @@ describe("ApprovalCard", () => {
   });
 
   /**
+   * 브라우저 검증 D6 — 같은 승인의 카드 둘(메시지 흐름·활동 탭)이 저마다 타이머를 돌려 패널 쪽이 늦게 틱했고,
+   * 그 틈에 남은 초가 1초 어긋났다. 패널 카드를 600ms 늦게 띄워 그 틈을 크게 벌린 채 틱마다 맞대 본다
+   */
+  it("같은 승인의 카드 둘은 늦게 뜬 쪽도 같은 초를 보인다(D6)", async () => {
+    vi.useFakeTimers({ now: NOW });
+    act(() => useApprovalStore.getState().apply(approval({ expiresAt: iso(NOW + 10_500) })));
+    const flow = <ApprovalCard key="flow" approvalId={APPROVAL} channelId={CH} />;
+    const { rerender } = renderWithClient(flow);
+    await act(async () => void vi.advanceTimersByTime(600));
+    rerender(
+      <>
+        {flow}
+        <ApprovalCard key="panel" approvalId={APPROVAL} channelId={CH} />
+      </>,
+    );
+    const shown = () =>
+      [...document.querySelectorAll('[data-slot="approval-outcome"]')].map((el) => el.textContent);
+
+    expect(shown()).toEqual(["10초 남음", "10초 남음"]);
+    for (const step of [400, 300, 700, 300]) {
+      await act(async () => void vi.advanceTimersByTime(step));
+      const [a, b] = shown();
+      expect(b).toBe(a);
+    }
+    expect(shown()).toEqual(["8초 남음", "8초 남음"]);
+  });
+
+  /**
    * 브라우저 검증 D13 — 결정을 누르면 버튼 줄이 통째로 사라지며 **누른 버튼이 언마운트**돼 초점이 `<body>`
    * (좁은 화면은 시트 루트)로 떨어졌다. D3(탭 전환 초점 유실)와 같은 부류다.
    * jsdom 은 떨어져 나간 노드도 `activeElement` 로 남겨 두므로 **노드가 살아 있는가**도 함께 본다

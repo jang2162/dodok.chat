@@ -8,7 +8,7 @@ import { selectPendingApproval, useApprovalStore } from "@/features/approvals/ap
 import { selectChannelRuns, TERMINAL, useRunStore } from "@/features/runs/runStore";
 import { RunList } from "./RunList";
 import { RunTimeline } from "./RunTimeline";
-import { mergeRuns } from "./timeline";
+import { freezeDurations, mergeRuns } from "./timeline";
 
 /**
  * 활동 탭(`/c/$channelId/activity`, 설계 5.1·5.2): 런 목록과 툴 타임라인. 바깥 틀(패널 ↔ 시트·탭 머리·닫기)은
@@ -41,19 +41,31 @@ function ActivityBody({ channelId }: { channelId: string }) {
    * 그래서 마지막으로 본 상태를 **REST 밑에** 깔아 둔다: 줄이 한 프레임도 비지 않아 선택이 옛 런으로 튀지 않고,
    * 아래 재조회가 서버 사실을 받아 오면 그쪽이 이 자리를 덮는다(`ended` 는 반대로 REST 위다 — 이미 본 종료가 정본).
    * 종료를 본 런(버블 정리로 빠진 것)은 `ended` 가 맡으므로 여기 넣지 않는다. 채널을 옮기면 통째로 버린다(`key`)
+   *
+   * 빠진 것을 안 시각도 적는다(`stopped`) — 끝난 시각을 모르는 동안 그 줄의 소요를 거기서 멈춘다(`freezeDurations`).
+   * 재조회가 실패하면 자리값(또는 끊기기 전에 받아 둔 REST 줄)이 그대로 남는데, 소요까지 흐르면 「아직 기다리는 중」이라는
+   * 지어낸 사실이 되고 1초 틱도 영원히 돈다(p2-t14 리뷰 §A.2). 다시 실시간으로 오면 더는 멈춘 줄이 아니다
    */
   const vanished = useRef(new Map<string, RunState>());
+  const stopped = useRef(new Map<string, string>());
   const wasLive = useRef(new Map<string, RunState>());
   const liveIds = new Set(live.map((v) => v.state.id));
   for (const [id, state] of wasLive.current)
-    if (!liveIds.has(id) && !ended.current.has(id)) vanished.current.set(id, state);
+    if (!liveIds.has(id) && !ended.current.has(id)) {
+      vanished.current.set(id, state);
+      stopped.current.set(id, new Date().toISOString());
+    }
+  for (const id of liveIds) stopped.current.delete(id);
   wasLive.current = new Map(live.map((v) => [v.state.id, v.state]));
 
   const runs = useMemo(
     () =>
-      mergeRuns(
-        [...vanished.current.values(), ...(rest.data ?? [])],
-        [...ended.current.values(), ...live.map((v) => v.state)],
+      freezeDurations(
+        mergeRuns(
+          [...vanished.current.values(), ...(rest.data ?? [])],
+          [...ended.current.values(), ...live.map((v) => v.state)],
+        ),
+        stopped.current,
       ),
     [rest.data, live],
   );

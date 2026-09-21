@@ -264,8 +264,11 @@ export function mergeRunEvents(
   return [...bySeq.values()].sort((a, b) => a.seq - b.seq);
 }
 
-/** 활동 목록의 런 한 줄 — REST 의 `Run` 위에 실시간 `run.state` 를 덮은 것 */
-export type ActivityRun = RunState & { createdAt?: string };
+/**
+ * 활동 목록의 런 한 줄 — REST 의 `Run` 위에 실시간 `run.state` 를 덮은 것.
+ * `frozenAt` 은 「더는 진행 중이 아니다」를 안 시각이다 — 끝난 시각을 모르는 채 남은 줄의 소요를 거기서 멈춘다(`freezeDurations`)
+ */
+export type ActivityRun = RunState & { createdAt?: string; frozenAt?: string };
 
 /**
  * 바탕(REST 런 목록 최근 50, 그 밑에 깔린 자리값)에 실시간 런 상태를 덮는다. REST 에 아직 없는 런(방금 시작)도
@@ -282,21 +285,40 @@ export function mergeRuns(base: readonly ActivityRun[], live: readonly RunState[
   return [...byId.values()].sort((a, b) => (a.id === b.id ? 0 : a.id < b.id ? 1 : -1));
 }
 
-/** 런 소요 시간(ms). 끝났으면 시작~끝, 진행 중이면 시작~지금. 시작 전이면 undefined */
+/**
+ * 더는 진행 중이 아닌 줄 아는데 끝난 시각은 모르는 런에 멈춘 시각(`frozenAt`)을 단다(p2-t14 리뷰 §A.2).
+ * `stopped` 는 런 id → 그 사실을 안 시각. 끊긴 사이 끝난 런의 자리값(D12)이 목록 조회가 실패하는 동안 「승인 대기 · 25 → 26초」로
+ * 흘렀다 — 흐르는 소요는 지어낸 사실이다. 줄은 그대로 두고(상태 글자도 마지막으로 본 것) 소요만 멈춘다.
+ * 끝난 시각을 아는 줄(서버 사실이 덮었다)은 그대로다
+ */
+export function freezeDurations(
+  runs: readonly ActivityRun[],
+  stopped: ReadonlyMap<string, string>,
+): ActivityRun[] {
+  return runs.map((run) => {
+    const frozenAt = stopped.get(run.id);
+    return frozenAt === undefined || run.endedAt !== undefined ? run : { ...run, frozenAt };
+  });
+}
+
+/** 런 소요 시간(ms). 끝났으면 시작~끝, 멈췄으면 시작~멈춘 시각, 진행 중이면 시작~지금. 시작 전이면 undefined */
 export function runDurationMs(
-  run: { startedAt?: string; endedAt?: string },
+  run: { startedAt?: string; endedAt?: string; frozenAt?: string },
   now: number,
 ): number | undefined {
   if (run.startedAt === undefined) return undefined;
-  return (run.endedAt === undefined ? now : Date.parse(run.endedAt)) - Date.parse(run.startedAt);
+  const end = run.endedAt ?? run.frozenAt;
+  return (end === undefined ? now : Date.parse(end)) - Date.parse(run.startedAt);
 }
 
 /**
  * 소요가 아직 흐르는 런이 있는가 — 목록은 이때만 1초 틱을 돌린다(브라우저 검증 D7).
- * 끝난 런은 `endedAt` 으로 고정이라 다시 그려도 값이 같다: 전부 끝났으면 틱은 멈춰야 한다
+ * 끝난 런은 `endedAt`, 멈춘 자리값은 `frozenAt` 으로 고정이라 다시 그려도 값이 같다: 그런 줄만 남으면 틱은 멈춰야 한다
  */
-export const hasFlowingDuration = (runs: readonly { startedAt?: string; endedAt?: string }[]): boolean =>
-  runs.some((r) => r.startedAt !== undefined && r.endedAt === undefined);
+export const hasFlowingDuration = (
+  runs: readonly { startedAt?: string; endedAt?: string; frozenAt?: string }[],
+): boolean =>
+  runs.some((r) => r.startedAt !== undefined && r.endedAt === undefined && r.frozenAt === undefined);
 
 const STATUS_LABEL: Record<RunStatus, string> = {
   queued: "대기 중",

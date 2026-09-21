@@ -47,3 +47,51 @@ it("내려가면 타이머를 거둔다", () => {
   unmount();
   expect(vi.getTimerCount()).toBe(0);
 });
+
+/**
+ * 브라우저 검증 D6 — 같은 승인의 카드 둘이 저마다 `setInterval` 을 돌려 한쪽이 ~150ms 늦게 틱했고, 그 틈에 두 카드의
+ * 남은 초가 1초 어긋났다. 시계는 **하나**다 — 구독자가 몇이든 타이머는 하나이고 모두 같은 틱에 같은 값을 받는다
+ */
+it("구독자가 여럿이어도 타이머는 하나이고, 늦게 붙은 쪽도 지금 도는 시계의 값을 본다(D6)", () => {
+  const a = renderHook(() => useNowTick(true));
+  act(() => void vi.advanceTimersByTime(600));
+  // 그린 값을 모두 적는다 — 효과가 곧바로 공용 값으로 덮어도, 첫 그림이 제 시각이면 브라우저에서는 한 프레임 거꾸로 튄다
+  const drawn: number[] = [];
+  const b = renderHook(() => {
+    const now = useNowTick(true);
+    drawn.push(now);
+    return now;
+  });
+  const c = renderHook(() => useNowTick(true));
+
+  expect(vi.getTimerCount()).toBe(1);
+  // 늦게 붙어도 제 시각(600ms 뒤)을 따로 읽지 않는다 — 첫 그림부터 앞선 구독자와 같은 틱의 값이다
+  expect(drawn.every((now) => now === a.result.current)).toBe(true);
+  expect(b.result.current).toBe(a.result.current);
+  expect(c.result.current).toBe(a.result.current);
+
+  // 따로 돌았다면 b·c 는 1600ms 에 틱했을 것이다 — 하나이므로 1000ms 에 함께 넘어간다
+  act(() => void vi.advanceTimersByTime(400));
+  expect(b.result.current).toBe(a.result.current);
+  expect(c.result.current).toBe(a.result.current);
+  act(() => void vi.advanceTimersByTime(700));
+  expect(b.result.current).toBe(a.result.current);
+});
+
+it("하나가 꺼져도 남은 구독자의 시계는 흐르고, 마지막이 떠나야 타이머를 거둔다", () => {
+  const a = renderHook(({ active }) => useNowTick(active), { initialProps: { active: true } });
+  const b = renderHook(() => useNowTick(true));
+  expect(vi.getTimerCount()).toBe(1);
+
+  a.rerender({ active: false });
+  const stopped = a.result.current;
+  const before = b.result.current;
+  expect(vi.getTimerCount()).toBe(1);
+  act(() => void vi.advanceTimersByTime(3 * TICK_MS));
+  expect(b.result.current).toBe(before + 3 * TICK_MS);
+  // 꺼진 쪽은 멈춘 값 그대로다 — 남이 틱해도 따라 흐르지 않는다
+  expect(a.result.current).toBe(stopped);
+
+  b.unmount();
+  expect(vi.getTimerCount()).toBe(0);
+});

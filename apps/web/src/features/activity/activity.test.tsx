@@ -9,6 +9,7 @@ import { createQueryClient } from "@/app/queryClient";
 import { selectPendingApproval, useApprovalStore } from "@/features/approvals/approvalStore";
 import { emptyTimeline } from "@/features/messages/timeline";
 import { useRunStore } from "@/features/runs/runStore";
+import { TICK_MS } from "@/hooks/useNowTick";
 import { createSubscriptions } from "@/realtime/subscriptions";
 import { useWireStatus } from "@/realtime/wire";
 import { createFakeSocket, type FakeSocket } from "../../../test/fakeSocket";
@@ -332,6 +333,27 @@ it("「활동 닫기」는 채널 화면으로 돌아간다", async () => {
   await userEvent.click(within(aside).getByRole("link", { name: "활동 닫기" }));
   await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}`));
   expect(screen.queryByTestId("page-channel-panel")).not.toBeInTheDocument();
+});
+
+/**
+ * 넓은 화면의 닫기 링크는 누르면 패널과 함께 언마운트돼 초점이 `<body>` 로 떨어졌다(p2-t14 걱정 6, D3·D13·D14 와 같은 부류).
+ * 활동 탭에는 헤더에 여는 자리가 따로 없고 탭 머리는 패널과 함께 사라진다 — 좁은 화면 시트(D14)와 같은 자리,
+ * 헤더의 「채널 설정」 링크로 돌려준다
+ */
+it("넓은 화면에서 「활동 닫기」를 누르면 초점이 헤더의 「채널 설정」 링크로 간다 — <body> 가 아니다", async () => {
+  stubMedia(false);
+  stubServer({ runs: [] });
+  const { router } = renderRoute(`/c/${CH}/activity`);
+  const aside = await panel();
+  within(aside).getByRole("link", { name: "활동 닫기" }).focus();
+
+  await userEvent.keyboard("{Enter}");
+
+  await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}`));
+  await waitFor(() => expect(screen.queryByTestId("page-channel-panel")).not.toBeInTheDocument());
+  const opener = within(screen.getByTestId("channel-header")).getByRole("link", { name: "채널 설정" });
+  expect(document.activeElement).not.toBe(document.body);
+  expect(opener).toHaveFocus();
 });
 
 it("미해결 승인이 없으면 카드도 없고, 오면 런 목록보다 위에 뜬다", async () => {
@@ -1000,6 +1022,126 @@ it("채널을 옮기면 「빠진 런」 기억도 버린다(D12 ④)", async ()
   expect(moved).toBe(aside);
   await within(moved).findByText("아직 실행 기록이 없습니다.");
   expect(runIds(moved)).toEqual([]);
+});
+
+/**
+ * p2-t14 리뷰 §A.2 — 재조회가 실패하는 동안 자리값(D12)의 소요가 계속 흘렀다(「승인 대기 · 25 → 26초」). 앱은 그 런이
+ * 더는 진행 중이 아님을 이미 안다. **자리값은 남기되**(판정 그대로) 소요는 안 순간에 멈추고, 그런 줄만 남으면 1초 틱도
+ * 멈춘다(D7 의 잠금). 틱은 `setInterval` 을 엿봐 잰다 — 이 파일에서는 react-query 타이머가 섞여 타이머 수를 못 센다
+ */
+const RUN3 = uid(105);
+const SINCE = Date.parse("2027-01-15T08:00:01.000Z");
+/**
+ * 줄에 보이는 소요(초). 가짜 시계가 실제 시간과 함께도 흐르므로(`shouldAdvanceTime`) 글자를 통째로 맞대지 않고 초를 읽어
+ * 범위로 잰다 — 부하가 큰 병렬 실행에서 실제로 흐른 수백 ms 가 한 칸을 넘겨도 흔들리지 않게
+ */
+const seconds = (el: HTMLElement | null) => Number(/ · (\d+)초/.exec(el?.textContent ?? "")?.[1]);
+
+/** RUN2 가 25초째 진행 중일 때 끊겼다가, 다시 붙자 목록 조회가 계속 실패한다. `known` 이면 REST 도 진행 중인 RUN2 를 받아 둔 채다 */
+async function vanishedWhileFailing({ known = false } = {}) {
+  const intervals = vi.spyOn(globalThis, "setInterval");
+  const clears = vi.spyOn(globalThis, "clearInterval");
+  const inFlight = runOf(RUN2, { status: "tool", startedAt: iso(SINCE), endedAt: undefined });
+  stubServer({
+    runs: known ? [inFlight, runOf(RUN)] : [runOf(RUN)],
+    events: { [RUN]: OTHER_RUN, [RUN2]: TOOL_EVENTS },
+  });
+  const { queryClient } = renderRoute(`/c/${CH}/activity`);
+  const aside = await panel();
+  act(() =>
+    useRunStore
+      .getState()
+      .applyState(runState({ id: RUN2, status: "awaiting_approval", startedAt: iso(SINCE) })),
+  );
+  const row = (id: string) => aside.querySelector<HTMLElement>(`[data-run-id="${id}"]`);
+  await waitFor(() => expect(seconds(row(RUN2))).toBeGreaterThanOrEqual(0));
+  act(() => void vi.advanceTimersByTime(25_000));
+  expect(seconds(row(RUN2))).toBeGreaterThanOrEqual(25);
+  const ticks = intervals.mock.results.filter((_, i) => intervals.mock.calls[i]?.[1] === TICK_MS);
+  expect(ticks).toHaveLength(1);
+
+  // 끊긴 사이 끝났고, 다시 붙자 목록 조회가 계속 실패한다(재시도까지 다 쓴다)
+  stubServer({
+    runs: [],
+    events: { [RUN]: OTHER_RUN, [RUN2]: TOOL_EVENTS },
+    override: (method, url) =>
+      method === "GET" && /\/runs\?/.test(url)
+        ? json(500, { code: "INTERNAL", message: "터졌다" })
+        : undefined,
+  });
+  await reconnect(queryClient);
+  await act(() => vi.advanceTimersByTimeAsync(5_000));
+  await within(aside).findByText("런 목록을 불러오지 못했습니다.");
+  return { aside, row, tick: ticks[0]?.value as unknown, clears };
+}
+
+it("목록 조회가 실패해 자리값으로 남은 런의 소요는 더 흐르지 않고, 그런 런만 남으면 1초 틱이 멈춘다", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true, now: SINCE });
+  try {
+    const { row, tick, clears } = await vanishedWhileFailing();
+
+    // 자리값은 남는다 — 상태 글자도 마지막으로 본 그대로다(「남는 쪽이 사라지는 쪽보다 낫다」)
+    expect(row(RUN2)).toHaveTextContent("승인 대기");
+    // 빠진 것을 안 순간(≈25초)에 멈췄다 — 재시도를 다 쓰는 5초 동안 흘렀다면 30초다
+    const frozen = row(RUN2)?.textContent;
+    expect(seconds(row(RUN2))).toBeLessThan(28);
+    act(() => void vi.advanceTimersByTime(30_000));
+    expect(row(RUN2)?.textContent).toBe(frozen);
+    // 흐르는 줄이 하나도 없다(RUN 은 끝났고 RUN2 는 멈췄다) — 1초 틱을 거둔다
+    expect(clears).toHaveBeenCalledWith(tick);
+  } finally {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  }
+});
+
+/** 자리값은 REST 밑에 깔린다 — REST 가 끊기기 전의 진행 중 모습을 쥐고 있으면 그 줄이 보인다. 그 줄도 흐르면 같은 거짓이다 */
+it("끊기기 전에 받아 둔 REST 줄이 진행 중이어도 재조회가 실패하는 동안 소요는 멈춘다", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true, now: SINCE });
+  try {
+    const { row, tick, clears } = await vanishedWhileFailing({ known: true });
+
+    // 보이는 것은 REST 의 낡은 줄이다(자리값이 아니다) — 그래도 더는 진행 중이 아님을 안다
+    expect(row(RUN2)).toHaveTextContent("도구 사용 중");
+    const frozen = row(RUN2)?.textContent;
+    expect(seconds(row(RUN2))).toBeLessThan(28);
+    act(() => void vi.advanceTimersByTime(30_000));
+    expect(row(RUN2)?.textContent).toBe(frozen);
+    expect(clears).toHaveBeenCalledWith(tick);
+  } finally {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  }
+});
+
+it("자리값 곁에서도 진짜 진행 중인 런은 흐르고, 다시 실시간으로 돌아온 자리값도 흐른다", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true, now: SINCE });
+  try {
+    const { row } = await vanishedWhileFailing();
+    const frozen = row(RUN2)?.textContent;
+
+    act(() =>
+      useRunStore
+        .getState()
+        .applyState(runState({ id: RUN3, status: "streaming", startedAt: iso(SINCE + 30_000) })),
+    );
+    await waitFor(() => expect(seconds(row(RUN3))).toBeGreaterThanOrEqual(0));
+    act(() => void vi.advanceTimersByTime(4_000));
+    expect(seconds(row(RUN3))).toBeGreaterThanOrEqual(4);
+    expect(row(RUN2)?.textContent).toBe(frozen);
+
+    // 빠졌던 런의 실시간 상태가 다시 오면 더는 자리값이 아니다 — 멈춘 표시를 떼고 다시 흐른다
+    act(() =>
+      useRunStore.getState().applyState(runState({ id: RUN2, status: "streaming", startedAt: iso(SINCE) })),
+    );
+    await waitFor(() => expect(row(RUN2)).toHaveTextContent("응답 중"));
+    const back = row(RUN2)?.textContent;
+    act(() => void vi.advanceTimersByTime(3_000));
+    expect(row(RUN2)?.textContent).not.toBe(back);
+  } finally {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  }
 });
 
 /**
