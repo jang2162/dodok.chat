@@ -1,5 +1,5 @@
 import type { Field } from "@dodok/shared";
-import { type ChangeEvent, useId } from "react";
+import { useId } from "react";
 import { Checkbox } from "@/ui/checkbox";
 import { FieldError } from "@/ui/field-error";
 import { Input } from "@/ui/input";
@@ -19,14 +19,19 @@ type Props = {
 const text = (v: unknown) => (typeof v === "string" ? v : "");
 const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
 
+/** number 칸의 값 — 비면 undefined. 못 읽는 입력(「e」「-」「1e」)도 value 는 "" 라 여기서는 빈 칸과 같다(`unreadableFieldIds`) */
+const numberOf = (el: HTMLInputElement) => (el.value === "" ? undefined : Number(el.value));
+
 /**
- * number 칸의 값 — 비면 undefined, 브라우저가 못 읽는 입력(「1e」 등: value 는 "" 이고 badInput)이면 NaN.
- * NaN 을 빈 칸과 가르지 않으면 선택 칸에서 사용자가 친 값이 소리 없이 빠진다
+ * 브라우저가 못 읽는 입력을 쥔 칸(number·date)의 id — 제출하는 순간 칸의 `validity.badInput` 을 읽는다.
+ * 못 읽는 입력은 value 가 "" 라 화면 값(state)으로는 빈 칸과 같다: 빈 number 칸의 「e」「-」는 value 가 그대로여서
+ * React onChange 가 안 불리고, date 의 부분 입력(「02/31」)은 input·change 이벤트조차 없다.
+ * 칸은 name 이 아니라 `data-field-id` 로 찾는다 — 칸 id 가 「elements」「submit」 같으면 name 이 form 의 속성을 가린다
  */
-function numberOf(e: ChangeEvent<HTMLInputElement>): number | undefined {
-  const el = e.currentTarget;
-  if (el.value === "") return el.validity.badInput ? Number.NaN : undefined;
-  return Number(el.value);
+export function unreadableFieldIds(form: HTMLFormElement): string[] {
+  return [...form.querySelectorAll<HTMLInputElement>("input[data-field-id]")].flatMap((el) =>
+    el.validity.badInput && el.dataset.fieldId ? [el.dataset.fieldId] : [],
+  );
 }
 
 /**
@@ -79,16 +84,19 @@ export function ModalField({ field, value, error, onChange }: Props) {
       widget = (
         <>
           <Label htmlFor={id}>{field.label}</Label>
-          {/* 못 읽는 입력(NaN)은 "" 로 그린다 — 브라우저가 쥔 원문을 React 가 덮지 않는다.
-              step 이 없으면 소수도 받는다(서버가 step 을 안 본다) */}
+          {/* 빈 칸은 "" 로 그린다 — 못 읽는 입력도 value 가 "" 라 브라우저가 쥔 원문(「1e」)을 React 가 덮지 않는다.
+              step 이 없으면 소수도 받는다(서버가 step 을 안 본다).
+              onChange 가 아니라 onInput — 빈 칸에 「e」를 치거나 지워도 value 는 "" 그대로라 onChange 가 안 불린다.
+              그래도 칸을 고친 것이니 그 칸의 오류를 내린다 */}
           <Input
             {...control}
             type="number"
-            value={typeof value === "number" && !Number.isNaN(value) ? value : ""}
+            data-field-id={field.id}
+            value={typeof value === "number" ? value : ""}
             min={field.min}
             max={field.max}
             step={field.step ?? "any"}
-            onChange={(e) => onChange(numberOf(e))}
+            onInput={(e) => onChange(numberOf(e.currentTarget))}
           />
         </>
       );
@@ -97,7 +105,13 @@ export function ModalField({ field, value, error, onChange }: Props) {
       widget = (
         <>
           <Label htmlFor={id}>{field.label}</Label>
-          <Input {...control} type="date" value={text(value)} onChange={(e) => onChange(e.target.value)} />
+          <Input
+            {...control}
+            type="date"
+            data-field-id={field.id}
+            value={text(value)}
+            onChange={(e) => onChange(e.target.value)}
+          />
         </>
       );
       break;

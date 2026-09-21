@@ -15,7 +15,7 @@ import { FieldError } from "@/ui/field-error";
 import { DisabledHint, reasonProps } from "../DisabledHint";
 import { itemState } from "../state";
 import type { Interact } from "../useInteract";
-import { ModalField } from "./fields";
+import { ModalField, unreadableFieldIds } from "./fields";
 import { type FieldValues, initialValues, issueFieldIds, submitValues, validateFields } from "./validate";
 
 /** 서버가 VALIDATION 으로 가리킨 칸의 문구 — 서버의 zod 문구(영문)를 그대로 내지 않는다(스펙 6장) */
@@ -73,9 +73,9 @@ export function ComponentModal({ modal, message, io, expired }: Props) {
     setFormError(undefined);
   }
 
-  async function submit() {
+  async function submit(unreadable: string[]) {
     if (state.disabled) return;
-    const found = validateFields(modal.fields, values);
+    const found = validateFields(modal.fields, values, unreadable);
     setErrors(found);
     setFormError(undefined);
     if (Object.keys(found).length > 0) return;
@@ -91,7 +91,8 @@ export function ComponentModal({ modal, message, io, expired }: Props) {
 
   function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    void submit();
+    // 못 읽는 입력은 화면 값에 남지 않는다 — 제출하는 순간 칸에서 읽는다
+    void submit(unreadableFieldIds(e.currentTarget));
   }
 
   // 「제출」의 설명: 잠긴 사유 + 하단 오류 줄

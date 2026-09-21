@@ -77,6 +77,10 @@ describe("validateFields — 서버 fieldSchema 와 같은 빡빡함", () => {
       x: "3자 이상이어야 합니다",
     });
     expect(validateFields([f({ type: "textarea", maxLength: 1 })], { x: "😀" })).toEqual({});
+    // 결합 문자도 한 글자 — 정규화(NFC)하지 않는다(zod 도 안 한다): 「e + ◌́」는 두 글자
+    expect(validateFields([f({ type: "text", maxLength: 1 })], { x: "e\u0301" })).toEqual({
+      x: "1자 이하여야 합니다",
+    });
   });
 
   it("공백도 글자다 — 다듬지 않는다(서버가 길이만 본다)", () => {
@@ -157,6 +161,20 @@ describe("validateFields — 서버 fieldSchema 와 같은 빡빡함", () => {
     expect(validateFields([f({ type: "select", options: OPTS })], { x: "a" })).toEqual({
       x: "값이 올바르지 않습니다",
     });
+  });
+
+  it("못 읽는 입력을 쥔 칸(unreadable)은 값이 비어도 형식 오류다 — 필수든 아니든, 「필수 항목입니다」보다 먼저", () => {
+    const fields = [
+      f({ type: "number", id: "n" }),
+      f({ type: "date", id: "d", required: true }),
+      f({ type: "text", id: "t" }),
+    ];
+    const values = { n: undefined, d: "", t: "" };
+    expect(validateFields(fields, values, ["n", "d"])).toEqual({
+      n: "숫자를 입력하세요",
+      d: "날짜 형식이 올바르지 않습니다",
+    });
+    expect(validateFields(fields, values)).toEqual({ d: "필수 항목입니다" });
   });
 
   it("칸마다 따로 — 여러 칸의 오류를 한꺼번에 돌려준다", () => {

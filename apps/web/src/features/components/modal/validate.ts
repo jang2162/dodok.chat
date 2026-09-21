@@ -1,12 +1,17 @@
 import type { Field, SelectOption } from "@dodok/shared";
 
-/** 필드 id → 화면이 든 값. text·textarea·date 는 문자열, number 는 수(비면 undefined·못 읽으면 NaN), select 는 배열 */
+/**
+ * 필드 id → 화면이 든 값. text·textarea·date 는 문자열, number 는 수(비면 undefined), select 는 배열.
+ * 브라우저가 못 읽는 입력은 값으로는 빈 칸이다 — 그 칸은 `validateFields` 의 `unreadable` 로 따로 받는다
+ */
 export type FieldValues = Record<string, unknown>;
 
 const REQUIRED = "필수 항목입니다";
 const BAD_VALUE = "값이 올바르지 않습니다";
 const NOT_OPTION = "목록에 없는 값입니다";
 const PICK_ONE = "하나를 고르세요";
+const NOT_NUMBER = "숫자를 입력하세요";
+const BAD_DATE = "날짜 형식이 올바르지 않습니다";
 
 /** text·textarea 의 기본 상한 — 서버 fieldSchema 의 `maxLength ?? 4000` */
 const TEXT_MAX = 4000;
@@ -94,14 +99,14 @@ function fieldError(f: Field, v: unknown): string | undefined {
     }
     case "number":
       // step 은 서버도 안 본다
-      if (typeof v !== "number" || !Number.isFinite(v)) return "숫자를 입력하세요";
+      if (typeof v !== "number" || !Number.isFinite(v)) return NOT_NUMBER;
       if (f.min !== undefined && v < f.min) return `${f.min} 이상이어야 합니다`;
       if (f.max !== undefined && v > f.max) return `${f.max} 이하여야 합니다`;
       return undefined;
     case "date":
       if (typeof v !== "string") return BAD_VALUE;
       if (v === "") return REQUIRED;
-      return isIsoDate(v) ? undefined : "날짜 형식이 올바르지 않습니다";
+      return isIsoDate(v) ? undefined : BAD_DATE;
     case "select":
       if (!Array.isArray(v)) return BAD_VALUE;
       if (!v.every((x) => hasOption(f.options, x))) return NOT_OPTION;
@@ -118,11 +123,22 @@ function fieldError(f: Field, v: unknown): string | undefined {
   }
 }
 
-/** 제출 전 화면 검사(스펙 5.4, 순수) — 필드 id → 오류 문구. 없으면 {} */
-export function validateFields(fields: Field[], values: FieldValues): Record<string, string> {
+/** 못 읽는 입력을 쥔 칸의 문구 — 그런 입력을 쥐는 것은 number·date 뿐이다 */
+const unreadableError = (f: Field) => (f.type === "date" ? BAD_DATE : NOT_NUMBER);
+
+/**
+ * 제출 전 화면 검사(스펙 5.4, 순수) — 필드 id → 오류 문구. 없으면 {}.
+ * `unreadable` 은 브라우저가 못 읽는 입력을 쥔 칸(number·date)의 id — 값은 비었어도 사용자는 친 것이 있으니
+ * 통과시키거나(선택 칸이 소리 없이 빠진다) 「필수 항목입니다」로 말하지 않고 형식 오류로 막는다
+ */
+export function validateFields(
+  fields: Field[],
+  values: FieldValues,
+  unreadable: readonly string[] = [],
+): Record<string, string> {
   const errors: Record<string, string> = {};
   for (const f of fields) {
-    const e = fieldError(f, outgoing(f, values[f.id]));
+    const e = unreadable.includes(f.id) ? unreadableError(f) : fieldError(f, outgoing(f, values[f.id]));
     if (e !== undefined) errors[f.id] = e;
   }
   return errors;

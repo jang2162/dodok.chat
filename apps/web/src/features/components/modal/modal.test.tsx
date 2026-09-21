@@ -1,5 +1,5 @@
 import { ComponentsV1, type Message } from "@dodok/shared";
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -51,6 +51,12 @@ async function open() {
   return screen.findByRole("dialog", { name: "새 작업" });
 }
 const submit = (dialog: HTMLElement) => userEvent.click(within(dialog).getByRole("button", { name: "제출" }));
+const sentValues = () => fake?.sentOf("component.interact").map((p) => (p as { values: unknown }).values);
+
+/** 브라우저는 못 읽는 입력(number 의 「e」, date 의 「02/31」)에 value 를 "" 로 두고 validity.badInput 을 켠다 — jsdom 은 몰라서 흉내 낸다 */
+function setBadInput(input: HTMLElement, badInput: boolean) {
+  Object.defineProperty(input, "validity", { configurable: true, value: { badInput } });
+}
 
 beforeEach(() => {
   fake = createFakeSocket();
@@ -113,6 +119,34 @@ describe("모달 — 트리거와 대화상자", () => {
     dialog = await open();
     expect(within(dialog).getByLabelText("제목")).toHaveValue("");
   });
+
+  it("다시 열면 지난 제출의 오류도 지워져 있다 — 칸 아래도 하단 줄도", async () => {
+    fake?.onAck("component.interact", () => ({
+      ok: false,
+      error: { code: "EXPIRED", message: "component expired" },
+    }));
+    renderWithClient(<Components message={withModal()} />);
+    const close = async (dialog: HTMLElement) => {
+      await userEvent.click(within(dialog).getByRole("button", { name: "취소" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    };
+    // 칸 아래 오류
+    let dialog = await open();
+    await submit(dialog);
+    expect(within(dialog).getByLabelText("제목")).toHaveAccessibleDescription("필수 항목입니다");
+    await close(dialog);
+    dialog = await open();
+    expect(within(dialog).getByLabelText("제목")).not.toHaveAttribute("aria-describedby");
+    expect(within(dialog).queryByText("필수 항목입니다")).toBeNull();
+    // 하단 줄
+    await userEvent.type(within(dialog).getByLabelText("제목"), "보고서");
+    await submit(dialog);
+    expect(await within(dialog).findByText("만료된 버튼입니다")).toBeVisible();
+    await close(dialog);
+    dialog = await open();
+    expect(within(dialog).queryByText("만료된 버튼입니다")).toBeNull();
+    expect(within(dialog).getByRole("button", { name: "제출" })).not.toHaveAttribute("aria-describedby");
+  });
 });
 
 describe("모달 — 필드 7종", () => {
@@ -131,6 +165,7 @@ describe("모달 — 필드 7종", () => {
     const text = within(dialog).getByRole("textbox", { name: "제목" });
     expect(text.tagName).toBe("INPUT");
     expect(text).toHaveAttribute("placeholder", "무엇을");
+    expect(text).not.toBeRequired();
     expect(within(dialog).getByRole("textbox", { name: "본문" }).tagName).toBe("TEXTAREA");
     const number = within(dialog).getByRole("spinbutton", { name: "개수" });
     expect(number).toHaveAttribute("min", "1");
@@ -260,6 +295,7 @@ describe("모달 — 제출", () => {
     renderWithClient(<Components message={withModal()} />);
     const dialog = await open();
     const title = within(dialog).getByLabelText("제목");
+    expect(title).toBeRequired();
     // 오류 자리는 비어 있는 채로 늘 있고, 오류가 없으면 칸이 가리키지 않는다(field-error 관습)
     expect(title).not.toHaveAttribute("aria-describedby");
     expect(title).not.toHaveAttribute("aria-invalid");
@@ -294,18 +330,88 @@ describe("모달 — 제출", () => {
     expect(within(dialog).getByLabelText("개수")).toHaveAccessibleDescription("5 이하여야 합니다");
   });
 
-  it("number 칸이 못 읽는 값(badInput)이면 비었다고 보지 않고 막는다", async () => {
+  it.each(["e", "-"])(
+    "빈 number 칸에 못 읽는 「%s」를 치면 비었다고 보지 않고 막는다 — 지우면 오류가 내려가고 다시 보낼 수 있다",
+    async (typed) => {
+      fake?.onAck("component.interact", () => OK);
+      // 선택 칸 — 막지 않으면 사용자가 친 것이 소리 없이 빠진 채 나간다
+      const message = withModal({ fields: [{ type: "number", id: "n", label: "개수" }] });
+      renderWithClient(<Components message={message} />);
+      const dialog = await open();
+      const input = within(dialog).getByLabelText("개수");
+      setBadInput(input, true);
+      await userEvent.type(input, typed);
+      // value 는 "" 그대로다 — React 의 onChange 가 안 불리는 자리
+      expect(input).toHaveValue(null);
+      await submit(dialog);
+      expect(sentValues()).toEqual([]);
+      expect(input).toHaveAccessibleDescription("숫자를 입력하세요");
+      // 지워도 value 는 "" 그대로 — 브라우저는 input 만 낸다
+      setBadInput(input, false);
+      await userEvent.type(input, "{Backspace}");
+      expect(input).not.toHaveAttribute("aria-describedby");
+      await submit(dialog);
+      expect(sentValues()).toEqual([{ fields: {} }]);
+    },
+  );
+
+  it("값이 있던 number 칸도 못 읽게 고치면(「3」→「3e」) 막고, 되돌리면 그 값으로 보낸다", async () => {
     fake?.onAck("component.interact", () => OK);
     const message = withModal({ fields: [{ type: "number", id: "n", label: "개수", default: 3 }] });
     renderWithClient(<Components message={message} />);
     const dialog = await open();
     const input = within(dialog).getByLabelText("개수");
-    // 브라우저는 「1e」처럼 못 읽는 입력의 value 를 "" 로 주고 validity.badInput 을 켠다(jsdom 은 그러지 않아 흉내 낸다)
-    Object.defineProperty(input, "validity", { configurable: true, value: { badInput: true } });
-    fireEvent.change(input, { target: { value: "" } });
+    setBadInput(input, true);
+    await userEvent.type(input, "e");
     await submit(dialog);
-    expect(fake?.sentOf("component.interact")).toEqual([]);
+    expect(sentValues()).toEqual([]);
     expect(input).toHaveAccessibleDescription("숫자를 입력하세요");
+    setBadInput(input, false);
+    await userEvent.type(input, "{Backspace}");
+    await submit(dialog);
+    expect(sentValues()).toEqual([{ fields: { n: 3 } }]);
+  });
+
+  it("빈 date 칸의 부분 입력도 막는다 — 이벤트가 하나도 안 와도, 지우면 다시 보낼 수 있다", async () => {
+    fake?.onAck("component.interact", () => OK);
+    const message = withModal({ fields: [{ type: "date", id: "d", label: "마감" }] });
+    renderWithClient(<Components message={message} />);
+    const dialog = await open();
+    const input = within(dialog).getByLabelText("마감");
+    setBadInput(input, true);
+    // Chrome 은 부분 날짜(「02/31」까지)에 value "" 와 badInput 만 두고 input·change 를 하나도 안 낸다.
+    // user-event 도 온전한 날짜가 아니면 이벤트를 안 낸다
+    await userEvent.type(input, "2026-02");
+    expect(input).toHaveValue("");
+    await submit(dialog);
+    expect(sentValues()).toEqual([]);
+    expect(input).toHaveAccessibleDescription("날짜 형식이 올바르지 않습니다");
+    // 지워도 이벤트가 없다 — 제출하는 순간 다시 읽는다
+    setBadInput(input, false);
+    await submit(dialog);
+    expect(sentValues()).toEqual([{ fields: {} }]);
+  });
+
+  it("필수 칸이어도 못 읽는 입력이면 「필수 항목입니다」가 아니라 까닭을 말한다 — 친 것이 있으니", async () => {
+    fake?.onAck("component.interact", () => OK);
+    const message = withModal({
+      fields: [
+        { type: "number", id: "n", label: "개수", required: true },
+        { type: "date", id: "d", label: "마감", required: true },
+      ],
+    });
+    renderWithClient(<Components message={message} />);
+    const dialog = await open();
+    const number = within(dialog).getByLabelText("개수");
+    const date = within(dialog).getByLabelText("마감");
+    setBadInput(number, true);
+    setBadInput(date, true);
+    await userEvent.type(number, "-");
+    await submit(dialog);
+    expect(sentValues()).toEqual([]);
+    expect(number).toHaveAccessibleDescription("숫자를 입력하세요");
+    expect(date).toHaveAccessibleDescription("날짜 형식이 올바르지 않습니다");
+    expect(within(dialog).queryByText("필수 항목입니다")).toBeNull();
   });
 
   it("칸을 고치면 그 칸의 오류가 내려간다", async () => {
@@ -341,6 +447,22 @@ describe("모달 — ack 오류는 대화상자 안에", () => {
       "만료된 버튼입니다",
     );
     expect(error).not.toHaveBeenCalled();
+  });
+
+  it("칸을 고치면 하단 줄도 내려간다 — 고친 값에 대한 오류처럼 남지 않게", async () => {
+    fake?.onAck("component.interact", () => ({
+      ok: false,
+      error: { code: "EXPIRED", message: "component expired" },
+    }));
+    renderWithClient(<Components message={withModal()} />);
+    const dialog = await open();
+    const title = within(dialog).getByLabelText("제목");
+    await userEvent.type(title, "보고서");
+    await submit(dialog);
+    expect(await within(dialog).findByText("만료된 버튼입니다")).toBeVisible();
+    await userEvent.type(title, "!");
+    expect(within(dialog).queryByText("만료된 버튼입니다")).toBeNull();
+    expect(within(dialog).getByRole("button", { name: "제출" })).not.toHaveAttribute("aria-describedby");
   });
 
   it("응답이 없어도(TIMEOUT) 대화상자 안에 보인다", async () => {
@@ -391,18 +513,30 @@ describe("모달 — ack 오류는 대화상자 안에", () => {
       error: {
         code: "VALIDATION",
         message: "invalid values",
-        details: { issues: [{ path: ["fields", "r"], message: "Invalid option" }] },
+        details: {
+          issues: [
+            { path: ["fields", "r"], message: "Invalid option" },
+            { path: ["fields", "s", 0], message: "Invalid option" },
+          ],
+        },
       },
     }));
-    const message = withModal({ fields: [{ type: "radio", id: "r", label: "우선순위", options: OPTS }] });
+    const message = withModal({
+      fields: [
+        { type: "radio", id: "r", label: "우선순위", options: OPTS },
+        { type: "select", id: "s", label: "태그", multi: true, options: OPTS },
+      ],
+    });
     renderWithClient(<Components message={message} />);
     const dialog = await open();
     await submit(dialog);
-    await waitFor(() =>
-      expect(within(dialog).getByRole("group", { name: "우선순위" })).toHaveAccessibleDescription(
-        "받아들일 수 없는 값입니다",
-      ),
-    );
+    for (const name of ["우선순위", "태그"]) {
+      await waitFor(() =>
+        expect(within(dialog).getByRole("group", { name })).toHaveAccessibleDescription(
+          "받아들일 수 없는 값입니다",
+        ),
+      );
+    }
   });
 
   it("issues 가 칸을 못 가리키면 하단 한 줄로", async () => {
