@@ -2,6 +2,7 @@ import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { TICK_MS, useNowTick } from "./useNowTick";
 
+// 구독자가 떠 있는 채로 가짜 시계로 바꾸지 마라 — 공용 시계는 첫 구독 때의 시계에 묶여, 뒤에 붙은 쪽도 그 시계를 탄다
 beforeEach(() => vi.useFakeTimers({ now: 1_800_000_000_000 }));
 afterEach(() => vi.useRealTimers());
 
@@ -39,6 +40,27 @@ it("꺼지면 타이머를 거두고, 다시 켜지면 그동안 흐른 시간�
   act(() => void rerender({ active: true }));
   expect(result.current).toBe(stopped + 60 * TICK_MS);
   expect(vi.getTimerCount()).toBe(1);
+});
+
+/**
+ * 멈춘 시계의 마지막 틱 값은 낡았다 — 구독자가 다 떠난 뒤 처음 붙는 쪽이 그 값을 그리면 한 프레임 과거가 보인다
+ * (앱에서 처음 뜨는 카운트다운이면 `ticked = 0` 기준 「2900만 분」). 멈춰 있으면 새로 읽는다
+ */
+it("멈춰 있던 시계에 처음 붙는 쪽은 첫 그림부터 지금을 본다 — 마지막 틱의 낡은 값이 아니다", () => {
+  const earlier = renderHook(() => useNowTick(true));
+  act(() => void vi.advanceTimersByTime(3 * TICK_MS));
+  earlier.unmount();
+  expect(vi.getTimerCount()).toBe(0);
+  act(() => void vi.advanceTimersByTime(60 * TICK_MS));
+
+  const drawn: number[] = [];
+  renderHook(() => {
+    const now = useNowTick(true);
+    drawn.push(now);
+    return now;
+  });
+  expect(drawn[0]).toBe(Date.now());
+  expect(drawn.every((now) => now === Date.now())).toBe(true);
 });
 
 it("내려가면 타이머를 거둔다", () => {

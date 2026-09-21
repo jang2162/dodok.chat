@@ -1,6 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, configure } from "@testing-library/react";
 import { afterEach, vi } from "vitest";
+import { resetNowTick } from "@/hooks/useNowTick";
 import { createdSockets } from "./fakeSocket";
 
 // findBy*·waitFor 의 기본 예산은 1초다. 루트 `pnpm test` 는 패키지 다섯을 한꺼번에 돌리고 vitest 는 저마다
@@ -36,7 +37,11 @@ if (typeof globalThis.ResizeObserver !== "function") {
   };
 }
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  // 공용 시계는 모듈 전역이다 — 언마운트가 못 거둔 구독자(RTL 밖 렌더)까지 비워 다음 테스트가 새 시계로 시작하게
+  resetNowTick();
+});
 
 // 테스트는 실제 소켓을 열지 않는다(네트워크 없음) — createWireSocket 은 가짜 소켓을 만들어 createdSockets 에 남긴다.
 // createWireSocket 자체를 재는 wire.test.ts 는 vi.unmock 으로 원래 모듈을 쓴다

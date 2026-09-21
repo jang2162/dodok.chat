@@ -36,6 +36,16 @@ function subscribe(listener: (now: number) => void): () => void {
 }
 
 /**
+ * 테스트에서 처음 상태로 — 내리지 않고 남긴 구독자가 다음 테스트의 시계를 쥐지 않게(`test/setup.ts`).
+ * 버려진 가짜 시계의 타이머 id 가 남으면 뒤 구독자가 새 타이머를 못 걸어 그 파일의 뒤 테스트가 줄줄이 무너진다
+ */
+export const resetNowTick = (): void => {
+  listeners.clear();
+  clearInterval(timer);
+  timer = undefined;
+};
+
+/**
  * 「지금」을 1초마다 새로 읽는 시계. `active` 가 거짓이면 구독하지 않는다 —
  * 흐르는 값이 하나도 없으면 다시 그릴 까닭도 없다(값은 마지막으로 읽은 시각 그대로).
  * 다시 켜질 때 한 번 읽는다 — 멈춰 있던 동안 흐른 시간이 남아 있으면 처음 한 칸이 엉뚱해진다

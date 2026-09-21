@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { qk } from "@/api/queries";
 import { createQueryClient } from "@/app/queryClient";
+import { ApprovalCard } from "@/features/approvals/ApprovalCard";
 import { selectPendingApproval, useApprovalStore } from "@/features/approvals/approvalStore";
 import { emptyTimeline } from "@/features/messages/timeline";
 import { useRunStore } from "@/features/runs/runStore";
@@ -29,9 +30,12 @@ import {
   uid,
 } from "../../../test/fixtures";
 import { stubMedia } from "../../../test/media";
+import { renderWithClient } from "../../../test/messages";
 import { stubScrollLayout } from "../../../test/scrollLayout";
 import { channelOf, json, ME, renderRoute, shellGet } from "../../../test/shellApi";
 import { agentOf } from "../../../test/settingsServer";
+import { RunList } from "./RunList";
+import type { ActivityRun } from "./timeline";
 
 // 활동 패널은 실시간 run.event 를 소켓에서 곧바로 받는다 — 테스트는 가짜 소켓을 끼운다
 const wire = vi.hoisted(() => ({ socket: undefined as unknown }));
@@ -1140,6 +1144,60 @@ it("자리값 곁에서도 진짜 진행 중인 런은 흐르고, 다시 실시�
     expect(row(RUN2)?.textContent).not.toBe(back);
   } finally {
     vi.restoreAllMocks();
+    vi.useRealTimers();
+  }
+});
+
+/** 활동 패널의 두 자리 그대로(`ActivityPanel`) — 미해결 승인이 오면 런 목록 위에 카드가 뜬다 */
+function CardOverRunList({ runs }: { runs: readonly ActivityRun[] }) {
+  const pending = useApprovalStore(selectPendingApproval(CH));
+  return (
+    <>
+      {pending && <ApprovalCard approvalId={pending.approval.id} channelId={CH} />}
+      <RunList
+        runs={runs}
+        selectedId={undefined}
+        onSelect={() => {}}
+        loading={false}
+        error={false}
+        onRetry={() => {}}
+        retrying={false}
+      />
+    </>
+  );
+}
+
+/**
+ * 브라우저 검증 D6 의 나머지 반 — 카드끼리만이 아니라 한 화면에서 흐르는 값 **모두**가 공용 시계 하나를 본다.
+ * 런이 도는 중에 600ms 늦게 뜬 카드가 제 시계를 따로 돌리면, 목록의 소요는 넘어갔는데 카드의 남은 초는 그대로인 순간이
+ * 생긴다. 패널을 통째로(라우트) 띄우려면 `shouldAdvanceTime` 이 있어야 해 틱을 ms 로 못 맞추므로, 패널의 두 자리만 띄운다
+ */
+it("승인 카드의 남은 초와 런 목록의 소요는 같은 틱에 함께 넘어간다(D6)", async () => {
+  const NOW = Date.parse("2027-01-15T08:00:00.000Z");
+  vi.useFakeTimers({ now: NOW });
+  try {
+    renderWithClient(<CardOverRunList runs={[runState({ status: "tool", startedAt: iso(NOW - 20_000) })]} />);
+    const shown = () => [
+      seconds(document.querySelector(`[data-run-id="${RUN}"]`)),
+      document.querySelector('[data-slot="approval-outcome"]')?.textContent,
+    ];
+
+    // 목록이 먼저 돌고 600ms 뒤 승인이 온다 — 카드가 제 시각으로 따로 세면 「9초」
+    await act(async () => void vi.advanceTimersByTime(600));
+    act(() => useApprovalStore.getState().apply(approval({ expiresAt: iso(NOW + 10_500) })));
+    expect(shown()).toEqual([20, "10초 남음"]);
+
+    // 소요가 1초 늘 때 남은 초도 같은 틱에 1초 준다 — 따로 돌면 카드가 600ms 늦게 넘어간다
+    for (const [step, expected] of [
+      [400, [21, "9초 남음"]],
+      [300, [21, "9초 남음"]],
+      [700, [22, "8초 남음"]],
+      [300, [22, "8초 남음"]],
+    ] as const) {
+      await act(async () => void vi.advanceTimersByTime(step));
+      expect(shown()).toEqual(expected);
+    }
+  } finally {
     vi.useRealTimers();
   }
 });
