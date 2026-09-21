@@ -325,7 +325,11 @@ describe("Components — 만료 시계", () => {
     componentState: { expiresAt: new Date(NOW + ms).toISOString(), consumed: [] },
   });
   beforeEach(() => vi.useFakeTimers({ now: NOW }));
-  afterEach(() => vi.useRealTimers());
+  // 스파이는 가짜 시계 위에 걸렸다 — 바깥 restoreAllMocks 가 시계를 거둔 뒤 돌면 가짜 setTimeout 을 되살린다
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
 
   it("열려 있는 동안 만료 시각이 지나면 다시 그려 비활성·「만료되었습니다」", () => {
     renderWithClient(<Components message={withButtons(at(1234))} />);
