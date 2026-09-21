@@ -1,7 +1,10 @@
 import type { Block, Message } from "@dodok/shared";
 import { useEffect, useState } from "react";
 import { ActionsBlock } from "./blocks/ActionsBlock";
-// 태스크 5: section·separator·media·file 블록 import 는 이 줄 아래에
+import { FileBlock } from "./blocks/FileBlock";
+import { MediaBlock } from "./blocks/MediaBlock";
+import { SectionBlock } from "./blocks/SectionBlock";
+import { SeparatorBlock } from "./blocks/SeparatorBlock";
 import { type Interact, useInteract } from "./useInteract";
 // 태스크 4: 모달 import 는 이 줄 아래에
 
@@ -24,22 +27,19 @@ function useExpired(expiresAt: string | undefined): boolean {
 
 type BlockProps = { block: Block; message: Message; io: Interact; expired: boolean };
 
-/** 블록 하나. 아직 그리지 않는 종류는 null — 자리표시 문구를 두지 않는다 */
+/** 블록 하나 — 다섯 종류를 모두 그린다(스펙 5.2) */
 function BlockView({ block, message, io, expired }: BlockProps) {
   switch (block.type) {
     case "actions":
       return <ActionsBlock block={block} message={message} io={io} expired={expired} />;
-
-    // 태스크 5: section — <SectionBlock>
-
-    // 태스크 5: separator — <SeparatorBlock>
-
-    // 태스크 5: media — <MediaBlock>
-
-    // 태스크 5: file — <FileBlock>
-
-    default:
-      return null;
+    case "section":
+      return <SectionBlock block={block} />;
+    case "separator":
+      return <SeparatorBlock />;
+    case "media":
+      return <MediaBlock block={block} />;
+    case "file":
+      return <FileBlock block={block} />;
   }
 }
 
