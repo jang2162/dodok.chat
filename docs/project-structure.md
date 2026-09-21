@@ -1,6 +1,6 @@
 # 프로젝트 구성 가이드 (Claude Code 인계용)
 
-작성일: 2026-09-14 · 계획서 v0.8 기준(2026-09-21 갱신: Phase 2 ① 활동 패널·승인 실물) · 이 문서는 "어떻게 구성할지"만 다룬다. 배경·결정 근거는 `docs/plan.md` 참고.
+작성일: 2026-09-14 · 계획서 v0.9 기준(2026-09-21 갱신: Phase 2 ① 활동 패널·승인 실물) · 이 문서는 "어떻게 구성할지"만 다룬다. 배경·결정 근거는 `docs/plan.md` 참고.
 
 ---
 
@@ -120,7 +120,7 @@ src/
 
 아직 없는 것(Phase 2 ② 이후): `push/`, `uploads/`, 어댑터 `registry.ts`(MVP 는 openclaw 하나).
 
-테스트(`apps/server/test/`): 모듈 단위(인메모리 SQLite), `fakes/`(가짜 Gateway·가짜 플러그인·시나리오 대본), `integration/`(시나리오 1~8 `relay`·`prompt`·`recovery`, 시나리오 9a~9f `approvals`, 실제 어댑터 + 가짜 둘), `helpers/`(`bootLiveApp`·wire 클라이언트·시나리오 단계).
+테스트(`apps/server/test/`): 모듈 단위(인메모리 SQLite), `fakes/`(가짜 Gateway·가짜 플러그인·시나리오 대본), `integration/`(시나리오 1~8 `relay`·`prompt`·`recovery`, 시나리오 9a~9g `approvals`(9c′ 포함 8건), 실제 어댑터 + 가짜 둘), `helpers/`(`bootLiveApp`·wire 클라이언트·시나리오 단계).
 손으로 두드리는 실연 도구는 루트 `scripts/wire-cli.ts`(`pnpm wire-cli`, `docs/guides/live-smoke.md`).
 
 개발 모드 `apps/server/scripts/dev-fake.ts`(`pnpm -F @dodok/server dev:fake`, 웹 MVP 스펙 9.2): 위 `test/fakes/` 를 그대로 가져다 가짜 Gateway·가짜 플러그인·대본과 함께 서버를 띄운다 —
@@ -221,7 +221,8 @@ src/
 │     ├─ ConnectionDots.tsx Gateway·플러그인 점 — wire 가 끊기면 마지막 값을 믿지 않고 「알 수 없음」
 │     ├─ NotifyToggle.tsx  사이드바 하단 「알림 켜기」 — 아직 묻지 않은 `default` 일 때만 보인다(granted 면 할 일이 없고, denied·미지원이면 다시 묻지 않는다)
 │     ├─ PanelTabs.tsx     오른쪽 패널의 탭 셸(「설정」·「활동」, `data-testid="page-channel-panel"`). 넓은 화면은 360px `<aside>`, 좁은 화면은 전체 시트.
-│     │                    내용은 포털 하나로 옮겨 다녀 탭을 바꿔도 안쪽이 리마운트되지 않는다
+│     │                    내용은 포털 하나로 옮겨 다녀 탭을 바꿔도 안쪽이 리마운트되지 않는다.
+│     │                    좁은 화면 시트만 초점을 손본다 — 열면 지금 탭 링크(`data-tab-id`), Esc·닫기면 헤더 「채널 설정」 링크. 넓은 화면은 건드리지 않는다
 │     └─ sidebarSheet.tsx  좁은 화면 시트 열기 컨텍스트 + 지금 화면의 메뉴 버튼(초점 복귀 대상)
 ├─ api/
 │  ├─ http.ts              같은 출처 REST(`/api/v1`) — 인증은 httpOnly 쿠키, 토큰을 다루지 않는다. ApiRequestError·NetworkError
@@ -237,13 +238,14 @@ src/
 │  └─ typing.ts            받은 `typing` 저장(5초 TTL)과 작성 중 행위자 목록
 ├─ features/
 │  ├─ activity/            ActivityPanel.tsx(`/c/$channelId/activity` — 맨 위 미해결 승인 카드 1장 + 런 목록 + 타임라인. REST 목록과 런 스토어를 합치고,
-│  │                       종료를 한 번 본 런은 재조회가 늦어도 목록에 붙들어 둔다) · RunList.tsx(`max-h-[40%]`, 진행 중 소요는 `useNowTick`) ·
+│  │                       종료를 한 번 본 런은 재조회가 늦어도 목록에 붙들어 둔다 — REST 「위」.
+│  │                       끊긴 사이 끝난 런은 마지막으로 본 상태를 자리값으로 REST 「밑에」 깔고 목록을 다시 받는다 — 서버 사실이 오면 물러난다) · RunList.tsx(`max-h-[40%]`, 진행 중 소요는 `useNowTick`) ·
 │  │                       RunTimeline.tsx · ToolCallRow.tsx(인자·결과 접힘 기본, `[+N chars hidden]` 이면 「잘렸습니다」) · Notice.tsx(패널 안 상태 문구·「다시 시도」) ·
 │  │                       timeline.ts(순수: 런 이벤트 → 행. 텍스트 델타는 행이 되지 않는다. mergeRuns·mergeRunEvents 로 REST 바탕 + 실시간) ·
 │  │                       useLiveRunEvents.ts(고른 런의 `run.event` 를 소켓에서 직접 — 런 스토어는 텍스트와 마지막 seq 만 들고 있어 행을 못 만든다)
 │  ├─ approvals/           approvalStore.ts(Zustand, 채널별. 승인이 들어오는 길 둘: 구독 ack 의 `pendingApprovals`(syncPending)·wire `approval.requested/resolved`(apply) — 활동 탭은 읽기만 한다.
 │  │                       확정 뒤에 온 `pending` 은 늦은 프레임이라 무시) · ApprovalCard.tsx(제목·severity 색·툴 인자·카운트다운·`allowedDecisions` 버튼만,
-│  │                       누르면 잠그고 ack 대기, 확정되면 결과 한 줄로 남는다) · countdown.ts(1초 간격 남은 시간 문구) ·
+│  │                       누르면 잠그고 ack 대기, 확정되면 결과 한 줄로 남는다. 결정 뒤 초점은 그 결과 줄로 — 「이 카드에서 누른 승인 id」일 때만 옮긴다) · countdown.ts(1초 간격 남은 시간 문구) ·
 │  │                       notify.ts(브라우저 알림 — 권한·지원 여부를 한 자리에서 가르고, 중복은 모듈 `Set` 으로 막는다(확정되면 `forgetApproval` 로 지운다 — 한 탭 안에서만 산다).
 │  │                       이미 답한 승인은 `handlers.ts` 가 `apply` **뒤** 들어온 페이로드의 `status` 로 거른다. `tag` 는 `approval:<id>`)
 │  ├─ auth/                LoginPage · mutations(useLogin·useLogout — 응답 `sessionToken` 은 쓰지 않는다, gcTime 0)
