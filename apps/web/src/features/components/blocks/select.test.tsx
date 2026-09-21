@@ -74,6 +74,7 @@ describe("셀렉트 — 단일", () => {
   it("단일 셀렉트는 라디오로 그리고, 고르기 전에는 「보내기」가 꺼져 있다", () => {
     renderWithClient(<Components message={withSelect(SINGLE)} />);
     const group = screen.getByRole("group", { name: "보고서 형식" });
+    expect(within(group).getByText("보고서 형식").tagName).toBe("LEGEND");
     expect(within(group).getAllByRole("radio")).toHaveLength(2);
     expect(within(group).queryAllByRole("checkbox")).toEqual([]);
     expect(send()).toBeDisabled();
@@ -182,11 +183,16 @@ describe("셀렉트 — 다중", () => {
 
   it("다중에 maxValues 가 없으면 옵션을 모두 고를 수 있다(상한 25)", async () => {
     fake?.onAck("component.interact", () => OK);
-    renderWithClient(<Components message={withSelect({ ...MULTI, maxValues: undefined })} />);
-    for (const o of ABCD) await userEvent.click(screen.getByRole("checkbox", { name: o.label }));
+    // 계약 상한인 25개 — 옵션이 적으면 기본값을 25 밑으로 내려도 안 걸린다
+    const all = Array.from({ length: 25 }, (_, i) => ({ value: `o${i}`, label: `옵션 ${i}` }));
+    renderWithClient(<Components message={withSelect({ ...MULTI, maxValues: undefined, options: all })} />);
+    for (const o of all) await userEvent.click(screen.getByRole("checkbox", { name: o.label }));
+    for (const o of all) expect(screen.getByRole("checkbox", { name: o.label })).toBeChecked();
     expect(screen.queryByText(/최대/)).toBeNull();
     await userEvent.click(send());
-    expect(fake?.sentOf("component.interact")).toMatchObject([{ values: { values: ["a", "b", "c", "d"] } }]);
+    expect(fake?.sentOf("component.interact")).toMatchObject([
+      { values: { values: all.map((o) => o.value) } },
+    ]);
   });
 });
 

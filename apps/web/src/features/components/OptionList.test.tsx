@@ -59,6 +59,8 @@ describe("OptionList — 단일(라디오)", () => {
     render(<Harness spy={spy} />);
     const group = screen.getByRole("group", { name: "보고서 형식" });
     expect(group.tagName).toBe("FIELDSET");
+    // aria-label 로는 같은 이름이 나지만 화면에서 사라진다 — 보이는 legend 여야 한다
+    expect(within(group).getByText("보고서 형식").tagName).toBe("LEGEND");
     expect(within(group).getAllByRole("radio")).toHaveLength(3);
     expect(within(group).queryAllByRole("checkbox")).toEqual([]);
 
