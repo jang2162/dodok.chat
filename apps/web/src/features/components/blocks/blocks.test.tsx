@@ -187,7 +187,7 @@ describe("file", () => {
 });
 
 describe("media·file — 계약 밖 주소", () => {
-  it("https:// 로 시작해야만 img·링크가 된다 — javascript:·data:·http:·대문자 HTTPS://·가운데·앞 공백 https:// 는 자리표시로", () => {
+  it("https:// 로 시작해야만 img·링크가 된다 — javascript:·data:·http:·대문자 HTTPS://·가운데·앞 공백 https://·상대 주소 // 와 / 는 자리표시로", () => {
     const OK_IMG = "https://example.com/ok.png";
     const OK_FILE = "https://example.com/ok.pdf";
     const BAD = [
@@ -199,6 +199,10 @@ describe("media·file — 계약 밖 주소", () => {
       "http://evil.example/?next=https://ok.example",
       // 앞에 공백 — 검사 전에 trim 으로 느슨해지는 것을 잡는다(계약 SafeUrl 도 ^https:// 라 거절한다)
       " https://example.com/x.png",
+      // 프로토콜 상대 주소 — 「상대 주소는 안전」으로 / 를 허용하는 것을 잡는다. //host 는 다른 출처다
+      "//evil.example/x.png",
+      // 같은 출처 경로 — // 만 막고 / 는 허용하는 것을 잡는다. img·링크가 쿠키 실린 같은 출처 GET 이 된다
+      "/api/me",
     ];
     // card() 의 ComponentsV1.parse 를 건너뛴다 — 계약이 먼저 거르면 렌더러의 허용목록이 안 잠긴다.
     // 서버는 쓸 때만 검증하므로 옛 행·느슨해진 계약의 값은 여기까지 온다(url 의 TS 타입은 string 이라 캐스트 없이 들어간다)
@@ -217,7 +221,7 @@ describe("media·file — 계약 밖 주소", () => {
       Array.from(container.querySelectorAll(sel), (e) => e.getAttribute(attr));
     expect(attrs("img", "src")).toEqual([OK_IMG]);
     expect(attrs("a", "href")).toEqual([OK_FILE]);
-    // 막힌 넷은 media 칸·file 줄마다 자리표시 하나씩
+    // 막힌 값은 media 칸·file 줄마다 자리표시 하나씩
     expect(screen.getAllByText(ARTIFACT_PENDING)).toHaveLength(BAD.length * 2);
   });
 });
