@@ -1,4 +1,4 @@
-import type { ApprovalDecision, ApprovalReason, Run, RunEvent, RunState, RunStatus } from "@dodok/shared";
+import type { ApprovalDecision, ApprovalReason, RunEvent, RunState, RunStatus } from "@dodok/shared";
 
 /**
  * 활동 타임라인의 순수 변환(설계 5.2). 런 이벤트를 화면 행으로 접고, REST 바탕과 실시간 값을 합친다.
@@ -268,12 +268,13 @@ export function mergeRunEvents(
 export type ActivityRun = RunState & { createdAt?: string };
 
 /**
- * REST 런 목록(최근 50)에 실시간 런 상태를 덮는다. REST 에 아직 없는 런(방금 시작)도 목록에 든다.
- * 실시간 값이 싣지 않는 열(createdAt 등)은 REST 값이 남는다. 최신이 앞 — id 가 uuid v7 이라 생성 순이다
+ * 바탕(REST 런 목록 최근 50, 그 밑에 깔린 자리값)에 실시간 런 상태를 덮는다. REST 에 아직 없는 런(방금 시작)도
+ * 목록에 든다. 실시간 값이 싣지 않는 열(createdAt 등)은 바탕 값이 남는다. 바탕 안에서는 **뒤에 온 것이 이긴다** —
+ * 부르는 쪽이 자리값을 앞에, 서버 사실을 뒤에 놓는다(D12). 최신이 앞 — id 가 uuid v7 이라 생성 순이다
  */
-export function mergeRuns(rest: readonly Run[], live: readonly RunState[]): ActivityRun[] {
+export function mergeRuns(base: readonly ActivityRun[], live: readonly RunState[]): ActivityRun[] {
   const byId = new Map<string, ActivityRun>();
-  for (const run of rest) byId.set(run.id, run);
+  for (const run of base) byId.set(run.id, run);
   for (const state of live) {
     const prev = byId.get(state.id);
     byId.set(state.id, prev ? { ...prev, ...state } : state);

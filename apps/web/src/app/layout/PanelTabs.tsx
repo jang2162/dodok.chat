@@ -1,6 +1,6 @@
 import { Link, useMatchRoute, useNavigate } from "@tanstack/react-router";
 import { XIcon } from "lucide-react";
-import { type ReactNode, useCallback, useId, useState } from "react";
+import { type ReactNode, type RefObject, useCallback, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useIsNarrow } from "@/hooks/useIsNarrow";
 import { cn } from "@/lib/utils";
@@ -55,14 +55,18 @@ export function PanelTabs({
   channelId,
   active,
   children,
+  openerRef,
 }: {
   channelId: string;
   active: PanelTab;
   children: ReactNode;
+  /** 시트를 연 자리(헤더의 「채널 설정」) — 좁은 화면에서 시트가 닫히면 초점을 여기로 돌려준다(D14) */
+  openerRef?: RefObject<HTMLAnchorElement | null>;
 }) {
   const narrow = useIsNarrow();
   const navigate = useNavigate();
   const titleId = useId();
+  const tabsRef = useRef<HTMLElement>(null);
   const [host] = useState(() => {
     const el = document.createElement("div");
     el.className = "contents";
@@ -95,11 +99,32 @@ export function PanelTabs({
             data-panel-tab={active}
             aria-describedby={undefined}
             className="w-full gap-0 p-0 sm:max-w-none"
+            /*
+             * 시트가 열리면 **탭 머리**에서 시작한다(브라우저 검증 D14). Radix 는 열 때 링크를 건너뛰고
+             * (`removeLinks`) 첫 입력에 초점을 줘서, 뒤에 있는 탭 링크로 가려면 Shift+Tab 이나 Tab 17회가 걸렸다.
+             * 넓은 화면(aside)은 대화상자가 아니라 초점을 옮길 일이 없다 — 링크 순서 그대로다
+             */
+            onOpenAutoFocus={(e) => {
+              // 지금 탭의 링크 — `aria-current` 가 아니라 `active` 로 찾는다(이동이 끝나기 전 프레임에도 어긋나지 않게)
+              const link = tabsRef.current?.querySelector<HTMLElement>(`[data-tab-id="${active}"]`);
+              if (!link) return;
+              e.preventDefault();
+              link.focus();
+            }}
+            /*
+             * 닫으면(Esc·닫기·탭 밖 이동) 시트를 연 자리로 돌려준다. 라우트로 열려 Radix 가 돌려줄 Trigger 가 없어
+             * 초점이 `<body>` 로 떨어졌다(D14). 사이드바 시트(AppShell)와 같은 수법이다
+             */
+            onCloseAutoFocus={(e) => {
+              if (!openerRef?.current) return;
+              e.preventDefault();
+              openerRef.current.focus();
+            }}
           >
             <div className="flex h-14 shrink-0 items-center border-b px-4 pr-12">
               <SheetTitle>{tab.title}</SheetTitle>
             </div>
-            <TabBar channelId={channelId} active={active} />
+            <TabBar ref={tabsRef} channelId={channelId} active={active} />
             <div ref={slot} className={bodyClass} />
           </SheetContent>
         </Sheet>
@@ -133,12 +158,21 @@ export function PanelTabs({
 }
 
 /** 탭 머리. 실제 이동이라 링크다 — 지금 탭은 라우터 Link 가 `aria-current="page"` 를 붙인다 */
-function TabBar({ channelId, active }: { channelId: string; active: PanelTab }) {
+function TabBar({
+  channelId,
+  active,
+  ref,
+}: {
+  channelId: string;
+  active: PanelTab;
+  ref?: RefObject<HTMLElement | null>;
+}) {
   return (
-    <nav aria-label="패널 탭" className="flex shrink-0 gap-1 border-b px-2">
+    <nav ref={ref} aria-label="패널 탭" className="flex shrink-0 gap-1 border-b px-2">
       {TABS.map((tab) => (
         <Link
           key={tab.id}
+          data-tab-id={tab.id}
           to={tab.to}
           params={{ channelId }}
           className={cn(

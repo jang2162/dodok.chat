@@ -1,5 +1,5 @@
 import { Link, Outlet, useParams } from "@tanstack/react-router";
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import { ApiRequestError, NetworkError } from "@/api/http";
 import { useChannel } from "@/api/queries";
 import { ChannelHeader } from "@/app/layout/ChannelHeader";
@@ -25,6 +25,8 @@ export function ChannelPage() {
   const { channelId } = useParams({ strict: false }) as { channelId: string };
   // 오른쪽 패널의 탭 머리는 여기서 그린다 — 탭을 옮겨도 머리의 링크가 죽지 않아야 초점이 살아남는다(D3)
   const tab = usePanelTab();
+  // 좁은 화면에서 패널은 시트로 뜬다 — 닫히면 초점을 연 자리(헤더의 설정 링크)로 돌려준다(D14)
+  const settingsRef = useRef<HTMLAnchorElement>(null);
   useChannelSubscription(channelId);
   const channel = useChannel(channelId);
   const bubbleRunIds = useChannelBubbles(channelId);
@@ -54,7 +56,7 @@ export function ChannelPage() {
     <div data-testid="page-channel" className="flex min-h-0 flex-1">
       <PendingActionsContext.Provider value={pendingActions}>
         <section className="flex min-w-0 flex-1 flex-col">
-          <ChannelHeader channelId={channelId} />
+          <ChannelHeader channelId={channelId} settingsRef={settingsRef} />
           <MessageList
             channelId={channelId}
             bubbleRunIds={bubbleRunIds}
@@ -67,7 +69,7 @@ export function ChannelPage() {
         </section>
       </PendingActionsContext.Provider>
       {tab && (
-        <PanelTabs channelId={channelId} active={tab}>
+        <PanelTabs channelId={channelId} active={tab} openerRef={settingsRef}>
           <Outlet />
         </PanelTabs>
       )}

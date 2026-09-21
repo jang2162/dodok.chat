@@ -1,6 +1,6 @@
 import type { ApprovalDecision, ApprovalReason, ApprovalSeverity, ApprovalStatus } from "@dodok/shared";
 import { InfoIcon, type LucideIcon, ShieldAlertIcon, TriangleAlertIcon } from "lucide-react";
-import { type ReactElement, useState } from "react";
+import { type ReactElement, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useAuthors } from "@/features/messages/useAuthors";
 import { cn } from "@/lib/utils";
@@ -92,6 +92,24 @@ export function ApprovalCard({
   const { author } = useAuthors();
   const pending = view?.approval.status === "pending";
   const { label: remaining, expired } = useRemaining(view?.approval.expiresAt ?? "", pending);
+  /**
+   * 결정을 누르면 버튼 줄이 통째로 사라진다(확정된 카드에는 누를 것이 없다) — 누른 버튼이 언마운트되면서
+   * 초점이 `<body>`·시트 루트로 떨어져 키보드·스크린 리더 사용자가 자리를 잃었다(브라우저 검증 D13, D3 와 같은 부류).
+   * **같은 카드 안에서 결과를 말하는 자리**(「허용됨」 줄)로 옮긴다 — 결말을 곧바로 듣고 Tab 이 카드 안에서 이어진다.
+   * 확정 안내(`선택: …`)는 이미 `aria-live` 라 거기 초점을 주면 같은 말이 두 번 읽힌다 — 그래서 그 줄이 아니다.
+   *
+   * **이 카드에서 누른 때만** 옮긴다(`acted`): 카드는 메시지 흐름과 활동 탭 두 자리에 서는데 `sending` 은 스토어가
+   * 함께 쥐므로, 그것만 보면 안 누른 쪽 카드가 초점을 빼앗아 간다. 카운트다운이 다 된 때도 옮기지 않는다 —
+   * 사용자가 한 일이 아닌데 초점을 뺏는 셈이다
+   */
+  const outcomeRef = useRef<HTMLSpanElement>(null);
+  const acted = useRef(false);
+  const answerable = pending && !expired;
+  useEffect(() => {
+    if (answerable || !acted.current) return;
+    acted.current = false;
+    outcomeRef.current?.focus();
+  }, [answerable]);
   if (!view) return null;
 
   const { approval, sending } = view;
@@ -101,7 +119,6 @@ export function ApprovalCard({
   const outcome =
     approval.status === "pending" ? undefined : OUTCOME[approval.status] + (note ? ` (${note})` : "");
   const args = approval.detail ?? approval.description;
-  const answerable = pending && !expired;
 
   return (
     <div className="flex justify-center px-4 py-1.5">
@@ -129,8 +146,17 @@ export function ApprovalCard({
                 {approval.toolName ? ` · ${approval.toolName}` : ""}
               </p>
             </div>
-            {/* 카운트다운은 1초마다 바뀐다 — 라이브 영역으로 두면 스크린 리더가 매초 읽는다 */}
-            <span className="shrink-0 pt-0.5 text-xs text-muted-foreground tabular-nums">
+            {/*
+              카운트다운은 1초마다 바뀐다 — 라이브 영역으로 두면 스크린 리더가 매초 읽는다.
+              결정 뒤 초점이 오는 자리라 `tabIndex={-1}`(탭 차례에는 안 든다) — 테두리는 `:focus-visible` 에서만
+              떠서 마우스로 누른 사람에게는 안 보인다(D13)
+            */}
+            <span
+              ref={outcomeRef}
+              tabIndex={-1}
+              data-slot="approval-outcome"
+              className="shrink-0 rounded-xs pt-0.5 text-xs text-muted-foreground tabular-nums focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+            >
               {outcome ?? (expired ? EXPIRED_LABEL : remaining && `${remaining} 남음`)}
             </span>
           </div>
@@ -147,6 +173,9 @@ export function ApprovalCard({
                   label={d.label}
                   variant={d.variant}
                   sending={sending}
+                  onActed={(yes) => {
+                    acted.current = yes;
+                  }}
                 />
               ))}
             </div>
@@ -203,12 +232,15 @@ function DecisionButton({
   label,
   variant,
   sending,
+  onActed,
 }: {
   approvalId: string;
   decision: ApprovalDecision;
   label: string;
   variant: "default" | "secondary" | "outline";
   sending?: ApprovalDecision;
+  /** 이 카드에서 눌렀는가 — 확정이 오면 카드가 초점을 결과 줄로 옮긴다(D13). 실패해 버튼이 다시 열리면 거짓 */
+  onActed: (acted: boolean) => void;
 }) {
   const { socket } = useWire();
   const connected = useWireStatus((s) => s.status === "connected");
@@ -217,10 +249,12 @@ function DecisionButton({
     if (!socket || sending) return;
     const { setSending } = useApprovalStore.getState();
     setSending(approvalId, decision);
+    onActed(true);
     emitAck(socket, "approval.resolve", { approvalId, decision }).catch((e: unknown) => {
       const message = resolveErrorMessage(e);
       toast.error(message, { id: `approval-resolve:${message}` });
       setSending(approvalId, undefined);
+      onActed(false);
     });
   }
 

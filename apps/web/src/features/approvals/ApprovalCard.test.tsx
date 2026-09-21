@@ -1,5 +1,5 @@
 import type { Approval, ErrorCode, Result } from "@dodok/shared";
-import { act, screen } from "@testing-library/react";
+import { act, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -208,6 +208,78 @@ describe("ApprovalCard", () => {
     );
     expect(screen.getByText("취소됨 (실행 중지)")).toBeInTheDocument();
     expect(screen.queryByText("만료됨")).not.toBeInTheDocument();
+  });
+
+  /**
+   * 브라우저 검증 D13 — 결정을 누르면 버튼 줄이 통째로 사라지며 **누른 버튼이 언마운트**돼 초점이 `<body>`
+   * (좁은 화면은 시트 루트)로 떨어졌다. D3(탭 전환 초점 유실)와 같은 부류다.
+   * jsdom 은 떨어져 나간 노드도 `activeElement` 로 남겨 두므로 **노드가 살아 있는가**도 함께 본다
+   */
+  it("결정 뒤 초점은 같은 카드의 결과 줄로 간다 — <body> 로 떨어지지 않는다(D13)", async () => {
+    const user = userEvent.setup();
+    fake.onAck("approval.resolve", () => ok(null));
+    renderCard(approval());
+    const pressed = button("이번만 허용");
+    pressed.focus();
+
+    await user.keyboard("{Enter}");
+    // ack 만으로는 안 바뀐다 — 서버 확정이 버튼 줄을 내린다
+    act(() =>
+      useApprovalStore
+        .getState()
+        .apply(approval({ status: "allowed", decision: "allow-once", reason: "user" })),
+    );
+
+    const outcome = screen.getByText("허용됨");
+    expect(document.activeElement).not.toBe(document.body);
+    expect(document.activeElement).toBe(outcome);
+    expect(document.body).toContainElement(outcome);
+    // 탭 차례에는 들지 않고, 테두리는 키보드에서만 — 마우스로 누른 사람에게 링이 튀지 않는다
+    expect(outcome).toHaveAttribute("tabindex", "-1");
+    expect(outcome.className).toContain("focus-visible:ring-2");
+    expect(outcome.className.split(/\s+/)).not.toContain("focus:ring-2");
+  });
+
+  it("누르지 않은 쪽 카드는 초점을 가져가지 않는다 — 카드는 두 자리에 선다(D13)", async () => {
+    const user = userEvent.setup();
+    fake.onAck("approval.resolve", () => ok(null));
+    act(() => useApprovalStore.getState().apply(approval()));
+    renderWithClient(
+      <>
+        <div data-testid="flow">
+          <ApprovalCard approvalId={APPROVAL} channelId={CH} />
+        </div>
+        <div data-testid="panel">
+          <ApprovalCard approvalId={APPROVAL} channelId={CH} />
+        </div>
+      </>,
+    );
+    const flow = screen.getByTestId("flow");
+    const pressed = within(flow).getByRole("button", { name: "이번만 허용" });
+    pressed.focus();
+
+    await user.keyboard("{Enter}");
+    act(() =>
+      useApprovalStore
+        .getState()
+        .apply(approval({ status: "allowed", decision: "allow-once", reason: "user" })),
+    );
+
+    // 누른 카드의 결과 줄이다 — 다른 자리의 카드가 초점을 낚아채지 않는다
+    expect(document.activeElement).toBe(within(flow).getByText("허용됨"));
+    expect(document.activeElement).not.toBe(within(screen.getByTestId("panel")).getByText("허용됨"));
+  });
+
+  it("카운트다운이 다 돼 버튼이 내려갈 때는 초점을 옮기지 않는다 — 사용자가 한 일이 아니다(D13)", async () => {
+    vi.useFakeTimers({ now: NOW });
+    renderCard(approval({ expiresAt: iso(NOW + 1_000) }));
+    const args = button("인자 보기");
+    args.focus();
+
+    await act(async () => void vi.advanceTimersByTime(1_500));
+
+    expect(screen.queryByRole("button", { name: "이번만 허용" })).not.toBeInTheDocument();
+    expect(document.activeElement).toBe(args);
   });
 
   it("인자는 접혀 있고 펼칠 수 있다 — 잘린 표시가 있으면 알린다", async () => {

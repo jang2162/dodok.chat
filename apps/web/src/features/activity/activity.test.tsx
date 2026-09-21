@@ -1,4 +1,4 @@
-import type { Run, RunEvent } from "@dodok/shared";
+import type { ChannelSubscribeResult, Result, Run, RunEvent } from "@dodok/shared";
 import type { QueryClient } from "@tanstack/react-query";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -9,6 +9,7 @@ import { createQueryClient } from "@/app/queryClient";
 import { selectPendingApproval, useApprovalStore } from "@/features/approvals/approvalStore";
 import { emptyTimeline } from "@/features/messages/timeline";
 import { useRunStore } from "@/features/runs/runStore";
+import { createSubscriptions } from "@/realtime/subscriptions";
 import { useWireStatus } from "@/realtime/wire";
 import { createFakeSocket, type FakeSocket } from "../../../test/fakeSocket";
 import {
@@ -863,4 +864,167 @@ it("런 목록 조회가 실패해도 실시간으로 아는 런은 그린다", 
   expect(await within(aside).findByRole("button", { name: /@dev/ })).toHaveTextContent("응답 중");
   // 실패 문구도 함께 남는다 — 목록이 낡았다는 사실을 감추지 않는다
   expect(within(aside).getByText("런 목록을 불러오지 못했습니다.")).toBeInTheDocument();
+});
+
+/**
+ * 브라우저 검증 D12 — 끊긴 사이 끝난 런(D9 의 재접속 경로). 재접속 스냅샷의 `activeRuns` 에 없는 진행 중 런은
+ * 런 스토어에서 빠지는데(`applySubscribed`), 이 탭은 그 런의 종료를 **본 적이 없어** `ended` 기억에도 없다.
+ * 그대로 두면 줄이 목록에서 빠지고 선택이 옛 런으로 넘어가 타임라인이 다른 런의 것이 된다.
+ * 실제 경로 그대로 잰다 — 구독 ack 을 대본으로 주고 `catchUp` 을 돌린다
+ */
+const subscribeAck = (over: Partial<ChannelSubscribeResult> = {}): Result<ChannelSubscribeResult> => ({
+  ok: true,
+  data: { messages: [], hasMore: false, activeRuns: [], pendingApprovals: [], ...over },
+});
+
+async function reconnect(queryClient: QueryClient, over: Partial<ChannelSubscribeResult> = {}) {
+  fake.onAck("channel.subscribe", () => subscribeAck(over));
+  const subs = createSubscriptions({ socket: fake.wire, queryClient });
+  await act(async () => {
+    await subs.catchUp(CH);
+  });
+}
+
+/** RUN(옛 런, REST 에만) + RUN2(실시간으로만 아는 진행 중 런). 고른 런은 최근 것인 RUN2 */
+async function awaitingRun(queryClient?: QueryClient) {
+  const { state, calls } = stubServer({
+    runs: [runOf(RUN)],
+    events: { [RUN]: OTHER_RUN, [RUN2]: TOOL_EVENTS },
+  });
+  const rendered = renderRoute(`/c/${CH}/activity`, queryClient);
+  const aside = await panel();
+  act(() => useRunStore.getState().applyState(runState({ id: RUN2, status: "awaiting_approval" })));
+  await within(aside).findByText("Read");
+  expect(pickedRun(aside)).toBe(RUN2);
+  return { aside, state, calls, queryClient: rendered.queryClient, router: rendered.router };
+}
+
+it("끊긴 사이 끝난 런은 재접속 뒤에도 목록에 남고 선택·타임라인이 그대로다(D12)", async () => {
+  const { aside, state, queryClient } = await awaitingRun();
+  const before = timelineBox(aside);
+  // 서버에서는 이미 끝났다 — 재접속 스냅샷의 activeRuns 에 없다
+  state.runs = [runOf(RUN2, { status: "done" }), runOf(RUN)];
+
+  await reconnect(queryClient);
+
+  // ① 줄이 남는다 ② 선택이 옛 런으로 안 넘어간다 ③ 타임라인이 새로 서지 않는다
+  expect(runIds(aside)).toEqual([RUN2, RUN]);
+  expect(pickedRun(aside)).toBe(RUN2);
+  expect(timelineBox(aside)).toBe(before);
+  expect(within(aside).getByText("Read")).toBeInTheDocument();
+  expect(within(aside).queryByText("옛도구")).not.toBeInTheDocument();
+  // 자리값은 마지막으로 본 상태다 — 재조회가 서버 사실을 받아 오면 그쪽이 덮는다(「승인 대기」 → 「완료」)
+  await waitFor(() =>
+    expect(within(aside).getAllByRole("button", { name: /@dev/ })[0]).toHaveTextContent("완료"),
+  );
+});
+
+it("재접속 목록 조회가 실패해도 끊긴 사이 끝난 런은 사라지지 않는다(D12)", async () => {
+  const { aside, queryClient } = await awaitingRun();
+  // 다시 붙자마자 조회가 또 실패하는 판 — 재접속은 바로 그런 때에 일어난다
+  stubServer({
+    runs: [],
+    events: { [RUN]: OTHER_RUN, [RUN2]: TOOL_EVENTS },
+    override: (method, url) =>
+      method === "GET" && /\/runs\?/.test(url)
+        ? json(500, { code: "INTERNAL", message: "터졌다" })
+        : undefined,
+  });
+
+  await reconnect(queryClient);
+
+  await within(aside).findByText("런 목록을 불러오지 못했습니다.");
+  expect(runIds(aside)).toContain(RUN2);
+  expect(pickedRun(aside)).toBe(RUN2);
+  expect(within(aside).getByText("Read")).toBeInTheDocument();
+});
+
+it("재접속이 지운 다른 채널 런은 이 채널 목록에 나타나지 않는다(D12 ④)", async () => {
+  const { aside, queryClient } = await awaitingRun();
+  const OTHER = uid(104);
+  act(() => useRunStore.getState().applyState(runState({ id: OTHER, channelId: CH2, status: "tool" })));
+  expect(runIds(aside)).toEqual([RUN2, RUN]);
+
+  await reconnect(queryClient);
+
+  // 이 채널 것만 기억한다 — 남의 채널 런이 이 목록에 섞여 들어오지 않는다
+  expect(runIds(aside)).toEqual([RUN2, RUN]);
+  // 그리고 남의 채널 런은 재접속이 건드리지 않는다(그 채널이 맡는다)
+  expect(useRunStore.getState().runs[OTHER]?.state.status).toBe("tool");
+});
+
+it("재접속이 미해결 승인을 닫아도 그 런 줄은 남는다 — D8 정본화와 D12 가 서로 안 상한다(D12 ⑤)", async () => {
+  const { aside, state, queryClient } = await awaitingRun();
+  act(() => useApprovalStore.getState().apply(approval({ runId: RUN2 })));
+  await waitFor(() => expect(aside.querySelector('[data-slot="approval-card"]')).not.toBeNull());
+  state.runs = [runOf(RUN2, { status: "done" }), runOf(RUN)];
+
+  // 끊긴 사이 승인이 확정됐다 — ack 의 미해결 목록이 비어 있다
+  await reconnect(queryClient);
+
+  expect(aside.querySelector('[data-slot="approval-card"]')).toBeNull();
+  expect(runIds(aside)).toEqual([RUN2, RUN]);
+  expect(pickedRun(aside)).toBe(RUN2);
+});
+
+it("채널을 옮기면 「빠진 런」 기억도 버린다(D12 ④)", async () => {
+  const queryClient = createQueryClient(() => {});
+  queryClient.setQueryData(qk.channel(CH2), channelOf(CH2));
+  const { aside, state, router } = await awaitingRun(queryClient);
+
+  await reconnect(queryClient);
+  expect(runIds(aside)).toContain(RUN2);
+
+  // 옮겨 간 채널에는 런이 없다 — 앞 채널에서 빠진 런의 기억이 따라오면 안 된다
+  state.runs = [];
+  await act(() => router.navigate({ to: "/c/$channelId/activity", params: { channelId: CH2 } }));
+
+  const moved = await panel();
+  expect(moved).toBe(aside);
+  await within(moved).findByText("아직 실행 기록이 없습니다.");
+  expect(runIds(moved)).toEqual([]);
+});
+
+/**
+ * 브라우저 검증 D14 — 좁은 화면 시트의 초점 두 자리. 열면 Radix 가 링크를 건너뛰고(`removeLinks`)
+ * 첫 입력에 초점을 줘 탭 머리가 뒤에 남았고, Esc 로 닫으면 돌려줄 Trigger 가 없어 초점이 `<body>` 로 떨어졌다
+ */
+it("좁은 화면에서 시트를 열면 초점이 탭 머리에서 시작한다(D14)", async () => {
+  stubMedia(true);
+  stubServer({ runs: [runOf(RUN)], events: TOOL_EVENTS });
+  renderRoute(`/c/${CH}/activity`);
+
+  const sheet = await screen.findByRole("dialog", { name: "활동" });
+
+  const activityTab = within(sheet).getByRole("link", { name: "활동" });
+  await waitFor(() => expect(activityTab).toHaveFocus());
+  // 링크 차례는 그대로다 — 초점만 옮긴다
+  expect([...sheet.querySelectorAll("[data-tab-id]")].map((el) => el.textContent)).toEqual(["설정", "활동"]);
+});
+
+it("넓은 화면 패널은 초점을 옮기지 않는다 — 링크 차례도 그대로다(D14)", async () => {
+  stubMedia(false);
+  stubServer({ runs: [runOf(RUN)], events: TOOL_EVENTS });
+  renderRoute(`/c/${CH}/activity`);
+  const aside = await panel();
+  await within(aside).findByText("Read");
+
+  // 대화상자가 아니다 — 주소로 들어온 사용자의 초점을 빼앗지 않는다
+  expect(document.activeElement).toBe(document.body);
+  expect([...aside.querySelectorAll("[data-tab-id]")].map((el) => el.textContent)).toEqual(["설정", "활동"]);
+});
+
+it("좁은 화면에서 Esc 로 시트를 닫으면 초점이 「채널 설정」 링크로 돌아간다(D14)", async () => {
+  stubMedia(true);
+  stubServer({ runs: [] });
+  const { router } = renderRoute(`/c/${CH}/activity`);
+  await screen.findByRole("dialog", { name: "활동" });
+
+  await userEvent.keyboard("{Escape}");
+
+  await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}`));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  const header = await screen.findByTestId("channel-header");
+  const opener = within(header).getByRole("link", { name: "채널 설정" });
+  await waitFor(() => expect(opener).toHaveFocus());
 });

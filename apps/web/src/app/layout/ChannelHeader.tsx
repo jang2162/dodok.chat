@@ -1,6 +1,7 @@
 import type { Agent } from "@dodok/shared";
 import { Link, useMatchRoute } from "@tanstack/react-router";
 import { HashIcon, SettingsIcon } from "lucide-react";
+import type { RefObject } from "react";
 import { useAgents, useChannel, useMembers } from "@/api/queries";
 import { agentColorVar } from "@/theme/agentColor";
 import { Avatar, AvatarFallback, AvatarGroup, AvatarGroupCount, AvatarImage } from "@/ui/avatar";
@@ -12,9 +13,16 @@ const MAX_AVATARS = 4;
 
 /**
  * 채널 헤더(스펙 2.4): 이름·주제, 참여 에이전트 아바타 묶음(테두리 에이전트 색, 스펙 7.2), 설정 패널 여닫기.
- * 좁은 화면이면 왼쪽에 「채널 목록 열기」
+ * 좁은 화면이면 왼쪽에 「채널 목록 열기」. `settingsRef` 는 그 설정 링크 — 좁은 화면 시트가 닫히면
+ * 초점이 여기로 돌아온다(브라우저 검증 D14)
  */
-export function ChannelHeader({ channelId }: { channelId: string }) {
+export function ChannelHeader({
+  channelId,
+  settingsRef,
+}: {
+  channelId: string;
+  settingsRef?: RefObject<HTMLAnchorElement | null>;
+}) {
   const channel = useChannel(channelId);
   const members = useMembers(channelId);
   const agents = useAgents();
@@ -66,6 +74,7 @@ export function ChannelHeader({ channelId }: { channelId: string }) {
       )}
       <Button asChild variant="ghost" size="icon-sm">
         <Link
+          ref={settingsRef}
           to={settingsOpen ? "/c/$channelId" : "/c/$channelId/settings"}
           params={{ channelId }}
           activeOptions={{ exact: true }}

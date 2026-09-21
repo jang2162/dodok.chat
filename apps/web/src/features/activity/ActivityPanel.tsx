@@ -34,27 +34,43 @@ function ActivityBody({ channelId }: { channelId: string }) {
    */
   const ended = useRef(new Map<string, RunState>());
   for (const v of live) if (TERMINAL.has(v.state.status)) ended.current.set(v.state.id, v.state);
+
+  /**
+   * 종료를 **못 본 채** 런 스토어에서 빠진 런(브라우저 검증 D12). 재접속 스냅샷은 「이 런은 더는 진행 중이
+   * 아니다」만 말해 주고(`subscriptions.applySubscribed`), 무엇으로 언제 끝났는지(status·endedAt)는 REST 가 안다.
+   * 그래서 마지막으로 본 상태를 **REST 밑에** 깔아 둔다: 줄이 한 프레임도 비지 않아 선택이 옛 런으로 튀지 않고,
+   * 아래 재조회가 서버 사실을 받아 오면 그쪽이 이 자리를 덮는다(`ended` 는 반대로 REST 위다 — 이미 본 종료가 정본).
+   * 종료를 본 런(버블 정리로 빠진 것)은 `ended` 가 맡으므로 여기 넣지 않는다. 채널을 옮기면 통째로 버린다(`key`)
+   */
+  const vanished = useRef(new Map<string, RunState>());
+  const wasLive = useRef(new Map<string, RunState>());
+  const liveIds = new Set(live.map((v) => v.state.id));
+  for (const [id, state] of wasLive.current)
+    if (!liveIds.has(id) && !ended.current.has(id)) vanished.current.set(id, state);
+  wasLive.current = new Map(live.map((v) => [v.state.id, v.state]));
+
   const runs = useMemo(
-    () => mergeRuns(rest.data ?? [], [...ended.current.values(), ...live.map((v) => v.state)]),
+    () =>
+      mergeRuns(
+        [...vanished.current.values(), ...(rest.data ?? [])],
+        [...ended.current.values(), ...live.map((v) => v.state)],
+      ),
     [rest.data, live],
   );
   /**
-   * 런이 끝나면 REST 목록을 다시 받아 둔다. 화면 값이 아니라 **캐시**를 위해서다 — 보이는 줄은 위의 `ended`
-   * 가 이미 서버 사실(끝난 시각까지)로 덮는다. 다시 받아 두지 않으면 캐시는 그 런을 모르는 채로 남아,
-   * 다음 마운트(탭·채널 복귀)가 첫 프레임에 그 런 없이 서고 그때 조회가 실패하면 아예 못 본다
+   * 끝난 것으로 판정된 런이 늘면 REST 목록을 다시 받아 둔다. 몫이 둘이다 — ① `ended` 는 **캐시**를 위해서다:
+   * 보이는 줄은 이미 서버 사실(끝난 시각까지)로 덮여 있고, 다시 받아 두지 않으면 캐시는 그 런을 모르는 채로
+   * 남아 다음 마운트(탭·채널 복귀)가 첫 프레임에 그 런 없이 선다. ② `vanished` 는 **화면**을 위해서다:
+   * 자리값을 서버 사실로 바꿔 줄 곳이 이 재조회뿐이다(D12)
    */
-  const endedKey = live
-    .filter((v) => TERMINAL.has(v.state.status))
-    .map((v) => v.state.id)
-    .sort()
-    .join(",");
-  const seenEnded = useRef(endedKey);
+  const settledKey = [...ended.current.keys(), ...vanished.current.keys()].sort().join(",");
+  const seenSettled = useRef(settledKey);
   const refetchRuns = rest.refetch;
   useEffect(() => {
-    if (seenEnded.current === endedKey) return;
-    seenEnded.current = endedKey;
+    if (seenSettled.current === settledKey) return;
+    seenSettled.current = settledKey;
     void refetchRuns();
-  }, [endedKey, refetchRuns]);
+  }, [settledKey, refetchRuns]);
 
   // 고르지 않았으면 가장 최근 런. 고른 런이 목록에서 사라지면(채널을 옮긴 뒤 등) 다시 최근 런으로 돌아간다
   const [picked, setPicked] = useState<string>();
