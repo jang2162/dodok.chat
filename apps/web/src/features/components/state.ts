@@ -16,7 +16,7 @@ export type StateInput = {
   expired: boolean;
   /** 응답을 기다리는 아이템 id 들 */
   busy: ReadonlySet<string>;
-  /** 그 아이템(또는 모달)의 allowedUsers */
+  /** 그 아이템(또는 모달)의 allowedUsers — 없거나 비어 있으면 누구나 */
   allowedUsers: readonly string[] | undefined;
   itemId: string;
 };
@@ -43,8 +43,13 @@ export function itemState(input: StateInput): ItemState {
   if (!c.reusable && message.componentState?.consumed.includes(itemId)) {
     return { disabled: true, reason: "consumed" };
   }
+  // 서버 interact 와 같다 — 빈 배열은 제한 없음
   const allowed = input.allowedUsers;
-  if (allowed !== undefined && (input.meId === undefined || !allowed.includes(input.meId))) {
+  if (
+    allowed !== undefined &&
+    allowed.length > 0 &&
+    (input.meId === undefined || !allowed.includes(input.meId))
+  ) {
     return { disabled: true, reason: "forbidden" };
   }
   if (input.busy.has(itemId)) return { disabled: true, reason: "busy" };

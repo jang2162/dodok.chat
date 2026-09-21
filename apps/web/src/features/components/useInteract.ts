@@ -1,11 +1,12 @@
-import type { Message } from "@dodok/shared";
+import type { ErrorCode, Message } from "@dodok/shared";
 import { useState } from "react";
 import { toast } from "sonner";
 import { emitAck, useWireStatus, WireAckError } from "@/realtime/wire";
 import { useWire } from "@/realtime/WireProvider";
+import { DISABLED_REASON_TEXT } from "./state";
 
 /** component.interact ack 오류(스펙 6장). wire 오류는 REST 전역 토스트 밖이라 여기서 알린다 */
-const ERR: Partial<Record<string, string>> = {
+const ERR: Partial<Record<ErrorCode, string>> = {
   EXPIRED: "만료된 버튼입니다",
   CONSUMED: "이미 처리된 버튼입니다",
   FORBIDDEN: "이 버튼을 누를 권한이 없습니다",
@@ -13,14 +14,48 @@ const ERR: Partial<Record<string, string>> = {
   TIMEOUT: "서버 응답이 없습니다",
 };
 
+/** ack 이 WireAckError 가 아닌 것으로 깨졌을 때(ack 모양이 계약과 다름) */
+const UNKNOWN_TEXT = "요청을 처리하지 못했습니다";
+
+/** ack 오류 코드 → 화면 문구(ERR 표 한 곳). 표에 없는 코드는 서버 문구 */
+export function interactErrorText(code: ErrorCode, serverMessage: string): string {
+  return ERR[code] ?? serverMessage;
+}
+
+/**
+ * `send` 의 결과 — 거부하지 않고 이것으로 성공·실패를 가른다.
+ * `DISCONNECTED` 는 소켓이나 components.id 가 없어 보내지 않은 것. `details` 는 서버 ApiError.details 그대로
+ * (`VALIDATION` 의 `issues` 등, wire 에서 온 외부 입력이라 쓰는 쪽이 Zod 로 파싱한다)
+ */
+export type SendResult =
+  | { ok: true }
+  | { ok: false; code: ErrorCode | "DISCONNECTED"; text: string; details?: Record<string, unknown> };
+type SendFailure = Extract<SendResult, { ok: false }>;
+
+export type SendOptions = {
+  blockId?: string;
+  /** 실패를 `text` 로 토스트한다(기본 true). 모달은 끄고 대화상자 안에 보인다(스펙 6장) */
+  toast?: boolean;
+};
+
 export type Interact = {
   /** 응답을 기다리는 아이템 id 들 */
   busy: ReadonlySet<string>;
-  /** 거부하지 않는다 — ack 오류는 토스트로 알린다. 소켓·components.id 가 없으면 아무것도 보내지 않는다 */
-  send(itemId: string, values: Record<string, unknown>, opts?: { blockId?: string }): Promise<void>;
+  /** 거부하지 않는다 — 결과로 가르고, 실패는 기본으로 토스트도 한다. 소켓·components.id 가 없으면 아무것도 보내지 않는다 */
+  send(itemId: string, values: Record<string, unknown>, opts?: SendOptions): Promise<SendResult>;
   connected: boolean;
   hasSocket: boolean;
 };
+
+function failureOf(e: unknown): SendFailure {
+  if (!(e instanceof WireAckError)) return { ok: false, code: "INTERNAL", text: UNKNOWN_TEXT };
+  return {
+    ok: false,
+    code: e.code,
+    text: interactErrorText(e.code, e.message),
+    ...(e.details ? { details: e.details } : {}),
+  };
+}
 
 /**
  * 카드 하나의 `component.interact` 래퍼 — 버튼·셀렉트·모달이 함께 쓴다.
@@ -32,8 +67,18 @@ export function useInteract(message: Message): Interact {
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
   const componentId = message.components?.id;
 
-  async function send(itemId: string, values: Record<string, unknown>, opts: { blockId?: string } = {}) {
-    if (!socket || !componentId) return;
+  async function send(
+    itemId: string,
+    values: Record<string, unknown>,
+    opts: SendOptions = {},
+  ): Promise<SendResult> {
+    const fail = (r: SendFailure) => {
+      if (opts.toast !== false) toast.error(r.text);
+      return r;
+    };
+    if (!socket || !componentId) {
+      return fail({ ok: false, code: "DISCONNECTED", text: DISABLED_REASON_TEXT.disconnected });
+    }
     setBusy((s) => new Set(s).add(itemId));
     try {
       await emitAck(socket, "component.interact", {
@@ -43,8 +88,9 @@ export function useInteract(message: Message): Interact {
         itemId,
         values,
       });
+      return { ok: true };
     } catch (e: unknown) {
-      if (e instanceof WireAckError) toast.error(ERR[e.code] ?? e.message);
+      return fail(failureOf(e));
     } finally {
       setBusy((s) => {
         const next = new Set(s);

@@ -1,5 +1,5 @@
 import { ComponentsV1, type Message } from "@dodok/shared";
-import { screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,6 +8,7 @@ import { createFakeSocket, type FakeSocket } from "../../../test/fakeSocket";
 import { msg, uid, USER } from "../../../test/fixtures";
 import { renderWithClient } from "../../../test/messages";
 import { Components } from "./Components";
+import { DISABLED_REASON_TEXT, type ItemState } from "./state";
 
 // 소켓은 테스트가 쥔 가짜 — WireProvider 의 나머지(구독 훅 등)는 원본
 let fake: FakeSocket | undefined;
@@ -214,6 +215,69 @@ describe("Components — 카드와 비활성 사유", () => {
     );
   });
 
+  // toHaveAccessibleDescription 은 aria-describedby 가 없는 id 를 가리키면 title 로 대신 계산한다 —
+  // 그래서 DisabledHint 가 실제로 그 문구를 내는지는 가리키는 요소를 꺼내 따로 잰다
+  it.each<[NonNullable<ItemState["reason"]>, string, () => Promise<string>]>([
+    [
+      "consumed",
+      "이미 처리되었습니다",
+      async () => {
+        const over = { componentState: { expiresAt: FUTURE, consumed: ["continue_relay"] } };
+        renderWithClient(<Components message={withButtons(over)} />);
+        return "이어가기";
+      },
+    ],
+    [
+      "expired",
+      "만료되었습니다",
+      async () => {
+        const over = { componentState: { expiresAt: "2020-01-01T00:00:00.000Z", consumed: [] } };
+        renderWithClient(<Components message={withButtons(over)} />);
+        return "이어가기";
+      },
+    ],
+    [
+      "disconnected",
+      "연결이 끊겨 지금은 보낼 수 없습니다",
+      async () => {
+        useWireStatus.getState().setStatus("reconnecting");
+        renderWithClient(<Components message={withButtons()} />);
+        return "이어가기";
+      },
+    ],
+    [
+      "forbidden",
+      "이 항목을 쓸 권한이 없습니다",
+      async () => {
+        const blocks = [
+          { type: "actions", items: [{ type: "button", id: "ok", label: "좋아", allowedUsers: [uid(99)] }] },
+        ];
+        renderWithClient(<Components message={withButtons({}, blocks)} />);
+        return "좋아";
+      },
+    ],
+    [
+      "busy",
+      "보내는 중입니다",
+      async () => {
+        fake?.onAck("component.interact", () => new Promise(() => {}) as never);
+        renderWithClient(<Components message={withButtons()} />);
+        await userEvent.click(screen.getByRole("button", { name: "이어가기" }));
+        return "이어가기";
+      },
+    ],
+  ])("비활성 사유 %s — aria-describedby 가 가리키는 힌트가 「%s」를 낸다", async (reason, text, setup) => {
+    const button = screen.getByRole("button", { name: await setup() });
+    expect(button).toBeDisabled();
+    const id = button.getAttribute("aria-describedby");
+    expect(id).toBeTruthy();
+    const hint = document.getElementById(id ?? "");
+    expect(hint).not.toBeNull();
+    expect(hint).not.toBe(button);
+    expect(hint?.textContent).toBe(text);
+    expect(text).toBe(DISABLED_REASON_TEXT[reason]);
+  });
+
   it("눌리는 버튼에는 사유가 붙지 않는다", () => {
     renderWithClient(<Components message={withButtons()} />);
     const button = screen.getByRole("button", { name: "이어가기" });
@@ -251,5 +315,45 @@ describe("Components — 카드와 비활성 사유", () => {
     const { container } = renderWithClient(<Components message={message} />);
     const rows = container.querySelectorAll("[data-slot=actions]");
     expect(Array.from(rows, (r) => r.textContent)).toEqual(["첫째", "둘째"]);
+  });
+});
+
+describe("Components — 만료 시계", () => {
+  const NOW = Date.parse("2030-01-01T00:00:00.000Z");
+  const MAX_TIMER_MS = 2_147_483_647;
+  const at = (ms: number) => ({
+    componentState: { expiresAt: new Date(NOW + ms).toISOString(), consumed: [] },
+  });
+  beforeEach(() => vi.useFakeTimers({ now: NOW }));
+  afterEach(() => vi.useRealTimers());
+
+  it("열려 있는 동안 만료 시각이 지나면 다시 그려 비활성·「만료되었습니다」", () => {
+    renderWithClient(<Components message={withButtons(at(1234))} />);
+    const button = screen.getByRole("button", { name: "이어가기" });
+    act(() => vi.advanceTimersByTime(1233));
+    expect(button).toBeEnabled();
+    act(() => vi.advanceTimersByTime(1));
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute("title", "만료되었습니다");
+  });
+
+  it("setTimeout 상한(약 24.8일)을 넘는 먼 만료에는 타이머를 걸지 않는다 — 걸면 넘쳐서 곧바로 만료로 보인다", () => {
+    const set = vi.spyOn(globalThis, "setTimeout");
+    renderWithClient(<Components message={withButtons(at(MAX_TIMER_MS + 60_000))} />);
+    act(() => vi.advanceTimersByTime(1000));
+    expect(screen.getByRole("button", { name: "이어가기" })).toBeEnabled();
+    expect(set.mock.calls.filter(([, ms]) => (ms ?? 0) > MAX_TIMER_MS)).toEqual([]);
+  });
+
+  it("언마운트하면 만료 타이머를 거둔다", () => {
+    const set = vi.spyOn(globalThis, "setTimeout");
+    const clear = vi.spyOn(globalThis, "clearTimeout");
+    const { unmount } = renderWithClient(<Components message={withButtons(at(1234))} />);
+    const i = set.mock.calls.findIndex(([, ms]) => ms === 1234);
+    expect(i).toBeGreaterThanOrEqual(0);
+    const timer: unknown = set.mock.results[i]?.value;
+    expect(clear).not.toHaveBeenCalledWith(timer);
+    unmount();
+    expect(clear).toHaveBeenCalledWith(timer);
   });
 });

@@ -46,6 +46,8 @@ export class WireAckError extends Error {
   constructor(
     readonly code: ErrorCode,
     message: string,
+    /** 서버 ApiError.details(`VALIDATION` 의 `issues` 등) — wire 에서 온 외부 입력이라 쓰는 쪽이 Zod 로 파싱한다 */
+    readonly details?: Record<string, unknown>,
   ) {
     super(message);
     this.name = "WireAckError";
@@ -63,7 +65,7 @@ export type AckEvents = {
 };
 export type AckEvent = { [E in keyof AckEvents]: AckEvents[E] extends never ? never : E }[keyof AckEvents];
 
-/** ack 을 기다린다. `ok:false` 는 그 code 의 WireAckError, 응답이 없으면(시간 초과·끊김) code `TIMEOUT` */
+/** ack 을 기다린다. `ok:false` 는 그 code·details 의 WireAckError, 응답이 없으면(시간 초과·끊김) code `TIMEOUT` */
 export async function emitAck<E extends AckEvent>(
   socket: Pick<WireSocket, "timeout">,
   event: E,
@@ -80,6 +82,6 @@ export async function emitAck<E extends AckEvent>(
   } catch {
     throw new WireAckError("TIMEOUT", `${event} 응답이 없습니다`);
   }
-  if (!res.ok) throw new WireAckError(res.error.code, res.error.message);
+  if (!res.ok) throw new WireAckError(res.error.code, res.error.message, res.error.details);
   return res.data;
 }

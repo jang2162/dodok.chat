@@ -27,6 +27,22 @@ describe("emitAck", () => {
     expect(err).toMatchObject({ code: "NOT_FOUND", message: "channel not found" });
   });
 
+  it("ack 오류의 details 를 버리지 않고 WireAckError.details 로 넘긴다(VALIDATION 의 issues 등)", async () => {
+    const fake = createFakeSocket();
+    const details = { issues: [{ path: ["fields", "title"], message: "Too small" }] };
+    fake.onAck("channel.subscribe", () => ({
+      ok: false,
+      error: { code: "VALIDATION", message: "invalid values", details },
+    }));
+    const err = await emitAck(fake.wire, "channel.subscribe", { channelId: CH }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(WireAckError);
+    expect(err).toMatchObject({ code: "VALIDATION", message: "invalid values", details });
+    // details 가 없는 오류는 없는 그대로
+    fake.onAck("channel.subscribe", () => ({ ok: false, error: { code: "NOT_FOUND", message: "nope" } }));
+    const bare = await emitAck(fake.wire, "channel.subscribe", { channelId: CH }).catch((e: unknown) => e);
+    expect((bare as WireAckError).details).toBeUndefined();
+  });
+
   it("응답이 없으면(emitWithAck 가 던짐) code TIMEOUT, 시간 초과 값은 넘긴 것을 쓴다", async () => {
     const fake = createFakeSocket();
     const err = await emitAck(fake.wire, "run.abort", { runId: CH }, 500).catch((e: unknown) => e);

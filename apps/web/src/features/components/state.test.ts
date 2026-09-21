@@ -60,6 +60,20 @@ describe("itemState", () => {
     expect(itemState({ ...base, allowedUsers: [USER], meId: undefined }).reason).toBe("forbidden");
   });
 
+  // 서버 interact 와 같은 규칙: 비어 있지 않을 때만 막는다(스키마는 빈 배열을 받는다)
+  it("allowedUsers 가 빈 배열이면 제한이 없다 — 누구나 눌린다", () => {
+    for (const meId of [USER, uid(99), undefined]) {
+      expect(itemState({ ...base, allowedUsers: [], meId })).toEqual({ disabled: false });
+    }
+  });
+
+  it("allowedUsers 에 값이 있으면 그 사람만 눌린다", () => {
+    const only = { ...base, allowedUsers: [uid(7)] };
+    expect(itemState({ ...only, meId: uid(7) })).toEqual({ disabled: false });
+    expect(itemState({ ...only, meId: USER })).toEqual({ disabled: true, reason: "forbidden" });
+    expect(itemState({ ...only, meId: undefined })).toEqual({ disabled: true, reason: "forbidden" });
+  });
+
   it("다른 아이템이 소비·전송 중이어도 이 아이템은 눌린다", () => {
     const m = msg(1, { components: CMP, componentState: { expiresAt: iso(FUTURE), consumed: ["other"] } });
     expect(itemState({ ...base, message: m, busy: new Set(["other"]) }).disabled).toBe(false);
@@ -79,6 +93,16 @@ describe("itemState", () => {
       busy: new Set(["ok"]),
     };
     it("다섯이 다 겹치면 disconnected", () => expect(itemState(all).reason).toBe("disconnected"));
+    // 연결됐다고 나와도 소켓이나 components.id 가 없으면 여전히 맨 앞 사유다
+    it("연결됐어도 소켓이 없으면 disconnected", () =>
+      expect(itemState({ ...all, connected: true, hasSocket: false }).reason).toBe("disconnected"));
+    it("연결됐어도 components.id 가 없으면 disconnected", () => {
+      const noId = msg(1, {
+        components: { ...CMP, id: undefined },
+        componentState: { expiresAt: iso(FUTURE), consumed: ["ok"] },
+      });
+      expect(itemState({ ...all, connected: true, message: noId }).reason).toBe("disconnected");
+    });
     it("연결을 빼면 expired", () => expect(itemState({ ...all, connected: true }).reason).toBe("expired"));
     it("만료까지 빼면 consumed", () =>
       expect(itemState({ ...all, connected: true, expired: false }).reason).toBe("consumed"));
