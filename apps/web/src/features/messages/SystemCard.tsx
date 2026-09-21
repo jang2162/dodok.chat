@@ -1,7 +1,7 @@
 import type { Message, SystemKind } from "@dodok/shared";
 import { CircleXIcon, InfoIcon, type LucideIcon, TriangleAlertIcon } from "lucide-react";
+import { Components } from "@/features/components/Components";
 import { cn } from "@/lib/utils";
-import { ActionButtons } from "./ActionButtons";
 import { MessageBody } from "./MessageBody";
 
 const LOOK: Record<SystemKind, { Icon: LucideIcon; label: string; tone: string }> = {
@@ -13,7 +13,7 @@ const LOOK: Record<SystemKind, { Icon: LucideIcon; label: string; tone: string }
 
 /**
  * 시스템 메시지(스펙 5.3·7.2): 가운데 정렬 얇은 카드, `systemMeta.kind` 별 아이콘·색 + 본문.
- * components 가 있으면 버튼(relay_limit 의 「이어가기」 등)
+ * components 가 있으면 그 카드(relay_limit 의 「이어가기」 버튼 등)
  */
 export function SystemCard({ message }: { message: Message }) {
   const { Icon, label, tone } = LOOK[message.systemMeta?.kind ?? "info"];
@@ -32,7 +32,7 @@ export function SystemCard({ message }: { message: Message }) {
         />
         <div className="min-w-0 [&_p]:text-sm">
           <MessageBody bodyMd={message.bodyMd} />
-          <ActionButtons message={message} />
+          <Components message={message} />
         </div>
       </div>
     </div>

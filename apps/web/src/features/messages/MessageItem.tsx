@@ -1,8 +1,8 @@
 import type { Message } from "@dodok/shared";
 import type { ReactNode } from "react";
+import { Components } from "@/features/components/Components";
 import { Avatar, AvatarFallback, AvatarImage } from "@/ui/avatar";
 import { Badge } from "@/ui/badge";
-import { ActionButtons } from "./ActionButtons";
 import { MessageBody } from "./MessageBody";
 import { type Author, useAuthors } from "./useAuthors";
 
@@ -47,7 +47,7 @@ export function AuthorLine({ author, children }: { author: Author; children: Rea
 }
 
 /**
- * 사람·에이전트 메시지(스펙 5.3): 머리(아바타·이름·「AI」·시각) + 본문 + 버튼.
+ * 사람·에이전트 메시지(스펙 5.3): 머리(아바타·이름·「AI」·시각) + 본문 + components 카드.
  * 같은 작성자의 연속(`head: false`)은 머리를 생략하고 시각은 마우스를 올리거나 행 안에 초점이 있을 때만 보인다 —
  * 투명도로만 숨겨 스크린 리더는 늘 읽는다(visibility:hidden 은 접근성 트리에서도 빠진다, web-t7 리뷰 m6)
  */
@@ -75,7 +75,7 @@ export function MessageItem({ message, head }: { message: Message; head: boolean
         )}
         <MessageBody bodyMd={message.bodyMd} />
         {message.editedAt && <span className="text-xs text-muted-foreground">(수정됨)</span>}
-        <ActionButtons message={message} />
+        <Components message={message} />
       </div>
     </article>
   );

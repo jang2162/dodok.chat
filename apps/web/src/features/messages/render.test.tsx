@@ -1,8 +1,10 @@
-import type { SystemKind } from "@dodok/shared";
+import { ComponentsV1, type SystemKind } from "@dodok/shared";
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { useWireStatus } from "@/realtime/wire";
 import { agentColorVar } from "@/theme/agentColor";
+import { createFakeSocket, type FakeSocket } from "../../../test/fakeSocket";
 import { AGENT, msg, uid, USER } from "../../../test/fixtures";
 import { authorsClient, DEV, renderWithClient } from "../../../test/messages";
 import { toBodyMd } from "@/features/composer/serialize";
@@ -13,6 +15,17 @@ import { PendingActionsContext } from "./pendingActions";
 import { PendingItem } from "./PendingItem";
 import { SystemCard } from "./SystemCard";
 import type { PendingMessage } from "./timeline";
+
+// 「이어가기」 회귀 테스트만 소켓을 쥔다 — 그 밖의 테스트는 소켓 없음(WireProvider 밖과 같다)
+let fake: FakeSocket | undefined;
+vi.mock("@/realtime/WireProvider", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/realtime/WireProvider")>()),
+  useWire: () => ({ socket: fake?.wire, subscriptions: undefined }),
+}));
+afterEach(() => {
+  fake = undefined;
+  useWireStatus.getState().setStatus("idle");
+});
 
 describe("MessageBody", () => {
   it("멘션 토큰은 칩 — 에이전트는 @핸들과 색 점, 모르는 id 는 「@알 수 없음」", () => {
@@ -186,6 +199,41 @@ describe("SystemCard", () => {
     const card = screen.getByRole("note");
     expect(within(card).getByRole("img", { name: label })).toBeInTheDocument();
     expect(card).toHaveTextContent(`${kind} 알림`);
+  });
+
+  // 서버(router/service 의 CONTINUE_RELAY_COMPONENTS)가 만드는 카드 모양 그대로 — 그 id 를 서버가 가로채 릴레이를 잇는다.
+  // 렌더러를 갈아 끼우며 이것이 조용히 깨지면 사용자는 릴레이 상한을 못 뚫는다
+  it("「이어가기」 시스템 카드의 버튼이 그대로 동작한다", async () => {
+    fake = createFakeSocket();
+    fake.onAck("component.interact", () => ({ ok: true, data: { interactionId: uid(500) } }));
+    useWireStatus.getState().setStatus("connected");
+    const message = msg(1, {
+      kind: "system",
+      authorType: "system",
+      authorId: undefined,
+      bodyMd: "릴레이 한도에 도달했습니다.",
+      systemMeta: {
+        kind: "relay_limit",
+        relay: { fromAgentId: AGENT, toAgentId: uid(12), sourceRunId: uid(101), rootMessageId: uid(10_000) },
+      },
+      components: ComponentsV1.parse({
+        id: "cmp_relay",
+        blocks: [
+          {
+            type: "actions",
+            items: [{ type: "button", id: "continue_relay", label: "이어가기", style: "primary" }],
+          },
+        ],
+      }),
+      componentState: { expiresAt: "2999-01-01T00:00:00.000Z", consumed: [] },
+    });
+    renderWithClient(<SystemCard message={message} />);
+    const button = within(screen.getByRole("note")).getByRole("button", { name: "이어가기" });
+    expect(button).toBeEnabled();
+    await userEvent.click(button);
+    expect(fake.sentOf("component.interact")).toEqual([
+      { messageId: message.id, componentId: "cmp_relay", itemId: "continue_relay", values: {} },
+    ]);
   });
 });
 
