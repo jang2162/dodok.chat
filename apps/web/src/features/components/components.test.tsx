@@ -93,13 +93,17 @@ describe("Components — 버튼", () => {
     expect(fake?.sentOf("component.interact")).toEqual([]);
   });
 
-  it("링크 버튼은 https:// 만 링크가 된다 — javascript:·data:·http:·대문자 HTTPS:// 는 링크 없이 비활성", () => {
+  it("링크 버튼은 https:// 로 시작해야만 링크가 된다 — javascript:·data:·http:·대문자 HTTPS://·가운데·앞 공백 https:// 는 링크 없이 비활성", () => {
     const OK_URL = "https://example.com/ok";
     const BAD = [
       "javascript:alert(1)",
       "data:text/html,<script>alert(1)</script>",
       "http://example.com/x",
       "HTTPS://example.com/x",
+      // https:// 를 가운데 품은 값 — 접두사 검사가 includes·indexOf 로 느슨해지는 것을 잡는다
+      "http://evil.example/?next=https://ok.example",
+      // 앞에 공백 — 검사 전에 trim 으로 느슨해지는 것을 잡는다(계약 SafeUrl 도 ^https:// 라 거절한다)
+      " https://example.com/x",
     ];
     // withButtons() 의 ComponentsV1.parse 를 건너뛴다 — 계약(SafeUrl)이 먼저 거르면 렌더러의 허용목록이 안 잠긴다.
     // 서버는 쓸 때만 검증하므로 옛 행·느슨해진 계약의 값은 여기까지 온다(url 의 TS 타입은 string 이라 캐스트 없이 들어간다)
@@ -123,10 +127,14 @@ describe("Components — 버튼", () => {
     const { container } = renderWithClient(<Components message={{ ...withButtons(), components }} />);
     expect(Array.from(container.querySelectorAll("a"), (a) => a.getAttribute("href"))).toEqual([OK_URL]);
     for (const url of BAD) {
-      const blocked = screen.getByRole("button", { name: url });
+      // 접근 이름은 앞뒤 공백을 버린다
+      const blocked = screen.getByRole("button", { name: url.trim() });
       expect(blocked).toBeDisabled();
       expect(blocked).toHaveAccessibleDescription(LINK_BLOCKED);
       expect(blocked).toHaveAttribute("title", LINK_BLOCKED);
+      // title 이 같은 설명을 주므로 위 단언만으로는 aria-describedby 가 안 잠긴다 — 가리키는 요소를 꺼내 잰다
+      const hint = document.getElementById(blocked.getAttribute("aria-describedby") ?? "");
+      expect(hint?.textContent).toBe(LINK_BLOCKED);
     }
   });
 
