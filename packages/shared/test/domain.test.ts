@@ -7,6 +7,7 @@ import {
   ApprovalStatus,
   Channel,
   Handle,
+  INTERACTIONS_MAX,
   Message,
   RelayPolicy,
   Run,
@@ -111,6 +112,24 @@ describe("Message", () => {
       },
     });
     expect(m.systemMeta?.kind).toBe("relay_limit");
+  });
+  it("interactions 는 없으면 빈 배열 — 옛 행도 그대로 파싱된다", () => {
+    expect(Message.parse(base).interactions).toEqual([]);
+  });
+
+  it("interactions 는 INTERACTIONS_MAX 를 넘으면 거부", () => {
+    const one = {
+      id: ID(5),
+      componentId: "cmp_1",
+      userId: ID(3),
+      itemId: "ok",
+      values: {},
+      createdAt: NOW,
+    };
+    const make = (n: number) =>
+      Message.safeParse({ ...base, interactions: Array.from({ length: n }, () => one) });
+    expect(make(INTERACTIONS_MAX).success).toBe(true);
+    expect(make(INTERACTIONS_MAX + 1).success).toBe(false);
   });
 });
 

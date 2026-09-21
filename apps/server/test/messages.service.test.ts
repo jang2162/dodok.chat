@@ -1,6 +1,8 @@
-import { Message } from "@dodok/shared";
+import { INTERACTIONS_MAX, Message } from "@dodok/shared";
 import { v7 as uuid } from "uuid";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { Db } from "../src/db/client";
+import { componentInteractions } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
 import { addMember, createChannel } from "../src/modules/channels/service";
 import {
@@ -9,6 +11,7 @@ import {
   createUserMessage,
   getMessage,
   listMessages,
+  withInteractions,
 } from "../src/modules/messages/service";
 import { ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
@@ -30,6 +33,25 @@ function setup() {
 afterEach(() => {
   vi.useRealTimers();
 });
+
+const CARD = {
+  blocks: [{ type: "actions" as const, items: [{ type: "button" as const, id: "ok", label: "OK" }] }],
+};
+
+/** component_interactions 에 한 줄을 바로 넣는다 — interact() 의 검사·런 전달 없이 하이드레이션만 볼 때 */
+function insertInteraction(db: Db, message: Message, userId: string, itemId: string, createdAt: Date): void {
+  db.insert(componentInteractions)
+    .values({
+      id: uuid(),
+      messageId: message.id,
+      componentId: message.components?.id ?? "",
+      userId,
+      itemId,
+      values: {},
+      createdAt,
+    })
+    .run();
+}
 
 describe("messages service", () => {
   it("createUserMessage 는 seq 를 1·2 로 발급하고 @handle 을 토큰으로 바꿔 mentions 를 채운다", () => {
@@ -217,6 +239,94 @@ describe("messages service", () => {
     expect(seqs(listMessages(db, channelId, { afterSeq: 0, limit: 200 }))).toEqual([1, 2, 3, 4, 5]);
     expect(seqs(listMessages(db, channelId, { afterSeq: 1, beforeSeq: 4, limit: 50 }))).toEqual([2, 3]);
     expect(listMessages(db, uuid(), { limit: 10 })).toEqual({ messages: [], hasMore: false });
+  });
+
+  it("withInteractions — components 있는 메시지에만 붙고, 최신 20건이 오름차순", () => {
+    const { db, bus, userId, channelId, devId } = setup();
+    const card = (externalId: string) =>
+      createAgentMessage(db, bus, {
+        channelId,
+        agentId: devId,
+        externalId,
+        bodyMd: "골라",
+        components: CARD,
+      });
+    const msgWithComponents = card("out-c");
+    const other = card("out-other");
+    const msgPlain = createAgentMessage(db, bus, {
+      channelId,
+      agentId: devId,
+      externalId: "out-p",
+      bodyMd: "끝",
+    });
+    // 21건을 createdAt 이 1분씩 늘게 — 넣는 순서는 거꾸로라 행 순서·id 순서로는 정렬이 맞지 않는다
+    const t0 = Date.parse("2026-09-21T00:00:00.000Z");
+    for (let i = 20; i >= 0; i--) {
+      insertInteraction(
+        db,
+        msgWithComponents,
+        userId,
+        i === 0 ? "oldest" : `n${i}`,
+        new Date(t0 + i * 60_000),
+      );
+    }
+    insertInteraction(db, other, userId, "ok", new Date(t0));
+
+    const [withC, otherC, plain] = withInteractions(db, [msgWithComponents, other, msgPlain]);
+    if (!withC || !otherC || !plain) throw new Error("메시지 셋이 그대로 돌아와야 한다");
+    expect(withC.interactions).toHaveLength(INTERACTIONS_MAX);
+    expect((withC.interactions[0]?.createdAt ?? "") < (withC.interactions[19]?.createdAt ?? "")).toBe(true);
+    // 잘린 것은 가장 오래된 1건 — 최신 20건이 오름차순으로 남는다
+    expect(withC.interactions.some((i) => i.itemId === "oldest")).toBe(false);
+    expect(withC.interactions.map((i) => i.itemId)).toEqual(
+      Array.from({ length: 20 }, (_, i) => `n${i + 1}`),
+    );
+    expect(withC.interactions[0]).toEqual({
+      id: expect.any(String),
+      componentId: msgWithComponents.components?.id,
+      userId,
+      itemId: "n1",
+      values: {},
+      createdAt: "2026-09-21T00:01:00.000Z",
+    });
+    expect(Message.parse(withC)).toEqual(withC);
+    // 메시지별로 나뉜다
+    expect(otherC.interactions.map((i) => i.itemId)).toEqual(["ok"]);
+    expect(plain.interactions).toEqual([]);
+  });
+
+  it("components 가 하나도 없으면 질의하지 않는다", () => {
+    const { db, bus, userId, channelId } = setup();
+    const msgPlain = createUserMessage(db, bus, {
+      channelId,
+      authorId: userId,
+      bodyMd: "hi",
+      clientMsgId: "c1",
+    });
+    const spy = vi.spyOn(db, "select");
+    expect(withInteractions(db, [msgPlain])).toEqual([msgPlain]);
+    expect(withInteractions(db, [])).toEqual([]);
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
+  it("listMessages 는 components 카드에 상호작용 기록을 싣는다 — REST 히스토리·구독 ack 가 이 경로다", () => {
+    const { db, bus, userId, channelId, devId } = setup();
+    createUserMessage(db, bus, { channelId, authorId: userId, bodyMd: "골라 줘", clientMsgId: "c1" });
+    const card = createAgentMessage(db, bus, {
+      channelId,
+      agentId: devId,
+      externalId: "out-1",
+      bodyMd: "골라",
+      components: CARD,
+    });
+    insertInteraction(db, card, userId, "ok", new Date());
+
+    const [user, listed] = listMessages(db, channelId, { limit: 50 }).messages;
+    expect(user?.interactions).toEqual([]);
+    expect(listed?.interactions).toMatchObject([{ userId, itemId: "ok", componentId: card.components?.id }]);
+    // 서버 내부 읽기(getMessage)는 거치지 않는다
+    expect(getMessage(db, card.id)?.interactions).toEqual([]);
   });
 
   it("listMessages 의 limit 은 200 을 넘지 않는다", () => {

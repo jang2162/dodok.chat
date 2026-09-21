@@ -28,8 +28,9 @@ type Target = { agentId: string; triggerKind: "continue" | "interaction" };
 
 /**
  * 스펙 3.10·계약 9.3 — 검사(NOT_FOUND → EXPIRED → FORBIDDEN → CONSUMED → VALIDATION) → component_interactions 저장
- * → 1회용이면 consumed 갱신 + message.updated → 대상 에이전트에 continue | interaction 런.
+ * → 1회용이면 consumed 갱신 → message.updated(상호작용마다, 설계 4.3) → 대상 에이전트에 continue | interaction 런.
  * 검사·저장·소비는 한 동기 트랜잭션이라 같은 아이템을 동시에 눌러도 한 번만 통과한다.
+ * 버스로 내보내는 Message 에는 상호작용 기록을 붙이지 않는다 — 붙이는 것은 wire 팬아웃(realtime/events.ts)이다.
  */
 export async function interact(deps: InteractDeps, input: InteractInput): Promise<{ interactionId: string }> {
   const { db, bus } = deps;
@@ -70,7 +71,8 @@ export async function interact(deps: InteractDeps, input: InteractInput): Promis
       })
       .run();
 
-    let updated: Message | undefined;
+    // 재사용 카드도 결과 줄이 실시간으로 늘어야 하므로 상호작용마다 방송한다 — 소비는 1회용만(설계 4.3)
+    let updated: Message = message;
     if (!components.reusable) {
       const row = tx
         .update(messages)
@@ -89,7 +91,7 @@ export async function interact(deps: InteractDeps, input: InteractInput): Promis
     return { message, target, interactionId, interactionText, updated };
   });
 
-  if (result.updated) bus.emit("message.updated", { message: result.updated });
+  bus.emit("message.updated", { message: result.updated });
   const { message, target, interactionId, interactionText } = result;
   await deps.enqueue(
     {

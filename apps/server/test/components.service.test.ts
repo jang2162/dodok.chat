@@ -2,11 +2,18 @@ import type { Agent, Message, RelayPolicy, Run } from "@dodok/shared";
 import { v7 as uuid } from "uuid";
 import { describe, expect, it, vi } from "vitest";
 import type { z } from "zod";
+import type { Db } from "../src/db/client";
 import { componentInteractions } from "../src/db/schema.sqlite";
 import { createAgent, updateAgent } from "../src/modules/agents/service";
 import { addMember, createChannel, removeMember } from "../src/modules/channels/service";
 import { type InteractInput, interact } from "../src/modules/components/service";
-import { createAgentMessage, getMessage } from "../src/modules/messages/service";
+import {
+  createAgentMessage,
+  createUserMessage,
+  getMessage,
+  listMessages,
+  withInteractions,
+} from "../src/modules/messages/service";
 import type { RunPlan } from "../src/modules/router/decide";
 import { createRouter } from "../src/modules/router/service";
 import type { EnqueueTrigger } from "../src/modules/runs/orchestrator";
@@ -43,6 +50,15 @@ const PICKER: CardComponents = {
     },
   ],
 };
+
+/** component_interactions 를 읽는 질의 수를 센다 — 트랜잭션 안(tx)의 질의도 같은 연결의 prepare 를 거친다. 쓰기(insert into)는 세지 않는다 */
+function countInteractionReads(db: Db): { count(): number; restore(): void } {
+  const spy = vi.spyOn(db.$client, "prepare");
+  return {
+    count: () => spy.mock.calls.filter(([sql]) => /from "component_interactions"/.test(String(sql))).length,
+    restore: () => spy.mockRestore(),
+  };
+}
 
 function setup(relayPolicy?: z.input<typeof RelayPolicy>) {
   const db = newTestDb();
@@ -271,15 +287,80 @@ describe("components service — interact", () => {
     expect(t.updated).toEqual([]);
   });
 
-  it("reusable 컴포넌트는 소비하지 않고 message.updated 도 내지 않는다", async () => {
+  it("reusable 카드도 상호작용마다 message.updated 를 쏜다 — 결과 줄이 실시간으로 는다", async () => {
     const t = setup();
     const message = t.card(t.dev, { ...PICKER, reusable: true });
     await interact(t.deps, t.click(message, "go"));
     await interact(t.deps, t.click(message, "go"));
     expect(t.enqueue).toHaveBeenCalledTimes(2);
     expect(t.interactionRows()).toHaveLength(2);
-    expect(t.updated).toEqual([]);
+    expect(t.updated.map((m) => m.id)).toEqual([message.id, message.id]);
+    // 소비 규칙은 그대로 — reusable 은 consumed 가 비어 있다
+    expect(t.updated[1]?.componentState?.consumed).toEqual([]);
     expect(getMessage(t.db, message.id)?.componentState?.consumed).toEqual([]);
+    // 결과 줄은 wire 경계(팬아웃)가 붙인다 — 그 메시지를 하이드레이션하면 2건(팬아웃 쪽은 wire.runs.test)
+    const [hydrated] = withInteractions(t.db, t.updated.slice(1));
+    expect(hydrated?.interactions.map((i) => i.itemId)).toEqual(["go", "go"]);
+  });
+
+  it("interact() 안에서 읽은 메시지·버스 페이로드에는 interactions 가 없다 — 내부 경로는 하이드레이션하지 않는다", async () => {
+    const t = setup();
+    const message = t.card(t.dev, { ...PICKER, reusable: true });
+    await interact(t.deps, t.click(message, "go"));
+    const reads = countInteractionReads(t.db);
+    try {
+      await interact(t.deps, t.click(message, "go"));
+      expect(reads.count()).toBe(0);
+      // 대조 — 하이드레이션을 부르면 세어진다(세는 방법이 헛돌지 않는다)
+      withInteractions(t.db, [message]);
+      expect(reads.count()).toBe(1);
+    } finally {
+      reads.restore();
+    }
+    // DB 에는 2건이 있어도 버스로 나간 Message 는 비어 있다 — 붙이는 것은 팬아웃(클라이언트 경계)의 몫
+    expect(t.interactionRows()).toHaveLength(2);
+    expect(t.updated[1]?.interactions).toEqual([]);
+  });
+
+  it("components 없는 메시지는 질의 0회, interactions 는 []", () => {
+    const t = setup();
+    createUserMessage(t.db, t.bus, {
+      channelId: t.channel.id,
+      authorId: t.userId,
+      bodyMd: "안녕",
+      clientMsgId: "c1",
+    });
+    createAgentMessage(t.db, t.bus, {
+      channelId: t.channel.id,
+      agentId: t.dev.id,
+      externalId: "p",
+      bodyMd: "네",
+    });
+    const reads = countInteractionReads(t.db);
+    try {
+      const page = listMessages(t.db, t.channel.id, { limit: 50 });
+      expect(page.messages).toHaveLength(2);
+      expect(page.messages.map((m) => m.interactions)).toEqual([[], []]);
+      expect(reads.count()).toBe(0);
+    } finally {
+      reads.restore();
+    }
+  });
+
+  it("같은 아이템을 동시에 눌러도 한 번만 통과한다", async () => {
+    const t = setup();
+    const message = t.card(t.dev);
+    const results = await Promise.allSettled([
+      interact(t.deps, t.click(message, "go")),
+      interact(t.deps, t.click(message, "go")),
+    ]);
+    expect(results.map((r) => r.status).sort()).toEqual(["fulfilled", "rejected"]);
+    const rejected = results.find((r) => r.status === "rejected");
+    expect(rejected?.reason).toMatchObject({ body: { code: "CONSUMED" } });
+    expect(t.interactionRows()).toHaveLength(1);
+    expect(t.enqueue).toHaveBeenCalledTimes(1);
+    expect(t.updated).toHaveLength(1);
+    expect(getMessage(t.db, message.id)?.componentState?.consumed).toEqual(["go"]);
   });
 
   it("오류 코드와 순서는 계약 9.3 — NOT_FOUND → EXPIRED → FORBIDDEN → CONSUMED → VALIDATION", async () => {

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { Id, IsoDateTime } from "../common";
-import { ComponentState, ComponentsV1 } from "../components";
+import { ComponentState, ComponentsV1, ItemId } from "../components";
 import { MentionSet } from "../mention"; // MentionSet은 mention.ts가 소유. 루트 index가 export하므로 여기서 재export하지 않는다(export * 충돌 방지).
 
 export const Handle = z.string().regex(/^[a-z0-9_-]{2,32}$/);
@@ -100,6 +100,20 @@ export const SystemMeta = z.object({
 });
 export type SystemMeta = z.infer<typeof SystemMeta>;
 
+/** 이 메시지의 components 에 일어난 상호작용 하나. 정본은 서버의 component_interactions 테이블이다. */
+export const MessageInteraction = z.object({
+  id: Id,
+  componentId: z.string().max(100),
+  userId: Id,
+  itemId: ItemId,
+  values: z.record(z.string(), z.unknown()),
+  createdAt: IsoDateTime,
+});
+export type MessageInteraction = z.infer<typeof MessageInteraction>;
+
+/** 메시지에 싣는 상호작용 개수 상한. 넘으면 최신 쪽을 남긴다(설계 3장). */
+export const INTERACTIONS_MAX = 20;
+
 export const Message = z.object({
   id: Id,
   channelId: Id,
@@ -112,6 +126,11 @@ export const Message = z.object({
   attachments: z.array(Attachment).max(10).default([]),
   components: ComponentsV1.optional(),
   componentState: ComponentState.optional(), // components가 있을 때 서버가 부여 (만료 시각·소비된 아이템)
+  /**
+   * 이 메시지 카드에 일어난 상호작용(설계 3장). **기본값이 있어 경계를 넘는 Message 에는 항상 있다** —
+   * 없는 채로 message.updated 가 오면 웹 캐시가 기존 결과 줄을 지워 버린다.
+   */
+  interactions: z.array(MessageInteraction).max(INTERACTIONS_MAX).default([]),
   systemMeta: SystemMeta.optional(), // kind === "system"일 때
   replyTo: Id.optional(),
   runId: Id.optional(), // agent 메시지: 만들어 낸 런

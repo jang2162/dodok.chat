@@ -1,12 +1,12 @@
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
-import { type Agent, Run, RunEventsReplayResult, type RunState } from "@dodok/shared";
+import { type Agent, type Message, Run, RunEventsReplayResult, type RunState } from "@dodok/shared";
 import { v7 as uuid } from "uuid";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { App } from "../src/app";
 import { createAgent } from "../src/modules/agents/service";
 import { addMember, type ChannelRecord, createChannel } from "../src/modules/channels/service";
 import { createAgentMessage } from "../src/modules/messages/service";
-import { getRun, insertRun } from "../src/modules/runs/store";
+import { getRun, insertRun, listOpenRuns } from "../src/modules/runs/store";
 import { bootTestApp, login } from "./helpers/app";
 import { seedWorkspace } from "./helpers/seed";
 import { connectWire, type WireClient, waitFor } from "./helpers/wire";
@@ -193,6 +193,71 @@ describe("wire 런 핸들러·REST 런 조회 (앱 부팅, FakeAdapter 배선)",
     ).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
 
     await socket.emitWithAck("run.abort", { runId: interactionRun?.id ?? "" });
+  });
+
+  it("상호작용 기록은 message.updated·새 구독 ack·REST 재조회 셋 다에 실린다 — reusable 카드도 누를 때마다 방송", async () => {
+    const socket = await connect();
+    const source = insertRun(app.db, {
+      channelId: channel.id,
+      agentId: dev.id,
+      triggerKind: "mention",
+      rootMessageId: uuid(),
+      relayDepth: 0,
+      sessionKey: `agent:dev:dodok:channel:${channel.id}`,
+      createdAt: new Date(),
+    });
+    const externalId = `card-${++n}`;
+    const created = waitFor(socket, "message.created", (p) => p.message.externalId === externalId);
+    const card = createAgentMessage(app.db, app.bus, {
+      channelId: channel.id,
+      agentId: dev.id,
+      runId: source.id,
+      externalId,
+      bodyMd: "몇 번이든 눌러도 됩니다",
+      components: {
+        reusable: true,
+        blocks: [{ type: "actions", items: [{ type: "button", id: "go", label: "진행" }] }],
+      },
+    });
+    expect((await created).message.interactions).toEqual([]);
+    const click = { messageId: card.id, componentId: card.components?.id ?? "", itemId: "go", values: {} };
+
+    try {
+      // ② message.updated — 누를 때마다 한 번씩, 결과 줄이 1 → 2 로 는다
+      const first = waitFor(socket, "message.updated", (p) => p.message.id === card.id);
+      expect(await socket.emitWithAck("component.interact", click)).toMatchObject({ ok: true });
+      expect((await first).message.interactions).toMatchObject([{ itemId: "go", userId: app.ownerUserId }]);
+      const second = waitFor(socket, "message.updated", (p) => p.message.id === card.id);
+      expect(await socket.emitWithAck("component.interact", click)).toMatchObject({ ok: true });
+      const updated = (await second).message;
+      expect(updated.interactions).toHaveLength(2);
+      // 소비 규칙은 그대로 — reusable 은 consumed 가 비어 있다
+      expect(updated.componentState?.consumed).toEqual([]);
+
+      // ① 새 탭 — 새 소켓의 구독 ack
+      const fresh = await connectWire(app, token);
+      sockets.push(fresh);
+      const ack = await fresh.emitWithAck("channel.subscribe", { channelId: channel.id });
+      if (!ack.ok) throw new Error(ack.error.code);
+      expect(ack.data.messages.find((m) => m.id === card.id)?.interactions).toEqual(updated.interactions);
+
+      // ③ 새로고침 — REST 히스토리
+      const res = await app.fastify.inject({
+        method: "GET",
+        url: `/api/v1/channels/${channel.id}/messages`,
+        headers,
+      });
+      expect(res.statusCode).toBe(200);
+      const { messages } = res.json() as { messages: Message[] };
+      expect(messages.find((m) => m.id === card.id)?.interactions).toEqual(updated.interactions);
+    } finally {
+      // 상호작용 런 둘을 닫는다 — 같은 세션에 남으면 뒤 테스트의 멘션 런이 줄을 선다
+      for (const run of listOpenRuns(app.db).filter(
+        (r) => r.channelId === channel.id && r.id !== source.id,
+      )) {
+        await socket.emitWithAck("run.abort", { runId: run.id });
+      }
+    }
   });
 
   it("approval.resolve 는 없는 승인에 NOT_FOUND, channel.subscribe 는 진행 중 런을 싣는다", async () => {

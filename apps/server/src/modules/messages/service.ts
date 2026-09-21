@@ -1,9 +1,17 @@
-import { ComponentsV1, Message, type SystemKind, type SystemMeta, tokenize } from "@dodok/shared";
-import { and, asc, desc, eq, gt, lt } from "drizzle-orm";
+import {
+  ComponentsV1,
+  INTERACTIONS_MAX,
+  Message,
+  type MessageInteraction,
+  type SystemKind,
+  type SystemMeta,
+  tokenize,
+} from "@dodok/shared";
+import { and, asc, desc, eq, gt, inArray, lt } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import type { z } from "zod";
 import type { Db, DbOrTx } from "../../db/client";
-import { channels, messages } from "../../db/schema.sqlite";
+import { channels, componentInteractions, messages } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
 import { parseStored } from "../../http/validate";
 import type { ServerBus } from "../../realtime/bus";
@@ -75,6 +83,41 @@ export function rowToMessage(row: MessageRow): Message {
     },
     "message",
   );
+}
+
+/**
+ * 클라이언트가 볼 Message 에 상호작용 기록을 붙인다(설계 4.1·4.2).
+ * components 가 있는 메시지만 고른다 — 보통 한 페이지에 0~2건이고, 하나도 없으면 질의하지 않는다.
+ * 서버 내부에서만 쓸 Message 에는 붙이지 않는다(트랜잭션마다 질의가 늘어난다).
+ */
+export function withInteractions(db: DbOrTx, msgs: Message[]): Message[] {
+  const ids = msgs.filter((m) => m.components !== undefined).map((m) => m.id);
+  if (ids.length === 0) return msgs;
+  const rows = db
+    .select()
+    .from(componentInteractions)
+    .where(inArray(componentInteractions.messageId, ids))
+    .orderBy(asc(componentInteractions.createdAt), asc(componentInteractions.id))
+    .all();
+  const byMessage = new Map<string, MessageInteraction[]>();
+  for (const r of rows) {
+    const list = byMessage.get(r.messageId) ?? [];
+    list.push({
+      id: r.id,
+      componentId: r.componentId,
+      userId: r.userId,
+      itemId: r.itemId,
+      values: r.values,
+      createdAt: r.createdAt.toISOString(),
+    });
+    byMessage.set(r.messageId, list);
+  }
+  return msgs.map((m) => {
+    const list = byMessage.get(m.id);
+    if (!list) return m;
+    // 넘치면 최신 쪽 20건을 남긴다 — 오래된 것이 잘린다(설계 3장)
+    return { ...m, interactions: list.slice(-INTERACTIONS_MAX) };
+  });
 }
 
 /** (authorId, clientMsgId) 가 이미 있으면 그 메시지를 돌려준다(이벤트 없음). 새로 저장했을 때만 커밋 뒤 message.created. */
@@ -157,6 +200,7 @@ export function createSystemMessage(db: Db, bus: ServerBus, input: CreateSystemM
 /**
  * seq 오름차순 한 페이지(limit ≤ 200). afterSeq 가 있으면 그 초과에서 가장 오래된 것부터(hasMore = 더 새것이 있다),
  * 없으면 (beforeSeq 미만에서) 가장 최근 것들(hasMore = 더 옛것이 있다).
+ * REST 히스토리와 구독 ack 가 쓰는 클라이언트 경로라 상호작용 기록을 붙여 돌려준다.
  */
 export function listMessages(
   db: DbOrTx,
@@ -183,7 +227,7 @@ export function listMessages(
   const hasMore = rows.length > limit;
   const page = rows.slice(0, limit);
   if (!oldestFirst) page.reverse();
-  return { messages: page.map(rowToMessage), hasMore };
+  return { messages: withInteractions(db, page.map(rowToMessage)), hasMore };
 }
 
 export function getMessage(db: DbOrTx, id: string): Message | undefined {

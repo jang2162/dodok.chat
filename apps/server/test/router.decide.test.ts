@@ -55,6 +55,7 @@ const userMsg = (agents: string[], bodyMd = "hi"): Message => ({
   bodyMd,
   mentions: { agents, users: [] },
   attachments: [],
+  interactions: [],
   createdAt: NOW,
 });
 const agentMsg = (author: string, agents: string[], bodyMd = "reply"): Message => ({
@@ -67,6 +68,7 @@ const agentMsg = (author: string, agents: string[], bodyMd = "reply"): Message =
   bodyMd,
   mentions: { agents, users: [] },
   attachments: [],
+  interactions: [],
   runId: ID(40),
   createdAt: NOW,
 });
