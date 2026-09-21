@@ -225,12 +225,19 @@ describe("wire 런 핸들러·REST 런 조회 (앱 부팅, FakeAdapter 배선)",
     try {
       // ② message.updated — 누를 때마다 한 번씩, 결과 줄이 1 → 2 로 는다
       const first = waitFor(socket, "message.updated", (p) => p.message.id === card.id);
-      expect(await socket.emitWithAck("component.interact", click)).toMatchObject({ ok: true });
+      const firstAck = await socket.emitWithAck("component.interact", click);
+      if (!firstAck.ok) throw new Error(firstAck.error.code);
       expect((await first).message.interactions).toMatchObject([{ itemId: "go", userId: app.ownerUserId }]);
       const second = waitFor(socket, "message.updated", (p) => p.message.id === card.id);
-      expect(await socket.emitWithAck("component.interact", click)).toMatchObject({ ok: true });
+      const secondAck = await socket.emitWithAck("component.interact", click);
+      if (!secondAck.ok) throw new Error(secondAck.error.code);
       const updated = (await second).message;
       expect(updated.interactions).toHaveLength(2);
+      // 기록 id 는 ack 의 interactionId 그대로, 누른 순서대로
+      expect(updated.interactions.map((i) => i.id)).toEqual([
+        firstAck.data.interactionId,
+        secondAck.data.interactionId,
+      ]);
       // 소비 규칙은 그대로 — reusable 은 consumed 가 비어 있다
       expect(updated.componentState?.consumed).toEqual([]);
 

@@ -14,10 +14,12 @@ import { Server } from "socket.io";
 import { v7 as uuid } from "uuid";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { App } from "../src/app";
+import { componentInteractions } from "../src/db/schema.sqlite";
 import { apiError } from "../src/http/errors";
 import type { Logger } from "../src/logger";
 import { createChannel, getChannel, listMembers } from "../src/modules/channels/service";
-import { createUserMessage } from "../src/modules/messages/service";
+import { createSystemMessage, createUserMessage } from "../src/modules/messages/service";
+import { ServerBus } from "../src/realtime/bus";
 import { attachWire, type WireContext } from "../src/realtime/socket";
 import type { RunsFacade, WireServer } from "../src/realtime/types";
 import { bootTestApp, login } from "./helpers/app";
@@ -348,8 +350,29 @@ describe("wire (앱 부팅, FakeAdapter)", () => {
       bodyMd: "fan",
       clientMsgId: "f-1",
     });
+    // 기록이 이미 있는 카드 — 지금 서버의 message.created 는 모두 새 메시지라 이런 페이로드를 내지 않지만,
+    // 팬아웃이 하이드레이션하므로 앞으로 생길 emit 자리도 결과 줄이 실린다(Ruling 1). 저장은 앱 bus 밖에서.
+    const card = createSystemMessage(app.db, new ServerBus(), {
+      channelId: channel.id,
+      kind: "info",
+      bodyMd: "card",
+      components: { blocks: [{ type: "actions", items: [{ type: "button", id: "ok", label: "OK" }] }] },
+    });
+    app.db
+      .insert(componentInteractions)
+      .values({
+        id: uuid(),
+        messageId: card.id,
+        componentId: card.components?.id ?? "",
+        userId: app.ownerUserId,
+        itemId: "ok",
+        values: {},
+        createdAt: new Date(),
+      })
+      .run();
 
     const expected = Promise.all([
+      waitFor(member, "message.created", (p) => p.message.id === card.id),
       waitFor(member, "message.updated"),
       waitFor(member, "run.state"),
       waitFor(member, "run.event"),
@@ -360,6 +383,7 @@ describe("wire (앱 부팅, FakeAdapter)", () => {
       waitFor(outsider, "adapter.status"),
       waitFor(outsider, "system.notice"),
     ]);
+    app.bus.emit("message.created", { message: card });
     app.bus.emit("message.updated", { message });
     app.bus.emit("run.state", { run });
     app.bus.emit("run.event", { event, channelId: channel.id });
@@ -369,8 +393,20 @@ describe("wire (앱 부팅, FakeAdapter)", () => {
     app.bus.emit("adapter.status", { provider: "openclaw", gateway: "reconnecting", bridge: "down" });
     app.bus.emit("system.notice", { level: "warn", message: "notice" });
 
-    const [updated, state, runEvent, channelUpdated, memberChanged, typing, status, outsiderStatus, notice] =
-      await expected;
+    const [
+      cardCreated,
+      updated,
+      state,
+      runEvent,
+      channelUpdated,
+      memberChanged,
+      typing,
+      status,
+      outsiderStatus,
+      notice,
+    ] = await expected;
+    expect(card.interactions).toEqual([]);
+    expect(cardCreated.message.interactions).toMatchObject([{ itemId: "ok", userId: app.ownerUserId }]);
     expect(updated.message.id).toBe(message.id);
     expect(state).toEqual({ run });
     // bus 의 channelId 는 룸 선택용 — wire 페이로드에는 싣지 않는다

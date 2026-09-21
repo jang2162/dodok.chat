@@ -39,15 +39,23 @@ const CARD = {
 };
 
 /** component_interactions 에 한 줄을 바로 넣는다 — interact() 의 검사·런 전달 없이 하이드레이션만 볼 때 */
-function insertInteraction(db: Db, message: Message, userId: string, itemId: string, createdAt: Date): void {
+function insertInteraction(
+  db: Db,
+  message: Message,
+  userId: string,
+  itemId: string,
+  createdAt: Date,
+  values: Record<string, unknown> = {},
+  id: string = uuid(),
+): void {
   db.insert(componentInteractions)
     .values({
-      id: uuid(),
+      id,
       messageId: message.id,
       componentId: message.components?.id ?? "",
       userId,
       itemId,
-      values: {},
+      values,
       createdAt,
     })
     .run();
@@ -270,7 +278,7 @@ describe("messages service", () => {
         new Date(t0 + i * 60_000),
       );
     }
-    insertInteraction(db, other, userId, "ok", new Date(t0));
+    insertInteraction(db, other, userId, "ok", new Date(t0), { values: ["a"] });
 
     const [withC, otherC, plain] = withInteractions(db, [msgWithComponents, other, msgPlain]);
     if (!withC || !otherC || !plain) throw new Error("메시지 셋이 그대로 돌아와야 한다");
@@ -292,7 +300,30 @@ describe("messages service", () => {
     expect(Message.parse(withC)).toEqual(withC);
     // 메시지별로 나뉜다
     expect(otherC.interactions.map((i) => i.itemId)).toEqual(["ok"]);
+    expect(otherC.interactions[0]?.values).toEqual({ values: ["a"] });
     expect(plain.interactions).toEqual([]);
+  });
+
+  it("withInteractions — createdAt 이 같으면 id 순이다(같은 밀리초의 두 클릭)", () => {
+    const { db, bus, userId, channelId, devId } = setup();
+    const card = createAgentMessage(db, bus, {
+      channelId,
+      agentId: devId,
+      externalId: "out-tie",
+      bodyMd: "골라",
+      components: CARD,
+    });
+    const at = new Date("2026-09-21T00:00:00.000Z");
+    // uuidv7 — 같은 밀리초 안에서도 뒤에 만든 쪽이 크다(interact() 가 기록 id 를 만드는 방식 그대로)
+    const firstId = uuid();
+    const secondId = uuid();
+    expect(firstId < secondId).toBe(true);
+    // id 역순으로 넣는다 — 행 순서로는 id 순이 나오지 않는다
+    insertInteraction(db, card, userId, "second", at, {}, secondId);
+    insertInteraction(db, card, userId, "first", at, {}, firstId);
+
+    const [hydrated] = withInteractions(db, [card]);
+    expect(hydrated?.interactions.map((i) => i.itemId)).toEqual(["first", "second"]);
   });
 
   it("components 가 하나도 없으면 질의하지 않는다", () => {
