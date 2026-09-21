@@ -26,10 +26,13 @@ vi.setConfig({ testTimeout: 30_000, hookTimeout: 20_000 });
 const RELAY_POLICY = { maxRelayTurns: 2, allowPairs: "all" as const };
 /** 로컬 로그인 owner 의 핸들(auth.test 가 잰다) — 상호작용 글의 `user=@…` */
 const OWNER_HANDLE = "owner";
-/** 에이전트가 대본에 채워 보내는 components.id — `cmp_` 로 시작해 접두어만 보는 단언으로는 덮어쓰기를 가려내지 못한다 */
-const AGENT_COMPONENT_ID = "cmp_from_agent";
-/** 서버가 저장 시 부여하는 모양 `cmp_<uuidv7>` */
-const SERVER_COMPONENT_ID_RE = /^cmp_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+/**
+ * 에이전트가 대본에 채워 보내는 components.id — 일부러 서버가 낼 법한 모양(`cmp_<uuid>`)이다. 그래서 「그대로 유지」는
+ * `not.toBe` 만, 에이전트 값을 재료로 쓴 「부분 유지」(접두사·꼬리를 붙임)는 모양 단언만 잡는다
+ */
+const AGENT_COMPONENT_ID = "cmp_01a0c2a8-8b53-719b-a49b-3aba4cd93eca";
+/** 서버가 저장 시 부여하는 모양 `cmp_<uuid>` — 계약은 uuid 판을 정하지 않으므로 버전·variant 자리는 보지 않는다 */
+const SERVER_COMPONENT_ID_RE = /^cmp_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 type CardComponents = NonNullable<ScenarioScript["components"]>;
 
