@@ -6,7 +6,7 @@ import { MediaBlock } from "./blocks/MediaBlock";
 import { SectionBlock } from "./blocks/SectionBlock";
 import { SeparatorBlock } from "./blocks/SeparatorBlock";
 import { type Interact, useInteract } from "./useInteract";
-// 태스크 4: 모달 import 는 이 줄 아래에
+import { ComponentModal } from "./modal/ComponentModal";
 
 /** 만료 시각에 다시 그리는 타이머의 상한(setTimeout 최대 지연 약 24.8일) */
 const MAX_TIMER_MS = 2_147_483_647;
@@ -58,7 +58,7 @@ export function Components({ message }: { message: Message }) {
         <BlockView key={i} block={b} message={message} io={io} expired={expired} />
       ))}
 
-      {/* 태스크 4: 모달 트리거 — 블록들 아래 */}
+      {c.modal && <ComponentModal modal={c.modal} message={message} io={io} expired={expired} />}
 
       {/* 태스크 6: 결과 줄 — 모달 트리거 뒤, 오래된 것부터 */}
     </div>

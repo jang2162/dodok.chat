@@ -1,0 +1,496 @@
+import { ComponentsV1, type Message } from "@dodok/shared";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { toast } from "sonner";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useWireStatus } from "@/realtime/wire";
+import { createFakeSocket, type FakeSocket } from "../../../../test/fakeSocket";
+import { msg, uid, USER } from "../../../../test/fixtures";
+import { renderWithClient } from "../../../../test/messages";
+import { Components } from "../Components";
+import { DISABLED_REASON_TEXT } from "../state";
+
+// 소켓은 테스트가 쥔 가짜 — WireProvider 의 나머지(구독 훅 등)는 원본
+let fake: FakeSocket | undefined;
+vi.mock("@/realtime/WireProvider", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/realtime/WireProvider")>()),
+  useWire: () => ({ socket: fake?.wire, subscriptions: undefined }),
+}));
+
+const COMPONENT_ID = "cmp_1";
+const FUTURE = "2999-01-01T00:00:00.000Z";
+const OK = { ok: true, data: { interactionId: uid(500) } } as const;
+const OPTS = [
+  { value: "hi", label: "높음" },
+  { value: "lo", label: "낮음" },
+];
+
+const BASE_MODAL = {
+  id: "form",
+  title: "새 작업",
+  triggerLabel: "작업 만들기",
+  fields: [{ type: "text", id: "title", label: "제목", required: true }],
+};
+
+/** 모달 하나를 단 카드. fields 를 주면 그것으로 바꾼다 */
+function withModal(
+  modal: Record<string, unknown> = {},
+  over: Partial<Message> = {},
+  extra: Record<string, unknown> = {},
+) {
+  return msg(1, {
+    components: ComponentsV1.parse({ id: COMPONENT_ID, modal: { ...BASE_MODAL, ...modal }, ...extra }),
+    componentState: { expiresAt: FUTURE, consumed: [] },
+    ...over,
+  });
+}
+
+const trigger = () => screen.getByRole("button", { name: "작업 만들기" });
+async function open() {
+  await userEvent.click(trigger());
+  return screen.findByRole("dialog", { name: "새 작업" });
+}
+const submit = (dialog: HTMLElement) => userEvent.click(within(dialog).getByRole("button", { name: "제출" }));
+
+beforeEach(() => {
+  fake = createFakeSocket();
+  useWireStatus.getState().setStatus("connected");
+});
+afterEach(() => {
+  fake = undefined;
+  useWireStatus.getState().setStatus("idle");
+  vi.restoreAllMocks();
+});
+
+describe("모달 — 트리거와 대화상자", () => {
+  it("트리거 버튼은 triggerLabel 로 그리고, 누르면 대화상자가 제목과 함께 열린다", async () => {
+    renderWithClient(<Components message={withModal()} />);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    const dialog = await open();
+    expect(within(dialog).getByRole("heading", { name: "새 작업" })).toBeVisible();
+    // Radix Dialog 가 초점을 안으로 가져간다 — 첫 칸
+    expect(within(dialog).getByLabelText("제목")).toHaveFocus();
+  });
+
+  it("트리거는 블록들 아래 한 줄이다", () => {
+    const message = withModal(
+      {},
+      {},
+      { blocks: [{ type: "actions", items: [{ type: "button", id: "ok", label: "확인" }] }] },
+    );
+    renderWithClient(<Components message={message} />);
+    const [first, second] = screen.getAllByRole("button");
+    expect(first).toHaveAccessibleName("확인");
+    expect(second).toBe(trigger());
+  });
+
+  it("modal 이 없으면 트리거를 그리지 않는다", () => {
+    const message = msg(1, {
+      components: ComponentsV1.parse({
+        id: COMPONENT_ID,
+        blocks: [{ type: "actions", items: [{ type: "button", id: "ok", label: "확인" }] }],
+      }),
+      componentState: { expiresAt: FUTURE, consumed: [] },
+    });
+    renderWithClient(<Components message={message} />);
+    expect(screen.getAllByRole("button")).toHaveLength(1);
+  });
+
+  it("Esc 로 닫으면 초점이 트리거로 돌아온다 — Radix Dialog 가 한다", async () => {
+    renderWithClient(<Components message={withModal()} />);
+    await open();
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(trigger()).toHaveFocus();
+  });
+
+  it("「취소」로 닫고 다시 열면 처음 값으로 돌아간다", async () => {
+    renderWithClient(<Components message={withModal()} />);
+    let dialog = await open();
+    await userEvent.type(within(dialog).getByLabelText("제목"), "쓰다 만 것");
+    await userEvent.click(within(dialog).getByRole("button", { name: "취소" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    dialog = await open();
+    expect(within(dialog).getByLabelText("제목")).toHaveValue("");
+  });
+});
+
+describe("모달 — 필드 7종", () => {
+  it("필드 7종이 각자 위젯으로 그려진다", async () => {
+    const message = withModal({
+      fields: [
+        { type: "text", id: "t", label: "제목", placeholder: "무엇을" },
+        { type: "textarea", id: "ta", label: "본문" },
+        { type: "number", id: "n", label: "개수", min: 1, max: 5, step: 1 },
+        { type: "date", id: "d", label: "마감" },
+        { type: "select", id: "s", label: "태그", multi: true, options: OPTS },
+      ],
+    });
+    renderWithClient(<Components message={message} />);
+    const dialog = await open();
+    const text = within(dialog).getByRole("textbox", { name: "제목" });
+    expect(text.tagName).toBe("INPUT");
+    expect(text).toHaveAttribute("placeholder", "무엇을");
+    expect(within(dialog).getByRole("textbox", { name: "본문" }).tagName).toBe("TEXTAREA");
+    const number = within(dialog).getByRole("spinbutton", { name: "개수" });
+    expect(number).toHaveAttribute("min", "1");
+    expect(number).toHaveAttribute("max", "5");
+    expect(within(dialog).getByLabelText("마감")).toHaveAttribute("type", "date");
+    const tags = within(dialog).getByRole("group", { name: "태그" });
+    expect(within(tags).getAllByRole("checkbox")).toHaveLength(2);
+    expect(within(tags).queryAllByRole("radio")).toEqual([]);
+  });
+
+  it("checkbox·radio·단일 select 도 각자 위젯으로 그려진다", async () => {
+    const message = withModal({
+      fields: [
+        { type: "checkbox", id: "c", label: "동의" },
+        { type: "radio", id: "r", label: "우선순위", options: OPTS },
+        { type: "select", id: "s", label: "형식", options: OPTS },
+      ],
+    });
+    renderWithClient(<Components message={message} />);
+    const dialog = await open();
+    expect(within(dialog).getByRole("checkbox", { name: "동의" })).not.toBeChecked();
+    const radio = within(dialog).getByRole("group", { name: "우선순위" });
+    expect(within(radio).getAllByRole("radio")).toHaveLength(2);
+    const single = within(dialog).getByRole("group", { name: "형식" });
+    expect(within(single).getAllByRole("radio")).toHaveLength(2);
+    expect(within(single).queryAllByRole("checkbox")).toEqual([]);
+  });
+
+  it("select·radio 의 이름은 legend 하나뿐이다 — ui/label 을 겹쳐 달지 않는다", async () => {
+    const message = withModal({ fields: [{ type: "radio", id: "r", label: "우선순위", options: OPTS }] });
+    renderWithClient(<Components message={message} />);
+    const dialog = await open();
+    expect(within(dialog).getAllByText("우선순위")).toHaveLength(1);
+    expect(within(dialog).getByText("우선순위").tagName).toBe("LEGEND");
+  });
+
+  it("default 가 초깃값으로 채워진다", async () => {
+    const message = withModal({
+      fields: [
+        { type: "text", id: "t", label: "제목", default: "보고서" },
+        { type: "number", id: "n", label: "개수", default: 3 },
+        { type: "date", id: "d", label: "마감", default: "2026-09-30" },
+        { type: "checkbox", id: "c", label: "동의", default: true },
+        { type: "radio", id: "r", label: "우선순위", options: OPTS, default: "lo" },
+      ],
+    });
+    renderWithClient(<Components message={message} />);
+    const dialog = await open();
+    expect(within(dialog).getByLabelText("제목")).toHaveValue("보고서");
+    expect(within(dialog).getByLabelText("개수")).toHaveValue(3);
+    expect(within(dialog).getByLabelText("마감")).toHaveValue("2026-09-30");
+    expect(within(dialog).getByRole("checkbox", { name: "동의" })).toBeChecked();
+    expect(within(dialog).getByRole("radio", { name: "낮음" })).toBeChecked();
+    expect(within(dialog).getByRole("radio", { name: "높음" })).not.toBeChecked();
+  });
+
+  it("textarea·select 의 default 도 채워진다", async () => {
+    const message = withModal({
+      fields: [
+        { type: "textarea", id: "ta", label: "본문", default: "첫 줄" },
+        { type: "select", id: "s", label: "태그", multi: true, options: OPTS, default: ["hi"] },
+      ],
+    });
+    renderWithClient(<Components message={message} />);
+    const dialog = await open();
+    expect(within(dialog).getByLabelText("본문")).toHaveValue("첫 줄");
+    expect(within(dialog).getByRole("checkbox", { name: "높음" })).toBeChecked();
+    expect(within(dialog).getByRole("checkbox", { name: "낮음" })).not.toBeChecked();
+  });
+});
+
+describe("모달 — 제출", () => {
+  it("제출하면 values: { fields: {...} } 로 나가고 성공하면 닫힌다", async () => {
+    fake?.onAck("component.interact", () => OK);
+    const message = withModal({
+      fields: [
+        { type: "text", id: "t", label: "제목", required: true },
+        { type: "number", id: "n", label: "개수" },
+        { type: "select", id: "s", label: "태그", multi: true, options: OPTS },
+        { type: "checkbox", id: "c", label: "동의" },
+        { type: "radio", id: "r", label: "우선순위", options: OPTS },
+      ],
+    });
+    renderWithClient(<Components message={message} />);
+    const dialog = await open();
+    await userEvent.type(within(dialog).getByLabelText("제목"), "보고서");
+    await userEvent.type(within(dialog).getByLabelText("개수"), "4");
+    await userEvent.click(within(dialog).getByRole("checkbox", { name: "낮음" }));
+    await userEvent.click(within(dialog).getByRole("checkbox", { name: "동의" }));
+    await userEvent.click(within(dialog).getByRole("radio", { name: "높음" }));
+    await submit(dialog);
+    expect(fake?.sentOf("component.interact")).toEqual([
+      {
+        messageId: message.id,
+        componentId: COMPONENT_ID,
+        itemId: "form",
+        values: { fields: { t: "보고서", n: 4, s: ["lo"], c: true, r: "hi" } },
+      },
+    ]);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("비워 둔 선택 칸은 싣지 않는다 — 체크박스의 false 는 싣는다", async () => {
+    fake?.onAck("component.interact", () => OK);
+    const message = withModal({
+      fields: [
+        { type: "text", id: "t", label: "제목" },
+        { type: "date", id: "d", label: "마감" },
+        { type: "checkbox", id: "c", label: "동의" },
+      ],
+    });
+    renderWithClient(<Components message={message} />);
+    await submit(await open());
+    expect(fake?.sentOf("component.interact")).toMatchObject([{ values: { fields: { c: false } } }]);
+  });
+
+  it("Enter 로도 제출한다", async () => {
+    fake?.onAck("component.interact", () => OK);
+    renderWithClient(<Components message={withModal()} />);
+    const dialog = await open();
+    await userEvent.type(within(dialog).getByLabelText("제목"), "보고서{Enter}");
+    expect(fake?.sentOf("component.interact")).toMatchObject([{ values: { fields: { title: "보고서" } } }]);
+  });
+
+  it("required 를 비우고 제출하면 보내지 않고 칸 아래 오류가 뜬다", async () => {
+    fake?.onAck("component.interact", () => OK);
+    renderWithClient(<Components message={withModal()} />);
+    const dialog = await open();
+    const title = within(dialog).getByLabelText("제목");
+    // 오류 자리는 비어 있는 채로 늘 있고, 오류가 없으면 칸이 가리키지 않는다(field-error 관습)
+    expect(title).not.toHaveAttribute("aria-describedby");
+    expect(title).not.toHaveAttribute("aria-invalid");
+    await submit(dialog);
+    expect(fake?.sentOf("component.interact")).toEqual([]);
+    expect(within(dialog).getByText("필수 항목입니다")).toBeVisible();
+    expect(title).toHaveAccessibleDescription("필수 항목입니다");
+    expect(title).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByRole("dialog")).toBe(dialog);
+  });
+
+  it("오류 자리는 제출 전부터 비어 있는 라이브 영역으로 있다", async () => {
+    renderWithClient(<Components message={withModal()} />);
+    const dialog = await open();
+    const regions = dialog.querySelectorAll("[data-slot=field-error]");
+    // 칸 하나 + 하단 한 줄
+    expect(regions).toHaveLength(2);
+    for (const r of regions) {
+      expect(r).toHaveAttribute("aria-live", "polite");
+      expect(r).toBeEmptyDOMElement();
+    }
+  });
+
+  it("범위를 벗어난 number 는 보내지 않고 칸 아래에 까닭을 보인다", async () => {
+    fake?.onAck("component.interact", () => OK);
+    const message = withModal({ fields: [{ type: "number", id: "n", label: "개수", min: 1, max: 5 }] });
+    renderWithClient(<Components message={message} />);
+    const dialog = await open();
+    await userEvent.type(within(dialog).getByLabelText("개수"), "9");
+    await submit(dialog);
+    expect(fake?.sentOf("component.interact")).toEqual([]);
+    expect(within(dialog).getByLabelText("개수")).toHaveAccessibleDescription("5 이하여야 합니다");
+  });
+
+  it("number 칸이 못 읽는 값(badInput)이면 비었다고 보지 않고 막는다", async () => {
+    fake?.onAck("component.interact", () => OK);
+    const message = withModal({ fields: [{ type: "number", id: "n", label: "개수", default: 3 }] });
+    renderWithClient(<Components message={message} />);
+    const dialog = await open();
+    const input = within(dialog).getByLabelText("개수");
+    // 브라우저는 「1e」처럼 못 읽는 입력의 value 를 "" 로 주고 validity.badInput 을 켠다(jsdom 은 그러지 않아 흉내 낸다)
+    Object.defineProperty(input, "validity", { configurable: true, value: { badInput: true } });
+    fireEvent.change(input, { target: { value: "" } });
+    await submit(dialog);
+    expect(fake?.sentOf("component.interact")).toEqual([]);
+    expect(input).toHaveAccessibleDescription("숫자를 입력하세요");
+  });
+
+  it("칸을 고치면 그 칸의 오류가 내려간다", async () => {
+    renderWithClient(<Components message={withModal()} />);
+    const dialog = await open();
+    await submit(dialog);
+    const title = within(dialog).getByLabelText("제목");
+    expect(title).toHaveAccessibleDescription("필수 항목입니다");
+    await userEvent.type(title, "a");
+    expect(title).not.toHaveAttribute("aria-describedby");
+    expect(within(dialog).queryByText("필수 항목입니다")).toBeNull();
+  });
+});
+
+describe("모달 — ack 오류는 대화상자 안에", () => {
+  it("ack 오류면 대화상자가 열린 채 문구가 뜬다 — 토스트가 아니라", async () => {
+    const error = vi.spyOn(toast, "error");
+    fake?.onAck("component.interact", () => ({
+      ok: false,
+      error: { code: "EXPIRED", message: "component expired" },
+    }));
+    renderWithClient(<Components message={withModal()} />);
+    const dialog = await open();
+    await userEvent.type(within(dialog).getByLabelText("제목"), "보고서");
+    await submit(dialog);
+    expect(await within(dialog).findByText("만료된 버튼입니다")).toBeVisible();
+    // 대화상자 안 한 곳에만 — 밖(가려지는 자리)에 겹쳐 내지 않는다
+    expect(screen.getAllByText("만료된 버튼입니다")).toHaveLength(1);
+    expect(screen.getByRole("dialog")).toBe(dialog);
+    // 입력은 그대로 남는다 — 다시 보낼 수 있게
+    expect(within(dialog).getByLabelText("제목")).toHaveValue("보고서");
+    expect(within(dialog).getByRole("button", { name: "제출" })).toHaveAccessibleDescription(
+      "만료된 버튼입니다",
+    );
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it("응답이 없어도(TIMEOUT) 대화상자 안에 보인다", async () => {
+    const error = vi.spyOn(toast, "error");
+    // ack 대본이 없으면 가짜 소켓이 던진다 — 시간 초과와 같다
+    renderWithClient(<Components message={withModal()} />);
+    const dialog = await open();
+    await userEvent.type(within(dialog).getByLabelText("제목"), "보고서");
+    await submit(dialog);
+    expect(await within(dialog).findByText("서버 응답이 없습니다")).toBeVisible();
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it("VALIDATION 의 details.issues 가 가리키는 필드 아래에 붙는다", async () => {
+    const error = vi.spyOn(toast, "error");
+    fake?.onAck("component.interact", () => ({
+      ok: false,
+      error: {
+        code: "VALIDATION",
+        message: "invalid values",
+        details: { issues: [{ path: ["fields", "n"], message: "Too big" }] },
+      },
+    }));
+    const message = withModal({
+      fields: [
+        { type: "text", id: "title", label: "제목", required: true },
+        { type: "number", id: "n", label: "개수" },
+      ],
+    });
+    renderWithClient(<Components message={message} />);
+    const dialog = await open();
+    await userEvent.type(within(dialog).getByLabelText("제목"), "보고서");
+    await userEvent.type(within(dialog).getByLabelText("개수"), "2");
+    await submit(dialog);
+    const n = within(dialog).getByLabelText("개수");
+    await waitFor(() => expect(n).toHaveAccessibleDescription("받아들일 수 없는 값입니다"));
+    expect(n).toHaveAttribute("aria-invalid", "true");
+    expect(within(dialog).getByLabelText("제목")).not.toHaveAttribute("aria-describedby");
+    // 서버 문구(영문)를 그대로 내지 않는다
+    expect(within(dialog).queryByText("Too big")).toBeNull();
+    expect(within(dialog).queryByText("처리할 수 없는 요청입니다")).toBeNull();
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it("select·radio 칸도 issues 로 가리키면 무리(fieldset)가 그 문구를 설명으로 든다", async () => {
+    fake?.onAck("component.interact", () => ({
+      ok: false,
+      error: {
+        code: "VALIDATION",
+        message: "invalid values",
+        details: { issues: [{ path: ["fields", "r"], message: "Invalid option" }] },
+      },
+    }));
+    const message = withModal({ fields: [{ type: "radio", id: "r", label: "우선순위", options: OPTS }] });
+    renderWithClient(<Components message={message} />);
+    const dialog = await open();
+    await submit(dialog);
+    await waitFor(() =>
+      expect(within(dialog).getByRole("group", { name: "우선순위" })).toHaveAccessibleDescription(
+        "받아들일 수 없는 값입니다",
+      ),
+    );
+  });
+
+  it("issues 가 칸을 못 가리키면 하단 한 줄로", async () => {
+    fake?.onAck("component.interact", () => ({
+      ok: false,
+      error: {
+        code: "VALIDATION",
+        message: "invalid values",
+        details: { issues: [{ path: ["fields"], message: "Unrecognized key" }] },
+      },
+    }));
+    renderWithClient(<Components message={withModal()} />);
+    const dialog = await open();
+    await userEvent.type(within(dialog).getByLabelText("제목"), "보고서");
+    await submit(dialog);
+    expect(await within(dialog).findByText("처리할 수 없는 요청입니다")).toBeVisible();
+    expect(within(dialog).getByLabelText("제목")).not.toHaveAttribute("aria-describedby");
+  });
+
+  it("보내는 동안 닫을 수 없고 「제출」이 잠긴다(두 번 보내지 않음)", async () => {
+    let answer: (v: unknown) => void = () => {};
+    fake?.onAck("component.interact", () => new Promise((r) => (answer = r)) as never);
+    renderWithClient(<Components message={withModal()} />);
+    const dialog = await open();
+    await userEvent.type(within(dialog).getByLabelText("제목"), "보고서");
+    await submit(dialog);
+    const send = within(dialog).getByRole("button", { name: "제출" });
+    expect(send).toBeDisabled();
+    expect(send).toHaveAccessibleDescription(DISABLED_REASON_TEXT.busy);
+    await userEvent.click(send);
+    await userEvent.keyboard("{Escape}");
+    expect(screen.getByRole("dialog")).toBe(dialog);
+    expect(within(dialog).getByRole("button", { name: "닫기" })).toBeDisabled();
+    expect(fake?.sentOf("component.interact")).toHaveLength(1);
+    answer(OK);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+});
+
+describe("모달 — 트리거 잠김", () => {
+  it.each<[string, Partial<Message>, Record<string, unknown>, keyof typeof DISABLED_REASON_TEXT]>([
+    ["소비", { componentState: { expiresAt: FUTURE, consumed: ["form"] } }, {}, "consumed"],
+    ["만료", { componentState: { expiresAt: "2020-01-01T00:00:00.000Z", consumed: [] } }, {}, "expired"],
+    ["권한 밖", {}, { allowedUsers: [uid(99)] }, "forbidden"],
+  ])("%s이면 트리거 버튼이 잠기고 사유를 말한다", async (_, over, modal, reason) => {
+    renderWithClient(<Components message={withModal(modal, over)} />);
+    const text = DISABLED_REASON_TEXT[reason];
+    expect(trigger()).toBeDisabled();
+    expect(trigger()).toHaveAttribute("title", text);
+    expect(trigger()).toHaveAccessibleDescription(text);
+    await userEvent.click(trigger());
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("연결이 끊기면 잠긴다", () => {
+    useWireStatus.getState().setStatus("reconnecting");
+    renderWithClient(<Components message={withModal()} />);
+    expect(trigger()).toBeDisabled();
+    expect(trigger()).toHaveAccessibleDescription(DISABLED_REASON_TEXT.disconnected);
+  });
+
+  it("권한 안이면(allowedUsers 에 내가 있으면) 잠기지 않는다", () => {
+    renderWithClient(<Components message={withModal({ allowedUsers: [USER] })} />);
+    expect(trigger()).toBeEnabled();
+    expect(trigger()).not.toHaveAttribute("aria-describedby");
+  });
+
+  it("reusable 카드는 소비된 모달도 다시 연다", () => {
+    const message = withModal(
+      {},
+      { componentState: { expiresAt: FUTURE, consumed: ["form"] } },
+      { reusable: true },
+    );
+    renderWithClient(<Components message={message} />);
+    expect(trigger()).toBeEnabled();
+  });
+
+  it("열려 있는 동안 연결이 끊기면 「제출」이 잠기고 사유를 말한다 — 대화상자는 그대로", async () => {
+    fake?.onAck("component.interact", () => OK);
+    renderWithClient(<Components message={withModal()} />);
+    const dialog = await open();
+    await userEvent.type(within(dialog).getByLabelText("제목"), "보고서");
+    useWireStatus.getState().setStatus("reconnecting");
+    const send = await within(dialog).findByRole("button", { name: "제출" });
+    await waitFor(() => expect(send).toBeDisabled());
+    expect(send).toHaveAccessibleDescription(DISABLED_REASON_TEXT.disconnected);
+    await userEvent.type(within(dialog).getByLabelText("제목"), "{Enter}");
+    expect(fake?.sentOf("component.interact")).toEqual([]);
+    expect(screen.getByRole("dialog")).toBe(dialog);
+  });
+});
