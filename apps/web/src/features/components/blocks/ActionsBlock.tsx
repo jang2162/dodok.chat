@@ -5,6 +5,7 @@ import { Button } from "@/ui/button";
 import { DisabledHint, reasonProps } from "../DisabledHint";
 import { itemState } from "../state";
 import type { Interact } from "../useInteract";
+import { SelectItem } from "./SelectItem";
 
 const STYLE = {
   primary: "default",
@@ -23,8 +24,10 @@ export function ActionsBlock({ block, message, io, expired }: Props) {
   const meId = useMe().data?.user.id;
   const hintBase = useId();
 
-  // 태스크 3: 셀렉트 — 셀렉트는 블록에 홀로 있다. 여기서 <SelectItem> 을 그린다
-  if (block.items.some((i) => i.type === "select")) return null;
+  // 셀렉트는 블록에 홀로 있다(shared 스키마)
+  const select = block.items.find((i) => i.type === "select");
+  if (select)
+    return <SelectItem item={select} blockId={block.id} message={message} io={io} expired={expired} />;
 
   const buttons = block.items.flatMap((i) => (i.type === "button" ? [i] : []));
   return (
