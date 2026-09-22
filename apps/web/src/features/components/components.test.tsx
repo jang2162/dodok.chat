@@ -1,6 +1,7 @@
-import { ComponentsV1, type Message } from "@dodok/shared";
-import { act, screen, waitFor } from "@testing-library/react";
+import { ComponentsV1, INTERACTIONS_MAX, type Message, type MessageInteraction } from "@dodok/shared";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactElement } from "react";
 import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useWireStatus } from "@/realtime/wire";
@@ -8,7 +9,8 @@ import { createFakeSocket, type FakeSocket } from "../../../test/fakeSocket";
 import { msg, uid, USER } from "../../../test/fixtures";
 import { renderWithClient } from "../../../test/messages";
 import { LINK_BLOCKED } from "./blocks/ActionsBlock";
-import { Components } from "./Components";
+import { ARTIFACT_PENDING } from "./blocks/artifact";
+import { Components, UNKNOWN_USER } from "./Components";
 import { DISABLED_REASON_TEXT, type ItemState } from "./state";
 
 // 소켓은 테스트가 쥔 가짜 — WireProvider 의 나머지(구독 훅 등)는 원본
@@ -108,6 +110,11 @@ describe("Components — 버튼", () => {
       "//evil.example/x",
       // 같은 출처 경로 — // 만 막고 / 는 허용하는 것을 잡는다. 새 탭 링크가 쿠키 실린 같은 출처 GET 이 된다
       "/api/me",
+      // artifact:// 를 닮았지만 아닌 값 — 첨부 문구가 아니라 「열 수 없음」이어야 한다(아래 artifact 테스트의 짝).
+      // 대문자(i 플래그로 느슨해짐)·앞 공백(trim)·가운데 품음(includes) 을 잡는다
+      "ARTIFACT://files/x",
+      " artifact://files/x",
+      "http://evil.example/?next=artifact://files/x",
     ];
     // withButtons() 의 ComponentsV1.parse 를 건너뛴다 — 계약(SafeUrl)이 먼저 거르면 렌더러의 허용목록이 안 잠긴다.
     // 서버는 쓸 때만 검증하므로 옛 행·느슨해진 계약의 값은 여기까지 온다(url 의 TS 타입은 string 이라 캐스트 없이 들어간다)
@@ -140,6 +147,59 @@ describe("Components — 버튼", () => {
       const hint = document.getElementById(blocked.getAttribute("aria-describedby") ?? "");
       expect(hint?.textContent).toBe(LINK_BLOCKED);
     }
+  });
+
+  it("artifact:// 링크 버튼은 링크가 아니라 비활성이고, 사유는 media·file 과 같은 첨부 문구다 — 「열 수 없음」이 아니라", () => {
+    // javascript: 는 계약 밖이라 parse 를 건너뛴다(위 테스트와 같은 까닭) — artifact:// 는 계약을 통과하는 유일한 비-https 값이라
+    // 운영에서 실제로 렌더러에 닿는다
+    const components: ComponentsV1 = {
+      id: COMPONENT_ID,
+      reusable: false,
+      ttlMs: 1_800_000,
+      blocks: [
+        {
+          type: "actions",
+          items: [
+            {
+              type: "button",
+              id: "att",
+              label: "보고서 받기",
+              style: "secondary",
+              url: "artifact://files/abc123",
+            },
+            { type: "button", id: "js", label: "나쁜 링크", style: "secondary", url: "javascript:alert(1)" },
+          ],
+        },
+      ],
+    };
+    const { container } = renderWithClient(<Components message={{ ...withButtons(), components }} />);
+    // artifact:// 가 a 로 새지 않는다
+    expect(container.querySelectorAll("a")).toHaveLength(0);
+    const att = screen.getByRole("button", { name: "보고서 받기" });
+    expect(att).toBeDisabled();
+    expect(att).toHaveAttribute("title", ARTIFACT_PENDING);
+    expect(att).toHaveAccessibleDescription(ARTIFACT_PENDING);
+    expect(document.getElementById(att.getAttribute("aria-describedby") ?? "")?.textContent).toBe(
+      ARTIFACT_PENDING,
+    );
+    const js = screen.getByRole("button", { name: "나쁜 링크" });
+    expect(js).toHaveAttribute("title", LINK_BLOCKED);
+    expect(js).toHaveAccessibleDescription(LINK_BLOCKED);
+  });
+
+  it("같은 카드의 같은 artifact:// 값은 media·file·링크 버튼이 같은 말을 한다", () => {
+    const ART = "artifact://files/abc123";
+    const message = withButtons({}, [
+      { type: "media", items: [{ url: ART, alt: "도표" }] },
+      { type: "file", url: ART, name: "보고서.pdf" },
+      { type: "actions", items: [{ type: "button", id: "att", label: "받기", url: ART }] },
+    ]);
+    const { container } = renderWithClient(<Components message={message} />);
+    const q = (slot: string) => container.querySelector(`[data-slot=${slot}]`);
+    expect(q("media")).toHaveTextContent(ARTIFACT_PENDING);
+    expect(q("file")).toHaveTextContent(ARTIFACT_PENDING);
+    expect(screen.getByRole("button", { name: "받기" })).toHaveAccessibleDescription(ARTIFACT_PENDING);
+    expect(container).not.toHaveTextContent(LINK_BLOCKED);
   });
 
   it("소비된 아이템·만료된 메시지·allowedUsers 밖이면 비활성", () => {
@@ -365,6 +425,248 @@ describe("Components — 카드와 비활성 사유", () => {
     const { container } = renderWithClient(<Components message={message} />);
     const rows = container.querySelectorAll("[data-slot=actions]");
     expect(Array.from(rows, (r) => r.textContent)).toEqual(["첫째", "둘째"]);
+  });
+});
+
+const OK = { ok: true, data: { interactionId: uid(500) } } as const;
+const OTHER = uid(99);
+
+/** 상호작용 하나 — n 이 클수록 나중(초 단위). id 는 uid(700 + n), 내 것이 기본 */
+function ix(n: number, itemId: string, over: Partial<MessageInteraction> = {}): MessageInteraction {
+  return {
+    id: uid(700 + n),
+    componentId: COMPONENT_ID,
+    userId: USER,
+    itemId,
+    values: {},
+    createdAt: new Date(Date.UTC(2030, 0, 1, 0, 0, n)).toISOString(),
+    ...over,
+  };
+}
+
+/** 결과 줄들의 글자 — 목록이 없으면 빈 배열 */
+function lines(): string[] {
+  const list = screen.queryByRole("list", { name: "상호작용 기록" });
+  return list
+    ? within(list)
+        .getAllByRole("listitem")
+        .map((li) => li.textContent ?? "")
+    : [];
+}
+const lineOf = (id: string) => document.querySelector<HTMLElement>(`[data-interaction-id="${id}"]`);
+
+const SELECT_CARD = [
+  { type: "actions", items: [{ type: "button", id: "ok", label: "확인", emoji: "👍" }] },
+  {
+    type: "actions",
+    items: [
+      {
+        type: "select",
+        id: "fmt",
+        placeholder: "보고서 형식",
+        multi: true,
+        options: [
+          { value: "pdf", label: "PDF" },
+          { value: "md", label: "마크다운" },
+        ],
+      },
+    ],
+  },
+];
+
+describe("Components — 결과 줄", () => {
+  it("결과 줄이 오래된 것부터 `@핸들 — 라벨: 값` 으로 그려진다 — 실려 온 순서가 아니라", () => {
+    const message = withButtons(
+      { interactions: [ix(3, "ok"), ix(1, "fmt", { values: { values: ["pdf", "md"] } })] },
+      SELECT_CARD,
+    );
+    renderWithClient(<Components message={message} />);
+    expect(lines()).toEqual(["@owner — 보고서 형식: PDF, 마크다운", "@owner — 확인"]);
+  });
+
+  it("모르는 사용자는 「알 수 없는 사용자」", () => {
+    renderWithClient(
+      <Components message={withButtons({ interactions: [ix(1, "stop", { userId: OTHER })] })} />,
+    );
+    expect(lines()).toEqual([`${UNKNOWN_USER} — 그만`]);
+  });
+
+  it("결과 줄은 카드 맨 아래 — 블록들과 모달 트리거 뒤", () => {
+    const message = withButtons({ interactions: [ix(1, "stop")] }, undefined, {
+      modal: {
+        id: "form",
+        title: "새 작업",
+        triggerLabel: "작업 만들기",
+        fields: [{ type: "text", id: "t", label: "제목" }],
+      },
+    });
+    const { container } = renderWithClient(<Components message={message} />);
+    const card = container.querySelector("[data-slot=components]");
+    expect(Array.from(card?.children ?? [], (el) => el.getAttribute("data-slot"))).toEqual([
+      "actions",
+      "modal-trigger",
+      "interaction-log",
+    ]);
+  });
+
+  it("상호작용이 없으면 결과 줄 자리도 없다", () => {
+    const { container } = renderWithClient(<Components message={withButtons()} />);
+    expect(container.querySelector("[data-slot=interaction-log]")).toBeNull();
+  });
+
+  it("상한에 닿으면 「최근 20건」을 덧붙인다 — 목록 밖에, 하나 모자라면 없다", () => {
+    const many = (k: number) => Array.from({ length: k }, (_, i) => ix(i, "stop"));
+    const { rerender } = renderWithClient(
+      <Components message={withButtons({ interactions: many(INTERACTIONS_MAX - 1) })} />,
+    );
+    expect(lines()).toHaveLength(INTERACTIONS_MAX - 1);
+    expect(screen.queryByText(`최근 ${INTERACTIONS_MAX}건`)).toBeNull();
+    rerender(<Components message={withButtons({ interactions: many(INTERACTIONS_MAX) })} />);
+    expect(lines()).toHaveLength(INTERACTIONS_MAX);
+    const note = screen.getByText(`최근 ${INTERACTIONS_MAX}건`);
+    expect(screen.getByRole("list", { name: "상호작용 기록" })).not.toContainElement(note);
+  });
+
+  it("summarize 가 못 푸는 줄은 건너뛴다 — 카드가 깨지지 않는다", () => {
+    const message = withButtons({ interactions: [ix(1, "stop"), ix(2, "gone"), ix(3, "continue_relay")] });
+    const { rerender, container } = renderWithClient(<Components message={message} />);
+    expect(lines()).toEqual(["@owner — 그만", "@owner — 이어가기"]);
+    expect(lineOf(uid(702))).toBeNull();
+    expect(screen.getByRole("button", { name: "이어가기" })).toBeInTheDocument();
+    // 하나도 못 풀면 목록을 두지 않는다 — 빈 목록을 읽지 않게
+    rerender(<Components message={withButtons({ interactions: [ix(2, "gone")] })} />);
+    expect(container.querySelector("[data-slot=interaction-log]")).toBeNull();
+    expect(screen.getByRole("button", { name: "이어가기" })).toBeInTheDocument();
+  });
+});
+
+describe("Components — 결정 뒤 초점", () => {
+  it("내가 보낸 뒤 초점이 그 결과 줄로 간다 — 줄이 ack 뒤에 와도", async () => {
+    fake?.onAck("component.interact", () => OK);
+    const { rerender } = renderWithClient(<Components message={withButtons()} />);
+    await userEvent.click(screen.getByRole("button", { name: "이어가기" }));
+    // 서버의 message.updated — 소비되어 버튼이 잠기고 결과 줄이 생긴다
+    rerender(
+      <Components
+        message={withButtons({
+          componentState: { expiresAt: FUTURE, consumed: ["continue_relay"] },
+          interactions: [ix(0, "continue_relay", { id: uid(500) })],
+        })}
+      />,
+    );
+    expect(lineOf(uid(500))).toHaveFocus();
+  });
+
+  it("줄이 ack 보다 먼저 와도 옮긴다 — 서버는 message.updated 를 ack 앞에 낸다", async () => {
+    const after = withButtons({
+      componentState: { expiresAt: FUTURE, consumed: ["continue_relay"] },
+      interactions: [ix(0, "continue_relay", { id: uid(500) })],
+    });
+    let rerender: (ui: ReactElement) => void = () => {};
+    fake?.onAck("component.interact", async () => {
+      await Promise.resolve();
+      rerender(<Components message={after} />);
+      return OK;
+    });
+    ({ rerender } = renderWithClient(<Components message={withButtons()} />));
+    await userEvent.click(screen.getByRole("button", { name: "이어가기" }));
+    await waitFor(() => expect(lineOf(uid(500))).toHaveFocus());
+  });
+
+  it("셀렉트도 「보내기」 뒤 그 결과 줄로", async () => {
+    fake?.onAck("component.interact", () => OK);
+    const { rerender } = renderWithClient(<Components message={withButtons({}, SELECT_CARD)} />);
+    await userEvent.click(screen.getByRole("checkbox", { name: "PDF" }));
+    await userEvent.click(screen.getByRole("button", { name: "보내기" }));
+    rerender(
+      <Components
+        message={withButtons(
+          { interactions: [ix(0, "fmt", { id: uid(500), values: { values: ["pdf"] } })] },
+          SELECT_CARD,
+        )}
+      />,
+    );
+    expect(lineOf(uid(500))).toHaveFocus();
+  });
+
+  it("다른 사람이 보낸 상호작용이 도착해도 초점을 뺏지 않는다", async () => {
+    const { rerender } = renderWithClient(<Components message={withButtons()} />);
+    const stop = screen.getByRole("button", { name: "✋ 그만" });
+    stop.focus();
+    rerender(
+      <Components message={withButtons({ interactions: [ix(1, "continue_relay", { userId: OTHER })] })} />,
+    );
+    expect(lineOf(uid(701))).not.toBeNull();
+    expect(stop).toHaveFocus();
+  });
+
+  it("내 줄로 옮긴 뒤 초점을 딴 데로 옮기면, 다음에 오는 줄(다른 사람 것)은 초점을 뺏지 않는다 — 표식은 한 번 쓰고 내린다", async () => {
+    fake?.onAck("component.interact", () => OK);
+    const message = (interactions: MessageInteraction[]) =>
+      withButtons({ interactions }, undefined, { reusable: true });
+    const { rerender } = renderWithClient(<Components message={message([])} />);
+    await userEvent.click(screen.getByRole("button", { name: "이어가기" }));
+    const mine = ix(0, "continue_relay", { id: uid(500) });
+    rerender(<Components message={message([mine])} />);
+    expect(lineOf(uid(500))).toHaveFocus();
+    const stop = screen.getByRole("button", { name: "✋ 그만" });
+    stop.focus();
+    rerender(<Components message={message([mine, ix(1, "continue_relay", { userId: OTHER })])} />);
+    expect(stop).toHaveFocus();
+  });
+
+  it("재사용 카드에서 다른 사람이 같은 버튼을 눌러도(같은 itemId) 그 줄로 가지 않는다 — 내 줄이 오면 그리로", async () => {
+    let answer: (v: typeof OK) => void = () => {};
+    fake?.onAck("component.interact", () => new Promise((r) => (answer = r)));
+    const message = (interactions: MessageInteraction[]) =>
+      withButtons({ interactions }, undefined, { reusable: true });
+    // 내가 전에 누른 줄이 이미 있다 — 같은 itemId
+    const old = ix(0, "continue_relay");
+    const { rerender } = renderWithClient(<Components message={message([old])} />);
+    const button = screen.getByRole("button", { name: "이어가기" });
+    await userEvent.click(button);
+    // 내 ack 이 오기 전에 다른 사람이 같은 버튼을 눌렀다
+    const theirs = ix(1, "continue_relay", { userId: OTHER });
+    rerender(<Components message={message([old, theirs])} />);
+    await act(async () => answer(OK));
+    expect(lineOf(theirs.id)).not.toHaveFocus();
+    expect(lineOf(old.id)).not.toHaveFocus();
+    rerender(<Components message={message([old, theirs, ix(2, "continue_relay", { id: uid(500) })])} />);
+    expect(lineOf(uid(500))).toHaveFocus();
+  });
+
+  it("만료로 잠겨도 초점을 뺏지 않는다 — 전에 보낸 내 줄이 있어도", () => {
+    const outside = document.createElement("input");
+    document.body.append(outside);
+    try {
+      const mine = [ix(1, "stop")];
+      const { rerender } = renderWithClient(<Components message={withButtons({ interactions: mine })} />);
+      outside.focus();
+      rerender(
+        <Components
+          message={withButtons({
+            componentState: { expiresAt: "2000-01-01T00:00:00.000Z", consumed: [] },
+            interactions: mine,
+          })}
+        />,
+      );
+      expect(screen.getByRole("button", { name: "이어가기" })).toBeDisabled();
+      expect(outside).toHaveFocus();
+    } finally {
+      outside.remove();
+    }
+  });
+
+  it("보내기가 실패하면 초점을 옮기지 않는다", async () => {
+    vi.spyOn(toast, "error");
+    fake?.onAck("component.interact", () => ({ ok: false, error: { code: "EXPIRED", message: "x" } }));
+    const { rerender } = renderWithClient(<Components message={withButtons()} />);
+    const button = screen.getByRole("button", { name: "이어가기" });
+    await userEvent.click(button);
+    rerender(
+      <Components message={withButtons({ interactions: [ix(1, "continue_relay", { userId: OTHER })] })} />,
+    );
+    expect(lineOf(uid(701))).not.toHaveFocus();
   });
 });
 

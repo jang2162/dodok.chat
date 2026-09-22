@@ -1,21 +1,7 @@
 import type { Block } from "@dodok/shared";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
-
-/**
- * `artifact://` 자리표시 문구 — media·file 이 같이 쓴다. `artifact://` 해석(Gateway `artifacts.download`)은
- * Phase 2 ③ 의 일이라 지금은 비활성 자리만 둔다(스펙 결정 1). ③ 은 해석기만 끼우면 된다
- */
-export const ARTIFACT_PENDING = "첨부는 곧 지원합니다";
-
-/** `artifact://` 자리표시 한 칸. 누를 것이 없다 — 링크도 이미지도 만들지 않는다 */
-export function ArtifactPending({ className }: { className?: string }) {
-  return (
-    <span data-slot="artifact-pending" className={cn("text-sm text-muted-foreground", className)}>
-      {ARTIFACT_PENDING}
-    </span>
-  );
-}
+import { ArtifactPending } from "./artifact";
 
 type Item = Extract<Block, { type: "media" }>["items"][number];
 

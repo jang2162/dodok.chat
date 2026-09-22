@@ -1,6 +1,7 @@
 import { ComponentsV1, type Message } from "@dodok/shared";
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactElement } from "react";
 import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useWireStatus } from "@/realtime/wire";
@@ -379,6 +380,17 @@ describe("모달 — 제출", () => {
     expect(sentValues()).toEqual([{ fields: { n: 3 } }]);
   });
 
+  it("키로 끝까지 친 날짜가 그대로 나간다 — 마지막 키를 뗀 것(keyup)이 칸 값을 지우지 않는다", async () => {
+    fake?.onAck("component.interact", () => OK);
+    const message = withModal({ fields: [{ type: "date", id: "d", label: "마감" }] });
+    renderWithClient(<Components message={message} />);
+    const dialog = await open();
+    // keyup 이 칸 값(e.currentTarget.value)을 읽는다 — 그 출처가 바뀌면 완성한 날짜가 마지막 keyup 에 지워진다(c2-t4 재리뷰 D7)
+    await userEvent.type(within(dialog).getByLabelText("마감"), "2026-09-30");
+    await submit(dialog);
+    expect(sentValues()).toEqual([{ fields: { d: "2026-09-30" } }]);
+  });
+
   it("빈 date 칸의 부분 입력도 막는다 — 이벤트가 하나도 안 와도, 지우면 다시 보낼 수 있다", async () => {
     fake?.onAck("component.interact", () => OK);
     const message = withModal({ fields: [{ type: "date", id: "d", label: "마감" }] });
@@ -738,6 +750,124 @@ describe("모달 — ack 오류는 대화상자 안에", () => {
     expect(fake?.sentOf("component.interact")).toHaveLength(1);
     answer(OK);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+});
+
+describe("모달 — 결정 뒤 초점", () => {
+  /**
+   * 제출 → 서버가 message.updated 로 싣는 결과 줄(ack 의 interactionId 와 같은 id).
+   * 1회용이면 모달이 소비되어 트리거가 잠긴다 — 잠긴 트리거로는 Radix 가 초점을 못 되돌리므로 「되돌림에 먹힘」은 재사용 카드에서 드러난다
+   */
+  const submittedCard = (extra: Record<string, unknown> = {}) =>
+    withModal(
+      {},
+      {
+        componentState: { expiresAt: FUTURE, consumed: extra.reusable ? [] : ["form"] },
+        interactions: [
+          {
+            id: uid(500),
+            componentId: COMPONENT_ID,
+            userId: USER,
+            itemId: "form",
+            values: { fields: { title: "보고서" } },
+            createdAt: "2030-01-01T00:00:00.000Z",
+          },
+        ],
+      },
+      extra,
+    );
+  const line = () => document.querySelector<HTMLElement>(`[data-interaction-id="${uid(500)}"]`);
+  /** Radix FocusScope 는 닫혀 언마운트된 **다음 틱**(setTimeout 0)에 트리거로 되돌린다 — 그 틱과 뒤따르는 렌더까지 흘린다 */
+  const settle = () => act(() => new Promise<void>((r) => setTimeout(r, 20)));
+
+  it("제출이 성공하면 대화상자가 닫힌 뒤 초점이 그 결과 줄로 간다 — 트리거로 되돌리는 것에 먹히지 않는다", async () => {
+    let rerender: (ui: ReactElement) => void = () => {};
+    // 서버는 message.updated 를 ack 앞에 낸다 — 줄이 대화상자가 열려 있는 동안 먼저 온다
+    fake?.onAck("component.interact", async () => {
+      await Promise.resolve();
+      rerender(<Components message={submittedCard()} />);
+      return OK;
+    });
+    ({ rerender } = renderWithClient(<Components message={withModal()} />));
+    const dialog = await open();
+    await userEvent.type(within(dialog).getByLabelText("제목"), "보고서");
+    await submit(dialog);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await settle();
+    expect(line()).toHaveFocus();
+    expect(line()).toHaveTextContent("@owner — 새 작업: 제목: 보고서");
+  });
+
+  it("재사용 카드(트리거가 다시 눌리는 채로 남음)에서도 — 닫힌 뒤 트리거로 되돌리는 것보다 나중에 옮긴다", async () => {
+    let rerender: (ui: ReactElement) => void = () => {};
+    fake?.onAck("component.interact", async () => {
+      await Promise.resolve();
+      rerender(<Components message={submittedCard({ reusable: true })} />);
+      return OK;
+    });
+    ({ rerender } = renderWithClient(<Components message={withModal({}, {}, { reusable: true })} />));
+    const dialog = await open();
+    await userEvent.type(within(dialog).getByLabelText("제목"), "보고서");
+    // 초점이 줄에 몇 번 오는가 — 닫히기 전에 먼저 가면 줄 → 트리거(되돌림) → 줄로 오가 스크린 리더가 같은 줄을 두 번 읽는다
+    let toLine = 0;
+    const count = (e: FocusEvent) => {
+      if (e.target instanceof HTMLElement && e.target.dataset.interactionId) toLine += 1;
+    };
+    document.addEventListener("focusin", count);
+    try {
+      await submit(dialog);
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      await settle();
+    } finally {
+      document.removeEventListener("focusin", count);
+    }
+    expect(trigger()).toBeEnabled();
+    expect(line()).toHaveFocus();
+    expect(toLine).toBe(1);
+  });
+
+  it("줄이 닫힌 뒤에 오면 그동안은 트리거에(<body> 가 아니라), 도착하면 줄로", async () => {
+    fake?.onAck("component.interact", () => OK);
+    const { rerender } = renderWithClient(<Components message={withModal()} />);
+    const dialog = await open();
+    await userEvent.type(within(dialog).getByLabelText("제목"), "보고서");
+    await submit(dialog);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await settle();
+    expect(trigger()).toHaveFocus();
+    rerender(<Components message={submittedCard()} />);
+    expect(line()).toHaveFocus();
+  });
+
+  it("「취소」로 닫으면 트리거로만 — 보낸 것이 없다", async () => {
+    const { rerender } = renderWithClient(<Components message={withModal()} />);
+    const dialog = await open();
+    await userEvent.click(within(dialog).getByRole("button", { name: "취소" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await settle();
+    expect(trigger()).toHaveFocus();
+    // 다른 사람이 같은 모달을 제출해 줄이 와도(재사용 카드) 초점은 그대로
+    rerender(
+      <Components
+        message={withModal(
+          {},
+          { interactions: submittedCard().interactions.map((i) => ({ ...i, userId: uid(99) })) },
+          { reusable: true },
+        )}
+      />,
+    );
+    expect(line()).not.toBeNull();
+    expect(trigger()).toHaveFocus();
+  });
+
+  it("ack 오류면 대화상자가 열린 채 초점도 대화상자 안에 남는다", async () => {
+    fake?.onAck("component.interact", () => ({ ok: false, error: { code: "EXPIRED", message: "x" } }));
+    renderWithClient(<Components message={withModal()} />);
+    const dialog = await open();
+    await userEvent.type(within(dialog).getByLabelText("제목"), "보고서");
+    await submit(dialog);
+    await settle();
+    expect(screen.getByRole("dialog")).toContainElement(document.activeElement as HTMLElement);
   });
 });
 

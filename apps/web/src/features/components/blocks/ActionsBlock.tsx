@@ -5,6 +5,7 @@ import { Button } from "@/ui/button";
 import { DisabledHint, reasonProps } from "../DisabledHint";
 import { itemState } from "../state";
 import type { Interact } from "../useInteract";
+import { ARTIFACT_PENDING, isArtifactUrl } from "./artifact";
 import { SelectItem } from "./SelectItem";
 
 const STYLE = {
@@ -14,7 +15,7 @@ const STYLE = {
   danger: "destructive",
 } as const;
 
-/** `https://` 가 아닌 링크 버튼의 사유 — title·aria-describedby 로 싣는다 */
+/** `https://`·`artifact://` 가 아닌 링크 버튼의 사유 — title·aria-describedby 로 싣는다 */
 export const LINK_BLOCKED = "열 수 없는 링크입니다";
 
 type Props = { block: Extract<Block, { type: "actions" }>; message: Message; io: Interact; expired: boolean };
@@ -24,7 +25,9 @@ type Props = { block: Extract<Block, { type: "actions" }>; message: Message; io:
  * 링크 버튼은 새 탭, 그 밖의 버튼은 누르면 `component.interact`. 비활성 규칙은 `itemState` 한 곳.
  *
  * 링크 버튼도 media·file 처럼 **`https://` 만** 링크로 만든다. 계약 `SafeUrl` 이 앞에서 막지만 옛 행·느슨해진 계약이면
- * 렌더러가 마지막 방어다. 그 밖(`artifact://` 포함)은 링크 없는 비활성 버튼으로 떨어뜨린다
+ * 렌더러가 마지막 방어다. 그 밖(`artifact://` 포함)은 링크 없는 비활성 버튼으로 떨어뜨린다.
+ * 사유는 둘로 갈린다: `artifact://` 는 media·file 과 같은 「첨부는 곧 지원합니다」(해석은 Phase 2 ③),
+ * 그 밖의 스킴·상대 주소는 「열 수 없는 링크입니다」. 같은 카드의 같은 값이 한 곳은 「곧 지원」, 다른 곳은 「열 수 없음」이면 거짓말이다
  */
 export function ActionsBlock({ block, message, io, expired }: Props) {
   const meId = useMe().data?.user.id;
@@ -42,13 +45,14 @@ export function ActionsBlock({ block, message, io, expired }: Props) {
         const label = `${item.emoji ? `${item.emoji} ` : ""}${item.label}`;
         const hintId = `${hintBase}-${item.id}`;
         if (item.url && !item.url.startsWith("https://")) {
+          const why = isArtifactUrl(item.url) ? ARTIFACT_PENDING : LINK_BLOCKED;
           return (
             <Fragment key={item.id}>
-              <Button variant="outline" size="sm" disabled title={LINK_BLOCKED} aria-describedby={hintId}>
+              <Button variant="outline" size="sm" disabled title={why} aria-describedby={hintId}>
                 {label}
               </Button>
               <span id={hintId} className="sr-only">
-                {LINK_BLOCKED}
+                {why}
               </span>
             </Fragment>
           );

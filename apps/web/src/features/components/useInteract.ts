@@ -1,5 +1,5 @@
 import type { ErrorCode, Message } from "@dodok/shared";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { emitAck, useWireStatus, WireAckError } from "@/realtime/wire";
 import { useWire } from "@/realtime/WireProvider";
@@ -24,11 +24,12 @@ export function interactErrorText(code: ErrorCode, serverMessage: string): strin
 
 /**
  * `send` 의 결과 — 거부하지 않고 이것으로 성공·실패를 가른다.
+ * 성공의 `interactionId` 는 ack 이 돌려준 상호작용 id(= 결과 줄의 `MessageInteraction.id`). ack 모양이 깨져 없으면 빠진다.
  * `DISCONNECTED` 는 소켓이나 components.id 가 없어 보내지 않은 것. `details` 는 서버 ApiError.details 그대로
  * (`VALIDATION` 의 `issues` 등, wire 에서 온 외부 입력이라 쓰는 쪽이 Zod 로 파싱한다)
  */
 export type SendResult =
-  | { ok: true }
+  | { ok: true; interactionId?: string }
   | { ok: false; code: ErrorCode | "DISCONNECTED"; text: string; details?: Record<string, unknown> };
 type SendFailure = Extract<SendResult, { ok: false }>;
 
@@ -36,6 +37,11 @@ export type SendOptions = {
   blockId?: string;
   /** 실패를 `text` 로 토스트한다(기본 true). 모달은 끄고 대화상자 안에 보인다(스펙 6장) */
   toast?: boolean;
+  /**
+   * 성공하면 그 결과 줄로 초점을 건다(기본 true, 스펙 5.7). 모달은 끄고 대화상자가 **닫힌 뒤에** `focusResult` 로 건다 —
+   * 열린 채 옮기면 Radix FocusScope 가 닫으면서 트리거로 되돌려 먹힌다
+   */
+  focus?: boolean;
 };
 
 export type Interact = {
@@ -45,6 +51,15 @@ export type Interact = {
   send(itemId: string, values: Record<string, unknown>, opts?: SendOptions): Promise<SendResult>;
   connected: boolean;
   hasSocket: boolean;
+  /**
+   * 초점을 옮길 결과 줄 — **내가 보내 성공한** 상호작용의 id(ack 의 interactionId). 카드가 그 줄을 그리면 옮기고 `focusDone`.
+   * 다른 사람이 보낸 것·만료는 이 id 가 아니라 초점을 뺏지 않는다
+   */
+  focusId: string | undefined;
+  /** 이 상호작용의 결과 줄로 초점을 건다 — 모달이 닫힌 뒤에 부른다 */
+  focusResult(interactionId: string): void;
+  /** 결과 줄로 옮겼다 — 표식을 내린다 */
+  focusDone(): void;
 };
 
 function failureOf(e: unknown): SendFailure {
@@ -65,6 +80,8 @@ export function useInteract(message: Message): Interact {
   const { socket } = useWire();
   const connected = useWireStatus((s) => s.status === "connected");
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
+  const [focusId, setFocusId] = useState<string>();
+  const focusDone = useCallback(() => setFocusId(undefined), []);
   const componentId = message.components?.id;
 
   async function send(
@@ -81,14 +98,19 @@ export function useInteract(message: Message): Interact {
     }
     setBusy((s) => new Set(s).add(itemId));
     try {
-      await emitAck(socket, "component.interact", {
+      const data = await emitAck(socket, "component.interact", {
         messageId: message.id,
         componentId,
         ...(opts.blockId ? { blockId: opts.blockId } : {}),
         itemId,
         values,
       });
-      return { ok: true };
+      // ack 모양이 깨져 id 가 없어도 보낸 것은 성공이다 — 초점만 못 건다
+      const interactionId = typeof data?.interactionId === "string" ? data.interactionId : undefined;
+      if (!interactionId) return { ok: true };
+      // 보낸 itemId 가 아니라 이 상호작용의 id 를 기억한다 — 재사용 카드에서 같은 itemId 의 다른 사람 줄·내 옛 줄과 섞이지 않는다
+      if (opts.focus !== false) setFocusId(interactionId);
+      return { ok: true, interactionId };
     } catch (e: unknown) {
       return fail(failureOf(e));
     } finally {
@@ -100,5 +122,13 @@ export function useInteract(message: Message): Interact {
     }
   }
 
-  return { busy, send, connected, hasSocket: socket !== undefined };
+  return {
+    busy,
+    send,
+    connected,
+    hasSocket: socket !== undefined,
+    focusId,
+    focusResult: setFocusId,
+    focusDone,
+  };
 }

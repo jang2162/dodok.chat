@@ -59,11 +59,18 @@ afterEach(() => {
 });
 
 describe("useInteract — send 결과", () => {
-  it("ack 이 ok 면 { ok: true } 이고 토스트는 없다", async () => {
+  it("ack 이 ok 면 { ok: true, interactionId } 이고 토스트는 없다", async () => {
     const error = vi.spyOn(toast, "error");
     fake?.onAck("component.interact", () => ({ ok: true, data: { interactionId: uid(500) } }));
-    expect(await sendOnce(MESSAGE, "ok", {})).toStrictEqual({ ok: true });
+    expect(await sendOnce(MESSAGE, "ok", {})).toStrictEqual({ ok: true, interactionId: uid(500) });
     expect(error).not.toHaveBeenCalled();
+  });
+
+  it("ack 모양이 깨져 interactionId 가 없어도 보낸 것은 성공이다 — 초점만 안 건다", async () => {
+    fake?.onAck("component.interact", () => ({ ok: true, data: {} }) as never);
+    const hook = mount(MESSAGE);
+    expect(await sendWith(hook, "ok", {})).toStrictEqual({ ok: true });
+    expect(hook.current.focusId).toBeUndefined();
   });
 
   it("ack 오류면 거부하지 않고 코드·문구·details 를 돌려주며, 기본은 토스트도 한다", async () => {
@@ -140,6 +147,38 @@ describe("useInteract — send 결과", () => {
       code: "DISCONNECTED",
     });
     expect(fake?.sentOf("component.interact")).toEqual([]);
+  });
+});
+
+describe("useInteract — 결정 뒤 초점 표식", () => {
+  it("성공하면 그 상호작용 id 로 걸리고, focusDone 이 내린다", async () => {
+    fake?.onAck("component.interact", () => ({ ok: true, data: { interactionId: uid(500) } }));
+    const hook = mount(MESSAGE);
+    expect(hook.current.focusId).toBeUndefined();
+    await sendWith(hook, "ok", {});
+    expect(hook.current.focusId).toBe(uid(500));
+    act(() => hook.current.focusDone());
+    expect(hook.current.focusId).toBeUndefined();
+  });
+
+  it("실패하면 걸지 않는다 — 결과 줄이 생기지 않는다", async () => {
+    fake?.onAck("component.interact", () => ({ ok: false, error: { code: "EXPIRED", message: "x" } }));
+    vi.spyOn(toast, "error");
+    const hook = mount(MESSAGE);
+    await sendWith(hook, "ok", {});
+    expect(hook.current.focusId).toBeUndefined();
+  });
+
+  it("focus: false 면 성공해도 걸지 않고 id 만 돌려준다 — 모달이 닫힌 뒤 focusResult 로 건다", async () => {
+    fake?.onAck("component.interact", () => ({ ok: true, data: { interactionId: uid(500) } }));
+    const hook = mount(MESSAGE);
+    expect(await sendWith(hook, "ok", {}, { focus: false })).toStrictEqual({
+      ok: true,
+      interactionId: uid(500),
+    });
+    expect(hook.current.focusId).toBeUndefined();
+    act(() => hook.current.focusResult(uid(500)));
+    expect(hook.current.focusId).toBe(uid(500));
   });
 });
 

@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { msg } from "../../../../test/fixtures";
 import { renderWithClient } from "../../../../test/messages";
 import { Components } from "../Components";
-import { ARTIFACT_PENDING } from "./MediaBlock";
+import { ARTIFACT_PENDING } from "./artifact";
 
 // 블록 렌더만 본다 — 소켓 없음(WireProvider 밖과 같다)
 vi.mock("@/realtime/WireProvider", async (importOriginal) => ({

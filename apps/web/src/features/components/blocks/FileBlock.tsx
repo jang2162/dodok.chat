@@ -1,7 +1,7 @@
 import type { Block } from "@dodok/shared";
 import { FileIcon } from "lucide-react";
 import { Button } from "@/ui/button";
-import { ArtifactPending } from "./MediaBlock";
+import { ArtifactPending } from "./artifact";
 
 const UNITS = ["B", "KB", "MB", "GB", "TB"] as const;
 const NUM = new Intl.NumberFormat("ko-KR", { maximumFractionDigits: 1 });

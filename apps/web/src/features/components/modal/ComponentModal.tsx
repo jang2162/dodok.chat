@@ -1,5 +1,5 @@
 import type { Message, Modal } from "@dodok/shared";
-import { type FormEvent, useId, useState } from "react";
+import { type FormEvent, useId, useRef, useState } from "react";
 import { useMe } from "@/api/queries";
 import { Button } from "@/ui/button";
 import {
@@ -45,6 +45,8 @@ export function ComponentModal({ modal, message, io, expired }: Props) {
   const [values, setValues] = useState<FieldValues>(() => byFieldId());
   const [errors, setErrors] = useState<Record<string, string>>(() => byFieldId());
   const [formError, setFormError] = useState<string>();
+  // 제출이 성공해 닫는 중인 상호작용 — 대화상자가 닫힌 **뒤에** 그 결과 줄로 초점을 건다(onCloseAutoFocus)
+  const submitted = useRef<string | undefined>(undefined);
 
   const state = itemState({
     message,
@@ -83,14 +85,31 @@ export function ComponentModal({ modal, message, io, expired }: Props) {
     setErrors(found);
     setFormError(undefined);
     if (Object.keys(found).length > 0) return;
-    const r = await io.send(modal.id, { fields: submitValues(modal.fields, values) }, { toast: false });
+    const r = await io.send(
+      modal.id,
+      { fields: submitValues(modal.fields, values) },
+      { toast: false, focus: false },
+    );
     if (r.ok) {
+      submitted.current = r.interactionId;
       setOpen(false);
       return;
     }
     const ids = r.code === "VALIDATION" ? issueFieldIds(modal.fields, r.details) : [];
     if (ids.length > 0) setErrors(byFieldId(ids.map((id) => [id, SERVER_REJECTED])));
     else setFormError(r.text);
+  }
+
+  /**
+   * 결정 뒤 초점(스펙 5.7) — 대화상자가 닫힌 **뒤에** 건다. Radix 는 닫혀 언마운트된 다음 틱에 이것을 부르고 곧이어 트리거로 되돌린다
+   * — 그보다 먼저(제출 성공 자리에서) 걸면 열린 대화상자의 초점 가둠에 끌려 들어가거나 그 되돌림에 먹힌다.
+   * 트리거 복귀는 막지 않는다: 결과 줄이 이미 있으면 다음 렌더에 옮기고, 아직 없으면 도착할 때까지 초점이 트리거에 있다(`<body>` 가 아니라).
+   * Esc·「취소」로 닫으면 보낸 것이 없어 트리거로만 돌아간다
+   */
+  function onCloseAutoFocus() {
+    const id = submitted.current;
+    submitted.current = undefined;
+    if (id) io.focusResult(id);
   }
 
   function onSubmit(e: FormEvent<HTMLFormElement>) {
@@ -114,7 +133,7 @@ export function ComponentModal({ modal, message, io, expired }: Props) {
           </Button>
         </DialogTrigger>
         {/* 계약에 모달 설명이 없다 — Radix 의 Description 경고를 끈다 */}
-        <DialogContent closeDisabled={busy} aria-describedby={undefined}>
+        <DialogContent closeDisabled={busy} aria-describedby={undefined} onCloseAutoFocus={onCloseAutoFocus}>
           {/* 검사는 validate.ts 가 한다 — 브라우저 기본 검사(min·max 등)가 제출을 가로채지 않게 */}
           <form noValidate onSubmit={onSubmit} className="grid gap-4">
             <DialogHeader>
