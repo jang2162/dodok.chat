@@ -23,6 +23,13 @@ const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string =>
 const numberOf = (el: HTMLInputElement) => (el.value === "" ? undefined : Number(el.value));
 
 /**
+ * date 칸을 고치는 키 — 조각에 숫자를 치거나(한 글자 키), 지우거나, 위아래로 올리고 내린다.
+ * 그 밖의 키를 뗀 것은 고친 것이 아니다: Enter 는 암묵 제출이 방금 띄운 오류를, Tab·Shift 는 들어오기만 한 칸의 오류를 지워 버린다
+ */
+const DATE_EDIT_KEYS = new Set(["Backspace", "Delete", "ArrowUp", "ArrowDown"]);
+const editsDate = (key: string) => key.length === 1 || DATE_EDIT_KEYS.has(key);
+
+/**
  * 브라우저가 못 읽는 입력을 쥔 칸(number·date)의 id — 제출하는 순간 칸의 `validity.badInput` 을 읽는다.
  * 못 읽는 입력은 value 가 "" 라 화면 값(state)으로는 빈 칸과 같다: 빈 number 칸의 「e」「-」는 value 가 그대로여서
  * React onChange 가 안 불리고, date 의 부분 입력(「02/31」)은 input·change 이벤트조차 없다.
@@ -105,12 +112,17 @@ export function ModalField({ field, value, error, onChange }: Props) {
       widget = (
         <>
           <Label htmlFor={id}>{field.label}</Label>
+          {/* 부분 입력(「2026」만)은 치거나 지워도 input·change 가 안 난다 — 고치는 키를 뗀 것으로 칸을 고친 것을 알고
+              그 칸의 오류를 내린다(`editsDate`) */}
           <Input
             {...control}
             type="date"
             data-field-id={field.id}
             value={text(value)}
             onChange={(e) => onChange(e.target.value)}
+            onKeyUp={(e) => {
+              if (editsDate(e.key)) onChange(e.currentTarget.value);
+            }}
           />
         </>
       );

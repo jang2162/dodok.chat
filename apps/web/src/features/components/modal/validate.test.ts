@@ -86,6 +86,9 @@ describe("validateFields — 서버 fieldSchema 와 같은 빡빡함", () => {
   it("공백도 글자다 — 다듬지 않는다(서버가 길이만 본다)", () => {
     expect(validateFields([f({ type: "text", required: true })], { x: "  " })).toEqual({});
     expect(submitValues([f({ type: "text", required: true })], { x: "  " })).toEqual({ x: "  " });
+    // 선택 칸도 — 공백뿐인 입력을 빈 칸으로 보고 소리 없이 빼지 않는다
+    expect(submitValues([f({ type: "text" })], { x: "  " })).toEqual({ x: "  " });
+    expect(submitValues([f({ type: "textarea" })], { x: " \n" })).toEqual({ x: " \n" });
   });
 
   it("textarea 는 required 면 비울 수 없고 minLength 는 없다", () => {
@@ -191,6 +194,9 @@ describe("validateFields — 서버 fieldSchema 와 같은 빡빡함", () => {
 });
 
 describe("initialValues", () => {
+  // 프로토타입 없는 객체다(byFieldId) — toStrictEqual 은 프로토타입까지 보므로 제 키만 평범한 객체로 옮겨 잰다
+  const own = (fields: Field[]) => ({ ...initialValues(fields) });
+
   it("initialValues 는 default 를 채우고 없는 칸은 비운다", () => {
     expect(
       initialValues([{ type: "checkbox", id: "c", label: "동의", required: false, default: true }]),
@@ -209,7 +215,7 @@ describe("initialValues", () => {
       f({ type: "checkbox", id: "c", default: false }),
       f({ type: "radio", id: "r", options: OPTS, default: "b" }),
     ];
-    expect(initialValues(fields)).toStrictEqual({
+    expect(own(fields)).toStrictEqual({
       t: "제목",
       ta: "본문",
       n: 0,
@@ -230,7 +236,7 @@ describe("initialValues", () => {
       f({ type: "checkbox", id: "c" }),
       f({ type: "radio", id: "r", options: OPTS }),
     ];
-    expect(initialValues(fields)).toStrictEqual({
+    expect(own(fields)).toStrictEqual({
       t: "",
       ta: "",
       n: undefined,
@@ -246,11 +252,11 @@ describe("initialValues", () => {
       f({ type: "select", id: "s", multi: true, options: OPTS, default: ["z", "a"] }),
       f({ type: "radio", id: "r", options: OPTS, default: "z" }),
     ];
-    expect(initialValues(fields)).toStrictEqual({ s: ["a"], r: undefined });
+    expect(own(fields)).toStrictEqual({ s: ["a"], r: undefined });
   });
 
   it("단일 select 의 default 가 여럿이면 첫 하나만", () => {
-    expect(initialValues([f({ type: "select", options: OPTS, default: ["b", "a"] })])).toStrictEqual({
+    expect(own([f({ type: "select", options: OPTS, default: ["b", "a"] })])).toStrictEqual({
       x: ["b"],
     });
   });
@@ -283,6 +289,41 @@ describe("submitValues — 보내는 모양", () => {
       s: ["a", "b"],
       r: "a",
     });
+  });
+});
+
+describe("칸 id 가 Object.prototype 의 이름이어도(계약 ItemId 가 받는다)", () => {
+  const fields = [
+    f({ type: "text", id: "__proto__", required: true }),
+    f({ type: "select", id: "constructor", multi: true, options: OPTS }),
+  ];
+
+  it("initialValues 가 그 칸을 제 키로 든다 — `__proto__` 에 써도 프로토타입 세터를 타지 않는다", () => {
+    expect(Object.entries(initialValues(fields))).toEqual([
+      ["__proto__", ""],
+      ["constructor", []],
+    ]);
+  });
+
+  it("validateFields 의 오류도 그 키로 — 없는 칸은 상속된 것을 읽지 않는다", () => {
+    const errors = validateFields(fields, initialValues(fields));
+    expect(Object.entries(errors)).toEqual([["__proto__", "필수 항목입니다"]]);
+    // 화면은 errors[f.id] 로 읽는다 — 오류 없는 칸에서 Object 함수가 나오면 그 칸이 aria-invalid 가 된다
+    expect(errors.constructor).toBeUndefined();
+  });
+
+  it("못 읽는 입력의 칸이 `__proto__` 여도 형식 오류로 막는다", () => {
+    const d = [f({ type: "date", id: "__proto__" })];
+    expect(Object.entries(validateFields(d, initialValues(d), ["__proto__"]))).toEqual([
+      ["__proto__", "날짜 형식이 올바르지 않습니다"],
+    ]);
+  });
+
+  it("submitValues 는 그 키를 싣는 평범한 객체 — wire(JSON)로 나간다", () => {
+    // 계산된 키로 — `{ __proto__: "a" }` 는 제 키가 아니라 프로토타입을 정하는 문법이다
+    const out = submitValues(fields, { ...initialValues(fields), ["__proto__"]: "a", constructor: ["b"] });
+    expect(Object.getPrototypeOf(out)).toBe(Object.prototype);
+    expect(JSON.stringify(out)).toBe('{"__proto__":"a","constructor":["b"]}');
   });
 });
 

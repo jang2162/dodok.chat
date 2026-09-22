@@ -195,11 +195,18 @@ describe("모달 — 필드 7종", () => {
   });
 
   it("select·radio 의 이름은 legend 하나뿐이다 — ui/label 을 겹쳐 달지 않는다", async () => {
-    const message = withModal({ fields: [{ type: "radio", id: "r", label: "우선순위", options: OPTS }] });
+    const message = withModal({
+      fields: [
+        { type: "radio", id: "r", label: "우선순위", options: OPTS },
+        { type: "select", id: "s", label: "태그", multi: true, options: OPTS },
+      ],
+    });
     renderWithClient(<Components message={message} />);
     const dialog = await open();
-    expect(within(dialog).getAllByText("우선순위")).toHaveLength(1);
-    expect(within(dialog).getByText("우선순위").tagName).toBe("LEGEND");
+    for (const name of ["우선순위", "태그"]) {
+      expect(within(dialog).getAllByText(name)).toHaveLength(1);
+      expect(within(dialog).getByText(name).tagName).toBe("LEGEND");
+    }
   });
 
   it("default 가 초깃값으로 채워진다", async () => {
@@ -392,6 +399,86 @@ describe("모달 — 제출", () => {
     expect(sentValues()).toEqual([{ fields: {} }]);
   });
 
+  it("date 의 부분 입력을 다 지우면 형식 오류가 바로 내려간다 — 이벤트가 없어도 키를 뗀 것으로", async () => {
+    const message = withModal({ fields: [{ type: "date", id: "d", label: "마감" }] });
+    renderWithClient(<Components message={message} />);
+    const dialog = await open();
+    const input = within(dialog).getByLabelText("마감");
+    setBadInput(input, true);
+    await userEvent.type(input, "2026");
+    await submit(dialog);
+    expect(input).toHaveAccessibleDescription("날짜 형식이 올바르지 않습니다");
+    // Chrome 은 지울 때도 input·change 를 안 낸다 — keydown·keyup 만
+    setBadInput(input, false);
+    await userEvent.type(input, "{Backspace}");
+    expect(input).not.toHaveAttribute("aria-describedby");
+    expect(input).not.toHaveAttribute("aria-invalid");
+  });
+
+  it("필수 오류 뒤 date 에 부분 입력을 치면 「필수 항목입니다」가 내려간다 — 친 것이 있으니", async () => {
+    const message = withModal({ fields: [{ type: "date", id: "d", label: "마감", required: true }] });
+    renderWithClient(<Components message={message} />);
+    const dialog = await open();
+    const input = within(dialog).getByLabelText("마감");
+    await submit(dialog);
+    expect(input).toHaveAccessibleDescription("필수 항목입니다");
+    setBadInput(input, true);
+    await userEvent.type(input, "2026");
+    expect(input).not.toHaveAttribute("aria-describedby");
+  });
+
+  it.each(["{Delete}", "{ArrowUp}", "{ArrowDown}"])(
+    "date 칸을 「%s」로 고쳐도 그 칸의 오류가 내려간다 — 지우기·올리고 내리기도 고친 것",
+    async (key) => {
+      const message = withModal({ fields: [{ type: "date", id: "d", label: "마감" }] });
+      renderWithClient(<Components message={message} />);
+      const dialog = await open();
+      const input = within(dialog).getByLabelText("마감");
+      setBadInput(input, true);
+      await userEvent.type(input, "2026");
+      await submit(dialog);
+      expect(input).toHaveAccessibleDescription("날짜 형식이 올바르지 않습니다");
+      await userEvent.type(input, key);
+      expect(input).not.toHaveAttribute("aria-describedby");
+    },
+  );
+
+  it("date 칸에서 Enter 로 제출해도 오류가 남는다 — 그 Enter 를 뗀 것은 칸을 고친 것이 아니다", async () => {
+    fake?.onAck("component.interact", () => OK);
+    const message = withModal({ fields: [{ type: "date", id: "d", label: "마감", required: true }] });
+    renderWithClient(<Components message={message} />);
+    const dialog = await open();
+    const input = within(dialog).getByLabelText("마감");
+    await userEvent.type(input, "{Enter}");
+    expect(sentValues()).toEqual([]);
+    expect(input).toHaveAccessibleDescription("필수 항목입니다");
+  });
+
+  it("Tab 으로 date 칸에 들어오기만 해서는 오류가 안 내려간다", async () => {
+    const message = withModal({
+      fields: [
+        { type: "text", id: "t", label: "제목" },
+        { type: "date", id: "d", label: "마감", required: true },
+      ],
+    });
+    renderWithClient(<Components message={message} />);
+    const dialog = await open();
+    const input = within(dialog).getByLabelText("마감");
+    await submit(dialog);
+    expect(input).toHaveAccessibleDescription("필수 항목입니다");
+    await userEvent.click(within(dialog).getByLabelText("제목"));
+    // Tab 의 keydown 은 앞 칸에, keyup 은 들어온 칸에 난다
+    await userEvent.tab();
+    expect(input).toHaveFocus();
+    expect(input).toHaveAccessibleDescription("필수 항목입니다");
+    // 뒤로(Shift+Tab) 들어와도 — Shift 를 늦게 떼면 그 keyup 도 이 칸에 난다
+    await userEvent.tab();
+    expect(within(dialog).getByRole("button", { name: "취소" })).toHaveFocus();
+    await userEvent.keyboard("{Shift>}{Tab}{/Shift}");
+    expect(input).toHaveFocus();
+    expect(input).toHaveAccessibleDescription("필수 항목입니다");
+  });
+
   it("필수 칸이어도 못 읽는 입력이면 「필수 항목입니다」가 아니라 까닭을 말한다 — 친 것이 있으니", async () => {
     fake?.onAck("component.interact", () => OK);
     const message = withModal({
@@ -423,6 +510,81 @@ describe("모달 — 제출", () => {
     await userEvent.type(title, "a");
     expect(title).not.toHaveAttribute("aria-describedby");
     expect(within(dialog).queryByText("필수 항목입니다")).toBeNull();
+  });
+});
+
+describe("모달 — 칸 id 가 Object.prototype 의 이름이어도(계약 ItemId 가 받는다)", () => {
+  it("열리고, 필수 오류가 그 칸에 뜨고, 고치면 그 칸만 내려가고, 채운 값이 그 id 로 나간다", async () => {
+    fake?.onAck("component.interact", () => OK);
+    const message = withModal({
+      fields: [
+        { type: "text", id: "__proto__", label: "제목", required: true },
+        { type: "number", id: "constructor", label: "개수", required: true },
+      ],
+    });
+    renderWithClient(<Components message={message} />);
+    const dialog = await open();
+    const title = within(dialog).getByLabelText("제목");
+    const count = within(dialog).getByLabelText("개수");
+    // 없는 오류를 Object.prototype 에서 읽지 않는다 — `__proto__` 면 오류 자리에 객체가 그려져 렌더가 던진다
+    expect(title).not.toHaveAttribute("aria-invalid");
+    expect(count).not.toHaveAttribute("aria-invalid");
+    await submit(dialog);
+    expect(sentValues()).toEqual([]);
+    expect(title).toHaveAccessibleDescription("필수 항목입니다");
+    expect(count).toHaveAccessibleDescription("필수 항목입니다");
+    await userEvent.type(title, "보고서");
+    expect(title).not.toHaveAttribute("aria-describedby");
+    expect(count).toHaveAccessibleDescription("필수 항목입니다");
+    await userEvent.type(count, "3");
+    expect(count).not.toHaveAttribute("aria-describedby");
+    await submit(dialog);
+    // wire(JSON)에 그 키로 실린다
+    expect(JSON.stringify(sentValues())).toBe('[{"fields":{"__proto__":"보고서","constructor":3}}]');
+  });
+
+  it("비워 둔 선택 칸은 그 이름이어도 빈 칸이다 — 막지 않고 빼고 보낸다", async () => {
+    fake?.onAck("component.interact", () => OK);
+    const message = withModal({
+      fields: [
+        { type: "date", id: "__proto__", label: "마감" },
+        { type: "select", id: "constructor", label: "태그", multi: true, options: OPTS },
+        { type: "text", id: "title", label: "제목", required: true },
+      ],
+    });
+    renderWithClient(<Components message={message} />);
+    const dialog = await open();
+    expect(within(dialog).getByLabelText("마감")).not.toHaveAttribute("aria-invalid");
+    expect(within(dialog).getByRole("group", { name: "태그" })).not.toHaveAttribute("aria-describedby");
+    await userEvent.type(within(dialog).getByLabelText("제목"), "보고서");
+    await submit(dialog);
+    expect(JSON.stringify(sentValues())).toBe('[{"fields":{"title":"보고서"}}]');
+  });
+
+  it("서버가 다른 칸을 가리켜도 그 이름의 칸들은 멀쩡하다", async () => {
+    fake?.onAck("component.interact", () => ({
+      ok: false,
+      error: {
+        code: "VALIDATION",
+        message: "invalid values",
+        details: { issues: [{ path: ["fields", "n"], message: "Too big" }] },
+      },
+    }));
+    const message = withModal({
+      fields: [
+        { type: "text", id: "__proto__", label: "제목" },
+        { type: "text", id: "constructor", label: "부제" },
+        { type: "number", id: "n", label: "개수" },
+      ],
+    });
+    renderWithClient(<Components message={message} />);
+    const dialog = await open();
+    await userEvent.type(within(dialog).getByLabelText("개수"), "2");
+    await submit(dialog);
+    const n = within(dialog).getByLabelText("개수");
+    await waitFor(() => expect(n).toHaveAccessibleDescription("받아들일 수 없는 값입니다"));
+    expect(within(dialog).getByLabelText("제목")).not.toHaveAttribute("aria-invalid");
+    expect(within(dialog).getByLabelText("부제")).not.toHaveAttribute("aria-invalid");
   });
 });
 
@@ -501,6 +663,9 @@ describe("모달 — ack 오류는 대화상자 안에", () => {
     await waitFor(() => expect(n).toHaveAccessibleDescription("받아들일 수 없는 값입니다"));
     expect(n).toHaveAttribute("aria-invalid", "true");
     expect(within(dialog).getByLabelText("제목")).not.toHaveAttribute("aria-describedby");
+    // 입력은 그대로 남는다 — 고치라는 칸에서 자기가 쓴 값을 잃지 않게
+    expect(n).toHaveValue(2);
+    expect(within(dialog).getByLabelText("제목")).toHaveValue("보고서");
     // 서버 문구(영문)를 그대로 내지 않는다
     expect(within(dialog).queryByText("Too big")).toBeNull();
     expect(within(dialog).queryByText("처리할 수 없는 요청입니다")).toBeNull();

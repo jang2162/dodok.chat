@@ -16,7 +16,14 @@ import { DisabledHint, reasonProps } from "../DisabledHint";
 import { itemState } from "../state";
 import type { Interact } from "../useInteract";
 import { ModalField, unreadableFieldIds } from "./fields";
-import { type FieldValues, initialValues, issueFieldIds, submitValues, validateFields } from "./validate";
+import {
+  byFieldId,
+  type FieldValues,
+  initialValues,
+  issueFieldIds,
+  submitValues,
+  validateFields,
+} from "./validate";
 
 /** 서버가 VALIDATION 으로 가리킨 칸의 문구 — 서버의 zod 문구(영문)를 그대로 내지 않는다(스펙 6장) */
 const SERVER_REJECTED = "받아들일 수 없는 값입니다";
@@ -34,8 +41,9 @@ export function ComponentModal({ modal, message, io, expired }: Props) {
   const submitHintId = `${hintId}-submit`;
   const formErrorId = `${hintId}-form`;
   const [open, setOpen] = useState(false);
-  const [values, setValues] = useState<FieldValues>({});
-  const [errors, setErrors] = useState<Record<string, string>>({});
+  // 칸 id 로 찾는 둘은 늘 byFieldId — 칸 id 가 「__proto__」「constructor」여도 상속된 것을 읽지 않게
+  const [values, setValues] = useState<FieldValues>(() => byFieldId());
+  const [errors, setErrors] = useState<Record<string, string>>(() => byFieldId());
   const [formError, setFormError] = useState<string>();
 
   const state = itemState({
@@ -56,7 +64,7 @@ export function ComponentModal({ modal, message, io, expired }: Props) {
     // 열 때마다 처음 값 — 지난번에 쓰다 만 값·오류를 남기지 않는다
     if (next) {
       setValues(initialValues(modal.fields));
-      setErrors({});
+      setErrors(byFieldId());
       setFormError(undefined);
     }
     setOpen(next);
@@ -64,12 +72,8 @@ export function ComponentModal({ modal, message, io, expired }: Props) {
 
   /** 칸을 고치면 그 칸의 오류와 하단 줄은 내린다 — 다음 제출까지 남아 고친 값에 대한 오류처럼 보이지 않게 */
   function edit(fieldId: string, value: unknown) {
-    setValues((v) => ({ ...v, [fieldId]: value }));
-    setErrors((e) => {
-      const next = { ...e };
-      delete next[fieldId];
-      return next;
-    });
+    setValues((v) => byFieldId([...Object.entries(v), [fieldId, value]]));
+    setErrors((e) => byFieldId(Object.entries(e).filter(([id]) => id !== fieldId)));
     setFormError(undefined);
   }
 
@@ -85,7 +89,7 @@ export function ComponentModal({ modal, message, io, expired }: Props) {
       return;
     }
     const ids = r.code === "VALIDATION" ? issueFieldIds(modal.fields, r.details) : [];
-    if (ids.length > 0) setErrors(Object.fromEntries(ids.map((id) => [id, SERVER_REJECTED])));
+    if (ids.length > 0) setErrors(byFieldId(ids.map((id) => [id, SERVER_REJECTED])));
     else setFormError(r.text);
   }
 

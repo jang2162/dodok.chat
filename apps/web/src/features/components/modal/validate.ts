@@ -6,6 +6,17 @@ import type { Field, SelectOption } from "@dodok/shared";
  */
 export type FieldValues = Record<string, unknown>;
 
+/**
+ * 칸 id 로 찾는 객체(화면 값·오류) — 프로토타입 없이 만든다. 계약 ItemId 는 「__proto__」「constructor」도 받는다:
+ * `{}` 면 없는 칸을 읽을 때 Object.prototype 의 것이 나오고(오류 자리에 객체가 그려져 렌더가 던진다),
+ * `__proto__` 에 쓰면 칸이 아니라 프로토타입 세터를 탄다. 서버로 나가는 값만은 평범한 객체다(`submitValues`)
+ */
+export function byFieldId<T>(entries: Iterable<readonly [string, T]> = []): Record<string, T> {
+  const out: Record<string, T> = Object.create(null);
+  for (const [id, v] of entries) out[id] = v;
+  return out;
+}
+
 const REQUIRED = "필수 항목입니다";
 const BAD_VALUE = "값이 올바르지 않습니다";
 const NOT_OPTION = "목록에 없는 값입니다";
@@ -36,7 +47,7 @@ function isIsoDate(v: string): boolean {
 
 /** 폼을 열 때의 값 — default 를 채우고 없는 칸은 비운다. 옵션에 없는 default 는 버린다(화면에 안 보이는 값을 보내지 않게) */
 export function initialValues(fields: Field[]): FieldValues {
-  const out: FieldValues = {};
+  const out = byFieldId<unknown>();
   for (const f of fields) {
     switch (f.type) {
       case "text":
@@ -69,14 +80,17 @@ const isEmpty = (v: unknown) => v === undefined || v === "" || (Array.isArray(v)
 /** 칸 하나가 서버로 나가는 값 — required 가 아닌 빈 칸은 undefined(키를 뺀다) */
 const outgoing = (f: Field, v: unknown) => (!f.required && isEmpty(v) ? undefined : v);
 
-/** 서버로 나가는 `values.fields` — required 가 아닌 빈 칸은 뺀다(서버 스키마가 optional 이라 빠진 키는 받는다) */
+/**
+ * 서버로 나가는 `values.fields` — required 가 아닌 빈 칸은 뺀다(서버 스키마가 optional 이라 빠진 키는 받는다).
+ * wire(JSON)로 나가니 평범한 객체로 — `Object.fromEntries` 는 `__proto__` 도 세터를 타지 않고 제 키로 싣는다
+ */
 export function submitValues(fields: Field[], values: FieldValues): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const f of fields) {
-    const v = outgoing(f, values[f.id]);
-    if (v !== undefined) out[f.id] = v;
-  }
-  return out;
+  return Object.fromEntries(
+    fields.flatMap((f) => {
+      const v = outgoing(f, values[f.id]);
+      return v === undefined ? [] : [[f.id, v] as const];
+    }),
+  );
 }
 
 /**
@@ -136,7 +150,7 @@ export function validateFields(
   values: FieldValues,
   unreadable: readonly string[] = [],
 ): Record<string, string> {
-  const errors: Record<string, string> = {};
+  const errors = byFieldId<string>();
   for (const f of fields) {
     const e = unreadable.includes(f.id) ? unreadableError(f) : fieldError(f, outgoing(f, values[f.id]));
     if (e !== undefined) errors[f.id] = e;
