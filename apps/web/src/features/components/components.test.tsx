@@ -145,11 +145,12 @@ describe("Components — 버튼", () => {
       const blocked = screen.getByRole("button", { name: url.trim() });
       expect(blocked).toBeDisabled();
       expect(blocked).toHaveAccessibleDescription(LINK_BLOCKED);
-      expect(blocked).toHaveAttribute("title", LINK_BLOCKED);
-      // title 이 같은 설명을 주므로 위 단언만으로는 aria-describedby 가 안 잠긴다 — 가리키는 요소를 꺼내 잰다
+      expect(blocked).not.toHaveAttribute("title");
       const hint = document.getElementById(blocked.getAttribute("aria-describedby") ?? "");
       expect(hint?.textContent).toBe(LINK_BLOCKED);
     }
+    // 같은 사유는 줄 끝에 한 번만 보인다(DisabledHint.test)
+    expect(screen.getAllByText(LINK_BLOCKED)).toHaveLength(1);
   });
 
   it("artifact:// 링크 버튼은 링크가 아니라 비활성이고, 사유는 media·file 과 같은 첨부 문구다 — 「열 수 없음」이 아니라", () => {
@@ -180,14 +181,18 @@ describe("Components — 버튼", () => {
     expect(container.querySelectorAll("a")).toHaveLength(0);
     const att = screen.getByRole("button", { name: "보고서 받기" });
     expect(att).toBeDisabled();
-    expect(att).toHaveAttribute("title", ARTIFACT_PENDING);
+    expect(att).not.toHaveAttribute("title");
     expect(att).toHaveAccessibleDescription(ARTIFACT_PENDING);
     expect(document.getElementById(att.getAttribute("aria-describedby") ?? "")?.textContent).toBe(
       ARTIFACT_PENDING,
     );
     const js = screen.getByRole("button", { name: "나쁜 링크" });
-    expect(js).toHaveAttribute("title", LINK_BLOCKED);
+    expect(js).not.toHaveAttribute("title");
     expect(js).toHaveAccessibleDescription(LINK_BLOCKED);
+    // 두 사유가 한 줄에 섞였다 — 어느 버튼의 것인지 앞에 적어 보인다
+    expect(Array.from(container.querySelectorAll("[data-slot=disabled-hint]"), (h) => h.textContent)).toEqual(
+      [`보고서 받기: ${ARTIFACT_PENDING}`, `나쁜 링크: ${LINK_BLOCKED}`],
+    );
   });
 
   it("같은 카드의 같은 artifact:// 값은 media·file·링크 버튼이 같은 말을 한다", () => {
@@ -302,11 +307,12 @@ describe("Components — 카드와 비활성 사유", () => {
   it.each<[string, Partial<Message>, string]>([
     ["소비", { componentState: { expiresAt: FUTURE, consumed: ["continue_relay"] } }, "이미 처리되었습니다"],
     ["만료", { componentState: { expiresAt: "2020-01-01T00:00:00.000Z", consumed: [] } }, "만료되었습니다"],
-  ])("비활성 사유(%s)를 회색으로만 두지 않고 title·설명으로 말한다", (_, over, text) => {
+  ])("비활성 사유(%s)를 회색으로만 두지 않고 보이는 글·설명으로 말한다", (_, over, text) => {
     renderWithClient(<Components message={withButtons(over)} />);
     const button = screen.getByRole("button", { name: "이어가기" });
     expect(button).toBeDisabled();
-    expect(button).toHaveAttribute("title", text);
+    expect(screen.getByText(text)).toBeInTheDocument();
+    expect(button).not.toHaveAttribute("title");
     expect(button).toHaveAccessibleDescription(text);
   });
 
@@ -328,8 +334,7 @@ describe("Components — 카드와 비활성 사유", () => {
     );
   });
 
-  // toHaveAccessibleDescription 은 aria-describedby 가 없는 id 를 가리키면 title 로 대신 계산한다 —
-  // 그래서 DisabledHint 가 실제로 그 문구를 내는지는 가리키는 요소를 꺼내 따로 잰다
+  // 가리키는 요소를 꺼내 따로 잰다 — 예전에는 title 이 같은 설명을 대신 내 toHaveAccessibleDescription 만으로는 힌트가 안 잠겼다
   it.each<[NonNullable<ItemState["reason"]>, string, () => Promise<string>]>([
     [
       "consumed",
@@ -724,7 +729,8 @@ describe("Components — 만료 시계", () => {
     expect(button).toBeEnabled();
     act(() => vi.advanceTimersByTime(1));
     expect(button).toBeDisabled();
-    expect(button).toHaveAttribute("title", "만료되었습니다");
+    expect(button).toHaveAccessibleDescription("만료되었습니다");
+    expect(screen.getByText("만료되었습니다")).toBeInTheDocument();
   });
 
   it("setTimeout 상한(약 24.8일)을 넘는 먼 만료에는 타이머를 걸지 않는다 — 걸면 넘쳐서 곧바로 만료로 보인다", () => {

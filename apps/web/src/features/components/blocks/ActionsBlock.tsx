@@ -1,9 +1,9 @@
 import type { Block, Message } from "@dodok/shared";
-import { Fragment, useId } from "react";
+import { useId } from "react";
 import { useMe } from "@/api/queries";
 import { Button } from "@/ui/button";
-import { DisabledHint, reasonProps } from "../DisabledHint";
-import { itemState } from "../state";
+import { ReasonHint } from "../DisabledHint";
+import { DISABLED_REASON_TEXT, itemState } from "../state";
 import type { Interact } from "../useInteract";
 import { ARTIFACT_PENDING, isArtifactUrl } from "./artifact";
 import { SelectItem } from "./SelectItem";
@@ -15,7 +15,7 @@ const STYLE = {
   danger: "destructive",
 } as const;
 
-/** `https://`·`artifact://` 가 아닌 링크 버튼의 사유 — title·aria-describedby 로 싣는다 */
+/** `https://`·`artifact://` 가 아닌 링크 버튼의 사유 — 다른 비활성 사유처럼 보이는 글로 싣는다(`ReasonHint`) */
 export const LINK_BLOCKED = "열 수 없는 링크입니다";
 
 type Props = { block: Extract<Block, { type: "actions" }>; message: Message; io: Interact; expired: boolean };
@@ -39,58 +39,83 @@ export function ActionsBlock({ block, message, io, expired }: Props) {
     return <SelectItem item={select} blockId={block.id} message={message} io={io} expired={expired} />;
 
   const buttons = block.items.flatMap((i) => (i.type === "button" ? [i] : []));
+  const rows = buttons.map((item) => {
+    const label = `${item.emoji ? `${item.emoji} ` : ""}${item.label}`;
+    if (item.url && !item.url.startsWith("https://")) {
+      return {
+        item,
+        label,
+        kind: "blocked" as const,
+        why: isArtifactUrl(item.url) ? ARTIFACT_PENDING : LINK_BLOCKED,
+      };
+    }
+    if (item.url) return { item, label, kind: "link" as const, why: undefined };
+    const state = itemState({
+      message,
+      connected: io.connected,
+      hasSocket: io.hasSocket,
+      meId,
+      expired,
+      busy: io.busy,
+      allowedUsers: item.allowedUsers,
+      itemId: item.id,
+    });
+    const why = state.reason ? DISABLED_REASON_TEXT[state.reason] : undefined;
+    return { item, label, kind: "button" as const, state, why };
+  });
+
+  // 사유가 같은 버튼은 줄 끝의 한 줄을 함께 가리킨다 — 만료·끊김이면 줄 전체가 같은 사유라 한 번만 보인다.
+  // 사유가 둘 이상 섞이면 어느 버튼의 것인지 앞에 적는다(회색 버튼만으로는 짝을 못 짓는다)
+  const hints: { id: string; text: string; labels: string[] }[] = [];
+  for (const { label, why } of rows) {
+    if (!why) continue;
+    const found = hints.find((h) => h.text === why);
+    if (found) found.labels.push(label);
+    else hints.push({ id: `${hintBase}-why-${hints.length}`, text: why, labels: [label] });
+  }
+  const hintId = (why: string | undefined) => hints.find((h) => h.text === why)?.id;
+
   return (
-    <div className="flex flex-wrap gap-2" data-slot="actions">
-      {buttons.map((item) => {
-        const label = `${item.emoji ? `${item.emoji} ` : ""}${item.label}`;
-        const hintId = `${hintBase}-${item.id}`;
-        if (item.url && !item.url.startsWith("https://")) {
-          const why = isArtifactUrl(item.url) ? ARTIFACT_PENDING : LINK_BLOCKED;
+    <div className="flex flex-wrap items-center gap-2" data-slot="actions">
+      {rows.map((row) => {
+        if (row.kind === "blocked") {
           return (
-            <Fragment key={item.id}>
-              <Button variant="outline" size="sm" disabled title={why} aria-describedby={hintId}>
-                {label}
-              </Button>
-              <span id={hintId} className="sr-only">
-                {why}
-              </span>
-            </Fragment>
+            <Button key={row.item.id} variant="outline" size="sm" disabled aria-describedby={hintId(row.why)}>
+              {row.label}
+            </Button>
           );
         }
-        if (item.url) {
+        if (row.kind === "link") {
           return (
-            <Button key={item.id} asChild variant="outline" size="sm">
-              <a href={item.url} target="_blank" rel="noopener noreferrer">
-                {label}
+            <Button key={row.item.id} asChild variant="outline" size="sm">
+              <a href={row.item.url} target="_blank" rel="noopener noreferrer">
+                {row.label}
               </a>
             </Button>
           );
         }
-        const state = itemState({
-          message,
-          connected: io.connected,
-          hasSocket: io.hasSocket,
-          meId,
-          expired,
-          busy: io.busy,
-          allowedUsers: item.allowedUsers,
-          itemId: item.id,
-        });
+        const { item, state } = row;
         return (
-          <Fragment key={item.id}>
-            <Button
-              size="sm"
-              variant={STYLE[item.style]}
-              disabled={state.disabled}
-              {...reasonProps(state, hintId)}
-              onClick={() => void io.send(item.id, {}, block.id ? { blockId: block.id } : {})}
-            >
-              {label}
-            </Button>
-            <DisabledHint state={state} id={hintId} />
-          </Fragment>
+          <Button
+            key={item.id}
+            size="sm"
+            variant={STYLE[item.style]}
+            disabled={state.disabled}
+            aria-describedby={hintId(row.why)}
+            onClick={() => void io.send(item.id, {}, block.id ? { blockId: block.id } : {})}
+          >
+            {row.label}
+          </Button>
         );
       })}
+      {hints.map((h) => (
+        <ReasonHint
+          key={h.id}
+          id={h.id}
+          text={h.text}
+          subject={hints.length > 1 ? h.labels.join(", ") : undefined}
+        />
+      ))}
     </div>
   );
 }

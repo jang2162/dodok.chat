@@ -21,7 +21,7 @@ export type StateInput = {
   itemId: string;
 };
 
-/** 비활성 사유를 사람에게 말하는 문구 — title·aria-describedby 로 싣는다(스펙 5.7) */
+/** 비활성 사유를 사람에게 말하는 문구 — 보이는 글로 두고 컨트롤이 aria-describedby 로 가리킨다(스펙 5.7, `DisabledHint`) */
 export const DISABLED_REASON_TEXT: Record<NonNullable<ItemState["reason"]>, string> = {
   disconnected: "연결이 끊겨 지금은 보낼 수 없습니다",
   expired: "만료되었습니다",

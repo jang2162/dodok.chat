@@ -151,21 +151,17 @@ export function ComponentModal({ modal, message, io, expired }: Props) {
             <FieldError id={formErrorId} className="empty:-mt-4">
               {formError}
             </FieldError>
+            {/* 「제출」이 잠긴 사유 — 푸터 위 한 줄. 푸터 안이면 넓은 화면에서 「제출」 오른쪽 끝에 끼인다 */}
+            <DisabledHint state={state} id={submitHintId} />
             <DialogFooter>
               <DialogClose asChild>
                 <Button type="button" variant="outline" disabled={busy}>
                   취소
                 </Button>
               </DialogClose>
-              <Button
-                type="submit"
-                disabled={state.disabled}
-                {...reasonProps(state, submitHintId)}
-                aria-describedby={submitDescribedBy}
-              >
+              <Button type="submit" disabled={state.disabled} aria-describedby={submitDescribedBy}>
                 제출
               </Button>
-              <DisabledHint state={state} id={submitHintId} />
             </DialogFooter>
           </form>
         </DialogContent>

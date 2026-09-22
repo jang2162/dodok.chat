@@ -208,8 +208,10 @@ describe("셀렉트 — 잠김과 오류", () => {
     expect(group).toHaveAccessibleDescription(text);
     for (const radio of within(group).getAllByRole("radio")) expect(radio).toBeDisabled();
     expect(send()).toBeDisabled();
-    expect(send()).toHaveAttribute("title", text);
+    expect(send()).not.toHaveAttribute("title");
     expect(send()).toHaveAccessibleDescription(text);
+    // 목록과 「보내기」가 한 글을 함께 가리킨다 — 보이는 글은 하나
+    expect(screen.getAllByText(text)).toHaveLength(1);
     // 잠긴 카드에는 「하나를 고르세요」 같은 고르기 안내를 내지 않는다 — 사유가 먼저다
     expect(screen.queryByText("하나를 고르세요")).toBeNull();
     await userEvent.click(screen.getByRole("radio", { name: "PDF" }));

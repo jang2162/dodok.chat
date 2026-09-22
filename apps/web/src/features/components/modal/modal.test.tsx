@@ -902,8 +902,9 @@ describe("모달 — 트리거 잠김", () => {
     renderWithClient(<Components message={withModal(modal, over)} />);
     const text = DISABLED_REASON_TEXT[reason];
     expect(trigger()).toBeDisabled();
-    expect(trigger()).toHaveAttribute("title", text);
+    expect(trigger()).not.toHaveAttribute("title");
     expect(trigger()).toHaveAccessibleDescription(text);
+    expect(screen.getByText(text)).toBeInTheDocument();
     await userEvent.click(trigger());
     expect(screen.queryByRole("dialog")).toBeNull();
   });
