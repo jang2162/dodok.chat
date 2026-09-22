@@ -144,22 +144,27 @@ describe("fakeAgentScript", () => {
       expect(cardOf("@dev 폼").modal?.id).not.toBe(cardOf("@dev 폼 둘").modal?.id);
     });
 
-    it("고르기 → 셀렉트 단일 1개 + 다중(최소 2·최대 3) 1개, 다중은 최대보다 옵션이 많다", () => {
+    it("고르기 → 셀렉트 단일 1개 + 다중(최소 2·최대 3) 1개, 다중은 최대보다 옵션이 많고 스크롤 상자가 넘칠 만큼 많다", () => {
       const selects = actionItems("@dev 고르기").filter((i) => i.type === "select");
       expect(selects.map((s) => [s.multi, s.minValues, s.maxValues])).toEqual([
         [false, undefined, undefined],
         [true, 2, 3],
       ]);
       expect(selects[1]?.options.length).toBeGreaterThan(3);
+      // 옵션 6개 초과면 스크롤 상자(최대 224px), 한 줄 25px 꼴(c2-t9 실측 8개 = 200px, 안 넘침) — 12개면 약 300px 로 넉넉히 넘친다
+      expect(selects[1]?.options.length).toBeGreaterThanOrEqual(12);
     });
 
-    it("카드 → section·separator·actions(버튼 셋)·media(https + artifact)·file(https + artifact)", () => {
+    it("카드 → section·separator·actions(버튼 셋 + artifact 링크 버튼)·media(https + artifact)·file(https + artifact)", () => {
       const { blocks } = cardOf("@dev 카드");
       expect(new Set(blocks.map((b) => b.type))).toEqual(
         new Set(["section", "separator", "actions", "media", "file"]),
       );
-      expect(actionItems("@dev 카드").map((i) => i.type)).toEqual(["button", "button", "button"]);
+      expect(actionItems("@dev 카드").map((i) => i.type)).toEqual(["button", "button", "button", "button"]);
       const scheme = (url: string) => url.slice(0, url.indexOf("://"));
+      // `artifact://` 가 링크 버튼·media·file 셋에서 같은 문구인지 한 카드에서 보려면 셋 다 artifact 가 있어야 한다
+      const linkUrls = actionItems("@dev 카드").flatMap((i) => (i.type === "button" && i.url ? [i.url] : []));
+      expect(linkUrls.map(scheme)).toEqual(["artifact"]);
       const mediaUrls = blocks.flatMap((b) => (b.type === "media" ? b.items.map((i) => i.url) : []));
       expect(mediaUrls.map(scheme)).toEqual(["https", "artifact"]);
       const fileUrls = blocks.flatMap((b) => (b.type === "file" ? [b.url] : []));
@@ -172,10 +177,11 @@ describe("fakeAgentScript", () => {
       for (const b of blocks) if (b.type === "media") for (const i of b.items) expect(i.alt).toBeTruthy();
     });
 
-    it("재사용 → reusable 버튼 카드", () => {
+    it("재사용 → reusable 버튼 + 모달 카드(결과 줄 상한과 모달 제출 뒤 초점을 한 카드에서 본다)", () => {
       expect(cardOf("@dev 재사용").reusable).toBe(true);
       expect(actionItems("@dev 재사용").every((i) => i.type === "button")).toBe(true);
       expect(actionItems("@dev 재사용").length).toBeGreaterThan(0);
+      expect(cardOf("@dev 재사용").modal?.fields.length).toBeGreaterThan(0);
       for (const keyword of KEYWORDS.filter((k) => k !== "재사용")) {
         expect(cardOf(`@dev ${keyword}`).reusable, keyword).toBe(false);
       }

@@ -159,7 +159,11 @@ const FORM_TWO_CARD: FakeComponents = {
   },
 };
 
-/** 「고르기」 — 셀렉트 단일 1개 + 다중 1개. 액션 로우 하나에 셀렉트는 하나뿐이라 로우가 둘이다 */
+/**
+ * 「고르기」 — 셀렉트 단일 1개 + 다중 1개. 액션 로우 하나에 셀렉트는 하나뿐이라 로우가 둘이다.
+ * 다중은 옵션이 12개다 — 6개를 넘으면 스크롤 상자(`OptionList`, 최대 224px)가 되는데, 한 줄이 25px 꼴(브라우저 검증 c2-t9
+ * 실측: 8개 = 200px)이라 12개면 약 300px 로 상자를 실제로 넘친다. 8개로는 상자만 생기고 스크롤은 안 생겼다
+ */
 const PICK_CARD: FakeComponents = {
   blocks: [
     {
@@ -193,6 +197,13 @@ const PICK_CARD: FakeComponents = {
             { value: "sora", label: "소라" },
             { value: "hoon", label: "훈" },
             { value: "yuna", label: "유나" },
+            { value: "jiho", label: "지호" },
+            { value: "seoyeon", label: "서연" },
+            { value: "doyun", label: "도윤" },
+            { value: "haeun", label: "하은" },
+            { value: "minjae", label: "민재" },
+            { value: "yerin", label: "예린" },
+            { value: "taeo", label: "태오" },
           ],
         },
       ],
@@ -200,7 +211,10 @@ const PICK_CARD: FakeComponents = {
   ],
 };
 
-/** 「카드」 — 블록 5종이 다 든 카드. media·file 은 https 하나 + artifact 하나(artifact 는 Phase 2 ③ 까지 자리표시) */
+/**
+ * 「카드」 — 블록 5종이 다 든 카드. media·file 은 https 하나 + artifact 하나(artifact 는 Phase 2 ③ 까지 자리표시).
+ * 링크 버튼도 artifact 하나를 둔다 — `artifact://` 가 링크 버튼·media·file **셋에서 같은 문구**인지 한 카드에서 본다
+ */
 const BLOCKS_CARD: FakeComponents = {
   blocks: [
     { type: "section", text: "**배포 요약** — `v1.2.0` 을 올렸어요.\n\n- 새 기능 셋\n- 고친 것 둘" },
@@ -212,6 +226,7 @@ const BLOCKS_CARD: FakeComponents = {
         { type: "button", id: "like", label: "좋아요", style: "primary", emoji: "👍" },
         { type: "button", id: "later", label: "나중에" },
         { type: "button", id: "rollback", label: "되돌리기", style: "danger" },
+        { type: "button", id: "open_screen", label: "스크린숏 열기", url: "artifact://dev-fake/screen.png" },
       ],
     },
     {
@@ -226,7 +241,10 @@ const BLOCKS_CARD: FakeComponents = {
   ],
 };
 
-/** 「재사용」 — 몇 번이든 누를 수 있는 버튼 카드(결과 줄이 누를 때마다 는다) */
+/**
+ * 「재사용」 — 몇 번이든 누를 수 있는 버튼 + 모달 카드(결과 줄이 누를 때마다 는다).
+ * 모달이 함께 있어야 결과 줄 상한(「최근 20건」)과 모달 제출 뒤 초점(결과 줄로)을 한 카드에서 본다
+ */
 const REUSABLE_CARD: FakeComponents = {
   reusable: true,
   blocks: [
@@ -239,6 +257,12 @@ const REUSABLE_CARD: FakeComponents = {
       ],
     },
   ],
+  modal: {
+    id: "note",
+    title: "한마디 남기기",
+    triggerLabel: "한마디 쓰기",
+    fields: [{ type: "text", id: "note_text", label: "한마디", required: true, maxLength: 100 }],
+  },
 };
 
 /** 「짧게」 — 버튼·셀렉트·모달이 한 카드에 있어, 만료되면 셋이 함께 잠기는 것을 본다 */
