@@ -860,6 +860,28 @@ describe("모달 — 결정 뒤 초점", () => {
     expect(trigger()).toHaveFocus();
   });
 
+  it("재사용 카드에서 제출해 줄로 간 뒤 다시 열어 「취소」하면 트리거로 — 지난 제출의 표식이 남아 옛 줄로 끌려가지 않는다", async () => {
+    let rerender: (ui: ReactElement) => void = () => {};
+    fake?.onAck("component.interact", async () => {
+      await Promise.resolve();
+      rerender(<Components message={submittedCard({ reusable: true })} />);
+      return OK;
+    });
+    ({ rerender } = renderWithClient(<Components message={withModal({}, {}, { reusable: true })} />));
+    const first = await open();
+    await userEvent.type(within(first).getByLabelText("제목"), "보고서");
+    await submit(first);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await settle();
+    expect(line()).toHaveFocus();
+
+    const again = await open();
+    await userEvent.click(within(again).getByRole("button", { name: "취소" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await settle();
+    expect(trigger()).toHaveFocus();
+  });
+
   it("ack 오류면 대화상자가 열린 채 초점도 대화상자 안에 남는다", async () => {
     fake?.onAck("component.interact", () => ({ ok: false, error: { code: "EXPIRED", message: "x" } }));
     renderWithClient(<Components message={withModal()} />);

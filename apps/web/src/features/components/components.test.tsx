@@ -115,6 +115,9 @@ describe("Components — 버튼", () => {
       "ARTIFACT://files/x",
       " artifact://files/x",
       "http://evil.example/?next=artifact://files/x",
+      // 스킴만 맞고 // 가 모자란 값 — 접두사가 "artifact:"·"artifact:/" 로 짧아지거나 new URL().protocol 로 가르는 것을 잡는다
+      "artifact:files/x",
+      "artifact:/files/x",
     ];
     // withButtons() 의 ComponentsV1.parse 를 건너뛴다 — 계약(SafeUrl)이 먼저 거르면 렌더러의 허용목록이 안 잠긴다.
     // 서버는 쓸 때만 검증하므로 옛 행·느슨해진 계약의 값은 여기까지 온다(url 의 TS 타입은 string 이라 캐스트 없이 들어간다)
@@ -525,6 +528,37 @@ describe("Components — 결과 줄", () => {
     expect(lines()).toHaveLength(INTERACTIONS_MAX);
     const note = screen.getByText(`최근 ${INTERACTIONS_MAX}건`);
     expect(screen.getByRole("list", { name: "상호작용 기록" })).not.toContainElement(note);
+  });
+
+  it("결과 줄은 초점을 받을 수 있지만 탭 차례에는 안 든다 — 줄 수만큼 Tab 이 늘지 않게", async () => {
+    renderWithClient(
+      <Components message={withButtons({ interactions: [ix(1, "stop"), ix(2, "continue_relay")] })} />,
+    );
+    const items = within(screen.getByRole("list", { name: "상호작용 기록" })).getAllByRole("listitem");
+    // 결정 뒤 초점은 스크립트로 오므로 -1 이어야 한다 — 빠지면 focus() 가 먹지 않는다
+    for (const li of items) expect(li).toHaveAttribute("tabindex", "-1");
+    // Tab 으로 한 바퀴 — 버튼 둘과 문서 링크만 들르고 줄에는 서지 않는다
+    const visited: Element[] = [];
+    for (let i = 0; i < items.length + 4; i++) {
+      await userEvent.tab();
+      if (document.activeElement) visited.push(document.activeElement);
+    }
+    expect(visited.filter((el) => el.tagName === "LI")).toEqual([]);
+  });
+
+  it("줄은 상호작용 id 로 가른다 — 재사용 카드에 같은 itemId 줄이 여럿이어도 넘김 뒤 초점이 제 줄에 남는다", () => {
+    // React 는 같은 key 를 console.error 로 알린다
+    const errors = vi.spyOn(console, "error");
+    const card = (interactions: MessageInteraction[]) =>
+      withButtons({ interactions }, undefined, { reusable: true });
+    const all = [ix(1, "stop"), ix(2, "stop", { userId: OTHER }), ix(3, "stop")];
+    const { rerender } = renderWithClient(<Components message={card(all.slice(0, 2))} />);
+    act(() => lineOf(uid(702))?.focus());
+    // 상한 넘김 — 가장 오래된 줄이 빠지고 새 줄이 붙는다
+    rerender(<Components message={card(all.slice(1))} />);
+    expect(lines()).toEqual([`${UNKNOWN_USER} — 그만`, "@owner — 그만"]);
+    expect(lineOf(uid(702))).toHaveFocus();
+    expect(errors).not.toHaveBeenCalled();
   });
 
   it("summarize 가 못 푸는 줄은 건너뛴다 — 카드가 깨지지 않는다", () => {
