@@ -17,7 +17,7 @@
 | 5 | **결과 줄은 메시지에 `interactions` 를 실어 보낸다** (아래 3장) | 테이블이 정본이라 **새로고침·새 탭에서 그대로** 보이고, `reusable` 도 되며, `componentState.consumed`(「더 못 쓴다」)와 뜻이 안 섞인다. 기존 `message.updated` 팬아웃을 그대로 탄다. |
 | 6 | **셀렉트는 항상 「보내기」 확정식** | 단일·다중이 같은 모양이라 설명하기 쉽고 오조작이 적다. 단일 선택에 클릭이 한 번 더 드는 것이 대가다. |
 | 7 | **옵션 목록은 한 렌더러**(단일→라디오, 다중→체크박스) | Radix `Select` 는 단일 전용이라 다중을 못 그린다. 옵션이 ≤25 뿐이라 목록으로 충분하고, **셀렉트 블록과 모달의 `select`·`radio` 필드가 같은 것을 쓴다** — 접근성을 한 곳에서만 맞춘다. `ui/select.tsx` 는 만들지 않는다. |
-| 8 | **`media` 의 `https://` 이미지는 불러온다** — `referrerPolicy="no-referrer"` + `loading="lazy"` | MVP 는 마크다운 이미지를 추적 픽셀 때문에 안 불러오지만, 「이미지를 보여 주는 블록」이 링크만 내면 블록의 뜻이 사라진다. 레퍼러 유출(어느 채널·메시지에서 불렀나)은 막는다. **남는 것은 IP 하나가 아니다**(c2-t5 리뷰): `crossOrigin` 없는 `<img>` 는 자격 증명을 실어 요청하므로 이미지 호스트는 ① 보는 사람의 **IP** ② **본 시각** — `lazy` 라 화면에 들어온 순간 요청이 가서 사실상 「읽음 확인」이다 ③ **User-Agent** ④ 그 호스트가 심어 둔 **`SameSite=None` 서드파티 쿠키**(Chrome 기본 허용, Safari·Firefox 는 막거나 나눈다)를 받는다. `crossOrigin="anonymous"` 로 쿠키는 뺄 수 있지만 CORS 헤더를 안 주는 호스트는 이미지가 실패해 링크로 물러나므로 쓰지 않았다. 페이지 전체의 CSP·Referrer-Policy 는 없어 `no-referrer` 속성이 유일한 레퍼러 방어다. Phase 2 ③에서 `artifact://` 로 가면 자기 서버 경유가 되니 그 이미지에 대해서는 임시 상태다. |
+| 8 | **`media` 의 `https://` 이미지는 불러온다** — `referrerPolicy="no-referrer"` + `loading="lazy"` | MVP 는 마크다운 이미지를 추적 픽셀 때문에 안 불러오지만, 「이미지를 보여 주는 블록」이 링크만 내면 블록의 뜻이 사라진다. 레퍼러는 보내지 않는다 — 다만 이 속성이 없어도 채널 경로(`/c/<channelId>`)는 안 샌다. 브라우저 기본 정책 `strict-origin-when-cross-origin`(Fetch 명세 2020-11 개정부터 기본, MDN `Referrer-Policy`)이 교차 출처 HTTPS 요청에는 이미 **출처만** 보내기 때문이다. 이 속성이 실제로 더 막는 것은 그 **출처**, 곧 「이 사람이 어느 dodok 서버를 쓰는가」다(c2-t10 리뷰). **남는 것은 IP 하나가 아니다**(c2-t5 리뷰): `crossOrigin` 없는 `<img>` 는 자격 증명을 실어 요청하므로 이미지 호스트는 ① 보는 사람의 **IP** ② **본 시각** — `lazy` 라 화면에 가까워지면(들어오기 조금 전) 요청이 가서 사실상 「읽음 확인」이다 ③ **User-Agent**(와 `Accept-Language` 같은 여느 요청 헤더) ④ 그 호스트가 심어 둔 **`SameSite=None` 서드파티 쿠키**(Chrome 기본 허용, Safari·Firefox 는 막거나 나눈다)를 받는다. `crossOrigin="anonymous"` 로 쿠키는 뺄 수 있지만 CORS 헤더를 안 주는 호스트는 이미지가 실패해 링크로 물러나므로 쓰지 않았다. 페이지 전체의 CSP·Referrer-Policy 는 없어 출처를 가리는 것은 이 `no-referrer` 속성뿐이다. Phase 2 ③에서 `artifact://` 로 가면 자기 서버 경유가 되니 그 이미지에 대해서는 임시 상태다. |
 | 9 | **이월은 초점·타이머 계열만 끼운다**(8장) | 이번 하위 프로젝트가 모달·카드 초점과 타이머를 어차피 다룬다. 나머지 이월은 Phase 2 ⑤로. |
 | 10 | **의존성 추가 0** | 모달 필드에 필요한 Radix 원시 요소는 이미 있는 `radix-ui` 1.6.7 에 들어 있다. 새 래퍼는 `ui/radio-group.tsx` **하나**. |
 
@@ -280,6 +280,8 @@ export function summarize(
 | 「재사용」 | `reusable: true` 버튼 카드 |
 | 「짧게」 | `ttlMs` 를 짧게(만료를 눈으로 보려고) |
 
+→ 구현은 키워드 여섯 그대로 셋을 더 싣는다 — 「재사용」에 모달, 「카드」에 `artifact://` 링크 버튼, 「고르기」 다중 셀렉트 옵션 12개(11장 「dev:fake 대본을 늘렸다」).
+
 ### 7.2 서버 통합 시나리오
 
 `apps/server/test/integration/` 에 components 시나리오를 더한다 — 4.4 표의 여섯을 실제 어댑터 + 가짜 Gateway·플러그인 위에서.
@@ -331,7 +333,7 @@ Phase 2 ① 규율 그대로:
 - **`ComponentsV1.text`(대체 텍스트)를 웹이 안 쓴다** — 「컴포넌트를 못 그리는 곳」용인데 이제 웹은 다 그린다. 푸시 알림 본문(Phase 2 ④)이 쓸 자리다.
 - **모달은 메시지당 1개** — 계약이 그렇다. 둘 이상이 필요하면 카드를 나누면 된다. 계약을 넓히는 것은 components v2 의 일이다.
 - **결과 줄의 라벨 해석이 서버와 두 벌** — 청중이 달라 일부러 나눴다(5.6). 같은 규칙을 쓰는지는 테스트로 맞대지만, 한쪽만 고치면 갈릴 수 있다.
-  c2-t6 리뷰가 실제 두 코드를 673건으로 맞댔더니 125건이 갈렸고, 그중 123건은 서버가 칸 id `constructor`·`__proto__` 의 **상속 값**을 읽는 서버 쪽 결함이었다(나머지 2건은 저장·문구 전 검증 때문에 닿지 않는 자리). → `docs/plan.md` 8장 「이월」.
+  c2-t6 리뷰가 실제 두 코드를 **검증을 거치지 않고** 673건으로 맞댔더니 125건이 갈렸고, 그중 123건은 서버가 칸 id `constructor`·`__proto__` 의 **상속 값**을 읽는 서버 쪽 결함이었다(나머지 2건은 `fields` 가 객체가 아닌 자리). 실물 경로에서는 검증(`validateInteraction`)이 문구보다 먼저라 그 대부분이 닿지 않는다 — 123건 중 에이전트에게 닿는 것은 `__proto__` 칸을 비워 제출한 부류(`[object Object]`)뿐이고, `constructor` 부류와 `fields` 가 객체가 아닌 부류는 검증이 막는다(c2-t10 리뷰·수정 라운드 1 측정). → `docs/plan.md` 8장 「이월」.
 
 ---
 
@@ -339,7 +341,7 @@ Phase 2 ① 규율 그대로:
 
 구현·리뷰·브라우저 검증과 그 수정 라운드에서 이 설계와 달라진 결정만 모았다. 정본 근거는 실행 원장(`.superpowers/sdd/2026-09-21-components-v1/ledger.md`, git 제외)의 판정 기록이다. 남은 문제는 `docs/plan.md` 8장 「이월」 한곳에 있다.
 
-**판정 다섯(Ruling 1~5)**
+**판정 여섯(Ruling 1~6)**
 
 - **Ruling 1 — 하이드레이션은 wire 팬아웃 한 곳에서 한다**(4.2 정정). 4.2 표는 `bus.emit("message.created"/"updated")` 페이로드에 붙이라고 했지만, 그 두 버스 이벤트를 듣는 곳은 wire 팬아웃 하나뿐이다(`rg -n 'on\("message\.(created|updated)"' apps/server/src` → `realtime/events.ts` 둘). 그래서 `attachWireFanout` 이 내보내기 직전에 `withInteractions` 를 부른다(`WireFanoutOptions.db`, `app.ts` 에서 넘긴다).
   붙는 자리는 둘로 세 경로를 덮는다 — ① wire 팬아웃(`message.created`·`message.updated`) ② `listMessages`(REST `GET /api/v1/channels/:id/messages` 와 구독 ack 가 함께 쓴다). 4.2 의 「REST `GET /messages/:id` 류」는 없다 — 메시지 REST 는 목록 하나다.
@@ -354,6 +356,7 @@ Phase 2 ① 규율 그대로:
 - **Ruling 5 — checkbox `required` 의 뜻과 `ItemId` 의 위험한 이름은 이월한다.** 둘 다 웹 렌더러 밖이고 1장이 계약 확장을 범위 밖으로 뒀다.
   (a) `required: true` 인 checkbox 는 아무것도 강제하지 않는다 — 서버 `fieldSchema` 가 checkbox 를 `z.boolean()` 으로 두고 `required` 는 `.optional()` 을 붙이느냐만 가른다(`apps/server/src/modules/components/interact.ts:63-65`·`:70`). 웹은 서버를 따른다(웹이 더 빡빡하면 보낼 수 있는 것을 막는다).
   (b) `ItemId`(`/^[a-z0-9_-]{1,40}$/`)가 `constructor`·`__proto__` 를 받는다. 처음엔 「관측된 피해가 없다」로 통째로 이월했으나, c2-t4 재리뷰가 **칸 id `__proto__` 면 모달을 여는 순간 렌더가 던지는 것**을 보여 **웹은 그때 막았다** — 칸 id 로 찾는 객체를 프로토타입 없이 만들고(`modal/validate.ts` 의 `byFieldId`), 결과 줄은 `Object.hasOwn` 으로 읽는다(`interactions.ts`). 계약과 서버 두 자리는 이월 — 고치는 길과 권고는 `docs/plan.md` 8장 「이월」.
+- **Ruling 6 — (b) 의 권고를 ②(서버 두 자리 방어)에서 ①(계약 한 줄 — `ItemId` 에서 두 이름을 뺀다)로 뒤집었다**(문서 태스크 c2-t10). 처음 권고는 ② 였다. c2-t10 이 zod 4.6.5 를 재서 그 전제를 깼다 — 프로토타입 없는 shape 도 `__proto__` 칸을 검증하지 못해 값이 조용히 버려진다. 그 리뷰와 수정 라운드가 실물 경로로 다시 재서 하나를 더 찾았다: `constructor` 는 zod 가 입력 쪽 `key in input` 으로 상속 값을 읽는 것이 뿌리라, shape 를 바꿔도 선택 칸을 비울 수 없다. ② 는 두 이름 모두에 단서가 붙는다. 측정과 단서는 `docs/plan.md` 8장 「이월」.
 
 **그 밖에 달라진 것**
 
