@@ -65,7 +65,7 @@ export function ActionsBlock({ block, message, io, expired }: Props) {
   });
 
   // 사유가 같은 버튼은 줄 끝의 한 줄을 함께 가리킨다 — 만료·끊김이면 줄 전체가 같은 사유라 한 번만 보인다.
-  // 사유가 둘 이상 섞이면 어느 버튼의 것인지 앞에 적는다(회색 버튼만으로는 짝을 못 짓는다)
+  // 사유가 둘 이상 섞이면 어느 버튼의 것인지 앞에 적고 줄을 하나씩 쓴다(회색 버튼만으로는 짝을 못 짓는다)
   const hints: { id: string; text: string; labels: string[] }[] = [];
   for (const { label, why } of rows) {
     if (!why) continue;

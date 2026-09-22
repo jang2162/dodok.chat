@@ -136,6 +136,20 @@ function hiddenWithin(el: HTMLElement, region: HTMLElement): boolean {
   return false;
 }
 
+/** 눈에서 지우는 유틸리티(화면 폭별 포함) — 한 토큰 전체가 이것일 때만 센다(`overflow-hidden` 은 아니다) */
+const HIDING_CLASS = /^(?:(?:max-)?(?:sm|md|lg|xl|2xl):)?(?:hidden|invisible|collapse|sr-only|opacity-0)$/;
+
+/**
+ * 이 요소의 안쪽 전부와 자리(region)까지의 바깥에 걸린 숨김 클래스. jsdom 은 Tailwind CSS 를 읽지 않아 `toBeVisible` 이
+ * 클래스로 숨긴 것을 못 본다(`hidden sm:inline` 이면 폰에서 사라져도 통과한다) — 그래서 이름으로 잰다.
+ * 안쪽도 보는 것은 힌트의 일부(섞인 줄의 이름)만 따로 싸서 숨기는 것까지 잡으려고
+ */
+function hidingClasses(el: HTMLElement, region: HTMLElement): string[] {
+  const nodes: Element[] = Array.from(el.querySelectorAll("*"));
+  for (let n: HTMLElement | null = el; n && n !== region.parentElement; n = n.parentElement) nodes.push(n);
+  return nodes.flatMap((n) => Array.from(n.classList).filter((c) => HIDING_CLASS.test(c)));
+}
+
 /**
  * 사유가 (1) 눈에 보이는 글로 자리 안에 **한 번** 있고 (2) 컨트롤마다 그 글이 **정확히** 설명이며
  * (3) 그 글은 스크린 리더가 문서를 훑을 때 따로 읽지 않는다(aria-hidden) — 설명으로 한 번, 글로 또 한 번 읽히지 않게.
@@ -146,7 +160,8 @@ function expectSeenAndSpokenOnce(spot: Spot, text: string) {
   const seen = within(region).getAllByText(text);
   expect(seen).toHaveLength(1);
   const [hint] = seen as [HTMLElement];
-  expect(hint.closest(".sr-only, [hidden]")).toBeNull();
+  expect(hint).toBeVisible();
+  expect(hidingClasses(hint, region)).toEqual([]);
   expect(hiddenWithin(hint, region)).toBe(true);
   for (const c of spot.controls()) {
     expect(c).toBeDisabled();
@@ -236,8 +251,10 @@ describe("버튼 줄 — 사유를 모아 말한다", () => {
     renderWithClient(
       <Components message={row(THREE, { componentState: { expiresAt: FUTURE, consumed: ["a"] } })} />,
     );
-    const hints = Array.from(document.querySelectorAll("[data-slot=disabled-hint]"), (h) => h.textContent);
-    expect(hints).toEqual([DISABLED_REASON_TEXT.consumed]);
+    const shown = Array.from(document.querySelectorAll<HTMLElement>("[data-slot=disabled-hint]"));
+    expect(shown.map((h) => h.textContent)).toEqual([DISABLED_REASON_TEXT.consumed]);
+    // 한 줄뿐이면 버튼 옆에 붙는다 — 줄을 따로 쓰는 것은 섞일 때만
+    expect(shown[0]).not.toHaveClass("basis-full");
     expect(button("둘")).toBeEnabled();
     expect(button("둘")).not.toHaveAttribute("aria-describedby");
   });
@@ -252,11 +269,21 @@ describe("버튼 줄 — 사유를 모아 말한다", () => {
     renderWithClient(
       <Components message={row(buttons, { componentState: { expiresAt: FUTURE, consumed: ["a", "c"] } })} />,
     );
-    const hints = Array.from(document.querySelectorAll("[data-slot=disabled-hint]"), (h) => h.textContent);
-    expect(hints).toEqual([
+    const shown = Array.from(document.querySelectorAll<HTMLElement>("[data-slot=disabled-hint]"));
+    expect(shown.map((h) => h.textContent)).toEqual([
       `하나, ✋ 셋: ${DISABLED_REASON_TEXT.consumed}`,
       `둘: ${DISABLED_REASON_TEXT.forbidden}`,
     ]);
+    for (const h of shown) {
+      // 이름까지 눈에 보이고
+      expect(h).toBeVisible();
+      expect(hidingClasses(h, slot("actions"))).toEqual([]);
+      // 이름까지 통째로 훑기에서 빠진다 — aria-hidden 이 사유(id) 쪽에만 걸리면 「둘: 」이 떨어진 글로 따로 읽힌다
+      expect(hiddenWithin(h, slot("actions"))).toBe(true);
+      // 섞인 힌트는 줄을 하나씩 쓴다 — 간격으로만 붙어 있으면 어디까지가 어느 버튼 얘기인지 흐리다.
+      // 줄바꿈 자체는 jsdom 이 못 재 클래스로 잠근다
+      expect(h).toHaveClass("basis-full");
+    }
     expect(button("하나")).toHaveAccessibleDescription(DISABLED_REASON_TEXT.consumed);
     expect(button("✋ 셋")).toHaveAccessibleDescription(DISABLED_REASON_TEXT.consumed);
     expect(button("둘")).toHaveAccessibleDescription(DISABLED_REASON_TEXT.forbidden);
