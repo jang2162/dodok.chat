@@ -1,8 +1,8 @@
 import type { ChannelSubscribeResult, Result } from "@dodok/shared";
 import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { meQuery, qk } from "@/api/queries";
 import { createQueryClient } from "@/app/queryClient";
 import { resetClientState } from "@/app/session";
@@ -13,7 +13,15 @@ import { stubNotification } from "../../test/domStubs";
 import { createdSockets } from "../../test/fakeSocket";
 import { approval, CH, CH2, runState, USER, uid } from "../../test/fixtures";
 import { useWireStatus } from "./wire";
-import { useChannelSubscription, useWire, WireProvider } from "./WireProvider";
+import { type AppNotifyTarget, useChannelSubscription, useWire, WireProvider } from "./WireProvider";
+
+// 기기 푸시 구독은 서비스 워커가 있어야 한다 — 여기서는 WireProvider 가 언제 부르는지만 잰다(push.test.ts 가 흐름을 잰다)
+vi.mock("@/pwa/push", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/pwa/push")>()),
+  syncPushSubscription: vi.fn(async () => {}),
+  dropLocalPush: vi.fn(async () => {}),
+}));
+const push = await import("@/pwa/push");
 
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status });
 const ME = { user: { id: USER, handle: "owner" }, workspaceId: uid(3) };
@@ -40,6 +48,8 @@ beforeEach(() => {
   useWireStatus.setState({ status: "idle" });
   onUnauthorized.mockClear();
   queryUnauthorized.mockClear();
+  vi.mocked(push.syncPushSubscription).mockClear();
+  vi.mocked(push.dropLocalPush).mockClear();
 });
 afterEach(() => {
   notifications?.restore();
@@ -61,10 +71,10 @@ function Probe() {
   return <div data-testid="probe">{socket && subscriptions ? "ready" : "none"}</div>;
 }
 
-function Tree({ children }: { children?: ReactNode }) {
+function Tree({ children, target = notify }: { children?: ReactNode; target?: AppNotifyTarget }) {
   return (
     <QueryClientProvider client={queryClient}>
-      <WireProvider onUnauthorized={onUnauthorized} notify={notify}>
+      <WireProvider onUnauthorized={onUnauthorized} notify={target}>
         <Probe />
         {children}
       </WireProvider>
@@ -207,4 +217,125 @@ it("useChannelSubscription: 마운트하면 들어가고, 채널이 바뀌거나
 
   rerender(<Tree />);
   expect(fake.sentOf("channel.unsubscribe")).toEqual([{ channelId: CH }, { channelId: CH2 }]);
+});
+
+describe("presence.update(스펙 5.3) — 보이는가·보는 채널", () => {
+  /** 라우터 대신 — 지금 채널을 바꾸고 이동을 알린다 */
+  function fakeLocation(initial?: string) {
+    let channelId = initial;
+    const watchers = new Set<() => void>();
+    const target: AppNotifyTarget = {
+      currentChannelId: () => channelId,
+      openActivity: () => {},
+      onLocationChange: (fn) => {
+        watchers.add(fn);
+        return () => void watchers.delete(fn);
+      },
+    };
+    return {
+      target,
+      watchers,
+      go(next?: string) {
+        channelId = next;
+        for (const fn of watchers) fn();
+      },
+    };
+  }
+
+  async function connected(target: AppNotifyTarget) {
+    stubMe();
+    render(<Tree target={target} />);
+    await waitFor(() => expect(createdSockets).toHaveLength(1));
+    const fake = createdSockets[0];
+    if (!fake) throw new Error("소켓 없음");
+    fake.socket.connected = true;
+    fake.serverEmit("connect");
+    return fake;
+  }
+
+  it("연결될 때마다 보낸다 — 같은 값이어도 다시 붙으면 다시(서버는 끊긴 소켓 상태를 지운다)", async () => {
+    const loc = fakeLocation(CH);
+    const fake = await connected(loc.target);
+    expect(fake.sentOf("presence.update")).toEqual([{ visible: true, channelId: CH }]);
+
+    fake.socket.connected = false;
+    fake.serverEmit("disconnect", "transport close");
+    fake.socket.connected = true;
+    fake.serverEmit("connect");
+    expect(fake.sentOf("presence.update")).toEqual([
+      { visible: true, channelId: CH },
+      { visible: true, channelId: CH },
+    ]);
+  });
+
+  it("채널 이동·visibilitychange 때 다시, 같은 값이면 보내지 않는다", async () => {
+    const loc = fakeLocation(CH);
+    const fake = await connected(loc.target);
+
+    act(() => loc.go(CH)); // 같은 채널 안 이동(활동 탭 등)
+    expect(fake.sentOf("presence.update")).toHaveLength(1);
+
+    act(() => loc.go(CH2));
+    expect(fake.sentOf("presence.update").at(-1)).toEqual({ visible: true, channelId: CH2 });
+
+    act(() => loc.go(undefined)); // /agents
+    expect(fake.sentOf("presence.update").at(-1)).toEqual({ visible: true });
+
+    const hidden = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    act(() => void document.dispatchEvent(new Event("visibilitychange")));
+    expect(fake.sentOf("presence.update").at(-1)).toEqual({ visible: false });
+    act(() => void document.dispatchEvent(new Event("visibilitychange")));
+    expect(fake.sentOf("presence.update")).toHaveLength(4);
+    hidden.mockRestore();
+    act(() => void document.dispatchEvent(new Event("visibilitychange")));
+    expect(fake.sentOf("presence.update").at(-1)).toEqual({ visible: true });
+  });
+
+  it("연결이 없으면 보내지 않고, 채널 id 가 uuid 가 아니면 싣지 않는다", async () => {
+    const loc = fakeLocation("nope");
+    stubMe();
+    render(<Tree target={loc.target} />);
+    await waitFor(() => expect(createdSockets).toHaveLength(1));
+    const fake = createdSockets[0];
+    if (!fake) throw new Error("소켓 없음");
+    act(() => loc.go(CH));
+    expect(fake.sentOf("presence.update")).toEqual([]);
+    act(() => loc.go("nope"));
+    fake.socket.connected = true;
+    fake.serverEmit("connect");
+    expect(fake.sentOf("presence.update")).toEqual([{ visible: true }]);
+  });
+
+  it("떠나면 이동·visibilitychange 구독을 푼다", async () => {
+    const loc = fakeLocation(CH);
+    stubMe();
+    const { unmount } = render(<Tree target={loc.target} />);
+    await waitFor(() => expect(createdSockets).toHaveLength(1));
+    expect(loc.watchers.size).toBe(1);
+    unmount();
+    expect(loc.watchers.size).toBe(0);
+    const fake = createdSockets[0];
+    if (!fake) throw new Error("소켓 없음");
+    fake.socket.connected = true;
+    act(() => void document.dispatchEvent(new Event("visibilitychange")));
+    expect(fake.sentOf("presence.update")).toEqual([]);
+  });
+});
+
+describe("기기 푸시 구독", () => {
+  it("로그인이 확인되면 그 사람으로 한 번 동기화한다(스펙 5.1)", async () => {
+    stubMe();
+    render(<Tree />);
+    await waitFor(() => expect(push.syncPushSubscription).toHaveBeenCalledTimes(1));
+    expect(push.syncPushSubscription).toHaveBeenCalledWith(USER);
+  });
+
+  it("[Review Focus 1] 세션 정리(401)는 기기 구독을 해지한다 — 서버 해지는 세션이 없어 못 한다", async () => {
+    stubMe();
+    render(<Tree />);
+    await waitFor(() => expect(createdSockets).toHaveLength(1));
+    expect(push.dropLocalPush).not.toHaveBeenCalled();
+    act(() => resetClientState(queryClient));
+    expect(push.dropLocalPush).toHaveBeenCalledTimes(1);
+  });
 });

@@ -6,7 +6,7 @@ import { CreateChannelDialog } from "@/features/channels/CreateChannelDialog";
 import { useLogout } from "@/features/auth/mutations";
 import { Button } from "@/ui/button";
 import { ConnectionDots } from "./ConnectionDots";
-import { NotifyToggle } from "./NotifyToggle";
+import { NotifySettings } from "./NotifySettings";
 
 /**
  * 왼쪽 사이드바(스펙 2.4): 워크스페이스 이름, 채널 목록·「채널 만들기」, 「에이전트」, 하단 연결 상태와 로그아웃.
@@ -41,8 +41,8 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           <BotIcon className="size-4 shrink-0 opacity-70" aria-hidden />
           에이전트
         </Link>
-        {/* 승인 요구 알림 권한 — 아직 묻지 않았을 때만 보인다(설계 5.4) */}
-        <NotifyToggle />
+        {/* 이 기기의 알림 — 푸시 켜기·끄기·앱 설치(스펙 6장) */}
+        <NotifySettings />
       </div>
       <div className="flex h-11 shrink-0 items-center justify-between border-t pr-2 pl-4">
         <ConnectionDots />

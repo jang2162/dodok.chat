@@ -8,12 +8,10 @@ import { type AdapterStatusResponse, qk } from "@/api/queries";
 import { createQueryClient } from "@/app/queryClient";
 import { type WireStatus, useWireStatus } from "@/realtime/wire";
 import { TooltipProvider } from "@/ui/tooltip";
-import { stubNotification } from "../../../test/domStubs";
 import { stubMedia } from "../../../test/media";
 import { ADAPTER_OK, ME, channelOf, json, renderRoute, shellGet } from "../../../test/shellApi";
 import { Banners } from "./Banners";
 import { ConnectionDots } from "./ConnectionDots";
-import { NotifyToggle } from "./NotifyToggle";
 
 afterEach(() => {
   useWireStatus.getState().setStatus("idle");
@@ -310,66 +308,5 @@ describe("AppShell", () => {
     expect(await screen.findByRole("heading", { name: "로그인" })).toBeInTheDocument();
     expect(fetch.mock.calls.filter(([url]) => String(url) === "/api/v1/auth/logout")).toHaveLength(1);
     expect(moves).toEqual(["/login"]);
-  });
-});
-
-describe("NotifyToggle", () => {
-  let stub: ReturnType<typeof stubNotification> | undefined;
-  afterEach(() => {
-    stub?.restore();
-    stub = undefined;
-  });
-
-  it("알림 켜기를 누르면 권한을 요청하고 켜지면 버튼이 사라진다", async () => {
-    stub = stubNotification("default");
-    stub.answer("granted");
-    render(<NotifyToggle />);
-
-    const button = screen.getByRole("button", { name: "알림 켜기" });
-    expect(stub.asked()).toBe(0); // 누르기 전에는 묻지 않는다 — 브라우저가 자동 요청을 벌준다
-    await userEvent.click(button);
-
-    await waitFor(() => expect(screen.queryByRole("button", { name: "알림 켜기" })).not.toBeInTheDocument());
-    expect(stub.asked()).toBe(1);
-  });
-
-  it("거부했거나 이미 켰거나 미지원이면 버튼이 없다 — 다시 묻지 않는다", () => {
-    for (const permission of ["denied", "granted"] as const) {
-      stub?.restore();
-      stub = stubNotification(permission);
-      const { unmount } = render(<NotifyToggle />);
-      expect(screen.queryByRole("button", { name: "알림 켜기" })).not.toBeInTheDocument();
-      unmount();
-    }
-    // 미지원(Notification 없음)도 같다
-    stub?.restore();
-    stub = undefined;
-    render(<NotifyToggle />);
-    expect(screen.queryByRole("button", { name: "알림 켜기" })).not.toBeInTheDocument();
-  });
-
-  it("권한을 물었는데 사용자가 닫으면(default 그대로) 버튼이 남는다", async () => {
-    stub = stubNotification("default");
-    render(<NotifyToggle />);
-    await userEvent.click(screen.getByRole("button", { name: "알림 켜기" }));
-    expect(await screen.findByRole("button", { name: "알림 켜기" })).toBeEnabled();
-    expect(stub.asked()).toBe(1);
-  });
-
-  it("사이드바 하단에 있다 — 채널 목록 밖, 연결 상태 위", async () => {
-    stub = stubNotification("default");
-    vi.stubGlobal(
-      "fetch",
-      vi.fn<typeof fetch>(async (input, init) => {
-        if (String(input) === "/api/v1/auth/me") return json(200, ME);
-        return shellGet(input, init) ?? json(404, { code: "NOT_FOUND", message: "x" });
-      }),
-    );
-    renderRoute("/agents");
-    const button = await screen.findByRole("button", { name: "알림 켜기" });
-    expect(screen.getByRole("navigation", { name: "채널" }).contains(button)).toBe(false);
-    expect(button.compareDocumentPosition(screen.getByRole("button", { name: "로그아웃" }))).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING,
-    );
   });
 });

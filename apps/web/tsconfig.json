@@ -7,6 +7,7 @@
     "paths": { "@/*": ["./src/*"] }
   },
   "include": ["src", "test", "vite.config.ts"],
-  // 서비스 워커는 DOM 이 아니라 WebWorker 전역에서 돈다 — tsconfig.sw.json 이 따로 검사한다
-  "exclude": ["src/sw.ts", "src/pwa/sw-logic.ts"]
+  // 서비스 워커는 DOM 이 아니라 WebWorker 전역에서 돈다 — tsconfig.sw.json 이 따로 검사한다.
+  // src/pwa/sw-logic.ts 는 앱(createApp·push)도 쓰는 순수 함수라 두 설정이 모두 검사한다
+  "exclude": ["src/sw.ts"]
 }

@@ -3,6 +3,10 @@ import { useRouter } from "@tanstack/react-router";
 import { api } from "@/api/http";
 import { qk } from "@/api/queries";
 import { resetClientState } from "@/app/session";
+import { disablePush } from "@/pwa/push";
+
+/** 로그아웃 앞 푸시 해지를 기다리는 최대 시간 — 서버가 답하지 않아도 로그아웃은 막히지 않는다 */
+const PUSH_OFF_WAIT_MS = 3000;
 
 /**
  * 응답의 sessionToken 은 쓰지 않는다 — 쿠키가 인증이다(Global Constraints).
@@ -23,12 +27,26 @@ export function useLogin() {
   });
 }
 
-/** 성공·실패와 상관없이 클라이언트 상태를 비우고 `/login` 으로 간다(그래서 오류 토스트도 없다) — 부르는 쪽은 mutate() 만 */
+/**
+ * 성공·실패와 상관없이 클라이언트 상태를 비우고 `/login` 으로 간다(그래서 오류 토스트도 없다) — 부르는 쪽은 mutate() 만.
+ * 이 기기의 푸시 구독은 서버 로그아웃 **전에** 지운다 — 서버 해지(DELETE)에 세션이 필요하다(Review Focus 1).
+ * 그 해지는 실패해도·늦어도 로그아웃을 막지 않는다(기기 구독은 세션 정리가 한 번 더 해지한다 — WireProvider)
+ */
 export function useLogout() {
   const qc = useQueryClient();
   const router = useRouter();
   return useMutation({
-    mutationFn: () => api<{ ok: true }>("POST", "/auth/logout"),
+    mutationFn: async () => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        disablePush(),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, PUSH_OFF_WAIT_MS);
+        }),
+      ]);
+      clearTimeout(timer);
+      return api<{ ok: true }>("POST", "/auth/logout");
+    },
     meta: { silent: true },
     onSettled: () => {
       resetClientState(qc);

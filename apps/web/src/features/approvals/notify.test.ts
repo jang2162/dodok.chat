@@ -42,6 +42,19 @@ it("권한이 granted 이고 다른 채널을 보고 있으면 띄운다", () =>
   expect(made[0]?.title).toBe("승인 필요 — @dev 가 Write 를 실행하려 합니다");
 });
 
+it("[결정 8] 이 기기에 푸시가 켜져 있으면 탭 안 알림은 쉰다 — 같은 승인이 두 번 울리지 않게", () => {
+  const { made } = notifications("granted");
+  localStorage.setItem("dodok.push", "u1");
+  try {
+    expect(notifyApproval(approval(), away())).toBe(false);
+    expect(made).toHaveLength(0);
+  } finally {
+    localStorage.removeItem("dodok.push");
+  }
+  // 푸시를 끄면 다시 탭 안 알림
+  expect(notifyApproval(approval(), away())).toBe(true);
+});
+
 it("같은 채널을 보고 있고 탭이 보이면 띄우지 않는다", () => {
   const { made } = notifications("granted");
   expect(notifyApproval(approval(), away({ currentChannelId: CH }))).toBe(false);

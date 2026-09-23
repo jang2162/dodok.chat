@@ -1,5 +1,6 @@
 import type { Approval } from "@dodok/shared";
 import { josa } from "@/lib/josa";
+import { pushOnThisDevice } from "@/pwa/push";
 
 /** 「미지원」은 브라우저에 `Notification` 이 없는 것 — 권한 셋과 같은 자리에서 가른다(설계 5.4) */
 export type NotifyPermission = "unsupported" | "default" | "granted" | "denied";
@@ -69,10 +70,12 @@ export function approvalNotifyTitle(a: Pick<Approval, "toolName">, handle?: stri
 
 /**
  * 승인 요구 알림(설계 5.4). 같은 채널을 보고 있고 탭이 보이면 띄우지 않는다 — 카드가 이미 화면에 있다.
- * 권한이 `granted` 가 아니면 조용히 넘어간다(카드가 정본이라 앱은 그대로 돈다). 띄웠으면 `true`
+ * 권한이 `granted` 가 아니면 조용히 넘어간다(카드가 정본이라 앱은 그대로 돈다). 띄웠으면 `true`.
+ * 이 기기에 푸시가 켜져 있으면 쉰다 — 서버 푸시가 같은 승인을 알린다(스펙 결정 8)
  */
 export function notifyApproval(a: Approval, ctx: NotifyContext): boolean {
   if (notified.has(a.id)) return false;
+  if (pushOnThisDevice()) return false;
   if (ctx.visible && ctx.currentChannelId === a.channelId) return false;
   const N = api();
   if (!N || notifyPermission() !== "granted") return false;
@@ -84,7 +87,7 @@ export function notifyApproval(a: Approval, ctx: NotifyContext): boolean {
       ...(ctx.channelName ? { body: `${ctx.channelName} 채널` } : {}),
     });
   } catch {
-    // 모바일 크롬은 서비스 워커 밖의 생성자를 막는다(Phase 2 ④ 웹푸시가 덮는다)
+    // 모바일 크롬은 서비스 워커 밖의 생성자를 막는다(웹 푸시를 켜면 그쪽이 알린다)
     return false;
   }
   notified.add(a.id);
