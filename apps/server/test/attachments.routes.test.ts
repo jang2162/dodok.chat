@@ -657,9 +657,11 @@ describe("첨부 정리 배선 (스펙 4.7)", () => {
         interval: 10,
       });
       expect(run).toHaveBeenCalledWith(orphan, expect.any(Function));
-      const png = makePng(10, 10);
-      expect((await uploadPng(app, png)).statusCode).toBe(200);
-      expect(run).toHaveBeenCalledWith(sha256Of(png), expect.any(Function));
+      const up = await uploadPng(app, makePng(10, 10));
+      expect(up.statusCode).toBe(200);
+      // 10 ms 정리 틱도 같은 png sha 로 run 을 부를 수 있다 — 업로드 쪽 콜백만 행을 돌려준다는 점으로 가른다(a3-t3 재리뷰 N1)
+      const values = await Promise.all(run.mock.results.map((r) => r.value));
+      expect(values.some((v) => (v as { id?: string } | undefined)?.id === up.json().id)).toBe(true);
     } finally {
       await app.close();
       await rm(dir, { recursive: true, force: true });
