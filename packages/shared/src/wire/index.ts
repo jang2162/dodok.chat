@@ -63,6 +63,10 @@ export type ApprovalResolve = z.infer<typeof ApprovalResolve>;
 export const Typing = z.object({ channelId: Id });
 export type Typing = z.infer<typeof Typing>;
 
+// 이 소켓의 탭이 보이는가·어느 채널을 보고 있는가 — 서버가 「보고 있으면 푸시 안 보냄」에 쓴다(스펙 5.3)
+export const PresenceUpdate = z.object({ visible: z.boolean(), channelId: Id.optional() });
+export type PresenceUpdate = z.infer<typeof PresenceUpdate>;
+
 export interface ClientToServerEvents {
   "channel.subscribe": (p: ChannelSubscribe, ack: Ack<ChannelSubscribeResult>) => void;
   "channel.unsubscribe": (p: { channelId: Id }, ack: Ack<null>) => void;
@@ -72,6 +76,7 @@ export interface ClientToServerEvents {
   "component.interact": (p: ComponentInteract, ack: Ack<{ interactionId: Id }>) => void;
   "approval.resolve": (p: ApprovalResolve, ack: Ack<null>) => void;
   typing: (p: Typing) => void; // ack 없음, 클라이언트가 3초 스로틀
+  "presence.update": (p: PresenceUpdate) => void; // ack 없음
 }
 
 // ── 서버 → 클라이언트 (룸 channel:<id> 또는 user:<id>) ──

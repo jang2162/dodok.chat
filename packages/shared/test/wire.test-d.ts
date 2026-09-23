@@ -14,6 +14,7 @@ describe("wire event maps", () => {
       | "component.interact"
       | "approval.resolve"
       | "typing"
+      | "presence.update"
     >();
   });
   it("서버→클라이언트 이벤트 이름", () => {
