@@ -40,6 +40,9 @@ describe("첨부 계약", () => {
     expect(parseArtifactUrl("artifact://report.pdf")).toBeNull(); // id 가 아니면 null — 이름 해석은 웹 몫
     expect(parseArtifactUrl(`https://x/${ID}`)).toBeNull();
     expect(parseArtifactUrl(` artifact://${ID}`)).toBeNull();
+    // 끝 앵커 — 꼬리가 붙으면 그 id 로 해석하지 않는다
+    expect(parseArtifactUrl(`artifact://${ID}x`)).toBeNull();
+    expect(parseArtifactUrl(`artifact://${ID}/y`)).toBeNull();
   });
 
   it("MessageSend: 본문이 비면 첨부가 있어야 한다", () => {
@@ -66,5 +69,18 @@ describe("첨부 계약", () => {
     });
     expect(m.attachmentIds).toEqual([]);
     expect("attachments" in m).toBe(false);
+  });
+
+  it("OutboundMessage.attachmentIds 는 10개까지", () => {
+    const base = {
+      outboundId: "o1",
+      channelId: ID,
+      agentId: "dev",
+      sessionKey: `agent:dev:dodok:channel:${ID}`,
+      text: "",
+      ts: "2026-09-23T00:00:00.000Z",
+    };
+    expect(OutboundMessage.safeParse({ ...base, attachmentIds: Array(10).fill(ID) }).success).toBe(true);
+    expect(OutboundMessage.safeParse({ ...base, attachmentIds: Array(11).fill(ID) }).success).toBe(false);
   });
 });

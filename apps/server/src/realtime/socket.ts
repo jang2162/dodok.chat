@@ -176,18 +176,14 @@ function sendMessage(ctx: WireContext, userId: string, raw: unknown): { message:
   if (!getChannel(ctx.db, input.channelId, ctx.workspaceId)) throw apiError("NOT_FOUND", "channel not found");
   const existing = findUserMessage(ctx.db, userId, input.clientMsgId);
   if (existing) return { message: existing, created: false };
-  // 업로드 API 는 Phase 2 — 거절하지 않고 빈 배열로 저장한다
-  if (input.attachments?.length) {
-    ctx.logger.warn(
-      { attachments: input.attachments.length, clientMsgId: input.clientMsgId },
-      "message.send attachments ignored",
-    );
-  }
+  // 첨부는 서비스로 넘긴다 — 묶기(태스크 4) 전에는 서비스가 VALIDATION 으로 거절한다.
+  // 버리고 저장하면 「본문 없음 + 첨부」가 빈 메시지로 남는다.
   const message = createUserMessage(ctx.db, ctx.bus, {
     channelId: input.channelId,
     authorId: userId,
     bodyMd: input.bodyMd,
     clientMsgId: input.clientMsgId,
+    attachments: input.attachments,
     replyTo: input.replyTo,
   });
   return { message, created: true };

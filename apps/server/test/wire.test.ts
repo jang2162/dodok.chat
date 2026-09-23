@@ -18,7 +18,7 @@ import { componentInteractions } from "../src/db/schema.sqlite";
 import { apiError } from "../src/http/errors";
 import type { Logger } from "../src/logger";
 import { createChannel, getChannel, listMembers } from "../src/modules/channels/service";
-import { createSystemMessage, createUserMessage } from "../src/modules/messages/service";
+import { createSystemMessage, createUserMessage, listMessages } from "../src/modules/messages/service";
 import { ServerBus } from "../src/realtime/bus";
 import { attachWire, type WireContext } from "../src/realtime/socket";
 import type { RunsFacade, WireServer } from "../src/realtime/types";
@@ -527,32 +527,55 @@ describe("wire (attachWire 단독 — route·runs 주입)", () => {
     expect(route).toHaveBeenCalledTimes(1);
   });
 
-  it("message.send — route 예외는 로그만, attachments 는 무시하고 빈 배열로 저장(경고 로그)", async () => {
+  it("message.send — route 예외는 로그만", async () => {
     const logger = fakeLogger();
     const route = vi.fn(async () => {
       throw new Error("route boom");
     });
     const socket = await start({ route, logger: logger as unknown as Logger });
-    const channel = newChannel("solo-attach");
+    const channel = newChannel("solo-route-boom");
 
     const res = await socket.emitWithAck("message.send", {
       channelId: channel.id,
       clientMsgId: "a-1",
-      bodyMd: "with file",
-      attachments: [uuid()],
+      bodyMd: "hello",
     });
     if (!res.ok) throw new Error(res.error.code);
-    expect(res.data.message.attachments).toEqual([]);
-    expect(logger.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ attachments: 1 }),
-      expect.stringContaining("attachments"),
-    );
     await vi.waitFor(() =>
       expect(logger.error).toHaveBeenCalledWith(
         expect.objectContaining({ messageId: res.data.message.id }),
         "route failed",
       ),
     );
+  });
+
+  it("message.send — 첨부는 서비스까지 가서 VALIDATION(태스크 4 전), 빈 본문 + 첨부도 저장되지 않는다", async () => {
+    const route = vi.fn(async () => {});
+    const socket = await start({ route });
+    const channel = newChannel("solo-attach");
+
+    for (const [clientMsgId, bodyMd] of [
+      ["a-empty", ""],
+      ["a-body", "with file"],
+    ] as const) {
+      const res = await socket.emitWithAck("message.send", {
+        channelId: channel.id,
+        clientMsgId,
+        bodyMd,
+        attachments: [uuid()],
+      });
+      expect(res).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
+    }
+    expect(listMessages(app.db, channel.id, { limit: 10 }).messages).toEqual([]);
+    expect(route).not.toHaveBeenCalled();
+
+    // 거절된 두 번이 seq 를 먹지 않았다 — 다음 메시지가 seq 1
+    const next = await socket.emitWithAck("message.send", {
+      channelId: channel.id,
+      clientMsgId: "a-next",
+      bodyMd: "plain",
+    });
+    expect(next).toMatchObject({ ok: true, data: { message: { seq: 1 } } });
   });
 
   it("런 핸들러 — runs 로 위임(userId 포함), HttpError 는 그 코드, 그 밖 예외는 INTERNAL + 로그", async () => {
