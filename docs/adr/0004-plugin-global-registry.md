@@ -61,7 +61,7 @@ CHANGELOG 9.5 「Live plugin management: install and reload … without restarti
 
 ## 4. 결과·위험
 
-- **9.4·9.5 둘 다에서 고친다**(9.4 는 원래 한 인스턴스라 무해). 결함 2 의 **첫 층**(`sendText` 의 「bridge is not running」)도 같이 닫힌다.
+- **9.4·9.5 둘 다에서 고친다**(9.4 는 원래 한 인스턴스라 무해). 결함 2 의 **첫 층**(`sendText` 의 「bridge is not running」)도 같이 닫힌다(**실물 확인 전** — live-smoke 11.3).
   결함 2 의 뒷 두 층 — `sendText` 가 `agentId:"unknown"` 이라 서버가 `agent not found` 로 거절(c2-t14 F7), 선택지 컨트롤이 없음 — 은 **A 로 안 닫힌다**(이월).
 - **9.5 의 인스턴스 격리를 의도적으로 넘는다.** 문서는 「lifecycle fencing applies to the managed callable surfaces, not every object a plugin can retain」이라 금지 대상은 아니다. 대신 **수명주기 책임이 우리에게 온다** —
   세대 교체 때 옛 세대의 핸들을 지우는 것은 우리 몫이고, 2절 2 의 가드가 그 최소 조건이다. 라이브 재로드에서 브리지 소켓이 세대를 넘어가는 순서(옛 세대 abort → 새 세대 start)는 **재지 않았다**.
