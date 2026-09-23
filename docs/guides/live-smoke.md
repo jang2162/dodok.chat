@@ -1,6 +1,6 @@
 # dev Gateway 실연(live smoke) — 서버 코어를 실제 Gateway·플러그인·모델로 한 번 돌리기
 
-작성: 2026-09-15 (서버 코어 계획 태스크 15) · 근거: 서버 코어 스펙 9.3, ADR 0002 2절·9절, ADR 0003 2절 · 7절 2026-09-20 (웹 MVP 계획 태스크 15) · 8~9절 2026-09-21 (활동 패널·승인 계획 태스크 11) · 10절 2026-09-23 (components v1 계획 태스크 11) · 11절 2026-09-23 (c2-t14 하네스, ADR 0004) · 12절 2026-09-23 (c2-t16 고침 실물 확인)
+작성: 2026-09-15 (서버 코어 계획 태스크 15) · 근거: 서버 코어 스펙 9.3, ADR 0002 2절·9절, ADR 0003 2절 · 7절 2026-09-20 (웹 MVP 계획 태스크 15) · 8~9절 2026-09-21 (활동 패널·승인 계획 태스크 11) · 10절 2026-09-23 (components v1 계획 태스크 11) · 11절 2026-09-23 (c2-t14 하네스, ADR 0004) · 12절 2026-09-23 (c2-t16 고침 실물 확인) · 13절 2026-09-23 (a3-t11 첨부 실연)
 
 ## 1. 목적
 
@@ -12,6 +12,7 @@
 **승인(Phase 2 ①)을 실물에서 일으키는 절차는 8절** — 기본 설정에서는 승인이 한 번도 안 뜬다. **사람만 확인할 수 있는 것(소리·팝업·잠금 화면·VoiceOver)은 9절**이다.
 **components v1(Phase 2 ②)을 실제 모델로 돌린 절차와 2026-09-23 결과는 10절**이다 — ❗ 모델 런 안의 `message` 툴 전송이 실물에서 깨져 있었다(10.4).
 원인(2026.9.5 번들 이중 평가)과 고침은 ADR 0004, **모델 런 없이 실물 Gateway 의 모델 경로를 두드리는 하네스는 11절**, **그 하네스로 고침을 확인한 2026-09-23 결과는 12절**이다.
+**첨부(Phase 2 ③)를 하네스(11.5)와 실제 모델로 돌린 2026-09-23 결과는 13절**이다 — ❗ 최종 응답의 `MEDIA:` 줄이 스트리밍 델타로 호스트 경로를 잠깐 드러낸다(13.4 A).
 
 ## 2. 전제
 
@@ -877,7 +878,7 @@ setTimeout(() => { log({ event: "no-user-record-timeout" }); process.exit(0); },
 
 ### 11.5 첨부 재기 (Phase 2 ③ — 계획 태스크 11 의 1단계)
 
-11.3 하네스에 세 가지를 더해 첨부 경로를 모델 없이 두드린다. 스파이크(`.superpowers/sdd/2026-09-23-phase2-attachments-spike/report.md` 「절차 요지」)가 11.4 를 넓혀 쓴 것을 이 문서 모양으로 다시 적었다 — **이 코드 그대로는 아직 돌리지 않았다.** 처음 돌리는 사람이 고친 데를 여기 적는다.
+11.3 하네스에 세 가지를 더해 첨부 경로를 모델 없이 두드린다. 스파이크(`.superpowers/sdd/2026-09-23-phase2-attachments-spike/report.md` 「절차 요지」)가 11.4 를 넓혀 쓴 것을 이 문서 모양으로 다시 적었다. **2026-09-23 a3-t11 이 처음 돌렸다(13절)** — 그때 고친 곳·보탠 것은 이 절 끝 ⑤ 에 있다.
 새 번들 설치는 3절 (b) 대로 한다 — **Gateway 를 먼저 내리고**, 설치 뒤 설치본 sha 가 빌드본과 같은지 본다.
 
 **① 가짜 CLI 가 받은 이미지를 잰다.** 11.4 스크립트의 stdin 처리에서 `log({ event: "stdin-record", … })` 한 줄을 아래로 바꾼다. claude-cli 는 이미지를 base64 블록이 아니라 프롬프트 끝 `@<ws>/.openclaw-cli-images/<sha256>.<ext>` 로 받는다(스파이크 1-7). 그 파일의 크기·권한·앞 8바이트만 적는다 — **base64 본문과 경로는 적지 않는다.**
@@ -919,16 +920,26 @@ shasum -a 256 $WS/a3-harness/*; stat -f '%z %N' $WS/a3-harness/*          # 크�
 
 | # | 런 | 준비 | 합격 |
 | --- | --- | --- | --- |
-| a | **인바운드** — 사람 이미지 | `fake-args.json`·`fake-final.txt` 없음. 웹에서 PNG 한 장 + `@dev 첨부 프로브` | `stdin-record` 의 `atRefs` 가 하나, `magic` 이 `89504e470d0a1a0a`, `size` 가 올린 원본과 같다(`contentKind:"string"`, `blocks:[]`). Gateway 로그 `dodok:inbound-media` 가 `images:1`·`reasons:[]` |
+| a | **인바운드** — 사람 이미지 | `fake-args.json`·`fake-final.txt` 없음. 웹에서 PNG 한 장 + `@dev 첨부 프로브` | `stdin-record` 의 `atRefs` 가 하나, `magic` 이 `89504e470d0a1a0a`, `size` 가 올린 원본과 같다(`contentKind:"string"`, `blocks:[]`). Gateway 로그 `[dodok] inbound-media` 가 `images:1`·`reasons:[]` |
 | b | **툴 `media`** — PNG·PDF·한국어 이름 | `fake-args.json` = `{"action":"send","target":"channel:<CH>","message":"첨부 둘","mediaUrls":["<WS>/a3-harness/chart.png","<WS>/a3-harness/월간 보고서.pdf"]}` | `tools/call message` 가 `sent to dodok channel …`. 채널 메시지에 첨부 둘이 **그 순서로**, 이름 `chart.png`·`월간 보고서.pdf` 그대로. 내려받은 바이트의 sha 가 ③ 과 같다. `dodok:tool-send-media` 가 `uploaded:2`·`failed:0` |
-| c | **최종 응답 `MEDIA:` 줄** | `fake-args.json` 없음. `fake-final.txt` 세 줄 — `결과`, 빈 줄, `MEDIA:<WS>/a3-harness/chart.png`(`printf '결과\n\nMEDIA:%s\n' <경로> > $SP/fake-final.txt`) | 채널 메시지 본문이 `결과` 이고 **`MEDIA:` 가 없다**, 첨부 하나. `dodok:deliver-media` 가 `uploaded:1`. 서버 로그에 `gateway snapshot media lines dropped` 가 없다(플러그인 정본이 먼저 왔다는 뜻 — 스펙 11장 Ruling 2) |
+| c | **최종 응답 `MEDIA:` 줄** | `fake-args.json` 없음. `fake-final.txt` 세 줄 — `결과`, 빈 줄, `MEDIA:<WS>/a3-harness/chart.png`(`printf '결과\n\nMEDIA:%s\n' <경로> > $SP/fake-final.txt`) | 채널 메시지 본문이 `결과` 이고 **`MEDIA:` 가 없다**, 첨부 하나. `[dodok] deliver-media` 가 `uploaded:1`. 서버 로그에 `gateway snapshot media lines dropped` 가 없다(플러그인 정본이 먼저 왔다는 뜻 — 스펙 11장 Ruling 2) |
 | d | **미디어만 있는 응답** | `fake-args.json` 없음. `fake-final.txt` 한 줄 — `MEDIA:<WS>/a3-harness/chart.png` | 채널에 **본문 없이** 첨부만 온다. 채널 어디에도 호스트 경로(`/Users/`·`~/.openclaw`)가 없다 |
 | e | **실패 문구**(선택) | b 의 경로 하나를 없는 파일로 | 툴 결과가 `dodok: 첨부를 보내지 못했습니다 — <이름>: 파일을 찾을 수 없음`. 호스트 경로가 툴 결과·채널에 없다(원문은 `dodok:tool-send-media` 의 `details` 에만, 가려서) |
 
 `<CH>`·`<WS>` 는 실제 값으로 바꿔 쓴다. c·d 가 통과하면 스파이크 2-10 의 결함(미디어 전용 응답이 `MEDIA:/호스트/경로` 를 채널에 드러냄)이 실물에서 닫힌 것이다.
 이 표는 플러그인 `channel.ts` 배선(순수 함수를 부르는가)의 합격 기준도 겸한다 — 단위 테스트는 그 우회를 못 잡는다(`docs/plan.md` 8장 이월).
 
-**끝나면**: 11.3 대로 되돌리고, `rm -rf $WS/a3-harness`. 플러그인이 저장한 원본(`~/.openclaw-dev/media/inbound/`)·CLI 복사본(`<ws>/.openclaw-cli-images/`)·스테이징(`<ws>/media/inbound/openclaw-staged-*`)에서 이번 런이 만든 것만 지운다(스파이크 보고서 「정리 상태」가 본보기).
+**끝나면**: 11.3 대로 되돌리고, `rm -rf $WS/a3-harness`. 플러그인이 저장한 원본(`~/.openclaw-dev/media/inbound/`)·CLI 복사본(`<ws>/.openclaw-cli-images/`)·스테이징(`<ws>/media/inbound/openclaw-staged-*`)·**아웃바운드 스테이징(`~/.openclaw-dev/media/outbound/` — 툴 `media` 와 `MEDIA:` 줄이 코어를 지날 때 복사본이 생긴다, Gateway 가 24h 뒤 지운다)**에서 이번 런이 만든 것만 지운다(`find … -newermt '<시작 시각>'` 로 가른다. 스파이크 보고서 「정리 상태」가 본보기). 모델 런이 워크스페이스에 만든 파일(예: `hello-c3po.txt`)도 지운다.
+
+**⑤ 처음 돌려 보고 고친 것·보탠 것 (a3-t11, 2026-09-23)**
+
+- **로그 머리가 둘이다.** 인바운드·최종 응답 쪽은 런타임 `logger` 라 `[dodok] inbound-media`·`[dodok] deliver`·`[dodok] deliver-media`, 툴 쪽은 `console.info` 라 `dodok:tool-send`·`dodok:tool-send-media` 다. 위 표의 `dodok:inbound-media`·`dodok:deliver-media` 는 틀린 이름이었다(고쳤다). `grep -a 'inbound-media\|deliver-media\|tool-send'` 로 한 번에 본다. 로그에 색 코드가 섞여 있어 `sed 's/\x1b\[[0-9;]*m//g'` 를 먼저 건다.
+- **웹 작성기에 파일을 넣는 법.** 작성기의 `<input type=file>` 은 `class="hidden"` 이라 BrowserOS neo 스냅샷에 ref 가 없고 `upload` 가 못 잡는다. 이미지를 워크트리 `data/`(ignored) 아래에 복사하고, 페이지 안에서 `fetch('/@fs<워크트리>/data/<폴더>/<파일>')` → `new File([blob], 이름, {type})` → `DataTransfer` 로 `input.files` 를 채운 뒤 `change` 를 쏜다. 칩이 뜨고 「보내기」가 켜진다(파일 선택기와 같은 코드 경로). 멘션은 입력칸에 `@dev` 를 쳐서 뜬 후보를 누른다.
+- **`fake-args.json` 을 배열로도 받고, 한 번 쓰면 치운다.** 한 런에서 여러 호출(b·e·상대 경로)을 한 번에 두드리고, 릴레이(에이전트 A 의 툴 전송이 `@dev` 를 불러 dev 의 런이 이어지는 것)에서 두 번째 런이 같은 툴을 다시 부르지 않게 했다. 11.4 의 `const args = …; const call = …` 자리를 `const raw = fs.readFileSync(ARGS_FILE); fs.renameSync(ARGS_FILE, ARGS_FILE + ".used-" + Date.now()); const calls = [].concat(JSON.parse(raw));` 와 `for (const args of calls) …` 로 바꾼다.
+- **`stdin-record` 에 두 가지를 더 적었다.** `atRefs` 마다 `sha256` 앞 16자(원본과 바이트 동일을 크기·magic 보다 세게 본다), 그리고 프롬프트에서 `/Users/…` 가 든 줄의 **꼴만**(`hostPathLines` — 홈을 `~` 로 바꾸고 160자로 자른다). 알림 줄은 `^\[(첨부 파일|이미지를 불러오지)` 로 뽑아 `notes` 에 둔다. Gateway 가 프롬프트에 `[media attached i/N: <스테이징 호스트 경로> …]` 를 스스로 붙이는 것이 이것으로 보였다(13.4).
+- **6 MiB 넘는 인바운드는 릴레이로만 잰다.** 사람 업로드 상한이 5 MiB 라 웹으로는 `saveMediaBuffer` 의 `maxBytes`(20 MiB)를 두드릴 수 없다. 채널에 `fin` 을 더하고, `fake-args.json` 을 `{"action":"send","target":"channel:<CH>","message":"@dev …","mediaUrls":["<WS>/a3-harness/big.png","<WS>/a3-harness/월간 보고서.pdf"]}` 로 둔 채 `@fin …` 을 보낸다 — fin 의 가짜 런이 큰 PNG·PDF 를 올리고, 그 메시지가 dev 를 불러 dev 의 인바운드에 이미지 하나 + `[첨부 파일: 월간 보고서.pdf]` 가 실린다. 무작위 픽셀 PNG(1700×1700, 8.7 MB)는 PIL 로 만든다.
+- **가짜 CLI 로는 스트리밍 창을 못 늘린다.** Gateway 는 가짜 CLI 의 `assistant` 레코드를 `result` 가 올 때 **한 델타로** 흘린다 — `assistant` 와 `result` 사이에 지연을 넣어도 버블이 먼저 보이지 않았다(12초 넣고 확인). 델타에 무엇이 실리는지는 하네스로 보지만, 사람 눈에 얼마나 오래 보이는지는 모델 런으로만 잰다(13.4 결함 A).
+- 11.1 의 `W channels` 출력 첫 줄은 `HTTP 200 GET …` 이다 — jq 에 넘길 때 `tail -n +2` 를 건다.
 
 ## 12. 결함 1 고침의 실물 확인 — 2026-09-23 결과 (c2-t16, 모델 런 0회)
 
@@ -954,3 +965,76 @@ shasum -a 256 $WS/a3-harness/*; stat -f '%z %N' $WS/a3-harness/*          # 크�
 웹(5180): 카드 2장이 목록에 그려지고, 활동 탭에 런 2건이 모두 `완료`, 모달 「세부 정보」의 필드 4개가 그대로 열렸다. 콘솔 예외 유무는 재지 않았다.
 
 **절차 노트**: 9.5 Gateway 가 떠 있는 채로 `plugins install --force` 하면 `device token scope mismatch` 로 실패하고 **파일도 안 바뀐다** — 3절 (b) 의 경고대로 Gateway 를 먼저 내리고, 설치 뒤 sha 를 반드시 확인한다.
+
+## 13. 첨부(Phase 2 ③) 실물 확인 — 2026-09-23 결과 (a3-t11, 모델 런 2회)
+
+11.5 하네스(처음 돌림 — 고친 것은 11.5 ⑤)로 첨부 경로를 모델 없이 두드린 뒤, 사용자 승인 상한(**모델 런 2회**, 웹 5180) 그대로 실제 모델로 두 번 돌렸다.
+
+**판정: 첨부 경로는 실물에서 돈다 — 합격 기준 9/9, 모델 런 ①② 통과. 새 결함 1(중간): 최종 응답의 `MEDIA:` 줄이 스트리밍 델타로 흘러 호스트 경로가 버블·`run_events` 에 남는다(13.4 A).**
+로그는 워크트리 `data/`(ignored): `dev-gateway.log`(Gateway·플러그인·claude-cli)·`phase2-live-20260923.log`(서버)·`frames-20260923.jsonl`(프레임 덤프)·`h2~h6-send.log`·`wire-watch-run1.log`·`wire-watch-run2.log`. 커밋하지 않는다.
+
+### 13.1 환경 실물
+
+| 항목 | 값 |
+| --- | --- |
+| Gateway | `OpenClaw 2026.9.5 (f396007)` — 12절과 같다. 서버 로그 `"gateway connected"` `gatewayVersion="2026.9.5"` `gatewayBuildId="2026.9.5-release-f39600759bec-2026-09-19T05-09-16.000Z"`, scopes 에 `operator.admin` · `"bridge plugin hello"` `gatewayVersion="2026.9.5"`(같은 줄 `pluginBuiltWithSdk="2026.9.4"` 는 빌드 상수) |
+| 플러그인 번들 | 설치 전 `0b53c75b…`(ADR 0004 고침, 첨부 이전) → `pack:plugin` 빌드본 `f5dc6438fbaf8b5c…` → **Gateway 를 내린 채로** 설치 → 설치본 `f5dc6438…` = 빌드본. `status: "loaded"`. main `b0b1b65` 의 깨끗한 트리에서 빌드했고 probe 는 쓰지 않았다 — **끝난 뒤에도 이 번들이 설치돼 있다** |
+| 서버 | `:19100`, `APP_ORIGIN=http://localhost:5180`, DB `data/live-smoke.sqlite`, 프레임 덤프 켬, `LOG_LEVEL=debug` |
+| 웹 | Vite 8.3.0 `:5180`(5173 은 다른 프로젝트 — 무접촉), 브라우저 BrowserOS neo |
+| 채널 | 하네스 `harness-a3t11`(`01a0cda5-fd39…`, 멤버 `@dev`·`@fin`) · 모델 런 ① `model-a3t11-img`(`01a0cdae-f9de…`) · ② `model-a3t11-file`(`01a0cdae-fb86…`) — 런마다 새 채널(가짜 claude 세션 id 와 섞지 않게) |
+| 시험 파일 | `word.png` 900×300 흰 바탕 검은 굵은 글씨 **`PLUMCOMET`**(10,619B) · `chart.png`(971B) · `photo.jpg`(92,415B) · `월간 보고서.pdf`(10,416B) · `big.png` 1700×1700 무작위 픽셀(8,683,839B) — PIL 로 만듦 |
+| 모델 | `anthropic/claude-opus-5` + claude-cli. CLI 보고 비용 ① **$0.6055**(새 세션 캐시 생성 60k) · ② **$0.2975**. 내장 cron 은 이번에 돌지 않았다(다음 실행 dev 09-30·fin 09-27) |
+
+### 13.2 합격 기준 (런 0회 — 가짜 claude CLI, 11.5)
+
+| # | 기준 | 결과 | 증거 |
+| --- | --- | --- | --- |
+| 1 | 새 번들 설치 | **통과** | 위 표. 설치 전 `0b53c75b…` ≠ 설치 후 `f5dc6438…` = 빌드본 |
+| 2 | 인바운드 — `@<ws>/.openclaw-cli-images/<sha>.<ext>`, 크기·magic 이 원본과 같다. 이미지 아닌 첨부는 `[첨부 파일: …]` | **통과** | 웹 작성기로 3장(`word.png`·`chart.png`·`photo.jpg`) + `@dev` → `stdin-record` `contentKind:"string"`, `blocks:[]`, `atRefs` 3개가 **올린 순서대로** 크기 10619·971·92415, magic `89504e47…`·`89504e47…`·`ffd8ffe0…`, **sha256 앞 16자가 원본과 셋 다 같다**, 모두 `.openclaw-cli-images/` 안 0600. `[dodok] inbound-media` `images:3`·`reasons:[]`. PDF 는 릴레이(6)로 `notes:["[첨부 파일: 월간 보고서.pdf]"]` |
+| 3 | 툴 `media` — PNG·PDF·한국어 공백 이름, 이름 그대로, 바이트 = 원본, components `artifact://<공백 든 이름>` 이 풀린다 | **통과** | 한 런에서 호출 셋. ① `mediaUrls:[chart.png, 월간 보고서.pdf]` + components(`media` → `artifact://chart.png`, `file`·링크 버튼 → `artifact://월간 보고서.pdf`) → `sent to dodok channel …`, `dodok:tool-send-media {"uploaded":2,"failed":0}`. 메시지 첨부가 그 순서로 `chart.png`(image/png 971)·`월간 보고서.pdf`(application/pdf 10416), REST 로 내려받은 sha 가 원본과 같다(`7ba5f6bd…`·`e1011056…`), `content-disposition` `filename*=UTF-8''%EC%9B%94%EA%B0%84%20…`. 저장된 components 의 url 은 `artifact://월간%20보고서.pdf`(Ruling 4). 웹에서 `media` 블록 `<img src=/api/v1/attachments/<chart id>>`, `file` 블록 「내려받기」·링크 버튼 「보고서 열기」가 **둘 다 PDF 첨부 id** 로 풀렸고 「첨부를 찾을 수 없습니다」·「열 수 없는 링크」는 0(Ruling 5). 카드가 가리킨 첨부는 격자에 다시 나오지 않았다 |
+| 4 | 최종 응답 `MEDIA:` 줄 — 첨부로 오고 본문에 `MEDIA:` 없음. **`gateway_final` 스냅샷에 `MEDIA:` 가 남는가**. `finalSource` | **통과 · 전제 확인** | `fake-final.txt` = `결과\n\nMEDIA:<ws>/a3-harness/chart.png` → 메시지 본문 `결과` + 첨부 `chart.png` 1, `[dodok] deliver-media {"uploaded":1,"failed":0}`, `finalSource=plugin`, `gateway snapshot media lines dropped` 0회. **프레임 덤프의 `chat` `state:"final"` 의 `message.content[0].text` 가 `"결과\n\nMEDIA:/Users/…/a3-harness/chart.png"` — 실제 Gateway 스냅샷에 `MEDIA:` 줄이 남는다**(모델 런 ② 도 같다). 정본은 final 뒤 31ms 에 왔다 |
+| 5 | 미디어만 있는 응답 — 첨부만, 호스트 경로 0 | **통과**(메시지) · 결함 A 는 별도 | `fake-final.txt` = `MEDIA:<경로>` 한 줄 → `[dodok] deliver {"textLength":0,…,"media":1}` → 메시지 `body=""` + 첨부 `chart.png`. 채널 메시지 전체(REST JSON)에 `/Users/`·`MEDIA:`·`openclaw-dev` **0건**, 웹 `main` 텍스트에도 0 |
+| 6 | 플러그인 배선 잠금 셋(a3-t5 M2) | **통과** | ⓐ `shouldDeliverFinal`: 5 로 확인. ⓑ `saveMediaBuffer` 의 `maxBytes`: 릴레이로 **8,683,839B PNG** 가 인바운드됐다(기본 5 MB 였다면 `SaveMediaSourceError` → `[이미지를 불러오지 못했습니다]`) — `inbound-media {"images":1,"notes":1,"reasons":[]}`, CLI 에는 **Gateway 가 재압축한 JPEG 1,848,277B**(`ffd8ffc0…`, 스파이크 1-12 와 같은 동작). 서버에 저장된 `big.png` 는 원본 그대로(8,683,839B). ⓒ `handleAction` 의 `mediaAccess`: `media:"a3-harness/chart.png"`(**워크스페이스 상대 경로**) → `uploaded:1`, 첨부 sha = 원본 |
+| 7 | Ruling 1 — ack 시간, 같은 deliveryId 재전송 없음 | **통과(루프백 한정)** | 어댑터 `inbound delivered` `ackMs`: 이미지 3장 **117ms**, 8.7 MB 릴레이 **175ms**, 첨부 없는 런 36~242ms, 새 세션 첫 런 873ms. `retries:0` 전부, `inbound.deliver ack timeout` 0회, 플러그인 `[dodok] ingress` 의 `deliveryId` 중복 0. **느린 링크(장당 30초 근처)는 재지 못했다** — 루프백이라 10초 기본값에도 한참 못 미친다 |
+| 8 | 실패 문구 — 고정 문구, 경로 없음 | **통과** | `mediaUrls:[chart.png, "<ws>/a3-harness/없는 파일.pdf"]` → 툴 결과 `{"content":[{"type":"text","text":"dodok: 첨부를 보내지 못했습니다 — 없는 파일.pdf: 파일을 찾을 수 없음"}],"isError":true}`, 로그 `dodok:tool-send-media {"uploaded":1,"failed":1,"details":["file not found"]}` — 경로 0. 먼저 올라간 `chart.png` 는 미묶음 행으로 남았다(설계대로 — 24시간 정리) |
+| 9 | 버전 로그 | **통과** | 13.1 — 12절과 같은 `2026.9.5`·같은 buildId |
+
+### 13.3 모델 런 (상한 2, 실제 2)
+
+| # | 채널 | 입력 | 런 id | 모델이 한 것 | 소요 | 결과 |
+| --- | --- | --- | --- | --- | --- | --- |
+| ① | `model-a3t11-img` | 웹 작성기로 `word.png` + `@dev 이 이미지에 쓰인 단어가 뭐야?` | `01a0cdaf-cf69` | **툴 호출 0** — CLI 가 `@경로` 를 네이티브 첨부로 읽었다 | `RUN_STARTED` → 첫 델타 3.4s → 정본 4.8s(ack 873ms, 새 세션) | **통과** — `PLUMCOMET 입니다. 흰 배경에 굵은 산세리프 대문자로 딱 한 단어만 쓰여 있네요.` |
+| ② | `model-a3t11-file` | `@dev 작은 텍스트 파일을 만들어 이 채널에 첨부로 보내 줘.` | `01a0cdb0-8736` | `Write{file_path:"<ws>/hello-c3po.txt"}` → **최종 응답 끝에 `MEDIA:<ws>/hello-c3po.txt` 줄**(스파이크 런 2 는 `message` 툴을 골랐다 — 이번엔 다른 입구를 탔다) | 첫 툴 5.6s → 정본 8.8s(ack 89ms) | **통과** — 본문 「@owner 파일 생성 완료입니다! `hello-c3po.txt`, … 첨부로 함께 보냅니다 …」 + 파일 카드 `hello-c3po.txt`(269 B, 텍스트). `deliver-media {"uploaded":1}`, `finalSource=plugin`, 본문·첨부 이름에 경로 0. 웹 카드 「내려받기」로 받은 바이트 sha = 워크스페이스 원본(`2809c2fe…`), `content-disposition: attachment` |
+
+- 두 런 모두 `RUN_FINISHED usage` 가 `inputTokens:2, outputTokens:1|4, costUsd:0` 이다(CLI 는 $0.61·$0.30 을 보고) — 5.4 이월(usage 값)과 같은 줄기로 보인다. 이번엔 파지 않았다.
+- **두 입구가 모두 실물 모델 런에서 돌았다**: 툴 `media`(스파이크 런 2)와 최종 응답 `MEDIA:` 줄(이번 런 ②). 런 ② 의 실제 `gateway_final` 스냅샷도 `…\n\nMEDIA:/Users/…/hello-c3po.txt` 였고 정본이 45ms 뒤에 와서 폴백·연장은 쓰이지 않았다.
+- 웹(5180): ① 이미지 칩 → 보내기 → 메시지 격자에 `word.png`, ② 파일 카드 표시·내려받기를 눈으로 봤다. 탭은 닫았다.
+
+### 13.4 틀린 것·고칠 것
+
+**A. [결함·중간] 최종 응답의 `MEDIA:` 줄이 스트리밍 델타로 흘러, 호스트 경로가 채널 버블에 잠깐 보이고 `run_events` 에 영구히 남는다.**
+- **재현**: 모델 런 ②. `run_events`(런 `01a0cdb0-8736…`) seq 26~28 의 `TEXT_MESSAGE_CONTENT` delta 가 `MEDIA:/Users/<사용자>` · `/.openclaw-d` · `ev/workspace/hello-c3po.txt`(09:55:01.715~.867), 정본 `message.created` 는 09:55:02.27 — **약 0.5초** 동안 채널을 보는 모든 사람의 스트리밍 버블에 호스트 경로가 그려진다. 하네스 c·d 에서도 wire `TEXT_MESSAGE_CONTENT` 에 `MEDIA:/Users/…` 가 그대로 실렸다(가짜 CLI 는 한 델타로 흘려 창이 ~30ms).
+- **왜**: 서버 폴백(`stripMediaLines`, 스펙 4.6)과 플러그인 정본은 `MEDIA:` 를 걷지만 델타 경로는 걷지 않는다. 웹 `apps/web/src/features/runs/runStore.ts:18-19` 가 델타를 그대로 이어 붙이고, `bubblePhase.ts:25-32` 가 streaming·finalizing 에서 `textVisible: true` 다. 서버는 델타를 `run_events.payload_json` 에 저장한다.
+- **영향**: 스펙 9장 「채널 어디에도 호스트 경로가 나타나지 않는다」가 잠깐 깨진다. 업로드가 느리면(큰 파일, Ruling 2 로 finalizing 최대 120초) 노출이 그만큼 길어진다. 경로가 줄 경계에서 델타 여럿으로 쪼개져 오므로(위 셋) 델타 하나씩 걷는 방식으로는 못 막는다 — 줄 단위로 버퍼링하거나 웹 표시에서 `MEDIA:` 로 시작하는 줄을 숨기는 쪽을 봐야 한다. 코드는 고치지 않았다.
+- 활동 탭이 런 텍스트를 보여 주는지, 재접속 때 델타가 다시 재생되는지는 재지 않았다.
+
+**B. [관찰] Gateway 가 프롬프트에 스테이징 호스트 경로를 스스로 붙인다.** 이미지 인바운드 때 CLI 프롬프트에 `[media attached 1/3: ~/.openclaw-dev/workspace/media/inbound/openclaw-staged-<uuid>/input-word---<uuid>… ]` 줄이 장마다 붙는다(가짜 CLI `hostPathLines`). 우리 텍스트가 아니라 OpenClaw 코어가 넣는 것이다. 모델이 이 경로를 답에 옮기면 채널 본문에 호스트 경로가 들어간다 — 우리 쪽 방어는 없다(스펙 10장 「사람이 채팅에 쓴 호스트 경로」와 같은 계열).
+
+**C. [관찰] 활동 탭의 툴 인자·결과에 호스트 경로가 있다.** 런 ② 의 `Write` 인자 `file_path` 와 결과 `File created successfully at: /Users/…` 가 `TOOL_CALL_ARGS`·`TOOL_CALL_RESULT` 로 저장·표시된다. Phase 2 ① 부터의 설계(툴 타임라인은 원문)이지만 「호스트 경로를 드러내지 않는다」를 활동 탭까지 넓힐지는 판단이 필요하다.
+
+**D. [관찰] Ruling 1·2 의 전제.** Ruling 2 의 전제(실제 `gateway_final` 스냅샷에 `MEDIA:` 줄이 남는다)는 **맞았다** — 하네스 c 와 모델 런 ② 모두. 정본은 final 뒤 31·45ms 에 와서 연장이 실제로 필요한 경우는 못 봤다. Ruling 1 은 루프백에서 ack 가 0.1~0.2초라 **정상 경로에서 재전송이 안 난다는 것만** 확인했고, 느린 링크의 이중 디스패치 여부는 여전히 못 쟀다(원격 Gateway 실연 몫).
+
+**E. [관찰] 아웃바운드 스테이징 사본.** 툴 `media` 와 `MEDIA:` 줄은 Gateway 코어를 지나며 `~/.openclaw-dev/media/outbound/<이름>---<uuid>.<ext>` 사본을 남긴다(이번 8개 — 툴로 보낸 `big.png` 는 **JPEG 4,047,716B** 사본도 생겼다, 서버에는 원본 PNG 가 갔다). Gateway 가 24h 뒤 지운다(스파이크 2-7). 11.5 「끝나면」에 넣었다.
+
+### 13.5 사람이 볼 것
+
+9.3 그대로(실제 OS 클립보드 붙여넣기·끌어다 놓기). 더해서, 13.4 A 를 고치기 전이라면 **긴 답 끝에 파일을 붙이는 런**에서 스트리밍 버블 마지막 줄에 `MEDIA:/…` 가 잠깐 보이는지 눈으로 한 번 — 자동화 도구로는 0.5초 창을 안정적으로 잡지 못했다.
+
+### 13.6 정리·잔여물
+
+- 서버(SIGINT)·Gateway(`shutdown completed cleanly`)·Vite 5180·wire-cli `watch` 를 내렸다. **19001·19100·5180 LISTEN 0, 5173 은 1 그대로**(다른 프로젝트, 무접촉). 브라우저 탭은 닫았다.
+- 설치본: `~/.openclaw-dev/extensions/dodok` = `f5dc6438…`(main `b0b1b65` 빌드, 첨부 든 번들), `status: loaded`. `channels.dodok.channels` 는 unset 그대로. 계정·에이전트·승인 정책 무변경.
+- dev 프로필에서 이번에 만든 것만 지웠다(모두 18:40 이후 생성 확인): `<ws>/a3-harness/`·`<ws>/hello-c3po.txt`(런 ②)·`<ws>/.openclaw-cli-images/`·`<ws>/media/`(둘 다 이번에 새로 생김)·`~/.openclaw-dev/media/inbound/`(새로 생김)·`media/outbound/` 안 파일 8개(디렉터리는 남김).
+- **남긴 것**: dev·fin 채널 세션 4개(하네스 채널 dev·fin — 가짜 세션 id `…a311` 가 박힘, 모델 채널 둘) · 실제 claude 전사(런 ①②, `~/.claude/projects/…` 는 읽지도 고치지도 않음) · `/tmp/openclaw/openclaw-dev-2026-09-23.log` · 워크트리 `data/`(ignored: 위 로그들, `live-smoke.{env,sqlite}`, `openclaw-device-dev.json`, `wire-cli-session.json`, `attachments/`(서버 블롭), `check-*.log`) · `packages/openclaw-plugin/dist/`(ignored, 깨끗한 빌드). 가짜 CLI·시험 이미지·스크래치는 지웠다.
+- 시크릿: `BRIDGE_TOKEN`·dev Gateway 토큰·`LOCAL_AUTH_TOKEN` 값의 출현 수 **0** — `data/*.log`·`data/*.jsonl`·`data/*.json`·`data/live-smoke.sqlite*`(WAL 체크포인트 뒤)·가짜 CLI 출력·`/tmp/openclaw/…log`. 이번 모델 런은 설정 파일을 뒤지지 않았다.
+- 검사: 루트 `pnpm test` exit 0(shared 101 · plugin 108 · adapter 206 · server 562 · web 996 = **1973**) · `pnpm typecheck` exit 0 · `pnpm lint` exit 0 · `pnpm fmt:check` exit 0.
