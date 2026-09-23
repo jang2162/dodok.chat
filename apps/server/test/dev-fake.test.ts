@@ -1,4 +1,5 @@
 import {
+  type Attachment,
   type ClientToServerEvents,
   ComponentsV1,
   type Field,
@@ -15,6 +16,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DEV_FAKE_LOCAL_TOKEN, type DevFake, fakeAgentScript, startDevFake } from "../scripts/dev-fake";
 import { findItem, formatInteractionText } from "../src/modules/components/interact";
 import type { ScenarioApproval } from "./fakes/scenario";
+import { makePng } from "./helpers/png";
 
 type Author = { type: "user" | "agent"; handle: string };
 
@@ -24,9 +26,10 @@ const delivery = (
   author: Author,
   self = "dev",
   agents: string[] = ["dev", "fin"],
+  attachments: Array<Partial<Attachment>> = [],
 ): InboundDeliver =>
   ({
-    message: { text, author: { ...author, displayName: author.handle } },
+    message: { text, author: { ...author, displayName: author.handle }, attachments },
     context: {
       participants: [
         { type: "user", handle: "owner", displayName: "owner", isSelf: false },
@@ -109,8 +112,89 @@ describe("fakeAgentScript", () => {
     expect(fakeAgentScript("dev", delivery("@dev 도구", owner)).tool?.name).toBe("Read");
   });
 
-  describe("components 키워드 — 폼·폼 둘·고르기·카드·재사용·짧게", () => {
-    const KEYWORDS = ["폼", "폼 둘", "고르기", "카드", "재사용", "짧게"] as const;
+  describe("첨부 키워드 — 이미지 보여줘·보고서 줘·카드에 이미지·미디어만, 사람 첨부 되말하기", () => {
+    const script = (text: string, attachments: Array<Partial<Attachment>> = []) =>
+      fakeAgentScript("dev", delivery(text, owner, "dev", ["dev", "fin"], attachments));
+    const files = (text: string) =>
+      (script(text).attachments ?? []).map((a) => ({ name: a.name, mime: a.mime, magic: magicOf(a.bytes) }));
+
+    it("이미지 보여줘 → 「그래프입니다」 + 480×320 PNG chart.png 한 장(무늬가 있어 그려졌는지 눈으로 안다)", () => {
+      const s = script("@dev 이미지 보여줘");
+      expect(s.reply).toBe("그래프입니다");
+      expect((s.deltas ?? []).join("")).toBe(s.reply);
+      expect(files("@dev 이미지 보여줘")).toEqual([{ name: "chart.png", mime: "image/png", magic: "png" }]);
+      const png = Buffer.from(s.attachments?.[0]?.bytes ?? []);
+      expect([png.readUInt32BE(16), png.readUInt32BE(20)]).toEqual([480, 320]);
+      expect(s.components).toBeUndefined();
+    });
+
+    it("보고서 줘 → 「보고서입니다」 + PDF report.pdf 한 개", () => {
+      expect(script("@dev 보고서 줘").reply).toBe("보고서입니다");
+      expect(files("@dev 보고서 줘")).toEqual([
+        { name: "report.pdf", mime: "application/pdf", magic: "pdf" },
+      ]);
+    });
+
+    it("미디어만 → 글 없는 답 + chart.png 한 장", () => {
+      const s = script("@dev 미디어만");
+      expect(s.reply).toBe("");
+      expect(s.deltas ?? []).toEqual([]);
+      expect(files("@dev 미디어만").map((f) => f.name)).toEqual(["chart.png"]);
+    });
+
+    it("카드에 이미지 → 「카드입니다」 + chart.png·월간 보고서.pdf, components 가 두 첨부를 이름으로 가리키고 없는 이름 하나를 둔다(「카드」 카드가 아니다)", () => {
+      const s = script("@dev 카드에 이미지");
+      expect(s.reply).toBe("카드입니다");
+      expect(files("@dev 카드에 이미지").map((f) => f.name)).toEqual(["chart.png", "월간 보고서.pdf"]);
+      const card = ComponentsV1.parse(s.components);
+      // 공백은 SafeUrl(`\S+`)을 못 지나 %20 으로 적는다 — 웹 resolveRef 가 디코드해 이름으로 푼다
+      const refOf = (url: string | undefined) => decodeURIComponent(url?.replace(/^artifact:\/\//, "") ?? "");
+      const media = card.blocks.flatMap((b) => (b.type === "media" ? b.items.map((i) => refOf(i.url)) : []));
+      expect(media).toEqual(["chart.png", "없음.png"]);
+      const fileBlocks = card.blocks.flatMap((b) => (b.type === "file" ? [b] : []));
+      expect(fileBlocks.map((b) => [refOf(b.url), b.name])).toEqual([["월간 보고서.pdf", "월간 보고서"]]);
+      const links = card.blocks.flatMap((b) =>
+        b.type === "actions"
+          ? b.items.flatMap((i) => (i.type === "button" && i.url ? [refOf(i.url)] : []))
+          : [],
+      );
+      expect(links).toEqual(["월간 보고서.pdf"]);
+      // 이 카드의 URL 은 모두 artifact:// — 바깥 네트워크 없이 첨부 해석만 본다
+      const names = new Set(s.attachments?.map((a) => a.name));
+      expect([...media, ...links].filter((n) => names.has(n))).toEqual(["chart.png", "월간 보고서.pdf"]);
+    });
+
+    it("첨부 키워드가 없으면 첨부를 싣지 않고, 「카드」는 그대로 블록 카드다", () => {
+      expect(script("@dev 안녕").attachments).toBeUndefined();
+      expect(script("@dev 카드").attachments).toBeUndefined();
+      expect(script("@dev 카드").reply).toContain("잘 받았어요");
+    });
+
+    it("사람 첨부가 있으면 대본 앞에 한 줄 — 받은 첨부 수와 첫 이미지 크기, 이미지가 없으면 「첫 이미지 없음」", () => {
+      const pdf: Partial<Attachment> = { kind: "file", name: "a.pdf" };
+      const img: Partial<Attachment> = { kind: "image", name: "b.png", width: 640, height: 480 };
+      const s = script("@dev 안녕", [pdf, img]);
+      expect(s.reply.split("\n")[0]).toBe("받은 첨부 2개, 첫 이미지 640×480");
+      expect(s.reply).toContain("잘 받았어요");
+      expect((s.deltas ?? []).join("")).toBe(s.reply);
+      expect(script("@dev 안녕", [pdf]).reply.split("\n")[0]).toBe("받은 첨부 1개, 첫 이미지 없음");
+      // 키워드 대본에도 앞에 붙는다
+      expect(script("@dev 이미지 보여줘", [img]).reply).toBe(
+        "받은 첨부 1개, 첫 이미지 640×480\n\n그래프입니다",
+      );
+      // 첨부가 없으면 붙지 않고, 에이전트가 보낸 첨부는 되말하지 않는다(사람 첨부만)
+      expect(script("@dev 안녕").reply).not.toContain("받은 첨부");
+      expect(
+        fakeAgentScript(
+          "fin",
+          delivery("그래프입니다", { type: "agent", handle: "dev" }, "fin", ["dev", "fin"], [img]),
+        ).reply,
+      ).not.toContain("받은 첨부");
+    });
+  });
+
+  describe("components 키워드 — 폼·폼 둘·고르기·카드·재사용·짧게·카드에 이미지", () => {
+    const KEYWORDS = ["폼", "폼 둘", "고르기", "카드", "재사용", "짧게", "카드에 이미지"] as const;
     /** 대본이 낸 components 를 플러그인·서버와 같은 스키마로 파싱한다 — 어기면 여기서 던진다 */
     const cardOf = (text: string) =>
       ComponentsV1.parse(fakeAgentScript("dev", delivery(text, owner)).components);
@@ -225,6 +309,14 @@ describe("fakeAgentScript", () => {
     });
   });
 });
+
+/** 첨부 바이트의 매직 — 이름·MIME 만 맞고 바이트가 엉뚱하면 서버 스니핑이 다른 종류로 본다 */
+function magicOf(bytes: Uint8Array): "png" | "pdf" | "other" {
+  const head = Buffer.from(bytes.subarray(0, 8));
+  if (head.equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "png";
+  if (head.subarray(0, 5).toString("latin1") === "%PDF-") return "pdf";
+  return "other";
+}
 
 /** 상호작용 글을 만들 때 필드마다 넣는 값 — 옵션 필드는 라벨이 글에 실리게 옵션 값을 고른다 */
 function sampleValue(f: Field): unknown {
@@ -368,6 +460,56 @@ describe("startDevFake", () => {
     const ttl = Date.parse(message.componentState?.expiresAt ?? "") - Date.parse(message.createdAt);
     expect(ttl).toBeGreaterThan(19_000);
     expect(ttl).toBeLessThanOrEqual(20_000);
+  }, 20_000);
+
+  it("「카드에 이미지」 → 가짜 플러그인이 두 파일을 올리고, 저장된 메시지에 chart.png(480×320)·월간 보고서.pdf 와 카드가 함께 온다", async () => {
+    const channelId = await channelWith("media", ["dev"]);
+    const devId = await agentId("dev");
+    const socket = await openWire(channelId);
+    const reply = new Promise<Message>((resolve) => {
+      socket.on("message.created", ({ message }) => {
+        if (message.authorType === "agent") resolve(message);
+      });
+    });
+    const sent = await socket.emitWithAck("message.send", {
+      channelId,
+      clientMsgId: "c4",
+      bodyMd: `<@a:${devId}> 카드에 이미지`,
+    });
+    expect(sent.ok).toBe(true);
+    const message = await reply;
+    expect(message.bodyMd).toBe("카드입니다");
+    expect(message.attachments.map((a) => [a.name, a.kind, a.width, a.height])).toEqual([
+      ["chart.png", "image", 480, 320],
+      ["월간 보고서.pdf", "file", undefined, undefined],
+    ]);
+    expect(message.components?.blocks.map((b) => b.type)).toContain("media");
+  }, 20_000);
+
+  it("사람이 이미지를 붙여 부르면 답 앞 줄이 받은 첨부 수와 첫 이미지 크기를 되말한다", async () => {
+    const channelId = await channelWith("upload", ["dev"]);
+    const devId = await agentId("dev");
+    const up = await fetch(`${dev.url}/api/v1/attachments?channelId=${channelId}`, {
+      method: "POST",
+      headers: { cookie, "content-type": "image/png" },
+      body: makePng(64, 48),
+    });
+    expect(up.status).toBe(200);
+    const { id } = (await up.json()) as { id: string };
+    const socket = await openWire(channelId);
+    const reply = new Promise<string>((resolve) => {
+      socket.on("message.created", ({ message }) => {
+        if (message.authorType === "agent") resolve(message.bodyMd);
+      });
+    });
+    const sent = await socket.emitWithAck("message.send", {
+      channelId,
+      clientMsgId: "c5",
+      bodyMd: `<@a:${devId}> 이거 봐`,
+      attachments: [id],
+    });
+    expect(sent.ok).toBe(true);
+    await expect(reply).resolves.toMatch(/^받은 첨부 1개, 첫 이미지 64×48\n/);
   }, 20_000);
 
   it("@dev @fin 이면 서로 부르다가 릴레이 턴 상한에서 relay_limit 시스템 메시지가 생긴다", async () => {

@@ -20,6 +20,7 @@ import {
   type ScenarioScript,
 } from "../test/fakes/scenario";
 import { waitForAdapterConnected } from "../test/helpers/live-app";
+import { makePng, PDF_BYTES } from "../test/helpers/png";
 
 /** 개발 전용 고정 로그인 토큰(= owner 비밀번호). 시크릿이 아니다 — 로그에 찍는다 */
 export const DEV_FAKE_LOCAL_TOKEN = "dev-fake-local-token";
@@ -300,13 +301,37 @@ const SHORT_CARD: FakeComponents = {
 };
 
 /**
- * components 키워드 → 카드, 앞에 있을수록 먼저 고른다(「폼 둘」이 「폼」보다 앞). 라벨·옵션·제목에는 키워드를 쓰지 않는다 —
+ * 「카드에 이미지」 — 같은 메시지 첨부를 `artifact://<파일 이름>` 으로 가리키는 카드(첨부 스펙 6.3).
+ * media 는 찾는 이름 하나 + 없는 이름 하나(「첨부를 찾을 수 없습니다」), file·링크 버튼은 공백·한국어 이름.
+ * 공백은 SafeUrl(`\S+`)을 못 지나 `%20` 으로 적는다 — 웹이 디코드한 이름으로도 찾는다
+ */
+const ARTIFACT_CARD: FakeComponents = {
+  blocks: [
+    { type: "section", text: "**월간 추이** — 그래프와 원본 파일이에요." },
+    {
+      type: "media",
+      items: [
+        { url: "artifact://chart.png", alt: "월간 추이 그래프" },
+        { url: "artifact://없음.png", alt: "빠진 그림" },
+      ],
+    },
+    { type: "file", url: "artifact://월간%20보고서.pdf", name: "월간 보고서" },
+    {
+      type: "actions",
+      items: [{ type: "button", id: "open_pdf", label: "원본 열기", url: "artifact://월간%20보고서.pdf" }],
+    },
+  ],
+};
+
+/**
+ * components 키워드 → 카드, 앞에 있을수록 먼저 고른다(「폼 둘」이 「폼」보다, 「카드에 이미지」가 「카드」보다 앞). 라벨·옵션·제목에는 키워드를 쓰지 않는다 —
  * 누른 상호작용 글이 다음 런의 받은 글이 되므로, 거기에 키워드가 있으면 카드가 또 나온다.
  */
 const COMPONENT_CARDS: ReadonlyArray<readonly [keyword: string, card: FakeComponents]> = [
   ["폼 둘", FORM_TWO_CARD],
   ["폼", FORM_CARD],
   ["고르기", PICK_CARD],
+  ["카드에 이미지", ARTIFACT_CARD],
   ["카드", BLOCKS_CARD],
   ["재사용", REUSABLE_CARD],
   ["짧게", SHORT_CARD],
@@ -319,8 +344,40 @@ function componentsScript(text: string): FakeComponents | undefined {
   return text.includes("짧게") ? { ...card, ttlMs: SHORT_COMPONENTS_TTL_MS } : card;
 }
 
+type FakeFile = NonNullable<ScenarioScript["attachments"]>[number];
+
+/** 대본 그림 — 480×320, 파랑 바탕에 밝은 대각선 줄무늬(단색이면 브라우저 검증에서 그려졌는지 가리기 어렵다) */
+const CHART_PNG: FakeFile = {
+  name: "chart.png",
+  mime: "image/png",
+  bytes: makePng(480, 320, [30, 120, 200], { rgb: [240, 200, 60], every: 24 }),
+};
+const pdfFile = (name: string): FakeFile => ({ name, mime: "application/pdf", bytes: PDF_BYTES });
+
 /**
- * 받은 글로 대본을 고른다 — 키워드: 드롭·실패·느리게·도구·승인(승인 둘·승인 항상)·폼(폼 둘)·고르기·카드·재사용·짧게.
+ * 첨부 키워드 → 정본 글·첨부(첨부 스펙 8.4). 앞에 있을수록 먼저 고른다. 대본 글은 받은 글을 되받지 않는 고정 문구다 —
+ * 어떤 키워드도 담지 않아, 채널의 다른 에이전트가 받아도 대본이 또 나오지 않는다.
+ * 「카드에 이미지」의 카드는 `COMPONENT_CARDS` 가 고른다(「카드」보다 앞).
+ */
+const ATTACHMENT_REPLIES: ReadonlyArray<readonly [keyword: string, reply: string, files: FakeFile[]]> = [
+  ["카드에 이미지", "카드입니다", [CHART_PNG, pdfFile("월간 보고서.pdf")]],
+  ["이미지 보여줘", "그래프입니다", [CHART_PNG]],
+  ["보고서 줘", "보고서입니다", [pdfFile("report.pdf")]],
+  ["미디어만", "", [CHART_PNG]],
+];
+
+/** 사람이 첨부를 붙여 불렀으면 대본 앞에 붙이는 한 줄 — 받은 첨부 수와 첫 이미지 크기(인바운드 `message.attachments`) */
+function receivedLine(d: InboundDeliver): string | undefined {
+  const { attachments, author } = d.message;
+  if (author.type !== "user" || attachments.length === 0) return undefined;
+  const image = attachments.find((a) => a.kind === "image");
+  const size = image ? `${image.width ?? "?"}×${image.height ?? "?"}` : "없음";
+  return `받은 첨부 ${attachments.length}개, 첫 이미지 ${size}`;
+}
+
+/**
+ * 받은 글로 대본을 고른다 — 키워드: 드롭·실패·느리게·도구·승인(승인 둘·승인 항상)·폼(폼 둘)·고르기·카드·재사용·짧게,
+ * 첨부 키워드 이미지 보여줘·보고서 줘·카드에 이미지·미디어만. 사람 첨부가 있으면 답 앞에 받은 첨부 줄을 붙인다.
  * 받은 글을 `@` 없이 인용해(멘션을 새로 만들지 않는다) 되받고,
  * 글이 부른 채널의 다른 에이전트와 보낸 에이전트를 끝의 「@핸들 이어서 부탁해요」로만 불러 릴레이를 만든다.
  * 핸들은 채널 참여자(`context.participants`)에서 읽는다 — 등록한 핸들이 providerAgentId 와 달라도 된다.
@@ -337,7 +394,10 @@ export function fakeAgentScript(self: string, d: InboundDeliver): ScenarioScript
   if (author.type === "agent" && others.has(author.handle)) calls.add(author.handle);
   const quote = [...text.replaceAll("@", "").replace(/\s+/g, " ").trim()].slice(0, QUOTE_MAX).join("");
   const tail = calls.size > 0 ? ` ${[...calls].map((h) => `@${h}`).join(" ")} 이어서 부탁해요.` : "";
-  const reply = `**${self}**: 「${quote}」 잘 받았어요.${tail}`;
+  const media = ATTACHMENT_REPLIES.find(([keyword]) => text.includes(keyword));
+  const body = media ? media[1] : `**${self}**: 「${quote}」 잘 받았어요.${tail}`;
+  const received = receivedLine(d);
+  const reply = received === undefined ? body : `${received}\n\n${body}`;
   const components = componentsScript(text);
   return {
     reply,
@@ -347,6 +407,7 @@ export function fakeAgentScript(self: string, d: InboundDeliver): ScenarioScript
     ...(text.includes("도구") ? { tool: { name: "Read", args: { path: "README.md" }, result: "ok" } } : {}),
     ...(text.includes("승인") ? { approval: approvalScript(text) } : {}),
     ...(components ? { components } : {}),
+    ...(media ? { attachments: media[2] } : {}),
   };
 }
 
