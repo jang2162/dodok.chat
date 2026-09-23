@@ -7,6 +7,8 @@ const SECRET_KEYS = new Set([
   "OPENCLAW_GATEWAY_TOKEN",
   "OPENCLAW_DEV_GATEWAY_TOKEN",
   "BETTER_AUTH_SECRET",
+  "VAPID_PRIVATE_KEY",
+  "privateKey",
   "password",
   "authorization",
   "cookie",

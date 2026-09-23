@@ -1,3 +1,9 @@
+import webpush from "web-push";
+
+// 앱마다 DATA_DIR/vapid.json 을 만들지 않게(저장소에 키 파일이 생기지 않게) 테스트 프로세스마다 한 쌍을 만들어 환경변수로 준다.
+// 파일 경로를 재는 테스트만 VAPID_PUBLIC_KEY·VAPID_PRIVATE_KEY 를 빈 값으로 덮고 임시 DATA_DIR 을 준다
+const vapid = webpush.generateVAPIDKeys();
+
 /**
  * 네트워크·파일 없이 loadConfig 를 통과하는 최소 env. DB 는 인메모리, 포트는 임의, 로그는 warn 이상.
  *
@@ -20,4 +26,8 @@ export const testEnv: Record<string, string | undefined> = {
   DATA_DIR: "./test-data-unused",
   LOG_LEVEL: "warn",
   ATTACHMENTS_DIR: "/dev/null/dodok-test-attachments-use-bootTestApp",
+  VAPID_PUBLIC_KEY: vapid.publicKey,
+  VAPID_PRIVATE_KEY: vapid.privateKey,
+  // 기본값(mailto:dodok@localhost)이면 앱마다 「로컬 자리값」 warn 이 찍힌다 — 그 warn 을 재는 테스트만 빈 값으로 덮는다
+  VAPID_SUBJECT: "mailto:dodok-test@example.com",
 };

@@ -13,7 +13,7 @@ import type { AgentAdapter } from "./adapters/types";
 import { type Auth, createAuth } from "./auth";
 import { bootstrapOwner } from "./auth/owner";
 import { registerAuthRoutes } from "./auth/routes";
-import type { ServerConfig } from "./config";
+import { isLocalVapidSubject, type ServerConfig } from "./config";
 import { createDb, type Db } from "./db/client";
 import { workspaces } from "./db/schema.sqlite";
 import { HttpError, httpStatusToErrorCode } from "./http/errors";
@@ -25,6 +25,8 @@ import { sweepAttachments } from "./modules/attachments/service";
 import { type BlobLocks, createBlobLocks } from "./modules/attachments/store";
 import { registerChannelRoutes } from "./modules/channels/routes";
 import { registerMessageRoutes } from "./modules/messages/routes";
+import { registerPushRoutes } from "./modules/push/routes";
+import { loadVapidKeys } from "./modules/push/vapid";
 import type { Orchestrator, RunTimeouts } from "./modules/runs/orchestrator";
 import { registerRunRoutes } from "./modules/runs/routes";
 import { ServerBus } from "./realtime/bus";
@@ -176,6 +178,18 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       bridgeToken: config.BRIDGE_TOKEN,
       locks: blobLocks,
     });
+    // 푸시: 키는 환경변수 둘 또는 DATA_DIR/vapid.json(스펙 5.1). 망가진 키 파일은 부팅을 막는다(덮어쓰면 모든 구독이 무효)
+    const vapid = loadVapidKeys({
+      dataDir: config.DATA_DIR,
+      publicKey: config.vapid.publicKey,
+      privateKey: config.vapid.privateKey,
+    });
+    if (isLocalVapidSubject(config.vapid.subject))
+      logger.warn(
+        { vapidSubject: config.vapid.subject },
+        "VAPID subject is a local placeholder — Apple Push rejects it (403 BadJwtToken)",
+      );
+    registerPushRoutes(fastify, { auth, db, workspaceId, publicKey: vapid.publicKey });
     const sweeper = startAttachmentSweeper(
       () =>
         sweepAttachments({ db, dir: config.attachmentsDir, locks: blobLocks }).then(

@@ -27,6 +27,17 @@ const Raw = z.object({
   OPENCLAW_FRAME_DUMP_PATH: z.string().optional(),
   BRIDGE_TOKEN: z.string().min(16),
   BRIDGE_PUBLIC_URL: z.url().optional(),
+  // 웹 푸시(스펙 5.1). 키 둘이 다 있어야 쓰고, 아니면 DATA_DIR/vapid.json(없으면 만든다)
+  VAPID_PUBLIC_KEY: z.string().min(1).optional(),
+  VAPID_PRIVATE_KEY: z.string().min(1).optional(),
+  // 푸시 서비스가 연락할 주체 — web-push 가 mailto: 또는 https: 를 요구한다. 기본값은 개발용(isLocalVapidSubject)
+  VAPID_SUBJECT: z
+    .string()
+    .refine(
+      (s) => /^mailto:\S+$/.test(s) || /^https:\/\/\S+$/.test(s),
+      "mailto: 또는 https:// 로 시작해야 한다",
+    )
+    .default("mailto:dodok@localhost"),
 });
 
 export type ServerConfig = z.infer<typeof Raw> & {
@@ -34,6 +45,7 @@ export type ServerConfig = z.infer<typeof Raw> & {
   attachmentsDir: string;
   deviceIdentityPath: string;
   gateway: { url: string; token: string };
+  vapid: { publicKey?: string; privateKey?: string; subject: string };
 };
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): ServerConfig {
@@ -66,5 +78,29 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     attachmentsDir: c.ATTACHMENTS_DIR ?? join(c.DATA_DIR, "attachments"),
     deviceIdentityPath: c.OPENCLAW_DEVICE_IDENTITY_PATH ?? join(c.DATA_DIR, `openclaw-device${suffix}.json`),
     gateway: { url: pair.url, token: pair.token },
+    vapid: { publicKey: c.VAPID_PUBLIC_KEY, privateKey: c.VAPID_PRIVATE_KEY, subject: c.VAPID_SUBJECT },
   };
+}
+
+/**
+ * VAPID 주체가 개발용 자리값인가 — 호스트(mailto: 는 @ 뒤, https: 는 URL 호스트)가 localhost·127.0.0.1·*.local.
+ * Apple Push 는 이런 주체를 403 BadJwtToken 으로 거부한다(web-push#947·#988) — 앱이 시작 때 warn 한 줄
+ */
+export function isLocalVapidSubject(subject: string): boolean {
+  const host = vapidSubjectHost(subject)?.toLowerCase();
+  if (!host) return false;
+  return host === "localhost" || host === "127.0.0.1" || host.endsWith(".local");
+}
+
+function vapidSubjectHost(subject: string): string | undefined {
+  if (subject.startsWith("mailto:")) {
+    const address = subject.slice("mailto:".length).split("?")[0] ?? "";
+    const at = address.lastIndexOf("@");
+    return at === -1 ? undefined : address.slice(at + 1);
+  }
+  try {
+    return new URL(subject).hostname;
+  } catch {
+    return undefined;
+  }
 }
