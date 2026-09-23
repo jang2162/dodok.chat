@@ -292,6 +292,41 @@ describe("presence.update(스펙 5.3) — 보이는가·보는 채널", () => {
     expect(fake.sentOf("presence.update").at(-1)).toEqual({ visible: true });
   });
 
+  it("pagehide 에서는 안 보임을 늘 보낸다 — 지난번과 같아도(끊기기 직전 마지막 값), 다시 보이면 다시", async () => {
+    const loc = fakeLocation(CH);
+    const fake = await connected(loc.target);
+
+    act(() => void window.dispatchEvent(new Event("pagehide")));
+    expect(fake.sentOf("presence.update").at(-1)).toEqual({ visible: false, channelId: CH });
+
+    const hidden = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    try {
+      act(() => void document.dispatchEvent(new Event("visibilitychange"))); // 같은 값 — 생략
+      expect(fake.sentOf("presence.update")).toHaveLength(2);
+      act(() => void window.dispatchEvent(new Event("pagehide"))); // 같은 값이어도 pagehide 는 보낸다
+      expect(fake.sentOf("presence.update")).toEqual([
+        { visible: true, channelId: CH },
+        { visible: false, channelId: CH },
+        { visible: false, channelId: CH },
+      ]);
+    } finally {
+      hidden.mockRestore(); // 실패해도 다음 테스트로 새지 않게
+    }
+
+    // bfcache 복원처럼 소켓이 살아 돌아오면 보임을 다시 알린다
+    act(() => void document.dispatchEvent(new Event("visibilitychange")));
+    expect(fake.sentOf("presence.update").at(-1)).toEqual({ visible: true, channelId: CH });
+  });
+
+  it("끊겨 있으면 pagehide 에도 보내지 않는다", async () => {
+    const loc = fakeLocation(CH);
+    const fake = await connected(loc.target);
+    fake.socket.connected = false;
+    fake.serverEmit("disconnect", "transport close");
+    act(() => void window.dispatchEvent(new Event("pagehide")));
+    expect(fake.sentOf("presence.update")).toEqual([{ visible: true, channelId: CH }]);
+  });
+
   it("연결이 없으면 보내지 않고, 채널 id 가 uuid 가 아니면 싣지 않는다", async () => {
     const loc = fakeLocation("nope");
     stubMe();
@@ -307,7 +342,7 @@ describe("presence.update(스펙 5.3) — 보이는가·보는 채널", () => {
     expect(fake.sentOf("presence.update")).toEqual([{ visible: true }]);
   });
 
-  it("떠나면 이동·visibilitychange 구독을 푼다", async () => {
+  it("떠나면 이동·visibilitychange·pagehide 구독을 푼다", async () => {
     const loc = fakeLocation(CH);
     stubMe();
     const { unmount } = render(<Tree target={loc.target} />);
@@ -319,6 +354,7 @@ describe("presence.update(스펙 5.3) — 보이는가·보는 채널", () => {
     if (!fake) throw new Error("소켓 없음");
     fake.socket.connected = true;
     act(() => void document.dispatchEvent(new Event("visibilitychange")));
+    act(() => void window.dispatchEvent(new Event("pagehide")));
     expect(fake.sentOf("presence.update")).toEqual([]);
   });
 });

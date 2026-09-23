@@ -123,6 +123,9 @@ export function WireProvider({
 /**
  * `presence.update`(스펙 5.3) — 서버가 「그 채널을 보고 있으면」 푸시를 거른다. 연결될 때마다(서버는 끊긴 소켓의 상태를
  * 지운다), `visibilitychange`·채널 이동 때 보낸다. 끊겨 있거나 지난번과 같은 값이면 보내지 않는다.
+ * `pagehide`(탭 닫기·다른 주소로 이동)에서는 지난번과 같아도 「안 보임」을 보낸다 — 끊기기 직전 마지막 값이 되게.
+ * 이때 `visibilityState` 는 아직 "visible" 이라 값을 덮어 쓴다. Chromium 은 pagehide 뒤 소켓이 살아 있는 동안
+ * `visibilitychange` hidden 도 와서 측정상 결과가 같다(p4-c1) — 언로드 때 그것이 오지 않는 엔진 대비다.
  * 채널 id 는 uuid 일 때만 싣는다 — 서버 스키마가 거르는 값을 보내지 않게
  */
 function attachPresence(socket: WireSocket, notify: AppNotifyTarget): () => void {
@@ -134,12 +137,12 @@ function attachPresence(socket: WireSocket, notify: AppNotifyTarget): () => void
       ...(Id.safeParse(channelId).success ? { channelId } : {}),
     };
   };
-  const send = (force: boolean) => {
+  const send = (force: boolean, hidden = false) => {
     if (!socket.connected) {
       last = undefined;
       return;
     }
-    const p = current();
+    const p = hidden ? { ...current(), visible: false } : current();
     const key = JSON.stringify(p);
     if (!force && key === last) return;
     last = key;
@@ -147,12 +150,15 @@ function attachPresence(socket: WireSocket, notify: AppNotifyTarget): () => void
   };
   const onConnect = () => send(true);
   const onChange = () => send(false);
+  const onPageHide = () => send(true, true);
   socket.on("connect", onConnect);
   document.addEventListener("visibilitychange", onChange);
+  window.addEventListener("pagehide", onPageHide);
   const unwatch = notify.onLocationChange?.(onChange);
   return () => {
     socket.off("connect", onConnect);
     document.removeEventListener("visibilitychange", onChange);
+    window.removeEventListener("pagehide", onPageHide);
     unwatch?.();
   };
 }
