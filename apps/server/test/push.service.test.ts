@@ -234,6 +234,27 @@ describe("createPushDispatcher — 발송·거르기·결과 분기(스펙 5.3·
     expect(calls).toHaveLength(2);
   });
 
+  it("[p4-c1] 거르기·성공 발송은 debug 한 줄씩 — 필드는 정해진 것만(다음 실연이 억제·발송·미도착을 가르게)", async () => {
+    presence.set("s1", alice, { visible: true, channelId: CH });
+    await dispatcher().dispatch([
+      { userId: alice, payload: mention(CH) },
+      { userId: bob, payload: mention(CH) },
+    ]);
+    const skipped = cap.lines.filter((l) => l.msg === "push skipped — watching");
+    expect(skipped).toHaveLength(1);
+    expect(skipped[0]).toMatchObject({ level: 20, userId: alice, channelId: CH, kind: "mention" });
+    expect(fieldsOf(skipped[0] as Record<string, unknown>)).toEqual(["channelId", "kind", "userId"]);
+
+    const sent = cap.lines.filter((l) => l.msg === "push sent");
+    expect(sent).toHaveLength(1); // bob 의 구독 하나
+    expect(sent[0]).toMatchObject({ level: 20, statusCode: 201 });
+    expect(fieldsOf(sent[0] as Record<string, unknown>)).toEqual(["statusCode", "subscriptionId"]);
+    expect(cap.lines).toHaveLength(2);
+    // 본문·endpoint·keys 는 어디에도 없다
+    const all = cap.raw.join("\n");
+    for (const secret of [BODY, EP_B, EP_A1, KEYS_B.p256dh, KEYS_B.auth]) expect(all).not.toContain(secret);
+  });
+
   it("구독이 없는 사람·빈 목록은 보내지 않는다", async () => {
     await dispatcher().dispatch([{ userId: uuid(), payload: mention() }]);
     await dispatcher().dispatch([]);

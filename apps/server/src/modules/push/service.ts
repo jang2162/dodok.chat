@@ -107,12 +107,13 @@ export type PushDispatcher = {
 
 /**
  * 받는 사람마다: 그 채널을 보고 있으면 건너뛰고(스펙 5.3), 아니면 구독마다 보낸다(사용자·구독 병렬, 재시도 없음).
- * 결과: 404·410 → 구독 삭제 · 400·403·413 → error(페이로드·VAPID 버그 — 구독은 그대로) · 그 밖·던짐 → warn.
- * 로그에는 userId·구독 id·kind·statusCode·짧은 사유만 싣는다 — endpoint·keys·페이로드 본문·오류 객체는 싣지 않는다(리뷰 D6)
+ * 결과: 2xx → debug · 404·410 → 구독 삭제 · 400·403·413 → error(페이로드·VAPID 버그 — 구독은 그대로) · 그 밖·던짐 → warn.
+ * 거르면 debug 한 줄 — 실연이 「걸렀다·보냈다·보냈는데 안 왔다」를 서버 로그로 가르게(p4-c1, LOG_LEVEL=debug 일 때만).
+ * 로그에는 userId·채널 id·구독 id·kind·statusCode·짧은 사유만 싣는다 — endpoint·keys·페이로드 본문·오류 객체는 싣지 않는다(리뷰 D6)
  */
 export function createPushDispatcher(deps: {
   db: Db;
-  logger: Pick<Logger, "info" | "warn" | "error">;
+  logger: Pick<Logger, "debug" | "info" | "warn" | "error">;
   send: PushSend;
   presence: Pick<Presence, "isWatching">;
 }): PushDispatcher {
@@ -137,7 +138,10 @@ export function createPushDispatcher(deps: {
       logger.warn({ ...ctx, reason: shortReason(err) }, "push send failed");
       return;
     }
-    if (statusCode >= 200 && statusCode < 300) return;
+    if (statusCode >= 200 && statusCode < 300) {
+      logger.debug({ subscriptionId: sub.id, statusCode }, "push sent");
+      return;
+    }
     if (statusCode === 404 || statusCode === 410) {
       deleteSubscriptionById(db, sub.id);
       logger.info({ ...ctx, statusCode }, "push subscription gone — removed");
@@ -150,7 +154,11 @@ export function createPushDispatcher(deps: {
   };
 
   const forUser = async (target: PushTarget): Promise<void> => {
-    if (presence.isWatching(target.userId, target.payload.channelId)) return;
+    if (presence.isWatching(target.userId, target.payload.channelId)) {
+      const { channelId, kind } = target.payload;
+      logger.debug({ userId: target.userId, channelId, kind }, "push skipped — watching");
+      return;
+    }
     const subs = listSubscriptions(db, target.userId);
     const body = JSON.stringify(target.payload);
     await Promise.all(subs.map((sub) => sendOne(target, sub, body)));
