@@ -97,6 +97,7 @@ describe("resolveRef — 플러그인 인코딩 왕복(a3-c1 리뷰 2절)", () =
     ["NBSP U+00A0", "월간 보고서.pdf", "artifact://월간%C2%A0보고서.pdf"],
     ["% + 전각 공백", "50%　할인.pdf", "artifact://50%%E3%80%80할인.pdf"],
     ["끝 공백(저장 이름은 trim)", "월간 보고서.pdf", "artifact://월간%20보고서.pdf%20"],
+    ["% 뒤 16진이 아닌 글자 + 공백", "100%go od.pdf", "artifact://100%go%20od.pdf"],
   ];
   for (const [label, name, url] of cases)
     it(`풀린다 — ${label}`, () => {
@@ -133,6 +134,18 @@ describe("resolveRef — 플러그인 인코딩 왕복(a3-c1 리뷰 2절)", () =
       kind: "attachment",
       attachment: front,
     });
+  });
+
+  it("이름 정보가 없는 ref 는 폴백 이름 file 인 첨부로 풀지 않는다(a3-c2 리뷰 3절)", () => {
+    const f = named("file");
+    for (const ref of ["%00", "%09", "%20", "%0A%0D", ".", "...", "%2F"])
+      expect(resolveRef(`artifact://${ref}`, [a1, f])).toEqual({ kind: "missing" });
+  });
+
+  it("이름이 file 인 첨부는 다듬어 file 이 되는 이름으로도 풀린다 — 끝 공백·탭·앞 점", () => {
+    const f = named("file");
+    for (const ref of ["file", "file%20", "fi%09le", ".file"])
+      expect(resolveRef(`artifact://${ref}`, [a1, f])).toEqual({ kind: "attachment", attachment: f });
   });
 
   it("referencedAttachmentIds 도 같은 해석을 쓴다 — 탭·% 든 이름", () => {
