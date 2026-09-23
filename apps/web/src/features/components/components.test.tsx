@@ -233,6 +233,29 @@ describe("Components — 버튼", () => {
     expect(screen.queryByText(ATTACHMENT_MISSING)).toBeNull();
   });
 
+  it("첨부로 풀렸지만 자기 서버 경로를 못 만들면(https url 첨부) 링크 버튼 사유는 「열 수 없는 링크입니다」— 「찾을 수 없음」이 아니라", () => {
+    const ID = "01a0cc16-22ee-7018-826c-e4783d25fa15";
+    const message = withButtons({}, [
+      {
+        type: "actions",
+        items: [{ type: "button", id: "att", label: "보고서 열기", url: "artifact://보고서.pdf" }],
+      },
+    ]);
+    message.attachments = [
+      {
+        id: ID,
+        kind: "file",
+        url: "https://e.com/r.pdf",
+        name: "보고서.pdf",
+        mime: "application/pdf",
+        size: 1,
+      },
+    ];
+    const { container } = renderWithClient(<Components message={message} />);
+    expect(container.querySelectorAll("a")).toHaveLength(0);
+    expect(screen.getByRole("button", { name: "보고서 열기" })).toHaveAccessibleDescription(LINK_BLOCKED);
+  });
+
   it("소비된 아이템·만료된 메시지·allowedUsers 밖이면 비활성", () => {
     const { unmount } = renderWithClient(
       <Components message={withButtons({ componentState: { expiresAt: FUTURE, consumed: ["stop"] } })} />,

@@ -8,9 +8,6 @@ import { cn } from "@/lib/utils";
 export const ATTACHMENT_MISSING = "첨부를 찾을 수 없습니다";
 export const LINK_BLOCKED = "열 수 없는 링크입니다";
 
-/** 계약 `SafeUrl` 이 https 말고 받는 유일한 스킴. 접두사로만 가른다 — 대문자·앞 공백·가운데 품은 값은 아니다 */
-export const isArtifactUrl = (url: string) => url.startsWith("artifact://");
-
 /** 풀리지 않는 URL 자리 한 칸. 누를 것이 없다 — 링크도 이미지도 만들지 않는다 */
 export function Unresolved({ text, className }: { text: string; className?: string }) {
   return (

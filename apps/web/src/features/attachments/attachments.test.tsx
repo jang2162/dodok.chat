@@ -1,6 +1,7 @@
 import { type Attachment, ComponentsV1 } from "@dodok/shared";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { LINK_BLOCKED } from "@/features/components/blocks/artifact";
 import { MessageItem } from "@/features/messages/MessageItem";
 import { msg } from "../../../test/fixtures";
 import { renderWithClient } from "../../../test/messages";
@@ -128,6 +129,15 @@ describe("MessageAttachments — 파일", () => {
       "텍스트",
       "ZIP",
     ]);
+  });
+
+  it("자기 서버 경로로 못 푸는 첨부(https url)는 내려받기 없이 「열 수 없는 링크입니다」", () => {
+    const { container } = render(
+      <MessageAttachments attachments={[{ ...report, url: "https://e.com/report.pdf" }]} />,
+    );
+    const card = container.querySelector("[data-slot=file-card]") as HTMLElement;
+    expect(within(card).queryByRole("link")).toBeNull();
+    expect(card).toHaveTextContent(LINK_BLOCKED);
   });
 
   it("exclude 에 든 id 는 그리지 않는다", () => {

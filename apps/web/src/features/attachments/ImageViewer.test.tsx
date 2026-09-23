@@ -46,13 +46,43 @@ describe("ImageViewer — 크게 보기(스펙 6.4)", () => {
     expect(screen.getByRole("dialog", { name: "셋.png" })).toHaveAccessibleDescription("3 / 3");
     await user.keyboard("{ArrowRight}");
     expect(screen.getByRole("dialog", { name: "셋.png" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "다음 이미지" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "다음 이미지" })).toHaveAttribute("aria-disabled", "true");
     await user.keyboard("{ArrowLeft}{ArrowLeft}{ArrowLeft}");
     expect(screen.getByRole("dialog", { name: "하나.png" })).toHaveAccessibleDescription("1 / 3");
-    expect(screen.getByRole("button", { name: "이전 이미지" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "이전 이미지" })).toHaveAttribute("aria-disabled", "true");
     // 화살표 버튼도 같은 일을 한다
     await user.click(screen.getByRole("button", { name: "다음 이미지" }));
     expect(screen.getByRole("dialog", { name: "둘.png" })).toBeInTheDocument();
+  });
+
+  it("다음 버튼으로 끝에 닿아도 초점이 그 버튼에 남고 ← 가 먹는다 — disabled 가 아니라 aria-disabled", async () => {
+    // disabled 가 되면 브라우저는 초점을 body 로 빼고 ←/→ 가 DialogContent 에 닿지 않는다(jsdom 은 blur 하지 않는다 —
+    // 그래서 disabled 속성이 없다는 것도 따로 단언한다)
+    const user = userEvent.setup();
+    render(<Harness images={IMAGES} />);
+    await user.click(screen.getByRole("button", { name: "하나.png 크게 보기" }));
+    const next = screen.getByRole("button", { name: "다음 이미지" });
+    await user.click(next);
+    await user.click(next);
+    expect(screen.getByRole("dialog", { name: "셋.png" })).toBeInTheDocument();
+    expect(next).toHaveAttribute("aria-disabled", "true");
+    expect(next).not.toHaveAttribute("disabled");
+    expect(document.activeElement).toBe(next);
+    await user.keyboard("{ArrowLeft}");
+    expect(screen.getByRole("dialog", { name: "둘.png" })).toHaveAccessibleDescription("2 / 3");
+  });
+
+  it("끝에서 다음·처음에서 이전을 눌러도 장이 안 바뀐다", async () => {
+    const user = userEvent.setup();
+    render(<Harness images={IMAGES} />);
+    await user.click(screen.getByRole("button", { name: "셋.png 크게 보기" }));
+    await user.click(screen.getByRole("button", { name: "다음 이미지" }));
+    expect(screen.getByRole("dialog", { name: "셋.png" })).toHaveAccessibleDescription("3 / 3");
+    await user.keyboard("{ArrowLeft}{ArrowLeft}");
+    const prev = screen.getByRole("button", { name: "이전 이미지" });
+    expect(prev).not.toHaveAttribute("disabled");
+    await user.click(prev);
+    expect(screen.getByRole("dialog", { name: "하나.png" })).toHaveAccessibleDescription("1 / 3");
   });
 
   it("Esc 로 닫으면 초점이 연 버튼으로 돌아간다", async () => {

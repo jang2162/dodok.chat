@@ -26,7 +26,8 @@ type Props = { block: Extract<Block, { type: "actions" }>; message: Message; io:
  * 링크 버튼의 URL 은 media·file 과 같은 `resolveRef`(첨부 스펙 6.3)로 가른다: `https://` 는 그대로, `artifact://<이름 또는 id>` 는
  * **그 메시지의** 첨부로 풀어 자기 서버 경로(`/api/v1/attachments/<id>`)를 새 탭으로 연다. 계약 `SafeUrl` 이 앞에서 막지만 옛 행·
  * 느슨해진 계약이면 렌더러가 마지막 방어다 — 못 푼 값은 링크 없는 비활성 버튼으로 떨어뜨리고 사유를 보이는 글로 싣는다(`ReasonHint`):
- * 첨부에 없으면 「첨부를 찾을 수 없습니다」, 그 밖의 스킴·상대 주소는 「열 수 없는 링크입니다」(media·file 과 같은 문구)
+ * 첨부에 없으면 「첨부를 찾을 수 없습니다」, 그 밖의 스킴·상대 주소와 첨부로 풀렸지만 자기 서버 경로를 못 만드는 값(`https` url 첨부)은
+ * 「열 수 없는 링크입니다」(media·file 과 같은 문구)
  */
 export function ActionsBlock({ block, message, io, expired }: Props) {
   const meId = useMe().data?.user.id;
@@ -49,7 +50,7 @@ export function ActionsBlock({ block, message, io, expired }: Props) {
         item,
         label,
         kind: "blocked" as const,
-        why: r.kind === "blocked" ? LINK_BLOCKED : ATTACHMENT_MISSING,
+        why: r.kind === "missing" ? ATTACHMENT_MISSING : LINK_BLOCKED,
       };
     }
     const state = itemState({

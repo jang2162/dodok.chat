@@ -13,6 +13,15 @@ const a1 = {
   width: 4,
   height: 3,
 };
+const ID3 = "01a0cc16-22ee-7018-826c-e4783d25fa16";
+const a3 = {
+  id: ID3,
+  kind: "file" as const,
+  url: `artifact://${ID3}`,
+  name: "notes.txt",
+  mime: "text/plain",
+  size: 5,
+};
 const a2 = {
   id: ID2,
   kind: "file" as const,
@@ -30,6 +39,10 @@ describe("resolveRef — 같은 메시지 첨부만(스펙 6.3)", () => {
   it("이름이 같은 첨부가 둘이면 첫 것", () => {
     const dup = { ...a2, id: ID1, name: "report.pdf" };
     expect(resolveRef("artifact://report.pdf", [dup, a2])).toEqual({ kind: "attachment", attachment: dup });
+  });
+  it("이름이 다른 첨부의 id 와 같으면 이름 쪽 — 이름이 먼저다", () => {
+    const named = { ...a2, name: ID1 };
+    expect(resolveRef(`artifact://${ID1}`, [a1, named])).toEqual({ kind: "attachment", attachment: named });
   });
   it("공백·한국어 이름은 퍼센트 인코딩돼 와도 찾는다", () => {
     const k = { ...a2, name: "월간 보고서.pdf" };
@@ -57,13 +70,14 @@ describe("resolveRef — 같은 메시지 첨부만(스펙 6.3)", () => {
       reusable: false,
       blocks: [
         { type: "media", items: [{ url: "artifact://chart.png" }, { url: "https://e.com/y.png" }] },
+        { type: "file", url: "artifact://notes.txt", name: "메모" },
         {
           type: "actions",
           items: [{ type: "button", id: "b", label: "열기", style: "secondary", url: `artifact://${ID2}` }],
         },
       ],
     };
-    expect(referencedAttachmentIds(components as never, [a1, a2])).toEqual(new Set([ID1, ID2]));
+    expect(referencedAttachmentIds(components as never, [a1, a2, a3])).toEqual(new Set([ID1, ID2, ID3]));
     expect(referencedAttachmentIds(undefined, [a1])).toEqual(new Set());
   });
 });

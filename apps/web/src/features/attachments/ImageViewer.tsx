@@ -21,7 +21,8 @@ type Props = {
 
 /**
  * 크게 보기(스펙 6.4) — 어두운 배경에 화면에 맞춰 원본 비율로. 같은 메시지 안의 이미지만 ←/→·화살표 버튼으로 넘기고
- * 끝에서 멈춘다(되돌지 않는다). Esc·바깥 누르기·닫기로 닫고 초점은 연 버튼으로 돌아간다 —
+ * 끝에서 멈춘다(되돌지 않는다). 끝의 넘기기 버튼은 `disabled` 가 아니라 `aria-disabled` + 무동작 — `disabled` 가 되면 브라우저가
+ * 누른 버튼의 초점을 body 로 빼서 ←/→ 가 `DialogContent` 에 닿지 않는다. Esc·바깥 누르기·닫기로 닫고 초점은 연 버튼으로 돌아간다 —
  * `DialogTrigger` 없이 열기 때문에 Radix 기본 복귀가 갈 곳이 없어 `onCloseAutoFocus` 에서 직접 돌려준다
  */
 export function ImageViewer({ images, index, onIndexChange, onClose, trigger }: Props) {
@@ -91,9 +92,9 @@ export function ImageViewer({ images, index, onIndexChange, onClose, trigger }: 
                 variant="ghost"
                 size="icon"
                 aria-label="이전 이미지"
-                disabled={index === 0}
+                aria-disabled={index === 0 || undefined}
                 onClick={() => go(index - 1)}
-                className="absolute top-1/2 left-1 -translate-y-1/2 bg-black/40 text-white hover:bg-black/60 hover:text-white"
+                className="absolute top-1/2 left-1 -translate-y-1/2 bg-black/40 text-white hover:bg-black/60 hover:text-white aria-disabled:cursor-default aria-disabled:opacity-50 aria-disabled:hover:bg-black/40"
               >
                 <ChevronLeftIcon aria-hidden />
               </Button>
@@ -101,9 +102,9 @@ export function ImageViewer({ images, index, onIndexChange, onClose, trigger }: 
                 variant="ghost"
                 size="icon"
                 aria-label="다음 이미지"
-                disabled={index === images.length - 1}
+                aria-disabled={index === images.length - 1 || undefined}
                 onClick={() => go(index + 1)}
-                className="absolute top-1/2 right-1 -translate-y-1/2 bg-black/40 text-white hover:bg-black/60 hover:text-white"
+                className="absolute top-1/2 right-1 -translate-y-1/2 bg-black/40 text-white hover:bg-black/60 hover:text-white aria-disabled:cursor-default aria-disabled:opacity-50 aria-disabled:hover:bg-black/40"
               >
                 <ChevronRightIcon aria-hidden />
               </Button>

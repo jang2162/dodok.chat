@@ -1,5 +1,6 @@
 import { FileIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { LINK_BLOCKED } from "@/features/components/blocks/artifact";
 import { Button } from "@/ui/button";
 import { formatSize } from "./format";
 
@@ -16,7 +17,10 @@ type Props = {
   name: string;
   size?: number;
   mime?: string;
-  /** 내려받기 주소 — `<a download>` 가 아니라 서버의 `Content-Disposition` 에 맡긴다(스펙 6.2). 없으면 버튼 대신 `note` 만 */
+  /**
+   * 내려받기 주소 — `<a download>` 가 아니라 서버의 `Content-Disposition` 에 맡긴다(스펙 6.2). 없으면 버튼 대신 `note` 만,
+   * `note` 도 없으면 「열 수 없는 링크입니다」(자기 서버 경로로 못 푸는 첨부 — 말없이 버튼만 빠지지 않게)
+   */
   href?: string;
   /** 이름 아래 한 줄(「이미지를 불러오지 못했습니다」 등) */
   note?: string;
@@ -29,6 +33,7 @@ type Props = {
 export function FileCard({ name, size, mime, href, note, slot = "file-card", className }: Props) {
   const sizeText = size === undefined ? undefined : formatSize(size);
   const kind = kindLabel(mime, name);
+  const line = note ?? (href ? undefined : LINK_BLOCKED);
   return (
     <div data-slot={slot} className={cn("flex items-center gap-2 rounded-md border px-3 py-2", className)}>
       <FileIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
@@ -46,7 +51,7 @@ export function FileCard({ name, size, mime, href, note, slot = "file-card", cla
             {kind && <span data-slot="file-kind">{kind}</span>}
           </span>
         )}
-        {note && <span className="text-xs text-muted-foreground">{note}</span>}
+        {line && <span className="text-xs text-muted-foreground">{line}</span>}
       </div>
       {href && (
         <Button asChild variant="outline" size="sm" className="shrink-0">
