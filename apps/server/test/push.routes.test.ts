@@ -6,8 +6,9 @@ import pino from "pino";
 import { v7 as uuid } from "uuid";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { App } from "../src/app";
-import { loadConfig } from "../src/config";
+import { isLocalVapidSubject, loadConfig } from "../src/config";
 import { pushSubscriptions, users } from "../src/db/schema.sqlite";
+import { listSubscriptions } from "../src/modules/push/service";
 import { bootTestApp, login } from "./helpers/app";
 import { testEnv } from "./helpers/env";
 
@@ -122,6 +123,21 @@ describe("푸시 경로 /api/v1/push", () => {
     const all = rows().filter((r) => r.endpoint === ENDPOINT);
     expect(all).toHaveLength(1);
     expect(all[0]).toMatchObject({ userId: b.id, keys: KEYS2 });
+
+    // A 의 발송 목록에는 그 endpoint 가 없고 B 의 목록에만 있다 — A 에게 B 의 알림이 가지 않는다
+    expect(listSubscriptions(app.db, a.id).map((s) => s.endpoint)).not.toContain(ENDPOINT);
+    expect(listSubscriptions(app.db, b.id)).toContainEqual(
+      expect.objectContaining({ endpoint: ENDPOINT, keys: KEYS2 }),
+    );
+
+    // A 는 이제 소유자가 아니다 — A 가 DELETE 해도 204 이고 B 의 행이 남는다
+    expect((await call(a, "DELETE", "/subscriptions", { endpoint: ENDPOINT })).statusCode).toBe(204);
+    expect(rows().filter((r) => r.endpoint === ENDPOINT)).toEqual([
+      expect.objectContaining({ userId: b.id, keys: KEYS2 }),
+    ]);
+    expect(listSubscriptions(app.db, b.id)).toContainEqual(
+      expect.objectContaining({ endpoint: ENDPOINT, keys: KEYS2 }),
+    );
   });
 
   it("DELETE /subscriptions — 자기 것만 지운다. 남의 endpoint·없는 endpoint 도 204", async () => {
@@ -201,6 +217,11 @@ describe("VAPID 설정", () => {
       await app?.close();
       rmSync(dataDir, { recursive: true, force: true });
     }
+  });
+
+  it("mailto 주체에 @ 가 둘이면 마지막 @ 뒤가 호스트다 — a@b@localhost 는 로컬, a@localhost@example.com 은 로컬 아님", () => {
+    expect(isLocalVapidSubject("mailto:a@b@localhost")).toBe(true);
+    expect(isLocalVapidSubject("mailto:a@localhost@example.com")).toBe(false);
   });
 
   const localWarns = (lines: ReturnType<typeof captureLogger>["lines"]) =>

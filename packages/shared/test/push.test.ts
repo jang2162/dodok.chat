@@ -26,7 +26,7 @@ describe("PushSubscriptionInput", () => {
     expect(PushSubscriptionInput.safeParse({ endpoint: at(2048), keys: KEYS }).success).toBe(true);
     expect(PushSubscriptionInput.safeParse({ endpoint: at(2049), keys: KEYS }).success).toBe(false);
   });
-  it("base64url 이 아닌 키는 거부한다(+ / 공백·빈 값)", () => {
+  it("base64url 이 아닌 키는 거부한다(+ / 공백·빈 값·패딩 셋)", () => {
     for (const bad of [
       { ...KEYS, p256dh: "abc+def" },
       { ...KEYS, p256dh: "abc/def" },
@@ -36,7 +36,13 @@ describe("PushSubscriptionInput", () => {
     ]) {
       expect(PushSubscriptionInput.safeParse({ endpoint: ENDPOINT, keys: bad }).success).toBe(false);
     }
-    // 끝 = 패딩은 둘까지 받는다
+    // 끝 = 패딩은 둘까지 받는다, 셋은 거부
+    expect(
+      PushSubscriptionInput.safeParse({
+        endpoint: ENDPOINT,
+        keys: { ...KEYS, auth: "tBHItJI5svbpez7KI4CCXg===" },
+      }).success,
+    ).toBe(false);
     expect(
       PushSubscriptionInput.safeParse({
         endpoint: ENDPOINT,
@@ -83,6 +89,9 @@ describe("PushPayload", () => {
     for (const kind of ["approval", "relay_limit"] as const) {
       expect(PushPayload.safeParse({ ...ok, kind }).success).toBe(true);
     }
+  });
+  it("kind 는 mention·approval·relay_limit 셋뿐이다", () => {
+    expect(PushPayload.shape.kind.options).toEqual(["mention", "approval", "relay_limit"]);
   });
   it("모르는 kind·uuid 아닌 channelId 는 거부한다", () => {
     expect(PushPayload.safeParse({ ...ok, kind: "message" }).success).toBe(false);

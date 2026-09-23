@@ -22,6 +22,9 @@ describe("loadVapidKeys", () => {
     dirs.push(dir);
     const k = loadVapidKeys({ dataDir: dir, publicKey: "PUB" });
     expect(k.publicKey).not.toBe("PUB");
+    const k2 = loadVapidKeys({ dataDir: dir, privateKey: "PRIV" });
+    expect(k2.privateKey).not.toBe("PRIV");
+    expect(k2).toEqual(k);
   });
   it("파일이 없으면 만들고(0600) 다음에는 같은 키를 읽는다", async () => {
     const dir = await mkdtemp(join(tmpdir(), "vapid-"));
