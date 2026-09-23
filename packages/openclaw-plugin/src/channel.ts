@@ -19,6 +19,7 @@ import {
 import { resolveStableChannelMessageIngress } from "openclaw/plugin-sdk/channel-ingress-runtime";
 import { waitUntilAbort } from "openclaw/plugin-sdk/channel-lifecycle";
 import { createBridgeClient, type BridgeClient, type BridgeLogger } from "./bridge-client";
+import { getBridge, getCorrelation, registerBridge, releaseBridge, setCorrelation } from "./bridge-registry";
 import { componentsJsonSchema } from "./components-schema";
 import {
   DEFAULT_ACCOUNT_ID,
@@ -49,11 +50,6 @@ const PLUGIN_VERSION = typeof __DODOK_PLUGIN_VERSION__ === "string" ? __DODOK_PL
 const SDK_VERSION = typeof __OPENCLAW_SDK_VERSION__ === "string" ? __OPENCLAW_SDK_VERSION__ : "unknown";
 
 type ChannelRuntime = PluginRuntime["channel"];
-
-/** 계정별 브리지 연결. message 툴 액션은 계정 id 로 연결을 찾는다 */
-const bridges = new Map<string, BridgeClient>();
-/** 세션 키 → 마지막 인바운드 상관관계. message 툴 send 를 우리 런에 묶는다 */
-const correlations = new Map<string, OutboundCorrelation>();
 
 function sectionOf(cfg: OpenClawConfig): unknown {
   return (cfg.channels as Record<string, unknown> | undefined)?.[DODOK_CHANNEL_ID];
@@ -152,7 +148,7 @@ async function dispatchInbound(params: {
     runId: facts.correlation.runId,
     replyToInboundId: facts.correlation.replyToInboundId,
   };
-  correlations.set(facts.sessionKey, correlation);
+  setCorrelation(facts.sessionKey, correlation);
 
   // ack 는 먼저 오는 쪽으로 한 번만 정해진다 — 런 시작(onAgentRunStart) 또는 런 없이 끝난 디스패치 결과
   let resolveAck: (result: InboundDeliverResult) => void = () => {};
@@ -280,12 +276,12 @@ async function startDodokAccount(ctx: {
       onReady: () => setStatus({ accountId: account.accountId, running: true, connected: true }),
     },
   });
-  bridges.set(account.accountId, bridge);
+  registerBridge(account.accountId, bridge);
   bridge.start();
   try {
     await waitUntilAbort(ctx.abortSignal);
   } finally {
-    bridges.delete(account.accountId);
+    releaseBridge(account.accountId, bridge);
     await bridge.stop();
     setStatus({ accountId: account.accountId, running: false, connected: false });
   }
@@ -371,9 +367,9 @@ export const dodokChannelPlugin = createChatChannelPlugin<ResolvedDodokAccount>(
       supportsAction: ({ action }) => action === "send",
       handleAction: async (actionCtx) => {
         const accountId = actionCtx.accountId ?? DEFAULT_ACCOUNT_ID;
-        const bridge = bridges.get(accountId);
+        const bridge = getBridge(accountId);
         const sessionKey = actionCtx.sessionKey ?? null;
-        const correlation = sessionKey ? correlations.get(sessionKey) : undefined;
+        const correlation = sessionKey ? getCorrelation(sessionKey) : undefined;
         const built = messageToolSendToOutbound({
           params: actionCtx.params,
           agentId: actionCtx.agentId ?? null,
@@ -416,7 +412,7 @@ export const dodokChannelPlugin = createChatChannelPlugin<ResolvedDodokAccount>(
       sendText: async ({ to, text, accountId }) => {
         const channelId = parseDodokTarget(to) ?? channelIdFromSessionKey(to);
         if (!channelId) throw new Error(`dodok: invalid target ${to}`);
-        const bridge = bridges.get(accountId ?? DEFAULT_ACCOUNT_ID);
+        const bridge = getBridge(accountId ?? DEFAULT_ACCOUNT_ID);
         if (!bridge) throw new Error("dodok: bridge is not running");
         // 코어의 일반 전송(크론·하트비트 전달 등) 경로 — 에이전트 컨텍스트가 없다. 스파이크에서는 호출되지 않았다(Phase 1 에서 정한다)
         const built = buildOutboundMessage({
