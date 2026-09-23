@@ -189,6 +189,18 @@ describe("붙여넣기·끌어 놓기", () => {
     expect(editor.getJSON()).toEqual(doc(p(t("그대로"))));
   });
 
+  it("웹 페이지 이미지 복사(파일 + text/html, text/plain 없음) → 칩만, HTML 은 본문에 안 들어간다", () => {
+    const { box, editor } = renderComposer();
+    setDoc(editor, doc(p(t("그대로"))));
+    const getData = (type: string) =>
+      type === "text/html" ? '<p>alt 글</p><img src="https://e.com/a.png">' : "";
+    fireEvent.paste(box, {
+      clipboardData: { files: [pngFile("a.png")], types: ["text/html", "Files"], getData },
+    });
+    expect(within(chips() as HTMLElement).getByText("a.png")).toBeInTheDocument();
+    expect(editor.getJSON()).toEqual(doc(p(t("그대로"))));
+  });
+
   it("글+이미지 붙여넣기 → 글도 들어가고 칩도 생긴다", () => {
     const { box, editor } = renderComposer();
     setDoc(editor, doc(p(t("앞 "))));
