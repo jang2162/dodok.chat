@@ -52,6 +52,8 @@ export type AppDeps = {
   closeTimeoutMs?: number;
   /** 첨부 블롭 sha 잠금(기본은 앱마다 새로 하나) — 업로드 경로와 정리가 같은 객체를 쓰는지 테스트가 들여다본다 */
   blobLocks?: BlobLocks;
+  /** 첨부 정리 주기(기본 ATTACHMENT_SWEEP_INTERVAL_MS) — 테스트가 낮춘다 */
+  attachmentSweepIntervalMs?: number;
 };
 
 export type App = {
@@ -67,6 +69,8 @@ export type App = {
   adapter: AgentAdapter;
   orchestrator: Orchestrator;
   services: Services;
+  /** 업로드 경로와 첨부 정리가 함께 지나는 블롭 잠금 — 둘이 같은 객체인지 테스트가 본다 */
+  readonly blobLocks: BlobLocks;
   /** listen 뒤에만 채워진다. 그 전에는 빈 문자열. */
   readonly url: string;
   /** 한 번만 실행한다 — 다시 부르면 같은 프로미스. 닫힌 어댑터를 다시 쓰지 않는다(sc-t11 재리뷰 이월). */
@@ -160,7 +164,8 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     registerMessageRoutes(fastify, routeContext);
     registerRunRoutes(fastify, routeContext);
     registerAdapterRoutes(fastify, routeContext);
-    // 첨부: 업로드의 「블롭 쓰기 + 행 넣기」와 정리의 「행 없음 확인 + 블롭 지우기」는 같은 잠금 객체를 지나야 한다
+    // 첨부: 업로드의 「블롭 쓰기 + 행 넣기」와 정리의 「행 없음 확인 + 블롭 지우기」는 같은 잠금 객체를 지나야 한다 —
+    // 이 한 변수로만 넘긴다(App.blobLocks 로도 내보내 테스트가 잠근다)
     mkdirSync(config.attachmentsDir, { recursive: true });
     const blobLocks = deps.blobLocks ?? createBlobLocks();
     registerAttachmentRoutes(fastify, {
@@ -177,7 +182,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
           (r) => (r.rows > 0 || r.blobs > 0 ? logger.info(r, "attachments swept") : undefined),
           (err: unknown) => logger.error({ err }, "attachments sweep failed"),
         ),
-      ATTACHMENT_SWEEP_INTERVAL_MS,
+      deps.attachmentSweepIntervalMs ?? ATTACHMENT_SWEEP_INTERVAL_MS,
     );
     undo.push({ step: "attachments-sweep", run: () => sweeper.close() });
     fastify.get("/healthz", async (_request, reply) => {
@@ -252,6 +257,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       adapter,
       orchestrator: services.orchestrator,
       services,
+      blobLocks,
       get url() {
         const addr = fastify.server.address();
         return typeof addr === "object" && addr ? `http://127.0.0.1:${addr.port}` : "";

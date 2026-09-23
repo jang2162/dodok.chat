@@ -1,23 +1,34 @@
+import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
 import { ATTACHMENT_LIMITS, type Attachment } from "@dodok/shared";
 import { fstatSync, mkdtempSync, readdirSync, statSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import pino from "pino";
+import { eq } from "drizzle-orm";
 import { v7 as uuid } from "uuid";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { type App, startAttachmentSweeper } from "../src/app";
+import { type App, createApp, startAttachmentSweeper } from "../src/app";
+import { loadConfig } from "../src/config";
 import { SESSION_COOKIE } from "../src/auth";
-import { channels, workspaces } from "../src/db/schema.sqlite";
+import { attachments, channels, workspaces } from "../src/db/schema.sqlite";
 import { blobPath, type BlobLocks, createBlobLocks, sha256Of } from "../src/modules/attachments/store";
 import { markBound, uploadAttachment } from "../src/modules/attachments/service";
 import { createUserMessage } from "../src/modules/messages/service";
-import { bootTestApp, login } from "./helpers/app";
+import { attachmentsDirOf, bootTestApp, login } from "./helpers/app";
 import { testEnv } from "./helpers/env";
 import { makePng, PDF_BYTES } from "./helpers/png";
 
 const BRIDGE_TOKEN = testEnv.BRIDGE_TOKEN as string;
 const NAME = '보고서 "최종" 😀.pdf';
+
+/** 로그를 줄 단위로 모은다 — 오류 로그 단언용 */
+function captureLogger() {
+  const lines: Array<{ level: number; msg?: string } & Record<string, unknown>> = [];
+  const logger = pino({ level: "debug" }, { write: (line: string) => void lines.push(JSON.parse(line)) });
+  return { logger, lines };
+}
 
 /** 이 프로세스가 연 fd 중 path 와 같은 파일(dev·ino)이 있는가 — macOS `/dev/fd`, Linux `/proc/self/fd` */
 function isOpen(path: string): boolean {
@@ -40,10 +51,11 @@ describe("첨부 HTTP (스펙 4.3)", () => {
   let sessionToken: string;
   let ch: string;
   let seq = 0;
+  const { logger, lines } = captureLogger();
 
   beforeAll(async () => {
     dir = mkdtempSync(join(tmpdir(), "dodok-att-routes-"));
-    app = await bootTestApp({ ATTACHMENTS_DIR: dir });
+    app = await bootTestApp({ ATTACHMENTS_DIR: dir }, { logger });
     const l = await login(app);
     session = l.headers;
     sessionToken = l.token;
@@ -81,9 +93,9 @@ describe("첨부 HTTP (스펙 4.3)", () => {
       payload,
     });
   /** 메시지 하나를 만들어 ids 를 묶는다 */
-  const bind = (ids: string[]) => {
+  const bind = (ids: string[], channelId = ch) => {
     const m = createUserMessage(app.db, app.bus, {
-      channelId: ch,
+      channelId,
       authorId: app.ownerUserId,
       bodyMd: "첨부",
       clientMsgId: `att-${++seq}`,
@@ -152,6 +164,15 @@ describe("첨부 HTTP (스펙 4.3)", () => {
     expect(pdf.json()).toMatchObject({ code: "VALIDATION", message: "이미지만 올릴 수 있습니다" });
   });
 
+  it("사람: 1 MiB 넘는 이미지(2 MiB)·정확히 5 MiB 이미지는 200 — 라우트 bodyLimit 이 서버 기본 1 MiB 를 넓힌다", async () => {
+    for (const size of [2 * 1024 * 1024, ATTACHMENT_LIMITS.userImageMaxBytes]) {
+      const png = makePng(3, 3);
+      const r = await upload(Buffer.concat([png, Buffer.alloc(size - png.length)]));
+      expect(r.statusCode, `${size} B`).toBe(200);
+      expect(r.json()).toMatchObject({ kind: "image", size });
+    }
+  });
+
   it("사람: JSON content-type 으로 올려도 JSON 으로 파싱하지 않는다(바이트 그대로 판별)", async () => {
     const r = await upload('{"a":1}', { "content-type": "application/json" });
     expect(r.statusCode).toBe(400);
@@ -190,6 +211,19 @@ describe("첨부 HTTP (스펙 4.3)", () => {
       })
       .run();
     expect((await upload(makePng(1, 1), {}, other)).statusCode).toBe(404);
+    // 다른 워크스페이스 채널 메시지에 묶인 첨부도 이 워크스페이스 사람에게는 없는 것이다
+    const foreign = await uploadAttachment(
+      { db: app.db, dir },
+      { channelId: other, uploader: { type: "user", userId: app.ownerUserId }, bytes: makePng(8, 1) },
+    );
+    bind([foreign.id], other);
+    const foreignGet = await app.fastify.inject({
+      method: "GET",
+      url: `/api/v1/attachments/${foreign.id}`,
+      headers: session,
+    });
+    expect(foreignGet.statusCode).toBe(404);
+    expect(foreignGet.json()).toMatchObject({ code: "NOT_FOUND" });
     const viaBridge = await bridgeUpload(PDF_BYTES, { "x-dodok-channel-id": other });
     expect(viaBridge.statusCode).toBe(404);
 
@@ -255,6 +289,46 @@ describe("첨부 HTTP (스펙 4.3)", () => {
     });
     expect(r.statusCode).toBe(404);
     expect(r.json()).toMatchObject({ code: "NOT_FOUND" });
+    // 오류 응답은 블롭 응답 헤더(1년 immutable 캐시·내려받기)를 달지 않는다
+    expect(r.headers["cache-control"]).toBeUndefined();
+    expect(r.headers["content-disposition"]).toBeUndefined();
+  });
+
+  it("사람: 블롭 파일 크기가 저장값과 다르면 200 을 흉내 내지 않고 500, 오류 로그에 id·크기 둘(경로 없이)", async () => {
+    const png = makePng(11, 11);
+    const a = (await upload(png)).json() as Attachment;
+    const path = blobPath(dir, sha256Of(png));
+    writeFileSync(path, png.subarray(0, 10)); // 디스크 손상·손 조작 흉내
+    const before = lines.length;
+    const r = await app.fastify.inject({
+      method: "GET",
+      url: `/api/v1/attachments/${a.id}`,
+      headers: session,
+    });
+    expect(r.statusCode).toBe(500);
+    expect(r.json()).toEqual({ code: "INTERNAL", message: "internal error" });
+    expect(r.headers["cache-control"]).toBeUndefined();
+    expect(r.headers["content-disposition"]).toBeUndefined();
+    const errors = lines.slice(before).filter((l) => l.level >= 50);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.cause).toEqual({ attachmentId: a.id, storedSize: png.length, blobSize: 10 });
+    expect(JSON.stringify(errors)).not.toContain(dir);
+    await vi.waitFor(() => expect(isOpen(path)).toBe(false), { timeout: 3000, interval: 20 });
+  });
+
+  it("저장값이 헤더로 못 쓰는 문자면(mime 에 개행) 파일을 열기 전에 500 — 블롭 fd 가 남지 않는다", async () => {
+    const png = makePng(12, 12);
+    const a = (await upload(png)).json() as Attachment;
+    app.db.update(attachments).set({ mime: "image/png\n" }).where(eq(attachments.id, a.id)).run();
+    const path = blobPath(dir, sha256Of(png));
+    const r = await app.fastify.inject({
+      method: "GET",
+      url: `/api/v1/attachments/${a.id}`,
+      headers: session,
+    });
+    expect(r.statusCode).toBe(500);
+    expect(r.headers["cache-control"]).toBeUndefined();
+    expect(isOpen(path)).toBe(false);
   });
 
   it("브리지: 토큰 없거나 틀리면 401, channel 헤더 없거나 틀리면 400, 없는 채널 404", async () => {
@@ -270,6 +344,8 @@ describe("첨부 HTTP (스펙 4.3)", () => {
       401,
     );
     expect((await bridgeUpload(PDF_BYTES, { authorization: BRIDGE_TOKEN })).statusCode).toBe(401);
+    // Bearer 스킴 이름은 대소문자를 가리지 않는다(RFC 9110 11.1)
+    expect((await bridgeUpload(PDF_BYTES, { authorization: `bearer ${BRIDGE_TOKEN}` })).statusCode).toBe(200);
     // 사람 세션 토큰은 브리지 토큰이 아니다
     expect((await bridgeUpload(PDF_BYTES, { authorization: `Bearer ${sessionToken}` })).statusCode).toBe(401);
 
@@ -375,6 +451,16 @@ describe("첨부 HTTP (스펙 4.3)", () => {
     expect(img.statusCode).toBe(200);
     expect(img.headers["content-type"]).toBe("image/png");
     expect(img.rawPayload.equals(makePng(6, 2))).toBe(true);
+    // 브리지 GET 은 이미지도 inline 이 아니라 내려받기다
+    expect(img.headers["content-disposition"]).toMatch(/^attachment; filename="[^"]*"; filename\*=UTF-8''/);
+  });
+
+  it("브리지 POST: 1 MiB 넘는 파일(2 MiB)·정확히 20 MiB 는 200 — 라우트 bodyLimit 이 서버 기본 1 MiB 를 넓힌다", async () => {
+    for (const size of [2 * 1024 * 1024, ATTACHMENT_LIMITS.agentFileMaxBytes]) {
+      const r = await bridgeUpload(Buffer.alloc(size, 3));
+      expect(r.statusCode, `${size} B`).toBe(200);
+      expect(r.json()).toMatchObject({ kind: "file", size });
+    }
   });
 
   it("브리지 POST: 20 MiB 넘으면 413", async () => {
@@ -535,6 +621,97 @@ describe("첨부 정리 배선 (스펙 4.7)", () => {
     }
   });
 
+  /** 부팅한 앱에서 채널을 만들고 PNG 하나를 올린다 */
+  async function uploadPng(app: App, png: Buffer) {
+    const { headers } = await login(app);
+    const created = await app.fastify.inject({
+      method: "POST",
+      url: "/api/v1/channels",
+      headers,
+      payload: { name: "sweep" },
+    });
+    return app.fastify.inject({
+      method: "POST",
+      url: `/api/v1/attachments?channelId=${created.json().channel.id}`,
+      headers: { ...headers, "content-type": "image/png" },
+      payload: png,
+    });
+  }
+  const writeOrphan = (dir: string, label: string) => {
+    const sha = sha256Of(Buffer.from(label));
+    mkdirSync(join(dir, sha.slice(0, 2)), { recursive: true });
+    writeFileSync(blobPath(dir, sha), label);
+    return sha;
+  };
+  const sweepFailures = (lines: Array<{ msg?: string }>) =>
+    lines.filter((l) => l.msg === "attachments sweep failed");
+
+  it("앱: 주입 없이 부팅해도 업로드와 주기 정리가 같은 잠금 객체(app.blobLocks)를 지난다", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "dodok-att-locks-"));
+    const app = await bootTestApp({ ATTACHMENTS_DIR: dir }, { attachmentSweepIntervalMs: 10 });
+    try {
+      const run = vi.spyOn(app.blobLocks, "run");
+      const orphan = writeOrphan(dir, "orphan-periodic");
+      await vi.waitFor(() => expect(existsSync(blobPath(dir, orphan))).toBe(false), {
+        timeout: 3000,
+        interval: 10,
+      });
+      expect(run).toHaveBeenCalledWith(orphan, expect.any(Function));
+      const png = makePng(10, 10);
+      expect((await uploadPng(app, png)).statusCode).toBe(200);
+      expect(run).toHaveBeenCalledWith(sha256Of(png), expect.any(Function));
+    } finally {
+      await app.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("앱: close() 뒤에는 정리 타이머가 돌지 않는다(닫힌 db 에 닿지 않는다)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "dodok-att-close-"));
+    const { logger, lines } = captureLogger();
+    const app = await bootTestApp({ ATTACHMENTS_DIR: dir }, { logger, attachmentSweepIntervalMs: 10 });
+    try {
+      // 대조군: 주기 정리가 돌고 있다
+      const orphan = writeOrphan(dir, "orphan-before-close");
+      await vi.waitFor(() => expect(existsSync(blobPath(dir, orphan))).toBe(false), {
+        timeout: 3000,
+        interval: 10,
+      });
+      await app.close();
+      await new Promise((r) => setTimeout(r, 150));
+      expect(sweepFailures(lines)).toEqual([]);
+    } finally {
+      await app.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("앱: 정리 타이머를 켠 뒤 부팅이 실패해도 타이머를 멈춘다", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "dodok-att-bootfail-"));
+    const orphan = writeOrphan(dir, "orphan-boot-fail");
+    const { logger, lines } = captureLogger();
+    // adapter.status() 는 정리 타이머를 켠 뒤(watchGatewayReconnecting)에 처음 불린다
+    class StatusThrows extends FakeAdapter {
+      override status(): never {
+        throw new Error("status boom");
+      }
+    }
+    try {
+      await expect(
+        bootTestApp(
+          { ATTACHMENTS_DIR: dir },
+          { adapter: new StatusThrows(), logger, attachmentSweepIntervalMs: 10 },
+        ),
+      ).rejects.toThrow("status boom");
+      // 실패 전에 켜진 부팅 정리를 undo 가 db 를 닫기 전에 끝까지 기다렸다(타이머가 켜졌다는 대조군이기도 하다)
+      expect(existsSync(blobPath(dir, orphan))).toBe(false);
+      await new Promise((r) => setTimeout(r, 150));
+      expect(sweepFailures(lines)).toEqual([]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("앱: ATTACHMENTS_DIR 이 없으면 부팅 때 만든다", async () => {
     const base = mkdtempSync(join(tmpdir(), "dodok-att-mk-"));
     const dir = join(base, "nested", "attachments");
@@ -545,5 +722,40 @@ describe("첨부 정리 배선 (스펙 4.7)", () => {
       await app.close();
       await rm(base, { recursive: true, force: true });
     }
+  });
+});
+
+describe("테스트 헬퍼의 첨부 디렉터리", () => {
+  it("bootTestApp: ATTACHMENTS_DIR 을 안 주면 앱마다 새 임시 디렉터리를 만들고 close() 뒤 지운다", async () => {
+    const a = await bootTestApp();
+    const b = await bootTestApp();
+    const da = attachmentsDirOf(a);
+    const db = attachmentsDirOf(b);
+    try {
+      expect(da).toBeDefined();
+      expect(db).toBeDefined();
+      expect(da).not.toBe(db);
+      expect(statSync(da as string).isDirectory()).toBe(true);
+      await a.close();
+      expect(existsSync(da as string)).toBe(false);
+      expect(existsSync(db as string)).toBe(true);
+    } finally {
+      await a.close();
+      await b.close();
+    }
+    expect(existsSync(db as string)).toBe(false);
+  });
+
+  it("bootTestApp: ATTACHMENTS_DIR 을 주면 그대로 쓰고 지우지 않는다(호출자 몫)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "dodok-att-own-"));
+    const app = await bootTestApp({ ATTACHMENTS_DIR: dir });
+    expect(attachmentsDirOf(app)).toBe(dir);
+    await app.close();
+    expect(existsSync(dir)).toBe(true);
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("testEnv 만으로 createApp 을 부르면 부팅이 실패한다 — 앱끼리 디렉터리를 나눠 쓰거나 저장소에 쓰지 않게", async () => {
+    await expect(createApp(loadConfig(testEnv), { adapter: new FakeAdapter() })).rejects.toThrow(/ENOTDIR/);
   });
 });

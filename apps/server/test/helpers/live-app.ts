@@ -15,7 +15,7 @@ export type LiveApp = {
   plugin: FakePlugin;
   /** owner 로그인 세션 */
   auth: Awaited<ReturnType<typeof login>>;
-  /** 디바이스 아이덴티티·DATA_DIR 임시 디렉터리 — close() 가 지운다 */
+  /** 디바이스 아이덴티티·DATA_DIR·첨부(dir/attachments) 임시 디렉터리 — close() 가 지운다 */
   dir: string;
   /** 앱 → 가짜 플러그인 → 가짜 Gateway 순으로 닫고 임시 디렉터리를 지운다. 두 번 불러도 같은 프로미스 */
   close(): Promise<void>;
@@ -36,6 +36,8 @@ const CONNECT_TIMEOUT_MS = 5_000;
  * 네트워크 없이 서버 전체를 띄운다: 가짜 Gateway 기동 → 그 주소를 dev Gateway 로 설정 → createApp(실제 OpenClawAdapter)
  * → listen(0) → 가짜 플러그인 /bridge 접속 → 어댑터가 gateway·bridge 모두 connected → owner 로그인.
  * 도중에 실패하면 만든 것을 닫고 던진다.
+ * 첨부 블롭은 앱마다 따로인 join(live.dir, "attachments") 에 쌓이고 close() 가 지운다(blobPath(그 경로, sha) 로 디스크를 본다).
+ * 재부팅 뒤에도 블롭이 남아야 하면 두 부팅에 같은 env.ATTACHMENTS_DIR(과 파일 DB_PATH)을 주고 스스로 지운다 — 동시에 띄우지 않는다.
  */
 export async function bootLiveApp(opts: LiveAppOptions = {}): Promise<LiveApp> {
   const dir = mkdtempSync(join(tmpdir(), "dodok-live-"));
@@ -69,6 +71,8 @@ export async function bootLiveApp(opts: LiveAppOptions = {}): Promise<LiveApp> {
         OPENCLAW_DEVICE_IDENTITY_PATH: join(dir, "openclaw-device.json"),
         DATA_DIR: dir,
         DB_PATH: ":memory:",
+        // 앱마다 따로(testEnv 주석) — dir 아래라 close() 가 함께 지운다
+        ATTACHMENTS_DIR: join(dir, "attachments"),
         ...opts.env,
       }),
       opts.timeouts === undefined

@@ -578,6 +578,7 @@ describe("실제 어댑터(createOpenClawAdapter) 부팅", () => {
         OPENCLAW_DEV_GATEWAY_URL: "ws://127.0.0.1:1", // 닫힌 포트 — 어떤 Gateway 에도 닿지 않는다
         OPENCLAW_DEVICE_IDENTITY_PATH: deviceIdentityPath,
         DATA_DIR: base,
+        ATTACHMENTS_DIR: join(base, "attachments"),
       }),
       { logger },
     );

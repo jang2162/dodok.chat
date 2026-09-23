@@ -13,6 +13,7 @@ import {
 } from "@dodok/shared";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { open } from "node:fs/promises";
+import { validateHeaderValue } from "node:http";
 import { z } from "zod";
 import type { Auth } from "../../auth";
 import { requireSession, sessionUser } from "../../auth/routes";
@@ -70,8 +71,25 @@ function contentDisposition(a: Attachment, forceDownload: boolean): string {
 }
 
 /**
- * 파일을 먼저 열어 보고(없으면 404 — 정리와 스친 행) 스트림으로 보낸다. 스트림은 autoClose 라 다 보내거나,
- * 요청이 끊겨 Fastify 가 destroy 하면 fd 를 닫는다
+ * 블롭 응답 헤더 값을 파일을 열기 전에 만들고 검사한다 — 보낼 때(setHeader) 던질 값이면 여기서 던져 fd 를 열지 않는다.
+ * 설정은 연 뒤에 한다(오류 응답에 1년 immutable 캐시·내려받기 헤더가 남지 않게)
+ */
+function blobHeaders(a: Attachment, forceDownload: boolean): Record<string, string> {
+  const headers = {
+    "content-type": a.mime,
+    "x-content-type-options": "nosniff",
+    "content-security-policy": "default-src 'none'; sandbox",
+    "cache-control": "private, max-age=31536000, immutable",
+    "content-disposition": contentDisposition(a, forceDownload),
+  };
+  for (const [name, value] of Object.entries(headers)) validateHeaderValue(name, value);
+  return headers;
+}
+
+/**
+ * 파일을 열어 보고(없으면 404 — 정리와 스친 행) 스트림으로 보낸다. 연 파일의 실제 크기가 저장값과 다르면(디스크 손상·손 조작)
+ * 틀린 content-length 로 보내다 끊기지 않게 500 으로 떨어진다. 스트림은 autoClose 라 다 보내거나, 요청이 끊겨 Fastify 가
+ * destroy 하면 fd 를 닫는다
  */
 async function sendBlob(
   reply: FastifyReply,
@@ -79,17 +97,24 @@ async function sendBlob(
   forceDownload: boolean,
 ) {
   const { attachment: a, path } = found;
+  const headers = blobHeaders(a, forceDownload);
   const handle = await open(path, "r").catch((err: NodeJS.ErrnoException) => {
     if (err.code === "ENOENT") throw apiError("NOT_FOUND", "attachment not found");
     throw err;
   });
-  reply
-    .header("content-type", a.mime)
-    .header("content-length", String(a.size))
-    .header("x-content-type-options", "nosniff")
-    .header("content-security-policy", "default-src 'none'; sandbox")
-    .header("cache-control", "private, max-age=31536000, immutable")
-    .header("content-disposition", contentDisposition(a, forceDownload));
+  try {
+    const { size } = await handle.stat();
+    if (size !== a.size) {
+      // 로그에는 id·크기만 — 블롭 경로는 남기지 않는다
+      const error = apiError("INTERNAL", "internal error");
+      error.cause = { attachmentId: a.id, storedSize: a.size, blobSize: size };
+      throw error;
+    }
+    reply.headers({ ...headers, "content-length": String(size) });
+  } catch (err) {
+    await handle.close();
+    throw err;
+  }
   return reply.send(handle.createReadStream());
 }
 
