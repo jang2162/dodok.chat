@@ -3,7 +3,7 @@ import { cleanupOutdatedCaches, createHandlerBoundToURL, precacheAndRoute } from
 import { NavigationRoute, registerRoute } from "workbox-routing";
 import { notificationFromPush, pickClient, safeNotificationUrl, urlBase64ToUint8Array } from "./pwa/sw-logic";
 
-// __WB_MANIFEST 의 타입(Array<PrecacheEntry | string>)은 workbox-precaching 이 ServiceWorkerGlobalScope 에 더한다
+// 주입 자리의 타입(Array<PrecacheEntry | string>)은 workbox-precaching 이 ServiceWorkerGlobalScope 에 더한다
 declare const self: ServiceWorkerGlobalScope;
 
 // 주입 자리는 한 번만 — workbox injectManifest 는 주입 자리가 파일에 정확히 한 번 나오기를 요구한다
