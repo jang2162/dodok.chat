@@ -11,3 +11,4 @@ export {
   sameApproval,
   type ProviderApproval,
 } from "./gateway/approvals";
+export { verifyBridgeToken } from "./bridge/session";

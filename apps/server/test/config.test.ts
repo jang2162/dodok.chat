@@ -28,6 +28,15 @@ describe("loadConfig", () => {
       loadConfig({ ...testEnv, OPENCLAW_FRAME_DUMP_PATH: "data/frames.jsonl" }).OPENCLAW_FRAME_DUMP_PATH,
     ).toBe("data/frames.jsonl");
   });
+  it("ATTACHMENTS_DIR 이 없거나 빈 값이면 DATA_DIR/attachments, 있으면 그대로", () => {
+    expect(
+      loadConfig({ ...testEnv, ATTACHMENTS_DIR: undefined, DATA_DIR: "./tmp-data" }).attachmentsDir,
+    ).toBe("tmp-data/attachments");
+    expect(loadConfig({ ...testEnv, ATTACHMENTS_DIR: "", DATA_DIR: "./tmp-data" }).attachmentsDir).toBe(
+      "tmp-data/attachments",
+    );
+    expect(loadConfig({ ...testEnv, ATTACHMENTS_DIR: "/srv/blobs" }).attachmentsDir).toBe("/srv/blobs");
+  });
   it("LOCAL_AUTH_TOKEN 이 16자 미만이면 실패한다", () => {
     expect(() => loadConfig({ ...testEnv, LOCAL_AUTH_TOKEN: "short" })).toThrow(/LOCAL_AUTH_TOKEN/);
   });

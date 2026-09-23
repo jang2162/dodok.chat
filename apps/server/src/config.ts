@@ -10,6 +10,8 @@ const Raw = z.object({
   TRUST_PROXY: z.enum(["true", "false"]).default("false"),
   DATA_DIR: z.string().default("./data"),
   DB_PATH: z.string().optional(),
+  // 첨부 블롭 디렉터리(스펙 4.1). 없으면 DATA_DIR/attachments
+  ATTACHMENTS_DIR: z.string().optional(),
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
   DODOK_WORKSPACE_NAME: z.string().min(1).max(80).default("dodok"),
   OWNER_HANDLE: Handle.default("owner"),
@@ -29,6 +31,7 @@ const Raw = z.object({
 
 export type ServerConfig = z.infer<typeof Raw> & {
   dbPath: string;
+  attachmentsDir: string;
   deviceIdentityPath: string;
   gateway: { url: string; token: string };
 };
@@ -60,6 +63,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   return {
     ...c,
     dbPath: c.DB_PATH ?? join(c.DATA_DIR, "dodok.sqlite"),
+    attachmentsDir: c.ATTACHMENTS_DIR ?? join(c.DATA_DIR, "attachments"),
     deviceIdentityPath: c.OPENCLAW_DEVICE_IDENTITY_PATH ?? join(c.DATA_DIR, `openclaw-device${suffix}.json`),
     gateway: { url: pair.url, token: pair.token },
   };

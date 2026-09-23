@@ -20,6 +20,9 @@ import { HttpError, httpStatusToErrorCode } from "./http/errors";
 import { createLogger, type Logger } from "./logger";
 import { registerAdapterRoutes } from "./modules/adapter/routes";
 import { registerAgentRoutes } from "./modules/agents/routes";
+import { registerAttachmentRoutes } from "./modules/attachments/routes";
+import { sweepAttachments } from "./modules/attachments/service";
+import { type BlobLocks, createBlobLocks } from "./modules/attachments/store";
 import { registerChannelRoutes } from "./modules/channels/routes";
 import { registerMessageRoutes } from "./modules/messages/routes";
 import type { Orchestrator, RunTimeouts } from "./modules/runs/orchestrator";
@@ -32,6 +35,8 @@ import { createServices, type Services, sessionRecoverTargets } from "./wiring";
 
 /** 스펙 2장 — 종료 전체 상한. 넘기면 warn 을 남기고 close() 를 끝낸다(남은 단계는 뒤에서 이어진다). */
 export const APP_CLOSE_TIMEOUT_MS = 10_000;
+/** 첨부 정리 주기(스펙 4.7 — 시작 때 한 번, 그 뒤 한 시간마다) */
+export const ATTACHMENT_SWEEP_INTERVAL_MS = 3600_000;
 /** Gateway 가 이만큼 reconnecting 이면 운영자에게 알린다 — 토큰 불일치처럼 스스로 풀리지 않는 실패(sc-t11 걱정 2) */
 export const GATEWAY_RECONNECTING_NOTICE_MS = 60_000;
 
@@ -45,6 +50,8 @@ export type AppDeps = {
   timeouts?: Partial<RunTimeouts>;
   /** close() 상한(기본 APP_CLOSE_TIMEOUT_MS) — 테스트가 낮춘다 */
   closeTimeoutMs?: number;
+  /** 첨부 블롭 sha 잠금(기본은 앱마다 새로 하나) — 업로드 경로와 정리가 같은 객체를 쓰는지 테스트가 들여다본다 */
+  blobLocks?: BlobLocks;
 };
 
 export type App = {
@@ -153,6 +160,26 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     registerMessageRoutes(fastify, routeContext);
     registerRunRoutes(fastify, routeContext);
     registerAdapterRoutes(fastify, routeContext);
+    // 첨부: 업로드의 「블롭 쓰기 + 행 넣기」와 정리의 「행 없음 확인 + 블롭 지우기」는 같은 잠금 객체를 지나야 한다
+    mkdirSync(config.attachmentsDir, { recursive: true });
+    const blobLocks = deps.blobLocks ?? createBlobLocks();
+    registerAttachmentRoutes(fastify, {
+      auth,
+      db,
+      workspaceId,
+      dir: config.attachmentsDir,
+      bridgeToken: config.BRIDGE_TOKEN,
+      locks: blobLocks,
+    });
+    const sweeper = startAttachmentSweeper(
+      () =>
+        sweepAttachments({ db, dir: config.attachmentsDir, locks: blobLocks }).then(
+          (r) => (r.rows > 0 || r.blobs > 0 ? logger.info(r, "attachments swept") : undefined),
+          (err: unknown) => logger.error({ err }, "attachments sweep failed"),
+        ),
+      ATTACHMENT_SWEEP_INTERVAL_MS,
+    );
+    undo.push({ step: "attachments-sweep", run: () => sweeper.close() });
     fastify.get("/healthz", async (_request, reply) => {
       const dbOk = pingDb(db, logger);
       return reply.status(dbOk ? 200 : 503).send({
@@ -202,6 +229,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     const shutdown = async () => {
       shuttingDown = true; // ① 새 wire 연결 거부
       await step("watch", () => watch.close());
+      await step("attachments-sweep", () => sweeper.close()); // 진행 중인 정리가 db 를 닫기 전에 끝나게
       await step("orchestrator", () => services.orchestrator.stop()); // ② 타이머·어댑터 구독 해제
       // ③ 브리지 system.notice shutdown → Gateway stop. io.close() 가 /bridge 소켓까지 끊으므로 그보다 먼저
       await step("adapter", () => adapter.close());
@@ -281,6 +309,40 @@ export function watchGatewayReconnecting(
       off();
       clearTimeout(timer);
       timer = undefined;
+    },
+  };
+}
+
+/**
+ * 첨부 정리를 지금 한 번, 그 뒤 intervalMs 마다 부른다. 앞 정리가 안 끝났으면 그 주기는 건너뛴다(겹쳐 돌지 않는다).
+ * run 이 던져도 다음 주기에 다시 돈다. 타이머는 unref. close() 는 타이머를 멈추고 진행 중인 정리를 기다린다
+ */
+export function startAttachmentSweeper(
+  run: () => Promise<unknown>,
+  intervalMs: number,
+): { close(): Promise<void> } {
+  let inflight: Promise<void> | undefined;
+  let stopped = false;
+  const tick = () => {
+    if (stopped || inflight) return;
+    inflight = (async () => {
+      try {
+        await run();
+      } catch {
+        // run 이 로그를 남긴다 — 여기서는 다음 주기를 막지 않게 삼킨다
+      } finally {
+        inflight = undefined;
+      }
+    })();
+  };
+  tick();
+  const timer = setInterval(tick, intervalMs);
+  timer.unref();
+  return {
+    async close() {
+      stopped = true;
+      clearInterval(timer);
+      await inflight;
     },
   };
 }
