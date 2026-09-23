@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ATTACHMENT_LIMITS } from "@dodok/shared";
@@ -16,7 +16,7 @@ import {
   sweepAttachments,
   uploadAttachment,
 } from "../src/modules/attachments/service";
-import { blobPath } from "../src/modules/attachments/store";
+import { type BlobLocks, blobPath, createBlobLocks } from "../src/modules/attachments/store";
 import { createChannel } from "../src/modules/channels/service";
 import { createUserMessage } from "../src/modules/messages/service";
 import { ServerBus } from "../src/realtime/bus";
@@ -273,5 +273,115 @@ describe("attachments service", () => {
     expect(
       findReadable({ db, dir }, "01a0cc16-0000-7000-8000-000000000000", { type: "bridge" }),
     ).toBeUndefined();
+  });
+
+  it("[결함 3] 정리가 블롭을 지우는 사이 같은 바이트 업로드가 끼어도 새 행의 블롭은 남는다", async () => {
+    const png = makePng(7, 7);
+    await uploadAttachment({ db, dir }, { channelId: chA, uploader: { type: "bridge" }, bytes: png });
+    const later = () => new Date(Date.now() + 25 * 3600_000);
+    // 정리를 먼저 시작하고(동기 부분에서 행 삭제), 끝나기 전에 같은 바이트를 올린다
+    const sweeping = sweepAttachments({ db, dir, now: later });
+    const uploading = uploadAttachment(
+      { db, dir, now: later },
+      { channelId: chA, uploader: { type: "bridge" }, bytes: png },
+    );
+    const [swept, b] = await Promise.all([sweeping, uploading]);
+    expect(swept.rows).toBe(1);
+    expect(db.select().from(attachments).all()).toHaveLength(1);
+    db.transaction((tx) => markBound(tx, [b.id], msgInA));
+    const readable = findReadable({ db, dir }, b.id, { type: "bridge" });
+    expect(readable && existsSync(readable.path)).toBe(true);
+  });
+
+  it("[결함 3] 업로드가 먼저 시작해도 같은 sha 의 정리가 그 블롭을 지우지 않는다", async () => {
+    const png = makePng(8, 8);
+    await uploadAttachment({ db, dir }, { channelId: chA, uploader: { type: "bridge" }, bytes: png });
+    const later = () => new Date(Date.now() + 25 * 3600_000);
+    const uploading = uploadAttachment(
+      { db, dir, now: later },
+      { channelId: chA, uploader: { type: "bridge" }, bytes: png },
+    );
+    const sweeping = sweepAttachments({ db, dir, now: later });
+    const [b, swept] = await Promise.all([uploading, sweeping]);
+    expect(swept).toEqual({ rows: 1, blobs: 0 });
+    expect(existsSync(blobPath(dir, sha256Of(png)))).toBe(true);
+    expect(
+      db
+        .select()
+        .from(attachments)
+        .all()
+        .map((r) => r.id),
+    ).toEqual([b.id]);
+  });
+
+  it("[결함 3] 정리가 행 없음을 확인하고 블롭을 지우는 바로 그 순간 같은 바이트 업로드가 와도 블롭은 남는다(잠금이 직렬화)", async () => {
+    const png = makePng(10, 10);
+    const sha = sha256Of(png);
+    await uploadAttachment({ db, dir }, { channelId: chA, uploader: { type: "bridge" }, bytes: png });
+    const later = () => new Date(Date.now() + 25 * 3600_000);
+    const real = createBlobLocks();
+    let started = false;
+    let uploading: Promise<unknown> | undefined;
+    // 정리가 sha 잠금 안에 들어온 그 틱에 업로드를 시작한다 — 잠금이 없으면 업로드는 「블롭이 있다」고 보고 행만 넣고,
+    // 정리의 rm 이 그 뒤에 끝나 새 행이 없는 블롭을 가리킨다
+    const locks: BlobLocks = {
+      run: (key, fn) =>
+        real.run(key, () => {
+          if (key === sha && !started) {
+            started = true;
+            uploading = uploadAttachment(
+              { db, dir, now: later, locks },
+              { channelId: chA, uploader: { type: "bridge" }, bytes: png },
+            );
+          }
+          return fn();
+        }),
+    };
+    const swept = await sweepAttachments({ db, dir, now: later, locks });
+    await uploading;
+    expect(swept).toEqual({ rows: 1, blobs: 1 }); // 정리가 먼저 잠금을 잡아 지웠고
+    expect(db.select().from(attachments).all()).toHaveLength(1);
+    expect(existsSync(blobPath(dir, sha))).toBe(true); // 업로드가 그 뒤에 다시 썼다
+  });
+
+  it("[결함 4] 어느 행도 안 가리키는 블롭과 1시간 넘은 .tmp 를 지우고, 새 .tmp·쓰이는 블롭은 남긴다", async () => {
+    const kept = await uploadAttachment(
+      { db, dir },
+      { channelId: chA, uploader: { type: "bridge" }, bytes: PDF_BYTES },
+    );
+    const keptPath = blobPath(dir, sha256Of(PDF_BYTES));
+    // 행 없는 블롭 — 채널 cascade·insert 실패·쓰기와 넣기 사이 프로세스 죽음이 남기는 모양
+    const orphanBytes = makePng(9, 9);
+    const orphanPath = blobPath(dir, sha256Of(orphanBytes));
+    await mkdir(join(orphanPath, ".."), { recursive: true });
+    await writeFile(orphanPath, orphanBytes);
+    const oldTmp = `${orphanPath}.old.tmp`;
+    const newTmp = `${keptPath}.new.tmp`;
+    await writeFile(oldTmp, "x");
+    await writeFile(newTmp, "y");
+    const now = Date.now();
+    const twoHoursAgo = new Date(now - 2 * 3600_000);
+    await utimes(oldTmp, twoHoursAgo, twoHoursAgo);
+    const halfHourAgo = new Date(now - 30 * 60_000);
+    await utimes(newTmp, halfHourAgo, halfHourAgo);
+    const res = await sweepAttachments({ db, dir, now: () => new Date(now) });
+    expect(res).toEqual({ rows: 0, blobs: 1 });
+    expect(existsSync(orphanPath)).toBe(false);
+    expect(existsSync(oldTmp)).toBe(false);
+    expect(existsSync(newTmp)).toBe(true); // 1시간 안 된 .tmp 는 쓰는 중일 수 있다
+    expect(existsSync(keptPath)).toBe(true);
+    expect(
+      db
+        .select()
+        .from(attachments)
+        .all()
+        .map((r) => r.id),
+    ).toEqual([kept.id]);
+    expect((await readdir(join(orphanPath, ".."))).sort()).toEqual([]);
+  });
+
+  it("[결함 4] 첨부 디렉터리가 아직 없어도 정리는 돈다", async () => {
+    await rm(dir, { recursive: true, force: true });
+    expect(await sweepAttachments({ db, dir })).toEqual({ rows: 0, blobs: 0 });
   });
 });

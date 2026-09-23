@@ -27,8 +27,17 @@ export function sniff(bytes: Uint8Array, hint?: string): Sniffed {
   const img = imageMime(bytes);
   if (img) {
     try {
-      const { width, height } = imageSize(bytes);
-      if (width && height) return { kind: "image", mime: img, width, height };
+      // image-size 는 길이 없는 DataView 로 바탕 ArrayBuffer 를 읽는다 — Buffer 풀 위 뷰면 이웃 바이트가 치수가 된다.
+      // 뷰가 버퍼 전체가 아니면 제 길이만큼 복사해 넘긴다(잘린 이미지는 RangeError → file)
+      const exact =
+        bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
+          ? bytes
+          : new Uint8Array(bytes);
+      const { width, height, orientation } = imageSize(exact);
+      // EXIF Orientation 5~8 은 90° 회전이다 — 브라우저는 돌려 그리므로 보이는 가로·세로로 저장한다
+      const turned = orientation !== undefined && orientation >= 5 && orientation <= 8;
+      if (width && height)
+        return { kind: "image", mime: img, width: turned ? height : width, height: turned ? width : height };
     } catch {
       // 머리만 맞고 몸이 망가졌다 — 아래로
     }

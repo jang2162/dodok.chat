@@ -12,6 +12,30 @@ const JPEG_3x2 = Buffer.from(
 );
 const WEBP_3x2 = Buffer.from("UklGRh4AAABXRUJQVlA4TBEAAAAvAkAAAAdQvHoUuf+BiOh/AAA=", "base64");
 
+/** JPEG 의 APPn 묶음 바로 뒤에 EXIF Orientation 만 담은 APP1 을 끼운다 — 뒤 APP1 이 앞 값을 덮으므로 sips 의 APP1 뒤에 둔다 */
+function withOrientation(jpeg: Uint8Array, orientation: number): Uint8Array {
+  let at = 2;
+  while (jpeg[at] === 0xff && jpeg[at + 1]! >= 0xe0 && jpeg[at + 1]! <= 0xef)
+    at += 2 + ((jpeg[at + 2]! << 8) | jpeg[at + 3]!);
+  const body = Buffer.concat([
+    Buffer.from("Exif\0\0", "latin1"),
+    Buffer.from([0x4d, 0x4d, 0x00, 0x2a, 0x00, 0x00, 0x00, 0x08]), // 빅엔디언 TIFF, IFD0 은 8
+    Buffer.from([0x00, 0x01]), // 항목 1개
+    Buffer.from([0x01, 0x12, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01, 0x00, orientation, 0x00, 0x00]), // Orientation SHORT×1
+    Buffer.from([0x00, 0x00, 0x00, 0x00]), // 다음 IFD 없음
+  ]);
+  const len = body.length + 2;
+  const app1 = Buffer.concat([Buffer.from([0xff, 0xe1, len >> 8, len & 0xff]), body]);
+  return Buffer.concat([jpeg.subarray(0, at), app1, jpeg.subarray(at)]);
+}
+
+/** 앞뒤를 0x7f 로 채운 큰 ArrayBuffer 한가운데에 bytes 를 두고 그 자리만 보는 뷰 — Node 의 Buffer 풀과 같은 모양을 결정적으로 만든다 */
+function viewInsideFilledBuffer(bytes: Uint8Array): Uint8Array {
+  const backing = new Uint8Array(4096).fill(0x7f);
+  backing.set(bytes, 1024);
+  return backing.subarray(1024, 1024 + bytes.length);
+}
+
 describe("sniff — 매직 바이트가 힌트를 이긴다", () => {
   it("PNG 는 image 이고 가로·세로를 읽는다", () => {
     expect(sniff(makePng(3, 2), "application/octet-stream")).toEqual({
@@ -60,5 +84,54 @@ describe("sniff — 매직 바이트가 힌트를 이긴다", () => {
       kind: "file",
       mime: "application/octet-stream",
     });
+  });
+  it("잘린 이미지를 담은 뷰 밖(바탕 ArrayBuffer 의 이웃 바이트)을 치수로 읽지 않는다", () => {
+    const truncated = [
+      Buffer.from("RIFF\0\0\0\0WEBPVP8 ", "latin1"),
+      Buffer.from("RIFF\0\0\0\0WEBPVP8X", "latin1"),
+      Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11]),
+      makePng(3, 2).subarray(0, 18),
+    ];
+    for (const bytes of truncated)
+      expect(sniff(viewInsideFilledBuffer(bytes))).toEqual({
+        kind: "file",
+        mime: "application/octet-stream",
+      });
+    // 멀쩡한 이미지는 뷰로 줘도 제 치수
+    expect(sniff(viewInsideFilledBuffer(WEBP_3x2))).toEqual({
+      kind: "image",
+      mime: "image/webp",
+      width: 3,
+      height: 2,
+    });
+    expect(sniff(viewInsideFilledBuffer(JPEG_3x2))).toEqual({
+      kind: "image",
+      mime: "image/jpeg",
+      width: 3,
+      height: 2,
+    });
+  });
+  it("Node Buffer 풀 위의 잘린 WebP 도 file (풀을 채운 뒤 수백 번)", () => {
+    for (let i = 0; i < 500; i++) {
+      Buffer.allocUnsafe(2048).fill(0x5a); // 풀에 이웃 바이트를 깐다
+      const bytes = Buffer.from("RIFF\0\0\0\0WEBPVP8 ", "latin1");
+      expect(sniff(bytes)).toEqual({ kind: "file", mime: "application/octet-stream" });
+    }
+  });
+  it("EXIF Orientation 5~8 이면 가로·세로를 바꿔 저장한다(브라우저가 돌려 그린 모양), 1~4 는 그대로", () => {
+    for (const o of [5, 6, 7, 8])
+      expect(sniff(withOrientation(JPEG_3x2, o))).toEqual({
+        kind: "image",
+        mime: "image/jpeg",
+        width: 2,
+        height: 3,
+      });
+    for (const o of [1, 2, 3, 4])
+      expect(sniff(withOrientation(JPEG_3x2, o))).toEqual({
+        kind: "image",
+        mime: "image/jpeg",
+        width: 3,
+        height: 2,
+      });
   });
 });
