@@ -6,7 +6,7 @@ import { loadConfig } from "../../src/config";
 import type { RunTimeouts } from "../../src/modules/runs/orchestrator";
 import { type FakeGateway, type FakeGatewayOptions, startFakeGateway } from "../fakes/fake-gateway";
 import { type FakePlugin, startFakePlugin } from "../fakes/fake-plugin";
-import { login } from "./app";
+import { login, noExternalPush } from "./app";
 import { testEnv } from "./env";
 
 export type LiveApp = {
@@ -75,9 +75,11 @@ export async function bootLiveApp(opts: LiveAppOptions = {}): Promise<LiveApp> {
         ATTACHMENTS_DIR: join(dir, "attachments"),
         ...opts.env,
       }),
-      opts.timeouts === undefined
-        ? (opts.deps ?? {})
-        : { ...opts.deps, timeouts: { ...opts.deps?.timeouts, ...opts.timeouts } },
+      {
+        ...opts.deps,
+        pushSend: opts.deps?.pushSend ?? noExternalPush,
+        ...(opts.timeouts === undefined ? {} : { timeouts: { ...opts.deps?.timeouts, ...opts.timeouts } }),
+      },
     );
     await app.fastify.listen({ host: "127.0.0.1", port: 0 });
     plugin = await startFakePlugin({ bridgeUrl: app.url, token: testEnv.BRIDGE_TOKEN as string });

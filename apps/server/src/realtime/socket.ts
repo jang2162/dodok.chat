@@ -6,6 +6,7 @@ import {
   Id,
   type Message,
   MessageSend,
+  PresenceUpdate,
   type Result,
   RunAbort,
   RunEventsReplay,
@@ -19,6 +20,7 @@ import { apiError, HttpError } from "../http/errors";
 import { parsePayload } from "../http/validate";
 import type { Logger } from "../logger";
 import { getChannel } from "../modules/channels/service";
+import type { Presence } from "../modules/push/presence";
 import {
   createUserMessage,
   findUserMessage,
@@ -41,6 +43,8 @@ export type WireContext = {
   runs: RunsFacade | null;
   /** 쿠키 인증을 받을 출처(APP_ORIGIN). 핸드셰이크 Origin 이 같을 때만 쿠키를 읽는다 */
   appOrigin: string;
+  /** 푸시 거르기(스펙 5.3) — 소켓별 「보이는가·보는 채널」. 없으면 presence.update 를 버린다 */
+  presence?: Pick<Presence, "set" | "drop">;
 };
 
 const ChannelUnsubscribe = z.object({ channelId: Id });
@@ -134,6 +138,13 @@ export function attachWire(io: WireServer, ctx: WireContext): void {
         .to(room)
         .emit("typing", { channelId: parsed.data.channelId, actorType: "user", actorId: userId });
     });
+
+    // 채널 id 가 이 워크스페이스 채널인지는 보지 않는다 — 거르기에만 쓰여 틀린 값은 「안 보고 있음」이 될 뿐이다
+    socket.on("presence.update", (raw: unknown) => {
+      const parsed = PresenceUpdate.safeParse(raw);
+      if (parsed.success) ctx.presence?.set(socket.id, userId, parsed.data);
+    });
+    socket.on("disconnect", () => ctx.presence?.drop(socket.id));
 
     socket.on("run.abort", async (raw: unknown, ack: unknown) => {
       const res = await settle(ctx.logger, "run.abort", async () => {

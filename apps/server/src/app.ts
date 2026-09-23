@@ -25,7 +25,15 @@ import { sweepAttachments } from "./modules/attachments/service";
 import { type BlobLocks, createBlobLocks } from "./modules/attachments/store";
 import { registerChannelRoutes } from "./modules/channels/routes";
 import { registerMessageRoutes } from "./modules/messages/routes";
+import { createPresence } from "./modules/push/presence";
 import { registerPushRoutes } from "./modules/push/routes";
+import {
+  attachPushTriggers,
+  createPushDispatcher,
+  createTriggerLookups,
+  type PushSend,
+  webPushSender,
+} from "./modules/push/service";
 import { loadVapidKeys } from "./modules/push/vapid";
 import type { Orchestrator, RunTimeouts } from "./modules/runs/orchestrator";
 import { registerRunRoutes } from "./modules/runs/routes";
@@ -39,6 +47,8 @@ import { createServices, type Services, sessionRecoverTargets } from "./wiring";
 export const APP_CLOSE_TIMEOUT_MS = 10_000;
 /** 첨부 정리 주기(스펙 4.7 — 시작 때 한 번, 그 뒤 한 시간마다) */
 export const ATTACHMENT_SWEEP_INTERVAL_MS = 3600_000;
+/** 종료 때 진행 중인 푸시 발송을 기다리는 상한 — 넘기면 놓고 db 를 닫는다(늦게 온 결과의 구독 정리는 로그만 남고 버려진다) */
+export const PUSH_DRAIN_TIMEOUT_MS = 2_000;
 /** Gateway 가 이만큼 reconnecting 이면 운영자에게 알린다 — 토큰 불일치처럼 스스로 풀리지 않는 실패(sc-t11 걱정 2) */
 export const GATEWAY_RECONNECTING_NOTICE_MS = 60_000;
 
@@ -56,6 +66,8 @@ export type AppDeps = {
   blobLocks?: BlobLocks;
   /** 첨부 정리 주기(기본 ATTACHMENT_SWEEP_INTERVAL_MS) — 테스트가 낮춘다 */
   attachmentSweepIntervalMs?: number;
+  /** 웹 푸시 발송기(기본은 VAPID 키로 만든 실제 web-push). 테스트는 가짜를 준다 — 밖으로 보내지 않게 */
+  pushSend?: PushSend;
 };
 
 export type App = {
@@ -212,6 +224,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     // 종료 ①: close() 가 켜면 새 wire 연결을 인증보다 먼저 거부한다. 기존 연결·/bridge 는 어댑터가 닫힐 때까지 둔다
     let shuttingDown = false;
     io.use((_socket, next) => (shuttingDown ? next(shuttingDownError()) : next()));
+    const presence = createPresence();
     attachWire(io, {
       auth,
       db,
@@ -221,11 +234,32 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       route: (message) => services.router.routeMessage(message),
       runs: services.runs,
       appOrigin: config.APP_ORIGIN,
+      presence,
     });
     const fanout = attachWireFanout(io, bus, { logger, db, workspaceId, maxPending: deps.wireMaxPending });
     undo.push({ step: "fanout", run: () => fanout.close() });
     const watch = watchGatewayReconnecting(adapter, bus, logger);
     undo.push({ step: "watch", run: () => watch.close() });
+    // 푸시(스펙 5.2~5.4): 버스 → 트리거 → 보고 있으면 거르기 → 발송. 발송은 버스 처리기를 막지 않는다
+    const pushDispatcher = createPushDispatcher({
+      db,
+      logger,
+      presence,
+      send:
+        deps.pushSend ??
+        webPushSender({
+          subject: config.vapid.subject,
+          publicKey: vapid.publicKey,
+          privateKey: vapid.privateKey,
+        }),
+    });
+    const pushTriggers = attachPushTriggers(
+      bus,
+      pushDispatcher,
+      createTriggerLookups(db, workspaceId),
+      logger,
+    );
+    undo.push({ step: "push-triggers", run: () => pushTriggers.close() });
 
     await services.orchestrator.recoverOnBoot();
     await fastify.ready();
@@ -248,6 +282,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     const shutdown = async () => {
       shuttingDown = true; // ① 새 wire 연결 거부
       await step("watch", () => watch.close());
+      await step("push-triggers", () => pushTriggers.close()); // 새 발송을 받지 않는다 — 이미 나간 것은 ⑥ 앞에서 잠깐 기다린다
       await step("attachments-sweep", () => sweeper.close()); // 진행 중인 정리가 db 를 닫기 전에 끝나게
       await step("orchestrator", () => services.orchestrator.stop()); // ② 타이머·어댑터 구독 해제
       // ③ 브리지 system.notice shutdown → Gateway stop. io.close() 가 /bridge 소켓까지 끊으므로 그보다 먼저
@@ -255,6 +290,8 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       await step("fanout", () => fanout.close());
       await step("io", () => io.close()); // ④ 남은 wire·브리지 소켓
       await step("fastify", () => fastify.close()); // ⑤
+      // 진행 중인 푸시가 구독 정리(404·410)로 db 를 쓸 수 있다 — 짧게만 기다린다(응답 없는 푸시 서비스가 종료를 막지 않게)
+      await step("push-drain", () => pushDispatcher.drain(PUSH_DRAIN_TIMEOUT_MS));
       await step("db", () => db.$client.close()); // ⑥ (리뷰 sc-t1 이월 1)
     };
     let closing: Promise<void> | undefined;

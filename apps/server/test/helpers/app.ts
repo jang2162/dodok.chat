@@ -4,7 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type App, type AppDeps, createApp } from "../../src/app";
 import { loadConfig } from "../../src/config";
+import type { PushSend } from "../../src/modules/push/service";
 import { testEnv } from "./env";
+
+/**
+ * 테스트 앱의 기본 발송기 — 밖(FCM 등)으로 아무것도 보내지 않고 201 을 낸다. 구독을 만든 테스트에서 멘션이 나도
+ * 실제 web-push 가 돌지 않게 bootTestApp·bootLiveApp 이 deps.pushSend 가 없을 때 넣는다
+ */
+export const noExternalPush: PushSend = async () => ({ statusCode: 201 });
 
 /** owner 비밀번호(= LOCAL_AUTH_TOKEN) 테스트 값 */
 export const TEST_LOCAL_TOKEN = testEnv.LOCAL_AUTH_TOKEN as string;
@@ -36,6 +43,7 @@ export async function bootTestApp(
     app = await createApp(loadConfig({ ...testEnv, ...overrides, ATTACHMENTS_DIR: dir }), {
       ...deps,
       adapter: deps.adapter ?? new FakeAdapter(),
+      pushSend: deps.pushSend ?? noExternalPush,
     });
   } catch (err) {
     remove();
