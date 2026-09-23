@@ -1,6 +1,6 @@
 # dev Gateway 실연(live smoke) — 서버 코어를 실제 Gateway·플러그인·모델로 한 번 돌리기
 
-작성: 2026-09-15 (서버 코어 계획 태스크 15) · 근거: 서버 코어 스펙 9.3, ADR 0002 2절·9절, ADR 0003 2절 · 7절 2026-09-20 (웹 MVP 계획 태스크 15) · 8~9절 2026-09-21 (활동 패널·승인 계획 태스크 11) · 10절 2026-09-23 (components v1 계획 태스크 11) · 11절 2026-09-23 (c2-t14 하네스, ADR 0004) · 12절 2026-09-23 (c2-t16 고침 실물 확인) · 13절 2026-09-23 (a3-t11 첨부 실연)
+작성: 2026-09-15 (서버 코어 계획 태스크 15) · 근거: 서버 코어 스펙 9.3, ADR 0002 2절·9절, ADR 0003 2절 · 7절 2026-09-20 (웹 MVP 계획 태스크 15) · 8~9절 2026-09-21 (활동 패널·승인 계획 태스크 11) · 10절 2026-09-23 (components v1 계획 태스크 11) · 11절 2026-09-23 (c2-t14 하네스, ADR 0004) · 12절 2026-09-23 (c2-t16 고침 실물 확인) · 13절 2026-09-23 (a3-t11 첨부 실연) · 13.7 2026-09-23 (a3-t13 결함 A 고침 실물 확인)
 
 ## 1. 목적
 
@@ -12,7 +12,7 @@
 **승인(Phase 2 ①)을 실물에서 일으키는 절차는 8절** — 기본 설정에서는 승인이 한 번도 안 뜬다. **사람만 확인할 수 있는 것(소리·팝업·잠금 화면·VoiceOver)은 9절**이다.
 **components v1(Phase 2 ②)을 실제 모델로 돌린 절차와 2026-09-23 결과는 10절**이다 — ❗ 모델 런 안의 `message` 툴 전송이 실물에서 깨져 있었다(10.4).
 원인(2026.9.5 번들 이중 평가)과 고침은 ADR 0004, **모델 런 없이 실물 Gateway 의 모델 경로를 두드리는 하네스는 11절**, **그 하네스로 고침을 확인한 2026-09-23 결과는 12절**이다.
-**첨부(Phase 2 ③)를 하네스(11.5)와 실제 모델로 돌린 2026-09-23 결과는 13절**이다 — ❗ 최종 응답의 `MEDIA:` 줄이 스트리밍 델타로 호스트 경로를 잠깐 드러낸다(13.4 A).
+**첨부(Phase 2 ③)를 하네스(11.5)와 실제 모델로 돌린 2026-09-23 결과는 13절**이다 — 거기서 찾은 결함 A(최종 응답의 `MEDIA:` 줄이 스트리밍 델타로 호스트 경로를 드러냄)는 서버에서 고쳤고(a3-t12) **실물 Gateway 에서 모델 런 0회로 확인했다(13.7)**.
 
 ## 2. 전제
 
@@ -938,7 +938,17 @@ shasum -a 256 $WS/a3-harness/*; stat -f '%z %N' $WS/a3-harness/*          # 크�
 - **`fake-args.json` 을 배열로도 받고, 한 번 쓰면 치운다.** 한 런에서 여러 호출(b·e·상대 경로)을 한 번에 두드리고, 릴레이(에이전트 A 의 툴 전송이 `@dev` 를 불러 dev 의 런이 이어지는 것)에서 두 번째 런이 같은 툴을 다시 부르지 않게 했다. 11.4 의 `const args = …; const call = …` 자리를 `const raw = fs.readFileSync(ARGS_FILE); fs.renameSync(ARGS_FILE, ARGS_FILE + ".used-" + Date.now()); const calls = [].concat(JSON.parse(raw));` 와 `for (const args of calls) …` 로 바꾼다.
 - **`stdin-record` 에 두 가지를 더 적었다.** `atRefs` 마다 `sha256` 앞 16자(원본과 바이트 동일을 크기·magic 보다 세게 본다), 그리고 프롬프트에서 `/Users/…` 가 든 줄의 **꼴만**(`hostPathLines` — 홈을 `~` 로 바꾸고 160자로 자른다). 알림 줄은 `^\[(첨부 파일|이미지를 불러오지)` 로 뽑아 `notes` 에 둔다. Gateway 가 프롬프트에 `[media attached i/N: <스테이징 호스트 경로> …]` 를 스스로 붙이는 것이 이것으로 보였다(13.4).
 - **6 MiB 넘는 인바운드는 릴레이로만 잰다.** 사람 업로드 상한이 5 MiB 라 웹으로는 `saveMediaBuffer` 의 `maxBytes`(20 MiB)를 두드릴 수 없다. 채널에 `fin` 을 더하고, `fake-args.json` 을 `{"action":"send","target":"channel:<CH>","message":"@dev …","mediaUrls":["<WS>/a3-harness/big.png","<WS>/a3-harness/월간 보고서.pdf"]}` 로 둔 채 `@fin …` 을 보낸다 — fin 의 가짜 런이 큰 PNG·PDF 를 올리고, 그 메시지가 dev 를 불러 dev 의 인바운드에 이미지 하나 + `[첨부 파일: 월간 보고서.pdf]` 가 실린다. 무작위 픽셀 PNG(1700×1700, 8.7 MB)는 PIL 로 만든다.
-- **가짜 CLI 로는 스트리밍 창을 못 늘린다.** Gateway 는 가짜 CLI 의 `assistant` 레코드를 `result` 가 올 때 **한 델타로** 흘린다 — `assistant` 와 `result` 사이에 지연을 넣어도 버블이 먼저 보이지 않았다(12초 넣고 확인). 델타에 무엇이 실리는지는 하네스로 보지만, 사람 눈에 얼마나 오래 보이는지는 모델 런으로만 잰다(13.4 결함 A).
+- **`assistant` 레코드만으로는 스트리밍 창을 못 늘린다.** Gateway 는 가짜 CLI 의 `assistant` 레코드(`stop_reason:"end_turn"`)를 `result` 가 올 때 **한 델타로** 흘린다 — `assistant` 와 `result` 사이에 지연을 넣어도 버블이 먼저 보이지 않았다(12초 넣고 확인).
+  **정정(a3-t13)**: 진짜 CLI 처럼 `stream_event` 레코드를 내면 Gateway 가 조각마다 따로 흘린다 — 코어의 claude-cli 파서가 `stream_event` 의 `content_block_delta`·`text_delta` 를 델타로 읽는다(9.5 `dist/cli-live-session-registry-*.mjs` 의 `parseClaudeCliStreamingDelta`). 그래서 **모델 런 없이 델타 쪼개기·시각을 잴 수 있다**(13.7). 11.4 의 `assistant`·`result` 두 줄 앞에 아래를 넣는다(`fake-stream.json` = `{"gapMs":600,"deltas":["…","…"]}`, 최종 텍스트는 `deltas` 를 이은 것).
+  ```js
+  const MID = "msg_fake_" + Date.now(), se = (event) => out({ type: "stream_event", session_id: SID, event });
+  se({ type: "message_start", message: { id: MID, type: "message", role: "assistant", model: "fake", content: [], stop_reason: null, usage: { input_tokens: 0, output_tokens: 0 } } });
+  se({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } });
+  for (const text of spec.deltas) { await sleep(spec.gapMs); se({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text } }); }
+  se({ type: "content_block_stop", index: 0 }); se({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 0 } }); se({ type: "message_stop" });
+  // 그다음 11.4 대로 assistant(content = deltas.join("")) · result(result = 같은 글)
+  ```
+  사람 눈에 실제로 얼마나 오래 보이는지(모델의 토큰 간격)는 여전히 모델 런으로만 잰다.
 - 11.1 의 `W channels` 출력 첫 줄은 `HTTP 200 GET …` 이다 — jq 에 넘길 때 `tail -n +2` 를 건다.
 
 ## 12. 결함 1 고침의 실물 확인 — 2026-09-23 결과 (c2-t16, 모델 런 0회)
@@ -971,6 +981,7 @@ shasum -a 256 $WS/a3-harness/*; stat -f '%z %N' $WS/a3-harness/*          # 크�
 11.5 하네스(처음 돌림 — 고친 것은 11.5 ⑤)로 첨부 경로를 모델 없이 두드린 뒤, 사용자 승인 상한(**모델 런 2회**, 웹 5180) 그대로 실제 모델로 두 번 돌렸다.
 
 **판정: 첨부 경로는 실물에서 돈다 — 합격 기준 9/9, 모델 런 ①② 통과. 새 결함 1(중간): 최종 응답의 `MEDIA:` 줄이 스트리밍 델타로 흘러 호스트 경로가 버블·`run_events` 에 남는다(13.4 A).**
+→ 결함 A 는 서버에서 고쳤고(a3-t12, `635fe76`) 실물 Gateway 에서 모델 런 0회로 확인했다 — **13.7**.
 로그는 워크트리 `data/`(ignored): `dev-gateway.log`(Gateway·플러그인·claude-cli)·`phase2-live-20260923.log`(서버)·`frames-20260923.jsonl`(프레임 덤프)·`h2~h6-send.log`·`wire-watch-run1.log`·`wire-watch-run2.log`. 커밋하지 않는다.
 
 ### 13.1 환경 실물
@@ -1017,6 +1028,8 @@ shasum -a 256 $WS/a3-harness/*; stat -f '%z %N' $WS/a3-harness/*          # 크�
 - **왜**: 서버 폴백(`stripMediaLines`, 스펙 4.6)과 플러그인 정본은 `MEDIA:` 를 걷지만 델타 경로는 걷지 않는다. 웹 `apps/web/src/features/runs/runStore.ts:18-19` 가 델타를 그대로 이어 붙이고, `bubblePhase.ts:25-32` 가 streaming·finalizing 에서 `textVisible: true` 다. 서버는 델타를 `run_events.payload_json` 에 저장한다.
 - **영향**: 스펙 9장 「채널 어디에도 호스트 경로가 나타나지 않는다」가 잠깐 깨진다. 업로드가 느리면(큰 파일, Ruling 2 로 finalizing 최대 120초) 노출이 그만큼 길어진다. 경로가 줄 경계에서 델타 여럿으로 쪼개져 오므로(위 셋) 델타 하나씩 걷는 방식으로는 못 막는다 — 줄 단위로 버퍼링하거나 웹 표시에서 `MEDIA:` 로 시작하는 줄을 숨기는 쪽을 봐야 한다. 코드는 고치지 않았다.
 - 활동 탭이 런 텍스트를 보여 주는지, 재접속 때 델타가 다시 재생되는지는 재지 않았다.
+- **고침(a3-t12, `1d6a06a`·`635fe76`)**: 서버가 텍스트 델타를 코얼레싱(= `run_events` 저장·wire 팬아웃의 입구)에 넣기 **전에** 런별 줄 단위 필터로 거른다(`apps/server/src/modules/runs/media-lines.ts`, 스펙 11장 Ruling 6). 줄 처음 조각이 `MEDIA:` 이거나 그 접두일 수 있으면 붙잡고, 줄이 끝나면 `MEDIA:` 줄은 줄바꿈째 버린다. 대소문자는 가리지 않는다(코어와 같다). `TEXT_MESSAGE_REPLACE` 본문도 같은 필터를 지난다. 붙잡힌 조각은 저장도 팬아웃도 되지 않은 상태라 재접속 재생(DB 만 읽는다)에도 경로가 없다.
+- **실물 확인(a3-t13, 모델 런 0회) — 13.7**: 실제 Gateway 가 `MEDIA:/Users/<u>` · `/.openclaw-d` · `ev/workspace/…/chart.png` 세 델타로 쪼개 보낸 것(런 ② 와 같은 모양)을 서버가 wire·`run_events` 어디에도 싣지 않았다. 소문자 `media:`·`Media: ` 줄도 같다. 보통 줄 델타는 Gateway 프레임 뒤 53~58ms(코얼레싱 창 50ms)에 그대로 나갔다.
 
 **B. [관찰] Gateway 가 프롬프트에 스테이징 호스트 경로를 스스로 붙인다.** 이미지 인바운드 때 CLI 프롬프트에 `[media attached 1/3: ~/.openclaw-dev/workspace/media/inbound/openclaw-staged-<uuid>/input-word---<uuid>… ]` 줄이 장마다 붙는다(가짜 CLI `hostPathLines`). 우리 텍스트가 아니라 OpenClaw 코어가 넣는 것이다. 모델이 이 경로를 답에 옮기면 채널 본문에 호스트 경로가 들어간다 — 우리 쪽 방어는 없다(스펙 10장 「사람이 채팅에 쓴 호스트 경로」와 같은 계열).
 
@@ -1028,7 +1041,7 @@ shasum -a 256 $WS/a3-harness/*; stat -f '%z %N' $WS/a3-harness/*          # 크�
 
 ### 13.5 사람이 볼 것
 
-9.3 그대로(실제 OS 클립보드 붙여넣기·끌어다 놓기). 더해서, 13.4 A 를 고치기 전이라면 **긴 답 끝에 파일을 붙이는 런**에서 스트리밍 버블 마지막 줄에 `MEDIA:/…` 가 잠깐 보이는지 눈으로 한 번 — 자동화 도구로는 0.5초 창을 안정적으로 잡지 못했다.
+9.3 그대로(실제 OS 클립보드 붙여넣기·끌어다 놓기). 13.4 A 는 서버가 wire 에 싣지 않게 고쳤고 wire 에서 0건을 확인했으므로(13.7), 버블에서 `MEDIA:/…` 를 눈으로 찾을 일은 더 없다. 고치기 전 코드(`1d6a06a` 이전 — `1c8ffc1` 까지)로 돌릴 때만 해당한다 — **긴 답 끝에 파일을 붙이는 런**에서 스트리밍 버블 마지막 줄에 `MEDIA:/…` 가 잠깐 보이는지 눈으로 한 번. 자동화 도구로는 0.5초 창을 안정적으로 잡지 못했다.
 
 ### 13.6 정리·잔여물
 
@@ -1038,3 +1051,60 @@ shasum -a 256 $WS/a3-harness/*; stat -f '%z %N' $WS/a3-harness/*          # 크�
 - **남긴 것**: dev·fin 채널 세션 4개(하네스 채널 dev·fin — 가짜 세션 id `…a311` 가 박힘, 모델 채널 둘) · 실제 claude 전사(런 ①②, `~/.claude/projects/…` 는 읽지도 고치지도 않음) · `/tmp/openclaw/openclaw-dev-2026-09-23.log` · 워크트리 `data/`(ignored: 위 로그들, `live-smoke.{env,sqlite}`, `openclaw-device-dev.json`, `wire-cli-session.json`, `attachments/`(서버 블롭), `check-*.log`) · `packages/openclaw-plugin/dist/`(ignored, 깨끗한 빌드). 가짜 CLI·시험 이미지·스크래치는 지웠다.
 - 시크릿: `BRIDGE_TOKEN`·dev Gateway 토큰·`LOCAL_AUTH_TOKEN` 값의 출현 수 **0** — `data/*.log`·`data/*.jsonl`·`data/*.json`·`data/live-smoke.sqlite*`(WAL 체크포인트 뒤)·가짜 CLI 출력·`/tmp/openclaw/…log`. 이번 모델 런은 설정 파일을 뒤지지 않았다.
 - 검사: 루트 `pnpm test` exit 0(shared 101 · plugin 108 · adapter 206 · server 562 · web 996 = **1973**) · `pnpm typecheck` exit 0 · `pnpm lint` exit 0 · `pnpm fmt:check` exit 0.
+
+### 13.7 결함 A 고침의 실물 확인 — 2026-09-23 (a3-t13, 모델 런 0회)
+
+13.4 A 를 서버에서 고친 뒤(a3-t12 — 스펙 11장 Ruling 6), 실제 dev Gateway 위에서 11.5 하네스 c·d 꼴을 **델타를 쪼개** 다시 돌렸다. 가짜 claude CLI 가 `stream_event` 로 조각을 600ms 간격으로 흘린다(11.5 ⑤ 정정). **모델 런 0회**. 가짜 CLI 의 `-p` 런 3회는 모두 `costUsd:0`·usage 0이다. `-p` 없는 호출 4회(버전·인증 확인)는 진짜 `claude` 로 넘어갔지만 모델을 부르지 않는다.
+
+**판정: 고쳐졌다.** 실제 Gateway 가 `MEDIA:` 줄을 세 델타로 쪼개 보냈다(런 ② 와 같은 모양). 서버는 그 줄을 wire 에도 `run_events` 에도 싣지 않았다. 소문자 `media:`·`Media: ` 도 같다. 첨부는 셋 다 오고, 본문에 경로는 0이다. 보통 줄은 늦어지지 않았다. dodok 코드 결함 0.
+로그는 워크트리 `data/`(ignored)에 있다: `dev-gateway.log`·`phase2-live-a3t13.log`(서버)·`frames-a3t13.jsonl`(프레임 덤프)·`wire-raw-{c,d,e}.jsonl`(아래 원시 감시)·`h-{c,d,e}-send.log`·`h-messages.json`·`fake-claude-a3t13.jsonl`.
+
+| 항목 | 값 |
+| --- | --- |
+| Gateway | `OpenClaw 2026.9.5 (f396007)`. 서버 로그 `gatewayVersion="2026.9.5"`, `gatewayBuildId` 는 13.1 과 같고 scopes 에 `operator.admin` 이 있다 |
+| 플러그인 | **재설치하지 않았다.** 설치본 `f5dc6438…` 는 13.1 그대로다. `b0b1b65..635fe76` 에서 `packages/openclaw-plugin` 은 바뀌지 않았다(diff 0줄). `status: "loaded"` |
+| 서버 | 워크트리 `a3-t13` = main `635fe76`, `:19100`, 새 DB `data/live-smoke.sqlite`, 프레임 덤프 켬. 웹은 띄우지 않았다(5173·5180 무접촉) |
+| 채널 | 하네스 전용 `harness-a3t13`(멤버 `@dev`), 가짜 세션 id `…0a3013` |
+| 시험 파일 | `<ws>/a3-harness/chart.png` 64×32 3,858B(sha `c5cdc0f6…`) |
+| wire 원시 감시 | `wire-cli` 는 델타를 뭉쳐 찍는다(4절). 그래서 `socket.io-client` 로 구독만 하는 스크래치 스크립트를 따로 썼다. `run.event`·`message.*` 를 받은 시각(epoch ms)과 함께 JSONL 로 적는다. 세션 토큰은 `data/wire-cli-session.json` 에서 읽고 출력하지 않는다 |
+
+**런 셋**(가짜 CLI `fake-stream.json` 의 `deltas`, `<u>` 는 사용자 이름)
+
+| # | 조각 | 뜻 |
+| --- | --- | --- |
+| c | `첫 줄은 ` · `보통 글입니다.\n` · `M` · `arkdown 은 두 번째 글자에서 풀린다.\n\n` · `MEDIA:/Users/<u>` · `/.openclaw-d` · `ev/workspace/a3-harness/chart.png` | 13.2-4 꼴 + 줄 머리 `M` |
+| d | `me` · `dia:/Users/<u>` · `/.openclaw-d` · `ev/workspace/a3-harness/chart.png` | 13.2-5 꼴(미디어만), **소문자** |
+| e | `앞 줄입니다.\n` · `Media: ` · `/Users/<u>/.openclaw-d` · `ev/workspace/a3-harness/chart.png\n` · `뒤 줄도 ` · `곧바로 나옵니다.` | 가운데 줄, 대소문자 섞임, 뒤에 글 |
+
+**결과**
+
+| # | 기준 | 결과 | 증거 |
+| --- | --- | --- | --- |
+| 1 | 입력이 정말 쪼개져 왔는가 | **그렇다** | 프레임 덤프 `chat` `state:"delta"` 의 `deltaText`: c `MEDIA:/Users/<u>`·`/.openclaw-d`·`ev/workspace/a3-harness/chart.png`(19:33:02.201·02.801·03.402), d `media:/Users/<u>`·`/.openclaw-d`·`ev/…/chart.png`, e `Media: /Users/<u>/.openclaw-d`·`ev/…/chart.png\n`. `gateway_final` 스냅샷에도 그 줄이 그대로 있다(13.2-4 와 같다) |
+| 2 | wire `TEXT_MESSAGE_CONTENT`·`TEXT_MESSAGE_REPLACE` 에 `/Users/`·`MEDIA:`·`media:` 0 | **0** | 원시 감시 세 파일 전체에서 `/Users/`·`MEDIA:`·`media:`·`Media:` 가 모두 0건이다. `TEXT_MESSAGE_CONTENT` 는 c 3·d 0·e 3건이고 모두 보통 글이다. d 는 `TEXT_MESSAGE_START` → `END` 뿐이다. `TEXT_MESSAGE_REPLACE` 는 0건이다 — Gateway 가 `replace` 를 내지 않아 **REPLACE 경로는 실물에서 두드려지지 않았다**(단위 테스트만) |
+| 3 | `run_events` 에 같은 검색 0 | **0** | 33행 중 `TEXT_MESSAGE_CONTENT` 는 6행이고 모두 보통 글이다. `instr(payload_json,'/Users/')` 0, `payload_json LIKE '%media:%'`(SQLite LIKE 는 ASCII 대소문자를 가리지 않는다) 0, `openclaw-dev` 0, `TEXT_MESSAGE_REPLACE` 0. `messages.body_md` 도 0이다 |
+| 4 | 채널에 첨부가 오고 본문에 경로 0, `finalSource` | **통과** | c 본문 `첫 줄은 보통 글입니다.\nMarkdown 은 두 번째 글자에서 풀린다.` + `chart.png` · d 본문 `""` + `chart.png` · e 본문 `앞 줄입니다.\n뒤 줄도 곧바로 나옵니다.` + `chart.png`. REST 로 내려받은 세 첨부의 sha 가 원본과 같다(`c5cdc0f6…`). 채널 메시지 REST JSON 전체에서 `/Users/`·`media:`(대소문자 무시)·`openclaw-dev` 는 0이다. 세 런 모두 `finalSource=plugin` 이다. 플러그인 `[dodok] deliver-media` 는 `uploaded:1,failed:0` 을 세 번 찍었다. 서버 `gateway snapshot media lines dropped` 는 0회, `stream media lines dropped` 는 `mediaLinesDropped:1` 로 세 번 찍혔다 |
+| 5 | 스트리밍이 느려지지 않았는가 | **그렇다 — 늘어난 지연 없음** | 아래 시각 표. 보통 줄 델타는 Gateway 프레임을 받은 뒤 **53~58ms** 에 wire 에 나왔다. 이 값은 코얼레싱 창 `coalesceMs: 50`(결함 A 이전부터 있다)에 해당한다. 고치기 전 코드로 같은 기준선을 다시 재지는 않았다 |
+
+**시각** — 서버가 Gateway 프레임을 받은 시각(프레임 덤프 `receivedAt`)과 원시 감시가 wire 이벤트를 받은 시각이다. 둘 다 같은 머신의 시계다. 가짜 CLI 의 조각 방출 → Gateway 프레임은 ~3ms 였다.
+
+| 런 | Gateway `deltaText` (받은 시각) | wire (받은 시각) | 차이 |
+| --- | --- | --- | --- |
+| c | `첫 줄은 ` (19:32:59.791) | seq 5 `첫 줄은 ` (59.849) | 58ms |
+| c | `보통 글입니다.\n` (00.393) | seq 6 (00.447) | 54ms |
+| c | `Markdown 은 …\n\n` (01.597) | seq 7 (01.652) | 55ms |
+| c | `MEDIA:/Users/<u>` · `/.openclaw-d` · `ev/…/chart.png` (02.201·02.801·03.402) | **없음** | — |
+| c | `final` (04.311) | `TEXT_MESSAGE_END` seq 9 (04.312) → 정본 `message.created` 는 그 뒤 67ms | — |
+| e | `앞 줄입니다.\n` (19:34:58.307) | seq 5 (58.361) | 54ms |
+| e | `Media: /Users/<u>/.openclaw-d` · `ev/…/chart.png\n` (59.513·00.113) | **없음** | — |
+| e | `뒤 줄도 ` (00.714) | seq 6 (00.767) | 53ms |
+| e | `곧바로 나옵니다.` (01.318) | seq 7 (01.372) | 54ms |
+
+**관찰**
+- **Gateway 가 짧은 줄 머리 조각을 스스로 합친다.** 가짜 CLI 가 따로 낸 `M`(c)·`me`(d)·`Media: `(e)를 Gateway 는 프레임으로 따로 내지 않았다. 다음 조각과 합쳐 `Markdown 은 …`·`media:/Users/<u>`·`Media: /Users/<u>/.openclaw-d` 로 냈다(600ms 뒤). 까닭은 파지 않았다.
+  그래서 서버 필터의 **접두 붙잡기**(`M` → 다음 글자에서 풀림)는 이 실물 경로에서 두드려지지 않았다. 그 동작은 단위 테스트(a3-t12)가 잠근다. 합친 뒤의 `MEDIA:` 줄은 Gateway 가 그대로 델타로 흘린다 — 서버 필터는 여전히 필요하다.
+- 붙잡힌 채 재접속하는 경우와 활동 탭 표시는 재지 않았다(웹을 띄우지 않았다). 재생은 DB 만 읽으므로 3번이 그 몫을 대신한다(a3-t12 리뷰 질문 2).
+
+**정리**: 서버(SIGINT)와 tsx watch·pnpm 부모를 내렸다. Gateway 는 `shutdown completed cleanly` 로 내렸다. **19001·19100·5180 LISTEN 0, 5173 은 1 그대로**(무접촉). 설치본은 `f5dc6438…`, `status: loaded` 이고 `channels.dodok.channels` 는 unset 이다.
+dev 프로필에서는 이번에 만든 것만 지웠다(19:31 이후 생성 확인): `<ws>/a3-harness/`, `~/.openclaw-dev/media/outbound/` 의 `chart---<uuid>.png` 3개(관찰 E 의 사본 — 런마다 하나). 가짜 CLI·스크래치는 지웠다. 하네스 채널의 dev 세션(가짜 세션 id)은 남겼다.
+시크릿(`BRIDGE_TOKEN`·dev Gateway 토큰·`LOCAL_AUTH_TOKEN`)의 출현 수는 0이다. 확인 범위는 `data/*.log`·`*.jsonl`·`*.json`·`live-smoke.sqlite*`·가짜 CLI 출력이다.
