@@ -35,7 +35,7 @@ const failures = [];
 // 태스크 3 Dockerfile 이 같은 명령을 쓴다 — 바꾸면 거기도 함께
 const deployArgs = ["--filter", "@dodok/server", "deploy", "--prod", "--legacy", "--offline"];
 
-// 중단(Ctrl-C·SIGTERM)에도 자식을 멈추고 work(deploy 산출물 약 260 MB)를 지운다. 처리기가 없으면 신호 기본 동작으로
+// 중단(Ctrl-C·SIGTERM·터미널 닫힘 SIGHUP)에도 자식을 멈추고 work(deploy 산출물 약 260 MB)를 지운다. 처리기가 없으면 신호 기본 동작으로
 // 즉사해 finally 가 돌지 않는다. 자식을 먼저 멈추는 것은 pnpm 이 쓰고 있는 디렉터리를 지우다 경합하지 않게
 const children = new Set();
 let interrupted = false;
@@ -62,9 +62,9 @@ async function abort(signal) {
   );
   rmSync(work, { recursive: true, force: true });
   console.log(`bundle smoke: ${signal} 로 중단 — 임시 디렉터리를 지웠다`);
-  process.exit(signal === "SIGINT" ? 130 : 143);
+  process.exit(signal === "SIGINT" ? 130 : signal === "SIGHUP" ? 129 : 143);
 }
-for (const signal of ["SIGINT", "SIGTERM"])
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"])
   process.on(signal, () => {
     if (!interrupted) void abort(signal);
   });
