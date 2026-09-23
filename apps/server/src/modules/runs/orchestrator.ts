@@ -21,7 +21,13 @@ import type { ApprovalsService } from "../approvals/service";
 import type { RunPlan } from "../router/decide";
 import { ensureSession } from "../sessions/service";
 import { buildInboundDeliver } from "./context";
-import { stripMediaLines } from "./media-lines";
+import {
+  createMediaLineFilter,
+  endMediaLineFilter,
+  feedMediaLineFilter,
+  type MediaLineFilter,
+  stripMediaLines,
+} from "./media-lines";
 import { type RunPatch, TERMINAL_STATUSES, transition } from "./machine";
 import * as store from "./store";
 import { createRunTimers } from "./timers";
@@ -106,6 +112,7 @@ const NOTIFY_CODES: ReadonlySet<string> = new Set(["TIMEOUT", "ADAPTER_UNAVAILAB
 
 type Coalescable = Extract<RunEventBody, { type: "TEXT_MESSAGE_CONTENT" | "TOOL_CALL_ARGS" }>;
 type DeltaBuffer = { channelId: string; type: Coalescable["type"]; key: string; delta: string };
+type TextFilter = { channelId: string; messageId: string; state: MediaLineFilter };
 type Pending = { sessionKey: string; order: number; trigger: EnqueueTrigger };
 
 /**
@@ -124,6 +131,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
   const inflight = new Set<string>();
   const awaitingAck = new Set<string>(); // adapter.send 를 기다리는 런(플러그인 대기·ack 재시도 중)
   const buffers = new Map<string, DeltaBuffer>();
+  const textFilters = new Map<string, TextFilter>(); // 런별 MEDIA: 줄 필터(결함 A) — 텍스트 델타가 코얼레싱에 들어가기 전
   const snapshots = new Map<string, string>();
   const forgetTimers = new Set<ReturnType<typeof setTimeout>>();
   let order = 0;
@@ -154,7 +162,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
   }
 
   /** 같은 key 의 조각은 첫 조각 기준 coalesceMs 뒤 한 번에 저장한다(타이머를 다시 걸지 않아 무한 지연이 없다). */
-  function coalesce(run: Run, event: Coalescable): void {
+  function coalesce(run: Pick<Run, "id" | "channelId">, event: Coalescable): void {
     const key = event.type === "TEXT_MESSAGE_CONTENT" ? event.messageId : event.toolCallId;
     const buf = buffers.get(run.id);
     if (buf && buf.type === event.type && buf.key === key) {
@@ -170,6 +178,43 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         logger.error({ err, runId: run.id }, "run event flush failed");
       }
     });
+  }
+
+  /**
+   * 텍스트 델타를 코얼레싱(= 저장·팬아웃)에 넣기 전에 MEDIA: 줄을 걷는다(결함 A·Ruling 6). 경로가 델타 여럿으로 쪼개져 오므로
+   * 줄 처음의 MEDIA: 후보만 붙잡고 나머지는 곧바로 흘린다. 붙잡은 것은 END·종료에서 drainTextFilter 가 판정한다.
+   */
+  function filterText(
+    run: Pick<Run, "id" | "channelId">,
+    event: Extract<Coalescable, { type: "TEXT_MESSAGE_CONTENT" }>,
+  ) {
+    const f = textFilterFor(run, event.messageId);
+    const delta = feedMediaLineFilter(f.state, event.delta);
+    if (delta !== "") coalesce(run, { ...event, delta });
+  }
+
+  function textFilterFor(run: Pick<Run, "id" | "channelId">, messageId: string): TextFilter {
+    const f = textFilters.get(run.id);
+    if (f?.messageId === messageId) return f;
+    if (f) drainTextFilter(run.id);
+    const created = { channelId: run.channelId, messageId, state: createMediaLineFilter() };
+    textFilters.set(run.id, created);
+    return created;
+  }
+
+  /** 붙잡은 조각을 판정해 버퍼에 넣고 필터를 치운다 — MEDIA: 줄이면 버리고, 접두였을 뿐이면 내보낸다 */
+  function drainTextFilter(runId: string): void {
+    const f = textFilters.get(runId);
+    if (!f) return;
+    textFilters.delete(runId);
+    const rest = endMediaLineFilter(f.state);
+    if (f.state.dropped > 0)
+      logger.info({ runId, mediaLinesDropped: f.state.dropped }, "stream media lines dropped");
+    if (rest === "") return;
+    coalesce(
+      { id: runId, channelId: f.channelId },
+      { type: "TEXT_MESSAGE_CONTENT", runId, messageId: f.messageId, delta: rest },
+    );
   }
 
   function recordUsage(run: Run, value: unknown): void {
@@ -400,6 +445,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     inflight.delete(runId);
     timers.clear(runId);
     buffers.delete(runId);
+    textFilters.delete(runId);
     snapshots.delete(runId);
     if (!info) return;
     const queue = sessionQueues.get(info.sessionKey);
@@ -451,11 +497,12 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     const next = t.next;
     if (next === run.status && !patchChanges(run, t.patch)) return run;
 
+    const terminal = TERMINAL_STATUSES.has(next);
+    if (terminal) drainTextFilter(runId); // END 없이 끝나는 런(오류·중지) — 붙잡은 접두를 종료 이벤트 전에
     flushBuffer(runId); // 앞서 받은 조각이 상태 이벤트보다 먼저 seq 를 받게
     const prev = run.status;
     const ts = now();
     const started = prev === "queued" && STARTED.has(next);
-    const terminal = TERMINAL_STATUSES.has(next);
     if (terminal) cancelApprovals(runId); // 전이 전에 — 종료된 런의 이벤트는 드롭된다
     const { updated, events } = db.transaction((tx) => {
       const updated = store.updateRun(tx, runId, {
@@ -798,8 +845,21 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
           return;
         }
         const body = { ...event, runId };
-        if (body.type === "TEXT_MESSAGE_CONTENT" || body.type === "TOOL_CALL_ARGS") {
+        if (body.type === "TEXT_MESSAGE_CONTENT") {
+          filterText(run, body);
+          return;
+        }
+        if (body.type === "TOOL_CALL_ARGS") {
           coalesce(run, body);
+          return;
+        }
+        if (body.type === "TEXT_MESSAGE_END") drainTextFilter(runId);
+        if (body.type === "TEXT_MESSAGE_REPLACE") {
+          // 본문 통째 교체 — 새 필터로 걷고, 끝의 붙잡은 조각은 이어지는 델타와 함께 판정한다
+          textFilters.delete(runId);
+          const text = feedMediaLineFilter(textFilterFor(run, body.messageId).state, body.text);
+          flushBuffer(runId);
+          writeEvents(run.channelId, runId, [{ ...body, text }]);
           return;
         }
         flushBuffer(runId); // 순서 보존
@@ -881,6 +941,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       if (stopped) return;
       stopped = true;
       unsubscribe();
+      for (const runId of textFilters.keys()) drainTextFilter(runId); // 순회 중 현재 항목 삭제는 안전하다
       for (const runId of buffers.keys()) {
         try {
           flushBuffer(runId);

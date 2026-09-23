@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import { v7 as uuid } from "uuid";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { attachments, channels, workspaces } from "../../src/db/schema.sqlite";
+import { attachments, channels, runEvents, workspaces } from "../../src/db/schema.sqlite";
 import {
   type AttachmentDeps,
   sweepAttachments,
@@ -318,6 +318,66 @@ describe("통합 시나리오 11 — 첨부", () => {
       expect((await channelMessages(l, setup.channel.id)).filter((m) => m.authorType === "agent")).toEqual(
         [],
       );
+    });
+  });
+
+  describe("11j 스트리밍 델타의 MEDIA: 줄(결함 A) — wire 에도 run_events 에도 경로가 없다", () => {
+    // 실연 런 ② 모양 — 경로가 델타 셋으로 쪼개진다. 조각 사이를 코얼레싱 창(50ms)보다 벌려 조각마다 따로 저장되게 한다
+    const deltas = ["끝났어요.\n\n", "MEDIA:/Users/someone", "/.openclaw-d", "ev/workspace/hello.txt"];
+    const storedEvents = (l: LiveApp, runId: string) =>
+      l.app.db.select().from(runEvents).where(eq(runEvents.runId, runId)).all();
+    const streamedText = (events: { type: string }[]) =>
+      events
+        .filter(
+          (e): e is { type: "TEXT_MESSAGE_CONTENT"; delta: string } => e.type === "TEXT_MESSAGE_CONTENT",
+        )
+        .map((e) => e.delta)
+        .join("");
+
+    it("정본 경로 — 스트리밍 텍스트는 「끝났어요.」 만, 정본은 지금처럼", async () => {
+      const l = await boot();
+      const setup = await setupRelayChannel(l, RELAY_POLICY);
+      const log = await openChannelWire(l, setup.channel.id, sockets);
+      createScenario({
+        gateway: l.gateway,
+        plugin: l.plugin,
+        agents: { dev: () => ({ deltas, deltaDelayMs: 60, reply: "끝났어요." }) },
+      });
+
+      await sendMessage(log.socket, setup.channel.id, "@dev 파일 써 줘");
+      const reply = await log.until(() => log.created.find((m) => m.authorType === "agent"), "에이전트 답");
+      const runId = reply.runId ?? "";
+      expect(await log.terminal(runId)).toMatchObject({ status: "done", finalSource: "plugin" });
+      expect(reply.bodyMd).toBe("끝났어요.");
+      expect(streamedText(log.eventsOf(runId))).toBe("끝났어요.\n\n");
+      expect(JSON.stringify(log.events)).not.toContain("/Users/");
+      const stored = storedEvents(l, runId);
+      expect(stored.some((e) => e.type === "TEXT_MESSAGE_CONTENT")).toBe(true);
+      expect(JSON.stringify(stored)).not.toContain("/Users/");
+    });
+
+    it("폴백 경로 — 정본 없이 스냅샷으로 끝나도 델타·저장 본문 어디에도 경로가 없다", async () => {
+      const l = await boot({ timeouts: { finalizingMs: 300, finalizingMediaLineMs: 0 } });
+      const setup = await setupRelayChannel(l, RELAY_POLICY);
+      const log = await openChannelWire(l, setup.channel.id, sockets);
+      createScenario({
+        gateway: l.gateway,
+        plugin: l.plugin,
+        agents: {
+          dev: () => ({ deltas, deltaDelayMs: 60, reply: deltas.join(""), withholdCanonical: true }),
+        },
+      });
+
+      await sendMessage(log.socket, setup.channel.id, "@dev 파일 써 줘");
+      const run = await log.until(() => log.states.find((s) => s.agentId === setup.dev.id), "dev 런");
+      expect(await log.terminal(run.id)).toMatchObject({ status: "done", finalSource: "gateway" });
+      const agentMessages = (await channelMessages(l, setup.channel.id)).filter(
+        (m) => m.authorType === "agent",
+      );
+      expect(agentMessages.map((m) => m.bodyMd)).toEqual(["끝났어요."]);
+      expect(streamedText(log.eventsOf(run.id))).toBe("끝났어요.\n\n");
+      expect(JSON.stringify(log.events)).not.toContain("/Users/");
+      expect(JSON.stringify(storedEvents(l, run.id))).not.toContain("/Users/");
     });
   });
 

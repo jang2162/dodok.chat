@@ -4,6 +4,7 @@ import type { AdapterStatus, Message, OutboundMessage, Run, RunEvent, RunState }
 import { eq } from "drizzle-orm";
 import { v7 as uuid } from "uuid";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { RunEventBody } from "../src/adapters/types";
 import type { DbOrTx } from "../src/db/client";
 import { attachments, componentInteractions, messages } from "../src/db/schema.sqlite";
 import { addMember, createChannel } from "../src/modules/channels/service";
@@ -314,6 +315,117 @@ describe("orchestrator", () => {
     ]);
     expect(t.events).toEqual(t.eventsOf(run.id));
     t.orch.stop();
+  });
+
+  describe("스트리밍 델타의 MEDIA: 줄(결함 A) — 저장·팬아웃 전에 걷는다", () => {
+    async function streaming() {
+      const t = setup();
+      const run = await t.enqueue();
+      await t.flush();
+      await t.orch.signal(run.id, { kind: "gateway_started" });
+      const emit = (event: RunEventBody) => t.adapter.emit({ kind: "run_event", runId: run.id, event });
+      const content = (delta: string) =>
+        emit({ type: "TEXT_MESSAGE_CONTENT", runId: run.id, messageId: run.id, delta });
+      const texts = (events: RunEvent[]) =>
+        events
+          .filter((e) => e.type === "TEXT_MESSAGE_CONTENT" || e.type === "TEXT_MESSAGE_REPLACE")
+          .map((e) =>
+            e.type === "TEXT_MESSAGE_CONTENT"
+              ? e.delta
+              : `=${e.type === "TEXT_MESSAGE_REPLACE" ? e.text : ""}`,
+          );
+      return { t, run, emit, content, texts };
+    }
+
+    it("쪼개진 MEDIA: 줄은 run_events 에도 팬아웃에도 없고, 정본은 그대로 저장된다", async () => {
+      const { t, run, emit, content, texts } = await streaming();
+      for (const d of ["끝났어요.\n\n", "MEDIA:/Users/someone", "/.openclaw-d", "ev/workspace/hello.txt"]) {
+        content(d);
+        vi.advanceTimersByTime(60); // 조각마다 따로 flush 되는 최악의 경우
+      }
+      emit({ type: "TEXT_MESSAGE_END", runId: run.id, messageId: run.id });
+      await t.orch.signal(
+        run.id,
+        { kind: "gateway_final" },
+        { message: "끝났어요.\n\nMEDIA:/Users/someone/.openclaw-dev/workspace/hello.txt" },
+      );
+      await t.orch.onCanonical(t.outbound({ text: "끝났어요.", runId: run.id }));
+      await t.flush();
+
+      expect(texts(t.eventsOf(run.id))).toEqual(["끝났어요.\n\n"]);
+      expect(JSON.stringify(t.eventsOf(run.id))).not.toContain("/Users/");
+      expect(JSON.stringify(t.events)).not.toContain("/Users/");
+      expect(t.runOf(run.id).status).toBe("done");
+      t.orch.stop();
+    });
+
+    it("M 으로 시작하는 보통 줄은 두 번째 글자에서 풀려나 첫 코얼레싱 창에 나간다", async () => {
+      const { t, run, content, texts } = await streaming();
+      content("M");
+      content("a");
+      vi.advanceTimersByTime(50);
+      expect(texts(t.eventsOf(run.id))).toEqual(["Ma"]);
+      content("rkdown");
+      vi.advanceTimersByTime(50);
+      expect(texts(t.eventsOf(run.id))).toEqual(["Ma", "rkdown"]);
+      t.orch.stop();
+    });
+
+    it("붙잡은 접두(MEDI)는 TEXT_MESSAGE_END 보다 먼저 나간다", async () => {
+      const { t, run, emit, content } = await streaming();
+      content("보통\nMEDI");
+      emit({ type: "TEXT_MESSAGE_END", runId: run.id, messageId: run.id });
+      expect(
+        t
+          .eventsOf(run.id)
+          .filter((e) => e.type === "TEXT_MESSAGE_CONTENT" || e.type === "TEXT_MESSAGE_END")
+          .map((e) => (e.type === "TEXT_MESSAGE_CONTENT" ? e.delta : e.type)),
+      ).toEqual(["보통\nMEDI", "TEXT_MESSAGE_END"]);
+      t.orch.stop();
+    });
+
+    it("END 없이 끝난 런(오류·중지) — 붙잡은 MEDIA: 줄은 버리고 접두는 종료 이벤트 전에 내보낸다", async () => {
+      const a = await streaming();
+      a.content("앞\nMEDIA:/Users/x/a.png");
+      await a.t.orch.signal(a.run.id, { kind: "gateway_error", code: "boom", message: "x" });
+      expect(a.texts(a.t.eventsOf(a.run.id))).toEqual(["앞\n"]);
+      expect(JSON.stringify(a.t.events)).not.toContain("/Users/");
+      a.t.orch.stop();
+
+      const b = await streaming();
+      b.content("앞\nME");
+      await b.t.orch.abort(b.run.id);
+      const types = b.t.eventsOf(b.run.id).map((e) => (e.type === "TEXT_MESSAGE_CONTENT" ? e.delta : e.type));
+      expect(types.slice(types.indexOf("앞\nME"))).toContain("RUN_ABORTED");
+      expect(b.texts(b.t.eventsOf(b.run.id))).toEqual(["앞\nME"]);
+      b.t.orch.stop();
+    });
+
+    it("TEXT_MESSAGE_REPLACE 본문의 MEDIA: 줄도 걷고, 이어지는 델타는 그 뒤에서 판정한다", async () => {
+      const { t, run, emit, content, texts } = await streaming();
+      emit({
+        type: "TEXT_MESSAGE_REPLACE",
+        runId: run.id,
+        messageId: run.id,
+        text: "가\nMEDIA:/Users/x/a\n나\nMEDIA:/Us",
+      });
+      content("ers/y/b.png\n다");
+      vi.advanceTimersByTime(50);
+      expect(texts(t.eventsOf(run.id))).toEqual(["=가\n나\n", "다"]);
+      expect(JSON.stringify(t.events)).not.toContain("/Users/");
+      t.orch.stop();
+    });
+
+    it("TOOL_CALL_ARGS 델타는 건드리지 않는다(관찰 C, 이월)", async () => {
+      const { t, run, emit } = await streaming();
+      emit({ type: "TOOL_CALL_START", runId: run.id, toolCallId: "t1", toolCallName: "Write" });
+      emit({ type: "TOOL_CALL_ARGS", runId: run.id, toolCallId: "t1", delta: "MEDIA:/Users/x" });
+      vi.advanceTimersByTime(50);
+      expect(t.eventsOf(run.id).filter((e) => e.type === "TOOL_CALL_ARGS")).toEqual([
+        expect.objectContaining({ delta: "MEDIA:/Users/x" }),
+      ]);
+      t.orch.stop();
+    });
   });
 
   it("정본이 오면 에이전트 메시지가 runId 를 달고 저장되고 onAgentMessage 가 불린다; final 뒤엔 done(plugin)", async () => {
