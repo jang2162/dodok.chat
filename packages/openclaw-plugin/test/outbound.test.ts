@@ -119,6 +119,73 @@ describe("buildOutboundMessage", () => {
   });
 });
 
+describe("buildOutboundMessage — artifact:// 이름의 공백류", () => {
+  const base = { outboundId: "oa", channelId: CH, agentId: "main", sessionKey: SESSION, text: "x", now: NOW };
+  const components = () => ({
+    blocks: [
+      { type: "media", items: [{ url: "artifact://월간 보고서.png", alt: "월간 보고서" }] },
+      { type: "file", url: "artifact://탭\t이름.pdf", name: "탭\t이름.pdf" },
+      {
+        type: "actions",
+        items: [{ type: "button", id: "open", label: "열기", url: "artifact://줄\n바꿈 이름.txt" }],
+      },
+    ],
+  });
+
+  it("media·file·링크 버튼의 artifact:// 값 안 공백류를 퍼센트 인코딩해 통과시킨다", () => {
+    const res = buildOutboundMessage({ ...base, components: components() });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(OutboundMessage.parse(res.message)).toEqual(res.message);
+    const [media, file, actions] = res.message.components?.blocks ?? [];
+    expect(media).toEqual({
+      type: "media",
+      items: [{ url: "artifact://월간%20보고서.png", alt: "월간 보고서" }],
+    });
+    expect(file).toMatchObject({ url: "artifact://탭%09이름.pdf", name: "탭\t이름.pdf" });
+    expect(actions).toMatchObject({ items: [{ url: "artifact://줄%0A바꿈%20이름.txt" }] });
+  });
+
+  it("원본 입력 객체는 바꾸지 않는다", () => {
+    const input = components();
+    const snapshot = structuredClone(input);
+    const res = buildOutboundMessage({ ...base, components: input });
+    expect(res.ok).toBe(true);
+    expect(input).toEqual(snapshot);
+  });
+
+  it("JSON 문자열로 온 components 도 같은 규칙", () => {
+    const res = buildOutboundMessage({ ...base, components: JSON.stringify(components()) });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.message.components?.blocks[0]).toMatchObject({
+      items: [{ url: "artifact://월간%20보고서.png" }],
+    });
+    expect(res.message.components?.blocks[1]).toMatchObject({ url: "artifact://탭%09이름.pdf" });
+  });
+
+  it("https:// 값의 공백은 건드리지 않고 여전히 계약 위반", () => {
+    const res = buildOutboundMessage({
+      ...base,
+      components: { blocks: [{ type: "file", url: "https://example.com/월간 보고서.pdf", name: "a.pdf" }] },
+    });
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.error).toContain("blocks.0.url");
+  });
+
+  it("url 이 아닌 필드의 artifact:// 문자열은 건드리지 않는다", () => {
+    const res = buildOutboundMessage({
+      ...base,
+      components: { blocks: [{ type: "section", text: "artifact://월간 보고서.pdf 를 보세요" }] },
+    });
+    expect(res.ok && res.message.components?.blocks[0]).toEqual({
+      type: "section",
+      text: "artifact://월간 보고서.pdf 를 보세요",
+    });
+  });
+});
+
 describe("messageToolSendToOutbound", () => {
   it("message 툴 send 인자(to·message·components)를 변환한다", () => {
     const res = messageToolSendToOutbound({

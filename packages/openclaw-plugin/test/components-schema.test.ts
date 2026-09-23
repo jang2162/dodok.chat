@@ -1,7 +1,11 @@
 import { ComponentsV1 } from "@dodok/shared/components";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { COMPONENTS_DESCRIPTION, componentsJsonSchema } from "../src/components-schema";
+import {
+  ARTIFACT_URL_DESCRIPTION,
+  COMPONENTS_DESCRIPTION,
+  componentsJsonSchema,
+} from "../src/components-schema";
 
 describe("componentsJsonSchema", () => {
   it("shared components v1 의 입력 JSON Schema 에 설명을 붙인다 ($schema 제거)", () => {
@@ -29,5 +33,11 @@ describe("componentsJsonSchema", () => {
       key === "description" || key === "$schema" ? undefined : value,
     );
     expect(stripped).toEqual(bare);
+  });
+
+  it("url 설명이 이름에 공백이 있어도 그대로 쓰라고 적는다", () => {
+    expect(ARTIFACT_URL_DESCRIPTION).toContain("공백이 있어도 그대로");
+    const text = JSON.stringify(componentsJsonSchema);
+    expect(text.split("공백이 있어도 그대로").length - 1).toBe(3);
   });
 });

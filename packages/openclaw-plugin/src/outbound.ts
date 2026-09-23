@@ -50,6 +50,24 @@ export function toolInputError(message: string): Error {
   return error;
 }
 
+/**
+ * 모델은 `artifact://<파일 이름>` 에 이름을 그대로 쓴다. 이름 안의 공백류는 계약 `SafeUrl`(`\S+`)에 막히므로
+ * 검증 전에 `url` 속성의 artifact:// 값에서만 공백류를 퍼센트 인코딩한다(웹 해석기가 디코드해 찾는다).
+ * https:// 값은 그대로 둔다 — 그쪽 공백은 계약 위반이 맞다. 입력은 바꾸지 않고 사본을 돌려준다
+ */
+function encodeArtifactWhitespace(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(encodeArtifactWhitespace);
+  if (!node || typeof node !== "object") return node;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(node)) {
+    out[key] =
+      key === "url" && typeof value === "string" && value.startsWith("artifact://")
+        ? value.replace(/\s/g, (ch) => encodeURIComponent(ch))
+        : encodeArtifactWhitespace(value);
+  }
+  return out;
+}
+
 function coerceComponents(
   raw: unknown,
 ): { ok: true; value: OutboundMessage["components"] } | { ok: false; error: string } {
@@ -62,7 +80,7 @@ function coerceComponents(
       return { ok: false, error: "components: JSON 문자열을 파싱할 수 없다" };
     }
   }
-  const parsed = ComponentsV1.safeParse(candidate);
+  const parsed = ComponentsV1.safeParse(encodeArtifactWhitespace(candidate));
   if (parsed.success) return { ok: true, value: parsed.data };
   const detail = parsed.error.issues
     .slice(0, 5)

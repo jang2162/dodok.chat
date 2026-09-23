@@ -12,7 +12,7 @@ export const COMPONENTS_DESCRIPTION =
 
 /** `media` 항목·`file`·링크 버튼의 `url` 설명(스펙 결정 5) — 모델은 첨부 id 를 모르므로 같은 메시지의 파일 이름으로 가리킨다 */
 export const ARTIFACT_URL_DESCRIPTION =
-  "https:// URL, 또는 이 메시지와 함께 `media` 로 보낸 파일은 `artifact://<파일 이름>` 으로 가리킨다.";
+  "https:// URL, 또는 이 메시지와 함께 `media` 로 보낸 파일은 `artifact://<파일 이름>` 으로 가리킨다. 이름에 공백이 있어도 그대로 쓴다.";
 
 /** 스키마 안의 모든 `url` 속성(components v1 에서는 media 항목·file·버튼 셋뿐)에 설명을 붙인다. 모양은 바꾸지 않는다 */
 function describeUrls(node: unknown): void {
