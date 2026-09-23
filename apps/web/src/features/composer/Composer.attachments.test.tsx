@@ -18,6 +18,7 @@ import {
   setDoc,
   t,
 } from "../../../test/composerHarness";
+import { focusAfterRemove } from "./PendingAttachments";
 
 const wire = vi.hoisted(() => ({ socket: undefined as unknown }));
 vi.mock("@/realtime/WireProvider", async (importOriginal) => ({
@@ -276,4 +277,52 @@ it("채널을 옮기면 칩을 비우고 올리던 것을 끊는다(첨부는 �
   act(() => rerender(CH2));
   expect(xhrAt(0).aborted).toBe(true);
   expect(chips()).toBeNull();
+});
+
+describe("칩을 빼면 초점을 옮긴다 — body 로 떨어지지 않게", () => {
+  const removeButton = (name: string) => screen.getByRole("button", { name: `${name} 빼기` });
+
+  it("focusAfterRemove: 다음 칩 → 이전 칩 → 없으면 null", () => {
+    expect(focusAfterRemove(["a", "b", "c"], "b")).toBe("c");
+    expect(focusAfterRemove(["a", "b", "c"], "c")).toBe("b");
+    expect(focusAfterRemove(["a"], "a")).toBeNull();
+    expect(focusAfterRemove(["a", "b"], "없음")).toBeNull();
+  });
+
+  it("세 칩에서 가운데를 빼면 셋째 칩의 빼기 버튼으로 — 키보드", async () => {
+    renderComposer();
+    await pick(pngFile("a.png"), pngFile("b.png"), pngFile("c.png"));
+    removeButton("b.png").focus();
+    await userEvent.keyboard("{Enter}");
+    expect(screen.queryByRole("button", { name: "b.png 빼기" })).toBeNull();
+    expect(document.activeElement).toBe(removeButton("c.png"));
+  });
+
+  it("마지막 칩을 빼면 이전 칩의 빼기 버튼으로 — 마우스", async () => {
+    renderComposer();
+    await pick(pngFile("a.png"), pngFile("b.png"), pngFile("c.png"));
+    await userEvent.click(removeButton("c.png"));
+    expect(document.activeElement).toBe(removeButton("b.png"));
+  });
+
+  it("하나 남은 칩을 빼면 「이미지 첨부」 버튼으로", async () => {
+    renderComposer();
+    await pick(pngFile("a.png"));
+    await userEvent.click(removeButton("a.png"));
+    expect(chips()).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "이미지 첨부" }));
+  });
+
+  it("보낸 뒤 칩을 비울 때는 초점을 옮기지 않는다 — 편집기에 남는다", async () => {
+    fake.onAck("message.send", confirmed);
+    const { box } = renderComposer();
+    await pick(pngFile("a.png"), pngFile("b.png"));
+    await finish(0);
+    await finish(1);
+    box.focus();
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(fake.sentOf("message.send")).toHaveLength(1);
+    expect(chips()).toBeNull();
+    expect(document.activeElement).toBe(box);
+  });
 });

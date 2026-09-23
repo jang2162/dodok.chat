@@ -1,19 +1,40 @@
 import { XIcon } from "lucide-react";
+import { useRef } from "react";
 import type { ComposerAttachment } from "@/features/attachments/useComposerAttachments";
 import { Button } from "@/ui/button";
 
+/** 칩을 뺀 뒤 초점을 둘 칩 — 다음 칩, 없으면 이전 칩, 남는 칩이 없으면 null */
+export function focusAfterRemove(keys: readonly string[], removed: string): string | null {
+  const i = keys.indexOf(removed);
+  if (i < 0) return null;
+  return keys[i + 1] ?? keys[i - 1] ?? null;
+}
+
 /**
  * 작성기 위 첨부 칩(스펙 6.1) — 로컬 미리보기·이름, 올리는 중이면 진행 막대, 오류면 빨간 이유, 빼기 버튼.
+ * 빼기 버튼으로 뺄 때만 초점을 옆 칩의 빼기 버튼으로, 칩이 다 빠지면 onEmptied 로 넘긴다 — 누른 버튼이 사라져도 body 로 떨어지지 않게.
  * 비었으면 아무것도 그리지 않는다
  */
 export function PendingAttachments({
   items,
   onRemove,
+  onEmptied,
 }: {
   items: readonly ComposerAttachment[];
   onRemove: (key: string) => void;
+  onEmptied: () => void;
 }) {
+  const buttons = useRef(new Map<string, HTMLButtonElement>());
   if (items.length === 0) return null;
+  const removeAndMoveFocus = (key: string) => {
+    const next = focusAfterRemove(
+      items.map((i) => i.key),
+      key,
+    );
+    onRemove(key);
+    if (next === null) onEmptied();
+    else buttons.current.get(next)?.focus();
+  };
   return (
     <ul role="list" aria-label="첨부할 이미지" className="flex flex-wrap gap-2 pt-1 pb-1.5">
       {items.map((item) => (
@@ -49,7 +70,11 @@ export function PendingAttachments({
             size="icon-xs"
             variant="ghost"
             aria-label={`${item.name} 빼기`}
-            onClick={() => onRemove(item.key)}
+            ref={(el) => {
+              if (el) buttons.current.set(item.key, el);
+              else buttons.current.delete(item.key);
+            }}
+            onClick={() => removeAndMoveFocus(item.key)}
           >
             <XIcon />
           </Button>

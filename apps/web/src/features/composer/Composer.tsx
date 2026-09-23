@@ -63,6 +63,7 @@ export function Composer({ channelId }: { channelId: string }) {
   const { send } = useSendMessage(channelId);
   const attachments = useComposerAttachments(channelId);
   const fileInput = useRef<HTMLInputElement>(null);
+  const attachButton = useRef<HTMLButtonElement>(null);
   const typing = useTyping(channelId);
   const members = useMembers(channelId);
   const agents = useAgents();
@@ -204,13 +205,18 @@ export function Composer({ channelId }: { channelId: string }) {
         onDragOver={onDragOver}
         onDrop={onDrop}
       >
-        <PendingAttachments items={attachments.items} onRemove={attachments.remove} />
+        <PendingAttachments
+          items={attachments.items}
+          onRemove={attachments.remove}
+          onEmptied={() => attachButton.current?.focus()}
+        />
         <div className="flex items-end gap-2">
           <Button
             type="button"
             size="icon"
             variant="ghost"
             aria-label="이미지 첨부"
+            ref={attachButton}
             className="-ml-2"
             onClick={() => fileInput.current?.click()}
           >
