@@ -202,15 +202,18 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     return created;
   }
 
-  /** 붙잡은 조각을 판정해 버퍼에 넣고 필터를 치운다 — MEDIA: 줄이면 버리고, 접두였을 뿐이면 내보낸다 */
-  function drainTextFilter(runId: string): void {
+  /**
+   * 붙잡은 조각을 판정해 버퍼에 넣고 필터를 치운다 — MEDIA: 줄이면 버리고, 접두였을 뿐이면 내보낸다.
+   * keepHeld=false 는 REPLACE — 본문이 통째 바뀌므로 붙잡은 조각도 버린다(걷은 줄 수는 그래도 남긴다).
+   */
+  function drainTextFilter(runId: string, keepHeld = true): void {
     const f = textFilters.get(runId);
     if (!f) return;
     textFilters.delete(runId);
     const rest = endMediaLineFilter(f.state);
     if (f.state.dropped > 0)
       logger.info({ runId, mediaLinesDropped: f.state.dropped }, "stream media lines dropped");
-    if (rest === "") return;
+    if (rest === "" || !keepHeld) return;
     coalesce(
       { id: runId, channelId: f.channelId },
       { type: "TEXT_MESSAGE_CONTENT", runId, messageId: f.messageId, delta: rest },
@@ -856,7 +859,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         if (body.type === "TEXT_MESSAGE_END") drainTextFilter(runId);
         if (body.type === "TEXT_MESSAGE_REPLACE") {
           // 본문 통째 교체 — 새 필터로 걷고, 끝의 붙잡은 조각은 이어지는 델타와 함께 판정한다
-          textFilters.delete(runId);
+          drainTextFilter(runId, false);
           const text = feedMediaLineFilter(textFilterFor(run, body.messageId).state, body.text);
           flushBuffer(runId);
           writeEvents(run.channelId, runId, [{ ...body, text }]);

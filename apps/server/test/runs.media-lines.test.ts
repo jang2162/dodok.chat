@@ -23,6 +23,15 @@ describe("stripMediaLines — 호스트 경로가 채널에 새지 않게(스파
   it("걷고 남은 빈 줄 셋 이상은 둘로", () => {
     expect(stripMediaLines("가\n\nMEDIA:/a\n\n나")).toEqual({ text: "가\n\n나", dropped: 1 });
   });
+  it("대소문자를 가리지 않는다 — 코어가 줄 머리를 toUpperCase 로 비교해 뽑는다", () => {
+    expect(stripMediaLines("가\nmedia:/Users/x/a.png\n나\n  Media: /Users/y/b.png")).toEqual({
+      text: "가\n나",
+      dropped: 2,
+    });
+  });
+  it("MEDIA 와 콜론 사이 공백은 MEDIA: 줄이 아니다 — 코어도 줄 머리 여섯 글자가 MEDIA: 여야 뽑는다", () => {
+    expect(stripMediaLines("MEDIA :/Users/x")).toEqual({ text: "MEDIA :/Users/x", dropped: 0 });
+  });
 });
 
 /** 조각마다 내보낸 것과 런 끝에 내보낸 것 */
@@ -87,6 +96,29 @@ describe("미디어 줄 필터 — 스트리밍 델타의 MEDIA: 줄을 걷는�
     expect(stream(["M", "a", "rkdown 표"]).out).toEqual(["", "Ma", "rkdown 표"]);
     expect(stream(["Markdown"]).out).toEqual(["Markdown"]);
     expect(stream(["안녕", "하세요"]).out).toEqual(["안녕", "하세요"]);
+  });
+  it("대소문자를 가리지 않는다 — media:·Media:·쪼개진 me + DIA: 모두 줄째 버린다", () => {
+    expect(joined(stream(["가\nmedia:/Users/x/a.png\n나"]))).toBe("가\n나");
+    expect(joined(stream(["가\n", "Media: /Users/x", "/a.png\n", "나"]))).toBe("가\n나");
+    const r = stream(["가\nme", "DIA:/Us", "ers/x/a.png"]);
+    expect(r.out).toEqual(["가\n", "", ""]);
+    expect(r).toMatchObject({ end: "", dropped: 1 });
+  });
+  it("소문자 접두도 붙잡았다가 판정한다 — mediation 은 콜론 자리에서 풀려난다", () => {
+    expect(stream(["medi", "ation"]).out).toEqual(["", "mediation"]);
+    expect(stream(["medi"])).toEqual({ out: [""], end: "medi", dropped: 0 });
+  });
+  it("MEDIA 와 콜론 사이 공백은 보통 줄이다(코어와 같다)", () => {
+    expect(joined(stream(["MEDIA", " :/Users/x\n"]))).toBe("MEDIA :/Users/x\n");
+  });
+  it("endMediaLineFilter 뒤 상태는 처음으로 돌아간다 — 붙잡은 것도 줄 가운데 표시도 남지 않는다", () => {
+    const f = createMediaLineFilter();
+    expect(feedMediaLineFilter(f, "MEDI")).toBe("");
+    expect(endMediaLineFilter(f)).toBe("MEDI");
+    expect(endMediaLineFilter(f)).toBe("");
+    expect(feedMediaLineFilter(f, "줄 가운데")).toBe("줄 가운데");
+    expect(endMediaLineFilter(f)).toBe("");
+    expect(feedMediaLineFilter(f, "MEDIA:/Users/x\n다음")).toBe("다음");
   });
   it("여러 줄이 한 조각에 오면 MEDIA: 줄만 빠진다", () => {
     const r = stream(["가\nMEDIA:/a\n나\n  MEDIA: https://e.com/b.png\n다"]);

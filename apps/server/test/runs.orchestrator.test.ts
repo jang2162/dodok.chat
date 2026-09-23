@@ -416,6 +416,58 @@ describe("orchestrator", () => {
       t.orch.stop();
     });
 
+    /** 「stream media lines dropped」 줄의 runId·mediaLinesDropped */
+    const droppedLines = (t: ReturnType<typeof setup>) =>
+      t.logger.info.mock.calls
+        .filter((c) => c[1] === "stream media lines dropped")
+        .map((c) => c[0] as { runId: string; mediaLinesDropped: number });
+
+    it("끝난 런의 필터는 남지 않는다 — END·종료 전이가 치운 필터를 stop() 이 다시 판정하지 않는다", async () => {
+      // END 뒤 done
+      const a = await streaming();
+      a.content("앞\nMEDIA:/Users/x/a.png\n뒤");
+      a.emit({ type: "TEXT_MESSAGE_END", runId: a.run.id, messageId: a.run.id });
+      await a.t.orch.signal(a.run.id, { kind: "gateway_final" });
+      await a.t.orch.onCanonical(a.t.outbound({ text: "앞\n뒤", runId: a.run.id }));
+      await a.t.flush();
+      expect(a.t.runOf(a.run.id).status).toBe("done");
+      const seqA = a.t.eventsOf(a.run.id).length;
+      a.t.orch.stop();
+      expect(droppedLines(a.t)).toEqual([{ runId: a.run.id, mediaLinesDropped: 1 }]);
+      expect(a.t.eventsOf(a.run.id)).toHaveLength(seqA);
+
+      // END 없이 오류로 끝난 런 — 붙잡은 MEDIA: 줄을 종료 전이가 판정한다
+      const b = await streaming();
+      b.content("앞\nMEDIA:/Users/x/a.png");
+      await b.t.orch.signal(b.run.id, { kind: "gateway_error", code: "boom", message: "x" });
+      const seqB = b.t.eventsOf(b.run.id).length;
+      b.t.orch.stop();
+      expect(droppedLines(b.t)).toEqual([{ runId: b.run.id, mediaLinesDropped: 1 }]);
+      expect(b.t.eventsOf(b.run.id)).toHaveLength(seqB);
+    });
+
+    it("REPLACE 가 버리는 이전 필터가 걷은 줄 수도 로그에 남는다", async () => {
+      const { t, run, emit, content } = await streaming();
+      content("가\nMEDIA:/Users/x/a\n");
+      emit({
+        type: "TEXT_MESSAGE_REPLACE",
+        runId: run.id,
+        messageId: run.id,
+        text: "나\nMEDIA:/Users/y/b\n",
+      });
+      emit({ type: "TEXT_MESSAGE_END", runId: run.id, messageId: run.id });
+      expect(droppedLines(t).reduce((n, l) => n + l.mediaLinesDropped, 0)).toBe(2);
+      t.orch.stop();
+    });
+
+    it("REPLACE 앞에 붙잡혀 있던 접두는 내보내지 않는다 — 본문이 통째 바뀌었다", async () => {
+      const { t, run, emit, content, texts } = await streaming();
+      content("보통\nMEDI");
+      emit({ type: "TEXT_MESSAGE_REPLACE", runId: run.id, messageId: run.id, text: "새 본문" });
+      expect(texts(t.eventsOf(run.id))).toEqual(["보통\n", "=새 본문"]);
+      t.orch.stop();
+    });
+
     it("TOOL_CALL_ARGS 델타는 건드리지 않는다(관찰 C, 이월)", async () => {
       const { t, run, emit } = await streaming();
       emit({ type: "TOOL_CALL_START", runId: run.id, toolCallId: "t1", toolCallName: "Write" });

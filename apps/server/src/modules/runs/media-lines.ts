@@ -1,6 +1,10 @@
-/** 코어의 레거시 첨부 관례 — 단독 줄 `MEDIA:<경로|URL>`. 폴백 최종본과 스트리밍 델타가 같은 줄 정의를 쓴다 */
-const MEDIA_LINE_START = /^[ \t]*MEDIA:/;
-const MEDIA_LINE = new RegExp(`${MEDIA_LINE_START.source}[^\\n]*(?:\\n|$)`, "gm");
+/**
+ * 코어의 레거시 첨부 관례 — 단독 줄 `MEDIA:<경로|URL>`. 폴백 최종본과 스트리밍 델타가 같은 줄 정의를 쓴다.
+ * 대소문자는 가리지 않는다 — 코어는 줄 머리 여섯 글자를 toUpperCase 로 `MEDIA:` 와 비교하고 `/\bMEDIA:…/gi` 로 뽑는다(9.4·9.5 같음).
+ * `MEDIA` 와 콜론 사이 공백은 코어도 허용하지 않는다.
+ */
+const MEDIA_LINE_START = /^[ \t]*MEDIA:/i;
+const MEDIA_LINE = new RegExp(`${MEDIA_LINE_START.source}[^\\n]*(?:\\n|$)`, "gim");
 const MEDIA_PREFIX = "MEDIA:";
 
 /** 코어의 MEDIA: 줄을 걷는다 — 폴백 최종본이 호스트 경로를 채널에 저장하지 않게(스펙 4.6) */
@@ -26,7 +30,7 @@ export function createMediaLineFilter(): MediaLineFilter {
 /** 앞 공백·탭을 걷고 MEDIA: 로 시작하거나 그 접두면(공백뿐인 조각 포함) 아직 판정할 수 없다 */
 function mayBeMediaLine(head: string): boolean {
   if (MEDIA_LINE_START.test(head)) return true;
-  return MEDIA_PREFIX.startsWith(head.replace(/^[ \t]*/, ""));
+  return MEDIA_PREFIX.startsWith(head.replace(/^[ \t]*/, "").toUpperCase());
 }
 
 /** 조각을 넣고 지금 내보낼 텍스트를 돌려준다(빈 문자열일 수 있다). MEDIA: 줄은 줄바꿈까지 버린다 */
