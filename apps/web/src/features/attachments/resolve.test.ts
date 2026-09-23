@@ -81,3 +81,72 @@ describe("resolveRef — 같은 메시지 첨부만(스펙 6.3)", () => {
     expect(referencedAttachmentIds(undefined, [a1])).toEqual(new Set());
   });
 });
+
+/** a3-c1 리뷰 2절 표 — 플러그인이 만든 url(공백류 퍼센트 인코딩)을 저장 이름(`sanitizeAttachmentName`)으로 푼다 */
+describe("resolveRef — 플러그인 인코딩 왕복(a3-c1 리뷰 2절)", () => {
+  const named = (name: string, id = ID2) => ({ ...a2, id, name });
+  const cases: [string, string, string][] = [
+    ["공백", "월간 보고서.pdf", "artifact://월간%20보고서.pdf"],
+    ["탭(모델이 원래 이름을 씀)", "탭이름.pdf", "artifact://탭%09이름.pdf"],
+    ["탭(모델이 저장 이름을 씀)", "탭이름.pdf", "artifact://탭이름.pdf"],
+    ["줄바꿈", "줄바꿈.txt", "artifact://줄%0A바꿈.txt"],
+    ["원래 % 가 든 이름", "50% 할인.pdf", "artifact://50%%20할인.pdf"],
+    ["이름 자체에 %20", "a%20b.pdf", "artifact://a%20b.pdf"],
+    ["모델이 이미 %20 으로 적음", "월간 보고서.pdf", "artifact://월간%20보고서.pdf"],
+    ["전각 공백 U+3000", "월간　보고서.pdf", "artifact://월간%E3%80%80보고서.pdf"],
+    ["NBSP U+00A0", "월간 보고서.pdf", "artifact://월간%C2%A0보고서.pdf"],
+    ["% + 전각 공백", "50%　할인.pdf", "artifact://50%%E3%80%80할인.pdf"],
+    ["끝 공백(저장 이름은 trim)", "월간 보고서.pdf", "artifact://월간%20보고서.pdf%20"],
+  ];
+  for (const [label, name, url] of cases)
+    it(`풀린다 — ${label}`, () => {
+      const k = named(name);
+      expect(resolveRef(url, [a1, k])).toEqual({ kind: "attachment", attachment: k });
+    });
+
+  it("남는 것 — %20 문자열과 공백이 함께 든 이름은 missing(본질적 모호: 어느 %20 이 원래 글자인지 url 로 모른다)", () => {
+    expect(resolveRef("artifact://a%20b%20c.pdf", [a1, named("a%20b c.pdf")])).toEqual({ kind: "missing" });
+  });
+
+  it("모호 ① — 정확 일치가 첨부 순서보다 먼저다: 뒤 첨부 a%20b.pdf 로 풀린다", () => {
+    const front = named("a b.pdf", ID1);
+    const back = named("a%20b.pdf", ID2);
+    expect(resolveRef("artifact://a%20b.pdf", [front, back])).toEqual({
+      kind: "attachment",
+      attachment: back,
+    });
+  });
+
+  it("남는 것 — 모호 ②: 뜻이 뒤 첨부 a b.pdf 여도 정확 일치인 앞 첨부로 풀린다(본질적 모호: 인코딩이 구분을 지웠다)", () => {
+    const front = named("a%20b.pdf", ID1);
+    const back = named("a b.pdf", ID2);
+    expect(resolveRef("artifact://a%20b.pdf", [front, back])).toEqual({
+      kind: "attachment",
+      attachment: front,
+    });
+  });
+
+  it("모호 ③ — 뜻이 뒤 첨부여도 관대한 디코드로 앞 첨부에 풀린다(본질적 모호, 리뷰 3절)", () => {
+    const front = named("50% a b.pdf", ID1);
+    const back = named("50% a%20b.pdf", ID2);
+    expect(resolveRef("artifact://50%%20a%20b.pdf", [front, back])).toEqual({
+      kind: "attachment",
+      attachment: front,
+    });
+  });
+
+  it("referencedAttachmentIds 도 같은 해석을 쓴다 — 탭·% 든 이름", () => {
+    const tab = named("탭이름.pdf", ID2);
+    const pct = named("50% 할인.pdf", ID3);
+    const components = {
+      id: "c",
+      ttlMs: 60_000,
+      reusable: false,
+      blocks: [
+        { type: "file", url: "artifact://탭%09이름.pdf", name: "탭" },
+        { type: "file", url: "artifact://50%%20할인.pdf", name: "할인" },
+      ],
+    };
+    expect(referencedAttachmentIds(components as never, [a1, tab, pct])).toEqual(new Set([ID2, ID3]));
+  });
+});
