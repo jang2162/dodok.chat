@@ -7,6 +7,11 @@ import { defineConfig } from "vitest/config";
 // 브라우저에게 웹과 API 는 같은 출처다 — 서버 REST 에 CORS 가 없고, 세션 쿠키(httpOnly)가 wire 핸드셰이크에도 붙는다(스펙 2.5)
 const api = process.env.DODOK_API_ORIGIN ?? "http://127.0.0.1:3000";
 
+// 개발 모드 서비스 워커는 켤 때만(VITE_PWA_DEV=1). 한 번 등록된 SW 는 그 오리진(localhost:<포트>)에 남아
+// 같은 포트에 뜨는 다른 앱·preview 의 탐색에도 닿는다 — 개발 기본 포트 5173 은 다른 프로젝트와 겹칠 수 있다.
+// 끄면 virtual:pwa-register 가 아무것도 하지 않는 registerSW 로 바뀌어 startPwa 도 등록하지 않는다
+const pwaDev = process.env.VITE_PWA_DEV === "1";
+
 export default defineConfig({
   plugins: [
     react(),
@@ -38,7 +43,8 @@ export default defineConfig({
       // 아이콘은 globPatterns 가 이미 담는다 — 매니페스트 아이콘을 따로 더하면 같은 항목이 두 번 들어간다
       includeManifestIcons: false,
       injectManifest: { globPatterns: ["**/*.{js,css,html,svg,png,woff2}"] },
-      devOptions: { enabled: true, type: "module", navigateFallback: "index.html" },
+      // navigateFallback 은 두지 않는다 — 두면 개발 SW 가 Vite 가 변환한 dev index.html 을 미리 저장해 탐색을 가로챈다
+      devOptions: { enabled: pwaDev, type: "module" },
     }),
   ],
   resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
