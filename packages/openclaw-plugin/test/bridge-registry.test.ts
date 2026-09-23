@@ -50,6 +50,32 @@ describe("bridge-registry — 모듈 인스턴스를 넘는 공유", () => {
   });
 });
 
+describe("bridge-registry — 전역 자리", () => {
+  it("두 Map 은 서로 다른 키를 쓴다", async () => {
+    const reg = await loadGeneration();
+    expect(reg.BRIDGES_KEY).not.toBe(reg.CORRELATIONS_KEY);
+    // 쓰는 자리에서 키를 바꿔 끼워도 잡는다 — 같은 id 가 서로를 덮지 않는다
+    const bridge = fakeBridge("x");
+    const correlation: OutboundCorrelation = { runId: "run-x", replyToInboundId: "msg-x" };
+    reg.registerBridge("x", bridge);
+    reg.setCorrelation("x", correlation);
+    expect(reg.getBridge("x")).toBe(bridge);
+    expect(reg.getCorrelation("x")).toBe(correlation);
+  });
+
+  it("전역 자리에 Map 이 아닌 값이 있으면 키 이름을 담아 던진다 — 조용히 덮어 브리지를 잃지 않는다", async () => {
+    const reg = await loadGeneration();
+    const g = globalThis as Record<symbol, unknown>;
+    g[reg.BRIDGES_KEY] = { stale: true };
+    g[reg.CORRELATIONS_KEY] = { stale: true };
+    expect(() => reg.getBridge("default")).toThrow("dodok.openclaw-plugin.bridges.v1");
+    expect(() => reg.getCorrelation("agent:dev:dodok:channel:c1")).toThrow(
+      "dodok.openclaw-plugin.correlations.v1",
+    );
+    expect(g[reg.BRIDGES_KEY]).toEqual({ stale: true });
+  });
+});
+
 describe("bridge-registry — 삭제 가드", () => {
   it("새 세대가 덮은 뒤 옛 세대가 옛 브리지로 release 해도 새 브리지가 남는다", async () => {
     const oldGen = await loadGeneration();

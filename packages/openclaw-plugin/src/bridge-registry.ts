@@ -5,7 +5,7 @@
  * 모델 런의 message 툴(handleAction)·sendText 는 세대 2 에서 돈다. 모듈 스코프 Map 이면 세대 2 가 비어 있으므로
  * globalThis 의 Symbol.for 키에 둔다(번들 채널 telegram 도 같은 관행). SDK 의 global-singleton 은 private-local 이라 쓰지 않는다.
  *
- * 키의 v1: 핫 리로드 때 서로 다른 플러그인 버전이 한 Map 을 볼 수 있다 — BridgeClient 모양을 바꾸면 올린다.
+ * 키의 v1: 핫 리로드 때 서로 다른 플러그인 버전이 한 Map 을 볼 수 있다 — BridgeClient·OutboundCorrelation 모양을 바꾸면 올린다.
  * SDK 를 import 하지 않는다(단위 테스트 대상).
  */
 import type { BridgeClient } from "./bridge-client";
@@ -16,12 +16,15 @@ export const CORRELATIONS_KEY = Symbol.for("dodok.openclaw-plugin.correlations.v
 
 function globalMap<V>(key: symbol): Map<string, V> {
   const g = globalThis as Record<symbol, unknown>;
-  let map = g[key] as Map<string, V> | undefined;
-  if (!map) {
-    map = new Map<string, V>();
+  const found = g[key];
+  if (found === undefined) {
+    const map = new Map<string, V>();
     g[key] = map;
+    return map;
   }
-  return map;
+  // 같은 realm 이라 instanceof 가 통한다(ADR 0004). 조용히 새 Map 으로 덮으면 브리지를 잃고도 증상이 안 보인다
+  if (!(found instanceof Map)) throw new Error(`globalThis[${key.toString()}] 가 Map 이 아니다`);
+  return found as Map<string, V>;
 }
 
 /** 계정별 브리지 연결. message 툴 액션·sendText 는 계정 id 로 연결을 찾는다 */
