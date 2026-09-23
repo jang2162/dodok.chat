@@ -4,6 +4,8 @@
  *
  * .env 를 읽지 않는다: 토큰·비밀은 아래 개발 전용 고정값이고(로그에 찍어도 된다), loadConfig 에는 여기서 정한 값만 넘긴다.
  * DB 는 <dataDir>/dev-fake.sqlite — 시작마다 새로, `--keep` 이면 유지. 실행: `PORT=0 pnpm -F @dodok/server dev:fake [--keep]`.
+ * 웹 오리진은 APP_ORIGIN(없으면 http://localhost:5173). 5173 이 차 있으면 5180 으로:
+ * `PORT=3100 APP_ORIGIN=http://localhost:5180 pnpm -F @dodok/server dev:fake` + `DODOK_API_ORIGIN=http://127.0.0.1:3100 pnpm -F @dodok/web dev --port 5180`.
  */
 import type { ApprovalDecision, InboundDeliver } from "@dodok/shared";
 import { mkdirSync, rmSync } from "node:fs";
@@ -22,6 +24,7 @@ import {
 import { waitForAdapterConnected } from "../test/helpers/live-app";
 import { makePng, PDF_BYTES } from "../test/helpers/png";
 
+const DEFAULT_APP_ORIGIN = "http://localhost:5173";
 /** 개발 전용 고정 로그인 토큰(= owner 비밀번호). 시크릿이 아니다 — 로그에 찍는다 */
 export const DEV_FAKE_LOCAL_TOKEN = "dev-fake-local-token";
 const DEV_FAKE_SECRET = "dev-fake-better-auth-secret-00000000";
@@ -50,7 +53,14 @@ export type DevFakeOptions = {
   /** true 면 dev-fake.sqlite 를 지우지 않는다 */
   keep?: boolean;
   logLevel?: "fatal" | "error" | "warn" | "info" | "debug" | "trace";
+  /** 웹 오리진(wire 핸드셰이크 Origin 검사). 기본 http://localhost:5173 */
+  appOrigin?: string;
 };
+
+/** 환경변수 APP_ORIGIN 이 있으면 그것, 없거나 비었으면 http://localhost:5173 */
+export function devFakeAppOrigin(env: Record<string, string | undefined>): string {
+  return env.APP_ORIGIN || DEFAULT_APP_ORIGIN;
+}
 export type DevFake = { app: App; url: string; close(): Promise<void> };
 
 /** 코드 포인트 단위로 대략 같은 길이 parts 개로 나눈다(서로게이트 쌍을 가르지 않는다) */
@@ -437,7 +447,7 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
       loadConfig({
         HOST: "127.0.0.1",
         PORT: String(port),
-        APP_ORIGIN: "http://localhost:5173",
+        APP_ORIGIN: opts.appOrigin ?? DEFAULT_APP_ORIGIN,
         DATA_DIR: dataDir,
         DB_PATH: dbPath,
         LOG_LEVEL: opts.logLevel ?? "info",
@@ -466,14 +476,22 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+  const appOrigin = devFakeAppOrigin(process.env);
   const dev = await startDevFake({
     port: Number(process.env.PORT || 3000),
+    appOrigin,
     dataDir: resolve(import.meta.dirname, "../../../data"),
     keep: process.argv.includes("--keep"),
   });
   dev.app.logger.info(
-    { url: dev.url, web: "http://localhost:5173", loginToken: DEV_FAKE_LOCAL_TOKEN },
-    "dev:fake 서버 — 웹은 pnpm -F @dodok/web dev, 로그인 토큰은 개발 전용 고정값",
+    {
+      url: dev.url,
+      web: appOrigin,
+      loginToken: DEV_FAKE_LOCAL_TOKEN,
+      web5180:
+        "PORT=3100 APP_ORIGIN=http://localhost:5180 pnpm -F @dodok/server dev:fake + DODOK_API_ORIGIN=http://127.0.0.1:3100 pnpm -F @dodok/web dev --port 5180",
+    },
+    "dev:fake 서버 — 웹은 pnpm -F @dodok/web dev(5173 이 차 있으면 web5180 처럼), 로그인 토큰은 개발 전용 고정값",
   );
   let stopping = false;
   const stop = () => {

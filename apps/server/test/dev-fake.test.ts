@@ -13,7 +13,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { io, type Socket } from "socket.io-client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { DEV_FAKE_LOCAL_TOKEN, type DevFake, fakeAgentScript, startDevFake } from "../scripts/dev-fake";
+import {
+  DEV_FAKE_LOCAL_TOKEN,
+  type DevFake,
+  devFakeAppOrigin,
+  fakeAgentScript,
+  startDevFake,
+} from "../scripts/dev-fake";
 import { findItem, formatInteractionText } from "../src/modules/components/interact";
 import type { ScenarioApproval } from "./fakes/scenario";
 import { makePng } from "./helpers/png";
@@ -37,6 +43,14 @@ const delivery = (
       ],
     },
   }) as unknown as InboundDeliver;
+
+describe("devFakeAppOrigin", () => {
+  it("APP_ORIGIN 이 있으면 그 오리진(5173 을 다른 프로젝트가 쓸 때 5180 으로), 없거나 비었으면 http://localhost:5173", () => {
+    expect(devFakeAppOrigin({ APP_ORIGIN: "http://localhost:5180" })).toBe("http://localhost:5180");
+    expect(devFakeAppOrigin({})).toBe("http://localhost:5173");
+    expect(devFakeAppOrigin({ APP_ORIGIN: "" })).toBe("http://localhost:5173");
+  });
+});
 
 describe("fakeAgentScript", () => {
   const owner: Author = { type: "user", handle: "owner" };
