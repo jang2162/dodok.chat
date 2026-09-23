@@ -173,6 +173,27 @@ describe("createConnectionManager — 접속 루프", () => {
     expect(events).toEqual([frame]);
   });
 
+  it("gateway connected 로그에 hello-ok 의 server.version 을 gatewayVersion 으로 싣는다(없으면 null)", async () => {
+    const withHello = Object.assign(fakeLink(), { hello: { server: { version: "2026.9.5" } } });
+    const { connector, attempts } = scriptedConnector([withHello, fakeLink()]);
+    const { manager, logger } = setup({ connector });
+    const connectedLines = () =>
+      logger.info.mock.calls.filter((call) => call[1] === "gateway connected").map((call) => call[0]);
+
+    manager.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(connectedLines()).toEqual([
+      {
+        scopes: ["operator.read", "operator.write", "operator.approvals", "operator.admin"],
+        gatewayVersion: "2026.9.5",
+      },
+    ]);
+
+    attempts[0]?.options.onClose?.({ code: 1006, reason: "" });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(connectedLines().at(-1)).toMatchObject({ gatewayVersion: null });
+  });
+
   it("onClose → reconnecting, 이전 연결을 stop 하고 1s 뒤 다시 붙어 connected", async () => {
     const first = fakeLink();
     const second = fakeLink();

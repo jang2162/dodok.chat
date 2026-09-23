@@ -207,7 +207,16 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
     serverVersion: opts.bridge.serverVersion,
     ...(opts.bridge.ackTimeoutMs === undefined ? {} : { ackTimeoutMs: opts.bridge.ackTimeoutMs }),
     onHello: (_session, hello) => {
-      logger.info({ pluginVersion: hello.version, sdkVersion: hello.sdkVersion }, "bridge plugin hello");
+      // gatewayVersion 은 플러그인이 돌고 있는 Gateway 의 runtime.version. pluginBuiltWithSdk 는 빌드 때 박힌
+      // openclaw devDependency 버전이라 Gateway 버전이 아니다(9.5 위에서도 2026.9.4 로 찍힌다)
+      logger.info(
+        {
+          pluginVersion: hello.version,
+          pluginBuiltWithSdk: hello.sdkVersion,
+          gatewayVersion: hello.gatewayVersion ?? null,
+        },
+        "bridge plugin hello",
+      );
       setBridgeState("connected");
     },
     onClose: (session) => {
