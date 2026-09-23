@@ -279,6 +279,11 @@ oc --dev plugins inspect dodok --json | jq .plugin.status     # 여전히 "loade
 - **[사람] 원격 Gateway 버전을 먼저 확인한다.** 서버를 원격에 붙이면 접속 한 번에 로그 두 줄이 알려 준다 — `"gateway connected"` 의 `gatewayVersion`·`gatewayBuildId`(hello-ok `server.version`·`server.buildId`)와 `"bridge plugin hello"` 의 `gatewayVersion`(원격 호스트의 플러그인이 보낸 `runtime.version`).
   원격이 `2026.9.5` 이상이면 **ADR 0004 이전 번들은 배포에서도 에이전트가 카드를 못 보낸다**(결함 1) — 호스트의 플러그인을 새 번들로 바꾸고, 그 버전에서 11절 하네스를 한 번 돌린다. `pluginBuiltWithSdk` 는 Gateway 버전이 아니다(2절).
 - dev 프로필 전용 주의(내장 cron·`~/.openclaw-dev` 잔여물)는 원격 호스트의 설정·예정 작업으로 바뀐다 — 호스트에서 `openclaw cron list` 로 본다.
+- **[사람] 첨부(Phase 2 ③) — 호스트 설정 둘을 정한다**(스펙 `docs/superpowers/specs/2026-09-23-attachments-design.md` 5.3, 스파이크 보고서 Q1·2-3).
+  ① **`attachments.ttlHours`** — 설정하지 않으면 플러그인이 저장한 사람 이미지 원본(`media/inbound/`)이 호스트에 **영구히** 남는다. Gateway 의 시간당 미디어 정비는 이 값이 있을 때만 지운다. 너무 짧으면 이력 재생에서 이미지가 빠진다(전사가 그 경로를 기억한다). 이미지는 호스트에 최소 세 부가 생긴다 — 원본, claude CLI 복사본(`<ws>/.openclaw-cli-images/`, 7일 스윕), 스테이징(`<ws>/media/inbound/openclaw-staged-*`, 정리 코드를 못 찾음).
+  ② **`tools.fs.workspaceOnly`** — `false`(기본)면 모델이 **호스트에서 읽을 수 있는 아무 파일이나** `message` 툴 `media` 로 채널에 보낼 수 있다(플러그인은 `loadWebMediaRaw` 에 Gateway 의 `mediaAccess` 를 그대로 넘긴다). `true` 면 워크스페이스·미디어 캐시·임시 루트로 좁혀진다. 원격 호스트에서 어느 쪽인지 확인하고 적는다.
+  계정 설정 `mediaMaxMb`(선택, 1~20, 기본 20)는 에이전트가 보내는 파일 한 개의 상한이다 — 서버 상한 20 MiB 를 넘을 수 없다.
+- 첨부 바이트는 브리지 WS 가 아니라 **같은 오리진의 HTTP** 로 오간다 — 플러그인이 `bridgeUrl` 의 `wss:`→`https:`(`ws:`→`http:`)로 바꿔 `GET`·`POST /bridge/attachments` 를 부른다(브리지 토큰). 터널·리버스 프록시가 `/bridge` WS 만 통과시키면 첨부만 실패한다. 요청 본문 상한은 20 MiB 보다 크게 둔다. 서버 쪽 블롭은 `ATTACHMENTS_DIR`(기본 `<DATA_DIR>/attachments`)에 쌓인다.
 
 ---
 
@@ -559,6 +564,21 @@ DOM 사실은 이미 확인돼 있다: 확정·만료 안내는 **텍스트를 �
   `denied` 판은 `Browser.setPermission` 으로 만들고, 끝나면 **`Browser.resetPermissions` 로 `default` 로 되돌린다** — 프로필을 갈아 끼울 필요가 없다. 위의 ⚠ 순서 경고(`granted` 를 먼저)는 **사람이 손으로 팝업에 답할 때** 그대로 유효하다.
 - **탭 숨김**: `document.visibilityState` 를 `hidden` 으로 덮어썼다(neo 는 배경 탭도 `visible` 로 유지한다). **진짜 숨김이 아니다** — 그래서 위 표 2·3(소리·클릭으로 탭이 앞으로)은 사람이 **진짜로** 다른 앱으로 전환해 봐야 한다.
 - 뷰포트 변경·wire 소켓만 끊기도 같은 CDP 경로로 했다. 소켓만 끊을 때는 `/socket.io/` 짜리만 막고 **REST 와 Vite HMR 소켓은 건드리지 않는다** — 브라우저를 통째로 offline 으로 만들면 재접속 때 목록을 알아서 다시 받아 재현이 안 되고, HMR 을 막으면 페이지가 새로 고쳐져 「재접속」이 아니라 「새 탭」이 된다.
+
+### 9.3 첨부(Phase 2 ③) — 사람이 볼 것
+
+브라우저 검증(a3-t9)은 파일 선택을 숨은 `input` 에 파일을 넣는 것으로, 붙여넣기를 페이지 안에서 만든 `ClipboardEvent` 로 대신했다. 칩·사유 문구·「서식 없이 글만」 같은 **코드가 하는 일**은 그것으로 확인됐다.
+**실제 OS 가 채우는 클립보드·드래그 데이터**는 자동화가 흉내 낼 수 없다 — 아래는 사람이 한 번 본다. `dev:fake` + 웹이면 된다(모델 런 0회, `CLAUDE.md` 「웹 손 확인」).
+
+| # | 볼 것 | 어떻게 | 통과 기준 |
+| --- | --- | --- | --- |
+| 1 | **웹 페이지 이미지 붙여넣기** | 다른 탭에서 이미지를 우클릭 → 「이미지 복사」 → 작성기에 붙여넣기 | 칩이 생기고 올라간다. 보내면 메시지에 이미지가 그려진다 |
+| 2 | **오피스·문서에서 이미지와 글을 함께 붙여넣기** | Word·한글·구글 문서에서 이미지와 글이 섞인 구간을 복사 → 붙여넣기 | 이미지가 파일로 실리는 앱이면 칩이 생긴다. 글은 **서식 없이** 들어온다 — 굵게·표·깨진 HTML 이 본문에 보이지 않는다. 이미지를 파일로 싣지 않는 앱이면 글만 들어오는 것이 정상이다. 앱마다 어땠는지 적는다 |
+| 3 | **PNG 끌어다 놓기** | Finder 에서 PNG 를 작성기(칩 줄·버튼 위 포함) 위로 끌어 놓는다 | 커서가 「복사」 모양이고 칩이 생긴다 |
+| 4 | **SVG·PDF 끌어다 놓기** | SVG(또는 PDF)를 작성기 위로 | 칩 없이 토스트 「이미지만 올릴 수 있습니다」. 서버 요청 0건 |
+| 5 | **작성기 밖에 놓기** | 이미지를 메시지 목록 위로 끌어 놓는다 | 커서가 「놓을 수 없음」, 토스트 「이미지는 입력 칸에 놓아 주세요」. 브라우저가 이미지를 열어 앱을 떠나지 않는다 |
+| 6 | **OS 파일 선택창** | 「이미지 첨부」 → 파일 창 | PNG·JPEG·GIF·WebP 만 고를 수 있다(`accept`). SVG 는 흐리거나 안 보인다 |
+| 7 | **Safari 에서 크게 보기를 닫은 뒤 초점** | Safari 에서 이미지를 **마우스로** 눌러 크게 보기 → Esc → Tab | 초점이 그 이미지 버튼 자리에서 이어진다(`body` 로 떨어져 문서 처음부터 다시 돌지 않는다). Chromium·jsdom 은 클릭한 버튼에 초점을 줘 이 차이를 못 잰다(a3-t6 리뷰 n2) |
 
 ---
 
@@ -854,6 +874,61 @@ const startTurn = () => (async () => {
 })();
 setTimeout(() => { log({ event: "no-user-record-timeout" }); process.exit(0); }, 60000);
 ```
+
+### 11.5 첨부 재기 (Phase 2 ③ — 계획 태스크 11 의 1단계)
+
+11.3 하네스에 세 가지를 더해 첨부 경로를 모델 없이 두드린다. 스파이크(`.superpowers/sdd/2026-09-23-phase2-attachments-spike/report.md` 「절차 요지」)가 11.4 를 넓혀 쓴 것을 이 문서 모양으로 다시 적었다 — **이 코드 그대로는 아직 돌리지 않았다.** 처음 돌리는 사람이 고친 데를 여기 적는다.
+새 번들 설치는 3절 (b) 대로 한다 — **Gateway 를 먼저 내리고**, 설치 뒤 설치본 sha 가 빌드본과 같은지 본다.
+
+**① 가짜 CLI 가 받은 이미지를 잰다.** 11.4 스크립트의 stdin 처리에서 `log({ event: "stdin-record", … })` 한 줄을 아래로 바꾼다. claude-cli 는 이미지를 base64 블록이 아니라 프롬프트 끝 `@<ws>/.openclaw-cli-images/<sha256>.<ext>` 로 받는다(스파이크 1-7). 그 파일의 크기·권한·앞 8바이트만 적는다 — **base64 본문과 경로는 적지 않는다.**
+
+```js
+const c = m.message?.content;
+const text = typeof c === "string" ? c : Array.isArray(c) ? c.filter((b) => b.type === "text").map((b) => b.text).join("\n") : "";
+const atRefs = [...text.matchAll(/@(\/\S+)/g)].map(([, p]) => {
+  try {
+    const st = fs.statSync(p), head = Buffer.alloc(8), fd = fs.openSync(p, "r");
+    fs.readSync(fd, head, 0, 8, 0); fs.closeSync(fd);
+    return { size: st.size, mode: (st.mode & 0o777).toString(8), magic: head.toString("hex") };
+  } catch (e) { return { error: e.code }; }
+});
+log({ event: "stdin-record", type: m.type, subtype: m.subtype, requestSubtype: m.request?.subtype,
+  contentKind: Array.isArray(c) ? "blocks" : typeof c, atRefs,
+  blocks: Array.isArray(c) ? c.filter((b) => b.type !== "text").map((b) => ({ type: b.type, mediaType: b.source?.media_type, bytes: b.source?.data?.length })) : [] });
+```
+
+**② 최종 응답을 파일로 바꾼다.** 11.4 의 `FAKE_CLI_DONE` 두 자리(`assistant` 의 `text`, `result` 의 `result`)를 `FINAL` 로 바꾸고, 툴 호출은 `fake-args.json` 이 있을 때만 한다.
+
+```js
+const FINAL_FILE = __dirname + "/../fake-final.txt";
+const FINAL = fs.existsSync(FINAL_FILE) ? fs.readFileSync(FINAL_FILE, "utf8") : "FAKE_CLI_DONE";
+// startTurn 안: const args = … 앞에서 if (!fs.existsSync(__dirname + "/../fake-args.json")) { log({ event: "no-tool-call" }); } else { …툴 호출… }
+```
+
+⚠ 가짜 CLI 런은 `message` 툴을 써도 최종 텍스트가 **억제되지 않는다**(스파이크 2-15 — 가짜 CLI 가 `tool_use` 레코드를 내지 않아서로 보인다). 툴 런에서 `FINAL` 이 따로 한 메시지로 오는 것은 하네스 탓이다. 억제 동작은 이 하네스로 재지 않는다.
+
+**③ 준비물.** 툴이 읽을 파일은 **Gateway 워크스페이스 안**에 둔다(dev: `~/.openclaw-dev/workspace`). 밖이면 `tools.fs.workspaceOnly` 에 따라 「허용되지 않은 경로」가 날 수 있다.
+
+```bash
+WS=~/.openclaw-dev/workspace; mkdir -p $WS/a3-harness
+cp <아무 PNG> $WS/a3-harness/chart.png; cp <아무 PDF> "$WS/a3-harness/월간 보고서.pdf"
+shasum -a 256 $WS/a3-harness/*; stat -f '%z %N' $WS/a3-harness/*          # 크기·sha 를 적어 둔다
+```
+
+**④ 차례와 합격 기준**(계획 `docs/superpowers/plans/2026-09-23-attachments.md` 태스크 11 의 1). 런마다 `$SP/fake-args.json`·`fake-final.txt` 를 바꾸고 `@dev` 를 한 번 보낸다. 사람 이미지는 **웹 작성기로** 보낸다 — `wire-cli` 는 첨부를 보내지 못한다(7.1 준비대로 웹을 띄운다).
+
+| # | 런 | 준비 | 합격 |
+| --- | --- | --- | --- |
+| a | **인바운드** — 사람 이미지 | `fake-args.json`·`fake-final.txt` 없음. 웹에서 PNG 한 장 + `@dev 첨부 프로브` | `stdin-record` 의 `atRefs` 가 하나, `magic` 이 `89504e470d0a1a0a`, `size` 가 올린 원본과 같다(`contentKind:"string"`, `blocks:[]`). Gateway 로그 `dodok:inbound-media` 가 `images:1`·`reasons:[]` |
+| b | **툴 `media`** — PNG·PDF·한국어 이름 | `fake-args.json` = `{"action":"send","target":"channel:<CH>","message":"첨부 둘","mediaUrls":["<WS>/a3-harness/chart.png","<WS>/a3-harness/월간 보고서.pdf"]}` | `tools/call message` 가 `sent to dodok channel …`. 채널 메시지에 첨부 둘이 **그 순서로**, 이름 `chart.png`·`월간 보고서.pdf` 그대로. 내려받은 바이트의 sha 가 ③ 과 같다. `dodok:tool-send-media` 가 `uploaded:2`·`failed:0` |
+| c | **최종 응답 `MEDIA:` 줄** | `fake-args.json` 없음. `fake-final.txt` 세 줄 — `결과`, 빈 줄, `MEDIA:<WS>/a3-harness/chart.png`(`printf '결과\n\nMEDIA:%s\n' <경로> > $SP/fake-final.txt`) | 채널 메시지 본문이 `결과` 이고 **`MEDIA:` 가 없다**, 첨부 하나. `dodok:deliver-media` 가 `uploaded:1`. 서버 로그에 `gateway snapshot media lines dropped` 가 없다(플러그인 정본이 먼저 왔다는 뜻 — 스펙 11장 Ruling 2) |
+| d | **미디어만 있는 응답** | `fake-args.json` 없음. `fake-final.txt` 한 줄 — `MEDIA:<WS>/a3-harness/chart.png` | 채널에 **본문 없이** 첨부만 온다. 채널 어디에도 호스트 경로(`/Users/`·`~/.openclaw`)가 없다 |
+| e | **실패 문구**(선택) | b 의 경로 하나를 없는 파일로 | 툴 결과가 `dodok: 첨부를 보내지 못했습니다 — <이름>: 파일을 찾을 수 없음`. 호스트 경로가 툴 결과·채널에 없다(원문은 `dodok:tool-send-media` 의 `details` 에만, 가려서) |
+
+`<CH>`·`<WS>` 는 실제 값으로 바꿔 쓴다. c·d 가 통과하면 스파이크 2-10 의 결함(미디어 전용 응답이 `MEDIA:/호스트/경로` 를 채널에 드러냄)이 실물에서 닫힌 것이다.
+이 표는 플러그인 `channel.ts` 배선(순수 함수를 부르는가)의 합격 기준도 겸한다 — 단위 테스트는 그 우회를 못 잡는다(`docs/plan.md` 8장 이월).
+
+**끝나면**: 11.3 대로 되돌리고, `rm -rf $WS/a3-harness`. 플러그인이 저장한 원본(`~/.openclaw-dev/media/inbound/`)·CLI 복사본(`<ws>/.openclaw-cli-images/`)·스테이징(`<ws>/media/inbound/openclaw-staged-*`)에서 이번 런이 만든 것만 지운다(스파이크 보고서 「정리 상태」가 본보기).
 
 ## 12. 결함 1 고침의 실물 확인 — 2026-09-23 결과 (c2-t16, 모델 런 0회)
 

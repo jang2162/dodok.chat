@@ -1920,7 +1920,7 @@ git commit -m "feat(web): 작성기 이미지 올리기·미리보기 칩·첨�
 | --- | --- |
 | 「이미지 보여줘」 | `reply: "그래프입니다"` + `attachments: [chart.png 480×320]` |
 | 「보고서 줘」 | `reply: "보고서입니다"` + `attachments: [report.pdf]` |
-| 「카드에 이미지」 | `reply: "카드입니다"` + `attachments: [chart.png, 월간 보고서.pdf]` + components `media`(`artifact://chart.png`)·`file`(`artifact://월간 보고서.pdf`, name 「월간 보고서」)·링크 버튼(`artifact://월간 보고서.pdf`)·`media` 항목 하나는 없는 이름(`artifact://없음.png` — 「첨부를 찾을 수 없습니다」 확인용) |
+| 「카드에 이미지」 | `reply: "첨부를 가리킨 안내입니다"`(처음 적은 「카드입니다」는 「카드」 키워드를 담아 바꿨다 — a3-t8 리뷰 L3) + `attachments: [chart.png, 월간 보고서.pdf]` + components `media`(`artifact://chart.png`)·`file`(`artifact://월간 보고서.pdf`, name 「월간 보고서」)·링크 버튼(`artifact://월간 보고서.pdf`)·`media` 항목 하나는 없는 이름(`artifact://없음.png` — 「첨부를 찾을 수 없습니다」 확인용) |
 | 「미디어만」 | `reply: ""` + `attachments: [chart.png]` |
 | (사람 첨부가 있는 모든 멘션) | 대본 앞에 한 줄 — `받은 첨부 N개, 첫 이미지 W×H`(인바운드 `message.attachments` 에서) |
 

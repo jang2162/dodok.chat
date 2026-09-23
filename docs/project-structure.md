@@ -32,7 +32,7 @@ dodok.chat/
 │  ├─ hooks/node-env.sh       # SessionStart: mise 가 핀한 Node·pnpm 을 Bash 도구 PATH 앞에 (비대화형 셸은 mise activate 훅이 안 돈다)
 │  └─ hooks/orca-worker-check.sh   # 미정리 워커·워크트리 현황을 세션에 알림
 ├─ .worktrees/dodok.chat/     # Orca 워크트리 자리 — git 제외 (docs/guides/worktree-workflow.md)
-├─ data/                      # 런타임 데이터 (SQLite, 업로드, 디바이스 아이덴티티) — git 제외
+├─ data/                      # 런타임 데이터 (SQLite, 첨부 블롭 attachments/, 디바이스 아이덴티티) — git 제외
 ├─ CLAUDE.md                  # 에이전트 지침 (정본)
 ├─ .mcp.json                  # 프로젝트 MCP — playwright-neo (BrowserOS neo 의 CDP 에 붙는 Playwright)
 ├─ .oxlintrc.json / .oxfmtrc.json
@@ -73,7 +73,8 @@ src/
 
 Phase 1 ① 서버 코어 실물(스펙 `docs/superpowers/specs/2026-09-15-server-core-design.md`, 계획 `docs/superpowers/plans/2026-09-15-server-core.md`)에
 Phase 2 ① 승인(스펙 `docs/superpowers/specs/2026-09-20-activity-approvals-design.md`)과 Phase 2 ② 상호작용 기록 하이드레이션
-(스펙 `docs/superpowers/specs/2026-09-21-components-v1-design.md` 4장)이 얹혔다. 한 프로세스 안에 REST·wire·브리지·어댑터가 같이 뜬다.
+(스펙 `docs/superpowers/specs/2026-09-21-components-v1-design.md` 4장), Phase 2 ③ 첨부(스펙 `docs/superpowers/specs/2026-09-23-attachments-design.md`, 구현과 달라진 것은 11장)가 얹혔다.
+한 프로세스 안에 REST·wire·브리지·어댑터가 같이 뜬다. 첨부 바이트는 브리지와 같은 오리진의 HTTP(`/bridge/attachments`)로 오간다.
 
 ```
 src/
@@ -84,7 +85,7 @@ src/
 ├─ logger.ts              pino, 토큰·비밀 키 redact
 ├─ wiring.ts              createServices(라우터 ⇄ 오케스트레이터 상호 참조, RunsFacade), sessionRecoverTargets(재접속 복구 대상)
 ├─ db/
-│  ├─ schema.sqlite.ts    Drizzle 스키마 (계획서 6장 테이블 + agent_sessions + approvals)
+│  ├─ schema.sqlite.ts    Drizzle 스키마 (계획서 6장 테이블 + agent_sessions + approvals + attachments — 마이그레이션 0003, FK cascade 없음)
 │  ├─ auth-schema.ts      Better Auth 테이블
 │  └─ client.ts           createDb: better-sqlite3 연결 + 마이그레이션(apps/server/drizzle)
 ├─ auth/
@@ -95,19 +96,29 @@ src/
 │  ├─ errors.ts           HttpError·apiError — ApiError { code, message, details? } ↔ HTTP 상태
 │  └─ validate.ts         경계 Zod 파싱(body·query·params·wire payload·저장값)
 ├─ modules/
+│  ├─ attachments/        Phase 2 ③. 첨부의 정본 — 디스크 블롭(`<ATTACHMENTS_DIR>/<sha 앞 2자>/<sha256>`, 같은 내용은 한 번) + attachments 행, 경계를 넘는 꼴은 `artifact://<id>`.
+│  │                      sniff.ts(순수: 매직 바이트 → kind·mime, 이미지면 image-size 로 가로·세로 — EXIF 회전 5~8 은 바꿔서, 못 읽으면 file. SVG 는 늘 file) ·
+│  │                      store.ts(sha256·블롭 쓰기(임시 파일 → rename)·지우기, sha 별 잠금 BlobLocks — 업로드와 정리가 같은 잠금을 지난다) ·
+│  │                      service.ts(올리기(사람 이미지 5 MB·브리지 파일 20 MiB)·잡기 claimUser/claimBridge·묶기·읽기 권한 findReadable·정리 sweepAttachments —
+│  │                      24시간 넘은 미묶음 행, 행 없는 블롭, 1시간 넘은 .tmp) ·
+│  │                      routes.ts(`POST`·`GET /api/v1/attachments`(세션), `POST`·`GET /bridge/attachments`(브리지 토큰) — 원시 바이트 본문, 인증은 onRequest,
+│  │                      GET 은 블롭을 먼저 열어 없으면 404, nosniff·CSP sandbox·immutable, Content-Disposition 은 RFC 5987).
+│  │                      정리 타이머 startAttachmentSweeper 는 app.ts 에 있다(부팅 때 한 번, 그 뒤 1시간마다, 닫을 때 진행 중인 정리를 기다린다)
 │  ├─ approvals/          store.ts(approvals 테이블 — providerApprovalId 유일 upsert, 중복은 병합 후 재발행, 채널 미해결 목록),
 │  │                      service.ts(상관 findOpenRunBySession → 저장 → APPROVAL_REQUESTED/RESOLVED 런 이벤트 → 버스, resolve 는 승인 설계 4.4 의 문지기 검사 뒤 어댑터 RPC).
 │  │                      REST 라우트는 없다 — 요구·확정은 wire 로만 오간다
 │  ├─ channels/           CRUD·멤버(에이전트 promptOverride·autoRespond·aliases)·프롬프트 리비전, 프롬프트 변경 시 어댑터 config.set, 「새 대화」(resetAgentSession)
 │  ├─ agents/             에이전트 등록·수정, GET /agents/discover(Gateway agents.list)
-│  ├─ messages/           seq 발급(seq.ts)·사람/에이전트/시스템 메시지 저장·bus 통지·히스토리 페이징.
+│  ├─ messages/           seq 발급(seq.ts)·사람/에이전트/시스템 메시지 저장·bus 통지·히스토리 페이징. 저장과 같은 트랜잭션에서 첨부를 묶는다
+│  │                      (사람: 틀린 id 가 하나라도 있으면 VALIDATION, clientMsgId 재전송은 잡기보다 먼저 확인 / 에이전트: 틀린 id 만 빼고 경고).
 │  │                      withInteractions(db, msgs): components 가 있는 메시지에만 component_interactions 를 한 번에 읽어
 │  │                      `interactions`(createdAt·id 오름차순, 최신 20건)를 싣는다 — 그런 메시지가 없으면 질의하지 않는다.
 │  │                      클라이언트가 볼 Message 만 거친다: listMessages(REST `GET /channels/:id/messages`·구독 ack)와 wire 팬아웃(realtime/events.ts).
 │  │                      내부 getMessage·bus 페이로드는 거치지 않는다(components v1 스펙 11장 Ruling 1)
 │  ├─ router/             decide.ts(순수: 멘션·릴레이 판정, maxRelayTurns·allowPairs·반복 해시·일일 상한) + service.ts(런 enqueue, relay_limit·relay_denied 시스템 메시지와 continue_relay 버튼)
 │  ├─ runs/               orchestrator.ts(세션 직렬화·타이머·신호 → 상태 전이·run_events·정본 상관·부팅 정리), machine.ts(순수 상태머신),
-│  │                      store.ts(runs·run_events), context.ts(인바운드 InboundDeliver 조립), timers.ts, routes.ts(런 목록·상세·이벤트 REST)
+│  │                      store.ts(runs·run_events), context.ts(인바운드 InboundDeliver 조립 — 트리거 첨부를 싣고, 이전 메시지 줄의 첨부는 `[이미지 N장]`·`[파일: 이름]` 자리표시로만),
+│  │                      media-lines.ts(순수: Gateway 폴백 스냅샷의 단독 `MEDIA:` 줄 걷기 — 줄이 있으면 finalizing 을 줄당 30s, 최대 120s 늘린다), timers.ts, routes.ts(런 목록·상세·이벤트 REST)
 │  ├─ sessions/           agent_sessions — 채널×에이전트 세션 키 보장, 리셋 뒤 프롬프트 리비전 갱신
 │  ├─ components/         interact.ts(순수: 검사 순서·값 스키마·인바운드 텍스트) + service.ts(저장·소비·continue/interaction 런.
 │  │                      상호작용마다 message.updated — reusable 카드도 결과 줄이 실시간으로 는다. 소비(consumed)는 1회용만)
@@ -128,11 +139,13 @@ src/
    └─ types.ts            WireServer·RunsFacade 타입
 ```
 
-아직 없는 것(Phase 2 ② 이후): `push/`, `uploads/`, 어댑터 `registry.ts`(MVP 는 openclaw 하나).
+아직 없는 것: `push/`, 어댑터 `registry.ts`(MVP 는 openclaw 하나). 업로드는 Phase 2 ③ 의 `modules/attachments/` 가 맡는다.
 
 테스트(`apps/server/test/`): 모듈 단위(인메모리 SQLite), `fakes/`(가짜 Gateway·가짜 플러그인·시나리오 대본 — 대본의 `components` 는 실물 플러그인
 `buildOutboundMessage` 를 지나 스키마를 어기면 거절된다), `integration/`(시나리오 1~8 `relay`·`prompt`·`recovery`, 시나리오 9a~9g `approvals`(9c′ 포함 8건),
-시나리오 10a~10g `components`(셀렉트·모달 → 다음 런, 결과 줄 세 경로, reusable, 상한 20, 동시 두 번, 스키마 위반 거절), 실제 어댑터 + 가짜 둘), `helpers/`(`bootLiveApp`·wire 클라이언트·시나리오 단계).
+시나리오 10a~10g `components`(셀렉트·모달 → 다음 런, 결과 줄 세 경로, reusable, 상한 20, 동시 두 번, 스키마 위반 거절), 시나리오 11a~11i `attachments`(올리기·권한·판별·에이전트 첨부·미디어만·폴백 `MEDIA:`·정리·문맥 자리표시), 실제 어댑터 + 가짜 둘),
+`helpers/`(`bootLiveApp`·wire 클라이언트·시나리오 단계·`png.ts`(테스트 PNG 생성기 `makePng`·`PDF_BYTES`) — `bootTestApp` 은 앱마다 임시 `ATTACHMENTS_DIR` 을 만들고 닫으면 지운다).
+가짜 플러그인은 브리지 HTTP 로 첨부를 받고 올리며(`uploadAttachment`·`downloadAttachment`), 대본 `ScenarioScript` 에 `attachments`·`attachmentIds`·`withholdCanonical` 이 있다.
 손으로 두드리는 실연 도구는 루트 `scripts/wire-cli.ts`(`pnpm wire-cli`, `docs/guides/live-smoke.md`).
 
 개발 모드 `apps/server/scripts/dev-fake.ts`(`pnpm -F @dodok/server dev:fake`, 웹 MVP 스펙 9.2): 위 `test/fakes/` 를 그대로 가져다 가짜 Gateway·가짜 플러그인·대본과 함께 서버를 띄운다 —
@@ -140,7 +153,9 @@ src/
 DB 는 `data/dev-fake.sqlite`(시작마다 새로, `--keep` 이면 유지), 기본 포트 3000(Vite 프록시 대상). 운영 코드(`src/`)는 건드리지 않는다.
 받은 글의 키워드로 대본을 고른다 — 드롭·실패·느리게·도구·승인(승인 둘·승인 항상), components 는 「폼」(모달 필드 5종)·「폼 둘」(checkbox·radio + 필수 text — 둘이 합쳐 필드 7종)·
 「고르기」(단일 셀렉트 + 옵션 12개 다중 셀렉트 — 스크롤 상자가 실제로 넘친다)·「카드」(블록 5종, media·file·링크 버튼에 `artifact://` 하나씩)·「재사용」(reusable 버튼 + 모달)·
-「짧게」(TTL 20초, 다른 키워드와 오면 그 카드의 TTL 만 줄인다). `APP_ORIGIN` 은 `http://localhost:5173` 고정이라 웹을 다른 포트로 띄우면 스크립트의 그 줄을 함께 바꿔야 한다.
+「짧게」(TTL 20초, 다른 키워드와 오면 그 카드의 TTL 만 줄인다), 첨부(Phase 2 ③)는 「이미지 보여줘」(chart.png 480×320)·「보고서 줘」(report.pdf)·「카드에 이미지」(media·file·링크 버튼이 `artifact://<이름>` 으로 첨부를 가리키고 하나는 없는 이름)·「미디어만」(글 없는 응답).
+사람이 첨부를 붙여 부르면 답 앞에 `받은 첨부 N개, 첫 이미지 W×H` 줄을 붙인다. 대본이 내는 글·라벨·파일 이름에 키워드가 없음을 `DEV_FAKE_KEYWORDS` 전수 테스트가 본다.
+웹을 다른 포트로 띄우면 `PORT=3100 APP_ORIGIN=http://localhost:5180 pnpm -F @dodok/server dev:fake` + `DODOK_API_ORIGIN=http://127.0.0.1:3100 pnpm -F @dodok/web dev --port 5180`(`APP_ORIGIN` 기본은 `http://localhost:5173`).
 
 ### 2.3 `packages/openclaw-adapter` (서버 프로세스 안에서 실행)
 
@@ -150,7 +165,7 @@ src/
 ├─ adapter-types.ts       AgentAdapter 인터페이스(스펙 6.1), AdapterEvent(+ kind:"approval")·RunEventBody, AdapterCapabilities(sessionReset·agentsList·configSet),
 │                         resolveApproval(providerApprovalId, kind, decision), AdapterError
 ├─ openclaw-adapter.ts    createOpenClawAdapter: 연결 관리자 + 브리지 + 매퍼 조립. send = 런 id 등록 → 세션 구독 → inbound.deliver(플러그인 미접속 120s 대기,
-│                         ack 타임아웃 10s·재시도 1s·4s·16s) → admission. 정본 outbound.message → onCanonical. abort(chat.abort)·resetSession(sessions.reset,
+│                         ack 타임아웃 10s + 트리거 이미지 첨부당 30s·재시도 1s·4s·16s) → admission. 정본 outbound.message → onCanonical. abort(chat.abort)·resetSession(sessions.reset,
 │                         FORBIDDEN 이면 capability 내림)·listAgents·syncChannelConfig·forgetRun·status 이벤트
 ├─ fake-adapter.ts        FakeAdapter — 서버 단위 테스트용(`@dodok/openclaw-adapter/fake` 서브패스), calls 기록·이벤트 주입
 ├─ config-sync.ts         채널 설정 → 브리지 config.set(10s). 플러그인이 없으면 기다리지 않고 ADAPTER_UNAVAILABLE
@@ -193,10 +208,17 @@ src/
 ├─ channel.ts             채널 정의: 인바운드 ingress, 아웃바운드 액션 어댑터(describeMessageTool),
 │                         채널별 설정 스키마(requireMention, systemPrompt, botLoopProtection, inboundChannelPrompt 는 제거[계획서 10장 #18]). 코어 봇 루프 보호는
 │                         플러그인이 에이전트 작성 인바운드에 사실을 넘길 때만 동작한다 (ADR 0002 7절)
-├─ components-schema.ts   message 툴에 끼울 components 스키마 조각 (shared/components를 그대로 노출)
+├─ components-schema.ts   message 툴에 끼울 components 스키마 조각 (shared/components를 그대로 노출). url 설명에 `artifact://<파일 이름>` 관례
+├─ config.ts              계정 설정 스키마 — bridgeUrl·token, 첨부 상한 mediaMaxMb(선택, 1~20 → min(값 MiB, 20 MiB))
+├─ media-http.ts          Phase 2 ③. 브리지 URL → HTTP 오리진(wss→https, 경로 제거), 첨부 받기·올리기(fetch 주입, 30s, 네트워크 오류만 1회 재시도). 상태 없음
+├─ inbound-media.ts       Phase 2 ③(순수). 인바운드 이미지 첨부를 병렬로 받아 saveMediaBuffer(maxBytes 20 MiB) → media fact(url 없음).
+│                         이미지가 아닌 첨부는 본문 끝 `[첨부 파일: 이름]`, 실패는 `[이미지를 불러오지 못했습니다: 이름]` — 런은 막지 않는다
+├─ outbound-media.ts      Phase 2 ③(순수). 원천 모으기(툴 media/mediaUrls·deliver mediaUrls)·이름 정리·겹치면 ` (2)`·loadWebMediaRaw 옵션·올리기,
+│                         실패 사유는 오류 코드별 고정 문구(원문은 가려서 로그에만 — 스펙 11장 Ruling 3), 미디어만 있는 final 도 보낸다(shouldDeliverFinal)
 ├─ bridge-client.ts       서버 브리지 WSS 아웃바운드 접속(BRIDGE_URL·토큰)·지수 백오프 재연결·아웃바운드 큐
 ├─ bridge-registry.ts     계정별 브리지·세션별 상관관계를 globalThis Symbol.for 키에 둔다 — 9.5 는 번들을 두 번 평가해 모델 런의 message 툴이
 │                         startAccount 를 돌지 않은 인스턴스로 간다. 삭제는 같은 객체일 때만(releaseBridge) (ADR 0004)
+├─ outbound.ts            buildOutboundMessage·coerceComponents — components 의 `artifact://` 값 안 공백류를 검증 전에 퍼센트 인코딩(Ruling 4)
 ├─ config-writer.ts       브리지에서 받은 채널 설정 변경을 runtime.config.mutateConfigFile 로 Gateway 설정에 반영(channel-config-writes 는 권한 판정).
 │                         반영은 설정 스냅샷 기준 live. claude-cli 기존 세션은 리셋·새 키에서만 반영, 드리프트·재시작으로는 미반영 (ADR 0003 3절)
 └─ context.ts             인바운드에 동봉할 최근 채널 메시지 N개 + 참여자 목록 + 릴레이 규칙 요약 + 채널 프롬프트 배치(헤더 줄 또는 ChannelPromptContext, ADR 0003)
@@ -210,8 +232,9 @@ SDK import 경로: `openclaw/plugin-sdk/plugin-entry`, `openclaw/plugin-sdk/chan
 
 Phase 1 ② 웹 MVP 실물(스펙 `docs/superpowers/specs/2026-09-19-web-mvp-design.md`, 계획 `docs/superpowers/plans/2026-09-19-web-mvp.md`)
 위에 Phase 2 ① 활동 패널·승인(스펙 `docs/superpowers/specs/2026-09-20-activity-approvals-design.md`)과
-Phase 2 ② components v1 렌더러(스펙 `docs/superpowers/specs/2026-09-21-components-v1-design.md`, 계획 `docs/superpowers/plans/2026-09-21-components-v1.md`)가 얹혔다.
-React 19 + Vite 8 + TanStack(Query·Router·Virtual) + Tiptap 작성기 + Streamdown 렌더 + Tailwind 4·shadcn. 의존성은 전부 정확 핀이고 태스크 2 에서 한 번에 넣었다 — 뒤 작업은 의존성을 더하지 않는다.
+Phase 2 ② components v1 렌더러(스펙 `docs/superpowers/specs/2026-09-21-components-v1-design.md`, 계획 `docs/superpowers/plans/2026-09-21-components-v1.md`)와
+Phase 2 ③ 첨부·이미지(스펙 `docs/superpowers/specs/2026-09-23-attachments-design.md`, 계획 `docs/superpowers/plans/2026-09-23-attachments.md`)가 얹혔다.
+React 19 + Vite 8 + TanStack(Query·Router·Virtual) + Tiptap 작성기 + Streamdown 렌더 + Tailwind 4·shadcn. 의존성은 전부 정확 핀이고 태스크 2 에서 한 번에 넣었다 — 뒤 작업은 의존성을 더하지 않는다(Phase 2 ③ 도 0).
 서버 상태의 진실은 Query 캐시이고 wire 이벤트가 그것을 패치한다. 스트리밍 중인 런만 Zustand 스토어에 둔다(스펙 4장, 데이터 흐름 A).
 
 ```
@@ -228,7 +251,7 @@ src/
 │  ├─ router.tsx           라우트(/login·가드 레이아웃·/·/c/$channelId(+/settings·/activity)·/agents), safeNext, 라우트 코드 분할
 │  ├─ queryClient.ts       Query 기본값 — 전역 오류 토스트(`meta.silent` 로 끔, 폼 오류 VALIDATION·CONFLICT 제외), 재시도는 네트워크·5xx 만, 401 → 로그인
 │  ├─ session.ts           로그아웃·401 정리(resetClientState)와 Query 밖 REST 401 통지
-│  ├─ fileDrop.ts          앱 수준 파일 드롭 막기 + 「이미지는 Phase 2」 한 문구·한 토스트 id
+│  ├─ fileDrop.ts          앱 수준 파일 드롭 막기(브라우저가 파일을 열어 앱을 떠나지 않게) + 「이미지는 입력 칸에 놓아 주세요」 한 문구·한 토스트 id. 작성기가 받은 드롭은 건드리지 않는다
 │  ├─ NotFound.tsx         없는 경로(defaultNotFoundComponent)
 │  ├─ RouteError.tsx       라우트 오류 화면(연결 문제 ↔ 코드 오류를 가른다)
 │  └─ layout/
@@ -268,6 +291,14 @@ src/
 │  │                       누르면 잠그고 ack 대기, 확정되면 결과 한 줄로 남는다. 결정 뒤 초점은 그 결과 줄로 — 「이 카드에서 누른 승인 id」일 때만 옮긴다) · countdown.ts(남은 시간 문구 — 공용 틱 `useNowTick` 을 본다) ·
 │  │                       notify.ts(브라우저 알림 — 권한·지원 여부를 한 자리에서 가르고, 중복은 모듈 `Set` 으로 막는다(확정되면 `forgetApproval` 로 지운다 — 한 탭 안에서만 산다).
 │  │                       이미 답한 승인은 `handlers.ts` 가 `apply` **뒤** 들어온 페이로드의 `status` 로 거른다. `tag` 는 `approval:<id>`)
+│  ├─ attachments/         Phase 2 ③. 메시지 첨부와 작성기 올리기. url.ts(`artifact://<id>` → `/api/v1/attachments/<id>[?download=1]`) ·
+│  │                       resolve.ts(순수: 카드의 `artifact://<ref>` → **그 메시지의** 첨부. 이름 후보를 우선순위로 — 그대로 → 디코드 → 관대한 디코드 → 저장 규칙으로 다듬은 것,
+│  │                       마지막에 id. `https://` 는 그대로, 그 밖은 blocked — 스펙 11장 Ruling 5) · format.ts(크기 문구) ·
+│  │                       AttachmentGrid.tsx(1장은 360×320 안에 비율대로, 2장 이상 2열, 자리는 저장된 가로·세로로 미리, 못 불러오면 파일 카드로 물러남) ·
+│  │                       FileCard.tsx(아이콘·이름·크기·종류·「내려받기」 — `download` 속성 없이 서버 Content-Disposition 에 맡긴다) ·
+│  │                       ImageViewer.tsx(크게 보기 — ui/dialog 위, ←/→·`n / 전체`·「원본 내려받기」·Esc, 닫으면 연 이미지로 초점. `useImageViewer` 를 메시지 격자와 media 블록이 같이 쓴다) ·
+│  │                       MessageAttachments.tsx(본문 아래 이미지 격자 + 파일 카드, 카드가 가리킨 첨부는 뺀다) ·
+│  │                       upload.ts(XHR 업로드·진행·취소, 형식·5 MB 검사와 문구) · useComposerAttachments.ts(작성기 칩 상태 — 넣는 즉시 올리고, 빼면 끊고, 채널이 바뀌면 모두 비운다. 10장 상한)
 │  ├─ auth/                LoginPage · mutations(useLogin·useLogout — 응답 `sessionToken` 은 쓰지 않는다, gcTime 0)
 │  ├─ components/          components v1 카드 렌더러(Phase 2 ②). 사람·에이전트 메시지(MessageItem)와 시스템 카드(SystemCard 의 「이어가기」)가 함께 쓴다.
 │  │                       Components.tsx(카드 전체: 블록을 배열 순서대로 → 모달 트리거 → 결과 줄 `@핸들 — 라벨: 값`(오래된 것부터, 20건이면 「최근 20건」).
@@ -278,19 +309,22 @@ src/
 │  │                       DisabledHint.tsx(비활성 사유를 **보이는 글**로 — `aria-hidden` 인 12px 글을 컨트롤이 `aria-describedby` 로 가리킨다, `title` 은 안 쓴다) ·
 │  │                       OptionList.tsx(옵션 목록 한 렌더러 — 단일=라디오·다중=체크박스, fieldset+legend, 6개 넘으면 스크롤 상자. 셀렉트와 모달 select·radio 가 함께) ·
 │  │                       interactions.ts(순수: 결과 줄 문구 `summarize`·순서 `oldestFirst` — 라벨 해석은 서버 `formatInteractionText` 의 사람 쪽과 같다) ·
-│  │                       blocks/(ActionsBlock — 버튼 줄 + 셀렉트, 링크 버튼은 `https://` 만 새 탭 · SelectItem — 고르기 + 「보내기」 확정 ·
-│  │                       SectionBlock — MessageBody 로 마크다운 · SeparatorBlock · MediaBlock — https 이미지 격자(`no-referrer`·`lazy`, 실패하면 링크로) ·
-│  │                       FileBlock — 이름·크기 + 「열기」 · artifact.tsx — `artifact://` 자리표시 「첨부는 곧 지원합니다」, 셋이 같이 쓴다) ·
+│  │                       blocks/(ActionsBlock — 버튼 줄 + 셀렉트, 링크 버튼은 `https://` 와 풀린 첨부만 새 탭 · SelectItem — 고르기 + 「보내기」 확정 ·
+│  │                       SectionBlock — MessageBody 로 마크다운 · SeparatorBlock · MediaBlock — https 이미지(`no-referrer`·`lazy`, 실패하면 링크로)와 풀린 첨부 이미지·파일 카드, 누르면 크게 보기 ·
+│  │                       FileBlock — 첨부면 FileCard, https 면 이름·크기 + 「열기」 · artifact.tsx — 못 푼 값의 문구 둘 「첨부를 찾을 수 없습니다」·「열 수 없는 링크입니다」, 셋이 `resolveRef` 와 같이 쓴다) ·
 │  │                       modal/(ComponentModal — `triggerLabel` 버튼 + Dialog + 제출, ack 오류는 대화상자 안 · fields.tsx — 필드 7종 → 위젯, 못 읽는 입력은
 │  │                       제출 때 `validity.badInput` · validate.ts — 순수 화면 검사(서버 `fieldSchema` 와 같은 경계, 코드 포인트로 센다), 칸 id 로 찾는 객체는 프로토타입 없이)
 │  ├─ channels/            ChannelList · CreateChannelDialog(만들면 설정으로) · HomeRedirect(`/` → 첫 채널, 들어올 때 받은 목록으로만 판단) · mutations
 │  ├─ messages/            timeline.ts(입장·과거·upsert·낙관적 교체·빈틈)·groupRows.ts(날짜 구분선·묶음)·useTimeline·useOlderPages·useAuthors,
 │  │                       MessageList.tsx(TanStack Virtual, 끝 붙기·「새 메시지」 칩), MessageItem·MessageBody(Streamdown, 원시 HTML 끔,
 │  │                       단일 개행 → br, 마크다운 이미지는 링크로)·MentionChip·mentionMarkdown·SystemCard(MessageItem 과 SystemCard 의 components 는 `features/components` 의 `<Components>` 가 그린다)·
-│  │                       PendingItem·pendingActions·MessageErrorBoundary, ChannelPage.tsx(채널 확인 뒤에만 안을 그린다)
+│  │                       PendingItem(보내는 중 첨부는 서버 경로로, 크게 보기 없음)·pendingActions·MessageErrorBoundary, ChannelPage.tsx(채널 확인 뒤에만 안을 그린다).
+│  │                       MessageItem 은 본문이 비면 본문을 그리지 않고, 본문 아래 `MessageAttachments` → components 카드 순으로 그린다
 │  ├─ runs/                runStore.ts(Zustand, seq 중복 제거·재생)·bubblePhase.ts(상태 → 버블 모양)·StreamingBubble.tsx·useChannelBubbles·abortError
 │  ├─ composer/            Composer.tsx(Tiptap) · mentions·MentionList(@ 후보) · serialize.ts(→ `<@a:id>` 토큰 bodyMd, 줄 머리 이스케이프) ·
-│  │                       submitKeys(Enter 전송·IME) · slash.ts(`/stop`·`/new`) · useSendMessage(ack·10s 타임아웃 → failed) · useTyping·TypingIndicator
+│  │                       submitKeys(Enter 전송·IME) · slash.ts(`/stop`·`/new`) · useSendMessage(ack·10s 타임아웃 → failed, 첨부 id 를 싣고 재시도도 같은 id) · useTyping·TypingIndicator ·
+│  │                       PendingAttachments.tsx(칩 — 미리보기·진행 막대·사유·「<이름> 빼기」, 빼면 초점을 옆 칩·「이미지 첨부」로). Composer 는 「이미지 첨부」 버튼·붙여넣기·
+│  │                       작성기 상자 전체의 끌어다 놓기로 칩을 넣고, 올리기가 끝나야 보낸다(사유: 끊김 → 「이미지를 올리는 중입니다」 → 「올리지 못한 이미지를 빼 주세요」). 글 없이 이미지만 보낼 수 있다
 │  ├─ agents/              AgentsPage·AgentRow(사용 토글·기본 프롬프트) · DiscoverDialog(「Gateway 에서 가져오기」) · ManualAgentForm·handleFrom ·
 │  │                       resetSession·ResetSessionDialog(「새 대화」 — 작성기 `/new` 와 설정 패널이 함께 쓴다) · mutations
 │  └─ settings/            ChannelSettingsPanel(패널 셸은 `app/layout/PanelTabs` 가 맡고 여기는 안쪽만) ·
@@ -308,9 +342,9 @@ src/
                            손으로 두고 `@/lib/utils` 로 잇는다 — CLI 를 워크스페이스에서 돌리지 않는다
 ```
 
-아직 없는 것(Phase 2 ③ 이후): `artifact://` 해석(지금은 media·file·링크 버튼 모두 자리표시 — Phase 2 ③ 첨부·이미지), 첨부·업로드, `features/setup/`(설정 마법사 — Phase 3), `pwa/`(서비스워커·푸시).
+아직 없는 것: `features/setup/`(설정 마법사 — Phase 3), `pwa/`(서비스워커·푸시). 사람이 이미지가 아닌 파일을 올리는 것은 범위 밖이다(첨부 스펙 결정 1).
 
-테스트: 소스 옆 `*.test.ts(x)`(순수 로직 + jsdom 렌더·라우팅·wire 핸들러) + `apps/web/test/`(`setup.ts`, 공용 도우미 `shellApi`·`messages`·`composerHarness`·`fakeSocket`·`fixtures`·`scrollLayout`·`settingsServer`·`agentsPage`·`domStubs`·`media`, `ui.test.tsx`). E2E 파일은 두지 않는다 — 브라우저 검증은 워커가 `dev:fake` 위에서 한 번 돌고 보고서로 남긴다(스펙 10.2).
+테스트: 소스 옆 `*.test.ts(x)`(순수 로직 + jsdom 렌더·라우팅·wire 핸들러) + `apps/web/test/`(`setup.ts`, 공용 도우미 `shellApi`·`messages`·`composerHarness`·`fakeSocket`·`fakeXhr`(가짜 XHR 업로드·object URL 스텁)·`fixtures`·`scrollLayout`·`settingsServer`·`agentsPage`·`domStubs`·`media`, `ui.test.tsx`). E2E 파일은 두지 않는다 — 브라우저 검증은 워커가 `dev:fake` 위에서 한 번 돌고 보고서로 남긴다(스펙 10.2).
 
 ---
 
@@ -338,8 +372,9 @@ src/
 | `PORT` | `3000` | 리슨 포트. REST `/api/v1`·wire(기본 네임스페이스)·브리지 `/bridge` 가 모두 여기 |
 | `APP_ORIGIN` | (필수) | 웹 앱 오리진 — Socket.IO CORS·Better Auth `baseURL`/`trustedOrigins`·세션 쿠키 Secure(https 일 때). 로컬 `http://localhost:5173` |
 | `TRUST_PROXY` | `false` | 리버스 프록시 뒤면 `true` — 로그인 레이트리밋이 X-Forwarded-For 의 클라이언트 IP 로 걸린다 |
-| `DATA_DIR` | `./data` | 런타임 데이터(DB·디바이스 아이덴티티) |
+| `DATA_DIR` | `./data` | 런타임 데이터(DB·첨부 블롭·디바이스 아이덴티티) |
 | `DB_PATH` | `<DATA_DIR>/dodok.sqlite` | SQLite 파일 |
+| `ATTACHMENTS_DIR` | `<DATA_DIR>/attachments` | 첨부 블롭 디렉터리(`<sha 앞 2자>/<sha256>`). 부팅 때 만든다. 한 서버 프로세스만 쓴다 — sha 잠금이 프로세스 안에서만 맞다 |
 | `LOG_LEVEL` | `info` | `fatal`~`trace` (pino, 토큰 키는 redact) |
 | `DODOK_WORKSPACE_NAME` | `dodok` | 부팅 때 워크스페이스가 없으면 이 이름으로 만든다 |
 | `OWNER_HANDLE` | `owner` | owner 핸들 |
@@ -357,16 +392,17 @@ src/
 플러그인은 env 가 아니라 Gateway 계정 설정 `channels.dodok.accounts.<id>.bridgeUrl`(오리진 + `/bridge`)로 접속한다(ADR 0002 10절). 서버 쪽 공개 주소는 `BRIDGE_PUBLIC_URL` 하나로 정리됐고, 스파이크의 `BRIDGE_URL` 은 러너 전용으로 남았다.
 웹(`apps/web`)은 `.env` 를 읽지 않는다 — 브라우저에 들어가는 설정이 없다. dev 서버의 프록시 대상만 셸 환경 `DODOK_API_ORIGIN`(기본 `http://127.0.0.1:3000`)으로 받는다(`vite.config.ts`). 서버 포트를 바꾸면 `APP_ORIGIN`(서버)·`DODOK_API_ORIGIN`(Vite)·브라우저 주소를 함께 맞춘다 — wire 는 핸드셰이크 `Origin` 이 `APP_ORIGIN` 과 같을 때만 쿠키를 받는다.
 
-Phase 2 이후에 더할 것: `VAPID_PUBLIC_KEY`·`VAPID_PRIVATE_KEY`·`VAPID_SUBJECT`(푸시), `UPLOAD_DIR`(업로드). Postgres 전환 시 `DB_PATH` 대신 연결 문자열.
+Phase 2 이후에 더할 것: `VAPID_PUBLIC_KEY`·`VAPID_PRIVATE_KEY`·`VAPID_SUBJECT`(푸시). Postgres 전환 시 `DB_PATH` 대신 연결 문자열.
 
 우리가 관리하는 OpenClaw 설정 조각(설정 마법사가 만들어 주고, 사용자가 Gateway 호스트에 적용):
 
 ```json5
 {
+  // 첨부(Phase 2 ③)의 attachments.ttlHours·tools.fs.workspaceOnly 는 운영자가 호스트에 맞춰 정한다 — docs/guides/live-smoke.md 6절
   tools: { agentToAgent: { enabled: false }, sessions: { visibility: "tree" } },   // 루트 sessions 키는 거부된다 (ADR 0002)
   channels: {
     dodok: {
-      accounts: { default: { bridgeUrl: "wss://dodok.example.com/bridge", token: "<BRIDGE_TOKEN>" } },
+      accounts: { default: { bridgeUrl: "wss://dodok.example.com/bridge", token: "<BRIDGE_TOKEN>" /* , mediaMaxMb: 20 (선택) */ } },
       channels: { "<channelId>": { requireMention: true, systemPrompt: "..." } }
     }
   }

@@ -1,6 +1,6 @@
-# dodok.chat — 에이전트 네이티브 메신저 개발 계획서 (v0.10)
+# dodok.chat — 에이전트 네이티브 메신저 개발 계획서 (v0.11)
 
-작성일: 2026-09-14 · 상태: v0.10 (2026-09-22) — Phase 2 ② components v1 종료(dev Gateway 실연은 남음). 8장 Phase 2 「`components` v1 렌더러」에 완료 표시와 실물 요약, 「이월」을 Phase 2 ② 종료 시점으로 다시 모음
+작성일: 2026-09-14 · 상태: v0.11 (2026-09-23) — Phase 2 ③ 첨부·이미지 종료(실연은 남음). 8장 Phase 2 「이미지 첨부」에 완료 표시와 확인 방법, 「이월」을 Phase 2 ③ 종료 시점으로 다시 모음
 
 ### 변경 이력
 
@@ -14,6 +14,7 @@
 | v0.8 | Phase 2 ① 종료(활동 패널·승인) — 8장 Phase 2 의 「활동 패널(툴 타임라인, 런 목록), 승인 카드」에 완료 표시와 실물 요약, 「이월」에서 Phase 2 ① 이 정리한 아홉(서버 넷·웹 넷·`wire-cli` typecheck) 제거와 「한국어 강조·구두점 경계」 해결 표시, 브라우저 검증이 남긴 셋(D4 카드 점프·D6 카운트다운 어긋남·D11 로그아웃 401)과 서버 둘(다른 채널 미해결 승인의 새로고침 복구, `providerApprovalId` 가 어댑터 상한 처리 밖)을 이월에 추가, Phase 1 「실물 확인」 줄을 실연 완료(2026-09-20)로 정정 |
 | v0.9 | Phase 2 ① **종료 확정** — 8장 Phase 2 「활동 패널·승인 카드」 완료 줄에 브라우저 재검증 결과(시나리오 9/9, 고친 7건 수치 확인, 새 결함 D12·D13·D14 도 수정), 「이월」 웹에 재검증 수정 라운드가 남긴 여섯(타임라인 행이 낡은 채 남음 · 자리값 소요가 계속 흐름 · `ended`·`vanished` 상한 없음 · 로그아웃 때 `/runs` 한 번 더 · 넓은 화면 「설정 닫기」 초점 · `PanelSlot` 하네스), 「실물 확인」의 사람 몫 줄에 재검증도 못 쟀다는 사실과 흉내 낸 방법 |
 | v0.10 | Phase 2 ② **components v1 종료**(2026-09-22) — 8장 Phase 2 「`components` v1 렌더러」에 완료 표시와 실물 요약(블록 5종·셀렉트·모달·결과 줄, 확인 방법), 「이월」에서 Phase 2 ② 가 끼워 정리한 셋(D6 카운트다운 어긋남 · 자리값 소요가 계속 흐름 · 넓은 화면 「설정 닫기」 초점) 제거, Phase 2 ② 가 남긴 것 추가(계약·서버 프로토타입 계열 한 묶음과 권고 · `required` checkbox · 모순 셀렉트 refine · ack 타입 · 결과 문구의 빈 값 · 날짜 키 롤오버 · `lastSeq` 재구독 · 가상화 목록 초점 · 오류 문구 「버튼」 · 이미지 크게 보기 · 긴 라벨 버튼 넘침 · `media`·`file` 문구 비대칭 · 초점·타이머 낮은 셋 · `App.test` 셔플 · `a11y.test` 셀렉트 · `infra/` 부재), 「끝난 런 기억」에 `stopped` 보탬. 같은 날 브라우저 **재검증 24/24·결함 0** 을 완료 줄에 반영(실제 앱에서 다섯 사유·섞인 줄 24px 간격·셀렉트 스크롤 상자), 「이월」의 `lastSeq` 재구독·날짜 키 롤오버·긴 라벨 버튼에 재검증이 본 것과 못 잰 것 |
+| v0.11 | Phase 2 ③ **첨부·이미지 종료**(2026-09-23, 실연은 남음) — 8장 Phase 2 「이미지 첨부」에 완료 표시와 확인 방법(통합 11a~11i · 브라우저 17/17 · 결함 1 고친 뒤 실제 앱 재측정), Phase 2 ② 「`components` v1」 줄의 `artifact://` 자리표시 문장을 지금 동작으로, 「이월」에서 Phase 2 ③ 이 닫은 둘(「`media` 이미지를 크게 볼 수 없다」·「`media`·`file` 문구 비대칭」) 제거, Phase 2 ③ 이 남긴 것 추가(스펙 10장 열린 문제 넷 · 판정 Ruling 1·2 가 틀렸을 때 남는 것 · `artifact://` 이름의 본질적 모호 · 잘린 VP8L · dev:fake 키워드 손 목록·진입점 · 채널 전환 초점 · 플러그인 배선 우회 · 종료를 붙잡는 keep-alive · 사람이 볼 것) |
 
 ---
 
@@ -438,7 +439,7 @@ SQLite(WAL)로 시작, Drizzle ORM으로 스키마 정의해 Postgres 전환 시
 - `components` v1 렌더러(버튼·셀렉트·모달·미디어·파일), 상호작용 → 인바운드 변환, TTL·reusable·allowedUsers. (Phase 1 은 `actions` 블록의 버튼만 그린다 — 나머지는 자리표시 한 줄.) → **완료**(2026-09-22, dev Gateway 실연은 남음) — 스펙 `docs/superpowers/specs/2026-09-21-components-v1-design.md`(설계와 달라진 것은 11장), 계획 `docs/superpowers/plans/2026-09-21-components-v1.md`.
   웹 `features/components/` 가 블록 5종(`section`·`separator`·`actions`·`media`·`file`)과 셀렉트(단일=라디오·다중=체크박스, 「보내기」로 확정)·모달(필드 7종, 화면 검사, ack 오류는 대화상자 안)을 그린다. 자리표시 한 줄은 없어졌다.
   누가 무엇을 보냈는지는 카드 안 **결과 줄**로 남는다 — 서버가 `Message.interactions`(최신 20건)를 wire 팬아웃과 `listMessages` 에서 하이드레이션하므로 새로고침·새 탭에서도 보이고, 상호작용마다 `message.updated` 가 나가 reusable 카드도 실시간으로 는다.
-  `media` 는 `https://` 이미지를 `no-referrer`·`lazy` 로 불러오고(드러나는 것은 스펙 결정 8), `artifact://` 는 media·file·링크 버튼 모두 「첨부는 곧 지원합니다」 자리표시다(해석은 아래 「이미지 첨부」). 비활성 사유는 컨트롤 옆 보이는 글로 말한다. 「이어가기」 시스템 카드도 같은 렌더러를 탄다.
+  `media` 는 `https://` 이미지를 `no-referrer`·`lazy` 로 불러오고(드러나는 것은 스펙 결정 8), `artifact://` 는 그때 media·file·링크 버튼 모두 「첨부는 곧 지원합니다」 자리표시였고, 아래 「이미지 첨부」(Phase 2 ③)가 같은 메시지의 첨부로 풀었다. 비활성 사유는 컨트롤 옆 보이는 글로 말한다. 「이어가기」 시스템 카드도 같은 렌더러를 탄다.
   「이월」의 초점·타이머 셋(D6 카운트다운 · 자리값 소요 · 넓은 화면 「설정 닫기」 초점)도 이때 정리했다. 의존성 추가 0(새 UI 래퍼는 `ui/radio-group.tsx` 하나), `packages/shared/src/components/` 는 한 줄도 안 바꿨다.
   **확인 방법**: 통합 시나리오 10a~10g(`apps/server/test/integration/components.test.ts` — 셀렉트·모달 → 그 에이전트의 다음 런, 결과 줄 세 경로, reusable, 상한 20, 동시 두 번, 스키마 위반 거절 · 실제 어댑터 + 가짜 Gateway·플러그인) · `pnpm -F @dodok/server dev:fake` 위 브라우저 검증 1차(시나리오 12 + 보탬 12 중 22 통과, 결함 1 — 비활성 사유가 `title`·`sr-only` 로만 있어 눈에 안 보임 → 고침 `aa0d4d8`·`4864ecb`)와 **수정 뒤 재검증 24/24·결함 0**(2026-09-22).
   재검증은 **실제 앱에서** 다섯 사유(consumed·expired·forbidden·busy·disconnected)를 버튼·셀렉트·모달 셋 모두 1280·390px 에서 눈으로 읽히는 글로 확인했고, 사유 셋이 한 줄에 섞인 경우(consumed·forbidden·`artifact://`)도 `basis-full` 로 줄마다 **24px 간격**으로 갈리는 것을 쟀다(수정 라운드는 정적 페이지로만 쟀었다). 셀렉트 스크롤 상자도 옵션 10개(재검증이 임시로 늘린 대본)에서 `scrollHeight` 250 > `clientHeight` 224 로 **실제로 스크롤되는 것**을 처음 봤다 — c2-t3 리뷰가 남긴 「대본에 7옵션 이상 셀렉트가 없어 못 잰다」가 닫혔다(정식 대본은 12개다).
@@ -449,7 +450,13 @@ SQLite(WAL)로 시작, Drizzle ORM으로 스키마 정의해 Postgres 전환 시
   근거는 승인 스파이크(`.superpowers/sdd/2026-09-20-phase2-approval-spike/`) — 실물 Gateway 승인 프레임을 한 번 받아 보고 계약을 맞췄다. 아래 「이월」의 서버 넷·웹 넷·`wire-cli` 도 이때 함께 정리했다.
   **확인 방법**: 통합 시나리오 9a~9g(`apps/server/test/integration/approvals.test.ts`, 9c′ 포함 8건 — 실제 어댑터 + 가짜 Gateway·플러그인) · `pnpm -F @dodok/server dev:fake` 위 브라우저 검증(시나리오 1~9)과 **수정 뒤 재검증 9/9**(2026-09-21).
   재검증은 1차가 찾은 결함 11 중 고친 7건을 수치로 확인했고(알림 0→1건 · 옛 런 노출 420→0ms · 탭 전환 뒤 Tab 5→2회 · 짧은 창 타임라인 54→128px), 새로 찾은 셋(재접속 뒤 끝난 런이 목록에서 사라짐 · 결정 뒤 초점이 `body` · 좁은 화면 시트 초점)도 고쳐 넣었다. 남은 것은 아래 「이월」.
-- 이미지 첨부(업로드 → 첨부 정책 검증 `hello-ok.policy`) 및 에이전트 생성 이미지(`artifacts.download` 단기 URL) 표시.
+- 이미지 첨부(업로드 → 첨부 정책 검증 `hello-ok.policy`) 및 에이전트 생성 이미지(`artifacts.download` 단기 URL) 표시. → **완료**(2026-09-23, 실연은 남음) — 스펙 `docs/superpowers/specs/2026-09-23-attachments-design.md`(구현과 달라진 것은 11장), 계획 `docs/superpowers/plans/2026-09-23-attachments.md`, 근거 스파이크 `.superpowers/sdd/2026-09-23-phase2-attachments-spike/report.md`.
+  원래 적은 길과 다르게 갔다 — 첨부의 정본은 **서버**다(로컬 디스크 블롭 + `attachments` 테이블, 경계를 넘는 꼴은 `artifact://<id>`). 에이전트 파일은 `artifacts.download` 가 아니라 Gateway 호스트 경로로 오므로(스파이크) 플러그인이 `loadWebMediaRaw` 로 읽어 브리지 HTTP(`POST /bridge/attachments`, 브리지 토큰)로 올린다. 서버는 외부 URL 을 가져오지 않는다. `hello-ok.policy.attachments` 는 WS `chat.send` 의 첨부 정책이라(스파이크 5-2) 쓰지 않고, 상한은 shared `ATTACHMENT_LIMITS` 하나를 세 패키지가 읽는다.
+  사람은 이미지(PNG·JPEG·GIF·WebP, 5 MB, 메시지당 10장)를 버튼·붙여넣기·끌어다 놓기로 올리고 글 없이도 보낸다. 에이전트는 이미지·파일(20 MiB)을 `message` 툴 `media` 나 최종 응답 `MEDIA:` 줄로 보낸다. MIME 은 매직 바이트로 정하고 SVG 는 늘 파일이다.
+  웹은 본문 아래 이미지 격자·파일 카드와 크게 보기(←/→·원본 내려받기·초점 복귀)를 그리고, components `media`·`file`·링크 버튼의 `artifact://<파일 이름>` 을 같은 메시지 첨부로 푼다. 미디어만 있는 최종 응답이 호스트 경로(`MEDIA:/Users/…`)를 채널에 드러내던 결함도 닫았다(플러그인 1차, 서버 폴백 2차).
+  의존성 추가는 서버 `image-size` 2.0.4 하나, 웹 0.
+  **확인 방법**: 통합 시나리오 11a~11i(`apps/server/test/integration/attachments.test.ts`, 11a′·11g 둘 포함 11건 — 실제 어댑터 + 가짜 Gateway·플러그인) · 플러그인·웹 단위(테스트 1973: shared 101·plugin 108·adapter 206·server 562·web 996) · `pnpm -F @dodok/server dev:fake` 위 브라우저 검증 **17/17**(계획 시나리오 10 + 리뷰가 넘긴 7, 1280·390px) — 결함 1(칩을 키보드로 빼면 초점이 `body`)을 고치고(`f3379b8`) 실제 앱(Chromium)에서 초점 이동을 다시 쟀다(가운데·마지막·전부·오류 칩·올리는 중 칩).
+  남은 것은 실연(스펙 8.5 — 런 0회 하네스 뒤 모델 런 2회 예상, 사용자 승인 필요)과 아래 「이월」의 「첨부·이미지(Phase 2 ③)」.
 - PWA: 설치, 오프라인 최근 채널 캐시, **푸시 알림(확정)** — 구독 저장(`push_subscriptions`), 멘션/승인 요청/릴레이 한도 이벤트에 발송, iOS 설치 안내.
 - **완료 기준**: 에이전트가 버튼/모달로 사용자 입력을 받아 작업을 이어가고, 툴 실행 로그가 UI에 실시간 표시.
 
@@ -466,11 +473,12 @@ SQLite(WAL)로 시작, Drizzle ORM으로 스키마 정의해 Postgres 전환 시
 - 앱: Tauri 데스크톱(트레이·알림), Capacitor 모바일 또는 네이티브.
 - 스레드, 검색, 에이전트 내부 위임 결과 요약 게시, 채널 템플릿.
 
-### 이월 — 남은 문제(Phase 2 ② 종료 시점, 2026-09-22)
+### 이월 — 남은 문제(Phase 2 ③ 종료 시점, 2026-09-23)
 
-Phase 1 ①·② 와 Phase 2 ①·② 를 돌면서 「고치지 않고 알고 넘긴 것」을 한곳에 모았다. 상세 근거는 각 줄에 적은 문서에 있다. 위 Phase 2·3 항목과 겹치면 그쪽을 가리킨다.
+Phase 1 ①·② 와 Phase 2 ①·②·③ 을 돌면서 「고치지 않고 알고 넘긴 것」을 한곳에 모았다. 상세 근거는 각 줄에 적은 문서에 있다. 위 Phase 2·3 항목과 겹치면 그쪽을 가리킨다.
 Phase 1 이 남긴 아홉(서버 넷·웹 넷·`wire-cli` typecheck)은 Phase 2 ① 태스크 0·1 에서, Phase 2 ① 이 남긴 초점·타이머 셋(D6 카운트다운 어긋남 · 자리값 소요가 계속 흐름 · 넓은 화면 「설정 닫기」 초점)은 Phase 2 ② 태스크 8 에서 정리해 지웠다.
-Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-components-v1/`(git 제외)의 리뷰·보고서다.
+Phase 2 ② 가 남긴 「`media` 이미지를 크게 볼 수 없다」·「`media`·`file` 문구 비대칭」은 Phase 2 ③ 이 닫아 지웠다(크게 보기 `ImageViewer`, 세 블록이 해석기 하나로 「첨부를 찾을 수 없습니다」·「열 수 없는 링크입니다」를 같이 쓴다).
+Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-components-v1/`, Phase 2 ③ 의 출처(a3-t*·a3-c*)는 `.superpowers/sdd/2026-09-23-attachments/`(둘 다 git 제외)의 리뷰·보고서다.
 
 **components 계약·서버(Phase 2 ②)**
 
@@ -496,7 +504,7 @@ Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-comp
 **웹 렌더(Phase 2 의존성 — 의존성을 더해야 한다)** — 「한국어 강조·구두점 경계」는 Phase 2 ① 태스크 1 에서 `@streamdown/cjk` 1.0.3 으로 해결했다.
 
 - **코드 하이라이트**: Streamdown 2.6 은 shiki 를 `@streamdown/code` 플러그인으로 뺐고 웹 MVP 의존성에 없다 — 지금 코드 블록은 틀·복사 버튼까지다(스펙 5.2). Phase 2 에서 번들 크기(첫 화면 0.47MB)와 함께 판단한다.
-- 이미지·첨부는 위 Phase 2 「이미지 첨부」 항목이다. MVP 는 마크다운 이미지를 **불러오지 않고 새 탭 링크로** 보인다(추적 픽셀 차단).
+- 마크다운 이미지(`![](https://…)`)는 지금도 **불러오지 않고 새 탭 링크로** 보인다(추적 픽셀 차단). 첨부 이미지는 Phase 2 ③ 이 본문 아래 격자로 그린다(위 「이미지 첨부」).
 
 **서버**
 
@@ -517,9 +525,7 @@ Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-comp
 - **가상화 목록이 초점 가진 행을 지우면 초점이 `body` 로 떨어진다** — 결과 줄·승인 카드의 결과 줄·링크 등 행 안에서 초점을 가진 무엇이든, 새 메시지가 몰려 그 행이 가상화 범위 밖으로 나가면 DOM 에서 빠지고 `activeElement` 가 `body` 가 된다. 다음 Tab 은 메시지 영역 뒤 첫 정거장(「새 메시지 N개」 칩이 떠 있으면 칩)으로 간다. components 가 초점을 옮기는 것은 아니지만 결정 뒤 초점(D13 규칙)으로 초점이 그 행에 **있을 일**이 늘었다. 출처: c2-t9 관찰, c2-t12 가 두 탭으로 재현하고 코드로 확인(칩에 `focus()` 하는 코드는 없다). 미룬 까닭: `MessageList`(Phase 1 ②)의 가상화 성질이라 components 범위 밖이다. 고칠 자리는 `rangeExtractor` 로 초점 행을 늘 그려 두는 것 등(`MessageList` 몫).
 - **날짜 칸의 키 롤오버에서 제출 오류가 조용히 지워진다** — 부분 날짜(또는 빈 필수 칸)에서 한 글자 키·Backspace 를 **떼기 전에** Enter 를 누르면, Enter 의 암묵 제출이 띄운 오류를 늦게 온 그 키의 keyup 이 곧바로 지운다(전송 0·문구 0, 값 손실은 없고 다시 Enter 하면 뜬다). jsdom 으로도 재현된다(`userEvent.keyboard("202{6>}{Enter}{/6}")`). 출처: c2-t4 재리뷰 2(B10·B11). 더 나은 길이 확인돼 있다 — keydown 에서 `value`·`validity.badInput` 을 적고 keyup 에서 **달라졌을 때만** 고친 것으로 본다(실브라우저 32단계 모두 기대대로). 미룬 까닭: 기존 date 키 테스트 5건(`modal.test.tsx`)을 전이 흉내로 다시 써야 해 막는 결함 대비 비용이 컸다. 브라우저 검증(c2-t9)은 자동화의 세그먼트 입력이 사람 타이핑과 달라 재현하지 못했다. 재검증(c2-t13)은 이 줄을 「확인됨」(결함으로 세지 않음)으로 적었지만, 본 것은 슬래시를 섞어 친 입력에서 세그먼트가 뒤섞인 것(`10/15/2026` → `101520-02-06`)이라 이 줄의 증상(keyup 이 Enter 의 오류를 지움)을 실브라우저에서 잰 것은 아니다.
 - **`useInteract` 오류 문구가 「버튼」이라고 말한다** — 「만료된 버튼입니다」·「이미 처리된 버튼입니다」·「이 버튼을 누를 권한이 없습니다」(`apps/web/src/features/components/useInteract.ts` 의 `ERR`). 셀렉트를 보내다 만료되면 토스트로, 모달은 대화상자 하단 한 줄로(`ComponentModal.tsx` 의 `setFormError(r.text)`) 「만료된 버튼입니다」가 뜬다. 출처: c2-t3 리뷰(낮음). 미룬 까닭: 태스크 2 파일이라 셀렉트 태스크가 못 고쳤고, 「항목」 같은 중립어로 바꾸는 한 줄이다.
-- **`media` 이미지를 크게 볼 수 없다** — 여러 장이면 정사각 칸에 `object-contain`(잘라내지 않음)이라 작게 보이고, 눌러서 원본을 여는 동작이 없다. 출처: c2-t5 보고서. 미룬 까닭: 계획·스펙에 없던 동작이다. Phase 2 ③ 에서 `artifact://` 이미지를 그릴 때 함께 정하는 편이 낫다.
 - **긴 라벨 버튼이 390px 에서 카드 밖으로 넘친다** — 계약은 버튼 라벨을 80자까지 받는데(`packages/shared/src/components/index.ts` 의 `Button.label` `max(80)`), 공용 `ui/button` 이 `whitespace-nowrap shrink-0` 이라 버튼 하나는 줄을 바꾸지 못한다(버튼 줄의 `flex-wrap` 은 버튼 **사이**만 바꾼다). 72자 라벨 버튼이 폭 575px 로 카드 오른쪽(374px) 밖으로 나가 라벨 끝이 잘렸다 — 페이지 가로 스크롤은 없다(`scrollWidth` 390). 모달을 여는 `triggerLabel` 버튼(역시 80자)도 같은 래퍼다(실측은 액션 버튼만). 출처: c2-t12 리뷰 이월 후보 1(390px 실측). 재검증(c2-t13)도 「확인됨」(결함으로 세지 않음)으로 다시 쟀다 — 58자 라벨이 폭 600px, 오른쪽 끝 664px 로 뷰포트 밖이고 `scrollWidth` 는 390, 390px 전체 스캔에서 뷰포트 밖으로 나간 요소는 이 버튼 하나였다. 미룬 까닭: 옛 `ActionButtons` 부터 있던 성질이고 대본 라벨이 짧아 드러나지 않았다. 공용 `ui/button` 을 바꾸면 앱의 다른 버튼에 퍼지므로 카드 안 버튼에만 줄바꿈을 허용하는 쪽으로 따로 정해야 한다.
-- **`media`·`file` 은 `https://` 가 아닌 값을 모두 「첨부는 곧 지원합니다」로 낸다** — 두 블록이 `https://` 여부만 가르고 `artifact://` 인지는 보지 않는다(`blocks/MediaBlock.tsx`·`blocks/FileBlock.tsx`). 링크 버튼은 `isArtifactUrl` 로 한 번 더 갈라 그 밖은 「열 수 없는 링크입니다」다(스펙 11장 Ruling 4). 그래서 같은 카드의 같은 `javascript:` 값이 링크 버튼에서는 「열 수 없음」, media·file 에서는 「곧 지원」이 된다 — Ruling 4 가 없애려던 거짓말의 반대 방향이다. 출처: c2-t6 리뷰 C(「남은 비대칭」). 미룬 까닭: 계약 `SafeUrl` 이 앞에서 막아 운영 행에서는 닿지 않는다. Phase 2 ③ 에서 artifact 해석기를 끼우며 media·file 도 `isArtifactUrl` 로 가르면 함께 정리된다.
 - **초점·타이머 낮은 셋(Phase 2 ② 태스크 8 곁가지)** — 모두 낮음. 출처: c2-t8 리뷰 「이월」 ①·④·⑤(같은 절의 ②·③ 은 c2-t8 수정 라운드 1·2 가 테스트와 `resetNowTick` 으로 닫았다). 미룬 까닭: 태스크 8 수정 브리프가 범위 밖으로 뒀고, 셋 다 값을 잃거나 초점을 잃지 않는다.
   - **켜짐 전이 첫 프레임이 옛 시각이다** — `useNowTick` 은 마운트 때만 `readNow` 로 읽고(`apps/web/src/hooks/useNowTick.ts` 의 `useState(readNow)`), `active` 가 거짓 → 참으로 **바뀌는** 렌더는 효과가 구독해 새 값을 넣기 전 한 프레임 동안 옛 `now` 를 그린다(기존 동작).
   - **넓은 화면 「닫기」의 수정자 클릭·뒤로 가기** — 닫기 링크의 `onClick` 이 수정자를 가리지 않아 Cmd/Ctrl/Shift 클릭은 패널이 열린 채 초점만 헤더 「채널 설정」으로 옮긴다(라우터는 수정자 클릭이면 이동하지 않는다, `app/layout/PanelTabs.tsx`). 브라우저 뒤로 가기로 패널이 내려가면 초점은 여전히 `body` 로 떨어진다 — 고침은 닫기 링크에만 걸려 있다.
@@ -542,8 +548,28 @@ Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-comp
 - **dev Gateway 가 스스로 업데이트해 정확 핀이 조용히 깨진다.** OpenClaw.app 이 2026-09-20 에 9.4 → 9.5 로 올랐고(앱 번들 `bin/openclaw` 심링크 수정 시각), 저장소 핀(`openclaw`·`@openclaw/gateway-*` `2026.9.4`)과 실연 Gateway 가 달라진 채 결함 1 을 만났다. 실연 전 `oc --version` 적기(`live-smoke.md` 2절)는 알아챌 뿐 막지 못한다. **사람이 할 일**: 앱의 자동 업데이트를 끌 수 있는지 확인한다. 그다음 핀 정책(9.5 로 올릴지 — 저장소 devDependency·`pluginApi`·`live-smoke.md` 2절)을 원격 버전과 함께 정한다(ADR 0004 3절 길 B).
 - **원격(배포) Gateway 버전을 아직 모른다.** 원격이 9.5 이상이면 ADR 0004 이전 번들은 배포에서도 에이전트가 카드를 못 보낸다. 서버가 이제 접속 로그에 싣는다 — `"gateway connected"` 의 `gatewayVersion`(hello-ok `server.version`)·`gatewayBuildId`(`server.buildId`, 같은 버전 문자열의 두 빌드를 가른다 — 없으면 `null`)와 `"bridge plugin hello"` 의 `gatewayVersion`(플러그인의 `runtime.version`). **원격에 한 번 붙으면 알 수 있다**(사람 몫, `live-smoke.md` 6절). ⚠ 같은 줄의 `pluginBuiltWithSdk`(옛 `sdkVersion`)는 빌드 때 박힌 상수라 Gateway 버전이 아니다.
 
+**첨부·이미지(Phase 2 ③, 2026-09-23)** — 스펙 `docs/superpowers/specs/2026-09-23-attachments-design.md` 10장(열린 문제)·11장(구현과 맞춘 것). 아래 출처의 보고서·리뷰(a3-t*·a3-c*)와 원장은 `.superpowers/sdd/2026-09-23-attachments/`, 스파이크 보고서는 `.superpowers/sdd/2026-09-23-phase2-attachments-spike/report.md` 다(둘 다 git 제외).
+
+- **사람이 채팅에 쓴 호스트 경로가 모델 문맥에 들어갈 수 있다** — Gateway 는 프롬프트 속 절대 이미지 경로를 찾아, 허용 루트 안이면 모델에 자동으로 붙인다(스파이크 1-16). 우리 쪽 텍스트(본문·문맥 줄·자리표시)에는 경로를 쓰지 않지만, 사람이 `/Users/…/x.png` 를 타이핑하면 그 호스트 이미지가 들어갈 수 있다. 출처: 스펙 10장, 스파이크 보고서 걱정 1. 미룬 까닭: 막으려면 서버가 사람 글을 고쳐 보내는 규칙(어떤 꼴을 어떻게 바꿀지)을 새로 정해야 한다. 원격 호스트에서는 `tools.fs.workspaceOnly`·허용 루트 설정이 먼저 좁힌다(`docs/guides/live-smoke.md` 6절).
+- **5 MiB 가까운 이미지가 Anthropic 이미지 상한에 걸리는지 모른다** — 스파이크가 5.32 MiB PNG 가 claude CLI 까지 그대로 가는 것은 봤지만 모델 런으로 재지는 않았다. 우리 상한 5 MB(5,242,880 바이트)가 방어선이다. 출처: 스펙 10장, 스파이크 걱정 4. 미룬 까닭: 모델 런이 필요하다 — 실연(계획 태스크 11) 때 큰 이미지 한 장으로 잴 수 있다.
+- **9.4 런타임에서 인바운드 `media` fact·`@경로` 가 같은지 모른다** — 스파이크와 구현 확인은 모두 2026.9.5 실물이다(9.4 는 SDK 타입만 확인). 출처: 스펙 10장, 스파이크 걱정 5. 미룬 까닭: 원격 Gateway 버전을 아직 모른다(아래 「플러그인·OpenClaw 버전」). 버전을 본 뒤 `docs/guides/live-smoke.md` 11.5 로 한 번 돈다.
+- **Gateway 호스트에 이미지 사본이 셋 남는다** — 플러그인이 저장한 원본(`media/inbound/`, 기본값으로 영구), claude CLI 복사본(`<ws>/.openclaw-cli-images/`, 7일 스윕), 스테이징(`<ws>/media/inbound/openclaw-staged-*`, 정리 코드를 못 찾음). 출처: 스펙 결정 6·10장, 스파이크 걱정 3. 미룬 까닭: 설계가 운영 설정(`attachments.ttlHours`)에 맡겼다 — 너무 빨리 지우면 이력 재생에서 이미지가 빠진다. 설치 안내는 `docs/guides/live-smoke.md` 6절.
+- **실연이 잴 것 — 판정 둘과 배선 하나.** 출처: 원장 Ruling 1·2, a3-t4 보고서 걱정 1~3, a3-t5 재리뷰 3·변이 표 끝. 미룬 까닭: 셋 다 실물 Gateway·네트워크에서만 드러난다 — 계획 태스크 11(사용자 승인)이 잰다.
+  - Ruling 1(인바운드 ack = 10초 + 이미지당 30초)이 틀리면: 한 장 받기가 30초를 넘는 느린 링크에서 ack 전에 재전송돼 **같은 런이 두 번** 돈다(플러그인에 `deliveryId` dedupe 가 없다). 상한은 이미지 수만 보고 크기는 안 본다.
+  - Ruling 2(`MEDIA:` 줄당 finalizing +30초, 최대 120초)가 틀리면: 120초 넘는 업로드는 **같은 답이 두 번** 저장된다(두 번째에만 첨부). 정본이 아예 안 오는 런도 `MEDIA:` 줄이 있으면 최대 120초 「마무리 중」으로 보인다. 실제 Gateway final 스냅샷이 `MEDIA:` 줄을 남기는지부터 본다.
+  - 플러그인 `channel.ts` 가 순수 함수(`shouldDeliverFinal`·`inboundSaveArgs`·`loaderOptions`)를 **우회하는** 변이 3건은 테스트가 못 잡는다(스펙 8.2 방침 — SDK 를 import 하는 파일이다). 실연의 합격 기준(미디어 전용 응답·`maxBytes`·`mediaAccess`)이 대신 잠근다.
+- **`artifact://` 이름 해석에 본질적으로 모호한 셋이 남았다** — 웹 `resolveRef`(대안 B, Ruling 5)는 ① `a%20b c.pdf`(`%20` 문자열과 공백이 함께 든 이름 — 플러그인이 `a%20b%20c.pdf` 로 보낸다)를 못 찾고(「첨부를 찾을 수 없습니다」) ② 첨부 `[a%20b.pdf, a b.pdf]` 에서 뒤를 뜻한 `a%20b.pdf` 를 앞 첨부로 푼다 ③ `[50% a b.pdf, 50% a%20b.pdf]` 에서 뒤를 뜻한 것을 앞 첨부로 푼다(전에는 missing). 테스트가 지금 결과를 단언한다. 출처: a3-c1 리뷰 2절 표, a3-c2 보고서(표·걱정). 미룬 까닭: 인코딩된 문자열만으로는 원래 이름을 가를 수 없다. 셋 다 한 메시지에 이름이 이렇게 겹쳐야 난다.
+- **잘린 16바이트 WebP(VP8L)가 1×1 이미지로 저장된다** — `RIFF\0\0\0\0WEBPVP8L` 은 독립 버퍼로 줘도 `image-size` 2.0.4 가 끝을 넘은 인덱스를 0 으로 읽어 1×1 을 돌려준다. 그래서 「못 읽으면 `file`」(스펙 4.2)과 조금 어긋난다. 뷰 밖 메모리를 읽는 것은 아니라 누출은 없고, 웹은 `<img>` 가 실패하면 파일 카드로 물러난다. 출처: a3-t2 보고서 수정 라운드 1 「남은 관찰」, a3-t2 재리뷰(동의). 미룬 까닭: 해가 없고 범위 밖이다. 고치려면 WebP 가 30바이트 미만이면 `file` 로 두는 가드 한 줄.
+- **dev:fake 키워드 목록의 앞 다섯이 손으로 적은 목록이다** — `DEV_FAKE_KEYWORDS` 는 `COMPONENT_CARDS`·`ATTACHMENT_REPLIES` 키를 표에서 뽑지만, 드롭·실패·느리게·도구·승인 다섯은 `fakeAgentScript` 안의 `text.includes("…")` 와 따로 산다(`apps/server/scripts/dev-fake.ts`). 인라인 조건에 새 키워드를 더하면 「대본 글에 키워드가 없다」 전수 검사를 빠져나간다(변이 K5 생존). 지금 값은 맞다. 출처: a3-t8 재리뷰 N1. 미룬 까닭: 낮음. 고칠 길은 인라인 다섯도 표에서 읽거나, 소스의 `text.includes` 리터럴이 목록에 모두 드는지 보는 사례 하나.
+- **dev:fake 진입점 한 줄이 잠기지 않았다** — 진입점의 `startDevFake(opts)` 를 `appOrigin` 없이 부르게 망가뜨려도 테스트가 초록이다(변이 M4c′). 출처: a3-t8 보고서 수정 라운드 2, a3-t8 재리뷰. 미룬 까닭: 진입점을 테스트에서 띄우면 저장소 `data/dev-fake.sqlite` 를 지운다. 한 줄 배선이고 시작 로그의 `web` 값으로 손 확인이 된다. 싸게 잠그려면 몸통을 `runDevFakeCli(env, argv, start = startDevFake)` 로 빼고 가짜 `start` 가 받은 옵션을 본다(10줄 안팎).
+- **채널 전환으로 칩이 빌 때 「초점을 건드리지 않는다」가 잠기지 않았다** — 칩을 빼면 초점을 옆 칩·「이미지 첨부」로 옮기는데(`f3379b8`), 보낸 뒤 비우기는 테스트가 「초점이 편집기에 남는다」를 잠그고 채널 전환 경로는 초점을 보지 않는다. 출처: a3-t9f 리뷰 m1. 미룬 까닭: Minor — 그 경로는 훅 안의 `clear` 라 클릭 핸들러를 거치지 않는다. 고침은 기존 「채널을 옮기면 칩을 비우고…」 테스트에 초점 단언 한 줄.
+- **격자에서 불러오지 못한 이미지도 크게 보기 목록에 남는다** — 그 칸은 파일 카드로 물러나지만 뷰어 목록은 `MessageAttachments` 가 미리 만든다. 이웃 이미지에서 ←/→ 로 넘기면 깨진 이미지를 볼 수 있다. 출처: a3-t6 보고서 걱정, a3-t6 리뷰 「못 잰 것」. 미룬 까닭: 드문 경우이고 결함으로 올리지 않았다.
+- **쉬고 있는 keep-alive 연결이 서버 종료를 붙잡는다** — undici `fetch`(keep-alive)로 요청한 뒤 `app.close()` 가 10초 상한(`APP_CLOSE_TIMEOUT_MS`)까지 기다렸다(`agent: false` 면 1.2초). 첨부 경로만의 성질은 아니다. 플러그인이 keep-alive 로 첨부를 주고받으면 서버 재기동이 최대 10초 늦어질 수 있다. 원인(`io.close()` 의 순서인지 Fastify `forceCloseConnections` 인지)은 확인하지 않았다. 출처: a3-t3 보고서 걱정 1. 미룬 까닭: 태스크 3 범위 밖의 기존 성질이다.
+- **마우스로 연 크게 보기를 닫은 뒤 Safari 초점은 재지 않았다** — 뷰어는 닫을 때 기본 복귀를 막고(`onCloseAutoFocus` 의 `preventDefault`) 연 버튼으로 직접 돌려준다. Safari 는 클릭해도 버튼에 초점을 주지 않아 두 길이 갈릴 수 있는데, jsdom·Chromium 에서는 같은 곳을 가리켜 잠기지 않았다. 출처: a3-t6 리뷰 n2. 미룬 까닭: 이 머신의 Playwright 에 WebKit 이 없었다 — 사람 몫(`docs/guides/live-smoke.md` 9.3).
+
 **실물 확인**
 
+- 첨부를 실물 Gateway 로 본 것은 스파이크(모델 런 2회)뿐이다 — 구현은 가짜 Gateway·플러그인과 `dev:fake` 로만 쟀다. 실연은 계획 태스크 11(`docs/guides/live-smoke.md` 11.5 하네스 뒤 모델 런, 사용자 승인). 자동화가 원리상 못 잰 것(실제 OS 클립보드 붙여넣기·끌어다 놓기·Safari 초점)은 `docs/guides/live-smoke.md` 9.3 — 사람이 한 번 봐야 한다.
 - 승인을 실물 Gateway·실제 모델로 본 것은 스파이크 1회(`.superpowers/sdd/2026-09-20-phase2-approval-spike/`)뿐이다. 웹 화면까지 실물로 도는 절차는 `docs/guides/live-smoke.md` 8절.
 - 자동 검증이 원리상 못 재는 것들(실제 소리·OS 알림 클릭으로 탭이 앞에 오는가·권한 팝업 모양·잠금 화면·VoiceOver 가 조건부 `aria-live` 를 읽는가)은 **1차 검증도 재검증(p2-t13)도 못 쟀다** — 사람이 한 번 봐야 한다. 절차와 「재검증이 대신 어떻게 흉내 냈나」는 `docs/guides/live-smoke.md` 9절.
 - 승인 재접속 복구의 「**서버 재기동 뒤** 미해결 승인이 돌아온다」는 `dev:fake` 로는 끝내 못 본다 — 서버를 재기동하면 가짜 Gateway 도 상태를 잃기 때문이다. 재검증은 서버를 살린 채 wire 소켓만 끊어 「앱이 구독 ack 로 미해결을 되살린다」까지만 확인했다(p2-t13 시나리오 5). 실물 Gateway 의 `approvalReplay` 경로는 다음 실연 몫이다(`docs/guides/live-smoke.md` 8절).
