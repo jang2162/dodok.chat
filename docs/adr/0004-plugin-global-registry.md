@@ -1,6 +1,6 @@
 # ADR 0004 — 플러그인의 인스턴스를 넘는 상태는 전역 레지스트리에 둔다 (2026.9.5 번들 이중 평가)
 
-- 상태: 결정·구현됨(2026-09-23). **실물 확인은 남았다**(6절 합격 기준 — 다음 태스크가 런 0회 하네스로 본다)
+- 상태: 결정·구현·**실물 확인됨**(2026-09-23). 6절 합격 기준 1~6 을 `oc 2026.9.5 (f396007)` 위에서 런 0회 하네스로 통과(c2-t16)
 - 날짜: 2026-09-23
 - 대상: `docs/guides/live-smoke.md` 10.4 결함 1·2, ADR 0002 5.2(`message` 툴 — `handleAction`), 불변 규칙 「OpenClaw 패키지 3종 정확 핀」
 - 산출 코드: `packages/openclaw-plugin/src/bridge-registry.ts`(새 순수 모듈)·`channel.ts`(모듈 스코프 Map 둘을 레지스트리로),
@@ -61,7 +61,7 @@ CHANGELOG 9.5 「Live plugin management: install and reload … without restarti
 
 ## 4. 결과·위험
 
-- **9.4·9.5 둘 다에서 고친다**(9.4 는 원래 한 인스턴스라 무해). 결함 2 의 **첫 층**(`sendText` 의 「bridge is not running」)도 같이 닫힌다(**실물 확인 전** — live-smoke 11.3).
+- **9.4·9.5 둘 다에서 고친다**(9.4 는 원래 한 인스턴스라 무해). 결함 2 의 **첫 층**(`sendText` 의 「bridge is not running」)도 같이 닫혔다 — 실물에서 `ask_user` 가 다음 층(`agent not found`)까지 갔다(c2-t16).
   결함 2 의 뒷 두 층 — `sendText` 가 `agentId:"unknown"` 이라 서버가 `agent not found` 로 거절(c2-t14 F7), 선택지 컨트롤이 없음 — 은 **A 로 안 닫힌다**(이월).
 - **9.5 의 인스턴스 격리를 의도적으로 넘는다.** 문서는 「lifecycle fencing applies to the managed callable surfaces, not every object a plugin can retain」이라 금지 대상은 아니다. 대신 **수명주기 책임이 우리에게 온다** —
   세대 교체 때 옛 세대의 핸들을 지우는 것은 우리 몫이고, 2절 2 의 가드가 그 최소 조건이다. 라이브 재로드에서 브리지 소켓이 세대를 넘어가는 순서(옛 세대 abort → 새 세대 start)는 **재지 않았다**.

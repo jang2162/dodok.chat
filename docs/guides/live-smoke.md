@@ -1,6 +1,6 @@
 # dev Gateway 실연(live smoke) — 서버 코어를 실제 Gateway·플러그인·모델로 한 번 돌리기
 
-작성: 2026-09-15 (서버 코어 계획 태스크 15) · 근거: 서버 코어 스펙 9.3, ADR 0002 2절·9절, ADR 0003 2절 · 7절 2026-09-20 (웹 MVP 계획 태스크 15) · 8~9절 2026-09-21 (활동 패널·승인 계획 태스크 11) · 10절 2026-09-23 (components v1 계획 태스크 11) · 11절 2026-09-23 (c2-t14 하네스, ADR 0004)
+작성: 2026-09-15 (서버 코어 계획 태스크 15) · 근거: 서버 코어 스펙 9.3, ADR 0002 2절·9절, ADR 0003 2절 · 7절 2026-09-20 (웹 MVP 계획 태스크 15) · 8~9절 2026-09-21 (활동 패널·승인 계획 태스크 11) · 10절 2026-09-23 (components v1 계획 태스크 11) · 11절 2026-09-23 (c2-t14 하네스, ADR 0004) · 12절 2026-09-23 (c2-t16 고침 실물 확인)
 
 ## 1. 목적
 
@@ -11,7 +11,7 @@
 2~6절은 서버 코어(Phase 1 ①, 2026-09-15 에 돌린 결과가 5절)다. **웹(Phase 1 ②)을 같은 환경에 얹는 절차와 2026-09-20 에 돌린 결과는 7절**이다.
 **승인(Phase 2 ①)을 실물에서 일으키는 절차는 8절** — 기본 설정에서는 승인이 한 번도 안 뜬다. **사람만 확인할 수 있는 것(소리·팝업·잠금 화면·VoiceOver)은 9절**이다.
 **components v1(Phase 2 ②)을 실제 모델로 돌린 절차와 2026-09-23 결과는 10절**이다 — ❗ 모델 런 안의 `message` 툴 전송이 실물에서 깨져 있었다(10.4).
-원인(2026.9.5 번들 이중 평가)과 고침은 ADR 0004, **모델 런 없이 실물 Gateway 의 모델 경로를 두드리는 하네스는 11절**이다.
+원인(2026.9.5 번들 이중 평가)과 고침은 ADR 0004, **모델 런 없이 실물 Gateway 의 모델 경로를 두드리는 하네스는 11절**, **그 하네스로 고침을 확인한 2026-09-23 결과는 12절**이다.
 
 ## 2. 전제
 
@@ -632,7 +632,7 @@ PARAMS=$(jq -cn --argjson a "$ARGS" --arg sk "agent:dev:dodok:channel:<채널 id
 ### 10.4 틀린 것·고칠 것
 
 1. **[결함·높음] 모델 런 안의 `message` 툴 전송이 실패한다 — `dodok: account "default" bridge is not running`.** 브리지는 `connected`(어댑터 상태·웹 점 초록), 정본 답(`deliver`)도 같은 브리지로 정상 도착했다.
-   → **원인 확정(2026-09-23), 고쳤다(실물 확인 전 — 11.3)**: 9.5 가 번들을 같은 realm 에서 두 번 평가하고 모델 런의 `handleAction` 이 `startAccount` 를 돌지 않은 두 번째 인스턴스로 간다(c2-t14, 모델 런 0회). 브리지·상관관계를 전역 레지스트리로 옮겼다 — ADR 0004. 실물 확인은 11절 하네스(아래 추정은 기록으로 남긴다).
+   → **원인 확정·고침·실물 확인 완료(2026-09-23, 12절)**: 9.5 가 번들을 같은 realm 에서 두 번 평가하고 모델 런의 `handleAction` 이 `startAccount` 를 돌지 않은 두 번째 인스턴스로 간다(c2-t14, 모델 런 0회). 브리지·상관관계를 전역 레지스트리로 옮겼다 — ADR 0004. 실물 확인은 11절 하네스(아래 추정은 기록으로 남긴다).
    - **재현**: 3절대로 띄우고 채널에 `@dev message 툴의 components 로 카드 하나만 보내 줘 …`(런 2). Gateway 로그에 `dodok:tool-send {"action":"send","accountId":"default",…,"hasComponents":true,"ok":true}` 가 찍히고
      wire 에 `TOOL_CALL_RESULT {"content":"dodok: account \"default\" bridge is not running","ok":false}` 가 온다. 로그 줄은 `packages/openclaw-plugin/src/channel.ts` 의 `handleAction` — `bridges.get(accountId)` 가 `undefined`.
    - **가른 것**: 같은 인자를 운영자 `tools.invoke`(10.2 (d))로 보내면 **같은 `handleAction` 이 브리지를 찾고 성공한다**. 즉 실패는 **claude-cli → MCP 루프백으로 들어온 툴 호출에서만** 난다.
@@ -854,3 +854,28 @@ const startTurn = () => (async () => {
 })();
 setTimeout(() => { log({ event: "no-user-record-timeout" }); process.exit(0); }, 60000);
 ```
+
+## 12. 결함 1 고침의 실물 확인 — 2026-09-23 결과 (c2-t16, 모델 런 0회)
+
+11.3 하네스로 ADR 0004 6절 합격 기준을 `oc 2026.9.5 (f396007)` 실물 Gateway 위에서 돌렸다. **모델 런 0회**(가짜 claude CLI, `costUsd: 0`), Gateway 에이전트 런 2회.
+
+**판정: 고쳐졌다. 6/6 통과. dodok 코드 결함 0.**
+
+| 항목 | 값 |
+| --- | --- |
+| Gateway | `OpenClaw 2026.9.5 (f396007)` — 저장소 핀(2026.9.4)과 다르다(앱 자동 업데이트, 8장 이월) |
+| 번들 sha | 설치 전 `9520de1f…`(고치기 전 코드) → 설치 후 `0b53c75b…`(고친 코드). **둘이 다른 것을 확인하고 쟀다** |
+| 채널 | 하네스 전용 새 채널(11.1 주의대로 — 가짜 claude 세션 id 가 채널 세션에 박힌다) |
+
+| # | 합격 기준 | 결과 |
+| --- | --- | --- |
+| 1 | `tools/call message` | `sent to dodok channel <CH> (<messageId>)` · `isError:false` — 전에는 `dodok: account "default" bridge is not running` |
+| 2 | 카드가 **런에 묶이는가** | `message.created … runId=<그 런> replyTo=<그 사람 메시지>` — 값이 정확히 일치. REST 로도 재확인. **`correlations` 도 세대를 넘었다**(반쪽 아님) |
+| 3 | `components` 온전성 | 셀렉트(`actions`)·모달(필드 4종)이 보낸 그대로 저장·렌더 |
+| 4 | `ask_user` | `ask_user prompt delivery failed \| INTERNAL: HttpError: agent not found` — 「bridge is not running」이 아니다. **첫 층이 닫혔다는 증거**(뒷 두 층은 8장 이월) |
+| 5 | 버전 로그 | `"gateway connected"` `gatewayVersion="2026.9.5"` `gatewayBuildId="2026.9.5-release-f39600759bec-…"` · `"bridge plugin hello"` `gatewayVersion="2026.9.5"`. ⚠ 같은 줄의 `pluginBuiltWithSdk="2026.9.4"` 는 빌드 상수다(Gateway 버전 아님) |
+| 6 | probe — 세대 확인 | `module-eval evals=1 instance=26vo7d` / `evals=2 instance=exfwnw`(같은 pid) · `start-account instance=26vo7d` · **`handle-action instance=exfwnw found=true`** — 전역 레지스트리가 세대를 넘는 것이 눈으로 보인다 |
+
+웹(5180): 카드 2장이 목록에 그려지고, 활동 탭에 런 2건이 모두 `완료`, 모달 「세부 정보」의 필드 4개가 그대로 열렸다. 콘솔 예외 유무는 재지 않았다.
+
+**절차 노트**: 9.5 Gateway 가 떠 있는 채로 `plugins install --force` 하면 `device token scope mismatch` 로 실패하고 **파일도 안 바뀐다** — 3절 (b) 의 경고대로 Gateway 를 먼저 내리고, 설치 뒤 sha 를 반드시 확인한다.
