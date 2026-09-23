@@ -91,7 +91,7 @@ export function buildOutboundMessage(input: BuildOutboundInput): OutboundResult 
     agentId: input.agentId,
     sessionKey: input.sessionKey,
     text: input.text,
-    attachments: [],
+    attachmentIds: [],
     ts: input.now.toISOString(),
   };
   const { runId, providerRunId, replyToInboundId } = input.correlation ?? {};
@@ -112,7 +112,7 @@ export function buildOutboundMessage(input: BuildOutboundInput): OutboundResult 
       ...(message.replyToInboundId ? { replyToInboundId: message.replyToInboundId } : {}),
       text: message.text,
       ...(message.components ? { components: message.components } : {}),
-      attachments: message.attachments,
+      attachmentIds: message.attachmentIds,
       ts: message.ts,
     },
   };

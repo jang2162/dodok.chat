@@ -44,9 +44,9 @@ describe("parseBridgeClientEvent", () => {
     expect(parseBridgeClientEvent("hello", hello)).toEqual({ ok: true, data: hello });
   });
 
-  it("outbound.message 는 기본값(attachments)을 채운다", () => {
+  it("outbound.message 는 기본값(attachmentIds)을 채운다", () => {
     const res = parseBridgeClientEvent("outbound.message", outbound);
-    expect(res).toEqual({ ok: true, data: { ...outbound, attachments: [] } });
+    expect(res).toEqual({ ok: true, data: { ...outbound, attachmentIds: [] } });
   });
 
   it("검증 실패는 VALIDATION 과 이슈 경로", () => {

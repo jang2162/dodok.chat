@@ -54,7 +54,7 @@ describe("buildOutboundMessage", () => {
       providerRunId: "oc-run-1",
       replyToInboundId: MSG,
       text: "PONG",
-      attachments: [],
+      attachmentIds: [],
       ts: "2026-09-15T01:02:03.000Z",
     });
   });

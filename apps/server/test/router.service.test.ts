@@ -325,7 +325,7 @@ describe("createServices — 라우터·오케스트레이터 상호 참조", ()
         sessionKey: devRun?.sessionKey ?? "",
         runId: devRun?.id,
         text: "@fin 이어서 부탁",
-        attachments: [],
+        attachmentIds: [],
         ts: new Date().toISOString(),
       });
       await vi.waitFor(() => expect(t.adapter.calls.send).toHaveLength(2));

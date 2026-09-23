@@ -90,6 +90,40 @@ export const Attachment = z.object({
 });
 export type Attachment = z.infer<typeof Attachment>;
 
+/** 첨부 상한(스펙 3장 4). 웹·서버·플러그인이 같은 값을 읽는다 */
+export const ATTACHMENT_LIMITS = {
+  userImageMaxBytes: 5 * 1024 * 1024,
+  agentFileMaxBytes: 20 * 1024 * 1024,
+  perMessage: 10,
+  imageMimes: ["image/png", "image/jpeg", "image/gif", "image/webp"],
+} as const;
+
+/** 그려도 되는 이미지 MIME 인가 — SVG 는 스크립트 면이라 아니다(스펙 결정 8). 대소문자를 맞춰 주지 않는다 */
+export function isImageMime(mime: string): boolean {
+  return (ATTACHMENT_LIMITS.imageMimes as readonly string[]).includes(mime);
+}
+
+/** 표시·`artifact://` 해석용 이름. 경로 구분자·제어 문자를 빼고 앞뒤 공백과 앞쪽 점을 걷는다. 비면 "file", 최대 255자 */
+export function sanitizeAttachmentName(raw: string): string {
+  const cleaned = Array.from(
+    raw
+      .replace(/[\p{Cc}/\\]/gu, "")
+      .trim()
+      .replace(/^\.+/, "")
+      .trim(),
+  )
+    .slice(0, 255)
+    .join("");
+  return cleaned || "file";
+}
+
+const ARTIFACT_ID_RE = /^artifact:\/\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+export const artifactUrl = (id: string): string => `artifact://${id}`;
+/** 서버 첨부 id 를 가리키는 `artifact://<uuid>` 면 id, 아니면 null */
+export function parseArtifactUrl(url: string): string | null {
+  return ARTIFACT_ID_RE.exec(url)?.[1]?.toLowerCase() ?? null;
+}
+
 export const SystemKind = z.enum(["relay_limit", "relay_denied", "run_error", "info"]);
 export type SystemKind = z.infer<typeof SystemKind>;
 export const SystemMeta = z.object({

@@ -74,7 +74,7 @@ function setup(opts: { timeouts?: Partial<RunTimeouts>; approvals?: Orchestrator
     agentId: "dev",
     sessionKey,
     text: "답입니다",
-    attachments: [],
+    attachmentIds: [],
     ts: new Date().toISOString(),
     ...over,
   });

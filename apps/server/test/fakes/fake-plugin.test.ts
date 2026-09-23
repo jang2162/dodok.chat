@@ -135,7 +135,7 @@ describe("가짜 플러그인 — 실제 attachBridge 에 붙는다", () => {
         runId: RUN_ID,
         replyToInboundId: MESSAGE_ID,
         text: "안녕하세요",
-        attachments: [],
+        attachmentIds: [],
       }),
     ).resolves.toEqual({ messageId: "stored-1" });
 
@@ -148,7 +148,7 @@ describe("가짜 플러그인 — 실제 attachBridge 에 붙는다", () => {
         runId: RUN_ID,
         replyToInboundId: MESSAGE_ID,
         text: "안녕하세요",
-        attachments: [],
+        attachmentIds: [],
         ts: expect.any(String),
       },
     ]);
@@ -163,7 +163,7 @@ describe("가짜 플러그인 — 실제 attachBridge 에 붙는다", () => {
         agentId: "dev",
         sessionKey: SESSION_KEY,
         text: "x",
-        attachments: [],
+        attachmentIds: [],
       }),
     ).rejects.toThrow(/VALIDATION/);
     expect(outbound).toEqual([]);

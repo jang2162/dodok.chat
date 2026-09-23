@@ -23,13 +23,18 @@ export const ChannelSubscribeResult = z.object({
 });
 export type ChannelSubscribeResult = z.infer<typeof ChannelSubscribeResult>;
 
-export const MessageSend = z.object({
-  channelId: Id,
-  clientMsgId: z.string().min(1).max(64),
-  bodyMd: z.string().min(1).max(100_000), // 토큰 본문
-  attachments: z.array(Id).max(10).optional(), // 업로드 API로 먼저 올린 첨부 id
-  replyTo: Id.optional(),
-});
+export const MessageSend = z
+  .object({
+    channelId: Id,
+    clientMsgId: z.string().min(1).max(64),
+    bodyMd: z.string().max(100_000), // 토큰 본문. 첨부가 있으면 비어도 된다
+    attachments: z.array(Id).max(10).optional(), // 업로드 API로 먼저 올린 첨부 id
+    replyTo: Id.optional(),
+  })
+  .refine((v) => v.bodyMd.trim() !== "" || (v.attachments?.length ?? 0) > 0, {
+    message: "본문이나 첨부 중 하나는 있어야 한다",
+    path: ["bodyMd"],
+  });
 export type MessageSend = z.infer<typeof MessageSend>;
 
 export const RunAbort = z.object({ runId: Id });

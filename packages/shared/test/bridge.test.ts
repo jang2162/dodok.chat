@@ -76,7 +76,7 @@ describe("bridge schemas", () => {
     expect(InboundDeliverResult.safeParse({ admission: "observeOnly" }).success).toBe(false);
   });
 
-  it("OutboundMessage: attachments 기본값 [], components는 스키마 검증", () => {
+  it("OutboundMessage: attachmentIds 기본값 [], components는 스키마 검증", () => {
     const base = {
       outboundId: "ob-1",
       channelId: ID(2),
@@ -85,7 +85,7 @@ describe("bridge schemas", () => {
       text: "@jang 결과입니다",
       ts: NOW,
     };
-    expect(OutboundMessage.parse(base).attachments).toEqual([]);
+    expect(OutboundMessage.parse(base).attachmentIds).toEqual([]);
     expect(
       OutboundMessage.safeParse({ ...base, components: { blocks: [{ type: "actions", items: [] }] } })
         .success,

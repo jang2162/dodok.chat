@@ -20,7 +20,7 @@ function outbound(outboundId: string): OutboundMessage {
     agentId: "main",
     sessionKey: `agent:main:dodok:channel:${CH}`,
     text: outboundId,
-    attachments: [],
+    attachmentIds: [],
     ts: "2026-09-15T01:02:03.000Z",
   };
 }

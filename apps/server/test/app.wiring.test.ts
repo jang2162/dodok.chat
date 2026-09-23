@@ -622,7 +622,7 @@ describe("실제 어댑터(createOpenClawAdapter) 부팅", () => {
         agentId: "dev",
         sessionKey: `agent:dev:dodok:channel:${channelId}`,
         text: "정본",
-        attachments: [],
+        attachmentIds: [],
         ts: new Date().toISOString(),
       })) as { ok: boolean; data?: { messageId: string } };
       expect(ack.ok).toBe(true);

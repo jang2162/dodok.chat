@@ -141,7 +141,7 @@ describe("시나리오 — 인바운드 대본을 Gateway 이벤트와 플러그
       runId: d.runId,
       replyToInboundId: d.message.id,
       text: "안녕하세요",
-      attachments: [],
+      attachmentIds: [],
     });
     expect(scenario.turns).toEqual([{ agentId: "dev", delivery: d }]);
     expect(scenario.errors).toEqual([]);

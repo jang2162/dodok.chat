@@ -528,8 +528,8 @@ describe("createOpenClawAdapter — 정본 훅", () => {
     const ack = await socket.emitWithAck("outbound.message", message);
 
     expect(ack).toEqual({ ok: true, data: { messageId: STORED_MESSAGE_ID } });
-    expect(canonical).toEqual([{ ...message, attachments: [] }]);
-    expect(ofKind("canonical")).toEqual([{ kind: "canonical", message: { ...message, attachments: [] } }]);
+    expect(canonical).toEqual([{ ...message, attachmentIds: [] }]);
+    expect(ofKind("canonical")).toEqual([{ kind: "canonical", message: { ...message, attachmentIds: [] } }]);
   });
 
   it("onCanonical 이 messageId 를 주지 않으면 outboundId 로 ack 한다", async () => {

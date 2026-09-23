@@ -89,7 +89,8 @@ export const OutboundMessage = z.object({
   replyToInboundId: Id.optional(), // InboundDeliver.message.id
   text: z.string().max(100_000), // 평문 (@handle) — 서버가 tokenize
   components: ComponentsV1.optional(),
-  attachments: z.array(Attachment).max(10).default([]),
+  /** 브리지 HTTP 로 먼저 올린 첨부 id(스펙 3장 2). 이름·크기·MIME 은 서버 기록이 정본이다 */
+  attachmentIds: z.array(Id).max(10).default([]),
   ts: IsoDateTime,
 });
 export type OutboundMessage = z.infer<typeof OutboundMessage>;
@@ -117,3 +118,10 @@ export interface BridgeServerToClientEvents {
   ) => void;
   "system.notice": (p: { reason: "replaced" | "shutdown"; message: string }) => void;
 }
+
+/** 브리지 HTTP 첨부 경로와 헤더(스펙 3장 5). 인증은 `Authorization: Bearer <브리지 토큰>` */
+export const BRIDGE_ATTACHMENTS_PATH = "/bridge/attachments";
+export const BRIDGE_ATTACHMENT_HEADERS = {
+  fileName: "x-dodok-file-name",
+  channelId: "x-dodok-channel-id",
+} as const;
