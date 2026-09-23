@@ -224,7 +224,37 @@ describe("messageToolSendToOutbound", () => {
       outboundId: "o10",
       now: NOW,
     });
-    expect(res).toEqual({ ok: false, error: "message: 본문이나 components 중 하나는 있어야 한다" });
+    expect(res).toEqual({ ok: false, error: "message: 본문·components·media 중 하나는 있어야 한다" });
+  });
+
+  it("본문이 비어도 media 가 있으면(hasMedia) 보낸다 — 채움 글을 넣지 않는다", () => {
+    const res = messageToolSendToOutbound({
+      params: { to: CH, media: "/w/a.png" },
+      agentId: "main",
+      sessionKey: SESSION,
+      outboundId: "o11",
+      now: NOW,
+      hasMedia: true,
+    });
+    expect(res.ok && res.message.text).toBe("");
+    expect(res.ok && res.message.attachmentIds).toEqual([]);
+  });
+});
+
+describe("buildOutboundMessage attachmentIds", () => {
+  it("attachmentIds 를 그대로 싣고, 텍스트 없이 첨부만 있는 메시지도 계약을 지킨다", () => {
+    const ids = ["01a09fc9-d204-7551-89d6-38544d07a105", "01a09fc9-d204-7551-89d6-38544d07a106"];
+    const res = buildOutboundMessage({
+      outboundId: "o12",
+      channelId: CH,
+      agentId: "main",
+      sessionKey: SESSION,
+      text: "",
+      attachmentIds: ids,
+      now: NOW,
+    });
+    expect(res.ok && res.message.attachmentIds).toEqual(ids);
+    expect(res.ok && OutboundMessage.parse(res.message).attachmentIds).toEqual(ids);
   });
 });
 

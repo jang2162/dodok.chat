@@ -1,3 +1,4 @@
+import { ATTACHMENT_LIMITS } from "@dodok/shared";
 import { describe, expect, it } from "vitest";
 import {
   applyChannelConfigSet,
@@ -55,8 +56,31 @@ describe("resolveDodokAccount", () => {
       configured: true,
       bridgeUrl: "ws://127.0.0.1:19100/bridge",
       token: "t0k",
+      mediaMaxBytes: 20 * 1024 * 1024,
       issues: [],
     });
+  });
+
+  it("mediaMaxMb(1~20)는 MiB 로 풀고, 없으면 20 MiB — 에이전트 파일 상한을 넘지 않는다", () => {
+    const at = (mediaMaxMb?: number) =>
+      resolveDodokAccount(
+        {
+          accounts: {
+            default: { bridgeUrl: "ws://h/bridge", token: "t", ...(mediaMaxMb ? { mediaMaxMb } : {}) },
+          },
+        },
+        "default",
+      );
+    expect(at(5).mediaMaxBytes).toBe(5 * 1024 * 1024);
+    expect(at().mediaMaxBytes).toBe(ATTACHMENT_LIMITS.agentFileMaxBytes);
+    expect(resolveDodokAccount({}, "other").mediaMaxBytes).toBe(ATTACHMENT_LIMITS.agentFileMaxBytes);
+    for (const bad of [0, 21, 1.5]) {
+      expect(
+        DodokChannelSection.safeParse({
+          accounts: { a: { bridgeUrl: "ws://h/b", token: "t", mediaMaxMb: bad } },
+        }).success,
+      ).toBe(false);
+    }
   });
 
   it("섹션 enabled:false 면 계정도 꺼진다", () => {

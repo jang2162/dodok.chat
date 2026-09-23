@@ -42,6 +42,11 @@
                 "token": {
                   "type": "string",
                   "minLength": 1
+                },
+                "mediaMaxMb": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 20
                 }
               },
               "required": ["bridgeUrl", "token"],

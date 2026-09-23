@@ -6,9 +6,10 @@
  *   서버 --inbound.deliver--> bridge-client --> dispatchInbound --> runtime.channel.inbound.dispatch --> 에이전트 런
  *   에이전트 최종 응답 --delivery.deliver--> outbound.message
  *   에이전트 message 툴(send) --actions.handleAction--> outbound.message (components 포함)
+ *   첨부 바이트는 브리지 오리진 HTTP 로 — 인바운드 이미지는 GET 해 Gateway 미디어 저장소에, 아웃바운드 미디어는 POST 해 attachmentIds 로
  */
 import { randomUUID } from "node:crypto";
-import type { InboundDeliver, InboundDeliverResult } from "@dodok/shared";
+import { ATTACHMENT_LIMITS, type InboundDeliver, type InboundDeliverResult } from "@dodok/shared";
 import {
   buildChannelConfigSchema,
   buildChannelOutboundSessionRoute,
@@ -16,8 +17,10 @@ import {
   type OpenClawConfig,
   type PluginRuntime,
 } from "openclaw/plugin-sdk/channel-core";
+import { toInboundMediaFacts } from "openclaw/plugin-sdk/channel-inbound";
 import { resolveStableChannelMessageIngress } from "openclaw/plugin-sdk/channel-ingress-runtime";
 import { waitUntilAbort } from "openclaw/plugin-sdk/channel-lifecycle";
+import { loadWebMediaRaw } from "openclaw/plugin-sdk/web-media";
 import { createBridgeClient, type BridgeClient, type BridgeLogger } from "./bridge-client";
 import { getBridge, getCorrelation, registerBridge, releaseBridge, setCorrelation } from "./bridge-registry";
 import { componentsJsonSchema } from "./components-schema";
@@ -32,6 +35,8 @@ import {
 import { writeChannelConfig } from "./config-writer";
 import { channelPromptContext } from "./context";
 import { toDeliverResult, toInboundFacts } from "./inbound";
+import { appendNotes, prepareInboundMedia } from "./inbound-media";
+import { bridgeHttpOrigin, downloadAttachment, uploadAttachment } from "./media-http";
 import {
   buildOutboundMessage,
   channelIdFromSessionKey,
@@ -41,6 +46,13 @@ import {
   toolInputError,
   type OutboundCorrelation,
 } from "./outbound";
+import {
+  collectDeliverMediaSources,
+  collectToolMediaSources,
+  deliverFailureLine,
+  toolFailureMessage,
+  uploadOutboundMedia,
+} from "./outbound-media";
 import { getDodokRuntime } from "./runtime";
 
 export const DODOK_CHANNEL_ID = "dodok";
@@ -114,6 +126,32 @@ async function dispatchInbound(params: {
     }),
   );
 
+  // 브리지 토큰·URL 은 startDodokAccount 가 확인했다
+  const origin = bridgeHttpOrigin(account.bridgeUrl!);
+  const token = account.token!;
+  const save = channelRuntime.media?.saveMediaBuffer ?? getDodokRuntime().channel.media?.saveMediaBuffer;
+  const inboundMedia = await prepareInboundMedia(delivery.message.attachments, {
+    download: (id) => downloadAttachment({ origin, token, id }),
+    save: async (bytes, mime, name) => {
+      if (!save) throw new Error("saveMediaBuffer unavailable");
+      // maxBytes 를 반드시 준다 — 기본 5 MB 에 기대지 않는다. 릴레이된 에이전트 이미지도 오므로 에이전트 상한으로(6 MiB 넘는 이미지는 Gateway 가 재압축한다, 스파이크 1-12)
+      return await save(bytes, mime, "inbound", ATTACHMENT_LIMITS.agentFileMaxBytes, name);
+    },
+  });
+  // fact 에 url 은 넣지 않는다(전사에 남는다). 옛 MediaPath* 필드는 쓰지 않는다
+  const media = inboundMedia.facts.length > 0 ? toInboundMediaFacts(inboundMedia.facts) : undefined;
+  const body = appendNotes(facts.body, inboundMedia.notes);
+  if (delivery.message.attachments.length > 0) {
+    // 경로는 싣지 않는다 — 개수만
+    logger.info(
+      logLine("inbound-media", {
+        deliveryId: facts.correlation.deliveryId,
+        images: inboundMedia.facts.length,
+        notes: inboundMedia.notes.length,
+      }),
+    );
+  }
+
   const ctxPayload = channelRuntime.inbound.buildContext({
     channel: DODOK_CHANNEL_ID,
     accountId: account.accountId,
@@ -131,11 +169,12 @@ async function dispatchInbound(params: {
     },
     reply: { to: facts.target, originatingTo: facts.target },
     message: {
-      body: facts.body,
-      bodyForAgent: facts.body,
+      body,
+      bodyForAgent: body,
       rawBody: facts.rawBody,
       commandBody: facts.rawBody,
     },
+    ...(media ? { media } : {}),
     channelIngress: ingress,
     extra: {
       CommandInterpretationSuppressed: true,
@@ -189,21 +228,61 @@ async function dispatchInbound(params: {
       delivery: {
         deliver: async (payload, info) => {
           const text = payload.text ?? "";
+          const sources = collectDeliverMediaSources(payload);
           logger.info(
             logLine("deliver", {
               deliveryId: facts.correlation.deliveryId,
               kind: info.kind,
               textLength: text.length,
               payloadKeys: Object.keys(payload),
+              media: sources.length,
             }),
           );
-          if (info.kind !== "final" || !text.trim()) return;
+          // 미디어만 있는 최종 응답도 보낸다(스펙 5.2 결함). 텍스트도 미디어도 없을 때만 돌아간다
+          if (info.kind !== "final" || (!text.trim() && sources.length === 0)) return;
+          const outcome =
+            sources.length === 0
+              ? { ids: [], failures: [] }
+              : await uploadOutboundMedia(sources, {
+                  // deliver 에는 mediaAccess 가 없다 — 스테이징 경로는 기본 루트 안이다(스파이크 2-9). fs.readFile 직접 금지
+                  load: async (src) => {
+                    const r = await loadWebMediaRaw(src, { maxBytes: account.mediaMaxBytes });
+                    return {
+                      bytes: r.buffer,
+                      ...(r.contentType ? { contentType: r.contentType } : {}),
+                      ...(r.fileName ? { fileName: r.fileName } : {}),
+                    };
+                  },
+                  upload: (bytes, name, mime) =>
+                    uploadAttachment({
+                      origin,
+                      token,
+                      channelId: facts.channelId,
+                      bytes,
+                      name,
+                      ...(mime ? { mime } : {}),
+                    }),
+                  maxBytes: account.mediaMaxBytes,
+                });
+          if (sources.length > 0) {
+            logger.info(
+              logLine("deliver-media", {
+                deliveryId: facts.correlation.deliveryId,
+                uploaded: outcome.ids.length,
+                failed: outcome.failures.length,
+              }),
+            );
+          }
+          // 모델에게 돌려줄 길이 없다 — 성공한 첨부로 보내고 본문 끝에 실패 줄
+          const finalText =
+            outcome.failures.length > 0 ? appendNotes(text, [deliverFailureLine(outcome.failures)]) : text;
           const built = buildOutboundMessage({
             outboundId: `dodok-reply-${randomUUID()}`,
             channelId: facts.channelId,
             agentId: facts.agentId,
             sessionKey: facts.sessionKey,
-            text,
+            text: finalText,
+            attachmentIds: outcome.ids,
             correlation,
             now: new Date(),
           });
@@ -370,6 +449,7 @@ export const dodokChannelPlugin = createChatChannelPlugin<ResolvedDodokAccount>(
         const bridge = getBridge(accountId);
         const sessionKey = actionCtx.sessionKey ?? null;
         const correlation = sessionKey ? getCorrelation(sessionKey) : undefined;
+        const sources = collectToolMediaSources(actionCtx.params);
         const built = messageToolSendToOutbound({
           params: actionCtx.params,
           agentId: actionCtx.agentId ?? null,
@@ -377,6 +457,7 @@ export const dodokChannelPlugin = createChatChannelPlugin<ResolvedDodokAccount>(
           correlation,
           outboundId: `dodok-tool-${randomUUID()}`,
           now: new Date(),
+          hasMedia: sources.length > 0,
         });
         console.info(
           logLine("tool-send", {
@@ -386,12 +467,49 @@ export const dodokChannelPlugin = createChatChannelPlugin<ResolvedDodokAccount>(
             agentId: actionCtx.agentId ?? null,
             paramKeys: Object.keys(actionCtx.params),
             hasComponents: actionCtx.params["components"] !== undefined,
+            media: sources.length,
             ok: built.ok,
             error: built.ok ? undefined : built.error,
           }),
         );
         if (!built.ok) throw toolInputError(built.error);
         if (!bridge) throw new Error(`dodok: account "${accountId}" bridge is not running`);
+        if (sources.length > 0) {
+          // handleAction 은 세대 2 에서 돌 수 있다(ADR 0004) — 계정은 액션 문맥의 cfg 로 푼다
+          const account = resolveDodokAccount(sectionOf(actionCtx.cfg), accountId);
+          if (!account.bridgeUrl || !account.token)
+            throw new Error(`dodok: account "${accountId}" is not configured`);
+          const origin = bridgeHttpOrigin(account.bridgeUrl);
+          const token = account.token;
+          const maxBytes = account.mediaMaxBytes;
+          const access = actionCtx.mediaAccess;
+          const channelId = built.message.channelId;
+          const outcome = await uploadOutboundMedia(sources, {
+            // 호스트 정책(localRoots·readFile·workspaceDir)을 그대로 넘긴다 — fs.readFile 직접 금지
+            load: async (src) => {
+              const r = await loadWebMediaRaw(src, {
+                maxBytes,
+                ...(access?.localRoots ? { localRoots: access.localRoots } : {}),
+                ...(access?.readFile ? { readFile: access.readFile } : {}),
+                ...(access?.workspaceDir ? { workspaceDir: access.workspaceDir } : {}),
+              });
+              return {
+                bytes: r.buffer,
+                ...(r.contentType ? { contentType: r.contentType } : {}),
+                ...(r.fileName ? { fileName: r.fileName } : {}),
+              };
+            },
+            upload: (bytes, name, mime) =>
+              uploadAttachment({ origin, token, channelId, bytes, name, ...(mime ? { mime } : {}) }),
+            maxBytes,
+          });
+          console.info(
+            logLine("tool-send-media", { uploaded: outcome.ids.length, failed: outcome.failures.length }),
+          );
+          // 하나라도 실패하면 툴 호출을 실패로 — 모델이 보고 고칠 수 있다. 이미 올린 것은 미묶음으로 남아 서버 정리가 지운다
+          if (outcome.failures.length > 0) throw toolInputError(toolFailureMessage(outcome.failures));
+          built.message.attachmentIds = outcome.ids;
+        }
         const ack = await bridge.sendOutbound(built.message);
         return {
           content: [

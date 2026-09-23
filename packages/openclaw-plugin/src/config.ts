@@ -4,7 +4,7 @@
  * 매니페스트(`openclaw.plugin.json` 의 `channelConfigs.dodok.schema`)는 이 스키마의 JSON Schema 이고,
  * `test/manifest.test.ts` 가 둘이 어긋나지 않는지 잰다.
  */
-import { Id, type ConfigSet } from "@dodok/shared";
+import { ATTACHMENT_LIMITS, Id, type ConfigSet } from "@dodok/shared";
 import { z } from "zod";
 
 export const DEFAULT_ACCOUNT_ID = "default";
@@ -30,6 +30,8 @@ export const DodokAccountConfig = z
     name: z.string().max(80).optional(),
     bridgeUrl: BridgeUrl,
     token: z.string().min(1),
+    /** 에이전트가 보내는 파일 하나의 상한(MiB). 없으면 20 — `ATTACHMENT_LIMITS.agentFileMaxBytes` 를 넘지 않는다 */
+    mediaMaxMb: z.int().min(1).max(20).optional(),
   })
   .strict();
 export type DodokAccountConfig = z.infer<typeof DodokAccountConfig>;
@@ -61,9 +63,15 @@ export type ResolvedDodokAccount = {
   configured: boolean;
   bridgeUrl?: string;
   token?: string;
+  /** 아웃바운드 미디어 한 파일의 상한(바이트) */
+  mediaMaxBytes: number;
   /** 검증 실패 경로·메시지. 값(토큰 등)은 싣지 않는다 */
   issues: string[];
 };
+
+function mediaMaxBytesOf(mediaMaxMb: number | undefined): number {
+  return Math.min((mediaMaxMb ?? 20) * 1024 * 1024, ATTACHMENT_LIMITS.agentFileMaxBytes);
+}
 
 function issuesOf(error: z.ZodError): string[] {
   return error.issues.map((issue) => `${issue.path.join(".") || "<root>"}: ${issue.message}`);
@@ -86,15 +94,18 @@ export function resolveDodokAccount(
 ): ResolvedDodokAccount {
   const id = accountId?.trim() || DEFAULT_ACCOUNT_ID;
   const { data, issues } = parseSection(section);
-  if (!data) return { accountId: id, enabled: false, configured: false, issues };
+  const mediaMaxBytes = mediaMaxBytesOf(undefined);
+  if (!data) return { accountId: id, enabled: false, configured: false, mediaMaxBytes, issues };
   const account = data.accounts?.[id];
-  if (!account) return { accountId: id, enabled: data.enabled !== false, configured: false, issues: [] };
+  if (!account)
+    return { accountId: id, enabled: data.enabled !== false, configured: false, mediaMaxBytes, issues: [] };
   return {
     accountId: id,
     enabled: data.enabled !== false && account.enabled !== false,
     configured: true,
     bridgeUrl: account.bridgeUrl,
     token: account.token,
+    mediaMaxBytes: mediaMaxBytesOf(account.mediaMaxMb),
     issues: [],
   };
 }

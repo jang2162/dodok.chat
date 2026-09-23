@@ -1,4 +1,6 @@
+import { ComponentsV1 } from "@dodok/shared/components";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import { COMPONENTS_DESCRIPTION, componentsJsonSchema } from "../src/components-schema";
 
 describe("componentsJsonSchema", () => {
@@ -16,5 +18,16 @@ describe("componentsJsonSchema", () => {
     expect(
       (componentsJsonSchema["properties"] as Record<string, { maxItems?: number }>)["blocks"]?.maxItems,
     ).toBe(10);
+  });
+
+  it("media·file·링크 버튼 url 설명에 artifact://<파일 이름> 관례를 적는다 — 스키마 모양은 그대로", () => {
+    const text = JSON.stringify(componentsJsonSchema);
+    const hits = text.split("artifact://<파일 이름>").length - 1;
+    expect(hits).toBe(3);
+    const stripped = JSON.parse(text, (key, value) => (key === "description" ? undefined : value));
+    const bare = JSON.parse(JSON.stringify(z.toJSONSchema(ComponentsV1, { io: "input" })), (key, value) =>
+      key === "description" || key === "$schema" ? undefined : value,
+    );
+    expect(stripped).toEqual(bare);
   });
 });

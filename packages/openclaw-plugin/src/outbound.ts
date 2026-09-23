@@ -78,6 +78,8 @@ export type BuildOutboundInput = {
   sessionKey: string;
   text: string;
   components?: unknown;
+  /** 브리지 HTTP 로 먼저 올린 첨부 id(순서대로). 메타데이터는 서버 기록에서 채운다 */
+  attachmentIds?: string[];
   correlation?: OutboundCorrelation;
   now: Date;
 };
@@ -91,7 +93,7 @@ export function buildOutboundMessage(input: BuildOutboundInput): OutboundResult 
     agentId: input.agentId,
     sessionKey: input.sessionKey,
     text: input.text,
-    attachmentIds: [],
+    attachmentIds: input.attachmentIds ?? [],
     ts: input.now.toISOString(),
   };
   const { runId, providerRunId, replyToInboundId } = input.correlation ?? {};
@@ -134,6 +136,8 @@ export type MessageToolSendInput = {
   correlation?: OutboundCorrelation;
   outboundId: string;
   now: Date;
+  /** 툴 인자에 `media`/`mediaUrls` 가 있다 — 본문 없이 첨부만 보내도 된다 */
+  hasMedia?: boolean;
 };
 
 export function messageToolSendToOutbound(input: MessageToolSendInput): OutboundResult {
@@ -142,8 +146,8 @@ export function messageToolSendToOutbound(input: MessageToolSendInput): Outbound
   if (!channelId) return { ok: false, error: "to: dodok 채널 id(channel:<uuid>)를 해석할 수 없다" };
   const text = firstString(input.params, ["message", "text", "content"]) ?? "";
   const components = input.params["components"];
-  if (!text && (components === undefined || components === null)) {
-    return { ok: false, error: "message: 본문이나 components 중 하나는 있어야 한다" };
+  if (!text && (components === undefined || components === null) && !input.hasMedia) {
+    return { ok: false, error: "message: 본문·components·media 중 하나는 있어야 한다" };
   }
   const agentId = input.agentId || agentIdFromSessionKey(input.sessionKey);
   if (!agentId) return { ok: false, error: "agentId: 툴 컨텍스트에도 세션 키에도 없다" };
