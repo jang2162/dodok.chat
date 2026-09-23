@@ -57,9 +57,20 @@ export type DevFakeOptions = {
   appOrigin?: string;
 };
 
-/** 환경변수 APP_ORIGIN 이 있으면 그것, 없거나 비었으면 http://localhost:5173 */
-export function devFakeAppOrigin(env: Record<string, string | undefined>): string {
-  return env.APP_ORIGIN || DEFAULT_APP_ORIGIN;
+/**
+ * 진입점이 startDevFake 에 넘길 옵션 — 포트는 PORT(기본 3000), 웹 오리진은 APP_ORIGIN(없거나 비었으면 http://localhost:5173),
+ * 데이터는 저장소 루트 data/, `--keep` 이면 DB 유지
+ */
+export function devFakeCliOptions(
+  env: Record<string, string | undefined>,
+  argv: readonly string[],
+): DevFakeOptions & { appOrigin: string } {
+  return {
+    port: Number(env.PORT || 3000),
+    appOrigin: env.APP_ORIGIN || DEFAULT_APP_ORIGIN,
+    dataDir: resolve(import.meta.dirname, "../../../data"),
+    keep: argv.includes("--keep"),
+  };
 }
 export type DevFake = { app: App; url: string; close(): Promise<void> };
 
@@ -366,14 +377,25 @@ const pdfFile = (name: string): FakeFile => ({ name, mime: "application/pdf", by
 
 /**
  * 첨부 키워드 → 정본 글·첨부(첨부 스펙 8.4). 앞에 있을수록 먼저 고른다. 대본 글은 받은 글을 되받지 않는 고정 문구다 —
- * 어떤 키워드도 담지 않아, 채널의 다른 에이전트가 받아도 대본이 또 나오지 않는다.
+ * 어떤 키워드(`DEV_FAKE_KEYWORDS`)도 담지 않아, 채널의 다른 에이전트가 받아도 대본이 또 나오지 않는다.
  * 「카드에 이미지」의 카드는 `COMPONENT_CARDS` 가 고른다(「카드」보다 앞).
  */
 const ATTACHMENT_REPLIES: ReadonlyArray<readonly [keyword: string, reply: string, files: FakeFile[]]> = [
-  ["카드에 이미지", "카드입니다", [CHART_PNG, pdfFile("월간 보고서.pdf")]],
+  ["카드에 이미지", "첨부를 가리킨 안내입니다", [CHART_PNG, pdfFile("월간 보고서.pdf")]],
   ["이미지 보여줘", "그래프입니다", [CHART_PNG]],
   ["보고서 줘", "보고서입니다", [pdfFile("report.pdf")]],
   ["미디어만", "", [CHART_PNG]],
+];
+
+/** 대본을 바꾸는 키워드 전부 — 대본이 내는 글·라벨·파일 이름에는 이 중 무엇도 넣지 않는다(「승인 둘」·「승인 항상」은 「승인」이 덮는다) */
+export const DEV_FAKE_KEYWORDS: readonly string[] = [
+  "드롭",
+  "실패",
+  "느리게",
+  "도구",
+  "승인",
+  ...COMPONENT_CARDS.map(([keyword]) => keyword),
+  ...ATTACHMENT_REPLIES.map(([keyword]) => keyword),
 ];
 
 /** 사람이 첨부를 붙여 불렀으면 대본 앞에 붙이는 한 줄 — 받은 첨부 수와 첫 이미지 크기(인바운드 `message.attachments`) */
@@ -407,7 +429,7 @@ export function fakeAgentScript(self: string, d: InboundDeliver): ScenarioScript
   const media = ATTACHMENT_REPLIES.find(([keyword]) => text.includes(keyword));
   const body = media ? media[1] : `**${self}**: 「${quote}」 잘 받았어요.${tail}`;
   const received = receivedLine(d);
-  const reply = received === undefined ? body : `${received}\n\n${body}`;
+  const reply = [received, body].filter(Boolean).join("\n\n");
   const components = componentsScript(text);
   return {
     reply,
@@ -476,17 +498,12 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
-  const appOrigin = devFakeAppOrigin(process.env);
-  const dev = await startDevFake({
-    port: Number(process.env.PORT || 3000),
-    appOrigin,
-    dataDir: resolve(import.meta.dirname, "../../../data"),
-    keep: process.argv.includes("--keep"),
-  });
+  const opts = devFakeCliOptions(process.env, process.argv);
+  const dev = await startDevFake(opts);
   dev.app.logger.info(
     {
       url: dev.url,
-      web: appOrigin,
+      web: opts.appOrigin,
       loginToken: DEV_FAKE_LOCAL_TOKEN,
       web5180:
         "PORT=3100 APP_ORIGIN=http://localhost:5180 pnpm -F @dodok/server dev:fake + DODOK_API_ORIGIN=http://127.0.0.1:3100 pnpm -F @dodok/web dev --port 5180",

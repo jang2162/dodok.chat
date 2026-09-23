@@ -15,8 +15,9 @@ import { io, type Socket } from "socket.io-client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   DEV_FAKE_LOCAL_TOKEN,
+  DEV_FAKE_KEYWORDS,
   type DevFake,
-  devFakeAppOrigin,
+  devFakeCliOptions,
   fakeAgentScript,
   startDevFake,
 } from "../scripts/dev-fake";
@@ -44,11 +45,23 @@ const delivery = (
     },
   }) as unknown as InboundDeliver;
 
-describe("devFakeAppOrigin", () => {
-  it("APP_ORIGIN 이 있으면 그 오리진(5173 을 다른 프로젝트가 쓸 때 5180 으로), 없거나 비었으면 http://localhost:5173", () => {
-    expect(devFakeAppOrigin({ APP_ORIGIN: "http://localhost:5180" })).toBe("http://localhost:5180");
-    expect(devFakeAppOrigin({})).toBe("http://localhost:5173");
-    expect(devFakeAppOrigin({ APP_ORIGIN: "" })).toBe("http://localhost:5173");
+describe("devFakeCliOptions", () => {
+  it("진입점이 startDevFake 에 넘길 옵션 — APP_ORIGIN 이 있으면 그 오리진(5173 을 다른 프로젝트가 쓸 때 5180 으로), 없거나 비었으면 http://localhost:5173", () => {
+    expect(
+      devFakeCliOptions({ APP_ORIGIN: "http://localhost:5180", PORT: "3100" }, [
+        "node",
+        "dev-fake.ts",
+        "--keep",
+      ]),
+    ).toMatchObject({ appOrigin: "http://localhost:5180", port: 3100, keep: true });
+    expect(devFakeCliOptions({}, [])).toMatchObject({
+      appOrigin: "http://localhost:5173",
+      port: 3000,
+      keep: false,
+    });
+    expect(devFakeCliOptions({ APP_ORIGIN: "", PORT: "" }, []).appOrigin).toBe("http://localhost:5173");
+    // 데이터는 저장소 루트 data/ 에 — 워크트리마다 따로
+    expect(devFakeCliOptions({}, []).dataDir).toMatch(/[/\\]data$/);
   });
 });
 
@@ -156,9 +169,9 @@ describe("fakeAgentScript", () => {
       expect(files("@dev 미디어만").map((f) => f.name)).toEqual(["chart.png"]);
     });
 
-    it("카드에 이미지 → 「카드입니다」 + chart.png·월간 보고서.pdf, components 가 두 첨부를 이름으로 가리키고 없는 이름 하나를 둔다(「카드」 카드가 아니다)", () => {
+    it("카드에 이미지 → 「첨부를 가리킨 안내입니다」 + chart.png·월간 보고서.pdf, components 가 두 첨부를 이름으로 가리키고 없는 이름 하나를 둔다(「카드」 카드가 아니다)", () => {
       const s = script("@dev 카드에 이미지");
-      expect(s.reply).toBe("카드입니다");
+      expect(s.reply).toBe("첨부를 가리킨 안내입니다");
       expect(files("@dev 카드에 이미지").map((f) => f.name)).toEqual(["chart.png", "월간 보고서.pdf"]);
       const card = ComponentsV1.parse(s.components);
       // 공백은 SafeUrl(`\S+`)을 못 지나 %20 으로 적는다 — 웹 resolveRef 가 디코드해 이름으로 푼다
@@ -196,6 +209,8 @@ describe("fakeAgentScript", () => {
       expect(script("@dev 이미지 보여줘", [img]).reply).toBe(
         "받은 첨부 1개, 첫 이미지 640×480\n\n그래프입니다",
       );
+      // 글 없는 대본(「미디어만」)이면 되말하기 줄만 — 끝에 빈 줄을 남기지 않는다
+      expect(script("@dev 미디어만", [img]).reply).toBe("받은 첨부 1개, 첫 이미지 640×480");
       // 첨부가 없으면 붙지 않고, 에이전트가 보낸 첨부는 되말하지 않는다(사람 첨부만)
       expect(script("@dev 안녕").reply).not.toContain("받은 첨부");
       expect(
@@ -318,11 +333,50 @@ describe("fakeAgentScript", () => {
           expect(next.components, `${keyword} → ${item.id}`).toBeUndefined();
           expect(next.approval, `${keyword} → ${item.id}`).toBeUndefined();
           expect(next.fail ?? next.drop ?? next.tool, `${keyword} → ${item.id}`).toBeUndefined();
+          expect(next.attachments, `${keyword} → ${item.id}`).toBeUndefined();
         }
       }
     });
   });
+
+  it("대본이 내는 글·라벨·파일 이름에는 어떤 키워드도 없다 — 다른 에이전트가 받거나 사람이 인용해도 대본이 또 나오지 않는다", () => {
+    const img: Partial<Attachment> = { kind: "image", name: "b.png", width: 640, height: 480 };
+    const pdf: Partial<Attachment> = { kind: "file", name: "a.pdf" };
+    const texts = [...DEV_FAKE_KEYWORDS, "안녕"].flatMap((keyword) =>
+      [[], [img], [pdf]].flatMap((attachments) => {
+        const s = fakeAgentScript(
+          "dev",
+          delivery(`@dev ${keyword}`, owner, "dev", ["dev", "fin"], attachments),
+        );
+        // 기본 대본은 받은 글을 「」 안에 되받는다 — 그 인용은 대본 글이 아니다
+        return [
+          s.reply.replace(/「[^」]*」/g, "「」"),
+          ...(s.attachments ?? []).map((a) => a.name),
+          ...stringsIn(s.components),
+          ...stringsIn(s.approval),
+          ...stringsIn(s.tool),
+          ...(s.fail === undefined ? [] : [s.fail]),
+        ];
+      }),
+    );
+    // 표가 다 들어왔는지 — 첨부 대본 글·파일 이름과 카드 라벨이 실제로 검사 대상에 있다
+    expect(texts).toEqual(
+      expect.arrayContaining(["그래프입니다", "보고서입니다", "월간 보고서.pdf", "원본 열기"]),
+    );
+    for (const text of texts) {
+      for (const keyword of DEV_FAKE_KEYWORDS)
+        expect(text, `${JSON.stringify(text)} ⊃ ${keyword}`).not.toContain(keyword);
+    }
+  });
 });
+
+/** 값 안의 문자열 잎을 모두 꺼낸다 */
+function stringsIn(value: unknown): string[] {
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) return value.flatMap(stringsIn);
+  if (value !== null && typeof value === "object") return Object.values(value).flatMap(stringsIn);
+  return [];
+}
 
 /** 첨부 바이트의 매직 — 이름·MIME 만 맞고 바이트가 엉뚱하면 서버 스니핑이 다른 종류로 본다 */
 function magicOf(bytes: Uint8Array): "png" | "pdf" | "other" {
@@ -492,7 +546,7 @@ describe("startDevFake", () => {
     });
     expect(sent.ok).toBe(true);
     const message = await reply;
-    expect(message.bodyMd).toBe("카드입니다");
+    expect(message.bodyMd).toBe("첨부를 가리킨 안내입니다");
     expect(message.attachments.map((a) => [a.name, a.kind, a.width, a.height])).toEqual([
       ["chart.png", "image", 480, 320],
       ["월간 보고서.pdf", "file", undefined, undefined],
@@ -544,5 +598,57 @@ describe("startDevFake", () => {
     });
     expect(sent.ok && sent.data.message.mentions.agents).toHaveLength(2);
     await expect(limit).resolves.toContain("릴레이 한도(1턴)");
+  }, 20_000);
+});
+
+describe("startDevFake appOrigin", () => {
+  let dir: string;
+  let dev: DevFake;
+  let sessionToken: string;
+
+  beforeAll(async () => {
+    dir = mkdtempSync(join(tmpdir(), "dodok-dev-fake-origin-"));
+    dev = await startDevFake({ port: 0, dataDir: dir, logLevel: "warn", appOrigin: "http://localhost:5180" });
+    const login = await fetch(`${dev.url}/api/v1/auth/local`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: DEV_FAKE_LOCAL_TOKEN }),
+    });
+    expect(login.status).toBe(200);
+    sessionToken = ((await login.json()) as { sessionToken: string }).sessionToken;
+  });
+
+  afterAll(async () => {
+    await dev?.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** 브라우저처럼 토큰 없이 Origin·세션 쿠키로만 붙는다 */
+  const openWithCookie = (origin: string) =>
+    new Promise<{ ok: true } | { ok: false; code: string }>((resolve) => {
+      const socket: WireSocket = io(dev.url, {
+        transports: ["websocket"],
+        reconnection: false,
+        forceNew: true,
+        auth: { protocol: WIRE_PROTOCOL },
+        // Node 전송(ws)은 extraHeaders 를 웹소켓 핸드셰이크 헤더로 싣는다
+        extraHeaders: { origin, cookie: `dodok.session=${sessionToken}` },
+      });
+      socket.on("connect", () => {
+        socket.close();
+        resolve({ ok: true });
+      });
+      socket.on("connect_error", (err) => {
+        socket.close();
+        resolve({ ok: false, code: (err as unknown as { data?: { code: string } }).data?.code ?? "?" });
+      });
+    });
+
+  it("appOrigin 5180 이면 5180 쿠키 핸드셰이크가 붙고 5173 은 UNAUTHORIZED — 5173 이 차 있을 때 웹을 5180 에 띄울 수 있다", async () => {
+    await expect(openWithCookie("http://localhost:5180")).resolves.toEqual({ ok: true });
+    await expect(openWithCookie("http://localhost:5173")).resolves.toEqual({
+      ok: false,
+      code: "UNAUTHORIZED",
+    });
   }, 20_000);
 });
