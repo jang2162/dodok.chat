@@ -14,7 +14,8 @@ import { build } from "esbuild";
 const external = ["better-sqlite3"];
 
 await build({
-  entryPoints: { main: "src/main.ts" },
+  // backup: 스펙 3.2 백업 CLI(docker compose exec app node dist/backup.js)
+  entryPoints: { main: "src/main.ts", backup: "src/backup-main.ts" },
   outdir: "dist",
   bundle: true,
   platform: "node",

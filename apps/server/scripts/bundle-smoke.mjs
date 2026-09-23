@@ -4,10 +4,21 @@
 // 빠진 prod 의존성이 가려진다(번들이 런타임에 찾는 ws 가 devDependency 였던 결함을 그렇게 놓쳤다).
 // 단계 1: 정상 env 로 /healthz 200 · GET /socket.io/socket.io.js 400(serveClient: false) 뒤에도 살아 있음
 // 단계 2: DODOK_MIGRATIONS_DIR 없이 띄우면 설정 오류로 죽는다 — 번들이 자기를 번들로 알아보는지(define·isBundled)를 이것으로 본다
+// 단계 3: dist/backup.js — 단계 1 서버가 떠 있는 동안 그 DATA_DIR 을 백업하면 exit 0·한 줄·사본, DB 없는 디렉터리면 exit 1·사유 한 줄.
+//   better-sqlite3 가 external 이라 번들 혼자로는 모른다 — 프로드 설치 위에서 실제로 적재되는지를 본다
 // 네트워크 밖으로 나가지 않는다(deploy 는 --offline 으로 로컬 스토어만 쓴다)
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -192,8 +203,38 @@ async function stage1() {
     await new Promise((r) => setTimeout(r, 300));
     if (run.exited || !(await healthz()))
       failures.push("단계 1: GET /socket.io/socket.io.js 뒤 서버가 죽었다");
+    await backupLive();
   }
   await stop(run);
+}
+
+// 단계 3 앞 절반 — 운영에서처럼 서버가 쓰고 있는 DB 를 다른 프로세스가 백업한다
+async function backupLive() {
+  const r = await runChild(process.execPath, ["dist/backup.js"], {
+    cwd: appDir,
+    env: { PATH: process.env.PATH, DATA_DIR: dataDir },
+  });
+  const copies = existsSync(join(dataDir, "backups"))
+    ? readdirSync(join(dataDir, "backups")).map((d) => join(dataDir, "backups", d, "dodok.sqlite"))
+    : [];
+  if (r.code !== 0)
+    failures.push(`단계 3: 떠 있는 서버의 DB 백업이 exit ${r.code ?? r.signal} — ${r.output.trim()}`);
+  else if (!/^백업 완료: \S+ \(\d+ bytes, \d+ ms, 지움 0\)\n$/.test(r.output))
+    failures.push(`단계 3: 백업 출력이 한 줄 형식이 아니다 — ${JSON.stringify(r.output)}`);
+  else if (copies.length !== 1 || !existsSync(copies[0]) || statSync(copies[0]).size === 0)
+    failures.push(`단계 3: backups/ 에 사본이 하나 있어야 하는데 ${copies.length}개`);
+}
+
+async function stage3() {
+  const empty = join(work, "empty-data");
+  mkdirSync(empty);
+  const r = await runChild(process.execPath, ["dist/backup.js"], {
+    cwd: appDir,
+    env: { PATH: process.env.PATH, DATA_DIR: empty },
+  });
+  if (r.code !== 1) failures.push(`단계 3: DB 없는 디렉터리에서 exit ${r.code ?? r.signal}(1 이어야 한다)`);
+  if (r.output !== `백업 실패: 백업할 DB 가 없다: ${join(empty, "dodok.sqlite")}\n`)
+    failures.push(`단계 3: DB 없음의 출력이 사유 한 줄이 아니다 — ${JSON.stringify(r.output)}`);
 }
 
 async function stage2() {
@@ -212,6 +253,7 @@ try {
   await stage1();
   rmSync(dataDir, { recursive: true, force: true });
   await stage2();
+  await stage3();
 } catch (e) {
   failures.push(e instanceof Error ? e.message : String(e));
 } finally {
@@ -221,7 +263,7 @@ try {
 if (!interrupted) {
   console.log(
     failures.length === 0
-      ? "bundle smoke: 1) /healthz 200 · /socket.io/socket.io.js 400  2) DODOK_MIGRATIONS_DIR 없으면 설정 오류로 종료"
+      ? "bundle smoke: 1) /healthz 200 · /socket.io/socket.io.js 400  2) DODOK_MIGRATIONS_DIR 없으면 설정 오류로 종료  3) backup.js 떠 있는 DB exit 0 · DB 없음 exit 1"
       : `bundle smoke: FAILED — ${failures.join(", ")}`,
   );
   process.exit(failures.length === 0 ? 0 : 1);
