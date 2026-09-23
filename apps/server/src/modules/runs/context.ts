@@ -1,4 +1,5 @@
 import {
+  type Attachment,
   InboundDeliver,
   type Message,
   type Participant,
@@ -59,8 +60,9 @@ export function buildInboundDeliver(db: DbOrTx, input: BuildInboundInput): Inbou
     message = {
       id: m.id,
       author: resolveAuthors(db, [m])(m),
+      // 텍스트는 그대로 — 트리거 첨부의 알림 줄은 플러그인이 붙인다(스펙 5.1-4)
       text: renderForAgent(m.bodyMd, participants),
-      attachments: [],
+      attachments: m.attachments,
       ts: m.createdAt,
     };
     recentUpTo = { seq: m.seq, inclusive: false };
@@ -88,6 +90,7 @@ export function buildInboundDeliver(db: DbOrTx, input: BuildInboundInput): Inbou
       authorType: messages.authorType,
       authorId: messages.authorId,
       bodyMd: messages.bodyMd,
+      attachments: messages.attachments,
       createdAt: messages.createdAt,
     })
     .from(messages)
@@ -127,7 +130,7 @@ export function buildInboundDeliver(db: DbOrTx, input: BuildInboundInput): Inbou
     context: {
       recentMessages: rows.map((r) => ({
         author: authorOf(r),
-        text: renderForAgent(r.bodyMd, participants),
+        text: withPlaceholder(renderForAgent(r.bodyMd, participants), r.attachments),
         ts: r.createdAt.toISOString(),
       })),
       participants: participants.map((p) => ({
@@ -142,6 +145,22 @@ export function buildInboundDeliver(db: DbOrTx, input: BuildInboundInput): Inbou
     },
     options: {},
   });
+}
+
+/** 문맥 줄의 첨부 자리표시(스펙 4.5) — 경로·URL 은 쓰지 않는다(Gateway 가 프롬프트 속 이미지 경로를 자동 첨부한다) */
+export function attachmentPlaceholder(atts: readonly Attachment[]): string {
+  const images = atts.filter((a) => a.kind === "image").length;
+  const parts = [
+    ...(images > 0 ? [`[이미지 ${images}장]`] : []),
+    ...atts.filter((a) => a.kind === "file").map((a) => `[파일: ${a.name}]`),
+  ];
+  return parts.join(" ");
+}
+
+function withPlaceholder(text: string, atts: readonly Attachment[]): string {
+  const placeholder = attachmentPlaceholder(atts);
+  if (!placeholder) return text;
+  return text ? `${text}\n${placeholder}` : placeholder;
 }
 
 /** 사람이 읽는 한 문단. allowPairs 제한이면 이 에이전트가 부를 수 있는 채널 에이전트(자기 자신 제외)만 나열한다. */

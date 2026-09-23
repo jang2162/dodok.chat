@@ -1,13 +1,15 @@
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
-import { InboundDeliver, type Run } from "@dodok/shared";
+import { type Attachment, InboundDeliver, type Run } from "@dodok/shared";
 import { eq } from "drizzle-orm";
 import { v7 as uuid, version } from "uuid";
 import { describe, expect, it, vi } from "vitest";
-import { agents, componentInteractions } from "../src/db/schema.sqlite";
+import type { DbOrTx } from "../src/db/client";
+import { agents, attachments, componentInteractions } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
+import { toAttachment } from "../src/modules/attachments/service";
 import { addMember, updateAgentMember, updateChannel } from "../src/modules/channels/service";
 import { createAgentMessage, createSystemMessage, createUserMessage } from "../src/modules/messages/service";
-import { type InboundTrigger, buildInboundDeliver } from "../src/modules/runs/context";
+import { type InboundTrigger, attachmentPlaceholder, buildInboundDeliver } from "../src/modules/runs/context";
 import { ensureSession } from "../src/modules/sessions/service";
 import { ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
@@ -16,6 +18,40 @@ import { seedChannelWithAgent } from "./helpers/seed";
 /** 서술 속 @핸들도 릴레이가 된다(live-smoke 5.4-5) — 부를 때만 @ 를 쓰게 한다 */
 const rule = (turns: number) =>
   `다른 에이전트에게 일을 넘길 때만 @핸들을 쓰세요 — @멘션하면 그 에이전트가 이어받습니다(최대 ${turns}턴). 언급만 할 때는 @ 없이 이름만 쓰세요.`;
+
+/** 첨부 행을 바로 넣는다 — 블롭 없이 묶기·문맥만 볼 때 */
+function insertAttachment(
+  db: DbOrTx,
+  opts: {
+    channelId: string;
+    uploaderType?: "user" | "bridge";
+    uploaderId?: string;
+    kind?: "image" | "file";
+    name?: string;
+  },
+): Attachment {
+  const file = opts.kind === "file";
+  const row = db
+    .insert(attachments)
+    .values({
+      id: uuid(),
+      channelId: opts.channelId,
+      uploaderType: opts.uploaderType ?? "user",
+      uploaderId: opts.uploaderType === "bridge" ? null : (opts.uploaderId ?? null),
+      kind: opts.kind ?? "image",
+      name: opts.name ?? "a.png",
+      mime: file ? "application/pdf" : "image/png",
+      size: 10,
+      width: file ? null : 4,
+      height: file ? null : 3,
+      sha256: "0".repeat(64),
+      messageId: null,
+      createdAt: new Date(),
+    })
+    .returning()
+    .get();
+  return toAttachment(row);
+}
 
 function setup() {
   const db = newTestDb();
@@ -160,6 +196,96 @@ describe("buildInboundDeliver", () => {
       ts: fromDev.createdAt,
     });
     expect(recent[19]?.ts).toBe(last.createdAt);
+  });
+
+  describe("첨부(스펙 4.5)", () => {
+    it("트리거 메시지의 첨부는 message.attachments 에 그대로 — 사람 이미지도, 릴레이된 에이전트 이미지도", () => {
+      const { db, bus, channelId, userId, devId, finId, deliver } = setup();
+      const img = insertAttachment(db, { channelId, uploaderId: userId });
+      const mine = createUserMessage(db, bus, {
+        channelId,
+        authorId: userId,
+        bodyMd: "",
+        clientMsgId: "img",
+        attachments: [img.id],
+      });
+      const { inbound } = deliver({ message: mine });
+      expect(InboundDeliver.safeParse(inbound).success).toBe(true);
+      // [Review Focus 3] 본문이 비어도 이미지는 실린다 — 트리거 텍스트에 자리표시를 붙이지 않는다(플러그인 몫, 스펙 5.1-4)
+      expect(inbound.message).toMatchObject({ text: "", attachments: [img] });
+
+      const chart = insertAttachment(db, { channelId, uploaderType: "bridge", name: "chart.png" });
+      const relay = createAgentMessage(db, bus, {
+        channelId,
+        agentId: devId,
+        externalId: "o-chart",
+        bodyMd: "@fin 이 차트 봐",
+        attachmentIds: [chart.id],
+      });
+      const { inbound: toFin } = deliver(
+        { message: relay },
+        { run: { agentId: finId, triggerKind: "relay" } },
+      );
+      expect(toFin.message).toMatchObject({ text: "@fin 이 차트 봐", attachments: [chart] });
+    });
+
+    it("이전 메시지 줄은 자리표시로만 — 「본문\n[이미지 2장] [파일: a.pdf]」, 본문이 비면 자리표시만, 경로·URL 은 어디에도 없다", () => {
+      const { db, bus, channelId, userId, devId, say, deliver } = setup();
+      const withBody = createAgentMessage(db, bus, {
+        channelId,
+        agentId: devId,
+        externalId: "o1",
+        bodyMd: "본문",
+        attachmentIds: [
+          insertAttachment(db, { channelId, uploaderType: "bridge", name: "x.png" }).id,
+          insertAttachment(db, { channelId, uploaderType: "bridge", kind: "file", name: "a.pdf" }).id,
+          insertAttachment(db, { channelId, uploaderType: "bridge", name: "y.png" }).id,
+        ],
+      });
+      expect(withBody.attachments).toHaveLength(3);
+      createAgentMessage(db, bus, {
+        channelId,
+        agentId: devId,
+        externalId: "o2",
+        bodyMd: "",
+        attachmentIds: [
+          insertAttachment(db, { channelId, uploaderType: "bridge", name: "x.png" }).id,
+          insertAttachment(db, { channelId, uploaderType: "bridge", name: "y.png" }).id,
+          insertAttachment(db, { channelId, uploaderType: "bridge", kind: "file", name: "a.pdf" }).id,
+        ],
+      });
+      say("글만");
+      const img = insertAttachment(db, { channelId, uploaderId: userId });
+      const trigger = createUserMessage(db, bus, {
+        channelId,
+        authorId: userId,
+        bodyMd: "@dev 봐 줘",
+        clientMsgId: "t",
+        attachments: [img.id],
+      });
+
+      const { inbound } = deliver({ message: trigger });
+      expect(inbound.context.recentMessages.map((m) => m.text)).toEqual([
+        "본문\n[이미지 2장] [파일: a.pdf]",
+        "[이미지 2장] [파일: a.pdf]",
+        "글만",
+      ]);
+      const texts = [inbound.message.text, ...inbound.context.recentMessages.map((m) => m.text)].join("\n");
+      expect(texts).not.toContain("artifact://");
+      expect(texts).not.toMatch(/(^|\s)\//m);
+    });
+
+    it("attachmentPlaceholder — 이미지는 장 수 하나로, 파일은 이름마다, 없으면 빈 문자열", () => {
+      const { db, channelId } = setup();
+      const image = insertAttachment(db, { channelId, uploaderType: "bridge" });
+      const file = (name: string) =>
+        insertAttachment(db, { channelId, uploaderType: "bridge", kind: "file", name });
+      expect(attachmentPlaceholder([])).toBe("");
+      expect(attachmentPlaceholder([image])).toBe("[이미지 1장]");
+      expect(attachmentPlaceholder([file("보고서 최종.pdf"), file("b.csv")])).toBe(
+        "[파일: 보고서 최종.pdf] [파일: b.csv]",
+      );
+    });
   });
 
   it("participants 는 채널 멤버 전부이고 isSelf 는 이 런의 에이전트 하나", () => {

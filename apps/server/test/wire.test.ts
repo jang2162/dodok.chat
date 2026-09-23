@@ -14,9 +14,10 @@ import { Server } from "socket.io";
 import { v7 as uuid } from "uuid";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { App } from "../src/app";
-import { componentInteractions } from "../src/db/schema.sqlite";
+import { attachments, componentInteractions } from "../src/db/schema.sqlite";
 import { apiError } from "../src/http/errors";
 import type { Logger } from "../src/logger";
+import { toAttachment } from "../src/modules/attachments/service";
 import { createChannel, getChannel, listMembers } from "../src/modules/channels/service";
 import { createSystemMessage, createUserMessage, listMessages } from "../src/modules/messages/service";
 import { ServerBus } from "../src/realtime/bus";
@@ -549,7 +550,7 @@ describe("wire (attachWire 단독 — route·runs 주입)", () => {
     );
   });
 
-  it("message.send — 첨부는 서비스까지 가서 VALIDATION(태스크 4 전), 빈 본문 + 첨부도 저장되지 않는다", async () => {
+  it("message.send — 쓸 수 없는 첨부 id 는 서비스까지 가서 VALIDATION, 빈 본문 + 그 첨부도 저장되지 않는다", async () => {
     const route = vi.fn(async () => {});
     const socket = await start({ route });
     const channel = newChannel("solo-attach");
@@ -576,6 +577,42 @@ describe("wire (attachWire 단독 — route·runs 주입)", () => {
       bodyMd: "plain",
     });
     expect(next).toMatchObject({ ok: true, data: { message: { seq: 1 } } });
+  });
+
+  it("message.send — 빈 본문 + 내 미묶음 첨부는 묶여 저장·라우팅되고, ack 를 잃은 재전송(같은 clientMsgId·같은 첨부)은 처음 메시지", async () => {
+    const route = vi.fn(async () => {});
+    const socket = await start({ route });
+    const channel = newChannel("solo-attach-ok");
+    const row = app.db
+      .insert(attachments)
+      .values({
+        id: uuid(),
+        channelId: channel.id,
+        uploaderType: "user",
+        uploaderId: app.ownerUserId,
+        kind: "image",
+        name: "a.png",
+        mime: "image/png",
+        size: 10,
+        width: 4,
+        height: 3,
+        sha256: "0".repeat(64),
+        messageId: null,
+        createdAt: new Date(),
+      })
+      .returning()
+      .get();
+    const payload = { channelId: channel.id, clientMsgId: "a-img", bodyMd: "", attachments: [row.id] };
+
+    const first = await socket.emitWithAck("message.send", payload);
+    expect(first).toMatchObject({
+      ok: true,
+      data: { message: { bodyMd: "", attachments: [toAttachment(row)] } },
+    });
+    const again = await socket.emitWithAck("message.send", payload);
+    expect(again).toEqual(first);
+    expect(route).toHaveBeenCalledTimes(1);
+    expect(listMessages(app.db, channel.id, { limit: 10 }).messages).toHaveLength(1);
   });
 
   it("런 핸들러 — runs 로 위임(userId 포함), HttpError 는 그 코드, 그 밖 예외는 INTERNAL + 로그", async () => {

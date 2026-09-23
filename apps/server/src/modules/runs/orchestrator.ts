@@ -21,6 +21,7 @@ import type { ApprovalsService } from "../approvals/service";
 import type { RunPlan } from "../router/decide";
 import { ensureSession } from "../sessions/service";
 import { buildInboundDeliver } from "./context";
+import { stripMediaLines } from "./media-lines";
 import { type RunPatch, TERMINAL_STATUSES, transition } from "./machine";
 import * as store from "./store";
 import { createRunTimers } from "./timers";
@@ -29,6 +30,10 @@ export type RunTimeouts = {
   queuedMs: number;
   runMs: number;
   finalizingMs: number;
+  /** 스냅샷의 단독 줄 `MEDIA:` 하나마다 finalizing 상한에 더한다 — 플러그인이 미디어를 올린 뒤에 정본을 보낸다(Ruling 2) */
+  finalizingMediaLineMs: number;
+  /** 연장된 finalizing 상한의 최대값 */
+  finalizingMaxMs: number;
   coalesceMs: number;
   maxInflight: number;
 };
@@ -38,6 +43,8 @@ export const DEFAULT_RUN_TIMEOUTS: RunTimeouts = {
   queuedMs: 120_000,
   runMs: 600_000,
   finalizingMs: 10_000,
+  finalizingMediaLineMs: 30_000,
+  finalizingMaxMs: 120_000,
   coalesceMs: 50,
   maxInflight: 32,
 };
@@ -619,15 +626,24 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
   }
 
   function storeAgentMessage(msg: OutboundMessage, agentId: string, runId: string | undefined): Message {
-    return createAgentMessage(db, bus, {
-      channelId: msg.channelId,
-      agentId,
-      runId,
-      externalId: msg.outboundId,
-      bodyMd: msg.text, // 평문 @handle — createAgentMessage 가 토큰화한다
-      components: msg.components,
-      replyTo: msg.replyToInboundId,
-    });
+    return createAgentMessage(
+      db,
+      bus,
+      {
+        channelId: msg.channelId,
+        agentId,
+        runId,
+        externalId: msg.outboundId,
+        bodyMd: msg.text, // 평문 @handle — createAgentMessage 가 토큰화한다
+        components: msg.components,
+        attachmentIds: msg.attachmentIds,
+        replyTo: msg.replyToInboundId,
+      },
+      {
+        onDroppedAttachments: (ids) =>
+          logger.warn({ outboundId: msg.outboundId, dropped: ids }, "outbound attachments dropped"),
+      },
+    );
   }
 
   async function routeAgentMessage(message: Message, run: Run): Promise<void> {
@@ -652,12 +668,33 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     forgetTimers.add(timer);
   }
 
+  /**
+   * Ruling 2 — 스냅샷에 단독 줄 MEDIA: 가 있으면 플러그인이 그 미디어를 올린 **뒤에** 정본을 보낸다. 10초 상한이 먼저 끝나면
+   * 스냅샷이 저장되고 늦은 정본이 두 번째 메시지가 된다 — 그때만 줄당 finalizingMediaLineMs 만큼(finalizingMaxMs 까지) 늘린다.
+   * 스냅샷은 gateway_final 에서만 들어온다(델타는 쌓지 않는다) — 그래서 다시 거는 자리는 여기 하나다.
+   */
+  function extendFinalizingForMedia(runId: string, snapshot: string): void {
+    if (stopped) return;
+    const { dropped } = stripMediaLines(snapshot);
+    if (dropped === 0) return;
+    const ms = Math.min(
+      timeouts.finalizingMs + dropped * timeouts.finalizingMediaLineMs,
+      Math.max(timeouts.finalizingMaxMs, timeouts.finalizingMs),
+    );
+    timers.set(runId, "finalizing", ms, () => {
+      void api.signal(runId, { kind: "final_timeout" });
+    });
+  }
+
   /** finalizing 상한 — 정본이 없으면 WS 스냅샷(비어 있지 않을 때)을 에이전트 메시지로 저장하고 done(gateway). */
   async function finalizeFromSnapshot(runId: string): Promise<void> {
     const run = store.getRun(db, runId);
     if (run?.status === "finalizing") logClosedByTimeout(run, "final_timeout");
     let message: Message | undefined;
-    const text = snapshots.get(runId) ?? "";
+    // 단독 줄 MEDIA: 는 호스트 경로다 — 채널에 저장하지 않는다(스펙 4.6). 바이트가 호스트에만 있어 이 경로의 미디어는 붙지 않는다
+    const { text, dropped } = stripMediaLines(snapshots.get(runId) ?? "");
+    if (dropped > 0)
+      logger.warn({ runId, mediaLinesDropped: dropped }, "gateway snapshot media lines dropped");
     // 라우팅을 기다리는 사이 정본이 이미 저장됐으면 스냅샷으로 겹쳐 쓰지 않는다
     if (
       run?.status === "finalizing" &&
@@ -731,11 +768,14 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
           await finalizeFromSnapshot(runId);
           return;
         }
+        const before = s.kind === "gateway_final" ? store.getRun(db, runId)?.status : undefined;
         const updated = applySignal(runId, s);
         // 스냅샷은 실제로 finalizing 에 있을 때만 보관한다 — 종료된 런에 늦게 온 final 이 맵에 남지 않게(sc-t8 리뷰 R1).
         // finalizing 타이머는 다음 틱 이후에 울리므로 전이 뒤에 넣어도 늦지 않다.
         if (s.kind === "gateway_final" && ctx?.message !== undefined && updated?.status === "finalizing") {
           snapshots.set(runId, ctx.message);
+          // 이 final 로 finalizing 에 들어왔을 때만(중복 final 이 상한을 밀지 않게) 방금 rearmTimers 가 건 상한을 늘린다
+          if (before !== "finalizing") extendFinalizingForMedia(runId, ctx.message);
         }
       } catch (err) {
         failRun(runId, err);

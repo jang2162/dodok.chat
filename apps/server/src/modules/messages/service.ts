@@ -15,6 +15,7 @@ import { channels, componentInteractions, messages } from "../../db/schema.sqlit
 import { apiError } from "../../http/errors";
 import { parseStored } from "../../http/validate";
 import type { ServerBus } from "../../realtime/bus";
+import { claimBridgeAttachments, claimUserAttachments, markBound } from "../attachments/service";
 import { channelParticipants } from "../channels/service";
 import { allocateSeq } from "./seq";
 
@@ -30,7 +31,7 @@ export type CreateUserMessageInput = {
   /** 평문 @handle 이 섞인 본문 — 저장 전에 채널 참가자로 토큰화한다 */
   bodyMd: string;
   clientMsgId: string;
-  /** 업로드 API 가 없어 MVP 에서는 비어 있어야 한다 */
+  /** 올린 사람 = 보내는 사람·같은 채널·미묶음이어야 한다 — 하나라도 틀리면 메시지 전체가 VALIDATION(스펙 4.4) */
   attachments?: string[];
   replyTo?: string;
 };
@@ -44,6 +45,8 @@ export type CreateAgentMessageInput = {
   /** 플러그인이 보낸 평문 @handle 본문 — 토큰화해 저장한다 */
   bodyMd: string;
   components?: z.input<typeof ComponentsV1>;
+  /** 브리지가 올린 같은 채널·미묶음 첨부만 묶고 나머지는 뺀다(스펙 4.4) */
+  attachmentIds?: string[];
   replyTo?: string;
 };
 
@@ -122,14 +125,19 @@ export function withInteractions(db: DbOrTx, msgs: Message[]): Message[] {
 
 /** (authorId, clientMsgId) 가 이미 있으면 그 메시지를 돌려준다(이벤트 없음). 새로 저장했을 때만 커밋 뒤 message.created. */
 export function createUserMessage(db: Db, bus: ServerBus, input: CreateUserMessageInput): Message {
-  if ((input.attachments?.length ?? 0) > 0) throw apiError("VALIDATION", "첨부는 아직 지원하지 않는다");
   const result = db.transaction((tx) => {
     const existing = tx
       .select()
       .from(messages)
       .where(and(eq(messages.authorId, input.authorId), eq(messages.clientMsgId, input.clientMsgId)))
       .get();
+    // 재전송(ack 유실)은 잡기 전에 돌아간다 — 처음 메시지가 이미 묶은 첨부를 「쓸 수 없는 첨부」로 거절하지 않게
     if (existing) return { message: rowToMessage(existing), created: false };
+    const claimed = claimUserAttachments(tx, {
+      ids: input.attachments ?? [],
+      channelId: input.channelId,
+      userId: input.authorId,
+    });
     const message = storeMessage(tx, input.channelId, () => {
       const { bodyMd, mentions } = tokenize(input.bodyMd, channelParticipants(tx, input.channelId));
       return {
@@ -138,11 +146,17 @@ export function createUserMessage(db: Db, bus: ServerBus, input: CreateUserMessa
         authorId: input.authorId,
         bodyMd,
         mentions,
+        attachments: claimed,
         replyTo: input.replyTo ?? null,
         clientMsgId: input.clientMsgId,
         createdAt: new Date(),
       };
     });
+    markBound(
+      tx,
+      claimed.map((a) => a.id),
+      message.id,
+    );
     return { message, created: true };
   });
   if (result.created) bus.emit("message.created", { message: result.message });
@@ -150,10 +164,19 @@ export function createUserMessage(db: Db, bus: ServerBus, input: CreateUserMessa
 }
 
 /** externalId 가 이미 있으면 그 메시지를 돌려준다(이벤트 없음). components 에는 서버 id 와 componentState 를 붙인다. */
-export function createAgentMessage(db: Db, bus: ServerBus, input: CreateAgentMessageInput): Message {
+export function createAgentMessage(
+  db: Db,
+  bus: ServerBus,
+  input: CreateAgentMessageInput,
+  opts: { onDroppedAttachments?: (ids: string[]) => void } = {},
+): Message {
   const result = db.transaction((tx) => {
     const existing = tx.select().from(messages).where(eq(messages.externalId, input.externalId)).get();
-    if (existing) return { message: rowToMessage(existing), created: false };
+    if (existing) return { message: rowToMessage(existing), created: false, dropped: [] };
+    const { accepted, dropped } = claimBridgeAttachments(tx, {
+      ids: input.attachmentIds ?? [],
+      channelId: input.channelId,
+    });
     const message = storeMessage(tx, input.channelId, () => {
       const now = new Date();
       const { bodyMd, mentions } = tokenize(input.bodyMd, channelParticipants(tx, input.channelId));
@@ -163,6 +186,7 @@ export function createAgentMessage(db: Db, bus: ServerBus, input: CreateAgentMes
         authorId: input.agentId,
         bodyMd,
         mentions,
+        attachments: accepted,
         ...componentFields(input.components, now),
         replyTo: input.replyTo ?? null,
         runId: input.runId ?? null,
@@ -170,8 +194,15 @@ export function createAgentMessage(db: Db, bus: ServerBus, input: CreateAgentMes
         createdAt: now,
       };
     });
-    return { message, created: true };
+    markBound(
+      tx,
+      accepted.map((a) => a.id),
+      message.id,
+    );
+    return { message, created: true, dropped };
   });
+  // 트랜잭션 밖에서 — 호출자의 로그가 커밋을 붙잡지 않게
+  if (result.dropped.length > 0) opts.onDroppedAttachments?.(result.dropped);
   if (result.created) bus.emit("message.created", { message: result.message });
   return result.message;
 }

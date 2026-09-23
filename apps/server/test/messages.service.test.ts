@@ -1,9 +1,11 @@
-import { INTERACTIONS_MAX, Message } from "@dodok/shared";
+import { type Attachment, INTERACTIONS_MAX, Message } from "@dodok/shared";
+import { inArray } from "drizzle-orm";
 import { v7 as uuid } from "uuid";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "../src/db/client";
-import { componentInteractions } from "../src/db/schema.sqlite";
+import { attachments, componentInteractions } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
+import { toAttachment } from "../src/modules/attachments/service";
 import { addMember, createChannel } from "../src/modules/channels/service";
 import {
   createAgentMessage,
@@ -27,7 +29,46 @@ function setup() {
   const channel = createChannel(db, { workspaceId, createdBy: userId, name: "general" });
   const dev = createAgent(db, { workspaceId, providerAgentId: "dev", handle: "dev", name: "Dev" });
   addMember(db, channel.id, { memberType: "agent", memberId: dev.id, aliases: ["reviewer"] }, logger);
-  return { db, bus, created, userId, channelId: channel.id, devId: dev.id };
+  return { db, bus, created, userId, workspaceId, channelId: channel.id, devId: dev.id };
+}
+
+/** 첨부 행을 바로 넣는다 — 블롭 없이 묶기만 볼 때(올리기는 attachments.service 테스트가 잰다) */
+function insertAttachment(
+  db: Db,
+  opts: {
+    channelId: string;
+    uploaderType?: "user" | "bridge";
+    uploaderId?: string;
+    kind?: "image" | "file";
+    name?: string;
+  },
+): Attachment {
+  const row = db
+    .insert(attachments)
+    .values({
+      id: uuid(),
+      channelId: opts.channelId,
+      uploaderType: opts.uploaderType ?? "user",
+      uploaderId: opts.uploaderType === "bridge" ? null : (opts.uploaderId ?? null),
+      kind: opts.kind ?? "image",
+      name: opts.name ?? "a.png",
+      mime: opts.kind === "file" ? "application/pdf" : "image/png",
+      size: 10,
+      width: opts.kind === "file" ? null : 4,
+      height: opts.kind === "file" ? null : 3,
+      sha256: "0".repeat(64),
+      messageId: null,
+      createdAt: new Date(),
+    })
+    .returning()
+    .get();
+  return toAttachment(row);
+}
+
+/** ids 순서대로 첨부 행의 message_id */
+function boundTo(db: Db, ids: string[]): Array<string | null> {
+  const rows = db.select().from(attachments).where(inArray(attachments.id, ids)).all();
+  return ids.map((id) => rows.find((r) => r.id === id)?.messageId ?? null);
 }
 
 afterEach(() => {
@@ -106,7 +147,7 @@ describe("messages service", () => {
     expect(createUserMessage(db, bus, { ...input, clientMsgId: "next" }).seq).toBe(2);
   });
 
-  it("없는 채널이면 NOT_FOUND, 첨부가 있으면 VALIDATION — 둘 다 저장·이벤트가 없다", () => {
+  it("없는 채널이면 NOT_FOUND, 없는 첨부 id 면 VALIDATION — 둘 다 저장·이벤트가 없다", () => {
     const { db, bus, created, userId, channelId } = setup();
     expect(() =>
       createUserMessage(db, bus, { channelId: uuid(), authorId: userId, bodyMd: "x", clientMsgId: "c" }),
@@ -122,6 +163,134 @@ describe("messages service", () => {
     ).toThrow(expect.objectContaining({ status: 400 }));
     expect(created).toHaveLength(0);
     expect(listMessages(db, channelId, { limit: 10 }).messages).toEqual([]);
+  });
+
+  describe("첨부 묶기(스펙 4.4)", () => {
+    it("사람: 첨부 둘을 보낸 순서대로 싣고 행의 message_id 를 채운다", () => {
+      const { db, bus, created, userId, channelId } = setup();
+      const b = insertAttachment(db, { channelId, uploaderId: userId, name: "b.png" });
+      const a = insertAttachment(db, { channelId, uploaderId: userId, name: "a.png" });
+      const m = createUserMessage(db, bus, {
+        channelId,
+        authorId: userId,
+        bodyMd: "보세요",
+        clientMsgId: "c1",
+        attachments: [b.id, a.id],
+      });
+      expect(m.attachments).toEqual([b, a]);
+      expect(created[0]?.attachments).toEqual([b, a]);
+      expect(getMessage(db, m.id)?.attachments).toEqual([b, a]);
+      expect(boundTo(db, [a.id, b.id])).toEqual([m.id, m.id]);
+    });
+
+    it("사람: 본문 없이 첨부만 있어도 저장한다", () => {
+      const { db, bus, userId, channelId } = setup();
+      const a = insertAttachment(db, { channelId, uploaderId: userId });
+      const m = createUserMessage(db, bus, {
+        channelId,
+        authorId: userId,
+        bodyMd: "",
+        clientMsgId: "c1",
+        attachments: [a.id],
+      });
+      expect(m).toMatchObject({ bodyMd: "", attachments: [a] });
+    });
+
+    it("사람: 남의 첨부·다른 채널 첨부·브리지 첨부·이미 묶인 첨부는 VALIDATION 이고 메시지도 안 생긴다(seq 그대로)", () => {
+      const { db, bus, created, userId, channelId, workspaceId } = setup();
+      const other = createChannel(db, { workspaceId, createdBy: userId, name: "other" });
+      const mine = insertAttachment(db, { channelId, uploaderId: userId });
+      const bound = insertAttachment(db, { channelId, uploaderId: userId });
+      createUserMessage(db, bus, {
+        channelId,
+        authorId: userId,
+        bodyMd: "먼저",
+        clientMsgId: "c0",
+        attachments: [bound.id],
+      });
+      const bad = [
+        insertAttachment(db, { channelId, uploaderId: uuid() }), // 남의 것
+        insertAttachment(db, { channelId: other.id, uploaderId: userId }), // 다른 채널
+        insertAttachment(db, { channelId, uploaderType: "bridge" }), // 브리지
+        bound, // 이미 묶임
+      ];
+      for (const [i, att] of bad.entries()) {
+        expect(() =>
+          createUserMessage(db, bus, {
+            channelId,
+            authorId: userId,
+            bodyMd: "x",
+            clientMsgId: `bad-${i}`,
+            attachments: [mine.id, att.id],
+          }),
+        ).toThrow(expect.objectContaining({ status: 400 }));
+      }
+      expect(created).toHaveLength(1);
+      // 롤백 — 함께 보낸 멀쩡한 첨부도 묶이지 않았다
+      expect(boundTo(db, [mine.id])).toEqual([null]);
+      expect(
+        createUserMessage(db, bus, { channelId, authorId: userId, bodyMd: "y", clientMsgId: "ok" }).seq,
+      ).toBe(2);
+    });
+
+    it("[Review Focus 4] ack 를 잃고 같은 clientMsgId·같은 첨부로 다시 보내면 처음 메시지를 그대로 돌려준다", () => {
+      const { db, bus, created, userId, channelId } = setup();
+      const a = insertAttachment(db, { channelId, uploaderId: userId });
+      const input = { channelId, authorId: userId, bodyMd: "", clientMsgId: "same", attachments: [a.id] };
+      const first = createUserMessage(db, bus, input);
+      const again = createUserMessage(db, bus, input);
+      expect(again).toEqual(first);
+      expect(created).toHaveLength(1);
+    });
+
+    it("에이전트: 브리지 첨부 둘만 순서대로 묶고, 다른 채널 것은 빼고 onDroppedAttachments 로 알린다", () => {
+      const { db, bus, userId, channelId, workspaceId, devId } = setup();
+      const other = createChannel(db, { workspaceId, createdBy: userId, name: "other" });
+      const f1 = insertAttachment(db, { channelId, uploaderType: "bridge", kind: "file", name: "1.pdf" });
+      const f2 = insertAttachment(db, { channelId, uploaderType: "bridge", kind: "file", name: "2.pdf" });
+      const stray = insertAttachment(db, { channelId: other.id, uploaderType: "bridge" });
+      const onDropped = vi.fn();
+      const m = createAgentMessage(
+        db,
+        bus,
+        {
+          channelId,
+          agentId: devId,
+          externalId: "o1",
+          bodyMd: "파일",
+          attachmentIds: [f2.id, stray.id, f1.id],
+        },
+        { onDroppedAttachments: onDropped },
+      );
+      expect(m.attachments).toEqual([f2, f1]);
+      expect(onDropped).toHaveBeenCalledExactlyOnceWith([stray.id]);
+      expect(boundTo(db, [f1.id, f2.id, stray.id])).toEqual([m.id, m.id, null]);
+    });
+
+    it("에이전트: 빠진 것이 없으면 onDroppedAttachments 를 부르지 않고, 본문 없이 첨부만 있어도 저장한다", () => {
+      const { db, bus, channelId, devId } = setup();
+      const f = insertAttachment(db, { channelId, uploaderType: "bridge" });
+      const onDropped = vi.fn();
+      const m = createAgentMessage(
+        db,
+        bus,
+        { channelId, agentId: devId, externalId: "o1", bodyMd: "", attachmentIds: [f.id] },
+        { onDroppedAttachments: onDropped },
+      );
+      expect(m).toMatchObject({ bodyMd: "", attachments: [f] });
+      expect(onDropped).not.toHaveBeenCalled();
+    });
+
+    it("에이전트: 같은 externalId 재전송은 같은 메시지 — 이미 묶인 첨부를 빠진 것으로 알리지 않는다", () => {
+      const { db, bus, created, channelId, devId } = setup();
+      const f = insertAttachment(db, { channelId, uploaderType: "bridge" });
+      const input = { channelId, agentId: devId, externalId: "o1", bodyMd: "파일", attachmentIds: [f.id] };
+      const first = createAgentMessage(db, bus, input);
+      const onDropped = vi.fn();
+      expect(createAgentMessage(db, bus, input, { onDroppedAttachments: onDropped })).toEqual(first);
+      expect(created).toHaveLength(1);
+      expect(onDropped).not.toHaveBeenCalled();
+    });
   });
 
   it("createAgentMessage 는 externalId 로 중복을 흡수하고 components 에 id·componentState 를 붙인다", () => {

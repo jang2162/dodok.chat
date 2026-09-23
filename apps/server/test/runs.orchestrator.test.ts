@@ -5,7 +5,7 @@ import { eq } from "drizzle-orm";
 import { v7 as uuid } from "uuid";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DbOrTx } from "../src/db/client";
-import { componentInteractions, messages } from "../src/db/schema.sqlite";
+import { attachments, componentInteractions, messages } from "../src/db/schema.sqlite";
 import { addMember, createChannel } from "../src/modules/channels/service";
 import { createUserMessage, getMessage, rowToMessage } from "../src/modules/messages/service";
 import type { RunPlan } from "../src/modules/router/decide";
@@ -24,6 +24,27 @@ type Ids = ReturnType<typeof seedChannelWithAgent>;
 
 function systemMessages(db: DbOrTx): Message[] {
   return db.select().from(messages).where(eq(messages.kind, "system")).all().map(rowToMessage);
+}
+
+/** 브리지가 올린 미묶음 첨부 행 — 블롭 없이 묶기만 볼 때 */
+function bridgeAttachment(db: DbOrTx, channelId: string): string {
+  const id = uuid();
+  db.insert(attachments)
+    .values({
+      id,
+      channelId,
+      uploaderType: "bridge",
+      uploaderId: null,
+      kind: "file",
+      name: "r.pdf",
+      mime: "application/pdf",
+      size: 10,
+      sha256: "0".repeat(64),
+      messageId: null,
+      createdAt: new Date(),
+    })
+    .run();
+  return id;
 }
 
 function setup(opts: { timeouts?: Partial<RunTimeouts>; approvals?: OrchestratorDeps["approvals"] } = {}) {
@@ -1253,6 +1274,134 @@ describe("orchestrator", () => {
     expect(bodies).toEqual(["정본"]);
     expect(t.eventsOf(run.id).at(-1)).toMatchObject({ type: "RUN_FINISHED", messageIds: [ack.messageId] });
     t.orch.stop();
+  });
+
+  describe("폴백의 MEDIA: 줄(스펙 4.6)과 finalizing 상한 연장(Ruling 2)", () => {
+    const bodiesOf = (t: ReturnType<typeof setup>, runId: string) =>
+      t.db
+        .select()
+        .from(messages)
+        .where(eq(messages.runId, runId))
+        .all()
+        .map((m) => m.bodyMd);
+    const finalWith = async (t: ReturnType<typeof setup>, snapshot: string) => {
+      const run = await t.enqueue();
+      await t.flush();
+      t.adapter.emit({ kind: "run_signal", runId: run.id, signal: { kind: "gateway_started" } });
+      t.adapter.emit({
+        kind: "run_signal",
+        runId: run.id,
+        signal: { kind: "gateway_final" },
+        snapshotText: snapshot,
+      });
+      await t.flush();
+      expect(t.runOf(run.id).status).toBe("finalizing");
+      return run;
+    };
+    /** finalizing 이 정확히 ms 에 닫히는가 — ms-1 에는 열려 있고 ms 에 done */
+    const closesAt = async (t: ReturnType<typeof setup>, runId: string, ms: number) => {
+      await vi.advanceTimersByTimeAsync(ms - 1);
+      expect(t.runOf(runId).status).toBe("finalizing");
+      await vi.advanceTimersByTimeAsync(1);
+      expect(t.runOf(runId).status).toBe("done");
+    };
+
+    it("스냅샷의 단독 줄 MEDIA: 를 걷고 저장한다 — 호스트 경로는 본문·로그에 남지 않고 걷은 수만 로그에", async () => {
+      const t = setup();
+      const run = await finalWith(t, "결과\n\nMEDIA:/Users/x/a.png");
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(t.runOf(run.id)).toMatchObject({ status: "done", finalSource: "gateway" });
+      expect(bodiesOf(t, run.id)).toEqual(["결과"]);
+      expect(t.logger.warn).toHaveBeenCalledWith(
+        { runId: run.id, mediaLinesDropped: 1 },
+        "gateway snapshot media lines dropped",
+      );
+      const logged = JSON.stringify([t.logger.warn.mock.calls, t.logger.info.mock.calls]);
+      expect(logged).not.toContain("/Users/x");
+      expect(t.onAgentMessage).toHaveBeenCalledTimes(1);
+      t.orch.stop();
+    });
+
+    it("스냅샷이 MEDIA: 줄뿐이면 메시지를 만들지 않고 done(gateway)", async () => {
+      const t = setup();
+      const run = await finalWith(t, "MEDIA:/Users/x/a.png\nMEDIA:/Users/x/b.png\n");
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(t.runOf(run.id)).toMatchObject({ status: "done", finalSource: "gateway" });
+      expect(bodiesOf(t, run.id)).toEqual([]);
+      expect(t.onAgentMessage).not.toHaveBeenCalled();
+      t.orch.stop();
+    });
+
+    it.each([
+      ["MEDIA 없음 → 10초", "그냥 답", 10_000],
+      ["MEDIA 2줄 → 70초", "답\nMEDIA:/a.png\nMEDIA:/b.png", 70_000],
+      ["MEDIA 5줄 → 120초 상한", `답\n${"MEDIA:/a.png\n".repeat(5)}`, 120_000],
+    ])("finalizing 상한: %s", async (_label, snapshot, ms) => {
+      const t = setup();
+      const run = await finalWith(t, snapshot);
+      await closesAt(t, run.id, ms);
+      t.orch.stop();
+    });
+
+    it("늘어난 상한 안에 정본이 오면 정본 하나만 남는다(같은 답 두 번 저장 없음)", async () => {
+      const t = setup();
+      const run = await finalWith(t, "답\nMEDIA:/Users/x/a.png\nMEDIA:/Users/x/b.png");
+      await vi.advanceTimersByTimeAsync(40_000); // 옛 상한(10초)은 지났다 — 플러그인이 아직 올리는 중
+      expect(t.runOf(run.id).status).toBe("finalizing");
+      await t.orch.onCanonical(t.outbound({ runId: run.id, text: "답" }));
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(t.runOf(run.id)).toMatchObject({ status: "done", finalSource: "plugin" });
+      expect(bodiesOf(t, run.id)).toEqual(["답"]);
+      t.orch.stop();
+    });
+
+    it("상한 연장은 주입한 timeouts 를 따른다(finalizingMs + 줄당 finalizingMediaLineMs, finalizingMaxMs 까지)", async () => {
+      const t = setup({ timeouts: { finalizingMs: 100, finalizingMediaLineMs: 50, finalizingMaxMs: 180 } });
+      const one = await finalWith(t, "a\nMEDIA:/x");
+      await closesAt(t, one.id, 150);
+      const t2 = setup({ timeouts: { finalizingMs: 100, finalizingMediaLineMs: 50, finalizingMaxMs: 180 } });
+      const two = await finalWith(t2, "a\nMEDIA:/x\nMEDIA:/y");
+      await closesAt(t2, two.id, 180);
+      t.orch.stop();
+      t2.orch.stop();
+    });
+
+    it("중복 gateway_final 은 상한을 다시 늘리지 않는다", async () => {
+      const t = setup();
+      const run = await finalWith(t, "답\nMEDIA:/a.png");
+      await vi.advanceTimersByTimeAsync(30_000);
+      t.adapter.emit({
+        kind: "run_signal",
+        runId: run.id,
+        signal: { kind: "gateway_final" },
+        snapshotText: "답\nMEDIA:/a.png",
+      });
+      await closesAt(t, run.id, 10_000);
+      t.orch.stop();
+    });
+
+    it("정본의 attachmentIds — 같은 채널 브리지 첨부만 묶고, 빠진 id 는 outboundId 와 함께 경고 한 줄", async () => {
+      const t = setup();
+      const other = createChannel(t.db, { workspaceId: t.workspaceId, createdBy: t.userId, name: "other" });
+      const ok = bridgeAttachment(t.db, t.channelId);
+      const stray = bridgeAttachment(t.db, other.id);
+      const run = await t.enqueue();
+      await t.flush();
+      const out = t.outbound({ runId: run.id, text: "", attachmentIds: [ok, stray] });
+      const { messageId } = await t.orch.onCanonical(out);
+      const stored = getMessage(t.db, messageId ?? "");
+      expect(stored).toMatchObject({ bodyMd: "", attachments: [{ id: ok }] });
+      expect(t.logger.warn).toHaveBeenCalledWith(
+        { outboundId: out.outboundId, dropped: [stray] },
+        "outbound attachments dropped",
+      );
+      // 본문 없는(미디어만) 정본도 라우팅된다
+      expect(t.onAgentMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ id: messageId }),
+        expect.anything(),
+      );
+      t.orch.stop();
+    });
   });
 
   describe("진단 로그 — 본문·토큰 없이 런 종료 한 줄, 상한으로 닫힐 때 한 줄", () => {
