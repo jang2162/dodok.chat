@@ -48,7 +48,7 @@ CHANGELOG 9.5 「Live plugin management: install and reload … without restarti
 5. 레지스트리 모듈은 **SDK 를 import 하지 않는다**(타입만). 그래서 단위 테스트가 된다 — `vi.resetModules()` 뒤 다시 `import` 하면 다른 모듈 인스턴스가 나와 이중 평가를 흉내 낸다.
    잠근 것: 세대 1 등록 → 세대 2 가 같은 브리지 · `correlations` 도 같은 객체 · 새 브리지로 덮은 뒤 옛 세대의 release 는 새 브리지를 남긴다 · 같은 객체로 release 하면 지워진다.
 
-곁들여, 원격 Gateway 가 9.5 인지 알 수 있게 **서버가 이미 받는데 버리던 버전 둘을 로그에 싣는다**: `"gateway connected"` 의 `gatewayVersion`(hello-ok `server.version` — 프로토콜 스키마의 필수 필드),
+곁들여, 원격 Gateway 가 9.5 인지 알 수 있게 **서버가 이미 받는데 버리던 버전 둘을 로그에 싣는다**: `"gateway connected"` 의 `gatewayVersion`(hello-ok `server.version` — 프로토콜 스키마의 필수 필드)·`gatewayBuildId`(`server.buildId` — 선택 필드라 없으면 `null`. 같은 버전 문자열의 두 빌드 `3a9d69d`·`f396007` 을 가른 값),
 `"bridge plugin hello"` 의 `gatewayVersion`(플러그인의 `runtime.version`). 같은 줄의 옛 `sdkVersion` 은 **빌드 때 박힌 devDependency 상수**라 9.5 위에서도 `2026.9.4` 로 찍혀 `pluginBuiltWithSdk` 로 이름을 바꿨다.
 
 ## 3. 버린 길

@@ -98,7 +98,7 @@ EOF
 
 - `OPENCLAW_DEVICE_IDENTITY_PATH=` 는 빈 값으로 **export** 된다 — `.env` 에 원격용 경로가 있어도 덮이지 않고, 빈 값은 설정 로더가 「없음」으로 봐서 기본 `data/openclaw-device-dev.json` 이 새로 생긴다.
   루프백 + 공유 토큰이면 페어링이 자동 승인되고 `operator.admin` 까지 붙는다(ADR 0003 2절, 이번에도 첫 시도 20ms).
-- 첫 부팅 로그에서 `"url":"http://127.0.0.1:<PORT>"`·`"msg":"gateway connected"`(scopes 에 `operator.admin`, `gatewayVersion` 이 `oc --version` 과 같은지)를 확인한다.
+- 첫 부팅 로그에서 `"url":"http://127.0.0.1:<PORT>"`·`"msg":"gateway connected"`(scopes 에 `operator.admin`, `gatewayVersion`·`gatewayBuildId` 가 `oc --version` 의 `<버전> (<빌드>)` 와 같은지)를 확인한다.
 
 ### (e) 연결 확인
 
@@ -272,7 +272,7 @@ oc --dev plugins inspect dodok --json | jq .plugin.status     # 여전히 "loade
   원격 공유 토큰은 `operator.admin` 을 부여한다(계획서 10장 #15, 2026-09-15 원격 실측 — 스코프 승급 자동 승인). 부여가 없어지면 `capabilities.sessionReset=false` 가 되고 「새 대화」는 409.
 - 브리지: 플러그인이 **아웃바운드로** 서버에 붙는다. 개발 PC 서버면 터널(cloudflared 등)로 `wss://…/bridge` 를 만들고, 그 주소를 `BRIDGE_PUBLIC_URL` 에 적고 호스트의 계정 `bridgeUrl` 에 넣는다. 토큰은 `BRIDGE_TOKEN` 과 같게.
 - 원격은 루프백이 아니므로 페어링 자동 승인·지연 수치가 다를 수 있다. ①~③ 을 다시 재고 이 문서에 표를 더한다.
-- **[사람] 원격 Gateway 버전을 먼저 확인한다.** 서버를 원격에 붙이면 접속 한 번에 로그 두 줄이 알려 준다 — `"gateway connected"` 의 `gatewayVersion`(hello-ok `server.version`)과 `"bridge plugin hello"` 의 `gatewayVersion`(원격 호스트의 플러그인이 보낸 `runtime.version`).
+- **[사람] 원격 Gateway 버전을 먼저 확인한다.** 서버를 원격에 붙이면 접속 한 번에 로그 두 줄이 알려 준다 — `"gateway connected"` 의 `gatewayVersion`·`gatewayBuildId`(hello-ok `server.version`·`server.buildId`)와 `"bridge plugin hello"` 의 `gatewayVersion`(원격 호스트의 플러그인이 보낸 `runtime.version`).
   원격이 `2026.9.5` 이상이면 **ADR 0004 이전 번들은 배포에서도 에이전트가 카드를 못 보낸다**(결함 1) — 호스트의 플러그인을 새 번들로 바꾸고, 그 버전에서 11절 하네스를 한 번 돌린다. `pluginBuiltWithSdk` 는 Gateway 버전이 아니다(2절).
 - dev 프로필 전용 주의(내장 cron·`~/.openclaw-dev` 잔여물)는 원격 호스트의 설정·예정 작업으로 바뀐다 — 호스트에서 `openclaw cron list` 로 본다.
 
@@ -628,7 +628,7 @@ PARAMS=$(jq -cn --argjson a "$ARGS" --arg sk "agent:dev:dodok:channel:<채널 id
 ### 10.4 틀린 것·고칠 것
 
 1. **[결함·높음] 모델 런 안의 `message` 툴 전송이 실패한다 — `dodok: account "default" bridge is not running`.** 브리지는 `connected`(어댑터 상태·웹 점 초록), 정본 답(`deliver`)도 같은 브리지로 정상 도착했다.
-   → **원인 확정·고침(2026-09-23)**: 9.5 가 번들을 같은 realm 에서 두 번 평가하고 모델 런의 `handleAction` 이 `startAccount` 를 돌지 않은 두 번째 인스턴스로 간다(c2-t14, 모델 런 0회). 브리지·상관관계를 전역 레지스트리로 옮겼다 — ADR 0004. 실물 확인은 11절 하네스(아래 추정은 기록으로 남긴다).
+   → **원인 확정(2026-09-23), 고쳤다(실물 확인 전 — 11.3)**: 9.5 가 번들을 같은 realm 에서 두 번 평가하고 모델 런의 `handleAction` 이 `startAccount` 를 돌지 않은 두 번째 인스턴스로 간다(c2-t14, 모델 런 0회). 브리지·상관관계를 전역 레지스트리로 옮겼다 — ADR 0004. 실물 확인은 11절 하네스(아래 추정은 기록으로 남긴다).
    - **재현**: 3절대로 띄우고 채널에 `@dev message 툴의 components 로 카드 하나만 보내 줘 …`(런 2). Gateway 로그에 `dodok:tool-send {"action":"send","accountId":"default",…,"hasComponents":true,"ok":true}` 가 찍히고
      wire 에 `TOOL_CALL_RESULT {"content":"dodok: account \"default\" bridge is not running","ok":false}` 가 온다. 로그 줄은 `packages/openclaw-plugin/src/channel.ts` 의 `handleAction` — `bridges.get(accountId)` 가 `undefined`.
    - **가른 것**: 같은 인자를 운영자 `tools.invoke`(10.2 (d))로 보내면 **같은 `handleAction` 이 브리지를 찾고 성공한다**. 즉 실패는 **claude-cli → MCP 루프백으로 들어온 툴 호출에서만** 난다.
@@ -638,6 +638,7 @@ PARAMS=$(jq -cn --argjson a "$ARGS" --arg sk "agent:dev:dodok:channel:<채널 id
    - **영향**: 실물에서 **에이전트가 카드를 스스로 보낼 수 없다** — components v1 전체가 dev 실물에서 쓸 수 없는 상태다. 가짜 Gateway·통합 시나리오는 플러그인을 한 인스턴스로 불러 이 경로를 못 본다.
 2. **[결함·중간] `ask_user` 가 dodok 채널에서 깨진다.** 코어 `ask_user` 는 질문을 채널 `outbound.sendText` 로 보내는데(`ask-user-tool-*.mjs` → `sendDurableMessageBatchCore`), 우리 `sendText` 도 `bridges.get(…)` 이 비어
    `dodok: bridge is not running` 을 던진다(결함 1 과 같은 뿌리로 보인다). 설령 브리지를 찾아도 `sendText` 는 **텍스트만** 보내고 `agentId: "unknown"` 이라 질문의 **선택지 컨트롤이 없다** — dodok 은 `ask_user` 를 카드로 그릴 길이 없다.
+   → 이어서 볼 곳: 첫 층(`sendText` 도 두 번째 인스턴스) → ADR 0004, 뒷 두 층(`agent not found`·선택지 컨트롤 없음) → `docs/plan.md` 8장 「플러그인·OpenClaw 버전」.
 3. **[관찰·중요] 모델은 `components` 보다 `ask_user` 를 먼저 고른다(발견 가능성).** 「셀렉트로 물어봐 줘」처럼 자연스러운 요청에 모델은 `message` 툴의 components 가 아니라 `ask_user` 를 불렀다(런 1).
    `components` 는 `message` 툴 스키마의 한 속성일 뿐이라 「사용자에게 묻는다」는 의도에 먼저 걸리는 쪽은 이름부터 그 일인 `ask_user` 다. 결함 1·2 를 고쳐도 **우리 카드가 실무에서 잘 안 쓰일 수 있다**.
    손댈 곳: `components-schema.ts` 의 `COMPONENTS_DESCRIPTION`(「사용자에게 선택·입력을 받을 때는 이것을 쓴다」를 앞에), 채널 프롬프트, 또는 `ask_user` 를 dodok 이 카드로 받아 그리는 길(결함 2) — 어느 쪽으로 갈지는 판단이 필요하다.
@@ -749,7 +750,9 @@ SP=$(mktemp -d); mkdir -p $SP/fakebin
 cp data/args.json $SP/fake-args.json                                            # message 인자
 echo '{"questions":[{"id":"q","header":"형식","question":"골라 주세요","options":[{"label":"A","description":"a"},{"label":"B","description":"b"}]}]}' > $SP/fake-ask-user.json   # 있으면 ask_user 도 부른다
 # 11.4 스크립트를 $SP/fakebin/claude 로 저장한 뒤:
-sed -i '' "s#__REAL_CLAUDE__#$(command -v claude)#" $SP/fakebin/claude && chmod +x $SP/fakebin/claude
+REAL=$(whence -p claude 2>/dev/null || command -v claude)                     # zsh 에서 alias·함수면 command -v 는 경로가 아니다
+[[ $REAL == /* && -x $REAL ]] && sed -i '' "s#__REAL_CLAUDE__#$REAL#" $SP/fakebin/claude && chmod +x $SP/fakebin/claude \
+  || echo "claude 절대경로가 아니다(REAL=$REAL) — REAL 에 직접 넣고 다시"
 kill $(lsof -nP -iTCP:19001 -sTCP:LISTEN -t)                                   # 지금 Gateway
 ( . ./.env
   env -u OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_TOKEN="$OPENCLAW_DEV_GATEWAY_TOKEN" NODE_OPTIONS=--stack-trace-limit=60 \
