@@ -1,22 +1,13 @@
 // apps/server/scripts/bundle-smoke.mjs — 운영 번들을 실행 이미지와 같은 배치로 띄워 본다(스펙 8장). 사용: build 뒤 pnpm -F @dodok/server bundle:smoke
-// 배치: `pnpm deploy --prod` 산출물의 node_modules 위에 dist/·drizzle/ 을 놓는다(태스크 3 Dockerfile 과 같은 명령).
+// 배치: `pnpm deploy --prod` 산출물의 node_modules 위에 dist/·drizzle/ 을 놓는다.
 // 저장소 밖 임시 디렉터리에서 띄운다 — 저장소 안이면 워크스페이스 node_modules(devDependency 포함)가 모든 것을 해석해
 // 빠진 prod 의존성이 가려진다(번들이 런타임에 찾는 ws 가 devDependency 였던 결함을 그렇게 놓쳤다).
 // 단계 1: 정상 env 로 /healthz 200 · GET /socket.io/socket.io.js 400(serveClient: false) 뒤에도 살아 있음
 // 단계 2: DODOK_MIGRATIONS_DIR 없이 띄우면 설정 오류로 죽는다 — 번들이 자기를 번들로 알아보는지(define·isBundled)를 이것으로 본다
 // 네트워크 밖으로 나가지 않는다(deploy 는 --offline 으로 로컬 스토어만 쓴다)
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import {
-  cpSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -41,68 +32,119 @@ const work = mkdtempSync(join(tmpdir(), "dodok-bundle-"));
 const appDir = join(work, "app");
 const dataDir = join(work, "data");
 const failures = [];
+// 태스크 3 Dockerfile 이 같은 명령을 쓴다 — 바꾸면 거기도 함께
+const deployArgs = ["--filter", "@dodok/server", "deploy", "--prod", "--legacy", "--offline"];
 
-function prepareApp() {
+// 중단(Ctrl-C·SIGTERM)에도 자식을 멈추고 work(deploy 산출물 약 260 MB)를 지운다. 처리기가 없으면 신호 기본 동작으로
+// 즉사해 finally 가 돌지 않는다. 자식을 먼저 멈추는 것은 pnpm 이 쓰고 있는 디렉터리를 지우다 경합하지 않게
+const children = new Set();
+let interrupted = false;
+function track(child) {
+  if (interrupted) {
+    child.kill("SIGKILL");
+    throw new Error("중단됨");
+  }
+  children.add(child);
+  child.once("exit", () => children.delete(child));
+  return child;
+}
+async function abort(signal) {
+  interrupted = true;
+  await Promise.all(
+    [...children].map(
+      (c) =>
+        new Promise((r) => {
+          c.once("exit", r);
+          c.kill("SIGTERM");
+          setTimeout(() => c.kill("SIGKILL"), 5_000).unref();
+        }),
+    ),
+  );
+  rmSync(work, { recursive: true, force: true });
+  console.log(`bundle smoke: ${signal} 로 중단 — 임시 디렉터리를 지웠다`);
+  process.exit(signal === "SIGINT" ? 130 : 143);
+}
+for (const signal of ["SIGINT", "SIGTERM"])
+  process.on(signal, () => {
+    if (!interrupted) void abort(signal);
+  });
+
+function runChild(cmd, args, opts) {
+  const child = track(spawn(cmd, args, { ...opts, stdio: ["ignore", "pipe", "pipe"] }));
+  let output = "";
+  child.stdout.on("data", (b) => (output += b));
+  child.stderr.on("data", (b) => (output += b));
+  return new Promise((r) => child.once("close", (code, signal) => r({ code, signal, output })));
+}
+
+// deploy 는 실행한 워크스페이스의 node_modules/.pnpm-workspace-state-v1.json 을 dev:false 로 덮어쓴다 — 원본이면 다음
+// `pnpm run` 이 의존성 확인에서 `pnpm install --production` 을 시도하고, CI=true 셸에서는 확인 없이 devDependency 를 전부 지운다.
+// 저장·되돌림은 신호가 쓰기와 되돌림 사이에 떨어지면 못 되돌리므로, 매니페스트만 복사한 사본에서 deploy 해 원본을 아예 안 만진다.
+// 사본에 필요한 것: 루트 package.json(packageManager 핀)·pnpm-workspace.yaml(allowBuilds)·pnpm-lock.yaml·.npmrc 와 워크스페이스
+// 패키지마다 package.json — 번들이 @dodok/* 를 품으므로 deploy 가 옮기는 @dodok/* 는 package.json 뿐인 껍데기여도 된다
+function copyManifests(dest) {
+  for (const f of ["package.json", "pnpm-workspace.yaml", "pnpm-lock.yaml", ".npmrc"])
+    if (existsSync(join(repoRoot, f))) cpSync(join(repoRoot, f), join(dest, f));
+  // pnpm-workspace.yaml 의 packages 글롭(apps/*·packages/*)과 맞춘다
+  for (const group of ["apps", "packages"])
+    for (const name of readdirSync(join(repoRoot, group))) {
+      const manifest = join(repoRoot, group, name, "package.json");
+      if (!existsSync(manifest)) continue;
+      mkdirSync(join(dest, group, name), { recursive: true });
+      cpSync(manifest, join(dest, group, name, "package.json"));
+    }
+}
+
+async function prepareApp() {
   if (!existsSync(join(serverDir, "dist/main.js")))
     throw new Error("dist/main.js 가 없다 — 먼저 pnpm -F @dodok/server build");
-  // 조상 디렉터리에 node_modules 가 있으면 Node 가 거기까지 올라가 해석하므로 격리가 깨진다
-  for (let d = work; ; d = dirname(d)) {
-    if (existsSync(join(d, "node_modules"))) throw new Error(`격리 불가: ${d}/node_modules 가 있다`);
-    if (dirname(d) === d) break;
+  const src = join(work, "src");
+  copyManifests(src);
+  // pnpm 11 은 inject-workspace-packages 가 없는 워크스페이스에서 --legacy 없이는 deploy 를 거부한다(ERR_PNPM_DEPLOY_NONINJECTED_WORKSPACE)
+  const r = await runChild("pnpm", [...deployArgs, join(work, "deploy")], { cwd: src });
+  if (r.code !== 0) {
+    process.stderr.write(r.output);
+    throw new Error(`pnpm deploy 가 exit ${r.code ?? r.signal}`);
   }
-  // pnpm 11 은 inject-workspace-packages 가 없는 워크스페이스에서 --legacy 없이는 deploy 를 거부한다(ERR_PNPM_DEPLOY_NONINJECTED_WORKSPACE).
-  // deploy 는 원본 워크스페이스의 node_modules/.pnpm-workspace-state-v1.json 을 dev:false 로 덮어쓴다 — 그대로 두면 다음
-  // `pnpm run` 이 의존성 확인에서 `pnpm install --production` 을 시도한다(TTY 가 없으면 실패). 그래서 앞뒤로 되돌린다
-  const statePath = join(repoRoot, "node_modules/.pnpm-workspace-state-v1.json");
-  const state = existsSync(statePath) ? readFileSync(statePath) : undefined;
-  let r;
-  try {
-    r = spawnSync(
-      "pnpm",
-      ["--filter", "@dodok/server", "deploy", "--prod", "--legacy", "--offline", join(work, "deploy")],
-      {
-        cwd: repoRoot,
-        encoding: "utf8",
-      },
-    );
-  } finally {
-    if (state) writeFileSync(statePath, state);
-  }
-  if (r.status !== 0) {
-    process.stderr.write(r.stdout + r.stderr);
-    throw new Error(`pnpm deploy 가 exit ${r.status ?? r.error}`);
-  }
-  // 이미지 배치(/app/node_modules·/app/dist·/app/drizzle)와 같게 — deploy 가 복사한 src/·test/ 는 쓰지 않는다
+  // 이미지 배치(/app/node_modules·/app/dist·/app/drizzle)와 같게 — deploy 가 복사한 나머지는 쓰지 않는다
   mkdirSync(appDir);
   renameSync(join(work, "deploy/node_modules"), join(appDir, "node_modules"));
   cpSync(join(work, "deploy/package.json"), join(appDir, "package.json"));
   rmSync(join(work, "deploy"), { recursive: true, force: true });
+  rmSync(src, { recursive: true, force: true });
   cpSync(join(serverDir, "dist"), join(appDir, "dist"), { recursive: true });
   cpSync(join(serverDir, "drizzle"), join(appDir, "drizzle"), { recursive: true });
+  // 조상 디렉터리에 node_modules 가 있으면 Node 가 거기까지 올라가 해석하므로 격리가 깨진다
+  for (let d = dirname(appDir); ; d = dirname(d)) {
+    if (existsSync(join(d, "node_modules"))) throw new Error(`격리 불가: ${d}/node_modules 가 있다`);
+    if (dirname(d) === d) break;
+  }
 }
 
 function startBundle(port, extraEnv) {
   mkdirSync(dataDir, { recursive: true });
   const secret = () => randomBytes(24).toString("hex");
-  const child = spawn(process.execPath, ["dist/main.js"], {
-    cwd: appDir,
-    env: {
-      PATH: process.env.PATH,
-      HOST: "127.0.0.1",
-      PORT: String(port),
-      DATA_DIR: dataDir,
-      APP_ORIGIN: `http://localhost:${port}`,
-      LOCAL_AUTH_TOKEN: secret(),
-      BETTER_AUTH_SECRET: secret(),
-      BRIDGE_TOKEN: secret(),
-      OPENCLAW_GATEWAY_URL: "ws://127.0.0.1:9", // 닿지 않는다 — 부팅을 막지 않는다(app.ts)
-      OPENCLAW_GATEWAY_TOKEN: secret(),
-      VAPID_SUBJECT: "mailto:smoke@example.com",
-      LOG_LEVEL: "warn",
-      ...extraEnv,
-    },
-    stdio: ["ignore", "inherit", "pipe"],
-  });
+  const child = track(
+    spawn(process.execPath, ["dist/main.js"], {
+      cwd: appDir,
+      env: {
+        PATH: process.env.PATH,
+        HOST: "127.0.0.1",
+        PORT: String(port),
+        DATA_DIR: dataDir,
+        APP_ORIGIN: `http://localhost:${port}`,
+        LOCAL_AUTH_TOKEN: secret(),
+        BETTER_AUTH_SECRET: secret(),
+        BRIDGE_TOKEN: secret(),
+        OPENCLAW_GATEWAY_URL: "ws://127.0.0.1:9", // 닿지 않는다 — 부팅을 막지 않는다(app.ts)
+        OPENCLAW_GATEWAY_TOKEN: secret(),
+        VAPID_SUBJECT: "mailto:smoke@example.com",
+        LOG_LEVEL: "warn",
+        ...extraEnv,
+      },
+      stdio: ["ignore", "inherit", "pipe"],
+    }),
+  );
   const run = { child, exited: false, code: null, stderr: "" };
   child.stderr.on("data", (b) => {
     run.stderr += b;
@@ -166,7 +208,7 @@ async function stage2() {
 }
 
 try {
-  prepareApp();
+  await prepareApp();
   await stage1();
   rmSync(dataDir, { recursive: true, force: true });
   await stage2();
@@ -175,9 +217,12 @@ try {
 } finally {
   rmSync(work, { recursive: true, force: true });
 }
-console.log(
-  failures.length === 0
-    ? "bundle smoke: 1) /healthz 200 · /socket.io/socket.io.js 400  2) DODOK_MIGRATIONS_DIR 없으면 설정 오류로 종료"
-    : `bundle smoke: FAILED — ${failures.join(", ")}`,
-);
-process.exit(failures.length === 0 ? 0 : 1);
+// 중단됐으면 판정과 종료 코드는 abort 가 낸다 — 자식이 죽어 생긴 실패를 결과로 보고하지 않게
+if (!interrupted) {
+  console.log(
+    failures.length === 0
+      ? "bundle smoke: 1) /healthz 200 · /socket.io/socket.io.js 400  2) DODOK_MIGRATIONS_DIR 없으면 설정 오류로 종료"
+      : `bundle smoke: FAILED — ${failures.join(", ")}`,
+  );
+  process.exit(failures.length === 0 ? 0 : 1);
+}

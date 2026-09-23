@@ -9,7 +9,8 @@ import { build } from "esbuild";
 // debug 의 supports-color, better-auth 의 @opentelemetry/api), 쓰지 않는 가지(pino transport 의 createRequire —
 // transport 를 안 쓴다), 내장 모듈(node:sqlite·node:async_hooks)이나 코드 생성 문자열(ajv·fast-json-stringify standalone)이다.
 // 의존성을 올린 뒤 다시 재려면 dist/main.js 에서 비내장 require("…")·import("…") 와 함께 createRequire·.resolve( 를 찾는다 —
-// 번들러가 이름을 require2 처럼 바꾸므로 \brequire\( 로는 못 센다. 빠진 것은 bundle-smoke(프로드 설치 위에서 띄운다)가 잡는다
+// 번들러가 이름을 require2 처럼 바꾸므로 \brequire\( 로는 못 센다. 빠진 것은 bundle-smoke(프로드 설치 위에서 띄운다)가 잡는다 —
+// 단 부팅 경로에서 찾는 것만(ws 는 부팅 때 Gateway 클라이언트가 적재한다). 요청 경로 안의 런타임 해석은 위 전수 재기로만 찾는다
 const external = ["better-sqlite3"];
 
 await build({
