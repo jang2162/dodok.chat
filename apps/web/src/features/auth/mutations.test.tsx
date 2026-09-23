@@ -18,6 +18,7 @@ const unregisters: Array<() => void> = [];
 let requests: string[] = [];
 let push: ReturnType<typeof stubPush> | undefined;
 afterEach(() => {
+  vi.useRealTimers();
   for (const unregister of unregisters.splice(0)) unregister();
   push?.restore();
   push = undefined;
@@ -163,7 +164,7 @@ describe("[Review Focus 1] 이 기기의 푸시 구독", () => {
     expect(localStorage.getItem("dodok.push")).toBeNull();
   });
 
-  it("서버 해지가 끝나지 않아도 오래 기다리지 않고 로그아웃한다", async () => {
+  it("서버 해지가 끝나지 않아도 3초만 기다리고 로그아웃한다", async () => {
     const sub = fakeSubscription();
     push = stubPush({ permission: "granted", subscription: sub });
     localStorage.setItem("dodok.push", "u");
@@ -173,9 +174,18 @@ describe("[Review Focus 1] 이 기기의 푸시 구독", () => {
       () => new Promise<Response>(() => {}),
     );
 
+    // 경계를 잰다 — 3초에서 1ms 모자라면 아직, 3초가 차면 서버 로그아웃
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     act(() => logout.current.mutate());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(requests).toContain("DELETE /api/v1/push/subscriptions");
+    await vi.advanceTimersByTimeAsync(2999);
+    expect(requests).not.toContain("POST /api/v1/auth/logout");
+    await vi.advanceTimersByTimeAsync(1);
+    expect(requests).toContain("POST /api/v1/auth/logout");
+    vi.useRealTimers();
 
-    expect(await screen.findByRole("heading", { name: "로그인" }, { timeout: 8000 })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "로그인" })).toBeInTheDocument();
     expect(requests).toContain("POST /api/v1/auth/logout");
     // 세션 정리(dropLocalPush)가 기기 구독을 해지한다
     await vi.waitFor(() => expect(sub.unsubscribed).toBe(true));

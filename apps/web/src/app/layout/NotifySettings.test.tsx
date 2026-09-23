@@ -134,6 +134,70 @@ describe("상태 다섯(스펙 6장)", () => {
     expect(within(panel).queryByRole("button", { name: "푸시 알림 켜기" })).not.toBeInTheDocument();
   });
 
+  it("켜기에서 권한을 거절하면 거절됨으로 바뀌고 안내 문장은 한 번만 보인다", async () => {
+    push = stubPush({ permission: "default" });
+    push.notification.answer("denied");
+    renderPanel();
+    const panel = await openPanel();
+    await userEvent.click(await within(panel).findByRole("button", { name: "푸시 알림 켜기" }));
+
+    await waitFor(() =>
+      expect(within(panel).queryByRole("button", { name: "푸시 알림 켜기" })).not.toBeInTheDocument(),
+    );
+    expect(within(panel).getAllByText("브라우저 설정에서 알림을 허용해 주세요")).toHaveLength(1);
+    expect(within(panel).queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("켜는 동안 패널은 닫히지 않는다(Esc·닫기) — 끝나면 닫힌다", async () => {
+    push = stubPush({ permission: "granted" });
+    let release: () => void = () => {};
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input) === "/api/v1/push/vapid-public-key") return json(200, { publicKey: VAPID_KEY });
+      if (init?.method === "POST")
+        await new Promise<void>((r) => {
+          release = r;
+        });
+      return new Response(null, { status: 204 });
+    });
+    renderPanel();
+    const panel = await openPanel();
+    await userEvent.click(await within(panel).findByRole("button", { name: "푸시 알림 켜기" }));
+    expect(await within(panel).findByText("켜는 중…")).toBeInTheDocument();
+
+    await userEvent.keyboard("{Escape}");
+    expect(screen.getByRole("dialog", { name: "알림" })).toBeInTheDocument();
+    expect(within(panel).getByRole("button", { name: "닫기" })).toBeDisabled();
+
+    act(() => release());
+    expect(await within(panel).findByText("이 기기에서 알림을 받습니다")).toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("끄는 동안 「끄기」는 비활성이고 패널은 닫히지 않는다", async () => {
+    const sub = fakeSubscription();
+    push = stubPush({ permission: "granted", subscription: sub });
+    localStorage.setItem("dodok.push", ME.user.id);
+    let release: () => void = () => {};
+    vi.mocked(fetch).mockImplementation(async (_input, init) => {
+      if (init?.method === "DELETE")
+        await new Promise<void>((r) => {
+          release = r;
+        });
+      return new Response(null, { status: 204 });
+    });
+    renderPanel();
+    const panel = await openPanel();
+    await userEvent.click(await within(panel).findByRole("button", { name: "끄기" }));
+    expect(await within(panel).findByText("끄는 중…")).toBeInTheDocument();
+    expect(within(panel).getByRole("button", { name: "끄기" })).toBeDisabled();
+    await userEvent.keyboard("{Escape}");
+    expect(screen.getByRole("dialog", { name: "알림" })).toBeInTheDocument();
+
+    act(() => release());
+    expect(await within(panel).findByRole("button", { name: "푸시 알림 켜기" })).toBeInTheDocument();
+  });
+
   it("설치 필요(iOS, 홈 화면 앱 아님) — 홈 화면에 추가 안내", async () => {
     vi.spyOn(navigator, "userAgent", "get").mockReturnValue(IPHONE);
     notification = stubNotification("default");

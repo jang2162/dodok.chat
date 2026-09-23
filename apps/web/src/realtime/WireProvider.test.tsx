@@ -10,6 +10,7 @@ import { useApprovalStore } from "@/features/approvals/approvalStore";
 import { notifyApproval, resetApprovalNotices } from "@/features/approvals/notify";
 import { useRunStore } from "@/features/runs/runStore";
 import { stubNotification } from "../../test/domStubs";
+import { fakeSubscription, pushStub, stubPush } from "../../test/pushStubs";
 import { createdSockets } from "../../test/fakeSocket";
 import { approval, CH, CH2, runState, USER, uid } from "../../test/fixtures";
 import { useWireStatus } from "./wire";
@@ -337,5 +338,45 @@ describe("기기 푸시 구독", () => {
     expect(push.dropLocalPush).not.toHaveBeenCalled();
     act(() => resetClientState(queryClient));
     expect(push.dropLocalPush).toHaveBeenCalledTimes(1);
+  });
+
+  it("세션 없이 앱을 열면(me 401, 사본 없음) 기기 구독을 해지하고 플래그를 지운다", async () => {
+    const actual = await vi.importActual<typeof import("@/pwa/push")>("@/pwa/push");
+    vi.mocked(push.dropLocalPush).mockImplementation(actual.dropLocalPush);
+    const sub = fakeSubscription();
+    const device = stubPush({ permission: "granted", subscription: sub });
+    try {
+      localStorage.setItem("dodok.push", "userA");
+      stubMe(401);
+      render(<Tree />);
+      await waitFor(() => expect(sub.unsubscribed).toBe(true));
+      expect(push.dropLocalPush).toHaveBeenCalledTimes(1);
+      expect(pushStub.current).toBeNull();
+      expect(localStorage.getItem("dodok.push")).toBeNull();
+    } finally {
+      device.restore();
+      localStorage.clear();
+      vi.mocked(push.dropLocalPush).mockImplementation(async () => {});
+    }
+  });
+
+  it("me 가 네트워크 오류·5xx 면 해지하지 않는다 — 일시 오류·오프라인", async () => {
+    for (const answer of [
+      async () => {
+        throw new TypeError("Failed to fetch");
+      },
+      async () => json(500, { code: "INTERNAL", message: "x" }),
+      async () => json(503, { code: "UNAVAILABLE", message: "x" }),
+    ]) {
+      queryClient = createQueryClient(queryUnauthorized);
+      // 재시도(5xx·네트워크 2회)는 그대로, 사이 대기만 없앤다
+      queryClient.setQueryDefaults(qk.me, { retryDelay: 0 });
+      vi.stubGlobal("fetch", vi.fn<typeof fetch>(answer));
+      const { unmount } = render(<Tree />);
+      await waitFor(() => expect(queryClient.getQueryState(qk.me)?.status).toBe("error"));
+      expect(queryClient.getQueryState(qk.me)?.fetchFailureCount).toBe(3);
+      expect(push.dropLocalPush).not.toHaveBeenCalled();
+      unmount();
+    }
   });
 });

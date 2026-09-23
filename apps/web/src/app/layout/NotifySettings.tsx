@@ -73,10 +73,12 @@ export function NotifySettings() {
     setBusy("on");
     setError(undefined);
     const r = await enablePush(userId);
-    setPermission(pushPermission());
+    const now = pushPermission();
+    setPermission(now);
     if (r.ok) setSubscribed(true);
     else {
-      setError(r.reason);
+      // 거절로 끝났으면 상태 줄(「거절됨」)이 같은 말을 이미 한다 — 두 번 쓰지 않는다
+      if (now !== "denied") setError(r.reason);
       setSubscribed((await currentSubscription()) !== null);
     }
     setBusy(undefined);

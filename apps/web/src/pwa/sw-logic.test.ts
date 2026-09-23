@@ -138,6 +138,20 @@ describe("pickClient", () => {
     ).toBe(1);
   });
 
+  it("보이는 창도 포커스 창도 없으면 가장 최근 창(matchAll 순서의 첫 같은 출처 창)", () => {
+    expect(
+      pickClient(
+        [
+          { url: "https://evil.example/", visibilityState: "hidden", focused: false },
+          { url: `${O}/c/a`, visibilityState: "hidden", focused: false },
+          { url: `${O}/c/b`, visibilityState: "hidden", focused: false },
+          { url: `${O}/c/c`, visibilityState: "hidden", focused: false },
+        ],
+        O,
+      ),
+    ).toBe(1);
+  });
+
   it("주소가 URL 이 아니면 그 창은 뺀다", () => {
     expect(pickClient([{ url: "::", visibilityState: "visible", focused: true }], O)).toBe(-1);
   });

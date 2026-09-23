@@ -89,6 +89,8 @@ describe("enablePush", () => {
     expect(stub.notification.asked()).toBe(1);
     expect(pushStub.subscribed).toHaveLength(1);
     expect([...(pushStub.subscribed[0]?.applicationServerKey ?? [])]).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    // 보이는 알림만 — Chrome 은 false 구독을 거부한다
+    expect(pushStub.subscribed[0]).toMatchObject({ userVisibleOnly: true });
     const post = calls.find(([m]) => m === "POST");
     expect(post?.[1]).toBe("/api/v1/push/subscriptions");
     expect(post?.[2]).toMatchObject({
@@ -104,6 +106,16 @@ describe("enablePush", () => {
     stub.notification.answer("denied");
     const r = await enablePush("u1");
     expect(r.ok).toBe(false);
+    expect(pushStub.subscribed).toHaveLength(0);
+    expect(calls).toHaveLength(0);
+    expect(pushOnThisDevice()).toBe(false);
+  });
+
+  it("권한 물음을 그냥 닫으면(요청 뒤에도 default) 구독하지 않고 이유", async () => {
+    stub = stubPush({ permission: "default" });
+    const r = await enablePush("u1");
+    expect(stub.notification.asked()).toBe(1);
+    expect(r).toEqual({ ok: false, reason: "알림 권한을 허용해야 켤 수 있습니다" });
     expect(pushStub.subscribed).toHaveLength(0);
     expect(calls).toHaveLength(0);
     expect(pushOnThisDevice()).toBe(false);

@@ -9,6 +9,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { ApiRequestError } from "@/api/http";
 import { type MeResponse, qk, useMe } from "@/api/queries";
 import { registerSessionReset, resetClientState } from "@/app/session";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
@@ -63,9 +64,16 @@ export function WireProvider({
   notify: AppNotifyTarget;
 }) {
   const qc = useQueryClient();
-  useMe(); // 가드·로그인 화면과 같은 me 쿼리 — 없으면 불러 둔다
+  const me = useMe(); // 가드·로그인 화면과 같은 me 쿼리 — 없으면 불러 둔다
   const signedIn = useSignedIn(qc);
   const [runtime, setRuntime] = useState<WireRuntime>(NONE);
+  // 세션 없이 앱을 열었다(만료 뒤 사본 없이 로그인 화면) — 값이 없는 me 의 401 은 세션 정리로 오지 않으므로 여기서
+  // 기기 구독을 해지한다(사본이 있는 경로와 같게). 401 만 — 네트워크 오류·5xx·오프라인은 일시적일 수 있다
+  const sessionGone = !signedIn && me.error instanceof ApiRequestError && me.error.status === 401;
+
+  useEffect(() => {
+    if (sessionGone) void dropLocalPush();
+  }, [sessionGone]);
 
   useEffect(() => {
     if (!signedIn) return;
