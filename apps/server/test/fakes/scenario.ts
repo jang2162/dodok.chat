@@ -9,7 +9,7 @@
  * 정본은 실제 플러그인의 `buildOutboundMessage` 로 만든다 — `components` 가 플러그인 검증(`ComponentsV1`)을 실제로 지나고,
  * 어기면 실물처럼 보내기 전에 거절된다(`errors` 에 남는다). 하네스가 실물보다 친절하면 결함이 숨는다(p2-t6 F2).
  */
-import type { ApprovalDecision, ComponentsV1, InboundDeliver } from "@dodok/shared";
+import type { ApprovalDecision, Attachment, ComponentsV1, InboundDeliver } from "@dodok/shared";
 import { randomUUID } from "node:crypto";
 import type { z } from "zod";
 import { buildOutboundMessage } from "../../../../packages/openclaw-plugin/src/outbound";
@@ -68,6 +68,15 @@ export type ScenarioScript = {
    * 플러그인이 검증해 기본값을 채운 뒤 보낸다. 서버가 `id`·`componentState` 를 부여한다
    */
   components?: z.input<typeof ComponentsV1>;
+  /**
+   * 정본 전에 브리지 HTTP 로 올려 `attachmentIds` 에 실을 파일(실제 플러그인이 미디어를 먼저 올리고 정본을 보낸다, 스펙 5.2).
+   * `reply: ""` 와 함께 쓰면 미디어만 있는 정본이다
+   */
+  attachments?: Array<{ name: string; mime: string; bytes: Uint8Array }>;
+  /** 이미 올린 첨부 id 를 그대로 싣는다 — 다른 채널 id 가 섞이면 서버가 빼는지 잴 때 */
+  attachmentIds?: string[];
+  /** true 면 Gateway final(스냅샷)까지만 흘리고 정본을 보내지 않는다 — finalizing 상한의 스냅샷 폴백을 잴 때 */
+  withholdCanonical?: boolean;
 };
 
 /** `index` 는 그 에이전트가 받은 인바운드 순번(0부터) */
@@ -179,7 +188,14 @@ export function createScenario(opts: {
       await gateway.chatFinal(runId, sessionKey, agentId, script.reply);
       await gateway.flush();
     }
-    if (stopped()) return;
+    if (stopped() || script.withholdCanonical) return;
+    // 실제 플러그인처럼 미디어를 먼저 올리고 정본을 보낸다(스펙 5.2)
+    const uploaded: Attachment[] = [];
+    for (const file of script.attachments ?? []) {
+      uploaded.push(
+        await plugin.uploadAttachment({ channelId, bytes: file.bytes, name: file.name, mime: file.mime }),
+      );
+    }
     const built = buildOutboundMessage({
       outboundId: randomUUID(),
       channelId,
@@ -187,6 +203,7 @@ export function createScenario(opts: {
       sessionKey,
       text: script.reply,
       components: script.components,
+      attachmentIds: [...uploaded.map((a) => a.id), ...(script.attachmentIds ?? [])],
       correlation: { runId, replyToInboundId: delivery.message.id },
       now: new Date(),
     });

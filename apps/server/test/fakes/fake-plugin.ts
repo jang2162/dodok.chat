@@ -5,6 +5,9 @@
  * `inbound.deliver`·`config.set` 은 계약 스키마로 파싱해 틀리면 VALIDATION 으로 ack. Gateway 쪽 런은 흉내 내지 않는다(시나리오가 한다).
  */
 import {
+  Attachment,
+  BRIDGE_ATTACHMENT_HEADERS,
+  BRIDGE_ATTACHMENTS_PATH,
   type BridgeClientToServerEvents,
   BridgeHello,
   BridgeHelloResult,
@@ -46,6 +49,18 @@ export type FakePlugin = {
   readonly helloResult: BridgeHelloResult | undefined;
   /** `outbound.message` 를 보내고 서버가 준 messageId 를 돌려준다. outboundId(uuid)·ts(now)는 없으면 채운다 */
   sendOutbound(message: OutboundInput): Promise<{ messageId: string }>;
+  /** 브리지 HTTP 로 첨부를 올린다(실제 플러그인 `uploadMedia` 와 같은 헤더). 2xx 가 아니면 상태·본문을 싣고 던진다 */
+  uploadAttachment(input: {
+    channelId: string;
+    bytes: Uint8Array;
+    name?: string;
+    mime?: string;
+  }): Promise<Attachment>;
+  /** 브리지 HTTP 로 첨부 바이트를 받는다 — 상태를 그대로 돌려준다(404·401 을 잴 때) */
+  downloadAttachment(
+    id: string,
+    opts?: { token?: string },
+  ): Promise<{ status: number; bytes: Buffer; headers: Headers }>;
   /** 소켓만 끊는다. 서버가 끊김을 알아채는 것은 비동기다 */
   disconnect(): void;
   /** 다시 접속해 hello ack 까지 기다린다 */
@@ -168,6 +183,26 @@ export async function startFakePlugin(opts: FakePluginOptions): Promise<FakePlug
       }>;
       if (!res.ok) throw new Error(`${res.error.code}: ${res.error.message}`);
       return res.data;
+    },
+    async uploadAttachment({ channelId, bytes, name, mime }) {
+      const res = await fetch(`${opts.bridgeUrl}${BRIDGE_ATTACHMENTS_PATH}`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${opts.token}`,
+          [BRIDGE_ATTACHMENT_HEADERS.channelId]: channelId,
+          ...(name === undefined ? {} : { [BRIDGE_ATTACHMENT_HEADERS.fileName]: encodeURIComponent(name) }),
+          "content-type": mime ?? "application/octet-stream",
+        },
+        body: bytes,
+      });
+      if (!res.ok) throw new Error(`fake upload ${res.status}: ${await res.text()}`);
+      return Attachment.parse(await res.json());
+    },
+    async downloadAttachment(id, over = {}) {
+      const res = await fetch(`${opts.bridgeUrl}${BRIDGE_ATTACHMENTS_PATH}/${id}`, {
+        headers: { authorization: `Bearer ${over.token ?? opts.token}` },
+      });
+      return { status: res.status, bytes: Buffer.from(await res.arrayBuffer()), headers: res.headers };
     },
     disconnect() {
       socket.disconnect();

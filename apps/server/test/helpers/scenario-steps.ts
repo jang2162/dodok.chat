@@ -4,16 +4,18 @@
  * 시간으로 기다리지 않는다: `WireLog.until` 은 이미 받은 것을 먼저 보고, 그 뒤로는 wire 이벤트가 올 때마다 조건을 다시 잰다.
  * 상한(WAIT_MS)은 실패를 드러내는 용도일 뿐이다.
  */
-import type {
-  Agent,
-  Approval,
-  ApprovalDecision,
-  Channel,
-  Message,
-  RelayPolicy,
-  Run,
-  RunEvent,
-  RunState,
+import {
+  type Agent,
+  type Approval,
+  Attachment,
+  BRIDGE_ATTACHMENT_HEADERS,
+  type ApprovalDecision,
+  type Channel,
+  type Message,
+  type RelayPolicy,
+  type Run,
+  type RunEvent,
+  type RunState,
 } from "@dodok/shared";
 import { randomUUID } from "node:crypto";
 import { expect } from "vitest";
@@ -132,10 +134,41 @@ export async function subscribe(
   return res.data;
 }
 
-export async function sendMessage(socket: WireClient, channelId: string, bodyMd: string): Promise<Message> {
-  const res = await socket.emitWithAck("message.send", { channelId, clientMsgId: randomUUID(), bodyMd });
+export async function sendMessage(
+  socket: WireClient,
+  channelId: string,
+  bodyMd: string,
+  opts: { attachments?: string[]; clientMsgId?: string } = {},
+): Promise<Message> {
+  const res = await socket.emitWithAck("message.send", {
+    channelId,
+    clientMsgId: opts.clientMsgId ?? randomUUID(),
+    bodyMd,
+    ...(opts.attachments === undefined ? {} : { attachments: opts.attachments }),
+  });
   if (!res.ok) throw new Error(`message.send 실패: ${res.error.code} ${res.error.message}`);
   return res.data.message;
+}
+
+/** owner 세션으로 `POST /api/v1/attachments` — 2xx 가 아니면 상태·본문을 싣고 던진다 */
+export async function uploadImage(
+  live: LiveApp,
+  channelId: string,
+  bytes: Uint8Array,
+  name: string,
+): Promise<Attachment> {
+  const res = await live.app.fastify.inject({
+    method: "POST",
+    url: `/api/v1/attachments?channelId=${channelId}`,
+    headers: {
+      ...live.auth.headers,
+      "content-type": "image/png",
+      [BRIDGE_ATTACHMENT_HEADERS.fileName]: encodeURIComponent(name),
+    },
+    payload: Buffer.from(bytes),
+  });
+  if (res.statusCode !== 200) throw new Error(`upload → ${res.statusCode} ${res.body}`);
+  return Attachment.parse(res.json());
 }
 
 /** 승인 카드의 버튼을 누른다 — ack 가 실패면 코드를 싣고 던진다 */
