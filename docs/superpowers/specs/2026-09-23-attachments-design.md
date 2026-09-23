@@ -307,6 +307,8 @@ finalizing 상한 뒤 WS 스냅샷을 에이전트 메시지로 저장하는 곳
 1. **런 0회 하네스**(live-smoke 11절)로: 인바운드 fact·`@경로` 복사본, 툴 `media` 업로드, 최종 응답 `MEDIA:` 업로드, 미디어 전용 응답이 호스트 경로 없이 채널에 오는지.
 2. **모델 런 2회 예상**: ① 사람이 올린 이미지에 대해 묻고 맞히는가 ② 「파일을 만들어 보내 줘」 → 채널에 파일 카드. 상한은 실연 때 사용자에게 받는다.
 
+→ 돌렸다(2026-09-23, a3-t11 — `docs/guides/live-smoke.md` 13절): 1 은 합격 기준 9/9, 2 는 모델 런 2회(상한 2) 모두 통과. 스트리밍 델타로 호스트 경로가 새는 결함 A 가 나왔고 11장 Ruling 6 으로 고쳤다(실물 확인 13.7).
+
 ---
 
 ## 9. 완료 기준
@@ -346,10 +348,10 @@ finalizing 상한 뒤 WS 스냅샷을 에이전트 메시지로 저장하는 곳
 
 - **Ruling 1 — 인바운드 ack 상한을 이미지 수에 비례해 늘린다**(5.1 보탬). 플러그인은 이미지를 받아 저장한 뒤에야 런을 시작하고 ack 를 보낸다. 장당 받기 제한은 30초인데 어댑터 `inbound.deliver` 의 ack 제한은 10초였다. 넘으면 다시 보내 **디스패치가 두 번 될 수 있었다**(a3-t5 걱정 1 — 플러그인에 `deliveryId` dedupe 가 없다).
   지금은 `10초 + 트리거의 이미지 첨부 수 × 30초` 다(`packages/openclaw-adapter/src/openclaw-adapter.ts` 의 `DELIVER_ACK_PER_IMAGE_MS`). 재시도도 같은 값을 쓴다. 파일 첨부는 플러그인이 받지 않으므로 세지 않는다.
-  **틀리면 남는 것**: 한 장 받기가 30초를 넘는 느린 링크에서는 여전히 이중 디스패치가 난다. 상한은 이미지 **수**만 보고 크기는 보지 않는다. 태스크 11 실연에서 잰다.
+  **틀리면 남는 것**: 한 장 받기가 30초를 넘는 느린 링크에서는 여전히 이중 디스패치가 난다. 상한은 이미지 **수**만 보고 크기는 보지 않는다. 실연(a3-t11, `docs/guides/live-smoke.md` 13.2-7)은 루프백 정상 경로만 확인했다(ack 117·175·873ms, 재전송 0) — 느린 링크는 원격 Gateway 에서 잰다.
 - **Ruling 2 — WS 스냅샷에 `MEDIA:` 줄이 있으면 finalizing 을 늘린다**(4.6 보탬). 최종 응답의 첨부 업로드가 서버 finalizing 10초와 경쟁했다. 업로드가 늦으면 폴백이 걷은 스냅샷을 저장하고, 늦게 온 정본이 **같은 답을 한 번 더** 저장한다(a3-t5 리뷰 M1).
   지금은 `finalizingMs + MEDIA 줄 수 × 30초`, 최대 120초다(`RunTimeouts.finalizingMediaLineMs`·`finalizingMaxMs`, 오케스트레이터 `extendFinalizingForMedia`). 스냅샷은 `gateway_final` 에서만 오고, 중복 final 은 상한을 다시 늘리지 않는다. 통합 11g 가 실제 시계로 잰다.
-  **틀리면 남는 것**: 120초를 넘는 업로드는 여전히 두 번 저장된다(두 번째에만 첨부). 정본이 아예 안 오는 런(플러그인 끊김)도 `MEDIA:` 줄이 있으면 최대 120초 「마무리 중」으로 보인다. 실제 Gateway final 이 `MEDIA:` 줄을 남기는지는 태스크 11 에서 본다.
+  **틀리면 남는 것**: 120초를 넘는 업로드는 여전히 두 번 저장된다(두 번째에만 첨부). 정본이 아예 안 오는 런(플러그인 끊김)도 `MEDIA:` 줄이 있으면 최대 120초 「마무리 중」으로 보인다. 전제(실제 Gateway final 이 `MEDIA:` 줄을 남긴다)는 실연(a3-t11)에서 확인했다(`docs/guides/live-smoke.md` 13.2-4, 모델 런 ②). 그러나 정본이 final 뒤 31·45ms 에 와 연장이 한 번도 쓰이지 않았다 — 연장 상한이 느린 업로드를 덮는지는 아직 두드려지지 않았다.
 - **Ruling 3 — 플러그인 실패 사유는 오류 코드별 고정 문구다**(5.2 「실패하면」 정정). 로더·HTTP 원문은 채널 본문·툴 오류에 싣지 않는다. 호스트 경로 가림(`maskHostPaths`)을 넓히는 대신 원문을 아예 빼는 쪽을 골랐다.
   로더(`loadWebMediaRaw`): `not-found` → 「파일을 찾을 수 없음」, `path-not-allowed`·`network-path-not-allowed` → 「허용되지 않은 경로」, 코드 없이 `cause.code === "too-large"` → 「20 MiB 초과」, 그 밖 → 「파일을 읽지 못함」. 업로드: 413 → 「서버 상한 초과」, 다른 HTTP → 「서버가 거절함 (N)」, 네트워크 → 「서버에 올리지 못함」. 메시지당 상한 → 「메시지당 10개 초과」.
   그래서 5.2 예시 `report.pdf: 20 MiB 를 넘습니다` 는 실제로 `report.pdf: 20 MiB 초과` 다. 원문은 가려서 120자로 자른 `detail` 로 `deliver-media`·`tool-send-media` 로그에만 남는다. `maskHostPaths` 는 이 로그의 방어로만 남았다.
@@ -368,10 +370,10 @@ finalizing 상한 뒤 WS 스냅샷을 에이전트 메시지로 저장하는 곳
   `TEXT_MESSAGE_REPLACE`(Gateway `replace` 델타 → 웹이 본문을 통째로 바꾼다)도 같은 누출 경로라 새 필터로 걸러 쓴다. 이것은 브리프 밖 확장이었고 수용했다. `TOOL_CALL_ARGS` 는 그대로다(아래 「틀리면 남는 것」의 관찰 C). 걷은 수는 로그 `stream media lines dropped`(`mediaLinesDropped`)로 남긴다.
   **대소문자는 가리지 않는다**(a3-t12 리뷰 Minor 1, `635fe76`). 코어는 줄 머리 여섯 글자를 `toUpperCase` 로 `MEDIA:` 와 비교하고 `/\bMEDIA:\s*…/gi` 로 뽑는다(9.4 `dist/parse-DrPJQjPs.mjs:90`·`:311-312`, 9.5 `dist/parse-output-DGOcuzU4.mjs:9`·`:230-231` — 같은 세 줄). 그래서 `media:`·`Media: ` 줄도 첨부로 뽑히고, 대문자만 보던 필터로는 결함 A 와 같은 모양으로 샜다.
   지금 줄 정의는 `/^[ \t]*MEDIA:/i` 하나다. 폴백 `stripMediaLines`(플래그 `gim`)와 스트리밍 필터가 이 정의를 함께 쓴다. `MEDIA` 와 콜론 사이 공백(`MEDIA :`)은 코어도 보통 줄로 두므로 우리도 걷지 않는다(테스트로 잠갔다).
-  보통 글은 늦어지지 않는다. 붙잡는 것은 줄 처음 조각이 `MEDIA:` 의 접두일 때뿐이고, 접두에서 벗어나는 첫 글자에서 풀린다(최악 `MEDIA` 다섯 글자 + 다음 글자). 실물에서 보통 줄 델타는 Gateway 프레임 뒤 53~58ms(코얼레싱 창 50ms)에 나갔다(a3-t13, `docs/guides/live-smoke.md` 13.7).
-  **틀리면 남는 것**(원장): 줄 앞에 다른 글자가 붙은 경로(코어 관례 밖)는 샌다. 또 이 필터는 줄 머리 `MEDIA:` 만 본다. 모델이 본문에 경로를 옮겨 쓰는 것(코어가 프롬프트에 붙이는 스테이징 경로 — 실연 관찰 B)과 활동 탭 툴 인자·결과의 경로(관찰 C)는 그대로다.
+  보통 글은 거의 늦어지지 않는다. 붙잡는 것은 줄 처음 조각이 `MEDIA:` 의 접두일 때뿐이고, 접두에서 벗어나는 첫 글자에서 풀린다(최악 `MEDIA` 다섯 글자 + 다음 글자). 붙잡는 동안 타이머는 없다 — 다음 델타가 늦으면(줄 처음 `M` 뒤에 긴 툴 실행) 붙잡은 몇 글자가 그만큼 늦게 보인다(a3-t12 리뷰 질문 4). 실물에서 보통 줄 델타는 Gateway 프레임 뒤 53~58ms(코얼레싱 창 50ms)에 나갔다(a3-t13, `docs/guides/live-smoke.md` 13.7).
+  **틀리면 남는 것**(첫 문장은 원장, 둘째 문장부터는 a3-t12 보고서 걱정 3): 줄 앞에 다른 글자가 붙은 경로(코어 관례 밖)는 샌다. 또 이 필터는 줄 머리 `MEDIA:` 만 본다. 모델이 본문에 경로를 옮겨 쓰는 것(코어가 프롬프트에 붙이는 스테이징 경로 — 실연 관찰 B)과 활동 탭 툴 인자·결과의 경로(관찰 C)는 그대로다.
   반대 방향 오류도 있다. 코어는 페이로드가 유효한 미디어일 때만 줄을 뽑고 아니면 남기는데, 필터·폴백은 `Media: …` 로 시작하는 보통 글 줄도 걷는다(a3-t12 재리뷰 N-1, 안전 쪽 오류). 셋 다 `docs/plan.md` 8장 이월이다. 이미 개발 DB 에 남은 실연 행(런 ② seq 26~28)은 이 고침이 지우지 않는다.
-  **실물 확인**: 런 0회 하네스로 실제 Gateway 가 세 델타로 쪼갠 `MEDIA:`·`media:`·`Media: ` 줄이 wire·`run_events` 에 0건, 첨부는 정본으로 도착(a3-t13, 13.7). Gateway 가 `replace` 를 내지 않아 REPLACE 경로는 단위 테스트로만 잠겨 있다.
+  **실물 확인**: 런 0회 하네스로 실제 Gateway 가 델타 여럿으로 쪼갠 `MEDIA:`(세 델타)·`media:`(세 델타)·`Media: `(두 델타) 줄이 wire·`run_events` 에 0건, 첨부는 정본으로 도착(a3-t13, 13.7). Gateway 가 `replace` 를 내지 않아 REPLACE 경로는 단위 테스트로만 잠겨 있다.
 
 **서버에서 달라진 것**(a3-t2·t3·t4)
 
@@ -387,7 +389,7 @@ finalizing 상한 뒤 WS 스냅샷을 에이전트 메시지로 저장하는 곳
 
 **플러그인에서 달라진 것**(a3-t5)
 
-- **새 모듈 둘**(2.3 정정). 스펙은 인바운드·아웃바운드 처리를 `src/inbound.ts`·`src/outbound.ts` 에 넣는다고 했다. 구현은 SDK 를 import 하지 않는 순수 모듈 `src/inbound-media.ts`·`src/outbound-media.ts` 로 뺐다(`src/media-http.ts` 는 스펙대로). `channel.ts` 의 배선은 순수 함수 `shouldDeliverFinal`·`inboundSaveArgs`·`loaderOptions` 를 부르는 한 줄씩이다. 그 호출을 **우회하는** 변이는 테스트가 못 잡는다(8.2 방침 그대로 — 실연이 잰다).
+- **새 모듈 둘**(2.3 정정). 스펙은 인바운드·아웃바운드 처리를 `src/inbound.ts`·`src/outbound.ts` 에 넣는다고 했다. 구현은 SDK 를 import 하지 않는 순수 모듈 `src/inbound-media.ts`·`src/outbound-media.ts` 로 뺐다(`src/media-http.ts` 는 스펙대로). `channel.ts` 의 배선은 순수 함수 `shouldDeliverFinal`·`inboundSaveArgs`·`loaderOptions` 를 부르는 한 줄씩이다. 그 호출을 **우회하는** 변이는 테스트가 못 잡는다(8.2 방침 그대로). 실연(a3-t11) 합격 기준 6 이 셋 다 실물로 확인했다(`docs/guides/live-smoke.md` 13.2-6) — 자동 테스트로는 여전히 안 잡힌다.
 - **인바운드 이미지는 병렬로 받는다**(5.1 의 1 「순서대로」 정정). `Promise.allSettled` 로 받고, fact·알림 줄은 첨부 순서로 모은다. 지연이 쌓이는 것을 줄이지만 대역폭이 모자란 경우는 줄지 않는다. 8초 전체 예산은 Ruling 1 과 부딪혀 넣지 않았다. 로그 `inbound-media` 에 실패 사유 `reasons`(`단계:종류`, 예 `download:http-404`)를 싣는다 — 경로는 없다.
 - **이름 우선순위**(5.2 「이름」 정정): 모델이 준 이름(툴 `filename`·`deliver` 의 `attachments[i].name`) → 로더 `fileName` → 원천 basename(쿼리를 먼저 뗀 뒤) → `file`. 스펙은 로더 `fileName` 이 먼저였다. 계획 코드가 모델 이름을 먼저 두었고 구현이 코드를 따랐다(a3-t5 판단 5).
 - **메시지당 10개를 넘는 원천은 읽지 않고 실패로 넣는다**(5.2 보탬). 넘긴 채 보내면 `OutboundMessage` 파싱이 `attachmentIds.max(10)` 에서 던져, 최종 응답은 텍스트까지 통째로 사라진다.

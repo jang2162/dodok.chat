@@ -1037,7 +1037,7 @@ shasum -a 256 $WS/a3-harness/*; stat -f '%z %N' $WS/a3-harness/*          # 크�
 
 **D. [관찰] Ruling 1·2 의 전제.** Ruling 2 의 전제(실제 `gateway_final` 스냅샷에 `MEDIA:` 줄이 남는다)는 **맞았다** — 하네스 c 와 모델 런 ② 모두. 정본은 final 뒤 31·45ms 에 와서 연장이 실제로 필요한 경우는 못 봤다. Ruling 1 은 루프백에서 ack 가 0.1~0.2초라 **정상 경로에서 재전송이 안 난다는 것만** 확인했고, 느린 링크의 이중 디스패치 여부는 여전히 못 쟀다(원격 Gateway 실연 몫).
 
-**E. [관찰] 아웃바운드 스테이징 사본.** 툴 `media` 와 `MEDIA:` 줄은 Gateway 코어를 지나며 `~/.openclaw-dev/media/outbound/<이름>---<uuid>.<ext>` 사본을 남긴다(이번 8개 — 툴로 보낸 `big.png` 는 **JPEG 4,047,716B** 사본도 생겼다, 서버에는 원본 PNG 가 갔다). Gateway 가 24h 뒤 지운다(스파이크 2-7). 11.5 「끝나면」에 넣었다.
+**E. [관찰] 아웃바운드 스테이징 사본.** 툴 `media` 와 `MEDIA:` 줄은 Gateway 코어를 지나며 `~/.openclaw-dev/media/outbound/<이름>---<uuid>.<ext>` 사본을 남긴다(이번 8개 — 툴로 보낸 `big.png` 는 **JPEG 4,047,716B** 사본도 생겼다, 서버에는 원본 PNG 가 갔다). Gateway 가 24h 뒤 지운다(스파이크 보고서 「언제 지워도 되는가」 — `OUTBOUND_STAGING_TTL_MS`, 코드 읽기. 사본이 생기는 것은 스파이크 2-7). 11.5 「끝나면」에 넣었다.
 
 ### 13.5 사람이 볼 것
 
@@ -1056,7 +1056,7 @@ shasum -a 256 $WS/a3-harness/*; stat -f '%z %N' $WS/a3-harness/*          # 크�
 
 13.4 A 를 서버에서 고친 뒤(a3-t12 — 스펙 11장 Ruling 6), 실제 dev Gateway 위에서 11.5 하네스 c·d 꼴을 **델타를 쪼개** 다시 돌렸다. 가짜 claude CLI 가 `stream_event` 로 조각을 600ms 간격으로 흘린다(11.5 ⑤ 정정). **모델 런 0회**. 가짜 CLI 의 `-p` 런 3회는 모두 `costUsd:0`·usage 0이다. `-p` 없는 호출 4회(버전·인증 확인)는 진짜 `claude` 로 넘어갔지만 모델을 부르지 않는다.
 
-**판정: 고쳐졌다.** 실제 Gateway 가 `MEDIA:` 줄을 세 델타로 쪼개 보냈다(런 ② 와 같은 모양). 서버는 그 줄을 wire 에도 `run_events` 에도 싣지 않았다. 소문자 `media:`·`Media: ` 도 같다. 첨부는 셋 다 오고, 본문에 경로는 0이다. 보통 줄은 늦어지지 않았다. dodok 코드 결함 0.
+**판정: 고쳐졌다.** 실제 Gateway 가 `MEDIA:` 줄을 세 델타로 쪼개 보냈다(런 ② 와 같은 모양). 서버는 그 줄을 wire 에도 `run_events` 에도 싣지 않았다. 소문자 `media:`(세 델타)·`Media: `(두 델타) 줄도 싣지 않았다. 첨부는 셋 다 오고, 본문에 경로는 0이다. 보통 줄은 늦어지지 않았다. dodok 코드 결함 0.
 로그는 워크트리 `data/`(ignored)에 있다: `dev-gateway.log`·`phase2-live-a3t13.log`(서버)·`frames-a3t13.jsonl`(프레임 덤프)·`wire-raw-{c,d,e}.jsonl`(아래 원시 감시)·`h-{c,d,e}-send.log`·`h-messages.json`·`fake-claude-a3t13.jsonl`.
 
 | 항목 | 값 |
@@ -1086,7 +1086,7 @@ shasum -a 256 $WS/a3-harness/*; stat -f '%z %N' $WS/a3-harness/*          # 크�
 | 4 | 채널에 첨부가 오고 본문에 경로 0, `finalSource` | **통과** | c 본문 `첫 줄은 보통 글입니다.\nMarkdown 은 두 번째 글자에서 풀린다.` + `chart.png` · d 본문 `""` + `chart.png` · e 본문 `앞 줄입니다.\n뒤 줄도 곧바로 나옵니다.` + `chart.png`. REST 로 내려받은 세 첨부의 sha 가 원본과 같다(`c5cdc0f6…`). 채널 메시지 REST JSON 전체에서 `/Users/`·`media:`(대소문자 무시)·`openclaw-dev` 는 0이다. 세 런 모두 `finalSource=plugin` 이다. 플러그인 `[dodok] deliver-media` 는 `uploaded:1,failed:0` 을 세 번 찍었다. 서버 `gateway snapshot media lines dropped` 는 0회, `stream media lines dropped` 는 `mediaLinesDropped:1` 로 세 번 찍혔다 |
 | 5 | 스트리밍이 느려지지 않았는가 | **그렇다 — 늘어난 지연 없음** | 아래 시각 표. 보통 줄 델타는 Gateway 프레임을 받은 뒤 **53~58ms** 에 wire 에 나왔다. 이 값은 코얼레싱 창 `coalesceMs: 50`(결함 A 이전부터 있다)에 해당한다. 고치기 전 코드로 같은 기준선을 다시 재지는 않았다 |
 
-**시각** — 서버가 Gateway 프레임을 받은 시각(프레임 덤프 `receivedAt`)과 원시 감시가 wire 이벤트를 받은 시각이다. 둘 다 같은 머신의 시계다. 가짜 CLI 의 조각 방출 → Gateway 프레임은 ~3ms 였다.
+**시각** — 서버가 Gateway 프레임을 받은 시각(프레임 덤프 `receivedAt`)과 원시 감시가 wire 이벤트를 받은 시각이다. 둘 다 같은 머신의 시계다. 가짜 CLI 의 조각 방출 → Gateway 프레임은 1~7ms 였다(합쳐진 조각은 뒤 조각 기준).
 
 | 런 | Gateway `deltaText` (받은 시각) | wire (받은 시각) | 차이 |
 | --- | --- | --- | --- |
