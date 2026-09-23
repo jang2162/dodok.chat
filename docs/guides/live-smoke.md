@@ -1037,7 +1037,7 @@ shasum -a 256 $WS/a3-harness/*; stat -f '%z %N' $WS/a3-harness/*          # 크�
 
 **D. [관찰] Ruling 1·2 의 전제.** Ruling 2 의 전제(실제 `gateway_final` 스냅샷에 `MEDIA:` 줄이 남는다)는 **맞았다** — 하네스 c 와 모델 런 ② 모두. 정본은 final 뒤 31·45ms 에 와서 연장이 실제로 필요한 경우는 못 봤다. Ruling 1 은 루프백에서 ack 가 0.1~0.2초라 **정상 경로에서 재전송이 안 난다는 것만** 확인했고, 느린 링크의 이중 디스패치 여부는 여전히 못 쟀다(원격 Gateway 실연 몫).
 
-**E. [관찰] 아웃바운드 스테이징 사본.** 툴 `media` 와 `MEDIA:` 줄은 Gateway 코어를 지나며 `~/.openclaw-dev/media/outbound/<이름>---<uuid>.<ext>` 사본을 남긴다(이번 8개 — 툴로 보낸 `big.png` 는 **JPEG 4,047,716B** 사본도 생겼다, 서버에는 원본 PNG 가 갔다). Gateway 가 24h 뒤 지운다(스파이크 보고서 「언제 지워도 되는가」 — `OUTBOUND_STAGING_TTL_MS`, 코드 읽기. 사본이 생기는 것은 스파이크 2-7). 11.5 「끝나면」에 넣었다.
+**E. [관찰] 아웃바운드 스테이징 사본.** 툴 `media` 와 `MEDIA:` 줄은 Gateway 코어를 지나며 `~/.openclaw-dev/media/outbound/<이름>---<uuid>.<ext>` 사본을 남긴다(이번 8개 — 툴로 보낸 `big.png` 는 **JPEG 4,047,716B** 사본도 생겼다, 서버에는 원본 PNG 가 갔다). Gateway 가 24h 뒤 지운다(스파이크 보고서 「언제 지워도 되는가」 — `OUTBOUND_STAGING_TTL_MS`, 코드 읽기. `MEDIA:` 줄의 사본은 스파이크 2-7, 툴 `media` 의 사본은 이번에 처음 봤다). 11.5 「끝나면」에 넣었다.
 
 ### 13.5 사람이 볼 것
 
