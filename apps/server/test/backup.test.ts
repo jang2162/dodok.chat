@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
   copyFileSync,
   existsSync,
@@ -7,6 +7,7 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { createRequire } from "node:module";
@@ -15,7 +16,7 @@ import { join } from "node:path";
 import { Worker } from "node:worker_threads";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { runBackup } from "../src/backup";
+import { runBackup, STALE_PARTIAL_MS } from "../src/backup";
 import { createDb } from "../src/db/client";
 
 let dataDir: string;
@@ -33,6 +34,17 @@ function makeDb(file = dbPath()) {
 }
 const backupsRoot = () => join(dataDir, "backups");
 const mode = (p: string) => statSync(p).mode & 0o777;
+const partials = () => readdirSync(backupsRoot()).filter((d) => d.startsWith(".partial-"));
+/** 중단된 백업이 남긴 것처럼 .partial-* 를 만든다. ageMs 를 주면 디렉터리와 안 파일의 mtime 을 그만큼 과거로 */
+function leavePartial(name: string, ageMs = 0, fileAgeMs = ageMs) {
+  const p = join(backupsRoot(), name);
+  mkdirSync(p, { recursive: true });
+  writeFileSync(join(p, "dodok.sqlite"), "부분 사본");
+  const at = (ms: number) => new Date(Date.now() - ms);
+  utimesSync(join(p, "dodok.sqlite"), at(fileAgeMs), at(fileAgeMs));
+  utimesSync(p, at(ageMs), at(ageMs));
+  return p;
+}
 
 describe("runBackup", () => {
   it("쓰는 중에도 온전한 사본을 만든다 [Review Focus 5]", async () => {
@@ -179,8 +191,101 @@ describe("runBackup", () => {
   it("DB 가 망가져 백업이 도중에 실패해도 부분 디렉터리를 남기지 않는다", async () => {
     writeFileSync(dbPath(), "이것은 SQLite 파일이 아니다".repeat(200));
     writeFileSync(join(dataDir, "vapid.json"), "{}");
-    await expect(runBackup({ dataDir })).rejects.toThrow();
+    let partial = "";
+    await expect(runBackup({ dataDir, onPartial: (p) => (partial = p) })).rejects.toThrow();
+    expect(partial).toMatch(/\/backups\/\.partial-2\d{3}-/);
     expect(readdirSync(backupsRoot())).toEqual([]);
+  });
+
+  it("사본은 .partial-* 에서 만들고 다 된 뒤에 백업 이름으로 옮긴다 — 옮긴 사본이 열린다", async () => {
+    makeDb();
+    writeFileSync(join(dataDir, "vapid.json"), "{}");
+    let during: string[] = [];
+    let partial = "";
+    const r = await runBackup({
+      dataDir,
+      now: new Date("2026-09-24T01:02:03.456Z"),
+      onPartial: (p) => {
+        partial = p;
+        during = readdirSync(backupsRoot());
+      },
+    });
+    // 임시 디렉터리를 만든 시점에 백업 이름은 아직 없다
+    expect(during).toEqual([partial.slice(backupsRoot().length + 1)]);
+    expect(partial).toMatch(/\/\.partial-2026-09-24T01-02-03-456Z-[^/]+$/);
+    expect(existsSync(partial)).toBe(false);
+    expect(readdirSync(backupsRoot())).toEqual(["2026-09-24T01-02-03-456Z"]);
+    expect(mode(r.dir)).toBe(0o700);
+    const copy = new Database(join(r.dir, "dodok.sqlite"), { readonly: true });
+    expect(copy.pragma("integrity_check", { simple: true })).toBe("ok");
+    copy.close();
+  });
+
+  it("중단된 백업(.partial-*)은 보관 개수로 세지도, 이름 충돌로 보지도 않는다", async () => {
+    makeDb();
+    const at = (h: number) => new Date(Date.UTC(2026, 8, 24, h));
+    const a = await runBackup({ dataDir, now: at(0) });
+    const b = await runBackup({ dataDir, now: at(1) });
+    // 새 백업과 같은 시각 이름의 partial 이 있어도 최종 이름은 접미사 없이 그 시각이다
+    const fresh = leavePartial(".partial-2026-09-24T02-00-00-000Z-abc123");
+    const c = await runBackup({ dataDir, now: at(2), keep: 2 });
+
+    expect(c.dir).toBe(join(backupsRoot(), "2026-09-24T02-00-00-000Z"));
+    expect(c.removed).toEqual([a.dir]);
+    expect(c.removedPartials).toEqual([]);
+    expect(existsSync(fresh)).toBe(true);
+    expect(readdirSync(backupsRoot()).sort()).toEqual(
+      [fresh, b.dir, c.dir].map((d) => d.slice(backupsRoot().length + 1)).sort(),
+    );
+  });
+
+  it("오래된 .partial-* 는 다음 실행이 지우고, 지금 쓰이는 것은 남긴다", async () => {
+    makeDb();
+    mkdirSync(backupsRoot(), { recursive: true });
+    const hour = STALE_PARTIAL_MS;
+    const stale = leavePartial(".partial-2026-09-24T00-00-00-000Z-old111", hour + 60_000);
+    const fresh = leavePartial(".partial-2026-09-24T00-00-00-000Z-new222", 60_000);
+    // 긴 복사 중이면 디렉터리 mtime 은 오래돼도 사본 파일 mtime 이 새롭다
+    const copying = leavePartial(".partial-2026-09-24T00-00-00-000Z-cpy333", 3 * hour, 1_000);
+    // .partial- 로 시작해도 파일은 사람이 둔 것일 수 있다
+    writeFileSync(join(backupsRoot(), ".partial-notes"), "x");
+    utimesSync(join(backupsRoot(), ".partial-notes"), new Date(0), new Date(0));
+
+    const r = await runBackup({ dataDir });
+
+    expect(r.removedPartials).toEqual([stale]);
+    expect(existsSync(stale)).toBe(false);
+    expect(existsSync(fresh)).toBe(true);
+    expect(existsSync(copying)).toBe(true);
+    expect(existsSync(join(backupsRoot(), ".partial-notes"))).toBe(true);
+    expect(existsSync(join(r.dir, "dodok.sqlite"))).toBe(true);
+  });
+
+  it("같은 밀리초에 11개를 넘어도 접미사를 수로 정렬해 오래된 것부터 지운다", async () => {
+    makeDb();
+    const stamp = "2026-09-24T01-02-03-000Z";
+    mkdirSync(join(backupsRoot(), stamp), { recursive: true });
+    for (let n = 1; n <= 11; n++) mkdirSync(join(backupsRoot(), `${stamp}-${n}`));
+    const r = await runBackup({ dataDir, now: new Date("2026-09-24T01:02:03.000Z"), keep: 3 });
+    expect(r.dir).toBe(join(backupsRoot(), `${stamp}-12`));
+    expect(readdirSync(backupsRoot()).sort()).toEqual([`${stamp}-10`, `${stamp}-11`, `${stamp}-12`]);
+  });
+
+  it("백업 이름을 앞뒤로 품은 이름과 백업 이름의 파일은 보관 정리가 건드리지 않는다", async () => {
+    makeDb();
+    mkdirSync(backupsRoot(), { recursive: true });
+    const human = [
+      "keep-2026-01-01T00-00-00-000Z",
+      "2026-01-01T00-00-00-000Z.bak",
+      "2026-01-01T00-00-00-000Z-x",
+    ];
+    for (const d of human) mkdirSync(join(backupsRoot(), d));
+    writeFileSync(join(backupsRoot(), "2026-01-01T00-00-00-001Z"), "파일");
+    const r = await runBackup({ dataDir, keep: 1 });
+    expect(r.removed).toEqual([]);
+    expect(readdirSync(backupsRoot()).sort()).toEqual(
+      [...human, "2026-01-01T00-00-00-001Z", r.dir.slice(backupsRoot().length + 1)].sort(),
+    );
   });
 
   it("사본 파일에 WAL·SHM 이 따라가지 않는다(단일 파일)", async () => {
@@ -193,9 +298,12 @@ describe("runBackup", () => {
     expect(existsSync(`${dbPath()}-wal`)).toBe(true);
 
     const r = await runBackup({ dataDir });
+    // 닫기 전의 원본 파일에는 WAL 의 커밋이 없어 사본과 크기가 다르다 — dbBytes 는 사본의 크기다
+    expect(r.dbBytes).not.toBe(statSync(dbPath()).size);
     live.close();
 
     expect(readdirSync(r.dir)).toEqual(["dodok.sqlite"]);
+    expect(r.dbBytes).toBe(statSync(join(r.dir, "dodok.sqlite")).size);
     // 파일 하나만 다른 자리로 옮겨도 내용이 다 있다 — 복원이 이 파일 하나를 되돌리는 절차이기 때문이다
     const alone = mkdtempSync(join(tmpdir(), "dodok-restore-"));
     try {
@@ -236,6 +344,73 @@ describe("backup CLI (src/backup-main.ts)", () => {
     expect(r.stdout).toBe("");
     expect(r.stderr).toBe(`백업 실패: 백업할 DB 가 없다: ${dbPath()}\n`);
   }, 20_000);
+
+  it("오래된 .partial-* 를 지우면 한 줄에 그 수를 덧붙인다", () => {
+    makeDb();
+    mkdirSync(backupsRoot(), { recursive: true });
+    leavePartial(".partial-2026-09-24T00-00-00-000Z-old111", 2 * STALE_PARTIAL_MS);
+    const r = cli([], { DATA_DIR: dataDir });
+    expect(r.code).toBe(0);
+    expect(r.stdout).toMatch(/ \(\d+ bytes, \d+ ms, 지움 0, 중단된 것 지움 1\)\n$/);
+    expect(partials()).toEqual([]);
+  }, 20_000);
+
+  it.each([
+    ["SIGINT", 130],
+    ["SIGTERM", 143],
+  ] as const)(
+    "%s 를 받으면 .partial-* 를 남기지 않는다 — 복사 전이면 지우고 exit %i, 복사 중이면 끝까지 복사한다",
+    async (sig, code) => {
+      // 복사가 수십 ms 걸리게 키운다 — partial 이 보이는 동안 신호를 보내기 위해서다
+      makeDb();
+      const db = new Database(dbPath());
+      db.exec("CREATE TABLE pad (b BLOB)");
+      db.exec(
+        "WITH RECURSIVE c(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM c WHERE i < 64) " +
+          "INSERT INTO pad SELECT zeroblob(1048576) FROM c",
+      );
+      db.close();
+      const child = spawn(process.execPath, ["--import", "tsx", "src/backup-main.ts"], {
+        cwd: serverDir,
+        env: { PATH: process.env.PATH, DATA_DIR: dataDir },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (d) => (stdout += d));
+      child.stderr.on("data", (d) => (stderr += d));
+      const exited = new Promise<[number | null, NodeJS.Signals | null]>((r) =>
+        child.once("exit", (c, s) => r([c, s])),
+      );
+      let alive = true;
+      void exited.then(() => (alive = false));
+      let sent = false;
+      while (alive && !sent) {
+        if (existsSync(backupsRoot()) && partials().length > 0) sent = child.kill(sig);
+        else await new Promise((r) => setTimeout(r, 1));
+      }
+      const [status, signal] = await exited;
+
+      // 이 테스트가 신호를 실제로 보냈다 — 못 보냈다면 복사가 너무 빨리 끝난 것이다
+      expect(sent).toBe(true);
+      expect(signal).toBeNull();
+      expect(partials()).toEqual([]);
+      if (status === 0) {
+        // 신호가 동기 복사 도중에 닿았다 — 처리기는 돌지 못하고 복사가 끝난다(backup-main.ts 주석)
+        expect(stdout).toMatch(/^백업 완료: /);
+        const [d, ...rest] = readdirSync(backupsRoot());
+        expect(rest).toEqual([]);
+        const copy = new Database(join(backupsRoot(), d!, "dodok.sqlite"), { readonly: true });
+        expect(copy.pragma("integrity_check", { simple: true })).toBe("ok");
+        copy.close();
+      } else {
+        expect(status).toBe(code);
+        expect(stderr).toBe(`백업 중단: ${sig}\n`);
+        expect(readdirSync(backupsRoot())).toEqual([]);
+      }
+    },
+    30_000,
+  );
 
   it.each([["0"], ["-1"], ["2.5"], ["abc"], [undefined]])(
     "--keep %s 은 거부한다",
