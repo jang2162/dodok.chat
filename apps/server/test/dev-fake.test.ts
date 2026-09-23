@@ -5,14 +5,15 @@ import {
   type Field,
   type InboundDeliver,
   type Message,
+  PushPayload,
   type ServerToClientEvents,
   WIRE_PROTOCOL,
 } from "@dodok/shared";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { io, type Socket } from "socket.io-client";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   DEV_FAKE_LOCAL_TOKEN,
   DEV_FAKE_KEYWORDS,
@@ -137,6 +138,20 @@ describe("fakeAgentScript", () => {
     expect(fakeAgentScript("dev", delivery("@dev 실패", owner)).fail).toBeDefined();
     expect(fakeAgentScript("dev", delivery("@dev 드롭", owner)).drop).toBe("bot-loop-protection");
     expect(fakeAgentScript("dev", delivery("@dev 도구", owner)).tool?.name).toBe("Read");
+  });
+
+  it("나 불러 → 부른 사람을 평문 @핸들로 부르는 고정 답(인용·릴레이 꼬리 없음), 에이전트가 보냈으면 채널의 첫 사람", () => {
+    const s = fakeAgentScript("dev", delivery("@dev @fin 나 불러", owner));
+    // 서버가 채널 참여자로 토큰화해 mentions.users 에 owner 를 넣는다 — 푸시 「멘션」 트리거
+    expect(s.reply).toBe("@owner 확인해 주세요");
+    expect((s.deltas ?? []).join("")).toBe(s.reply);
+    expect(fakeAgentScript("dev", delivery("@dev 나 불러", { type: "user", handle: "mina" })).reply).toBe(
+      "@mina 확인해 주세요",
+    );
+    expect(fakeAgentScript("fin", delivery("나 불러", { type: "agent", handle: "dev" }, "fin")).reply).toBe(
+      "@owner 확인해 주세요",
+    );
+    expect(DEV_FAKE_KEYWORDS).toContain("나 불러");
   });
 
   describe("첨부 키워드 — 이미지 보여줘·보고서 줘·카드에 이미지·미디어만, 사람 첨부 되말하기", () => {
@@ -599,6 +614,179 @@ describe("startDevFake", () => {
     expect(sent.ok && sent.data.message.mentions.agents).toHaveLength(2);
     await expect(limit).resolves.toContain("릴레이 한도(1턴)");
   }, 20_000);
+});
+
+/** 로그인한 owner 로 REST 를 부른다 — /auth/local 은 5회/분이라 앱마다 한 번만 */
+async function loginOwner(url: string): Promise<{ sessionToken: string; ownerId: string; cookie: string }> {
+  const res = await fetch(`${url}/api/v1/auth/local`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ token: DEV_FAKE_LOCAL_TOKEN }),
+  });
+  expect(res.status).toBe(200);
+  const { sessionToken, user } = (await res.json()) as { sessionToken: string; user: { id: string } };
+  return { sessionToken, ownerId: user.id, cookie: `dodok.session=${sessionToken}` };
+}
+
+async function restAs<T>(url: string, cookie: string, method: "GET" | "POST", path: string, body?: unknown) {
+  const res = await fetch(`${url}/api/v1${path}`, {
+    method,
+    headers: { cookie, ...(body === undefined ? {} : { "content-type": "application/json" }) },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  if (res.status >= 300) throw new Error(`${method} ${path} → ${res.status} ${await res.text()}`);
+  return (res.status === 204 ? undefined : await res.json()) as T;
+}
+
+/** 닿지 않는 endpoint(push.invalid) — 가짜 발송기라 어차피 나가지 않는다 */
+const PUSH_SUB = {
+  endpoint: "https://push.invalid/dev-fake-owner",
+  keys: {
+    p256dh: "BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCA_0QTpQtUbVlUls0VJXg7A8u-Ts1XbjhazAkj7I99e8QcYP7DkM",
+    auth: "tBHItJI5svbpez7KI4CCXg",
+  },
+};
+
+describe("startDevFake 푸시 — 「나 불러」", () => {
+  let dir: string;
+  let dev: DevFake;
+  const sent: Array<{ endpoint: string; payload: PushPayload }> = [];
+  const sockets: WireSocket[] = [];
+
+  beforeAll(async () => {
+    dir = mkdtempSync(join(tmpdir(), "dodok-dev-fake-push-"));
+    dev = await startDevFake({
+      port: 0,
+      dataDir: dir,
+      logLevel: "warn",
+      pushSend: async (sub, body) => {
+        sent.push({ endpoint: sub.endpoint, payload: PushPayload.parse(JSON.parse(body)) });
+        return { statusCode: 201 };
+      },
+    });
+  });
+
+  afterAll(async () => {
+    for (const socket of sockets.splice(0)) socket.close();
+    await dev?.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("「나 불러」 → 에이전트 답의 mentions.users 에 owner, 채널을 보고 있지 않은 owner 의 구독으로 멘션 푸시 한 건", async () => {
+    const { sessionToken, ownerId, cookie } = await loginOwner(dev.url);
+    await restAs(dev.url, cookie, "POST", "/push/subscriptions", PUSH_SUB);
+    const { agent } = await restAs<{ agent: { id: string } }>(dev.url, cookie, "POST", "/agents", {
+      providerAgentId: "dev",
+      handle: "dev",
+      name: "dev",
+    });
+    const { channel } = await restAs<{ channel: { id: string } }>(dev.url, cookie, "POST", "/channels", {
+      name: "push",
+    });
+    await restAs(dev.url, cookie, "POST", `/channels/${channel.id}/members`, {
+      memberType: "agent",
+      memberId: agent.id,
+    });
+
+    // presence 를 알리지 않은 소켓은 「보고 있음」이 아니다 — 푸시가 간다
+    const socket: WireSocket = io(dev.url, {
+      transports: ["websocket"],
+      reconnection: false,
+      forceNew: true,
+      auth: { protocol: WIRE_PROTOCOL, token: sessionToken },
+    });
+    sockets.push(socket);
+    const subscribed = await socket.emitWithAck("channel.subscribe", { channelId: channel.id });
+    expect(subscribed.ok).toBe(true);
+    const reply = new Promise<Message>((resolve) => {
+      socket.on("message.created", ({ message }) => {
+        if (message.authorType === "agent") resolve(message);
+      });
+    });
+    const sentMsg = await socket.emitWithAck("message.send", {
+      channelId: channel.id,
+      clientMsgId: "call-me",
+      bodyMd: `<@a:${agent.id}> 나 불러`,
+    });
+    expect(sentMsg.ok).toBe(true);
+
+    const message = await reply;
+    expect(message.mentions.users).toEqual([ownerId]);
+    expect(message.bodyMd).toBe(`<@u:${ownerId}> 확인해 주세요`);
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]).toEqual({
+      endpoint: PUSH_SUB.endpoint,
+      payload: {
+        kind: "mention",
+        channelId: channel.id,
+        title: "dodok",
+        body: "@dev가 #push에서 불렀습니다",
+        url: `/c/${channel.id}`,
+        tag: `mention:${channel.id}`,
+      },
+    });
+  }, 20_000);
+});
+
+describe("startDevFake VAPID", () => {
+  let dir: string;
+  const running: DevFake[] = [];
+  const noSend: NonNullable<Parameters<typeof startDevFake>[0]>["pushSend"] = async () => ({
+    statusCode: 201,
+  });
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), "dodok-dev-fake-vapid-"));
+  });
+
+  afterAll(async () => {
+    for (const dev of running.splice(0)) await dev.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  async function boot(): Promise<DevFake> {
+    const dev = await startDevFake({ port: 0, dataDir: dir, logLevel: "warn", pushSend: noSend });
+    running.push(dev);
+    return dev;
+  }
+
+  it("<dataDir>/vapid.json 은 시작마다 새로 만들지 않는다 — dev-fake.sqlite 는 새로 만들어도 키는 그대로(구독이 무효가 되지 않게)", async () => {
+    const vapidPath = join(dir, "vapid.json");
+    const first = await boot();
+    const saved = readFileSync(vapidPath, "utf8");
+    expect(statSync(vapidPath).mode & 0o777).toBe(0o600);
+    const a = await loginOwner(first.url);
+    await restAs(first.url, a.cookie, "POST", "/channels", { name: "before-restart" });
+    const firstKey = await restAs<{ publicKey: string }>(
+      first.url,
+      a.cookie,
+      "GET",
+      "/push/vapid-public-key",
+    );
+    await first.close();
+    running.splice(0);
+
+    const second = await boot();
+    const b = await loginOwner(second.url);
+    // DB 는 새것 — 앞 실행의 채널이 없다
+    const { channels } = await restAs<{ channels: Array<{ name: string }> }>(
+      second.url,
+      b.cookie,
+      "GET",
+      "/channels",
+    );
+    expect(channels.map((c) => c.name)).not.toContain("before-restart");
+    // 키는 그대로 — 파일 내용도, 브라우저가 구독에 쓰는 공개 키도
+    expect(readFileSync(vapidPath, "utf8")).toBe(saved);
+    const secondKey = await restAs<{ publicKey: string }>(
+      second.url,
+      b.cookie,
+      "GET",
+      "/push/vapid-public-key",
+    );
+    expect(secondKey.publicKey).toBe(firstKey.publicKey);
+    expect(secondKey.publicKey).toBe((JSON.parse(saved) as { publicKey: string }).publicKey);
+  }, 30_000);
 });
 
 describe("startDevFake appOrigin", () => {

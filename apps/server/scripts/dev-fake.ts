@@ -4,6 +4,7 @@
  *
  * .env 를 읽지 않는다: 토큰·비밀은 아래 개발 전용 고정값이고(로그에 찍어도 된다), loadConfig 에는 여기서 정한 값만 넘긴다.
  * DB 는 <dataDir>/dev-fake.sqlite — 시작마다 새로, `--keep` 이면 유지. 실행: `PORT=0 pnpm -F @dodok/server dev:fake [--keep]`.
+ * VAPID 키 <dataDir>/vapid.json 은 지우지 않는다 — 새로 만들면 브라우저의 푸시 구독이 매번 무효가 된다.
  * 웹 오리진은 APP_ORIGIN(없으면 http://localhost:5173). 5173 이 차 있으면 5180 으로:
  * `PORT=3100 APP_ORIGIN=http://localhost:5180 pnpm -F @dodok/server dev:fake` + `DODOK_API_ORIGIN=http://127.0.0.1:3100 pnpm -F @dodok/web dev --port 5180`.
  */
@@ -11,7 +12,7 @@ import type { ApprovalDecision, InboundDeliver } from "@dodok/shared";
 import { mkdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { type App, createApp } from "../src/app";
+import { type App, type AppDeps, createApp } from "../src/app";
 import { loadConfig } from "../src/config";
 import { type FakeGateway, startFakeGateway } from "../test/fakes/fake-gateway";
 import { type FakePlugin, startFakePlugin } from "../test/fakes/fake-plugin";
@@ -55,6 +56,8 @@ export type DevFakeOptions = {
   logLevel?: "fatal" | "error" | "warn" | "info" | "debug" | "trace";
   /** 웹 오리진(wire 핸드셰이크 Origin 검사). 기본 http://localhost:5173 */
   appOrigin?: string;
+  /** 웹 푸시 발송기. 기본은 실제 web-push(dev:fake 로 브라우저 푸시를 본다) — 테스트는 가짜를 줘 밖으로 보내지 않는다 */
+  pushSend?: AppDeps["pushSend"];
 };
 
 /**
@@ -387,6 +390,19 @@ const ATTACHMENT_REPLIES: ReadonlyArray<readonly [keyword: string, reply: string
   ["미디어만", "", [CHART_PNG]],
 ];
 
+/**
+ * 「나 불러」 — 부른 사람을 평문 `@핸들` 로 부르는 고정 답(인용·릴레이 꼬리 없음). 서버가 채널 참여자로 토큰화해
+ * `mentions.users` 에 넣으므로 푸시 「멘션」 트리거가 선다. 에이전트가 보냈으면 채널의 첫 사람을 부른다
+ */
+const CALL_ME = "나 불러";
+
+function callMeReply(d: InboundDeliver): string {
+  const { author } = d.message;
+  const human =
+    author.type === "user" ? author.handle : d.context.participants.find((p) => p.type === "user")?.handle;
+  return `@${human ?? "owner"} 확인해 주세요`;
+}
+
 /** 대본을 바꾸는 키워드 전부 — 대본이 내는 글·라벨·파일 이름에는 이 중 무엇도 넣지 않는다(「승인 둘」·「승인 항상」은 「승인」이 덮는다) */
 export const DEV_FAKE_KEYWORDS: readonly string[] = [
   "드롭",
@@ -394,6 +410,7 @@ export const DEV_FAKE_KEYWORDS: readonly string[] = [
   "느리게",
   "도구",
   "승인",
+  CALL_ME,
   ...COMPONENT_CARDS.map(([keyword]) => keyword),
   ...ATTACHMENT_REPLIES.map(([keyword]) => keyword),
 ];
@@ -408,7 +425,7 @@ function receivedLine(d: InboundDeliver): string | undefined {
 }
 
 /**
- * 받은 글로 대본을 고른다 — 키워드: 드롭·실패·느리게·도구·승인(승인 둘·승인 항상)·폼(폼 둘)·고르기·카드·재사용·짧게,
+ * 받은 글로 대본을 고른다 — 키워드: 드롭·실패·느리게·도구·승인(승인 둘·승인 항상)·나 불러·폼(폼 둘)·고르기·카드·재사용·짧게,
  * 첨부 키워드 이미지 보여줘·보고서 줘·카드에 이미지·미디어만. 사람 첨부가 있으면 답 앞에 받은 첨부 줄을 붙인다.
  * 받은 글을 `@` 없이 인용해(멘션을 새로 만들지 않는다) 되받고,
  * 글이 부른 채널의 다른 에이전트와 보낸 에이전트를 끝의 「@핸들 이어서 부탁해요」로만 불러 릴레이를 만든다.
@@ -427,7 +444,11 @@ export function fakeAgentScript(self: string, d: InboundDeliver): ScenarioScript
   const quote = [...text.replaceAll("@", "").replace(/\s+/g, " ").trim()].slice(0, QUOTE_MAX).join("");
   const tail = calls.size > 0 ? ` ${[...calls].map((h) => `@${h}`).join(" ")} 이어서 부탁해요.` : "";
   const media = ATTACHMENT_REPLIES.find(([keyword]) => text.includes(keyword));
-  const body = media ? media[1] : `**${self}**: 「${quote}」 잘 받았어요.${tail}`;
+  const body = media
+    ? media[1]
+    : text.includes(CALL_ME)
+      ? callMeReply(d)
+      : `**${self}**: 「${quote}」 잘 받았어요.${tail}`;
   const received = receivedLine(d);
   const reply = [received, body].filter(Boolean).join("\n\n");
   const components = componentsScript(text);
@@ -481,7 +502,7 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
         OPENCLAW_DEV_GATEWAY_TOKEN: gateway.token,
         OPENCLAW_DEVICE_IDENTITY_PATH: join(dataDir, "dev-fake-device.json"),
       }),
-      {},
+      opts.pushSend ? { pushSend: opts.pushSend } : {},
     );
     await app.fastify.listen({ host: "127.0.0.1", port });
     plugin = await startFakePlugin({ bridgeUrl: app.url, token: DEV_FAKE_BRIDGE_TOKEN });
