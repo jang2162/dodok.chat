@@ -338,7 +338,7 @@ finalizing 상한 뒤 WS 스냅샷을 에이전트 메시지로 저장하는 곳
 - **REST 경로는 `/api/v1/attachments` 다**(2.1·4.3·6.3 정정). 기존 REST 관례를 따랐다. 웹 `attachmentHref` 가 `/api/v1/attachments/<id>[?download=1]` 을 만든다.
 - **「채널 멤버」는 「세션 사용자의 워크스페이스에 속한 채널」이다**(4.3·4.4 정정). 지금 코드의 접근 규칙(`getChannel(db, id, workspaceId)`)이고, 메시지 목록·wire 구독도 같은 규칙이다. 통합 11b 는 「다른 워크스페이스 채널」로 잰다.
 - **FK cascade 가 없다**(4.1·4.7 정정). 채널·메시지를 지우는 기능이 아직 없다. 마이그레이션 `0003_wandering_vargas.sql` 의 두 FK 는 `ON DELETE no action` 이다. 삭제가 생길 때 첨부 행 처리도 함께 정한다.
-- **인바운드 `saveMediaBuffer` 의 `maxBytes` 는 5 MB 가 아니라 `agentFileMaxBytes`(20 MiB)다**(5.1 의 2 정정). 트리거가 릴레이된 에이전트 메시지면 에이전트가 올린 20 MiB 이하 이미지도 인바운드로 온다. 그래도 기본값에 기대지 않고 늘 준다. 순수 함수 `inboundSaveArgs` 가 잠근다.
+- **인바운드 `saveMediaBuffer` 의 `maxBytes` 는 5 MB 가 아니라 `agentFileMaxBytes`(20 MiB)다**(5.1 의 2 정정). 트리거가 릴레이된 에이전트 메시지면 에이전트가 올린 20 MiB 이하 이미지도 인바운드로 온다. 그래도 기본값에 기대지 않고 늘 준다. 순수 함수 `inboundSaveArgs` 가 잠근다. 그래서 10장의 「우리 상한 5 MB 가 방어선」은 사람이 올린 이미지에만 맞다 — 릴레이된 5~6 MiB 이미지는 그대로 간다(6 MiB 넘는 것은 Gateway 가 재압축, 스파이크 1-12).
 - **채널을 옮기면 첨부 칩을 비운다**(6.1 보탬). 올리는 중인 요청은 끊는다. 초안 글은 남는다. `useComposerAttachments(channelId)` 가 채널이 바뀌거나 언마운트될 때 모두 끊고 object URL 을 푼다.
 - **두 POST 의 인증은 `onRequest` 다**(4.3 보탬). 본문을 받기 전에 거절한다. 로그인 없이 5 MiB 넘게 보내면 413 이 아니라 401 이다. GET 둘도 같은 자리에 둔다.
 
@@ -356,7 +356,7 @@ finalizing 상한 뒤 WS 스냅샷을 에이전트 메시지로 저장하는 곳
   **틀리면 남는 것**: 모델이 고칠 단서를 덜 받는다. `invalid-root`·`unsafe-bypass` 같은 설정 문제도 「파일을 읽지 못함」으로 뭉친다 — 원인은 로그 `detail` 로 본다.
 - **Ruling 4 — components 의 `artifact://` 값 안 공백류는 플러그인이 검증 전에 퍼센트 인코딩한다**(6.3 보탬). 계약 `SafeUrl` 은 `^(https://|artifact://)\S+$` 라 `artifact://월간 보고서.pdf` 가 카드째 거절됐다(a3-t8).
   `coerceComponents` 가 사본을 만들어 `url` 키의 `artifact://` 값에서만 `\s`(스페이스·탭·줄바꿈)를 바꾼다(`packages/openclaw-plugin/src/outbound.ts` 의 `encodeArtifactWhitespace`). 계약은 그대로다. 모델용 설명(`ARTIFACT_URL_DESCRIPTION`)에 「이름에 공백이 있어도 그대로 쓴다」를 붙였다.
-  **틀리면 남는 것**: 판정 때 걱정한 「다른 공백류」는 `\s` 로 함께 닫혔다. 대신 이름에 원래 `%` 가 있으면 인코딩하지 않아 웹이 받아야 한다 — 그 몫이 Ruling 5 다.
+  **틀리면 남는 것**: 판정 때 걱정한 「다른 공백류」가 카드째 거절되는 것은 `\s` 로 함께 닫혔다. 그러나 그 이름이 풀리지는 않았다 — 서버가 저장할 때 제어 문자를 빼고 끝 공백을 다듬어, 탭·줄바꿈·끝 공백이 든 url 은 「첨부를 찾을 수 없습니다」가 됐다(a3-c1 리뷰 D1·D4). 원래 `%` 가 든 이름도 풀리지 않았다. 이 몫을 Ruling 5 가 맡는다.
 - **Ruling 5 — 웹 `resolveRef` 는 이름 후보를 우선순위로 맞춘다(대안 B)**(6.3 「ref 와 name 이 같은 첫 첨부」 정정). 서버는 저장할 때 `sanitizeAttachmentName` 으로 제어 문자를 빼고 끝 공백을 다듬는다. 그래서 Ruling 4 의 인코딩을 왕복하면 현행 해석으로 **missing 이 여섯** 났다(탭·줄바꿈이 든 원래 이름, `%` 든 이름 둘, 끝 공백, `%20` 문자열과 공백이 함께 든 이름 — a3-c1 리뷰 2절).
   후보 순서: ref 그대로 → `decodeURIComponent` → 관대한 디코드(뒤에 16진 두 자리가 없는 `%` 를 `%25` 로 본다) → 셋 각각을 `sanitizeAttachmentName` 으로 다듬은 것. 다듬어 빈 후보(`%09` 처럼 폴백 `file` 이 되는 것)는 건너뛴다. 후보마다 **첨부 전체**를 보고, 후보가 다 빗나가면 id 로 찾는다(`apps/web/src/features/attachments/resolve.ts`).
   조율자 안(공백 `%XX` 만 되돌려 한 번 더 찾기)은 실측으로 기각했다 — 한 건만 닫고 새 오해석을 하나 만들었다. 다듬어 빈 후보를 거르는 가드도 조율자 예시 대신 리뷰어의 정밀 가드를 썼다(예시는 `file%20`·`fi%09le`·`.file` 을 missing 으로 만들었다).
@@ -376,7 +376,7 @@ finalizing 상한 뒤 WS 스냅샷을 에이전트 메시지로 저장하는 곳
 
 **플러그인에서 달라진 것**(a3-t5)
 
-- **새 모듈 셋**(2.3 정정). 스펙은 인바운드·아웃바운드 처리를 `src/inbound.ts`·`src/outbound.ts` 에 넣는다고 했다. 구현은 SDK 를 import 하지 않는 순수 모듈 `src/media-http.ts`·`src/inbound-media.ts`·`src/outbound-media.ts` 로 뺐다. `channel.ts` 의 배선은 순수 함수 `shouldDeliverFinal`·`inboundSaveArgs`·`loaderOptions` 를 부르는 한 줄씩이다. 그 호출을 **우회하는** 변이는 테스트가 못 잡는다(8.2 방침 그대로 — 실연이 잰다).
+- **새 모듈 둘**(2.3 정정). 스펙은 인바운드·아웃바운드 처리를 `src/inbound.ts`·`src/outbound.ts` 에 넣는다고 했다. 구현은 SDK 를 import 하지 않는 순수 모듈 `src/inbound-media.ts`·`src/outbound-media.ts` 로 뺐다(`src/media-http.ts` 는 스펙대로). `channel.ts` 의 배선은 순수 함수 `shouldDeliverFinal`·`inboundSaveArgs`·`loaderOptions` 를 부르는 한 줄씩이다. 그 호출을 **우회하는** 변이는 테스트가 못 잡는다(8.2 방침 그대로 — 실연이 잰다).
 - **인바운드 이미지는 병렬로 받는다**(5.1 의 1 「순서대로」 정정). `Promise.allSettled` 로 받고, fact·알림 줄은 첨부 순서로 모은다. 지연이 쌓이는 것을 줄이지만 대역폭이 모자란 경우는 줄지 않는다. 8초 전체 예산은 Ruling 1 과 부딪혀 넣지 않았다. 로그 `inbound-media` 에 실패 사유 `reasons`(`단계:종류`, 예 `download:http-404`)를 싣는다 — 경로는 없다.
 - **이름 우선순위**(5.2 「이름」 정정): 모델이 준 이름(툴 `filename`·`deliver` 의 `attachments[i].name`) → 로더 `fileName` → 원천 basename(쿼리를 먼저 뗀 뒤) → `file`. 스펙은 로더 `fileName` 이 먼저였다. 계획 코드가 모델 이름을 먼저 두었고 구현이 코드를 따랐다(a3-t5 판단 5).
 - **메시지당 10개를 넘는 원천은 읽지 않고 실패로 넣는다**(5.2 보탬). 넘긴 채 보내면 `OutboundMessage` 파싱이 `attachmentIds.max(10)` 에서 던져, 최종 응답은 텍스트까지 통째로 사라진다.
