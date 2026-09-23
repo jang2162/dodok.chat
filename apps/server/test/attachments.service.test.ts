@@ -165,6 +165,19 @@ describe("attachments service", () => {
     expect(readable && existsSync(readable.path)).toBe(true); // 같은 sha 를 b 가 쓰므로 블롭이 남는다
   });
 
+  it("정리: 첨부 디렉터리 맨 위에 파일(.DS_Store 등)이 있어도 던지지 않고 고아 블롭을 지운다", async () => {
+    await writeFile(join(dir, ".DS_Store"), "x");
+    await uploadAttachment(
+      { db, dir },
+      { channelId: chA, uploader: { type: "bridge" }, bytes: makePng(7, 7) },
+    );
+    const path = blobPath(dir, createHash("sha256").update(makePng(7, 7)).digest("hex"));
+    const res = await sweepAttachments({ db, dir, now: () => new Date(Date.now() + 25 * 3600_000) });
+    expect(res).toEqual({ rows: 1, blobs: 1 });
+    expect(existsSync(path)).toBe(false);
+    expect(existsSync(join(dir, ".DS_Store"))).toBe(true);
+  });
+
   it("정리: 아무도 안 가리키는 블롭은 지우고, 24시간 안 된 미묶음은 남긴다", async () => {
     const old = await uploadAttachment(
       { db, dir },

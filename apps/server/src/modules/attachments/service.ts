@@ -201,6 +201,8 @@ export async function sweepAttachments(
     .all();
   let blobs = 0;
   for (const prefix of await listDir(deps.dir)) {
+    // 블롭 하위 디렉터리는 sha 앞 2자(hex)뿐이다 — 맨 위의 다른 항목(.DS_Store·사람이 둔 파일)은 건너뛴다
+    if (!/^[0-9a-f]{2}$/.test(prefix)) continue;
     const sub = join(deps.dir, prefix);
     for (const name of await listDir(sub)) {
       const sha = name.slice(0, 64);
