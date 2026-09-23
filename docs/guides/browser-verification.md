@@ -221,9 +221,9 @@ neo 쪽에서는 남의 탭으로 보여 손댈 수 없다. **조작은 한쪽�
   ⚠ 이 머신의 5173 은 **다른 프로젝트**다. 그 오리진에 dodok 서비스 워커를 남기면 다른 앱의 탐색에 닿는다 — PWA 확인은 5180 에서 한다(`APP_ORIGIN`·`DODOK_API_ORIGIN`·`--port` 를 맞춘다).
 - **preview 를 띄웠던 오리진에서 dev 로 돌아오면 서비스 워커를 해제한다(또는 Shift+새로고침).** 빌드본 SW 는 미리 저장한 번들을 계속 내주고, dev 서버는 `/sw.js` 에 HTML 을 돌려 갱신 확인이 실패한다 — 옛 빌드가 계속 뜬다(p4-t1b 리뷰 D1 「고쳐도 남는 것」).
   해제는 DevTools Application → Service workers → Unregister, 또는 페이지에서 `(await navigator.serviceWorker.getRegistrations()).forEach((r) => r.unregister())` 뒤 새로고침. 캐시(`caches.keys()`)·IndexedDB(`keyval-store` — 오프라인 사본)도 같이 지운다.
-  반대 방향(dev → preview)은 새 SW 가 waiting 에 들어가 「새 버전이 있습니다」 토스트가 뜨고, 누르면 넘어간다.
+  반대 방향(dev → preview)은, `VITE_PWA_DEV=1` 로 개발 SW 를 켰던 오리진이면 새 SW 가 waiting 에 들어가 「새 버전이 있습니다」 토스트가 뜨고 누르면 넘어간다. 기본 dev(SW 없음) 뒤에는 첫 설치라 곧바로 활성화된다(waiting·토스트 없음).
 - **알림 권한이 필요한 검증은 headed 브라우저로 한다(화면 밖 `--window-position`).** 헤드리스 Chromium 은 권한을 줘도 `Notification.permission` 이 `"denied"` 로 고정돼, 앱의 알림 패널이 늘 「거절됨」이다(p4-t7).
-  Playwright 로 새 브라우저를 띄워야 하면 `headless: false` + `args: ["--window-position=-2400,-2400"]` 로 사람 화면 밖에 띄운다 — 사람의 작업을 가리지 않는다. 번들 Chromium(Google Chrome for Testing)은 실제 FCM 수신까지 된다.
+  Playwright 로 새 브라우저를 띄워야 하면 `headless: false` + `args: ["--window-position=-2400,-2400"]` 로 사람 화면 밖에 띄운다 — 사람의 작업을 가리지 않는다. p4-t7 은 Playwright 가 받아 둔 Chromium(`~/Library/Caches/ms-playwright`, Google Chrome for Testing — 없으면 `pnpm dlx playwright install chromium`)을 `playwright-core`(openclaw 가 끌어오는 전이 의존성 — 브라우저를 내려받지 않는다)로 띄웠고, 이 빌드는 실제 FCM 수신까지 된다.
   neo 에 붙이는 경우는 neo 가 이미 headed 다 — 권한은 CDP `Browser.grantPermissions`, 끝나면 `Browser.resetPermissions`([live-smoke](live-smoke.md) 9.2).
 - 끝나면 등록한 서비스 워커·캐시·IndexedDB·푸시 구독·알림 권한을 지운다 — **네가 연 것은 네가 닫는다.** neo 의 공유 프로필에 남기면 다음 세션의 확인이 옛 SW 위에서 돈다.
 

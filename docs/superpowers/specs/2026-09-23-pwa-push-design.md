@@ -234,7 +234,7 @@
 
 **shared·서버에서 달라진 것**(태스크 2·3·6 — `b65a247`·`60b3ac3`·`e33509c`·`0ba1ad2`·`1d1454d`)
 
-- **`PresenceUpdate` 는 wire 계약에 있다**(2.3 정정). `packages/shared/src/wire/index.ts:67` 의 `Typing` 옆이다(push 모듈이 아니다). `@dodok/shared` 루트 export 로 둘 다 보이니 쓰는 쪽은 차이가 없다.
+- **`PresenceUpdate` 는 wire 계약에 있다**(2.3 보탬 — 자리). `packages/shared/src/wire/index.ts:67` 의 `Typing` 옆이다(push 모듈이 아니다). `@dodok/shared` 루트 export 로 둘 다 보이니 쓰는 쪽은 차이가 없다.
 - **`VAPID_SUBJECT` 검사가 조금 더 엄격하다**(5.1 보탬). `mailto:`/`https:` 로 「시작」만 보지 않고 `^mailto:\S+$`·`^https://\S+$` 를 요구한다(`apps/server/src/config.ts:34-40`). 그래서 `mailto:` 만 있는 값은 설정 오류다.
 - **망가진 `vapid.json` 은 덮어쓰지 않고 던진다**(5.1 보탬). 지우면 새로 만들지만 모든 구독이 무효가 된다는 문구로 부팅이 멈춘다(`apps/server/src/modules/push/vapid.ts:19-25`). 새 파일은 `flag: "wx"`·`0600` 이다.
 - **구독 행의 user-agent 는 512자에서 자른다**(5.1 보탬, `apps/server/src/modules/push/routes.ts:19`). 클라이언트가 보내는 헤더라 상한을 두었다.

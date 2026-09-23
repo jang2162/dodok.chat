@@ -526,7 +526,7 @@ oc --dev config get   agents.entries.dev.tools.exec.ask        # 되돌아갔는
 재검증이 대신 무엇을 확인했고 **어떻게 흉내 냈는지**는 9.2 에 적어 뒀다 — 같은 방법을 그대로 쓰면 준비가 빨라진다.
 `dev:fake` 로도 되고 실물로도 된다 — 8절로 승인을 한 번 일으킨 김에 같이 본다. 브라우저는 `http://localhost:5173` 고정(알림 권한은 **출처별**이라 주소가 다르면 다시 묻는다).
 
-Phase 2 ④ 뒤: 옛 「알림 켜기」 토글은 사이드바 하단 「알림」 패널로 옮겨졌고, **이 기기에 푸시가 켜져 있으면 탭 안 승인 알림은 쉰다** — 이 절을 볼 때는 14.3 끝의 순서(권한 허용 → 푸시 「끄기」)를 먼저 한다. 아래 「알림 켜기」는 그 패널의 「푸시 알림 켜기」(권한을 묻는 자리)로 읽는다.
+Phase 2 ④ 뒤: 옛 「알림 켜기」 토글은 사이드바 하단 「알림」 패널로 옮겨졌고, **이 기기에 푸시가 켜져 있으면 탭 안 승인 알림은 쉰다** — preview(14.1)에서 이 절을 볼 때는 14.3 끝의 순서(권한 허용 → 푸시 「끄기」)를 먼저 한다. 아래 고정 주소 5173(dev 서버, 서비스 워커 없음)에서는 「푸시 알림 켜기」가 권한만 받고 10초 뒤 「서비스 워커가 준비되지 않았습니다」로 끝나 「끄기」 버튼이 생기지 않는다 — 플래그가 없으므로 그대로 탭 안 알림이 돈다. 아래 「알림 켜기」는 그 패널의 「푸시 알림 켜기」(권한을 묻는 자리)로 읽는다.
 
 ⚠ **순서가 있다**: `granted` 를 **먼저** 본다. 권한을 한 번 `denied` 로 만들면 「알림 켜기」 토글이 영영 사라지고(설계대로), 같은 출처에서 다시 묻지 못한다.
 되돌리려면 브라우저 사이트 설정에서 손으로 초기화해야 한다.
@@ -1135,7 +1135,7 @@ DODOK_API_ORIGIN=http://127.0.0.1:3100 pnpm -F @dodok/web exec vite preview --po
 - `dev:fake` 는 VAPID 주체가 기본값이라 시작 때 `VAPID subject is a local placeholder …` warn 한 줄을 찍는다 — 의도한 경고다. 키 `data/vapid.json` 은 재시작해도 그대로다(지우면 그 오리진의 구독이 모두 무효).
 
 **브라우저 — headed 여야 한다.** 헤드리스 Chromium 은 권한을 줘도 `Notification.permission` 이 `"denied"` 로 고정된다(`Notification.requestPermission()` 결과와 `navigator.permissions.query` 는 `granted` 인데 동기 getter 만 `denied`). 앱은 동기 getter 를 보므로 헤드리스에서는 패널이 늘 「거절됨」이다.
-p4-t7 은 `playwright-core`(저장소 의존성) 번들 Chromium 을 **headed** 로, `--window-position=-2400,-2400` 으로 화면 밖에 띄워 사람 화면을 가리지 않았다. 이 번들은 Google Chrome for Testing 빌드라 **실제 FCM 수신까지 된다** — 시스템 Chrome 으로 갈아탈 필요가 없었다. 프로필은 스크래치패드의 영구 프로필(`launchPersistentContext`)이고, 권한은 `context.grantPermissions(["notifications"], { origin: "http://localhost:5180" })` 로 준다.
+p4-t7 은 Playwright 가 받아 둔 Chromium(`~/Library/Caches/ms-playwright`, Google Chrome for Testing — 없으면 `pnpm dlx playwright install chromium`)을 `playwright-core`(openclaw 가 끌어오는 전이 의존성 — 브라우저를 내려받지 않는다)로 **headed** 로, `--window-position=-2400,-2400` 으로 화면 밖에 띄워 사람 화면을 가리지 않았다. 이 빌드는 Google Chrome for Testing 이라 **실제 FCM 수신까지 된다** — 시스템 Chrome 으로 갈아탈 필요가 없었다. 프로필은 스크래치패드의 영구 프로필(`launchPersistentContext`)이고, 권한은 `context.grantPermissions(["notifications"], { origin: "http://localhost:5180" })` 로 준다.
 BrowserOS neo 를 쓸 수 있으면 neo 의 CDP(`docs/guides/browser-verification.md`)에 붙여도 된다 — 권한은 `Browser.grantPermissions`, 끝나면 `Browser.resetPermissions`(9.2).
 
 **켜기** — 로그인 → 사이드바 하단 「알림」 → 「푸시 알림 켜기」 → 「이 기기에서 알림을 받습니다」. 서버 행은 읽기 전용으로 본다: `sqlite3 -readonly data/dev-fake.sqlite "select user_id, substr(endpoint,1,40) from push_subscriptions"`(endpoint 는 `https://…google.com/fcm/send/…`). 브라우저 쪽 플래그는 `localStorage["dodok.push"]`(= 켠 사용자 id).
@@ -1213,7 +1213,7 @@ await page.evaluate(async () =>
 | 6 | **실제 기기 오프라인** | 앱을 한 번 연 뒤 Wi-Fi 를 끄고(비행기 모드) 앱을 새로 연다 → 다시 켠다 | 곧바로 배너 「오프라인 — 저장된 내용을 보여 줍니다」와 최근 채널, 토스트 없음, 보내기 막힘. 다시 연결되면 배너가 사라진다 |
 | 7 | **iOS·안드로이드 실기기** | **Phase 3**(HTTPS 배포 뒤) | iOS 16.4+ 는 홈 화면에 추가한 앱에서만(패널 「홈 화면에 추가하면 알림을 받을 수 있습니다 — …」). `VAPID_SUBJECT` 가 실제 연락처여야 Apple 이 받는다(14.2) |
 
-9절의 탭 안 승인 알림(「승인 필요 — @dev 가 Write 를 실행하려 합니다」)은 **이 기기에 푸시가 켜져 있으면 쉰다**(결정 8). 9절을 볼 때는 「푸시 알림 켜기」로 권한을 허용한 뒤 「끄기」를 누른다 — 권한은 `granted` 로 남고 플래그가 지워져 탭 안 알림이 돈다. 옛 「알림 켜기」 토글은 「알림」 패널로 옮겨졌다(푸시를 지원하지 않는 브라우저에서만 「탭이 열려 있을 때만 알림 켜기」로 남는다).
+9절의 탭 안 승인 알림(「승인 필요 — @dev 가 Write 를 실행하려 합니다」)은 **이 기기에 푸시가 켜져 있으면 쉰다**(결정 8). preview(14.1)에서 9절을 볼 때는 「푸시 알림 켜기」로 권한을 허용한 뒤 「끄기」를 누른다 — 권한은 `granted` 로 남고 플래그가 지워져 탭 안 알림이 돈다. dev 서버(서비스 워커 없음)에서는 「푸시 알림 켜기」가 권한만 받고 10초 뒤 「서비스 워커가 준비되지 않았습니다」로 끝난다 — 「끄기」 버튼은 생기지 않고, 플래그가 없으므로 그대로 탭 안 알림이 돈다. 옛 「알림 켜기」 토글은 「알림」 패널로 옮겨졌다(푸시를 지원하지 않는 브라우저에서만 「탭이 열려 있을 때만 알림 켜기」로 남는다).
 
 ### 14.4 실연 — 예정
 
