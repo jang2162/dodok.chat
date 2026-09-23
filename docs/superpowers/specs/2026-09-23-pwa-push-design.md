@@ -1,6 +1,6 @@
 # Phase 2 ④ PWA·푸시 설계
 
-**상태**: 설계 확정(2026-09-23), 구현 전
+**상태**: 설계 확정(2026-09-23), 구현·브라우저 검증 완료(2026-09-24 — 계획 태스크 1~7, 브라우저 16/16·결함 0), 실연(8.4, 계획 태스크 9)은 예정 — 구현이 이 설계와 달라진 것은 11장
 **범위**: PWA 설치(매니페스트·아이콘·설치 버튼), 서비스 워커(앱 껍데기 저장·푸시·알림 누르기), 최근 채널 오프라인 읽기, 웹 푸시(멘션·승인 요청·릴레이 한도), iOS 설치 안내
 **앞선 근거**: 계획서 `docs/plan.md` 8장 Phase 2 「PWA」·10장 결정 #5(푸시 MVP 포함) · 기술 표(`vite-plugin-pwa` + Workbox, `web-push`) · Phase 2 ① 스펙 `2026-09-20-activity-approvals-design.md` 5.4(탭 안 승인 알림·문구 규칙)
 
@@ -202,3 +202,93 @@
 - iOS 는 설치 PWA 의 저장소를 오래 안 쓰면 지울 수 있다 — 오프라인 사본이 사라질 수 있다.
 - 푸시 서비스로 가는 메타데이터(언제·몇 번)는 암호화와 별개로 드러난다.
 - 서버 재시작 직후 presence 가 비어 있는 몇 초 동안은 보고 있어도 푸시가 갈 수 있다.
+
+---
+
+## 11. 구현과 맞춘 것 (2026-09-24)
+
+구현(계획 태스크 1~6)·리뷰·브라우저 검증(태스크 7)과 그 수정 라운드에서 이 설계와 달라진 것만 모았다. main `330f5e8` 기준이다.
+정본 근거는 실행 원장 `.superpowers/sdd/2026-09-23-pwa-push/ledger.md`(git 제외)의 판정 R1~R8 과, 원장이 가리키는 보고서·리뷰(`p4-t*`)다. 보고서의 커밋 해시는 워크트리 것이라 main 에서는 다르다 — 아래 해시는 main 의 것이다.
+남은 문제는 `docs/plan.md` 8장 「이월」 한곳에 있다. 실연(8.4, 계획 태스크 9 — 모델 런 1회)은 아직 돌리지 않았다.
+
+**계획이 정한 둘**(계획 Self-Review 「스펙과 다르게 정한 것」)
+
+- **VAPID 주체가 로컬 자리값이면 서버 시작 때 warn 한 줄**(5.1 보탬). 기본값 `mailto:dodok@localhost` 는 개발 편의로 그대로 두었다. 주체의 호스트(`mailto:` 는 마지막 `@` 뒤, `https:` 는 URL 호스트)가 `localhost`·`127.0.0.1`·`*.local` 이면 `createApp` 한 번에 한 번 `VAPID subject is a local placeholder — Apple Push rejects it (403 BadJwtToken)` 을 남긴다(`apps/server/src/config.ts:86-` `isLocalVapidSubject`, `apps/server/src/app.ts:194-203`).
+  까닭: 실행 전 이슈 확인에서 Apple Push 가 이런 주체를 `403 BadJwtToken` 으로 거부한다는 것(web-push#947·#988)을 찾았다. `[::1]`·`*.localhost` 는 warn 하지 않는다(p4-t2 보고서 걱정).
+- **발송 응답 403 은 구독을 지우지 않는 error 다**(5.4 정정 — 5.4 는 404·410 삭제, 413·400 error 만 말했다). 403 은 VAPID 주체·키 문제라 구독 탓이 아니다(`apps/server/src/modules/push/service.ts:141-146`).
+  그래서 주체가 잘못된 배포에서는 발송마다 error 가 쌓인다 — 운영자가 봐야 할 신호로 둔다(p4-t3 보고서 걱정).
+
+**웹 PWA 껍데기에서 달라진 것**(태스크 1 — `7710487`·`f6741f3`)
+
+- **R4 — 개발 모드 서비스 워커는 기본으로 끈다**(2.1 정정). 2.1 은 `devOptions: { enabled: true, type: "module" }` 이었다. 지금은 `enabled: process.env.VITE_PWA_DEV === "1"` 이고 `navigateFallback` 도 두지 않는다(`apps/web/vite.config.ts:10-13`·`:50-51`, `f6741f3`).
+  까닭: 계획 Step 3 이 더한 `navigateFallback: "index.html"` 때문에 개발 SW 가 **Vite 가 변환한 dev `index.html`** 을 미리 저장하고 탐색을 가로챘다. 같은 오리진에서 dev 뒤에 preview 를 띄우면 빈 화면에 갇혔다(p4-t1b 리뷰 D1, 실측). 또 이 머신의 5173 은 다른 프로젝트라, dodok dev 를 5173 에서 한 번 연 브라우저는 그 오리진의 다른 앱에도 SW 를 남긴다.
+  끄면 `virtual:pwa-register` 가 아무것도 하지 않는 `registerSW` 로 풀려 `startPwa` 도 등록하지 않는다(p4-t1b 재리뷰 실측). 브라우저 검증은 빌드본 `vite preview` 로 하거나 `VITE_PWA_DEV=1` 을 셸에 준다(설정은 `loadEnv` 를 쓰지 않아 `.env` 의 값은 닿지 않는다). 절차는 `docs/guides/browser-verification.md`「PWA·서비스 워커를 볼 때」.
+  **틀리면 남는 것**: 개발 중 SW 동작을 보려면 환경변수 하나가 더 든다. 빌드본은 끄기에 안 걸린다 — 빌드본 SW 는 미리 저장 목록에 `index.html` 이 있을 때만 탐색 폴백(`NavigationRoute`)을 건다(`apps/web/src/sw.ts:15-20`). 반대 방향(preview 를 띄웠던 오리진에서 dev 로 돌아오기)은 PWA 본성상 옛 빌드가 계속 뜬다 — SW 를 해제하거나 Shift+새로고침한다.
+- **`sw.ts` 는 주입 자리 `self.__WB_MANIFEST` 를 한 번만 읽는다**(3장 보탬). `const manifest = self.__WB_MANIFEST` 뒤 `precacheAndRoute(manifest)`·`manifest.some(...)` 이다(`apps/web/src/sw.ts:9-16`). workbox `injectManifest` 는 그 자리가 파일에 정확히 한 번 나오기를 요구한다 — 계획 코드처럼 두 번 참조하면 빌드가 `AssertionError` 로 실패했다(p4-t1b 보고서 표 1). 태스크 5 브리프에 「다시 참조 금지」로 넘겼다.
+  `self` 의 타입은 workbox-precaching 이 이미 선언한 전역을 쓴다(`declare const self: ServiceWorkerGlobalScope`). 계획의 교차 타입은 `TS2339` 로 깨졌다.
+- **`includeManifestIcons: false`**(2.1 보탬, `apps/web/vite.config.ts:47-48`). 아이콘은 `globPatterns` 가 이미 담는다. 켜 두면 매니페스트 아이콘 셋이 미리 저장 목록에 두 번 들어갔다(33 → 30 항목, 지금 빌드는 `main.tsx` 의 등록 조각 둘까지 32).
+- **등록은 `injectRegister: false` + 렌더 뒤 동적 import**(2.1 보탬). `main.tsx` 가 `bootApp(...)` 이 끝난 뒤 `import("virtual:pwa-register")` 로 `startPwa` 를 부른다 — 최상위 await 로 첫 렌더를 막지 않는다. 실패는 `console.warn`.
+- **`theme-color` 는 meta 둘**(라이트 `#f6f7f8`·다크 `#18191c`, `media` 로 나눔 — `apps/web/index.html:8-9`). 매니페스트에는 값 하나만 되므로 라이트 배경 토큰 값이다.
+- **서비스 워커 타입 검사는 따로 한다**. `apps/web/tsconfig.sw.json`(`lib: ["ES2023","WebWorker"]`, `include`: `src/sw.ts`·`src/pwa/sw-logic.ts`)이 새로 생겼고, 앱 tsconfig 는 `sw.ts` 를 뺀다. `sw-logic.ts` 는 두 설정이 모두 검사한다(DOM·WebWorker 어느 전역도 쓰지 않는다). `typecheck`·`build` 둘 다 두 설정을 돈다.
+- **`vite-plugin-pwa` 는 `devDependencies`**, `workbox-*` 셋은 런타임이라 `dependencies`(p4-t1b 리뷰 D2, `f6741f3`).
+
+**shared·서버에서 달라진 것**(태스크 2·3·6 — `b65a247`·`60b3ac3`·`e33509c`·`0ba1ad2`·`1d1454d`)
+
+- **`PresenceUpdate` 는 wire 계약에 있다**(2.3 정정). `packages/shared/src/wire/index.ts:67` 의 `Typing` 옆이다(push 모듈이 아니다). `@dodok/shared` 루트 export 로 둘 다 보이니 쓰는 쪽은 차이가 없다.
+- **`VAPID_SUBJECT` 검사가 조금 더 엄격하다**(5.1 보탬). `mailto:`/`https:` 로 「시작」만 보지 않고 `^mailto:\S+$`·`^https://\S+$` 를 요구한다(`apps/server/src/config.ts:34-40`). 그래서 `mailto:` 만 있는 값은 설정 오류다.
+- **망가진 `vapid.json` 은 덮어쓰지 않고 던진다**(5.1 보탬). 지우면 새로 만들지만 모든 구독이 무효가 된다는 문구로 부팅이 멈춘다(`apps/server/src/modules/push/vapid.ts:19-25`). 새 파일은 `flag: "wx"`·`0600` 이다.
+- **구독 행의 user-agent 는 512자에서 자른다**(5.1 보탬, `apps/server/src/modules/push/routes.ts:19`). 클라이언트가 보내는 헤더라 상한을 두었다.
+- **트리거의 DB 조회는 `service.ts` 에 있다**(2.2 정정). `triggers.ts` 는 순수(받을 사람·알림 내용)이고, 조회 `createTriggerLookups`(채널 이름은 `getChannel(db, id, workspaceId)` — 다른 워크스페이스면 없음)와 버스 배선 `attachPushTriggers` 는 `service.ts` 다. 발송기 `createPushDispatcher` 는 `PushTarget` 만 받는다.
+- **발송기 주입은 `AppDeps.pushSend` 다**(5.4 정정 — 5.4 는 `createPushService({ send })` 였다). `createApp` 이 `pushSend` 를 받고, 없으면 `webPushSender({ subject, publicKey, privateKey })` 를 쓴다. 발송·정리는 `createPushDispatcher({ db, logger, send, presence })` → `{ dispatch, drain }` 이고, `dispatch` 는 던지지 않는다(DB 오류도 error 로그).
+- **같은 승인은 한 번만 보낸다**(5.2 보탬). 승인 서비스가 늦게 차는 값(대기 카드의 `urlPath` 등)을 병합하면 같은 id·같은 `pending` 으로 `approval.requested` 를 버스에 다시 싣는다(`publish(announce:false)`). 그대로 두면 승인마다 푸시가 두 번 간다. 최근 1000개 id 를 기억한다(`apps/server/src/modules/push/service.ts:212`·`:236-243`, 통합 12c).
+  리뷰가 코드로 확인했다 — 같은 id 가 다시 `pending` 이 되는 길이 없어 정당한 두 번째 알림을 삼키지 않는다(p4-t3 리뷰 A 9번). 기억은 메모리뿐이라 재시작 뒤 다시 실리면 한 번 더 가지만, 재시작하면 `recoverOnBoot` 가 대기 승인을 닫는다.
+- **종료 때 트리거를 떼고, 진행 중인 발송을 최대 2초 기다린다**(5.4 보탬). `shutdown` 둘째 단계에서 `push-triggers` 를 떼고(새 발송 없음), DB 를 닫기 직전 `push-drain` 이 `PUSH_DRAIN_TIMEOUT_MS = 2_000` 까지 기다린다(`apps/server/src/app.ts:51`·`:285`·`:294`). 404·410 정리가 닫힌 DB 에 막히지 않게 하되, 응답 없는 푸시 서비스가 종료(상한 10초)를 붙잡지 않게 했다. 2초를 넘긴 결과는 error 로그 한 줄이 되고 정리는 다음 410 때 한다(p4-t3 리뷰 실측).
+- **발송 로그에 endpoint 도 싣지 않는다**(5.1 보탬 — 5.1 은 비밀 키·구독 `keys` 만 말했다). endpoint 는 그 자체로 발송 권한이 걸린 주소라서다. 로그 필드는 `userId`·`subscriptionId`·`kind`·`statusCode`·`reason`(오류 이름과 메시지, 200자)뿐이고, 성공 발송은 로그를 남기지 않는다(브라우저 검증 H — 서버 로그 386줄에서 `p256dh`·비밀 키·알림 문구·`fcm/send` 0회).
+- **`webPushSender` 는 요청마다 `timeout: 10_000` 을 준다**(5.4 보탬, `apps/server/src/modules/push/service.ts:69`·`:91`). 응답 없는 푸시 서비스가 소켓을 붙잡지 않게. web-push 의 `timeout` 은 소켓 **유휴** 제한이라 조금씩 흘리는 서버는 더 오래 붙잡을 수 있다(p4-t3 리뷰 「못 잰 것」) — 종료는 drain 상한이 막는다.
+- **멘션 문구의 조사는 `josa` 결과 그대로**(5.2 보탬). 계획 예시 「@alice이」는 실제로 「@alice가」다(끝 묵음 e 를 떼고 판단). 핸들을 못 풀면 「누군가가」, 채널 이름을 못 풀면 「채널」이다(`apps/server/src/modules/push/triggers.ts:15`·`:44`). 자기 멘션은 **작성자가 사람일 때만** 뺀다(에이전트 작성자와 id 가 겹쳐도 빼지 않는다).
+- **서버는 `presence.update` 의 `channelId` 를 검증하지 않는다**(5.3 보탬, 계획대로). 남의 채널 id 를 보내면 자기 알림이 덜 올 뿐이다. 소켓 수 상한도 없다(끊김마다 지우므로 새지는 않는다).
+- **테스트 앱은 늘 가짜 발송기**(8.1 보탬). `bootTestApp`·`bootLiveApp` 이 `deps.pushSend` 가 없으면 `noExternalPush` 를 넣고, 테스트 환경은 프로세스마다 만든 VAPID 키를 환경변수로 준다 — 저장소에 `data/vapid.json` 을 만들지 않는다(원장 R2). 반대로 **`dev:fake` 는 실제 `web-push` 발송기**다 — 구독하고 트리거를 일으키면 실제 FCM 으로 나간다(`startDevFake` 의 `pushSend` 옵션으로만 바꾼다). `dev:fake` 는 `data/vapid.json` 을 지우지 않는다(재시작해도 구독이 산다).
+- **`dev:fake` 키워드 「나 불러」**(8.3 보탬, 태스크 6). 에이전트가 `@<부른 사람 핸들> 확인해 주세요` 로 답해 멘션 푸시를 일으킨다. 「느리게」와 함께 쓰면 델타가 1.5초 간격이라 채널을 옮길 시간이 난다.
+
+**웹 오프라인에서 달라진 것**(태스크 4 — `c6d8744`·`5a4188f`)
+
+- **R3 — `["channel", id]` 도 최근 채널이면 저장한다**(4장 보탬). 4장 목록은 `members`·`timeline` 만 말했다. 서버만 죽고 브라우저는 온라인인 경우 자리값은 오류 상태에서 사라져 「채널을 불러오지 못했습니다」가 뜬다 — 저장해 두면 값이 남는다. 「최근 본 채널」 목록 자체는 `["recentChannels"]` 쿼리다(`apps/web/src/pwa/persist.ts:38-45`). 채널 화면이 부르는 나머지 키(`adapter`·런·활동·에이전트 찾기)는 저장하지 않는다.
+- **me 가 없는 스냅샷은 저장하지 않고 사본을 지운다**, 뮤테이션은 두 겹으로 저장하지 않는다(`shouldDehydrateMutation: () => false` + `trimForPersist` 의 `mutations: []` — 로그인 토큰이 뮤테이션 변수에 있다). 사본은 로그인한 사람의 것이다(`persist.ts:151-155`).
+- **R5 — 저장하는 타임라인의 `lastSeq` 는 0 이다**(4장 정정 — 4장은 「연결되면 wire 재구독이 최신으로 채운다(지금 동작)」라고 했다). 복원한 채널의 첫 구독이 이어 받기가 아니라 최신 페이지로 새로(`fresh`) 시작한다(`persist.ts:47-55`, `5a4188f`).
+  까닭: 카드 상호작용(`message.updated`)은 seq 가 그대로라 이어 받기로는 오지 않는다. 사본의 `lastSeq` 로 이으면 앱이 닫혀 있던 동안의 결과 줄이 영영 안 보였다(p4-t4 리뷰 결함 1, 실물 재현 — Phase 2 ② 의 「결과 줄은 새로고침·새 탭에서도 보인다」가 깨진다). 브라우저 검증 L 이 실물에서 고쳐진 것을 봤다. **틀리면 남는 것**: 복원 직후 최신 50개를 한 번 더 받는다.
+- **R6 — `gcTime` 은 기본(5분) 그대로, 사본은 이전 사본에서 이어 붙인다**(4장 보탬). 첫 구현은 최근 채널 사본이 gc 로 빠지지 않게 `channel`·`members`·`timeline` 의 `gcTime` 을 7일로 올렸다. 그러면 세션 내내 들른 **모든** 채널이 메모리에 남고 `lastSeq` 이어 받기의 낡음 틈이 세션 전체로 넓어졌다(p4-t4 리뷰 C).
+  지금은 저장할 때 **최근 목록에 있는데 캐시에 없는** 채널 쪽 항목을 마지막으로 저장·복원한 사본에서 붙인다(`carryOver`, `persist.ts:92-107`). 지운(`clear`) 뒤와 최근에서 밀려난 채널은 붙이지 않는다. `recentChannels` 만 `gcTime` 무한이다(`:169-170`).
+- **저장마다 세대(epoch)를 달고, 쓰는 순간에도 본다**(4장 「지우기」 보탬). 잘라 두기(1초)로 기다리던 저장, 그리고 직렬화를 마치고 쓰기만 남은 저장이 로그아웃·401 로 지운 **뒤에** 옛 사본을 다시 쓸 수 있었다 — 뒤엣것은 수정 라운드가 테스트로 찾았다. `serialize` 와 `setItem` 두 자리에서 세대를 보고, 지우기가 세대를 올린다(`persist.ts:121-150`).
+- **값을 가진 채 실패한 쿼리는 성공으로 저장한다**(`trimForPersist`, `persist.ts:57-79`). 오류 객체는 직렬화되지 않고, 복원 뒤 오류로 남으면 오프라인 판단이 틀린다.
+- **복원은 최대 1초만 기다리고, 복원한 me 는 낡은 것으로 둔다**(4장 보탬). 1초 안에 못 읽으면 사본 없이 띄운다(늦게 온 값은 버린다). 복원 뒤 `invalidateQueries(me, refetchType: "none")` — 첫 관찰자·연결 회복 때 me 를 다시 불러 세션을 확인한다(`persist.ts:156-183`). 실측: 저장소가 멈추면 1,299ms 에 그려졌다(p4-t4 리뷰 B-6).
+- **`buster` 는 `__BUILD_ID__`** = `VITE_BUILD_ID` 환경변수, 없으면 빌드 시각(`apps/web/vite.config.ts:15-19`).
+- **R7 — 부팅에서 `onlineManager.setOnline(navigator.onLine)`**(4장 「오프라인일 때」 보탬). Query 의 `onlineManager` 는 온라인으로 시작해 `online`·`offline` 이벤트로만 바뀐다. 그래서 기기가 처음부터 오프라인이면 REST 6종을 3번씩 부르고 3.1초에 「서버에 연결할 수 없습니다」 토스트가 배너와 같은 사실을 한 번 더 말했다(p4-t4 리뷰 결함 2). 지금은 요청을 쉬었다가 `online` 이벤트에 다시 부른다(브라우저 검증 K — API 요청 0·토스트 0·배너 1).
+  배선은 `apps/web/src/app/boot.tsx` 의 `bootApp` 하나로 뺐다(온라인 여부 → 복원 대기 → `registerSessionReset(clear)` → 렌더). `main.tsx` 와 테스트가 같은 것을 부른다(p4-t4 리뷰 결함 3 의 N28·N29).
+- **오프라인 판단**(4장 보탬, `apps/web/src/pwa/offline.ts`): `!navigator.onLine || !onlineManager.isOnline()`, 또는 me 가 **값을 가진 채** `NetworkError` 다. 브라우저는 온라인인데 서버만 죽은 경우도 배너가 뜬다(me 재시도 뒤 약 3초). 오프라인이면 「서버에 다시 연결하는 중…」 배너는 내지 않는다(같은 `role="status"` 자리에 하나만). me 는 관찰자 없이 캐시 구독으로 읽는다 — 관찰자를 두면 세션 정리 뒤 me 를 다시 불러 로그인 화면이 되돌아갔다.
+- **`MessageList` 의 「새 메시지」 칩 기준은 가진 마지막 메시지의 seq 다**(R5 의 부수 효과, `apps/web/src/features/messages/MessageList.tsx:343-351`). 기준이 `timeline.lastSeq` 면 사본(0)에서 위로 스크롤할 때 가진 50개를 모두 새 메시지로 셌다. 평소에는 두 값이 같다(p4-t4 재리뷰 RR1~RR6).
+- **`queryClient` — 값을 가진 me 의 401 은 `onUnauthorized`**(4장 「401 이면 지우고 로그인으로」 보탬, 조율자 허락). 복원한 me 는 다시 요청돼 401 이어도 전에는 me 오류를 통째로 무시해 아무 일도 없었다. 값이 **없는** me 의 401(첫 가드)은 지금처럼 가드만 로그인으로 보낸다 — 두 번 가지 않게(`apps/web/src/app/queryClient.ts:31-45`).
+- 「최근 본 채널」은 채널이 **확인된 뒤에** `apps/web/src/features/messages/ChannelPage.tsx` 가 갱신한다(없는 채널은 넣지 않는다).
+
+**웹 푸시에서 달라진 것**(태스크 5 — `7a352b8`·`330f5e8`)
+
+- **플래그 `dodok.push` 의 값은 켠 사용자의 id 다**(5.1 「동기화」·6장 보탬, `apps/web/src/pwa/push.ts:10-14`). 그래서 `enablePush(userId)`·`syncPushSubscription(userId)` 가 인자를 받는다. 앱을 열 때 동기화가 **다른 사람(또는 누가 켰는지 모르는) 구독**을 다시 등록하면 그 endpoint 가 지금 사용자에게 옮겨져, 스스로 켜지 않은 사람에게 푸시가 온다. 플래그가 지금 사용자와 다르면 기기에서 해지하고 등록하지 않는다(`push.ts:187-201`). 사용자 id 는 비밀이 아니다.
+- **`dropLocalPush()` — 세션이 이미 없을 때 기기 구독만 해지한다**(6장 「로그아웃」 보탬, `push.ts:177-185`). 서버 해지(DELETE)에는 세션이 필요하다. 해지된 endpoint 는 다음 발송의 404·410 이 서버 행을 지운다. 세션 정리 훅(`resetClientState`)이 부른다.
+- **R8 — 세션 없이 연 앱도 기기 구독을 해지한다, 401 에서만**(6장 보탬, `apps/web/src/realtime/WireProvider.tsx:72-76`, `330f5e8`). 값이 없는 me 의 401 은 세션 정리로 오지 않는다(위 `queryClient` 규칙 — 가드만 보낸다). 그래서 사본 없이 세션이 만료된 채 연 로그인 화면에서는 구독이 살아 있었다(p4-t5 리뷰가 실물 재현). 지금은 `!signedIn && me.error` 가 401 일 때 `dropLocalPush()` 를 한 번 부른다. NetworkError·5xx·오프라인은 해지하지 않는다(재리뷰 탐침 P1~P6 — 겹쳐 불려도 멱등이다).
+  **틀리면 남는 것**: 30일 넘게 앱을 안 연 사람이 다시 로그인하면 푸시를 손으로 다시 켜야 한다. 서버 구독 행이 세션보다 오래 사는 문제는 그대로다(`docs/plan.md` 8장 이월).
+- **로그아웃은 `disablePush()` 를 최대 3초만 기다린다**(6장 보탬, `apps/web/src/features/auth/mutations.ts:9`·`:42-44`). 순서는 `DELETE /push/subscriptions` → `POST /auth/logout` → 세션 정리(브라우저에서 서버 로그 순서로 확인). 서버가 답하지 않아도 로그아웃이 막히지 않고, 3초를 넘기면 세션 정리의 `dropLocalPush` 가 기기 구독을 해지한다(그때 서버 행은 다음 410 까지 남는다). 테스트가 2999ms·3000ms 경계를 잰다.
+- **알림 누르기는 `postMessage` 만 쓴다**(3장 정정 — 3장은 `focus()` 후 `navigate(url)`, 안 되면 `postMessage` 였다). 창이 있으면 `focus()` 뒤 `postMessage({ type: "navigate", url })`, 받는 쪽(`apps/web/src/app/createApp.ts:46-52`)이 `safeNotificationUrl` 로 한 번 더 걸러 라우터로 옮긴다. 창이 없으면 `openWindow(url)`(`apps/web/src/sw.ts:46-66`). 계획 코드를 따랐고, 초안은 이 규칙으로 남는다.
+  까닭: `WindowClient.navigate()` 는 전체 새로고침이라 작성 중인 초안·첨부 칩을 잃는다(결정 7). 브라우저 검증 6 이 새로고침 없이 옮겨 가는 것(`window.__marker` 생존)을 봤다.
+- **창 고르기 순서**(3장 보탬, `apps/web/src/pwa/sw-logic.ts:54-66`): 같은 출처 창 가운데 **보이면서 포커스 → 보임 → 포커스 → 첫 창**(`matchAll` 은 최근에 포커스된 순). 3장의 「보이는 창 → 가장 최근 창」을 풀어 쓴 것이다.
+- **빈 tag 면 tag·`renotify` 를 싣지 않는다**(3장 보탬, `sw-logic.ts:24-38`). shared `PushPayload.tag` 는 빈 값을 받는데, `renotify: true` + 빈 tag 는 `showNotification` 이 TypeError 로 던져 알림이 안 뜬다 — 받은 푸시마다 무엇이든 띄워야 한다는 규칙(결정 2)을 어긴다.
+- **`enablePush` 는 서비스 워커 `ready` 를 10초까지만 기다린다**(6장 보탬, `push.ts:15`·`:86-97`). 개발 모드(SW 꺼짐, R4)에서 `ready` 는 끝나지 않는다. 넘으면 이유 「서비스 워커가 준비되지 않았습니다 — 새로고침한 뒤 다시 시도해 주세요」.
+- **켜기 실패 이유**(6장 보탬). 권한 물음을 닫아 `default` 로 끝나면 「알림 권한을 허용해야 켤 수 있습니다」, 거절(`denied`)로 끝나면 이유를 따로 싣지 않는다 — 상태 줄이 같은 문장을 이미 보인다(p4-t5 리뷰 Minor 2, `apps/web/src/app/layout/NotifySettings.tsx:81`). 「꺼짐」 상태에는 안내 한 줄(「멘션·승인 요청·에이전트 대화 한도를 이 기기로 알립니다」)을 더했다. 켜고 끄는 동안은 버튼을 잠그고 패널이 닫히지 않는다(이유를 잃지 않게).
+- **알림 패널은 Dialog 다**(6장 「Popover 또는 기존 Sheet」 정정). 사이드바 하단 「알림」(벨) 버튼이 `ui/dialog` 패널을 연다. `NotifyToggle.tsx` 는 지웠고 그 테스트는 `NotifySettings.test.tsx` 로 옮겼다. 푸시가 없는 브라우저(iOS 아님)에서 `Notification` 권한이 `default` 면 「탭이 열려 있을 때만 알림 켜기」가 남는다.
+- **알림 권한 읽기를 `push.ts` 에 따로 둔다**(`pushPermission`). `features/approvals/notify.ts` 가 `pushOnThisDevice` 를 쓰므로 push.ts 가 notify.ts 를 가져오면 순환 import 가 생긴다. 판정은 같다.
+- **presence 보내기**(5.3 보탬, `apps/web/src/realtime/WireProvider.tsx:123-157`). 연결될 때마다 강제로 보내고, `visibilitychange`·채널 이동 때는 값이 바뀌었을 때만 보낸다. **끊겨 있으면 보내지 않는다** — socket.io 는 끊긴 동안의 emit 을 모았다가 다시 붙을 때 보내 낡은 값이 먼저 간다. 채널 id 는 uuid 일 때만 싣는다. WireProvider 는 RouterProvider 바깥이라 채널 이동은 `router.subscribe("onResolved")` 로 받는다(`createApp.ts:42-43`).
+- **「앱 설치」 이벤트는 앱 시작 때부터 받는다**(`captureInstallPrompt`, `createApp.ts:54-55`). `beforeinstallprompt` 는 패널이 열리기 전에 온다. 브라우저 검증 J 가 실제 빌드본에서 버튼을 봤다.
+
+**검증이 확인한 것**
+
+- 서버 통합 12a~12h + 종료 시나리오(`apps/server/test/integration/push.test.ts` — 멘션·보고 있으면 거름·승인(두 번 실려도 1건)·릴레이 한도·410 정리·자기 멘션·**페이로드에 본문 없음**·소켓 둘, 가짜 발송기). 테스트 2182(shared 113·plugin 108·adapter 206·server 656·web 1099), 검사 4종·웹 빌드 통과(조율자 측정, main `330f5e8`).
+- 브라우저 검증(태스크 7, 빌드본 `vite preview` 5180 + `dev:fake` 3100, headed 오프스크린 Chromium): 계획 시나리오 10 + 넘겨받은 6 = **16/16 통과, 결함 0**. **실제 `web-push` → FCM 왕복**(멘션·승인·릴레이 한도 셋 다), CDP `ServiceWorker.deliverPushMessage` 로 넣은 옳은·잘못된·바깥 url 페이로드, 알림 누르기(SW 안 합성 클릭 — 창이 있을 때 라우터 이동, 없을 때 `openWindow`), 오프라인 새로고침·첫 부팅, 로그아웃·세션 만료 뒤 구독 없음, 새 버전 토스트(초안 보존)를 봤다. 절차는 `docs/guides/live-smoke.md` 14절.
+- 검증이 확인한 환경 사실(결함 아님): **헤드리스 Chromium 은 권한을 줘도 `Notification.permission` 이 `denied` 로 고정**이다(`requestPermission()` 결과는 `granted`) — 알림 권한이 필요한 확인은 headed 로 한다. Playwright 번들 Chromium(Google Chrome for Testing)은 실제 FCM 수신까지 된다. 강제 종료된 자동화 브라우저의 소켓이 ping 제한까지 presence 에 남아 한 번 과잉 억제가 났다 — 정상 종료에서는 재현되지 않았다.

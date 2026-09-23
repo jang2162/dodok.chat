@@ -1,6 +1,6 @@
 # dev Gateway 실연(live smoke) — 서버 코어를 실제 Gateway·플러그인·모델로 한 번 돌리기
 
-작성: 2026-09-15 (서버 코어 계획 태스크 15) · 근거: 서버 코어 스펙 9.3, ADR 0002 2절·9절, ADR 0003 2절 · 7절 2026-09-20 (웹 MVP 계획 태스크 15) · 8~9절 2026-09-21 (활동 패널·승인 계획 태스크 11) · 10절 2026-09-23 (components v1 계획 태스크 11) · 11절 2026-09-23 (c2-t14 하네스, ADR 0004) · 12절 2026-09-23 (c2-t16 고침 실물 확인) · 13절 2026-09-23 (a3-t11 첨부 실연) · 13.7 2026-09-23 (a3-t13 결함 A 고침 실물 확인)
+작성: 2026-09-15 (서버 코어 계획 태스크 15) · 근거: 서버 코어 스펙 9.3, ADR 0002 2절·9절, ADR 0003 2절 · 7절 2026-09-20 (웹 MVP 계획 태스크 15) · 8~9절 2026-09-21 (활동 패널·승인 계획 태스크 11) · 10절 2026-09-23 (components v1 계획 태스크 11) · 11절 2026-09-23 (c2-t14 하네스, ADR 0004) · 12절 2026-09-23 (c2-t16 고침 실물 확인) · 13절 2026-09-23 (a3-t11 첨부 실연) · 13.7 2026-09-23 (a3-t13 결함 A 고침 실물 확인) · 14절 2026-09-24 (PWA·푸시 계획 태스크 8 — p4-t7 브라우저 검증 절차)
 
 ## 1. 목적
 
@@ -13,6 +13,7 @@
 **components v1(Phase 2 ②)을 실제 모델로 돌린 절차와 2026-09-23 결과는 10절**이다 — ❗ 모델 런 안의 `message` 툴 전송이 실물에서 깨져 있었다(10.4).
 원인(2026.9.5 번들 이중 평가)과 고침은 ADR 0004, **모델 런 없이 실물 Gateway 의 모델 경로를 두드리는 하네스는 11절**, **그 하네스로 고침을 확인한 2026-09-23 결과는 12절**이다.
 **첨부(Phase 2 ③)를 하네스(11.5)와 실제 모델로 돌린 2026-09-23 결과는 13절**이다 — 거기서 찾은 결함 A(최종 응답의 `MEDIA:` 줄이 스트리밍 델타로 호스트 경로를 드러냄)는 서버에서 고쳤고(a3-t12) **실물 Gateway 에서 모델 런 0회로 확인했다(13.7)**.
+**PWA·푸시(Phase 2 ④)는 14절**이다 — 푸시 확인 절차(`dev:fake`, 모델 런 0회), 원격 배포에서 VAPID 키 옮기기, 사람이 볼 것. 실제 모델로 멘션 푸시를 보는 실연은 예정(14.4).
 
 ## 2. 전제
 
@@ -524,6 +525,8 @@ oc --dev config get   agents.entries.dev.tools.exec.ask        # 되돌아갔는
 아래는 브라우저 자동화·jsdom 이 **측정할 수 없는** 것들이다. 1차 브라우저 검증(p2-t10 §5)에 이어 **재검증(p2-t13)도 넷 다 못 쟀다** — 도구를 바꿔서 될 일이 아니라 사람의 눈·귀가 필요한 자리다.
 재검증이 대신 무엇을 확인했고 **어떻게 흉내 냈는지**는 9.2 에 적어 뒀다 — 같은 방법을 그대로 쓰면 준비가 빨라진다.
 `dev:fake` 로도 되고 실물로도 된다 — 8절로 승인을 한 번 일으킨 김에 같이 본다. 브라우저는 `http://localhost:5173` 고정(알림 권한은 **출처별**이라 주소가 다르면 다시 묻는다).
+
+Phase 2 ④ 뒤: 옛 「알림 켜기」 토글은 사이드바 하단 「알림」 패널로 옮겨졌고, **이 기기에 푸시가 켜져 있으면 탭 안 승인 알림은 쉰다** — 이 절을 볼 때는 14.3 끝의 순서(권한 허용 → 푸시 「끄기」)를 먼저 한다. 아래 「알림 켜기」는 그 패널의 「푸시 알림 켜기」(권한을 묻는 자리)로 읽는다.
 
 ⚠ **순서가 있다**: `granted` 를 **먼저** 본다. 권한을 한 번 `denied` 로 만들면 「알림 켜기」 토글이 영영 사라지고(설계대로), 같은 출처에서 다시 묻지 못한다.
 되돌리려면 브라우저 사이트 설정에서 손으로 초기화해야 한다.
@@ -1108,3 +1111,110 @@ shasum -a 256 $WS/a3-harness/*; stat -f '%z %N' $WS/a3-harness/*          # 크�
 **정리**: 서버(SIGINT)와 tsx watch·pnpm 부모를 내렸다. Gateway 는 `shutdown completed cleanly` 로 내렸다. **19001·19100·5180 LISTEN 0, 5173 은 1 그대로**(무접촉). 설치본은 `f5dc6438…`, `status: loaded` 이고 `channels.dodok.channels` 는 unset 이다.
 dev 프로필에서는 이번에 만든 것만 지웠다(19:31 이후 생성 확인): `<ws>/a3-harness/`, `~/.openclaw-dev/media/outbound/` 의 `chart---<uuid>.png` 3개(관찰 E 의 사본 — 런마다 하나). 가짜 CLI·스크래치는 지웠다. 하네스 채널의 dev 세션(가짜 세션 id)은 남겼다.
 시크릿(`BRIDGE_TOKEN`·dev Gateway 토큰·`LOCAL_AUTH_TOKEN`)의 출현 수는 0이다. 확인 범위는 `data/*.log`·`*.jsonl`·`*.json`·`live-smoke.sqlite*`·가짜 CLI 출력이다.
+
+---
+
+## 14. PWA·푸시(Phase 2 ④) — 푸시 확인 절차·VAPID 키 옮기기·사람이 볼 것
+
+스펙 `docs/superpowers/specs/2026-09-23-pwa-push-design.md`(구현과 달라진 것은 11장). 14.1 은 브라우저 검증(p4-t7, 2026-09-24 — 16/16·결함 0)이 실제로 쓴 절차다. **모델 런 0회**이고 dev Gateway 도 필요 없다 — `dev:fake` 로 돈다.
+실제 dev Gateway·실제 모델로 에이전트 멘션 푸시를 보는 실연은 14.4(예정)다.
+
+### 14.1 푸시 확인 절차 (`dev:fake`, 모델 런 0회)
+
+**띄우기** — 5173 은 이 머신의 다른 프로젝트라 웹은 5180, API 는 3100 이다.
+
+```bash
+# 서버: 실제 web-push 발송기(구독하고 트리거를 일으키면 실제 푸시 서비스로 나간다). 로그인 토큰 dev-fake-local-token
+PORT=3100 APP_ORIGIN=http://localhost:5180 pnpm -F @dodok/server dev:fake
+# 웹: 빌드본 preview — 프록시는 vite.config.ts 의 server.proxy 를 그대로 따른다
+pnpm -F @dodok/web build
+DODOK_API_ORIGIN=http://127.0.0.1:3100 pnpm -F @dodok/web exec vite preview --port 5180 --strictPort
+```
+
+- **개발 서버(`pnpm -F @dodok/web dev`)에는 서비스 워커가 없다**(스펙 11장 R4). 거기서 보려면 셸에서 `VITE_PWA_DEV=1` 을 준다(`.env` 의 값은 닿지 않는다). 개발 SW 는 미리 저장이 비어 오프라인 탐색 폴백이 없다 — 오프라인 확인은 preview 로만 된다. 같은 오리진에서 preview 와 dev 를 오갈 때의 주의는 `docs/guides/browser-verification.md` 「PWA·서비스 워커를 볼 때」.
+- `dev:fake` 는 VAPID 주체가 기본값이라 시작 때 `VAPID subject is a local placeholder …` warn 한 줄을 찍는다 — 의도한 경고다. 키 `data/vapid.json` 은 재시작해도 그대로다(지우면 그 오리진의 구독이 모두 무효).
+
+**브라우저 — headed 여야 한다.** 헤드리스 Chromium 은 권한을 줘도 `Notification.permission` 이 `"denied"` 로 고정된다(`Notification.requestPermission()` 결과와 `navigator.permissions.query` 는 `granted` 인데 동기 getter 만 `denied`). 앱은 동기 getter 를 보므로 헤드리스에서는 패널이 늘 「거절됨」이다.
+p4-t7 은 `playwright-core`(저장소 의존성) 번들 Chromium 을 **headed** 로, `--window-position=-2400,-2400` 으로 화면 밖에 띄워 사람 화면을 가리지 않았다. 이 번들은 Google Chrome for Testing 빌드라 **실제 FCM 수신까지 된다** — 시스템 Chrome 으로 갈아탈 필요가 없었다. 프로필은 스크래치패드의 영구 프로필(`launchPersistentContext`)이고, 권한은 `context.grantPermissions(["notifications"], { origin: "http://localhost:5180" })` 로 준다.
+BrowserOS neo 를 쓸 수 있으면 neo 의 CDP(`docs/guides/browser-verification.md`)에 붙여도 된다 — 권한은 `Browser.grantPermissions`, 끝나면 `Browser.resetPermissions`(9.2).
+
+**켜기** — 로그인 → 사이드바 하단 「알림」 → 「푸시 알림 켜기」 → 「이 기기에서 알림을 받습니다」. 서버 행은 읽기 전용으로 본다: `sqlite3 -readonly data/dev-fake.sqlite "select user_id, substr(endpoint,1,40) from push_subscriptions"`(endpoint 는 `https://…google.com/fcm/send/…`). 브라우저 쪽 플래그는 `localStorage["dodok.push"]`(= 켠 사용자 id).
+
+**푸시를 직접 넣기 — CDP `ServiceWorker.deliverPushMessage`**(서버·푸시 서비스를 거치지 않는다):
+
+```js
+// page 는 5180 을 연 탭, ctx 는 그 컨텍스트 (playwright-core)
+const cdp = await ctx.newCDPSession(page);
+const updated = new Promise((r) => cdp.once("ServiceWorker.workerRegistrationUpdated", r));
+await cdp.send("ServiceWorker.enable");
+const { registrations } = await updated;
+const reg = registrations.find((x) => x.scopeURL === "http://localhost:5180/" && !x.isDeleted);
+const push = (data) =>
+  cdp.send("ServiceWorker.deliverPushMessage", { origin: "http://localhost:5180", registrationId: reg.registrationId, data });
+await push(JSON.stringify({ kind: "approval", channelId: "<uuid>", title: "dodok",
+  body: "#general에 승인 요청이 있습니다", url: "/c/<uuid>/activity", tag: "approval:verify-1" }));
+// 뜬 알림 읽기
+await page.evaluate(async () =>
+  (await (await navigator.serviceWorker.ready).getNotifications()).map((n) => ({ title: n.title, body: n.body, tag: n.tag, data: n.data })));
+```
+
+| 넣은 것 | 기대(스펙 3장·11장) |
+| --- | --- |
+| 위 옳은 페이로드 | `{ title: "dodok", body: "#general에 승인 요청이 있습니다", tag: "approval:verify-1", data.url: "/c/<uuid>/activity" }`, 승인이라 `renotify` |
+| `not json{` | `{ title: "dodok — 새 알림", body: "", data.url: "/" }` |
+| 옳은 꼴 + url `//evil.example/c/x`·`https://evil.example/…` | `data.url: "/"` |
+| 옳은 꼴 + 빈 tag | 알림이 뜨고 tag `""`, `renotify` 없음(TypeError 없음) |
+
+**서버 트리거를 실물로 — 실제 `web-push` → FCM**. `dev:fake` 키워드(p4-t6):
+
+| 푸시 | 보낼 글 | 조건 |
+| --- | --- | --- |
+| 멘션 | `@dev 나 불러` | 답 `@owner 확인해 주세요` 가 owner 를 멘션한다. **그 채널을 보이는 탭으로 보고 있으면 오지 않는 것이 정상**(결정 2) — 다른 채널로 옮기거나 탭을 숨긴 뒤. `나 불러 느리게` 면 델타가 1.5초 간격이라 옮길 시간이 난다 |
+| 승인 요청 | `@dev 승인` · `승인 둘`(두 건, tag 가 달라 둘 다 뜬다) · `승인 항상` | 같음. 푸시가 켜진 기기는 탭 안 승인 알림(`new Notification`)이 0회여야 한다(결정 8) |
+| 릴레이 한도 | `@dev @fin 시작` | 채널에 dev·fin 둘 다. 채널 설정에서 릴레이 턴 상한을 1 로(`PATCH /channels/:id {relayPolicy:{maxRelayTurns:1, allowPairs:"all"}}`) 하면 곧바로 닿는다 |
+
+도착은 `registration.getNotifications()` 로 본다 — **성공 발송은 서버 로그를 남기지 않는다**(실패만 `push send failed`(warn)·`push rejected`(error)). 알림 본문에 메시지 본문·툴 인자가 없는 것, 서버 로그에 `p256dh`·비밀 키·알림 문구·`fcm/send` 가 없는 것도 같이 본다(p4-t7 H — 0회).
+⚠ 자동화 브라우저를 강제 종료(kill)하며 여러 번 붙으면, 죽은 소켓이 ping 제한까지 presence 에 남아 「보고 있음」으로 한 번 더 걸러질 수 있다(p4-t7 「확인됨」 2). 헷갈리면 서버를 `--keep` 으로 다시 띄워 presence 만 비운다.
+
+**알림 누르기** — 헤드리스·CDP 로는 시스템 알림을 누를 수 없고, 서비스 워커 안에서 `new NotificationEvent("notificationclick", …)` 를 합성하면 `waitUntil` 이 `InvalidStateError` 로 던진다(신뢰되지 않은 이벤트). p4-t5 리뷰·p4-t7 은 서비스 워커 컨텍스트(`ctx.serviceWorkers()[0].evaluate`)에서 신뢰된 클릭에만 허용되는 셋 — `ExtendableEvent.prototype.waitUntil`·`WindowClient.prototype.focus`·`clients.openWindow` — 만 기록하는 것으로 대신 풀고, 나머지(창 고르기·`postMessage`·앱의 라우터 이동)는 빌드본 그대로 돌렸다.
+기대: 다른 채널에 열린 창이 앞으로 오고(`focus` 1회, `openWindow` 0회) **새로고침 없이** 그 채널 활동 탭으로 옮겨 간다(누르기 전 심은 `window.__marker` 가 남는다). 창이 없으면 `openWindow("/c/<id>…")` 1회. **OS 창이 실제로 앞으로 오는지는 14.3 — 사람이 본다.**
+
+**오프라인** — Playwright `context.setOffline(true)` 뒤 새로고침하면 `navigator.onLine` 이 `true` 로 돌아온다(CDP `Network.emulateNetworkConditions` 도 같다 — p4-t4 리뷰 탐침). 그 판은 「브라우저는 온라인인데 서버에 안 닿는」 경우라 배너가 me 재시도 뒤 약 3초에 뜬다.
+「기기가 처음부터 오프라인」은 초기화 스크립트로 `navigator.onLine` 을 `false` 로 두고 모든 요청을 막아 흉내 낸다 — 기대는 API 요청 0·토스트 0·배너 1(p4-t7 K). 실제 비행기 모드는 14.3.
+
+**정리** — 등록한 서비스 워커·캐시·IndexedDB(`keyval-store`)를 지우고, 푸시 구독을 해지하고(「끄기」 또는 `getSubscription()?.unsubscribe()`), 컨텍스트를 닫고 프로필 디렉터리를 지운다. 3100·5180 을 내리고 LISTEN 0 을 확인한다(5173 은 그대로). 워크트리에서 띄웠으면 `dev:fake` 가 만든 워크트리 `data/` 를 지운다. **최상위 `data/vapid.json` 은 지우지 않는다** — 개발자의 키다.
+
+### 14.2 원격 배포에서 VAPID 키 옮기기
+
+서버는 키를 두 곳 중 하나에서 얻는다(`apps/server/src/modules/push/vapid.ts`). **환경변수 `VAPID_PUBLIC_KEY`·`VAPID_PRIVATE_KEY` 가 둘 다 있으면 그것**, 아니면 `<DATA_DIR>/vapid.json`(`{"publicKey","privateKey"}`, 없으면 처음 부팅 때 만들고 0600). 한쪽 환경변수만 주면 없는 것으로 보고 파일을 쓴다.
+
+**키를 바꾸면 모든 기기의 푸시 구독이 무효가 된다.** 구독은 만들 때의 공개키에 묶여 있어서다. 옮길 때는 같은 키를 그대로 가져간다:
+
+- **파일로** — 옛 서버의 `data/vapid.json` 을 새 서버의 `DATA_DIR` 로 복사하고 `chmod 600`. 환경변수는 비워 둔다.
+- **환경변수로** — 파일의 두 값을 배포의 비밀 저장소(또는 서버 호스트의 `.env`)에 `VAPID_PUBLIC_KEY`·`VAPID_PRIVATE_KEY` 로 넣는다. 둘 다 있으면 파일은 읽지도 만들지도 않는다. 비밀 키는 로그에서 가린다(`VAPID_PRIVATE_KEY`·`privateKey`). 시크릿 규칙(2절)대로 `data/`·`.env` 에만 두고 커밋하지 않는다.
+- ⚠ `data/` 를 새로 만든 채(파일도 환경변수도 없이) 부팅하면 **새 키가 조용히 생긴다** — 그 순간 옛 구독은 모두 무효다. 망가진 파일은 덮어쓰지 않고 부팅을 멈춘다(「지우면 새로 만들지만 모든 푸시 구독이 무효가 된다」).
+- 키가 바뀐 뒤: 앱을 다시 연 기기는 동기화(`syncPushSubscription`)가 서버 공개키와 구독의 키를 비교해 새로 구독한다(푸시를 켠 그 사용자로 로그인해 있을 때). 앱을 열지 않은 기기는 그때까지 못 받는다. 옛 구독으로 보낸 발송의 응답 코드가 무엇인지(404·410 이면 행이 지워지고, 403 이면 행을 남기고 `push rejected` error)는 재지 않았다.
+
+**`VAPID_SUBJECT` 는 실제 연락처로** — `mailto:ops@example.com` 또는 `https://…`(`mailto:`/`https://` 뒤에 공백 없는 값이 있어야 한다 — 아니면 설정 오류로 부팅하지 않는다). 기본값 `mailto:dodok@localhost` 는 개발용이다.
+주체의 호스트가 `localhost`·`127.0.0.1`·`*.local` 이면 **Apple Push(Safari·iOS)가 `403 BadJwtToken` 으로 거부한다**(web-push#947·#988) — 서버는 시작 때 warn 한 줄을 남기고, 발송 403 은 구독을 지우지 않고 error 를 남긴다(키·주체 문제라 구독 탓이 아니다). FCM(Chrome) 은 로컬 주체로도 받았다(p4-t7).
+실기기에는 HTTPS 배포가 필요하다 — 서비스 워커·푸시는 보안 출처에서만 돈다(`localhost` 는 예외). 배포 구성은 Phase 3 이다(`docs/plan.md` 8장).
+
+### 14.3 사람이 볼 것 (자동화가 원리상 못 잰 것)
+
+`dev:fake` + 빌드본 preview(14.1)면 된다(모델 런 0회). 브라우저는 사람이 쓰는 데스크톱 Chrome 이고, 알림 권한은 **출처별**이라 `http://localhost:5180` 으로 연다.
+
+| # | 볼 것 | 어떻게 | 통과 기준 |
+| --- | --- | --- | --- |
+| 1 | **실제 OS 알림 클릭** | 푸시를 켜고 작성기에 초안을 조금 쓴 뒤, 그 창을 **다른 채널에 두거나 최소화**한다 → 다른 브라우저 프로필이나 `pnpm wire-cli` 로 에이전트가 있는 채널에서 `@dev 승인` → macOS 알림 센터의 dodok 알림을 누른다 | 그 브라우저 창이 **앞으로 오고** 그 채널 활동 탭(`/c/<id>/activity`)으로 옮겨 간다. 작성기에 써 둔 초안이 남아 있다(새로고침이 아니다) |
+| 2 | **창이 없을 때 클릭** | dodok 탭을 모두 닫고(브라우저는 켜 둔 채) 다른 프로필이나 `pnpm wire-cli` 로 `@dev 나 불러` 를 보내 알림을 누른다 | 새 창이 그 채널(`/c/<id>`)로 열린다 |
+| 3 | **「앱 설치」를 끝까지** | 「알림」 패널의 「앱 설치」 → OS 설치 대화상자 → 설치 | 설치된 앱이 독립 창(standalone)으로 뜨고, 패널의 「앱 설치」 버튼이 사라진다. 설치된 창에서도 1 이 된다 |
+| 4 | **macOS 알림 모양** | 1·2 의 알림을 본다. 알림이 뜬 채 화면을 잠근다 | 제목 `dodok`, 본문은 누가·어디·무엇뿐(「@dev가 #<채널>에서 불렀습니다」·「#<채널>에 승인 요청이 있습니다」·「#<채널>의 에이전트 대화가 한도에 닿았습니다」). 아이콘이 dodok 아이콘이다. 잠금 화면에도 메시지 본문·툴 인자가 없다 |
+| 5 | **가려진 창 경계** | 같은 채널을 연 창을 다른 창 뒤로 **일부만** 가리거나 포커스만 빼고 → 그 채널에서 `@dev 승인` | 기록한다: 푸시도 탭 안 알림도 안 뜨는가. 창이 `visible` 이면 서버가 걸러 알림이 아무 데도 안 뜰 수 있다 — `docs/plan.md` 8장 「이월」(판단 필요) |
+| 6 | **실제 기기 오프라인** | 앱을 한 번 연 뒤 Wi-Fi 를 끄고(비행기 모드) 앱을 새로 연다 → 다시 켠다 | 곧바로 배너 「오프라인 — 저장된 내용을 보여 줍니다」와 최근 채널, 토스트 없음, 보내기 막힘. 다시 연결되면 배너가 사라진다 |
+| 7 | **iOS·안드로이드 실기기** | **Phase 3**(HTTPS 배포 뒤) | iOS 16.4+ 는 홈 화면에 추가한 앱에서만(패널 「홈 화면에 추가하면 알림을 받을 수 있습니다 — …」). `VAPID_SUBJECT` 가 실제 연락처여야 Apple 이 받는다(14.2) |
+
+9절의 탭 안 승인 알림(「승인 필요 — @dev 가 Write 를 실행하려 합니다」)은 **이 기기에 푸시가 켜져 있으면 쉰다**(결정 8). 9절을 볼 때는 「푸시 알림 켜기」로 권한을 허용한 뒤 「끄기」를 누른다 — 권한은 `granted` 로 남고 플래그가 지워져 탭 안 알림이 돈다. 옛 「알림 켜기」 토글은 「알림」 패널로 옮겨졌다(푸시를 지원하지 않는 브라우저에서만 「탭이 열려 있을 때만 알림 켜기」로 남는다).
+
+### 14.4 실연 — 예정
+
+예정(계획 태스크 9, 스펙 8.4): dev Gateway 에서 에이전트가 사람을 멘션하는 **모델 런 1회**(사용자 승인) — 런 0회 하네스(11절 가짜 claude CLI 가 `@owner` 든 답을 낸다)로 경로를 먼저 재고, 웹을 다른 채널에 두거나 닫은 채 데스크톱 Chromium 에 실제 FCM 푸시가 오는지 본다. 결과는 이 자리에 적는다.
