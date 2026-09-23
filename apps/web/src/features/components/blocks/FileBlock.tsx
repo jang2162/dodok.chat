@@ -1,28 +1,31 @@
-import type { Block } from "@dodok/shared";
+import type { Attachment, Block } from "@dodok/shared";
 import { FileIcon } from "lucide-react";
+import { FileCard } from "@/features/attachments/FileCard";
+import { formatSize } from "@/features/attachments/format";
+import { resolveRef } from "@/features/attachments/resolve";
+import { attachmentHref } from "@/features/attachments/url";
 import { Button } from "@/ui/button";
-import { ArtifactPending } from "./artifact";
+import { ATTACHMENT_MISSING, LINK_BLOCKED, Unresolved } from "./artifact";
 
-const UNITS = ["B", "KB", "MB", "GB", "TB"] as const;
-const NUM = new Intl.NumberFormat("ko-KR", { maximumFractionDigits: 1 });
-
-/** 바이트 → 사람이 읽는 단위(1024 배수, 소수 한 자리까지). 음수는 뜻이 없어 적지 않는다 */
-function formatSize(bytes: number): string | undefined {
-  if (bytes < 0) return undefined;
-  let n = bytes;
-  let unit = 0;
-  while (n >= 1024 && unit < UNITS.length - 1) {
-    n /= 1024;
-    unit++;
-  }
-  return `${NUM.format(n)} ${UNITS[unit]}`;
-}
+type Props = { block: Extract<Block, { type: "file" }>; attachments: readonly Attachment[] };
 
 /**
- * file 블록 — 이름·크기(있을 때만) + 「열기」. `https://` 면 새 탭 링크(`noopener noreferrer`),
- * `artifact://` 면 링크를 만들지 않고 자리표시(스펙 결정 1 — 해석은 Phase 2 ③)
+ * file 블록 — `resolveRef`(첨부 스펙 6.3)로 갈린다. 그 메시지의 첨부로 풀리면 파일 카드(표시 이름은 블록의 `name`, 크기·종류는 첨부),
+ * `https://` 면 이름·크기(있을 때만) + 새 탭 「열기」(`noopener noreferrer`), 못 찾으면 「첨부를 찾을 수 없습니다」,
+ * 그 밖의 값은 「열 수 없는 링크입니다」
  */
-export function FileBlock({ block }: { block: Extract<Block, { type: "file" }> }) {
+export function FileBlock({ block, attachments }: Props) {
+  const r = resolveRef(block.url, attachments);
+  if (r.kind === "attachment")
+    return (
+      <FileCard
+        slot="file"
+        name={block.name}
+        size={r.attachment.size}
+        mime={r.attachment.mime}
+        href={attachmentHref(r.attachment)}
+      />
+    );
   const size = block.size === undefined ? undefined : formatSize(block.size);
   return (
     <div data-slot="file" className="flex items-center gap-2 rounded-md border px-3 py-2">
@@ -35,14 +38,17 @@ export function FileBlock({ block }: { block: Extract<Block, { type: "file" }> }
           {size}
         </span>
       )}
-      {block.url.startsWith("https://") ? (
+      {r.kind === "https" ? (
         <Button asChild variant="outline" size="sm" className="shrink-0">
-          <a href={block.url} target="_blank" rel="noopener noreferrer" aria-label={`${block.name} 열기`}>
+          <a href={r.url} target="_blank" rel="noopener noreferrer" aria-label={`${block.name} 열기`}>
             열기
           </a>
         </Button>
       ) : (
-        <ArtifactPending className="shrink-0 text-xs" />
+        <Unresolved
+          text={r.kind === "missing" ? ATTACHMENT_MISSING : LINK_BLOCKED}
+          className="shrink-0 text-xs"
+        />
       )}
     </div>
   );

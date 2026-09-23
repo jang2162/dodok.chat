@@ -1,10 +1,11 @@
-import { type Block, ComponentsV1, type Message } from "@dodok/shared";
+import { type Attachment, type Block, ComponentsV1, type Message } from "@dodok/shared";
 import { fireEvent, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { msg } from "../../../../test/fixtures";
 import { renderWithClient } from "../../../../test/messages";
 import { Components } from "../Components";
-import { ARTIFACT_PENDING } from "./artifact";
+import { ATTACHMENT_MISSING, LINK_BLOCKED } from "./artifact";
 
 // 블록 렌더만 본다 — 소켓 없음(WireProvider 밖과 같다)
 vi.mock("@/realtime/WireProvider", async (importOriginal) => ({
@@ -15,16 +16,17 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-/** 에이전트가 보낸 카드 하나 — 블록은 shared 스키마를 통과시켜 계약과 맞춘다 */
-function card(blocks: unknown[]): Message {
+/** 에이전트가 보낸 카드 하나 — 블록은 shared 스키마를 통과시켜 계약과 맞춘다. `attachments` 는 그 메시지의 첨부 */
+function card(blocks: unknown[], attachments: Attachment[] = []): Message {
   return msg(1, {
+    attachments,
     components: ComponentsV1.parse({ id: "cmp_1", blocks }),
     componentState: { expiresAt: "2999-01-01T00:00:00.000Z", consumed: [] },
   });
 }
 
-function show(blocks: unknown[]) {
-  return renderWithClient(<Components message={card(blocks)} />);
+function show(blocks: unknown[], attachments: Attachment[] = []) {
+  return renderWithClient(<Components message={card(blocks, attachments)} />);
 }
 
 /** 카드 안 블록들의 data-slot, 배열 순서대로 */
@@ -32,7 +34,28 @@ const slots = (container: HTMLElement) =>
   Array.from(container.querySelectorAll("[data-slot=components] > *"), (e) => e.getAttribute("data-slot"));
 
 const IMG = "https://example.com/cat.png";
+/** 그 메시지의 첨부에 없는 이름 */
 const ART = "artifact://files/abc";
+const ID1 = "01a0cc16-22ee-7018-826c-e4783d25fa14";
+const ID2 = "01a0cc16-22ee-7018-826c-e4783d25fa15";
+const CHART: Attachment = {
+  id: ID1,
+  kind: "image",
+  url: `artifact://${ID1}`,
+  name: "chart.png",
+  mime: "image/png",
+  size: 10,
+  width: 400,
+  height: 300,
+};
+const DATA: Attachment = {
+  id: ID2,
+  kind: "file",
+  url: `artifact://${ID2}`,
+  name: "data.csv",
+  mime: "text/csv",
+  size: 20,
+};
 
 describe("Components — 다섯 종류가 모두 그려진다", () => {
   it("section·separator·media·file 이 배열 순서대로 — 빈 자리가 없다", () => {
@@ -85,15 +108,61 @@ describe("media", () => {
     expect(screen.queryByRole("img")).toBeNull();
   });
 
-  it("artifact:// 는 이미지를 만들지 않고 자리표시로", () => {
-    const { container } = show([{ type: "media", items: [{ url: ART, alt: "도표" }] }]);
+  it("그 메시지의 첨부에 없는 artifact:// 는 이미지를 만들지 않고 「첨부를 찾을 수 없습니다」", () => {
+    const { container } = show([{ type: "media", items: [{ url: ART, alt: "도표" }] }], [CHART]);
     expect(container.querySelector("img")).toBeNull();
     expect(container.querySelector(`[src="${ART}"], [href="${ART}"]`)).toBeNull();
-    // 문구는 스펙 5.2 그대로
-    expect(screen.getByText(/첨부는 곧 지원합니다/)).toBeInTheDocument();
+    // 문구는 첨부 스펙 6.3 그대로
+    expect(screen.getByText("첨부를 찾을 수 없습니다")).toBeInTheDocument();
   });
 
-  it("항목별로 갈린다 — https 는 그리고 artifact 항목만 자리표시", () => {
+  it("artifact://<이름> 이 이미지 첨부로 풀리면 자기 서버 이미지 — 누르면 크게 보기·원본 내려받기", async () => {
+    const user = userEvent.setup();
+    const { container } = show(
+      [
+        {
+          type: "media",
+          items: [
+            { url: "artifact://chart.png", alt: "월간 도표" },
+            { url: IMG, alt: "고양이" },
+          ],
+        },
+      ],
+      [CHART],
+    );
+    const img = container.querySelector(`img[src="/api/v1/attachments/${ID1}"]`);
+    expect(img).toHaveAttribute("alt", "월간 도표");
+    expect(img).toHaveAttribute("width", "400");
+    expect(container.querySelector(`[src="artifact://chart.png"]`)).toBeNull();
+    await user.click(screen.getByRole("button", { name: "월간 도표 크게 보기" }));
+    expect(screen.getByRole("dialog", { name: "월간 도표" })).toHaveAccessibleDescription("1 / 2");
+    expect(screen.getByRole("link", { name: "원본 내려받기" })).toHaveAttribute(
+      "href",
+      `/api/v1/attachments/${ID1}?download=1`,
+    );
+    // 이 블록 안의 https 이미지로 넘어간다 — 내려받기 링크는 없다(결정 8)
+    await user.keyboard("{ArrowRight}");
+    expect(screen.getByRole("dialog", { name: "고양이" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "원본 내려받기" })).toBeNull();
+  });
+
+  it("https 이미지도 크게 보기가 된다 — alt 가 없으면 「이미지」", async () => {
+    const user = userEvent.setup();
+    show([{ type: "media", items: [{ url: IMG }] }]);
+    await user.click(screen.getByRole("button", { name: "이미지 크게 보기" }));
+    expect(screen.getByRole("dialog", { name: "이미지" })).toBeInTheDocument();
+  });
+
+  it("artifact:// 가 파일 첨부로 풀리면 그 칸은 파일 카드", () => {
+    const { container } = show([{ type: "media", items: [{ url: `artifact://${ID2}` }] }], [DATA]);
+    expect(container.querySelector("img")).toBeNull();
+    expect(screen.getByRole("link", { name: "data.csv 내려받기" })).toHaveAttribute(
+      "href",
+      `/api/v1/attachments/${ID2}`,
+    );
+  });
+
+  it("항목별로 갈린다 — https 는 그리고 못 찾은 artifact 항목만 「첨부를 찾을 수 없습니다」", () => {
     const { container } = show([
       {
         type: "media",
@@ -105,11 +174,11 @@ describe("media", () => {
       },
     ]);
     expect(screen.getAllByRole("img").map((i) => i.getAttribute("alt"))).toEqual(["하나", "셋"]);
-    expect(screen.getAllByText(ARTIFACT_PENDING)).toHaveLength(1);
-    // 자리표시도 격자 칸 하나를 차지한다 — 항목 순서 그대로
+    expect(screen.getAllByText(ATTACHMENT_MISSING)).toHaveLength(1);
+    // 못 찾은 칸도 격자 칸 하나를 차지한다 — 항목 순서 그대로
     const grid = container.querySelector("[data-slot=media]") as HTMLElement;
     expect(grid.children).toHaveLength(3);
-    expect(grid.children[1]).toHaveTextContent(ARTIFACT_PENDING);
+    expect(grid.children[1]).toHaveTextContent(ATTACHMENT_MISSING);
   });
 
   it("격자는 항목 수에 따라 1~3열", () => {
@@ -158,13 +227,28 @@ describe("file", () => {
     expect(open).toHaveAttribute("rel", "noopener noreferrer");
   });
 
-  it("artifact:// 는 링크가 아니라 자리표시 — 이름은 남는다", () => {
-    const { container } = show([{ type: "file", url: ART, name: "data.csv", size: 10 }]);
+  it("그 메시지의 첨부에 없는 artifact:// 는 링크가 아니라 「첨부를 찾을 수 없습니다」 — 이름은 남는다", () => {
+    const { container } = show([{ type: "file", url: ART, name: "data.csv", size: 10 }], [DATA]);
     expect(screen.queryByRole("link")).toBeNull();
     expect(container.querySelector(`[href="${ART}"]`)).toBeNull();
     const row = container.querySelector("[data-slot=file]") as HTMLElement;
     expect(row).toHaveTextContent("data.csv");
-    expect(within(row).getByText(ARTIFACT_PENDING)).toBeInTheDocument();
+    expect(within(row).getByText(ATTACHMENT_MISSING)).toBeInTheDocument();
+  });
+
+  it("artifact:// 가 첨부로 풀리면 파일 카드 — 표시 이름은 블록의 name, 크기·종류는 첨부, 내려받기는 자기 서버 경로", () => {
+    const { container } = show(
+      [{ type: "file", url: "artifact://data.csv", name: "3분기 자료", size: 999 }],
+      [DATA],
+    );
+    const row = container.querySelector("[data-slot=file]") as HTMLElement;
+    expect(row).toHaveTextContent("3분기 자료");
+    expect(within(row).getByText("20 B")).toBeInTheDocument();
+    expect(within(row).getByText("텍스트")).toBeInTheDocument();
+    expect(within(row).getByRole("link", { name: "3분기 자료 내려받기" })).toHaveAttribute(
+      "href",
+      `/api/v1/attachments/${ID2}`,
+    );
   });
 
   it("size 가 없으면 크기를 적지 않는다", () => {
@@ -187,7 +271,7 @@ describe("file", () => {
 });
 
 describe("media·file — 계약 밖 주소", () => {
-  it("https:// 로 시작해야만 img·링크가 된다 — javascript:·data:·http:·대문자 HTTPS://·가운데·앞 공백 https://·상대 주소 // 와 / 는 자리표시로", () => {
+  it("https:// 로 시작해야만 img·링크가 된다 — javascript:·data:·http:·대문자 HTTPS://·가운데·앞 공백 https://·상대 주소 // 와 / 는 「열 수 없는 링크입니다」", () => {
     const OK_IMG = "https://example.com/ok.png";
     const OK_FILE = "https://example.com/ok.pdf";
     const BAD = [
@@ -203,6 +287,10 @@ describe("media·file — 계약 밖 주소", () => {
       "//evil.example/x.png",
       // 같은 출처 경로 — // 만 막고 / 는 허용하는 것을 잡는다. img·링크가 쿠키 실린 같은 출처 GET 이 된다
       "/api/me",
+      // artifact:// 를 닮았지만 아닌 값 — 첨부 문구가 아니라 「열 수 없음」이어야 한다(링크 버튼과 같다)
+      "ARTIFACT://files/x",
+      " artifact://files/x",
+      "artifact:/files/x",
     ];
     // card() 의 ComponentsV1.parse 를 건너뛴다 — 계약이 먼저 거르면 렌더러의 허용목록이 안 잠긴다.
     // 서버는 쓸 때만 검증하므로 옛 행·느슨해진 계약의 값은 여기까지 온다(url 의 TS 타입은 string 이라 캐스트 없이 들어간다)
@@ -221,7 +309,8 @@ describe("media·file — 계약 밖 주소", () => {
       Array.from(container.querySelectorAll(sel), (e) => e.getAttribute(attr));
     expect(attrs("img", "src")).toEqual([OK_IMG]);
     expect(attrs("a", "href")).toEqual([OK_FILE]);
-    // 막힌 값은 media 칸·file 줄마다 자리표시 하나씩
-    expect(screen.getAllByText(ARTIFACT_PENDING)).toHaveLength(BAD.length * 2);
+    // 막힌 값은 media 칸·file 줄마다 문구 하나씩 — 링크 버튼과 같은 말(첨부 스펙 6.3, 이월 「media·file 문구 비대칭」)
+    expect(screen.getAllByText(LINK_BLOCKED)).toHaveLength(BAD.length * 2);
+    expect(screen.queryByText(ATTACHMENT_MISSING)).toBeNull();
   });
 });

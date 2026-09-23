@@ -45,9 +45,9 @@ function BlockView({ block, message, io, expired }: BlockProps) {
     case "separator":
       return <SeparatorBlock />;
     case "media":
-      return <MediaBlock block={block} />;
+      return <MediaBlock block={block} attachments={message.attachments} />;
     case "file":
-      return <FileBlock block={block} />;
+      return <FileBlock block={block} attachments={message.attachments} />;
   }
 }
 

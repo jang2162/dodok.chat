@@ -1,20 +1,21 @@
 import { cn } from "@/lib/utils";
 
 /**
- * `artifact://` 자리표시 문구 — media·file·링크 버튼이 같이 쓴다. `artifact://` 해석(Gateway `artifacts.download`)은
- * Phase 2 ③ 의 일이라 지금은 비활성 자리만 둔다(스펙 결정 1). ③ 은 해석기만 끼우면 된다.
- * 같은 카드 안에서 같은 `artifact://` 값이 한 곳은 「곧 지원」, 다른 곳은 「열 수 없음」(망가졌다는 뜻)으로 갈리지 않게 한 곳에 둔다
+ * 카드 URL 이 풀리지 않을 때의 문구 — media·file·링크 버튼이 같이 쓴다(첨부 스펙 6.3).
+ * `artifact://<이름 또는 id>` 가 그 메시지의 첨부에 없으면 「첨부를 찾을 수 없습니다」, `artifact://` 도 `https://` 도 아니면
+ * 「열 수 없는 링크입니다」. 같은 카드의 같은 값이 자리마다 다른 말을 하지 않게 한 곳에 둔다
  */
-export const ARTIFACT_PENDING = "첨부는 곧 지원합니다";
+export const ATTACHMENT_MISSING = "첨부를 찾을 수 없습니다";
+export const LINK_BLOCKED = "열 수 없는 링크입니다";
 
 /** 계약 `SafeUrl` 이 https 말고 받는 유일한 스킴. 접두사로만 가른다 — 대문자·앞 공백·가운데 품은 값은 아니다 */
 export const isArtifactUrl = (url: string) => url.startsWith("artifact://");
 
-/** `artifact://` 자리표시 한 칸. 누를 것이 없다 — 링크도 이미지도 만들지 않는다 */
-export function ArtifactPending({ className }: { className?: string }) {
+/** 풀리지 않는 URL 자리 한 칸. 누를 것이 없다 — 링크도 이미지도 만들지 않는다 */
+export function Unresolved({ text, className }: { text: string; className?: string }) {
   return (
-    <span data-slot="artifact-pending" className={cn("text-sm text-muted-foreground", className)}>
-      {ARTIFACT_PENDING}
+    <span data-slot="unresolved" className={cn("text-sm text-muted-foreground", className)}>
+      {text}
     </span>
   );
 }

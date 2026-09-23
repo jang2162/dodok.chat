@@ -8,8 +8,7 @@ import { useWireStatus } from "@/realtime/wire";
 import { createFakeSocket, type FakeSocket } from "../../../test/fakeSocket";
 import { msg, uid, USER } from "../../../test/fixtures";
 import { renderWithClient } from "../../../test/messages";
-import { LINK_BLOCKED } from "./blocks/ActionsBlock";
-import { ARTIFACT_PENDING } from "./blocks/artifact";
+import { ATTACHMENT_MISSING, LINK_BLOCKED } from "./blocks/artifact";
 import { Components, UNKNOWN_USER } from "./Components";
 import { DISABLED_REASON_TEXT, type ItemState } from "./state";
 
@@ -153,7 +152,7 @@ describe("Components — 버튼", () => {
     expect(screen.getAllByText(LINK_BLOCKED)).toHaveLength(1);
   });
 
-  it("artifact:// 링크 버튼은 링크가 아니라 비활성이고, 사유는 media·file 과 같은 첨부 문구다 — 「열 수 없음」이 아니라", () => {
+  it("그 메시지의 첨부에 없는 artifact:// 링크 버튼은 링크가 아니라 비활성이고, 사유는 media·file 과 같은 「첨부를 찾을 수 없습니다」다 — 「열 수 없음」이 아니라", () => {
     // javascript: 는 계약 밖이라 parse 를 건너뛴다(위 테스트와 같은 까닭) — artifact:// 는 계약을 통과하는 유일한 비-https 값이라
     // 운영에서 실제로 렌더러에 닿는다
     const components: ComponentsV1 = {
@@ -182,20 +181,20 @@ describe("Components — 버튼", () => {
     const att = screen.getByRole("button", { name: "보고서 받기" });
     expect(att).toBeDisabled();
     expect(att).not.toHaveAttribute("title");
-    expect(att).toHaveAccessibleDescription(ARTIFACT_PENDING);
+    expect(att).toHaveAccessibleDescription(ATTACHMENT_MISSING);
     expect(document.getElementById(att.getAttribute("aria-describedby") ?? "")?.textContent).toBe(
-      ARTIFACT_PENDING,
+      ATTACHMENT_MISSING,
     );
     const js = screen.getByRole("button", { name: "나쁜 링크" });
     expect(js).not.toHaveAttribute("title");
     expect(js).toHaveAccessibleDescription(LINK_BLOCKED);
     // 두 사유가 한 줄에 섞였다 — 어느 버튼의 것인지 앞에 적어 보인다
     expect(Array.from(container.querySelectorAll("[data-slot=disabled-hint]"), (h) => h.textContent)).toEqual(
-      [`보고서 받기: ${ARTIFACT_PENDING}`, `나쁜 링크: ${LINK_BLOCKED}`],
+      [`보고서 받기: ${ATTACHMENT_MISSING}`, `나쁜 링크: ${LINK_BLOCKED}`],
     );
   });
 
-  it("같은 카드의 같은 artifact:// 값은 media·file·링크 버튼이 같은 말을 한다", () => {
+  it("같은 카드의 같은 (못 찾는) artifact:// 값은 media·file·링크 버튼이 같은 말을 한다", () => {
     const ART = "artifact://files/abc123";
     const message = withButtons({}, [
       { type: "media", items: [{ url: ART, alt: "도표" }] },
@@ -204,10 +203,34 @@ describe("Components — 버튼", () => {
     ]);
     const { container } = renderWithClient(<Components message={message} />);
     const q = (slot: string) => container.querySelector(`[data-slot=${slot}]`);
-    expect(q("media")).toHaveTextContent(ARTIFACT_PENDING);
-    expect(q("file")).toHaveTextContent(ARTIFACT_PENDING);
-    expect(screen.getByRole("button", { name: "받기" })).toHaveAccessibleDescription(ARTIFACT_PENDING);
+    expect(q("media")).toHaveTextContent(ATTACHMENT_MISSING);
+    expect(q("file")).toHaveTextContent(ATTACHMENT_MISSING);
+    expect(screen.getByRole("button", { name: "받기" })).toHaveAccessibleDescription(ATTACHMENT_MISSING);
     expect(container).not.toHaveTextContent(LINK_BLOCKED);
+  });
+
+  it("artifact://<이름 또는 id> 가 그 메시지의 첨부로 풀리면 링크 버튼은 자기 서버 경로를 새 탭으로 연다", () => {
+    const ID = "01a0cc16-22ee-7018-826c-e4783d25fa15";
+    const message = withButtons({}, [
+      {
+        type: "actions",
+        items: [
+          { type: "button", id: "by_name", label: "보고서 열기", url: "artifact://보고서.pdf" },
+          { type: "button", id: "by_id", label: "id 로 열기", url: `artifact://${ID}` },
+        ],
+      },
+    ]);
+    message.attachments = [
+      { id: ID, kind: "file", url: `artifact://${ID}`, name: "보고서.pdf", mime: "application/pdf", size: 1 },
+    ];
+    renderWithClient(<Components message={message} />);
+    for (const name of ["보고서 열기", "id 로 열기"]) {
+      const link = screen.getByRole("link", { name });
+      expect(link).toHaveAttribute("href", `/api/v1/attachments/${ID}`);
+      expect(link).toHaveAttribute("target", "_blank");
+      expect(link).toHaveAttribute("rel", "noopener noreferrer");
+    }
+    expect(screen.queryByText(ATTACHMENT_MISSING)).toBeNull();
   });
 
   it("소비된 아이템·만료된 메시지·allowedUsers 밖이면 비활성", () => {

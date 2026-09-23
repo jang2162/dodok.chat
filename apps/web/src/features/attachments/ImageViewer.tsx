@@ -1,0 +1,140 @@
+import { ChevronLeftIcon, ChevronRightIcon, DownloadIcon, XIcon } from "lucide-react";
+import { type KeyboardEvent, type ReactNode, useCallback, useRef, useState } from "react";
+import { Button } from "@/ui/button";
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "@/ui/dialog";
+
+export type ViewerImage = {
+  src: string;
+  name: string;
+  /** 원본 내려받기(`?download=1`) — 자기 서버 첨부만. https 이미지는 없다 */
+  downloadHref?: string;
+};
+
+type Props = {
+  images: readonly ViewerImage[];
+  index: number;
+  onIndexChange: (index: number) => void;
+  onClose: () => void;
+  /** 닫은 뒤 초점을 돌려줄 요소 — 연 이미지 버튼(스펙 6.4) */
+  trigger?: HTMLElement | null;
+};
+
+/**
+ * 크게 보기(스펙 6.4) — 어두운 배경에 화면에 맞춰 원본 비율로. 같은 메시지 안의 이미지만 ←/→·화살표 버튼으로 넘기고
+ * 끝에서 멈춘다(되돌지 않는다). Esc·바깥 누르기·닫기로 닫고 초점은 연 버튼으로 돌아간다 —
+ * `DialogTrigger` 없이 열기 때문에 Radix 기본 복귀가 갈 곳이 없어 `onCloseAutoFocus` 에서 직접 돌려준다
+ */
+export function ImageViewer({ images, index, onIndexChange, onClose, trigger }: Props) {
+  const image = images[index];
+  if (!image) return null;
+  const many = images.length > 1;
+  const go = (next: number) => {
+    if (next >= 0 && next < images.length && next !== index) onIndexChange(next);
+  };
+  const onKeyDown = (e: KeyboardEvent) => {
+    if (e.key === "ArrowLeft") go(index - 1);
+    else if (e.key === "ArrowRight") go(index + 1);
+    else return;
+    e.preventDefault();
+  };
+  return (
+    <Dialog open onOpenChange={(open) => (open ? undefined : onClose())}>
+      <DialogContent
+        showCloseButton={false}
+        onKeyDown={onKeyDown}
+        onCloseAutoFocus={(e) => {
+          e.preventDefault();
+          trigger?.focus();
+        }}
+        className="flex h-[calc(100dvh-2rem)] flex-col gap-3 border-none bg-black/90 p-3 text-white sm:max-w-[calc(100%-2rem)]"
+      >
+        <div className="flex items-center gap-2">
+          <div className="flex min-w-0 flex-1 items-baseline gap-2">
+            <DialogTitle className="truncate text-base" title={image.name}>
+              {image.name}
+            </DialogTitle>
+            <DialogDescription className={many ? "shrink-0 text-white/70 tabular-nums" : "sr-only"}>
+              {index + 1} / {images.length}
+            </DialogDescription>
+          </div>
+          {image.downloadHref && (
+            <Button
+              asChild
+              variant="ghost"
+              size="sm"
+              className="text-white hover:bg-white/10 hover:text-white"
+            >
+              <a href={image.downloadHref}>
+                <DownloadIcon aria-hidden />
+                원본 내려받기
+              </a>
+            </Button>
+          )}
+          <DialogClose asChild>
+            <Button variant="ghost" size="icon-sm" className="text-white hover:bg-white/10 hover:text-white">
+              <XIcon aria-hidden />
+              <span className="sr-only">닫기</span>
+            </Button>
+          </DialogClose>
+        </div>
+        <div className="relative flex min-h-0 flex-1 items-center justify-center">
+          <img
+            key={image.src}
+            src={image.src}
+            alt={image.name}
+            referrerPolicy="no-referrer"
+            className="max-h-full max-w-full object-contain"
+          />
+          {many && (
+            <>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="이전 이미지"
+                disabled={index === 0}
+                onClick={() => go(index - 1)}
+                className="absolute top-1/2 left-1 -translate-y-1/2 bg-black/40 text-white hover:bg-black/60 hover:text-white"
+              >
+                <ChevronLeftIcon aria-hidden />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="다음 이미지"
+                disabled={index === images.length - 1}
+                onClick={() => go(index + 1)}
+                className="absolute top-1/2 right-1 -translate-y-1/2 bg-black/40 text-white hover:bg-black/60 hover:text-white"
+              >
+                <ChevronRightIcon aria-hidden />
+              </Button>
+            </>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** 크게 보기 상태 — 연 버튼을 쥐고 있다가 닫을 때 돌려준다. 메시지 첨부·media 블록이 같이 쓴다 */
+export function useImageViewer(images: readonly ViewerImage[]): {
+  open: (index: number, trigger: HTMLElement) => void;
+  viewer: ReactNode;
+} {
+  const [index, setIndex] = useState<number | null>(null);
+  const trigger = useRef<HTMLElement | null>(null);
+  const open = useCallback((i: number, el: HTMLElement) => {
+    trigger.current = el;
+    setIndex(i);
+  }, []);
+  const viewer =
+    index === null ? null : (
+      <ImageViewer
+        images={images}
+        index={index}
+        onIndexChange={setIndex}
+        onClose={() => setIndex(null)}
+        trigger={trigger.current}
+      />
+    );
+  return { open, viewer };
+}
