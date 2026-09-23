@@ -69,6 +69,8 @@ export type OpenClawAdapter = AgentAdapter & {
 
 // 계약 스펙 8.3 — ack 타임아웃 10s, 없으면 1·4·16s 뒤 재전송(3회). 플러그인 미접속은 120s 기다린다(queued 상한).
 const DELIVER_ACK_TIMEOUT_MS = 10_000;
+// 플러그인은 트리거 이미지를 받은 뒤에야 런을 시작해 ack 한다(장당 받기 상한 30s) — 그 전에 재전송하면 이중 디스패치다(Ruling 1)
+const DELIVER_ACK_PER_IMAGE_MS = 30_000;
 const DELIVER_RETRY_DELAYS_MS = [1_000, 4_000, 16_000];
 const PLUGIN_READY_WAIT_MS = 120_000;
 // final 뒤에도 같은 런의 늦은 프레임(usage 등)이 온다 — 그동안은 우리 런으로 본다.
@@ -247,6 +249,8 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
   }
 
   async function deliver(input: InboundDeliver): Promise<InboundDeliverResult> {
+    const images = input.message.attachments.filter((a) => a.kind === "image").length;
+    const ackTimeoutMs = DELIVER_ACK_TIMEOUT_MS + DELIVER_ACK_PER_IMAGE_MS * images;
     let timeoutRetries = 0;
     let waitedForPlugin = false;
     const firstAttemptAt = performance.now();
@@ -256,7 +260,7 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
       if (!knownRunIds.has(input.runId)) {
         throw new AdapterError("ADAPTER_UNAVAILABLE", "run forgotten before delivery");
       }
-      const res = await bridge.deliverInbound(input, DELIVER_ACK_TIMEOUT_MS);
+      const res = await bridge.deliverInbound(input, ackTimeoutMs);
       if (res.ok) {
         // 진단용 — 본문·토큰은 싣지 않는다. ackMs 는 첫 전송 시도부터(플러그인 대기·재시도 포함)
         logger.info(

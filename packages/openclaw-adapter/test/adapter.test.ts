@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { InboundDeliver, OutboundMessage } from "@dodok/shared";
+import { artifactUrl, type InboundDeliver, type OutboundMessage } from "@dodok/shared";
 import type { EventFrame } from "@openclaw/gateway-protocol";
 import Fastify, { type FastifyInstance } from "fastify";
 import { Server } from "socket.io";
@@ -296,6 +296,56 @@ describe("createOpenClawAdapter — send", () => {
       expect.objectContaining({ admission: "dispatch", ackMs: 11_000, retries: 1, waitedForPlugin: false }),
     ]);
   });
+
+  it.each([
+    [0, 10_000],
+    [1, 40_000],
+    [3, 100_000],
+  ])(
+    "이미지 %i장이면 ack 상한이 %ims — 플러그인이 이미지를 받은 뒤에야 ack 한다(파일 첨부는 세지 않는다)",
+    async (images, ackMs) => {
+      let deliveries = 0;
+      await plugin({
+        "inbound.deliver": (payload: InboundDeliver, ack) => {
+          deliveries += 1;
+          if (deliveries >= 2) dispatchAck(payload, ack);
+        },
+      });
+      const spy = vi.spyOn(adapter.bridge, "deliverInbound");
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+      const input = delivery();
+      const attachment = (kind: "image" | "file", i: number) => {
+        const id = randomUUID();
+        return kind === "image"
+          ? {
+              id,
+              kind,
+              url: artifactUrl(id),
+              name: `${i}.png`,
+              mime: "image/png",
+              size: 10,
+              width: 1,
+              height: 1,
+            }
+          : { id, kind, url: artifactUrl(id), name: `${i}.pdf`, mime: "application/pdf", size: 10 };
+      };
+      input.message.attachments = [
+        ...Array.from({ length: images }, (_, i) => attachment("image", i)),
+        attachment("file", 99),
+      ];
+
+      const sending = adapter.send(input);
+      await until(() => deliveries === 1, "first delivery");
+      expect(spy).toHaveBeenLastCalledWith(expect.objectContaining({ runId: f.RUN_ID }), ackMs);
+      // 상한 - 1ms 에는 아직 기다리고, 상한 + 재시도 대기 1s 에 두 번째를 보낸다
+      await vi.advanceTimersByTimeAsync(ackMs + 999);
+      expect(spy).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(spy).toHaveBeenCalledTimes(2);
+      expect(spy).toHaveBeenLastCalledWith(expect.objectContaining({ runId: f.RUN_ID }), ackMs);
+      await expect(sending).resolves.toEqual({ admission: "dispatch", providerRunId: f.RUN_ID });
+    },
+  );
 
   it("ack 가 끝내 오지 않으면 1s·4s·16s 로 3회 재시도한 뒤 AdapterError(TIMEOUT)", async () => {
     await plugin({ "inbound.deliver": () => undefined });
