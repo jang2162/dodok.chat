@@ -24,16 +24,22 @@ const notify = { currentChannelId: () => undefined, openActivity: () => {} };
 
 let queryClient: QueryClient;
 const onUnauthorized = vi.fn();
+/**
+ * queryClient 의 401 처리(값을 가진 me 의 401 도 부른다 — 오프라인 사본 뒤 세션 만료)는 따로 잰다. 앱에서는 둘이 같은
+ * createApp 의 함수이고 겹쳐 불려도 멱등이다(/login 이면 생략) — 여기서는 WireProvider 가 받은 것만 센다
+ */
+const queryUnauthorized = vi.fn();
 /** `Notification` 전역 스텁 — 단언이 터져도 같은 파일 뒤 테스트로 새지 않게 afterEach 가 벗긴다 */
 let notifications: ReturnType<typeof stubNotification> | undefined;
 
 beforeEach(() => {
-  queryClient = createQueryClient(onUnauthorized);
+  queryClient = createQueryClient(queryUnauthorized);
   useRunStore.getState().reset();
   useApprovalStore.getState().reset();
   resetApprovalNotices();
   useWireStatus.setState({ status: "idle" });
   onUnauthorized.mockClear();
+  queryUnauthorized.mockClear();
 });
 afterEach(() => {
   notifications?.restore();

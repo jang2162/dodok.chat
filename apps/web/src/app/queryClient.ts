@@ -29,8 +29,9 @@ function toastError(e: unknown) {
 }
 
 /**
- * 쿼리·뮤테이션의 401 은 onUnauthorized(토스트 없음). 다만 me 쿼리는 여기서 아무것도 하지 않는다 — 라우트 가드가
- * `/login?next=` 로 보내고(로그인 화면은 me 로 「이미 로그인」만 본다), 여기서도 보내면 로그인 화면으로 두 번 간다.
+ * 쿼리·뮤테이션의 401 은 onUnauthorized(토스트 없음). 다만 값이 없는 me 의 401 은 여기서 아무것도 하지 않는다 — 라우트
+ * 가드가 `/login?next=` 로 보내고(로그인 화면은 me 로 「이미 로그인」만 본다), 여기서도 보내면 로그인 화면으로 두 번 간다.
+ * me 는 토스트하지 않는다(오프라인은 배너가 알린다).
  * 그 밖의 실패는 전역 토스트 — `meta.silent` 로 끄고, 뮤테이션의 VALIDATION·CONFLICT 는 저절로 빠진다.
  * 쿼리 onError 는 재시도가 다 끝난 뒤 한 번 온다. 재시도는 5xx·네트워크 실패만 2회.
  */
@@ -38,7 +39,11 @@ export function createQueryClient(onUnauthorized: () => void): QueryClient {
   return new QueryClient({
     queryCache: new QueryCache({
       onError: (e, query) => {
-        if (query.queryKey[0] === qk.me[0]) return;
+        if (query.queryKey[0] === qk.me[0]) {
+          // 값을 가진 me 의 401 은 세션 만료다(오프라인 사본으로 뜬 뒤 다시 확인 등) — 가드가 다시 돌지 않으므로 여기서
+          if (is401(e) && query.state.data !== undefined) onUnauthorized();
+          return;
+        }
         if (is401(e)) onUnauthorized();
         else if (!query.meta?.silent) toastError(e);
       },

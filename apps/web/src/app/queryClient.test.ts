@@ -49,6 +49,35 @@ describe("createQueryClient", () => {
     expect(onUnauthorized).not.toHaveBeenCalled();
   });
 
+  it("값을 가진 me 의 401(오프라인 사본으로 뜬 뒤 세션 만료)은 한 번 부른다 — 가드는 다시 돌지 않는다", async () => {
+    const onUnauthorized = vi.fn();
+    const qc = createQueryClient(onUnauthorized);
+    qc.setQueryData(qk.me, { user: { id: "u", handle: "owner" }, workspaceId: "w" });
+    await expect(
+      qc.fetchQuery({ queryKey: qk.me, queryFn: async () => Promise.reject(unauthorized()), staleTime: 0 }),
+    ).rejects.toMatchObject({ status: 401 });
+    expect(onUnauthorized).toHaveBeenCalledTimes(1);
+  });
+
+  it("값을 가진 me 의 네트워크 실패·5xx 는 부르지도 토스트하지도 않는다 — 오프라인 배너가 알린다", async () => {
+    const onUnauthorized = vi.fn();
+    const toastError = vi.spyOn(toast, "error");
+    const qc = createQueryClient(onUnauthorized);
+    qc.setQueryData(qk.me, { user: { id: "u", handle: "owner" }, workspaceId: "w" });
+    for (const error of [new NetworkError(new TypeError("x")), new ApiRequestError(500, "INTERNAL", "x")]) {
+      await qc
+        .fetchQuery({
+          queryKey: qk.me,
+          queryFn: async () => Promise.reject(error),
+          staleTime: 0,
+          retry: false,
+        })
+        .catch(() => {});
+    }
+    expect(onUnauthorized).not.toHaveBeenCalled();
+    expect(toastError).not.toHaveBeenCalled();
+  });
+
   it("401 밖의 오류는 부르지 않는다", async () => {
     const onUnauthorized = vi.fn();
     const qc = createQueryClient(onUnauthorized);

@@ -1,5 +1,6 @@
 import { UnplugIcon } from "lucide-react";
 import { useAdapterStatus } from "@/api/queries";
+import { useOffline } from "@/pwa/offline";
 import { useWireStatus } from "@/realtime/wire";
 import { Alert, AlertDescription } from "@/ui/alert";
 import { Button } from "@/ui/button";
@@ -10,11 +11,14 @@ import { Button } from "@/ui/button";
  * `protocol_mismatch`·`rejected` 는 재연결을 멈춘 상태라 사용자가 할 일을 알린다.
  * OpenClaw 배너는 점(ConnectionDots)과 같은 규칙을 따른다 — wire 가 끊기면 `adapter.status` 가 더는 오지 않아
  * 마지막 값이 남으므로 「모름」으로 보고 띄우지 않는다. 그 사정은 끊김 배너가 이미 알린다(브라우저 재검증 걱정 3).
+ * 오프라인(스펙 4장 — 브라우저 오프라인이거나 me 가 네트워크 오류)이면 「오프라인」 배너 하나만 — 그동안 wire 도
+ * `reconnecting` 이지만 같은 사실을 두 번 말하지 않는다. OpenClaw 배너는 wire 가 붙어 있을 때만이라 겹치지 않는다.
  * 라이브 영역(alert — 할 일이 있는 것, status — 기다리면 되는 것)은 비어 있는 채로 늘 두고 안의 배너만 바꾼다 —
  * 새로 끼운 라이브 영역은 스크린 리더가 놓칠 수 있다. 두 wire 상태는 함께 올 수 없어 alert 를 위에 두어도 순서가 같다
  */
 export function Banners() {
   const wire = useWireStatus((s) => s.status);
+  const offline = useOffline();
   const { data: adapter } = useAdapterStatus();
   const openclawDown =
     wire === "connected" &&
@@ -40,10 +44,16 @@ export function Banners() {
         )}
       </div>
       <div role="status">
-        {wire === "reconnecting" && (
+        {offline ? (
           <div className="bg-muted px-4 py-1 text-center text-xs text-muted-foreground">
-            서버에 다시 연결하는 중…
+            오프라인 — 저장된 내용을 보여 줍니다
           </div>
+        ) : (
+          wire === "reconnecting" && (
+            <div className="bg-muted px-4 py-1 text-center text-xs text-muted-foreground">
+              서버에 다시 연결하는 중…
+            </div>
+          )
         )}
         {openclawDown && (
           // 바깥 status 영역이 읽는다 — Alert 의 기본 role="alert" 는 뺀다

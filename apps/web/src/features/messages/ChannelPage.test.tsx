@@ -3,6 +3,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { afterEach, beforeEach, expect, it, type MockInstance, vi } from "vitest";
+import { qk } from "@/api/queries";
 import { createQueryClient } from "@/app/queryClient";
 import { useChannelSubscription } from "@/realtime/WireProvider";
 import { agentColorVar } from "@/theme/agentColor";
@@ -88,6 +89,25 @@ it("마운트되면 useChannelSubscription(channelId) — 채널을 옮기면 �
   expect(new Set(vi.mocked(useChannelSubscription).mock.calls.map(([id]) => id))).toEqual(
     new Set(["a", "b"]),
   );
+});
+
+it("채널을 열면 최근 본 채널(오프라인 사본 대상) 맨 앞에", async () => {
+  stubServer();
+  const { queryClient } = renderRoute("/c/a");
+  expect(await screen.findByRole("heading", { name: /general/ })).toBeInTheDocument();
+  await waitFor(() => expect(queryClient.getQueryData(qk.recentChannels)).toEqual(["a"]));
+
+  const nav = screen.getByRole("navigation", { name: "채널" });
+  await userEvent.click(await within(nav).findByRole("link", { name: /random/ }));
+  expect(await screen.findByRole("heading", { name: /random/ })).toBeInTheDocument();
+  await waitFor(() => expect(queryClient.getQueryData(qk.recentChannels)).toEqual(["b", "a"]));
+});
+
+it("없는 채널(404)은 최근 본 채널에 넣지 않는다", async () => {
+  stubServer();
+  const { queryClient } = renderRoute("/c/nope");
+  expect(await screen.findByRole("heading", { name: "채널을 찾을 수 없습니다" })).toBeInTheDocument();
+  expect(queryClient.getQueryData(qk.recentChannels)).toBeUndefined();
 });
 
 it("헤더: 이름·주제, 채널 에이전트 아바타(테두리 에이전트 색), 설정 버튼은 설정 패널을 여닫는다", async () => {

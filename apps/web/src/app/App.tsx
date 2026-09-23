@@ -8,7 +8,10 @@ import { type AppClient, createApp } from "./createApp";
 import { usePreventFileDrop } from "./fileDrop";
 import { registerUnauthorized } from "./session";
 
-/** `app` 은 테스트가 메모리 히스토리로 만든 것을 넘길 때만 — 없으면 브라우저 히스토리로 한 번 만든다 */
+/**
+ * `app` 은 main.tsx(오프라인 사본을 복원한 queryClient)와 테스트(메모리 히스토리)가 넘긴다 — 없으면 브라우저 히스토리로
+ * 한 번 만든다
+ */
 export function App({ app }: { app?: AppClient }) {
   const [{ queryClient, router, onUnauthorized, notify }] = useState(() => app ?? createApp());
   // Query 밖 REST 401(과거 페이지·빈틈 이어 받기)도 같은 곳으로. createApp 이 아니라 여기서 마운트 동안만 등록한다 —

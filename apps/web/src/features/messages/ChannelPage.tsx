@@ -1,5 +1,6 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { Link, Outlet, useParams } from "@tanstack/react-router";
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { ApiRequestError, NetworkError } from "@/api/http";
 import { useChannel } from "@/api/queries";
 import { ChannelHeader } from "@/app/layout/ChannelHeader";
@@ -10,6 +11,7 @@ import { TypingIndicator } from "@/features/composer/TypingIndicator";
 import { useSendMessage } from "@/features/composer/useSendMessage";
 import { StreamingBubble } from "@/features/runs/StreamingBubble";
 import { useChannelBubbles } from "@/features/runs/useChannelBubbles";
+import { touchRecentChannel } from "@/pwa/persist";
 import { useChannelSubscription } from "@/realtime/WireProvider";
 import { Button } from "@/ui/button";
 import { MessageList } from "./MessageList";
@@ -29,6 +31,12 @@ export function ChannelPage() {
   const settingsRef = useRef<HTMLAnchorElement>(null);
   useChannelSubscription(channelId);
   const channel = useChannel(channelId);
+  // 확인된 채널만 최근 본 채널로(오프라인 사본 대상, 스펙 4장) — 없는 채널 주소가 실제 채널을 밀어내지 않게
+  const qc = useQueryClient();
+  const known = channel.data !== undefined;
+  useEffect(() => {
+    if (known) touchRecentChannel(qc, channelId);
+  }, [known, qc, channelId]);
   const bubbleRunIds = useChannelBubbles(channelId);
   const { retry, discard } = useSendMessage(channelId);
   // 보내는 중 항목의 「다시 보내기」·「삭제」(태스크 7 PendingItem 이 읽는다). 실패는 항목 상태(failed)로 보인다

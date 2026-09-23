@@ -27,6 +27,8 @@ export const qk = {
   timeline: (id: string) => ["timeline", id] as const,
   channelRuns: (channelId: string) => ["channels", channelId, "runs"] as const,
   runEvents: (runId: string) => ["runs", runId, "events"] as const,
+  /** 최근 본 채널 id(앞이 최근) — 서버 조회가 아니라 오프라인 사본이 무엇을 담을지 정하는 목록(pwa/persist) */
+  recentChannels: ["recentChannels"] as const,
 };
 
 /** 활동 패널이 한 번에 받는 런 수(REST 상한 200) */
