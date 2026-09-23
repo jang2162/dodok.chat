@@ -272,8 +272,9 @@ describe("통합 시나리오 11 — 첨부", () => {
   });
 
   describe("11g 폴백 — 정본 없이 WS 스냅샷만(finalizing 상한을 줄여 실제 시계로)", () => {
-    // 줄당 연장(Ruling 2)도 줄여 잰다 — 1줄이면 300 + 200 = 500ms
-    const timeouts = { finalizingMs: 300, finalizingMediaLineMs: 200, finalizingMaxMs: 2_000 };
+    // 줄당 연장(Ruling 2)도 줄여 잰다 — 1줄이면 300 + 700 = 1000ms. 연장 없음(300ms)과 여유를 넓게 둬
+    // 부하에서 finalizing 진입 관측이 늦어도 하한(700)이 깨지지 않게 한다(a3-t4 리뷰 L1)
+    const timeouts = { finalizingMs: 300, finalizingMediaLineMs: 700, finalizingMaxMs: 2_000 };
 
     it("「결과\\n\\nMEDIA:/Users/x/a.png」 → 저장 본문은 「결과」, 상한은 MEDIA 줄만큼 늘었다", async () => {
       const l = await boot({ timeouts });
@@ -292,7 +293,7 @@ describe("통합 시나리오 11 — 첨부", () => {
       );
       const enteredAt = Date.now();
       const final = await log.terminal(finalizing.id);
-      expect(Date.now() - enteredAt).toBeGreaterThanOrEqual(400);
+      expect(Date.now() - enteredAt).toBeGreaterThanOrEqual(700);
       expect(final).toMatchObject({ status: "done", finalSource: "gateway" });
       const agentMessages = (await channelMessages(l, setup.channel.id)).filter(
         (m) => m.authorType === "agent",
