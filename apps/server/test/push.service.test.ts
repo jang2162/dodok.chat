@@ -121,6 +121,13 @@ function captureLogger() {
   return { logger, lines, raw };
 }
 
+/** pino 가 늘 붙이는 것 — 이것을 뺀 나머지가 호출부가 실은 필드다 */
+const PINO_BASE = new Set(["level", "time", "pid", "hostname", "msg"]);
+const fieldsOf = (line: Record<string, unknown>) =>
+  Object.keys(line)
+    .filter((k) => !PINO_BASE.has(k))
+    .sort();
+
 type SendCall = { endpoint: string; keys: { p256dh: string; auth: string }; body: string; opts: unknown };
 
 describe("pushTopic — tag 에서 32자 이하 url-safe(스펙 5.4)", () => {
@@ -352,6 +359,114 @@ describe("createPushDispatcher — 발송·거르기·결과 분기(스펙 5.3·
     db.$client.close();
     await expect(dispatcher().dispatch([{ userId: alice, payload: mention() }])).resolves.toBeUndefined();
     expect(cap.lines.filter((l) => l.level === 50)).toHaveLength(1);
+    // [리뷰 m1] 사용자 단위 실패 로그도 허용 필드만 — 오류 객체·페이로드는 없다
+    expect(cap.lines).toHaveLength(1);
+    expect(cap.lines[0]).toMatchObject({
+      level: 50,
+      msg: "push dispatch failed",
+      userId: alice,
+      kind: "mention",
+    });
+    expect(fieldsOf(cap.lines[0] as Record<string, unknown>)).toEqual(["kind", "reason", "userId"]);
+  });
+
+  it("[리뷰 m1] 발송 경로의 로그는 분기마다 정해진 필드만 싣는다(오류 객체·페이로드·keys·endpoint 없음)", async () => {
+    const SUB = ["kind", "subscriptionId", "userId"];
+    const cases: Array<{
+      name: string;
+      respond: () => Promise<{ statusCode: number }>;
+      level: number;
+      msg: string;
+      fields: string[];
+    }> = [
+      {
+        name: "410",
+        respond: async () => ({ statusCode: 410 }),
+        level: 30,
+        msg: "push subscription gone — removed",
+        fields: [...SUB, "statusCode"],
+      },
+      {
+        name: "403",
+        respond: async () => ({ statusCode: 403 }),
+        level: 50,
+        msg: "push rejected",
+        fields: [...SUB, "statusCode"],
+      },
+      {
+        name: "500",
+        respond: async () => ({ statusCode: 500 }),
+        level: 40,
+        msg: "push send failed",
+        fields: [...SUB, "statusCode"],
+      },
+      {
+        name: "던짐",
+        respond: async () => {
+          throw Object.assign(new Error("socket hang up"), {
+            keys: KEYS_B,
+            endpoint: EP_B,
+            payload: mention(),
+          });
+        },
+        level: 40,
+        msg: "push send failed",
+        fields: [...SUB, "reason"],
+      },
+    ];
+    for (const c of cases) {
+      cap = captureLogger();
+      respond = c.respond;
+      upsertSubscription(db, bob, { endpoint: EP_B, keys: KEYS_B }); // 410 이 지운 뒤에도 다음 경우를 위해
+      await dispatcher().dispatch([{ userId: bob, payload: mention() }]);
+      expect(cap.lines, c.name).toHaveLength(1);
+      expect(cap.lines[0], c.name).toMatchObject({
+        level: c.level,
+        msg: c.msg,
+        userId: bob,
+        kind: "mention",
+      });
+      expect(fieldsOf(cap.lines[0] as Record<string, unknown>), c.name).toEqual([...c.fields].sort());
+    }
+  });
+
+  it("[리뷰 m1] 사용자 단위 실패(push dispatch failed)에 오류 객체·페이로드·keys·endpoint 가 실리지 않는다", async () => {
+    const leaky = Object.assign(new Error(`presence broke ${"y".repeat(1000)}`), {
+      keys: KEYS_B,
+      endpoint: EP_B,
+      payload: mention(),
+      body: "THROWN-BODY-SECRET",
+    });
+    const d = createPushDispatcher({
+      db,
+      logger: cap.logger,
+      send,
+      presence: {
+        isWatching: () => {
+          throw leaky;
+        },
+      },
+    });
+    await expect(d.dispatch([{ userId: bob, payload: mention() }])).resolves.toBeUndefined();
+    expect(calls).toEqual([]);
+    expect(cap.lines).toHaveLength(1);
+    const line = cap.lines[0] as Record<string, unknown>;
+    expect(line).toMatchObject({ level: 50, msg: "push dispatch failed", userId: bob, kind: "mention" });
+    expect(fieldsOf(line)).toEqual(["kind", "reason", "userId"]);
+    expect(String(line.reason).startsWith("Error: presence broke ")).toBe(true);
+    expect(String(line.reason).length).toBeLessThanOrEqual(200);
+    const all = cap.raw.join("\n");
+    for (const secret of [
+      KEYS_B.p256dh,
+      KEYS_B.auth,
+      EP_B,
+      BODY,
+      "불렀습니다",
+      "THROWN-BODY-SECRET",
+      "stack",
+    ]) {
+      expect(all).not.toContain(secret);
+    }
   });
 
   it("drain — 진행 중인 발송을 기다리되 상한을 넘기면 놓는다", async () => {
@@ -533,5 +648,7 @@ describe("attachPushTriggers — 버스 배선", () => {
     expect(cap.lines).toEqual([
       expect.objectContaining({ level: 50, event: "message.created", reason: "Error: db closed" }),
     ]);
+    // [리뷰 m1] 정해진 필드만 — 오류 객체·메시지 본문은 없다
+    expect(fieldsOf(cap.lines[0] as Record<string, unknown>)).toEqual(["event", "reason"]);
   });
 });
