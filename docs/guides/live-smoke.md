@@ -1245,18 +1245,29 @@ await page.evaluate(async () =>
 | 2 | 설치 번들 sha = 빌드본 | **통과(재설치 경로로)** | 설치 전 `f5dc6438…` → 재설치 후 `e4a6284c5df128a018841f71ba0ca9f01f6fc4757d9fdf0c917dab25dbe42ebb` = `packages/openclaw-plugin/dist/index.js` 빌드본과 동일. `plugins inspect` `status:"loaded"` |
 | 3 | 에이전트 답(플러그인 경로)의 `mentions.users` 에 사람 id | **통과** | 하네스 `message` 툴 호출로 보낸 `"@owner 한마디: 확인해 주세요"` → REST `GET .../messages` 의 그 메시지 `mentions:{agents:[],users:["01a0cf70-0fec-7665-a303-ad307112077a"]}`. wire 로도 `finalSource=plugin`·`runId`·`replyTo` 일치(ADR 0004 6절 기준 재확인) |
 | 4 | 보고 있으면 거름 | **통과** | 브라우저가 하네스 채널을 보이게 보는 상태에서 같은 트리거 3회(최초·재확인·GCM 연결 뒤) → `registration.getNotifications()` 매번 `[]` |
-| 5 | 다른 채널/탭 닫음 → 실제 FCM 알림 1건 | **통과** | 아래 14.4.3 참고 — 여러 차례 실패 끝에 원인 둘을 찾아 걷은 뒤부터는 매번 성공했다. 도착 페이로드: `{"title":"dodok","body":"@dev가 #harness-09240304에서 불렀습니다","tag":"mention:01a0cf70-620c-76bd-946b-90dd0fc0f6b0","data":{"url":"/c/01a0cf70-620c-76bd-946b-90dd0fc0f6b0"}}` — 스펙 5.2 문구·url·tag 그대로. 탭을 모두 닫고 SW 컨텍스트로 읽은 것도 같은 페이로드로 도착(p4-t7 방법) |
+| 5 | 다른 채널/탭 닫음 → 실제 FCM 알림 1건 | **통과** | 아래 14.4.3 참고 — 여러 차례 실패 끝에 A 를 걷은 뒤부터는 매번 성공했다(당시 원인으로 함께 꼽은 B 는 p4-c1 이 재현하지 못해 정정했다). 도착 페이로드: `{"title":"dodok","body":"@dev가 #harness-09240304에서 불렀습니다","tag":"mention:01a0cf70-620c-76bd-946b-90dd0fc0f6b0","data":{"url":"/c/01a0cf70-620c-76bd-946b-90dd0fc0f6b0"}}` — 스펙 5.2 문구·url·tag 그대로. 탭을 모두 닫고 SW 컨텍스트로 읽은 것도 같은 페이로드로 도착(p4-t7 방법) |
 | 6 | 본문에 유일 문구 없음 | **통과** | 도착한 알림 본문 어디에도 트리거 문구(`"가짜 CLI 프로브"`·`"한마디: 확인해 주세요"`)나 `FAKE_CLI_DONE` 이 없다 — 「누가·어디」만 있다(결정 1) |
 | 7 | 로그 위생 | **통과** | 아래 14.4.5 |
 
 **추가로 CDP `ServiceWorker.deliverPushMessage` 로 직접 주입한 테스트 페이로드도 즉시 알림으로 떴다** — 브라우저 쪽 SW·알림 표시 파이프라인 자체는 항상 정상이었다(14.4.3 의 실패가 클라이언트 문제가 아니라는 근거).
 
-#### 14.4.3 새로 찾은 것 — 실제 FCM 전달의 타이밍 제약 둘 (제품 결함 아님, 절차 보탬)
+#### 14.4.3 새로 찾은 것 — 실제 FCM 전달의 타이밍 제약 (제품 결함 아님, 절차 보탬 — B 는 p4-c1 이 정정)
 
 이 둘은 dodok 코드가 아니라 **자동화 헤드리스/headed Chromium + 실제 Google 푸시 인프라**의 특성이다. 14.1 의 CDP `deliverPushMessage`(가짜 주입)로 확인하던 이전 검증(p4-t7)은 이 경로를 두드리지 않아 못 봤다.
 
 - **A. `--disable-background-networking` 가 실제 GCM 연결을 막는다.** Playwright 의 기본 자동화 인자에 이 플래그가 들어 있다(`ps aux` 로 확인). 이 플래그가 있는 채로는 `chrome://gcm-internals` 가 `GCM Client State: LOADING`·`Connection Client Created: false` 에서 멈췄고(수 분 대기·45초 대기 재시도 모두 실패), 실제 FCM 발송이 브라우저에 전혀 닿지 않았다(서버는 발송을 시도하지만 알림이 안 뜬다). `chromium.launchPersistentContext(..., { ignoreDefaultArgs: ["--disable-background-networking"] })` 로 그 인자만 뺀 뒤에는 `Connection State: CONNECTED`(`mtalk.google.com`)까지 갔고, 그 뒤로는 실제 FCM 발송이 매번(하네스 재현 포함) 도착했다. **다만 이 플래그 하나가 유일한 원인인지 A/B 로 엄밀히 가르진 않았다** — 플래그 제거 전에는 최대 45초 대기까지도 실패했고, 제거 뒤에는 몇 차례(약 15~30초, 처음 구독을 만들고 실제 체크인까지는 더 걸릴 수도 있다) 만에 성공한 정황 증거다.
-- **B. 소켓 정리는 최대 45초(engine.io 기본 `pingInterval`25000ms+`pingTimeout`20000ms) 걸릴 수 있다.** 탭을 닫거나(페이지 전체가 즉시 파괴돼 `WireProvider` 의 `socket.disconnect()` 정리 코드가 못 돈다) 하드 네비게이션(`page.goto`, 마찬가지로 React 언마운트가 안 돈다)을 하면, 서버의 `presence` 맵에 그 소켓의 **직전 상태**(예: 이전 채널을 `visible:true` 로 보던 것)가 최대 45초까지 남을 수 있다. 그 사이 그 채널로 트리거하면 `presence.isWatching` 이 옛 소켓 때문에 `true` 로 걸려 **엉뚱하게 억제된다.** 실측: 탭을 닫은 직후 트리거 → 억제(도착 0) → 45초 대기 뒤 같은 트리거 재현 → 정상 도착. `presence.ts` 자체의 버그는 아니다(설계가 소켓별 상태를 그대로 두는 것이 맞다 — 스펙 10장의 반대 방향과 같은 트레이드오프, p4-t7 「확인됨 2」와 같은 계열). **실사용에서는 사람이 탭을 닫고 45초 안에 같은 채널로 멘션이 올 일이 드물어 영향이 작을 것으로 본다.**
+- **B. ~~탭을 닫으면 소켓 정리가 최대 45초 걸려 그 채널 푸시가 억제된다~~ — p4-c1 이 재서 재현되지 않았다(정정).** p4-t9 는 「탭을 닫은 직후 트리거 → 도착 0 → 45초 뒤 재현 → 도착」을 보고 engine.io 핑 시간(25s+20s)으로 설명했지만, 그때 서버는 걸렀는지·보냈는지를 로그로 남기지 않아 **도착 여부로만** 판단했고 같은 실연의 A(GCM 연결 지연)와 겹쳤다. p4-c1 은 `dev:fake`(3100)+빌드본 preview(5180)에서 headed Chromium(Chrome for Testing, 1.62.1)으로 서버 소켓의 connect·`presence.update`·disconnect·발송 시각을 직접 기록했다(닫은 뒤 곧바로 `@dev 나 불러` 트리거):
+
+  | 경로 | 닫기 방식 | 서버 disconnect(닫기 호출부터) | `visible:false` 도착 | 트리거 발송 |
+  | --- | --- | --- | --- | --- |
+  | 앱(SW·푸시 켬), preview 프록시 경유 — 고치기 전 | `page.close({runBeforeUnload:true})` · CDP `Target.closeTarget` · `page.close()` · `goto about:blank` · `goto` 다른 오리진 | 9~68ms(`transport close`) | 5종 모두 disconnect 전(3~26ms) | 5/5 보냄(630~676ms) |
+  | 앱, 같은 조건 — 고친 뒤(pagehide) | 같은 5종 + 닫기 3종 한 번 더 | 11~123ms | 8/8 disconnect 전(1~14ms) | 8/8 보냄(621~749ms), 서버 debug `push sent` 201 |
+  | 최소 프로브(앱과 같은 presence 규칙), 프록시 경유 | `runBeforeUnload` · `Target.closeTarget` · `goto` 다른 오리진, pagehide 전송 유무 각각 | 4~590ms | 6/6 disconnect 전 | 6/6 보냄 |
+  | 최소 프로브, 서버 3100 직접 | 같은 6조합 | 50~81ms | 6/6 disconnect 전 | 6/6 보냄 |
+
+  탭을 닫든 다른 주소로 가든 브라우저가 웹소켓을 곧바로 닫고(React 정리가 안 돌아도 된다), vite preview 프록시도 늦추지 않는다. Chromium 은 언로드 때 `pagehide`(이때 `visibilityState` 는 아직 `visible`) 다음 `visibilitychange` hidden 을 보내고, 그 뒤에 소켓이 닫힌다. 웹은 이제 `pagehide` 에서도 「안 보임」을 강제로 보낸다(`WireProvider` `attachPresence` — 언로드 때 `visibilitychange` 가 오지 않는 엔진 대비, Chromium 에서는 결과가 같다). **남는 최대 45초 창은 close 가 서버에 가지 않는 경우 — 네트워크 단절·절전·프로세스 멈춤 — 뿐이다**(스펙 10장 트레이드오프, `pagehide` 로도 못 막는다).
+  실제 알림 도착: 데워진 프로필에서는 닫기 3종 3/3 이 닫은 뒤 1.7~1.9초에 SW `getNotifications` 로 잡혔다. 새 프로필 첫 몇 분에는 5건 중 2건만 20초 안에 잡혔다(서버는 5건 모두 201) — A 와 같은 GCM 준비 쪽으로 보이며, 같은 `Topic` 의 대기 메시지가 다음 발송에 밀려 풀린 것처럼 보이는 꼴이었지만 원인은 가르지 않았다.
+  **이제 서버가 가른다** — `LOG_LEVEL=debug` 면 디스패처가 거를 때 `push skipped — watching`(`userId`·`channelId`·`kind`), 푸시 서비스가 받으면 `push sent`(`subscriptionId`·`statusCode`)를 한 줄씩 남긴다. 다음 실연은 「걸렀다·보냈다·보냈는데 안 왔다」를 이 두 줄과 `chrome://gcm-internals` 로 가른다. `dev:fake` 진입점은 로그 수준을 `info` 로 고정하므로 debug 줄을 보려면 `startDevFake({ logLevel: "debug" })` 로 감싸 띄운다.
 
 #### 14.4.4 모델 런 (상한 1, 실제 1)
 
@@ -1265,7 +1276,7 @@ await page.evaluate(async () =>
 | # | 기준 | 결과 | 증거 |
 | --- | --- | --- | --- |
 | 3 | 모델 답의 `mentions.users` 에 사람 id, `finalSource: plugin` | **통과** | 모델 답: `"@owner 님, 오늘도 무사히 컴파일되는 하루 되시길 바랍니다! 🤖\n\n혹시 스택 트레이스가 47층까지 쌓이거든 주저 말고 부르십시오. 저는 육백만 가지 에러 메시지에 능통하니까요. 물론... 성공 확률은 3,720 대 1 정도겠지만, 그래도 함께 해보는 겁니다.\n\n오 메이커시여, 오늘의 빌드에 축복을! ⚠️"`. REST 로 그 메시지의 `mentions:{agents:[],users:["01a0cf70-0fec-7665-a303-ad307112077a"]}`. wire `run.state` 가 `finalSource=plugin`·`hasCanonical`, `RUN_FINISHED` 의 `messageIds` 가 그 메시지와 일치 |
-| 5 | 실제 FCM 알림 도착 | **미확인(서버 발송·GCM 계층 수신까지만 확인)** | 서버가 발송을 시도했다는 것은 `lsof` 로 그 순간 dodok 서버 프로세스가 `172.217.211.101:443`(Google) 에 새 TCP 연결을 여는 것으로 간접 확인했다(하네스 발송 때도 같은 패턴). `chrome://gcm-internals` 의 **Receive Message Log** 에 우리 구독의 app id(`wp:http://localhost:5180/#4CF2BA56-AD13-4A58-9924-DAC3E54AA-V2`)로 **`Data msg received` 723 bytes** 가 모델 런 종료 약 1초 뒤(런 종료 03:33:44 무렵 → 수신 로그 03:33:45)에 찍혔다 — Chromium 이 실제로 그 발송을 받았다는 증거다. 그런데 그 뒤 약 15초(수신 직후·+5초·+10초 3회) 동안 `registration.getNotifications()` 는 계속 `[]` 였다. GCM 연결은 이미 5분 넘게 전에 `CONNECTED` 였고(같은 브라우저 인스턴스, 그 사이 다른 발송은 성공), 이 브라우저가 모델 채널을 본 적이 없어 14.4.3-B 의 소켓 잔류로도 설명되지 않는다 — 즉 14.4.3 의 두 타이밍 제약 어느 쪽도 이 건의 원인이 아니다. **모델 런은 1회로 제한돼 있어 재시도하지 않았다.** 대신 같은 세션·같은 브라우저에서 하네스로 같은 경로(다른 채널을 보며 `@owner` 멘션 트리거)를 바로 재현했더니 **2초 만에** 정상 도착했다 — 그래서 dodok 코드(트리거·발송·프레즌스 로직)의 결함으로 보지 않고, 이 한 번의 자동화 브라우저 전달 유실로 본다. 원인은 특정하지 못했다(짐작 가는 파일 없음 — 발송은 서버가 했고 수신은 Chromium 내부 GCM 파이프라인이라 dodok 코드 밖이다) |
+| 5 | 실제 FCM 알림 도착 | **미확인(서버 발송·GCM 계층 수신까지만 확인)** | 서버가 발송을 시도했다는 것은 `lsof` 로 그 순간 dodok 서버 프로세스가 `172.217.211.101:443`(Google) 에 새 TCP 연결을 여는 것으로 간접 확인했다(하네스 발송 때도 같은 패턴). `chrome://gcm-internals` 의 **Receive Message Log** 에 우리 구독의 app id(`wp:http://localhost:5180/#4CF2BA56-AD13-4A58-9924-DAC3E54AA-V2`)로 **`Data msg received` 723 bytes** 가 모델 런 종료 약 1초 뒤(런 종료 03:33:44 무렵 → 수신 로그 03:33:45)에 찍혔다 — Chromium 이 실제로 그 발송을 받았다는 증거다. 그런데 그 뒤 약 15초(수신 직후·+5초·+10초 3회) 동안 `registration.getNotifications()` 는 계속 `[]` 였다. GCM 연결은 이미 5분 넘게 전에 `CONNECTED` 였고(같은 브라우저 인스턴스, 그 사이 다른 발송은 성공), 이 브라우저가 모델 채널을 본 적이 없어 presence 거르기로도 설명되지 않는다(14.4.3-B 는 p4-c1 이 재현하지 못했다) — 즉 14.4.3-A 도 이 건의 원인이 아니다. **모델 런은 1회로 제한돼 있어 재시도하지 않았다.** 대신 같은 세션·같은 브라우저에서 하네스로 같은 경로(다른 채널을 보며 `@owner` 멘션 트리거)를 바로 재현했더니 **2초 만에** 정상 도착했다 — 그래서 dodok 코드(트리거·발송·프레즌스 로직)의 결함으로 보지 않고, 이 한 번의 자동화 브라우저 전달 유실로 본다. 원인은 특정하지 못했다(짐작 가는 파일 없음 — 발송은 서버가 했고 수신은 Chromium 내부 GCM 파이프라인이라 dodok 코드 밖이다) |
 | 6 | 본문에 모델 답 원문 없음 | **간접 확인** | 알림이 뜨지 않아 알림 자체로는 못 쟀다. 다만 알림 본문은 `triggers.ts` 의 `targetsForMessage` 가 메시지 종류와 무관하게 항상 `"{작성자}가 #{채널}에서 불렀습니다"` 템플릿만 만든다(모델의 실제 텍스트를 읽지 않는다) — 이 코드 경로는 하네스에서 같은 함수로 여러 번 통과 확인했다(위 14.4.2-6). 이번 모델 답 원문(`"컴파일되는 하루"`·`"스택 트레이스"` 등)이 알림 페이로드에 실릴 경로 자체가 없다 |
 
 #### 14.4.5 로그 위생
