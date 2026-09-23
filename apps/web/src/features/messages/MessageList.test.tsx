@@ -197,6 +197,16 @@ describe("MessageList", () => {
     expect(screen.getByRole("region", { name: "메시지" })).toHaveFocus();
   });
 
+  it("사본에서 복원한 타임라인(lastSeq 0)은 위로 올려도 가진 메시지를 새 메시지로 세지 않는다 — 그 뒤 온 것만", async () => {
+    const { qc, scrollTo, atEnd } = setup({ ...timelineOf(range(1, 40)), lastSeq: 0 });
+    await waitFor(() => expect(atEnd()).toBe(true));
+    await scrollTo(300);
+    await act(() => new Promise((r) => setTimeout(r, 10)));
+    expect(screen.queryByRole("button", { name: /새 메시지/ })).toBeNull();
+    act(() => updateTimeline(qc, CH, (t) => upsert(t, range(41, 41)[0] as Message)));
+    await screen.findByRole("button", { name: "새 메시지 1개" });
+  });
+
   it("스크롤해서 맨 아래로 돌아오면 칩이 사라진다", async () => {
     const { qc, scrollTo, scroller } = setup(timelineOf(range(1, 40)));
     await scrollTo(300);

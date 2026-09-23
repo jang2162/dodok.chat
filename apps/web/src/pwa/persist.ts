@@ -44,13 +44,18 @@ export function shouldPersist(query: { queryKey: readonly unknown[] }, recent: r
   return false;
 }
 
+/**
+ * 최근 50개·보내는 중 항목 없이. `lastSeq` 는 0 으로 — 복원한 채널의 첫 구독이 이어 받기가 아니라 최신 페이지로
+ * 새로 시작(`fresh`)하게 한다. 앱이 닫혀 있던 동안의 카드 상호작용(`message.updated`)은 seq 가 그대로라 이어 받기로는
+ * 오지 않는다(p4-t4 리뷰 결함 1)
+ */
 function trimTimeline(t: Timeline): Timeline {
   const items = t.items.slice(-TIMELINE_KEEP);
-  return { ...t, items, pending: [], hasOlder: t.hasOlder || items.length < t.items.length };
+  return { ...t, items, pending: [], hasOlder: t.hasOlder || items.length < t.items.length, lastSeq: 0 };
 }
 
 /**
- * 저장 직전에 고친다(메모리의 캐시는 그대로): 타임라인은 최근 50개·보내는 중 항목 없이, 값을 가진 채 실패한 쿼리
+ * 저장 직전에 고친다(메모리의 캐시는 그대로): 타임라인은 위처럼 잘라서, 값을 가진 채 실패한 쿼리
  * (오프라인의 me 등)는 성공으로 — 오류 객체는 직렬화되지 않고, 복원 뒤 오류로 남으면 오프라인 판단이 틀린다
  */
 export function trimForPersist(state: DehydratedState): DehydratedState {
@@ -82,11 +87,31 @@ const idbStorage: AsyncStorage<string> = {
 type Persistence = { stop(): void; clear(): Promise<void> };
 type Tagged = PersistedClient & { epoch?: number };
 
+const CHANNEL_HEADS: readonly unknown[] = ["channel", "members", "timeline"];
+
+/**
+ * 지금 최근 목록에 있는데 캐시에 없는 채널 쪽 항목을 옛 사본(`prev`)에서 붙인다. 관찰자 없는 쿼리는 기본 gcTime(5분)
+ * 뒤 메모리에서 빠지지만, 최근 채널의 사본은 기한 동안 남아야 한다. 최근에서 밀려난 채널은 붙이지 않는다
+ */
+function carryOver(state: DehydratedState, prev: DehydratedState | undefined): DehydratedState {
+  if (!prev) return state;
+  const recent = state.queries.find((q) => q.queryKey[0] === qk.recentChannels[0])?.state.data;
+  const have = new Set(state.queries.map((q) => q.queryHash));
+  const carried = prev.queries.filter(
+    (q) =>
+      CHANNEL_HEADS.includes(q.queryKey[0]) &&
+      !have.has(q.queryHash) &&
+      shouldPersist(q, Array.isArray(recent) ? (recent as string[]) : []),
+  );
+  return carried.length === 0 ? state : { ...state, queries: [...state.queries, ...carried] };
+}
+
 /**
  * 오프라인 사본(스펙 4장) — 복원을 기다린 뒤(최대 1초) 저장을 시작한다. 저장소가 없거나 던지면 저장 없이 돈다.
- * `clear()` 는 로그아웃·401(`resetClientState`)이 부른다. 잘라 두기(throttle) 때문에 기다리던 저장이 지운 뒤에
- * 쓰일 수 있어, 저장마다 세대(epoch)를 달고 지우면 세대를 올려 옛 세대의 저장은 버린다.
- * me 가 없는 캐시(로그인 전·지운 뒤)는 저장하지 않고 지운다 — 사본은 로그인한 사람의 것이다
+ * `clear()` 는 로그아웃·401(`resetClientState`)이 부른다. 잘라 두기(throttle) 때문에 기다리던 저장, 직렬화를 마치고
+ * 쓰기를 기다리던 저장이 지운 뒤에 쓰일 수 있어, 저장마다 세대(epoch)를 달고 지우면 세대를 올려 옛 세대의 저장은 버린다.
+ * me 가 없는 캐시(로그인 전·지운 뒤)는 저장하지 않고 지운다 — 사본은 로그인한 사람의 것이다.
+ * 마지막으로 저장·복원한 사본을 들고 있다가 저장 때 최근 채널의 빠진 항목을 붙인다(`carryOver`) — 지우면 함께 버린다
  */
 export async function startPersistence(
   qc: QueryClient,
@@ -94,16 +119,29 @@ export async function startPersistence(
 ): Promise<Persistence> {
   const storage = opts.storage ?? idbStorage;
   let epoch = 0;
+  /** 지금 쓰는 저장의 세대 — 직렬화와 쓰기 사이(마이크로태스크)에 지워질 수 있다 */
+  let writing = -1;
+  let last: DehydratedState | undefined;
   const base = createAsyncStoragePersister({
-    storage,
+    storage: {
+      getItem: (k) => storage.getItem(k),
+      // 캐시 리스너는 동기라, 지우기 직전의 변경은 지우기 전에 직렬화되고 지운 뒤에 쓰인다 — 쓸 때 한 번 더 본다
+      setItem: async (k, v) => (writing === epoch ? storage.setItem(k, v) : undefined),
+      removeItem: (k) => storage.removeItem(k),
+    },
     key: PERSIST_KEY,
     throttleTime: opts.throttleMs ?? 1000,
     serialize: ({ epoch: at, ...client }: Tagged) => {
       if (at !== epoch) throw new Error("stale persist epoch");
-      return JSON.stringify({ ...client, clientState: trimForPersist(client.clientState) });
+      writing = at;
+      last = trimForPersist(carryOver(client.clientState, last));
+      return JSON.stringify({ ...client, clientState: last });
     },
   });
+  /** 지울 때마다 세대를 올린다 — 기다리던·쓰던 옛 세대의 저장은 버린다 */
   const removeClient = async () => {
+    epoch += 1;
+    last = undefined;
     try {
       await base.removeClient();
     } catch {
@@ -120,13 +158,15 @@ export async function startPersistence(
       Promise.race([
         base.restoreClient(),
         new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), RESTORE_TIMEOUT_MS)),
-      ]),
+      ]).then((client) => {
+        // 버릴 사본(나이·빌드)이면 persistQueryClientRestore 가 removeClient 로 다시 비운다
+        last = client?.clientState;
+        return client;
+      }),
     removeClient,
   };
 
-  // 복원한 최근 채널의 것은 화면에 관찰자가 없어도 사본 기한 동안 남아야 한다 — 기본 gcTime(5분)이면 다음 저장에서 빠진다
-  for (const head of ["channel", "members", "timeline"])
-    qc.setQueryDefaults([head], { gcTime: PERSIST_MAX_AGE_MS });
+  // 최근 목록은 관찰자가 없어도 늘 남아야 한다 — 채널 쪽 항목은 gcTime 을 늘리지 않고 저장 때 옛 사본에서 붙인다
   qc.setQueryDefaults(qk.recentChannels, { gcTime: Number.POSITIVE_INFINITY });
 
   try {
@@ -155,9 +195,6 @@ export async function startPersistence(
 
   return {
     stop: unsubscribe,
-    clear: async () => {
-      epoch += 1;
-      await removeClient();
-    },
+    clear: removeClient,
   };
 }

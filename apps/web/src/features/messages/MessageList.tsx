@@ -337,11 +337,12 @@ function Skeleton() {
 
 /**
  * 맨 아래에 붙어 있지 않을 때 들어온 확정 메시지 수(스펙 5.5 칩). 붙어 있으면 본 것으로 친다.
- * 내 메시지는 세지 않는다(보낼 때 끝으로 간다)
+ * 내 메시지는 세지 않는다(보낼 때 끝으로 간다). 기준은 가진 마지막 메시지의 seq — 사본에서 복원한 타임라인은
+ * `lastSeq` 가 0 이라(첫 구독을 새로 받게) 그것을 쓰면 오프라인에서 위로 올리자마자 전부 새 메시지로 센다
  */
 function useUnseen(timeline: ReturnType<typeof useTimeline>, stuck: boolean): number {
   const me = useMe().data?.user.id;
-  const lastSeq = timeline?.lastSeq ?? 0;
+  const lastSeq = timeline?.items.at(-1)?.seq ?? 0;
   const [seenSeq, setSeenSeq] = useState(lastSeq);
   useEffect(() => {
     if (stuck && seenSeq !== lastSeq) setSeenSeq(lastSeq);

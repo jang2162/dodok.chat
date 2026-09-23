@@ -1,18 +1,20 @@
+import { ComponentsV1, type Message, type MessageInteraction } from "@dodok/shared";
 import { onlineManager, QueryClientProvider, type QueryClient } from "@tanstack/react-query";
 import { createMemoryHistory } from "@tanstack/react-router";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NetworkError } from "@/api/http";
 import { meQuery, qk } from "@/api/queries";
-import { App } from "@/app/App";
+import { bootApp } from "@/app/boot";
 import { createApp } from "@/app/createApp";
 import { Banners } from "@/app/layout/Banners";
 import { createQueryClient } from "@/app/queryClient";
-import { registerSessionReset } from "@/app/session";
+import { resetClientState } from "@/app/session";
 import type { Timeline } from "@/features/messages/timeline";
 import { useWireStatus } from "@/realtime/wire";
 import { TooltipProvider } from "@/ui/tooltip";
-import { CH, msg } from "../../test/fixtures";
+import { createdSockets } from "../../test/fakeSocket";
+import { CH, msg, uid } from "../../test/fixtures";
 import { memoryStorage } from "../../test/memoryStorage";
 import { stubScrollLayout } from "../../test/scrollLayout";
 import { ADAPTER_OK, ME, channelOf, json, shellGet } from "../../test/shellApi";
@@ -75,6 +77,19 @@ describe("Banners — 오프라인", () => {
     expect(screen.getByText(RECONNECTING)).toBeInTheDocument();
   });
 
+  it("Query 가 모르는 오프라인(navigator.onLine 만 거짓, onlineManager 는 온라인)도 배너를 낸다", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => json(200, ME)),
+    );
+    const qc = createQueryClient(() => {});
+    qc.setQueryData(qk.me, ME);
+    vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    expect(onlineManager.isOnline()).toBe(true);
+    renderBanners(qc);
+    expect(await screen.findByText(OFFLINE)).toBeInTheDocument();
+  });
+
   it("me 가 값을 가진 채 네트워크 오류면 오프라인 — wire 가 다시 붙으면 me 를 다시 불러 배너를 내린다", async () => {
     let down = true;
     const fetch = vi.fn<typeof globalThis.fetch>(async (input) => {
@@ -112,8 +127,8 @@ describe("Banners — 오프라인", () => {
 });
 
 describe("오프라인 사본으로 띄우기 (createApp + 메모리 히스토리 + 가짜 fetch)", () => {
-  /** 앞선 세션이 남긴 사본 — 채널 CH 를 60개 메시지까지 보고 떠났다 */
-  async function savedCopy() {
+  /** 앞선 세션이 남긴 사본 — 채널 CH 를 60개 메시지까지 보고 떠났다(마지막은 `last` 로 바꿀 수 있다) */
+  async function savedCopy(last?: Message) {
     const storage = memoryStorage();
     const qc = createQueryClient(() => {});
     const p = await startPersistence(qc, { buster: "b1", storage, throttleMs: 0 });
@@ -124,26 +139,77 @@ describe("오프라인 사본으로 띄우기 (createApp + 메모리 히스토�
     qc.setQueryData(qk.channel(CH), channelOf(CH, { name: "general" }));
     qc.setQueryData(qk.members(CH), []);
     const items = Array.from({ length: 60 }, (_, i) => msg(i + 1, { bodyMd: `메시지 ${i + 1}` }));
+    if (last) items[59] = last;
     qc.setQueryData<Timeline>(qk.timeline(CH), { items, pending: [], hasOlder: false, lastSeq: 60 });
     await vi.waitFor(() => expect(storage.map.get(PERSIST_KEY)).toContain('"timeline"'));
     p.stop();
     return storage;
   }
 
-  /** main.tsx 와 같은 순서 — 만들고, 복원을 기다리고, 지우기를 세션 정리에 걸고, 그린다 */
+  /** main.tsx 와 같은 배선(bootApp) — 그리기만 testing-library 로 */
   async function boot(storage: ReturnType<typeof memoryStorage>) {
     const history = createMemoryHistory({ initialEntries: [`/c/${CH}`] });
     const app = createApp(history);
-    const persistence = await startPersistence(app.queryClient, { buster: "b1", storage, throttleMs: 0 });
-    cleanups.push(
-      persistence.stop,
-      registerSessionReset(() => void persistence.clear()),
-    );
     const moves: string[] = [];
     history.subscribe(({ location }) => moves.push(location.href));
-    render(<App app={app} />);
+    cleanups.push(await bootApp(app, { buster: "b1", storage, throttleMs: 0, render: (el) => render(el) }));
     return { app, history, moves };
   }
+
+  it("사본 복원을 기다린 뒤 그린다 — 로그아웃·401(세션 정리)이 사본을 지운다(bootApp 배선)", async () => {
+    const storage = await savedCopy();
+    const saved = storage.map.get(PERSIST_KEY) ?? "";
+    let answer: (v: string) => void = () => {};
+    storage.getItem.mockImplementationOnce(() => new Promise<string>((r) => (answer = r)));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("Failed to fetch");
+      }),
+    );
+    const app = createApp(createMemoryHistory({ initialEntries: [`/c/${CH}`] }));
+    const drawn = vi.fn();
+    const booted = bootApp(app, { buster: "b1", storage, throttleMs: 30, render: drawn });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(drawn).not.toHaveBeenCalled();
+    answer(saved);
+    cleanups.push(await booted);
+    expect(drawn).toHaveBeenCalledTimes(1);
+    expect(app.queryClient.getQueryData(qk.me)).toEqual(ME);
+
+    // 세션 정리에 건 지우기만으로 — 캐시 비우기(me 없는 캐시를 지우는 두 번째 겹)를 막아도 사본과 쓰던 저장이 사라진다
+    await new Promise((r) => setTimeout(r, 60));
+    vi.spyOn(app.queryClient, "clear").mockImplementation(() => {});
+    app.queryClient.setQueryData(qk.agents, [{ id: "late" }]);
+    resetClientState(app.queryClient);
+    await new Promise((r) => setTimeout(r, 120));
+    expect(storage.map.has(PERSIST_KEY)).toBe(false);
+  });
+
+  it("[결함 2] 기기가 오프라인으로 열리면(navigator.onLine 만 거짓) 요청을 쉬고 토스트 없이 배너 — online 이벤트에 me 를 다시 확인한다", async () => {
+    const storage = await savedCopy();
+    let online = false;
+    const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
+      if (!online) throw new TypeError("Failed to fetch");
+      if (String(input) === "/api/v1/auth/me") return json(200, ME);
+      return shellGet(input, init) ?? json(200, { members: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const onLine = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    await boot(storage);
+
+    expect(await screen.findByText("메시지 60")).toBeInTheDocument();
+    expect(screen.getByText(OFFLINE)).toBeInTheDocument();
+    await act(() => new Promise((r) => setTimeout(r, 50)));
+    expect(fetch).not.toHaveBeenCalled();
+    expect(screen.queryByText("서버에 연결할 수 없습니다")).toBeNull();
+
+    online = true;
+    onLine.mockReturnValue(true);
+    act(() => void window.dispatchEvent(new Event("online")));
+    await waitFor(() => expect(meCalls(fetch)).toBe(1));
+    await waitFor(() => expect(screen.queryByText(OFFLINE)).toBeNull());
+  });
 
   it("오프라인으로 시작해도 me 요청 없이 채널 화면·저장된 메시지·배너가 뜨고, 보내기는 막힌다", async () => {
     const storage = await savedCopy();
@@ -207,5 +273,56 @@ describe("오프라인 사본으로 띄우기 (createApp + 메모리 히스토�
     await waitFor(() => expect(meCalls(fetch)).toBe(1));
     expect(screen.queryByText(OFFLINE)).toBeNull();
     expect(storage.map.get(PERSIST_KEY)).toContain('"timeline"');
+  });
+
+  it("[결함 1] 사본으로 연 채널의 첫 구독은 새로 받는다 — 닫혀 있던 동안 다른 기기가 누른 카드의 결과 줄이 보인다", async () => {
+    const card = msg(60, {
+      bodyMd: "메시지 60",
+      components: ComponentsV1.parse({
+        id: "cmp_1",
+        reusable: true,
+        blocks: [{ type: "actions", items: [{ type: "button", id: "plus", label: "+1" }] }],
+      }),
+      componentState: { expiresAt: "2999-01-01T00:00:00.000Z", consumed: [] },
+    });
+    const storage = await savedCopy(card);
+    const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
+      if (String(input) === "/api/v1/auth/me") return json(200, ME);
+      return shellGet(input, init) ?? json(200, { members: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+    await boot(storage);
+    expect(await screen.findByText("메시지 60")).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "상호작용 기록" })).toBeNull();
+
+    // 다른 기기에서 누른 「+1」 — seq 는 그대로, interactions 만 바뀌었다
+    const pressed: MessageInteraction = {
+      id: uid(700),
+      componentId: "cmp_1",
+      userId: ME.user.id,
+      itemId: "plus",
+      values: {},
+      createdAt: "2026-09-23T00:00:00.000Z",
+    };
+    await waitFor(() => expect(createdSockets).toHaveLength(1));
+    const fake = createdSockets[0];
+    if (!fake) throw new Error("no socket");
+    // 서버처럼: 이어 받기(lastSeq)면 그 뒤 메시지만 — 카드 갱신은 seq 가 같아 오지 않는다. 새로 받기면 최신 페이지
+    fake.onAck("channel.subscribe", (payload) => ({
+      ok: true,
+      data: {
+        messages: (payload as { lastSeq?: number }).lastSeq ? [] : [{ ...card, interactions: [pressed] }],
+        hasMore: true,
+        activeRuns: [],
+        pendingApprovals: [],
+      },
+    }));
+    fake.socket.connected = true;
+    act(() => fake.serverEmit("connect"));
+
+    await waitFor(() =>
+      expect(document.querySelector(`[data-interaction-id="${pressed.id}"]`)).not.toBeNull(),
+    );
+    expect(fake.sentOf("channel.subscribe")).toEqual([{ channelId: CH }]);
   });
 });
