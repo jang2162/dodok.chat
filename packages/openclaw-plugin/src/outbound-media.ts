@@ -1,11 +1,14 @@
 /**
  * 에이전트 미디어 → 서버 첨부(스펙 5.2). SDK 로더·업로더는 deps 로 받는다 — `openclaw` 를 import 하지 않는다.
- * 원천(`src`)은 Gateway 호스트 경로이거나 URL 이다. 경로는 어떤 텍스트에도 싣지 않는다 — 이름은 basename, 사유는 가린다.
+ * 원천(`src`)은 Gateway 호스트 경로이거나 URL 이다. 경로는 어떤 텍스트에도 싣지 않는다 — 이름은 basename,
+ * 채널·툴로 가는 사유는 고정 문구뿐이고 원문(가린 것)은 로그용 `detail` 에만 둔다.
  */
 import { ATTACHMENT_LIMITS, sanitizeAttachmentName } from "@dodok/shared";
+import { MediaHttpError } from "./media-http";
 
 export type MediaSource = { src: string; name?: string };
-export type MediaFailure = { name: string; reason: string };
+/** `reason` 은 채널 본문·툴 오류에 싣는 고정 문구, `detail` 은 로그에만 싣는 원문(호스트 경로를 가린 것) */
+export type MediaFailure = { name: string; reason: string; detail: string };
 
 const str = (v: unknown): string | undefined => (typeof v === "string" && v.trim() !== "" ? v : undefined);
 
@@ -55,7 +58,8 @@ export function uniqueNames(names: readonly string[]): string[] {
 }
 
 /**
- * 오류 사유 속 호스트 경로를 `<경로>` 로 가린다(Global Constraints — 경로는 어떤 텍스트에도 쓰지 않는다).
+ * 오류 원문 속 호스트 경로를 `<경로>` 로 가린다 — 로그 방어용이다. 못 잡는 꼴이 있어(`ENOENT:/x`·백틱 등) 채널·툴 문구에는
+ * 원문을 아예 싣지 않는다(`loadFailureReason`·`uploadFailureReason`).
  * 공백·따옴표·괄호 뒤에서 `/`·`\`·`~/`·`C:\`·`file://` 로 시작하면 다음 따옴표나 줄 끝까지 — 경로에 공백이 있어도 꼬리가 새지 않게.
  * `https://…` 의 `//` 는 `:` 뒤라 건드리지 않는다
  */
@@ -63,11 +67,55 @@ export function maskHostPaths(text: string): string {
   return text.replace(/(^|[\s'"(=,;])(?:file:\/\/|[A-Za-z]:[\\/]|~[\\/]|[\\/])[^'"\n]*/g, "$1<경로>");
 }
 
-const REASON_MAX = 120;
-const reasonOf = (err: unknown): string =>
-  maskHostPaths(String((err as Error | undefined)?.message ?? err)).slice(0, REASON_MAX);
+const DETAIL_MAX = 120;
+const detailOf = (err: unknown): string =>
+  maskHostPaths(String((err as Error | undefined)?.message ?? err)).slice(0, DETAIL_MAX);
 const basename = (src: string) => src.split("?")[0]!.split(/[\\/]/).filter(Boolean).at(-1) ?? "";
 const mib = (bytes: number) => `${Math.round(bytes / 1024 / 1024)} MiB`;
+const codeOf = (v: unknown): unknown => (v as { code?: unknown } | undefined)?.code;
+
+/**
+ * 로더(`loadWebMediaRaw`) 실패 → 고정 문구. 9.4 `LocalMediaAccessError.code` 로만 가른다 — 로더 크기 초과는 코드 없는
+ * `Error` 에 `cause.code === "too-large"`(FsSafeError) 로 온다
+ */
+export function loadFailureReason(err: unknown, maxBytes: number): string {
+  const code = codeOf(err);
+  if (code === "not-found") return "파일을 찾을 수 없음";
+  if (code === "path-not-allowed" || code === "network-path-not-allowed") return "허용되지 않은 경로";
+  if (code === undefined && codeOf((err as { cause?: unknown } | undefined)?.cause) === "too-large")
+    return `${mib(maxBytes)} 초과`;
+  return "파일을 읽지 못함";
+}
+
+/** 업로드 실패 → 고정 문구. HTTP 상태만 싣는다 */
+export function uploadFailureReason(err: unknown): string {
+  if (err instanceof MediaHttpError && err.status !== undefined)
+    return err.status === 413 ? "서버 상한 초과" : `서버가 거절함 (${err.status})`;
+  return "서버에 올리지 못함";
+}
+
+/** `deliver` 가 보낼지 — final 이고 텍스트나 미디어 중 하나라도 있으면(미디어 전용 응답도 보낸다, 스펙 5.2) */
+export const shouldDeliverFinal = (kind: string, text: string, sourceCount: number): boolean =>
+  kind === "final" && (text.trim() !== "" || sourceCount > 0);
+
+/** 9.4 `OutboundMediaAccess` 와 같은 모양 — SDK 를 import 하지 않으려고 여기 둔다 */
+export type MediaAccess = {
+  localRoots?: readonly string[];
+  readFile?: (filePath: string) => Promise<Buffer>;
+  workspaceDir?: string;
+};
+/** `loadWebMediaRaw` 옵션 — 호스트 정책(`mediaAccess`)의 있는 키만 그대로 넘긴다. fs.readFile 직접 금지 */
+export function loaderOptions(
+  access: MediaAccess | undefined,
+  maxBytes: number,
+): MediaAccess & { maxBytes: number } {
+  return {
+    maxBytes,
+    ...(access?.localRoots ? { localRoots: access.localRoots } : {}),
+    ...(access?.readFile ? { readFile: access.readFile } : {}),
+    ...(access?.workspaceDir ? { workspaceDir: access.workspaceDir } : {}),
+  };
+}
 
 export type OutboundMediaDeps = {
   load(src: string): Promise<{ bytes: Buffer; contentType?: string; fileName?: string }>;
@@ -77,10 +125,10 @@ export type OutboundMediaDeps = {
 
 type Loaded =
   | { ok: true; bytes: Buffer; mime?: string; name: string }
-  | { ok: false; name: string; reason: string };
+  | { ok: false; name: string; reason: string; detail: string };
 
 /**
- * 원천마다 읽고(크기 검사) 올려 id 를 순서대로 모은다. 실패는 이름·짧은 사유로 모으고 나머지는 계속한다.
+ * 원천마다 읽고(크기 검사) 올려 id 를 순서대로 모은다. 실패는 이름·고정 사유(+로그용 detail)로 모으고 나머지는 계속한다.
  * 메시지당 상한을 넘는 원천은 읽지 않는다 — `OutboundMessage.attachmentIds` 가 상한을 넘으면 메시지 전체가 거부된다
  */
 export async function uploadOutboundMedia(
@@ -91,17 +139,25 @@ export async function uploadOutboundMedia(
   for (const [i, item] of items.entries()) {
     const guess = sanitizeAttachmentName(item.name ?? basename(item.src));
     if (i >= ATTACHMENT_LIMITS.perMessage) {
-      loaded.push({ ok: false, name: guess, reason: `메시지당 ${ATTACHMENT_LIMITS.perMessage}개 초과` });
+      const reason = `메시지당 ${ATTACHMENT_LIMITS.perMessage}개 초과`;
+      loaded.push({ ok: false, name: guess, reason, detail: reason });
       continue;
     }
     try {
       const r = await deps.load(item.src);
       const name = sanitizeAttachmentName(item.name ?? r.fileName ?? basename(item.src));
-      if (r.bytes.length > deps.maxBytes)
-        loaded.push({ ok: false, name, reason: `${mib(deps.maxBytes)} 초과` });
-      else loaded.push({ ok: true, bytes: r.bytes, ...(r.contentType ? { mime: r.contentType } : {}), name });
+      if (r.bytes.length > deps.maxBytes) {
+        const reason = `${mib(deps.maxBytes)} 초과`;
+        loaded.push({ ok: false, name, reason, detail: reason });
+      } else
+        loaded.push({ ok: true, bytes: r.bytes, ...(r.contentType ? { mime: r.contentType } : {}), name });
     } catch (err) {
-      loaded.push({ ok: false, name: guess, reason: reasonOf(err) });
+      loaded.push({
+        ok: false,
+        name: guess,
+        reason: loadFailureReason(err, deps.maxBytes),
+        detail: detailOf(err),
+      });
     }
   }
   const names = uniqueNames(loaded.map((l) => l.name));
@@ -110,13 +166,13 @@ export async function uploadOutboundMedia(
   for (const [i, l] of loaded.entries()) {
     const name = names[i] ?? l.name;
     if (!l.ok) {
-      failures.push({ name, reason: l.reason });
+      failures.push({ name, reason: l.reason, detail: l.detail });
       continue;
     }
     try {
       ids.push((await deps.upload(l.bytes, name, l.mime)).id);
     } catch (err) {
-      failures.push({ name, reason: reasonOf(err) });
+      failures.push({ name, reason: uploadFailureReason(err), detail: detailOf(err) });
     }
   }
   return { ids, failures };

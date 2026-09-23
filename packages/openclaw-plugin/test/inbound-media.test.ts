@@ -1,6 +1,7 @@
-import type { Attachment } from "@dodok/shared";
+import { ATTACHMENT_LIMITS, type Attachment } from "@dodok/shared";
 import { describe, expect, it, vi } from "vitest";
-import { appendNotes, prepareInboundMedia } from "../src/inbound-media";
+import { appendNotes, inboundSaveArgs, prepareInboundMedia } from "../src/inbound-media";
+import { MediaHttpError } from "../src/media-http";
 
 let seq = 0;
 function att(kind: Attachment["kind"], name: string, mime: string): Attachment {
@@ -62,7 +63,11 @@ describe("prepareInboundMedia", () => {
     const download = vi.fn();
     const r = await prepareInboundMedia([odd], { download, save: vi.fn() });
     expect(download).not.toHaveBeenCalled();
-    expect(r).toEqual({ facts: [], notes: ["[이미지를 불러오지 못했습니다: w.png]"] });
+    expect(r).toEqual({
+      facts: [],
+      notes: ["[이미지를 불러오지 못했습니다: w.png]"],
+      reasons: ["url:not-attachment-id"],
+    });
   });
 
   it("알림 줄과 facts 는 첨부 순서를 따른다, 첨부가 없으면 둘 다 비어 있다", async () => {
@@ -75,7 +80,67 @@ describe("prepareInboundMedia", () => {
     await expect(prepareInboundMedia([], { download: vi.fn(), save: vi.fn() })).resolves.toEqual({
       facts: [],
       notes: [],
+      reasons: [],
     });
+  });
+});
+
+describe("prepareInboundMedia — 병렬 받기·사유", () => {
+  it("받기는 한꺼번에 시작하고, 늦게 끝난 장이 있어도 facts·notes 는 첨부 순서 그대로", async () => {
+    const [a, b, c, d] = [img("a.png"), file("b.pdf"), img("c.png"), img("d.png")];
+    const pending = new Map<string, (v: { bytes: Buffer; mime: string }) => void>();
+    const download = vi.fn(
+      (id: string) =>
+        new Promise<{ bytes: Buffer; mime: string }>((resolve, reject) => {
+          if (id === d.id) reject(new MediaHttpError("첨부 받기 실패 404", 404));
+          else pending.set(id, resolve);
+        }),
+    );
+    const run = prepareInboundMedia([a, b, c, d], {
+      download,
+      save: async (_b, _m, name) => ({ path: `/m/${name}`, contentType: "image/png" }),
+    });
+    await vi.waitFor(() => expect(download).toHaveBeenCalledTimes(3));
+    // 뒤 장부터 끝낸다
+    pending.get(c.id)!({ bytes: Buffer.from([1]), mime: "image/png" });
+    await Promise.resolve();
+    pending.get(a.id)!({ bytes: Buffer.from([1]), mime: "image/png" });
+    const r = await run;
+    expect(r.facts.map((f) => f.fileName)).toEqual(["a.png", "c.png"]);
+    expect(r.notes).toEqual(["[첨부 파일: b.pdf]", "[이미지를 불러오지 못했습니다: d.png]"]);
+  });
+
+  it("실패 사유(reasons)는 단계와 경로 없는 종류 — HTTP 상태·오류 코드·오류 이름", async () => {
+    const [a, b, c, d] = [img("a.png"), img("b.png"), img("c.png"), img("d.png")];
+    const r = await prepareInboundMedia([a, b, c, d], {
+      download: async (id) => {
+        if (id === a.id) throw new MediaHttpError("첨부 받기 실패 404", 404);
+        if (id === b.id)
+          throw new DOMException("The operation was aborted due to timeout /Users/x", "TimeoutError");
+        return { bytes: Buffer.from([1]), mime: "image/png" };
+      },
+      save: async (_b, _m, name) => {
+        if (name === "c.png") throw Object.assign(new Error("too big /Users/x/c.png"), { code: "too-large" });
+        if (name === "d.png") throw new Error("disk full at /Users/x/media");
+        return { path: "/m/x" };
+      },
+    });
+    expect(r.facts).toEqual([]);
+    expect(r.reasons).toEqual(["download:http-404", "download:TimeoutError", "save:too-large", "save:Error"]);
+    expect(r.reasons.join(" ")).not.toContain("/Users");
+  });
+});
+
+describe("inboundSaveArgs", () => {
+  it("saveMediaBuffer 인자 — inbound 하위 폴더·에이전트 상한 maxBytes·원래 이름", () => {
+    const bytes = Buffer.from([1]);
+    expect(inboundSaveArgs(bytes, "image/png", "a.png")).toEqual([
+      bytes,
+      "image/png",
+      "inbound",
+      ATTACHMENT_LIMITS.agentFileMaxBytes,
+      "a.png",
+    ]);
   });
 });
 

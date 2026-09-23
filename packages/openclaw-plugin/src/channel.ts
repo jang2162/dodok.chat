@@ -9,7 +9,7 @@
  *   첨부 바이트는 브리지 오리진 HTTP 로 — 인바운드 이미지는 GET 해 Gateway 미디어 저장소에, 아웃바운드 미디어는 POST 해 attachmentIds 로
  */
 import { randomUUID } from "node:crypto";
-import { ATTACHMENT_LIMITS, type InboundDeliver, type InboundDeliverResult } from "@dodok/shared";
+import { type InboundDeliver, type InboundDeliverResult } from "@dodok/shared";
 import {
   buildChannelConfigSchema,
   buildChannelOutboundSessionRoute,
@@ -35,7 +35,7 @@ import {
 import { writeChannelConfig } from "./config-writer";
 import { channelPromptContext } from "./context";
 import { toDeliverResult, toInboundFacts } from "./inbound";
-import { appendNotes, prepareInboundMedia } from "./inbound-media";
+import { appendNotes, inboundSaveArgs, prepareInboundMedia } from "./inbound-media";
 import { bridgeHttpOrigin, downloadAttachment, uploadAttachment } from "./media-http";
 import {
   buildOutboundMessage,
@@ -50,6 +50,8 @@ import {
   collectDeliverMediaSources,
   collectToolMediaSources,
   deliverFailureLine,
+  loaderOptions,
+  shouldDeliverFinal,
   toolFailureMessage,
   uploadOutboundMedia,
 } from "./outbound-media";
@@ -134,20 +136,20 @@ async function dispatchInbound(params: {
     download: (id) => downloadAttachment({ origin, token, id }),
     save: async (bytes, mime, name) => {
       if (!save) throw new Error("saveMediaBuffer unavailable");
-      // maxBytes 를 반드시 준다 — 기본 5 MB 에 기대지 않는다. 릴레이된 에이전트 이미지도 오므로 에이전트 상한으로(6 MiB 넘는 이미지는 Gateway 가 재압축한다, 스파이크 1-12)
-      return await save(bytes, mime, "inbound", ATTACHMENT_LIMITS.agentFileMaxBytes, name);
+      return await save(...inboundSaveArgs(bytes, mime, name));
     },
   });
   // fact 에 url 은 넣지 않는다(전사에 남는다). 옛 MediaPath* 필드는 쓰지 않는다
   const media = inboundMedia.facts.length > 0 ? toInboundMediaFacts(inboundMedia.facts) : undefined;
   const body = appendNotes(facts.body, inboundMedia.notes);
   if (delivery.message.attachments.length > 0) {
-    // 경로는 싣지 않는다 — 개수만
+    // 경로는 싣지 않는다 — 개수와 실패 단계·종류(download:http-404 등)만
     logger.info(
       logLine("inbound-media", {
         deliveryId: facts.correlation.deliveryId,
         images: inboundMedia.facts.length,
         notes: inboundMedia.notes.length,
+        reasons: inboundMedia.reasons,
       }),
     );
   }
@@ -239,14 +241,14 @@ async function dispatchInbound(params: {
             }),
           );
           // 미디어만 있는 최종 응답도 보낸다(스펙 5.2 결함). 텍스트도 미디어도 없을 때만 돌아간다
-          if (info.kind !== "final" || (!text.trim() && sources.length === 0)) return;
+          if (!shouldDeliverFinal(info.kind, text, sources.length)) return;
           const outcome =
             sources.length === 0
               ? { ids: [], failures: [] }
               : await uploadOutboundMedia(sources, {
                   // deliver 에는 mediaAccess 가 없다 — 스테이징 경로는 기본 루트 안이다(스파이크 2-9). fs.readFile 직접 금지
                   load: async (src) => {
-                    const r = await loadWebMediaRaw(src, { maxBytes: account.mediaMaxBytes });
+                    const r = await loadWebMediaRaw(src, loaderOptions(undefined, account.mediaMaxBytes));
                     return {
                       bytes: r.buffer,
                       ...(r.contentType ? { contentType: r.contentType } : {}),
@@ -270,6 +272,8 @@ async function dispatchInbound(params: {
                 deliveryId: facts.correlation.deliveryId,
                 uploaded: outcome.ids.length,
                 failed: outcome.failures.length,
+                // 원문은 가린 뒤 로그에만 — 채널 본문에는 고정 사유만 간다
+                details: outcome.failures.map((f) => f.detail),
               }),
             );
           }
@@ -487,12 +491,7 @@ export const dodokChannelPlugin = createChatChannelPlugin<ResolvedDodokAccount>(
           const outcome = await uploadOutboundMedia(sources, {
             // 호스트 정책(localRoots·readFile·workspaceDir)을 그대로 넘긴다 — fs.readFile 직접 금지
             load: async (src) => {
-              const r = await loadWebMediaRaw(src, {
-                maxBytes,
-                ...(access?.localRoots ? { localRoots: access.localRoots } : {}),
-                ...(access?.readFile ? { readFile: access.readFile } : {}),
-                ...(access?.workspaceDir ? { workspaceDir: access.workspaceDir } : {}),
-              });
+              const r = await loadWebMediaRaw(src, loaderOptions(access, maxBytes));
               return {
                 bytes: r.buffer,
                 ...(r.contentType ? { contentType: r.contentType } : {}),
@@ -504,7 +503,11 @@ export const dodokChannelPlugin = createChatChannelPlugin<ResolvedDodokAccount>(
             maxBytes,
           });
           console.info(
-            logLine("tool-send-media", { uploaded: outcome.ids.length, failed: outcome.failures.length }),
+            logLine("tool-send-media", {
+              uploaded: outcome.ids.length,
+              failed: outcome.failures.length,
+              details: outcome.failures.map((f) => f.detail),
+            }),
           );
           // 하나라도 실패하면 툴 호출을 실패로 — 모델이 보고 고칠 수 있다. 이미 올린 것은 미묶음으로 남아 서버 정리가 지운다
           if (outcome.failures.length > 0) throw toolInputError(toolFailureMessage(outcome.failures));

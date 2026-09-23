@@ -105,6 +105,13 @@ describe("media-http", () => {
     await expect(
       downloadAttachment({ origin: "http://h", token: "t", id: ID, fetch: param as never }),
     ).resolves.toMatchObject({ mime: "image/png" });
+    // 빈 값·매개변수만 있는 값도 octet-stream(`??` 가 아니라 `||`)
+    for (const ct of ["", ";charset=x"]) {
+      const empty = vi.fn(async () => new Response(new Uint8Array([1]), { headers: { "content-type": ct } }));
+      await expect(
+        downloadAttachment({ origin: "http://h", token: "t", id: ID, fetch: empty as never }),
+      ).resolves.toMatchObject({ mime: "application/octet-stream" });
+    }
   });
 
   it("올리기: 네트워크 오류가 retries 를 넘으면 그 오류를 던진다", async () => {
