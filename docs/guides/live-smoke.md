@@ -61,6 +61,10 @@ shasum -a 256 packages/openclaw-plugin/dist/index.js ~/.openclaw-dev/extensions/
 
 설치는 떠 있는 Gateway 에 반영되지 않는다(「next Gateway start」) — Gateway 를 이 뒤에 띄우거나 재시작한다.
 
+> ⚠ **Gateway 를 먼저 내리고 설치한다.** 2026.9.5 는 떠 있는 Gateway 에 라이브 리로드를 시도하다
+> `unauthorized: device token scope mismatch (re-pair or approve scope upgrade)` 로 실패하는데, **파일도 갱신되지 않는다**.
+> 실패를 놓치면 옛 번들을 그대로 재게 된다 — **설치 뒤 위 sha 두 줄이 같은지 반드시 확인**한다(c2-t16 이 한 번 걸렸다).
+
 ### (c) dev Gateway 기동
 
 ```bash
