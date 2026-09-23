@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { Ack } from "../common";
 import { BRIDGE_PROTOCOL, Id, IsoDateTime } from "../common";
 import { ComponentsV1 } from "../components";
-import { Attachment } from "../domain";
+import { ATTACHMENT_LIMITS, Attachment } from "../domain";
 
 export const BridgeCapability = z.enum(["agents.list", "config.set", "typing", "run_id_in_outbound"]);
 export type BridgeCapability = z.infer<typeof BridgeCapability>;
@@ -55,7 +55,7 @@ export const InboundDeliver = z.object({
     id: Id,
     author: InboundAuthor,
     text: z.string(), // renderForAgent 결과 (@handle 평문)
-    attachments: z.array(Attachment).max(10),
+    attachments: z.array(Attachment).max(ATTACHMENT_LIMITS.perMessage),
     ts: IsoDateTime,
   }),
   context: InboundContext,
@@ -90,7 +90,7 @@ export const OutboundMessage = z.object({
   text: z.string().max(100_000), // 평문 (@handle) — 서버가 tokenize
   components: ComponentsV1.optional(),
   /** 브리지 HTTP 로 먼저 올린 첨부 id(스펙 3장 2). 이름·크기·MIME 은 서버 기록이 정본이다 */
-  attachmentIds: z.array(Id).max(10).default([]),
+  attachmentIds: z.array(Id).max(ATTACHMENT_LIMITS.perMessage).default([]),
   ts: IsoDateTime,
 });
 export type OutboundMessage = z.infer<typeof OutboundMessage>;

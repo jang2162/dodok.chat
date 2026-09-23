@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { Ack } from "../common";
 import { Id } from "../common";
 import {
+  ATTACHMENT_LIMITS,
   AgentProvider,
   Approval,
   ApprovalDecision,
@@ -28,7 +29,7 @@ export const MessageSend = z
     channelId: Id,
     clientMsgId: z.string().min(1).max(64),
     bodyMd: z.string().max(100_000), // 토큰 본문. 첨부가 있으면 비어도 된다
-    attachments: z.array(Id).max(10).optional(), // 업로드 API로 먼저 올린 첨부 id
+    attachments: z.array(Id).max(ATTACHMENT_LIMITS.perMessage).optional(), // 업로드 API로 먼저 올린 첨부 id
     replyTo: Id.optional(),
   })
   .refine((v) => v.bodyMd.trim() !== "" || (v.attachments?.length ?? 0) > 0, {

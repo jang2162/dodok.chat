@@ -157,7 +157,7 @@ export const Message = z.object({
   authorId: Id.optional(), // system이면 없음
   bodyMd: z.string().max(100_000),
   mentions: MentionSet,
-  attachments: z.array(Attachment).max(10).default([]),
+  attachments: z.array(Attachment).max(ATTACHMENT_LIMITS.perMessage).default([]),
   components: ComponentsV1.optional(),
   componentState: ComponentState.optional(), // components가 있을 때 서버가 부여 (만료 시각·소비된 아이템)
   /**
