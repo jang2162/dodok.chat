@@ -125,30 +125,34 @@ it("(d) wire 가 connected 가 아니면 전송 버튼 비활성 + 「연결되�
   expect(button).toBeEnabled();
 });
 
-describe("(g) 붙여넣기·끌어 놓기", () => {
-  const png = () => new File(["x"], "a.png", { type: "image/png" });
+describe("(g) 붙여넣기·끌어 놓기 — 이미지 아닌 파일(이미지는 Composer.attachments.test)", () => {
+  const pdf = () => new File(["x"], "a.pdf", { type: "application/pdf" });
 
-  it("파일만 온 붙여넣기 → 토스트, 본문 변화 없음", () => {
+  it("이미지 아닌 파일만 온 붙여넣기 → 「이미지만 올릴 수 있습니다」 토스트, 본문 변화 없음", () => {
     const { box, editor } = renderComposer();
     setDoc(editor, doc(p(t("그대로"))));
-    fireEvent.paste(box, { clipboardData: { files: [png()], types: ["Files"], getData: () => "" } });
-    expect(toastInfo).toHaveBeenCalledWith("이미지는 Phase 2 에서 지원합니다", expect.anything());
+    fireEvent.paste(box, { clipboardData: { files: [pdf()], types: ["Files"], getData: () => "" } });
+    expect(toastInfo).toHaveBeenCalledWith("이미지만 올릴 수 있습니다", { id: "attach-only-images" });
     expect(editor.getJSON()).toEqual(doc(p(t("그대로"))));
+    expect(screen.queryByRole("list", { name: "첨부할 이미지" })).toBeNull();
   });
 
-  it("글과 파일이 함께 오면 글만 들어가고 토스트는 없다", () => {
+  it("글과 이미지 아닌 파일이 함께 오면 글은 들어가고 파일은 알린다", () => {
     const { box, editor } = renderComposer();
     setDoc(editor, doc(p(t("앞 "))));
     const getData = (type: string) => (type === "text/plain" ? "붙인 글" : "");
-    fireEvent.paste(box, { clipboardData: { files: [png()], types: ["text/plain", "Files"], getData } });
-    expect(toastInfo).not.toHaveBeenCalled();
+    fireEvent.paste(box, { clipboardData: { files: [pdf()], types: ["text/plain", "Files"], getData } });
+    expect(toastInfo).toHaveBeenCalledWith("이미지만 올릴 수 있습니다", { id: "attach-only-images" });
     expect(editor.getText()).toBe("앞 붙인 글");
   });
 
-  it("파일 끌어 놓기 → 토스트", () => {
+  it("이미지 아닌 파일 끌어 놓기 → 토스트, 브라우저가 열지 않게 막는다", () => {
     const { box } = renderComposer();
-    fireEvent.drop(box, { dataTransfer: { files: [png()], types: ["Files"], getData: () => "" } });
-    expect(toastInfo).toHaveBeenCalledWith("이미지는 Phase 2 에서 지원합니다", expect.anything());
+    const dropped = fireEvent.drop(box, {
+      dataTransfer: { files: [pdf()], types: ["Files"], getData: () => "" },
+    });
+    expect(dropped).toBe(false);
+    expect(toastInfo).toHaveBeenCalledWith("이미지만 올릴 수 있습니다", { id: "attach-only-images" });
   });
 });
 

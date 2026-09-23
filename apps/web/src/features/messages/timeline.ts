@@ -1,4 +1,4 @@
-import type { Message } from "@dodok/shared";
+import type { Attachment, Message } from "@dodok/shared";
 
 export type PendingState = "sending" | "failed";
 export type PendingMessage = {
@@ -7,6 +7,8 @@ export type PendingMessage = {
   bodyMd: string;
   createdAt: string;
   state: PendingState;
+  /** 올려 둔 첨부 — 다시 보내기도 같은 id 로 간다 */
+  attachments?: Attachment[];
 };
 /** 확정 메시지(seq 오름차순)와 보내는 중 항목. 보내는 중 항목은 항상 목록 끝에 그린다(스펙 4.3-6) */
 export type Timeline = { items: Message[]; pending: PendingMessage[]; hasOlder: boolean; lastSeq: number };

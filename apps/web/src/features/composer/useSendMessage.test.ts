@@ -7,6 +7,7 @@ import { getTimeline } from "@/realtime/timelineCache";
 import { useWireStatus } from "@/realtime/wire";
 import { useSendMessage } from "./useSendMessage";
 import { createFakeSocket, type FakeSocket } from "../../../test/fakeSocket";
+import { uploaded } from "../../../test/fakeXhr";
 import { CH, msg } from "../../../test/fixtures";
 
 // 소켓만 가짜로 — WireProvider 의 나머지는 원본
@@ -168,4 +169,46 @@ it("반환한 함수들은 렌더 사이에 같은 것(Provider 값이 매번 �
   expect(result.current.send).toBe(first.send);
   expect(result.current.retry).toBe(first.retry);
   expect(result.current.discard).toBe(first.discard);
+});
+
+it("첨부가 있으면 보내는 중 항목에 싣고 message.send 에 id 를 — 글 없이도 보낸다(bodyMd 빈 문자열)", async () => {
+  fake.onAck("message.send", () => ({ ok: false, error: { code: "INTERNAL", message: "x" } }));
+  const a1 = uploaded(1);
+  const a2 = uploaded(2);
+  const send = renderSend();
+  await act(() => send.current.send("", [a1, a2]));
+  const [payload] = fake.sentOf("message.send") as SendPayload[];
+  expect(payload).toEqual({
+    channelId: CH,
+    clientMsgId: expect.any(String),
+    bodyMd: "",
+    attachments: [a1.id, a2.id],
+  });
+  expect(getTimeline(qc, CH)?.pending).toEqual([
+    expect.objectContaining({ bodyMd: "", attachments: [a1, a2], state: "failed" }),
+  ]);
+});
+
+it("첨부 있는 전송의 retry 는 같은 clientMsgId·같은 첨부 id 로(서버가 clientMsgId 로 멱등)", async () => {
+  fake.onAck("message.send", () => ({ ok: false, error: { code: "INTERNAL", message: "x" } }));
+  const a1 = uploaded(1);
+  const send = renderSend();
+  await act(() => send.current.send("사진", [a1]));
+  const id = getTimeline(qc, CH)?.pending[0]?.clientMsgId ?? "";
+
+  fake.onAck("message.send", (p) => confirmed(p, 4));
+  await act(() => send.current.retry(id));
+  const sent = { channelId: CH, clientMsgId: id, bodyMd: "사진", attachments: [a1.id] };
+  expect(fake.sentOf("message.send")).toEqual([sent, sent]);
+  expect(getTimeline(qc, CH)?.pending).toEqual([]);
+});
+
+it("빈 첨부 배열이면 페이로드·보내는 중 항목에 attachments 를 싣지 않는다", async () => {
+  fake.onAck("message.send", () => ({ ok: false, error: { code: "INTERNAL", message: "x" } }));
+  const send = renderSend();
+  await act(() => send.current.send("글만", []));
+  expect(fake.sentOf("message.send")).toEqual([
+    { channelId: CH, clientMsgId: expect.any(String), bodyMd: "글만" },
+  ]);
+  expect(getTimeline(qc, CH)?.pending[0]).not.toHaveProperty("attachments");
 });

@@ -22,7 +22,7 @@ const text = () => ({
   dataTransfer: { types: ["text/plain"], files: [], getData: () => "글", dropEffect: "copy" },
 });
 
-it("앱 어디에 파일을 끌어 놓아도 브라우저가 파일을 열지 않는다 — 놓으면 「이미지는 Phase 2」 토스트 하나", () => {
+it("앱 어디에 파일을 끌어 놓아도 브라우저가 파일을 열지 않는다 — 놓으면 「이미지는 입력 칸에 놓아 주세요」 토스트 하나", () => {
   const info = vi.spyOn(toast, "info");
   const { getByTestId } = render(<Page />);
   const list = getByTestId("list");
@@ -30,7 +30,7 @@ it("앱 어디에 파일을 끌어 놓아도 브라우저가 파일을 열지 �
   expect(fireEvent.dragOver(list, files())).toBe(false);
   expect(fireEvent.drop(list, files())).toBe(false);
   expect(info).toHaveBeenCalledTimes(1);
-  expect(info).toHaveBeenCalledWith("이미지는 Phase 2 에서 지원합니다", { id: "files-later" });
+  expect(info).toHaveBeenCalledWith("이미지는 입력 칸에 놓아 주세요", { id: "drop-on-composer" });
 });
 
 it("drop 을 주지 않는 브라우저에서도 끌고 있는 동안 안내한다 — 커서는 「놓을 수 없음」", () => {
@@ -39,7 +39,7 @@ it("drop 을 주지 않는 브라우저에서도 끌고 있는 동안 안내한�
   const dragging = files();
   expect(fireEvent.dragOver(getByTestId("list"), dragging)).toBe(false);
   expect(info).toHaveBeenCalledTimes(1);
-  expect(info).toHaveBeenCalledWith("이미지는 Phase 2 에서 지원합니다", { id: "files-later" });
+  expect(info).toHaveBeenCalledWith("이미지는 입력 칸에 놓아 주세요", { id: "drop-on-composer" });
   expect(dragging.dataTransfer.dropEffect).toBe("none");
 });
 

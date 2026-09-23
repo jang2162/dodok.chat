@@ -31,7 +31,8 @@ type ImageProps = {
   attachment: Attachment;
   single: boolean;
   label?: string;
-  onOpen: (el: HTMLElement) => void;
+  /** 없으면 누를 것 없이 그림만(보내는 중 항목) */
+  onOpen?: (el: HTMLElement) => void;
 };
 
 /**
@@ -44,37 +45,47 @@ export function AttachmentImage({ attachment: a, single, label = a.name, onOpen 
   if (failed || !src)
     return <FileCard name={label} size={a.size} mime={a.mime} href={src} note={IMAGE_FAILED} />;
   const box = single ? singleBox(a) : undefined;
+  const frame = cn(
+    "block max-w-full overflow-hidden rounded-md bg-muted",
+    single ? "max-h-80 max-w-[360px]" : "aspect-square w-full",
+  );
+  const img = (
+    <img
+      src={src}
+      alt={label}
+      loading="lazy"
+      width={a.width}
+      height={a.height}
+      onError={() => setFailed(true)}
+      className={cn("object-contain", box || !single ? "size-full" : "max-h-80 max-w-full")}
+    />
+  );
+  if (!onOpen)
+    return (
+      <div className={frame} style={box}>
+        {img}
+      </div>
+    );
   return (
     <button
       type="button"
       aria-label={`${label} 크게 보기`}
       onClick={(e) => onOpen(e.currentTarget)}
-      className={cn(
-        "block max-w-full overflow-hidden rounded-md bg-muted outline-none focus-visible:ring-2 focus-visible:ring-ring",
-        single ? "max-h-80 max-w-[360px]" : "aspect-square w-full",
-      )}
+      className={cn(frame, "outline-none focus-visible:ring-2 focus-visible:ring-ring")}
       style={box}
     >
-      <img
-        src={src}
-        alt={label}
-        loading="lazy"
-        width={a.width}
-        height={a.height}
-        onError={() => setFailed(true)}
-        className={cn("object-contain", box || !single ? "size-full" : "max-h-80 max-w-full")}
-      />
+      {img}
     </button>
   );
 }
 
-/** 메시지 첨부 이미지 격자(스펙 6.2) — 한 장이면 원본 비율로 최대 360×320, 두 장 이상이면 2열 */
+/** 메시지 첨부 이미지 격자(스펙 6.2) — 한 장이면 원본 비율로 최대 360×320, 두 장 이상이면 2열. `onOpen` 이 없으면 크게 보기 없이 */
 export function AttachmentGrid({
   images,
   onOpen,
 }: {
   images: readonly Attachment[];
-  onOpen: (index: number, trigger: HTMLElement) => void;
+  onOpen?: (index: number, trigger: HTMLElement) => void;
 }) {
   const single = images.length === 1;
   return (
@@ -83,7 +94,12 @@ export function AttachmentGrid({
       className={cn("grid gap-2", single ? "grid-cols-1 justify-items-start" : "max-w-[360px] grid-cols-2")}
     >
       {images.map((a, i) => (
-        <AttachmentImage key={a.id} attachment={a} single={single} onOpen={(el) => onOpen(i, el)} />
+        <AttachmentImage
+          key={a.id}
+          attachment={a}
+          single={single}
+          onOpen={onOpen && ((el) => onOpen(i, el))}
+        />
       ))}
     </div>
   );

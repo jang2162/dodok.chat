@@ -3,12 +3,14 @@ import Mention from "@tiptap/extension-mention";
 import { Placeholder } from "@tiptap/extension-placeholder";
 import { EditorContent, useEditor, useEditorState } from "@tiptap/react";
 import { StarterKit } from "@tiptap/starter-kit";
-import { SendHorizontalIcon } from "lucide-react";
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { isImageMime } from "@dodok/shared";
+import { ImagePlusIcon, SendHorizontalIcon } from "lucide-react";
+import { type DragEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useAgents, useMe, useMembers } from "@/api/queries";
-import { FILES_LATER, FILES_LATER_TOAST_ID } from "@/app/fileDrop";
 import { ResetSessionDialog } from "@/features/agents/ResetSessionDialog";
+import { ONLY_IMAGES } from "@/features/attachments/upload";
+import { useComposerAttachments } from "@/features/attachments/useComposerAttachments";
 import { abortErrorMessage } from "@/features/runs/abortError";
 import { selectChannelRuns, TERMINAL, useRunStore } from "@/features/runs/runStore";
 import { emitAck, useWireStatus, type WireSocket } from "@/realtime/wire";
@@ -16,6 +18,7 @@ import { useWire } from "@/realtime/WireProvider";
 import { Button } from "@/ui/button";
 import { mentionCandidates } from "./mentions";
 import { mentionSuggestion } from "./MentionList";
+import { PendingAttachments } from "./PendingAttachments";
 import { toBodyMd } from "./serialize";
 import { parseSlash } from "./slash";
 import { SubmitKeys } from "./submitKeys";
@@ -23,6 +26,17 @@ import { useSendMessage } from "./useSendMessage";
 import { useTyping } from "./useTyping";
 
 const PLACEHOLDER = "메시지 보내기 — @로 에이전트 부르기";
+const IMAGE_ACCEPT = "image/png,image/jpeg,image/gif,image/webp";
+
+/** 보내기를 막는 사유 — 우선순위 순(끊김이 먼저) */
+const BLOCKED = {
+  disconnected: "연결되면 보낼 수 있습니다",
+  uploading: "이미지를 올리는 중입니다",
+  failed: "올리지 못한 이미지를 빼 주세요",
+} as const;
+
+const draggingFiles = (e: { dataTransfer: DataTransfer | null }) =>
+  e.dataTransfer?.types.includes("Files") ?? false;
 
 /** ProseMirror 요소 — 입력 영역 높이 제한, 자리표시(Placeholder 의 data-placeholder), 목록·코드·인용·멘션 모양 */
 const EDITOR_CLASS = [
@@ -39,13 +53,16 @@ const EDITOR_CLASS = [
 type ResetTarget = { channelId: string; agentId: string; handle: string };
 
 /**
- * 작성기(스펙 5.1·4.4): Tiptap + @멘션. Enter 전송(토큰 본문 `toBodyMd`), `/stop`·`/new @에이전트` 는 메시지로 보내지 않는다.
- * wire 가 connected 가 아니면 입력은 받되 전송은 막는다. 초안은 채널마다 따로 둔다 — 채널을 옮겨도 이 인스턴스가 유지된다
+ * 작성기(스펙 5.1·4.4·6.1): Tiptap + @멘션. Enter 전송(토큰 본문 `toBodyMd`), `/stop`·`/new @에이전트` 는 메시지로 보내지 않는다.
+ * wire 가 connected 가 아니면 입력은 받되 전송은 막는다. 초안은 채널마다 따로 둔다 — 채널을 옮겨도 이 인스턴스가 유지된다.
+ * 이미지는 첨부 버튼·붙여넣기·끌어 놓기로 넣는 즉시 올린다. 올리기가 모두 끝나야(오류 칩 없이) 보낼 수 있고, 글 없이 이미지만도 된다
  */
 export function Composer({ channelId }: { channelId: string }) {
   const { socket } = useWire();
   const connected = useWireStatus((s) => s.status === "connected");
   const { send } = useSendMessage(channelId);
+  const attachments = useComposerAttachments(channelId);
+  const fileInput = useRef<HTMLInputElement>(null);
   const typing = useTyping(channelId);
   const members = useMembers(channelId);
   const agents = useAgents();
@@ -60,7 +77,12 @@ export function Composer({ channelId }: { channelId: string }) {
     [members.data, agents.data, me.data],
   );
   // 편집기는 한 번만 만든다 — 바뀌는 값은 ref 로 읽는다
-  const live = useRef({ candidates, submit: () => {}, notifyTyping: () => {} });
+  const live = useRef({
+    candidates,
+    submit: () => {},
+    notifyTyping: () => {},
+    addFiles: (_files: readonly File[]) => {},
+  });
   const menu = useRef({ open: false }).current;
   const drafts = useRef(new Map<string, JSONContent>()).current;
 
@@ -85,21 +107,18 @@ export function Composer({ channelId }: { channelId: string }) {
           "aria-autocomplete": "list",
           class: EDITOR_CLASS,
         },
-        // 텍스트만(스펙 5.1). 파일만 온 붙여넣기·끌어 놓기는 막고 알린다. 글이 함께 오면 글만 들어간다
+        // 붙여넣은 파일 중 이미지는 칩으로(스펙 6.1), 그 밖은 알린다. 글이 함께 오면 글도 들어간다
         handlePaste: (_view, event) => {
           const data = event.clipboardData;
-          if (!data?.files.length || data.getData("text/plain")) return false;
-          toast.info(FILES_LATER, { id: FILES_LATER_TOAST_ID });
-          return true;
+          const files = Array.from(data?.files ?? []);
+          if (files.length === 0) return false;
+          live.current.addFiles(files);
+          return !data?.getData("text/plain");
         },
         handleDOMEvents: {
-          // 파일 끌어 놓기는 ProseMirror 보다 먼저 막는다 — 놓친 자리에서는 브라우저가 파일을 열어 앱을 떠난다
-          drop: (_view, event) => {
-            if (!event.dataTransfer?.files.length) return false;
-            event.preventDefault();
-            toast.info(FILES_LATER, { id: FILES_LATER_TOAST_ID });
-            return true;
-          },
+          // 파일 끌기는 ProseMirror 가 손대지 않게 넘기고 작성기 상자(onDragOver·onDrop)가 받는다
+          dragover: (_view, event) => draggingFiles(event),
+          drop: (_view, event) => draggingFiles(event),
         },
       },
       onUpdate: ({ editor: ed }) => {
@@ -123,6 +142,18 @@ export function Composer({ channelId }: { channelId: string }) {
 
   live.current.candidates = candidates;
   live.current.notifyTyping = typing.notify;
+  live.current.addFiles = (files) => {
+    const images = files.filter((f) => isImageMime(f.type));
+    if (images.length < files.length) toast.info(ONLY_IMAGES, { id: "attach-only-images" });
+    if (images.length > 0) attachments.add(images);
+  };
+  const blocked = !connected
+    ? BLOCKED.disconnected
+    : attachments.uploading
+      ? BLOCKED.uploading
+      : attachments.failed
+        ? BLOCKED.failed
+        : undefined;
   live.current.submit = () => {
     const doc: JSONContent = editor.getJSON();
     const cmd = parseSlash(doc);
@@ -144,31 +175,77 @@ export function Composer({ channelId }: { channelId: string }) {
       editor.commands.clearContent();
       return;
     }
+    // 명령이 아니면 메시지 — 올리기가 끝나지 않았거나 오류 칩이 있으면 보내지 않는다(입력·칩은 그대로)
+    if (blocked) return;
     const bodyMd = toBodyMd(doc);
-    if (!bodyMd) return;
-    void send(bodyMd);
+    if (!bodyMd && attachments.ready.length === 0) return;
+    void send(bodyMd, attachments.ready);
+    attachments.clear();
     editor.commands.clearContent();
+  };
+
+  // 작성기 상자 어디에 놓아도 받는다 — 창 전역 차단(fileDrop)보다 먼저 막아 그쪽이 건드리지 않게 한다
+  const onDragOver = (e: DragEvent) => {
+    if (!draggingFiles(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+  };
+  const onDrop = (e: DragEvent) => {
+    const files = Array.from(e.dataTransfer?.files ?? []);
+    if (files.length === 0) return;
+    e.preventDefault();
+    live.current.addFiles(files);
   };
 
   return (
     <div className="px-4 pb-4">
-      <div className="flex items-end gap-2 rounded-lg border border-input bg-card px-3 py-1.5 shadow-xs focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/30">
-        <EditorContent editor={editor} className="min-w-0 flex-1" />
-        <Button
-          type="button"
-          size="icon"
-          variant="ghost"
-          aria-label="보내기"
-          aria-describedby={connected ? undefined : hintId}
-          disabled={!connected || empty}
-          onClick={() => live.current.submit()}
-        >
-          <SendHorizontalIcon />
-        </Button>
+      <div
+        className="rounded-lg border border-input bg-card px-3 py-1.5 shadow-xs focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/30"
+        onDragOver={onDragOver}
+        onDrop={onDrop}
+      >
+        <PendingAttachments items={attachments.items} onRemove={attachments.remove} />
+        <div className="flex items-end gap-2">
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            aria-label="이미지 첨부"
+            className="-ml-2"
+            onClick={() => fileInput.current?.click()}
+          >
+            <ImagePlusIcon />
+          </Button>
+          <input
+            ref={fileInput}
+            type="file"
+            multiple
+            accept={IMAGE_ACCEPT}
+            className="hidden"
+            tabIndex={-1}
+            aria-hidden
+            onChange={(e) => {
+              live.current.addFiles(Array.from(e.currentTarget.files ?? []));
+              e.currentTarget.value = ""; // 같은 파일을 다시 고를 수 있게
+            }}
+          />
+          <EditorContent editor={editor} className="min-w-0 flex-1" />
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            aria-label="보내기"
+            aria-describedby={blocked ? hintId : undefined}
+            disabled={!!blocked || (empty && attachments.ready.length === 0)}
+            onClick={() => live.current.submit()}
+          >
+            <SendHorizontalIcon />
+          </Button>
+        </div>
       </div>
-      {!connected && (
+      {blocked && (
         <p id={hintId} className="mt-1 text-xs text-muted-foreground">
-          연결되면 보낼 수 있습니다
+          {blocked}
         </p>
       )}
       {reset.target && (

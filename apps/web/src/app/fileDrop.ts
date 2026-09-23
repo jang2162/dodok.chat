@@ -1,15 +1,15 @@
 import { useEffect } from "react";
 import { toast } from "sonner";
 
-/** 첨부는 Phase 2(스펙 1장) — 작성기 붙여넣기·끌어 놓기와 같은 문구·토스트 id */
-export const FILES_LATER = "이미지는 Phase 2 에서 지원합니다";
-export const FILES_LATER_TOAST_ID = "files-later";
+/** 이미지는 작성기만 받는다(스펙 6.1) — 그 밖의 자리에 끌어 놓으면 이 문구 */
+export const DROP_ON_COMPOSER = "이미지는 입력 칸에 놓아 주세요";
+export const DROP_ON_COMPOSER_TOAST_ID = "drop-on-composer";
 
 const hasFiles = (e: DragEvent) => e.dataTransfer?.types.includes("Files") ?? false;
 
 /**
  * 앱 어디에 파일을 끌어 놓아도 브라우저가 그 파일을 열어 앱을 떠나지 않게 한다(web-t9 리뷰 M5).
- * 창에서 받으므로 스스로 처리한 자리(작성기 — 막고 알린다)는 이미 defaultPrevented 라 건드리지 않는다.
+ * 창에서 받으므로 스스로 처리한 자리(작성기 — 받아서 올린다)는 이미 defaultPrevented 라 건드리지 않는다.
  * 글 끌어 놓기(입력 칸)는 파일이 아니라 그대로 둔다
  */
 export function usePreventFileDrop(): void {
@@ -21,7 +21,7 @@ export function usePreventFileDrop(): void {
     const announce = () => {
       if (announced) return;
       announced = true;
-      toast.info(FILES_LATER, { id: FILES_LATER_TOAST_ID });
+      toast.info(DROP_ON_COMPOSER, { id: DROP_ON_COMPOSER_TOAST_ID });
     };
     const onDragOver = (e: DragEvent) => {
       if (e.defaultPrevented || !hasFiles(e)) return;

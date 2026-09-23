@@ -1,3 +1,4 @@
+import type { Attachment } from "@dodok/shared";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useMemo } from "react";
 import { addPending, removePending, setPendingState, upsert } from "@/features/messages/timeline";
@@ -6,9 +7,9 @@ import { emitAck, useWireStatus } from "@/realtime/wire";
 import { useWire } from "@/realtime/WireProvider";
 
 export type SendMessage = {
-  /** 보내는 중 항목을 넣고 `message.send`. 실패는 던지지 않고 항목을 `failed` 로 둔다 */
-  send(bodyMd: string): Promise<void>;
-  /** 같은 clientMsgId·같은 본문으로 다시(서버가 `(authorId, clientMsgId)` 로 멱등) */
+  /** 보내는 중 항목을 넣고 `message.send`. 실패는 던지지 않고 항목을 `failed` 로 둔다. 첨부가 있으면 본문은 비어도 된다 */
+  send(bodyMd: string, attachments?: readonly Attachment[]): Promise<void>;
+  /** 같은 clientMsgId·같은 본문·같은 첨부로 다시(서버가 `(authorId, clientMsgId)` 로 멱등) */
   retry(clientMsgId: string): Promise<void>;
   /** 캐시에서만 지운다 */
   discard(clientMsgId: string): void;
@@ -24,11 +25,17 @@ export function useSendMessage(channelId: string): SendMessage {
   const { socket } = useWire();
 
   const deliver = useCallback(
-    async (clientMsgId: string, bodyMd: string) => {
+    async (clientMsgId: string, bodyMd: string, attachments: readonly Attachment[] = []) => {
       const fail = () => updateTimeline(qc, channelId, (t) => setPendingState(t, clientMsgId, "failed"));
       if (!socket || useWireStatus.getState().status !== "connected") return fail();
       try {
-        const { message } = await emitAck(socket, "message.send", { channelId, clientMsgId, bodyMd });
+        const ids = attachments.map((a) => a.id);
+        const { message } = await emitAck(socket, "message.send", {
+          channelId,
+          clientMsgId,
+          bodyMd,
+          ...(ids.length > 0 ? { attachments: ids } : {}),
+        });
         updateTimeline(qc, channelId, (t) => upsert(t, message));
       } catch {
         // wire ack 오류(TIMEOUT 포함)는 토스트 없이 항목에만 보인다(스펙 8장)
@@ -39,13 +46,14 @@ export function useSendMessage(channelId: string): SendMessage {
   );
 
   const send = useCallback(
-    async (bodyMd: string) => {
+    async (bodyMd: string, attachments: readonly Attachment[] = []) => {
       const clientMsgId = crypto.randomUUID();
       const createdAt = new Date().toISOString();
+      const withAttachments = attachments.length > 0 ? { attachments: [...attachments] } : {};
       updateTimeline(qc, channelId, (t) =>
-        addPending(t, { clientMsgId, channelId, bodyMd, createdAt, state: "sending" }),
+        addPending(t, { clientMsgId, channelId, bodyMd, createdAt, state: "sending", ...withAttachments }),
       );
-      await deliver(clientMsgId, bodyMd);
+      await deliver(clientMsgId, bodyMd, attachments);
     },
     [qc, channelId, deliver],
   );
@@ -55,7 +63,7 @@ export function useSendMessage(channelId: string): SendMessage {
       const p = getTimeline(qc, channelId)?.pending.find((x) => x.clientMsgId === clientMsgId);
       if (!p) return;
       updateTimeline(qc, channelId, (t) => setPendingState(t, clientMsgId, "sending"));
-      await deliver(clientMsgId, p.bodyMd);
+      await deliver(clientMsgId, p.bodyMd, p.attachments);
     },
     [qc, channelId, deliver],
   );

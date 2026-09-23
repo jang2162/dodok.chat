@@ -5,6 +5,7 @@ import { LINK_BLOCKED } from "@/features/components/blocks/artifact";
 import { MessageItem } from "@/features/messages/MessageItem";
 import { msg } from "../../../test/fixtures";
 import { renderWithClient } from "../../../test/messages";
+import { AttachmentGrid } from "./AttachmentGrid";
 import { MessageAttachments } from "./MessageAttachments";
 
 // MessageItem 의 components 카드 — 소켓 없음(WireProvider 밖과 같다)
@@ -92,6 +93,27 @@ describe("MessageAttachments — 이미지(스펙 6.2)", () => {
       "href",
       `/api/v1/attachments/${ID1}`,
     );
+  });
+});
+
+describe("AttachmentGrid — 열 수 없는 격자(보내는 중)", () => {
+  it("onOpen 이 없으면 「크게 보기」 버튼 없이 그림만 — alt·자리는 그대로", () => {
+    const { container } = render(<AttachmentGrid images={[chart, image(ID3, "b.png", 10, 10)]} />);
+    expect(screen.queryAllByRole("button")).toEqual([]);
+    expect(screen.getByRole("img", { name: "chart.png" })).toHaveAttribute(
+      "src",
+      `/api/v1/attachments/${ID1}`,
+    );
+    expect(screen.getByRole("img", { name: "b.png" })).toBeInTheDocument();
+    expect(container.querySelector("[data-slot=attachment-grid]")?.children).toHaveLength(2);
+  });
+
+  it("한 장도 상자 크기는 같게 — 360×320 안에 비율대로", () => {
+    const { container } = render(<AttachmentGrid images={[image(ID1, "tall.png", 300, 6000)]} />);
+    const box = container.querySelector("[data-slot=attachment-grid] > *") as HTMLElement;
+    expect(box.tagName).toBe("DIV");
+    expect(box.style.width).toBe("16px");
+    expect(box.style.aspectRatio).toBe("300 / 6000");
   });
 });
 
