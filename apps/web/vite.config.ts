@@ -1,13 +1,46 @@
 import { fileURLToPath } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
+import { VitePWA } from "vite-plugin-pwa";
 import { defineConfig } from "vitest/config";
 
 // 브라우저에게 웹과 API 는 같은 출처다 — 서버 REST 에 CORS 가 없고, 세션 쿠키(httpOnly)가 wire 핸드셰이크에도 붙는다(스펙 2.5)
 const api = process.env.DODOK_API_ORIGIN ?? "http://127.0.0.1:3000";
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [
+    react(),
+    tailwindcss(),
+    // 서비스 워커는 직접 쓴다(src/sw.ts) — 푸시 핸들러가 들어가야 해서 generateSW 로는 안 된다(스펙 결정 6)
+    VitePWA({
+      strategies: "injectManifest",
+      srcDir: "src",
+      filename: "sw.ts",
+      registerType: "prompt",
+      injectRegister: false, // main.tsx 가 startPwa 로 등록한다
+      manifest: {
+        name: "dodok",
+        short_name: "dodok",
+        description: "사람과 AI 에이전트가 같은 채널에서 대화하는 메신저",
+        lang: "ko",
+        start_url: "/",
+        scope: "/",
+        display: "standalone",
+        // 라이트 배경 토큰 --background oklch(0.975 0.002 265) 의 sRGB 값(theme/tokens.css). 다크는 index.html 의 meta 가 맡는다
+        background_color: "#f6f7f8",
+        theme_color: "#f6f7f8",
+        icons: [
+          { src: "pwa-192x192.png", sizes: "192x192", type: "image/png" },
+          { src: "pwa-512x512.png", sizes: "512x512", type: "image/png" },
+          { src: "maskable-icon-512x512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
+        ],
+      },
+      // 아이콘은 globPatterns 가 이미 담는다 — 매니페스트 아이콘을 따로 더하면 같은 항목이 두 번 들어간다
+      includeManifestIcons: false,
+      injectManifest: { globPatterns: ["**/*.{js,css,html,svg,png,woff2}"] },
+      devOptions: { enabled: true, type: "module", navigateFallback: "index.html" },
+    }),
+  ],
   resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
   build: {
     // chunkSizeWarningLimit 은 기본값 500 그대로 둔다 — 전역 임계값을 올리면 가장 큰 조각만이 아니라

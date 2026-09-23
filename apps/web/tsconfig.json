@@ -3,8 +3,10 @@
   "compilerOptions": {
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "jsx": "react-jsx",
-    "types": ["vite/client", "@testing-library/jest-dom/vitest"],
+    "types": ["vite/client", "vite-plugin-pwa/client", "@testing-library/jest-dom/vitest"],
     "paths": { "@/*": ["./src/*"] }
   },
-  "include": ["src", "test", "vite.config.ts"]
+  "include": ["src", "test", "vite.config.ts"],
+  // 서비스 워커는 DOM 이 아니라 WebWorker 전역에서 돈다 — tsconfig.sw.json 이 따로 검사한다
+  "exclude": ["src/sw.ts", "src/pwa/sw-logic.ts"]
 }
