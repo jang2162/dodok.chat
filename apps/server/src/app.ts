@@ -139,6 +139,9 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
 
     const io: WireServer = new Server(fastify.server, {
       cors: { origin: config.APP_ORIGIN, credentials: true },
+      // 웹은 socket.io-client 를 번들해 쓴다. 켜 두면 운영 번들에서는 client-dist 가 없어 GET /socket.io/socket.io.js 가
+      // 200 머리만 보내고 끊긴다(소스 실행은 파일을 준다) — 쓰는 곳이 없는 표면이라 두 모드 모두 끈다(bundle-smoke 가 400 을 확인)
+      serveClient: false,
     });
     undo.push({ step: "io", run: () => io.close() });
 
