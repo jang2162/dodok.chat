@@ -1,6 +1,6 @@
 # dev Gateway 실연(live smoke) — 서버 코어를 실제 Gateway·플러그인·모델로 한 번 돌리기
 
-작성: 2026-09-15 (서버 코어 계획 태스크 15) · 근거: 서버 코어 스펙 9.3, ADR 0002 2절·9절, ADR 0003 2절 · 7절 2026-09-20 (웹 MVP 계획 태스크 15) · 8~9절 2026-09-21 (활동 패널·승인 계획 태스크 11) · 10절 2026-09-23 (components v1 계획 태스크 11)
+작성: 2026-09-15 (서버 코어 계획 태스크 15) · 근거: 서버 코어 스펙 9.3, ADR 0002 2절·9절, ADR 0003 2절 · 7절 2026-09-20 (웹 MVP 계획 태스크 15) · 8~9절 2026-09-21 (활동 패널·승인 계획 태스크 11) · 10절 2026-09-23 (components v1 계획 태스크 11) · 11절 2026-09-23 (c2-t14 하네스, ADR 0004)
 
 ## 1. 목적
 
@@ -10,13 +10,14 @@
 
 2~6절은 서버 코어(Phase 1 ①, 2026-09-15 에 돌린 결과가 5절)다. **웹(Phase 1 ②)을 같은 환경에 얹는 절차와 2026-09-20 에 돌린 결과는 7절**이다.
 **승인(Phase 2 ①)을 실물에서 일으키는 절차는 8절** — 기본 설정에서는 승인이 한 번도 안 뜬다. **사람만 확인할 수 있는 것(소리·팝업·잠금 화면·VoiceOver)은 9절**이다.
-**components v1(Phase 2 ②)을 실제 모델로 돌린 절차와 2026-09-23 결과는 10절**이다 — ❗ 모델 런 안의 `message` 툴 전송이 실물에서 깨져 있다(10.4).
+**components v1(Phase 2 ②)을 실제 모델로 돌린 절차와 2026-09-23 결과는 10절**이다 — ❗ 모델 런 안의 `message` 툴 전송이 실물에서 깨져 있었다(10.4).
+원인(2026.9.5 번들 이중 평가)과 고침은 ADR 0004, **모델 런 없이 실물 Gateway 의 모델 경로를 두드리는 하네스는 11절**이다.
 
 ## 2. 전제
 
 | 항목 | 값 |
 | --- | --- |
-| OpenClaw CLI | `/Applications/OpenClaw.app` 번들 CLI(`2026.9.4 (3a9d69d)`, 번들 Node 24.19.0). PATH 에 번들 bin 을 앞에 둘 때만 쓴다 — `gateway install`·글로벌 설치·시스템 Node 교체 금지. ⚠ **앱은 스스로 업데이트된다** — 2026-09-23 에는 `2026.9.5 (f396007)` 였다(앱 번들 수정 시각 2026-09-19). 저장소 핀은 `2026.9.4` 그대로라 **실연 전에 `oc --version` 을 적는다**(10.1) |
+| OpenClaw CLI | `/Applications/OpenClaw.app` 번들 CLI(`2026.9.4 (3a9d69d)`, 번들 Node 24.19.0). PATH 에 번들 bin 을 앞에 둘 때만 쓴다 — `gateway install`·글로벌 설치·시스템 Node 교체 금지. ⚠ **앱은 스스로 업데이트된다** — 2026-09-23 에는 `2026.9.5 (f396007)` 였다(앱 번들 `bin/openclaw` 심링크 수정 시각 2026-09-20 14:24 — 승인 스파이크 뒤. 전에 적은 「09-19」는 번들 `node` 바이너리 시각이었다, c2-t14). 저장소 핀은 `2026.9.4` 그대로라 **실연 전에 `oc --version` 을 적는다**(10.1). 서버 로그로도 보인다: `"gateway connected"`·`"bridge plugin hello"` 의 `gatewayVersion`. ⚠ 같은 줄의 `pluginBuiltWithSdk`(옛 이름 `sdkVersion`)는 **빌드 때 박힌 devDependency 상수**라 9.5 위에서도 `2026.9.4` 다 — Gateway 버전으로 읽지 않는다 |
 | 프로필 | **dev 만**: 모든 CLI 호출에 `--dev`(상태 `~/.openclaw-dev`). 원격 프로필 `~/.openclaw` 는 건드리지 않는다 |
 | 에이전트 | `dev`·`fin`, 모델 `anthropic/claude-opus-5` + `agentRuntime claude-cli`(ADR 0002 2절) |
 | 플러그인 계정 | `channels.dodok.accounts.default = { bridgeUrl: "ws://127.0.0.1:19100/bridge", token: <BRIDGE_TOKEN> }` — 스파이크 때 설정된 것을 그대로 쓴다 |
@@ -97,7 +98,7 @@ EOF
 
 - `OPENCLAW_DEVICE_IDENTITY_PATH=` 는 빈 값으로 **export** 된다 — `.env` 에 원격용 경로가 있어도 덮이지 않고, 빈 값은 설정 로더가 「없음」으로 봐서 기본 `data/openclaw-device-dev.json` 이 새로 생긴다.
   루프백 + 공유 토큰이면 페어링이 자동 승인되고 `operator.admin` 까지 붙는다(ADR 0003 2절, 이번에도 첫 시도 20ms).
-- 첫 부팅 로그에서 `"url":"http://127.0.0.1:<PORT>"`·`"msg":"gateway connected"`(scopes 에 `operator.admin`)를 확인한다.
+- 첫 부팅 로그에서 `"url":"http://127.0.0.1:<PORT>"`·`"msg":"gateway connected"`(scopes 에 `operator.admin`, `gatewayVersion` 이 `oc --version` 과 같은지)를 확인한다.
 
 ### (e) 연결 확인
 
@@ -271,6 +272,8 @@ oc --dev plugins inspect dodok --json | jq .plugin.status     # 여전히 "loade
   원격 공유 토큰은 `operator.admin` 을 부여한다(계획서 10장 #15, 2026-09-15 원격 실측 — 스코프 승급 자동 승인). 부여가 없어지면 `capabilities.sessionReset=false` 가 되고 「새 대화」는 409.
 - 브리지: 플러그인이 **아웃바운드로** 서버에 붙는다. 개발 PC 서버면 터널(cloudflared 등)로 `wss://…/bridge` 를 만들고, 그 주소를 `BRIDGE_PUBLIC_URL` 에 적고 호스트의 계정 `bridgeUrl` 에 넣는다. 토큰은 `BRIDGE_TOKEN` 과 같게.
 - 원격은 루프백이 아니므로 페어링 자동 승인·지연 수치가 다를 수 있다. ①~③ 을 다시 재고 이 문서에 표를 더한다.
+- **[사람] 원격 Gateway 버전을 먼저 확인한다.** 서버를 원격에 붙이면 접속 한 번에 로그 두 줄이 알려 준다 — `"gateway connected"` 의 `gatewayVersion`(hello-ok `server.version`)과 `"bridge plugin hello"` 의 `gatewayVersion`(원격 호스트의 플러그인이 보낸 `runtime.version`).
+  원격이 `2026.9.5` 이상이면 **ADR 0004 이전 번들은 배포에서도 에이전트가 카드를 못 보낸다**(결함 1) — 호스트의 플러그인을 새 번들로 바꾸고, 그 버전에서 11절 하네스를 한 번 돌린다. `pluginBuiltWithSdk` 는 Gateway 버전이 아니다(2절).
 - dev 프로필 전용 주의(내장 cron·`~/.openclaw-dev` 잔여물)는 원격 호스트의 설정·예정 작업으로 바뀐다 — 호스트에서 `openclaw cron list` 로 본다.
 
 ---
@@ -625,6 +628,7 @@ PARAMS=$(jq -cn --argjson a "$ARGS" --arg sk "agent:dev:dodok:channel:<채널 id
 ### 10.4 틀린 것·고칠 것
 
 1. **[결함·높음] 모델 런 안의 `message` 툴 전송이 실패한다 — `dodok: account "default" bridge is not running`.** 브리지는 `connected`(어댑터 상태·웹 점 초록), 정본 답(`deliver`)도 같은 브리지로 정상 도착했다.
+   → **원인 확정·고침(2026-09-23)**: 9.5 가 번들을 같은 realm 에서 두 번 평가하고 모델 런의 `handleAction` 이 `startAccount` 를 돌지 않은 두 번째 인스턴스로 간다(c2-t14, 모델 런 0회). 브리지·상관관계를 전역 레지스트리로 옮겼다 — ADR 0004. 실물 확인은 11절 하네스(아래 추정은 기록으로 남긴다).
    - **재현**: 3절대로 띄우고 채널에 `@dev message 툴의 components 로 카드 하나만 보내 줘 …`(런 2). Gateway 로그에 `dodok:tool-send {"action":"send","accountId":"default",…,"hasComponents":true,"ok":true}` 가 찍히고
      wire 에 `TOOL_CALL_RESULT {"content":"dodok: account \"default\" bridge is not running","ok":false}` 가 온다. 로그 줄은 `packages/openclaw-plugin/src/channel.ts` 의 `handleAction` — `bridges.get(accountId)` 가 `undefined`.
    - **가른 것**: 같은 인자를 운영자 `tools.invoke`(10.2 (d))로 보내면 **같은 `handleAction` 이 브리지를 찾고 성공한다**. 즉 실패는 **claude-cli → MCP 루프백으로 들어온 툴 호출에서만** 난다.
@@ -667,3 +671,179 @@ PARAMS=$(jq -cn --argjson a "$ARGS" --arg sk "agent:dev:dodok:channel:<채널 id
 - ⚠ **`BRIDGE_TOKEN` 값이 새어 들어간 곳**(런 2 에서 모델이 Bash 로 읽음): 서버 DB `run_events` 1행 → **가렸다**(`[REDACTED-BRIDGE-TOKEN]`, WAL 체크포인트·VACUUM 뒤 0회) · 프레임 덤프 → **지웠다** ·
   claude-cli 전사 `~/.claude/projects/-Users-jang2162--openclaw-dev-workspace/<세션>.jsonl` 1회 → **남아 있다**(모델 제공자에게도 이미 갔다). 로컬 루프백 브리지 토큰이지만 **교체를 권한다**(`.env` 와 dev 계정 토큰을 함께 — 3절 (e) 의 패치 파일 방법).
 - 워크트리 `data/`(ignored): 서버·Gateway·Vite·wire 로그, `live-smoke.env`(시크릿), `live-smoke.sqlite`(가림), `openclaw-device-dev.json`, `wire-cli-session.json`, `cron-list.json`, `run2-message-args.jsonl`(모델이 낸 `message` 인자). **Gateway 토큰은 전부 0회, `BRIDGE_TOKEN` 은 가린 뒤 0회**.
+
+---
+
+## 11. 런 0회 하네스 — 모델 없이 모델 런의 툴 경로를 두드리기 (c2-t14, ADR 0004)
+
+**왜**: 가짜 Gateway 통합 테스트는 플러그인을 한 인스턴스로 불러, 「모델 런의 툴 호출이 어느 플러그인 인스턴스로 가는가」 같은 실물 경로를 원리상 못 본다(ADR 0004 4절).
+여기 둘은 **실제 Gateway 의 루프백 `/mcp`** 를 두드리되 모델을 부르지 않는다(비용 0). OpenClaw 버전을 올렸을 때, 플러그인의 툴·아웃바운드를 고쳤을 때 한 번 돌린다.
+
+| 하네스 | 붙는 곳 | 어느 인스턴스로 가나 | 쓸모 |
+| --- | --- | --- | --- |
+| 11.2 `attach.grant` | 모델 런이 쓰는 바로 그 루프백 서버(세션 grant) | 세대 1(`startAccount` 를 돈 쪽) — run 문맥이 없다 | 툴 노출·`components` 스키마 확인. **결함 1 은 재현하지 않는다** |
+| 11.3 가짜 claude CLI(정본) | 루프백 서버(run grant — 진짜 모델 런과 같다) | 세대 2(prepared-runtime) — 모델 런과 같다 | **결함 1·2 재현, 고친 뒤 합격 확인** |
+
+`openclaw --dev mcp serve` 는 **다른 경로**다(외부 MCP 클라이언트용 채널 브리지, 툴 9개에 `message`·`components` 없음) — 이 목적에 쓰지 않는다.
+
+### 11.1 준비 (3절 (a)~(e) 그대로 + 하네스용 채널)
+
+```bash
+OCBIN=/Applications/OpenClaw.app/Contents/Resources/node-worker/arm64/bin
+oc() { env -u OPENCLAW_GATEWAY_URL -u OPENCLAW_GATEWAY_TOKEN PATH="$OCBIN:$PATH" openclaw "$@"; }
+oc --version                                   # 적는다 (2026-09-23: 2026.9.5 (f396007))
+# 3절 (a) 채널 설정 지우기 · (b) pack:plugin + plugins install --force(설치본 sha = 빌드본 sha) · (c) Gateway · (d) data/live-smoke.env + 서버 · (e) adapter/status connected
+W() { (set -a; . data/live-smoke.env; set +a; export DODOK_LOCAL_TOKEN="$LOCAL_AUTH_TOKEN"; pnpm -s wire-cli http://127.0.0.1:19100 "$@"); }
+W create-channel harness-$(date +%m%d%H%M); W channels      # 새 채널 id 를 CH 에
+W add-agent $CH dev dev
+```
+
+⚠ **하네스용 채널은 따로 만든다.** 가짜 CLI 런은 채널 세션에 **가짜 claude 세션 id**(`00000000-0000-4000-8000-00000000c214`)를 남긴다. 같은 채널에서 나중에 진짜 모델 런을 하면 `--resume` 이 그 id 를 찾다 실패할 수 있다.
+
+`data/args.json` 은 `message` 툴 인자다 — `{"action":"send","target":"channel:<CH>","message":"…","components":{…}}`. 모델이 낸 인자는 서버 `run_events` 의 `TOOL_CALL_ARGS` 에 그대로 있다(10.3 의 카드면 충분하다).
+
+(선택) **어느 인스턴스에서 돌았는지** 보려면 `packages/openclaw-plugin/src/channel.ts` 모듈 최상위에 probe 를 붙여 재패킹·재설치한다 — **커밋 금지**, 끝나면 `git checkout -- src/channel.ts` → 재패킹 → 재설치 → sha 가 원래 값인지 확인.
+Gateway 는 `NODE_OPTIONS=--stack-trace-limit=60` 로 띄운다(기본 10줄로는 누가 로드했는지 안 보인다).
+
+```ts
+const PROBE_INSTANCE = Math.random().toString(36).slice(2, 8);
+const PROBE_G = globalThis as Record<string, unknown>;
+PROBE_G["__dodokProbeRealm"] ??= Math.random().toString(36).slice(2, 8);
+PROBE_G["__dodokProbeEvals"] = ((PROBE_G["__dodokProbeEvals"] as number | undefined) ?? 0) + 1;
+function probe(event: string, extra: Record<string, unknown> = {}): void {
+  console.info(`dodok:probe ${JSON.stringify({ event, instance: PROBE_INSTANCE, realm: PROBE_G["__dodokProbeRealm"],
+    evals: PROBE_G["__dodokProbeEvals"], pid: process.pid, ...extra })}`);
+}
+probe("module-eval", { url: import.meta.url, stack: new Error().stack?.split("\n").slice(1, 60) });
+// 부를 자리: startDodokAccount 의 registerBridge 뒤 probe("start-account"), handleAction·sendText 의 getBridge 뒤 probe("handle-action"|"send-text", { found: !!bridge })
+```
+
+### 11.2 `attach.grant` — 툴 노출·스키마 확인용
+
+```bash
+umask 077
+( . ./.env; env -u OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_TOKEN="$OPENCLAW_DEV_GATEWAY_TOKEN" PATH="$OCBIN:$PATH" \
+    openclaw --dev gateway call attach.grant --port 19001 --json \
+    --params "{\"sessionKey\":\"agent:dev:dodok:channel:$CH\",\"agentId\":\"dev\",\"ttlMs\":1800000}" ) > data/grant.json
+jq '{sessionKey, expiresAtMs, url: .mcpConfig.mcpServers.openclaw.url}' data/grant.json          # token 은 출력하지 않는다
+printf 'Authorization: Bearer %s\nContent-Type: application/json\nAccept: application/json, text/event-stream\n' \
+  "$(jq -r .token data/grant.json)" > data/grant.headers                                          # curl -H @파일 — ps 에 안 남는다
+URL=$(jq -r .mcpConfig.mcpServers.openclaw.url data/grant.json)
+curl -s -H @data/grant.headers -X POST $URL -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"probe","version":"0"}}}'
+curl -s -H @data/grant.headers -X POST $URL -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' | jq '.result.tools[] | select(.name=="message") | .inputSchema.properties.components | keys'
+BODY=$(jq -cn --argjson a "$(cat data/args.json)" '{jsonrpc:"2.0",id:3,method:"tools/call",params:{name:"message",arguments:$a}}')
+curl -s -H @data/grant.headers -X POST $URL -d "$BODY"      # 세대 1 → 성공(카드 도착). 결함 1 의 합격 판정에는 쓰지 않는다
+rm data/grant.json data/grant.headers                     # grant 는 TTL 뒤 또는 Gateway 를 내리면 사라진다
+```
+
+2026-09-23: `tools/list` 34개(`message`·`ask_user` 포함), `components` 키 `blocks·id·modal·reusable·text·ttlMs`.
+⚠ `attach.revoke` 는 토큰을 `--params` 인자로 넘겨 ps 에 잠깐 남는다 — 그날은 revoke 대신 Gateway 종료로 없앴다.
+
+### 11.3 가짜 claude CLI — 결함 1·2 재현·합격 확인(정본)
+
+Gateway 는 claude-cli 백엔드를 **PATH 의 `claude`** 로 띄운다. 가짜 `claude` 를 PATH 앞에 둔 Gateway 를 띄우고 채널에 `@dev` 를 보낸다. 가짜 CLI 는 `--mcp-config` 와 env(`OPENCLAW_MCP_TOKEN`·`OPENCLAW_MCP_CLI_CAPTURE_KEY`)로
+**run grant** 를 받아 루프백에 `message`(와 `ask_user`)를 한 번씩 부르고 끝낸다. 가짜 CLI 는 **레포에 파일로 두지 않는다**(실행 파일이 레포에 있으면 진짜 `claude` 를 가릴 수 있다) — 아래 11.4 를 스크래치 디렉터리에 만든다.
+
+```bash
+SP=$(mktemp -d); mkdir -p $SP/fakebin
+cp data/args.json $SP/fake-args.json                                            # message 인자
+echo '{"questions":[{"id":"q","header":"형식","question":"골라 주세요","options":[{"label":"A","description":"a"},{"label":"B","description":"b"}]}]}' > $SP/fake-ask-user.json   # 있으면 ask_user 도 부른다
+# 11.4 스크립트를 $SP/fakebin/claude 로 저장한 뒤:
+sed -i '' "s#__REAL_CLAUDE__#$(command -v claude)#" $SP/fakebin/claude && chmod +x $SP/fakebin/claude
+kill $(lsof -nP -iTCP:19001 -sTCP:LISTEN -t)                                   # 지금 Gateway
+( . ./.env
+  env -u OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_TOKEN="$OPENCLAW_DEV_GATEWAY_TOKEN" NODE_OPTIONS=--stack-trace-limit=60 \
+      PATH="$SP/fakebin:$OCBIN:$PATH" \
+      nohup openclaw --dev gateway run --dev --auth token --port 19001 --bind loopback >> data/dev-gateway.log 2>&1 < /dev/null & )
+# 서버 로그에 bridge 가 다시 connected 가 된 뒤
+W send $CH "@dev 가짜 CLI 프로브" --watch-ms 20000
+jq -c 'select(.isRun != false) | del(.argv,.envKeys)' $SP/fake-out/fake-claude.jsonl    # tools/call message 결과 원문
+grep "dodok:probe\|dodok:tool-send" data/dev-gateway.log | tail                       # probe 번들이면 어느 세대인지
+```
+
+**합격 기준**(ADR 0004 6절):
+- `tools/call message` → `sent to dodok channel <CH> (<messageId>)`. (고치기 전: `{"content":[{"type":"text","text":"dodok: account \"default\" bridge is not running"}],"isError":true}`)
+- 서버에 카드 `message.created` 가 오고, 그 메시지의 **`runId` 가 그 가짜 런**이고 **`replyTo` 가 방금 보낸 사람 메시지**다 — 상관관계(`correlations`)까지 공유됐는지를 이것으로 본다. 카드만 오고 `runId` 가 비면 반쪽이다.
+- `ask_user` 는 다음 층 `agent not found`(결함 2 의 뒷반쪽, `docs/plan.md` 8장 이월)에서 막히는 것이 **정상**이다. 고치기 전에는 `ask_user prompt delivery failed | dodok: bridge is not running`.
+- 런 정본은 가짜 답 `FAKE_CLI_DONE` → `message.created` · `RUN_FINISHED`(usage 0·cost 0).
+
+**가짜 CLI 가 걸린 곳 셋**(다음 사람용 — c2-t14 는 1~3회차 런이 `RUN_ERROR "Claude CLI live session exited unexpectedly without a terminal result."` 로 끝났다):
+1. 툴을 너무 일찍 부르면 `Native tool authority is not initialized` 가 난다. CLI 가 `system/init` 레코드(`tools` 배열)를 먼저 stdout 에 내야 authority 가 잡힌다.
+2. Gateway 는 stdin 으로 `control_request{subtype:"initialize"}` 를 먼저 보내고 `control_response` 를 기다린다. 그다음에 `user` 레코드가 온다. 순서는 **control_response → user 수신 → system/init → 툴 호출 → assistant·result**.
+3. `-p` 가 없는 호출(버전·인증 확인)은 진짜 `claude` 로 넘긴다 — 모델을 부르지 않는다.
+
+**끝나면**: 가짜 PATH 없이 Gateway 를 다시 띄우거나(3절 (c)) 내린다. `rm -rf $SP`. probe 를 붙였으면 11.1 대로 되돌린다. 하네스 채널은 진짜 모델 런에 쓰지 않는다.
+
+### 11.4 가짜 claude CLI 스크립트
+
+모델을 부르지 않는다. `-p` 런이면 run grant 로 루프백 `/mcp` 에 `message`(그리고 `fake-ask-user.json` 이 있으면 `ask_user`)를 한 번씩 부르고 끝낸다.
+출력은 `$SP/fake-out/fake-claude.jsonl`(env 는 **키 이름만** 적는다 — 토큰 값은 남기지 않는다).
+
+```js
+#!/usr/bin/env node
+// 가짜 claude — 모델을 부르지 않는다. -p 런이면 루프백 MCP 로 message 툴을 한 번 호출하고 끝낸다.
+const fs = require("node:fs");
+const { spawnSync } = require("node:child_process");
+const DIR = __dirname + "/../fake-out";
+fs.mkdirSync(DIR, { recursive: true });
+const argv = process.argv.slice(2);
+const log = (o) => fs.appendFileSync(DIR + "/fake-claude.jsonl", JSON.stringify({ t: new Date().toISOString(), pid: process.pid, ...o }) + "\n");
+const isRun = argv.includes("-p") || argv.includes("--print");
+log({ event: "invoke", isRun, argv: argv.map((a) => (a.length > 200 ? a.slice(0, 200) + "…" : a)), envKeys: Object.keys(process.env).filter((k) => /OPENCLAW|MCP|CLAUDE|ANTHROPIC/.test(k)) });
+if (!isRun) {
+  const r = spawnSync("__REAL_CLAUDE__", argv, { stdio: "inherit" }); // 11.3 의 sed 가 진짜 claude 경로로 바꾼다
+  process.exit(r.status ?? 1);
+}
+const SID = "00000000-0000-4000-8000-00000000c214";
+let inBuf = "";
+let started = false;
+process.stdin.on("data", (d) => {
+  inBuf += d;
+  let i;
+  while ((i = inBuf.indexOf("\n")) >= 0) {
+    const line = inBuf.slice(0, i); inBuf = inBuf.slice(i + 1);
+    try { const m = JSON.parse(line);
+      if (m.type === "control_request") process.stdout.write(JSON.stringify({ type: "control_response", response: { subtype: "success", request_id: m.request_id, response: {} } }) + "\n");
+      if (m.type === "user" && !started) { started = true; startTurn(); }
+      log({ event: "stdin-record", type: m.type, subtype: m.subtype, requestSubtype: m.request?.subtype }); } catch { log({ event: "stdin-raw", bytes: line.length }); }
+  }
+});
+const startTurn = () => (async () => {
+  // native tool authority 는 system/init 의 tools 로 잡힌다 — 툴 호출보다 먼저
+  process.stdout.write(JSON.stringify({ type: "system", subtype: "init", session_id: SID, model: "fake", tools: [] }) + "\n");
+  await new Promise((r) => setTimeout(r, 500));
+  try {
+    const i = argv.indexOf("--mcp-config");
+    const cfg = JSON.parse(fs.readFileSync(argv[i + 1], "utf8"));
+    const srv = cfg.mcpServers.openclaw;
+    const headers = { "content-type": "application/json", accept: "application/json, text/event-stream" };
+    for (const [k, v] of Object.entries(srv.headers ?? {})) headers[k] = String(v).replace(/\$\{([A-Z0-9_]+)\}/g, (_, n) => process.env[n] ?? "");
+    log({ event: "mcp-config", url: srv.url, headerKeys: Object.keys(srv.headers ?? {}), tokenPresent: !!process.env.OPENCLAW_MCP_TOKEN, captureKeyPresent: !!process.env.OPENCLAW_MCP_CLI_CAPTURE_KEY });
+    let id = 0;
+    const rpc = async (method, params) => {
+      const res = await fetch(srv.url, { method: "POST", headers, signal: AbortSignal.timeout(25000), body: JSON.stringify({ jsonrpc: "2.0", id: ++id, method, params }) });
+      return { status: res.status, text: await res.text() };
+    };
+    const init = await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "fake-claude", version: "0" } });
+    log({ event: "initialize", status: init.status, body: init.text.slice(0, 300) });
+    const list = await rpc("tools/list", {});
+    let names = [];
+    try { names = JSON.parse(list.text).result.tools.map((t) => t.name); } catch {}
+    log({ event: "tools/list", status: list.status, count: names.length, hasMessage: names.includes("message"), hasAskUser: names.includes("ask_user") });
+    const args = JSON.parse(fs.readFileSync(__dirname + "/../fake-args.json", "utf8"));
+    const call = await rpc("tools/call", { name: "message", arguments: args });
+    log({ event: "tools/call message", status: call.status, body: call.text.slice(0, 600) });
+    if (fs.existsSync(__dirname + "/../fake-ask-user.json")) {
+      const ask = await rpc("tools/call", { name: "ask_user", arguments: JSON.parse(fs.readFileSync(__dirname + "/../fake-ask-user.json", "utf8")) });
+      log({ event: "tools/call ask_user", status: ask.status, body: ask.text.slice(0, 600) });
+    }
+  } catch (e) {
+    log({ event: "error", error: String((e && e.stack) || e).slice(0, 800) });
+  }
+  process.stdout.write(JSON.stringify({ type: "assistant", session_id: SID, message: { id: "msg_fake", type: "message", role: "assistant", model: "fake", content: [{ type: "text", text: "FAKE_CLI_DONE" }], stop_reason: "end_turn", usage: { input_tokens: 0, output_tokens: 0 } } }) + "\n");
+  process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "FAKE_CLI_DONE", session_id: SID, total_cost_usd: 0, usage: { input_tokens: 0, output_tokens: 0 } }) + "\n");
+  log({ event: "exit" });
+  setTimeout(() => process.exit(0), 1500);
+})();
+setTimeout(() => { log({ event: "no-user-record-timeout" }); process.exit(0); }, 60000);
+```
