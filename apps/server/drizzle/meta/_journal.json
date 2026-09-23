@@ -22,6 +22,13 @@
       "when": 1789910107425,
       "tag": "0002_shocking_kulan_gath",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1790136604827,
+      "tag": "0003_wandering_vargas",
+      "breakpoints": true
     }
   ]
 }

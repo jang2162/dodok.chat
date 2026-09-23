@@ -162,6 +162,33 @@ export const messages = sqliteTable(
   ],
 );
 
+/** 첨부(스펙 4.1). message_id 가 null 이면 아직 묶이지 않은 업로드다. 블롭은 sha256 이름으로 디스크에 한 번만 */
+export const attachments = sqliteTable(
+  "attachments",
+  {
+    id: text("id").primaryKey(),
+    channelId: text("channel_id")
+      .notNull()
+      .references(() => channels.id),
+    uploaderType: text("uploader_type").notNull(), // "user" | "bridge"
+    uploaderId: text("uploader_id"), // 사용자 id, 브리지면 null
+    kind: text("kind").notNull(), // "image" | "file"
+    name: text("name").notNull(),
+    mime: text("mime").notNull(),
+    size: integer("size").notNull(),
+    width: integer("width"),
+    height: integer("height"),
+    sha256: text("sha256").notNull(),
+    messageId: text("message_id").references(() => messages.id),
+    createdAt: ts("created_at").notNull(),
+  },
+  (t) => [
+    index("attachments_message").on(t.messageId),
+    index("attachments_sha256").on(t.sha256),
+    index("attachments_unbound").on(t.messageId, t.createdAt),
+  ],
+);
+
 export const runs = sqliteTable(
   "runs",
   {

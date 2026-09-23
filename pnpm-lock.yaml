@@ -53,6 +53,9 @@ importers:
       fastify:
         specifier: 5.12.4
         version: 5.12.4
+      image-size:
+        specifier: 2.0.4
+        version: 2.0.4
       pino:
         specifier: 10.3.1
         version: 10.3.1
@@ -3825,6 +3828,11 @@ packages:
   ignore@7.0.7:
     resolution: {integrity: sha512-dML0wP6oak21rsNYCJpJB6O1BJIEwNpGrTw0URPfAk4hm0e3pRfCtzkfB6olBcXcVlU2rouCyz7lCyRB0OMVCA==}
     engines: {node: '>= 4'}
+
+  image-size@2.0.4:
+    resolution: {integrity: sha512-QRUkFFsRV/6fuESxb9Vkq+a0LkSrgKXuc2NEqfikiXxxN/G3tjWt5EVUlMaImRBZRZK/jRBEbYvpPYZL8t08Zw==}
+    engines: {node: '>=18'}
+    hasBin: true
 
   immediate@3.0.6:
     resolution: {integrity: sha512-XXOFtyqDjNDAQxVfYxuF7g9Il/IbWmmlQg2MYKOH8ExIT1qg6xc4zyS3HaEEATgs1btfzxq15ciUiY7gjSXRGQ==}
@@ -8765,6 +8773,8 @@ snapshots:
   ieee754@1.2.1: {}
 
   ignore@7.0.7: {}
+
+  image-size@2.0.4: {}
 
   immediate@3.0.6: {}
 
