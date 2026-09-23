@@ -26,7 +26,7 @@ export type GatewayLink = {
   ): Promise<T>;
   stop(): Promise<void>;
   /** 받은 `hello-ok` 중 로그에 싣는 것. `server.version` 은 프로토콜 스키마의 필수 필드다(ADR 0001) */
-  readonly hello?: { readonly server: { readonly version: string } };
+  readonly hello?: { readonly server: { readonly version: string; readonly buildId?: string } };
 };
 
 export type GatewayConnector = (options: GatewayConnectOptions) => Promise<GatewayLink>;
@@ -160,9 +160,14 @@ export function createConnectionManager(opts: ConnectionManagerOptions): Connect
     }
     link = next;
     failures = 0;
-    // 원격 Gateway 의 실제 버전 — 플러그인이 보내는 sdkVersion(빌드 때 박힌 상수)과 다르다
+    // 원격 Gateway 의 실제 버전 — 플러그인이 보내는 sdkVersion(빌드 때 박힌 상수)과 다르다.
+    // 같은 버전 문자열의 두 빌드(9.4 3a9d69d·9.5 f396007)를 가른 것은 buildId 다(스키마 선택 필드)
     logger.info(
-      { scopes: DEFAULT_GATEWAY_SCOPES, gatewayVersion: next.hello?.server.version ?? null },
+      {
+        scopes: DEFAULT_GATEWAY_SCOPES,
+        gatewayVersion: next.hello?.server.version ?? null,
+        gatewayBuildId: next.hello?.server.buildId ?? null,
+      },
       "gateway connected",
     );
     setState("connected");

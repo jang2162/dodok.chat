@@ -173,9 +173,13 @@ describe("createConnectionManager — 접속 루프", () => {
     expect(events).toEqual([frame]);
   });
 
-  it("gateway connected 로그에 hello-ok 의 server.version 을 gatewayVersion 으로 싣는다(없으면 null)", async () => {
-    const withHello = Object.assign(fakeLink(), { hello: { server: { version: "2026.9.5" } } });
-    const { connector, attempts } = scriptedConnector([withHello, fakeLink()]);
+  it("gateway connected 로그에 hello-ok 의 server.version·buildId 를 gatewayVersion·gatewayBuildId 로 싣는다(없으면 null)", async () => {
+    const withBuild = Object.assign(fakeLink(), {
+      hello: { server: { version: "2026.9.5", buildId: "f396007" } },
+    });
+    // buildId 는 스키마의 선택 필드다
+    const versionOnly = Object.assign(fakeLink(), { hello: { server: { version: "2026.9.4" } } });
+    const { connector, attempts } = scriptedConnector([withBuild, versionOnly, fakeLink()]);
     const { manager, logger } = setup({ connector });
     const connectedLines = () =>
       logger.info.mock.calls.filter((call) => call[1] === "gateway connected").map((call) => call[0]);
@@ -186,12 +190,18 @@ describe("createConnectionManager — 접속 루프", () => {
       {
         scopes: ["operator.read", "operator.write", "operator.approvals", "operator.admin"],
         gatewayVersion: "2026.9.5",
+        gatewayBuildId: "f396007",
       },
     ]);
 
     attempts[0]?.options.onClose?.({ code: 1006, reason: "" });
     await vi.advanceTimersByTimeAsync(1_000);
-    expect(connectedLines().at(-1)).toMatchObject({ gatewayVersion: null });
+    expect(connectedLines().at(-1)).toMatchObject({ gatewayVersion: "2026.9.4", gatewayBuildId: null });
+
+    attempts[1]?.options.onClose?.({ code: 1006, reason: "" });
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(connectedLines()).toHaveLength(3);
+    expect(connectedLines().at(-1)).toMatchObject({ gatewayVersion: null, gatewayBuildId: null });
   });
 
   it("onClose → reconnecting, 이전 연결을 stop 하고 1s 뒤 다시 붙어 connected", async () => {
