@@ -124,7 +124,7 @@ docs/guides/deploy.md
 `docker compose stop app` → 백업의 `dodok.sqlite` 를 `/data/dodok.sqlite` 로 되돌리고 WAL·SHM 을 지운다 → 필요하면 `vapid.json`·디바이스 아이덴티티도 되돌린다 → `docker compose start app`. 절차는 일회용 컨테이너(`docker compose run --rm --entrypoint sh app`)로 한다.
 
 ### 3.4 업데이트
-백업 → `git pull` → `docker compose up -d --build`. 마이그레이션은 부팅 때 자동이다. 부팅에 실패하면(헬스체크 unhealthy) `git checkout <앞 커밋>` → 백업 복원 → 다시 빌드한다. 마이그레이션은 앞으로만 가므로, 되돌릴 때는 반드시 **업데이트 직전 백업**으로 복원한다(문서에 굵게).
+백업 → `git pull` → `docker compose up -d --build`. 마이그레이션은 부팅 때 자동이다. 부팅에 실패하면(헬스체크 unhealthy) `stop app` → `git checkout <앞 커밋>` → `docker compose build`(옛 이미지) → `app` 을 멈춘 채 일회용 컨테이너(`run --rm --entrypoint sh app`)에서 백업 복원(WAL·SHM 삭제) → 그 뒤에야 `up -d`. 3.3 의 `start app` 을 그대로 쓰면 새 이미지가 되돌린 DB 에 마이그레이션을 다시 올린다. 마이그레이션은 앞으로만 가므로, 되돌릴 때는 반드시 **업데이트 직전 백업**으로 복원한다(문서에 굵게).
 
 ---
 
@@ -244,7 +244,7 @@ docs/guides/deploy.md
 
 - **자리는 `src/backup.ts`(`runBackup`)·`src/backup-main.ts`(CLI)**(2장 구조 정정 — 2장은 `scripts/backup.ts` 였다). 번들 엔트리 `backup` 이 `dist/backup.js` 를 낸다.
 - **한 단계 전체 복사**(3.2 보탬). 계획의 단계당 100 페이지 백업은 단계 사이에 다른 연결이 쓸 때마다 SQLite 가 처음부터 다시 시작해, 쓰기가 이어지는 동안 끝나지 않았다(테스트 「쓰는 중에도」가 30초 안에 못 끝냄). 지금은 `progress: () => 0x7fffffff` 로 한 읽기 트랜잭션의 스냅숏을 한 번에 복사한다. 리뷰가 쓰기를 막지 않음을 쟀다(1 GB DB 백업 중 쓰기 p99 0.14 ms, WAL 4 → 19 MB). 로컬 검증에서 초당 몇 건씩 쓰는 중에 백업해도 `integrity_check` `ok` 였다.
-- **`.partial-*` 에서 만들고 rename**(3.2 보탬, `195f8c8`). 백업은 `backups/.partial-<시각>-XXXXXX/` 에서 만든 뒤 다 되면 `<시각>/` 으로 옮긴다. 중단(SIGKILL 등)으로 남은 `.partial-*` 는 복원에 쓰지 않으며, 1시간이 지나면 다음 백업이 지운다(`STALE_PARTIAL_MS`). CLI 는 SIGINT·SIGTERM 에 자기 `.partial-*` 를 지우고 130·143 으로 끝난다. 고치기 전에는 중단된 백업이 백업 이름으로 남아 보관 개수를 차지하고 「가장 최근 백업」으로 골릴 수 있었다(d1-t2 리뷰 결함 1).
+- **`.partial-*` 에서 만들고 rename**(3.2 보탬, `195f8c8`). 백업은 `backups/.partial-<시각>-XXXXXX/` 에서 만든 뒤 다 되면 `<시각>/` 으로 옮긴다. 중단(SIGKILL 등)으로 남은 `.partial-*` 는 복원에 쓰지 않으며, 1시간이 지나면 다음 백업이 지운다(`STALE_PARTIAL_MS`). CLI 는 SIGINT·SIGTERM 에 자기 `.partial-*` 를 지우고 130·143 으로 끝난다 — 단 복사 단계는 동기라 복사 도중의 신호는 복사가 끝난 뒤에야 처리되고, 그때는 완료 줄을 찍고 exit 0 으로 끝난다. 고치기 전에는 중단된 백업이 백업 이름으로 남아 보관 개수를 차지하고 「가장 최근 백업」으로 골릴 수 있었다(d1-t2 리뷰 결함 1).
 - **보관 개수는 백업 이름 형식만 센다**(3.2 보탬). `YYYY-MM-DDTHH-MM-SS-mmmZ(-N)` — 사람이 `backups/` 에 둔 다른 이름은 세지도 지우지도 않는다. 같은 시각이면 `-1`·`-2` 접미사.
 - **사본 파일에 `openclaw-device-dev.json` 도**(3.2 보탬) — dev 대상 디바이스 아이덴티티가 있으면 함께 싣는다.
 

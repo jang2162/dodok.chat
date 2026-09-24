@@ -90,8 +90,8 @@ curl -fsS https://<도메인>/healthz              # "db":"ok" 가 든 JSON
 docker compose -f infra/compose.yml logs app | grep -E 'gateway connected|pairing required'
 ```
 
-- `"gateway connected"` 줄의 `gatewayVersion` 이 저장소가 핀한 OpenClaw 버전(`packages/openclaw-adapter/package.json` 의 `@openclaw/gateway-client`)과 같은지 본다. 원격이 `2026.9.5` 이상이면 플러그인은 ADR 0004 이후 번들이어야 한다(`docs/guides/live-smoke.md` 「원격 Gateway 에서 같은 절차를」 절). 같은 줄의 `pluginBuiltWithSdk` 는 Gateway 버전이 아니다.
-- `device pairing required (requestId: …)` 가 **계속** 나오면 [B] 에서 `openclaw devices approve <requestId>`. 공유 토큰이면 보통 몇 초 뒤 자동 승인이라 필요 없다(ADR 0001).
+- `"gateway connected"` 줄의 `gatewayVersion` 이 저장소가 핀한 OpenClaw 버전(`packages/openclaw-adapter/package.json` 의 `@openclaw/gateway-client`)과 같은지 본다. 원격이 `2026.9.5` 이상이면 플러그인은 ADR 0004 이후 번들이어야 한다(`docs/guides/live-smoke.md` 「원격 Gateway 에서 같은 절차를」 절).
+- `"gateway pairing required; retrying"` 줄이 **계속** 나오면 그 줄의 `requestId` 필드 값으로 [B] 에서 `openclaw devices approve <requestId>`. 공유 토큰이면 보통 몇 초 뒤 자동 승인이라 필요 없다(ADR 0001).
 - 디바이스 아이덴티티는 `/data/openclaw-device.json` 에 생긴다(볼륨 — 재시작해도 다시 페어링하지 않는다).
 
 ### 4. [PC → B] 플러그인 설치·브리지 설정
@@ -133,7 +133,7 @@ openclaw config patch --file /tmp/dodok.patch.json5 && rm /tmp/dodok.patch.json5
 docker compose -f infra/compose.yml logs app | grep 'bridge plugin hello'
 ```
 
-`"bridge plugin hello"` 줄이 있으면 플러그인이 `wss://<도메인>/bridge` 로 붙었다(Socket.IO `/socket.io/` 의 `/bridge` 네임스페이스). 그 줄의 `gatewayVersion` 은 플러그인이 보낸 Gateway 런타임 버전이다.
+`"bridge plugin hello"` 줄이 있으면 플러그인이 `wss://<도메인>/bridge` 로 붙었다(Socket.IO `/socket.io/` 의 `/bridge` 네임스페이스). 그 줄의 `gatewayVersion` 은 플러그인이 보낸 Gateway 런타임 버전이다. 같은 줄의 `pluginBuiltWithSdk` 는 플러그인 빌드 때 박힌 SDK 버전이라 Gateway 버전이 아니다.
 안 붙으면: [B] 계정 설정의 `bridgeUrl`(`wss://`, 경로 `/bridge`)·`token` 이 `.env` 의 `BRIDGE_PUBLIC_URL`·`BRIDGE_TOKEN` 과 같은지, [B] 에서 `https://<도메인>/healthz` 가 닿는지.
 첨부 바이트는 같은 오리진의 HTTP `/bridge/attachments` 로 오간다 — Caddy 가 `/bridge/*` 를 서버로 넘긴다(`infra/Caddyfile` 의 `@backend`).
 
@@ -237,12 +237,28 @@ docker compose -f infra/compose.yml ps                              # app·caddy
 
 부팅에 실패하면(`app` 이 unhealthy·재시작 반복 — `docker compose -f infra/compose.yml logs app`):
 
+순서가 중요하다 — **옛 이미지를 먼저 빌드하고, `app` 을 멈춘 채 DB 를 되돌리고, 그 뒤에야 `app` 을 시작한다.** 위 「복원」 절을 통째로 따르지 않는다: 그 절의 마지막 `start app` 은 아직 새 이미지로 뜨고, 새 코드가 되돌린 DB 에 마이그레이션을 다시 올려 되돌리기가 조용히 무효가 된다.
+
 ```bash
 docker compose -f infra/compose.yml stop app
-# 위 「복원」 절차로 **업데이트 직전 백업**을 되돌린다
 git checkout <적어 둔 커밋>
 DODOK_WEB_BUILD_ID=$(git log -1 --format=%h -- apps/web packages/shared pnpm-lock.yaml tsconfig.base.json package.json pnpm-workspace.yaml infra/Dockerfile.web) \
-  docker compose -f infra/compose.yml up -d --build
+  docker compose -f infra/compose.yml build
+docker compose -f infra/compose.yml run --rm --entrypoint sh app    # 방금 빌드한 옛 이미지
+```
+
+컨테이너 안(「복원」 절과 같다 — **업데이트 직전 백업**을 고른다):
+
+```sh
+B=/data/backups/<업데이트 직전 백업 이름>
+cp "$B/dodok.sqlite" /data/dodok.sqlite
+rm -f /data/dodok.sqlite-wal /data/dodok.sqlite-shm
+exit
+```
+
+```bash
+docker compose -f infra/compose.yml up -d
+docker compose -f infra/compose.yml ps     # app·caddy (healthy)
 ```
 
 ⚠ **되돌릴 때는 반드시 업데이트 직전 백업으로 복원한다.** 마이그레이션은 앞으로만 간다 — 새 코드가 이미 올린 스키마를 옛 코드가 읽지 못한다. 더 오래된 백업이면 그 뒤의 데이터를 잃고, 더 새 백업(업데이트 뒤)이면 옛 코드가 못 연다. 백업 뒤 업데이트 사이에 쓰인 것은 잃는다.
@@ -253,7 +269,7 @@ DODOK_WEB_BUILD_ID=$(git log -1 --format=%h -- apps/web packages/shared pnpm-loc
 | 증상 | 원인·확인 | 고침 |
 | --- | --- | --- |
 | compose 명령이 `DODOK_DOMAIN 이 필요하다 — 루트 .env 에 두고 ln -s ../.env infra/.env` 로 멈춤 | 링크가 없거나 `.env` 에 `DODOK_DOMAIN` 이 비었다 | `ln -s ../.env infra/.env`, 값 채우기 |
-| `app` 이 재시작을 되풀이, `caddy` 는 대기 | `.env` 필수 값이 없거나 틀렸다 — `docker compose -f infra/compose.yml logs app` 에 `설정 오류` 한 줄 | 그 값을 고치고 `up -d` |
+| `app` 이 재시작을 되풀이, `caddy` 는 대기 | `.env` 필수 값이 없거나 틀렸다 — `docker compose -f infra/compose.yml logs app` 에 `설정 오류:` 로 시작하는 줄과 그 아래 틀린 항목마다 한 줄(`<이름>: <사유>`), 이어서 Node 스택 | 그 값을 고치고 `up -d` |
 | `app` 로그 한 줄: `설정 오류: DATA_DIR 에 쓸 수 없다: /data (EACCES) — 컨테이너면 볼륨 소유자를 1000:1000 으로: …` | 볼륨이 다른 UID(예: root)로 채워진 적이 있다. 컨테이너는 `node`(1000:1000)로 돈다. 빈 볼륨은 Docker 가 이미지의 `/data` 소유자를 입혀 이 경우가 안 생긴다 — 파일이 이미 든 볼륨에서만 난다 | `docker compose -f infra/compose.yml run --rm -u 0 app chown -R 1000:1000 /data` 뒤 `up -d` |
 | `/healthz` 가 안 됨, `caddy` 는 healthy | 인증서 발급 실패 — `logs caddy`. 확인 순서: DNS A 레코드가 이 호스트인가 → 80·443 이 밖에서 열려 있나 → `DODOK_DOMAIN` 이 그 이름인가 | 고친 뒤 `docker compose -f infra/compose.yml restart caddy`. Let's Encrypt 는 실패가 잦으면 잠시 막는다 — 고치기 전에 되풀이하지 않는다 |
 | Caddy 502 | `app` 이 아직 안 떴거나 재시작 중 | `ps`·`logs app` |
