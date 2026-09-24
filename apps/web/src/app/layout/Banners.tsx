@@ -1,5 +1,6 @@
+import { Link } from "@tanstack/react-router";
 import { UnplugIcon } from "lucide-react";
-import { useAdapterStatus } from "@/api/queries";
+import { useAdapterStatus, useIsOwner } from "@/api/queries";
 import { useOffline } from "@/pwa/offline";
 import { useWireStatus } from "@/realtime/wire";
 import { Alert, AlertDescription } from "@/ui/alert";
@@ -14,12 +15,14 @@ import { Button } from "@/ui/button";
  * 오프라인(스펙 4장 — 브라우저 오프라인이거나 me 가 네트워크 오류)이면 「오프라인」 배너 하나만 — 그동안 wire 도
  * `reconnecting` 이지만 같은 사실을 두 번 말하지 않는다. OpenClaw 배너는 wire 가 붙어 있을 때만이라 겹치지 않는다.
  * 라이브 영역(alert — 할 일이 있는 것, status — 기다리면 되는 것)은 비어 있는 채로 늘 두고 안의 배너만 바꾼다 —
- * 새로 끼운 라이브 영역은 스크린 리더가 놓칠 수 있다. 두 wire 상태는 함께 올 수 없어 alert 를 위에 두어도 순서가 같다
+ * 새로 끼운 라이브 영역은 스크린 리더가 놓칠 수 있다. 두 wire 상태는 함께 올 수 없어 alert 를 위에 두어도 순서가 같다.
+ * OpenClaw 배너의 「연결 설정 보기」는 owner 에게만 — 연결 페이지는 owner 만 쓴다
  */
 export function Banners() {
   const wire = useWireStatus((s) => s.status);
   const offline = useOffline();
   const { data: adapter } = useAdapterStatus();
+  const owner = useIsOwner();
   const openclawDown =
     wire === "connected" &&
     adapter !== undefined &&
@@ -60,7 +63,12 @@ export function Banners() {
           <Alert role={undefined} className="rounded-none border-x-0 border-t-0">
             <UnplugIcon />
             <AlertDescription>
-              OpenClaw 에 연결되지 않아 에이전트가 답하지 못합니다. 메시지는 저장됩니다.
+              <p>OpenClaw 에 연결되지 않아 에이전트가 답하지 못합니다. 메시지는 저장됩니다.</p>
+              {owner && (
+                <Link to="/settings/connection" className="text-foreground underline underline-offset-4">
+                  연결 설정 보기
+                </Link>
+              )}
             </AlertDescription>
           </Alert>
         )}

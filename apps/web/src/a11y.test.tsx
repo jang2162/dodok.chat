@@ -12,6 +12,7 @@ import { AGENT, CH, msg, runState, textDelta, uid } from "../test/fixtures";
 import { stubScrollLayout } from "../test/scrollLayout";
 import { renderRoute } from "../test/shellApi";
 import { DEV_AGENT, FIN_AGENT, agentOf, memberOf, stubSettingsServer } from "../test/settingsServer";
+import { statusOf, stubSetupServer, tokenOf } from "../test/setupServer";
 
 /**
  * 스펙 7.3 접근성 — 화면마다 (a) 이름 없는 버튼·링크·입력·그림이 없다(아이콘만 있는 버튼 포함),
@@ -204,5 +205,36 @@ describe("에이전트 화면", () => {
     await userEvent.click(await within(dialog).findByRole("checkbox", { name: "Ops" }));
     expect(within(dialog).getByRole("button", { name: "닫기" })).toBeInTheDocument();
     expect(unnamed(dialog)).toEqual(NONE);
+  });
+});
+
+describe("연결 화면", () => {
+  it("섹션·복사·받기·폐기 버튼, 발급·폐기 대화상자까지 이름이 있다", async () => {
+    stubSetupServer({
+      status: statusOf({
+        gateway: { state: "reconnecting", pairing: { requestId: "req-1", since: new Date().toISOString() } },
+      }),
+      tokens: [tokenOf(1, { label: "env", connected: true }), tokenOf(2)],
+    });
+    renderRoute("/settings/connection");
+    const page = await screen.findByTestId("page-connection");
+    await within(page).findByRole("listitem", { name: "env" });
+    await within(page).findByRole("button", { name: "플러그인 받기" });
+    expect(unnamed()).toEqual(NONE);
+
+    await userEvent.click(within(page).getByRole("button", { name: "새 토큰 발급" }));
+    const issue = await screen.findByRole("dialog", { name: "새 브리지 토큰" });
+    expect(unnamed(issue)).toEqual(NONE);
+    await userEvent.type(within(issue).getByLabelText("라벨"), "새것");
+    await userEvent.click(within(issue).getByRole("button", { name: "발급" }));
+    const issued = await screen.findByRole("dialog", { name: /토큰을 발급했습니다/ });
+    await within(issued).findByRole("button", { name: "토큰 복사" });
+    expect(unnamed(issued)).toEqual(NONE);
+    await userEvent.click(within(issued).getByRole("button", { name: "복사했습니다" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    await userEvent.click(within(page).getByRole("button", { name: "토큰-2 폐기" }));
+    const confirm = await screen.findByRole("dialog", { name: /토큰을 폐기할까요/ });
+    expect(unnamed(confirm)).toEqual(NONE);
   });
 });

@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
-import { BotIcon, LogOutIcon, PlusIcon } from "lucide-react";
-import { useMe } from "@/api/queries";
+import { BotIcon, CableIcon, LogOutIcon, PlusIcon } from "lucide-react";
+import { useIsOwner, useMe } from "@/api/queries";
 import { ChannelList } from "@/features/channels/ChannelList";
 import { CreateChannelDialog } from "@/features/channels/CreateChannelDialog";
 import { useLogout } from "@/features/auth/mutations";
@@ -8,14 +8,19 @@ import { Button } from "@/ui/button";
 import { ConnectionDots } from "./ConnectionDots";
 import { NotifySettings } from "./NotifySettings";
 
+/** 사이드바 하단 링크(에이전트·연결)의 꼴 */
+const NAV_LINK =
+  "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-sidebar-foreground/80 outline-none hover:not-aria-[current=page]:bg-sidebar-accent hover:not-aria-[current=page]:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:ring-offset-1 focus-visible:ring-offset-sidebar aria-[current=page]:bg-sidebar-primary aria-[current=page]:font-medium aria-[current=page]:text-sidebar-primary-foreground";
+
 /**
- * 왼쪽 사이드바(스펙 2.4): 워크스페이스 이름, 채널 목록·「채널 만들기」, 「에이전트」, 하단 연결 상태와 로그아웃.
+ * 왼쪽 사이드바(스펙 2.4): 워크스페이스 이름, 채널 목록·「채널 만들기」, 「에이전트」, 「연결」(owner 에게만), 하단 연결 상태와 로그아웃.
  * 이름은 `GET /auth/me` 의 `workspace.name` — 아직 못 받았거나 주지 않는 서버면 「dodok」.
  * `onNavigate` 는 이동할 때마다 부른다(좁은 화면 시트 닫기)
  */
 export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const logout = useLogout();
   const me = useMe();
+  const owner = useIsOwner();
   return (
     <div className="flex h-full min-h-0 flex-col bg-sidebar text-sidebar-foreground">
       <div className="flex h-14 shrink-0 items-center px-4 text-base font-semibold">
@@ -33,14 +38,17 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         </CreateChannelDialog>
       </nav>
       <div className="border-t px-2 py-2">
-        <Link
-          to="/agents"
-          onClick={onNavigate}
-          className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-sidebar-foreground/80 outline-none hover:not-aria-[current=page]:bg-sidebar-accent hover:not-aria-[current=page]:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:ring-offset-1 focus-visible:ring-offset-sidebar aria-[current=page]:bg-sidebar-primary aria-[current=page]:font-medium aria-[current=page]:text-sidebar-primary-foreground"
-        >
+        <Link to="/agents" onClick={onNavigate} className={NAV_LINK}>
           <BotIcon className="size-4 shrink-0 opacity-70" aria-hidden />
           에이전트
         </Link>
+        {/* 연결 설정은 owner 만 쓴다(설정 마법사 스펙 「결정」 — setup 은 owner 만) — 아닌 사람에게는 진입점이 없다 */}
+        {owner && (
+          <Link to="/settings/connection" onClick={onNavigate} className={NAV_LINK}>
+            <CableIcon className="size-4 shrink-0 opacity-70" aria-hidden />
+            연결
+          </Link>
+        )}
         {/* 이 기기의 알림 — 푸시 켜기·끄기·앱 설치(스펙 6장) */}
         <NotifySettings />
       </div>

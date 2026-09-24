@@ -99,12 +99,22 @@ export const agentsRoute = createRoute({
   component: lazyPage(() => import("@/features/agents/AgentsPage"), "AgentsPage"),
 });
 
+/**
+ * 연결 설정(owner 만 — 페이지가 가른다). 채널 아래의 `settings` 자식(`/c/$channelId/settings`)과 겹치지 않는 최상위 경로
+ */
+export const connectionRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/settings/connection",
+  component: lazyPage(() => import("@/features/setup/ConnectionPage"), "ConnectionPage"),
+});
+
 const routeTree = rootRoute.addChildren([
   loginRoute,
   appRoute.addChildren([
     indexRoute,
     channelRoute.addChildren([channelSettingsRoute, channelActivityRoute]),
     agentsRoute,
+    connectionRoute,
   ]),
 ]);
 

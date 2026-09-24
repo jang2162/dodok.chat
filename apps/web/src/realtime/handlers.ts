@@ -154,6 +154,14 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
     "channel.member.changed": ({ channelId, members }) => qc.setQueryData(qk.members(channelId), members),
     "adapter.status": (status: AdapterStatus) =>
       qc.setQueryData<AdapterStatusResponse>(qk.adapter, (prev) => prev && { ...prev, ...status }),
+    /**
+     * 연결 설정 상태(owner 에게만 온다) — 통째로 바꾼다. 토큰 목록의 「지금 접속 중」·마지막 사용은 목록 응답에 있어
+     * 다시 받게 낡은 것으로 둔다(보고 있는 화면만 곧바로 다시 부른다)
+     */
+    "setup.status": ({ status }) => {
+      qc.setQueryData(qk.setupStatus, status);
+      void qc.invalidateQueries({ queryKey: qk.bridgeTokens });
+    },
     typing: (p) => useTypingStore.getState().note(p),
     "system.notice": ({ level, message }) => {
       const opts = { duration: NOTICE_DURATION_MS[level] };

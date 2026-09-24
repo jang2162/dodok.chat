@@ -8,7 +8,8 @@ import type {
   User,
   Workspace,
 } from "@dodok/shared";
-import { queryOptions, useQuery, useQueryClient } from "@tanstack/react-query";
+import { notifyManager, queryOptions, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useSyncExternalStore } from "react";
 import { api } from "./http";
 
 /**
@@ -37,6 +38,9 @@ export const qk = {
   runEvents: (runId: string) => ["runs", runId, "events"] as const,
   /** 최근 본 채널 id(앞이 최근) — 서버 조회가 아니라 오프라인 사본이 무엇을 담을지 정하는 목록(pwa/persist) */
   recentChannels: ["recentChannels"] as const,
+  /** 연결 설정(owner 만) — 오프라인 사본에 담지 않는다(pwa/persist). 발급 원문은 어느 키에도 넣지 않는다 */
+  setupStatus: ["setup", "status"] as const,
+  bridgeTokens: ["setup", "bridge-tokens"] as const,
 };
 
 /** 활동 패널이 한 번에 받는 런 수(REST 상한 200) */
@@ -48,6 +52,23 @@ export const meQuery = queryOptions({
   staleTime: Infinity,
 });
 export const useMe = () => useQuery(meQuery);
+/**
+ * 연결 설정 같은 owner 전용 진입점을 가를 때(설정 마법사 스펙 「결정」 — setup 은 owner 만). role 이 없는 옛 me 는 owner 가 아니다.
+ * 라우트 가드가 이미 받은 me 를 캐시 구독으로 읽기만 한다 — 관찰자를 두지 않는 까닭은 pwa/offline.ts `useMeDown` 의 주석
+ */
+export function useIsOwner(): boolean {
+  const qc = useQueryClient();
+  const subscribe = useCallback(
+    (onChange: () => void) => {
+      const notify = notifyManager.batchCalls(onChange);
+      return qc.getQueryCache().subscribe((e) => {
+        if (e.query.queryKey[0] === qk.me[0]) notify();
+      });
+    },
+    [qc],
+  );
+  return useSyncExternalStore(subscribe, () => qc.getQueryData<MeResponse>(qk.me)?.role === "owner");
+}
 export const useChannels = () =>
   useQuery({
     queryKey: qk.channels,

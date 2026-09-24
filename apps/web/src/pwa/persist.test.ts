@@ -72,6 +72,11 @@ describe("shouldPersist", () => {
     expect(yes(["adapter"])).toBe(false);
     expect(yes(["agents", "discover"])).toBe(false);
   });
+  it("연결 설정(setup)의 것은 담지 않는다 — 상태·토큰 목록 모두", () => {
+    expect(yes(qk.setupStatus)).toBe(false);
+    expect(yes(qk.bridgeTokens)).toBe(false);
+    expect(yes(["setup"])).toBe(false);
+  });
 });
 
 describe("trimForPersist", () => {
@@ -176,6 +181,8 @@ describe("startPersistence", () => {
     qc.setQueryData(qk.timeline(CH), timelineOf(60));
     qc.setQueryData(qk.timeline(CH2), timelineOf(2));
     qc.setQueryData(qk.channelRuns(CH), []);
+    qc.setQueryData(qk.setupStatus, { server: { version: "0.1.0" } });
+    qc.setQueryData(qk.bridgeTokens, [{ id: "t", label: "env", prefix: "abc123" }]);
   }
 
   it("골라서 저장한다 — 최근 채널의 것·me·목록만, 타임라인은 잘라서", async () => {

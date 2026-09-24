@@ -33,10 +33,12 @@ export function touchRecentChannel(qc: QueryClient, channelId: string): void {
 
 /**
  * 사본에 담을 쿼리(스펙 4장). me·채널 목록·에이전트·최근 목록은 늘, 채널 하나의 것(채널·멤버·타임라인)은 최근 본
- * 채널만. 런·활동·어댑터 상태는 지나간 실시간 값이라 담지 않는다(복원하면 틀린 상태를 보인다)
+ * 채널만. 런·활동·어댑터 상태는 지나간 실시간 값이라 담지 않는다(복원하면 틀린 상태를 보인다).
+ * 연결 설정(`setup`)은 owner 의 관리 정보라 기기에 남기지 않는다 — 아래 규칙이 바뀌어도 빠지게 먼저 거른다
  */
 export function shouldPersist(query: { queryKey: readonly unknown[] }, recent: readonly string[]): boolean {
   const [head, id] = query.queryKey;
+  if (head === qk.setupStatus[0]) return false;
   if (head === "me" || head === "channels" || head === "agents" || head === "recentChannels")
     return query.queryKey.length === 1;
   if (head === "channel" || head === "members" || head === "timeline")

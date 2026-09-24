@@ -1,4 +1,10 @@
-import { Channel, ChannelMember, type ChannelSubscribeResult, type Result } from "@dodok/shared";
+import {
+  Channel,
+  ChannelMember,
+  type ChannelSubscribeResult,
+  type Result,
+  type SetupStatus,
+} from "@dodok/shared";
 import type { QueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -438,6 +444,15 @@ describe("캐시 패치", () => {
     fake.serverEmit("channel.member.changed", { channelId: CH, members: [member] });
 
     expect(queryClient.getQueryData(qk.members(CH))).toEqual([member]);
+  });
+
+  it("setup.status: [setup, status] 를 통째로 바꾸고 토큰 목록은 다시 받게 낡은 것으로 둔다", () => {
+    const { fake, queryClient } = setup();
+    queryClient.setQueryData(qk.bridgeTokens, []);
+    const status = { envTokenIgnored: true } as unknown as SetupStatus;
+    fake.serverEmit("setup.status", { status });
+    expect(queryClient.getQueryData(qk.setupStatus)).toBe(status);
+    expect(queryClient.getQueryState(qk.bridgeTokens)?.isInvalidated).toBe(true);
   });
 
   it("adapter.status: [adapter] 에 병합한다 — capabilities 는 유지, 아직 없으면 만들지 않는다", () => {
