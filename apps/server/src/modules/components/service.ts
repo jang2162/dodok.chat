@@ -9,6 +9,7 @@ import { getAgent } from "../agents/service";
 import { getChannel, listMembers } from "../channels/service";
 import { getMessage, rowToMessage } from "../messages/service";
 import type { RunGate } from "../ops/budget";
+import { isPairAllowed } from "../router/decide";
 import { CONTINUE_RELAY_ITEM, RETRY_RUN_ITEM } from "../router/service";
 import { getRun } from "../runs/store";
 import { formatInteractionText, validateInteraction } from "./interact";
@@ -175,6 +176,14 @@ function retryTarget(tx: DbOrTx, message: Message): Target {
   }
   const triggerMessage = getMessage(tx, run.triggerMessageId);
   if (!triggerMessage) throw apiError("VALIDATION", "run is not retryable");
+  // 판정 R2 — 사람이 누른 것이라 이어가기처럼 턴 상한·반복은 다시 보지 않지만, 쌍 허용은 이어가기로도 못 뚫는 차단이라 지금 정책으로 다시 본다
+  if (run.triggerKind === "relay") {
+    const from = triggerMessage.authorType === "agent" ? triggerMessage.authorId : undefined;
+    const channel = getChannel(tx, run.channelId);
+    if (!channel || from === undefined || !isPairAllowed(channel.relayPolicy, from, run.agentId)) {
+      throw apiError("VALIDATION", "relay pair is not allowed");
+    }
+  }
   return { agentId: run.agentId, triggerKind: "retry", run, triggerMessage };
 }
 

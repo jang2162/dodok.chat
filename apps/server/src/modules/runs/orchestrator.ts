@@ -487,7 +487,10 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         kind: "run_error",
         bodyMd,
         systemMeta: { kind: "run_error", runId: run.id },
-        ...(run.triggerMessageId === undefined ? {} : { components: RETRY_COMPONENTS }),
+        // 봇 루프 보호로 떨어진 런은 다시 보내도 플러그인이 같은 사유로 떨어뜨린다 — 누를 때마다 카드만 는다
+        ...(run.triggerMessageId === undefined || code === "DROPPED:bot-loop-protection"
+          ? {}
+          : { components: RETRY_COMPONENTS }),
       });
     } catch (err) {
       logger.error({ err, runId: run.id }, "run_error system message failed");

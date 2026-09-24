@@ -41,6 +41,10 @@ export function computeRelayHash(fromAgentId: string, toAgentId: string, bodyMd:
     .digest("hex");
 }
 
+export function isPairAllowed(policy: Channel["relayPolicy"], from: string, to: string): boolean {
+  return policy.allowPairs === "all" || policy.allowPairs.some((p) => p.from === from && p.to === to);
+}
+
 function uniq<T>(xs: T[]): T[] {
   return [...new Set(xs)];
 }
@@ -89,10 +93,7 @@ export function decideRuns(input: RoutingInput): { runs: RunPlan[]; blocked: Blo
         blocked.push({ agentId: to, reason: "disabled" });
         continue;
       }
-      const allowed =
-        policy.allowPairs === "all" ||
-        policy.allowPairs.some((p) => p.from === sourceRun.agentId && p.to === to);
-      if (!allowed) {
+      if (!isPairAllowed(policy, sourceRun.agentId, to)) {
         blocked.push({ agentId: to, reason: "pair_not_allowed" });
         continue;
       }

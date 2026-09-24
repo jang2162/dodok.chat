@@ -5,7 +5,7 @@ import type { z } from "zod";
 import type { Db } from "../src/db/client";
 import { componentInteractions } from "../src/db/schema.sqlite";
 import { createAgent, updateAgent } from "../src/modules/agents/service";
-import { addMember, createChannel, removeMember } from "../src/modules/channels/service";
+import { addMember, createChannel, removeMember, updateChannel } from "../src/modules/channels/service";
 import { type InteractInput, interact } from "../src/modules/components/service";
 import {
   createAgentMessage,
@@ -151,6 +151,38 @@ function retryNotice(t: ReturnType<typeof setup>, runId: string): Message {
       blocks: [{ type: "actions", items: [{ type: "button", id: "retry_run", label: "다시 실행" }] }],
     },
   });
+}
+
+/** error 로 끝난 런과 그 run_error 카드 — relay 면 트리거는 fromAgent 의 메시지다 */
+function failedRun(
+  t: ReturnType<typeof setup>,
+  opts: { agent: Agent; triggerKind: "mention" | "relay"; relayDepth?: number; fromAgent?: Agent },
+): { run: Run; notice: Message } {
+  const trigger = opts.fromAgent
+    ? createAgentMessage(t.db, t.bus, {
+        channelId: t.channel.id,
+        agentId: opts.fromAgent.id,
+        externalId: `out-trigger-${uuid()}`,
+        bodyMd: `@${opts.agent.handle} 넘길게`,
+      })
+    : createUserMessage(t.db, t.bus, {
+        channelId: t.channel.id,
+        authorId: t.userId,
+        bodyMd: `@${opts.agent.handle} 해줘`,
+        clientMsgId: `c-${uuid()}`,
+      });
+  const run = insertRun(t.db, {
+    channelId: t.channel.id,
+    agentId: opts.agent.id,
+    triggerKind: opts.triggerKind,
+    triggerMessageId: trigger.id,
+    rootMessageId: uuid(),
+    relayDepth: opts.relayDepth ?? 0,
+    sessionKey: "k",
+    createdAt: new Date(),
+  });
+  updateRun(t.db, run.id, { status: "error", error: { code: "TIMEOUT", message: "t" } });
+  return { run, notice: retryNotice(t, run.id) };
 }
 
 describe("components service — interact", () => {
@@ -397,24 +429,12 @@ describe("components service — interact", () => {
 
   it("retry_run → 원래 런의 트리거로 새 런(parentRunId), 1회용 소비", async () => {
     const t = setup();
-    const trigger = createUserMessage(t.db, t.bus, {
-      channelId: t.channel.id,
-      authorId: t.userId,
-      bodyMd: "@dev 해줘",
-      clientMsgId: "c-retry",
-    });
-    const failed = insertRun(t.db, {
-      channelId: t.channel.id,
-      agentId: t.dev.id,
+    const { run: failed, notice } = failedRun(t, {
+      agent: t.dev,
       triggerKind: "relay",
-      triggerMessageId: trigger.id,
-      rootMessageId: uuid(),
       relayDepth: 2,
-      sessionKey: "k",
-      createdAt: new Date(),
+      fromAgent: t.fin,
     });
-    updateRun(t.db, failed.id, { status: "error", error: { code: "TIMEOUT", message: "t" } });
-    const notice = retryNotice(t, failed.id);
 
     await interact(t.deps, t.click(notice, "retry_run"));
     expect(t.enqueue).toHaveBeenCalledTimes(1);
@@ -427,7 +447,7 @@ describe("components service — interact", () => {
         relayDepth: 2,
         parentRunId: failed.id,
       },
-      { message: expect.objectContaining({ id: trigger.id }) },
+      { message: expect.objectContaining({ id: failed.triggerMessageId }) },
     );
     expect(getMessage(t.db, notice.id)?.componentState?.consumed).toEqual(["retry_run"]);
     await expect(interact(t.deps, t.click(notice, "retry_run"))).rejects.toMatchObject({
@@ -457,6 +477,82 @@ describe("components service — interact", () => {
     }
     expect(t.enqueue).not.toHaveBeenCalled();
     expect(t.interactionRows()).toEqual([]);
+  });
+
+  it("retry_run 대상 에이전트가 비활성이면 VALIDATION — 저장·소비·런 없음(되살리면 다시 누를 수 있다)", async () => {
+    const t = setup();
+    const { notice } = failedRun(t, { agent: t.dev, triggerKind: "mention" });
+    updateAgent(t.db, t.dev.id, { enabled: false });
+    await expect(interact(t.deps, t.click(notice, "retry_run"))).rejects.toMatchObject({
+      body: { code: "VALIDATION" },
+    });
+    expect(t.enqueue).not.toHaveBeenCalled();
+    expect(t.interactionRows()).toEqual([]);
+    expect(getMessage(t.db, notice.id)?.componentState?.consumed).toEqual([]);
+
+    updateAgent(t.db, t.dev.id, { enabled: true });
+    await interact(t.deps, t.click(notice, "retry_run"));
+    expect(t.enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it("retry_run 대상 에이전트가 채널에서 빠졌으면 VALIDATION — 저장·소비·런 없음", async () => {
+    const t = setup();
+    const { notice } = failedRun(t, { agent: t.dev, triggerKind: "mention" });
+    removeMember(t.db, t.channel.id, t.dev.id);
+    await expect(interact(t.deps, t.click(notice, "retry_run"))).rejects.toMatchObject({
+      body: { code: "VALIDATION" },
+    });
+    expect(t.enqueue).not.toHaveBeenCalled();
+    expect(t.interactionRows()).toEqual([]);
+    expect(getMessage(t.db, notice.id)?.componentState?.consumed).toEqual([]);
+  });
+
+  it("relay 런 retry 는 턴 상한을 다시 보지 않는다 — 이어가기처럼 사람이 누른 것(판정 R2)", async () => {
+    const t = setup({ maxRelayTurns: 1 });
+    const { run, notice } = failedRun(t, {
+      agent: t.fin,
+      triggerKind: "relay",
+      relayDepth: 3,
+      fromAgent: t.dev,
+    });
+    await interact(t.deps, t.click(notice, "retry_run"));
+    expect(t.enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: t.fin.id,
+        triggerKind: "relay",
+        relayDepth: 3,
+        parentRunId: run.id,
+      }),
+      expect.anything(),
+    );
+  });
+
+  it("relay 런 retry 는 지금 allowPairs 에서 빠진 쌍이면 VALIDATION — 버튼은 남고, 쌍을 되돌리면 통과(판정 R2)", async () => {
+    const t = setup();
+    const { notice } = failedRun(t, { agent: t.fin, triggerKind: "relay", relayDepth: 1, fromAgent: t.dev });
+    // 반대 방향(fin → dev)만 남긴다 — 원래 런의 쌍은 dev → fin
+    updateChannel(t.db, t.channel.id, {
+      relayPolicy: { maxRelayTurns: 4, allowPairs: [{ from: t.fin.id, to: t.dev.id }] },
+    });
+    await expect(interact(t.deps, t.click(notice, "retry_run"))).rejects.toMatchObject({
+      body: { code: "VALIDATION" },
+    });
+    expect(t.enqueue).not.toHaveBeenCalled();
+    expect(t.interactionRows()).toEqual([]);
+    expect(getMessage(t.db, notice.id)?.componentState?.consumed).toEqual([]);
+
+    updateChannel(t.db, t.channel.id, {
+      relayPolicy: { maxRelayTurns: 4, allowPairs: [{ from: t.dev.id, to: t.fin.id }] },
+    });
+    await interact(t.deps, t.click(notice, "retry_run"));
+    expect(t.enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it("mention 런 retry 는 allowPairs 와 무관하다", async () => {
+    const t = setup({ maxRelayTurns: 4, allowPairs: [] });
+    const { notice } = failedRun(t, { agent: t.dev, triggerKind: "mention" });
+    await interact(t.deps, t.click(notice, "retry_run"));
+    expect(t.enqueue).toHaveBeenCalledTimes(1);
   });
 
   it("같은 아이템을 동시에 눌러도 한 번만 통과한다", async () => {

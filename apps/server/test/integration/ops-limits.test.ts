@@ -33,6 +33,8 @@ const RETRY_COMPONENTS = {
     { type: "actions", items: [{ type: "button", id: "retry_run", label: "다시 실행", style: "primary" }] },
   ],
 };
+/** 버튼이 붙는 실패 — bot-loop-protection 은 다시 보내도 같은 사유로 떨어지므로 버튼이 없다 */
+const TEST_DROP = "test-drop";
 const WORKSPACE_LIMIT_BODY = (n: number) => `오늘 런 한도(${n})에 도달했습니다 — 내일 0시에 풀립니다`;
 
 describe("런 관문·다시 실행", () => {
@@ -139,8 +141,7 @@ describe("런 관문·다시 실행", () => {
 
   it("같은 버튼 두 번째는 CONSUMED, 두 소켓이 동시에 눌러도 새 런은 하나", async () => {
     const { setup, log } = await start({
-      dev: ({ index }) =>
-        index === 0 ? { reply: "안 보냄", drop: "bot-loop-protection" } : { reply: "했어요" },
+      dev: ({ index }) => (index === 0 ? { reply: "안 보냄", drop: TEST_DROP } : { reply: "했어요" }),
     });
     const { runId, notice } = await failedMention(setup, log);
     const other = await connectWire(live.app, live.auth.token);
@@ -161,8 +162,7 @@ describe("런 관문·다시 실행", () => {
 
   it("워크스페이스 한도에 걸린 채 누르면 RUN_LIMIT — 상호작용 0·버튼 미소비, 한도를 올리면 다시 눌러 통과", async () => {
     const { setup, log } = await start({
-      dev: ({ index }) =>
-        index === 0 ? { reply: "안 보냄", drop: "bot-loop-protection" } : { reply: "했어요" },
+      dev: ({ index }) => (index === 0 ? { reply: "안 보냄", drop: TEST_DROP } : { reply: "했어요" }),
     });
     const { runId, notice } = await failedMention(setup, log);
     patchOpsSettings(live.app.db, live.app.workspaceId, { dailyRunLimit: 1 }); // 오늘 런 1개 — 이미 찼다
@@ -188,7 +188,7 @@ describe("런 관문·다시 실행", () => {
 
   it("다시 실행 대상 런이 error 가 아니면(되돌려진 상태) VALIDATION — 버튼은 남는다", async () => {
     const { setup, log } = await start({
-      dev: () => ({ reply: "안 보냄", drop: "bot-loop-protection" }),
+      dev: () => ({ reply: "안 보냄", drop: TEST_DROP }),
     });
     const { runId, notice } = await failedMention(setup, log);
     live.app.db.update(runs).set({ status: "done" }).where(eq(runs.id, runId)).run();
@@ -198,11 +198,24 @@ describe("런 관문·다시 실행", () => {
     expect(childrenOf(runId)).toEqual([]);
   });
 
+  it("bot-loop-protection 으로 떨어진 런은 트리거 메시지가 있어도 run_error 에 버튼이 없다", async () => {
+    const { setup, log, scenario } = await start({
+      dev: () => ({ reply: "안 보냄", drop: "bot-loop-protection" }),
+    });
+    const { trigger, runId, final, notice } = await failedMention(setup, log);
+    expect(final).toMatchObject({ status: "error", error: { code: "DROPPED:bot-loop-protection" } });
+    expect((await getRunRest(live, runId)).triggerMessageId).toBe(trigger.id);
+    expect(notice.bodyMd).toBe("@dev 가 봇 루프 보호로 메시지를 받지 않았습니다");
+    expect(notice.components).toBeUndefined();
+    expect(notice.componentState).toBeUndefined();
+    expect(scenario.turns).toHaveLength(1);
+  });
+
   it("트리거 메시지가 없는 이어가기 런이 실패하면 run_error 에 버튼이 없다", async () => {
     const { setup, log } = await start(
       {
         dev: () => ({ reply: "@fin 넘길게" }),
-        fin: () => ({ reply: "안 보냄", drop: "bot-loop-protection" }),
+        fin: () => ({ reply: "안 보냄", drop: TEST_DROP }),
       },
       {},
       { maxRelayTurns: 0, allowPairs: "all" },
