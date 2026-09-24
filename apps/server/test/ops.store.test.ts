@@ -54,6 +54,12 @@ describe("recordEvent 묶기", () => {
     expect(rows()).toHaveLength(1);
   });
 
+  it("정확히 60분 뒤는 아직 창 안 — 같은 줄", () => {
+    const first = recordEvent(db, ws, ratelimit(), T0);
+    expect(recordEvent(db, ws, ratelimit(), at(OPS_GROUP_WINDOW_MS)).id).toBe(first.id);
+    expect(recordEvent(db, ws, ratelimit(), at(2 * OPS_GROUP_WINDOW_MS + 1)).id).not.toBe(first.id);
+  });
+
   it("61분 뒤면 새 줄", () => {
     const first = recordEvent(db, ws, ratelimit(), T0);
     const second = recordEvent(db, ws, ratelimit(), at(61 * MIN));
@@ -121,6 +127,7 @@ describe("끊김 사건", () => {
     expect(closed).toMatchObject({
       id: first.id,
       resolvedAt: at(7 * MIN).toISOString(),
+      lastAt: at(7 * MIN).toISOString(), // 닫은 시각이 마지막 활동 — 목록 맨 위로 온다
       detail: { since: "x", downMs: 7 * MIN },
     });
     const next = recordEvent(db, ws, down, at(8 * MIN));
@@ -164,6 +171,12 @@ describe("ackEvents·unackedCounts", () => {
     expect(unackedCounts(db, ws)).toEqual({ warn: 1, error: 0 });
     expect(ackEvents(db, ws, at(5), at(30))).toHaveLength(0); // 이미 확인한 줄은 다시 세지 않는다
   });
+
+  it("lastAt 이 upTo 와 같은 줄도 확인한다 — ack 를 누른 그 밀리초에 난 사건", () => {
+    const row = recordEvent(db, ws, { kind: "run_failed", key: "agent:a", severity: "warn" }, at(7));
+    expect(ackEvents(db, ws, new Date(row.lastAt), at(7)).map((e) => e.id)).toEqual([row.id]);
+    expect(unackedCounts(db, ws)).toEqual({ warn: 0, error: 0 });
+  });
 });
 
 describe("sweepEvents", () => {
@@ -178,6 +191,14 @@ describe("sweepEvents", () => {
         .map((r) => r.key)
         .sort(),
     ).toEqual(["edge", "fresh"]);
+  });
+
+  it("다른 워크스페이스의 오래된 줄은 지우지 않는다", () => {
+    const other = seedWorkspace(db, { userHandle: "other" }).workspaceId;
+    recordEvent(db, ws, ratelimit("mine"), T0);
+    recordEvent(db, other, ratelimit("theirs"), T0);
+    expect(sweepEvents(db, ws, at(OPS_RETENTION_MS + 1))).toBe(1);
+    expect(rows().map((r) => r.key)).toEqual(["theirs"]);
   });
 });
 

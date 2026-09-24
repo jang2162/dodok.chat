@@ -7,7 +7,8 @@ import { v7 as uuid } from "uuid";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { App } from "../../src/app";
 import { createDb } from "../../src/db/client";
-import { opsEvents, workspaces } from "../../src/db/schema.sqlite";
+import { eq } from "drizzle-orm";
+import { memberships, opsEvents, workspaces } from "../../src/db/schema.sqlite";
 import { bootTestApp, login, userWithRole } from "../helpers/app";
 import { connectWire, recordEvents, waitFor, type WireClient } from "../helpers/wire";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -53,6 +54,31 @@ describe("운영 사건 통합 — ops.event 팬아웃", () => {
 
     await roundTrip(member);
     expect(memberSeen).toHaveLength(0);
+  });
+
+  it("역할이 바뀌면 다음 사건부터 따른다 — member→owner 는 받기 시작하고 owner→member 는 그친다", async () => {
+    app = await bootTestApp({}, { pluginDirs: [] });
+    await app.fastify.listen({ host: "127.0.0.1", port: 0 });
+    const bee = await userWithRole(app, "bee", "member");
+    const socket = await connectWire(app, bee.token);
+    sockets.push(socket);
+    const seen = recordEvents(socket, ["ops.event"]);
+    const setRole = (role: string) =>
+      app?.db.update(memberships).set({ role }).where(eq(memberships.userId, bee.id)).run();
+
+    app.ops.record({ kind: "run_failed", key: "before", severity: "warn" });
+    await roundTrip(socket);
+    expect(seen).toHaveLength(0);
+
+    setRole("owner");
+    const got = waitFor(socket, "ops.event");
+    app.ops.record({ kind: "run_failed", key: "promoted", severity: "warn" });
+    expect((await got).event.key).toBe("promoted");
+
+    setRole("member");
+    app.ops.record({ kind: "run_failed", key: "demoted", severity: "warn" });
+    await roundTrip(socket);
+    expect(seen.map((e) => (e.payload as { event: { key: string } }).event.key)).toEqual(["promoted"]);
   });
 });
 
