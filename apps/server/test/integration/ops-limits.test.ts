@@ -108,6 +108,10 @@ describe("런 관문·다시 실행", () => {
     expect(final).toMatchObject({ status: "error", error: { code: "ADAPTER_UNAVAILABLE" } });
     expect(notice.components).toMatchObject(RETRY_COMPONENTS);
     expect(notice.components?.reusable).toBe(false);
+    // 한도에 막혀 남긴 버튼을 한도가 풀린 뒤에도 누를 수 있게 계약 상한(24시간)까지 산다
+    expect(Date.parse(notice.componentState?.expiresAt as string) - Date.parse(notice.createdAt)).toBe(
+      86_400_000,
+    );
 
     await live.plugin.reconnect();
     await log.until(() => log.adapterStatus.find((s) => s.bridge === "connected"), "bridge connected");

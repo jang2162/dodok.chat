@@ -108,8 +108,12 @@ const STARTED: ReadonlySet<RunStatus> = new Set<RunStatus>([
   "awaiting_approval",
   "finalizing",
 ]);
-/** run_error 카드의 1회용 「다시 실행」 — 트리거 메시지가 있는 런에만 붙인다(상호작용·이어가기는 다시 만들 트리거가 없다) */
+/**
+ * run_error 카드의 1회용 「다시 실행」 — 트리거 메시지가 있는 런에만 붙인다(상호작용·이어가기는 다시 만들 트리거가 없다).
+ * 수명은 계약 상한(24시간)이다 — 기본 30분이면 한도에 막혀 버튼을 남겨 둔 사람이 한도가 풀린 뒤 누를 수 없다
+ */
 const RETRY_COMPONENTS = {
+  ttlMs: 86_400_000,
   blocks: [
     {
       type: "actions" as const,
