@@ -1,5 +1,5 @@
 import type { BridgeTokenRecord, SetupStatus } from "@dodok/shared";
-import { useRef, useState } from "react";
+import { type RefObject, useRef, useState } from "react";
 import { ConfirmDialog } from "@/features/settings/ConfirmDialog";
 import { Badge } from "@/ui/badge";
 import { Button } from "@/ui/button";
@@ -38,18 +38,22 @@ type Step = "confirm" | "last";
 /**
  * 토큰 목록(스펙 「연결 페이지」) — 라벨·`dbt_` + 앞 6자·만든 때·마지막 사용·「지금 접속 중」·폐기됨. 이어받은 줄(라벨 `env`)은 prefix 대신
  * 「.env 에서 이어받음」 — 그 prefix 는 원문이 아니라 해시 앞자리라 보여도 알아볼 수 없다.
- * 폐기는 확인을 거친다: 접속 중이면 에이전트가 멈춘다고, 활성 토큰이 0개가 되면 한 번 더
+ * 폐기는 확인을 거친다: 접속 중이면 에이전트가 멈춘다고, 활성 토큰이 0개가 되면 한 번 더(`ConfirmDialog` 의 `escalated`).
+ * 폐기한 줄에는 「폐기」 버튼이 없어 초점을 돌려줄 자리가 사라진다 — 아래 줄의 「폐기」, 없으면 `issueButton`(「새 토큰 발급」)으로 옮긴다
  */
 export function TokenList({
   tokens,
   status,
+  issueButton,
 }: {
   tokens: BridgeTokenRecord[];
   status: SetupStatus | undefined;
+  issueButton?: RefObject<HTMLButtonElement | null>;
 }) {
   const revoke = useRevokeBridgeToken();
   const [target, setTarget] = useState<{ token: BridgeTokenRecord; step: Step }>();
-  const returnFocus = useRef<HTMLButtonElement | null>(null);
+  const returnFocus = useRef<HTMLElement | null>(null);
+  const revokeButtons = useRef(new Map<string, HTMLButtonElement>());
   const connectedId = connectedTokenId(tokens, status);
   const current = tokens.find((t) => t.id === connectedId);
   const active = tokens.filter((t) => t.revokedAt === null);
@@ -66,7 +70,19 @@ export function TokenList({
       setTarget({ token: target.token, step: "last" });
       return;
     }
-    revoke.mutate(target.token.id, { onSettled: () => setTarget(undefined) });
+    const id = target.token.id;
+    revoke.mutate(id, {
+      onSuccess: () => {
+        returnFocus.current = focusAfterRevoke(id);
+      },
+      onSettled: () => setTarget(undefined),
+    });
+  }
+
+  function focusAfterRevoke(id: string): HTMLElement | null {
+    const after = tokens.slice(tokens.findIndex((t) => t.id === id) + 1);
+    const next = after.find((t) => t.revokedAt === null);
+    return (next && revokeButtons.current.get(next.id)) ?? issueButton?.current ?? null;
   }
 
   const connected = target?.token.id === connectedId;
@@ -128,6 +144,10 @@ export function TokenList({
                   variant="outline"
                   aria-label={`${token.label} 폐기`}
                   disabled={revoke.isPending}
+                  ref={(el) => {
+                    if (el) revokeButtons.current.set(token.id, el);
+                    else revokeButtons.current.delete(token.id);
+                  }}
                   onClick={(e) => start(token, e.currentTarget)}
                 >
                   폐기
@@ -149,6 +169,7 @@ export function TokenList({
         pending={revoke.isPending}
         destructive
         returnFocus={returnFocus}
+        escalated={target?.step === "last"}
         onConfirm={confirm}
       />
     </>

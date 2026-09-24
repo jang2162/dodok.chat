@@ -1,9 +1,11 @@
 import type { BridgeTokenRecord, IssueBridgeTokenResult, SetupStatus } from "@dodok/shared";
 import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render } from "@testing-library/react";
+import { RouterContextProvider, createMemoryHistory } from "@tanstack/react-router";
 import { vi } from "vitest";
 import { qk } from "@/api/queries";
 import { createQueryClient } from "@/app/queryClient";
+import { createAppRouter } from "@/app/router";
 import { ConnectionPage } from "@/features/setup/ConnectionPage";
 import { ME, json, shellGet } from "./shellApi";
 
@@ -141,12 +143,18 @@ export function stubSetupServer(
   };
 }
 
-/** me 를 미리 넣고 페이지만 그린다 — 라우트 가드가 me 를 채운 뒤의 모습 */
+/**
+ * me 를 미리 넣고 페이지만 그린다 — 라우트 가드가 me 를 채운 뒤의 모습. 라우터는 문맥만 준다(원문이 보이는 동안의 이동 막기가
+ * 라우터를 쓴다) — 셸까지 띄우는 이동 시나리오는 `renderRoute`
+ */
 export function renderConnection(me: unknown = OWNER, qc: QueryClient = createQueryClient(() => {})) {
   qc.setQueryData(qk.me, me);
+  const router = createAppRouter(qc, createMemoryHistory({ initialEntries: ["/settings/connection"] }));
   render(
     <QueryClientProvider client={qc}>
-      <ConnectionPage />
+      <RouterContextProvider router={router}>
+        <ConnectionPage />
+      </RouterContextProvider>
     </QueryClientProvider>,
   );
   return qc;

@@ -161,15 +161,18 @@ export function GatewaySection({ status }: { status: SetupStatus }) {
 }
 
 /**
- * Gateway 호스트에서 돌릴 설치 명령(live-smoke 「절차」의 플러그인 재설치 순서) — 떠 있는 Gateway 에 설치하면 파일이 갱신되지 않고 실패할 수 있어
- * 먼저 내린다. 설치된 번들 sha256 이 서버가 품은 번들과 같아야 「같은 빌드」로 보인다(스펙 「결정」 — 번들 파일 sha256 으로 가른다)
+ * Gateway 호스트에서 돌릴 설치 명령 — `docs/guides/deploy.md` 「[PC → B] 플러그인 설치·브리지 설정」 절의 [B] 블록이 정본이다.
+ * 그 블록의 줄을 글자 그대로 옮기고 계정 설정 패치 줄만 뺀다(토큰은 「새 토큰 발급」이 따로 준다). 다른 것은 둘뿐이다 —
+ * 받은 파일 이름, 번들 sha256 을 대조할 값(deploy.md 는 [PC] 에서 잰 값, 여기는 서버가 품은 번들의 값 — 스펙 「결정」 번들 파일 sha256).
+ * `connection.test.tsx` 가 그 블록과 대조하므로 문서가 바뀌면 테스트가 알린다
  */
 export function installCommands(fileName: string, bundleSha256: string): string {
   return [
-    "openclaw gateway stop",
-    `openclaw plugins install ./${fileName} --force --accept-capabilities`,
-    `shasum -a 256 ~/.openclaw/extensions/dodok/dist/index.js   # ${bundleSha256} 이어야 한다`,
-    "openclaw gateway start",
+    "# Gateway 를 내린다(호스트가 Gateway 를 돌리는 방식대로)",
+    `openclaw plugins install /tmp/${fileName} --force --accept-capabilities`,
+    `openclaw plugins inspect dodok --json | jq '.plugin.status, .plugin.channelIds'   # "loaded", ["dodok"]`,
+    `sha256sum ~/.openclaw/extensions/dodok/dist/index.js      # 기본 상태 디렉터리일 때. ${bundleSha256} 이어야 한다(macOS 는 shasum -a 256)`,
+    "# Gateway 를 올린다",
   ].join("\n");
 }
 
@@ -259,8 +262,8 @@ export function PluginSection({ status }: { status: SetupStatus }) {
           </div>
           <div className="flex flex-col gap-1.5">
             <p className="text-sm text-muted-foreground">
-              받은 파일을 Gateway 호스트로 옮긴 뒤 그 자리에서 돌립니다. 떠 있는 Gateway 에 설치하면 파일이
-              바뀌지 않을 수 있어 먼저 내립니다.
+              받은 파일을 Gateway 호스트의 <code className="font-mono">/tmp</code> 로 옮긴 뒤 그 호스트에서
+              돌립니다. 떠 있는 Gateway 에 설치하면 파일이 바뀌지 않을 수 있어 먼저 내립니다.
             </p>
             <CopyBlock
               text={installCommands(fileName, file.bundleSha256)}

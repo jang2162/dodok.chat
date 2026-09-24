@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import type { SetupStatus } from "@dodok/shared";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -15,6 +17,7 @@ import {
   tokenId,
   tokenOf,
 } from "../../../test/setupServer";
+import { installCommands } from "./sections";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -62,6 +65,20 @@ describe("서버·Gateway", () => {
     expect(gw).toHaveTextContent("OPENCLAW_GATEWAY_TOKEN");
     expect(gw).toHaveTextContent("서버 로그");
   });
+
+  it.each(["connected", "reconnecting"] as const)(
+    "%s 이면(페어링 대기도 아니면) .env·서버 로그 안내가 없다",
+    async (state) => {
+      stubSetupServer({ status: statusOf({ gateway: { state } }) });
+      renderConnection();
+      const gw = await region("Gateway");
+      expect(
+        await within(gw).findByText(state === "connected" ? "연결됨" : "다시 연결하는 중"),
+      ).toBeInTheDocument();
+      expect(gw).not.toHaveTextContent("OPENCLAW_GATEWAY_URL");
+      expect(gw).not.toHaveTextContent("서버 로그");
+    },
+  );
 
   it("페어링 대기 — 요청 id 와 승인 명령을 복사한다, 5분 전에는 강조하지 않는다", async () => {
     const since = new Date(Date.now() - 60_000).toISOString();
@@ -130,18 +147,33 @@ describe("플러그인", () => {
     expect(pl).toHaveTextContent("2026.9.5");
     expect(pl).toHaveTextContent(SHA_FILE);
     expect(within(pl).getByRole("button", { name: "플러그인 받기" })).toBeInTheDocument();
-    // live-smoke 「절차」의 플러그인 재설치 순서: 내리기 → 설치 → sha 확인 → 올리기
+    // 받은 파일 이름·번들 sha256(파일 sha 가 아니다)을 넣은 deploy.md [B] 줄들 — 대조는 아래 테스트
     const cmd = within(pl).getByTestId("plugin-install-commands").textContent ?? "";
-    const order = [
-      "openclaw gateway stop",
-      "openclaw plugins install",
-      "shasum -a 256",
-      "openclaw gateway start",
-    ].map((s) => cmd.indexOf(s));
-    expect(order.every((i) => i >= 0)).toBe(true);
-    expect([...order].sort((a, b) => a - b)).toEqual(order);
-    expect(cmd).toContain("dodok-openclaw-plugin-ffffffffffff.tgz");
-    expect(cmd).toContain(SHA_A);
+    expect(cmd).toBe(installCommands("dodok-openclaw-plugin-ffffffffffff.tgz", SHA_A));
+    expect(cmd).toContain("openclaw plugins install /tmp/dodok-openclaw-plugin-ffffffffffff.tgz ");
+    expect(cmd).not.toContain(SHA_FILE);
+  });
+
+  it("설치 명령은 deploy.md [B] 블록과 글자 그대로 같다 — 계정 설정 패치 줄만 빼고, 파일 이름과 대조할 sha 만 다르다", () => {
+    const doc = readFileSync(resolve(import.meta.dirname, "../../../../../docs/guides/deploy.md"), "utf8");
+    const from = doc.indexOf("[B] — **Gateway 를 먼저 내리고**");
+    expect(from).toBeGreaterThan(-1);
+    const block = /```bash\n([\s\S]*?)```/.exec(doc.slice(from))?.[1] ?? "";
+    const docLines = block.trimEnd().split("\n");
+    const patch = docLines.filter((l) => l.startsWith("openclaw config patch "));
+    expect(patch).toHaveLength(1);
+    const expected = docLines.filter((l) => !patch.includes(l));
+    // deploy.md 가 옮기는 파일 이름을 넣으면 설치 줄까지 글자 그대로 같아야 한다
+    const web = installCommands("dodok-openclaw-plugin-0.0.0.tgz", SHA_A).split("\n");
+    expect(web).toHaveLength(expected.length);
+    web.forEach((line, i) => {
+      const want = expected[i] ?? "";
+      if (!want.startsWith("sha256sum ")) return expect(line).toBe(want);
+      // 명령과 「기본 상태 디렉터리일 때」 단서는 그대로, 대조할 값만 [PC] 에서 잰 값 대신 서버가 품은 번들의 sha
+      const [command, comment] = want.split("# ");
+      expect(comment?.startsWith("기본 상태 디렉터리일 때. ")).toBe(true);
+      expect(line.startsWith(`${command}# 기본 상태 디렉터리일 때. ${SHA_A} 이어야 한다`)).toBe(true);
+    });
   });
 
   it("다른 빌드면 「받아서 다시 설치」 경고", async () => {
@@ -264,6 +296,17 @@ describe("브리지 토큰", () => {
     expect(await within(br).findByText("토큰이 없습니다 — 발급하세요")).toBeInTheDocument();
   });
 
+  it("폐기된 줄이 있어도 활성 토큰이 하나라도 있으면 「토큰이 없습니다」가 없다", async () => {
+    stubSetupServer({
+      status: statusOf({ plugin: { tokenId: tokenId(2) } }),
+      tokens: [tokenOf(1, { revokedAt: "2026-09-24T00:00:00.000Z" }), tokenOf(2, { connected: true })],
+    });
+    renderConnection();
+    const br = await region("브리지 토큰");
+    await within(br).findByRole("listitem", { name: "토큰-2" });
+    expect(br).not.toHaveTextContent("토큰이 없습니다");
+  });
+
   it("envTokenIgnored 면 .env 의 BRIDGE_TOKEN 은 더 이상 쓰지 않는다고 한 줄", async () => {
     stubSetupServer({ status: statusOf({ envTokenIgnored: true }), tokens: [tokenOf(1)] });
     renderConnection();
@@ -303,6 +346,21 @@ describe("브리지 토큰", () => {
     expect(oldRow).not.toHaveTextContent("지금 접속 중");
     expect(oldRow).toHaveTextContent("이제 폐기해도 됩니다");
     expect(newRow).not.toHaveTextContent("이제 폐기해도 됩니다");
+  });
+
+  it("이미 폐기한 옛 줄에는 「이제 폐기해도 됩니다」가 없다", async () => {
+    stubSetupServer({
+      status: statusOf({ plugin: { tokenId: tokenId(2) } }),
+      tokens: [tokenOf(1, { revokedAt: "2026-09-24T00:00:00.000Z" }), tokenOf(2, { connected: true })],
+    });
+    renderConnection();
+    const br = await region("브리지 토큰");
+    const oldRow = await within(br).findByRole("listitem", { name: "토큰-1" });
+    await waitFor(() =>
+      expect(within(br).getByRole("listitem", { name: "토큰-2" })).toHaveTextContent("지금 접속 중"),
+    );
+    expect(oldRow).toHaveTextContent("폐기됨");
+    expect(br).not.toHaveTextContent("이제 폐기해도 됩니다");
   });
 
   describe("폐기", () => {
@@ -363,8 +421,101 @@ describe("브리지 토큰", () => {
       await waitFor(() =>
         expect(screen.getByRole("dialog")).toHaveTextContent("활성 토큰이 하나도 남지 않습니다"),
       );
-      await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "그래도 폐기" }));
+      const confirm = within(screen.getByRole("dialog")).getByRole("button", { name: "그래도 폐기" });
+      await waitFor(() => expect(confirm).toBeEnabled(), { timeout: 2000 });
+      await userEvent.click(confirm);
       await waitFor(() => expect(server.count("DELETE", url)).toBe(1));
+    });
+
+    describe("마지막 활성 토큰의 두 번째 확인은 첫 확인의 입력이 번지지 않는다", () => {
+      const url = `/api/v1/setup/bridge-tokens/${tokenId(1)}`;
+      async function openFirst() {
+        const server = stubSetupServer({
+          status: statusOf({ plugin: { tokenId: tokenId(1) } }),
+          tokens: [tokenOf(1, { connected: true })],
+        });
+        renderConnection();
+        const br = await region("브리지 토큰");
+        const row = await within(br).findByRole("listitem", { name: "토큰-1" });
+        await userEvent.click(within(row).getByRole("button", { name: "토큰-1 폐기" }));
+        const dialog = await screen.findByRole("dialog");
+        return { server, dialog, first: within(dialog).getByRole("button", { name: "폐기" }) };
+      }
+
+      it("두 번째 단계 — 확인 버튼은 새 요소로 취소의 반대편에, 잠깐 잠겨 있고, 초점은 취소", async () => {
+        const { server, dialog, first } = await openFirst();
+        const footer = first.parentElement;
+        expect([...(footer?.children ?? [])].map((b) => b.textContent)).toEqual(["취소", "폐기"]);
+        await userEvent.click(first);
+        await waitFor(() => expect(dialog).toHaveTextContent("활성 토큰이 하나도 남지 않습니다"));
+        const confirm = within(dialog).getByRole("button", { name: "그래도 폐기" });
+        expect(confirm).not.toBe(first);
+        expect([...(confirm.parentElement?.children ?? [])].map((b) => b.textContent)).toEqual([
+          "그래도 폐기",
+          "취소",
+        ]);
+        expect(confirm).toBeDisabled();
+        await waitFor(() => expect(within(dialog).getByRole("button", { name: "취소" })).toHaveFocus());
+        // 새 제목을 알린다 — 열린 대화상자의 제목이 바뀌는 것만으로는 다시 읽히지 않는다
+        expect(dialog.querySelector('[aria-live="assertive"]')).toHaveTextContent(
+          "활성 토큰이 하나도 남지 않습니다",
+        );
+        await waitFor(() => expect(confirm).toBeEnabled(), { timeout: 2000 });
+        expect(server.count("DELETE", url)).toBe(0);
+      });
+
+      it("「폐기」 더블클릭은 DELETE 를 보내지 않는다", async () => {
+        const { server, dialog, first } = await openFirst();
+        await userEvent.dblClick(first);
+        await waitFor(() => expect(dialog).toHaveTextContent("활성 토큰이 하나도 남지 않습니다"));
+        expect(server.count("DELETE", url)).toBe(0);
+      });
+
+      it("잠긴 동안 「그래도 폐기」를 눌러도 보내지 않는다", async () => {
+        const { server, dialog, first } = await openFirst();
+        await userEvent.click(first);
+        await userEvent.click(await within(dialog).findByRole("button", { name: "그래도 폐기" }));
+        expect(server.count("DELETE", url)).toBe(0);
+      });
+
+      it.each([
+        ["Enter 두 번", "{Enter}{Enter}"],
+        ["Enter 키 반복", "{Enter>6}"],
+        ["스페이스 두 번", "[Space][Space]"],
+      ])("%s은 DELETE 를 보내지 않는다", async (_name, keys) => {
+        const { server, first } = await openFirst();
+        first.focus();
+        await userEvent.keyboard(keys);
+        await new Promise((r) => setTimeout(r, 50));
+        expect(server.count("DELETE", url)).toBe(0);
+      });
+    });
+
+    it("폐기한 뒤 초점은 아래 줄의 「폐기」로, 아래에 활성 줄이 없으면 「새 토큰 발급」으로", async () => {
+      stubSetupServer({
+        status: statusOf({ plugin: { tokenId: tokenId(1) } }),
+        tokens: [
+          tokenOf(1, { connected: true }),
+          tokenOf(2),
+          tokenOf(3, { revokedAt: "2026-09-24T00:00:00.000Z" }),
+          tokenOf(4),
+        ],
+      });
+      renderConnection();
+      const br = await region("브리지 토큰");
+      const revokeOf = (n: number) => within(br).getByRole("button", { name: `토큰-${n} 폐기` });
+      await within(br).findByRole("listitem", { name: "토큰-2" });
+
+      // 바로 아래(3)는 폐기된 줄이라 건너뛴다
+      await userEvent.click(revokeOf(2));
+      await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "폐기" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+      await waitFor(() => expect(revokeOf(4)).toHaveFocus());
+
+      await userEvent.click(revokeOf(4));
+      await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "폐기" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+      await waitFor(() => expect(within(br).getByRole("button", { name: "새 토큰 발급" })).toHaveFocus());
     });
   });
 });

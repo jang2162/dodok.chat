@@ -1,4 +1,5 @@
 import type { SetupStatus } from "@dodok/shared";
+import { useRef } from "react";
 import { useIsOwner } from "@/api/queries";
 import { OpenSidebarButton } from "@/app/layout/sidebarSheet";
 import { Button } from "@/ui/button";
@@ -30,6 +31,7 @@ function Pending({ what, query }: { what: string; query: { isPending: boolean; r
 
 function BridgeTokenSection({ status }: { status: SetupStatus | undefined }) {
   const tokens = useBridgeTokens();
+  const issueButton = useRef<HTMLButtonElement>(null);
   const none = tokens.data !== undefined && tokens.data.every((t) => t.revokedAt !== null);
   return (
     <Section title="브리지 토큰">
@@ -44,7 +46,7 @@ function BridgeTokenSection({ status }: { status: SetupStatus | undefined }) {
             </>
           )}
         </p>
-        <IssueTokenDialog />
+        <IssueTokenDialog triggerRef={issueButton} />
       </div>
       {status?.envTokenIgnored && (
         <p role="note" className="text-sm font-medium text-amber-700 dark:text-amber-400">
@@ -53,7 +55,7 @@ function BridgeTokenSection({ status }: { status: SetupStatus | undefined }) {
       )}
       {none && <p className="text-sm font-medium text-destructive">토큰이 없습니다 — 발급하세요</p>}
       {tokens.data ? (
-        tokens.data.length > 0 && <TokenList tokens={tokens.data} status={status} />
+        tokens.data.length > 0 && <TokenList tokens={tokens.data} status={status} issueButton={issueButton} />
       ) : (
         <Pending what="토큰 목록" query={tokens} />
       )}

@@ -1,6 +1,7 @@
 import type { IssueBridgeTokenResult } from "@dodok/shared";
 import { KeyRoundIcon } from "lucide-react";
-import { type FormEvent, useId, useState } from "react";
+import { useBlocker } from "@tanstack/react-router";
+import { type FormEvent, type RefObject, useEffect, useId, useRef, useState } from "react";
 import { formError as serverFormError } from "@/api/formErrors";
 import { Button } from "@/ui/button";
 import {
@@ -20,9 +21,11 @@ import { CopyBlock } from "./sections";
 /**
  * 「새 토큰 발급」(스펙 「연결 페이지」 교체 흐름 1) — 라벨 → 발급 → 원문과 플러그인 설정 조각을 한 번 보인다.
  * 원문이 보이는 동안은 「복사했습니다」로만 닫힌다(Esc·바깥 클릭·X 없음) — 복사하지 못한 채 닫히면 다시 볼 길이 없다.
- * 원문은 이 컴포넌트 상태에만 있고 닫으면 버린다 — 쿼리·뮤테이션 캐시에는 들어가지 않는다(`useIssueBridgeToken`)
+ * 원문은 이 컴포넌트 상태에만 있고 닫으면 버린다 — 쿼리·뮤테이션 캐시에는 들어가지 않는다(`useIssueBridgeToken`).
+ * 같은 까닭으로 원문이 보이는 동안 페이지를 떠나는 것도 막는다: 라우트 이동(뒤로 가기·주소 변경)은 대화상자 안에서 한 번 더 묻고,
+ * 탭 닫기·새로고침은 브라우저가 묻게 한다(`beforeunload`). 「복사했습니다」를 누르면 둘 다 풀린다
  */
-export function IssueTokenDialog() {
+export function IssueTokenDialog({ triggerRef }: { triggerRef?: RefObject<HTMLButtonElement | null> }) {
   const [open, setOpen] = useState(false);
   const [label, setLabel] = useState("");
   const [error, setError] = useState<string>();
@@ -31,6 +34,29 @@ export function IssueTokenDialog() {
   const labelId = useId();
   const errorId = useId();
   const trimmed = label.trim();
+  const stayRef = useRef<HTMLButtonElement>(null);
+  const leave = useBlocker({
+    shouldBlockFn: () => true,
+    disabled: !issued,
+    // 라우터의 beforeunload 는 브라우저 히스토리에만 붙는다 — 히스토리 종류와 무관하게 아래 효과가 직접 건다
+    enableBeforeUnload: false,
+    withResolver: true,
+  });
+
+  useEffect(() => {
+    if (!issued) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      // 옛 브라우저는 returnValue 가 있어야 묻는다
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [issued]);
+
+  useEffect(() => {
+    if (leave.status === "blocked") stayRef.current?.focus();
+  }, [leave.status]);
 
   function reset() {
     setLabel("");
@@ -46,9 +72,12 @@ export function IssueTokenDialog() {
     if (!next) reset();
   }
 
+  /** 원문을 버리고 닫는다. 막아 둔 라우트 이동이 있으면 이어서 보낸다 — 떠나려던 사람이 복사를 마친 것이다 */
   function done() {
+    const proceed = leave.status === "blocked" ? leave.proceed : undefined;
     setOpen(false);
     reset();
+    proceed?.();
   }
 
   function submit(e: FormEvent<HTMLFormElement>) {
@@ -61,7 +90,7 @@ export function IssueTokenDialog() {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTrigger asChild>
-        <Button type="button" size="sm">
+        <Button ref={triggerRef} type="button" size="sm">
           <KeyRoundIcon />새 토큰 발급
         </Button>
       </DialogTrigger>
@@ -91,6 +120,22 @@ export function IssueTokenDialog() {
                 testId="plugin-config"
               />
             </div>
+            {leave.status === "blocked" && (
+              <div
+                role="alert"
+                className="flex flex-col gap-2 rounded-md border border-destructive bg-destructive/10 p-3 text-sm"
+              >
+                <p className="font-medium">이 페이지를 떠나면 토큰 원문을 다시 볼 수 없습니다.</p>
+                <div className="flex flex-wrap gap-2">
+                  <Button ref={stayRef} type="button" size="sm" variant="outline" onClick={leave.reset}>
+                    머무르기
+                  </Button>
+                  <Button type="button" size="sm" variant="destructive" onClick={done}>
+                    원문을 버리고 떠나기
+                  </Button>
+                </div>
+              </div>
+            )}
             <DialogFooter>
               <Button type="button" onClick={done}>
                 복사했습니다
