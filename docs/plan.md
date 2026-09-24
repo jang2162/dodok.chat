@@ -1,6 +1,6 @@
-# dodok.chat — 에이전트 네이티브 메신저 개발 계획서 (v0.14)
+# dodok.chat — 에이전트 네이티브 메신저 개발 계획서 (v0.15)
 
-작성일: 2026-09-14 · 상태: v0.14 (2026-09-24) — Phase 3 ① 배포 패키징 종료(로컬 Compose 검증 12/12, 테스트 2226 — 실제 서버·도메인·폰은 사람 절차 `docs/guides/deploy.md`). 8장 Phase 3 「Docker Compose 패키징」에 완료 표시와 확인 방법, 「이월」을 Phase 3 ① 종료 시점으로 다시 모음
+작성일: 2026-09-14 · 상태: v0.15 (2026-09-25) — Phase 3 ② 설정 마법사 종료(웹 연결 페이지·브리지 토큰 DB·플러그인 내려받기, 브라우저 검증 결함 1 고침, 테스트 2400 — 실연은 `docs/guides/live-smoke.md` 15절). 8장 Phase 3 「설정 마법사」에 완료 표시와 확인 방법, 「이월」을 Phase 3 ② 종료 시점으로 다시 모음
 
 ### 변경 이력
 
@@ -18,6 +18,7 @@
 | v0.12 | Phase 2 ④ **PWA·푸시 종료**(2026-09-24, 실연은 예정) — 8장 Phase 2 「PWA」에 완료 표시와 확인 방법(통합 12a~12h + 종료 · 브라우저 16/16·결함 0 — 실제 `web-push` → FCM 왕복 포함), 「이월」에 Phase 2 ④ 가 남긴 것 추가(스펙 10장 열린 문제 넷 · 구독 행이 세션과 묶이지 않음 · 가려졌지만 `visible` 인 창 · presence 잔류·상한 · 승인 기억 상한 테스트(p4-t3 리뷰 m2) · 동기화 경로 `userVisibleOnly`(Nit R14b) · 권한 `default` 문구(Nit F1c) · 서버만 죽었을 때 토스트 · 알려진 경고 셋(DEP0169·#912·#928) · 사람이 볼 것), 웹 「`lastSeq` 재구독」 줄에 사본 복원 경로는 닫혔다는 것(R5)과 남은 5분 창 |
 | v0.13 | Phase 2 ④ **실연 완료**(2026-09-24, dev Gateway 2026.9.5) — 8장 「PWA」 완료 줄의 「실연은 아직」을 결과로(런 0회 하네스 7/7 · 모델 런 1회 — 멘션·`finalSource=plugin`·본문 없음 통과, 그 런의 알림 표시는 미확인), 실연이 의심한 「탭을 닫은 뒤 45초 동안 거름」은 p4-c1 측정(17조합)에서 재현되지 않음 — 웹 `pagehide` 에서도 「안 보임」을 보내고 서버는 `LOG_LEVEL=debug` 에서 거름·발송을 한 줄씩 남긴다(`a81e850`·`9fa919b`), 테스트 2185. 「이월」 presence 줄 정정, 새 이월 셋(모델 런 알림 미표시·새 프로필 첫 몇 분의 FCM 누락 · dev:fake 로그 레벨 고정 · bfcache 복귀 `pageshow`) |
 | v0.14 | Phase 3 ① **배포 패키징 종료**(2026-09-24) — 8장 Phase 3 「Docker Compose 패키징」에 완료 표시와 확인 방법(로컬 Compose 검증 12/12 · 번들 스모크 · 테스트 2226), 운영 절차 `docs/guides/deploy.md`. 1.3·2.2·4.5·7장 기술 표·10장 #6 의 「Compose 프로필로 로컬 Gateway 동반 기동(`--profile gateway`)」을 뺐다(배포 패키징 스펙 결정 5), 4.5 에 Caddy 가 여는 `/bridge/*`(플러그인의 첨부 HTTP). 「이월」에서 「`infra/` 가 없는데 두 문서가 있다고 말한다」 제거, Phase 3 ① 이 남긴 것 추가(첨부 상한 초과 문구 F1 · 실제 배포를 사람이 아직 안 따라 함 · 볼륨째 옮기기 미검증 · 백업 이월 셋 · 소스 실행 chdir 검사 · 요청 경로 런타임 해석 · 빌드가 레지스트리에 닿아야 함 · 스펙 11장 열린 문제 · `compose.yml` 머리 주석의 웹 빌드 ID 경로 · neo CDP 와 `.mcp.json` 포트 · PWA 스펙이 가리키는 없는 절), 「실기기 푸시」 줄의 미룬 까닭을 지금 상태로 |
+| v0.15 | Phase 3 ② **설정 마법사 종료**(2026-09-25) — 8장 Phase 3 「설정 마법사」에 완료 표시와 확인 방법(서버 통합 `setup` · 웹 단위 · `dev:fake` 위 브라우저 시나리오 1~10 — 결함 1(390px 발급 대화상자 원문 잘림)은 고침, 확인 불가 2 는 사람이 볼 것 · 실연은 `docs/guides/live-smoke.md` 15절 · 테스트 2400). 브리지 토큰의 정본이 DB 로 옮겨 `.env` 의 `BRIDGE_TOKEN` 은 선택(첫 부팅 이어받기)이 됐다 — 운영 절차 `docs/guides/deploy.md` 「[웹 → B] 플러그인 설치·브리지 토큰」·「[웹] 브리지 접속 확인」·「브리지 토큰 교체」 절. 「이월」에 Phase 3 ② 가 남긴 것 추가(루트 병렬 실행의 backup SIGINT 테스트 흔들림 · 폐기 알림 `system.notice` · 플러그인 빌드 가드 한계 · dev:fake 훅 테스트·415 · JSON 상자 오버레이 스크롤바 · 비슷한 글자 라벨 `env` · 막힌 이동 중 401 의 `next` · 사람이 볼 것) |
 
 ---
 
@@ -476,7 +477,9 @@ SQLite(WAL)로 시작, Drizzle ORM으로 스키마 정의해 Postgres 전환 시
 - Docker Compose 패키징 → **완료**(2026-09-24, 로컬 Compose 검증까지 — 실제 서버·도메인·폰은 사람 절차) — 스펙 `docs/superpowers/specs/2026-09-24-deploy-packaging-design.md`(구현과 달라진 것은 12장), 계획 `docs/superpowers/plans/2026-09-24-deploy-packaging.md`(태스크 1~5), 운영 절차 `docs/guides/deploy.md`.
   `infra/` 에 이미지 둘(서버 esbuild 번들 + 번들이 런타임에 찾는 의존성의 닫힘만 든 `node_modules` / 웹 정적을 구운 Caddy 2.11.4)·`compose.yml`(서비스 `app`·`caddy`, 호스트에 여는 포트는 Caddy 80·443 뿐)·`Caddyfile`(자동 HTTPS·SPA 폴백·캐시·보안 헤더·본문 상한 32 MB)·로컬 검증 겹침 `compose.local.yml`(`127.0.0.1:8443`, devfake 프로필)·`check-caddy.sh` 가 있다. 설정은 루트 `.env` 하나(`infra/.env` 링크로 compose 치환까지), 데이터는 볼륨 `dodok-data` 하나, 백업은 `docker compose -f infra/compose.yml exec app node dist/backup.js [--keep N]`(온라인 — 서버를 멈추지 않는다). 로컬 Gateway 동반 기동(`--profile gateway`)은 뺐다(스펙 결정 5).
   **확인 방법**: 로컬 Compose 검증(계획 태스크 4 — 이 Mac) 합격 기준 **12/12**·Review Focus 1~5 통과 — 이미지 안 `.env`·TS 0, `app` 포트 미노출, `check-caddy.sh` 전부 PASS, devfake 로 스트리밍·카드·승인이 Caddy 를 지나고 첨부 업로드·다운로드 sha256 일치, 서비스 워커·매니페스트·실제 FCM 구독, `down`/`up` 뒤 데이터·`vapid.json` 유지, 쓰는 중 백업 → 복원(WAL·SHM 을 안 지우면 조용히 무효 — 66→70 재현), `X-Forwarded-For` 위조로 레이트리밋 우회 불가, 볼륨 권한 오류 한 줄, 로그·이미지 시크릿 0. 결함 1(F1 — 첨부 상한 초과 문구, 아래 「이월」). 번들은 `pnpm -F @dodok/server bundle:smoke`(prod 격리 배치에서 부팅·설정 오류·백업). 테스트 2226(shared 113·plugin 108·adapter 206·server 698·web 1101). 남은 것은 아래 「이월」의 「배포 패키징(Phase 3 ①)」.
-- 설정 마법사(Gateway URL·토큰·페어링·**플러그인 설치 안내와 브리지 URL/토큰 발급**).
+- 설정 마법사(Gateway URL·토큰·페어링·**플러그인 설치 안내와 브리지 URL/토큰 발급**) → **완료**(2026-09-25) — 스펙 `docs/superpowers/specs/2026-09-24-setup-wizard-design.md`(구현과 달라진 것은 스펙 「구현과 맞춘 것」 장), 계획 `docs/superpowers/plans/2026-09-24-setup-wizard.md`(태스크 1~8), 운영 절차 `docs/guides/deploy.md` 「[웹 → B] 플러그인 설치·브리지 토큰」·「[웹] 브리지 접속 확인」·「브리지 토큰 교체」 절.
+  웹 「연결」 페이지(`/settings/connection`, owner 만 — 사이드바 「연결」·OpenClaw 배너의 「연결 설정 보기」)가 서버·Gateway(상태·호스트·버전, 페어링 대기면 승인 명령)·플러그인(접속·버전·「서버와 같은 빌드」·받기·설치 명령)·브리지 토큰(발급·목록·폐기)을 보이고, `setup.status` wire 로 실시간으로 바뀐다. 브리지 토큰은 DB `bridge_tokens`(해시만)가 정본이고 겹쳐서 교체한다 — 원문은 발급 응답에 한 번만(`Cache-Control: no-store`, 캐시·오프라인 사본·목록·로그·wire 어디에도 없음). `.env` 의 `BRIDGE_TOKEN` 은 선택이고, 토큰 행이 없을 때 라벨 `env` 로 한 번 이어받는다. 서버 이미지가 같은 커밋의 플러그인 tgz 를 `/app/plugin/` 에 품고 내려주며, 「같은 빌드」는 플러그인이 hello 로 보내는 번들 파일 sha256 으로 가른다. Gateway URL·토큰은 `.env` 그대로다(스펙 결정 1).
+  **확인 방법**: 서버 통합 `apps/server/test/integration/setup.test.ts`(가짜 Gateway·플러그인 — 겹침 교체 → 폐기 → 그 세션 즉시 끊김·핸드셰이크·첨부 HTTP 거절, `setup.status` 는 owner 소켓에만, 원문이 로그·목록·wire 에 없음, BRIDGE_TOKEN 없는 부팅, 검증 함수가 던지면 거절, 거절 로그 주소) · 서버·어댑터·플러그인·웹 단위(웹 `apps/web/src/features/setup/*.test.tsx` — 설치 명령이 `docs/guides/deploy.md` [B] 블록과 글자 그대로 같은지 포함) · 태스크마다 독립 리뷰(변이)·수정·재리뷰 · `dev:fake` 위 브라우저 검증 시나리오 1~10(가짜 플러그인 토큰 바꾸기 훅 `POST /__devfake/plugin-token`) — 결함 1(390px 발급 대화상자에서 원문이 화면 밖으로 잘림, 1280px 에서도 JSON)은 `CopyBlock` 을 고쳐 390·1280px 실측으로 닫았고, 확인 불가 2(탭 닫기 `beforeunload`, member 화면)는 아래 「이월」의 사람이 볼 것 · 로컬 Compose 이미지 검증(`GET /api/v1/setup/plugin.tgz` 로 받은 파일 sha256 = 이미지 안 `/app/plugin/*.tgz` = 화면 값, tgz 안 번들 sha256 = `bundleSha256`, 실행 이미지는 tgz 만큼만 커짐) · 실연(로컬 dev Gateway, 모델 런 0)은 `docs/guides/live-smoke.md` 15절. 테스트 2400(shared 131·plugin 112·adapter 240·server 759·web 1158). 남은 것은 아래 「이월」의 「설정 마법사(Phase 3 ②)」.
 - 에러/재시도·레이트리밋·비용 상한, 로그·메트릭.
 - 문서화(설치, 에이전트 프롬프트 가이드 — components 사용법 포함).
 
@@ -487,13 +490,13 @@ SQLite(WAL)로 시작, Drizzle ORM으로 스키마 정의해 Postgres 전환 시
 - 앱: Tauri 데스크톱(트레이·알림), Capacitor 모바일 또는 네이티브.
 - 스레드, 검색, 에이전트 내부 위임 결과 요약 게시, 채널 템플릿.
 
-### 이월 — 남은 문제(Phase 3 ① 배포 패키징 종료 시점, 2026-09-24)
+### 이월 — 남은 문제(Phase 3 ② 설정 마법사 종료 시점, 2026-09-25)
 
-Phase 1 ①·②, Phase 2 ①·②·③·④, Phase 3 ① 을 돌면서 「고치지 않고 알고 넘긴 것」을 한곳에 모았다. 상세 근거는 각 줄에 적은 문서에 있다. 위 Phase 2·3 항목과 겹치면 그쪽을 가리킨다.
+Phase 1 ①·②, Phase 2 ①·②·③·④, Phase 3 ①·② 를 돌면서 「고치지 않고 알고 넘긴 것」을 한곳에 모았다. 상세 근거는 각 줄에 적은 문서에 있다. 위 Phase 2·3 항목과 겹치면 그쪽을 가리킨다.
 Phase 1 이 남긴 아홉(서버 넷·웹 넷·`wire-cli` typecheck)은 Phase 2 ① 태스크 0·1 에서, Phase 2 ① 이 남긴 초점·타이머 셋(D6 카운트다운 어긋남 · 자리값 소요가 계속 흐름 · 넓은 화면 「설정 닫기」 초점)은 Phase 2 ② 태스크 8 에서 정리해 지웠다.
 Phase 2 ② 가 남긴 「`media` 이미지를 크게 볼 수 없다」·「`media`·`file` 문구 비대칭」은 Phase 2 ③ 이 닫아 지웠다(크게 보기 `ImageViewer`, 세 블록이 해석기 하나로 「첨부를 찾을 수 없습니다」·「열 수 없는 링크입니다」를 같이 쓴다).
 Phase 2 ② 가 남긴 「`infra/` 가 없는데 두 문서가 있다고 말한다」는 Phase 3 ① 이 `infra/` 를 만들고 `docs/project-structure.md` 를 고쳐 지웠다(`CLAUDE.md` 「명령」 줄은 조율자가 고친다).
-Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-components-v1/`, Phase 2 ③ 의 출처(a3-t*·a3-c*)는 `.superpowers/sdd/2026-09-23-attachments/`, Phase 2 ④ 의 출처(p4-t*·판정 R1~R8)는 `.superpowers/sdd/2026-09-23-pwa-push/`, Phase 3 ① 의 출처(d1-t*·판정 R1~R7)는 `.superpowers/sdd/2026-09-24-deploy-packaging/`(넷 다 git 제외)의 리뷰·보고서·원장이다.
+Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-components-v1/`, Phase 2 ③ 의 출처(a3-t*·a3-c*)는 `.superpowers/sdd/2026-09-23-attachments/`, Phase 2 ④ 의 출처(p4-t*·판정 R1~R8)는 `.superpowers/sdd/2026-09-23-pwa-push/`, Phase 3 ① 의 출처(d1-t*·판정 R1~R7)는 `.superpowers/sdd/2026-09-24-deploy-packaging/`, Phase 3 ② 의 출처(s2-t*·s2-c1·판정 R1)는 `.superpowers/sdd/2026-09-24-setup-wizard/`(다섯 다 git 제외)의 리뷰·보고서·원장이다.
 
 **components 계약·서버(Phase 2 ②)**
 
@@ -627,6 +630,17 @@ Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-comp
 - **이미지 빌드가 npm 레지스트리에 닿아야 하고, 어느 파일이 바뀌어도 다시 빌드한다** — `pnpm deploy --prod --legacy` 는 Docker 안에서 `--offline` 을 못 쓴다(`ERR_PNPM_NO_OFFLINE_META`). 두 Dockerfile 모두 `COPY . .` 뒤라 문서 한 줄만 바뀌어도 서버·웹 빌드를 다시 한다(웹 산출물은 R7 로 같게 나온다). 출처: d1-t3 보고서 걱정. 미룬 까닭: 개인 배포 규모에서 받아들였다. BuildKit 캐시 마운트는 buildx 없는 Docker 에서 깨진다(`infra/Dockerfile.server` 주석).
 - **CSP 가 없다** — Report-Only 측정에서 위반은 번들이 꽂는 인라인 `<style>` 과 zod 의 `Function("")` 기능 탐지 둘뿐이었다. 넣으려면 `style-src 'self' 'unsafe-inline'`(또는 에디터 CSS 주입을 끄고 해시)이 필요하고, `worker-src` 는 로컬 CA 때문에 못 쟀다. 출처: 스펙 11장·12장, d1-t3 보고서 실측 판정 9. 미룬 까닭: 실측 없이 켜면 앱이 깨질 위험이 더 크다(계획 Self-Review) — 실제 도메인(공인 인증서)에서 서비스 워커까지 재고 정한다.
 - **스펙 11장 열린 문제 넷** — 이미지 레지스트리·자동 빌드(CI), Postgres 전환, 백업을 다른 호스트·오브젝트 저장소로 보내기(지금 백업은 같은 볼륨 안이라 호스트와 함께 잃는다 — `docs/guides/deploy.md` 「백업」의 `compose cp` 로 꺼내는 것은 사람 몫), Gateway 버전 드리프트 감지(서버 로그 `gatewayVersion` 과 핀 비교 경고 — Phase 3 ③ 운영 보강 후보). 출처: 스펙 11장. 미룬 까닭: 개인용 한 호스트 배포에 아직 필요 없다.
+
+**설정 마법사(Phase 3 ②, 2026-09-25)** — 스펙 `docs/superpowers/specs/2026-09-24-setup-wizard-design.md` 「열린 문제」·「구현과 맞춘 것」 장, 운영 절차 `docs/guides/deploy.md`. 아래 출처의 보고서·리뷰(s2-t*·s2-c1)와 원장은 `.superpowers/sdd/2026-09-24-setup-wizard/`(git 제외)에 있다.
+
+- **루트 병렬 실행에서 백업 SIGINT 테스트가 흔들린다** — `apps/server/test/backup.test.ts` 「SIGINT 를 받으면 .partial-* 를 남기지 않는다 — 복사 전이면 지우고 exit 130, 복사 중이면 끝까지 복사한다」가 루트 `pnpm test`(패키지 병렬 부하)에서 가끔 실패한다. 단독으로는 통과한다(단독 3회·server 전체). 신호를 보내는 시점에 결과가 갈리는 타이밍 테스트라 부하에 민감한 것으로 보이며, 원인은 재지 않았다. 출처: s2-t2 조율자 측정(원장). 미룬 까닭: 낮음 — Phase 3 ① 에서 들어온 테스트이고 기능 결함이 아니다. 실패하면 그 파일만 다시 돌려 가른다.
+- **폐기해도 플러그인은 까닭을 모른다** — 폐기는 그 토큰의 브리지 세션을 사유 `revoked` 로 끊지만(어댑터 `revokeSessions`) 플러그인에 `system.notice { reason: "revoked" }` 를 보내지 않는다. 플러그인은 끊김으로만 보고 재접속을 되풀이하다 거절된다(서버 거절 로그는 주소마다 1분에 한 줄). 출처: s2-t2 리뷰 (3). 미룬 까닭: shared 브리지 계약(`system.notice` 의 사유)을 바꿔야 한다 — 원격 플러그인 재배포가 따라온다.
+- **플러그인 빌드 가드의 한계** — `packages/openclaw-plugin/scripts/build.mjs` 가 산출물 글자로 번들 해시 두 자리를 확인하는데 ① 가드가 실패해도 이미 쓴 `dist/` 가 남는다(다음 `pack:plugin` 이 망가진 번들을 쌀 수 있다 — Docker 는 단계가 멈춰 괜찮다) ② 오류 문구가 고칠 자리(`channel.ts` 의 모듈 스코프 `BUNDLE_SHA256`·hello 필드)를 말하지 않는다 ③ 글자 확인이라 거짓 음성·양성이 있다(주석·문자열 안의 같은 글자, esbuild 가 식을 바꿔 쓰는 경우). 출처: s2-t1 재리뷰(원장 「Task 1」 이월). 미룬 까닭: 낮음 — 해시가 조용히 사라지는 주 경로(define 치환·hello 줄 삭제)는 잡는다.
+- **dev:fake 훅 테스트 보강과 `text/plain` 단순 요청** — `POST /__devfake/plugin-token` 은 ① 「운영 `createApp` 에는 없다」 테스트가 `app.fastify.inject` 로 불러 훅이 사는 층(HTTP 서버의 request 리스너)을 지나지 않는다 — 같은 방식으로 운영에 들어가도 초록이다(변이 M3b 생존, 지금은 번들 grep 이 막는다) ② member 403·경로 정확 일치 테스트가 없다(M4·M5 생존) ③ `content-type` 을 보지 않아 `text/plain` 본문도 JSON 으로 읽고 교체한다 — CORS preflight 없는 단순 요청이 되어 같은 사이트(`localhost:*`) 페이지가 쿠키로 가짜 플러그인 토큰을 바꿀 수 있다. `application/json` 이 아니면 415 로 돌려주면 앱 REST 와 같은 선이 된다. 출처: s2-t6a 리뷰 권고 1~3. 미룬 까닭: 개발 전용 경로이고 영향은 dev:fake 의 가짜 플러그인이 끊기는 정도다. 고칠 자리는 `apps/server/test/dev-fake.test.ts`(listen 한 앱에 실제 `fetch` 로 404, member·`…/plugin-tokenX` 두 건)와 `apps/server/scripts/dev-fake.ts` 의 `handlePluginToken`.
+- **설정 JSON 상자가 스크롤된다는 게 안 보일 수 있다** — 발급 대화상자의 「플러그인 설정」과 연결 페이지의 설치·승인 명령은 줄 구조를 지키고 제 상자 안에서 가로로 스크롤한다(`CopyBlock` 기본, 토큰만 `wrap`). macOS 의 오버레이 스크롤바(스크롤할 때만 보임)에서는 넘치는 끝이 잘린 것처럼 보일 수 있다. 안: JSON 도 줄바꿈(`whitespace-pre-wrap` + `break-all` — 들여쓰기는 유지, 복사 값은 같다)으로 바꾸는 한 줄 prop 변경. 명령은 줄바꿈이 한 명령을 두 줄로 읽히게 해 그대로 둔다. 출처: s2-c1 리뷰, 원장 Ruling(s2-c1). 미룬 까닭: 복사 버튼이 정본 경로라 차단이 아니다 — 사람이 오버레이 스크롤바에서 한 번 보고 정한다(아래 사람이 볼 것).
+- **눈에 `env` 로 보이는 라벨은 발급된다** — 라벨 `env` 거절은 trim(유니코드 공백 포함)·대소문자 무시까지다. 전각(`ｅｎｖ`)·키릴 `е`·제로폭 공백·결합 부호가 섞인 라벨은 그대로 저장된다. 웹은 `label === "env"` 정확 비교로 「.env 에서 이어받음」을 그리므로 이어받은 토큰으로 잘못 보이지는 않는다. 출처: s2-t3 재리뷰 N1. 미룬 까닭: 낮음 — 발급은 owner 만 하고, 기계 판별은 틀리지 않는다.
+- **이동이 막혀 있는 동안 401 이 나면 로그인 뒤 `next` 가 가려던 곳이 된다** — 원문 대화상자가 사람의 이동(예: `/agents`)을 막고 있을 때 세션이 끝나면, 401 의 `/login` 이 먼저 가고(`ignoreBlocker`) 이어서 대화상자가 사라지며 막아 둔 이동이 흘러가 `/login?next=%2Fagents` 에 닿는다(히스토리 2개). 끝은 로그인 화면이고 원문은 0 이다. 출처: s2-t5 재리뷰 2 O2. 미룬 까닭: 낮음 — `next` 도 사람이 가려던 곳이다.
+- **사람이 볼 것** — 자동화가 원리상 또는 도구 한계로 못 잰 넷. ① 원문이 보이는 채 탭을 닫으면 브라우저가 떠날지 묻는가(`beforeunload` — CDP 로 제어되는 페이지는 프롬프트가 억제된다), 취소하면 탭이 남는가 ② member 역할 화면 — 사이드바에 「연결」이 없고 `/settings/connection` 직접 주소가 「권한이 없습니다」인가(dev:fake 에 두 번째 사용자가 없다 — 웹 단위 테스트만 있다) ③ 페어링 대기 명령 블록 — 실제 Gateway 의 페어링 대기에서 요청 id·`openclaw devices approve` 가 보이고 5분 뒤 강조되는가(dev:fake 에 페어링 대기 상태가 없다 — 통합 테스트가 상태의 `requestId` 까지 본다) ④ macOS 오버레이 스크롤바에서 설정 JSON 상자가 스크롤된다는 게 보이는가(위 줄). 출처: s2-t6b 보고서 「확인 불가」·「사람이 볼 것」, 원장. 결과는 실제 배포(`docs/guides/deploy.md` 「사람이 한 번 따라 한 결과」) 때 함께 본다.
 
 **실물 확인**
 

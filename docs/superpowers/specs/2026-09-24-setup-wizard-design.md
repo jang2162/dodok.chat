@@ -1,6 +1,6 @@
 # Phase 3 ② 설정 마법사(연결 점검·브리지 토큰) 설계
 
-**상태**: 설계 확정(2026-09-24)
+**상태**: 설계 확정(2026-09-24), 구현·브라우저 검증 완료(2026-09-25 — 계획 태스크 1~6, 브라우저 시나리오 1~10 결함 1 고침, 테스트 2400) — 구현이 이 설계와 달라진 것은 「구현과 맞춘 것」 장. 실연은 `docs/guides/live-smoke.md` 15절, 운영 절차는 `docs/guides/deploy.md`
 **범위**:
 - 웹 「연결」 페이지: 서버·Gateway·페어링·플러그인·브리지의 상태, 다음에 할 일, 복사할 명령·설정
 - 서버가 품은 플러그인 파일 내려받기
@@ -190,3 +190,52 @@
 - 토큰 만료·자동 교체 알림.
 - Gateway 호스트 원격 조작(플러그인 설치·설정 패치 RPC) — ADR 0002: `plugins.install` 은 `clawhub`·`official` 원천만 받는다.
 - 여러 플러그인 계정·여러 Gateway(Phase 4).
+
+---
+
+## 10. 구현과 맞춘 것 (2026-09-25)
+
+구현(계획 태스크 1~6)·리뷰·브라우저 검증과 그 수정 라운드에서 이 설계와 달라지거나 설계가 정하지 않은 것을 정한 자리만 모았다. main `eef129b` 기준이다.
+정본 근거는 실행 원장 `.superpowers/sdd/2026-09-24-setup-wizard/ledger.md`(git 제외)의 판정 R1·Ruling 과, 원장이 가리키는 보고서·리뷰(`s2-t*`·`s2-c1`)다. 보고서의 커밋 해시는 워크트리 것이라 main 에서는 다르다 — 아래 해시는 main 의 것이다.
+운영 절차는 `docs/guides/deploy.md`(「[웹 → B] 플러그인 설치·브리지 토큰」·「[웹] 브리지 접속 확인」·「브리지 토큰 교체」 절), 실연은 `docs/guides/live-smoke.md` 15절, 남은 문제는 `docs/plan.md` 8장 「이월」 한곳에 있다. 각 파일이 왜 그렇게 생겼는지는 그 파일의 머리 주석이 정본이다.
+
+**브리지 토큰(태스크 2·3 — `2555c77`·`af48455`·`7d633c6`·`e446f9d`)**
+
+- **라벨 `env` 로는 발급할 수 없다**(2.1·3장 보탬, `e446f9d`). `issueBridgeToken` 이 trim 뒤 대소문자를 무시하고 `env` 면 400 `VALIDATION`(「env 는 .env 에서 이어받은 토큰에만 쓰는 라벨입니다」)이다. 목록에서 이어받은 토큰을 가르는 표지가 라벨뿐이라(따로 `source` 필드를 두지 않았다), 사람이 `env` 로 발급하면 출처가 틀리게 보였다(s2-t3 리뷰 M1). **남는 틈**: 전각·제로폭·키릴 문자로 눈에 `env` 처럼 보이는 라벨은 통과한다 — 웹은 `label === "env"` 정확 비교라 오인하지 않는다(s2-t3 재리뷰 N1, 이월).
+- **이어받은 토큰의 `prefix` 는 원문이 아니라 해시 앞 6자다**(2.1 정정). `.env` 토큰은 16자까지 짧을 수 있어 원문 조각을 DB 에 두지 않는다. 그래서 웹은 그 줄에 `dbt_` + prefix 대신 「.env 에서 이어받음」을 쓴다 — 해시 앞자리를 `dbt_…` 로 보이면 원문 앞자리로 읽힌다.
+- **`importEnvToken` 은 셋 중 하나를 돌려준다**(결정 3·6장 구체화). 그 워크스페이스에 행이 0개면 `imported`(라벨 `env`), 행이 있고 `.env` 값이 활성 토큰이면 `skipped`, 그 밖(다른 값·**폐기된** 값)은 `ignored` — 부팅 warn 한 줄 `BRIDGE_TOKEN in .env is ignored — manage bridge tokens in the connection page`. `envTokenIgnored` 는 읽을 때마다 「`.env` 에 값이 있고 활성 토큰이 아니다」로 계산한다.
+- **`BridgeTokenRecord` 에 `connected`**(2.6 보탬) — 지금 그 토큰으로 붙은 브리지 세션이 있다. 웹은 실시간 `setup.status` 의 `bridge.plugin.tokenId` 를 먼저 믿고, 상태가 없을 때만 이것을 본다.
+- **거절 로그는 원격 주소마다 1분에 한 줄**(5장 「지금과 같은 `token mismatch` 로그」 보탬 — Review Focus 2). 폐기된 토큰으로 재접속을 되풀이하는 플러그인이 로그를 채우지 않게 어댑터 `RejectLogThrottle`(주소 256개까지)이 줄이고, 넘친 수는 다음 줄에 `(N more suppressed)`. 주소는 `TRUST_PROXY=true` 면 `X-Forwarded-For` 첫 값(trim), 아니면 소켓 주소다(서버의 `bridgeClientAddress` → 어댑터 `clientAddress` 옵션 — `false` 면 꾸민 헤더로 주소를 바꿀 수 없다).
+- **검증 함수가 던지면 거절이다**(2.3 보탬, `af48455`) — 핸드셰이크와 첨부 HTTP 모두. DB 오류가 통과로 새지 않는다.
+- **`setup.status` 는 어댑터 이벤트와 발급·폐기 두 자리에서 낸다**(2.6 구체화). 어댑터는 `setupDetail()` 이 바뀔 때만 `{ kind: "setup" }` 을 내고(같은 상세면 안 냄), 서버는 토큰 발급·폐기 뒤에도 다시 읽은 상태를 보낸다 — 접속하지 않은 토큰을 폐기하면 어댑터 쪽에는 바뀐 것이 없기 때문이다.
+- **폐기는 사유 `revoked` 로 세션을 끊을 뿐 플러그인에 알리지 않는다** — `system.notice { reason: "revoked" }` 는 계약 변경이 필요해 이월했다(s2-t2 리뷰 (3)).
+
+**플러그인 파일·이미지(태스크 1·3·4 — `c3e97e5`·`d5db77e`·`7d633c6`·`8959646`·`4c80e11`)**
+
+- **플러그인 빌드 가드**(2.4 보탬, `d5db77e`). 번들 해시는 테스트·typecheck 로 안 잡히는 두 자리(모듈 스코프 `import.meta.url`, hello 필드)에 달려 있어, `packages/openclaw-plugin/scripts/build.mjs` 가 esbuild 의 `empty-import-meta` 를 오류로 올리고 산출물 글자에서 `computeBundleSha256(import.meta.url)`·`bundleSha256: BUNDLE_SHA256` 를 확인한다. 한계(가드 실패 뒤 망가진 `dist` 가 남음·오류 문구에 고칠 자리 없음·글자 확인의 거짓 음성·양성)는 이월.
+- **받기 실패는 둘이다**(3장 보탬). 파일이 없으면 404 `NOT_FOUND` + message `PLUGIN_FILE_MISSING`, 부팅 때 잰 sha256 과 지금 파일이 다르면 409 `CONFLICT` + message `PLUGIN_FILE_CHANGED: …`(부팅 뒤 다시 빌드됨 — 재시작하면 맞는다). 웹은 404 를 message 로, 409 를 `startsWith` 로 가른다.
+- **이미지의 `plugin` 단계**(2.5 구체화, `8959646`). `FROM build AS plugin` 이 플러그인 워크스페이스만 더 설치해(openclaw devDependency 는 `pnpm fetch` 층이 이미 받아 이 단계에서 링크만 — 약 220 MB, 이 단계 층에만) `pack:plugin` 을 돌리고, `runtime` 이 `/app/plugin/` 에 tgz 만 복사한다 — 실행 이미지는 tgz 만큼(약 196 KB) 커진다(`docker image inspect <tag> --format '{{.Size}}'`). tgz 가 없으면 `COPY` 가 실패해 파일 없는 이미지가 조용히 나가지 않는다.
+- **같은 빌드를 번들 sha 로 가르는 것이 실제로 필요하다**(결정 5 확인). 같은 소스에서 컨테이너(linux)와 호스트(macOS)가 만든 tgz 는 **tgz sha256 은 다르고 번들 sha256 은 같다**(s2-t4 곁 관찰) — tgz 전체로 비교하면 같은 빌드가 다르게 보인다.
+- **compose 가 `DODOK_PLUGIN_DIR=/app/plugin` 을 고정한다**(2.5 보탬, `4c80e11`). 이미지 ENV 로만 두면 `.env` 의 빈 줄 `DODOK_PLUGIN_DIR=` 가 덮어 「플러그인 파일 없음」이 된다 — Phase 3 ① 이 `HOST` 등 넷을 고정한 까닭과 같다. 그래서 `.env` 의 그 값은 배포에서 무시된다.
+
+**웹(태스크 5 — `1d23854`·`6180844`·`f5ba6bf`, s2-c1 — `eef129b`)**
+
+- **`GET /api/v1/auth/me` 에 `role`**(계획 수정 — 6장이 전제한 owner 판별의 입력). membership 이 없으면 `member`.
+- **owner 판별은 `useIsOwner`**(2.7 구체화). me 쿼리 캐시를 관찰자 없이 구독해 `role === "owner"` 를 읽는다(`useSyncExternalStore`). 배너·사이드바에 `useMe()` 관찰자를 두면 401 정리(`queryClient.clear()`) 뒤 다시 그려지며 me 를 새로 불러 로그인 이동을 되돌렸다(`App.test` 회귀). `enabled: false` 관찰자는 재접속 뒤 me 다시 받기(`refetchQueries`)를 건너뛰게 해 쓰지 않았다. role 이 없는 옛 me 는 owner 가 아니다.
+- **받기 버튼은 `status.pluginFile.available` 로만 그린다** — 받아 보고 404 로 가르지 않는다. 없으면 「서버에 플러그인 파일이 없습니다」와 만드는 명령.
+- **페어링 `requestId` 가 빈 문자열이면 `openclaw devices list`**(4장 보탬). Gateway 의 페어링 오류가 요청 id 를 싣지 않으면 어댑터가 `""` 로 둔다 — 그때는 승인 명령 대신 목록 명령과 「목록에서 이 서버의 요청을 승인하세요」.
+- **설치 명령은 `docs/guides/deploy.md` 「[웹 → B] 플러그인 설치·브리지 토큰」 절의 [B] 블록을 글자 그대로 옮긴다**(4장 「live-smoke 3절 절차」 정정). 계정 설정 패치 줄만 빼고(토큰은 발급 대화상자가 준다), 받은 파일 이름과 대조할 번들 sha256 만 채운다. `connection.test.tsx` 가 그 블록과 대조한다 — 문서를 고치면 테스트가 알린다.
+- **마지막 활성 토큰 폐기의 두 번째 확인은 새 버튼을 반대편에, 600ms 무장**(4장 교체 흐름 4 구체화, `6180844`). 같은 버튼의 라벨만 바꾸면 첫 확인의 더블클릭·Enter 두 번이 곧장 두 번째 확인이 됐다(s2-t5 리뷰 D1 — DELETE 1회 재현). 지금은 `ConfirmDialog` `escalated` 가 첫 확인 버튼 자리에 「취소」(초점)를 두고 「그래도 폐기」를 반대편에 `ESCALATED_ARM_MS`(600ms) 동안 비활성으로 그린다. 브라우저 검증에서 강제 클릭 2·Enter 5·더블클릭을 합쳐도 DELETE 는 1건이었다. 폐기 뒤 초점은 아래 줄의 「폐기」, 없으면 「새 토큰 발급」.
+- **원문이 보이는 동안 떠나기를 막는다**(4장 교체 흐름 1 보탬, `6180844`). 대화상자는 Esc·바깥 클릭·X 로 닫히지 않고, 라우트 이동(뒤로 가기·주소 변경)은 `useBlocker` 로 대화상자 안에서 한 번 더 묻고(「머무르기」·「원문을 버리고 떠나기」), 탭 닫기·새로고침은 `beforeunload`. **「복사했습니다」를 누르면 막아 둔 이동이 이어진다** — 떠나려던 사람이 복사를 마친 것이다(s2-t5 수정 판단 (a), 문구로 알린다).
+- **R1 — 401 은 막기를 건너 즉시 로그인으로**(`f5ba6bf`). `onUnauthorized` 의 `/login` 이동에 `ignoreBlocker`, 막힌 채 대화상자가 언마운트되면 `proceed`. 막기가 401 이동까지 잡으면 대화상자가 언마운트되며 대기가 풀리지 않아 owner 가 「권한이 없습니다」 화면에 갇혔다(s2-t5 재리뷰 D5). 세션이 끝난 뒤 원문을 지키려 사람을 가두는 것이 더 나쁘다. **대가**: 이동이 막혀 있는 동안 401 이 나면 로그인 뒤 `next` 가 그 사람이 가려던 곳이 된다(이월, 낮음).
+- **발급 결과는 뮤테이션 캐시에 두지 않는다**(2.7 「닫으면 캐시에서도 지운다」 구체화). `useIssueBridgeToken` 이 응답을 `onIssued` 콜백으로 컴포넌트 상태에만 넘기고 뮤테이션 `data` 는 늘 비어 있다(`gcTime: 0`). 브라우저 검증에서 닫은 뒤 DOM·localStorage·sessionStorage·IndexedDB·새로고침·뒤로 가기 어디에도 원문이 없었다.
+- **원문 상자 — 토큰은 줄바꿈, JSON·명령은 제 상자 안 스크롤**(s2-c1, `eef129b`). 브라우저 검증이 390px 발급 대화상자에서 토큰·설정 값이 화면 밖으로 잘리는 것을 찾았다(1280px 에서도 JSON 이 대화상자를 넘었다). `CopyBlock` 래퍼에 `min-w-0`(grid 트랙 안에서 원문 폭이 트랙을 넓히지 않게), 토큰은 `wrap`(`whitespace-pre-wrap` + `break-all`), JSON·명령은 줄 구조를 지키고 `overflow-x-auto` — 명령은 줄을 바꾸면 한 명령이 두 줄로 읽힌다. 390·1280px 실측으로 닫았다. JSON 도 줄바꿈으로 바꾸자는 권고는 이월(Ruling — macOS 오버레이 스크롤바에서 스크롤된다는 게 보이는지 사람이 본다, 복사 버튼이 정본 경로라 차단 아님).
+
+**dev:fake 훅(태스크 6 — `11df417`)**
+
+- **`POST /__devfake/plugin-token { token }`**(7장 「dev:fake 가 가짜 플러그인 토큰 바꾸기를 할 수 있어야 한다」의 답). 가짜 플러그인을 끊고 그 토큰으로 다시 붙여 `{ ok: true }` 또는 `{ ok: false, reason }` 을 돌려준다. `createApp` 이 이미 ready 라 Fastify 경로를 더할 수 없어(`FST_ERR_INSTANCE_ALREADY_LISTENING`) HTTP 서버의 request 리스너를 감싼다 — 이 경로만 받고 나머지는 원래 리스너(engine.io → Fastify)로. owner 판정은 같은 쿠키·Authorization 으로 앱의 `GET /api/v1/setup/status` 를 inject 해 그 401·403 을 그대로 돌려준다. dev:fake 에만 있고 운영 `createApp`·번들에는 없다. 테스트 보강(inject 로는 훅 층을 못 지나는 운영 404·member·경로)과 `text/plain` 단순 요청의 415 는 이월.
+
+**검증이 확인한 것**
+
+- 서버 통합 `apps/server/test/integration/setup.test.ts`(7장 서버 통합 항목 전부 + BRIDGE_TOKEN 없는 부팅·검증 함수 예외·거절 로그 주소), 로컬 Compose 이미지(받은 tgz sha256 = 이미지 안 파일 = 화면 값, tgz 안 번들 sha256 = `bundleSha256`, 익명 받기 401), `dev:fake` 위 브라우저 시나리오 1~10(결함 1 — 위 s2-c1, 확인 불가 2 — 탭 닫기 `beforeunload`(CDP 가 프롬프트를 억제)·member 화면(dev:fake 에 두 번째 사용자 없음)).
+- 테스트 2400(shared 131·plugin 112·adapter 240·server 759·web 1158 — 루트 `pnpm test` 의 패키지별 `Tests` 줄).
