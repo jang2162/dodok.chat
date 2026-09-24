@@ -63,8 +63,11 @@ export type FakePlugin = {
   ): Promise<{ status: number; bytes: Buffer; headers: Headers }>;
   /** 소켓만 끊는다. 서버가 끊김을 알아채는 것은 비동기다 */
   disconnect(): void;
-  /** 다시 접속해 hello ack 까지 기다린다 */
-  reconnect(): Promise<void>;
+  /**
+   * 다시 접속해 hello ack 까지 기다린다. `token` 을 주면 붙어 있던 소켓을 먼저 끊고, 그 뒤로는 핸드셰이크·첨부 HTTP 가
+   * 그 토큰을 쓴다(거절돼도 바뀐 채로)
+   */
+  reconnect(opts?: { token?: string }): Promise<void>;
   /** 끊고 리스너를 떼어낸다 — 그 뒤에는 reconnect 할 수 없다 */
   close(): void;
 };
@@ -93,8 +96,10 @@ function issuesText(error: { issues: Array<{ path: PropertyKey[]; message: strin
 }
 
 export async function startFakePlugin(opts: FakePluginOptions): Promise<FakePlugin> {
+  /** 핸드셰이크·첨부 HTTP 가 쓰는 토큰 — reconnect({ token }) 이 바꾼다 */
+  let token = opts.token;
   const socket: BridgeClientSocket = io(`${opts.bridgeUrl}/bridge`, {
-    auth: { token: opts.token },
+    auth: { token },
     transports: ["websocket"],
     autoConnect: false,
     reconnection: false, // 실제 플러그인도 재연결을 직접 한다 — 가짜는 reconnect() 로만
@@ -188,7 +193,7 @@ export async function startFakePlugin(opts: FakePluginOptions): Promise<FakePlug
       const res = await fetch(`${opts.bridgeUrl}${BRIDGE_ATTACHMENTS_PATH}`, {
         method: "POST",
         headers: {
-          authorization: `Bearer ${opts.token}`,
+          authorization: `Bearer ${token}`,
           [BRIDGE_ATTACHMENT_HEADERS.channelId]: channelId,
           ...(name === undefined ? {} : { [BRIDGE_ATTACHMENT_HEADERS.fileName]: encodeURIComponent(name) }),
           "content-type": mime ?? "application/octet-stream",
@@ -200,15 +205,20 @@ export async function startFakePlugin(opts: FakePluginOptions): Promise<FakePlug
     },
     async downloadAttachment(id, over = {}) {
       const res = await fetch(`${opts.bridgeUrl}${BRIDGE_ATTACHMENTS_PATH}/${id}`, {
-        headers: { authorization: `Bearer ${over.token ?? opts.token}` },
+        headers: { authorization: `Bearer ${over.token ?? token}` },
       });
       return { status: res.status, bytes: Buffer.from(await res.arrayBuffer()), headers: res.headers };
     },
     disconnect() {
       socket.disconnect();
     },
-    reconnect() {
+    reconnect(over = {}) {
       if (closed) return Promise.reject(new Error("fake plugin closed"));
+      if (over.token !== undefined) {
+        socket.disconnect();
+        token = over.token;
+        socket.auth = { token };
+      }
       return connectAndHello();
     },
     close() {

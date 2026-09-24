@@ -7,11 +7,14 @@
  * VAPID 키 <dataDir>/vapid.json 은 지우지 않는다 — 새로 만들면 브라우저의 푸시 구독이 매번 무효가 된다.
  * 웹 오리진은 APP_ORIGIN(없으면 http://localhost:5173). 5173 이 차 있으면 5180 으로:
  * `PORT=3100 APP_ORIGIN=http://localhost:5180 pnpm -F @dodok/server dev:fake` + `DODOK_API_ORIGIN=http://127.0.0.1:3100 pnpm -F @dodok/web dev --port 5180`.
+ * 가짜 플러그인의 브리지 토큰은 `POST /__devfake/plugin-token { token }`(owner 세션)으로 바꿔 다시 붙인다 — `DEV_FAKE_PLUGIN_TOKEN_PATH`.
  */
 import type { ApprovalDecision, InboundDeliver } from "@dodok/shared";
 import { mkdirSync, rmSync } from "node:fs";
+import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { z } from "zod";
 import { type App, type AppDeps, createApp } from "../src/app";
 import { loadConfig } from "../src/config";
 import { type FakeGateway, startFakeGateway } from "../test/fakes/fake-gateway";
@@ -45,6 +48,15 @@ const SHORT_COMPONENTS_TTL_MS = 20_000;
  * 브라우저 검증이 오프라인이어도 요청은 곧바로 실패하고, img 요소·alt·링크로 물러난 모습은 그대로 확인할 수 있다.
  */
 const LOCAL_HTTPS = "https://localhost/dodok-dev-fake";
+/**
+ * 개발 전용 — `POST { token }` 이면 가짜 플러그인을 끊고 그 토큰으로 다시 붙인다(연결 페이지의 토큰 교체를 브라우저로 잴 때).
+ * dev:fake 에만 있다 — 운영 `createApp` 에는 없다. owner 세션(쿠키 또는 Bearer)이 있어야 한다
+ */
+export const DEV_FAKE_PLUGIN_TOKEN_PATH = "/__devfake/plugin-token";
+const PluginTokenInput = z.object({ token: z.string().min(1) });
+const PLUGIN_TOKEN_BODY_MAX = 16 * 1024;
+/** 새 접속이 hello 까지 됐으면 ok, 핸드셰이크·hello 가 거절되면 그 사유(`UNAUTHORIZED` 등) */
+export type PluginTokenResult = { ok: true } | { ok: false; reason: string };
 
 export type DevFakeOptions = {
   /** 기본 3000. 0 이면 빈 포트 */
@@ -468,6 +480,81 @@ export function fakeAgentScript(self: string, d: InboundDeliver): ScenarioScript
   };
 }
 
+function sendJson(res: ServerResponse, status: number, body: unknown): void {
+  res.writeHead(status, { "content-type": "application/json; charset=utf-8" }).end(JSON.stringify(body));
+}
+
+function readBody(req: IncomingMessage): Promise<string | undefined> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    req.on("data", (chunk: Buffer) => {
+      size += chunk.length;
+      if (size <= PLUGIN_TOKEN_BODY_MAX) chunks.push(chunk);
+    });
+    req.on("end", () =>
+      resolve(size <= PLUGIN_TOKEN_BODY_MAX ? Buffer.concat(chunks).toString("utf8") : undefined),
+    );
+    req.on("error", reject);
+  });
+}
+
+/**
+ * `POST DEV_FAKE_PLUGIN_TOKEN_PATH` 를 받는다. 세션은 앱의 owner 경로(`/api/v1/setup/status`)에 같은 헤더로 물어 판정한다 —
+ * 그 경로의 `requireOwner` 가 401·403 을 내면 그 응답을 그대로 돌려준다
+ */
+async function handlePluginToken(
+  app: App,
+  req: IncomingMessage,
+  res: ServerResponse,
+  swap: (token: string) => Promise<PluginTokenResult>,
+): Promise<void> {
+  const { cookie, authorization } = req.headers;
+  const guard = await app.fastify.inject({
+    method: "GET",
+    url: "/api/v1/setup/status",
+    headers: { ...(cookie ? { cookie } : {}), ...(authorization ? { authorization } : {}) },
+  });
+  if (guard.statusCode !== 200) {
+    res
+      .writeHead(guard.statusCode, { "content-type": String(guard.headers["content-type"]) })
+      .end(guard.body);
+    return;
+  }
+  const raw = await readBody(req);
+  let parsed: ReturnType<typeof PluginTokenInput.safeParse> | undefined;
+  try {
+    parsed = raw === undefined ? undefined : PluginTokenInput.safeParse(JSON.parse(raw));
+  } catch {
+    parsed = undefined;
+  }
+  if (!parsed?.success) {
+    sendJson(res, 400, { code: "VALIDATION", message: "body must be { token: string }" });
+    return;
+  }
+  sendJson(res, 200, await swap(parsed.data.token));
+}
+
+/**
+ * `createApp` 이 fastify.ready() 까지 마쳐 경로를 더할 수 없다(FST_ERR_INSTANCE_ALREADY_LISTENING) — HTTP 서버의 request 리스너를
+ * 감싼다. engine.io 가 `/socket.io/` 를 가로채는 것과 같은 방식: 이 경로만 받고 나머지는 원래 리스너(engine.io → Fastify)에 넘긴다
+ */
+function interceptDevFakeRoutes(app: App, swap: (token: string) => Promise<PluginTokenResult>): void {
+  const server: Server = app.fastify.server;
+  const listeners = server.listeners("request") as Array<(req: IncomingMessage, res: ServerResponse) => void>;
+  server.removeAllListeners("request");
+  server.on("request", (req: IncomingMessage, res: ServerResponse) => {
+    if (req.method === "POST" && req.url?.split("?")[0] === DEV_FAKE_PLUGIN_TOKEN_PATH) {
+      handlePluginToken(app, req, res, swap).catch((err: unknown) => {
+        app.logger.error({ err }, "dev:fake plugin-token failed");
+        if (!res.headersSent) sendJson(res, 500, { code: "INTERNAL", message: "dev:fake hook failed" });
+      });
+      return;
+    }
+    for (const listener of listeners) listener.call(server, req, res);
+  });
+}
+
 /** 가짜 Gateway → createApp(실제 OpenClawAdapter) → listen → 가짜 플러그인 → 대본 → 어댑터 gateway·bridge connected. 실패하면 만든 것을 닫고 던진다 */
 export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> {
   const dataDir = opts.dataDir ?? "data";
@@ -509,6 +596,28 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
       }),
       opts.pushSend ? { pushSend: opts.pushSend } : {},
     );
+    // 토큰 바꾸기는 한 번에 하나씩 — 겹치면 소켓 하나를 두 핸드셰이크가 다툰다
+    let swapping: Promise<unknown> = Promise.resolve();
+    const swapPluginToken = (token: string): Promise<PluginTokenResult> => {
+      const run = swapping.then(async (): Promise<PluginTokenResult> => {
+        if (!plugin) return { ok: false, reason: "fake plugin not started" };
+        try {
+          await plugin.reconnect({ token });
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error);
+          app?.logger.warn({ reason }, "dev:fake plugin token swap rejected");
+          return { ok: false, reason };
+        }
+        app?.logger.info(
+          { tokenId: app.adapter.setupDetail().bridge.plugin?.tokenId },
+          "dev:fake plugin reconnected with swapped token",
+        );
+        return { ok: true };
+      });
+      swapping = run;
+      return run;
+    };
+    interceptDevFakeRoutes(app, swapPluginToken);
     await app.fastify.listen({ host, port });
     // app.url 은 리슨 주소와 무관하게 127.0.0.1 — 0.0.0.0 으로 들어도 가짜 플러그인은 루프백으로 붙는다
     plugin = await startFakePlugin({ bridgeUrl: app.url, token: DEV_FAKE_BRIDGE_TOKEN });

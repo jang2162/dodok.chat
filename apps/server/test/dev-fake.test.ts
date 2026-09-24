@@ -18,13 +18,16 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   DEV_FAKE_LOCAL_TOKEN,
   DEV_FAKE_KEYWORDS,
+  DEV_FAKE_PLUGIN_TOKEN_PATH,
   type DevFake,
   devFakeCliOptions,
   fakeAgentScript,
   startDevFake,
 } from "../scripts/dev-fake";
+import type { App } from "../src/app";
 import { findItem, formatInteractionText } from "../src/modules/components/interact";
 import type { ScenarioApproval } from "./fakes/scenario";
+import { bootTestApp, login } from "./helpers/app";
 import { makePng } from "./helpers/png";
 
 type Author = { type: "user" | "agent"; handle: string };
@@ -876,4 +879,117 @@ describe("startDevFake appOrigin", () => {
       code: "UNAUTHORIZED",
     });
   }, 20_000);
+});
+
+describe("startDevFake 가짜 플러그인 토큰 바꾸기 — POST /__devfake/plugin-token", () => {
+  let dir: string;
+  let dev: DevFake;
+  let cookie: string;
+
+  beforeAll(async () => {
+    dir = mkdtempSync(join(tmpdir(), "dodok-dev-fake-token-"));
+    dev = await startDevFake({ port: 0, dataDir: dir, logLevel: "warn" });
+    const login = await fetch(`${dev.url}/api/v1/auth/local`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: DEV_FAKE_LOCAL_TOKEN }),
+    });
+    expect(login.status).toBe(200);
+    cookie = `dodok.session=${((await login.json()) as { sessionToken: string }).sessionToken}`;
+  });
+
+  afterAll(async () => {
+    await dev?.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const swap = (body: unknown, headers: Record<string, string> = { cookie }) =>
+    fetch(`${dev.url}${DEV_FAKE_PLUGIN_TOKEN_PATH}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify(body),
+    });
+
+  async function issue(label: string): Promise<{ token: string; id: string }> {
+    const res = await fetch(`${dev.url}/api/v1/setup/bridge-tokens`, {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ label }),
+    });
+    expect(res.status).toBe(201);
+    const { token, record } = (await res.json()) as { token: string; record: { id: string } };
+    return { token, id: record.id };
+  }
+
+  const connectedTokenId = () => dev.app.adapter.setupDetail().bridge.plugin?.tokenId;
+
+  it("세션이 없으면 401 이고 가짜 플러그인은 그대로 붙어 있다", async () => {
+    const before = connectedTokenId();
+    expect(before).toBeTruthy();
+    const res = await swap({ token: "whatever" }, {});
+    expect(res.status).toBe(401);
+    expect(connectedTokenId()).toBe(before);
+  });
+
+  it("본문에 token 이 없으면 400", async () => {
+    const res = await swap({});
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({ code: "VALIDATION" });
+    expect((await swap({ token: "" })).status).toBe(400);
+  });
+
+  it("DB 로 발급한 새 토큰으로 바꾸면 { ok: true } 이고 붙은 플러그인의 tokenId 가 그 행이다", async () => {
+    const issued = await issue("rotate");
+    const res = await swap({ token: issued.token });
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ ok: true });
+    expect(connectedTokenId()).toBe(issued.id);
+  }, 20_000);
+
+  it("폐기한 토큰으로 바꾸면 { ok: false, reason } — 새 토큰으로 다시 바꾸면 돌아온다", async () => {
+    const old = await issue("old");
+    await expect((await swap({ token: old.token })).json()).resolves.toEqual({ ok: true });
+    const revoke = await fetch(`${dev.url}/api/v1/setup/bridge-tokens/${old.id}`, {
+      method: "DELETE",
+      headers: { cookie },
+    });
+    expect(revoke.status).toBe(204);
+
+    const res = await swap({ token: old.token });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; reason?: string };
+    expect(body.ok).toBe(false);
+    expect(body.reason).toContain("UNAUTHORIZED");
+    expect(dev.app.adapter.setupDetail().bridge.plugin).toBeFalsy();
+
+    const fresh = await issue("fresh");
+    await expect((await swap({ token: fresh.token })).json()).resolves.toEqual({ ok: true });
+    expect(connectedTokenId()).toBe(fresh.id);
+  }, 20_000);
+
+  it("그 밖의 경로는 앱이 그대로 받는다", async () => {
+    const res = await fetch(`${dev.url}/api/v1/setup/status`, { headers: { cookie } });
+    expect(res.status).toBe(200);
+  });
+});
+
+describe("운영 createApp 에는 dev:fake 경로가 없다", () => {
+  let app: App;
+  beforeAll(async () => {
+    app = await bootTestApp();
+  });
+  afterAll(async () => {
+    await app?.close();
+  });
+
+  it(`POST ${DEV_FAKE_PLUGIN_TOKEN_PATH} → 404`, async () => {
+    const { headers } = await login(app);
+    const res = await app.fastify.inject({
+      method: "POST",
+      url: DEV_FAKE_PLUGIN_TOKEN_PATH,
+      headers,
+      payload: { token: "x" },
+    });
+    expect(res.statusCode).toBe(404);
+  });
 });
