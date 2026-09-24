@@ -1,3 +1,4 @@
+import { BridgeAuthGuard } from "@dodok/openclaw-adapter";
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
 import { ATTACHMENT_LIMITS, type Attachment } from "@dodok/shared";
 import { fstatSync, mkdtempSync, readdirSync, statSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
@@ -5,6 +6,7 @@ import { rm } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import Fastify from "fastify";
 import pino from "pino";
 import { eq } from "drizzle-orm";
 import { v7 as uuid } from "uuid";
@@ -14,6 +16,7 @@ import { loadConfig } from "../src/config";
 import { SESSION_COOKIE } from "../src/auth";
 import { attachments, channels, workspaces } from "../src/db/schema.sqlite";
 import { blobPath, type BlobLocks, createBlobLocks, sha256Of } from "../src/modules/attachments/store";
+import { registerAttachmentRoutes } from "../src/modules/attachments/routes";
 import { markBound, uploadAttachment } from "../src/modules/attachments/service";
 import { createUserMessage } from "../src/modules/messages/service";
 import { attachmentsDirOf, bootTestApp, login } from "./helpers/app";
@@ -759,5 +762,42 @@ describe("테스트 헬퍼의 첨부 디렉터리", () => {
 
   it("testEnv 만으로 createApp 을 부르면 부팅이 실패한다 — 앱끼리 디렉터리를 나눠 쓰거나 저장소에 쓰지 않게", async () => {
     await expect(createApp(loadConfig(testEnv), { adapter: new FakeAdapter() })).rejects.toThrow(/ENOTDIR/);
+  });
+});
+
+describe("브리지 첨부 인증 — 실패 카운터(운영 보강 스펙 4.1)", () => {
+  it("검증 함수가 던지면 거절하되 실패로 세지 않는다 — 저장소가 잠깐 잠긴 동안 정상 플러그인 주소가 막히지 않게", async () => {
+    const app = await bootTestApp();
+    const fastify = Fastify();
+    const guard = new BridgeAuthGuard({ maxFailures: 1 });
+    let verify: () => { tokenId: string } | null = () => {
+      throw new Error("db locked");
+    };
+    registerAttachmentRoutes(fastify, {
+      auth: app.auth,
+      db: app.db,
+      workspaceId: app.workspaceId,
+      dir: attachmentsDirOf(app) as string,
+      verifyBridgeToken: () => verify(),
+      bridgeGuard: { guard, now: () => 0, onBlocked: () => {} },
+      locks: createBlobLocks(),
+    });
+    const get = () =>
+      fastify.inject({
+        method: "GET",
+        url: `/bridge/attachments/${uuid()}`,
+        headers: { authorization: "Bearer x" },
+      });
+    try {
+      for (let i = 0; i < 3; i++) expect((await get()).statusCode).not.toBe(200);
+      expect(guard.isBlocked("127.0.0.1", 0)).toBe(false);
+      // 대조: 토큰이 틀리면(null) 한 번에 센다
+      verify = () => null;
+      await get();
+      expect(guard.isBlocked("127.0.0.1", 0)).toBe(true);
+    } finally {
+      await fastify.close();
+      await app.close();
+    }
   });
 });

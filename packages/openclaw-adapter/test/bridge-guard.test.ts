@@ -17,6 +17,8 @@ describe("BridgeAuthGuard — 브리지 인증 실패 카운터(스펙 4.1)", ()
     expect(guard.isBlocked(A, 30 * SEC)).toBe(true);
     // 막힌 동안의 실패는 새로 막히기 시작한 것이 아니다
     expect(guard.fail(A, 31 * SEC)).toBe(false);
+    // 그 실패가 막힘을 지우지 않는다
+    expect(guard.isBlocked(A, 31 * SEC)).toBe(true);
   });
 
   it("막힌 지 59.999초는 여전히 막히고 60초에 저절로 풀린다(Review Focus 3)", () => {

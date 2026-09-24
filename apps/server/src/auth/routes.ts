@@ -28,6 +28,8 @@ export type AuthRouteContext = {
   secureCookie: boolean;
   /** /api/auth/*(Better Auth) IP 당 분당 상한 — LIMITS.betterAuthPerMin */
   betterAuthPerMin: number;
+  /** /api/v1/auth/local IP 당 분당 상한 — LIMITS.localLoginPerMin */
+  localLoginPerMin: number;
   /** 로그인 전 상한에 걸리면 ratelimit 사건을 남긴다 */
   ops: Pick<OpsService, "record">;
 };
@@ -64,7 +66,7 @@ export function registerAuthRoutes(fastify: FastifyInstance, ctx: AuthRouteConte
 
   fastify.post(
     "/api/v1/auth/local",
-    { config: { rateLimit: { max: 5, timeWindow: "1 minute", onExceeded } } },
+    { config: { rateLimit: { max: ctx.localLoginPerMin, timeWindow: "1 minute", onExceeded } } },
     async (request, reply) => {
       const body = LocalLoginBody.safeParse(request.body);
       if (!body.success) throw apiError("VALIDATION", "token 이 필요하다");

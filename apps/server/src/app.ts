@@ -28,6 +28,7 @@ import { registerMessageRoutes } from "./modules/messages/routes";
 import { createRestLimits } from "./modules/ops/http-limits";
 import { ipPrefix } from "./modules/ops/ip";
 import { LIMITS, type Limits } from "./modules/ops/limits";
+import { monotonicNow } from "./modules/ops/ratelimit";
 import type { OpsService } from "./modules/ops/service";
 import { createPresence } from "./modules/push/presence";
 import { registerPushRoutes } from "./modules/push/routes";
@@ -82,7 +83,7 @@ export type AppDeps = {
   pluginDirs?: string[];
   /** 레이트리밋 숫자(기본 LIMITS, 얕게 덮는다) — 테스트가 수백 번 되풀이할 상한을 줄인다 */
   limits?: Partial<Limits>;
-  /** 레이트리밋·브리지 실패 카운터의 시계(ms, 기본 Date.now) — 테스트가 창·버킷을 넘긴다. Better Auth·로컬 로그인 상한(@fastify/rate-limit)은 따르지 않는다 */
+  /** 레이트리밋·브리지 실패 카운터의 시계(ms, 기본 단조 시계 monotonicNow) — 테스트가 창·버킷을 넘긴다. Better Auth·로컬 로그인 상한(@fastify/rate-limit)은 따르지 않는다 */
   limitClock?: () => number;
 };
 
@@ -151,7 +152,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     const verifyBridgeToken: BridgeTokenVerifier = (presented) => verifyBridgeTokenDb(db, presented);
     const bus = new ServerBus();
     const limits: Limits = { ...LIMITS, ...deps.limits };
-    const limitClock = deps.limitClock ?? Date.now;
+    const limitClock = deps.limitClock ?? monotonicNow;
     const trustProxy = config.TRUST_PROXY === "true";
     // 핸드셰이크와 첨부 HTTP 가 같은 실패 카운터를 쓴다(스펙 4.1) — 한쪽에서 막힌 주소는 다른 쪽에서도 막힌다
     const bridgeGuard = new BridgeAuthGuard(limits.bridgeFail);
@@ -259,6 +260,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       workspaceId,
       secureCookie: new URL(config.APP_ORIGIN).protocol === "https:",
       betterAuthPerMin: limits.betterAuthPerMin,
+      localLoginPerMin: limits.localLoginPerMin,
       ops,
     });
     const routeContext = { auth, db, bus, logger, workspaceId, adapter, orchestrator: services.orchestrator };

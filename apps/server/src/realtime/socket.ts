@@ -22,7 +22,7 @@ import type { Logger } from "../logger";
 import { getChannel } from "../modules/channels/service";
 import { ipPrefix } from "../modules/ops/ip";
 import { LIMITS, type Limits } from "../modules/ops/limits";
-import { TokenBucket } from "../modules/ops/ratelimit";
+import { monotonicNow, TokenBucket } from "../modules/ops/ratelimit";
 import type { OpsService } from "../modules/ops/service";
 import type { Presence } from "../modules/push/presence";
 import {
@@ -51,7 +51,7 @@ export type WireContext = {
   presence?: Pick<Presence, "set" | "drop">;
   /** wire 레이트리밋(운영 보강 스펙 4.2). 없으면 LIMITS */
   limits?: Pick<Limits, "wire" | "socketsPerUser">;
-  /** 버킷의 시계(ms) — 테스트 주입. 기본 Date.now */
+  /** 버킷의 시계(ms) — 테스트 주입. 기본 단조 시계(monotonicNow) */
   now?: () => number;
   /** 레이트리밋에 걸리면 ratelimit 사건을 남긴다 */
   ops?: Pick<OpsService, "record">;
@@ -62,12 +62,12 @@ export type WireContext = {
   }) => string;
 };
 
-/** wire 이벤트 → 소켓 버킷(스펙 4.2 표). 여기 없는 이벤트(구독·구독 해제)는 상한이 없다 */
+/** wire 이벤트 → 소켓 버킷(스펙 4.2 표, run.events.replay 만 자기 버킷 — limits.ts). 여기 없는 이벤트(구독·구독 해제)는 상한이 없다 */
 export const WIRE_BUCKET = {
   "message.send": "heavy",
   "component.interact": "heavy",
   "run.abort": "heavy",
-  "run.events.replay": "heavy",
+  "run.events.replay": "replay",
   "approval.resolve": "approval",
   typing: "chatter",
   "presence.update": "chatter",
@@ -88,7 +88,7 @@ export const workspaceRoom = (workspaceId: string): string => `workspace:${works
 /** 기본 네임스페이스에 인증 미들웨어와 클라이언트 → 서버 핸들러를 붙인다(계약 스펙 7장). 팬아웃은 events.ts. */
 export function attachWire(io: WireServer, ctx: WireContext): void {
   const limits = ctx.limits ?? LIMITS;
-  const now = ctx.now ?? Date.now;
+  const now = ctx.now ?? monotonicNow;
   const addressOf = (handshake: Parameters<NonNullable<WireContext["clientAddress"]>>[0]): string => {
     if (!ctx.clientAddress) return handshake.address;
     try {
@@ -135,6 +135,7 @@ export function attachWire(io: WireServer, ctx: WireContext): void {
 
     const buckets: Record<keyof Limits["wire"], TokenBucket> = {
       heavy: new TokenBucket({ ...limits.wire.heavy, now }),
+      replay: new TokenBucket({ ...limits.wire.replay, now }),
       approval: new TokenBucket({ ...limits.wire.approval, now }),
       chatter: new TokenBucket({ ...limits.wire.chatter, now }),
     };

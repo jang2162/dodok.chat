@@ -2,9 +2,10 @@
  * 레이트리밋 통합(운영 보강 스펙 4장) — 가짜 Gateway·플러그인 위 실제 앱. 시계는 AppDeps.limitClock 으로 주입해 창·버킷을 넘긴다.
  * 숫자는 LIMITS 그대로 쓰되, 수백 번을 되풀이해야 하는 REST·업로드·Better Auth 는 AppDeps.limits 로 줄인다.
  */
-import { type OpsEventKind, WIRE_PROTOCOL } from "@dodok/shared";
+import { BRIDGE_ATTACHMENTS_PATH, type OpsEventKind, WIRE_PROTOCOL } from "@dodok/shared";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
+import { io } from "socket.io-client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { messages, opsEvents, runs } from "../../src/db/schema.sqlite";
 import { LIMITS } from "../../src/modules/ops/limits";
@@ -24,9 +25,12 @@ describe("레이트리밋 통합", () => {
   let live: LiveApp | undefined;
   const clock = { t: Date.parse("2026-09-25T03:00:00.000Z"), now: () => clock.t };
 
-  async function boot(deps: LiveAppOptions["deps"] = {}): Promise<LiveApp> {
+  async function boot(deps: LiveAppOptions["deps"] = {}, env?: Record<string, string>): Promise<LiveApp> {
     clock.t = Date.parse("2026-09-25T03:00:00.000Z");
-    live = await bootLiveApp({ deps: { limitClock: clock.now, ...deps } });
+    live = await bootLiveApp({
+      deps: { limitClock: clock.now, ...deps },
+      ...(env === undefined ? {} : { env }),
+    });
     return live;
   }
 
@@ -123,6 +127,45 @@ describe("레이트리밋 통합", () => {
     expect((await l.plugin.downloadAttachment(attachment.id)).status).toBe(404);
   });
 
+  it("브리지 — TRUST_PROXY 면 핸드셰이크와 /bridge/attachments 가 같은 X-Forwarded-For 주소로 센다", async () => {
+    const l = await boot({}, { TRUST_PROXY: "true" });
+    const attachment = { id: randomUUID() };
+    const handshake = (xff: string, token: string) =>
+      new Promise<"connected" | "rejected">((resolve) => {
+        const socket = io(`${l.app.url}/bridge`, {
+          auth: { token },
+          transports: ["websocket"],
+          extraHeaders: { "x-forwarded-for": xff },
+          reconnection: false,
+          forceNew: true,
+        });
+        socket.once("connect", () => {
+          socket.close();
+          resolve("connected");
+        });
+        socket.once("connect_error", () => {
+          socket.close();
+          resolve("rejected");
+        });
+      });
+    const download = async (xff: string, token: string) =>
+      (
+        await fetch(`${l.app.url}${BRIDGE_ATTACHMENTS_PATH}/${attachment.id}`, {
+          headers: { authorization: `Bearer ${token}`, "x-forwarded-for": xff },
+        })
+      ).status;
+
+    for (let i = 0; i < 5; i++) expect(await handshake("198.51.100.7", "wrong")).toBe("rejected");
+    for (let i = 0; i < 5; i++) expect(await download("198.51.100.7", "wrong")).toBe(401);
+
+    expect(await download("198.51.100.7", BRIDGE_TOKEN)).toBe(429);
+    expect(await handshake("198.51.100.7", BRIDGE_TOKEN)).toBe("rejected");
+    // 다른 주소·프록시 소켓 주소(127.0.0.1)는 막히지 않았다
+    expect(await download("198.51.100.8", BRIDGE_TOKEN)).toBe(404);
+    expect((await l.plugin.downloadAttachment(attachment.id)).status).toBe(404);
+    expect(opsRows(l, "bridge_auth_blocked").map((r) => r.detail)).toEqual([{ ipPrefix: "198.51.100.0/24" }]);
+  });
+
   it("REST — 사용자당 분당 상한을 넘으면 429 RATE_LIMITED, 수백 번 걸려도 사건은 라우트 패턴당 한 줄", async () => {
     const l = await boot({ limits: { restPerMin: 20 } });
     const { channel } = await setupRelayChannel(l, RELAY_POLICY); // REST 6번
@@ -140,6 +183,7 @@ describe("레이트리밋 통합", () => {
       ["rest:/api/v1/channels/:id", 301],
     ]);
     expect(JSON.stringify(rows)).not.toContain(channel.id);
+    expect(rows.map((r) => r.detail)).toEqual([{ ipPrefix: "127.0.0.0/24" }, { ipPrefix: "127.0.0.0/24" }]);
 
     clock.t += 60_000;
     expect((await rest(l, "GET", `/channels/${channel.id}`)).status).toBe(200);
@@ -172,6 +216,20 @@ describe("레이트리밋 통합", () => {
     expect(statuses).toEqual([200, 200, 200, 429]);
     expect((await hit()).json()).toMatchObject({ code: "RATE_LIMITED" });
     expect(opsRows(l, "ratelimit").map((r) => [r.key, r.count])).toEqual([["rest:/api/auth/*", 2]]);
+  });
+
+  it("로컬 로그인 /api/v1/auth/local — LIMITS.localLoginPerMin 을 넘으면 429 와 사건 한 줄", async () => {
+    // 부팅이 로그인을 한 번 쓴다(bootLiveApp → login)
+    const l = await boot({ limits: { localLoginPerMin: 2 } });
+    const attempt = () =>
+      l.app.fastify.inject({ method: "POST", url: "/api/v1/auth/local", payload: { token: "wrong" } });
+    expect((await attempt()).statusCode).toBe(401);
+    const limited = await attempt();
+    expect(limited.statusCode).toBe(429);
+    expect(limited.json()).toMatchObject({ code: "RATE_LIMITED" });
+    const rows = opsRows(l, "ratelimit");
+    expect(rows.map((r) => [r.key, r.count])).toEqual([["rest:/api/v1/auth/local", 1]]);
+    expect(rows[0]?.detail).toEqual({ ipPrefix: "127.0.0.0/24" });
   });
 
   it("같은 사용자의 wire 소켓 21번째는 핸드셰이크에서 RATE_LIMITED 로 거절된다", async () => {
