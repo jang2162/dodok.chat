@@ -152,6 +152,10 @@ describe("플러그인", () => {
     expect(cmd).toBe(installCommands("dodok-openclaw-plugin-ffffffffffff.tgz", SHA_A));
     expect(cmd).toContain("openclaw plugins install /tmp/dodok-openclaw-plugin-ffffffffffff.tgz ");
     expect(cmd).not.toContain(SHA_FILE);
+    // 명령은 줄 구조를 지키고 넘치는 폭은 제 상자 안에서 스크롤한다(줄을 바꾸면 한 명령이 두 줄로 읽힌다)
+    const block = within(pl).getByTestId("plugin-install-commands");
+    expect(block).toHaveClass("whitespace-pre", "overflow-x-auto");
+    expect(block.parentElement).toHaveClass("min-w-0");
   });
 
   it("설치 명령은 deploy.md [B] 블록과 글자 그대로 같다 — 계정 설정 패치 줄만 빼고, 파일 이름과 대조할 sha 만 다르다", () => {

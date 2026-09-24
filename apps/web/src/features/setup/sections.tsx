@@ -66,13 +66,30 @@ export function CopyButton({ text, label }: { text: string; label: string }) {
   );
 }
 
-/** 복사할 명령·설정 — 선택 가능한 고정폭 블록과 복사 버튼 */
-export function CopyBlock({ text, label, testId }: { text: string; label: string; testId?: string }) {
+/**
+ * 복사할 명령·설정 — 선택 가능한 고정폭 블록과 복사 버튼. 원문은 한 글자도 가리지 않는다: 기본은 줄 구조를 지키고 넘치는 폭을
+ * 블록 안에서 가로로 스크롤한다(명령·JSON 은 줄바꿈이 뜻을 바꾼다). `wrap` 이면 아무 글자 사이에서나 줄을 바꿔 전부 보인다
+ * (공백 없는 한 줄 — 토큰). 래퍼의 `min-w-0` 은 grid 트랙 안에서 원문 폭이 트랙을 넓혀 대화상자 밖으로 삐져나가지 않게 한다
+ */
+export function CopyBlock({
+  text,
+  label,
+  testId,
+  wrap = false,
+}: {
+  text: string;
+  label: string;
+  testId?: string;
+  wrap?: boolean;
+}) {
   return (
-    <div className="flex flex-col items-start gap-1.5">
+    <div className="flex min-w-0 flex-col items-start gap-1.5">
       <pre
         data-testid={testId}
-        className="w-full overflow-x-auto rounded-md bg-muted px-3 py-2 font-mono text-xs whitespace-pre select-all"
+        className={cn(
+          "w-full rounded-md bg-muted px-3 py-2 font-mono text-xs select-all",
+          wrap ? "break-all whitespace-pre-wrap" : "overflow-x-auto whitespace-pre",
+        )}
       >
         {text}
       </pre>

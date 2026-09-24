@@ -117,7 +117,7 @@ export function IssueTokenDialog({ triggerRef }: { triggerRef?: RefObject<HTMLBu
             </DialogHeader>
             <div className="grid min-w-0 gap-1.5">
               <p className="text-sm font-medium">토큰</p>
-              <CopyBlock text={issued.token} label="토큰 복사" />
+              <CopyBlock text={issued.token} label="토큰 복사" wrap />
             </div>
             <div className="grid min-w-0 gap-1.5">
               <p className="text-sm font-medium">플러그인 설정</p>

@@ -54,6 +54,21 @@ describe("새 토큰 발급", () => {
     expect(JSON.parse(writeText.mock.lastCall?.[0] ?? "")).toEqual(JSON.parse(config));
   });
 
+  it("좁은 대화상자에서도 원문을 숨기지 않는다 — 토큰은 줄을 바꾸고, 설정 조각은 제 상자 안에서 가로로 스크롤한다", async () => {
+    // jsdom 은 레이아웃이 없어 구조만 본다 — 390px 실측은 s2-c1 보고
+    stubSetupServer({ tokens: [tokenOf(1, { connected: true })] });
+    renderConnection();
+    const dialog = await issue("좁은 화면");
+    const token = await within(dialog).findByText(RAW_TOKEN);
+    const config = within(dialog).getByTestId("plugin-config");
+    // grid 트랙 안의 블록이 원문 폭만큼 트랙을 넓히지 않는다(min-width:auto 면 대화상자 밖으로 삐져나간다)
+    for (const pre of [token, config]) expect(pre.parentElement).toHaveClass("min-w-0");
+    expect(token).toHaveClass("whitespace-pre-wrap", "break-all");
+    expect(token).not.toHaveClass("overflow-x-auto");
+    // 설정 조각은 줄 구조(들여쓰기)를 지키고 넘치는 폭은 제 상자 안에서 스크롤한다
+    expect(config).toHaveClass("whitespace-pre", "overflow-x-auto");
+  });
+
   it("「복사했습니다」 전에는 Esc 로도 닫히지 않는다 — 누르면 닫히고, 원문은 DOM·쿼리·뮤테이션 캐시 어디에도 없다", async () => {
     stubSetupServer({ tokens: [tokenOf(1, { connected: true })] });
     const qc = renderConnection();
