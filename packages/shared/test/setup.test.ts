@@ -114,6 +114,10 @@ describe("SetupStatus", () => {
     const file = { available: true, sha256: SHA, bundleSha256: "b".repeat(64), bytes: 1234 };
     expect(SetupStatus.parse({ ...STATUS, pluginFile: file }).pluginFile).toEqual(file);
     expect(SetupStatus.safeParse({ ...STATUS, pluginFile: { available: true } }).success).toBe(false);
+    for (const key of ["sha256", "bundleSha256"] as const) {
+      const { [key]: _, ...missing } = file;
+      expect(SetupStatus.safeParse({ ...STATUS, pluginFile: missing }).success).toBe(false);
+    }
     expect(SetupStatus.safeParse({ ...STATUS, pluginFile: { ...file, bytes: -1 } }).success).toBe(false);
   });
   it("페어링 대기는 requestId·since 를 싣는다", () => {
@@ -122,6 +126,16 @@ describe("SetupStatus", () => {
       requestId: "req-1",
       since: NOW,
     });
+  });
+  it("Gateway 에 아직 못 붙었으면 gateway.version 은 null", () => {
+    const gateway = { ...STATUS.gateway, state: "down", version: null };
+    expect(SetupStatus.parse({ ...STATUS, gateway }).gateway.version).toBeNull();
+  });
+  it("pairing.since·connectedAt 은 ISO 시각만", () => {
+    const pairing = { requestId: "req-1", since: "어제" };
+    expect(SetupStatus.safeParse({ ...STATUS, gateway: { ...STATUS.gateway, pairing } }).success).toBe(false);
+    const plugin = { ...STATUS.bridge.plugin, connectedAt: "2026-09-24" };
+    expect(SetupStatus.safeParse({ ...STATUS, bridge: { ...STATUS.bridge, plugin } }).success).toBe(false);
   });
   it("플러그인이 접속하지 않았으면 bridge.plugin 은 null", () => {
     const bridge = { state: "down", publicUrl: "wss://chat.example/bridge", plugin: null };

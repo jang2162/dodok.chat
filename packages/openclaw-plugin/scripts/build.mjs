@@ -23,4 +23,15 @@ await build({
   },
   legalComments: "none",
   logLevel: "info",
+  // CJS 로 바꾸면 import.meta 가 빈 객체가 된다 — 경고로 두면 번들 해시가 조용히 사라지므로 빌드를 멈춘다
+  logOverride: { "empty-import-meta": "error" },
 });
+
+// 설정 마법사 결정 5 — 번들 해시는 테스트·typecheck 로 안 잡히는 두 자리(모듈 스코프 import.meta.url, hello 필드)에
+// 달려 있다. define 치환이나 hello 줄 삭제는 esbuild 도 경고하지 않으니 산출물 글자로 확인한다
+const out = readFileSync("dist/index.js", "utf8");
+for (const needle of ["computeBundleSha256(import.meta.url)", "bundleSha256: BUNDLE_SHA256"]) {
+  if (!out.includes(needle)) {
+    throw new Error(`dist/index.js 에 「${needle}」 가 없다 — hello 의 bundleSha256 이 조용히 사라진다`);
+  }
+}

@@ -1,6 +1,7 @@
 import { describe, expectTypeOf, it } from "vitest";
 import type { Ack } from "../src/common";
 import type { Message } from "../src/domain";
+import type { SetupStatus } from "../src/setup";
 import type { ClientToServerEvents, MessageSend, ServerToClientEvents } from "../src/wire";
 
 describe("wire event maps", () => {
@@ -33,6 +34,11 @@ describe("wire event maps", () => {
       | "setup.status"
       | "system.notice"
     >();
+  });
+  it("setup.status 페이로드는 { status } 로 감싼다", () => {
+    expectTypeOf<Parameters<ServerToClientEvents["setup.status"]>[0]>().toEqualTypeOf<{
+      status: SetupStatus;
+    }>();
   });
   it("message.send의 페이로드와 ack 타입", () => {
     expectTypeOf<Parameters<ClientToServerEvents["message.send"]>[0]>().toEqualTypeOf<MessageSend>();
