@@ -95,13 +95,23 @@ describe("watchConnections — 60초 넘는 끊김만 사건(Review Focus 2)", (
     set({ gateway: "connected" });
     const [closed] = rowsOf("gateway_down");
     expect(closed?.resolvedAt).not.toBeNull();
-    // downMs 는 줄이 열린 때(first_at — 끊긴 지 60초)부터다(store.resolveEvent). 실제 끊김은 여기에 60초를 더한 것
-    expect(closed?.detail).toMatchObject({ downMs: 21 * SEC });
+    // 줄은 끊긴 지 60초에 열리지만 downMs 는 실제로 끊긴 때부터다 — 30 + 31 + 20초
+    expect(closed?.detail).toMatchObject({ downMs: 81 * SEC });
 
     set({ gateway: "reconnecting" });
     vi.advanceTimersByTime(61 * SEC);
     expect(rowsOf("gateway_down")).toHaveLength(2);
     expect(rowsOf("gateway_down").filter((r) => r.resolvedAt === null)).toHaveLength(1);
+    watch.close();
+  });
+
+  it("90초 끊겼다 붙으면 downMs 는 90초 — 임계 60초를 빼지 않는다", () => {
+    const { adapter, set } = setup();
+    const watch = watchConnections(adapter, ops);
+    set({ bridge: "down" });
+    vi.advanceTimersByTime(90 * SEC);
+    set({ bridge: "connected" });
+    expect(rowsOf("plugin_down")[0]?.detail).toMatchObject({ downMs: 90 * SEC });
     watch.close();
   });
 
@@ -218,6 +228,20 @@ describe("createDiskMonitor", () => {
     expect(logged).toContainEqual(
       expect.objectContaining({ level: 40, msg: "disk check failed", code: "ENOENT" }),
     );
+    disk.close();
+  });
+
+  it("error 를 잰 뒤 statfs 가 던지면 unknown 으로 돌아간다 — 옛 error 로 업로드를 계속 막지 않는다", async () => {
+    const statfs = statfsOf(100 * MIB, 50 * GIB);
+    const disk = createDiskMonitor({ dataDir: "/data", ops, statfs, logger: pino({ level: "silent" }) });
+    await disk.ready;
+    expect(disk.current().level).toBe("error");
+    statfs.mockImplementation(async () => {
+      throw Object.assign(new Error("EIO"), { code: "EIO" });
+    });
+    await vi.advanceTimersByTimeAsync(DISK_CHECK_INTERVAL_MS);
+    expect(statfs).toHaveBeenCalledTimes(2);
+    expect(disk.current()).toEqual({ level: "unknown" });
     disk.close();
   });
 

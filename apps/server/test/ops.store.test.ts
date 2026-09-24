@@ -136,6 +136,12 @@ describe("끊김 사건", () => {
     expect(rows()).toHaveLength(2);
   });
 
+  it("detail.thresholdMs 가 있으면 downMs 에 더한다 — 줄은 끊긴 지 임계만큼 지나서 열렸다", () => {
+    recordEvent(db, ws, { ...down, detail: { thresholdMs: MIN } }, T0);
+    const closed = resolveEvent(db, ws, "gateway_down", "gateway", at(7 * MIN));
+    expect(closed?.detail).toMatchObject({ thresholdMs: MIN, downMs: 8 * MIN });
+  });
+
   it("열린 줄이 없으면 resolve 는 null — 닫힌 줄을 다시 닫지 않는다", () => {
     expect(resolveEvent(db, ws, "plugin_down", "plugin", T0)).toBeNull();
     recordEvent(db, ws, { kind: "plugin_down", key: "plugin", severity: "warn" }, T0);

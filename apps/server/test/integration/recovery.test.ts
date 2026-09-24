@@ -5,7 +5,9 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { opsEvents } from "../../src/db/schema.sqlite";
 import { createScenario } from "../fakes/scenario";
 import { bootLiveApp, type LiveAppOptions, type LiveApp } from "../helpers/live-app";
 import {
@@ -266,6 +268,17 @@ describe("통합 시나리오 6·7 — 드롭·끊김·재접속·재시작", ()
       const types = (events.json() as { events: Array<{ type: string }> }).events.map((e) => e.type);
       expect(types.slice(-2)).toEqual(["STATE_SNAPSHOT", "RUN_ERROR"]);
       expect(types).toContain("TEXT_MESSAGE_CONTENT");
+      // 부팅 정리가 닫은 런도 실패한 런이다 — 감시가 recoverOnBoot 보다 먼저 걸려 run_failed 가 한 번 남는다
+      expect(restarted.app.db.select().from(opsEvents).where(eq(opsEvents.kind, "run_failed")).all()).toEqual(
+        [
+          expect.objectContaining({
+            key: `agent:${dev.id}`,
+            severity: "warn",
+            count: 1,
+            detail: { code: "SERVER_RESTART" },
+          }),
+        ],
+      );
     });
   });
 });

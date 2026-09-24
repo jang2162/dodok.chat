@@ -65,7 +65,8 @@ describe("운영 안정성 — 끊김·실패한 런·Gateway 버전·디스크"
     const resolved = await closed;
     expect(resolved.event.id).toBe(payload.event.id);
     expect(resolved.event.resolvedAt).toBeDefined();
-    expect(resolved.event.detail.downMs).toBeGreaterThanOrEqual(0);
+    // 줄은 끊긴 지 임계(300ms)에 열린다 — downMs 는 끊긴 때부터라 임계보다 짧을 수 없다
+    expect(resolved.event.detail.downMs).toBeGreaterThanOrEqual(300);
     expect(eventsOf(l, "gateway_down")).toEqual([]);
   });
 
@@ -120,6 +121,24 @@ describe("운영 안정성 — 끊김·실패한 런·Gateway 버전·디스크"
     );
     expect(row).toMatchObject({ key: "gateway:2026.9.5", severity: "info" });
     expect(getOpsSettings(drifted.app.db, drifted.app.workspaceId).lastGatewayVersion).toBe("2026.9.5");
+  });
+
+  it("createApp 은 첫 디스크 측정이 끝나야 풀린다 — 부팅 직후 disk() 가 unknown 이 아니다", async () => {
+    let release = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const statfs = vi.fn(async () => {
+      await gate;
+      return { bavail: (100 * MIB) / 4096, bsize: 4096, blocks: (50 * GIB) / 4096 };
+    });
+    const booting = bootLiveApp({ deps: { statfs } });
+    const early = await Promise.race([
+      booting.then(() => "booted" as const),
+      new Promise<"waiting">((r) => setTimeout(() => r("waiting"), 1_000)),
+    ]);
+    release();
+    live = await booting;
+    expect(early).toBe("waiting");
+    expect(live.app.disk()).toMatchObject({ level: "error" });
   });
 
   it("디스크 여유 error 면 disk_low(error) 가 남고 사람·브리지 업로드가 507 — 업로드 상한이 먼저 센다", async () => {

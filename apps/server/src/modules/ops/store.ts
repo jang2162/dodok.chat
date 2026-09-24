@@ -129,7 +129,8 @@ export function recordEventChange(
 }
 
 /**
- * 열린 끊김 줄을 닫는다 — resolved_at·last_at 을 at 으로, detail.downMs = at - first_at. 열린 줄이 없으면 null.
+ * 열린 끊김 줄을 닫는다 — resolved_at·last_at 을 at 으로, detail.downMs = at - first_at + detail.thresholdMs(없으면 0).
+ * 줄은 끊긴 지 임계만큼 지나서 열리므로 임계를 더해야 실제로 끊긴 시간이다. 열린 줄이 없으면 null.
  * 병합한 detail 이 모양을 어기면 닫지 않고 OpsShapeError
  */
 export function resolveEvent(
@@ -155,7 +156,8 @@ export function resolveEvent(
       .limit(1)
       .get();
     if (!found) return null;
-    const detail = { ...found.detail, downMs: at.getTime() - found.firstAt.getTime() };
+    const threshold = typeof found.detail.thresholdMs === "number" ? found.detail.thresholdMs : 0;
+    const detail = { ...found.detail, downMs: at.getTime() - found.firstAt.getTime() + threshold };
     assertStorable(found.key, detail);
     const updated = tx
       .update(opsEvents)

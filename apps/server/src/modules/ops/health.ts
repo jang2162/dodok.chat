@@ -59,7 +59,8 @@ export function watchConnections(
         }
         timer = setTimeout(() => {
           timer = undefined;
-          ops.record({ kind: side.kind, key: side.key, severity: "warn" });
+          // 줄은 끊긴 지 delayMs 뒤에 열린다 — 닫을 때 downMs 가 실제로 끊긴 때부터가 되게 임계를 싣는다(store.resolveEvent)
+          ops.record({ kind: side.kind, key: side.key, severity: "warn", detail: { thresholdMs: delayMs } });
         }, delayMs);
         timer.unref();
       },
