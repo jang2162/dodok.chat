@@ -62,6 +62,8 @@ export function statusOf(over: StatusOver = {}): SetupStatus {
       state: "connected",
       host: "gateway.example.com",
       version: "2026.9.5",
+      pinned: "2026.9.4",
+      drift: true,
       pairing: null,
       ...over.gateway,
     },

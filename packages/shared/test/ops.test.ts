@@ -4,8 +4,12 @@ import {
   OPS_DEFAULT_DAILY_RUN_LIMIT,
   OpsEvent,
   OpsEventKind,
+  OpsAckResult,
   OpsEventsPage,
+  OpsRunsRow,
+  OpsRunsSummary,
   OpsSettingsPatch,
+  OpsStatus,
   OpsUnacked,
   SystemKind,
   SystemMeta,
@@ -123,5 +127,63 @@ describe("ErrorCode", () => {
   it("RUN_LIMIT·INSUFFICIENT_STORAGE 를 받는다", () => {
     expect(ErrorCode.safeParse("RUN_LIMIT").success).toBe(true);
     expect(ErrorCode.safeParse("INSUFFICIENT_STORAGE").success).toBe(true);
+  });
+});
+
+const STATUS = {
+  workspaceId: ID,
+  server: { version: "0.0.0", startedAt: NOW, previousClean: null },
+  db: { bytes: 4096 },
+  disk: { level: "ok", freeBytes: 10, totalBytes: 20 },
+  adapter: { provider: "openclaw", gateway: "connected", bridge: "down" },
+  gateway: { state: "connected", version: "2026.9.5", pinned: "2026.9.4", drift: true },
+  plugin: { state: "down" },
+  runsToday: 3,
+  dailyRunLimit: 300,
+  blockedToday: 0,
+  unacked: { warn: 1, error: 0 },
+};
+
+describe("OpsStatus", () => {
+  it("디스크 unknown 은 수치 없이, 상한 null(무제한)·직전 종료 불리언을 받는다", () => {
+    expect(OpsStatus.safeParse(STATUS).success).toBe(true);
+    expect(OpsStatus.safeParse({ ...STATUS, disk: { level: "unknown" }, dailyRunLimit: null }).success).toBe(
+      true,
+    );
+    expect(
+      OpsStatus.safeParse({ ...STATUS, server: { ...STATUS.server, previousClean: false } }).success,
+    ).toBe(true);
+  });
+
+  it("수치 없는 ok 디스크·음수 런 수·모르는 상태를 거절한다", () => {
+    expect(OpsStatus.safeParse({ ...STATUS, disk: { level: "ok" } }).success).toBe(false);
+    expect(OpsStatus.safeParse({ ...STATUS, runsToday: -1 }).success).toBe(false);
+    expect(OpsStatus.safeParse({ ...STATUS, blockedToday: -1 }).success).toBe(false);
+    expect(OpsStatus.safeParse({ ...STATUS, plugin: { state: "reconnecting" } }).success).toBe(false);
+  });
+
+  it("/healthz 에서 뺀 워크스페이스 id·어댑터 상세가 있어야 한다(스펙 6장)", () => {
+    const { workspaceId: _w, ...noWorkspace } = STATUS;
+    const { adapter: _a, ...noAdapter } = STATUS;
+    expect(OpsStatus.safeParse(noWorkspace).success).toBe(false);
+    expect(OpsStatus.safeParse(noAdapter).success).toBe(false);
+  });
+});
+
+describe("OpsRunsSummary", () => {
+  const ROW = { id: ID, name: "general", runs: 2, failed: 1, aborted: 0, blocked: 0 };
+  it("days 는 1·7 만, 토큰·금액은 선택", () => {
+    const summary = { days: 7, byChannel: [ROW], byAgent: [], usageTrusted: false };
+    expect(OpsRunsSummary.safeParse(summary).success).toBe(true);
+    expect(OpsRunsSummary.safeParse({ ...summary, days: 3 }).success).toBe(false);
+    expect(OpsRunsRow.safeParse({ ...ROW, tokens: 10, costUsd: 0.5 }).success).toBe(true);
+    expect(OpsRunsRow.safeParse({ ...ROW, runs: -1 }).success).toBe(false);
+  });
+});
+
+describe("OpsAckResult", () => {
+  it("확인한 줄 수 — 0 이상 정수", () => {
+    expect(OpsAckResult.safeParse({ acked: 0 }).success).toBe(true);
+    expect(OpsAckResult.safeParse({ acked: -1 }).success).toBe(false);
   });
 });

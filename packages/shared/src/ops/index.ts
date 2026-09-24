@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { Id, IsoDateTime } from "../common";
+import { AdapterStatus } from "../wire";
 
 // 운영 보강 계약(스펙 2026-09-25-ops-hardening-design.md 2.3·3.1·6장). 사건 detail 에는 id·코드·수치만 싣는다(8장)
 
@@ -52,3 +53,61 @@ export type OpsSettingsPatch = z.infer<typeof OpsSettingsPatch>;
 
 /** 워크스페이스 일일 런 상한 — 설정 키가 없을 때 */
 export const OPS_DEFAULT_DAILY_RUN_LIMIT = 300;
+
+/** POST /api/v1/ops/events/ack 응답 — 이번에 확인 처리한 줄 수 */
+export const OpsAckResult = z.object({ acked: z.int().min(0) });
+export type OpsAckResult = z.infer<typeof OpsAckResult>;
+
+/** GET /api/v1/ops/status 응답(스펙 6장) */
+export const OpsStatus = z.object({
+  workspaceId: Id, // /healthz 에서 뺀 것(스펙 8장) — owner 에게만
+  server: z.object({
+    version: z.string(),
+    startedAt: IsoDateTime,
+    previousClean: z.boolean().nullable(), // 직전 종료 표지 — 표지가 없거나 읽지 못했으면 null
+  }),
+  db: z.object({ bytes: z.int().min(0) }),
+  disk: z.discriminatedUnion("level", [
+    z.object({
+      level: z.enum(["ok", "warn", "error"]),
+      freeBytes: z.int().min(0),
+      totalBytes: z.int().min(0),
+    }),
+    z.object({ level: z.literal("unknown") }), // 첫 측정 전·statfs 실패
+  ]),
+  adapter: AdapterStatus, // /healthz 에서 뺀 어댑터 상세
+  gateway: z.object({
+    state: z.enum(["connected", "reconnecting", "down"]),
+    version: z.string().nullable(),
+    pinned: z.string(), // 저장소가 검증한 버전
+    drift: z.boolean(), // 받은 버전이 있고 핀과 다르다
+  }),
+  plugin: z.object({ state: z.enum(["connected", "down"]) }),
+  runsToday: z.int().min(0),
+  dailyRunLimit: z.int().nullable(), // null 은 무제한
+  blockedToday: z.int().min(0), // 오늘 워크스페이스 상한으로 막힌 수 — 채널 한도 차단은 런 표의 행에
+  unacked: OpsUnacked,
+});
+export type OpsStatus = z.infer<typeof OpsStatus>;
+
+/** 런 표 한 행 — 채널 또는 에이전트. tokens·costUsd 는 usage 값을 믿을 수 있을 때만(스펙 3.3) */
+export const OpsRunsRow = z.object({
+  id: Id,
+  name: z.string(),
+  runs: z.int().min(0),
+  failed: z.int().min(0), // status error
+  aborted: z.int().min(0),
+  blocked: z.int().min(0), // 채널 한도 run_limit 사건 count 합 — 에이전트 행은 늘 0
+  tokens: z.int().min(0).optional(),
+  costUsd: z.number().min(0).optional(),
+});
+export type OpsRunsRow = z.infer<typeof OpsRunsRow>;
+
+/** GET /api/v1/ops/runs?days=1|7 응답 */
+export const OpsRunsSummary = z.object({
+  days: z.union([z.literal(1), z.literal(7)]),
+  byChannel: z.array(OpsRunsRow),
+  byAgent: z.array(OpsRunsRow),
+  usageTrusted: z.boolean(),
+});
+export type OpsRunsSummary = z.infer<typeof OpsRunsSummary>;

@@ -37,6 +37,7 @@ import { createRestLimits } from "./modules/ops/http-limits";
 import { ipPrefix } from "./modules/ops/ip";
 import { LIMITS, type Limits } from "./modules/ops/limits";
 import { monotonicNow } from "./modules/ops/ratelimit";
+import { registerOpsRoutes } from "./modules/ops/routes";
 import type { OpsService } from "./modules/ops/service";
 import { createPresence } from "./modules/push/presence";
 import { registerPushRoutes } from "./modules/push/routes";
@@ -135,6 +136,8 @@ export type App = {
   ops: OpsService;
   /** DATA_DIR 디스크 여유 — 첫 측정은 createApp 이 끝나기 전에 끝난다. error 면 첨부 업로드가 507 */
   disk(): DiskState;
+  /** main 이 종료 표지(startRunState)를 읽은 뒤 직전 종료가 깨끗했는지 넘긴다 — ops/status 가 싣는다. 넘기기 전에는 null */
+  setPreviousClean(previousClean: boolean | null): void;
   /** 업로드 경로와 첨부 정리가 함께 지나는 블롭 잠금 — 둘이 같은 객체인지 테스트가 본다 */
   readonly blobLocks: BlobLocks;
   /** listen 뒤에만 채워진다. 그 전에는 빈 문자열. */
@@ -149,6 +152,8 @@ export type App = {
  */
 export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promise<App> {
   const logger = deps.logger ?? createLogger(config.LOG_LEVEL);
+  const startedAt = new Date();
+  let previousClean: boolean | null = null;
   const undo: Array<{ step: string; run: () => unknown }> = [];
   try {
     // DATA_DIR 은 gitignore 라 새 클론·워크트리에 없다 — better-sqlite3 는 디렉터리를 만들지 않는다(리뷰 sc-t1 지적 2)
@@ -364,6 +369,18 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       status: setupStatus,
       changed: emitSetupStatus,
     });
+    // 운영 API(운영 보강 스펙 6장) — /healthz 에서 뺀 워크스페이스 id·어댑터 상세도 여기서 owner 에게만
+    registerOpsRoutes(fastify, {
+      auth,
+      db,
+      workspaceId,
+      adapter,
+      ops,
+      disk: () => disk.current(),
+      serverVersion: packageJson.version,
+      startedAt,
+      previousClean: () => previousClean,
+    });
     // 인증 없이 열려 있다 — 워크스페이스 id·어댑터 상세는 내놓지 않는다(운영 보강 스펙 8장, 상세는 owner 전용 ops/status)
     fastify.get("/healthz", async (_request, reply) => {
       const dbOk = pingDb(db, logger);
@@ -477,6 +494,9 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       services,
       ops: services.ops,
       disk: () => disk.current(),
+      setPreviousClean(value) {
+        previousClean = value;
+      },
       blobLocks,
       get url() {
         const addr = fastify.server.address();

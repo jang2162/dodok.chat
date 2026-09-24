@@ -38,6 +38,8 @@ export const SetupStatus = z.object({
     state: z.enum(["connected", "reconnecting", "down"]),
     host: z.string(), // URL 의 호스트만 — 자격 증명·경로·쿼리·Gateway 토큰은 싣지 않는다
     version: z.string().nullable(),
+    pinned: z.string(), // 저장소가 검증한 Gateway 버전(운영 보강 5.2)
+    drift: z.boolean(), // version 이 있고 pinned 와 다르다
     pairing: z.object({ requestId: z.string(), since: IsoDateTime }).nullable(),
   }),
   bridge: z.object({

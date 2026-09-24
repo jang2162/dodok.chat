@@ -1,6 +1,7 @@
 /** 설정 마법사의 연결 상태 조립(스펙 3장 SetupStatus) — 어댑터 상세·플러그인 파일·서버 버전을 모은다. 입출력 없음 */
 import type { AdapterSetupDetail } from "@dodok/openclaw-adapter";
 import type { SetupStatus } from "@dodok/shared";
+import { gatewayPin } from "../ops/health";
 import type { PluginFile } from "./plugin-file";
 
 /** 플러그인 계정 설정의 bridgeUrl — BRIDGE_PUBLIC_URL, 없으면 APP_ORIGIN 의 https:→wss:·http:→ws: + /bridge */
@@ -32,6 +33,7 @@ export function buildSetupStatus(input: {
       state: detail.gateway.state,
       host: detail.gateway.host,
       version: detail.gateway.version,
+      ...gatewayPin(detail.gateway.version),
       pairing: detail.gateway.pairing,
     },
     bridge: { state: detail.bridge.state, publicUrl: input.publicUrl, plugin: plugin ? { ...plugin } : null },

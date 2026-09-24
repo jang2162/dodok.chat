@@ -1,4 +1,4 @@
-import type { AdapterSetupDetail } from "@dodok/openclaw-adapter";
+import { type AdapterSetupDetail, OPENCLAW_PINNED_VERSION } from "@dodok/openclaw-adapter";
 import { SetupStatus } from "@dodok/shared";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
@@ -226,7 +226,14 @@ describe("buildSetupStatus", () => {
     expect(SetupStatus.parse(status)).toEqual(status);
     expect(status).toEqual({
       server: { version: "1.2.3" },
-      gateway: { state: "connected", host: "gw.example:443", version: "2026.9.5", pairing: null },
+      gateway: {
+        state: "connected",
+        host: "gw.example:443",
+        version: "2026.9.5",
+        pinned: OPENCLAW_PINNED_VERSION,
+        drift: true,
+        pairing: null,
+      },
       bridge: { state: "connected", publicUrl: "wss://chat.example.com/bridge", plugin },
       pluginFile: { available: true, sha256: file.sha256, bundleSha256: BUNDLE_SHA, bytes: 1234 },
       pluginMatches: true,
@@ -244,6 +251,20 @@ describe("buildSetupStatus", () => {
     expect(build(null, file).pluginMatches).toBeNull();
     expect(build({ ...plugin, bundleSha256: null }, file).pluginMatches).toBeNull();
     expect(build(plugin, null).pluginFile).toEqual({ available: false });
+  });
+
+  it("gateway.drift: 받은 버전이 핀과 다를 때만 — 같거나 모르면(null) false [운영 보강 5.2]", () => {
+    const withVersion = (version: string | null) =>
+      buildSetupStatus({
+        detail: { ...detail(null), gateway: { ...detail(null).gateway, version } },
+        pluginFile: null,
+        serverVersion: "1.2.3",
+        publicUrl: "wss://chat.example.com/bridge",
+        envTokenIgnored: false,
+      }).gateway;
+    expect(withVersion("2026.9.5")).toMatchObject({ pinned: OPENCLAW_PINNED_VERSION, drift: true });
+    expect(withVersion(OPENCLAW_PINNED_VERSION)).toMatchObject({ drift: false });
+    expect(withVersion(null)).toMatchObject({ version: null, drift: false });
   });
 
   it("envTokenIgnored 를 그대로 싣는다", () => {

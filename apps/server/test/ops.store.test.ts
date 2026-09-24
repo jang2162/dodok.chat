@@ -9,6 +9,7 @@ import {
   OPS_RETENTION_MS,
   recordEvent,
   resolveEvent,
+  sumCountsSince,
   sweepEvents,
   unackedCounts,
 } from "../src/modules/ops/store";
@@ -205,6 +206,29 @@ describe("sweepEvents", () => {
     recordEvent(db, other, ratelimit("theirs"), T0);
     expect(sweepEvents(db, ws, at(OPS_RETENTION_MS + 1))).toBe(1);
     expect(rows().map((r) => r.key)).toEqual(["theirs"]);
+  });
+});
+
+describe("sumCountsSince", () => {
+  const limit = (key: string) => ({ kind: "run_limit", key, severity: "warn" }) as const;
+
+  it("그 kind 의 lastAt ≥ since 인 줄의 count 를 key 별로 더한다 — 확인한 줄도 센다", () => {
+    const since = at(10 * MIN);
+    recordEvent(db, ws, limit("channel:a"), at(9 * MIN)); // 창 밖(lastAt < since) — 아래 묶임이 lastAt 을 올리면 들어온다
+    recordEvent(db, ws, limit("channel:b"), at(5 * MIN)); // since 전에 끝난 줄
+    recordEvent(db, ws, limit("channel:a"), at(11 * MIN)); // 같은 줄로 묶여 count 2·lastAt 11분
+    ackEvents(db, ws, at(11 * MIN), at(11 * MIN));
+    recordEvent(db, ws, limit("channel:a"), at(12 * MIN)); // 확인 뒤 새 줄
+    recordEvent(db, ws, limit("workspace"), at(10 * MIN)); // 경계 — 포함
+    recordEvent(db, ws, ratelimit("channel:a"), at(12 * MIN)); // 다른 kind
+    const sums = sumCountsSince(db, ws, "run_limit", since);
+    expect(Object.fromEntries(sums)).toEqual({ "channel:a": 3, workspace: 1 });
+  });
+
+  it("다른 워크스페이스의 줄은 세지 않는다", () => {
+    const other = seedWorkspace(db, { userHandle: "other" }).workspaceId;
+    recordEvent(db, other, limit("workspace"), T0);
+    expect(sumCountsSince(db, ws, "run_limit", T0).size).toBe(0);
   });
 });
 

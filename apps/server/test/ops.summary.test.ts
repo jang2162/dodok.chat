@@ -1,0 +1,207 @@
+import { OpsRunsSummary, type RunStatus, type RunUsage } from "@dodok/shared";
+import { eq } from "drizzle-orm";
+import pino from "pino";
+import { v7 as uuid } from "uuid";
+import { beforeEach, describe, expect, it } from "vitest";
+import type { Db } from "../src/db/client";
+import { runs } from "../src/db/schema.sqlite";
+import { createAgent } from "../src/modules/agents/service";
+import { createChannel } from "../src/modules/channels/service";
+import { createOpsService, type OpsService } from "../src/modules/ops/service";
+import { runsSummary, USAGE_TRUSTED } from "../src/modules/ops/summary";
+import { insertRun } from "../src/modules/runs/store";
+import { ServerBus } from "../src/realtime/bus";
+import { newTestDb } from "./helpers/db";
+import { seedWorkspace } from "./helpers/seed";
+
+// 「하루」는 서버 현지 자정 — 현지 시각 생성자로 TZ 와 무관하게 경계를 만든다
+const DAY = (d: number, h = 12, m = 0, s = 0, ms = 0) => new Date(2026, 8, d, h, m, s, ms);
+const NOW = DAY(25, 12);
+const ROOT = uuid();
+
+let db: Db;
+let workspaceId: string;
+let userId: string;
+let ops: OpsService;
+let clock: Date;
+let dev: string;
+let fin: string;
+let general: string;
+let random: string;
+
+beforeEach(() => {
+  db = newTestDb();
+  ({ workspaceId, userId } = seedWorkspace(db));
+  clock = NOW;
+  ops = createOpsService({
+    db,
+    bus: new ServerBus(),
+    logger: pino({ level: "silent" }),
+    workspaceId,
+    now: () => clock,
+  });
+  dev = createAgent(db, { workspaceId, providerAgentId: "dev", handle: "dev", name: "Dev" }).id;
+  fin = createAgent(db, { workspaceId, providerAgentId: "fin", handle: "fin", name: "Fin" }).id;
+  general = createChannel(db, { workspaceId, createdBy: userId, name: "general" }).id;
+  random = createChannel(db, { workspaceId, createdBy: userId, name: "random" }).id;
+});
+
+function run(
+  channelId: string,
+  agentId: string,
+  createdAt: Date,
+  status: RunStatus = "done",
+  usage?: RunUsage,
+): void {
+  const { id } = insertRun(db, {
+    channelId,
+    agentId,
+    triggerKind: "mention",
+    rootMessageId: ROOT,
+    relayDepth: 0,
+    sessionKey: `k:${agentId}`,
+    createdAt,
+  });
+  db.update(runs)
+    .set({ status, ...(usage ? { usage } : {}) })
+    .where(eq(runs.id, id))
+    .run();
+}
+
+/** clock 을 at 으로 옮겨 run_limit 사건을 남긴다(관문이 남기는 모양) */
+function blocked(key: string, at: Date): void {
+  clock = at;
+  ops.record({ kind: "run_limit", key, severity: "warn", detail: { limit: 1 } });
+  clock = NOW;
+}
+
+const summary = (days: 1 | 7, usageTrusted?: boolean) =>
+  runsSummary(db, {
+    days,
+    now: NOW,
+    ops,
+    workspaceId,
+    ...(usageTrusted === undefined ? {} : { usageTrusted }),
+  });
+const row = (rows: OpsRunsSummary["byChannel"], id: string) => rows.find((r) => r.id === id);
+
+describe("runsSummary 기간", () => {
+  beforeEach(() => {
+    run(general, dev, DAY(25, 0, 0, 0, 0)); // 오늘 0시 정각 — 오늘
+    run(general, dev, DAY(24, 23, 59, 59, 999)); // 어제 끝 — 7일에만
+    run(general, dev, DAY(19, 0, 0, 0, 0)); // 6일 전 0시 정각 — 7일에만
+    run(general, dev, DAY(18, 23, 59, 59, 999)); // 7일 전 끝 — 어디에도 없다
+  });
+
+  it("days=1 은 오늘 0시부터, days=7 은 6일 전 0시부터 [주입한 now]", () => {
+    expect(row(summary(1).byChannel, general)?.runs).toBe(1);
+    expect(row(summary(7).byChannel, general)?.runs).toBe(3);
+    expect(summary(1).days).toBe(1);
+    expect(summary(7).days).toBe(7);
+  });
+
+  it("run_limit 사건도 같은 기간 — lastAt 이 기간 안인 줄만", () => {
+    blocked(`channel:${general}`, DAY(24, 23, 30)); // 어제 — 7일에만
+    blocked(`channel:${random}`, DAY(18, 23, 0)); // 7일 전 — 어디에도 없다
+    expect(row(summary(1).byChannel, general)?.blocked).toBe(0);
+    expect(row(summary(7).byChannel, general)?.blocked).toBe(1);
+    expect(row(summary(7).byChannel, random)).toBeUndefined();
+  });
+});
+
+describe("runsSummary 합계", () => {
+  beforeEach(() => {
+    run(general, dev, DAY(25, 9), "done");
+    run(general, dev, DAY(25, 9), "error");
+    run(general, fin, DAY(25, 9), "aborted");
+    run(general, fin, DAY(25, 9), "error");
+    run(random, dev, DAY(25, 10), "streaming");
+  });
+
+  it("채널별·에이전트별 런·실패(error)·중지(aborted) — 이름을 싣는다", () => {
+    const s = summary(1);
+    expect(OpsRunsSummary.parse(s)).toEqual(s);
+    expect(row(s.byChannel, general)).toEqual({
+      id: general,
+      name: "general",
+      runs: 4,
+      failed: 2,
+      aborted: 1,
+      blocked: 0,
+    });
+    expect(row(s.byChannel, random)).toMatchObject({ name: "random", runs: 1, failed: 0, aborted: 0 });
+    expect(row(s.byAgent, dev)).toEqual({ id: dev, name: "Dev", runs: 3, failed: 1, aborted: 0, blocked: 0 });
+    expect(row(s.byAgent, fin)).toMatchObject({ name: "Fin", runs: 2, failed: 1, aborted: 1 });
+  });
+
+  it("blocked 는 채널 한도 사건만 채널 행에 — 워크스페이스 차단은 어느 행에도 없다, 런 없이 막히기만 한 채널도 행이 있다", () => {
+    const quiet = createChannel(db, { workspaceId, createdBy: userId, name: "quiet" }).id;
+    blocked(`channel:${general}`, DAY(25, 11));
+    blocked(`channel:${general}`, DAY(25, 11, 30)); // 같은 줄로 묶여 count 2
+    blocked(`channel:${quiet}`, DAY(25, 11));
+    blocked("workspace", DAY(25, 11));
+    const s = summary(1);
+    expect(row(s.byChannel, general)?.blocked).toBe(2);
+    expect(row(s.byChannel, quiet)).toEqual({
+      id: quiet,
+      name: "quiet",
+      runs: 0,
+      failed: 0,
+      aborted: 0,
+      blocked: 1,
+    });
+    expect(s.byChannel.reduce((n, r) => n + r.blocked, 0)).toBe(3);
+    expect(s.byAgent.every((r) => r.blocked === 0)).toBe(true);
+  });
+
+  it("다른 워크스페이스의 런은 세지 않는다", () => {
+    const other = seedWorkspace(db, { userHandle: "other" });
+    const agent = createAgent(db, {
+      workspaceId: other.workspaceId,
+      providerAgentId: "xx",
+      handle: "xx",
+      name: "X",
+    });
+    const ch = createChannel(db, { workspaceId: other.workspaceId, createdBy: other.userId, name: "theirs" });
+    run(ch.id, agent.id, DAY(25, 9));
+    const s = summary(1);
+    expect(row(s.byChannel, ch.id)).toBeUndefined();
+    expect(row(s.byAgent, agent.id)).toBeUndefined();
+  });
+
+  it("행은 런 수 내림차순", () => {
+    expect(summary(1).byChannel.map((r) => r.name)).toEqual(["general", "random"]);
+  });
+});
+
+describe("runsSummary usage", () => {
+  beforeEach(() => {
+    run(general, dev, DAY(25, 9), "done", { inputTokens: 100, outputTokens: 20, costUsd: 0.25 });
+    run(general, dev, DAY(25, 9), "done", { inputTokens: 5, costUsd: 0.5 });
+    run(general, fin, DAY(25, 9), "done"); // usage 없음 — 0 으로 더한다
+  });
+
+  it("USAGE_TRUSTED 는 아직 false — 기본 경로는 tokens·costUsd 키가 없다", () => {
+    expect(USAGE_TRUSTED).toBe(false);
+    const s = summary(1);
+    expect(s.usageTrusted).toBe(false);
+    for (const r of [...s.byChannel, ...s.byAgent]) {
+      expect(r).not.toHaveProperty("tokens");
+      expect(r).not.toHaveProperty("costUsd");
+    }
+  });
+
+  it("믿을 수 있으면(태스크 7) 입력+출력 토큰과 costUsd 를 더한다", () => {
+    const s = summary(1, true);
+    expect(s.usageTrusted).toBe(true);
+    expect(OpsRunsSummary.parse(s)).toEqual(s);
+    expect(row(s.byChannel, general)).toMatchObject({ tokens: 125, costUsd: 0.75 });
+    expect(row(s.byAgent, dev)).toMatchObject({ tokens: 125, costUsd: 0.75 });
+    expect(row(s.byAgent, fin)).toMatchObject({ tokens: 0, costUsd: 0 });
+  });
+
+  it("믿을 수 있을 때 런 없이 막히기만 한 채널 행은 0 을 싣는다", () => {
+    blocked(`channel:${random}`, DAY(25, 11));
+    expect(row(summary(1, true).byChannel, random)).toMatchObject({ runs: 0, tokens: 0, costUsd: 0 });
+  });
+});

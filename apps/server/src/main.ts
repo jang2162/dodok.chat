@@ -27,6 +27,7 @@ if (unwritable) {
 const app = await createApp(config);
 // 부팅 중(createApp 안) 예외는 처리기가 없어 Node 기본대로 죽는다 — 표지도 아직 안 썼으니 다음 부팅이 unclean 으로 보지 않는다
 const runState = startRunState(config.DATA_DIR, app.ops, app.logger);
+app.setPreviousClean(runState.previousClean);
 installProcessHandlers({ app, runState, exit: (code) => process.exit(code), proc: process });
 await app.fastify.listen({ host: config.HOST, port: config.PORT });
 app.logger.info({ url: app.url }, "dodok server listening");

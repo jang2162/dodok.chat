@@ -16,7 +16,14 @@ const RECORD = {
 };
 const STATUS = {
   server: { version: "0.0.0" },
-  gateway: { state: "connected", host: "gw.example", version: "2026.9.5", pairing: null },
+  gateway: {
+    state: "connected",
+    host: "gw.example",
+    version: "2026.9.5",
+    pinned: "2026.9.4",
+    drift: true,
+    pairing: null,
+  },
   bridge: {
     state: "connected",
     publicUrl: "wss://chat.example/bridge",
@@ -107,6 +114,12 @@ describe("IssueBridgeTokenResult", () => {
 });
 
 describe("SetupStatus", () => {
+  it("gateway 에 핀·드리프트가 있어야 한다(운영 보강 5.2)", () => {
+    const { pinned: _p, ...noPinned } = STATUS.gateway;
+    const { drift: _d, ...noDrift } = STATUS.gateway;
+    expect(SetupStatus.safeParse({ ...STATUS, gateway: noPinned }).success).toBe(false);
+    expect(SetupStatus.safeParse({ ...STATUS, gateway: noDrift }).success).toBe(false);
+  });
   it("pluginFile 없음·gateway.pairing null 은 통과한다", () => {
     expect(SetupStatus.parse(STATUS)).toEqual(STATUS);
   });

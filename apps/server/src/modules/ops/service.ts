@@ -34,6 +34,8 @@ export interface OpsService {
     events: OpsEvent[];
     nextCursor?: string;
   };
+  /** 읽기 전용 — 그 kind 의 last_at ≥ since 인 줄의 count 를 key 별로 더한다(확인한 줄 포함). 런 집계의 차단 수 */
+  countsSince(kind: OpsEventKind, since: Date): Map<string, number>;
   /** 메모리 캐시 — 생성 때 한 번 세고, 새 줄·severity 상승·ack·sweep 때만 다시 센다 */
   unacked(): OpsUnacked;
   sweep(now?: Date): number; // last_at 이 30일 지난 줄 삭제
@@ -180,6 +182,8 @@ export function createOpsService(deps: {
     },
 
     list: (opts) => store.listEvents(db, workspaceId, opts),
+
+    countsSince: (kind, since) => store.sumCountsSince(db, workspaceId, kind, since),
 
     unacked: currentUnacked,
 

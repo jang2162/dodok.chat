@@ -195,6 +195,27 @@ export function unackedCounts(db: DbOrTx, workspaceId: string): OpsUnacked {
 }
 
 /**
+ * 그 kind 의 줄 가운데 last_at 이 since 이후(같음 포함)인 줄의 count 를 key 별로 더한다 — 확인한 줄도 센다.
+ * 줄은 1시간 창으로 묶이므로 since 직전에 시작해 since 뒤까지 이어진 줄의 count 는 통째로 들어온다
+ */
+export function sumCountsSince(
+  db: DbOrTx,
+  workspaceId: string,
+  kind: OpsEventKind,
+  since: Date,
+): Map<string, number> {
+  const rows = db
+    .select({ key: opsEvents.key, n: sql<number>`sum(${opsEvents.count})` })
+    .from(opsEvents)
+    .where(
+      and(eq(opsEvents.workspaceId, workspaceId), eq(opsEvents.kind, kind), gte(opsEvents.lastAt, since)),
+    )
+    .groupBy(opsEvents.key)
+    .all();
+  return new Map(rows.map((r) => [r.key, r.n]));
+}
+
+/**
  * last_at 내림차순(같으면 id 내림차순) 페이지. 커서는 마지막 줄의 「last_at 밀리초:id」 —
  * 페이지 사이에 줄이 묶여 last_at 이 올라가면 그 줄은 앞 페이지로 옮겨 가 이번 순회에서 빠질 수 있다
  */

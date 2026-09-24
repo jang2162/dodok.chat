@@ -89,6 +89,11 @@ export function watchConnections(
   };
 }
 
+/** 받은 Gateway 버전과 저장소 핀 — 버전을 모르면(null) 드리프트로 보지 않는다. 운영 상태·연결 페이지가 같은 판정을 쓴다 */
+export function gatewayPin(version: string | null): { pinned: string; drift: boolean } {
+  return { pinned: OPENCLAW_PINNED_VERSION, drift: version !== null && version !== OPENCLAW_PINNED_VERSION };
+}
+
 /**
  * 접속 때 받은 Gateway 버전을 기억(ops_json.lastGatewayVersion)과 핀에 대조해 사건을 남긴다. 기억과 같으면 아무것도 하지 않는다 —
  * untested 는 버전이 바뀔 때마다 한 번. DB 오류는 던진다(부르는 쪽이 로그로 끝낸다)
