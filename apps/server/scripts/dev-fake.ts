@@ -56,13 +56,16 @@ export type DevFakeOptions = {
   logLevel?: "fatal" | "error" | "warn" | "info" | "debug" | "trace";
   /** 웹 오리진(wire 핸드셰이크 Origin 검사). 기본 http://localhost:5173 */
   appOrigin?: string;
+  /** 리슨 주소. 기본 127.0.0.1 — 컨테이너(Dockerfile.server 의 devfake 타깃)는 Caddy 가 닿게 0.0.0.0 */
+  host?: string;
   /** 웹 푸시 발송기. 기본은 실제 web-push(dev:fake 로 브라우저 푸시를 본다) — 테스트는 가짜를 줘 밖으로 보내지 않는다 */
   pushSend?: AppDeps["pushSend"];
 };
 
 /**
  * 진입점이 startDevFake 에 넘길 옵션 — 포트는 PORT(기본 3000), 웹 오리진은 APP_ORIGIN(없거나 비었으면 http://localhost:5173),
- * 데이터는 저장소 루트 data/, `--keep` 이면 DB 유지
+ * 리슨 주소는 DEV_FAKE_HOST(없거나 비었으면 127.0.0.1), 데이터는 저장소 루트 data/, `--keep` 이면 DB 유지.
+ * 리슨 주소가 HOST 가 아닌 까닭: HOST 는 운영 서버 설정 이름이라, 셸에 남은 값이 개발 서버를 모든 주소에 여는 일이 없게 따로 둔다
  */
 export function devFakeCliOptions(
   env: Record<string, string | undefined>,
@@ -70,6 +73,7 @@ export function devFakeCliOptions(
 ): DevFakeOptions & { appOrigin: string } {
   return {
     port: Number(env.PORT || 3000),
+    host: env.DEV_FAKE_HOST || "127.0.0.1",
     appOrigin: env.APP_ORIGIN || DEFAULT_APP_ORIGIN,
     dataDir: resolve(import.meta.dirname, "../../../data"),
     keep: argv.includes("--keep"),
@@ -468,6 +472,7 @@ export function fakeAgentScript(self: string, d: InboundDeliver): ScenarioScript
 export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> {
   const dataDir = opts.dataDir ?? "data";
   const port = opts.port ?? 3000;
+  const host = opts.host ?? "127.0.0.1";
   const dbPath = join(dataDir, "dev-fake.sqlite");
   mkdirSync(dataDir, { recursive: true });
   if (!opts.keep) for (const f of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) rmSync(f, { force: true });
@@ -488,7 +493,7 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
   try {
     app = await createApp(
       loadConfig({
-        HOST: "127.0.0.1",
+        HOST: host,
         PORT: String(port),
         APP_ORIGIN: opts.appOrigin ?? DEFAULT_APP_ORIGIN,
         DATA_DIR: dataDir,
@@ -504,7 +509,8 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
       }),
       opts.pushSend ? { pushSend: opts.pushSend } : {},
     );
-    await app.fastify.listen({ host: "127.0.0.1", port });
+    await app.fastify.listen({ host, port });
+    // app.url 은 리슨 주소와 무관하게 127.0.0.1 — 0.0.0.0 으로 들어도 가짜 플러그인은 루프백으로 붙는다
     plugin = await startFakePlugin({ bridgeUrl: app.url, token: DEV_FAKE_BRIDGE_TOKEN });
     const agents: Record<string, ScenarioAgent> = {};
     for (const id of AGENT_IDS) agents[id] = ({ delivery }) => fakeAgentScript(id, delivery);

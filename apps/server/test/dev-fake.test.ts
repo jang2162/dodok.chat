@@ -10,6 +10,7 @@ import {
   WIRE_PROTOCOL,
 } from "@dodok/shared";
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { io, type Socket } from "socket.io-client";
@@ -63,6 +64,12 @@ describe("devFakeCliOptions", () => {
     expect(devFakeCliOptions({ APP_ORIGIN: "", PORT: "" }, []).appOrigin).toBe("http://localhost:5173");
     // 데이터는 저장소 루트 data/ 에 — 워크트리마다 따로
     expect(devFakeCliOptions({}, []).dataDir).toMatch(/[/\\]data$/);
+  });
+
+  it("리슨 주소는 DEV_FAKE_HOST(컨테이너의 devfake 타깃은 0.0.0.0), 없거나 비었으면 127.0.0.1", () => {
+    expect(devFakeCliOptions({ DEV_FAKE_HOST: "0.0.0.0" }, []).host).toBe("0.0.0.0");
+    expect(devFakeCliOptions({}, []).host).toBe("127.0.0.1");
+    expect(devFakeCliOptions({ DEV_FAKE_HOST: "" }, []).host).toBe("127.0.0.1");
   });
 });
 
@@ -787,6 +794,36 @@ describe("startDevFake VAPID", () => {
     expect(secondKey.publicKey).toBe(firstKey.publicKey);
     expect(secondKey.publicKey).toBe((JSON.parse(saved) as { publicKey: string }).publicKey);
   }, 30_000);
+});
+
+describe("startDevFake host", () => {
+  let dir: string;
+  const running: DevFake[] = [];
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), "dodok-dev-fake-host-"));
+  });
+
+  afterAll(async () => {
+    for (const dev of running.splice(0)) await dev.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const listenAddress = (dev: DevFake) => (dev.app.fastify.server.address() as AddressInfo).address;
+
+  it("host 를 안 주면 127.0.0.1 에서만 듣는다", async () => {
+    const dev = await startDevFake({ port: 0, dataDir: dir, logLevel: "warn" });
+    running.push(dev);
+    expect(listenAddress(dev)).toBe("127.0.0.1");
+  }, 20_000);
+
+  it("host 0.0.0.0 이면 모든 주소에서 듣고, 가짜 플러그인은 그래도 127.0.0.1 로 붙는다(어댑터가 bridge connected 까지 간다)", async () => {
+    const dev = await startDevFake({ port: 0, dataDir: dir, logLevel: "warn", host: "0.0.0.0" });
+    running.push(dev);
+    expect(listenAddress(dev)).toBe("0.0.0.0");
+    expect(dev.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+    expect((await fetch(`${dev.url}/healthz`)).status).toBe(200);
+  }, 20_000);
 });
 
 describe("startDevFake appOrigin", () => {
