@@ -3,6 +3,8 @@ data/
 .env
 .env.*
 !.env.example
+# 로컬 검증 비밀(infra/local.env.example 의 사본) — 이름이 .env.* 꼴이 아니라 위 줄에 안 걸린다
+infra/local.env
 
 # 의존성·빌드
 node_modules/

@@ -1,0 +1,21 @@
+# 이미지 빌드 컨텍스트에서 빼는 것 — 시크릿·런타임 데이터·호스트 의존성·작업 디렉터리(스펙 6장)
+# 패턴은 루트 기준이다 — 하위 디렉터리까지 막으려면 **/ 를 붙인다(.gitignore 와 다르다)
+.git
+**/node_modules
+**/dist
+data
+**/.env
+**/.env.*
+!.env.example
+# infra/local.env(로컬 검증 비밀)·infra/.env(compose 변수 치환용)
+infra/*.env
+infra/.env
+.worktrees
+.superpowers
+.claude
+**/.turbo
+.idea
+.vscode
+**/.DS_Store
+**/*.tgz
+.playwright-mcp

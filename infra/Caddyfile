@@ -1,0 +1,42 @@
+# dodok 공개 오리진(스펙 2.3) — 정적 웹·서버 프록시·보안 헤더·본문 상한. 검증: infra/check-caddy.sh
+# 환경변수(compose 가 넘긴다) — Caddy 는 {$VAR} 를 설정을 읽을 때 글자 그대로 치환한다(전역 블록 안에서도)
+#   DODOK_DOMAIN       인증서를 받을 도메인(필수). 로컬 검증은 localhost
+#   CADDY_LOCAL_CERTS  로컬 검증만 local_certs — 공개 CA 대신 Caddy 내부 CA. 운영은 비워 둔다(빈 전역 블록)
+#   DODOK_UPSTREAM     서버 주소(기본 app:3000). 로컬 검증의 devfake 프로필만 devfake:3000
+{
+	{$CADDY_LOCAL_CERTS}
+}
+
+{$DODOK_DOMAIN} {
+	encode zstd gzip
+	# 첨부 20 MiB + multipart 여유 — 서버 상한보다 커야 넘친 업로드에 Caddy 413 대신 서버의 고정 문구가 나간다
+	request_body {
+		max_size 32MB
+	}
+
+	# /bridge/* 는 플러그인의 첨부 HTTP(/bridge/attachments) — 브리지 WebSocket 은 /socket.io/ 의 /bridge 네임스페이스다
+	@backend path /api/* /socket.io/* /bridge/* /healthz
+	handle @backend {
+		reverse_proxy {$DODOK_UPSTREAM:app:3000}
+	}
+
+	# 해시가 붙은 빌드 산출물. SPA 폴백을 주지 않는다 — 없는 청크(옛 버전을 든 탭)가 index.html 로 200 을 받아 1년 캐시되면 안 된다
+	handle /assets/* {
+		root * /srv
+		header Cache-Control "public, max-age=31536000, immutable"
+		file_server
+	}
+
+	# 나머지는 매번 재검증(no-cache) — sw.js 가 캐시되면 새 버전이 영영 안 뜬다. 경로로 고르지 않고 전부에 거는 까닭: `/` 와
+	# SPA 깊은 경로(/c/<id>)도 index.html 을 내는데, 경로 매처(/index.html)로는 그 둘이 빠진다
+	handle {
+		root * /srv
+		header Cache-Control "no-cache"
+		try_files {path} /index.html
+		file_server
+	}
+
+	header Strict-Transport-Security "max-age=31536000"
+	header X-Content-Type-Options nosniff
+	header Referrer-Policy strict-origin-when-cross-origin
+}

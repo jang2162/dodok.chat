@@ -1,0 +1,35 @@
+# 운영 Compose(스펙 2.4). 배포 호스트에서 한 번 `ln -s ../.env infra/.env` 를 하고, 그 뒤 저장소 루트에서:
+#   docker compose -f infra/compose.yml up -d --build
+# 링크가 필요한 까닭: compose 는 변수 치환(아래 ${DODOK_DOMAIN})에 첫 -f 파일의 디렉터리(infra/)의 .env 를 읽고 루트 .env 는
+# 보지 않는다. 앱 설정은 env_file 이 루트 .env 를 따로 읽으므로 링크가 없으면 DODOK_DOMAIN 만 없다는 오류로 멈춘다.
+# 치환은 up 뿐 아니라 ps·logs·exec·down 에서도 돌아서, 링크 대신 --env-file .env 를 쓰면 그 명령마다 붙여야 한다
+name: dodok
+services:
+  app:
+    build: { context: .., dockerfile: infra/Dockerfile.server, target: runtime }
+    env_file: ../.env
+    # 컨테이너 계약 — 헬스체크·Caddy upstream(3000)·볼륨(/data)·이미지 안 마이그레이션 자리. environment 가 env_file 보다 앞서므로
+    # .env 의 같은 이름은 무시된다. 이미지 ENV 로만 두면 .env.example 을 복사한 `HOST=` 같은 빈 줄이 그 값을 빈 문자열로 덮고,
+    # 서버는 빈 값을 기본값(127.0.0.1·./data)으로 읽는다 — 헬스체크(컨테이너 안 127.0.0.1)는 초록인데 Caddy 는 502 가 된다
+    environment:
+      HOST: 0.0.0.0
+      PORT: "3000"
+      DATA_DIR: /data
+      DODOK_MIGRATIONS_DIR: /app/drizzle
+    volumes: [dodok-data:/data]
+    # 호스트에 열지 않는다 — Caddy 만 compose 내부 네트워크로 닿는다
+    expose: ["3000"]
+    restart: unless-stopped
+  caddy:
+    build: { context: .., dockerfile: infra/Dockerfile.web }
+    environment:
+      # 비면 Caddyfile 이 「unrecognized global option」처럼 엉뚱한 오류로 죽는다 — 여기서 먼저 막는다
+      DODOK_DOMAIN: ${DODOK_DOMAIN:?DODOK_DOMAIN 이 필요하다 — 루트 .env 에 두고 ln -s ../.env infra/.env}
+    ports: ["80:80", "443:443", "443:443/udp"]
+    volumes: [caddy-data:/data, caddy-config:/config]
+    depends_on: { app: { condition: service_healthy } }
+    restart: unless-stopped
+volumes:
+  dodok-data:
+  caddy-data:
+  caddy-config:
