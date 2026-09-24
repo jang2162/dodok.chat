@@ -25,8 +25,11 @@ const Raw = z.object({
   OPENCLAW_DEVICE_IDENTITY_PATH: z.string().optional(),
   // 진단용 — 있으면 어댑터가 받은 Gateway chat·agent·session.message 프레임을 이 파일에 JSONL 로 append(본문 포함)
   OPENCLAW_FRAME_DUMP_PATH: z.string().optional(),
-  BRIDGE_TOKEN: z.string().min(16),
+  // 선택(설정 마법사 결정 3) — 브리지 토큰의 정본은 DB 다. 있으면 DB 가 비었을 때만 첫 토큰(라벨 env)으로 이어받는다
+  BRIDGE_TOKEN: z.string().min(16).optional(),
   BRIDGE_PUBLIC_URL: z.url().optional(),
+  // 서버가 품은 플러그인 tgz 디렉터리(이미지가 /app/plugin). 없으면 소스 실행에서 packages/openclaw-plugin/dist
+  DODOK_PLUGIN_DIR: z.string().optional(),
   // 웹 푸시(스펙 5.1). 키 둘이 다 있어야 쓰고, 아니면 DATA_DIR/vapid.json(없으면 만든다)
   VAPID_PUBLIC_KEY: z.string().min(1).optional(),
   VAPID_PRIVATE_KEY: z.string().min(1).optional(),

@@ -11,8 +11,16 @@ import type {
 import { queryOptions, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./http";
 
-/** `workspace` 는 이름이 필요한 화면(사이드바 제목)이 본다 — 주지 않는 서버도 있어 선택이다(그때는 기본 이름) */
-export type MeResponse = { user: User; workspaceId: string; workspace?: Pick<Workspace, "id" | "name"> };
+/**
+ * `workspace` 는 이름이 필요한 화면(사이드바 제목)이 본다 — 주지 않는 서버도 있어 선택이다(그때는 기본 이름).
+ * `role` 은 그 워크스페이스 membership 의 역할("owner"·"member") — 옛 서버·옛 오프라인 사본에는 없어 선택이다(그때는 owner 가 아닌 것으로 본다)
+ */
+export type MeResponse = {
+  user: User;
+  workspaceId: string;
+  workspace?: Pick<Workspace, "id" | "name">;
+  role?: string;
+};
 export type AdapterCapabilities = { sessionReset: boolean; agentsList: boolean; configSet: boolean };
 export type AdapterStatusResponse = AdapterStatus & { capabilities: AdapterCapabilities };
 

@@ -40,4 +40,14 @@ describe("loadConfig", () => {
   it("LOCAL_AUTH_TOKEN 이 16자 미만이면 실패한다", () => {
     expect(() => loadConfig({ ...testEnv, LOCAL_AUTH_TOKEN: "short" })).toThrow(/LOCAL_AUTH_TOKEN/);
   });
+  it("BRIDGE_TOKEN 은 선택 — 없거나 빈 값이면 undefined, 있으면 16자 이상", () => {
+    expect(loadConfig({ ...testEnv, BRIDGE_TOKEN: undefined }).BRIDGE_TOKEN).toBeUndefined();
+    expect(loadConfig({ ...testEnv, BRIDGE_TOKEN: "" }).BRIDGE_TOKEN).toBeUndefined();
+    expect(() => loadConfig({ ...testEnv, BRIDGE_TOKEN: "short" })).toThrow(/BRIDGE_TOKEN/);
+    expect(loadConfig({ ...testEnv, BRIDGE_TOKEN: "b".repeat(16) }).BRIDGE_TOKEN).toBe("b".repeat(16));
+  });
+  it("DODOK_PLUGIN_DIR 는 선택", () => {
+    expect(loadConfig(testEnv).DODOK_PLUGIN_DIR).toBeUndefined();
+    expect(loadConfig({ ...testEnv, DODOK_PLUGIN_DIR: "/app/plugin" }).DODOK_PLUGIN_DIR).toBe("/app/plugin");
+  });
 });

@@ -53,6 +53,7 @@ describe("auth", () => {
       user: me,
       workspaceId: app.workspaceId,
       workspace: { id: app.workspaceId, name: "dodok" },
+      role: "owner",
     });
     expect(await verifySessionToken(app.auth, sessionToken)).toEqual({ userId: me.id });
     expect(await verifySessionToken(app.auth, "nope")).toBeNull();

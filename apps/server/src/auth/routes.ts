@@ -1,11 +1,11 @@
 import type { User } from "@dodok/shared";
 import { isAPIError } from "better-auth/api";
 import { fromNodeHeaders } from "better-auth/node";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { Db } from "../db/client";
-import { users, workspaces } from "../db/schema.sqlite";
+import { memberships, users, workspaces } from "../db/schema.sqlite";
 import { apiError } from "../http/errors";
 import type { Logger } from "../logger";
 import { type Auth, OWNER_EMAIL, SESSION_COOKIE, SESSION_MAX_AGE_S, verifySessionToken } from "./index";
@@ -91,6 +91,8 @@ export function registerAuthRoutes(fastify: FastifyInstance, ctx: AuthRouteConte
     // workspaceId 는 기존 클라이언트를 위해 남긴다 — 이름이 필요한 화면은 workspace 를 본다
     workspaceId: ctx.workspaceId,
     workspace: loadWorkspace(ctx.db, ctx.workspaceId),
+    // 그 워크스페이스 membership 의 역할 — 웹이 owner 전용 진입점(연결 설정)을 가른다. 행이 없으면 member 로 본다
+    role: membershipRole(ctx.db, ctx.workspaceId, sessionUser(request).id) ?? "member",
   }));
 
   fastify.post("/api/v1/auth/logout", { preHandler: requireSession(ctx) }, async (request, reply) => {
@@ -111,6 +113,28 @@ export function requireSession(ctx: { auth: Auth; workspaceId: string }) {
     const session = token ? await verifySessionToken(ctx.auth, token) : null;
     if (!session) throw apiError("UNAUTHORIZED", "로그인이 필요하다");
     request.user = { id: session.userId, workspaceId: ctx.workspaceId };
+  };
+}
+
+/** 그 워크스페이스에서의 역할("owner"·"member"). membership 이 없으면 undefined */
+export function membershipRole(db: Db, workspaceId: string, userId: string): string | undefined {
+  return db
+    .select({ role: memberships.role })
+    .from(memberships)
+    .where(and(eq(memberships.workspaceId, workspaceId), eq(memberships.userId, userId)))
+    .get()?.role;
+}
+
+/**
+ * owner 세션만 통과시키는 preHandler(설정 마법사 결정 6). 세션이 없으면 401, owner 가 아니면 403.
+ * membership 을 요청마다 읽는다 — 역할이 바뀌면 다음 요청부터 따른다
+ */
+export function requireOwner(ctx: { auth: Auth; db: Db; workspaceId: string }) {
+  const session = requireSession(ctx);
+  return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
+    await session(request, reply);
+    if (membershipRole(ctx.db, ctx.workspaceId, sessionUser(request).id) !== "owner")
+      throw apiError("FORBIDDEN", "owner 만 쓸 수 있다");
   };
 }
 

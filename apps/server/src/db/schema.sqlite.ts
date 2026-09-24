@@ -312,3 +312,27 @@ export const pushSubscriptions = sqliteTable(
   },
   (t) => [uniqueIndex("push_subscriptions_endpoint").on(t.endpoint)],
 );
+
+/**
+ * 브리지 토큰(설정 마법사 스펙 2.2) — 원문은 두지 않는다. hash 는 sha256(원문) hex, prefix 는 알아보기용 6자.
+ * 폐기는 지우지 않고 revoked_at 을 채운다(목록에 남는다)
+ */
+export const bridgeTokens = sqliteTable(
+  "bridge_tokens",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id),
+    label: text("label").notNull(),
+    hash: text("hash").notNull(),
+    prefix: text("prefix").notNull(),
+    createdAt: ts("created_at").notNull(),
+    lastUsedAt: ts("last_used_at"),
+    revokedAt: ts("revoked_at"),
+  },
+  (t) => [
+    uniqueIndex("bridge_tokens_hash").on(t.hash),
+    index("bridge_tokens_ws_created").on(t.workspaceId, t.createdAt),
+  ],
+);

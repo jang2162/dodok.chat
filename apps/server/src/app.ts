@@ -1,4 +1,4 @@
-import { createOpenClawAdapter } from "@dodok/openclaw-adapter";
+import { type BridgeTokenVerifier, createOpenClawAdapter } from "@dodok/openclaw-adapter";
 import type { AdapterStatus, ApiError } from "@dodok/shared";
 import cookie from "@fastify/cookie";
 import rateLimit from "@fastify/rate-limit";
@@ -37,6 +37,10 @@ import {
 import { loadVapidKeys } from "./modules/push/vapid";
 import type { Orchestrator, RunTimeouts } from "./modules/runs/orchestrator";
 import { registerRunRoutes } from "./modules/runs/routes";
+import { pluginDirCandidates, readPluginFile } from "./modules/setup/plugin-file";
+import { registerSetupRoutes } from "./modules/setup/routes";
+import { bridgePublicUrl, buildSetupStatus } from "./modules/setup/status";
+import { importEnvToken, isActiveBridgeToken, verifyBridgeTokenDb } from "./modules/setup/tokens";
 import { ServerBus } from "./realtime/bus";
 import { attachWireFanout } from "./realtime/events";
 import { attachWire } from "./realtime/socket";
@@ -68,7 +72,28 @@ export type AppDeps = {
   attachmentSweepIntervalMs?: number;
   /** 웹 푸시 발송기(기본은 VAPID 키로 만든 실제 web-push). 테스트는 가짜를 준다 — 밖으로 보내지 않게 */
   pushSend?: PushSend;
+  /** 품은 플러그인 tgz 를 찾을 디렉터리(기본 pluginDirCandidates) — 테스트가 임시 디렉터리나 []를 준다 */
+  pluginDirs?: string[];
 };
+
+/** 이어받지 않은 .env 토큰 경고(Review Focus 1) — 사람이 로그에서 이 문장을 찾는다 */
+export const ENV_BRIDGE_TOKEN_IGNORED_WARNING =
+  "BRIDGE_TOKEN in .env is ignored — manage bridge tokens in the connection page";
+
+/**
+ * 브리지 거절 로그의 원격 주소. 리버스 프록시를 믿을 때(TRUST_PROXY=true)만 X-Forwarded-For 첫 값을 쓴다 —
+ * 믿지 않는데 읽으면 클라이언트가 헤더를 꾸며 스로틀·귀속을 피한다. Caddy 는 클라이언트 XFF 를 자기가 본 IP 로 덮는다
+ */
+export function bridgeClientAddress(
+  trustProxy: boolean,
+): (handshake: { address: string; headers: Record<string, string | string[] | undefined> }) => string {
+  return (handshake) => {
+    if (!trustProxy) return handshake.address;
+    const raw = handshake.headers["x-forwarded-for"];
+    const first = (Array.isArray(raw) ? raw[0] : raw)?.split(",")[0]?.trim();
+    return first || handshake.address;
+  };
+}
 
 export type App = {
   fastify: FastifyInstance;
@@ -106,6 +131,12 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     const workspaceId = ensureWorkspace(db, config.DODOK_WORKSPACE_NAME);
     const auth = createAuth(db, config, logger);
     const { userId: ownerUserId } = await bootstrapOwner(db, auth, config, workspaceId);
+    // 브리지 토큰의 정본은 DB — .env 값은 비었을 때만 첫 토큰(라벨 env)으로 이어받는다(설정 마법사 결정 3)
+    const envImport = importEnvToken(db, workspaceId, config.BRIDGE_TOKEN);
+    if (envImport === "imported") logger.info({ label: "env" }, "bridge token imported from .env");
+    if (envImport === "ignored") logger.warn(ENV_BRIDGE_TOKEN_IGNORED_WARNING);
+    // 핸드셰이크와 첨부 HTTP 가 같은 검증을 쓴다. DB 오류는 던지고, 부르는 쪽이 거절로 본다
+    const verifyBridgeToken: BridgeTokenVerifier = (presented) => verifyBridgeTokenDb(db, presented);
     const bus = new ServerBus();
 
     // 기본 제네릭(FastifyBaseLogger)으로 추론되게 한다 — pino Logger 로 추론되면 FastifyInstance·플러그인 타입과 어긋난다
@@ -155,7 +186,12 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
           token: config.gateway.token,
           deviceIdentityPath: config.deviceIdentityPath,
         },
-        bridge: { io, token: config.BRIDGE_TOKEN, serverVersion: packageJson.version },
+        bridge: {
+          io,
+          verifyToken: verifyBridgeToken,
+          clientAddress: bridgeClientAddress(config.TRUST_PROXY === "true"),
+          serverVersion: packageJson.version,
+        },
         logger: logger.child({ mod: "adapter" }),
         onCanonical: (message) => orchestrator.onCanonical(message),
         sessionKeysToRecover: () => sessionRecoverTargets(db),
@@ -190,7 +226,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       db,
       workspaceId,
       dir: config.attachmentsDir,
-      bridgeToken: config.BRIDGE_TOKEN,
+      verifyBridgeToken,
       locks: blobLocks,
     });
     // 푸시: 키는 환경변수 둘 또는 DATA_DIR/vapid.json(스펙 5.1). 망가진 키 파일은 부팅을 막는다(덮어쓰면 모든 구독이 무효)
@@ -214,6 +250,43 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       deps.attachmentSweepIntervalMs ?? ATTACHMENT_SWEEP_INTERVAL_MS,
     );
     undo.push({ step: "attachments-sweep", run: () => sweeper.close() });
+    // 설정 마법사(스펙 3장): 상태는 읽을 때마다 조립한다 — 어댑터 상세·활성 토큰이 바뀌면 다음 읽기에 따른다
+    const pluginFile = readPluginFile(deps.pluginDirs ?? pluginDirCandidates(config));
+    if (!pluginFile)
+      logger.info("plugin file not found — build it with pnpm -F @dodok/openclaw-plugin run pack:plugin");
+    const publicUrl = bridgePublicUrl(config);
+    const setupStatus = () =>
+      buildSetupStatus({
+        detail: adapter.setupDetail(),
+        pluginFile,
+        serverVersion: packageJson.version,
+        publicUrl,
+        envTokenIgnored:
+          config.BRIDGE_TOKEN !== undefined && !isActiveBridgeToken(db, workspaceId, config.BRIDGE_TOKEN),
+      });
+    // 어댑터 setup 이벤트(마이크로태스크 뒤)·토큰 발급·폐기 때 owner 에게 다시 읽은 상태를 보낸다
+    const emitSetupStatus = () => {
+      try {
+        bus.emit("setup.status", { status: setupStatus() });
+      } catch (err) {
+        logger.error({ err }, "setup status emit failed");
+      }
+    };
+    const offSetup = adapter.onEvent((event) => {
+      if (event.kind === "setup") emitSetupStatus();
+    });
+    undo.push({ step: "setup-events", run: () => offSetup() });
+    registerSetupRoutes(fastify, {
+      auth,
+      db,
+      logger,
+      workspaceId,
+      adapter,
+      pluginFile,
+      publicUrl,
+      status: setupStatus,
+      changed: emitSetupStatus,
+    });
     fastify.get("/healthz", async (_request, reply) => {
       const dbOk = pingDb(db, logger);
       return reply.status(dbOk ? 200 : 503).send({
@@ -285,6 +358,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     const shutdown = async () => {
       shuttingDown = true; // ① 새 wire 연결 거부
       await step("watch", () => watch.close());
+      await step("setup-events", () => offSetup());
       await step("push-triggers", () => pushTriggers.close()); // 새 발송을 받지 않는다 — 이미 나간 것은 ⑥ 앞에서 잠깐 기다린다
       await step("attachments-sweep", () => sweeper.close()); // 진행 중인 정리가 db 를 닫기 전에 끝나게
       await step("orchestrator", () => services.orchestrator.stop()); // ② 타이머·어댑터 구독 해제

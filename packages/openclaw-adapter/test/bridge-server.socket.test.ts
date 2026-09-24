@@ -310,10 +310,7 @@ describe("attachBridge — 거절 로그 주소(clientAddress)", () => {
       await waitFor(open("203.0.113.7"), "connect_error");
       await waitFor(open("203.0.113.7"), "connect_error");
       await waitFor(open("198.51.100.9"), "connect_error");
-      expect(logged).toEqual([
-        "token mismatch from 203.0.113.7",
-        "token mismatch from 198.51.100.9",
-      ]);
+      expect(logged).toEqual(["token mismatch from 203.0.113.7", "token mismatch from 198.51.100.9"]);
     } finally {
       ownBridge.close();
       ownIo.close();
@@ -337,7 +334,11 @@ describe("attachBridge — 거절 로그 주소(clientAddress)", () => {
     await own.listen({ host: "127.0.0.1", port: 0 });
     const ownUrl = `ws://127.0.0.1:${(own.server.address() as AddressInfo).port}/bridge`;
     try {
-      const socket = connect(ownUrl, { transports: ["websocket"], auth: { token: "x" }, reconnection: false });
+      const socket = connect(ownUrl, {
+        transports: ["websocket"],
+        auth: { token: "x" },
+        reconnection: false,
+      });
       clients.push(socket);
       expect(((await waitFor(socket, "connect_error")) as Error).message).toBe("UNAUTHORIZED");
       expect(logged).toHaveLength(1);

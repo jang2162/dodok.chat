@@ -25,8 +25,12 @@ import {
   type AdapterSetupDetail,
   type AgentAdapter,
 } from "./adapter-types";
-import { attachBridge, type BridgeHandle, type BridgeTokenVerifier } from "./bridge/server";
-import { verifyBridgeToken } from "./bridge/session";
+import {
+  attachBridge,
+  type BridgeHandle,
+  type BridgeServerOptions,
+  type BridgeTokenVerifier,
+} from "./bridge/server";
 import { syncChannelConfig } from "./config-sync";
 import {
   isApprovalEvent,
@@ -52,13 +56,16 @@ import { parseSessionsReset, sessionKeyFor } from "./gateway/sessions";
 export type OpenClawAdapterOptions = {
   gateway: { url: string; token: string; deviceIdentityPath: string; deviceTokenStorePath?: string };
   /**
-   * 플러그인 핸드셰이크 인증은 `verifyToken`(통과면 토큰 id). `token` 은 서버가 검증 함수로 옮기기 전(설정 마법사 태스크 3)까지의
-   * 호환 층이다 — 같은 값이면 토큰 id "env" 로 통과시킨다. 서버가 옮긴 뒤 `token` 과 이 분기는 지워도 된다.
+   * 플러그인 핸드셰이크 인증은 `verifyToken`(통과면 토큰 id — 세션이 기억하고 폐기 때 그 id 로 끊는다).
+   * `clientAddress` 는 거절 로그의 원격 주소(없으면 `handshake.address`) — `BridgeServerOptions.clientAddress`
    */
-  bridge: { io: Server; serverVersion: string; ackTimeoutMs?: number } & (
-    | { verifyToken: BridgeTokenVerifier; token?: never }
-    | { token: string; verifyToken?: never }
-  );
+  bridge: {
+    io: Server;
+    serverVersion: string;
+    ackTimeoutMs?: number;
+    verifyToken: BridgeTokenVerifier;
+    clientAddress?: BridgeServerOptions["clientAddress"];
+  };
   logger: AdapterLogger;
   /** 서버가 정본을 저장하고 id 를 돌려준다. 그 id 가 플러그인 ack 의 messageId 가 된다. */
   onCanonical: (message: OutboundMessage) => Promise<{ messageId?: string }>;
@@ -87,13 +94,6 @@ const PLUGIN_READY_WAIT_MS = 120_000;
 const FORGET_AFTER_FINAL_MS = 60_000;
 // 승인 병합 기억 상한. Gateway 의 세션 되감기 상한과 같은 1000 — 넘으면 오래 손대지 않은 것부터 버린다.
 const APPROVAL_DEDUPE_MAX = 1_000;
-
-/** 옛 `bridge.token` 을 검증 함수로 감싼다(호환 층 — 서버 전환 뒤 지운다) */
-function bridgeVerifier(bridge: OpenClawAdapterOptions["bridge"]): BridgeTokenVerifier {
-  if (bridge.verifyToken) return bridge.verifyToken;
-  const expected = bridge.token ?? "";
-  return (presented) => (verifyBridgeToken(expected, presented) ? { tokenId: "env" } : null);
-}
 
 const AgentsListResult = z.looseObject({
   agents: z.array(z.looseObject({ id: z.string().min(1), name: z.string().optional().catch(undefined) })),
@@ -244,7 +244,8 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
   });
 
   const bridge = attachBridge(opts.bridge.io, {
-    verifyToken: bridgeVerifier(opts.bridge),
+    verifyToken: opts.bridge.verifyToken,
+    ...(opts.bridge.clientAddress === undefined ? {} : { clientAddress: opts.bridge.clientAddress }),
     serverVersion: opts.bridge.serverVersion,
     ...(opts.bridge.ackTimeoutMs === undefined ? {} : { ackTimeoutMs: opts.bridge.ackTimeoutMs }),
     onHello: (_session, hello) => {

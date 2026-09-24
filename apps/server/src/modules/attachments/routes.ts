@@ -3,7 +3,7 @@
  * (스코프 안에서만 — 다른 경로의 JSON 파싱은 그대로). 인증은 onRequest 라 본문을 받기 전에 거절한다.
  * 응답 헤더는 받은 파일이 무엇이든 브라우저가 문서로 실행하지 못하게 한다(nosniff·CSP sandbox·image 만 inline)
  */
-import { verifyBridgeToken } from "@dodok/openclaw-adapter";
+import type { BridgeTokenVerifier } from "@dodok/openclaw-adapter";
 import {
   ATTACHMENT_LIMITS,
   type Attachment,
@@ -30,7 +30,8 @@ export type AttachmentRouteContext = {
   db: Db;
   workspaceId: string;
   dir: string;
-  bridgeToken: string;
+  /** 브리지 핸드셰이크와 같은 검증(DB 브리지 토큰) — 던지면 401 */
+  verifyBridgeToken: BridgeTokenVerifier;
   locks: BlobLocks;
 };
 
@@ -118,11 +119,18 @@ async function sendBlob(
   return reply.send(handle.createReadStream());
 }
 
-function requireBridge(token: string) {
+function requireBridge(verify: BridgeTokenVerifier) {
   return async (request: FastifyRequest): Promise<void> => {
     const header = request.headers.authorization;
     const provided = header?.slice(0, 7).toLowerCase() === "bearer " ? header.slice(7).trim() : undefined;
-    if (!verifyBridgeToken(token, provided)) throw apiError("UNAUTHORIZED", "브리지 토큰이 틀렸다");
+    let verified: { tokenId: string } | null = null;
+    try {
+      verified = verify(provided);
+    } catch (err) {
+      // 검증 오류(저장소 등)는 통과가 아니라 거절이다(fail-closed) — 원인만 남기고 토큰은 싣지 않는다
+      request.log.error({ err }, "bridge token verification failed");
+    }
+    if (!verified) throw apiError("UNAUTHORIZED", "브리지 토큰이 틀렸다");
   };
 }
 
@@ -132,7 +140,7 @@ export function registerAttachmentRoutes(fastify: FastifyInstance, ctx: Attachme
     scope.addContentTypeParser("*", { parseAs: "buffer" }, (_req, body, done) => done(null, body));
     const deps: AttachmentDeps = { db: ctx.db, dir: ctx.dir, locks: ctx.locks };
     const session = requireSession(ctx);
-    const bridge = requireBridge(ctx.bridgeToken);
+    const bridge = requireBridge(ctx.verifyBridgeToken);
 
     scope.post(
       "/api/v1/attachments",

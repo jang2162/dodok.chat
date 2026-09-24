@@ -393,46 +393,44 @@ describe("createOpenClawAdapter — revokeBridgeSessions", () => {
   });
 });
 
-describe("createOpenClawAdapter — 옛 bridge.token 옵션(서버 전환 전 호환)", () => {
-  it('token 만 주면 그 값과 같을 때 토큰 id "env" 로 붙고, 다르면 거절한다', async () => {
-    const compatApp = Fastify({ logger: false });
-    const compatIo = new Server(compatApp.server, { transports: ["websocket"] });
-    const compat = createOpenClawAdapter({
+describe("createOpenClawAdapter — bridge.clientAddress", () => {
+  it("브리지 거절 warn 의 주소는 clientAddress 가 준 값이다", async () => {
+    const ownApp = Fastify({ logger: false });
+    const ownIo = new Server(ownApp.server, { transports: ["websocket"] });
+    const ownLogger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+    const own = createOpenClawAdapter({
       gateway: { url: "ws://127.0.0.1:1", token: "gw", deviceIdentityPath: "/data/device.json" },
-      bridge: { io: compatIo, token: TOKEN, serverVersion: "test" },
-      logger,
+      bridge: {
+        io: ownIo,
+        verifyToken: () => null,
+        clientAddress: () => "203.0.113.7",
+        serverVersion: "test",
+      },
+      logger: ownLogger,
       onCanonical: async () => ({}),
       connector: async () => {
         throw new Error("unused");
       },
     });
-    await compatApp.listen({ host: "127.0.0.1", port: 0 });
-    const compatUrl = `ws://127.0.0.1:${(compatApp.server.address() as AddressInfo).port}/bridge`;
+    await ownApp.listen({ host: "127.0.0.1", port: 0 });
+    const ownUrl = `ws://127.0.0.1:${(ownApp.server.address() as AddressInfo).port}/bridge`;
     try {
-      const wrong = connect(compatUrl, {
+      const wrong = connect(ownUrl, {
         transports: ["websocket"],
-        auth: { token: OTHER_TOKEN },
+        auth: { token: TOKEN },
         reconnection: false,
       });
       clients.push(wrong);
       expect((await new Promise<Error>((resolve) => wrong.once("connect_error", resolve))).message).toBe(
         "UNAUTHORIZED",
       );
-
-      const right = connect(compatUrl, {
-        transports: ["websocket"],
-        auth: { token: TOKEN },
-        reconnection: false,
-      });
-      clients.push(right);
-      await new Promise<void>((resolve) => right.once("connect", () => resolve()));
-      await right.emitWithAck("hello", hello);
-      expect(compat.setupDetail().bridge.plugin?.tokenId).toBe("env");
+      const warns = ownLogger.warn.mock.calls.filter((call) => call[1] === "bridge connection rejected");
+      expect(warns).toEqual([[{ reason: "token mismatch from 203.0.113.7" }, "bridge connection rejected"]]);
     } finally {
       for (const socket of clients.splice(0)) socket.disconnect();
-      await compat.close();
-      compatIo.close();
-      await compatApp.close();
+      await own.close();
+      ownIo.close();
+      await ownApp.close();
     }
   });
 });
@@ -1079,7 +1077,7 @@ describe("Gateway 프레임 덤프(frameDumpPath)", () => {
         token: "gw-token",
         deviceIdentityPath: "/data/device.json",
       },
-      bridge: { io, token: TOKEN, serverVersion: "test" },
+      bridge: { io, verifyToken: () => ({ tokenId: "t1" }), serverVersion: "test" },
       logger,
       onCanonical: async () => ({}),
       frameDumpPath: path,
