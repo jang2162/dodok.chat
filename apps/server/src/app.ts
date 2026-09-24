@@ -1,4 +1,4 @@
-import { type BridgeTokenVerifier, createOpenClawAdapter } from "@dodok/openclaw-adapter";
+import { BridgeAuthGuard, type BridgeTokenVerifier, createOpenClawAdapter } from "@dodok/openclaw-adapter";
 import type { AdapterStatus, ApiError } from "@dodok/shared";
 import cookie from "@fastify/cookie";
 import rateLimit from "@fastify/rate-limit";
@@ -25,6 +25,9 @@ import { sweepAttachments } from "./modules/attachments/service";
 import { type BlobLocks, createBlobLocks } from "./modules/attachments/store";
 import { registerChannelRoutes } from "./modules/channels/routes";
 import { registerMessageRoutes } from "./modules/messages/routes";
+import { createRestLimits } from "./modules/ops/http-limits";
+import { ipPrefix } from "./modules/ops/ip";
+import { LIMITS, type Limits } from "./modules/ops/limits";
 import type { OpsService } from "./modules/ops/service";
 import { createPresence } from "./modules/push/presence";
 import { registerPushRoutes } from "./modules/push/routes";
@@ -77,6 +80,10 @@ export type AppDeps = {
   pushSend?: PushSend;
   /** 품은 플러그인 tgz 를 찾을 디렉터리(기본 pluginDirCandidates) — 테스트가 임시 디렉터리나 []를 준다 */
   pluginDirs?: string[];
+  /** 레이트리밋 숫자(기본 LIMITS, 얕게 덮는다) — 테스트가 수백 번 되풀이할 상한을 줄인다 */
+  limits?: Partial<Limits>;
+  /** 레이트리밋·브리지 실패 카운터의 시계(ms, 기본 Date.now) — 테스트가 창·버킷을 넘긴다. Better Auth·로컬 로그인 상한(@fastify/rate-limit)은 따르지 않는다 */
+  limitClock?: () => number;
 };
 
 /** 이어받지 않은 .env 토큰 경고(Review Focus 1) — 사람이 로그에서 이 문장을 찾는다 */
@@ -84,7 +91,7 @@ export const ENV_BRIDGE_TOKEN_IGNORED_WARNING =
   "BRIDGE_TOKEN in .env is ignored — manage bridge tokens in the connection page";
 
 /**
- * 브리지 거절 로그의 원격 주소. 리버스 프록시를 믿을 때(TRUST_PROXY=true)만 X-Forwarded-For 첫 값을 쓴다 —
+ * 브리지 거절 로그·실패 카운터와 wire 레이트리밋 사건의 원격 주소. 리버스 프록시를 믿을 때(TRUST_PROXY=true)만 X-Forwarded-For 첫 값을 쓴다 —
  * 믿지 않는데 읽으면 클라이언트가 헤더를 꾸며 스로틀·귀속을 피한다. Caddy 는 클라이언트 XFF 를 자기가 본 IP 로 덮는다
  */
 export function bridgeClientAddress(
@@ -143,11 +150,25 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     // 핸드셰이크와 첨부 HTTP 가 같은 검증을 쓴다. DB 오류는 던지고, 부르는 쪽이 거절로 본다
     const verifyBridgeToken: BridgeTokenVerifier = (presented) => verifyBridgeTokenDb(db, presented);
     const bus = new ServerBus();
+    const limits: Limits = { ...LIMITS, ...deps.limits };
+    const limitClock = deps.limitClock ?? Date.now;
+    const trustProxy = config.TRUST_PROXY === "true";
+    // 핸드셰이크와 첨부 HTTP 가 같은 실패 카운터를 쓴다(스펙 4.1) — 한쪽에서 막힌 주소는 다른 쪽에서도 막힌다
+    const bridgeGuard = new BridgeAuthGuard(limits.bridgeFail);
+    // 사건 서비스는 어댑터 뒤에 만들어진다 — 막힘은 listen 뒤 핸드셰이크에서만 일어나므로 그때는 있다
+    let ops: OpsService;
+    const onBridgeBlocked = (address: string) =>
+      ops.record({
+        kind: "bridge_auth_blocked",
+        key: "bridge",
+        severity: "warn",
+        detail: { ipPrefix: ipPrefix(address) },
+      });
 
     // 기본 제네릭(FastifyBaseLogger)으로 추론되게 한다 — pino Logger 로 추론되면 FastifyInstance·플러그인 타입과 어긋난다
     const loggerInstance: FastifyBaseLogger = logger;
     // 리버스 프록시 뒤면 request.ip(레이트리밋 키)가 X-Forwarded-For 를 따르게 한다(리뷰 sc-t3 이월 4)
-    const fastify = Fastify({ loggerInstance, trustProxy: config.TRUST_PROXY === "true" });
+    const fastify = Fastify({ loggerInstance, trustProxy });
     undo.push({ step: "fastify", run: () => fastify.close() });
     await fastify.register(cookie);
     // 라우트가 config.rateLimit 로 켠 곳에만 건다(/api/v1/auth/local)
@@ -194,8 +215,11 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
         bridge: {
           io,
           verifyToken: verifyBridgeToken,
-          clientAddress: bridgeClientAddress(config.TRUST_PROXY === "true"),
+          clientAddress: bridgeClientAddress(trustProxy),
           serverVersion: packageJson.version,
+          authGuard: bridgeGuard,
+          onBlocked: onBridgeBlocked,
+          now: limitClock,
         },
         logger: logger.child({ mod: "adapter" }),
         onCanonical: (message) => orchestrator.onCanonical(message),
@@ -207,6 +231,9 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     undo.push({ step: "adapter", run: () => adapter.close() });
     const services = createServices({ db, bus, logger, adapter, workspaceId, timeouts: deps.timeouts });
     orchestrator = services.orchestrator;
+    ops = services.ops;
+    // requireSession·업로드가 request.server.restLimits 로 찾는다(http-limits.ts)
+    fastify.decorate("restLimits", createRestLimits({ limits, ops, now: limitClock }));
     undo.push({ step: "orchestrator", run: () => services.orchestrator.stop() });
     // 운영 사건 보존: 30일 지난 줄을 지금 한 번, 그 뒤 하루 한 번 지운다. 실패는 로그만 남기고 부팅·주기를 막지 않는다
     const sweepOps = () => {
@@ -231,6 +258,8 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       logger,
       workspaceId,
       secureCookie: new URL(config.APP_ORIGIN).protocol === "https:",
+      betterAuthPerMin: limits.betterAuthPerMin,
+      ops,
     });
     const routeContext = { auth, db, bus, logger, workspaceId, adapter, orchestrator: services.orchestrator };
     registerChannelRoutes(fastify, routeContext);
@@ -248,6 +277,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       workspaceId,
       dir: config.attachmentsDir,
       verifyBridgeToken,
+      bridgeGuard: { guard: bridgeGuard, now: limitClock, onBlocked: onBridgeBlocked },
       locks: blobLocks,
     });
     // 푸시: 키는 환경변수 둘 또는 DATA_DIR/vapid.json(스펙 5.1). 망가진 키 파일은 부팅을 막는다(덮어쓰면 모든 구독이 무효)
@@ -308,14 +338,10 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       status: setupStatus,
       changed: emitSetupStatus,
     });
+    // 인증 없이 열려 있다 — 워크스페이스 id·어댑터 상세는 내놓지 않는다(운영 보강 스펙 8장, 상세는 owner 전용 ops/status)
     fastify.get("/healthz", async (_request, reply) => {
       const dbOk = pingDb(db, logger);
-      return reply.status(dbOk ? 200 : 503).send({
-        ok: dbOk,
-        db: dbOk ? "ok" : "error",
-        workspace: workspaceId,
-        adapter: adapter.status(),
-      });
+      return reply.status(dbOk ? 200 : 503).send({ ok: dbOk, db: dbOk ? "ok" : "error" });
     });
 
     // 종료 ①: close() 가 켜면 새 wire 연결을 인증보다 먼저 거부한다. 기존 연결·/bridge 는 어댑터가 닫힐 때까지 둔다
@@ -332,6 +358,10 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       runs: services.runs,
       appOrigin: config.APP_ORIGIN,
       presence,
+      limits,
+      now: limitClock,
+      ops,
+      clientAddress: bridgeClientAddress(trustProxy),
     });
     const fanout = attachWireFanout(io, bus, { logger, db, workspaceId, maxPending: deps.wireMaxPending });
     undo.push({ step: "fanout", run: () => fanout.close() });

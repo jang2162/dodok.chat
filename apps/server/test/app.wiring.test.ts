@@ -376,7 +376,7 @@ describe("REST·wire 배선 (FakeAdapter)", () => {
     const get = vi.spyOn(app.db, "get");
     const ok = await app.fastify.inject({ method: "GET", url: "/healthz" });
     expect(ok.statusCode).toBe(200);
-    expect(ok.json()).toMatchObject({ ok: true, db: "ok", adapter: adapter.status() });
+    expect(ok.json()).toEqual({ ok: true, db: "ok" });
     expect(get).toHaveBeenCalledTimes(1);
 
     get.mockImplementationOnce(() => {
@@ -587,7 +587,7 @@ describe("실제 어댑터(createOpenClawAdapter) 부팅", () => {
       await app.fastify.listen({ host: "127.0.0.1", port: 0 });
       const health = await app.fastify.inject({ method: "GET", url: "/healthz" });
       expect(health.statusCode).toBe(200);
-      expect(["down", "reconnecting"]).toContain(health.json().adapter.gateway);
+      expect(["down", "reconnecting"]).toContain(app.adapter.status().gateway);
       // 부팅 뒤 connect() 가 접속 루프를 돌렸다 — 설정의 디바이스 아이덴티티 경로(임시 디렉터리)를 쓰고, 거부되면 reconnecting
       await vi.waitFor(() => expect(existsSync(deviceIdentityPath)).toBe(true));
       await vi.waitFor(() => expect(app.adapter.status().gateway).toBe("reconnecting"), { timeout: 3_000 });

@@ -25,6 +25,7 @@ import {
 } from "@dodok/shared";
 import type { Namespace, Server, Socket } from "socket.io";
 import { z } from "zod";
+import type { BridgeAuthGuard } from "./guard";
 import { BridgeSessionState, OutboundDedupe, parseBridgeClientEvent, RejectLogThrottle } from "./session";
 
 export const BRIDGE_NAMESPACE = "/bridge";
@@ -64,6 +65,13 @@ export type BridgeServerOptions = BridgeServerCallbacks & {
    * 전달 헤더를 읽어 준다(믿지 않는 헤더를 읽으면 위조로 스로틀·귀속을 우회한다). 던지면 기본값을 쓴다
    */
   clientAddress?: (handshake: BridgeSocket["handshake"]) => string;
+  /**
+   * 인증 실패 카운터(`clientAddress` 주소별, 시계는 `now`). 막힌 주소는 토큰을 보지 않고 거절하고, 검증 실패만 센다 —
+   * 성공은 카운터를 건드리지 않는다. 서버의 첨부 HTTP 인증도 같은 인스턴스를 받는다
+   */
+  authGuard?: BridgeAuthGuard;
+  /** 이번 실패로 그 주소가 막히기 시작했을 때 한 번 */
+  onBlocked?: (address: string) => void;
 };
 
 export type BridgeHandle = {
@@ -134,25 +142,32 @@ export function attachBridge(io: Server, opts: BridgeServerOptions): BridgeHandl
   };
 
   namespace.use((socket, next) => {
+    const address = remoteAddress(socket.handshake);
+    const at = now();
+    const reject = (reason: string) => {
+      // 폐기된 토큰으로 재접속을 되풀이하는 플러그인이 로그를 채우지 않게 주소별로 줄인다(Review Focus 2)
+      const logged = rejectLog.take(address, at);
+      if (logged) {
+        const suppressed = logged.suppressed > 0 ? ` (${logged.suppressed} more suppressed)` : "";
+        opts.onRejected?.(`${reason} from ${address}${suppressed}`);
+      }
+      next(new Error("UNAUTHORIZED"));
+    };
+    if (opts.authGuard?.isBlocked(address, at)) return reject("blocked after repeated failures");
     const token = (socket.handshake.auth as { token?: unknown } | undefined)?.token;
-    let verified: { tokenId: string } | null = null;
+    let verified: { tokenId: string } | null;
     try {
       verified = opts.verifyToken(token);
     } catch {
-      // 검증 함수 오류(저장소 등)는 거절로 본다 — 아래 거절 로그 한 줄이 남는다
+      // 검증 함수 오류(저장소 등)는 거절로 본다 — 거절 로그 한 줄이 남는다. 플러그인 잘못이 아니라 실패로 세지 않는다
+      return reject("token mismatch");
     }
     if (verified) {
       (socket.data as { tokenId?: string }).tokenId = verified.tokenId;
       return next();
     }
-    // 폐기된 토큰으로 재접속을 되풀이하는 플러그인이 로그를 채우지 않게 주소별로 줄인다(Review Focus 2)
-    const address = remoteAddress(socket.handshake);
-    const logged = rejectLog.take(address, now());
-    if (logged) {
-      const suppressed = logged.suppressed > 0 ? ` (${logged.suppressed} more suppressed)` : "";
-      opts.onRejected?.(`token mismatch from ${address}${suppressed}`);
-    }
-    next(new Error("UNAUTHORIZED"));
+    if (opts.authGuard?.fail(address, at)) opts.onBlocked?.(address);
+    reject("token mismatch");
   });
 
   namespace.on("connection", (socket) => {

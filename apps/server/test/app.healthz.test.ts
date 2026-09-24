@@ -14,18 +14,23 @@ afterEach(async () => {
 });
 
 describe("createApp", () => {
-  it("/healthz 는 인증 없이 db·adapter 상태를 낸다", async () => {
+  it("/healthz 는 인증 없이 {ok, db} 만 낸다 — 워크스페이스 id·어댑터 상태는 싣지 않는다", async () => {
     const adapter = new FakeAdapter();
     adapter.setStatus({ provider: "openclaw", gateway: "down", bridge: "down" });
     app = await bootTestApp({}, { adapter });
     const res = await app.fastify.inject({ method: "GET", url: "/healthz" });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({
-      ok: true,
-      db: "ok",
-      adapter: { provider: "openclaw", gateway: "down", bridge: "down" },
-      workspace: expect.any(String),
-    });
+    expect(res.json()).toEqual({ ok: true, db: "ok" });
+    expect(res.json()).not.toHaveProperty("workspace");
+    expect(res.json()).not.toHaveProperty("adapter");
+    expect(res.body).not.toContain(app.workspaceId);
+  });
+  it("/healthz 는 db 가 닫혀 있으면 503 {ok:false, db:error}", async () => {
+    app = await bootTestApp();
+    app.db.$client.close();
+    const res = await app.fastify.inject({ method: "GET", url: "/healthz" });
+    expect(res.statusCode).toBe(503);
+    expect(res.json()).toEqual({ ok: false, db: "error" });
   });
   it("워크스페이스가 없으면 부팅 때 하나 만든다", async () => {
     app = await bootTestApp();

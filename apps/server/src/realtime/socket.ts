@@ -20,6 +20,10 @@ import { apiError, HttpError } from "../http/errors";
 import { parsePayload } from "../http/validate";
 import type { Logger } from "../logger";
 import { getChannel } from "../modules/channels/service";
+import { ipPrefix } from "../modules/ops/ip";
+import { LIMITS, type Limits } from "../modules/ops/limits";
+import { TokenBucket } from "../modules/ops/ratelimit";
+import type { OpsService } from "../modules/ops/service";
 import type { Presence } from "../modules/push/presence";
 import {
   createUserMessage,
@@ -45,6 +49,33 @@ export type WireContext = {
   appOrigin: string;
   /** 푸시 거르기(스펙 5.3) — 소켓별 「보이는가·보는 채널」. 없으면 presence.update 를 버린다 */
   presence?: Pick<Presence, "set" | "drop">;
+  /** wire 레이트리밋(운영 보강 스펙 4.2). 없으면 LIMITS */
+  limits?: Pick<Limits, "wire" | "socketsPerUser">;
+  /** 버킷의 시계(ms) — 테스트 주입. 기본 Date.now */
+  now?: () => number;
+  /** 레이트리밋에 걸리면 ratelimit 사건을 남긴다 */
+  ops?: Pick<OpsService, "record">;
+  /** 사건 detail.ipPrefix 의 주소. 기본 handshake.address — 프록시 뒤면 app.ts 가 TRUST_PROXY 를 따르는 함수를 준다 */
+  clientAddress?: (handshake: {
+    address: string;
+    headers: Record<string, string | string[] | undefined>;
+  }) => string;
+};
+
+/** wire 이벤트 → 소켓 버킷(스펙 4.2 표). 여기 없는 이벤트(구독·구독 해제)는 상한이 없다 */
+export const WIRE_BUCKET = {
+  "message.send": "heavy",
+  "component.interact": "heavy",
+  "run.abort": "heavy",
+  "run.events.replay": "heavy",
+  "approval.resolve": "approval",
+  typing: "chatter",
+  "presence.update": "chatter",
+} as const satisfies Record<string, keyof Limits["wire"]>;
+
+const RATE_LIMITED: Result<never> = {
+  ok: false,
+  error: { code: "RATE_LIMITED", message: "too many requests" },
 };
 
 const ChannelUnsubscribe = z.object({ channelId: Id });
@@ -56,6 +87,25 @@ export const workspaceRoom = (workspaceId: string): string => `workspace:${works
 
 /** 기본 네임스페이스에 인증 미들웨어와 클라이언트 → 서버 핸들러를 붙인다(계약 스펙 7장). 팬아웃은 events.ts. */
 export function attachWire(io: WireServer, ctx: WireContext): void {
+  const limits = ctx.limits ?? LIMITS;
+  const now = ctx.now ?? Date.now;
+  const addressOf = (handshake: Parameters<NonNullable<WireContext["clientAddress"]>>[0]): string => {
+    if (!ctx.clientAddress) return handshake.address;
+    try {
+      return ctx.clientAddress(handshake);
+    } catch {
+      return handshake.address;
+    }
+  };
+  // key 는 이벤트 이름만 — 채널 id 같은 값을 넣으면 줄이 폭증한다. 폭주는 OpsService 가 묶는다
+  const recordLimited = (event: string, handshake: Parameters<typeof addressOf>[0]) =>
+    ctx.ops?.record({
+      kind: "ratelimit",
+      key: `wire:${event}`,
+      severity: "info",
+      detail: { ipPrefix: ipPrefix(addressOf(handshake)) },
+    });
+
   io.use(async (socket, next) => {
     const { token, protocol } = (socket.handshake.auth ?? {}) as { token?: unknown; protocol?: unknown };
     // 프로토콜 → 토큰 순서. 토큰 값은 로그에 싣지 않는다
@@ -67,6 +117,12 @@ export function attachWire(io: WireServer, ctx: WireContext): void {
       typeof token === "string" ? token : cookieSessionToken(socket.handshake.headers, ctx.appOrigin);
     const user = sessionToken ? await verifySessionToken(ctx.auth, sessionToken) : null;
     if (!user) return next(connectError("UNAUTHORIZED", "invalid session"));
+    // 방에는 connection 에서 들어간다 — 동시에 도착한 핸드셰이크는 서로를 못 봐 상한을 조금 넘길 수 있다(느슨한 상한)
+    const open = await io.in(userRoom(user.userId)).fetchSockets();
+    if (open.length >= limits.socketsPerUser) {
+      recordLimited("connect", socket.handshake);
+      return next(connectError("RATE_LIMITED", "too many connections"));
+    }
     socket.data.userId = user.userId;
     next();
   });
@@ -76,6 +132,18 @@ export function attachWire(io: WireServer, ctx: WireContext): void {
     void socket.join(userRoom(userId));
     // 서버는 워크스페이스 하나만 섬긴다 — 접속한 소켓은 모두 그 워크스페이스 소속이다
     void socket.join(workspaceRoom(ctx.workspaceId));
+
+    const buckets: Record<keyof Limits["wire"], TokenBucket> = {
+      heavy: new TokenBucket({ ...limits.wire.heavy, now }),
+      approval: new TokenBucket({ ...limits.wire.approval, now }),
+      chatter: new TokenBucket({ ...limits.wire.chatter, now }),
+    };
+    /** 핸들러 맨 앞에서 부른다 — true 면 그 이벤트를 처리하지 않는다(ack 있는 이벤트는 RATE_LIMITED 로 답한다) */
+    const limited = (event: keyof typeof WIRE_BUCKET): boolean => {
+      if (buckets[WIRE_BUCKET[event]].take()) return false;
+      recordLimited(event, socket.handshake);
+      return true;
+    };
 
     const runs = (): RunsFacade => {
       if (!ctx.runs) throw apiError("ADAPTER_UNAVAILABLE", "runs are not available");
@@ -117,6 +185,8 @@ export function attachWire(io: WireServer, ctx: WireContext): void {
     });
 
     socket.on("message.send", async (raw: unknown, ack: unknown) => {
+      // 저장·라우팅 전에 막는다 — 같은 clientMsgId 로 다시 보내면 그때 한 번 저장된다
+      if (limited("message.send")) return reply(ack, RATE_LIMITED);
       const res = await settle(ctx.logger, "message.send", () => sendMessage(ctx, userId, raw));
       reply(ack, res.ok ? { ok: true, data: { message: res.data.message } } : res);
       // 멱등 재전송은 다시 라우팅하지 않는다(에이전트 런이 두 번 뜬다)
@@ -129,6 +199,7 @@ export function attachWire(io: WireServer, ctx: WireContext): void {
     });
 
     socket.on("typing", (raw: unknown) => {
+      if (limited("typing")) return;
       const parsed = Typing.safeParse(raw);
       if (!parsed.success) return;
       const room = channelRoom(parsed.data.channelId);
@@ -141,12 +212,14 @@ export function attachWire(io: WireServer, ctx: WireContext): void {
 
     // 채널 id 가 이 워크스페이스 채널인지는 보지 않는다 — 거르기에만 쓰여 틀린 값은 「안 보고 있음」이 될 뿐이다
     socket.on("presence.update", (raw: unknown) => {
+      if (limited("presence.update")) return;
       const parsed = PresenceUpdate.safeParse(raw);
       if (parsed.success) ctx.presence?.set(socket.id, userId, parsed.data);
     });
     socket.on("disconnect", () => ctx.presence?.drop(socket.id));
 
     socket.on("run.abort", async (raw: unknown, ack: unknown) => {
+      if (limited("run.abort")) return reply(ack, RATE_LIMITED);
       const res = await settle(ctx.logger, "run.abort", async () => {
         const { runId } = parsePayload(RunAbort, raw);
         await runs().abort(runId, userId);
@@ -156,6 +229,7 @@ export function attachWire(io: WireServer, ctx: WireContext): void {
     });
 
     socket.on("run.events.replay", async (raw: unknown, ack: unknown) => {
+      if (limited("run.events.replay")) return reply(ack, RATE_LIMITED);
       const res = await settle(ctx.logger, "run.events.replay", () => {
         const { runId, afterSeq } = parsePayload(RunEventsReplay, raw);
         return runs().replay(runId, afterSeq);
@@ -164,6 +238,7 @@ export function attachWire(io: WireServer, ctx: WireContext): void {
     });
 
     socket.on("component.interact", async (raw: unknown, ack: unknown) => {
+      if (limited("component.interact")) return reply(ack, RATE_LIMITED);
       const res = await settle(ctx.logger, "component.interact", () => {
         const input = parsePayload(ComponentInteract, raw);
         return runs().interact({ ...input, userId });
@@ -172,6 +247,7 @@ export function attachWire(io: WireServer, ctx: WireContext): void {
     });
 
     socket.on("approval.resolve", async (raw: unknown, ack: unknown) => {
+      if (limited("approval.resolve")) return reply(ack, RATE_LIMITED);
       const res = await settle(ctx.logger, "approval.resolve", async () => {
         const { approvalId, decision } = parsePayload(ApprovalResolve, raw);
         await runs().resolveApproval({ approvalId, decision, userId });

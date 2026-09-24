@@ -8,7 +8,8 @@
 import { INTERACTIONS_MAX, type Message, type Result } from "@dodok/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createScenario, type Scenario, type ScenarioScript } from "../fakes/scenario";
-import { bootLiveApp, type LiveApp } from "../helpers/live-app";
+import { LIMITS } from "../../src/modules/ops/limits";
+import { bootLiveApp, type LiveApp, type LiveAppOptions } from "../helpers/live-app";
 import {
   getRunRest,
   openChannelWire,
@@ -61,8 +62,8 @@ describe("통합 시나리오 10 — components 상호작용이 그 에이전트
    * dev 한 명짜리 채널 + 구독한 소켓 + 대본(첫 턴은 카드, 그 뒤 턴은 「받았어요 <턴>」) → `@dev` 로 카드를 받는다.
    * 카드 뒤 턴의 답에 순번을 박아 두면 「n 번째 상호작용 런이 끝났다」를 wire 로 기다릴 수 있다.
    */
-  async function startCard(components: CardComponents) {
-    live = await bootLiveApp();
+  async function startCard(components: CardComponents, opts: LiveAppOptions = {}) {
+    live = await bootLiveApp(opts);
     const setup = await setupRelayChannel(live, RELAY_POLICY);
     const log = await openChannelWire(live, setup.channel.id, sockets);
     const scenario = createScenario({
@@ -315,10 +316,15 @@ describe("통합 시나리오 10 — components 상호작용이 그 에이전트
   });
 
   it(`시나리오 10e — 21건을 넘기면 최신 ${INTERACTIONS_MAX}건만 실린다(가장 오래된 1건이 잘린다)`, async () => {
-    const { setup, log, scenario, card } = await startCard({
-      reusable: true,
-      blocks: [{ type: "actions", items: [{ type: "button", id: "tap", label: "눌러요" }] }],
-    });
+    // 21번을 한 번에 누른다 — wire 버킷(연속 10)을 넓혀 상한이 아니라 자르기만 잰다
+    const wire = { ...LIMITS.wire, heavy: { perMin: 60, burst: INTERACTIONS_MAX + 5 } };
+    const { setup, log, scenario, card } = await startCard(
+      {
+        reusable: true,
+        blocks: [{ type: "actions", items: [{ type: "button", id: "tap", label: "눌러요" }] }],
+      },
+      { deps: { limits: { wire } } },
+    );
     const ids: string[] = [];
     for (let i = 0; i < INTERACTIONS_MAX + 1; i++) {
       ids.push(interactionIdOf(await press(log.socket, card, "tap")));

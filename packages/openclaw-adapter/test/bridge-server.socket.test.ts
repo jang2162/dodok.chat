@@ -5,6 +5,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { Server } from "socket.io";
 import { io as connect, type Socket } from "socket.io-client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { BridgeAuthGuard } from "../src/bridge/guard";
 import { attachBridge, type BridgeHandle } from "../src/bridge/server";
 
 const TOKEN = "bridge-test-token";
@@ -347,6 +348,98 @@ describe("attachBridge — 거절 로그 주소(clientAddress)", () => {
       ownBridge.close();
       ownIo.close();
       await own.close();
+    }
+  });
+});
+
+describe("attachBridge — 인증 실패 카운터(authGuard)", () => {
+  async function guarded() {
+    const own = Fastify({ logger: false });
+    const ownIo = new Server(own.server, { transports: ["websocket"] });
+    const state = {
+      nowMs: 0,
+      throws: false,
+      verified: [] as unknown[],
+      blocked: [] as string[],
+      logged: [] as string[],
+    };
+    const guard = new BridgeAuthGuard();
+    const ownBridge = attachBridge(ownIo, {
+      verifyToken: (presented) => {
+        state.verified.push(presented);
+        if (state.throws) throw new Error("SqliteError: database is locked");
+        return presented === TOKEN ? { tokenId: "t1" } : null;
+      },
+      serverVersion: "test",
+      now: () => state.nowMs,
+      clientAddress: () => "203.0.113.7",
+      authGuard: guard,
+      onBlocked: (address) => state.blocked.push(address),
+      onRejected: (reason) => state.logged.push(reason),
+      onOutboundMessage: async () => ({ messageId: randomUUID() }),
+    });
+    await own.listen({ host: "127.0.0.1", port: 0 });
+    const ownUrl = `ws://127.0.0.1:${(own.server.address() as AddressInfo).port}/bridge`;
+    const open = (token: string) => {
+      const socket = connect(ownUrl, { transports: ["websocket"], auth: { token }, reconnection: false });
+      clients.push(socket);
+      return socket;
+    };
+    const close = async () => {
+      ownBridge.close();
+      ownIo.close();
+      await own.close();
+    };
+    return { state, guard, open, close };
+  }
+
+  it("10번 틀리면 onBlocked 한 번, 그 뒤 60초는 정상 토큰도 검사 없이 거절, 60초 뒤 저절로 통과", async () => {
+    const { state, open, close } = await guarded();
+    try {
+      for (let i = 0; i < 10; i += 1) {
+        state.nowMs = i * 1_000;
+        await waitFor(open("wrong"), "connect_error");
+      }
+      expect(state.blocked).toEqual(["203.0.113.7"]);
+
+      state.verified.length = 0;
+      state.nowMs = 9_000 + 59_999;
+      const error = (await waitFor(open(TOKEN), "connect_error")) as Error;
+      expect(error.message).toBe("UNAUTHORIZED");
+      expect(state.verified).toEqual([]); // 막힌 주소는 토큰을 보지 않는다
+      expect(state.blocked).toHaveLength(1);
+
+      state.nowMs = 9_000 + 60_000;
+      await waitFor(open(TOKEN), "connect");
+    } finally {
+      await close();
+    }
+  });
+
+  it("성공은 카운터를 건드리지 않는다 — 9번 틀리고 성공해도 한 번 더 틀리면 막힌다", async () => {
+    const { state, guard, open, close } = await guarded();
+    try {
+      for (let i = 0; i < 9; i += 1) await waitFor(open("wrong"), "connect_error");
+      await waitFor(open(TOKEN), "connect");
+      await waitFor(open("wrong"), "connect_error");
+      expect(state.blocked).toEqual(["203.0.113.7"]);
+      expect(guard.isBlocked("203.0.113.7", state.nowMs)).toBe(true);
+    } finally {
+      await close();
+    }
+  });
+
+  it("검증 함수가 던진 거절은 실패로 세지 않는다 — 저장소 오류가 정상 플러그인 주소를 막지 않게", async () => {
+    const { state, guard, open, close } = await guarded();
+    try {
+      state.throws = true;
+      for (let i = 0; i < 10; i += 1) await waitFor(open(TOKEN), "connect_error");
+      expect(state.blocked).toEqual([]);
+      expect(guard.isBlocked("203.0.113.7", state.nowMs)).toBe(false);
+      state.throws = false;
+      await waitFor(open(TOKEN), "connect");
+    } finally {
+      await close();
     }
   });
 });

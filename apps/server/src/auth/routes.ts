@@ -8,6 +8,8 @@ import type { Db } from "../db/client";
 import { memberships, users, workspaces } from "../db/schema.sqlite";
 import { apiError } from "../http/errors";
 import type { Logger } from "../logger";
+import { recordRateLimit } from "../modules/ops/http-limits";
+import type { OpsService } from "../modules/ops/service";
 import { type Auth, OWNER_EMAIL, SESSION_COOKIE, SESSION_MAX_AGE_S, verifySessionToken } from "./index";
 
 declare module "fastify" {
@@ -24,15 +26,21 @@ export type AuthRouteContext = {
   workspaceId: string;
   /** APP_ORIGIN 이 https 일 때 true — 세션 쿠키에 Secure */
   secureCookie: boolean;
+  /** /api/auth/*(Better Auth) IP 당 분당 상한 — LIMITS.betterAuthPerMin */
+  betterAuthPerMin: number;
+  /** 로그인 전 상한에 걸리면 ratelimit 사건을 남긴다 */
+  ops: Pick<OpsService, "record">;
 };
 
 const LocalLoginBody = z.object({ token: z.string().min(1).max(256) });
 
 export function registerAuthRoutes(fastify: FastifyInstance, ctx: AuthRouteContext): void {
+  const onExceeded = (request: FastifyRequest) => recordRateLimit(ctx.ops, request);
   // Better Auth 자체 엔드포인트. 가입·이메일 사인인은 createAuth 에서 막혀 있다.
   fastify.route({
     method: ["GET", "POST"],
     url: "/api/auth/*",
+    config: { rateLimit: { max: ctx.betterAuthPerMin, timeWindow: "1 minute", onExceeded } },
     async handler(request, reply) {
       const headers = fromNodeHeaders(request.headers);
       headers.delete("content-length"); // 파싱된 본문을 다시 직렬화하므로 원래 길이와 다를 수 있다
@@ -56,7 +64,7 @@ export function registerAuthRoutes(fastify: FastifyInstance, ctx: AuthRouteConte
 
   fastify.post(
     "/api/v1/auth/local",
-    { config: { rateLimit: { max: 5, timeWindow: "1 minute" } } },
+    { config: { rateLimit: { max: 5, timeWindow: "1 minute", onExceeded } } },
     async (request, reply) => {
       const body = LocalLoginBody.safeParse(request.body);
       if (!body.success) throw apiError("VALIDATION", "token 이 필요하다");
@@ -105,7 +113,7 @@ export function registerAuthRoutes(fastify: FastifyInstance, ctx: AuthRouteConte
 
 /**
  * REST 인증 preHandler. `Authorization: Bearer <sessionToken>` 또는 `dodok.session` 쿠키.
- * Better Auth 자체 쿠키는 보지 않는다.
+ * Better Auth 자체 쿠키는 보지 않는다. 사용자를 확인한 뒤 앱의 REST 상한(restLimits)을 지난다 — 넘으면 429
  */
 export function requireSession(ctx: { auth: Auth; workspaceId: string }) {
   return async (request: FastifyRequest, _reply: FastifyReply): Promise<void> => {
@@ -113,6 +121,7 @@ export function requireSession(ctx: { auth: Auth; workspaceId: string }) {
     const session = token ? await verifySessionToken(ctx.auth, token) : null;
     if (!session) throw apiError("UNAUTHORIZED", "로그인이 필요하다");
     request.user = { id: session.userId, workspaceId: ctx.workspaceId };
+    request.server.restLimits?.rest(request, session.userId);
   };
 }
 

@@ -3,7 +3,7 @@
  * (스코프 안에서만 — 다른 경로의 JSON 파싱은 그대로). 인증은 onRequest 라 본문을 받기 전에 거절한다.
  * 응답 헤더는 받은 파일이 무엇이든 브라우저가 문서로 실행하지 못하게 한다(nosniff·CSP sandbox·image 만 inline)
  */
-import type { BridgeTokenVerifier } from "@dodok/openclaw-adapter";
+import type { BridgeAuthGuard, BridgeTokenVerifier } from "@dodok/openclaw-adapter";
 import {
   ATTACHMENT_LIMITS,
   type Attachment,
@@ -32,6 +32,11 @@ export type AttachmentRouteContext = {
   dir: string;
   /** 브리지 핸드셰이크와 같은 검증(DB 브리지 토큰) — 던지면 401 */
   verifyBridgeToken: BridgeTokenVerifier;
+  /**
+   * 브리지 핸드셰이크와 같은 실패 카운터 인스턴스(app.ts 가 하나를 만들어 둘에 준다). 주소는 request.ip — TRUST_PROXY 일 때
+   * X-Forwarded-For 를 따르는 것이 핸드셰이크의 bridgeClientAddress 와 같다
+   */
+  bridgeGuard: { guard: BridgeAuthGuard; now: () => number; onBlocked: (address: string) => void };
   locks: BlobLocks;
 };
 
@@ -119,18 +124,27 @@ async function sendBlob(
   return reply.send(handle.createReadStream());
 }
 
-function requireBridge(verify: BridgeTokenVerifier) {
+function requireBridge(verify: BridgeTokenVerifier, bridgeGuard: AttachmentRouteContext["bridgeGuard"]) {
   return async (request: FastifyRequest): Promise<void> => {
+    const { guard, now, onBlocked } = bridgeGuard;
+    const address = request.ip;
+    const at = now();
+    // 막힌 주소는 토큰을 보지 않는다 — 성공도 카운터를 비우지 않으므로 정상 토큰도 막힌 동안은 429
+    if (guard.isBlocked(address, at)) throw apiError("RATE_LIMITED", "인증 실패가 너무 많습니다");
     const header = request.headers.authorization;
     const provided = header?.slice(0, 7).toLowerCase() === "bearer " ? header.slice(7).trim() : undefined;
-    let verified: { tokenId: string } | null = null;
+    let verified: { tokenId: string } | null;
     try {
       verified = verify(provided);
     } catch (err) {
-      // 검증 오류(저장소 등)는 통과가 아니라 거절이다(fail-closed) — 원인만 남기고 토큰은 싣지 않는다
+      // 검증 오류(저장소 등)는 통과가 아니라 거절이다(fail-closed) — 원인만 남기고 토큰은 싣지 않는다.
+      // 플러그인 잘못이 아니라 실패로 세지 않는다(핸드셰이크와 같다)
       request.log.error({ err }, "bridge token verification failed");
+      throw apiError("UNAUTHORIZED", "브리지 토큰이 틀렸다");
     }
-    if (!verified) throw apiError("UNAUTHORIZED", "브리지 토큰이 틀렸다");
+    if (verified) return;
+    if (guard.fail(address, at)) onBlocked(address);
+    throw apiError("UNAUTHORIZED", "브리지 토큰이 틀렸다");
   };
 }
 
@@ -140,11 +154,14 @@ export function registerAttachmentRoutes(fastify: FastifyInstance, ctx: Attachme
     scope.addContentTypeParser("*", { parseAs: "buffer" }, (_req, body, done) => done(null, body));
     const deps: AttachmentDeps = { db: ctx.db, dir: ctx.dir, locks: ctx.locks };
     const session = requireSession(ctx);
-    const bridge = requireBridge(ctx.verifyBridgeToken);
+    const bridge = requireBridge(ctx.verifyBridgeToken, ctx.bridgeGuard);
+    // 업로드 상한은 본문을 받기 전에 — 세션(REST 상한) 뒤에 한 번 더
+    const uploadLimit = async (request: FastifyRequest): Promise<void> =>
+      request.server.restLimits?.upload(request, sessionUser(request).id);
 
     scope.post(
       "/api/v1/attachments",
-      { onRequest: session, bodyLimit: ATTACHMENT_LIMITS.userImageMaxBytes },
+      { onRequest: [session, uploadLimit], bodyLimit: ATTACHMENT_LIMITS.userImageMaxBytes },
       async (request) => {
         const { channelId } = parseQuery(UploadQuery, request.query);
         const user = sessionUser(request);

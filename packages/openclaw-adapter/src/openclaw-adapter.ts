@@ -65,6 +65,11 @@ export type OpenClawAdapterOptions = {
     ackTimeoutMs?: number;
     verifyToken: BridgeTokenVerifier;
     clientAddress?: BridgeServerOptions["clientAddress"];
+    /** 인증 실패 카운터 — 서버가 첨부 HTTP 와 같은 인스턴스를 준다(`BridgeServerOptions.authGuard`) */
+    authGuard?: BridgeServerOptions["authGuard"];
+    onBlocked?: BridgeServerOptions["onBlocked"];
+    /** 거절 스로틀·실패 카운터의 시계(ms) — 테스트 주입. 기본 `Date.now` */
+    now?: BridgeServerOptions["now"];
   };
   logger: AdapterLogger;
   /** 서버가 정본을 저장하고 id 를 돌려준다. 그 id 가 플러그인 ack 의 messageId 가 된다. */
@@ -246,6 +251,9 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
   const bridge = attachBridge(opts.bridge.io, {
     verifyToken: opts.bridge.verifyToken,
     ...(opts.bridge.clientAddress === undefined ? {} : { clientAddress: opts.bridge.clientAddress }),
+    ...(opts.bridge.authGuard === undefined ? {} : { authGuard: opts.bridge.authGuard }),
+    ...(opts.bridge.onBlocked === undefined ? {} : { onBlocked: opts.bridge.onBlocked }),
+    ...(opts.bridge.now === undefined ? {} : { now: opts.bridge.now }),
     serverVersion: opts.bridge.serverVersion,
     ...(opts.bridge.ackTimeoutMs === undefined ? {} : { ackTimeoutMs: opts.bridge.ackTimeoutMs }),
     onHello: (_session, hello) => {
