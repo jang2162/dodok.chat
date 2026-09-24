@@ -1,6 +1,6 @@
 # 프로젝트 구성 가이드 (Claude Code 인계용)
 
-작성일: 2026-09-14 · 계획서 v0.12 기준(2026-09-24 갱신: Phase 2 ④ PWA·푸시 실물) · 이 문서는 "어떻게 구성할지"만 다룬다. 배경·결정 근거는 `docs/plan.md` 참고.
+작성일: 2026-09-14 · 계획서 v0.14 기준(2026-09-24 갱신: Phase 3 ① 배포 패키징) · 이 문서는 "어떻게 구성할지"만 다룬다. 배경·결정 근거는 `docs/plan.md` 참고.
 
 ---
 
@@ -15,13 +15,19 @@ dodok.chat/
 │  ├─ shared/                 # @dodok/shared — 도메인 타입·Zod 스키마·components v1 규약·RunEvent(AG-UI 매핑)·wire 계약
 │  ├─ openclaw-plugin/        # @dodok/openclaw-plugin — OpenClaw 채널 플러그인 (원격 Gateway 안에서 실행)
 │  └─ openclaw-adapter/       # @dodok/openclaw-adapter — 서버 측 OpenClaw 어댑터 (브리지 서버 + Gateway WS 클라이언트)
-├─ infra/
-│  ├─ docker-compose.yml      # server + web(정적) + caddy, `--profile gateway`로 로컬 OpenClaw 동반 기동
-│  └─ caddy/Caddyfile         # /, /api, /socket.io 를 TLS로 노출 (브리지는 Socket.IO 네임스페이스라 /socket.io 하나로 충분)
+├─ infra/                    # 배포(Docker Compose) — 절차 docs/guides/deploy.md, 각 파일의 까닭은 그 파일 머리 주석
+│  ├─ compose.yml             # 운영: 서비스 app(서버, 포트 안 엶)·caddy(80·443), 볼륨 dodok-data·caddy-data·caddy-config. app 의 HOST·PORT·DATA_DIR·DODOK_MIGRATIONS_DIR 고정
+│  ├─ compose.local.yml       # 이 Mac 의 로컬 검증 겹침: 127.0.0.1:8443·Caddy 내부 CA·devfake 프로필(dev:fake 를 Caddy 뒤에)
+│  ├─ Dockerfile.server       # 단계 build(번들) → deploy(런타임 의존성 닫힘) → runtime(운영, node:24.21.0-bookworm-slim, 비루트) · devfake(로컬 검증 전용)
+│  ├─ Dockerfile.web          # 웹 빌드(ARG VITE_BUILD_ID) → caddy:2.11.4 에 dist 와 Caddyfile
+│  ├─ Caddyfile               # 자동 HTTPS·/api·/socket.io·/bridge/*·/healthz 프록시, /assets immutable·나머지 no-cache·SPA 폴백, 보안 헤더, 본문 32MB
+│  ├─ check-caddy.sh          # Caddy 앞단 검사(curl — 라우팅·폴백·캐시·보안 헤더), `bash infra/check-caddy.sh https://localhost:8443`
+│  ├─ local.env.example       # 로컬 검증 설정의 틀 — 사본 infra/local.env 는 git 제외
+│  └─ .env → ../.env          # 배포 호스트에서 손으로 만드는 링크(git 제외) — compose 변수 치환이 infra/ 의 .env 만 읽는다
 ├─ docs/
 │  ├─ plan.md                 # 계획서
 │  ├─ project-structure.md    # 이 문서
-│  ├─ guides/                 # 작업 지침 (worktree-workflow.md, browser-verification.md, live-smoke.md)
+│  ├─ guides/                 # 작업 지침 (worktree-workflow.md, browser-verification.md, live-smoke.md, deploy.md — 배포·백업·복원·업데이트)
 │  ├─ superpowers/            # 스펙·구현계획 (specs/, plans/)
 │  └─ adr/                    # 결정 기록 (스파이크 결과마다 한 장; 0001 = Gateway 클라이언트 스파이크)
 ├─ scripts/
@@ -36,6 +42,7 @@ dodok.chat/
 ├─ CLAUDE.md                  # 에이전트 지침 (정본)
 ├─ .mcp.json                  # 프로젝트 MCP — playwright-neo (BrowserOS neo 의 CDP 에 붙는 Playwright)
 ├─ .oxlintrc.json / .oxfmtrc.json
+├─ .dockerignore             # 이미지 빌드 컨텍스트에서 빼는 것 — .env*·data·node_modules·dist·.worktrees·.superpowers·infra/*.env (패턴이 루트 기준이라 **/ 로 하위까지)
 ├─ mise.toml / .npmrc         # Node 24.21.0 · pnpm 11.16.0 핀(openclaw engines >=24.16 <25) · engine-strict
 ├─ package.json / pnpm-workspace.yaml / turbo.json
 └─ .env.example
@@ -77,12 +84,19 @@ src/
 Phase 1 ① 서버 코어 실물(스펙 `docs/superpowers/specs/2026-09-15-server-core-design.md`, 계획 `docs/superpowers/plans/2026-09-15-server-core.md`)에
 Phase 2 ① 승인(스펙 `docs/superpowers/specs/2026-09-20-activity-approvals-design.md`)과 Phase 2 ② 상호작용 기록 하이드레이션
 (스펙 `docs/superpowers/specs/2026-09-21-components-v1-design.md` 4장), Phase 2 ③ 첨부(스펙 `docs/superpowers/specs/2026-09-23-attachments-design.md`, 구현과 달라진 것은 11장),
-Phase 2 ④ 웹 푸시(스펙 `docs/superpowers/specs/2026-09-23-pwa-push-design.md`, 구현과 달라진 것은 11장)가 얹혔다.
+Phase 2 ④ 웹 푸시(스펙 `docs/superpowers/specs/2026-09-23-pwa-push-design.md`, 구현과 달라진 것은 11장)가 얹혔고,
+Phase 3 ① 배포 패키징(스펙 `docs/superpowers/specs/2026-09-24-deploy-packaging-design.md`, 구현과 달라진 것은 12장)이 운영 번들·백업을 더했다.
 한 프로세스 안에 REST·wire·브리지·어댑터가 같이 뜬다. 첨부 바이트는 브리지와 같은 오리진의 HTTP(`/bridge/attachments`)로 오간다.
 
 ```
 src/
-├─ main.ts                프로세스 진입점: cwd 를 저장소 루트로 옮기고 루트 .env 로드(이미 있는 env 는 덮지 않음) → createApp → listen, SIGINT/SIGTERM → close
+├─ main.ts                프로세스 진입점: 소스 실행이면 cwd 를 저장소 루트로 옮기고 루트 .env 로드(이미 있는 env 는 덮지 않음 — 운영 번들은 둘 다 안 한다) →
+│                         DATA_DIR 쓰기 검사(못 쓰면 한 줄 설정 오류로 exit 1) → createApp → listen, SIGINT/SIGTERM → close
+├─ runtime.ts             실행 모드: isBundled(esbuild define __DODOK_BUNDLED__)·migrationsFolder(DODOK_MIGRATIONS_DIR, 없으면 apps/server/drizzle)·
+│                         unwritableDataPath·dataDirErrorMessage(비루트 컨테이너 + 다른 UID 볼륨 → chown 명령이 든 한 줄)
+├─ backup.ts              runBackup: 온라인 백업을 한 번에 전부 복사(읽기 트랜잭션 스냅숏) → <DATA_DIR>/backups/.partial-* 에서 만들고 rename,
+│                         vapid.json·디바이스 아이덴티티 사본(0600), 보관 개수(기본 7, 백업 이름 형식만 센다), 1시간 넘은 .partial-* 정리
+├─ backup-main.ts         백업 CLI(번들 dist/backup.js — `docker compose -f infra/compose.yml exec app node dist/backup.js [--keep N]`), 한 줄 출력·실패 exit 1, SIGINT·SIGTERM 에 자기 .partial-* 삭제
 ├─ app.ts                 createApp: 부팅 순서(DB → 워크스페이스 → 인증·owner → Fastify → Socket.IO → 어댑터 → 서비스 → 라우트 → wire → 부팅 정리 → adapter.connect),
 │                         종료 순서(새 wire 거부 → 푸시 트리거 떼기 → 오케스트레이터 stop → adapter.close → io.close → Fastify → 진행 중 푸시 발송 최대 2s(PUSH_DRAIN_TIMEOUT_MS) → DB, 10s 상한),
 │                         /healthz, Gateway 재접속 60s 알림. VAPID 키를 읽고(주체가 로컬 자리값이면 warn 한 줄) 발송기(`AppDeps.pushSend`, 없으면 webPushSender)를 배선한다
@@ -92,7 +106,7 @@ src/
 ├─ db/
 │  ├─ schema.sqlite.ts    Drizzle 스키마 (계획서 6장 테이블 + agent_sessions + approvals + attachments — 마이그레이션 0003, FK cascade 없음)
 │  ├─ auth-schema.ts      Better Auth 테이블
-│  └─ client.ts           createDb: better-sqlite3 연결 + 마이그레이션(apps/server/drizzle)
+│  └─ client.ts           createDb: better-sqlite3 연결(WAL) + 마이그레이션(runtime.migrationsFolder — 운영 번들은 DODOK_MIGRATIONS_DIR 가 없으면 설정 오류)
 ├─ auth/
 │  ├─ index.ts            Better Auth(이메일 로그인·가입 비활성), 세션 토큰 검증
 │  ├─ owner.ts            부팅 때 owner 보장 — LOCAL_AUTH_TOKEN 이 owner 비밀번호, 바뀌면 기존 세션을 끊는다
@@ -393,6 +407,12 @@ src/
 
 ---
 
+운영 번들 스크립트(`apps/server/scripts/`, Phase 3 ① — 정본은 각 파일 머리 주석):
+- `build.mjs`(`pnpm -F @dodok/server build`) — esbuild 로 `src/main.ts` → `dist/main.js`, `src/backup-main.ts` → `dist/backup.js`(ESM, 소스맵). external 은 `better-sqlite3` 하나, 번들 밖에서 런타임에 찾는 것의 목록 `runtimeDeps`(`better-sqlite3`·`ws`)를 `dist/runtime-deps.json` 으로 쓴다. 배너가 CommonJS 의존성용 `require`·`__filename`·`__dirname` 을 만든다.
+- `prune-runtime-deps.mjs` — `pnpm deploy --prod` 산출물에서 `runtime-deps.json` 이름들의 닫힘(dependencies·optional·peer)만 평평한 `node_modules` 로 옮긴다. `infra/Dockerfile.server` 의 `deploy` 단계와 `bundle-smoke` 가 같은 명령으로 쓴다.
+- `bundle-smoke.mjs`(`pnpm -F @dodok/server bundle:smoke`, build 뒤) — 저장소 밖 임시 디렉터리에 매니페스트 사본으로 `pnpm deploy --prod --legacy --offline` → 가지치기 → 번들을 띄워 ① `/healthz` 200·`/socket.io/socket.io.js` 400 뒤 생존 ② `DODOK_MIGRATIONS_DIR` 없으면 설정 오류 ③ `dist/backup.js` 성공·실패 한 줄을 본다. 원본 워크스페이스 상태는 바꾸지 않고, 중단에도 임시 디렉터리를 지운다.
+- dev:fake 는 `DEV_FAKE_HOST`(기본 `127.0.0.1`)로 리슨 주소를 받는다 — 로컬 검증의 `devfake` 컨테이너가 `0.0.0.0` 을 준다.
+
 ## 3. 런타임 토폴로지
 
 ```
@@ -402,14 +422,15 @@ src/
 ```
 
 - 기본값: 본인이 운영하는 원격 Gateway에 연결(`OPENCLAW_GATEWAY_URL=wss://...`). 플러그인은 그 Gateway에 설치되어 `BRIDGE_PUBLIC_URL`로 우리 서버에 접속한다.
-- 로컬 개발: `docker compose --profile gateway up`이면 Gateway도 함께 기동(A=B). 원격 Gateway의 플러그인을 개발 PC의 브리지에 붙이려면 터널(cloudflared/tailscale 등)로 `BRIDGE_PUBLIC_URL`을 만든다.
+- 배포: `infra/compose.yml` 로 서버 A 에 `app`·`caddy` 를 띄운다(`docs/guides/deploy.md`). Caddy 가 `/api`·`/socket.io`(wire·브리지 WebSocket)·`/bridge/*`(플러그인의 첨부 HTTP)·`/healthz` 를 서버로 넘기고 나머지는 웹 정적이다. Gateway 는 Compose 밖이다(동반 기동 프로필은 뺐다 — 배포 패키징 스펙 결정 5).
+- 로컬 개발: Gateway 는 원격에 붙거나 `openclaw --dev`(`docs/guides/live-smoke.md`). 원격 Gateway의 플러그인을 개발 PC의 브리지에 붙이려면 터널(cloudflared/tailscale 등)로 `BRIDGE_PUBLIC_URL`을 만든다.
 - 응답 정본은 플러그인 경로, WS 경로는 미리보기(델타)·툴 이벤트·승인. `runId`로 dedupe.
 
 ---
 
 ## 4. 환경 변수 (`.env.example`)
 
-정본은 `apps/server/src/config.ts`(zod). 서버는 저장소 루트를 작업 디렉터리로 삼고 루트 `.env` 를 읽는다 — **이미 설정된 환경 변수는 `.env` 가 덮지 않는다**(`process.loadEnvFile`, 실연에서 확인). 빈 값(`KEY=`)은 설정하지 않은 것으로 보고 기본값을 쓴다.
+정본은 `apps/server/src/config.ts`(zod). 소스 실행의 서버는 저장소 루트를 작업 디렉터리로 삼고 루트 `.env` 를 읽는다(운영 번들은 `.env` 파일을 읽지 않고 compose 의 `env_file` 로 받는다 — 배포 값은 `docs/guides/deploy.md` 「설정 — `.env`」) — **이미 설정된 환경 변수는 `.env` 가 덮지 않는다**(`process.loadEnvFile`, 실연에서 확인). 빈 값(`KEY=`)은 설정하지 않은 것으로 보고 기본값을 쓴다.
 
 | 변수 | 기본값 | 뜻 |
 | --- | --- | --- |
@@ -434,10 +455,12 @@ src/
 | `BRIDGE_PUBLIC_URL` | — | 플러그인 계정 설정 `bridgeUrl` 에 적을 공개 주소(정보용 — 서버는 이 값으로 리슨하지 않는다). 예 `wss://dodok.example.com/bridge` |
 | `VAPID_PUBLIC_KEY` · `VAPID_PRIVATE_KEY` | — | 웹 푸시 VAPID 키 쌍 — **둘 다** 있어야 쓴다. 없으면 `<DATA_DIR>/vapid.json` 을 만들어(0600) 쓴다. 키가 바뀌면 모든 기기의 푸시 구독이 무효가 된다. 비밀 키는 로그에서 가린다 |
 | `VAPID_SUBJECT` | `mailto:dodok@localhost` | 푸시 서비스가 연락할 주체 — `mailto:…` 또는 `https://…`. 호스트가 `localhost`·`127.0.0.1`·`*.local` 이면 시작 때 warn(Apple Push 는 `403 BadJwtToken`) — 배포는 실제 연락처로(`docs/guides/live-smoke.md` 14.2) |
+| `DODOK_MIGRATIONS_DIR` | 소스 `apps/server/drizzle` | drizzle 마이그레이션 폴더. 운영 번들은 **필수**(없으면 설정 오류) — 이미지·compose 가 `/app/drizzle` 로 준다 |
+| `DODOK_DOMAIN` | — | **배포 전용**(서버는 읽지 않음) — Caddy 가 인증서를 받을 공개 도메인. compose 변수 치환이라 배포 호스트에 `infra/.env → ../.env` 링크가 필요하다 |
 | `BRIDGE_URL` | — | **스파이크 러너 전용**(서버는 읽지 않음) — 러너가 브리지를 리슨할 오리진(`/bridge` 없음) |
 
 플러그인은 env 가 아니라 Gateway 계정 설정 `channels.dodok.accounts.<id>.bridgeUrl`(오리진 + `/bridge`)로 접속한다(ADR 0002 10절). 서버 쪽 공개 주소는 `BRIDGE_PUBLIC_URL` 하나로 정리됐고, 스파이크의 `BRIDGE_URL` 은 러너 전용으로 남았다.
-웹(`apps/web`)은 `.env` 를 읽지 않는다 — 브라우저에 들어가는 설정이 없다. `vite.config.ts` 가 셸 환경으로 받는 것은 셋이다 — dev 서버의 프록시 대상 `DODOK_API_ORIGIN`(기본 `http://127.0.0.1:3000`), 개발 모드 서비스 워커 `VITE_PWA_DEV=1`(기본 끔), 빌드 식별자 `VITE_BUILD_ID`(기본 빌드 시각 — 오프라인 사본을 버리는 기준). 서버 포트를 바꾸면 `APP_ORIGIN`(서버)·`DODOK_API_ORIGIN`(Vite)·브라우저 주소를 함께 맞춘다 — wire 는 핸드셰이크 `Origin` 이 `APP_ORIGIN` 과 같을 때만 쿠키를 받는다.
+웹(`apps/web`)은 `.env` 를 읽지 않는다 — 브라우저에 들어가는 설정이 없다. `vite.config.ts` 가 셸 환경으로 받는 것은 셋이다 — dev 서버의 프록시 대상 `DODOK_API_ORIGIN`(기본 `http://127.0.0.1:3000`), 개발 모드 서비스 워커 `VITE_PWA_DEV=1`(기본 끔), 빌드 식별자 `VITE_BUILD_ID`(없거나 비면 빌드 시각 — 오프라인 사본을 버리는 기준. 배포 이미지는 compose 의 `DODOK_WEB_BUILD_ID` 를 빌드 인자로 받는다 — `docs/guides/deploy.md` 「기동」). 서버 포트를 바꾸면 `APP_ORIGIN`(서버)·`DODOK_API_ORIGIN`(Vite)·브라우저 주소를 함께 맞춘다 — wire 는 핸드셰이크 `Origin` 이 `APP_ORIGIN` 과 같을 때만 쿠키를 받는다.
 
 Postgres 전환 시 `DB_PATH` 대신 연결 문자열.
 

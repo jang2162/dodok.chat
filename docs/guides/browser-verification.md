@@ -9,6 +9,7 @@
 
 이 저장소의 로컬 앱은 평문 HTTP 다 — 웹은 Vite 개발 서버, API·Socket.IO 는 서버 프로세스이고 주소는 `.env` 가 정한다.
 인증서·자동 로그인 같은 전제가 없으므로 **도구를 고르고 탭을 여는 규칙만 지키면 된다.**
+예외는 배포 이미지를 이 Mac 에 띄운 로컬 검증(`https://localhost:8443`, Caddy 내부 CA)이다 — 아래 「로컬 HTTPS(Compose 8443)를 볼 때」.
 
 ## 이 저장소에서 달라지는 것
 
@@ -26,6 +27,32 @@
 - **워크트리에서 앱을 띄울 때는 최상위와 포트를 갈라라.** 같은 포트를 두 프로세스가 잡으면 뒤에
   뜬 쪽이 죽거나, 브라우저가 어느 인스턴스를 보고 있는지 알 수 없다.
   → [워크트리 작업 흐름](worktree-workflow.md) 「생성 직후 세팅」
+
+## 로컬 HTTPS(Compose 8443)를 볼 때
+
+`docs/guides/deploy.md` 「로컬 검증 (이 Mac)」 으로 띄운 `https://localhost:8443` 은 **Caddy 내부 CA 의 자체 인증서**다. 도구마다 막히는 자리가 다르다.
+
+- ⚠ **Claude-in-Chrome 은 인증서 오류를 넘기지 못한다** — `net::ERR_CERT_AUTHORITY_INVALID` 에서 멈추고 예외를 거는 옵션이 없다.
+- ⚠ **Playwright 의 `ignoreHTTPSErrors` 만으로는 서비스 워커가 등록되지 않는다** — 페이지는 열리지만 SW 스크립트 가져오기가 `An SSL certificate error occurred when fetching the script` 로 거절된다. 브라우저 인자 `--ignore-certificate-errors` 가 있어야 한다.
+- ⚠ **Playwright 의 임시 컨텍스트(`browser.newContext()`)에는 Push API 가 없다** — Chromium 이 임시 프로필을 시크릿으로 취급해 `Chrome currently does not support the Push API in incognito mode` 로 구독이 실패한다. 푸시 켜기까지 보려면 **`launchPersistentContext`** 로 띄운다.
+- neo 로 이 인증서를 넘길 수 있는지는 재지 않았다(neo 의 CDP 는 Playwright `connectOverCDP` 를 `Browser context management is not supported` 로 거절했다). 로그인이 필요 없는 검증이라 독립 브라우저로 한다.
+
+```js
+// playwright-core + 이미 받아 둔 Chromium(Chrome for Testing) — 전역 설치 없이
+import { chromium } from "playwright-core";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const ctx = await chromium.launchPersistentContext(mkdtempSync(join(tmpdir(), "dodok-8443-")), {
+  headless: false, // 알림 권한이 필요하면 headed(창은 화면 밖에 두어도 된다)
+  args: ["--ignore-certificate-errors"],
+  ignoreHTTPSErrors: true,
+  // 실제 FCM 까지 받으려면: ignoreDefaultArgs: ["--disable-background-networking"] — live-smoke.md 「새로 찾은 것 — 실제 FCM 전달의 타이밍 제약」
+});
+```
+
+쓴 뒤에는 컨텍스트를 닫고 임시 디렉터리를 지운다.
 
 ## neo 가 잘 하는 것
 

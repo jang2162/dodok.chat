@@ -1,6 +1,6 @@
-# dodok.chat — 에이전트 네이티브 메신저 개발 계획서 (v0.12)
+# dodok.chat — 에이전트 네이티브 메신저 개발 계획서 (v0.14)
 
-작성일: 2026-09-14 · 상태: v0.13 (2026-09-24) — Phase 2 ④ PWA·푸시 종료(브라우저 16/16·결함 0, 실연 — 런 0회 하네스 7/7 + 모델 런 1회, `docs/guides/live-smoke.md` 14.4). 8장 Phase 2 「PWA」에 완료 표시와 확인 방법, 「이월」을 Phase 2 ④ 종료 시점으로 다시 모음
+작성일: 2026-09-14 · 상태: v0.14 (2026-09-24) — Phase 3 ① 배포 패키징 종료(로컬 Compose 검증 12/12, 테스트 2226 — 실제 서버·도메인·폰은 사람 절차 `docs/guides/deploy.md`). 8장 Phase 3 「Docker Compose 패키징」에 완료 표시와 확인 방법, 「이월」을 Phase 3 ① 종료 시점으로 다시 모음
 
 ### 변경 이력
 
@@ -17,6 +17,7 @@
 | v0.11 | Phase 2 ③ **첨부·이미지 종료**(2026-09-23, 실연은 남음) — 8장 Phase 2 「이미지 첨부」에 완료 표시와 확인 방법(통합 11a~11i · 브라우저 17/17 · 결함 1 고친 뒤 실제 앱 재측정), Phase 2 ② 「`components` v1」 줄의 `artifact://` 자리표시 문장을 지금 동작으로, 「이월」에서 Phase 2 ③ 이 닫은 둘(「`media` 이미지를 크게 볼 수 없다」·「`media`·`file` 문구 비대칭」) 제거, Phase 2 ③ 이 남긴 것 추가(스펙 10장 열린 문제 넷 · 판정 Ruling 1·2 가 틀렸을 때 남는 것 · `artifact://` 이름의 본질적 모호 · 잘린 VP8L · dev:fake 키워드 손 목록·진입점 · 채널 전환 초점 · 플러그인 배선 우회 · 종료를 붙잡는 keep-alive · 사람이 볼 것) |
 | v0.12 | Phase 2 ④ **PWA·푸시 종료**(2026-09-24, 실연은 예정) — 8장 Phase 2 「PWA」에 완료 표시와 확인 방법(통합 12a~12h + 종료 · 브라우저 16/16·결함 0 — 실제 `web-push` → FCM 왕복 포함), 「이월」에 Phase 2 ④ 가 남긴 것 추가(스펙 10장 열린 문제 넷 · 구독 행이 세션과 묶이지 않음 · 가려졌지만 `visible` 인 창 · presence 잔류·상한 · 승인 기억 상한 테스트(p4-t3 리뷰 m2) · 동기화 경로 `userVisibleOnly`(Nit R14b) · 권한 `default` 문구(Nit F1c) · 서버만 죽었을 때 토스트 · 알려진 경고 셋(DEP0169·#912·#928) · 사람이 볼 것), 웹 「`lastSeq` 재구독」 줄에 사본 복원 경로는 닫혔다는 것(R5)과 남은 5분 창 |
 | v0.13 | Phase 2 ④ **실연 완료**(2026-09-24, dev Gateway 2026.9.5) — 8장 「PWA」 완료 줄의 「실연은 아직」을 결과로(런 0회 하네스 7/7 · 모델 런 1회 — 멘션·`finalSource=plugin`·본문 없음 통과, 그 런의 알림 표시는 미확인), 실연이 의심한 「탭을 닫은 뒤 45초 동안 거름」은 p4-c1 측정(17조합)에서 재현되지 않음 — 웹 `pagehide` 에서도 「안 보임」을 보내고 서버는 `LOG_LEVEL=debug` 에서 거름·발송을 한 줄씩 남긴다(`a81e850`·`9fa919b`), 테스트 2185. 「이월」 presence 줄 정정, 새 이월 셋(모델 런 알림 미표시·새 프로필 첫 몇 분의 FCM 누락 · dev:fake 로그 레벨 고정 · bfcache 복귀 `pageshow`) |
+| v0.14 | Phase 3 ① **배포 패키징 종료**(2026-09-24) — 8장 Phase 3 「Docker Compose 패키징」에 완료 표시와 확인 방법(로컬 Compose 검증 12/12 · 번들 스모크 · 테스트 2226), 운영 절차 `docs/guides/deploy.md`. 1.3·2.2·4.5·7장 기술 표·10장 #6 의 「Compose 프로필로 로컬 Gateway 동반 기동(`--profile gateway`)」을 뺐다(배포 패키징 스펙 결정 5), 4.5 에 Caddy 가 여는 `/bridge/*`(플러그인의 첨부 HTTP). 「이월」에서 「`infra/` 가 없는데 두 문서가 있다고 말한다」 제거, Phase 3 ① 이 남긴 것 추가(첨부 상한 초과 문구 F1 · 실제 배포를 사람이 아직 안 따라 함 · 볼륨째 옮기기 미검증 · 백업 이월 셋 · 소스 실행 chdir 검사 · 요청 경로 런타임 해석 · 빌드가 레지스트리에 닿아야 함 · 스펙 11장 열린 문제 · `compose.yml` 머리 주석의 웹 빌드 ID 경로 · neo CDP 와 `.mcp.json` 포트 · PWA 스펙이 가리키는 없는 절), 「실기기 푸시」 줄의 미룬 까닭을 지금 상태로 |
 
 ---
 
@@ -39,7 +40,7 @@
 | OpenClaw 연동 방식 | **하이브리드** — 전용 채널 플러그인(라우팅·UI 컴포넌트·채널 프롬프트) + Gateway WS 클라이언트(토큰 스트리밍·툴 이벤트·승인) |
 | 멀티에이전트 발언 규칙 | **멘션 + 자동 릴레이** — @멘션된 에이전트가 응답, 에이전트가 다른 에이전트를 @멘션하면 앱이 릴레이 (턴 제한·루프 가드) |
 | 기술 스택 / 실행 형태 | **TypeScript 풀스택 + 셀프호스팅** — React(Vite) PWA, Node 백엔드(Fastify + Socket.IO), SQLite→Postgres, Docker Compose |
-| Gateway 배치 | **본인 운영 원격 Gateway에 연결이 기본**. 플러그인은 Gateway 호스트에 설치되어 우리 서버의 브리지로 아웃바운드 WSS 접속. 로컬 개발용 Compose 프로필로 동반 기동도 지원 |
+| Gateway 배치 | **본인 운영 원격 Gateway에 연결이 기본**. 플러그인은 Gateway 호스트에 설치되어 우리 서버의 브리지로 아웃바운드 WSS 접속. 로컬 개발은 `openclaw --dev`(Compose 동반 기동 프로필은 뺐다 — 배포 패키징 스펙 결정 5) |
 | 버전 정책 | `@openclaw/gateway-client`·`@openclaw/gateway-protocol`·`openclaw`(플러그인 SDK)를 **Gateway와 같은 버전으로 정확히 핀**. 시작 버전 2026.9.4, 프로토콜 v4 |
 | 산출물 | 마크다운 계획서 (본 문서) + 구성 가이드(`docs/project-structure.md`), 저장소에 저장 |
 
@@ -66,7 +67,7 @@
 
 ### 2.2 비기능 요구사항
 
-- **셀프호스팅 우선**: 메신저 서버(API + 웹 정적 + Caddy)는 Docker Compose로 기동한다. OpenClaw Gateway는 기본적으로 **별도 호스트에서 본인이 운영하는 원격 Gateway**에 `wss://`로 연결하고, 우리 채널 플러그인은 그 Gateway 호스트에 설치되어 우리 서버의 브리지 엔드포인트로 **아웃바운드 WSS** 접속한다. 따라서 서버의 브리지·웹·API는 리버스 프록시(TLS)로 외부에 노출되어야 한다. 로컬 개발·데모용으로 Compose 프로필에서 Gateway를 동반 기동하는 옵션도 둔다.
+- **셀프호스팅 우선**: 메신저 서버(API + 웹 정적 + Caddy)는 Docker Compose로 기동한다. OpenClaw Gateway는 기본적으로 **별도 호스트에서 본인이 운영하는 원격 Gateway**에 `wss://`로 연결하고, 우리 채널 플러그인은 그 Gateway 호스트에 설치되어 우리 서버의 브리지 엔드포인트로 **아웃바운드 WSS** 접속한다. 따라서 서버의 브리지·웹·API는 리버스 프록시(TLS)로 외부에 노출되어야 한다. Gateway 를 Compose 로 동반 기동하는 옵션은 두지 않는다(배포 패키징 스펙 결정 5 — 개발은 `openclaw --dev`).
 - **오프라인 내성**: PWA로 최근 채널 캐시, 재접속 시 `chat.history` 델타 커서로 복구.
 - **확장 가능한 인증**: MVP는 단일 사용자(로컬 토큰), 이후 OIDC/이메일 로그인 추가 가능하도록 `users`/`memberships` 테이블 선반영.
 - **관측성**: 에이전트 런(run) 단위로 이벤트를 저장해 사후 재생(replay) 가능.
@@ -212,11 +213,11 @@ flowchart LR
 
 | 구성 요소 | 위치 | 노출 |
 | --- | --- | --- |
-| dodok 서버(API·Socket.IO·브리지)·웹 정적·Caddy | 본인 서버 A (Docker Compose) | Caddy가 TLS로 `/`(웹), `/api`, `/socket.io` 노출(브리지는 Socket.IO 네임스페이스 `/bridge` 라 `/socket.io` 하나로 충분 — ADR 0002) |
+| dodok 서버(API·Socket.IO·브리지)·웹 정적·Caddy | 본인 서버 A (Docker Compose — `infra/compose.yml`) | Caddy가 TLS로 `/`(웹), `/api`, `/socket.io`, `/bridge/*` 노출. 브리지 WebSocket 은 Socket.IO 네임스페이스 `/bridge` 라 `/socket.io` 로 지나고(ADR 0002), `/bridge/*` 는 플러그인의 첨부 HTTP(`/bridge/attachments`)다. 호스트에 여는 포트는 Caddy 80·443 뿐 |
 | OpenClaw Gateway + dodok 플러그인 + 에이전트 | 본인 서버 B (원격, 이미 운영 중) | 우리 서버가 `wss://`로 접속. 플러그인은 `/bridge`로 아웃바운드 접속. 추가 인바운드 포트 불필요 |
-| 로컬 개발 | 개발 PC | 서버는 `pnpm dev`. Gateway는 원격에 붙거나 Compose `--profile gateway`로 로컬 기동. 원격 플러그인이 개발 PC의 브리지에 붙어야 할 때는 터널(cloudflared/tailscale 등)로 `BRIDGE_PUBLIC_URL`을 만든다 |
+| 로컬 개발 | 개발 PC | 서버는 `pnpm -F @dodok/server dev`. Gateway는 원격에 붙거나 `openclaw --dev`로 로컬 기동(Compose 동반 기동 `--profile gateway` 는 뺐다 — 배포 패키징 스펙 결정 5). 원격 플러그인이 개발 PC의 브리지에 붙어야 할 때는 터널(cloudflared/tailscale 등)로 `BRIDGE_PUBLIC_URL`을 만든다 |
 
-A와 B가 같은 호스트여도 되며, 그 경우 Compose 프로필 하나로 함께 띄운다.
+A와 B가 같은 호스트여도 된다 — Gateway 는 Compose 밖에서 따로 돈다. 배포 절차는 `docs/guides/deploy.md`.
 
 ---
 
@@ -364,7 +365,7 @@ SQLite(WAL)로 시작, Drizzle ORM으로 스키마 정의해 Postgres 전환 시
 | DB | SQLite(better-sqlite3) → Postgres, Drizzle ORM | 개인→팀 전환 경로 |
 | OpenClaw | `@openclaw/gateway-client`, `@openclaw/gateway-protocol`, `openclaw`(plugin-sdk) — **2026.9.4 정확 핀, Gateway와 동일 버전** | 공식 경로 |
 | 모노레포 | pnpm workspaces + Turborepo: `apps/web`, `apps/server`, `packages/shared`(타입·컴포넌트 스키마·이벤트·wire 계약), `packages/openclaw-plugin`, `packages/openclaw-adapter`. npm 스코프 `@dodok/*` | 스키마 단일 소스 |
-| 배포 | Docker Compose(서버 + 웹 정적 + Caddy; `--profile gateway`로 로컬 Gateway 동반 기동), 기본은 원격 Gateway 연결 | 셀프호스팅 |
+| 배포 | Docker Compose(서버 번들 + 웹 정적 + Caddy 자동 HTTPS — `infra/compose.yml`, 배포 호스트에서 소스로 빌드), 기본은 원격 Gateway 연결. 로컬 Gateway 동반 기동(`--profile gateway`)은 뺐다(배포 패키징 스펙 결정 5) | 셀프호스팅 |
 | 테스트 | Vitest, Playwright(E2E), `protocol.schema.json` 기반 계약 테스트 | |
 
 ### 7.1 오픈소스 활용 맵 — 직접 만들지 않을 것
@@ -472,7 +473,10 @@ SQLite(WAL)로 시작, Drizzle ORM으로 스키마 정의해 Postgres 전환 시
 
 ### Phase 3 — 안정화·개인용 릴리스 (1~2주)
 
-- Docker Compose 패키징, 설정 마법사(Gateway URL·토큰·페어링·**플러그인 설치 안내와 브리지 URL/토큰 발급**).
+- Docker Compose 패키징 → **완료**(2026-09-24, 로컬 Compose 검증까지 — 실제 서버·도메인·폰은 사람 절차) — 스펙 `docs/superpowers/specs/2026-09-24-deploy-packaging-design.md`(구현과 달라진 것은 12장), 계획 `docs/superpowers/plans/2026-09-24-deploy-packaging.md`(태스크 1~5), 운영 절차 `docs/guides/deploy.md`.
+  `infra/` 에 이미지 둘(서버 esbuild 번들 + 번들이 런타임에 찾는 의존성의 닫힘만 든 `node_modules` / 웹 정적을 구운 Caddy 2.11.4)·`compose.yml`(서비스 `app`·`caddy`, 호스트에 여는 포트는 Caddy 80·443 뿐)·`Caddyfile`(자동 HTTPS·SPA 폴백·캐시·보안 헤더·본문 상한 32 MB)·로컬 검증 겹침 `compose.local.yml`(`127.0.0.1:8443`, devfake 프로필)·`check-caddy.sh` 가 있다. 설정은 루트 `.env` 하나(`infra/.env` 링크로 compose 치환까지), 데이터는 볼륨 `dodok-data` 하나, 백업은 `docker compose -f infra/compose.yml exec app node dist/backup.js [--keep N]`(온라인 — 서버를 멈추지 않는다). 로컬 Gateway 동반 기동(`--profile gateway`)은 뺐다(스펙 결정 5).
+  **확인 방법**: 로컬 Compose 검증(계획 태스크 4 — 이 Mac) 합격 기준 **12/12**·Review Focus 1~5 통과 — 이미지 안 `.env`·TS 0, `app` 포트 미노출, `check-caddy.sh` 전부 PASS, devfake 로 스트리밍·카드·승인이 Caddy 를 지나고 첨부 업로드·다운로드 sha256 일치, 서비스 워커·매니페스트·실제 FCM 구독, `down`/`up` 뒤 데이터·`vapid.json` 유지, 쓰는 중 백업 → 복원(WAL·SHM 을 안 지우면 조용히 무효 — 66→70 재현), `X-Forwarded-For` 위조로 레이트리밋 우회 불가, 볼륨 권한 오류 한 줄, 로그·이미지 시크릿 0. 결함 1(F1 — 첨부 상한 초과 문구, 아래 「이월」). 번들은 `pnpm -F @dodok/server bundle:smoke`(prod 격리 배치에서 부팅·설정 오류·백업). 테스트 2226(shared 113·plugin 108·adapter 206·server 698·web 1101). 남은 것은 아래 「이월」의 「배포 패키징(Phase 3 ①)」.
+- 설정 마법사(Gateway URL·토큰·페어링·**플러그인 설치 안내와 브리지 URL/토큰 발급**).
 - 에러/재시도·레이트리밋·비용 상한, 로그·메트릭.
 - 문서화(설치, 에이전트 프롬프트 가이드 — components 사용법 포함).
 
@@ -483,12 +487,13 @@ SQLite(WAL)로 시작, Drizzle ORM으로 스키마 정의해 Postgres 전환 시
 - 앱: Tauri 데스크톱(트레이·알림), Capacitor 모바일 또는 네이티브.
 - 스레드, 검색, 에이전트 내부 위임 결과 요약 게시, 채널 템플릿.
 
-### 이월 — 남은 문제(Phase 2 ④ 종료 시점, 2026-09-24)
+### 이월 — 남은 문제(Phase 3 ① 배포 패키징 종료 시점, 2026-09-24)
 
-Phase 1 ①·② 와 Phase 2 ①·②·③·④ 를 돌면서 「고치지 않고 알고 넘긴 것」을 한곳에 모았다. 상세 근거는 각 줄에 적은 문서에 있다. 위 Phase 2·3 항목과 겹치면 그쪽을 가리킨다.
+Phase 1 ①·②, Phase 2 ①·②·③·④, Phase 3 ① 을 돌면서 「고치지 않고 알고 넘긴 것」을 한곳에 모았다. 상세 근거는 각 줄에 적은 문서에 있다. 위 Phase 2·3 항목과 겹치면 그쪽을 가리킨다.
 Phase 1 이 남긴 아홉(서버 넷·웹 넷·`wire-cli` typecheck)은 Phase 2 ① 태스크 0·1 에서, Phase 2 ① 이 남긴 초점·타이머 셋(D6 카운트다운 어긋남 · 자리값 소요가 계속 흐름 · 넓은 화면 「설정 닫기」 초점)은 Phase 2 ② 태스크 8 에서 정리해 지웠다.
 Phase 2 ② 가 남긴 「`media` 이미지를 크게 볼 수 없다」·「`media`·`file` 문구 비대칭」은 Phase 2 ③ 이 닫아 지웠다(크게 보기 `ImageViewer`, 세 블록이 해석기 하나로 「첨부를 찾을 수 없습니다」·「열 수 없는 링크입니다」를 같이 쓴다).
-Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-components-v1/`, Phase 2 ③ 의 출처(a3-t*·a3-c*)는 `.superpowers/sdd/2026-09-23-attachments/`, Phase 2 ④ 의 출처(p4-t*·판정 R1~R8)는 `.superpowers/sdd/2026-09-23-pwa-push/`(셋 다 git 제외)의 리뷰·보고서·원장이다.
+Phase 2 ② 가 남긴 「`infra/` 가 없는데 두 문서가 있다고 말한다」는 Phase 3 ① 이 `infra/` 를 만들고 `docs/project-structure.md` 를 고쳐 지웠다(`CLAUDE.md` 「명령」 줄은 조율자가 고친다).
+Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-components-v1/`, Phase 2 ③ 의 출처(a3-t*·a3-c*)는 `.superpowers/sdd/2026-09-23-attachments/`, Phase 2 ④ 의 출처(p4-t*·판정 R1~R8)는 `.superpowers/sdd/2026-09-23-pwa-push/`, Phase 3 ① 의 출처(d1-t*·판정 R1~R7)는 `.superpowers/sdd/2026-09-24-deploy-packaging/`(넷 다 git 제외)의 리뷰·보고서·원장이다.
 
 **components 계약·서버(Phase 2 ②)**
 
@@ -549,7 +554,9 @@ Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-comp
 
 **문서**
 
-- **`infra/` 가 없는데 두 문서가 있다고 말한다** — `docs/project-structure.md` 1장 트리의 `infra/`(`docker-compose.yml`·`caddy/Caddyfile`)와 `CLAUDE.md` 「명령」의 `docker compose -f infra/docker-compose.yml up [--profile gateway]` 는 지금 없는 경로다(`git ls-files infra` 0줄, 이력 `git log --all -- infra` 0건) — 그 명령은 돌리면 실패한다. 출처: c2-t10 보고서 걱정 2, c2-t10 리뷰 C.2. 미룬 까닭: Phase 2 ② 가 만든 거짓이 아니고, 채울 일은 위 Phase 3 「Docker Compose 패키징」이다. 그때까지 두 자리에 「(Phase 3, 아직 없음)」을 달지는 그 문서들을 만지는 사람이 정한다.
+- **`infra/compose.yml` 머리 주석의 웹 빌드 ID 경로가 셋뿐이다** — 머리의 실행 줄은 `git log -1 --format=%h -- apps/web packages/shared pnpm-lock.yaml` 인데, `docs/guides/deploy.md`·배포 패키징 스펙 12장(판정 R7)은 루트 입력(`tsconfig.base.json`·`package.json`·`pnpm-workspace.yaml`)과 `infra/Dockerfile.web` 까지 일곱이다. 루트 입력만 바뀐 커밋이면 머리 주석대로 띄운 배포는 웹 산출물이 바뀌었는데 ID 가 그대로라 클라이언트가 옛 오프라인 사본을 쓴다. 출처: d1-t5 보고서(원장 R7 보탬). 미룬 까닭: 코드 파일이라 문서 태스크 범위 밖 — 한 줄 고침(`infra/compose.yml` 머리 주석을 deploy.md 명령과 같게).
+- **neo 의 CDP 에 Playwright 가 안 붙고, `.mcp.json` 의 포트가 neo 설정과 다르다** — `.mcp.json` 의 `playwright-neo` 는 9110 을 가리키는데 이 머신 neo 설정의 `ports.cdp` 는 9111 이고(9110 닫힘), 9111 은 `connectOverCDP` 를 `Browser.setDownloadBehavior: Browser context management is not supported` 로 거절했다. `docs/guideline/browseros-neo/02-playwright.md` 「Playwright 를 neo 에 붙일 때」 의 예가 이 neo 에서는 안 된다. 출처: d1-t3 보고서 걱정. 미룬 까닭: 지침 문서는 문서 저장소 사본이고 `.mcp.json` 은 설정이라 이 배치 범위 밖 — 넣을 문장은 d1-t3 보고서 걱정 2.
+- **PWA 스펙이 없는 절을 가리킨다** — `docs/superpowers/specs/2026-09-23-pwa-push-design.md` 11장 R4 줄의 「`docs/guides/browser-verification.md`「PWA·서비스 워커를 볼 때」」는 그 문서에 없는 절이다(개발 SW·preview 절차는 `docs/guides/live-smoke.md` 「푸시 확인 절차 (`dev:fake`, 모델 런 0회)」에 있다). 출처: d1-t5 가 인용을 대조하다 찾음. 미룬 까닭: 이력 문서(스펙)라 가리키는 곳만 바꾸면 된다 — 낮음.
 
 **플러그인·OpenClaw 버전(2026-09-23, components 실연 결함 1 뒤)** — 결함 1(모델 런의 `message` 툴 「bridge is not running」)은 2026.9.5 의 번들 이중 평가가 원인이었고 전역 레지스트리로 고쳤고 **실물에서 확인했다**(c2-t16, 모델 런 0회 — `live-smoke.md` 11.3·12절, `docs/adr/0004-plugin-global-registry.md`). 출처는 c2-t14 원인 가르기(모델 런 0회)·c2-t15 구현, 실물 확인 절차는 `docs/guides/live-smoke.md` 11절.
 
@@ -591,7 +598,7 @@ Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-comp
 
 **PWA·푸시(Phase 2 ④, 2026-09-24)** — 스펙 `docs/superpowers/specs/2026-09-23-pwa-push-design.md` 10장(열린 문제)·11장(구현과 맞춘 것). 아래 출처의 보고서·리뷰(p4-t*)와 원장은 `.superpowers/sdd/2026-09-23-pwa-push/`(git 제외)에 있다.
 
-- **실기기(iOS 16.4+ 홈 화면 PWA·안드로이드 Chrome) 푸시를 안 봤다** — 이번 확인은 데스크톱 Chromium(Google Chrome for Testing)이다. 출처: 스펙 결정 5·10장. 미룬 까닭: 푸시·서비스 워커는 보안 출처에서만 돌고, 실기기에는 HTTPS 배포(위 Phase 3 「Docker Compose 패키징」)가 필요하다. 그때 `VAPID_SUBJECT` 를 실제 연락처로 둔다(Apple 은 로컬 주체를 `403 BadJwtToken` 으로 거부 — `docs/guides/live-smoke.md` 14.2).
+- **실기기(iOS 16.4+ 홈 화면 PWA·안드로이드 Chrome) 푸시를 안 봤다** — 이번 확인은 데스크톱 Chromium(Google Chrome for Testing)이다. 출처: 스펙 결정 5·10장. 미룬 까닭: 푸시·서비스 워커는 보안 출처에서만 돌고, 실기기에는 HTTPS 배포가 필요하다 — 그 패키징(위 Phase 3 「Docker Compose 패키징」)은 끝났고, 사람이 `docs/guides/deploy.md` 체크리스트 6을 한 번 따라 하고 그 문서 「사람이 한 번 따라 한 결과」에 적으면 닫힌다. 그때 `VAPID_SUBJECT` 를 실제 연락처로 둔다(Apple 은 로컬 주체를 `403 BadJwtToken` 으로 거부 — `docs/guides/live-smoke.md` 14.2).
 - **iOS 는 오래 안 쓴 설치 PWA 의 저장소를 지울 수 있다** — 오프라인 사본이 사라질 수 있다. 출처: 스펙 10장. 미룬 까닭: 플랫폼 정책이라 앱이 막을 수 없고, 사본이 없으면 지금처럼 오류 화면이다(스펙 7장).
 - **푸시 서비스로 가는 메타데이터(언제·몇 번)는 드러난다** — 페이로드는 암호화되고 누가·어디·무엇만 싣지만, 발송 시각과 횟수는 FCM·APNs 가 본다. 출처: 스펙 10장. 미룬 까닭: 웹 푸시의 구조다. 줄이려면 알림 종류를 끄는 설정(스펙 1장 「후속」)이 먼저다.
 - **presence 가 틀리는 두 방향** — ① 서버 재시작 직후 presence 가 빈 몇 초 동안은 보고 있어도 푸시가 간다(스펙 10장). ② 네트워크 단절·절전처럼 연결이 닫히지 않고 끊긴 탭의 소켓은 socket.io ping 제한(25초+20초)까지 presence 에 남아, 그동안 그 채널 푸시가 과하게 걸러진다. 탭 닫기·하드 이동은 해당하지 않는다 — p4-c1 이 닫기 방식 다섯·프록시 경유/직접 17조합을 재 보니 서버 disconnect 가 9~590ms 안에 왔고 그 전에 `visible:false` 가 먼저 도착했다(실연 p4-t9 가 본 「45초 억제」는 서버 로그 없이 도착 여부로만 본 것이라 GCM 연결 지연과 섞였다 — `docs/guides/live-smoke.md` 14.4.3-B 정정). p4-t7 「확인됨」 2 는 강제 종료된 스크립트의 브라우저 페이지가 떠 있던 것. 또 서버는 `presence.update` 의 `channelId` 를 검증하지 않고 사용자당 소켓 수 상한도 없다(p4-t3 보고서 걱정 — 남의 채널 id 는 자기 알림을 덜 받게 할 뿐이고, 끊김마다 지워 새지는 않는다). 미룬 까닭: 모두 몇 초~수십 초의 틈이거나 자기 자신에게만 닿는다. presence 를 저장하거나 ping 을 줄이는 것은 비용이 이득보다 크다.
@@ -609,6 +616,18 @@ Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-comp
 - **`pickClient` 의 순서 변이(포커스를 보임보다 앞에)가 살아남는다** — `apps/web/src/pwa/sw-logic.ts` 의 `pickClient` 에서 「포커스만」 가지를 「보이기만」 가지보다 앞에 둬도 테스트가 초록이다. 출처: p4-t5 재리뷰 끝 줄(변이 R8 — 판정 R8 과 다른 이름), p4-t8 리뷰 「빠진 것」. 미룬 까닭: 포커스가 있으면서 안 보이는 창은 실제로 드물어 사실상 동치로 넘겼다(낮음).
 - **서비스 워커의 `SKIP_WAITING` 조건에 자동 테스트가 없다** — `apps/web/src/sw.ts` 의 메시지 처리(「새로고침」을 누를 때만 `skipWaiting`, 스펙 결정 7)는 브라우저로 올바른 코드의 동작만 봤다. 앱이 누르기 전에는 메시지를 보내지 않아, 조건을 지운 변이는 브라우저로도 구별되지 않는다. 출처: p4-t1b 리뷰 「못 잰 것」 3, p4-t8 리뷰 「빠진 것」. 미룬 까닭: 순수 판정을 `sw-logic.ts` 로 빼면 단위 테스트가 되지만 한 줄 조건이라 미뤘다(낮음).
 - **알려진 경고 셋(결함 아님, 고치지 않는다)** — 웹 빌드 `inlineDynamicImports option is deprecated`(vite-plugin-pwa#912)·`[baseline-browser-mapping] … over two months old`(#928), 서버 `url.parse()` 폐기 경고 DEP0169(web-push 3.6.7 내부, Node 24). 출처: 계획 Global Constraints·Self-Review 「실행 전 이슈 확인」. 미룬 까닭: 동작 영향이 없고, web-push 는 upstream main 에만 고침이 있고 3년째 릴리스가 없다(web-push#978). 의존성은 정확 핀으로 둔다(vite-plugin-pwa#933 — 메인테이너가 workbox 포크를 준비 중).
+
+**배포 패키징(Phase 3 ①, 2026-09-24)** — 스펙 `docs/superpowers/specs/2026-09-24-deploy-packaging-design.md` 11장(열린 문제)·12장(구현과 맞춘 것), 운영 절차 `docs/guides/deploy.md`. 아래 출처의 보고서·리뷰(d1-t*)와 원장은 `.superpowers/sdd/2026-09-24-deploy-packaging/`(git 제외)에 있다.
+
+- **실제 서버·도메인·폰으로 배포를 한 번도 안 했다** — 자동 검증은 이 Mac 의 로컬 Compose(`https://localhost:8443`, Caddy 내부 CA)까지다(스펙 결정 6). Let's Encrypt 발급, 원격 Gateway 페어링·`gatewayVersion`, 원격 플러그인의 `wss://<도메인>/bridge` 접속과 첨부 HTTP, iOS·안드로이드 푸시는 아직 실물로 안 봤다. 출처: 스펙 결정 6·10장. 미룬 까닭: 외부 서버·DNS·인증서는 되돌리기 어렵고 바깥에 드러나 사람 절차로 정했다 — `docs/guides/deploy.md` 체크리스트를 따라 하고 「사람이 한 번 따라 한 결과」 표를 채운다.
+- **「볼륨째 옮기기」 명령은 돌려 보지 않았다** — `docs/guides/deploy.md` 「볼륨째 옮기기(첨부 포함)」의 `tar` 두 줄(앱 이미지의 `tar`, `-u 0`, 풀고 나서 `chown`). 출처: d1-t5(문서만 쓴 명령). 미룬 까닭: 백업·복원은 로컬 검증이 쟀고, 이것은 호스트를 옮길 때만 쓴다 — 처음 쓰는 사람이 결과 절에 적는다.
+- **첨부 상한을 넘는 업로드가 첨부 서비스의 고정 문구가 아니라 Fastify 의 일반 문구로 거절된다(F1)** — 20 MiB 를 넘는 브리지 업로드(`POST /bridge/attachments`)는 413 `{"code":"VALIDATION","message":"Request body is too large"}` 이고 `maxBytes` 도 없다. 라우트 `bodyLimit`(`apps/server/src/modules/attachments/routes.ts` 의 두 `bodyLimit`)이 앱 상한과 같아 Fastify 의 body-too-large 가 핸들러보다 먼저 나고, `service.ts` 의 「크기 상한을 넘는다」 검사는 정상 HTTP 로는 닿지 않는다. 사람 경로(5 MiB)도 코드 꼴이 같아 같을 것으로 보이나 재현하지 않았다. 스펙 5장 「업로드가 Caddy 상한을 넘음」 줄이 절반만 맞다(JSON 은 맞고 문구가 다르다). 출처: d1-t4 보고서 F1(조율자 판정 낮음). 미룬 까닭: 웹(`upload.ts` — 올리기 전 검사)·플러그인(`outbound-media.ts` — 상태 413 으로 자기 문구)이 자기 문구를 내 사용자 영향이 없고 Phase 2 ③ 부터의 동작이다. 고치려면 `bodyLimit` 을 상한보다 크게 두거나 오류 처리기에서 `FST_ERR_CTP_BODY_TOO_LARGE` 를 첨부 문구로 다시 씌운다.
+- **백업의 낮은 셋** — ① 원본 DB 가 잠겨(`SQLITE_BUSY`) 실패하면 사유 문구가 원인 대신 뒤따른 `chmod` 의 `ENOENT` 로 나온다(실패는 exit 1 로 드러난다 — 조용하지 않다). ② 같은 밀리초에 백업 둘이 돌면 rename 이 경쟁해 한쪽이 `ENOTEMPTY` 로 실패한다(시끄럽게 실패). ③ 오래된 `.partial-*` 정리가 한 시간 넘은 **진짜** 백업까지 고르게 바꿔도 테스트가 초록이다(변이 M13 — 지금 코드는 `.partial-` 접두어로 정확히 고른다). 출처: d1-t2 재리뷰, 원장 「Task 2」 이월. 미룬 까닭: 셋 다 조용한 데이터 손실이 아니고, 백업은 사람·cron 이 하루 한 번 돌린다.
+- **소스 실행의 cwd 옮기기(`main.ts` 의 `process.chdir`)에 자동 검사가 없다** — 번들이 아닐 때만 저장소 루트로 옮기고 `.env` 를 읽는데, 이 가지를 깨도 테스트는 초록이다. 출처: d1-t1 리뷰 M5(판정 R2 에서 이월). 미룬 까닭: 낮음 — `pnpm -F @dodok/server dev` 를 띄우면 바로 보인다.
+- **요청 경로 안의 런타임 모듈 해석은 번들 스모크가 못 잡는다** — `bundle:smoke` 는 가지치기한 운영 배치에서 **부팅 경로**만 돈다. 의존성을 올린 뒤 요청을 처리하다 번들 밖 `node_modules` 를 찾는 코드가 생기면 운영에서만 그 요청이 죽는다. 다시 재는 법은 `apps/server/scripts/build.mjs` 머리 주석(비내장 `require`·`import`·`createRequire`·`.resolve(` 전수). 배너의 `__filename`·`__dirname` 두 줄도 검사가 없다(방어일 뿐 — 지워도 스모크는 초록). 출처: d1-t1·d1-t3 보고서. 미룬 까닭: 실행 없이 번들 전체를 판정하는 도구가 없다 — 의존성을 올리는 작업의 확인 항목으로 둔다.
+- **이미지 빌드가 npm 레지스트리에 닿아야 하고, 어느 파일이 바뀌어도 다시 빌드한다** — `pnpm deploy --prod --legacy` 는 Docker 안에서 `--offline` 을 못 쓴다(`ERR_PNPM_NO_OFFLINE_META`). 두 Dockerfile 모두 `COPY . .` 뒤라 문서 한 줄만 바뀌어도 서버·웹 빌드를 다시 한다(웹 산출물은 R7 로 같게 나온다). 출처: d1-t3 보고서 걱정. 미룬 까닭: 개인 배포 규모에서 받아들였다. BuildKit 캐시 마운트는 buildx 없는 Docker 에서 깨진다(`infra/Dockerfile.server` 주석).
+- **CSP 가 없다** — Report-Only 측정에서 위반은 번들이 꽂는 인라인 `<style>` 과 zod 의 `Function("")` 기능 탐지 둘뿐이었다. 넣으려면 `style-src 'self' 'unsafe-inline'`(또는 에디터 CSS 주입을 끄고 해시)이 필요하고, `worker-src` 는 로컬 CA 때문에 못 쟀다. 출처: 스펙 11장·12장, d1-t3 보고서 실측 판정 9. 미룬 까닭: 실측 없이 켜면 앱이 깨질 위험이 더 크다(계획 Self-Review) — 실제 도메인(공인 인증서)에서 서비스 워커까지 재고 정한다.
+- **스펙 11장 열린 문제 넷** — 이미지 레지스트리·자동 빌드(CI), Postgres 전환, 백업을 다른 호스트·오브젝트 저장소로 보내기(지금 백업은 같은 볼륨 안이라 호스트와 함께 잃는다 — `docs/guides/deploy.md` 「백업」의 `compose cp` 로 꺼내는 것은 사람 몫), Gateway 버전 드리프트 감지(서버 로그 `gatewayVersion` 과 핀 비교 경고 — Phase 3 ③ 운영 보강 후보). 출처: 스펙 11장. 미룬 까닭: 개인용 한 호스트 배포에 아직 필요 없다.
 
 **실물 확인**
 
@@ -647,7 +666,7 @@ Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-comp
 | 3 | OpenClaw 세션 키 단위 | **채널당 에이전트별 1세션** `agent:<agentId>:dodok:channel:<channelId>`, 스레드는 후속 하위 세션. 상세 5.8 | 2026-09-14 |
 | 4 | 자동 응답 에이전트 | 채널당 1개 허용, 기본값은 꺼짐 | 2026-09-14 |
 | 5 | PWA 푸시 알림 | MVP 포함 — 멘션·승인 요청·릴레이 한도 도달 시 발송 | 2026-09-14 |
-| 6 | Gateway 호스팅 관계 | **본인 운영 원격 Gateway 연결이 기본**. 플러그인은 Gateway 호스트에 설치되어 우리 서버 브리지로 아웃바운드 WSS 접속. Compose 프로필로 로컬 동반 기동 옵션 제공 | 2026-09-14 (v0.4 변경) |
+| 6 | Gateway 호스팅 관계 | **본인 운영 원격 Gateway 연결이 기본**. 플러그인은 Gateway 호스트에 설치되어 우리 서버 브리지로 아웃바운드 WSS 접속. Compose 동반 기동 옵션은 뺐다(배포 패키징 스펙 결정 5, 2026-09-24) | 2026-09-14 (v0.4 변경) |
 | 7 | 프로젝트·플러그인 이름 | **`dodok`** — 저장소 dodok.chat, npm 스코프 `@dodok/*`, 플러그인 id `dodok`, 설정 키 `channels.dodok.*`, 세션 키의 채널 세그먼트 `dodok` | 2026-09-14 (v0.4) |
 | 8 | OpenClaw 버전 정책 | 세 패키지를 **배포 Gateway와 같은 버전으로 정확 핀**. 시작은 2026.9.4(Gateway 업그레이드 후). 프로토콜 v4. 업그레이드는 Gateway와 같은 PR에서 | 2026-09-14 (v0.4) |
 | 9 | 실시간 전송 | **Socket.IO** (채널 = 룸, ack, 자동 재연결). `ws` 직접 구현은 채택하지 않음 | 2026-09-14 (v0.4) |

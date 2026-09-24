@@ -1,6 +1,6 @@
 # Phase 3 ① 배포 패키징 설계
 
-**상태**: 설계 확정(2026-09-24)
+**상태**: 설계 확정(2026-09-24), 구현·로컬 Compose 검증 완료(2026-09-24 — 계획 태스크 1~5, 검증 12/12, 테스트 2226) — 구현이 이 설계와 달라진 것은 12장. 실제 서버·도메인·폰은 사람 절차(`docs/guides/deploy.md` 「사람이 한 번 따라 한 결과」)
 **범위**: Docker Compose 로 dodok 서버·웹을 한 호스트에 올린다. Caddy 가 공개 도메인에 자동 HTTPS 를 붙인다. 데이터 볼륨·백업·복원·업데이트, 원격 Gateway·플러그인 연결 절차(사람), 이 Mac 에서의 로컬 검증까지 다룬다.
 **앞선 근거**:
 - 계획서 `docs/plan.md` 4.5(배포 토폴로지)·8장 Phase 3 「Docker Compose 패키징」, 기술 표 「배포」
@@ -216,3 +216,62 @@ docs/guides/deploy.md
 - 백업을 다른 호스트·오브젝트 저장소로 보내기 — 사람 cron 몫.
 - CSP — 2.3·6장, 계획이 넣지 못하면 여기 남는다.
 - Gateway 버전 드리프트 감지(서버 로그 `gatewayVersion` 과 핀 비교 경고) — ③ 운영 보강 후보.
+
+---
+
+## 12. 구현과 맞춘 것 (2026-09-24)
+
+구현(계획 태스크 1~3)·리뷰·로컬 Compose 검증(태스크 4)과 그 수정 라운드에서 이 설계와 달라진 것만 모았다. main `bb2b5bb` 기준이다.
+정본 근거는 실행 원장 `.superpowers/sdd/2026-09-24-deploy-packaging/ledger.md`(git 제외)의 판정 R1~R7 과, 원장이 가리키는 보고서·리뷰(`d1-t*`)다. 보고서의 커밋 해시는 워크트리 것이라 main 에서는 다르다 — 아래 해시는 main 의 것이다.
+운영 절차는 `docs/guides/deploy.md`, 남은 문제는 `docs/plan.md` 8장 「이월」 한곳에 있다. 각 파일이 왜 그렇게 생겼는지는 그 파일의 머리 주석이 정본이다.
+
+**계획이 정한 셋**(계획 Self-Review 「스펙과 다르게 정한 것」)
+
+- **로컬 검증의 에이전트 경로는 dev:fake 를 별도 빌드 타깃으로 돌린다**(9장이 계획에 맡긴 선택). `infra/Dockerfile.server` 의 `devfake` 단계(`build` 를 잇고 플러그인 소스까지 더 설치)와 `infra/compose.local.yml` 의 `devfake` 프로필이다 — 운영 이미지(`runtime`)에는 개발 진입점이 없다. dev:fake 는 `DEV_FAKE_HOST`(없거나 비면 `127.0.0.1`)로 리슨 주소를 받는다(`a772ca9`) — 컨테이너 안에서 Caddy 가 닿게 `0.0.0.0`.
+- **CSP 는 넣지 않았다**(2.3·6장이 계획에 맡긴 판단 — 11장 「열린 문제」에 그대로 남는다). Report-Only 로 한 번 쟀다(d1-t3 보고서 실측 판정 9): devfake 위 로그인 → 채널 → 이미지 카드 답 → 새로고침에서 위반은 둘 — ① 번들이 런타임에 꽂는 `<style>`(`style-src-elem` inline, 페이지마다 2~3건) ② zod 의 기능 탐지 `Function("")`(`script-src` eval — 강제해도 대체 경로로 돈다). img·connect(wss 포함)·font 위반은 0. 넣으려면 `style-src 'self' 'unsafe-inline'`(또는 에디터 CSS 주입을 끄고 해시)이 필요하다. `worker-src` 는 로컬 CA 인증서 때문에 그 측정에서 못 쟀다.
+- **`DATA_DIR` 쓰기 검사를 더했다**(5장 「볼륨 권한」 보탬, `532d27b`). 비루트 컨테이너에 파일이 이미 든 root 소유 볼륨이 붙으면 better-sqlite3 가 `unable to open database file` 과 여러 줄 스택으로 죽어 권한 문제로 읽히지 않았다(재현). 지금은 부팅 전에 `unwritableDataPath`(`apps/server/src/runtime.ts`)가 DATA_DIR·DB·WAL·SHM·첨부 디렉터리를 보고, 못 쓰면 `dataDirErrorMessage` 한 줄(원인 + `chown` 명령)로 exit 1 이다. 빈 볼륨은 Docker 가 첫 마운트 때 이미지의 `/data` 소유자(node, 1000:1000)를 입혀 이 경우가 안 생긴다.
+
+**서버 번들에서 달라진 것**(태스크 1 — `605b2fc`·`31f3e0c`·`51374f5`·`31baa13`)
+
+- **external 은 `better-sqlite3` 하나, 그런데 번들 밖에서 찾는 것이 하나 더 있다 — `ws`**(2.1 「무엇을 external 로 둘지는 계획이 실측으로」). `@openclaw/gateway-client` 가 `createRequire(import.meta.url)` 로 `ws/package.json` 을 런타임에 해석하고, 번들 뒤 `import.meta.url` 은 `dist/main.js` 라 실행 자리의 `node_modules` 에서 찾는다. 그래서 `ws` 는 `@dodok/server` 의 `dependencies` 다(devDependency 였을 때 프로드 배치에서 부팅 즉시 죽었다 — d1-t1 리뷰 Critical, 재현). 목록의 정본은 `apps/server/scripts/build.mjs` 의 `runtimeDeps`(`[...external, "ws"]`)이고 빌드가 `dist/runtime-deps.json` 으로 쓴다.
+- **번들 배너에 `__filename`·`__dirname`**(`605b2fc`). 계획의 배너(`require` 만)로는 인증 없는 `GET /socket.io/socket.io.js` 한 번이 socket.io 클라이언트 파일 서빙의 `__dirname` 에서 `ReferenceError` 로 번들 서버를 죽였다(관문이 잡음). pino transport·thread-stream 도 `__dirname` 을 참조하지만 transport 를 안 써서 돌지 않는다 — 배너는 방어이고 그 두 줄을 빼도 스모크는 초록이다(`build.mjs` 주석).
+- **R1 — `serveClient: false`**(`apps/server/src/app.ts` 의 Socket.IO 옵션, `31f3e0c`). 7장 「그 밖의 앱 동작은 바꾸지 않는다」의 예외다 — `/socket.io/socket.io.js` 를 쓰는 곳이 없고(웹은 `socket.io-client` 를 번들한다), 번들에서 프로세스를 죽이던 표면이다 — 배너를 고친 뒤에도 운영 번들에는 `client-dist` 가 없어 200 머리만 보내고 끊겼다. 소스·번들 두 모드 모두 끈다. 지금 그 경로는 engine.io 의 400 이다(`infra/check-caddy.sh` 가 서버까지 갔는지를 이것으로 본다). **틀리면 남는 것**: 그 파일을 받아 쓰던 외부 도구가 깨진다(없음).
+- **R2·R4 — 번들 스모크는 prod 의존성만 있는 격리 배치에서 돈다**(8장 「번들 연기 테스트」 구체화). `pnpm -F @dodok/server bundle:smoke`(`apps/server/scripts/bundle-smoke.mjs`)가 저장소 밖 임시 디렉터리에 `pnpm deploy --prod --legacy --offline` 산출물을 만들고 — 저장소 안이면 워크스페이스 `node_modules` 가 빠진 prod 의존성을 가린다(ws 결함을 그렇게 놓쳤다) — 세 단계를 본다: ① `/healthz` 200·`/socket.io/socket.io.js` 400 뒤에도 생존 ② `DODOK_MIGRATIONS_DIR` 없이 띄우면 설정 오류로 exit≠0(번들이 자기를 번들로 아는지) ③ `dist/backup.js` 가 떠 있는 서버의 DATA_DIR 을 백업(exit 0·한 줄), DB 없는 디렉터리면 exit 1. deploy 는 **매니페스트 사본에서** 한다(R4) — 원본 워크스페이스에서 하면 `node_modules/.pnpm-workspace-state-v1.json` 을 운영(dev:false)으로 덮어, 다음 `CI=true` 설치가 devDependencies 를 조용히 지웠다. 중단(SIGINT·SIGTERM·SIGHUP)에도 임시 디렉터리를 지운다.
+- **R3 — 소스맵을 이미지에 싣고 켠다**(2.1 보탬). `sourcemap: true` + 실행 이미지 `NODE_OPTIONS=--enable-source-maps` — 개인 운영 로그의 스택이 원본 TS 줄을 가리키게(소스는 공개 저장소 그대로). **대가**: `main.js.map` 만큼(약 10 MB) 이미지가 크다.
+- **마이그레이션 폴더는 `DODOK_MIGRATIONS_DIR` 가 번들에서 필수다**(2.1 「번들 기준 경로로 맞추거나 환경변수로」 중 환경변수). `migrationsFolder`(`apps/server/src/runtime.ts`)는 env 가 있으면 그것, 없으면 소스 기준 `apps/server/drizzle` 이다. 번들인데 env 가 없으면 `createDb` 가 설정 오류로 던진다 — 번들 기준 상대 경로로 조용히 엉뚱한 자리를 읽지 않게. 번들 판정은 esbuild `define` 의 `__DODOK_BUNDLED__`(`isBundled`)이고, 번들은 `.env` 를 읽지 않고 cwd 도 옮기지 않는다(`apps/server/src/main.ts` — 2.5 끝 「계획이 확인한다」의 답).
+
+**백업에서 달라진 것**(태스크 2 — `4657c21`·`195f8c8`)
+
+- **자리는 `src/backup.ts`(`runBackup`)·`src/backup-main.ts`(CLI)**(2장 구조 정정 — 2장은 `scripts/backup.ts` 였다). 번들 엔트리 `backup` 이 `dist/backup.js` 를 낸다.
+- **한 단계 전체 복사**(3.2 보탬). 계획의 단계당 100 페이지 백업은 단계 사이에 다른 연결이 쓸 때마다 SQLite 가 처음부터 다시 시작해, 쓰기가 이어지는 동안 끝나지 않았다(테스트 「쓰는 중에도」가 30초 안에 못 끝냄). 지금은 `progress: () => 0x7fffffff` 로 한 읽기 트랜잭션의 스냅숏을 한 번에 복사한다. 리뷰가 쓰기를 막지 않음을 쟀다(1 GB DB 백업 중 쓰기 p99 0.14 ms, WAL 4 → 19 MB). 로컬 검증에서 초당 몇 건씩 쓰는 중에 백업해도 `integrity_check` `ok` 였다.
+- **`.partial-*` 에서 만들고 rename**(3.2 보탬, `195f8c8`). 백업은 `backups/.partial-<시각>-XXXXXX/` 에서 만든 뒤 다 되면 `<시각>/` 으로 옮긴다. 중단(SIGKILL 등)으로 남은 `.partial-*` 는 복원에 쓰지 않으며, 1시간이 지나면 다음 백업이 지운다(`STALE_PARTIAL_MS`). CLI 는 SIGINT·SIGTERM 에 자기 `.partial-*` 를 지우고 130·143 으로 끝난다. 고치기 전에는 중단된 백업이 백업 이름으로 남아 보관 개수를 차지하고 「가장 최근 백업」으로 골릴 수 있었다(d1-t2 리뷰 결함 1).
+- **보관 개수는 백업 이름 형식만 센다**(3.2 보탬). `YYYY-MM-DDTHH-MM-SS-mmmZ(-N)` — 사람이 `backups/` 에 둔 다른 이름은 세지도 지우지도 않는다. 같은 시각이면 `-1`·`-2` 접미사.
+- **사본 파일에 `openclaw-device-dev.json` 도**(3.2 보탬) — dev 대상 디바이스 아이덴티티가 있으면 함께 싣는다.
+
+**이미지·Compose 에서 달라진 것**(태스크 3 — `a772ca9`·`e8a554d`·`532d27b`·`700cd37`·`bf7ce2a`·`c9246f3`·`df64609`·`bb2b5bb`)
+
+- **베이스 이미지는 `node:24.21.0-bookworm`(빌드)·`node:24.21.0-bookworm-slim`(실행)·`caddy:2.11.4`**(2.1·2.2 정정 — `node:24-slim`·`caddy:2` 대신 정확 태그). 빌드 단계는 네이티브 모듈 빌드 도구가 있는 full 이미지다.
+- **R5 — 실행 이미지의 `node_modules` 는 런타임 해석 닫힘만**(2.1 「external 의존성만 둔다」 구체화, `e8a554d`). `pnpm deploy --prod` 산출물을 그대로 실으면 better-auth 의 optional peer 가 lockfile 스냅숏에 워크스페이스 것으로 묶여 개발 도구(vitest·vite·drizzle-kit·jsdom…)와 `@dodok/*` TS 원본까지 따라왔다(234 MB). `apps/server/scripts/prune-runtime-deps.mjs` 가 `dist/runtime-deps.json` 의 이름에서 dependencies·optional·peer 를 따라간 닫힘만 남긴다 — `better-sqlite3`·`node-addon-api`·`ws`(27 MB, `docker run --rm dodok-app du -sh /app/node_modules`). 같은 스크립트를 Dockerfile 의 `deploy` 단계와 `bundle-smoke` 가 함께 써서, 목록이 모자라면 스모크가 빨개진다. 이미지는 `dodok-app` 407 MB(압축 95 MB)·`dodok-caddy` 87 MB(`docker image ls`). **남는 틈**: 스모크는 부팅 경로에서 찾는 것만 잡는다 — 요청 경로 안의 런타임 해석은 `build.mjs` 주석의 전수 재기로만 찾는다.
+- **`pnpm deploy --prod --legacy` 앞에 `pnpm install --frozen-lockfile`, deploy 는 별도 단계**(2.1 보탬). 매니페스트가 lockfile 과 어긋나면 `deploy --legacy` 가 멈추지 않고 조용히 다시 해석한다 — 앞의 설치가 그 어긋남을 빌드 실패로 드러낸다. 같은 단계면 deploy 가 쓴 워크스페이스 상태 파일이 `devfake` 의 `dev:fake` 에 번진다. Docker 안에서는 `--offline` 을 못 쓴다(`pnpm fetch` 가 legacy deploy 의 메타데이터 캐시를 채우지 않는다 — `ERR_PNPM_NO_OFFLINE_META`) — 빌드가 npm 레지스트리에 닿아야 한다.
+- **BuildKit 캐시 마운트 대신 `pnpm fetch` 층**(2.1 보탬). buildx 가 없는 Docker 에서 compose 가 클래식 빌더로 빌드해 `--mount=type=cache` 가 오류다. 두 Dockerfile 이 fetch 층까지 줄이 같아 캐시를 나눠 쓴다. **대가**: `COPY . .` 뒤라 저장소 어느 파일이 바뀌어도 웹·서버 빌드를 다시 한다.
+- **실행 이미지는 deploy 산출물의 `package.json` 을 싣는다** — `"type": "module"` 이라야 `dist/main.js` 가 ESM 으로 읽힌다.
+- **Caddyfile 결함 셋을 고쳤다**(2.3 정정, `700cd37`). ① `@backend` 에 **`/bridge/*`** — 플러그인의 첨부 HTTP 가 `/bridge/attachments` 다. 2.3 대로면 SPA 폴백으로 떨어져 원격 플러그인의 첨부 주고받기가 깨진다(2.3 첫 줄 「브리지는 `/socket.io` 하나로 충분」은 WebSocket 만 맞다). ② **no-cache 를 경로 목록 대신 정적 나머지 전부에** — 2.3 의 `@nocache path /sw.js /index.html …` 는 `header` 가 `try_files` 보다 먼저 돌아 원래 경로로 매칭돼, index.html 을 내는 `/` 와 SPA 깊은 경로(`/c/<id>`)에 안 붙는다. ③ **`/assets/*` 는 SPA 폴백 없이** — 없는 청크(옛 버전을 든 탭)가 index.html 200 + immutable 로 1년 캐시되지 않게 404.
+- **immutable 은 있는 파일에만(`@built file`)**, **`registerSW.js` 는 목록에서 뺐다**(2.3 정정, `bf7ce2a`). 없는 `/assets/…` 의 404 도 immutable 이면 휴리스틱 캐시에 1년 남는다. `registerSW.js` 는 `injectManifest` 빌드에 없다.
+- **Caddyfile 이 받는 env 가 둘 늘었다** — `CADDY_LOCAL_CERTS`(로컬 검증만 `local_certs`, 운영은 빈 전역 블록)·`DODOK_UPSTREAM`(기본 `app:3000`, devfake 프로필만 `devfake:3000`). `DODOK_DOMAIN` 이 비면 사이트 블록이 전역 블록으로 읽혀 `unrecognized global option: encode` 같은 엉뚱한 오류가 나서, compose 가 `${DODOK_DOMAIN:?…}` 로 먼저 막는다.
+- **`infra/check-caddy.sh`**(9장 합격 기준 3·7 의 도구). 라우팅·SPA 폴백·캐시·보안 헤더를 curl 로 단언한다. `/healthz` 는 상태 코드만이 아니라 본문의 `"db":"ok"` 를 본다(`bf7ce2a` — 상태만 보면 `/healthz` 가 `@backend` 에서 빠져도 SPA 폴백 200 으로 통과한다). 보지 않는 것(업로드 상한·WebSocket·XFF)은 스크립트 머리에 적었다.
+- **caddy 헬스체크는 관리 API**(`127.0.0.1:2019/config/`) — 운영 도메인은 컨테이너 안에서 그 이름으로 닿지 않고, 인증서 발급 전에도 헬스가 초록이어야 로그로 원인을 볼 수 있다. **대가**: 인증서 실패가 `ps` 에 안 보인다(`docs/guides/deploy.md` 「오류」).
+- **compose 가 네 값을 `environment` 로 고정한다**(2.5 정정 — 2.5 는 「이미지가 정하고 `.env` 에 두지 않는다(두면 덮는다)」였다, `700cd37`). `HOST`·`PORT`·`DATA_DIR`·`DODOK_MIGRATIONS_DIR`. `.env.example` 을 복사하면 생기는 `HOST=` 빈 줄이 이미지 ENV 를 빈 문자열로 덮고, 서버는 빈 값을 기본값(127.0.0.1·./data)으로 읽어 헬스체크(컨테이너 안 127.0.0.1)는 초록인데 Caddy 는 502 였다(재현). `environment` 가 `env_file` 보다 앞서므로 지금 `.env` 의 그 네 이름은 무시된다.
+- **변수 치환은 `infra/.env → ../.env` 링크로**(2.4 보탬, `700cd37`). compose 는 치환에 첫 `-f` 파일의 디렉터리(`infra/`)의 `.env` 만 읽고 루트 `.env` 는 안 본다. 치환이 `ps`·`logs`·`exec`·`down` 에서도 돌아 `--env-file .env` 는 명령마다 붙여야 해서 링크를 기본으로 정했다(`.dockerignore`·`.gitignore` 가 링크를 뺀다). 로컬 검증은 `--env-file infra/local.env`(치환이 파일을 합치기 전에 돌아 `compose.local.yml` 의 값으로는 못 피한다), 겹침 파일의 `env_file: !override` 로 루트 `.env` 없이도 돈다.
+- **로컬 검증 포트는 `127.0.0.1:8443` 만**(2.4 정정, `bf7ce2a`). 모든 인터페이스면 devfake 프로필의 고정 로그인 토큰이 LAN 에 열린다.
+- **R7 — 웹 빌드 ID 를 빌드 인자로**(2.2 보탬, `df64609`·`bb2b5bb`). 웹의 `__BUILD_ID__` 가 빌드 시각이면 `COPY . .` 때문에 서버만 바뀐 배포에서도 청크·`sw.js` 이름이 바뀌어 모든 클라이언트가 새 버전 토스트·오프라인 사본 폐기를 겪었다(d1-t3 재리뷰 N1). 지금은 compose 가 `DODOK_WEB_BUILD_ID` → `Dockerfile.web` 의 `ARG VITE_BUILD_ID` 로 넘기고, 배포 명령이 웹 입력(`apps/web packages/shared pnpm-lock.yaml tsconfig.base.json package.json pnpm-workspace.yaml infra/Dockerfile.web`)의 마지막 커밋을 준다 — 같은 ID·같은 입력이면 산출물이 바이트 단위로 같다. 비면 빌드 시각(늘 새 버전 — 안전한 쪽). 빈 값 방어가 두 겹이다 — Dockerfile 이 빈 ARG 를 unset 하고, `apps/web/vite.config.ts` 도 `??` 가 아니라 `||` 다(빈 문자열이 ID 로 고정되면 웹이 바뀌어도 사본이 안 버려진다). 얕은 클론에서는 값이 틀린다(`docs/guides/deploy.md` 「기동」).
+- **`.dockerignore` 는 `**/` 로 하위까지**(6장 정정). `.dockerignore` 패턴은 루트 기준이라 6장 목록 그대로면 `.env.*`·`.turbo` 가 루트에서만 빠진다. `infra/*.env`·`infra/.env`(로컬 비밀·치환용 링크)도 뺀다. 로컬 검증에서 이미지 안 `.env*`·`*.ts` 0건, 로그·`docker history` 의 시크릿 0건(`grep -c -F`).
+- **`.env.example` 배포 절**(2.5 대로) — `DODOK_DOMAIN`, 배포 값, compose 가 고정하는 네 값, 링크 한 줄.
+
+**로컬 Compose 검증이 확인한 것**(태스크 4, 합격 기준 12개 — 9장의 11개에 볼륨 권한 재현을 더함)
+
+- 12/12 통과, Review Focus 1~5 통과, 결함 1(아래 F1). 절차와 명령은 `docs/guides/deploy.md` 「로컬 검증 (이 Mac)」.
+- **9장 기준 4의 19 MiB 업로드는 브리지 경로(`/bridge/attachments`)로 쟀다** — 사람 업로드는 이미지 5 MiB 상한이다. 사람 경로는 PNG 업로드·다운로드 sha256 일치로 봤다.
+- **F1 — 5장 「업로드가 Caddy 상한을 넘음」 줄이 절반만 맞다**(이월, 사용자 영향 없음). 21 MiB 업로드는 Caddy(32 MB)를 지나 서버가 413 JSON 으로 거절하지만, 문구가 첨부 서비스의 고정 문구가 아니라 Fastify 의 `Request body is too large` 다 — 라우트 `bodyLimit` 이 앱 상한과 같아 body-too-large 가 핸들러보다 먼저 난다. 웹(업로드 전 검사)과 플러그인(상태 413 으로 자기 문구)은 영향이 없다. Phase 2 ③ 부터의 동작이다.
+- **WAL·SHM 을 안 지운 복원은 조용히 무효가 된다**(3.3 의 경고를 실측). 백업 시점 66건, 그 뒤 4건 쓰고 `docker kill` → WAL 을 둔 채 DB 만 덮으면 70건(오류·경고 없음), 지우면 66건. 정상 정지(`docker compose stop`)는 WAL 을 합치고 지우므로 남는 것은 비정상 종료 뒤다. 문서(`docs/guides/deploy.md` 「복원」)에 굵게.
+- **`X-Forwarded-For` 위조로 로그인 레이트리밋을 우회할 수 없다**(2.3 의 전제 확인). Caddy 에 `trusted_proxies` 가 없어 클라이언트 XFF 를 자기가 본 연결 IP 로 덮는다 — XFF 값을 바꿔도 5회 뒤 첫 요청부터 429.
+- **자동화 브라우저 절차**: Claude-in-Chrome 은 자체 인증서를 못 넘고, Playwright 임시 컨텍스트는 시크릿 취급이라 Push API 가 없다 — `launchPersistentContext` + `--ignore-certificate-errors`(`docs/guides/browser-verification.md` 「로컬 HTTPS(Compose 8443)를 볼 때」).
