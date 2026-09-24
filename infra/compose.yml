@@ -17,6 +17,7 @@ services:
       PORT: "3000"
       DATA_DIR: /data
       DODOK_MIGRATIONS_DIR: /app/drizzle
+      DODOK_PLUGIN_DIR: /app/plugin # 이미지가 품은 플러그인 tgz — .env 의 빈 줄이 덮어 「플러그인 파일 없음」이 되지 않게
     volumes: [dodok-data:/data]
     # 호스트에 열지 않는다 — Caddy 만 compose 내부 네트워크로 닿는다
     expose: ["3000"]
