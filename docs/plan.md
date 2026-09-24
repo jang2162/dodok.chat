@@ -554,7 +554,6 @@ Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-comp
 
 **문서**
 
-- **`infra/compose.yml` 머리 주석의 웹 빌드 ID 경로가 셋뿐이다** — 머리의 실행 줄은 `git log -1 --format=%h -- apps/web packages/shared pnpm-lock.yaml` 인데, `docs/guides/deploy.md`·배포 패키징 스펙 12장(판정 R7)은 루트 입력(`tsconfig.base.json`·`package.json`·`pnpm-workspace.yaml`)과 `infra/Dockerfile.web` 까지 일곱이다. 루트 입력만 바뀐 커밋이면 머리 주석대로 띄운 배포는 웹 산출물이 바뀌었는데 ID 가 그대로라 클라이언트가 옛 오프라인 사본을 쓴다. 출처: d1-t5 보고서(원장 R7 보탬). 미룬 까닭: 코드 파일이라 문서 태스크 범위 밖 — 한 줄 고침(`infra/compose.yml` 머리 주석을 deploy.md 명령과 같게).
 - **neo 의 CDP 에 Playwright 가 안 붙고, `.mcp.json` 의 포트가 neo 설정과 다르다** — `.mcp.json` 의 `playwright-neo` 는 9110 을 가리키는데 이 머신 neo 설정의 `ports.cdp` 는 9111 이고(9110 닫힘), 9111 은 `connectOverCDP` 를 `Browser.setDownloadBehavior: Browser context management is not supported` 로 거절했다. `docs/guideline/browseros-neo/02-playwright.md` 「Playwright 를 neo 에 붙일 때」 의 예가 이 neo 에서는 안 된다. 출처: d1-t3 보고서 걱정. 미룬 까닭: 지침 문서는 문서 저장소 사본이고 `.mcp.json` 은 설정이라 이 배치 범위 밖 — 넣을 문장은 d1-t3 보고서 걱정 2.
 - **PWA 스펙이 없는 절을 가리킨다** — `docs/superpowers/specs/2026-09-23-pwa-push-design.md` 11장 R4 줄의 「`docs/guides/browser-verification.md`「PWA·서비스 워커를 볼 때」」는 그 문서에 없는 절이다(개발 SW·preview 절차는 `docs/guides/live-smoke.md` 「푸시 확인 절차 (`dev:fake`, 모델 런 0회)」에 있다). 출처: d1-t5 가 인용을 대조하다 찾음. 미룬 까닭: 이력 문서(스펙)라 가리키는 곳만 바꾸면 된다 — 낮음.
 

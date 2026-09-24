@@ -269,7 +269,7 @@ docker compose -f infra/compose.yml ps     # app·caddy (healthy)
 | 증상 | 원인·확인 | 고침 |
 | --- | --- | --- |
 | compose 명령이 `DODOK_DOMAIN 이 필요하다 — 루트 .env 에 두고 ln -s ../.env infra/.env` 로 멈춤 | 링크가 없거나 `.env` 에 `DODOK_DOMAIN` 이 비었다 | `ln -s ../.env infra/.env`, 값 채우기 |
-| `app` 이 재시작을 되풀이, `caddy` 는 대기 | `.env` 필수 값이 없거나 틀렸다 — `docker compose -f infra/compose.yml logs app` 에 `설정 오류:` 로 시작하는 줄과 그 아래 틀린 항목마다 한 줄(`<이름>: <사유>`), 이어서 Node 스택 | 그 값을 고치고 `up -d` |
+| `app` 이 재시작을 되풀이, `caddy` 는 대기 | `.env` 필수 값이 없거나 틀렸다 — `docker compose -f infra/compose.yml logs app` 에 `Error: 설정 오류:` 줄(그 위에 소스 위치와 `^` 줄이 먼저 나온다)과 그 아래 틀린 항목마다 한 줄(`<이름>: <사유>`), 이어서 Node 스택 | 그 값을 고치고 `up -d` |
 | `app` 로그 한 줄: `설정 오류: DATA_DIR 에 쓸 수 없다: /data (EACCES) — 컨테이너면 볼륨 소유자를 1000:1000 으로: …` | 볼륨이 다른 UID(예: root)로 채워진 적이 있다. 컨테이너는 `node`(1000:1000)로 돈다. 빈 볼륨은 Docker 가 이미지의 `/data` 소유자를 입혀 이 경우가 안 생긴다 — 파일이 이미 든 볼륨에서만 난다 | `docker compose -f infra/compose.yml run --rm -u 0 app chown -R 1000:1000 /data` 뒤 `up -d` |
 | `/healthz` 가 안 됨, `caddy` 는 healthy | 인증서 발급 실패 — `logs caddy`. 확인 순서: DNS A 레코드가 이 호스트인가 → 80·443 이 밖에서 열려 있나 → `DODOK_DOMAIN` 이 그 이름인가 | 고친 뒤 `docker compose -f infra/compose.yml restart caddy`. Let's Encrypt 는 실패가 잦으면 잠시 막는다 — 고치기 전에 되풀이하지 않는다 |
 | Caddy 502 | `app` 이 아직 안 떴거나 재시작 중 | `ps`·`logs app` |

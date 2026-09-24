@@ -134,7 +134,7 @@ docs/guides/deploy.md
 
 1. [A] DNS 가 A 를 가리키고 80·443 이 열려 있는지 확인. 저장소 clone, `.env` 작성(2.5, 토큰은 `openssl rand -hex 32`).
 2. [A] `docker compose -f infra/compose.yml up -d --build` → `docker compose ps` 두 서비스 healthy → `https://<도메인>/healthz`.
-3. [A] 서버 로그에서 Gateway 접속 결과를 본다. `device pairing required (requestId: …)` 가 있으면 [B] `openclaw devices approve <requestId>`(ADR 0001 — 필요 없을 수도 있다). 로그의 `gatewayVersion` 이 핀한 OpenClaw 버전과 맞는지 확인.
+3. [A] 서버 로그에서 Gateway 접속 결과를 본다. `"gateway pairing required; retrying"` 줄이 계속 나오면 그 줄의 `requestId` 필드 값으로 [B] `openclaw devices approve <requestId>`(ADR 0001 — 필요 없을 수도 있다). 로그의 `gatewayVersion` 이 핀한 OpenClaw 버전과 맞는지 확인.
 4. [PC] `pnpm -F @dodok/openclaw-plugin run pack:plugin` → tgz 를 [B] 로 옮긴다 → [B] Gateway 를 내리고 설치 → sha 확인 → 올린다(live-smoke 3절 (b) 절차). 플러그인 계정 설정의 `bridgeUrl` 은 `wss://<도메인>/bridge`, 토큰은 `BRIDGE_TOKEN`.
 5. [A] 서버 로그에서 브리지 접속(플러그인 hello)을 본다.
 6. [폰] `https://<도메인>` → 로그인(`LOCAL_AUTH_TOKEN`) → iOS 는 홈 화면에 추가 뒤 그 아이콘으로 연다 → 「알림」 켜기 → PC 에서 에이전트에게 「@<핸들> 불러 줘」 류 요청 → 폰을 잠근 채 푸시 도착·누르면 그 채널. 안드로이드 Chrome 도 같게.
