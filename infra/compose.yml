@@ -1,5 +1,6 @@
 # 운영 Compose(스펙 2.4). 배포 호스트에서 한 번 `ln -s ../.env infra/.env` 를 하고, 그 뒤 저장소 루트에서:
-#   docker compose -f infra/compose.yml up -d --build
+#   DODOK_WEB_BUILD_ID=$(git log -1 --format=%h -- apps/web packages/shared pnpm-lock.yaml) docker compose -f infra/compose.yml up -d --build
+#   (DODOK_WEB_BUILD_ID 를 빼면 웹 빌드 ID 가 빌드 시각이 된다 — 그 대가는 Dockerfile.web 의 ARG VITE_BUILD_ID 자리)
 # 링크가 필요한 까닭: compose 는 변수 치환(아래 ${DODOK_DOMAIN})에 첫 -f 파일의 디렉터리(infra/)의 .env 를 읽고 루트 .env 는
 # 보지 않는다. 앱 설정은 env_file 이 루트 .env 를 따로 읽으므로 링크가 없으면 DODOK_DOMAIN 만 없다는 오류로 멈춘다.
 # 치환은 up 뿐 아니라 ps·logs·exec·down 에서도 돌아서, 링크 대신 --env-file .env 를 쓰면 그 명령마다 붙여야 한다
@@ -21,7 +22,11 @@ services:
     expose: ["3000"]
     restart: unless-stopped
   caddy:
-    build: { context: .., dockerfile: infra/Dockerfile.web }
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.web
+      # 넘길 값은 이 파일 머리의 실행 줄, 빈 값의 대가는 Dockerfile.web 의 ARG VITE_BUILD_ID 자리
+      args: { VITE_BUILD_ID: "${DODOK_WEB_BUILD_ID:-}" }
     environment:
       # 비면 Caddyfile 이 「unrecognized global option」처럼 엉뚱한 오류로 죽는다 — 여기서 먼저 막는다
       DODOK_DOMAIN: ${DODOK_DOMAIN:?DODOK_DOMAIN 이 필요하다 — 루트 .env 에 두고 ln -s ../.env infra/.env}

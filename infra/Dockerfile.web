@@ -8,8 +8,14 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 RUN pnpm fetch
 COPY . .
 RUN pnpm install --offline --frozen-lockfile --filter "@dodok/web..."
+# 웹 빌드 ID(__BUILD_ID__ — 오프라인 사본 buster). 비면 vite.config.ts 가 빌드 시각을 쓴다. COPY . . 때문에 서버만 바뀐 배포도
+# 이 층을 다시 돌리고, 빌드 시각이면 그때마다 index 를 import 하는 청크들·sw.js 이름이 바뀌어 모든 클라이언트가 청크를 다시 받고
+# 새 버전 토스트·오프라인 사본 폐기를 겪는다. 그래서 배포는 웹 입력의 마지막 커밋을 넘긴다(compose.yml 머리의 DODOK_WEB_BUILD_ID) —
+# 같은 ID·같은 웹 입력이면 산출물이 바이트 단위로 같다. 빈 값은 unset 한다 — vite.config.ts 는 `??` 라 빈 문자열을 ID 로 쓴다.
+# ARG 를 install 뒤에 두는 까닭: 값이 바뀌어도 install 층 캐시는 산다
+ARG VITE_BUILD_ID=
 # 웹은 같은 오리진의 /api·/socket.io 를 쓴다 — 빌드가 API 오리진을 알 필요가 없다
-RUN pnpm -F @dodok/web build
+RUN if [ -z "$VITE_BUILD_ID" ]; then unset VITE_BUILD_ID; fi && pnpm -F @dodok/web build
 
 # 태그는 정확 핀 — latest·2 처럼 움직이는 태그는 재빌드마다 다른 Caddy 가 된다
 FROM caddy:2.11.4 AS web
