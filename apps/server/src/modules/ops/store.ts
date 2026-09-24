@@ -1,4 +1,4 @@
-import type { OpsEvent, OpsEventKind, OpsSeverity, OpsUnacked } from "@dodok/shared";
+import { OpsEvent, type OpsEventKind, type OpsSeverity, type OpsUnacked } from "@dodok/shared";
 import { and, desc, eq, gte, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import type { DbOrTx } from "../../db/client";
@@ -34,12 +34,50 @@ export function toOpsEvent(row: Row): OpsEvent {
   };
 }
 
+/** 저장하려는 key·detail 이 shared OpsEvent 모양을 어겼다. 값은 싣지 않는다(토큰·경로가 로그로 새지 않게) — 어긴 자리와 코드만 */
+export class OpsShapeError extends Error {
+  constructor(readonly issues: Array<{ path: string; code: string }>) {
+    super("ops event shape rejected");
+    this.name = "OpsShapeError";
+  }
+}
+
+/** 쓰기 직전의 최종 key·detail(묶기·닫기 병합 뒤)을 shared 스키마로 검사한다. 어기면 OpsShapeError */
+function assertStorable(key: string, detail: unknown): void {
+  const issues = [
+    ...(OpsEvent.shape.key.safeParse(key).error?.issues ?? []).map((i) => ({
+      ...i,
+      path: ["key", ...i.path],
+    })),
+    ...(OpsEvent.shape.detail.safeParse(detail).error?.issues ?? []).map((i) => ({
+      ...i,
+      path: ["detail", ...i.path],
+    })),
+  ];
+  if (issues.length > 0)
+    throw new OpsShapeError(issues.map((i) => ({ path: i.path.map(String).join("."), code: i.code })));
+}
+
+/** 기록이 줄을 어떻게 바꿨나 — created·raised 는 unacked 수가 바뀔 수 있고, grouped 는 count·last_at·detail 만 바뀐다 */
+export type OpsRecordChange = "created" | "raised" | "grouped";
+
+export function recordEvent(db: DbOrTx, workspaceId: string, input: OpsRecordInput, now: Date): OpsEvent {
+  return recordEventChange(db, workspaceId, input, now).event;
+}
+
 /**
  * 묶기 규칙을 한 트랜잭션에서 적용한다 — 열린 줄이 있으면 count·last_at 을 올리고 detail 은 새 값으로 덮으며
- * severity 는 더 높은 쪽을 남긴다. 없으면 새 줄. 끊김 사건은 확인 여부와 상관없이 닫히기 전까지 같은 줄이다
+ * severity 는 더 높은 쪽을 남긴다. 없으면 새 줄. 끊김 사건은 확인 여부와 상관없이 닫히기 전까지 같은 줄이다.
+ * 병합한 key·detail 이 모양을 어기면 아무것도 쓰지 않고 OpsShapeError 를 던진다
  */
-export function recordEvent(db: DbOrTx, workspaceId: string, input: OpsRecordInput, now: Date): OpsEvent {
+export function recordEventChange(
+  db: DbOrTx,
+  workspaceId: string,
+  input: OpsRecordInput,
+  now: Date,
+): { event: OpsEvent; change: OpsRecordChange } {
   const detail = input.detail ?? {};
+  assertStorable(input.key, detail);
   return db.transaction((tx) => {
     const same = and(
       eq(opsEvents.workspaceId, workspaceId),
@@ -55,20 +93,21 @@ export function recordEvent(db: DbOrTx, workspaceId: string, input: OpsRecordInp
         );
     const found = tx.select().from(opsEvents).where(open).orderBy(desc(opsEvents.lastAt)).limit(1).get();
     if (found) {
-      const severity =
-        SEVERITY_RANK[input.severity] > SEVERITY_RANK[found.severity] ? input.severity : found.severity;
+      const raised = SEVERITY_RANK[input.severity] > SEVERITY_RANK[found.severity];
+      const merged = { ...found.detail, ...detail };
+      assertStorable(input.key, merged);
       const updated = tx
         .update(opsEvents)
         .set({
           count: sql`${opsEvents.count} + 1`,
           lastAt: now,
-          severity,
-          detail: { ...found.detail, ...detail },
+          severity: raised ? input.severity : found.severity,
+          detail: merged,
         })
         .where(eq(opsEvents.id, found.id))
         .returning()
         .get();
-      return toOpsEvent(updated);
+      return { event: toOpsEvent(updated), change: raised ? "raised" : "grouped" };
     }
     const inserted = tx
       .insert(opsEvents)
@@ -85,11 +124,14 @@ export function recordEvent(db: DbOrTx, workspaceId: string, input: OpsRecordInp
       })
       .returning()
       .get();
-    return toOpsEvent(inserted);
+    return { event: toOpsEvent(inserted), change: "created" };
   });
 }
 
-/** 열린 끊김 줄을 닫는다 — resolved_at·last_at 을 at 으로, detail.downMs = at - first_at. 열린 줄이 없으면 null */
+/**
+ * 열린 끊김 줄을 닫는다 — resolved_at·last_at 을 at 으로, detail.downMs = at - first_at. 열린 줄이 없으면 null.
+ * 병합한 detail 이 모양을 어기면 닫지 않고 OpsShapeError
+ */
 export function resolveEvent(
   db: DbOrTx,
   workspaceId: string,
@@ -113,13 +155,11 @@ export function resolveEvent(
       .limit(1)
       .get();
     if (!found) return null;
+    const detail = { ...found.detail, downMs: at.getTime() - found.firstAt.getTime() };
+    assertStorable(found.key, detail);
     const updated = tx
       .update(opsEvents)
-      .set({
-        resolvedAt: at,
-        lastAt: at,
-        detail: { ...found.detail, downMs: at.getTime() - found.firstAt.getTime() },
-      })
+      .set({ resolvedAt: at, lastAt: at, detail })
       .where(eq(opsEvents.id, found.id))
       .returning()
       .get();

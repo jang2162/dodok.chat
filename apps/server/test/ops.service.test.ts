@@ -1,11 +1,12 @@
-import { OPS_DEFAULT_DAILY_RUN_LIMIT } from "@dodok/shared";
+import { OPS_DEFAULT_DAILY_RUN_LIMIT, OpsEvent } from "@dodok/shared";
 import { eq } from "drizzle-orm";
 import pino from "pino";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "../src/db/client";
 import { opsEvents, workspaces } from "../src/db/schema.sqlite";
 import { ipPrefix } from "../src/modules/ops/ip";
-import { createOpsService, type OpsService } from "../src/modules/ops/service";
+import { createOpsService, OPS_EMIT_COALESCE_MS, type OpsService } from "../src/modules/ops/service";
+import { recordEvent, unackedCounts } from "../src/modules/ops/store";
 import { getOpsSettings, patchOpsSettings } from "../src/modules/ops/settings";
 import { type BusEvents, ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
@@ -66,13 +67,6 @@ describe("OpsService.record", () => {
     expect(opsLines()[0]).toMatchObject({ event: "ops.ratelimit", key: "k", count: 1 });
   });
 
-  it("폭주 — 1000번 record 하면 DB 행은 1(count 1000), emit 은 1000번", () => {
-    for (let i = 0; i < 1000; i++) ops.record({ kind: "ratelimit", key: "k", severity: "info" });
-    expect(db.select().from(opsEvents).all()).toHaveLength(1);
-    expect(emitted).toHaveLength(1000);
-    expect(emitted.at(-1)?.event.count).toBe(1000);
-  });
-
   it("DB 오류(닫힌 DB)면 던지지 않고 null + logger.error", () => {
     db.$client.close();
     expect(ops.record({ kind: "run_failed", key: "agent:a", severity: "warn" })).toBeNull();
@@ -93,6 +87,199 @@ describe("OpsService.record", () => {
     expect(captured.lines).toContainEqual(
       expect.objectContaining({ level: 50, msg: "ops event emit failed" }),
     );
+  });
+});
+
+describe("OpsService.record — 저장 전 모양 검사(shared OpsEvent.key·detail)", () => {
+  const SECRET = "tok_SECRET";
+  const rejected = () => lines.filter((l) => l.msg === "ops record rejected");
+
+  it.each([
+    ["201자 key", { key: `/x?token=${SECRET}${"t".repeat(200)}` }],
+    ["객체 값 detail", { detail: { nested: { token: SECRET } } as unknown as OpsEvent["detail"] }],
+    ["배열 값 detail", { detail: { list: [SECRET] } as unknown as OpsEvent["detail"] }],
+    ["201자 문자열 detail", { detail: { token: SECRET + "t".repeat(200) } }],
+  ])("%s → 저장하지 않고 null·logger.error, 로그에 값이 남지 않는다", (_name, patch) => {
+    const got = ops.record({ kind: "ratelimit", key: "rest:/api/v1/messages", severity: "warn", ...patch });
+    expect(got).toBeNull();
+    expect(db.select().from(opsEvents).all()).toHaveLength(0);
+    expect(emitted).toHaveLength(0);
+    expect(rejected()).toEqual([expect.objectContaining({ level: 50, kind: "ratelimit" })]);
+    expect(JSON.stringify(lines)).not.toContain(SECRET);
+  });
+
+  it("경계 — 200자 key·200자 문자열·숫자·불리언·null 은 그대로 저장되고 스키마를 통과한다", () => {
+    const got = ops.record({
+      kind: "ratelimit",
+      key: "k".repeat(200),
+      severity: "info",
+      detail: { s: "v".repeat(200), n: 1, b: true, z: null },
+    });
+    expect(got).not.toBeNull();
+    expect(OpsEvent.parse(got)).toEqual(got);
+  });
+
+  it("묶일 줄이 있어도 모양이 틀리면 그 줄을 건드리지 않는다(count 그대로)", () => {
+    ops.record({ kind: "ratelimit", key: "k", severity: "info" });
+    expect(
+      ops.record({ kind: "ratelimit", key: "k", severity: "info", detail: { x: "v".repeat(201) } }),
+    ).toBeNull();
+    expect(db.select().from(opsEvents).all()).toEqual([expect.objectContaining({ count: 1, detail: {} })]);
+  });
+
+  it("resolve — 병합한 detail 이 모양을 어기면 닫지 않고 null·logger.error", () => {
+    db.insert(opsEvents)
+      .values({
+        id: "0199a000-0000-7000-8000-000000000001",
+        workspaceId: ws,
+        kind: "gateway_down",
+        severity: "warn",
+        key: "gateway",
+        detail: { nested: { a: 1 } } as unknown as OpsEvent["detail"],
+        firstAt: T0,
+        lastAt: T0,
+      })
+      .run();
+    expect(ops.resolve("gateway_down", "gateway", new Date(T0.getTime() + MIN))).toBeNull();
+    expect(db.select().from(opsEvents).get()?.resolvedAt).toBeNull();
+    expect(emitted).toHaveLength(0);
+    expect(lines).toContainEqual(expect.objectContaining({ level: 50, msg: "ops resolve failed" }));
+  });
+});
+
+describe("OpsService — 폭주 병합(같은 줄의 ops.event·로그는 창마다 한 번, unacked 는 캐시)", () => {
+  beforeEach(() => void vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] }));
+  afterEach(() => void vi.useRealTimers());
+
+  /** unacked 집계 쿼리(count(*)) 준비 횟수 — drizzle 은 쿼리마다 prepare 한다 */
+  const countQueries = () => {
+    const spy = vi.spyOn(db.$client, "prepare");
+    return () => spy.mock.calls.filter(([q]) => /count\(\*\)/i.test(String(q))).length;
+  };
+
+  it(`1000번 record — DB 는 매번 count 가 오르고, emit·로그는 첫 번 즉시 1 + ${OPS_EMIT_COALESCE_MS}ms 뒤 마지막 상태 1, unacked 집계 0회`, () => {
+    ops.record({ kind: "ratelimit", key: "k", severity: "warn" }); // 새 줄 — 여기서만 센다
+    const unackedQueries = countQueries();
+    for (let i = 0; i < 999; i++) ops.record({ kind: "ratelimit", key: "k", severity: "warn" });
+    expect(db.select().from(opsEvents).get()?.count).toBe(1000);
+    expect(unackedQueries()).toBe(0);
+    expect(emitted).toHaveLength(1);
+    expect(opsLines()).toHaveLength(1);
+
+    vi.advanceTimersByTime(OPS_EMIT_COALESCE_MS);
+    expect(emitted).toHaveLength(2);
+    expect(emitted[1]).toEqual({
+      event: expect.objectContaining({ count: 1000 }),
+      unacked: { warn: 1, error: 0 },
+    });
+    expect(opsLines().at(-1)).toMatchObject({ count: 1000, coalesced: 999 });
+    expect(unackedQueries()).toBe(0);
+
+    vi.advanceTimersByTime(10 * OPS_EMIT_COALESCE_MS); // 조용해지면 더 보내지 않는다
+    expect(emitted).toHaveLength(2);
+    expect(opsLines()).toHaveLength(2);
+
+    ops.record({ kind: "ratelimit", key: "k", severity: "warn" }); // 창 밖 묶임 — 즉시 보내되 다시 세지 않는다
+    expect(emitted.at(-1)).toEqual({
+      event: expect.objectContaining({ count: 1001 }),
+      unacked: { warn: 1, error: 0 },
+    });
+    expect(unackedQueries()).toBe(0);
+  });
+
+  it("창이 계속 이어져도 같은 줄은 창마다 한 번만 — 조용한 창 뒤의 record 는 다시 즉시", () => {
+    const rec = () => ops.record({ kind: "ratelimit", key: "k", severity: "info" });
+    rec(); // 즉시
+    vi.advanceTimersByTime(OPS_EMIT_COALESCE_MS / 2);
+    rec(); // 보류
+    vi.advanceTimersByTime(OPS_EMIT_COALESCE_MS / 2); // 창 끝 → 보류분(count 2)
+    expect(emitted.map((p) => p.event.count)).toEqual([1, 2]);
+    rec(); // 방금 보냈으니 다시 보류
+    expect(emitted).toHaveLength(2);
+    vi.advanceTimersByTime(OPS_EMIT_COALESCE_MS);
+    expect(emitted.map((p) => p.event.count)).toEqual([1, 2, 3]);
+    vi.advanceTimersByTime(OPS_EMIT_COALESCE_MS); // 보류 없는 창 → 창을 닫는다
+    rec();
+    expect(emitted.map((p) => p.event.count)).toEqual([1, 2, 3, 4]); // 즉시
+  });
+
+  it("다른 줄은 서로의 창에 묶이지 않는다", () => {
+    ops.record({ kind: "ratelimit", key: "a", severity: "info" });
+    ops.record({ kind: "ratelimit", key: "b", severity: "info" });
+    expect(emitted.map((p) => p.event.key)).toEqual(["a", "b"]);
+  });
+
+  it("severity 가 오르면 창 안이어도 즉시 보내고 unacked 를 다시 센다", () => {
+    ops.record({ kind: "disk_low", key: "data", severity: "warn" });
+    ops.record({ kind: "disk_low", key: "data", severity: "error" });
+    expect(emitted.at(-1)).toMatchObject({
+      event: { severity: "error", count: 2 },
+      unacked: { warn: 0, error: 1 },
+    });
+    vi.advanceTimersByTime(OPS_EMIT_COALESCE_MS);
+    expect(emitted).toHaveLength(2);
+  });
+
+  it("resolve 는 즉시 보내고, 그 줄의 보류분(옛 상태)을 버린다", () => {
+    ops.record({ kind: "gateway_down", key: "gateway", severity: "warn" });
+    ops.record({ kind: "gateway_down", key: "gateway", severity: "warn" }); // 보류
+    const closed = ops.resolve("gateway_down", "gateway");
+    expect(emitted.at(-1)?.event).toEqual(closed);
+    vi.advanceTimersByTime(OPS_EMIT_COALESCE_MS);
+    expect(emitted.at(-1)?.event).toEqual(closed);
+    expect(emitted).toHaveLength(2);
+  });
+
+  it("ack 는 즉시 보내고, 그 줄의 보류분(옛 상태)을 버린다", () => {
+    ops.record({ kind: "run_failed", key: "agent:a", severity: "warn" });
+    ops.record({ kind: "run_failed", key: "agent:a", severity: "warn" }); // 보류
+    expect(ops.ack()).toBe(1);
+    const acked = emitted.at(-1);
+    expect(acked).toMatchObject({
+      event: { count: 2, ackedAt: clock.toISOString() },
+      unacked: { warn: 0, error: 0 },
+    });
+    vi.advanceTimersByTime(OPS_EMIT_COALESCE_MS);
+    expect(emitted.at(-1)).toEqual(acked);
+    expect(emitted).toHaveLength(2);
+  });
+
+  it("close 는 보류분을 내보내고 타이머를 끈다", () => {
+    ops.record({ kind: "ratelimit", key: "k", severity: "info" });
+    ops.record({ kind: "ratelimit", key: "k", severity: "info" });
+    ops.close();
+    expect(emitted.map((p) => p.event.count)).toEqual([1, 2]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("unacked 캐시는 부팅(서비스 생성) 때 한 번 센 값에서 시작하고, 새 줄·ack·sweep 뒤 DB 와 같다", () => {
+    recordEvent(db, ws, { kind: "run_failed", key: "old", severity: "warn" }, T0); // 서비스 밖에서 먼저 있던 줄
+    const bus = new ServerBus();
+    const svc = createOpsService({
+      db,
+      bus,
+      logger: captureLogger().logger,
+      workspaceId: ws,
+      now: () => clock,
+    });
+    const same = () => expect(svc.unacked()).toEqual(unackedCounts(db, ws));
+    expect(svc.unacked()).toEqual({ warn: 1, error: 0 });
+
+    svc.record({ kind: "crash_exception", key: "process", severity: "error" });
+    same();
+    svc.record({ kind: "crash_exception", key: "process", severity: "error" }); // 묶임 — 수는 그대로
+    same();
+    clock = new Date(T0.getTime() + MIN);
+    svc.ack(new Date(T0.getTime()));
+    expect(svc.unacked()).toEqual({ warn: 0, error: 0 });
+    same();
+    clock = new Date(T0.getTime() + 2 * MIN);
+    svc.record({ kind: "run_failed", key: "new", severity: "warn" });
+    same();
+    svc.sweep(new Date(T0.getTime() + 2 * MIN + 30 * 24 * 60 * MIN + 1));
+    expect(svc.unacked()).toEqual({ warn: 0, error: 0 });
+    same();
+    svc.close();
   });
 });
 

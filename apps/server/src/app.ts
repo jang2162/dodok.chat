@@ -219,7 +219,11 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     sweepOps();
     const opsSweepTimer = setInterval(sweepOps, OPS_SWEEP_INTERVAL_MS);
     opsSweepTimer.unref();
-    undo.push({ step: "ops-sweep", run: () => clearInterval(opsSweepTimer) });
+    const closeOps = () => {
+      clearInterval(opsSweepTimer);
+      services.ops.close(); // 모으던 ops.event·로그를 내보낸다 — io 를 닫기 전에
+    };
+    undo.push({ step: "ops", run: closeOps });
 
     registerAuthRoutes(fastify, {
       auth,
@@ -378,7 +382,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       await step("setup-events", () => offSetup());
       await step("push-triggers", () => pushTriggers.close()); // 새 발송을 받지 않는다 — 이미 나간 것은 ⑥ 앞에서 잠깐 기다린다
       await step("attachments-sweep", () => sweeper.close()); // 진행 중인 정리가 db 를 닫기 전에 끝나게
-      await step("ops-sweep", () => clearInterval(opsSweepTimer));
+      await step("ops", closeOps);
       await step("orchestrator", () => services.orchestrator.stop()); // ② 타이머·어댑터 구독 해제
       // ③ 브리지 system.notice shutdown → Gateway stop. io.close() 가 /bridge 소켓까지 끊으므로 그보다 먼저
       await step("adapter", () => adapter.close());
