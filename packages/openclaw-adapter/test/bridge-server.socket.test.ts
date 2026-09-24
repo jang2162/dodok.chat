@@ -29,6 +29,8 @@ let received: OutboundMessage[];
 let storeDelayMs: number;
 let rejected: string[];
 let nowMs: number;
+// 검증 함수가 던지는 경우(저장소 오류)를 재는 테스트만 켠다
+let verifyThrows: boolean;
 const clients: Socket[] = [];
 
 function client(token: string): Socket {
@@ -64,10 +66,12 @@ beforeEach(async () => {
   storeDelayMs = 0;
   rejected = [];
   nowMs = 0;
+  verifyThrows = false;
   app = Fastify({ logger: false });
   ioServer = new Server(app.server, { transports: ["websocket"] });
   bridge = attachBridge(ioServer, {
     verifyToken: (presented) => {
+      if (verifyThrows) throw new Error("SqliteError: no such table: bridge_tokens");
       const tokenId = typeof presented === "string" ? TOKEN_IDS[presented] : undefined;
       return tokenId ? { tokenId } : null;
     },
@@ -104,6 +108,18 @@ describe("attachBridge (실제 Socket.IO)", () => {
     await socket.emitWithAck("hello", { ...hello, bundleSha256: BUNDLE_SHA });
     expect(bridge.current()?.tokenId).toBe("t2");
     expect(bridge.current()?.hello?.bundleSha256).toBe(BUNDLE_SHA);
+  });
+
+  it("검증 함수가 던지면 통과가 아니라 UNAUTHORIZED 로 거절하고, 거절 로그에는 토큰이 없다", async () => {
+    verifyThrows = true;
+    const socket = client(TOKEN);
+    const error = (await waitFor(socket, "connect_error")) as Error;
+    expect(error.message).toBe("UNAUTHORIZED");
+    expect(socket.connected).toBe(false);
+    expect(bridge.current()).toBeUndefined();
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]).toMatch(/^token mismatch from \S+$/);
+    expect(rejected.join("\n")).not.toContain(TOKEN);
   });
 
   it("같은 주소에서 거절이 10번 와도 onRejected 는 1분에 한 번이고, 1분 뒤 한 번 더 — 눌러 둔 수를 싣는다", async () => {
@@ -262,5 +278,74 @@ describe("attachBridge (실제 Socket.IO)", () => {
       ok: true,
       data: { agents: [{ agentId: "dev", name: "Dev" }] },
     });
+  });
+});
+
+describe("attachBridge — 거절 로그 주소(clientAddress)", () => {
+  it("clientAddress 가 준 주소로 거절 로그를 남기고 그 주소별로 줄인다", async () => {
+    const own = Fastify({ logger: false });
+    const ownIo = new Server(own.server, { transports: ["websocket"] });
+    const logged: string[] = [];
+    const ownBridge = attachBridge(ownIo, {
+      verifyToken: () => null,
+      serverVersion: "test",
+      now: () => 0,
+      clientAddress: (handshake) => String(handshake.headers["x-test-client"] ?? "none"),
+      onRejected: (reason) => logged.push(reason),
+      onOutboundMessage: async () => ({ messageId: randomUUID() }),
+    });
+    await own.listen({ host: "127.0.0.1", port: 0 });
+    const ownUrl = `ws://127.0.0.1:${(own.server.address() as AddressInfo).port}/bridge`;
+    const open = (client: string) => {
+      const socket = connect(ownUrl, {
+        transports: ["websocket"],
+        auth: { token: "x" },
+        reconnection: false,
+        extraHeaders: { "x-test-client": client },
+      });
+      clients.push(socket);
+      return socket;
+    };
+    try {
+      await waitFor(open("203.0.113.7"), "connect_error");
+      await waitFor(open("203.0.113.7"), "connect_error");
+      await waitFor(open("198.51.100.9"), "connect_error");
+      expect(logged).toEqual([
+        "token mismatch from 203.0.113.7",
+        "token mismatch from 198.51.100.9",
+      ]);
+    } finally {
+      ownBridge.close();
+      ownIo.close();
+      await own.close();
+    }
+  });
+
+  it("clientAddress 가 던지면 handshake.address 로 남기고 거절은 그대로다", async () => {
+    const own = Fastify({ logger: false });
+    const ownIo = new Server(own.server, { transports: ["websocket"] });
+    const logged: string[] = [];
+    const ownBridge = attachBridge(ownIo, {
+      verifyToken: () => null,
+      serverVersion: "test",
+      clientAddress: () => {
+        throw new Error("boom");
+      },
+      onRejected: (reason) => logged.push(reason),
+      onOutboundMessage: async () => ({ messageId: randomUUID() }),
+    });
+    await own.listen({ host: "127.0.0.1", port: 0 });
+    const ownUrl = `ws://127.0.0.1:${(own.server.address() as AddressInfo).port}/bridge`;
+    try {
+      const socket = connect(ownUrl, { transports: ["websocket"], auth: { token: "x" }, reconnection: false });
+      clients.push(socket);
+      expect(((await waitFor(socket, "connect_error")) as Error).message).toBe("UNAUTHORIZED");
+      expect(logged).toHaveLength(1);
+      expect(logged[0]).toMatch(/^token mismatch from \S*127\.0\.0\.1$/);
+    } finally {
+      ownBridge.close();
+      ownIo.close();
+      await own.close();
+    }
   });
 });

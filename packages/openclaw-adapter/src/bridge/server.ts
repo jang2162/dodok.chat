@@ -59,6 +59,11 @@ export type BridgeServerOptions = BridgeServerCallbacks & {
   ackTimeoutMs?: number;
   /** 거절 로그 스로틀의 시계(ms) — 테스트 주입. 기본 `Date.now` */
   now?: () => number;
+  /**
+   * 거절 로그·스로틀의 원격 주소. 기본 `handshake.address`. 리버스 프록시 뒤면 서버가 믿을 수 있는 경우에만
+   * 전달 헤더를 읽어 준다(믿지 않는 헤더를 읽으면 위조로 스로틀·귀속을 우회한다). 던지면 기본값을 쓴다
+   */
+  clientAddress?: (handshake: BridgeSocket["handshake"]) => string;
 };
 
 export type BridgeHandle = {
@@ -119,6 +124,14 @@ export function attachBridge(io: Server, opts: BridgeServerOptions): BridgeHandl
   const connections = new Map<string, { socket: BridgeSocket; session: BridgeSessionState }>();
   const rejectLog = new RejectLogThrottle();
   const now = opts.now ?? Date.now;
+  const remoteAddress = (handshake: BridgeSocket["handshake"]): string => {
+    if (!opts.clientAddress) return handshake.address;
+    try {
+      return opts.clientAddress(handshake);
+    } catch {
+      return handshake.address;
+    }
+  };
 
   namespace.use((socket, next) => {
     const token = (socket.handshake.auth as { token?: unknown } | undefined)?.token;
@@ -133,7 +146,7 @@ export function attachBridge(io: Server, opts: BridgeServerOptions): BridgeHandl
       return next();
     }
     // 폐기된 토큰으로 재접속을 되풀이하는 플러그인이 로그를 채우지 않게 주소별로 줄인다(Review Focus 2)
-    const address = socket.handshake.address;
+    const address = remoteAddress(socket.handshake);
     const logged = rejectLog.take(address, now());
     if (logged) {
       const suppressed = logged.suppressed > 0 ? ` (${logged.suppressed} more suppressed)` : "";
