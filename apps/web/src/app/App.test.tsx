@@ -110,6 +110,27 @@ it("Query 밖 REST 401(notifyUnauthorized)도 같은 곳 — 상태를 비우고
   expect(reset).toHaveBeenCalled();
 });
 
+it("401 은 이동 막기(blocker)를 건너뛴다 — 막는 화면이 남아 있어도 로그인 화면으로 간다", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn<typeof fetch>(async (input, init) => {
+      if (String(input) === "/api/v1/auth/me") return json(200, ME);
+      return shellGet(input, init) ?? json(200, { channels: [] });
+    }),
+  );
+  const { app, history } = renderApp("/c/abc");
+  expect(await screen.findByTestId("page-channel")).toBeInTheDocument();
+  const blockerFn = vi.fn(async () => true);
+  const unblock = history.block({ blockerFn });
+  unregisters.push(unblock);
+
+  act(() => app.onUnauthorized());
+
+  expect(await screen.findByRole("heading", { name: "로그인" })).toBeInTheDocument();
+  expect(history.location.pathname).toBe("/login");
+  expect(blockerFn).not.toHaveBeenCalled();
+});
+
 it("로그인 화면에서 틀린 토큰(401)은 이동하지 않는다 — next 를 덮지 않는다", async () => {
   vi.stubGlobal(
     "fetch",

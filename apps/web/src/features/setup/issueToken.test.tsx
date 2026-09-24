@@ -1,8 +1,13 @@
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { createMemoryHistory } from "@tanstack/react-router";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { qk } from "@/api/queries";
+import { App } from "@/app/App";
+import { createApp } from "@/app/createApp";
 import { json, renderRoute } from "../../../test/shellApi";
 import {
+  OWNER,
   PUBLIC_URL,
   RAW_TOKEN,
   cacheDump,
@@ -151,6 +156,7 @@ describe("원문이 보이는 동안 페이지를 떠나지 않게", () => {
     act(() => void router.navigate({ to: "/agents" }));
     const alert = await within(dialog).findByRole("alert");
     expect(alert).toHaveTextContent("토큰 원문을 다시 볼 수 없습니다");
+    expect(alert).toHaveTextContent("「복사했습니다」를 누르세요. 닫고 이어서 이동합니다");
     await waitFor(() => expect(within(alert).getByRole("button", { name: "머무르기" })).toHaveFocus());
     expect(router.state.location.pathname).toBe("/settings/connection");
 
@@ -184,6 +190,44 @@ describe("원문이 보이는 동안 페이지를 떠나지 않게", () => {
     act(() => void router.navigate({ to: "/agents" }));
     await within(dialog).findByRole("alert");
     await userEvent.click(within(dialog).getByRole("button", { name: "복사했습니다" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/agents"));
+    expect(document.body.innerHTML).not.toContain(RAW_TOKEN);
+  });
+
+  it("원문이 보이는 동안 세션이 끝나면(401) 묻지 않고 바로 로그인 화면으로 간다", async () => {
+    stubSetupServer({ tokens: [tokenOf(1, { connected: true })] });
+    const history = createMemoryHistory({ initialEntries: ["/settings/connection"] });
+    const app = createApp(history);
+    render(<App app={app} />);
+    const dialog = await issue("새것");
+    await within(dialog).findByText(RAW_TOKEN);
+
+    // 401 은 me·setup 만 — 셸의 다른 요청이 401 을 다시 불러 두 번째 이동으로 빠져나가지 않게, 이동 한 번만 잰다
+    const served = globalThis.fetch;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input, init) =>
+        String(input) === "/api/v1/auth/me" || String(input).startsWith("/api/v1/setup/")
+          ? json(401, { code: "UNAUTHORIZED", message: "로그인이 필요하다" })
+          : served(input, init),
+      ),
+    );
+    act(() => app.onUnauthorized());
+    expect(await screen.findByRole("heading", { name: "로그인" })).toBeInTheDocument();
+    expect(history.location.pathname).toBe("/login");
+    expect(document.body.innerHTML).not.toContain(RAW_TOKEN);
+    expect(screen.queryByText(/권한이 없습니다/)).not.toBeInTheDocument();
+  });
+
+  it("이동이 막힌 채 대화상자가 사라지면(owner 가 아니게 됨) 막아 둔 이동을 이어서 보낸다", async () => {
+    stubSetupServer({ tokens: [tokenOf(1, { connected: true })] });
+    const { router, queryClient } = renderRoute("/settings/connection");
+    const dialog = await issue("새것");
+    await within(dialog).findByText(RAW_TOKEN);
+    act(() => void router.navigate({ to: "/agents" }));
+    await within(dialog).findByRole("alert");
+
+    act(() => queryClient.setQueryData(qk.me, { ...OWNER, role: "member" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/agents"));
     expect(document.body.innerHTML).not.toContain(RAW_TOKEN);
   });

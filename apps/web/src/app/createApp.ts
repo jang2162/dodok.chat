@@ -22,12 +22,14 @@ export function createApp(history?: RouterHistory): AppClient {
   /**
    * REST 401(wire `UNAUTHORIZED` 도 여기로 — 태스크 5): 클라이언트 상태를 비우고 `/login?next=<지금 경로>` 로.
    * 이미 로그인 화면이면(틀린 토큰의 401 등) 아무것도 하지 않는다 — next 를 덮거나 두 번 가지 않게.
+   * 이동 막기(`useBlocker` — 토큰 원문 대화상자 등)는 건너뛴다: 세션이 끝났으니 머무를 까닭이 없고, 캐시를 비우면 막던 화면도
+   * 어차피 사라진다
    */
   function onUnauthorized() {
     const { pathname, href } = router.latestLocation;
     if (pathname === "/login") return;
     resetClientState(queryClient);
-    void router.navigate({ to: "/login", search: { next: href }, replace: true });
+    void router.navigate({ to: "/login", search: { next: href }, replace: true, ignoreBlocker: true });
   }
 
   /**

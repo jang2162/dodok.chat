@@ -58,6 +58,18 @@ export function IssueTokenDialog({ triggerRef }: { triggerRef?: RefObject<HTMLBu
     if (leave.status === "blocked") stayRef.current?.focus();
   }, [leave.status]);
 
+  // 막아 둔 채 사라지면(owner 가 아니게 됨 등) 이어서 보낸다 — useBlocker 는 언마운트 때 대기를 풀지 않아 이동이 매달린다.
+  // 원문은 대화상자와 함께 이미 사라졌다
+  const leaveRef = useRef(leave);
+  leaveRef.current = leave;
+  useEffect(
+    () => () => {
+      const last = leaveRef.current;
+      if (last.status === "blocked") last.proceed();
+    },
+    [],
+  );
+
   function reset() {
     setLabel("");
     setError(undefined);
@@ -126,6 +138,7 @@ export function IssueTokenDialog({ triggerRef }: { triggerRef?: RefObject<HTMLBu
                 className="flex flex-col gap-2 rounded-md border border-destructive bg-destructive/10 p-3 text-sm"
               >
                 <p className="font-medium">이 페이지를 떠나면 토큰 원문을 다시 볼 수 없습니다.</p>
+                <p>복사를 마쳤다면 「복사했습니다」를 누르세요. 닫고 이어서 이동합니다.</p>
                 <div className="flex flex-wrap gap-2">
                   <Button ref={stayRef} type="button" size="sm" variant="outline" onClick={leave.reset}>
                     머무르기
