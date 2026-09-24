@@ -68,14 +68,16 @@ afterEach(() => {
 describe("prune-runtime-deps", () => {
   it("목록의 dependencies·optional·peer 닫힘만 평평하게 실제 파일로 복사한다 — 없는 optional·peer 는 건너뛰고 목록 밖 패키지는 싣지 않는다", () => {
     const scoped = pkg("@s/leaf");
+    const opt = pkg("opt-dep");
     const b = pkg("b", { version: "2.0.0", dependencies: { "@s/leaf": "1.0.0" } });
     const peer = pkg("peer-dep");
     const a = pkg("a", {
       dependencies: { b: "2.0.0" },
-      optionalDependencies: { "missing-optional": "1.0.0" },
+      optionalDependencies: { "opt-dep": "1.0.0", "missing-optional": "1.0.0" },
       peerDependencies: { "peer-dep": "*", "missing-peer": "*" },
     });
     sibling(a, "b", b);
+    sibling(a, "opt-dep", opt);
     sibling(a, "peer-dep", peer);
     sibling(b, "@s/leaf", scoped);
     top("a", a);
@@ -84,8 +86,10 @@ describe("prune-runtime-deps", () => {
     const r = run(["a"]);
     expect(r.stderr).toBe("");
     expect(r.code).toBe(0);
-    expect(r.stdout).toBe(`runtime deps: @s/leaf@1.0.0, a@1.0.0, b@2.0.0, peer-dep@1.0.0 → ${r.out}\n`);
-    expect(readdirSync(r.out).sort()).toEqual(["@s", "a", "b", "peer-dep"]);
+    expect(r.stdout).toBe(
+      `runtime deps: @s/leaf@1.0.0, a@1.0.0, b@2.0.0, opt-dep@1.0.0, peer-dep@1.0.0 → ${r.out}\n`,
+    );
+    expect(readdirSync(r.out).sort()).toEqual(["@s", "a", "b", "opt-dep", "peer-dep"]);
     expect(existsSync(join(r.out, "unrelated"))).toBe(false);
     // 링크가 아니라 파일 — 이미지로 복사해도 deploy 디렉터리를 가리키지 않는다
     expect(lstatSync(join(r.out, "b")).isSymbolicLink()).toBe(false);
