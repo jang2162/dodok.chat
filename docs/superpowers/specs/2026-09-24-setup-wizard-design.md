@@ -237,5 +237,5 @@
 
 **검증이 확인한 것**
 
-- 서버 통합 `apps/server/test/integration/setup.test.ts`(7장 서버 통합 항목 전부 + BRIDGE_TOKEN 없는 부팅·검증 함수 예외·거절 로그 주소), 로컬 Compose 이미지(받은 tgz sha256 = 이미지 안 파일 = 화면 값, tgz 안 번들 sha256 = `bundleSha256`, 익명 받기 401), `dev:fake` 위 브라우저 시나리오 1~10(결함 1 — 위 s2-c1, 확인 불가 2 — 탭 닫기 `beforeunload`(CDP 가 프롬프트를 억제)·member 화면(dev:fake 에 두 번째 사용자 없음)).
+- 서버 통합 `apps/server/test/integration/setup.test.ts`(7장 서버 통합 항목 — owner 403 은 `apps/server/test/setup.routes.test.ts` — + BRIDGE_TOKEN 없는 부팅·검증 함수 예외·거절 로그 주소), 로컬 Compose 이미지(받은 tgz sha256 = 이미지 안 파일 = 화면 값, tgz 안 번들 sha256 = `bundleSha256`, 익명 받기 401), `dev:fake` 위 브라우저 시나리오 1~10(결함 1 — 위 s2-c1, 확인 불가 2 — 탭 닫기 `beforeunload`(CDP 가 프롬프트를 억제)·member 화면(dev:fake 에 두 번째 사용자 없음)).
 - 테스트 2400(shared 131·plugin 112·adapter 240·server 759·web 1158 — 루트 `pnpm test` 의 패키지별 `Tests` 줄).

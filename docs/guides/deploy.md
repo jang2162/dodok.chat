@@ -45,7 +45,7 @@ ${EDITOR:-vi} .env      # 아래 표의 나머지 값 — OPENCLAW_GATEWAY_TOKEN
 | `LOCAL_AUTH_TOKEN` | **필수**(≥16자) | 로그인 토큰 = owner 비밀번호. 바꾸면 기존 세션이 끊긴다 |
 | `BETTER_AUTH_SECRET` | **필수**(≥32자) | 세션 서명 비밀 |
 | `OPENCLAW_GATEWAY_URL` · `OPENCLAW_GATEWAY_TOKEN` | **필수** | 원격 Gateway(`wss://…`)와 그 공유 토큰. `OPENCLAW_TARGET` 은 비워 둔다(기본 `remote`) |
-| `BRIDGE_TOKEN` | 선택(있으면 ≥16자) — 새 배포는 비워 둔다 | 브리지 토큰의 정본은 DB 다. 이 값은 **첫 부팅 때 토큰 테이블이 비어 있으면 라벨 `env` 로 한 번 이어받을 뿐**이다(이미 이 값을 플러그인에 넣어 둔 배포가 그대로 붙게). 그 뒤로 `.env` 를 바꾸고 재시작해도 새 값은 통하지 않는다 — 서버 로그 warn `BRIDGE_TOKEN in .env is ignored — manage bridge tokens in the connection page`, 연결 페이지 「.env 의 BRIDGE_TOKEN 은 더 이상 쓰지 않습니다 — 연결 페이지에서 발급하세요」. 교체는 아래 「브리지 토큰 교체」 |
+| `BRIDGE_TOKEN` | 선택(있으면 ≥16자) — 새 배포는 비워 둔다 | 브리지 토큰의 정본은 DB 다. 이 값은 **부팅 때 토큰 행이 하나도 없으면(폐기된 행 포함) 라벨 `env` 로 한 번 이어받을 뿐**이다(이미 이 값을 플러그인에 넣어 둔 배포가 그대로 붙게). 그 뒤로 `.env` 를 바꾸고 재시작해도 새 값은 통하지 않는다 — 서버 로그 warn `BRIDGE_TOKEN in .env is ignored — manage bridge tokens in the connection page`, 연결 페이지 「.env 의 BRIDGE_TOKEN 은 더 이상 쓰지 않습니다 — 연결 페이지에서 발급하세요」. 교체는 아래 「브리지 토큰 교체」 |
 | `BRIDGE_PUBLIC_URL` | 선택 | `wss://<도메인>/bridge`. 비우면 `APP_ORIGIN` 의 `https:` → `wss:` + `/bridge` 로 같은 값이 된다. 연결 페이지가 보여 주고, 발급한 설정 조각의 `bridgeUrl` 에 들어간다(서버는 이 값으로 리슨하지 않는다) |
 | `VAPID_SUBJECT` | **필수**(실제 연락처) | `mailto:<실제 주소>` 또는 `https://…`. 로컬 자리값(`localhost`·`*.local`)이면 Apple Push 가 `403 BadJwtToken` 으로 거부한다 — 폰 푸시가 안 온다 |
 | `LOG_LEVEL` · `OWNER_HANDLE` · `DODOK_WORKSPACE_NAME` | 선택 | 기본 `info` · `owner` · `dodok` |
@@ -115,13 +115,15 @@ scp <받은 파일> <B>:/tmp/
 **브리지 토큰 발급** — 「브리지 토큰」 섹션의 「새 토큰 발급」 → 라벨(알아볼 이름, 예: Gateway 호스트 이름. `env` 는 `.env` 에서 이어받은 토큰에만 쓰는 라벨이라 거절된다) → 「발급」.
 
 - **원문은 이 대화상자에서 한 번만 보인다.** 서버는 해시만 두고, 목록·로그·새로고침·뒤로 가기 어디에서도 원문을 다시 볼 수 없다. 원문이 보이는 동안 대화상자는 「복사했습니다」로만 닫히고, 다른 곳으로 가려 하면 한 번 더 묻는다(탭 닫기·새로고침은 브라우저가 묻는다. 세션이 끝나 로그인 화면으로 보내질 때만은 묻지 않고 원문이 사라진다). 복사하지 못한 채 닫았으면 그 토큰을 폐기하고 새로 발급한다.
-- 「플러그인 설정」 조각(`channels.dodok.accounts.default` 의 `bridgeUrl`·`token`)을 「설정 복사」로 복사해 [B] 에서 파일로 둔다 — 붙여 넣기로 쓰면 토큰이 셸 기록·`ps` 에 남지 않는다.
+- 「플러그인 설정」 조각(`channels.dodok.accounts.default` 의 `bridgeUrl`·`token`)을 「플러그인 설정」 아래의 「복사」로 복사해 [B] 에서 파일로 둔다 — 붙여 넣기로 쓰면 토큰이 셸 기록·`ps` 에 남지 않는다.
   ```bash
   ( umask 077; cat > /tmp/dodok.patch.json5 )     # [B] — 조각을 붙여 넣고 Ctrl-D
   ```
 - 파일을 둔 뒤 「복사했습니다」.
 
-**[B] 설치** — 연결 페이지 「플러그인」 섹션의 「설치 명령 복사」가 아래 블록과 같은 명령에 받은 파일 이름과 대조할 「번들 sha256」 값을 채워 준다(계정 설정 패치 줄은 빼고 — 토큰은 발급 대화상자가 따로 준다). 아래 블록의 파일 이름 `dodok-openclaw-plugin-0.0.0.tgz` 는 개발 PC 에서 `pnpm -F @dodok/openclaw-plugin run pack:plugin` 으로 만든 파일의 이름이고, sha 줄의 대조 값은 연결 페이지의 「번들 sha256」이다.
+**[B] 설치** — 연결 페이지 「플러그인」 섹션 설치 명령 상자 아래의 「복사」가 아래 블록과 같은 명령에 받은 파일 이름과 대조할 「번들 sha256」 값을 채워 준다(계정 설정 패치 줄은 빼고 — 토큰은 발급 대화상자가 따로 준다). 아래 블록의 파일 이름 `dodok-openclaw-plugin-0.0.0.tgz` 는 개발 PC 에서 `pnpm -F @dodok/openclaw-plugin run pack:plugin` 으로 만든 파일의 이름이고, sha 줄의 대조 값은 연결 페이지의 「번들 sha256」이다.
+
+처음 설치라면 복사한 명령의 마지막 줄(Gateway 올리기) 전에 `openclaw config patch --file /tmp/dodok.patch.json5 && rm /tmp/dodok.patch.json5` 를 돌린다 — 아래 블록이 그 순서다. 블록을 손으로 칠 때는 파일 이름을 받은 파일 이름으로 바꾼다.
 
 [B] — **Gateway 를 먼저 내리고** 설치한다(2026.9.5 는 떠 있는 Gateway 에 라이브 리로드를 시도하다 실패하면서 파일도 안 바꾼다 — `docs/guides/live-smoke.md` 「플러그인 최신 번들 재설치」). 계정 설정을 넣은 뒤 올린다.
 
@@ -176,9 +178,9 @@ docker compose -f infra/compose.yml exec app node dist/backup.js
 
 ## 브리지 토큰 교체
 
-토큰은 겹쳐서 바꾼다 — 새 토큰을 넣고 다시 붙는 동안 옛 토큰도 통하므로 에이전트가 멈추지 않는다. `.env` 의 `BRIDGE_TOKEN` 을 고쳐서는 바꿀 수 없다(위 `.env` 표).
+토큰은 겹쳐서 바꾼다 — 새 토큰을 넣고 다시 붙는 동안 옛 토큰도 통하므로 토큰 때문에 에이전트가 멈추지는 않는다(Gateway 재시작 동안의 짧은 끊김은 있다). `.env` 의 `BRIDGE_TOKEN` 을 고쳐서는 바꿀 수 없다(위 `.env` 표).
 
-1. **발급** — 연결 페이지 「새 토큰 발급」(체크리스트 4 「브리지 토큰 발급」과 같다 — 원문은 한 번만 보인다). 「설정 복사」한 조각을 [B] 의 `/tmp/dodok.patch.json5` 로 두고 「복사했습니다」.
+1. **발급** — 연결 페이지 「새 토큰 발급」(체크리스트 4 「브리지 토큰 발급」과 같다 — 원문은 한 번만 보인다). 「플러그인 설정」 아래의 「복사」로 복사한 조각을 [B] 의 `/tmp/dodok.patch.json5` 로 두고 「복사했습니다」.
 2. **[B] 설정 교체** — 플러그인은 다시 설치하지 않는다.
    ```bash
    openclaw config patch --file /tmp/dodok.patch.json5 && rm /tmp/dodok.patch.json5
@@ -186,7 +188,7 @@ docker compose -f infra/compose.yml exec app node dist/backup.js
    ```
 3. **접속 이동 확인** — 연결 페이지 「브리지 토큰」에서 「지금 접속 중」이 새 줄로 옮겨 가고, 옛 줄에 「이제 폐기해도 됩니다 — 플러그인이 새 토큰으로 접속해 있습니다」가 뜬다. 옮겨 가지 않으면 [B] 의 설정·재시작을 다시 본다 — 이 단계 전에는 옛 토큰을 폐기하지 않는다.
 4. **옛 토큰 폐기** — 옛 줄의 「폐기」 → 확인. 그 토큰으로 붙은 세션은 곧바로 끊기고, 그 뒤 핸드셰이크·첨부 HTTP 모두 거절된다. 되돌릴 수 없다.
-   - 지금 접속 중인 토큰을 폐기하려 하면 「에이전트가 멈춘다」고 한 번 더 알린다.
+   - 지금 접속 중인 토큰이면 확인 대화상자가 「폐기하면 곧바로 끊기고 에이전트가 멈춥니다」라고 알린다.
    - 활성 토큰이 하나도 남지 않게 되면 두 번째 확인(「그래도 폐기」)이 뜬다. 첫 확인 버튼이 있던 자리에는 「취소」가 오고(초점도 거기), 「그래도 폐기」는 반대쪽에 잠시(600ms) 누를 수 없게 나타난다 — 두 번 누르기·Enter 연타가 두 번째 확인으로 번지지 않는다.
 
 `.env` 에서 이어받은 토큰(목록의 라벨 `env`, 알아보기용 앞자리 대신 「.env 에서 이어받음」)도 같은 절차로 바꾼다. 폐기한 뒤에는 `.env` 의 `BRIDGE_TOKEN` 줄을 지워도 되고, 남겨 두면 부팅 때 warn 한 줄과 연결 페이지 한 줄(「.env 의 BRIDGE_TOKEN 은 더 이상 쓰지 않습니다 — 연결 페이지에서 발급하세요」)이 계속 보인다.
@@ -313,7 +315,7 @@ docker compose -f infra/compose.yml ps     # app·caddy (healthy)
 | 에이전트 목록이 비고 로그에 Gateway 재시도 | Gateway URL·토큰, 방화벽 — 서버는 멈추지 않고 재시도만 한다 | 체크리스트 3 |
 | `bridge plugin hello` 가 안 나옴 | 플러그인 `bridgeUrl`·`token`, [B] → [A] 443. `bridge connection rejected` 의 `token mismatch` 면 토큰이 활성 토큰과 맞지 않는다 | 체크리스트 5 |
 | 연결 페이지 브리지 토큰 섹션 「토큰이 없습니다 — 발급하세요」 | 활성 토큰이 0개다(새 배포, 또는 전부 폐기) — 브리지 접속은 모두 거절된다 | 체크리스트 4 「브리지 토큰 발급」 |
-| `.env` 의 `BRIDGE_TOKEN` 을 바꿨는데 플러그인이 안 붙음, 로그 warn `BRIDGE_TOKEN in .env is ignored — manage bridge tokens in the connection page` | `.env` 값은 토큰 테이블이 비었을 때 한 번만 이어받는다 | 「브리지 토큰 교체」 |
+| `.env` 의 `BRIDGE_TOKEN` 을 바꿨는데 플러그인이 안 붙음, 로그 warn `BRIDGE_TOKEN in .env is ignored — manage bridge tokens in the connection page` | `.env` 값은 토큰 행이 하나도 없을 때(폐기된 행 포함) 한 번만 이어받는다 | 「브리지 토큰 교체」 |
 | 연결 페이지 「다른 빌드입니다」·「빌드를 알 수 없습니다」 | [B] 의 플러그인이 이 서버 이미지가 품은 번들과 다르다(또는 번들 sha256 을 보내지 않는 옛 플러그인) | 체크리스트 4 의 받기·설치 |
 | 「플러그인 받기」가 「플러그인 파일이 그새 다시 빌드됐습니다」 | 부팅 때 잰 tgz 와 지금 파일이 다르다(서버 409 `PLUGIN_FILE_CHANGED`) — 이미지로 돌면 나지 않는다 | 서버 재시작 |
 | 폰에 푸시가 안 옴(iOS) | `VAPID_SUBJECT` 가 로컬 자리값이면 Apple 이 `403 BadJwtToken` — 서버 시작 로그에 warn 한 줄 | 실제 연락처로 바꾸고 `up -d` |
@@ -343,11 +345,11 @@ docker compose -f infra/compose.yml ps     # app·caddy (healthy)
 
 ```bash
 cp infra/local.env.example infra/local.env
-for k in LOCAL_AUTH_TOKEN BETTER_AUTH_SECRET BRIDGE_TOKEN OPENCLAW_GATEWAY_TOKEN; do
+for k in LOCAL_AUTH_TOKEN BETTER_AUTH_SECRET OPENCLAW_GATEWAY_TOKEN; do
   sed -i.bak "s/^$k=\$/$k=$(openssl rand -hex 32)/" infra/local.env; done; rm infra/local.env.bak
 ```
 
-`infra/local.env` 는 git 제외다. 이 파일은 `app` 의 `env_file` 이면서 compose 의 `--env-file`(변수 치환)이라, **모든** compose 명령에 같은 조합을 붙인다.
+`BRIDGE_TOKEN` 은 비워 둔다 — 운영 모드의 연결 페이지에서 「토큰이 없습니다 — 발급하세요」와 첫 발급을 본다(값을 넣으면 `.env` 이어받기 경로를 본다). `infra/local.env` 는 git 제외다. 이 파일은 `app` 의 `env_file` 이면서 compose 의 `--env-file`(변수 치환)이라, **모든** compose 명령에 같은 조합을 붙인다.
 
 ```bash
 # zsh 는 따옴표 없는 변수를 낱말로 쪼개지 않는다 — 변수 대신 함수로 둔다
