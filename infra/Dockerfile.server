@@ -1,7 +1,8 @@
 # 서버 이미지(스펙 2.1). 빌드 컨텍스트는 저장소 루트다 — compose.yml 이 context: .. 로 준다
 #   build   워크스페이스 설치·번들(dist/main.js·dist/backup.js + 소스맵)
 #   deploy  lockfile 의 운영 의존성 배치에서 번들이 런타임에 찾는 것의 닫힘만 남긴 node_modules(/runtime/node_modules)
-#   runtime 운영 이미지 — 번들 + 그 배치 + 마이그레이션, 비루트
+#   plugin  설정 마법사가 내려 주는 플러그인 tgz(pack:plugin)
+#   runtime 운영 이미지 — 번들 + 그 배치 + 마이그레이션 + 플러그인 tgz, 비루트
 #   devfake 로컬 검증 전용(compose.local.yml 의 devfake 프로필). 운영 이미지가 아니다
 FROM node:24.21.0-bookworm AS build
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
@@ -28,16 +29,25 @@ RUN pnpm --filter @dodok/server deploy --prod --legacy /deploy
 # 목록은 build.mjs 의 runtimeDeps(dist/runtime-deps.json) — 까닭·크기는 스크립트 머리. bundle-smoke 가 같은 명령으로 배치를 만든다
 RUN node apps/server/scripts/prune-runtime-deps.mjs /deploy /runtime/node_modules apps/server/dist/runtime-deps.json
 
+# 설정 마법사 스펙 2.5 — 서버가 GET /api/v1/setup/plugin.tgz 로 내려 줄 파일. 플러그인의 devDependency(openclaw 등)는 pnpm fetch 가
+# 이미 스토어에 받아 두었고 이 단계에서만 링크된다(openclaw 약 220 MB) — runtime 에는 tgz 하나만 간다.
+# pack:plugin 의 build.mjs 가 번들 해시 가드(import.meta.url·hello 필드)를 돌려 어긋나면 여기서 빌드가 멈춘다
+FROM build AS plugin
+RUN pnpm install --offline --frozen-lockfile --filter "@dodok/openclaw-plugin..."
+RUN pnpm -F @dodok/openclaw-plugin run pack:plugin
+
 FROM node:24.21.0-bookworm-slim AS runtime
 # 소스맵을 싣고 켠다 — 운영 로그의 스택이 원본 TS 줄을 가리키게
 ENV NODE_ENV=production DATA_DIR=/data HOST=0.0.0.0 PORT=3000 DODOK_MIGRATIONS_DIR=/app/drizzle \
-    NODE_OPTIONS=--enable-source-maps
+    DODOK_PLUGIN_DIR=/app/plugin NODE_OPTIONS=--enable-source-maps
 WORKDIR /app
 COPY --from=deploy --chown=node:node /runtime/node_modules ./node_modules
 # "type": "module" — dist/main.js 가 ESM 으로 읽히게
 COPY --from=deploy --chown=node:node /deploy/package.json ./package.json
 COPY --from=build --chown=node:node /repo/apps/server/dist ./dist
 COPY --from=build --chown=node:node /repo/apps/server/drizzle ./drizzle
+# tgz 가 없으면 COPY 가 실패한다(no source files were specified) — 파일 없는 이미지가 조용히 나가지 않는다
+COPY --from=plugin --chown=node:node /repo/packages/openclaw-plugin/dist/*.tgz ./plugin/
 # 빈 볼륨은 마운트 때 이 디렉터리의 소유자(node, 1000:1000)를 물려받는다. 파일이 이미 든 root 소유 볼륨은 그대로라 부팅 때
 # 설정 오류 한 줄(src/runtime.ts 의 unwritableDataPath)로 끝난다
 RUN mkdir -p /data && chown node:node /data
