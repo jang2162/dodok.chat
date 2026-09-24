@@ -252,6 +252,16 @@ describe("OpsService — 폭주 병합(같은 줄의 ops.event·로그는 창마
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it("close 뒤 record 는 DB 에 쓰고 로그·emit 을 즉시 하되 창(타이머)을 열지 않는다 — 종료 도중의 기록(o3-t1 N3)", () => {
+    ops.close();
+    ops.record({ kind: "crash_exception", key: "process", severity: "error" });
+    ops.record({ kind: "crash_exception", key: "process", severity: "error" });
+    expect(vi.getTimerCount()).toBe(0);
+    expect(db.select().from(opsEvents).all()).toEqual([expect.objectContaining({ count: 2 })]);
+    expect(emitted.map((p) => p.event.count)).toEqual([1, 2]);
+    expect(opsLines().map((l) => l.count)).toEqual([1, 2]);
+  });
+
   it("unacked 캐시는 부팅(서비스 생성) 때 한 번 센 값에서 시작하고, 새 줄·ack·sweep 뒤 DB 와 같다", () => {
     recordEvent(db, ws, { kind: "run_failed", key: "old", severity: "warn" }, T0); // 서비스 밖에서 먼저 있던 줄
     const bus = new ServerBus();

@@ -32,7 +32,7 @@ export function apiError(code: ErrorCode, message: string, details?: Record<stri
   return new HttpError(STATUS[code], { code, message, ...(details ? { details } : {}) });
 }
 
-/** Fastify 가 낸 4xx 상태를 계약 ErrorCode 로. 표에 없는 4xx 는 VALIDATION. */
+/** Fastify 가 낸 4xx(와 507) 상태를 계약 ErrorCode 로. 표에 없는 상태는 VALIDATION. */
 export function httpStatusToErrorCode(status: number): ErrorCode {
   switch (status) {
     case 401:
@@ -49,6 +49,8 @@ export function httpStatusToErrorCode(status: number): ErrorCode {
       return "EXPIRED";
     case 429:
       return "RATE_LIMITED";
+    case 507:
+      return "INSUFFICIENT_STORAGE";
     default:
       return "VALIDATION";
   }

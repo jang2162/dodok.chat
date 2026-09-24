@@ -61,7 +61,10 @@ export async function bootLiveApp(opts: LiveAppOptions = {}): Promise<LiveApp> {
   };
 
   try {
-    gateway = await startFakeGateway(opts.grantAdmin === undefined ? {} : { grantAdmin: opts.grantAdmin });
+    gateway = await startFakeGateway({
+      ...(opts.grantAdmin === undefined ? {} : { grantAdmin: opts.grantAdmin }),
+      ...(opts.serverVersion === undefined ? {} : { serverVersion: opts.serverVersion }),
+    });
     app = await createApp(
       loadConfig({
         ...testEnv,

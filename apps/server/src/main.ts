@@ -2,6 +2,8 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { createApp } from "./app";
 import { loadConfig } from "./config";
+import { startRunState } from "./modules/ops/health";
+import { installProcessHandlers } from "./process-handlers";
 import { dataDirErrorMessage, isBundled, unwritableDataPath } from "./runtime";
 
 // 소스 실행(`pnpm -F @dodok/server dev`)은 cwd 가 apps/server 다 — ./data·.env 가 저장소 루트를 가리키게 옮긴다.
@@ -23,15 +25,8 @@ if (unwritable) {
   process.exit(1);
 }
 const app = await createApp(config);
+// 부팅 중(createApp 안) 예외는 처리기가 없어 Node 기본대로 죽는다 — 표지도 아직 안 썼으니 다음 부팅이 unclean 으로 보지 않는다
+const runState = startRunState(config.DATA_DIR, app.ops, app.logger);
+installProcessHandlers({ app, runState, exit: (code) => process.exit(code), proc: process });
 await app.fastify.listen({ host: config.HOST, port: config.PORT });
 app.logger.info({ url: app.url }, "dodok server listening");
-
-for (const sig of ["SIGINT", "SIGTERM"] as const) {
-  process.on(sig, () => {
-    const t = setTimeout(() => process.exit(1), 10_000);
-    void app.close().then(() => {
-      clearTimeout(t);
-      process.exit(0);
-    });
-  });
-}

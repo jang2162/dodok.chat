@@ -95,6 +95,8 @@ export type FakeGatewayOptions = {
    * 실제 클라이언트는 프레임 없이 hello 의 `policy.tickIntervalMs`(30s)×2 가 지나면 끊으므로 오래 띄우는 개발 모드에 필요하다
    */
   tickIntervalMs?: number;
+  /** hello-ok 의 server.version(기본은 저장소 핀 2026.9.4) — 서버의 Gateway 버전 사건을 잴 때 바꾼다 */
+  serverVersion?: string;
 };
 
 export type FakeGateway = {
@@ -225,13 +227,13 @@ function isRequestFrame(value: unknown): value is RequestFrame {
  * `HelloOkSchema`(gateway-protocol `frames-*.d.mts` 69-)의 필수 필드 전부. 반환 타입이 그 스키마의 Static 이라 빠지면 typecheck 가 깨진다.
  * `sessionDefaults` 는 선택이지만 넣으면 `defaultAgentId`·`mainKey`·`mainSessionKey` 가 필수다(같은 파일 247-253).
  */
-function helloOk(connectParams: unknown): HelloOk {
+function helloOk(connectParams: unknown, serverVersion = "2026.9.4"): HelloOk {
   const params = record(connectParams);
   const scopes = Array.isArray(params.scopes) ? params.scopes.filter((s) => typeof s === "string") : [];
   return {
     type: "hello-ok",
     protocol: 4,
-    server: { version: "2026.9.4", connId: randomUUID() },
+    server: { version: serverVersion, connId: randomUUID() },
     features: { methods: [...FAKE_GATEWAY_METHODS], events: [...FAKE_GATEWAY_EVENTS], capabilities: [] },
     snapshot: {
       presence: [],
@@ -521,7 +523,7 @@ export async function startFakeGateway(opts: FakeGatewayOptions = {}): Promise<F
     };
     if (frame.method === "connect") {
       connected.add(socket);
-      reply({ ok: true, payload: helloOk(frame.params) });
+      reply({ ok: true, payload: helloOk(frame.params, opts.serverVersion) });
       return;
     }
     if (frame.method === "sessions.messages.subscribe") {

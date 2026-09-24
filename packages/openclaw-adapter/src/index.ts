@@ -14,3 +14,4 @@ export {
 export type { BridgeTokenVerifier } from "./bridge/server";
 export { verifyBridgeToken } from "./bridge/session";
 export { BridgeAuthGuard } from "./bridge/guard";
+export { OPENCLAW_PINNED_VERSION } from "./version";

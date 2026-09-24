@@ -15,6 +15,16 @@ import { testEnv } from "./env";
  */
 export const noExternalPush: PushSend = async () => ({ statusCode: 201 });
 
+/**
+ * 테스트 앱의 기본 디스크 측정 — 여유 넉넉(ok). testEnv 의 DATA_DIR 은 없는 경로라 실제 statfs 면 앱마다 「disk check failed」
+ * warn 이 찍힌다. 디스크를 재는 테스트만 deps.statfs 를 준다
+ */
+export const plentyOfDisk: NonNullable<AppDeps["statfs"]> = async () => ({
+  bavail: 1n << 20n,
+  bsize: 4096n,
+  blocks: 1n << 21n,
+});
+
 /** owner 비밀번호(= LOCAL_AUTH_TOKEN) 테스트 값 */
 export const TEST_LOCAL_TOKEN = testEnv.LOCAL_AUTH_TOKEN as string;
 
@@ -46,6 +56,7 @@ export async function bootTestApp(
       ...deps,
       adapter: deps.adapter ?? new FakeAdapter(),
       pushSend: deps.pushSend ?? noExternalPush,
+      statfs: deps.statfs ?? plentyOfDisk,
     });
   } catch (err) {
     remove();

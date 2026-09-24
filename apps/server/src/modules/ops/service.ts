@@ -37,7 +37,10 @@ export interface OpsService {
   /** 메모리 캐시 — 생성 때 한 번 세고, 새 줄·severity 상승·ack·sweep 때만 다시 센다 */
   unacked(): OpsUnacked;
   sweep(now?: Date): number; // last_at 이 30일 지난 줄 삭제
-  /** 모으던 emit·로그를 내보내고 창 타이머를 끈다(앱 종료) */
+  /**
+   * 모으던 emit·로그를 내보내고 창 타이머를 끈다(앱 종료). 그 뒤의 record 도 DB 에 쓰고 로그·emit 을 즉시 하지만
+   * 창을 다시 열지 않는다 — 종료 도중(uncaughtException 등)의 기록이 타이머를 남기지 않게(o3-t1 N3)
+   */
   close(): void;
 }
 
@@ -91,7 +94,9 @@ export function createOpsService(deps: {
     );
 
   const windows = new Map<string, EmitWindow>();
+  let closed = false;
   const openWindow = (id: string) => {
+    if (closed) return;
     const timer = setTimeout(() => flushWindow(id), OPS_EMIT_COALESCE_MS);
     timer.unref();
     windows.set(id, { timer });
@@ -188,6 +193,7 @@ export function createOpsService(deps: {
     },
 
     close() {
+      closed = true;
       for (const [id, window] of windows) {
         clearTimeout(window.timer);
         windows.delete(id);

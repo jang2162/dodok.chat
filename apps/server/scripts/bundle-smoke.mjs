@@ -4,14 +4,24 @@
 // 빠진 것이 있으면 여기서 부팅이 깨진다.
 // 저장소 밖 임시 디렉터리에서 띄운다 — 저장소 안이면 워크스페이스 node_modules(devDependency 포함)가 모든 것을 해석해
 // 빠진 prod 의존성이 가려진다(번들이 런타임에 찾는 ws 가 devDependency 였던 결함을 그렇게 놓쳤다).
-// 단계 1: 정상 env 로 /healthz 200 · GET /socket.io/socket.io.js 400(serveClient: false) 뒤에도 살아 있음
+// 단계 1: 정상 env 로 /healthz 200 · GET /socket.io/socket.io.js 400(serveClient: false) 뒤에도 살아 있음 · SIGTERM 이면 exit 0 과
+//   DATA_DIR/run-state.json clean:true(종료 표지 — 처리기가 번들 main 에 걸렸는지)
 // 단계 2: DODOK_MIGRATIONS_DIR 없이 띄우면 설정 오류로 죽는다 — 번들이 자기를 번들로 알아보는지(define·isBundled)를 이것으로 본다
 // 단계 3: dist/backup.js — 단계 1 서버가 떠 있는 동안 그 DATA_DIR 을 백업하면 exit 0·한 줄·사본, DB 없는 디렉터리면 exit 1·사유 한 줄.
 //   better-sqlite3 가 external 이라 번들 혼자로는 모른다 — 프로드 설치 위에서 실제로 적재되는지를 본다
 // 네트워크 밖으로 나가지 않는다(deploy 는 --offline 으로 로컬 스토어만 쓴다)
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -212,6 +222,12 @@ async function stage1() {
     await backupLive();
   }
   await stop(run);
+  if (ok) {
+    if (run.code !== 0) failures.push(`단계 1: SIGTERM 뒤 exit ${run.code}(0 이어야 한다)`);
+    const marker = join(dataDir, "run-state.json");
+    const clean = existsSync(marker) ? JSON.parse(readFileSync(marker, "utf8")).clean : "파일 없음";
+    if (clean !== true) failures.push(`단계 1: SIGTERM 뒤 run-state.json clean 이 true 가 아니라 ${clean}`);
+  }
 }
 
 // 단계 3 앞 절반 — 운영에서처럼 서버가 쓰고 있는 DB 를 다른 프로세스가 백업한다
@@ -269,7 +285,7 @@ try {
 if (!interrupted) {
   console.log(
     failures.length === 0
-      ? "bundle smoke: 1) /healthz 200 · /socket.io/socket.io.js 400  2) DODOK_MIGRATIONS_DIR 없으면 설정 오류로 종료  3) backup.js 떠 있는 DB exit 0 · DB 없음 exit 1"
+      ? "bundle smoke: 1) /healthz 200 · /socket.io/socket.io.js 400 · SIGTERM exit 0·clean 표지  2) DODOK_MIGRATIONS_DIR 없으면 설정 오류로 종료  3) backup.js 떠 있는 DB exit 0 · DB 없음 exit 1"
       : `bundle smoke: FAILED — ${failures.join(", ")}`,
   );
   process.exit(failures.length === 0 ? 0 : 1);

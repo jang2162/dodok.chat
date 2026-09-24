@@ -25,6 +25,14 @@ import { sweepAttachments } from "./modules/attachments/service";
 import { type BlobLocks, createBlobLocks } from "./modules/attachments/store";
 import { registerChannelRoutes } from "./modules/channels/routes";
 import { registerMessageRoutes } from "./modules/messages/routes";
+import {
+  createDiskMonitor,
+  DISCONNECT_EVENT_MS,
+  type DiskState,
+  watchConnections,
+  watchGatewayVersion,
+  watchRunFailures,
+} from "./modules/ops/health";
 import { createRestLimits } from "./modules/ops/http-limits";
 import { ipPrefix } from "./modules/ops/ip";
 import { LIMITS, type Limits } from "./modules/ops/limits";
@@ -85,6 +93,10 @@ export type AppDeps = {
   limits?: Partial<Limits>;
   /** 레이트리밋·브리지 실패 카운터의 시계(ms, 기본 단조 시계 monotonicNow) — 테스트가 창·버킷을 넘긴다. Better Auth·로컬 로그인 상한(@fastify/rate-limit)은 따르지 않는다 */
   limitClock?: () => number;
+  /** DATA_DIR 디스크 측정(기본 fs.statfs) — 테스트가 여유를 흉내 낸다 */
+  statfs?: Parameters<typeof createDiskMonitor>[0]["statfs"];
+  /** 끊김 사건 임계(기본 DISCONNECT_EVENT_MS) — 통합 테스트가 실제 시계로 잴 만큼 줄인다 */
+  disconnectEventMs?: number;
 };
 
 /** 이어받지 않은 .env 토큰 경고(Review Focus 1) — 사람이 로그에서 이 문장을 찾는다 */
@@ -121,6 +133,8 @@ export type App = {
   services: Services;
   /** 운영 사건 입구(= services.ops) — 프로세스 예외 처리기(main.ts)도 여기로 남긴다 */
   ops: OpsService;
+  /** DATA_DIR 디스크 여유 — 첫 측정은 createApp 이 끝나기 전에 끝난다. error 면 첨부 업로드가 507 */
+  disk(): DiskState;
   /** 업로드 경로와 첨부 정리가 함께 지나는 블롭 잠금 — 둘이 같은 객체인지 테스트가 본다 */
   readonly blobLocks: BlobLocks;
   /** listen 뒤에만 채워진다. 그 전에는 빈 문자열. */
@@ -252,6 +266,15 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       services.ops.close(); // 모으던 ops.event·로그를 내보낸다 — io 를 닫기 전에
     };
     undo.push({ step: "ops", run: closeOps });
+    // 디스크 여유(운영 보강 스펙 5.4): 지금 한 번, 그 뒤 10분마다. 사건을 남기므로 ops 뒤에 만들고 ops 보다 먼저 닫는다
+    const disk = createDiskMonitor({
+      dataDir: config.DATA_DIR,
+      ops,
+      logger,
+      ...(deps.statfs === undefined ? {} : { statfs: deps.statfs }),
+    });
+    undo.push({ step: "disk", run: () => disk.close() });
+    await disk.ready;
 
     registerAuthRoutes(fastify, {
       auth,
@@ -281,6 +304,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       verifyBridgeToken,
       bridgeGuard: { guard: bridgeGuard, now: limitClock, onBlocked: onBridgeBlocked },
       locks: blobLocks,
+      diskFull: () => disk.current().level === "error",
     });
     // 푸시: 키는 환경변수 둘 또는 DATA_DIR/vapid.json(스펙 5.1). 망가진 키 파일은 부팅을 막는다(덮어쓰면 모든 구독이 무효)
     const vapid = loadVapidKeys({
@@ -369,6 +393,13 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     undo.push({ step: "fanout", run: () => fanout.close() });
     const watch = watchGatewayReconnecting(adapter, bus, logger);
     undo.push({ step: "watch", run: () => watch.close() });
+    // 운영 사건(스펙 5.2·5.3·3.1 run_failed) — 위 system.notice 감시와 따로 돈다. 부팅 정리(recoverOnBoot)가 닫는 런도 센다
+    const connections = watchConnections(adapter, ops, deps.disconnectEventMs ?? DISCONNECT_EVENT_MS);
+    undo.push({ step: "connections", run: () => connections.close() });
+    const gatewayVersion = watchGatewayVersion(adapter, { db, workspaceId, ops, logger });
+    undo.push({ step: "gateway-version", run: () => gatewayVersion.close() });
+    const runFailures = watchRunFailures(bus, ops);
+    undo.push({ step: "run-failures", run: () => runFailures.close() });
     // 푸시(스펙 5.2~5.4): 버스 → 트리거 → 보고 있으면 거르기 → 발송. 발송은 버스 처리기를 막지 않는다
     const pushDispatcher = createPushDispatcher({
       db,
@@ -411,6 +442,11 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     const shutdown = async () => {
       shuttingDown = true; // ① 새 wire 연결 거부
       await step("watch", () => watch.close());
+      // 사건을 남기는 감시는 ops 를 닫기 전에 끈다 — 그 뒤 기록은 창 없이 즉시 나간다(OpsService.close)
+      await step("connections", () => connections.close());
+      await step("gateway-version", () => gatewayVersion.close());
+      await step("run-failures", () => runFailures.close());
+      await step("disk", () => disk.close());
       await step("setup-events", () => offSetup());
       await step("push-triggers", () => pushTriggers.close()); // 새 발송을 받지 않는다 — 이미 나간 것은 ⑥ 앞에서 잠깐 기다린다
       await step("attachments-sweep", () => sweeper.close()); // 진행 중인 정리가 db 를 닫기 전에 끝나게
@@ -440,6 +476,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       orchestrator: services.orchestrator,
       services,
       ops: services.ops,
+      disk: () => disk.current(),
       blobLocks,
       get url() {
         const addr = fastify.server.address();

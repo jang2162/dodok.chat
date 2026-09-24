@@ -38,6 +38,8 @@ export type AttachmentRouteContext = {
    */
   bridgeGuard: { guard: BridgeAuthGuard; now: () => number; onBlocked: (address: string) => void };
   locks: BlobLocks;
+  /** true 면 업로드(사람·브리지)를 507 INSUFFICIENT_STORAGE 로 거절한다 — 디스크 여유 error(운영 보강 스펙 5.4). 없으면 막지 않는다 */
+  diskFull?: () => boolean;
 };
 
 const IdParams = z.object({ id: Id });
@@ -158,10 +160,15 @@ export function registerAttachmentRoutes(fastify: FastifyInstance, ctx: Attachme
     // 업로드 상한은 본문을 받기 전에 — 세션(REST 상한) 뒤에 한 번 더
     const uploadLimit = async (request: FastifyRequest): Promise<void> =>
       request.server.restLimits?.upload(request, sessionUser(request).id);
+    // 디스크 검사도 본문을 받기 전에(최대 20 MiB 를 받고 버리지 않게), 인증·업로드 상한 **뒤에** 둔다 — 인증 전이면 누구에게나
+    // 디스크 상태를 알려 주고, 상한 앞이면 507 을 받고 곧바로 다시 보내는 클라이언트가 상한을 소모하지 않고 되풀이한다
+    const storage = async (): Promise<void> => {
+      if (ctx.diskFull?.()) throw apiError("INSUFFICIENT_STORAGE", "서버 디스크 여유가 부족합니다");
+    };
 
     scope.post(
       "/api/v1/attachments",
-      { onRequest: [session, uploadLimit], bodyLimit: ATTACHMENT_LIMITS.userImageMaxBytes },
+      { onRequest: [session, uploadLimit, storage], bodyLimit: ATTACHMENT_LIMITS.userImageMaxBytes },
       async (request) => {
         const { channelId } = parseQuery(UploadQuery, request.query);
         const user = sessionUser(request);
@@ -188,7 +195,7 @@ export function registerAttachmentRoutes(fastify: FastifyInstance, ctx: Attachme
 
     scope.post(
       BRIDGE_ATTACHMENTS_PATH,
-      { onRequest: bridge, bodyLimit: ATTACHMENT_LIMITS.agentFileMaxBytes },
+      { onRequest: [bridge, storage], bodyLimit: ATTACHMENT_LIMITS.agentFileMaxBytes },
       async (request) => {
         const channelId = Id.safeParse(request.headers[H.channelId]);
         if (!channelId.success) throw apiError("VALIDATION", `${H.channelId} 헤더가 필요하다`);
