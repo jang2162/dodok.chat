@@ -23,7 +23,7 @@ export type WireFanoutOptions = {
 
 /**
  * bus → Socket.IO 팬아웃. 채널 이벤트는 channel:<id> 룸, 승인 둘은 workspace:<id> 룸,
- * adapter.status·system.notice 는 전체(단일 사용자 MVP), setup.status 는 owner 사용자 룸에만(설정 마법사 결정 6).
+ * adapter.status·system.notice 는 전체(단일 사용자 MVP), setup.status·ops.event 는 owner 사용자 룸에만(설정 마법사 결정 6·운영 보강 6장).
  * message.created·updated 는 여기서 상호작용 기록을 붙인다 — 버스 페이로드는 가볍게 두고, 클라이언트가 보는 Message 는
  * wire 경계에서 한 번 하이드레이션한다(설계 4.2 「클라이언트가 볼 Message 는 항상 하이드레이션을 거친다」).
  * run.event 만 백프레셔를 본다: 소켓의 미전송 큐가 maxPending 이상이면 그 소켓엔 델타를 버리고
@@ -84,13 +84,14 @@ export function attachWireFanout(io: WireServer, bus: ServerBus, opts: WireFanou
       }
     });
 
-  const ownerIds = (): string[] =>
+  // owner 는 보낼 때마다 읽는다 — 역할이 바뀌면 다음 이벤트부터 따른다. owner 가 없으면 아무에게도 안 간다
+  const ownerRooms = (): string[] =>
     opts.db
       .select({ userId: memberships.userId })
       .from(memberships)
       .where(and(eq(memberships.workspaceId, opts.workspaceId), eq(memberships.role, "owner")))
       .all()
-      .map((row) => row.userId);
+      .map((row) => userRoom(row.userId));
 
   const hydrate = (message: Message): Message => withInteractions(opts.db, [message])[0] ?? message;
 
@@ -122,10 +123,13 @@ export function attachWireFanout(io: WireServer, bus: ServerBus, opts: WireFanou
     on("typing", (p) => io.to(channelRoom(p.channelId)).emit("typing", p)),
     on("adapter.status", (p) => io.emit("adapter.status", p)),
     on("system.notice", (p) => io.emit("system.notice", p)),
-    // owner 는 보낼 때마다 읽는다 — 역할이 바뀌면 다음 이벤트부터 따른다. owner 가 없으면 아무에게도 안 간다
     on("setup.status", (p) => {
-      const rooms = ownerIds().map(userRoom);
+      const rooms = ownerRooms();
       if (rooms.length > 0) io.to(rooms).emit("setup.status", p);
+    }),
+    on("ops.event", (p) => {
+      const rooms = ownerRooms();
+      if (rooms.length > 0) io.to(rooms).emit("ops.event", p);
     }),
   ];
 

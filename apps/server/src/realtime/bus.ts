@@ -23,6 +23,8 @@ export type BusEvents = {
   "system.notice": Payload<"system.notice">;
   // 연결 상태(설정 마법사) — owner 사용자 룸에만 간다(events.ts)
   "setup.status": Payload<"setup.status">;
+  // 운영 사건 — setup.status 와 같은 owner 사용자 룸으로
+  "ops.event": Payload<"ops.event">;
 };
 
 /** 프로세스 안 타입드 이벤트 버스. 모듈은 Socket.IO 를 직접 만지지 않고 여기로 알린다. */

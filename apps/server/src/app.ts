@@ -25,6 +25,7 @@ import { sweepAttachments } from "./modules/attachments/service";
 import { type BlobLocks, createBlobLocks } from "./modules/attachments/store";
 import { registerChannelRoutes } from "./modules/channels/routes";
 import { registerMessageRoutes } from "./modules/messages/routes";
+import type { OpsService } from "./modules/ops/service";
 import { createPresence } from "./modules/push/presence";
 import { registerPushRoutes } from "./modules/push/routes";
 import {
@@ -55,6 +56,8 @@ export const ATTACHMENT_SWEEP_INTERVAL_MS = 3600_000;
 export const PUSH_DRAIN_TIMEOUT_MS = 2_000;
 /** Gateway 가 이만큼 reconnecting 이면 운영자에게 알린다 — 토큰 불일치처럼 스스로 풀리지 않는 실패(sc-t11 걱정 2) */
 export const GATEWAY_RECONNECTING_NOTICE_MS = 60_000;
+/** 운영 사건 보존 정리 주기(운영 보강 스펙 3.1 — 부팅 때 한 번, 그 뒤 하루 한 번) */
+export const OPS_SWEEP_INTERVAL_MS = 24 * 3600_000;
 
 export type AppDeps = {
   /** 없으면 설정으로 실제 어댑터(createOpenClawAdapter — Gateway WS·/bridge)를 만든다. 테스트는 FakeAdapter 를 준다. */
@@ -108,6 +111,8 @@ export type App = {
   adapter: AgentAdapter;
   orchestrator: Orchestrator;
   services: Services;
+  /** 운영 사건 입구(= services.ops) — 프로세스 예외 처리기(main.ts)도 여기로 남긴다 */
+  ops: OpsService;
   /** 업로드 경로와 첨부 정리가 함께 지나는 블롭 잠금 — 둘이 같은 객체인지 테스트가 본다 */
   readonly blobLocks: BlobLocks;
   /** listen 뒤에만 채워진다. 그 전에는 빈 문자열. */
@@ -203,6 +208,18 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     const services = createServices({ db, bus, logger, adapter, workspaceId, timeouts: deps.timeouts });
     orchestrator = services.orchestrator;
     undo.push({ step: "orchestrator", run: () => services.orchestrator.stop() });
+    // 운영 사건 보존: 30일 지난 줄을 지금 한 번, 그 뒤 하루 한 번 지운다. 실패는 로그만 남기고 부팅·주기를 막지 않는다
+    const sweepOps = () => {
+      try {
+        services.ops.sweep();
+      } catch (err) {
+        logger.error({ err }, "ops sweep failed");
+      }
+    };
+    sweepOps();
+    const opsSweepTimer = setInterval(sweepOps, OPS_SWEEP_INTERVAL_MS);
+    opsSweepTimer.unref();
+    undo.push({ step: "ops-sweep", run: () => clearInterval(opsSweepTimer) });
 
     registerAuthRoutes(fastify, {
       auth,
@@ -361,6 +378,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       await step("setup-events", () => offSetup());
       await step("push-triggers", () => pushTriggers.close()); // 새 발송을 받지 않는다 — 이미 나간 것은 ⑥ 앞에서 잠깐 기다린다
       await step("attachments-sweep", () => sweeper.close()); // 진행 중인 정리가 db 를 닫기 전에 끝나게
+      await step("ops-sweep", () => clearInterval(opsSweepTimer));
       await step("orchestrator", () => services.orchestrator.stop()); // ② 타이머·어댑터 구독 해제
       // ③ 브리지 system.notice shutdown → Gateway stop. io.close() 가 /bridge 소켓까지 끊으므로 그보다 먼저
       await step("adapter", () => adapter.close());
@@ -385,6 +403,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       adapter,
       orchestrator: services.orchestrator,
       services,
+      ops: services.ops,
       blobLocks,
       get url() {
         const addr = fastify.server.address();

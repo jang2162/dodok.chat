@@ -7,6 +7,7 @@ import { MessageBody } from "./MessageBody";
 const LOOK: Record<SystemKind, { Icon: LucideIcon; label: string; tone: string }> = {
   relay_limit: { Icon: TriangleAlertIcon, label: "주의", tone: "text-warning" },
   relay_denied: { Icon: TriangleAlertIcon, label: "주의", tone: "text-warning" },
+  run_limit: { Icon: TriangleAlertIcon, label: "주의", tone: "text-warning" },
   run_error: { Icon: CircleXIcon, label: "오류", tone: "text-destructive" },
   info: { Icon: InfoIcon, label: "정보", tone: "text-muted-foreground" },
 };

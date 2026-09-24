@@ -4,6 +4,9 @@ import type {
   ComponentState,
   ComponentsV1,
   MentionSet,
+  OpsEvent,
+  OpsEventKind,
+  OpsSeverity,
   RelayPolicy,
   RunEvent,
   RunUsage,
@@ -18,6 +21,8 @@ export const workspaces = sqliteTable("workspaces", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   createdAt: ts("created_at").notNull(),
+  /** 운영 설정 { dailyRunLimit?, lastGatewayVersion? } — 망가진 값도 읽을 수 있게 json 모드가 아니다(modules/ops/settings.ts 가 파싱) */
+  opsJson: text("ops_json").notNull().default("{}"),
 });
 
 export const users = sqliteTable(
@@ -334,5 +339,32 @@ export const bridgeTokens = sqliteTable(
   (t) => [
     uniqueIndex("bridge_tokens_hash").on(t.hash),
     index("bridge_tokens_ws_created").on(t.workspaceId, t.createdAt),
+  ],
+);
+
+/**
+ * 운영 사건(운영 보강 스펙 3.1) — 같은 kind·key 는 한 줄로 묶여 count·last_at 만 오른다.
+ * detail_json 에는 id·코드·수치만(메시지 본문·토큰·호스트 경로·IP 전체 금지). last_at 이 30일 지나면 지운다
+ */
+export const opsEvents = sqliteTable(
+  "ops_events",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id),
+    kind: text("kind").$type<OpsEventKind>().notNull(),
+    severity: text("severity").$type<OpsSeverity>().notNull(),
+    key: text("key").notNull(),
+    detail: json<OpsEvent["detail"]>("detail_json").notNull(),
+    count: integer("count").notNull().default(1),
+    firstAt: ts("first_at").notNull(),
+    lastAt: ts("last_at").notNull(),
+    resolvedAt: ts("resolved_at"),
+    ackedAt: ts("acked_at"),
+  },
+  (t) => [
+    index("ops_events_ws_last").on(t.workspaceId, t.lastAt),
+    index("ops_events_open").on(t.workspaceId, t.kind, t.key, t.ackedAt),
   ],
 );

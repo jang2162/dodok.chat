@@ -7,3 +7,4 @@ export * from "./mention";
 export * from "./wire";
 export * from "./push";
 export * from "./setup";
+export * from "./ops";

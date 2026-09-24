@@ -124,13 +124,15 @@ export function parseArtifactUrl(url: string): string | null {
   return ARTIFACT_ID_RE.exec(url)?.[1]?.toLowerCase() ?? null;
 }
 
-export const SystemKind = z.enum(["relay_limit", "relay_denied", "run_error", "info"]);
+export const SystemKind = z.enum(["relay_limit", "relay_denied", "run_error", "run_limit", "info"]);
 export type SystemKind = z.infer<typeof SystemKind>;
 export const SystemMeta = z.object({
   kind: SystemKind,
   /** relay_limit/relay_denied: 이어가기 대상 */
   relay: z.object({ fromAgentId: Id, toAgentId: Id, sourceRunId: Id, rootMessageId: Id }).optional(),
   runId: Id.optional(),
+  /** run_limit: 막은 범위와 그 한도 */
+  limit: z.object({ scope: z.enum(["channel", "workspace"]), limit: z.int().min(1) }).optional(),
 });
 export type SystemMeta = z.infer<typeof SystemMeta>;
 

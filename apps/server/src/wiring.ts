@@ -7,6 +7,7 @@ import { apiError } from "./http/errors";
 import type { Logger } from "./logger";
 import { type ApprovalsService, createApprovalsService } from "./modules/approvals/service";
 import { interact } from "./modules/components/service";
+import { createOpsService, type OpsService } from "./modules/ops/service";
 import { createRouter, type Router } from "./modules/router/service";
 import { createOrchestrator, type Orchestrator, type RunTimeouts } from "./modules/runs/orchestrator";
 import * as store from "./modules/runs/store";
@@ -28,6 +29,7 @@ export type Services = {
   orchestrator: Orchestrator;
   runs: RunsFacade;
   approvals: ApprovalsService;
+  ops: OpsService;
 };
 
 export type SessionRecoverTarget = ReturnType<
@@ -54,6 +56,7 @@ export function sessionRecoverTargets(db: DbOrTx): SessionRecoverTarget[] {
  */
 export function createServices(deps: ServicesDeps): Services {
   const { db, bus, logger, adapter, workspaceId } = deps;
+  const ops = createOpsService({ db, bus, logger, workspaceId });
   // 라우터를 먼저 만든다 — enqueue 는 메시지가 들어올 때(이 함수가 끝난 뒤) 불리므로 그때는 orchestrator 가 있다
   let orchestrator: Orchestrator;
   const enqueue: Orchestrator["enqueueRun"] = (plan, trigger) => orchestrator.enqueueRun(plan, trigger);
@@ -104,5 +107,5 @@ export function createServices(deps: ServicesDeps): Services {
     interact: (input) => interact({ db, bus, workspaceId, enqueue }, input),
   };
 
-  return { router, orchestrator, runs, approvals };
+  return { router, orchestrator, runs, approvals, ops };
 }

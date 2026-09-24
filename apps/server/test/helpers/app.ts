@@ -4,7 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type App, type AppDeps, createApp } from "../../src/app";
 import { loadConfig } from "../../src/config";
+import { memberships, users } from "../../src/db/schema.sqlite";
 import type { PushSend } from "../../src/modules/push/service";
+import { v7 as uuid } from "uuid";
 import { testEnv } from "./env";
 
 /**
@@ -66,4 +68,31 @@ export async function login(app: App): Promise<{ token: string; headers: { autho
   if (res.statusCode !== 200) throw new Error(`login 실패: ${res.statusCode} ${res.body}`);
   const { sessionToken } = res.json() as { sessionToken: string };
   return { token: sessionToken, headers: { authorization: `Bearer ${sessionToken}` } };
+}
+
+/** membership role 을 준 두 번째 사용자를 만들고 세션 토큰을 바로 낸다(owner 전용 표면의 member 거절을 볼 때) */
+export async function userWithRole(
+  app: App,
+  handle: string,
+  role: string,
+): Promise<{ id: string; token: string }> {
+  const ctx = await app.auth.$context;
+  const id = uuid();
+  await ctx.internalAdapter.createUser(
+    { id, email: `${handle}@dodok.local`, name: handle, emailVerified: true },
+    { method: "email-password" },
+  );
+  app.db
+    .insert(users)
+    .values({
+      id,
+      workspaceId: app.workspaceId,
+      handle,
+      displayName: handle,
+      authProvider: "local",
+      createdAt: new Date(),
+    })
+    .run();
+  app.db.insert(memberships).values({ id: uuid(), workspaceId: app.workspaceId, userId: id, role }).run();
+  return { id, token: (await ctx.internalAdapter.createSession(id)).token };
 }

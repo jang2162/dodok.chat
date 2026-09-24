@@ -22,11 +22,13 @@ describe("common", () => {
       "CONFLICT",
       "RATE_LIMITED",
       "RELAY_LIMIT",
+      "RUN_LIMIT",
       "ADAPTER_UNAVAILABLE",
       "PROTOCOL_MISMATCH",
       "EXPIRED",
       "CONSUMED",
       "TIMEOUT",
+      "INSUFFICIENT_STORAGE",
       "INTERNAL",
     ]);
     expect(ErrorCode.safeParse("NOPE").success).toBe(false);

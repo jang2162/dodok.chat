@@ -16,11 +16,13 @@ export const ErrorCode = z.enum([
   "CONFLICT",
   "RATE_LIMITED",
   "RELAY_LIMIT",
+  "RUN_LIMIT",
   "ADAPTER_UNAVAILABLE",
   "PROTOCOL_MISMATCH",
   "EXPIRED",
   "CONSUMED",
   "TIMEOUT",
+  "INSUFFICIENT_STORAGE",
   "INTERNAL",
 ]);
 export type ErrorCode = z.infer<typeof ErrorCode>;
