@@ -30,6 +30,7 @@ describe("wire event maps", () => {
       | "channel.member.changed"
       | "typing"
       | "adapter.status"
+      | "setup.status"
       | "system.notice"
     >();
   });

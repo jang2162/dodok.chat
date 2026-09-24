@@ -3,6 +3,7 @@ import type { Ack } from "../common";
 import { BRIDGE_PROTOCOL, Id, IsoDateTime } from "../common";
 import { ComponentsV1 } from "../components";
 import { ATTACHMENT_LIMITS, Attachment } from "../domain";
+import { Sha256Hex } from "../setup";
 
 export const BridgeCapability = z.enum(["agents.list", "config.set", "typing", "run_id_in_outbound"]);
 export type BridgeCapability = z.infer<typeof BridgeCapability>;
@@ -12,6 +13,7 @@ export const BridgeHello = z.object({
   version: z.string(), // 플러그인 패키지 버전
   sdkVersion: z.string(), // openclaw 패키지 버전
   gatewayVersion: z.string().optional(),
+  bundleSha256: Sha256Hex.optional(), // 플러그인 번들 파일 sha256 — 읽기 실패·옛 플러그인이면 없다(설정 마법사 결정 5)
   capabilities: z.array(BridgeCapability),
 });
 export type BridgeHello = z.infer<typeof BridgeHello>;

@@ -55,6 +55,7 @@ import {
   toolFailureMessage,
   uploadOutboundMedia,
 } from "./outbound-media";
+import { computeBundleSha256 } from "./bundle-hash";
 import { getDodokRuntime } from "./runtime";
 
 export const DODOK_CHANNEL_ID = "dodok";
@@ -62,6 +63,9 @@ declare const __DODOK_PLUGIN_VERSION__: string;
 declare const __OPENCLAW_SDK_VERSION__: string;
 const PLUGIN_VERSION = typeof __DODOK_PLUGIN_VERSION__ === "string" ? __DODOK_PLUGIN_VERSION__ : "0.0.0";
 const SDK_VERSION = typeof __OPENCLAW_SDK_VERSION__ === "string" ? __OPENCLAW_SDK_VERSION__ : "unknown";
+// 번들(scripts/build.mjs, format esm)에서 import.meta.url 은 dist/index.js 자신이다. 빌드를 CJS 로 바꾸거나
+// import.meta 를 define 으로 치환하면 해시가 조용히 사라져 서버는 늘 「빌드를 알 수 없습니다」로 본다
+const BUNDLE_SHA256 = computeBundleSha256(import.meta.url);
 
 type ChannelRuntime = PluginRuntime["channel"];
 
@@ -350,6 +354,7 @@ async function startDodokAccount(ctx: {
       version: PLUGIN_VERSION,
       sdkVersion: SDK_VERSION,
       gatewayVersion: runtime.version,
+      ...(BUNDLE_SHA256 ? { bundleSha256: BUNDLE_SHA256 } : {}),
       capabilities: ["run_id_in_outbound", "config.set"],
     },
     logger,

@@ -12,6 +12,7 @@ import {
   RunState,
 } from "../domain";
 import { RunEvent } from "../events";
+import type { SetupStatus } from "../setup";
 
 // ── 클라이언트 → 서버 (ack 있음) ──
 export const ChannelSubscribe = z.object({ channelId: Id, lastSeq: z.int().min(0).optional() });
@@ -100,5 +101,6 @@ export interface ServerToClientEvents {
   "channel.member.changed": (p: { channelId: Id; members: ChannelMember[] }) => void;
   typing: (p: { channelId: Id; actorType: "user" | "agent"; actorId: Id }) => void;
   "adapter.status": (p: AdapterStatus) => void; // user 룸
+  "setup.status": (p: { status: SetupStatus }) => void; // owner 사용자 룸에만
   "system.notice": (p: { level: "info" | "warn" | "error"; message: string }) => void;
 }
