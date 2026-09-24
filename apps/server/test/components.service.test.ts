@@ -9,15 +9,18 @@ import { addMember, createChannel, removeMember } from "../src/modules/channels/
 import { type InteractInput, interact } from "../src/modules/components/service";
 import {
   createAgentMessage,
+  createSystemMessage,
   createUserMessage,
   getMessage,
   listMessages,
   withInteractions,
 } from "../src/modules/messages/service";
 import type { RunPlan } from "../src/modules/router/decide";
+import { createRunGate } from "../src/modules/ops/budget";
+import { patchOpsSettings } from "../src/modules/ops/settings";
 import { createRouter } from "../src/modules/router/service";
 import type { EnqueueTrigger } from "../src/modules/runs/orchestrator";
-import { insertRun } from "../src/modules/runs/store";
+import { insertRun, updateRun } from "../src/modules/runs/store";
 import { ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
 import { seedWorkspace } from "./helpers/seed";
@@ -78,7 +81,10 @@ function setup(relayPolicy?: z.input<typeof RelayPolicy>) {
       ({ id: uuid(), ...plan }) as Run,
   );
   let clock = new Date();
-  const deps = { db, bus, workspaceId, enqueue, now: () => clock };
+  const ops = { record: vi.fn(() => null) };
+  // 실제 관문 — 한도 판정·run_limit 알림은 관문 몫이고, 그 뒤 런은 enqueue 대역으로 간다
+  const gate = createRunGate({ db, bus, ops, workspaceId, enqueue, now: () => clock });
+  const deps = { db, bus, workspaceId, gate, now: () => clock };
   const setNow = (d: Date) => {
     clock = d;
   };
@@ -123,6 +129,7 @@ function setup(relayPolicy?: z.input<typeof RelayPolicy>) {
     dev,
     fin,
     enqueue,
+    ops,
     deps,
     setNow,
     updated,
@@ -131,6 +138,19 @@ function setup(relayPolicy?: z.input<typeof RelayPolicy>) {
     click,
     interactionRows,
   };
+}
+
+/** 오케스트레이터가 남기는 run_error 카드와 같은 모양 */
+function retryNotice(t: ReturnType<typeof setup>, runId: string): Message {
+  return createSystemMessage(t.db, t.bus, {
+    channelId: t.channel.id,
+    kind: "run_error",
+    bodyMd: "@dev 실행이 실패했습니다: TIMEOUT",
+    systemMeta: { kind: "run_error", runId },
+    components: {
+      blocks: [{ type: "actions", items: [{ type: "button", id: "retry_run", label: "다시 실행" }] }],
+    },
+  });
 }
 
 describe("components service — interact", () => {
@@ -345,6 +365,98 @@ describe("components service — interact", () => {
     } finally {
       reads.restore();
     }
+  });
+
+  it("한도에 걸리면 RUN_LIMIT — 저장·소비·런 없음, 누를 수 없는 아이템은 그 사유가 먼저", async () => {
+    const t = setup();
+    const message = t.card(t.dev); // 오늘 런 1개(카드를 낸 런)
+    const consumed = t.card(t.dev);
+    await interact(t.deps, t.click(consumed, "go"));
+    t.enqueue.mockClear();
+    t.updated.length = 0;
+    patchOpsSettings(t.db, t.workspaceId, { dailyRunLimit: 2 }); // 오늘 런 2개 — 찼다
+
+    await expect(interact(t.deps, t.click(message, "go"))).rejects.toMatchObject({
+      body: { code: "RUN_LIMIT" },
+    });
+    await expect(interact(t.deps, t.click(consumed, "go"))).rejects.toMatchObject({
+      body: { code: "CONSUMED" },
+    });
+    expect(t.enqueue).not.toHaveBeenCalled();
+    expect(t.interactionRows()).toHaveLength(1); // 앞서 소비한 것뿐
+    expect(t.updated).toEqual([]);
+    expect(getMessage(t.db, message.id)?.componentState?.consumed).toEqual([]);
+    expect(t.ops.record).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "run_limit", key: "workspace" }),
+    );
+
+    patchOpsSettings(t.db, t.workspaceId, { dailyRunLimit: 3 });
+    await interact(t.deps, t.click(message, "go"));
+    expect(t.enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it("retry_run → 원래 런의 트리거로 새 런(parentRunId), 1회용 소비", async () => {
+    const t = setup();
+    const trigger = createUserMessage(t.db, t.bus, {
+      channelId: t.channel.id,
+      authorId: t.userId,
+      bodyMd: "@dev 해줘",
+      clientMsgId: "c-retry",
+    });
+    const failed = insertRun(t.db, {
+      channelId: t.channel.id,
+      agentId: t.dev.id,
+      triggerKind: "relay",
+      triggerMessageId: trigger.id,
+      rootMessageId: uuid(),
+      relayDepth: 2,
+      sessionKey: "k",
+      createdAt: new Date(),
+    });
+    updateRun(t.db, failed.id, { status: "error", error: { code: "TIMEOUT", message: "t" } });
+    const notice = retryNotice(t, failed.id);
+
+    await interact(t.deps, t.click(notice, "retry_run"));
+    expect(t.enqueue).toHaveBeenCalledTimes(1);
+    expect(t.enqueue).toHaveBeenCalledWith(
+      {
+        agentId: t.dev.id,
+        channelId: t.channel.id,
+        triggerKind: "relay",
+        rootMessageId: failed.rootMessageId,
+        relayDepth: 2,
+        parentRunId: failed.id,
+      },
+      { message: expect.objectContaining({ id: trigger.id }) },
+    );
+    expect(getMessage(t.db, notice.id)?.componentState?.consumed).toEqual(["retry_run"]);
+    await expect(interact(t.deps, t.click(notice, "retry_run"))).rejects.toMatchObject({
+      body: { code: "CONSUMED" },
+    });
+  });
+
+  it("retry_run 대상이 error 가 아니거나 트리거 메시지가 없거나 런이 없으면 VALIDATION — 버튼은 남는다", async () => {
+    const t = setup();
+    const base = {
+      channelId: t.channel.id,
+      agentId: t.dev.id,
+      rootMessageId: uuid(),
+      relayDepth: 0,
+      sessionKey: "k",
+      createdAt: new Date(),
+    };
+    const done = insertRun(t.db, { ...base, triggerKind: "mention", triggerMessageId: uuid() });
+    const noTrigger = insertRun(t.db, { ...base, triggerKind: "interaction" });
+    updateRun(t.db, noTrigger.id, { status: "error", error: { code: "TIMEOUT", message: "t" } });
+    for (const runId of [done.id, noTrigger.id, uuid()]) {
+      const notice = retryNotice(t, runId);
+      await expect(interact(t.deps, t.click(notice, "retry_run"))).rejects.toMatchObject({
+        body: { code: "VALIDATION" },
+      });
+      expect(getMessage(t.db, notice.id)?.componentState?.consumed).toEqual([]);
+    }
+    expect(t.enqueue).not.toHaveBeenCalled();
+    expect(t.interactionRows()).toEqual([]);
   });
 
   it("같은 아이템을 동시에 눌러도 한 번만 통과한다", async () => {

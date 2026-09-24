@@ -19,6 +19,7 @@ import { getAgent } from "../agents/service";
 import { createAgentMessage, createSystemMessage } from "../messages/service";
 import type { ApprovalsService } from "../approvals/service";
 import type { RunPlan } from "../router/decide";
+import { RETRY_RUN_ITEM } from "../router/service";
 import { ensureSession } from "../sessions/service";
 import { buildInboundDeliver } from "./context";
 import {
@@ -107,6 +108,15 @@ const STARTED: ReadonlySet<RunStatus> = new Set<RunStatus>([
   "awaiting_approval",
   "finalizing",
 ]);
+/** run_error 카드의 1회용 「다시 실행」 — 트리거 메시지가 있는 런에만 붙인다(상호작용·이어가기는 다시 만들 트리거가 없다) */
+const RETRY_COMPONENTS = {
+  blocks: [
+    {
+      type: "actions" as const,
+      items: [{ type: "button" as const, id: RETRY_RUN_ITEM, label: "다시 실행", style: "primary" as const }],
+    },
+  ],
+};
 /** 사람에게 run_error 시스템 메시지로 알리는 코드(디스패치 실패·타임아웃). SERVER_RESTART·INTERNAL·Gateway 오류는 알리지 않는다 */
 const NOTIFY_CODES: ReadonlySet<string> = new Set(["TIMEOUT", "ADAPTER_UNAVAILABLE", "ADAPTER_PROTOCOL"]);
 
@@ -473,6 +483,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         kind: "run_error",
         bodyMd,
         systemMeta: { kind: "run_error", runId: run.id },
+        ...(run.triggerMessageId === undefined ? {} : { components: RETRY_COMPONENTS }),
       });
     } catch (err) {
       logger.error({ err, runId: run.id }, "run_error system message failed");
@@ -789,6 +800,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
           rootMessageId: plan.rootMessageId,
           relayDepth: plan.relayDepth,
           relayHash: plan.relayHash,
+          parentRunId: plan.parentRunId,
           sessionKey: session.sessionKey,
           createdAt: ts,
         });

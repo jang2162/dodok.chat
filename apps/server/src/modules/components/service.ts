@@ -1,4 +1,4 @@
-import type { ComponentInteract, Message } from "@dodok/shared";
+import type { ComponentInteract, Message, Run } from "@dodok/shared";
 import { eq } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import type { Db, DbOrTx } from "../../db/client";
@@ -8,8 +8,8 @@ import type { ServerBus } from "../../realtime/bus";
 import { getAgent } from "../agents/service";
 import { getChannel, listMembers } from "../channels/service";
 import { getMessage, rowToMessage } from "../messages/service";
-import { CONTINUE_RELAY_ITEM } from "../router/service";
-import type { Orchestrator } from "../runs/orchestrator";
+import type { RunGate } from "../ops/budget";
+import { CONTINUE_RELAY_ITEM, RETRY_RUN_ITEM } from "../router/service";
 import { getRun } from "../runs/store";
 import { formatInteractionText, validateInteraction } from "./interact";
 
@@ -18,17 +18,27 @@ export type InteractDeps = {
   bus: ServerBus;
   /** 메시지의 채널이 이 워크스페이스에 있어야 한다 */
   workspaceId: string;
-  enqueue: Orchestrator["enqueueRun"];
+  /** 런 관문 — 상호작용 런(interaction·continue·retry)도 일일 한도를 지난다 */
+  gate: RunGate;
   now?: () => Date;
 };
 
 export type InteractInput = ComponentInteract & { userId: string };
 
-type Target = { agentId: string; triggerKind: "continue" | "interaction" };
+type Target =
+  | { agentId: string; triggerKind: "continue" | "interaction" }
+  /** run_error 의 retry_run — 원래 런의 트리거 메시지로 같은 런을 다시 만든다 */
+  | { agentId: string; triggerKind: "retry"; run: Run; triggerMessage: Message };
+
+type Checked = {
+  message: Message;
+  checked: Extract<ReturnType<typeof validateInteraction>, { ok: true }>;
+  target: Target;
+};
 
 /**
- * 스펙 3.10·계약 9.3 — 검사(NOT_FOUND → EXPIRED → FORBIDDEN → CONSUMED → VALIDATION) → component_interactions 저장
- * → 1회용이면 consumed 갱신 → message.updated(상호작용마다, 설계 4.3) → 대상 에이전트에 continue | interaction 런.
+ * 스펙 3.10·계약 9.3 — 검사(NOT_FOUND → EXPIRED → FORBIDDEN → CONSUMED → VALIDATION) → 관문(RUN_LIMIT) → component_interactions 저장
+ * → 1회용이면 consumed 갱신 → message.updated(상호작용마다, 설계 4.3) → 대상 에이전트에 continue | interaction | 다시 실행 런.
  * 검사·저장·소비는 한 동기 트랜잭션이라 같은 아이템을 동시에 눌러도 한 번만 통과한다.
  * 버스로 내보내는 Message 에는 상호작용 기록을 붙이지 않는다 — 붙이는 것은 wire 팬아웃(realtime/events.ts)이다.
  */
@@ -36,24 +46,16 @@ export async function interact(deps: InteractDeps, input: InteractInput): Promis
   const { db, bus } = deps;
   const now = deps.now?.() ?? new Date();
 
+  // 관문은 저장·소비 전에 본다 — 막히면 버튼이 살아 있어 한도가 풀린 뒤 다시 누른다(Review Focus 5).
+  // 검사를 먼저 한 번 돌려 누를 수 없는 아이템(만료·소비·대상 없음)은 한도보다 그 사유로 거절한다
+  const pre = checkInteraction(db, deps.workspaceId, input, now);
+  if (deps.gate.check(pre.message.channelId)) throw apiError("RUN_LIMIT", "daily run limit reached");
+
   const result = db.transaction((tx) => {
-    const message = getMessage(tx, input.messageId);
-    if (!message || !getChannel(tx, message.channelId, deps.workspaceId)) {
-      throw apiError("NOT_FOUND", "message not found");
-    }
-    const checked = validateInteraction({
-      message,
-      componentId: input.componentId,
-      itemId: input.itemId,
-      userId: input.userId,
-      values: input.values,
-      now,
-    });
-    if (!checked.ok) throw apiError(checked.error.code, checked.error.message, checked.error.details);
+    const { message, checked, target } = checkInteraction(tx, deps.workspaceId, input, now);
     const components = message.components;
     const state = message.componentState;
     if (!components || !state) throw apiError("INTERNAL", "validated component without state");
-    const target = targetOf(tx, message, input.itemId);
     const user = tx.select({ handle: users.handle }).from(users).where(eq(users.id, input.userId)).get();
     if (!user) throw apiError("NOT_FOUND", "user not found");
 
@@ -93,7 +95,22 @@ export async function interact(deps: InteractDeps, input: InteractInput): Promis
 
   bus.emit("message.updated", { message: result.updated });
   const { message, target, interactionId, interactionText } = result;
-  await deps.enqueue(
+  if (target.triggerKind === "retry") {
+    const { run } = target;
+    await deps.gate.enqueue(
+      {
+        agentId: run.agentId,
+        channelId: run.channelId,
+        triggerKind: run.triggerKind,
+        rootMessageId: run.rootMessageId,
+        relayDepth: run.relayDepth,
+        parentRunId: run.id,
+      },
+      { message: target.triggerMessage },
+    );
+    return { interactionId };
+  }
+  await deps.gate.enqueue(
     {
       agentId: target.agentId,
       channelId: message.channelId,
@@ -106,7 +123,28 @@ export async function interact(deps: InteractDeps, input: InteractInput): Promis
   return { interactionId };
 }
 
-/** 시스템 메시지의 continue_relay → systemMeta.relay.toAgentId, 그 밖 → 컴포넌트를 쓴 에이전트(메시지 runId 의 런, 없으면 작성자) */
+/** 저장 없이 검사만 — 통과하면 메시지·검사 결과·대상을 돌려주고, 아니면 그 사유의 apiError 를 던진다 */
+function checkInteraction(tx: DbOrTx, workspaceId: string, input: InteractInput, now: Date): Checked {
+  const message = getMessage(tx, input.messageId);
+  if (!message || !getChannel(tx, message.channelId, workspaceId)) {
+    throw apiError("NOT_FOUND", "message not found");
+  }
+  const checked = validateInteraction({
+    message,
+    componentId: input.componentId,
+    itemId: input.itemId,
+    userId: input.userId,
+    values: input.values,
+    now,
+  });
+  if (!checked.ok) throw apiError(checked.error.code, checked.error.message, checked.error.details);
+  return { message, checked, target: targetOf(tx, message, input.itemId) };
+}
+
+/**
+ * 시스템 메시지의 continue_relay → systemMeta.relay.toAgentId, retry_run → systemMeta.runId 의 런을 쓴 에이전트,
+ * 그 밖 → 컴포넌트를 쓴 에이전트(메시지 runId 의 런, 없으면 작성자)
+ */
 function targetOf(tx: DbOrTx, message: Message, itemId: string): Target {
   const target = resolveTarget(tx, message, itemId);
   assertDeliverable(tx, message.channelId, target.agentId);
@@ -115,6 +153,7 @@ function targetOf(tx: DbOrTx, message: Message, itemId: string): Target {
 
 function resolveTarget(tx: DbOrTx, message: Message, itemId: string): Target {
   if (message.authorType === "system") {
+    if (itemId === RETRY_RUN_ITEM) return retryTarget(tx, message);
     const relay = message.systemMeta?.relay;
     if (itemId !== CONTINUE_RELAY_ITEM || !relay) {
       throw apiError("VALIDATION", "system component has no agent to deliver to");
@@ -125,6 +164,18 @@ function resolveTarget(tx: DbOrTx, message: Message, itemId: string): Target {
   const agentId = run?.agentId ?? (message.authorType === "agent" ? message.authorId : undefined);
   if (!agentId) throw apiError("VALIDATION", "component message has no agent to deliver to");
   return { agentId, triggerKind: "interaction" };
+}
+
+/** 다시 실행은 error 로 끝난, 트리거 메시지가 있는 런만 — 1회용 버튼 소비가 「한 번만」을 맡는다 */
+function retryTarget(tx: DbOrTx, message: Message): Target {
+  const runId = message.systemMeta?.runId;
+  const run = runId === undefined ? undefined : getRun(tx, runId);
+  if (!run || run.status !== "error" || run.triggerMessageId === undefined) {
+    throw apiError("VALIDATION", "run is not retryable");
+  }
+  const triggerMessage = getMessage(tx, run.triggerMessageId);
+  if (!triggerMessage) throw apiError("VALIDATION", "run is not retryable");
+  return { agentId: run.agentId, triggerKind: "retry", run, triggerMessage };
 }
 
 /**

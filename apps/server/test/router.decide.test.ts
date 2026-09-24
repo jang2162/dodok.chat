@@ -91,7 +91,6 @@ const input = (partial: Partial<RoutingInput>): RoutingInput => ({
   members: [member(A), member(B)],
   agents: [agent(A, "a"), agent(B, "b")],
   chainHashes: new Set(),
-  todayRunCount: 0,
   now: new Date(NOW),
   ...partial,
 });
@@ -206,20 +205,6 @@ describe("decideRuns — 에이전트 메시지(릴레이)", () => {
       input({ message: agentMsg(A, [B], "reply"), sourceRun: run(A, 0), chainHashes: new Set([h]) }),
     );
     expect(r.blocked).toEqual([{ agentId: B, reason: "repeat" }]);
-  });
-  it("daily_limit: 오늘 런 수 + 이번 계획 수가 상한에 닿으면 차단", () => {
-    const r = decideRuns(
-      input({
-        message: agentMsg(A, [B, C]),
-        sourceRun: run(A, 0),
-        members: [member(A), member(B), member(C)],
-        agents: [agent(A, "a"), agent(B, "b"), agent(C, "c")],
-        channel: channel({ dailyRunLimit: 10 }),
-        todayRunCount: 9,
-      }),
-    );
-    expect(r.runs.map((x) => x.agentId)).toEqual([B]);
-    expect(r.blocked).toEqual([{ agentId: C, reason: "daily_limit" }]);
   });
   it("disabled: 비활성 대상은 blocked로 알린다", () => {
     const r = decideRuns(

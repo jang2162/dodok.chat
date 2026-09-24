@@ -5,8 +5,10 @@ import { describe, expect, it, vi } from "vitest";
 import type { z } from "zod";
 import type { Logger } from "../src/logger";
 import { createAgent, updateAgent } from "../src/modules/agents/service";
-import { addMember, createChannel } from "../src/modules/channels/service";
-import { createAgentMessage, createUserMessage } from "../src/modules/messages/service";
+import { addMember, createChannel, updateAgentMember } from "../src/modules/channels/service";
+import { createAgentMessage, createUserMessage, listMessages } from "../src/modules/messages/service";
+import { createRunGate } from "../src/modules/ops/budget";
+import { patchOpsSettings } from "../src/modules/ops/settings";
 import { computeRelayHash, type RunPlan } from "../src/modules/router/decide";
 import { createRouter } from "../src/modules/router/service";
 import type { EnqueueTrigger } from "../src/modules/runs/orchestrator";
@@ -95,6 +97,13 @@ function setup(relayPolicy?: z.input<typeof RelayPolicy>) {
     said,
     systemMessages,
   };
+}
+
+/** setup 의 enqueue 대역 앞에 실제 관문을 둔 라우터 */
+function gatedRouter(t: ReturnType<typeof setup>) {
+  const ops = { record: vi.fn(() => null) };
+  const gate = createRunGate({ db: t.db, bus: t.bus, ops, workspaceId: t.workspaceId, enqueue: t.enqueue });
+  return createRouter({ db: t.db, bus: t.bus, logger: t.logger, enqueue: gate.enqueue });
 }
 
 describe("router service", () => {
@@ -243,16 +252,38 @@ describe("router service", () => {
     ]);
   });
 
-  it("일일 런 상한 → relay_denied(daily_limit)", async () => {
+  it("릴레이가 채널 한도에 막히면 관문의 run_limit 한 줄 — relay_denied 는 없다", async () => {
     const t = setup({ dailyRunLimit: 1 });
+    const router = gatedRouter(t);
     const run = t.runOf(t.dev); // 오늘 런 1개
-    await t.router.routeMessage(t.said(t.dev, run, "@fin 하나 더"));
+    await router.routeMessage(t.said(t.dev, run, "@fin 하나 더"));
     expect(t.enqueue).not.toHaveBeenCalled();
-    expect(t.systemMessages()).toEqual([
-      expect.objectContaining({
-        bodyMd: "채널의 일일 런 상한에 도달했습니다",
-        systemMeta: expect.objectContaining({ kind: "relay_denied" }),
-      }),
+    expect(t.systemMessages().map((m) => [m.bodyMd, m.systemMeta])).toEqual([
+      [
+        "이 채널의 오늘 런 한도(1)에 도달했습니다 — 내일 0시에 풀립니다",
+        { kind: "run_limit", limit: { scope: "channel", limit: 1 } },
+      ],
+    ]);
+  });
+
+  it("사람 멘션·자동 응답이 워크스페이스 한도에 막히면 런 0 · 메시지는 저장 · 시스템 메시지 1", async () => {
+    const t = setup();
+    patchOpsSettings(t.db, t.workspaceId, { dailyRunLimit: 1 });
+    updateAgentMember(t.db, t.channel.id, t.fin.id, { autoRespond: true }, t.logger);
+    const router = gatedRouter(t);
+    t.runOf(t.dev); // 오늘 런 1개
+
+    const mention = t.human("@dev 안녕");
+    await router.routeMessage(mention);
+    const plain = t.human("아무나");
+    await router.routeMessage(plain);
+
+    expect(t.enqueue).not.toHaveBeenCalled();
+    expect(listMessages(t.db, t.channel.id, { limit: 50 }).messages.map((m) => m.id)).toEqual(
+      expect.arrayContaining([mention.id, plain.id]),
+    );
+    expect(t.systemMessages().map((m) => m.bodyMd)).toEqual([
+      "오늘 런 한도(1)에 도달했습니다 — 내일 0시에 풀립니다",
     ]);
   });
 

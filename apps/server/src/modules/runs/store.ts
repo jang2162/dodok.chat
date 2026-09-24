@@ -213,6 +213,13 @@ export function countRunsToday(db: DbOrTx, channelId: string, now: Date): number
   return row?.n ?? 0;
 }
 
+/** 서버 현지 자정 이후 만든 런 수(상태 무관) — 서버는 워크스페이스 하나라 runs 전체를 센다 */
+export function countRunsTodayInWorkspace(db: DbOrTx, now: Date): number {
+  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const row = db.select({ n: count() }).from(runs).where(gte(runs.createdAt, midnight)).get();
+  return row?.n ?? 0;
+}
+
 /** 같은 rootMessageId 체인의 relayHash 집합 */
 export function chainHashes(db: DbOrTx, rootMessageId: string): Set<string> {
   const rows = db

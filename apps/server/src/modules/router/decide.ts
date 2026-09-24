@@ -16,7 +16,6 @@ export type RoutingInput = {
   agents: Agent[]; // 채널 소속 에이전트 (enabled 여부 포함)
   sourceRun?: Run; // message가 에이전트 메시지일 때 그 런
   chainHashes: Set<string>; // 같은 rootMessageId 체인의 relayHash 집합
-  todayRunCount: number; // 채널 일일 런 수
   now: Date;
 };
 
@@ -26,8 +25,10 @@ export type RunPlan = {
   rootMessageId: string;
   relayDepth: number;
   relayHash?: string;
+  /** 다시 실행한 런이면 원래 런 */
+  parentRunId?: string;
 };
-export type BlockedReason = "pair_not_allowed" | "max_turns" | "repeat" | "daily_limit" | "disabled";
+export type BlockedReason = "pair_not_allowed" | "max_turns" | "repeat" | "disabled";
 export type Blocked = { agentId: string; reason: BlockedReason };
 
 export function normalizeForHash(bodyMd: string): string {
@@ -103,10 +104,6 @@ export function decideRuns(input: RoutingInput): { runs: RunPlan[]; blocked: Blo
       const relayHash = computeRelayHash(sourceRun.agentId, to, message.bodyMd);
       if (input.chainHashes.has(relayHash)) {
         blocked.push({ agentId: to, reason: "repeat" });
-        continue;
-      }
-      if (policy.dailyRunLimit !== undefined && input.todayRunCount + runs.length >= policy.dailyRunLimit) {
-        blocked.push({ agentId: to, reason: "daily_limit" });
         continue;
       }
       runs.push({

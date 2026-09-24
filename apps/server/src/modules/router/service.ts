@@ -8,7 +8,7 @@ import { josa } from "../../util/josa";
 import { getAgent, rowToAgent } from "../agents/service";
 import { type ChannelRecord, getChannel, listMembers } from "../channels/service";
 import { createSystemMessage } from "../messages/service";
-import type { Orchestrator } from "../runs/orchestrator";
+import type { RunGate } from "../ops/budget";
 import * as store from "../runs/store";
 import { type Blocked, type BlockedReason, decideRuns } from "./decide";
 
@@ -18,7 +18,8 @@ export type RouterDeps = {
   db: Db;
   bus: ServerBus;
   logger: RouterLogger;
-  enqueue: Orchestrator["enqueueRun"];
+  /** 런 관문(ops/budget) — 한도에 막히면 null 이고 알림은 관문이 남긴다 */
+  enqueue: RunGate["enqueue"];
   now?: () => Date;
 };
 
@@ -29,6 +30,9 @@ export type Router = {
 
 /** relay_limit 카드의 이어가기 버튼 — components/service 가 이 id 를 가로챈다 */
 export const CONTINUE_RELAY_ITEM = "continue_relay";
+
+/** run_error 카드의 다시 실행 버튼(1회용) — components/service 가 이 id 를 가로챈다 */
+export const RETRY_RUN_ITEM = "retry_run";
 
 const CONTINUE_RELAY_COMPONENTS = {
   blocks: [
@@ -46,7 +50,6 @@ const SYSTEM_KIND: Record<BlockedReason, SystemKind> = {
   max_turns: "relay_limit",
   repeat: "relay_limit",
   pair_not_allowed: "relay_denied",
-  daily_limit: "relay_denied",
   disabled: "relay_denied",
 };
 
@@ -76,8 +79,6 @@ export function createRouter(deps: RouterDeps): Router {
         const list = targets.join(", ");
         return `@${from} ${josa(from, "은", "는")} ${list} ${josa(list, "을", "를")} 부를 수 없습니다(허용 목록 밖)`;
       }
-      case "daily_limit":
-        return "채널의 일일 런 상한에 도달했습니다";
       case "disabled": {
         const list = targets.join(", ");
         return `${list} ${josa(list, "은", "는")} 비활성 상태입니다`;
@@ -147,10 +148,10 @@ export function createRouter(deps: RouterDeps): Router {
         agents: agentList,
         ...(sourceRun ? { sourceRun } : {}),
         chainHashes: sourceRun ? store.chainHashes(db, sourceRun.rootMessageId) : new Set(),
-        todayRunCount: store.countRunsToday(db, channel.id, at),
         now: at,
       });
 
+      // 관문이 막으면(null) 알림은 관문이 이미 남겼다 — 여기서는 넘어간다
       for (const plan of decision.runs) {
         try {
           await deps.enqueue({ ...plan, channelId: channel.id }, { message });

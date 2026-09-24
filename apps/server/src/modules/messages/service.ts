@@ -57,6 +57,8 @@ export type CreateSystemMessageInput = {
   /** kind 는 인자 kind 로 채운다 */
   systemMeta?: Omit<SystemMeta, "kind"> & { kind?: SystemKind };
   components?: z.input<typeof ComponentsV1>;
+  /** 없으면 지금. 「오늘 이미 남겼나」를 created_at 으로 가리는 쪽(런 관문)이 자기 시계를 넘긴다 */
+  createdAt?: Date;
 };
 
 export type ListMessagesOptions = { beforeSeq?: number; afterSeq?: number; limit: number };
@@ -211,7 +213,7 @@ export function createAgentMessage(
 export function createSystemMessage(db: Db, bus: ServerBus, input: CreateSystemMessageInput): Message {
   const message = db.transaction((tx) =>
     storeMessage(tx, input.channelId, () => {
-      const now = new Date();
+      const now = input.createdAt ?? new Date();
       return {
         kind: "system",
         authorType: "system",

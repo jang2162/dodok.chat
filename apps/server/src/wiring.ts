@@ -7,6 +7,7 @@ import { apiError } from "./http/errors";
 import type { Logger } from "./logger";
 import { type ApprovalsService, createApprovalsService } from "./modules/approvals/service";
 import { interact } from "./modules/components/service";
+import { createRunGate } from "./modules/ops/budget";
 import { createOpsService, type OpsService } from "./modules/ops/service";
 import { createRouter, type Router } from "./modules/router/service";
 import { createOrchestrator, type Orchestrator, type RunTimeouts } from "./modules/runs/orchestrator";
@@ -60,7 +61,9 @@ export function createServices(deps: ServicesDeps): Services {
   // 라우터를 먼저 만든다 — enqueue 는 메시지가 들어올 때(이 함수가 끝난 뒤) 불리므로 그때는 orchestrator 가 있다
   let orchestrator: Orchestrator;
   const enqueue: Orchestrator["enqueueRun"] = (plan, trigger) => orchestrator.enqueueRun(plan, trigger);
-  const router = createRouter({ db, bus, logger, enqueue });
+  // 런을 만드는 경로(라우터·상호작용·다시 실행)는 모두 관문을 지난다(스펙 3.2)
+  const gate = createRunGate({ db, bus, ops, workspaceId, enqueue });
+  const router = createRouter({ db, bus, logger, enqueue: gate.enqueue });
   // 승인 서비스도 같은 방식으로 먼저 만든다 — 런 이벤트·신호를 오케스트레이터로 되돌려 보내고,
   // 오케스트레이터는 어댑터 승인 이벤트를 이 서비스로 넘긴다(서로가 서로를 부른다)
   const approvals = createApprovalsService({
@@ -104,7 +107,7 @@ export function createServices(deps: ServicesDeps): Services {
       const run = visibleRun(runId);
       return { events: store.listRunEvents(db, runId, afterSeq), run: store.toRunState(run) };
     },
-    interact: (input) => interact({ db, bus, workspaceId, enqueue }, input),
+    interact: (input) => interact({ db, bus, workspaceId, gate }, input),
   };
 
   return { router, orchestrator, runs, approvals, ops };
