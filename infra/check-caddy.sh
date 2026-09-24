@@ -35,7 +35,7 @@ check() {
     return
   fi
   if [[ -n "$type" && "$(header content-type)" != "$type"* ]]; then
-    fail "$label" "$path content-type '$(header content-type)' (기대 $type…)"
+    fail "$label" "$path content-type '$(header content-type)' (기대 ${type}…)"
     return
   fi
   if [[ -n "$cache" && "$(header cache-control)" != *"$cache"* ]]; then
@@ -45,7 +45,9 @@ check() {
   pass "$label"
 }
 
-check "/healthz 200 (서버까지 프록시)" /healthz 200
+# 상태 코드만 보면 /healthz 가 @backend 에서 빠져도 SPA 폴백의 index.html 200 으로 통과한다 — 서버가 내는 JSON 필드를 본다
+check "/healthz 200 JSON (서버까지 프록시)" /healthz 200 application/json
+if grep -qF '"db":"ok"' "$tmp/b"; then pass "/healthz 본문이 서버의 응답(db: ok)"; else fail "/healthz 본문이 서버의 응답(db: ok)" "본문 '$(head -c 120 "$tmp/b" | tr '\n' ' ')'"; fi
 check "/ 200 HTML · no-cache" / 200 text/html no-cache
 check "SPA 깊은 경로 /c/<id> 200 HTML · no-cache" /c/00000000-0000-0000-0000-000000000000 200 text/html no-cache
 # 없는 API 가 SPA 폴백(index.html 200)으로 떨어지면 웹이 JSON 대신 HTML 을 파싱하다 엉뚱하게 깨진다
@@ -68,6 +70,8 @@ else
 fi
 # 없는 청크가 index.html 로 200·1년 캐시되면 옛 탭이 HTML 을 JS 로 받는다
 check "없는 /assets/… 는 404(SPA 폴백 아님)" /assets/does-not-exist.js 404
+# 404 도 휴리스틱 캐시 대상이다 — immutable 이 붙으면 없는 청크의 404 를 1년 보관한다
+if [[ "$(header cache-control)" == *immutable* ]]; then fail "없는 /assets/… 404 는 immutable 아님" "Cache-Control '$(header cache-control)'"; else pass "없는 /assets/… 404 는 immutable 아님"; fi
 
 # 보안 헤더 — 정적 응답과 프록시 응답 둘 다
 for path in / /healthz; do
