@@ -1,5 +1,7 @@
 // apps/server/scripts/bundle-smoke.mjs — 운영 번들을 실행 이미지와 같은 배치로 띄워 본다(스펙 8장). 사용: build 뒤 pnpm -F @dodok/server bundle:smoke
-// 배치: `pnpm deploy --prod` 산출물의 node_modules 위에 dist/·drizzle/ 을 놓는다.
+// 배치: `pnpm deploy --prod` 산출물을 scripts/prune-runtime-deps.mjs 로 dist/runtime-deps.json 의 닫힘만 남긴 node_modules 위에
+// dist/·drizzle/ 을 놓는다 — infra/Dockerfile.server 의 runtime 이미지와 같은 명령·같은 배치다. 그래서 build.mjs 의 runtimeDeps 에
+// 빠진 것이 있으면 여기서 부팅이 깨진다.
 // 저장소 밖 임시 디렉터리에서 띄운다 — 저장소 안이면 워크스페이스 node_modules(devDependency 포함)가 모든 것을 해석해
 // 빠진 prod 의존성이 가려진다(번들이 런타임에 찾는 ws 가 devDependency 였던 결함을 그렇게 놓쳤다).
 // 단계 1: 정상 env 로 /healthz 200 · GET /socket.io/socket.io.js 400(serveClient: false) 뒤에도 살아 있음
@@ -9,16 +11,7 @@
 // 네트워크 밖으로 나가지 않는다(deploy 는 --offline 으로 로컬 스토어만 쓴다)
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import {
-  cpSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  renameSync,
-  rmSync,
-  statSync,
-} from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -119,7 +112,20 @@ async function prepareApp() {
   }
   // 이미지 배치(/app/node_modules·/app/dist·/app/drizzle)와 같게 — deploy 가 복사한 나머지는 쓰지 않는다
   mkdirSync(appDir);
-  renameSync(join(work, "deploy/node_modules"), join(appDir, "node_modules"));
+  const pruned = await runChild(
+    process.execPath,
+    [
+      "scripts/prune-runtime-deps.mjs",
+      join(work, "deploy"),
+      join(appDir, "node_modules"),
+      "dist/runtime-deps.json",
+    ],
+    { cwd: serverDir },
+  );
+  if (pruned.code !== 0) {
+    process.stderr.write(pruned.output);
+    throw new Error(`prune-runtime-deps 가 exit ${pruned.code ?? pruned.signal}`);
+  }
   cpSync(join(work, "deploy/package.json"), join(appDir, "package.json"));
   rmSync(join(work, "deploy"), { recursive: true, force: true });
   rmSync(src, { recursive: true, force: true });
