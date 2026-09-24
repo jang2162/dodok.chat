@@ -11,6 +11,7 @@ import {
   AdapterError,
   type AdapterCapabilities,
   type AdapterEvent,
+  type AdapterSetupDetail,
   type AgentAdapter,
 } from "./adapter-types";
 import type { ProviderApproval } from "./gateway/approvals";
@@ -33,7 +34,16 @@ export class FakeAdapter implements AgentAdapter {
     abort: Array<{ runId: string; sessionKey: string }>;
     forget: string[];
     resolveApproval: Array<{ providerApprovalId: string; kind: ApprovalKind; decision: ApprovalDecision }>;
-  } = { send: [], syncChannelConfig: [], reset: [], abort: [], forget: [], resolveApproval: [] };
+    revokeBridgeSessions: string[];
+  } = {
+    send: [],
+    syncChannelConfig: [],
+    reset: [],
+    abort: [],
+    forget: [],
+    resolveApproval: [],
+    revokeBridgeSessions: [],
+  };
 
   private sendScript: SendScript = (input) => ({ admission: "dispatch", providerRunId: input.runId });
   private resolveApprovalScript: ResolveApprovalScript | undefined;
@@ -45,6 +55,21 @@ export class FakeAdapter implements AgentAdapter {
     sessionReset: true,
     agentsList: true,
     configSet: true,
+  };
+  // setStatus 와 따로 둔다 — 설정 상세가 필요한 테스트가 setSetupDetail 로 넣는다
+  private currentSetupDetail: AdapterSetupDetail = {
+    gateway: { state: "connected", host: "fake-gateway:443", version: null, pairing: null },
+    bridge: {
+      state: "connected",
+      plugin: {
+        version: "0.0.0",
+        sdkVersion: "0.0.0",
+        gatewayVersion: null,
+        bundleSha256: null,
+        tokenId: null,
+        connectedAt: "1970-01-01T00:00:00.000Z",
+      },
+    },
   };
 
   script(fn: SendScript): void {
@@ -73,6 +98,11 @@ export class FakeAdapter implements AgentAdapter {
     this.currentCapabilities = capabilities;
   }
 
+  /** setup 이벤트는 내지 않는다 — 알려야 하면 emit({ kind: "setup" }) */
+  setSetupDetail(detail: AdapterSetupDetail): void {
+    this.currentSetupDetail = detail;
+  }
+
   async connect(): Promise<void> {}
 
   async close(): Promise<void> {}
@@ -83,6 +113,20 @@ export class FakeAdapter implements AgentAdapter {
 
   capabilities(): AdapterCapabilities {
     return this.currentCapabilities;
+  }
+
+  setupDetail(): AdapterSetupDetail {
+    return this.currentSetupDetail;
+  }
+
+  /** 붙은 플러그인이 그 토큰이면 끊은 것으로 두고(bridge down) setup 을 한 번 낸다 */
+  revokeBridgeSessions(tokenId: string): number {
+    this.calls.revokeBridgeSessions.push(tokenId);
+    const { bridge } = this.currentSetupDetail;
+    if (!bridge.plugin || bridge.plugin.tokenId !== tokenId) return 0;
+    this.currentSetupDetail = { ...this.currentSetupDetail, bridge: { state: "down", plugin: null } };
+    this.emit({ kind: "setup" });
+    return 1;
   }
 
   async listAgents(): Promise<Array<{ providerAgentId: string; name?: string }>> {

@@ -35,6 +35,7 @@ import type { EventFrame } from "@openclaw/gateway-protocol";
 import Fastify from "fastify";
 import { Server } from "socket.io";
 import { attachBridge, type BridgeHandle } from "../bridge/server";
+import { verifyBridgeToken } from "../bridge/session";
 import { connectGateway, type GatewayConnection } from "../gateway/client";
 
 type Json = unknown;
@@ -384,7 +385,7 @@ async function main(): Promise<void> {
   const app = Fastify({ logger: false });
   const io = new Server(app.server, { transports: ["websocket"] });
   const bridge = attachBridge(io, {
-    token: BRIDGE_TOKEN,
+    verifyToken: (presented) => (verifyBridgeToken(BRIDGE_TOKEN, presented) ? { tokenId: "spike" } : null),
     serverVersion: "spike-2",
     ackTimeoutMs: 15_000,
     onHello: (session, hello) => {

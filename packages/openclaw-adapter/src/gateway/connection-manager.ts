@@ -33,6 +33,35 @@ export type GatewayConnector = (options: GatewayConnectOptions) => Promise<Gatew
 
 export type GatewayState = "down" | "reconnecting" | "connected";
 
+/**
+ * 설정 마법사가 보여 줄 연결 상세. `version` 은 마지막으로 붙은 Gateway 의 hello-ok `server.version`,
+ * `pairing` 은 아직 승인되지 않은 페어링 요청(`since` 는 그 requestId 를 처음 본 시각) — 다음 성공 접속에서 지운다.
+ * requestId 를 주지 않은 페어링 오류는 빈 문자열로 남긴다(요청이 있다는 사실은 보여야 한다).
+ */
+export type GatewayDetail = {
+  version: string | null;
+  pairing: { requestId: string; since: string } | null;
+};
+
+const UNKNOWN_HOST = "(알 수 없음)";
+const DEFAULT_PORTS: Record<string, string> = { "ws:": "80", "wss:": "443", "http:": "80", "https:": "443" };
+
+/**
+ * Gateway URL 에서 화면·API 에 내도 되는 부분 — `호스트:포트` 만. 자격 증명·경로·쿼리는 버린다.
+ * 파싱이 안 되면 고정값이다 — 원문에 자격 증명이 들 수 있어 그대로 싣지 않는다.
+ */
+export function gatewayHost(url: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return UNKNOWN_HOST;
+  }
+  if (!parsed.hostname) return UNKNOWN_HOST;
+  const port = parsed.port || DEFAULT_PORTS[parsed.protocol];
+  return port ? `${parsed.hostname}:${port}` : parsed.hostname;
+}
+
 export type RecoverTarget = { sessionKey: string; agentId: string; cursor?: string };
 
 export type ConnectionManagerOptions = {
@@ -41,6 +70,8 @@ export type ConnectionManagerOptions = {
   logger: AdapterLogger;
   onEvent: (frame: EventFrame) => void;
   onState: (state: GatewayState) => void;
+  /** `detail()` 이 바뀔 때(페어링 시작·requestId 변경·해소, 새 버전) 한 번 */
+  onDetail?: (detail: GatewayDetail) => void;
   sessionKeysToRecover?: () => RecoverTarget[];
   /** 세션 구독 응답의 `approvalReplay`(미해결 승인) — 재접속 되감기(스파이크 5.3). 없으면 부르지 않는다. */
   onApprovalReplay?: (approvals: ProviderApproval[]) => void;
@@ -57,6 +88,7 @@ export type ConnectionManager = {
   start(): void;
   stop(): Promise<void>;
   state(): GatewayState;
+  detail(): GatewayDetail;
   request<T = unknown>(method: string, params: unknown, timeoutMs?: number): Promise<T>;
   /**
    * 현재 연결에서 아직 구독하지 않은 세션이면 `sessions.messages.subscribe { key, agentId, includeApprovals }` 를 보낸다(연결당 한 번).
@@ -86,6 +118,7 @@ export function createConnectionManager(opts: ConnectionManagerOptions): Connect
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
   // 현재 연결에서 sessions.messages.subscribe 를 보낸 세션 키. 새 연결·stop 에서 비운다
   const subscribed = new Set<string>();
+  let detail: GatewayDetail = { version: null, pairing: null };
 
   /** `includeApprovals` 를 켜야 그 세션의 `session.approval` 과 구독 응답의 되감기가 온다(스파이크 3.1·5.3). */
   function subscribeParams(sessionKey: string, agentId: string) {
@@ -103,6 +136,16 @@ export function createConnectionManager(opts: ConnectionManagerOptions): Connect
     if (state === next) return;
     state = next;
     opts.onState(next);
+  }
+
+  function setDetail(next: GatewayDetail) {
+    const same =
+      next.version === detail.version &&
+      next.pairing?.requestId === detail.pairing?.requestId &&
+      next.pairing?.since === detail.pairing?.since;
+    if (same) return;
+    detail = next;
+    opts.onDetail?.({ ...detail });
   }
 
   function backoffDelay(): number {
@@ -141,6 +184,10 @@ export function createConnectionManager(opts: ConnectionManagerOptions): Connect
       if (!running || gen !== generation) return;
       setState("reconnecting");
       if (error instanceof GatewayPairingRequiredError) {
+        const requestId = error.requestId ?? "";
+        const since =
+          detail.pairing?.requestId === requestId ? detail.pairing.since : new Date().toISOString();
+        setDetail({ version: detail.version, pairing: { requestId, since } });
         logger.warn(
           { requestId: error.requestId, reason: error.reason, delayMs: pairingRetryMs },
           "gateway pairing required; retrying",
@@ -170,6 +217,7 @@ export function createConnectionManager(opts: ConnectionManagerOptions): Connect
       },
       "gateway connected",
     );
+    setDetail({ version: next.hello?.server.version ?? null, pairing: null });
     setState("connected");
     await recover(next, gen);
   }
@@ -246,6 +294,7 @@ export function createConnectionManager(opts: ConnectionManagerOptions): Connect
       if (current) await current.stop();
     },
     state: () => state,
+    detail: () => ({ ...detail }),
     async subscribeSession(sessionKey, agentId) {
       const current = link;
       if (!current) {

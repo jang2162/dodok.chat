@@ -5,6 +5,8 @@ import { GatewayPairingRequiredError, type GatewayConnectOptions } from "../src/
 import {
   createConnectionManager,
   type ConnectionManagerOptions,
+  type GatewayDetail,
+  gatewayHost,
   type GatewayLink,
   type GatewayState,
 } from "../src/gateway/connection-manager";
@@ -49,6 +51,7 @@ function scriptedConnector(script: Array<GatewayLink | Error>) {
 
 function setup(overrides: Partial<ConnectionManagerOptions> & Pick<ConnectionManagerOptions, "connector">) {
   const states: GatewayState[] = [];
+  const details: GatewayDetail[] = [];
   const events: EventFrame[] = [];
   const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
   const manager = createConnectionManager({
@@ -56,18 +59,21 @@ function setup(overrides: Partial<ConnectionManagerOptions> & Pick<ConnectionMan
     logger,
     onEvent: (frame) => events.push(frame),
     onState: (state) => states.push(state),
+    onDetail: (detail) => details.push(detail),
     random: () => 0.5,
     ...overrides,
   });
-  return { manager, states, events, logger };
+  return { manager, states, details, events, logger };
 }
 
-const pairingError = () =>
+const PAIRING_REQUEST_ID = "e3fbfe98-1666-4506-b6e7-5d7f04783c47";
+// null 은 requestId 를 싣지 않은 오류
+const pairingError = (requestId: string | null = PAIRING_REQUEST_ID) =>
   new GatewayPairingRequiredError({
     cause: new Error("NOT_PAIRED"),
     details: { code: "PAIRING_REQUIRED" },
     message: "device pairing required",
-    requestId: "e3fbfe98-1666-4506-b6e7-5d7f04783c47",
+    requestId: requestId ?? undefined,
   });
 
 beforeEach(() => {
@@ -250,6 +256,76 @@ describe("createConnectionManager — 접속 루프", () => {
     expect(link.stop).toHaveBeenCalled();
     expect(connected.manager.state()).toBe("down");
   });
+});
+
+describe("createConnectionManager — 상세(페어링·버전)", () => {
+  it("페어링 요구는 pairing { requestId, since } 로 남고, 같은 requestId 가 다시 와도 since 는 처음 시각이다", async () => {
+    const link = Object.assign(fakeLink(), { hello: { server: { version: "2026.9.5" } } });
+    const { connector } = scriptedConnector([pairingError(), pairingError(), link]);
+    const { manager, details } = setup({ connector });
+
+    expect(manager.detail()).toEqual({ version: null, pairing: null });
+    manager.start();
+    await vi.advanceTimersByTimeAsync(0);
+    const pending = {
+      version: null,
+      pairing: { requestId: PAIRING_REQUEST_ID, since: new Date(0).toISOString() },
+    };
+    expect(manager.detail()).toEqual(pending);
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(manager.detail()).toEqual(pending);
+    // 같은 상세가 반복되면 알리지 않는다
+    expect(details).toEqual([pending]);
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(manager.state()).toBe("connected");
+    expect(manager.detail()).toEqual({ version: "2026.9.5", pairing: null });
+    expect(details).toEqual([pending, { version: "2026.9.5", pairing: null }]);
+  });
+
+  it("requestId 가 바뀌면 since 를 새로 잡고, requestId 가 없으면 빈 문자열로 남긴다", async () => {
+    const { connector } = scriptedConnector([pairingError("r-1"), pairingError("r-2"), pairingError(null)]);
+    const { manager, details } = setup({ connector });
+
+    manager.start();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(details.map((d) => d.pairing)).toEqual([
+      { requestId: "r-1", since: new Date(0).toISOString() },
+      { requestId: "r-2", since: new Date(5_000).toISOString() },
+      { requestId: "", since: new Date(10_000).toISOString() },
+    ]);
+    await manager.stop();
+  });
+
+  it("페어링 대기 중 다른 접속 오류가 와도 pairing 은 남는다 — 지우는 것은 성공한 접속뿐", async () => {
+    const { connector } = scriptedConnector([pairingError(), new Error("ECONNRESET")]);
+    const { manager } = setup({ connector });
+
+    manager.start();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(manager.detail().pairing?.requestId).toBe(PAIRING_REQUEST_ID);
+    await manager.stop();
+  });
+});
+
+describe("gatewayHost", () => {
+  it.each([
+    ["wss://u:p@gw.example:443/path?x=1#frag", "gw.example:443"],
+    ["wss://gw.example/gateway", "gw.example:443"],
+    ["ws://127.0.0.1:18789", "127.0.0.1:18789"],
+    ["ws://localhost", "localhost:80"],
+    ["wss://[::1]:9000/", "[::1]:9000"],
+  ])("%s → %s (자격 증명·경로·쿼리 없음)", (url, host) => {
+    expect(gatewayHost(url)).toBe(host);
+  });
+
+  it.each([["not a url"], [""], ["wss://user:secret@"]])(
+    "파싱이 안 되면 고정값 — 원문을 싣지 않는다 (%s)",
+    (url) => {
+      expect(gatewayHost(url)).toBe("(알 수 없음)");
+    },
+  );
 });
 
 describe("createConnectionManager — 재접속 복구", () => {

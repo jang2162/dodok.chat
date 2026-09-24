@@ -1,7 +1,7 @@
 /**
  * 플러그인이 아웃바운드로 붙는 브리지 엔드포인트 — Socket.IO 네임스페이스 `/bridge`.
  *
- * Phase 1 이 이어받을 최소 표면: 토큰 인증(handshake `auth.token`), 플러그인 → 서버 이벤트
+ * Phase 1 이 이어받을 최소 표면: 토큰 인증(handshake `auth.token` 을 검증 함수에 넘긴다 — 통과한 토큰 id 를 세션이 기억한다), 플러그인 → 서버 이벤트
  * (`hello`·`outbound.message`·`outbound.typing`·`status`) 수신, 서버 → 플러그인 요청
  * (`inbound.deliver`·`config.set`·`agents.list`) 송신. 저장·라우팅 같은 런타임 로직은 콜백으로 밖에 둔다.
  * 플러그인 ack 는 외부 입력이라 Result 봉투와 data 를 Zod 로 파싱한다 — 틀리면 `INTERNAL` + `ADAPTER_PROTOCOL: …`.
@@ -25,7 +25,7 @@ import {
 } from "@dodok/shared";
 import type { Namespace, Server, Socket } from "socket.io";
 import { z } from "zod";
-import { BridgeSessionState, OutboundDedupe, parseBridgeClientEvent, verifyBridgeToken } from "./session";
+import { BridgeSessionState, OutboundDedupe, parseBridgeClientEvent, RejectLogThrottle } from "./session";
 
 export const BRIDGE_NAMESPACE = "/bridge";
 
@@ -46,19 +46,27 @@ export type BridgeServerCallbacks = {
   onTyping?: (session: BridgeSessionState, payload: { channelId: string; agentId: string }) => void;
   onStatus?: (session: BridgeSessionState, status: BridgeStatus) => void;
   onClose?: (session: BridgeSessionState) => void;
+  /** 핸드셰이크 거절 — 원격 주소별 1분에 한 번만 온다(그 사이 눌러 둔 수를 싣는다). 제시된 토큰은 싣지 않는다 */
   onRejected?: (reason: string) => void;
 };
 
+/** 핸드셰이크 `auth.token`(외부 입력 그대로)을 보고 통과면 그 토큰의 id, 아니면 null */
+export type BridgeTokenVerifier = (presented: unknown) => { tokenId: string } | null;
+
 export type BridgeServerOptions = BridgeServerCallbacks & {
-  token: string;
+  verifyToken: BridgeTokenVerifier;
   serverVersion: string;
   ackTimeoutMs?: number;
+  /** 거절 로그 스로틀의 시계(ms) — 테스트 주입. 기본 `Date.now` */
+  now?: () => number;
 };
 
 export type BridgeHandle = {
   readonly namespace: Namespace<BridgeClientToServerEvents, BridgeServerToClientEvents>;
   /** 현재 ready 인 플러그인 연결 (가장 최근 1개) */
   current(): BridgeSessionState | undefined;
+  /** 그 토큰으로 통과한 연결(hello 전 포함)을 모두 끊고 끊은 수를 돌려준다 — 토큰 폐기 때 */
+  revokeSessions(tokenId: string): number;
   waitForReady(timeoutMs: number): Promise<BridgeSessionState>;
   deliverInbound(payload: InboundDeliver, timeoutMs?: number): Promise<Result<InboundDeliverResult>>;
   setConfig(payload: ConfigSet, timeoutMs?: number): Promise<Result<ConfigSetResult>>;
@@ -107,16 +115,40 @@ export function attachBridge(io: Server, opts: BridgeServerOptions): BridgeHandl
   // 중복 흡수는 연결이 아니라 이 브리지(플러그인 id) 단위 — 플러그인은 ack 를 못 받은 head 를 재연결 뒤 같은 outboundId 로 다시 보낸다
   const dedupe = new OutboundDedupe();
   const inflight = new Map<string, Promise<{ messageId: string }>>();
+  // hello 전 연결까지 — 폐기는 hello 여부와 무관하게 그 토큰의 연결을 전부 끊는다
+  const connections = new Map<string, { socket: BridgeSocket; session: BridgeSessionState }>();
+  const rejectLog = new RejectLogThrottle();
+  const now = opts.now ?? Date.now;
 
   namespace.use((socket, next) => {
     const token = (socket.handshake.auth as { token?: unknown } | undefined)?.token;
-    if (verifyBridgeToken(opts.token, token)) return next();
-    opts.onRejected?.(`token mismatch from ${socket.handshake.address}`);
+    let verified: { tokenId: string } | null = null;
+    try {
+      verified = opts.verifyToken(token);
+    } catch {
+      // 검증 함수 오류(저장소 등)는 거절로 본다 — 아래 거절 로그 한 줄이 남는다
+    }
+    if (verified) {
+      (socket.data as { tokenId?: string }).tokenId = verified.tokenId;
+      return next();
+    }
+    // 폐기된 토큰으로 재접속을 되풀이하는 플러그인이 로그를 채우지 않게 주소별로 줄인다(Review Focus 2)
+    const address = socket.handshake.address;
+    const logged = rejectLog.take(address, now());
+    if (logged) {
+      const suppressed = logged.suppressed > 0 ? ` (${logged.suppressed} more suppressed)` : "";
+      opts.onRejected?.(`token mismatch from ${address}${suppressed}`);
+    }
     next(new Error("UNAUTHORIZED"));
   });
 
   namespace.on("connection", (socket) => {
-    const session = new BridgeSessionState(randomUUID(), { dedupe });
+    const tokenId = (socket.data as { tokenId?: string }).tokenId;
+    const session = new BridgeSessionState(randomUUID(), {
+      dedupe,
+      ...(tokenId === undefined ? {} : { tokenId }),
+    });
+    connections.set(socket.id, { socket, session });
 
     socket.on("hello", (payload, ack) => {
       const parsed = parseBridgeClientEvent("hello", payload);
@@ -179,6 +211,7 @@ export function attachBridge(io: Server, opts: BridgeServerOptions): BridgeHandl
     });
 
     socket.on("disconnect", () => {
+      connections.delete(socket.id);
       if (session.phase !== "closed") session.close("disconnect");
       if (active?.socket.id === socket.id) active = undefined;
       opts.onClose?.(session);
@@ -208,6 +241,17 @@ export function attachBridge(io: Server, opts: BridgeServerOptions): BridgeHandl
   return {
     namespace,
     current: () => requireActive()?.session,
+    revokeSessions(tokenId) {
+      let count = 0;
+      // disconnect 가 동기로 지금 항목을 connections 에서 지운다 — Map 순회는 그래도 남은 항목을 이어 돈다
+      for (const { socket, session } of connections.values()) {
+        if (session.tokenId !== tokenId) continue;
+        count += 1;
+        session.close("revoked");
+        socket.disconnect(true);
+      }
+      return count;
+    },
     waitForReady(timeoutMs) {
       const existing = requireActive();
       if (existing) return Promise.resolve(existing.session);

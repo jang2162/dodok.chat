@@ -10,12 +10,16 @@ import { Server } from "socket.io";
 import { io as connect, type Socket } from "socket.io-client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type AdapterEvent, AdapterError, createOpenClawAdapter, type OpenClawAdapter } from "../src";
-import type { GatewayConnectOptions } from "../src/gateway/client";
+import { GatewayPairingRequiredError, type GatewayConnectOptions } from "../src/gateway/client";
 import * as f from "./fixtures/gateway-events";
 
 // 실제 attachBridge + socket.io-client 가짜 플러그인, Gateway 는 주입한 가짜 connector. 네트워크는 루프백뿐.
 
 const TOKEN = "bridge-test-token";
+const OTHER_TOKEN = "bridge-other-token";
+// 검증 함수가 아는 토큰 → 토큰 id
+const TOKEN_IDS: Record<string, string> = { [TOKEN]: "t1", [OTHER_TOKEN]: "t2" };
+const BUNDLE_SHA = "b".repeat(64);
 const CH = f.CHANNEL_ID;
 const STORED_MESSAGE_ID = "01a09fc9-d204-7551-89d6-38544d07a2aa";
 const hello = { pluginId: "dodok", version: "0.0.0", sdkVersion: "2026.9.4", capabilities: ["config.set"] };
@@ -34,6 +38,9 @@ let gatewayResponses: Record<string, Responder>;
 let gatewayCalls: Array<{ method: string; params: unknown }>;
 let connectOptions: GatewayConnectOptions | undefined;
 let gatewayStop: () => Promise<void>;
+/** 성공 전에 connector 가 던질 오류들(차례로) */
+let connectFailures: Error[];
+let gatewayHello: { server: { version: string } } | undefined;
 const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
 const clients: Socket[] = [];
 
@@ -45,23 +52,35 @@ beforeEach(async () => {
   gatewayCalls = [];
   connectOptions = undefined;
   gatewayStop = async () => undefined;
+  connectFailures = [];
+  gatewayHello = undefined;
   app = Fastify({ logger: false });
   ioServer = new Server(app.server, { transports: ["websocket"] });
   adapter = createOpenClawAdapter({
     gateway: {
-      url: "wss://gateway.example.test",
+      url: "wss://operator:pw@gateway.example.test/gw?t=1",
       token: "gw-token",
       deviceIdentityPath: "/data/device.json",
     },
-    bridge: { io: ioServer, token: TOKEN, serverVersion: "test" },
+    bridge: {
+      io: ioServer,
+      verifyToken: (presented) => {
+        const tokenId = typeof presented === "string" ? TOKEN_IDS[presented] : undefined;
+        return tokenId ? { tokenId } : null;
+      },
+      serverVersion: "test",
+    },
     logger,
     onCanonical: async (message) => {
       canonical.push(message);
       return canonicalResult;
     },
     connector: async (options) => {
+      const failure = connectFailures.shift();
+      if (failure) throw failure;
       connectOptions = options;
       return {
+        ...(gatewayHello ? { hello: gatewayHello } : {}),
         request: async (method: string, params?: unknown) => {
           gatewayCalls.push({ method, params });
           const respond = gatewayResponses[method];
@@ -92,8 +111,9 @@ afterEach(async () => {
 async function plugin(
   handlers: Record<string, (payload: never, ack: Ack) => void> = {},
   helloPayload: Record<string, unknown> = hello,
+  token: string = TOKEN,
 ): Promise<Socket> {
-  const socket = connect(url, { transports: ["websocket"], auth: { token: TOKEN }, reconnection: false });
+  const socket = connect(url, { transports: ["websocket"], auth: { token }, reconnection: false });
   clients.push(socket);
   for (const [event, handler] of Object.entries(handlers))
     socket.on(event, handler as (...args: unknown[]) => void);
@@ -216,6 +236,204 @@ describe("createOpenClawAdapter — 상태", () => {
 
   it("sessionKeyFor 는 원형 세션 키", () => {
     expect(adapter.sessionKeyFor("dev", CH)).toBe(`agent:dev:dodok:channel:${CH}`);
+  });
+});
+
+describe("createOpenClawAdapter — 설정 상세(setupDetail)", () => {
+  const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
+  it("처음에는 둘 다 down, host 는 URL 의 호스트:포트만 — 자격 증명·경로·쿼리·Gateway 토큰이 없다", () => {
+    const detail = adapter.setupDetail();
+    expect(detail).toEqual({
+      gateway: { state: "down", host: "gateway.example.test:443", version: null, pairing: null },
+      bridge: { state: "down", plugin: null },
+    });
+    const text = JSON.stringify(detail);
+    for (const secret of ["operator", "pw", "gw-token", "/gw", "t=1"]) expect(text).not.toContain(secret);
+  });
+
+  it("플러그인 hello → plugin 요약(토큰 id·bundleSha256·gatewayVersion), 끊기면 null — 변화마다 setup 이벤트 1회", async () => {
+    const socket = await plugin({}, { ...hello, gatewayVersion: "2026.9.5", bundleSha256: BUNDLE_SHA });
+    expect(adapter.setupDetail().bridge).toEqual({
+      state: "connected",
+      plugin: {
+        version: "0.0.0",
+        sdkVersion: "2026.9.4",
+        gatewayVersion: "2026.9.5",
+        bundleSha256: BUNDLE_SHA,
+        tokenId: "t1",
+        connectedAt: expect.stringMatching(ISO),
+      },
+    });
+    expect(ofKind("setup")).toHaveLength(1);
+
+    socket.disconnect();
+    await until(() => adapter.setupDetail().bridge.plugin === null, "plugin gone");
+    expect(adapter.setupDetail().bridge.state).toBe("down");
+    expect(ofKind("setup")).toHaveLength(2);
+  });
+
+  it("옛 플러그인(bundleSha256·gatewayVersion 없음)은 null 로 싣는다", async () => {
+    await plugin();
+    expect(adapter.setupDetail().bridge.plugin).toMatchObject({
+      bundleSha256: null,
+      gatewayVersion: null,
+      tokenId: "t1",
+    });
+  });
+
+  it("새 연결이 이전 연결을 교체하면 새 토큰 id 로 바뀌고 setup 이벤트는 교체마다 한 번", async () => {
+    const first = await plugin();
+    await plugin({}, hello, OTHER_TOKEN);
+    await until(() => first.disconnected, "replaced socket closed");
+    expect(adapter.setupDetail().bridge.plugin?.tokenId).toBe("t2");
+    expect(ofKind("setup")).toHaveLength(2);
+  });
+
+  it("검증 함수가 null 이면 핸드셰이크에서 UNAUTHORIZED, 거절 warn 에 토큰이 없다", async () => {
+    const socket = connect(url, {
+      transports: ["websocket"],
+      auth: { token: "dbt_revoked" },
+      reconnection: false,
+    });
+    clients.push(socket);
+    const error = await new Promise<Error>((resolve) => socket.once("connect_error", resolve));
+    expect(error.message).toBe("UNAUTHORIZED");
+    const warns = logger.warn.mock.calls.filter((call) => call[1] === "bridge connection rejected");
+    expect(warns).toHaveLength(1);
+    expect(JSON.stringify(warns)).not.toContain("dbt_revoked");
+    expect(ofKind("setup")).toHaveLength(0);
+  });
+
+  it("Gateway 접속 → state connected·version(hello-ok server.version) — setup 이벤트 1회", async () => {
+    gatewayHello = { server: { version: "2026.9.5" } };
+    await connectedGateway();
+    expect(adapter.setupDetail().gateway).toEqual({
+      state: "connected",
+      host: "gateway.example.test:443",
+      version: "2026.9.5",
+      pairing: null,
+    });
+    expect(ofKind("setup")).toHaveLength(1);
+  });
+
+  it("페어링 요구 → pairing { requestId, since }, 다음 성공 접속 → pairing null·version", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    connectFailures = [
+      new GatewayPairingRequiredError({
+        cause: new Error("NOT_PAIRED"),
+        details: { code: "PAIRING_REQUIRED" },
+        message: "device pairing required",
+        requestId: "req-1",
+      }),
+    ];
+    gatewayHello = { server: { version: "2026.9.5" } };
+    await adapter.connect();
+    await until(() => adapter.setupDetail().gateway.pairing !== null, "pairing recorded");
+    expect(adapter.setupDetail().gateway).toEqual({
+      state: "reconnecting",
+      host: "gateway.example.test:443",
+      version: null,
+      pairing: { requestId: "req-1", since: expect.stringMatching(ISO) },
+    });
+    // reconnecting 과 pairing 은 한 동기 구간에서 함께 바뀐다 — 이벤트는 한 번
+    expect(ofKind("setup")).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    await until(() => adapter.setupDetail().gateway.state === "connected", "gateway connected");
+    expect(adapter.setupDetail().gateway).toMatchObject({ version: "2026.9.5", pairing: null });
+    expect(ofKind("setup")).toHaveLength(2);
+  });
+
+  it("hello 없이 붙었다 끊긴 연결은 상세를 바꾸지 않으므로 setup 이벤트가 없다", async () => {
+    const socket = connect(url, { transports: ["websocket"], auth: { token: TOKEN }, reconnection: false });
+    clients.push(socket);
+    await new Promise<void>((resolve) => socket.once("connect", () => resolve()));
+    expect(adapter.revokeBridgeSessions("t1")).toBe(1);
+    await until(() => socket.disconnected, "socket closed");
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(ofKind("setup")).toHaveLength(0);
+  });
+
+  it("상세가 그대로인 상태 이벤트(능력 끄기 등)에는 setup 이벤트를 내지 않는다", async () => {
+    await connectedGateway();
+    const before = ofKind("setup").length;
+    gatewayResponses["agents.list"] = () => {
+      throw Object.assign(new Error("missing scope"), { details: { code: "MISSING_SCOPE" } });
+    };
+    await adapter.listAgents().catch(() => undefined);
+    expect(adapter.capabilities().agentsList).toBe(false);
+    expect(ofKind("setup")).toHaveLength(before);
+  });
+});
+
+describe("createOpenClawAdapter — revokeBridgeSessions", () => {
+  it("그 토큰으로 붙은 소켓을 끊고 끊은 수를 돌려준다 — 다른 토큰 세션은 그대로, 사유 로그 한 줄", async () => {
+    const waiting = connect(url, { transports: ["websocket"], auth: { token: TOKEN }, reconnection: false });
+    clients.push(waiting);
+    await new Promise<void>((resolve) => waiting.once("connect", () => resolve()));
+    const kept = await plugin({}, hello, OTHER_TOKEN);
+
+    expect(adapter.revokeBridgeSessions("t1")).toBe(1);
+    await until(() => waiting.disconnected, "revoked socket closed");
+    expect(kept.connected).toBe(true);
+    expect(adapter.setupDetail().bridge.plugin?.tokenId).toBe("t2");
+    expect(logger.info).toHaveBeenCalledWith({ tokenId: "t1", sessions: 1 }, "bridge sessions revoked");
+  });
+
+  it("지금 붙은 플러그인의 토큰을 폐기하면 bridge down·plugin null", async () => {
+    const socket = await plugin();
+    const setupBefore = ofKind("setup").length;
+    expect(adapter.revokeBridgeSessions("t1")).toBe(1);
+    await until(() => socket.disconnected, "revoked socket closed");
+    await until(() => adapter.status().bridge === "down", "bridge down");
+    expect(adapter.setupDetail().bridge).toEqual({ state: "down", plugin: null });
+    expect(ofKind("setup")).toHaveLength(setupBefore + 1);
+    expect(adapter.revokeBridgeSessions("t1")).toBe(0);
+  });
+});
+
+describe("createOpenClawAdapter — 옛 bridge.token 옵션(서버 전환 전 호환)", () => {
+  it('token 만 주면 그 값과 같을 때 토큰 id "env" 로 붙고, 다르면 거절한다', async () => {
+    const compatApp = Fastify({ logger: false });
+    const compatIo = new Server(compatApp.server, { transports: ["websocket"] });
+    const compat = createOpenClawAdapter({
+      gateway: { url: "ws://127.0.0.1:1", token: "gw", deviceIdentityPath: "/data/device.json" },
+      bridge: { io: compatIo, token: TOKEN, serverVersion: "test" },
+      logger,
+      onCanonical: async () => ({}),
+      connector: async () => {
+        throw new Error("unused");
+      },
+    });
+    await compatApp.listen({ host: "127.0.0.1", port: 0 });
+    const compatUrl = `ws://127.0.0.1:${(compatApp.server.address() as AddressInfo).port}/bridge`;
+    try {
+      const wrong = connect(compatUrl, {
+        transports: ["websocket"],
+        auth: { token: OTHER_TOKEN },
+        reconnection: false,
+      });
+      clients.push(wrong);
+      expect((await new Promise<Error>((resolve) => wrong.once("connect_error", resolve))).message).toBe(
+        "UNAUTHORIZED",
+      );
+
+      const right = connect(compatUrl, {
+        transports: ["websocket"],
+        auth: { token: TOKEN },
+        reconnection: false,
+      });
+      clients.push(right);
+      await new Promise<void>((resolve) => right.once("connect", () => resolve()));
+      await right.emitWithAck("hello", hello);
+      expect(compat.setupDetail().bridge.plugin?.tokenId).toBe("env");
+    } finally {
+      for (const socket of clients.splice(0)) socket.disconnect();
+      await compat.close();
+      compatIo.close();
+      await compatApp.close();
+    }
   });
 });
 

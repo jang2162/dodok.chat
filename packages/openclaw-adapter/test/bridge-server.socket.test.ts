@@ -8,6 +8,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { attachBridge, type BridgeHandle } from "../src/bridge/server";
 
 const TOKEN = "bridge-test-token";
+const OTHER_TOKEN = "bridge-other-token";
+// 검증 함수가 아는 토큰 → 토큰 id
+const TOKEN_IDS: Record<string, string> = { [TOKEN]: "t1", [OTHER_TOKEN]: "t2" };
+const BUNDLE_SHA = "a".repeat(64);
 const CH = "01a09fc9-d204-7551-89d6-38544d07a102";
 
 const hello = {
@@ -23,6 +27,8 @@ let bridge: BridgeHandle;
 let url: string;
 let received: OutboundMessage[];
 let storeDelayMs: number;
+let rejected: string[];
+let nowMs: number;
 const clients: Socket[] = [];
 
 function client(token: string): Socket {
@@ -56,11 +62,18 @@ function outbound(outboundId: string) {
 beforeEach(async () => {
   received = [];
   storeDelayMs = 0;
+  rejected = [];
+  nowMs = 0;
   app = Fastify({ logger: false });
   ioServer = new Server(app.server, { transports: ["websocket"] });
   bridge = attachBridge(ioServer, {
-    token: TOKEN,
+    verifyToken: (presented) => {
+      const tokenId = typeof presented === "string" ? TOKEN_IDS[presented] : undefined;
+      return tokenId ? { tokenId } : null;
+    },
     serverVersion: "test",
+    now: () => nowMs,
+    onRejected: (reason) => rejected.push(reason),
     onOutboundMessage: async (_session, message) => {
       received.push(message);
       if (storeDelayMs > 0) await new Promise((done) => setTimeout(done, storeDelayMs));
@@ -83,6 +96,49 @@ describe("attachBridge (실제 Socket.IO)", () => {
     const socket = client("wrong");
     const error = (await waitFor(socket, "connect_error")) as Error;
     expect(error.message).toBe("UNAUTHORIZED");
+  });
+
+  it("검증 함수가 준 토큰 id 를 세션에 싣고, hello 의 bundleSha256 도 세션에 남는다", async () => {
+    const socket = client(OTHER_TOKEN);
+    await waitFor(socket, "connect");
+    await socket.emitWithAck("hello", { ...hello, bundleSha256: BUNDLE_SHA });
+    expect(bridge.current()?.tokenId).toBe("t2");
+    expect(bridge.current()?.hello?.bundleSha256).toBe(BUNDLE_SHA);
+  });
+
+  it("같은 주소에서 거절이 10번 와도 onRejected 는 1분에 한 번이고, 1분 뒤 한 번 더 — 눌러 둔 수를 싣는다", async () => {
+    for (let i = 0; i < 10; i += 1) {
+      nowMs = i * 1_000;
+      await waitFor(client("revoked-token"), "connect_error");
+    }
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]).toMatch(/^token mismatch from \S+$/);
+    // 거절 로그에 제시된 토큰은 싣지 않는다
+    expect(rejected.join("\n")).not.toContain("revoked-token");
+
+    nowMs = 60_000;
+    await waitFor(client("revoked-token"), "connect_error");
+    expect(rejected).toHaveLength(2);
+    expect(rejected[1]).toMatch(/\(9 more suppressed\)$/);
+  });
+
+  it("revokeSessions(tokenId) 는 그 토큰의 소켓만 끊고 끊은 수를 돌려준다", async () => {
+    const revoked = client(TOKEN);
+    await waitFor(revoked, "connect");
+    const kept = client(OTHER_TOKEN);
+    await waitFor(kept, "connect");
+    await kept.emitWithAck("hello", hello);
+    const disconnected = new Promise((resolve) => revoked.once("disconnect", resolve));
+
+    expect(bridge.revokeSessions("t1")).toBe(1);
+    await disconnected;
+    expect(kept.connected).toBe(true);
+    expect(bridge.current()?.tokenId).toBe("t2");
+    expect(bridge.revokeSessions("unknown")).toBe(0);
+
+    expect(bridge.revokeSessions("t2")).toBe(1);
+    await new Promise((resolve) => kept.once("disconnect", resolve));
+    expect(bridge.current()).toBeUndefined();
   });
 
   it("hello → ready, 같은 outboundId 재전송은 한 번만 저장하고 같은 messageId 를 돌려준다", async () => {

@@ -4,6 +4,7 @@ import type { AddressInfo } from "node:net";
 import { Server } from "socket.io";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { attachBridge, type BridgeHandle } from "../../../../packages/openclaw-adapter/src/bridge/server";
+import { verifyBridgeToken } from "../../../../packages/openclaw-adapter/src/bridge/session";
 import { FAKE_PLUGIN_HELLO, type FakePlugin, startFakePlugin } from "./fake-plugin";
 
 const TOKEN = "fake-bridge-token";
@@ -48,7 +49,7 @@ describe("가짜 플러그인 — 실제 attachBridge 에 붙는다", () => {
     const http = createServer();
     io = new Server(http);
     bridge = attachBridge(io, {
-      token: TOKEN,
+      verifyToken: (presented) => (verifyBridgeToken(TOKEN, presented) ? { tokenId: "env" } : null),
       serverVersion: "9.9.9",
       onHello: (_session, hello) => hellos.push(hello),
       onOutboundMessage: async (_session, message) => {

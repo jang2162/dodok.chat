@@ -22,9 +22,11 @@ import {
   type AdapterCapabilities,
   type AdapterEvent,
   type AdapterLogger,
+  type AdapterSetupDetail,
   type AgentAdapter,
 } from "./adapter-types";
-import { attachBridge, type BridgeHandle } from "./bridge/server";
+import { attachBridge, type BridgeHandle, type BridgeTokenVerifier } from "./bridge/server";
+import { verifyBridgeToken } from "./bridge/session";
 import { syncChannelConfig } from "./config-sync";
 import {
   isApprovalEvent,
@@ -38,6 +40,7 @@ import {
 import { connectGateway } from "./gateway/client";
 import {
   createConnectionManager,
+  gatewayHost,
   type GatewayConnector,
   type GatewayState,
   type RecoverTarget,
@@ -48,7 +51,14 @@ import { parseSessionsReset, sessionKeyFor } from "./gateway/sessions";
 
 export type OpenClawAdapterOptions = {
   gateway: { url: string; token: string; deviceIdentityPath: string; deviceTokenStorePath?: string };
-  bridge: { io: Server; token: string; serverVersion: string; ackTimeoutMs?: number };
+  /**
+   * 플러그인 핸드셰이크 인증은 `verifyToken`(통과면 토큰 id). `token` 은 서버가 검증 함수로 옮기기 전(설정 마법사 태스크 3)까지의
+   * 호환 층이다 — 같은 값이면 토큰 id "env" 로 통과시킨다. 서버가 옮긴 뒤 `token` 과 이 분기는 지워도 된다.
+   */
+  bridge: { io: Server; serverVersion: string; ackTimeoutMs?: number } & (
+    | { verifyToken: BridgeTokenVerifier; token?: never }
+    | { token: string; verifyToken?: never }
+  );
   logger: AdapterLogger;
   /** 서버가 정본을 저장하고 id 를 돌려준다. 그 id 가 플러그인 ack 의 messageId 가 된다. */
   onCanonical: (message: OutboundMessage) => Promise<{ messageId?: string }>;
@@ -78,6 +88,13 @@ const FORGET_AFTER_FINAL_MS = 60_000;
 // 승인 병합 기억 상한. Gateway 의 세션 되감기 상한과 같은 1000 — 넘으면 오래 손대지 않은 것부터 버린다.
 const APPROVAL_DEDUPE_MAX = 1_000;
 
+/** 옛 `bridge.token` 을 검증 함수로 감싼다(호환 층 — 서버 전환 뒤 지운다) */
+function bridgeVerifier(bridge: OpenClawAdapterOptions["bridge"]): BridgeTokenVerifier {
+  if (bridge.verifyToken) return bridge.verifyToken;
+  const expected = bridge.token ?? "";
+  return (presented) => (verifyBridgeToken(expected, presented) ? { tokenId: "env" } : null);
+}
+
 const AgentsListResult = z.looseObject({
   agents: z.array(z.looseObject({ id: z.string().min(1), name: z.string().optional().catch(undefined) })),
 });
@@ -95,6 +112,10 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
   const capabilities: AdapterCapabilities = { sessionReset: true, agentsList: true, configSet: true };
   let gatewayState: GatewayState = "down";
   let bridgeState: AdapterStatus["bridge"] = "down";
+  const gatewayHostLabel = gatewayHost(opts.gateway.url);
+  // 마지막으로 알린(또는 처음) setupDetail — 같은 상세면 setup 이벤트를 내지 않는다
+  let lastSetupKey: string | undefined;
+  let setupCheckQueued = false;
 
   function emit(event: AdapterEvent) {
     for (const handler of handlers) {
@@ -114,6 +135,22 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
     bridgeState = next;
     logger.info({ bridge: next }, "bridge status changed");
     emitStatus();
+  }
+
+  /**
+   * setupDetail 이 바뀌었으면 setup 이벤트를 한 번 낸다. 한 동기 구간의 여러 변화(예: reconnecting + 페어링)는
+   * 마이크로태스크로 모아 한 번만 비교한다.
+   */
+  function queueSetupCheck() {
+    if (setupCheckQueued) return;
+    setupCheckQueued = true;
+    queueMicrotask(() => {
+      setupCheckQueued = false;
+      const key = JSON.stringify(setupDetail());
+      if (key === lastSetupKey) return;
+      lastSetupKey = key;
+      emit({ kind: "setup" });
+    });
   }
 
   function disableCapability(name: keyof AdapterCapabilities) {
@@ -196,7 +233,9 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
     onState: (next) => {
       gatewayState = next;
       emitStatus();
+      queueSetupCheck();
     },
+    onDetail: () => queueSetupCheck(),
     onApprovalReplay: (approvals) => {
       for (const approval of approvals) emitApproval(approval);
     },
@@ -205,7 +244,7 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
   });
 
   const bridge = attachBridge(opts.bridge.io, {
-    token: opts.bridge.token,
+    verifyToken: bridgeVerifier(opts.bridge),
     serverVersion: opts.bridge.serverVersion,
     ...(opts.bridge.ackTimeoutMs === undefined ? {} : { ackTimeoutMs: opts.bridge.ackTimeoutMs }),
     onHello: (_session, hello) => {
@@ -220,8 +259,10 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
         "bridge plugin hello",
       );
       setBridgeState("connected");
+      queueSetupCheck();
     },
     onClose: (session) => {
+      queueSetupCheck();
       // 새 연결이 이전 연결을 교체할 때는 down 을 거치지 않는다
       if (session.closeReason === "replaced") return;
       if (!bridge.current()) setBridgeState("down");
@@ -235,6 +276,30 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
     onStatus: (_session, pluginStatus) => logger.debug({ pluginStatus }, "bridge plugin status"),
     onRejected: (reason) => logger.warn({ reason }, "bridge connection rejected"),
   });
+
+  function setupDetail(): AdapterSetupDetail {
+    const gateway = manager.detail();
+    const session = bridge.current();
+    const hello = session?.hello;
+    return {
+      gateway: { state: gatewayState, host: gatewayHostLabel, ...gateway },
+      bridge: {
+        state: bridgeState,
+        plugin:
+          session && hello
+            ? {
+                version: hello.version,
+                sdkVersion: hello.sdkVersion,
+                gatewayVersion: hello.gatewayVersion ?? null,
+                bundleSha256: hello.bundleSha256 ?? null,
+                tokenId: session.tokenId,
+                connectedAt: session.connectedAt.toISOString(),
+              }
+            : null,
+      },
+    };
+  }
+  lastSetupKey = JSON.stringify(setupDetail());
 
   const adapterClosed = () => new AdapterError("ADAPTER_UNAVAILABLE", "adapter closed");
 
@@ -339,6 +404,13 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
 
     status,
     capabilities: () => ({ ...capabilities }),
+    setupDetail,
+
+    revokeBridgeSessions(tokenId) {
+      const sessions = bridge.revokeSessions(tokenId);
+      logger.info({ tokenId, sessions }, "bridge sessions revoked");
+      return sessions;
+    },
 
     async listAgents() {
       let res: unknown;

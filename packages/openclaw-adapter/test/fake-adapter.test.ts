@@ -35,6 +35,35 @@ function deliver(overrides: Partial<InboundDeliver> = {}): InboundDeliver {
 }
 
 describe("FakeAdapter", () => {
+  it("setupDetail 은 주입한 상세를 돌려주고, revokeBridgeSessions 는 붙은 플러그인 토큰이면 끊고(1) 아니면 0", () => {
+    const adapter = new FakeAdapter();
+    const events: AdapterEvent[] = [];
+    adapter.onEvent((e) => events.push(e));
+    expect(adapter.setupDetail().bridge.plugin?.tokenId).toBeNull();
+
+    const plugin = {
+      version: "0.0.0",
+      sdkVersion: "2026.9.4",
+      gatewayVersion: "2026.9.5",
+      bundleSha256: "c".repeat(64),
+      tokenId: "t1",
+      connectedAt: "2026-09-24T00:00:00.000Z",
+    };
+    const detail = {
+      gateway: { state: "connected" as const, host: "gw.example:443", version: "2026.9.5", pairing: null },
+      bridge: { state: "connected" as const, plugin },
+    };
+    adapter.setSetupDetail(detail);
+    expect(adapter.setupDetail()).toEqual(detail);
+
+    expect(adapter.revokeBridgeSessions("t2")).toBe(0);
+    expect(events).toEqual([]);
+    expect(adapter.revokeBridgeSessions("t1")).toBe(1);
+    expect(adapter.setupDetail().bridge).toEqual({ state: "down", plugin: null });
+    expect(adapter.calls.revokeBridgeSessions).toEqual(["t2", "t1"]);
+    expect(events).toEqual([{ kind: "setup" }]);
+  });
+
   it("send 는 기본으로 dispatch 를 돌려주고 calls.send 에 입력을 기록한다", async () => {
     const adapter = new FakeAdapter();
     const input = deliver();

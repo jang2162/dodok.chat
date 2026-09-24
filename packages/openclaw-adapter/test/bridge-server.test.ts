@@ -3,6 +3,7 @@ import {
   BridgeSessionState,
   OutboundDedupe,
   parseBridgeClientEvent,
+  RejectLogThrottle,
   verifyBridgeToken,
 } from "../src/bridge/session";
 
@@ -107,6 +108,42 @@ describe("BridgeSessionState", () => {
     expect(state.phase).toBe("closed");
     expect(state.closeReason).toBe("replaced");
     expect(state.acceptOutbound("o9")).toEqual({ kind: "reject", code: "PROTOCOL_MISMATCH" });
+  });
+});
+
+describe("BridgeSessionState.tokenId", () => {
+  it("핸드셰이크가 검증한 토큰 id 를 기억하고, 없으면 null", () => {
+    expect(new BridgeSessionState("sock-1", { tokenId: "t1" }).tokenId).toBe("t1");
+    expect(new BridgeSessionState("sock-2").tokenId).toBeNull();
+  });
+});
+
+describe("RejectLogThrottle", () => {
+  it("같은 주소는 1분에 한 번만 로그하고, 다음 로그에 그 사이 눌러 둔 수를 싣는다", () => {
+    const throttle = new RejectLogThrottle();
+    expect(throttle.take("10.0.0.1", 0)).toEqual({ suppressed: 0 });
+    for (let i = 1; i <= 9; i += 1) expect(throttle.take("10.0.0.1", i * 1_000)).toBeNull();
+    expect(throttle.take("10.0.0.1", 59_999)).toBeNull();
+    expect(throttle.take("10.0.0.1", 60_000)).toEqual({ suppressed: 10 });
+    expect(throttle.take("10.0.0.1", 60_001)).toBeNull();
+  });
+
+  it("주소가 다르면 따로 센다", () => {
+    const throttle = new RejectLogThrottle();
+    expect(throttle.take("10.0.0.1", 0)).toEqual({ suppressed: 0 });
+    expect(throttle.take("10.0.0.2", 1)).toEqual({ suppressed: 0 });
+    expect(throttle.take("10.0.0.1", 2)).toBeNull();
+  });
+
+  it("주소 기억은 상한(기본 256)을 넘으면 가장 오래 로그한 주소부터 잊는다", () => {
+    const throttle = new RejectLogThrottle({ max: 2 });
+    throttle.take("a", 0);
+    throttle.take("b", 1);
+    throttle.take("c", 2); // a 가 밀려난다
+    expect(throttle.size).toBe(2);
+    expect(throttle.take("a", 3)).toEqual({ suppressed: 0 });
+    expect(throttle.take("c", 4)).toBeNull();
+    expect(new RejectLogThrottle().max).toBe(256);
   });
 });
 

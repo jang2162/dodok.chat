@@ -26,6 +26,7 @@ import type { InboundDeliver } from "@dodok/shared";
 import Fastify from "fastify";
 import { Server } from "socket.io";
 import { attachBridge } from "../bridge/server";
+import { verifyBridgeToken } from "../bridge/session";
 
 function findRepoRoot(): string {
   let current = process.cwd();
@@ -90,7 +91,7 @@ function toDelivery(line: string): InboundDeliver | null {
 const app = Fastify({ logger: false });
 const io = new Server(app.server, { transports: ["websocket"] });
 const bridge = attachBridge(io, {
-  token: BRIDGE_TOKEN,
+  verifyToken: (presented) => (verifyBridgeToken(BRIDGE_TOKEN, presented) ? { tokenId: "spike" } : null),
   serverVersion: "spike-2-serve",
   onHello: (_session, hello) => console.log(`플러그인 hello: ${JSON.stringify(hello)}`),
   onOutboundMessage: async (_session, message) => {

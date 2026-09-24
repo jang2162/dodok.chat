@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { Server } from "socket.io";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { attachBridge, type BridgeHandle } from "../../../../packages/openclaw-adapter/src/bridge/server";
+import { verifyBridgeToken } from "../../../../packages/openclaw-adapter/src/bridge/session";
 import {
   connectGateway,
   type GatewayConnection,
@@ -73,7 +74,7 @@ describe("시나리오 — 인바운드 대본을 Gateway 이벤트와 플러그
     const http = createServer();
     io = new Server(http);
     bridge = attachBridge(io, {
-      token: TOKEN,
+      verifyToken: (presented) => (verifyBridgeToken(TOKEN, presented) ? { tokenId: "env" } : null),
       serverVersion: "9.9.9",
       onOutboundMessage: async (_session, message) => {
         outbound.push(message);
