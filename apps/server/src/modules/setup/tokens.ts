@@ -46,7 +46,10 @@ function findActive(db: DbOrTx, presented: unknown): Row | undefined {
   return timingSafeEqual(Buffer.from(row.hash, "hex"), Buffer.from(hash, "hex")) ? row : undefined;
 }
 
-/** 새 토큰을 만든다. 라벨은 trim 뒤 1~60자(아니면 VALIDATION). 원문은 이 반환값에만 있다 */
+/**
+ * 새 토큰을 만든다. 라벨은 trim 뒤 1~60자(아니면 VALIDATION). 원문은 이 반환값에만 있다.
+ * 라벨 env(대소문자 무시)도 VALIDATION — 목록에서 이어받은 토큰을 가르는 표지라 사람이 발급한 토큰에 쓰면 출처가 틀리게 보인다
+ */
 export function issueBridgeToken(
   db: Db,
   workspaceId: string,
@@ -55,6 +58,8 @@ export function issueBridgeToken(
 ): { token: string; record: BridgeTokenRecord } {
   const input = IssueBridgeTokenInput.safeParse({ label });
   if (!input.success) throw apiError("VALIDATION", "라벨은 1~60자여야 한다");
+  if (input.data.label.toLowerCase() === ENV_TOKEN_LABEL)
+    throw apiError("VALIDATION", "env 는 .env 에서 이어받은 토큰에만 쓰는 라벨입니다");
   const token = `${TOKEN_PREFIX}${randomBytes(32).toString("base64url")}`;
   const row: Row = {
     id: uuidv7(),

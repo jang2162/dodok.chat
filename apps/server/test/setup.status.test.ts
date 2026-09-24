@@ -75,6 +75,16 @@ describe("tarEntry", () => {
     expect(tarEntry(tar, "package/short")).toBeUndefined();
   });
 
+  it("pax path 는 바로 다음 항목에만 — 그 뒤 항목은 제 이름으로 돌아간다", () => {
+    const tar = tarOf([
+      tarBlock("PaxHeader/x", Buffer.from(paxRecord("path", "package/README.md")), "x"),
+      tarBlock("package/README", Buffer.from("readme")),
+      tarBlock(PLUGIN_BUNDLE_ENTRY, BUNDLE),
+    ]);
+    expect(tarEntry(tar, PLUGIN_BUNDLE_ENTRY)).toEqual(BUNDLE);
+    expect(tarEntry(tar, "package/README.md")).toEqual(Buffer.from("readme"));
+  });
+
   it("ustar prefix 와 이름을 이어 붙인다", () => {
     const block = tarBlock("index.js", BUNDLE);
     block.write("package/dist", 345, 155, "utf8");
@@ -120,6 +130,23 @@ describe("readPluginFile", () => {
     utimesSync(join(first, "new.tgz"), new Date(2_000_000), new Date(2_000_000));
     expect(readPluginFile([first, second])?.bundleSha256).toBe(sha("new"));
     expect(readPluginFile([second, first])?.bundleSha256).toBe(sha("second"));
+  });
+
+  it("가장 최근은 이름순이 아니라 mtime 으로, 더 최근이어도 tgz 가 아닌 파일은 보지 않는다", () => {
+    const at = (s: number) => new Date(s * 1000);
+    writeFileSync(join(dir, "a-new.tgz"), pluginTgz(Buffer.from("a-new")));
+    writeFileSync(join(dir, "z-old.tgz"), pluginTgz(Buffer.from("z-old")));
+    utimesSync(join(dir, "a-new.tgz"), at(2_000), at(2_000));
+    utimesSync(join(dir, "z-old.tgz"), at(1_000), at(1_000));
+    expect(readPluginFile([dir])?.bundleSha256).toBe(sha("a-new"));
+    utimesSync(join(dir, "z-old.tgz"), at(3_000), at(3_000));
+    expect(readPluginFile([dir])?.bundleSha256).toBe(sha("z-old"));
+    // 더 최근인 tgz 모양의 비-tgz 파일(다른 확장자)은 후보가 아니다
+    writeFileSync(join(dir, "zz-latest.tgz.bak"), pluginTgz(Buffer.from("bak")));
+    writeFileSync(join(dir, "index.js"), "x");
+    utimesSync(join(dir, "zz-latest.tgz.bak"), at(4_000), at(4_000));
+    utimesSync(join(dir, "index.js"), at(4_000), at(4_000));
+    expect(readPluginFile([dir])?.bundleSha256).toBe(sha("z-old"));
   });
 
   it("tgz 가 없거나, gzip 이 아니거나, 안에 번들이 없으면 null", () => {

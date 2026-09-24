@@ -310,4 +310,35 @@ describe("설정 마법사 통합 — 어댑터 setup 이벤트", () => {
       await app.close();
     }
   });
+
+  it("접속하지 않은 토큰을 폐기해도 서버가 setup.status 를 다시 보낸다 — 어댑터 이벤트(세션 끊김)에 기대지 않는다", async () => {
+    // FakeAdapter 의 revokeBridgeSessions 는 기록만 하고 {kind:setup} 을 내지 않는다
+    const adapter = new FakeAdapter();
+    const app = await bootTestApp({}, { adapter, pluginDirs: [] });
+    const sockets: WireClient[] = [];
+    try {
+      await app.fastify.listen({ host: "127.0.0.1", port: 0 });
+      const { token, headers } = await login(app);
+      const owner = await connectWire(app, token);
+      sockets.push(owner);
+      const seen = recordEvents(owner, ["setup.status"]);
+      await roundTrip(owner);
+      seen.length = 0; // 접속 때 온 것이 있으면 버린다
+      const [envRow] = app.db.select().from(bridgeTokens).all();
+      const res = await app.fastify.inject({
+        method: "DELETE",
+        url: `/api/v1/setup/bridge-tokens/${envRow?.id}`,
+        headers,
+      });
+      expect(res.statusCode).toBe(204);
+      await roundTrip(owner);
+      expect(seen).toHaveLength(1);
+      // BRIDGE_TOKEN 은 그대로인데 그 값이 이제 활성 토큰이 아니다
+      const payload = seen[0]?.payload as WirePayload<"setup.status"> | undefined;
+      expect(SetupStatus.parse(payload?.status).envTokenIgnored).toBe(true);
+    } finally {
+      for (const socket of sockets) socket.close();
+      await app.close();
+    }
+  });
 });

@@ -36,8 +36,8 @@ function tinyPluginTgz(bundle: Buffer): Buffer {
   return gzipSync(Buffer.concat([header, body, Buffer.alloc(1024)]));
 }
 
-/** 두 번째 사용자 — membership role 을 준다(Phase 4 팀원 대비). 세션은 Better Auth 내부 어댑터로 바로 낸다 */
-async function userWithRole(app: App, handle: string, role: string) {
+/** 두 번째 사용자 — membership role 을 준다(Phase 4 팀원 대비). role 이 null 이면 membership 행을 만들지 않는다. 세션은 Better Auth 내부 어댑터로 바로 낸다 */
+async function userWithRole(app: App, handle: string, role: string | null) {
   const ctx = await app.auth.$context;
   const id = uuid();
   await ctx.internalAdapter.createUser(
@@ -55,7 +55,8 @@ async function userWithRole(app: App, handle: string, role: string) {
       createdAt: new Date(),
     })
     .run();
-  app.db.insert(memberships).values({ id: uuid(), workspaceId: app.workspaceId, userId: id, role }).run();
+  if (role !== null)
+    app.db.insert(memberships).values({ id: uuid(), workspaceId: app.workspaceId, userId: id, role }).run();
   const session = await ctx.internalAdapter.createSession(id);
   return { id, headers: { authorization: `Bearer ${session.token}` } };
 }
@@ -65,6 +66,7 @@ describe("설정 API /api/v1/setup", () => {
   let adapter: FakeAdapter;
   let owner: { authorization: string };
   let member: { authorization: string };
+  let noMembership: { authorization: string };
   let pluginDir: string;
   let log: ReturnType<typeof captureLogger>;
   const BUNDLE = Buffer.from("export const dodok = 1;\n");
@@ -82,6 +84,7 @@ describe("설정 API /api/v1/setup", () => {
     );
     owner = (await login(app)).headers;
     member = (await userWithRole(app, "bee", "member")).headers;
+    noMembership = (await userWithRole(app, "nom", null)).headers;
   });
   afterAll(async () => {
     await app.close();
@@ -101,14 +104,15 @@ describe("설정 API /api/v1/setup", () => {
       ...(payload === undefined ? {} : { payload }),
     });
 
-  it("GET /auth/me 에 그 워크스페이스 role — owner·member", async () => {
+  it("GET /auth/me 에 그 워크스페이스 role — owner·member, membership 이 없으면 member", async () => {
     const me = (h: Record<string, string>) =>
       app.fastify.inject({ method: "GET", url: "/api/v1/auth/me", headers: h }).then((r) => r.json());
     expect((await me(owner)).role).toBe("owner");
     expect((await me(member)).role).toBe("member");
+    expect((await me(noMembership)).role).toBe("member");
   });
 
-  it("owner 가 아니면 다섯 경로 모두 403, 세션이 없으면 401 [Review Focus 4]", async () => {
+  it("owner 가 아니면(member·membership 없음) 다섯 경로 모두 403, 세션이 없으면 401 [Review Focus 4]", async () => {
     const id = uuid();
     const routes: Array<["GET" | "POST" | "DELETE", string, object?]> = [
       ["GET", "/status"],
@@ -119,9 +123,11 @@ describe("설정 API /api/v1/setup", () => {
     ];
     const before = app.db.select().from(bridgeTokens).all().length;
     for (const [method, url, body] of routes) {
-      const forbidden = await call(member, method, url, body);
-      expect(forbidden.statusCode, `${method} ${url}`).toBe(403);
-      expect(forbidden.json().code).toBe("FORBIDDEN");
+      for (const headers of [member, noMembership]) {
+        const forbidden = await call(headers, method, url, body);
+        expect(forbidden.statusCode, `${method} ${url}`).toBe(403);
+        expect(forbidden.json().code).toBe("FORBIDDEN");
+      }
       expect((await call(undefined, method, url, body)).statusCode, `${method} ${url}`).toBe(401);
     }
     expect(app.db.select().from(bridgeTokens).all()).toHaveLength(before);
@@ -167,6 +173,21 @@ describe("설정 API /api/v1/setup", () => {
     expect((await call(owner, "POST", "/bridge-tokens", { label: "" })).statusCode).toBe(400);
     expect((await call(owner, "POST", "/bridge-tokens", { label: "x".repeat(61) })).statusCode).toBe(400);
     expect((await call(owner, "POST", "/bridge-tokens")).statusCode).toBe(400);
+  });
+
+  it("POST 라벨 env(대소문자·앞뒤 공백 무시)는 400 VALIDATION — 목록의 env 줄은 이어받은 토큰 하나뿐이다", async () => {
+    const before = app.db.select().from(bridgeTokens).all().length;
+    for (const label of ["env", " ENV ", "Env"]) {
+      const res = await call(owner, "POST", "/bridge-tokens", { label });
+      expect(res.statusCode, label).toBe(400);
+      expect(res.json()).toMatchObject({
+        code: "VALIDATION",
+        message: "env 는 .env 에서 이어받은 토큰에만 쓰는 라벨입니다",
+      });
+    }
+    expect(app.db.select().from(bridgeTokens).all()).toHaveLength(before);
+    const { tokens } = (await call(owner, "GET", "/bridge-tokens")).json() as { tokens: BridgeTokenRecord[] };
+    expect(tokens.filter((t) => t.label.toLowerCase() === "env")).toHaveLength(1);
   });
 
   it("GET 목록 — env 이어받은 줄 포함, 새것부터, 지금 접속 중인 토큰이 connected", async () => {

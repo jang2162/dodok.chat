@@ -74,6 +74,25 @@ describe("issueBridgeToken", () => {
     expect(rows()).toHaveLength(0);
     expect(issueBridgeToken(db, ws, "x".repeat(60)).record.label).toHaveLength(60);
   });
+
+  it("라벨 env 는 대소문자·앞뒤 공백과 무관하게 VALIDATION — 이어받은 토큰의 표지다. envoy 처럼 env 를 품은 라벨은 된다", () => {
+    for (const label of ["env", "ENV", " Env ", "\tenv\n"]) {
+      let error: unknown;
+      try {
+        issueBridgeToken(db, ws, label);
+      } catch (e) {
+        error = e;
+      }
+      expect(error, JSON.stringify(label)).toBeInstanceOf(HttpError);
+      expect((error as HttpError).body).toMatchObject({
+        code: "VALIDATION",
+        message: "env 는 .env 에서 이어받은 토큰에만 쓰는 라벨입니다",
+      });
+    }
+    expect(rows()).toHaveLength(0);
+    expect(issueBridgeToken(db, ws, "envoy").record.label).toBe("envoy");
+    expect(issueBridgeToken(db, ws, "my env").record.label).toBe("my env");
+  });
 });
 
 describe("verifyBridgeTokenDb", () => {
@@ -99,6 +118,17 @@ describe("verifyBridgeTokenDb", () => {
     // 틀린 토큰은 어느 행도 건드리지 않는다
     verifyBridgeTokenDb(db, "dbt_wrong", at(10 * BRIDGE_TOKEN_LAST_USED_INTERVAL_MS));
     expect(lastUsed()).toEqual(at(1_000 + BRIDGE_TOKEN_LAST_USED_INTERVAL_MS));
+  });
+
+  it("검증한 토큰의 행만 lastUsedAt 을 채운다 — 다른 행은 그대로", () => {
+    const a = issueBridgeToken(db, ws, "a", T0);
+    const b = issueBridgeToken(db, ws, "b", T0);
+    importEnvToken(db, seedWorkspace(db, { userHandle: "o" }).workspaceId, ENV_TOKEN, T0);
+    verifyBridgeTokenDb(db, a.token, at(1_000));
+    const byId = new Map(rows().map((r) => [r.id, r.lastUsedAt]));
+    expect(byId.get(a.record.id)).toEqual(at(1_000));
+    expect(byId.get(b.record.id)).toBeNull();
+    expect([...byId.values()].filter((v) => v !== null)).toHaveLength(1);
   });
 
   it("isActiveBridgeToken 은 같은 판정을 하지만 lastUsedAt 을 건드리지 않는다", () => {
