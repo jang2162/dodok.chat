@@ -123,11 +123,11 @@ curl -s -H "authorization: Bearer $T" http://127.0.0.1:$PORT/api/v1/adapter/stat
 ```
 
 `bridge` 가 60초 안에 `connected` 가 안 되면 `data/dev-gateway.log` 의 `[dodok] bridge:` 줄을 본다. 서버가 늦게 뜨면 플러그인 백오프가 벌어져 있어
-첫 연결에 그만큼 걸린다(상한 10s, 지터 포함 ~12s — 30s 상한이던 이번 실연은 21s). `UNAUTHORIZED` 면 계정 토큰을 `.env` 의 `BRIDGE_TOKEN` 과 맞춘다 — 인자로 넘기면 ps 에 남으므로 ADR 0002 9.5 처럼 패치 파일로:
+첫 연결에 그만큼 걸린다(상한 10s, 지터 포함 ~12s — 30s 상한이던 이번 실연은 21s). `UNAUTHORIZED` 면 계정 토큰이 서버 DB 의 활성 토큰과 다르다. **브리지 토큰의 정본은 DB 다** — `.env` 의 `BRIDGE_TOKEN` 은 토큰 행이 하나도 없을 때(새 DB) 라벨 `env` 로 한 번 이어받을 뿐이고, 이어받은 뒤에는 `.env` 를 바꿔도 통하지 않는다. 새 토큰은 연결 페이지에서 발급한다(이 문서 「브리지 토큰 교체 — 사람이 따라 할 절차」 절 · `docs/guides/deploy.md` 「브리지 토큰 교체」). 이 절처럼 실연 DB 를 새로 만들었다면 계정 토큰을 `.env` 의 `BRIDGE_TOKEN` 과 맞추면 붙는다 — 인자로 넘기면 ps 에 남으므로 ADR 0002 9.5 처럼 패치 파일로:
 
 ```bash
 ( . ./.env; umask 077; printf '{ channels: { dodok: { accounts: { default: { token: "%s" } } } } }\n' "$BRIDGE_TOKEN" > data/bridge-token.patch.json5 )
-oc --dev config patch --file data/bridge-token.patch.json5 && rm data/bridge-token.patch.json5   # 계정 변경은 Gateway in-process 재시작을 부른다
+oc --dev config patch --file data/bridge-token.patch.json5 && rm data/bridge-token.patch.json5   # 9.5 는 Gateway 재기동 없이 dodok 채널만 다시 띄운다(핫 리로드)
 ```
 
 주의: Gateway 를 띄우면 OpenClaw 내장 주간 cron `skill-collection-review:<agent>`(격리 세션, exec·write 툴)가 밀린 실행을 곧바로 돌 수 있다 — 이번 실연에서 dev 의 것이
@@ -283,7 +283,7 @@ oc --dev plugins inspect dodok --json | jq .plugin.status     # 여전히 "loade
 - 플러그인은 **사용자가 Gateway 호스트에 설치**한다(ADR 0002 9.2~9.5: `pack:plugin` → tarball 복사 → `openclaw plugins install … --force --accept-capabilities` → 계정 설정은 패치 파일). 워커는 원격 호스트를 만지지 않는다.
 - 서버 env: `OPENCLAW_TARGET=remote`(기본), `OPENCLAW_GATEWAY_URL=wss://…`·`OPENCLAW_GATEWAY_TOKEN`, 디바이스 파일은 기본 `data/openclaw-device.json`(dev 와 따로).
   원격 공유 토큰은 `operator.admin` 을 부여한다(계획서 10장 #15, 2026-09-15 원격 실측 — 스코프 승급 자동 승인). 부여가 없어지면 `capabilities.sessionReset=false` 가 되고 「새 대화」는 409.
-- 브리지: 플러그인이 **아웃바운드로** 서버에 붙는다. 개발 PC 서버면 터널(cloudflared 등)로 `wss://…/bridge` 를 만들고, 그 주소를 `BRIDGE_PUBLIC_URL` 에 적고 호스트의 계정 `bridgeUrl` 에 넣는다. 토큰은 `BRIDGE_TOKEN` 과 같게.
+- 브리지: 플러그인이 **아웃바운드로** 서버에 붙는다. 개발 PC 서버면 터널(cloudflared 등)로 `wss://…/bridge` 를 만들고, 그 주소를 `BRIDGE_PUBLIC_URL` 에 적고 호스트의 계정 `bridgeUrl` 에 넣는다. 토큰은 서버 DB 의 활성 토큰과 같게 — 브리지 토큰의 정본은 DB 다. `.env` 의 `BRIDGE_TOKEN` 은 토큰 행이 없을 때 한 번 이어받을 뿐이고, 새 토큰은 연결 페이지에서 발급한다(이 문서 「브리지 토큰 교체 — 사람이 따라 할 절차」 절 · `docs/guides/deploy.md` 「브리지 토큰 교체」).
 - 원격은 루프백이 아니므로 페어링 자동 승인·지연 수치가 다를 수 있다. ①~③ 을 다시 재고 이 문서에 표를 더한다.
 - **[사람] 원격 Gateway 버전을 먼저 확인한다.** 서버를 원격에 붙이면 접속 한 번에 로그 두 줄이 알려 준다 — `"gateway connected"` 의 `gatewayVersion`·`gatewayBuildId`(hello-ok `server.version`·`server.buildId`)와 `"bridge plugin hello"` 의 `gatewayVersion`(원격 호스트의 플러그인이 보낸 `runtime.version`).
   원격이 `2026.9.5` 이상이면 **ADR 0004 이전 번들은 배포에서도 에이전트가 카드를 못 보낸다**(결함 1) — 호스트의 플러그인을 새 번들로 바꾸고, 그 버전에서 11절 하네스를 한 번 돌린다. `pluginBuiltWithSdk` 는 Gateway 버전이 아니다(2절).
