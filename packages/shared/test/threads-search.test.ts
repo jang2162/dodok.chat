@@ -181,6 +181,7 @@ describe("검색 계약", () => {
     const hit = {
       messageId: ID(1),
       channelId: ID(2),
+      seq: 7,
       authorType: "user",
       authorId: ID(3),
       createdAt: NOW,
@@ -189,6 +190,10 @@ describe("검색 계약", () => {
     expect(SearchHit.safeParse(hit).success).toBe(true);
     expect(SearchHit.safeParse({ ...hit, threadRootId: ID(4) }).success).toBe(true);
     expect(SearchHit.safeParse({ ...hit, snippet: "a".repeat(401) }).success).toBe(false);
+    // 결과로 가기가 around=<seq> 로 받는다(판정 R5)
+    const { seq: _, ...noSeq } = hit;
+    expect(SearchHit.safeParse(noSeq).success).toBe(false);
+    expect(SearchHit.safeParse({ ...hit, seq: 0 }).success).toBe(false);
     expect(SearchResult.parse({ hits: [hit], limited: false })).toEqual({ hits: [hit], limited: false });
     expect(SearchResult.safeParse({ hits: [], nextCursor: "n" }).success).toBe(false);
   });

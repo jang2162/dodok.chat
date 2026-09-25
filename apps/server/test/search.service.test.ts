@@ -380,13 +380,15 @@ describe("스니펫", () => {
 });
 
 describe("결과 모양", () => {
-  it("messageId·channelId·authorType·authorId·createdAt", () => {
+  it("messageId·channelId·seq·authorType·authorId·createdAt", () => {
     const t = setup();
+    t.say("앞 메시지");
     const m = t.agentSays("모양검사 본문");
     const [hit] = t.search("모양검사").hits;
     expect(hit).toEqual({
       messageId: m.id,
       channelId: t.channelId,
+      seq: m.seq,
       authorType: "agent",
       authorId: t.devId,
       createdAt: m.createdAt,
@@ -405,14 +407,14 @@ describe("결과 모양", () => {
       threadRootId: root.id,
     });
     expect(t.search("스레드답글").hits).toEqual([
-      expect.objectContaining({ messageId: reply.id, threadRootId: root.id }),
+      expect.objectContaining({ messageId: reply.id, seq: reply.seq, threadRootId: root.id }),
     ]);
     const [rootHit] = t.search("스레드루트").hits;
     expect(rootHit?.messageId).toBe(root.id);
     expect(rootHit).not.toHaveProperty("threadRootId");
     // 2글자(LIKE) 경로도 같은 변환을 지난다
     expect(t.search("답글").hits).toEqual([
-      expect.objectContaining({ messageId: reply.id, threadRootId: root.id }),
+      expect.objectContaining({ messageId: reply.id, seq: reply.seq, threadRootId: root.id }),
     ]);
   });
 });
