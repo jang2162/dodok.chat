@@ -457,7 +457,7 @@ describe("캐시 패치", () => {
     expect(queryClient.getQueryState(qk.bridgeTokens)?.isInvalidated).toBe(true);
   });
 
-  it("ops.event: [ops, status] 의 unacked 만 덮고 사건 목록은 다시 받게 낡은 것으로 둔다 — 상태가 아직 없으면 만들지 않는다", () => {
+  it("ops.event: [ops, status] 의 unacked 를 곧바로 덮고 상태·사건 목록은 다시 받게 낡은 것으로 둔다 — 상태가 아직 없으면 만들지 않는다", () => {
     const { fake, queryClient } = setup();
     const event = eventOf(1);
     fake.serverEmit("ops.event", { event, unacked: { warn: 1, error: 0 } });
@@ -470,6 +470,8 @@ describe("캐시 패치", () => {
     expect(status?.unacked).toEqual({ warn: 2, error: 1 });
     expect(status?.runsToday).toBe(7);
     expect(queryClient.getQueryState(qk.opsEvents(undefined))?.isInvalidated).toBe(true);
+    // 배지 밖의 칸(디스크·버전·런 수)은 사건이 바꿨을 수 있다 — 상태도 다시 받게 낡은 것으로 둔다(브라우저 검증 D1)
+    expect(queryClient.getQueryState(qk.opsStatus)?.isInvalidated).toBe(true);
   });
 
   it("adapter.status: [adapter] 에 병합한다 — capabilities 는 유지, 아직 없으면 만들지 않는다", () => {

@@ -17,6 +17,15 @@ describe("사건 한 줄 문구 — kind 별 고정 문구", () => {
     expect(eventText(eventOf(1, { kind, detail: {} }))).toBe(text);
   });
 
+  it("run_limit 은 key 로 범위를 붙인다 — workspace 는 (워크스페이스), channel:<id> 는 이름을 찾으면 (#이름), 못 찾으면 (채널)", () => {
+    const names = (id: string) => (id === "c1" ? "general" : undefined);
+    const hit = (key: string) => eventOf(1, { kind: "run_limit", key, detail: { limit: 2 }, count: 2 });
+    expect(eventText(hit("workspace"), names)).toBe("런 한도 도달 (워크스페이스) ×2");
+    expect(eventText(hit("channel:c1"), names)).toBe("런 한도 도달 (#general) ×2");
+    expect(eventText(hit("channel:c9"), names)).toBe("런 한도 도달 (채널) ×2");
+    expect(eventText(hit("channel:c1"))).toBe("런 한도 도달 (채널) ×2");
+  });
+
   it("모르는 kind(이 웹보다 새 서버)면 던지지 않고 「알 수 없는 사건 (kind)」 — ×n 은 그대로", () => {
     const future = { ...eventOf(1, { count: 2 }), kind: "future_kind" } as unknown as OpsEvent;
     expect(eventText(future)).toBe("알 수 없는 사건 (future_kind) ×2");

@@ -1,6 +1,7 @@
 import type { OpsSeverity } from "@dodok/shared";
 import { CircleXIcon, InfoIcon, type LucideIcon, TriangleAlertIcon } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useState } from "react";
+import { useChannels } from "@/api/queries";
 import { Section } from "@/features/setup/sections";
 import { cn } from "@/lib/utils";
 import { Button } from "@/ui/button";
@@ -26,13 +27,16 @@ const FILTERS: Array<{ value: OpsSeverity | undefined; label: string }> = [
 
 /**
  * 최근 사건(스펙 7장): 심각도 필터, 「모두 확인」, 한 줄 = 고정 문구 + ×n + 시각(끊김은 끊긴 때), 「더 보기」로 다음 페이지.
- * 확인 안 한 줄은 굵게. 좁은 화면에서는 문구와 시각이 줄을 바꿔 흐른다
+ * 확인 안 한 줄은 굵게, 확인한 줄은 흐리게. 좁은 화면에서는 문구와 시각이 줄을 바꿔 흐른다.
+ * 런 한도 줄의 채널 이름은 채널 목록 캐시에서 찾는다(사이드바가 이미 받은 것)
  */
 export function EventList() {
   const [severity, setSeverity] = useState<OpsSeverity>();
   const events = useOpsEvents(severity);
   const ack = useAckEvents();
   const list = events.data?.pages.flatMap((p) => p.events);
+  const channels = useChannels().data;
+  const nameOf = useCallback((id: string) => channels?.find((c) => c.id === id)?.name, [channels]);
   return (
     <Section title="최근 사건">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -94,8 +98,13 @@ export function EventList() {
                   className={cn("mt-0.5 size-4 shrink-0", tone)}
                 />
                 <div className="flex min-w-0 flex-1 flex-wrap gap-x-2">
-                  <span className={cn("min-w-0 break-words", e.ackedAt === undefined && "font-medium")}>
-                    {eventText(e)}
+                  <span
+                    className={cn(
+                      "min-w-0 break-words",
+                      e.ackedAt === undefined ? "font-medium" : "text-muted-foreground",
+                    )}
+                  >
+                    {eventText(e, nameOf)}
                   </span>
                   <time dateTime={at.toISOString()} className="text-xs text-muted-foreground">
                     {WHEN.format(at)}

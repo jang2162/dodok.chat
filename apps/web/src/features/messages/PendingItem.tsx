@@ -5,11 +5,9 @@ import { Button } from "@/ui/button";
 import { AuthorAvatar, AuthorLine } from "./MessageItem";
 import { MessageBody } from "./MessageBody";
 import { usePendingActions } from "./pendingActions";
+import { RATE_LIMITED_TEXT } from "./rateLimited";
 import type { PendingMessage } from "./timeline";
 import { useAuthors } from "./useAuthors";
-
-/** 레이트리밋으로 실패한 항목의 문구(운영 보강 스펙 4장) */
-export const RATE_LIMITED_TEXT = "너무 빠르게 보내고 있습니다 — 잠시 뒤 다시";
 
 /**
  * 보내는 중·실패한 내 메시지(스펙 4.4·5.3): 본문을 흐리게, `sending` 은 스피너, `failed` 는 「다시 보내기」·「삭제」.

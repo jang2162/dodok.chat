@@ -2,11 +2,19 @@ import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { qk } from "@/api/queries";
+import { attachHandlers } from "@/realtime/handlers";
+import { createSubscriptions } from "@/realtime/subscriptions";
+import { useWireStatus } from "@/realtime/wire";
+import { createFakeSocket } from "../../../test/fakeSocket";
+import { OWNER } from "../../../test/setupServer";
 import { uid } from "../../../test/fixtures";
-import { ME, json } from "../../../test/shellApi";
+import { createQueryClient } from "@/app/queryClient";
+import { ME, channelOf, json } from "../../../test/shellApi";
 import { eventOf, opsStatusOf, renderOps, rowOf, runsOf, stubOpsServer } from "../../../test/opsServer";
 
 afterEach(() => {
+  useWireStatus.getState().setStatus("idle");
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -100,6 +108,91 @@ describe("상태 카드 — 문제가 있는 줄만 강조", () => {
     const shutdown = await statusRow("직전 종료");
     expect(shutdown).toHaveTextContent("알 수 없음");
     expect(shutdown).not.toHaveAttribute("data-problem");
+  });
+});
+
+/** 실제 wire 핸들러를 붙인 QueryClient 로 운영 화면을 그린다 — 서버 이벤트는 `fake.serverEmit` 으로 */
+function renderLive() {
+  const fake = createFakeSocket();
+  fake.socket.connected = true;
+  const qc = createQueryClient(() => {});
+  const subscriptions = createSubscriptions({ socket: fake.wire, queryClient: qc, fetchPage: vi.fn() });
+  attachHandlers(fake.wire, {
+    queryClient: qc,
+    subscriptions,
+    onUnauthorized: () => {},
+    notify: { currentChannelId: () => undefined, openActivity: () => {} },
+  });
+  act(() => useWireStatus.getState().setStatus("connected"));
+  renderOps(OWNER, qc);
+  return { fake, qc };
+}
+
+describe("상태 카드 — 실시간(브라우저 검증 D1)", () => {
+  it("연결 줄은 wire 어댑터 상태를 따른다 — 끊김 사건(60초)을 기다리지 않고 바로 바뀌고, 돌아오면 바로 돌아온다", async () => {
+    const server = stubOpsServer();
+    const { fake } = renderLive();
+    expect(await statusRow("Gateway")).toHaveTextContent("연결됨");
+    await waitFor(() => expect(server.count("GET", "/api/v1/adapter/status")).toBe(1));
+    await waitFor(() => expect(server.count("GET", "/api/v1/ops/status")).toBe(1));
+
+    act(() =>
+      fake.serverEmit("adapter.status", { provider: "openclaw", gateway: "reconnecting", bridge: "down" }),
+    );
+    expect(await statusRow("Gateway")).toHaveTextContent("다시 연결하는 중");
+    expect(await statusRow("Gateway")).toHaveAttribute("data-problem");
+    expect(await statusRow("플러그인")).toHaveTextContent("연결 안 됨");
+    expect(await statusRow("플러그인")).toHaveAttribute("data-problem");
+
+    act(() =>
+      fake.serverEmit("adapter.status", { provider: "openclaw", gateway: "connected", bridge: "connected" }),
+    );
+    expect(await statusRow("Gateway")).not.toHaveAttribute("data-problem");
+    expect(await statusRow("플러그인")).not.toHaveAttribute("data-problem");
+    // 상태를 다시 부르지 않았다 — 캐시만 바뀌었다
+    expect(server.count("GET", "/api/v1/ops/status")).toBe(1);
+  });
+
+  it("wire 가 끊겨 있으면 연결 줄은 운영 상태 응답의 값 — 멈춘 어댑터 캐시를 믿지 않는다", async () => {
+    stubOpsServer({ status: opsStatusOf({ gateway: { state: "down" }, plugin: { state: "down" } }) });
+    renderOps();
+    expect(await statusRow("Gateway")).toHaveTextContent("연결 안 됨");
+    expect(await statusRow("플러그인")).toHaveAttribute("data-problem");
+  });
+
+  it("ops.event(disk_low) 가 오면 상태를 다시 받아 디스크 줄이 바뀐다", async () => {
+    const server = stubOpsServer();
+    const { fake } = renderLive();
+    expect(await statusRow("디스크 여유")).toHaveTextContent("50 GB");
+    server.setStatus(
+      opsStatusOf({
+        disk: { level: "error", freeBytes: 100 * 1024 ** 2, totalBytes: 10 * 1024 ** 3 },
+        unacked: { warn: 0, error: 1 },
+      }),
+    );
+    act(() =>
+      fake.serverEmit("ops.event", {
+        event: eventOf(9, { kind: "disk_low", severity: "error", key: "disk", detail: {} }),
+        unacked: { warn: 0, error: 1 },
+      }),
+    );
+    await waitFor(async () => expect(await statusRow("디스크 여유")).toHaveTextContent("100 MB"));
+    expect(await statusRow("디스크 여유")).toHaveAttribute("data-problem");
+    expect(server.count("GET", "/api/v1/ops/status")).toBe(2);
+  });
+
+  it("운영 화면이 떠 있는 동안 30초마다 상태를 다시 받는다", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const server = stubOpsServer();
+    renderOps();
+    await statusRow("Gateway");
+    await waitFor(() => expect(server.count("GET", "/api/v1/ops/status")).toBe(1));
+    server.setStatus(opsStatusOf({ runsToday: 42 }));
+    await act(() => vi.advanceTimersByTimeAsync(29_000));
+    expect(server.count("GET", "/api/v1/ops/status")).toBe(1);
+    await act(() => vi.advanceTimersByTimeAsync(1_500));
+    await waitFor(() => expect(server.count("GET", "/api/v1/ops/status")).toBe(2));
+    expect(await within(await region("한도")).findByText("오늘 42 / 300회")).toBeInTheDocument();
   });
 });
 
@@ -352,6 +445,32 @@ describe("최근 사건", () => {
     expect(within(items[0] as HTMLElement).getByRole("img", { name: "critical" })).toBeInTheDocument();
     expect(items[1]).toHaveTextContent("처리 안 된 오류");
     for (const name of ["상태", "런", "한도"]) expect(await region(name)).toBeInTheDocument();
+  });
+
+  it("run_limit 줄은 범위를 붙인다 — 채널 이름은 채널 목록 캐시에서", async () => {
+    const ws = eventOf(5, { kind: "run_limit", key: "workspace", detail: { limit: 2 }, count: 2 });
+    const ch = eventOf(6, { kind: "run_limit", key: `channel:${uid(21)}`, detail: { limit: 1 } });
+    const gone = eventOf(7, { kind: "run_limit", key: `channel:${uid(22)}`, detail: { limit: 1 } });
+    stubOpsServer({ pages: [[ws, ch, gone]], channels: [channelOf(uid(21), { name: "limit" })] });
+    renderOps();
+    const items = within(await list()).getAllByRole("listitem");
+    expect(items[0]).toHaveTextContent("런 한도 도달 (워크스페이스) ×2");
+    await waitFor(() => expect(items[1]).toHaveTextContent("런 한도 도달 (#limit)"));
+    expect(items[2]).toHaveTextContent("런 한도 도달 (채널)");
+  });
+
+  it("확인한 줄은 흐리게 — 확인 안 한 줄(굵게)과 모양이 다르다", async () => {
+    const acked = eventOf(8, { ackedAt: "2026-09-25T02:00:00.000Z" });
+    stubOpsServer({ pages: [[FAILED, acked]] });
+    renderOps();
+    const [fresh, seen] = within(await list()).getAllByRole("listitem") as HTMLElement[];
+    const text = (li: HTMLElement | undefined) => within(li as HTMLElement).getByText(/런 실패/);
+    expect(fresh).not.toHaveAttribute("data-acked");
+    expect(text(fresh)).toHaveClass("font-medium");
+    expect(text(fresh)).not.toHaveClass("text-muted-foreground");
+    expect(seen).toHaveAttribute("data-acked");
+    expect(text(seen)).not.toHaveClass("font-medium");
+    expect(text(seen)).toHaveClass("text-muted-foreground");
   });
 
   it("사건이 없으면 「사건이 없습니다」", async () => {

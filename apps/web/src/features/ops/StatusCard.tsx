@@ -1,8 +1,10 @@
 import type { OpsStatus } from "@dodok/shared";
 import type { ReactNode } from "react";
+import { useAdapterStatus } from "@/api/queries";
 import { formatSize } from "@/features/attachments/format";
 import { Section } from "@/features/setup/sections";
 import { cn } from "@/lib/utils";
+import { useWireStatus } from "@/realtime/wire";
 
 const WHEN = new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short" });
 
@@ -50,19 +52,32 @@ const SHUTDOWN = (clean: boolean | null) =>
   clean === null ? "알 수 없음" : clean ? "정상" : "비정상 종료 — 서버 로그를 확인하세요";
 
 /**
+ * 연결 줄의 값 — wire 가 붙어 있으면 어댑터 캐시(REST 로 받고 wire `adapter.status` 가 곧바로 고친다, 배너·연결 점과 같은 출처).
+ * 끊김 사건은 60초를 넘겨야 열리므로 그 안의 깜빡임은 이것만 따라간다(브라우저 검증 D1). wire 가 끊겼으면 캐시가 멈춰 있어
+ * 운영 상태 응답의 값을 쓴다
+ */
+function useLiveConnection(status: OpsStatus) {
+  const { data: adapter } = useAdapterStatus();
+  const live = useWireStatus((s) => s.status) === "connected";
+  if (adapter && live) return { gateway: adapter.gateway, plugin: adapter.bridge };
+  return { gateway: status.gateway.state, plugin: status.plugin.state };
+}
+
+/**
  * 상태 카드(스펙 7장): 연결(Gateway·플러그인), 버전(드리프트 한 줄), 디스크 여유, 직전 종료. 문제가 있는 줄만 강조한다 —
  * 모르는 값(디스크를 못 잼·종료 표지 없음)은 문제로 보지 않는다
  */
 export function StatusCard({ status }: { status: OpsStatus }) {
-  const { gateway, plugin, disk, server } = status;
+  const { gateway, disk, server } = status;
+  const connection = useLiveConnection(status);
   return (
     <Section title="상태">
       <dl className="flex flex-col gap-0.5">
-        <Row name="Gateway" problem={gateway.state !== "connected"}>
-          {GATEWAY_STATE[gateway.state]}
+        <Row name="Gateway" problem={connection.gateway !== "connected"}>
+          {GATEWAY_STATE[connection.gateway]}
         </Row>
-        <Row name="플러그인" problem={plugin.state !== "connected"}>
-          {PLUGIN_STATE[plugin.state]}
+        <Row name="플러그인" problem={connection.plugin !== "connected"}>
+          {PLUGIN_STATE[connection.plugin]}
         </Row>
         <Row name="Gateway 버전" problem={gateway.drift}>
           {gateway.version ?? "모름"}

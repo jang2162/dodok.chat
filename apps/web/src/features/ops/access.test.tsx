@@ -98,3 +98,51 @@ describe("배지 — 확인 안 한 warn·error 수", () => {
     await waitFor(() => expect(badgeOf(link)).toBeNull());
   });
 });
+
+describe("좁은 화면 — 서랍이 닫혀 있으면 메뉴 버튼이 알린다(브라우저 검증 O3)", () => {
+  function narrow() {
+    vi.spyOn(window, "matchMedia").mockImplementation(
+      (query: string): MediaQueryList =>
+        ({
+          matches: query === "(max-width: 767px)",
+          media: query,
+          onchange: null,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+          addListener: () => {},
+          removeListener: () => {},
+          dispatchEvent: () => false,
+        }) as MediaQueryList,
+    );
+  }
+  const menu = () => screen.findByRole("button", { name: /^채널 목록 열기/ });
+
+  it("owner 에게 확인 안 한 warn·error 가 있으면 점을 찍고 접근성 이름에 그 수", async () => {
+    narrow();
+    stubOpsServer({ status: opsStatusOf({ unacked: { warn: 2, error: 1 } }) });
+    renderRoute("/agents");
+    const button = await menu();
+    await waitFor(() => expect(button).toHaveAccessibleName("채널 목록 열기 (확인 안 한 운영 사건 3)"));
+    expect(button.querySelector("[data-ops-dot]")).not.toBeNull();
+  });
+
+  it("없으면 점도 수도 없다", async () => {
+    narrow();
+    const server = stubOpsServer();
+    renderRoute("/agents");
+    const button = await menu();
+    await waitFor(() => expect(server.count("GET", "/api/v1/ops/status")).toBeGreaterThan(0));
+    expect(button).toHaveAccessibleName("채널 목록 열기");
+    expect(button.querySelector("[data-ops-dot]")).toBeNull();
+  });
+
+  it("member 는 표시가 없고 ops API 를 부르지 않는다", async () => {
+    narrow();
+    const server = stubOpsServer({ me: MEMBER });
+    renderRoute("/agents");
+    const button = await menu();
+    expect(button).toHaveAccessibleName("채널 목록 열기");
+    expect(button.querySelector("[data-ops-dot]")).toBeNull();
+    expect(server.opsCalls()).toEqual([]);
+  });
+});

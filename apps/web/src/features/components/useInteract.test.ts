@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useWireStatus } from "@/realtime/wire";
 import { createFakeSocket, type FakeSocket } from "../../../test/fakeSocket";
 import { msg, uid } from "../../../test/fixtures";
+import { RATE_LIMITED_TEXT } from "@/features/messages/rateLimited";
 import { DISABLED_REASON_TEXT } from "./state";
 import { type Interact, interactErrorText, type SendResult, useInteract } from "./useInteract";
 
@@ -187,5 +188,12 @@ describe("interactErrorText", () => {
     expect(interactErrorText("EXPIRED", "server says")).toBe("만료된 버튼입니다");
     expect(interactErrorText("TIMEOUT", "server says")).toBe("서버 응답이 없습니다");
     expect(interactErrorText("INTERNAL", "터졌다")).toBe("터졌다");
+  });
+
+  it("런 한도·레이트리밋은 영어 서버 문구 대신 웹 문구(브라우저 검증 D2) — 레이트리밋은 작성기와 같은 문구", () => {
+    expect(interactErrorText("RUN_LIMIT", "daily run limit reached")).toBe(
+      "오늘 런 한도에 도달했습니다 — 한도가 풀리면 다시 누를 수 있습니다",
+    );
+    expect(interactErrorText("RATE_LIMITED", "too many requests")).toBe(RATE_LIMITED_TEXT);
   });
 });

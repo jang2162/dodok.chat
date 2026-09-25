@@ -3,6 +3,8 @@ import { ApiError, ATTACHMENT_LIMITS, Attachment, isImageMime } from "@dodok/sha
 export const ONLY_IMAGES = "이미지만 올릴 수 있습니다";
 export const TOO_BIG = "5 MB 를 넘습니다";
 export const UPLOAD_FAILED = "올리지 못했습니다";
+/** 서버 디스크 여유가 부족해 거절(507) — 사람이 고칠 수 없는 원인이라 따로 말한다(운영 보강 브라우저 검증 O1) */
+export const DISK_FULL = "서버 디스크 여유가 부족해 올리지 못했습니다";
 
 /** 올리기 전 검사(스펙 6.1) — 틀리면 칩에 쓸 이유, 맞으면 undefined. SVG 는 이미지가 아니다(스펙 결정 8) */
 export function checkImageFile(file: Pick<File, "type" | "size">): string | undefined {
@@ -13,7 +15,7 @@ export function checkImageFile(file: Pick<File, "type" | "size">): string | unde
 
 /**
  * 이미지 한 장을 올린다 — XHR 인 까닭은 `fetch` 가 업로드 진행을 주지 않아서다(스펙 6.1). 쿠키 인증, 같은 출처.
- * 413 은 상한 문구, 400 은 서버 문구, 그 밖·네트워크 오류는 「올리지 못했습니다」. `abort()` 는 `AbortError` 로 끝낸다
+ * 413 은 상한 문구, 400 은 서버 문구, 507 은 디스크 문구, 그 밖·네트워크 오류는 「올리지 못했습니다」. `abort()` 는 `AbortError` 로 끝낸다
  */
 export function uploadImage(
   file: File,
@@ -35,6 +37,7 @@ export function uploadImage(
         return parsed.success ? resolve(parsed.data) : reject(new Error(UPLOAD_FAILED));
       }
       if (xhr.status === 413) return reject(new Error(TOO_BIG));
+      if (xhr.status === 507) return reject(new Error(DISK_FULL));
       const body = ApiError.safeParse(safeJson(xhr.responseText));
       reject(new Error(body.success && xhr.status === 400 ? body.data.message : UPLOAD_FAILED));
     };

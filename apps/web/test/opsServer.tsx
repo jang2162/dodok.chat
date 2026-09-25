@@ -1,4 +1,5 @@
 import {
+  type Channel,
   OpsEvent,
   OpsEventsPage,
   OpsRunsRow,
@@ -75,6 +76,8 @@ export function stubOpsServer(
     /** 사건 페이지 응답을 스키마 검사 없이 그대로 준다 — 이 웹보다 새 서버가 보내는 모르는 kind·severity */
     rawEvents?: unknown[];
     ack?: () => Reply;
+    /** GET /channels 응답 — 사건 문구가 채널 이름을 찾는 캐시. 없으면 셸 기본(빈 목록) */
+    channels?: Channel[];
   } = {},
 ) {
   const calls: Call[] = [];
@@ -87,6 +90,8 @@ export function stubOpsServer(
     calls.push({ method, url, body });
     const me = opts.me ?? OWNER;
     if (url === "/api/v1/auth/me") return json(200, me);
+    if (opts.channels && method === "GET" && url === "/api/v1/channels")
+      return json(200, { channels: opts.channels });
     if (url.startsWith("/api/v1/ops/")) {
       if ((me as { role?: string }).role !== "owner")
         return json(403, { code: "FORBIDDEN", message: "owner only" });

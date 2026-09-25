@@ -8,7 +8,7 @@ import { RunsTable } from "./RunsTable";
 import { StatusCard } from "./StatusCard";
 
 function OwnerContent() {
-  const status = useOpsStatus();
+  const status = useOpsStatus({ poll: true });
   return (
     <>
       {status.data ? (

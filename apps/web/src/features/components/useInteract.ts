@@ -2,6 +2,7 @@ import type { ErrorCode, Message } from "@dodok/shared";
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { emitAck, useWireStatus, WireAckError } from "@/realtime/wire";
+import { RATE_LIMITED_TEXT } from "@/features/messages/rateLimited";
 import { useWire } from "@/realtime/WireProvider";
 import { DISABLED_REASON_TEXT } from "./state";
 
@@ -12,6 +13,9 @@ const ERR: Partial<Record<ErrorCode, string>> = {
   FORBIDDEN: "이 버튼을 누를 권한이 없습니다",
   VALIDATION: "처리할 수 없는 요청입니다",
   TIMEOUT: "서버 응답이 없습니다",
+  // 「다시 실행」이 런 한도에 걸린 것 — 버튼은 소비되지 않아 한도가 풀리면 다시 누른다(채널에는 한도 시스템 메시지가 따로 뜬다)
+  RUN_LIMIT: "오늘 런 한도에 도달했습니다 — 한도가 풀리면 다시 누를 수 있습니다",
+  RATE_LIMITED: RATE_LIMITED_TEXT,
 };
 
 /** ack 이 WireAckError 가 아닌 것으로 깨졌을 때(ack 모양이 계약과 다름) */

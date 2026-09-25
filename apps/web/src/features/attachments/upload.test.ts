@@ -2,7 +2,7 @@ import { ATTACHMENT_LIMITS } from "@dodok/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CH } from "../../../test/fixtures";
 import { FakeXhr, makeFakeXhr, pngFile, uploaded } from "../../../test/fakeXhr";
-import { checkImageFile, ONLY_IMAGES, TOO_BIG, UPLOAD_FAILED, uploadImage } from "./upload";
+import { checkImageFile, DISK_FULL, ONLY_IMAGES, TOO_BIG, UPLOAD_FAILED, uploadImage } from "./upload";
 
 beforeEach(() => FakeXhr.reset());
 
@@ -77,6 +77,19 @@ describe("uploadImage", () => {
     const { up, xhr } = start();
     xhr.respond(400, { code: "VALIDATION", message: "이미지만 올릴 수 있습니다" });
     await expect(up.promise).rejects.toThrow("이미지만 올릴 수 있습니다");
+  });
+
+  it("507(서버 디스크 부족)이면 원인을 말한다 — 본문이 없어도(프록시가 바꿔도) 상태로 가른다", async () => {
+    for (const body of [
+      { code: "INSUFFICIENT_STORAGE", message: "서버 디스크 여유가 부족합니다" },
+      "",
+    ] as const) {
+      FakeXhr.reset();
+      const { up, xhr } = start();
+      xhr.respond(507, body);
+      await expect(up.promise).rejects.toThrow(DISK_FULL);
+    }
+    expect(DISK_FULL).toBe("서버 디스크 여유가 부족해 올리지 못했습니다");
   });
 
   it("그 밖의 상태(403·500)나 본문 없는 400 은 「올리지 못했습니다」", async () => {
