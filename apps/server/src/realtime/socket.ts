@@ -30,6 +30,7 @@ import {
   findUserMessage,
   listMessages,
   MESSAGE_PAGE_MAX,
+  threadRootsOf,
 } from "../modules/messages/service";
 import type { ServerBus } from "./bus";
 import { cookieSessionToken } from "./cookie-auth";
@@ -172,6 +173,8 @@ export function attachWire(io: WireServer, ctx: WireContext): void {
           hasMore: page.hasMore,
           activeRuns: ctx.runs?.activeRuns(channel.id) ?? [],
           pendingApprovals: ctx.runs?.pendingApprovals(channel.id) ?? [],
+          // 끊긴 사이 옛 루트에 붙은 답글이면 그 루트의 새 요약 — 루트 message.updated 를 못 받았다
+          ...(lastSeq === undefined ? {} : { threadRoots: threadRootsOf(ctx.db, channel.id, page.messages) }),
         };
       });
       reply(ack, res);

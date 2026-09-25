@@ -15,7 +15,7 @@ import {
   SearchQuery,
   SearchResult,
 } from "../src/search";
-import { MessageSend } from "../src/wire";
+import { ChannelSubscribeResult, MessageSend } from "../src/wire";
 
 const ID = (n: number) => `01a09fc9-d204-7551-89d6-38544d07a1${n.toString(16).padStart(2, "0")}`;
 const NOW = "2026-09-25T00:00:00Z";
@@ -71,6 +71,29 @@ describe("MessageSend.threadRootId", () => {
     expect(MessageSend.parse({ ...base, threadRootId: ID(2) }).threadRootId).toBe(ID(2));
     expect(MessageSend.safeParse(base).success).toBe(true);
     expect(MessageSend.safeParse({ ...base, threadRootId: "root" }).success).toBe(false);
+  });
+});
+
+describe("ChannelSubscribeResult.threadRoots", () => {
+  it("선택, Message 배열 — 재동기화 페이지 답글의 옛 루트", () => {
+    const base = { messages: [], hasMore: false, activeRuns: [], pendingApprovals: [] };
+    expect(ChannelSubscribeResult.parse(base)).not.toHaveProperty("threadRoots");
+    const rootMsg = {
+      id: ID(2),
+      channelId: ID(3),
+      seq: 1,
+      kind: "normal",
+      authorType: "user",
+      authorId: ID(4),
+      bodyMd: "루트",
+      mentions: { users: [], agents: [] },
+      createdAt: NOW,
+      threadSummary: { count: 2, lastAt: NOW, agentIds: [] },
+    };
+    expect(ChannelSubscribeResult.parse({ ...base, threadRoots: [rootMsg] }).threadRoots).toMatchObject([
+      rootMsg,
+    ]);
+    expect(ChannelSubscribeResult.safeParse({ ...base, threadRoots: [{ id: "x" }] }).success).toBe(false);
   });
 });
 

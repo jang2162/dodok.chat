@@ -178,6 +178,27 @@ export function hydrateForClient(db: DbOrTx, msgs: Message[]): Message[] {
   return withThreadSummaries(db, withInteractions(db, msgs));
 }
 
+/**
+ * 페이지 답글이 가리키는 루트 중 페이지에 없는 것 — 요약을 실어 seq 순. lastSeq 재동기화가 쓴다: 루트는 seq ≤ lastSeq 라
+ * 페이지에 없고, 끊긴 사이 발행된 루트 message.updated 는 소켓이 못 받았다. 루트 읽기는 질의 한 번(N+1 없음)
+ */
+export function threadRootsOf(db: DbOrTx, channelId: string, page: Message[]): Message[] {
+  const inPage = new Set(page.map((m) => m.id));
+  const rootIds = [
+    ...new Set(page.flatMap((m) => (m.threadRootId && !inPage.has(m.threadRootId) ? [m.threadRootId] : []))),
+  ];
+  if (rootIds.length === 0) return [];
+  const rows = db
+    .select()
+    .from(messages)
+    .where(
+      and(eq(messages.channelId, channelId), inArray(messages.id, rootIds), isNull(messages.threadRootId)),
+    )
+    .orderBy(asc(messages.seq))
+    .all();
+  return hydrateForClient(db, rows.map(rowToMessage));
+}
+
 /** 루트의 스레드 요약. 답글이 없거나 루트가 없으면 undefined */
 export function threadSummaryOf(db: DbOrTx, rootId: string): ThreadSummary | undefined {
   const root = db

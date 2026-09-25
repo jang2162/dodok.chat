@@ -23,6 +23,9 @@ export const ChannelSubscribeResult = z.object({
   hasMore: z.boolean(),
   activeRuns: z.array(RunState), // 종료되지 않은 런
   pendingApprovals: z.array(Approval),
+  // lastSeq 재동기화만 — messages 의 답글이 가리키는 루트 중 messages 에 없는 것(최신 threadSummary 를 실었다).
+  // 끊긴 사이 발행된 루트 message.updated 를 소켓이 못 받았으므로 웹은 이것으로 칩을 고친다
+  threadRoots: z.array(Message).optional(),
 });
 export type ChannelSubscribeResult = z.infer<typeof ChannelSubscribeResult>;
 

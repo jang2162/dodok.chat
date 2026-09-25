@@ -14,6 +14,7 @@ import {
   createUserMessage,
   getMessage,
   listMessages,
+  threadRootsOf,
   threadSummaryOf,
 } from "../src/modules/messages/service";
 import type { RunPlan } from "../src/modules/router/decide";
@@ -306,6 +307,29 @@ describe("listMessages 스코프·around", () => {
     expect(b.reads).toBe(a.reads);
     expect(b.reads).toBeLessThanOrEqual(2);
   });
+
+  it("threadRootsOf — 페이지 답글의 페이지 밖 루트를 seq 순으로, 루트 수와 상관없이 같은 질의 수(N+1 없음)", () => {
+    const run = (roots: number) => {
+      const t = setup();
+      const ids: string[] = [];
+      for (let i = 0; i < roots; i++) ids.push(t.human(`r${i}`).id);
+      const cut = t.human("경계").seq;
+      for (const id of [...ids].reverse()) t.human("답", { threadRootId: id });
+      const page = listMessages(t.db, t.channel.id, { afterSeq: cut, limit: 50, scope: "all" });
+      const spy = countMessageReads(t.db);
+      try {
+        const got = threadRootsOf(t.db, t.channel.id, page.messages);
+        expect(got.map((m) => m.id)).toEqual(ids);
+        expect(got.every((m) => m.threadSummary?.count === 1)).toBe(true);
+        return spy.count();
+      } finally {
+        spy.restore();
+      }
+    };
+    const one = run(1);
+    expect(run(6)).toBe(one);
+    expect(one).toBeLessThanOrEqual(2);
+  });
 });
 
 describe("DB — 스레드 열·세션 유일성", () => {
@@ -483,6 +507,42 @@ describe("wire·REST — 스레드", () => {
     if (!resync.ok) throw new Error(resync.error.code);
     expect(resync.data.messages.map((m) => m.seq)).toEqual([2, 3, 4]);
     expect(resync.data.messages.map((m) => m.threadRootId)).toEqual([root.id, undefined, root.id]);
+  });
+
+  it("channel.subscribe lastSeq — 끊긴 사이 옛 루트에 붙은 답글이면 threadRoots 에 그 루트와 새 요약(Review Focus 3)", async () => {
+    const socket = await connect();
+    const channel = newChannel("wire-thread-roots");
+    const root = post(channel.id, "루트");
+    post(channel.id, "답", root.id);
+    const first = await socket.emitWithAck("channel.subscribe", { channelId: channel.id });
+    if (!first.ok) throw new Error(first.error.code);
+    expect(first.data).not.toHaveProperty("threadRoots");
+    // 끊긴 사이 같은 옛 루트에 답글 — 그때 발행된 루트 message.updated 는 이 소켓이 못 받았다
+    post(channel.id, "끊긴 사이 답", root.id);
+    const resync = await socket.emitWithAck("channel.subscribe", { channelId: channel.id, lastSeq: 2 });
+    if (!resync.ok) throw new Error(resync.error.code);
+    expect(resync.data.messages.map((m) => m.seq)).toEqual([3]);
+    expect(resync.data.threadRoots?.map((m) => m.id)).toEqual([root.id]);
+    expect(resync.data.threadRoots?.[0]?.threadSummary).toMatchObject({ count: 2, agentIds: [] });
+  });
+
+  it("channel.subscribe lastSeq — 루트가 이미 messages 에 있으면 threadRoots 에 겹치지 않는다, 답글이 없으면 빈 배열", async () => {
+    const socket = await connect();
+    const channel = newChannel("wire-thread-roots-dup");
+    const old = post(channel.id, "옛 루트");
+    post(channel.id, "옛 답", old.id);
+    const fresh = post(channel.id, "새 루트");
+    post(channel.id, "새 답", fresh.id);
+    post(channel.id, "옛 루트에 또 답", old.id);
+    const resync = await socket.emitWithAck("channel.subscribe", { channelId: channel.id, lastSeq: 2 });
+    if (!resync.ok) throw new Error(resync.error.code);
+    expect(resync.data.messages.map((m) => m.seq)).toEqual([3, 4, 5]);
+    expect(resync.data.messages[0]?.threadSummary?.count).toBe(1);
+    expect(resync.data.threadRoots?.map((m) => m.id)).toEqual([old.id]);
+    expect(resync.data.threadRoots?.[0]?.threadSummary?.count).toBe(2);
+    const quiet = await socket.emitWithAck("channel.subscribe", { channelId: channel.id, lastSeq: 5 });
+    if (!quiet.ok) throw new Error(quiet.error.code);
+    expect(quiet.data.threadRoots).toEqual([]);
   });
 
   it("GET /channels/:id/messages?around= — 루트만, 답글 seq 면 그 루트가 가운데", async () => {
