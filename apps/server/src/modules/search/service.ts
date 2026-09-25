@@ -5,7 +5,6 @@ import {
   type SearchQuery,
   type SearchResult,
 } from "@dodok/shared";
-import type Database from "better-sqlite3";
 import { type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { DbOrTx } from "../../db/client";
@@ -22,26 +21,6 @@ export const SHORT_QUERY_LIMITS = { maxAgeDays: 90, maxHits: 50 } as const;
 const SNIPPET_CONTEXT = 64;
 const DAY_MS = 86_400_000;
 
-/**
- * better-sqlite3 가 번들한 SQLite 에 FTS5 trigram·contentless_delete 가 있는지. createDb 가 마이그레이션 **전에** 부른다 —
- * 없으면 검색 마이그레이션이 drizzle 오류 여러 줄로 죽어 사유가 안 읽힌다. temp 스키마에 만들었다 지우므로 DB 파일은 그대로다
- */
-export function assertTrigramSupport(sqlite: Pick<Database.Database, "exec">): void {
-  try {
-    sqlite.exec(
-      "CREATE VIRTUAL TABLE temp.trigram_probe USING fts5(x, content='', tokenize='trigram case_sensitive 0', contentless_delete=1); DROP TABLE temp.trigram_probe",
-    );
-  } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
-    throw new Error(
-      `SQLite FTS5 trigram 을 쓸 수 없다 — better-sqlite3 가 번들한 SQLite 를 확인하라(${reason})`,
-      {
-        cause: err,
-      },
-    );
-  }
-}
-
 type HitRow = {
   id: string;
   channelId: string;
@@ -50,6 +29,7 @@ type HitRow = {
   createdAt: number;
   bodyMd: string;
   attachmentsJson: string;
+  threadRootId: string | null;
   rank?: number;
 };
 
@@ -57,7 +37,8 @@ const MatchCursor = z.object({ rank: z.number(), createdAt: z.int(), id: z.strin
 type MatchCursor = z.infer<typeof MatchCursor>;
 
 const SELECT_HIT = sql`m.id AS id, m.channel_id AS channelId, m.author_type AS authorType, m.author_id AS authorId,
-  m.created_at AS createdAt, m.body_md AS bodyMd, m.attachments_json AS attachmentsJson`;
+  m.created_at AS createdAt, m.body_md AS bodyMd, m.attachments_json AS attachmentsJson,
+  m.thread_root_id AS threadRootId`;
 
 /**
  * 3글자 이상은 FTS MATCH(bm25 다음 최신순, 커서 페이지), 2글자는 LIKE(최근 90일·50개, 커서 없음 — `limited: true`).
@@ -152,7 +133,7 @@ function decodeCursor(raw: string): MatchCursor {
   return parsed.data;
 }
 
-/** 행 → SearchHit 변환은 여기 한 곳이다. 스레드 답글의 threadRootId 는 messages.thread_root_id 가 생기면 여기서 싣는다 */
+/** 행 → SearchHit 변환은 여기 한 곳이다(MATCH·LIKE 두 경로). 스레드 답글이면 그 루트 id 를 싣는다 */
 function toHit(row: HitRow, q: string): SearchHit {
   return parseStored(
     SearchHit,
@@ -161,6 +142,7 @@ function toHit(row: HitRow, q: string): SearchHit {
       channelId: row.channelId,
       authorType: row.authorType,
       authorId: row.authorId ?? undefined,
+      threadRootId: row.threadRootId ?? undefined,
       createdAt: new Date(row.createdAt).toISOString(),
       snippet: snippetOf(row, q),
     },

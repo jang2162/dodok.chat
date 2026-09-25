@@ -21,7 +21,7 @@ import { messages } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
 import { addMember, createChannel } from "../src/modules/channels/service";
 import { createAgentMessage, createSystemMessage, createUserMessage } from "../src/modules/messages/service";
-import { assertTrigramSupport, searchMessages } from "../src/modules/search/service";
+import { searchMessages } from "../src/modules/search/service";
 import { ServerBus } from "../src/realtime/bus";
 import { migrationsFolder } from "../src/runtime";
 import { newTestDb } from "./helpers/db";
@@ -80,25 +80,7 @@ function at(db: Db, id: string, createdAt: Date) {
 }
 
 const ids = (r: SearchResult) => r.hits.map((h) => h.messageId);
-
-describe("assertTrigramSupport", () => {
-  it("번들 SQLite 에는 trigram 이 있다 — 던지지 않고 탐침 테이블을 남기지 않는다", () => {
-    const db = newTestDb();
-    expect(() => assertTrigramSupport(db.$client)).not.toThrow();
-    expect(db.$client.prepare("SELECT name FROM temp.sqlite_master").all()).toEqual([]);
-  });
-
-  it("없으면 사유 한 줄로 던진다", () => {
-    const sqlite = {
-      exec: () => {
-        throw new Error("no such tokenizer: trigram");
-      },
-    };
-    expect(() => assertTrigramSupport(sqlite as never)).toThrow(
-      /^SQLite FTS5 trigram 을 쓸 수 없다 — .*no such tokenizer: trigram/,
-    );
-  });
-});
+const ftsCount = (db: Db) => db.get<{ n: number }>(sql`SELECT count(*) AS n FROM messages_fts`)?.n;
 
 describe("색인 트리거 (스펙 5.1)", () => {
   it("삽입하면 찾히고, 본문을 고치면 옛 말은 안 찾히고 새 말이 찾히고, 지우면 안 찾힌다", () => {
@@ -110,6 +92,50 @@ describe("색인 트리거 (스펙 5.1)", () => {
     expect(ids(t.search("회고를"))).toEqual([m.id]);
     t.db.delete(messages).where(eq(messages.id, m.id)).run();
     expect(ids(t.search("회고를"))).toEqual([]);
+  });
+
+  it("맨 끝 메시지를 지우고 새 메시지를 넣어도(rowid 재사용) 지운 말로 새 메시지가 찾히지 않는다", () => {
+    const t = setup();
+    const gone = t.say("지워질유령단어 메시지");
+    const rowidOf = (id: string) =>
+      t.db.get<{ r: number }>(sql`SELECT rowid AS r FROM messages WHERE id = ${id}`)?.r;
+    const oldRowid = rowidOf(gone.id);
+    t.db.delete(messages).where(eq(messages.id, gone.id)).run();
+    const next = t.say("전혀 다른 본문");
+    // text PK 라 rowid 는 별명이 아니다 — 맨 끝 행을 지우면 다음 INSERT 가 같은 rowid 를 다시 쓴다
+    expect(rowidOf(next.id)).toBe(oldRowid);
+    expect(ids(t.search("지워질유령단어"))).toEqual([]);
+    expect(ids(t.search("다른 본문"))).toEqual([next.id]);
+  });
+
+  it("kind 를 normal → system → normal 로 바꾸면 안 찾혔다가 다시 찾힌다", () => {
+    const t = setup();
+    const m = t.say("종류전환 메시지");
+    const setKind = (kind: string) =>
+      t.db.run(sql`UPDATE messages SET kind = ${kind}, author_type = ${kind === "system" ? "system" : "user"}
+        WHERE id = ${m.id}`);
+    setKind("system");
+    expect(ids(t.search("종류전환"))).toEqual([]);
+    expect(ftsCount(t.db)).toBe(0);
+    setKind("normal");
+    expect(ids(t.search("종류전환"))).toEqual([m.id]);
+    expect(ftsCount(t.db)).toBe(1);
+  });
+
+  it("색인 행 수는 normal 메시지 수와 같다 — 시스템 메시지와 그 본문 수정은 색인에 들지 않는다", () => {
+    const t = setup();
+    t.say("사람 메시지 하나");
+    t.agentSays("에이전트 메시지 하나");
+    const sys = createSystemMessage(t.db, t.bus, {
+      channelId: t.channelId,
+      kind: "info",
+      bodyMd: "시스템 공지",
+    });
+    createSystemMessage(t.db, t.bus, { channelId: t.channelId, kind: "info", bodyMd: "또 공지" });
+    t.db.update(messages).set({ bodyMd: "고친 시스템 공지" }).where(eq(messages.id, sys.id)).run();
+    const normal = t.db.get<{ n: number }>(sql`SELECT count(*) AS n FROM messages WHERE kind = 'normal'`)?.n;
+    expect(normal).toBe(2);
+    expect(ftsCount(t.db)).toBe(normal);
   });
 
   it("본문·첨부가 그대로인 UPDATE(components 상태 등)는 색인을 흔들지 않는다", () => {
@@ -368,8 +394,27 @@ describe("결과 모양", () => {
     });
   });
 
-  // 태스크 4 가 messages.thread_root_id 를 만든 뒤 rebase 때 채운다 — 행 → SearchHit 변환(toHit) 한 곳
-  it.todo("스레드 답글 결과에 threadRootId");
+  it("스레드 답글 결과에는 루트 id(threadRootId), 루트·일반 메시지에는 없다", () => {
+    const t = setup();
+    const root = t.say("스레드루트 본문");
+    const reply = createUserMessage(t.db, t.bus, {
+      channelId: t.channelId,
+      authorId: t.userId,
+      bodyMd: "스레드답글 본문",
+      clientMsgId: "reply",
+      threadRootId: root.id,
+    });
+    expect(t.search("스레드답글").hits).toEqual([
+      expect.objectContaining({ messageId: reply.id, threadRootId: root.id }),
+    ]);
+    const [rootHit] = t.search("스레드루트").hits;
+    expect(rootHit?.messageId).toBe(root.id);
+    expect(rootHit).not.toHaveProperty("threadRootId");
+    // 2글자(LIKE) 경로도 같은 변환을 지난다
+    expect(t.search("답글").hits).toEqual([
+      expect.objectContaining({ messageId: reply.id, threadRootId: root.id }),
+    ]);
+  });
 });
 
 describe("마이그레이션 — 기존 DB 에 색인을 채운다", () => {
@@ -379,7 +424,7 @@ describe("마이그레이션 — 기존 DB 에 색인을 채운다", () => {
     dir = undefined;
   });
 
-  it("직전 마이그레이션까지 적용된 DB 의 normal 메시지를 백필한다(시스템 제외)", () => {
+  it("직전 마이그레이션까지 적용된 DB 의 normal 메시지를 백필한다(시스템 제외) — rowid 구멍·뒤 마이그레이션에도 트리거·행이 맞다", () => {
     dir = mkdtempSync(join(tmpdir(), "dodok-search-mig-"));
     const src = migrationsFolder();
     const journal = JSON.parse(readFileSync(join(src, "meta/_journal.json"), "utf8")) as {
@@ -409,19 +454,43 @@ describe("마이그레이션 — 기존 DB 에 색인을 채운다", () => {
           ${kind === "system" ? "system" : "user"}, ${kind === "system" ? null : userId}, ${body},
           '{"agents":[],"users":[]}', ${attachmentsJson}, ${NOW.getTime()})`);
       const normal = uuid();
+      const holed = uuid();
+      const afterHole = uuid();
       const withFile = uuid();
-      insert(normal, "normal", "예전에 쓴 백필대상 메시지");
+      insert(normal, "normal", "예전에 쓴 백필대상 메시지 첫행고유");
+      insert(holed, "normal", "가운데 지울 행 구멍고유");
+      insert(afterHole, "normal", "구멍 뒤 행 뒤행고유");
       insert(uuid(), "system", "예전 시스템 백필대상");
       insert(withFile, "normal", "", JSON.stringify([{ name: "옛첨부파일.png" }, { name: "둘째.txt" }]));
+      // 가운데 normal 행을 지워 rowid 에 구멍을 낸다 — messages 를 다시 만드는 마이그레이션이 rowid 를 새로 매기면
+      // 구멍 뒤 행들이 엉뚱한 메시지를 가리킨다
+      db.run(sql`DELETE FROM messages WHERE id = ${holed}`);
 
       migrate(db, { migrationsFolder: src });
+      // 모든 마이그레이션 뒤에도 트리거 셋이 messages 에 걸려 있다 — 뒤 마이그레이션이 messages 를 다시 만들며
+      // 트리거·백필을 다시 넣지 않으면 여기서 깨진다
+      const triggers = sqlite
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'messages' ORDER BY name",
+        )
+        .all()
+        .map((r) => (r as { name: string }).name);
+      expect(triggers).toEqual(
+        expect.arrayContaining(["messages_fts_ad", "messages_fts_ai", "messages_fts_au"]),
+      );
       const found = (q: string) =>
         searchMessages(db as unknown as Db, workspaceId, userId, SearchQuery.parse({ q }), NOW).hits.map(
           (h) => h.messageId,
         );
       expect(found("백필대상")).toEqual([normal]);
+      expect(found("첫행고유")).toEqual([normal]);
+      expect(found("구멍고유")).toEqual([]);
+      expect(found("뒤행고유")).toEqual([afterHole]);
       expect(found("옛첨부파일")).toEqual([withFile]);
       expect(found("둘째.txt")).toEqual([withFile]);
+      const fresh = uuid();
+      insert(fresh, "normal", "마이그레이션 뒤 새행고유");
+      expect(found("새행고유")).toEqual([fresh]);
     } finally {
       sqlite.close();
     }

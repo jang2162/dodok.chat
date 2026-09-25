@@ -26,7 +26,7 @@ export const SearchHit = z.object({
 });
 export type SearchHit = z.infer<typeof SearchHit>;
 
-/** `limited` 는 1~2글자 검색이라 최근 90일·50개까지만 찾았다는 뜻 */
+/** `limited` 는 2글자 검색이라 최근 90일·50개까지만 찾았다는 뜻 */
 export const SearchResult = z.object({
   hits: z.array(SearchHit),
   nextCursor: z.string().optional(),

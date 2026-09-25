@@ -1,9 +1,9 @@
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
-import { assertTrigramSupport } from "../modules/search/service";
 import { isBundled, migrationsFolder } from "../runtime";
 import * as authSchema from "./auth-schema";
+import { assertTrigramSupport } from "./fts";
 import * as schema from "./schema.sqlite";
 
 /** 파일 경로 또는 ":memory:". 연결 후 마이그레이션까지 적용한다. */
