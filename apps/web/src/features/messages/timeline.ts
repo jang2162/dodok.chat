@@ -9,7 +9,10 @@ export type PendingMessage = {
   state: PendingState;
   /** 올려 둔 첨부 — 다시 보내기도 같은 id 로 간다 */
   attachments?: Attachment[];
+  /** `failed` 의 사유 — 레이트리밋(ack RATE_LIMITED)이면 다른 문구를 보인다. 없으면 일반 실패 */
+  reason?: PendingFailReason;
 };
+export type PendingFailReason = "rate_limited";
 /** 확정 메시지(seq 오름차순)와 보내는 중 항목. 보내는 중 항목은 항상 목록 끝에 그린다(스펙 4.3-6) */
 export type Timeline = { items: Message[]; pending: PendingMessage[]; hasOlder: boolean; lastSeq: number };
 
@@ -66,8 +69,21 @@ export function hasGap(t: Timeline, m: Message): boolean {
 export function addPending(t: Timeline, p: PendingMessage): Timeline {
   return { ...t, pending: [...t.pending.filter((x) => x.clientMsgId !== p.clientMsgId), p] };
 }
-export function setPendingState(t: Timeline, clientMsgId: string, state: PendingState): Timeline {
-  return { ...t, pending: t.pending.map((p) => (p.clientMsgId === clientMsgId ? { ...p, state } : p)) };
+/** 상태를 바꾸며 사유를 새로 둔다 — `reason` 을 주지 않으면 지난 사유를 지운다(다시 보내는 중에는 사유가 없다) */
+export function setPendingState(
+  t: Timeline,
+  clientMsgId: string,
+  state: PendingState,
+  reason?: PendingFailReason,
+): Timeline {
+  return {
+    ...t,
+    pending: t.pending.map((p) => {
+      if (p.clientMsgId !== clientMsgId) return p;
+      const { reason: _, ...rest } = p;
+      return reason === undefined ? { ...rest, state } : { ...rest, state, reason };
+    }),
+  };
 }
 export function removePending(t: Timeline, clientMsgId: string): Timeline {
   return { ...t, pending: t.pending.filter((p) => p.clientMsgId !== clientMsgId) };

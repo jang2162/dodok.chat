@@ -56,6 +56,25 @@ describe("서버·Gateway", () => {
     expect(screen.getByRole("heading", { level: 1, name: "연결" })).toBeInTheDocument();
   });
 
+  it("drift 면 버전 옆에 「저장소가 검증한 버전(핀)과 다릅니다」", async () => {
+    stubSetupServer({
+      status: statusOf({ gateway: { version: "2026.9.5", pinned: "2026.9.4", drift: true } }),
+    });
+    renderConnection();
+    const gw = await region("Gateway");
+    expect(await within(gw).findByText(/저장소가 검증한 버전\(2026\.9\.4\)과 다릅니다/)).toBeInTheDocument();
+  });
+
+  it("drift 가 아니면 그 줄이 없다", async () => {
+    stubSetupServer({
+      status: statusOf({ gateway: { version: "2026.9.4", pinned: "2026.9.4", drift: false } }),
+    });
+    renderConnection();
+    const gw = await region("Gateway");
+    await within(gw).findByText("연결됨");
+    expect(gw).not.toHaveTextContent("저장소가 검증한");
+  });
+
   it("down 이면 .env 의 Gateway URL·토큰과 서버 로그를 보라고 안내한다", async () => {
     stubSetupServer({ status: statusOf({ gateway: { state: "down", version: null } }) });
     renderConnection();

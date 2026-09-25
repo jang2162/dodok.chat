@@ -77,6 +77,11 @@ describe("shouldPersist", () => {
     expect(yes(qk.bridgeTokens)).toBe(false);
     expect(yes(["setup"])).toBe(false);
   });
+  it("운영(ops)의 것은 담지 않는다 — 상태·런 집계·사건 모두", () => {
+    expect(yes(qk.opsStatus)).toBe(false);
+    expect(yes(qk.opsRuns(7))).toBe(false);
+    expect(yes(qk.opsEvents("warn"))).toBe(false);
+  });
 });
 
 describe("trimForPersist", () => {

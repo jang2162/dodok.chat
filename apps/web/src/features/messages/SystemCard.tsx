@@ -1,5 +1,7 @@
 import type { Message, SystemKind } from "@dodok/shared";
+import { Link } from "@tanstack/react-router";
 import { CircleXIcon, InfoIcon, type LucideIcon, TriangleAlertIcon } from "lucide-react";
+import { useIsOwner } from "@/api/queries";
 import { Components } from "@/features/components/Components";
 import { cn } from "@/lib/utils";
 import { MessageBody } from "./MessageBody";
@@ -14,10 +16,14 @@ const LOOK: Record<SystemKind, { Icon: LucideIcon; label: string; tone: string }
 
 /**
  * 시스템 메시지(스펙 5.3·7.2): 가운데 정렬 얇은 카드, `systemMeta.kind` 별 아이콘·색 + 본문.
- * components 가 있으면 그 카드(relay_limit 의 「이어가기」 버튼 등)
+ * components 가 있으면 그 카드(relay_limit 의 「이어가기」, run_error 의 「다시 실행」 버튼 등).
+ * run_limit 은 이어갈 버튼이 없고, 막은 한도(`systemMeta.limit`)가 실려 있으면 owner 에게만 운영 화면 링크를 붙인다(운영 보강 스펙 3.2)
  */
 export function SystemCard({ message }: { message: Message }) {
   const { Icon, label, tone } = LOOK[message.systemMeta?.kind ?? "info"];
+  const owner = useIsOwner();
+  const limitLink =
+    owner && message.systemMeta?.kind === "run_limit" && message.systemMeta.limit !== undefined;
   return (
     <div className="flex justify-center px-4 py-1.5">
       <div
@@ -34,6 +40,14 @@ export function SystemCard({ message }: { message: Message }) {
         <div className="min-w-0 [&_p]:text-sm">
           <MessageBody bodyMd={message.bodyMd} />
           <Components message={message} />
+          {limitLink && (
+            <Link
+              to="/settings/operations"
+              className="mt-1 inline-block text-xs font-medium text-foreground underline underline-offset-4"
+            >
+              운영에서 한도 바꾸기
+            </Link>
+          )}
         </div>
       </div>
     </div>

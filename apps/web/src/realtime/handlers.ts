@@ -1,4 +1,4 @@
-import type { AdapterStatus, Agent, Channel, ServerToClientEvents } from "@dodok/shared";
+import type { AdapterStatus, Agent, Channel, OpsStatus, ServerToClientEvents } from "@dodok/shared";
 import type { QueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ApiRequestError } from "@/api/http";
@@ -161,6 +161,14 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
     "setup.status": ({ status }) => {
       qc.setQueryData(qk.setupStatus, status);
       void qc.invalidateQueries({ queryKey: qk.bridgeTokens });
+    },
+    /**
+     * 운영 사건(owner 에게만 온다) — 배지가 읽는 상태의 `unacked` 만 덮는다(상태를 아직 안 받았으면 만들지 않는다).
+     * 사건 목록은 낡은 것으로 둔다 — 보고 있는 화면만 곧바로 다시 부른다
+     */
+    "ops.event": ({ unacked }) => {
+      qc.setQueryData<OpsStatus>(qk.opsStatus, (prev) => prev && { ...prev, unacked });
+      void qc.invalidateQueries({ queryKey: qk.opsEventsAll });
     },
     typing: (p) => useTypingStore.getState().note(p),
     "system.notice": ({ level, message }) => {

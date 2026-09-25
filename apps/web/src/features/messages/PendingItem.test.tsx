@@ -2,6 +2,7 @@ import { screen } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { uploaded } from "../../../test/fakeXhr";
 import { renderWithClient } from "../../../test/messages";
+import { PendingActionsContext } from "./pendingActions";
 import { PendingItem } from "./PendingItem";
 import type { PendingMessage } from "./timeline";
 
@@ -43,4 +44,23 @@ it("글 없는 이미지 메시지는 빈 본문 단락 없이 격자만", () =>
 it("첨부가 없으면 격자도 없다", () => {
   const { container } = renderWithClient(<PendingItem pending={pending()} />);
   expect(container.querySelector("[data-slot=attachment-grid]")).toBeNull();
+});
+
+it("레이트리밋으로 실패하면 「너무 빠르게 보내고 있습니다 — 잠시 뒤 다시」 — 다시 보내기는 그대로", () => {
+  const retry = vi.fn();
+  renderWithClient(
+    <PendingActionsContext.Provider value={{ retry, discard: vi.fn() }}>
+      <PendingItem pending={pending({ state: "failed", reason: "rate_limited" })} />
+    </PendingActionsContext.Provider>,
+  );
+  expect(screen.getByText("너무 빠르게 보내고 있습니다 — 잠시 뒤 다시")).toBeInTheDocument();
+  expect(screen.queryByText("전송 실패")).toBeNull();
+  screen.getByRole("button", { name: "다시 보내기" }).click();
+  expect(retry).toHaveBeenCalledWith("c-1");
+});
+
+it("그 밖의 실패는 「전송 실패」", () => {
+  renderWithClient(<PendingItem pending={pending({ state: "failed" })} />);
+  expect(screen.getByText("전송 실패")).toBeInTheDocument();
+  expect(screen.queryByText(/너무 빠르게/)).toBeNull();
 });

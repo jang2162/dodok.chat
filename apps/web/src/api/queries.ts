@@ -41,6 +41,12 @@ export const qk = {
   /** 연결 설정(owner 만) — 오프라인 사본에 담지 않는다(pwa/persist). 발급 원문은 어느 키에도 넣지 않는다 */
   setupStatus: ["setup", "status"] as const,
   bridgeTokens: ["setup", "bridge-tokens"] as const,
+  /** 운영(owner 만) — 오프라인 사본에 담지 않는다(pwa/persist). 상태의 `unacked` 가 사이드바 배지다 */
+  opsStatus: ["ops", "status"] as const,
+  opsRuns: (days: 1 | 7) => ["ops", "runs", days] as const,
+  /** 사건 목록(무한 쿼리) — severity 가 없으면 전부 */
+  opsEvents: (severity?: string) => ["ops", "events", severity ?? "all"] as const,
+  opsEventsAll: ["ops", "events"] as const,
 };
 
 /** 활동 패널이 한 번에 받는 런 수(REST 상한 200) */

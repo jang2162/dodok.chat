@@ -1,4 +1,4 @@
-import type { Channel } from "@dodok/shared";
+import type { Channel, OpsStatus } from "@dodok/shared";
 import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { render } from "@testing-library/react";
@@ -14,6 +14,21 @@ export const ADAPTER_OK: AdapterStatusResponse = {
   gateway: "connected",
   bridge: "connected",
   capabilities: { sessionReset: true, agentsList: true, configSet: true },
+};
+
+/** 문제 없는 운영 상태(OpsStatus 모양) — 운영 화면 테스트는 test/opsServer 의 `opsStatusOf` 로 칸을 덮는다 */
+export const OPS_STATUS_OK: OpsStatus = {
+  workspaceId: "01a00000-0000-7000-8000-000000000003",
+  server: { version: "0.1.0", startedAt: "2026-09-25T00:00:00.000Z", previousClean: true },
+  db: { bytes: 1_048_576 },
+  disk: { level: "ok", freeBytes: 50 * 1024 ** 3, totalBytes: 100 * 1024 ** 3 },
+  adapter: { provider: "openclaw", gateway: "connected", bridge: "connected" },
+  gateway: { state: "connected", version: "2026.9.4", pinned: "2026.9.4", drift: false },
+  plugin: { state: "connected" },
+  runsToday: 0,
+  dailyRunLimit: 300,
+  blockedToday: 0,
+  unacked: { warn: 0, error: 0 },
 };
 
 /** 테스트용 채널(REST 응답 모양). id 는 URL 에 들어가는 문자열이면 된다 */
@@ -38,6 +53,8 @@ export function shellGet(input: RequestInfo | URL, init?: RequestInit): Response
   if (url === "/api/v1/channels") return json(200, { channels: [] });
   if (url === "/api/v1/adapter/status") return json(200, ADAPTER_OK);
   if (url === "/api/v1/agents") return json(200, { agents: [] });
+  // owner 의 사이드바 「운영」 배지가 부르는 상태 — 기본은 확인 안 한 사건 없음
+  if (url === "/api/v1/ops/status") return json(200, OPS_STATUS_OK);
   // 활동 패널(오른쪽 패널 「활동」 탭)이 부르는 조회 — 기본은 런도 이벤트도 없음
   if (/^\/api\/v1\/channels\/[^/]+\/runs(\?|$)/.test(url)) return json(200, { runs: [] });
   if (/^\/api\/v1\/runs\/[^/]+\/events(\?|$)/.test(url)) return json(200, { events: [] });

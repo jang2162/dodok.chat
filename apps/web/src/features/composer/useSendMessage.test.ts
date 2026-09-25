@@ -86,6 +86,42 @@ it("ack ok:false 면 failed", async () => {
   expect(getTimeline(qc, CH)?.items).toEqual([]);
 });
 
+it("ack 오류가 RATE_LIMITED 면 failed 에 사유 rate_limited — 그 밖 실패에는 사유가 없다", async () => {
+  fake.onAck("message.send", () => ({ ok: false, error: { code: "RATE_LIMITED", message: "slow down" } }));
+  const send = renderSend();
+  await act(() => send.current.send("빨리"));
+  expect(getTimeline(qc, CH)?.pending.map((p) => [p.state, p.reason])).toEqual([["failed", "rate_limited"]]);
+
+  fake.onAck("message.send", () => ({ ok: false, error: { code: "INTERNAL", message: "x" } }));
+  await act(() => send.current.send("다른"));
+  expect(getTimeline(qc, CH)?.pending[1]).not.toHaveProperty("reason");
+});
+
+it("레이트리밋으로 실패한 것의 다시 보내기는 같은 clientMsgId 로 — 보내는 중에는 사유를 내린다", async () => {
+  fake.onAck("message.send", () => ({ ok: false, error: { code: "RATE_LIMITED", message: "slow down" } }));
+  const send = renderSend();
+  await act(() => send.current.send("빨리"));
+  const first = getTimeline(qc, CH)?.pending[0];
+
+  let release!: () => void;
+  const acked = new Promise<void>((r) => (release = r));
+  fake.onAck("message.send", async (p) => {
+    await acked;
+    return confirmed(p, 4);
+  });
+  let done!: Promise<void>;
+  act(() => {
+    done = send.current.retry(first?.clientMsgId ?? "");
+  });
+  expect(getTimeline(qc, CH)?.pending).toEqual([expect.not.objectContaining({ reason: expect.anything() })]);
+  expect(getTimeline(qc, CH)?.pending[0]?.state).toBe("sending");
+  release();
+  await act(() => done);
+  const sent = fake.sentOf("message.send") as SendPayload[];
+  expect(sent.map((p) => p.clientMsgId)).toEqual([first?.clientMsgId, first?.clientMsgId]);
+  expect(getTimeline(qc, CH)?.items.map((m) => m.seq)).toEqual([4]);
+});
+
 it("시간 초과(ack 없음)도 failed", async () => {
   // 대본이 없으면 가짜 소켓의 emitWithAck 가 던진다 = 시간 초과
   const send = renderSend();

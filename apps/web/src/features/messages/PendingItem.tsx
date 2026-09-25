@@ -8,6 +8,9 @@ import { usePendingActions } from "./pendingActions";
 import type { PendingMessage } from "./timeline";
 import { useAuthors } from "./useAuthors";
 
+/** 레이트리밋으로 실패한 항목의 문구(운영 보강 스펙 4장) */
+export const RATE_LIMITED_TEXT = "너무 빠르게 보내고 있습니다 — 잠시 뒤 다시";
+
 /**
  * 보내는 중·실패한 내 메시지(스펙 4.4·5.3): 본문을 흐리게, `sending` 은 스피너, `failed` 는 「다시 보내기」·「삭제」.
  * 두 버튼은 ChannelPage 가 넣는 PendingActions 컨텍스트로 잇는다 — 없으면 그리지 않는다.
@@ -26,7 +29,9 @@ export function PendingItem({ pending }: { pending: PendingMessage }) {
       <div className="min-w-0 flex-1 pt-1">
         <AuthorLine author={me}>
           {failed ? (
-            <span className="text-destructive">전송 실패</span>
+            <span className="text-destructive">
+              {pending.reason === "rate_limited" ? RATE_LIMITED_TEXT : "전송 실패"}
+            </span>
           ) : (
             <LoaderCircleIcon
               role="status"

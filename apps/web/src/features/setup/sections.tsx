@@ -115,7 +115,7 @@ const GATEWAY_STATE: Record<SetupStatus["gateway"]["state"], string> = {
 };
 
 /**
- * Gateway — 상태·호스트·버전과 다음에 할 일(스펙 「연결 페이지」). 페어링 대기면 승인 명령(요청 id 를 못 받았으면 목록 명령)을,
+ * Gateway — 상태·호스트·버전(핀과 다르면 드리프트 한 줄 — 운영 보강 스펙 7장)과 다음에 할 일(스펙 「연결 페이지」). 페어링 대기면 승인 명령(요청 id 를 못 받았으면 목록 명령)을,
  * 대기가 5분을 넘으면 강조한다. 그 밖에 `down` 이면 `.env`·서버 로그를 보라고 한다
  */
 export function GatewaySection({ status }: { status: SetupStatus }) {
@@ -129,7 +129,15 @@ export function GatewaySection({ status }: { status: SetupStatus }) {
       <dl className="flex flex-col gap-1">
         <Field name="상태">{GATEWAY_STATE[gateway.state]}</Field>
         <Field name="호스트">{gateway.host}</Field>
-        <Field name="버전">{gateway.version ?? "모름"}</Field>
+        <Field name="버전">
+          {gateway.version ?? "모름"}
+          {gateway.drift && (
+            <span className="font-medium text-destructive">
+              {" "}
+              — 저장소가 검증한 버전({gateway.pinned})과 다릅니다
+            </span>
+          )}
+        </Field>
       </dl>
       {pairing ? (
         <div

@@ -108,6 +108,13 @@ export const connectionRoute = createRoute({
   component: lazyPage(() => import("@/features/setup/ConnectionPage"), "ConnectionPage"),
 });
 
+/** 운영(owner 만 — 페이지가 가른다, 스펙 7장) */
+export const operationsRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/settings/operations",
+  component: lazyPage(() => import("@/features/ops/OpsPage"), "OpsPage"),
+});
+
 const routeTree = rootRoute.addChildren([
   loginRoute,
   appRoute.addChildren([
@@ -115,6 +122,7 @@ const routeTree = rootRoute.addChildren([
     channelRoute.addChildren([channelSettingsRoute, channelActivityRoute]),
     agentsRoute,
     connectionRoute,
+    operationsRoute,
   ]),
 ]);
 
