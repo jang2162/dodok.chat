@@ -1,6 +1,6 @@
-# dodok.chat — 에이전트 네이티브 메신저 개발 계획서 (v0.15)
+# dodok.chat — 에이전트 네이티브 메신저 개발 계획서 (v0.17)
 
-작성일: 2026-09-14 · 상태: v0.16 (2026-09-25) — Phase 3 ③ 운영 보강 종료(런 수 상한 두 겹·레이트리밋·운영 사건·owner 운영 화면·안정성, 브라우저 검증 11/12 → 결함 고침 뒤 재검증, 테스트 2762, usage 진단 모델 런 1회 — ADR 0005, 실연 `docs/guides/live-smoke.md` 16절). 8장 Phase 3 「에러/재시도·레이트리밋·비용 상한, 로그·메트릭」에 완료 표시와 확인 방법, 「이월」을 Phase 3 ③ 종료 시점으로 다시 모음
+작성일: 2026-09-14 · 상태: v0.17 (2026-09-25) — Phase 3 ④ 문서화 종료(루트 `README.md` · 에이전트 가이드 `docs/guides/agent-guide.md` — 붙여 넣을 블록 포함, 가이드의 components 예시는 shared 테스트가 계약으로 파싱한다). 8장 Phase 3 「문서화」에 완료 표시와 확인 방법, 「이월」에 문서화가 남긴 것
 
 ### 변경 이력
 
@@ -20,6 +20,7 @@
 | v0.14 | Phase 3 ① **배포 패키징 종료**(2026-09-24) — 8장 Phase 3 「Docker Compose 패키징」에 완료 표시와 확인 방법(로컬 Compose 검증 12/12 · 번들 스모크 · 테스트 2226), 운영 절차 `docs/guides/deploy.md`. 1.3·2.2·4.5·7장 기술 표·10장 #6 의 「Compose 프로필로 로컬 Gateway 동반 기동(`--profile gateway`)」을 뺐다(배포 패키징 스펙 결정 5), 4.5 에 Caddy 가 여는 `/bridge/*`(플러그인의 첨부 HTTP). 「이월」에서 「`infra/` 가 없는데 두 문서가 있다고 말한다」 제거, Phase 3 ① 이 남긴 것 추가(첨부 상한 초과 문구 F1 · 실제 배포를 사람이 아직 안 따라 함 · 볼륨째 옮기기 미검증 · 백업 이월 셋 · 소스 실행 chdir 검사 · 요청 경로 런타임 해석 · 빌드가 레지스트리에 닿아야 함 · 스펙 11장 열린 문제 · `compose.yml` 머리 주석의 웹 빌드 ID 경로 · neo CDP 와 `.mcp.json` 포트 · PWA 스펙이 가리키는 없는 절), 「실기기 푸시」 줄의 미룬 까닭을 지금 상태로 |
 | v0.15 | Phase 3 ② **설정 마법사 종료**(2026-09-25) — 8장 Phase 3 「설정 마법사」에 완료 표시와 확인 방법(서버 통합 `setup` · 웹 단위 · `dev:fake` 위 브라우저 시나리오 1~10 — 결함 1(390px 발급 대화상자 원문 잘림)은 고침, 확인 불가 2 는 사람이 볼 것 · 실연 13/13·모델 런 0 은 `docs/guides/live-smoke.md` 15절 · 테스트 2400). 브리지 토큰의 정본이 DB 로 옮겨 `.env` 의 `BRIDGE_TOKEN` 은 선택(부팅 때 토큰 행이 하나도 없으면 — 폐기된 행 포함 — 이어받기)이 됐다 — 운영 절차 `docs/guides/deploy.md` 「[웹 → B] 플러그인 설치·브리지 토큰」·「[웹] 브리지 접속 확인」·「브리지 토큰 교체」 절. 「이월」에 Phase 3 ② 가 남긴 것 추가(루트 병렬 실행의 backup SIGINT 테스트 흔들림 · 폐기 알림 `system.notice` · 플러그인 빌드 가드 한계 · dev:fake 훅 테스트·415 · JSON 상자 오버레이 스크롤바 · 비슷한 글자 라벨 `env` · 막힌 이동 중 401 의 `next` · 사람이 볼 것) |
 | v0.16 | Phase 3 ③ **운영 보강 종료**(2026-09-25) — 8장 Phase 3 「에러/재시도·레이트리밋·비용 상한, 로그·메트릭」에 완료 표시와 확인 방법(서버 통합 `ops-*` · 웹 단위 · 태스크마다 독립 리뷰 · `dev:fake` 위 브라우저 11/12 — 결함 D1·D2 와 재검증이 찾은 N1 고침 · 로컬 Compose · usage 진단 모델 런 1회(ADR 0005) · 실연 `docs/guides/live-smoke.md` 16절 · 테스트 2762). 운영 절차 `docs/guides/deploy.md` 「운영 화면」 절과 `.env` 표의 `TZ`. 「이월」의 usage 줄을 ADR 0005 결론으로 바꾸고, 「dev:fake 훅 테스트 보강과 `text/plain` 단순 요청」(닫힘)을 지우고, 배포 패키징 열린 문제에서 Gateway 버전 드리프트 감지(구현됨)를 뺐다. Phase 3 ③ 이 남긴 것 추가(테스트 공백 · 묶인 `disk_low` 줄의 심각도 · 채널 전환 info 사건 · 재접속 뒤 `setupStatus` · 다시 실행 버튼 24시간 · 운영 알림·금액 상한 등 스펙 「열린 문제」 · 사람이 볼 member 화면) |
+| v0.17 | Phase 3 ④ **문서화 종료**(2026-09-25) — 8장 Phase 3 「문서화」에 완료 표시와 확인 방법(루트 `README.md` — 소개·구성·빠른 시작 두 갈래·문서 지도, `docs/guides/agent-guide.md` — 에이전트가 받는 것·채널 프롬프트·릴레이·components v1·파일·승인·붙여 넣을 블록·흔한 실수, 예시 검사 `packages/shared/test/agent-guide-examples.test.ts`), 제목의 판 번호를 상태 줄과 맞춤(v0.15 에 머물러 있었다). 「이월」 머리를 Phase 3 ④ 종료 시점으로 바꾸고 문서화가 남긴 것 추가(「기본 프롬프트」가 에이전트에게 닿지 않는다는 화면 안내 없음 · 붙여 넣을 블록의 모델 효과 미측정 · 블록 산문의 제약 숫자는 테스트 밖 · `AGENTS.md` 반영 시점 미실측) |
 
 ---
 
@@ -487,7 +488,9 @@ SQLite(WAL)로 시작, Drizzle ORM으로 스키마 정의해 Postgres 전환 시
   **안정성** — 처리 안 된 예외(`unhandledRejection` 은 기록하고 계속, `uncaughtException` 은 기록 뒤 종료), 종료 표지(`run-state.json` — 다음 부팅의 「직전 종료」), Gateway 버전 드리프트(핀·기억한 값과 비교), 디스크 여유(256 MiB 미만이면 첨부 업로드 507), 60초 넘는 Gateway·플러그인 끊김 사건, compose 로그 로테이션(10 MB × 5)·`stop_grace_period 15s`, 로그 가림 보강·사건 줄 `event: "ops.<kind>"`, 실패한 런 「다시 실행」(run_error 카드의 1회용 컴포넌트 버튼). `/healthz` 는 `{ok, db}` 로 줄고 상세는 owner 전용 `GET /api/v1/ops/status`.
   **운영 화면** — `/settings/operations`(owner 만): 상태 카드(연결 두 줄은 wire 실시간)·런 표(오늘 / 7일)·한도·최근 사건(`ops_events` — 1시간 묶기, 30일 보존, 「모두 확인」)·사이드바 배지(좁은 화면은 메뉴 버튼의 점). 알림은 화면에만 — 푸시·웹훅 없음(스펙 결정 2).
   **확인 방법**: 서버 통합 `apps/server/test/integration/ops-events.test.ts`·`ops-limits.test.ts`·`ops-ratelimit.test.ts`·`ops-health.test.ts`(가짜 Gateway·플러그인 — 워크스페이스 상한 도달 → 사람 멘션도 막힘 → 시스템 메시지 1회 → 사건 1줄, 다시 실행 → `parentRunId`·두 소켓 동시·한도 거절 미소비, `/bridge` 무차별 대입 → 막힘 → 풀린 뒤 정상 토큰 통과·`TRUST_PROXY` XFF 에서 핸드셰이크·첨부가 한 카운터, wire 폭주 → `RATE_LIMITED`, 끊김 사건 열림·닫힘(`downMs`), 디스크 507, `ops.event` 는 owner 소켓에만, `/healthz` 에 id 없음) · 서버 단위(가짜 타이머로 60초 깜빡임 0줄·61초 1줄, 주입한 `now` 로 자정 경계) · 웹 단위(`apps/web/src/features/ops/*.test.*` — 권한·상태 강조·390px 카드·한도 폼·사건 문구·배지 99+·실시간, 작성기 `RATE_LIMITED` 문구, 「다시 실행」, owner 링크) · 태스크마다 독립 리뷰(변이)·수정·범위 재리뷰 · `dev:fake` 위 브라우저 검증(운영 훅 셋 — 사건 주입·가짜 Gateway 끊기·디스크 흉내, 390·1280px) **11/12**(확인 불가 1 — member 화면) — 결함 D1(상태 카드가 실시간이 아님)·D2(한도 거절 토스트가 영어)와 관찰 다섯 중 넷을 고쳐 재검증했고, 재검증이 찾은 N1(wire 재접속 뒤 낡은 「연결됨」)도 고쳤다 · 로컬 Compose(로그 로테이션·`StopTimeout 15`·`TRUST_PROXY` 가 컨테이너에 먹음, XFF 를 바꿔도 여섯째 로그인 429, `/healthz` 키 둘, `stop` → `start` 뒤 직전 종료 깨끗) · usage 진단(dev Gateway 2026.9.5, 모델 런 1회 + 층별 값 하네스 — ADR 0005) · 실연(dev Gateway, 모델 런 0 — 가짜 claude CLI)은 `docs/guides/live-smoke.md` 16절. 테스트 2762(shared 151·plugin 112·adapter 252·server 992·web 1255). 남은 것은 아래 「이월」의 「운영 보강(Phase 3 ③)」.
-- 문서화(설치, 에이전트 프롬프트 가이드 — components 사용법 포함).
+- 문서화(설치, 에이전트 프롬프트 가이드 — components 사용법 포함) → **완료**(2026-09-25) — 루트 `README.md`, `docs/guides/agent-guide.md`.
+  `README.md` 는 소개·구성 그림·빠른 시작 두 갈래(개발은 `dev:fake` + 웹 5173 — 모델 런 없음, 운영은 `docs/guides/deploy.md` 「체크리스트 — 처음 배포」 절로 보낸다 — 설치 단계는 옮겨 적지 않는다)·문서 지도다. `docs/guides/agent-guide.md` 는 에이전트를 채널에 넣는 사람용이다 — 에이전트가 매 턴 받는 헤더와 채널 프롬프트·채널 지시의 반영 시점, 채널 프롬프트 예 셋, 릴레이(멈추는 네 사유·이어가기·일일 한도·다시 실행), components v1(제약·1회용과 재사용·누른 결과가 다음 턴에 오는 글·`artifact://`·예시와 틀린 예), 파일·이미지(`MEDIA:` 줄·한도·호스트 경로 금지), 승인 카드, **에이전트 지시 파일(`AGENTS.md`)과 채널 프롬프트에 붙여 넣을 블록**, 흔한 실수. 플러그인이 이 사용법을 자동으로 주입하지는 않는다(사람이 붙여 넣는다).
+  **확인 방법**: `pnpm -F @dodok/shared test` 의 `agent-guide-examples.test.ts` — 가이드의 `json dodok-components` 예시(6)는 `ComponentsV1` 을 통과하고 `json dodok-components-invalid` 예시(6)는 실패하며 `json dodok-message` 예시(2)의 `components` 도 통과한다, 종류마다 최소 개수(6·5·2)를 걸어 0개 실행이 통과로 보이지 않는다(테스트 15). 가이드의 동작 서술은 절마다 적은 정본 코드와 대조했다(보고서 `.superpowers/sdd/2026-09-25-docs/p3d-t1-report.md`, git 제외). 붙여 넣을 블록이 모델 행동을 바꾸는지는 재지 않았다(모델 런 0 — 아래 「이월」).
 
 ### Phase 4 — 확장 (후속, 순서는 재검토)
 
@@ -496,9 +499,9 @@ SQLite(WAL)로 시작, Drizzle ORM으로 스키마 정의해 Postgres 전환 시
 - 앱: Tauri 데스크톱(트레이·알림), Capacitor 모바일 또는 네이티브.
 - 스레드, 검색, 에이전트 내부 위임 결과 요약 게시, 채널 템플릿.
 
-### 이월 — 남은 문제(Phase 3 ③ 운영 보강 종료 시점, 2026-09-25)
+### 이월 — 남은 문제(Phase 3 ④ 문서화 종료 시점, 2026-09-25)
 
-Phase 1 ①·②, Phase 2 ①·②·③·④, Phase 3 ①·②·③ 을 돌면서 「고치지 않고 알고 넘긴 것」을 한곳에 모았다. 상세 근거는 각 줄에 적은 문서에 있다. 위 Phase 2·3 항목과 겹치면 그쪽을 가리킨다.
+Phase 1 ①·②, Phase 2 ①·②·③·④, Phase 3 ①·②·③·④ 를 돌면서 「고치지 않고 알고 넘긴 것」을 한곳에 모았다. 상세 근거는 각 줄에 적은 문서에 있다. 위 Phase 2·3 항목과 겹치면 그쪽을 가리킨다.
 Phase 1 이 남긴 아홉(서버 넷·웹 넷·`wire-cli` typecheck)은 Phase 2 ① 태스크 0·1 에서, Phase 2 ① 이 남긴 초점·타이머 셋(D6 카운트다운 어긋남 · 자리값 소요가 계속 흐름 · 넓은 화면 「설정 닫기」 초점)은 Phase 2 ② 태스크 8 에서 정리해 지웠다.
 Phase 2 ② 가 남긴 「`media` 이미지를 크게 볼 수 없다」·「`media`·`file` 문구 비대칭」은 Phase 2 ③ 이 닫아 지웠다(크게 보기 `ImageViewer`, 세 블록이 해석기 하나로 「첨부를 찾을 수 없습니다」·「열 수 없는 링크입니다」를 같이 쓴다).
 Phase 2 ② 가 남긴 「`infra/` 가 없는데 두 문서가 있다고 말한다」는 Phase 3 ① 이 `infra/` 를 만들고 `docs/project-structure.md` 를 고쳐 지웠다(`CLAUDE.md` 「명령」 줄은 조율자가 고친다).
@@ -666,6 +669,13 @@ Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-comp
 - **`run_failed` 는 에이전트별 한 줄이라 코드가 마지막 것만 남는다** — key `agent:<id>` 로 묶이며 `detail.code` 를 덮어써, 앞 실패의 코드는 목록에서 사라진다. 출처: `docs/guides/live-smoke.md` 「운영 보강(Phase 3 ③) 실연」 절의 「새로 찾은 것」(o3-t9a).
 - **서버 요청 로그에 IP 전체가 남는다** — Fastify 기본 `incoming request` 줄의 `req.remoteAddress`. 스펙이 IP 를 줄인 곳은 사건·집계뿐이다(배포에서는 Caddy 뒤라 컨테이너 네트워크 주소). 로그 보존·공유 정책이 필요하면 판단 거리. 출처: `docs/guides/live-smoke.md` 「운영 보강(Phase 3 ③) 실연」 절의 「새로 찾은 것」(o3-t9a).
 - **사람이 볼 것** — member 역할 화면: 사이드바에 「운영」이 없고 `/settings/operations` 직접 주소가 「권한이 없습니다」인가(dev:fake 에 두 번째 사용자가 없다 — 웹 단위 테스트만 있다). 출처: o3-t8b 「확인 불가」. 결과는 실제 배포(`docs/guides/deploy.md` 「사람이 한 번 따라 한 결과」) 때 위 「설정 마법사」의 member 확인과 함께 본다.
+
+**문서화(Phase 3 ④, 2026-09-25)** — `docs/guides/agent-guide.md`. 아래 출처의 보고서는 `.superpowers/sdd/2026-09-25-docs/`(git 제외)에 있다.
+
+- **에이전트의 「기본 프롬프트」는 에이전트에게 닿지 않는데 화면이 그렇게 말하지 않는다** — `basePrompt` 는 저장·표시만 하고 인바운드에 싣지 않는다(서버 코어 스펙 `docs/superpowers/specs/2026-09-15-server-core-design.md` 의 에이전트 항목 — 의도한 것). 설정 → 에이전트 화면은 「기본 프롬프트 편집」만 보여 규칙을 적는 자리로 읽힌다. 가이드 「채널 프롬프트와 채널 지시」 표와 「흔한 실수」가 적었다. 사람 판단: 화면에 「에이전트에게 전달되지 않는 메모」라고 쓸지, 인바운드에 실을지. 출처: p3d-t1 보고서.
+- **붙여 넣을 블록의 효과를 재지 않았다** — 블록이 모델에게 `ask_user` 대신 `components` 카드를 고르게 하는지(components 실연에서 모델은 `ask_user` 를 먼저 골랐다 — `docs/guides/live-smoke.md` 「components v1(Phase 2 ②) 실물 확인」 절)는 모델 런이 필요하다. 다음 실연 몫. 출처: p3d-t1 보고서.
+- **블록 산문 속 제약 숫자는 테스트 밖이다** — 예시 JSON 은 `agent-guide-examples.test.ts` 가 계약으로 잠그지만, 붙여 넣을 블록과 표의 숫자(버튼 5·옵션 25·칸 5·20 MiB 등)와 모델용 `COMPONENTS_DESCRIPTION` 은 사람이 맞춘다. 계약 숫자를 바꾸면 세 자리(`ComponentsV1`·`COMPONENTS_DESCRIPTION`·가이드)를 함께 고친다. 출처: p3d-t1 보고서.
+- **`AGENTS.md` 를 고친 뒤 「새 대화」가 필요하다는 것은 문서 근거다** — OpenClaw 문서 「Agent workspace」(세션 시작 때 읽는다)와 claude-cli 가 시스템 프롬프트를 세션 시작 때 고정한다는 ADR 0003 에서 끌어낸 것이고, `AGENTS.md` 로 직접 재지는 않았다. 출처: p3d-t1 보고서.
 
 **실물 확인**
 

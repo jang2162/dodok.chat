@@ -1,6 +1,6 @@
 # 프로젝트 구성 가이드 (Claude Code 인계용)
 
-작성일: 2026-09-14 · 계획서 v0.15 기준(2026-09-25 갱신: Phase 3 ② 설정 마법사) · 이 문서는 "어떻게 구성할지"만 다룬다. 배경·결정 근거는 `docs/plan.md` 참고.
+작성일: 2026-09-14 · 계획서 v0.17 기준(2026-09-25 갱신: Phase 3 ④ 문서화) · 이 문서는 "어떻게 구성할지"만 다룬다. 배경·결정 근거는 `docs/plan.md` 참고.
 
 ---
 
@@ -28,7 +28,8 @@ dodok.chat/
 ├─ docs/
 │  ├─ plan.md                 # 계획서
 │  ├─ project-structure.md    # 이 문서
-│  ├─ guides/                 # 작업 지침 (worktree-workflow.md, browser-verification.md, live-smoke.md, deploy.md — 배포·백업·복원·업데이트)
+│  ├─ guides/                 # 작업 지침 (worktree-workflow.md, browser-verification.md, live-smoke.md, deploy.md — 배포·백업·복원·업데이트,
+│  │                          #   agent-guide.md — 에이전트가 채널에서 받는 것·릴레이·components·파일·승인과 AGENTS.md·채널 프롬프트에 붙여 넣을 블록)
 │  ├─ superpowers/            # 스펙·구현계획 (specs/, plans/)
 │  └─ adr/                    # 결정 기록 (스파이크 결과마다 한 장; 0001 = Gateway 클라이언트 스파이크)
 ├─ scripts/
@@ -40,6 +41,7 @@ dodok.chat/
 │  └─ hooks/orca-worker-check.sh   # 미정리 워커·워크트리 현황을 세션에 알림
 ├─ .worktrees/dodok.chat/     # Orca 워크트리 자리 — git 제외 (docs/guides/worktree-workflow.md)
 ├─ data/                      # 런타임 데이터 (SQLite, 첨부 블롭 attachments/, 디바이스 아이덴티티, VAPID 키 vapid.json) — git 제외
+├─ README.md                  # 저장소 첫 화면 — 소개·구성 그림·빠른 시작(dev:fake / deploy.md 로)·문서 지도. 설치 단계는 옮겨 적지 않는다
 ├─ CLAUDE.md                  # 에이전트 지침 (정본)
 ├─ .mcp.json                  # 프로젝트 MCP — playwright-neo (BrowserOS neo 의 CDP 에 붙는 Playwright)
 ├─ .oxlintrc.json / .oxfmtrc.json
@@ -85,6 +87,8 @@ src/
 │                 ({ kind: mention|approval|relay_limit, channelId, title ≤80, body ≤200, url, tag ≤80 } — 서비스 워커가 경계에서 파싱한다).
 │                 wire 쪽 `presence.update`(`PresenceUpdate` { visible, channelId? }, ack 없음)는 `wire/` 의 Typing 옆에 있다
 └─ mention.ts     @멘션 파싱 (사람/에이전트 별칭 → id), 릴레이 감지에 공용
+test/agent-guide-examples.test.ts   docs/guides/agent-guide.md 의 `json dodok-components`·`-invalid`·`json dodok-message` 코드 블록을 뽑아 ComponentsV1 로 파싱
+                 (유효는 통과·틀린 예는 실패·종류마다 최소 개수). shared 에 Node 타입이 없어 문서는 Vite `?raw` 동적 import 로 읽는다
 ```
 
 규칙: 여기의 Zod 스키마가 단일 진실. 서버 입력 검증·클라이언트 폼·플러그인 아웃바운드 검증·브리지 양단 검증이 전부 같은 스키마를 import한다. 브리지 계약이 `shared`에 있는 이유는 플러그인과 서버가 서로 다른 프로세스·호스트에서 같은 메시지를 파싱하기 때문이다.
