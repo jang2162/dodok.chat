@@ -21,7 +21,12 @@ export const BridgeHello = z.object({
   sdkVersion: z.string(), // openclaw 패키지 버전
   gatewayVersion: z.string().optional(),
   bundleSha256: Sha256Hex.optional(), // 플러그인 번들 파일 sha256 — 읽기 실패·옛 플러그인이면 없다(설정 마법사 결정 5)
-  capabilities: z.array(BridgeCapability),
+  // 모르는 capability 는 버리고 받는다 — 거절하면 새 플러그인이 옛 서버에 못 붙어 서버만 되돌리는 롤백이 막힌다(판정 R1)
+  capabilities: z
+    .array(z.unknown())
+    .transform((caps) =>
+      caps.filter((cap): cap is BridgeCapability => BridgeCapability.safeParse(cap).success),
+    ),
 });
 export type BridgeHello = z.infer<typeof BridgeHello>;
 export const BridgeHelloResult = z.object({

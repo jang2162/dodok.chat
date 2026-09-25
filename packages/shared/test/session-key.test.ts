@@ -24,6 +24,47 @@ describe("dodokSessionKey·parseDodokSessionKey", () => {
     expect(parsed).toEqual({ providerAgentId: "dev", channelId: CH, threadRootId: ROOT });
   });
 
+  it("스레드 없는 채널 키의 대문자 channelId 도 소문자로 돌려준다", () => {
+    expect(parseDodokSessionKey(`agent:dev:dodok:channel:${CH.toUpperCase()}`)).toEqual({
+      providerAgentId: "dev",
+      channelId: CH,
+    });
+  });
+
+  it("빌더는 channelId 도 소문자로 만든다 — 코어가 키 전체를 소문자로 접으므로 build∘parse 가 항등이다", () => {
+    expect(dodokSessionKey("dev", CH.toUpperCase())).toBe(`agent:dev:dodok:channel:${CH}`);
+    const key = dodokSessionKey("dev", CH.toUpperCase(), ROOT_UPPER);
+    const parsed = parseDodokSessionKey(key)!;
+    expect(dodokSessionKey(parsed.providerAgentId, parsed.channelId, parsed.threadRootId)).toBe(key);
+  });
+
+  it("에이전트 id 의 대소문자는 그대로 둔다 — 서버가 저장한 providerAgentId 로 에이전트를 찾는다", () => {
+    const key = dodokSessionKey("Dev", CH);
+    expect(key).toBe(`agent:Dev:dodok:channel:${CH}`);
+    expect(parseDodokSessionKey(key)?.providerAgentId).toBe("Dev");
+  });
+
+  it.each([
+    ["빈 문자열", ""],
+    ["공백", "a b"],
+    ["줄바꿈", "a\nb"],
+    ["끝 줄바꿈", "dev\n"],
+    ["콜론", "a:b"],
+    ["밑줄로 시작", "_dev"],
+    ["65자", "a".repeat(65)],
+  ])("빌더는 OpenClaw agentId 가 아닌 것을 던진다 — %s", (_label, agentId) => {
+    expect(() => dodokSessionKey(agentId, CH)).toThrow();
+  });
+
+  it("빌더는 64자·밑줄·하이픈 agentId 를 받는다", () => {
+    expect(() => dodokSessionKey("a".repeat(64), CH)).not.toThrow();
+    expect(() => dodokSessionKey("dev_main-2", CH)).not.toThrow();
+  });
+
+  it("빌더는 빈 threadRootId 를 던진다 — 파서가 거절하는 키를 만들지 않는다", () => {
+    expect(() => dodokSessionKey("dev", CH, "")).toThrow();
+  });
+
   it("채널 키에는 threadRootId 키 자체가 없다", () => {
     expect(parseDodokSessionKey(dodokSessionKey("dev", CH))).not.toHaveProperty("threadRootId");
   });
@@ -40,6 +81,10 @@ describe("dodokSessionKey·parseDodokSessionKey", () => {
     ["다른 채널 종류", `agent:dev:other:channel:${CH}`],
     ["채널 id 가 UUID 아님", "agent:dev:dodok:channel:general"],
     ["에이전트 id 빔", `agent::dodok:channel:${CH}`],
+    ["에이전트 id 에 콜론", `agent:a:b:dodok:channel:${CH}`],
+    ["에이전트 id 에 공백", `agent:a b:dodok:channel:${CH}`],
+    ["에이전트 id 에 줄바꿈", `agent:a\nb:dodok:channel:${CH}`],
+    ["에이전트 id 가 65자", `agent:${"a".repeat(65)}:dodok:channel:${CH}`],
   ])("우리 모양이 아니면 undefined — %s", (_label, key) => {
     expect(parseDodokSessionKey(key)).toBeUndefined();
   });

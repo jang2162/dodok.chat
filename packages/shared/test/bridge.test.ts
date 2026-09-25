@@ -5,7 +5,7 @@ const ID = (n: number) => `01a09fc9-d204-7551-89d6-38544d07a1${n.toString(16).pa
 const NOW = "2026-09-14T00:00:00Z";
 
 describe("bridge schemas", () => {
-  it("BridgeHello: pluginId는 dodok 고정, capability는 닫힌 목록", () => {
+  it("BridgeHello: pluginId는 dodok 고정, 모르는 capability 는 버리고 받는다", () => {
     expect(
       BridgeHello.safeParse({
         pluginId: "dodok",
@@ -24,6 +24,27 @@ describe("bridge schemas", () => {
         version: "0.1.0",
         sdkVersion: "2026.9.4",
         capabilities: ["nope"],
+      }).success,
+    ).toBe(true);
+  });
+
+  it("BridgeHello: 새 플러그인이 옛 서버에 붙을 수 있게 모르는 capability 만 걷어 낸다(판정 R1)", () => {
+    const hello = BridgeHello.parse({
+      pluginId: "dodok",
+      version: "0.1.0",
+      sdkVersion: "2026.9.4",
+      capabilities: ["future.cap", "threads", "config.set", 7],
+    });
+    expect(hello.capabilities).toEqual(["threads", "config.set"]);
+  });
+
+  it("BridgeHello: capabilities 가 배열이 아니면 거절한다", () => {
+    expect(
+      BridgeHello.safeParse({
+        pluginId: "dodok",
+        version: "0.1.0",
+        sdkVersion: "2026.9.4",
+        capabilities: "threads",
       }).success,
     ).toBe(false);
   });
