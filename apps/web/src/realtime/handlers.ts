@@ -58,6 +58,8 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
   /** 이어진 직접 재연결 횟수 — 백오프 간격을 정한다. 다시 붙으면 0 으로 */
   let retryAttempt = 0;
+  /** 한 번이라도 붙었는가 — 두 번째 connect 부터가 다시 붙은 것이다 */
+  let connectedOnce = false;
 
   /** 새 메시지·수정. 구독한 적 없는 채널(캐시 없음)은 무시, 빈틈이면 넣지 않고 lastSeq 로 이어 받는다(스펙 4.3-3·4) */
   function applyMessage({ message: m }: MessageEvent, updated: boolean): void {
@@ -187,6 +189,15 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
     setStatus("connected");
     // 처음 붙을 때도 — 연결 전에 들어간 채널은 enter 가 보내지 않고 기억만 한다
     void subscriptions.resubscribeAll().catch(() => undefined);
+
+    // 다시 붙으면 끊긴 사이 놓친 adapter.status·ops.event 를 메운다 — 서버는 접속 때 상태를 보내지 않는다(재검증 N1).
+    // 떠 있는 쿼리만 다시 부른다: member 의 ops 쿼리는 관찰자가 없거나 꺼져 있어(owner 만 켠다) 요청이 나가지 않는다
+    if (connectedOnce) {
+      void qc.invalidateQueries({ queryKey: qk.adapter });
+      void qc.invalidateQueries({ queryKey: qk.opsStatus });
+      void qc.invalidateQueries({ queryKey: qk.opsEventsAll });
+    }
+    connectedOnce = true;
   };
   const onDisconnect = (reason: string) => {
     if (STOPPED.has(useWireStatus.getState().status)) return;

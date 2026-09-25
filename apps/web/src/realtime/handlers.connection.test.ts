@@ -1,4 +1,7 @@
+import { type QueryClient, type QueryKey, QueryObserver } from "@tanstack/react-query";
+import { waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { qk } from "@/api/queries";
 import { createQueryClient } from "@/app/queryClient";
 import { createFakeSocket } from "../../test/fakeSocket";
 import { uid, USER } from "../../test/fixtures";
@@ -26,7 +29,7 @@ function setup() {
   const queryClient = createQueryClient(onUnauthorized);
   const subscriptions = createSubscriptions({ socket: fake.wire, queryClient });
   detachers.push(attachHandlers(fake.wire, { queryClient, subscriptions, onUnauthorized, notify: noNotify }));
-  return { fake, subscriptions, onUnauthorized };
+  return { fake, queryClient, subscriptions, onUnauthorized };
 }
 
 beforeEach(() => {
@@ -211,6 +214,49 @@ describe("연결 상태", () => {
     expect(fake.listenerCount()).toBe(before);
     await vi.advanceTimersByTimeAsync(WIRE_RETRY_BASE_MS * 2);
     expect(fake.calls.connect).toBe(0);
+  });
+});
+
+describe("다시 붙으면 끊긴 사이 놓친 상태를 다시 받는다(재검증 N1)", () => {
+  /** 화면에 떠 있는 쿼리처럼 관찰자를 붙이고 부른 횟수를 센다. `enabled` 거짓은 member 의 좁은 화면 메뉴 버튼 자리 */
+  function observe(queryClient: QueryClient, queryKey: QueryKey, enabled = true) {
+    const queryFn = vi.fn(async () => ({}));
+    const observer = new QueryObserver(queryClient, { queryKey, queryFn, enabled });
+    detachers.push(observer.subscribe(() => {}));
+    return queryFn;
+  }
+
+  it("owner — 첫 연결은 그대로, 다시 붙으면 어댑터·운영 상태·사건 목록을 다시 받는다", async () => {
+    const { fake, queryClient, subscriptions } = setup();
+    vi.spyOn(subscriptions, "resubscribeAll").mockResolvedValue();
+    const adapter = observe(queryClient, qk.adapter);
+    const opsStatus = observe(queryClient, qk.opsStatus);
+    const opsEvents = observe(queryClient, qk.opsEvents("error"));
+    await waitFor(() => expect(opsEvents).toHaveBeenCalledTimes(1));
+
+    fake.serverEmit("connect");
+    await Promise.resolve();
+    expect([adapter, opsStatus, opsEvents].map((f) => f.mock.calls.length)).toEqual([1, 1, 1]);
+
+    fake.serverEmit("disconnect", "transport close");
+    fake.serverEmit("connect");
+    await waitFor(() => expect(adapter).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(opsStatus).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(opsEvents).toHaveBeenCalledTimes(2));
+  });
+
+  it("member — 어댑터만 다시 받고 ops 요청은 0 이다", async () => {
+    const { fake, queryClient, subscriptions } = setup();
+    vi.spyOn(subscriptions, "resubscribeAll").mockResolvedValue();
+    const adapter = observe(queryClient, qk.adapter);
+    const opsStatus = observe(queryClient, qk.opsStatus, false);
+    await waitFor(() => expect(adapter).toHaveBeenCalledTimes(1));
+
+    fake.serverEmit("connect");
+    fake.serverEmit("disconnect", "transport close");
+    fake.serverEmit("connect");
+    await waitFor(() => expect(adapter).toHaveBeenCalledTimes(2));
+    expect(opsStatus).not.toHaveBeenCalled();
   });
 });
 

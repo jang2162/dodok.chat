@@ -6,8 +6,10 @@ import { qk } from "@/api/queries";
 import { useWireStatus } from "@/realtime/wire";
 import { ME, renderRoute } from "../../../test/shellApi";
 import { eventOf, opsStatusOf, stubOpsServer } from "../../../test/opsServer";
+import { OPS_STATUS_POLL_MS } from "./queries";
 
 afterEach(() => {
+  vi.useRealTimers();
   useWireStatus.getState().setStatus("idle");
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -16,6 +18,13 @@ afterEach(() => {
 const MEMBER = { ...ME, role: "member" };
 const opsLink = () => screen.queryByRole("link", { name: /^운영/ });
 const badgeOf = (link: HTMLElement) => link.querySelector("[data-ops-badge]");
+
+/** 운영 화면 밖에서는 주기가 돌지 않는다 — 배지는 `ops.event` 가 고친다(재검증 M3b). 두 주기가 지나도 처음 한 번뿐 */
+async function expectNoPolling(server: ReturnType<typeof stubOpsServer>) {
+  await waitFor(() => expect(server.count("GET", "/api/v1/ops/status")).toBe(1));
+  await act(() => vi.advanceTimersByTimeAsync(OPS_STATUS_POLL_MS * 2 + 1_000));
+  expect(server.count("GET", "/api/v1/ops/status")).toBe(1);
+}
 
 describe("진입점과 권한 — owner 에게만", () => {
   it("owner 는 사이드바 「운영」으로 /settings/operations 에 간다", async () => {
@@ -77,6 +86,14 @@ describe("배지 — 확인 안 한 warn·error 수", () => {
     await waitFor(() => expect(badgeOf(link)).toHaveTextContent("99+"));
   });
 
+  it("사이드바 배지만 있으면 상태를 주기로 다시 받지 않는다", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const server = stubOpsServer();
+    renderRoute("/agents");
+    await screen.findByRole("link", { name: /^운영/ });
+    await expectNoPolling(server);
+  });
+
   it("상태 캐시의 unacked 가 바뀌면(ops.event) 곧바로 늘어난다", async () => {
     stubOpsServer({ status: opsStatusOf({ unacked: { warn: 1, error: 0 } }) });
     const { queryClient } = renderRoute("/agents");
@@ -134,6 +151,15 @@ describe("좁은 화면 — 서랍이 닫혀 있으면 메뉴 버튼이 알린�
     await waitFor(() => expect(server.count("GET", "/api/v1/ops/status")).toBeGreaterThan(0));
     expect(button).toHaveAccessibleName("채널 목록 열기");
     expect(button.querySelector("[data-ops-dot]")).toBeNull();
+  });
+
+  it("메뉴 버튼의 점도 상태를 주기로 다시 받지 않는다", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    narrow();
+    const server = stubOpsServer();
+    renderRoute("/agents");
+    await menu();
+    await expectNoPolling(server);
   });
 
   it("member 는 표시가 없고 ops API 를 부르지 않는다", async () => {
