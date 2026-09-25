@@ -82,4 +82,48 @@ describe("sessions service", () => {
       needsPromptContext: false,
     });
   });
+
+  it("스레드 세션은 (에이전트, 채널, 스레드)마다 따로 — 키에 스레드 접미사, 채널 세션과 섞이지 않는다", () => {
+    const { db, adapter, channelId, agentId } = setup();
+    const ROOT_A = "01a09fc9-d204-7551-89d6-38544d07a1aa";
+    const ROOT_B = "01a09fc9-d204-7551-89d6-38544d07a1bb";
+    const channel = ensureSession(db, adapter, { channelId, agentId }).session;
+    const a = ensureSession(db, adapter, { channelId, agentId, threadRootId: ROOT_A }).session;
+    const b = ensureSession(db, adapter, { channelId, agentId, threadRootId: ROOT_B }).session;
+    expect(a.sessionKey).toBe(`agent:dev-main:dodok:channel:${channelId}:thread:${ROOT_A}`);
+    expect(a.threadRootId).toBe(ROOT_A);
+    expect(new Set([channel.id, a.id, b.id]).size).toBe(3);
+    expect(ensureSession(db, adapter, { channelId, agentId, threadRootId: ROOT_A }).session.id).toBe(a.id);
+    expect(ensureSession(db, adapter, { channelId, agentId }).session.id).toBe(channel.id);
+    expect(db.select().from(agentSessions).all()).toHaveLength(3);
+  });
+
+  it("스레드 markSessionReset 은 그 스레드 행만 바꾸고, 없으면 스레드 키로 만든다", () => {
+    const { db, adapter, channelId, agentId } = setup();
+    const ROOT = "01a09fc9-d204-7551-89d6-38544d07a1cc";
+    const channel = ensureSession(db, adapter, { channelId, agentId }).session;
+    updateChannel(db, channelId, { prompt: "p" });
+
+    const created = markSessionReset(db, channelId, agentId, { lifecycleRevision: "t1" }, ROOT);
+    expect(created).toMatchObject({
+      threadRootId: ROOT,
+      sessionKey: adapter.sessionKeyFor("dev-main", channelId, ROOT),
+      promptRevisionAtStart: 2,
+      lifecycleRevision: "t1",
+    });
+    const again = markSessionReset(db, channelId, agentId, { lifecycleRevision: "t2" }, ROOT);
+    expect(again.id).toBe(created.id);
+    expect(again.lifecycleRevision).toBe("t2");
+
+    const untouched = db.select().from(agentSessions).where(eq(agentSessions.id, channel.id)).get();
+    expect(untouched).toMatchObject({ promptRevisionAtStart: 1, lifecycleRevision: null });
+  });
+
+  it("규칙 밖 providerAgentId 는 세션 키를 만들지 않고 던진다(빌더 규칙)", () => {
+    const { db, adapter, channelId, agentId } = setup();
+    db.update(agents).set({ providerAgentId: "dev:main" }).where(eq(agents.id, agentId)).run();
+    expect(() => ensureSession(db, adapter, { channelId, agentId })).toThrow();
+    expect(() => markSessionReset(db, channelId, agentId, {})).toThrow();
+    expect(db.select().from(agentSessions).all()).toHaveLength(0);
+  });
 });

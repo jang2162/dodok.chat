@@ -50,7 +50,9 @@ export async function interact(deps: InteractDeps, input: InteractInput): Promis
   // 관문은 저장·소비 전에 본다 — 막히면 버튼이 살아 있어 한도가 풀린 뒤 다시 누른다(Review Focus 5).
   // 검사를 먼저 한 번 돌려 누를 수 없는 아이템(만료·소비·대상 없음)은 한도보다 그 사유로 거절한다
   const pre = checkInteraction(db, deps.workspaceId, input, now);
-  if (deps.gate.check(pre.message.channelId)) throw apiError("RUN_LIMIT", "daily run limit reached");
+  if (deps.gate.check(pre.message.channelId, threadOf(pre.target, pre.message))) {
+    throw apiError("RUN_LIMIT", "daily run limit reached");
+  }
 
   const result = db.transaction((tx) => {
     const { message, checked, target } = checkInteraction(tx, deps.workspaceId, input, now);
@@ -106,6 +108,7 @@ export async function interact(deps: InteractDeps, input: InteractInput): Promis
         rootMessageId: run.rootMessageId,
         relayDepth: run.relayDepth,
         parentRunId: run.id,
+        ...withThread(threadOf(target, message)),
       },
       { message: target.triggerMessage },
     );
@@ -118,10 +121,23 @@ export async function interact(deps: InteractDeps, input: InteractInput): Promis
       triggerKind: target.triggerKind,
       rootMessageId: message.id,
       relayDepth: 0,
+      ...withThread(threadOf(target, message)),
     },
     { interactionId, interactionText, interactionMessageId: message.id },
   );
   return { interactionId };
+}
+
+/**
+ * 새 런이 돌 스레드(스펙 2.2) — 다시 실행은 원래 런의 스레드, 그 밖(카드·이어가기)은 누른 메시지가 있는 스레드.
+ * 채널 최상위면 undefined
+ */
+function threadOf(target: Target, message: Message): string | undefined {
+  return target.triggerKind === "retry" ? target.run.threadRootId : message.threadRootId;
+}
+
+function withThread(threadRootId: string | undefined): { threadRootId?: string } {
+  return threadRootId === undefined ? {} : { threadRootId };
 }
 
 /** 저장 없이 검사만 — 통과하면 메시지·검사 결과·대상을 돌려주고, 아니면 그 사유의 apiError 를 던진다 */

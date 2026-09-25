@@ -7,7 +7,7 @@ import type { ServerBus } from "../../realtime/bus";
 import { josa } from "../../util/josa";
 import { getAgent, rowToAgent } from "../agents/service";
 import { type ChannelRecord, getChannel, listMembers } from "../channels/service";
-import { createSystemMessage } from "../messages/service";
+import { createSystemMessage, getThreadRoot } from "../messages/service";
 import type { RunGate } from "../ops/budget";
 import * as store from "../runs/store";
 import { type Blocked, type BlockedReason, decideRuns } from "./decide";
@@ -86,11 +86,13 @@ export function createRouter(deps: RouterDeps): Router {
     }
   }
 
+  /** 알림은 막힌 멘션이 있던 곳(채널 또는 스레드)에 남긴다(스펙 2.1) */
   function announceBlocked(
     channel: ChannelRecord,
     sourceRun: Run,
     blocked: Blocked[],
     byId: Map<string, Agent>,
+    threadRootId: string | undefined,
   ) {
     const groups = new Map<BlockedReason, Blocked[]>();
     for (const b of blocked) groups.set(b.reason, [...(groups.get(b.reason) ?? []), b]);
@@ -101,6 +103,7 @@ export function createRouter(deps: RouterDeps): Router {
       const targets = items.map((b) => `@${handleOf(byId, b.agentId)}`);
       createSystemMessage(db, bus, {
         channelId: channel.id,
+        ...(threadRootId === undefined ? {} : { threadRootId }),
         kind,
         bodyMd: bodyFor(reason, channel, from, targets),
         systemMeta: {
@@ -119,14 +122,6 @@ export function createRouter(deps: RouterDeps): Router {
   return {
     async routeMessage(message) {
       if (message.kind !== "normal") return;
-      // 임시 — 스레드 런(하위 세션)이 들어오기 전까지 스레드 답글이 채널 런을 만들지 않게 한다. 태스크 5 가 지운다
-      if (message.threadRootId !== undefined) {
-        logger.warn(
-          { messageId: message.id, threadRootId: message.threadRootId },
-          "route: thread reply — thread runs not wired yet, skipped",
-        );
-        return;
-      }
       const channel = getChannel(db, message.channelId);
       if (!channel) {
         logger.warn({ messageId: message.id, channelId: message.channelId }, "route: channel not found");
@@ -146,6 +141,10 @@ export function createRouter(deps: RouterDeps): Router {
         }
       }
 
+      // 스레드 답글이면 루트 — 멘션 없는 답글의 응답자를 루트 작성자로 정한다(결정 4). 저장 경로가 루트임을 이미 검증했다
+      const threadRoot =
+        message.threadRootId === undefined ? undefined : getThreadRoot(db, channel.id, message.threadRootId);
+
       const members = listMembers(db, channel.id);
       const agentList = channelAgents(members.filter((m) => m.memberType === "agent").map((m) => m.memberId));
       const at = now();
@@ -155,6 +154,7 @@ export function createRouter(deps: RouterDeps): Router {
         members,
         agents: agentList,
         ...(sourceRun ? { sourceRun } : {}),
+        ...(threadRoot ? { threadRoot } : {}),
         chainHashes: sourceRun ? store.chainHashes(db, sourceRun.rootMessageId) : new Set(),
         now: at,
       });
@@ -168,7 +168,13 @@ export function createRouter(deps: RouterDeps): Router {
         }
       }
       if (sourceRun && decision.blocked.length > 0) {
-        announceBlocked(channel, sourceRun, decision.blocked, new Map(agentList.map((a) => [a.id, a])));
+        announceBlocked(
+          channel,
+          sourceRun,
+          decision.blocked,
+          new Map(agentList.map((a) => [a.id, a])),
+          message.threadRootId,
+        );
       }
     },
   };

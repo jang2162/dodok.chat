@@ -22,6 +22,8 @@ export type InsertRunInput = {
   relayHash?: string | undefined;
   parentRunId?: string | undefined;
   sessionKey: string;
+  /** 스레드 하위 세션의 런이면 그 루트 */
+  threadRootId?: string | undefined;
   createdAt: Date;
 };
 
@@ -49,6 +51,7 @@ export function rowToRun(row: RunRow): Run {
       relayDepth: row.relayDepth,
       parentRunId: row.parentRunId ?? undefined,
       sessionKey: row.sessionKey,
+      threadRootId: row.threadRootId ?? undefined,
       providerRunId: row.providerRunId ?? undefined,
       status: row.status,
       hasCanonical: row.hasCanonical,
@@ -83,6 +86,7 @@ export function insertRun(db: DbOrTx, input: InsertRunInput): Run {
       relayHash: input.relayHash ?? null,
       parentRunId: input.parentRunId ?? null,
       sessionKey: input.sessionKey,
+      threadRootId: input.threadRootId ?? null,
       status: "queued",
       hasCanonical: false,
       createdAt: input.createdAt,

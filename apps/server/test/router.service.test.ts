@@ -323,6 +323,83 @@ describe("router service", () => {
   });
 });
 
+describe("router service — 스레드", () => {
+  function threadSetup(relayPolicy?: z.input<typeof RelayPolicy>) {
+    const t = setup(relayPolicy);
+    let n = 0;
+    const reply = (rootId: string, bodyMd: string) =>
+      createUserMessage(t.db, t.bus, {
+        channelId: t.channel.id,
+        authorId: t.userId,
+        bodyMd,
+        clientMsgId: `t${++n}`,
+        threadRootId: rootId,
+      });
+    const agentReply = (agent: Agent, run: Run, rootId: string, bodyMd: string) =>
+      createAgentMessage(t.db, t.bus, {
+        channelId: t.channel.id,
+        agentId: agent.id,
+        runId: run.id,
+        externalId: `tr-${++n}`,
+        bodyMd,
+        threadRootId: rootId,
+      });
+    return { ...t, reply, agentReply };
+  }
+
+  it("스레드 답글 @dev → 그 스레드의 mention 런(임시 건너뛰기 없음)", async () => {
+    const t = threadSetup();
+    const root = t.human("루트");
+    const message = t.reply(root.id, "@dev 봐줘");
+    await t.router.routeMessage(message);
+    expect(t.enqueue).toHaveBeenCalledWith(
+      {
+        agentId: t.dev.id,
+        channelId: t.channel.id,
+        triggerKind: "mention",
+        rootMessageId: message.id,
+        relayDepth: 0,
+        threadRootId: root.id,
+      },
+      { message },
+    );
+    expect(t.logger.warn).not.toHaveBeenCalled();
+  });
+
+  it("멘션 없는 스레드 답글 — 루트가 에이전트 메시지면 그 에이전트", async () => {
+    const t = threadSetup();
+    updateAgentMember(t.db, t.channel.id, t.dev.id, { autoRespond: true }, t.logger);
+    const root = t.said(t.fin, t.runOf(t.fin), "에이전트 루트");
+    await t.router.routeMessage(t.reply(root.id, "이어서 질문"));
+    expect(t.enqueue.mock.calls.map(([plan]) => [plan.agentId, plan.triggerKind, plan.threadRootId])).toEqual(
+      [[t.fin.id, "auto_respond", root.id]],
+    );
+  });
+
+  it("스레드 안 릴레이 차단(한도) 알림은 그 스레드에 남는다", async () => {
+    const t = threadSetup({ maxRelayTurns: 1 });
+    const root = t.human("루트");
+    const run = { ...t.runOf(t.dev, { relayDepth: 1 }), threadRootId: root.id };
+    await t.router.routeMessage(t.agentReply(t.dev, run, root.id, "@fin 부탁"));
+    expect(t.enqueue).not.toHaveBeenCalled();
+    expect(t.systemMessages().map((m) => [m.systemMeta?.kind, m.threadRootId])).toEqual([
+      ["relay_limit", root.id],
+    ]);
+  });
+
+  it("스레드 런이 한도에 막히면 run_limit 알림도 그 스레드에", async () => {
+    const t = threadSetup({ dailyRunLimit: 1 });
+    const router = gatedRouter(t);
+    t.runOf(t.dev);
+    const root = t.human("루트");
+    await router.routeMessage(t.reply(root.id, "@dev 하나 더"));
+    expect(t.enqueue).not.toHaveBeenCalled();
+    expect(t.systemMessages().map((m) => [m.systemMeta?.kind, m.threadRootId])).toEqual([
+      ["run_limit", root.id],
+    ]);
+  });
+});
+
 describe("createServices — 라우터·오케스트레이터 상호 참조", () => {
   function boot() {
     const t = setup();

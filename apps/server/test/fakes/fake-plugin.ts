@@ -31,6 +31,8 @@ export type FakePluginOptions = {
   token: string;
   /** 기본은 dispatch(`providerRunId` = 우리 runId, ADR 0002 4.3) */
   onInbound?: InboundHandler;
+  /** 기본 FAKE_PLUGIN_HELLO — 옛 플러그인(스레드 모름)을 흉내 낼 때 capabilities 를 바꿔 준다 */
+  hello?: BridgeHello;
 };
 
 export type OutboundInput = Omit<OutboundMessage, "outboundId" | "ts"> &
@@ -65,9 +67,9 @@ export type FakePlugin = {
   disconnect(): void;
   /**
    * 다시 접속해 hello ack 까지 기다린다. `token` 을 주면 붙어 있던 소켓을 먼저 끊고, 그 뒤로는 핸드셰이크·첨부 HTTP 가
-   * 그 토큰을 쓴다(거절돼도 바뀐 채로)
+   * 그 토큰을 쓴다(거절돼도 바뀐 채로). `hello` 를 주면 붙어 있던 소켓을 먼저 끊고 그 hello 로 붙는다(플러그인 재설치)
    */
-  reconnect(opts?: { token?: string }): Promise<void>;
+  reconnect(opts?: { token?: string; hello?: BridgeHello }): Promise<void>;
   /** 끊고 리스너를 떼어낸다 — 그 뒤에는 reconnect 할 수 없다 */
   close(): void;
 };
@@ -78,7 +80,7 @@ export const FAKE_PLUGIN_HELLO: BridgeHello = BridgeHello.parse({
   version: "0.0.0-fake",
   sdkVersion: "2026.9.4",
   gatewayVersion: "2026.9.4",
-  capabilities: ["agents.list", "config.set", "typing", "run_id_in_outbound"],
+  capabilities: ["agents.list", "config.set", "typing", "run_id_in_outbound", "threads"],
 });
 
 export const FAKE_PLUGIN_AGENTS = [{ agentId: "dev", name: "dev" }, { agentId: "fin" }];
@@ -98,6 +100,8 @@ function issuesText(error: { issues: Array<{ path: PropertyKey[]; message: strin
 export async function startFakePlugin(opts: FakePluginOptions): Promise<FakePlugin> {
   /** 핸드셰이크·첨부 HTTP 가 쓰는 토큰 — reconnect({ token }) 이 바꾼다 */
   let token = opts.token;
+  /** hello 페이로드 — reconnect({ hello }) 가 바꾼다 */
+  let hello = opts.hello ?? FAKE_PLUGIN_HELLO;
   const socket: BridgeClientSocket = io(`${opts.bridgeUrl}/bridge`, {
     auth: { token },
     transports: ["websocket"],
@@ -115,7 +119,7 @@ export async function startFakePlugin(opts: FakePluginOptions): Promise<FakePlug
     return new Promise((resolve, reject) => {
       const onConnect = () => {
         socket.off("connect_error", onError);
-        (socket.timeout(ACK_TIMEOUT_MS).emitWithAck("hello", FAKE_PLUGIN_HELLO) as Promise<Result<unknown>>)
+        (socket.timeout(ACK_TIMEOUT_MS).emitWithAck("hello", hello) as Promise<Result<unknown>>)
           .then((res) => {
             if (!res.ok) throw new Error(`${res.error.code}: ${res.error.message}`);
             helloResult = BridgeHelloResult.parse(res.data);
@@ -214,11 +218,12 @@ export async function startFakePlugin(opts: FakePluginOptions): Promise<FakePlug
     },
     reconnect(over = {}) {
       if (closed) return Promise.reject(new Error("fake plugin closed"));
+      if (over.token !== undefined || over.hello !== undefined) socket.disconnect();
       if (over.token !== undefined) {
-        socket.disconnect();
         token = over.token;
         socket.auth = { token };
       }
+      if (over.hello !== undefined) hello = over.hello;
       return connectAndHello();
     },
     close() {

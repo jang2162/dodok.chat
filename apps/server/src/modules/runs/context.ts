@@ -7,7 +7,7 @@ import {
   type Run,
   renderForAgent,
 } from "@dodok/shared";
-import { and, desc, eq, inArray, lt, lte } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lt, lte } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import type { DbOrTx } from "../../db/client";
 import { agents, channelMembers, componentInteractions, messages, users } from "../../db/schema.sqlite";
@@ -15,8 +15,11 @@ import { apiError } from "../../http/errors";
 import { channelParticipants, getChannel } from "../channels/service";
 import type { AgentSessionRow } from "../sessions/service";
 
-/** InboundContext.recentMessages 상한(계약 스펙 8.2) */
+/** InboundContext.recentMessages 상한(계약 스펙 8.2) — 스레드 최근 메시지도 같은 상한 */
 export const RECENT_MESSAGES_MAX = 20;
+
+/** 스레드 문맥에 싣는 루트 본문 상한(스펙 2.3) */
+export const THREAD_ROOT_TEXT_MAX = 4000;
 
 export type InboundTrigger = {
   message?: Message;
@@ -39,7 +42,8 @@ type AuthorRef = { authorType: string; authorId?: string | null | undefined };
 
 /**
  * 스펙 7장 — 서버가 채우는 인바운드. 메시지 트리거면 그 메시지 이전, 상호작용 트리거(interaction·continue)면 컴포넌트가
- * 달린 메시지까지의 normal 메시지를 recentMessages 로 싣는다. 계약을 어기면 InboundDeliver.parse 가 던진다.
+ * 달린 메시지까지의 normal 메시지를 싣는다 — 채널 런은 채널 최상위만 recentMessages 로, 스레드 런은 그 스레드 답글만
+ * context.thread 로(루트 따로, recentMessages 는 빈 배열 — 스펙 2.3). 계약을 어기면 InboundDeliver.parse 가 던진다.
  */
 export function buildInboundDeliver(db: DbOrTx, input: BuildInboundInput): InboundDeliver {
   const { run, trigger, session } = input;
@@ -98,6 +102,9 @@ export function buildInboundDeliver(db: DbOrTx, input: BuildInboundInput): Inbou
       and(
         eq(messages.channelId, run.channelId),
         eq(messages.kind, "normal"),
+        run.threadRootId === undefined
+          ? isNull(messages.threadRootId)
+          : eq(messages.threadRootId, run.threadRootId),
         recentUpTo.inclusive ? lte(messages.seq, recentUpTo.seq) : lt(messages.seq, recentUpTo.seq),
       ),
     )
@@ -105,7 +112,14 @@ export function buildInboundDeliver(db: DbOrTx, input: BuildInboundInput): Inbou
     .limit(RECENT_MESSAGES_MAX)
     .all()
     .reverse();
-  const authorOf = resolveAuthors(db, rows);
+  const root = run.threadRootId === undefined ? undefined : threadRootRow(db, run);
+  const authorOf = resolveAuthors(db, root ? [...rows, root] : rows);
+  const toContext = (r: (typeof rows)[number]) => ({
+    author: authorOf(r),
+    text: withPlaceholder(renderForAgent(r.bodyMd, participants), r.attachments),
+    ts: r.createdAt.toISOString(),
+  });
+  const rootLine = root ? toContext(root) : undefined;
 
   const override = db
     .select({ promptOverride: channelMembers.promptOverride })
@@ -125,14 +139,19 @@ export function buildInboundDeliver(db: DbOrTx, input: BuildInboundInput): Inbou
     channelId: run.channelId,
     agentId: agent.providerAgentId,
     sessionKey: session.sessionKey,
+    ...(run.threadRootId === undefined ? {} : { threadId: run.threadRootId }),
     runId: run.id,
     message,
     context: {
-      recentMessages: rows.map((r) => ({
-        author: authorOf(r),
-        text: withPlaceholder(renderForAgent(r.bodyMd, participants), r.attachments),
-        ts: r.createdAt.toISOString(),
-      })),
+      recentMessages: rootLine ? [] : rows.map(toContext),
+      ...(rootLine
+        ? {
+            thread: {
+              root: { ...rootLine, text: clip(rootLine.text, THREAD_ROOT_TEXT_MAX) },
+              recentMessages: rows.map(toContext),
+            },
+          }
+        : {}),
       participants: participants.map((p) => ({
         type: p.type,
         handle: p.handle,
@@ -145,6 +164,36 @@ export function buildInboundDeliver(db: DbOrTx, input: BuildInboundInput): Inbou
     },
     options: {},
   });
+}
+
+function threadRootRow(db: DbOrTx, run: Run) {
+  const root = db
+    .select({
+      authorType: messages.authorType,
+      authorId: messages.authorId,
+      bodyMd: messages.bodyMd,
+      attachments: messages.attachments,
+      createdAt: messages.createdAt,
+    })
+    .from(messages)
+    .where(
+      and(
+        eq(messages.id, run.threadRootId ?? ""),
+        eq(messages.channelId, run.channelId),
+        isNull(messages.threadRootId),
+      ),
+    )
+    .get();
+  if (!root) throw apiError("NOT_FOUND", "thread root not found");
+  return root;
+}
+
+/** max UTF-16 단위에서 자른다 — 서러게이트 쌍 가운데서 끊기면 앞 반쪽도 버린다 */
+function clip(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max);
+  const last = cut.charCodeAt(cut.length - 1);
+  return last >= 0xd800 && last <= 0xdbff ? cut.slice(0, -1) : cut;
 }
 
 /** 문맥 줄의 첨부 자리표시(스펙 4.5) — 경로·URL 은 쓰지 않는다(Gateway 가 프롬프트 속 이미지 경로를 자동 첨부한다) */

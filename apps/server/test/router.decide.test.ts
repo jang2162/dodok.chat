@@ -218,6 +218,104 @@ describe("decideRuns — 에이전트 메시지(릴레이)", () => {
   });
 });
 
+const ROOT = ID(50);
+/** 스레드 루트 — 작성자 종류만 바꿔 쓴다 */
+const rootMsg = (authorType: "user" | "agent", authorId: string): Message => ({
+  id: ROOT,
+  channelId: CH,
+  seq: 1,
+  kind: "normal",
+  authorType,
+  authorId,
+  bodyMd: "root",
+  mentions: { agents: [], users: [] },
+  attachments: [],
+  interactions: [],
+  createdAt: NOW,
+});
+const inThread = (m: Message): Message => ({ ...m, threadRootId: ROOT });
+
+describe("decideRuns — 스레드 답글(스펙 2.2)", () => {
+  it("사람 답글의 멘션 → 에이전트마다 그 스레드의 mention 런", () => {
+    const r = decideRuns(input({ message: inThread(userMsg([A, B])), threadRoot: rootMsg("user", USER) }));
+    expect(r.runs).toEqual([
+      { agentId: A, triggerKind: "mention", rootMessageId: ID(30), relayDepth: 0, threadRootId: ROOT },
+      { agentId: B, triggerKind: "mention", rootMessageId: ID(30), relayDepth: 0, threadRootId: ROOT },
+    ]);
+  });
+  it("멘션 없음 + 루트가 에이전트 메시지 → 그 에이전트(자동 응답 에이전트보다 먼저)", () => {
+    const r = decideRuns(
+      input({
+        message: inThread(userMsg([])),
+        threadRoot: rootMsg("agent", B),
+        members: [member(A, { autoRespond: true }), member(B)],
+      }),
+    );
+    expect(r.runs).toEqual([
+      { agentId: B, triggerKind: "auto_respond", rootMessageId: ID(30), relayDepth: 0, threadRootId: ROOT },
+    ]);
+  });
+  it("멘션 없음 + 루트 에이전트가 비활성·비소속 → 채널 자동 응답 에이전트", () => {
+    for (const setup of [
+      {
+        agents: [agent(A, "a"), agent(B, "b", false)],
+        members: [member(A, { autoRespond: true }), member(B)],
+      },
+      { agents: [agent(A, "a"), agent(B, "b")], members: [member(A, { autoRespond: true })] },
+    ]) {
+      const r = decideRuns(
+        input({ message: inThread(userMsg([])), threadRoot: rootMsg("agent", B), ...setup }),
+      );
+      expect(r.runs).toEqual([
+        { agentId: A, triggerKind: "auto_respond", rootMessageId: ID(30), relayDepth: 0, threadRootId: ROOT },
+      ]);
+    }
+  });
+  it("멘션 없음 + 사람 루트 → 채널 자동 응답 에이전트, 없으면 런 없음", () => {
+    const withAuto = decideRuns(
+      input({
+        message: inThread(userMsg([])),
+        threadRoot: rootMsg("user", USER),
+        members: [member(A), member(B, { autoRespond: true })],
+      }),
+    );
+    expect(withAuto.runs).toEqual([
+      { agentId: B, triggerKind: "auto_respond", rootMessageId: ID(30), relayDepth: 0, threadRootId: ROOT },
+    ]);
+    expect(
+      decideRuns(input({ message: inThread(userMsg([])), threadRoot: rootMsg("user", USER) })).runs,
+    ).toEqual([]);
+  });
+  it("멘션이 전부 비활성이면 루트 에이전트로도 폴백하지 않는다", () => {
+    const r = decideRuns(
+      input({
+        message: inThread(userMsg([C])),
+        threadRoot: rootMsg("agent", A),
+      }),
+    );
+    expect(r.runs).toEqual([]);
+  });
+  it("에이전트 답글의 멘션은 같은 스레드의 릴레이", () => {
+    const r = decideRuns(
+      input({ message: inThread(agentMsg(A, [B], "B야")), sourceRun: { ...run(A, 0), threadRootId: ROOT } }),
+    );
+    expect(r.runs).toEqual([
+      {
+        agentId: B,
+        triggerKind: "relay",
+        rootMessageId: ID(30),
+        relayDepth: 1,
+        relayHash: computeRelayHash(A, B, "B야"),
+        threadRootId: ROOT,
+      },
+    ]);
+  });
+  it("최상위 메시지의 런에는 threadRootId 가 없다", () => {
+    const r = decideRuns(input({ message: userMsg([A]) }));
+    expect(r.runs[0]).not.toHaveProperty("threadRootId");
+  });
+});
+
 describe("해시", () => {
   it("normalizeForHash: 토큰 제거, 공백 축약, 소문자, 앞 300자", () => {
     expect(normalizeForHash(`  Hello   <@a:${A}>  World\n\n`)).toBe("hello world");

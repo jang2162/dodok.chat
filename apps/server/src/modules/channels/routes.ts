@@ -6,7 +6,7 @@ import type { Auth } from "../../auth";
 import { requireSession, sessionUser } from "../../auth/routes";
 import type { Db } from "../../db/client";
 import { apiError } from "../../http/errors";
-import { parseBody, parseParams } from "../../http/validate";
+import { parseBody, parseParams, parseQuery } from "../../http/validate";
 import type { Logger } from "../../logger";
 import type { ServerBus } from "../../realtime/bus";
 import type { Orchestrator } from "../runs/orchestrator";
@@ -37,6 +37,8 @@ export type ChannelRouteContext = {
 const ChannelParams = z.object({ id: Id });
 const MemberParams = z.object({ id: Id, memberId: Id });
 const AgentParams = z.object({ id: Id, agentId: Id });
+/** 「새 대화」 — 스레드 루트를 주면 그 스레드 세션만(스펙 2.4) */
+const ResetQuery = z.object({ threadRootId: Id.optional() });
 
 const CreateChannelBody = Channel.pick({
   name: true,
@@ -145,8 +147,9 @@ export function registerChannelRoutes(fastify: FastifyInstance, ctx: ChannelRout
   /** 「새 대화」(스펙 3.4) — 409 CONFLICT(ADAPTER_CAPABILITY_MISSING)·503 ADAPTER_UNAVAILABLE 등은 서비스가 정한다 */
   fastify.post("/api/v1/channels/:id/agents/:agentId/reset", authed, async (request) => {
     const { id, agentId } = parseParams(AgentParams, request.params);
+    const { threadRootId } = parseQuery(ResetQuery, request.query);
     loadChannel(sessionUser(request).workspaceId, id);
-    await resetAgentSession(ctx, { channelId: id, agentId });
+    await resetAgentSession(ctx, { channelId: id, agentId, threadRootId });
     return { ok: true };
   });
 }

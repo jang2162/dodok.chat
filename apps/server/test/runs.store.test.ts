@@ -14,6 +14,7 @@ import {
   listOpenRuns,
   listRunEvents,
   listRunMessageIds,
+  toRunState,
   updateRun,
 } from "../src/modules/runs/store";
 import { ServerBus } from "../src/realtime/bus";
@@ -40,6 +41,16 @@ function setup() {
 }
 
 describe("runs store", () => {
+  it("스레드 런은 thread_root_id 를 저장하고 Run·RunState 가 싣는다", () => {
+    const { newRun, db } = setup();
+    const threadRootId = uuid();
+    const run = newRun({ threadRootId });
+    expect(run.threadRootId).toBe(threadRootId);
+    expect(getRun(db, run.id)?.threadRootId).toBe(threadRootId);
+    expect(toRunState(run).threadRootId).toBe(threadRootId);
+    expect(newRun()).not.toHaveProperty("threadRootId", expect.anything());
+  });
+
   it("insertRun 은 queued 행을 만들고 getRun·updateRun 이 Run 도메인으로 돌려준다", () => {
     const { db, newRun, channelId, agentId, sessionKey } = setup();
     const triggerInteractionId = uuid();

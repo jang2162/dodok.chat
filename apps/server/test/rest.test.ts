@@ -182,6 +182,23 @@ describe("REST /api/v1 (FakeAdapter)", () => {
     ).toBe(400);
   });
 
+  it("POST /agents 는 providerAgentId 를 세션 키 규칙(OpenClaw agentId)으로 검증한다 — 밖이면 400 VALIDATION", async () => {
+    for (const providerAgentId of ["dev:main", "dev main", "-dev", "개발", "a".repeat(65)]) {
+      const res = await api("POST", "/agents", { providerAgentId, handle: "rest-badid", name: "x" });
+      expect(res.statusCode).toBe(400);
+      expect(res.json()).toMatchObject({
+        code: "VALIDATION",
+        message: expect.stringContaining("providerAgentId"),
+      });
+    }
+    const ok = await api("POST", "/agents", {
+      providerAgentId: "dev_main-2",
+      handle: "rest-goodid",
+      name: "x",
+    });
+    expect(ok.statusCode).toBe(201);
+  });
+
   it("핸들 충돌과 providerAgentId 충돌은 CONFLICT details.field 로 갈린다", async () => {
     const agent = await newAgent("rest-field");
     const dupHandle = await api("POST", "/agents", {

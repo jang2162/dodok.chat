@@ -1,3 +1,4 @@
+import { dodokSessionKey } from "@dodok/shared";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import type { AgentAdapter } from "../../adapters/types";
@@ -7,14 +8,16 @@ import { apiError } from "../../http/errors";
 
 export type AgentSessionRow = typeof agentSessions.$inferSelect;
 
-export type EnsureSessionInput = { channelId: string; agentId: string };
+/** threadRootId 가 있으면 그 스레드의 하위 세션(ADR 0006), 없으면 채널 세션 */
+export type EnsureSessionInput = { channelId: string; agentId: string; threadRootId?: string | undefined };
 
 /** 어댑터 resetSession 응답 그대로 */
 export type SessionResetInfo = { sessionStartedAt?: string; lifecycleRevision?: string };
 
 /**
  * 스펙 3.9 — 디스패치 직전에 부른다. 행이 없으면 현재 채널 promptRevision 으로 만든다(첫 턴은 설정 경로가 이미
- * 프롬프트를 담으므로 동봉하지 않는다). 세션 시작 뒤 리비전이 올랐으면 needsPromptContext.
+ * 프롬프트를 담으므로 동봉하지 않는다). 세션 시작 뒤 리비전이 올랐으면 needsPromptContext. 리비전은 스레드 세션 행별로 기억한다(스펙 2.3).
+ * providerAgentId 가 세션 키 규칙 밖이면 던진다 — 행을 만들지 않는다.
  */
 export function ensureSession(
   db: Db,
@@ -30,7 +33,7 @@ export function ensureSession(
         and(
           eq(agentSessions.channelId, input.channelId),
           eq(agentSessions.agentId, input.agentId),
-          isNull(agentSessions.threadRootId),
+          sameThread(input.threadRootId),
         ),
       )
       .get();
@@ -42,7 +45,12 @@ export function ensureSession(
           id: uuidv7(),
           channelId: input.channelId,
           agentId: input.agentId,
-          sessionKey: adapter.sessionKeyFor(providerAgentIdOf(tx, input.agentId), input.channelId),
+          threadRootId: input.threadRootId ?? null,
+          sessionKey: adapter.sessionKeyFor(
+            providerAgentIdOf(tx, input.agentId),
+            input.channelId,
+            input.threadRootId,
+          ),
           promptRevisionAtStart: promptRevision,
         })
         .returning()
@@ -54,12 +62,14 @@ export function ensureSession(
 /**
  * 우리 resetSession 이 성공한 뒤 부른다 — 새 세션은 현재 채널 프롬프트를 설정 경로로 받으므로 리비전을 맞춘다.
  * 응답에 없는 sessionStartedAt·lifecycleRevision 은 null(옛 세션 값을 남기지 않는다). 행이 없으면 만든다.
+ * threadRootId 가 있으면 그 스레드 세션 행만 바꾼다.
  */
 export function markSessionReset(
   db: Db,
   channelId: string,
   agentId: string,
   reset: SessionResetInfo,
+  threadRootId?: string,
 ): AgentSessionRow {
   return db.transaction((tx) => {
     const now = new Date();
@@ -69,29 +79,38 @@ export function markSessionReset(
       lifecycleRevision: reset.lifecycleRevision ?? null,
       lastSyncedAt: now,
     };
-    // 채널 세션 부분 유일 인덱스(agent_sessions_channel_session)를 고른다 — targetWhere 가 인덱스 조건과 같아야 SQLite 가 받는다
-    return tx
-      .insert(agentSessions)
-      .values({
-        id: uuidv7(),
-        channelId,
-        agentId,
-        sessionKey: canonicalSessionKey(providerAgentIdOf(tx, agentId), channelId),
-        ...fields,
-      })
-      .onConflictDoUpdate({
-        target: [agentSessions.channelId, agentSessions.agentId],
-        targetWhere: sql`thread_root_id IS NULL`,
-        set: fields,
-      })
+    const row = {
+      id: uuidv7(),
+      channelId,
+      agentId,
+      threadRootId: threadRootId ?? null,
+      sessionKey: dodokSessionKey(providerAgentIdOf(tx, agentId), channelId, threadRootId),
+      ...fields,
+    };
+    // 스레드 행은 3열 유일 인덱스, 채널 행은 부분 유일 인덱스(agent_sessions_channel_session) — 채널 쪽은 targetWhere 가
+    // 인덱스 조건과 같아야 SQLite 가 받는다
+    const upsert = tx.insert(agentSessions).values(row);
+    return (
+      threadRootId === undefined
+        ? upsert.onConflictDoUpdate({
+            target: [agentSessions.channelId, agentSessions.agentId],
+            targetWhere: sql`thread_root_id IS NULL`,
+            set: fields,
+          })
+        : upsert.onConflictDoUpdate({
+            target: [agentSessions.channelId, agentSessions.agentId, agentSessions.threadRootId],
+            set: fields,
+          })
+    )
       .returning()
       .get();
   });
 }
 
-/** 어댑터 sessionKeyFor 와 같은 원형(계획서 #19, 스펙 6.5). 어댑터를 받지 않는 markSessionReset 이 행을 만들 때만 쓴다. */
-function canonicalSessionKey(providerAgentId: string, channelId: string): string {
-  return `agent:${providerAgentId}:dodok:channel:${channelId}`;
+function sameThread(threadRootId: string | undefined) {
+  return threadRootId === undefined
+    ? isNull(agentSessions.threadRootId)
+    : eq(agentSessions.threadRootId, threadRootId);
 }
 
 function currentPromptRevision(db: DbOrTx, channelId: string): number {

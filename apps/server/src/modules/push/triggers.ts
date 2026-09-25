@@ -13,11 +13,17 @@ export type PushTarget = { userId: string; payload: PushPayload };
 
 const TITLE = "dodok";
 const channelLabel = (l: TriggerLookups, id: string) => l.channelName(id) ?? "채널";
+/** 스레드 안 메시지면 「#채널 스레드」, 누르면 그 스레드(웹 /c/<id>/t/<rootId>) */
+const placeOf = (l: TriggerLookups, m: Message) =>
+  m.threadRootId === undefined
+    ? { label: `#${channelLabel(l, m.channelId)}`, url: `/c/${m.channelId}` }
+    : { label: `#${channelLabel(l, m.channelId)} 스레드`, url: `/c/${m.channelId}/t/${m.threadRootId}` };
 
 export function targetsForMessage(m: Message, l: TriggerLookups): PushTarget[] {
   if (m.kind === "system") {
     if (m.systemMeta?.kind !== "relay_limit") return [];
-    const body = `#${channelLabel(l, m.channelId)}의 에이전트 대화가 한도에 닿았습니다`;
+    const place = placeOf(l, m);
+    const body = `${place.label}의 에이전트 대화가 한도에 닿았습니다`;
     return l.humanMembers(m.channelId).map((userId) => ({
       userId,
       payload: {
@@ -25,7 +31,7 @@ export function targetsForMessage(m: Message, l: TriggerLookups): PushTarget[] {
         channelId: m.channelId,
         title: TITLE,
         body,
-        url: `/c/${m.channelId}`,
+        url: place.url,
         tag: `relay:${m.channelId}`,
       },
     }));
@@ -42,7 +48,10 @@ export function targetsForMessage(m: Message, l: TriggerLookups): PushTarget[] {
         ? l.agentHandle(m.authorId)
         : l.userHandle(m.authorId);
   const who = author ? `@${author}${josa(author, "이", "가")}` : "누군가가";
-  const body = `${who} #${channelLabel(l, m.channelId)}에서 불렀습니다`;
+  const place = placeOf(l, m);
+  const body = `${who} ${place.label}에서 불렀습니다`;
+  // 같은 tag 는 푸시 서비스가 바꿔 끼운다 — 스레드마다 따로 둔다(80자 상한이라 채널 id 는 빼고 루트 id 만)
+  const tag = m.threadRootId === undefined ? `mention:${m.channelId}` : `mention:t:${m.threadRootId}`;
   return receivers.map((userId) => ({
     userId,
     payload: {
@@ -50,8 +59,8 @@ export function targetsForMessage(m: Message, l: TriggerLookups): PushTarget[] {
       channelId: m.channelId,
       title: TITLE,
       body,
-      url: `/c/${m.channelId}`,
-      tag: `mention:${m.channelId}`,
+      url: place.url,
+      tag,
     },
   }));
 }

@@ -1,3 +1,4 @@
+import type { BridgeHello } from "@dodok/shared";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -28,6 +29,8 @@ export type LiveAppOptions = FakeGatewayOptions & {
   env?: Record<string, string>;
   /** 오케스트레이터 상한을 실제 시계로 잴 만큼 줄인다 — `deps.timeouts` 위에 덮는다 */
   timeouts?: Partial<RunTimeouts>;
+  /** 가짜 플러그인 hello — 옛 플러그인(스레드 모름)을 흉내 낼 때 */
+  pluginHello?: BridgeHello;
 };
 
 const CONNECT_TIMEOUT_MS = 5_000;
@@ -85,7 +88,11 @@ export async function bootLiveApp(opts: LiveAppOptions = {}): Promise<LiveApp> {
       },
     );
     await app.fastify.listen({ host: "127.0.0.1", port: 0 });
-    plugin = await startFakePlugin({ bridgeUrl: app.url, token: testEnv.BRIDGE_TOKEN as string });
+    plugin = await startFakePlugin({
+      bridgeUrl: app.url,
+      token: testEnv.BRIDGE_TOKEN as string,
+      ...(opts.pluginHello === undefined ? {} : { hello: opts.pluginHello }),
+    });
     await waitForAdapterConnected(app);
     const auth = await login(app);
     return { app, gateway, plugin, auth, dir, close };

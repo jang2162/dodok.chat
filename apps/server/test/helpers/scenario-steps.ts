@@ -138,13 +138,14 @@ export async function sendMessage(
   socket: WireClient,
   channelId: string,
   bodyMd: string,
-  opts: { attachments?: string[]; clientMsgId?: string } = {},
+  opts: { attachments?: string[]; clientMsgId?: string; threadRootId?: string } = {},
 ): Promise<Message> {
   const res = await socket.emitWithAck("message.send", {
     channelId,
     clientMsgId: opts.clientMsgId ?? randomUUID(),
     bodyMd,
     ...(opts.attachments === undefined ? {} : { attachments: opts.attachments }),
+    ...(opts.threadRootId === undefined ? {} : { threadRootId: opts.threadRootId }),
   });
   if (!res.ok) throw new Error(`message.send 실패: ${res.error.code} ${res.error.message}`);
   return res.data.message;

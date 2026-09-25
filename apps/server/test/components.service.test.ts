@@ -633,3 +633,119 @@ describe("components service — interact", () => {
     expect(t.interactionRows()).toEqual([]);
   });
 });
+
+describe("components service — 스레드 안의 카드(스펙 2.2)", () => {
+  function threadSetup() {
+    const t = setup();
+    const root = createUserMessage(t.db, t.bus, {
+      channelId: t.channel.id,
+      authorId: t.userId,
+      bodyMd: "루트",
+      clientMsgId: "root",
+    });
+    return { ...t, root };
+  }
+
+  it("스레드 안 에이전트 카드 → 그 스레드의 interaction 런", async () => {
+    const t = threadSetup();
+    const card = createAgentMessage(t.db, t.bus, {
+      channelId: t.channel.id,
+      agentId: t.dev.id,
+      runId: t.runOf(t.dev).id,
+      externalId: "thread-card",
+      bodyMd: "골라 주세요",
+      components: PICKER,
+      threadRootId: t.root.id,
+    });
+    await interact(t.deps, t.click(card, "go"));
+    expect(t.enqueue.mock.calls[0]?.[0]).toMatchObject({
+      agentId: t.dev.id,
+      triggerKind: "interaction",
+      threadRootId: t.root.id,
+    });
+  });
+
+  it("스레드 안 relay_limit 의 이어가기 → 그 스레드의 continue 런", async () => {
+    const t = threadSetup();
+    const limit = createSystemMessage(t.db, t.bus, {
+      channelId: t.channel.id,
+      threadRootId: t.root.id,
+      kind: "relay_limit",
+      bodyMd: "한도",
+      systemMeta: {
+        kind: "relay_limit",
+        relay: { fromAgentId: t.dev.id, toAgentId: t.fin.id, sourceRunId: uuid(), rootMessageId: uuid() },
+      },
+      components: {
+        blocks: [{ type: "actions", items: [{ type: "button", id: "continue_relay", label: "이어가기" }] }],
+      },
+    });
+    await interact(t.deps, t.click(limit, "continue_relay"));
+    expect(t.enqueue.mock.calls[0]?.[0]).toMatchObject({
+      agentId: t.fin.id,
+      triggerKind: "continue",
+      threadRootId: t.root.id,
+    });
+  });
+
+  it("스레드 런의 다시 실행 → 원래 런의 스레드", async () => {
+    const t = threadSetup();
+    const trigger = createUserMessage(t.db, t.bus, {
+      channelId: t.channel.id,
+      authorId: t.userId,
+      bodyMd: "@dev 해줘",
+      clientMsgId: "t1",
+      threadRootId: t.root.id,
+    });
+    const run = insertRun(t.db, {
+      channelId: t.channel.id,
+      agentId: t.dev.id,
+      triggerKind: "mention",
+      triggerMessageId: trigger.id,
+      rootMessageId: trigger.id,
+      relayDepth: 0,
+      sessionKey: "k",
+      threadRootId: t.root.id,
+      createdAt: new Date(),
+    });
+    updateRun(t.db, run.id, { status: "error", error: { code: "PLUGIN_OUTDATED", message: "p" } });
+    const notice = createSystemMessage(t.db, t.bus, {
+      channelId: t.channel.id,
+      threadRootId: t.root.id,
+      kind: "run_error",
+      bodyMd: "실패",
+      systemMeta: { kind: "run_error", runId: run.id },
+      components: {
+        blocks: [{ type: "actions", items: [{ type: "button", id: "retry_run", label: "다시 실행" }] }],
+      },
+    });
+    await interact(t.deps, t.click(notice, "retry_run"));
+    expect(t.enqueue.mock.calls[0]?.[0]).toMatchObject({
+      agentId: t.dev.id,
+      parentRunId: run.id,
+      threadRootId: t.root.id,
+    });
+  });
+
+  it("스레드 안 카드가 한도에 막히면 run_limit 알림도 그 스레드에", async () => {
+    const t = threadSetup();
+    patchOpsSettings(t.db, t.workspaceId, { dailyRunLimit: 1 });
+    const card = createAgentMessage(t.db, t.bus, {
+      channelId: t.channel.id,
+      agentId: t.dev.id,
+      runId: t.runOf(t.dev).id, // 오늘 런 1개
+      externalId: "thread-card-2",
+      bodyMd: "골라 주세요",
+      components: PICKER,
+      threadRootId: t.root.id,
+    });
+    await expect(interact(t.deps, t.click(card, "go"))).rejects.toMatchObject({
+      body: { code: "RUN_LIMIT" },
+    });
+    const notices = listMessages(t.db, t.channel.id, {
+      limit: 50,
+      scope: { threadRootId: t.root.id },
+    }).messages.filter((m) => m.systemMeta?.kind === "run_limit");
+    expect(notices).toHaveLength(1);
+  });
+});

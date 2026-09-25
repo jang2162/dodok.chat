@@ -201,6 +201,7 @@ export function createScenario(opts: {
       channelId,
       agentId,
       sessionKey,
+      ...(delivery.threadId === undefined ? {} : { threadId: delivery.threadId }),
       text: script.reply,
       components: script.components,
       attachmentIds: [...uploaded.map((a) => a.id), ...(script.attachmentIds ?? [])],

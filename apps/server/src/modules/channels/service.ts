@@ -11,7 +11,7 @@ import { parseStored } from "../../http/validate";
 import type { Logger } from "../../logger";
 import type { ServerBus } from "../../realtime/bus";
 import { getAgent } from "../agents/service";
-import { createSystemMessage } from "../messages/service";
+import { createSystemMessage, getThreadRoot } from "../messages/service";
 import type { Orchestrator } from "../runs/orchestrator";
 import { ensureSession, markSessionReset } from "../sessions/service";
 
@@ -339,14 +339,19 @@ export type ResetAgentSessionDeps = {
 
 /**
  * 스펙 3.4 「새 대화」 — 채널의 에이전트 멤버만. capability 확인 → 그 세션의 진행 런 abort → Gateway sessions.reset →
- * agent_sessions 리비전·시작 시각 → info 시스템 메시지. Gateway 리셋은 되돌릴 수 없어서 그 뒤 DB 쓰기가 실패하면 500 이고
+ * agent_sessions 리비전·시작 시각 → info 시스템 메시지. threadRootId 가 있으면 그 스레드 세션만 — 채널 세션·다른 스레드는
+ * 그대로이고 info 도 그 스레드에 남는다(스펙 2.4). 이 채널의 루트가 아니면 404. Gateway 리셋은 되돌릴 수 없어서 그 뒤 DB 쓰기가 실패하면 500 이고
  * 세션 행은 옛 리비전으로 남는다(다음 턴이 channelPrompt 를 한 번 더 싣는 정도).
  */
 export async function resetAgentSession(
   deps: ResetAgentSessionDeps,
-  input: { channelId: string; agentId: string },
+  input: { channelId: string; agentId: string; threadRootId?: string | undefined },
 ): Promise<void> {
   const { db, adapter, orchestrator } = deps;
+  const { threadRootId } = input;
+  if (threadRootId !== undefined && !getThreadRoot(db, input.channelId, threadRootId)) {
+    throw apiError("NOT_FOUND", "thread not found");
+  }
   const member = listMembers(db, input.channelId).some(
     (m) => m.memberType === "agent" && m.memberId === input.agentId,
   );
@@ -354,9 +359,12 @@ export async function resetAgentSession(
   if (!adapter.capabilities().sessionReset) throw capabilityMissing();
   // markSessionReset 이 행을 만들며 키를 따로 조립하지 않게, 세션 행을 먼저 보장하고 그 키로 리셋한다(sc-t7 걱정 1)
   const { session } = ensureSession(db, adapter, input);
-  // 세션은 (채널, 에이전트)당 하나 — 그 에이전트의 미종료 런이 곧 이 세션의 런이다. 옛 세션에서 먼저 멈춘다.
-  // 대기 런(뒤)부터 거꾸로 닫는다 — 진행 런을 먼저 닫으면 pump 가 다음 대기 런을 Gateway 로 보내 버린다(sc-t12 리뷰 R1)
-  const mine = orchestrator.activeRuns(input.channelId).filter((run) => run.agentId === input.agentId);
+  // 세션은 (채널, 에이전트, 스레드)당 하나 — 그 에이전트의 같은 스레드(채널이면 스레드 없음) 미종료 런이 곧 이 세션의 런이다.
+  // 옛 세션에서 먼저 멈춘다. 대기 런(뒤)부터 거꾸로 닫는다 — 진행 런을 먼저 닫으면 pump 가 다음 대기 런을 Gateway 로
+  // 보내 버린다(sc-t12 리뷰 R1)
+  const mine = orchestrator
+    .activeRuns(input.channelId)
+    .filter((run) => run.agentId === input.agentId && run.threadRootId === threadRootId);
   for (const run of mine.reverse()) await orchestrator.abort(run.id);
   let reset: Awaited<ReturnType<AgentAdapter["resetSession"]>>;
   try {
@@ -367,10 +375,11 @@ export async function resetAgentSession(
     if (err.code === "FORBIDDEN") throw capabilityMissing();
     throw apiError(err.code, err.message);
   }
-  markSessionReset(db, input.channelId, input.agentId, reset);
+  markSessionReset(db, input.channelId, input.agentId, reset, threadRootId);
   const handle = getAgent(db, input.agentId)?.handle ?? "unknown";
   createSystemMessage(db, deps.bus, {
     channelId: input.channelId,
+    ...(threadRootId === undefined ? {} : { threadRootId }),
     kind: "info",
     bodyMd: `@${handle} 의 대화를 새로 시작했습니다`,
     systemMeta: { kind: "info" },

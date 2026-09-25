@@ -6,7 +6,7 @@ import { v7 as uuid } from "uuid";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RunEventBody } from "../src/adapters/types";
 import type { DbOrTx } from "../src/db/client";
-import { attachments, componentInteractions, messages } from "../src/db/schema.sqlite";
+import { agents, attachments, componentInteractions, messages } from "../src/db/schema.sqlite";
 import { addMember, createChannel } from "../src/modules/channels/service";
 import { createUserMessage, getMessage, rowToMessage } from "../src/modules/messages/service";
 import type { RunPlan } from "../src/modules/router/decide";
@@ -70,12 +70,13 @@ function setup(opts: { timeouts?: Partial<RunTimeouts>; approvals?: Orchestrator
   });
 
   let n = 0;
-  const say = (bodyMd = "@dev 안녕", at: Ids = ids) =>
+  const say = (bodyMd = "@dev 안녕", at: Ids = ids, threadRootId?: string) =>
     createUserMessage(db, bus, {
       channelId: at.channelId,
       authorId: at.userId,
       bodyMd,
       clientMsgId: `c${++n}`,
+      threadRootId,
     });
   const enqueue = (message: Message = say(), plan: Partial<RunPlan & { channelId: string }> = {}) =>
     orch.enqueueRun(
@@ -1740,6 +1741,153 @@ describe("orchestrator", () => {
       expect(lines(t.logger.warn, "run closed by timeout")).toEqual([]);
       t.orch.stop();
     });
+  });
+
+  describe("스레드 런", () => {
+    /** 루트와 그 스레드 답글 @dev 로 스레드 런 하나 */
+    async function threadRun(t: ReturnType<typeof setup>) {
+      const root = t.say("루트");
+      const reply = t.say("@dev 스레드", t, root.id);
+      const run = await t.enqueue(reply, { threadRootId: root.id });
+      return { root, reply, run };
+    }
+
+    it("스레드 세션 키·threadRootId 로 런을 만들고 인바운드에 threadId 를 싣는다 — 정본은 그 스레드에 저장", async () => {
+      const t = setup();
+      const { root, run } = await threadRun(t);
+      await t.flush();
+      const threadKey = `${t.sessionKey}:thread:${root.id}`;
+      expect(run).toMatchObject({ sessionKey: threadKey, threadRootId: root.id });
+      expect(t.states[0]).toMatchObject({ id: run.id, threadRootId: root.id });
+      expect(t.adapter.calls.send).toEqual([
+        expect.objectContaining({ runId: run.id, sessionKey: threadKey, threadId: root.id }),
+      ]);
+      const { messageId } = await t.orch.onCanonical(
+        t.outbound({ runId: run.id, sessionKey: threadKey, threadId: root.id }),
+      );
+      expect(getMessage(t.db, messageId ?? "")).toMatchObject({ runId: run.id, threadRootId: root.id });
+      t.orch.stop();
+    });
+
+    it("채널 런과 스레드 런은 세션 큐가 달라 동시에 send 된다", async () => {
+      const t = setup();
+      const channelRun = await t.enqueue();
+      const { run } = await threadRun(t);
+      await t.flush();
+      expect(t.adapter.calls.send.map((d) => d.runId)).toEqual([channelRun.id, run.id]);
+      t.orch.stop();
+    });
+
+    it("붙은 플러그인이 스레드를 모르면 send 없이 PLUGIN_OUTDATED — 스레드에 run_error 카드(다시 실행), 채널 런은 정상", async () => {
+      const t = setup();
+      t.adapter.setPluginCapabilities(["run_id_in_outbound", "config.set"]);
+      const { root, run } = await threadRun(t);
+      const channelRun = await t.enqueue();
+      await t.flush();
+      expect(t.runOf(run.id)).toMatchObject({ status: "error", error: { code: "PLUGIN_OUTDATED" } });
+      expect(t.adapter.calls.send.map((d) => d.runId)).toEqual([channelRun.id]);
+      expect(systemMessages(t.db)).toEqual([
+        expect.objectContaining({
+          threadRootId: root.id,
+          bodyMd: "@dev 가 스레드에서 답하지 못했습니다 — 플러그인을 새로 설치해야 합니다(연결 페이지)",
+          systemMeta: { kind: "run_error", runId: run.id },
+          components: expect.objectContaining({
+            blocks: [expect.objectContaining({ items: [expect.objectContaining({ id: "retry_run" })] })],
+          }),
+        }),
+      ]);
+      t.orch.stop();
+    });
+
+    it("붙은 플러그인이 없으면 PLUGIN_OUTDATED 로 단정하지 않고 보낸다(어댑터가 플러그인을 기다린다)", async () => {
+      const t = setup();
+      t.adapter.setPluginCapabilities([]);
+      t.adapter.setSetupDetail({
+        ...t.adapter.setupDetail(),
+        bridge: { state: "down", plugin: null },
+      });
+      const { run } = await threadRun(t);
+      await t.flush();
+      expect(t.adapter.calls.send.map((d) => d.runId)).toEqual([run.id]);
+      expect(t.runOf(run.id).status).toBe("queued");
+      t.orch.stop();
+    });
+
+    it("정본의 threadId 가 세션 키·런의 스레드와 다르면 저장하지 않고 VALIDATION·warn", async () => {
+      const t = setup();
+      const { root, run } = await threadRun(t);
+      await t.flush();
+      const threadKey = `${t.sessionKey}:thread:${root.id}`;
+      const other = t.say("다른 루트");
+      const cases: Partial<OutboundMessage>[] = [
+        { runId: run.id, sessionKey: threadKey }, // threadId 없음
+        { runId: run.id, sessionKey: threadKey, threadId: other.id }, // 키와 다름
+        { runId: run.id, sessionKey: `${t.sessionKey}:thread:${other.id}`, threadId: other.id }, // 런의 스레드와 다름
+        { runId: run.id, sessionKey: t.sessionKey }, // 스레드 런에 채널 키
+      ];
+      for (const over of cases) {
+        await expect(t.orch.onCanonical(t.outbound(over))).rejects.toMatchObject({
+          body: { code: "VALIDATION" },
+        });
+      }
+      expect(t.db.select().from(messages).where(eq(messages.kind, "normal")).all()).toHaveLength(3);
+      expect(t.logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ runId: run.id }),
+        "canonical thread mismatch — rejected",
+      );
+      expect(t.runOf(run.id).hasCanonical).toBe(false);
+      t.orch.stop();
+    });
+
+    it("채널 런에 스레드 정본이 오면 거절한다", async () => {
+      const t = setup();
+      const run = await t.enqueue();
+      await t.flush();
+      const root = t.say("루트");
+      await expect(
+        t.orch.onCanonical(
+          t.outbound({ runId: run.id, sessionKey: `${t.sessionKey}:thread:${root.id}`, threadId: root.id }),
+        ),
+      ).rejects.toMatchObject({ body: { code: "VALIDATION" } });
+      t.orch.stop();
+    });
+
+    it("finalizing 상한의 스냅샷 메시지도 런의 스레드에 저장한다", async () => {
+      const t = setup();
+      const { root, run } = await threadRun(t);
+      await t.flush();
+      t.adapter.emit({ kind: "run_signal", runId: run.id, signal: { kind: "gateway_started" } });
+      t.adapter.emit({
+        kind: "run_signal",
+        runId: run.id,
+        signal: { kind: "gateway_final" },
+        snapshotText: "스냅샷 답",
+      });
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(t.runOf(run.id)).toMatchObject({ status: "done", finalSource: "gateway" });
+      const stored = t.db.select().from(messages).where(eq(messages.runId, run.id)).all().map(rowToMessage);
+      expect(stored).toEqual([expect.objectContaining({ bodyMd: "스냅샷 답", threadRootId: root.id })]);
+      t.orch.stop();
+    });
+  });
+
+  it("저장된 providerAgentId 가 세션 키 규칙 밖이면 런을 만들어 곧바로 error(INVALID_AGENT_ID) — 사유 있는 run_error 카드, send 없음", async () => {
+    const t = setup();
+    t.db.update(agents).set({ providerAgentId: "dev:main" }).where(eq(agents.id, t.agentId)).run();
+    const run = await t.enqueue();
+    await t.flush();
+    expect(t.runOf(run.id)).toMatchObject({ status: "error", error: { code: "INVALID_AGENT_ID" } });
+    expect(t.adapter.calls.send).toEqual([]);
+    expect(t.eventsOf(run.id).map((e) => e.type)).toEqual(["RUN_QUEUED", "STATE_SNAPSHOT", "RUN_ERROR"]);
+    expect(systemMessages(t.db)).toEqual([
+      expect.objectContaining({
+        bodyMd:
+          "@dev 실행이 실패했습니다: OpenClaw 에이전트 id 가 세션 키 규칙(영문·숫자·_·-)에 맞지 않습니다 — 올바른 id 로 에이전트를 다시 등록하세요",
+        systemMeta: { kind: "run_error", runId: run.id },
+      }),
+    ]);
+    expect(systemMessages(t.db)[0]?.components).toBeUndefined();
+    t.orch.stop();
   });
 
   it("usage CUSTOM 은 저장하지 않고 runs.usage 를 갱신하고, 어댑터 status 는 bus adapter.status 로", async () => {

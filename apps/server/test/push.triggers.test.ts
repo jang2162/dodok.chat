@@ -204,3 +204,51 @@ describe("targetsForApproval (스펙 5.2 둘째 줄)", () => {
     expect(targetsForApproval(approval({ channelId: GHOST }), L)).toEqual([]);
   });
 });
+
+describe("targetsForMessage — 스레드(스펙 4.2 푸시)", () => {
+  const ROOT = "0199a000-0000-7000-8000-00000000f00d";
+
+  it("스레드 멘션 → 「스레드에서 불렀습니다」, 링크는 그 스레드, tag 는 스레드마다", () => {
+    const t = targetsForMessage(
+      msg({
+        authorType: "agent",
+        authorId: DEV,
+        threadRootId: ROOT,
+        mentions: { users: [ALICE], agents: [] },
+      }),
+      L,
+    );
+    expect(t).toEqual([
+      {
+        userId: ALICE,
+        payload: {
+          kind: "mention",
+          channelId: CH,
+          title: "dodok",
+          body: "@dev가 #프로젝트 스레드에서 불렀습니다",
+          url: `/c/${CH}/t/${ROOT}`,
+          tag: `mention:t:${ROOT}`,
+        },
+      },
+    ]);
+    for (const x of t) expect(PushPayload.safeParse(x.payload).success).toBe(true);
+  });
+
+  it("스레드 안 relay_limit → 스레드 문구·링크", () => {
+    const t = targetsForMessage(
+      msg({
+        kind: "system",
+        authorType: "system",
+        authorId: undefined,
+        threadRootId: ROOT,
+        systemMeta: { kind: "relay_limit" },
+      }),
+      L,
+    );
+    expect(t.map((x) => [x.payload.body, x.payload.url])).toEqual([
+      ["#프로젝트 스레드의 에이전트 대화가 한도에 닿았습니다", `/c/${CH}/t/${ROOT}`],
+      ["#프로젝트 스레드의 에이전트 대화가 한도에 닿았습니다", `/c/${CH}/t/${ROOT}`],
+    ]);
+    for (const x of t) expect(PushPayload.safeParse(x.payload).success).toBe(true);
+  });
+});

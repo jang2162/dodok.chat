@@ -15,8 +15,11 @@ export type LimitHit = { scope: "channel" | "workspace"; limit: number };
 
 /** 런을 만드는 모든 경로(라우터·컴포넌트 상호작용·다시 실행)가 지나는 일일 런 수 관문(스펙 3.2) */
 export interface RunGate {
-  /** 한도 안이면 null. 넘으면 LimitHit — 그 채널에 오늘 같은 scope 의 run_limit 시스템 메시지가 없으면 남기고 사건 run_limit 을 기록한다 */
-  check(channelId: string): LimitHit | null;
+  /**
+   * 한도 안이면 null. 넘으면 LimitHit — 그 채널에 오늘 같은 scope 의 run_limit 시스템 메시지가 없으면 남기고 사건 run_limit 을 기록한다.
+   * 스레드에서 막혔으면 알림은 그 스레드에 남는다(하루 한 번은 채널 단위 그대로)
+   */
+  check(channelId: string, threadRootId?: string): LimitHit | null;
   /** check 가 null 이면 orchestrator.enqueueRun, 아니면 null */
   enqueue(plan: RunPlan & { channelId: string }, trigger: EnqueueTrigger): Promise<Run | null>;
 }
@@ -63,7 +66,7 @@ export function createRunGate(deps: {
     return row !== undefined;
   }
 
-  function check(channelId: string): LimitHit | null {
+  function check(channelId: string, threadRootId?: string): LimitHit | null {
     const at = now();
     const hit = hitOf(channelId, at);
     if (!hit) return null;
@@ -71,6 +74,7 @@ export function createRunGate(deps: {
       const prefix = hit.scope === "channel" ? "이 채널의 " : "";
       createSystemMessage(db, bus, {
         channelId,
+        ...(threadRootId === undefined ? {} : { threadRootId }),
         kind: "run_limit",
         bodyMd: `${prefix}오늘 런 한도(${hit.limit})에 도달했습니다 — 내일 0시에 풀립니다`,
         systemMeta: { kind: "run_limit", limit: hit },
@@ -89,7 +93,7 @@ export function createRunGate(deps: {
   return {
     check,
     async enqueue(plan, trigger) {
-      if (check(plan.channelId)) return null;
+      if (check(plan.channelId, plan.threadRootId)) return null;
       return deps.enqueue(plan, trigger);
     },
   };

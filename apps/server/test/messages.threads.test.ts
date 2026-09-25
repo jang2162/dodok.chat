@@ -1,5 +1,5 @@
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
-import { Message } from "@dodok/shared";
+import { dodokSessionKey, Message } from "@dodok/shared";
 import { sql } from "drizzle-orm";
 import { v7 as uuid } from "uuid";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -17,8 +17,6 @@ import {
   threadRootsOf,
   threadSummaryOf,
 } from "../src/modules/messages/service";
-import type { RunPlan } from "../src/modules/router/decide";
-import { createRouter } from "../src/modules/router/service";
 import { ensureSession, markSessionReset } from "../src/modules/sessions/service";
 import { ServerBus } from "../src/realtime/bus";
 import { bootTestApp, login } from "./helpers/app";
@@ -367,7 +365,7 @@ describe("DB — 스레드 열·세션 유일성", () => {
         threadRootId: root.id,
       })
       .run();
-    const adapter = { sessionKeyFor: (a: string, c: string) => `agent:${a}:dodok:channel:${c}` };
+    const adapter = { sessionKeyFor: dodokSessionKey };
     const { session } = ensureSession(t.db, adapter, { channelId: t.channel.id, agentId: dev.id });
     expect(session).toMatchObject({
       threadRootId: null,
@@ -381,35 +379,12 @@ describe("DB — 스레드 열·세션 유일성", () => {
     expect(rows.find((r) => r.id === "thread-row")?.lifecycleRevision).toBeNull();
   });
 
-  it("runs 에 thread_root_id 열이 있다(태스크 5 가 채운다)", () => {
+  it("runs 에 thread_root_id 열이 있다", () => {
     const t = setup();
     const cols = t.db
       .all<{ name: string }>(sql`select name from pragma_table_info('runs')`)
       .map((c) => c.name);
     expect(cols).toContain("thread_root_id");
-  });
-});
-
-describe("라우터 — 스레드 답글 임시 건너뛰기", () => {
-  it("threadRootId 가 있는 메시지로는 런을 만들지 않고 warn", async () => {
-    const t = setup();
-    const dev = t.agent("dev");
-    const logger = { warn: vi.fn(), error: vi.fn() };
-    const enqueue = vi.fn(
-      async (plan: RunPlan & { channelId: string }) => ({ id: uuid(), ...plan }) as never,
-    );
-    const router = createRouter({ db: t.db, bus: t.bus, logger, enqueue });
-    const root = t.human("루트");
-    const reply = t.human("@dev 봐줘", { threadRootId: root.id });
-    expect(reply.mentions.agents).toEqual([dev.id]);
-    await router.routeMessage(reply);
-    expect(enqueue).not.toHaveBeenCalled();
-    expect(logger.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ messageId: reply.id, threadRootId: root.id }),
-      expect.any(String),
-    );
-    await router.routeMessage(t.human("@dev 채널"));
-    expect(enqueue).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -1,6 +1,8 @@
 import {
+  isOpenClawAgentId,
   type Message,
   type OutboundMessage,
+  parseDodokSessionKey,
   type Run,
   type RunSignal,
   type RunState,
@@ -121,8 +123,20 @@ const RETRY_COMPONENTS = {
     },
   ],
 };
+/** 스레드 런인데 붙은 플러그인이 스레드를 모른다(hello capabilities 에 threads 없음) — 재설치하면 다시 실행으로 푼다 */
+const PLUGIN_OUTDATED = "PLUGIN_OUTDATED";
+/** 저장된 providerAgentId 가 세션 키 규칙 밖 — 키를 못 만들어 런을 보낼 수 없다. 다시 실행해도 같다 */
+const INVALID_AGENT_ID = "INVALID_AGENT_ID";
 /** 사람에게 run_error 시스템 메시지로 알리는 코드(디스패치 실패·타임아웃). SERVER_RESTART·INTERNAL·Gateway 오류는 알리지 않는다 */
-const NOTIFY_CODES: ReadonlySet<string> = new Set(["TIMEOUT", "ADAPTER_UNAVAILABLE", "ADAPTER_PROTOCOL"]);
+const NOTIFY_CODES: ReadonlySet<string> = new Set([
+  "TIMEOUT",
+  "ADAPTER_UNAVAILABLE",
+  "ADAPTER_PROTOCOL",
+  PLUGIN_OUTDATED,
+  INVALID_AGENT_ID,
+]);
+/** 다시 실행해도 같은 사유로 떨어지는 코드 — 누를 때마다 카드만 는다 */
+const NO_RETRY_CODES: ReadonlySet<string> = new Set(["DROPPED:bot-loop-protection", INVALID_AGENT_ID]);
 
 type Coalescable = Extract<RunEventBody, { type: "TEXT_MESSAGE_CONTENT" | "TOOL_CALL_ARGS" }>;
 type DeltaBuffer = { channelId: string; type: Coalescable["type"]; key: string; delta: string };
@@ -478,17 +492,13 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     if (!NOTIFY_CODES.has(code) && !code.startsWith("DROPPED:") && !code.startsWith("ADAPTER_ERROR:")) return;
     try {
       const handle = getAgent(db, run.agentId)?.handle ?? "unknown";
-      const bodyMd =
-        code === "DROPPED:bot-loop-protection"
-          ? `@${handle} ${josa(handle, "이", "가")} 봇 루프 보호로 메시지를 받지 않았습니다`
-          : `@${handle} 실행이 실패했습니다: ${code}`;
       createSystemMessage(db, bus, {
         channelId: run.channelId,
+        ...(run.threadRootId === undefined ? {} : { threadRootId: run.threadRootId }),
         kind: "run_error",
-        bodyMd,
+        bodyMd: runErrorBody(code, handle),
         systemMeta: { kind: "run_error", runId: run.id },
-        // 봇 루프 보호로 떨어진 런은 다시 보내도 플러그인이 같은 사유로 떨어뜨린다 — 누를 때마다 카드만 는다
-        ...(run.triggerMessageId === undefined || code === "DROPPED:bot-loop-protection"
+        ...(run.triggerMessageId === undefined || NO_RETRY_CODES.has(code)
           ? {}
           : { components: RETRY_COMPONENTS }),
       });
@@ -599,9 +609,18 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         return;
       }
       const trigger = pending.get(runId)?.trigger ?? {};
+      if (run.threadRootId !== undefined && pluginLacksThreads()) {
+        applySignal(runId, {
+          kind: "gateway_error",
+          code: PLUGIN_OUTDATED,
+          message: "connected plugin does not support threads",
+        });
+        return;
+      }
       const { session, needsPromptContext } = ensureSession(db, adapter, {
         channelId: run.channelId,
         agentId: run.agentId,
+        threadRootId: run.threadRootId,
       });
       const inbound = buildInboundDeliver(db, { run, trigger, session, needsPromptContext, now: now() });
       // ack 전 상한 — 어댑터는 플러그인이 없으면 120s, ack 가 없으면 재시도로 더 기다린다. 그동안에도 런은 queued 이므로
@@ -663,7 +682,38 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     }
   }
 
+  /**
+   * 붙은 플러그인이 스레드를 모른다. 붙은 플러그인이 없으면 모른다고 단정하지 않는다 — 어댑터가 플러그인을 기다렸다 보내고,
+   * 못 붙으면 ADAPTER_UNAVAILABLE 로 닫힌다(브리지가 잠깐 끊긴 사이의 스레드 멘션에 재설치 안내를 남기지 않게)
+   */
+  function pluginLacksThreads(): boolean {
+    return adapter.setupDetail().bridge.plugin !== null && !adapter.pluginSupports("threads");
+  }
+
   // ── 정본 ────────────────────────────────────────────────────
+
+  /**
+   * 스펙 3.5 — threadId 는 세션 키의 스레드 접미사와, 런이 있으면 런의 스레드와도 같아야 한다. 스레드 발언이 채널에(또는 반대로)
+   * 저장되지 않게 다르면 거절한다. 맞으면 저장할 스레드(없으면 undefined)를 돌려준다.
+   */
+  function canonicalThread(msg: OutboundMessage, run: Run | undefined): string | undefined {
+    const thread = msg.threadId?.toLowerCase();
+    const keyThread = parseDodokSessionKey(msg.sessionKey)?.threadRootId;
+    if (thread !== keyThread || (run !== undefined && run.threadRootId !== thread)) {
+      logger.warn(
+        {
+          outboundId: msg.outboundId,
+          channelId: msg.channelId,
+          sessionKey: msg.sessionKey,
+          threadId: msg.threadId,
+          ...(run ? { runId: run.id, runThreadRootId: run.threadRootId } : {}),
+        },
+        "canonical thread mismatch — rejected",
+      );
+      throw apiError("VALIDATION", "threadId does not match the session key or the run thread");
+    }
+    return thread;
+  }
 
   function agentIdFor(msg: OutboundMessage): string | undefined {
     return db
@@ -693,12 +743,18 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     return inChannel(store.findRunByTriggerMessage(db, msg.replyToInboundId, agentId));
   }
 
-  function storeAgentMessage(msg: OutboundMessage, agentId: string, runId: string | undefined): Message {
+  function storeAgentMessage(
+    msg: OutboundMessage,
+    agentId: string,
+    runId: string | undefined,
+    threadRootId: string | undefined,
+  ): Message {
     return createAgentMessage(
       db,
       bus,
       {
         channelId: msg.channelId,
+        threadRootId,
         agentId,
         runId,
         externalId: msg.outboundId,
@@ -772,6 +828,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       try {
         message = createAgentMessage(db, bus, {
           channelId: run.channelId,
+          threadRootId: run.threadRootId,
           agentId: run.agentId,
           runId,
           externalId: `gateway-final:${runId}`,
@@ -795,8 +852,17 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
   const api: Orchestrator = {
     async enqueueRun(plan, trigger) {
       const ts = now();
-      const { session } = ensureSession(db, adapter, { channelId: plan.channelId, agentId: plan.agentId });
-      const queue = sessionQueues.get(session.sessionKey) ?? [];
+      const providerAgentId = getAgent(db, plan.agentId)?.providerAgentId;
+      // 규칙 밖 id 는 세션 키를 못 만든다 — 조용히 던지지 않고 런을 남겨 사유 있는 run_error 로 닫는다
+      const keyable = providerAgentId === undefined || isOpenClawAgentId(providerAgentId);
+      const sessionKey = keyable
+        ? ensureSession(db, adapter, {
+            channelId: plan.channelId,
+            agentId: plan.agentId,
+            threadRootId: plan.threadRootId,
+          }).session.sessionKey
+        : "";
+      const queue = keyable ? (sessionQueues.get(sessionKey) ?? []) : [];
       const { run, event } = db.transaction((tx) => {
         const run = store.insertRun(tx, {
           channelId: plan.channelId,
@@ -808,7 +874,8 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
           relayDepth: plan.relayDepth,
           relayHash: plan.relayHash,
           parentRunId: plan.parentRunId,
-          sessionKey: session.sessionKey,
+          sessionKey,
+          threadRootId: plan.threadRootId,
           createdAt: ts,
         });
         const event = store.appendRunEvent(
@@ -819,6 +886,18 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         );
         return { run, event };
       });
+      if (!keyable) {
+        emitEvents(run.channelId, [event]);
+        bus.emit("run.state", { run: store.toRunState(run) });
+        logger.warn({ runId: run.id, agentId: plan.agentId }, "providerAgentId outside session key rule");
+        return (
+          applySignal(run.id, {
+            kind: "gateway_error",
+            code: INVALID_AGENT_ID,
+            message: "providerAgentId is not a valid OpenClaw agentId",
+          }) ?? run
+        );
+      }
       pending.set(run.id, { sessionKey: run.sessionKey, order: ++order, trigger });
       queue.push(run.id);
       sessionQueues.set(run.sessionKey, queue);
@@ -916,6 +995,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       if (existing) return { messageId: existing.id };
 
       const run = correlate(msg);
+      const threadRootId = canonicalThread(msg, run);
       if (!run) {
         const agentId = agentIdFor(msg);
         const where = { outboundId: msg.outboundId, channelId: msg.channelId, sessionKey: msg.sessionKey };
@@ -923,12 +1003,12 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
           logger.warn({ ...where, providerAgentId: msg.agentId }, "canonical message from unknown agent");
           throw apiError("NOT_FOUND", "agent not found");
         }
-        const message = storeAgentMessage(msg, agentId, undefined);
+        const message = storeAgentMessage(msg, agentId, undefined, threadRootId);
         logger.warn({ ...where, runId: msg.runId, messageId: message.id }, "canonical message without run");
         return { messageId: message.id };
       }
 
-      const message = storeAgentMessage(msg, run.agentId, run.id);
+      const message = storeAgentMessage(msg, run.agentId, run.id, threadRootId);
       await routeAgentMessage(message, run);
       await api.signal(run.id, { kind: "canonical_received" }); // 종료된 런이면 ignored — 저장·라우팅만
       return { messageId: message.id };
@@ -1003,6 +1083,20 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
   });
 
   return api;
+}
+
+/** run_error 카드 본문 — 사람이 할 일이 있는 코드는 사유를 쓴다 */
+function runErrorBody(code: string, handle: string): string {
+  switch (code) {
+    case "DROPPED:bot-loop-protection":
+      return `@${handle} ${josa(handle, "이", "가")} 봇 루프 보호로 메시지를 받지 않았습니다`;
+    case PLUGIN_OUTDATED:
+      return `@${handle} ${josa(handle, "이", "가")} 스레드에서 답하지 못했습니다 — 플러그인을 새로 설치해야 합니다(연결 페이지)`;
+    case INVALID_AGENT_ID:
+      return `@${handle} 실행이 실패했습니다: OpenClaw 에이전트 id 가 세션 키 규칙(영문·숫자·_·-)에 맞지 않습니다 — 올바른 id 로 에이전트를 다시 등록하세요`;
+    default:
+      return `@${handle} 실행이 실패했습니다: ${code}`;
+  }
 }
 
 /** 패키지 경계를 넘어 클래스가 둘일 수 있어 이름도 본다 */

@@ -2,7 +2,7 @@ import { AdapterError } from "@dodok/openclaw-adapter";
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
 import { type AdapterStatus, BRIDGE_PROTOCOL, type Message, WIRE_PROTOCOL } from "@dodok/shared";
 import Database from "better-sqlite3";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -66,24 +66,42 @@ function seedAgentChannel(app: App, name: string, agentId?: string) {
   return { agentId: agent.id, channelId: channel.id };
 }
 
-async function startRun(app: App, channelId: string, agentId: string) {
+/** threadRootId 를 주면 그 스레드의 답글로 스레드 런 */
+async function startRun(app: App, channelId: string, agentId: string, threadRootId?: string) {
   const message = createUserMessage(app.db, app.bus, {
     channelId,
     authorId: app.ownerUserId,
     bodyMd: "@dev 안녕",
     clientMsgId: uuid(),
+    threadRootId,
   });
   return app.orchestrator.enqueueRun(
-    { agentId, channelId, triggerKind: "mention", rootMessageId: message.id, relayDepth: 0 },
+    {
+      agentId,
+      channelId,
+      triggerKind: "mention",
+      rootMessageId: message.id,
+      relayDepth: 0,
+      ...(threadRootId === undefined ? {} : { threadRootId }),
+    },
     { message },
   );
 }
 
-function sessionRow(app: App, channelId: string, agentId: string) {
+/** threadRootId 가 없으면 채널 세션 행 */
+function sessionRow(app: App, channelId: string, agentId: string, threadRootId?: string) {
   return app.db
     .select()
     .from(agentSessions)
-    .where(and(eq(agentSessions.channelId, channelId), eq(agentSessions.agentId, agentId)))
+    .where(
+      and(
+        eq(agentSessions.channelId, channelId),
+        eq(agentSessions.agentId, agentId),
+        threadRootId === undefined
+          ? isNull(agentSessions.threadRootId)
+          : eq(agentSessions.threadRootId, threadRootId),
+      ),
+    )
     .get();
 }
 
@@ -346,6 +364,80 @@ describe("REST·wire 배선 (FakeAdapter)", () => {
     expect((await api("POST", `/channels/${channelId}/agents/${outsider.id}/reset`)).statusCode).toBe(404);
     expect((await api("POST", `/channels/${uuid()}/agents/${dev}/reset`)).statusCode).toBe(404);
     expect((await api("POST", `/channels/${channelId}/agents/not-an-id/reset`)).statusCode).toBe(400);
+  });
+
+  it("reset?threadRootId — 그 스레드 세션만: 스레드 런만 abort·스레드 키로 resetSession·스레드 행 갱신·info 는 스레드에", async () => {
+    const { channelId } = seedAgentChannel(app, "reset-thread", dev);
+    const root = createUserMessage(app.db, app.bus, {
+      channelId,
+      authorId: app.ownerUserId,
+      bodyMd: "루트",
+      clientMsgId: uuid(),
+    });
+    const channelRun = await startRun(app, channelId, dev);
+    const threadRun = await startRun(app, channelId, dev, root.id);
+    await vi.waitFor(() =>
+      expect(adapter.calls.send.filter((s) => [channelRun.id, threadRun.id].includes(s.runId))).toHaveLength(
+        2,
+      ),
+    );
+    const channelSession = sessionRow(app, channelId, dev);
+    const threadSession = sessionRow(app, channelId, dev, root.id);
+    expect(threadSession?.sessionKey).toBe(`agent:dev:dodok:channel:${channelId}:thread:${root.id}`);
+    const abortSpy = vi.spyOn(adapter, "abort");
+    const resetsBefore = adapter.calls.reset.length;
+
+    const res = await api("POST", `/channels/${channelId}/agents/${dev}/reset?threadRootId=${root.id}`);
+
+    expect(res.statusCode).toBe(200);
+    expect(adapter.calls.reset.slice(resetsBefore)).toEqual([threadSession?.sessionKey]);
+    expect(abortSpy.mock.calls).toEqual([[threadRun.id, threadSession?.sessionKey]]);
+    expect(getRun(app.db, threadRun.id)?.status).toBe("aborted");
+    expect(getRun(app.db, channelRun.id)?.status).toBe("queued");
+    expect(sessionRow(app, channelId, dev, root.id)).toMatchObject({ lifecycleRevision: "fake-1" });
+    expect(sessionRow(app, channelId, dev)).toMatchObject({
+      lifecycleRevision: channelSession?.lifecycleRevision,
+    });
+    const info = listMessages(app.db, channelId, {
+      limit: 50,
+      scope: { threadRootId: root.id },
+    }).messages.filter((m) => m.kind === "system");
+    expect(info).toEqual([
+      expect.objectContaining({ bodyMd: "@dev 의 대화를 새로 시작했습니다", threadRootId: root.id }),
+    ]);
+    expect(systemMessages(app, channelId)).toEqual([]); // 채널 타임라인(루트만)에는 없다
+
+    // 채널 리셋은 스레드 런을 건드리지 않는다
+    const again = await startRun(app, channelId, dev, root.id);
+    abortSpy.mockClear();
+    expect((await api("POST", `/channels/${channelId}/agents/${dev}/reset`)).statusCode).toBe(200);
+    expect(abortSpy.mock.calls.map(([runId]) => runId)).toEqual([channelRun.id]);
+    expect(getRun(app.db, again.id)?.status).not.toBe("aborted");
+  });
+
+  it("reset?threadRootId — 답글·다른 채널 루트·없는 id 는 404, UUID 가 아니면 400", async () => {
+    const { channelId } = seedAgentChannel(app, "reset-thread-bad", dev);
+    const other = seedAgentChannel(app, "reset-thread-other", dev);
+    const say = (at: string, threadRootId?: string) =>
+      createUserMessage(app.db, app.bus, {
+        channelId: at,
+        authorId: app.ownerUserId,
+        bodyMd: "m",
+        clientMsgId: uuid(),
+        threadRootId,
+      });
+    const root = say(channelId);
+    const reply = say(channelId, root.id);
+    const foreign = say(other.channelId);
+    const resetsBefore = adapter.calls.reset.length;
+    for (const id of [reply.id, foreign.id, uuid()]) {
+      const res = await api("POST", `/channels/${channelId}/agents/${dev}/reset?threadRootId=${id}`);
+      expect(res.statusCode).toBe(404);
+    }
+    expect((await api("POST", `/channels/${channelId}/agents/${dev}/reset?threadRootId=x`)).statusCode).toBe(
+      400,
+    );
+    expect(adapter.calls.reset).toHaveLength(resetsBefore);
   });
 
   it("GET /adapter/status 는 AdapterStatus + capabilities, 인증이 필요하다", async () => {

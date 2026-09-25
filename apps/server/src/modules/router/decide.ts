@@ -15,6 +15,7 @@ export type RoutingInput = {
   members: ChannelMember[];
   agents: Agent[]; // 채널 소속 에이전트 (enabled 여부 포함)
   sourceRun?: Run; // message가 에이전트 메시지일 때 그 런
+  threadRoot?: Message; // message가 스레드 답글일 때 그 루트
   chainHashes: Set<string>; // 같은 rootMessageId 체인의 relayHash 집합
   now: Date;
 };
@@ -27,6 +28,8 @@ export type RunPlan = {
   relayHash?: string;
   /** 다시 실행한 런이면 원래 런 */
   parentRunId?: string;
+  /** 스레드 하위 세션의 런이면 그 루트 */
+  threadRootId?: string;
 };
 export type BlockedReason = "pair_not_allowed" | "max_turns" | "repeat" | "disabled";
 export type Blocked = { agentId: string; reason: BlockedReason };
@@ -49,12 +52,26 @@ function uniq<T>(xs: T[]): T[] {
   return [...new Set(xs)];
 }
 
+/** 스레드 답글에 멘션이 없을 때 — 루트가 에이전트 메시지면 그 에이전트(결정 4). 비활성·비소속이면 없다 */
+function threadResponder(root: Message | undefined, isActive: (id: string) => boolean): string | undefined {
+  if (root?.authorType !== "agent" || root.authorId === undefined) return undefined;
+  return isActive(root.authorId) ? root.authorId : undefined;
+}
+
+function autoResponder(agentMembers: ChannelMember[], isActive: (id: string) => boolean): string | undefined {
+  return agentMembers
+    .filter((m) => m.autoRespond && isActive(m.memberId))
+    .sort((a, b) => Date.parse(a.joinedAt) - Date.parse(b.joinedAt))[0]?.memberId;
+}
+
 export function decideRuns(input: RoutingInput): { runs: RunPlan[]; blocked: Blocked[] } {
   const { message, channel, members, agents, sourceRun } = input;
   const agentById = new Map(agents.map((a) => [a.id, a]));
   const agentMembers = members.filter((m) => m.memberType === "agent");
   const memberIds = new Set(agentMembers.map((m) => m.memberId));
   const isActive = (id: string) => memberIds.has(id) && agentById.get(id)?.enabled === true;
+
+  const thread = message.threadRootId === undefined ? {} : { threadRootId: message.threadRootId };
 
   if (message.authorType === "user") {
     const targets = uniq(message.mentions.agents).filter(isActive);
@@ -65,19 +82,23 @@ export function decideRuns(input: RoutingInput): { runs: RunPlan[]; blocked: Blo
           triggerKind: "mention",
           rootMessageId: message.id,
           relayDepth: 0,
+          ...thread,
         })),
         blocked: [],
       };
     }
     if (message.mentions.agents.length > 0) return { runs: [], blocked: [] }; // 멘션이 전부 비활성: 폴백 없음
-    const auto = agentMembers
-      .filter((m) => m.autoRespond && isActive(m.memberId))
-      .sort((a, b) => Date.parse(a.joinedAt) - Date.parse(b.joinedAt));
-    const first = auto[0];
-    if (!first) return { runs: [], blocked: [] };
+    const responder = threadResponder(input.threadRoot, isActive) ?? autoResponder(agentMembers, isActive);
+    if (responder === undefined) return { runs: [], blocked: [] };
     return {
       runs: [
-        { agentId: first.memberId, triggerKind: "auto_respond", rootMessageId: message.id, relayDepth: 0 },
+        {
+          agentId: responder,
+          triggerKind: "auto_respond",
+          rootMessageId: message.id,
+          relayDepth: 0,
+          ...thread,
+        },
       ],
       blocked: [],
     };
@@ -113,6 +134,7 @@ export function decideRuns(input: RoutingInput): { runs: RunPlan[]; blocked: Blo
         rootMessageId: sourceRun.rootMessageId,
         relayDepth: depth,
         relayHash,
+        ...thread,
       });
     }
     return { runs, blocked };

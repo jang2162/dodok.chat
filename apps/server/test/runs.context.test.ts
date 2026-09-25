@@ -65,17 +65,21 @@ function setup() {
   addMember(db, channelId, { memberType: "agent", memberId: fin.id }, logger);
 
   let n = 0;
-  const say = (bodyMd: string) =>
-    createUserMessage(db, bus, { channelId, authorId: userId, bodyMd, clientMsgId: `c${++n}` });
-  const agentSays = (agentId: string, bodyMd: string) =>
-    createAgentMessage(db, bus, { channelId, agentId, externalId: `o${++n}`, bodyMd });
+  const say = (bodyMd: string, threadRootId?: string) =>
+    createUserMessage(db, bus, { channelId, authorId: userId, bodyMd, clientMsgId: `c${++n}`, threadRootId });
+  const agentSays = (agentId: string, bodyMd: string, threadRootId?: string) =>
+    createAgentMessage(db, bus, { channelId, agentId, externalId: `o${++n}`, bodyMd, threadRootId });
 
   const deliver = (
     trigger: InboundTrigger,
     opts: { run?: Partial<Run>; needsPromptContext?: boolean; now?: Date } = {},
   ) => {
     const agentId = opts.run?.agentId ?? devId;
-    const { session } = ensureSession(db, adapter, { channelId, agentId });
+    const { session } = ensureSession(db, adapter, {
+      channelId,
+      agentId,
+      threadRootId: opts.run?.threadRootId,
+    });
     const run: Run = {
       id: uuid(),
       channelId,
@@ -449,5 +453,90 @@ describe("buildInboundDeliver", () => {
       },
     });
     expect(cont.context.recentMessages.map((m) => m.text)).toEqual(["m1", "@owner 골라 주세요", "카드 뒤"]);
+  });
+
+  describe("스레드 런(스펙 2.3)", () => {
+    it("threadId·스레드 세션 키, context.thread 는 루트와 트리거 앞 스레드 답글, 채널 대화(recentMessages)는 빈 배열", () => {
+      const { db, bus, channelId, devId, finId, say, agentSays, deliver } = setup();
+      say("채널 앞");
+      const root = agentSays(finId, "루트 본문 @dev");
+      const other = say("다른 루트");
+      say("다른 스레드 답", other.id);
+      say("답 1", root.id);
+      agentSays(devId, "답 2", root.id);
+      createSystemMessage(db, bus, { channelId, kind: "info", bodyMd: "시스템", threadRootId: root.id });
+      say("채널 사이");
+      const trigger = say("@dev 답 3", root.id);
+      say("답 4(뒤)", root.id);
+
+      const { inbound } = deliver({ message: trigger }, { run: { threadRootId: root.id } });
+      expect(InboundDeliver.safeParse(inbound).success).toBe(true);
+      expect(inbound.threadId).toBe(root.id);
+      expect(inbound.sessionKey).toBe(`agent:dev-main:dodok:channel:${channelId}:thread:${root.id}`);
+      expect(inbound.context.recentMessages).toEqual([]);
+      expect(inbound.context.thread).toEqual({
+        root: {
+          author: { type: "agent", handle: "fin", displayName: "Fin" },
+          text: "루트 본문 @dev",
+          ts: root.createdAt,
+        },
+        recentMessages: [
+          expect.objectContaining({ text: "답 1", author: expect.objectContaining({ type: "user" }) }),
+          expect.objectContaining({ text: "답 2", author: expect.objectContaining({ handle: "dev" }) }),
+        ],
+      });
+    });
+
+    it("스레드 최근 메시지는 트리거 앞 최대 20개, 루트 본문은 4,000자에서 자른다", () => {
+      const { say, deliver } = setup();
+      const root = say("가".repeat(4100));
+      for (let i = 1; i <= 22; i++) say(`r${i}`, root.id);
+      const trigger = say("@dev 마지막", root.id);
+      const { inbound } = deliver({ message: trigger }, { run: { threadRootId: root.id } });
+      expect(InboundDeliver.safeParse(inbound).success).toBe(true);
+      expect(inbound.context.thread?.root.text).toBe("가".repeat(4000));
+      expect(inbound.context.thread?.recentMessages.map((m) => m.text)).toEqual(
+        Array.from({ length: 20 }, (_, i) => `r${i + 3}`),
+      );
+    });
+
+    it("상호작용 트리거가 스레드 안 카드면 그 카드까지의 스레드 답글", () => {
+      const { db, bus, channelId, devId, say, deliver, interactionOn } = setup();
+      const root = say("루트");
+      say("앞 답", root.id);
+      const card = createAgentMessage(db, bus, {
+        channelId,
+        agentId: devId,
+        externalId: "o-thread-card",
+        bodyMd: "골라 주세요",
+        threadRootId: root.id,
+        components: { blocks: [{ type: "actions", items: [{ type: "button", id: "ok", label: "확인" }] }] },
+      });
+      say("뒤 답", root.id);
+      const { inbound } = deliver(
+        { interactionText: "확인", interactionMessageId: card.id },
+        {
+          run: {
+            triggerKind: "interaction",
+            threadRootId: root.id,
+            triggerInteractionId: interactionOn(card.id, card.components?.id ?? ""),
+          },
+        },
+      );
+      expect(inbound.threadId).toBe(root.id);
+      expect(inbound.context.recentMessages).toEqual([]);
+      expect(inbound.context.thread?.recentMessages.map((m) => m.text)).toEqual(["앞 답", "골라 주세요"]);
+    });
+
+    it("채널 런의 recentMessages 에는 스레드 답글이 없다 — threadId·thread 도 없다", () => {
+      const { say, deliver } = setup();
+      const root = say("루트");
+      say("스레드 답", root.id);
+      const trigger = say("@dev 채널");
+      const { inbound } = deliver({ message: trigger });
+      expect(inbound.context.recentMessages.map((m) => m.text)).toEqual(["루트"]);
+      expect(inbound).not.toHaveProperty("threadId");
+      expect(inbound.context).not.toHaveProperty("thread");
+    });
   });
 });
