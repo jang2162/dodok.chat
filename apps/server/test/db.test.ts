@@ -46,12 +46,12 @@ const msg = (ch: string, seq: number, extra: Partial<typeof messages.$inferInser
 });
 
 describe("db", () => {
-  it("마이그레이션이 20개 테이블을 만든다", () => {
+  it("마이그레이션이 21개 테이블을 만든다(FTS5 그림자 테이블 제외)", () => {
     const db = createDb(":memory:");
     const rows = db.all<{ name: string }>(sql`select name from sqlite_master where type = 'table'`);
     const names = rows
       .map((r) => r.name)
-      .filter((n) => !n.startsWith("__") && !n.startsWith("sqlite_"))
+      .filter((n) => !n.startsWith("__") && !n.startsWith("sqlite_") && !n.startsWith("messages_fts_"))
       .sort();
     expect(names).toEqual([
       "account",
@@ -65,6 +65,7 @@ describe("db", () => {
       "component_interactions",
       "memberships",
       "messages",
+      "messages_fts",
       "ops_events",
       "push_subscriptions",
       "run_events",

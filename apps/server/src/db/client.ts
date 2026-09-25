@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
+import { assertTrigramSupport } from "../modules/search/service";
 import { isBundled, migrationsFolder } from "../runtime";
 import * as authSchema from "./auth-schema";
 import * as schema from "./schema.sqlite";
@@ -16,6 +17,7 @@ export function createDb(file: string) {
       "설정 오류: 운영 번들에는 DODOK_MIGRATIONS_DIR 가 필요하다(이미지가 /app/drizzle 로 준다)",
     );
   }
+  assertTrigramSupport(sqlite);
   migrate(db, { migrationsFolder: migrationsFolder() });
   return db;
 }

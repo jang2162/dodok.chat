@@ -8,6 +8,8 @@ export const LIMITS = {
   restPerMin: 300,
   /** 첨부 업로드 — 사용자당 분당(REST 상한 위에 한 번 더) */
   uploadPerMin: 30,
+  /** GET /api/v1/search — 사용자당 분당(REST 상한 위에 한 번 더, 스레드·검색 스펙 5.2) */
+  searchPerMin: 60,
   /** wire 이벤트 — 소켓마다 토큰 버킷 */
   wire: {
     heavy: { perMin: 30, burst: 10 }, // message.send·component.interact·run.abort
@@ -28,6 +30,7 @@ export type Limits = {
   localLoginPerMin: number;
   restPerMin: number;
   uploadPerMin: number;
+  searchPerMin: number;
   wire: Record<keyof (typeof LIMITS)["wire"], { perMin: number; burst: number }>;
   socketsPerUser: number;
   bridgeFail: { maxFailures: number; windowMs: number; blockMs: number; maxAddresses: number };

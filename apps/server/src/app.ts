@@ -51,6 +51,7 @@ import {
 import { loadVapidKeys } from "./modules/push/vapid";
 import type { Orchestrator, RunTimeouts } from "./modules/runs/orchestrator";
 import { registerRunRoutes } from "./modules/runs/routes";
+import { registerSearchRoutes } from "./modules/search/routes";
 import { pluginDirCandidates, readPluginFile } from "./modules/setup/plugin-file";
 import { registerSetupRoutes } from "./modules/setup/routes";
 import { bridgePublicUrl, buildSetupStatus } from "./modules/setup/status";
@@ -302,6 +303,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     registerMessageRoutes(fastify, routeContext);
     registerRunRoutes(fastify, routeContext);
     registerAdapterRoutes(fastify, routeContext);
+    registerSearchRoutes(fastify, { auth, db, workspaceId, limits, ops, now: limitClock });
     // 첨부: 업로드의 「블롭 쓰기 + 행 넣기」와 정리의 「행 없음 확인 + 블롭 지우기」는 같은 잠금 객체를 지나야 한다 —
     // 이 한 변수로만 넘긴다(App.blobLocks 로도 내보내 테스트가 잠근다)
     mkdirSync(config.attachmentsDir, { recursive: true });
