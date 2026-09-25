@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import type { AgentAdapter } from "../../adapters/types";
 import type { Db, DbOrTx } from "../../db/client";
@@ -26,7 +26,13 @@ export function ensureSession(
     const existing = tx
       .select()
       .from(agentSessions)
-      .where(and(eq(agentSessions.channelId, input.channelId), eq(agentSessions.agentId, input.agentId)))
+      .where(
+        and(
+          eq(agentSessions.channelId, input.channelId),
+          eq(agentSessions.agentId, input.agentId),
+          isNull(agentSessions.threadRootId),
+        ),
+      )
       .get();
     const session =
       existing ??
@@ -63,6 +69,7 @@ export function markSessionReset(
       lifecycleRevision: reset.lifecycleRevision ?? null,
       lastSyncedAt: now,
     };
+    // 채널 세션 부분 유일 인덱스(agent_sessions_channel_session)를 고른다 — targetWhere 가 인덱스 조건과 같아야 SQLite 가 받는다
     return tx
       .insert(agentSessions)
       .values({
@@ -72,7 +79,11 @@ export function markSessionReset(
         sessionKey: canonicalSessionKey(providerAgentIdOf(tx, agentId), channelId),
         ...fields,
       })
-      .onConflictDoUpdate({ target: [agentSessions.channelId, agentSessions.agentId], set: fields })
+      .onConflictDoUpdate({
+        target: [agentSessions.channelId, agentSessions.agentId],
+        targetWhere: sql`thread_root_id IS NULL`,
+        set: fields,
+      })
       .returning()
       .get();
   });

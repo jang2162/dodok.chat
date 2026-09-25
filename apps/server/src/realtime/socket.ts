@@ -159,12 +159,13 @@ export function attachWire(io: WireServer, ctx: WireContext): void {
         if (!channel) throw apiError("NOT_FOUND", "channel not found");
         // 룸에 먼저 들어간 뒤 읽는다 — 그 사이 메시지는 페이지와 이벤트에 겹칠 수는 있어도 빠지지 않는다
         await socket.join(channelRoom(channel.id));
+        // 처음 구독은 타임라인(루트만), lastSeq 재동기화는 끊긴 사이 답글까지 — 웹이 threadRootId 로 스레드 캐시에 나눈다
         const page = listMessages(
           ctx.db,
           channel.id,
           lastSeq === undefined
-            ? { limit: MESSAGE_PAGE_MAX }
-            : { afterSeq: lastSeq, limit: MESSAGE_PAGE_MAX },
+            ? { limit: MESSAGE_PAGE_MAX, scope: "roots" }
+            : { afterSeq: lastSeq, limit: MESSAGE_PAGE_MAX, scope: "all" },
         );
         return {
           messages: page.messages,
@@ -272,6 +273,7 @@ function sendMessage(ctx: WireContext, userId: string, raw: unknown): { message:
     clientMsgId: input.clientMsgId,
     attachments: input.attachments,
     replyTo: input.replyTo,
+    threadRootId: input.threadRootId,
   });
   return { message, created: true };
 }

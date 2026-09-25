@@ -12,6 +12,7 @@ import type {
   RunUsage,
   SystemMeta,
 } from "@dodok/shared";
+import { sql } from "drizzle-orm";
 import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 const ts = (name: string) => integer(name, { mode: "timestamp_ms" });
@@ -114,8 +115,16 @@ export const agentSessions = sqliteTable(
     providerSessionId: text("provider_session_id"), // sessionId (리셋 뒤에도 유지되므로 식별용으로만)
     historyCursor: text("history_cursor"), // chat.history deltaCursor (오면 저장, 최적화용)
     lastSyncedAt: ts("last_synced_at"),
+    threadRootId: text("thread_root_id"), // 스레드 하위 세션이면 그 루트 메시지 id, 채널 세션은 null
   },
-  (t) => [uniqueIndex("agent_sessions_channel_agent").on(t.channelId, t.agentId)],
+  (t) => [
+    uniqueIndex("agent_sessions_channel_agent_thread").on(t.channelId, t.agentId, t.threadRootId),
+    // SQLite 유일 인덱스는 NULL 끼리를 서로 다르다고 봐서 위 인덱스만으로는 채널 세션 행이 둘 생길 수 있다 — 채널 세션만 따로 막는다.
+    // coalesce 표현식 인덱스는 drizzle-kit 이 쉼표에서 SQL 을 깨뜨린다. onConflict 는 targetWhere 로 이 인덱스를 고른다(sessions/service.ts)
+    uniqueIndex("agent_sessions_channel_session")
+      .on(t.channelId, t.agentId)
+      .where(sql`thread_root_id IS NULL`),
+  ],
 );
 
 export const channelMembers = sqliteTable(
@@ -156,6 +165,7 @@ export const messages = sqliteTable(
     runId: text("run_id"),
     clientMsgId: text("client_msg_id"),
     externalId: text("external_id"),
+    threadRootId: text("thread_root_id"), // 스레드 답글이면 같은 채널의 루트(thread_root_id 가 null 인 메시지) id
     createdAt: ts("created_at").notNull(),
     editedAt: ts("edited_at"),
   },
@@ -164,6 +174,7 @@ export const messages = sqliteTable(
     uniqueIndex("messages_author_client_msg").on(t.authorId, t.clientMsgId),
     uniqueIndex("messages_external_id").on(t.externalId),
     index("messages_run").on(t.runId),
+    index("messages_channel_thread_seq").on(t.channelId, t.threadRootId, t.seq),
   ],
 );
 
@@ -218,6 +229,7 @@ export const runs = sqliteTable(
     usage: json<RunUsage>("usage_json"),
     error: json<{ code: string; message: string }>("error_json"),
     relayHash: text("relay_hash"), // hash(from, to, 정규화 본문)
+    threadRootId: text("thread_root_id"), // 스레드 런이면 그 루트 메시지 id
     createdAt: ts("created_at").notNull(),
     startedAt: ts("started_at"),
     endedAt: ts("ended_at"),

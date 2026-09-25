@@ -3,7 +3,7 @@ import { and, eq } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { memberships } from "../db/schema.sqlite";
 import type { Logger } from "../logger";
-import { withInteractions } from "../modules/messages/service";
+import { hydrateForClient, withInteractions } from "../modules/messages/service";
 import { TERMINAL_STATUSES } from "../modules/runs/machine";
 import type { BusEvents, ServerBus } from "./bus";
 import { channelRoom, userRoom, workspaceRoom } from "./socket";
@@ -94,13 +94,17 @@ export function attachWireFanout(io: WireServer, bus: ServerBus, opts: WireFanou
       .map((row) => userRoom(row.userId));
 
   const hydrate = (message: Message): Message => withInteractions(opts.db, [message])[0] ?? message;
+  // 갱신은 루트일 수 있다(카드 상호작용 등) — 요약을 빼고 보내면 웹 칩이 사라진다. 새 메시지는 답글이 있을 수 없어 요약을 보지 않는다
+  const hydrateUpdated = (message: Message): Message => hydrateForClient(opts.db, [message])[0] ?? message;
 
   const offs = [
     on("message.created", (p) =>
       io.to(channelRoom(p.message.channelId)).emit("message.created", { ...p, message: hydrate(p.message) }),
     ),
     on("message.updated", (p) =>
-      io.to(channelRoom(p.message.channelId)).emit("message.updated", { ...p, message: hydrate(p.message) }),
+      io
+        .to(channelRoom(p.message.channelId))
+        .emit("message.updated", { ...p, message: hydrateUpdated(p.message) }),
     ),
     on("run.state", (p) => {
       if (TERMINAL_STATUSES.has(p.run.status)) {

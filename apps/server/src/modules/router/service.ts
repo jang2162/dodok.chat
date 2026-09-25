@@ -119,6 +119,14 @@ export function createRouter(deps: RouterDeps): Router {
   return {
     async routeMessage(message) {
       if (message.kind !== "normal") return;
+      // 임시 — 스레드 런(하위 세션)이 들어오기 전까지 스레드 답글이 채널 런을 만들지 않게 한다. 태스크 5 가 지운다
+      if (message.threadRootId !== undefined) {
+        logger.warn(
+          { messageId: message.id, threadRootId: message.threadRootId },
+          "route: thread reply — thread runs not wired yet, skipped",
+        );
+        return;
+      }
       const channel = getChannel(db, message.channelId);
       if (!channel) {
         logger.warn({ messageId: message.id, channelId: message.channelId }, "route: channel not found");
