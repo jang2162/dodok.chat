@@ -141,6 +141,13 @@ describe("trimForPersist", () => {
     expect(t.lastSeq).toBe(0);
   });
 
+  it("결과로 가기의 떨어진 창(hasNewer)은 그 표시를 지닌 채 담는다 — 복원한 사본이 이어진 최신 목록처럼 보이지 않게", () => {
+    const t = trimForPersist(state(timelineOf(3, { hasNewer: true }))).queries[0]?.state.data as Timeline;
+    expect(t.hasNewer).toBe(true);
+    // 첫 구독은 fresh — fromLatest 가 떨어진 창을 최신 페이지로 바꾼다(timeline.test)
+    expect(t.lastSeq).toBe(0);
+  });
+
   it("50개 이하면 hasOlder 는 원래 값", () => {
     const t = trimForPersist(state(timelineOf(3))).queries[0]?.state.data as Timeline;
     expect(t.items).toHaveLength(3);

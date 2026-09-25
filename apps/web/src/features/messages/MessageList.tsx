@@ -10,18 +10,23 @@ import {
   useRef,
   useState,
 } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useShallow } from "zustand/react/shallow";
 import { useMe } from "@/api/queries";
 import { ApprovalCard } from "@/features/approvals/ApprovalCard";
 import { selectChannelApprovals, useApprovalStore } from "@/features/approvals/approvalStore";
 import { useRunStore } from "@/features/runs/runStore";
+import { cn } from "@/lib/utils";
 import { Button } from "@/ui/button";
 import { groupRows, type Row } from "./groupRows";
+import { loadLatest } from "./jump";
 import { MessageErrorBoundary } from "./MessageErrorBoundary";
 import { MessageItem } from "./MessageItem";
 import { PendingItem } from "./PendingItem";
 import { SystemCard } from "./SystemCard";
-import { useOlderPages } from "./useOlderPages";
+import { useJump } from "./useJump";
+import { useNewerPages } from "./useNewerPages";
+import { reportPageError, useOlderPages } from "./useOlderPages";
 import { useTimeline } from "./useTimeline";
 
 /** 하단에서 이만큼 안이면 「맨 아래에 붙어 있다」 — 새 행을 따라간다(스펙 5.5) */
@@ -75,6 +80,8 @@ function ChannelMessages({
     [timeline, bubbleRunIds, approvalFacts],
   );
   const scrollRef = useRef<HTMLDivElement>(null);
+  // 결과로 가기로 받은 떨어진 창(timeline.ts `Timeline` 의 `hasNewer`)
+  const hasNewer = timeline?.hasNewer === true;
   const getItemKey = useCallback((i: number) => rows[i]?.key ?? i, [rows]);
   const virtualizer = useVirtualizer({
     count: rows.length,
@@ -84,7 +91,8 @@ function ChannelMessages({
     getItemKey,
     // 채팅 모드: 앞에 붙는 행(과거 페이지)은 보던 행을 기준으로 자리를 지키고, 끝에 붙어 있으면 새 행·자라는 행을 따라간다
     anchorTo: "end",
-    followOnAppend: true,
+    // 떨어진 창에서는 따라가지 않는다 — 아래로 이어 받은 행을 따라 내려가면 또 아래 끝이라 다음 쪽이 연달아 불린다
+    followOnAppend: !hasNewer,
     scrollEndThreshold: STICK_PX,
     // 잰 크기를 ResizeObserver 콜백 안에서 바로 반영하면 같은 프레임에 또 배치가 바뀌어
     // 「ResizeObserver loop completed with undelivered notifications」 가 난다(브라우저 검증 결함 4 — 개발 모드에서
@@ -103,6 +111,22 @@ function ChannelMessages({
   }, []);
   const unseen = useUnseen(timeline, stuck);
   const older = useOlderPages(channelId, threadRootId);
+  const newer = useNewerPages(channelId, threadRootId, hasNewer);
+  const qc = useQueryClient();
+
+  const positioned = useRef(false);
+  /** 첫 붙임을 놓을 시각(performance.now 기준). 0 이면 끝났거나 사용자가 잡았다 — 효과가 다시 돌아도 되살아나지 않는다 */
+  const settleUntil = useRef(0);
+  // 결과로 가기(스레드·검색 스펙 5.3) — 그 행을 가운데로. 끝에 붙어 있지 않으므로 첫 붙임·끝 따라가기를 멈춘다
+  const arrive = useCallback(
+    (index: number) => {
+      settleUntil.current = 0;
+      setStuck(false);
+      virtualizer.scrollToIndex(index, { align: "center" });
+    },
+    [setStuck, virtualizer],
+  );
+  const jump = useJump(channelId, threadRootId, timeline, rows, arrive);
 
   // 처음(캐시가 있으면 마운트 때, 없으면 첫 응답 때) 맨 아래로.
   // 한 번 겨누고 마는 것으로는 모자란다 — 행은 추정 높이(64)로 먼저 잡혔다가 그 뒤에 실제로 재어지는데,
@@ -110,10 +134,9 @@ function ChannelMessages({
   // scrollToEnd 직후 scrollTop 4526/총 5184 → 다음 프레임 0/4029. 줄어든 만큼(−1155)이 아니라 0 이 된다 —
   // virtual-core 가 줄어든 총 높이를 보정할 때 아직 한 번도 못 본 스크롤 오프셋(0)에서 빼는 것으로 보인다.
   // 그래서 총 높이가 잦아들 때까지 프레임마다 끝에 다시 붙인다. 사용자가 손을 대면 그 자리에서 멈춘다 —
-  // 스스로 위로 올린 사람을 끌어내리지 않는다(스펙 5.5: 맨 아래에 붙어 있을 때만 따라간다)
-  const positioned = useRef(false);
-  /** 첫 붙임을 놓을 시각(performance.now 기준). 0 이면 끝났거나 사용자가 잡았다 — 효과가 다시 돌아도 되살아나지 않는다 */
-  const settleUntil = useRef(0);
+  // 스스로 위로 올린 사람을 끌어내리지 않는다(스펙 5.5: 맨 아래에 붙어 있을 때만 따라간다).
+  // 결과로 가기 목표를 안고 열렸으면 끝으로 가지 않는다 — 그 메시지로 간다(`useJump`)
+  const jumpPending = jump.pending;
   useLayoutEffect(() => {
     const el = scrollRef.current;
     const win = el?.ownerDocument.defaultView;
@@ -123,6 +146,10 @@ function ChannelMessages({
     };
     if (!positioned.current) {
       positioned.current = true;
+      if (jumpPending) {
+        settleUntil.current = 0;
+        return;
+      }
       virtualizer.scrollToEnd();
       pin();
       settleUntil.current = win.performance.now() + SETTLE_MAX_MS;
@@ -154,9 +181,10 @@ function ChannelMessages({
     raf = win.requestAnimationFrame(tick);
     for (const type of HANDS_ON) el.addEventListener(type, handsOn, { passive: true });
     return stop;
-  }, [rows.length, virtualizer]);
+  }, [rows.length, virtualizer, jumpPending]);
 
-  // 내가 보낸 항목이 붙으면 위를 보고 있었어도 끝으로
+  // 내가 보낸 항목이 붙으면 위를 보고 있었어도 끝으로. 떨어진 창이면 먼저 최신으로 — 보내는 중 항목은 늘 목록 끝이라
+  // 창 뒤에 곧바로 붙으면 그 사이의 받지 않은 메시지가 보이지 않은 채 이어진 것처럼 보인다
   const lastPending = timeline?.pending.at(-1)?.clientMsgId;
   const prevPending = useRef(lastPending);
   useLayoutEffect(() => {
@@ -164,8 +192,12 @@ function ChannelMessages({
     prevPending.current = lastPending;
     if (lastPending === undefined) return;
     setStuck(true);
+    if (hasNewer) {
+      loadLatest(qc, channelId, threadRootId).then(() => virtualizer.scrollToEnd(), reportPageError);
+      return;
+    }
     virtualizer.scrollToEnd();
-  }, [lastPending, virtualizer]);
+  }, [lastPending, virtualizer, hasNewer, qc, channelId, threadRootId, setStuck]);
 
   // 끝에 붙은 채 마지막 행이 다른 key 로 바뀌면(버블 → 확정 메시지, 보내는 중 → 확정) 끝으로. 행 수가 같아 followOnAppend 가
   // 걸리지 않고, 새 행이 추정 높이로 먼저 잡혔다 재어지면 virtual-core 는 끝까지 남은 거리를 그대로 둔다.
@@ -204,11 +236,14 @@ function ChannelMessages({
     };
   }, [mounted, virtualizer]);
 
+  // 떨어진 창의 아래 끝은 목록의 끝이 아니다 — 붙어 있지 않은 것으로 둬 새 행을 따라가지 않는다(아래로 이어 받기가 연달아 돌지 않게)
   const onScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
-    setStuck(el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_PX);
+    const fromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    setStuck(fromBottom <= STICK_PX && !hasNewer);
     older.onScrollTop(el.scrollTop);
+    newer.onScrollBottom(fromBottom);
   };
 
   // 칩은 누르면 사라진다 — 초점을 목록으로 옮겨 잃지 않게
@@ -216,6 +251,15 @@ function ChannelMessages({
     setStuck(true);
     virtualizer.scrollToEnd();
     scrollRef.current?.focus({ preventScroll: true });
+  };
+  const toLatest = async () => {
+    try {
+      await loadLatest(qc, channelId, threadRootId);
+    } catch (e) {
+      reportPageError(e);
+      return;
+    }
+    toEnd();
   };
 
   if (!timeline) return <Skeleton />;
@@ -243,12 +287,18 @@ function ChannelMessages({
           {items.map((v) => {
             const row = rows[v.index];
             if (!row) return null;
+            // 결과로 가기가 도착한 메시지 — 색이 옅어지며 풀린다. 움직임을 줄이는 설정이면 색만 바뀐다
+            const lit = row.kind === "message" && row.message.id === jump.highlighted;
             return (
               <div
                 key={v.key}
                 data-index={v.index}
+                data-highlighted={lit || undefined}
                 ref={virtualizer.measureElement}
-                className="absolute top-0 left-0 w-full"
+                className={cn(
+                  "absolute top-0 left-0 w-full transition-colors duration-700 motion-reduce:transition-none",
+                  lit && "bg-yellow-100/70 dark:bg-yellow-500/15",
+                )}
                 style={{ transform: `translateY(${v.start}px)` }}
               >
                 <MessageErrorBoundary resetKey={resetKeyOf(row)}>
@@ -269,12 +319,31 @@ function ChannelMessages({
           </p>
         )}
       </div>
+      {newer.loading && (
+        <p
+          role="status"
+          className="absolute inset-x-0 bottom-14 z-10 mx-auto w-fit rounded-full border bg-background px-3 py-1 text-xs text-muted-foreground shadow-sm"
+        >
+          다음 메시지를 불러오는 중…
+        </p>
+      )}
       <div aria-live="polite" className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
-        {unseen > 0 && (
-          <Button size="sm" className="pointer-events-auto rounded-full shadow-md" onClick={toEnd}>
-            새 메시지 {unseen}개
+        {hasNewer ? (
+          <Button
+            size="sm"
+            className="pointer-events-auto rounded-full shadow-md"
+            onClick={() => void toLatest()}
+          >
+            최신 메시지로
             <ArrowDownIcon aria-hidden />
           </Button>
+        ) : (
+          unseen > 0 && (
+            <Button size="sm" className="pointer-events-auto rounded-full shadow-md" onClick={toEnd}>
+              새 메시지 {unseen}개
+              <ArrowDownIcon aria-hidden />
+            </Button>
+          )
         )}
       </div>
     </div>

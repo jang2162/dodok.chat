@@ -2,17 +2,20 @@ import { Message } from "@dodok/shared";
 import { describe, expect, it } from "vitest";
 import {
   addPending,
+  appendNewer,
   applyToChannel,
   emptyTimeline,
   fromLatest,
   hasGap,
   inThread,
+  jumpAround,
   noteSeq,
   type PendingMessage,
   prependOlder,
   refreshRoots,
   removePending,
   setPendingState,
+  threadAround,
   threadFromPage,
   upsert,
   upsertMany,
@@ -151,5 +154,84 @@ describe("루트만 드는 채널 타임라인(스레드·검색 스펙 4.1)", (
     const other = msg(9).id;
     const picked = inThread(ROOT, [msg(1), reply(2), msg(3), reply(4, { threadRootId: other })]);
     expect(picked.map((m) => m.seq)).toEqual([1, 2]);
+  });
+});
+
+describe("결과로 가기 — around 페이지로 갈아 끼우기(떨어진 창)", () => {
+  // 채널은 루트만 든다 — seq 가 띄엄띄엄이다(사이는 답글). 지금 가진 것은 최신 쪽 루트 40·44, 채널의 끝은 46
+  const live = () => ({ ...emptyTimeline(), items: [msg(40), msg(44)], hasOlder: true, lastSeq: 46 });
+  const page = (seqs: number[], hasMore: boolean, hasMoreAfter: boolean) => ({
+    messages: seqs.map((s) => msg(s)),
+    hasMore,
+    hasMoreAfter,
+  });
+
+  it("더 새것이 있으면 그 페이지만 두고 hasNewer — lastSeq 는 내려가지 않는다(거짓 빈틈 없음)", () => {
+    const t = jumpAround(live(), page([5, 9, 12], true, true));
+    expect(t.items.map((m) => m.seq)).toEqual([5, 9, 12]);
+    expect(t.hasOlder).toBe(true);
+    expect(t.hasNewer).toBe(true);
+    expect(t.lastSeq).toBe(46);
+    // 다음 wire 메시지(47)는 빈틈이 아니다 — 루트 사이 seq(10·11)가 비어 있어도
+    expect(hasGap(t, msg(47))).toBe(false);
+    expect(hasGap(t, msg(48))).toBe(true);
+  });
+
+  it("페이지가 끝까지 닿으면 hasNewer 없이, 그 사이 새로 온 것(페이지보다 새것)은 남긴다", () => {
+    const prev = { ...live(), items: [msg(40), msg(44), msg(50)], lastSeq: 50 };
+    const t = jumpAround(prev, page([30, 36, 40, 44], false, false));
+    expect(t.items.map((m) => m.seq)).toEqual([30, 36, 40, 44, 50]);
+    expect(t.hasNewer).toBe(false);
+    expect(t.hasOlder).toBe(false);
+    expect(t.lastSeq).toBe(50);
+  });
+
+  it("보내는 중 항목은 그대로", () => {
+    const prev = addPending(live(), pending("c1"));
+    expect(jumpAround(prev, page([5], false, true)).pending).toEqual(prev.pending);
+  });
+
+  it("떨어진 창에는 창보다 새 메시지를 넣지 않는다 — lastSeq 만 올리고 확정된 보내는 중 항목은 뺀다", () => {
+    const t = addPending(jumpAround(live(), page([5, 9], true, true)), pending("c1"));
+    const next = upsertMany(t, [msg(47, { clientMsgId: "c1" }), { ...msg(9), bodyMd: "고침" }]);
+    expect(next.items.map((m) => m.seq)).toEqual([5, 9]);
+    expect(next.items[1]?.bodyMd).toBe("고침");
+    expect(next.lastSeq).toBe(47);
+    expect(next.pending).toEqual([]);
+    // 재동기화 응답도 같은 길(applyToChannel → upsertMany)
+    expect(applyToChannel(t, [msg(48)]).items.map((m) => m.seq)).toEqual([5, 9]);
+  });
+
+  it("아래로 이어 받기(appendNewer) 는 창을 넓히고, 끝에 닿으면 hasNewer 를 끈다", () => {
+    const t = jumpAround(live(), page([5, 9], true, true));
+    const more = appendNewer(t, [msg(12), msg(15)], true);
+    expect(more.items.map((m) => m.seq)).toEqual([5, 9, 12, 15]);
+    expect(more.hasNewer).toBe(true);
+    const done = appendNewer(more, [msg(40), msg(44)], false);
+    expect(done.hasNewer).toBe(false);
+    expect(done.lastSeq).toBe(46);
+    // 이제 새 메시지는 끝에 붙는다
+    expect(upsert(done, msg(47)).items.at(-1)?.seq).toBe(47);
+  });
+
+  it("최신 페이지로 새로 시작하면(fromLatest) 떨어진 창이 아니다", () => {
+    const t = jumpAround(live(), page([5], true, true));
+    expect(fromLatest(t, [msg(44)], true).hasNewer).toBeUndefined();
+  });
+
+  it("스레드 — 루트는 늘 맨 앞, 페이지가 루트를 담아도 한 번만", () => {
+    const root = msg(1);
+    const r = (seq: number) => msg(seq, { threadRootId: root.id });
+    const prev = threadFromPage(undefined, root, [r(80), r(90)], true);
+    const t = threadAround(prev, root, { messages: [r(20), r(30)], hasMore: true, hasMoreAfter: true });
+    expect(t.items.map((m) => m.seq)).toEqual([1, 20, 30]);
+    expect(t.hasNewer).toBe(true);
+    const all = threadAround(prev, root, {
+      messages: [root, r(20), r(30)],
+      hasMore: false,
+      hasMoreAfter: true,
+    });
+    expect(all.items.map((m) => m.seq)).toEqual([1, 20, 30]);
+    expect(all.hasOlder).toBe(false);
   });
 });

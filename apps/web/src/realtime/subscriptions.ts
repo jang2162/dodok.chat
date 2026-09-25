@@ -21,18 +21,25 @@ const REPLAY_STATUSES: ReadonlySet<RunState["status"]> = new Set([
   "awaiting_approval",
 ]);
 
+/** 히스토리 쪽 인자 — `around` 는 그 seq 를 가운데 둔 한 쪽(결과로 가기)이라 before·after 와 함께 쓰지 않는다 */
+export type PageQuery = { afterSeq?: number; beforeSeq?: number; around?: number; limit: number };
+/** `hasMoreAfter` 는 around 페이지에만 — 더 새것이 있다 */
 export type FetchPage = (
   channelId: string,
-  q: { afterSeq?: number; beforeSeq?: number; limit: number },
-) => Promise<{ messages: Message[]; hasMore: boolean }>;
+  q: PageQuery,
+) => Promise<{ messages: Message[]; hasMore: boolean; hasMoreAfter?: boolean }>;
 
-/** REST `GET /channels/:id/messages` — 빈틈 이어 받기(afterSeq)와 과거 페이지(beforeSeq) */
-export const restFetchPage: FetchPage = (channelId, q) => {
+export function pageParams(q: PageQuery): URLSearchParams {
   const params = new URLSearchParams({ limit: String(q.limit) });
   if (q.afterSeq !== undefined) params.set("afterSeq", String(q.afterSeq));
   if (q.beforeSeq !== undefined) params.set("beforeSeq", String(q.beforeSeq));
-  return api("GET", `/channels/${channelId}/messages?${params}`);
-};
+  if (q.around !== undefined) params.set("around", String(q.around));
+  return params;
+}
+
+/** REST `GET /channels/:id/messages` — 빈틈 이어 받기(afterSeq)·과거 페이지(beforeSeq)·결과로 가기(around) */
+export const restFetchPage: FetchPage = (channelId, q) =>
+  api("GET", `/channels/${channelId}/messages?${pageParams(q)}`);
 
 /** REST 직접 호출이라 Query 의 전역 401 처리를 타지 않는다 — 401 이면 로그인으로(스펙 8장) 보내고 오류는 그대로 올린다 */
 function toLoginOn401(e: unknown): never {

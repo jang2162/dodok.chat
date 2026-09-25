@@ -11,7 +11,7 @@ import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type AdapterStatusResponse, qk } from "@/api/queries";
 import { createQueryClient } from "@/app/queryClient";
-import { fromLatest, threadFromPage } from "@/features/messages/timeline";
+import { fromLatest, jumpAround, threadFromPage } from "@/features/messages/timeline";
 import { threadQuery } from "@/features/threads/queries";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
 import { notifyApproval, resetApprovalNotices } from "@/features/approvals/notify";
@@ -149,6 +149,70 @@ describe("타임라인 이벤트", () => {
       [11, "고침"],
     ]);
     expect(getTimeline(queryClient, CH2)).toBeUndefined();
+  });
+});
+
+describe("결과로 가기(around)로 갈아 끼운 뒤의 wire 이벤트", () => {
+  const ROOT = msg(1);
+  const reply = (seq: number) => msg(seq, { threadRootId: ROOT.id });
+  /** 구독한 채널(루트 40·44, 끝 46)을 루트 5·9·12 의 around 페이지로 — 더 새것이 있어 떨어진 창이다 */
+  function jumped(hasMoreAfter = true) {
+    const t = setup();
+    seed(t.queryClient, [msg(40), msg(44)]);
+    updateTimeline(t.queryClient, CH, (x) => ({ ...x, lastSeq: 46 }));
+    updateTimeline(t.queryClient, CH, (x) =>
+      jumpAround(x, { messages: [msg(5), msg(9), msg(12)], hasMore: true, hasMoreAfter }),
+    );
+    return { ...t, catchUp: vi.spyOn(t.subscriptions, "catchUp").mockResolvedValue() };
+  }
+
+  it("다음 seq 는 빈틈이 아니다 — 창보다 새 루트는 목록에 넣지 않고 lastSeq 만, 답글도 seq 만", () => {
+    const { fake, queryClient, catchUp } = jumped();
+    fake.serverEmit("message.created", { message: msg(47) });
+    fake.serverEmit("message.created", { message: reply(48) });
+    fake.serverEmit("message.created", { message: msg(49) });
+
+    expect(catchUp).not.toHaveBeenCalled();
+    expect(seqs(queryClient)).toEqual([5, 9, 12]);
+    expect(getTimeline(queryClient, CH)?.lastSeq).toBe(49);
+  });
+
+  it("창 안 루트의 수정(message.updated)은 그대로 반영한다", () => {
+    const { fake, queryClient } = jumped();
+    fake.serverEmit("message.updated", { message: msg(9, { bodyMd: "고침" }) });
+    expect(getTimeline(queryClient, CH)?.items[1]?.bodyMd).toBe("고침");
+  });
+
+  it("진짜 빈틈(채널의 끝 + 1 보다 큼)은 여전히 catchUp — 기준은 창의 끝이 아니라 채널의 끝", () => {
+    const { fake, queryClient, catchUp } = jumped();
+    fake.serverEmit("message.created", { message: msg(50) });
+    expect(catchUp).toHaveBeenCalledWith(CH);
+    expect(seqs(queryClient)).toEqual([5, 9, 12]);
+  });
+
+  it("재동기화(lastSeq 구독)가 창보다 새 루트를 돌려줘도 창에 붙이지 않는다 — 이어 받기는 창의 끝에서", async () => {
+    const { fake, queryClient, catchUp } = jumped();
+    catchUp.mockRestore();
+    fake.onAck("channel.subscribe", () =>
+      ok<ChannelSubscribeResult>({
+        messages: [msg(47), reply(48)],
+        hasMore: false,
+        activeRuns: [],
+        pendingApprovals: [],
+      }),
+    );
+    fake.serverEmit("message.created", { message: msg(50) });
+    await vi.waitFor(() => expect(getTimeline(queryClient, CH)?.lastSeq).toBe(48));
+    expect(fake.sentOf("channel.subscribe")).toEqual([{ channelId: CH, lastSeq: 46 }]);
+    expect(seqs(queryClient)).toEqual([5, 9, 12]);
+    expect(getTimeline(queryClient, CH)?.hasNewer).toBe(true);
+  });
+
+  it("페이지가 끝까지 닿았으면(hasMoreAfter 없음) 새 루트는 끝에 붙는다", () => {
+    const { fake, queryClient, catchUp } = jumped(false);
+    fake.serverEmit("message.created", { message: msg(47) });
+    expect(catchUp).not.toHaveBeenCalled();
+    expect(seqs(queryClient)).toEqual([5, 9, 12, 40, 44, 47]);
   });
 });
 

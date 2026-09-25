@@ -1,5 +1,7 @@
 import { Outlet } from "@tanstack/react-router";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { isSearchShortcut, OpenSearchContext } from "@/features/search/openSearch";
+import { SearchDialog } from "@/features/search/SearchDialog";
 import { useIsNarrow } from "@/hooks/useIsNarrow";
 import { Sheet, SheetContent, SheetTitle } from "@/ui/sheet";
 import { Banners } from "./Banners";
@@ -9,7 +11,8 @@ import { OpenSidebarContext, SidebarTriggerContext } from "./sidebarSheet";
 /**
  * 로그인 뒤 레이아웃(스펙 2.4): 사이드바 + 연결 배너 + 페이지. 768px 미만이면 사이드바를 왼쪽 시트로 접고,
  * 페이지 헤더가 `useOpenSidebar()` 로 여는 버튼을 그린다. 시트는 그 안에서 이동하면 닫히고, 닫히면(이동·Esc·닫기)
- * 초점은 지금 화면의 메뉴 버튼으로 돌아간다
+ * 초점은 지금 화면의 메뉴 버튼으로 돌아간다. 검색 대화상자(스레드·검색 스펙 5.4)는 어느 화면에서나 `⌘K`/`Ctrl+K` 와
+ * 사이드바의 검색 칸으로 연다
  */
 export function AppShell() {
   const narrow = useIsNarrow();
@@ -28,40 +31,55 @@ export function AppShell() {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const pendingFocus = useRef(false);
   const [trigger] = useState(() => ({ ref: triggerRef, pendingFocus }));
+  const [searchOpen, setSearchOpen] = useState(false);
+  const openSearch = useCallback(() => setSearchOpen(true), []);
+  useEffect(() => {
+    // 작성기 안에서 눌러도 연다 — 브라우저의 주소창 초점(Ctrl+K)보다 앞선다
+    const onKey = (e: KeyboardEvent) => {
+      if (!isSearchShortcut(e)) return;
+      e.preventDefault();
+      setSearchOpen(true);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   return (
-    <OpenSidebarContext.Provider value={narrow ? openSidebar : undefined}>
-      <SidebarTriggerContext.Provider value={trigger}>
-        <div data-testid="app-shell" className="flex h-dvh bg-background text-foreground">
-          {narrow ? (
-            <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
-              <SheetContent
-                side="left"
-                className="w-[260px] gap-0 p-0"
-                aria-describedby={undefined}
-                onCloseAutoFocus={(e) => {
-                  e.preventDefault();
-                  // 링크로 닫혔으면 이동은 아직 끝나지 않았다 — 지금 버튼에 초점을 주고, 화면이 바뀌어 그 버튼이
-                  // 사라지면(초점을 잃으면) 새 화면의 버튼이 이어받게 표시해 둔다
-                  pendingFocus.current = true;
-                  triggerRef.current?.focus();
-                }}
-              >
-                <SheetTitle className="sr-only">채널 목록</SheetTitle>
-                <Sidebar onNavigate={closeSidebar} />
-              </SheetContent>
-            </Sheet>
-          ) : (
-            <aside className="w-[260px] shrink-0 border-r">
-              <Sidebar />
-            </aside>
-          )}
-          <main className="flex min-w-0 flex-1 flex-col">
-            <Banners />
-            <Outlet />
-          </main>
-        </div>
-      </SidebarTriggerContext.Provider>
-    </OpenSidebarContext.Provider>
+    <OpenSearchContext.Provider value={openSearch}>
+      <OpenSidebarContext.Provider value={narrow ? openSidebar : undefined}>
+        <SidebarTriggerContext.Provider value={trigger}>
+          <div data-testid="app-shell" className="flex h-dvh bg-background text-foreground">
+            {narrow ? (
+              <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
+                <SheetContent
+                  side="left"
+                  className="w-[260px] gap-0 p-0"
+                  aria-describedby={undefined}
+                  onCloseAutoFocus={(e) => {
+                    e.preventDefault();
+                    // 링크로 닫혔으면 이동은 아직 끝나지 않았다 — 지금 버튼에 초점을 주고, 화면이 바뀌어 그 버튼이
+                    // 사라지면(초점을 잃으면) 새 화면의 버튼이 이어받게 표시해 둔다
+                    pendingFocus.current = true;
+                    triggerRef.current?.focus();
+                  }}
+                >
+                  <SheetTitle className="sr-only">채널 목록</SheetTitle>
+                  <Sidebar onNavigate={closeSidebar} />
+                </SheetContent>
+              </Sheet>
+            ) : (
+              <aside className="w-[260px] shrink-0 border-r">
+                <Sidebar />
+              </aside>
+            )}
+            <main className="flex min-w-0 flex-1 flex-col">
+              <Banners />
+              <Outlet />
+            </main>
+          </div>
+          <SearchDialog open={searchOpen} onOpenChange={setSearchOpen} />
+        </SidebarTriggerContext.Provider>
+      </OpenSidebarContext.Provider>
+    </OpenSearchContext.Provider>
   );
 }

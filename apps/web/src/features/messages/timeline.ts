@@ -13,8 +13,18 @@ export type PendingMessage = {
   reason?: PendingFailReason;
 };
 export type PendingFailReason = "rate_limited";
-/** 확정 메시지(seq 오름차순)와 보내는 중 항목. 보내는 중 항목은 항상 목록 끝에 그린다(스펙 4.3-6) */
-export type Timeline = { items: Message[]; pending: PendingMessage[]; hasOlder: boolean; lastSeq: number };
+/**
+ * 확정 메시지(seq 오름차순)와 보내는 중 항목. 보내는 중 항목은 항상 목록 끝에 그린다(스펙 4.3-6).
+ * `hasNewer` 는 결과로 가기(`around`)로 받은 떨어진 창이다 — 창 뒤에 받지 않은 메시지가 있다. 그동안 `lastSeq` 는 창의 끝이
+ * 아니라 wire 로 본 채널의 끝이고(빈틈 판단은 그대로), 창보다 새 메시지는 목록에 넣지 않는다(`upsertMany`)
+ */
+export type Timeline = {
+  items: Message[];
+  pending: PendingMessage[];
+  hasOlder: boolean;
+  lastSeq: number;
+  hasNewer?: boolean;
+};
 
 export const emptyTimeline = (): Timeline => ({ items: [], pending: [], hasOlder: false, lastSeq: 0 });
 
@@ -48,12 +58,20 @@ export function prependOlder(t: Timeline, older: readonly Message[], hasOlder: b
   return { ...t, items: merge(t.items, older), hasOlder };
 }
 
-/** message.created·updated, 전송 ack, 빈틈 메우기 페이지 */
+/**
+ * message.created·updated, 전송 ack, 빈틈 메우기 페이지. 떨어진 창(`hasNewer`)이면 창 안(가장 새 항목의 seq 이하)과 이미
+ * 가진 것만 넣는다 — 창 뒤에 하나만 붙이면 그 사이의 빈 곳이 보이지 않은 채 이어진 목록처럼 보인다. 나머지는 아래로
+ * 이어 받을 때(`appendNewer`) 온다
+ */
 export function upsertMany(t: Timeline, incoming: readonly Message[]): Timeline {
   if (incoming.length === 0) return t;
+  const newest = t.items.at(-1)?.seq ?? 0;
+  const kept = t.hasNewer
+    ? incoming.filter((m) => m.seq <= newest || t.items.some((x) => x.id === m.id))
+    : incoming;
   return {
     ...t,
-    items: merge(t.items, incoming),
+    items: merge(t.items, kept),
     pending: dropConfirmed(t.pending, incoming),
     lastSeq: Math.max(t.lastSeq, maxSeq(incoming)),
   };
@@ -106,6 +124,41 @@ export function threadFromPage(
   hasOlder: boolean,
 ): Timeline {
   return fromLatest(prev, [root, ...messages.filter((m) => m.id !== root.id)], hasOlder);
+}
+
+/** REST around 페이지(`?around=<seq>`) — 그 seq 앞뒤 절반씩. `hasMoreAfter` 는 더 새것이 있다 */
+export type AroundPage = { messages: readonly Message[]; hasMore: boolean; hasMoreAfter?: boolean };
+
+/**
+ * 결과로 가기(스레드·검색 스펙 5.3) — 타임라인을 around 페이지로 갈아 끼운다. 더 새것이 있으면 떨어진 창(`hasNewer`),
+ * 끝까지 닿았으면 받는 사이 새로 온 것(페이지보다 새것)을 남겨 이어진 목록이다. `lastSeq` 는 내려가지 않는다 — 루트만 든
+ * 페이지의 가장 새 seq 로 내리면 그 뒤 답글·루트가 거짓 빈틈이 된다. 보내는 중 항목은 유지
+ */
+export function jumpAround(prev: Timeline, page: AroundPage): Timeline {
+  const items = [...page.messages].sort(bySeq);
+  const newest = maxSeq(items);
+  const lastSeq = Math.max(prev.lastSeq, newest);
+  if (page.hasMoreAfter) return { ...prev, items, hasOlder: page.hasMore, hasNewer: true, lastSeq };
+  const arrived = prev.hasNewer ? [] : prev.items.filter((m) => m.seq > newest);
+  return { ...prev, items: merge(items, arrived), hasOlder: page.hasMore, hasNewer: false, lastSeq };
+}
+
+/** 스레드판 `jumpAround` — 루트는 페이지가 거기까지 닿지 않아도 늘 맨 앞(`threadFromPage` 와 같다) */
+export function threadAround(prev: Timeline | undefined, root: Message, page: AroundPage): Timeline {
+  const base = prev ?? emptyTimeline();
+  const t = jumpAround(base, { ...page, messages: page.messages.filter((m) => m.id !== root.id) });
+  return { ...t, items: [root, ...t.items.filter((m) => m.id !== root.id)] };
+}
+
+/** 떨어진 창의 아래로 이어 받기(`afterSeq`) — 창 밖이어도 붙인다. 더 없으면 창이 끝에 닿았다 */
+export function appendNewer(t: Timeline, newer: readonly Message[], hasMore: boolean): Timeline {
+  return {
+    ...t,
+    items: merge(t.items, newer),
+    pending: dropConfirmed(t.pending, newer),
+    hasNewer: hasMore,
+    lastSeq: Math.max(t.lastSeq, maxSeq(newer)),
+  };
 }
 
 /** 같은 clientMsgId 가 있으면 빼고 끝에 다시 넣는다(다시 보내기) */

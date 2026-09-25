@@ -3,22 +3,17 @@ import { type QueryClient, queryOptions } from "@tanstack/react-query";
 import { ApiRequestError, api } from "@/api/http";
 import { qk } from "@/api/queries";
 import { threadFromPage, type Timeline } from "@/features/messages/timeline";
+import { type PageQuery, pageParams } from "@/realtime/subscriptions";
 import { withThreadEdits } from "@/realtime/timelineCache";
 
 /** 스레드 패널이 한 번에 받는 메시지 수(채널 과거 페이지와 같다) */
 export const THREAD_PAGE = 50;
 
 /** REST `GET /channels/:id/threads/:rootId/messages` — 루트는 페이지가 거기까지 닿지 않아도 `root` 로 늘 온다 */
-export type ThreadPage = { root: Message; messages: Message[]; hasMore: boolean };
+export type ThreadPage = { root: Message; messages: Message[]; hasMore: boolean; hasMoreAfter?: boolean };
 
-export function fetchThreadPage(
-  channelId: string,
-  rootId: string,
-  q: { beforeSeq?: number; limit: number },
-): Promise<ThreadPage> {
-  const params = new URLSearchParams({ limit: String(q.limit) });
-  if (q.beforeSeq !== undefined) params.set("beforeSeq", String(q.beforeSeq));
-  return api("GET", `/channels/${channelId}/threads/${rootId}/messages?${params}`);
+export function fetchThreadPage(channelId: string, rootId: string, q: PageQuery): Promise<ThreadPage> {
+  return api("GET", `/channels/${channelId}/threads/${rootId}/messages?${pageParams(q)}`);
 }
 
 /** 없는 루트 — 404(지운 메시지·답글·다른 채널) 또는 주소의 id 가 UUID 가 아님(VALIDATION) */
