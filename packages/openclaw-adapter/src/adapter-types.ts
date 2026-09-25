@@ -74,7 +74,10 @@ export interface AgentAdapter {
   /** 그 브리지 토큰으로 붙은 플러그인 연결을 끊고 끊은 수를 돌려준다 — 토큰 폐기 때 */
   revokeBridgeSessions(tokenId: string): number;
   listAgents(): Promise<Array<{ providerAgentId: string; name?: string }>>;
-  sessionKeyFor(providerAgentId: string, channelId: string): string;
+  /** 스레드 루트를 주면 그 스레드의 하위 세션 키 */
+  sessionKeyFor(providerAgentId: string, channelId: string, threadRootId?: string): string;
+  /** 지금 붙은 플러그인이 그 능력을 hello 로 알렸는가(붙은 플러그인이 없으면 false) */
+  pluginSupports(capability: "threads"): boolean;
   /** ok:false 는 throw AdapterError(code) */
   send(input: InboundDeliver): Promise<InboundDeliverResult>;
   abort(runId: string, sessionKey: string): Promise<void>;

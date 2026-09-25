@@ -445,6 +445,8 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
 
     sessionKeyFor,
 
+    pluginSupports: (capability) => bridge.current()?.hello?.capabilities.includes(capability) ?? false,
+
     async send(input) {
       // 플러그인은 런이 시작될 때(onAgentRunStart) ack 하므로 Gateway 이벤트가 ack 보다 먼저 올 수 있다 — 전송 전에 등록한다
       knownRunIds.add(input.runId);

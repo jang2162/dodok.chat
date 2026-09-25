@@ -1,10 +1,11 @@
+import { dodokSessionKey } from "@dodok/shared";
 import { z } from "zod";
 
 // 서버 코어 스펙 6.5 — 세션 키와 세션 메서드 응답 파싱. 응답은 외부 입력이라 읽는 필드만 좁게 파싱하고 던지지 않는다.
 
-/** 계획서 #19: 채널당 에이전트별 1개, 접미사 없음. */
-export function sessionKeyFor(providerAgentId: string, channelId: string): string {
-  return `agent:${providerAgentId}:dodok:channel:${channelId}`;
+/** 채널당 에이전트별 1개, 스레드면 그 아래 하위 세션 1개 — 모양은 shared `dodokSessionKey` 가 정본이다 */
+export function sessionKeyFor(providerAgentId: string, channelId: string, threadRootId?: string): string {
+  return dodokSessionKey(providerAgentId, channelId, threadRootId);
 }
 
 const SessionsResetResult = z.looseObject({

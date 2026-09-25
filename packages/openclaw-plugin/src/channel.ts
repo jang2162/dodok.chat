@@ -9,10 +9,17 @@
  *   첨부 바이트는 브리지 오리진 HTTP 로 — 인바운드 이미지는 GET 해 Gateway 미디어 저장소에, 아웃바운드 미디어는 POST 해 attachmentIds 로
  */
 import { randomUUID } from "node:crypto";
-import { type InboundDeliver, type InboundDeliverResult } from "@dodok/shared";
+import {
+  dodokSessionKey,
+  Id,
+  type BridgeCapability,
+  type InboundDeliver,
+  type InboundDeliverResult,
+} from "@dodok/shared";
 import {
   buildChannelConfigSchema,
   buildChannelOutboundSessionRoute,
+  buildThreadAwareOutboundSessionRoute,
   createChatChannelPlugin,
   type OpenClawConfig,
   type PluginRuntime,
@@ -42,6 +49,7 @@ import {
   channelIdFromSessionKey,
   formatDodokTarget,
   messageToolSendToOutbound,
+  outboundRouteThreadId,
   parseDodokTarget,
   toolInputError,
   type OutboundCorrelation,
@@ -66,6 +74,8 @@ const SDK_VERSION = typeof __OPENCLAW_SDK_VERSION__ === "string" ? __OPENCLAW_SD
 // 번들(scripts/build.mjs, format esm)에서 import.meta.url 은 dist/index.js 자신이다. 빌드를 CJS 로 바꾸거나
 // import.meta 를 define 으로 치환하면 해시가 조용히 사라져 서버는 늘 「빌드를 알 수 없습니다」로 본다
 const BUNDLE_SHA256 = computeBundleSha256(import.meta.url);
+/** hello 로 서버에 알리는 능력. `threads` 가 없으면 서버는 스레드 런을 PLUGIN_OUTDATED 로 끝낸다(스펙 3.2) */
+export const DODOK_BRIDGE_CAPABILITIES: BridgeCapability[] = ["run_id_in_outbound", "config.set", "threads"];
 
 type ChannelRuntime = PluginRuntime["channel"];
 
@@ -166,14 +176,9 @@ async function dispatchInbound(params: {
     timestamp: facts.timestamp,
     from: facts.sender.id,
     sender: { id: facts.sender.id, name: facts.sender.name, isBot: facts.sender.isBot },
-    conversation: { kind: "channel", id: facts.channelId, label: facts.channelId },
-    route: {
-      agentId: facts.agentId,
-      accountId: account.accountId,
-      routeSessionKey: facts.sessionKey,
-      dispatchSessionKey: facts.sessionKey,
-    },
-    reply: { to: facts.target, originatingTo: facts.target },
+    conversation: facts.conversation,
+    route: facts.route,
+    reply: facts.reply,
     message: {
       body,
       bodyForAgent: body,
@@ -289,6 +294,7 @@ async function dispatchInbound(params: {
             channelId: facts.channelId,
             agentId: facts.agentId,
             sessionKey: facts.sessionKey,
+            ...(facts.threadId ? { threadId: facts.threadId } : {}),
             text: finalText,
             attachmentIds: outcome.ids,
             correlation,
@@ -355,7 +361,7 @@ async function startDodokAccount(ctx: {
       sdkVersion: SDK_VERSION,
       gatewayVersion: runtime.version,
       ...(BUNDLE_SHA256 ? { bundleSha256: BUNDLE_SHA256 } : {}),
-      capabilities: ["run_id_in_outbound", "config.set"],
+      capabilities: DODOK_BRIDGE_CAPABILITIES,
     },
     logger,
     handlers: {
@@ -426,10 +432,13 @@ export const dodokChannelPlugin = createChatChannelPlugin<ResolvedDodokAccount>(
         looksLikeId: (raw: string) => parseDodokTarget(raw) !== null,
         hint: "channel:<dodok channel uuid>",
       },
-      resolveOutboundSessionRoute: ({ cfg, agentId, accountId, target }) => {
+      // 돌려준 경로의 키가 코어의 delivery-mirror 전사 자리다 — 채널 키만 돌려주면 스레드 세션의 툴 전송이 채널 세션
+      // 전사에 샌다(ADR 0006 「아웃바운드와 delivery-mirror 누수」 절). SDK 기본 precedence 는 replyToId 를 먼저 보는데
+      // 우리 replyToId 는 인바운드 메시지 id 라 `:thread:<메시지 id>` 라는 없는 세션으로 가므로 쓰지 않는다
+      resolveOutboundSessionRoute: ({ cfg, agentId, accountId, target, currentSessionKey, threadId }) => {
         const channelId = parseDodokTarget(target);
         if (!channelId) return null;
-        return buildChannelOutboundSessionRoute({
+        const route = buildChannelOutboundSessionRoute({
           cfg,
           agentId,
           channel: DODOK_CHANNEL_ID,
@@ -438,6 +447,13 @@ export const dodokChannelPlugin = createChatChannelPlugin<ResolvedDodokAccount>(
           chatType: "channel",
           from: `dodok:${accountId ?? DEFAULT_ACCOUNT_ID}`,
           to: formatDodokTarget(channelId),
+        });
+        const routeThreadId = outboundRouteThreadId({ currentSessionKey, threadId });
+        return buildThreadAwareOutboundSessionRoute({
+          route,
+          ...(routeThreadId === undefined ? {} : { threadId: routeThreadId }),
+          ...(currentSessionKey ? { currentSessionKey } : {}),
+          precedence: ["threadId", "currentSession"],
         });
       },
     },
@@ -482,6 +498,17 @@ export const dodokChannelPlugin = createChatChannelPlugin<ResolvedDodokAccount>(
           }),
         );
         if (!built.ok) throw toolInputError(built.error);
+        // 스레드의 정본은 세션 키다. 코어가 넘긴 현재 스레드는 대조만 한다 — 어긋나면 코어·우리 중 하나의 가정이 틀렸다
+        const currentThreadTs = actionCtx.toolContext?.currentThreadTs;
+        if (currentThreadTs && currentThreadTs.toLowerCase() !== (built.message.threadId ?? "")) {
+          console.warn(
+            logLine("tool-send-thread-mismatch", {
+              sessionKey,
+              threadId: built.message.threadId ?? null,
+              currentThreadTs,
+            }),
+          );
+        }
         if (!bridge) throw new Error(`dodok: account "${accountId}" bridge is not running`);
         if (sources.length > 0) {
           // handleAction 은 세대 2 에서 돌 수 있다(ADR 0004) — 계정은 액션 문맥의 cfg 로 푼다
@@ -535,17 +562,26 @@ export const dodokChannelPlugin = createChatChannelPlugin<ResolvedDodokAccount>(
     base: { deliveryMode: "direct" },
     attachedResults: {
       channel: DODOK_CHANNEL_ID,
-      sendText: async ({ to, text, accountId }) => {
+      sendText: async ({ to, text, accountId, threadId: rawThreadId }) => {
         const channelId = parseDodokTarget(to) ?? channelIdFromSessionKey(to);
         if (!channelId) throw new Error(`dodok: invalid target ${to}`);
+        // 스레드 런이 실패하면 코어가 오류 알림을 threadId 와 함께 여기로 보낸다(ADR 0006) — 버리면 채널 최상위에 뜬다
+        const threadId =
+          rawThreadId === undefined || rawThreadId === null || rawThreadId === ""
+            ? undefined
+            : String(rawThreadId);
+        if (threadId !== undefined && !Id.safeParse(threadId).success) {
+          throw new Error(`dodok: invalid threadId ${threadId}`);
+        }
         const bridge = getBridge(accountId ?? DEFAULT_ACCOUNT_ID);
         if (!bridge) throw new Error("dodok: bridge is not running");
-        // 코어의 일반 전송(크론·하트비트 전달 등) 경로 — 에이전트 컨텍스트가 없다. 스파이크에서는 호출되지 않았다(Phase 1 에서 정한다)
+        // 코어의 일반 전송(크론·하트비트 전달·런 오류 알림 등) 경로 — 에이전트 컨텍스트가 없다
         const built = buildOutboundMessage({
           outboundId: `dodok-out-${randomUUID()}`,
           channelId,
           agentId: "unknown",
-          sessionKey: `agent:unknown:dodok:channel:${channelId}`,
+          sessionKey: dodokSessionKey("unknown", channelId, threadId),
+          ...(threadId ? { threadId } : {}),
           text,
           now: new Date(),
         });

@@ -22,6 +22,7 @@ const TOKEN_IDS: Record<string, string> = { [TOKEN]: "t1", [OTHER_TOKEN]: "t2" }
 const BUNDLE_SHA = "b".repeat(64);
 const CH = f.CHANNEL_ID;
 const STORED_MESSAGE_ID = "01a09fc9-d204-7551-89d6-38544d07a2aa";
+const THREAD_ROOT = "01a09fc9-d204-7551-89d6-38544d07a2ab";
 const hello = { pluginId: "dodok", version: "0.0.0", sdkVersion: "2026.9.4", capabilities: ["config.set"] };
 
 type Responder = (params: Record<string, unknown>) => unknown;
@@ -234,8 +235,36 @@ describe("createOpenClawAdapter — 상태", () => {
     expect(ofKind("status").map((e) => e.status.bridge)).toEqual(["connected", "down"]);
   });
 
-  it("sessionKeyFor 는 원형 세션 키", () => {
+  it("sessionKeyFor 는 원형 세션 키, 스레드 루트를 주면 스레드 하위 세션 키", () => {
     expect(adapter.sessionKeyFor("dev", CH)).toBe(`agent:dev:dodok:channel:${CH}`);
+    expect(adapter.sessionKeyFor("dev", CH, THREAD_ROOT)).toBe(
+      `agent:dev:dodok:channel:${CH}:thread:${THREAD_ROOT}`,
+    );
+  });
+});
+
+describe("createOpenClawAdapter — pluginSupports", () => {
+  it("붙은 플러그인이 없으면 false", () => {
+    expect(adapter.pluginSupports("threads")).toBe(false);
+  });
+
+  it("마지막 hello 의 capabilities 를 따른다 — 옛 플러그인은 false, 새 플러그인은 true, 끊기면 false", async () => {
+    const old = await plugin();
+    expect(adapter.pluginSupports("threads")).toBe(false);
+
+    await plugin({}, { ...hello, capabilities: ["config.set", "threads"] });
+    await until(() => old.disconnected, "replaced socket closed");
+    expect(adapter.pluginSupports("threads")).toBe(true);
+
+    clients.at(-1)?.disconnect();
+    await until(() => adapter.status().bridge === "down", "bridge down");
+    expect(adapter.pluginSupports("threads")).toBe(false);
+  });
+
+  it("모르는 capability 가 섞인 hello 도 받는다(판정 R1)", async () => {
+    await plugin({}, { ...hello, capabilities: ["future.cap", "threads"] });
+    expect(adapter.status().bridge).toBe("connected");
+    expect(adapter.pluginSupports("threads")).toBe(true);
   });
 });
 
@@ -1131,6 +1160,27 @@ describe("send 전 세션 구독", () => {
       },
     ]);
     expect(subscribesAtDeliver).toEqual([1, 1]); // 구독이 전송보다 먼저다
+  });
+
+  it("스레드 키도 전송 전에 구독한다 — 채널 키 구독만으로는 스레드 세션 이벤트가 안 온다(ADR 0006)", async () => {
+    await connectedGateway();
+    const subscribedKeysAtDeliver: string[][] = [];
+    await plugin({
+      "inbound.deliver": (payload: InboundDeliver, ack: Ack) => {
+        subscribedKeysAtDeliver.push(
+          gatewayCalls
+            .filter((c) => c.method === "sessions.messages.subscribe")
+            .map((c) => (c.params as { key: string }).key),
+        );
+        dispatchAck(payload, ack);
+      },
+    });
+    const threadKey = `${f.SESSION_KEY}:thread:${THREAD_ROOT}`;
+
+    await adapter.send(delivery());
+    await adapter.send({ ...delivery(randomUUID()), sessionKey: threadKey, threadId: THREAD_ROOT });
+
+    expect(subscribedKeysAtDeliver).toEqual([[f.SESSION_KEY], [f.SESSION_KEY, threadKey]]);
   });
 
   it("Gateway 가 끊겨 있으면 구독 없이 전송한다(정본은 플러그인 경로) — 붙을 때 recover 가 agent_sessions 로 구독한다", async () => {

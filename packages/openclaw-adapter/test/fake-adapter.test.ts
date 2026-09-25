@@ -135,6 +135,7 @@ describe("FakeAdapter", () => {
     const adapter = new FakeAdapter();
     const key = adapter.sessionKeyFor("dev", CH);
     expect(key).toBe(`agent:dev:dodok:channel:${CH}`);
+    expect(adapter.sessionKeyFor("dev", CH, MSG)).toBe(`agent:dev:dodok:channel:${CH}:thread:${MSG}`);
 
     await expect(adapter.listAgents()).resolves.toEqual([
       { providerAgentId: "dev", name: "dev" },
@@ -218,5 +219,28 @@ describe("FakeAdapter — 승인(서버 테스트용 대본)", () => {
       reason: "timeout",
     });
     expect(adapter.calls.resolveApproval).toHaveLength(2);
+  });
+});
+
+describe("FakeAdapter.pluginSupports", () => {
+  it("기본은 스레드를 아는 플러그인이 붙어 있다", () => {
+    expect(new FakeAdapter().pluginSupports("threads")).toBe(true);
+  });
+
+  it("setPluginCapabilities 로 옛 플러그인을 흉내 낸다", () => {
+    const adapter = new FakeAdapter();
+    adapter.setPluginCapabilities([]);
+    expect(adapter.pluginSupports("threads")).toBe(false);
+    adapter.setPluginCapabilities(["threads"]);
+    expect(adapter.pluginSupports("threads")).toBe(true);
+  });
+
+  it("붙은 플러그인이 없으면 false", () => {
+    const adapter = new FakeAdapter();
+    adapter.setSetupDetail({
+      ...adapter.setupDetail(),
+      bridge: { state: "down", plugin: null },
+    });
+    expect(adapter.pluginSupports("threads")).toBe(false);
   });
 });

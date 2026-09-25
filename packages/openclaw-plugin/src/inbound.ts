@@ -2,14 +2,14 @@
  * 서버 → 에이전트 방향 변환. 브리지 `inbound.deliver` 를 OpenClaw 인바운드 디스패치에 넣을 사실(facts)로 만든다.
  * `openclaw` 를 import 하지 않는다 — 단위 테스트 대상. SDK 호출은 `channel.ts` 가 한다.
  */
-import type { InboundDeliver, InboundDeliverResult } from "@dodok/shared";
+import {
+  dodokSessionKey,
+  threadMatchesSessionKey,
+  type InboundDeliver,
+  type InboundDeliverResult,
+} from "@dodok/shared";
 import { buildInboundText, type ContextFormatOptions } from "./context";
 import { formatDodokTarget } from "./outbound";
-
-/** 계획서 5.8 — 채널당 에이전트별 1세션. 접미사(세대·스레드)는 두지 않는다(계획서 10장 #19) */
-export function dodokSessionKey(agentId: string, channelId: string): string {
-  return `agent:${agentId}:dodok:channel:${channelId}`;
-}
 
 export type DodokInboundFacts = {
   accountId: string;
@@ -26,6 +26,16 @@ export type DodokInboundFacts = {
   body: string;
   rawBody: string;
   correlation: { deliveryId: string; runId: string; replyToInboundId: string };
+  /** 스레드 런만. 소문자 루트 id — 세션 키의 스레드 접미사와 같다 */
+  threadId?: string;
+  /** 코어 `ConversationFacts`·`RouteFacts`·`ReplyPlanFacts` 중 우리가 채우는 것 */
+  conversation: { kind: "channel"; id: string; label: string; threadId?: string };
+  /**
+   * `parentSessionKey` 는 두지 않는다 — 주면 스레드 세션이 채널 전사를 복사해 오고(포크) 통제 못 하는 재주입이
+   * 따라온다(ADR 0006 「포크(`route.parentSessionKey`) — 곁가지」 절). 문맥은 우리가 헤더로 싣는다
+   */
+  route: { agentId: string; accountId: string; routeSessionKey: string; dispatchSessionKey: string };
+  reply: { to: string; originatingTo: string; messageThreadId?: string };
   /** 에이전트 작성 인바운드일 때만. OpenClaw `ChannelBotLoopProtectionFacts` 의 입력 */
   botLoopProtection?: {
     scopeId: string;
@@ -42,30 +52,54 @@ export function toInboundFacts(
   d: InboundDeliver,
   opts: { accountId: string; context?: ContextFormatOptions },
 ): InboundFactsResult {
-  const expected = dodokSessionKey(d.agentId, d.channelId);
+  let expected: string;
+  try {
+    expected = dodokSessionKey(d.agentId, d.channelId, d.threadId);
+  } catch (error) {
+    return { ok: false, error: `sessionKey 를 만들 수 없다: ${String(error)}` };
+  }
   if (d.sessionKey !== expected) {
     return { ok: false, error: `sessionKey 불일치: 기대 ${expected}, 받음 ${d.sessionKey}` };
   }
+  // 위 비교로 이미 맞지만, 키·threadId 대조의 정본(스펙 3.2)을 거쳐 두 판정이 갈라지지 않게 한다
+  if (!threadMatchesSessionKey(d.sessionKey, d.threadId)) {
+    return {
+      ok: false,
+      error: `threadId 불일치: 세션 키 ${d.sessionKey}, threadId ${d.threadId ?? "(없음)"}`,
+    };
+  }
+  const threadId = d.threadId?.toLowerCase();
   const author = d.message.author;
   const isBot = author.type === "agent";
   const senderId = `${author.type}:${author.handle}`;
   const self = d.context.participants.find((p) => p.isSelf);
+  const target = formatDodokTarget(d.channelId);
   const facts: DodokInboundFacts = {
     accountId: opts.accountId,
     channelId: d.channelId,
     agentId: d.agentId,
     sessionKey: d.sessionKey,
-    target: formatDodokTarget(d.channelId),
+    target,
     messageId: d.message.id,
     timestamp: Date.parse(d.message.ts),
     sender: { id: senderId, name: author.displayName, isBot },
     body: buildInboundText(d, opts.context),
     rawBody: d.message.text,
     correlation: { deliveryId: d.deliveryId, runId: d.runId, replyToInboundId: d.message.id },
+    conversation: { kind: "channel", id: d.channelId, label: d.channelId, ...(threadId ? { threadId } : {}) },
+    route: {
+      agentId: d.agentId,
+      accountId: opts.accountId,
+      routeSessionKey: d.sessionKey,
+      dispatchSessionKey: d.sessionKey,
+    },
+    reply: { to: target, originatingTo: target, ...(threadId ? { messageThreadId: threadId } : {}) },
   };
+  if (threadId) facts.threadId = threadId;
   if (isBot) {
     facts.botLoopProtection = {
       scopeId: opts.accountId,
+      // 스레드도 채널과 한 예산이다 — 쪼개면 코어 안전망이 스레드 수만큼 넓어진다(ADR 0006 「봇 루프 예산」 절)
       conversationId: d.channelId,
       senderId,
       receiverId: `agent:${self?.handle ?? d.agentId}`,

@@ -19,17 +19,27 @@ export function formatInboundContext(d: InboundDeliver, opts: ContextFormatOptio
   const tz = opts.timeZone ?? "UTC";
   const self = d.context.participants.find((p) => p.isSelf);
   const lines: string[] = [];
-  lines.push(`[dodok context] channel=${d.channelId} you=@${self?.handle ?? d.agentId}`);
+  const thread = d.context.thread;
+  const threadPart = d.threadId ? ` thread=${d.threadId}` : "";
+  lines.push(`[dodok context] channel=${d.channelId}${threadPart} you=@${self?.handle ?? d.agentId}`);
   lines.push(
     `참여자: ${d.context.participants
       .map((p) => `@${p.handle}(${p.type === "user" ? "사람" : "에이전트"}${p.isSelf ? ", 나" : ""})`)
       .join(", ")}`,
   );
   lines.push(`릴레이 규칙: ${d.context.relayRules}`);
-  if (d.context.recentMessages.length > 0) {
+  const line = (m: { author: { handle: string }; text: string; ts: string }) =>
+    `[${hhmm(m.ts, tz)}] @${m.author.handle}: ${m.text}`;
+  if (thread) {
+    // 스레드 세션에는 채널 최근 대화를 싣지 않는다(스펙 2.3) — 서버가 비워 보내도 여기서 한 번 더 막는다
+    lines.push(`스레드 루트: ${line(thread.root)}`);
+    if (thread.recentMessages.length > 0) {
+      lines.push("스레드 최근:");
+      for (const m of thread.recentMessages) lines.push(line(m));
+    }
+  } else if (d.context.recentMessages.length > 0) {
     lines.push("최근 대화:");
-    for (const m of d.context.recentMessages)
-      lines.push(`[${hhmm(m.ts, tz)}] @${m.author.handle}: ${m.text}`);
+    for (const m of d.context.recentMessages) lines.push(line(m));
   }
   lines.push("---");
   return lines.join("\n");

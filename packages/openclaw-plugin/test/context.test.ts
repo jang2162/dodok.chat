@@ -67,6 +67,56 @@ describe("formatInboundContext", () => {
   });
 });
 
+describe("formatInboundContext 스레드", () => {
+  const ROOT = "01a09fc9-d204-7551-89d6-38544d07a1aa";
+  const threaded: InboundDeliver = {
+    ...deliver,
+    sessionKey: `agent:researcher:dodok:channel:${CH}:thread:${ROOT}`,
+    threadId: ROOT,
+    context: {
+      ...deliver.context,
+      thread: {
+        root: {
+          author: { type: "user", handle: "jang", displayName: "장병현" },
+          text: "배포 순서 정리하자",
+          ts: "2026-09-14T00:10:00Z",
+        },
+        recentMessages: [
+          {
+            author: { type: "agent", handle: "planner", displayName: "Planner" },
+            text: "DB 먼저요",
+            ts: "2026-09-14T00:11:00Z",
+          },
+        ],
+      },
+    },
+  };
+
+  it("스레드 루트·스레드 최근 줄을 싣고 채널 최근 대화는 싣지 않는다", () => {
+    expect(formatInboundContext(threaded, { timeZone: "Asia/Seoul" })).toBe(
+      [
+        `[dodok context] channel=${CH} thread=${ROOT} you=@researcher`,
+        "참여자: @jang(사람), @researcher(에이전트, 나), @planner(에이전트)",
+        "릴레이 규칙: 다른 에이전트에게 일을 넘길 때만 @핸들을 쓰세요 — @멘션하면 그 에이전트가 이어받습니다(최대 4턴). 언급만 할 때는 @ 없이 이름만 쓰세요.",
+        "스레드 루트: [09:10] @jang: 배포 순서 정리하자",
+        "스레드 최근:",
+        "[09:11] @planner: DB 먼저요",
+        "---",
+      ].join("\n"),
+    );
+  });
+
+  it("스레드 최근 메시지가 없으면 그 줄이 빠진다", () => {
+    const out = formatInboundContext({
+      ...threaded,
+      context: { ...threaded.context, thread: { ...threaded.context.thread!, recentMessages: [] } },
+    });
+    expect(out).toContain("스레드 루트: [00:10] @jang: 배포 순서 정리하자");
+    expect(out).not.toContain("스레드 최근:");
+    expect(out).not.toContain("최근 대화:");
+  });
+});
+
 describe("buildInboundText", () => {
   it("헤더 다음 줄에 본문", () => {
     const out = buildInboundText(deliver);

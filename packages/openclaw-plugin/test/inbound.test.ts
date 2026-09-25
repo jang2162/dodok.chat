@@ -1,9 +1,11 @@
 import type { InboundDeliver } from "@dodok/shared";
 import { describe, expect, it } from "vitest";
 import { buildInboundText } from "../src/context";
-import { dodokSessionKey, toDeliverResult, toInboundFacts } from "../src/inbound";
+import { toDeliverResult, toInboundFacts } from "../src/inbound";
 
 const CH = "01a09fc9-d204-7551-89d6-38544d07a102";
+const ROOT = "01a09fc9-d204-7551-89d6-38544d07a1aa";
+const THREAD_KEY = `agent:main:dodok:channel:${CH}:thread:${ROOT}`;
 
 function deliver(overrides: Partial<InboundDeliver> = {}): InboundDeliver {
   return {
@@ -33,12 +35,6 @@ function deliver(overrides: Partial<InboundDeliver> = {}): InboundDeliver {
   };
 }
 
-describe("dodokSessionKey", () => {
-  it("계획서 5.8 형식", () => {
-    expect(dodokSessionKey("main", CH)).toBe(`agent:main:dodok:channel:${CH}`);
-  });
-});
-
 describe("toInboundFacts", () => {
   it("사람 인바운드 → 디스패치 입력 (봇 루프 사실 없음)", () => {
     const d = deliver();
@@ -57,8 +53,79 @@ describe("toInboundFacts", () => {
         body: buildInboundText(d),
         rawBody: "@main Reply with exactly: PONG",
         correlation: { deliveryId: d.deliveryId, runId: d.runId, replyToInboundId: d.message.id },
+        conversation: { kind: "channel", id: CH, label: CH },
+        route: {
+          agentId: "main",
+          accountId: "default",
+          routeSessionKey: `agent:main:dodok:channel:${CH}`,
+          dispatchSessionKey: `agent:main:dodok:channel:${CH}`,
+        },
+        reply: { to: `channel:${CH}`, originatingTo: `channel:${CH}` },
       },
     });
+  });
+
+  it("스레드 인바운드 — 대화·답장에 스레드 id, 포크 없음, 봇 루프 대화는 채널 그대로", () => {
+    const d = deliver({
+      sessionKey: THREAD_KEY,
+      threadId: ROOT,
+      message: { ...deliver().message, author: { type: "agent", handle: "fin", displayName: "Fin" } },
+    });
+    const res = toInboundFacts(d, { accountId: "default" });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.facts.threadId).toBe(ROOT);
+    expect(res.facts.sessionKey).toBe(THREAD_KEY);
+    expect(res.facts.conversation).toEqual({ kind: "channel", id: CH, label: CH, threadId: ROOT });
+    expect(res.facts.reply).toEqual({
+      to: `channel:${CH}`,
+      originatingTo: `channel:${CH}`,
+      messageThreadId: ROOT,
+    });
+    expect(res.facts.route).toEqual({
+      agentId: "main",
+      accountId: "default",
+      routeSessionKey: THREAD_KEY,
+      dispatchSessionKey: THREAD_KEY,
+    });
+    expect(res.facts.route).not.toHaveProperty("parentSessionKey");
+    expect(res.facts.target).toBe(`channel:${CH}`);
+    expect(res.facts.botLoopProtection?.conversationId).toBe(CH);
+  });
+
+  it("대문자 threadId 도 소문자 키와 맞고, 사실에는 소문자로 싣는다", () => {
+    const res = toInboundFacts(deliver({ sessionKey: THREAD_KEY, threadId: ROOT.toUpperCase() }), {
+      accountId: "default",
+    });
+    expect(res.ok && res.facts.threadId).toBe(ROOT);
+  });
+
+  it("채널 인바운드에는 스레드 필드가 없다", () => {
+    const res = toInboundFacts(deliver(), { accountId: "default" });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.facts).not.toHaveProperty("threadId");
+    expect(res.facts.conversation).not.toHaveProperty("threadId");
+    expect(res.facts.reply).not.toHaveProperty("messageThreadId");
+  });
+
+  it.each([
+    ["키는 스레드인데 threadId 없음", { sessionKey: THREAD_KEY }],
+    ["threadId 는 있는데 키는 채널", { threadId: ROOT }],
+    [
+      "키와 threadId 가 다른 스레드",
+      { sessionKey: THREAD_KEY, threadId: "01a09fc9-d204-7551-89d6-38544d07a1bb" },
+    ],
+  ])("세션 키와 threadId 가 어긋나면 거부한다 — %s", (_label, overrides) => {
+    const res = toInboundFacts(deliver(overrides), { accountId: "default" });
+    expect(res.ok).toBe(false);
+  });
+
+  it("OpenClaw agentId 가 아니면 던지지 않고 거부한다", () => {
+    const res = toInboundFacts(deliver({ agentId: "a b", sessionKey: `agent:a b:dodok:channel:${CH}` }), {
+      accountId: "default",
+    });
+    expect(res.ok).toBe(false);
   });
 
   it("에이전트 작성자면 봇 루프 보호 사실(scope·대화·쌍·eventId)을 싣는다", () => {
@@ -104,8 +171,8 @@ describe("toInboundFacts", () => {
     });
   });
 
-  it("세션 키에 접미사(:g2, :thread:1 등)가 붙어 있으면 거부한다 — 채널당 에이전트별 1세션 원형만 받는다", () => {
-    for (const suffix of [":g2", ":g3", ":thread:1", ":", "x"]) {
+  it("세션 키에 우리 것이 아닌 접미사(:g2, :thread:1 등)가 붙어 있으면 거부한다", () => {
+    for (const suffix of [":g2", ":g3", ":thread:1", `:thread:${ROOT}:x`, ":", "x"]) {
       const res = toInboundFacts(deliver({ sessionKey: `agent:main:dodok:channel:${CH}${suffix}` }), {
         accountId: "default",
       });

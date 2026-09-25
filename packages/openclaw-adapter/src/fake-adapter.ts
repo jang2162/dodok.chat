@@ -1,11 +1,13 @@
-import type {
-  AdapterStatus,
-  ApprovalDecision,
-  ApprovalKind,
-  ConfigSet,
-  ConfigSetResult,
-  InboundDeliver,
-  InboundDeliverResult,
+import {
+  dodokSessionKey,
+  type AdapterStatus,
+  type ApprovalDecision,
+  type ApprovalKind,
+  type BridgeCapability,
+  type ConfigSet,
+  type ConfigSetResult,
+  type InboundDeliver,
+  type InboundDeliverResult,
 } from "@dodok/shared";
 import {
   AdapterError,
@@ -72,6 +74,9 @@ export class FakeAdapter implements AgentAdapter {
     },
   };
 
+  // 붙은 플러그인의 hello capabilities. 기본은 스레드를 아는 플러그인 — 옛 플러그인은 setPluginCapabilities([])
+  private pluginCapabilities = new Set<BridgeCapability>(["run_id_in_outbound", "config.set", "threads"]);
+
   script(fn: SendScript): void {
     this.sendScript = fn;
   }
@@ -96,6 +101,10 @@ export class FakeAdapter implements AgentAdapter {
 
   setCapabilities(capabilities: AdapterCapabilities): void {
     this.currentCapabilities = capabilities;
+  }
+
+  setPluginCapabilities(capabilities: BridgeCapability[]): void {
+    this.pluginCapabilities = new Set(capabilities);
   }
 
   /** setup 이벤트는 내지 않는다 — 알려야 하면 emit({ kind: "setup" }) */
@@ -133,8 +142,13 @@ export class FakeAdapter implements AgentAdapter {
     return [{ providerAgentId: "dev", name: "dev" }, { providerAgentId: "fin" }];
   }
 
-  sessionKeyFor(providerAgentId: string, channelId: string): string {
-    return `agent:${providerAgentId}:dodok:channel:${channelId}`;
+  sessionKeyFor(providerAgentId: string, channelId: string, threadRootId?: string): string {
+    return dodokSessionKey(providerAgentId, channelId, threadRootId);
+  }
+
+  /** 실물과 같이 붙은 플러그인(setupDetail 의 bridge.plugin)이 없으면 false */
+  pluginSupports(capability: "threads"): boolean {
+    return this.currentSetupDetail.bridge.plugin !== null && this.pluginCapabilities.has(capability);
   }
 
   async send(input: InboundDeliver): Promise<InboundDeliverResult> {

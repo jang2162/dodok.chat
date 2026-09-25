@@ -2,11 +2,22 @@
  * 에이전트 → 서버 방향 변환. 응답 전달(`deliver`)과 `message` 툴 send 인자를 브리지 계약의 `OutboundMessage` 로 만든다.
  * `openclaw` 를 import 하지 않는다 — 단위 테스트 대상.
  */
-import { ComponentsV1, Id, type OutboundMessage } from "@dodok/shared";
+import {
+  ComponentsV1,
+  dodokSessionKey,
+  Id,
+  parseDodokSessionKey,
+  threadMatchesSessionKey,
+  type OutboundMessage,
+} from "@dodok/shared";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const SESSION_CHANNEL_RE =
-  /^agent:([^:]+):dodok:channel:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?::|$)/i;
+
+/**
+ * 스레드 세션의 에이전트가 채널 최상위·다른 채널·다른 스레드로 보내려 할 때 모델에게 돌려주는 고정 사유(스펙 결정 6).
+ * 대상을 되읊지 않는다 — 모델이 고칠 것은 「이 스레드로만」 하나다
+ */
+export const THREAD_ONLY_REASON = "dodok: 이 대화는 스레드라 이 스레드에만 보낼 수 있습니다";
 
 /** message 툴의 `to` 로 쓰는 dodok 대상 문법: `channel:<uuid>` (앞에 `dodok:` 가 붙어도 된다) */
 export function formatDodokTarget(channelId: string): string {
@@ -22,13 +33,7 @@ export function parseDodokTarget(raw: string): string | null {
 }
 
 export function channelIdFromSessionKey(sessionKey: string | null | undefined): string | null {
-  const match = sessionKey ? SESSION_CHANNEL_RE.exec(sessionKey) : null;
-  return match?.[2]?.toLowerCase() ?? null;
-}
-
-function agentIdFromSessionKey(sessionKey: string | null | undefined): string | null {
-  const match = sessionKey ? SESSION_CHANNEL_RE.exec(sessionKey) : null;
-  return match?.[1] ?? null;
+  return parseDodokSessionKey(sessionKey ?? undefined)?.channelId ?? null;
 }
 
 /** 인바운드에서 받은 상관관계 — 응답을 우리 런·원 메시지에 묶는다 */
@@ -37,6 +42,20 @@ export type OutboundCorrelation = {
   replyToInboundId?: string;
   providerRunId?: string;
 };
+
+/**
+ * `resolveOutboundSessionRoute` 에 넘길 스레드 id. 채널 세션이면 없다 — message 툴이 채널 세션의 `threadId` 인자를
+ * 쓰지 않으므로(`messageToolSendToOutbound`) 경로만 스레드로 가면 채널 발언이 스레드 전사에 mirror 된다.
+ * 세션 문맥이 없는 코어 전송(sendText 의 런 오류 알림 등)은 코어가 준 threadId 를 그대로 쓴다.
+ */
+export function outboundRouteThreadId(params: {
+  currentSessionKey?: string | null | undefined;
+  threadId?: string | number | null | undefined;
+}): string | number | undefined {
+  const current = parseDodokSessionKey(params.currentSessionKey ?? undefined);
+  if (current && !current.threadRootId) return undefined;
+  return params.threadId ?? undefined;
+}
 
 export type OutboundResult = { ok: true; message: OutboundMessage } | { ok: false; error: string };
 
@@ -94,6 +113,8 @@ export type BuildOutboundInput = {
   channelId: string;
   agentId: string;
   sessionKey: string;
+  /** 스레드 세션이면 그 루트 id — 세션 키의 스레드 접미사와 같아야 한다 */
+  threadId?: string;
   text: string;
   components?: unknown;
   /** 브리지 HTTP 로 먼저 올린 첨부 id(순서대로). 메타데이터는 서버 기록에서 채운다 */
@@ -103,6 +124,14 @@ export type BuildOutboundInput = {
 };
 
 export function buildOutboundMessage(input: BuildOutboundInput): OutboundResult {
+  // 서버도 대조하지만(스펙 3.2) 여기서 먼저 막는다 — 어긋난 채로 가면 스레드 발언이 채널에 저장되거나 ack 오류로만 보인다
+  const ours = parseDodokSessionKey(input.sessionKey) !== undefined;
+  if (ours ? !threadMatchesSessionKey(input.sessionKey, input.threadId) : input.threadId !== undefined) {
+    return {
+      ok: false,
+      error: `threadId 불일치: 세션 키 ${input.sessionKey}, threadId ${input.threadId ?? "(없음)"}`,
+    };
+  }
   const components = coerceComponents(input.components);
   if (!components.ok) return components;
   const message: OutboundMessage = {
@@ -110,6 +139,7 @@ export function buildOutboundMessage(input: BuildOutboundInput): OutboundResult 
     channelId: input.channelId,
     agentId: input.agentId,
     sessionKey: input.sessionKey,
+    ...(input.threadId ? { threadId: input.threadId.toLowerCase() } : {}),
     text: input.text,
     attachmentIds: input.attachmentIds ?? [],
     ts: input.now.toISOString(),
@@ -127,6 +157,7 @@ export function buildOutboundMessage(input: BuildOutboundInput): OutboundResult 
       channelId: message.channelId,
       agentId: message.agentId,
       sessionKey: message.sessionKey,
+      ...(message.threadId ? { threadId: message.threadId } : {}),
       ...(message.runId ? { runId: message.runId } : {}),
       ...(message.providerRunId ? { providerRunId: message.providerRunId } : {}),
       ...(message.replyToInboundId ? { replyToInboundId: message.replyToInboundId } : {}),
@@ -158,22 +189,47 @@ export type MessageToolSendInput = {
   hasMedia?: boolean;
 };
 
+/**
+ * 스레드 세션(ADR 0006 「아웃바운드와 delivery-mirror 누수」 절)은 세션 키가 정본이다 — `to` 가 없거나 같은 채널이면
+ * 그 스레드로 보내고, 다른 채널이나 다른 `threadId` 인자(최상위를 뜻하려는 값 포함)는 고정 사유로 거절한다.
+ * 채널 세션은 `threadId` 인자를 쓰지 않는다 — 서버는 런의 스레드와 다른 전송을 받지 않는다(스펙 3.5).
+ */
 export function messageToolSendToOutbound(input: MessageToolSendInput): OutboundResult {
+  const session = parseDodokSessionKey(input.sessionKey ?? undefined);
   const rawTarget = firstString(input.params, ["to", "target", "channelId"]);
-  const channelId = rawTarget ? parseDodokTarget(rawTarget) : channelIdFromSessionKey(input.sessionKey);
+  const channelId = rawTarget ? parseDodokTarget(rawTarget) : (session?.channelId ?? null);
   if (!channelId) return { ok: false, error: "to: dodok 채널 id(channel:<uuid>)를 해석할 수 없다" };
+  const threadId = session?.threadRootId;
+  if (threadId) {
+    const requested = input.params["threadId"];
+    const requestedThread =
+      requested === undefined || requested === null || requested === "" ? undefined : String(requested);
+    if (channelId !== session.channelId) return { ok: false, error: THREAD_ONLY_REASON };
+    if (requestedThread !== undefined && requestedThread.toLowerCase() !== threadId) {
+      return { ok: false, error: THREAD_ONLY_REASON };
+    }
+  }
   const text = firstString(input.params, ["message", "text", "content"]) ?? "";
   const components = input.params["components"];
   if (!text && (components === undefined || components === null) && !input.hasMedia) {
     return { ok: false, error: "message: 본문·components·media 중 하나는 있어야 한다" };
   }
-  const agentId = input.agentId || agentIdFromSessionKey(input.sessionKey);
+  const agentId = input.agentId || session?.providerAgentId;
   if (!agentId) return { ok: false, error: "agentId: 툴 컨텍스트에도 세션 키에도 없다" };
+  let sessionKey = input.sessionKey;
+  if (!sessionKey) {
+    try {
+      sessionKey = dodokSessionKey(agentId, channelId);
+    } catch (error) {
+      return { ok: false, error: `agentId: ${String(error)}` };
+    }
+  }
   return buildOutboundMessage({
     outboundId: input.outboundId,
     channelId,
     agentId,
-    sessionKey: input.sessionKey ?? `agent:${agentId}:dodok:channel:${channelId}`,
+    sessionKey,
+    ...(threadId ? { threadId } : {}),
     text,
     components,
     correlation: input.correlation,

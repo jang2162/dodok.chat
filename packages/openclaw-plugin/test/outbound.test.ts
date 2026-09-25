@@ -6,6 +6,7 @@ import {
   formatDodokTarget,
   messageToolSendToOutbound,
   parseDodokTarget,
+  THREAD_ONLY_REASON,
   toolInputError,
 } from "../src/outbound";
 
@@ -14,6 +15,9 @@ const RUN = "01a09fc9-d204-7551-89d6-38544d07a103";
 const MSG = "01a09fc9-d204-7551-89d6-38544d07a104";
 const NOW = new Date("2026-09-15T01:02:03.000Z");
 const SESSION = `agent:main:dodok:channel:${CH}`;
+const ROOT = "01a09fc9-d204-7551-89d6-38544d07a1aa";
+const OTHER_CH = "01a09fc9-d204-7551-89d6-38544d07a1cc";
+const THREAD_SESSION = `${SESSION}:thread:${ROOT}`;
 
 describe("target 문법", () => {
   it("channel:<id>, dodok:channel:<id>, 맨 id 를 받는다", () => {
@@ -26,7 +30,8 @@ describe("target 문법", () => {
 
   it("세션 키에서 채널 id 를 뽑는다", () => {
     expect(channelIdFromSessionKey(SESSION)).toBe(CH);
-    expect(channelIdFromSessionKey(`agent:main:dodok:channel:${CH}:thread:x`)).toBe(CH);
+    expect(channelIdFromSessionKey(THREAD_SESSION)).toBe(CH);
+    expect(channelIdFromSessionKey(`agent:main:dodok:channel:${CH}:g2`)).toBeNull();
     expect(channelIdFromSessionKey("agent:main:main")).toBeNull();
   });
 });
@@ -305,6 +310,68 @@ describe("messageToolSendToOutbound", () => {
     });
     expect(res.ok && res.message.text).toBe("");
     expect(res.ok && res.message.attachmentIds).toEqual([]);
+  });
+});
+
+describe("스레드 아웃바운드", () => {
+  const base = { outboundId: "t1", channelId: CH, agentId: "main", text: "x", now: NOW };
+
+  it("buildOutboundMessage 는 threadId 를 싣고 계약을 지킨다", () => {
+    const res = buildOutboundMessage({ ...base, sessionKey: THREAD_SESSION, threadId: ROOT });
+    expect(res.ok && res.message.threadId).toBe(ROOT);
+    expect(res.ok && OutboundMessage.parse(res.message).threadId).toBe(ROOT);
+  });
+
+  it("buildOutboundMessage 는 세션 키와 threadId 가 어긋나면 거절한다", () => {
+    expect(buildOutboundMessage({ ...base, sessionKey: THREAD_SESSION }).ok).toBe(false);
+    expect(buildOutboundMessage({ ...base, sessionKey: SESSION, threadId: ROOT }).ok).toBe(false);
+    expect(buildOutboundMessage({ ...base, sessionKey: "agent:main:main", threadId: ROOT }).ok).toBe(false);
+  });
+
+  it("채널 메시지에는 threadId 키가 없다", () => {
+    const res = buildOutboundMessage({ ...base, sessionKey: SESSION });
+    expect(res.ok && res.message).not.toHaveProperty("threadId");
+  });
+
+  const toolSend = (params: Record<string, unknown>, sessionKey: string | null = THREAD_SESSION) =>
+    messageToolSendToOutbound({ params, agentId: "main", sessionKey, outboundId: "t2", now: NOW });
+
+  it("스레드 세션의 message 툴 — to 가 없거나 같은 채널이면 그 스레드로", () => {
+    for (const params of [
+      { message: "hi" },
+      { to: `channel:${CH}`, message: "hi" },
+      { to: CH, message: "hi" },
+    ]) {
+      const res = toolSend(params);
+      expect(res.ok && [res.message.channelId, res.message.threadId, res.message.sessionKey]).toEqual([
+        CH,
+        ROOT,
+        THREAD_SESSION,
+      ]);
+    }
+  });
+
+  it("스레드 세션의 message 툴 — threadId 인자가 같은 스레드면(대소문자 무시) 받는다", () => {
+    const res = toolSend({ to: `channel:${CH}`, message: "hi", threadId: ROOT.toUpperCase() });
+    expect(res.ok && res.message.threadId).toBe(ROOT);
+  });
+
+  it.each([
+    ["다른 채널", { to: `channel:${OTHER_CH}`, message: "hi" }],
+    ["다른 스레드", { to: `channel:${CH}`, message: "hi", threadId: "01a09fc9-d204-7551-89d6-38544d07a1bb" }],
+    ["스레드가 아닌 값(최상위를 뜻하려는 것)", { to: `channel:${CH}`, message: "hi", threadId: "top" }],
+  ])("스레드 세션의 message 툴이 가리키는 곳이 %s — 고정 사유로 거절한다", (_label, params) => {
+    expect(toolSend(params)).toEqual({ ok: false, error: THREAD_ONLY_REASON });
+  });
+
+  it("고정 사유 문구", () => {
+    expect(THREAD_ONLY_REASON).toBe("dodok: 이 대화는 스레드라 이 스레드에만 보낼 수 있습니다");
+  });
+
+  it("채널 세션의 message 툴은 스레드로 보내지 않는다 — threadId 인자는 쓰지 않는다", () => {
+    const res = toolSend({ to: `channel:${CH}`, message: "hi", threadId: ROOT }, SESSION);
+    expect(res.ok).toBe(true);
+    expect(res.ok && res.message).not.toHaveProperty("threadId");
   });
 });
 

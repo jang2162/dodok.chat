@@ -17,16 +17,20 @@ import {
   ApprovalReason,
   ApprovalSeverity,
   ApprovalStatus,
+  parseDodokSessionKey,
+  type ParsedDodokSessionKey,
 } from "@dodok/shared";
 import { z } from "zod";
 
-/** 런 상관(서버 태스크 4) 전의 승인. `channelId`·`providerAgentId` 는 `sessionKey` 에서 푼 값이다. */
+/** 런 상관(서버 태스크 4) 전의 승인. `channelId`·`providerAgentId`·`threadRootId` 는 `sessionKey` 에서 푼 값이다. */
 export type ProviderApproval = {
   providerApprovalId: string;
   kind: ApprovalKind;
   sessionKey: string;
   providerAgentId: string;
   channelId: string;
+  /** 스레드 세션의 승인만 */
+  threadRootId?: string;
   toolCallId?: string;
   toolName?: string;
   pluginId?: string;
@@ -56,9 +60,6 @@ const MAX = {
   toolCallId: 200,
 };
 
-const SESSION_KEY_RE =
-  /^agent:([^:]+):dodok:channel:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
-
 const APPROVAL_EVENTS: ReadonlySet<string> = new Set([
   "plugin.approval.requested",
   "plugin.approval.resolved",
@@ -74,15 +75,9 @@ export function isApprovalEvent(event: string): boolean {
   return APPROVAL_EVENTS.has(event);
 }
 
-/** 우리 세션 키(`agent:<providerAgentId>:dodok:channel:<uuid>`)만 받는다. 접미사가 붙으면 우리 것이 아니다(계획 #19). */
-export function parseSessionKey(
-  sessionKey: string | undefined,
-): { providerAgentId: string; channelId: string } | undefined {
-  const match = sessionKey ? SESSION_KEY_RE.exec(sessionKey) : null;
-  const providerAgentId = match?.[1];
-  const channelId = match?.[2];
-  if (!providerAgentId || !channelId) return undefined;
-  return { providerAgentId, channelId: channelId.toLowerCase() };
+/** 우리 세션 키(채널 키 또는 그 스레드 키)만 받는다 — 판정은 shared `parseDodokSessionKey` 가 정본이다 */
+export function parseSessionKey(sessionKey: string | undefined): ParsedDodokSessionKey | undefined {
+  return parseDodokSessionKey(sessionKey);
 }
 
 // 외부 입력 — 읽는 필드만 좁게, 값 검증은 정규화에서 한다(모르는 값 하나가 승인을 통째로 버리지 않게).
@@ -351,6 +346,7 @@ function normalize(input: Normalizable): ProviderApproval | undefined {
     sessionKey: input.sessionKey,
     providerAgentId: session.providerAgentId,
     channelId: session.channelId,
+    ...opt("threadRootId", session.threadRootId),
     // 상관 키라 자르면 안 된다(자른 id 는 어느 툴 호출과도 안 맞는다) — 상한을 넘으면 없는 셈 치고 채널 수준 승인이 된다
     ...opt("toolCallId", keyWithin(nonEmpty(details?.toolCallId), MAX.toolCallId)),
     ...opt("toolName", toolName),

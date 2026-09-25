@@ -21,6 +21,7 @@ const CREATED_AT = new Date(1_789_897_787_988).toISOString();
 const EXPIRES_AT = new Date(1_789_897_907_988).toISOString(); // +120s
 const RESOLVED_AT = new Date(1_789_897_790_009).toISOString();
 const OTHER_SESSION = "agent:dev:discord:channel:01a09fc9-d204-7551-89d6-38544d07a202";
+const THREAD_ROOT = "01a09fc9-d204-7551-89d6-38544d07a2ab";
 
 const payloadOf = (frame: EventFrame): unknown => frame.payload;
 
@@ -199,10 +200,31 @@ describe("parseApprovalFrame — 우리 세션만 거른다(전역 이벤트)", 
     expect(frames).toEqual([undefined, undefined, undefined, undefined]);
   });
 
-  it("parseSessionKey 는 접미사 붙은 키를 받지 않는다(계획 #19 — 채널당 1개, 접미사 없음)", () => {
+  it("parseSessionKey 는 스레드 접미사 말고 다른 접미사가 붙은 키를 받지 않는다", () => {
     expect(parseSessionKey(f.SESSION_KEY)).toEqual({ providerAgentId: "dev", channelId: f.CHANNEL_ID });
     expect(parseSessionKey(`${f.SESSION_KEY}:sub`)).toBeUndefined();
+    expect(parseSessionKey(`${f.SESSION_KEY}:thread:x`)).toBeUndefined();
     expect(parseSessionKey(OTHER_SESSION)).toBeUndefined();
+  });
+
+  it("parseSessionKey 는 스레드 키에서 threadRootId 까지 돌려준다", () => {
+    expect(parseSessionKey(`${f.SESSION_KEY}:thread:${THREAD_ROOT.toUpperCase()}`)).toEqual({
+      providerAgentId: "dev",
+      channelId: f.CHANNEL_ID,
+      threadRootId: THREAD_ROOT,
+    });
+  });
+
+  it("스레드 세션의 승인은 threadRootId 를 싣고, 채널 세션의 승인에는 그 키가 없다", () => {
+    const threadKey = `${f.SESSION_KEY}:thread:${THREAD_ROOT}`;
+    const a = parsed(
+      "plugin.approval.requested",
+      payloadOf(f.pluginApprovalRequested({ sessionKey: threadKey })),
+    );
+    expect(a).toMatchObject({ sessionKey: threadKey, channelId: f.CHANNEL_ID, threadRootId: THREAD_ROOT });
+    expect(parsed("plugin.approval.requested", payloadOf(f.pluginApprovalRequested()))).not.toHaveProperty(
+      "threadRootId",
+    );
   });
 });
 

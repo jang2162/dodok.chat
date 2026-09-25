@@ -364,6 +364,31 @@ describe("createConnectionManager — 재접속 복구", () => {
     );
   });
 
+  it("재접속 복구는 스레드 세션 키도 채널 키와 같이 다시 구독한다", async () => {
+    const threadKey = `${KEY_A}:thread:01a09fc9-d204-7551-89d6-38544d07a2ab`;
+    const link = fakeLink();
+    const { manager } = setup({
+      connector: scriptedConnector([link]).connector,
+      sessionKeysToRecover: () => [
+        { sessionKey: KEY_A, agentId: "dev" },
+        { sessionKey: threadKey, agentId: "dev" },
+      ],
+    });
+
+    manager.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(link.calls.filter((c) => c.method === "sessions.messages.subscribe").map((c) => c.params)).toEqual(
+      [
+        { key: KEY_A, agentId: "dev", includeApprovals: true },
+        { key: threadKey, agentId: "dev", includeApprovals: true },
+      ],
+    );
+    // 복구 구독을 기억한다 — 전송 전 구독이 같은 키를 다시 보내지 않는다
+    await manager.subscribeSession(threadKey, "dev");
+    expect(link.calls.filter((c) => c.method === "sessions.messages.subscribe")).toHaveLength(2);
+  });
+
   it('커서로 부른 chat.history 가 { kind: "reset" } 이면 커서 없이 한 번 더 부르고, 응답의 deltaCursor 를 저장한다', async () => {
     const link = fakeLink({
       "chat.history": (params) =>

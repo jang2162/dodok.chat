@@ -7,6 +7,15 @@ describe("sessionKeyFor", () => {
   it("agent:<providerAgentId>:dodok:channel:<channelId> 원형(접미사 없음)", () => {
     expect(sessionKeyFor("dev", CH)).toBe(`agent:dev:dodok:channel:${CH}`);
   });
+
+  it("스레드 루트를 주면 스레드 하위 세션 키 — rootId 는 소문자", () => {
+    const root = "01a09fc9-d204-7551-89d6-38544d07a2ab";
+    expect(sessionKeyFor("dev", CH, root.toUpperCase())).toBe(`agent:dev:dodok:channel:${CH}:thread:${root}`);
+  });
+
+  it("shared 헬퍼를 쓴다 — OpenClaw agentId 가 아니면 던진다", () => {
+    expect(() => sessionKeyFor("a b", CH)).toThrow();
+  });
 });
 
 describe("parseSessionsReset (ADR 0003 3.4 실물)", () => {
