@@ -53,17 +53,28 @@ describe("운영 안정성 — 끊김·실패한 런·Gateway 버전·디스크"
     const owner = await connectWire(l.app, l.auth.token);
     sockets.push(owner);
 
-    // 임계가 300ms 라 병렬 부하에서는 부팅 때 Gateway 첫 접속이 늦어 gateway_down 이 열렸다 닫힐 수 있다 —
-    // 워크스페이스 전체 수(unacked)가 아니라 plugin_down 줄 자체를 본다
-    const opened = waitFor(owner, "ops.event", (p) => p.event.kind === "plugin_down");
+    // 임계가 300ms 라 병렬 부하에서는 부팅 때 Gateway·플러그인 첫 접속이 늦어 끊김 줄이 열렸다 닫힐 수 있다.
+    // bootLiveApp 은 두 쪽이 모두 connected 가 된 뒤 돌아오고 닫힘은 같은 status 이벤트에서 동기로 끝난다 —
+    // 부팅 때 줄은 여기서 닫혀 있어야 하고, 워크스페이스 전체 수(unacked)가 아니라 이 끊김이 연 줄 하나만 본다
+    const bootRows = eventsOf(l, "plugin_down");
+    const bootGatewayRows = eventsOf(l, "gateway_down");
+    expect([...bootRows, ...bootGatewayRows].filter((r) => r.resolvedAt === null)).toEqual([]);
+    const opened = waitFor(
+      owner,
+      "ops.event",
+      (p) => p.event.kind === "plugin_down" && p.event.resolvedAt === undefined,
+    );
     l.plugin.disconnect();
     const payload = await opened;
     expect(payload.event).toMatchObject({ kind: "plugin_down", key: "plugin", severity: "warn", count: 1 });
-    expect(payload.event.resolvedAt).toBeUndefined();
     expect(payload.unacked.warn).toBeGreaterThanOrEqual(1);
     const rows = eventsOf(l, "plugin_down");
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ id: payload.event.id, ackedAt: null, resolvedAt: null });
+    expect(rows).toHaveLength(bootRows.length + 1);
+    expect(rows.find((r) => r.id === payload.event.id)).toMatchObject({
+      ackedAt: null,
+      resolvedAt: null,
+      count: 1,
+    });
 
     const closed = waitFor(
       owner,
@@ -75,9 +86,9 @@ describe("운영 안정성 — 끊김·실패한 런·Gateway 버전·디스크"
     expect(resolved.event.id).toBe(payload.event.id);
     // 줄은 끊긴 지 임계(300ms)에 열린다 — downMs 는 끊긴 때부터라 임계보다 짧을 수 없다
     expect(resolved.event.detail.downMs).toBeGreaterThanOrEqual(300);
-    expect(eventsOf(l, "plugin_down")).toHaveLength(1);
-    // 플러그인 끊김은 Gateway 줄을 열지 않는다 — 부팅 때 열렸다 닫힌 줄은 있을 수 있어 열린 줄만 본다
-    expect(eventsOf(l, "gateway_down").filter((r) => r.resolvedAt === null)).toEqual([]);
+    expect(eventsOf(l, "plugin_down")).toHaveLength(bootRows.length + 1);
+    // 플러그인 끊김은 Gateway 줄을 열지 않는다 — 부팅 때 열렸다 닫힌 줄 말고는 없다
+    expect(eventsOf(l, "gateway_down")).toEqual(bootGatewayRows);
   });
 
   it("임계보다 짧게 끊겼다 붙기를 되풀이하면 사건이 없다", async () => {
