@@ -132,7 +132,7 @@
 
 정본: 제약 값은 `packages/shared/src/components/index.ts` 의 `ComponentsV1`, 모델에게 가는 설명은 `packages/openclaw-plugin/src/components-schema.ts`, 누른 결과의 글은 `apps/server/src/modules/components/interact.ts` 의 `formatInteractionText`. 설계는 `docs/superpowers/specs/2026-09-21-components-v1-design.md`.
 
-이 절의 `json dodok-components` 예시는 `packages/shared/test/agent-guide-examples.test.ts` 가 뽑아 `ComponentsV1` 로 파싱한다 — 유효 예시는 통과해야 하고 `json dodok-components-invalid` 예시는 실패해야 한다. 예시를 고치면 그 테스트가 잡는다.
+이 절의 `json dodok-components` 예시는 `packages/shared/test/agent-guide-examples.test.ts` 가 뽑아 `ComponentsV1` 로 파싱한다 — 유효 예시는 통과해야 하고 모르는 키가 없어야 한다(`ComponentsV1` 은 오타 키를 오류 없이 버린다). 틀린 예는 펜스 정보 문자열 뒤에 적어 둔 경로·코드의 위반 **하나만**으로 실패해야 한다(`json dodok-components-invalid <경로> <Zod issue 코드>`). 위반이 둘 섞인 예는 한 규칙이 풀려도 다른 위반 때문에 계속 실패해 아무것도 지키지 않는다.
 
 ### 보내는 법
 
@@ -399,7 +399,7 @@
 
 **버튼과 셀렉트를 한 `actions` 에 섞었다.**
 
-```json dodok-components-invalid
+```json dodok-components-invalid blocks.0.items custom
 {
   "blocks": [
     {
@@ -415,7 +415,7 @@
 
 **버튼 여섯 개** — 한 블록에 다섯까지. 더 필요하면 `actions` 블록을 나누거나 셀렉트로 바꾼다.
 
-```json dodok-components-invalid
+```json dodok-components-invalid blocks.0.items too_big
 {
   "blocks": [
     {
@@ -435,7 +435,7 @@
 
 **id 가 겹친다** — 모달 칸 id 까지 카드 전체에서 하나여야 한다.
 
-```json dodok-components-invalid
+```json dodok-components-invalid blocks custom
 {
   "blocks": [{ "type": "actions", "items": [{ "type": "button", "id": "title", "label": "제목 정하기" }] }],
   "modal": {
@@ -449,7 +449,7 @@
 
 **모달 칸 여섯 개** — 다섯까지. 넘치면 카드를 둘로 나눈다.
 
-```json dodok-components-invalid
+```json dodok-components-invalid modal.fields too_big
 {
   "modal": {
     "id": "profile",
@@ -467,14 +467,27 @@
 }
 ```
 
-**대문자 id 와 `http://` 링크**
+**대문자 id** — id 는 소문자·숫자·`_`·`-` 만.
 
-```json dodok-components-invalid
+```json dodok-components-invalid blocks.0.items.0.id invalid_format
 {
   "blocks": [
     {
       "type": "actions",
-      "items": [{ "type": "button", "id": "OpenDocs", "label": "문서", "url": "http://example.com/docs" }]
+      "items": [{ "type": "button", "id": "OpenDocs", "label": "문서" }]
+    }
+  ]
+}
+```
+
+**`http://` 링크** — `url` 은 `https://` 또는 `artifact://` 만.
+
+```json dodok-components-invalid blocks.0.items.0.url invalid_format
+{
+  "blocks": [
+    {
+      "type": "actions",
+      "items": [{ "type": "button", "id": "open_docs", "label": "문서", "url": "http://example.com/docs" }]
     }
   ]
 }
@@ -482,7 +495,7 @@
 
 **`allowedUsers` 에 핸들** — 사용자 id(UUID)만 받는다.
 
-```json dodok-components-invalid
+```json dodok-components-invalid blocks.0.items.0.allowedUsers.0 invalid_format
 {
   "blocks": [
     {
