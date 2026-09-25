@@ -6,7 +6,7 @@ import { agents, channels, runs } from "../../db/schema.sqlite";
 import type { OpsService } from "./service";
 
 /**
- * runs.usage_json 의 토큰·금액을 믿을 수 있는가(스펙 3.3). 태스크 7(ADR 0005)이 값이 맞다고 판정하면 true 로 —
+ * runs.usage_json 의 토큰·금액을 믿을 수 있는가(스펙 3.3). 출력 토큰·비용이 CLI `result` 와 같을 때만 true — 판정·다시 재는 법은 ADR 0005.
  * false 인 동안 응답 행에 tokens·costUsd 키가 없고 화면은 「측정 불가」를 보인다
  */
 export const USAGE_TRUSTED = false;

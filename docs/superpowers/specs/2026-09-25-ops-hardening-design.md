@@ -1,6 +1,6 @@
 # Phase 3 ③ 운영 보강(비용 상한·레이트리밋·안정성·운영 화면) 설계
 
-**상태**: 설계 확정(2026-09-25)
+**상태**: 설계 확정(2026-09-25), 구현·브라우저 검증·Compose 검증 완료(2026-09-25 — 계획 태스크 1~8, 브라우저 11/12 결함 고친 뒤 재검증, 테스트 2762) — 구현이 이 설계와 달라진 것은 「구현과 맞춘 것」 장(판정 R1 「다시 실행」 = 컴포넌트 버튼 등). usage 판정은 `docs/adr/0005-usage-values.md`, 실연은 `docs/guides/live-smoke.md` 16절, 운영 절차는 `docs/guides/deploy.md` 「운영 화면」 절
 **범위**:
 - 런 수 상한 두 겹(채널 일일 한도를 모든 런으로, 워크스페이스 일일 상한 신설)과 usage 값 진단
 - 인증 없는 입구와 로그인 뒤 경로의 레이트리밋, `/healthz` 축소
@@ -285,3 +285,91 @@
 - 푸시 발송 재시도.
 - 여러 서버 프로세스가 나눠 쓰는 레이트리밋 상태.
 - 레이트리밋 상한 숫자를 화면에서 바꾸기(지금은 상수).
+
+---
+
+## 13. 구현과 맞춘 것 (2026-09-25)
+
+구현(계획 태스크 1~8)·리뷰·브라우저 검증과 그 수정 라운드에서 이 설계와 달라지거나 설계가 정하지 않은 것을 정한 자리만 모았다. main `99d9f6b` 기준이다.
+정본 근거는 실행 원장 `.superpowers/sdd/2026-09-25-ops-hardening/ledger.md`(git 제외)의 판정 R1~R6·R3b 와, 원장이 가리키는 보고서·리뷰(`o3-t*`·`o3-c1`)다. 보고서의 커밋 해시는 워크트리 것이라 main 에서는 다르다 — 아래 해시는 main 의 것이다.
+운영 절차는 `docs/guides/deploy.md` 「운영 화면」 절, usage 판정은 `docs/adr/0005-usage-values.md`, 실연은 `docs/guides/live-smoke.md` 16절, 남은 문제는 `docs/plan.md` 8장 「이월」 한곳에 있다. 각 파일이 왜 그렇게 생겼는지는 그 파일의 머리 주석이 정본이다.
+
+**런 관문·다시 실행(태스크 2 — `5931f9c`·`c4b2c5b`·`c777646`)**
+
+- **R1 — 「다시 실행」은 wire `run.retry` 가 아니라 run_error 시스템 메시지의 1회용 컴포넌트 버튼이다**(2.3·4.2·5.6·9장 정정). 버튼 id `retry_run`(`RETRY_RUN_ITEM`)을 `component.interact` 로 누르면 components 서비스가 원래 런의 트리거 메시지로 `parentRunId` 를 단 새 런을 만든다. 1회 소비·결과 줄(「@owner — 다시 실행」)·권한(채널의 사람 멤버)·wire 레이트리밋(heavy 버킷)을 components 에서 그대로 물려받는다 — 그래서 5.6 의 「이미 있으면 그 runId 를 돌려준다」 대신 두 번째 누름은 `CONSUMED`(웹 「이미 처리되었습니다」)이고, 「다시 실행함」 대신 결과 줄이 남는다. 9장의 오류도 `component.interact` 의 ack 다 — 대상이 `error` 가 아니거나 트리거가 없으면 `VALIDATION`, 한도면 `RUN_LIMIT`. shared 에 `run.retry` 는 없다. 틀리면 wire 이벤트 하나를 더해 되돌린다.
+- **버튼은 트리거 메시지가 있는 런에만 붙는다** — 상호작용·이어가기 런은 다시 만들 트리거가 없다. **봇 루프 보호(`DROPPED:bot-loop-protection`)로 떨어진 런에도 없다** — 다시 실행해도 플러그인이 같은 사유로 떨어뜨린다(o3-t2 리뷰 D1). run_error 는 전처럼 `TIMEOUT`·`ADAPTER_UNAVAILABLE`·`ADAPTER_PROTOCOL`·`DROPPED:*`·`ADAPTER_ERROR:*` 에만 난다 — `dev:fake` 대본의 「실패」(코드 `unknown`)는 카드를 만들지 않는다.
+- **버튼 수명은 24시간(components 계약 `ttlMs` 상한)이다**(`c4b2c5b`). 기본 30분이면 한도에 막혀 버튼을 남겨 둔 사람이 한도가 풀린 뒤 누를 수 없다. 24시간도 「다음 날」을 다 덮지는 못한다 — 막힌 뒤 24시간 넘게 지나면 사람이 다시 멘션한다(이월).
+- **R2 — 다시 실행은 사람의 행위다.** 이어가기처럼 릴레이 턴 상한·반복 감지는 다시 보지 않는다. 쌍 허용(`allowPairs`)은 이어가기로도 못 뚫는 차단이므로, relay 런을 다시 실행하면 원래 쌍(트리거 메시지를 쓴 에이전트 → 대상)을 지금 정책으로 다시 판정하고 막히면 `VALIDATION`(버튼은 남는다). 쌍 판정은 라우터와 같은 `isPairAllowed` 다. 대상 에이전트가 비활성이거나 채널에서 빠졌으면 `VALIDATION`(미소비).
+- **관문의 모양은 `admit(channelId, n)` 이 아니라 `RunGate.check(channelId)`·`enqueue(plan, trigger)`**(2.1·3.2 구체화, `modules/ops/budget.ts` 의 `createRunGate`). 라우터·components 가 `orchestrator.enqueueRun` 대신 `gate.enqueue` 를 부르고, decide 의 `daily_limit` 사유·`todayRunCount` 는 없어졌다 — 그래서 채널 `dailyRunLimit` 이 릴레이뿐 아니라 사람 멘션·자동 응답에도 걸린다.
+- **상호작용의 순서는 검사 → 관문 → 저장·소비다.** 트랜잭션 밖에서 검사(`NOT_FOUND`→`EXPIRED`→`FORBIDDEN`→`CONSUMED`→`VALIDATION`)를 한 번 돌고, `gate.check` 에 막히면 `RUN_LIMIT`(소비하지 않는다 — 한도가 풀리면 다시 누른다), 통과하면 트랜잭션 안에서 다시 검사하고 저장·소비한다. 관문을 맨 앞에 두면 이미 소비·만료된 버튼에도 `RUN_LIMIT` 과 한도 알림이 난다. 관문을 트랜잭션 안에서 부르면 던질 때 롤백이 관문이 남긴 시스템 메시지까지 지운다.
+- **「오늘 이미 남겼나」는 시스템 메시지의 `created_at` 으로 가린다** — `createSystemMessage` 에 선택 인자 `createdAt` 을 더해 관문이 자기 시계를 넘긴다(주입한 `now` 로 자정 경계를 재는 테스트).
+- **`RUN_LIMIT` 의 HTTP 상태는 429**(`RELAY_LIMIT` 은 409 그대로). 다시 실행 런에는 `triggerInteractionId` 가 없다 — 누가 눌렀는지는 run_error 카드의 결과 줄에만 있다.
+
+**사건 저장소·서비스(태스크 1 — `6e3b740`·`57063e0`·`1f9e43d`, 태스크 4 의 N3)**
+
+- **`ops_events` 는 `OpsService` 로만 쓴다** — 확인 안 한 수(`unacked`)를 메모리에 두고 새 줄·심각도 상승·ack·sweep 때만 다시 센다. 라우트·dev:fake 훅도 `app.ops` 를 거친다.
+- **같은 줄의 emit·로그는 1초 창으로 모은다**(`OPS_EMIT_COALESCE_MS`). 창이 없을 때의 기록은 즉시, 창 안에서 묶이기만 한 기록은 창 끝에 마지막 상태로 한 번(로그에 `coalesced: n`). 새 줄·심각도 상승·resolve·ack 는 창 안이어도 즉시. DB count 는 매번 정확하다. 그래서 웹은 같은 줄의 `ops.event` 를 최대 1초 늦게 받는다.
+- **R3b — 레이트리밋이 걸릴 때마다 사건 DB 쓰기(select+update) 한 번은 받아들인다**(이월에 고칠 방향).
+- **저장 전 모양 검사** — `key`·`detail` 이 shared `OpsEvent` 모양(평평한 원시값, 200자)을 어기면 저장하지 않고 `ops record rejected`(error, key 는 로그에 싣지 않는다) 뒤 null. 묶을 때·resolve 때는 합친 detail 을 한 번 더 본다. key 는 라우트 패턴·wire 이벤트 이름처럼 고정된 값이다 — ratelimit 은 `rest:<라우트 패턴>`·`wire:<이벤트>`(소켓 상한은 `wire:connect`).
+- **묶을 때 detail 은 합치고 심각도는 높은 쪽을 남긴다** — `disk_low` 가 오류 → 주의로 회복돼도 확인 전까지 그 줄은 오류다(이월).
+- **끊김 사건의 열린 줄은 `resolved_at IS NULL` 이면 확인 여부와 무관하다.** resolve 는 `last_at` 도 닫은 때로 올린다(목록 맨 위, 보존 기준도 복구 시각).
+- **ack 는 확인한 줄마다 `ops.event`** 를 보낸다(unacked 는 마지막 상태로 같다).
+- **N3 — `close()` 뒤의 record** 는 DB·로그·emit 을 즉시 하고 창·타이머를 열지 않는다(종료 도중 `uncaughtException` 기록이 타이머를 남기지 않게).
+- `workspaces.ops_json` 은 drizzle json 모드가 아닌 text — 망가진 값을 `{}` 로 읽고 warn 하려고. 패치는 모르는 키를 보존하고 범위 밖이면 저장하지 않고 400.
+
+**레이트리밋·`/healthz`(태스크 3 — `8880da7`·`fadec00`)**
+
+- **R3 — `run.events.replay` 는 자기 버킷 {분당 120, 연속 30} 이다**(4.2 표 정정). 웹이 채널 입장·재접속·resync 때 활성 런마다 스스로 부르므로, heavy 를 나눠 쓰면 채널 몇 번 오가는 것만으로 `message.send` 가 막혔다(실측). 지금 heavy 는 `message.send`·`component.interact`·`run.abort`(다시 실행은 `component.interact`)이다. 브라우저 검증에서 네 채널 48번 전환 뒤 곧바로 보낸 메시지가 성공했다.
+- **REST 상한은 컨텍스트가 아니라 앱 데코레이션 `request.server.restLimits` 로 찾는다** — `requireSession` 을 부르는 라우트 모듈이 여럿이라, 컨텍스트로 넘기면 하나만 빠뜨려도 그 라우트만 조용히 상한이 없다. 데코레이션은 스코프 플러그인에도 물려받아진다. 세션을 확인한 뒤 센다.
+- **첨부 업로드 상한은 `onRequest`(세션 뒤)** — 5 MiB 본문을 받기 전에 거절한다.
+- **검증 함수가 던진 거절(DB 오류)은 브리지 실패로 세지 않는다**(핸드셰이크·첨부 둘 다) — 플러그인 잘못이 아닌데 정상 주소가 막히지 않게. 거절 자체는 그대로다.
+- **로컬 로그인 상한도 `LIMITS.localLoginPerMin` 에 있고, 걸리면 사건을 남긴다**(4.1 표의 「지금 그대로」 구체화). `/api/auth/*`·로컬 로그인의 `@fastify/rate-limit` 은 앱 시계를 따르지 않는다.
+- **시계는 단조 시계다**(`monotonicNow` — `AppDeps.limitClock` 기본). 벽시계가 뒤로 가면 버킷 빚·창 연장·막힘 연장이 생겼다(o3-t3 리뷰 M1). 주입한 시계가 역행해도 늘지 않게 보충·창을 막았다. `perMin: 0` 은 모두 거절이다.
+- **사용자당 소켓 상한은 느슨하다** — 동시에 도착한 핸드셰이크는 방에 들기 전이라 서로를 못 봐 조금 넘을 수 있다.
+- **`/healthz` 는 `{ok, db}`**(200 `{"ok":true,"db":"ok"}`, DB 실패 503). 워크스페이스 id·어댑터 상세는 `ops/status` 로 옮겼다.
+
+**안정성(태스크 4 — `4b33041`·`0c2b844`)**
+
+- **R4 — `downMs` 는 실제로 끊긴 때부터다.** 줄은 끊긴 지 임계(60초) 뒤에 열리므로 record 가 `detail.thresholdMs` 를 싣고 resolve 가 `downMs = 닫은 때 − first_at + thresholdMs` 로 계산한다(상태가 DB 에 있어 앞 프로세스가 연 줄도 맞다). `firstAt` 은 줄이 열린 때이고, 웹은 「끊긴 때」를 `firstAt − detail.thresholdMs` 로 보인다.
+- **`stop_grace_period: 15s`**(2.6 보탬). 앱의 종료 상한(`PROCESS_EXIT_TIMEOUT_MS`·`APP_CLOSE_TIMEOUT_MS` 10초)과 Docker 기본 유예가 같아, 닫기가 오래 걸리면 SIGKILL 이 먼저 와 깨끗한 종료 표지를 못 쓸 수 있었다.
+- **처리기는 `src/process-handlers.ts`**(main.ts 는 최상위 스크립트라 테스트하려고 뺐다). `uncaughtException` 은 로그 두 줄(스택 줄 + 사건 줄 — 둘 다 `"event":"ops.crash_exception"`)이고, 사건을 close **전에** 동기로 쓴다. `listen` 실패(포트 충돌)도 Node 24 ESM 에서는 `uncaughtException` 으로 와 같은 길로 내려가고 다음 부팅에 `unclean_shutdown` 이 뜬다.
+- **Gateway 핀은 `packages/openclaw-adapter/src/version.ts` 의 상수 `OPENCLAW_PINNED_VERSION`**(5.2 구체화) — package.json 의 정확 핀과 같은지 테스트가 본다. `gateway_version_untested` 는 버전을 key(`gateway:<버전>`)에만 싣는다.
+- **`run_failed` 는 부팅 정리(`recoverOnBoot`)가 error 로 닫는 런도 센다** — 비정상 종료 뒤 부팅이면 `unclean_shutdown` 과 함께 뜬다. detail 은 `code` 만(200자).
+- **디스크 507 의 순서** — 사람 업로드는 세션 → 업로드 상한 → 디스크, 브리지 업로드는 브리지 인증 → 디스크, 모두 본문 전(onRequest). 인증 전이면 디스크 상태를 누구에게나 알려 주고, 상한 앞이면 507 을 받고 곧바로 다시 보내는 클라이언트가 상한을 쓰지 않는다. 부팅은 첫 측정을 기다린다(`disk.ready`).
+- **로그 가림**(5.5 정정) — 깊이 0~3 의 token 류와 `set-cookie`(괄호 표기). `x-*-token` 꼴은 넣지 않았다 — 그런 헤더가 저장소에 없다(브리지 토큰은 `Authorization`·핸드셰이크 auth). 새로 만들면 `logger.ts` 에 이름을 적는다(redact 는 헤더 이름 와일드카드를 받지 못한다).
+
+**ops API(태스크 5 — `e187dd1`)**
+
+- **`OpsStatus` 에 `workspaceId`·`adapter`(AdapterStatus 그대로)·`blockedToday` 가 더 있다**(6장 보탬) — 앞 둘은 `/healthz` 에서 뺀 것의 자리, `blockedToday` 는 오늘 워크스페이스 상한으로 막힌 수(사건 count 합). 채널 한도 차단은 런 표 행의 `blocked` 다(에이전트 행은 늘 0).
+- **런 표의 차단 수는 사건 표를 읽는 `OpsService.countsSince` 하나로** 센다 — 기간은 줄의 `last_at` 으로 가린다(1시간 창으로 묶인 줄이 기간 직전에 시작했으면 통째로 들어온다).
+- **usage 합계의 출처는 저장 모양 `RunUsage`** 다(`inputTokens + outputTokens`, `costUsd`). R5 로 지금은 꺼져 있다.
+- **모든 응답은 shared 스키마로 한 번 더 파싱**한다 — 어기면 500 `INTERNAL` 이고 어긴 값은 응답에 싣지 않는다. `SetupStatus.gateway` 에도 `pinned`·`drift` 가 들어가 연결 페이지가 같은 판정을 쓴다.
+- `db.bytes` 는 `page_count × page_size`(체크포인트 전 WAL 은 빠진다).
+
+**usage 진단(태스크 7 — `7a7c04c`)**
+
+- **R5 — 진단 범위는 모델 런 1회 + 층별 값 하네스였다**(3.3 의 「1~2회」 중 1회로 충분 — 2026-09-20 덤프가 이미 갈랐고 9.5 에서 같은 모양이었다). 입력·캐시 토큰은 맞고, 출력 토큰은 `message_start` 스냅샷, 비용은 0 이다. 원인은 OpenClaw claude-cli 파서 층이라(어댑터 매퍼가 아니다) 이번 범위에서 고치지 않았다. `USAGE_TRUSTED = false` — 출력 토큰·비용이 CLI `result` 와 같을 때만 true 로 바꾼다. 그래서 `ops/runs` 행에 토큰·금액이 없고 운영 화면은 「토큰·금액은 측정 불가 — … (ADR 0005)」 한 줄이다. 판정·다시 재는 법·후속은 ADR 0005.
+
+**웹(태스크 6 — `49d81e5`·`4949dbd`·`837534a`, o3-c1 — `44993e3`·`99d9f6b`)**
+
+- **R6 — 상태 카드의 연결 두 줄(Gateway·플러그인)은 wire 어댑터 상태를 읽는다**(7장 구체화). wire 가 connected 이고 어댑터 캐시가 있으면 `useAdapterStatus`(배너·연결 점과 같은 캐시), 아니면 `ops/status` 값. 그 밖 칸은 `ops.event` 가 오면 `unacked` 를 곧바로 덮은 뒤 상태를 다시 받고, 운영 화면을 보는 동안 30초마다(`OPS_STATUS_POLL_MS`, 탭이 가려지면 쉰다) 다시 받는다. 사이드바 배지·좁은 화면 점은 주기 재조회를 하지 않는다. 브라우저 검증이 「사건 목록은 끊김 (지금도), 카드는 연결됨」을 찾아(D1) 정했다. 틀리면 주기만 조정한다.
+- **wire 가 다시 붙으면 어댑터·운영 상태·사건 목록을 다시 받는다**(재검증 N1, `99d9f6b`) — 서버는 접속 때 `adapter.status` 를 보내지 않고 변화만 팬아웃하므로, 끊긴 사이 바뀐 상태를 놓쳐 낡은 「연결됨」이 보였다(배너·연결 점도). 첫 연결은 무효화하지 않는다.
+- **채널별 한도는 링크가 아니라 안내 문장이다**(7장 「채널 설정에 있다는 링크」 정정) — 가리킬 채널이 하나가 아니다. 「채널별 한도는 각 채널 설정의 「릴레이 정책」에 있습니다」, 채널로 가는 길은 런 표의 채널 이름.
+- **run_limit 시스템 메시지의 owner 링크는 범위를 따른다**(2.5 구체화) — workspace 면 「운영에서 한도 바꾸기」(`/settings/operations`), channel 이면 「채널 설정에서 한도 바꾸기」(`/c/<id>/settings`).
+- **모르는 값은 폴백한다** — 모르는 사건 kind 는 「알 수 없는 사건 (kind)」, 모르는 severity 는 정보 아이콘과 원문 라벨, 모르는 SystemKind 는 정보 모양. 옛 PWA 가 새 서버의 값을 받아도 페이지 전체가 `RouteError` 로 떨어지지 않는다.
+- **「모두 확인」 뒤 배지를 0 으로 덮지 않는다** — 서버는 ack 를 처리한 때까지만 확인하므로, 상태·목록을 다시 받아 서버 값으로 맞춘다.
+- **사건 문구** — 런 한도 줄은 「(워크스페이스)」·「(#채널 이름)」·「(채널)」로 범위를 가른다(O2), 확인한 줄은 흐리게(O5), 끊긴 시간은 분 단위 반올림(최소 1분 — 임계가 60초라 늘 1분 이상).
+- **좁은 화면 배지**(7장 보탬, O3) — 사이드바가 서랍이라 닫혀 있으면 배지가 안 보여, 메뉴 버튼에 빨간 점과 「채널 목록 열기 (확인 안 한 운영 사건 N)」.
+- **문구** — `component.interact` 의 `RUN_LIMIT`·`RATE_LIMITED` 토스트가 한국어다(D2 — 전에는 서버 영어 문구). 첨부 업로드 507 은 본문과 무관하게 칩에 「서버 디스크 여유가 부족해 올리지 못했습니다」(O1).
+- 쿼리 키는 `apps/web/src/api/queries.ts` 의 `qk`(opsStatus·opsRuns·opsEvents·opsEventsAll). ops 쿼리는 오프라인 사본에서 먼저 뺀다.
+
+**dev:fake 운영 훅(태스크 8 앞 — `238af79`)**
+
+- 10장 「개발 전용 훅」의 답: `POST /__devfake/ops/event`·`/__devfake/gateway`·`/__devfake/disk`, 끊김 임계 `DODOK_DEVFAKE_DISCONNECT_MS`, 종료 표지 `<dataDir>/dev-fake-run/`. 설명·호출 예는 `docs/project-structure.md` 의 `apps/server` 절. Gateway down 은 소켓 끊기가 아니라 connect 를 `UNAVAILABLE` 로 거절한다 — 끊기만 하면 `@openclaw/gateway-client` 가 자기 백오프(최대 30초)로 속에서 재시도해 어댑터 백오프(dev:fake 만 상한 1초 — `AppDeps.gatewayBackoff`)가 안 먹었다. 운영 코드에는 선택 입력 둘(`App.checkDisk`·`AppDeps.gatewayBackoff`)만 더했다. 기존 `plugin-token` 도 함께 비 JSON 415·경로 정확 일치가 됐다.
+
+**검증이 확인한 것**
+
+- 서버 통합 `apps/server/test/integration/ops-events.test.ts`·`ops-limits.test.ts`·`ops-ratelimit.test.ts`·`ops-health.test.ts`(10장 서버 통합 항목 — 60초는 가짜 타이머 단위 테스트, 통합은 줄인 임계 `disconnectEventMs`), 웹 단위, 태스크마다 독립 리뷰(변이)·수정·범위 재리뷰(태스크 5 리뷰는 구현과 같은 세션이 해 설계 판단의 독립성이 약하다 — 변이 결과만 객관 근거로 받았다).
+- `dev:fake` 위 브라우저 검증 11/12(390·1280px — 확인 불가 1: member 화면, dev:fake 에 두 번째 사용자가 없다), 결함 D1·D2 와 관찰 O1·O2·O3·O5 를 고친 뒤 재검증, 재검증이 찾은 N1 을 고쳤다. 로컬 Compose(`LogConfig` json-file 10m×5·`StopTimeout 15`·`TRUST_PROXY=true`, XFF 를 바꿔도 여섯째 로그인 429, `/healthz` 키 둘, `stop` → `start` 뒤 `previousClean: true`).
+- 실연(dev Gateway, 모델 런 0)은 `docs/guides/live-smoke.md` 16절.
+- 테스트 2762(shared 151·plugin 112·adapter 252·server 992·web 1255 — 루트 `pnpm test` 의 패키지별 `Tests` 줄).

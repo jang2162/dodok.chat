@@ -76,6 +76,11 @@ src/
 ├─ setup/         Phase 3 ②. 설정 마법사 계약 — Sha256Hex·SetupStatus(server·gateway{state,host,version,pairing}·bridge{state,publicUrl,plugin}·pluginFile·
 │                 pluginMatches·envTokenIgnored)·BridgeTokenRecord(원문·해시 없음, prefix 6자, connected)·IssueBridgeTokenInput(라벨 trim 1~60)·
 │                 IssueBridgeTokenResult(token `dbt_` + 43자 — 원문은 여기에만, record, pluginConfig). wire server→client `setup.status`({ status })는 `wire/` 에
+├─ ops/           Phase 3 ③. 운영 계약 — OpsEventKind(12종)·OpsSeverity(info·warn·error)·OpsEvent(detail 은 평평한 원시값만 — id·코드·수치, key 1~200자)·OpsUnacked{warn,error}·
+│                 OpsEventsPage·OpsSettingsPatch(dailyRunLimit 1~10000 또는 null)·`OPS_DEFAULT_DAILY_RUN_LIMIT`=300·OpsAckResult·OpsStatus(서버·DB·디스크·Gateway{pinned,drift}·
+│                 플러그인·adapter·오늘 런 수·상한·blockedToday·unacked·workspaceId)·OpsRunsRow·OpsRunsSummary(usageTrusted 가 false 면 행에 tokens·costUsd 가 없다).
+│                 wire server→client `ops.event`({ event, unacked } — owner 만)는 `wire/` 에, SystemKind `run_limit`·SystemMeta.limit{scope,limit} 은 `domain/` 에,
+│                 ErrorCode `RATE_LIMITED`·`RUN_LIMIT`·`INSUFFICIENT_STORAGE` 는 `common.ts` 에
 ├─ push/          Phase 2 ④. PushSubscriptionInput(https endpoint ≤2048·base64url 키)·PushUnsubscribeInput·PushPayload
 │                 ({ kind: mention|approval|relay_limit, channelId, title ≤80, body ≤200, url, tag ≤80 } — 서비스 워커가 경계에서 파싱한다).
 │                 wire 쪽 `presence.update`(`PresenceUpdate` { visible, channelId? }, ack 없음)는 `wire/` 의 Typing 옆에 있다
@@ -91,13 +96,18 @@ Phase 2 ① 승인(스펙 `docs/superpowers/specs/2026-09-20-activity-approvals-
 (스펙 `docs/superpowers/specs/2026-09-21-components-v1-design.md` 4장), Phase 2 ③ 첨부(스펙 `docs/superpowers/specs/2026-09-23-attachments-design.md`, 구현과 달라진 것은 11장),
 Phase 2 ④ 웹 푸시(스펙 `docs/superpowers/specs/2026-09-23-pwa-push-design.md`, 구현과 달라진 것은 11장)가 얹혔고,
 Phase 3 ① 배포 패키징(스펙 `docs/superpowers/specs/2026-09-24-deploy-packaging-design.md`, 구현과 달라진 것은 12장)이 운영 번들·백업을,
-Phase 3 ② 설정 마법사(스펙 `docs/superpowers/specs/2026-09-24-setup-wizard-design.md`, 구현과 달라진 것은 스펙 「구현과 맞춘 것」 장)가 연결 점검·브리지 토큰(DB)·플러그인 파일 내려받기를 더했다.
+Phase 3 ② 설정 마법사(스펙 `docs/superpowers/specs/2026-09-24-setup-wizard-design.md`, 구현과 달라진 것은 스펙 「구현과 맞춘 것」 장)가 연결 점검·브리지 토큰(DB)·플러그인 파일 내려받기를,
+Phase 3 ③ 운영 보강(스펙 `docs/superpowers/specs/2026-09-25-ops-hardening-design.md`, 구현과 달라진 것은 스펙 「구현과 맞춘 것」 장)이 런 수 상한·레이트리밋·운영 사건·운영 API 를 더했다.
 한 프로세스 안에 REST·wire·브리지·어댑터가 같이 뜬다. 첨부 바이트는 브리지와 같은 오리진의 HTTP(`/bridge/attachments`)로 오간다.
 
 ```
 src/
 ├─ main.ts                프로세스 진입점: 소스 실행이면 cwd 를 저장소 루트로 옮기고 루트 .env 로드(이미 있는 env 는 덮지 않음 — 운영 번들은 둘 다 안 한다) →
-│                         DATA_DIR 쓰기 검사(못 쓰면 한 줄 설정 오류로 exit 1) → createApp → listen, SIGINT/SIGTERM → close
+│                         DATA_DIR 쓰기 검사(못 쓰면 한 줄 설정 오류로 exit 1) → createApp → 종료 표지 startRunState(`<DATA_DIR>/run-state.json`) → app.setPreviousClean →
+│                         installProcessHandlers → listen
+├─ process-handlers.ts    installProcessHandlers: SIGINT/SIGTERM → close → 표지 clean → exit 0(close 가 PROCESS_EXIT_TIMEOUT_MS 10s 를 넘으면 exit 1, 두 번째 신호는 다시 안 닫음) ·
+│                         unhandledRejection → error 로그 + 사건 crash_rejection, 계속 돈다 · uncaughtException → 사건 crash_exception 을 close **전에** 동기로 → close → exit 1(표지는 clean:false 그대로).
+│                         listen 실패(포트 충돌)도 Node 24 ESM 에서는 uncaughtException 으로 와 같은 길이다
 ├─ runtime.ts             실행 모드: isBundled(esbuild define __DODOK_BUNDLED__)·migrationsFolder(DODOK_MIGRATIONS_DIR, 없으면 apps/server/drizzle)·
 │                         unwritableDataPath·dataDirErrorMessage(비루트 컨테이너 + 다른 UID 볼륨 → chown 명령이 든 한 줄)
 ├─ backup.ts              runBackup: 온라인 백업을 한 번에 전부 복사(읽기 트랜잭션 스냅숏) → <DATA_DIR>/backups/.partial-* 에서 만들고 rename,
@@ -105,21 +115,30 @@ src/
 ├─ backup-main.ts         백업 CLI(번들 dist/backup.js — `docker compose -f infra/compose.yml exec app node dist/backup.js [--keep N]`), 한 줄 출력·실패 exit 1, SIGINT·SIGTERM 에 자기 .partial-* 삭제(복사 도중의 신호는 복사가 끝난 뒤 완료·exit 0)
 ├─ app.ts                 createApp: 부팅 순서(DB → 워크스페이스 → 인증·owner → Fastify → Socket.IO → 어댑터 → 서비스 → 라우트 → wire → 부팅 정리 → adapter.connect),
 │                         종료 순서(새 wire 거부 → 푸시 트리거 떼기 → 오케스트레이터 stop → adapter.close → io.close → Fastify → 진행 중 푸시 발송 최대 2s(PUSH_DRAIN_TIMEOUT_MS) → DB, 10s 상한),
-│                         /healthz, Gateway 재접속 60s 알림. VAPID 키를 읽고(주체가 로컬 자리값이면 warn 한 줄) 발송기(`AppDeps.pushSend`, 없으면 webPushSender)를 배선한다.
+│                         /healthz(`{ok, db}` 뿐 — 워크스페이스 id·어댑터 상세는 ops/status), Gateway 재접속 60s 알림.
+│                         운영(Phase 3 ③): ops 서비스·부팅 sweep + 24시간마다(OPS_SWEEP_INTERVAL_MS), 레이트리밋(`AppDeps.limits`·`limitClock` — 기본 LIMITS·단조 시계)과 REST 상한 데코레이션
+│                         `restLimits`, 브리지 실패 카운터 BridgeAuthGuard 하나(핸드셰이크·`/bridge/attachments`), 감시 넷(watchConnections·watchGatewayVersion·watchRunFailures·
+│                         createDiskMonitor — `await disk.ready` 로 부팅이 끝나면 첫 측정이 있다, `App.disk()`·`checkDisk()`)는 종료 때 `"ops"` 단계 **전에** 닫는다.
+│                         테스트·dev:fake 입력: `AppDeps.statfs`·`disconnectEventMs`·`gatewayBackoff`. VAPID 키를 읽고(주체가 로컬 자리값이면 warn 한 줄) 발송기(`AppDeps.pushSend`, 없으면 webPushSender)를 배선한다.
 │                         owner 보장 뒤 `.env` BRIDGE_TOKEN 이어받기(importEnvToken — ignored 면 warn `ENV_BRIDGE_TOKEN_IGNORED_WARNING` 한 줄), 브리지 검증 함수
 │                         (verifyBridgeTokenDb — 어댑터 핸드셰이크와 `/bridge/attachments` 가 같이 쓴다), 부팅 때 한 번 readPluginFile, setup 상태 조립·`setup.status` 발행
 ├─ config.ts              env 를 zod 로 검증한 ServerConfig. OPENCLAW_TARGET 이 원격/dev Gateway 쌍과 디바이스 파일을 고른다
-├─ logger.ts              pino, 토큰·비밀 키 redact(VAPID_PRIVATE_KEY·privateKey 포함)
+├─ logger.ts              pino, 토큰·비밀 키 redact(VAPID_PRIVATE_KEY·privateKey 포함, 깊이 0~3 의 token·`set-cookie` — 새 토큰 헤더를 만들면 이름을 이 파일에 적는다:
+│                         redact 는 헤더 이름 와일드카드를 받지 못한다). 사건 줄은 `event: "ops.<kind>"`(modules/ops/service.ts)
 ├─ wiring.ts              createServices(라우터 ⇄ 오케스트레이터 상호 참조, RunsFacade), sessionRecoverTargets(재접속 복구 대상)
 ├─ db/
-│  ├─ schema.sqlite.ts    Drizzle 스키마 (계획서 6장 테이블 + agent_sessions + approvals + attachments + bridge_tokens — 마이그레이션 0004, FK cascade 없음).
-│  │                      bridge_tokens: id·workspace_id·label·hash(sha256 hex, 유일)·prefix·created_at·last_used_at·revoked_at — 원문 없음
+│  ├─ schema.sqlite.ts    Drizzle 스키마 (계획서 6장 테이블 + agent_sessions + approvals + attachments + bridge_tokens + ops_events — 마이그레이션 0005, FK cascade 없음).
+│  │                      bridge_tokens: id·workspace_id·label·hash(sha256 hex, 유일)·prefix·created_at·last_used_at·revoked_at — 원문 없음.
+│  │                      ops_events(0005): id·workspace_id·kind·severity·key·detail_json·count·first_at·last_at·resolved_at(끊김 사건)·acked_at, 인덱스 ops_events_ws_last(workspace_id, last_at)·
+│  │                      ops_events_open(workspace_id, kind, key, acked_at). workspaces.ops_json(0005, text 기본 `'{}'`) — { dailyRunLimit?: number | null, lastGatewayVersion?: string },
+│  │                      키가 없으면 상한 300, null 이면 무제한(json 모드가 아닌 까닭: 망가진 값을 {} 로 읽고 warn 하려고)
 │  ├─ auth-schema.ts      Better Auth 테이블
 │  └─ client.ts           createDb: better-sqlite3 연결(WAL) + 마이그레이션(runtime.migrationsFolder — 운영 번들은 DODOK_MIGRATIONS_DIR 가 없으면 설정 오류)
 ├─ auth/
 │  ├─ index.ts            Better Auth(이메일 로그인·가입 비활성), 세션 토큰 검증
 │  ├─ owner.ts            부팅 때 owner 보장 — LOCAL_AUTH_TOKEN 이 owner 비밀번호, 바뀌면 기존 세션을 끊는다
-│  └─ routes.ts           POST /api/v1/auth/local(5회/분)·GET me·POST logout, requireSession(Bearer 또는 dodok.session 쿠키)
+│  └─ routes.ts           POST /api/v1/auth/local(IP 당 분당 LIMITS.localLoginPerMin)·GET me·POST logout, `/api/auth/*`(Better Auth, LIMITS.betterAuthPerMin) — 넘으면 429 + 사건 ratelimit,
+│                         requireSession(Bearer 또는 dodok.session 쿠키 — 사용자를 확인한 뒤 REST 상한 `request.server.restLimits` 를 센다)
 ├─ http/
 │  ├─ errors.ts           HttpError·apiError — ApiError { code, message, details? } ↔ HTTP 상태
 │  └─ validate.ts         경계 Zod 파싱(body·query·params·wire payload·저장값)
@@ -143,13 +162,18 @@ src/
 │  │                      `interactions`(createdAt·id 오름차순, 최신 20건)를 싣는다 — 그런 메시지가 없으면 질의하지 않는다.
 │  │                      클라이언트가 볼 Message 만 거친다: listMessages(REST `GET /channels/:id/messages`·구독 ack)와 wire 팬아웃(realtime/events.ts).
 │  │                      내부 getMessage·bus 페이로드는 거치지 않는다(components v1 스펙 11장 Ruling 1)
-│  ├─ router/             decide.ts(순수: 멘션·릴레이 판정, maxRelayTurns·allowPairs·반복 해시·일일 상한) + service.ts(런 enqueue, relay_limit·relay_denied 시스템 메시지와 continue_relay 버튼)
-│  ├─ runs/               orchestrator.ts(세션 직렬화·타이머·신호 → 상태 전이·run_events·정본 상관·부팅 정리), machine.ts(순수 상태머신),
+│  ├─ router/             decide.ts(순수: 멘션·릴레이 판정, maxRelayTurns·allowPairs·반복 해시 — 일일 상한은 ops 관문, isPairAllowed 는 다시 실행도 쓴다) +
+│  │                      service.ts(관문 `RunGate.enqueue` 로 런, relay_limit·relay_denied 시스템 메시지와 continue_relay 버튼, RETRY_RUN_ITEM = "retry_run")
+│  ├─ runs/               orchestrator.ts(세션 직렬화·타이머·신호 → 상태 전이·run_events·정본 상관·부팅 정리. run_error 시스템 메시지(TIMEOUT·ADAPTER_UNAVAILABLE·ADAPTER_PROTOCOL·
+│  │                      DROPPED:*·ADAPTER_ERROR:*)에 트리거 메시지가 있으면 1회용 「다시 실행」 버튼(retry_run, 24시간) — bot-loop-protection 으로 떨어진 런은 빼고), machine.ts(순수 상태머신),
 │  │                      store.ts(runs·run_events), context.ts(인바운드 InboundDeliver 조립 — 트리거 첨부를 싣고, 이전 메시지 줄의 첨부는 `[이미지 N장]`·`[파일: 이름]` 자리표시로만),
 │  │                      media-lines.ts(순수: Gateway 폴백 스냅샷의 단독 `MEDIA:` 줄 걷기 — 줄이 있으면 finalizing 을 줄당 30s, 최대 120s 늘린다), timers.ts, routes.ts(런 목록·상세·이벤트 REST)
 │  ├─ sessions/           agent_sessions — 채널×에이전트 세션 키 보장, 리셋 뒤 프롬프트 리비전 갱신
-│  ├─ components/         interact.ts(순수: 검사 순서·값 스키마·인바운드 텍스트) + service.ts(저장·소비·continue/interaction 런.
-│  │                      상호작용마다 message.updated — reusable 카드도 결과 줄이 실시간으로 는다. 소비(consumed)는 1회용만)
+│  ├─ components/         interact.ts(순수: 검사 순서·값 스키마·인바운드 텍스트) + service.ts(저장·소비·continue/interaction/retry 런.
+│  │                      상호작용마다 message.updated — reusable 카드도 결과 줄이 실시간으로 는다. 소비(consumed)는 1회용만.
+│  │                      검사(트랜잭션 밖) → 관문 check(막히면 RUN_LIMIT, 소비 안 함) → 트랜잭션 안 재검사·저장·소비 → 관문 enqueue.
+│  │                      retry_run: 원래 런이 error 이고 트리거 메시지가 있을 때만, 같은 트리거·rootMessageId·relayDepth 로 parentRunId 를 단 새 런 — relay 런이면 쌍(트리거를 쓴 에이전트 → 대상)을
+│  │                      지금 allowPairs 로 다시 본다(턴 상한·반복은 안 본다))
 │  ├─ push/               Phase 2 ④. vapid.ts(키: VAPID_PUBLIC_KEY·VAPID_PRIVATE_KEY 둘 다 있으면 그것, 아니면 `<DATA_DIR>/vapid.json`(없으면 만들고 0600,
 │  │                      망가졌으면 덮어쓰지 않고 던진다)) · presence.ts(소켓별 「보이는가·보는 채널」, 메모리뿐 — isWatching) ·
 │  │                      triggers.ts(순수: message.created·approval.requested → 받을 사람·알림 내용 — 멘션(자기 멘션은 작성자가 사람일 때만 뺀다)·승인 요청·relay_limit,
@@ -170,6 +194,24 @@ src/
 │  │                      routes.ts(`GET /api/v1/setup/status` · `GET`·`POST /api/v1/setup/bridge-tokens`(발급 201, `Cache-Control: no-store` — 원문은 이 응답에만) ·
 │  │                      `DELETE /api/v1/setup/bridge-tokens/:id`(204, 폐기 뒤 revokeBridgeSessions — 끊기 실패는 warn) · `GET /api/v1/setup/plugin.tgz`
 │  │                      (`dodok-openclaw-plugin-<sha 앞 12자>.tgz`, 없으면 404 `PLUGIN_FILE_MISSING`, 부팅 뒤 파일이 바뀌었으면 409 `PLUGIN_FILE_CHANGED`))
+│  ├─ ops/                Phase 3 ③. 운영 사건·런 수 상한·레이트리밋·안정성 — API 는 전부 owner 세션(`requireOwner`, 아니면 403).
+│  │                      store.ts(ops_events: 묶기 — 같은 kind·key·미확인·last_at 1시간 안이면 count+1, severity 는 높은 쪽 · 끊김 사건은 resolved_at 전까지 한 줄 ·
+│  │                      resolveEvent(downMs = 닫은 때 − first_at + detail.thresholdMs) · ack(upTo 까지) · 목록(커서 `<last_at ms>:<id>`, 50) · sumCountsSince · 30일 sweep ·
+│  │                      저장 전 모양 검사 OpsShapeError) ·
+│  │                      service.ts(createOpsService — 다른 모듈의 유일한 입구 record·resolve·ack·list·countsSince·unacked·sweep·close. 실패는 logger.error 뒤 null(원래 동작을 막지 않는다),
+│  │                      ops_events 는 이 서비스로만 쓴다(unacked 메모리 캐시). 기록마다 로그 `event: "ops.<kind>"` 와 owner 소켓 `ops.event` — 같은 줄은 OPS_EMIT_COALESCE_MS(1s) 창으로 모은다) ·
+│  │                      settings.ts(workspaces.ops_json 읽기·패치 — 모르는 키는 보존) · ip.ts(ipPrefix — IPv4 /24·IPv6 /48) ·
+│  │                      budget.ts(createRunGate — 런을 만드는 모든 경로가 지나는 관문 check·enqueue: 워크스페이스 상한 먼저, 그다음 채널 dailyRunLimit. 막히면 그 채널에 오늘 같은 scope 의
+│  │                      run_limit 시스템 메시지가 없을 때만 하나 + 사건 run_limit) ·
+│  │                      limits.ts(LIMITS — 레이트리밋 숫자의 유일한 자리) · ratelimit.ts(TokenBucket·KeyedLimiter, 기본 시계 monotonicNow) ·
+│  │                      http-limits.ts(createRestLimits — REST·업로드 상한, recordRateLimit — 사건 key 는 라우트 패턴) ·
+│  │                      health.ts(watchConnections — Gateway·브리지가 DISCONNECT_EVENT_MS(60s) 넘게 끊기면 gateway_down·plugin_down 을 열고 붙으면 닫는다 ·
+│  │                      gatewayPin·observeGatewayVersion·watchGatewayVersion — 핀과 다르면 gateway_version_untested, 기억한 값과 다르면 gateway_version_changed ·
+│  │                      diskLevel·createDiskMonitor — 부팅 때와 10분마다 statfs, error 면 첨부 업로드 507, check() 로 곧바로 다시 잰다 ·
+│  │                      startRunState — run-state.json 종료 표지, 직전이 clean:false 면 unclean_shutdown · watchRunFailures — error 로 끝난 런마다 run_failed agent:<id>) ·
+│  │                      summary.ts(runsSummary — 오늘·7일 채널별·에이전트별 런·실패·중지·차단, USAGE_TRUSTED — false 면 토큰·금액 없음, ADR 0005) ·
+│  │                      routes.ts(`GET /api/v1/ops/status` · `GET /api/v1/ops/runs?days=1|7` · `GET /api/v1/ops/events?cursor&severity` · `POST /api/v1/ops/events/ack` ·
+│  │                      `PATCH /api/v1/ops/settings` {dailyRunLimit} — 응답은 전부 shared 스키마로 한 번 더 파싱)
 │  └─ adapter/            GET /api/v1/adapter/status
 ├─ adapters/
 │  └─ types.ts            AgentAdapter 계열 타입 재수출(구현은 packages/openclaw-adapter)
@@ -177,11 +219,13 @@ src/
 │  └─ josa.ts             받침에 따른 조사(시스템 메시지 병기형). 웹 `lib/josa.ts` 와 두 벌 — 한쪽만 고치면 어긋난다
 └─ realtime/
    ├─ bus.ts              ServerBus — 모듈 → realtime 타입드 이벤트
-   ├─ socket.ts           wire 인증(세션 토큰·프로토콜)·룸(channel:<id>, user:<id>, workspace:<id>)·클라이언트 → 서버 핸들러(subscribe 는 lastSeq 이후 ≤200,
+   ├─ socket.ts           wire 인증(세션 토큰·프로토콜)·사용자당 동시 소켓 상한(LIMITS.socketsPerUser)·룸(channel:<id>, user:<id>, workspace:<id>)·
+   │                      소켓마다 토큰 버킷 넷(WIRE_BUCKET — heavy·replay·approval·chatter, 넘으면 ack RATE_LIMITED·ack 없는 이벤트는 버림·사건 ratelimit `wire:<이벤트>`)·
+   │                      클라이언트 → 서버 핸들러(subscribe 는 lastSeq 이후 ≤200,
    │                      ack 에 그 채널의 **미해결** 승인 pendingApprovals · approval.resolve 는 승인 서비스로 넘긴다 ·
    │                      presence.update 는 PresenceUpdate 로 파싱해 push presence 에 — 실패는 버린다, 끊기면 지운다)
    ├─ cookie-auth.ts      wire 핸드셰이크의 dodok.session 쿠키 파싱(웹은 토큰을 다루지 않는다)
-   ├─ events.ts           bus → 룸 팬아웃(`setup.status` 는 owner 사용자 룸에만), 소켓별 미전송 500 초과 시 run.event 버림 + run.state { resync }.
+   ├─ events.ts           bus → 룸 팬아웃(`setup.status`·`ops.event` 는 owner 사용자 룸에만 — ownerRooms 를 보낼 때마다 다시 읽어 역할 변경을 따른다), 소켓별 미전송 500 초과 시 run.event 버림 + run.state { resync }.
    │                      message.created·updated 는 여기서 withInteractions 로 하이드레이션한다 — 그 두 버스 이벤트의 유일한 소비자라
    │                      emit 자리가 늘어도 저절로 덮인다(components v1 스펙 11장 Ruling 1).
    │                      approval.requested·resolved 는 channel.created 와 함께 **워크스페이스 룸**으로 — 지금 구독 중이 아닌 채널의 승인도 닿아야 한다(설계 5.4·Ruling 7)
@@ -194,6 +238,8 @@ src/
 `buildOutboundMessage` 를 지나 스키마를 어기면 거절된다), `integration/`(시나리오 1~8 `relay`·`prompt`·`recovery`, 시나리오 9a~9g `approvals`(9c′ 포함 8건),
 시나리오 10a~10g `components`(셀렉트·모달 → 다음 런, 결과 줄 세 경로, reusable, 상한 20, 동시 두 번, 스키마 위반 거절), 시나리오 11a~11i `attachments`(올리기·권한·판별·에이전트 첨부·미디어만·폴백 `MEDIA:`·정리·문맥 자리표시),
 시나리오 12a~12h `push`(멘션·보고 있으면 거름·승인·릴레이 한도·410 정리·자기 멘션·페이로드에 본문 없음·소켓 둘 + 종료 drain),
+`ops-events`·`ops-limits`·`ops-ratelimit`·`ops-health`(운영 보강 — `ops.event` 는 owner 소켓에만, 워크스페이스·채널 한도와 하루 한 번 메시지·다시 실행, REST·wire·브리지 실패 카운터·XFF,
+끊김 사건 열고 닫기·버전·디스크 507·run_failed — 60초는 가짜 타이머 단위 테스트가 재고 통합은 줄인 임계 `disconnectEventMs`),
 `setup`(설정 마법사 — 토큰 겹침 교체·폐기 뒤 핸드셰이크·첨부 HTTP 거절·접속 중 폐기의 즉시 끊김, `setup.status` 는 owner 소켓에만, 원문이 로그·목록·wire 에 없음,
 BRIDGE_TOKEN 없는 부팅, 검증 함수가 던지면 거절, 거절 로그 주소(TRUST_PROXY)), 실제 어댑터 + 가짜 둘),
 `helpers/`(`bootLiveApp`·wire 클라이언트·시나리오 단계·`png.ts`(테스트 PNG 생성기 `makePng`·`PDF_BYTES`) — `bootTestApp` 은 앱마다 임시 `ATTACHMENTS_DIR` 을 만들고 닫으면 지운다.
@@ -211,15 +257,34 @@ DB 는 `data/dev-fake.sqlite`(시작마다 새로, `--keep` 이면 유지), 기�
 웹을 다른 포트로 띄우면 `PORT=3100 APP_ORIGIN=http://localhost:5180 pnpm -F @dodok/server dev:fake` + `DODOK_API_ORIGIN=http://127.0.0.1:3100 pnpm -F @dodok/web dev --port 5180`(`APP_ORIGIN` 기본은 `http://localhost:5173`).
 가짜 플러그인은 `.env` 가 아니라 dev:fake 고정 브리지 토큰으로 붙는다 — 빈 DB 에 라벨 `env` 로 이어받는 경로라, 연결 페이지 토큰 목록의 첫 줄이 「.env 에서 이어받음」이다.
 **개발 전용 훅 `POST /__devfake/plugin-token { "token": "<원문>" }`**(`DEV_FAKE_PLUGIN_TOKEN_PATH`): 가짜 플러그인을 끊고 그 토큰으로 다시 붙인다 — 연결 페이지의 토큰 교체(발급 → 「지금 접속 중」 이동 → 옛 토큰 폐기 → 옛 토큰 재접속 거절)를 브라우저로 잴 때.
-owner 세션(쿠키 또는 Bearer)이 있어야 하고, 판정은 같은 헤더로 앱의 `GET /api/v1/setup/status` 를 inject 해 그 401·403 을 그대로 돌려준다. 응답은 200 `{ ok: true }` 또는 `{ ok: false, reason }`(예 `UNAUTHORIZED`), 본문이 `{ token }` 이 아니면 400.
-`createApp` 은 ready 뒤라 경로를 더할 수 없어 HTTP 서버의 request 리스너를 감싼다(이 경로만 받고 나머지는 engine.io → Fastify). 운영 `createApp`·번들에는 이 경로가 없다(404).
+응답은 200 `{ ok: true }` 또는 `{ ok: false, reason }`(예 `UNAUTHORIZED` — 모르는 토큰을 주면 가짜 플러그인이 끊긴 채 남아 임계 뒤 `plugin_down` 이 열린다).
+**운영 훅**(Phase 3 ③) — 운영 화면의 배지·끊김·디스크를 브라우저로 잴 때:
+- `POST /__devfake/ops/event { kind, key, severity, detail? }`(`DEV_FAKE_OPS_EVENT_PATH`) — `app.ops.record` 만 부른다(ops_events 를 직접 쓰지 않아 unacked 캐시·`ops.event`·로그가 함께 돈다). 200 `{ ok: true, event }`.
+- `POST /__devfake/gateway { state: "down" | "connected" }`(`DEV_FAKE_GATEWAY_PATH`) — down 이면 가짜 Gateway 가 연결을 끊고 그 뒤 `connect` 를 `UNAVAILABLE` 로 거절한다(끊기만 하면 `@openclaw/gateway-client` 가 자기 백오프로 속에서 재시도해 어댑터가 모른다). dev:fake 만 어댑터 재접속 백오프 상한을 1초로 준다(`AppDeps.gatewayBackoff`). 플러그인(브리지)은 그대로. 200 `{ ok: true, status }`, 10초 안에 안 바뀌면 `{ ok: false, reason: "timeout", status }`.
+- `POST /__devfake/disk { freeBytes, totalBytes } | { reset: true }`(`DEV_FAKE_DISK_PATH`) — 디스크 감시의 statfs 를 그 값으로 바꾸고 곧바로 다시 잰다(error 면 응답 전에 `disk_low`·첨부 507 이 반영된다). reset 이면 실제 statfs. 값은 메모리에만 있어 다시 띄우면 실제로 돌아간다.
+
+네 훅 공통: owner 세션(쿠키 또는 Bearer) — 판정은 같은 헤더로 앱의 `GET /api/v1/setup/status` 를 inject 해 그 401·403 을 그대로 돌려준다, 본문은 판정 뒤에 읽는다, `content-type` 이 `application/json` 이 아니면 415(단순 요청으로 못 부르게), 경로는 쿼리 앞까지 정확히 일치(아니면 원래 리스너 → 앱 404), 본문 16 KB 상한, 모양이 틀리면 400 `VALIDATION`.
+서버 오리진으로 직접 부른다 — 웹 페이지 안 `fetch` 는 CORS 와 415 에 걸린다. Playwright 면 `context.cookies()` 의 `dodok.session` 을 `request.post(…, { headers: { cookie }, data })` 로 싣는다.
+```bash
+O=http://127.0.0.1:3100; J=<스크래치>/jar     # dev:fake 를 PORT=3100 으로 띄웠을 때
+curl -s -c $J -o /dev/null -X POST $O/api/v1/auth/local -H 'content-type: application/json' -d '{"token":"dev-fake-local-token"}'
+curl -s -b $J -X POST $O/__devfake/ops/event -H 'content-type: application/json' -d '{"kind":"ratelimit","key":"wire:message.send","severity":"warn"}'
+curl -s -b $J -X POST $O/__devfake/gateway   -H 'content-type: application/json' -d '{"state":"down"}'
+curl -s -b $J -X POST $O/__devfake/disk      -H 'content-type: application/json' -d '{"freeBytes":104857600,"totalBytes":10737418240}'
+```
+`createApp` 은 ready 뒤라 경로를 더할 수 없어 HTTP 서버의 request 리스너를 감싼다(이 경로들만 받고 나머지는 engine.io → Fastify). 운영 `createApp`·번들에는 이 경로가 없다(404).
+**`DODOK_DEVFAKE_DISCONNECT_MS`**(dev:fake 전용, 양의 정수 ms — 없거나 비면 운영과 같은 60000, 그 밖이면 시작하지 않는다) — 끊김 사건 임계(`AppDeps.disconnectEventMs`). 사건 `detail.thresholdMs` 에 실린다.
+종료 표지는 `<dataDir>/dev-fake-run/run-state.json` — `pnpm -F @dodok/server dev` 의 표지와 섞이지 않는다. 처음 띄우면 운영 화면 「직전 종료」가 알 수 없음, Ctrl-C·SIGTERM 뒤면 깨끗, `kill -9` 뒤면 비정상 + `unclean_shutdown`.
+run_error 「다시 실행」 카드는 대본 「실패」 키워드(코드 `unknown` — 알리지 않는 코드)나 Gateway down(런이 기다렸다 돈다)으로는 생기지 않는다 — `plugin-token {"token":"nope"}` 로 가짜 플러그인을 끊고 멘션하면 120초(`queuedMs`) 뒤 `ADAPTER_UNAVAILABLE` 로 생긴다. 되붙이기는 `{"token":"dev-fake-bridge-token"}`(이어받은 행을 폐기하지 않았다면). 같은 채널·에이전트에 여럿 걸면 세션 큐 때문에 120초씩 이어지니 채널을 나눈다.
 ⚠ `dev:fake` 는 **실제 `web-push` 발송기**를 쓴다 — 브라우저에서 푸시를 켜고 트리거를 일으키면 실제 푸시 서비스(FCM 등)로 나간다(`startDevFake` 의 `pushSend` 옵션으로만 바꾼다). `<dataDir>/vapid.json` 은 시작마다 지우지 않는다 — 새 키면 브라우저 구독이 매번 무효가 된다.
 
 ### 2.3 `packages/openclaw-adapter` (서버 프로세스 안에서 실행)
 
 ```
 src/
-├─ index.ts               배럴: adapter-types · createOpenClawAdapter · FakeAdapter · ProviderApproval·parseSessionKey(서버 승인 상관이 쓴다)
+├─ index.ts               배럴: adapter-types · createOpenClawAdapter · FakeAdapter · ProviderApproval·parseSessionKey(서버 승인 상관이 쓴다) · BridgeAuthGuard · OPENCLAW_PINNED_VERSION
+├─ version.ts             OPENCLAW_PINNED_VERSION — 저장소가 검증한 OpenClaw 버전. package.json 의 OpenClaw 패키지 정확 핀과 같아야 한다(test/version.test.ts).
+│                         서버가 접속한 Gateway 버전과 비교해 gateway_version_untested·운영 화면·연결 페이지의 드리프트 문구를 낸다
 ├─ adapter-types.ts       AgentAdapter 인터페이스(스펙 6.1), AdapterEvent(+ kind:"approval")·RunEventBody, AdapterCapabilities(sessionReset·agentsList·configSet),
 │                         resolveApproval(providerApprovalId, kind, decision), AdapterError
 ├─ openclaw-adapter.ts    createOpenClawAdapter: 연결 관리자 + 브리지 + 매퍼 조립. send = 런 id 등록 → 세션 구독 → inbound.deliver(플러그인 미접속 120s 대기,
@@ -251,7 +316,11 @@ src/
 │  └─ sessions.ts         sessionKeyFor(agent:<agentId>:dodok:channel:<channelId> 원형 고정 — 「새 대화」는 sessions.reset, 세대 접미사 없음: 계획서 10장 #15·#19),
 │                         sessions.reset·chat.history 응답 파싱
 ├─ bridge/
-│  ├─ server.ts           attachBridge: Socket.IO 네임스페이스 /bridge(HTTP 경로는 /socket.io/). verifyToken 인증(던지면 거절) → 세션이 tokenId 를 기억 → hello →
+│  ├─ guard.ts            BridgeAuthGuard(Phase 3 ③) — 브리지 인증 **실패만** 세는 주소별 카운터(isBlocked·fail). 창 안에 maxFailures 번 틀리면 blockMs 동안 막고,
+│  │                      성공은 카운터를 건드리지 않는다(그런 메서드가 없다 — 막힌 주소의 정상 토큰도 막힌 동안 거절되고 저절로 풀린다), 주소 maxAddresses 개까지.
+│  │                      서버가 인스턴스 하나를 만들어 핸드셰이크(옵션 `bridge.authGuard`·`onBlocked`)와 `/bridge/attachments` 에 같이 준다. 숫자는 서버 LIMITS.bridgeFail
+│  ├─ server.ts           attachBridge: Socket.IO 네임스페이스 /bridge(HTTP 경로는 /socket.io/). 막힌 주소(authGuard)는 토큰을 보지 않고 거절(`blocked after repeated failures`) →
+│  │                      verifyToken 인증(던지면 거절 — 실패 카운터에는 세지 않는다) → 세션이 tokenId 를 기억 → hello →
 │  │                      inbound.deliver·config.set·agents.list 요청, outbound.message·status 수신, close 때 system.notice { reason: "shutdown" }.
 │  │                      거절 로그 `token mismatch from <주소>` 는 주소별 1분에 한 줄(넘친 수는 `(N more suppressed)`), revokeSessions(tokenId) 는 사유 revoked 로 끊는다
 │  └─ session.ts          RejectLogThrottle·클라이언트 이벤트 Zod 파싱·연결 단계(tokenId 포함)·outboundId 중복 제거, verifyBridgeToken(상수 시간 비교 — 스파이크 러너용)
@@ -300,7 +369,8 @@ Phase 1 ② 웹 MVP 실물(스펙 `docs/superpowers/specs/2026-09-19-web-mvp-des
 Phase 2 ② components v1 렌더러(스펙 `docs/superpowers/specs/2026-09-21-components-v1-design.md`, 계획 `docs/superpowers/plans/2026-09-21-components-v1.md`)와
 Phase 2 ③ 첨부·이미지(스펙 `docs/superpowers/specs/2026-09-23-attachments-design.md`, 계획 `docs/superpowers/plans/2026-09-23-attachments.md`)와
 Phase 2 ④ PWA·푸시(스펙 `docs/superpowers/specs/2026-09-23-pwa-push-design.md`, 계획 `docs/superpowers/plans/2026-09-23-pwa-push.md`, 구현과 달라진 것은 스펙 11장)와
-Phase 3 ② 설정 마법사의 연결 페이지(스펙 `docs/superpowers/specs/2026-09-24-setup-wizard-design.md`, 계획 `docs/superpowers/plans/2026-09-24-setup-wizard.md`, 구현과 달라진 것은 스펙 「구현과 맞춘 것」 장)이 얹혔다.
+Phase 3 ② 설정 마법사의 연결 페이지(스펙 `docs/superpowers/specs/2026-09-24-setup-wizard-design.md`, 계획 `docs/superpowers/plans/2026-09-24-setup-wizard.md`, 구현과 달라진 것은 스펙 「구현과 맞춘 것」 장)와
+Phase 3 ③ 운영 화면(스펙 `docs/superpowers/specs/2026-09-25-ops-hardening-design.md`, 계획 `docs/superpowers/plans/2026-09-25-ops-hardening.md`, 구현과 달라진 것은 스펙 「구현과 맞춘 것」 장)이 얹혔다.
 React 19 + Vite 8 + TanStack(Query·Router·Virtual) + Tiptap 작성기 + Streamdown 렌더 + Tailwind 4·shadcn. 의존성은 전부 정확 핀이고 웹 MVP 태스크 2 에서 한 번에 넣었다(Phase 2 ③ 은 0).
 Phase 2 ④ 가 PWA·오프라인 사본 몫으로 더했다 — `vite-plugin-pwa`(dev)·`workbox-precaching`·`workbox-routing`·`workbox-window`·`@tanstack/query-persist-client-core`·`@tanstack/query-async-storage-persister`·`idb-keyval`.
 서버 상태의 진실은 Query 캐시이고 wire 이벤트가 그것을 패치한다. 스트리밍 중인 런만 Zustand 스토어에 둔다(스펙 4장, 데이터 흐름 A).
@@ -325,7 +395,7 @@ src/
 │  ├─ createApp.ts         앱 하나의 QueryClient·Router·onUnauthorized(`/login?next=` 로 replace, `ignoreBlocker` — 원문 대화상자의 이동 막기를 건너뛴다) (테스트는 메모리 히스토리를 넘긴다). notify(승인 알림의 화면 사정 + 채널 이동 알림 onLocationChange —
 │  │                       router.subscribe("onResolved")), 서비스 워커의 navigate 메시지 → safeNotificationUrl → router.navigate, captureInstallPrompt
 │  ├─ boot.tsx             bootApp — onlineManager.setOnline(navigator.onLine) → 오프라인 사본 복원(최대 1초) → registerSessionReset(사본 지우기) → 렌더. main 과 테스트가 같은 것을 부른다
-│  ├─ router.tsx           라우트(/login·가드 레이아웃·/·/c/$channelId(+/settings·/activity)·/agents·/settings/connection), safeNext, 라우트 코드 분할
+│  ├─ router.tsx           라우트(/login·가드 레이아웃·/·/c/$channelId(+/settings·/activity)·/agents·/settings/connection·/settings/operations), safeNext, 라우트 코드 분할
 │  ├─ queryClient.ts       Query 기본값 — 전역 오류 토스트(`meta.silent` 로 끔, 폼 오류 VALIDATION·CONFLICT 제외), 재시도는 네트워크·5xx 만, 401 → 로그인.
 │  │                       me 는 토스트하지 않고, 값이 없는 me 의 401(첫 가드)은 가드에 맡기며, 값을 가진 me 의 401(사본으로 뜬 뒤 세션 만료)은 onUnauthorized
 │  ├─ session.ts           로그아웃·401 정리(resetClientState — 등록된 정리 훅: 오프라인 사본 지우기·dropLocalPush)와 Query 밖 REST 401 통지
@@ -334,7 +404,8 @@ src/
 │  ├─ RouteError.tsx       라우트 오류 화면(연결 문제 ↔ 코드 오류를 가른다)
 │  └─ layout/
 │     ├─ AppShell.tsx      사이드바 + 배너 + 페이지. 768px 미만은 사이드바를 왼쪽 시트로, 닫히면 초점 복귀
-│     ├─ Sidebar.tsx       워크스페이스 이름·채널 목록·「채널 만들기」·「에이전트」·「연결」(owner 에게만 — useIsOwner)·연결 상태·로그아웃
+│     ├─ Sidebar.tsx       워크스페이스 이름·채널 목록·「채널 만들기」·「에이전트」·「연결」·「운영」(둘 다 owner 에게만 — useIsOwner)·연결 상태·로그아웃.
+│     │                    「운영」 옆 배지 = ops/status 의 unacked warn + error(0 이면 없음, 100 이상 「99+」, sr-only 「(확인 안 한 사건 n건)」) — `ops.event` 로 실시간, 주기 재조회는 없다
 │     ├─ ChannelHeader.tsx 채널 이름·주제, 에이전트 아바타 묶음(+N), 설정 패널 여닫기, 좁은 화면 메뉴 버튼
 │     ├─ Banners.tsx       wire 끊김·`rejected`·`protocol_mismatch` 배너 + OpenClaw 미연결 배너(둘은 함께 보일 수 있다, owner 에게는 「연결 설정 보기」 링크) + 오프라인 배너
 │     │                    「오프라인 — 저장된 내용을 보여 줍니다」(useOffline — 그때는 「서버에 다시 연결하는 중…」을 내지 않는다)
@@ -346,17 +417,20 @@ src/
 │     │                    내용은 포털 하나로 옮겨 다녀 탭을 바꿔도 안쪽이 리마운트되지 않는다.
 │     │                    초점: 좁은 화면 시트는 열면 지금 탭 링크(`data-tab-id`), Esc·닫기면 헤더 「채널 설정」 링크. 넓은 화면은 「설정 닫기」·「활동 닫기」
 │     │                    링크를 누르면 패널이 내려가기 전에 같은 헤더 링크로 옮긴다(헤더에 활동을 여는 자리가 없어 두 탭 모두 그 자리)
-│     └─ sidebarSheet.tsx  좁은 화면 시트 열기 컨텍스트 + 지금 화면의 메뉴 버튼(초점 복귀 대상)
+│     └─ sidebarSheet.tsx  좁은 화면 시트 열기 컨텍스트 + 지금 화면의 메뉴 버튼(초점 복귀 대상). owner 이고 확인 안 한 warn·error 가 있으면 메뉴 버튼에 빨간 점과
+│                          「채널 목록 열기 (확인 안 한 운영 사건 N)」(owner 가 아니거나 넓은 화면이면 ops API 를 부르지 않는다)
 ├─ api/
 │  ├─ http.ts              같은 출처 REST(`/api/v1`) — 인증은 httpOnly 쿠키, 토큰을 다루지 않는다. ApiRequestError·NetworkError
-│  ├─ queries.ts           쿼리 키 `qk` 와 공용 훅(me·channels·channel·members·agents·adapter). useIsOwner — me 캐시의 `role === "owner"` 를 관찰자 없이 캐시 구독으로 읽는다
+│  ├─ queries.ts           쿼리 키 `qk` 와 공용 훅(me·channels·channel·members·agents·adapter). 운영 키 opsStatus·opsRuns(days)·opsEvents(severity)·opsEventsAll 도 여기. useIsOwner — me 캐시의 `role === "owner"` 를 관찰자 없이 캐시 구독으로 읽는다
 │  │                       (useSyncExternalStore — useMe 관찰자를 두면 401 정리 뒤 me 를 다시 불러 로그인 이동을 되돌린다). role 이 없는 옛 me 는 owner 가 아니다
 │  └─ formErrors.ts        VALIDATION·CONFLICT 를 폼 칸·문구로 잇는 도우미
 ├─ realtime/
 │  ├─ wire.ts              Socket.IO 클라이언트(토큰 없음 — 쿠키 인증, `transports: ["websocket"]` 만: polling 첫 GET 에는 Origin 이 없다), WireStatus, WireAckError
 │  ├─ WireProvider.tsx     로그인(me 캐시)이 확인되면 소켓을 만들어 붙인다 + `useChannelSubscription`. presence.update(연결마다 강제, visibilitychange·채널 이동 때 값이 바뀌면,
 │  │                       끊겨 있으면 안 보냄, 채널 id 는 uuid 일 때만) · 로그인 확인 때 syncPushSubscription · 세션 정리 훅과 「값 없는 me 의 401」에서 dropLocalPush
-│  ├─ handlers.ts          서버 이벤트 → Query 캐시·런 스토어·작성 중 저장소·연결 상태. `system.notice` 토스트 지속시간
+│  ├─ handlers.ts          서버 이벤트 → Query 캐시·런 스토어·작성 중 저장소·연결 상태. `system.notice` 토스트 지속시간.
+│  │                       `ops.event` → 상태 캐시의 unacked 를 곧바로 덮고(상태를 아직 안 받았으면 만들지 않는다) opsStatus·사건 목록 무효화.
+│  │                       첫 연결이 아닌 재연결이면 adapter·opsStatus·opsEventsAll 을 무효화한다 — 끊긴 사이의 변화는 팬아웃으로 다시 오지 않는다
 │  ├─ subscriptions.ts     한 채널 구독·빈틈 이어 받기·과거 페이지 REST(5쪽 초과면 타임라인 리셋)
 │  ├─ timelineCache.ts     `["timeline", channelId]` 읽기·쓰기
 │  ├─ runReplay.ts         `run.events.replay` 와 실시간 `run.event` 의 경합(ack 전 이벤트는 버퍼)
@@ -382,13 +456,13 @@ src/
 │  │                       FileCard.tsx(아이콘·이름·크기·종류·「내려받기」 — `download` 속성 없이 서버 Content-Disposition 에 맡긴다) ·
 │  │                       ImageViewer.tsx(크게 보기 — ui/dialog 위, ←/→·`n / 전체`·「원본 내려받기」·Esc, 닫으면 연 이미지로 초점. `useImageViewer` 를 메시지 격자와 media 블록이 같이 쓴다) ·
 │  │                       MessageAttachments.tsx(본문 아래 이미지 격자 + 파일 카드, 카드가 가리킨 첨부는 뺀다) ·
-│  │                       upload.ts(XHR 업로드·진행·취소, 형식·5 MB 검사와 문구) · useComposerAttachments.ts(작성기 칩 상태 — 넣는 즉시 올리고, 빼면 끊고, 채널이 바뀌면 모두 비운다. 10장 상한)
+│  │                       upload.ts(XHR 업로드·진행·취소, 형식·5 MB 검사와 문구, 507 이면 본문과 무관하게 「서버 디스크 여유가 부족해 올리지 못했습니다」) · useComposerAttachments.ts(작성기 칩 상태 — 넣는 즉시 올리고, 빼면 끊고, 채널이 바뀌면 모두 비운다. 10장 상한)
 │  ├─ auth/                LoginPage · mutations(useLogin·useLogout — 응답 `sessionToken` 은 쓰지 않는다, gcTime 0. 로그아웃은 disablePush 를 최대 3초 기다린 뒤 POST /auth/logout)
 │  ├─ components/          components v1 카드 렌더러(Phase 2 ②). 사람·에이전트 메시지(MessageItem)와 시스템 카드(SystemCard 의 「이어가기」)가 함께 쓴다.
 │  │                       Components.tsx(카드 전체: 블록을 배열 순서대로 → 모달 트리거 → 결과 줄 `@핸들 — 라벨: 값`(오래된 것부터, 20건이면 「최근 20건」).
 │  │                       결정 뒤 초점은 ack 이 돌려준 **내** 상호작용 id 의 결과 줄로만) ·
 │  │                       state.ts(순수: 비활성 규칙 한 곳 — 연결 → 만료 → 소비 → 권한(`allowedUsers` 가 비어 있지 않을 때만) → 전송 중, 사유 문구) ·
-│  │                       useInteract.ts(`component.interact` 래퍼 — `send` 는 거부하지 않고 `SendResult` 로 성공·실패를 돌려준다. 버튼·셀렉트는 토스트,
+│  │                       useInteract.ts(`component.interact` 래퍼 — `send` 는 거부하지 않고 `SendResult` 로 성공·실패를 돌려준다. 버튼·셀렉트는 토스트(RUN_LIMIT·RATE_LIMITED 는 한국어 문구 — run_error 「다시 실행」도 이 길),
 │  │                       모달은 `toast: false`. 소켓·`components.id` 가 없으면 보내지 않고 `DISCONNECTED`) ·
 │  │                       DisabledHint.tsx(비활성 사유를 **보이는 글**로 — `aria-hidden` 인 12px 글을 컨트롤이 `aria-describedby` 로 가리킨다, `title` 은 안 쓴다) ·
 │  │                       OptionList.tsx(옵션 목록 한 렌더러 — 단일=라디오·다중=체크박스, fieldset+legend, 6개 넘으면 스크롤 상자. 셀렉트와 모달 select·radio 가 함께) ·
@@ -402,11 +476,25 @@ src/
 │  ├─ messages/            timeline.ts(입장·과거·upsert·낙관적 교체·빈틈)·groupRows.ts(날짜 구분선·묶음)·useTimeline·useOlderPages·useAuthors,
 │  │                       MessageList.tsx(TanStack Virtual, 끝 붙기·「새 메시지」 칩 — 기준은 가진 마지막 메시지의 seq), MessageItem·MessageBody(Streamdown, 원시 HTML 끔,
 │  │                       단일 개행 → br, 마크다운 이미지는 링크로)·MentionChip·mentionMarkdown·SystemCard(MessageItem 과 SystemCard 의 components 는 `features/components` 의 `<Components>` 가 그린다)·
-│  │                       PendingItem(보내는 중 첨부는 서버 경로로, 크게 보기 없음)·pendingActions·MessageErrorBoundary, ChannelPage.tsx(채널 확인 뒤에만 안을 그린다, 확인되면 touchRecentChannel).
+│  │                       PendingItem(보내는 중 첨부는 서버 경로로, 크게 보기 없음, 사유 rate_limited 면 rateLimited.ts 의 「너무 빠르게 보내고 있습니다 — 잠시 뒤 다시」)·pendingActions·MessageErrorBoundary,
+│  │                       SystemCard 의 run_limit 은 owner 에게만 링크 — scope workspace 면 「운영에서 한도 바꾸기」, channel 이면 「채널 설정에서 한도 바꾸기」, 모르는 kind 는 정보 모양, ChannelPage.tsx(채널 확인 뒤에만 안을 그린다, 확인되면 touchRecentChannel).
 │  │                       MessageItem 은 본문이 비면 본문을 그리지 않고, 본문 아래 `MessageAttachments` → components 카드 순으로 그린다
+│  ├─ ops/                 Phase 3 ③. 운영 화면 `/settings/operations` — owner 만(member·role 없는 옛 me 는 ops API 를 부르지 않고 「권한이 없습니다」).
+│  │                       OpsPage.tsx(섹션 넷 — 상태를 30초마다 다시 받는 것은 이 화면만(OPS_STATUS_POLL_MS, 탭이 가려지면 쉰다)) ·
+│  │                       StatusCard.tsx(Gateway·플러그인·Gateway 버전(drift 면 「저장소가 검증한 버전(<핀>)과 다릅니다」)·디스크·직전 종료·서버·DB, 문제가 있는 줄만 `data-problem` 강조 + sr-only 「문제:」.
+│  │                       연결 두 줄은 wire 가 connected 이고 어댑터 캐시가 있으면 `useAdapterStatus`(배너·연결 점과 같은 캐시), 아니면 ops/status 값) ·
+│  │                       RunsTable.tsx(「오늘 / 7일」, 채널별·에이전트별 런·실패·중지·차단, 채널 이름은 채널 링크. usageTrusted 가 false 면 「토큰·금액은 측정 불가 — … (ADR 0005)」 한 줄,
+│  │                       768px 미만은 표 대신 카드 목록) ·
+│  │                       LimitForm.tsx(워크스페이스 일일 상한 — 빈칸 null(무제한), 1~10000 정수 아니면 보내지 않음, 오늘 사용량 막대 또는 「오늘 n회 · 무제한」, 「오늘 워크스페이스 상한으로 막힌 런 n회」,
+│  │                       채널별 한도는 각 채널 설정 「릴레이 정책」이라는 안내 문장) ·
+│  │                       EventList.tsx(심각도 필터·「모두 확인」·「더 보기」(useInfiniteQuery), 확인 안 한 줄 굵게·확인한 줄 흐리게, 모르는 severity 는 정보 아이콘·원문 라벨) ·
+│  │                       copy.ts(kind → 고정 문구 — 모르는 kind 는 「알 수 없는 사건 (kind)」, 런 한도는 「(워크스페이스)」·「(#채널 이름)」·「(채널)」, 끊김은 「(지금도)」 또는 detail.downMs 로
+│  │                       「(n분 동안)」, 「×n」, 시각은 끊김이면 끊긴 때(firstAt − detail.thresholdMs) 아니면 lastAt) ·
+│  │                       queries.ts(useOpsStatus({ poll, enabled })·useOpsRuns·useOpsEvents) · mutations.ts(useAckEvents — 성공하면 status·목록을 다시 받는다(0 으로 덮지 않는다), useSaveRunLimit).
+│  │                       ops 쿼리는 오프라인 사본(`pwa/persist.ts`)에서 먼저 뺀다
 │  ├─ runs/                runStore.ts(Zustand, seq 중복 제거·재생)·bubblePhase.ts(상태 → 버블 모양)·StreamingBubble.tsx·useChannelBubbles·abortError
 │  ├─ composer/            Composer.tsx(Tiptap) · mentions·MentionList(@ 후보) · serialize.ts(→ `<@a:id>` 토큰 bodyMd, 줄 머리 이스케이프) ·
-│  │                       submitKeys(Enter 전송·IME) · slash.ts(`/stop`·`/new`) · useSendMessage(ack·10s 타임아웃 → failed, 첨부 id 를 싣고 재시도도 같은 id) · useTyping·TypingIndicator ·
+│  │                       submitKeys(Enter 전송·IME) · slash.ts(`/stop`·`/new`) · useSendMessage(ack·10s 타임아웃 → failed, ack RATE_LIMITED 면 사유 rate_limited, 첨부 id 를 싣고 재시도도 같은 clientMsgId·id) · useTyping·TypingIndicator ·
 │  │                       PendingAttachments.tsx(칩 — 미리보기·진행 막대·사유·「<이름> 빼기」, 빼면 초점을 옆 칩·「이미지 첨부」로). Composer 는 「이미지 첨부」 버튼·붙여넣기·
 │  │                       작성기 상자 전체의 끌어다 놓기로 칩을 넣고, 올리기가 끝나야 보낸다(사유: 끊김 → 「이미지를 올리는 중입니다」 → 「올리지 못한 이미지를 빼 주세요」). 글 없이 이미지만 보낼 수 있다
 │  ├─ agents/              AgentsPage·AgentRow(사용 토글·기본 프롬프트) · DiscoverDialog(「Gateway 에서 가져오기」) · ManualAgentForm·handleFrom ·
@@ -486,7 +574,8 @@ src/
 | `HOST` | `127.0.0.1` | 리슨 주소 |
 | `PORT` | `3000` | 리슨 포트. REST `/api/v1`·wire(기본 네임스페이스)·브리지 `/bridge` 가 모두 여기 |
 | `APP_ORIGIN` | (필수) | 웹 앱 오리진 — Socket.IO CORS·Better Auth `baseURL`/`trustedOrigins`·세션 쿠키 Secure(https 일 때). 로컬 `http://localhost:5173` |
-| `TRUST_PROXY` | `false` | 리버스 프록시 뒤면 `true` — 로그인 레이트리밋이 X-Forwarded-For 의 클라이언트 IP 로 걸린다 |
+| `TRUST_PROXY` | `false` | 리버스 프록시 뒤면 `true` — 레이트리밋·브리지 실패 카운터·브리지 거절 로그의 주소가 X-Forwarded-For 첫 값이 된다. 배포 compose 는 `true` 로 고정한다 |
+| `TZ` | 프로세스 기본(컨테이너는 UTC) | 「하루」의 경계 — 일일 런 상한이 이 시간대의 자정에 풀리고 운영 화면 「오늘」·「7일」 집계도 그 자정을 따른다(`docs/guides/deploy.md` 「설정 — `.env`」). `.env.example` 에는 없다 — Node 가 읽는 표준 변수라 config.ts 가 검증하지 않는다 |
 | `DATA_DIR` | `./data` | 런타임 데이터(DB·첨부 블롭·디바이스 아이덴티티·VAPID 키 `vapid.json`) |
 | `DB_PATH` | `<DATA_DIR>/dodok.sqlite` | SQLite 파일 |
 | `ATTACHMENTS_DIR` | `<DATA_DIR>/attachments` | 첨부 블롭 디렉터리(`<sha 앞 2자>/<sha256>`). 부팅 때 만든다. 한 서버 프로세스만 쓴다 — sha 잠금이 프로세스 안에서만 맞다 |

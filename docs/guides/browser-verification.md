@@ -28,6 +28,13 @@
   뜬 쪽이 죽거나, 브라우저가 어느 인스턴스를 보고 있는지 알 수 없다.
   → [워크트리 작업 흐름](worktree-workflow.md) 「생성 직후 세팅」
 
+## Playwright 로 여러 번 나눠 돌릴 때
+
+- ⚠ **`connectOverCDP` 로 스크립트마다 붙었다 떼면 `setViewportSize` 가 연결과 함께 풀린다** — 창 실제 크기(headless 면 대개 756×413)로 돌아가, 390px 검증이 조용히 넓은 화면으로 찍힌다. 붙을 때마다 다시 준다.
+- 붙을 때마다 다시 주는 대신, `launchPersistentContext` 를 띄운 Node 프로세스 하나가 127.0.0.1 포트로 스크립트 본문을 받아 같은 컨텍스트에서 실행하게 하면 페이지·뷰포트·리스너가 호출 사이에 남는다. 그 포트도 끝에 LISTEN 0 을 확인한다.
+- **서버 쪽 wire 끊김은 `page.routeWebSocket` 으로 흉내 낸다** — `page.routeWebSocket(u => u.pathname.includes("socket.io"), ws => { if (block) ws.close(); else ws.connectToServer(); })` 를 페이지를 열기 전에 건다. `context.setOffline` 은 브라우저 온라인 이벤트로 React Query 가 쿼리를 다시 받아 **재접속 뒤 캐시가 낡는 결함을 가린다.**
+- `dev:fake` 의 개발 전용 훅(`/__devfake/*`)은 서버 오리진으로 직접 부른다 — 페이지 안 `fetch` 는 CORS 와 415(JSON 이 아닌 단순 요청 거절)에 걸린다. 훅 목록·호출 예는 `docs/project-structure.md` 의 `apps/server` 절 dev:fake 문단.
+
 ## 로컬 HTTPS(Compose 8443)를 볼 때
 
 `docs/guides/deploy.md` 「로컬 검증 (이 Mac)」 으로 띄운 `https://localhost:8443` 은 **Caddy 내부 CA 의 자체 인증서**다. 도구마다 막히는 자리가 다르다.

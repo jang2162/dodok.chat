@@ -233,7 +233,7 @@
 
 **dev:fake 훅(태스크 6 — `11df417`)**
 
-- **`POST /__devfake/plugin-token { token }`**(7장 「dev:fake 가 가짜 플러그인 토큰 바꾸기를 할 수 있어야 한다」의 답). 가짜 플러그인을 끊고 그 토큰으로 다시 붙여 `{ ok: true }` 또는 `{ ok: false, reason }` 을 돌려준다. `createApp` 이 이미 ready 라 Fastify 경로를 더할 수 없어(`FST_ERR_INSTANCE_ALREADY_LISTENING`) HTTP 서버의 request 리스너를 감싼다 — 이 경로만 받고 나머지는 원래 리스너(engine.io → Fastify)로. owner 판정은 같은 쿠키·Authorization 으로 앱의 `GET /api/v1/setup/status` 를 inject 해 그 401·403 을 그대로 돌려준다. dev:fake 에만 있고 운영 `createApp`·번들에는 없다. 테스트 보강(inject 로는 훅 층을 못 지나는 운영 404·member·경로)과 `text/plain` 단순 요청의 415 는 이월.
+- **`POST /__devfake/plugin-token { token }`**(7장 「dev:fake 가 가짜 플러그인 토큰 바꾸기를 할 수 있어야 한다」의 답). 가짜 플러그인을 끊고 그 토큰으로 다시 붙여 `{ ok: true }` 또는 `{ ok: false, reason }` 을 돌려준다. `createApp` 이 이미 ready 라 Fastify 경로를 더할 수 없어(`FST_ERR_INSTANCE_ALREADY_LISTENING`) HTTP 서버의 request 리스너를 감싼다 — 이 경로만 받고 나머지는 원래 리스너(engine.io → Fastify)로. owner 판정은 같은 쿠키·Authorization 으로 앱의 `GET /api/v1/setup/status` 를 inject 해 그 401·403 을 그대로 돌려준다. dev:fake 에만 있고 운영 `createApp`·번들에는 없다. 테스트 보강(inject 로는 훅 층을 못 지나는 운영 404·member·경로)과 `text/plain` 단순 요청의 415 는 이월(o3-t8a 에서 닫힘 — 실제 `fetch` 로 운영 404·member 403·경로 정확 일치, 비 JSON 은 415).
 
 **검증이 확인한 것**
 
