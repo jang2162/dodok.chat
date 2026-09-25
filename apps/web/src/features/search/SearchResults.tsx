@@ -20,7 +20,7 @@ export function searchErrorText(e: unknown): string {
 
 /**
  * 결과 목록(스레드·검색 스펙 5.4) — 줄마다 채널·작성자·시각·스니펫(일치 부분 강조), 답글이면 「스레드 답글」.
- * 누르면 `onPick`. 2글자 검색(`limited`)은 「더 보기」 없이 범위 안내 한 줄
+ * 누르면 `onPick`. 2글자 검색(`limited`)은 「더 보기」 없이 범위 안내 한 줄. 다음 쪽이 실패하면(429 포함) 받은 결과 아래에 한 줄
  */
 export function SearchResults({
   search,
@@ -34,7 +34,8 @@ export function SearchResults({
   const { author } = useAuthors();
 
   if (!search.enabled) return null;
-  if (search.isError) {
+  // 다음 쪽 실패면 받은 결과는 둔다 — 한 줄은 목록 아래에
+  if (search.isError && !search.isFetchNextPageError) {
     return (
       <p role="alert" className="px-4 py-3 text-sm text-destructive">
         {searchErrorText(search.error)}
@@ -81,6 +82,11 @@ export function SearchResults({
             </li>
           ))}
         </ul>
+      )}
+      {search.isFetchNextPageError && (
+        <p role="alert" className="px-4 pt-2 text-sm text-destructive">
+          {searchErrorText(search.error)}
+        </p>
       )}
       {!search.limited && search.hasNextPage && (
         <div className="flex justify-center px-4 py-2">

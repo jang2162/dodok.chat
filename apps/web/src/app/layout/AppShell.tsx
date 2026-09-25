@@ -1,6 +1,6 @@
 import { Outlet } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { isSearchShortcut, OpenSearchContext } from "@/features/search/openSearch";
+import { isSearchShortcut, OpenSearchContext, otherModalOpen } from "@/features/search/openSearch";
 import { SearchDialog } from "@/features/search/SearchDialog";
 import { useIsNarrow } from "@/hooks/useIsNarrow";
 import { Sheet, SheetContent, SheetTitle } from "@/ui/sheet";
@@ -34,9 +34,9 @@ export function AppShell() {
   const [searchOpen, setSearchOpen] = useState(false);
   const openSearch = useCallback(() => setSearchOpen(true), []);
   useEffect(() => {
-    // 작성기 안에서 눌러도 연다 — 브라우저의 주소창 초점(Ctrl+K)보다 앞선다
+    // 작성기 안에서 눌러도 연다 — 브라우저의 주소창 초점(Ctrl+K)보다 앞선다. 다른 모달 위에서는 무시한다
     const onKey = (e: KeyboardEvent) => {
-      if (!isSearchShortcut(e)) return;
+      if (!isSearchShortcut(e) || otherModalOpen()) return;
       e.preventDefault();
       setSearchOpen(true);
     };

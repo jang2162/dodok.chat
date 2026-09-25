@@ -59,16 +59,14 @@ export function prependOlder(t: Timeline, older: readonly Message[], hasOlder: b
 }
 
 /**
- * message.created·updated, 전송 ack, 빈틈 메우기 페이지. 떨어진 창(`hasNewer`)이면 창 안(가장 새 항목의 seq 이하)과 이미
- * 가진 것만 넣는다 — 창 뒤에 하나만 붙이면 그 사이의 빈 곳이 보이지 않은 채 이어진 목록처럼 보인다. 나머지는 아래로
+ * message.created·updated, 전송 ack, 빈틈 메우기 페이지. 떨어진 창(`hasNewer`)이면 창 안(가장 새 항목의 seq 이하)만
+ * 넣는다 — 창 뒤에 하나만 붙이면 그 사이의 빈 곳이 보이지 않은 채 이어진 목록처럼 보인다. 나머지는 아래로
  * 이어 받을 때(`appendNewer`) 온다
  */
 export function upsertMany(t: Timeline, incoming: readonly Message[]): Timeline {
   if (incoming.length === 0) return t;
   const newest = t.items.at(-1)?.seq ?? 0;
-  const kept = t.hasNewer
-    ? incoming.filter((m) => m.seq <= newest || t.items.some((x) => x.id === m.id))
-    : incoming;
+  const kept = t.hasNewer ? incoming.filter((m) => m.seq <= newest) : incoming;
   return {
     ...t,
     items: merge(t.items, kept),

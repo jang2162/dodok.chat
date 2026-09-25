@@ -126,6 +126,19 @@ describe("채널 — 떨어진 창의 아래로 이어 받기·최신으로", ()
     expect(getTimeline(qc, CH)?.hasNewer).toBe(false);
   });
 
+  it("받는 사이 다른 떨어진 창(around)으로 갈아 끼웠으면 옛 창의 다음 쪽을 붙이지 않는다", async () => {
+    const qc = detached();
+    const res = deferred();
+    routes.set(channelUrl("limit=50&afterSeq=9"), () => res.promise);
+    const done = loadNewer(qc, CH);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    qc.setQueryData<Timeline>(qk.timeline(CH), (t) => ({ ...t!, items: [msg(30), msg(33)], hasNewer: true }));
+    res.resolve(json(200, { messages: [msg(12)], hasMore: true }));
+    await done;
+    expect(seqs(getTimeline(qc, CH))).toEqual([30, 33]);
+    expect(getTimeline(qc, CH)?.hasNewer).toBe(true);
+  });
+
   it("최신으로 — 최신 페이지로 새로 시작하고 lastSeq 는 내려가지 않는다", async () => {
     const qc = detached();
     routes.set(channelUrl("limit=50"), () => json(200, { messages: [msg(40), msg(44)], hasMore: true }));

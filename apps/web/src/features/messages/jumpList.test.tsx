@@ -11,7 +11,7 @@ import { stubScrollLayout } from "../../../test/scrollLayout";
 import { json } from "../../../test/shellApi";
 import { HIGHLIGHT_MS, requestJump, useJumpStore } from "./jumpTarget";
 import { MessageList } from "./MessageList";
-import { addPending, emptyTimeline, type Timeline } from "./timeline";
+import { addPending, emptyTimeline, type Timeline, upsert } from "./timeline";
 
 const RECT = { width: 800, height: 600 };
 const range = (from: number, to: number): Message[] =>
@@ -95,6 +95,21 @@ describe("결과로 가기 — 채널 목록", () => {
     const scroller = container.querySelector<HTMLElement>("[data-scroller]")!;
     await new Promise((r) => setTimeout(r, 50));
     expect(scroller.scrollTop).toBe(0);
+    answer(json(200, { messages: range(1, 20), hasMore: false, hasMoreAfter: true }));
+    await waitFor(() => expect(row("본문 10")).toHaveAttribute("data-highlighted", "true"));
+  });
+
+  it("around 를 받는 사이 목록이 바뀌어도(wire 새 메시지) around 는 한 번만 부른다", async () => {
+    let answer: (r: Response) => void = () => {};
+    fetchMock.mockImplementationOnce(() => new Promise<Response>((r) => (answer = r)));
+    const { qc, row } = setup(timelineOf(range(60, 100)));
+    jumpTo(10);
+    await waitFor(() => expect(fetched()).toContain(url("limit=50&around=10")));
+    act(() => qc.setQueryData<Timeline>(qk.timeline(CH), (t) => upsert(t!, range(101, 101)[0]!)));
+    act(() => qc.setQueryData<Timeline>(qk.timeline(CH), (t) => upsert(t!, range(102, 102)[0]!)));
+    await screen.findByText("본문 102");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(fetched().filter((u) => u === url("limit=50&around=10"))).toHaveLength(1);
     answer(json(200, { messages: range(1, 20), hasMore: false, hasMoreAfter: true }));
     await waitFor(() => expect(row("본문 10")).toHaveAttribute("data-highlighted", "true"));
   });

@@ -5,7 +5,7 @@ import {
   type SearchHit,
   type SearchResult,
 } from "@dodok/shared";
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, createEvent, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { qk } from "@/api/queries";
@@ -47,7 +47,7 @@ const hitOf = (m: Message, over: Partial<SearchHit> = {}): SearchHit => ({
 let restore: Array<() => void>;
 let fetchMock: ReturnType<typeof vi.fn<typeof globalThis.fetch>>;
 /** 검색 요청 URL → 응답 */
-let search: (url: URL) => Response;
+let search: (url: URL) => Response | Promise<Response>;
 /** 그 밖의 REST(around 등) — 정확한 URL 로 */
 let routes: Map<string, () => Response>;
 beforeEach(() => {
@@ -116,6 +116,56 @@ describe("검색 대화상자 열기", () => {
     await openWith({ ctrlKey: true });
   });
 
+  it("Alt·Shift 가 섞이면 열지 않는다 — 여는 키는 기본 동작(Ctrl+K 주소창)을 막는다", async () => {
+    renderRoute(`/c/${CH}`, subscribedClient());
+    await screen.findByTestId("app-shell");
+    expect(fireEvent.keyDown(window, { key: "k", metaKey: true, altKey: true })).toBe(true);
+    expect(fireEvent.keyDown(window, { key: "K", ctrlKey: true, shiftKey: true })).toBe(true);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByRole("dialog", { name: "검색" })).toBeNull();
+    const open = createEvent.keyDown(window, { key: "k", ctrlKey: true });
+    fireEvent(window, open);
+    expect(open.defaultPrevented).toBe(true);
+    expect(await screen.findByRole("dialog", { name: "검색" })).toBeInTheDocument();
+  });
+
+  it("한글 입력기 상태(key 가 「k」 가 아니다)여도 물리 키 K 면 연다", async () => {
+    renderRoute(`/c/${CH}`, subscribedClient());
+    await screen.findByTestId("app-shell");
+    fireEvent.keyDown(window, { key: "ㅏ", code: "KeyK", metaKey: true });
+    expect(await screen.findByRole("dialog", { name: "검색" })).toBeInTheDocument();
+  });
+
+  it("작성기 안에서 눌러도 연다 — 닫으면 작성기로 돌아간다", async () => {
+    renderRoute(`/c/${CH}`, subscribedClient());
+    const box = await screen.findByRole("textbox", { name: "메시지 입력" });
+    act(() => box.focus());
+    expect(box).toHaveFocus();
+    fireEvent.keyDown(box, { key: "k", ctrlKey: true });
+    expect(await screen.findByRole("dialog", { name: "검색" })).toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(box).toHaveFocus());
+  });
+
+  it("다른 대화상자가 열려 있으면 무시한다 — 그 위에 겹쳐 열지 않는다", async () => {
+    renderRoute(`/c/${CH}`, subscribedClient());
+    await userEvent.click(await screen.findByRole("button", { name: "채널 만들기" }));
+    await screen.findByRole("dialog", { name: "채널 만들기" });
+    expect(fireEvent.keyDown(window, { key: "k", metaKey: true })).toBe(true);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByRole("dialog", { name: "검색" })).toBeNull();
+  });
+
+  it("닫으면 초점이 연 자리로 돌아간다", async () => {
+    renderRoute(`/c/${CH}`, subscribedClient());
+    const opener = await screen.findByRole("button", { name: /검색/ });
+    await userEvent.click(opener);
+    await screen.findByRole("dialog", { name: "검색" });
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "검색" })).toBeNull());
+    await waitFor(() => expect(opener).toHaveFocus());
+  });
+
   it("사이드바 위의 검색 칸을 눌러도 열린다", async () => {
     renderRoute(`/c/${CH}`, subscribedClient());
     await userEvent.click(await screen.findByRole("button", { name: /검색/ }));
@@ -143,6 +193,37 @@ describe("검색하기", () => {
     await new Promise((r) => setTimeout(r, SEARCH_DEBOUNCE_MS + 50));
     expect(searchCalls()).toHaveLength(1);
     expect(await screen.findByText("결과가 없습니다")).toBeInTheDocument();
+  });
+
+  it("1글자로 줄이면 옛 결과를 곧바로 숨기고 안내만 — 디바운스를 기다리지 않는다", async () => {
+    search = () => json(200, { hits: [hitOf(msg(70), { snippet: "옛 결과" })], limited: false });
+    renderRoute(`/c/${CH}`, subscribedClient());
+    const dialog = await openWith({ metaKey: true });
+    await typeQuery("배포를");
+    expect(await within(dialog).findByText("옛 결과")).toBeInTheDocument();
+    await typeQuery("{Backspace}{Backspace}");
+    expect(within(dialog).getByText("2글자 이상 입력하세요")).toBeInTheDocument();
+    expect(within(dialog).queryByText("옛 결과")).toBeNull();
+    expect(within(dialog).queryByRole("list", { name: "검색 결과" })).toBeNull();
+  });
+
+  it("늦게 온 옛 검색어 응답이 새 결과를 덮지 않는다", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    search = (u) =>
+      u.searchParams.get("q") === "배포"
+        ? gate.then(() => json(200, { hits: [hitOf(msg(70), { snippet: "옛 결과" })], limited: true }))
+        : json(200, { hits: [hitOf(msg(71), { snippet: "새 결과" })], limited: false });
+    renderRoute(`/c/${CH}`, subscribedClient());
+    const dialog = await openWith({ metaKey: true });
+    await typeQuery("배포");
+    await waitFor(() => expect(searchCalls()).toHaveLength(1));
+    await typeQuery("를");
+    expect(await within(dialog).findByText("새 결과")).toBeInTheDocument();
+    release();
+    await new Promise((r) => setTimeout(r, 100));
+    expect(within(dialog).queryByText("옛 결과")).toBeNull();
+    expect(within(dialog).queryByText("2글자는 최근 90일에서 50개까지만 찾습니다")).toBeNull();
   });
 
   it("스니펫의 일치 부분은 <mark>, HTML 주입 문자열은 글자 그대로(Review Focus 4)", async () => {
@@ -197,8 +278,26 @@ describe("검색하기", () => {
     expect(within(dialog).queryByRole("button", { name: "더 보기" })).toBeNull();
   });
 
+  it("다음 쪽이 실패하면(429) 받은 결과는 두고 목록 아래에 한 줄", async () => {
+    search = (u) =>
+      u.searchParams.get("cursor") === "c2"
+        ? json(429, { code: "RATE_LIMITED", message: "검색 요청이 너무 많습니다" })
+        : json(200, { hits: [hitOf(msg(70), { snippet: "첫째 쪽" })], nextCursor: "c2", limited: false });
+    renderRoute(`/c/${CH}`, subscribedClient());
+    const dialog = await openWith({ metaKey: true });
+    await typeQuery("배포를");
+    await userEvent.click(await within(dialog).findByRole("button", { name: "더 보기" }));
+    const alert = await within(dialog).findByRole("alert");
+    expect(alert).toHaveTextContent("검색 요청이 너무 많습니다. 잠시 뒤 다시 시도하세요");
+    expect(within(dialog).getByText("첫째 쪽")).toBeInTheDocument();
+    // 한 줄은 목록 아래
+    const list = within(dialog).getByRole("list", { name: "검색 결과" });
+    expect(list.compareDocumentPosition(alert) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("2글자(limited) — 「더 보기」 없이 안내 한 줄", async () => {
-    search = () => json(200, { hits: [hitOf(msg(70))], limited: true });
+    // 커서가 실려 와도(서버는 싣지 않는다) limited 면 더 보기를 두지 않는다
+    search = () => json(200, { hits: [hitOf(msg(70))], nextCursor: "x", limited: true });
     renderRoute(`/c/${CH}`, subscribedClient());
     const dialog = await openWith({ metaKey: true });
     await typeQuery("배포");

@@ -1,13 +1,14 @@
 import type { SearchHit } from "@dodok/shared";
 import { useNavigate } from "@tanstack/react-router";
 import { SearchIcon } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useChannels } from "@/api/queries";
 import { requestJump } from "@/features/messages/jumpTarget";
 import { useIsNarrow } from "@/hooks/useIsNarrow";
 import { Dialog, DialogContent, DialogTitle } from "@/ui/dialog";
 import { Input } from "@/ui/input";
 import { Sheet, SheetContent, SheetTitle } from "@/ui/sheet";
+import { SEARCH_DIALOG_ATTR } from "./openSearch";
 import { SearchResults } from "./SearchResults";
 import { SEARCH_MIN_CHARS, type SearchFilters, searchLength, useSearch } from "./useSearch";
 
@@ -26,11 +27,26 @@ export function SearchDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const narrow = useIsNarrow();
+  const opener = useRef<HTMLElement | null>(null);
   const body = <SearchPanel onDone={() => onOpenChange(false)} />;
+  // `DialogTrigger` 없이 열어 Radix 기본 복귀가 갈 곳이 없다 — 열 때 초점을 가졌던 자리(검색 칸·작성기 등)를 기억해 돌려준다.
+  // 그 자리가 사라졌으면(결과로 가서 화면이 바뀌었다) 기본대로 둔다
+  const contentProps = {
+    "aria-describedby": undefined,
+    [SEARCH_DIALOG_ATTR]: "",
+    onOpenAutoFocus: () => {
+      opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    },
+    onCloseAutoFocus: (e: Event) => {
+      if (!opener.current?.isConnected) return;
+      e.preventDefault();
+      opener.current.focus();
+    },
+  };
   if (narrow) {
     return (
       <Sheet open={open} onOpenChange={onOpenChange}>
-        <SheetContent side="bottom" className="h-dvh gap-0 p-0" aria-describedby={undefined}>
+        <SheetContent side="bottom" className="h-dvh gap-0 p-0" {...contentProps}>
           <SheetTitle className="sr-only">검색</SheetTitle>
           {body}
         </SheetContent>
@@ -39,10 +55,7 @@ export function SearchDialog({
   }
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        className="flex max-h-[80dvh] flex-col gap-0 p-0 sm:max-w-xl"
-        aria-describedby={undefined}
-      >
+      <DialogContent className="flex max-h-[80dvh] flex-col gap-0 p-0 sm:max-w-xl" {...contentProps}>
         <DialogTitle className="sr-only">검색</DialogTitle>
         {body}
       </DialogContent>
@@ -58,7 +71,9 @@ function SearchPanel({ onDone }: { onDone: () => void }) {
   const channels = useChannels().data ?? [];
   const navigate = useNavigate();
   const set = (patch: SearchFilters) => setFilters((f) => ({ ...f, ...patch }));
-  const short = input.trim() !== "" && searchLength(input) < SEARCH_MIN_CHARS;
+  // 짧으면 옛 결과를 곧바로 숨긴다 — 결과는 디바운스된 검색어로 그리므로 기다리면 안내와 옛 결과가 겹친다
+  const tooShort = searchLength(input) < SEARCH_MIN_CHARS;
+  const short = input.trim() !== "" && tooShort;
 
   const pick = (hit: SearchHit) => {
     requestJump(hit);
@@ -80,7 +95,6 @@ function SearchPanel({ onDone }: { onDone: () => void }) {
           type="search"
           aria-label="검색어"
           placeholder="메시지 검색"
-          autoFocus
           maxLength={200}
           value={input}
           onChange={(e) => setInput(e.target.value)}
@@ -129,7 +143,7 @@ function SearchPanel({ onDone }: { onDone: () => void }) {
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {short && <p className="px-4 py-3 text-sm text-muted-foreground">2글자 이상 입력하세요</p>}
-        <SearchResults search={search} onPick={pick} />
+        {!tooShort && <SearchResults search={search} onPick={pick} />}
       </div>
     </div>
   );
