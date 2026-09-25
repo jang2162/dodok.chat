@@ -676,6 +676,7 @@ Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-comp
 - **붙여 넣을 블록의 효과를 재지 않았다** — 블록이 모델에게 `ask_user` 대신 `components` 카드를 고르게 하는지(components 실연에서 모델은 `ask_user` 를 먼저 골랐다 — `docs/guides/live-smoke.md` 「components v1(Phase 2 ②) 실물 확인」 절)는 모델 런이 필요하다. 다음 실연 몫. 출처: p3d-t1 보고서.
 - **블록 산문 속 제약 숫자는 테스트 밖이다** — 예시 JSON 은 `agent-guide-examples.test.ts` 가 계약으로 잠그지만, 붙여 넣을 블록과 표의 숫자(버튼 5·옵션 25·칸 5·20 MiB 등)와 모델용 `COMPONENTS_DESCRIPTION` 은 사람이 맞춘다. 계약 숫자를 바꾸면 세 자리(`ComponentsV1`·`COMPONENTS_DESCRIPTION`·가이드)를 함께 고친다. 출처: p3d-t1 보고서.
 - **`AGENTS.md` 를 고친 뒤 「새 대화」가 필요하다는 것은 문서 근거다** — OpenClaw 문서 「Agent workspace」(세션 시작 때 읽는다)와 claude-cli 가 시스템 프롬프트를 세션 시작 때 고정한다는 ADR 0003 에서 끌어낸 것이고, `AGENTS.md` 로 직접 재지는 않았다. 출처: p3d-t1 보고서.
+- **`message` 툴 뒤 최종 답 억제는 9.4 스파이크 실측이다 — 9.5 에서 다시 잰다.** `docs/adr/0002-channel-plugin-spike.md` 「`message` 툴 — `describeMessageTool` 과 `handleAction`」 절이 2026.9.4 모델 런(B1)에서 `terminalReply.disposition: "silent"` 를 봤다. 9.5 에서는 `message` 툴이 성공한 모델 런의 최종 답을 본 적이 없다 — components 실연의 모델 런은 툴이 결함 1 로 실패했고(`docs/guides/live-smoke.md` 「components v1(Phase 2 ②) 실물 확인」 절), 런 0회 하네스는 억제를 재현하지 않는다(같은 문서 「첨부 재기」 절의 가짜 CLI 경고). 가이드는 「안 올라갈 수 있다」로 적고 할 말을 `message` 본문에 쓰라고 가르친다 — 9.5 에서 억제가 없으면 그 지시는 해가 없고, 있으면 가이드가 맞다. 출처: p3d-t1 리뷰 I1.
 
 **실물 확인**
 
