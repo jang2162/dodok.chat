@@ -1,4 +1,4 @@
-import { dodokSessionKey } from "@dodok/shared";
+import { dodokSessionKey, isOpenClawAgentId } from "@dodok/shared";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import type { AgentAdapter } from "../../adapters/types";
@@ -7,6 +7,10 @@ import { agentSessions, agents, channels } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
 
 export type AgentSessionRow = typeof agentSessions.$inferSelect;
+
+/** 저장된 providerAgentId 가 세션 키 규칙 밖일 때의 사유 — 런 경로(run_error 카드)와 「새 대화」 REST 가 같은 문장을 쓴다 */
+export const INVALID_AGENT_ID_REASON =
+  "OpenClaw 에이전트 id 가 세션 키 규칙(영문·숫자·_·-)에 맞지 않습니다 — 올바른 id 로 에이전트를 다시 등록하세요";
 
 /** threadRootId 가 있으면 그 스레드의 하위 세션(ADR 0006), 없으면 채널 세션 */
 export type EnsureSessionInput = { channelId: string; agentId: string; threadRootId?: string | undefined };
@@ -17,7 +21,7 @@ export type SessionResetInfo = { sessionStartedAt?: string; lifecycleRevision?: 
 /**
  * 스펙 3.9 — 디스패치 직전에 부른다. 행이 없으면 현재 채널 promptRevision 으로 만든다(첫 턴은 설정 경로가 이미
  * 프롬프트를 담으므로 동봉하지 않는다). 세션 시작 뒤 리비전이 올랐으면 needsPromptContext. 리비전은 스레드 세션 행별로 기억한다(스펙 2.3).
- * providerAgentId 가 세션 키 규칙 밖이면 던진다 — 행을 만들지 않는다.
+ * providerAgentId 가 세션 키 규칙 밖이면 VALIDATION 을 던진다 — 행을 만들지 않는다.
  */
 export function ensureSession(
   db: Db,
@@ -130,6 +134,8 @@ function providerAgentIdOf(db: DbOrTx, agentId: string): string {
     .where(eq(agents.id, agentId))
     .get();
   if (!agent) throw apiError("NOT_FOUND", "agent not found");
+  // 빌더가 일반 Error 로 던지면 REST 가 500 이 된다 — 키를 만들기 전에 사유 있는 4xx 로
+  if (!isOpenClawAgentId(agent.providerAgentId)) throw apiError("VALIDATION", INVALID_AGENT_ID_REASON);
   return agent.providerAgentId;
 }
 

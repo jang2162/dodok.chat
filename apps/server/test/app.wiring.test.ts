@@ -366,6 +366,28 @@ describe("REST·wire 배선 (FakeAdapter)", () => {
     expect((await api("POST", `/channels/${channelId}/agents/not-an-id/reset`)).statusCode).toBe(400);
   });
 
+  it("reset — 저장된 providerAgentId 가 세션 키 규칙 밖이면 500 이 아니라 400 VALIDATION(런 경로와 같은 사유), 어댑터를 건드리지 않는다", async () => {
+    const bad = createAgent(app.db, {
+      workspaceId: app.workspaceId,
+      providerAgentId: "bad:id",
+      handle: "badid",
+      name: "Bad",
+    }).id;
+    const { channelId } = seedAgentChannel(app, "reset-badid", bad);
+    const resetsBefore = adapter.calls.reset.length;
+
+    const res = await api("POST", `/channels/${channelId}/agents/${bad}/reset`);
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({
+      code: "VALIDATION",
+      message:
+        "OpenClaw 에이전트 id 가 세션 키 규칙(영문·숫자·_·-)에 맞지 않습니다 — 올바른 id 로 에이전트를 다시 등록하세요",
+    });
+    expect(adapter.calls.reset).toHaveLength(resetsBefore);
+    expect(systemMessages(app, channelId)).toEqual([]);
+  });
+
   it("reset?threadRootId — 그 스레드 세션만: 스레드 런만 abort·스레드 키로 resetSession·스레드 행 갱신·info 는 스레드에", async () => {
     const { channelId } = seedAgentChannel(app, "reset-thread", dev);
     const root = createUserMessage(app.db, app.bus, {

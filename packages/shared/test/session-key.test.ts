@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { threadMatchesSessionKey } from "../src/bridge";
-import { dodokSessionKey, isOpenClawAgentId, parseDodokSessionKey } from "../src/session-key";
+import {
+  dodokSessionKey,
+  isOpenClawAgentId,
+  isRegistrableAgentId,
+  parseDodokSessionKey,
+} from "../src/session-key";
 
 const CH = "01a09fc9-d204-7551-89d6-38544d07a101";
 const ROOT = "01a09fc9-d204-7551-89d6-38544d07a1ab";
@@ -124,4 +129,14 @@ describe("isOpenClawAgentId", () => {
       expect(() => dodokSessionKey(id, CH)).toThrow();
     },
   );
+});
+
+describe("isRegistrableAgentId", () => {
+  it.each(["dev", "dev-main", "a_b", "0", "a".repeat(64)])("소문자 규칙 안 — %s", (id) => {
+    expect(isRegistrableAgentId(id)).toBe(true);
+  });
+  // 코어가 세션 키를 소문자로 접으므로 대문자 id 는 키에서 푼 id 와 날 비교로 어긋난다
+  it.each(["DEV", "Dev", "dev-Main", "", "-dev", "a:b", "a".repeat(65)])("거절 — %j", (id) => {
+    expect(isRegistrableAgentId(id)).toBe(false);
+  });
 });

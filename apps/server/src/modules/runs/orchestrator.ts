@@ -17,12 +17,12 @@ import { apiError } from "../../http/errors";
 import type { Logger } from "../../logger";
 import type { ServerBus } from "../../realtime/bus";
 import { josa } from "../../util/josa";
-import { getAgent } from "../agents/service";
+import { getAgent, providerAgentIdIs } from "../agents/service";
 import { createAgentMessage, createSystemMessage } from "../messages/service";
 import type { ApprovalsService } from "../approvals/service";
 import type { RunPlan } from "../router/decide";
 import { RETRY_RUN_ITEM } from "../router/service";
-import { ensureSession } from "../sessions/service";
+import { ensureSession, INVALID_AGENT_ID_REASON } from "../sessions/service";
 import { buildInboundDeliver } from "./context";
 import {
   createMediaLineFilter,
@@ -724,7 +724,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         and(
           eq(channels.id, msg.channelId),
           eq(agents.provider, adapter.provider),
-          eq(agents.providerAgentId, msg.agentId),
+          providerAgentIdIs(msg.agentId),
         ),
       )
       .get()?.id;
@@ -1093,7 +1093,7 @@ function runErrorBody(code: string, handle: string): string {
     case PLUGIN_OUTDATED:
       return `@${handle} ${josa(handle, "이", "가")} 스레드에서 답하지 못했습니다 — 플러그인을 새로 설치해야 합니다(연결 페이지)`;
     case INVALID_AGENT_ID:
-      return `@${handle} 실행이 실패했습니다: OpenClaw 에이전트 id 가 세션 키 규칙(영문·숫자·_·-)에 맞지 않습니다 — 올바른 id 로 에이전트를 다시 등록하세요`;
+      return `@${handle} 실행이 실패했습니다: ${INVALID_AGENT_ID_REASON}`;
     default:
       return `@${handle} 실행이 실패했습니다: ${code}`;
   }

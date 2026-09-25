@@ -1357,6 +1357,23 @@ describe("orchestrator", () => {
     t.orch.stop();
   });
 
+  it("대문자로 저장된 providerAgentId — 런은 저장된 id 그대로 키를 만들고, 소문자 agentId 의 런 없는 정본도 그 에이전트에 붙는다", async () => {
+    const t = setup();
+    t.db.update(agents).set({ providerAgentId: "Dev" }).where(eq(agents.id, t.agentId)).run();
+    const run = await t.enqueue();
+    await t.flush();
+    expect(t.runOf(run.id).status).toBe("queued");
+    expect(t.adapter.calls.send).toEqual([
+      expect.objectContaining({ runId: run.id, sessionKey: `agent:Dev:dodok:channel:${t.channelId}` }),
+    ]);
+
+    const ack = await t.orch.onCanonical(
+      t.outbound({ text: "혼잣말", agentId: "dev", sessionKey: t.sessionKey }),
+    );
+    expect(getMessage(t.db, ack.messageId ?? "")).toMatchObject({ authorId: t.agentId, bodyMd: "혼잣말" });
+    t.orch.stop();
+  });
+
   it("정본 상관관계: runId 가 없으면 세션의 미종료 런, 그다음 replyToInboundId 가 트리거한 런", async () => {
     const t = setup();
     const trigger = t.say("@dev 하나");
@@ -1845,7 +1862,9 @@ describe("orchestrator", () => {
       await t.flush();
       await expect(
         t.orch.onCanonical(t.outbound({ runId: run.id, sessionKey: t.sessionKey, threadId: root.id })),
-      ).rejects.toMatchObject({ body: { code: "VALIDATION", message: expect.stringContaining("threadId does not match") } });
+      ).rejects.toMatchObject({
+        body: { code: "VALIDATION", message: expect.stringContaining("threadId does not match") },
+      });
       expect(t.db.select().from(messages).where(eq(messages.kind, "normal")).all()).toHaveLength(2);
       t.orch.stop();
     });

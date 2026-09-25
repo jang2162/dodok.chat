@@ -7,6 +7,7 @@ import { agents } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
 import type { Logger } from "../../logger";
 import type { ServerBus } from "../../realtime/bus";
+import { providerAgentIdIs } from "../agents/service";
 import { getChannel } from "../channels/service";
 import { findOpenRunBySession } from "../runs/store";
 import * as store from "./store";
@@ -342,7 +343,7 @@ function findAgentId(
       and(
         eq(agents.workspaceId, workspaceId),
         eq(agents.provider, provider),
-        eq(agents.providerAgentId, providerAgentId),
+        providerAgentIdIs(providerAgentId),
       ),
     )
     .get()?.id;

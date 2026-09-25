@@ -1,5 +1,5 @@
 import { Agent } from "@dodok/shared";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, type SQL, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import type { Db, DbOrTx } from "../../db/client";
 import { agents } from "../../db/schema.sqlite";
@@ -7,6 +7,14 @@ import { apiError } from "../../http/errors";
 import { parseStored } from "../../http/validate";
 
 type AgentRow = typeof agents.$inferSelect;
+
+/**
+ * 세션 키에서 푼 id 로 에이전트를 찾는 조건 — 대소문자 무시. 코어가 키를 소문자로 접으므로 등록이 소문자로 좁혀지기 전에
+ * 대문자로 저장된 행(`Dev`)도 `dev` 로 찾아야 한다.
+ */
+export function providerAgentIdIs(providerAgentId: string): SQL {
+  return sql`lower(${agents.providerAgentId}) = ${providerAgentId.toLowerCase()}`;
+}
 
 export type CreateAgentInput = {
   workspaceId: string;

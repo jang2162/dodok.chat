@@ -218,6 +218,23 @@ describe("승인 저장·런 상관·wire 중계 (앱 부팅, FakeAdapter)", () 
     expect(approval.agentId).toBe(dev.id);
   });
 
+  it("대문자로 저장된 providerAgentId 에도 소문자 세션 키의 승인이 붙는다(코어가 키를 소문자로 접는다)", async () => {
+    const upper = createAgent(app.db, {
+      workspaceId: app.workspaceId,
+      providerAgentId: "UpperDev",
+      handle: "upperdev",
+      name: "Upper",
+    });
+    addMember(app.db, channel.id, { memberType: "agent", memberId: upper.id }, app.logger);
+    const socket = await connect();
+    const requested = waitFor(socket, "approval.requested");
+
+    adapter.emitApproval(providerApproval(sessionKeyOf("upperdev", channel.id)));
+
+    const { approval } = await requested;
+    expect(approval.agentId).toBe(upper.id);
+  });
+
   it("같은 승인이 두 번 오면 한 번만 중계한다(어댑터 재생성·되감기)", async () => {
     const socket = await connect();
     const seen: string[] = [];

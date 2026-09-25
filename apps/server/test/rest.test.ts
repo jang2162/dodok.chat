@@ -183,12 +183,23 @@ describe("REST /api/v1 (FakeAdapter)", () => {
   });
 
   it("POST /agents 는 providerAgentId 를 세션 키 규칙(OpenClaw agentId)으로 검증한다 — 밖이면 400 VALIDATION", async () => {
-    for (const providerAgentId of ["dev:main", "dev main", "-dev", "개발", "a".repeat(65)]) {
+    // 대문자는 소문자로 접힌 세션 키와 어긋나므로 받지 않는다
+    for (const providerAgentId of [
+      "dev:main",
+      "dev main",
+      "-dev",
+      "개발",
+      "a".repeat(65),
+      "Dev",
+      "DEV-MAIN",
+    ]) {
       const res = await api("POST", "/agents", { providerAgentId, handle: "rest-badid", name: "x" });
       expect(res.statusCode).toBe(400);
       expect(res.json()).toMatchObject({
         code: "VALIDATION",
-        message: expect.stringContaining("providerAgentId"),
+        message: expect.stringContaining(
+          "providerAgentId 는 OpenClaw 에이전트 id(영문 소문자·숫자로 시작, 영문 소문자·숫자·_·-, 64자 이하)여야 한다",
+        ),
       });
     }
     const ok = await api("POST", "/agents", {

@@ -1,4 +1,4 @@
-import { Agent, Id, isOpenClawAgentId } from "@dodok/shared";
+import { Agent, Id, isRegistrableAgentId } from "@dodok/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { AdapterError, type AgentAdapter } from "../../adapters/types";
@@ -25,9 +25,10 @@ const CreateAgentBody = Agent.pick({
   avatarUrl: true,
   basePrompt: true,
 }).extend({
-  // 세션 키 빌더(dodokSessionKey)와 같은 규칙 — 밖의 id 는 키를 못 만들어 런이 시작되지 않는다
-  providerAgentId: Agent.shape.providerAgentId.refine(isOpenClawAgentId, {
-    message: "providerAgentId 는 OpenClaw 에이전트 id(영문·숫자로 시작, 영문·숫자·_·-, 64자 이하)여야 한다",
+  // 세션 키 빌더(dodokSessionKey) 규칙에 소문자까지 — 밖의 id 는 키를 못 만들고, 대문자는 코어가 접은 키와 어긋난다
+  providerAgentId: Agent.shape.providerAgentId.refine(isRegistrableAgentId, {
+    message:
+      "providerAgentId 는 OpenClaw 에이전트 id(영문 소문자·숫자로 시작, 영문 소문자·숫자·_·-, 64자 이하)여야 한다",
   }),
   provider: z.literal("openclaw").default("openclaw"),
   enabled: Agent.shape.enabled.default(true),
