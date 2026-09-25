@@ -151,7 +151,8 @@ type Statfs = (
 
 /**
  * DATA_DIR 의 디스크 여유를 지금 한 번, 그 뒤 intervalMs 마다 잰다. warn·error 면 disk_low 를 남긴다(같은 줄로 묶인다).
- * ready 는 첫 측정이 끝나면 풀린다 — 그 전과 statfs 실패 때 current() 는 unknown 이고 업로드를 막지 않는다
+ * ready 는 첫 측정이 끝나면 풀린다 — 그 전과 statfs 실패 때 current() 는 unknown 이고 업로드를 막지 않는다.
+ * check() 는 주기를 기다리지 않고 지금 다시 잰다(진행 중인 측정이 있으면 그것이 끝난 뒤) — dev:fake 디스크 흉내가 쓴다
  */
 export function createDiskMonitor(deps: {
   dataDir: string;
@@ -159,16 +160,14 @@ export function createDiskMonitor(deps: {
   logger: Pick<Logger, "warn">;
   statfs?: Statfs;
   intervalMs?: number;
-}): { current(): DiskState; close(): void; ready: Promise<void> } {
+}): { current(): DiskState; check(): Promise<void>; close(): void; ready: Promise<void> } {
   const { dataDir, ops, logger } = deps;
   const statfs: Statfs = deps.statfs ?? ((p) => fsStatfs(p, { bigint: true }));
   let state: DiskState = { level: "unknown" };
   let closed = false;
-  let inflight = false;
+  let inflight: Promise<void> | undefined;
 
-  const check = async () => {
-    if (closed || inflight) return;
-    inflight = true;
+  const measure = async () => {
     try {
       const s = await statfs(dataDir);
       if (closed) return;
@@ -185,16 +184,28 @@ export function createDiskMonitor(deps: {
       // 경로가 든 메시지는 싣지 않는다 — 코드만
       const code = (err as NodeJS.ErrnoException | undefined)?.code;
       logger.warn({ code: code ?? "unknown" }, "disk check failed");
-    } finally {
-      inflight = false;
     }
   };
+  /** 주기 측정 — 진행 중인 측정이 있으면 건너뛴다(겹쳐 재지 않는다) */
+  const tick = (): Promise<void> => {
+    if (closed || inflight) return inflight ?? Promise.resolve();
+    const run = measure().finally(() => {
+      if (inflight === run) inflight = undefined;
+    });
+    inflight = run;
+    return run;
+  };
 
-  const ready = check();
-  const timer = setInterval(() => void check(), deps.intervalMs ?? DISK_CHECK_INTERVAL_MS);
+  const ready = tick();
+  const timer = setInterval(() => void tick(), deps.intervalMs ?? DISK_CHECK_INTERVAL_MS);
   timer.unref();
   return {
     current: () => state,
+    async check() {
+      // 진행 중인 측정은 부르기 전 값을 읽었을 수 있다 — 끝나기를 기다렸다가 새로 잰다
+      await inflight;
+      await tick();
+    },
     close() {
       closed = true;
       clearInterval(timer);

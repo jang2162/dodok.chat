@@ -9,15 +9,18 @@ import {
   type ServerToClientEvents,
   WIRE_PROTOCOL,
 } from "@dodok/shared";
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { io, type Socket } from "socket.io-client";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
+  DEV_FAKE_DISK_PATH,
+  DEV_FAKE_GATEWAY_PATH,
   DEV_FAKE_LOCAL_TOKEN,
   DEV_FAKE_KEYWORDS,
+  DEV_FAKE_OPS_EVENT_PATH,
   DEV_FAKE_PLUGIN_TOKEN_PATH,
   type DevFake,
   devFakeCliOptions,
@@ -26,8 +29,9 @@ import {
 } from "../scripts/dev-fake";
 import type { App } from "../src/app";
 import { findItem, formatInteractionText } from "../src/modules/components/interact";
+import { DISCONNECT_EVENT_MS } from "../src/modules/ops/health";
 import type { ScenarioApproval } from "./fakes/scenario";
-import { bootTestApp, login } from "./helpers/app";
+import { bootTestApp, login, userWithRole } from "./helpers/app";
 import { makePng } from "./helpers/png";
 
 type Author = { type: "user" | "agent"; handle: string };
@@ -73,6 +77,18 @@ describe("devFakeCliOptions", () => {
     expect(devFakeCliOptions({ DEV_FAKE_HOST: "0.0.0.0" }, []).host).toBe("0.0.0.0");
     expect(devFakeCliOptions({}, []).host).toBe("127.0.0.1");
     expect(devFakeCliOptions({ DEV_FAKE_HOST: "" }, []).host).toBe("127.0.0.1");
+  });
+
+  it("끊김 사건 임계는 DODOK_DEVFAKE_DISCONNECT_MS(양의 정수 ms), 없거나 비었으면 운영과 같은 60초", () => {
+    expect(devFakeCliOptions({ DODOK_DEVFAKE_DISCONNECT_MS: "5000" }, []).disconnectEventMs).toBe(5_000);
+    expect(devFakeCliOptions({}, []).disconnectEventMs).toBe(DISCONNECT_EVENT_MS);
+    expect(devFakeCliOptions({ DODOK_DEVFAKE_DISCONNECT_MS: "" }, []).disconnectEventMs).toBe(
+      DISCONNECT_EVENT_MS,
+    );
+    for (const bad of ["0", "-1", "1.5", "abc"])
+      expect(() => devFakeCliOptions({ DODOK_DEVFAKE_DISCONNECT_MS: bad }, [])).toThrow(
+        /DODOK_DEVFAKE_DISCONNECT_MS/,
+      );
   });
 });
 
@@ -973,23 +989,252 @@ describe("startDevFake 가짜 플러그인 토큰 바꾸기 — POST /__devfake/
   });
 });
 
+describe("startDevFake 운영 훅 — /__devfake/ops/event·gateway·disk", () => {
+  const DISCONNECT_MS = 300;
+  let dir: string;
+  let dev: DevFake;
+  let cookie: string;
+  let memberAuth: string;
+
+  beforeAll(async () => {
+    dir = mkdtempSync(join(tmpdir(), "dodok-dev-fake-ops-"));
+    dev = await startDevFake({ port: 0, dataDir: dir, logLevel: "warn", disconnectEventMs: DISCONNECT_MS });
+    const login = await fetch(`${dev.url}/api/v1/auth/local`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: DEV_FAKE_LOCAL_TOKEN }),
+    });
+    expect(login.status).toBe(200);
+    cookie = `dodok.session=${((await login.json()) as { sessionToken: string }).sessionToken}`;
+    memberAuth = `Bearer ${(await userWithRole(dev.app, "member1", "member")).token}`;
+  });
+
+  afterAll(async () => {
+    await dev?.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const post = (
+    path: string,
+    body: unknown,
+    headers: Record<string, string> = { cookie, "content-type": "application/json" },
+  ) => fetch(`${dev.url}${path}`, { method: "POST", headers, body: JSON.stringify(body) });
+
+  const events = (kind: string) => dev.app.ops.list({ limit: 100 }).events.filter((e) => e.kind === kind);
+
+  describe.each([
+    // 빈 토큰(400) — 가드를 지난 호출이 실제로 토큰을 바꿔 가짜 플러그인을 끊지 않게
+    [DEV_FAKE_PLUGIN_TOKEN_PATH, { token: "" }],
+    [DEV_FAKE_OPS_EVENT_PATH, { kind: "ratelimit", key: "guard", severity: "warn" }],
+    [DEV_FAKE_GATEWAY_PATH, { state: "connected" }],
+    [DEV_FAKE_DISK_PATH, { reset: true }],
+  ] as const)("%s 공통 가드", (path, body) => {
+    it("세션 없음 401 · member 403 — 앱의 requireOwner 응답 그대로", async () => {
+      const anon = await post(path, body, { "content-type": "application/json" });
+      expect(anon.status).toBe(401);
+      await expect(anon.json()).resolves.toMatchObject({ code: "UNAUTHORIZED" });
+      const member = await post(path, body, {
+        authorization: memberAuth,
+        "content-type": "application/json",
+      });
+      expect(member.status).toBe(403);
+      await expect(member.json()).resolves.toMatchObject({ code: "FORBIDDEN" });
+    });
+
+    it("content-type 이 application/json 이 아니면 415 — CORS preflight 없는 단순 요청으로 부를 수 없다", async () => {
+      const plain = await post(path, body, { cookie, "content-type": "text/plain" });
+      expect(plain.status).toBe(415);
+      await expect(plain.json()).resolves.toMatchObject({ code: "VALIDATION" });
+      const none = await fetch(`${dev.url}${path}`, { method: "POST", headers: { cookie } });
+      expect(none.status).toBe(415);
+      // 매개변수가 붙은 JSON 은 받는다
+      const charset = await post(path, body, { cookie, "content-type": "application/json; charset=utf-8" });
+      expect(charset.status).not.toBe(415);
+    }, 20_000);
+
+    it("경로는 정확히 일치해야 한다 — 꼬리·접미·대소문자·GET 은 앱의 404", async () => {
+      for (const variant of [`${path}X`, `${path}/`, path.toUpperCase()])
+        expect((await post(variant, body)).status).toBe(404);
+      expect((await fetch(`${dev.url}${path}`, { headers: { cookie } })).status).toBe(404);
+    });
+  });
+
+  it("ops/event — app.ops.record 로 남긴다: 사건 목록·unacked 에 곧바로 보이고, 같은 kind·key 는 묶인다", async () => {
+    const before = dev.app.ops.unacked();
+    const res = await post(DEV_FAKE_OPS_EVENT_PATH, {
+      kind: "bridge_auth_blocked",
+      key: "ip:127.0.0",
+      severity: "error",
+      detail: { ipPrefix: "127.0.0", failures: 10 },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; event: { id: string; count: number } };
+    expect(body).toMatchObject({
+      ok: true,
+      event: { kind: "bridge_auth_blocked", key: "ip:127.0.0", severity: "error", count: 1 },
+    });
+    expect(dev.app.ops.unacked().error).toBe(before.error + 1);
+    const again = await post(DEV_FAKE_OPS_EVENT_PATH, {
+      kind: "bridge_auth_blocked",
+      key: "ip:127.0.0",
+      severity: "error",
+    });
+    await expect(again.json()).resolves.toMatchObject({ event: { id: body.event.id, count: 2 } });
+    const listed = await fetch(`${dev.url}/api/v1/ops/events`, { headers: { cookie } });
+    const { events: rows } = (await listed.json()) as { events: Array<{ id: string; count: number }> };
+    expect(rows).toContainEqual(expect.objectContaining({ id: body.event.id, count: 2 }));
+  });
+
+  it("ops/event — 모르는 kind·severity·빈 key·중첩 detail 은 400(VALIDATION), 사건을 남기지 않는다", async () => {
+    const count = () => dev.app.ops.list({ limit: 100 }).events.length;
+    const before = count();
+    for (const bad of [
+      { kind: "nope", key: "k", severity: "warn" },
+      { kind: "ratelimit", key: "k", severity: "fatal" },
+      { kind: "ratelimit", key: "", severity: "warn" },
+      { kind: "ratelimit", key: "k", severity: "warn", detail: { nested: { a: 1 } } },
+      { kind: "ratelimit", key: "x".repeat(201), severity: "warn" },
+    ]) {
+      const res = await post(DEV_FAKE_OPS_EVENT_PATH, bad);
+      expect(res.status).toBe(400);
+      await expect(res.json()).resolves.toMatchObject({ code: "VALIDATION" });
+    }
+    expect(count()).toBe(before);
+  });
+
+  it("disk — 값을 주면 곧바로 다시 재 error 면 disk_low(error)·업로드 507, reset 이면 실제 statfs 로 돌아간다", async () => {
+    const MIB = 1024 * 1024;
+    const res = await post(DEV_FAKE_DISK_PATH, { freeBytes: 100 * MIB, totalBytes: 10_000 * MIB });
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      ok: true,
+      disk: { level: "error", freeBytes: 100 * MIB, totalBytes: 10_000 * MIB },
+    });
+    expect(dev.app.disk().level).toBe("error");
+    expect(events("disk_low")).toEqual([
+      expect.objectContaining({ key: "data", severity: "error", detail: { freeBytes: 100 * MIB } }),
+    ]);
+    const upload = await fetch(`${dev.url}/api/v1/attachments`, {
+      method: "POST",
+      headers: { cookie, "content-type": "image/png", "x-dodok-filename": "a.png" },
+      body: new Uint8Array(makePng(4, 4, [0, 0, 0])),
+    });
+    expect(upload.status).toBe(507);
+
+    const reset = await post(DEV_FAKE_DISK_PATH, { reset: true });
+    expect(reset.status).toBe(200);
+    const { disk } = (await reset.json()) as { disk: { level: string; freeBytes?: number } };
+    expect(disk.freeBytes).not.toBe(100 * MIB);
+    expect(dev.app.disk()).toEqual(disk);
+  });
+
+  it("disk — 음수·소수·free > total·total 0·reset 과 값 섞기는 400, 디스크 상태는 그대로", async () => {
+    const before = dev.app.disk();
+    for (const bad of [
+      { freeBytes: -1, totalBytes: 10 },
+      { freeBytes: 1.5, totalBytes: 10 },
+      { freeBytes: 11, totalBytes: 10 },
+      { freeBytes: 0, totalBytes: 0 },
+      { freeBytes: 1 },
+      { reset: false },
+      { reset: true, freeBytes: 1, totalBytes: 10 },
+    ]) {
+      const res = await post(DEV_FAKE_DISK_PATH, bad);
+      expect(res.status).toBe(400);
+    }
+    expect(dev.app.disk()).toEqual(before);
+  });
+
+  it("gateway down → 어댑터 status 가 connected 가 아니고 임계 뒤 gateway_down 이 열린다 → connected 면 다시 붙고 사건이 닫힌다", async () => {
+    const down = await post(DEV_FAKE_GATEWAY_PATH, { state: "down" });
+    expect(down.status).toBe(200);
+    const downBody = (await down.json()) as { ok: boolean; status: { gateway: string; bridge: string } };
+    expect(downBody.ok).toBe(true);
+    expect(downBody.status.gateway).not.toBe("connected");
+    expect(downBody.status.bridge).toBe("connected"); // 플러그인은 그대로
+    await vi.waitFor(() => expect(events("gateway_down")).toHaveLength(1), { timeout: DISCONNECT_MS * 10 });
+    expect(events("gateway_down")[0]?.resolvedAt).toBeUndefined();
+
+    const up = await post(DEV_FAKE_GATEWAY_PATH, { state: "connected" });
+    expect(up.status).toBe(200);
+    await expect(up.json()).resolves.toMatchObject({ ok: true, status: { gateway: "connected" } });
+    expect(events("gateway_down")[0]?.resolvedAt).toBeDefined();
+  }, 20_000);
+
+  it("gateway — 오래 끊겨 있었어도 connected 는 몇 초 안에 붙는다(dev:fake 는 재접속 백오프 상한을 줄인다)", async () => {
+    await post(DEV_FAKE_GATEWAY_PATH, { state: "down" });
+    // 운영 백오프(1s 부터 두 배, ±20%)면 8초 끊긴 뒤 다음 시도는 11초 이후 — 줄인 상한이면 1초 남짓
+    await new Promise((r) => setTimeout(r, 8_000));
+    const started = Date.now();
+    const up = await post(DEV_FAKE_GATEWAY_PATH, { state: "connected" });
+    await expect(up.json()).resolves.toMatchObject({ ok: true, status: { gateway: "connected" } });
+    expect(Date.now() - started).toBeLessThan(3_000);
+  }, 20_000);
+
+  it("gateway — state 가 down·connected 가 아니면 400", async () => {
+    expect((await post(DEV_FAKE_GATEWAY_PATH, { state: "up" })).status).toBe(400);
+    expect((await post(DEV_FAKE_GATEWAY_PATH, {})).status).toBe(400);
+  });
+});
+
+describe("startDevFake 종료 표지 — 운영 화면 「직전 종료」", () => {
+  let dir: string;
+  beforeAll(() => void (dir = mkdtempSync(join(tmpdir(), "dodok-dev-fake-runstate-"))));
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  async function previousClean(dev: DevFake): Promise<unknown> {
+    const login = await fetch(`${dev.url}/api/v1/auth/local`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: DEV_FAKE_LOCAL_TOKEN }),
+    });
+    const { sessionToken } = (await login.json()) as { sessionToken: string };
+    const res = await fetch(`${dev.url}/api/v1/ops/status`, {
+      headers: { cookie: `dodok.session=${sessionToken}` },
+    });
+    return ((await res.json()) as { server: { previousClean: unknown } }).server.previousClean;
+  }
+
+  it("처음은 null, 닫고 다시 띄우면 true — 표지는 dataDir 의 dev-fake 전용 자리(운영 서버의 run-state.json 을 건드리지 않는다)", async () => {
+    const first = await startDevFake({ port: 0, dataDir: dir, logLevel: "warn" });
+    try {
+      expect(await previousClean(first)).toBeNull();
+      expect(existsSync(join(dir, "run-state.json"))).toBe(false);
+    } finally {
+      await first.close();
+    }
+    const second = await startDevFake({ port: 0, dataDir: dir, logLevel: "warn" });
+    try {
+      expect(await previousClean(second)).toBe(true);
+    } finally {
+      await second.close();
+    }
+  }, 30_000);
+});
+
 describe("운영 createApp 에는 dev:fake 경로가 없다", () => {
   let app: App;
   beforeAll(async () => {
     app = await bootTestApp();
+    // 훅은 HTTP 서버의 request 리스너 층에 있다 — inject 는 그 층을 지나지 않으므로 실제로 듣고 fetch 로 부른다
+    await app.fastify.listen({ host: "127.0.0.1", port: 0 });
   });
   afterAll(async () => {
     await app?.close();
   });
 
-  it(`POST ${DEV_FAKE_PLUGIN_TOKEN_PATH} → 404`, async () => {
+  it.each([
+    [DEV_FAKE_PLUGIN_TOKEN_PATH, { token: "x" }],
+    [DEV_FAKE_OPS_EVENT_PATH, { kind: "ratelimit", key: "k", severity: "warn" }],
+    [DEV_FAKE_GATEWAY_PATH, { state: "down" }],
+    [DEV_FAKE_DISK_PATH, { reset: true }],
+  ])("POST %s → 404 (실제 fetch, owner 세션)", async (path, body) => {
     const { headers } = await login(app);
-    const res = await app.fastify.inject({
+    const res = await fetch(`${app.url}${path}`, {
       method: "POST",
-      url: DEV_FAKE_PLUGIN_TOKEN_PATH,
-      headers,
-      payload: { token: "x" },
+      headers: { ...headers, "content-type": "application/json" },
+      body: JSON.stringify(body),
     });
-    expect(res.statusCode).toBe(404);
+    expect(res.status).toBe(404);
   });
 });

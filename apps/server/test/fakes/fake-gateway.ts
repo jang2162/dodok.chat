@@ -157,6 +157,13 @@ export type FakeGateway = {
    * 먼저 읽을 수 있어서, 실물처럼 Gateway 이벤트를 정본보다 먼저 처리시키려면 정본 앞에서 부른다.
    */
   flush(): Promise<void>;
+  /**
+   * false 면 열린 연결을 모두 끊고, 그 뒤의 `connect` 에는 오류(UNAVAILABLE)로 답한다(Gateway 가 내려간 것처럼 — 포트는 그대로).
+   * 소켓을 hello 전에 끊지 않고 connect 오류로 답하는 까닭: hello 전 끊김은 gateway-client 라이브러리가 자기 백오프(최대 30초)로
+   * 다시 시도해 어댑터의 백오프 설정이 안 먹지만, connect 오류는 onConnectError 로 곧바로 어댑터에 넘어온다.
+   * 미해결 승인은 close 처럼 버린다. true 면 다시 받는다 — 붙는 것은 어댑터의 다음 재접속 시도 때다. 기본 true(dev:fake 끊김 훅)
+   */
+  setAccepting(accepting: boolean): void;
   /** 열린 연결을 모두 끊고 포트를 닫는다. 두 번 불러도 된다 */
   close(): Promise<void>;
 };
@@ -268,6 +275,8 @@ export async function startFakeGateway(opts: FakeGatewayOptions = {}): Promise<F
   const approvals = new Map<string, ApprovalState>();
   let seq = 0;
   let chatSendHandler: ((params: ChatSendParams) => void | Promise<void>) | undefined;
+  /** setAccepting(false) 동안 connect 를 거절한다 */
+  let accepting = true;
   let closing: Promise<void> | undefined;
 
   const sessionIdFor = (key: string): string => {
@@ -522,6 +531,13 @@ export async function startFakeGateway(opts: FakeGatewayOptions = {}): Promise<F
       void write(socket, { type: "res", id: frame.id, ...result });
     };
     if (frame.method === "connect") {
+      if (!accepting) {
+        reply({
+          ok: false,
+          error: { code: "UNAVAILABLE", message: "gateway unavailable (fake gateway down)" },
+        });
+        return;
+      }
       connected.add(socket);
       reply({ ok: true, payload: helloOk(frame.params, opts.serverVersion) });
       return;
@@ -661,6 +677,13 @@ export async function startFakeGateway(opts: FakeGatewayOptions = {}): Promise<F
 
     async flush() {
       await Promise.all([...connected].map(pingPong));
+    },
+    setAccepting(next) {
+      accepting = next;
+      if (next) return;
+      dropApprovals(() => true, { status: "cancelled", decision: "deny", reason: "run-aborted" });
+      for (const socket of wss.clients) socket.terminate();
+      connected.clear();
     },
     close() {
       clearInterval(tickTimer);

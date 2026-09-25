@@ -7,16 +7,30 @@
  * VAPID 키 <dataDir>/vapid.json 은 지우지 않는다 — 새로 만들면 브라우저의 푸시 구독이 매번 무효가 된다.
  * 웹 오리진은 APP_ORIGIN(없으면 http://localhost:5173). 5173 이 차 있으면 5180 으로:
  * `PORT=3100 APP_ORIGIN=http://localhost:5180 pnpm -F @dodok/server dev:fake` + `DODOK_API_ORIGIN=http://127.0.0.1:3100 pnpm -F @dodok/web dev --port 5180`.
- * 가짜 플러그인의 브리지 토큰은 `POST /__devfake/plugin-token { token }`(owner 세션)으로 바꿔 다시 붙인다 — `DEV_FAKE_PLUGIN_TOKEN_PATH`.
+ * 개발 전용 훅(owner 세션, `content-type: application/json`, 경로 정확 일치 — 운영 `createApp` 에는 없다):
+ * - `POST /__devfake/plugin-token { token }` — 가짜 플러그인의 브리지 토큰을 바꿔 다시 붙인다
+ * - `POST /__devfake/ops/event { kind, key, severity, detail? }` — 운영 사건을 `app.ops.record` 로 남긴다
+ * - `POST /__devfake/gateway { state: "down" | "connected" }` — 가짜 Gateway 를 끊고 붙인다(어댑터 status 가 실제로 바뀐다)
+ * - `POST /__devfake/disk { freeBytes, totalBytes } | { reset: true }` — 디스크 감시가 그 값을 보게 하고 곧바로 다시 잰다
+ * 끊김 사건 임계는 DODOK_DEVFAKE_DISCONNECT_MS(기본 운영과 같은 60초)로 줄인다. 종료 표지는 <dataDir>/dev-fake-run/ 에 둔다.
  */
-import type { ApprovalDecision, InboundDeliver } from "@dodok/shared";
+import {
+  type AdapterStatus,
+  type ApprovalDecision,
+  type InboundDeliver,
+  OpsEvent,
+  OpsEventKind,
+  OpsSeverity,
+} from "@dodok/shared";
 import { mkdirSync, rmSync } from "node:fs";
+import { statfs as fsStatfs } from "node:fs/promises";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { type App, type AppDeps, createApp } from "../src/app";
 import { loadConfig } from "../src/config";
+import { DISCONNECT_EVENT_MS, startRunState } from "../src/modules/ops/health";
 import { type FakeGateway, startFakeGateway } from "../test/fakes/fake-gateway";
 import { type FakePlugin, startFakePlugin } from "../test/fakes/fake-plugin";
 import {
@@ -53,10 +67,21 @@ const LOCAL_HTTPS = "https://localhost/dodok-dev-fake";
  * dev:fake 에만 있다 — 운영 `createApp` 에는 없다. owner 세션(쿠키 또는 Bearer)이 있어야 한다
  */
 export const DEV_FAKE_PLUGIN_TOKEN_PATH = "/__devfake/plugin-token";
-const PluginTokenInput = z.object({ token: z.string().min(1) });
-const PLUGIN_TOKEN_BODY_MAX = 16 * 1024;
+/** 개발 전용 — 운영 사건 하나를 `app.ops.record` 로 남긴다(ops_events 를 직접 쓰지 않는다 — unacked 캐시·ops.event 팬아웃이 함께 돈다) */
+export const DEV_FAKE_OPS_EVENT_PATH = "/__devfake/ops/event";
+/** 개발 전용 — 가짜 Gateway 를 끊고(down) 붙인다(connected). 어댑터가 실제로 끊겨 끊김 감시(watchConnections)가 돈다 */
+export const DEV_FAKE_GATEWAY_PATH = "/__devfake/gateway";
+/** 개발 전용 — 디스크 감시가 볼 여유·전체 바이트를 정하거나(reset 이면 실제 statfs 로) 곧바로 다시 잰다 */
+export const DEV_FAKE_DISK_PATH = "/__devfake/disk";
+const DEV_FAKE_BODY_MAX = 16 * 1024;
 /** 새 접속이 hello 까지 됐으면 ok, 핸드셰이크·hello 가 거절되면 그 사유(`UNAUTHORIZED` 등) */
 export type PluginTokenResult = { ok: true } | { ok: false; reason: string };
+/** 끊김 훅 뒤 곧바로 붙게 줄인 재접속 백오프 — 운영 기본(상한 30초)이면 오래 끊긴 뒤 connected 가 30초까지 늦는다 */
+const DEV_FAKE_GATEWAY_BACKOFF = { initialMs: 250, maxMs: 1_000 };
+/** gateway 훅이 어댑터 status 가 바뀌기를 기다리는 상한 */
+const GATEWAY_HOOK_TIMEOUT_MS = 10_000;
+/** 종료 표지 자리 — 같은 data/ 를 쓰는 운영 서버(`pnpm -F @dodok/server dev`)의 run-state.json 과 섞이지 않게 따로 둔다 */
+const RUN_STATE_DIR = "dev-fake-run";
 
 export type DevFakeOptions = {
   /** 기본 3000. 0 이면 빈 포트 */
@@ -72,11 +97,22 @@ export type DevFakeOptions = {
   host?: string;
   /** 웹 푸시 발송기. 기본은 실제 web-push(dev:fake 로 브라우저 푸시를 본다) — 테스트는 가짜를 줘 밖으로 보내지 않는다 */
   pushSend?: AppDeps["pushSend"];
+  /** 끊김 사건 임계(기본 운영과 같은 DISCONNECT_EVENT_MS) — 브라우저 검증이 60초를 기다리지 않게 줄인다 */
+  disconnectEventMs?: number;
 };
+
+/** DODOK_DEVFAKE_DISCONNECT_MS — 없거나 비었으면 운영 기본, 양의 정수가 아니면 시작하지 않는다 */
+function disconnectMsFromEnv(raw: string | undefined): number {
+  if (!raw) return DISCONNECT_EVENT_MS;
+  if (!/^[1-9]\d*$/.test(raw))
+    throw new Error(`DODOK_DEVFAKE_DISCONNECT_MS must be a positive integer (ms): ${raw}`);
+  return Number(raw);
+}
 
 /**
  * 진입점이 startDevFake 에 넘길 옵션 — 포트는 PORT(기본 3000), 웹 오리진은 APP_ORIGIN(없거나 비었으면 http://localhost:5173),
- * 리슨 주소는 DEV_FAKE_HOST(없거나 비었으면 127.0.0.1), 데이터는 저장소 루트 data/, `--keep` 이면 DB 유지.
+ * 리슨 주소는 DEV_FAKE_HOST(없거나 비었으면 127.0.0.1), 데이터는 저장소 루트 data/, `--keep` 이면 DB 유지,
+ * 끊김 사건 임계는 DODOK_DEVFAKE_DISCONNECT_MS(없으면 60초).
  * 리슨 주소가 HOST 가 아닌 까닭: HOST 는 운영 서버 설정 이름이라, 셸에 남은 값이 개발 서버를 모든 주소에 여는 일이 없게 따로 둔다
  */
 export function devFakeCliOptions(
@@ -89,6 +125,7 @@ export function devFakeCliOptions(
     appOrigin: env.APP_ORIGIN || DEFAULT_APP_ORIGIN,
     dataDir: resolve(import.meta.dirname, "../../../data"),
     keep: argv.includes("--keep"),
+    disconnectEventMs: disconnectMsFromEnv(env.DODOK_DEVFAKE_DISCONNECT_MS),
   };
 }
 export type DevFake = { app: App; url: string; close(): Promise<void> };
@@ -490,24 +527,62 @@ function readBody(req: IncomingMessage): Promise<string | undefined> {
     let size = 0;
     req.on("data", (chunk: Buffer) => {
       size += chunk.length;
-      if (size <= PLUGIN_TOKEN_BODY_MAX) chunks.push(chunk);
+      if (size <= DEV_FAKE_BODY_MAX) chunks.push(chunk);
     });
     req.on("end", () =>
-      resolve(size <= PLUGIN_TOKEN_BODY_MAX ? Buffer.concat(chunks).toString("utf8") : undefined),
+      resolve(size <= DEV_FAKE_BODY_MAX ? Buffer.concat(chunks).toString("utf8") : undefined),
     );
     req.on("error", reject);
   });
 }
 
+/** 본문이 JSON 이 아니거나 모양이 틀렸다 — 400 */
+const invalid = Symbol("invalid");
+
+/** 훅 하나 — 본문을 input 으로 파싱해 run 에 넘기고, 돌려준 값을 200 JSON 으로 낸다. usage 는 400 응답 문구 */
+type DevFakeRoute = { usage: string; handle(body: unknown): Promise<unknown> };
+
+function route<T>(input: z.ZodType<T>, usage: string, run: (value: T) => Promise<unknown>): DevFakeRoute {
+  return {
+    usage,
+    async handle(body) {
+      const parsed = input.safeParse(body);
+      return parsed.success ? run(parsed.data) : invalid;
+    },
+  };
+}
+
+const PluginTokenInput = z.object({ token: z.string().min(1) });
+/** key·detail 모양은 shared OpsEvent 그대로(key 는 비지 않게) — record 가 거절할 것을 여기서 400 으로 먼저 돌려준다 */
+const OpsEventInput = z.strictObject({
+  kind: OpsEventKind,
+  key: OpsEvent.shape.key.min(1),
+  severity: OpsSeverity,
+  detail: OpsEvent.shape.detail.optional(),
+});
+const GatewayInput = z.strictObject({ state: z.enum(["down", "connected"]) });
+const Bytes = z.int().min(0).max(Number.MAX_SAFE_INTEGER);
+const DiskInput = z.union([
+  z.strictObject({ reset: z.literal(true) }),
+  z
+    .strictObject({ freeBytes: Bytes, totalBytes: Bytes.min(1) })
+    .refine((d) => d.freeBytes <= d.totalBytes, "freeBytes must not exceed totalBytes"),
+]);
+
+/** content-type 의 미디어 타입(매개변수 앞)이 application/json 인가 — 아니면 415(앱 REST 와 같은 선: 단순 요청으로 못 부르게) */
+function isJson(req: IncomingMessage): boolean {
+  return req.headers["content-type"]?.split(";")[0]?.trim().toLowerCase() === "application/json";
+}
+
 /**
- * `POST DEV_FAKE_PLUGIN_TOKEN_PATH` 를 받는다. 세션은 앱의 owner 경로(`/api/v1/setup/status`)에 같은 헤더로 물어 판정한다 —
- * 그 경로의 `requireOwner` 가 401·403 을 내면 그 응답을 그대로 돌려준다
+ * 훅 하나를 받는다. 세션은 앱의 owner 경로(`/api/v1/setup/status`)에 같은 헤더로 물어 판정한다 —
+ * 그 경로의 `requireOwner` 가 401·403 을 내면 그 응답을 그대로 돌려준다. 본문은 판정 뒤에 읽는다
  */
-async function handlePluginToken(
+async function handleDevFakeRoute(
   app: App,
   req: IncomingMessage,
   res: ServerResponse,
-  swap: (token: string) => Promise<PluginTokenResult>,
+  hook: DevFakeRoute,
 ): Promise<void> {
   const { cookie, authorization } = req.headers;
   const guard = await app.fastify.inject({
@@ -521,37 +596,67 @@ async function handlePluginToken(
       .end(guard.body);
     return;
   }
-  const raw = await readBody(req);
-  let parsed: ReturnType<typeof PluginTokenInput.safeParse> | undefined;
-  try {
-    parsed = raw === undefined ? undefined : PluginTokenInput.safeParse(JSON.parse(raw));
-  } catch {
-    parsed = undefined;
-  }
-  if (!parsed?.success) {
-    sendJson(res, 400, { code: "VALIDATION", message: "body must be { token: string }" });
+  if (!isJson(req)) {
+    req.resume(); // 본문을 버린다 — 연결이 다음 요청에 쓰이게
+    sendJson(res, 415, { code: "VALIDATION", message: "content-type must be application/json" });
     return;
   }
-  sendJson(res, 200, await swap(parsed.data.token));
+  const raw = await readBody(req);
+  let body: unknown = invalid;
+  try {
+    if (raw !== undefined) body = JSON.parse(raw);
+  } catch {
+    body = invalid;
+  }
+  const result = body === invalid ? invalid : await hook.handle(body);
+  if (result === invalid) {
+    sendJson(res, 400, { code: "VALIDATION", message: `body must be ${hook.usage}` });
+    return;
+  }
+  sendJson(res, 200, result);
 }
 
 /**
  * `createApp` 이 fastify.ready() 까지 마쳐 경로를 더할 수 없다(FST_ERR_INSTANCE_ALREADY_LISTENING) — HTTP 서버의 request 리스너를
- * 감싼다. engine.io 가 `/socket.io/` 를 가로채는 것과 같은 방식: 이 경로만 받고 나머지는 원래 리스너(engine.io → Fastify)에 넘긴다
+ * 감싼다. engine.io 가 `/socket.io/` 를 가로채는 것과 같은 방식: POST 로 온 이 경로(쿼리 앞까지 정확히 일치)만 받고
+ * 나머지는 원래 리스너(engine.io → Fastify)에 넘긴다
  */
-function interceptDevFakeRoutes(app: App, swap: (token: string) => Promise<PluginTokenResult>): void {
+function interceptDevFakeRoutes(app: App, routes: ReadonlyMap<string, DevFakeRoute>): void {
   const server: Server = app.fastify.server;
   const listeners = server.listeners("request") as Array<(req: IncomingMessage, res: ServerResponse) => void>;
   server.removeAllListeners("request");
   server.on("request", (req: IncomingMessage, res: ServerResponse) => {
-    if (req.method === "POST" && req.url?.split("?")[0] === DEV_FAKE_PLUGIN_TOKEN_PATH) {
-      handlePluginToken(app, req, res, swap).catch((err: unknown) => {
-        app.logger.error({ err }, "dev:fake plugin-token failed");
+    const path = req.url?.split("?")[0] ?? "";
+    const hook = req.method === "POST" ? routes.get(path) : undefined;
+    if (hook) {
+      handleDevFakeRoute(app, req, res, hook).catch((err: unknown) => {
+        app.logger.error({ err, path }, "dev:fake hook failed");
         if (!res.headersSent) sendJson(res, 500, { code: "INTERNAL", message: "dev:fake hook failed" });
       });
       return;
     }
     for (const listener of listeners) listener.call(server, req, res);
+  });
+}
+
+/** 어댑터의 Gateway 상태가 want 를 만족할 때까지 기다린다 — timeoutMs 가 지나면 false */
+function waitForGateway(
+  app: App,
+  want: (state: AdapterStatus["gateway"]) => boolean,
+  timeoutMs: number,
+): Promise<boolean> {
+  if (want(app.adapter.status().gateway)) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      off();
+      resolve(false);
+    }, timeoutMs);
+    const off = app.adapter.onEvent((e) => {
+      if (e.kind !== "status" || !want(e.status.gateway)) return;
+      clearTimeout(timer);
+      off();
+      resolve(true);
+    });
   });
 }
 
@@ -563,15 +668,25 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
   const dbPath = join(dataDir, "dev-fake.sqlite");
   mkdirSync(dataDir, { recursive: true });
   if (!opts.keep) for (const f of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) rmSync(f, { force: true });
+  const runStateDir = join(dataDir, RUN_STATE_DIR);
+  mkdirSync(runStateDir, { recursive: true });
+  // 디스크 훅이 값을 정하면 그 값을, 아니면 실제 statfs 를 본다
+  let fakeDisk: { freeBytes: number; totalBytes: number } | undefined;
+  const statfs: NonNullable<AppDeps["statfs"]> = (path) =>
+    fakeDisk
+      ? Promise.resolve({ bavail: fakeDisk.freeBytes, bsize: 1, blocks: fakeDisk.totalBytes })
+      : fsStatfs(path, { bigint: true });
 
   const gateway: FakeGateway = await startFakeGateway({ tickIntervalMs: TICK_INTERVAL_MS });
   let app: App | undefined;
   let plugin: FakePlugin | undefined;
+  let runState: ReturnType<typeof startRunState> | undefined;
   let closing: Promise<void> | undefined;
   // 앱이 먼저 닫혀야 플러그인이 shutdown notice 를 받고, 어댑터가 Gateway 연결을 스스로 끊는다
   const close = () => {
     closing ??= (async () => {
       await app?.close();
+      runState?.markClean(); // main.ts 처럼 닫힌 뒤에 — 강제 종료(kill -9)면 다음 시작이 unclean_shutdown 을 남긴다
       plugin?.close();
       await gateway.close();
     })();
@@ -594,8 +709,16 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
         OPENCLAW_DEV_GATEWAY_TOKEN: gateway.token,
         OPENCLAW_DEVICE_IDENTITY_PATH: join(dataDir, "dev-fake-device.json"),
       }),
-      opts.pushSend ? { pushSend: opts.pushSend } : {},
+      {
+        ...(opts.pushSend ? { pushSend: opts.pushSend } : {}),
+        statfs,
+        disconnectEventMs: opts.disconnectEventMs ?? DISCONNECT_EVENT_MS,
+        gatewayBackoff: DEV_FAKE_GATEWAY_BACKOFF,
+      },
     );
+    // main.ts 와 같다 — 운영 화면 「직전 종료」가 null 로만 보이지 않게
+    runState = startRunState(runStateDir, app.ops, app.logger);
+    app.setPreviousClean(runState.previousClean);
     // 토큰 바꾸기는 한 번에 하나씩 — 겹치면 소켓 하나를 두 핸드셰이크가 다툰다
     let swapping: Promise<unknown> = Promise.resolve();
     const swapPluginToken = (token: string): Promise<PluginTokenResult> => {
@@ -617,7 +740,46 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
       swapping = run;
       return run;
     };
-    interceptDevFakeRoutes(app, swapPluginToken);
+    const live: App = app;
+    interceptDevFakeRoutes(
+      live,
+      new Map([
+        [
+          DEV_FAKE_PLUGIN_TOKEN_PATH,
+          route(PluginTokenInput, "{ token: string }", ({ token }) => swapPluginToken(token)),
+        ],
+        [
+          DEV_FAKE_OPS_EVENT_PATH,
+          route(OpsEventInput, "{ kind, key, severity, detail? }", async (input) => {
+            const event = live.ops.record(input);
+            if (!event) throw new Error("app.ops.record returned null — see the ops record log line");
+            return { ok: true, event };
+          }),
+        ],
+        [
+          DEV_FAKE_GATEWAY_PATH,
+          route(GatewayInput, '{ state: "down" | "connected" }', async ({ state }) => {
+            gateway.setAccepting(state === "connected");
+            const reached = await waitForGateway(
+              live,
+              (g) => (state === "connected" ? g === "connected" : g !== "connected"),
+              GATEWAY_HOOK_TIMEOUT_MS,
+            );
+            live.logger.info({ state, reached }, "dev:fake gateway hook");
+            return reached
+              ? { ok: true, status: live.adapter.status() }
+              : { ok: false, reason: "timeout", status: live.adapter.status() };
+          }),
+        ],
+        [
+          DEV_FAKE_DISK_PATH,
+          route(DiskInput, "{ freeBytes, totalBytes } | { reset: true }", async (input) => {
+            fakeDisk = "reset" in input ? undefined : input;
+            return { ok: true, disk: await live.checkDisk() };
+          }),
+        ],
+      ]),
+    );
     await app.fastify.listen({ host, port });
     // app.url 은 리슨 주소와 무관하게 127.0.0.1 — 0.0.0.0 으로 들어도 가짜 플러그인은 루프백으로 붙는다
     plugin = await startFakePlugin({ bridgeUrl: app.url, token: DEV_FAKE_BRIDGE_TOKEN });

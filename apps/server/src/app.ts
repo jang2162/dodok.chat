@@ -98,6 +98,8 @@ export type AppDeps = {
   statfs?: Parameters<typeof createDiskMonitor>[0]["statfs"];
   /** 끊김 사건 임계(기본 DISCONNECT_EVENT_MS) — 통합 테스트가 실제 시계로 잴 만큼 줄인다 */
   disconnectEventMs?: number;
+  /** 실제 어댑터의 Gateway 재접속 백오프(기본 1초부터 두 배, 상한 30초) — dev:fake 가 끊김 훅 뒤 곧바로 붙게 상한을 줄인다 */
+  gatewayBackoff?: { initialMs?: number; maxMs?: number };
 };
 
 /** 이어받지 않은 .env 토큰 경고(Review Focus 1) — 사람이 로그에서 이 문장을 찾는다 */
@@ -136,6 +138,8 @@ export type App = {
   ops: OpsService;
   /** DATA_DIR 디스크 여유 — 첫 측정은 createApp 이 끝나기 전에 끝난다. error 면 첨부 업로드가 507 */
   disk(): DiskState;
+  /** 10분 주기를 기다리지 않고 지금 다시 재고 그 결과를 돌려준다(dev:fake 디스크 흉내) */
+  checkDisk(): Promise<DiskState>;
   /** main 이 종료 표지(startRunState)를 읽은 뒤 직전 종료가 깨끗했는지 넘긴다 — ops/status 가 싣는다. 넘기기 전에는 null */
   setPreviousClean(previousClean: boolean | null): void;
   /** 업로드 경로와 첨부 정리가 함께 지나는 블롭 잠금 — 둘이 같은 객체인지 테스트가 본다 */
@@ -247,6 +251,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
         ...(config.OPENCLAW_FRAME_DUMP_PATH === undefined
           ? {}
           : { frameDumpPath: config.OPENCLAW_FRAME_DUMP_PATH }),
+        ...(deps.gatewayBackoff === undefined ? {} : { backoff: deps.gatewayBackoff }),
       });
     undo.push({ step: "adapter", run: () => adapter.close() });
     const services = createServices({ db, bus, logger, adapter, workspaceId, timeouts: deps.timeouts });
@@ -494,6 +499,10 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       services,
       ops: services.ops,
       disk: () => disk.current(),
+      async checkDisk() {
+        await disk.check();
+        return disk.current();
+      },
       setPreviousClean(value) {
         previousClean = value;
       },

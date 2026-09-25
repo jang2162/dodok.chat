@@ -245,6 +245,44 @@ describe("createDiskMonitor", () => {
     disk.close();
   });
 
+  it("check() 는 주기를 기다리지 않고 지금 다시 잰다 — 끝나면 current()·사건에 곧바로 반영된다", async () => {
+    const statfs = statfsOf(3 * GIB, 10 * GIB);
+    const disk = createDiskMonitor({ dataDir: "/data", ops, statfs, logger: pino({ level: "silent" }) });
+    await disk.ready;
+    expect(disk.current().level).toBe("ok");
+    statfs.mockImplementation(async () => ({ bavail: 100n, bsize: 4096n, blocks: 1_000_000n }));
+    await disk.check();
+    expect(statfs).toHaveBeenCalledTimes(2);
+    expect(disk.current().level).toBe("error");
+    expect(rowsOf("disk_low").map((r) => r.severity)).toEqual(["error"]);
+    disk.close();
+  });
+
+  it("check() 가 진행 중인 측정과 겹치면 그 측정이 끝난 뒤 한 번 더 잰다 — 부르기 전에 바꾼 값을 놓치지 않는다", async () => {
+    let release: (v: { bavail: bigint; bsize: bigint; blocks: bigint }) => void = () => {};
+    const statfs = vi.fn(
+      () => new Promise<{ bavail: bigint; bsize: bigint; blocks: bigint }>((r) => (release = r)),
+    );
+    const disk = createDiskMonitor({ dataDir: "/data", ops, statfs, logger: pino({ level: "silent" }) });
+    const checked = disk.check(); // 첫 측정(ready)이 아직 진행 중
+    release({ bavail: 1_000_000n, bsize: 4096n, blocks: 2_000_000n }); // 옛 값 — ok
+    await disk.ready;
+    await vi.waitFor(() => expect(statfs).toHaveBeenCalledTimes(2));
+    release({ bavail: 100n, bsize: 4096n, blocks: 2_000_000n }); // 새 값 — error
+    await checked;
+    expect(disk.current().level).toBe("error");
+    disk.close();
+  });
+
+  it("close 뒤 check() 는 재지 않는다", async () => {
+    const statfs = statfsOf(3 * GIB, 10 * GIB);
+    const disk = createDiskMonitor({ dataDir: "/data", ops, statfs, logger: pino({ level: "silent" }) });
+    await disk.ready;
+    disk.close();
+    await disk.check();
+    expect(statfs).toHaveBeenCalledTimes(1);
+  });
+
   it("close 뒤에는 다시 재지 않고, 진행 중이던 측정 결과도 기록하지 않는다", async () => {
     let release: (v: { bavail: number; bsize: number; blocks: number }) => void = () => {};
     const statfs = vi.fn(
