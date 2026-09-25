@@ -1,8 +1,8 @@
-import { skipToken, useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useReducer } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { qk } from "@/api/queries";
 import type { Timeline } from "@/features/messages/timeline";
+import { timelineQuery } from "@/features/messages/useTimeline";
 import { planBubbles } from "./bubblePhase";
 import { selectScopeRuns, useRunStore } from "./runStore";
 
@@ -18,16 +18,12 @@ const messageRunIds = (t: Timeline): string[] =>
  * 버블 텍스트는 `StreamingBubble` 이 런 스토어에서 직접 읽는다.
  * 숨겨진 종료 런은 런 스토어에서 지우고, 보이는 종료 런이 숨겨질 시각에 다시 계산한다. 그 타이머는 채널이 바뀌거나 내려가면 거둔다.
  * `threadRootId` 를 주면 그 스레드의 런만, 없으면 채널 런만(판정 R3′) — 스레드 런의 버블은 채널 타임라인에 새지 않는다.
- * 캐시는 읽기만 한다(스레드를 받아 오는 것은 패널의 `useTimeline`)
+ * 캐시는 읽기만 한다(스레드를 받아 오는 것은 패널의 `useTimeline` — 둘 다 같은 옵션이라 여기서 붙어도 다시 받기가 맞다)
  */
 export function useChannelBubbles(channelId: string, threadRootId?: string): readonly string[] {
-  const ids = useQuery<Timeline, Error, string[]>({
-    queryKey: threadRootId === undefined ? qk.timeline(channelId) : qk.thread(channelId, threadRootId),
-    queryFn: skipToken,
-    select: messageRunIds,
-    // 스레드 조회의 오류는 패널이 그린다 — 같은 키의 관찰자라 meta 를 맞춘다(마지막 관찰자의 meta 가 이긴다)
-    meta: { silent: true },
-  }).data;
+  const qc = useQueryClient();
+  // 같은 키의 관찰자라 옵션(queryFn·meta)을 맞춘다 — 마지막으로 다시 그려진 관찰자의 옵션이 이긴다(`timelineQuery`)
+  const ids = useQuery({ ...timelineQuery(qc, channelId, threadRootId), select: messageRunIds }).data;
   const withMessage = useMemo(() => new Set(ids ?? NONE), [ids]);
   const [tick, recompute] = useReducer((n: number) => n + 1, 0);
 

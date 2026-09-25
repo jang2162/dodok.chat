@@ -342,6 +342,30 @@ describe("재동기화의 스레드(Review Focus 3 — 끊긴 사이 온 스레�
     expect(seqs(queryClient)).toEqual([1500]);
     expect(queryClient.getQueryState(qk.thread(CH, ROOT.id))?.isInvalidated).toBe(true);
   });
+
+  it("복원한 타임라인(lastSeq 0)의 첫 구독(fresh)도 연 스레드를 낡은 것으로 둔다 — hasMore 없이", async () => {
+    const { fake, queryClient, subs } = setup();
+    seed(queryClient, [ROOT]);
+    updateTimeline(queryClient, CH, (t) => ({ ...t, lastSeq: 0 }));
+    openThread(queryClient);
+    fake.onAck("channel.subscribe", () => subscribed([ROOT, msg(7)]));
+
+    await subs.catchUp(CH);
+
+    expect(fake.sentOf("channel.subscribe")).toEqual([{ channelId: CH }]);
+    expect(queryClient.getQueryState(qk.thread(CH, ROOT.id))?.isInvalidated).toBe(true);
+  });
+
+  it("타임라인 캐시가 없던 채널의 첫 구독은 스레드를 무효화하지 않는다 — 그 스레드는 방금 REST 로 받는 중이다", async () => {
+    const { fake, queryClient, subs } = setup();
+    openThread(queryClient);
+    fake.onAck("channel.subscribe", () => subscribed([ROOT, msg(7)]));
+
+    await subs.catchUp(CH);
+
+    expect(seqs(queryClient)).toEqual([1, 7]);
+    expect(queryClient.getQueryState(qk.thread(CH, ROOT.id))?.isInvalidated).toBe(false);
+  });
 });
 
 describe("restFetchPage", () => {

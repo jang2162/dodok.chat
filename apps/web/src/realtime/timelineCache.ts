@@ -15,16 +15,46 @@ export function updateTimeline(qc: QueryClient, channelId: string, fn: (t: Timel
 export const getThread = (qc: QueryClient, channelId: string, rootId: string): Timeline | undefined =>
   qc.getQueryData<Timeline>(qk.thread(channelId, rootId));
 
+type ThreadEdit = (t: Timeline) => Timeline;
+/** 스레드를 REST 로 받는 중인 요청마다 그동안 온 변경 — 클라이언트·스레드별(`withThreadEdits`) */
+const inFlight = new WeakMap<QueryClient, Map<string, Set<ThreadEdit[]>>>();
+const threadSlot = (channelId: string, rootId: string) => `${channelId}/${rootId}`;
+
 /**
  * 스레드 캐시를 고친다 — **있을 때만**. 연 적 없는 스레드의 답글은 버린다(루트의 요약이 칩을 맞춘다):
- * 한 페이지도 받지 않은 스레드에 답글 몇 개만 두면 그 스레드를 열 때 빈 곳이 있는 목록을 온전한 것처럼 보인다
+ * 한 페이지도 받지 않은 스레드에 답글 몇 개만 두면 그 스레드를 열 때 빈 곳이 있는 목록을 온전한 것처럼 보인다.
+ * 다만 그 스레드를 REST 로 받는 중이면 캐시가 없어도 변경을 모아 두었다가 받은 페이지에 다시 적용한다(`withThreadEdits`) —
+ * 받는 사이 wire 로 온 답글은 채널 lastSeq 만 올려 두므로 여기서 버리면 빈틈 복구로도 돌아오지 않는다.
+ * 그래서 `fn` 은 새 페이지에 다시 적용돼도 맞아야 한다(과거 페이지 붙이기는 가장 옛 답글이 같을 때만 붙인다, `useOlderPages`)
  */
-export function updateThread(
+export function updateThread(qc: QueryClient, channelId: string, rootId: string, fn: ThreadEdit): void {
+  for (const log of inFlight.get(qc)?.get(threadSlot(channelId, rootId)) ?? []) log.push(fn);
+  if (!getThread(qc, channelId, rootId)) return;
+  qc.setQueryData<Timeline>(qk.thread(channelId, rootId), (prev) => (prev ? fn(prev) : prev));
+}
+
+/**
+ * 스레드 페이지를 받는 동안 온 `updateThread` 변경을 받은 결과에 차례로 다시 적용한다(p4t-t6 리뷰 I1) — 첫 열기(캐시 없음)와
+ * 다시 받기(옛 캐시를 새 페이지가 통째로 바꾼다) 둘 다. 스냅숏이 이미 가진 것은 upsert 가 같은 것으로 덮을 뿐이다
+ */
+export async function withThreadEdits(
   qc: QueryClient,
   channelId: string,
   rootId: string,
-  fn: (t: Timeline) => Timeline,
-): void {
-  if (!getThread(qc, channelId, rootId)) return;
-  qc.setQueryData<Timeline>(qk.thread(channelId, rootId), (prev) => (prev ? fn(prev) : prev));
+  load: () => Promise<Timeline>,
+): Promise<Timeline> {
+  let byThread = inFlight.get(qc);
+  if (!byThread) inFlight.set(qc, (byThread = new Map()));
+  const slot = threadSlot(channelId, rootId);
+  let logs = byThread.get(slot);
+  if (!logs) byThread.set(slot, (logs = new Set()));
+  const log: ThreadEdit[] = [];
+  logs.add(log);
+  try {
+    const t = await load();
+    return log.reduce((acc, fn) => fn(acc), t);
+  } finally {
+    logs.delete(log);
+    if (logs.size === 0) byThread.delete(slot);
+  }
 }

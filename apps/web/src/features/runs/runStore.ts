@@ -18,8 +18,8 @@ export type RunView = {
 /** 스레드 소속은 run.state 의 threadRootId 가 1순위다 — queued 로 끝나는 런은 RUN_STARTED 가 없다. 뒤따른 상태에 빠져도 잊지 않는다 */
 export function reduceState(prev: RunView | undefined, state: RunState, now: number): RunView {
   const base: RunView = prev ? { ...prev, state } : { state, text: "", lastEventSeq: 0 };
-  const threadRootId = state.threadRootId ?? prev?.threadRootId;
-  if (threadRootId !== undefined) base.threadRootId = threadRootId;
+  // 빠지면 prev 의 것(펼침)이 남는다
+  if (state.threadRootId !== undefined) base.threadRootId = state.threadRootId;
   if (TERMINAL.has(state.status) && base.terminalAt === undefined) base.terminalAt = now;
   return base;
 }

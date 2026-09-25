@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type AdapterStatusResponse, qk } from "@/api/queries";
 import { createQueryClient } from "@/app/queryClient";
 import { fromLatest, threadFromPage } from "@/features/messages/timeline";
+import { threadQuery } from "@/features/threads/queries";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
 import { notifyApproval, resetApprovalNotices } from "@/features/approvals/notify";
 import { useRunStore } from "@/features/runs/runStore";
@@ -240,6 +241,98 @@ describe("스레드 답글 이벤트(스레드·검색 스펙 4.1 — 채널 룸
 
     expect(seqs(queryClient)).toEqual([1]);
     expect(getThread(queryClient, CH, ROOT.id)?.items[1]?.bodyMd).toBe("고친 답글");
+  });
+
+  it("과거가 남은 스레드에서 가장 옛 답글보다 앞 답글의 수정은 넣지 않는다 — 범위 안 수정은 넣는다", () => {
+    const { fake, queryClient } = setup();
+    seed(queryClient, [ROOT]);
+    updateTimeline(queryClient, CH, (t) => ({ ...t, lastSeq: 11 }));
+    queryClient.setQueryData(
+      qk.thread(CH, ROOT.id),
+      threadFromPage(undefined, ROOT, [reply(10), reply(11)], true),
+    );
+
+    fake.serverEmit("message.updated", { message: reply(5, { bodyMd: "옛 답글 고침" }) });
+    expect(threadSeqs(queryClient)).toEqual([1, 10, 11]);
+
+    fake.serverEmit("message.updated", { message: reply(11, { bodyMd: "고친 답글" }) });
+    expect(getThread(queryClient, CH, ROOT.id)?.items[2]?.bodyMd).toBe("고친 답글");
+  });
+
+  describe("스레드 REST 가 도는 사이 온 답글이 스레드에 남는다(p4t-t6 리뷰 I1)", () => {
+    /** 스레드 REST 를 약속으로 막는다 — 응답은 그 요청 때의 스냅숏(루트·답글 2) */
+    function gateThreadRest() {
+      let open = () => {};
+      const gate = new Promise<void>((resolve) => {
+        open = resolve;
+      });
+      const calls: string[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: RequestInfo | URL) => {
+          calls.push(String(input));
+          await gate;
+          return new Response(JSON.stringify({ root: ROOT, messages: [reply(2)], hasMore: false }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }),
+      );
+      return { open, calls };
+    }
+    afterEach(() => vi.unstubAllGlobals());
+
+    it("첫 열기 — 캐시가 없어도 받는 중이면 그 사이 답글을 결과에 얹는다", async () => {
+      const { fake, queryClient, subscriptions } = setup();
+      const catchUp = vi.spyOn(subscriptions, "catchUp").mockResolvedValue();
+      seed(queryClient, [ROOT]);
+      updateTimeline(queryClient, CH, (t) => ({ ...t, lastSeq: 2 }));
+      const rest = gateThreadRest();
+
+      const loading = queryClient.fetchQuery(threadQuery(queryClient, CH, ROOT.id));
+      await vi.waitFor(() => expect(rest.calls).toHaveLength(1));
+      fake.serverEmit("message.created", { message: reply(3) });
+      rest.open();
+      await loading;
+
+      expect(threadSeqs(queryClient)).toEqual([1, 2, 3]);
+      expect(catchUp).not.toHaveBeenCalled();
+    });
+
+    it("다시 받기(invalidate) — 옛 캐시에 들어간 답글을 새 페이지가 지우지 않는다", async () => {
+      const { fake, queryClient } = setup();
+      seed(queryClient, [ROOT]);
+      updateTimeline(queryClient, CH, (t) => ({ ...t, lastSeq: 2 }));
+      const first = gateThreadRest();
+      first.open();
+      await queryClient.fetchQuery(threadQuery(queryClient, CH, ROOT.id));
+      expect(threadSeqs(queryClient)).toEqual([1, 2]);
+
+      const rest = gateThreadRest();
+      const again = queryClient.invalidateQueries({ queryKey: qk.threads(CH), refetchType: "all" });
+      await vi.waitFor(() => expect(rest.calls).toHaveLength(1));
+      fake.serverEmit("message.created", { message: reply(3) });
+      expect(threadSeqs(queryClient)).toEqual([1, 2, 3]);
+      rest.open();
+      await again;
+
+      expect(threadSeqs(queryClient)).toEqual([1, 2, 3]);
+    });
+
+    it("받는 중 온 수정도 순서대로 얹는다 — 스냅숏의 옛 본문이 이기지 않는다", async () => {
+      const { fake, queryClient } = setup();
+      seed(queryClient, [ROOT]);
+      updateTimeline(queryClient, CH, (t) => ({ ...t, lastSeq: 2 }));
+      const rest = gateThreadRest();
+
+      const loading = queryClient.fetchQuery(threadQuery(queryClient, CH, ROOT.id));
+      await vi.waitFor(() => expect(rest.calls).toHaveLength(1));
+      fake.serverEmit("message.updated", { message: reply(2, { bodyMd: "고친 답글" }) });
+      rest.open();
+      await loading;
+
+      expect(getThread(queryClient, CH, ROOT.id)?.items[1]?.bodyMd).toBe("고친 답글");
+    });
   });
 });
 

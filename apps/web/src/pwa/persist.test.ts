@@ -426,6 +426,39 @@ describe("startPersistence", () => {
       expect(timelines?.map((q) => (q.state.data as Timeline).items.length)).toEqual([3]);
     });
 
+    /** 이번 실행에서 스레드를 열고(저장) 닫은 뒤 10분 — 스레드 캐시는 관찰자가 없어 gc 된다 */
+    async function closedThreadTenMinutesAgo() {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      const qc = createQueryClient(() => {});
+      observeShell(qc);
+      const storage = memoryStorage();
+      const started = startPersistence(qc, { buster: "b1", storage, throttleMs: 0 });
+      await vi.advanceTimersByTimeAsync(0);
+      stops.push((await started).stop);
+      qc.setQueryData(qk.me, ME);
+      touchRecentChannel(qc, CH);
+      touchRecentThread(qc, CH, ROOT.id);
+      qc.setQueryData(qk.thread(CH, ROOT.id), threadOf(3));
+      await vi.advanceTimersByTimeAsync(10);
+      expect(storedKeys(storage)).toContain(JSON.stringify(qk.thread(CH, ROOT.id)));
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      return { qc, storage };
+    }
+
+    it("닫은 지 5분 넘은 스레드도 옛 사본에서 이어 담는다", async () => {
+      const { qc, storage } = await closedThreadTenMinutesAgo();
+      expect(qc.getQueryData(qk.thread(CH, ROOT.id))).toBeUndefined();
+      await saveAgain(qc, storage);
+      expect(storedKeys(storage)).toContain(JSON.stringify(qk.thread(CH, ROOT.id)));
+    });
+
+    it("recentThreads 는 gc 되지 않는다 — 관찰자 없이 5분이 지나도 메모리와 사본에 남는다", async () => {
+      const { qc, storage } = await closedThreadTenMinutesAgo();
+      expect(qc.getQueryData(qk.recentThreads)).toEqual({ [CH]: ROOT.id });
+      await saveAgain(qc, storage);
+      expect(storedKeys(storage)).toContain(JSON.stringify(qk.recentThreads));
+    });
+
     it("최근 목록에서 밀려나면 붙이지 않는다", async () => {
       const storage = await savedBy();
       vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });

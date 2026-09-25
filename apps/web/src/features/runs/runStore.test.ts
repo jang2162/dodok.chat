@@ -114,6 +114,25 @@ describe("런의 스레드 소속(판정 R3′)", () => {
     expect(channel?.threadRootId).toBeUndefined();
   });
 
+  it("세션 키로 정한 스레드는 뒤의 run.state 에 threadRootId 가 없어도(옛 서버) 유지", () => {
+    const s = useRunStore.getState();
+    s.applyState(state({ id: R1, status: "queued" }));
+    s.applyEvent(
+      ev({
+        type: "RUN_STARTED",
+        runId: R1,
+        seq: 1,
+        threadId: C1,
+        agentId: A1,
+        sessionKey: `agent:dev:dodok:channel:${C1}:thread:${ROOT}`,
+      }),
+    );
+    useRunStore.getState().applyState(state({ id: R1, status: "streaming" }));
+    useRunStore.getState().applyState(state({ id: R1, status: "done" }));
+    expect(useRunStore.getState().runs[R1]?.threadRootId).toBe(ROOT);
+    expect(selectScopeRuns(C1)(useRunStore.getState())).toEqual([]);
+  });
+
   it("selectScopeRuns: 채널 범위는 스레드 런을, 스레드 범위는 채널 런·다른 스레드 런을 뺀다", () => {
     const s = useRunStore.getState();
     s.applyState(state({ id: R1 }));

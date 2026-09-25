@@ -168,6 +168,13 @@ describe("URL 로 열기", () => {
     expect(screen.getByRole("link", { name: "채널로 돌아가기" })).toHaveAttribute("href", `/c/${CH}`);
   });
 
+  it("주소의 루트가 UUID 가 아니면(VALIDATION) 「스레드를 찾을 수 없습니다」 — /c/:id/t/nope", async () => {
+    threadReply = () => json(400, { code: "VALIDATION", message: "rootId must be a uuid" });
+    renderRoute(`/c/${CH}/t/nope`, channelClient());
+    expect(await screen.findByText("스레드를 찾을 수 없습니다")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "채널로 돌아가기" })).toHaveAttribute("href", `/c/${CH}`);
+  });
+
   it("좁은 화면(390px)에서는 전체 화면 시트로 뜬다", async () => {
     stubMedia(true);
     renderRoute(`/c/${CH}/t/${ROOT.id}`, channelClient());
@@ -176,6 +183,25 @@ describe("URL 로 열기", () => {
     expect(sheet.className).toContain("w-full");
     expect(await within(sheet).findByText("답글 3")).toBeInTheDocument();
     expect(within(sheet).getByRole("textbox", { name: "스레드 답글 입력" })).toBeInTheDocument();
+  });
+
+  it("패널이 열린 채 버블만 다시 그려진 뒤 무효화해도 스레드 REST 를 다시 부른다(p4t-t6 리뷰 I2)", async () => {
+    const qc = channelClient();
+    renderRoute(`/c/${CH}/t/${ROOT.id}`, qc);
+    const view = await panel();
+    await within(view).findByText("답글 3");
+    const threadCalls = () =>
+      fetchMock.mock.calls.filter((c) => String(c[0]).startsWith(`/api/v1/channels/${CH}/threads/`)).length;
+    expect(threadCalls()).toBe(1);
+    // 스레드 버블 하나 — 패널의 버블 관찰자만 다시 그려진다
+    act(() =>
+      useRunStore.getState().applyState(runState({ id: RUN2, status: "queued", threadRootId: ROOT.id })),
+    );
+    await waitFor(() => expect(view.querySelector(`[data-run-id="${RUN2}"]`)).not.toBeNull());
+
+    await act(() => qc.invalidateQueries({ queryKey: qk.threads(CH) }));
+    expect(threadCalls()).toBe(2);
+    expect(qc.getQueryState(qk.thread(CH, ROOT.id))?.status).toBe("success");
   });
 
   it("연 스레드는 채널마다 마지막 하나로 기억한다(오프라인 사본 대상)", async () => {

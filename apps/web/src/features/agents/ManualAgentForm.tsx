@@ -7,12 +7,12 @@ import { FieldError } from "@/ui/field-error";
 import { Input } from "@/ui/input";
 import { Label } from "@/ui/label";
 import { handleFrom } from "./handleFrom";
-import { formError } from "@/api/formErrors";
+import { formError, validationField } from "@/api/formErrors";
 import { useCreateAgent } from "./mutations";
 
 const NAME_MAX = 80;
-/** OpenClaw 에이전트 id 규칙 안내 — 서버가 shared 세션 키 헬퍼와 같은 규칙으로 거절한다(스레드·검색 태스크 5) */
-export const PROVIDER_ID_HINT = "영문·숫자로 시작, 영문·숫자·_·- (64자 이하)";
+/** OpenClaw 에이전트 id 규칙 안내 — 서버가 shared 세션 키 헬퍼와 같은 규칙에 소문자만으로 거절한다(스레드·검색 태스크 5, 판정 R4) */
+export const PROVIDER_ID_HINT = "영문 소문자·숫자로 시작, 영문 소문자·숫자·_·- (64자 이하)";
 
 /** 클라이언트 검사 — shared 규칙(Handle·Agent.name)과 같다. 문구는 폼 안에 그린다 */
 export const handleProblem = (handle: string): string | undefined =>
@@ -155,7 +155,8 @@ export function ManualAgentForm({
           const message = formError(err);
           if (message === undefined) return;
           const code = err instanceof ApiRequestError ? err.code : undefined;
-          const field = code === "CONFLICT" ? "handle" : /\bproviderAgentId\b/.test(message) ? "id" : "form";
+          const field =
+            code === "CONFLICT" ? "handle" : validationField(message, ["providerAgentId"]) ? "id" : "form";
           setServerError({ field, message });
         },
       },
