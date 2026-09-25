@@ -8,3 +8,5 @@ export * from "./wire";
 export * from "./push";
 export * from "./setup";
 export * from "./ops";
+export * from "./search";
+export * from "./session-key";

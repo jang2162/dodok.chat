@@ -19,7 +19,7 @@ import type { SetupStatus } from "../setup";
 export const ChannelSubscribe = z.object({ channelId: Id, lastSeq: z.int().min(0).optional() });
 export type ChannelSubscribe = z.infer<typeof ChannelSubscribe>;
 export const ChannelSubscribeResult = z.object({
-  messages: z.array(Message), // lastSeq 이후, 최대 200개
+  messages: z.array(Message), // lastSeq 이후, 최대 200개. lastSeq 가 있으면 스레드 답글도 들어간다
   hasMore: z.boolean(),
   activeRuns: z.array(RunState), // 종료되지 않은 런
   pendingApprovals: z.array(Approval),
@@ -33,6 +33,7 @@ export const MessageSend = z
     bodyMd: z.string().max(100_000), // 토큰 본문. 첨부가 있으면 비어도 된다
     attachments: z.array(Id).max(ATTACHMENT_LIMITS.perMessage).optional(), // 업로드 API로 먼저 올린 첨부 id
     replyTo: Id.optional(),
+    threadRootId: Id.optional(), // 답글을 가리키면 서버가 VALIDATION 으로 거절한다 — 웹이 루트를 보낸다
   })
   .refine((v) => v.bodyMd.trim() !== "" || (v.attachments?.length ?? 0) > 0, {
     message: "본문이나 첨부 중 하나는 있어야 한다",

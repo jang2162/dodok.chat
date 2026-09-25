@@ -3,9 +3,16 @@ import type { Ack } from "../common";
 import { BRIDGE_PROTOCOL, Id, IsoDateTime } from "../common";
 import { ComponentsV1 } from "../components";
 import { ATTACHMENT_LIMITS, Attachment } from "../domain";
+import { parseDodokSessionKey } from "../session-key";
 import { Sha256Hex } from "../setup";
 
-export const BridgeCapability = z.enum(["agents.list", "config.set", "typing", "run_id_in_outbound"]);
+export const BridgeCapability = z.enum([
+  "agents.list",
+  "config.set",
+  "typing",
+  "run_id_in_outbound",
+  "threads",
+]);
 export type BridgeCapability = z.infer<typeof BridgeCapability>;
 
 export const BridgeHello = z.object({
@@ -30,8 +37,17 @@ export const InboundAuthor = z.object({
 });
 export type InboundAuthor = z.infer<typeof InboundAuthor>;
 
+const InboundContextMessage = z.object({ author: InboundAuthor, text: z.string(), ts: IsoDateTime });
+
 export const InboundContext = z.object({
-  recentMessages: z.array(z.object({ author: InboundAuthor, text: z.string(), ts: IsoDateTime })).max(20),
+  recentMessages: z.array(InboundContextMessage).max(20), // 스레드 런이면 비어 있다 — 채널 대화는 스레드에 싣지 않는다
+  /** 스레드 런만. 루트 본문은 서버가 4,000자에서 자른다 */
+  thread: z
+    .object({
+      root: InboundContextMessage.extend({ text: z.string().max(4000) }),
+      recentMessages: z.array(InboundContextMessage).max(20),
+    })
+    .optional(),
   participants: z.array(
     z.object({
       type: z.enum(["user", "agent"]),
@@ -51,7 +67,8 @@ export const InboundDeliver = z.object({
   kind: z.enum(["message", "interaction", "continue"]),
   channelId: Id,
   agentId: z.string(), // providerAgentId (OpenClaw agentId)
-  sessionKey: z.string(), // agent:<agentId>:dodok:channel:<channelId>
+  sessionKey: z.string(), // dodokSessionKey(agentId, channelId, threadId)
+  threadId: Id.optional(), // 스레드 루트 id — threadMatchesSessionKey 로 키와 대조한다
   runId: Id, // 우리 런 id
   message: z.object({
     id: Id,
@@ -86,6 +103,7 @@ export const OutboundMessage = z.object({
   channelId: Id,
   agentId: z.string(), // providerAgentId
   sessionKey: z.string(),
+  threadId: Id.optional(), // 스레드 세션에서 보낸 것이면 그 루트 id
   runId: Id.optional(), // 인바운드에서 받은 우리 런 id
   providerRunId: z.string().optional(),
   replyToInboundId: Id.optional(), // InboundDeliver.message.id
@@ -96,6 +114,14 @@ export const OutboundMessage = z.object({
   ts: IsoDateTime,
 });
 export type OutboundMessage = z.infer<typeof OutboundMessage>;
+
+/** 세션 키의 스레드 접미사와 threadId 가 같은가(둘 다 없으면 참). 서버·플러그인이 같이 쓴다 */
+export function threadMatchesSessionKey(sessionKey: string, threadId: string | undefined): boolean {
+  const parsed = parseDodokSessionKey(sessionKey);
+  // 우리 모양이 아닌 키는 스레드인지 알 수 없으므로 맞다고 하지 않는다
+  if (!parsed) return false;
+  return parsed.threadRootId === threadId?.toLowerCase();
+}
 
 export const BridgeStatus = z.object({
   gateway: z.enum(["connected", "reconnecting", "down"]),

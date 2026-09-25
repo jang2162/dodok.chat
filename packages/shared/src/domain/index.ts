@@ -150,6 +150,14 @@ export type MessageInteraction = z.infer<typeof MessageInteraction>;
 /** 메시지에 싣는 상호작용 개수 상한. 넘으면 최신 쪽을 남긴다(설계 3장). */
 export const INTERACTIONS_MAX = 20;
 
+/** 루트 메시지의 스레드 요약 — 답글이 있을 때만 싣는다(스레드·검색 스펙 4.1) */
+export const ThreadSummary = z.object({
+  count: z.int().min(1),
+  lastAt: IsoDateTime,
+  agentIds: z.array(Id).max(10),
+});
+export type ThreadSummary = z.infer<typeof ThreadSummary>;
+
 export const Message = z.object({
   id: Id,
   channelId: Id,
@@ -169,6 +177,8 @@ export const Message = z.object({
   interactions: z.array(MessageInteraction).max(INTERACTIONS_MAX).default([]),
   systemMeta: SystemMeta.optional(), // kind === "system"일 때
   replyTo: Id.optional(),
+  threadRootId: Id.optional(), // 스레드 답글이면 그 루트. 스레드 안의 스레드는 없다 — 루트만 가리킨다
+  threadSummary: ThreadSummary.optional(),
   runId: Id.optional(), // agent 메시지: 만들어 낸 런
   clientMsgId: z.string().max(64).optional(), // 사용자 전송 멱등 키
   externalId: z.string().max(128).optional(), // 브리지 outboundId
