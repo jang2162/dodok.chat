@@ -41,7 +41,6 @@ ${EDITOR:-vi} .env      # 아래 표의 나머지 값 — OPENCLAW_GATEWAY_TOKEN
 | --- | --- | --- |
 | `DODOK_DOMAIN` | **필수** | Caddy 가 인증서를 받을 공개 도메인(예 `dodok.example.com`). 비면 compose 가 먼저 멈춘다 |
 | `APP_ORIGIN` | **필수** | `https://<도메인>` — 슬래시 없이 정확히. 쿠키·wire 핸드셰이크 `Origin` 검사 기준이라 브라우저 주소와 다르면 웹이 「rejected」 배너로 막힌다 |
-| `TRUST_PROXY` | **필수** `true` | Caddy 뒤. 로그인 레이트리밋이 Caddy 가 붙인 클라이언트 IP 로 걸린다(아래 「보안」) |
 | `LOCAL_AUTH_TOKEN` | **필수**(≥16자) | 로그인 토큰 = owner 비밀번호. 바꾸면 기존 세션이 끊긴다 |
 | `BETTER_AUTH_SECRET` | **필수**(≥32자) | 세션 서명 비밀 |
 | `OPENCLAW_GATEWAY_URL` · `OPENCLAW_GATEWAY_TOKEN` | **필수** | 원격 Gateway(`wss://…`)와 그 공유 토큰. `OPENCLAW_TARGET` 은 비워 둔다(기본 `remote`) |
@@ -49,10 +48,13 @@ ${EDITOR:-vi} .env      # 아래 표의 나머지 값 — OPENCLAW_GATEWAY_TOKEN
 | `BRIDGE_PUBLIC_URL` | 선택 | `wss://<도메인>/bridge`. 비우면 `APP_ORIGIN` 의 `https:` → `wss:` + `/bridge` 로 같은 값이 된다. 연결 페이지가 보여 주고, 발급한 설정 조각의 `bridgeUrl` 에 들어간다(서버는 이 값으로 리슨하지 않는다) |
 | `VAPID_SUBJECT` | **필수**(실제 연락처) | `mailto:<실제 주소>` 또는 `https://…`. 로컬 자리값(`localhost`·`*.local`)이면 Apple Push 가 `403 BadJwtToken` 으로 거부한다 — 폰 푸시가 안 온다 |
 | `LOG_LEVEL` · `OWNER_HANDLE` · `DODOK_WORKSPACE_NAME` | 선택 | 기본 `info` · `owner` · `dodok` |
+| `TZ` | 선택(IANA 이름, 예 `Asia/Seoul`) | 「하루」의 경계다 — 일일 런 상한(워크스페이스·채널)이 서버 현지 자정에 풀리고, 한도 문구 「내일 0시에 풀립니다」와 운영 화면의 「오늘」 집계도 그 자정을 따른다. 비우면 이미지 기본인 UTC 라 한국에서는 오전 9시에 하루가 바뀐다. 이미지가 시간대 데이터를 품고 있어 값만 주면 된다(`docker run --rm -e TZ=Asia/Seoul node:24.21.0-bookworm-slim node -e 'console.log(new Date(0).getHours())'` → `9`) |
 | `VAPID_PUBLIC_KEY` · `VAPID_PRIVATE_KEY` | 선택 | 비우면 서버가 `/data/vapid.json` 을 만들어 쓴다(볼륨에 남는다). 키가 바뀌면 모든 기기의 푸시 구독이 무효가 된다 |
 | `DB_PATH` · `ATTACHMENTS_DIR` · `OPENCLAW_DEVICE_IDENTITY_PATH` | **비워 둔다** | 기본값이 `/data` 아래다. 볼륨 밖 경로를 주면 컨테이너를 다시 만들 때 그 데이터가 사라진다 |
-| `HOST` · `PORT` · `DATA_DIR` · `DODOK_MIGRATIONS_DIR` · `DODOK_PLUGIN_DIR` | 무시된다 | compose 가 `environment` 로 `0.0.0.0`·`3000`·`/data`·`/app/drizzle`·`/app/plugin`(이미지가 품은 플러그인 tgz 자리) 을 고정한다. `.env.example` 을 복사해 생긴 빈 줄(`HOST=`)이 그대로 있어도 된다 |
+| `HOST` · `PORT` · `DATA_DIR` · `DODOK_MIGRATIONS_DIR` · `DODOK_PLUGIN_DIR` · `TRUST_PROXY` | 무시된다 | compose 가 `environment` 로 `0.0.0.0`·`3000`·`/data`·`/app/drizzle`·`/app/plugin`(이미지가 품은 플러그인 tgz 자리)·`true` 를 고정한다. `.env.example` 을 복사해 생긴 빈 줄(`HOST=`)이 그대로 있어도 된다. `TRUST_PROXY` 는 Caddy 뒤라 늘 `true` 다 — 레이트리밋·브리지 실패 카운터가 Caddy 가 붙인 클라이언트 IP 로 걸린다(아래 「보안」). `.env` 의 빈 줄이나 `false` 가 덮으면 모든 요청이 Caddy 주소 하나로 묶여 한 사람의 폭주가 모두를 막는다 |
 | `OPENCLAW_DEV_*` · `OPENCLAW_FRAME_DUMP_PATH` · `BRIDGE_URL` | 쓰지 않는다 | 개발·진단·스파이크 전용 |
+
+compose 가 `.env` 와 상관없이 더 고정하는 것 — 로그 로테이션(`app`·`caddy` 둘 다 `json-file`, 파일 10 MB × 5개 — 서비스마다 최대 50 MB)과 `app` 의 `stop_grace_period: 15s`(앱의 종료 상한 10초보다 길게 — 짧으면 SIGKILL 이 먼저 와 깨끗한 종료 표지를 못 쓰고, 다음 부팅의 운영 화면에 사건 「직전 종료가 비정상」이 뜬다). 컨테이너에 먹었는지는 `docker inspect <컨테이너> --format '{{json .HostConfig.LogConfig}} {{.Config.StopTimeout}}'`.
 
 `DODOK_WEB_BUILD_ID` 는 `.env` 에 두지 않는다 — 배포마다 셸이 계산해 넘기는 값이다(아래 「기동」). `.env` 에 고정하면 웹이 바뀌어도 ID 가 그대로라 클라이언트가 옛 오프라인 사본을 버리지 않는다.
 전체 변수 목록과 기본값은 `docs/project-structure.md` 「환경 변수」 장, 형식은 `.env.example`.
@@ -75,7 +77,7 @@ git clone <저장소 URL> dodok.chat && cd dodok.chat     # --depth 를 주지 �
 DODOK_WEB_BUILD_ID=$(git log -1 --format=%h -- apps/web packages/shared pnpm-lock.yaml tsconfig.base.json package.json pnpm-workspace.yaml infra/Dockerfile.web) \
   docker compose -f infra/compose.yml up -d --build
 docker compose -f infra/compose.yml ps          # app·caddy 둘 다 (healthy)
-curl -fsS https://<도메인>/healthz              # "db":"ok" 가 든 JSON
+curl -fsS https://<도메인>/healthz              # {"ok":true,"db":"ok"}
 ```
 
 - 빌드는 이 호스트에서 소스로 한다(이미지 레지스트리 없음). 빌드 중에 npm 레지스트리에 닿아야 한다(`pnpm fetch`·`pnpm deploy`).
@@ -192,6 +194,44 @@ docker compose -f infra/compose.yml exec app node dist/backup.js
    - 활성 토큰이 하나도 남지 않게 되면 두 번째 확인(「그래도 폐기」)이 뜬다. 첫 확인 버튼이 있던 자리에는 「취소」가 오고(초점도 거기), 「그래도 폐기」는 반대쪽에 잠시(600ms) 누를 수 없게 나타난다 — 두 번 누르기·Enter 연타가 두 번째 확인으로 번지지 않는다.
 
 `.env` 에서 이어받은 토큰(목록의 라벨 `env`, 알아보기용 앞자리 대신 「.env 에서 이어받음」)도 같은 절차로 바꾼다. 폐기한 뒤에는 `.env` 의 `BRIDGE_TOKEN` 줄을 지워도 되고, 남겨 두면 부팅 때 warn 한 줄과 연결 페이지 한 줄(「.env 의 BRIDGE_TOKEN 은 더 이상 쓰지 않습니다 — 연결 페이지에서 발급하세요」)이 계속 보인다.
+
+## 운영 화면
+
+웹 사이드바 「운영」(`/settings/operations`, owner 만 — member 에게는 메뉴가 없고 직접 주소는 「권한이 없습니다」)이 「어젯밤 무슨 일이 있었나」에 답한다. 외부 모니터링 스택·푸시·웹훅 알림은 없다 — 사이드바 「운영」 옆 배지로 알아챈다. 설계는 `docs/superpowers/specs/2026-09-25-ops-hardening-design.md`(구현과 달라진 것은 그 스펙의 「구현과 맞춘 것」 장).
+
+- **상태 카드** — Gateway·플러그인 연결, Gateway 버전, 디스크 여유, 직전 종료, 서버·DB. 문제가 있는 줄만 강조한다. 연결 두 줄은 wire 로 실시간이고, 나머지 칸은 사건이 올 때와 화면을 보는 동안 30초마다 다시 받는다. Gateway 버전이 저장소 핀(`packages/openclaw-adapter/src/version.ts` 의 `OPENCLAW_PINNED_VERSION`)과 다르면 「저장소가 검증한 버전(<핀>)과 다릅니다」 — 연결 페이지 Gateway 줄에도 같은 문구가 붙는다.
+- **런 표** — 「오늘 / 7일」, 채널별·에이전트별 런·실패·중지·차단. 토큰·금액은 「측정 불가」다 — Gateway 가 주는 출력 토큰·비용 값이 틀린다(`docs/adr/0005-usage-values.md`).
+- **한도** — 워크스페이스 일일 런 상한. 새 배포는 **300**, 1~10000, 비우면 무제한. 채널별 상한은 각 채널 설정 「릴레이 정책」의 「일일 실행 상한」이다. 둘 다 그 채널·워크스페이스에서 오늘 **만들어진 모든 런**(사람 멘션·자동 응답·릴레이·컴포넌트 상호작용·다시 실행)을 센다 — 한도로 막혀 만들지 않은 런은 세지 않는다. 막히면 런을 만들지 않고, 그 채널에 「오늘 런 한도(N)에 도달했습니다 — 내일 0시에 풀립니다」(채널 상한이면 「이 채널의」가 붙는다)를 범위마다 **하루 한 번** 남기며, 사람이 보낸 메시지는 그대로 저장된다. 「하루」는 `TZ` 의 자정이다(위 「설정 — `.env`」).
+- **최근 사건** — 심각도 필터·「모두 확인」·「더 보기」. 같은 종류·대상의 사건은 확인하기 전 1시간 안이면 한 줄로 묶여 「×n」이 오르고, 30일 지난 줄은 지워진다. 끊김 사건(Gateway·플러그인)은 **60초 넘게** 끊겨야 열리고(그 안에 돌아오면 남지 않는다), 붙으면 같은 줄이 「(n분 동안)」으로 닫힌다.
+- **배지** — 확인 안 한 주의·오류 사건 수(100 이상은 「99+」). 좁은 화면에서는 채널 목록 메뉴 버튼의 빨간 점. 「모두 확인」 뒤 사라진다.
+- **다시 실행** — 디스패치 실패·타임아웃으로 끝난 런의 채널 알림 「@<에이전트> 실행이 실패했습니다: <코드>」에 1회용 「다시 실행」 버튼이 붙는다(채널의 사람 누구나, 24시간). 같은 트리거로 새 런을 만들고, 한도에 걸리면 버튼은 소비되지 않는다.
+
+**서버 로그에서 사건 모으기** — 사건을 기록한 줄마다 `event` 필드가 `ops.<kind>` 다(메시지 `ops event`). 같은 줄이 폭주해도 1초에 한 번으로 모이고 모은 수가 `coalesced` 에 실린다.
+
+```bash
+docker compose -f infra/compose.yml logs app | grep '"event":"ops.'
+```
+
+**`/healthz`** — 인증 없이 열려 있고 본문은 `{"ok":true,"db":"ok"}`(DB 를 못 읽으면 503 `{"ok":false,"db":"error"}`)뿐이다. 워크스페이스 id·어댑터 상세는 owner 전용 `GET /api/v1/ops/status`(운영 화면이 읽는 것)에만 있다.
+
+**디스크 여유** — 부팅 때와 10분마다 `DATA_DIR` 이 든 파일 시스템을 잰다. 여유가 1 GiB 미만 **또는** 5% 미만이면 사건 「디스크 여유 부족」(주의), **256 MiB 미만이면 오류이고 첨부 업로드(사람 이미지·에이전트 파일 둘 다)를 507 `INSUFFICIENT_STORAGE` 로 거절한다** — SQLite 가 쓸 자리를 남긴다. 웹 칩은 「서버 디스크 여유가 부족해 올리지 못했습니다」. 공간을 비우면 다음 측정(최대 10분 뒤, 또는 `restart app`)부터 다시 받는다. 재지 못하면(`statfs` 실패) 「알 수 없음」이고 업로드는 막지 않는다.
+
+**레이트리밋** — 숫자의 정본은 `apps/server/src/modules/ops/limits.ts` 의 `LIMITS` 하나다(`grep -nE 'PerMin|perMin|socketsPerUser|bridgeFail' apps/server/src/modules/ops/limits.ts`). 상태는 서버 메모리에 있어 재시작하면 풀린다. 걸릴 때마다 사건 「요청 제한 발동」(정보 — 배지에는 안 잡힌다)이 남고, 주소는 IPv4 /24·IPv6 /48 로 줄여 적힌다.
+
+| 입구 | `LIMITS` 키 | 넘으면 |
+| --- | --- | --- |
+| `POST /api/v1/auth/local`(로그인 토큰) | `localLoginPerMin`(IP 당 분당) | 429 |
+| `/api/auth/*`(Better Auth) | `betterAuthPerMin`(IP 당 분당) | 429 |
+| 로그인 뒤 REST `/api/v1/*` | `restPerMin`(사용자당 분당) | 429 `{"code":"RATE_LIMITED"}` |
+| 첨부 업로드 `POST /api/v1/attachments` | `uploadPerMin`(사용자당 분당, REST 상한 위에 한 번 더) | 429 `RATE_LIMITED` |
+| wire `message.send`·`component.interact`·`run.abort` | `wire.heavy`(소켓마다 토큰 버킷 — 분당·연속) | ack `RATE_LIMITED` — 작성기는 「너무 빠르게 보내고 있습니다 — 잠시 뒤 다시」, 「다시 보내기」는 같은 메시지라 런이 두 번 뜨지 않는다 |
+| wire `run.events.replay` | `wire.replay` | ack `RATE_LIMITED` |
+| wire `approval.resolve` | `wire.approval` | ack `RATE_LIMITED` |
+| wire `typing`·`presence.update` | `wire.chatter` | 조용히 버린다(ack 없음) |
+| wire 동시 소켓 | `socketsPerUser`(사용자당) | 새 연결을 핸드셰이크에서 거절 |
+| `/bridge` 핸드셰이크·`/bridge/attachments` | `bridgeFail`(**실패만** 센다 — 한 주소가 창 안에 정해진 수만큼 틀리면 그 주소를 막는다) | 막힌 동안은 토큰을 보지 않고 거절(첨부 HTTP 는 429 「인증 실패가 너무 많습니다」), 사건 「브리지 인증 실패가 반복돼 주소를 막음」. 성공은 카운터를 비우지 않아 막힌 주소의 정상 플러그인도 막힌 동안은 거절되고, 풀리면 저절로 붙는다 |
+
+토큰을 바꾼 직후 옛 토큰으로 재접속을 되풀이하는 플러그인이 [B] 와 같은 주소의 정상 플러그인까지 잠시 막을 수 있다 — 옛 플러그인 설정을 먼저 고치고, 풀리기를 기다린다(아래 「오류」).
 
 ## 백업
 
@@ -320,6 +360,10 @@ docker compose -f infra/compose.yml ps     # app·caddy (healthy)
 | 「플러그인 받기」가 「플러그인 파일이 그새 다시 빌드됐습니다」 | 부팅 때 잰 tgz 와 지금 파일이 다르다(서버 409 `PLUGIN_FILE_CHANGED`) — 이미지로 돌면 나지 않는다 | 서버 재시작 |
 | 폰에 푸시가 안 옴(iOS) | `VAPID_SUBJECT` 가 로컬 자리값이면 Apple 이 `403 BadJwtToken` — 서버 시작 로그에 warn 한 줄 | 실제 연락처로 바꾸고 `up -d` |
 | 백업 `백업 실패: …` exit 1 | 한 줄 사유(디스크 부족이면 부분 디렉터리는 지워진다) | 공간 확보 뒤 다시 |
+| 첨부 업로드가 507 `INSUFFICIENT_STORAGE`, 운영 화면 「디스크 여유 부족」(오류) | 데이터 볼륨의 여유가 256 MiB 미만 | 공간 확보(`backups/` 의 오래된 백업, 호스트의 다른 파일) → 최대 10분 뒤 또는 `docker compose -f infra/compose.yml restart app`. 위 「운영 화면」 |
+| 멘션해도 답이 없고 채널에 「오늘 런 한도(N)에 도달했습니다 — 내일 0시에 풀립니다」 | 워크스페이스 또는 채널 일일 런 상한 | 운영 화면 「한도」 또는 채널 설정 「일일 실행 상한」. 자정이 예상과 다르면 `TZ` |
+| 요청이 429 `RATE_LIMITED`, 운영 화면 「요청 제한 발동」 | 레이트리밋(위 「운영 화면」의 표) — 한 사람·한 탭의 폭주 | 1분 안에 저절로 풀린다. 되풀이되면 그 사건의 `key`(경로·이벤트 이름)로 무엇이 두드리는지 본다 |
+| 플러그인이 안 붙고 로그 `bridge connection rejected … blocked after repeated failures`, 운영 화면 「브리지 인증 실패가 반복돼 주소를 막음」 | 한 주소에서 틀린 토큰이 되풀이됐다(옛 토큰으로 재접속하는 플러그인 등) | 틀린 토큰을 쓰는 쪽을 고친 뒤 막힘이 풀리기를 기다린다(`LIMITS.bridgeFail.blockMs`) — 재시작해도 풀린다 |
 | 에이전트 파일 업로드 413 | 32 MB 초과면 Caddy 의 413, 20 MiB~32 MB 면 서버의 413 JSON `{"code":"VALIDATION","message":"Request body is too large"}` — 첨부 전용 고정 문구가 아니다(`docs/plan.md` 8장 이월). 웹과 플러그인은 올리기 전에 크기를 걸러 자기 문구를 낸다 | 파일을 줄인다 |
 
 ## 보안
@@ -327,7 +371,7 @@ docker compose -f infra/compose.yml ps     # app·caddy (healthy)
 - 호스트에 열리는 포트는 Caddy 80·443(udp 포함)뿐이다. `app` 은 compose 내부 네트워크에만 있다.
 - 컨테이너는 비루트(`node`)로 돈다. `.env`·`data/` 는 이미지에 들어가지 않는다(`.dockerignore`).
 - HSTS·`nosniff`·`Referrer-Policy` 는 Caddy 가 붙인다. CSP 는 없다(스펙 「구현과 맞춘 것」).
-- **`X-Forwarded-For` 를 위조해도 로그인 레이트리밋은 우회되지 않는다.** Caddy 에 `trusted_proxies` 가 없어(기본 — 아무도 믿지 않음) 클라이언트가 보낸 XFF 를 그대로 넘기지 않고 자기가 본 연결 IP 로 덮는다. 서버는 `TRUST_PROXY=true` 로 그 값을 읽는다. 로컬 검증에서 틀린 토큰 로그인을 XFF 를 바꿔 가며 보내도 5회 뒤 새 XFF 값의 첫 요청부터 429 였다(다시 재려면 `curl -H 'X-Forwarded-For: <아무 값>'` 으로 `POST /api/v1/auth/local` 을 6회). Caddy 앞에 다른 프록시를 더 두면 이 전제가 바뀐다 — 그때는 Caddy 에 그 프록시만 `trusted_proxies` 로 둔다.
+- **`X-Forwarded-For` 를 위조해도 로그인 레이트리밋은 우회되지 않는다.** Caddy 에 `trusted_proxies` 가 없어(기본 — 아무도 믿지 않음) 클라이언트가 보낸 XFF 를 그대로 넘기지 않고 자기가 본 연결 IP 로 덮는다. 서버는 compose 가 고정한 `TRUST_PROXY=true` 로 그 값을 읽는다 — 다른 레이트리밋과 브리지 실패 카운터(위 「운영 화면」)도 같은 주소를 쓴다. 로컬 검증에서 틀린 토큰 로그인을 XFF 를 바꿔 가며 보내도 5회 뒤 새 XFF 값의 첫 요청부터 429 였다(다시 재려면 `curl -H 'X-Forwarded-For: <아무 값>'` 으로 `POST /api/v1/auth/local` 을 6회). Caddy 앞에 다른 프록시를 더 두면 이 전제가 바뀐다 — 그때는 Caddy 에 그 프록시만 `trusted_proxies` 로 둔다.
 
 ## Docker 정리 규칙
 
@@ -338,6 +382,7 @@ docker compose -f infra/compose.yml ps     # app·caddy (healthy)
 - 다른 compose 프로젝트의 컨테이너·볼륨·네트워크는 읽기만 한다. 작업 전후로 `docker ps -a`·`docker volume ls`·`docker image ls -a` 를 떠 두고 대조하면 무엇을 남겼는지 안다.
 - 이 저장소가 만드는 이름: 이미지 `dodok-app`·`dodok-caddy`(로컬 검증은 `dodok-devfake` 도), 볼륨 `dodok_dodok-data`·`dodok_caddy-data`·`dodok_caddy-config`(로컬 검증은 `dodok_devfake-data` 도), 네트워크 `dodok_default`. 베이스 이미지(`node:24.21.0-bookworm`·`node:24.21.0-bookworm-slim`·`caddy:2.11.4`)는 다음 빌드의 캐시라 두는 것이 기본이다.
 - ⚠ 운영 호스트에서 `down -v` 는 **데이터 볼륨을 지운다.** 운영에서는 `-v` 를 붙이지 않는다.
+- ⚠ **zsh 는 따옴표 없는 변수를 낱말로 쪼개지 않는다** — `IDS=$(…); for id in $IDS` 는 목록 전체를 한 번에 넘겨 아무것도 지우지 않고 오류도 내지 않는다. ID 목록은 배열(`ids=(${(f)"$(…)"})`)로 받거나 `${=IDS}` 로 돌린다. 지운 뒤 `docker image ls -a` 를 시작 스냅숏과 diff 해 실제로 사라졌는지 본다.
 
 ## 로컬 검증 (이 Mac)
 
