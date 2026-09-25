@@ -78,7 +78,8 @@ export function EventList() {
       ) : (
         <ul aria-label="사건" className="flex flex-col divide-y">
           {list.map((e) => {
-            const { Icon, tone } = ICON[e.severity];
+            // 모르는 severity(새 서버)면 정보 모양에 원문 라벨
+            const { Icon, tone } = ICON[e.severity] ?? ICON.info;
             const at = new Date(eventTime(e));
             return (
               <li
@@ -88,7 +89,7 @@ export function EventList() {
               >
                 <Icon
                   role="img"
-                  aria-label={SEVERITY_LABEL[e.severity]}
+                  aria-label={SEVERITY_LABEL[e.severity] ?? e.severity}
                   aria-hidden={false}
                   className={cn("mt-0.5 size-4 shrink-0", tone)}
                 />

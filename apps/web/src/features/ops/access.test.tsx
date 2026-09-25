@@ -60,6 +60,16 @@ describe("배지 — 확인 안 한 warn·error 수", () => {
     expect(badgeOf(link)).toBeNull();
   });
 
+  it.each([
+    [{ warn: 99, error: 0 }, "99"],
+    [{ warn: 60, error: 40 }, "99+"],
+  ])("경계 — %o 이면 「%s」", async (unacked, text) => {
+    stubOpsServer({ status: opsStatusOf({ unacked }) });
+    renderRoute("/agents");
+    const link = await screen.findByRole("link", { name: /^운영/ });
+    await waitFor(() => expect(badgeOf(link)?.textContent).toBe(text));
+  });
+
   it("100 이상이면 99+", async () => {
     stubOpsServer({ status: opsStatusOf({ unacked: { warn: 120, error: 5 } }) });
     renderRoute("/agents");

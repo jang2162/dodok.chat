@@ -72,6 +72,9 @@ export function stubOpsServer(
     runs?: (days: 1 | 7) => OpsRunsSummary;
     pages?: OpsEvent[][];
     patch?: (body: unknown) => Reply;
+    /** 사건 페이지 응답을 스키마 검사 없이 그대로 준다 — 이 웹보다 새 서버가 보내는 모르는 kind·severity */
+    rawEvents?: unknown[];
+    ack?: () => Reply;
   } = {},
 ) {
   const calls: Call[] = [];
@@ -94,6 +97,7 @@ export function stubOpsServer(
         return json(200, opts.runs ? opts.runs(days) : runsOf({ days }));
       }
       if (method === "GET" && url.startsWith("/api/v1/ops/events")) {
+        if (opts.rawEvents) return json(200, { events: opts.rawEvents });
         const q = new URL(url, "http://x").searchParams;
         const at = Number(q.get("cursor") ?? 0);
         const severity = q.get("severity") as OpsSeverity | null;
@@ -102,6 +106,7 @@ export function stubOpsServer(
         return json(200, OpsEventsPage.parse({ events, ...next }));
       }
       if (method === "POST" && url === "/api/v1/ops/events/ack") {
+        if (opts.ack) return opts.ack();
         status = { ...status, unacked: { warn: 0, error: 0 } };
         return json(200, { acked: 3 });
       }
@@ -120,6 +125,10 @@ export function stubOpsServer(
   return {
     calls,
     opsCalls: () => calls.filter((c) => c.url.startsWith("/api/v1/ops")),
+    /** 서버 쪽 상태를 바꾼다 — 다음 GET ops/status 부터 이 값 */
+    setStatus: (next: OpsStatus) => {
+      status = next;
+    },
     count: (method: string, url: string) => calls.filter((c) => c.method === method && c.url === url).length,
   };
 }

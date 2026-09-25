@@ -1,4 +1,4 @@
-import type { OpsEventKind } from "@dodok/shared";
+import type { OpsEvent, OpsEventKind } from "@dodok/shared";
 import { describe, expect, it } from "vitest";
 import { eventOf } from "../../../test/opsServer";
 import { eventText, eventTime, formatDowntime } from "./copy";
@@ -15,6 +15,11 @@ describe("사건 한 줄 문구 — kind 별 고정 문구", () => {
     ["disk_low", "디스크 여유 부족"],
   ] as const)("%s → 「%s」", (kind: OpsEventKind, text) => {
     expect(eventText(eventOf(1, { kind, detail: {} }))).toBe(text);
+  });
+
+  it("모르는 kind(이 웹보다 새 서버)면 던지지 않고 「알 수 없는 사건 (kind)」 — ×n 은 그대로", () => {
+    const future = { ...eventOf(1, { count: 2 }), kind: "future_kind" } as unknown as OpsEvent;
+    expect(eventText(future)).toBe("알 수 없는 사건 (future_kind) ×2");
   });
 
   it("gateway_down 이 열려 있으면 「(지금도)」", () => {

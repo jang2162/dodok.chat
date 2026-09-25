@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { qk } from "@/api/queries";
@@ -243,6 +243,26 @@ describe("한도", () => {
     expect(server.calls.filter((c) => c.method === "PATCH")).toEqual([]);
   });
 
+  it("저장이 끝나기 전에 다시 눌러도 PATCH 는 1건 — 버튼은 「저장 중…」·비활성", async () => {
+    let release!: (r: Response) => void;
+    const server = stubOpsServer({ patch: () => new Promise<Response>((r) => (release = r)) });
+    renderOps();
+    const field = await input();
+    await userEvent.clear(field);
+    await userEvent.type(field, "50");
+    const limit = await region("한도");
+    await userEvent.click(within(limit).getByRole("button", { name: "저장" }));
+    const pending = await within(limit).findByRole("button", { name: "저장 중…" });
+    expect(pending).toBeDisabled();
+    await userEvent.click(pending);
+    // 버튼을 거치지 않는 제출(엔터 등)도 막힌다
+    fireEvent.submit(field.closest("form") as HTMLFormElement);
+    expect(server.calls.filter((c) => c.method === "PATCH")).toHaveLength(1);
+    release(json(200, { dailyRunLimit: 50 }));
+    expect(await within(limit).findByText("저장했습니다")).toBeInTheDocument();
+    expect(server.calls.filter((c) => c.method === "PATCH")).toHaveLength(1);
+  });
+
   it("서버가 거절하면 그 사유를 보인다", async () => {
     stubOpsServer({ patch: () => json(400, { code: "VALIDATION", message: "dailyRunLimit 범위" }) });
     renderOps();
@@ -322,6 +342,18 @@ describe("최근 사건", () => {
     expect(within(events).queryByRole("button", { name: "더 보기" })).not.toBeInTheDocument();
   });
 
+  it("모르는 kind·severity(이 웹보다 새 서버)가 와도 그 줄만 일반 문구 — 나머지 섹션은 그대로", async () => {
+    const future = { ...FAILED, id: uid(799), kind: "future_kind", severity: "critical" };
+    stubOpsServer({ rawEvents: [future, CRASH] });
+    renderOps();
+    const items = within(await list()).getAllByRole("listitem");
+    expect(items).toHaveLength(2);
+    expect(items[0]).toHaveTextContent("알 수 없는 사건 (future_kind) ×3");
+    expect(within(items[0] as HTMLElement).getByRole("img", { name: "critical" })).toBeInTheDocument();
+    expect(items[1]).toHaveTextContent("처리 안 된 오류");
+    for (const name of ["상태", "런", "한도"]) expect(await region(name)).toBeInTheDocument();
+  });
+
   it("사건이 없으면 「사건이 없습니다」", async () => {
     stubOpsServer();
     renderOps();
@@ -340,6 +372,30 @@ describe("최근 사건", () => {
     await waitFor(() => expect(server.count("POST", "/api/v1/ops/events/ack")).toBe(1));
     await waitFor(() =>
       expect(qc.getQueryData<{ unacked: unknown }>(qk.opsStatus)?.unacked).toEqual({ warn: 0, error: 0 }),
+    );
+  });
+
+  it("「모두 확인」 도중에 새 사건이 오면 0 으로 덮지 않고 서버가 준 수를 쓴다", async () => {
+    let release!: (r: Response) => void;
+    const server = stubOpsServer({
+      status: opsStatusOf({ unacked: { warn: 2, error: 1 } }),
+      pages: [[FAILED]],
+      ack: () => new Promise<Response>((r) => (release = r)),
+    });
+    const { qc } = renderOps();
+    const events = await region("최근 사건");
+    await within(events).findByText(/런 실패/);
+    await userEvent.click(within(events).getByRole("button", { name: "모두 확인" }));
+    await waitFor(() => expect(server.count("POST", "/api/v1/ops/events/ack")).toBe(1));
+    // ack 가 떠 있는 동안 새 warn 사건(ops.event) — 서버는 ack 뒤에도 그 한 줄을 확인 안 한 것으로 센다
+    act(() => {
+      qc.setQueryData(qk.opsStatus, opsStatusOf({ unacked: { warn: 3, error: 1 } }));
+    });
+    server.setStatus(opsStatusOf({ unacked: { warn: 1, error: 0 } }));
+    release(json(200, { acked: 3 }));
+    await waitFor(() => expect(server.count("GET", "/api/v1/ops/status")).toBe(2));
+    await waitFor(() =>
+      expect(qc.getQueryData<{ unacked: unknown }>(qk.opsStatus)?.unacked).toEqual({ warn: 1, error: 0 }),
     );
   });
 });

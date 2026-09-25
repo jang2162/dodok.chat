@@ -62,6 +62,15 @@ describe("run_limit 카드", () => {
     expect(link).toHaveAttribute("href", "/settings/operations");
   });
 
+  it("채널 한도(scope channel)면 그 채널 설정으로 — 「채널 설정에서 한도 바꾸기」", () => {
+    const message = runLimit({ scope: "channel", limit: 5 });
+    renderCard(message, "owner");
+    const note = screen.getByRole("note");
+    const link = within(note).getByRole("link", { name: "채널 설정에서 한도 바꾸기" });
+    expect(link).toHaveAttribute("href", `/c/${message.channelId}/settings`);
+    expect(within(note).queryByRole("link", { name: "운영에서 한도 바꾸기" })).not.toBeInTheDocument();
+  });
+
   it.each([["member"], [undefined]])("owner 가 아니면(%s) 링크가 없다", (role) => {
     renderCard(runLimit({ scope: "channel", limit: 5 }), role);
     expect(within(screen.getByRole("note")).queryByRole("link")).not.toBeInTheDocument();

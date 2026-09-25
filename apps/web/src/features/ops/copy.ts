@@ -43,7 +43,9 @@ export function formatDowntime(ms: number): string {
  * 사건 한 줄 = 고정 문구 + 끊긴 시간 + 「×n」. 끊김이 닫혔으면 실제 끊긴 시간(`detail.downMs`), 열려 있으면 「(지금도)」
  */
 export function eventText(e: OpsEvent): string {
-  let text = TITLE[e.kind](e);
+  // 응답은 파싱하지 않으므로 이 웹보다 새 서버가 늘린 kind 가 온다(PWA 는 새 버전을 토스트로만 받는다) — 그 줄만 일반 문구
+  const title = TITLE[e.kind] as ((e: OpsEvent) => string) | undefined;
+  let text = title ? title(e) : `알 수 없는 사건 (${e.kind})`;
   if (DOWN.has(e.kind)) {
     const downMs = num(e.detail.downMs);
     text +=
