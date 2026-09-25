@@ -5,7 +5,7 @@
 
 **Goal:** 사람이 채널 메시지에서 스레드를 열어 에이전트와 스레드 하위 세션으로 대화하고, 채널·스레드 메시지를 한국어로 전문 검색해 그 자리로 간다.
 
-**Architecture:** 스레드는 `messages.thread_root_id` 로 채널 안에 둔다(`seq` 는 채널 하나를 같이 쓴다). 에이전트 세션 행이 (에이전트, 채널, 스레드) 단위가 되고 세션 키에 `:thread:<rootId>` 가 붙는다 — 키 만들기·풀기는 shared 헬퍼 하나를 서버·어댑터·플러그인이 같이 쓴다. 브리지 계약에 `threadId` 가 생기고 플러그인은 인바운드 사실·아웃바운드 셋(route·handleAction·sendText)을 스레드 인식으로 고친다(ADR 0006). 검색은 FTS5 `trigram` 가상 테이블과 트리거, 1~2글자는 `LIKE`.
+**Architecture:** 스레드는 `messages.thread_root_id` 로 채널 안에 둔다(`seq` 는 채널 하나를 같이 쓴다). 에이전트 세션 행이 (에이전트, 채널, 스레드) 단위가 되고 세션 키에 `:thread:<rootId>` 가 붙는다 — 키 만들기·풀기는 shared 헬퍼 하나를 서버·어댑터·플러그인이 같이 쓴다. 브리지 계약에 `threadId` 가 생기고 플러그인은 인바운드 사실·아웃바운드 셋(route·handleAction·sendText)을 스레드 인식으로 고친다(ADR 0006). 검색은 FTS5 `trigram` 가상 테이블과 트리거, 2글자는 `LIKE`.
 
 **Tech Stack:** Fastify 5 · Socket.IO 4.8 · drizzle-orm 0.45 + better-sqlite3(번들 SQLite — FTS5 trigram) · zod 4 · React 19 + TanStack Router/Query · OpenClaw 플러그인 SDK(2026.9.4 핀, dev Gateway 9.5) — **새 의존성 없음**
 
@@ -20,7 +20,7 @@
 - 포크 없음(`route.parentSessionKey` 비움). 봇 루프 예산 `conversationId = channelId` 그대로.
 - 스레드 세션의 에이전트는 채널 최상위·다른 채널로 쓰지 못한다(플러그인이 고정 사유로 거절).
 - 옛 플러그인(hello `capabilities` 에 `"threads"` 없음)으로 스레드 런 → 런 `error` 코드 `PLUGIN_OUTDATED`.
-- 검색: FTS5 `tokenize='trigram case_sensitive 0'`, 3글자 이상 `MATCH`(입력은 따옴표 구절 하나), 1~2글자 `LIKE ... ESCAPE`(최근 90일·50개·`limited: true`), 페이지 20, `q` 2~200자, 사용자당 분당 60(`LIMITS.searchPerMin`), 스니펫 앞뒤 64자·표시 `\u0002`/`\u0003`.
+- 검색: FTS5 `tokenize='trigram case_sensitive 0'`, 3글자 이상 `MATCH`(입력은 따옴표 구절 하나), 2글자 `LIKE ... ESCAPE`(최근 90일·50개·`limited: true`), 페이지 20, `q` 2~200자, 사용자당 분당 60(`LIMITS.searchPerMin`), 스니펫 앞뒤 64자·표시 `\u0002`/`\u0003`.
 - 시크릿 규칙 `docs/guides/live-smoke.md` 「시크릿 규칙」. 5173·3000 금지(웹 5180, dev:fake 3100 대). 프로세스는 자기 PID 로만. Docker `prune` 금지.
 - 커밋: `git add -A`·`git commit -a` 금지, 경로 명시. Conventional Commits + 스코프. 워커 트레일러 `Co-Authored-By: <네 실제 모델명> <noreply@anthropic.com>`.
 - 생성물(drizzle SQL·meta)은 생성기로. FTS 가상 테이블·트리거처럼 drizzle-kit 이 못 만드는 SQL 은 **커스텀 마이그레이션**(`drizzle-kit generate --custom`)으로 만들어 그 파일에만 손으로 쓴다.
@@ -170,7 +170,7 @@ export function searchMessages(db: DbOrTx, workspaceId: string, userId: string, 
 
 - 커스텀 마이그레이션: `CREATE VIRTUAL TABLE messages_fts USING fts5(body, attachment_names, content='', tokenize='trigram case_sensitive 0', contentless_delete=1)` — rowid 는 `messages` 의 rowid. INSERT/UPDATE/DELETE 트리거(`kind = 'normal'` 만), 기존 행 백필 `INSERT INTO messages_fts(rowid, body, attachment_names) SELECT rowid, body_md, <attachments_json 의 name 들을 공백으로 이은 것> FROM messages WHERE kind = 'normal'`. `contentless_delete` 가 SQLite 판에서 안 되면 `content='messages'` 외부 콘텐츠 방식으로 바꾸고 보고서에 적는다.
 - 3글자 이상: `WHERE messages_fts MATCH '"' || replace(q, '"', '""') || '"'` (구절 하나), `ORDER BY bm25(messages_fts), created_at DESC`. `snippet(messages_fts, 0, char(2), char(3), '…', 16)` 은 토큰 단위라 trigram 에서 글자 수가 흔들린다 — 스니펫은 서버가 본문에서 첫 일치 위치를 찾아 앞뒤 64자로 직접 자른다.
-- 1~2글자: `body_md LIKE ? ESCAPE '\'`(`%`·`_`·`\` 이스케이프), `created_at >= now - 90일`, `LIMIT 50`, 최신순, `limited: true`.
+- 2글자: `body_md LIKE ? ESCAPE '\'`(`%`·`_`·`\` 이스케이프), `created_at >= now - 90일`, `LIMIT 50`, 최신순, `limited: true`.
 - 필터·커서: `channelId`·`authorType`·`authorId`·`from`/`to`(서버 현지 날짜 경계), 커서는 불투명 문자열(`base64url(JSON {rank, createdAt, id})`). 멤버십: 사용자가 멤버인 채널만(지금 워크스페이스 전부 — `channel_members` 로 거르는 자리를 둔다).
 
 - [ ] **Step 1: 실패하는 테스트** — 트리거 동기화(삽입 → 찾힘, 본문 수정 → 옛 말 안 찾힘·새 말 찾힘, 삭제 → 안 찾힘, 시스템 메시지 안 찾힘), 한국어 「배포를 마쳤다」 에서 `배포를`·`마쳤다`(3글자) 찾힘, 2글자 `배포` → LIKE 경로·`limited: true`·90일 밖 안 찾힘, **특수 문자·연산자 `%`·`_`·`"`·`*`·`OR`·`NEAR(`·`body:` → 글자 그대로, 500 없음**(Review Focus 4), 필터·커서 두 페이지, 첨부 이름으로 찾힘, 스니펫 64자·표시 문자, 스레드 답글 결과에 `threadRootId`, 레이트리밋 61번째 429, 익명 401, `q` 1자·201자 400.
@@ -260,7 +260,7 @@ export function threadSummaryOf(db: DbOrTx, rootId: string): ThreadSummary | und
 
 - 스니펫 표시 문자(`\u0002`/`\u0003`)를 `<mark>` 로 — `dangerouslySetInnerHTML` 쓰지 않는다(글자 조각 배열로 렌더).
 - 결과 누름 → 채널 이동 → `around` 페이지 → 그 메시지로 스크롤·2초 강조(`prefers-reduced-motion` 면 색만). 답글이면 스레드 패널을 그 답글 위치로.
-- 짧은 검색어면 「1~2글자는 최근 90일에서 50개까지만 찾습니다」.
+- 짧은 검색어면 「2글자는 최근 90일에서 50개까지만 찾습니다」.
 
 - [ ] **Step 1: 실패하는 테스트** — `⌘K`·`Ctrl+K`·Esc, 입력 디바운스·요청, 스니펫 강조(HTML 주입 문자열이 글자로 나옴), 필터, 더 보기(커서), limited 문구, 결과 → around 이동·강조, 답글 결과 → 스레드 패널, 390px 시트, 결과 없음·오류.
 - [ ] **Step 2: 구현 → 통과, 웹 빌드.**
