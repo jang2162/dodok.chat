@@ -4,7 +4,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { qk } from "@/api/queries";
 import { createQueryClient } from "@/app/queryClient";
 import { registerSessionReset, resetClientState } from "@/app/session";
-import type { Timeline } from "@/features/messages/timeline";
+import { threadFromPage, type Timeline } from "@/features/messages/timeline";
+import { touchRecentThread } from "@/features/threads/queries";
 import { CH, CH2, msg, uid } from "../../test/fixtures";
 import { memoryStorage } from "../../test/memoryStorage";
 import { channelOf, ME } from "../../test/shellApi";
@@ -18,6 +19,16 @@ import {
   touchRecentChannel,
   trimForPersist,
 } from "./persist";
+
+const ROOT = msg(1);
+/** 루트 하나와 답글 n 개(seq 2…n+1)인 스레드 */
+const threadOf = (n: number): Timeline =>
+  threadFromPage(
+    undefined,
+    ROOT,
+    Array.from({ length: n }, (_, i) => msg(i + 2, { threadRootId: ROOT.id })),
+    false,
+  );
 
 const stored = (s: ReturnType<typeof memoryStorage>) => {
   const raw = s.map.get(PERSIST_KEY);
@@ -160,6 +171,85 @@ describe("trimForPersist", () => {
       fetchStatus: "idle",
       data: ME,
     });
+  });
+});
+
+describe("스레드 사본(스레드·검색 스펙 4.2 — 최근 채널에 그 채널에서 연 스레드의 마지막 페이지)", () => {
+  const threads = { [CH]: ROOT.id };
+  it("shouldPersist: 최근 채널에서 마지막으로 연 스레드 하나만, 최근 스레드 목록은 늘", () => {
+    const yes = (key: readonly unknown[]) => shouldPersist({ queryKey: key }, [CH], threads);
+    expect(yes(["recentThreads"])).toBe(true);
+    expect(yes(qk.thread(CH, ROOT.id))).toBe(true);
+    // 같은 채널의 다른 스레드·최근이 아닌 채널의 스레드·기억한 스레드가 없는 채널
+    expect(yes(qk.thread(CH, uid(77)))).toBe(false);
+    expect(shouldPersist({ queryKey: qk.thread(CH2, ROOT.id) }, [CH], { [CH2]: ROOT.id })).toBe(false);
+    expect(shouldPersist({ queryKey: qk.thread(CH, ROOT.id) }, [CH])).toBe(false);
+  });
+
+  it("trimForPersist: 루트는 남기고 마지막 답글 50개, 보내는 중 항목은 빼고 hasOlder 는 참", () => {
+    const pending = [
+      { clientMsgId: "c", channelId: CH, bodyMd: "p", createdAt: "x", state: "sending" as const },
+    ];
+    const out = trimForPersist({
+      mutations: [],
+      queries: [
+        {
+          queryKey: qk.thread(CH, ROOT.id),
+          queryHash: "h",
+          dehydratedAt: 1,
+          state: {
+            data: { ...threadOf(60), pending },
+            dataUpdateCount: 1,
+            dataUpdatedAt: 1,
+            error: null,
+            errorUpdateCount: 0,
+            errorUpdatedAt: 0,
+            fetchFailureCount: 0,
+            fetchFailureReason: null,
+            fetchMeta: null,
+            isInvalidated: false,
+            status: "success",
+            fetchStatus: "idle",
+          },
+        },
+      ],
+    });
+    const kept = out.queries[0]?.state.data as Timeline;
+    expect(kept.items).toHaveLength(TIMELINE_KEEP + 1);
+    expect(kept.items[0]?.id).toBe(ROOT.id);
+    expect(kept.items[1]?.seq).toBe(12);
+    expect(kept.pending).toEqual([]);
+    expect(kept.hasOlder).toBe(true);
+  });
+
+  it("저장·복원한다 — 복원한 스레드는 다시 열 때 새로 받게 낡은 것으로 둔다", async () => {
+    const qc = createQueryClient(() => {});
+    const { storage } = await persist(qc);
+    qc.setQueryData(qk.me, ME);
+    touchRecentChannel(qc, CH);
+    touchRecentThread(qc, CH, ROOT.id);
+    qc.setQueryData(qk.thread(CH, ROOT.id), threadOf(3));
+    qc.setQueryData(qk.thread(CH, uid(77)), threadOf(1));
+    await vi.waitFor(() =>
+      expect(storedKeys(storage)).toEqual(
+        [["me"], ["recentChannels"], ["recentThreads"], qk.thread(CH, ROOT.id)]
+          .map((k) => JSON.stringify(k))
+          .sort(),
+      ),
+    );
+
+    const next = createQueryClient(() => {});
+    await persist(next, storage);
+    expect(next.getQueryData<Timeline>(qk.thread(CH, ROOT.id))?.items.map((m) => m.seq)).toEqual([
+      1, 2, 3, 4,
+    ]);
+    expect(next.getQueryData(qk.recentThreads)).toEqual({ [CH]: ROOT.id });
+    expect(
+      next
+        .getQueryCache()
+        .find({ queryKey: qk.thread(CH, ROOT.id), exact: true })
+        ?.isStale(),
+    ).toBe(true);
   });
 });
 

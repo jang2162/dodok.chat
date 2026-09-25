@@ -1,9 +1,11 @@
 import type { Agent } from "@dodok/shared";
 import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { RouterContextProvider, createMemoryHistory } from "@tanstack/react-router";
 import { render } from "@testing-library/react";
 import type { ReactElement, ReactNode } from "react";
 import { qk } from "@/api/queries";
 import { createQueryClient } from "@/app/queryClient";
+import { createAppRouter } from "@/app/router";
 import { AGENT, USER } from "./fixtures";
 
 /** 메시지 렌더 테스트의 작성자: 사람 owner(USER) 한 명과 에이전트 dev(AGENT) */
@@ -39,10 +41,16 @@ export function authorsClient(agents: Agent[] = [DEV]): QueryClient {
   return qc;
 }
 
-/** QueryClientProvider 로 감싸 그린다 — rerender 도 같은 Provider 안 */
+/**
+ * QueryClientProvider 로 감싸 그린다 — rerender 도 같은 Provider 안. 메시지 행의 스레드 링크(칩·「스레드에서 답하기」)가
+ * 라우터 문맥을 읽으므로 앱 라우터의 문맥만 준다(화면은 그리지 않는다 — 넘긴 ui 가 곧 화면이다)
+ */
 export function renderWithClient(ui: ReactElement, qc: QueryClient = authorsClient()) {
+  const router = createAppRouter(qc, createMemoryHistory({ initialEntries: ["/"] }));
   const wrapper = ({ children }: { children: ReactNode }) => (
-    <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+    <QueryClientProvider client={qc}>
+      <RouterContextProvider router={router}>{children}</RouterContextProvider>
+    </QueryClientProvider>
   );
-  return { ...render(ui, { wrapper }), qc };
+  return { ...render(ui, { wrapper }), qc, router };
 }

@@ -12,7 +12,7 @@ import { ResetSessionDialog } from "@/features/agents/ResetSessionDialog";
 import { ONLY_IMAGES } from "@/features/attachments/upload";
 import { useComposerAttachments } from "@/features/attachments/useComposerAttachments";
 import { abortErrorMessage } from "@/features/runs/abortError";
-import { selectChannelRuns, TERMINAL, useRunStore } from "@/features/runs/runStore";
+import { selectScopeRuns, TERMINAL, useRunStore } from "@/features/runs/runStore";
 import { emitAck, useWireStatus, type WireSocket } from "@/realtime/wire";
 import { useWire } from "@/realtime/WireProvider";
 import { Button } from "@/ui/button";
@@ -26,6 +26,7 @@ import { useSendMessage } from "./useSendMessage";
 import { useTyping } from "./useTyping";
 
 const PLACEHOLDER = "메시지 보내기 — @로 에이전트 부르기";
+const THREAD_PLACEHOLDER = "스레드에 답하기 — @로 에이전트 부르기";
 const IMAGE_ACCEPT = "image/png,image/jpeg,image/gif,image/webp";
 
 /** 보내기를 막는 사유 — 우선순위 순(끊김이 먼저) */
@@ -49,18 +50,21 @@ const EDITOR_CLASS = [
   "[&_pre]:my-1 [&_pre]:rounded [&_pre]:bg-muted [&_pre]:p-2 [&_pre_code]:bg-transparent [&_pre_code]:p-0",
 ].join(" ");
 
-/** 「새 대화」 대상 — 연 채널에 묶는다. 열린 채 채널이 바뀌어도 요청은 그 채널로만 간다 */
-type ResetTarget = { channelId: string; agentId: string; handle: string };
+/** 「새 대화」 대상 — 연 채널(스레드)에 묶는다. 열린 채 채널이 바뀌어도 요청은 그 채널로만 간다 */
+type ResetTarget = { channelId: string; threadRootId?: string; agentId: string; handle: string };
 
 /**
  * 작성기(스펙 5.1·4.4·6.1): Tiptap + @멘션. Enter 전송(토큰 본문 `toBodyMd`), `/stop`·`/new @에이전트` 는 메시지로 보내지 않는다.
  * wire 가 connected 가 아니면 입력은 받되 전송은 막는다. 초안은 채널마다 따로 둔다 — 채널을 옮겨도 이 인스턴스가 유지된다.
- * 이미지는 첨부 버튼·붙여넣기·끌어 놓기로 넣는 즉시 올린다. 올리기가 모두 끝나야(오류 칩 없이) 보낼 수 있고, 글 없이 이미지만도 된다
+ * 이미지는 첨부 버튼·붙여넣기·끌어 놓기로 넣는 즉시 올린다. 올리기가 모두 끝나야(오류 칩 없이) 보낼 수 있고, 글 없이 이미지만도 된다.
+ * `threadRootId` 를 주면 스레드 작성기다(스레드·검색 스펙 4.2) — 메시지는 그 스레드로, `/stop` 은 그 스레드의 런만,
+ * `/new @에이전트` 는 그 스레드의 세션만(스펙 2.4). 작성 중 알림(`typing`)은 채널 단위라 보내지 않는다 —
+ * 스레드에서 쓰는 사람을 채널 작성기 아래에 「입력 중」으로 보이면 어디에 답하는지 틀리게 읽힌다
  */
-export function Composer({ channelId }: { channelId: string }) {
+export function Composer({ channelId, threadRootId }: { channelId: string; threadRootId?: string }) {
   const { socket } = useWire();
   const connected = useWireStatus((s) => s.status === "connected");
-  const { send } = useSendMessage(channelId);
+  const { send } = useSendMessage(channelId, threadRootId);
   const attachments = useComposerAttachments(channelId);
   const fileInput = useRef<HTMLInputElement>(null);
   const attachButton = useRef<HTMLButtonElement>(null);
@@ -72,6 +76,8 @@ export function Composer({ channelId }: { channelId: string }) {
   const [reset, setReset] = useState<{ target?: ResetTarget; open: boolean }>({ open: false });
   // 연 채널을 떠나면(대화상자 너머 뒤로 가기 등) 닫는다 — 되돌릴 수 없는 리셋을 옮겨 간 채널에서 묻지 않게
   if (reset.open && reset.target?.channelId !== channelId) setReset((r) => ({ ...r, open: false }));
+  // 초안은 채널마다, 스레드 작성기는 스레드마다 — 같은 패널에서 다른 스레드로 옮겨도 이 인스턴스가 유지된다
+  const draftKey = threadRootId === undefined ? channelId : `${channelId}:${threadRootId}`;
 
   const candidates = useMemo(
     () => mentionCandidates(members.data, agents.data, me.data),
@@ -91,7 +97,7 @@ export function Composer({ channelId }: { channelId: string }) {
     {
       extensions: [
         StarterKit.configure({ heading: false, horizontalRule: false, link: false, underline: false }),
-        Placeholder.configure({ placeholder: PLACEHOLDER }),
+        Placeholder.configure({ placeholder: threadRootId === undefined ? PLACEHOLDER : THREAD_PLACEHOLDER }),
         Mention.configure({
           HTMLAttributes: { class: "rounded bg-primary/10 px-0.5 font-medium text-primary" },
           renderText: ({ node }) => `@${String(node.attrs.label ?? "")}`,
@@ -103,7 +109,7 @@ export function Composer({ channelId }: { channelId: string }) {
         attributes: {
           role: "textbox",
           "aria-multiline": "true",
-          "aria-label": "메시지 입력",
+          "aria-label": threadRootId === undefined ? "메시지 입력" : "스레드 답글 입력",
           // @ 후보 목록이 뜬다 — 열렸을 때 목록·지금 줄은 MentionList 가 가리킨다(aria-controls·aria-activedescendant)
           "aria-autocomplete": "list",
           class: EDITOR_CLASS,
@@ -132,17 +138,17 @@ export function Composer({ channelId }: { channelId: string }) {
 
   // 채널을 옮기면 지금 초안을 그 채널 몫으로 두고, 옮겨 간 채널의 초안을 꺼낸다(없으면 비움)
   useEffect(() => {
-    const saved = drafts.get(channelId);
+    const saved = drafts.get(draftKey);
     if (saved) editor.commands.setContent(saved, { emitUpdate: false });
     else if (!editor.isEmpty) editor.commands.clearContent(false);
     return () => {
-      if (editor.isDestroyed || editor.isEmpty) drafts.delete(channelId);
-      else drafts.set(channelId, editor.getJSON());
+      if (editor.isDestroyed || editor.isEmpty) drafts.delete(draftKey);
+      else drafts.set(draftKey, editor.getJSON());
     };
-  }, [editor, channelId, drafts]);
+  }, [editor, draftKey, drafts]);
 
   live.current.candidates = candidates;
-  live.current.notifyTyping = typing.notify;
+  live.current.notifyTyping = threadRootId === undefined ? typing.notify : () => {};
   live.current.addFiles = (files) => {
     const images = files.filter((f) => isImageMime(f.type));
     if (images.length < files.length) toast.info(ONLY_IMAGES, { id: "attach-only-images" });
@@ -165,14 +171,14 @@ export function Composer({ channelId }: { channelId: string }) {
     if (cmd?.kind === "new") {
       const label = doc.content?.[0]?.content?.find((n) => n.attrs?.id === `a:${cmd.agentId}`)?.attrs?.label;
       const handle = agents.data?.find((a) => a.id === cmd.agentId)?.handle ?? String(label ?? "");
-      setReset({ target: { channelId, agentId: cmd.agentId, handle }, open: true });
+      setReset({ target: { channelId, threadRootId, agentId: cmd.agentId, handle }, open: true });
       editor.commands.clearContent();
       return;
     }
     // 메시지·/stop 은 wire 로 간다 — 붙어 있을 때만(입력은 그대로 둔다)
     if (!connected || !socket) return;
     if (cmd?.kind === "stop") {
-      stopRuns(socket, channelId);
+      stopRuns(socket, channelId, threadRootId);
       editor.commands.clearContent();
       return;
     }
@@ -257,6 +263,7 @@ export function Composer({ channelId }: { channelId: string }) {
       {reset.target && (
         <ResetSessionDialog
           channelId={reset.target.channelId}
+          threadRootId={reset.target.threadRootId}
           agentId={reset.target.agentId}
           handle={reset.target.handle}
           open={reset.open}
@@ -270,11 +277,15 @@ export function Composer({ channelId }: { channelId: string }) {
   );
 }
 
-/** `/stop`(스펙 5.1): 이 채널의 끝나지 않은 런마다 `run.abort`. 없으면 알리고, ack 실패는 코드별 토스트(스펙 8장) */
-function stopRuns(socket: WireSocket, channelId: string) {
-  const running = selectChannelRuns(channelId)(useRunStore.getState()).filter(
-    (v) => !TERMINAL.has(v.state.status),
-  );
+/**
+ * `/stop`(스펙 5.1): 이 채널(스레드 작성기면 그 스레드)의 끝나지 않은 런마다 `run.abort`. 없으면 알리고,
+ * ack 실패는 코드별 토스트(스펙 8장). 채널 작성기의 `/stop` 은 스레드 런을 멈추지 않는다 — 그 버블은 스레드 패널에 있다
+ */
+function stopRuns(socket: WireSocket, channelId: string, threadRootId?: string) {
+  const running = selectScopeRuns(
+    channelId,
+    threadRootId,
+  )(useRunStore.getState()).filter((v) => !TERMINAL.has(v.state.status));
   if (running.length === 0) {
     toast.info("진행 중인 실행이 없습니다");
     return;

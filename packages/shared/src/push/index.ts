@@ -21,7 +21,7 @@ export const PushPayload = z.object({
   channelId: Id,
   title: z.string().max(80),
   body: z.string().max(200),
-  url: z.string().max(200), // 같은 출처 상대 경로(/c/<uuid>·/c/<uuid>/activity) — 서비스 워커가 다시 거른다
+  url: z.string().max(200), // 같은 출처 상대 경로(/c/<uuid>·/c/<uuid>/activity·/c/<uuid>/t/<uuid>) — 서비스 워커가 다시 거른다
   tag: z.string().max(80),
 });
 export type PushPayload = z.infer<typeof PushPayload>;

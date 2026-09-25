@@ -1,7 +1,8 @@
 import type { ChannelSubscribeResult, Message, Result } from "@dodok/shared";
 import { QueryClient } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fromLatest } from "@/features/messages/timeline";
+import { fromLatest, threadFromPage } from "@/features/messages/timeline";
+import { qk } from "@/api/queries";
 import { ApiRequestError } from "@/api/http";
 import { registerUnauthorized } from "@/app/session";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
@@ -21,7 +22,7 @@ import {
   uid,
 } from "../../test/fixtures";
 import { createSubscriptions, type FetchPage, restFetchPage } from "./subscriptions";
-import { getTimeline, updateTimeline } from "./timelineCache";
+import { getThread, getTimeline, updateTimeline } from "./timelineCache";
 
 const ok = <T>(data: T): Result<T> => ({ ok: true, data });
 const subscribed = (messages: Message[], over: Partial<ChannelSubscribeResult> = {}) =>
@@ -273,6 +274,73 @@ describe("createSubscriptions", () => {
 
     expect(fake.sentOf("channel.subscribe")).toEqual([{ channelId: CH, lastSeq: 1 }]);
     expect(useApprovalStore.getState().byChannel[CH]?.[APPROVAL]?.approval.status).toBe("pending");
+  });
+});
+
+describe("재동기화의 스레드(Review Focus 3 — 끊긴 사이 온 스레드 답글)", () => {
+  const ROOT = msg(1);
+  const OTHER = msg(2);
+  const reply = (seq: number, root = ROOT) => msg(seq, { threadRootId: root.id });
+  const summary = (count: number, at: number) => ({ count, lastAt: msg(at).createdAt, agentIds: [] });
+  const openThread = (qc: QueryClient) =>
+    qc.setQueryData(qk.thread(CH, ROOT.id), threadFromPage(undefined, ROOT, [reply(3)], false));
+
+  it("답글은 연 스레드 캐시에, 닫힌 스레드의 답글은 버리고 요약(threadRoots)만 채널 캐시의 루트에", async () => {
+    const { fake, queryClient, subs } = setup();
+    seed(queryClient, [ROOT, OTHER]);
+    updateTimeline(queryClient, CH, (t) => ({ ...t, lastSeq: 3 }));
+    openThread(queryClient);
+    const root = msg(1, { threadSummary: summary(2, 5) });
+    const other = msg(2, { threadSummary: summary(1, 6) });
+    fake.onAck("channel.subscribe", () =>
+      subscribed([reply(5), reply(6, OTHER), msg(7)], { threadRoots: [root, other] }),
+    );
+
+    await subs.catchUp(CH);
+
+    expect(fake.sentOf("channel.subscribe")).toEqual([{ channelId: CH, lastSeq: 3 }]);
+    // 채널: 루트만, 요약은 새것, lastSeq 는 답글까지
+    const t = getTimeline(queryClient, CH);
+    expect(t?.items.map((m) => m.seq)).toEqual([1, 2, 7]);
+    expect(t?.items[0]?.threadSummary).toEqual(summary(2, 5));
+    expect(t?.items[1]?.threadSummary).toEqual(summary(1, 6));
+    expect(t?.lastSeq).toBe(7);
+    // 연 스레드: 답글이 들어오고 루트의 요약도 맞다
+    const thread = getThread(queryClient, CH, ROOT.id);
+    expect(thread?.items.map((m) => m.seq)).toEqual([1, 3, 5]);
+    expect(thread?.items[0]?.threadSummary).toEqual(summary(2, 5));
+    // 닫힌 스레드는 캐시를 만들지 않는다
+    expect(getThread(queryClient, CH, OTHER.id)).toBeUndefined();
+  });
+
+  it("구독 한 쪽을 넘겨 REST(루트만)로 이어 받았으면 연 스레드는 다시 받게 낡은 것으로 둔다", async () => {
+    const { fake, queryClient, fetchPage, subs } = setup();
+    seed(queryClient, [ROOT]);
+    openThread(queryClient);
+    fake.onAck("channel.subscribe", () => subscribed([reply(4)], { hasMore: true }));
+    fetchPage.mockResolvedValueOnce({ messages: [msg(9)], hasMore: false });
+
+    await subs.catchUp(CH);
+
+    expect(seqs(queryClient)).toEqual([1, 9]);
+    expect(queryClient.getQueryState(qk.thread(CH, ROOT.id))?.isInvalidated).toBe(true);
+  });
+
+  it("다시 새로 시작(fresh)하면 연 스레드도 낡은 것으로 둔다 — 루트만 받는 구독은 답글을 싣지 않는다", async () => {
+    const { fake, queryClient, fetchPage, subs } = setup();
+    seed(queryClient, [ROOT]);
+    openThread(queryClient);
+    fake.onAck("channel.subscribe", (p) =>
+      (p as { lastSeq?: number }).lastSeq === undefined
+        ? subscribed([msg(1500)])
+        : subscribed([msg(3)], { hasMore: true }),
+    );
+    fetchPage.mockImplementation(async () => ({ messages: [], hasMore: true }));
+
+    await subs.catchUp(CH);
+
+    expect(seqs(queryClient)).toEqual([1500]);
+    expect(queryClient.getQueryState(qk.thread(CH, ROOT.id))?.isInvalidated).toBe(true);
   });
 });
 

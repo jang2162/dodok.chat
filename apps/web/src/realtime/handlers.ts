@@ -1,14 +1,14 @@
-import type { AdapterStatus, Agent, Channel, OpsStatus, ServerToClientEvents } from "@dodok/shared";
+import type { AdapterStatus, Agent, Channel, Message, OpsStatus, ServerToClientEvents } from "@dodok/shared";
 import type { QueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ApiRequestError } from "@/api/http";
 import { type AdapterStatusResponse, meQuery, qk } from "@/api/queries";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
 import { forgetApproval, notifyApproval } from "@/features/approvals/notify";
-import { hasGap, upsert } from "@/features/messages/timeline";
+import { hasGap, noteSeq, type Timeline, upsert } from "@/features/messages/timeline";
 import { useRunStore } from "@/features/runs/runStore";
 import type { Subscriptions } from "./subscriptions";
-import { getTimeline, updateTimeline } from "./timelineCache";
+import { getTimeline, updateThread, updateTimeline } from "./timelineCache";
 import { useTypingStore } from "./typing";
 import { useWireStatus, type WireSocket, type WireStatus } from "./wire";
 
@@ -61,18 +61,39 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
   /** 한 번이라도 붙었는가 — 두 번째 connect 부터가 다시 붙은 것이다 */
   let connectedOnce = false;
 
-  /** 새 메시지·수정. 구독한 적 없는 채널(캐시 없음)은 무시, 빈틈이면 넣지 않고 lastSeq 로 이어 받는다(스펙 4.3-3·4) */
+  /**
+   * 새 메시지·수정. 구독한 적 없는 채널(캐시 없음)은 무시, 빈틈이면 넣지 않고 lastSeq 로 이어 받는다(스펙 4.3-3·4).
+   * 채널 룸 하나로 루트와 스레드 답글이 함께 온다(스레드·검색 스펙 4.1) — 채널 타임라인은 루트만, 답글은 seq 만 기록하고
+   * 연 스레드의 캐시에 넣는다. 루트의 바뀐 요약(`threadSummary`)은 서버가 루트 `message.updated` 로 따로 보낸다
+   */
   function applyMessage({ message: m }: MessageEvent, updated: boolean): void {
     const t = getTimeline(qc, m.channelId);
     if (!t) return;
-    // 적재 범위 밖(더 옛것)의 수정은 넣지 않는다 — 과거 페이지(beforeSeq)가 가장 옛 seq 를 기준으로 삼는다
-    if (updated && m.seq <= t.lastSeq && !t.items.some((x) => x.id === m.id)) return;
+    const rootId = m.threadRootId;
+    // 이미 지난 seq 의 수정 — 빈틈을 볼 일이 없다
+    const stale = updated && m.seq <= t.lastSeq;
     // 빈 채널(lastSeq 0)은 hasGap 이 빈틈으로 보지 않는다 — 구독 경합으로 앞 메시지를 놓쳤을 수 있다(web-t3 리뷰 Ruling)
-    if (hasGap(t, m) || (t.lastSeq === 0 && m.seq > 1)) {
+    if (!stale && (hasGap(t, m) || (t.lastSeq === 0 && m.seq > 1))) {
       void subscriptions.catchUp(m.channelId).catch(() => undefined);
       return;
     }
+    if (rootId !== undefined) {
+      if (!stale) updateTimeline(qc, m.channelId, (prev) => noteSeq(prev, m.seq));
+      updateThread(qc, m.channelId, rootId, (prev) => (keeps(prev, m, updated) ? upsert(prev, m) : prev));
+      return;
+    }
+    // 연 스레드의 루트는 적재 범위와 상관없이 늘 맞춘다(패널 맨 위에 늘 있다)
+    updateThread(qc, m.channelId, m.id, (prev) => upsert(prev, m));
+    // 적재 범위 밖(더 옛것)의 수정은 넣지 않는다 — 과거 페이지(beforeSeq)가 가장 옛 seq 를 기준으로 삼는다
+    if (stale && !t.items.some((x) => x.id === m.id)) return;
     updateTimeline(qc, m.channelId, (prev) => upsert(prev, m));
+  }
+
+  /** 스레드 캐시에 넣을 답글인가 — 수정이면 가진 것이거나 적재 범위(가장 옛 답글) 안일 때만 */
+  function keeps(thread: Timeline, m: Message, updated: boolean): boolean {
+    if (!updated || !thread.hasOlder || thread.items.some((x) => x.id === m.id)) return true;
+    const oldestReply = thread.items.find((x) => x.threadRootId !== undefined);
+    return oldestReply !== undefined && m.seq > oldestReply.seq;
   }
 
   function retryLater(): void {

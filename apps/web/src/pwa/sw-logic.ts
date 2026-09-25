@@ -3,10 +3,13 @@ import { PushPayload } from "@dodok/shared";
 // 서비스 워커(WebWorker)와 앱(DOM)이 함께 쓰는 순수 함수 — 어느 한쪽 전역(self·window·document)도 쓰지 않는다
 
 const UUID = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
-/** 알림이 열 수 있는 자리 — 같은 출처 상대 경로 `/c/<uuid>`·`/c/<uuid>/activity` 뿐(스펙 3장) */
-const SAFE_URL = new RegExp(`^/c/${UUID}(?:/activity)?$`);
+/**
+ * 알림이 열 수 있는 자리 — 같은 출처 상대 경로 `/c/<uuid>`·`/c/<uuid>/activity`·`/c/<uuid>/t/<uuid>`(스레드) 뿐
+ * (스펙 3장, 스레드·검색 스펙 4.2)
+ */
+const SAFE_URL = new RegExp(`^/c/${UUID}(?:/activity|/t/${UUID})?$`);
 
-/** 알림 누르기가 갈 곳. 위 두 꼴이 아니면(다른 출처·`//`·`..`·쿼리·다른 값) 모두 `/` */
+/** 알림 누르기가 갈 곳. 위 세 꼴이 아니면(다른 출처·`//`·`..`·쿼리·다른 값) 모두 `/` */
 export function safeNotificationUrl(url: unknown): string {
   return typeof url === "string" && SAFE_URL.test(url) ? url : "/";
 }

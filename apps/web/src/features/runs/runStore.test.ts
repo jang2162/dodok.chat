@@ -1,6 +1,13 @@
 import { RunEvent, RunState } from "@dodok/shared";
 import { beforeEach, describe, expect, it } from "vitest";
-import { reduceEvent, reduceReplay, reduceState, selectChannelRuns, useRunStore } from "./runStore";
+import {
+  reduceEvent,
+  reduceReplay,
+  reduceState,
+  selectChannelRuns,
+  selectScopeRuns,
+  useRunStore,
+} from "./runStore";
 
 const id = (n: number) => `01a00000-0000-7000-8000-${String(n).padStart(12, "0")}`;
 // uuid v7 은 생성 순 = 문자열 순. R1 < R2 < R3
@@ -81,5 +88,57 @@ describe("useRunStore", () => {
     expect(useRunStore.getState().runs[R1]).toMatchObject({ text: "ab", lastEventSeq: 3 });
     useRunStore.getState().reset();
     expect(useRunStore.getState().runs).toEqual({});
+  });
+});
+
+describe("런의 스레드 소속(판정 R3′)", () => {
+  const ROOT = id(500);
+  const started = (sessionKey: string) =>
+    ev({ type: "RUN_STARTED", seq: 1, threadId: C1, agentId: A1, sessionKey });
+  beforeEach(() => useRunStore.getState().reset());
+
+  it("run.state 의 threadRootId 가 1순위 — queued 로 RUN_STARTED 전이어도 스레드 런이다", () => {
+    expect(reduceState(undefined, state({ status: "queued", threadRootId: ROOT }), 1).threadRootId).toBe(
+      ROOT,
+    );
+    // 뒤따른 상태에 필드가 빠져도 잊지 않는다
+    const v = reduceState(reduceState(undefined, state({ threadRootId: ROOT }), 1), state(), 2);
+    expect(v.threadRootId).toBe(ROOT);
+  });
+
+  it("threadRootId 가 없으면 RUN_STARTED 의 세션 키를 shared 파서로 풀어 가른다 — 채널 키는 채널 런", () => {
+    const base = reduceState(undefined, state({ status: "queued" }), 1);
+    const thread = reduceEvent(base, started(`agent:dev:dodok:channel:${C1}:thread:${ROOT.toUpperCase()}`));
+    expect(thread?.threadRootId).toBe(ROOT);
+    const channel = reduceEvent(base, started(`agent:dev:dodok:channel:${C1}`));
+    expect(channel?.threadRootId).toBeUndefined();
+  });
+
+  it("selectScopeRuns: 채널 범위는 스레드 런을, 스레드 범위는 채널 런·다른 스레드 런을 뺀다", () => {
+    const s = useRunStore.getState();
+    s.applyState(state({ id: R1 }));
+    s.applyState(state({ id: R2, threadRootId: ROOT }));
+    s.applyState(state({ id: R3, threadRootId: id(501) }));
+    const now = useRunStore.getState();
+    expect(selectScopeRuns(C1)(now).map((v) => v.state.id)).toEqual([R1]);
+    expect(selectScopeRuns(C1, ROOT)(now).map((v) => v.state.id)).toEqual([R2]);
+    // 활동 탭·재동기화는 여전히 채널의 전부를 본다
+    expect(selectChannelRuns(C1)(now)).toHaveLength(3);
+  });
+
+  it("런을 스토어에서 지워도 스레드 소속은 남는다 — 확정된 승인 카드가 채널로 새지 않게", () => {
+    const s = useRunStore.getState();
+    s.applyState(state({ id: R2, threadRootId: ROOT }));
+    s.remove(R2);
+    expect(useRunStore.getState().threads[R2]).toBe(ROOT);
+    useRunStore.getState().reset();
+    expect(useRunStore.getState().threads).toEqual({});
+  });
+
+  it("재생(applyReplay)의 RUN_STARTED 로도 소속을 기록한다", () => {
+    useRunStore
+      .getState()
+      .applyReplay(state({ id: R1 }), [started(`agent:dev:dodok:channel:${C1}:thread:${ROOT}`)]);
+    expect(useRunStore.getState().threads[R1]).toBe(ROOT);
   });
 });

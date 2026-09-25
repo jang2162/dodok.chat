@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { MessageAttachments } from "@/features/attachments/MessageAttachments";
 import { referencedAttachmentIds } from "@/features/attachments/resolve";
 import { Components } from "@/features/components/Components";
+import { ReplyInThread, ThreadChip } from "@/features/threads/ThreadChip";
 import { Avatar, AvatarFallback, AvatarImage } from "@/ui/avatar";
 import { Badge } from "@/ui/badge";
 import { MessageBody } from "./MessageBody";
@@ -52,12 +53,25 @@ export function AuthorLine({ author, children }: { author: Author; children: Rea
  * 사람·에이전트 메시지(스펙 5.3): 머리(아바타·이름·「AI」·시각) + 본문 + 첨부 + components 카드.
  * 글 없는 첨부 메시지는 본문을 그리지 않는다(빈 단락이 줄을 차지하지 않게). 카드가 가리킨 첨부는 본문 아래에 다시 그리지 않는다(첨부 스펙 6.3).
  * 같은 작성자의 연속(`head: false`)은 머리를 생략하고 시각은 마우스를 올리거나 행 안에 초점이 있을 때만 보인다 —
- * 투명도로만 숨겨 스크린 리더는 늘 읽는다(visibility:hidden 은 접근성 트리에서도 빠진다, web-t7 리뷰 m6)
+ * 투명도로만 숨겨 스크린 리더는 늘 읽는다(visibility:hidden 은 접근성 트리에서도 빠진다, web-t7 리뷰 m6).
+ * 채널 타임라인에서는 루트 아래에 답글 요약 칩과 「스레드에서 답하기」가 붙는다(스레드·검색 스펙 4.2) — 스레드 패널
+ * 안(`inThread`)에서는 둘 다 없다: 이미 그 스레드이고, 스레드 안의 스레드는 없다
  */
-export function MessageItem({ message, head }: { message: Message; head: boolean }) {
+export function MessageItem({
+  message,
+  head,
+  inThread = false,
+}: {
+  message: Message;
+  head: boolean;
+  inThread?: boolean;
+}) {
   const author = useAuthors().author(message);
   return (
-    <article className="group flex gap-3 px-4 py-0.5 hover:bg-accent/40" data-head={head || undefined}>
+    <article
+      className="group relative flex gap-3 px-4 py-0.5 hover:bg-accent/40"
+      data-head={head || undefined}
+    >
       <div className="flex w-9 shrink-0 justify-end">
         {head ? (
           <div className="pt-1">
@@ -83,7 +97,11 @@ export function MessageItem({ message, head }: { message: Message; head: boolean
           exclude={referencedAttachmentIds(message.components, message.attachments)}
         />
         <Components message={message} />
+        {!inThread && message.threadSummary && (
+          <ThreadChip message={message} summary={message.threadSummary} />
+        )}
       </div>
+      {!inThread && <ReplyInThread message={message} />}
     </article>
   );
 }

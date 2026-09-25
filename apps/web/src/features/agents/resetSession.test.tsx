@@ -56,6 +56,19 @@ it("POST /channels/:id/agents/:agentId/reset", async () => {
   expect(result.current.data).toBeUndefined();
 });
 
+it("스레드면 ?threadRootId= 를 붙인다 — 그 스레드의 세션만(채널 세션은 그대로, 스펙 2.4)", async () => {
+  const fetch = vi.fn<typeof globalThis.fetch>(async () => json(200, { ok: true }));
+  vi.stubGlobal("fetch", fetch);
+  const qc = createQueryClient(() => {});
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+  );
+  const { result } = renderHook(() => useResetSession("ch-1", "root-1"), { wrapper });
+  result.current.mutate("ag-1");
+  await waitFor(() => expect(result.current.isSuccess).toBe(true));
+  expect(fetch.mock.calls[0]?.[0]).toBe("/api/v1/channels/ch-1/agents/ag-1/reset?threadRootId=root-1");
+});
+
 it("실패는 전역 토스트 없이(대화상자가 그린다) — 503 도, 409 도", async () => {
   const { toastError, result } = setup(() =>
     json(503, { code: "ADAPTER_UNAVAILABLE", message: "adapter down" }),

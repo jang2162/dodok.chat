@@ -7,15 +7,17 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/ui/sheet";
 
-export type PanelTab = "settings" | "activity";
+export type PanelTab = "settings" | "activity" | "thread";
 
 /**
- * 오른쪽 패널의 탭 둘(설계 5.1). 순서가 화면 순서다.
- * `scroll` 은 틀이 세로 스크롤을 맡는가 — 활동 탭은 제 스크롤 영역을 따로 가진다(런 목록·타임라인)
+ * 오른쪽 패널의 탭(설계 5.1). 순서가 화면 순서다.
+ * `scroll` 은 틀이 세로 스크롤을 맡는가 — 활동·스레드 탭은 제 스크롤 영역을 따로 가진다(런 목록·타임라인, 메시지 목록).
+ * 스레드 탭은 스레드를 연 동안에만 머리에 있다 — 어느 스레드인지(`rootId`)는 주소에서 온다(스레드·검색 스펙 4.2)
  */
 const TABS = [
   { id: "settings", label: "설정", title: "채널 설정", to: "/c/$channelId/settings", scroll: true },
   { id: "activity", label: "활동", title: "활동", to: "/c/$channelId/activity", scroll: false },
+  { id: "thread", label: "스레드", title: "스레드", to: "/c/$channelId/t/$rootId", scroll: false },
 ] as const satisfies ReadonlyArray<{
   id: PanelTab;
   label: string;
@@ -53,11 +55,14 @@ export function usePanelTab(): PanelTab | undefined {
  */
 export function PanelTabs({
   channelId,
+  rootId,
   active,
   children,
   openerRef,
 }: {
   channelId: string;
+  /** 연 스레드의 루트(스레드 탭일 때) — 탭 머리의 「스레드」 링크가 쓴다 */
+  rootId?: string;
   active: PanelTab;
   children: ReactNode;
   /** 패널을 여는 자리(헤더의 「채널 설정」) — 패널을 닫으면(좁은 화면 시트·넓은 화면 닫기 링크) 초점을 여기로 돌려준다(D14) */
@@ -124,7 +129,7 @@ export function PanelTabs({
             <div className="flex h-14 shrink-0 items-center border-b px-4 pr-12">
               <SheetTitle>{tab.title}</SheetTitle>
             </div>
-            <TabBar ref={tabsRef} channelId={channelId} active={active} />
+            <TabBar ref={tabsRef} channelId={channelId} rootId={rootId} active={active} />
             <div ref={slot} className={bodyClass} />
           </SheetContent>
         </Sheet>
@@ -160,41 +165,59 @@ export function PanelTabs({
             </Link>
           </Button>
         </div>
-        <TabBar channelId={channelId} active={active} />
+        <TabBar channelId={channelId} rootId={rootId} active={active} />
         <div ref={slot} className={bodyClass} />
       </aside>
     </>
   );
 }
 
-/** 탭 머리. 실제 이동이라 링크다 — 지금 탭은 라우터 Link 가 `aria-current="page"` 를 붙인다 */
+/** 탭 머리. 실제 이동이라 링크다 — 지금 탭은 라우터 Link 가 `aria-current="page"` 를 붙인다. 스레드 탭은 연 스레드가 있을 때만 */
 function TabBar({
   channelId,
+  rootId,
   active,
   ref,
 }: {
   channelId: string;
+  rootId?: string;
   active: PanelTab;
   ref?: RefObject<HTMLElement | null>;
 }) {
+  const className = (id: PanelTab) =>
+    cn(
+      "-mb-px border-b-2 px-3 py-2 text-sm font-medium transition-colors",
+      id === active
+        ? "border-primary text-foreground"
+        : "border-transparent text-muted-foreground hover:text-foreground",
+    );
   return (
     <nav ref={ref} aria-label="패널 탭" className="flex shrink-0 gap-1 border-b px-2">
-      {TABS.map((tab) => (
-        <Link
-          key={tab.id}
-          data-tab-id={tab.id}
-          to={tab.to}
-          params={{ channelId }}
-          className={cn(
-            "-mb-px border-b-2 px-3 py-2 text-sm font-medium transition-colors",
-            tab.id === active
-              ? "border-primary text-foreground"
-              : "border-transparent text-muted-foreground hover:text-foreground",
-          )}
-        >
-          {tab.label}
-        </Link>
-      ))}
+      {TABS.map((tab) =>
+        tab.id === "thread" ? (
+          rootId !== undefined && (
+            <Link
+              key={tab.id}
+              data-tab-id={tab.id}
+              to={tab.to}
+              params={{ channelId, rootId }}
+              className={className(tab.id)}
+            >
+              {tab.label}
+            </Link>
+          )
+        ) : (
+          <Link
+            key={tab.id}
+            data-tab-id={tab.id}
+            to={tab.to}
+            params={{ channelId }}
+            className={className(tab.id)}
+          >
+            {tab.label}
+          </Link>
+        ),
+      )}
     </nav>
   );
 }

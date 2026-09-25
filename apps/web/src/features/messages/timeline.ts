@@ -60,9 +60,52 @@ export function upsertMany(t: Timeline, incoming: readonly Message[]): Timeline 
 }
 export const upsert = (t: Timeline, m: Message): Timeline => upsertMany(t, [m]);
 
-/** 이 메시지 앞에 빠진 seq 가 있는가 — 있으면 lastSeq 로 다시 구독한다. 처음(lastSeq 0)·이미 가진 것은 빈틈이 아니다 */
+/**
+ * 이 메시지 앞에 빠진 seq 가 있는가 — 있으면 lastSeq 로 다시 구독한다. 처음(lastSeq 0)·이미 가진 것은 빈틈이 아니다.
+ * 채널 타임라인은 루트만 들지만 답글도 채널 seq 를 같이 쓴다 — 답글이 오면 `noteSeq` 로 lastSeq 를 올려 두어야
+ * 다음 루트가 거짓 빈틈이 되지 않는다
+ */
 export function hasGap(t: Timeline, m: Message): boolean {
   return t.lastSeq > 0 && m.seq > t.lastSeq + 1 && !t.items.some((x) => x.id === m.id);
+}
+
+/** 채널 타임라인에 넣지 않는 메시지의 seq(스레드 답글)를 본 것으로 기록한다 */
+export function noteSeq(t: Timeline, seq: number): Timeline {
+  return seq > t.lastSeq ? { ...t, lastSeq: seq } : t;
+}
+
+const isRoot = (m: Message) => m.threadRootId === undefined;
+
+/** 재동기화 응답(루트·답글이 섞였다)을 채널 타임라인에 — 루트는 병합하고 답글은 seq 만 기록한다 */
+export function applyToChannel(t: Timeline, incoming: readonly Message[]): Timeline {
+  return noteSeq(upsertMany(t, incoming.filter(isRoot)), maxSeq(incoming));
+}
+
+/**
+ * 이미 가진 루트만 갈아 끼운다 — 재동기화 ack 의 `threadRoots`(끊긴 사이 바뀐 옛 루트의 요약). 적재 범위 밖의 루트는
+ * 넣지 않는다(과거 페이지가 가장 옛 seq 를 기준으로 삼는다)
+ */
+export function refreshRoots(t: Timeline, roots: readonly Message[]): Timeline {
+  const byId = new Map(roots.map((m) => [m.id, m]));
+  if (!t.items.some((m) => byId.has(m.id))) return t;
+  return { ...t, items: t.items.map((m) => byId.get(m.id) ?? m) };
+}
+
+/** 이 스레드의 것(루트와 그 답글)만 */
+export const inThread = (rootId: string, incoming: readonly Message[]): Message[] =>
+  incoming.filter((m) => m.id === rootId || m.threadRootId === rootId);
+
+/**
+ * 스레드 타임라인 — 루트와 답글을 seq 순으로 한 목록에 둔다. 루트는 스레드에서 가장 옛 메시지라 늘 맨 앞이고,
+ * 페이지가 거기까지 닿지 않아도 넣는다(REST 가 `root` 를 따로 싣는다). 보내는 중 항목은 유지한다
+ */
+export function threadFromPage(
+  prev: Timeline | undefined,
+  root: Message,
+  messages: readonly Message[],
+  hasOlder: boolean,
+): Timeline {
+  return fromLatest(prev, [root, ...messages.filter((m) => m.id !== root.id)], hasOlder);
 }
 
 /** 같은 clientMsgId 가 있으면 빼고 끝에 다시 넣는다(다시 보내기) */

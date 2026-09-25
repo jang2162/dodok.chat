@@ -11,6 +11,8 @@ import { formError } from "@/api/formErrors";
 import { useCreateAgent } from "./mutations";
 
 const NAME_MAX = 80;
+/** OpenClaw 에이전트 id 규칙 안내 — 서버가 shared 세션 키 헬퍼와 같은 규칙으로 거절한다(스레드·검색 태스크 5) */
+export const PROVIDER_ID_HINT = "영문·숫자로 시작, 영문·숫자·_·- (64자 이하)";
 
 /** 클라이언트 검사 — shared 규칙(Handle·Agent.name)과 같다. 문구는 폼 안에 그린다 */
 export const handleProblem = (handle: string): string | undefined =>
@@ -22,25 +24,35 @@ export function nameProblem(name: string): string | undefined {
   return undefined;
 }
 
-/** 라벨·입력·오류 한 벌. 오류는 입력의 설명(aria-describedby)으로 잇고, 오류 자리는 늘 두는 라이브 영역이다 */
+/**
+ * 라벨·입력·오류 한 벌. 오류는 입력의 설명(aria-describedby)으로 잇고, 오류 자리는 늘 두는 라이브 영역이다.
+ * 안내(`hint`)가 있으면 칸 아래에 늘 보이고, 오류가 없을 때의 설명이다 — 오류가 나면 설명은 오류 문구가 된다
+ */
 function Field({
   label,
   error,
+  hint,
   ...input
-}: { label: string; error?: string } & Omit<ComponentProps<"input">, "id">) {
+}: { label: string; error?: string; hint?: string } & Omit<ComponentProps<"input">, "id">) {
   const id = useId();
+  const describedBy = error !== undefined ? `${id}-error` : hint !== undefined ? `${id}-hint` : undefined;
   return (
     <div className="flex flex-col gap-1.5">
       <Label htmlFor={id}>{label}</Label>
       <Input
         id={id}
         aria-invalid={error !== undefined}
-        aria-describedby={error === undefined ? undefined : `${id}-error`}
+        aria-describedby={describedBy}
         autoCapitalize="none"
         autoComplete="off"
         spellCheck={false}
         {...input}
       />
+      {hint !== undefined && (
+        <p id={`${id}-hint`} className="text-xs text-muted-foreground">
+          {hint}
+        </p>
+      )}
       <FieldError id={`${id}-error`}>{error}</FieldError>
     </div>
   );
@@ -85,7 +97,8 @@ export function AgentFields(props: AgentFieldsProps) {
 
 /**
  * OpenClaw id·핸들·이름을 직접 넣어 등록. 핸들·이름은 손대기 전까지 OpenClaw id 를 따라간다(핸들은 handleFrom).
- * 서버 CONFLICT 는 핸들 칸 아래, VALIDATION 은 폼 아래 — 그 밖은 전역 토스트가 알린다
+ * 서버 CONFLICT 는 핸들 칸 아래, providerAgentId 를 가리킨 VALIDATION 은 OpenClaw id 칸 아래, 그 밖의 VALIDATION 은
+ * 폼 아래 — 그 밖은 전역 토스트가 알린다
  */
 export function ManualAgentForm({
   registeredIds,
@@ -99,13 +112,18 @@ export function ManualAgentForm({
   const [rawId, setRawId] = useState("");
   const [handle, setHandle] = useState<string>(); // undefined 면 OpenClaw id 를 따른다
   const [name, setName] = useState<string>();
-  const [serverError, setServerError] = useState<{ field: "handle" | "form"; message: string }>();
+  const [serverError, setServerError] = useState<{ field: "id" | "handle" | "form"; message: string }>();
 
   const providerAgentId = rawId.trim();
   const started = providerAgentId !== "";
   const currentHandle = handle ?? (started ? handleFrom(providerAgentId) : "");
   const currentName = name ?? providerAgentId;
-  const idError = registeredIds.has(providerAgentId) ? "이미 등록된 OpenClaw id 입니다" : undefined;
+  const idError =
+    serverError?.field === "id"
+      ? serverError.message
+      : registeredIds.has(providerAgentId)
+        ? "이미 등록된 OpenClaw id 입니다"
+        : undefined;
   const handleError =
     serverError?.field === "handle"
       ? serverError.message
@@ -136,7 +154,8 @@ export function ManualAgentForm({
         onError: (err) => {
           const message = formError(err);
           if (message === undefined) return;
-          const field = err instanceof ApiRequestError && err.code === "CONFLICT" ? "handle" : "form";
+          const code = err instanceof ApiRequestError ? err.code : undefined;
+          const field = code === "CONFLICT" ? "handle" : /\bproviderAgentId\b/.test(message) ? "id" : "form";
           setServerError({ field, message });
         },
       },
@@ -150,6 +169,7 @@ export function ManualAgentForm({
         value={rawId}
         onChange={(e) => edit(setRawId)(e.target.value)}
         error={idError}
+        hint={PROVIDER_ID_HINT}
         disabled={create.isPending}
       />
       <AgentFields

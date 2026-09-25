@@ -3,10 +3,11 @@ import type { QueryClient } from "@tanstack/react-query";
 import { ApiRequestError, api } from "@/api/http";
 import { notifyUnauthorized } from "@/app/session";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
-import { fromLatest, upsertMany } from "@/features/messages/timeline";
+import { qk } from "@/api/queries";
+import { applyToChannel, fromLatest, refreshRoots, upsert, upsertMany } from "@/features/messages/timeline";
 import { TERMINAL, useRunStore } from "@/features/runs/runStore";
 import { createRunReplay } from "./runReplay";
-import { getTimeline, updateTimeline } from "./timelineCache";
+import { getTimeline, updateThread, updateTimeline } from "./timelineCache";
 import { emitAck, type WireSocket } from "./wire";
 
 const PAGE = 200;
@@ -82,11 +83,42 @@ export function createSubscriptions(deps: {
     await Promise.all(res.activeRuns.filter((r) => REPLAY_STATUSES.has(r.status)).map(runReplay.fromStart));
   }
 
+  /**
+   * 이 채널의 스레드 캐시를 낡은 것으로 둔다 — 보고 있는 스레드는 곧바로 다시 받고, 닫힌 것은 다시 열 때 받는다.
+   * 답글을 다 받았다고 말할 수 없는 재동기화(루트만 싣는 새 구독·REST 이어 받기) 뒤에 부른다
+   */
+  const staleThreads = (channelId: string) =>
+    void qc.invalidateQueries({ queryKey: qk.threads(channelId) }).catch(() => undefined);
+
   async function fresh(channelId: string): Promise<void> {
     const known = knownApprovals(channelId);
+    const had = getTimeline(qc, channelId) !== undefined;
     const res = await emitAck(socket, "channel.subscribe", { channelId });
     updateTimeline(qc, channelId, (prev) => fromLatest(prev, res.messages, res.hasMore));
+    // 처음 들어간 채널의 스레드는 방금 REST 로 받는 중이다 — 가진 캐시를 버릴 때만
+    if (had) staleThreads(channelId);
     await applySubscribed(channelId, res, known);
+  }
+
+  /**
+   * lastSeq 재동기화 응답을 나눈다(Review Focus 3): 루트는 채널 타임라인에, 답글은 **연 스레드의 캐시에만**(연 적 없는
+   * 스레드의 답글은 버린다), `threadRoots`(끊긴 사이 요약이 바뀐 옛 루트)는 가진 루트를 갈아 끼운다
+   */
+  function distribute(
+    channelId: string,
+    messages: readonly Message[],
+    threadRoots: readonly Message[],
+  ): void {
+    updateTimeline(qc, channelId, (prev) => refreshRoots(applyToChannel(prev, messages), threadRoots));
+    const replies = new Map<string, Message[]>();
+    for (const m of messages) {
+      if (m.threadRootId !== undefined)
+        replies.set(m.threadRootId, [...(replies.get(m.threadRootId) ?? []), m]);
+    }
+    for (const [rootId, list] of replies) updateThread(qc, channelId, rootId, (t) => upsertMany(t, list));
+    for (const root of [...threadRoots, ...messages.filter((m) => m.threadRootId === undefined)]) {
+      updateThread(qc, channelId, root.id, (t) => upsert(t, root));
+    }
   }
 
   /** 가진 것(lastSeq) 뒤를 받아 병합한다. 처음(캐시 없음·lastSeq 0)이면 최근 페이지로 새로 시작한다 */
@@ -95,9 +127,11 @@ export function createSubscriptions(deps: {
     if (!t || t.lastSeq === 0) return fresh(channelId);
     const known = knownApprovals(channelId);
     const res = await emitAck(socket, "channel.subscribe", { channelId, lastSeq: t.lastSeq });
-    updateTimeline(qc, channelId, (prev) => upsertMany(prev, res.messages));
+    distribute(channelId, res.messages, res.threadRoots ?? []);
     await applySubscribed(channelId, res, known);
     let hasMore = res.hasMore;
+    // REST 이어 받기는 루트만 준다 — 그 사이 답글은 스레드 캐시가 다시 받는다
+    if (hasMore) staleThreads(channelId);
     for (let pages = 1; hasMore; pages += 1) {
       if (pages >= MAX_PAGES) return fresh(channelId);
       const lastSeq = getTimeline(qc, channelId)?.lastSeq ?? 0;

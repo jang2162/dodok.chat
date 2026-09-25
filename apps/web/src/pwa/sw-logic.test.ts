@@ -6,6 +6,8 @@ describe("safeNotificationUrl", () => {
   it("같은 출처 상대 채널 경로만", () => {
     expect(safeNotificationUrl(`/c/${CH}`)).toBe(`/c/${CH}`);
     expect(safeNotificationUrl(`/c/${CH}/activity`)).toBe(`/c/${CH}/activity`);
+    // 스레드 멘션·스레드 안 릴레이 한도(스레드·검색 스펙 4.2) — 누르면 그 스레드
+    expect(safeNotificationUrl(`/c/${CH}/t/${CH}`)).toBe(`/c/${CH}/t/${CH}`);
     for (const bad of [
       "https://evil.example/c/x",
       `https://evil.example/c/${CH}`,
@@ -16,6 +18,11 @@ describe("safeNotificationUrl", () => {
       `/c/${CH}?x=1`,
       `/c/${CH}#x`,
       `/c/${CH}/settings`,
+      `/c/${CH}/t/nope`,
+      `/c/${CH}/t/`,
+      `/c/${CH}/t/${CH}/x`,
+      `/c/${CH}/t/${CH}?x=1`,
+      `/c/${CH}/activity/t/${CH}`,
       `/\\evil.example/c/${CH}`,
       "/c/nope",
       "javascript:alert(1)",

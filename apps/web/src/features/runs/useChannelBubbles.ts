@@ -4,7 +4,7 @@ import { useShallow } from "zustand/react/shallow";
 import { qk } from "@/api/queries";
 import type { Timeline } from "@/features/messages/timeline";
 import { planBubbles } from "./bubblePhase";
-import { selectChannelRuns, useRunStore } from "./runStore";
+import { selectScopeRuns, useRunStore } from "./runStore";
 
 type RunStoreState = ReturnType<typeof useRunStore.getState>;
 const NONE: string[] = [];
@@ -16,20 +16,25 @@ const messageRunIds = (t: Timeline): string[] =>
 /**
  * 채널에 보일 스트리밍 버블의 runId(런 순서, 스펙 4.6). 내용이 같으면 같은 배열을 돌려주고 델타로는 다시 그리지 않는다 —
  * 버블 텍스트는 `StreamingBubble` 이 런 스토어에서 직접 읽는다.
- * 숨겨진 종료 런은 런 스토어에서 지우고, 보이는 종료 런이 숨겨질 시각에 다시 계산한다. 그 타이머는 채널이 바뀌거나 내려가면 거둔다
+ * 숨겨진 종료 런은 런 스토어에서 지우고, 보이는 종료 런이 숨겨질 시각에 다시 계산한다. 그 타이머는 채널이 바뀌거나 내려가면 거둔다.
+ * `threadRootId` 를 주면 그 스레드의 런만, 없으면 채널 런만(판정 R3′) — 스레드 런의 버블은 채널 타임라인에 새지 않는다.
+ * 캐시는 읽기만 한다(스레드를 받아 오는 것은 패널의 `useTimeline`)
  */
-export function useChannelBubbles(channelId: string): readonly string[] {
+export function useChannelBubbles(channelId: string, threadRootId?: string): readonly string[] {
   const ids = useQuery<Timeline, Error, string[]>({
-    queryKey: qk.timeline(channelId),
+    queryKey: threadRootId === undefined ? qk.timeline(channelId) : qk.thread(channelId, threadRootId),
     queryFn: skipToken,
     select: messageRunIds,
+    // 스레드 조회의 오류는 패널이 그린다 — 같은 키의 관찰자라 meta 를 맞춘다(마지막 관찰자의 meta 가 이긴다)
+    meta: { silent: true },
   }).data;
   const withMessage = useMemo(() => new Set(ids ?? NONE), [ids]);
   const [tick, recompute] = useReducer((n: number) => n + 1, 0);
 
   // 시각은 렌더마다 한 번 — 한 렌더 안의 선택자들은 같은 시각으로 계산한다
   const now = Date.now();
-  const plan = (s: RunStoreState) => planBubbles(selectChannelRuns(channelId)(s), withMessage, now);
+  const plan = (s: RunStoreState) =>
+    planBubbles(selectScopeRuns(channelId, threadRootId)(s), withMessage, now);
   const visible = useRunStore(useShallow((s) => plan(s).visible));
   const stale = useRunStore(useShallow((s) => plan(s).stale));
   const nextAt = useRunStore((s) => plan(s).nextAt);
@@ -44,7 +49,7 @@ export function useChannelBubbles(channelId: string): readonly string[] {
     if (nextAt === undefined) return;
     const timer = setTimeout(recompute, Math.max(0, nextAt - Date.now()));
     return () => clearTimeout(timer);
-  }, [channelId, nextAt, tick]);
+  }, [channelId, threadRootId, nextAt, tick]);
 
   return visible;
 }

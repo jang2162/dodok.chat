@@ -3,12 +3,14 @@ import { api, ApiRequestError, NetworkError } from "@/api/http";
 
 /**
  * 「새 대화」(스펙 6.4) — `POST /channels/:id/agents/:agentId/reset`, 변수는 agentId. 성공하면 서버가 info 시스템 메시지를
- * 채널에 보내므로 캐시를 고치지 않는다. 오류는 대화상자 안에 `resetErrorMessage` 로 그리므로 전역 토스트를 끈다(401 은 그대로 로그인)
+ * 채널에 보내므로 캐시를 고치지 않는다. 오류는 대화상자 안에 `resetErrorMessage` 로 그리므로 전역 토스트를 끈다(401 은 그대로 로그인).
+ * `threadRootId` 를 주면 그 스레드의 세션만 리셋한다(`?threadRootId=`, 스레드·검색 스펙 2.4) — 채널 세션은 그대로다
  */
-export function useResetSession(channelId: string) {
+export function useResetSession(channelId: string, threadRootId?: string) {
   return useMutation<void, Error, string>({
     mutationFn: async (agentId) => {
-      await api<{ ok: true }>("POST", `/channels/${channelId}/agents/${agentId}/reset`);
+      const query = threadRootId === undefined ? "" : `?${new URLSearchParams({ threadRootId })}`;
+      await api<{ ok: true }>("POST", `/channels/${channelId}/agents/${agentId}/reset${query}`);
     },
     meta: { silent: true },
   });

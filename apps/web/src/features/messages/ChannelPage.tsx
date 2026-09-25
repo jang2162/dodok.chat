@@ -18,13 +18,13 @@ import { MessageList } from "./MessageList";
 import { type PendingActions, PendingActionsContext } from "./pendingActions";
 
 /**
- * 채널 화면: 헤더 · 메시지 목록 · 작성기 · 오른쪽 패널(`PanelTabs` 틀 + 탭 내용 `<Outlet/>`).
+ * 채널 화면: 헤더 · 메시지 목록(루트만) · 작성기 · 오른쪽 패널(`PanelTabs` 틀 + 탭 내용 `<Outlet/>` — 설정·활동·스레드).
  * 채널이 확인되기 전(목록의 자리값 포함)에는 그 안을 그리지 않는다 — 없는 채널에서 멤버·메시지 조회가 나가
  * 전역 토스트가 화면 안 문구와 겹치지 않게. 불러오지 못하면(없는 채널 등) 화면 안에 알린다(`useChannel` 은 silent)
  */
 export function ChannelPage() {
   // 라우트 id 문자열에 기대지 않는다(레이아웃 id 가 바뀌어도 안전)
-  const { channelId } = useParams({ strict: false }) as { channelId: string };
+  const { channelId, rootId } = useParams({ strict: false }) as { channelId: string; rootId?: string };
   // 오른쪽 패널의 탭 머리는 여기서 그린다 — 탭을 옮겨도 머리의 링크가 죽지 않아야 초점이 살아남는다(D3)
   const tab = usePanelTab();
   // 좁은 화면에서 패널은 시트로 뜬다 — 닫히면 초점을 연 자리(헤더의 설정 링크)로 돌려준다(D14)
@@ -77,7 +77,12 @@ export function ChannelPage() {
         </section>
       </PendingActionsContext.Provider>
       {tab && (
-        <PanelTabs channelId={channelId} active={tab} openerRef={settingsRef}>
+        <PanelTabs
+          channelId={channelId}
+          rootId={tab === "thread" ? rootId : undefined}
+          active={tab}
+          openerRef={settingsRef}
+        >
           <Outlet />
         </PanelTabs>
       )}

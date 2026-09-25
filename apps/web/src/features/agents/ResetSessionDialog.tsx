@@ -15,10 +15,12 @@ import { resetErrorMessage, useResetSession } from "./resetSession";
  * 「새 대화」 확인 대화상자(스펙 6.4·5.1 `/new`). 작성기와 채널 설정 패널(태스크 11)이 같이 쓴다 — 여는 버튼은 부르는 쪽 몫.
  * 성공하면 토스트 없이 닫는다(서버가 info 시스템 메시지를 채널에 보낸다). 실패는 대화상자 안에 알린다.
  * 시작하는 중에는 닫히지 않는다 — 결과를 잃지 않게.
- * `returnFocus` 를 주면 닫힐 때 초점을 그 요소로 돌려준다(제어형이라 Radix 는 되돌릴 곳을 모른다)
+ * `returnFocus` 를 주면 닫힐 때 초점을 그 요소로 돌려준다(제어형이라 Radix 는 되돌릴 곳을 모른다).
+ * `threadRootId` 를 주면 그 스레드의 대화만 새로 시작한다(스레드 패널의 에이전트 줄·스레드 작성기의 `/new`)
  */
 export function ResetSessionDialog({
   channelId,
+  threadRootId,
   agentId,
   handle,
   open,
@@ -26,13 +28,14 @@ export function ResetSessionDialog({
   returnFocus,
 }: {
   channelId: string;
+  threadRootId?: string;
   agentId: string;
   handle: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   returnFocus?: RefObject<HTMLElement | null>;
 }) {
-  const reset = useResetSession(channelId);
+  const reset = useResetSession(channelId, threadRootId);
   const { reset: clear } = reset;
 
   // 다시 열 때 지난 결과(오류 문구)를 지운다
@@ -57,7 +60,9 @@ export function ResetSessionDialog({
         <DialogHeader>
           <DialogTitle>새 대화</DialogTitle>
           <DialogDescription>
-            @{handle} {josa(handle, "과", "와")}의 대화 기록을 새로 시작합니다. 진행 중인 실행은 중지됩니다
+            {threadRootId === undefined
+              ? `@${handle} ${josa(handle, "과", "와")}의 대화 기록을 새로 시작합니다. 진행 중인 실행은 중지됩니다`
+              : `이 스레드에서 @${handle} ${josa(handle, "과", "와")}의 대화 기록을 새로 시작합니다. 채널 대화는 그대로이고, 이 스레드에서 진행 중인 실행은 중지됩니다`}
           </DialogDescription>
         </DialogHeader>
         {reset.isError && (

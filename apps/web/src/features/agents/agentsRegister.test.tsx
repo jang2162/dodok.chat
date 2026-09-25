@@ -294,6 +294,34 @@ describe("직접 입력", () => {
     expect(screen.getByText("@main2")).toBeInTheDocument();
   });
 
+  it("OpenClaw id 칸에 규칙 안내가 있고, 서버가 그 id 를 VALIDATION 으로 거절하면 id 칸 아래에 서버 message(토스트 없음)", async () => {
+    const rule =
+      "providerAgentId 는 OpenClaw 에이전트 id(영문·숫자로 시작, 영문·숫자·_·-, 64자 이하)여야 한다";
+    stubServer({
+      agents: [dev()],
+      discover: unavailable,
+      create: (body, fallback) =>
+        body.providerAgentId === "my agent" ? apiErr(400, "VALIDATION", rule) : fallback(body),
+    });
+    renderPage();
+    const dialog = await openDiscover();
+    const id = await within(dialog).findByRole("textbox", { name: "OpenClaw id" });
+    expect(id).toHaveAccessibleDescription("영문·숫자로 시작, 영문·숫자·_·- (64자 이하)");
+
+    await userEvent.type(id, "my agent");
+    await userEvent.click(within(dialog).getByRole("button", { name: "등록" }));
+    await waitFor(() => expect(id).toHaveAccessibleDescription(rule));
+    expect(id).toHaveAttribute("aria-invalid", "true");
+    // 폼 아래 오류로 한 번 더 그리지 않는다
+    expect(within(dialog).getAllByText(rule)).toHaveLength(1);
+    expect(toastError).not.toHaveBeenCalled();
+
+    // 고치면 지난 서버 오류는 지우고 안내로 돌아간다
+    await userEvent.clear(id);
+    await userEvent.type(id, "my-agent");
+    expect(id).toHaveAccessibleDescription("영문·숫자로 시작, 영문·숫자·_·- (64자 이하)");
+  });
+
   it("이미 등록된 OpenClaw id·규칙 밖 핸들이면 요청하지 않고 폼 안에서 알린다", async () => {
     const server = stubServer({ agents: [dev()], discover: unavailable });
     renderPage();

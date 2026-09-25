@@ -14,6 +14,7 @@ import { useShallow } from "zustand/react/shallow";
 import { useMe } from "@/api/queries";
 import { ApprovalCard } from "@/features/approvals/ApprovalCard";
 import { selectChannelApprovals, useApprovalStore } from "@/features/approvals/approvalStore";
+import { useRunStore } from "@/features/runs/runStore";
 import { Button } from "@/ui/button";
 import { groupRows, type Row } from "./groupRows";
 import { MessageErrorBoundary } from "./MessageErrorBoundary";
@@ -36,6 +37,8 @@ const DAY = new Intl.DateTimeFormat("ko-KR", { dateStyle: "full" });
 
 export type MessageListProps = {
   channelId: string;
+  /** 스레드 패널이면 그 루트 — 루트·답글과 그 스레드의 버블·승인 카드만 그린다. 없으면 채널 타임라인(루트만) */
+  threadRootId?: string;
   /** 태스크 8: 보일 스트리밍 버블의 runId(순서대로) 와 그 버블 */
   bubbleRunIds?: readonly string[];
   bubbles?: (runId: string) => ReactNode;
@@ -43,16 +46,30 @@ export type MessageListProps = {
   initialRect?: { width: number; height: number };
 };
 
-/** 채널 메시지 목록(스펙 5.5). 스크롤 위치·「새 메시지」 칩은 채널마다 새로 시작한다 */
+/** 채널 메시지 목록(스펙 5.5)·스레드 패널의 목록. 스크롤 위치·「새 메시지」 칩은 채널·스레드마다 새로 시작한다 */
 export function MessageList(props: MessageListProps) {
-  return <ChannelMessages key={props.channelId} {...props} />;
+  return <ChannelMessages key={`${props.channelId}:${props.threadRootId ?? ""}`} {...props} />;
 }
 
-function ChannelMessages({ channelId, bubbleRunIds = NO_RUNS, bubbles, initialRect }: MessageListProps) {
-  const timeline = useTimeline(channelId);
-  // 승인 카드는 스토어에서 바로 읽는다(설계 5.3) — 카드 안은 `ApprovalCard` 가 스스로 구독하므로 여기는 행 자리만 본다
+function ChannelMessages({
+  channelId,
+  threadRootId,
+  bubbleRunIds = NO_RUNS,
+  bubbles,
+  initialRect,
+}: MessageListProps) {
+  const timeline = useTimeline(channelId, threadRootId);
+  // 승인 카드는 스토어에서 바로 읽는다(설계 5.3) — 카드 안은 `ApprovalCard` 가 스스로 구독하므로 여기는 행 자리만 본다.
+  // 스레드 런의 승인은 그 스레드에만(런의 소속으로 가른다, 판정 R3′)
   const approvals = useApprovalStore(useShallow(selectChannelApprovals(channelId)));
-  const approvalFacts = useMemo(() => approvals.map((v) => v.approval), [approvals]);
+  const runThreads = useRunStore((s) => s.threads);
+  const approvalFacts = useMemo(
+    () =>
+      approvals
+        .map((v) => v.approval)
+        .filter((a) => (a.runId === undefined ? undefined : runThreads[a.runId]) === threadRootId),
+    [approvals, runThreads, threadRootId],
+  );
   const rows = useMemo(
     () => (timeline ? groupRows(timeline, bubbleRunIds, approvalFacts) : []),
     [timeline, bubbleRunIds, approvalFacts],
@@ -85,7 +102,7 @@ function ChannelMessages({ channelId, bubbleRunIds = NO_RUNS, bubbles, initialRe
     setStuckState(next);
   }, []);
   const unseen = useUnseen(timeline, stuck);
-  const older = useOlderPages(channelId);
+  const older = useOlderPages(channelId, threadRootId);
 
   // 처음(캐시가 있으면 마운트 때, 없으면 첫 응답 때) 맨 아래로.
   // 한 번 겨누고 마는 것으로는 모자란다 — 행은 추정 높이(64)로 먼저 잡혔다가 그 뒤에 실제로 재어지는데,
@@ -217,7 +234,7 @@ function ChannelMessages({ channelId, bubbleRunIds = NO_RUNS, bubbles, initialRe
         ref={scrollRef}
         data-scroller
         role="region"
-        aria-label="메시지"
+        aria-label={threadRootId === undefined ? "메시지" : "스레드 메시지"}
         tabIndex={0}
         onScroll={onScroll}
         className="min-h-0 flex-1 overflow-y-auto overscroll-contain outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset"
@@ -238,6 +255,7 @@ function ChannelMessages({ channelId, bubbleRunIds = NO_RUNS, bubbles, initialRe
                   <RowView
                     row={row}
                     channelId={channelId}
+                    inThread={threadRootId !== undefined}
                     bubble={row.kind === "bubble" ? bubbles?.(row.runId) : undefined}
                   />
                 </MessageErrorBoundary>
@@ -279,9 +297,9 @@ function sameRow(a: Row, b: Row): boolean {
   return true;
 }
 
-type RowProps = { row: Row; channelId: string; bubble: ReactNode };
+type RowProps = { row: Row; channelId: string; inThread: boolean; bubble: ReactNode };
 const RowView = memo(
-  function RowView({ row, channelId, bubble }: RowProps) {
+  function RowView({ row, channelId, inThread, bubble }: RowProps) {
     switch (row.kind) {
       case "divider":
         return <DayDivider date={row.date} />;
@@ -289,7 +307,7 @@ const RowView = memo(
         return row.message.kind === "system" ? (
           <SystemCard message={row.message} />
         ) : (
-          <MessageItem message={row.message} head={row.head} />
+          <MessageItem message={row.message} head={row.head} inThread={inThread} />
         );
       case "pending":
         return <PendingItem pending={row.pending} />;
@@ -299,7 +317,11 @@ const RowView = memo(
         return <ApprovalCard approvalId={row.approvalId} channelId={channelId} />;
     }
   },
-  (a: RowProps, b: RowProps) => a.bubble === b.bubble && a.channelId === b.channelId && sameRow(a.row, b.row),
+  (a: RowProps, b: RowProps) =>
+    a.bubble === b.bubble &&
+    a.channelId === b.channelId &&
+    a.inThread === b.inThread &&
+    sameRow(a.row, b.row),
 );
 
 function DayDivider({ date }: { date: string }) {

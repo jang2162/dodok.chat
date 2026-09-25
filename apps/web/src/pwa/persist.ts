@@ -33,16 +33,35 @@ export function touchRecentChannel(qc: QueryClient, channelId: string): void {
 
 /**
  * 사본에 담을 쿼리(스펙 4장). me·채널 목록·에이전트·최근 목록은 늘, 채널 하나의 것(채널·멤버·타임라인)은 최근 본
- * 채널만. 런·활동·어댑터 상태는 지나간 실시간 값이라 담지 않는다(복원하면 틀린 상태를 보인다).
+ * 채널만. 스레드는 최근 채널마다 마지막으로 연 스레드 하나만(`threads` — 채널 id → 루트 id, 스레드·검색 스펙 4.2).
+ * 런·활동·어댑터 상태는 지나간 실시간 값이라 담지 않는다(복원하면 틀린 상태를 보인다).
  * 연결 설정(`setup`)·운영(`ops`)은 owner 의 관리 정보라 기기에 남기지 않는다 — 아래 규칙이 바뀌어도 빠지게 먼저 거른다
  */
-export function shouldPersist(query: { queryKey: readonly unknown[] }, recent: readonly string[]): boolean {
-  const [head, id] = query.queryKey;
+export function shouldPersist(
+  query: { queryKey: readonly unknown[] },
+  recent: readonly string[],
+  threads: Readonly<Record<string, string>> = {},
+): boolean {
+  const [head, id, rootId] = query.queryKey;
   if (head === qk.setupStatus[0] || head === qk.opsStatus[0]) return false;
-  if (head === "me" || head === "channels" || head === "agents" || head === "recentChannels")
+  if (
+    head === "me" ||
+    head === "channels" ||
+    head === "agents" ||
+    head === "recentChannels" ||
+    head === "recentThreads"
+  )
     return query.queryKey.length === 1;
   if (head === "channel" || head === "members" || head === "timeline")
     return query.queryKey.length === 2 && typeof id === "string" && recent.includes(id);
+  if (head === "thread")
+    return (
+      query.queryKey.length === 3 &&
+      typeof id === "string" &&
+      recent.includes(id) &&
+      rootId !== undefined &&
+      threads[id] === rootId
+    );
   return false;
 }
 
@@ -54,6 +73,14 @@ export function shouldPersist(query: { queryKey: readonly unknown[] }, recent: r
 function trimTimeline(t: Timeline): Timeline {
   const items = t.items.slice(-TIMELINE_KEEP);
   return { ...t, items, pending: [], hasOlder: t.hasOlder || items.length < t.items.length, lastSeq: 0 };
+}
+
+/** 스레드는 루트(맨 앞)를 남기고 마지막 답글 50개 — 루트가 없는 패널은 그릴 수 없다 */
+function trimThread(t: Timeline): Timeline {
+  const [root, ...replies] = t.items;
+  if (!root) return { ...t, pending: [] };
+  const kept = replies.slice(-TIMELINE_KEEP);
+  return { ...t, items: [root, ...kept], pending: [], hasOlder: t.hasOlder || kept.length < replies.length };
 }
 
 /**
@@ -70,6 +97,7 @@ export function trimForPersist(state: DehydratedState): DehydratedState {
         ...(q.queryKey[0] === "timeline" && q.state.data
           ? { data: trimTimeline(q.state.data as Timeline) }
           : {}),
+        ...(q.queryKey[0] === "thread" && q.state.data ? { data: trimThread(q.state.data as Timeline) } : {}),
         status: "success",
         error: null,
         fetchFailureCount: 0,
@@ -89,7 +117,7 @@ const idbStorage: AsyncStorage<string> = {
 type Persistence = { stop(): void; clear(): Promise<void> };
 type Tagged = PersistedClient & { epoch?: number };
 
-const CHANNEL_HEADS: readonly unknown[] = ["channel", "members", "timeline"];
+const CHANNEL_HEADS: readonly unknown[] = ["channel", "members", "timeline", "thread"];
 
 /**
  * 지금 최근 목록에 있는데 캐시에 없는 채널 쪽 항목을 옛 사본(`prev`)에서 붙인다. 관찰자 없는 쿼리는 기본 gcTime(5분)
@@ -98,12 +126,17 @@ const CHANNEL_HEADS: readonly unknown[] = ["channel", "members", "timeline"];
 function carryOver(state: DehydratedState, prev: DehydratedState | undefined): DehydratedState {
   if (!prev) return state;
   const recent = state.queries.find((q) => q.queryKey[0] === qk.recentChannels[0])?.state.data;
+  const threads = state.queries.find((q) => q.queryKey[0] === qk.recentThreads[0])?.state.data;
   const have = new Set(state.queries.map((q) => q.queryHash));
   const carried = prev.queries.filter(
     (q) =>
       CHANNEL_HEADS.includes(q.queryKey[0]) &&
       !have.has(q.queryHash) &&
-      shouldPersist(q, Array.isArray(recent) ? (recent as string[]) : []),
+      shouldPersist(
+        q,
+        Array.isArray(recent) ? (recent as string[]) : [],
+        threads && typeof threads === "object" ? (threads as Record<string, string>) : {},
+      ),
   );
   return carried.length === 0 ? state : { ...state, queries: [...state.queries, ...carried] };
 }
@@ -170,6 +203,7 @@ export async function startPersistence(
 
   // 최근 목록은 관찰자가 없어도 늘 남아야 한다 — 채널 쪽 항목은 gcTime 을 늘리지 않고 저장 때 옛 사본에서 붙인다
   qc.setQueryDefaults(qk.recentChannels, { gcTime: Number.POSITIVE_INFINITY });
+  qc.setQueryDefaults(qk.recentThreads, { gcTime: Number.POSITIVE_INFINITY });
 
   try {
     await persistQueryClientRestore({
@@ -180,6 +214,8 @@ export async function startPersistence(
     });
     // 사본의 me 는 낡은 것으로 둔다 — 첫 관찰자·연결 회복 때 다시 불러 세션을 확인한다(401 이면 지우고 로그인으로)
     void qc.invalidateQueries({ queryKey: qk.me, exact: true, refetchType: "none" });
+    // 스레드는 저절로 낡지 않는다(wire 가 고친다) — 앱이 닫힌 사이의 답글을 다시 열 때 받게 낡은 것으로 둔다
+    void qc.invalidateQueries({ queryKey: qk.threadsAll, refetchType: "none" });
   } catch {
     // 읽지 못한 사본은 persistQueryClientRestore 가 지웠다 — 사본 없이 띄운다
   }
@@ -191,7 +227,12 @@ export async function startPersistence(
     dehydrateOptions: {
       shouldDehydrateMutation: () => false,
       shouldDehydrateQuery: (q) =>
-        q.state.data !== undefined && shouldPersist(q, qc.getQueryData<string[]>(qk.recentChannels) ?? []),
+        q.state.data !== undefined &&
+        shouldPersist(
+          q,
+          qc.getQueryData<string[]>(qk.recentChannels) ?? [],
+          qc.getQueryData<Record<string, string>>(qk.recentThreads),
+        ),
     },
   });
 

@@ -11,7 +11,7 @@ import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type AdapterStatusResponse, qk } from "@/api/queries";
 import { createQueryClient } from "@/app/queryClient";
-import { fromLatest } from "@/features/messages/timeline";
+import { fromLatest, threadFromPage } from "@/features/messages/timeline";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
 import { notifyApproval, resetApprovalNotices } from "@/features/approvals/notify";
 import { useRunStore } from "@/features/runs/runStore";
@@ -35,7 +35,7 @@ import {
 } from "../../test/fixtures";
 import { attachHandlers, NOTICE_DURATION_MS } from "./handlers";
 import { createSubscriptions } from "./subscriptions";
-import { getTimeline, updateTimeline } from "./timelineCache";
+import { getThread, getTimeline, updateTimeline } from "./timelineCache";
 import { typingActors, useTypingStore } from "./typing";
 
 vi.mock("sonner", () => ({ toast: { info: vi.fn(), warning: vi.fn(), error: vi.fn() } }));
@@ -148,6 +148,98 @@ describe("타임라인 이벤트", () => {
       [11, "고침"],
     ]);
     expect(getTimeline(queryClient, CH2)).toBeUndefined();
+  });
+});
+
+describe("스레드 답글 이벤트(스레드·검색 스펙 4.1 — 채널 룸 하나로 받아 웹이 나눈다)", () => {
+  const ROOT = msg(1);
+  const reply = (seq: number, over: Parameters<typeof msg>[1] = {}) =>
+    msg(seq, { threadRootId: ROOT.id, ...over });
+  const summary = (count: number) => ({ count, lastAt: msg(9).createdAt, agentIds: [] });
+  /** 연 스레드(REST 로 받은 첫 페이지) */
+  const openThread = (qc: QueryClient, messages = [ROOT, reply(2)]) =>
+    qc.setQueryData(qk.thread(CH, ROOT.id), threadFromPage(undefined, ROOT, messages, false));
+  const threadSeqs = (qc: QueryClient) => getThread(qc, CH, ROOT.id)?.items.map((m) => m.seq);
+
+  it("답글은 채널 타임라인에 넣지 않고 lastSeq 만 올린다 — 연 스레드 캐시에 넣는다", () => {
+    const { fake, queryClient, subscriptions } = setup();
+    const catchUp = vi.spyOn(subscriptions, "catchUp").mockResolvedValue();
+    seed(
+      queryClient,
+      [ROOT, reply(2)].filter((m) => !m.threadRootId),
+    );
+    openThread(queryClient);
+    // 채널 lastSeq 는 1(루트만 받았다) — 답글 2 는 이미 스레드에 있다
+    fake.serverEmit("message.created", { message: reply(2) });
+    fake.serverEmit("message.created", { message: reply(3) });
+
+    expect(seqs(queryClient)).toEqual([1]);
+    expect(getTimeline(queryClient, CH)?.lastSeq).toBe(3);
+    expect(threadSeqs(queryClient)).toEqual([1, 2, 3]);
+    expect(catchUp).not.toHaveBeenCalled();
+  });
+
+  it("답글 뒤의 루트는 빈틈이 아니다 — 루트만 든 타임라인에서 거짓 빈틈을 내지 않는다", () => {
+    const { fake, queryClient, subscriptions } = setup();
+    const catchUp = vi.spyOn(subscriptions, "catchUp").mockResolvedValue();
+    seed(queryClient, [ROOT]);
+
+    fake.serverEmit("message.created", { message: reply(2) });
+    fake.serverEmit("message.created", { message: reply(3) });
+    fake.serverEmit("message.created", { message: msg(4) });
+
+    expect(catchUp).not.toHaveBeenCalled();
+    expect(seqs(queryClient)).toEqual([1, 4]);
+  });
+
+  it("답글로도 빈틈은 잡는다 — 앞의 seq 를 놓쳤으면 catchUp", () => {
+    const { fake, queryClient, subscriptions } = setup();
+    const catchUp = vi.spyOn(subscriptions, "catchUp").mockResolvedValue();
+    seed(queryClient, [ROOT]);
+    openThread(queryClient, [ROOT]);
+
+    fake.serverEmit("message.created", { message: reply(5) });
+
+    expect(catchUp).toHaveBeenCalledWith(CH);
+    expect(threadSeqs(queryClient)).toEqual([1]);
+  });
+
+  it("연 적 없는 스레드의 답글은 버린다 — 스레드 캐시를 만들지 않는다", () => {
+    const { fake, queryClient } = setup();
+    seed(queryClient, [ROOT]);
+    fake.serverEmit("message.created", { message: reply(2) });
+    expect(getThread(queryClient, CH, ROOT.id)).toBeUndefined();
+  });
+
+  it("루트 message.updated(요약)는 채널 캐시의 루트를, 연 스레드의 루트도 바꾼다", () => {
+    const { fake, queryClient } = setup();
+    seed(queryClient, [ROOT]);
+    openThread(queryClient);
+    fake.serverEmit("message.updated", { message: msg(1, { threadSummary: summary(2) }) });
+
+    expect(getTimeline(queryClient, CH)?.items[0]?.threadSummary).toEqual(summary(2));
+    expect(getThread(queryClient, CH, ROOT.id)?.items[0]?.threadSummary).toEqual(summary(2));
+  });
+
+  it("적재 범위 밖의 루트 수정도 연 스레드의 루트는 바꾼다(채널 목록에는 넣지 않는다)", () => {
+    const { fake, queryClient } = setup();
+    seed(queryClient, [msg(10), msg(11)]);
+    openThread(queryClient);
+    fake.serverEmit("message.updated", { message: msg(1, { bodyMd: "고침" }) });
+
+    expect(seqs(queryClient)).toEqual([10, 11]);
+    expect(getThread(queryClient, CH, ROOT.id)?.items[0]?.bodyMd).toBe("고침");
+  });
+
+  it("답글 message.updated(카드 상호작용)는 스레드 캐시의 그 답글을 바꾼다 — 채널 목록은 그대로", () => {
+    const { fake, queryClient } = setup();
+    seed(queryClient, [ROOT]);
+    updateTimeline(queryClient, CH, (t) => ({ ...t, lastSeq: 2 }));
+    openThread(queryClient);
+    fake.serverEmit("message.updated", { message: reply(2, { bodyMd: "고친 답글" }) });
+
+    expect(seqs(queryClient)).toEqual([1]);
+    expect(getThread(queryClient, CH, ROOT.id)?.items[1]?.bodyMd).toBe("고친 답글");
   });
 });
 

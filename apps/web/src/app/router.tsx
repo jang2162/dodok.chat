@@ -31,7 +31,7 @@ export function safeNext(value: unknown): string | undefined {
 }
 
 /**
- * 지금 보고 있는 채널 — `/c/<id>` 와 그 아래(설정·활동 탭). 승인 알림이 「같은 채널을 보고 있는가」를
+ * 지금 보고 있는 채널 — `/c/<id>` 와 그 아래(설정·활동·스레드 탭). 승인 알림이 「같은 채널을 보고 있는가」를
  * 가릴 때 쓴다(설계 5.4). 라우터 바깥(realtime)에서 부르므로 경로 모양만 본다
  */
 export const channelIdOf = (pathname: string): string | undefined => /^\/c\/([^/]+)/.exec(pathname)?.[1];
@@ -93,6 +93,15 @@ export const channelActivityRoute = createRoute({
   path: "activity",
   component: lazyPage(() => import("@/features/activity/ActivityPanel"), "ActivityPanel"),
 });
+/**
+ * 스레드 패널(스레드·검색 스펙 4.2) — 설정·활동과 같은 오른쪽 패널 자리의 탭 하나. 새로고침·푸시 링크로 바로 열린다.
+ * `rootId` 는 루트 메시지 id — 답글 id 면 서버가 없는 스레드로 답한다(패널이 「찾을 수 없습니다」)
+ */
+export const channelThreadRoute = createRoute({
+  getParentRoute: () => channelRoute,
+  path: "t/$rootId",
+  component: lazyPage(() => import("@/features/threads/ThreadPanel"), "ThreadPanel"),
+});
 export const agentsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/agents",
@@ -119,7 +128,7 @@ const routeTree = rootRoute.addChildren([
   loginRoute,
   appRoute.addChildren([
     indexRoute,
-    channelRoute.addChildren([channelSettingsRoute, channelActivityRoute]),
+    channelRoute.addChildren([channelSettingsRoute, channelActivityRoute, channelThreadRoute]),
     agentsRoute,
     connectionRoute,
     operationsRoute,

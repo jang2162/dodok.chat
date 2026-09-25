@@ -2,13 +2,18 @@ import { Message } from "@dodok/shared";
 import { describe, expect, it } from "vitest";
 import {
   addPending,
+  applyToChannel,
   emptyTimeline,
   fromLatest,
   hasGap,
+  inThread,
+  noteSeq,
   type PendingMessage,
   prependOlder,
+  refreshRoots,
   removePending,
   setPendingState,
+  threadFromPage,
   upsert,
   upsertMany,
 } from "./timeline";
@@ -93,5 +98,58 @@ describe("timeline", () => {
     expect(
       fromLatest(prev, [msg(1, { clientMsgId: "c2" })], false).pending.map((p) => p.clientMsgId),
     ).toEqual(["c1"]);
+  });
+});
+
+describe("루트만 드는 채널 타임라인(스레드·검색 스펙 4.1)", () => {
+  const ROOT = msg(1).id;
+  const reply = (seq: number, over: Partial<Message> = {}) => msg(seq, { threadRootId: ROOT, ...over });
+
+  it("noteSeq: 답글의 seq 는 목록에 넣지 않고 lastSeq 만 올린다 — 옛 seq 는 그대로", () => {
+    const t = fromLatest(undefined, [msg(1), msg(2)], false);
+    const noted = noteSeq(t, 4);
+    expect(noted.items.map((m) => m.seq)).toEqual([1, 2]);
+    expect(noted.lastSeq).toBe(4);
+    expect(noteSeq(noted, 3)).toBe(noted);
+  });
+
+  it("답글 seq 를 기록한 뒤에는 그 다음 루트가 빈틈이 아니다(답글이 채널 seq 를 같이 쓴다)", () => {
+    const t = fromLatest(undefined, [msg(1), msg(2)], false);
+    // 기록하지 않으면 루트 5 는 3·4(답글) 때문에 빈틈으로 보인다
+    expect(hasGap(t, msg(5))).toBe(true);
+    const noted = noteSeq(noteSeq(t, 3), 4);
+    expect(hasGap(noted, msg(5))).toBe(false);
+  });
+
+  it("applyToChannel: 루트는 병합하고 답글은 seq 만 — 재동기화 응답(scope all)", () => {
+    const t = fromLatest(undefined, [msg(1), msg(2)], false);
+    const next = applyToChannel(t, [reply(3), msg(4), reply(5)]);
+    expect(next.items.map((m) => m.seq)).toEqual([1, 2, 4]);
+    expect(next.lastSeq).toBe(5);
+  });
+
+  it("refreshRoots: 이미 가진 루트만 요약을 갈아 끼우고, 없는 루트(적재 범위 밖)는 넣지 않는다", () => {
+    const t = fromLatest(undefined, [msg(2), msg(3)], true);
+    const summary = { count: 2, lastAt: msg(9).createdAt, agentIds: [] };
+    const next = refreshRoots(t, [msg(2, { threadSummary: summary }), msg(1, { threadSummary: summary })]);
+    expect(next.items.map((m) => m.seq)).toEqual([2, 3]);
+    expect(next.items[0]?.threadSummary).toEqual(summary);
+    expect(next.lastSeq).toBe(t.lastSeq);
+  });
+
+  it("threadFromPage: 루트를 늘 맨 앞에 두고(페이지가 닿지 않아도) 답글을 seq 순으로", () => {
+    const t = threadFromPage(undefined, msg(1), [reply(7), reply(5)], true);
+    expect(t.items.map((m) => m.seq)).toEqual([1, 5, 7]);
+    expect(t.hasOlder).toBe(true);
+    // 페이지가 루트까지 닿으면 둘이 아니라 하나
+    expect(threadFromPage(undefined, msg(1), [msg(1), reply(2)], false).items.map((m) => m.seq)).toEqual([
+      1, 2,
+    ]);
+  });
+
+  it("inThread: 그 스레드의 루트·답글만 고른다", () => {
+    const other = msg(9).id;
+    const picked = inThread(ROOT, [msg(1), reply(2), msg(3), reply(4, { threadRootId: other })]);
+    expect(picked.map((m) => m.seq)).toEqual([1, 2]);
   });
 });

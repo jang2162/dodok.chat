@@ -34,10 +34,16 @@ export const qk = {
   discover: ["agents", "discover"] as const,
   adapter: ["adapter"] as const,
   timeline: (id: string) => ["timeline", id] as const,
+  /** 스레드 하나(루트·답글) — 채널 타임라인은 루트만 든다. `threads` 는 한 채널의 스레드 전부(무효화용 앞머리) */
+  thread: (channelId: string, rootId: string) => ["thread", channelId, rootId] as const,
+  threads: (channelId: string) => ["thread", channelId] as const,
+  threadsAll: ["thread"] as const,
   channelRuns: (channelId: string) => ["channels", channelId, "runs"] as const,
   runEvents: (runId: string) => ["runs", runId, "events"] as const,
   /** 최근 본 채널 id(앞이 최근) — 서버 조회가 아니라 오프라인 사본이 무엇을 담을지 정하는 목록(pwa/persist) */
   recentChannels: ["recentChannels"] as const,
+  /** 채널마다 마지막으로 연 스레드(채널 id → 루트 id) — 오프라인 사본이 채널마다 그 스레드 하나만 담는다(pwa/persist) */
+  recentThreads: ["recentThreads"] as const,
   /** 연결 설정(owner 만) — 오프라인 사본에 담지 않는다(pwa/persist). 발급 원문은 어느 키에도 넣지 않는다 */
   setupStatus: ["setup", "status"] as const,
   bridgeTokens: ["setup", "bridge-tokens"] as const,

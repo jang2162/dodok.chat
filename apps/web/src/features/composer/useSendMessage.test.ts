@@ -3,7 +3,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { getTimeline } from "@/realtime/timelineCache";
+import { qk } from "@/api/queries";
+import { fromLatest, threadFromPage } from "@/features/messages/timeline";
+import { getThread, getTimeline, updateTimeline } from "@/realtime/timelineCache";
 import { useWireStatus } from "@/realtime/wire";
 import { useSendMessage } from "./useSendMessage";
 import { createFakeSocket, type FakeSocket } from "../../../test/fakeSocket";
@@ -247,4 +249,47 @@ it("빈 첨부 배열이면 페이로드·보내는 중 항목에 attachments �
     { channelId: CH, clientMsgId: expect.any(String), bodyMd: "글만" },
   ]);
   expect(getTimeline(qc, CH)?.pending[0]).not.toHaveProperty("attachments");
+});
+
+it("스레드 작성기: threadRootId 를 싣고, 보내는 중·확정은 스레드 캐시에 — 채널 타임라인에는 seq 만", async () => {
+  const root = msg(1);
+  updateTimeline(qc, CH, (t) => fromLatest(t, [root], false));
+  qc.setQueryData(qk.thread(CH, root.id), threadFromPage(undefined, root, [], false));
+  let release!: () => void;
+  const acked = new Promise<void>((r) => (release = r));
+  fake.onAck("message.send", async (p) => {
+    await acked;
+    const { clientMsgId, bodyMd } = p as SendPayload;
+    return { ok: true, data: { message: msg(4, { clientMsgId, bodyMd, threadRootId: root.id }) } };
+  });
+  const wrapper = ({ children }: { children: ReactNode }) =>
+    createElement(QueryClientProvider, { client: qc }, children);
+  const send = renderHook(() => useSendMessage(CH, root.id), { wrapper }).result;
+
+  let done!: Promise<void>;
+  act(() => {
+    done = send.current.send("스레드 답");
+  });
+  expect(fake.sentOf("message.send")[0]).toMatchObject({
+    channelId: CH,
+    threadRootId: root.id,
+    bodyMd: "스레드 답",
+  });
+  expect(getThread(qc, CH, root.id)?.pending.map((p) => p.bodyMd)).toEqual(["스레드 답"]);
+  expect(getTimeline(qc, CH)?.pending).toEqual([]);
+
+  release();
+  await act(() => done);
+  expect(getThread(qc, CH, root.id)?.items.map((m) => m.seq)).toEqual([1, 4]);
+  expect(getThread(qc, CH, root.id)?.pending).toEqual([]);
+  // 채널 목록에는 답글이 없고, 다음 루트가 거짓 빈틈이 되지 않게 seq 만 올라간다
+  expect(getTimeline(qc, CH)?.items.map((m) => m.seq)).toEqual([1]);
+  expect(getTimeline(qc, CH)?.lastSeq).toBe(4);
+});
+
+it("채널 작성기는 threadRootId 를 싣지 않는다", async () => {
+  fake.onAck("message.send", (p) => confirmed(p));
+  const send = renderSend();
+  await act(() => send.current.send("채널"));
+  expect(fake.sentOf("message.send")[0]).not.toHaveProperty("threadRootId");
 });
