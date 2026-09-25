@@ -1839,6 +1839,33 @@ describe("orchestrator", () => {
       t.orch.stop();
     });
 
+    it("스레드 런의 정본이 채널 키에 그 런의 threadId 를 실으면 거절한다(키 쪽 대조)", async () => {
+      const t = setup();
+      const { root, run } = await threadRun(t);
+      await t.flush();
+      await expect(
+        t.orch.onCanonical(t.outbound({ runId: run.id, sessionKey: t.sessionKey, threadId: root.id })),
+      ).rejects.toMatchObject({ body: { code: "VALIDATION", message: expect.stringContaining("threadId does not match") } });
+      expect(t.db.select().from(messages).where(eq(messages.kind, "normal")).all()).toHaveLength(2);
+      t.orch.stop();
+    });
+
+    it("런 없는 정본은 세션 키의 스레드에 저장하고, 채널 키에 threadId 가 붙으면 거절한다", async () => {
+      const t = setup();
+      const root = t.say("루트");
+      const { messageId } = await t.orch.onCanonical(
+        t.outbound({ text: "혼잣말", sessionKey: `${t.sessionKey}:thread:${root.id}`, threadId: root.id }),
+      );
+      expect(getMessage(t.db, messageId ?? "")).toMatchObject({ authorId: t.agentId, threadRootId: root.id });
+      expect(getMessage(t.db, messageId ?? "")?.runId).toBeUndefined();
+
+      await expect(
+        t.orch.onCanonical(t.outbound({ text: "샌 말", sessionKey: t.sessionKey, threadId: root.id })),
+      ).rejects.toMatchObject({ body: { code: "VALIDATION" } });
+      expect(t.db.select().from(messages).where(eq(messages.bodyMd, "샌 말")).all()).toEqual([]);
+      t.orch.stop();
+    });
+
     it("채널 런에 스레드 정본이 오면 거절한다", async () => {
       const t = setup();
       const run = await t.enqueue();
