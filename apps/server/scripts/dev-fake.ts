@@ -12,11 +12,13 @@
  * - `POST /__devfake/ops/event { kind, key, severity, detail? }` — 운영 사건을 `app.ops.record` 로 남긴다
  * - `POST /__devfake/gateway { state: "down" | "connected" }` — 가짜 Gateway 를 끊고 붙인다(어댑터 status 가 실제로 바뀐다)
  * - `POST /__devfake/disk { freeBytes, totalBytes } | { reset: true }` — 디스크 감시가 그 값을 보게 하고 곧바로 다시 잰다
+ * - `POST /__devfake/plugin-capabilities { threads: boolean }` — false 면 threads 없는 hello 로 다시 붙는다(옛 플러그인 흉내), true 면 되돌린다
  * 끊김 사건 임계는 DODOK_DEVFAKE_DISCONNECT_MS(기본 운영과 같은 60초)로 줄인다. 종료 표지는 <dataDir>/dev-fake-run/ 에 둔다.
  */
 import {
   type AdapterStatus,
   type ApprovalDecision,
+  BridgeHello,
   type InboundDeliver,
   OpsEvent,
   OpsEventKind,
@@ -32,7 +34,7 @@ import { type App, type AppDeps, createApp } from "../src/app";
 import { loadConfig } from "../src/config";
 import { DISCONNECT_EVENT_MS, startRunState } from "../src/modules/ops/health";
 import { type FakeGateway, startFakeGateway } from "../test/fakes/fake-gateway";
-import { type FakePlugin, startFakePlugin } from "../test/fakes/fake-plugin";
+import { FAKE_PLUGIN_HELLO, type FakePlugin, startFakePlugin } from "../test/fakes/fake-plugin";
 import {
   createScenario,
   type ScenarioAgent,
@@ -52,6 +54,9 @@ const AGENT_IDS = ["dev", "fin"] as const;
 /** 실제 클라이언트는 hello 의 tickIntervalMs(30s)×2 동안 프레임이 없으면 끊는다 */
 const TICK_INTERVAL_MS = 15_000;
 const DELTA_PARTS = 4;
+/** 「오래」 — 답 길이와 무관하게 이만큼 동안 흐른다. 채널·스레드에 연달아 불러 두 버블을 동시에 볼 틈 */
+const LONG_STREAM_MS = 15_000;
+const LONG_DELTA_PARTS = 15;
 const QUOTE_MAX = 40;
 /** 승인 대본의 TTL — 실물 plugin 승인은 120초지만, 만료까지 눈으로 볼 수 있게 줄였다 */
 const APPROVAL_TTL_MS = 20_000;
@@ -73,6 +78,13 @@ export const DEV_FAKE_OPS_EVENT_PATH = "/__devfake/ops/event";
 export const DEV_FAKE_GATEWAY_PATH = "/__devfake/gateway";
 /** 개발 전용 — 디스크 감시가 볼 여유·전체 바이트를 정하거나(reset 이면 실제 statfs 로) 곧바로 다시 잰다 */
 export const DEV_FAKE_DISK_PATH = "/__devfake/disk";
+/** 개발 전용 — 가짜 플러그인을 끊고 hello capabilities 의 threads 를 빼거나(false, 옛 플러그인) 되돌려(true) 다시 붙인다 */
+export const DEV_FAKE_PLUGIN_CAPABILITIES_PATH = "/__devfake/plugin-capabilities";
+/** 스레드를 모르는 옛 플러그인의 hello — 스레드 멘션은 PLUGIN_OUTDATED 로 끝난다 */
+const OLD_PLUGIN_HELLO: BridgeHello = BridgeHello.parse({
+  ...FAKE_PLUGIN_HELLO,
+  capabilities: FAKE_PLUGIN_HELLO.capabilities.filter((cap) => cap !== "threads"),
+});
 const DEV_FAKE_BODY_MAX = 16 * 1024;
 /** 새 접속이 hello 까지 됐으면 ok, 핸드셰이크·hello 가 거절되면 그 사유(`UNAUTHORIZED` 등) */
 export type PluginTokenResult = { ok: true } | { ok: false; reason: string };
@@ -461,6 +473,7 @@ export const DEV_FAKE_KEYWORDS: readonly string[] = [
   "드롭",
   "실패",
   "느리게",
+  "오래",
   "도구",
   "승인",
   CALL_ME,
@@ -478,7 +491,7 @@ function receivedLine(d: InboundDeliver): string | undefined {
 }
 
 /**
- * 받은 글로 대본을 고른다 — 키워드: 드롭·실패·느리게·도구·승인(승인 둘·승인 항상)·나 불러·폼(폼 둘)·고르기·카드·재사용·짧게,
+ * 받은 글로 대본을 고른다 — 키워드: 드롭·실패·느리게·오래·도구·승인(승인 둘·승인 항상)·나 불러·폼(폼 둘)·고르기·카드·재사용·짧게,
  * 첨부 키워드 이미지 보여줘·보고서 줘·카드에 이미지·미디어만. 사람 첨부가 있으면 답 앞에 받은 첨부 줄을 붙인다.
  * 받은 글을 `@` 없이 인용해(멘션을 새로 만들지 않는다) 되받고,
  * 글이 부른 채널의 다른 에이전트와 보낸 에이전트를 끝의 「@핸들 이어서 부탁해요」로만 불러 릴레이를 만든다.
@@ -505,10 +518,16 @@ export function fakeAgentScript(self: string, d: InboundDeliver): ScenarioScript
   const received = receivedLine(d);
   const reply = [received, body].filter(Boolean).join("\n\n");
   const components = componentsScript(text);
+  const long = text.includes("오래");
+  const deltas = splitDeltas(reply, long ? LONG_DELTA_PARTS : DELTA_PARTS);
   return {
     reply,
-    deltas: splitDeltas(reply, DELTA_PARTS),
-    deltaDelayMs: text.includes("느리게") ? 1_500 : 150,
+    deltas,
+    deltaDelayMs: long
+      ? Math.round(LONG_STREAM_MS / Math.max(1, deltas.length))
+      : text.includes("느리게")
+        ? 1_500
+        : 150,
     ...(text.includes("실패") ? { fail: "fake failure" } : {}),
     ...(text.includes("도구") ? { tool: { name: "Read", args: { path: "README.md" }, result: "ok" } } : {}),
     ...(text.includes("승인") ? { approval: approvalScript(text) } : {}),
@@ -553,6 +572,7 @@ function route<T>(input: z.ZodType<T>, usage: string, run: (value: T) => Promise
 }
 
 const PluginTokenInput = z.object({ token: z.string().min(1) });
+const PluginCapabilitiesInput = z.strictObject({ threads: z.boolean() });
 /** key·detail 모양은 shared OpsEvent 그대로(key 는 비지 않게) — record 가 거절할 것을 여기서 400 으로 먼저 돌려준다 */
 const OpsEventInput = z.strictObject({
   kind: OpsEventKind,
@@ -719,21 +739,24 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
     // main.ts 와 같다 — 운영 화면 「직전 종료」가 null 로만 보이지 않게
     runState = startRunState(runStateDir, app.ops, app.logger);
     app.setPreviousClean(runState.previousClean);
-    // 토큰 바꾸기는 한 번에 하나씩 — 겹치면 소켓 하나를 두 핸드셰이크가 다툰다
+    // 다시 붙이기(토큰·hello 바꾸기)는 한 번에 하나씩 — 겹치면 소켓 하나를 두 핸드셰이크가 다툰다
     let swapping: Promise<unknown> = Promise.resolve();
-    const swapPluginToken = (token: string): Promise<PluginTokenResult> => {
+    const reconnectPlugin = (
+      over: { token: string } | { hello: BridgeHello },
+      what: string,
+    ): Promise<PluginTokenResult> => {
       const run = swapping.then(async (): Promise<PluginTokenResult> => {
         if (!plugin) return { ok: false, reason: "fake plugin not started" };
         try {
-          await plugin.reconnect({ token });
+          await plugin.reconnect(over);
         } catch (error) {
           const reason = error instanceof Error ? error.message : String(error);
-          app?.logger.warn({ reason }, "dev:fake plugin token swap rejected");
+          app?.logger.warn({ reason }, `dev:fake plugin ${what} rejected`);
           return { ok: false, reason };
         }
         app?.logger.info(
           { tokenId: app.adapter.setupDetail().bridge.plugin?.tokenId },
-          "dev:fake plugin reconnected with swapped token",
+          `dev:fake plugin reconnected with ${what}`,
         );
         return { ok: true };
       });
@@ -746,7 +769,17 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
       new Map([
         [
           DEV_FAKE_PLUGIN_TOKEN_PATH,
-          route(PluginTokenInput, "{ token: string }", ({ token }) => swapPluginToken(token)),
+          route(PluginTokenInput, "{ token: string }", ({ token }) =>
+            reconnectPlugin({ token }, "swapped token"),
+          ),
+        ],
+        [
+          DEV_FAKE_PLUGIN_CAPABILITIES_PATH,
+          route(PluginCapabilitiesInput, "{ threads: boolean }", async ({ threads }) => {
+            const hello = threads ? FAKE_PLUGIN_HELLO : OLD_PLUGIN_HELLO;
+            const result = await reconnectPlugin({ hello }, threads ? "threads hello" : "old hello");
+            return result.ok ? { ok: true, capabilities: hello.capabilities } : result;
+          }),
         ],
         [
           DEV_FAKE_OPS_EVENT_PATH,

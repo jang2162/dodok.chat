@@ -6,6 +6,8 @@ import {
   type InboundDeliver,
   type Message,
   PushPayload,
+  type RunEvent,
+  type RunState,
   type ServerToClientEvents,
   WIRE_PROTOCOL,
 } from "@dodok/shared";
@@ -21,6 +23,7 @@ import {
   DEV_FAKE_LOCAL_TOKEN,
   DEV_FAKE_KEYWORDS,
   DEV_FAKE_OPS_EVENT_PATH,
+  DEV_FAKE_PLUGIN_CAPABILITIES_PATH,
   DEV_FAKE_PLUGIN_TOKEN_PATH,
   type DevFake,
   devFakeCliOptions,
@@ -164,6 +167,18 @@ describe("fakeAgentScript", () => {
     expect(fakeAgentScript("dev", delivery("@dev 실패", owner)).fail).toBeDefined();
     expect(fakeAgentScript("dev", delivery("@dev 드롭", owner)).drop).toBe("bot-loop-protection");
     expect(fakeAgentScript("dev", delivery("@dev 도구", owner)).tool?.name).toBe("Read");
+  });
+
+  it("오래 → 답 길이와 무관하게 약 15초 동안 흐른다(채널·스레드 버블 둘을 동시에 볼 틈), 「느리게」와 함께 와도 오래가 이긴다", () => {
+    for (const text of ["@dev 오래", `@dev 오래 ${"가".repeat(200)}`, "@dev 오래 느리게"]) {
+      const s = fakeAgentScript("dev", delivery(text, owner));
+      expect(s.deltas?.length, text).toBeGreaterThanOrEqual(10);
+      expect((s.deltas ?? []).join("")).toBe(s.reply);
+      const total = (s.deltaDelayMs ?? 0) * (s.deltas?.length ?? 0);
+      expect(total, text).toBeGreaterThanOrEqual(14_000);
+      expect(total, text).toBeLessThanOrEqual(16_000);
+    }
+    expect(DEV_FAKE_KEYWORDS).toContain("오래");
   });
 
   it("나 불러 → 부른 사람을 평문 @핸들로 부르는 고정 답(인용·릴레이 꼬리 없음), 에이전트가 보냈으면 채널의 첫 사람", () => {
@@ -654,7 +669,13 @@ async function loginOwner(url: string): Promise<{ sessionToken: string; ownerId:
   return { sessionToken, ownerId: user.id, cookie: `dodok.session=${sessionToken}` };
 }
 
-async function restAs<T>(url: string, cookie: string, method: "GET" | "POST", path: string, body?: unknown) {
+async function restAs<T>(
+  url: string,
+  cookie: string,
+  method: "GET" | "POST" | "PATCH",
+  path: string,
+  body?: unknown,
+) {
   const res = await fetch(`${url}/api/v1${path}`, {
     method,
     headers: { cookie, ...(body === undefined ? {} : { "content-type": "application/json" }) },
@@ -1028,6 +1049,8 @@ describe("startDevFake 운영 훅 — /__devfake/ops/event·gateway·disk", () =
     [DEV_FAKE_OPS_EVENT_PATH, { kind: "ratelimit", key: "guard", severity: "warn" }],
     [DEV_FAKE_GATEWAY_PATH, { state: "connected" }],
     [DEV_FAKE_DISK_PATH, { reset: true }],
+    // 되돌림(true) — 가드를 지난 호출이 옛 플러그인으로 바꿔 두지 않게
+    [DEV_FAKE_PLUGIN_CAPABILITIES_PATH, { threads: true }],
   ] as const)("%s 공통 가드", (path, body) => {
     it("세션 없음 401 · member 403 — 앱의 requireOwner 응답 그대로", async () => {
       const anon = await post(path, body, { "content-type": "application/json" });
@@ -1177,6 +1200,246 @@ describe("startDevFake 운영 훅 — /__devfake/ops/event·gateway·disk", () =
   });
 });
 
+describe("startDevFake 스레드 — 스레드 답·스레드 릴레이·동시 스트리밍·옛 플러그인 훅", () => {
+  let dir: string;
+  let dev: DevFake;
+  let cookie: string;
+  let sessionToken: string;
+  const sockets: WireSocket[] = [];
+  const agentIds: Partial<Record<"dev" | "fin", string>> = {};
+
+  beforeAll(async () => {
+    dir = mkdtempSync(join(tmpdir(), "dodok-dev-fake-threads-"));
+    dev = await startDevFake({ port: 0, dataDir: dir, logLevel: "warn" });
+    ({ sessionToken, cookie } = await loginOwner(dev.url));
+    for (const handle of ["dev", "fin"] as const) {
+      const { agent } = await restAs<{ agent: { id: string } }>(dev.url, cookie, "POST", "/agents", {
+        providerAgentId: handle,
+        handle,
+        name: handle,
+      });
+      agentIds[handle] = agent.id;
+    }
+  });
+
+  afterAll(async () => {
+    for (const socket of sockets.splice(0)) socket.close();
+    await dev?.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const idOf = (handle: "dev" | "fin") => agentIds[handle] ?? "";
+
+  /** 채널을 만들고 에이전트를 넣은 뒤 구독한 wire — 받은 메시지·런 상태·런 이벤트를 도착 순서대로 모은다 */
+  async function channelWire(name: string, handles: Array<"dev" | "fin">) {
+    const { channel } = await restAs<{ channel: { id: string } }>(dev.url, cookie, "POST", "/channels", {
+      name,
+    });
+    for (const handle of handles) {
+      await restAs(dev.url, cookie, "POST", `/channels/${channel.id}/members`, {
+        memberType: "agent",
+        memberId: idOf(handle),
+      });
+    }
+    const socket: WireSocket = io(dev.url, {
+      transports: ["websocket"],
+      reconnection: false,
+      forceNew: true,
+      auth: { protocol: WIRE_PROTOCOL, token: sessionToken },
+    });
+    sockets.push(socket);
+    const created: Message[] = [];
+    const states: RunState[] = [];
+    const events: RunEvent[] = [];
+    socket.on("message.created", ({ message }) => created.push(message));
+    socket.on("run.state", ({ run }) => states.push(run));
+    socket.on("run.event", ({ event }) => events.push(event));
+    const res = await socket.emitWithAck("channel.subscribe", { channelId: channel.id });
+    if (!res.ok) throw new Error(`channel.subscribe → ${res.error.code}`);
+    let n = 0;
+    const send = async (bodyMd: string, threadRootId?: string): Promise<Message> => {
+      const sent = await socket.emitWithAck("message.send", {
+        channelId: channel.id,
+        clientMsgId: `${name}-${n++}`,
+        bodyMd,
+        ...(threadRootId === undefined ? {} : { threadRootId }),
+      });
+      if (!sent.ok) throw new Error(`message.send → ${sent.error.code}`);
+      return sent.data.message;
+    };
+    /** 그 에이전트·그 스레드(없으면 채널)의 런 id, 처음 본 순서 */
+    const runIds = (handle: "dev" | "fin", threadRootId?: string) => [
+      ...new Set(
+        states.filter((s) => s.agentId === idOf(handle) && s.threadRootId === threadRootId).map((s) => s.id),
+      ),
+    ];
+    const terminal = (runId: string) =>
+      states.find((s) => s.id === runId && ["done", "error", "aborted"].includes(s.status));
+    return { channelId: channel.id, created, states, events, send, runIds, terminal };
+  }
+
+  it("스레드에서 @dev → 답이 그 스레드에 저장되고, 그 런은 threadRootId 를 싣고 델타를 흘린다", async () => {
+    const w = await channelWire("thread-reply", ["dev"]);
+    const root = await w.send("루트 질문");
+    await w.send(`<@a:${idOf("dev")}> 스레드에서 봐줘`, root.id);
+    const answer = await vi.waitFor(
+      () => {
+        const found = w.created.find((m) => m.authorType === "agent");
+        if (!found) throw new Error("에이전트 답 없음");
+        return found;
+      },
+      { timeout: 15_000 },
+    );
+    expect(answer.threadRootId).toBe(root.id);
+    expect(answer.bodyMd).toContain("잘 받았어요");
+    const [runId] = w.runIds("dev", root.id);
+    expect(runId).toBeDefined();
+    await vi.waitFor(() => expect(w.terminal(runId ?? "")?.status).toBe("done"), { timeout: 15_000 });
+    const deltas = w.events.filter((e) => e.runId === runId && e.type === "TEXT_MESSAGE_CONTENT");
+    expect(deltas.length).toBeGreaterThanOrEqual(2);
+    expect(w.runIds("dev")).toEqual([]); // 채널 런은 없다
+  }, 20_000);
+
+  it("스레드에서 @dev @fin → 서로 부르는 릴레이가 같은 스레드에서 돌고, 한도 알림(relay_limit)도 그 스레드에", async () => {
+    const w = await channelWire("thread-relay", ["dev", "fin"]);
+    await restAs(dev.url, cookie, "PATCH", `/channels/${w.channelId}`, {
+      relayPolicy: { maxRelayTurns: 1, allowPairs: "all" },
+    });
+    const root = await w.send("릴레이 루트");
+    await w.send(`<@a:${idOf("dev")}> <@a:${idOf("fin")}> 시작`, root.id);
+    const limit = await vi.waitFor(
+      () => {
+        const found = w.created.find((m) => m.kind === "system" && m.systemMeta?.kind === "relay_limit");
+        if (!found) throw new Error("relay_limit 없음");
+        return found;
+      },
+      { timeout: 15_000 },
+    );
+    expect(limit.threadRootId).toBe(root.id);
+    const agentReplies = w.created.filter((m) => m.authorType === "agent");
+    expect(agentReplies.length).toBeGreaterThanOrEqual(2);
+    expect(agentReplies.every((m) => m.threadRootId === root.id)).toBe(true);
+    expect(new Set(agentReplies.map((m) => m.authorId))).toEqual(new Set([idOf("dev"), idOf("fin")]));
+    expect([...w.runIds("dev"), ...w.runIds("fin")]).toEqual([]); // 채널 최상위 런 없음
+  }, 20_000);
+
+  it("「오래」를 채널과 스레드에 연달아 부르면 두 런이 동시에 스트리밍한다 — 채널 런이 끝나기 전에 스레드 런의 델타가 온다", async () => {
+    const w = await channelWire("thread-both", ["dev"]);
+    const root = await w.send("동시 루트");
+    await w.send(`<@a:${idOf("dev")}> 오래`);
+    await w.send(`<@a:${idOf("dev")}> 오래`, root.id);
+    const [channelRun] = await vi.waitFor(
+      () => {
+        const ids = w.runIds("dev");
+        if (ids.length === 0) throw new Error("채널 런 없음");
+        return ids;
+      },
+      { timeout: 5_000 },
+    );
+    const [threadRun] = await vi.waitFor(
+      () => {
+        const ids = w.runIds("dev", root.id);
+        if (ids.length === 0) throw new Error("스레드 런 없음");
+        return ids;
+      },
+      { timeout: 5_000 },
+    );
+    const deltasOf = (runId: string | undefined) =>
+      w.events.filter((e) => e.runId === runId && e.type === "TEXT_MESSAGE_CONTENT");
+    await vi.waitFor(
+      () => {
+        expect(deltasOf(threadRun).length).toBeGreaterThanOrEqual(1);
+        expect(deltasOf(channelRun).length).toBeGreaterThanOrEqual(1);
+      },
+      { timeout: 5_000 },
+    );
+    // 둘 다 델타를 흘리는 중이고, 5초 뒤에도 어느 쪽도 끝나지 않았다 — 브라우저에서 두 버블을 함께 볼 틈
+    await new Promise((resolve) => setTimeout(resolve, 5_000));
+    expect(w.terminal(channelRun ?? "")).toBeUndefined();
+    expect(w.terminal(threadRun ?? "")).toBeUndefined();
+    expect(deltasOf(threadRun).length).toBeGreaterThanOrEqual(2);
+    await vi.waitFor(
+      () => {
+        expect(w.terminal(channelRun ?? "")?.status).toBe("done");
+        expect(w.terminal(threadRun ?? "")?.status).toBe("done");
+      },
+      { timeout: 25_000 },
+    );
+  }, 40_000);
+
+  describe("POST /__devfake/plugin-capabilities — 옛 플러그인 흉내", () => {
+    const setCaps = (body: unknown) =>
+      fetch(`${dev.url}${DEV_FAKE_PLUGIN_CAPABILITIES_PATH}`, {
+        method: "POST",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+    it("threads 가 boolean 이 아니거나 모르는 키가 있으면 400, 플러그인은 그대로", async () => {
+      for (const body of [{}, { threads: "no" }, { threads: false, extra: 1 }]) {
+        const res = await setCaps(body);
+        expect(res.status, JSON.stringify(body)).toBe(400);
+        await expect(res.json()).resolves.toMatchObject({ code: "VALIDATION" });
+      }
+      expect(dev.app.adapter.pluginSupports("threads")).toBe(true);
+    });
+
+    it("false → threads 없는 hello 로 다시 붙어 스레드 멘션은 PLUGIN_OUTDATED 카드(채널 멘션은 그대로) → true 로 되돌리고 「다시 실행」하면 스레드에서 답한다", async () => {
+      const off = await setCaps({ threads: false });
+      expect(off.status).toBe(200);
+      const offBody = (await off.json()) as { ok: boolean; capabilities: string[] };
+      expect(offBody.ok).toBe(true);
+      expect(offBody.capabilities).not.toContain("threads");
+      expect(offBody.capabilities).toContain("agents.list");
+      expect(dev.app.adapter.pluginSupports("threads")).toBe(false);
+
+      const w = await channelWire("thread-outdated", ["dev"]);
+      const root = await w.send("옛 플러그인 루트");
+      await w.send(`<@a:${idOf("dev")}> 스레드`, root.id);
+      const card = await vi.waitFor(
+        () => {
+          const found = w.created.find((m) => m.systemMeta?.kind === "run_error");
+          if (!found) throw new Error("run_error 카드 없음");
+          return found;
+        },
+        { timeout: 15_000 },
+      );
+      expect(card.threadRootId).toBe(root.id);
+      const [failed] = w.runIds("dev", root.id);
+      await vi.waitFor(() =>
+        expect(w.states.find((s) => s.id === failed && s.status === "error")?.error?.code).toBe(
+          "PLUGIN_OUTDATED",
+        ),
+      );
+      await w.send(`<@a:${idOf("dev")}> 채널`);
+      await vi.waitFor(
+        () => expect(w.created.find((m) => m.authorType === "agent" && !m.threadRootId)).toBeDefined(),
+        { timeout: 15_000 },
+      );
+
+      const on = await setCaps({ threads: true });
+      expect(on.status).toBe(200);
+      expect(((await on.json()) as { capabilities: string[] }).capabilities).toContain("threads");
+      expect(dev.app.adapter.pluginSupports("threads")).toBe(true);
+      const socket = sockets.at(-1);
+      const retried = await socket?.emitWithAck("component.interact", {
+        messageId: card.id,
+        componentId: card.components?.id ?? "",
+        itemId: "retry_run",
+        values: {},
+      });
+      expect(retried?.ok).toBe(true);
+      await vi.waitFor(
+        () =>
+          expect(
+            w.created.find((m) => m.authorType === "agent" && m.threadRootId === root.id)?.bodyMd,
+          ).toContain("잘 받았어요"),
+        { timeout: 15_000 },
+      );
+    }, 40_000);
+  });
+});
+
 describe("startDevFake 종료 표지 — 운영 화면 「직전 종료」", () => {
   let dir: string;
   beforeAll(() => void (dir = mkdtempSync(join(tmpdir(), "dodok-dev-fake-runstate-"))));
@@ -1228,6 +1491,7 @@ describe("운영 createApp 에는 dev:fake 경로가 없다", () => {
     [DEV_FAKE_OPS_EVENT_PATH, { kind: "ratelimit", key: "k", severity: "warn" }],
     [DEV_FAKE_GATEWAY_PATH, { state: "down" }],
     [DEV_FAKE_DISK_PATH, { reset: true }],
+    [DEV_FAKE_PLUGIN_CAPABILITIES_PATH, { threads: false }],
   ])("POST %s → 404 (실제 fetch, owner 세션)", async (path, body) => {
     const { headers } = await login(app);
     const res = await fetch(`${app.url}${path}`, {
