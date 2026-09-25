@@ -23,7 +23,8 @@ const LIMIT_LINK = "mt-1 inline-block text-xs font-medium text-foreground underl
  * (운영 보강 스펙 3.2). 워크스페이스 상한은 운영 화면, 채널 한도는 그 채널 설정의 「릴레이 정책」에서 바꾼다
  */
 export function SystemCard({ message }: { message: Message }) {
-  const { Icon, label, tone } = LOOK[message.systemMeta?.kind ?? "info"];
+  // 이 웹보다 새 서버가 늘린 kind 는 표에 없다 — 정보 모양으로 그린다
+  const { Icon, label, tone } = LOOK[message.systemMeta?.kind ?? "info"] ?? LOOK.info;
   const owner = useIsOwner();
   const limitScope =
     owner && message.systemMeta?.kind === "run_limit" ? message.systemMeta.limit?.scope : undefined;

@@ -126,3 +126,17 @@ describe("run_error 카드의 「다시 실행」", () => {
     expect(within(screen.getByRole("note")).queryByRole("link")).not.toBeInTheDocument();
   });
 });
+
+// 이 웹보다 새 서버가 늘린 kind — 화면이 깨지지 않고 정보 모양으로 그린다
+it("모르는 kind 의 시스템 메시지는 정보 모양으로 그린다", () => {
+  // 픽스처는 shared 스키마로 파싱하므로 모르는 kind 는 파싱 뒤에 얹는다
+  const message = {
+    ...msg(3, { kind: "system", authorType: "system", authorId: undefined, bodyMd: "새 서버가 보낸 알림" }),
+    systemMeta: { kind: "future_kind" },
+  } as unknown as Message;
+  renderCard(message, "owner");
+  const card = screen.getByRole("note");
+  expect(card).toHaveAttribute("data-system-kind", "future_kind");
+  expect(within(card).getByRole("img", { name: "정보" })).toBeInTheDocument();
+  expect(card).toHaveTextContent("새 서버가 보낸 알림");
+});
