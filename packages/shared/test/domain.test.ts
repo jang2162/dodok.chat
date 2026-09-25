@@ -162,6 +162,21 @@ describe("Run", () => {
     });
     expect(r.hasCanonical).toBe(false);
   });
+  it("스레드 런은 threadRootId 를 싣는다(UUID)", () => {
+    const base = {
+      id: ID(1),
+      channelId: ID(2),
+      agentId: ID(3),
+      triggerKind: "mention",
+      rootMessageId: ID(4),
+      relayDepth: 0,
+      sessionKey: `agent:dev:dodok:channel:${ID(2)}:thread:${ID(5)}`,
+      status: "queued",
+      createdAt: NOW,
+    };
+    expect(Run.parse({ ...base, threadRootId: ID(5) }).threadRootId).toBe(ID(5));
+    expect(Run.safeParse({ ...base, threadRootId: "x" }).success).toBe(false);
+  });
   it("RunState는 요약 키만 가진다", () => {
     expect(Object.keys(RunState.shape).sort()).toEqual(
       [
@@ -176,6 +191,7 @@ describe("Run", () => {
         "relayDepth",
         "startedAt",
         "status",
+        "threadRootId",
       ].sort(),
     );
   });

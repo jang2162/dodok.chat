@@ -8,6 +8,11 @@ const AGENT_ID_RE = new RegExp(`^${AGENT_ID}$`, "i");
 // 세대(`:g<N>`) 같은 다른 접미사는 우리 것이 아니다 — 끝까지 맞아야 한다
 const SESSION_KEY_RE = new RegExp(`^agent:(${AGENT_ID}):dodok:channel:(${UUID})(?::thread:(${UUID}))?$`, "i");
 
+/** OpenClaw agentId 규칙 안인가 — 에이전트 등록 경계가 빌더와 같은 규칙으로 거절하게(빌더는 규칙 밖에서 던진다) */
+export function isOpenClawAgentId(id: string): boolean {
+  return AGENT_ID_RE.test(id);
+}
+
 /**
  * `agent:<a>:dodok:channel:<c>` 또는 `…:thread:<rootId>`. channelId·rootId 를 소문자로 만드는 것은 코어가 dodok 키를
  * 통째로 소문자로 접기 때문이다 — 우리 쪽이 날 문자열로 비교하는 자리(세션 행·플러그인 인바운드 대조)도 Gateway 와
@@ -15,7 +20,7 @@ const SESSION_KEY_RE = new RegExp(`^agent:(${AGENT_ID}):dodok:channel:(${UUID})(
  * 파서가 거절할 키는 만들지 않는다 — agentId 가 규칙 밖이거나 rootId 가 비었으면 던진다.
  */
 export function dodokSessionKey(providerAgentId: string, channelId: string, threadRootId?: string): string {
-  if (!AGENT_ID_RE.test(providerAgentId)) {
+  if (!isOpenClawAgentId(providerAgentId)) {
     throw new Error(`dodokSessionKey: not an OpenClaw agentId: ${JSON.stringify(providerAgentId)}`);
   }
   if (threadRootId === "") throw new Error("dodokSessionKey: empty threadRootId");

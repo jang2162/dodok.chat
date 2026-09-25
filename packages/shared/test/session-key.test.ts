@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { threadMatchesSessionKey } from "../src/bridge";
-import { dodokSessionKey, parseDodokSessionKey } from "../src/session-key";
+import { dodokSessionKey, isOpenClawAgentId, parseDodokSessionKey } from "../src/session-key";
 
 const CH = "01a09fc9-d204-7551-89d6-38544d07a101";
 const ROOT = "01a09fc9-d204-7551-89d6-38544d07a1ab";
@@ -110,4 +110,18 @@ describe("threadMatchesSessionKey", () => {
   it("우리 모양이 아닌 키는 threadId 가 없어도 거짓", () => {
     expect(threadMatchesSessionKey(`agent:dev:dodok:channel:${CH}:g2`, undefined)).toBe(false);
   });
+});
+
+describe("isOpenClawAgentId", () => {
+  it.each(["dev", "dev-main", "a_b", "0", "DEV", "a".repeat(64)])("규칙 안 — %s", (id) => {
+    expect(isOpenClawAgentId(id)).toBe(true);
+    expect(() => dodokSessionKey(id, CH)).not.toThrow();
+  });
+  it.each(["", "-dev", "_dev", "a:b", "a b", "a.b", "개발", "a".repeat(65), "a\nb"])(
+    "규칙 밖 — %j (빌더도 던진다)",
+    (id) => {
+      expect(isOpenClawAgentId(id)).toBe(false);
+      expect(() => dodokSessionKey(id, CH)).toThrow();
+    },
+  );
 });

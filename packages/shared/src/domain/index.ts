@@ -216,6 +216,7 @@ export const Run = z.object({
   triggerMessageId: Id.optional(), // interaction이면 없음
   triggerInteractionId: Id.optional(),
   rootMessageId: Id, // 릴레이 체인의 루트
+  threadRootId: Id.optional(), // 스레드 런이면 그 루트 — 채널 런은 없다
   relayDepth: z.int().min(0),
   parentRunId: Id.optional(), // 서브에이전트 자식 런
   sessionKey: z.string(),
@@ -235,6 +236,7 @@ export type Run = z.infer<typeof Run>;
 export const RunState = Run.pick({
   id: true,
   channelId: true,
+  threadRootId: true,
   agentId: true,
   status: true,
   relayDepth: true,
