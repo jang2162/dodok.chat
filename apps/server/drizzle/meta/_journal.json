@@ -57,6 +57,13 @@
       "when": 1790333524325,
       "tag": "0007_search_fts",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1790424137662,
+      "tag": "0008_team_invites",
+      "breakpoints": true
     }
   ]
 }

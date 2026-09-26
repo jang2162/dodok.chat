@@ -39,8 +39,13 @@ export const users = sqliteTable(
     authProvider: text("auth_provider").notNull(),
     avatarUrl: text("avatar_url"),
     createdAt: ts("created_at").notNull(),
+    leftHandle: text("left_handle"), // 내보낸 멤버의 원래 핸들 — handle 은 left-<id 앞 8자>, email 은 NULL 로 놓아준다(팀 스펙 4장)
   },
-  (t) => [uniqueIndex("users_ws_handle").on(t.workspaceId, t.handle)],
+  (t) => [
+    uniqueIndex("users_ws_handle").on(t.workspaceId, t.handle),
+    // email 이 NULL 인 행(나간 멤버 등)은 여럿이어도 된다 — SQLite 는 유일 인덱스에서 NULL 을 서로 다르게 본다
+    uniqueIndex("users_ws_email").on(t.workspaceId, t.email),
+  ],
 );
 
 export const memberships = sqliteTable(
@@ -379,4 +384,32 @@ export const opsEvents = sqliteTable(
     index("ops_events_ws_last").on(t.workspaceId, t.lastAt),
     index("ops_events_open").on(t.workspaceId, t.kind, t.key, t.ackedAt),
   ],
+);
+
+/**
+ * 초대·재설정 링크(팀 스펙 3.1) — 원문(dit_…·drt_…)은 두지 않는다. token_hash 는 sha256(원문) hex, prefix 는 원문 앞 8자.
+ * 유효 = used_at·revoked_at 이 NULL 이고 expires_at 이 지나지 않음. 폐기·사용은 지우지 않고 그 칸을 채운다
+ */
+export const invites = sqliteTable(
+  "invites",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id),
+    kind: text("kind").$type<"invite" | "reset">().notNull(),
+    role: text("role").$type<"admin" | "member">(), // kind = 'invite' 일 때만
+    targetUserId: text("target_user_id").references(() => users.id), // kind = 'reset' 일 때만
+    tokenHash: text("token_hash").notNull(),
+    prefix: text("prefix").notNull(),
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: ts("created_at").notNull(),
+    expiresAt: ts("expires_at").notNull(),
+    usedAt: ts("used_at"),
+    usedBy: text("used_by"),
+    revokedAt: ts("revoked_at"),
+  },
+  (t) => [uniqueIndex("invites_token_hash").on(t.tokenHash)],
 );
