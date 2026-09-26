@@ -156,6 +156,7 @@ src/
 │  │                      ⚠ **`messages` 를 다시 만드는 마이그레이션(drizzle 의 `__new_messages` 복사 → DROP → RENAME)을 내면 트리거가 사라지고 rowid 가 새로 매겨진다** —
 │  │                      오류 없이 검색만 낡는다(지운 말로 다른 메시지가 찾힌다). 그 뒤에 `0007_search_fts.sql` 의 트리거 셋과 백필을 새 커스텀 마이그레이션으로 다시 넣는다.
 │  │                      가드: `test/search.service.test.ts` 의 백필 테스트(모든 마이그레이션 뒤 트리거 셋 존재·남은 행마다 제 id 로만 찾힘)가 빨갛게 된다.
+│  │                      `VACUUM` 도 text PK 테이블의 rowid 를 바꿀 수 있다(SQLite 문서 — 번들 SQLite 에서는 보존됐다) — 운영자가 돌렸다면 `0007_search_fts.sql` 의 백필(`DELETE FROM messages_fts` 뒤 `INSERT … SELECT`)을 다시 한다.
 │  │                      bridge_tokens: id·workspace_id·label·hash(sha256 hex, 유일)·prefix·created_at·last_used_at·revoked_at — 원문 없음.
 │  │                      ops_events(0005): id·workspace_id·kind·severity·key·detail_json·count·first_at·last_at·resolved_at(끊김 사건)·acked_at, 인덱스 ops_events_ws_last(workspace_id, last_at)·
 │  │                      ops_events_open(workspace_id, kind, key, acked_at). workspaces.ops_json(0005, text 기본 `'{}'`) — { dailyRunLimit?: number | null, lastGatewayVersion?: string },
