@@ -1,5 +1,5 @@
-import { Channel, ChannelMember, type Participant, RelayPolicy } from "@dodok/shared";
-import { and, asc, eq, sql } from "drizzle-orm";
+import { Channel, ChannelMember, type Participant, RelayPolicy, TeamRole } from "@dodok/shared";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { SQLiteUpdateSetSource } from "drizzle-orm/sqlite-core";
 import { v7 as uuidv7 } from "uuid";
 import { z } from "zod";
@@ -361,7 +361,12 @@ export function userMessageParticipants(db: DbOrTx, channelId: string): Particip
     .from(users)
     .innerJoin(
       memberships,
-      and(eq(memberships.userId, users.id), eq(memberships.workspaceId, channel.workspaceId)),
+      // 모르는 역할(guest 등)은 roleOf·listMembers 처럼 멤버로 치지 않는다
+      and(
+        eq(memberships.userId, users.id),
+        eq(memberships.workspaceId, channel.workspaceId),
+        inArray(memberships.role, TeamRole.options),
+      ),
     )
     .where(eq(users.workspaceId, channel.workspaceId))
     .orderBy(asc(users.createdAt), asc(users.id))

@@ -5,7 +5,9 @@ import type { Auth } from "../../auth";
 import { requireRole, requireSession, sessionUser } from "../../auth/roles";
 import type { Db } from "../../db/client";
 import { parseBody, parseParams } from "../../http/validate";
+import type { Logger } from "../../logger";
 import type { ServerBus } from "../../realtime/bus";
+import type { OpsService } from "../ops/service";
 import { broadcastPeople, listPeople } from "./people";
 import { changeRole, listMembers, removeMember } from "./service";
 
@@ -14,6 +16,8 @@ export type MemberManageRouteContext = {
   db: Db;
   bus: ServerBus;
   workspaceId: string;
+  ops: Pick<OpsService, "record">;
+  logger: Logger;
   /** 내보낸 사람의 열린 wire 소켓을 끊는다 — app.ts 가 realtime/socket.ts disconnectUser 를 묶어 준다 */
   disconnectUser(userId: string): void;
 };

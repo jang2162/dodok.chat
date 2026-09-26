@@ -304,6 +304,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     registerMemberRoutes(fastify, {
       auth,
       db,
+      bus,
       logger,
       workspaceId,
       appOrigin: config.APP_ORIGIN,
@@ -322,6 +323,8 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       db,
       bus,
       workspaceId,
+      ops,
+      logger,
       disconnectUser: (userId) => disconnectUser(io, userId),
     });
     registerRunRoutes(fastify, routeContext);

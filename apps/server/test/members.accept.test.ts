@@ -294,7 +294,7 @@ describe("POST /api/v1/invites/lookup·accept", () => {
     const before = counts(app);
     const ctx = await app.auth.$context;
     const createUser = ctx.internalAdapter.createUser.bind(ctx.internalAdapter);
-    // assertHandleFreeForPeople·claimInvite 는 이미 동기로 지났다 — Better Auth 사용자를 만드는 await 중간에
+    // assertHandleFree·claimInvite 는 이미 동기로 지났다 — Better Auth 사용자를 만드는 await 중간에
     // 다른 요청이 같은 핸들로 먼저 커밋했다고 흉내 낸다. Promise.all 로 두 accept 를 동시에 내면 앞선 요청의 행이
     // 동기 검사보다 먼저 들어가 이 catch 경로에 닿지 않는다(리뷰 p4m-t3-review.md m1-2) — 그래서 직접 끼워 넣는다
     ctx.internalAdapter.createUser = (async (...args: Parameters<typeof createUser>) => {

@@ -9,10 +9,11 @@ import { v7 as uuidv7 } from "uuid";
 import type { Auth } from "../../auth";
 import { roleOf } from "../../auth/roles";
 import type { Db, DbOrTx } from "../../db/client";
-import { agents, invites, memberships, users } from "../../db/schema.sqlite";
+import { invites, memberships, users } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
 import type { Logger } from "../../logger";
 import type { OpsService } from "../ops/service";
+import { assertHandleFree } from "./handles";
 import { claimInvite, findValidInvite, type InviteRow, unclaimInvite } from "./invites";
 
 export type AcceptDeps = {
@@ -33,22 +34,6 @@ export const inviteNotFound = () => apiError("NOT_FOUND", "초대가 만료됐�
  */
 export function normalizeEmail(email: string): string {
   return email.toLowerCase();
-}
-
-/** 멘션이 같은 이름공간이라 사람(users)과 에이전트(agents)를 통틀어 워크스페이스 안에서 유일하다. 겹치면 409 field "handle" */
-export function assertHandleFreeForPeople(db: DbOrTx, workspaceId: string, handle: string): void {
-  const person = db
-    .select({ id: users.id })
-    .from(users)
-    .where(and(eq(users.workspaceId, workspaceId), eq(users.handle, handle)))
-    .get();
-  const agent = db
-    .select({ id: agents.id })
-    .from(agents)
-    .where(and(eq(agents.workspaceId, workspaceId), eq(agents.handle, handle)))
-    .get();
-  if (person || agent)
-    throw apiError("CONFLICT", `handle @${handle} 는 이미 쓰이고 있다`, { field: "handle" });
 }
 
 function emailTaken(db: DbOrTx, workspaceId: string, email: string): boolean {
@@ -105,8 +90,8 @@ export async function acceptInvite(
   const passwordHash = await ctx.password.hash(body.password);
 
   // 여기서 claim 까지는 await 가 없다 — 검사와 잡기 사이에 다른 가입이 끼지 않는다. 그 전의 await 사이에 낀 경합은
-  // 아래 유일 인덱스가 막고 catch 의 재검사(assertHandleFreeForPeople·assertEmailFree)가 409 로 바꾼다
-  assertHandleFreeForPeople(db, workspaceId, body.handle);
+  // 아래 유일 인덱스가 막고 catch 의 재검사(assertHandleFree·assertEmailFree)가 409 로 바꾼다
+  assertHandleFree(db, workspaceId, body.handle);
   if (emailTaken(db, workspaceId, email)) throw emailConflict();
   if (!claimInvite(db, invite.id, deps.now())) throw inviteNotFound();
 
@@ -145,7 +130,7 @@ export async function acceptInvite(
   } catch (err) {
     await undoAccept(deps, invite.id, created ? userId : undefined);
     // 검사 뒤 await 사이에 같은 핸들·이메일을 다른 가입이 먼저 넣었으면 유일 인덱스가 막은 것이다
-    assertHandleFreeForPeople(db, workspaceId, body.handle);
+    assertHandleFree(db, workspaceId, body.handle);
     await assertEmailFree(deps, email);
     throw internal(deps, err, "invite accept failed", { inviteId: invite.id });
   }

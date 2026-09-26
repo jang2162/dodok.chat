@@ -22,6 +22,7 @@ import type { Db } from "../../db/client";
 import { apiError } from "../../http/errors";
 import { parseBody, parseParams } from "../../http/validate";
 import type { Logger } from "../../logger";
+import type { ServerBus } from "../../realtime/bus";
 import { recordRateLimit } from "../ops/http-limits";
 import type { Limits } from "../ops/limits";
 import { KeyedLimiter } from "../ops/ratelimit";
@@ -36,10 +37,13 @@ import {
   listPendingInvites,
   revokeInvite,
 } from "./invites";
+import { broadcastPeople } from "./people";
 
 export type MemberRouteContext = {
   auth: Auth;
   db: Db;
+  /** 가입·표시 이름 바꾸기 뒤 people.changed(people.ts broadcastPeople) */
+  bus: ServerBus;
   logger: Logger;
   workspaceId: string;
   /** 링크 url 의 앞부분(`<APP_ORIGIN>/join/<token>`) */
@@ -156,6 +160,7 @@ export function registerMemberRoutes(fastify: FastifyInstance, ctx: MemberRouteC
   fastify.post("/api/v1/invites/accept", { onRequest: ctx.loginLimit }, async (request, reply) => {
     const body = parseBody(AcceptInviteBody, request.body);
     const { userId, sessionToken } = await acceptInvite(acceptDeps, body);
+    broadcastPeople(ctx.bus, ctx.db, ctx.workspaceId);
     setSessionCookie(reply, sessionToken, ctx.secureCookie);
     return { sessionToken, user: loadUser(ctx.db, userId) };
   });
@@ -171,6 +176,7 @@ export function registerMemberRoutes(fastify: FastifyInstance, ctx: MemberRouteC
     const { displayName } = parseBody(UpdateMeBody, request.body);
     const me = sessionUser(request);
     updateDisplayName(ctx.db, me.id, displayName);
+    broadcastPeople(ctx.bus, ctx.db, ctx.workspaceId);
     return { user: loadUser(ctx.db, me.id) };
   });
 

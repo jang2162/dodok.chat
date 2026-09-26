@@ -5,7 +5,7 @@ import { v7 as uuid } from "uuid";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { App } from "../src/app";
 import type { DbOrTx } from "../src/db/client";
-import { channelMembers, memberships, users } from "../src/db/schema.sqlite";
+import { channelMembers, memberships, users, workspaces } from "../src/db/schema.sqlite";
 import { joinChannelIfAbsent } from "../src/modules/channels/service";
 import { broadcastPeople, listPeople } from "../src/modules/members/people";
 import { createAgentMessage, createUserMessage } from "../src/modules/messages/service";
@@ -187,6 +187,44 @@ describe("채널 자동 참여", () => {
     const message = say(userId, "@gone 어디 갔어");
     expect(message.mentions.users).toEqual([]);
     expect(isChannelMember(db, channelId, gone)).toBe(false);
+    expect(changes).toHaveLength(0);
+  });
+
+  it("다른 워크스페이스의 사람·membership 은 멘션으로 풀리지도 참여하지도 않는다", () => {
+    const { db, channelId, userId, workspaceId, changes, say } = setup();
+    const other = uuid();
+    db.insert(workspaces).values({ id: other, name: "other", createdAt: new Date() }).run();
+    // 사람도 membership 도 다른 워크스페이스
+    const stranger = addPerson(db, other, "stranger");
+    // 사람은 이 워크스페이스인데 membership 은 다른 워크스페이스
+    const drifter = uuid();
+    db.insert(users)
+      .values({
+        id: drifter,
+        workspaceId,
+        handle: "drifter",
+        displayName: "drifter",
+        authProvider: "local",
+        createdAt: new Date(),
+      })
+      .run();
+    db.insert(memberships).values({ id: uuid(), workspaceId: other, userId: drifter, role: "member" }).run();
+    // 사람은 다른 워크스페이스인데 membership 은 이 워크스페이스
+    const visitor = addPerson(db, other, "visitor");
+    db.insert(memberships).values({ id: uuid(), workspaceId, userId: visitor, role: "member" }).run();
+
+    const message = say(userId, "@stranger @drifter @visitor 안녕");
+    expect(message.mentions.users).toEqual([]);
+    for (const id of [stranger, drifter, visitor]) expect(isChannelMember(db, channelId, id)).toBe(false);
+    expect(changes).toHaveLength(0);
+  });
+
+  it("모르는 역할(guest 등)의 membership 은 멤버로 치지 않는다 — 멘션으로 풀리지 않는다", () => {
+    const { db, channelId, userId, workspaceId, changes, say } = setup();
+    const guest = addPerson(db, workspaceId, "guesty", "guest");
+    const message = say(userId, "@guesty 들려?");
+    expect(message.mentions.users).toEqual([]);
+    expect(isChannelMember(db, channelId, guest)).toBe(false);
     expect(changes).toHaveLength(0);
   });
 

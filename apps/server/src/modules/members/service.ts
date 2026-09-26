@@ -1,13 +1,16 @@
 import { MemberRow, roleAtLeast, TeamRole } from "@dodok/shared";
-import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, or } from "drizzle-orm";
 import type { Auth } from "../../auth";
 import { assertRole, roleOf } from "../../auth/roles";
 import type { Db, DbOrTx } from "../../db/client";
 import { channelMembers, invites, memberships, pushSubscriptions, users } from "../../db/schema.sqlite";
-import { apiError } from "../../http/errors";
+import { apiError, HttpError } from "../../http/errors";
 import { parseStored } from "../../http/validate";
+import type { Logger } from "../../logger";
 import type { ServerBus } from "../../realtime/bus";
 import { listMembers as listChannelMembers } from "../channels/service";
+import type { OpsService } from "../ops/service";
+import { LEFT_HANDLE_PREFIX } from "./handles";
 
 // 멤버 관리(팀 스펙 「멤버 관리」 절). 권한은 여기서도 membership 을 다시 읽어 본다 — 라우트 가드는 최소 역할만 거른다
 
@@ -45,7 +48,10 @@ export function listMembers(db: DbOrTx, workspaceId: string): MemberRow[] {
     );
 }
 
-/** owner 만. owner 를 대상으로 하면(owner 자신 포함) 403, membership 이 없으면 404 */
+/**
+ * owner 만. owner 를 대상으로 하면(owner 자신 포함) 403, membership 이 없으면 404.
+ * admin → member 면 그 사람이 발급한 쓰이지 않은 초대·재설정 링크를 같은 트랜잭션에서 폐기한다 — 발급 권한을 잃었다
+ */
 export function changeRole(
   db: Db,
   workspaceId: string,
@@ -62,6 +68,12 @@ export function changeRole(
       .set({ role })
       .where(and(eq(memberships.workspaceId, workspaceId), eq(memberships.userId, userId)))
       .run();
+    if (current === "admin" && role === "member") {
+      tx.update(invites)
+        .set({ revokedAt: new Date() })
+        .where(and(eq(invites.createdBy, userId), isNull(invites.usedAt), isNull(invites.revokedAt)))
+        .run();
+    }
     const row = listMembers(tx, workspaceId).find((m) => m.id === userId);
     if (!row) throw apiError("NOT_FOUND", "member not found");
     return row;
@@ -73,6 +85,8 @@ export type RemoveMemberDeps = {
   auth: Auth;
   bus: ServerBus;
   workspaceId: string;
+  ops: Pick<OpsService, "record">;
+  logger: Logger;
   /** 그 사용자의 열린 wire 소켓을 서버가 끊는다(realtime/socket.ts disconnectUser) */
   disconnectUser(userId: string): void;
 };
@@ -81,8 +95,10 @@ export type RemoveMemberDeps = {
  * 내보내기. admin 은 member 만, owner 는 owner 를 뺀 모두. membership 이 없으면(이미 나감) 404.
  * Better Auth 사용자·계정·세션을 먼저 지운다 — 같은 이메일로 다시 들일 수 있어야 하고(Better Auth 의 이메일은 유일),
  * 우리 쪽 쓰기가 실패해도 다시 부르면 이어진다. 그다음 한 트랜잭션으로 membership·채널 참여·푸시 구독을 지우고
- * 그 사람을 겨눈 재설정 링크를 폐기하고 users 행이 핸들·이메일을 놓아준다. 행과 메시지는 남는다(작성자 참조).
- * people.changed 는 호출자(라우트)가 낸다
+ * 그 사람을 겨눈 재설정 링크와 그 사람이 발급한 쓰이지 않은 초대·재설정 링크를 폐기하고(원문을 쥔 채 나간 사람이 다시
+ * 들어오거나 남의 비밀번호를 바꾸지 못하게) users 행이 핸들·이메일을 놓아준다. 행과 메시지는 남는다(작성자 참조).
+ * 그 트랜잭션이 실패하면(권한·없음 판정이 아닌 것) 세션은 이미 지워졌으니 열린 소켓도 끊고 운영 사건을 남긴 뒤 500 —
+ * membership 이 남아 있어 다시 부르면 이어진다. people.changed 는 호출자(라우트)가 낸다
  */
 export async function removeMember(deps: RemoveMemberDeps, actorId: string, userId: string): Promise<void> {
   const { db, workspaceId } = deps;
@@ -96,7 +112,40 @@ export async function removeMember(deps: RemoveMemberDeps, actorId: string, user
   await adapter.deleteUser(userId);
 
   const now = new Date();
-  const channelIds = db.transaction((tx) => {
+  let channelIds: string[];
+  try {
+    channelIds = leaveInTransaction(deps, actorId, userId, now);
+  } catch (err) {
+    if (err instanceof HttpError && err.body.code !== "INTERNAL") throw err;
+    deps.disconnectUser(userId);
+    deps.ops.record({
+      kind: "member_remove_failed",
+      key: `member:${userId}`,
+      severity: "error",
+      detail: { userId },
+    });
+    const cause = (err as { cause?: { code?: unknown } } | undefined)?.cause;
+    // 오류 객체를 통째로 싣지 않는다 — 드라이버 문구에 무엇이 실리는지 보증할 수 없다(accept.ts internal 과 같은 까닭)
+    deps.logger.error(
+      {
+        userId,
+        errName: err instanceof Error ? err.name : typeof err,
+        code: (err as { code?: unknown } | undefined)?.code ?? cause?.code,
+      },
+      "member remove failed",
+    );
+    throw apiError("INTERNAL", "요청을 마치지 못했다");
+  }
+  // 트랜잭션과 같은 동기 구간에서 끊는다 — 핸드셰이크를 지나던 소켓은 connection 에서 membership 을 다시 본다(socket.ts)
+  deps.disconnectUser(userId);
+  for (const channelId of channelIds) {
+    deps.bus.emit("channel.member.changed", { channelId, members: listChannelMembers(db, channelId) });
+  }
+}
+
+function leaveInTransaction(deps: RemoveMemberDeps, actorId: string, userId: string, now: Date): string[] {
+  const { db, workspaceId } = deps;
+  return db.transaction((tx) => {
     // await 사이 역할이 바뀌었거나 같은 요청이 먼저 끝났을 수 있다 — 다시 본다. 두 번 돌면 left_handle 이 left-… 로 덮인다
     assertCanRemove(roleOf(tx, workspaceId, actorId), roleOf(tx, workspaceId, userId));
     tx.delete(memberships)
@@ -112,8 +161,7 @@ export async function removeMember(deps: RemoveMemberDeps, actorId: string, user
       .set({ revokedAt: now })
       .where(
         and(
-          eq(invites.kind, "reset"),
-          eq(invites.targetUserId, userId),
+          or(and(eq(invites.kind, "reset"), eq(invites.targetUserId, userId)), eq(invites.createdBy, userId)),
           isNull(invites.usedAt),
           isNull(invites.revokedAt),
         ),
@@ -127,19 +175,15 @@ export async function removeMember(deps: RemoveMemberDeps, actorId: string, user
       .run();
     return [...new Set(left.map((r) => r.channelId))];
   });
-  // 트랜잭션과 같은 동기 구간에서 끊는다 — 핸드셰이크를 지나던 소켓은 connection 에서 membership 을 다시 본다(socket.ts)
-  deps.disconnectUser(userId);
-  for (const channelId of channelIds) {
-    deps.bus.emit("channel.member.changed", { channelId, members: listChannelMembers(db, channelId) });
-  }
 }
 
 /**
- * 나간 멤버의 핸들 — `left-` + id 의 뒤 12자(uuid v7 의 난수 부분). 앞 8자는 v7 의 시각이라 약 65초 안에
- * 만든 사용자끼리 같아 users_ws_handle 유일 인덱스에 걸린다. 17자라 Handle 규칙(2~32자) 안이다
+ * 나간 멤버의 핸들 — `left-` + id(하이픈 뺀 32 hex)의 뒤 27자 = Handle 상한 32자. 앞 8자는 v7 의 시각이라 약 65초 안에
+ * 만든 사용자끼리 같아 users_ws_handle 유일 인덱스에 걸린다 — 시각 앞 5자만 버리고 seq·rand_a·rand_b 를 모두 싣는다.
+ * 결정적이라 한 번 겹치면 다시 불러도 겹치므로 엔트로피를 최대로 둔다. `left-` 는 가입·등록에 예약돼 있다(handles.ts)
  */
 export function leftHandleOf(userId: string): string {
-  return `left-${userId.replace(/-/g, "").slice(-12)}`;
+  return `${LEFT_HANDLE_PREFIX}${userId.replace(/-/g, "").slice(-27)}`;
 }
 
 function assertCanRemove(actor: TeamRole | undefined, target: TeamRole | undefined): void {

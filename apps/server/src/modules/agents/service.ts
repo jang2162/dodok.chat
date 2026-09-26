@@ -2,9 +2,10 @@ import { Agent } from "@dodok/shared";
 import { and, asc, eq, type SQL, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import type { Db, DbOrTx } from "../../db/client";
-import { agents, users } from "../../db/schema.sqlite";
+import { agents } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
 import { parseStored } from "../../http/validate";
+import { assertHandleFree } from "../members/handles";
 
 type AgentRow = typeof agents.$inferSelect;
 
@@ -135,20 +136,4 @@ export function getAgent(db: DbOrTx, id: string, workspaceId?: string): Agent | 
     )
     .get();
   return row ? rowToAgent(row) : undefined;
-}
-
-/** 핸들은 사람과 에이전트를 통틀어 워크스페이스 안에서 유일하다 — 멘션이 같은 이름공간이다(팀 스펙 「조회·수락」 절). 나간 멤버의 옛 핸들(left_handle)은 비어 있다 */
-function assertHandleFree(db: DbOrTx, workspaceId: string, handle: string): void {
-  const agent = db
-    .select({ id: agents.id })
-    .from(agents)
-    .where(and(eq(agents.workspaceId, workspaceId), eq(agents.handle, handle)))
-    .get();
-  const person = db
-    .select({ id: users.id })
-    .from(users)
-    .where(and(eq(users.workspaceId, workspaceId), eq(users.handle, handle)))
-    .get();
-  if (agent || person)
-    throw apiError("CONFLICT", `handle @${handle} 는 이미 쓰이고 있다`, { field: "handle" });
 }
