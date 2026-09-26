@@ -156,6 +156,13 @@ describe("검색 대화상자 열기", () => {
     expect(screen.queryByRole("dialog", { name: "검색" })).toBeNull();
   });
 
+  it("열린 채 Ctrl+K 를 다시 누르면 기본 동작을 막고 대화상자는 그대로", async () => {
+    renderRoute(`/c/${CH}`, subscribedClient());
+    const dialog = await openWith({ ctrlKey: true });
+    expect(fireEvent.keyDown(window, { key: "k", ctrlKey: true })).toBe(false);
+    expect(screen.getByRole("dialog", { name: "검색" })).toBe(dialog);
+  });
+
   it("닫으면 초점이 연 자리로 돌아간다", async () => {
     renderRoute(`/c/${CH}`, subscribedClient());
     const opener = await screen.findByRole("button", { name: /검색/ });
