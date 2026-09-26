@@ -6,7 +6,7 @@ import {
   type ApprovalSeverity,
   type ApprovalStatus,
 } from "@dodok/shared";
-import { and, asc, eq, gt } from "drizzle-orm";
+import { and, asc, eq, gt, isNull } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import type { DbOrTx } from "../../db/client";
 import { approvals } from "../../db/schema.sqlite";
@@ -252,6 +252,23 @@ export function listPendingApprovalsByRun(db: DbOrTx, runId: string): Approval[]
     .orderBy(asc(approvals.createdAt), asc(approvals.id))
     .all()
     .map(rowToApproval);
+}
+
+/**
+ * `decided_by` 가 비어 있을 때만 채운다(원자적 `WHERE decided_by IS NULL`) — Gateway 해결 이벤트가 RPC 응답보다
+ * 먼저 결말을 적어도(설계 4.4 「먼저 온 쪽이 이긴다」) `approval.resolve` 를 부른 사용자가 감사 기록에 남게 한다.
+ * 이미 다른 사용자가 먼저 채웠으면(두 사람이 거의 동시에 눌렀을 때) 덮지 않고 그 행 그대로 돌려준다.
+ */
+export function claimDecidedBy(db: DbOrTx, id: string, userId: string): Approval | undefined {
+  const claimed = db
+    .update(approvals)
+    .set({ decidedBy: userId })
+    .where(and(eq(approvals.id, id), isNull(approvals.decidedBy)))
+    .returning()
+    .get();
+  if (claimed) return rowToApproval(claimed);
+  const existing = db.select().from(approvals).where(eq(approvals.id, id)).get();
+  return existing ? rowToApproval(existing) : undefined;
 }
 
 export function markApproval(db: DbOrTx, id: string, patch: ApprovalPatch): Approval {

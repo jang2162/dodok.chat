@@ -766,7 +766,7 @@ describe("승인 저장·런 상관·wire 중계 (앱 부팅, FakeAdapter)", () 
     await vi.waitFor(() => expect(getRun(app.db, run.id)?.status).toBe("streaming"));
   });
 
-  it("Gateway 이벤트가 먼저 오면 해결 경로는 같은 행을 다시 쓰지 않는다 — 먼저 온 쪽이 이긴다", async () => {
+  it("Gateway 이벤트가 먼저 와도 결과는 먼저 온 쪽 그대로이되, 해결자는 approval.resolve 를 부른 사용자로 남는다", async () => {
     const socket = await connect();
     const { approval } = await pendingApproval(socket);
     const seen: Approval[] = [];
@@ -793,9 +793,53 @@ describe("승인 저장·런 상관·wire 중계 (앱 부팅, FakeAdapter)", () 
     expect(spy).toHaveBeenCalledTimes(1);
     await roundTrip(socket);
     expect(seen.map((a) => a.id)).toEqual([approval.id]); // 두 번 중계하지 않는다
-    // 먼저 온 쪽(Gateway 이벤트)이 적은 값 그대로다 — 다른 디바이스가 해결한 것처럼 해결자를 비운다
-    expect(stored(approval)).toMatchObject({ status: "allowed", decision: "allow-once" });
+    // 결과(허용·거절)는 먼저 온 쪽(Gateway 이벤트) 그대로다 — 그래도 이 승인을 해결한 사람은 우리 사용자다(사람이 여럿인
+    // 팀에서는 누가 눌렀는지가 감사 기록이다) — decided_by 가 비어 있을 때만 채우는 갱신으로 뒤늦게 남긴다
+    expect(stored(approval)).toMatchObject({
+      status: "allowed",
+      decision: "allow-once",
+      decidedBy: app.ownerUserId,
+    });
+  });
+
+  it("반대 순서 — RPC 응답이 먼저 decided_by 를 적고 나면, 뒤늦게 온 같은 결말의 이벤트가 지우지 않는다", async () => {
+    const socket = await connect();
+    const { approval } = await pendingApproval(socket);
+    const a = providerApproval(sessionKeyOf("dev", channel.id), {
+      providerApprovalId: approval.providerApprovalId,
+    });
+
+    expect(await resolve(socket, approval.id, "allow-once")).toEqual({ ok: true, data: null });
+    expect(stored(approval)).toMatchObject({ status: "allowed", decidedBy: app.ownerUserId });
+
+    // 같은 승인의 확정 이벤트가 뒤늦게 도착한다(어댑터 재생성·되감기) — 종료된 행이라 더 바뀌지 않는다
+    adapter.emitApproval({ ...a, status: "allowed", decision: "allow-once", reason: "user" });
+
+    await roundTrip(socket);
+    expect(stored(approval)).toMatchObject({ status: "allowed", decidedBy: app.ownerUserId });
+  });
+
+  it("두 사람이 거의 동시에 결정하면 먼저 결정자로 남은 사람만 남는다 — 나중 사용자는 덮지 못한다", async () => {
+    const socket = await connect();
+    const { approval } = await pendingApproval(socket);
+    const otherUserId = uuid();
+    // Gateway 이벤트가 먼저 결말을 적어 decided_by 가 아직 빈 채로 닫혔다고 가정한다(두 사람 다 이 상태에서 출발)
+    adapter.emitApproval({
+      ...providerApproval(sessionKeyOf("dev", channel.id), {
+        providerApprovalId: approval.providerApprovalId,
+      }),
+      status: "allowed",
+      decision: "allow-once",
+      reason: "user",
+    });
+    await vi.waitFor(() => expect(stored(approval)?.status).toBe("allowed"));
     expect(stored(approval)?.decidedBy).toBeUndefined();
+
+    // 먼저 결정자로 claim 한 사용자만 남고, 뒤이어 다른 사용자가 같은 승인을 claim 해도 덮지 못한다
+    approvalStore.claimDecidedBy(app.db, approval.id, app.ownerUserId);
+    approvalStore.claimDecidedBy(app.db, approval.id, otherUserId);
+
+    expect(stored(approval)?.decidedBy).toBe(app.ownerUserId);
   });
 
   it("earliestPendingExpiry — 그 런의 미해결 승인 중 가장 이른 만료 시각(해결된 것은 세지 않는다)", async () => {
@@ -1150,6 +1194,25 @@ describe("승인 store (메모리 DB)", () => {
     expect(cancelled.decidedBy).toBeUndefined();
     expect(cancelled.decision).toBeUndefined();
     expect(() => approvalStore.markApproval(db, uuid(), { status: "expired", decidedAt: at })).toThrow();
+  });
+
+  it("claimDecidedBy — 비어 있을 때만 채운다, 먼저 채운 사람을 나중 사람이 덮지 못한다", () => {
+    const { db, input } = setup();
+    const { approval } = approvalStore.upsertApproval(db, input());
+    const first = uuid();
+    const second = uuid();
+
+    const claimed = approvalStore.claimDecidedBy(db, approval.id, first);
+    expect(claimed?.decidedBy).toBe(first);
+
+    const notOverwritten = approvalStore.claimDecidedBy(db, approval.id, second);
+    expect(notOverwritten?.decidedBy).toBe(first); // 나중 사람은 이미 찬 값을 덮지 못한다
+    expect(approvalStore.getApproval(db, approval.id)?.decidedBy).toBe(first);
+  });
+
+  it("claimDecidedBy — 없는 승인이면 undefined", () => {
+    const { db } = setup();
+    expect(approvalStore.claimDecidedBy(db, uuid(), uuid())).toBeUndefined();
   });
 
   it("resolvedOutcome — 만료·취소는 deny 로, 결정 없는 허용은 allow-once 로 정규화한다", () => {

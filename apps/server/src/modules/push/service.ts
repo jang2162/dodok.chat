@@ -139,7 +139,7 @@ export function createPushDispatcher(deps: {
       return;
     }
     if (statusCode >= 200 && statusCode < 300) {
-      logger.debug({ subscriptionId: sub.id, statusCode }, "push sent");
+      logger.debug({ ...ctx, statusCode }, "push sent");
       return;
     }
     if (statusCode === 404 || statusCode === 410) {

@@ -247,8 +247,13 @@ describe("createPushDispatcher — 발송·거르기·결과 분기(스펙 5.3·
 
     const sent = cap.lines.filter((l) => l.msg === "push sent");
     expect(sent).toHaveLength(1); // bob 의 구독 하나
-    expect(sent[0]).toMatchObject({ level: 20, statusCode: 201 });
-    expect(fieldsOf(sent[0] as Record<string, unknown>)).toEqual(["statusCode", "subscriptionId"]);
+    expect(sent[0]).toMatchObject({ level: 20, statusCode: 201, userId: bob, kind: "mention" });
+    expect(fieldsOf(sent[0] as Record<string, unknown>)).toEqual([
+      "kind",
+      "statusCode",
+      "subscriptionId",
+      "userId",
+    ]);
     expect(cap.lines).toHaveLength(2);
     // 본문·endpoint·keys 는 어디에도 없다
     const all = cap.raw.join("\n");

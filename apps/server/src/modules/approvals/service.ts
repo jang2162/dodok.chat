@@ -234,11 +234,15 @@ export function createApprovalsService(deps: ApprovalsDeps): ApprovalsService {
       logger.debug({ approvalId, decision, userId }, "approval resolve sent to gateway");
       const snapshot = await resolveOnGateway(deps.adapter, approval, decision);
 
-      // 기다리는 사이 Gateway 가 같은 사실을 이벤트로 먼저 줬을 수 있다 — 먼저 온 쪽이 이긴다(설계 4.4)
+      // 기다리는 사이 Gateway 가 같은 사실을 이벤트로 먼저 줬을 수 있다 — 결과는 먼저 온 쪽이 이긴다(설계 4.4).
+      // 그래도 이 승인을 해결한 것은 지금 approval.resolve 를 부른 사용자다 — 사람이 여럿인 팀에서는 누가
+      // 허용·거절했는지가 감사 기록이라 decided_by 는 비어 있을 때만 채워 뒤늦게라도 남긴다(다른 사용자가
+      // 거의 동시에 먼저 결정자로 남았으면 덮지 않는다 — store.claimDecidedBy)
       const current = store.getApproval(db, approvalId);
       if (current?.status !== "pending") {
         logger.debug({ approvalId, status: current?.status }, "approval already resolved — not relayed");
-        return current ?? approval;
+        if (current === undefined) return approval;
+        return store.claimDecidedBy(db, approvalId, userId) ?? current;
       }
       // Gateway 가 준 terminal 스냅샷이 정본이다. 읽을 수 없으면(pending) 우리가 보낸 결정으로 닫는다
       const status: ApprovalStatus =

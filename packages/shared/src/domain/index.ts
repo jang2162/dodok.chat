@@ -17,7 +17,7 @@ export const User = z.object({
   email: z.email().optional(),
   authProvider: z.enum(["local", "email", "oidc"]),
   avatarUrl: z.url().optional(),
-  leftHandle: Handle.optional(), // 있으면 나간 멤버 — handle 은 left-<id 뒤 12자>, 이 값이 나간 때의 옛 핸들(팀 설계 「멤버 관리」 절)
+  leftHandle: Handle.optional(), // 있으면 나간 멤버 — handle 은 left-<id 뒤 27자>, 이 값이 나간 때의 옛 핸들(팀 설계 「멤버 관리」 절)
   createdAt: IsoDateTime,
 });
 export type User = z.infer<typeof User>;
