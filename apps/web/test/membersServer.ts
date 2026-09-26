@@ -13,7 +13,7 @@ export const memberRowOf = (
   over: Partial<MemberRow> & Pick<MemberRow, "id" | "handle" | "role">,
 ): MemberRow => ({
   displayName: over.handle,
-  createdAt: "2026-09-20T00:00:00.000Z",
+  createdAt: "2026-09-20T12:00:00.000Z",
   ...over,
 });
 
@@ -37,7 +37,7 @@ export const MINA_ROW = memberRowOf({
   displayName: "미나",
   role: "member",
   email: "mina@example.com",
-  createdAt: "2026-09-25T09:00:00.000Z",
+  createdAt: "2026-09-25T12:00:00.000Z",
 });
 
 export const inviteOf = (n: number, role: "admin" | "member", over: Partial<Invite> = {}): Invite => ({
@@ -46,8 +46,8 @@ export const inviteOf = (n: number, role: "admin" | "member", over: Partial<Invi
   role,
   prefix: `dit_${String(n).padStart(4, "0")}`,
   createdBy: OWNER_ID,
-  createdAt: "2026-09-26T00:00:00.000Z",
-  expiresAt: "2026-10-03T00:00:00.000Z",
+  createdAt: "2026-09-26T12:00:00.000Z",
+  expiresAt: "2026-10-03T12:00:00.000Z",
   ...over,
 });
 
@@ -86,10 +86,13 @@ export function stubMembersServer(
     if (member && method === "PATCH") {
       const role = body?.role as MemberRow["role"];
       state.members = state.members.map((m) => (m.id === member ? { ...m, role } : m));
+      // 서버 실물: 강등하면 그 사람이 발급한 쓰이지 않은 링크를 폐기한다(팀 스펙 4장)
+      if (role === "member") state.invites = state.invites.filter((i) => i.createdBy !== member);
       return json(200, { member: state.members.find((m) => m.id === member) });
     }
     if (member && method === "DELETE") {
       state.members = state.members.filter((m) => m.id !== member);
+      state.invites = state.invites.filter((i) => i.createdBy !== member);
       return new Response(null, { status: 204 });
     }
     const reset = /^\/api\/v1\/members\/([^/]+)\/reset-link$/.exec(url)?.[1];

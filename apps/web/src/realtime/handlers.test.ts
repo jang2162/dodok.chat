@@ -727,6 +727,15 @@ describe("캐시 패치", () => {
     expect(queryClient.getQueryData(qk.people)).toEqual(people);
   });
 
+  it("people.changed: 멤버 표·대기 초대는 다시 받게 낡은 것으로 둔다(다른 관리자의 가입·역할·내보내기)", () => {
+    const { fake, queryClient } = setup();
+    queryClient.setQueryData(qk.teamMembers, []);
+    queryClient.setQueryData(qk.invites, []);
+    fake.serverEmit("people.changed", { people: [] });
+    expect(queryClient.getQueryState(qk.teamMembers)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(qk.invites)?.isInvalidated).toBe(true);
+  });
+
   it("people.changed 에서 내 역할이 me 와 다르면 me 를 다시 받는다 — 같으면 부르지 않는다", async () => {
     const { fake, queryClient } = setup();
     const me = { user: { id: uid(30), handle: "mina" }, workspaceId: "w", role: "admin" };

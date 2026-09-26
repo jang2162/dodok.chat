@@ -11,6 +11,7 @@ import {
   INVITE_TOKEN,
   INVITE_URL,
   MINA_ID,
+  MINA_ROW,
   RESET_URL,
   inviteOf,
   stubMembersServer,
@@ -36,6 +37,11 @@ const rowOf = async (handle: string) => {
   return within(row);
 };
 const pending = () => screen.findByRole("region", { name: "대기 중인 초대" });
+/** 화면은 로컬 날짜로 그린다 — 기대값도 픽스처 시각의 로컬 날짜로 만들어 시간대(UTC−12~+14)에 묶이지 않게 한다 */
+const localDay = (iso: string) => {
+  const d = new Date(iso);
+  return `${d.getFullYear()}. ${d.getMonth() + 1}. ${d.getDate()}.`;
+};
 
 describe("멤버 표", () => {
   it("핸들·이름·이메일·역할·가입일", async () => {
@@ -50,7 +56,7 @@ describe("멤버 표", () => {
     const mina = await rowOf("mina");
     expect(mina.getByText("미나")).toBeInTheDocument();
     expect(mina.getByText("mina@example.com")).toBeInTheDocument();
-    expect(mina.getByText("2026. 9. 25.")).toBeInTheDocument();
+    expect(mina.getByText(localDay(MINA_ROW.createdAt))).toBeInTheDocument();
     expect((await rowOf("owner")).getByText("owner")).toBeInTheDocument();
   });
 
@@ -146,6 +152,12 @@ describe("멤버 표", () => {
           .map((m) => m.state.data),
       ),
     ).not.toContain("drt_");
+
+    // 다시 열면 앞 링크가 아니라 「링크 만들기」부터
+    await userEvent.click(mina.getByRole("button", { name: "@mina 재설정 링크" }));
+    const again = await screen.findByRole("dialog", { name: "비밀번호 재설정 링크" });
+    expect(within(again).getByRole("button", { name: "링크 만들기" })).toBeInTheDocument();
+    expect(document.body.innerHTML).not.toContain("drt_");
   });
 });
 
@@ -184,6 +196,12 @@ describe("초대", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(document.body.innerHTML).not.toContain(INVITE_TOKEN);
     expect(await within(await pending()).findByText(/관리자/)).toBeInTheDocument();
+
+    // 다시 열면 앞 링크가 아니라 역할·「링크 만들기」 폼부터(역할도 기본값으로)
+    const again = await openInvite();
+    expect(within(again).getByRole("radio", { name: "멤버" })).toBeChecked();
+    expect(within(again).getByRole("button", { name: "링크 만들기" })).toBeInTheDocument();
+    expect(document.body.innerHTML).not.toContain(INVITE_TOKEN);
   });
 
   it("owner 의 기본 역할은 멤버", async () => {
@@ -217,7 +235,7 @@ describe("대기 중인 초대", () => {
     const items = await within(region).findAllByRole("listitem");
     expect(items).toHaveLength(2);
     expect(items[0]).toHaveTextContent("멤버");
-    expect(items[0]).toHaveTextContent("2026. 10. 3.");
+    expect(items[0]).toHaveTextContent(localDay(invites[0]!.expiresAt));
     await userEvent.click(within(items[0]!).getByRole("button", { name: /폐기/ }));
     await waitFor(() =>
       expect(server.writes()).toEqual([
@@ -239,6 +257,34 @@ describe("대기 중인 초대", () => {
     stubMembersServer({ invites: [] });
     renderRoute("/settings/members");
     expect(await within(await pending()).findByText("대기 중인 초대가 없습니다")).toBeInTheDocument();
+  });
+});
+
+describe("역할 바꾸기·내보내기 뒤 대기 중인 초대", () => {
+  // 서버는 강등·내보내기 때 그 사람이 만든 쓰이지 않은 링크를 폐기한다 — 목록을 다시 받아 낡은 줄을 뺀다
+  const invites = () => [inviteOf(1, "member"), inviteOf(2, "member", { createdBy: ADMIN_ID })];
+
+  it("admin 을 멤버로 내리면 그 사람이 만든 초대 줄이 빠진다", async () => {
+    stubMembersServer({ invites: invites() });
+    renderRoute("/settings/members");
+    const region = await pending();
+    expect(await within(region).findAllByRole("listitem")).toHaveLength(2);
+    await userEvent.selectOptions(
+      (await rowOf("sora")).getByRole("combobox", { name: "@sora 역할" }),
+      "member",
+    );
+    await waitFor(() => expect(within(region).getAllByRole("listitem")).toHaveLength(1));
+  });
+
+  it("내보내면 그 사람이 만든 초대 줄이 빠진다", async () => {
+    stubMembersServer({ invites: invites() });
+    renderRoute("/settings/members");
+    const region = await pending();
+    expect(await within(region).findAllByRole("listitem")).toHaveLength(2);
+    await userEvent.click((await rowOf("sora")).getByRole("button", { name: "@sora 내보내기" }));
+    const dialog = await screen.findByRole("dialog", { name: "멤버 내보내기" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "내보내기" }));
+    await waitFor(() => expect(within(region).getAllByRole("listitem")).toHaveLength(1));
   });
 });
 

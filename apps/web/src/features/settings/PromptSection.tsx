@@ -24,7 +24,8 @@ export function PromptSection({ channel }: { channel: Channel }) {
   const [error, setError] = useState<string>();
   const [saved, setSaved] = useState(false);
   const id = useId();
-  const value = draft ?? channel.prompt ?? "";
+  // 잠겼으면 저장되지 않은 초안이 아니라 서버 값을 보인다(강등 직후 — `OverrideEditor` 와 같은 규칙)
+  const value = (locked ? undefined : draft) ?? channel.prompt ?? "";
 
   function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();

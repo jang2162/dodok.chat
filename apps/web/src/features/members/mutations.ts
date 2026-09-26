@@ -44,25 +44,35 @@ export function useRevokeInvite() {
   });
 }
 
-/** 역할 바꾸기(owner 만). 사람 목록은 wire `people.changed` 가 고친다 — 표는 응답 줄로 곧바로 바꾼다 */
+/**
+ * 역할 바꾸기(owner 만). 사람 목록은 wire `people.changed` 가 고친다 — 표는 응답 줄로 곧바로 바꾼다.
+ * 강등이면 서버가 그 사람이 만든 쓰이지 않은 링크를 폐기하므로 대기 초대도 다시 받는다
+ */
 export function useChangeRole() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ userId, role }: { userId: string; role: "admin" | "member" }) =>
       (await api<{ member: MemberRow }>("PATCH", `/members/${userId}`, { role })).member,
-    onSuccess: (member) =>
+    onSuccess: (member) => {
       qc.setQueryData<MemberRow[]>(qk.teamMembers, (list) =>
         list?.map((m) => (m.id === member.id ? member : m)),
-      ),
+      );
+      void qc.invalidateQueries({ queryKey: qk.invites });
+    },
   });
 }
 
-/** 내보내기 — 서버가 그 사람의 세션·소켓·푸시 구독을 끊는다. 표에서 곧바로 뺀다 */
+/**
+ * 내보내기 — 서버가 그 사람의 세션·소켓·푸시 구독을 끊고 그 사람이 만든 쓰이지 않은 링크를 폐기한다.
+ * 표에서 곧바로 빼고 대기 초대는 다시 받는다
+ */
 export function useRemoveMember() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (userId: string) => api<void>("DELETE", `/members/${userId}`),
-    onSuccess: (_void, userId) =>
-      qc.setQueryData<MemberRow[]>(qk.teamMembers, (list) => list?.filter((m) => m.id !== userId)),
+    onSuccess: (_void, userId) => {
+      qc.setQueryData<MemberRow[]>(qk.teamMembers, (list) => list?.filter((m) => m.id !== userId));
+      void qc.invalidateQueries({ queryKey: qk.invites });
+    },
   });
 }

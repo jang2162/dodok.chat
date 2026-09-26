@@ -115,6 +115,7 @@ describe("역할이 내려간 직후(Review Focus 5)", () => {
     let role = "admin";
     const server = stubSettingsServer({
       me: { ...ME, role: "admin" },
+      channel: { prompt: "원래 지시" },
       override: ({ method, url }) => {
         if (url === "/api/v1/auth/me") return new Response(JSON.stringify({ ...ME, role }), { status: 200 });
         if (method === "PATCH" && url === `/api/v1/channels/${CH}`)
@@ -124,13 +125,42 @@ describe("역할이 내려간 직후(Review Focus 5)", () => {
     });
     renderRoute(`/c/${CH}/settings`);
     const section = await region("채널 프롬프트");
-    await userEvent.type(within(section).getByRole("textbox", { name: "채널 프롬프트" }), "새 지시");
+    const box = within(section).getByRole("textbox", { name: "채널 프롬프트" });
+    await userEvent.clear(box);
+    await userEvent.type(box, "새 지시");
     role = "member"; // 그 사이 owner 가 역할을 내렸다
     await userEvent.click(within(section).getByRole("button", { name: "저장" }));
     await waitFor(() => expect(toastError).toHaveBeenCalledWith("권한이 없습니다", { id: "forbidden" }));
     expect(toastError).toHaveBeenCalledTimes(1);
     expect(await within(section).findByText(LOCKED)).toBeInTheDocument();
     expect(within(section).getByRole("textbox", { name: "채널 프롬프트" })).toBeDisabled();
+    // 잠긴 칸은 저장되지 않은 초안이 아니라 서버 값을 보인다
+    expect(within(section).getByRole("textbox", { name: "채널 프롬프트" })).toHaveValue("원래 지시");
+    expect(server.writes()).toHaveLength(1);
+  });
+
+  it("릴레이 정책도 잠기면 초안 대신 서버 값을 보인다", async () => {
+    let role = "admin";
+    const server = stubSettingsServer({
+      me: { ...ME, role: "admin" },
+      channel: { relayPolicy: { maxRelayTurns: 3, allowPairs: "all", dailyRunLimit: 20 } },
+      override: ({ method, url }) => {
+        if (url === "/api/v1/auth/me") return new Response(JSON.stringify({ ...ME, role }), { status: 200 });
+        if (method === "PATCH" && url === `/api/v1/channels/${CH}`)
+          return apiErr(403, "FORBIDDEN", "channel field relayPolicy requires admin");
+        return undefined;
+      },
+    });
+    renderRoute(`/c/${CH}/settings`);
+    const section = await region("릴레이 정책");
+    const turns = within(section).getByRole("textbox", { name: "턴 상한" });
+    await userEvent.clear(turns);
+    await userEvent.type(turns, "7");
+    role = "member";
+    await userEvent.click(within(section).getByRole("button", { name: "저장" }));
+    expect(await within(section).findByText(LOCKED)).toBeInTheDocument();
+    expect(within(section).getByRole("textbox", { name: "턴 상한" })).toBeDisabled();
+    expect(within(section).getByRole("textbox", { name: "턴 상한" })).toHaveValue("3");
     expect(server.writes()).toHaveLength(1);
   });
 });

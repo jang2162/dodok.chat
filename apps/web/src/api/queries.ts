@@ -40,6 +40,8 @@ export const qk = {
   people: ["people"] as const,
   /** 멤버 관리(admin 이상, 팀 스펙 6장) — 오프라인 사본에 담지 않는다(pwa/persist). 발급 원문은 어느 키에도 넣지 않는다 */
   teamMembers: ["team", "members"] as const,
+  /** 멤버 표·대기 초대 둘 다(무효화용 앞머리) */
+  team: ["team"] as const,
   invites: ["team", "invites"] as const,
   discover: ["agents", "discover"] as const,
   adapter: ["adapter"] as const,

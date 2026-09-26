@@ -24,7 +24,8 @@ export function RelayPolicySection({ channel, agents }: { channel: Channel; agen
   const [error, setError] = useState<{ message: string; field?: RelayFormField }>();
   const [saved, setSaved] = useState(false);
   const id = useId();
-  const form = draft ?? toForm(channel.relayPolicy);
+  // 잠겼으면 저장되지 않은 초안이 아니라 서버 값을 보인다(강등 직후 — `OverrideEditor` 와 같은 규칙)
+  const form = (locked ? undefined : draft) ?? toForm(channel.relayPolicy);
 
   function edit(next: Partial<RelayForm>) {
     setDraft({ ...form, ...next });

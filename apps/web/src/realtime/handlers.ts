@@ -187,10 +187,12 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
     "channel.member.changed": ({ channelId, members }) => qc.setQueryData(qk.members(channelId), members),
     /**
      * 사람 목록(가입·역할·표시 이름·내보내기 뒤 전체) — 통째로 바꾼다. 내 역할이 바뀌었으면 me 를 다시 받는다: 역할의 정본은
-     * `/auth/me` 이고(팀 스펙 6장) 관리 화면은 그것을 본다. 내보내졌으면(내 줄의 role 이 없다) 서버가 소켓을 끊고 다음 REST 가 401 이다
+     * `/auth/me` 이고(팀 스펙 6장) 관리 화면은 그것을 본다. 내보내졌으면(내 줄의 role 이 없다) 서버가 소켓을 끊고 다음 REST 가 401 이다.
+     * 멤버 표·대기 초대(가입은 초대를 쓰고, 강등·내보내기는 링크를 폐기한다)는 낡은 것으로 둔다 — 보고 있는 화면만 다시 부른다
      */
     "people.changed": ({ people }) => {
       qc.setQueryData(qk.people, people);
+      void qc.invalidateQueries({ queryKey: qk.team });
       const me = qc.getQueryData<MeResponse>(qk.me);
       const mine = me && people.find((p) => p.id === me.user.id);
       if (mine?.role !== undefined && mine.role !== me?.role)
