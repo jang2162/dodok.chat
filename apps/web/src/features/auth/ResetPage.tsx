@@ -48,7 +48,7 @@ function ResetForm({ token, lookup }: { token: string; lookup: InviteLookup }) {
         onSuccess: finish,
         onError: (err) => {
           if (err instanceof ApiRequestError && err.status === 404) setGone(true);
-          else setError(authErrorText(err));
+          else setError(authErrorText(err, "invite"));
         },
         onSettled: () => reset.reset(),
       },

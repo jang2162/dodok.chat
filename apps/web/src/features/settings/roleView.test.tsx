@@ -105,6 +105,14 @@ describe("member 의 채널 설정", () => {
     expect(within(section).queryByRole("link", { name: "에이전트 등록" })).toBeNull();
   });
 
+  it("등록된 에이전트가 없으면 안내 문구만 — 「에이전트 화면에서 등록하세요」 링크는 admin 이상에게만", async () => {
+    stubSettingsServer({ me: MEMBER, agents: [] });
+    renderRoute(`/c/${CH}/settings`);
+    const section = await membersSection();
+    expect(await within(section).findByText(/등록된 에이전트가 없습니다/)).toBeInTheDocument();
+    expect(within(section).queryByRole("link", { name: "에이전트 화면에서 등록하세요" })).toBeNull();
+  });
+
   it("owner·admin 에게는 잠김이 없다", async () => {
     stubSettingsServer({ me: { ...ME, role: "admin" }, members: members([DEV]) });
     renderRoute(`/c/${CH}/settings`);

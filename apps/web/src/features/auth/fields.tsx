@@ -42,13 +42,15 @@ export function passwordProblem(password: string): string | undefined {
 }
 
 /**
- * 로그인 전 경로 공통 문구. 이 경로들은 로그인과 IP 버킷 하나를 같이 쓴다(서버 `createLoginLimit`) — 429 문구의 「1분 5회」는
- * 그 버킷이다. 그 밖의 서버 오류는 서버 message 그대로
+ * 로그인 전 경로 공통 문구. `bucket` 은 429 문구가 말할 한도 — "login"(로그인·`me/password`, 서버 `LIMITS.localLoginPerMin`
+ * 분당 5회) 은 그 숫자를 그대로 말하고, "invite"(초대 조회·수락·재설정, 로그인과 다른 버킷) 는 숫자를 빼고 말한다 — 한도 값의
+ * 정본은 서버 `LIMITS` 뿐이라 여기서 버킷마다 다시 맞출 수 없다. 그 밖의 서버 오류는 서버 message 그대로
  */
-export function authErrorText(error: unknown): string {
+export function authErrorText(error: unknown, bucket: "login" | "invite" = "login"): string {
   if (error instanceof NetworkError) return "서버에 연결할 수 없습니다";
   if (error instanceof ApiRequestError) {
-    if (error.status === 429) return "잠시 뒤 다시 시도하세요(1분 5회)";
+    if (error.status === 429)
+      return bucket === "login" ? "잠시 뒤 다시 시도하세요(1분 5회)" : "잠시 뒤 다시 시도하세요";
     return error.message;
   }
   return "요청을 처리하지 못했습니다";
@@ -66,10 +68,14 @@ const KNOWN_FIELD_ERRORS: Record<string, string> = {
   "VALIDATION:current": "현재 비밀번호가 맞지 않습니다",
 };
 
-export function fieldErrorText(error: unknown, field: string | undefined): string {
+export function fieldErrorText(
+  error: unknown,
+  field: string | undefined,
+  bucket: "login" | "invite" = "login",
+): string {
   if (field !== undefined && error instanceof ApiRequestError) {
     const known = KNOWN_FIELD_ERRORS[`${error.code}:${field}`];
     if (known !== undefined) return known;
   }
-  return authErrorText(error);
+  return authErrorText(error, bucket);
 }

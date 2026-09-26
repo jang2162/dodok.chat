@@ -165,10 +165,15 @@ function AddAgentForm({
   if (agents.length === 0) {
     return (
       <p className="text-sm text-muted-foreground">
-        등록된 에이전트가 없습니다.{" "}
-        <Link to="/agents" className="text-primary underline-offset-4 hover:underline">
-          에이전트 화면에서 등록하세요
-        </Link>
+        등록된 에이전트가 없습니다.
+        {canManage && (
+          <>
+            {" "}
+            <Link to="/agents" className="text-primary underline-offset-4 hover:underline">
+              에이전트 화면에서 등록하세요
+            </Link>
+          </>
+        )}
       </p>
     );
   }

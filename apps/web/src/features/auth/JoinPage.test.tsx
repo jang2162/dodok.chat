@@ -142,10 +142,10 @@ describe("JoinPage", () => {
     expect(toastError).not.toHaveBeenCalled();
   });
 
-  it("조회가 429 면 레이트리밋 문구와 「다시 시도」", async () => {
+  it("조회가 429 면 레이트리밋 문구와 「다시 시도」 — 초대 버킷은 숫자를 말하지 않는다", async () => {
     stubServer({ lookup: () => json(429, { code: "RATE_LIMITED", message: "Rate limit exceeded" }) });
     renderRoute(`/join/${TOKEN}`);
-    expect(await screen.findByText("잠시 뒤 다시 시도하세요(1분 5회)")).toBeInTheDocument();
+    expect(await screen.findByText("잠시 뒤 다시 시도하세요")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "다시 시도" })).toBeInTheDocument();
   });
 
@@ -315,12 +315,13 @@ describe("JoinPage", () => {
     expect(screen.queryByLabelText("핸들")).not.toBeInTheDocument();
   });
 
-  it("429 는 폼 안에 레이트리밋 문구", async () => {
+  it("429 는 폼 안에 레이트리밋 문구 — 초대 버킷은 숫자를 말하지 않는다", async () => {
     stubServer({ accept: () => json(429, { code: "RATE_LIMITED", message: "Rate limit exceeded" }) });
     renderRoute(`/join/${TOKEN}`);
     await fillForm();
     await userEvent.click(screen.getByRole("button", { name: "가입" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("잠시 뒤 다시 시도하세요(1분 5회)");
+    expect(await screen.findByRole("alert")).toHaveTextContent("잠시 뒤 다시 시도하세요");
+    expect(screen.getByRole("alert")).not.toHaveTextContent("5회");
   });
 
   it("성공하면 주소에서 토큰이 사라지고(replace) 로그인된 채로 첫 채널로 간다", async () => {

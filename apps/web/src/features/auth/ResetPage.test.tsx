@@ -87,6 +87,14 @@ describe("ResetPage", () => {
     expect(await screen.findByText(/관리자에게 새 링크를 받으세요/)).toBeInTheDocument();
   });
 
+  it("429 는 레이트리밋 문구 — 초대 버킷은 숫자를 말하지 않는다", async () => {
+    stubServer({ reset: () => json(429, { code: "RATE_LIMITED", message: "Rate limit exceeded" }) });
+    renderRoute(`/reset/${TOKEN}`);
+    await fillPasswords("correct-horse-battery");
+    await userEvent.click(screen.getByRole("button", { name: "비밀번호 바꾸기" }));
+    expect(await screen.findByText("잠시 뒤 다시 시도하세요")).toBeInTheDocument();
+  });
+
   it("성공하면 토큰을 주소에서 걷고 첫 채널로 간다", async () => {
     const fetch = stubServer();
     const { router, history } = renderRoute(`/reset/${TOKEN}`);

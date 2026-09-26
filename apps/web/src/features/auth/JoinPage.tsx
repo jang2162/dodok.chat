@@ -107,7 +107,7 @@ function JoinForm({ token, lookup }: { token: string; lookup: InviteLookup }) {
           if (err instanceof ApiRequestError && err.status === 404) setGone(true);
           else {
             const field = detailField(err, ["handle", "email"]);
-            setServerError({ field, message: fieldErrorText(err, field) });
+            setServerError({ field, message: fieldErrorText(err, field, "invite") });
           }
         },
         onSettled: () => accept.reset(),
