@@ -14,6 +14,7 @@ import {
   users,
 } from "../src/db/schema.sqlite";
 import { createChannel } from "../src/modules/channels/service";
+import { claimInvite, findValidInvite, unclaimInvite } from "../src/modules/members/invites";
 import { changeRole, leftHandleOf, removeMember } from "../src/modules/members/service";
 import { createUserMessage } from "../src/modules/messages/service";
 import { upsertSubscription } from "../src/modules/push/service";
@@ -166,13 +167,17 @@ describe("멤버 관리 REST", () => {
       ).toBe(404);
     });
 
-    it("admin 을 member 로 내리면 그 사람이 발급한 쓰이지 않은 링크가 폐기된다 — admin 을 admin 으로 두면 그대로", async () => {
+    it("admin 을 member 로 내리면 그 사람이 발급한 쓰이지 않은 링크가 폐기된다 — admin 을 admin 으로 두면 그대로, 이미 수락이 끝난 링크는 그대로", async () => {
       const admin = await person("admin");
       const kept = await person("admin");
       const member = await person("member");
       const invite = await issueInvite(admin.token);
       const reset = await issueReset(admin.token, member.id);
       const keptInvite = await issueInvite(kept.token);
+      const used = await issueInvite(admin.token);
+      const usedRow = findValidInvite(app.db, used, new Date());
+      if (!usedRow) throw new Error("invite not found");
+      expect((await open("/api/v1/invites/accept", joinBody(used, `used${++n}`))).statusCode).toBe(200);
 
       expect(
         (await call(ownerToken, "PATCH", `/api/v1/members/${admin.id}`, { role: "member" })).statusCode,
@@ -186,6 +191,8 @@ describe("멤버 관리 REST", () => {
         404,
       );
       expect((await open("/api/v1/invites/lookup", { token: keptInvite })).statusCode).toBe(200);
+      // 이미 수락이 끝난(used_by 있음) 링크는 발급자를 강등해도 폐기되지 않는다
+      expect(app.db.select().from(invites).where(eq(invites.id, usedRow.id)).get()?.revokedAt).toBeNull();
     });
 
     it("서비스도 직접 막는다 — admin 행위자의 역할 바꾸기는 403", async () => {
@@ -365,6 +372,34 @@ describe("멤버 관리 REST", () => {
         404,
       );
       expect((await open("/api/v1/invites/lookup", { token: ownersInvite })).statusCode).toBe(200);
+    });
+
+    it("수락이 진행 중(claim 됨, used_by 없음)인 초대는 발급자를 내보내면 폐기된다 — 그 수락이 실패해 되돌아가도 링크는 무효로 남고, 이미 끝난 수락은 그대로", async () => {
+      const admin = await person("admin");
+      const claiming = await issueInvite(admin.token);
+      const claimingRow = findValidInvite(app.db, claiming, new Date());
+      if (!claimingRow) throw new Error("invite not found");
+      // acceptInvite 가 claimInvite 로 used_at 만 찍고 아직 사용자 생성을 못 끝낸 틈을 흉내 낸다
+      expect(claimInvite(app.db, claimingRow.id, new Date())).toBe(true);
+
+      const done = await issueInvite(admin.token);
+      const doneRow = findValidInvite(app.db, done, new Date());
+      if (!doneRow) throw new Error("invite not found");
+      expect((await open("/api/v1/invites/accept", joinBody(done, `n1${++n}`))).statusCode).toBe(200);
+
+      expect((await call(ownerToken, "DELETE", `/api/v1/members/${admin.id}`)).statusCode).toBe(204);
+
+      expect(
+        app.db.select().from(invites).where(eq(invites.id, claimingRow.id)).get()?.revokedAt,
+      ).toBeInstanceOf(Date);
+      // 이미 수락이 끝난(used_by 있음) 행은 건드리지 않는다
+      expect(app.db.select().from(invites).where(eq(invites.id, doneRow.id)).get()?.revokedAt).toBeNull();
+
+      // 그 수락이 실패해 unclaimInvite 로 되돌아가도(used_at·used_by 만 NULL) 링크는 무효로 남는다
+      unclaimInvite(app.db, claimingRow.id);
+      expect((await open("/api/v1/invites/accept", joinBody(claiming, `n1retry${++n}`))).statusCode).toBe(
+        404,
+      );
     });
 
     it("트랜잭션이 실패해도 소켓을 끊고 운영 사건 member_remove_failed 를 남긴 뒤 500 — 막힌 것을 치우면 다시 불러 이어진다", async () => {

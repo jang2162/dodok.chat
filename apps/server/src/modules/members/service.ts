@@ -71,7 +71,7 @@ export function changeRole(
     if (current === "admin" && role === "member") {
       tx.update(invites)
         .set({ revokedAt: new Date() })
-        .where(and(eq(invites.createdBy, userId), isNull(invites.usedAt), isNull(invites.revokedAt)))
+        .where(and(eq(invites.createdBy, userId), isNull(invites.usedBy), isNull(invites.revokedAt)))
         .run();
     }
     const row = listMembers(tx, workspaceId).find((m) => m.id === userId);
@@ -162,7 +162,7 @@ function leaveInTransaction(deps: RemoveMemberDeps, actorId: string, userId: str
       .where(
         and(
           or(and(eq(invites.kind, "reset"), eq(invites.targetUserId, userId)), eq(invites.createdBy, userId)),
-          isNull(invites.usedAt),
+          isNull(invites.usedBy),
           isNull(invites.revokedAt),
         ),
       )
