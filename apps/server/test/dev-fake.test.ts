@@ -11,6 +11,7 @@ import {
   type ServerToClientEvents,
   WIRE_PROTOCOL,
 } from "@dodok/shared";
+import { and, eq } from "drizzle-orm";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -22,6 +23,10 @@ import {
   DEV_FAKE_GATEWAY_PATH,
   DEV_FAKE_LOCAL_TOKEN,
   DEV_FAKE_KEYWORDS,
+  DEV_FAKE_MEMBER_DISPLAY_NAME,
+  DEV_FAKE_MEMBER_EMAIL,
+  DEV_FAKE_MEMBER_HANDLE,
+  DEV_FAKE_MEMBER_PASSWORD,
   DEV_FAKE_OPS_EVENT_PATH,
   DEV_FAKE_PLUGIN_CAPABILITIES_PATH,
   DEV_FAKE_PLUGIN_TOKEN_PATH,
@@ -32,6 +37,8 @@ import {
 } from "../scripts/dev-fake";
 import type { App } from "../src/app";
 import { findItem, formatInteractionText } from "../src/modules/components/interact";
+import { users } from "../src/db/schema.sqlite";
+import { normalizeEmail } from "../src/modules/members/accept";
 import { DISCONNECT_EVENT_MS } from "../src/modules/ops/health";
 import type { ScenarioApproval } from "./fakes/scenario";
 import { bootTestApp, login, userWithRole } from "./helpers/app";
@@ -1475,6 +1482,71 @@ describe("startDevFake 종료 표지 — 운영 화면 「직전 종료」", () 
   }, 30_000);
 });
 
+describe("startDevFake 고정 member 계정 — mia", () => {
+  let dir: string;
+  let dev: DevFake;
+
+  beforeAll(async () => {
+    dir = mkdtempSync(join(tmpdir(), "dodok-dev-fake-member-"));
+    dev = await startDevFake({ port: 0, dataDir: dir, logLevel: "warn" });
+  });
+
+  afterAll(async () => {
+    await dev?.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const memberLogin = () =>
+    fetch(`${dev.url}/api/v1/auth/local`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: DEV_FAKE_MEMBER_EMAIL, password: DEV_FAKE_MEMBER_PASSWORD }),
+    });
+
+  it("고정 이메일·비밀번호로 로그인하면 핸들 mia·표시 이름 미아, /auth/me 의 role 은 member", async () => {
+    const res = await memberLogin();
+    expect(res.status).toBe(200);
+    const { sessionToken, user } = (await res.json()) as {
+      sessionToken: string;
+      user: { handle: string; displayName: string };
+    };
+    expect(user.handle).toBe(DEV_FAKE_MEMBER_HANDLE);
+    expect(user.displayName).toBe(DEV_FAKE_MEMBER_DISPLAY_NAME);
+    const me = await fetch(`${dev.url}/api/v1/auth/me`, {
+      headers: { cookie: `dodok.session=${sessionToken}` },
+    });
+    expect(me.status).toBe(200);
+    await expect(me.json()).resolves.toMatchObject({ role: "member" });
+  });
+
+  it("--keep 두 번째 시작에서 중복 없이 그대로 — 같은 사용자 id, 로그인도 그대로 된다", async () => {
+    const owner1 = await loginOwner(dev.url);
+    const before = await restAs<{ members: Array<{ handle: string; id: string }> }>(
+      dev.url,
+      owner1.cookie,
+      "GET",
+      "/members",
+    );
+    const miaBefore = before.members.filter((m) => m.handle === DEV_FAKE_MEMBER_HANDLE);
+    expect(miaBefore).toHaveLength(1);
+
+    await dev.close();
+    dev = await startDevFake({ port: 0, dataDir: dir, keep: true, logLevel: "warn" });
+
+    expect((await memberLogin()).status).toBe(200);
+    const owner2 = await loginOwner(dev.url);
+    const after = await restAs<{ members: Array<{ handle: string; id: string }> }>(
+      dev.url,
+      owner2.cookie,
+      "GET",
+      "/members",
+    );
+    const miaAfter = after.members.filter((m) => m.handle === DEV_FAKE_MEMBER_HANDLE);
+    expect(miaAfter).toHaveLength(1);
+    expect(miaAfter[0]?.id).toBe(miaBefore[0]?.id);
+  }, 20_000);
+});
+
 describe("운영 createApp 에는 dev:fake 경로가 없다", () => {
   let app: App;
   beforeAll(async () => {
@@ -1500,5 +1572,16 @@ describe("운영 createApp 에는 dev:fake 경로가 없다", () => {
       body: JSON.stringify(body),
     });
     expect(res.status).toBe(404);
+  });
+
+  // /api/v1/auth/local 은 5회/분 — 위 it.each 가 이미 그 버킷을 쓰므로 로그인을 한 번 더 부르지 않고 DB 로 직접 본다
+  it("dev:fake 고정 member 계정도 없다 — 그 이메일의 users 행이 없다", () => {
+    const email = normalizeEmail(DEV_FAKE_MEMBER_EMAIL);
+    const row = app.db
+      .select({ id: users.id })
+      .from(users)
+      .where(and(eq(users.workspaceId, app.workspaceId), eq(users.email, email)))
+      .get();
+    expect(row).toBeUndefined();
   });
 });

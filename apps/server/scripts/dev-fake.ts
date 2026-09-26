@@ -3,6 +3,8 @@
  * 테스트와 같은 가짜(`test/fakes/*`)를 쓴다. 운영 코드(`src/`)는 그대로 — 실제 OpenClawAdapter 가 가짜 Gateway 를 dev Gateway 로 붙는다.
  *
  * .env 를 읽지 않는다: 토큰·비밀은 아래 개발 전용 고정값이고(로그에 찍어도 된다), loadConfig 에는 여기서 정한 값만 넘긴다.
+ * 고정 member 계정(이메일 member@dodok.local·비밀번호 dev-fake-member-password·핸들 mia)도 owner 와 함께 보장한다 —
+ * `--keep` 이면 이미 있을 때 그대로. 운영 `createApp` 에는 없다.
  * DB 는 <dataDir>/dev-fake.sqlite — 시작마다 새로, `--keep` 이면 유지. 실행: `PORT=0 pnpm -F @dodok/server dev:fake [--keep]`.
  * VAPID 키 <dataDir>/vapid.json 은 지우지 않는다 — 새로 만들면 브라우저의 푸시 구독이 매번 무효가 된다.
  * 웹 오리진은 APP_ORIGIN(없으면 http://localhost:5173). 5173 이 차 있으면 5180 으로:
@@ -24,6 +26,7 @@ import {
   OpsEventKind,
   OpsSeverity,
 } from "@dodok/shared";
+import { and, eq } from "drizzle-orm";
 import { mkdirSync, rmSync } from "node:fs";
 import { statfs as fsStatfs } from "node:fs/promises";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
@@ -32,6 +35,9 @@ import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { type App, type AppDeps, createApp } from "../src/app";
 import { loadConfig } from "../src/config";
+import { users } from "../src/db/schema.sqlite";
+import { acceptInvite, normalizeEmail } from "../src/modules/members/accept";
+import { issueInvite } from "../src/modules/members/invites";
 import { DISCONNECT_EVENT_MS, startRunState } from "../src/modules/ops/health";
 import { type FakeGateway, startFakeGateway } from "../test/fakes/fake-gateway";
 import { FAKE_PLUGIN_HELLO, type FakePlugin, startFakePlugin } from "../test/fakes/fake-plugin";
@@ -49,6 +55,11 @@ const DEFAULT_APP_ORIGIN = "http://localhost:5173";
 export const DEV_FAKE_LOCAL_TOKEN = "dev-fake-local-token";
 const DEV_FAKE_SECRET = "dev-fake-better-auth-secret-00000000";
 const DEV_FAKE_BRIDGE_TOKEN = "dev-fake-bridge-token";
+/** 고정 member 계정(팀 스펙 태스크 7a) — 시크릿이 아닌 개발 전용 고정값이라 owner 토큰과 같이 로그에 찍는다 */
+export const DEV_FAKE_MEMBER_EMAIL = "member@dodok.local";
+export const DEV_FAKE_MEMBER_PASSWORD = "dev-fake-member-password";
+export const DEV_FAKE_MEMBER_HANDLE = "mia";
+export const DEV_FAKE_MEMBER_DISPLAY_NAME = "미아";
 /** 가짜 Gateway `agents.list` 와 같다 — 이 providerAgentId 마다 대본을 건다 */
 const AGENT_IDS = ["dev", "fin"] as const;
 /** 실제 클라이언트는 hello 의 tickIntervalMs(30s)×2 동안 프레임이 없으면 끊는다 */
@@ -680,6 +691,33 @@ function waitForGateway(
   });
 }
 
+/**
+ * 고정 member 계정을 보장한다(팀 스펙 태스크 7a) — 사람을 만드는 서버 경로(members/accept.ts 의 `acceptInvite`)를 그대로 쓴다:
+ * 초대를 하나 내부에서 내 곧바로 그 초대로 수락한다(따로 흉내 내지 않는다). 이미 있으면(`--keep` 으로 이어받은 DB) 그대로 둔다
+ */
+async function ensureDevFakeMember(app: App): Promise<void> {
+  const { db, workspaceId } = app;
+  const email = normalizeEmail(DEV_FAKE_MEMBER_EMAIL);
+  const exists = db
+    .select({ id: users.id })
+    .from(users)
+    .where(and(eq(users.workspaceId, workspaceId), eq(users.email, email)))
+    .get();
+  if (exists) return;
+  const now = new Date();
+  const { token } = issueInvite(db, { workspaceId, role: "member", createdBy: app.ownerUserId, now });
+  await acceptInvite(
+    { db, auth: app.auth, workspaceId, ops: app.ops, logger: app.logger, now: () => now },
+    {
+      token,
+      handle: DEV_FAKE_MEMBER_HANDLE,
+      displayName: DEV_FAKE_MEMBER_DISPLAY_NAME,
+      email: DEV_FAKE_MEMBER_EMAIL,
+      password: DEV_FAKE_MEMBER_PASSWORD,
+    },
+  );
+}
+
 /** 가짜 Gateway → createApp(실제 OpenClawAdapter) → listen → 가짜 플러그인 → 대본 → 어댑터 gateway·bridge connected. 실패하면 만든 것을 닫고 던진다 */
 export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> {
   const dataDir = opts.dataDir ?? "data";
@@ -739,6 +777,7 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
     // main.ts 와 같다 — 운영 화면 「직전 종료」가 null 로만 보이지 않게
     runState = startRunState(runStateDir, app.ops, app.logger);
     app.setPreviousClean(runState.previousClean);
+    await ensureDevFakeMember(app);
     // 다시 붙이기(토큰·hello 바꾸기)는 한 번에 하나씩 — 겹치면 소켓 하나를 두 핸드셰이크가 다툰다
     let swapping: Promise<unknown> = Promise.resolve();
     const reconnectPlugin = (
@@ -836,10 +875,12 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
       url: dev.url,
       web: opts.appOrigin,
       loginToken: DEV_FAKE_LOCAL_TOKEN,
+      memberEmail: DEV_FAKE_MEMBER_EMAIL,
+      memberPassword: DEV_FAKE_MEMBER_PASSWORD,
       web5180:
         "PORT=3100 APP_ORIGIN=http://localhost:5180 pnpm -F @dodok/server dev:fake + DODOK_API_ORIGIN=http://127.0.0.1:3100 pnpm -F @dodok/web dev --port 5180",
     },
-    "dev:fake 서버 — 웹은 pnpm -F @dodok/web dev(5173 이 차 있으면 web5180 처럼), 로그인 토큰은 개발 전용 고정값",
+    "dev:fake 서버 — 웹은 pnpm -F @dodok/web dev(5173 이 차 있으면 web5180 처럼), 로그인 토큰·고정 member 계정(mia)은 개발 전용 고정값",
   );
   let stopping = false;
   const stop = () => {
