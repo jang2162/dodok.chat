@@ -819,6 +819,34 @@ describe("승인 저장·런 상관·wire 중계 (앱 부팅, FakeAdapter)", () 
     expect(stored(approval)).toMatchObject({ status: "allowed", decidedBy: app.ownerUserId });
   });
 
+  it("Gateway 이벤트가 먼저 다른 결정으로 확정되면 — 진 결정을 낸 나는 결정자로 남지 않는다", async () => {
+    const socket = await connect();
+    const { approval } = await pendingApproval(socket);
+    // RPC 를 기다리는 사이 Gateway 가 다른 결정(허용)으로 이미 확정했다 — 나는 "deny" 를 눌렀지만 진 쪽이다
+    const spy = vi
+      .spyOn(adapter, "resolveApproval")
+      .mockImplementationOnce(async (providerApprovalId, kind, _decision) => {
+        const terminal: ProviderApproval = {
+          ...providerApproval(sessionKeyOf("dev", channel.id)),
+          providerApprovalId,
+          kind,
+          status: "allowed",
+          decision: "allow-once",
+          reason: "user",
+          resolvedAt: new Date().toISOString(),
+        };
+        adapter.emitApproval(terminal); // 다른 사람의 결정(허용)이 이벤트로 먼저 온다
+        return terminal; // 내 RPC 응답도 승자 스냅샷 그대로 — applied:false 상황을 흉내
+      });
+
+    expect(await resolve(socket, approval.id, "deny")).toEqual({ ok: true, data: null });
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(stored(approval)).toMatchObject({ status: "allowed", decision: "allow-once" });
+    // 결과는 허용인데 나는 거절을 눌렀다 — 진 결정을 낸 내가 결정자로 남으면 안 된다
+    expect(stored(approval)?.decidedBy).toBeUndefined();
+  });
+
   it("두 사람이 거의 동시에 결정하면 먼저 결정자로 남은 사람만 남는다 — 나중 사용자는 덮지 못한다", async () => {
     const socket = await connect();
     const { approval } = await pendingApproval(socket);
