@@ -24,6 +24,10 @@
   인증은 이 영향이 작지만, **쿠키 세션(Better Auth)이 들어오는 순간 같은 호스트에 붙은 두 인스턴스는
   세션 쿠키 한 칸을 두고 서로를 덮는다** — 쿠키는 포트를 구분하지 않는다. 그때는 인스턴스마다
   세션 쿠키 이름을 갈라야 하고, 그 규칙은 인증을 넣는 작업이 이 절에 적는다.
+- ⚠ **같은 오리진(포트)에서 빌드본(`vite preview`)을 본 뒤 dev 로 돌아오면 빌드본의 서비스 워커가 남아 옛 빌드를 계속 내준다** — 고친 코드가 안 보이는데 오류도 없다.
+  빌드본 검증을 끝낼 때와 dev 로 바꿀 때 `navigator.serviceWorker.getRegistrations()` 를 전부 `unregister()` 하고 `caches` 를 지운다.
+  빌드본을 두 번째로 올릴 때는 새 SW 가 `waiting` 에 머무므로(새 버전은 토스트로만 넘어간다 — PWA 스펙 `docs/superpowers/specs/2026-09-23-pwa-push-design.md` 결정 7)
+  `registration.waiting.postMessage({ type: "SKIP_WAITING" })` 로 넘긴 뒤 잰다.
 - **워크트리에서 앱을 띄울 때는 최상위와 포트를 갈라라.** 같은 포트를 두 프로세스가 잡으면 뒤에
   뜬 쪽이 죽거나, 브라우저가 어느 인스턴스를 보고 있는지 알 수 없다.
   → [워크트리 작업 흐름](worktree-workflow.md) 「생성 직후 세팅」
@@ -32,7 +36,7 @@
 
 - ⚠ **`connectOverCDP` 로 스크립트마다 붙었다 떼면 `setViewportSize` 가 연결과 함께 풀린다** — 창 실제 크기(headless 면 대개 756×413)로 돌아가, 390px 검증이 조용히 넓은 화면으로 찍힌다. 붙을 때마다 다시 준다.
 - 붙을 때마다 다시 주는 대신, `launchPersistentContext` 를 띄운 Node 프로세스 하나가 127.0.0.1 포트로 스크립트 본문을 받아 같은 컨텍스트에서 실행하게 하면 페이지·뷰포트·리스너가 호출 사이에 남는다. 그 포트도 끝에 LISTEN 0 을 확인한다.
-- **서버 쪽 wire 끊김은 `page.routeWebSocket` 으로 흉내 낸다** — `page.routeWebSocket(u => u.pathname.includes("socket.io"), ws => { if (block) ws.close(); else ws.connectToServer(); })` 를 페이지를 열기 전에 건다. `context.setOffline` 은 브라우저 온라인 이벤트로 React Query 가 쿼리를 다시 받아 **재접속 뒤 캐시가 낡는 결함을 가린다.**
+- **서버 쪽 wire 끊김은 `page.routeWebSocket` 으로 흉내 낸다** — `page.routeWebSocket(u => u.pathname.includes("socket.io"), ws => { if (block) ws.close(); else ws.connectToServer(); })` 를 페이지를 열기 전에 건다. `context.setOffline` 은 브라우저 온라인 이벤트로 React Query 가 쿼리를 다시 받아 **재접속 뒤 캐시가 낡는 결함을 가린다.** 이 `ws.close()` 는 「업그레이드는 됐는데 핸드셰이크 전에 깨끗이 닫힌」 시도라, 진짜 서버 중단(연결 거부 — 브라우저가 `error` 를 먼저 낸다)과 다른 길을 탄다 — 웹은 그 길을 `realtime/wire.ts` 의 `WireManager` 로 실패로 친다. 서버가 죽은 경우를 재려면 서버 프로세스를 내렸다 올린다.
 - `dev:fake` 의 개발 전용 훅(`/__devfake/*`)은 서버 오리진으로 직접 부른다 — 페이지 안 `fetch` 는 CORS 와 415(JSON 이 아닌 단순 요청 거절)에 걸린다. 훅 목록·호출 예는 `docs/project-structure.md` 의 `apps/server` 절 dev:fake 문단.
 
 ## 로컬 HTTPS(Compose 8443)를 볼 때

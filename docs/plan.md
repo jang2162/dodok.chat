@@ -1,6 +1,6 @@
-# dodok.chat — 에이전트 네이티브 메신저 개발 계획서 (v0.17)
+# dodok.chat — 에이전트 네이티브 메신저 개발 계획서 (v0.18)
 
-작성일: 2026-09-14 · 상태: v0.17 (2026-09-25) — Phase 3 ④ 문서화 종료(루트 `README.md` · 에이전트 가이드 `docs/guides/agent-guide.md` — 붙여 넣을 블록 포함, 가이드의 components 예시는 shared 테스트가 계약으로 파싱한다). 8장 Phase 3 「문서화」에 완료 표시와 확인 방법, 「이월」에 문서화가 남긴 것
+작성일: 2026-09-14 · 상태: v0.18 (2026-09-26) — Phase 4 ① 스레드·검색 종료(스레드 하위 세션 `…:thread:<rootId 소문자>` · FTS5 trigram 검색·결과로 가기). 8장 Phase 4 「스레드·검색」에 완료 표시와 확인 방법, 10장 #19 에 스레드 접미사, 「이월」에 스레드·검색이 남긴 것
 
 ### 변경 이력
 
@@ -21,6 +21,7 @@
 | v0.15 | Phase 3 ② **설정 마법사 종료**(2026-09-25) — 8장 Phase 3 「설정 마법사」에 완료 표시와 확인 방법(서버 통합 `setup` · 웹 단위 · `dev:fake` 위 브라우저 시나리오 1~10 — 결함 1(390px 발급 대화상자 원문 잘림)은 고침, 확인 불가 2 는 사람이 볼 것 · 실연 13/13·모델 런 0 은 `docs/guides/live-smoke.md` 15절 · 테스트 2400). 브리지 토큰의 정본이 DB 로 옮겨 `.env` 의 `BRIDGE_TOKEN` 은 선택(부팅 때 토큰 행이 하나도 없으면 — 폐기된 행 포함 — 이어받기)이 됐다 — 운영 절차 `docs/guides/deploy.md` 「[웹 → B] 플러그인 설치·브리지 토큰」·「[웹] 브리지 접속 확인」·「브리지 토큰 교체」 절. 「이월」에 Phase 3 ② 가 남긴 것 추가(루트 병렬 실행의 backup SIGINT 테스트 흔들림 · 폐기 알림 `system.notice` · 플러그인 빌드 가드 한계 · dev:fake 훅 테스트·415 · JSON 상자 오버레이 스크롤바 · 비슷한 글자 라벨 `env` · 막힌 이동 중 401 의 `next` · 사람이 볼 것) |
 | v0.16 | Phase 3 ③ **운영 보강 종료**(2026-09-25) — 8장 Phase 3 「에러/재시도·레이트리밋·비용 상한, 로그·메트릭」에 완료 표시와 확인 방법(서버 통합 `ops-*` · 웹 단위 · 태스크마다 독립 리뷰 · `dev:fake` 위 브라우저 11/12 — 결함 D1·D2 와 재검증이 찾은 N1 고침 · 로컬 Compose · usage 진단 모델 런 1회(ADR 0005) · 실연 `docs/guides/live-smoke.md` 16절 · 테스트 2762). 운영 절차 `docs/guides/deploy.md` 「운영 화면」 절과 `.env` 표의 `TZ`. 「이월」의 usage 줄을 ADR 0005 결론으로 바꾸고, 「dev:fake 훅 테스트 보강과 `text/plain` 단순 요청」(닫힘)을 지우고, 배포 패키징 열린 문제에서 Gateway 버전 드리프트 감지(구현됨)를 뺐다. Phase 3 ③ 이 남긴 것 추가(테스트 공백 · 묶인 `disk_low` 줄의 심각도 · 채널 전환 info 사건 · 재접속 뒤 `setupStatus` · 다시 실행 버튼 24시간 · 운영 알림·금액 상한 등 스펙 「열린 문제」 · 사람이 볼 member 화면) |
 | v0.17 | Phase 3 ④ **문서화 종료**(2026-09-25) — 8장 Phase 3 「문서화」에 완료 표시와 확인 방법(루트 `README.md` — 소개·구성·빠른 시작 두 갈래·문서 지도, `docs/guides/agent-guide.md` — 에이전트가 받는 것·채널 프롬프트·릴레이·components v1·파일·승인·붙여 넣을 블록·흔한 실수, 예시 검사 `packages/shared/test/agent-guide-examples.test.ts`), 제목의 판 번호를 상태 줄과 맞춤(v0.15 에 머물러 있었다). 「이월」 머리를 Phase 3 ④ 종료 시점으로 바꾸고 문서화가 남긴 것 추가(「기본 프롬프트」가 에이전트에게 닿지 않는다는 화면 안내 없음 · 붙여 넣을 블록의 모델 효과 미측정 · 블록 산문의 제약 숫자는 테스트 밖 · `AGENTS.md` 반영 시점 미실측) |
+| v0.18 | Phase 4 ① **스레드·검색 종료**(2026-09-26) — 8장 Phase 4 「스레드·검색」에 완료 표시와 확인 방법(서버 통합 `threads` 11건 · 검색 단위(트리거·rowid 재사용·백필 가드) · 태스크마다 독립 리뷰(변이)·수정·범위 재리뷰 · `dev:fake` 위 브라우저 11항목 중 9 통과와 재접속 결함(Phase 4 이전부터 있던 20초 멈춤) 수정 · 실연 `docs/guides/live-smoke.md` 17절 · 테스트 3190). 5.8·10장 #3·#19 에 스레드 하위 세션 키 `agent:<agentId>:dodok:channel:<channelId>:thread:<rootId 소문자>`, 2.1 F-2·7.1 검색 줄을 지금 상태로. 「이월」 머리를 Phase 4 ① 종료 시점으로 바꾸고 스레드·검색이 남긴 것 추가(한글 NFD · `messages` 재생성 마이그레이션 · T2 Minor 넷 · 대기 중 옛 플러그인 · run_limit 채널 단위 · 정본 거절 ack 코드 · Dev·dev 공존 · 200 초과 이어 받기의 옛 루트 요약 · 끝난 스레드 런 · 결과로 가기 경합 · 사람이 볼 것), 「문서」의 neo CDP 줄에 원인(창 없음) |
 
 ---
 
@@ -56,7 +57,7 @@
 | ID | 요구사항 | MVP | 비고 |
 | --- | --- | --- | --- |
 | F-1 | OpenClaw 에이전트 연동 (메시지 송수신, 세션 유지) | ✅ | 하이브리드 구조 |
-| F-2 | 채널 생성/관리로 대화 주제 분리 | ✅ | 워크스페이스 > 채널 > 스레드(후속) |
+| F-2 | 채널 생성/관리로 대화 주제 분리 | ✅ | 워크스페이스 > 채널 > 스레드(스레드는 Phase 4 ①) |
 | F-3 | 한 채널에 여러 에이전트 배치, 에이전트 간 소통 | ✅ | 멘션 + 릴레이 |
 | F-4 | 채널별 프롬프트 (시스템 지시) | ✅ | 채널 프롬프트 + 에이전트별 채널 오버라이드 |
 | F-5 | OpenClaw UI 입력 네이티브 지원 (텍스트·버튼·선택·모달) | ✅ | Discord 플러그인의 components 규약 대응 |
@@ -331,7 +332,7 @@ OpenClaw 어댑터가 첫 구현. Claude Agent SDK/Codex app-server는 로컬 �
 
 ### 5.8 OpenClaw 세션·내부 위임 설계 (결정 사항)
 
-**세션 키 단위 — 채널당 에이전트별 1세션.** 키 형식은 OpenClaw 그룹 관례를 따른다: `agent:<agentId>:dodok:channel:<channelId>` (DM은 `agent:<agentId>:dodok:direct:<userId>`). OpenClaw에서 세션은 "에이전트별 대화 컨텍스트(트랜스크립트·컨텍스트 윈도우·압축)"이므로, 에이전트 3개가 있는 채널에는 세션도 3개다. 각 에이전트는 자기 세션에 전달된 메시지만 기억하므로, 우리 플러그인은 멘션으로 트리거된 인바운드에 **최근 채널 메시지 N개(다른 에이전트 발언 포함)를 컨텍스트 창으로 동봉**해 "같은 방에 있다"는 감각을 준다. 같은 세션에서는 런이 직렬이라 동일 에이전트를 연속 멘션하면 두 번째는 큐잉(`queueMode: followup` 기본)되고, 서로 다른 에이전트는 세션이 다르므로 병렬 실행된다. `groupScope: "main"`(에이전트 메인 세션 공유)은 채널 간 컨텍스트가 섞이므로 쓰지 않는다. 채널에서 "새 대화" 명령은 `sessions.reset`, 후속 스레드 기능은 `...:thread:<id>` 하위 세션으로 확장한다.
+**세션 키 단위 — 채널당 에이전트별 1세션.** 키 형식은 OpenClaw 그룹 관례를 따른다: `agent:<agentId>:dodok:channel:<channelId>` (DM은 `agent:<agentId>:dodok:direct:<userId>`). OpenClaw에서 세션은 "에이전트별 대화 컨텍스트(트랜스크립트·컨텍스트 윈도우·압축)"이므로, 에이전트 3개가 있는 채널에는 세션도 3개다. 각 에이전트는 자기 세션에 전달된 메시지만 기억하므로, 우리 플러그인은 멘션으로 트리거된 인바운드에 **최근 채널 메시지 N개(다른 에이전트 발언 포함)를 컨텍스트 창으로 동봉**해 "같은 방에 있다"는 감각을 준다. 같은 세션에서는 런이 직렬이라 동일 에이전트를 연속 멘션하면 두 번째는 큐잉(`queueMode: followup` 기본)되고, 서로 다른 에이전트는 세션이 다르므로 병렬 실행된다. `groupScope: "main"`(에이전트 메인 세션 공유)은 채널 간 컨텍스트가 섞이므로 쓰지 않는다. 채널에서 "새 대화" 명령은 `sessions.reset`. 스레드는 스레드마다 에이전트 하위 세션 `agent:<agentId>:dodok:channel:<channelId>:thread:<rootId 소문자>`(10장 #19) — 채널 세션과 병렬로 돌고, 채널 대화를 문맥에 싣지 않으며, 「새 대화」도 그 스레드 세션만 리셋한다(스레드·검색 스펙 `docs/superpowers/specs/2026-09-25-threads-search-design.md`).
 
 **내부 위임(`sessions_send`) — MVP 차단.** OpenClaw 기본값은 `tools.agentToAgent.enabled: true`, `tools.sessions.visibility: "all"`이라 아무 설정 없이 두면 에이전트가 다른 에이전트·다른 채널의 세션에 직접 메시지를 보낼 수 있다. 우리가 관리하는 OpenClaw 설정에서 `tools.agentToAgent.enabled: false`, `tools.sessions.visibility: "tree"`(자기 세션 + 자기가 스폰한 자식만; 루트 `sessions` 키는 설정 스키마가 거부한다 — ADR 0002)로 명시한다. 차단 근거: (1) 교환 내용이 채널 기록 밖에서 일어나 F-3/F-7의 "소통·작업 기록 확인"이 깨진다. (2) 응답 후 자동 실행되는 "announce step"이 요청자/대상 전달 컨텍스트에 답을 다시 게시하는데, 이를 끌 수 있는 설정이 없고(#7463 미해결, #105503 요청 중) 멀티에이전트 구성에서 엉뚱한 채팅에 게시되는 버그(#55981)가 보고되어 있다. (3) 루프 제한이 OpenClaw 내장 상한으로 걸려 우리 `relayPolicy`와 이중으로 동작한다. (4) 채널 A의 에이전트가 채널 B 세션을 읽을 수 있어 채널 분리 원칙과 충돌한다. 후속 단계에서 announce 비활성화 옵션이 생기면, 허용 쌍(`allow`)을 채널 `relayPolicy`와 동기화하고 `sessions_send` 툴 이벤트를 "위임 카드"로 채널에 표시하는 방식으로 재검토한다.
 
@@ -403,7 +404,7 @@ SQLite(WAL)로 시작, Drizzle ORM으로 스키마 정의해 Postgres 전환 시
 | **인증** | **Better Auth**(MIT) — 이메일/패스키/OIDC·SSO, **조직·팀·멀티테넌트 플러그인**, Drizzle 어댑터 | Auth.js | MVP는 단일 사용자로 두되 팀 확장 시 재작업 없이 켤 수 있음 |
 | **PWA·푸시** | **vite-plugin-pwa + Workbox**(서비스워커·오프라인 캐시), **web-push**(Node, VAPID) | — | iOS는 홈 화면 설치 PWA에서만 푸시 가능(16.4+) → 설치 안내 UI 필요 |
 | **파일 업로드** | Uppy(MIT) 또는 단순 multipart + sharp 썸네일 | tus 재개 가능 업로드 | MVP는 단순 multipart |
-| **검색** | SQLite FTS5 → Postgres tsvector | Meilisearch | 후속 |
+| **검색** | SQLite FTS5 → Postgres tsvector | Meilisearch | Phase 4 ① 이 SQLite FTS5 `trigram` 으로 넣었다 |
 | **로깅/관측** | pino, OpenTelemetry | — | |
 | **OpenClaw 연동** | `@openclaw/gateway-client`, `@openclaw/gateway-protocol`, `openclaw/plugin-sdk/*`; **Discord 플러그인 소스**(components 구현 참조), **openclaw-open-webui-channels**(봇-인-채널 패턴 참조) | — | 2026.9.4 핀 |
 | **데스크톱/모바일(후속)** | Tauri(데스크톱), Capacitor(모바일) | Electron / React Native | 같은 웹 번들 재사용 |
@@ -497,15 +498,19 @@ SQLite(WAL)로 시작, Drizzle ORM으로 스키마 정의해 Postgres 전환 시
 - 팀: 워크스페이스 멤버 초대, OIDC 로그인, 채널 권한, 멀티 Gateway 연결.
 - 어댑터: Claude Agent SDK 러너 → Codex app-server 러너 → Hermes(API 서버 경로).
 - 앱: Tauri 데스크톱(트레이·알림), Capacitor 모바일 또는 네이티브.
-- 스레드, 검색, 에이전트 내부 위임 결과 요약 게시, 채널 템플릿.
+- 스레드·검색 → **완료**(2026-09-26) — 스펙 `docs/superpowers/specs/2026-09-25-threads-search-design.md`(구현과 달라진 것은 스펙 「구현과 맞춘 것」 장), 계획 `docs/superpowers/plans/2026-09-25-threads-search.md`(태스크 1~9), 스레드 하위 세션 실측 `docs/adr/0006-thread-sessions-spike.md`, 에이전트 쪽 설명 `docs/guides/agent-guide.md` 「스레드」 절.
+  **스레드** — 사람이 아무 채널 메시지에서 스레드를 연다(스레드 안의 스레드는 없다). 스레드 안의 에이전트는 **스레드마다 하위 세션**(10장 #19)이라 채널 세션·다른 스레드와 섞이지 않고 채널 런과 병렬로 돈다. 스레드 런의 문맥은 루트(4,000자)와 그 스레드 답글 최근 20개뿐이고, 채널 런의 문맥에서도 스레드 답글을 뺀다. 멘션·자동 응답(멘션이 없으면 루트를 쓴 에이전트)·릴레이·카드·다시 실행·「새 대화」·run_error·릴레이 한도 알림이 그 스레드 안에서 돌고, 스레드 세션의 에이전트는 채널 최상위로 보내지 못한다(플러그인이 고정 사유로 거절). 옛 플러그인(hello 에 `threads` 없음)이 붙어 있으면 스레드 런은 `PLUGIN_OUTDATED` run_error 카드(재설치 안내 + 「다시 실행」), 채널 런은 그대로다. 웹은 루트 아래 칩(답글 수·마지막 시각·에이전트)·「스레드에서 답하기」·스레드 패널(넓은 화면 오른쪽 탭, 좁은 화면 전체 시트, URL `/c/$channelId/t/$rootId`)·스레드 멘션 푸시(누르면 그 스레드)·오프라인 사본(최근 채널마다 마지막으로 연 스레드 하나).
+  **검색** — `GET /api/v1/search`(FTS5 `trigram` — 3글자 이상은 구절 하나로 MATCH·bm25, 2글자는 `LIKE` 최근 90일·50개, 사용자당 분당 60). 웹은 사이드바 검색 칸·`⌘K`/`Ctrl+K` 대화상자(필터 채널·사람/에이전트·기간)와 결과로 가기(`?around=<seq>` — 떨어진 창에서 위·아래로 이어 받고 「최신 메시지로」, 답글 결과는 스레드 패널을 그 답글로, 2초 강조).
+  **확인 방법**: 서버 통합 `apps/server/test/integration/threads.test.ts` 11건(가짜 Gateway·플러그인 — 스레드 키·`context.thread`(채널 대화 없음)·정본이 스레드에·루트 요약, activeRuns 의 `threadRootId`, 멘션 없는 답글, 채널·스레드 병렬과 같은 스레드 직렬, 스레드 릴레이·relay_limit, 한도가 스레드 런도 셈, 스레드 「새 대화」, `PLUGIN_OUTDATED` → 재설치 → 다시 실행, `threadId` 불일치 거절, 카드 버튼, 스레드 멘션 푸시) · 검색 단위(`apps/server/test/search.service.test.ts`·`search.routes.test.ts`·`db.fts.test.ts` — 트리거 셋·rowid 재사용·백필 가드·FTS 연산자 주입·2글자·NUL 400·레이트리밋) · 플러그인·어댑터·웹 단위 · 태스크마다 독립 리뷰(변이)·수정·범위 재리뷰 · `dev:fake` 위 브라우저 검증(BrowserOS neo + Playwright — 스레드 대본·「오래」·훅 `plugin-capabilities`) 11항목 중 **9 통과**, 항목 8(재접속)이 찾은 결함 — wire 가 핸드셰이크 전에 깨끗이 닫히면 socket.io Manager 가 연결 제한시간 20초까지 다시 붙지 않는다(Phase 4 이전부터 있던 것) — 은 곁가지 p4t-c1 이 원인을 확정하고 `WireManager` 로 고쳤다(같은 재현에서 다시 붙기 22~24초 → 약 3초), 항목 9(푸시 링크)는 합성 클릭이라 부분 확인, 칩 닫기 초점(m5)·알림 클릭의 focus 실패도 p4t-c1 이 고쳤다 · 실연(dev Gateway)은 `docs/guides/live-smoke.md` 17절. 테스트 3190(shared 247·plugin 146·adapter 264·server 1151·web 1382). 남은 것은 아래 「이월」의 「스레드·검색(Phase 4 ①)」.
+- 에이전트 내부 위임 결과 요약 게시, 채널 템플릿.
 
-### 이월 — 남은 문제(Phase 3 ④ 문서화 종료 시점, 2026-09-25)
+### 이월 — 남은 문제(Phase 4 ① 스레드·검색 종료 시점, 2026-09-26)
 
-Phase 1 ①·②, Phase 2 ①·②·③·④, Phase 3 ①·②·③·④ 를 돌면서 「고치지 않고 알고 넘긴 것」을 한곳에 모았다. 상세 근거는 각 줄에 적은 문서에 있다. 위 Phase 2·3 항목과 겹치면 그쪽을 가리킨다.
+Phase 1 ①·②, Phase 2 ①·②·③·④, Phase 3 ①·②·③·④, Phase 4 ① 을 돌면서 「고치지 않고 알고 넘긴 것」을 한곳에 모았다. 상세 근거는 각 줄에 적은 문서에 있다. 위 Phase 2·3 항목과 겹치면 그쪽을 가리킨다.
 Phase 1 이 남긴 아홉(서버 넷·웹 넷·`wire-cli` typecheck)은 Phase 2 ① 태스크 0·1 에서, Phase 2 ① 이 남긴 초점·타이머 셋(D6 카운트다운 어긋남 · 자리값 소요가 계속 흐름 · 넓은 화면 「설정 닫기」 초점)은 Phase 2 ② 태스크 8 에서 정리해 지웠다.
 Phase 2 ② 가 남긴 「`media` 이미지를 크게 볼 수 없다」·「`media`·`file` 문구 비대칭」은 Phase 2 ③ 이 닫아 지웠다(크게 보기 `ImageViewer`, 세 블록이 해석기 하나로 「첨부를 찾을 수 없습니다」·「열 수 없는 링크입니다」를 같이 쓴다).
 Phase 2 ② 가 남긴 「`infra/` 가 없는데 두 문서가 있다고 말한다」는 Phase 3 ① 이 `infra/` 를 만들고 `docs/project-structure.md` 를 고쳐 지웠다(`CLAUDE.md` 「명령」 줄은 조율자가 고친다).
-Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-components-v1/`, Phase 2 ③ 의 출처(a3-t*·a3-c*)는 `.superpowers/sdd/2026-09-23-attachments/`, Phase 2 ④ 의 출처(p4-t*·판정 R1~R8)는 `.superpowers/sdd/2026-09-23-pwa-push/`, Phase 3 ① 의 출처(d1-t*·판정 R1~R7)는 `.superpowers/sdd/2026-09-24-deploy-packaging/`, Phase 3 ② 의 출처(s2-t*·s2-c1·판정 R1)는 `.superpowers/sdd/2026-09-24-setup-wizard/`, Phase 3 ③ 의 출처(o3-t*·o3-c1·판정 R1~R6)는 `.superpowers/sdd/2026-09-25-ops-hardening/`(여섯 다 git 제외)의 리뷰·보고서·원장이다.
+Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-components-v1/`, Phase 2 ③ 의 출처(a3-t*·a3-c*)는 `.superpowers/sdd/2026-09-23-attachments/`, Phase 2 ④ 의 출처(p4-t*·판정 R1~R8)는 `.superpowers/sdd/2026-09-23-pwa-push/`, Phase 3 ① 의 출처(d1-t*·판정 R1~R7)는 `.superpowers/sdd/2026-09-24-deploy-packaging/`, Phase 3 ② 의 출처(s2-t*·s2-c1·판정 R1)는 `.superpowers/sdd/2026-09-24-setup-wizard/`, Phase 3 ③ 의 출처(o3-t*·o3-c1·판정 R1~R6)는 `.superpowers/sdd/2026-09-25-ops-hardening/`, Phase 4 ① 의 출처(p4t-t*·p4t-c1·판정 R1~R5·R3′)는 `.superpowers/sdd/2026-09-25-threads-search/`(일곱 다 git 제외)의 리뷰·보고서·원장이다.
 
 **components 계약·서버(Phase 2 ②)**
 
@@ -566,7 +571,7 @@ Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-comp
 
 **문서**
 
-- **neo 의 CDP 에 Playwright 가 안 붙고, `.mcp.json` 의 포트가 neo 설정과 다르다** — `.mcp.json` 의 `playwright-neo` 는 9110 을 가리키는데 이 머신 neo 설정의 `ports.cdp` 는 9111 이고(9110 닫힘), 9111 은 `connectOverCDP` 를 `Browser.setDownloadBehavior: Browser context management is not supported` 로 거절했다. `docs/guideline/browseros-neo/02-playwright.md` 「Playwright 를 neo 에 붙일 때」 의 예가 이 neo 에서는 안 된다. 출처: d1-t3 보고서 걱정. 미룬 까닭: 지침 문서는 문서 저장소 사본이고 `.mcp.json` 은 설정이라 이 배치 범위 밖 — 넣을 문장은 d1-t3 보고서 걱정 2.
+- **neo 의 CDP 에 Playwright 가 안 붙고, `.mcp.json` 의 포트가 neo 설정과 다르다** — `.mcp.json` 의 `playwright-neo` 는 9110 을 가리키는데 이 머신 neo 설정의 `ports.cdp` 는 9111 이고(9110 닫힘), 9111 은 `connectOverCDP` 를 `Browser.setDownloadBehavior: Browser context management is not supported` 로 거절했다. `docs/guideline/browseros-neo/02-playwright.md` 「Playwright 를 neo 에 붙일 때」 의 예가 이 neo 에서는 안 된다. **그 거절은 neo 에 창이 하나도 없을 때 나온다** — 그때 `curl …/json/list` 가 빈 배열이고 neo MCP 의 `tabs new` 는 `No browser window available` 로 실패한다. `open -g -a "BrowserOS neo"` 로 창을 하나 만들면 9111 로 붙는다(그 창은 끝나도 닫지 않는다 — 닫으면 다시 창 없음). 출처: d1-t3 보고서 걱정, 원인은 p4t-c1 보고서 「지침 보고」 2. 미룬 까닭: 지침 문서는 문서 저장소 사본이고 `.mcp.json` 은 설정이라 이 배치 범위 밖 — 문서 저장소에 올릴 문장은 p4t-c1 보고서 「지침 보고」 2, 포트는 이 머신의 사정이다(설정 파일 `ports.cdp` 에서 읽는다).
 - **PWA 스펙이 없는 절을 가리킨다** — `docs/superpowers/specs/2026-09-23-pwa-push-design.md` 11장 R4 줄의 「`docs/guides/browser-verification.md`「PWA·서비스 워커를 볼 때」」는 그 문서에 없는 절이다(개발 SW·preview 절차는 `docs/guides/live-smoke.md` 「푸시 확인 절차 (`dev:fake`, 모델 런 0회)」에 있다). 출처: d1-t5 가 인용을 대조하다 찾음. 미룬 까닭: 이력 문서(스펙)라 가리키는 곳만 바꾸면 된다 — 낮음.
 
 **플러그인·OpenClaw 버전(2026-09-23, components 실연 결함 1 뒤)** — 결함 1(모델 런의 `message` 툴 「bridge is not running」)은 2026.9.5 의 번들 이중 평가가 원인이었고 전역 레지스트리로 고쳤고 **실물에서 확인했다**(c2-t16, 모델 런 0회 — `live-smoke.md` 11.3·12절, `docs/adr/0004-plugin-global-registry.md`). 출처는 c2-t14 원인 가르기(모델 런 0회)·c2-t15 구현, 실물 확인 절차는 `docs/guides/live-smoke.md` 11절.
@@ -678,8 +683,33 @@ Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-comp
 - **`AGENTS.md` 를 고친 뒤 「새 대화」가 필요하다는 것은 문서 근거다** — OpenClaw 문서 「Agent workspace」(세션 시작 때 읽는다)와 claude-cli 가 시스템 프롬프트를 세션 시작 때 고정한다는 ADR 0003 에서 끌어낸 것이고, `AGENTS.md` 로 직접 재지는 않았다. 출처: p3d-t1 보고서.
 - **`message` 툴 뒤 최종 답 억제는 9.4 스파이크 실측이다 — 9.5 에서 다시 잰다.** `docs/adr/0002-channel-plugin-spike.md` 「`message` 툴 — `describeMessageTool` 과 `handleAction`」 절이 2026.9.4 모델 런(B1)에서 `terminalReply.disposition: "silent"` 를 봤다. 9.5 에서는 `message` 툴이 성공한 모델 런의 최종 답을 본 적이 없다 — components 실연의 모델 런은 툴이 결함 1 로 실패했고(`docs/guides/live-smoke.md` 「components v1(Phase 2 ②) 실물 확인」 절), 런 0회 하네스는 억제를 재현하지 않는다(같은 문서 「첨부 재기」 절의 가짜 CLI 경고). 가이드는 「안 올라갈 수 있다」로 적고 할 말을 `message` 본문에 쓰라고 가르친다 — 9.5 에서 억제가 없으면 그 지시는 해가 없고, 있으면 가이드가 맞다. 출처: p3d-t1 리뷰 I1.
 
+**스레드·검색(Phase 4 ①, 2026-09-26)** — 스펙 `docs/superpowers/specs/2026-09-25-threads-search-design.md` 「열린 문제」·「구현과 맞춘 것」 장, ADR 0006. 아래 출처의 보고서·리뷰(p4t-t*·p4t-c1)와 원장은 `.superpowers/sdd/2026-09-25-threads-search/`(git 제외)에 있다.
+
+- **검색 — 첨부 이름·검색어의 유니코드 정규화가 없다.** macOS 에서 올린 한글 파일 이름(NFD)은 NFC 검색어로 안 찾힌다(탐침: 본문을 `"회의록".normalize("NFD")` 로 저장하면 `회의록` 으로 0건). 본문은 브라우저 입력이라 대개 NFC 지만 파일 이름은 NFD 로 오는 일이 흔하다. 고칠 자리: 첨부 저장 경계에서 이름을 NFC 로, `searchMessages` 의 검색어도 `q.normalize("NFC")`(기존 행은 백필이 필요하다). 출처: p4t-t3 리뷰 「이월 제안」. 미룬 까닭: 첨부 저장 규칙과 색인 백필을 함께 바꾸는 일이라 검색 태스크 범위 밖.
+- **`messages` 를 다시 만드는 마이그레이션이 검색 색인을 조용히 망가뜨린다** — `messages` 는 text PK 라 rowid 가 별명이 아니다. drizzle 이 테이블 재생성(`__new_messages` 복사 → DROP → RENAME)을 내면 `messages_fts` 트리거가 사라지고 rowid 가 새로 매겨진다 — 오류 없이 검색만 낡는다(지운 말로 다른 메시지가 찾힌다). 그런 마이그레이션 뒤에는 `apps/server/drizzle/0007_search_fts.sql` 의 트리거 셋과 백필을 새 커스텀 마이그레이션으로 다시 넣는다. 가드: `apps/server/test/search.service.test.ts` 의 백필 테스트(모든 마이그레이션 뒤 트리거 셋 존재·남은 행마다 제 id 로만 찾힘)가 빨갛게 된다 — 규칙은 `docs/project-structure.md` 의 `apps/server` 절 `db/`. 출처: p4t-t3 보고서 걱정·리뷰 I1. 미룬 까닭: 지금 그런 마이그레이션이 없다 — 다음에 `messages` 열을 바꾸는 사람이 만난다.
+- **플러그인·계약의 낮은 넷(p4t-t2 리뷰 Minor)** — 모두 정상 모델 호출로는 거의 안 닿는다. 미룬 까닭: 태스크 2 병합을 막지 않았고 뒤 태스크 범위 밖이었다.
+  - **코어의 명시적 「최상위」 표지를 거절하지 않는다** — 스레드 세션에서 `message` 툴이 `topLevel: true` 나 `threadId: null` 을 싣고 오면 플러그인은 「`threadId` 없음」으로 보고 **그 스레드로 보낸다**(모델은 최상위를 원했는데 성공으로 끝난다). `message` 툴 send 스키마는 `threadId: string` 만 드러내 `topLevel` 이 없다. 고칠 자리: `packages/openclaw-plugin/src/outbound.ts` 의 스레드 세션 검사에 `params.topLevel === true || params.threadId === null` 이면 `THREAD_ONLY_REASON`.
+  - **route precedence 순서를 고정하는 테스트가 없다** — `["threadId","currentSession"]` 를 뒤집어도 초록이다(실질 동치 — 갈리는 경우인 「스레드 세션 + 다른 `threadId`」는 `handleAction` 이 먼저 거절한다). 고침: `packages/openclaw-plugin/test/channel.test.ts` 에 `route({ currentSessionKey: 스레드 키, threadId: 다른 UUID })` → 그 다른 스레드 키 한 줄.
+  - **dodok 이 아닌 세션에서 `threadId` 를 주고 dodok 채널로 보내면 mirror 자리와 실제 전송 자리가 갈린다** — route 는 스레드 키가 되는데 `handleAction` 은 그 세션을 못 풀어 스레드를 싣지 않고 채널 최상위로 보낸다(서버는 런 없는 정본으로 저장) → 최상위 메시지가 스레드 전사에 mirror 된다. 다른 채널(텔레그램 등) 세션의 교차 전송에서만 닿는다. 고칠 방향: route 도 「우리 세션이 아니면 `threadId` 무시」, 또는 `handleAction` 도 그 `threadId` 를 싣기.
+  - **주석 둘이 낡았다** — `packages/shared/src/session-key.ts` `dodokSessionKey` 머리주석 「파서가 거절할 키는 만들지 않는다」는 agentId·빈 rootId 에만 참이다(channelId·rootId 가 UUID 가 아니면 파서가 거절할 키를 만든다 — 호출처가 `Id` 로 보장한다). `packages/openclaw-plugin/src/channel.ts` 머리주석의 「Node 22 에서 단위 테스트한다」·「SDK 에 닿는 코드는 단위 테스트하지 않는다」는 함의는 지금 Node 24 이고 `channel.ts` 도 `test/channel.test.ts` 가 핀 SDK 로 시험한다. 넣을 문장은 p4t-t2 리뷰 Minor-4·p4t-t2 보고서 「지침·문서 보고」.
+- **스레드 런 대기 중 옛 플러그인이 붙으면 `PLUGIN_OUTDATED` 가 아니라 `ADAPTER_ERROR:INTERNAL` 카드다** — `PLUGIN_OUTDATED` 는 보낼 때 붙은 플러그인이 있을 때만 판정한다(스펙 「구현과 맞춘 것」). 붙은 플러그인이 없어 어댑터가 기다렸다가 새로 붙은 옛 플러그인에 보내면 hello 대조를 지나지 않는다. 새지도 조용하지도 않고 「다시 실행」도 있다(옛 번들을 읽어 판단 — 재지 않음). 고칠 자리: 어댑터가 send 직전에 hello capabilities 를 다시 본다(`packages/openclaw-adapter/src/openclaw-adapter.ts` 의 `send`). 출처: p4t-t5 보고서 걱정 1·리뷰 m1. 미룬 까닭: 어댑터 범위.
+- **run_limit 「하루 한 번」은 채널 단위다** — 그날 첫 한도 알림이 스레드에 남으면 같은 날 채널 최상위에는 다시 남지 않는다. 최상위만 보는 사람은 멘션이 왜 조용한지 모를 수 있다 — 루트 칩의 답글 수가 하나 늘고 운영 화면(owner)에 사건 `run_limit` 이 남을 뿐이다. 사람 판단: 「오늘 이미 남겼나」를 (채널, 스레드) 단위로 가를지(권고 — 한도 알림은 드물어 소음이 적다). 자리 `apps/server/src/modules/ops/budget.ts` 의 `createRunGate`. 출처: p4t-t5 보고서 「계획과 달라진 것」 9·리뷰 m4.
+- **정본 거절의 플러그인 ack 코드가 `INTERNAL` 이다** — 서버는 `VALIDATION`(`threadId does not match`)을 던지지만 어댑터 브리지(`onOutboundMessage`)가 훅 예외를 모두 `INTERNAL: <메시지>` 로 싣는다(기존 「모르는 에이전트」 `NOT_FOUND` 도 같다). 스펙의 「플러그인 ack 오류」는 지켜지고 사유 문장은 그대로 간다. 고칠 자리: 어댑터가 `HttpError`·`ApiError` 코드를 보존한다. 출처: p4t-t5 보고서 「계획과 달라진 것」 2. 미룬 까닭: 어댑터 범위.
+- **옛 데이터에 `Dev`·`dev` 가 함께 저장돼 있으면 에이전트 조회가 하나를 고른다** — 승인 `findAgentId`·런 없는 정본 `agentIdFor` 는 대소문자를 무시하고(`providerAgentIdIs`) `.get()` 이 먼저 준 행을 쓴다. 등록이 이제 소문자만 받아 새로 생길 수는 없다(판정 R4). 출처: p4t-t5 수정 보고서 m2. 미룬 까닭: 옛 데이터에만 있는 경계이고 관측되지 않았다.
+- **lastSeq 재동기화가 200개를 넘겨 REST 로 이어 받으면, 그 구간 답글의 옛 루트 요약(칩)은 새로고침 전까지 낡는다** — `threadRoots` 는 구독 첫 쪽에만 있다(판정 R2). 첫 쪽 안 루트·REST 로 온 루트는 읽을 때의 요약이라 맞다. 출처: p4t-t6 리뷰 m6. 미룬 까닭: 드물고 새로고침으로 풀린다.
+- **끝난 스레드 런은 그 스레드 패널을 열 때만 런 스토어에서 지워진다** — 닫힌 스레드의 끝난 런은 세션 동안 메모리에 남는다(채널 런도 그 채널을 열 때만 지워지는 같은 성질, 동작 영향 없음). 출처: p4t-t6 리뷰 m7·수정 보고서. 미룬 까닭: 지우려면 채널 쪽 훅이 스레드 런의 숨김 타이머까지 돌려야 한다.
+- **이미 들른 채널의 결과로 가기와 catchUp 의 `fresh` 가 겹치면 「메시지를 찾을 수 없습니다」가 잘못 뜬다** — 캐시가 있는 채널은 around 를 곧바로 부르는데, 그 사이 catchUp 이 5쪽을 넘겨 `fresh` 로 가면 다시 얹힌 `fromLatest` 가 around 결과를 덮는다. 드물다. 출처: p4t-t7 리뷰 m9. 미룬 까닭: 알려진 한계로 둔다.
+- **낮은 관찰 몇** — 스레드를 around 로 갈아 끼운 직후 `staleThreads`(REST 이어 받기가 있었을 때)가 스레드를 다시 받으면 목록이 최신 50 으로 돌아가 보던 자리가 바뀐다(강조는 끝난 뒤, p4t-t7 보고서 걱정·리뷰 m10 — 브라우저로 재지 않았다) · 200 초과 끊김 뒤 REST 이어 받기가 연 스레드를 다시 받으면 패널에서 올려 둔 과거 페이지가 버려지고 끝으로 간다(p4t-t6 보고서 걱정 2) · 새 구독(루트만)은 채널의 최대 seq 를 알려 주지 않아, 마지막 루트 뒤에 답글이 있던 채널은 첫 이벤트에서 catchUp 이 한 번 돈다(p4t-t6 보고서 「계획과 달라진 것」 4 — 계약을 바꾸지 않고는 못 없앤다) · 손으로 친 답글 id 주소(`/c/:id/t/<답글 id>`)는 루트로 옮겨 주지 않고 「스레드를 찾을 수 없습니다」다(웹이 만드는 링크는 늘 루트) · 스레드 작성기는 입력 중 표시를 보내지 않는다(wire `Typing` 이 채널 단위) · bm25 커서는 페이지 사이 새 메시지가 들어오면 조금 흔들린다 · 2글자(LIKE) 경로는 `created_at` 인덱스 없이 전 테이블을 훑는다(수십만 행이면 다시 본다) · 스니펫 위치는 JS `toLowerCase`, FTS 는 SQLite 유니코드 접기라 어긋나면 표시 없는 본문 머리로 떨어진다(p4t-t3 보고서 걱정) · 사이드바 검색 칸의 `⌘K` 표시는 플랫폼을 가리지 않는다(단축키는 둘 다 받는다, p4t-t7 보고서 걱정).
+- **스펙 「열린 문제」** — 스레드 읽음 상태·스레드 목록 화면·스레드를 채널로 올리기, 스레드 자동 리셋(코어 `session.resetByType.thread`), 봇 루프 예산을 스레드별로 쪼갤지(지금은 채널과 공유), 원격 Gateway 판에서의 스레드 동작, 의미 검색·첨부 내용·툴 인자 검색. 출처: 스펙 「열린 문제」. 미룬 까닭: 이번 사이클 범위 밖(스펙 결정 1).
+- **사람이 볼 것** — 출처: p4t-t8b 「확인 못한 것」·「사람이 볼 것」. 자동 검증이 1280px 만 쟀거나 원리상 못 잰 것이다.
+  - **390px 기능 항목 대부분** — 브라우저 검증은 390px 에서 레이아웃·가로 스크롤·시트 초점(항목 3)만 봤다. 스레드 열기·답·칩, 새로고침, 동시 스트리밍, 「새 대화」, `PLUGIN_OUTDATED`, 검색(390 시트에서 사이드바 검색 칸으로 열 때 두 시트의 초점)은 1280px 만이다.
+  - **떨어진 창 흐름** — 결과로 가기 뒤 「최신 메시지로」·그 사이 새 메시지 도착·떨어진 창에서 작성기로 보내기, 다음 쪽 429(m8)를 브라우저로 재지 않았다(단위 테스트까지). 결과로 가기 뒤 다른 채널로 갔다 돌아오면 떨어진 창이 남아 있는 것(의도)이 어색하지 않은지도.
+  - **진짜 알림 클릭으로 스레드 열기** — 서비스 워커 안 합성 클릭은 user activation 이 없어 `focus()` 가 거절된다. 고친 서비스 워커가 그때도 이동하는 것까지는 봤다(p4t-c1). 실제 OS 알림을 눌러 창이 앞으로 오고 스레드가 열리는지는 사람이 본다(`docs/guides/live-smoke.md` 「PWA·푸시(Phase 2 ④) — 푸시 확인 절차」 절의 사람 몫과 함께).
+  - **실제 한글 입력기 상태의 ⌘K/Ctrl+K** — 브라우저 검증은 `key:"ㅁ", code:"KeyK"` 합성 keydown 으로만 봤다.
+
 **실물 확인**
 
+- **스레드를 실물 dev Gateway(2026.9.5)로 본 것은 스파이크(ADR 0006 — 모델 런 0회)와 실연(`docs/guides/live-smoke.md` 17절)이다.** 실연이 새로 찾은 것은 그 절에 있다. 원격 Gateway 판에서는 아직 안 봤다(위 「플러그인·OpenClaw 버전」).
 - **PWA·푸시를 실물 dev Gateway(2026.9.5)로 본 것은 실연(p4-t9 — 런 0회 하네스 7/7 + 모델 런 1회, `docs/guides/live-smoke.md` 14.4)이다.** Playwright 로 실제 FCM 을 받으려면 기본 인자 `--disable-background-networking` 을 빼야 한다(14.4.3-A). 자동화가 원리상 못 잰 것(실제 OS 알림 클릭·설치 끝까지·macOS 알림 모양·가려진 창)은 14.3 — 사람이 한 번 봐야 한다. 브라우저 검증이 알림 누르기를 잰 것은 서비스 워커 안 합성 클릭(신뢰된 클릭만 허용되는 `waitUntil`·`focus`·`openWindow` 를 대행)이라, OS 창이 실제로 앞으로 오는지는 모른다.
 - 첨부를 실물 dev Gateway(2026.9.5)로 본 것은 스파이크(모델 런 2회), 실연(a3-t11 — 런 0회 하네스 합격 기준 9/9 + 모델 런 2회, `docs/guides/live-smoke.md` 13절), 결함 A 고침 확인(a3-t13 — 런 0회, 13.7절)이다. 9.4 런타임과 원격 Gateway 는 아직 안 봤다(위 이월). 자동화가 원리상 못 잰 것(실제 OS 클립보드 붙여넣기·끌어다 놓기·Safari 초점)은 `docs/guides/live-smoke.md` 9.3 — 사람이 한 번 봐야 한다.
 - 승인을 실물 Gateway·실제 모델로 본 것은 스파이크 1회(`.superpowers/sdd/2026-09-20-phase2-approval-spike/`)뿐이다. 웹 화면까지 실물로 도는 절차는 `docs/guides/live-smoke.md` 8절.
@@ -712,7 +742,7 @@ Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-comp
 | --- | --- | --- | --- |
 | 1 | 채널 프롬프트 주입 방식 | **(a) 채널별 `systemPrompt` 설정(플러그인 내부 쓰기 a-1)이 기준선.** claude-cli 기존 세션에는 설정 변경이 들어가지 않으므로(ADR 0003 3절) 서버가 세션별로 「세션 시작 시점의 채널 프롬프트 리비전」을 기억해 현재와 다르면 인바운드 `context.channelPrompt` 를 채우고 플러그인이 `ChannelPromptContext` 로 싣는다(ADR 0003 7.1). 새 세션(첫 턴·리셋 뒤)은 싣지 않는다. 에이전트별 `promptOverride` 도 헤더 줄 대신 `ChannelPromptContext`(전사 오염 방지, 같은 이유). 프롬프트 변경으로 리셋·회전하지 않는다 | 2026-09-14 (v0.4) · **2026-09-15 확정**(ADR 0003 10절 1 = ADR 0002 12절 5) |
 | 2 | 에이전트 내부 위임(`sessions_send`) | **MVP 차단** — `tools.agentToAgent.enabled: false`, `tools.sessions.visibility: "tree"`. 서브에이전트 스폰은 허용. 상세 5.8 | 2026-09-14 |
-| 3 | OpenClaw 세션 키 단위 | **채널당 에이전트별 1세션** `agent:<agentId>:dodok:channel:<channelId>`, 스레드는 후속 하위 세션. 상세 5.8 | 2026-09-14 |
+| 3 | OpenClaw 세션 키 단위 | **채널당 에이전트별 1세션** `agent:<agentId>:dodok:channel:<channelId>`, 스레드는 스레드마다 하위 세션(#19). 상세 5.8 | 2026-09-14 |
 | 4 | 자동 응답 에이전트 | 채널당 1개 허용, 기본값은 꺼짐 | 2026-09-14 |
 | 5 | PWA 푸시 알림 | MVP 포함 — 멘션·승인 요청·릴레이 한도 도달 시 발송 | 2026-09-14 |
 | 6 | Gateway 호스팅 관계 | **본인 운영 원격 Gateway 연결이 기본**. 플러그인은 Gateway 호스트에 설치되어 우리 서버 브리지로 아웃바운드 WSS 접속. Compose 동반 기동 옵션은 뺐다(배포 패키징 스펙 결정 5, 2026-09-24) | 2026-09-14 (v0.4 변경) |
@@ -728,7 +758,7 @@ Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-comp
 | 16 | 재접속 복구 | `sessions.list` → 선택 세션 `chat.history`(limit) **전체 치환**이 기본. `deltaCursor` 가 오면 저장해 다음 재접속에 `cursor` 로 먼저 시도하고 `kind:"reset"` 이면 전체 치환으로 — 최적화일 뿐(claude-cli 세션은 커서 없음). 메시지 정본은 서버 DB | 2026-09-15 (ADR 0003 10절 3) |
 | 17 | `chat.send` 대체 경로 | **MVP 미사용.** 비상 경로가 필요하면 `deliver` 없이 `chat.send` 만 보내고 WS `chat` final 을 서버 메시지로 쓴다 | 2026-09-15 (ADR 0003 10절 4) |
 | 18 | 플러그인 `inboundChannelPrompt` 설정 키 | **제거.** 인바운드 `context.channelPrompt` 가 있으면 플러그인은 항상 `ChannelPromptContext` 로 싣고, 채울지 판단(리비전 불일치)은 서버가 한다. `InboundContext` 에 리비전 필드는 두지 않는다 | 2026-09-15 (ADR 0003 10절 5) |
-| 19 | 세션 키 세대 접미사 `:g<N>` | **플러그인 수용 코드 제거**(#15 로 리셋을 쓴다). 폴백이 필요해지면 되살린다. 세션 키 규칙은 원형 유지 | 2026-09-15 (ADR 0003 10절 7) |
+| 19 | 세션 키 규칙 | **세대 접미사 `:g<N>` 는 쓰지 않는다** — 플러그인 수용 코드 제거(#15 로 리셋을 쓴다), 폴백이 필요해지면 되살린다. 채널 세션 `agent:<agentId>:dodok:channel:<channelId>`, **스레드 하위 세션은 접미사 `:thread:<rootId 소문자>`** 하나만 붙는다. 서버가 만들고 플러그인은 모양과 `threadId` 대조만 한다. 키는 shared `dodokSessionKey`·`parseDodokSessionKey`(`packages/shared/src/session-key.ts`)로만 만들고 푼다 — 빌더가 channelId·rootId 를 소문자로(코어가 dodok 키를 통째로 소문자로 접는다), agentId 는 OpenClaw 규칙 밖이면 던진다 | 2026-09-15 (ADR 0003 10절 7), 스레드 접미사 2026-09-25 (ADR 0006, 스레드·검색 스펙 결정 2) |
 | 20 | 업스트림 이슈 보고 | **보류** — MVP 뒤 재검토. 재현 절차는 ADR 0003 3.1(P0→P1) | 2026-09-15 (ADR 0003 10절 6) |
 | 21 | 로컬 첫 에이전트 id | dev 프로필(`openclaw --dev`)은 `main` 을 만들 수 없으므로 로컬 개발 문서는 **`dev`** 를 첫 에이전트로 쓴다. `doctor --fix` 절차는 적지 않는다 | 2026-09-15 (ADR 0002 12절 6) |
 
