@@ -136,9 +136,11 @@
 - `DELETE /api/v1/members/:userId` — admin 은 member 만, owner 는 owner 를 뺀 모두:
   - `memberships` 행을 지우고, 그 사용자의 Better Auth 세션·푸시 구독을 모두 지우고, 열린 wire 소켓을 서버가 끊는다(`disconnect(true)`).
   - 그 사람의 **Better Auth 사용자(user·account·session)는 지운다** — 같은 이메일로 다시 초대받을 수 있어야 한다(Better Auth 의 이메일은 유일하다).
-  - 우리 `users` 행과 그 사람이 쓴 메시지는 남긴다(작성자 참조). 그 행은 핸들과 이메일을 놓아준다: 내보낸 때의 핸들을 새 열 `users.left_handle` 에 옮기고, `handle` 은 `left-<id 앞 8자>`(규칙 `Handle` 안), `email` 은 NULL 로 바꾼다. 그래서 옛 핸들·이메일을 새 가입이 다시 쓸 수 있다.
+  - 우리 `users` 행과 그 사람이 쓴 메시지는 남긴다(작성자 참조). 그 행은 핸들과 이메일을 놓아준다: 내보낸 때의 핸들을 새 열 `users.left_handle` 에 옮기고, `handle` 은 `left-<id 뒤 27자>`(규칙 `Handle` 안 — uuid v7 의 앞쪽은 시각이라 가까운 때 가입한 사람끼리 겹친다), `email` 은 NULL 로 바꾼다. 그래서 옛 핸들·이메일을 새 가입이 다시 쓸 수 있다. `left-` 로 시작하는 핸들은 이 용도로 **예약**한다 — 사람 가입·에이전트 등록은 400 `VALIDATION`.
   - 웹은 `left_handle` 이 있는 작성자를 「나간 멤버 @<left_handle>」로 그린다. 같은 사람을 다시 들이면 **새 사용자**다 — 옛 메시지는 옛 행에 남는다.
   - 채널 참여 행(`channel_members` 의 user)도 지운다 — 에이전트 헤더 「참여자」에서 빠진다.
+  - 그 사람을 겨눈 재설정 링크와 **그 사람이 발급한** 쓰이지 않은 초대·재설정 링크를 모두 폐기한다 — 원문을 쥔 채 나간 사람이 다시 들어오거나 남의 비밀번호를 바꾸지 못하게. admin 에서 member 로 내릴 때도 그 사람이 발급한 링크를 폐기한다.
+  - 내보내기가 중간에 실패하면 열린 소켓은 끊고 운영 사건 `member_remove_failed` 를 남긴 뒤 500.
 - 내보내진 사람의 다음 REST 는 401, wire 재접속은 핸드셰이크에서 거절된다.
 
 ---
