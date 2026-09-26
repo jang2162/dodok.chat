@@ -1,6 +1,6 @@
 /**
  * 초대·재설정 링크·「내 계정」 REST(팀 스펙 3.2~3.5). 원문 토큰은 발급 응답에만 싣고 그 응답은 `Cache-Control: no-store`.
- * lookup·accept·reset 은 로그인 없이 열려 있어 로그인과 같은 IP 버킷(loginLimit)을 지난다.
+ * lookup·accept·reset 은 로그인 없이 열려 있어 셋이 한 IP 버킷(invitePublicLimit)을 지난다 — 로그인 버킷과는 따로다.
  */
 import {
   AcceptInviteBody,
@@ -50,8 +50,14 @@ export type MemberRouteContext = {
   appOrigin: string;
   secureCookie: boolean;
   limits: Pick<Limits, "inviteIssuePerMin">;
-  /** 로그인과 같이 쓰는 IP 버킷(auth/routes.ts createLoginLimit) */
+  /** 로그인과 같이 쓰는 IP 버킷(auth/routes.ts createIpLimit, LIMITS.localLoginPerMin) — me/password 가 지난다 */
   loginLimit: onRequestHookHandler;
+  /** lookup·accept·reset 이 같이 쓰는 IP 버킷(createIpLimit, LIMITS.invitePublicPerMin) */
+  invitePublicLimit: onRequestHookHandler;
+  /** 재설정 수락 뒤 대상의 열린 wire 소켓을 모두 끊는다(realtime/socket.ts disconnectUser) */
+  disconnectUser(userId: string): void;
+  /** me/password 뒤 지운 세션의 열린 wire 소켓만 끊는다(realtime/socket.ts disconnectSessions) */
+  disconnectSessions(sessionIds: readonly string[]): void;
   ops: Pick<OpsService, "record">;
   /** 레이트리밋 시계 — app.ts 의 limitClock */
   limitNow: () => number;
@@ -140,7 +146,7 @@ export function registerMemberRoutes(fastify: FastifyInstance, ctx: MemberRouteC
     },
   );
 
-  fastify.post("/api/v1/invites/lookup", { onRequest: ctx.loginLimit }, async (request) => {
+  fastify.post("/api/v1/invites/lookup", { onRequest: ctx.invitePublicLimit }, async (request) => {
     const { token } = parseBody(TokenBody, request.body);
     const invite = findValidInvite(ctx.db, token, now());
     if (!invite || invite.workspaceId !== ctx.workspaceId) throw inviteNotFound();
@@ -157,7 +163,7 @@ export function registerMemberRoutes(fastify: FastifyInstance, ctx: MemberRouteC
     return result;
   });
 
-  fastify.post("/api/v1/invites/accept", { onRequest: ctx.loginLimit }, async (request, reply) => {
+  fastify.post("/api/v1/invites/accept", { onRequest: ctx.invitePublicLimit }, async (request, reply) => {
     const body = parseBody(AcceptInviteBody, request.body);
     const { userId, sessionToken } = await acceptInvite(acceptDeps, body);
     broadcastPeople(ctx.bus, ctx.db, ctx.workspaceId);
@@ -165,9 +171,12 @@ export function registerMemberRoutes(fastify: FastifyInstance, ctx: MemberRouteC
     return { sessionToken, user: loadUser(ctx.db, userId) };
   });
 
-  fastify.post("/api/v1/invites/reset", { onRequest: ctx.loginLimit }, async (request, reply) => {
+  fastify.post("/api/v1/invites/reset", { onRequest: ctx.invitePublicLimit }, async (request, reply) => {
     const body = parseBody(ResetPasswordBody, request.body);
-    const { userId, sessionToken } = await resetPassword(acceptDeps, body);
+    const { userId, sessionToken } = await resetPassword(
+      { ...acceptDeps, disconnectUser: ctx.disconnectUser },
+      body,
+    );
     setSessionCookie(reply, sessionToken, ctx.secureCookie);
     return { sessionToken, user: loadUser(ctx.db, userId) };
   });
@@ -190,7 +199,7 @@ export function registerMemberRoutes(fastify: FastifyInstance, ctx: MemberRouteC
       const body = parseBody(ChangePasswordBody, request.body);
       const keep = sessionTokenOf(request);
       if (!keep) throw apiError("UNAUTHORIZED", "로그인이 필요하다");
-      await changePassword(ctx.auth, me.id, keep, body);
+      await changePassword(ctx.auth, me.id, keep, body, ctx.disconnectSessions);
       ctx.logger.info({ userId: me.id }, "password changed");
       return reply.status(204).send();
     },

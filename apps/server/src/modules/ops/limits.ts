@@ -2,8 +2,13 @@
 export const LIMITS = {
   /** /api/auth/*(Better Auth) — IP 당 분당 */
   betterAuthPerMin: 30,
-  /** /api/v1/auth/local(로그인)과 초대 조회·수락·재설정 — IP 당 분당, 한 버킷 */
+  /** /api/v1/auth/local(로그인)과 me/password — IP 당 분당, 한 버킷. 비밀번호 추측을 막는다 */
   localLoginPerMin: 5,
+  /**
+   * 초대 조회·수락·재설정 — IP 당 분당, 셋이 한 버킷(로그인과 나눈다). 토큰은 32바이트 난수라 추측 방어가 아니라 폭주 방어다 —
+   * 한 사무실(NAT)에서 여러 사람이 링크를 동시에 열어도 로그인 실패 몇 번에 가입이 막히지 않게
+   */
+  invitePublicPerMin: 20,
   /** REST /api/v1/* — 사용자당 분당 */
   restPerMin: 300,
   /** 첨부 업로드 — 사용자당 분당(REST 상한 위에 한 번 더) */
@@ -30,6 +35,7 @@ export const LIMITS = {
 export type Limits = {
   betterAuthPerMin: number;
   localLoginPerMin: number;
+  invitePublicPerMin: number;
   restPerMin: number;
   uploadPerMin: number;
   searchPerMin: number;

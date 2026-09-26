@@ -14,7 +14,8 @@ export function updateDisplayName(db: Db, userId: string, displayName: string): 
 }
 
 /**
- * 현재 비밀번호를 확인하고 바꾼 뒤 이 세션(keepSessionToken)을 뺀 본인 세션을 끊는다.
+ * 현재 비밀번호를 확인하고 바꾼 뒤 이 세션(keepSessionToken)을 뺀 본인 세션과 그 세션들의 열린 wire 소켓을 끊는다 —
+ * 이 세션의 소켓은 남긴다(disconnectSessions 는 세션 id 로 가른다).
  * 틀린 현재 비밀번호는 401 이 아니라 400 field "current" — 웹은 401 을 「세션 끝남」으로 읽어 로그인 화면으로 보낸다
  */
 export async function changePassword(
@@ -22,6 +23,7 @@ export async function changePassword(
   userId: string,
   keepSessionToken: string,
   body: ChangePasswordBody,
+  disconnectSessions: (sessionIds: readonly string[]) => void,
 ): Promise<void> {
   const ctx = await auth.$context;
   const adapter = ctx.internalAdapter;
@@ -31,8 +33,8 @@ export async function changePassword(
     : false;
   if (!ok) throw apiError("VALIDATION", "현재 비밀번호가 맞지 않는다", { field: "current" });
   await adapter.updatePassword(userId, await ctx.password.hash(body.next));
-  const others = (await adapter.listSessions(userId))
-    .map((s) => s.token)
-    .filter((token) => token !== keepSessionToken);
-  if (others.length > 0) await adapter.deleteSessions(others);
+  const others = (await adapter.listSessions(userId)).filter((s) => s.token !== keepSessionToken);
+  if (others.length === 0) return;
+  await adapter.deleteSessions(others.map((s) => s.token));
+  disconnectSessions(others.map((s) => s.id));
 }

@@ -59,13 +59,17 @@ export type Auth = ReturnType<typeof createAuth>;
 /** 헤더 값이 될 수 있는 토큰만(가시 ASCII). wire 의 auth.token 은 임의 유니코드가 올 수 있다 — Headers 가 던지지 않게 먼저 거른다 */
 const TOKEN_RE = /^[\x21-\x7e]+$/;
 
-export async function verifySessionToken(auth: Auth, token: string): Promise<{ userId: string } | null> {
+/** sessionId 는 Better Auth session 행의 id — 토큰 원문 대신 세션을 가리킬 때 쓴다(wire 소켓의 세션 단위 끊기) */
+export async function verifySessionToken(
+  auth: Auth,
+  token: string,
+): Promise<{ userId: string; sessionId: string } | null> {
   if (typeof token !== "string" || !TOKEN_RE.test(token)) return null;
   try {
     const session = await auth.api.getSession({
       headers: new Headers({ authorization: `Bearer ${token}` }),
     });
-    return session ? { userId: session.user.id } : null;
+    return session ? { userId: session.user.id, sessionId: session.session.id } : null;
   } catch {
     // 무효 토큰은 예외가 아니라 null 이다(리뷰 sc-t3 지적 1)
     return null;

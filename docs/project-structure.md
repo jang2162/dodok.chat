@@ -269,7 +269,8 @@ src/
 │  └─ josa.ts             받침에 따른 조사(시스템 메시지 병기형). 웹 `lib/josa.ts` 와 두 벌 — 한쪽만 고치면 어긋난다
 └─ realtime/
    ├─ bus.ts              ServerBus — 모듈 → realtime 타입드 이벤트
-   ├─ socket.ts           wire 인증(세션 토큰·프로토콜)·사용자당 동시 소켓 상한(LIMITS.socketsPerUser)·룸(channel:<id>, user:<id>, workspace:<id>)·
+   ├─ socket.ts           wire 인증(세션 토큰·프로토콜)·사용자당 동시 소켓 상한(LIMITS.socketsPerUser)·룸(channel:<id>, user:<id>, workspace:<id>, session:<Better Auth session id> — 토큰 원문은 소켓에 두지 않는다)·connection 에서 membership·세션을 다시 본다·
+   │                      disconnectUser(내보내기·재설정 수락)·disconnectSessions(me/password — 지운 세션만)·
    │                      소켓마다 토큰 버킷 넷(WIRE_BUCKET — heavy·replay·approval·chatter, 넘으면 ack RATE_LIMITED·ack 없는 이벤트는 버림·사건 ratelimit `wire:<이벤트>`)·
    │                      클라이언트 → 서버 핸들러(subscribe 는 lastSeq 가 없으면 루트만, 있으면 lastSeq 이후 루트·답글 ≤200 + 옛 루트 요약 threadRoots · message.send 는 threadRootId 를 넘긴다,
    │                      ack 에 그 채널의 **미해결** 승인 pendingApprovals · approval.resolve 는 승인 서비스로 넘긴다 ·
@@ -549,7 +550,7 @@ src/
 │  │                       MessageAttachments.tsx(본문 아래 이미지 격자 + 파일 카드, 카드가 가리킨 첨부는 뺀다) ·
 │  │                       upload.ts(XHR 업로드·진행·취소, 형식·5 MB 검사와 문구, 507 이면 본문과 무관하게 「서버 디스크 여유가 부족해 올리지 못했습니다」) · useComposerAttachments.ts(작성기 칩 상태 — 넣는 즉시 올리고, 빼면 끊고, 채널이 바뀌면 모두 비운다. 10장 상한)
 │  ├─ auth/                LoginPage(이메일·비밀번호가 기본, 접힌 「owner 로컬 토큰으로 로그인」) · JoinPage(`/join/<token>`)·ResetPage(`/reset/<token>`) — invite.tsx 의 InviteGate 가
-│  │                       `POST /invites/lookup` 을 본문 토큰으로 부른 뒤 폼(무효·다른 종류 링크는 한 문구, 로그인 IP 버킷이라 `retry: false`, 쿼리 키에 토큰 원문 대신 `useId` — 토큰이 바뀌면 `key={token}` 으로 다시 마운트), 409 는 `details.field` 칸 아래, 수락 404 는 무효 화면.
+│  │                       `POST /invites/lookup` 을 본문 토큰으로 부른 뒤 폼(무효·다른 종류 링크는 한 문구, 초대 경로 IP 버킷이라 `retry: false`, 쿼리 키에 토큰 원문 대신 `useId` — 토큰이 바뀌면 `key={token}` 으로 다시 마운트), 409 는 `details.field` 칸 아래, 수락 404 는 무효 화면.
 │  │                       성공하면 `useFinishInvite` 가 클라이언트 상태를 비우고 `/` 로 replace(주소창의 토큰을 걷는다) · fields.tsx(AuthField·비밀번호 규칙·로그인 전 경로 공통 문구) ·
 │  │                       mutations(useLogin(`{ token }`·`{ email, password }`)·useAcceptInvite·useResetPassword·useLogout — 응답 `sessionToken` 은 쓰지 않는다, gcTime 0. 로그아웃은 disablePush 를 최대 3초 기다린 뒤 POST /auth/logout)
 │  ├─ account/             AccountDialog(사이드바 하단 「내 계정」 — 표시 이름 `PATCH /me`(me 캐시의 user 를 고친다), 비밀번호 바꾸기 `POST /me/password`(틀린 현재 비밀번호는 400 `field: "current"` → 그 칸 아래).

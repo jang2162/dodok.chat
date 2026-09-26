@@ -12,6 +12,7 @@ describe("LIMITS — 스펙 4장 숫자", () => {
     expect(LIMITS).toEqual({
       betterAuthPerMin: 30,
       localLoginPerMin: 5,
+      invitePublicPerMin: 20,
       restPerMin: 300,
       uploadPerMin: 30,
       inviteIssuePerMin: 20,

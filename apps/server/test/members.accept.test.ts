@@ -8,6 +8,7 @@ import { user as authUser } from "../src/db/auth-schema";
 import { agents, invites, memberships, opsEvents, users } from "../src/db/schema.sqlite";
 import { findValidInvite } from "../src/modules/members/invites";
 import { bootTestApp, login, userWithRole } from "./helpers/app";
+import { connectWire } from "./helpers/wire";
 
 let app: App | undefined;
 afterEach(async () => {
@@ -383,6 +384,51 @@ describe("POST /api/v1/invites/reset", () => {
       payload: { token: invite.token, password: next },
     });
     expect(wrongKind.statusCode).toBe(404);
+  });
+
+  it("재설정은 대상의 열린 wire 소켓을 모두 서버가 끊는다 — 옛 세션 재접속은 거절, 새 세션·다른 사람 소켓은 그대로", async () => {
+    app = await bootTestApp({}, roomy);
+    await app.fastify.listen({ host: "127.0.0.1", port: 0 });
+    const owner = await login(app);
+    const joined = await accept(app, joinBody((await issue(app, owner.headers)).token));
+    const first = (joined.json() as { sessionToken: string }).sessionToken;
+    const userId = (joined.json() as { user: User }).user.id;
+    const signedIn = await app.fastify.inject({
+      method: "POST",
+      url: "/api/v1/auth/local",
+      payload: { email: "bee@example.com", password: PASSWORD },
+    });
+    const second = (signedIn.json() as { sessionToken: string }).sessionToken;
+    const victims = [
+      await connectWire(app, first),
+      await connectWire(app, first),
+      await connectWire(app, second),
+    ];
+    const watcher = await connectWire(app, owner.token);
+    try {
+      const reasons = victims.map((s) => new Promise<string>((resolve) => s.once("disconnect", resolve)));
+      const link = await app.fastify.inject({
+        method: "POST",
+        url: `/api/v1/members/${userId}/reset-link`,
+        headers: owner.headers,
+      });
+      const res = await app.fastify.inject({
+        method: "POST",
+        url: "/api/v1/invites/reset",
+        payload: { token: (link.json() as { token: string }).token, password: "brand-new-password-42" },
+      });
+      expect(res.statusCode).toBe(200);
+      // 클라이언트가 스스로 끊은 게 아니다
+      expect(await Promise.all(reasons)).toEqual(Array(3).fill("io server disconnect"));
+      for (const token of [first, second]) {
+        await expect(connectWire(app, token)).rejects.toMatchObject({ data: { code: "UNAUTHORIZED" } });
+      }
+      const fresh = await connectWire(app, (res.json() as { sessionToken: string }).sessionToken);
+      fresh.close();
+      expect(watcher.connected).toBe(true);
+    } finally {
+      for (const s of [...victims, watcher]) s.close();
+    }
   });
 
   it("대상이 더 이상 멤버가 아니면 404, 링크는 소비되지 않는다", async () => {

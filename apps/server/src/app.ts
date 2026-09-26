@@ -12,7 +12,7 @@ import packageJson from "../package.json" with { type: "json" };
 import type { AgentAdapter } from "./adapters/types";
 import { type Auth, createAuth } from "./auth";
 import { bootstrapOwner } from "./auth/owner";
-import { createLoginLimit, registerAuthRoutes } from "./auth/routes";
+import { createIpLimit, registerAuthRoutes } from "./auth/routes";
 import { isLocalVapidSubject, type ServerConfig } from "./config";
 import { createDb, type Db } from "./db/client";
 import { workspaces } from "./db/schema.sqlite";
@@ -60,7 +60,7 @@ import { bridgePublicUrl, buildSetupStatus } from "./modules/setup/status";
 import { importEnvToken, isActiveBridgeToken, verifyBridgeTokenDb } from "./modules/setup/tokens";
 import { ServerBus } from "./realtime/bus";
 import { attachWireFanout } from "./realtime/events";
-import { attachWire, disconnectUser } from "./realtime/socket";
+import { attachWire, disconnectSessions, disconnectUser } from "./realtime/socket";
 import type { WireServer } from "./realtime/types";
 import { createServices, type Services, sessionRecoverTargets } from "./wiring";
 
@@ -290,7 +290,9 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     await disk.ready;
 
     const secureCookie = new URL(config.APP_ORIGIN).protocol === "https:";
-    const loginLimit = createLoginLimit(fastify, { perMin: limits.localLoginPerMin, ops });
+    // 로그인·me/password(비밀번호 추측)와 초대 조회·수락·재설정(폭주)은 버킷이 따로다 — 한쪽이 차도 다른 쪽은 된다
+    const loginLimit = createIpLimit(fastify, { perMin: limits.localLoginPerMin, ops });
+    const invitePublicLimit = createIpLimit(fastify, { perMin: limits.invitePublicPerMin, ops });
     registerAuthRoutes(fastify, {
       auth,
       db,
@@ -311,8 +313,11 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       secureCookie,
       limits,
       loginLimit,
+      invitePublicLimit,
       ops,
       limitNow: limitClock,
+      disconnectUser: (userId) => disconnectUser(io, userId),
+      disconnectSessions: (sessionIds) => disconnectSessions(io, sessionIds),
     });
     const routeContext = { auth, db, bus, logger, workspaceId, adapter, orchestrator: services.orchestrator };
     registerChannelRoutes(fastify, routeContext);

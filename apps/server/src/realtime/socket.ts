@@ -14,9 +14,11 @@ import {
   Typing,
   WIRE_PROTOCOL,
 } from "@dodok/shared";
+import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { type Auth, verifySessionToken } from "../auth";
 import { roleOf } from "../auth/roles";
+import { session as authSession } from "../db/auth-schema";
 import type { Db } from "../db/client";
 import { apiError, HttpError } from "../http/errors";
 import { parsePayload } from "../http/validate";
@@ -87,10 +89,26 @@ export const channelRoom = (channelId: string): string => `channel:${channelId}`
 export const userRoom = (userId: string): string => `user:${userId}`;
 /** 채널 룸에 아직 아무도 없는 워크스페이스 단위 통지(channel.created)용 */
 export const workspaceRoom = (workspaceId: string): string => `workspace:${workspaceId}`;
+/** 세션 단위 끊기용 — Better Auth session 행의 id */
+export const sessionRoom = (sessionId: string): string => `session:${sessionId}`;
 
-/** 그 사용자의 열린 wire 소켓을 서버가 끊는다(내보내기 — 팀 스펙 「멤버 관리」 절). 클라이언트는 「io server disconnect」를 받는다 */
+/**
+ * 그 사용자의 열린 wire 소켓을 서버가 끊는다(내보내기·재설정 수락 — 팀 스펙 「멤버 관리」 절·3.3). 클라이언트는 「io server disconnect」를
+ * 받는다. 세션 행을 지운 뒤에 부른다 — 핸드셰이크를 지나던 소켓은 connection 에서 membership·세션을 다시 본다
+ */
 export function disconnectUser(io: WireServer, userId: string): void {
   io.in(userRoom(userId)).disconnectSockets(true);
+}
+
+/** 그 세션들의 열린 wire 소켓만 끊는다(me/password — 이 세션을 뺀 본인 세션, 팀 스펙 3.5). 세션 행을 지운 뒤에 부른다 */
+export function disconnectSessions(io: WireServer, sessionIds: readonly string[]): void {
+  if (sessionIds.length === 0) return;
+  io.in(sessionIds.map(sessionRoom)).disconnectSockets(true);
+}
+
+/** 세션 행이 아직 있는가 — 동기(better-sqlite3). connection 에서 방 참가와 같은 구간에 본다 */
+function sessionAlive(db: Db, sessionId: string): boolean {
+  return !!db.select({ id: authSession.id }).from(authSession).where(eq(authSession.id, sessionId)).get();
 }
 
 /** 기본 네임스페이스에 인증 미들웨어와 클라이언트 → 서버 핸들러를 붙인다(계약 스펙 7장). 팬아웃은 events.ts. */
@@ -135,18 +153,21 @@ export function attachWire(io: WireServer, ctx: WireContext): void {
       return next(connectError("RATE_LIMITED", "too many connections"));
     }
     socket.data.userId = user.userId;
+    socket.data.sessionId = user.sessionId;
     next();
   });
 
   io.on("connection", (socket) => {
-    const { userId } = socket.data;
-    // 미들웨어의 membership 확인과 여기 사이에 await 가 있다 — 그 사이 내보내졌으면 disconnectUser 가 아직 방에 없는
-    // 이 소켓을 못 본다. 확인과 방 참가를 같은 동기 구간에 둔다(members/service.ts removeMember 도 쓰기와 끊기를 한 구간에)
-    if (!roleOf(ctx.db, ctx.workspaceId, userId)) {
+    const { userId, sessionId } = socket.data;
+    // 미들웨어의 membership·세션 확인과 여기 사이에 await 가 있다 — 그 사이 내보내졌거나 세션이 지워졌으면(재설정·비밀번호 변경)
+    // disconnectUser·disconnectSessions 가 아직 방에 없는 이 소켓을 못 본다. 확인과 방 참가를 같은 동기 구간에 둔다
+    // (members/service.ts removeMember·accept.ts resetPassword 도 지우기 뒤 끊기를 한 구간에)
+    if (!roleOf(ctx.db, ctx.workspaceId, userId) || !sessionAlive(ctx.db, sessionId)) {
       socket.disconnect(true);
       return;
     }
     void socket.join(userRoom(userId));
+    void socket.join(sessionRoom(sessionId));
     // 서버는 워크스페이스 하나만 섬긴다 — 접속한 소켓은 모두 그 워크스페이스 소속이다
     void socket.join(workspaceRoom(ctx.workspaceId));
 

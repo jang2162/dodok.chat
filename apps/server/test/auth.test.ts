@@ -2,12 +2,13 @@ import { User } from "@dodok/shared";
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { eq } from "drizzle-orm";
 import pino from "pino";
 import { v7 as uuidv7 } from "uuid";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { App } from "../src/app";
 import { OWNER_EMAIL, verifySessionToken } from "../src/auth";
-import { account, user } from "../src/db/auth-schema";
+import { account, session, user } from "../src/db/auth-schema";
 import { memberships, users } from "../src/db/schema.sqlite";
 import { bootTestApp, login, TEST_LOCAL_TOKEN } from "./helpers/app";
 
@@ -55,7 +56,10 @@ describe("auth", () => {
       workspace: { id: app.workspaceId, name: "dodok" },
       role: "owner",
     });
-    expect(await verifySessionToken(app.auth, sessionToken)).toEqual({ userId: me.id });
+    // sessionId 는 세션 행의 id 다 — 토큰 원문이 아니다(wire 소켓이 socket.data 에 둔다)
+    const row = app.db.select().from(session).where(eq(session.token, sessionToken)).get();
+    expect(await verifySessionToken(app.auth, sessionToken)).toEqual({ userId: me.id, sessionId: row?.id });
+    expect(row?.id).not.toBe(sessionToken);
     expect(await verifySessionToken(app.auth, "nope")).toBeNull();
     // 헤더 값이 될 수 없는 입력도 예외가 아니라 null (wire auth.token 은 임의 유니코드)
     expect(await verifySessionToken(app.auth, "토큰")).toBeNull();
@@ -137,7 +141,7 @@ describe("auth", () => {
     const first = await bootTestApp({ DB_PATH });
     const ownerId = first.ownerUserId;
     const oldSession = (await local(first, TEST_LOCAL_TOKEN)).json().sessionToken as string;
-    expect(await verifySessionToken(first.auth, oldSession)).toEqual({ userId: ownerId });
+    expect(await verifySessionToken(first.auth, oldSession)).toMatchObject({ userId: ownerId });
     await first.close();
     first.db.$client.close();
 

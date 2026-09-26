@@ -9,8 +9,8 @@ import type {
 } from "@dodok/shared";
 import type { Server, Socket } from "socket.io";
 
-/** 인증 미들웨어가 채운다 */
-export type WireSocketData = { userId: string };
+/** 인증 미들웨어가 채운다. sessionId 는 Better Auth session 행의 id — 토큰 원문은 소켓에 두지 않는다 */
+export type WireSocketData = { userId: string; sessionId: string };
 
 /** 기본 네임스페이스 wire 서버(계약 스펙 7장). 서버 간 이벤트는 없다(단일 프로세스). */
 export type WireServer = Server<

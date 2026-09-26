@@ -220,7 +220,8 @@ docker compose -f infra/compose.yml logs app | grep '"event":"ops.'
 
 | 입구 | `LIMITS` 키 | 넘으면 |
 | --- | --- | --- |
-| `POST /api/v1/auth/local`(로그인 토큰) | `localLoginPerMin`(IP 당 분당) | 429 |
+| `POST /api/v1/auth/local`(로그인)·`POST /api/v1/me/password` | `localLoginPerMin`(IP 당 분당, 둘이 한 버킷) | 429 |
+| `POST /api/v1/invites/lookup`·`/accept`·`/reset`(초대·재설정 링크) | `invitePublicPerMin`(IP 당 분당, 셋이 한 버킷 — 로그인과 따로) | 429 |
 | `/api/auth/*`(Better Auth) | `betterAuthPerMin`(IP 당 분당) | 429 |
 | 로그인 뒤 REST `/api/v1/*` | `restPerMin`(사용자당 분당) | 429 `{"code":"RATE_LIMITED"}` |
 | 첨부 업로드 `POST /api/v1/attachments` | `uploadPerMin`(사용자당 분당, REST 상한 위에 한 번 더) | 429 `RATE_LIMITED` |

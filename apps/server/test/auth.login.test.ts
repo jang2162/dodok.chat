@@ -1,11 +1,13 @@
-import { IssuedInvite, User } from "@dodok/shared";
+import { IssuedInvite, User, WIRE_PROTOCOL } from "@dodok/shared";
 import { and, eq } from "drizzle-orm";
 import pino from "pino";
+import { v7 as uuidv7 } from "uuid";
 import { afterEach, describe, expect, it } from "vitest";
 import type { App } from "../src/app";
 import { session as authSession } from "../src/db/auth-schema";
 import { memberships } from "../src/db/schema.sqlite";
 import { bootTestApp, login, TEST_LOCAL_TOKEN } from "./helpers/app";
+import { connectWire, openWire } from "./helpers/wire";
 
 let app: App | undefined;
 afterEach(async () => {
@@ -130,28 +132,50 @@ describe("POST /api/v1/auth/local 두 모양", () => {
     }
   });
 
-  it("로그인·조회·수락·재설정이 IP 버킷 하나를 같이 쓴다", async () => {
-    app = await bootTestApp({}, { limits: { localLoginPerMin: 4 } });
-    const owner = await login(app); // 1
-    expect(
+  it("로그인 버킷(localLoginPerMin)이 차도 초대 경로는 된다 — 조회·수락·재설정은 자기 IP 버킷", async () => {
+    app = await bootTestApp();
+    const owner = await login(app); // 로그인 버킷 1
+    for (let i = 0; i < 4; i++) {
+      expect((await local(app, { email: "bee@example.com", password: PASSWORD })).statusCode).toBe(401);
+    }
+    const sixth = await local(app, { email: "bee@example.com", password: PASSWORD });
+    expect(sixth.statusCode).toBe(429);
+    expect(sixth.json()).toMatchObject({ code: "RATE_LIMITED" });
+    const issued = IssuedInvite.parse(
       (
         await app.fastify.inject({
           method: "POST",
-          url: "/api/v1/invites/lookup",
-          payload: { token: "dit_x" },
+          url: "/api/v1/invites",
+          headers: owner.headers,
+          payload: { role: "member" },
         })
-      ).statusCode,
-    ).toBe(404); // 2
-    expect(
-      (await app.fastify.inject({ method: "POST", url: "/api/v1/invites/accept", payload: {} })).statusCode,
-    ).toBe(400); // 3
-    expect(
-      (await app.fastify.inject({ method: "POST", url: "/api/v1/invites/reset", payload: {} })).statusCode,
-    ).toBe(400); // 4
-    const fifth = await local(app, { email: "bee@example.com", password: PASSWORD });
-    expect(fifth.statusCode).toBe(429);
-    expect(fifth.json()).toMatchObject({ code: "RATE_LIMITED" });
-    expect(owner.token).toEqual(expect.any(String));
+      ).json(),
+    );
+    const lookup = await app.fastify.inject({
+      method: "POST",
+      url: "/api/v1/invites/lookup",
+      payload: { token: issued.token },
+    });
+    expect(lookup.statusCode).toBe(200);
+  });
+
+  it("조회·수락·재설정이 한 IP 버킷(invitePublicPerMin 20)을 같이 쓴다 — 21번째는 429, 로그인 버킷은 그대로 5", async () => {
+    app = await bootTestApp();
+    const paths = ["/api/v1/invites/lookup", "/api/v1/invites/accept", "/api/v1/invites/reset"];
+    for (let i = 0; i < 20; i++) {
+      const res = await app.fastify.inject({ method: "POST", url: paths[i % 3]!, payload: {} });
+      expect(res.statusCode, `${i + 1}번째`).toBe(400);
+    }
+    for (const url of paths) {
+      const res = await app.fastify.inject({ method: "POST", url, payload: {} });
+      expect(res.statusCode, url).toBe(429);
+      expect(res.json()).toMatchObject({ code: "RATE_LIMITED" });
+    }
+    // 초대 경로가 다 써도 로그인은 자기 5회를 그대로 갖는다
+    for (let i = 0; i < 5; i++) {
+      expect((await local(app, { email: "bee@example.com", password: PASSWORD })).statusCode).toBe(401);
+    }
+    expect((await local(app, { email: "bee@example.com", password: PASSWORD })).statusCode).toBe(429);
   });
 
   it("me/password 도 같은 IP 버킷을 쓴다 — 상한을 넘기면 /auth/local 이 429", async () => {
@@ -233,6 +257,65 @@ describe("「내 계정」", () => {
     const ownerChange = await change(owner.token, { current: TEST_LOCAL_TOKEN, next: "next-password-123" });
     expect(ownerChange.statusCode).toBe(403);
     expect((await local(app, { token: TEST_LOCAL_TOKEN })).statusCode).toBe(200);
+  });
+
+  it("me/password — 지운 세션의 열린 wire 소켓만 서버가 끊고, 이 세션의 소켓은 남는다", async () => {
+    app = await bootTestApp({}, roomy);
+    await app.fastify.listen({ host: "127.0.0.1", port: 0 });
+    const owner = await login(app);
+    const joined = await join(app, owner.headers);
+    const other = (await local(app, { email: "bee@example.com", password: PASSWORD })).json() as {
+      sessionToken: string;
+    };
+    const kept = [await connectWire(app, joined.sessionToken), await connectWire(app, joined.sessionToken)];
+    const cut = [await connectWire(app, other.sessionToken), await connectWire(app, other.sessionToken)];
+    try {
+      const reasons = cut.map((s) => new Promise<string>((resolve) => s.once("disconnect", resolve)));
+      const res = await app.fastify.inject({
+        method: "POST",
+        url: "/api/v1/me/password",
+        headers: bearer(joined.sessionToken),
+        payload: { current: PASSWORD, next: "next-password-123" },
+      });
+      expect(res.statusCode).toBe(204);
+      expect(await Promise.all(reasons)).toEqual(["io server disconnect", "io server disconnect"]);
+      await expect(connectWire(app, other.sessionToken)).rejects.toMatchObject({
+        data: { code: "UNAUTHORIZED" },
+      });
+      // 같은 연결의 ack 왕복 — 끊기가 이미 지나갔어도 이 세션의 소켓은 살아서 답한다
+      for (const socket of kept) {
+        expect(socket.connected).toBe(true);
+        const ack = await new Promise<{ ok: boolean }>((resolve) =>
+          socket.emit("channel.unsubscribe", { channelId: uuidv7() }, resolve),
+        );
+        expect(ack.ok).toBe(true);
+      }
+    } finally {
+      for (const s of [...kept, ...cut]) s.close();
+    }
+  });
+
+  it("핸드셰이크를 지나는 사이 세션이 지워지면 connection 에서 끊는다", async () => {
+    app = await bootTestApp({}, roomy);
+    await app.fastify.listen({ host: "127.0.0.1", port: 0 });
+    const owner = await login(app);
+    const joined = await join(app, owner.headers);
+    const db = app.db;
+    // attachWire 의 인증 미들웨어 뒤에 붙는다 — 세션은 확인했고 방에는 아직 안 들어간 틈을 흉내 낸다
+    app.io.use((socket, next) => {
+      if (socket.data.userId === joined.user.id) {
+        db.delete(authSession).where(eq(authSession.userId, joined.user.id)).run();
+      }
+      next();
+    });
+    const socket = openWire(app, { token: joined.sessionToken, protocol: WIRE_PROTOCOL });
+    try {
+      expect(await new Promise<string>((resolve) => socket.once("disconnect", resolve))).toBe(
+        "io server disconnect",
+      );
+    } finally {
+      socket.close();
+    }
   });
 });
 

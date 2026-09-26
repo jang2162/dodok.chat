@@ -30,8 +30,8 @@ describe("멤버 관리 REST", () => {
   let n = 0;
 
   beforeAll(async () => {
-    // 수락·재설정이 로그인과 같은 IP 버킷을 쓴다 — 이 파일이 여러 번 부른다
-    app = await bootTestApp({}, { limits: { localLoginPerMin: 1000 } });
+    // 조회·수락·재설정(초대 경로 IP 버킷)과 로그인을 이 파일이 여러 번 부른다
+    app = await bootTestApp({}, { limits: { localLoginPerMin: 1000, invitePublicPerMin: 1000 } });
     await app.fastify.listen({ host: "127.0.0.1", port: 0 });
     ownerToken = (await login(app)).token;
   });

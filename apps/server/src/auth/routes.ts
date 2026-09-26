@@ -25,7 +25,7 @@ export type AuthRouteContext = {
   secureCookie: boolean;
   /** /api/auth/*(Better Auth) IP 당 분당 상한 — LIMITS.betterAuthPerMin */
   betterAuthPerMin: number;
-  /** /api/v1/auth/local 의 IP 버킷(createLoginLimit) — 초대 조회·수락·재설정과 같이 쓴다 */
+  /** /api/v1/auth/local 의 IP 버킷(createIpLimit, LIMITS.localLoginPerMin) — me/password 와 같이 쓴다 */
   loginLimit: onRequestHookHandler;
   /** 로그인 전 상한에 걸리면 ratelimit 사건을 남긴다 */
   ops: Pick<OpsService, "record">;
@@ -35,11 +35,11 @@ export type AuthRouteContext = {
 const WRONG_LOGIN = "이메일 또는 비밀번호가 맞지 않는다";
 
 /**
- * 로그인 전 경로의 IP 당 분당 상한(LIMITS.localLoginPerMin) 하나. route config.rateLimit 은 경로마다 저장소를 새로 만들어
- * 버킷이 갈린다(@fastify/rate-limit LocalStore.child) — 경로를 옮겨 다니며 대입하지 못하게 fastify.rateLimit 핸들러 하나를
- * 여러 경로의 onRequest 에 건다
+ * 여러 경로가 같이 쓰는 IP 당 분당 상한 하나 — 로그인(LIMITS.localLoginPerMin)·초대 경로(LIMITS.invitePublicPerMin)가 하나씩 만든다.
+ * route config.rateLimit 은 경로마다 저장소를 새로 만들어 버킷이 갈린다(@fastify/rate-limit LocalStore.child) — 경로를 옮겨 다니며
+ * 대입하지 못하게 fastify.rateLimit 핸들러 하나를 여러 경로의 onRequest 에 건다. 이 함수를 부를 때마다 저장소가 따로 생긴다
  */
-export function createLoginLimit(
+export function createIpLimit(
   fastify: FastifyInstance,
   opts: { perMin: number; ops: Pick<OpsService, "record"> },
 ): onRequestHookHandler {

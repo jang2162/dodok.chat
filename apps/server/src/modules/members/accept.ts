@@ -168,9 +168,17 @@ async function undoAccept(
   throw internal(deps, failed, "invite accept rollback failed", { inviteId });
 }
 
-/** 대상의 비밀번호를 바꾸고 그 사용자의 세션을 모두 끊은 뒤 새 세션을 낸다. 대상이 더 이상 멤버가 아니면 404(링크 미소비) */
+export type ResetDeps = AcceptDeps & {
+  /** 그 사용자의 열린 wire 소켓을 서버가 끊는다(realtime/socket.ts disconnectUser) */
+  disconnectUser(userId: string): void;
+};
+
+/**
+ * 대상의 비밀번호를 바꾸고 그 사용자의 세션과 열린 wire 소켓을 모두 끊은 뒤 새 세션을 낸다. 대상이 더 이상 멤버가 아니면 404(링크 미소비).
+ * 소켓은 핸드셰이크에서만 세션을 본다 — 세션만 지우면 새어 나간 쪽의 열린 탭이 계속 말하고 받는다
+ */
 export async function resetPassword(
-  deps: AcceptDeps,
+  deps: ResetDeps,
   body: ResetPasswordBody,
 ): Promise<{ userId: string; sessionToken: string }> {
   const invite = validInvite(deps, body.token, "reset", deps.now());
@@ -192,6 +200,8 @@ export async function resetPassword(
         password: passwordHash,
       });
     await adapter.deleteUserSessions(userId);
+    // 지운 바로 뒤 같은 동기 구간에서 — 아래가 실패해도 세션은 이미 없다. 핸드셰이크를 지나던 소켓은 connection 에서 세션을 다시 본다
+    deps.disconnectUser(userId);
     deps.db.update(invites).set({ usedBy: userId }).where(eq(invites.id, invite.id)).run();
   } catch (err) {
     try {

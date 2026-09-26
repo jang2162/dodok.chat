@@ -119,7 +119,7 @@
 - `{ token }` — 지금처럼 owner(`OWNER_EMAIL` + 로컬 토큰).
 - `{ email, password }` — 멤버. Better Auth `signInEmail` 로 확인한다. `OWNER_EMAIL` 로의 이메일 로그인은 막는다(owner 는 토큰으로만).
 - 실패 문구는 둘 다 401 「이메일 또는 비밀번호가 맞지 않는다」 하나다(토큰 모양은 「토큰이 맞지 않는다」 그대로). 성공한 사용자에게 membership 이 없으면 401.
-- 레이트리밋은 지금의 `localLoginPerMin`(IP 당) 버킷을 같이 쓴다.
+- 레이트리밋은 지금의 `localLoginPerMin`(IP 당) 버킷을 `me/password` 와 같이 쓴다(초대 경로는 따로 — 7장).
 
 ### 3.5 「내 계정」
 
@@ -172,7 +172,7 @@
 
 - 토큰 32바이트 난수, 해시(sha256)로만 저장, 대조는 해시 유일 인덱스로 찾은 뒤 상수 시간 비교. 원문은 발급 응답 한 번뿐.
 - 토큰은 웹 경로(`/join/<token>`)에 있지만 API 에는 본문으로 보낸다 — Caddy·서버 로그의 API 줄에 원문이 없다. 정적 경로 줄에는 남을 수 있다 → 1회용·만료로 막는다. 웹은 수락·재설정이 끝나면 `history.replaceState` 로 주소창에서 토큰을 걷는다.
-- 레이트리밋(`modules/ops/limits.ts`): `lookup`·`accept`·`reset` 은 로그인과 같은 IP 버킷, 초대·재설정 링크 발급은 사용자당 분당 상한.
+- 레이트리밋(`modules/ops/limits.ts`): `lookup`·`accept`·`reset` 은 셋이 한 IP 버킷(`invitePublicPerMin`)을 쓰고 로그인 버킷과 나눈다 — 한 사무실(NAT)에서 여러 사람이 링크를 동시에 열어도 로그인 실패 몇 번에 가입이 막히지 않게. 토큰은 32바이트 난수라 이 버킷은 추측이 아니라 폭주를 막는다. 로그인(`/auth/local`)과 `me/password` 는 비밀번호 추측을 막는 `localLoginPerMin` 버킷을 같이 쓴다. 초대·재설정 링크 발급은 사용자당 분당 상한.
 - 비밀번호 해시는 Better Auth 기본(scrypt).
 - 로그에 비밀번호·토큰·이메일 원문을 남기지 않는다(사용자 id 만).
 
