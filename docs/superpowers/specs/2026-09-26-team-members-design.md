@@ -1,6 +1,6 @@
 # Phase 4 ② 팀 — 초대·멤버·역할 설계
 
-**상태**: 설계 확정(2026-09-26), 구현·브라우저 검증 완료(2026-09-27 — 계획 태스크 1~7 과 곁가지 p4m-c1·c2, 브라우저 11항목 중 9 통과·결함 둘(D1·D2) 수정, 테스트 3529) — 구현이 이 설계와 달라진 것은 「구현과 맞춘 것」 장(판정 R1~R4 등). 계획 `docs/superpowers/plans/2026-09-26-team-members.md`, 실연(계획 태스크 8)은 `docs/guides/live-smoke.md` 「팀(Phase 4 ②) 실연」 절
+**상태**: 설계 확정(2026-09-26), 구현·브라우저 검증 완료(2026-09-27 — 계획 태스크 1~7 과 곁가지 p4m-c1·c2, 브라우저 11항목 중 9 통과·결함 둘(D1·D2) 수정, 테스트 3538) — 구현이 이 설계와 달라진 것은 「구현과 맞춘 것」 장(판정 R1~R4 등). 계획 `docs/superpowers/plans/2026-09-26-team-members.md`, 실연(계획 태스크 8)은 `docs/guides/live-smoke.md` 「팀(Phase 4 ②) 실연」 절
 **범위**:
 - 초대: owner·admin 이 1회용 초대 링크를 발급하고, 받은 사람이 핸들·이메일·비밀번호로 가입한다(메일 서버 없음)
 - 로그인: 멤버는 이메일·비밀번호, owner 는 지금의 로컬 토큰
@@ -294,4 +294,4 @@
 
 - 서버 단위·통합: `apps/server/test/roles.matrix.test.ts`(2장 표 — 경로 × 역할 3 의 허용·거부 전부, `PATCH`·`POST /channels` 필드별, 채널 멤버 필드별, `approval.resolve`, 승인 푸시 수신자, membership 없는 세션 401, 역할이 바뀐 다음 요청), `members.invites`·`members.accept`·`members.manage`·`people`·`auth.login`·`auth.test`(9장 서버 항목 전부 — 두 번 제출·핸들 충돌 양쪽·재가입·링크 폐기·세션 소켓 끊기·핸드셰이크 틈·버킷 분리·Better Auth 폐기 경로 404), `integration/ops-events`·`setup`(방). 태스크마다 독립 리뷰(변이)·수정·범위 재리뷰.
 - `dev:fake` 위 브라우저 검증(Playwright 브라우저 컨텍스트 7개, 390·1280px): 11항목 중 9 통과, Review Focus 1~5 실제 화면 통과(동시 가입은 한 쪽만·핸들 `dev` 409·내보낸 탭 2.4초 뒤 로그인 화면·member 의 `{ name, prompt }` 403·강등 직후 403 → 잠김). 결함 D2(재설정·비밀번호 변경 뒤 옛 세션 소켓이 말함 — 보안)·D1(390px 멤버 화면 가로 176px)과 관찰 o1~o5 는 곁가지 p4m-c1·c2 가 고쳤다. 실제 멘션 푸시 표시는 서비스 워커가 꺼진 dev 라 서버의 발송 시도·거름까지만 봤다(사람이 볼 것 — `docs/plan.md` 8장).
-- 테스트 3529(shared 260·plugin 146·adapter 264·server 1375·web 1484 — 루트 `pnpm test` 의 패키지별 `Tests` 줄).
+- 테스트 3538(shared 260·plugin 146·adapter 264·server 1382·web 1486 — 루트 `pnpm test` 의 패키지별 `Tests` 줄).
