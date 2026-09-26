@@ -1,6 +1,7 @@
 import { Link } from "@tanstack/react-router";
-import { ActivityIcon, BotIcon, CableIcon, LogOutIcon, PlusIcon, SearchIcon } from "lucide-react";
+import { ActivityIcon, BotIcon, CableIcon, LogOutIcon, PlusIcon, SearchIcon, UserIcon } from "lucide-react";
 import { useIsOwner, useMe } from "@/api/queries";
+import { AccountDialog } from "@/features/account/AccountDialog";
 import { ChannelList } from "@/features/channels/ChannelList";
 import { CreateChannelDialog } from "@/features/channels/CreateChannelDialog";
 import { useLogout } from "@/features/auth/mutations";
@@ -45,7 +46,7 @@ function OpsLink({ onNavigate }: { onNavigate?: () => void }) {
 }
 
 /**
- * 왼쪽 사이드바(스펙 2.4): 워크스페이스 이름, 검색 칸(검색 대화상자를 연다 — 스레드·검색 스펙 5.4), 채널 목록·「채널 만들기」, 「에이전트」, 「연결」·「운영」(owner 에게만), 하단 연결 상태와 로그아웃.
+ * 왼쪽 사이드바(스펙 2.4): 워크스페이스 이름, 검색 칸(검색 대화상자를 연다 — 스레드·검색 스펙 5.4), 채널 목록·「채널 만들기」, 「에이전트」, 「연결」·「운영」(owner 에게만), 하단 연결 상태와 「내 계정」·로그아웃.
  * 이름은 `GET /auth/me` 의 `workspace.name` — 아직 못 받았거나 주지 않는 서버면 「dodok」.
  * `onNavigate` 는 이동할 때마다 부른다(좁은 화면 시트 닫기)
  */
@@ -105,11 +106,18 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       </div>
       <div className="flex h-11 shrink-0 items-center justify-between border-t pr-2 pl-4">
         <ConnectionDots />
-        {/* /login 이동·상태 비우기는 훅이 한다 */}
-        <Button variant="ghost" size="sm" disabled={logout.isPending} onClick={() => logout.mutate()}>
-          <LogOutIcon />
-          로그아웃
-        </Button>
+        <div className="flex items-center">
+          <AccountDialog>
+            <Button variant="ghost" size="sm">
+              <UserIcon />내 계정
+            </Button>
+          </AccountDialog>
+          {/* /login 이동·상태 비우기는 훅이 한다 */}
+          <Button variant="ghost" size="sm" disabled={logout.isPending} onClick={() => logout.mutate()}>
+            <LogOutIcon />
+            로그아웃
+          </Button>
+        </div>
       </div>
     </div>
   );

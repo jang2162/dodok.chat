@@ -55,6 +55,21 @@ export const loginRoute = createRoute({
   component: lazyPage(() => import("@/features/auth/LoginPage"), "LoginPage"),
 });
 
+/**
+ * 초대 가입·비밀번호 재설정(팀 스펙 6장) — 로그인 없이 여는 링크라 가드 밖. 토큰은 경로에 있지만 API 에는 본문으로 보내고,
+ * 끝나면 주소를 바꿔 걷는다(features/auth `useFinishInvite`)
+ */
+export const joinRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/join/$token",
+  component: lazyPage(() => import("@/features/auth/JoinPage"), "JoinPage"),
+});
+export const resetRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/reset/$token",
+  component: lazyPage(() => import("@/features/auth/ResetPage"), "ResetPage"),
+});
+
 /** 로그인 가드 레이아웃. me 의 401 은 `/login?next=`, 그 밖의 실패(네트워크·5xx)는 오류 화면 */
 const appRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -126,6 +141,8 @@ export const operationsRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([
   loginRoute,
+  joinRoute,
+  resetRoute,
   appRoute.addChildren([
     indexRoute,
     channelRoute.addChildren([channelSettingsRoute, channelActivityRoute, channelThreadRoute]),

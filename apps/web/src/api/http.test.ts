@@ -44,6 +44,18 @@ describe("api", () => {
     });
   });
 
+  it("오류 본문의 details 는 ApiRequestError.details 로 — 폼이 field 로 칸을 가른다", async () => {
+    vi.stubGlobal(
+      "fetch",
+      reply(409, { code: "CONFLICT", message: "이미 가입된 이메일입니다", details: { field: "email" } }),
+    );
+    await expect(api("POST", "/invites/accept", {})).rejects.toMatchObject({
+      status: 409,
+      code: "CONFLICT",
+      details: { field: "email" },
+    });
+  });
+
   it("오류 본문이 계약 밖이면 INTERNAL + 한국어 일반 문구(상태 코드만 덧붙임 — 영문 상태 문구는 토스트에 나가지 않는다)", async () => {
     vi.stubGlobal(
       "fetch",

@@ -137,9 +137,10 @@ it("로그인 화면에서 틀린 토큰(401)은 이동하지 않는다 — next
     vi.fn(async () => json(401, UNAUTHORIZED)),
   );
   const { history, moves } = renderApp("/login?next=%2Fagents");
+  await userEvent.click(await screen.findByRole("button", { name: "owner 로컬 토큰으로 로그인" }));
   await userEvent.type(await screen.findByLabelText("로컬 토큰"), "wrong{Enter}");
   expect(await screen.findByText("토큰이 맞지 않습니다")).toBeInTheDocument();
-  await waitFor(() => expect(screen.getByRole("button", { name: "로그인" })).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByRole("button", { name: "토큰으로 로그인" })).toBeInTheDocument());
   expect(history.location.pathname).toBe("/login");
   expect(new URLSearchParams(history.location.search).get("next")).toBe("/agents");
   expect(moves).toHaveLength(0);

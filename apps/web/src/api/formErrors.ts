@@ -22,3 +22,12 @@ export function validationField<F extends string>(
     ? undefined
     : fields.find((field) => new RegExp(`(^|[^a-zA-Z])${field}:`).test(message));
 }
+
+/**
+ * 서버가 `details.field` 로 가리킨 칸(가입 409 `handle`·`email`, 비밀번호 400 `current`). 목록에 없는 값이면 undefined —
+ * 폼은 그때 문구를 폼 아래에 그린다
+ */
+export function detailField<F extends string>(e: unknown, fields: readonly F[]): F | undefined {
+  const field = e instanceof ApiRequestError ? e.details?.field : undefined;
+  return fields.find((f) => f === field);
+}
