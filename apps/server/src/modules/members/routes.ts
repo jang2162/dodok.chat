@@ -30,11 +30,13 @@ import type { OpsService } from "../ops/service";
 import { acceptInvite, inviteNotFound, resetPassword } from "./accept";
 import { changePassword, updateDisplayName } from "./account";
 import {
+  canIssueResetLink,
   findValidInvite,
   getPendingInvite,
   issueInvite,
   issueResetLink,
   listPendingInvites,
+  resetLinkUsable,
   revokeInvite,
 } from "./invites";
 import { broadcastPeople } from "./people";
@@ -131,10 +133,13 @@ export function registerMemberRoutes(fastify: FastifyInstance, ctx: MemberRouteC
       const me = sessionUser(request);
       const target = roleOf(ctx.db, ctx.workspaceId, userId);
       if (!target) throw apiError("NOT_FOUND", "member not found");
-      // owner 계정은 로컬 토큰이 비밀번호라 재설정 링크가 없다. admin 은 member 에게만
-      if (target === "owner") throw apiError("FORBIDDEN", "owner 는 재설정 링크를 받을 수 없다");
-      if (me.role !== "owner" && target !== "member")
-        throw apiError("FORBIDDEN", "admin 은 member 의 재설정 링크만 만들 수 있다");
+      if (!canIssueResetLink(me.role, target))
+        throw apiError(
+          "FORBIDDEN",
+          target === "owner"
+            ? "owner 는 재설정 링크를 받을 수 없다"
+            : "admin 은 member 의 재설정 링크만 만들 수 있다",
+        );
       const { invite, token } = issueResetLink(ctx.db, {
         workspaceId: ctx.workspaceId,
         targetUserId: userId,
@@ -150,11 +155,8 @@ export function registerMemberRoutes(fastify: FastifyInstance, ctx: MemberRouteC
     const { token } = parseBody(TokenBody, request.body);
     const invite = findValidInvite(ctx.db, token, now());
     if (!invite || invite.workspaceId !== ctx.workspaceId) throw inviteNotFound();
-    // 재설정 링크의 대상이 이미 나갔으면 수락이 404 다 — 조회도 같게
-    if (invite.kind === "reset") {
-      const role = invite.targetUserId ? roleOf(ctx.db, ctx.workspaceId, invite.targetUserId) : undefined;
-      if (!role || role === "owner") throw inviteNotFound();
-    }
+    // 재설정 링크가 지금 역할로 발급 규칙을 못 지나면(대상이 나감·오름) 수락이 404 다 — 조회도 같게
+    if (invite.kind === "reset" && !resetLinkUsable(ctx.db, ctx.workspaceId, invite)) throw inviteNotFound();
     const result: InviteLookup = {
       workspaceName: loadWorkspace(ctx.db, ctx.workspaceId).name,
       kind: invite.kind,

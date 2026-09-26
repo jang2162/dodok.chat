@@ -2,9 +2,10 @@
  * 초대·재설정 링크 저장소(팀 스펙 3.1·3.2). 유효 = used_at·revoked_at 이 비고 expires_at > now.
  * 무효의 까닭(쓰임·만료·폐기·없음)은 밖으로 가르지 않는다 — 부르는 쪽은 모두 404 로 낸다.
  */
-import type { Invite } from "@dodok/shared";
+import type { Invite, TeamRole } from "@dodok/shared";
 import { and, desc, eq, gt, isNull } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
+import { roleOf } from "../../auth/roles";
 import type { Db, DbOrTx } from "../../db/client";
 import { invites } from "../../db/schema.sqlite";
 import { hashToken, newToken, sameHash } from "./tokens";
@@ -52,6 +53,22 @@ export function issueInvite(
   };
   db.insert(invites).values(row).run();
   return { invite: toInvite(row), token };
+}
+
+/**
+ * 재설정 링크 규칙(팀 스펙 3.2) — owner 계정은 받지 않는다(로컬 토큰이 비밀번호). owner 는 그 밖 누구에게나, admin 은 member 에게만.
+ * 발급(POST /members/:userId/reset-link)과 조회·수락(resetLinkUsable)이 이 함수 하나로 본다 — 발급 뒤 대상이 admin 으로 오르면
+ * admin 이 낸 링크는 무효다
+ */
+export function canIssueResetLink(issuer: TeamRole | undefined, target: TeamRole | undefined): boolean {
+  if (!target || target === "owner") return false;
+  return issuer === "owner" || (issuer === "admin" && target === "member");
+}
+
+/** 조회·수락 때 — 발급자와 대상의 **지금** 역할로 canIssueResetLink 를 다시 본다. 발급자·대상이 나갔으면 false */
+export function resetLinkUsable(db: DbOrTx, workspaceId: string, row: InviteRow): boolean {
+  if (row.kind !== "reset" || !row.targetUserId) return false;
+  return canIssueResetLink(roleOf(db, workspaceId, row.createdBy), roleOf(db, workspaceId, row.targetUserId));
 }
 
 /** 대상의 앞선(아직 유효한) 재설정 링크는 같은 트랜잭션에서 폐기한다 — 한 사용자에게 살아 있는 링크는 하나 */

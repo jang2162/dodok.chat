@@ -195,6 +195,44 @@ describe("멤버 관리 REST", () => {
       expect(app.db.select().from(invites).where(eq(invites.id, usedRow.id)).get()?.revokedAt).toBeNull();
     });
 
+    it("admin 이 member 에게 낸 재설정 링크는 대상이 admin 으로 오르면 조회·수락 모두 404 — 대상의 옛 세션은 살고 링크는 소비되지 않는다", async () => {
+      const admin = await person("admin");
+      const target = await person("member");
+      const reset = await issueReset(admin.token, target.id);
+      const row = findValidInvite(app.db, reset, new Date());
+      if (!row) throw new Error("reset link not found");
+
+      expect(
+        (await call(ownerToken, "PATCH", `/api/v1/members/${target.id}`, { role: "admin" })).statusCode,
+      ).toBe(200);
+      // 새 발급은 규칙대로 403 — 앞서 받은 링크도 같은 규칙으로 막혀야 한다
+      expect((await call(admin.token, "POST", `/api/v1/members/${target.id}/reset-link`)).statusCode).toBe(
+        403,
+      );
+      expect((await open("/api/v1/invites/lookup", { token: reset })).statusCode).toBe(404);
+      expect((await open("/api/v1/invites/reset", { token: reset, password: PASSWORD })).statusCode).toBe(
+        404,
+      );
+      expect((await call(target.token, "GET", "/api/v1/auth/me")).statusCode).toBe(200);
+      expect(app.db.select().from(invites).where(eq(invites.id, row.id)).get()).toMatchObject({
+        usedAt: null,
+        usedBy: null,
+      });
+    });
+
+    it("owner 가 낸 재설정 링크는 대상이 admin 으로 올라도 조회·수락된다", async () => {
+      const target = await person("member");
+      const reset = await issueReset(ownerToken, target.id);
+      expect(
+        (await call(ownerToken, "PATCH", `/api/v1/members/${target.id}`, { role: "admin" })).statusCode,
+      ).toBe(200);
+      expect((await open("/api/v1/invites/lookup", { token: reset })).statusCode).toBe(200);
+      expect((await open("/api/v1/invites/reset", { token: reset, password: PASSWORD })).statusCode).toBe(
+        200,
+      );
+      expect((await call(target.token, "GET", "/api/v1/auth/me")).statusCode).toBe(401);
+    });
+
     it("서비스도 직접 막는다 — admin 행위자의 역할 바꾸기는 403", async () => {
       const admin = await person("admin");
       const member = await person("member");

@@ -7,14 +7,13 @@ import type { AcceptInviteBody, ResetPasswordBody } from "@dodok/shared";
 import { and, eq } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import type { Auth } from "../../auth";
-import { roleOf } from "../../auth/roles";
 import type { Db, DbOrTx } from "../../db/client";
 import { invites, memberships, users } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
 import type { Logger } from "../../logger";
 import type { OpsService } from "../ops/service";
 import { assertHandleFree } from "./handles";
-import { claimInvite, findValidInvite, type InviteRow, unclaimInvite } from "./invites";
+import { claimInvite, findValidInvite, type InviteRow, resetLinkUsable, unclaimInvite } from "./invites";
 
 export type AcceptDeps = {
   db: Db;
@@ -174,7 +173,8 @@ export type ResetDeps = AcceptDeps & {
 };
 
 /**
- * 대상의 비밀번호를 바꾸고 그 사용자의 세션과 열린 wire 소켓을 모두 끊은 뒤 새 세션을 낸다. 대상이 더 이상 멤버가 아니면 404(링크 미소비).
+ * 대상의 비밀번호를 바꾸고 그 사용자의 세션과 열린 wire 소켓을 모두 끊은 뒤 새 세션을 낸다. 지금 역할로 발급 규칙(canIssueResetLink)을
+ * 다시 지나지 못하면 404(링크 미소비).
  * 소켓은 핸드셰이크에서만 세션을 본다 — 세션만 지우면 새어 나간 쪽의 열린 탭이 계속 말하고 받는다
  */
 export async function resetPassword(
@@ -183,9 +183,8 @@ export async function resetPassword(
 ): Promise<{ userId: string; sessionToken: string }> {
   const invite = validInvite(deps, body.token, "reset", deps.now());
   const userId = invite.targetUserId;
-  const role = userId ? roleOf(deps.db, deps.workspaceId, userId) : undefined;
-  // owner 는 로컬 토큰이 비밀번호다 — 발급에서 막지만 발급 뒤 역할이 바뀐 경우까지 여기서 한 번 더
-  if (!userId || !role || role === "owner") throw inviteNotFound();
+  // 발급 뒤 발급자·대상의 역할이 바뀌었으면(대상이 owner·admin 으로 오름, 대상이 나감) 발급 규칙으로 다시 본다 — 링크는 소비하지 않는다
+  if (!userId || !resetLinkUsable(deps.db, deps.workspaceId, invite)) throw inviteNotFound();
   const ctx = await deps.auth.$context;
   const adapter = ctx.internalAdapter;
   const passwordHash = await ctx.password.hash(body.password);
