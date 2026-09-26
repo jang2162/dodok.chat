@@ -109,6 +109,6 @@ export interface ServerToClientEvents {
   typing: (p: { channelId: Id; actorType: "user" | "agent"; actorId: Id }) => void;
   "adapter.status": (p: AdapterStatus) => void; // user 룸
   "setup.status": (p: { status: SetupStatus }) => void; // owner 사용자 룸에만
-  "ops.event": (p: { event: OpsEvent; unacked: OpsUnacked }) => void; // owner 사용자 룸에만
+  "ops.event": (p: { event: OpsEvent; unacked: OpsUnacked }) => void; // owner·admin 사용자 룸에만
   "system.notice": (p: { level: "info" | "warn" | "error"; message: string }) => void;
 }

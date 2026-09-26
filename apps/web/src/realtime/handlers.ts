@@ -209,7 +209,7 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
       void qc.invalidateQueries({ queryKey: qk.bridgeTokens });
     },
     /**
-     * 운영 사건(owner 에게만 온다) — 배지가 읽는 상태의 `unacked` 는 곧바로 덮는다(상태를 아직 안 받았으면 만들지 않는다).
+     * 운영 사건(owner·admin 에게만 온다) — 배지가 읽는 상태의 `unacked` 는 곧바로 덮는다(상태를 아직 안 받았으면 만들지 않는다).
      * 상태의 나머지 칸(디스크·버전·런 수)도 사건과 함께 바뀌었을 수 있어 상태와 사건 목록은 낡은 것으로 둔다 —
      * 보고 있는 화면만 곧바로 다시 부른다(브라우저 검증 D1)
      */

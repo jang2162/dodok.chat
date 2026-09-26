@@ -25,7 +25,7 @@ export type BusEvents = {
   "system.notice": Payload<"system.notice">;
   // 연결 상태(설정 마법사) — owner 사용자 룸에만 간다(events.ts)
   "setup.status": Payload<"setup.status">;
-  // 운영 사건 — setup.status 와 같은 owner 사용자 룸으로
+  // 운영 사건 — owner·admin 사용자 룸으로(events.ts)
   "ops.event": Payload<"ops.event">;
 };
 
