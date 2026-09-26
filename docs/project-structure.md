@@ -175,7 +175,7 @@ src/
 │  └─ fts.ts              assertTrigramSupport(sqlite) — temp 탐침 테이블로 FTS5 trigram 을 확인, 없으면 한 줄 오류(cause 보존). 마이그레이션 **전**이어야 한다 —
 │                         뒤면 0007 이 여러 줄 drizzle 오류로 먼저 죽는다
 ├─ auth/
-│  ├─ index.ts            Better Auth(이메일 로그인·가입·비밀번호 변경·세션 폐기·로그아웃 HTTP 경로 비활성 — disabledPaths), 세션 토큰 검증(userId·sessionId)
+│  ├─ index.ts            Better Auth(이메일 로그인·가입·비밀번호 변경·세션 폐기·로그아웃 HTTP 경로 비활성 — disabledPaths, routes.ts 허용 목록 밑의 겹 방어), 세션 토큰 검증(userId·sessionId)
 │  ├─ owner.ts            부팅 때 owner 보장 — LOCAL_AUTH_TOKEN 이 owner 비밀번호, 바뀌면 기존 세션을 끊는다
 │  ├─ roles.ts            Phase 4 ② 팀. 역할 검사의 유일한 자리(매트릭스의 정본은 팀 스펙 「역할과 권한」 절 표) — requireSession(세션 + membership, 없거나 모르는 역할이면 401,
 │  │                      `request.user` = { id, workspaceId, role, sessionId })·requireRole(ctx, min — 요청마다 membership 을 읽는다, 모자라면 403 FORBIDDEN)·assertRole(핸들러 안에서 다시 읽기)·
@@ -183,7 +183,7 @@ src/
 │  │                      MEMBER_EDITABLE_AGENT_MEMBER_FIELDS(memberType·memberId·aliases — 채널 멤버 `POST`·`PATCH`)과 hasFieldOutside(원문 본문 키 — 목록 밖이 하나라도 있으면 admin, 새 필드의 기본은 admin).
 │  │                      requireSession 이 여기 있는 까닭: routes.ts 와 나누면 서로를 import 한다
 │  └─ routes.ts           POST /api/v1/auth/local(`{ token }` = owner, `{ email, password }` = 멤버 — 이메일은 소문자로, `OWNER_EMAIL` 이메일 로그인·membership 없는 사용자는 같은 401 한 문구, IP 당 분당 LIMITS.localLoginPerMin)·GET me(role 포함)·POST logout(세션 행을 지우고 disconnectSessions 로 그 세션 소켓을 끊는다),
-│                         `/api/auth/*`(Better Auth, LIMITS.betterAuthPerMin) — 넘으면 429 + 사건 ratelimit,
+│                         `/api/auth/*`(Better Auth, LIMITS.betterAuthPerMin) — 넘으면 429 + 사건 ratelimit, 허용 목록 BETTER_AUTH_HTTP_PATHS(`/ok`)만 통과하고 나머지는 404,
 │                         requireOwner(= roles.ts 의 requireRole(ctx, "owner")) · requireSession·sessionUser 는 roles.ts 에서 다시 내보낸다(Bearer 또는 dodok.session 쿠키 — 사용자를 확인한 뒤 REST 상한 `request.server.restLimits` 를 센다),
 │                         createIpLimit — 로그인(`/auth/local`·`me/password`)·초대 경로(lookup·accept·reset)가 하나씩
 ├─ http/
@@ -201,7 +201,7 @@ src/
 │  ├─ approvals/          store.ts(approvals 테이블 — providerApprovalId 유일 upsert, 중복은 병합 후 재발행, 채널 미해결 목록),
 │  │                      service.ts(상관 findOpenRunBySession → 저장 → APPROVAL_REQUESTED/RESOLVED 런 이벤트 → 버스, resolve 는 승인 설계 4.4 의 문지기 검사 뒤 어댑터 RPC).
 │  │                      REST 라우트는 없다 — 요구·확정은 wire 로만 오간다
-│  ├─ channels/           CRUD·멤버(에이전트 promptOverride·autoRespond·aliases)·프롬프트 리비전(역할: 만들기·`PATCH` 는 name·topic 밖 필드면 admin, 채널 멤버는 aliases 밖 필드면 admin, 「새 대화」는 admin — auth/roles.ts),
+│  ├─ channels/           CRUD·멤버(에이전트 promptOverride·autoRespond·aliases, 사람은 membership 이 있는 사람만 — 나간 사람 404)·프롬프트 리비전(역할: 만들기·`PATCH` 는 name·topic 밖 필드면 admin, 채널 멤버는 aliases 밖 필드면 admin, 「새 대화」는 admin — auth/roles.ts),
 │  │                      사람의 자동 참여 joinChannelIfAbsent·사람 메시지의 멘션 후보 userMessageParticipants(채널 밖의 워크스페이스 사람 + 채널 참가자)·에이전트 헤더의 channelParticipants, 프롬프트 변경 시 어댑터 config.set, 「새 대화」(resetAgentSession —
 │  │                      `POST …/agents/:agentId/reset?threadRootId=` 면 그 스레드 세션만 reset·그 스레드 런만 abort, info 도 스레드에. 루트가 아니면 404, UUID 가 아니면 400)
 │  ├─ agents/             에이전트 등록·수정(admin 이상, 핸들은 members/handles.ts 의 assertHandleFree), GET /agents/discover(Gateway agents.list, admin 이상). 등록은 providerAgentId 를 shared `isRegistrableAgentId`(소문자)로 400 VALIDATION,
@@ -282,11 +282,12 @@ src/
 │  │                      `PATCH /api/v1/ops/settings` {dailyRunLimit} — 응답은 전부 shared 스키마로 한 번 더 파싱)
 │  ├─ members/            Phase 4 ② 팀. 초대·재설정 링크·가입·멤버 관리·「내 계정」·사람 목록 — 원문 토큰은 발급 응답 한 번뿐(`Cache-Control: no-store`), 로그·사건·목록·wire 에 없다.
 │  │                      tokens.ts(원문 `dit_`(초대)·`drt_`(재설정) + randomBytes(32) base64url, DB 는 sha256 hex·prefix 만 · sameHash — 해시로 찾은 행을 상수 시간으로 한 번 더 대조) ·
-│  │                      invites.ts(invites 저장소: issueInvite(7일)·issueResetLink(24시간 — 대상의 앞선 재설정 링크를 같은 트랜잭션에서 폐기)·listPendingInvites(kind invite 만)·getPendingInvite·
+│  │                      invites.ts(invites 저장소: issueInvite(7일)·issueResetLink(24시간 — 대상의 앞선 재설정 링크를 같은 트랜잭션에서 폐기)·canIssueResetLink(발급 규칙 — 발급·조회·수락이 같이 쓴다)·
+│  │                      resetLinkUsable(조회·수락 때 발급자·대상의 지금 역할로 canIssueResetLink)·listPendingInvites(kind invite 만)·getPendingInvite·
 │  │                      revokeInvite·findValidInvite(무효 까닭은 가르지 않는다)·claimInvite(`used_at IS NULL AND revoked_at IS NULL AND expires_at > now` 원자적 잡기)·unclaimInvite(`used_at` 만 되돌린다)) ·
 │  │                      accept.ts(acceptInvite — 초대 확인 → Better Auth 쪽 이메일·비밀번호 해시(await) → await 없이 핸들·이메일 검사와 claim → Better Auth 내부 어댑터로 사용자·credential →
 │  │                      users·memberships 한 트랜잭션 → 세션 발급 { userId, sessionToken }. 실패하면 Better Auth 사용자 삭제·claim 되돌림, 되돌리기도 실패하면 운영 사건 invite_accept_failed ·
-│  │                      resetPassword — 대상이 멤버가 아니거나 owner 면 404, 비밀번호 교체 → 대상 세션 삭제 → 곧바로 disconnectUser → 새 세션 · normalizeEmail(소문자 — 이메일을 넣거나 찾는 경로는 모두 지난다)) ·
+│  │                      resetPassword — resetLinkUsable 을 못 지나면 404(링크 미소비), 비밀번호 교체 → 대상 세션 삭제 → 곧바로 disconnectUser → 새 세션 · normalizeEmail(소문자 — 이메일을 넣거나 찾는 경로는 모두 지난다)) ·
 │  │                      account.ts(updateDisplayName · changePassword — 현재 비밀번호 확인(틀리면 400 VALIDATION field current), 이 세션을 뺀 세션 삭제 → 지운 세션만 disconnectSessions) ·
 │  │                      handles.ts(assertHandleFree — 핸들 검사의 유일한 자리: `left-`(LEFT_HANDLE_PREFIX, 나간 사람 몫 예약)는 400 VALIDATION, 사람(users)·에이전트(agents) 어느 쪽과 겹쳐도 409,
 │  │                      둘 다 field handle. 가입·에이전트 등록·수정이 부른다) ·
