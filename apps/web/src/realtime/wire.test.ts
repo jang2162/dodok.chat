@@ -171,4 +171,26 @@ describe("WireManager", () => {
     expect(raws).toHaveLength(2);
     socket.disconnect();
   });
+
+  it("핸드셰이크가 끝난 뒤의 close 는 engine error 를 내지 않는다", async () => {
+    vi.useFakeTimers();
+    const manager = new WireManager({
+      transports: [FakeTransport],
+      autoConnect: false,
+      reconnectionDelay: 1_000,
+    });
+    const socket = manager.socket("/");
+    const errors: unknown[] = [];
+    manager.on("error", (e) => errors.push(e));
+    socket.connect();
+    raws[0]!.handshake();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(manager.engine.readyState).toBe("open");
+
+    // 살아 있던 연결이 정상적으로(전송 close) 끊긴다 — 핸드셰이크 전 close 와 달리 engine error 를 만들지 않는다
+    raws[0]!.closeCleanly();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(errors).toEqual([]);
+    socket.disconnect();
+  });
 });
