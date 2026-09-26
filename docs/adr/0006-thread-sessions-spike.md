@@ -70,7 +70,7 @@
 - claude-cli 는 시스템 프롬프트를 argv 가 아니라 **stdin `control_request { subtype: "initialize", appendSystemPrompt }`** 로 받는다. 채널 `systemPrompt` 가 채널 세션·스레드 세션 양쪽 `appendSystemPrompt` 에 있었다 — 플러그인이 디스패치마다 채널 항목을 읽어 `GroupSystemPrompt` 로 싣기 때문이다.
 - 스레드 세션의 첫 턴은 새 CLI 세션이라 그때의 채널 프롬프트가 들어간다. 오래 산 스레드는 채널 세션과 같은 문제(ADR 0003 「질문 1 — 채널 프롬프트가 기존 세션에」 절 — 재개된 CLI 세션은 바뀐 프롬프트를 안 받는다)를 **스레드마다 따로** 갖는다.
 - 인바운드 `context.channelPrompt` 를 주면 스레드 프롬프트에도 `ChannelPromptContext` 로 실렸다.
-- `sessions.reset { key: <스레드 키> }` → 응답 `entry` 에 새 `sessionStartedAt`·`lifecycleRevision`(`sessionId` 는 유지 — ADR 0003 과 같다). 채널 세션의 `sessionStartedAt`·전사는 그대로. 채널 키 리셋이 스레드에 영향이 없는지는 재지 않았다.
+- `sessions.reset { key: <스레드 키> }` → 응답 `entry` 에 새 `sessionStartedAt`·`lifecycleRevision`(`sessionId` 는 유지 — ADR 0003 과 같다). 채널 세션의 `sessionStartedAt`·전사는 그대로. 반대로 채널 키 리셋도 스레드 세션의 전사를 건드리지 않는다(`docs/guides/live-smoke.md` 「스레드(Phase 4 ①) 실연」 절).
 
 ### 3.5 동시성 (질문 5)
 
@@ -114,11 +114,18 @@
 
 ## 6. 확인 못 한 것
 
-- 실제 모델 런에서의 동작 — 모델이 스레드 세션에서 `message` 툴에 `threadId`·최상위 지정을 넣는지, 같은 채널 툴 전송 뒤 최종 답 억제(`silent`), 포크·새 CLI 세션의 전사 재주입.
-- `agent` `stream: "tool"`·승인 이벤트의 `sessionKey` — 가짜 CLI 는 claude `tool_use` 를 내지 않는다. 코드상 같은 세션 키 경로다.
-- 같은 스레드 두 번째 턴의 `--resume` — 가짜 CLI 가 claude 전사 파일을 만들지 않아 매번 새 CLI 세션이 됐다.
-- 채널 키 리셋이 스레드 세션에 영향이 없는지.
-- 원격 Gateway 판에서의 동작(SDK 표면은 9.4 타입에도 있다).
+- 같은 스레드 두 번째 턴의 `--resume` — 가짜 CLI 가 claude 전사 파일을 만들지 않아 매번 새 CLI 세션이 됐고, 실제 모델 런으로도 아직 재지 않았다.
+- 스레드 세션에서 모델이 `message` 툴로 채널 최상위를 지정하는 경우 — 플러그인이 고정 사유로 거절하게 했지만, 모델이 그렇게 부르는 것을 본 적은 없다.
+- 포크·새 CLI 세션의 전사 재주입(3.6). 설계는 포크하지 않는다(4절 2).
+- 승인 이벤트의 `sessionKey` — 가짜 CLI 는 승인을 일으키지 못하고, 모델 런에서도 승인을 켜지 않았다. 코드상 같은 세션 키 경로다.
+- 원격 Gateway 판에서의 동작(SDK 표면은 9.4 타입에도 있다). 아래 실측은 모두 9.5 다.
+
+`docs/guides/live-smoke.md` 「스레드(Phase 4 ①) 실연」 절이 잰 것(dev Gateway 9.5, 새 플러그인):
+
+- **스레드 세션의 모델이 `message` 툴에 `threadId` 를 스스로 넣었다**(모델 런 1회) — 헤더의 `thread=` 값 그대로. 카드는 그 스레드에 섰고 채널 세션 전사는 생기지도 않았다.
+- **9.5 는 `message` 툴을 쓴 런의 최종 답을 억제하지 않는다** — 채널 최상위·스레드 모두 최종 답이 따로 한 메시지로 올라왔다. ADR 0002 의 억제(`silent`)는 9.4 실측이다.
+- 스레드 런의 `agent` `stream: "tool"` 이 스레드 키로 서버까지 와 활동 타임라인(`TOOL_CALL_*`)에 들어간다.
+- 채널 키 리셋은 스레드 세션에 영향이 없다(3.4).
 
 ## 7. 다시 재는 법
 
