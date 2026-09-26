@@ -103,7 +103,7 @@ docker compose -f infra/compose.yml logs app | grep -E 'gateway connected|pairin
 
 플러그인 파일과 브리지 토큰은 dodok 웹의 **연결 페이지**(`https://<도메인>/settings/connection`)에서 받는다. 개발 PC 는 필요 없다.
 
-**연결 페이지 열기** — 브라우저로 `https://<도메인>` 에 로그인(`LOCAL_AUTH_TOKEN`)하고 사이드바 하단 「연결」. owner 에게만 보인다(owner 가 아니면 그 주소도 「권한이 없습니다」). OpenClaw 가 끊겼다는 배너의 「연결 설정 보기」도 같은 곳으로 간다.
+**연결 페이지 열기** — 브라우저로 `https://<도메인>` 에 로그인(로그인 화면 아래 「owner 로컬 토큰으로 로그인」을 펼쳐 `LOCAL_AUTH_TOKEN`)하고 사이드바 하단 「연결」. owner 에게만 보인다(owner 가 아니면 그 주소도 「권한이 없습니다」). OpenClaw 가 끊겼다는 배너의 「연결 설정 보기」도 같은 곳으로 간다.
 
 **플러그인 받기** — 「플러그인」 섹션의 「플러그인 받기」가 서버 이미지가 품은 tgz(같은 커밋에서 빌드한 것)를 내려준다. 파일 이름은 `dodok-openclaw-plugin-<파일 sha256 앞 12자>.tgz` 다. 받은 파일을 화면의 「파일 sha256」과 대조하고 [B] 로 옮긴다.
 
@@ -161,7 +161,7 @@ docker compose -f infra/compose.yml logs app | grep -E 'bridge plugin hello|brid
 
 ### 6. [폰] 로그인·설치·푸시
 
-1. `https://<도메인>` → 로그인(`LOCAL_AUTH_TOKEN` — 폰에 옮길 때는 비밀번호 관리자처럼 화면에 남지 않는 길로).
+1. `https://<도메인>` → 로그인(owner 는 「owner 로컬 토큰으로 로그인」 → `LOCAL_AUTH_TOKEN` — 폰에 옮길 때는 비밀번호 관리자처럼 화면에 남지 않는 길로. 초대로 가입한 멤버는 이메일·비밀번호 — 아래 「멤버 초대·비밀번호 재설정·내보내기」).
 2. iOS(16.4+): Safari 공유 → 「홈 화면에 추가」 → **그 아이콘으로 연다**(iOS 는 홈 화면 PWA 에서만 푸시가 된다). 안드로이드: Chrome 에서 연다(설치는 선택).
 3. 앱의 알림 설정에서 「푸시 알림 켜기」 → OS 권한 허용.
 4. [PC] 브라우저에서 에이전트에게 사람을 부르는 답을 내게 한다(예: 「@<핸들> 불러 줘」 류) — 또는 승인 요청.
@@ -195,9 +195,36 @@ docker compose -f infra/compose.yml exec app node dist/backup.js
 
 `.env` 에서 이어받은 토큰(목록의 라벨 `env`, 알아보기용 앞자리 대신 「.env 에서 이어받음」)도 같은 절차로 바꾼다. 폐기한 뒤에는 `.env` 의 `BRIDGE_TOKEN` 줄을 지워도 되고, 남겨 두면 부팅 때 warn 한 줄과 연결 페이지 한 줄(「.env 의 BRIDGE_TOKEN 은 더 이상 쓰지 않습니다 — 연결 페이지에서 발급하세요」)이 계속 보인다.
 
+## 멤버 초대·비밀번호 재설정·내보내기
+
+사람은 초대 링크로 들인다 — 공개 가입은 없고 메일도 보내지 않는다. 역할은 셋이다: **owner**(한 명 — `LOCAL_AUTH_TOKEN` 으로 로그인하는 계정), **admin**(에이전트 동작·비용 설정·「새 대화」·도구 승인·에이전트 등록·member 관리·운영 화면), **member**(채널에서 대화하기·채널 만들기·이름·설명·에이전트 넣기·빼기). 무엇을 누가 하는지의 표는 팀 스펙 `docs/superpowers/specs/2026-09-26-team-members-design.md` 「역할과 권한」 절이고, 서버가 요청마다 막는다(화면에서 숨기는 것은 편의다). 화면은 사이드바 「멤버」(`/settings/members`, owner·admin).
+
+**초대**
+
+1. 「초대」 → 역할을 고른다(owner 는 멤버·관리자, admin 은 멤버만) → 「링크 만들기」.
+2. 링크 `<APP_ORIGIN>/join/dit_…` 가 **한 번만** 보인다 — 서버는 해시만 저장해 다시 보여 줄 수 없다. 「복사」 → 메신저로 그 사람에게 건넨다 → 「복사했습니다」로 닫는다. 잃었으면 대기 중인 초대에서 「폐기」하고 새로 만든다.
+   - 링크의 앞부분은 `.env` 의 `APP_ORIGIN` 이다. 실제 도메인(`https://<도메인>`)이 아니면 받은 사람이 엉뚱한 주소를 연다 — 틀렸으면 `.env` 를 고치고 `docker compose -f infra/compose.yml up -d` 뒤 새 링크를 만든다.
+   - 링크는 **1회용·7일**이다. 대기 중인 초대(역할·만료)는 같은 화면 아래에 있고 「폐기」로 무효로 만든다(admin 은 관리자 초대를 폐기하지 못한다).
+3. 받은 사람이 링크를 열어 핸들·표시 이름·이메일·비밀번호(12자 이상)를 넣으면 곧바로 로그인돼 첫 채널로 간다. 핸들은 사람과 에이전트를 통틀어 겹칠 수 없고, `left-` 로 시작할 수 없다(나간 멤버 몫). 이미 다른 계정으로 로그인된 브라우저에서 열면 폼 위에 「지금 @<핸들> 로 로그인돼 있습니다 — 가입하면 이 브라우저는 새 계정으로 바뀝니다」가 뜬다.
+4. 「초대가 만료됐거나 이미 쓰였습니다」가 뜨면 쓰였거나·만료됐거나·폐기된 링크다(까닭을 가르지 않는다) — 새 링크를 만든다. 「잠시 뒤 다시 시도하세요」는 한 주소(같은 사무실 NAT 포함)에서 초대 조회·가입·재설정이 1분에 20번을 넘은 것이다(위 「운영 화면」의 레이트리밋 표).
+
+가입한 사람은 이메일·비밀번호로 로그인한다. 채널은 워크스페이스 전원이 본다 — 그 채널에 처음 쓰거나 멘션받으면 저절로 채널에 참여하고, 그때부터 에이전트가 받는 「참여자:」 줄에 실린다(`docs/guides/agent-guide.md` 「매 턴의 인바운드」 절).
+
+**비밀번호 재설정** — 메일이 없으므로 관리자가 링크를 만든다.
+
+1. 멤버 줄의 「재설정 링크」 → 확인(앞서 만든 그 사람의 재설정 링크는 쓸 수 없게 된다) → 링크 `<APP_ORIGIN>/reset/drt_…` 가 한 번만 보인다 → 메신저로 건넨다. admin 은 member 에게만, owner 는 owner 를 뺀 누구에게나 만든다. **1회용·24시간.**
+2. 받은 사람이 새 비밀번호를 넣으면 곧바로 로그인되고, **그 사람의 다른 로그인(다른 기기·탭의 세션과 열린 연결)은 모두 끊긴다.**
+3. 본인이 비밀번호를 알면 사이드바 하단 「내 계정」에서 바꾼다 — 이 기기는 남고 다른 기기의 로그인은 끊긴다.
+
+**owner 비밀번호는 `LOCAL_AUTH_TOKEN`** 이다 — 재설정 링크도 「내 계정」의 비밀번호 칸도 없다. 바꾸려면 `.env` 의 `LOCAL_AUTH_TOKEN` 을 고치고 `docker compose -f infra/compose.yml up -d` — owner 의 기존 세션이 끊긴다. owner 는 이메일·비밀번호 폼으로 로그인할 수 없다(「owner 로컬 토큰으로 로그인」만).
+
+**역할 바꾸기** — owner 만, 멤버 표의 역할 칸(관리자 ↔ 멤버). 바꾸는 즉시 적용된다(확인 대화상자가 없다). 관리자를 멤버로 내리면 그 사람이 만들어 두고 아직 쓰이지 않은 초대·재설정 링크가 모두 폐기된다 — 다시 올려도 살아나지 않는다.
+
+**내보내기** — 멤버 줄의 「내보내기」 → 확인. admin 은 member 만, owner 는 owner 를 뺀 누구나. 내보낸 사람은 곧바로 아무것도 못 한다 — 열린 화면은 로그인 화면으로 가고, 연결이 끊기고, 푸시 구독이 지워진다. 그 사람이 만들어 둔 쓰이지 않은 링크도 폐기된다. 쓴 메시지는 남아 「나간 멤버 @<옛 핸들>」로 보인다. 같은 이메일·핸들로 다시 초대할 수 있다 — 다시 들어오면 **새 계정**이고 옛 메시지는 옛 이름 그대로다. 내보내기가 중간에 실패하면 500 과 운영 사건 「멤버 내보내기 실패」가 남는다 — 원인을 보고 다시 내보내면 이어진다.
+
 ## 운영 화면
 
-웹 사이드바 「운영」(`/settings/operations`, owner 만 — member 에게는 메뉴가 없고 직접 주소는 「권한이 없습니다」)이 「어젯밤 무슨 일이 있었나」에 답한다. 외부 모니터링 스택·푸시·웹훅 알림은 없다 — 사이드바 「운영」 옆 배지로 알아챈다. 설계는 `docs/superpowers/specs/2026-09-25-ops-hardening-design.md`(구현과 달라진 것은 그 스펙의 「구현과 맞춘 것」 장).
+웹 사이드바 「운영」(`/settings/operations`, owner·admin — member 에게는 메뉴가 없고 직접 주소는 「권한이 없습니다」)이 「어젯밤 무슨 일이 있었나」에 답한다. 외부 모니터링 스택·푸시·웹훅 알림은 없다 — 사이드바 「운영」 옆 배지로 알아챈다. 설계는 `docs/superpowers/specs/2026-09-25-ops-hardening-design.md`(구현과 달라진 것은 그 스펙의 「구현과 맞춘 것」 장).
 
 - **상태**(맨 위 카드) — Gateway·플러그인 연결, Gateway 버전, 디스크 여유, 직전 종료, 서버·DB. 문제가 있는 줄만 강조한다. 연결 두 줄은 wire 로 실시간이고, 나머지 칸은 사건이 올 때와 화면을 보는 동안 30초마다 다시 받는다. Gateway 버전이 저장소 핀(`packages/openclaw-adapter/src/version.ts` 의 `OPENCLAW_PINNED_VERSION`)과 다르면 「저장소가 검증한 버전(<핀>)과 다릅니다」 — 연결 페이지 Gateway 줄에도 같은 문구가 붙는다.
 - **런**(표) — 「오늘 / 7일」, 채널별·에이전트별 런·실패·중지·차단. 토큰·금액은 「측정 불가」다 — Gateway 가 주는 출력 토큰·비용 값이 틀린다(`docs/adr/0005-usage-values.md`).
@@ -212,7 +239,7 @@ docker compose -f infra/compose.yml exec app node dist/backup.js
 docker compose -f infra/compose.yml logs app | grep '"event":"ops.'
 ```
 
-**`/healthz`** — 인증 없이 열려 있고 본문은 `{"ok":true,"db":"ok"}`(DB 를 못 읽으면 503 `{"ok":false,"db":"error"}`)뿐이다. 워크스페이스 id·어댑터 상세는 owner 전용 `GET /api/v1/ops/status`(운영 화면이 읽는 것)에만 있다.
+**`/healthz`** — 인증 없이 열려 있고 본문은 `{"ok":true,"db":"ok"}`(DB 를 못 읽으면 503 `{"ok":false,"db":"error"}`)뿐이다. 워크스페이스 id·어댑터 상세는 admin 이상만 읽는 `GET /api/v1/ops/status`(운영 화면이 읽는 것)에만 있다.
 
 **디스크 여유** — 부팅 때와 10분마다 `DATA_DIR` 이 든 파일 시스템을 잰다. 여유가 1 GiB 미만 **또는** 5% 미만이면 사건 「디스크 여유 부족」(주의), **256 MiB 미만이면 오류이고 첨부 업로드(사람 이미지·에이전트 파일 둘 다)를 507 `INSUFFICIENT_STORAGE` 로 거절한다** — SQLite 가 쓸 자리를 남긴다. 웹 칩은 「서버 디스크 여유가 부족해 올리지 못했습니다」. 공간을 비우면 다음 측정(최대 10분 뒤, 또는 `restart app`)부터 다시 받는다. 재지 못하면(`statfs` 실패) 「알 수 없음」이고 업로드는 막지 않는다.
 
@@ -223,6 +250,7 @@ docker compose -f infra/compose.yml logs app | grep '"event":"ops.'
 | `POST /api/v1/auth/local`(로그인)·`POST /api/v1/me/password` | `localLoginPerMin`(IP 당 분당, 둘이 한 버킷) | 429 |
 | `POST /api/v1/invites/lookup`·`/accept`·`/reset`(초대·재설정 링크) | `invitePublicPerMin`(IP 당 분당, 셋이 한 버킷 — 로그인과 따로) | 429 |
 | `/api/auth/*`(Better Auth) | `betterAuthPerMin`(IP 당 분당) | 429 |
+| `POST /api/v1/invites`·`POST /api/v1/members/:userId/reset-link`(링크 발급) | `inviteIssuePerMin`(사용자당 분당, 둘이 한 버킷) | 429 |
 | 로그인 뒤 REST `/api/v1/*` | `restPerMin`(사용자당 분당) | 429 `{"code":"RATE_LIMITED"}` |
 | 첨부 업로드 `POST /api/v1/attachments` | `uploadPerMin`(사용자당 분당, REST 상한 위에 한 번 더) | 429 `RATE_LIMITED` |
 | wire `message.send`·`component.interact`·`run.abort` | `wire.heavy`(소켓마다 토큰 버킷 — 분당·연속) | ack `RATE_LIMITED` — 작성기는 「너무 빠르게 보내고 있습니다 — 잠시 뒤 다시」, 「다시 보내기」는 같은 메시지라 런이 두 번 뜨지 않는다 |
@@ -449,6 +477,7 @@ DODOK_UPSTREAM=devfake:3000 lc --profile devfake up -d --build
 | 브리지 토큰 교체(발급 → [B] 설정 교체 → 「지금 접속 중」 이동 → 옛 토큰 폐기) | | |
 | 6. 폰 — iOS 홈 화면 PWA 푸시·누르기 | | |
 | 6. 폰 — 안드로이드 Chrome 푸시·누르기 | | |
+| 멤버 초대 — 다른 브라우저·폰에서 가입, 서로 멘션해 폰에 푸시가 오는가, 내보내기 뒤 그 화면 | | |
 | 7. 백업·cron | | |
 | 복원(업데이트 직전 백업) | | |
 | 업데이트·되돌리기 | | |
