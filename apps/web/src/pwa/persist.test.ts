@@ -382,7 +382,12 @@ describe("startPersistence", () => {
     pending({ current: "current-secret-666", next: "next-secret-777" });
     // 실패해도 풀어 준다 — 남은 요청이 뒤 테스트(가짜 시계)를 멈춰 세운다
     try {
-      expect(qc.getMutationCache().getAll().filter((m) => m.state.status === "pending")).toHaveLength(4);
+      expect(
+        qc
+          .getMutationCache()
+          .getAll()
+          .filter((m) => m.state.status === "pending"),
+      ).toHaveLength(4);
       qc.setQueryData(qk.agents, [{ id: "after-pending" }]);
       await vi.waitFor(() => expect(storage.map.get(PERSIST_KEY)).toContain("after-pending"));
       const raw = storage.map.get(PERSIST_KEY) ?? "";
