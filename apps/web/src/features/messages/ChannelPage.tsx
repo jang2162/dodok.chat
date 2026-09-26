@@ -11,6 +11,7 @@ import { TypingIndicator } from "@/features/composer/TypingIndicator";
 import { useSendMessage } from "@/features/composer/useSendMessage";
 import { StreamingBubble } from "@/features/runs/StreamingBubble";
 import { useChannelBubbles } from "@/features/runs/useChannelBubbles";
+import { type ThreadOpener, ThreadOpenerContext } from "@/features/threads/threadOpener";
 import { touchRecentChannel } from "@/pwa/persist";
 import { useChannelSubscription } from "@/realtime/WireProvider";
 import { Button } from "@/ui/button";
@@ -29,6 +30,8 @@ export function ChannelPage() {
   const tab = usePanelTab();
   // 좁은 화면에서 패널은 시트로 뜬다 — 닫히면 초점을 연 자리(헤더의 설정 링크)로 돌려준다(D14)
   const settingsRef = useRef<HTMLAnchorElement>(null);
+  // 칩·「스레드에서 답하기」로 연 스레드는 닫으면 그 자리로 초점을 돌려준다(p4t-c1, m5)
+  const threadOpenerRef = useRef<ThreadOpener>(null);
   useChannelSubscription(channelId);
   const channel = useChannel(channelId);
   // 확인된 채널만 최근 본 채널로(오프라인 사본 대상, 스펙 4장) — 없는 채널 주소가 실제 채널을 밀어내지 않게
@@ -63,18 +66,20 @@ export function ChannelPage() {
   return (
     <div data-testid="page-channel" className="flex min-h-0 flex-1">
       <PendingActionsContext.Provider value={pendingActions}>
-        <section className="flex min-w-0 flex-1 flex-col">
-          <ChannelHeader channelId={channelId} settingsRef={settingsRef} />
-          <MessageList
-            channelId={channelId}
-            bubbleRunIds={bubbleRunIds}
-            bubbles={(runId) => <StreamingBubble runId={runId} />}
-          />
-          <div data-slot="composer">
-            <TypingIndicator channelId={channelId} />
-            <Composer channelId={channelId} />
-          </div>
-        </section>
+        <ThreadOpenerContext.Provider value={threadOpenerRef}>
+          <section className="flex min-w-0 flex-1 flex-col">
+            <ChannelHeader channelId={channelId} settingsRef={settingsRef} />
+            <MessageList
+              channelId={channelId}
+              bubbleRunIds={bubbleRunIds}
+              bubbles={(runId) => <StreamingBubble runId={runId} />}
+            />
+            <div data-slot="composer">
+              <TypingIndicator channelId={channelId} />
+              <Composer channelId={channelId} />
+            </div>
+          </section>
+        </ThreadOpenerContext.Provider>
       </PendingActionsContext.Provider>
       {tab && (
         <PanelTabs
@@ -82,6 +87,7 @@ export function ChannelPage() {
           rootId={tab === "thread" ? rootId : undefined}
           active={tab}
           openerRef={settingsRef}
+          threadOpenerRef={threadOpenerRef}
         >
           <Outlet />
         </PanelTabs>

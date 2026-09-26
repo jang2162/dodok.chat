@@ -1,7 +1,8 @@
 import { Link, useMatchRoute, useNavigate } from "@tanstack/react-router";
 import { XIcon } from "lucide-react";
-import { type ReactNode, type RefObject, useCallback, useId, useRef, useState } from "react";
+import { type ReactNode, type RefObject, useCallback, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import type { ThreadOpener } from "@/features/threads/threadOpener";
 import { useIsNarrow } from "@/hooks/useIsNarrow";
 import { cn } from "@/lib/utils";
 import { Button } from "@/ui/button";
@@ -59,6 +60,7 @@ export function PanelTabs({
   active,
   children,
   openerRef,
+  threadOpenerRef,
 }: {
   channelId: string;
   /** 연 스레드의 루트(스레드 탭일 때) — 탭 머리의 「스레드」 링크가 쓴다 */
@@ -67,6 +69,8 @@ export function PanelTabs({
   children: ReactNode;
   /** 패널을 여는 자리(헤더의 「채널 설정」) — 패널을 닫으면(좁은 화면 시트·넓은 화면 닫기 링크) 초점을 여기로 돌려준다(D14) */
   openerRef?: RefObject<HTMLAnchorElement | null>;
+  /** 스레드를 연 자리(칩·「스레드에서 답하기」) — 스레드 탭을 닫으면 그 자리가 아직 화면에 있을 때 `openerRef` 대신 여기로 */
+  threadOpenerRef?: RefObject<ThreadOpener | null>;
 }) {
   const narrow = useIsNarrow();
   const navigate = useNavigate();
@@ -86,6 +90,17 @@ export function PanelTabs({
   );
   const body = createPortal(children, host);
   const tab = tabOf(active);
+  // 다른 스레드가 열렸으면(주소·검색·푸시 — 칩이 적지 않는 길) 앞 스레드를 연 자리는 잊는다. 닫는 순간에는 비교하지 않는다:
+  // 주소가 먼저 바뀌어 스레드 탭의 마지막 렌더에는 rootId 가 없다
+  useEffect(() => {
+    const t = threadOpenerRef?.current;
+    if (threadOpenerRef && rootId !== undefined && t && t.rootId !== rootId) threadOpenerRef.current = null;
+  }, [threadOpenerRef, rootId]);
+  /** 닫을 때 초점을 돌려줄 자리 — 이 스레드를 연 칩·버튼(스레드 탭, 아직 붙어 있을 때), 아니면 헤더의 「채널 설정」(D14) */
+  const returnTarget = (): HTMLElement | null | undefined => {
+    const t = active === "thread" ? threadOpenerRef?.current : undefined;
+    return t?.el.isConnected ? t.el : openerRef?.current;
+  };
   const bodyClass = cn("min-h-0 flex-1", tab.scroll ? "overflow-y-auto" : "flex flex-col overflow-hidden");
 
   if (narrow) {
@@ -121,9 +136,10 @@ export function PanelTabs({
              * 초점이 `<body>` 로 떨어졌다(D14). 사이드바 시트(AppShell)와 같은 수법이다
              */
             onCloseAutoFocus={(e) => {
-              if (!openerRef?.current) return;
+              const target = returnTarget();
+              if (!target) return;
               e.preventDefault();
-              openerRef.current.focus();
+              target.focus();
             }}
           >
             <div className="flex h-14 shrink-0 items-center border-b px-4 pr-12">
@@ -153,13 +169,14 @@ export function PanelTabs({
             {/*
              * 이 링크는 누르면 패널과 함께 언마운트돼 초점이 `<body>` 로 떨어졌다(D3·D13·D14 와 같은 부류). 패널이 내려가기
              * **전에** 헤더의 「채널 설정」 링크로 옮긴다 — 좁은 화면 시트가 닫힐 때 돌려주는 자리와 같다(D14).
-             * 활동 탭도 같은 자리다: 헤더에 활동을 여는 자리는 따로 없고, 탭 머리는 패널과 함께 사라진다
+             * 활동 탭도 같은 자리다: 헤더에 활동을 여는 자리는 따로 없고, 탭 머리는 패널과 함께 사라진다.
+             * 칩·「스레드에서 답하기」로 연 스레드만 그 자리로 돌아간다(`returnTarget`, m5)
              */}
             <Link
               to="/c/$channelId"
               params={{ channelId }}
               aria-label={`${tab.label} 닫기`}
-              onClick={() => openerRef?.current?.focus()}
+              onClick={() => returnTarget()?.focus()}
             >
               <XIcon />
             </Link>

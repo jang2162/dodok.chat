@@ -6,6 +6,7 @@ import { useAgents } from "@/api/queries";
 import { agentColorVar } from "@/theme/agentColor";
 import { Avatar, AvatarFallback, AvatarImage } from "@/ui/avatar";
 import { threadRootOf } from "./queries";
+import { useNoteThreadOpener } from "./threadOpener";
 
 /** 칩에 그리는 에이전트 아바타 수 — 요약의 agentIds 는 최근에 답한 에이전트부터다 */
 const AVATARS_MAX = 3;
@@ -29,10 +30,12 @@ export function ThreadChip({ message, summary }: { message: Message; summary: Th
     const byId = new Map((agents ?? []).map((a) => [a.id, a]));
     return summary.agentIds.flatMap((id) => byId.get(id) ?? []).slice(0, AVATARS_MAX);
   }, [agents, summary.agentIds]);
+  const noteOpener = useNoteThreadOpener(message.id);
   return (
     <Link
       to="/c/$channelId/t/$rootId"
       params={{ channelId: message.channelId, rootId: message.id }}
+      onClick={noteOpener}
       data-slot="thread-chip"
       className="mt-1 inline-flex max-w-full items-center gap-2 rounded-md border border-transparent px-1.5 py-0.5 text-xs hover:border-border hover:bg-background focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
     >
@@ -67,10 +70,13 @@ export function ThreadChip({ message, summary }: { message: Message; summary: Th
  * 마우스를 올리거나 행 안에 초점이 있을 때 보이고, 호버가 없는 기기(터치)에서는 늘 보인다
  */
 export function ReplyInThread({ message }: { message: Message }) {
+  const rootId = threadRootOf(message);
+  const noteOpener = useNoteThreadOpener(rootId);
   return (
     <Link
       to="/c/$channelId/t/$rootId"
-      params={{ channelId: message.channelId, rootId: threadRootOf(message) }}
+      params={{ channelId: message.channelId, rootId }}
+      onClick={noteOpener}
       aria-label="스레드에서 답하기"
       title="스레드에서 답하기"
       data-slot="reply-in-thread"

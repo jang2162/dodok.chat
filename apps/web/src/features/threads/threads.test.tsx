@@ -143,6 +143,116 @@ describe("채널 타임라인의 칩·메뉴", () => {
   });
 });
 
+/**
+ * 스레드를 닫으면 초점을 연 자리로(p4t-c1, T6/T7 리뷰 m5). 칩·「스레드에서 답하기」로 열었으면 그것, 그 자리가 화면에서
+ * 사라졌거나 주소로 들어왔으면 헤더의 「채널 설정」(D14). 설정·활동 탭은 그대로 헤더다
+ */
+describe("스레드 닫기 초점(m5)", () => {
+  const inList = async () => within(await screen.findByRole("region", { name: "메시지" }));
+  const header = () => within(screen.getByTestId("channel-header")).getByRole("link", { name: "채널 설정" });
+  const closeThread = async () =>
+    userEvent.click(
+      within(await screen.findByTestId("page-channel-panel")).getByRole("link", { name: "스레드 닫기" }),
+    );
+
+  it("넓은 화면: 칩으로 연 스레드를 닫으면 초점이 그 칩으로 돌아간다", async () => {
+    const { router } = renderRoute(`/c/${CH}`, channelClient());
+    const chip = await (await inList()).findByRole("link", { name: /답글 2개/ });
+    await userEvent.click(chip);
+    await panel();
+    // 패널 안(작성기 등)으로 초점을 옮긴 뒤 닫아도
+    screen.getByRole("textbox", { name: "스레드 답글 입력" }).focus();
+
+    await closeThread();
+
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}`));
+    await waitFor(() => expect(screen.queryByTestId("page-channel-panel")).not.toBeInTheDocument());
+    expect(chip).toHaveFocus();
+  });
+
+  it("넓은 화면: 「스레드에서 답하기」로 연 스레드를 닫으면 그 행의 그 버튼으로 돌아간다", async () => {
+    const { router } = renderRoute(`/c/${CH}`, channelClient([ROOT]));
+    const open = await (await inList()).findByRole("link", { name: "스레드에서 답하기" });
+    await userEvent.click(open);
+    await panel();
+
+    await closeThread();
+
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}`));
+    expect(open).toHaveFocus();
+  });
+
+  it("좁은 화면: 칩으로 연 스레드 시트를 Esc 로 닫으면 칩으로 돌아간다", async () => {
+    stubMedia(true);
+    const { router } = renderRoute(`/c/${CH}`, channelClient());
+    const chip = await (await inList()).findByRole("link", { name: /답글 2개/ });
+    await userEvent.click(chip);
+    await screen.findByRole("dialog");
+
+    await userEvent.keyboard("{Escape}");
+
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}`));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await waitFor(() => expect(chip).toHaveFocus());
+  });
+
+  it("주소로 연 스레드(연 자리 없음)를 닫으면 헤더의 「채널 설정」", async () => {
+    const { router } = renderRoute(`/c/${CH}/t/${ROOT.id}`, channelClient());
+    await panel();
+
+    await closeThread();
+
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}`));
+    expect(header()).toHaveFocus();
+  });
+
+  it("연 칩이 화면에서 사라졌으면 헤더의 「채널 설정」", async () => {
+    const qc = channelClient();
+    const { router } = renderRoute(`/c/${CH}`, qc);
+    await userEvent.click(await (await inList()).findByRole("link", { name: /답글 2개/ }));
+    await panel();
+    // 요약이 빠져 칩이 내려간다
+    act(() => qc.setQueryData<Timeline>(qk.timeline(CH), (t) => t && { ...t, items: [ROOT] }));
+    await waitFor(() => expect(channelList().querySelector('[data-slot="thread-chip"]')).toBeNull());
+
+    await closeThread();
+
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}`));
+    expect(header()).toHaveFocus();
+  });
+
+  it("칩으로 연 뒤 다른 스레드로 옮겼으면(검색·주소) 앞 칩이 아니라 헤더의 「채널 설정」", async () => {
+    const other = msg(9, { bodyMd: "다른 루트" });
+    const { router } = renderRoute(`/c/${CH}`, channelClient());
+    await userEvent.click(await (await inList()).findByRole("link", { name: /답글 2개/ }));
+    await panel();
+    await act(() =>
+      router.navigate({ to: "/c/$channelId/t/$rootId", params: { channelId: CH, rootId: other.id } }),
+    );
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/t/${other.id}`));
+
+    await closeThread();
+
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}`));
+    expect(header()).toHaveFocus();
+  });
+
+  it("칩으로 스레드를 연 뒤 설정 탭으로 옮겨 닫으면 설정 탭의 규칙대로 헤더의 「채널 설정」(D14)", async () => {
+    const { router } = renderRoute(`/c/${CH}`, channelClient());
+    await userEvent.click(await (await inList()).findByRole("link", { name: /답글 2개/ }));
+    const aside = await screen.findByTestId("page-channel-panel");
+    await userEvent.click(within(aside).getByRole("link", { name: "설정" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/settings`));
+
+    await userEvent.click(
+      await within(await screen.findByTestId("page-channel-panel")).findByRole("link", { name: "설정 닫기" }),
+    );
+
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}`));
+    expect(header()).toHaveFocus();
+  });
+});
+
 describe("URL 로 열기", () => {
   it("/c/:id/t/:rootId 새로고침 — 스레드 REST 로 루트·답글을 받아 패널에 그리고, 탭 머리에 「스레드」", async () => {
     renderRoute(`/c/${CH}/t/${ROOT.id}`, channelClient());
