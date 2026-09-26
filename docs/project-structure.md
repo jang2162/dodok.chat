@@ -166,10 +166,12 @@ src/
 │  └─ fts.ts              assertTrigramSupport(sqlite) — temp 탐침 테이블로 FTS5 trigram 을 확인, 없으면 한 줄 오류(cause 보존). 마이그레이션 **전**이어야 한다 —
 │                         뒤면 0007 이 여러 줄 drizzle 오류로 먼저 죽는다
 ├─ auth/
-│  ├─ index.ts            Better Auth(이메일 로그인·가입 비활성), 세션 토큰 검증
+│  ├─ index.ts            Better Auth(이메일 로그인·가입·비밀번호 변경·세션 폐기·로그아웃 HTTP 경로 비활성 — disabledPaths), 세션 토큰 검증(userId·sessionId)
 │  ├─ owner.ts            부팅 때 owner 보장 — LOCAL_AUTH_TOKEN 이 owner 비밀번호, 바뀌면 기존 세션을 끊는다
-│  └─ routes.ts           POST /api/v1/auth/local(IP 당 분당 LIMITS.localLoginPerMin)·GET me·POST logout, `/api/auth/*`(Better Auth, LIMITS.betterAuthPerMin) — 넘으면 429 + 사건 ratelimit,
-│                         requireSession(Bearer 또는 dodok.session 쿠키 — 사용자를 확인한 뒤 REST 상한 `request.server.restLimits` 를 센다)
+│  └─ routes.ts           POST /api/v1/auth/local(IP 당 분당 LIMITS.localLoginPerMin)·GET me·POST logout(세션 행을 지우고 disconnectSessions 로 그 세션 소켓을 끊는다),
+│                         `/api/auth/*`(Better Auth, LIMITS.betterAuthPerMin) — 넘으면 429 + 사건 ratelimit,
+│                         requireSession(Bearer 또는 dodok.session 쿠키 — 사용자를 확인한 뒤 REST 상한 `request.server.restLimits` 를 센다),
+│                         createIpLimit — 로그인·초대 경로가 하나씩
 ├─ http/
 │  ├─ errors.ts           HttpError·apiError — ApiError { code, message, details? } ↔ HTTP 상태
 │  └─ validate.ts         경계 Zod 파싱(body·query·params·wire payload·저장값)

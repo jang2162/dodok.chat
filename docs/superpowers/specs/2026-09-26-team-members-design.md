@@ -9,7 +9,7 @@
 
 **앞선 근거**:
 - 계획서 `docs/plan.md` 8장 Phase 4 「팀: 워크스페이스 멤버 초대, OIDC 로그인, 채널 권한, 멀티 Gateway 연결」
-- 인증 구조: `apps/server/src/auth/`(Better Auth `emailAndPassword` — 가입 차단·비밀번호 변경 경로 차단, owner 는 `bootstrapOwner` 가 내부 어댑터로 만든다, 로그인은 레이트리밋이 걸린 `/api/v1/auth/local` 로만, `requireOwner` 는 요청마다 membership 을 읽는다)
+- 인증 구조: `apps/server/src/auth/`(Better Auth `emailAndPassword` — 가입 차단·비밀번호 변경·세션 폐기·로그아웃 경로 차단(세션은 소켓을 함께 끊는 우리 경로만 지운다), owner 는 `bootstrapOwner` 가 내부 어댑터로 만든다, 로그인은 레이트리밋이 걸린 `/api/v1/auth/local` 로만, `requireOwner` 는 요청마다 membership 을 읽는다)
 - 발급 원문을 한 번만 보이는 토큰의 선례: 설정 마법사 스펙 `docs/superpowers/specs/2026-09-24-setup-wizard-design.md` 의 브리지 토큰(`bridge_tokens` — 해시만 저장)
 - 레이트리밋 숫자의 한곳: `apps/server/src/modules/ops/limits.ts`
 
@@ -111,7 +111,7 @@
   5. 세션을 발급하고 쿠키를 싣는다(로그인과 같은 모양 `{ sessionToken, user }`).
   - 4 가 실패하면 만든 Better Auth 사용자를 지우고 초대의 `used_at` 을 되돌린다. 되돌리기도 실패하면 운영 사건(`kind: "invite_accept_failed"`)을 남기고 500.
   - 동시에 두 번 제출하면 3 이 하나만 통과시킨다. 2 와 3 사이에 다른 가입이 같은 핸들을 잡으면 4 의 유일 인덱스가 막는다 → 409 로 바꾸고 되돌린다.
-- **재설정 수락** `POST /api/v1/invites/reset { token, password }`: 3 과 같이 잡고, 대상 사용자의 credential 비밀번호를 바꾸고, **그 사용자의 세션을 모두 끊는다**. 새 세션을 발급해 로그인시킨다.
+- **재설정 수락** `POST /api/v1/invites/reset { token, password }`: 3 과 같이 잡고, 대상 사용자의 credential 비밀번호를 바꾸고, **그 사용자의 세션을 모두 끊는다** — 세션 행을 지우고 열린 wire 소켓도 서버가 끊는다(`disconnectUser`). 새 세션을 발급해 로그인시킨다.
 
 ### 3.4 로그인
 
@@ -120,11 +120,12 @@
 - `{ email, password }` — 멤버. Better Auth `signInEmail` 로 확인한다. `OWNER_EMAIL` 로의 이메일 로그인은 막는다(owner 는 토큰으로만).
 - 실패 문구는 둘 다 401 「이메일 또는 비밀번호가 맞지 않는다」 하나다(토큰 모양은 「토큰이 맞지 않는다」 그대로). 성공한 사용자에게 membership 이 없으면 401.
 - 레이트리밋은 지금의 `localLoginPerMin`(IP 당) 버킷을 `me/password` 와 같이 쓴다(초대 경로는 따로 — 7장).
+- `POST /api/v1/auth/logout` 은 이 세션 행을 지우고 그 세션의 열린 wire 소켓을 모두 끊는다(같은 쿠키를 쓰는 다른 탭 포함).
 
 ### 3.5 「내 계정」
 
 - `PATCH /api/v1/me { displayName }` — 본인 표시 이름.
-- `POST /api/v1/me/password { current, next }` — 현재 비밀번호를 확인하고 바꾼다. 바꾸면 **이 세션을 뺀** 본인 세션을 끊는다. owner 는 403(로컬 토큰이 비밀번호다 — `.env` 로 바꾼다).
+- `POST /api/v1/me/password { current, next }` — 현재 비밀번호를 확인하고 바꾼다. 바꾸면 **이 세션을 뺀** 본인 세션을 끊는다 — 지운 세션의 열린 wire 소켓만 끊고(`session:<id>` 룸), 이 세션의 소켓은 남긴다. owner 는 403(로컬 토큰이 비밀번호다 — `.env` 로 바꾼다).
 - Better Auth 의 `/change-password`·`/update-user` 등은 계속 닫아 둔다.
 
 ---
@@ -195,7 +196,7 @@
 
 ## 9. 테스트·검증
 
-- **서버 단위·통합**: 초대 발급(역할 제한)·조회·수락·만료·폐기·재사용, 두 번 제출, 핸들 충돌(사람·에이전트 양쪽 — 에이전트 등록도), 이메일 충돌, 수락 중 실패 되돌림, 로그인 두 모양·실패 문구 하나·`OWNER_EMAIL` 이메일 로그인 거절, 재설정 뒤 대상 세션 끊김, `me/password` 뒤 다른 세션 끊김, 내보내기 뒤 REST 401·wire 끊김·재접속 거절·푸시 구독 삭제·채널 참여 삭제·`left_handle`, **역할 매트릭스의 허용·거부 전부**(REST 경로별, `PATCH /channels/:id` 필드별, wire `approval.resolve`), 승인 푸시 수신자, 자동 참여(첫 메시지·스레드 답글·멘션), 에이전트 헤더 참여자.
+- **서버 단위·통합**: 초대 발급(역할 제한)·조회·수락·만료·폐기·재사용, 두 번 제출, 핸들 충돌(사람·에이전트 양쪽 — 에이전트 등록도), 이메일 충돌, 수락 중 실패 되돌림, 로그인 두 모양·실패 문구 하나·`OWNER_EMAIL` 이메일 로그인 거절, 재설정 뒤 대상 세션·wire 소켓 끊김, `me/password` 뒤 다른 세션·그 소켓 끊김(이 세션 소켓 유지), 로그아웃 뒤 그 세션 소켓 끊김, 핸드셰이크 틈, 내보내기 뒤 REST 401·wire 끊김·재접속 거절·푸시 구독 삭제·채널 참여 삭제·`left_handle`, **역할 매트릭스의 허용·거부 전부**(REST 경로별, `PATCH /channels/:id` 필드별, wire `approval.resolve`), 승인 푸시 수신자, 자동 참여(첫 메시지·스레드 답글·멘션), 에이전트 헤더 참여자.
 - **웹 단위**: 가입·재설정·로그인 화면, 멤버 화면(초대 대화상자·폐기·역할·내보내기), 「내 계정」, member 가 보는 잠긴 설정·숨긴 버튼·승인 카드, 나간 멤버 표시.
 - **dev:fake**: 둘째 계정(member)을 만드는 길 — 고정 초대 또는 개발 훅. 브라우저 검증은 owner·member 두 브라우저 컨텍스트를 나란히: 초대 → 가입 → 같은 채널 대화(자동 참여·멘션 푸시) → member 의 관리 거부 → 역할 올리기 → 재설정 → 내보내기 → 끊김. 390·1280px.
 - **실연**(모델 런 0회): 사람이 둘인 채널에서 에이전트 헤더 「참여자:」가 실제로 온 사람만 싣는지 런 0회 하네스로.
