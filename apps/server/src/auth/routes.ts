@@ -52,14 +52,26 @@ export function createIpLimit(
   });
 }
 
+/**
+ * HTTP 로 통과시키는 Better Auth 경로(basePath 뒤). 기본은 닫힘 — 새 Better Auth 버전이 경로를 더해도 여기 없으면 404 다.
+ * 웹·스크립트는 Better Auth HTTP 를 부르지 않는다(로그인·로그아웃·세션 확인은 /api/v1/auth/*, 서버 안은 auth.api 직접 호출이라
+ * 이 목록과 무관). `/ok` 는 상태만 내는 확인 경로라 남긴다. 목록 밖에서 막는 것: 비밀번호 확인(/verify-password — 현재 비밀번호
+ * 대입은 loginLimit 버킷의 me/password 로만)·세션 목록(/list-sessions — 세션 토큰 원문을 낸다) 등. createAuth 의 disabledPaths 는 겹 방어로 둔다
+ */
+export const BETTER_AUTH_HTTP_PATHS: ReadonlySet<string> = new Set(["/ok"]);
+
 export function registerAuthRoutes(fastify: FastifyInstance, ctx: AuthRouteContext): void {
   const onExceeded = (request: FastifyRequest) => recordRateLimit(ctx.ops, request);
-  // Better Auth 자체 엔드포인트. 가입·이메일 사인인은 createAuth 에서 막혀 있다.
+  // Better Auth 자체 엔드포인트 — BETTER_AUTH_HTTP_PATHS 만. 목록 밖도 이 라우트의 IP 버킷을 지나고 404 다
   fastify.route({
     method: ["GET", "POST"],
     url: "/api/auth/*",
     config: { rateLimit: { max: ctx.betterAuthPerMin, timeWindow: "1 minute", onExceeded } },
     async handler(request, reply) {
+      // 원문 경로(쿼리 뺀)를 정확히 대조한다 — 인코딩·끝 슬래시·`..` 을 풀지 않으므로 변형은 모두 목록 밖이다
+      const path = request.url.split("?", 1)[0] ?? "";
+      if (!path.startsWith("/api/auth/") || !BETTER_AUTH_HTTP_PATHS.has(path.slice("/api/auth".length)))
+        throw apiError("NOT_FOUND", "not found");
       const headers = fromNodeHeaders(request.headers);
       headers.delete("content-length"); // 파싱된 본문을 다시 직렬화하므로 원래 길이와 다를 수 있다
       const hasBody = request.method !== "GET" && request.body !== undefined;

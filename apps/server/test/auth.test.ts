@@ -10,7 +10,8 @@ import type { App } from "../src/app";
 import { OWNER_EMAIL, verifySessionToken } from "../src/auth";
 import { account, session, user } from "../src/db/auth-schema";
 import { memberships, users } from "../src/db/schema.sqlite";
-import { bootTestApp, login, TEST_LOCAL_TOKEN } from "./helpers/app";
+import { BETTER_AUTH_HTTP_PATHS } from "../src/auth/routes";
+import { bootTestApp, login, TEST_LOCAL_TOKEN, userWithRole } from "./helpers/app";
 
 let app: App | undefined;
 let tmpDir: string | undefined;
@@ -167,9 +168,7 @@ describe("auth", () => {
       headers: { origin: "http://localhost:5173" },
       payload: { email: "intruder@example.com", password: "p".repeat(20), name: "intruder" },
     });
-    expect(signUp.statusCode).toBeGreaterThanOrEqual(400);
-    expect(signUp.statusCode).toBeLessThan(500);
-    expect(signUp.body).toContain("EMAIL_PASSWORD_SIGN_UP_DISABLED");
+    expect(signUp.statusCode).toBe(404);
     expect(app.db.select().from(user).all()).toHaveLength(1);
 
     // 레이트리밋이 걸린 /api/v1/auth/local 을 우회해 토큰을 대입하지 못하게
@@ -215,6 +214,66 @@ describe("auth", () => {
     }
     expect(await verifySessionToken(app.auth, token)).toEqual(session);
   });
+  it("Better Auth HTTP 는 허용 목록만 통과한다 — 런타임 auth.api 의 경로 가운데 목록 밖은 GET·POST 모두 404", async () => {
+    // 경로 수 × 두 방법이 /api/auth/* 의 IP 버킷(기본 30/분)을 넘는다
+    app = await bootTestApp({}, { limits: { betterAuthPerMin: 1000 } });
+    const member = await userWithRole(app, "probe", "member");
+    const headers = { authorization: `Bearer ${member.token}` };
+    const paths = Object.values(app.auth.api)
+      .map((endpoint) => (endpoint as { path?: string }).path)
+      .filter((path): path is string => typeof path === "string");
+    // 이 버전의 Better Auth 가 경로를 몇 개 내는지와 무관하게 — 비었다면 목록을 못 읽은 것이다
+    expect(paths.length).toBeGreaterThan(20);
+    expect(paths).toEqual(expect.arrayContaining([...BETTER_AUTH_HTTP_PATHS]));
+    for (const path of paths) {
+      if (BETTER_AUTH_HTTP_PATHS.has(path)) continue;
+      const url = `/api/auth${path.replace(/:[^/]+/g, "x")}`;
+      for (const method of ["GET", "POST"] as const) {
+        const res = await app.fastify.inject({
+          method,
+          url,
+          headers: { ...headers, origin: "http://localhost:5173", "content-type": "application/json" },
+          ...(method === "POST" ? { payload: {} } : {}),
+        });
+        expect(res.statusCode, `${method} ${url}`).toBe(404);
+      }
+    }
+    expect((await app.fastify.inject({ method: "GET", url: "/api/auth/ok" })).statusCode).toBe(200);
+  });
+
+  it("비밀번호 확인·세션 목록은 HTTP 로 열려 있지 않다 — 세션 하나로 비밀번호를 맞혀 보거나 다른 세션 토큰을 모으지 못한다", async () => {
+    app = await bootTestApp();
+    const member = await userWithRole(app, "victim", "member");
+    const second = await (await app.auth.$context).internalAdapter.createSession(member.id);
+    const headers = {
+      authorization: `Bearer ${member.token}`,
+      origin: "http://localhost:5173",
+      "content-type": "application/json",
+    };
+    const verify = await app.fastify.inject({
+      method: "POST",
+      url: "/api/auth/verify-password",
+      headers,
+      payload: { password: "p".repeat(20) },
+    });
+    expect(verify.statusCode).toBe(404);
+    const list = await app.fastify.inject({ method: "GET", url: "/api/auth/list-sessions", headers });
+    expect(list.statusCode).toBe(404);
+    expect(list.body).not.toContain(second.token);
+    // 쿼리·끝 슬래시·퍼센트 인코딩·경로 조작을 붙여도 목록 밖이다
+    for (const url of [
+      "/api/auth/list-sessions?x=1",
+      "/api/auth/list-sessions/",
+      "/api/auth/%6cist-sessions",
+      "/api/auth//list-sessions",
+      "/api/auth/ok/../list-sessions",
+    ]) {
+      const res = await app.fastify.inject({ method: "GET", url, headers });
+      expect(res.statusCode, url).toBe(404);
+      expect(res.body, url).not.toContain(second.token);
+    }
+  });
+
   it("/api/v1/auth/local 은 1분에 5회까지, 6번째는 429 RATE_LIMITED", async () => {
     app = await bootTestApp();
     for (let i = 0; i < 5; i++) expect((await local(app, `wrong-token-${i}-xxxxxx`)).statusCode).toBe(401);
