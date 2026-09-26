@@ -29,6 +29,8 @@ export type AuthRouteContext = {
   loginLimit: onRequestHookHandler;
   /** 로그인 전 상한에 걸리면 ratelimit 사건을 남긴다 */
   ops: Pick<OpsService, "record">;
+  /** 로그아웃 뒤 그 세션의 열린 wire 소켓을 끊는다(realtime/socket.ts disconnectSessions) */
+  disconnectSessions(sessionIds: readonly string[]): void;
 };
 
 /** 이메일 모양 로그인 실패는 까닭(없는 이메일·틀린 비밀번호·owner 이메일·membership 없음)을 가르지 않는다 */
@@ -98,9 +100,11 @@ export function registerAuthRoutes(fastify: FastifyInstance, ctx: AuthRouteConte
     role: sessionUser(request).role,
   }));
 
+  // 같은 쿠키를 쓰는 다른 탭의 소켓도 이 세션이다 — 세션 행을 지운 뒤 그 세션의 소켓을 모두 끊는다
   fastify.post("/api/v1/auth/logout", { preHandler: requireSession(ctx) }, async (request, reply) => {
     const token = sessionTokenOf(request);
     if (token) await ctx.auth.api.signOut({ headers: bearerHeaders(token) });
+    ctx.disconnectSessions([sessionUser(request).sessionId]);
     reply.clearCookie(SESSION_COOKIE, { path: "/" });
     return { ok: true };
   });

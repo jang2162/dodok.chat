@@ -195,6 +195,26 @@ describe("auth", () => {
       expect(res.statusCode, url).toBe(404);
     }
   });
+  it("Better Auth 의 세션 폐기·로그아웃 경로는 HTTP 로 열려 있지 않다 — 세션은 우리 경로만 지운다(소켓 끊기와 함께)", async () => {
+    app = await bootTestApp();
+    const { token, headers } = await login(app);
+    const session = await verifySessionToken(app.auth, token);
+    for (const url of [
+      "/api/auth/revoke-session",
+      "/api/auth/revoke-sessions",
+      "/api/auth/revoke-other-sessions",
+      "/api/auth/sign-out",
+    ]) {
+      const res = await app.fastify.inject({
+        method: "POST",
+        url,
+        headers: { ...headers, origin: "http://localhost:5173", "content-type": "application/json" },
+        payload: { token },
+      });
+      expect(res.statusCode, url).toBe(404);
+    }
+    expect(await verifySessionToken(app.auth, token)).toEqual(session);
+  });
   it("/api/v1/auth/local 은 1분에 5회까지, 6번째는 429 RATE_LIMITED", async () => {
     app = await bootTestApp();
     for (let i = 0; i < 5; i++) expect((await local(app, `wrong-token-${i}-xxxxxx`)).statusCode).toBe(401);

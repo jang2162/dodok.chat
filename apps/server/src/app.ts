@@ -302,6 +302,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       betterAuthPerMin: limits.betterAuthPerMin,
       loginLimit,
       ops,
+      disconnectSessions: (sessionIds) => disconnectSessions(io, sessionIds),
     });
     registerMemberRoutes(fastify, {
       auth,

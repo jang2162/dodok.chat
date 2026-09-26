@@ -12,8 +12,8 @@ import { type Auth, SESSION_COOKIE, verifySessionToken } from "./index";
 
 declare module "fastify" {
   interface FastifyRequest {
-    /** requireSession 이 채운다. role 은 이 요청에서 membership 을 읽은 값이다 */
-    user?: { id: string; workspaceId: string; role: TeamRole };
+    /** requireSession 이 채운다. role 은 이 요청에서 membership 을 읽은 값이다. sessionId 는 Better Auth session 행의 id */
+    user?: { id: string; workspaceId: string; role: TeamRole; sessionId: string };
   }
 }
 
@@ -66,7 +66,7 @@ export function requireSession(ctx: GuardContext) {
     if (!session) throw apiError("UNAUTHORIZED", "로그인이 필요하다");
     const role = roleOf(ctx.db, ctx.workspaceId, session.userId);
     if (!role) throw apiError("UNAUTHORIZED", "워크스페이스 멤버가 아니다");
-    request.user = { id: session.userId, workspaceId: ctx.workspaceId, role };
+    request.user = { id: session.userId, workspaceId: ctx.workspaceId, role, sessionId: session.sessionId };
     request.server.restLimits?.rest(request, session.userId);
   };
 }
@@ -81,7 +81,12 @@ export function requireRole(ctx: GuardContext, min: TeamRole) {
 }
 
 /** requireSession 뒤 핸들러에서 쓴다 */
-export function sessionUser(request: FastifyRequest): { id: string; workspaceId: string; role: TeamRole } {
+export function sessionUser(request: FastifyRequest): {
+  id: string;
+  workspaceId: string;
+  role: TeamRole;
+  sessionId: string;
+} {
   if (!request.user) throw apiError("UNAUTHORIZED", "로그인이 필요하다");
   return request.user;
 }

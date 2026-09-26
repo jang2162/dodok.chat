@@ -295,6 +295,34 @@ describe("「내 계정」", () => {
     }
   });
 
+  it("로그아웃 — 그 세션의 열린 wire 소켓(같은 쿠키를 쓰는 다른 탭 포함)을 모두 끊고, 다른 세션의 소켓은 남는다", async () => {
+    app = await bootTestApp({}, roomy);
+    await app.fastify.listen({ host: "127.0.0.1", port: 0 });
+    const owner = await login(app);
+    const joined = await join(app, owner.headers);
+    const other = (await local(app, { email: "bee@example.com", password: PASSWORD })).json() as {
+      sessionToken: string;
+    };
+    const cut = [await connectWire(app, joined.sessionToken), await connectWire(app, joined.sessionToken)];
+    const kept = await connectWire(app, other.sessionToken);
+    try {
+      const reasons = cut.map((s) => new Promise<string>((resolve) => s.once("disconnect", resolve)));
+      const res = await app.fastify.inject({
+        method: "POST",
+        url: "/api/v1/auth/logout",
+        headers: { cookie: `dodok.session=${joined.sessionToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(await Promise.all(reasons)).toEqual(["io server disconnect", "io server disconnect"]);
+      const ack = await new Promise<{ ok: boolean }>((resolve) =>
+        kept.emit("channel.unsubscribe", { channelId: uuidv7() }, resolve),
+      );
+      expect(ack.ok).toBe(true);
+    } finally {
+      for (const s of [...cut, kept]) s.close();
+    }
+  });
+
   it("핸드셰이크를 지나는 사이 세션이 지워지면 connection 에서 끊는다", async () => {
     app = await bootTestApp({}, roomy);
     await app.fastify.listen({ host: "127.0.0.1", port: 0 });

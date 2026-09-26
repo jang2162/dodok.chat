@@ -30,6 +30,7 @@ export function createAuth(
     },
     // 비밀번호 사인인은 레이트리밋이 걸린 /api/v1/auth/local 로만 — 서버 API(auth.api.signInEmail)는 영향 없음.
     // 비밀번호·프로필 변경 경로도 닫는다: 「로컬 토큰 = owner 비밀번호」 불변식과 users 행 동기화를 지키기 위해(리뷰 sc-t3 지적 2)
+    // 세션 폐기·로그아웃도 닫는다 — 세션 행은 그 세션의 wire 소켓을 함께 끊는 우리 경로(/api/v1/auth/logout·me/password·재설정·내보내기)만 지운다
     disabledPaths: [
       "/sign-in/email",
       "/change-password",
@@ -37,6 +38,10 @@ export function createAuth(
       "/update-user",
       "/change-email",
       "/delete-user",
+      "/sign-out",
+      "/revoke-session",
+      "/revoke-sessions",
+      "/revoke-other-sessions",
     ],
     session: { expiresIn: SESSION_MAX_AGE_S, updateAge: 60 * 60 * 24 },
     plugins: [bearer()],
