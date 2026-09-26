@@ -60,7 +60,7 @@ describe("운영 사건 통합 — ops.event 팬아웃", () => {
     expect(memberSeen).toHaveLength(0);
   });
 
-  it("역할이 바뀌면 다음 사건부터 따른다 — member→owner 는 받기 시작하고 owner→member 는 그친다", async () => {
+  it("역할이 바뀌면 다음 사건부터 따른다 — owner·admin 으로 오르면 받기 시작하고 member 로 내리면 그친다", async () => {
     app = await bootTestApp({}, { pluginDirs: [] });
     await app.fastify.listen({ host: "127.0.0.1", port: 0 });
     const bee = await userWithRole(app, "bee", "member");
@@ -69,6 +69,7 @@ describe("운영 사건 통합 — ops.event 팬아웃", () => {
     const seen = recordEvents(socket, ["ops.event"]);
     const setRole = (role: string) =>
       app?.db.update(memberships).set({ role }).where(eq(memberships.userId, bee.id)).run();
+    const keys = () => seen.map((e) => (e.payload as { event: { key: string } }).event.key);
 
     app.ops.record({ kind: "run_failed", key: "before", severity: "warn" });
     await roundTrip(socket);
@@ -82,7 +83,17 @@ describe("운영 사건 통합 — ops.event 팬아웃", () => {
     setRole("member");
     app.ops.record({ kind: "run_failed", key: "demoted", severity: "warn" });
     await roundTrip(socket);
-    expect(seen.map((e) => (e.payload as { event: { key: string } }).event.key)).toEqual(["promoted"]);
+    expect(keys()).toEqual(["promoted"]);
+
+    setRole("admin");
+    const gotAdmin = waitFor(socket, "ops.event");
+    app.ops.record({ kind: "run_failed", key: "admin", severity: "warn" });
+    expect((await gotAdmin).event.key).toBe("admin");
+
+    setRole("member");
+    app.ops.record({ kind: "run_failed", key: "admin-demoted", severity: "warn" });
+    await roundTrip(socket);
+    expect(keys()).toEqual(["promoted", "admin"]);
   });
 });
 

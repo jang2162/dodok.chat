@@ -63,8 +63,8 @@ export function registerAgentRoutes(fastify: FastifyInstance, ctx: AgentRouteCon
     return { agent: updateAgent(ctx.db, id, patch) };
   });
 
-  /** Gateway agents.list 를 그대로 — 등록 화면의 선택지. 자동 동기화는 하지 않는다(스펙 3.5). */
-  fastify.get("/api/v1/agents/discover", authed, async () => {
+  /** Gateway agents.list 를 그대로 — 등록 화면(admin)의 선택지. 자동 동기화는 하지 않는다(스펙 3.5). */
+  fastify.get("/api/v1/agents/discover", admin, async () => {
     if (!ctx.adapter) throw apiError("ADAPTER_UNAVAILABLE", "adapter not configured");
     try {
       return { agents: await ctx.adapter.listAgents() };

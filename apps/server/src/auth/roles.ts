@@ -19,7 +19,7 @@ declare module "fastify" {
 
 type GuardContext = { auth: Auth; db: DbOrTx; workspaceId: string };
 
-/** PATCH /channels/:id 에서 member 가 바꿀 수 있는 필드. 목록 밖 필드가 하나라도 있으면 admin — 새 필드는 기본이 admin 이다 */
+/** POST /channels·PATCH /channels/:id 에서 member 가 줄 수 있는 필드. 목록 밖 필드가 하나라도 있으면 admin — 새 필드는 기본이 admin 이다 */
 export const MEMBER_EDITABLE_CHANNEL_FIELDS: ReadonlySet<string> = new Set(["name", "topic"]);
 
 /**

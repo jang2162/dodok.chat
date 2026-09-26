@@ -88,7 +88,7 @@ describe("역할 매트릭스(스펙 2장)", () => {
       .from(channelMembers)
       .where(and(eq(channelMembers.channelId, channelId), eq(channelMembers.memberId, agentId)))
       .get();
-  const setRole = (userId: string, role: TeamRole) =>
+  const setRole = (userId: string, role: TeamRole | "guest") =>
     app.db
       .update(memberships)
       .set({ role })
@@ -126,11 +126,25 @@ describe("역할 매트릭스(스펙 2장)", () => {
       }),
     },
     {
-      name: "POST /channels",
-      min: "member",
-      ok: 201,
-      request: () => ({ method: "POST", url: "/api/v1/channels", payload: { name: `c${++n}` } }),
+      name: "GET /agents/discover",
+      min: "admin",
+      ok: 200,
+      request: () => ({ method: "GET", url: "/api/v1/agents/discover" }),
     },
+    ...(
+      [
+        ["{name}", "member", {}],
+        ["{name, topic}", "member", { topic: "설명" }],
+        ["{name, prompt}", "admin", { prompt: "새 프롬프트" }],
+        ["{name, relayPolicy}", "admin", { relayPolicy: { maxRelayTurns: 2, allowPairs: "all" } }],
+        ["{name, visibility}", "admin", { visibility: "private" }],
+      ] as const
+    ).map(([label, min, extra]): Case => ({
+      name: `POST /channels ${label}`,
+      min,
+      ok: 201,
+      request: () => ({ method: "POST", url: "/api/v1/channels", payload: { name: `c${++n}`, ...extra } }),
+    })),
     ...(
       [
         ["{name}", "member", { name: "새 이름" }],
@@ -264,6 +278,18 @@ describe("역할 매트릭스(스펙 2장)", () => {
     });
   });
 
+  it("member 의 POST /channels {name, prompt} 는 403 — 채널이 생기지 않는다", async () => {
+    const name = `sneaky${++n}`;
+    const res = await call(tokens.member, {
+      method: "POST",
+      url: "/api/v1/channels",
+      payload: { name, prompt: "관리자 몰래" },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toMatchObject({ code: "FORBIDDEN" });
+    expect(app.db.select().from(channels).where(eq(channels.name, name)).get()).toBeUndefined();
+  });
+
   it("member 의 PATCH /channels/:id 에 모르는 필드가 섞이면 admin 몫이다 — 목록에 없는 필드는 admin", async () => {
     const channel = newChannel();
     const res = await call(tokens.member, {
@@ -325,6 +351,14 @@ describe("역할 매트릭스(스펙 2장)", () => {
 
     it("/auth/me 401", async () => {
       const res = await call(gone.token, { method: "GET", url: "/api/v1/auth/me" });
+      expect(res.statusCode).toBe(401);
+      expect(res.json()).toMatchObject({ code: "UNAUTHORIZED" });
+    });
+
+    it("membership role 이 guest 면 /auth/me 401 — 모르는 역할은 membership 이 없는 것과 같다", async () => {
+      const guest = await userWithRole(app, `guest${++n}`, "member");
+      setRole(guest.id, "guest");
+      const res = await call(guest.token, { method: "GET", url: "/api/v1/auth/me" });
       expect(res.statusCode).toBe(401);
       expect(res.json()).toMatchObject({ code: "UNAUTHORIZED" });
     });

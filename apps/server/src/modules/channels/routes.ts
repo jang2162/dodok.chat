@@ -103,6 +103,8 @@ export function registerChannelRoutes(fastify: FastifyInstance, ctx: ChannelRout
   fastify.post("/api/v1/channels", authed, async (request, reply) => {
     const user = sessionUser(request);
     const body = parseBody(CreateChannelBody, request.body);
+    // 만들 때 name·topic 밖의 필드(프롬프트·릴레이 정책·공개 범위)를 실으면 PATCH 와 같이 admin 몫
+    assertFields(request, MEMBER_EDITABLE_CHANNEL_FIELDS);
     const channel = createChannel(ctx.db, { ...body, workspaceId: user.workspaceId, createdBy: user.id });
     // 채널 룸에는 아직 아무도 없다 — 워크스페이스 룸으로 알려 다른 탭의 목록에 바로 뜨게 한다(계획서 8장 이월)
     ctx.bus.emit("channel.created", { channel });
