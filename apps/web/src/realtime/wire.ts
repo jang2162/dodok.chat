@@ -5,7 +5,7 @@ import {
   type ServerToClientEvents,
   WIRE_PROTOCOL,
 } from "@dodok/shared";
-import { io, type Socket } from "socket.io-client";
+import { Manager, type Socket } from "socket.io-client";
 import { create } from "zustand";
 
 export type WireSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
@@ -33,13 +33,52 @@ export const useWireStatus = create<{ status: WireStatus; setStatus(s: WireStatu
  * polling 의 첫 GET 에는 Origin 이 없으므로 websocket 전송만 쓴다.
  */
 export function createWireSocket(): WireSocket {
-  return io({
+  const manager = new WireManager({
     path: "/socket.io",
     transports: ["websocket"],
     withCredentials: true,
     autoConnect: false,
-    auth: { protocol: WIRE_PROTOCOL },
   });
+  return manager.socket("/", { auth: { protocol: WIRE_PROTOCOL } });
+}
+
+/**
+ * 다시 붙기가 핸드셰이크 전에 **깨끗이** 닫히면(close 프레임만, error 없음) socket.io Manager 는 그 시도를 실패로 보지
+ * 않는다 — 열리는 동안 engine 의 error 만 듣기 때문이다. 그러면 연결 제한시간(`timeout`, 20초)이 지나서야 다음 시도로
+ * 가고 그동안 아무것도 받지 못한다(p4t-c1 결함 1). 그 close 를 error 로 알려 Manager 의 백오프가 곧바로 다음 시도를
+ * 잡게 한다. 연결 거부·비정상 종료는 원래 error 가 먼저 온다
+ */
+export class WireManager extends Manager {
+  override open(fn?: (err?: Error) => void): this {
+    super.open(fn);
+    failOnEarlyClose(this.engine);
+    return this;
+  }
+}
+
+const watched = new WeakSet<Manager["engine"]>();
+
+function failOnEarlyClose(engine: Manager["engine"]): void {
+  // 이미 열렸거나(super.open 이 아무것도 안 했다) 보고 있는 엔진
+  if (engine.readyState !== "opening" || watched.has(engine)) return;
+  watched.add(engine);
+  const stop = () => {
+    engine.off("open", stop);
+    engine.off("error", stop);
+    engine.off("close", onClose);
+  };
+  const onClose = (reason: string) => {
+    stop();
+    // 제한시간·disconnect() 가 닫은 것(forced close)은 Manager 가 먼저 듣기를 거둬 이 알림이 닿지 않는다.
+    // Manager 가 듣는 자리(열리는 동안의 engine error)로 알린다 — emitReserved 는 protected 라 한 번 캐스트한다
+    (engine as unknown as { emitReserved(e: "error", err: Error): void }).emitReserved(
+      "error",
+      new Error(`${reason} before handshake`),
+    );
+  };
+  engine.on("open", stop);
+  engine.on("error", stop);
+  engine.on("close", onClose);
 }
 
 export class WireAckError extends Error {

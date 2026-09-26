@@ -1,8 +1,9 @@
 import { WIRE_PROTOCOL } from "@dodok/shared";
-import { describe, expect, it, vi } from "vitest";
+import { WebSocket as WebSocketTransport } from "socket.io-client";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createFakeSocket } from "../../test/fakeSocket";
 import { CH } from "../../test/fixtures";
-import { createWireSocket, emitAck, WireAckError } from "./wire";
+import { createWireSocket, emitAck, WireAckError, WireManager } from "./wire";
 
 // test/setup.ts 는 createWireSocket 을 가짜로 바꾼다 — 이 파일은 원래 것을 잰다
 vi.unmock("./wire");
@@ -77,5 +78,97 @@ describe("createWireSocket", () => {
       withCredentials: true,
       autoConnect: false,
     });
+  });
+});
+
+/** 테스트가 여닫는 날 WebSocket — 엔진의 websocket 전송이 이것을 만든다 */
+class RawSocket {
+  binaryType = "arraybuffer";
+  onopen: (() => void) | null = null;
+  onclose: ((e: { code: number; reason: string; wasClean: boolean }) => void) | null = null;
+  onmessage: ((e: { data: string }) => void) | null = null;
+  onerror: ((e: unknown) => void) | null = null;
+  send = vi.fn();
+  close = vi.fn();
+  /** 업그레이드가 되고 엔진 핸드셰이크(open 패킷)까지 온다 */
+  handshake(): void {
+    this.onopen?.();
+    this.onmessage?.({
+      data: `0${JSON.stringify({ sid: "s", upgrades: [], pingInterval: 25_000, pingTimeout: 20_000, maxPayload: 1e6 })}`,
+    });
+  }
+  /** close 프레임만 — error 없이 깨끗이 닫힌다(브라우저 검증 결함 1 의 재현: 핸드셰이크 전에 이렇게 닫힌다) */
+  closeCleanly(): void {
+    this.onclose?.({ code: 1000, reason: "", wasClean: true });
+  }
+}
+
+describe("WireManager", () => {
+  const raws: RawSocket[] = [];
+  class FakeTransport extends WebSocketTransport {
+    override createSocket(): never {
+      const raw = new RawSocket();
+      raws.push(raw);
+      return raw as never;
+    }
+  }
+  afterEach(() => {
+    raws.length = 0;
+    vi.useRealTimers();
+  });
+
+  it("다시 붙기가 핸드셰이크 전에 깨끗이 닫혀도 연결 제한시간(20초)을 기다리지 않고 백오프 안에 다시 시도한다", async () => {
+    vi.useFakeTimers();
+    const manager = new WireManager({
+      transports: [FakeTransport],
+      autoConnect: false,
+      reconnectionDelay: 1_000,
+      reconnectionDelayMax: 5_000,
+      randomizationFactor: 0,
+    });
+    const socket = manager.socket("/");
+    socket.connect();
+    raws[0]!.handshake();
+    await vi.advanceTimersByTimeAsync(0);
+
+    // 살아 있던 연결이 끊긴다 → 1초 뒤 첫 재시도
+    raws[0]!.closeCleanly();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(raws).toHaveLength(2);
+
+    // 그 시도는 업그레이드까지 되고 핸드셰이크 전에 깨끗이 닫힌다(실패) → 다음 백오프(2초) 안에 다시
+    raws[1]!.onopen?.();
+    raws[1]!.closeCleanly();
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(raws).toHaveLength(3);
+
+    // 그 시도는 붙는다
+    raws[2]!.handshake();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(manager.engine.readyState).toBe("open");
+    socket.disconnect();
+  });
+
+  it("처음 붙기가 핸드셰이크 전에 깨끗이 닫혀도 connect_error 를 내고 백오프 뒤 다시 시도한다", async () => {
+    vi.useFakeTimers();
+    const manager = new WireManager({
+      transports: [FakeTransport],
+      autoConnect: false,
+      reconnectionDelay: 1_000,
+      randomizationFactor: 0,
+    });
+    const socket = manager.socket("/");
+    const errors: string[] = [];
+    socket.on("connect_error", (e) => errors.push(e.message));
+    socket.connect();
+    raws[0]!.onopen?.();
+    raws[0]!.closeCleanly();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(errors).toEqual(["transport close before handshake"]);
+    // 앱 재시도(handlers 의 retryLater)는 active 가 아닐 때만 — socket.io 가 다시 붙는다
+    expect(socket.active).toBe(true);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(raws).toHaveLength(2);
+    socket.disconnect();
   });
 });
