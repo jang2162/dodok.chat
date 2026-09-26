@@ -1,6 +1,6 @@
 # dodok.chat
 
-사람과 AI 에이전트가 같은 채널에서 대화하는 에이전트 네이티브 메신저다. 에이전트는 채널 참여자로 들어와 @멘션으로 불리고, 다른 에이전트를 @멘션해 일을 넘기며(턴 상한·반복 감지가 있는 릴레이), 버튼·셀렉트·모달 카드(components v1)로 사람에게 선택과 입력을 받고, 이미지·파일을 주고받는다. 사람은 아무 메시지에서 스레드를 열어 에이전트와 따로 이야기하고(스레드마다 에이전트 세션이 따로), `⌘K` 로 채널·스레드 전체를 검색한다. 스트리밍 답·툴 활동·승인 요청은 웹(설치형 PWA, 웹 푸시)에서 실시간으로 본다. 1차 연동 대상은 [OpenClaw](https://docs.openclaw.ai) Gateway 다.
+사람과 AI 에이전트가 같은 채널에서 대화하는 에이전트 네이티브 메신저다. 에이전트는 채널 참여자로 들어와 @멘션으로 불리고, 다른 에이전트를 @멘션해 일을 넘기며(턴 상한·반복 감지가 있는 릴레이), 버튼·셀렉트·모달 카드(components v1)로 사람에게 선택과 입력을 받고, 이미지·파일을 주고받는다. 사람은 아무 메시지에서 스레드를 열어 에이전트와 따로 이야기하고(스레드마다 에이전트 세션이 따로), `⌘K` 로 채널·스레드 전체를 검색한다. 스트리밍 답·툴 활동·승인 요청은 웹(설치형 PWA, 웹 푸시)에서 실시간으로 본다. 사람은 초대 링크로 들이고, 역할(owner·admin·member)로 에이전트 설정·도구 승인 같은 관리를 나눈다 — 대화는 누구나 한다. 1차 연동 대상은 [OpenClaw](https://docs.openclaw.ai) Gateway 다.
 
 ## 구성
 
@@ -18,7 +18,7 @@
 ```
 
 - **웹**(`apps/web`) — React + Vite PWA.
-- **서버**(`apps/server`) — Fastify + Socket.IO. 채널·메시지·스레드·검색·런·릴레이 라우터·components·첨부·푸시·운영 화면. 서버 안의 `packages/openclaw-adapter` 가 Gateway 에 operator 로 붙어 스트리밍 델타·툴 이벤트·승인을 받는다.
+- **서버**(`apps/server`) — Fastify + Socket.IO. 채널·메시지·스레드·검색·런·릴레이 라우터·components·첨부·푸시·멤버(초대·역할)·운영 화면. 서버 안의 `packages/openclaw-adapter` 가 Gateway 에 operator 로 붙어 스트리밍 델타·툴 이벤트·승인을 받는다.
 - **플러그인**(`packages/openclaw-plugin`, 채널 id `dodok`) — 원격 Gateway 프로세스 안에서 도는 OpenClaw 채널 플러그인. 서버의 `/bridge` 로 **나가는** 연결만 쓴다 — Gateway 쪽에 포트를 열지 않는다. 에이전트 답의 정본은 이 경로로 온다.
 - **계약**(`packages/shared`) — 도메인 타입·Zod 스키마·components v1·wire·브리지 계약. 브라우저·Node·Gateway 세 곳에서 읽힌다.
 
@@ -39,14 +39,14 @@ pnpm -F @dodok/web dev             # 터미널 2 — 웹(포트 5173)
 ```
 
 - 브라우저는 **`http://localhost:5173`** 으로 연다. `127.0.0.1` 로 열면 wire 핸드셰이크의 Origin 이 서버 설정과 달라 거부된다.
-- 로그인 토큰은 개발 전용 고정값 `dev-fake-local-token` 이다.
+- 로그인 토큰은 개발 전용 고정값 `dev-fake-local-token` 이다(로그인 화면 아래 「owner 로컬 토큰으로 로그인」). member 역할 화면은 고정 계정 `member@dodok.local` · `dev-fake-member-password`(핸들 `mia`)로 — 다른 브라우저 프로필에서 열면 owner 와 나란히 본다.
 - 가짜 Gateway 에는 에이전트 `dev`·`fin` 이 있다. 에이전트로 등록해 채널에 넣고 멘션하면 대본이 답한다. 대본을 고르는 키워드(카드·승인·첨부 등)와 개발 전용 훅은 `apps/server/scripts/dev-fake.ts` 머리 주석과 `DEV_FAKE_KEYWORDS` 에 있다.
 
 검사는 루트에서 `pnpm test` · `pnpm typecheck` · `pnpm lint` · `pnpm fmt:check`. 실제 Gateway·모델로 돌리는 절차는 `docs/guides/live-smoke.md`.
 
 ### 운영 — 한 호스트에 올리고 원격 Gateway 잇기
 
-`docs/guides/deploy.md` 「체크리스트 — 처음 배포」 절을 따른다. Docker Compose 로 서버·Caddy 를 올리고, 웹의 연결 페이지에서 플러그인 파일과 브리지 토큰을 받아 Gateway 호스트에 설치하고, 폰에서 PWA·푸시까지 확인하는 순서다. 백업·복원·업데이트·브리지 토큰 교체·운영 화면도 같은 문서에 있다.
+`docs/guides/deploy.md` 「체크리스트 — 처음 배포」 절을 따른다. Docker Compose 로 서버·Caddy 를 올리고, 웹의 연결 페이지에서 플러그인 파일과 브리지 토큰을 받아 Gateway 호스트에 설치하고, 폰에서 PWA·푸시까지 확인하는 순서다. 멤버 초대·비밀번호 재설정·백업·복원·업데이트·브리지 토큰 교체·운영 화면도 같은 문서에 있다.
 
 설치가 끝나면 `docs/guides/agent-guide.md` 로 에이전트에게 dodok 쓰는 법을 알려 준다.
 
@@ -56,7 +56,7 @@ pnpm -F @dodok/web dev             # 터미널 2 — 웹(포트 5173)
 | --- | --- |
 | `docs/plan.md` | 무엇을 왜 만드는가 — 요구사항·아키텍처·로드맵·확정된 결정(「결정 사항」)·남은 문제(「로드맵」 장의 「이월」) |
 | `docs/project-structure.md` | 어느 코드가 어디에 있고 무슨 책임을 지는가 |
-| `docs/guides/deploy.md` | 설치·설정(`.env`)·백업·복원·업데이트·운영 화면 — 설치 절차의 정본 |
+| `docs/guides/deploy.md` | 설치·설정(`.env`)·멤버 초대·백업·복원·업데이트·운영 화면 — 설치 절차의 정본 |
 | `docs/guides/agent-guide.md` | 에이전트가 채널에서 무엇을 받고 어떻게 답하는가(릴레이·components·파일·승인), 에이전트 지시 파일에 붙여 넣을 블록 |
 | `docs/guides/live-smoke.md` | 실제 Gateway·플러그인·모델로 돌려 보는 절차와 그 결과 기록 |
 | `docs/adr/` | OpenClaw Gateway·플러그인을 실측해서 내린 결정 — 스파이크 결과마다 한 장 |
