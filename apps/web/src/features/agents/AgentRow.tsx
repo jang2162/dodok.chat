@@ -11,8 +11,11 @@ import { usePatchAgent } from "./mutations";
 
 const PROMPT_MAX = 20_000;
 
-/** 목록 한 줄: 이름·핸들·OpenClaw id·사용 토글·기본 프롬프트. 토글은 낙관적 갱신 없이 요청 중에만 잠근다(실패는 전역 토스트) */
-export function AgentRow({ agent }: { agent: Agent }) {
+/**
+ * 목록 한 줄: 이름·핸들·OpenClaw id·사용 토글·기본 프롬프트. 토글은 낙관적 갱신 없이 요청 중에만 잠근다(실패는 전역 토스트).
+ * `readOnly`(admin 미만 — 팀 스펙 2장)면 토글을 잠그고 프롬프트는 미리보기만
+ */
+export function AgentRow({ agent, readOnly = false }: { agent: Agent; readOnly?: boolean }) {
   const toggle = usePatchAgent();
   const handle = `@${agent.handle}`;
   return (
@@ -35,17 +38,17 @@ export function AgentRow({ agent }: { agent: Agent }) {
         <Switch
           aria-label={`${handle} 사용`}
           checked={agent.enabled}
-          disabled={toggle.isPending}
+          disabled={toggle.isPending || readOnly}
           onCheckedChange={(enabled) => toggle.mutate({ id: agent.id, patch: { enabled } })}
         />
       </div>
-      <BasePromptEditor agent={agent} />
+      <BasePromptEditor agent={agent} readOnly={readOnly} />
     </li>
   );
 }
 
 /** 접힌 채로는 미리보기, 펼치면 편집. 비워 저장하면 null(지움). VALIDATION·CONFLICT 만 폼 안에 — 그 밖은 전역 토스트 */
-function BasePromptEditor({ agent }: { agent: Agent }) {
+function BasePromptEditor({ agent, readOnly }: { agent: Agent; readOnly: boolean }) {
   const save = usePatchAgent();
   const [draft, setDraft] = useState<string>(); // undefined 면 접힘
   const [error, setError] = useState<string>();
@@ -54,7 +57,7 @@ function BasePromptEditor({ agent }: { agent: Agent }) {
   const id = useId();
   const handle = `@${agent.handle}`;
 
-  if (draft === undefined) {
+  if (draft === undefined || readOnly) {
     return (
       <div className="flex items-start justify-between gap-3">
         <p
@@ -65,15 +68,17 @@ function BasePromptEditor({ agent }: { agent: Agent }) {
         >
           {agent.basePrompt ?? "기본 프롬프트 없음"}
         </p>
-        <Button
-          variant="outline"
-          size="sm"
-          aria-label={`${handle} 기본 프롬프트 편집`}
-          autoFocus={refocus}
-          onClick={() => setDraft(agent.basePrompt ?? "")}
-        >
-          기본 프롬프트 편집
-        </Button>
+        {!readOnly && (
+          <Button
+            variant="outline"
+            size="sm"
+            aria-label={`${handle} 기본 프롬프트 편집`}
+            autoFocus={refocus}
+            onClick={() => setDraft(agent.basePrompt ?? "")}
+          >
+            기본 프롬프트 편집
+          </Button>
+        )}
       </div>
     );
   }

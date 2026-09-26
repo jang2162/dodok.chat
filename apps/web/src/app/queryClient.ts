@@ -1,7 +1,7 @@
 import { MutationCache, QueryCache, QueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ApiRequestError, NetworkError } from "@/api/http";
-import { qk } from "@/api/queries";
+import { meQuery, qk } from "@/api/queries";
 
 /** 쿼리·뮤테이션 meta. `silent` 면 전역 오류 토스트를 내지 않는다(401 처리는 그대로) — 오류를 스스로 보이는 곳이 쓴다 */
 export type RequestMeta = { silent?: boolean };
@@ -14,6 +14,8 @@ declare module "@tanstack/react-query" {
 }
 
 const is401 = (e: unknown) => e instanceof ApiRequestError && e.status === 401;
+/** 역할이 모자라 서버가 막은 것(팀 스펙 2장) — 봉투 없는 403(프록시 등)은 아니다 */
+const isForbidden = (e: unknown) => e instanceof ApiRequestError && e.code === "FORBIDDEN";
 /** 폼 입력 오류는 폼 안에서 보인다(스펙 8장) — 뮤테이션 전역 토스트에서 뺀다 */
 const isFormError = (e: unknown) =>
   e instanceof ApiRequestError && (e.code === "VALIDATION" || e.code === "CONFLICT");
@@ -24,7 +26,8 @@ const isRetryable = (e: unknown) =>
 
 /** 스펙 8장: 네트워크 실패는 한 id 로 모아 하나만, API 오류는 서버 message. 그 밖(코드 오류)은 토스트하지 않는다 */
 function toastError(e: unknown) {
-  if (e instanceof NetworkError) toast.error("서버에 연결할 수 없습니다", { id: "network" });
+  if (isForbidden(e)) toast.error("권한이 없습니다", { id: "forbidden" });
+  else if (e instanceof NetworkError) toast.error("서버에 연결할 수 없습니다", { id: "network" });
   else if (e instanceof ApiRequestError) toast.error(e.message);
 }
 
@@ -34,9 +37,14 @@ function toastError(e: unknown) {
  * me 는 토스트하지 않는다(오프라인은 배너가 알린다).
  * 그 밖의 실패는 전역 토스트 — `meta.silent` 로 끄고, 뮤테이션의 VALIDATION·CONFLICT 는 저절로 빠진다.
  * 쿼리 onError 는 재시도가 다 끝난 뒤 한 번 온다. 재시도는 5xx·네트워크 실패만 2회.
+ * `FORBIDDEN` 은 역할이 바뀐 것을 화면이 아직 모른다는 뜻이다(팀 스펙 6장 — 역할은 다음 `/auth/me` 부터 따른다) — 서버 문구 대신
+ * 「권한이 없습니다」 한 줄을 띄우고, `silent` 여부와 상관없이 me 를 다시 받아 관리 화면을 잠근다
  */
 export function createQueryClient(onUnauthorized: () => void): QueryClient {
-  return new QueryClient({
+  const refreshRole = (e: unknown) => {
+    if (isForbidden(e)) void qc.fetchQuery({ ...meQuery, staleTime: 0 }).catch(() => undefined);
+  };
+  const qc: QueryClient = new QueryClient({
     queryCache: new QueryCache({
       onError: (e, query) => {
         if (query.queryKey[0] === qk.me[0]) {
@@ -44,12 +52,14 @@ export function createQueryClient(onUnauthorized: () => void): QueryClient {
           if (is401(e) && query.state.data !== undefined) onUnauthorized();
           return;
         }
+        refreshRole(e);
         if (is401(e)) onUnauthorized();
         else if (!query.meta?.silent) toastError(e);
       },
     }),
     mutationCache: new MutationCache({
       onError: (e, _variables, _onMutateResult, mutation) => {
+        refreshRole(e);
         if (is401(e)) onUnauthorized();
         else if (!mutation.meta?.silent && !isFormError(e)) toastError(e);
       },
@@ -61,4 +71,5 @@ export function createQueryClient(onUnauthorized: () => void): QueryClient {
       },
     },
   });
+  return qc;
 }

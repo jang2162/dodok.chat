@@ -7,7 +7,7 @@ import { isImageMime } from "@dodok/shared";
 import { ImagePlusIcon, SendHorizontalIcon } from "lucide-react";
 import { type DragEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { useAgents, useMe, useMembers } from "@/api/queries";
+import { useAgents, useCanManage, useMe, useMembers, usePeople } from "@/api/queries";
 import { ResetSessionDialog } from "@/features/agents/ResetSessionDialog";
 import { ONLY_IMAGES } from "@/features/attachments/upload";
 import { useComposerAttachments } from "@/features/attachments/useComposerAttachments";
@@ -72,6 +72,8 @@ export function Composer({ channelId, threadRootId }: { channelId: string; threa
   const members = useMembers(channelId);
   const agents = useAgents();
   const me = useMe();
+  const people = usePeople();
+  const canManage = useCanManage();
   const hintId = useId();
   const [reset, setReset] = useState<{ target?: ResetTarget; open: boolean }>({ open: false });
   // 연 채널을 떠나면(대화상자 너머 뒤로 가기 등) 닫는다 — 되돌릴 수 없는 리셋을 옮겨 간 채널에서 묻지 않게
@@ -80,8 +82,8 @@ export function Composer({ channelId, threadRootId }: { channelId: string; threa
   const draftKey = threadRootId === undefined ? channelId : `${channelId}:${threadRootId}`;
 
   const candidates = useMemo(
-    () => mentionCandidates(members.data, agents.data, me.data),
-    [members.data, agents.data, me.data],
+    () => mentionCandidates(members.data, agents.data, me.data, people.data),
+    [members.data, agents.data, me.data, people.data],
   );
   // 편집기는 한 번만 만든다 — 바뀌는 값은 ref 로 읽는다
   const live = useRef({
@@ -166,6 +168,11 @@ export function Composer({ channelId, threadRootId }: { channelId: string; threa
     const cmd = parseSlash(doc);
     if (cmd?.kind === "invalid") {
       toast.error(cmd.message, { id: "slash-invalid" });
+      return;
+    }
+    // 「새 대화」는 admin 이상(팀 스펙 2장) — 대화상자를 열지 않고 알린다. 입력은 그대로 둬 고쳐 보낼 수 있게
+    if (cmd?.kind === "new" && !canManage) {
+      toast.error("「새 대화」는 관리자만 시작할 수 있습니다", { id: "slash-invalid" });
       return;
     }
     if (cmd?.kind === "new") {

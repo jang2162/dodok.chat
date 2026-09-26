@@ -38,7 +38,7 @@ describe("권한", () => {
 
   it("role 이 없는 옛 me 도 owner 가 아닌 것으로 본다", async () => {
     const server = stubSetupServer();
-    renderConnection(ME);
+    renderConnection({ user: ME.user, workspaceId: ME.workspaceId });
     expect(await screen.findByText(/권한이 없습니다/)).toBeInTheDocument();
     expect(server.setupCalls()).toEqual([]);
   });

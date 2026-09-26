@@ -59,6 +59,8 @@ export function stubSettingsServer(
     agents?: Agent[];
     channelList?: () => Channel[];
     override?: (call: Call) => Reply;
+    /** 로그인한 사람 — 기본은 owner(ME). member 화면은 `{ ...ME, role: "member" }` */
+    me?: unknown;
   } = {},
 ) {
   const state = {
@@ -70,7 +72,7 @@ export function stubSettingsServer(
   const base = `/api/v1/channels/${CH}`;
 
   function handle({ method, url, body }: Call): Reply {
-    if (url === "/api/v1/auth/me") return json(200, ME);
+    if (url === "/api/v1/auth/me") return json(200, opts.me ?? ME);
     if (method === "GET" && url === "/api/v1/channels")
       return json(200, { channels: opts.channelList?.() ?? [state.channel] });
     if (method === "GET" && url === "/api/v1/agents") return json(200, { agents: state.agents });

@@ -3,6 +3,7 @@ import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, vi } from "vitest";
+import { qk } from "@/api/queries";
 import { createQueryClient } from "@/app/queryClient";
 import { AgentsPage } from "@/features/agents/AgentsPage";
 
@@ -86,7 +87,10 @@ export function stubServer(
   };
 }
 
-export function renderPage(qc: QueryClient = createQueryClient(() => {})) {
+/** 로그인한 사람은 owner — 라우트 가드가 받아 둔 me 를 흉내 낸다(이미 있으면 그대로). member 화면은 `role` 을 넘긴다 */
+export function renderPage(qc: QueryClient = createQueryClient(() => {}), role = "owner") {
+  if (qc.getQueryData(qk.me) === undefined)
+    qc.setQueryData(qk.me, { user: { id: "u", handle: "owner" }, workspaceId: "w", role });
   render(
     <QueryClientProvider client={qc}>
       <AgentsPage />

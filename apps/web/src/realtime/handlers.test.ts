@@ -512,9 +512,14 @@ describe("승인 이벤트", () => {
 describe("승인 알림", () => {
   let stub: ReturnType<typeof stubNotification>;
   /** 알림이 뜰 수 있는 판 — 권한 있음, 에이전트·채널 이름은 캐시에 */
-  function armed(permission: NotificationPermission = "granted") {
+  function armed(permission: NotificationPermission = "granted", role: string | null = "owner") {
     stub = stubNotification(permission);
     const s = setup();
+    s.queryClient.setQueryData(qk.me, {
+      user: { id: "u", handle: "owner" },
+      workspaceId: "w",
+      ...(role === null ? {} : { role }),
+    });
     s.queryClient.setQueryData(qk.agents, [agentOf(AGENT, "dev")]);
     s.queryClient.setQueryData(qk.channels, [channel({ name: "일반" })]);
     return s;
@@ -557,6 +562,23 @@ describe("승인 알림", () => {
       status: "pending",
     });
     expect(stub.made).toHaveLength(1);
+  });
+
+  it("admin 도 알린다, member·역할 모름은 알리지 않는다 — 결정은 관리자 몫이다(팀 스펙 5장)", () => {
+    for (const [role, n] of [
+      ["admin", 1],
+      ["member", 0],
+      [null, 0],
+    ] as const) {
+      resetApprovalNotices();
+      const { fake } = armed("granted", role);
+      screenNow.channelId = CH2;
+      fake.serverEmit("approval.requested", { approval: approval() });
+      expect(stub.made, String(role)).toHaveLength(n);
+      // 카드(스토어)에는 누구에게나 들어간다 — 결과는 모두에게 보인다
+      expect(useApprovalStore.getState().byChannel[CH]?.[APPROVAL]).toBeDefined();
+      stub.restore();
+    }
   });
 
   it("보고 있는 채널의 승인은 알리지 않는다 — 카드가 이미 화면에 있다", () => {
@@ -623,7 +645,8 @@ describe("승인 알림", () => {
 
   it("에이전트·채널을 아직 못 받았으면 일반 문구로 띄운다 — 알림 때문에 REST 를 부르지 않는다", () => {
     stub = stubNotification("granted");
-    const { fake } = setup();
+    const { fake, queryClient } = setup();
+    queryClient.setQueryData(qk.me, { user: { id: "u", handle: "owner" }, workspaceId: "w", role: "owner" });
     screenNow.channelId = CH2;
     fake.serverEmit("approval.requested", { approval: approval({ toolName: undefined }) });
     expect(stub.made[0]?.title).toBe("승인 필요 — 에이전트가 도구를 실행하려 합니다");
@@ -695,6 +718,33 @@ describe("캐시 패치", () => {
     fake.serverEmit("channel.member.changed", { channelId: CH, members: [member] });
 
     expect(queryClient.getQueryData(qk.members(CH))).toEqual([member]);
+  });
+
+  it("people.changed: [people] 를 통째로 바꾼다", () => {
+    const { fake, queryClient } = setup();
+    const people = [{ id: uid(30), handle: "mina", displayName: "미나", role: "member" as const }];
+    fake.serverEmit("people.changed", { people });
+    expect(queryClient.getQueryData(qk.people)).toEqual(people);
+  });
+
+  it("people.changed 에서 내 역할이 me 와 다르면 me 를 다시 받는다 — 같으면 부르지 않는다", async () => {
+    const { fake, queryClient } = setup();
+    const me = { user: { id: uid(30), handle: "mina" }, workspaceId: "w", role: "admin" };
+    queryClient.setQueryData(qk.me, me);
+    const fetch = vi.fn(async () => new Response(JSON.stringify({ ...me, role: "member" }), { status: 200 }));
+    vi.stubGlobal("fetch", fetch);
+    try {
+      fake.serverEmit("people.changed", {
+        people: [{ id: uid(30), handle: "mina", displayName: "미나", role: "admin" }],
+      });
+      expect(fetch).not.toHaveBeenCalled();
+      fake.serverEmit("people.changed", {
+        people: [{ id: uid(30), handle: "mina", displayName: "미나", role: "member" }],
+      });
+      await vi.waitFor(() => expect(queryClient.getQueryData<{ role?: string }>(qk.me)?.role).toBe("member"));
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("setup.status: [setup, status] 를 통째로 바꾸고 토큰 목록은 다시 받게 낡은 것으로 둔다", () => {

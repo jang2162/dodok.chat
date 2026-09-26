@@ -29,7 +29,7 @@ export const FIN: Agent = {
   name: "Finance",
   enabled: false,
 };
-export const ME = { user: { id: USER, handle: "owner", displayName: "주인" }, workspaceId: W };
+export const ME = { user: { id: USER, handle: "owner", displayName: "주인" }, workspaceId: W, role: "owner" };
 
 export const memberOf = (memberId: string, aliases: string[] = []): ChannelMember => ({
   id: `m-${memberId}`,
@@ -51,9 +51,10 @@ export const mention = (id: string, label: string): JSONContent => ({
 export const doc = (...content: JSONContent[]): JSONContent => ({ type: "doc", content });
 
 /** 캐시를 채운 채 띄운다(조회 없음). 편집기는 ProseMirror 요소에 붙은 Tiptap 인스턴스 */
-export function renderComposer(channelId = CH) {
+export function renderComposer(channelId = CH, me: { role?: string } = ME) {
   const qc = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, retry: false } } });
-  qc.setQueryData(qk.me, ME);
+  qc.setQueryData(qk.me, me);
+  qc.setQueryData(qk.people, [{ id: USER, handle: "owner", displayName: "주인", role: "owner" }]);
   qc.setQueryData(qk.agents, [DEV, FIN]);
   qc.setQueryData(qk.members(CH), [memberOf(DEV.id, ["coder"]), memberOf(FIN.id)]);
   qc.setQueryData(qk.members(CH2), []);

@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiRequestError, NetworkError } from "@/api/http";
-import { useAgents, useMembers } from "@/api/queries";
+import { useAgents, useCanManage, useMembers } from "@/api/queries";
 import { ResetSessionDialog } from "@/features/agents/ResetSessionDialog";
 import { Composer } from "@/features/composer/Composer";
 import { useSendMessage } from "@/features/composer/useSendMessage";
@@ -80,7 +80,8 @@ function ThreadView({ channelId, rootId }: { channelId: string; rootId: string }
 
 /**
  * 채널 설정의 에이전트 줄 「새 대화」의 스레드판(스펙 2.4) — 이 스레드의 그 에이전트 세션만 새로 시작한다.
- * 채널의 에이전트 멤버마다 버튼 하나. 멤버가 없으면(아직 못 받았거나 에이전트가 없다) 줄을 그리지 않는다
+ * 채널의 에이전트 멤버마다 버튼 하나. 멤버가 없으면(아직 못 받았거나 에이전트가 없다) 줄을 그리지 않는다.
+ * admin 미만에게는 줄이 없다(팀 스펙 2장 — 「새 대화」는 관리 동작이다)
  */
 function ThreadAgents({ channelId, rootId }: { channelId: string; rootId: string }) {
   const members = useMembers(channelId);
@@ -89,7 +90,8 @@ function ThreadAgents({ channelId, rootId }: { channelId: string; rootId: string
   const [target, setTarget] = useState<{ agentId: string; handle: string }>();
   const [open, setOpen] = useState(false);
   const opener = useRef<HTMLButtonElement | null>(null);
-  if (rows.length === 0) return null;
+  const canManage = useCanManage();
+  if (rows.length === 0 || !canManage) return null;
   return (
     <div className="flex shrink-0 flex-wrap items-center gap-1 border-b px-3 py-1.5 text-xs text-muted-foreground">
       <span>새 대화</span>

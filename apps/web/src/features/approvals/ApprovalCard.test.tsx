@@ -4,10 +4,11 @@ import userEvent from "@testing-library/user-event";
 import { type ReactElement, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { qk } from "@/api/queries";
 import { useWireStatus, WireAckError } from "@/realtime/wire";
 import { createFakeSocket, type FakeSocket } from "../../../test/fakeSocket";
 import { APPROVAL, APPROVAL2, CH, CH2, approval, iso } from "../../../test/fixtures";
-import { renderWithClient } from "../../../test/messages";
+import { authorsClient, ME_USER, renderWithClient } from "../../../test/messages";
 import { ApprovalCard, resolveErrorMessage } from "./ApprovalCard";
 import { selectPendingApproval, useApprovalStore } from "./approvalStore";
 
@@ -149,6 +150,38 @@ describe("ApprovalCard", () => {
     // 다시 누를 수 있다
     await user.click(button("이번만 허용"));
     expect(fake.sentOf("approval.resolve")).toHaveLength(2);
+  });
+
+  it("member 에게는 버튼 대신 「관리자가 결정합니다」 — 카운트다운·인자는 그대로(팀 스펙 6장)", () => {
+    const qc = authorsClient();
+    qc.setQueryData(qk.me, { ...ME_USER, role: "member" });
+    act(() => useApprovalStore.getState().apply(approval()));
+    renderWithClient(<ApprovalCard approvalId={APPROVAL} channelId={CH} />, qc);
+    expect(screen.queryByRole("button", { name: "이번만 허용" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "거절" })).toBeNull();
+    expect(screen.getByText("관리자가 결정합니다")).toBeInTheDocument();
+    expect(screen.getByText(/남음$/)).toBeInTheDocument();
+  });
+
+  it("역할이 내려간 뒤 누르면(FORBIDDEN) me 를 다시 받아 버튼을 거둔다(Review Focus 5)", async () => {
+    const user = userEvent.setup();
+    fake.onAck("approval.resolve", () => fail("FORBIDDEN"));
+    const qc = authorsClient();
+    qc.setQueryData(qk.me, { ...ME_USER, role: "admin" });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ ...ME_USER, role: "member" }), { status: 200 })),
+    );
+    act(() => useApprovalStore.getState().apply(approval()));
+    renderWithClient(<ApprovalCard approvalId={APPROVAL} channelId={CH} />, qc);
+    try {
+      await user.click(button("이번만 허용"));
+      expect(toast.error).toHaveBeenCalledWith("권한이 없습니다", expect.anything());
+      expect(await screen.findByText("관리자가 결정합니다")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "이번만 허용" })).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("wire 가 끊겨 있으면 누를 수 없다", () => {

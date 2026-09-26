@@ -26,7 +26,14 @@ async function expectNoPolling(server: ReturnType<typeof stubOpsServer>) {
   expect(server.count("GET", "/api/v1/ops/status")).toBe(1);
 }
 
-describe("진입점과 권한 — owner 에게만", () => {
+describe("진입점과 권한 — admin 이상(팀 스펙 2장)", () => {
+  it("admin 도 사이드바 「운영」으로 들어가 상태를 본다", async () => {
+    stubOpsServer({ me: { ...ME, role: "admin" } });
+    renderRoute("/agents");
+    await userEvent.click(await screen.findByRole("link", { name: /^운영/ }));
+    expect(await screen.findByRole("region", { name: "상태" })).toBeInTheDocument();
+  });
+
   it("owner 는 사이드바 「운영」으로 /settings/operations 에 간다", async () => {
     stubOpsServer();
     const { router } = renderRoute("/agents");

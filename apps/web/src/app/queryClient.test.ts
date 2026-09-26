@@ -192,11 +192,9 @@ describe("전역 오류 토스트(스펙 8장)", () => {
 
   it("뮤테이션의 그 밖 4xx·네트워크 실패는 토스트", async () => {
     const qc = createQueryClient(() => {});
-    await runMutation(qc, new ApiRequestError(403, "FORBIDDEN", "권한이 없다"));
     await runMutation(qc, new ApiRequestError(404, "NOT_FOUND", "채널이 없다"));
     await runMutation(qc, new NetworkError(new TypeError("Failed to fetch")));
     expect(toastError.mock.calls).toEqual([
-      ["권한이 없다"],
       ["채널이 없다"],
       ["서버에 연결할 수 없습니다", { id: "network" }],
     ]);
@@ -207,5 +205,64 @@ describe("전역 오류 토스트(스펙 8장)", () => {
     await failQuery(qc, new TypeError("x is undefined"));
     await runMutation(qc, new Error("boom"));
     expect(toastError).not.toHaveBeenCalled();
+  });
+});
+
+describe("403 FORBIDDEN — 역할이 내려간 직후의 관리 동작(팀 스펙 6장·Review Focus 5)", () => {
+  let toastError: MockInstance<typeof toast.error>;
+  beforeEach(() => {
+    toastError = vi.spyOn(toast, "error").mockImplementation(() => 0);
+  });
+  const forbidden = () => new ApiRequestError(403, "FORBIDDEN", "admin 초대는 owner 만 할 수 있다");
+
+  it("뮤테이션의 403 은 서버 문구 대신 「권한이 없습니다」 한 줄이고, me 를 다시 받아 화면을 잠근다", async () => {
+    const qc = createQueryClient(() => {});
+    qc.setQueryData(qk.me, { user: { id: "u", handle: "a" }, workspaceId: "w", role: "admin" });
+    const fetch = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ user: { id: "u", handle: "a" }, workspaceId: "w", role: "member" }), {
+          status: 200,
+        }),
+    );
+    vi.stubGlobal("fetch", fetch);
+    await runMutation(qc, forbidden());
+    expect(toastError).toHaveBeenCalledTimes(1);
+    expect(toastError).toHaveBeenCalledWith("권한이 없습니다", { id: "forbidden" });
+    await vi.waitFor(() => expect(qc.getQueryData<{ role?: string }>(qk.me)?.role).toBe("member"));
+    expect(fetch).toHaveBeenCalledWith("/api/v1/auth/me", expect.anything());
+  });
+
+  it("쿼리의 403 도 같다 — 두 번 와도 토스트는 한 id", async () => {
+    const qc = createQueryClient(() => {});
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () => new Response(JSON.stringify({ user: { id: "u" }, workspaceId: "w" }), { status: 200 }),
+      ),
+    );
+    await qc
+      .fetchQuery({ queryKey: ["x"], queryFn: async () => Promise.reject(forbidden()) })
+      .catch(() => {});
+    expect(toastError).toHaveBeenCalledWith("권한이 없습니다", { id: "forbidden" });
+  });
+
+  it("silent 여도 me 는 다시 받는다(토스트만 없다) — 문구는 부르는 쪽이 그린다", async () => {
+    const qc = createQueryClient(() => {});
+    const fetch = vi.fn(
+      async () => new Response(JSON.stringify({ user: { id: "u" }, workspaceId: "w" }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetch);
+    await runMutation(qc, forbidden(), { silent: true });
+    expect(toastError).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/v1/auth/me", expect.anything()));
+  });
+
+  it("FORBIDDEN 이 아닌 403(봉투 없는 프록시 등)은 그대로 서버 문구", async () => {
+    const qc = createQueryClient(() => {});
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    await runMutation(qc, new ApiRequestError(403, "INTERNAL", "요청을 처리하지 못했습니다 (403)"));
+    expect(toastError).toHaveBeenCalledWith("요청을 처리하지 못했습니다 (403)");
+    expect(fetch).not.toHaveBeenCalled();
   });
 });

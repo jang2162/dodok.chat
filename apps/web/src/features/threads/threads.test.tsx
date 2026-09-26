@@ -404,6 +404,19 @@ describe("스레드 작성기", () => {
   });
 });
 
+describe("member 의 스레드 패널", () => {
+  it("에이전트 줄의 「새 대화」가 없다 — admin 이상의 동작이다(팀 스펙 2장)", async () => {
+    const base = fetchMock.getMockImplementation();
+    fetchMock.mockImplementation(async (input, init) =>
+      String(input) === "/api/v1/auth/me" ? json(200, { ...ME, role: "member" }) : base!(input, init),
+    );
+    renderRoute(`/c/${CH}/t/${ROOT.id}`, channelClient());
+    const view = await panel();
+    expect(await within(view).findByText("루트 질문")).toBeInTheDocument();
+    expect(within(view).queryByRole("button", { name: "@dev 새 대화" })).toBeNull();
+  });
+});
+
 describe("버블·승인의 소속(판정 R3′)", () => {
   /** 채널 목록과 스레드 목록을 나란히 — 둘 다 버블을 그린다 */
   function Both() {

@@ -1,6 +1,6 @@
 import { MenuIcon } from "lucide-react";
 import { type RefObject, createContext, useCallback, useContext } from "react";
-import { useIsOwner } from "@/api/queries";
+import { useCanManage } from "@/api/queries";
 import { useOpsStatus } from "@/features/ops/queries";
 import { Button } from "@/ui/button";
 
@@ -25,13 +25,13 @@ export const useOpenSidebar = (): (() => void) | undefined => useContext(OpenSid
 
 /**
  * 페이지 헤더 왼쪽의 「채널 목록 열기」 — 넓은 화면에서는 아무것도 그리지 않는다. 좁은 화면에서는 사이드바의 「운영」 배지가
- * 서랍 안에 숨으므로, owner 에게 확인 안 한 warn·error 가 있으면 버튼에 점을 찍고 이름에 그 수를 싣는다(브라우저 검증 O3)
+ * 서랍 안에 숨으므로, admin 이상에게 확인 안 한 warn·error 가 있으면 버튼에 점을 찍고 이름에 그 수를 싣는다(브라우저 검증 O3)
  */
 export function OpenSidebarButton() {
   const openSidebar = useOpenSidebar();
-  const owner = useIsOwner();
-  const unacked = useOpsStatus({ enabled: owner && openSidebar !== undefined }).data?.unacked;
-  const n = owner && unacked ? unacked.warn + unacked.error : 0;
+  const manager = useCanManage();
+  const unacked = useOpsStatus({ enabled: manager && openSidebar !== undefined }).data?.unacked;
+  const n = manager && unacked ? unacked.warn + unacked.error : 0;
   const trigger = useContext(SidebarTriggerContext);
   const ref = useCallback(
     (el: HTMLButtonElement | null) => {

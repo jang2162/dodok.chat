@@ -1,8 +1,8 @@
 import type { IssueBridgeTokenResult } from "@dodok/shared";
 import { KeyRoundIcon } from "lucide-react";
-import { useBlocker } from "@tanstack/react-router";
 import { type FormEvent, type RefObject, useEffect, useId, useRef, useState } from "react";
 import { formError as serverFormError } from "@/api/formErrors";
+import { useLeaveGuard } from "@/hooks/useLeaveGuard";
 import { Button } from "@/ui/button";
 import {
   Dialog,
@@ -22,8 +22,8 @@ import { CopyBlock } from "./sections";
  * 「새 토큰 발급」(스펙 「연결 페이지」 교체 흐름 1) — 라벨 → 발급 → 원문과 플러그인 설정 조각을 한 번 보인다.
  * 원문이 보이는 동안은 「복사했습니다」로만 닫힌다(Esc·바깥 클릭·X 없음) — 복사하지 못한 채 닫히면 다시 볼 길이 없다.
  * 원문은 이 컴포넌트 상태에만 있고 닫으면 버린다 — 쿼리·뮤테이션 캐시에는 들어가지 않는다(`useIssueBridgeToken`).
- * 같은 까닭으로 원문이 보이는 동안 페이지를 떠나는 것도 막는다: 라우트 이동(뒤로 가기·주소 변경)은 대화상자 안에서 한 번 더 묻고,
- * 탭 닫기·새로고침은 브라우저가 묻게 한다(`beforeunload`). 「복사했습니다」를 누르면 둘 다 풀린다
+ * 같은 까닭으로 원문이 보이는 동안 페이지를 떠나는 것도 막는다(`useLeaveGuard`): 라우트 이동은 대화상자 안에서 한 번 더 묻고,
+ * 탭 닫기·새로고침은 브라우저가 묻게 한다. 「복사했습니다」를 누르면 둘 다 풀린다
  */
 export function IssueTokenDialog({ triggerRef }: { triggerRef?: RefObject<HTMLButtonElement | null> }) {
   const [open, setOpen] = useState(false);
@@ -35,40 +35,11 @@ export function IssueTokenDialog({ triggerRef }: { triggerRef?: RefObject<HTMLBu
   const errorId = useId();
   const trimmed = label.trim();
   const stayRef = useRef<HTMLButtonElement>(null);
-  const leave = useBlocker({
-    shouldBlockFn: () => true,
-    disabled: !issued,
-    // 라우터의 beforeunload 는 브라우저 히스토리에만 붙는다 — 히스토리 종류와 무관하게 아래 효과가 직접 건다
-    enableBeforeUnload: false,
-    withResolver: true,
-  });
-
-  useEffect(() => {
-    if (!issued) return;
-    const warn = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-      // 옛 브라우저는 returnValue 가 있어야 묻는다
-      e.returnValue = "";
-    };
-    window.addEventListener("beforeunload", warn);
-    return () => window.removeEventListener("beforeunload", warn);
-  }, [issued]);
+  const leave = useLeaveGuard(issued !== undefined);
 
   useEffect(() => {
     if (leave.status === "blocked") stayRef.current?.focus();
   }, [leave.status]);
-
-  // 막아 둔 채 사라지면(owner 가 아니게 됨 등) 이어서 보낸다 — useBlocker 는 언마운트 때 대기를 풀지 않아 이동이 매달린다.
-  // 원문은 대화상자와 함께 이미 사라졌다
-  const leaveRef = useRef(leave);
-  leaveRef.current = leave;
-  useEffect(
-    () => () => {
-      const last = leaveRef.current;
-      if (last.status === "blocked") last.proceed();
-    },
-    [],
-  );
 
   function reset() {
     setLabel("");

@@ -8,7 +8,8 @@ import { createAppRouter } from "@/app/router";
 import { TooltipProvider } from "@/ui/tooltip";
 
 export const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status });
-export const ME = { user: { id: "u", handle: "owner" }, workspaceId: "w" };
+/** 로그인한 owner — 관리 화면이 열려 있다. member·admin 을 재는 테스트는 `{ ...ME, role: "member" }` 로 덮는다 */
+export const ME = { user: { id: "u", handle: "owner" }, workspaceId: "w", role: "owner" };
 export const ADAPTER_OK: AdapterStatusResponse = {
   provider: "openclaw",
   gateway: "connected",
@@ -53,6 +54,11 @@ export function shellGet(input: RequestInfo | URL, init?: RequestInit): Response
   if (url === "/api/v1/channels") return json(200, { channels: [] });
   if (url === "/api/v1/adapter/status") return json(200, ADAPTER_OK);
   if (url === "/api/v1/agents") return json(200, { agents: [] });
+  // 사람 목록(작성자·@ 후보) — 기본은 로그인한 owner 한 명
+  if (url === "/api/v1/people")
+    return json(200, {
+      people: [{ id: ME.user.id, handle: ME.user.handle, displayName: "주인", role: "owner" }],
+    });
   // owner 의 사이드바 「운영」 배지가 부르는 상태 — 기본은 확인 안 한 사건 없음
   if (url === "/api/v1/ops/status") return json(200, OPS_STATUS_OK);
   // 활동 패널(오른쪽 패널 「활동」 탭)이 부르는 조회 — 기본은 런도 이벤트도 없음

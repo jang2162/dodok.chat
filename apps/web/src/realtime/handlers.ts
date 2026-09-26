@@ -1,8 +1,16 @@
-import type { AdapterStatus, Agent, Channel, Message, OpsStatus, ServerToClientEvents } from "@dodok/shared";
+import {
+  type AdapterStatus,
+  type Agent,
+  type Channel,
+  type Message,
+  type OpsStatus,
+  roleAtLeast,
+  type ServerToClientEvents,
+} from "@dodok/shared";
 import type { QueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ApiRequestError } from "@/api/http";
-import { type AdapterStatusResponse, meQuery, qk } from "@/api/queries";
+import { type AdapterStatusResponse, type MeResponse, meQuery, qk } from "@/api/queries";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
 import { forgetApproval, notifyApproval } from "@/features/approvals/notify";
 import { hasGap, noteSeq, type Timeline, upsert } from "@/features/messages/timeline";
@@ -145,6 +153,8 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
       useApprovalStore.getState().apply(approval);
       // 이미 답한 승인은 알리지 않는다 — 재접속 되감기·늦게 온 프레임이 확정 뒤에 올 수 있다
       if (approval.status !== "pending") return;
+      // 결정은 admin 이상의 몫이다(팀 스펙 5장) — member 는 카드만 본다(「관리자가 결정합니다」)
+      if (!roleAtLeast(qc.getQueryData<MeResponse>(qk.me)?.role, "admin")) return;
       notifyApproval(approval, {
         visible: document.visibilityState === "visible",
         currentChannelId: notify.currentChannelId(),
@@ -175,6 +185,17 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
       qc.setQueryData<Channel>(qk.channel(channel.id), channel);
     },
     "channel.member.changed": ({ channelId, members }) => qc.setQueryData(qk.members(channelId), members),
+    /**
+     * 사람 목록(가입·역할·표시 이름·내보내기 뒤 전체) — 통째로 바꾼다. 내 역할이 바뀌었으면 me 를 다시 받는다: 역할의 정본은
+     * `/auth/me` 이고(팀 스펙 6장) 관리 화면은 그것을 본다. 내보내졌으면(내 줄의 role 이 없다) 서버가 소켓을 끊고 다음 REST 가 401 이다
+     */
+    "people.changed": ({ people }) => {
+      qc.setQueryData(qk.people, people);
+      const me = qc.getQueryData<MeResponse>(qk.me);
+      const mine = me && people.find((p) => p.id === me.user.id);
+      if (mine?.role !== undefined && mine.role !== me?.role)
+        void qc.fetchQuery({ ...meQuery, staleTime: 0 }).catch(() => undefined);
+    },
     "adapter.status": (status: AdapterStatus) =>
       qc.setQueryData<AdapterStatusResponse>(qk.adapter, (prev) => prev && { ...prev, ...status }),
     /**

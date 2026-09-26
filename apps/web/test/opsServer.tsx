@@ -6,6 +6,7 @@ import {
   OpsRunsSummary,
   OpsStatus,
   type OpsSeverity,
+  roleAtLeast,
 } from "@dodok/shared";
 import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render } from "@testing-library/react";
@@ -93,8 +94,9 @@ export function stubOpsServer(
     if (opts.channels && method === "GET" && url === "/api/v1/channels")
       return json(200, { channels: opts.channels });
     if (url.startsWith("/api/v1/ops/")) {
-      if ((me as { role?: string }).role !== "owner")
-        return json(403, { code: "FORBIDDEN", message: "owner only" });
+      // 운영은 admin 이상(팀 스펙 2장)
+      if (!roleAtLeast((me as { role?: string }).role, "admin"))
+        return json(403, { code: "FORBIDDEN", message: "admin only" });
       if (method === "GET" && url === "/api/v1/ops/status") return json(200, status);
       const runs = /^\/api\/v1\/ops\/runs\?days=(\d+)$/.exec(url);
       if (method === "GET" && runs) {

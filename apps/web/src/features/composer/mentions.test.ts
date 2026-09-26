@@ -1,4 +1,4 @@
-import { Agent, ChannelMember, User } from "@dodok/shared";
+import { Agent, ChannelMember, type Person, User } from "@dodok/shared";
 import { expect, it } from "vitest";
 import { type MentionCandidate, matchMentions, mentionCandidates } from "./mentions";
 import { uid } from "../../../test/fixtures";
@@ -79,4 +79,23 @@ it("검색: 핸들·이름·별칭 앞부분(대소문자 무시), 빈 검색어
   expect(labels("fi")).toEqual(["fin"]);
   expect(labels("장")).toEqual(["owner"]);
   expect(labels("ev")).toEqual([]);
+});
+
+it("사람 목록이 있으면 사람 후보는 그 목록의 멤버 전원(가입 순) — 나간 멤버(role 없음)는 빠진다(팀 스펙 5장)", () => {
+  const people: Person[] = [
+    { id: ME.user.id, handle: "owner", displayName: "장병현", role: "owner" },
+    { id: uid(30), handle: "mina", displayName: "미나", role: "member" },
+    { id: uid(31), handle: "left-x", displayName: "지훈", leftHandle: "jihoon" },
+    { id: uid(32), handle: "sora", displayName: "소라", role: "admin", avatarUrl: "/a.png" },
+  ];
+  const list = mentionCandidates([member("agent", DEV.id)], [DEV], ME, people);
+  expect(list.map((c) => c.id)).toEqual([`a:${DEV.id}`, `u:${ME.user.id}`, `u:${uid(30)}`, `u:${uid(32)}`]);
+  expect(list[2]).toEqual<MentionCandidate>({
+    id: `u:${uid(30)}`,
+    label: "mina",
+    name: "미나",
+    kind: "user",
+    aliases: [],
+    enabled: true,
+  });
 });

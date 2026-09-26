@@ -1,6 +1,7 @@
 import type { Channel } from "@dodok/shared";
 import { type FormEvent, useId, useState } from "react";
 import { formError } from "@/api/formErrors";
+import { useCanManage } from "@/api/queries";
 import { Button } from "@/ui/button";
 import { Textarea } from "@/ui/textarea";
 import { usePatchChannel } from "./mutations";
@@ -12,8 +13,12 @@ export const PROMPT_MAX = 20_000;
 export const PROMPT_SAVED_NOTICE =
   "다음 턴부터 반영됩니다. 이미 진행 중인 대화에 온전히 반영하려면 에이전트별 「새 대화」를 누르세요";
 
-/** 채널 프롬프트(스펙 6.3). 공백뿐이면 지운다(null). VALIDATION·CONFLICT 만 섹션 안에, 그 밖은 전역 토스트 */
+/**
+ * 채널 프롬프트(스펙 6.3). 공백뿐이면 지운다(null). VALIDATION·CONFLICT 만 섹션 안에, 그 밖은 전역 토스트.
+ * admin 미만이면 값만 보이고 잠근다(팀 스펙 2장 — 서버도 막는다)
+ */
 export function PromptSection({ channel }: { channel: Channel }) {
+  const locked = !useCanManage();
   const save = usePatchChannel(channel.id);
   const [draft, setDraft] = useState<string>();
   const [error, setError] = useState<string>();
@@ -23,7 +28,7 @@ export function PromptSection({ channel }: { channel: Channel }) {
 
   function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (draft === undefined || save.isPending) return;
+    if (draft === undefined || save.isPending || locked) return;
     setError(undefined);
     save.mutate(
       { prompt: draft.trim() === "" ? null : draft },
@@ -39,7 +44,7 @@ export function PromptSection({ channel }: { channel: Channel }) {
 
   const describedBy = [`${id}-count`, error && `${id}-error`].filter(Boolean).join(" ");
   return (
-    <Section title="채널 프롬프트">
+    <Section title="채널 프롬프트" locked={locked}>
       <form onSubmit={submit} className="flex flex-col gap-2">
         <p className="text-xs text-muted-foreground">이 채널의 모든 에이전트가 매 턴 함께 받는 지시입니다.</p>
         <Textarea
@@ -50,7 +55,7 @@ export function PromptSection({ channel }: { channel: Channel }) {
           maxLength={PROMPT_MAX}
           rows={8}
           placeholder="없음"
-          disabled={save.isPending}
+          disabled={save.isPending || locked}
           onChange={(e) => {
             setDraft(e.target.value);
             setError(undefined);
@@ -66,11 +71,13 @@ export function PromptSection({ channel }: { channel: Channel }) {
           </p>
         )}
         {saved && <Saved>{PROMPT_SAVED_NOTICE}</Saved>}
-        <div className="flex justify-end">
-          <Button type="submit" size="sm" disabled={draft === undefined || save.isPending}>
-            {save.isPending ? "저장 중…" : "저장"}
-          </Button>
-        </div>
+        {!locked && (
+          <div className="flex justify-end">
+            <Button type="submit" size="sm" disabled={draft === undefined || save.isPending}>
+              {save.isPending ? "저장 중…" : "저장"}
+            </Button>
+          </div>
+        )}
       </form>
     </Section>
   );

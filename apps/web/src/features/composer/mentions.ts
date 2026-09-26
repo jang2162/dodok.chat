@@ -1,4 +1,4 @@
-import type { Agent, ChannelMember } from "@dodok/shared";
+import type { Agent, ChannelMember, Person } from "@dodok/shared";
 import type { MeResponse } from "@/api/queries";
 
 /** 작성기 @ 후보(스펙 5.1). `id` 는 멘션 노드 attrs.id 그대로 — `"a:<agentId>"`·`"u:<userId>"` */
@@ -16,11 +16,15 @@ export type MentionCandidate = {
 /** 후보 목록에 보이는 최대 수 */
 export const MAX_MENTIONS = 8;
 
-/** 채널의 에이전트 멤버(멤버 순, `useMembers` × `useAgents`) 다음 사람(MVP 는 owner — `useMe`) */
+/**
+ * 채널의 에이전트 멤버(멤버 순, `useMembers` × `useAgents`) 다음 사람. 사람은 워크스페이스 멤버 전원(`usePeople`, 가입 순 —
+ * 나간 멤버는 부를 수 없어 뺀다, 팀 스펙 5장). 사람 목록을 아직 못 받았으면 나 하나(`useMe`)
+ */
 export function mentionCandidates(
   members: readonly ChannelMember[] | undefined,
   agents: readonly Agent[] | undefined,
   me: MeResponse | undefined,
+  people?: readonly Person[],
 ): MentionCandidate[] {
   const byId = new Map((agents ?? []).map((a) => [a.id, a]));
   const channelAgents = (members ?? []).flatMap((m): MentionCandidate[] => {
@@ -38,19 +42,34 @@ export function mentionCandidates(
         ]
       : [];
   });
-  const people: MentionCandidate[] = me
-    ? [
-        {
-          id: `u:${me.user.id}`,
-          label: me.user.handle,
-          name: me.user.displayName,
-          kind: "user",
-          aliases: [],
-          enabled: true,
-        },
-      ]
-    : [];
-  return [...channelAgents, ...people];
+  const humans: MentionCandidate[] = people
+    ? people.flatMap((p): MentionCandidate[] =>
+        p.role === undefined
+          ? []
+          : [
+              {
+                id: `u:${p.id}`,
+                label: p.handle,
+                name: p.displayName,
+                kind: "user",
+                aliases: [],
+                enabled: true,
+              },
+            ],
+      )
+    : me
+      ? [
+          {
+            id: `u:${me.user.id}`,
+            label: me.user.handle,
+            name: me.user.displayName,
+            kind: "user",
+            aliases: [],
+            enabled: true,
+          },
+        ]
+      : [];
+  return [...channelAgents, ...humans];
 }
 
 /** 핸들·이름·별칭 앞부분 일치(대소문자 무시). 빈 검색어는 전부 */

@@ -71,6 +71,11 @@ describe("shouldPersist", () => {
     expect(yes(["agents"])).toBe(true);
     expect(yes(["recentChannels"])).toBe(true);
   });
+  it("사람 목록은 늘 — 오프라인에서도 작성자 이름이 풀린다. 멤버 관리(team)는 담지 않는다", () => {
+    expect(yes(qk.people)).toBe(true);
+    expect(yes(qk.teamMembers)).toBe(false);
+    expect(yes(qk.invites)).toBe(false);
+  });
   it("채널·멤버·타임라인은 최근 목록에 있는 채널만", () => {
     for (const head of ["channel", "members", "timeline"]) {
       expect(yes([head, CH])).toBe(true);
@@ -589,7 +594,7 @@ describe("startPersistence", () => {
     qc.clear();
     qc.setQueryData(qk.me, { ...ME, user: { id: "b", handle: "bee" } });
     await vi.waitFor(() => expect(storage.map.get(PERSIST_KEY)).toContain('"bee"'));
-    expect(storage.map.get(PERSIST_KEY)).not.toContain('"owner"');
+    expect(storage.map.get(PERSIST_KEY)).not.toContain('"handle":"owner"');
   });
 
   it("저장소가 던지면 복원·저장 없이 돈다", async () => {

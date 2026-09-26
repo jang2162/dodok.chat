@@ -1,16 +1,19 @@
-import { useAgents } from "@/api/queries";
+import { useAgents, useCanManage } from "@/api/queries";
 import { OpenSidebarButton } from "@/app/layout/sidebarSheet";
 import { Button } from "@/ui/button";
+import { LOCKED_NOTICE } from "@/features/settings/Section";
 import { AgentRow } from "./AgentRow";
 import { DiscoverDialog } from "./DiscoverDialog";
 
 /**
  * 에이전트 관리(스펙 6.1): 목록·사용 토글·기본 프롬프트, 「Gateway 에서 가져오기」·직접 입력.
  * 목록 조회 실패의 원인은 전역 토스트가 알린다 — 여기는 받은 목록이 없을 때만 그 자리에 「다시 시도」를 둔다.
- * 이미 받은 목록은 다시 불러오기가 실패해도 그대로 그린다
+ * 이미 받은 목록은 다시 불러오기가 실패해도 그대로 그린다.
+ * 등록·수정은 admin 이상(팀 스펙 2장) — 아니면 등록 버튼이 없고 목록은 값만 보인다
  */
 export function AgentsPage() {
   const agents = useAgents();
+  const canManage = useCanManage();
   const registeredIds = new Set((agents.data ?? []).map((a) => a.providerAgentId));
 
   let content;
@@ -38,14 +41,16 @@ export function AgentsPage() {
   } else if (agents.data.length === 0) {
     content = (
       <p className="text-sm text-muted-foreground">
-        등록된 에이전트가 없습니다. 「Gateway 에서 가져오기」로 등록하세요.
+        {canManage
+          ? "등록된 에이전트가 없습니다. 「Gateway 에서 가져오기」로 등록하세요."
+          : "등록된 에이전트가 없습니다."}
       </p>
     );
   } else {
     content = (
       <ul className="flex flex-col gap-3">
         {agents.data.map((agent) => (
-          <AgentRow key={agent.id} agent={agent} />
+          <AgentRow key={agent.id} agent={agent} readOnly={!canManage} />
         ))}
       </ul>
     );
@@ -63,8 +68,9 @@ export function AgentsPage() {
             OpenClaw 에이전트를 등록하고 사용 여부·기본 프롬프트를 정합니다.
           </p>
         </div>
-        <DiscoverDialog registeredIds={registeredIds} disabled={!agents.data} />
+        {canManage && <DiscoverDialog registeredIds={registeredIds} disabled={!agents.data} />}
       </header>
+      {!canManage && <p className="-mt-3 text-xs text-muted-foreground">{LOCKED_NOTICE}</p>}
       {content}
     </section>
   );

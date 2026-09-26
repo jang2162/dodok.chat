@@ -1,7 +1,9 @@
 import type { ApprovalDecision, ApprovalReason, ApprovalSeverity, ApprovalStatus } from "@dodok/shared";
 import { InfoIcon, type LucideIcon, ShieldAlertIcon, TriangleAlertIcon } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { type ReactElement, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { meQuery, useCanManage } from "@/api/queries";
 import { useAuthors } from "@/features/messages/useAuthors";
 import { cn } from "@/lib/utils";
 import { emitAck, useWireStatus, WireAckError } from "@/realtime/wire";
@@ -79,7 +81,8 @@ export function resolveErrorMessage(e: unknown): string {
 /**
  * 승인 카드(설계 5.3). 자리 둘 — 채널 메시지 흐름(시간 순서)과 활동 탭 맨 위 — 이 같은 스토어를 본다.
  * 미해결이면 남은 시간과 버튼, 확정되면 **사라지지 않고** 결과 한 줄로 바뀐다(기록).
- * 클라이언트 시계로 0 이 되면 「만료됨」으로 보이되 서버 사실이 오면 그쪽이 이긴다(설계 5.5)
+ * 클라이언트 시계로 0 이 되면 「만료됨」으로 보이되 서버 사실이 오면 그쪽이 이긴다(설계 5.5).
+ * 결정은 admin 이상의 몫이다(팀 스펙 2장) — member 에게는 버튼 대신 「관리자가 결정합니다」
  */
 export function ApprovalCard({
   approvalId,
@@ -90,6 +93,7 @@ export function ApprovalCard({
 }): ReactElement | null {
   const view = useApprovalStore((s) => s.byChannel[channelId]?.[approvalId]);
   const { author } = useAuthors();
+  const canDecide = useCanManage();
   const pending = view?.approval.status === "pending";
   const { label: remaining, expired } = useRemaining(view?.approval.expiresAt ?? "", pending);
   /**
@@ -167,7 +171,8 @@ export function ApprovalCard({
 
           {args && <Arguments args={args} />}
 
-          {answerable && (
+          {answerable && !canDecide && <p className="text-xs text-muted-foreground">관리자가 결정합니다</p>}
+          {answerable && canDecide && (
             <div className="flex flex-wrap gap-2">
               {DECISIONS.filter((d) => approval.allowedDecisions.includes(d.decision)).map((d) => (
                 <DecisionButton
@@ -250,6 +255,7 @@ function DecisionButton({
   onActed: (acted: boolean) => void;
 }) {
   const { socket } = useWire();
+  const qc = useQueryClient();
   const connected = useWireStatus((s) => s.status === "connected");
 
   function resolve() {
@@ -260,6 +266,9 @@ function DecisionButton({
     emitAck(socket, "approval.resolve", { approvalId, decision }).catch((e: unknown) => {
       const message = resolveErrorMessage(e);
       toast.error(message, { id: `approval-resolve:${message}` });
+      // 역할이 내려갔다 — me 를 다시 받아 버튼을 거둔다(REST 403 의 전역 처리와 같은 규칙, app/queryClient)
+      if (e instanceof WireAckError && e.code === "FORBIDDEN")
+        void qc.fetchQuery({ ...meQuery, staleTime: 0 }).catch(() => undefined);
       setSending(approvalId, undefined);
       onActed(false);
     });

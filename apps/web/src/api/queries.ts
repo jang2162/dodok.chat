@@ -1,12 +1,16 @@
-import type {
-  Agent,
-  AdapterStatus,
-  Channel,
-  ChannelMember,
-  Run,
-  RunEvent,
-  User,
-  Workspace,
+import {
+  type Agent,
+  type AdapterStatus,
+  type Channel,
+  type ChannelMember,
+  type Person,
+  type Run,
+  type RunEvent,
+  type TeamRole,
+  type User,
+  type Workspace,
+  roleAtLeast,
+  TeamRole as TeamRoleSchema,
 } from "@dodok/shared";
 import { notifyManager, queryOptions, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useSyncExternalStore } from "react";
@@ -14,7 +18,8 @@ import { api } from "./http";
 
 /**
  * `workspace` 는 이름이 필요한 화면(사이드바 제목)이 본다 — 주지 않는 서버도 있어 선택이다(그때는 기본 이름).
- * `role` 은 그 워크스페이스 membership 의 역할("owner"·"member") — 옛 서버·옛 오프라인 사본에는 없어 선택이다(그때는 owner 가 아닌 것으로 본다)
+ * `role` 은 그 워크스페이스 membership 의 역할("owner"·"admin"·"member") — 옛 서버·옛 오프라인 사본에는 없어 선택이다(그때는 관리
+ * 권한이 없는 것으로 본다)
  */
 export type MeResponse = {
   user: User;
@@ -31,6 +36,11 @@ export const qk = {
   channel: (id: string) => ["channel", id] as const,
   members: (id: string) => ["members", id] as const,
   agents: ["agents"] as const,
+  /** 워크스페이스 사람 전원(나간 멤버 포함) — 작성자·사람 멘션·@ 후보. wire `people.changed` 가 통째로 바꾼다 */
+  people: ["people"] as const,
+  /** 멤버 관리(admin 이상, 팀 스펙 6장) — 오프라인 사본에 담지 않는다(pwa/persist). 발급 원문은 어느 키에도 넣지 않는다 */
+  teamMembers: ["team", "members"] as const,
+  invites: ["team", "invites"] as const,
   discover: ["agents", "discover"] as const,
   adapter: ["adapter"] as const,
   timeline: (id: string) => ["timeline", id] as const,
@@ -47,7 +57,7 @@ export const qk = {
   /** 연결 설정(owner 만) — 오프라인 사본에 담지 않는다(pwa/persist). 발급 원문은 어느 키에도 넣지 않는다 */
   setupStatus: ["setup", "status"] as const,
   bridgeTokens: ["setup", "bridge-tokens"] as const,
-  /** 운영(owner 만) — 오프라인 사본에 담지 않는다(pwa/persist). 상태의 `unacked` 가 사이드바 배지다 */
+  /** 운영(admin 이상) — 오프라인 사본에 담지 않는다(pwa/persist). 상태의 `unacked` 가 사이드바 배지다 */
   opsStatus: ["ops", "status"] as const,
   opsRuns: (days: 1 | 7) => ["ops", "runs", days] as const,
   /** 사건 목록(무한 쿼리) — severity 가 없으면 전부 */
@@ -85,6 +95,16 @@ export function useCachedMe(): MeResponse | undefined {
  * 라우트 가드가 이미 받은 me 를 읽기만 한다(`useCachedMe`)
  */
 export const useIsOwner = (): boolean => useCachedMe()?.role === "owner";
+/** 내 역할(팀 스펙 2장) — me 캐시에서. 없거나 모르는 값(옛 서버·guest)이면 undefined */
+export function useRole(): TeamRole | undefined {
+  const parsed = TeamRoleSchema.safeParse(useCachedMe()?.role);
+  return parsed.success ? parsed.data : undefined;
+}
+/**
+ * 관리 동작(에이전트 등록·채널 동작 설정·「새 대화」·승인·멤버·운영)을 보이는가 — admin 이상. 서버가 막으므로 숨김은 편의다.
+ * 역할이 내려간 뒤 남은 버튼은 서버 403 → 전역 처리(app/queryClient)가 me 를 다시 받아 잠근다
+ */
+export const useCanManage = (): boolean => roleAtLeast(useCachedMe()?.role, "admin");
 export const useChannels = () =>
   useQuery({
     queryKey: qk.channels,
@@ -114,6 +134,16 @@ export const useAgents = () =>
   useQuery({
     queryKey: qk.agents,
     queryFn: async () => (await api<{ agents: Agent[] }>("GET", "/agents")).agents,
+  });
+/**
+ * 사람 목록(`GET /people`) — 로그인한 누구나 읽는다. `role` 없는 줄은 나간 멤버다. 조회가 실패해도 작성자가 「알 수 없음」으로
+ * 남을 뿐이라 토스트를 띄우지 않는다(`silent`) — 다음 `people.changed` 가 통째로 채운다
+ */
+export const usePeople = () =>
+  useQuery({
+    queryKey: qk.people,
+    queryFn: async () => (await api<{ people: Person[] }>("GET", "/people")).people,
+    meta: { silent: true },
   });
 export const useAdapterStatus = () =>
   useQuery({ queryKey: qk.adapter, queryFn: () => api<AdapterStatusResponse>("GET", "/adapter/status") });

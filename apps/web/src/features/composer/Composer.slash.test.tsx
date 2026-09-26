@@ -10,6 +10,7 @@ import { AGENT, CH, CH2, RUN, RUN2, runState, uid } from "../../../test/fixtures
 import { json } from "../../../test/shellApi";
 import type { ComponentProps } from "react";
 import {
+  ME,
   doc,
   flushEditorFrames,
   mention,
@@ -122,6 +123,21 @@ describe("(f) /new", () => {
     expect(fetch.mock.calls.map(([url, init]) => [url, init?.method])).toEqual([
       [`/api/v1/channels/${CH}/agents/${AGENT}/reset`, "POST"],
     ]);
+  });
+
+  it("member 의 /new 는 대화상자 없이 「관리자만」 한 줄 — 요청·메시지 없음, 입력은 그대로(팀 스펙 2장)", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => json(200, { ok: true }));
+    vi.stubGlobal("fetch", fetch);
+    const { box, editor } = renderComposer(CH, { ...ME, role: "member" });
+    setDoc(editor, doc(p(t("/new "), mention(`a:${AGENT}`, "dev"))));
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(toastError).toHaveBeenCalledWith("「새 대화」는 관리자만 시작할 수 있습니다", {
+      id: "slash-invalid",
+    });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(fetch).not.toHaveBeenCalled();
+    expect(fake.sentOf("message.send")).toEqual([]);
+    expect(editor.isEmpty).toBe(false);
   });
 
   it("열린 채 채널이 바뀌면 닫는다 — 돌아와도 다시 열리지 않고, 요청도 없다", async () => {

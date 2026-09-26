@@ -26,7 +26,8 @@ afterEach(() => {
 /** 라우터 문맥 안에 그린다 — owner 링크가 라우터 Link 다 */
 function renderCard(message: Message, role?: string) {
   const qc = authorsClient();
-  qc.setQueryData(qk.me, role === undefined ? ME_USER : { ...ME_USER, role });
+  const { role: _owner, ...noRole } = ME_USER;
+  qc.setQueryData(qk.me, role === undefined ? noRole : { ...ME_USER, role });
   const router = createAppRouter(qc, createMemoryHistory({ initialEntries: ["/"] }));
   render(
     <QueryClientProvider client={qc}>
@@ -71,7 +72,14 @@ describe("run_limit 카드", () => {
     expect(within(note).queryByRole("link", { name: "운영에서 한도 바꾸기" })).not.toBeInTheDocument();
   });
 
-  it.each([["member"], [undefined]])("owner 가 아니면(%s) 링크가 없다", (role) => {
+  it("admin 에게도 링크 — 운영·채널 릴레이 정책은 admin 이상이 바꾼다(팀 스펙 2장)", () => {
+    renderCard(runLimit({ scope: "workspace", limit: 300 }), "admin");
+    expect(
+      within(screen.getByRole("note")).getByRole("link", { name: "운영에서 한도 바꾸기" }),
+    ).toBeInTheDocument();
+  });
+
+  it.each([["member"], [undefined]])("관리자가 아니면(%s) 링크가 없다", (role) => {
     renderCard(runLimit({ scope: "channel", limit: 5 }), role);
     expect(within(screen.getByRole("note")).queryByRole("link")).not.toBeInTheDocument();
   });

@@ -1,6 +1,15 @@
 import { Link } from "@tanstack/react-router";
-import { ActivityIcon, BotIcon, CableIcon, LogOutIcon, PlusIcon, SearchIcon, UserIcon } from "lucide-react";
-import { useIsOwner, useMe } from "@/api/queries";
+import {
+  ActivityIcon,
+  BotIcon,
+  CableIcon,
+  LogOutIcon,
+  PlusIcon,
+  SearchIcon,
+  UserIcon,
+  UsersIcon,
+} from "lucide-react";
+import { useCanManage, useIsOwner, useMe } from "@/api/queries";
 import { AccountDialog } from "@/features/account/AccountDialog";
 import { ChannelList } from "@/features/channels/ChannelList";
 import { CreateChannelDialog } from "@/features/channels/CreateChannelDialog";
@@ -19,7 +28,7 @@ const NAV_LINK =
 const BADGE_MAX = 99;
 
 /**
- * 「운영」 링크와 확인 안 한 warn·error 수 배지(운영 보강 스펙 7장). owner 일 때만 그린다 — 그래서 member 는 ops/status 를 부르지 않는다.
+ * 「운영」 링크와 확인 안 한 warn·error 수 배지(운영 보강 스펙 7장). admin 이상일 때만 그린다 — 그래서 member 는 ops/status 를 부르지 않는다.
  * 수는 상태 캐시의 `unacked` 이고 실시간 `ops.event` 가 그 칸을 덮는다(realtime/handlers)
  */
 function OpsLink({ onNavigate }: { onNavigate?: () => void }) {
@@ -46,7 +55,8 @@ function OpsLink({ onNavigate }: { onNavigate?: () => void }) {
 }
 
 /**
- * 왼쪽 사이드바(스펙 2.4): 워크스페이스 이름, 검색 칸(검색 대화상자를 연다 — 스레드·검색 스펙 5.4), 채널 목록·「채널 만들기」, 「에이전트」, 「연결」·「운영」(owner 에게만), 하단 연결 상태와 「내 계정」·로그아웃.
+ * 왼쪽 사이드바(스펙 2.4): 워크스페이스 이름, 검색 칸(검색 대화상자를 연다 — 스레드·검색 스펙 5.4), 채널 목록·「채널 만들기」, 「에이전트」,
+ * 「멤버」·「운영」(admin 이상)·「연결」(owner 만 — 팀 스펙 6장), 하단 연결 상태와 「내 계정」·로그아웃.
  * 이름은 `GET /auth/me` 의 `workspace.name` — 아직 못 받았거나 주지 않는 서버면 「dodok」.
  * `onNavigate` 는 이동할 때마다 부른다(좁은 화면 시트 닫기)
  */
@@ -54,6 +64,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const logout = useLogout();
   const me = useMe();
   const owner = useIsOwner();
+  const manager = useCanManage();
   const openSearch = useOpenSearch();
   return (
     <div className="flex h-full min-h-0 flex-col bg-sidebar text-sidebar-foreground">
@@ -93,6 +104,12 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           <BotIcon className="size-4 shrink-0 opacity-70" aria-hidden />
           에이전트
         </Link>
+        {manager && (
+          <Link to="/settings/members" onClick={onNavigate} className={NAV_LINK}>
+            <UsersIcon className="size-4 shrink-0 opacity-70" aria-hidden />
+            멤버
+          </Link>
+        )}
         {/* 연결 설정은 owner 만 쓴다(설정 마법사 스펙 「결정」 — setup 은 owner 만) — 아닌 사람에게는 진입점이 없다 */}
         {owner && (
           <Link to="/settings/connection" onClick={onNavigate} className={NAV_LINK}>
@@ -100,7 +117,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
             연결
           </Link>
         )}
-        {owner && <OpsLink onNavigate={onNavigate} />}
+        {manager && <OpsLink onNavigate={onNavigate} />}
         {/* 이 기기의 알림 — 푸시 켜기·끄기·앱 설치(스펙 6장) */}
         <NotifySettings />
       </div>

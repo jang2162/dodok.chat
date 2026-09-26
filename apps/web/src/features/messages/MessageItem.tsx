@@ -5,6 +5,7 @@ import { referencedAttachmentIds } from "@/features/attachments/resolve";
 import { Components } from "@/features/components/Components";
 import { ReplyInThread, ThreadChip } from "@/features/threads/ThreadChip";
 import { Avatar, AvatarFallback, AvatarImage } from "@/ui/avatar";
+import { cn } from "@/lib/utils";
 import { Badge } from "@/ui/badge";
 import { MessageBody } from "./MessageBody";
 import { type Author, useAuthors } from "./useAuthors";
@@ -34,11 +35,13 @@ export function AuthorAvatar({ author }: { author: Author }) {
   );
 }
 
-/** 머리 줄: 이름 · 에이전트면 「AI」 배지 · 시각(또는 상태) */
+/** 머리 줄: 이름(나간 멤버면 흐리게) · 에이전트면 「AI」 배지 · 시각(또는 상태) */
 export function AuthorLine({ author, children }: { author: Author; children: ReactNode }) {
   return (
     <div className="flex items-baseline gap-2 text-[15px] leading-snug">
-      <span className="truncate font-semibold">{author.name}</span>
+      <span className={cn("truncate font-semibold", author.left && "font-normal text-muted-foreground")}>
+        {author.name}
+      </span>
       {author.isAgent && (
         <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
           AI

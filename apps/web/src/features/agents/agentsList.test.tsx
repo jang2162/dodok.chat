@@ -87,7 +87,7 @@ describe("목록", () => {
     expect(trigger).toBeDisabled(); // 목록을 받기 전엔 등록된 것을 가를 수 없다
     expect(await screen.findByText("에이전트 목록을 불러오지 못했습니다")).toBeInTheDocument();
     expect(toastError).toHaveBeenCalledTimes(1);
-    expect(toastError).toHaveBeenCalledWith("권한이 없다");
+    expect(toastError).toHaveBeenCalledWith("권한이 없습니다", { id: "forbidden" });
     expect(trigger).toBeDisabled();
     await userEvent.click(screen.getByRole("button", { name: "다시 시도" }));
     expect(await screen.findByText("@dev")).toBeInTheDocument();
@@ -105,7 +105,7 @@ describe("목록", () => {
     // 화면에 다시 들어온다 — 같은 캐시로 새로 붙어 다시 불러온다(staleTime 0)
     cleanup();
     renderPage(qc);
-    await waitFor(() => expect(toastError).toHaveBeenCalledWith("권한이 없다"));
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith("권한이 없습니다", { id: "forbidden" }));
     expect(server.count("GET", "/api/v1/agents")).toBe(2);
     expect(screen.getByText("@dev")).toBeInTheDocument();
     expect(screen.queryByText("에이전트 목록을 불러오지 못했습니다")).not.toBeInTheDocument();
@@ -149,5 +149,19 @@ describe("기본 프롬프트", () => {
     expect(screen.getByText("기존 프롬프트")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "@dev 기본 프롬프트 편집" })).toHaveFocus();
     expect(server.bodies("PATCH")).toEqual([]);
+  });
+});
+
+describe("member 가 보는 에이전트 화면(팀 스펙 2·6장)", () => {
+  it("등록 버튼이 없고, 사용 토글·기본 프롬프트는 값만 — 「관리자만 바꿀 수 있습니다」", async () => {
+    const server = stubServer({ agents: [dev()] });
+    renderPage(undefined, "member");
+    expect(await screen.findByText("@dev")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Gateway 에서 가져오기" })).toBeNull();
+    expect(screen.getByRole("switch", { name: "@dev 사용" })).toBeDisabled();
+    expect(screen.getByText("기존 프롬프트")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "@dev 기본 프롬프트 편집" })).toBeNull();
+    expect(screen.getByText("관리자만 바꿀 수 있습니다")).toBeInTheDocument();
+    expect(server.count("GET", "/api/v1/agents/discover")).toBe(0);
   });
 });

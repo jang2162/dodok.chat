@@ -1,6 +1,7 @@
 import type { Agent, Channel } from "@dodok/shared";
 import { type FormEvent, useId, useState } from "react";
 import { formError, validationField } from "@/api/formErrors";
+import { useCanManage } from "@/api/queries";
 import { Button } from "@/ui/button";
 import { Checkbox } from "@/ui/checkbox";
 import { Input } from "@/ui/input";
@@ -12,10 +13,13 @@ import { Saved, Section } from "./Section";
 
 /**
  * 릴레이 정책(스펙 6.3): 턴 상한, 일일 실행 상한(빈칸 = 없음), 허용 쌍. 「모든 에이전트끼리 허용」을 끄면
- * 채널 에이전트의 from→to 체크 목록(자기 자신 제외). 검증 오류·서버 VALIDATION·CONFLICT 는 섹션 안, 그 밖은 전역 토스트
+ * 채널 에이전트의 from→to 체크 목록(자기 자신 제외). 검증 오류·서버 VALIDATION·CONFLICT 는 섹션 안, 그 밖은 전역 토스트.
+ * admin 미만이면 값만 보이고 잠근다(팀 스펙 2장 — 릴레이 정책·일일 한도는 비용 설정이다)
  */
 export function RelayPolicySection({ channel, agents }: { channel: Channel; agents: Agent[] }) {
+  const locked = !useCanManage();
   const save = usePatchChannel(channel.id);
+  const disabled = save.isPending || locked;
   const [draft, setDraft] = useState<RelayForm>();
   const [error, setError] = useState<{ message: string; field?: RelayFormField }>();
   const [saved, setSaved] = useState(false);
@@ -35,7 +39,7 @@ export function RelayPolicySection({ channel, agents }: { channel: Channel; agen
 
   function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (draft === undefined || save.isPending) return;
+    if (draft === undefined || disabled) return;
     const parsed = fromForm(draft);
     if (!parsed.ok) {
       setError({ message: parsed.error, field: parsed.field });
@@ -66,7 +70,7 @@ export function RelayPolicySection({ channel, agents }: { channel: Channel; agen
       : { "aria-describedby": hintId };
 
   return (
-    <Section title="릴레이 정책">
+    <Section title="릴레이 정책" locked={locked}>
       <form onSubmit={submit} noValidate className="flex flex-col gap-3">
         <div className="grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-1.5">
@@ -76,7 +80,7 @@ export function RelayPolicySection({ channel, agents }: { channel: Channel; agen
               inputMode="numeric"
               value={form.maxRelayTurns}
               {...fieldProps("maxRelayTurns", `${id}-turns-hint`)}
-              disabled={save.isPending}
+              disabled={disabled}
               onChange={(e) => edit({ maxRelayTurns: e.target.value })}
             />
             <p id={`${id}-turns-hint`} className="text-xs text-muted-foreground">
@@ -91,7 +95,7 @@ export function RelayPolicySection({ channel, agents }: { channel: Channel; agen
               value={form.dailyRunLimit}
               placeholder="없음"
               {...fieldProps("dailyRunLimit", `${id}-daily-hint`)}
-              disabled={save.isPending}
+              disabled={disabled}
               onChange={(e) => edit({ dailyRunLimit: e.target.value })}
             />
             <p id={`${id}-daily-hint`} className="text-xs text-muted-foreground">
@@ -103,25 +107,25 @@ export function RelayPolicySection({ channel, agents }: { channel: Channel; agen
           <Switch
             id={`${id}-all`}
             checked={form.allowAll}
-            disabled={save.isPending}
+            disabled={disabled}
             onCheckedChange={(allowAll) => edit({ allowAll })}
           />
           <Label htmlFor={`${id}-all`}>모든 에이전트끼리 허용</Label>
         </div>
-        {!form.allowAll && (
-          <PairList agents={agents} form={form} disabled={save.isPending} onToggle={togglePair} />
-        )}
+        {!form.allowAll && <PairList agents={agents} form={form} disabled={disabled} onToggle={togglePair} />}
         {error && (
           <p id={`${id}-error`} role="alert" className="text-sm text-destructive">
             {error.message}
           </p>
         )}
-        <div className="flex items-center justify-end gap-3">
-          {saved && <Saved />}
-          <Button type="submit" size="sm" disabled={draft === undefined || save.isPending}>
-            {save.isPending ? "저장 중…" : "저장"}
-          </Button>
-        </div>
+        {!locked && (
+          <div className="flex items-center justify-end gap-3">
+            {saved && <Saved />}
+            <Button type="submit" size="sm" disabled={draft === undefined || save.isPending}>
+              {save.isPending ? "저장 중…" : "저장"}
+            </Button>
+          </div>
+        )}
       </form>
     </Section>
   );

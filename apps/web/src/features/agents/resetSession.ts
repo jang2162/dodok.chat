@@ -24,5 +24,7 @@ export function resetErrorMessage(e: Error): string {
     return "Gateway 권한(operator.admin)이 없어 새 대화를 시작할 수 없습니다";
   }
   if (e.status === 503) return "Gateway 에 연결되지 않았습니다";
+  // 역할이 내려갔다 — 전역 처리(app/queryClient)가 me 를 다시 받아 버튼을 거둔다. 문구는 그 규칙과 같게
+  if (e.code === "FORBIDDEN") return "권한이 없습니다";
   return e.message;
 }

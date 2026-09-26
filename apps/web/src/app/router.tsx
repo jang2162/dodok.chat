@@ -138,11 +138,18 @@ export const connectionRoute = createRoute({
   component: lazyPage(() => import("@/features/setup/ConnectionPage"), "ConnectionPage"),
 });
 
-/** 운영(owner 만 — 페이지가 가른다, 스펙 7장) */
+/** 운영(admin 이상 — 페이지가 가른다, 스펙 7장·팀 스펙 2장) */
 export const operationsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/settings/operations",
   component: lazyPage(() => import("@/features/ops/OpsPage"), "OpsPage"),
+});
+
+/** 멤버 관리(admin 이상 — 페이지가 가른다, 팀 스펙 6장) */
+export const membersRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/settings/members",
+  component: lazyPage(() => import("@/features/members/MembersPage"), "MembersPage"),
 });
 
 const routeTree = rootRoute.addChildren([
@@ -155,6 +162,7 @@ const routeTree = rootRoute.addChildren([
     agentsRoute,
     connectionRoute,
     operationsRoute,
+    membersRoute,
   ]),
 ]);
 

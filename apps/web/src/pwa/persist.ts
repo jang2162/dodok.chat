@@ -35,7 +35,8 @@ export function touchRecentChannel(qc: QueryClient, channelId: string): void {
  * 사본에 담을 쿼리(스펙 4장). me·채널 목록·에이전트·최근 목록은 늘, 채널 하나의 것(채널·멤버·타임라인)은 최근 본
  * 채널만. 스레드는 최근 채널마다 마지막으로 연 스레드 하나만(`threads` — 채널 id → 루트 id, 스레드·검색 스펙 4.2).
  * 런·활동·어댑터 상태는 지나간 실시간 값이라 담지 않는다(복원하면 틀린 상태를 보인다).
- * 연결 설정(`setup`)·운영(`ops`)은 owner 의 관리 정보라 기기에 남기지 않는다 — 아래 규칙이 바뀌어도 빠지게 먼저 거른다
+ * 연결 설정(`setup`)·운영(`ops`)은 관리 정보라 기기에 남기지 않는다 — 아래 규칙이 바뀌어도 빠지게 먼저 거른다.
+ * 사람 목록(`people` — 오프라인에서도 작성자가 풀리게)은 담고, 멤버 관리(`team` — 이메일이 든다)는 목록에 없어 빠진다
  */
 export function shouldPersist(
   query: { queryKey: readonly unknown[] },
@@ -48,6 +49,7 @@ export function shouldPersist(
     head === "me" ||
     head === "channels" ||
     head === "agents" ||
+    head === "people" ||
     head === "recentChannels" ||
     head === "recentThreads"
   )

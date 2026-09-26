@@ -1,6 +1,7 @@
 import type { Agent, ChannelMember } from "@dodok/shared";
 import { type FormEvent, useId, useRef, useState } from "react";
 import { formError } from "@/api/formErrors";
+import { useCanManage } from "@/api/queries";
 import { ResetSessionDialog } from "@/features/agents/ResetSessionDialog";
 import { josa } from "@/lib/josa";
 import { cn } from "@/lib/utils";
@@ -14,10 +15,12 @@ import { type AutoRespondStep, autoRespondPlan } from "./autoRespond";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { usePatchMember, useRemoveMember } from "./mutations";
 import { PROMPT_MAX } from "./PromptSection";
+import { LockedNotice } from "./Section";
 
 /**
  * 채널의 에이전트 한 줄(스펙 6.4): 이름·핸들, 자동 응답, 채널 오버라이드 프롬프트(펼침), 「새 대화」, 제거.
- * 자동 응답을 켤 때 다른 에이전트가 켜져 있으면 확인을 받은 뒤 그쪽을 먼저 끈다(`autoRespondPlan`)
+ * 자동 응답을 켤 때 다른 에이전트가 켜져 있으면 확인을 받은 뒤 그쪽을 먼저 끈다(`autoRespondPlan`).
+ * admin 미만이면 자동 응답·오버라이드는 값만 보이고 「새 대화」는 없다 — 제거는 열려 있다(팀 스펙 2장)
  */
 export function AgentMemberRow({
   channelId,
@@ -40,6 +43,7 @@ export function AgentMemberRow({
   onRemoved: () => void;
 }) {
   const remove = useRemoveMember(channelId);
+  const canManage = useCanManage();
   // 확인이 필요한지 판단할 때의 계획 — 확인 때 지금 멤버로 다시 세운다(열린 사이 wire 로 다른 에이전트가 켜질 수 있다)
   const [switching, setSwitching] = useState<AutoRespondStep[]>();
   const [removing, setRemoving] = useState(false);
@@ -82,21 +86,24 @@ export function AgentMemberRow({
           id={`${member.id}-auto`}
           aria-label={`${handle} 자동 응답`}
           checked={member.autoRespond}
-          disabled={autoRespondBusy}
+          disabled={autoRespondBusy || !canManage}
           onCheckedChange={toggleAutoRespond}
         />
       </div>
-      <OverrideEditor channelId={channelId} member={member} handle={handle} />
+      <OverrideEditor channelId={channelId} member={member} handle={handle} readOnly={!canManage} />
+      {!canManage && <LockedNotice />}
       <div className="flex justify-end gap-2">
-        <Button
-          ref={resetRef}
-          variant="outline"
-          size="sm"
-          aria-label={`${handle} 새 대화`}
-          onClick={() => setResetting(true)}
-        >
-          새 대화
-        </Button>
+        {canManage && (
+          <Button
+            ref={resetRef}
+            variant="outline"
+            size="sm"
+            aria-label={`${handle} 새 대화`}
+            onClick={() => setResetting(true)}
+          >
+            새 대화
+          </Button>
+        )}
         <Button
           ref={removeRef}
           variant="ghost"
@@ -152,15 +159,20 @@ export function AgentMemberRow({
   );
 }
 
-/** 채널 오버라이드 프롬프트 — 접힌 채로는 미리보기, 펼치면 편집. 공백뿐이면 지운다(null). VALIDATION·CONFLICT 만 폼 안에 */
+/**
+ * 채널 오버라이드 프롬프트 — 접힌 채로는 미리보기, 펼치면 편집. 공백뿐이면 지운다(null). VALIDATION·CONFLICT 만 폼 안에.
+ * `readOnly` 면 미리보기만(편집 버튼 없음)
+ */
 function OverrideEditor({
   channelId,
   member,
   handle,
+  readOnly,
 }: {
   channelId: string;
   member: ChannelMember;
   handle: string;
+  readOnly: boolean;
 }) {
   const save = usePatchMember(channelId);
   const [draft, setDraft] = useState<string>(); // undefined 면 접힘
@@ -169,7 +181,7 @@ function OverrideEditor({
   const [refocus, setRefocus] = useState(false);
   const id = useId();
 
-  if (draft === undefined) {
+  if (draft === undefined || readOnly) {
     return (
       <div className="flex items-start justify-between gap-2">
         <p
@@ -180,15 +192,17 @@ function OverrideEditor({
         >
           {member.promptOverride ?? "채널 프롬프트 오버라이드 없음"}
         </p>
-        <Button
-          variant="outline"
-          size="xs"
-          aria-label={`${handle} 채널 프롬프트 편집`}
-          autoFocus={refocus}
-          onClick={() => setDraft(member.promptOverride ?? "")}
-        >
-          편집
-        </Button>
+        {!readOnly && (
+          <Button
+            variant="outline"
+            size="xs"
+            aria-label={`${handle} 채널 프롬프트 편집`}
+            autoFocus={refocus}
+            onClick={() => setDraft(member.promptOverride ?? "")}
+          >
+            편집
+          </Button>
+        )}
       </div>
     );
   }

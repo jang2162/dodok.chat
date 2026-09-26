@@ -34,6 +34,12 @@ it("resetErrorMessage: 권한 없음(409 ADAPTER_CAPABILITY_MISSING)·Gateway �
   expect(resetErrorMessage(new Error("x"))).toBe("새 대화를 시작하지 못했습니다");
 });
 
+it("resetErrorMessage: 역할이 내려간 뒤(403 FORBIDDEN)는 서버 문구 대신 「권한이 없습니다」(팀 스펙 6장)", () => {
+  expect(resetErrorMessage(new ApiRequestError(403, "FORBIDDEN", "admin 이상만 할 수 있다"))).toBe(
+    "권한이 없습니다",
+  );
+});
+
 function setup(res: () => Response) {
   const fetch = vi.fn<typeof globalThis.fetch>(async () => res());
   vi.stubGlobal("fetch", fetch);
