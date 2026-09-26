@@ -87,7 +87,8 @@ function trimThread(t: Timeline): Timeline {
 
 /**
  * 저장 직전에 고친다(메모리의 캐시는 그대로): 타임라인은 위처럼 잘라서, 값을 가진 채 실패한 쿼리
- * (오프라인의 me 등)는 성공으로 — 오류 객체는 직렬화되지 않고, 복원 뒤 오류로 남으면 오프라인 판단이 틀린다
+ * (오프라인의 me 등)는 성공으로 — 오류 객체는 직렬화되지 않고, 복원 뒤 오류로 남으면 오프라인 판단이 틀린다.
+ * 뮤테이션은 버린다 — variables 에 비밀번호·초대 원문이 실린다. 저장 설정(shouldDehydrateMutation)도 담지 않는 겹 방어다
  */
 export function trimForPersist(state: DehydratedState): DehydratedState {
   return {

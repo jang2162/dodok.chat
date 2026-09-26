@@ -184,6 +184,23 @@ describe("trimForPersist", () => {
       data: ME,
     });
   });
+
+  it("뮤테이션은 버린다 — 저장 설정(shouldDehydrateMutation)이 담아 보내도 사본에는 없다", () => {
+    const s = state(ME, ["me"]);
+    const withMutation = {
+      ...s,
+      mutations: [
+        {
+          mutationKey: undefined,
+          scope: undefined,
+          state: { status: "pending", variables: { email: "m@dodok.local", password: "login-secret-111" } },
+        },
+      ],
+    } as unknown as DehydratedState;
+    const out = trimForPersist(withMutation);
+    expect(out.mutations).toEqual([]);
+    expect(JSON.stringify(out)).not.toContain("login-secret-111");
+  });
 });
 
 describe("스레드 사본(스레드·검색 스펙 4.2 — 최근 채널에 그 채널에서 연 스레드의 마지막 페이지)", () => {
@@ -337,6 +354,43 @@ describe("startPersistence", () => {
     expect(raw.toLowerCase()).not.toContain("sessiontoken");
     expect(stored(storage)?.clientState.mutations).toEqual([]);
     document.cookie = "dodok_probe=; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+  });
+
+  it("진행 중인 로그인·가입·재설정·비밀번호 변경 뮤테이션이 있어도 사본의 mutations 는 비어 있다 — 비밀번호·초대 원문이 variables 에 있다", async () => {
+    const qc = createQueryClient(() => {});
+    const { storage } = await persist(qc);
+    seed(qc);
+    // 응답을 기다리는 요청 — 끝나기 전에는 gcTime 과 무관하게 뮤테이션 캐시에 남는다. 테스트 끝에 풀어 준다
+    const settle: Array<() => void> = [];
+    const pending = (variables: object) =>
+      void qc
+        .getMutationCache()
+        .build(qc, {
+          mutationFn: () => new Promise<void>((resolve) => settle.push(resolve)),
+          gcTime: 0,
+        })
+        .execute(variables);
+    pending({ email: "m@dodok.local", password: "login-secret-111" });
+    pending({
+      token: "dit_invite-secret-222",
+      handle: "mia",
+      displayName: "Mia",
+      email: "m@dodok.local",
+      password: "join-secret-333",
+    });
+    pending({ token: "drt_reset-secret-444", password: "reset-secret-555" });
+    pending({ current: "current-secret-666", next: "next-secret-777" });
+    // 실패해도 풀어 준다 — 남은 요청이 뒤 테스트(가짜 시계)를 멈춰 세운다
+    try {
+      expect(qc.getMutationCache().getAll().filter((m) => m.state.status === "pending")).toHaveLength(4);
+      qc.setQueryData(qk.agents, [{ id: "after-pending" }]);
+      await vi.waitFor(() => expect(storage.map.get(PERSIST_KEY)).toContain("after-pending"));
+      const raw = storage.map.get(PERSIST_KEY) ?? "";
+      expect(raw).not.toMatch(/secret-\d{3}/);
+      expect(stored(storage)?.clientState.mutations).toEqual([]);
+    } finally {
+      for (const resolve of settle) resolve();
+    }
   });
 
   it("me 가 없으면 저장하지 않는다(로그인하지 않은 캐시)", async () => {
