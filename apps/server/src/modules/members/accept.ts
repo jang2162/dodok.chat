@@ -105,7 +105,7 @@ export async function acceptInvite(
   const passwordHash = await ctx.password.hash(body.password);
 
   // 여기서 claim 까지는 await 가 없다 — 검사와 잡기 사이에 다른 가입이 끼지 않는다. 그 전의 await 사이에 낀 경합은
-  // 아래 유일 인덱스가 막고 conflictAfterFailure 가 409 로 바꾼다
+  // 아래 유일 인덱스가 막고 catch 의 재검사(assertHandleFreeForPeople·assertEmailFree)가 409 로 바꾼다
   assertHandleFreeForPeople(db, workspaceId, body.handle);
   if (emailTaken(db, workspaceId, email)) throw emailConflict();
   if (!claimInvite(db, invite.id, deps.now())) throw inviteNotFound();

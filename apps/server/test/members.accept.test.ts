@@ -286,6 +286,44 @@ describe("POST /api/v1/invites/lookup·accept", () => {
       expect(logText, secret.slice(0, 6)).not.toContain(secret);
     }
   });
+
+  it("경합 — 검사 뒤 다른 요청이 같은 핸들을 먼저 커밋하면 409 로 바뀌고 초대가 되돌려진다", async () => {
+    app = await bootTestApp({}, roomy);
+    const owner = await login(app);
+    const issued = await issue(app, owner.headers);
+    const before = counts(app);
+    const ctx = await app.auth.$context;
+    const createUser = ctx.internalAdapter.createUser.bind(ctx.internalAdapter);
+    // assertHandleFreeForPeople·claimInvite 는 이미 동기로 지났다 — Better Auth 사용자를 만드는 await 중간에
+    // 다른 요청이 같은 핸들로 먼저 커밋했다고 흉내 낸다. Promise.all 로 두 accept 를 동시에 내면 앞선 요청의 행이
+    // 동기 검사보다 먼저 들어가 이 catch 경로에 닿지 않는다(리뷰 p4m-t3-review.md m1-2) — 그래서 직접 끼워 넣는다
+    ctx.internalAdapter.createUser = (async (...args: Parameters<typeof createUser>) => {
+      app!.db
+        .insert(users)
+        .values({
+          id: uuidv7(),
+          workspaceId: app!.workspaceId,
+          handle: "bee",
+          displayName: "Rival",
+          email: "rival@example.com",
+          authProvider: "local",
+          createdAt: new Date(),
+        })
+        .run();
+      return createUser(...args);
+    }) as typeof createUser;
+
+    const res = await accept(app, joinBody(issued.token));
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ code: "CONFLICT", details: { field: "handle" } });
+    expect(findValidInvite(app.db, issued.token, new Date())?.id).toBe(issued.invite.id);
+    // Better Auth 사용자는 만들어졌다가 되돌리기로 지워진다 — rival 의 users 행 하나만 늘어난다
+    expect(counts(app)).toEqual({
+      users: before.users + 1,
+      memberships: before.memberships,
+      authUsers: before.authUsers,
+    });
+  });
 });
 
 describe("POST /api/v1/invites/reset", () => {
@@ -368,5 +406,45 @@ describe("POST /api/v1/invites/reset", () => {
     });
     expect(res.statusCode).toBe(404);
     expect(findValidInvite(app.db, token, new Date())).toBeDefined();
+  });
+
+  it("조회도 — 대상이 더 이상 멤버가 아니면 404", async () => {
+    app = await bootTestApp({}, roomy);
+    const owner = await login(app);
+    const member = await userWithRole(app, "mem", "member");
+    const link = await app.fastify.inject({
+      method: "POST",
+      url: `/api/v1/members/${member.id}/reset-link`,
+      headers: owner.headers,
+    });
+    const { token } = link.json() as { token: string };
+    app.db
+      .delete(memberships)
+      .where(and(eq(memberships.workspaceId, app.workspaceId), eq(memberships.userId, member.id)))
+      .run();
+    const lookup = await app.fastify.inject({
+      method: "POST",
+      url: "/api/v1/invites/lookup",
+      payload: { token },
+    });
+    expect(lookup.statusCode).toBe(404);
+    expect(findValidInvite(app.db, token, new Date())).toBeDefined();
+  });
+
+  it("동시 두 번 제출 — 한 쪽만 성공한다(claim 결과를 본다)", async () => {
+    app = await bootTestApp({}, roomy);
+    const owner = await login(app);
+    const joined = await accept(app, joinBody((await issue(app, owner.headers)).token));
+    const userId = (joined.json() as { user: User }).user.id;
+    const link = await app.fastify.inject({
+      method: "POST",
+      url: `/api/v1/members/${userId}/reset-link`,
+      headers: owner.headers,
+    });
+    const { token } = link.json() as { token: string };
+    const submit = (password: string) =>
+      app!.fastify.inject({ method: "POST", url: "/api/v1/invites/reset", payload: { token, password } });
+    const [a, b] = await Promise.all([submit("first-new-password-1"), submit("second-new-password-2")]);
+    expect([a.statusCode, b.statusCode].sort()).toEqual([200, 404]);
   });
 });

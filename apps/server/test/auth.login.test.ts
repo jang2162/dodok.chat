@@ -84,7 +84,10 @@ describe("POST /api/v1/auth/local 두 모양", () => {
     const wrong = await local(app, { email: "bee@example.com", password: "wrong-password-here" });
     const missing = await local(app, { email: "nobody@example.com", password: PASSWORD });
     const ownerEmail = await local(app, { email: "owner@dodok.local", password: TEST_LOCAL_TOKEN });
-    for (const res of [wrong, missing, ownerEmail]) {
+    // 대소문자만 다른 OWNER_EMAIL — Better Auth 는 이메일을 스스로 소문자로 바꾸므로, 우리 쪽 정규화가
+    // 빠지면 대문자 owner 이메일 + 로컬 토큰으로 이메일 로그인이 될 수 있다(signInMember 의 normalizeEmail)
+    const ownerEmailUpper = await local(app, { email: "OWNER@dodok.local", password: TEST_LOCAL_TOKEN });
+    for (const res of [wrong, missing, ownerEmail, ownerEmailUpper]) {
       expect(res.statusCode).toBe(401);
       expect(res.json()).toEqual(WRONG_LOGIN);
     }
@@ -149,6 +152,24 @@ describe("POST /api/v1/auth/local 두 모양", () => {
     expect(fifth.statusCode).toBe(429);
     expect(fifth.json()).toMatchObject({ code: "RATE_LIMITED" });
     expect(owner.token).toEqual(expect.any(String));
+  });
+
+  it("me/password 도 같은 IP 버킷을 쓴다 — 상한을 넘기면 /auth/local 이 429", async () => {
+    app = await bootTestApp({}, { limits: { localLoginPerMin: 3 } });
+    const owner = await login(app); // 1
+    const change = () =>
+      app!.fastify.inject({
+        method: "POST",
+        url: "/api/v1/me/password",
+        headers: bearer(owner.token),
+        payload: {},
+      });
+    // owner 는 비밀번호를 못 바꿔 403 이지만, onRequest 의 loginLimit 은 핸들러보다 먼저 센다
+    expect((await change()).statusCode).toBe(403); // 2
+    expect((await change()).statusCode).toBe(403); // 3
+    const fourth = await local(app, { token: TEST_LOCAL_TOKEN });
+    expect(fourth.statusCode).toBe(429);
+    expect(fourth.json()).toMatchObject({ code: "RATE_LIMITED" });
   });
 });
 
