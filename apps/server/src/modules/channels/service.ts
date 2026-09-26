@@ -4,6 +4,7 @@ import type { SQLiteUpdateSetSource } from "drizzle-orm/sqlite-core";
 import { v7 as uuidv7 } from "uuid";
 import { z } from "zod";
 import { AdapterError, type AgentAdapter } from "../../adapters/types";
+import { roleOf } from "../../auth/roles";
 import type { Db, DbOrTx } from "../../db/client";
 import { agents, channelMembers, channels, memberships, users } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
@@ -176,7 +177,7 @@ export function getChannel(db: DbOrTx, id: string, workspaceId?: string): Channe
   return row ? rowToChannel(row) : undefined;
 }
 
-/** 멤버는 채널과 같은 워크스페이스의 사용자·에이전트여야 한다. autoRespond=true 가 둘 이상이 되면 저장하고 경고한다. */
+/** 멤버는 채널과 같은 워크스페이스의 사용자(membership 이 있는)·에이전트여야 한다. autoRespond=true 가 둘 이상이 되면 저장하고 경고한다. */
 export function addMember(
   db: Db,
   channelId: string,
@@ -199,7 +200,9 @@ export function addMember(
         .from(users)
         .where(and(eq(users.id, input.memberId), eq(users.workspaceId, channel.workspaceId)))
         .get();
-      if (!user) throw apiError("NOT_FOUND", "user not found");
+      // 나간 사람(membership 없음)은 users 행이 남아도 넣지 않는다 — 넣으면 에이전트 헤더 「참여자:」에 다시 실린다
+      if (!user || !roleOf(tx, channel.workspaceId, input.memberId))
+        throw apiError("NOT_FOUND", "user not found");
     } else {
       const agent = tx
         .select({ id: agents.id })

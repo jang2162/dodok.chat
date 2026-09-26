@@ -61,6 +61,40 @@ describe("GET /people", () => {
     const res = await app.fastify.inject({ method: "GET", url: "/api/v1/people" });
     expect(res.statusCode).toBe(401);
   });
+
+  it("채널에 사람 넣기·빼기는 누구나 — 나간 사람은 넣지 못한다(404)", async () => {
+    const member = await userWithRole(app, "adder", "member");
+    const friend = await userWithRole(app, "friend", "member");
+    const gone = await userWithRole(app, "leaver", "member");
+    const as = (token: string, method: "POST" | "DELETE", url: string, payload?: object) =>
+      app.fastify.inject({
+        method,
+        url,
+        headers: { authorization: `Bearer ${token}` },
+        ...(payload === undefined ? {} : { payload }),
+      });
+    const created = await as(member.token, "POST", "/api/v1/channels", { name: `people-${uuid()}` });
+    expect(created.statusCode).toBe(201);
+    const channelId = (created.json() as { channel: { id: string } }).channel.id;
+    expect((await as(ownerToken, "DELETE", `/api/v1/members/${gone.id}`)).statusCode).toBe(204);
+
+    const left = await as(member.token, "POST", `/api/v1/channels/${channelId}/members`, {
+      memberType: "user",
+      memberId: gone.id,
+    });
+    expect(left.statusCode).toBe(404);
+    expect(isChannelMember(app.db, channelId, gone.id)).toBe(false);
+
+    const added = await as(member.token, "POST", `/api/v1/channels/${channelId}/members`, {
+      memberType: "user",
+      memberId: friend.id,
+    });
+    expect(added.statusCode).toBe(201);
+    expect(
+      (await as(member.token, "DELETE", `/api/v1/channels/${channelId}/members/${friend.id}`)).statusCode,
+    ).toBe(200);
+    expect(isChannelMember(app.db, channelId, friend.id)).toBe(false);
+  });
 });
 
 /** seed 에는 memberships 가 없다 — 사람을 워크스페이스 멤버로 넣는다 */

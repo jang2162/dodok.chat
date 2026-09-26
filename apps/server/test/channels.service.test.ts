@@ -2,7 +2,7 @@ import { Channel, ChannelMember } from "@dodok/shared";
 import { eq } from "drizzle-orm";
 import { v7 as uuid } from "uuid";
 import { describe, expect, it, vi } from "vitest";
-import { channels } from "../src/db/schema.sqlite";
+import { channels, memberships } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
 import {
   addMember,
@@ -21,6 +21,8 @@ import { seedWorkspace } from "./helpers/seed";
 function setup() {
   const db = newTestDb();
   const { workspaceId, userId } = seedWorkspace(db, { userHandle: "jang" });
+  // addMember 는 사람 멤버의 membership 을 본다 — seed 는 membership 을 넣지 않는다
+  db.insert(memberships).values({ id: uuid(), workspaceId, userId, role: "owner" }).run();
   const logger = { warn: vi.fn() };
   const agent = (handle: string) =>
     createAgent(db, { workspaceId, providerAgentId: handle, handle, name: handle.toUpperCase() });
