@@ -1,6 +1,7 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { QueryClient } from "@tanstack/react-query";
 import { type MeResponse, qk } from "@/api/queries";
 import { ME, json, renderRoute, shellGet } from "../../../test/shellApi";
 
@@ -40,6 +41,14 @@ function stubServer(me: MeResponse, { patchMe, password }: { patchMe?: Handler; 
   return fetch;
 }
 
+const mutationStates = (queryClient: QueryClient) =>
+  JSON.stringify(
+    queryClient
+      .getMutationCache()
+      .getAll()
+      .map((m) => m.state),
+  );
+
 async function openAccount() {
   await userEvent.click(await screen.findByRole("button", { name: "내 계정" }));
   return screen.findByRole("dialog", { name: "내 계정" });
@@ -77,6 +86,20 @@ describe("AccountDialog", () => {
     expect(queryClient.getQueryData<MeResponse>(qk.me)?.role).toBe("member");
   });
 
+  it("표시 이름 저장이 실패하면 서버 문구를 칸 아래에 — 고쳐 치기 시작하면 지운다", async () => {
+    stubServer(MEMBER, { patchMe: () => json(500, { code: "INTERNAL", message: "서버 내부 오류" }) });
+    renderRoute("/agents");
+    const dialog = await openAccount();
+    const name = within(dialog).getByLabelText("표시 이름");
+    await userEvent.type(name, "!");
+    await userEvent.click(within(dialog).getByRole("button", { name: "저장" }));
+    await waitFor(() => expect(name).toHaveAccessibleDescription("서버 내부 오류"));
+
+    await userEvent.type(name, "?");
+    expect(name).not.toHaveAccessibleDescription("서버 내부 오류");
+    expect(name).not.toHaveAttribute("aria-invalid", "true");
+  });
+
   it("owner 에게는 비밀번호 칸 대신 로컬 토큰 안내", async () => {
     stubServer({ ...MEMBER, user: { ...MEMBER.user, handle: "owner" }, role: "owner" });
     renderRoute("/agents");
@@ -108,6 +131,39 @@ describe("AccountDialog", () => {
     await waitFor(() => expect(current).toHaveAccessibleDescription("현재 비밀번호가 맞지 않는다"));
     expect(current).toHaveAttribute("aria-invalid", "true");
     expect(history.location.pathname).toBe("/agents");
+  });
+
+  it("비밀번호 바꾸기가 실패하든 성공하든 뮤테이션 캐시 어디에도 현재·새 비밀번호가 없다", async () => {
+    let calls = 0;
+    stubServer(MEMBER, {
+      password: () => {
+        calls += 1;
+        return calls === 1
+          ? json(400, {
+              code: "VALIDATION",
+              message: "현재 비밀번호가 맞지 않는다",
+              details: { field: "current" },
+            })
+          : new Response(null, { status: 204 });
+      },
+    });
+    const { queryClient } = renderRoute("/agents");
+    const dialog = await openAccount();
+    await userEvent.type(within(dialog).getByLabelText("현재 비밀번호"), "wrong-password-1");
+    await userEvent.type(within(dialog).getByLabelText("새 비밀번호"), "correct-horse-battery");
+    await userEvent.type(within(dialog).getByLabelText("새 비밀번호 확인"), "correct-horse-battery");
+    await userEvent.click(within(dialog).getByRole("button", { name: "비밀번호 바꾸기" }));
+    await within(dialog).findByText("현재 비밀번호가 맞지 않는다");
+    await waitFor(() => expect(mutationStates(queryClient)).not.toContain("wrong-password-1"));
+    expect(mutationStates(queryClient)).not.toContain("correct-horse-battery");
+
+    const current = within(dialog).getByLabelText("현재 비밀번호");
+    await userEvent.clear(current);
+    await userEvent.type(current, "old-password-12");
+    await userEvent.click(within(dialog).getByRole("button", { name: "비밀번호 바꾸기" }));
+    await within(dialog).findByText("비밀번호를 바꿨습니다 — 다른 기기의 로그인은 끊겼습니다");
+    await waitFor(() => expect(mutationStates(queryClient)).not.toContain("old-password-12"));
+    expect(mutationStates(queryClient)).not.toContain("correct-horse-battery");
   });
 
   it("새 비밀번호 두 칸이 다르면 보내지 않는다", async () => {

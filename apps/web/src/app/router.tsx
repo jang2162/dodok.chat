@@ -70,6 +70,12 @@ export const resetRoute = createRoute({
   component: lazyPage(() => import("@/features/auth/ResetPage"), "ResetPage"),
 });
 
+/**
+ * 로그인 없이 여는 화면인가 — 위 두 라우트(`/join/…`·`/reset/…`). 끊긴 세션의 401(createApp `onUnauthorized`)은 이 화면에서
+ * 로그인으로 보내지 않는다: 계정이 없는 사람을 쫓아내고, 경로의 토큰을 `next` 로 옮기게 된다
+ */
+export const isPublicPath = (pathname: string): boolean => /^\/(?:join|reset)\//.test(pathname);
+
 /** 로그인 가드 레이아웃. me 의 401 은 `/login?next=`, 그 밖의 실패(네트워크·5xx)는 오류 화면 */
 const appRoute = createRoute({
   getParentRoute: () => rootRoute,

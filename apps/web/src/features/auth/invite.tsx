@@ -1,7 +1,7 @@
 import type { InviteKind, InviteLookup } from "@dodok/shared";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import type { ReactNode } from "react";
+import { type ReactNode, useId } from "react";
 import { ApiRequestError, api } from "@/api/http";
 import { Button } from "@/ui/button";
 
@@ -14,11 +14,13 @@ export const INVALID_TEXT: Record<InviteKind, string> = {
 /**
  * 링크 조회(`POST /invites/lookup`) — 토큰은 본문으로 보낸다(서버 접근 로그의 URL 에 남지 않게, 팀 스펙 7장).
  * 조회는 로그인과 같은 IP 버킷(분당 5회)을 쓴다 — 저절로 되풀이하지 않는다(`retry: false`, 다시 받는 일은 「다시 시도」만).
- * 키에 토큰이 들지만 사본 저장 대상이 아니고(pwa/persist 의 shouldPersist) 화면을 떠나면 곧 빠진다(`gcTime: 0`)
+ * 키에는 토큰 대신 마운트마다 다른 `useId` 를 쓴다 — 키는 `queryHash` 로 캐시 전체에 퍼지는 식별자라 원문을 싣지 않는다.
+ * 그래서 토큰이 바뀌면 부르는 쪽이 `<InviteGate key={token}>` 로 다시 마운트한다. 화면을 떠나면 곧 빠진다(`gcTime: 0`)
  */
-function useInviteLookup(token: string) {
+function useInviteLookup(token: string, kind: InviteKind) {
+  const id = useId();
   return useQuery({
-    queryKey: ["inviteLookup", token],
+    queryKey: ["inviteLookup", kind, id],
     queryFn: () => api<InviteLookup>("POST", "/invites/lookup", { token }),
     retry: false,
     staleTime: Infinity,
@@ -49,7 +51,8 @@ export function InviteInvalid({ kind }: { kind: InviteKind }) {
 
 /**
  * 조회가 끝나야 폼을 그린다. 404 와 종류가 다른 링크(가입 주소에 재설정 토큰)는 무효 화면, 그 밖의 실패(네트워크·5xx·429)는
- * 문구와 「다시 시도」
+ * 문구와 「다시 시도」. 조회 키가 토큰을 모르므로 부르는 쪽은 `key={token}` 을 준다 — 라우터는 같은 라우트의 파라미터만 바뀌면
+ * 다시 마운트하지 않는다
  */
 export function InviteGate({
   token,
@@ -60,7 +63,7 @@ export function InviteGate({
   kind: InviteKind;
   children: (lookup: InviteLookup) => ReactNode;
 }) {
-  const lookup = useInviteLookup(token);
+  const lookup = useInviteLookup(token, kind);
   if (lookup.data) return lookup.data.kind === kind ? children(lookup.data) : <InviteInvalid kind={kind} />;
   if (lookup.error instanceof ApiRequestError && lookup.error.status === 404)
     return <InviteInvalid kind={kind} />;

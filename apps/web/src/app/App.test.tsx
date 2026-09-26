@@ -223,6 +223,40 @@ it("wire UNAUTHORIZED 인데 REST 세션이 살아 있으면(me 200) 로그인�
   expect(createdSockets).toHaveLength(1);
 });
 
+it("로그인 없이 여는 링크(/join)에서는 끊긴 세션의 401 이 상태만 비우고 주소를 그대로 둔다 — 토큰이 next 로 옮겨지지 않는다", async () => {
+  const TOKEN = "dit_abcDEF123-_xyz";
+  vi.stubGlobal(
+    "fetch",
+    vi.fn<typeof fetch>(async (input) => {
+      if (String(input) === "/api/v1/invites/lookup")
+        return json(200, { workspaceName: "도독 팀", kind: "invite", role: "member" });
+      return json(401, UNAUTHORIZED);
+    }),
+  );
+  const history = createMemoryHistory({ initialEntries: [`/join/${TOKEN}`] });
+  const app = createApp(history);
+  // 오프라인 사본이 복원한 옛 me — 서버 세션은 이미 끝났다
+  app.queryClient.setQueryData(qk.me, ME);
+  const moves: string[] = [];
+  history.subscribe(({ location }) => moves.push(location.href));
+  render(<App app={app} />);
+  expect(await screen.findByRole("heading", { name: "도독 팀에 가입" })).toBeInTheDocument();
+  await waitFor(() => expect(createdSockets).toHaveLength(1));
+  const reset = spyReset();
+
+  act(() => createdSockets[0]?.serverEmit("connect_error", wireUnauthorized()));
+
+  await waitFor(() => expect(reset).toHaveBeenCalled());
+  await waitFor(() => expect(app.queryClient.getQueryData(qk.me)).toBeUndefined());
+  expect(history.location.pathname).toBe(`/join/${TOKEN}`);
+  expect(moves).toHaveLength(0);
+  expect(screen.getByRole("heading", { name: "도독 팀에 가입" })).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "로그인" })).not.toBeInTheDocument();
+  // 옛 사용자의 소켓은 끊고, 로그인이 없으니 새로 붙지 않는다
+  expect(createdSockets[0]?.calls.disconnect).toBeGreaterThanOrEqual(1);
+  expect(createdSockets).toHaveLength(1);
+});
+
 it("앱은 파일 끌어 놓기를 창에서 막는다(로그인 화면에서도) — 브라우저가 파일을 열어 앱을 떠나지 않게", async () => {
   vi.stubGlobal(
     "fetch",

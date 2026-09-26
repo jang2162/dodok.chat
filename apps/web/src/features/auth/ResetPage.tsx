@@ -14,7 +14,7 @@ const route = getRouteApi("/reset/$token");
 export function ResetPage() {
   const { token } = route.useParams();
   return (
-    <InviteGate token={token} kind="reset">
+    <InviteGate key={token} token={token} kind="reset">
       {(lookup) => <ResetForm token={token} lookup={lookup} />}
     </InviteGate>
   );

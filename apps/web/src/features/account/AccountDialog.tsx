@@ -88,6 +88,7 @@ function DisplayNameForm({ current }: { current: string }) {
         value={name}
         onChange={(e) => {
           setSaved(false);
+          setError(undefined);
           setName(e.target.value);
         }}
         error={error ?? (name !== "" && !valid ? "표시 이름은 1~64자입니다" : undefined)}

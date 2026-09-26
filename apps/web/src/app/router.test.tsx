@@ -8,7 +8,7 @@ import { TooltipProvider } from "@/ui/tooltip";
 import { shellGet } from "../../test/shellApi";
 import { RouteError } from "./RouteError";
 import { createQueryClient } from "./queryClient";
-import { channelIdOf, createAppRouter, safeNext } from "./router";
+import { channelIdOf, createAppRouter, isPublicPath, safeNext } from "./router";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -108,6 +108,13 @@ it("channelIdOf 는 채널 경로와 그 아래 탭에서만 채널 id 를 준�
   for (const other of ["/", "/agents", "/login", "/c", "/c/"]) {
     expect(channelIdOf(other)).toBeUndefined();
   }
+});
+
+it("isPublicPath 는 가입·재설정 링크(/join/…·/reset/…)만 로그인 없이 여는 화면으로 본다", () => {
+  expect(isPublicPath("/join/dit_x")).toBe(true);
+  expect(isPublicPath("/reset/drt_x")).toBe(true);
+  for (const other of ["/login", "/", "/c/abc", "/joiner/x", "/c/join/x", "/join", "/reset"])
+    expect(isPublicPath(other)).toBe(false);
 });
 
 it("safeNext 는 앱 안 경로만 받는다", () => {

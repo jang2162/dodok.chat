@@ -3,6 +3,7 @@ import { getRouteApi } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
 import { detailField } from "@/api/formErrors";
 import { ApiRequestError } from "@/api/http";
+import { useCachedMe } from "@/api/queries";
 import { Alert, AlertDescription } from "@/ui/alert";
 import { Button } from "@/ui/button";
 import { AuthField, CONFIRM_MISMATCH, PASSWORD_HINT, authErrorText, passwordProblem } from "./fields";
@@ -34,7 +35,7 @@ function problems(v: Values): Partial<Record<Field, string>> {
 export function JoinPage() {
   const { token } = route.useParams();
   return (
-    <InviteGate token={token} kind="invite">
+    <InviteGate key={token} token={token} kind="invite">
       {(lookup) => <JoinForm token={token} lookup={lookup} />}
     </InviteGate>
   );
@@ -46,6 +47,8 @@ export function JoinPage() {
  * 수락 404(그 사이 다른 쪽이 씀·만료)는 무효 화면으로 바꾼다
  */
 function JoinForm({ token, lookup }: { token: string; lookup: InviteLookup }) {
+  // 이미 로그인한 브라우저면 가입이 그 로그인을 바꾼다(useFinishInvite) — 폼 위에 한 줄로 알린다
+  const signedInAs = useCachedMe()?.user.handle;
   const accept = useAcceptInvite();
   const finish = useFinishInvite();
   const [values, setValues] = useState<Values>(EMPTY);
@@ -107,6 +110,11 @@ function JoinForm({ token, lookup }: { token: string; lookup: InviteLookup }) {
           <h1 className="text-xl font-semibold break-words">{lookup.workspaceName}에 가입</h1>
           {lookup.role && <p className="text-sm text-muted-foreground">{ROLE_TEXT[lookup.role]}</p>}
         </div>
+        {signedInAs && (
+          <p className="rounded-lg border px-4 py-3 text-sm break-words text-muted-foreground">
+            지금 @{signedInAs} 로 로그인돼 있습니다 — 가입하면 이 브라우저는 새 계정으로 바뀝니다
+          </p>
+        )}
         <AuthField
           label="핸들"
           hint="@멘션에 쓰는 이름 — 영문 소문자·숫자·_·-"

@@ -1,11 +1,16 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { toast } from "sonner";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { qk } from "@/api/queries";
 import { createQueryClient } from "@/app/queryClient";
+import { registerSessionReset } from "@/app/session";
 import { ME, channelOf, json, renderRoute, shellGet } from "../../../test/shellApi";
 
+// 등록한 세션 정리 스파이는 단언이 실패해도 다음 테스트로 새지 않게 여기서 푼다
+const unregisters: Array<() => void> = [];
 afterEach(() => {
+  for (const unregister of unregisters.splice(0)) unregister();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -13,6 +18,7 @@ afterEach(() => {
 const TOKEN = "dit_abcDEF123-_xyz";
 const LOOKUP = { workspaceName: "도독 팀", kind: "invite", role: "member" };
 const NEW_USER = { id: "u2", handle: "mia", displayName: "미아" };
+const OLD_USER = { id: "u1", handle: "alice", displayName: "앨리스" };
 
 /**
  * lookup·accept 를 가르는 가짜 서버. accept 가 2xx 면 그 뒤 me 는 새 사용자(쿠키가 구워진 것처럼),
@@ -21,9 +27,12 @@ const NEW_USER = { id: "u2", handle: "mia", displayName: "미아" };
 function stubServer({
   lookup = () => json(200, LOOKUP),
   accept = () => json(200, { sessionToken: "s", user: NEW_USER }),
+  before,
 }: {
   lookup?: (body: unknown) => Response | Promise<Response>;
   accept?: (body: unknown) => Response | Promise<Response>;
+  /** 수락 전에 이 브라우저가 로그인해 있던 사용자 — 없으면 me 는 401 */
+  before?: typeof OLD_USER;
 } = {}) {
   let loggedIn = false;
   const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
@@ -38,7 +47,9 @@ function stubServer({
     if (url === "/api/v1/auth/me")
       return loggedIn
         ? json(200, { ...ME, user: NEW_USER, role: "member" })
-        : json(401, { code: "UNAUTHORIZED", message: "x" });
+        : before
+          ? json(200, { ...ME, user: before, role: "member" })
+          : json(401, { code: "UNAUTHORIZED", message: "x" });
     if (url === "/api/v1/channels") return json(200, { channels: [channelOf("ch1")] });
     const shell = shellGet(input, init);
     if (shell) return shell;
@@ -47,6 +58,14 @@ function stubServer({
   vi.stubGlobal("fetch", fetch);
   return fetch;
 }
+
+const mutationStates = (queryClient: ReturnType<typeof createQueryClient>) =>
+  JSON.stringify(
+    queryClient
+      .getMutationCache()
+      .getAll()
+      .map((m) => m.state),
+  );
 
 const callsTo = (fetch: ReturnType<typeof stubServer>, path: string) =>
   fetch.mock.calls.filter(([url]) => String(url) === `/api/v1${path}`);
@@ -76,6 +95,58 @@ describe("JoinPage", () => {
     const [lookup] = callsTo(fetch, "/invites/lookup");
     expect(lookup?.[1]).toMatchObject({ method: "POST", body: JSON.stringify({ token: TOKEN }) });
     expect(fetch.mock.calls.some(([url]) => String(url).includes(TOKEN))).toBe(false);
+  });
+
+  it("쿼리 캐시의 키·해시 어디에도 토큰 원문이 없고, 화면을 떠나면 조회 결과가 캐시에서 빠진다", async () => {
+    stubServer();
+    const { router, queryClient } = renderRoute(`/join/${TOKEN}`);
+    expect(await screen.findByRole("heading", { name: "도독 팀에 가입" })).toBeInTheDocument();
+    const keys = () =>
+      queryClient
+        .getQueryCache()
+        .getAll()
+        .map((q) => [q.queryKey, q.queryHash]);
+    expect(keys().some(([key]) => (key as unknown[])[0] === "inviteLookup")).toBe(true);
+    expect(JSON.stringify(keys())).not.toContain(TOKEN);
+
+    await router.navigate({ to: "/login" });
+    expect(await screen.findByRole("heading", { name: "로그인" })).toBeInTheDocument();
+    await waitFor(() => expect(keys().some(([key]) => (key as unknown[])[0] === "inviteLookup")).toBe(false));
+  });
+
+  it("같은 화면에서 토큰이 바뀌면 새 토큰으로 다시 조회한다", async () => {
+    const fetch = stubServer({
+      lookup: (body) =>
+        json(200, {
+          ...LOOKUP,
+          workspaceName: (body as { token: string }).token === TOKEN ? "도독 팀" : "다른 팀",
+        }),
+    });
+    const { router } = renderRoute(`/join/${TOKEN}`);
+    expect(await screen.findByRole("heading", { name: "도독 팀에 가입" })).toBeInTheDocument();
+    await router.navigate({ to: "/join/$token", params: { token: "dit_other" } });
+    expect(await screen.findByRole("heading", { name: "다른 팀에 가입" })).toBeInTheDocument();
+    expect(callsTo(fetch, "/invites/lookup").map(([, init]) => JSON.parse(String(init?.body)))).toEqual([
+      { token: TOKEN },
+      { token: "dit_other" },
+    ]);
+  });
+
+  it("조회 404 는 무효 화면만 — 전역 토스트가 겹치지 않는다", async () => {
+    const toastError = vi.spyOn(toast, "error").mockImplementation(() => 0);
+    stubServer({
+      lookup: () => json(404, { code: "NOT_FOUND", message: "초대가 만료됐거나 이미 쓰였습니다" }),
+    });
+    renderRoute(`/join/${TOKEN}`);
+    expect(await screen.findByText(/초대한 사람에게 새 링크를 받으세요/)).toBeInTheDocument();
+    expect(toastError).not.toHaveBeenCalled();
+  });
+
+  it("조회가 429 면 레이트리밋 문구와 「다시 시도」", async () => {
+    stubServer({ lookup: () => json(429, { code: "RATE_LIMITED", message: "Rate limit exceeded" }) });
+    renderRoute(`/join/${TOKEN}`);
+    expect(await screen.findByText("잠시 뒤 다시 시도하세요(1분 5회)")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "다시 시도" })).toBeInTheDocument();
   });
 
   it("admin 초대면 「관리자로 초대받았습니다」", async () => {
@@ -180,6 +251,37 @@ describe("JoinPage", () => {
     });
   });
 
+  it("409 로 폼에 머무는 동안에도 뮤테이션 캐시 어디에도 비밀번호·토큰이 없다", async () => {
+    stubServer({
+      accept: () =>
+        json(409, { code: "CONFLICT", message: "이미 가입된 이메일입니다", details: { field: "email" } }),
+    });
+    const queryClient = createQueryClient(() => {});
+    renderRoute(`/join/${TOKEN}`, queryClient);
+    await fillForm();
+    await userEvent.click(screen.getByRole("button", { name: "가입" }));
+    await waitFor(() =>
+      expect(screen.getByLabelText("이메일")).toHaveAccessibleDescription("이미 가입된 이메일입니다"),
+    );
+    await waitFor(() => expect(mutationStates(queryClient)).not.toContain("correct-horse-battery"));
+    expect(mutationStates(queryClient)).not.toContain(TOKEN);
+    // 칸 값은 남는다 — 고쳐 다시 보낸다
+    expect(screen.getByLabelText("비밀번호")).toHaveValue("correct-horse-battery");
+  });
+
+  // type="email" 칸은 브라우저(jsdom 도)가 값의 앞뒤 공백을 이미 떼므로(HTML 값 정리 규칙) 폼의 trim() 은 겹 방어다 —
+  // 이 테스트는 그 trim 을 따로 잠그지 못하고, 사람이 보는 결과(공백이 서버로 가지 않는다)만 본다
+  it("이메일 앞뒤 공백은 서버로 가지 않는다", async () => {
+    const fetch = stubServer();
+    const { history } = renderRoute(`/join/${TOKEN}`);
+    await fillForm({ 이메일: "  mia@example.com  " });
+    await userEvent.click(screen.getByRole("button", { name: "가입" }));
+    await waitFor(() => expect(history.location.pathname).toBe("/c/ch1"));
+    expect(JSON.parse(String(callsTo(fetch, "/invites/accept")[0]?.[1]?.body))).toMatchObject({
+      email: "mia@example.com",
+    });
+  });
+
   it("수락이 404(그 사이 다른 쪽이 씀)면 만료 안내로 바뀐다", async () => {
     stubServer({
       accept: () => json(404, { code: "NOT_FOUND", message: "초대가 만료됐거나 이미 쓰였습니다" }),
@@ -222,6 +324,40 @@ describe("JoinPage", () => {
         ),
       ).not.toContain("correct-horse-battery"),
     );
+  });
+
+  it("다른 계정으로 로그인해 있던 브라우저에서 가입하면 앞 사용자의 상태를 비우고 me 는 새 사용자다", async () => {
+    stubServer({ before: OLD_USER });
+    const queryClient = createQueryClient(() => {});
+    queryClient.setQueryData(qk.me, { ...ME, user: OLD_USER, role: "member" });
+    const reset = vi.fn();
+    unregisters.push(registerSessionReset(reset));
+    const { history } = renderRoute(`/join/${TOKEN}`, queryClient);
+    await fillForm();
+    await userEvent.click(screen.getByRole("button", { name: "가입" }));
+
+    await waitFor(() => expect(history.location.pathname).toBe("/c/ch1"));
+    expect(reset).toHaveBeenCalledTimes(1);
+    expect(queryClient.getQueryData<{ user: { id: string } }>(qk.me)?.user.id).toBe("u2");
+  });
+
+  it("이미 로그인한 채 초대 링크를 열면 폼 위에 지금 계정과 바뀐다는 것을 한 줄로 알린다", async () => {
+    stubServer({ before: OLD_USER });
+    const queryClient = createQueryClient(() => {});
+    queryClient.setQueryData(qk.me, { ...ME, user: OLD_USER, role: "member" });
+    renderRoute(`/join/${TOKEN}`, queryClient);
+    expect(
+      await screen.findByText(
+        "지금 @alice 로 로그인돼 있습니다 — 가입하면 이 브라우저는 새 계정으로 바뀝니다",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("로그인하지 않았으면 계정 안내 줄이 없다", async () => {
+    stubServer();
+    renderRoute(`/join/${TOKEN}`);
+    expect(await screen.findByRole("heading", { name: "도독 팀에 가입" })).toBeInTheDocument();
+    expect(screen.queryByText(/로그인돼 있습니다/)).not.toBeInTheDocument();
   });
 
   it("390px 폭에서도 폼이 화면 폭을 넘지 않게 w-full·max-w 로만 잡는다", async () => {

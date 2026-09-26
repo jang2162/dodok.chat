@@ -65,10 +65,9 @@ export const meQuery = queryOptions({
 });
 export const useMe = () => useQuery(meQuery);
 /**
- * 연결 설정 같은 owner 전용 진입점을 가를 때(설정 마법사 스펙 「결정」 — setup 은 owner 만). role 이 없는 옛 me 는 owner 가 아니다.
- * 라우트 가드가 이미 받은 me 를 캐시 구독으로 읽기만 한다 — 관찰자를 두지 않는 까닭은 pwa/offline.ts `useMeDown` 의 주석
+ * 캐시에 있는 me — 불러오지 않고 캐시 구독으로 읽기만 한다. 관찰자를 두지 않는 까닭은 pwa/offline.ts `useMeDown` 의 주석
  */
-export function useIsOwner(): boolean {
+export function useCachedMe(): MeResponse | undefined {
   const qc = useQueryClient();
   const subscribe = useCallback(
     (onChange: () => void) => {
@@ -79,8 +78,13 @@ export function useIsOwner(): boolean {
     },
     [qc],
   );
-  return useSyncExternalStore(subscribe, () => qc.getQueryData<MeResponse>(qk.me)?.role === "owner");
+  return useSyncExternalStore(subscribe, () => qc.getQueryData<MeResponse>(qk.me));
 }
+/**
+ * 연결 설정 같은 owner 전용 진입점을 가를 때(설정 마법사 스펙 「결정」 — setup 은 owner 만). role 이 없는 옛 me 는 owner 가 아니다.
+ * 라우트 가드가 이미 받은 me 를 읽기만 한다(`useCachedMe`)
+ */
+export const useIsOwner = (): boolean => useCachedMe()?.role === "owner";
 export const useChannels = () =>
   useQuery({
     queryKey: qk.channels,
