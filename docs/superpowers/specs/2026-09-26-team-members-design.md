@@ -52,11 +52,11 @@
 
 | 할 일 | member | admin | owner |
 | --- | --- | --- | --- |
-| 채널 읽기·쓰기·만들기, 채널 이름·설명(`name`·`topic`) 바꾸기, 멘션, 카드·모달, 첨부, 검색, 런 중지(`run.abort`) | ✅ | ✅ | ✅ |
+| 채널 읽기·쓰기·만들기(만들 때 `name`·`topic` 밖의 필드 — 프롬프트·릴레이 정책·공개 범위 — 를 주면 admin 이상), 채널 이름·설명(`name`·`topic`) 바꾸기, 멘션, 카드·모달, 첨부, 검색, 런 중지(`run.abort`) | ✅ | ✅ | ✅ |
 | 채널에 에이전트 넣기·빼기(`POST/DELETE /channels/:id/members`) | ✅ | ✅ | ✅ |
 | 채널의 에이전트 동작·비용 설정 — 채널 프롬프트, 에이전트별 프롬프트(`PATCH /channels/:id/members/:memberId`), 릴레이 정책, 자동 응답, 일일 한도 | — | ✅ | ✅ |
 | 「새 대화」(`POST /channels/:id/agents/:agentId/reset`), 도구 실행 승인·거절(wire `approval.resolve`) | — | ✅ | ✅ |
-| 에이전트 등록·수정(`POST/PATCH /agents`) | — | ✅ | ✅ |
+| 에이전트 등록·수정(`POST/PATCH /agents`), Gateway 에이전트 찾기(`GET /agents/discover`) | — | ✅ | ✅ |
 | member 초대, 재설정 링크 발급, member 내보내기 | — | ✅ | ✅ |
 | admin 초대, 역할 바꾸기(admin ↔ member), admin 내보내기 | — | — | ✅ |
 | 운영 화면(`/api/v1/ops/*` — 사건 확인·한도 설정) | — | ✅ | ✅ |
