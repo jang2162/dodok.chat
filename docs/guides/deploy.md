@@ -310,6 +310,8 @@ docker compose -f infra/compose.yml ps                              # app·caddy
 
 마이그레이션은 부팅 때 자동이다. 새 이미지는 그 커밋의 플러그인 tgz 를 품는다 — 연결 페이지 「플러그인」 섹션이 「다른 빌드입니다 — 받아서 다시 설치하세요」면 체크리스트 4 의 받기·[B] 설치를 다시 한다(토큰은 그대로 — 계정 설정 패치 줄은 건너뛴다). 「서버와 같은 빌드입니다」면 플러그인은 그대로 둔다.
 
+**스레드가 있는 판(Phase 4 ① 이후)으로 올릴 때는 플러그인을 반드시 다시 설치한다.** 스레드 런은 hello 에 `threads` 를 싣는 플러그인이 붙어 있어야 돈다. 옛 플러그인이 붙어 있으면 스레드에서 에이전트를 부를 때마다 스레드에 「@dev 가 스레드에서 답하지 못했습니다 — 플러그인을 새로 설치해야 합니다(연결 페이지)」 run_error 카드(`PLUGIN_OUTDATED`)가 남고, 채널 최상위 멘션은 그대로 돈다. 다시 설치한 뒤 그 카드의 「다시 실행」을 누르면 스레드에서 답한다.
+
 ### 되돌리기
 
 부팅에 실패하면(`app` 이 unhealthy·재시작 반복 — `docker compose -f infra/compose.yml logs app`):
@@ -337,6 +339,14 @@ exit
 docker compose -f infra/compose.yml up -d
 docker compose -f infra/compose.yml ps     # app·caddy (healthy)
 ```
+
+**서버와 플러그인의 판이 엇갈릴 때** — 되돌리기는 서버만 옛 커밋으로 가므로 Gateway 의 플러그인은 새 판 그대로 남는다.
+
+| 서버 | 플러그인 | 결과 |
+| --- | --- | --- |
+| 모르는 hello capability 를 버리는 서버(Phase 4 ① 이후) | 새 판(`threads` 를 싣는다) | 붙는다 — 서버가 모르는 값만 버린다 |
+| Phase 4 ① 이전 서버(Phase 3) | 새 판 | **붙지 못한다** — 옛 서버는 모르는 capability 가 든 hello 를 통째로 거절한다. 서버를 Phase 3 으로 되돌릴 때는 플러그인도 같은 커밋의 tgz 로 다시 설치한다(옛 이미지의 연결 페이지 「플러그인」 섹션에서 받는다) |
+| Phase 4 ① 이후 서버 | 옛 판(`threads` 없음) | 채널만 돈다 — 스레드 멘션은 `PLUGIN_OUTDATED` 카드 |
 
 ⚠ **되돌릴 때는 반드시 업데이트 직전 백업으로 복원한다.** 마이그레이션은 앞으로만 간다 — 새 코드가 이미 올린 스키마를 옛 코드가 읽지 못한다. 더 오래된 백업이면 그 뒤의 데이터를 잃고, 더 새 백업(업데이트 뒤)이면 옛 코드가 못 연다. 백업 뒤 업데이트 사이에 쓰인 것은 잃는다.
 고친 뒤 돌아올 때는 `git checkout main && git pull --ff-only` 부터 업데이트를 다시 한다(`checkout <커밋>` 은 detached HEAD 라 `pull` 이 안 된다).
