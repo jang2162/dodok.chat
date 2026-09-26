@@ -493,6 +493,17 @@ describe("마이그레이션 — 기존 DB 에 색인을 채운다", () => {
       const fresh = uuid();
       insert(fresh, "normal", "마이그레이션 뒤 새행고유");
       expect(found("새행고유")).toEqual([fresh]);
+
+      // VACUUM 뒤에도 행마다 제 id 로만 찾힌다(m1) — text PK 테이블(messages)은 SQLite 문서상 VACUUM 이 rowid 를
+      // 바꿀 수 있다. 지금 번들 판은 안 바뀌지만, 판이 올라가 이 가정이 깨지면 여기서 잡는다
+      sqlite.exec("VACUUM");
+      expect(found("백필대상")).toEqual([normal]);
+      expect(found("첫행고유")).toEqual([normal]);
+      expect(found("구멍고유")).toEqual([]);
+      expect(found("뒤행고유")).toEqual([afterHole]);
+      expect(found("옛첨부파일")).toEqual([withFile]);
+      expect(found("둘째.txt")).toEqual([withFile]);
+      expect(found("새행고유")).toEqual([fresh]);
     } finally {
       sqlite.close();
     }
