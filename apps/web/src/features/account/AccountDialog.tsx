@@ -1,5 +1,5 @@
 import { DisplayName } from "@dodok/shared";
-import { type FormEvent, type ReactNode, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { detailField } from "@/api/formErrors";
 import { useMe } from "@/api/queries";
 import {
@@ -7,6 +7,7 @@ import {
   CONFIRM_MISMATCH,
   PASSWORD_HINT,
   authErrorText,
+  fieldErrorText,
   passwordProblem,
 } from "@/features/auth/fields";
 import { Alert, AlertDescription } from "@/ui/alert";
@@ -116,6 +117,11 @@ function PasswordForm() {
   const [submitted, setSubmitted] = useState(false);
   const [serverError, setServerError] = useState<{ field?: "current" | "next"; message: string }>();
   const [done, setDone] = useState(false);
+  // 400 필드 오류 뒤 그 칸으로 초점을 옮긴다(o2) — 커밋 뒤(잠금이 풀린 뒤)로 미룬다
+  const fieldRefs = useRef<Partial<Record<PwField, HTMLInputElement | null>>>({});
+  useEffect(() => {
+    if (serverError?.field) fieldRefs.current[serverError.field]?.focus();
+  }, [serverError]);
 
   const local: Record<PwField, string | undefined> = {
     current: values.current === "" ? "현재 비밀번호를 입력하세요" : undefined,
@@ -129,6 +135,9 @@ function PasswordForm() {
         ? local[field]
         : undefined;
   const bind = (field: PwField) => ({
+    ref: (el: HTMLInputElement | null) => {
+      fieldRefs.current[field] = el;
+    },
     type: "password",
     value: values[field],
     onChange: (e: { target: { value: string } }) => {
@@ -156,8 +165,10 @@ function PasswordForm() {
           setSubmitted(false);
           setDone(true);
         },
-        onError: (err) =>
-          setServerError({ field: detailField(err, ["current", "next"]), message: authErrorText(err) }),
+        onError: (err) => {
+          const field = detailField(err, ["current", "next"]);
+          setServerError({ field, message: fieldErrorText(err, field) });
+        },
         onSettled: () => change.reset(),
       },
     );

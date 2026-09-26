@@ -111,7 +111,7 @@ describe("AccountDialog", () => {
     );
   });
 
-  it("틀린 현재 비밀번호(400 field current)는 현재 칸 아래에 — 로그인 화면으로 가지 않는다", async () => {
+  it("틀린 현재 비밀번호(400 field current)는 서버 문구 대신 화면 문구를 현재 칸 아래에, 그 칸으로 초점 — 로그인 화면으로 가지 않는다(o1·o2)", async () => {
     stubServer(MEMBER, {
       password: () =>
         json(400, {
@@ -128,8 +128,10 @@ describe("AccountDialog", () => {
     await userEvent.click(within(dialog).getByRole("button", { name: "비밀번호 바꾸기" }));
 
     const current = within(dialog).getByLabelText("현재 비밀번호");
-    await waitFor(() => expect(current).toHaveAccessibleDescription("현재 비밀번호가 맞지 않는다"));
+    await waitFor(() => expect(current).toHaveAccessibleDescription("현재 비밀번호가 맞지 않습니다"));
+    expect(screen.queryByText("현재 비밀번호가 맞지 않는다")).not.toBeInTheDocument();
     expect(current).toHaveAttribute("aria-invalid", "true");
+    expect(current).toHaveFocus();
     expect(history.location.pathname).toBe("/agents");
   });
 
@@ -153,7 +155,7 @@ describe("AccountDialog", () => {
     await userEvent.type(within(dialog).getByLabelText("새 비밀번호"), "correct-horse-battery");
     await userEvent.type(within(dialog).getByLabelText("새 비밀번호 확인"), "correct-horse-battery");
     await userEvent.click(within(dialog).getByRole("button", { name: "비밀번호 바꾸기" }));
-    await within(dialog).findByText("현재 비밀번호가 맞지 않는다");
+    await within(dialog).findByText("현재 비밀번호가 맞지 않습니다");
     await waitFor(() => expect(mutationStates(queryClient)).not.toContain("wrong-password-1"));
     expect(mutationStates(queryClient)).not.toContain("correct-horse-battery");
 

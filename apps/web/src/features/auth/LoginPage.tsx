@@ -13,9 +13,15 @@ import { useLogin } from "./mutations";
 
 const route = getRouteApi("/login");
 
-/** 토큰 모양의 401 은 서버 문구(「토큰이 맞지 않는다」) 대신 화면 말투로. 이메일 모양의 401 은 서버 문구 그대로(팀 스펙 3.4 — 문구 하나) */
+/** 토큰 모양의 401 은 서버 문구(「토큰이 맞지 않는다」) 대신 화면 말투로 */
 function tokenErrorText(error: Error): string {
   if (error instanceof ApiRequestError && error.status === 401) return "토큰이 맞지 않습니다";
+  return authErrorText(error);
+}
+
+/** 이메일 모양의 401 도 서버 문구(해라체) 대신 화면 말투로(o1) — 코드는 토큰과 같은 UNAUTHORIZED/401 이라 폼별로 가른다 */
+function emailErrorText(error: Error): string {
+  if (error instanceof ApiRequestError && error.status === 401) return "이메일 또는 비밀번호가 맞지 않습니다";
   return authErrorText(error);
 }
 
@@ -85,7 +91,7 @@ function EmailForm() {
       { email: email.trim(), password },
       {
         onSuccess: () => setError(NO_SESSION),
-        onError: (err) => setError(authErrorText(err)),
+        onError: (err) => setError(emailErrorText(err)),
         onSettled: () => login.reset(),
       },
     );

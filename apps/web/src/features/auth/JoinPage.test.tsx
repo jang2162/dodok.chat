@@ -211,7 +211,7 @@ describe("JoinPage", () => {
     expect(callsTo(fetch, "/invites/accept")).toHaveLength(0);
   });
 
-  it("409 는 서버가 가리킨 칸(핸들·이메일) 아래에 — 고치면 지우고 다시 보낼 수 있다", async () => {
+  it("409 는 서버 문구 대신 화면 문구를 서버가 가리킨 칸(핸들·이메일) 아래에 — 그 칸으로 초점이 가고, 고치면 지우고 다시 보낼 수 있다(o1·o2)", async () => {
     let calls = 0;
     const fetch = stubServer({
       accept: () => {
@@ -230,17 +230,20 @@ describe("JoinPage", () => {
     await userEvent.click(screen.getByRole("button", { name: "가입" }));
 
     const handle = screen.getByLabelText("핸들");
-    expect(await screen.findByText("handle @dev 는 이미 쓰이고 있다")).toBeInTheDocument();
+    expect(await screen.findByText("이 핸들은 이미 쓰이고 있습니다")).toBeInTheDocument();
+    expect(screen.queryByText("handle @dev 는 이미 쓰이고 있다")).not.toBeInTheDocument();
     expect(handle).toHaveAttribute("aria-invalid", "true");
-    expect(handle).toHaveAccessibleDescription("handle @dev 는 이미 쓰이고 있다");
+    expect(handle).toHaveAccessibleDescription("이 핸들은 이미 쓰이고 있습니다");
+    expect(handle).toHaveFocus();
     // 비밀번호는 지우지 않는다 — 핸들만 고쳐 다시 보낸다
     expect(screen.getByLabelText("비밀번호")).toHaveValue("correct-horse-battery");
 
     await userEvent.type(handle, "2");
-    expect(screen.queryByText("handle @dev 는 이미 쓰이고 있다")).not.toBeInTheDocument();
+    expect(screen.queryByText("이 핸들은 이미 쓰이고 있습니다")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "가입" }));
     const email = screen.getByLabelText("이메일");
-    await waitFor(() => expect(email).toHaveAccessibleDescription("이미 가입된 이메일입니다"));
+    await waitFor(() => expect(email).toHaveAccessibleDescription("이 이메일은 이미 가입돼 있습니다"));
+    expect(email).toHaveFocus();
     expect(callsTo(fetch, "/invites/accept")).toHaveLength(2);
     expect(JSON.parse(String(callsTo(fetch, "/invites/accept")[1]?.[1]?.body))).toEqual({
       token: TOKEN,
@@ -249,6 +252,25 @@ describe("JoinPage", () => {
       email: "mia@example.com",
       password: "correct-horse-battery",
     });
+  });
+
+  it("예약된 핸들(left- 로 시작, 400 VALIDATION)도 화면 문구로", async () => {
+    const fetch = stubServer({
+      accept: () =>
+        json(400, {
+          code: "VALIDATION",
+          message: "handle 은 left- 로 시작할 수 없다",
+          details: { field: "handle" },
+        }),
+    });
+    renderRoute(`/join/${TOKEN}`);
+    await fillForm({ 핸들: "left-x" });
+    await userEvent.click(screen.getByRole("button", { name: "가입" }));
+    const handle = screen.getByLabelText("핸들");
+    expect(await screen.findByText("이 핸들은 쓸 수 없습니다")).toBeInTheDocument();
+    expect(handle).toHaveAccessibleDescription("이 핸들은 쓸 수 없습니다");
+    expect(handle).toHaveFocus();
+    expect(callsTo(fetch, "/invites/accept")).toHaveLength(1);
   });
 
   it("409 로 폼에 머무는 동안에도 뮤테이션 캐시 어디에도 비밀번호·토큰이 없다", async () => {
@@ -261,7 +283,7 @@ describe("JoinPage", () => {
     await fillForm();
     await userEvent.click(screen.getByRole("button", { name: "가입" }));
     await waitFor(() =>
-      expect(screen.getByLabelText("이메일")).toHaveAccessibleDescription("이미 가입된 이메일입니다"),
+      expect(screen.getByLabelText("이메일")).toHaveAccessibleDescription("이 이메일은 이미 가입돼 있습니다"),
     );
     await waitFor(() => expect(mutationStates(queryClient)).not.toContain("correct-horse-battery"));
     expect(mutationStates(queryClient)).not.toContain(TOKEN);

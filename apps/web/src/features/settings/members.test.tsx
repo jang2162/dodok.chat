@@ -52,6 +52,8 @@ describe("추가·제거", () => {
     );
     expect(await within(await agentList()).findByText("@fin")).toBeInTheDocument();
     expect(within(section).getByText(/등록된 에이전트가 모두 채널에 있습니다/)).toBeInTheDocument();
+    // owner 는 admin 이상이라 등록 링크가 있다(o4 — member 는 없다, roleView.test.tsx)
+    expect(within(section).getByRole("link", { name: "에이전트 등록" })).toHaveAttribute("href", "/agents");
     expect(server.count("GET", membersUrl)).toBe(1);
   });
 

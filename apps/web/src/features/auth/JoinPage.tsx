@@ -1,12 +1,12 @@
 import { AcceptInviteBody, DisplayName, Handle, type InviteLookup } from "@dodok/shared";
 import { getRouteApi } from "@tanstack/react-router";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { detailField } from "@/api/formErrors";
 import { ApiRequestError } from "@/api/http";
 import { useCachedMe } from "@/api/queries";
 import { Alert, AlertDescription } from "@/ui/alert";
 import { Button } from "@/ui/button";
-import { AuthField, CONFIRM_MISMATCH, PASSWORD_HINT, authErrorText, passwordProblem } from "./fields";
+import { AuthField, CONFIRM_MISMATCH, PASSWORD_HINT, fieldErrorText, passwordProblem } from "./fields";
 import { AuthScreen, InviteGate, InviteInvalid } from "./invite";
 import { useAcceptInvite, useFinishInvite } from "./mutations";
 
@@ -56,6 +56,12 @@ function JoinForm({ token, lookup }: { token: string; lookup: InviteLookup }) {
   const [submitted, setSubmitted] = useState(false);
   const [serverError, setServerError] = useState<{ field?: "handle" | "email"; message: string }>();
   const [gone, setGone] = useState(false);
+  // 409·400 필드 오류 뒤 그 칸으로 초점을 옮긴다(o2) — 제출 버튼이 비활성으로 바뀌며 초점을 잃는 대신.
+  // 이 오류가 뜨는 렌더에서는 이미 accept.isPending 이 꺼져 칸이 잠기지 않는다 — useEffect 로 커밋 뒤에 옮긴다
+  const fieldRefs = useRef<Partial<Record<Field, HTMLInputElement | null>>>({});
+  useEffect(() => {
+    if (serverError?.field) fieldRefs.current[serverError.field]?.focus();
+  }, [serverError]);
 
   if (gone) return <InviteInvalid kind="invite" />;
 
@@ -68,6 +74,9 @@ function JoinForm({ token, lookup }: { token: string; lookup: InviteLookup }) {
         : undefined;
 
   const bind = (field: Field) => ({
+    ref: (el: HTMLInputElement | null) => {
+      fieldRefs.current[field] = el;
+    },
     value: values[field],
     onChange: (e: { target: { value: string } }) => {
       if (serverError?.field === field) setServerError(undefined);
@@ -96,7 +105,10 @@ function JoinForm({ token, lookup }: { token: string; lookup: InviteLookup }) {
         onSuccess: finish,
         onError: (err) => {
           if (err instanceof ApiRequestError && err.status === 404) setGone(true);
-          else setServerError({ field: detailField(err, ["handle", "email"]), message: authErrorText(err) });
+          else {
+            const field = detailField(err, ["handle", "email"]);
+            setServerError({ field, message: fieldErrorText(err, field) });
+          }
         },
         onSettled: () => accept.reset(),
       },

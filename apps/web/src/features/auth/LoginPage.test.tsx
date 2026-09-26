@@ -94,13 +94,13 @@ describe("LoginPage — 이메일·비밀번호(기본)", () => {
     );
   });
 
-  it("401 이면 서버 문구를 그대로 — 비밀번호 칸만 비우고 이메일은 남긴다", async () => {
+  it("401 이면 서버 문구(해라체) 대신 화면 문구(합쇼체)로 — 비밀번호 칸만 비우고 이메일은 남긴다(o1)", async () => {
     const fetch = stubServer(() =>
       json(401, { code: "UNAUTHORIZED", message: "이메일 또는 비밀번호가 맞지 않는다" }),
     );
     const router = renderAt("/login");
     const password = await submitEmail("mia@example.com", "wrong-password");
-    expect(await screen.findByRole("alert")).toHaveTextContent("이메일 또는 비밀번호가 맞지 않는다");
+    expect(await screen.findByRole("alert")).toHaveTextContent("이메일 또는 비밀번호가 맞지 않습니다");
     expect(password).toHaveValue("");
     expect(screen.getByLabelText("이메일")).toHaveValue("mia@example.com");
     expect(router.state.location.pathname).toBe("/login");

@@ -57,7 +57,15 @@ describe("멤버 표", () => {
     expect(mina.getByText("미나")).toBeInTheDocument();
     expect(mina.getByText("mina@example.com")).toBeInTheDocument();
     expect(mina.getByText(localDay(MINA_ROW.createdAt))).toBeInTheDocument();
-    expect((await rowOf("owner")).getByText("owner")).toBeInTheDocument();
+    expect((await rowOf("owner")).getByText("소유자")).toBeInTheDocument();
+  });
+
+  it("390px 가로 스크롤 상자에 relative 를 둬 sr-only 「동작」이 상자 밖으로 문서를 넓히지 않는다(D1)", async () => {
+    stubMembersServer();
+    renderRoute("/settings/members");
+    const t = await table();
+    const scrollBox = t.parentElement;
+    expect(scrollBox).toHaveClass("relative", "overflow-x-auto");
   });
 
   it("owner 는 owner 가 아닌 줄의 역할을 바꾼다 — PATCH { role }", async () => {

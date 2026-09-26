@@ -8,7 +8,7 @@ import { MemberRowActions } from "./MemberRowActions";
 import { useChangeRole, useRevokeInvite } from "./mutations";
 import { useInvites, useTeamMembers } from "./queries";
 
-const ROLE_LABEL: Record<TeamRole, string> = { owner: "owner", admin: "관리자", member: "멤버" };
+const ROLE_LABEL: Record<TeamRole, string> = { owner: "소유자", admin: "관리자", member: "멤버" };
 const DATE = new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium" });
 const dateOf = (iso: string) => DATE.format(new Date(iso));
 
@@ -69,8 +69,10 @@ function MembersTable({ viewerRole }: { viewerRole: "owner" | "admin" }) {
     );
   }
   return (
-    // 좁은 화면에서는 표가 제 상자 안에서 가로로 스크롤한다 — 페이지가 넘치지 않게
-    <div className="overflow-x-auto rounded-lg border">
+    // 좁은 화면에서는 표가 제 상자 안에서 가로로 스크롤한다 — 페이지가 넘치지 않게.
+    // relative 가 없으면 「동작」 sr-only span(absolute)의 포함 블록이 이 상자 밖(초기 포함 블록)이 되어
+    // 표가 넓어진 만큼 문서 전체를 가로로 넓힌다(D1)
+    <div className="relative overflow-x-auto rounded-lg border">
       <table aria-label="멤버" className="w-full text-sm">
         <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
           <tr>

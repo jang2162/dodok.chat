@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { type FormEvent, type RefObject, useEffect, useId, useRef, useState } from "react";
 import { toast } from "sonner";
 import { formError } from "@/api/formErrors";
+import { useCanManage } from "@/api/queries";
 import { cn } from "@/lib/utils";
 import { Button } from "@/ui/button";
 import { FieldError } from "@/ui/field-error";
@@ -139,6 +140,7 @@ function AddAgentForm({
   selectRef: RefObject<HTMLSelectElement | null>;
 }) {
   const add = useAddMember(channelId);
+  const canManage = useCanManage();
   const [selected, setSelected] = useState("");
   const [error, setError] = useState<string>();
   const id = useId();
@@ -187,10 +189,15 @@ function AddAgentForm({
   if (ready && candidates.length === 0) {
     return (
       <p className="text-xs text-muted-foreground">
-        등록된 에이전트가 모두 채널에 있습니다.{" "}
-        <Link to="/agents" className="text-primary underline-offset-4 hover:underline">
-          에이전트 등록
-        </Link>
+        등록된 에이전트가 모두 채널에 있습니다.
+        {canManage && (
+          <>
+            {" "}
+            <Link to="/agents" className="text-primary underline-offset-4 hover:underline">
+              에이전트 등록
+            </Link>
+          </>
+        )}
       </p>
     );
   }
