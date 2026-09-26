@@ -494,6 +494,27 @@ describe("멤버 관리 REST", () => {
       );
     });
 
+    it("세션을 지운 뒤 트랜잭션 재검사가 403 으로 떨어져도(그 사이 행위자 강등) 대상의 열린 소켓은 끊는다", async () => {
+      const actor = await person("admin");
+      const target = await person("member");
+      const real = (await app.auth.$context).internalAdapter;
+      // Better Auth 사용자를 지운 직후 — 트랜잭션 재검사 전 — 행위자를 member 로 내린다
+      const adapter = Object.create(real) as typeof real;
+      adapter.deleteUser = async (userId: string) => {
+        await real.deleteUser(userId);
+        app.db.update(memberships).set({ role: "member" }).where(eq(memberships.userId, actor.id)).run();
+      };
+      const auth = { $context: Promise.resolve({ internalAdapter: adapter }) } as unknown as App["auth"];
+      const cut: string[] = [];
+      await expect(
+        removeMember({ ...serviceDeps(), auth, disconnectUser: (id) => cut.push(id) }, actor.id, target.id),
+      ).rejects.toMatchObject({ status: 403 });
+      expect(cut).toEqual([target.id]);
+      expect(app.db.select().from(memberships).where(eq(memberships.userId, target.id)).all()).toHaveLength(
+        1,
+      );
+    });
+
     it("같은 분에 들어온 두 사람을 차례로 내보내도 나간 핸들이 겹치지 않는다", async () => {
       const a = await person("member");
       const b = await person("member");

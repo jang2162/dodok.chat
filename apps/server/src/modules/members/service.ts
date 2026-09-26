@@ -97,8 +97,8 @@ export type RemoveMemberDeps = {
  * 우리 쪽 쓰기가 실패해도 다시 부르면 이어진다. 그다음 한 트랜잭션으로 membership·채널 참여·푸시 구독을 지우고
  * 그 사람을 겨눈 재설정 링크와 그 사람이 발급한 쓰이지 않은 초대·재설정 링크를 폐기하고(원문을 쥔 채 나간 사람이 다시
  * 들어오거나 남의 비밀번호를 바꾸지 못하게) users 행이 핸들·이메일을 놓아준다. 행과 메시지는 남는다(작성자 참조).
- * 그 트랜잭션이 실패하면(권한·없음 판정이 아닌 것) 세션은 이미 지워졌으니 열린 소켓도 끊고 운영 사건을 남긴 뒤 500 —
- * membership 이 남아 있어 다시 부르면 이어진다. people.changed 는 호출자(라우트)가 낸다
+ * 그 트랜잭션이 실패하면 세션은 이미 지워졌으니 어느 갈래든 열린 소켓은 끊는다. 권한·없음 판정이면 그 오류를, 아니면 운영 사건을
+ * 남긴 뒤 500 — membership 이 남아 있어 다시 부르면 이어진다. people.changed 는 호출자(라우트)가 낸다
  */
 export async function removeMember(deps: RemoveMemberDeps, actorId: string, userId: string): Promise<void> {
   const { db, workspaceId } = deps;
@@ -116,8 +116,9 @@ export async function removeMember(deps: RemoveMemberDeps, actorId: string, user
   try {
     channelIds = leaveInTransaction(deps, actorId, userId, now);
   } catch (err) {
-    if (err instanceof HttpError && err.body.code !== "INTERNAL") throw err;
+    // 세션은 이미 지웠다 — 재검사가 권한·없음으로 떨어져도(await 사이 행위자 강등 등) 열린 소켓은 끊는다
     deps.disconnectUser(userId);
+    if (err instanceof HttpError && err.body.code !== "INTERNAL") throw err;
     deps.ops.record({
       kind: "member_remove_failed",
       key: `member:${userId}`,
