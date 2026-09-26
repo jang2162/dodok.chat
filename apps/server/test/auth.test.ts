@@ -1,5 +1,6 @@
 import { User } from "@dodok/shared";
 import { mkdirSync, rmSync } from "node:fs";
+import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
@@ -271,6 +272,28 @@ describe("auth", () => {
       const res = await app.fastify.inject({ method: "GET", url, headers });
       expect(res.statusCode, url).toBe(404);
       expect(res.body, url).not.toContain(second.token);
+    }
+
+    // inject 는 URL 파싱에서 `..` 세그먼트를 풀어 버려(위 케이스는 실제로 /api/auth/list-sessions 로 간다) 경로 조작을
+    // 시험하지 못한다 — 원문 요청줄을 그대로 보내는 실제 소켓(node:http, path 는 정규화되지 않는다)으로 다시 두드린다
+    await app.fastify.listen({ host: "127.0.0.1", port: 0 });
+    const { port } = app.fastify.server.address() as { port: number };
+    const rawRequest = (path: string) =>
+      new Promise<{ status: number; body: string }>((resolve, reject) => {
+        const req = httpRequest({ host: "127.0.0.1", port, path, headers, agent: false }, (res) => {
+          const chunks: Buffer[] = [];
+          res.on("data", (chunk: Buffer) => chunks.push(chunk));
+          res.on("end", () =>
+            resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString() }),
+          );
+        });
+        req.on("error", reject);
+        req.end();
+      });
+    for (const path of ["/api/auth/ok/../list-sessions", "/api/auth/ok/%2e%2e/list-sessions"]) {
+      const res = await rawRequest(path);
+      expect(res.status, path).toBe(404);
+      expect(res.body, path).not.toContain(second.token);
     }
   });
 
