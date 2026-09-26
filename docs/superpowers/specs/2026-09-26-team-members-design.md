@@ -1,6 +1,6 @@
 # Phase 4 ② 팀 — 초대·멤버·역할 설계
 
-**상태**: 설계 확정(2026-09-26), 구현·브라우저 검증 완료(2026-09-27 — 계획 태스크 1~7 과 곁가지 p4m-c1·c2, 브라우저 11항목 중 9 통과·결함 둘(D1·D2) 수정, 테스트 3524) — 구현이 이 설계와 달라진 것은 「구현과 맞춘 것」 장(판정 R1~R4 등). 계획 `docs/superpowers/plans/2026-09-26-team-members.md`, 실연(계획 태스크 8)은 `docs/guides/live-smoke.md` 「팀(Phase 4 ②) 실연」 절
+**상태**: 설계 확정(2026-09-26), 구현·브라우저 검증 완료(2026-09-27 — 계획 태스크 1~7 과 곁가지 p4m-c1·c2, 브라우저 11항목 중 9 통과·결함 둘(D1·D2) 수정, 테스트 3529) — 구현이 이 설계와 달라진 것은 「구현과 맞춘 것」 장(판정 R1~R4 등). 계획 `docs/superpowers/plans/2026-09-26-team-members.md`, 실연(계획 태스크 8)은 `docs/guides/live-smoke.md` 「팀(Phase 4 ②) 실연」 절
 **범위**:
 - 초대: owner·admin 이 1회용 초대 링크를 발급하고, 받은 사람이 핸들·이메일·비밀번호로 가입한다(메일 서버 없음)
 - 로그인: 멤버는 이메일·비밀번호, owner 는 지금의 로컬 토큰
@@ -237,6 +237,7 @@
 - **필드 검사는 원문 본문의 키로 한다** — 파싱된 값은 기본값이 채워져(`autoRespond` 기본 false) 「보냈는가」를 못 가른다. 파싱이 버린 모르는 키도 admin 몫으로 센다(2장 「목록에 없는 필드는 admin」). 검사는 쓰기 **전**이라 부분 적용이 없다(member 의 `{ name, prompt }` 는 이름도 안 바뀐다).
 - **채널 멤버 경로는 `aliases` 만 member 에게 열린다** — `MEMBER_EDITABLE_AGENT_MEMBER_FIELDS`(memberType·memberId·aliases). `POST /channels/:id/members` 의 에이전트 `{}`·`{aliases}` 와 `PATCH …/members/:memberId` 의 `{aliases}` 는 member 도, `promptOverride`·`autoRespond` 가 하나라도 있으면 admin 이상. 사람 멤버에 그 필드를 주면 전처럼 서비스가 400. 웹에는 별칭 편집 UI 가 없다(이월).
 - **승인 푸시는 채널 참여와 무관하게 워크스페이스의 owner·admin 전원이다**(5장 구체화) — `TriggerLookups.admins()`. 채널에 들어온 member 는 받지 않는다.
+- **승인의 결정자(`approvals.decided_by`)는 이긴 결정을 누른 사람이다** — Gateway 해결 이벤트가 RPC 응답보다 먼저 와도 `approval.resolve` 를 부른 사람을 남긴다(`claimDecidedBy` — `decided_by IS NULL` 일 때만, 먼저 채운 사람을 덮지 않는다). 그 사람의 결정이 저장된 결과와 다르면(두 사람이 거의 동시에 다른 결정) 채우지 않는다. 누가 허용·거절했는지가 감사 기록이다.
 - **wire `ops.event` 는 owner·admin 사용자 룸, `setup.status` 는 owner 만** — `realtime/events.ts` 의 `roleRooms` 가 **보낼 때마다** membership 을 읽어 방을 고르므로 역할이 바뀌면 재접속 없이 다음 사건부터 따른다. 운영 REST(`/api/v1/ops/*`)도 admin 이상이다(2장 표).
 - **DB(0008)** — `invites` 테이블, `users.left_handle`, 유일 인덱스 `users_ws_email (workspace_id, email)`(NULL 여럿 허용 — 나간 사람의 이메일은 NULL). `invites.used_by` 에는 FK 가 없다. 이미 배포된 DB 에 같은 워크스페이스·같은 이메일 행이 둘 있으면 0008 이 실패한다 — 지금까지는 owner 한 명뿐이라 생길 수 없다.
 
@@ -290,4 +291,4 @@
 
 - 서버 단위·통합: `apps/server/test/roles.matrix.test.ts`(2장 표 — 경로 × 역할 3 의 허용·거부 전부, `PATCH`·`POST /channels` 필드별, 채널 멤버 필드별, `approval.resolve`, 승인 푸시 수신자, membership 없는 세션 401, 역할이 바뀐 다음 요청), `members.invites`·`members.accept`·`members.manage`·`people`·`auth.login`·`auth.test`(9장 서버 항목 전부 — 두 번 제출·핸들 충돌 양쪽·재가입·링크 폐기·세션 소켓 끊기·핸드셰이크 틈·버킷 분리·Better Auth 폐기 경로 404), `integration/ops-events`·`setup`(방). 태스크마다 독립 리뷰(변이)·수정·범위 재리뷰.
 - `dev:fake` 위 브라우저 검증(Playwright 브라우저 컨텍스트 7개, 390·1280px): 11항목 중 9 통과, Review Focus 1~5 실제 화면 통과(동시 가입은 한 쪽만·핸들 `dev` 409·내보낸 탭 2.4초 뒤 로그인 화면·member 의 `{ name, prompt }` 403·강등 직후 403 → 잠김). 결함 D2(재설정·비밀번호 변경 뒤 옛 세션 소켓이 말함 — 보안)·D1(390px 멤버 화면 가로 176px)과 관찰 o1~o5 는 곁가지 p4m-c1·c2 가 고쳤다. 실제 멘션 푸시 표시는 서비스 워커가 꺼진 dev 라 서버의 발송 시도·거름까지만 봤다(사람이 볼 것 — `docs/plan.md` 8장).
-- 테스트 3524(shared 260·plugin 146·adapter 264·server 1370·web 1484 — 루트 `pnpm test` 의 패키지별 `Tests` 줄).
+- 테스트 3529(shared 260·plugin 146·adapter 264·server 1375·web 1484 — 루트 `pnpm test` 의 패키지별 `Tests` 줄).
