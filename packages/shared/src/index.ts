@@ -4,6 +4,7 @@ export * from "./components";
 export * from "./domain";
 export * from "./events";
 export * from "./mention";
+export * from "./members";
 export * from "./wire";
 export * from "./push";
 export * from "./setup";

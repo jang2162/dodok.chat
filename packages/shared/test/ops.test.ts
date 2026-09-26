@@ -55,7 +55,7 @@ describe("OpsEvent", () => {
     expect(OpsEvent.safeParse({ ...EVENT, severity: "debug" }).success).toBe(false);
   });
 
-  it("kind 열거는 스펙 3.1 표의 열두 가지", () => {
+  it("kind 열거는 운영 보강 3.1 표의 열두 가지 + 팀 설계의 invite_accept_failed", () => {
     expect(OpsEventKind.options).toEqual([
       "gateway_down",
       "plugin_down",
@@ -69,6 +69,7 @@ describe("OpsEvent", () => {
       "crash_exception",
       "unclean_shutdown",
       "disk_low",
+      "invite_accept_failed",
     ]);
   });
 });

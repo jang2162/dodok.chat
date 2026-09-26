@@ -30,6 +30,7 @@ describe("wire event maps", () => {
       | "channel.created"
       | "channel.updated"
       | "channel.member.changed"
+      | "people.changed"
       | "typing"
       | "adapter.status"
       | "setup.status"

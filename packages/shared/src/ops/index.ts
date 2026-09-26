@@ -18,6 +18,7 @@ export const OpsEventKind = z.enum([
   "crash_exception",
   "unclean_shutdown",
   "disk_low",
+  "invite_accept_failed",
 ]);
 export type OpsEventKind = z.infer<typeof OpsEventKind>;
 

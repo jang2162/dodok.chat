@@ -12,6 +12,7 @@ import {
   RunState,
 } from "../domain";
 import { RunEvent } from "../events";
+import type { Person } from "../members";
 import type { OpsEvent, OpsUnacked } from "../ops";
 import type { SetupStatus } from "../setup";
 
@@ -104,6 +105,7 @@ export interface ServerToClientEvents {
   "channel.created": (p: { channel: Channel }) => void; // workspace 룸 — 채널 룸에는 아직 아무도 없다
   "channel.updated": (p: { channel: Channel }) => void;
   "channel.member.changed": (p: { channelId: Id; members: ChannelMember[] }) => void;
+  "people.changed": (p: { people: Person[] }) => void; // workspace 룸 — 가입·역할·표시 이름·내보내기 뒤 전체 목록
   typing: (p: { channelId: Id; actorType: "user" | "agent"; actorId: Id }) => void;
   "adapter.status": (p: AdapterStatus) => void; // user 룸
   "setup.status": (p: { status: SetupStatus }) => void; // owner 사용자 룸에만

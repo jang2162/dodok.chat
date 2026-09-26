@@ -41,6 +41,7 @@ const TITLE: Record<OpsEventKind, (e: OpsEvent, nameOf: ChannelNameOf | undefine
   crash_exception: () => "서버가 오류로 종료됨",
   unclean_shutdown: () => "직전 종료가 비정상",
   disk_low: () => "디스크 여유 부족",
+  invite_accept_failed: () => "초대 수락 실패",
 };
 
 export const SEVERITY_LABEL: Record<OpsSeverity, string> = { info: "정보", warn: "주의", error: "오류" };
