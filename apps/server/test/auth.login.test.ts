@@ -2,7 +2,7 @@ import { IssuedInvite, User, WIRE_PROTOCOL } from "@dodok/shared";
 import { and, eq } from "drizzle-orm";
 import pino from "pino";
 import { v7 as uuidv7 } from "uuid";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { App } from "../src/app";
 import { session as authSession } from "../src/db/auth-schema";
 import { memberships } from "../src/db/schema.sqlite";
@@ -58,6 +58,34 @@ async function join(
 }
 
 const roomy = { limits: { localLoginPerMin: 100 } };
+
+/**
+ * app.io.in 을 감싸 호출마다 그 룸이 가리키는 세션 행이 그 순간 몇 개 있는지 남긴다(지우기 → 끊기 순서 확인 — m5·T2).
+ * 소켓을 실제로 연결하지 않아도 disconnectUser·disconnectSessions·연결 미들웨어는 모두 io.in 을 거친다.
+ */
+function watchSessionRoomCalls(a: App): { room: string; sessionRows: number }[] {
+  const snapshots: { room: string; sessionRows: number }[] = [];
+  const originalIn = a.io.in.bind(a.io);
+  vi.spyOn(a.io, "in").mockImplementation((room) => {
+    for (const r of Array.isArray(room) ? room : [room]) {
+      if (r.startsWith("session:")) {
+        const id = r.slice("session:".length);
+        snapshots.push({
+          room: r,
+          sessionRows: a.db.select().from(authSession).where(eq(authSession.id, id)).all().length,
+        });
+      } else if (r.startsWith("user:")) {
+        const userId = r.slice("user:".length);
+        snapshots.push({
+          room: r,
+          sessionRows: a.db.select().from(authSession).where(eq(authSession.userId, userId)).all().length,
+        });
+      }
+    }
+    return originalIn(room);
+  });
+  return snapshots;
+}
 
 describe("POST /api/v1/auth/local 두 모양", () => {
   it("{token} owner 는 그대로, {email,password} 멤버 성공 — 응답 모양이 같다", async () => {
@@ -295,6 +323,39 @@ describe("「내 계정」", () => {
     }
   });
 
+  it("me/password — 세션이 하나뿐이면(끊을 세션 없음) 아무 소켓도 끊지 않는다 — 빈 목록 가드가 없으면 io.in([]) 이 전체를 끊는다", async () => {
+    app = await bootTestApp({}, roomy);
+    await app.fastify.listen({ host: "127.0.0.1", port: 0 });
+    const owner = await login(app);
+    const joined = await join(app, owner.headers);
+    // joined.sessionToken 이 이 멤버의 유일한 세션이다 — changePassword 의 others 가 빈 배열이 된다
+    const ownerSocket = await connectWire(app, owner.token);
+    const memberSocket = await connectWire(app, joined.sessionToken);
+    try {
+      const res = await app.fastify.inject({
+        method: "POST",
+        url: "/api/v1/me/password",
+        headers: bearer(joined.sessionToken),
+        payload: { current: PASSWORD, next: "next-password-123" },
+      });
+      expect(res.statusCode).toBe(204);
+      for (const socket of [ownerSocket, memberSocket]) {
+        const early = await Promise.race([
+          new Promise<string>((resolve) => socket.once("disconnect", resolve)),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 100)),
+        ]);
+        expect(early).toBeNull();
+        expect(socket.connected).toBe(true);
+        const ack = await new Promise<{ ok: boolean }>((resolve) =>
+          socket.emit("channel.unsubscribe", { channelId: uuidv7() }, resolve),
+        );
+        expect(ack.ok).toBe(true);
+      }
+    } finally {
+      for (const s of [ownerSocket, memberSocket]) s.close();
+    }
+  });
+
   it("로그아웃 — 그 세션의 열린 wire 소켓(같은 쿠키를 쓰는 다른 탭 포함)을 모두 끊고, 다른 세션의 소켓은 남는다", async () => {
     app = await bootTestApp({}, roomy);
     await app.fastify.listen({ host: "127.0.0.1", port: 0 });
@@ -344,6 +405,75 @@ describe("「내 계정」", () => {
     } finally {
       socket.close();
     }
+  });
+
+  it("재설정 — 소켓을 끊는 순간엔 이미 그 사용자의 세션 행이 없다(지우기 → 끊기 순서)", async () => {
+    app = await bootTestApp({}, roomy);
+    const owner = await login(app);
+    const joined = await join(app, owner.headers);
+    const snapshots = watchSessionRoomCalls(app);
+    const link = await app.fastify.inject({
+      method: "POST",
+      url: `/api/v1/members/${joined.user.id}/reset-link`,
+      headers: owner.headers,
+    });
+    const res = await app.fastify.inject({
+      method: "POST",
+      url: "/api/v1/invites/reset",
+      payload: { token: (link.json() as { token: string }).token, password: "brand-new-password-42" },
+    });
+    expect(res.statusCode).toBe(200);
+    const hit = snapshots.find((s) => s.room === `user:${joined.user.id}`);
+    expect(hit).toBeDefined();
+    expect(hit?.sessionRows).toBe(0);
+  });
+
+  it("me/password — 소켓을 끊는 순간엔 이미 그 세션 행이 없다(지우기 → 끊기 순서)", async () => {
+    app = await bootTestApp({}, roomy);
+    const owner = await login(app);
+    const joined = await join(app, owner.headers);
+    const other = (await local(app, { email: "bee@example.com", password: PASSWORD })).json() as {
+      sessionToken: string;
+    };
+    const otherSessionId = app.db
+      .select({ id: authSession.id })
+      .from(authSession)
+      .where(eq(authSession.token, other.sessionToken))
+      .get()?.id;
+    if (!otherSessionId) throw new Error("세션 행을 못 찾았다");
+    const snapshots = watchSessionRoomCalls(app);
+    const res = await app.fastify.inject({
+      method: "POST",
+      url: "/api/v1/me/password",
+      headers: bearer(joined.sessionToken),
+      payload: { current: PASSWORD, next: "next-password-123" },
+    });
+    expect(res.statusCode).toBe(204);
+    const hit = snapshots.find((s) => s.room === `session:${otherSessionId}`);
+    expect(hit).toBeDefined();
+    expect(hit?.sessionRows).toBe(0);
+  });
+
+  it("로그아웃 — 소켓을 끊는 순간엔 이미 그 세션 행이 없다(지우기 → 끊기 순서)", async () => {
+    app = await bootTestApp({}, roomy);
+    const owner = await login(app);
+    const joined = await join(app, owner.headers);
+    const sessionId = app.db
+      .select({ id: authSession.id })
+      .from(authSession)
+      .where(eq(authSession.token, joined.sessionToken))
+      .get()?.id;
+    if (!sessionId) throw new Error("세션 행을 못 찾았다");
+    const snapshots = watchSessionRoomCalls(app);
+    const res = await app.fastify.inject({
+      method: "POST",
+      url: "/api/v1/auth/logout",
+      headers: { cookie: `dodok.session=${joined.sessionToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const hit = snapshots.find((s) => s.room === `session:${sessionId}`);
+    expect(hit).toBeDefined();
+    expect(hit?.sessionRows).toBe(0);
   });
 });
 
