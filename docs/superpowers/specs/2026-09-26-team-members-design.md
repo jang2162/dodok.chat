@@ -9,7 +9,7 @@
 
 **앞선 근거**:
 - 계획서 `docs/plan.md` 8장 Phase 4 「팀: 워크스페이스 멤버 초대, OIDC 로그인, 채널 권한, 멀티 Gateway 연결」
-- 인증 구조: `apps/server/src/auth/`(Better Auth `emailAndPassword` — 가입 차단·비밀번호 변경·세션 폐기·로그아웃 경로 차단(세션은 소켓을 함께 끊는 우리 경로만 지운다), owner 는 `bootstrapOwner` 가 내부 어댑터로 만든다, 로그인은 레이트리밋이 걸린 `/api/v1/auth/local` 로만, `requireOwner` 는 요청마다 membership 을 읽는다)
+- 인증 구조: `apps/server/src/auth/`(Better Auth `emailAndPassword` — HTTP 는 허용 목록(`/ok`)만 통과하고 가입·비밀번호 변경·세션 폐기·로그아웃은 `disabledPaths` 로도 닫는다(세션은 소켓을 함께 끊는 우리 경로만 지운다), owner 는 `bootstrapOwner` 가 내부 어댑터로 만든다, 로그인은 레이트리밋이 걸린 `/api/v1/auth/local` 로만, `requireOwner` 는 요청마다 membership 을 읽는다)
 - 발급 원문을 한 번만 보이는 토큰의 선례: 설정 마법사 스펙 `docs/superpowers/specs/2026-09-24-setup-wizard-design.md` 의 브리지 토큰(`bridge_tokens` — 해시만 저장)
 - 레이트리밋 숫자의 한곳: `apps/server/src/modules/ops/limits.ts`
 
@@ -54,6 +54,7 @@
 | --- | --- | --- | --- |
 | 채널 읽기·쓰기·만들기(만들 때 `name`·`topic` 밖의 필드 — 프롬프트·릴레이 정책·공개 범위 — 를 주면 admin 이상), 채널 이름·설명(`name`·`topic`) 바꾸기, 멘션, 카드·모달, 첨부, 검색, 런 중지(`run.abort`) | ✅ | ✅ | ✅ |
 | 채널에 에이전트 넣기·빼기(`POST/DELETE /channels/:id/members`) | ✅ | ✅ | ✅ |
+| 채널에 사람 넣기·빼기(같은 경로, `memberType: "user"`) — 나간 사람(membership 없음)은 404 | ✅ | ✅ | ✅ |
 | 채널의 에이전트 동작·비용 설정 — 채널 프롬프트, 에이전트별 프롬프트(`PATCH /channels/:id/members/:memberId`), 릴레이 정책, 자동 응답, 일일 한도 | — | ✅ | ✅ |
 | 「새 대화」(`POST /channels/:id/agents/:agentId/reset`), 도구 실행 승인·거절(wire `approval.resolve`) | — | ✅ | ✅ |
 | 에이전트 등록·수정(`POST/PATCH /agents`), Gateway 에이전트 찾기(`GET /agents/discover`) | — | ✅ | ✅ |
@@ -99,6 +100,7 @@
 - `GET /api/v1/invites` → 대기 중(유효한) 초대만, 원문 없이.
 - `DELETE /api/v1/invites/:id` → 폐기. admin 은 member 초대만 폐기한다.
 - `POST /api/v1/members/:userId/reset-link` → `{ token, url }`(`/reset/<token>`). admin 은 member 에게만, owner 는 owner 자신을 제외한 모두에게. owner 계정은 로컬 토큰이 비밀번호라 재설정 링크가 없다.
+- 재설정 링크는 수락·조회 때 발급자의 지금 역할이 대상의 지금 역할에 링크를 낼 수 있어야 쓰인다 — 대상이 admin 으로 오르면 admin 이 낸 링크는 무효다(404, 까닭을 가르지 않고 링크를 소비하지 않는다). 발급과 조회·수락이 같은 규칙 함수(`members/invites.ts` 의 `canIssueResetLink`)를 쓴다.
 
 ### 3.3 조회·수락
 
@@ -235,6 +237,7 @@
 
 - **역할 검사의 자리는 `apps/server/src/auth/roles.ts` 하나다** — `requireSession`(세션 + membership, 없으면 401)·`requireRole(ctx, min)`·`assertRole`(핸들러 안에서 membership 을 다시 읽는다)·`roleOf`(모르는 역할 `guest` 는 undefined → 401)·`hasFieldOutside` 와 가르는 목록 둘. `requireSession` 이 여기 있는 까닭: 세션 확인이 membership 을 읽고 `requireRole` 이 그 위에 서므로 `auth/routes.ts` 와 나누면 서로를 import 한다. `requireOwner` 는 `requireRole(ctx, "owner")` 의 얇은 이름으로 남았다. `request.user` 는 `{ id, workspaceId, role, sessionId }` 다.
 - **필드 검사는 원문 본문의 키로 한다** — 파싱된 값은 기본값이 채워져(`autoRespond` 기본 false) 「보냈는가」를 못 가른다. 파싱이 버린 모르는 키도 admin 몫으로 센다(2장 「목록에 없는 필드는 admin」). 검사는 쓰기 **전**이라 부분 적용이 없다(member 의 `{ name, prompt }` 는 이름도 안 바뀐다).
+- **채널에 사람을 넣는 것은 membership 이 있는 사람만이다** — `channels/service.ts` 의 `addMember` 가 `roleOf` 를 본다. 나간 사람은 users 행이 남아도 404(넣으면 에이전트 헤더 「참여자:」에 다시 실리고 `@left-…` 멘션이 풀린다). 사람 넣기·빼기의 역할은 에이전트 넣기·빼기와 같이 누구나(2장 표).
 - **채널 멤버 경로는 `aliases` 만 member 에게 열린다** — `MEMBER_EDITABLE_AGENT_MEMBER_FIELDS`(memberType·memberId·aliases). `POST /channels/:id/members` 의 에이전트 `{}`·`{aliases}` 와 `PATCH …/members/:memberId` 의 `{aliases}` 는 member 도, `promptOverride`·`autoRespond` 가 하나라도 있으면 admin 이상. 사람 멤버에 그 필드를 주면 전처럼 서비스가 400. 웹에는 별칭 편집 UI 가 없다(이월).
 - **승인 푸시는 채널 참여와 무관하게 워크스페이스의 owner·admin 전원이다**(5장 구체화) — `TriggerLookups.admins()`. 채널에 들어온 member 는 받지 않는다.
 - **승인의 결정자(`approvals.decided_by`)는 이긴 결정을 누른 사람이다** — Gateway 해결 이벤트가 RPC 응답보다 먼저 와도 `approval.resolve` 를 부른 사람을 남긴다(`claimDecidedBy` — `decided_by IS NULL` 일 때만, 먼저 채운 사람을 덮지 않는다). 그 사람의 결정이 저장된 결과와 다르면(두 사람이 거의 동시에 다른 결정) 채우지 않는다. 누가 허용·거절했는지가 감사 기록이다.
@@ -246,10 +249,10 @@
 - **이메일은 넣거나 찾기 전에 소문자로 정규화한다** — `members/accept.ts` 의 `normalizeEmail`. 가입·로그인·중복 검사가 모두 이것을 지난다(`Bee@X.com` 가입 → `bee@x.com` 저장, `BEE@x.com` 둘째 가입은 409 `email`, `OWNER@…` 이메일 로그인도 같은 401).
 - **수락·재설정 응답은 200 `{ sessionToken, user }`**(로그인과 같은 모양, 3.3 5단계 구체화) — 세션 발급까지 서비스(`acceptInvite`·`resetPassword`)가 끝내고 쿠키는 라우트가 싣는다. 웹은 `sessionToken` 을 쓰지 않는다(쿠키만). 그 밖의 응답 모양: `GET /invites` → `{ invites }`(대기 중 `kind: "invite"` 만 — 재설정 링크는 싣지 않는다), `POST /members/:userId/reset-link` → 201 `{ invite, token, url }`(3.2 의 `{ token, url }` 위에 `invite`), `PATCH /me` → `{ user }`, `DELETE /invites/:id`·`POST /me/password` → 204. 발급 응답은 `Cache-Control: no-store`.
 - **틀린 현재 비밀번호는 400 `VALIDATION` + `details.field: "current"`** — 401 이면 웹이 세션 끝남으로 읽어 로그인 화면으로 보낸다.
-- **재설정 링크의 대상 검사** — 조회·수락 때 대상의 membership 이 없거나 owner 면 404(링크 미소비). 대상에게 credential 계정이 없으면 `linkAccount` 로 만든다.
+- **재설정 링크의 재검사** — 조회·수락 때 발급 규칙(`canIssueResetLink` — 3.2)을 발급자·대상의 지금 역할로 다시 지난다(`resetLinkUsable`). 대상이 나갔거나 owner 이거나, admin 이 낸 링크의 대상이 admin 으로 올랐거나, 발급자가 나갔으면 404(링크 미소비). 발급자 쪽 강등은 R2 의 폐기가 먼저 덮는다. 대상에게 credential 계정이 없으면 `linkAccount` 로 만든다.
 - **가입 검사 순서** — 초대 확인(값싼 404) → Better Auth 쪽 이메일 존재·비밀번호 해시(await) → **await 없이** 핸들·이메일 검사와 `claimInvite`. 그 앞 await 사이의 경합은 유일 인덱스가 막고, 실패 뒤 다시 검사해 409 `field` 로 바꾼다.
 - **운영 사건 `invite_accept_failed`**(key `invite:accept`) — 수락이 실패하고 되돌리기(Better Auth 사용자 삭제·`used_at` 되돌림)도 실패했을 때. 로그에는 오류의 이름·코드만 남긴다(Better Auth 어댑터 오류 문구가 무엇을 싣는지 보증하지 못한다).
-- **Better Auth 설정의 `minPasswordLength` 는 16 그대로다** — 우리 경로가 `ctx.password.hash` 를 직접 부르고 `signInEmail` 은 길이를 보지 않아, 12~15자 비밀번호도 가입·로그인된다(규칙의 정본은 shared `Password` 12~256자). Better Auth 의 공개 경로가 닫혀 있는 한 이 값은 쓰이지 않는다.
+- **Better Auth 설정의 `minPasswordLength` 는 16 그대로다** — 우리 경로가 `ctx.password.hash` 를 직접 부르고 `signInEmail` 은 길이를 보지 않아, 12~15자 비밀번호도 가입·로그인된다(규칙의 정본은 shared `Password` 12~256자). Better Auth 의 공개 경로가 닫혀 있는 한(허용 목록 — 「세션을 지우는 모든 자리」 절) 이 값은 쓰이지 않는다.
 
 **멤버 관리·사람 목록·자동 참여(태스크 4 — `85c1c6d`·`eef0334`·`9d3931b`·`553f489`)**
 
@@ -260,14 +263,14 @@
 - **나간 핸들은 `left-` + id(하이픈 뺀 32 hex)의 뒤 27자**(`leftHandleOf`, 4장) — `Handle` 상한 32자. 앞쪽 8자(uuid v7 의 시각)로 하면 약 65초 안에 가입한 두 사람을 차례로 내보낼 때 `users_ws_handle` 유일 인덱스에 걸렸다.
 - **R2 — 내보내기와 admin → member 강등은 그 사람이 발급한 쓰이지 않은 초대·재설정 링크를 같은 트랜잭션에서 모두 폐기한다**(4장). 발급 권한을 잃은 뒤 링크가 권한 노릇을 하면 안 된다. 재승격해도 링크는 되살아나지 않는다. 틀리면 초대만 폐기로 좁힌다.
 - **R4 — 폐기 조건은 `used_by IS NULL` 이다**(`used_at` 이 아니라). 수락이 진행 중인 초대(`claimInvite` 로 `used_at` 은 찍혔고 사용자 생성 전)도 폐기 대상에 든다 — `unclaimInvite` 는 `used_at` 만 되돌리므로 수락이 실패해도 폐기된 채 무효로 남는다. 수락이 끝난(`used_by` 있음) 행은 발급자를 나중에 내보내거나 강등해도 건드리지 않는다(「쓰임」과 「폐기」를 함께 말하지 않게). 틀리면 claim 중인 초대는 폐기에서 뺀다.
-- **내보내기 순서** — Better Auth 삭제(세션·계정·사용자) → 우리 트랜잭션(역할을 안에서 다시 본다 — 동시에 두 번이면 둘째는 404) → `disconnectUser`. 트랜잭션이 실패하면 열린 소켓을 끊고 운영 사건 `member_remove_failed`(key `member:<userId>`, severity error) 뒤 500 — membership 이 남아 DELETE 를 다시 부르면 이어진다(Better Auth 삭제는 멱등). 권한·없음 판정은 사건 없이 그대로 403·404.
+- **내보내기 순서** — Better Auth 삭제(세션·계정·사용자) → 우리 트랜잭션(역할을 안에서 다시 본다 — 동시에 두 번이면 둘째는 404) → `disconnectUser`. 트랜잭션이 실패하면 어느 갈래든 열린 소켓은 끊는다(세션은 이미 지웠다). 권한·없음 판정(await 사이 행위자 강등 등)은 사건 없이 그대로 403·404, 그 밖의 실패는 운영 사건 `member_remove_failed`(key `member:<userId>`, severity error) 뒤 500 — membership 이 남아 DELETE 를 다시 부르면 이어진다(Better Auth 삭제는 멱등).
 - **wire `connection` 에서 membership 과 세션 행을 다시 본다** — 인증 미들웨어의 확인 뒤 await 가 있어, 그 틈에 내보내지거나 세션이 지워지면 `disconnectUser` 가 아직 방에 없는 소켓을 못 본다. 확인과 방 참가를 한 동기 구간에, 지우기와 끊기를 한 동기 구간에 두어 엇갈림을 닫았다.
 
 **세션을 지우는 모든 자리가 그 소켓을 끊는다(곁가지 p4m-c1 — `1bc390d`·`d595334`·`87cbbf2`·`2afd070`)**
 
 - 핸드셰이크가 Better Auth 세션 행 id 를 `socket.data.sessionId` 에 두고 `session:<id>` 룸에 넣는다(토큰 원문은 소켓에 없다). 세션을 지우는 자리와 끊기: 재설정 수락 → `disconnectUser`(대상 사용자 전부), `me/password` → `disconnectSessions`(지운 세션만 — 이 세션 소켓은 남는다), 로그아웃 → `disconnectSessions([이 세션])`(같은 쿠키의 다른 탭 포함), 내보내기 → `disconnectUser`. 순서는 늘 **지우기 → 끊기**다(뒤집으면 핸드셰이크 중인 소켓이 `connection` 재확인을 지나 방에 들어온 뒤 세션만 지워진다 — 테스트가 순서를 고정한다).
 - `disconnectSessions` 와 `changePassword` 는 빈 목록이면 아무것도 하지 않는다 — socket.io-adapter 2.5.8 은 룸 목록이 비면 **모든 소켓**에 적용한다(`io.in([])`).
-- **Better Auth 의 세션을 지우는 HTTP 경로는 닫는다** — `disabledPaths` 에 `/sign-out`·`/revoke-session`·`/revoke-sessions`·`/revoke-other-sessions` 를 더했다(전부터 닫힌 `/change-password`·`/set-password`·`/update-user`·`/change-email`·`/delete-user` 와 함께). 세션은 소켓을 함께 끊는 우리 경로만 지운다. 서버 API `auth.api.signOut` 은 영향이 없다.
+- **Better Auth HTTP 는 허용 목록만 통과시킨다** — `auth/routes.ts` 의 `BETTER_AUTH_HTTP_PATHS`(`/ok` 하나), 목록 밖은 404. 웹·스크립트는 Better Auth HTTP 를 부르지 않는다. 비밀번호 확인(`/verify-password`)·세션 목록(`/list-sessions` — 세션 토큰 원문을 낸다)도 닫는다 — 현재 비밀번호 대입은 `localLoginPerMin` 버킷의 `me/password` 로만. 원문 경로(쿼리 뺀)를 정확히 대조하므로 인코딩·끝 슬래시 변형도 목록 밖이고, 새 Better Auth 버전이 경로를 더해도 닫힌 채다. 그 밑의 겹 방어로 `disabledPaths` 가 세션을 지우는 경로(`/sign-out`·`/revoke-session`·`/revoke-sessions`·`/revoke-other-sessions`)와 `/sign-in/email`·`/change-password`·`/set-password`·`/update-user`·`/change-email`·`/delete-user` 를 닫는다. 세션은 소켓을 함께 끊는 우리 경로만 지운다. 서버 안의 `auth.api.*` 직접 호출(`signInEmail`·`signOut`·`getSession`)은 HTTP 를 지나지 않아 영향이 없다.
 - **초대 경로 IP 버킷 `invitePublicPerMin` 20**(7장) — `lookup`·`accept`·`reset` 셋이 한 버킷, 로그인(`/auth/local`)과 `me/password` 는 `localLoginPerMin` 5 한 버킷. `@fastify/rate-limit` 은 라우트 `config.rateLimit` 마다 저장소를 따로 만들어 버킷이 갈리므로, 핸들러를 `createIpLimit` 으로 한 번 만들어 여러 라우트의 `onRequest` 에 같이 건다. 발급(`POST /invites`·`reset-link`)은 사용자당 `inviteIssuePerMin` 20.
 - 만료된 세션(30일)의 소켓은 다음 재접속까지 산다 — 이월(`docs/plan.md` 8장).
 
