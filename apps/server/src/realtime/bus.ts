@@ -18,6 +18,8 @@ export type BusEvents = {
   "channel.created": Payload<"channel.created">;
   "channel.updated": Payload<"channel.updated">;
   "channel.member.changed": Payload<"channel.member.changed">;
+  // 사람 목록 — 워크스페이스 방으로(가입·역할·표시 이름·내보내기 뒤, members/people.ts broadcastPeople)
+  "people.changed": Payload<"people.changed">;
   typing: Payload<"typing">;
   "adapter.status": Payload<"adapter.status">;
   "system.notice": Payload<"system.notice">;

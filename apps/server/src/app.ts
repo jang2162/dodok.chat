@@ -24,6 +24,7 @@ import { registerAttachmentRoutes } from "./modules/attachments/routes";
 import { sweepAttachments } from "./modules/attachments/service";
 import { type BlobLocks, createBlobLocks } from "./modules/attachments/store";
 import { registerChannelRoutes } from "./modules/channels/routes";
+import { registerMemberManageRoutes } from "./modules/members/manage.routes";
 import { registerMemberRoutes } from "./modules/members/routes";
 import { registerMessageRoutes } from "./modules/messages/routes";
 import {
@@ -59,7 +60,7 @@ import { bridgePublicUrl, buildSetupStatus } from "./modules/setup/status";
 import { importEnvToken, isActiveBridgeToken, verifyBridgeTokenDb } from "./modules/setup/tokens";
 import { ServerBus } from "./realtime/bus";
 import { attachWireFanout } from "./realtime/events";
-import { attachWire } from "./realtime/socket";
+import { attachWire, disconnectUser } from "./realtime/socket";
 import type { WireServer } from "./realtime/types";
 import { createServices, type Services, sessionRecoverTargets } from "./wiring";
 
@@ -316,6 +317,13 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     registerChannelRoutes(fastify, routeContext);
     registerAgentRoutes(fastify, routeContext);
     registerMessageRoutes(fastify, routeContext);
+    registerMemberManageRoutes(fastify, {
+      auth,
+      db,
+      bus,
+      workspaceId,
+      disconnectUser: (userId) => disconnectUser(io, userId),
+    });
     registerRunRoutes(fastify, routeContext);
     registerAdapterRoutes(fastify, routeContext);
     registerSearchRoutes(fastify, { auth, db, workspaceId, limits, ops, now: limitClock });

@@ -17,7 +17,12 @@ import { apiError } from "../../http/errors";
 import { parseStored } from "../../http/validate";
 import type { ServerBus } from "../../realtime/bus";
 import { claimBridgeAttachments, claimUserAttachments, markBound } from "../attachments/service";
-import { channelParticipants } from "../channels/service";
+import {
+  channelParticipants,
+  joinChannelIfAbsent,
+  listMembers,
+  userMessageParticipants,
+} from "../channels/service";
 import { allocateSeq } from "./seq";
 
 /** listMessages 한 페이지 상한 */
@@ -29,7 +34,7 @@ type MessageFields = Omit<typeof messages.$inferInsert, "id" | "channelId" | "se
 export type CreateUserMessageInput = {
   channelId: string;
   authorId: string;
-  /** 평문 @handle 이 섞인 본문 — 저장 전에 채널 참가자로 토큰화한다 */
+  /** 평문 @handle 이 섞인 본문 — 저장 전에 채널 참가자와 채널 밖 워크스페이스 사람으로 토큰화한다(userMessageParticipants) */
   bodyMd: string;
   clientMsgId: string;
   /** 올린 사람 = 보내는 사람·같은 채널·미묶음이어야 한다 — 하나라도 틀리면 메시지 전체가 VALIDATION(스펙 4.4) */
@@ -251,7 +256,11 @@ function summarizeThreads(db: DbOrTx, channelId: string, rootIds: string[]): Map
   return out;
 }
 
-/** (authorId, clientMsgId) 가 이미 있으면 그 메시지를 돌려준다(이벤트 없음). 새로 저장했을 때만 커밋 뒤 message.created. */
+/**
+ * (authorId, clientMsgId) 가 이미 있으면 그 메시지를 돌려준다(이벤트 없음). 새로 저장했을 때만 커밋 뒤 message.created.
+ * 쓴 사람과 멘션된 사람은 같은 트랜잭션에서 채널에 들어온다(자동 참여, 팀 스펙 「채널 참여」 절) — 누가 새로 들어왔으면
+ * message.created 뒤에 channel.member.changed 한 번
+ */
 export function createUserMessage(db: Db, bus: ServerBus, input: CreateUserMessageInput): Message {
   const result = db.transaction((tx) => {
     const existing = tx
@@ -260,14 +269,14 @@ export function createUserMessage(db: Db, bus: ServerBus, input: CreateUserMessa
       .where(and(eq(messages.authorId, input.authorId), eq(messages.clientMsgId, input.clientMsgId)))
       .get();
     // 재전송(ack 유실)은 잡기 전에 돌아간다 — 처음 메시지가 이미 묶은 첨부를 「쓸 수 없는 첨부」로 거절하지 않게
-    if (existing) return { message: rowToMessage(existing), created: false, root: undefined };
+    if (existing) return { message: rowToMessage(existing), created: false, root: undefined, joined: false };
     const claimed = claimUserAttachments(tx, {
       ids: input.attachments ?? [],
       channelId: input.channelId,
       userId: input.authorId,
     });
     const message = storeMessage(tx, input.channelId, input.threadRootId, () => {
-      const { bodyMd, mentions } = tokenize(input.bodyMd, channelParticipants(tx, input.channelId));
+      const { bodyMd, mentions } = tokenize(input.bodyMd, userMessageParticipants(tx, input.channelId));
       return {
         kind: "normal",
         authorType: "user",
@@ -285,9 +294,20 @@ export function createUserMessage(db: Db, bus: ServerBus, input: CreateUserMessa
       claimed.map((a) => a.id),
       message.id,
     );
-    return { message, created: true, root: updatedRoot(tx, message) };
+    const now = new Date();
+    // 모두 부른다 — some 이면 앞에서 true 가 나올 때 뒤 사람을 건너뛴다
+    const joined = [input.authorId, ...message.mentions.users]
+      .map((userId) => joinChannelIfAbsent(tx, input.channelId, userId, now))
+      .includes(true);
+    return { message, created: true, root: updatedRoot(tx, message), joined };
   });
   if (result.created) emitCreated(bus, result.message, result.root);
+  if (result.joined) {
+    bus.emit("channel.member.changed", {
+      channelId: input.channelId,
+      members: listMembers(db, input.channelId),
+    });
+  }
   return result.message;
 }
 

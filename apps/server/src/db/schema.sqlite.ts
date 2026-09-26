@@ -39,7 +39,7 @@ export const users = sqliteTable(
     authProvider: text("auth_provider").notNull(),
     avatarUrl: text("avatar_url"),
     createdAt: ts("created_at").notNull(),
-    leftHandle: text("left_handle"), // 내보낸 멤버의 원래 핸들 — handle 은 left-<id 앞 8자>, email 은 NULL 로 놓아준다(팀 스펙 4장)
+    leftHandle: text("left_handle"), // 내보낸 멤버의 원래 핸들 — handle 은 left-…(modules/members/service.ts leftHandleOf), email 은 NULL 로 놓아준다(팀 스펙 4장)
   },
   (t) => [
     uniqueIndex("users_ws_handle").on(t.workspaceId, t.handle),

@@ -5,7 +5,7 @@ import { v7 as uuidv7 } from "uuid";
 import { z } from "zod";
 import { AdapterError, type AgentAdapter } from "../../adapters/types";
 import type { Db, DbOrTx } from "../../db/client";
-import { agents, channelMembers, channels, users } from "../../db/schema.sqlite";
+import { agents, channelMembers, channels, memberships, users } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
 import { parseStored } from "../../http/validate";
 import type { Logger } from "../../logger";
@@ -289,6 +289,19 @@ export function removeMember(db: DbOrTx, channelId: string, memberId: string): v
   if (removed.length === 0) throw apiError("NOT_FOUND", "member not found");
 }
 
+/** 사람이 채널에 없으면 넣고 true(호출자가 channel.member.changed 를 낸다). 이미 있으면 false(팀 스펙 「채널 참여」 절) */
+export function joinChannelIfAbsent(tx: DbOrTx, channelId: string, userId: string, now: Date): boolean {
+  const inserted = tx
+    .insert(channelMembers)
+    .values({ id: uuidv7(), channelId, memberType: "user", memberId: userId, joinedAt: now })
+    .onConflictDoNothing({
+      target: [channelMembers.channelId, channelMembers.memberType, channelMembers.memberId],
+    })
+    .returning({ id: channelMembers.id })
+    .all();
+  return inserted.length > 0;
+}
+
 /** joinedAt 순 */
 export function listMembers(db: DbOrTx, channelId: string): ChannelMember[] {
   return db
@@ -328,6 +341,34 @@ export function channelParticipants(db: DbOrTx, channelId: string): Participant[
     ...people.map((p): Participant => ({ type: "user", ...p })),
     ...bots.map((b): Participant => ({ type: "agent", ...b })),
   ];
+}
+
+/**
+ * 사람 메시지의 멘션을 풀 참가자 — 채널에 아직 없는 워크스페이스 사람(나간 멤버 제외)을 앞에, channelParticipants 를 뒤에.
+ * 사람은 멘션으로 채널에 들어오므로(자동 참여) 채널 밖 사람도 풀려야 한다. 뒤가 같은 핸들을 덮으므로 겹치면 채널 쪽(에이전트)이 이긴다
+ */
+export function userMessageParticipants(db: DbOrTx, channelId: string): Participant[] {
+  const inChannel = channelParticipants(db, channelId);
+  const channel = db
+    .select({ workspaceId: channels.workspaceId })
+    .from(channels)
+    .where(eq(channels.id, channelId))
+    .get();
+  if (!channel) return inChannel;
+  const joined = new Set(inChannel.filter((p) => p.type === "user").map((p) => p.id));
+  const others = db
+    .select({ id: users.id, handle: users.handle, displayName: users.displayName })
+    .from(users)
+    .innerJoin(
+      memberships,
+      and(eq(memberships.userId, users.id), eq(memberships.workspaceId, channel.workspaceId)),
+    )
+    .where(eq(users.workspaceId, channel.workspaceId))
+    .orderBy(asc(users.createdAt), asc(users.id))
+    .all()
+    .filter((p) => !joined.has(p.id))
+    .map((p): Participant => ({ type: "user", ...p }));
+  return [...others, ...inChannel];
 }
 
 export type ResetAgentSessionDeps = {
