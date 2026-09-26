@@ -12,7 +12,7 @@ import packageJson from "../package.json" with { type: "json" };
 import type { AgentAdapter } from "./adapters/types";
 import { type Auth, createAuth } from "./auth";
 import { bootstrapOwner } from "./auth/owner";
-import { registerAuthRoutes } from "./auth/routes";
+import { createLoginLimit, registerAuthRoutes } from "./auth/routes";
 import { isLocalVapidSubject, type ServerConfig } from "./config";
 import { createDb, type Db } from "./db/client";
 import { workspaces } from "./db/schema.sqlite";
@@ -24,6 +24,7 @@ import { registerAttachmentRoutes } from "./modules/attachments/routes";
 import { sweepAttachments } from "./modules/attachments/service";
 import { type BlobLocks, createBlobLocks } from "./modules/attachments/store";
 import { registerChannelRoutes } from "./modules/channels/routes";
+import { registerMemberRoutes } from "./modules/members/routes";
 import { registerMessageRoutes } from "./modules/messages/routes";
 import {
   createDiskMonitor,
@@ -287,15 +288,29 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     undo.push({ step: "disk", run: () => disk.close() });
     await disk.ready;
 
+    const secureCookie = new URL(config.APP_ORIGIN).protocol === "https:";
+    const loginLimit = createLoginLimit(fastify, { perMin: limits.localLoginPerMin, ops });
     registerAuthRoutes(fastify, {
       auth,
       db,
       logger,
       workspaceId,
-      secureCookie: new URL(config.APP_ORIGIN).protocol === "https:",
+      secureCookie,
       betterAuthPerMin: limits.betterAuthPerMin,
-      localLoginPerMin: limits.localLoginPerMin,
+      loginLimit,
       ops,
+    });
+    registerMemberRoutes(fastify, {
+      auth,
+      db,
+      logger,
+      workspaceId,
+      appOrigin: config.APP_ORIGIN,
+      secureCookie,
+      limits,
+      loginLimit,
+      ops,
+      limitNow: limitClock,
     });
     const routeContext = { auth, db, bus, logger, workspaceId, adapter, orchestrator: services.orchestrator };
     registerChannelRoutes(fastify, routeContext);

@@ -14,6 +14,7 @@ describe("LIMITS — 스펙 4장 숫자", () => {
       localLoginPerMin: 5,
       restPerMin: 300,
       uploadPerMin: 30,
+      inviteIssuePerMin: 20,
       searchPerMin: 60,
       wire: {
         heavy: { perMin: 30, burst: 10 },

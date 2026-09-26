@@ -2,12 +2,14 @@
 export const LIMITS = {
   /** /api/auth/*(Better Auth) — IP 당 분당 */
   betterAuthPerMin: 30,
-  /** /api/v1/auth/local(로컬 토큰 로그인) — IP 당 분당 */
+  /** /api/v1/auth/local(로그인)과 초대 조회·수락·재설정 — IP 당 분당, 한 버킷 */
   localLoginPerMin: 5,
   /** REST /api/v1/* — 사용자당 분당 */
   restPerMin: 300,
   /** 첨부 업로드 — 사용자당 분당(REST 상한 위에 한 번 더) */
   uploadPerMin: 30,
+  /** 초대·재설정 링크 발급 — 사용자당 분당(둘이 한 버킷, 팀 스펙 7장) */
+  inviteIssuePerMin: 20,
   /** GET /api/v1/search — 사용자당 분당(REST 상한 위에 한 번 더, 스레드·검색 스펙 5.2) */
   searchPerMin: 60,
   /** wire 이벤트 — 소켓마다 토큰 버킷 */
@@ -31,6 +33,7 @@ export type Limits = {
   restPerMin: number;
   uploadPerMin: number;
   searchPerMin: number;
+  inviteIssuePerMin: number;
   wire: Record<keyof (typeof LIMITS)["wire"], { perMin: number; burst: number }>;
   socketsPerUser: number;
   bridgeFail: { maxFailures: number; windowMs: number; blockMs: number; maxAddresses: number };

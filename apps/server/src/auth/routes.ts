@@ -1,17 +1,17 @@
-import type { User } from "@dodok/shared";
+import { LocalLoginBody, type User } from "@dodok/shared";
 import { isAPIError } from "better-auth/api";
 import { fromNodeHeaders } from "better-auth/node";
 import { eq } from "drizzle-orm";
-import type { FastifyInstance, FastifyRequest } from "fastify";
-import { z } from "zod";
+import type { FastifyInstance, FastifyReply, FastifyRequest, onRequestHookHandler } from "fastify";
 import type { Db } from "../db/client";
 import { users, workspaces } from "../db/schema.sqlite";
 import { apiError } from "../http/errors";
 import type { Logger } from "../logger";
+import { normalizeEmail } from "../modules/members/accept";
 import { recordRateLimit } from "../modules/ops/http-limits";
 import type { OpsService } from "../modules/ops/service";
 import { type Auth, OWNER_EMAIL, SESSION_COOKIE, SESSION_MAX_AGE_S } from "./index";
-import { requireRole, requireSession, sessionTokenOf, sessionUser } from "./roles";
+import { requireRole, requireSession, roleOf, sessionTokenOf, sessionUser } from "./roles";
 
 // 라우트 모듈들이 이 경로로 가져온다 — 정의는 auth/roles.ts
 export { requireSession, sessionUser };
@@ -25,13 +25,30 @@ export type AuthRouteContext = {
   secureCookie: boolean;
   /** /api/auth/*(Better Auth) IP 당 분당 상한 — LIMITS.betterAuthPerMin */
   betterAuthPerMin: number;
-  /** /api/v1/auth/local IP 당 분당 상한 — LIMITS.localLoginPerMin */
-  localLoginPerMin: number;
+  /** /api/v1/auth/local 의 IP 버킷(createLoginLimit) — 초대 조회·수락·재설정과 같이 쓴다 */
+  loginLimit: onRequestHookHandler;
   /** 로그인 전 상한에 걸리면 ratelimit 사건을 남긴다 */
   ops: Pick<OpsService, "record">;
 };
 
-const LocalLoginBody = z.object({ token: z.string().min(1).max(256) });
+/** 이메일 모양 로그인 실패는 까닭(없는 이메일·틀린 비밀번호·owner 이메일·membership 없음)을 가르지 않는다 */
+const WRONG_LOGIN = "이메일 또는 비밀번호가 맞지 않는다";
+
+/**
+ * 로그인 전 경로의 IP 당 분당 상한(LIMITS.localLoginPerMin) 하나. route config.rateLimit 은 경로마다 저장소를 새로 만들어
+ * 버킷이 갈린다(@fastify/rate-limit LocalStore.child) — 경로를 옮겨 다니며 대입하지 못하게 fastify.rateLimit 핸들러 하나를
+ * 여러 경로의 onRequest 에 건다
+ */
+export function createLoginLimit(
+  fastify: FastifyInstance,
+  opts: { perMin: number; ops: Pick<OpsService, "record"> },
+): onRequestHookHandler {
+  return fastify.rateLimit({
+    max: opts.perMin,
+    timeWindow: "1 minute",
+    onExceeded: (request: FastifyRequest) => recordRateLimit(opts.ops, request),
+  });
+}
 
 export function registerAuthRoutes(fastify: FastifyInstance, ctx: AuthRouteContext): void {
   const onExceeded = (request: FastifyRequest) => recordRateLimit(ctx.ops, request);
@@ -61,37 +78,16 @@ export function registerAuthRoutes(fastify: FastifyInstance, ctx: AuthRouteConte
     },
   });
 
-  fastify.post(
-    "/api/v1/auth/local",
-    { config: { rateLimit: { max: ctx.localLoginPerMin, timeWindow: "1 minute", onExceeded } } },
-    async (request, reply) => {
-      const body = LocalLoginBody.safeParse(request.body);
-      if (!body.success) throw apiError("VALIDATION", "token 이 필요하다");
-      let signed: { token: string; user: { id: string } };
-      try {
-        signed = await ctx.auth.api.signInEmail({
-          body: { email: OWNER_EMAIL, password: body.data.token },
-          headers: fromNodeHeaders(request.headers),
-          asResponse: false,
-        });
-      } catch (error) {
-        if (isAPIError(error) && error.statusCode === 401) {
-          throw apiError("UNAUTHORIZED", "토큰이 맞지 않는다");
-        }
-        // 토큰 불일치가 아닌 실패(DB 등)는 401 로 뭉개지 않는다 — 에러 핸들러가 500 으로 낸다
-        ctx.logger.error({ err: error }, "local login failed");
-        throw error;
-      }
-      reply.setCookie(SESSION_COOKIE, signed.token, {
-        path: "/",
-        httpOnly: true,
-        sameSite: "lax",
-        secure: ctx.secureCookie,
-        maxAge: SESSION_MAX_AGE_S,
-      });
-      return { sessionToken: signed.token, user: loadUser(ctx.db, signed.user.id) };
-    },
-  );
+  fastify.post("/api/v1/auth/local", { onRequest: ctx.loginLimit }, async (request, reply) => {
+    const body = LocalLoginBody.safeParse(request.body);
+    if (!body.success) throw apiError("VALIDATION", "token 또는 email·password 가 필요하다");
+    const signed =
+      "token" in body.data
+        ? await signIn(ctx, request, OWNER_EMAIL, body.data.token, "토큰이 맞지 않는다")
+        : await signInMember(ctx, request, body.data.email, body.data.password);
+    setSessionCookie(reply, signed.token, ctx.secureCookie);
+    return { sessionToken: signed.token, user: loadUser(ctx.db, signed.user.id) };
+  });
 
   fastify.get("/api/v1/auth/me", { preHandler: requireSession(ctx) }, async (request) => ({
     user: loadUser(ctx.db, sessionUser(request).id),
@@ -115,11 +111,59 @@ export function requireOwner(ctx: { auth: Auth; db: Db; workspaceId: string }) {
   return requireRole(ctx, "owner");
 }
 
+/** owner 는 토큰 모양으로만 — 이메일 모양으로 OWNER_EMAIL 을 주면 같은 401. 성공했는데 membership 이 없으면 세션을 지우고 401 */
+async function signInMember(
+  ctx: AuthRouteContext,
+  request: FastifyRequest,
+  rawEmail: string,
+  password: string,
+): Promise<{ token: string; user: { id: string } }> {
+  const email = normalizeEmail(rawEmail);
+  if (email === OWNER_EMAIL) throw apiError("UNAUTHORIZED", WRONG_LOGIN);
+  const signed = await signIn(ctx, request, email, password, WRONG_LOGIN);
+  if (!roleOf(ctx.db, ctx.workspaceId, signed.user.id)) {
+    await (await ctx.auth.$context).internalAdapter.deleteSession(signed.token);
+    throw apiError("UNAUTHORIZED", WRONG_LOGIN);
+  }
+  return signed;
+}
+
+async function signIn(
+  ctx: AuthRouteContext,
+  request: FastifyRequest,
+  email: string,
+  password: string,
+  wrong: string,
+): Promise<{ token: string; user: { id: string } }> {
+  try {
+    return await ctx.auth.api.signInEmail({
+      body: { email, password },
+      headers: fromNodeHeaders(request.headers),
+      asResponse: false,
+    });
+  } catch (error) {
+    if (isAPIError(error) && error.statusCode === 401) throw apiError("UNAUTHORIZED", wrong);
+    // 자격 불일치가 아닌 실패(DB 등)는 401 로 뭉개지 않는다 — 에러 핸들러가 500 으로 낸다
+    ctx.logger.error({ err: error }, "local login failed");
+    throw error;
+  }
+}
+
+export function setSessionCookie(reply: FastifyReply, token: string, secure: boolean): void {
+  reply.setCookie(SESSION_COOKIE, token, {
+    path: "/",
+    httpOnly: true,
+    sameSite: "lax",
+    secure,
+    maxAge: SESSION_MAX_AGE_S,
+  });
+}
+
 function bearerHeaders(token: string): Headers {
   return new Headers({ authorization: `Bearer ${token}` });
 }
 
-function loadWorkspace(db: Db, id: string): { id: string; name: string } {
+export function loadWorkspace(db: Db, id: string): { id: string; name: string } {
   const row = db
     .select({ id: workspaces.id, name: workspaces.name })
     .from(workspaces)
@@ -130,7 +174,7 @@ function loadWorkspace(db: Db, id: string): { id: string; name: string } {
   return row;
 }
 
-function loadUser(db: Db, id: string): User {
+export function loadUser(db: Db, id: string): User {
   const row = db.select().from(users).where(eq(users.id, id)).get();
   // Better Auth 세션은 있는데 users 행이 없으면 dodok 사용자가 아니다
   if (!row) throw apiError("UNAUTHORIZED", "사용자를 찾을 수 없다");

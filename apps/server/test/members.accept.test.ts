@@ -1,0 +1,372 @@
+import { IssuedInvite, User } from "@dodok/shared";
+import { and, eq } from "drizzle-orm";
+import pino from "pino";
+import { v7 as uuidv7 } from "uuid";
+import { afterEach, describe, expect, it } from "vitest";
+import type { App } from "../src/app";
+import { user as authUser } from "../src/db/auth-schema";
+import { agents, invites, memberships, opsEvents, users } from "../src/db/schema.sqlite";
+import { findValidInvite } from "../src/modules/members/invites";
+import { bootTestApp, login, userWithRole } from "./helpers/app";
+
+let app: App | undefined;
+afterEach(async () => {
+  await app?.close();
+  app = undefined;
+});
+
+const PASSWORD = "correct-horse-battery";
+const bearer = (token: string) => ({ authorization: `Bearer ${token}` });
+
+async function issue(a: App, headers: Record<string, string>, role: "admin" | "member" = "member") {
+  const res = await a.fastify.inject({ method: "POST", url: "/api/v1/invites", headers, payload: { role } });
+  if (res.statusCode !== 201) throw new Error(`issue 실패: ${res.statusCode} ${res.body}`);
+  return IssuedInvite.parse(res.json());
+}
+
+const accept = (a: App, payload: Record<string, unknown>) =>
+  a.fastify.inject({ method: "POST", url: "/api/v1/invites/accept", payload });
+
+const joinBody = (token: string, over: Record<string, unknown> = {}) => ({
+  token,
+  handle: "bee",
+  displayName: "Bee",
+  email: "bee@example.com",
+  password: PASSWORD,
+  ...over,
+});
+
+const me = (a: App, token: string) =>
+  a.fastify.inject({ method: "GET", url: "/api/v1/auth/me", headers: bearer(token) });
+
+function counts(a: App) {
+  return {
+    users: a.db.select().from(users).all().length,
+    memberships: a.db.select().from(memberships).all().length,
+    authUsers: a.db.select().from(authUser).all().length,
+  };
+}
+
+/** 로그인 버킷(5회/분)을 넉넉히 — 수락·재설정·로그인이 같은 IP 버킷을 쓴다 */
+const roomy = { limits: { localLoginPerMin: 100 } };
+
+describe("POST /api/v1/invites/lookup·accept", () => {
+  it("정상 가입 → 쿠키·sessionToken, /auth/me 의 role 이 초대의 역할, 초대는 소비·used_by", async () => {
+    app = await bootTestApp({}, roomy);
+    const owner = await login(app);
+    const issued = await issue(app, owner.headers, "admin");
+
+    const lookup = await app.fastify.inject({
+      method: "POST",
+      url: "/api/v1/invites/lookup",
+      payload: { token: issued.token },
+    });
+    expect(lookup.statusCode).toBe(200);
+    expect(lookup.json()).toEqual({ workspaceName: "dodok", kind: "invite", role: "admin" });
+
+    const res = await accept(app, joinBody(issued.token));
+    expect(res.statusCode).toBe(200);
+    const { sessionToken, user } = res.json() as { sessionToken: string; user: User };
+    expect(User.parse(user)).toEqual(user);
+    expect(user).toMatchObject({ handle: "bee", displayName: "Bee", email: "bee@example.com" });
+    expect(user.authProvider).toBe("local");
+    expect(res.cookies.find((c) => c.name === "dodok.session")).toMatchObject({
+      value: sessionToken,
+      httpOnly: true,
+    });
+    const meRes = await me(app, sessionToken);
+    expect(meRes.statusCode).toBe(200);
+    expect(meRes.json()).toMatchObject({ role: "admin", user: { id: user.id } });
+
+    const row = app.db.select().from(invites).where(eq(invites.id, issued.invite.id)).get();
+    expect(row?.usedAt).toBeInstanceOf(Date);
+    expect(row?.usedBy).toBe(user.id);
+    // 재사용 404 — 조회도 수락도
+    const reuse = await accept(app, joinBody(issued.token, { handle: "bee2", email: "bee2@example.com" }));
+    expect(reuse.statusCode).toBe(404);
+    const relookup = await app.fastify.inject({
+      method: "POST",
+      url: "/api/v1/invites/lookup",
+      payload: { token: issued.token },
+    });
+    expect(relookup.statusCode).toBe(404);
+  });
+
+  it("만료·폐기·없음·재설정 토큰은 모두 같은 404 본문", async () => {
+    app = await bootTestApp({}, roomy);
+    const owner = await login(app);
+    const expired = await issue(app, owner.headers);
+    app.db
+      .update(invites)
+      .set({ expiresAt: new Date(Date.now() - 1000) })
+      .where(eq(invites.id, expired.invite.id))
+      .run();
+    const revoked = await issue(app, owner.headers);
+    await app.fastify.inject({
+      method: "DELETE",
+      url: `/api/v1/invites/${revoked.invite.id}`,
+      headers: owner.headers,
+    });
+    const member = await userWithRole(app, "mem", "member");
+    const reset = await app.fastify.inject({
+      method: "POST",
+      url: `/api/v1/members/${member.id}/reset-link`,
+      headers: owner.headers,
+    });
+    const resetToken = (reset.json() as { token: string }).token;
+
+    const bodies = [];
+    for (const token of [expired.token, revoked.token, "dit_nope", resetToken]) {
+      const res = await accept(app, joinBody(token));
+      expect(res.statusCode, token.slice(0, 8)).toBe(404);
+      bodies.push(res.json());
+    }
+    expect(new Set(bodies.map((b) => JSON.stringify(b))).size).toBe(1);
+    expect(counts(app).users).toBe(2);
+  });
+
+  it("Review Focus 1 — 같은 링크를 거의 동시에 두 번 제출하면 한 명만, 다른 쪽 404", async () => {
+    app = await bootTestApp({}, roomy);
+    const owner = await login(app);
+    const issued = await issue(app, owner.headers);
+    const before = counts(app);
+    const [a, b] = await Promise.all([
+      accept(app, joinBody(issued.token)),
+      accept(app, joinBody(issued.token, { handle: "wasp", email: "wasp@example.com" })),
+    ]);
+    expect([a.statusCode, b.statusCode].sort()).toEqual([200, 404]);
+    expect(counts(app)).toEqual({
+      users: before.users + 1,
+      memberships: before.memberships + 1,
+      authUsers: before.authUsers + 1,
+    });
+  });
+
+  it("Review Focus 2 — 에이전트 핸들 dev 로 가입하면 409 field:handle, 초대 미소비, 고쳐서 성공", async () => {
+    app = await bootTestApp({}, roomy);
+    const owner = await login(app);
+    app.db
+      .insert(agents)
+      .values({
+        id: uuidv7(),
+        workspaceId: app.workspaceId,
+        provider: "openclaw",
+        providerAgentId: "dev",
+        handle: "dev",
+        name: "Dev",
+        createdAt: new Date(),
+      })
+      .run();
+    const issued = await issue(app, owner.headers);
+    const before = counts(app);
+    const clash = await accept(app, joinBody(issued.token, { handle: "dev" }));
+    expect(clash.statusCode).toBe(409);
+    expect(clash.json()).toMatchObject({ code: "CONFLICT", details: { field: "handle" } });
+    expect(counts(app)).toEqual(before);
+    expect(findValidInvite(app.db, issued.token, new Date())?.id).toBe(issued.invite.id);
+    // 사람 핸들(owner)과 겹쳐도 409
+    const human = await accept(app, joinBody(issued.token, { handle: "owner" }));
+    expect(human.json()).toMatchObject({ code: "CONFLICT", details: { field: "handle" } });
+
+    const fixed = await accept(app, joinBody(issued.token, { handle: "dev2" }));
+    expect(fixed.statusCode).toBe(200);
+  });
+
+  it("이메일은 소문자로 넣는다 — 대문자만 다른 이메일로 둘째 가입은 409 field:email, owner 이메일도 409", async () => {
+    app = await bootTestApp({}, roomy);
+    const owner = await login(app);
+    const first = await accept(
+      app,
+      joinBody((await issue(app, owner.headers)).token, { email: "Bee@X.com" }),
+    );
+    expect(first.statusCode).toBe(200);
+    expect((first.json() as { user: User }).user.email).toBe("bee@x.com");
+
+    const issued = await issue(app, owner.headers);
+    const dup = await accept(app, joinBody(issued.token, { handle: "bee2", email: "BEE@x.com" }));
+    expect(dup.statusCode).toBe(409);
+    expect(dup.json()).toMatchObject({ code: "CONFLICT", details: { field: "email" } });
+    const ownerEmail = await accept(
+      app,
+      joinBody(issued.token, { handle: "bee2", email: "Owner@dodok.local" }),
+    );
+    expect(ownerEmail.json()).toMatchObject({ code: "CONFLICT", details: { field: "email" } });
+    expect(findValidInvite(app.db, issued.token, new Date())?.id).toBe(issued.invite.id);
+
+    const login2 = await app.fastify.inject({
+      method: "POST",
+      url: "/api/v1/auth/local",
+      payload: { email: "bee@x.com", password: PASSWORD },
+    });
+    expect(login2.statusCode).toBe(200);
+  });
+
+  it("입력 검증 — 핸들 모양·짧은 비밀번호·빈 표시 이름은 400, 초대 미소비", async () => {
+    app = await bootTestApp({}, roomy);
+    const owner = await login(app);
+    const issued = await issue(app, owner.headers);
+    for (const over of [
+      { handle: "Bee" },
+      { handle: "b" },
+      { password: "short-pass1" },
+      { displayName: "   " },
+      { email: "not-an-email" },
+    ]) {
+      const res = await accept(app, joinBody(issued.token, over));
+      expect(res.statusCode, JSON.stringify(over)).toBe(400);
+    }
+    expect(findValidInvite(app.db, issued.token, new Date())?.id).toBe(issued.invite.id);
+  });
+
+  it("우리 행 쓰기가 실패하면 Better Auth 사용자를 지우고 초대를 되돌린다 → 500, 고친 뒤 다시 성공", async () => {
+    app = await bootTestApp({}, roomy);
+    const owner = await login(app);
+    const issued = await issue(app, owner.headers);
+    const before = counts(app);
+    app.db.$client.exec(
+      "CREATE TRIGGER fail_membership BEFORE INSERT ON memberships BEGIN SELECT RAISE(ABORT, 'boom'); END;",
+    );
+    const res = await accept(app, joinBody(issued.token));
+    expect(res.statusCode).toBe(500);
+    expect(counts(app)).toEqual(before);
+    expect(findValidInvite(app.db, issued.token, new Date())?.id).toBe(issued.invite.id);
+    expect(app.db.select().from(opsEvents).where(eq(opsEvents.kind, "invite_accept_failed")).all()).toEqual(
+      [],
+    );
+
+    app.db.$client.exec("DROP TRIGGER fail_membership;");
+    expect((await accept(app, joinBody(issued.token))).statusCode).toBe(200);
+  });
+
+  it("users 쓰기 실패(되돌리기 성공) → 500, 로그에 쿼리 파라미터(이메일·핸들)가 없다", async () => {
+    const lines: string[] = [];
+    const logger = pino({ level: "trace" }, { write: (line: string) => void lines.push(line) });
+    app = await bootTestApp({}, { ...roomy, logger });
+    const owner = await login(app);
+    const issued = await issue(app, owner.headers);
+    const before = counts(app);
+    app.db.$client.exec(
+      "CREATE TRIGGER fail_users BEFORE INSERT ON users BEGIN SELECT RAISE(ABORT, 'boom'); END;",
+    );
+    const res = await accept(app, joinBody(issued.token, { handle: "secret-handle" }));
+    expect(res.statusCode).toBe(500);
+    expect(counts(app)).toEqual(before);
+    expect(findValidInvite(app.db, issued.token, new Date())?.id).toBe(issued.invite.id);
+    const logText = lines.join("\n");
+    expect(logText).toContain("invite accept failed");
+    for (const secret of [issued.token, "bee@example.com", PASSWORD, "secret-handle"]) {
+      expect(logText, secret.slice(0, 6)).not.toContain(secret);
+    }
+  });
+
+  it("되돌리기도 실패하면 운영 사건 invite_accept_failed(원문 없이) 후 500 — 로그에 쿼리 파라미터(이메일·핸들)가 없다", async () => {
+    const lines: string[] = [];
+    const logger = pino({ level: "trace" }, { write: (line: string) => void lines.push(line) });
+    app = await bootTestApp({}, { ...roomy, logger });
+    const owner = await login(app);
+    const issued = await issue(app, owner.headers);
+    // users INSERT 의 파라미터에 이메일·핸들이 실린다 — drizzle 쿼리 오류 문구가 로그로 새지 않는지 본다
+    app.db.$client.exec(
+      "CREATE TRIGGER fail_users BEFORE INSERT ON users BEGIN SELECT RAISE(ABORT, 'boom'); END;",
+    );
+    app.db.$client.exec(
+      "CREATE TRIGGER fail_unclaim BEFORE UPDATE ON invites WHEN NEW.used_at IS NULL BEGIN SELECT RAISE(ABORT, 'boom'); END;",
+    );
+    const res = await accept(app, joinBody(issued.token));
+    expect(res.statusCode).toBe(500);
+    const events = app.db.select().from(opsEvents).where(eq(opsEvents.kind, "invite_accept_failed")).all();
+    expect(events).toHaveLength(1);
+    const text = JSON.stringify(events);
+    expect(text).not.toContain(issued.token);
+    expect(text).not.toContain("bee@example.com");
+    expect(text).not.toContain(PASSWORD);
+    const logText = lines.join("\n");
+    expect(logText).toContain("invite accept rollback failed");
+    for (const secret of [issued.token, "bee@example.com", PASSWORD, '"bee"']) {
+      expect(logText, secret.slice(0, 6)).not.toContain(secret);
+    }
+  });
+});
+
+describe("POST /api/v1/invites/reset", () => {
+  it("재설정 뒤 대상의 옛 세션 401, 새 세션으로 로그인됨, 새 비밀번호로 로그인·옛 비밀번호 401", async () => {
+    app = await bootTestApp({}, roomy);
+    const owner = await login(app);
+    const joined = await accept(app, joinBody((await issue(app, owner.headers)).token));
+    const oldSession = (joined.json() as { sessionToken: string }).sessionToken;
+    const userId = (joined.json() as { user: User }).user.id;
+
+    const link = await app.fastify.inject({
+      method: "POST",
+      url: `/api/v1/members/${userId}/reset-link`,
+      headers: owner.headers,
+    });
+    const { token } = link.json() as { token: string };
+    const lookup = await app.fastify.inject({
+      method: "POST",
+      url: "/api/v1/invites/lookup",
+      payload: { token },
+    });
+    expect(lookup.json()).toEqual({ workspaceName: "dodok", kind: "reset" });
+
+    const next = "brand-new-password-42";
+    const res = await app.fastify.inject({
+      method: "POST",
+      url: "/api/v1/invites/reset",
+      payload: { token, password: next },
+    });
+    expect(res.statusCode).toBe(200);
+    const { sessionToken, user } = res.json() as { sessionToken: string; user: User };
+    expect(user.id).toBe(userId);
+    expect(res.cookies.find((c) => c.name === "dodok.session")?.value).toBe(sessionToken);
+    expect((await me(app, oldSession)).statusCode).toBe(401);
+    expect((await me(app, sessionToken)).statusCode).toBe(200);
+
+    const signIn = (password: string) =>
+      app!.fastify.inject({
+        method: "POST",
+        url: "/api/v1/auth/local",
+        payload: { email: "bee@example.com", password },
+      });
+    expect((await signIn(PASSWORD)).statusCode).toBe(401);
+    expect((await signIn(next)).statusCode).toBe(200);
+
+    const reuse = await app.fastify.inject({
+      method: "POST",
+      url: "/api/v1/invites/reset",
+      payload: { token, password: "another-password-42" },
+    });
+    expect(reuse.statusCode).toBe(404);
+    // 초대 토큰은 재설정에 못 쓴다
+    const invite = await issue(app, owner.headers);
+    const wrongKind = await app.fastify.inject({
+      method: "POST",
+      url: "/api/v1/invites/reset",
+      payload: { token: invite.token, password: next },
+    });
+    expect(wrongKind.statusCode).toBe(404);
+  });
+
+  it("대상이 더 이상 멤버가 아니면 404, 링크는 소비되지 않는다", async () => {
+    app = await bootTestApp({}, roomy);
+    const owner = await login(app);
+    const member = await userWithRole(app, "mem", "member");
+    const link = await app.fastify.inject({
+      method: "POST",
+      url: `/api/v1/members/${member.id}/reset-link`,
+      headers: owner.headers,
+    });
+    const { token } = link.json() as { token: string };
+    app.db
+      .delete(memberships)
+      .where(and(eq(memberships.workspaceId, app.workspaceId), eq(memberships.userId, member.id)))
+      .run();
+    const res = await app.fastify.inject({
+      method: "POST",
+      url: "/api/v1/invites/reset",
+      payload: { token, password: "brand-new-password-42" },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(findValidInvite(app.db, token, new Date())).toBeDefined();
+  });
+});

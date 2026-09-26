@@ -1,0 +1,222 @@
+/**
+ * 초대 수락·재설정 수락(팀 스펙 3.3). 가입은 공개 경로가 아니라 Better Auth 내부 어댑터로 한다 — bootstrapOwner 와 같은 길.
+ * SQLite 동기 드라이버라 Better Auth 호출과 우리 행을 한 트랜잭션으로 묶을 수 없다 — 초대를 먼저 원자적으로 잡고,
+ * 뒤가 실패하면 만든 Better Auth 사용자를 지우고 초대를 되돌린다.
+ */
+import type { AcceptInviteBody, ResetPasswordBody } from "@dodok/shared";
+import { and, eq } from "drizzle-orm";
+import { v7 as uuidv7 } from "uuid";
+import type { Auth } from "../../auth";
+import { roleOf } from "../../auth/roles";
+import type { Db, DbOrTx } from "../../db/client";
+import { agents, invites, memberships, users } from "../../db/schema.sqlite";
+import { apiError } from "../../http/errors";
+import type { Logger } from "../../logger";
+import type { OpsService } from "../ops/service";
+import { claimInvite, findValidInvite, type InviteRow, unclaimInvite } from "./invites";
+
+export type AcceptDeps = {
+  db: Db;
+  auth: Auth;
+  workspaceId: string;
+  ops: Pick<OpsService, "record">;
+  logger: Logger;
+  now: () => Date;
+};
+
+/** 무효의 까닭은 가르지 않는다 — 쓰임·만료·폐기·없음·종류 다름 모두 이 한 문구 */
+export const inviteNotFound = () => apiError("NOT_FOUND", "초대가 만료됐거나 이미 쓰였습니다");
+
+/**
+ * users_ws_email 유일 인덱스는 대소문자를 가른다 — 넣기·찾기 전에 모두 이것을 지난다.
+ * Better Auth 도 user.email 을 소문자로 넣으므로 두 테이블이 같은 값을 갖는다
+ */
+export function normalizeEmail(email: string): string {
+  return email.toLowerCase();
+}
+
+/** 멘션이 같은 이름공간이라 사람(users)과 에이전트(agents)를 통틀어 워크스페이스 안에서 유일하다. 겹치면 409 field "handle" */
+export function assertHandleFreeForPeople(db: DbOrTx, workspaceId: string, handle: string): void {
+  const person = db
+    .select({ id: users.id })
+    .from(users)
+    .where(and(eq(users.workspaceId, workspaceId), eq(users.handle, handle)))
+    .get();
+  const agent = db
+    .select({ id: agents.id })
+    .from(agents)
+    .where(and(eq(agents.workspaceId, workspaceId), eq(agents.handle, handle)))
+    .get();
+  if (person || agent)
+    throw apiError("CONFLICT", `handle @${handle} 는 이미 쓰이고 있다`, { field: "handle" });
+}
+
+function emailTaken(db: DbOrTx, workspaceId: string, email: string): boolean {
+  return !!db
+    .select({ id: users.id })
+    .from(users)
+    .where(and(eq(users.workspaceId, workspaceId), eq(users.email, email)))
+    .get();
+}
+
+const emailConflict = () => apiError("CONFLICT", "이미 가입된 이메일입니다", { field: "email" });
+
+/** Better Auth 의 이메일은 워크스페이스와 무관하게 유일하다 — 우리 users 에 없는 행(owner 부트스트랩 중간 등)도 본다 */
+async function assertEmailFree(deps: AcceptDeps, email: string): Promise<void> {
+  if (emailTaken(deps.db, deps.workspaceId, email)) throw emailConflict();
+  const ctx = await deps.auth.$context;
+  if (await ctx.internalAdapter.findUserByEmail(email)) throw emailConflict();
+}
+
+function validInvite(deps: AcceptDeps, token: string, kind: InviteRow["kind"], now: Date): InviteRow {
+  const invite = findValidInvite(deps.db, token, now);
+  if (!invite || invite.kind !== kind || invite.workspaceId !== deps.workspaceId) throw inviteNotFound();
+  return invite;
+}
+
+/**
+ * 오류 객체를 통째로 로그·응답에 싣지 않고 이름·코드만 남긴다(스펙 7장 — 로그에 이메일 없음). 이 자리는 Better Auth 어댑터와
+ * 드라이버 오류를 함께 받는데 그 문구에 무엇이 실리는지 여기서 보증할 수 없다(better-sqlite3 SqliteError 는 파라미터를 싣지 않는다 —
+ * members.accept.test 의 users 트리거 실패 테스트가 로그를 본다)
+ */
+function internal(deps: AcceptDeps, err: unknown, what: string, ids: Record<string, string>) {
+  const cause = (err as { cause?: { code?: unknown } } | undefined)?.cause;
+  deps.logger.error(
+    {
+      ...ids,
+      errName: err instanceof Error ? err.name : typeof err,
+      code: (err as { code?: unknown } | undefined)?.code ?? cause?.code,
+    },
+    what,
+  );
+  return apiError("INTERNAL", "요청을 마치지 못했다");
+}
+
+export async function acceptInvite(
+  deps: AcceptDeps,
+  body: AcceptInviteBody,
+): Promise<{ userId: string; sessionToken: string }> {
+  const { db, workspaceId } = deps;
+  const email = normalizeEmail(body.email);
+  const invite = validInvite(deps, body.token, "invite", deps.now());
+  const ctx = await deps.auth.$context;
+  const adapter = ctx.internalAdapter;
+  await assertEmailFree(deps, email);
+  const passwordHash = await ctx.password.hash(body.password);
+
+  // 여기서 claim 까지는 await 가 없다 — 검사와 잡기 사이에 다른 가입이 끼지 않는다. 그 전의 await 사이에 낀 경합은
+  // 아래 유일 인덱스가 막고 conflictAfterFailure 가 409 로 바꾼다
+  assertHandleFreeForPeople(db, workspaceId, body.handle);
+  if (emailTaken(db, workspaceId, email)) throw emailConflict();
+  if (!claimInvite(db, invite.id, deps.now())) throw inviteNotFound();
+
+  const userId = uuidv7();
+  let created = false;
+  try {
+    await adapter.createUser(
+      { id: userId, email, name: body.displayName, emailVerified: true },
+      { method: "email-password" },
+    );
+    created = true;
+    await adapter.linkAccount({
+      userId,
+      providerId: "credential",
+      accountId: userId,
+      password: passwordHash,
+    });
+    const now = deps.now();
+    db.transaction((tx) => {
+      tx.insert(users)
+        .values({
+          id: userId,
+          workspaceId,
+          handle: body.handle,
+          displayName: body.displayName,
+          email,
+          authProvider: "local",
+          createdAt: now,
+        })
+        .run();
+      tx.insert(memberships)
+        .values({ id: uuidv7(), workspaceId, userId, role: invite.role ?? "member" })
+        .run();
+      tx.update(invites).set({ usedBy: userId }).where(eq(invites.id, invite.id)).run();
+    });
+  } catch (err) {
+    await undoAccept(deps, invite.id, created ? userId : undefined);
+    // 검사 뒤 await 사이에 같은 핸들·이메일을 다른 가입이 먼저 넣었으면 유일 인덱스가 막은 것이다
+    assertHandleFreeForPeople(db, workspaceId, body.handle);
+    await assertEmailFree(deps, email);
+    throw internal(deps, err, "invite accept failed", { inviteId: invite.id });
+  }
+  const session = await adapter.createSession(userId);
+  deps.logger.info({ userId, inviteId: invite.id, role: invite.role }, "invite accepted");
+  return { userId, sessionToken: session.token };
+}
+
+/** 되돌리기도 실패하면 초대가 잡힌 채 남거나 Better Auth 사용자가 고아가 된다 — 사람이 봐야 하므로 운영 사건 */
+async function undoAccept(
+  deps: AcceptDeps,
+  inviteId: string,
+  createdUserId: string | undefined,
+): Promise<void> {
+  let failed: unknown;
+  if (createdUserId) {
+    try {
+      await (await deps.auth.$context).internalAdapter.deleteUser(createdUserId);
+    } catch (err) {
+      failed = err;
+    }
+  }
+  try {
+    unclaimInvite(deps.db, inviteId);
+  } catch (err) {
+    failed ??= err;
+  }
+  if (failed === undefined) return;
+  deps.ops.record({
+    kind: "invite_accept_failed",
+    key: "invite:accept",
+    severity: "error",
+    detail: { inviteId, ...(createdUserId ? { userId: createdUserId } : {}) },
+  });
+  throw internal(deps, failed, "invite accept rollback failed", { inviteId });
+}
+
+/** 대상의 비밀번호를 바꾸고 그 사용자의 세션을 모두 끊은 뒤 새 세션을 낸다. 대상이 더 이상 멤버가 아니면 404(링크 미소비) */
+export async function resetPassword(
+  deps: AcceptDeps,
+  body: ResetPasswordBody,
+): Promise<{ userId: string; sessionToken: string }> {
+  const invite = validInvite(deps, body.token, "reset", deps.now());
+  const userId = invite.targetUserId;
+  const role = userId ? roleOf(deps.db, deps.workspaceId, userId) : undefined;
+  // owner 는 로컬 토큰이 비밀번호다 — 발급에서 막지만 발급 뒤 역할이 바뀐 경우까지 여기서 한 번 더
+  if (!userId || !role || role === "owner") throw inviteNotFound();
+  const ctx = await deps.auth.$context;
+  const adapter = ctx.internalAdapter;
+  const passwordHash = await ctx.password.hash(body.password);
+  if (!claimInvite(deps.db, invite.id, deps.now())) throw inviteNotFound();
+  try {
+    if (await adapter.findCredentialAccount(userId)) await adapter.updatePassword(userId, passwordHash);
+    else
+      await adapter.linkAccount({
+        userId,
+        providerId: "credential",
+        accountId: userId,
+        password: passwordHash,
+      });
+    await adapter.deleteUserSessions(userId);
+    deps.db.update(invites).set({ usedBy: userId }).where(eq(invites.id, invite.id)).run();
+  } catch (err) {
+    try {
+      unclaimInvite(deps.db, invite.id);
+    } catch {
+      // 링크가 잡힌 채 남으면 발급자가 새 링크를 내면 된다 — 원래 오류를 낸다
+    }
+    throw internal(deps, err, "password reset failed", { inviteId: invite.id, userId });
+  }
+  const session = await adapter.createSession(userId);
+  deps.logger.info({ userId, inviteId: invite.id }, "password reset");
+  return { userId, sessionToken: session.token };
+}
