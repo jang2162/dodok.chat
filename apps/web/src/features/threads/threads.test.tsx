@@ -251,6 +251,26 @@ describe("스레드 닫기 초점(m5)", () => {
     await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}`));
     expect(header()).toHaveFocus();
   });
+
+  it("칩으로 열고 닫은 뒤 같은 스레드를 주소로 열어 닫으면 채널 설정", async () => {
+    const { router } = renderRoute(`/c/${CH}`, channelClient());
+    const chip = await (await inList()).findByRole("link", { name: /답글 2개/ });
+    await userEvent.click(chip);
+    await panel();
+    await closeThread();
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}`));
+
+    // 주소로 다시 열었다 — 칩을 누르지 않아 연 자리를 남기지 않는다
+    await act(() =>
+      router.navigate({ to: "/c/$channelId/t/$rootId", params: { channelId: CH, rootId: ROOT.id } }),
+    );
+    await panel();
+
+    await closeThread();
+
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}`));
+    expect(header()).toHaveFocus();
+  });
 });
 
 describe("URL 로 열기", () => {

@@ -96,9 +96,15 @@ export function PanelTabs({
     const t = threadOpenerRef?.current;
     if (threadOpenerRef && rootId !== undefined && t && t.rootId !== rootId) threadOpenerRef.current = null;
   }, [threadOpenerRef, rootId]);
-  /** 닫을 때 초점을 돌려줄 자리 — 이 스레드를 연 칩·버튼(스레드 탭, 아직 붙어 있을 때), 아니면 헤더의 「채널 설정」(D14) */
+  /**
+   * 닫을 때 초점을 돌려줄 자리 — 이 스레드를 연 칩·버튼(스레드 탭, 아직 붙어 있을 때), 아니면 헤더의 「채널 설정」(D14).
+   * 읽는 동시에 그 자리를 잊는다(m4) — 그래야 같은 스레드를 다음에 주소·검색·푸시로 다시 열었을 때 이번에 쓴 칩으로
+   * 돌아가지 않는다. 닫을 때만 부르므로(아래 두 자리) 여기서 지워도 열려 있는 동안의 값은 그대로다
+   */
   const returnTarget = (): HTMLElement | null | undefined => {
-    const t = active === "thread" ? threadOpenerRef?.current : undefined;
+    if (active !== "thread") return openerRef?.current;
+    const t = threadOpenerRef?.current;
+    if (threadOpenerRef) threadOpenerRef.current = null;
     return t?.el.isConnected ? t.el : openerRef?.current;
   };
   const bodyClass = cn("min-h-0 flex-1", tab.scroll ? "overflow-y-auto" : "flex flex-col overflow-hidden");
