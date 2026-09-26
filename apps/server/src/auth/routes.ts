@@ -1,23 +1,20 @@
 import type { User } from "@dodok/shared";
 import { isAPIError } from "better-auth/api";
 import { fromNodeHeaders } from "better-auth/node";
-import { and, eq } from "drizzle-orm";
-import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { eq } from "drizzle-orm";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { Db } from "../db/client";
-import { memberships, users, workspaces } from "../db/schema.sqlite";
+import { users, workspaces } from "../db/schema.sqlite";
 import { apiError } from "../http/errors";
 import type { Logger } from "../logger";
 import { recordRateLimit } from "../modules/ops/http-limits";
 import type { OpsService } from "../modules/ops/service";
-import { type Auth, OWNER_EMAIL, SESSION_COOKIE, SESSION_MAX_AGE_S, verifySessionToken } from "./index";
+import { type Auth, OWNER_EMAIL, SESSION_COOKIE, SESSION_MAX_AGE_S } from "./index";
+import { requireRole, requireSession, sessionTokenOf, sessionUser } from "./roles";
 
-declare module "fastify" {
-  interface FastifyRequest {
-    /** requireSession 이 채운다 */
-    user?: { id: string; workspaceId: string };
-  }
-}
+// 라우트 모듈들이 이 경로로 가져온다 — 정의는 auth/roles.ts
+export { requireSession, sessionUser };
 
 export type AuthRouteContext = {
   auth: Auth;
@@ -101,8 +98,8 @@ export function registerAuthRoutes(fastify: FastifyInstance, ctx: AuthRouteConte
     // workspaceId 는 기존 클라이언트를 위해 남긴다 — 이름이 필요한 화면은 workspace 를 본다
     workspaceId: ctx.workspaceId,
     workspace: loadWorkspace(ctx.db, ctx.workspaceId),
-    // 그 워크스페이스 membership 의 역할 — 웹이 owner 전용 진입점(연결 설정)을 가른다. 행이 없으면 member 로 본다
-    role: membershipRole(ctx.db, ctx.workspaceId, sessionUser(request).id) ?? "member",
+    // 그 워크스페이스 membership 의 역할 — 웹이 역할별 진입점을 가른다. 행이 없으면 requireSession 이 이미 401 로 막았다
+    role: sessionUser(request).role,
   }));
 
   fastify.post("/api/v1/auth/logout", { preHandler: requireSession(ctx) }, async (request, reply) => {
@@ -113,55 +110,9 @@ export function registerAuthRoutes(fastify: FastifyInstance, ctx: AuthRouteConte
   });
 }
 
-/**
- * REST 인증 preHandler. `Authorization: Bearer <sessionToken>` 또는 `dodok.session` 쿠키.
- * Better Auth 자체 쿠키는 보지 않는다. 사용자를 확인한 뒤 앱의 REST 상한(restLimits)을 지난다 — 넘으면 429
- */
-export function requireSession(ctx: { auth: Auth; workspaceId: string }) {
-  return async (request: FastifyRequest, _reply: FastifyReply): Promise<void> => {
-    const token = sessionTokenOf(request);
-    const session = token ? await verifySessionToken(ctx.auth, token) : null;
-    if (!session) throw apiError("UNAUTHORIZED", "로그인이 필요하다");
-    request.user = { id: session.userId, workspaceId: ctx.workspaceId };
-    request.server.restLimits?.rest(request, session.userId);
-  };
-}
-
-/** 그 워크스페이스에서의 역할("owner"·"member"). membership 이 없으면 undefined */
-export function membershipRole(db: Db, workspaceId: string, userId: string): string | undefined {
-  return db
-    .select({ role: memberships.role })
-    .from(memberships)
-    .where(and(eq(memberships.workspaceId, workspaceId), eq(memberships.userId, userId)))
-    .get()?.role;
-}
-
-/**
- * owner 세션만 통과시키는 preHandler(설정 마법사 결정 6). 세션이 없으면 401, owner 가 아니면 403.
- * membership 을 요청마다 읽는다 — 역할이 바뀌면 다음 요청부터 따른다
- */
+/** owner 세션만 통과시키는 preHandler(설정 마법사 결정 6) — requireRole(ctx, "owner") 의 이름 */
 export function requireOwner(ctx: { auth: Auth; db: Db; workspaceId: string }) {
-  const session = requireSession(ctx);
-  return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
-    await session(request, reply);
-    if (membershipRole(ctx.db, ctx.workspaceId, sessionUser(request).id) !== "owner")
-      throw apiError("FORBIDDEN", "owner 만 쓸 수 있다");
-  };
-}
-
-/** requireSession 뒤 핸들러에서 쓴다 */
-export function sessionUser(request: FastifyRequest): { id: string; workspaceId: string } {
-  if (!request.user) throw apiError("UNAUTHORIZED", "로그인이 필요하다");
-  return request.user;
-}
-
-function sessionTokenOf(request: FastifyRequest): string | undefined {
-  const header = request.headers.authorization;
-  if (header && header.slice(0, 7).toLowerCase() === "bearer ") {
-    const token = header.slice(7).trim();
-    if (token) return token;
-  }
-  return request.cookies[SESSION_COOKIE] || undefined;
+  return requireRole(ctx, "owner");
 }
 
 function bearerHeaders(token: string): Headers {

@@ -20,6 +20,7 @@ describe("운영 API /api/v1/ops", () => {
   let owner: { authorization: string };
   let ownerId: string;
   let member: { authorization: string };
+  let admin: { authorization: string };
 
   beforeAll(async () => {
     adapter = new FakeAdapter();
@@ -28,6 +29,7 @@ describe("운영 API /api/v1/ops", () => {
     owner = session.headers;
     ownerId = app.ownerUserId;
     member = { authorization: `Bearer ${(await userWithRole(app, "bee", "member")).token}` };
+    admin = { authorization: `Bearer ${(await userWithRole(app, "ada", "admin")).token}` };
   });
   afterAll(async () => {
     await app.close();
@@ -51,7 +53,7 @@ describe("운영 API /api/v1/ops", () => {
     gateway: { ...adapter.setupDetail().gateway, version },
   });
 
-  it("owner 가 아니면 다섯 경로 모두 403, 세션이 없으면 401 — member 의 PATCH 는 설정을 바꾸지 않는다", async () => {
+  it("member 는 다섯 경로 모두 403, 세션이 없으면 401 — member 의 PATCH 는 설정을 바꾸지 않는다", async () => {
     const routes: Array<[Method, string, object?]> = [
       ["GET", "/status"],
       ["GET", "/runs?days=1"],
@@ -68,6 +70,22 @@ describe("운영 API /api/v1/ops", () => {
     }
     expect(getOpsSettings(app.db, app.workspaceId).dailyRunLimit).toBe(300);
     expect(app.ops.unacked()).toEqual({ warn: 1, error: 0 });
+  });
+
+  it("admin 은 다섯 경로 모두 통과한다(팀 스펙 「역할과 권한」 — 운영 화면은 admin 이상)", async () => {
+    app.ops.record({ kind: "run_failed", key: "agent:x", severity: "warn" });
+    for (const [method, url, body] of [
+      ["GET", "/status"],
+      ["GET", "/runs?days=1"],
+      ["GET", "/events"],
+      ["POST", "/events/ack"],
+      ["PATCH", "/settings", { dailyRunLimit: 7 }],
+    ] as Array<[Method, string, object?]>) {
+      expect((await call(admin, method, url, body)).statusCode, `${method} ${url}`).toBe(200);
+    }
+    expect(getOpsSettings(app.db, app.workspaceId).dailyRunLimit).toBe(7);
+    expect(app.ops.unacked()).toEqual({ warn: 0, error: 0 });
+    await call(owner, "PATCH", "/settings", { dailyRunLimit: 300 });
   });
 
   describe("GET /status", () => {

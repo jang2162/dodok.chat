@@ -5,7 +5,7 @@ import { v7 as uuid } from "uuid";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import webpush from "web-push";
 import type { Db } from "../src/db/client";
-import { channelMembers, pushSubscriptions, users } from "../src/db/schema.sqlite";
+import { channelMembers, memberships, pushSubscriptions, users } from "../src/db/schema.sqlite";
 import { createPresence } from "../src/modules/push/presence";
 import {
   attachPushTriggers,
@@ -576,6 +576,35 @@ describe("createTriggerLookups — DB 로 이름 풀기", () => {
     // 다른 워크스페이스 채널은 이름을 풀지 않는다
     expect(createTriggerLookups(db, uuid()).channelName(s.channelId)).toBeUndefined();
   });
+
+  it("admins — 그 워크스페이스 membership 의 owner·admin 만(member·다른 워크스페이스·membership 없음은 빼고)", () => {
+    const db = newTestDb();
+    const s = seedChannelWithAgent(db);
+    const other = seedWorkspace(db, { userHandle: "far" });
+    const person = (workspaceId: string, handle: string, role: string | null) => {
+      const id = uuid();
+      db.insert(users)
+        .values({
+          id,
+          workspaceId,
+          handle,
+          displayName: handle,
+          authProvider: "local",
+          createdAt: new Date(),
+        })
+        .run();
+      if (role !== null) db.insert(memberships).values({ id: uuid(), workspaceId, userId: id, role }).run();
+      return id;
+    };
+    db.insert(memberships)
+      .values({ id: uuid(), workspaceId: s.workspaceId, userId: s.userId, role: "owner" })
+      .run();
+    const admin = person(s.workspaceId, "adm", "admin");
+    person(s.workspaceId, "mem", "member");
+    person(s.workspaceId, "nom", null);
+    person(other.workspaceId, "farad", "admin");
+    expect(createTriggerLookups(db, s.workspaceId).admins().sort()).toEqual([s.userId, admin].sort());
+  });
 });
 
 describe("attachPushTriggers — 버스 배선", () => {
@@ -587,6 +616,7 @@ describe("attachPushTriggers — 버스 배선", () => {
     userHandle: () => "alice",
     agentHandle: () => "dev",
     humanMembers: () => [ALICE_ID],
+    admins: () => [ALICE_ID],
   };
   const message = {
     id: uuid(),

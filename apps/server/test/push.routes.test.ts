@@ -3,13 +3,12 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
-import { v7 as uuid } from "uuid";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { App } from "../src/app";
 import { isLocalVapidSubject, loadConfig } from "../src/config";
-import { pushSubscriptions, users } from "../src/db/schema.sqlite";
+import { pushSubscriptions } from "../src/db/schema.sqlite";
 import { listSubscriptions } from "../src/modules/push/service";
-import { bootTestApp, login } from "./helpers/app";
+import { bootTestApp, login, userWithRole } from "./helpers/app";
 import { testEnv } from "./helpers/env";
 
 const ENDPOINT = "https://fcm.googleapis.com/fcm/send/device-1";
@@ -25,30 +24,13 @@ function captureLogger() {
   return { logger, lines };
 }
 
-/** 두 번째 사용자 — 가입이 막혀 있어 bootstrapOwner 처럼 Better Auth 내부 어댑터로 만들고 세션을 바로 낸다 */
+/** 두 번째 사용자(member) — membership 이 없는 세션은 401 이라 userWithRole 로 만든다 */
 async function secondUser(
   app: App,
   handle: string,
 ): Promise<{ id: string; headers: { authorization: string } }> {
-  const ctx = await app.auth.$context;
-  const id = uuid();
-  await ctx.internalAdapter.createUser(
-    { id, email: `${handle}@dodok.local`, name: handle, emailVerified: true },
-    { method: "email-password" },
-  );
-  app.db
-    .insert(users)
-    .values({
-      id,
-      workspaceId: app.workspaceId,
-      handle,
-      displayName: handle,
-      authProvider: "local",
-      createdAt: new Date(),
-    })
-    .run();
-  const session = await ctx.internalAdapter.createSession(id);
-  return { id, headers: { authorization: `Bearer ${session.token}` } };
+  const { id, token } = await userWithRole(app, handle, "member");
+  return { id, headers: { authorization: `Bearer ${token}` } };
 }
 
 describe("푸시 경로 /api/v1/push", () => {

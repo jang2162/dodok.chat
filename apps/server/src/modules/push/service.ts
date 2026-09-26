@@ -1,11 +1,11 @@
 /** 푸시 구독 저장(스펙 5.1)·발송(5.4)·버스 배선 */
 import type { PushSubscriptionInput } from "@dodok/shared";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { v7 as uuidv7 } from "uuid";
 import webpush from "web-push";
 import type { Db, DbOrTx } from "../../db/client";
-import { agents, pushSubscriptions, users } from "../../db/schema.sqlite";
+import { agents, memberships, pushSubscriptions, users } from "../../db/schema.sqlite";
 import type { Logger } from "../../logger";
 import type { ServerBus } from "../../realtime/bus";
 import { channelParticipants, getChannel } from "../channels/service";
@@ -213,6 +213,13 @@ export function createTriggerLookups(db: DbOrTx, workspaceId: string): TriggerLo
       channelParticipants(db, channelId)
         .filter((p) => p.type === "user")
         .map((p) => p.id),
+    admins: () =>
+      db
+        .select({ userId: memberships.userId })
+        .from(memberships)
+        .where(and(eq(memberships.workspaceId, workspaceId), inArray(memberships.role, ["owner", "admin"])))
+        .all()
+        .map((row) => row.userId),
   };
 }
 

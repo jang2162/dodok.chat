@@ -8,6 +8,8 @@ export type TriggerLookups = {
   agentHandle(id: string): string | undefined;
   /** 채널의 사람 멤버 id */
   humanMembers(channelId: string): string[];
+  /** 워크스페이스의 owner·admin id — 승인은 관리 일이라 채널 참여와 무관하게 이들에게만 간다 */
+  admins(): string[];
 };
 export type PushTarget = { userId: string; payload: PushPayload };
 
@@ -67,7 +69,7 @@ export function targetsForMessage(m: Message, l: TriggerLookups): PushTarget[] {
 
 export function targetsForApproval(a: Approval, l: TriggerLookups): PushTarget[] {
   const body = `#${channelLabel(l, a.channelId)}에 승인 요청이 있습니다`;
-  return l.humanMembers(a.channelId).map((userId) => ({
+  return l.admins().map((userId) => ({
     userId,
     payload: {
       kind: "approval",

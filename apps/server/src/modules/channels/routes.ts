@@ -1,8 +1,15 @@
 import { Channel, ChannelMember, Id } from "@dodok/shared";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { AgentAdapter } from "../../adapters/types";
 import type { Auth } from "../../auth";
+import {
+  assertRole,
+  hasFieldOutside,
+  MEMBER_EDITABLE_AGENT_MEMBER_FIELDS,
+  MEMBER_EDITABLE_CHANNEL_FIELDS,
+  requireRole,
+} from "../../auth/roles";
 import { requireSession, sessionUser } from "../../auth/routes";
 import type { Db } from "../../db/client";
 import { apiError } from "../../http/errors";
@@ -71,6 +78,13 @@ const UpdateMemberBody = z.object({
 
 export function registerChannelRoutes(fastify: FastifyInstance, ctx: ChannelRouteContext): void {
   const authed = { preHandler: requireSession(ctx) };
+  const admin = { preHandler: requireRole(ctx, "admin") };
+  /** 필드별 역할 검사 — 파싱 뒤, 어떤 쓰기보다 먼저 부른다(403 이면 아무 필드도 안 바뀐다) */
+  const assertFields = (request: FastifyRequest, allowed: ReadonlySet<string>) => {
+    if (!hasFieldOutside(request.body, allowed)) return;
+    const user = sessionUser(request);
+    assertRole(ctx.db, user.workspaceId, user.id, "admin");
+  };
 
   /** 요청자 워크스페이스의 채널만 — 아니면 404 */
   const loadChannel = (workspaceId: string, id: string): ChannelRecord => {
@@ -104,6 +118,7 @@ export function registerChannelRoutes(fastify: FastifyInstance, ctx: ChannelRout
     const { id } = parseParams(ChannelParams, request.params);
     loadChannel(sessionUser(request).workspaceId, id);
     const patch = parseBody(UpdateChannelBody, request.body);
+    assertFields(request, MEMBER_EDITABLE_CHANNEL_FIELDS);
     const { channel, promptChanged } = updateChannel(ctx.db, id, patch);
     ctx.bus.emit("channel.updated", { channel });
     // 채널 변경은 이미 유효하다 — Gateway 반영은 비동기, 실패는 system.notice 로만 알린다(스펙 3.4)
@@ -121,6 +136,8 @@ export function registerChannelRoutes(fastify: FastifyInstance, ctx: ChannelRout
     const { id } = parseParams(ChannelParams, request.params);
     loadChannel(sessionUser(request).workspaceId, id);
     const body = parseBody(AddMemberBody, request.body);
+    // 사람 멤버는 promptOverride·autoRespond 를 못 가진다 — 서비스가 400 으로 막는다
+    if (body.memberType === "agent") assertFields(request, MEMBER_EDITABLE_AGENT_MEMBER_FIELDS);
     const member = addMember(ctx.db, id, body, ctx.logger);
     emitMembers(id);
     return reply.code(201).send({ member });
@@ -130,6 +147,7 @@ export function registerChannelRoutes(fastify: FastifyInstance, ctx: ChannelRout
     const { id, memberId } = parseParams(MemberParams, request.params);
     loadChannel(sessionUser(request).workspaceId, id);
     const patch = parseBody(UpdateMemberBody, request.body);
+    assertFields(request, MEMBER_EDITABLE_AGENT_MEMBER_FIELDS);
     const { member } = updateAgentMember(ctx.db, id, memberId, patch, ctx.logger);
     emitMembers(id);
     return { member };
@@ -145,7 +163,7 @@ export function registerChannelRoutes(fastify: FastifyInstance, ctx: ChannelRout
   });
 
   /** 「새 대화」(스펙 3.4) — 409 CONFLICT(ADAPTER_CAPABILITY_MISSING)·503 ADAPTER_UNAVAILABLE 등은 서비스가 정한다 */
-  fastify.post("/api/v1/channels/:id/agents/:agentId/reset", authed, async (request) => {
+  fastify.post("/api/v1/channels/:id/agents/:agentId/reset", admin, async (request) => {
     const { id, agentId } = parseParams(AgentParams, request.params);
     const { threadRootId } = parseQuery(ResetQuery, request.query);
     loadChannel(sessionUser(request).workspaceId, id);

@@ -10,11 +10,13 @@ import {
   type Result,
   RunAbort,
   RunEventsReplay,
+  roleAtLeast,
   Typing,
   WIRE_PROTOCOL,
 } from "@dodok/shared";
 import { z } from "zod";
 import { type Auth, verifySessionToken } from "../auth";
+import { roleOf } from "../auth/roles";
 import type { Db } from "../db/client";
 import { apiError, HttpError } from "../http/errors";
 import { parsePayload } from "../http/validate";
@@ -118,6 +120,9 @@ export function attachWire(io: WireServer, ctx: WireContext): void {
       typeof token === "string" ? token : cookieSessionToken(socket.handshake.headers, ctx.appOrigin);
     const user = sessionToken ? await verifySessionToken(ctx.auth, sessionToken) : null;
     if (!user) return next(connectError("UNAUTHORIZED", "invalid session"));
+    // membership 이 없는 세션(내보내진 뒤의 낡은 세션 등)은 REST 처럼 401 이다
+    if (!roleOf(ctx.db, ctx.workspaceId, user.userId))
+      return next(connectError("UNAUTHORIZED", "not a member"));
     // 방에는 connection 에서 들어간다 — 동시에 도착한 핸드셰이크는 서로를 못 봐 상한을 조금 넘길 수 있다(느슨한 상한)
     const open = await io.in(userRoom(user.userId)).fetchSockets();
     if (open.length >= limits.socketsPerUser) {
@@ -255,6 +260,9 @@ export function attachWire(io: WireServer, ctx: WireContext): void {
       if (limited("approval.resolve")) return reply(ack, RATE_LIMITED);
       const res = await settle(ctx.logger, "approval.resolve", async () => {
         const { approvalId, decision } = parsePayload(ApprovalResolve, raw);
+        // wire 에서 역할을 보는 이벤트는 이것 하나다(팀 스펙 「역할과 권한」). 역할은 이벤트마다 다시 읽는다
+        if (!roleAtLeast(roleOf(ctx.db, ctx.workspaceId, userId), "admin"))
+          throw apiError("FORBIDDEN", "승인·거절은 admin 이상만 할 수 있다");
         await runs().resolveApproval({ approvalId, decision, userId });
         return null;
       });

@@ -447,7 +447,14 @@ describe("마이그레이션 — 기존 DB 에 색인을 채운다", () => {
     try {
       const db = drizzle(sqlite, { schema: { ...schema, ...authSchema } });
       migrate(db, { migrationsFolder: older });
-      const { workspaceId, userId } = seedWorkspace(db as unknown as Db);
+      // 스키마 객체로 넣으면 drizzle 이 뒤 마이그레이션의 열(users.left_handle)까지 싣는다 — 옛 DB 에는 SQL 로 넣는다
+      const workspaceId = uuid();
+      const userId = uuid();
+      db.run(
+        sql`INSERT INTO workspaces (id, name, created_at) VALUES (${workspaceId}, 'w', ${NOW.getTime()})`,
+      );
+      db.run(sql`INSERT INTO users (id, workspace_id, handle, display_name, auth_provider, created_at)
+        VALUES (${userId}, ${workspaceId}, 'owner', 'owner', 'local', ${NOW.getTime()})`);
       const ch = createChannel(db as unknown as Db, { workspaceId, createdBy: userId, name: "g" });
       let seq = 0;
       const insert = (id: string, kind: string, body: string, attachmentsJson = "[]") =>

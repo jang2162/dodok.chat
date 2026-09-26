@@ -104,15 +104,15 @@ describe("설정 API /api/v1/setup", () => {
       ...(payload === undefined ? {} : { payload }),
     });
 
-  it("GET /auth/me 에 그 워크스페이스 role — owner·member, membership 이 없으면 member", async () => {
+  it("GET /auth/me 에 그 워크스페이스 role — owner·member, membership 이 없으면 401", async () => {
     const me = (h: Record<string, string>) =>
-      app.fastify.inject({ method: "GET", url: "/api/v1/auth/me", headers: h }).then((r) => r.json());
-    expect((await me(owner)).role).toBe("owner");
-    expect((await me(member)).role).toBe("member");
-    expect((await me(noMembership)).role).toBe("member");
+      app.fastify.inject({ method: "GET", url: "/api/v1/auth/me", headers: h });
+    expect((await me(owner)).json().role).toBe("owner");
+    expect((await me(member)).json().role).toBe("member");
+    expect((await me(noMembership)).statusCode).toBe(401);
   });
 
-  it("owner 가 아니면(member·membership 없음) 다섯 경로 모두 403, 세션이 없으면 401 [Review Focus 4]", async () => {
+  it("member 는 다섯 경로 모두 403, membership 이 없거나 세션이 없으면 401 [Review Focus 4]", async () => {
     const id = uuid();
     const routes: Array<["GET" | "POST" | "DELETE", string, object?]> = [
       ["GET", "/status"],
@@ -123,11 +123,10 @@ describe("설정 API /api/v1/setup", () => {
     ];
     const before = app.db.select().from(bridgeTokens).all().length;
     for (const [method, url, body] of routes) {
-      for (const headers of [member, noMembership]) {
-        const forbidden = await call(headers, method, url, body);
-        expect(forbidden.statusCode, `${method} ${url}`).toBe(403);
-        expect(forbidden.json().code).toBe("FORBIDDEN");
-      }
+      const forbidden = await call(member, method, url, body);
+      expect(forbidden.statusCode, `${method} ${url}`).toBe(403);
+      expect(forbidden.json().code).toBe("FORBIDDEN");
+      expect((await call(noMembership, method, url, body)).statusCode, `${method} ${url}`).toBe(401);
       expect((await call(undefined, method, url, body)).statusCode, `${method} ${url}`).toBe(401);
     }
     expect(app.db.select().from(bridgeTokens).all()).toHaveLength(before);

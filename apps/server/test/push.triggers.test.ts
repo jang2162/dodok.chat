@@ -15,6 +15,8 @@ const L: TriggerLookups = {
   userHandle: (id) => ({ [ALICE]: "alice", [BOB]: "bob", [SAM]: "sam" })[id],
   agentHandle: (id) => ({ [DEV]: "dev" })[id],
   humanMembers: (id) => (id === CH ? [ALICE, BOB] : []),
+  // SAM 은 채널 밖 admin, ALICE 는 채널 안 member — 승인은 채널 참여와 무관하게 owner·admin 에게만
+  admins: () => [SAM, BOB],
 };
 
 function msg(over: Partial<Message>): Message {
@@ -180,12 +182,12 @@ describe("targetsForMessage — 시스템 메시지(스펙 5.2 셋째 줄)", () 
 });
 
 describe("targetsForApproval (스펙 5.2 둘째 줄)", () => {
-  it("승인 요청 → 채널의 사람 멤버, 활동 탭 url, 승인 제목·설명은 싣지 않는다", () => {
+  it("승인 요청 → 워크스페이스의 owner·admin(채널 참여와 무관), 활동 탭 url, 승인 제목·설명은 싣지 않는다", () => {
     const t = targetsForApproval(
       approval({ title: "rm -rf 실행", description: "비밀", detail: "기밀 세부", toolName: "Bash" }),
       L,
     );
-    expect(t.map((x) => x.userId)).toEqual([ALICE, BOB]);
+    expect(t.map((x) => x.userId)).toEqual([SAM, BOB]);
     expect(t.map((x) => x.payload)).toEqual([
       {
         kind: "approval",
@@ -200,8 +202,8 @@ describe("targetsForApproval (스펙 5.2 둘째 줄)", () => {
     expect(JSON.stringify(t)).not.toMatch(/rm -rf|비밀|기밀|Bash/);
   });
 
-  it("사람 멤버가 없으면 없다", () => {
-    expect(targetsForApproval(approval({ channelId: GHOST }), L)).toEqual([]);
+  it("owner·admin 이 없으면 없다 — 채널의 사람 멤버에게로 새지 않는다", () => {
+    expect(targetsForApproval(approval({}), { ...L, admins: () => [] })).toEqual([]);
   });
 });
 

@@ -3,6 +3,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { AdapterError, type AgentAdapter } from "../../adapters/types";
 import type { Auth } from "../../auth";
+import { requireRole } from "../../auth/roles";
 import { requireSession, sessionUser } from "../../auth/routes";
 import type { Db } from "../../db/client";
 import { apiError } from "../../http/errors";
@@ -42,18 +43,19 @@ const UpdateAgentBody = Agent.pick({ handle: true, name: true, enabled: true }).
 
 export function registerAgentRoutes(fastify: FastifyInstance, ctx: AgentRouteContext): void {
   const authed = { preHandler: requireSession(ctx) };
+  const admin = { preHandler: requireRole(ctx, "admin") };
 
   fastify.get("/api/v1/agents", authed, async (request) => ({
     agents: listAgents(ctx.db, sessionUser(request).workspaceId),
   }));
 
-  fastify.post("/api/v1/agents", authed, async (request, reply) => {
+  fastify.post("/api/v1/agents", admin, async (request, reply) => {
     const body = parseBody(CreateAgentBody, request.body);
     const agent = createAgent(ctx.db, { ...body, workspaceId: sessionUser(request).workspaceId });
     return reply.code(201).send({ agent });
   });
 
-  fastify.patch("/api/v1/agents/:id", authed, async (request) => {
+  fastify.patch("/api/v1/agents/:id", admin, async (request) => {
     const { id } = parseParams(AgentParams, request.params);
     if (!getAgent(ctx.db, id, sessionUser(request).workspaceId))
       throw apiError("NOT_FOUND", "agent not found");

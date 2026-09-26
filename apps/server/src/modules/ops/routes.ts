@@ -1,5 +1,5 @@
 /**
- * 운영 API(운영 보강 스펙 6장) — 전부 owner 세션만. 사건은 OpsService 로만 읽고 쓴다(직접 쿼리하면 unacked 캐시와 어긋난다).
+ * 운영 API(운영 보강 스펙 6장) — 전부 admin 이상(팀 스펙 「역할과 권한」 표). 사건은 OpsService 로만 읽고 쓴다(직접 쿼리하면 unacked 캐시와 어긋난다).
  * 응답은 shared 스키마로 한 번 파싱해서 보낸다 — 어기면 서버 버그라 500 INTERNAL
  */
 import {
@@ -14,7 +14,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { AgentAdapter } from "../../adapters/types";
 import type { Auth } from "../../auth";
-import { requireOwner } from "../../auth/routes";
+import { requireRole } from "../../auth/roles";
 import type { Db } from "../../db/client";
 import { parseBody, parseQuery, parseStored } from "../../http/validate";
 import { countRunsTodayInWorkspace } from "../runs/store";
@@ -41,10 +41,10 @@ const RunsQuery = z.object({ days: z.enum(["1", "7"]).transform((d) => (d === "1
 const EventsQuery = z.object({ cursor: z.string().optional(), severity: OpsSeverity.optional() });
 
 export function registerOpsRoutes(fastify: FastifyInstance, ctx: OpsRouteContext): void {
-  const owner = { preHandler: requireOwner(ctx) };
+  const admin = { preHandler: requireRole(ctx, "admin") };
   const now = ctx.now ?? (() => new Date());
 
-  fastify.get("/api/v1/ops/status", owner, async () => {
+  fastify.get("/api/v1/ops/status", admin, async () => {
     const at = now();
     const adapter = ctx.adapter.status();
     const version = ctx.adapter.setupDetail().gateway.version;
@@ -69,13 +69,13 @@ export function registerOpsRoutes(fastify: FastifyInstance, ctx: OpsRouteContext
     return parseStored(OpsStatus, status, "ops status");
   });
 
-  fastify.get("/api/v1/ops/runs", owner, async (request) => {
+  fastify.get("/api/v1/ops/runs", admin, async (request) => {
     const { days } = parseQuery(RunsQuery, request.query);
     const summary = runsSummary(ctx.db, { days, now: now(), ops: ctx.ops, workspaceId: ctx.workspaceId });
     return parseStored(OpsRunsSummary, summary, "ops runs summary");
   });
 
-  fastify.get("/api/v1/ops/events", owner, async (request) => {
+  fastify.get("/api/v1/ops/events", admin, async (request) => {
     const { cursor, severity } = parseQuery(EventsQuery, request.query);
     const page = ctx.ops.list({
       ...(cursor === undefined ? {} : { cursor }),
@@ -85,11 +85,11 @@ export function registerOpsRoutes(fastify: FastifyInstance, ctx: OpsRouteContext
   });
 
   // 본문 없음 — 지금까지의 사건을 모두 확인 처리한다
-  fastify.post("/api/v1/ops/events/ack", owner, async () =>
+  fastify.post("/api/v1/ops/events/ack", admin, async () =>
     parseStored(OpsAckResult, { acked: ctx.ops.ack() }, "ops ack result"),
   );
 
-  fastify.patch("/api/v1/ops/settings", owner, async (request) => {
+  fastify.patch("/api/v1/ops/settings", admin, async (request) => {
     const { dailyRunLimit } = parseBody(OpsSettingsPatch, request.body);
     const saved = patchOpsSettings(ctx.db, ctx.workspaceId, { dailyRunLimit });
     return parseStored(OpsSettingsPatch, { dailyRunLimit: saved.dailyRunLimit }, "ops settings");

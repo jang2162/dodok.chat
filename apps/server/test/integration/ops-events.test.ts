@@ -1,5 +1,5 @@
 /**
- * 운영 사건 팬아웃 — ops.event 는 owner 소켓에만 간다(스펙 6·8장, setup.status 와 같은 방).
+ * 운영 사건 팬아웃 — ops.event 는 owner·admin 소켓에만 간다(스펙 6·8장, 운영 화면은 admin 이상 — 팀 스펙 「역할과 권한」).
  * 앱이 app.ops 로 사건 서비스를 내놓고, 부팅 때 30일 지난 줄을 지운다.
  */
 import { OpsEvent, OpsUnacked } from "@dodok/shared";
@@ -31,17 +31,20 @@ describe("운영 사건 통합 — ops.event 팬아웃", () => {
     app = undefined;
   });
 
-  it("app.ops.record → owner 소켓만 {event, unacked} 를 받고 member 소켓은 받지 않는다", async () => {
+  it("app.ops.record → owner·admin 소켓이 {event, unacked} 를 받고 member 소켓은 받지 않는다", async () => {
     app = await bootTestApp({}, { pluginDirs: [] });
     await app.fastify.listen({ host: "127.0.0.1", port: 0 });
     const { token } = await login(app);
     const owner = await connectWire(app, token);
     sockets.push(owner);
+    const admin = await connectWire(app, (await userWithRole(app, "ada", "admin")).token);
+    sockets.push(admin);
     const member = await connectWire(app, (await userWithRole(app, "bee", "member")).token);
     sockets.push(member);
     const memberSeen = recordEvents(member, ["ops.event"]);
 
     const got = waitFor(owner, "ops.event");
+    const gotAdmin = waitFor(admin, "ops.event");
     const recorded = app.ops.record({
       kind: "run_failed",
       key: "agent:a",
@@ -51,6 +54,7 @@ describe("운영 사건 통합 — ops.event 팬아웃", () => {
     const payload = await got;
     expect(OpsEvent.parse(payload.event)).toEqual(recorded);
     expect(OpsUnacked.parse(payload.unacked)).toEqual({ warn: 1, error: 0 });
+    expect(await gotAdmin).toEqual(payload);
 
     await roundTrip(member);
     expect(memberSeen).toHaveLength(0);

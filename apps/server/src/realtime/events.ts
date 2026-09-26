@@ -1,5 +1,5 @@
-import type { Message, RunEvent, RunState } from "@dodok/shared";
-import { and, eq } from "drizzle-orm";
+import type { Message, RunEvent, RunState, TeamRole } from "@dodok/shared";
+import { and, eq, inArray } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { memberships } from "../db/schema.sqlite";
 import type { Logger } from "../logger";
@@ -84,12 +84,12 @@ export function attachWireFanout(io: WireServer, bus: ServerBus, opts: WireFanou
       }
     });
 
-  // owner 는 보낼 때마다 읽는다 — 역할이 바뀌면 다음 이벤트부터 따른다. owner 가 없으면 아무에게도 안 간다
-  const ownerRooms = (): string[] =>
+  // 받을 사람은 보낼 때마다 membership 에서 읽는다 — 역할이 바뀌면 재접속 없이 다음 이벤트부터 따른다. 없으면 아무에게도 안 간다
+  const roleRooms = (roles: TeamRole[]): string[] =>
     opts.db
       .select({ userId: memberships.userId })
       .from(memberships)
-      .where(and(eq(memberships.workspaceId, opts.workspaceId), eq(memberships.role, "owner")))
+      .where(and(eq(memberships.workspaceId, opts.workspaceId), inArray(memberships.role, roles)))
       .all()
       .map((row) => userRoom(row.userId));
 
@@ -127,12 +127,13 @@ export function attachWireFanout(io: WireServer, bus: ServerBus, opts: WireFanou
     on("typing", (p) => io.to(channelRoom(p.channelId)).emit("typing", p)),
     on("adapter.status", (p) => io.emit("adapter.status", p)),
     on("system.notice", (p) => io.emit("system.notice", p)),
+    // 연결 페이지는 owner 만, 운영 화면은 admin 이상(팀 스펙 「역할과 권한」 표)
     on("setup.status", (p) => {
-      const rooms = ownerRooms();
+      const rooms = roleRooms(["owner"]);
       if (rooms.length > 0) io.to(rooms).emit("setup.status", p);
     }),
     on("ops.event", (p) => {
-      const rooms = ownerRooms();
+      const rooms = roleRooms(["owner", "admin"]);
       if (rooms.length > 0) io.to(rooms).emit("ops.event", p);
     }),
   ];

@@ -2,9 +2,11 @@ import type { FastifyInstance } from "fastify";
 import type { AgentAdapter } from "../../adapters/types";
 import type { Auth } from "../../auth";
 import { requireSession } from "../../auth/routes";
+import type { Db } from "../../db/client";
 
 export type AdapterRouteContext = {
   auth: Auth;
+  db: Db;
   workspaceId: string;
   adapter: Pick<AgentAdapter, "status" | "capabilities">;
 };
