@@ -25,7 +25,7 @@ export function isRegistrableAgentId(id: string): boolean {
  * `agent:<a>:dodok:channel:<c>` 또는 `…:thread:<rootId>`. channelId·rootId 를 소문자로 만드는 것은 코어가 dodok 키를
  * 통째로 소문자로 접기 때문이다 — 우리 쪽이 날 문자열로 비교하는 자리(세션 행·플러그인 인바운드 대조)도 Gateway 와
  * 같은 결론을 내게 한다. agentId 는 그대로 둔다(서버가 저장한 providerAgentId 로 에이전트를 찾는다).
- * 파서가 거절할 키는 만들지 않는다 — agentId 가 규칙 밖이거나 rootId 가 비었으면 던진다.
+ * agentId 가 규칙 밖이거나 rootId 가 빈 문자열이면 던진다 — id 모양(UUID)은 호출처가 `Id` 로 보장한다.
  */
 export function dodokSessionKey(providerAgentId: string, channelId: string, threadRootId?: string): string {
   if (!isOpenClawAgentId(providerAgentId)) {

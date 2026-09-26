@@ -1,6 +1,6 @@
 /**
  * dodok 채널 정의 — Gateway 프로세스 안에서 돈다. SDK 에 닿는 코드는 여기와 index.ts·runtime.ts 에만 둔다
- * (나머지는 openclaw 를 import 하지 않는 순수 모듈이라 Node 22 에서 단위 테스트한다).
+ * (나머지는 openclaw 를 import 하지 않는 순수 모듈이다. `channel.ts` 도 핀 SDK 를 그대로 불러 `test/channel.test.ts` 에서 시험한다).
  *
  * 경로:
  *   서버 --inbound.deliver--> bridge-client --> dispatchInbound --> runtime.channel.inbound.dispatch --> 에이전트 런

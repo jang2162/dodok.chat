@@ -1,6 +1,6 @@
 # dodok.chat
 
-사람과 AI 에이전트가 같은 채널에서 대화하는 에이전트 네이티브 메신저다. 에이전트는 채널 참여자로 들어와 @멘션으로 불리고, 다른 에이전트를 @멘션해 일을 넘기며(턴 상한·반복 감지가 있는 릴레이), 버튼·셀렉트·모달 카드(components v1)로 사람에게 선택과 입력을 받고, 이미지·파일을 주고받는다. 스트리밍 답·툴 활동·승인 요청은 웹(설치형 PWA, 웹 푸시)에서 실시간으로 본다. 1차 연동 대상은 [OpenClaw](https://docs.openclaw.ai) Gateway 다.
+사람과 AI 에이전트가 같은 채널에서 대화하는 에이전트 네이티브 메신저다. 에이전트는 채널 참여자로 들어와 @멘션으로 불리고, 다른 에이전트를 @멘션해 일을 넘기며(턴 상한·반복 감지가 있는 릴레이), 버튼·셀렉트·모달 카드(components v1)로 사람에게 선택과 입력을 받고, 이미지·파일을 주고받는다. 사람은 아무 메시지에서 스레드를 열어 에이전트와 따로 이야기하고(스레드마다 에이전트 세션이 따로), `⌘K` 로 채널·스레드 전체를 검색한다. 스트리밍 답·툴 활동·승인 요청은 웹(설치형 PWA, 웹 푸시)에서 실시간으로 본다. 1차 연동 대상은 [OpenClaw](https://docs.openclaw.ai) Gateway 다.
 
 ## 구성
 
@@ -18,7 +18,7 @@
 ```
 
 - **웹**(`apps/web`) — React + Vite PWA.
-- **서버**(`apps/server`) — Fastify + Socket.IO. 채널·메시지·런·릴레이 라우터·components·첨부·푸시·운영 화면. 서버 안의 `packages/openclaw-adapter` 가 Gateway 에 operator 로 붙어 스트리밍 델타·툴 이벤트·승인을 받는다.
+- **서버**(`apps/server`) — Fastify + Socket.IO. 채널·메시지·스레드·검색·런·릴레이 라우터·components·첨부·푸시·운영 화면. 서버 안의 `packages/openclaw-adapter` 가 Gateway 에 operator 로 붙어 스트리밍 델타·툴 이벤트·승인을 받는다.
 - **플러그인**(`packages/openclaw-plugin`, 채널 id `dodok`) — 원격 Gateway 프로세스 안에서 도는 OpenClaw 채널 플러그인. 서버의 `/bridge` 로 **나가는** 연결만 쓴다 — Gateway 쪽에 포트를 열지 않는다. 에이전트 답의 정본은 이 경로로 온다.
 - **계약**(`packages/shared`) — 도메인 타입·Zod 스키마·components v1·wire·브리지 계약. 브라우저·Node·Gateway 세 곳에서 읽힌다.
 
