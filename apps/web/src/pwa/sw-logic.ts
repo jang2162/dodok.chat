@@ -68,6 +68,22 @@ export function pickClient(clients: ReadonlyArray<ClientInfo>, origin: string): 
   return pick ? pick.i : -1;
 }
 
+/**
+ * 고른 창을 앞으로 가져오고 그 자리로 옮긴다(라우터 이동 — 앱의 `navigate` 메시지). focus 가 거절돼도(사용자 활성화가
+ * 없거나 창·OS 가 막는다) 이동은 보낸다 — 알림은 이미 닫혔으니 여기서 멈추면 아무 일도 일어나지 않는다(p4t-c1)
+ */
+export async function focusAndNavigate(
+  client: { focus(): Promise<unknown>; postMessage(message: unknown): void },
+  url: string,
+): Promise<void> {
+  try {
+    await client.focus();
+  } catch {
+    // 이동만으로도 그 창이 그 자리를 보인다
+  }
+  client.postMessage({ type: "navigate", url });
+}
+
 /** VAPID 공개키(base64url, 패딩 없음) → `applicationServerKey` 바이트 */
 export function urlBase64ToUint8Array(base64: string): Uint8Array<ArrayBuffer> {
   const padded = (base64 + "=".repeat((4 - (base64.length % 4)) % 4)).replace(/-/g, "+").replace(/_/g, "/");

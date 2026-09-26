@@ -1,6 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { CH } from "../../test/fixtures";
-import { notificationFromPush, pickClient, safeNotificationUrl, urlBase64ToUint8Array } from "./sw-logic";
+import {
+  focusAndNavigate,
+  notificationFromPush,
+  pickClient,
+  safeNotificationUrl,
+  urlBase64ToUint8Array,
+} from "./sw-logic";
 
 describe("safeNotificationUrl", () => {
   it("같은 출처 상대 채널 경로만", () => {
@@ -161,6 +167,41 @@ describe("pickClient", () => {
 
   it("주소가 URL 이 아니면 그 창은 뺀다", () => {
     expect(pickClient([{ url: "::", visibilityState: "visible", focused: true }], O)).toBe(-1);
+  });
+});
+
+describe("focusAndNavigate", () => {
+  it("창을 앞으로 가져온 뒤 그 자리로 옮긴다", async () => {
+    const order: string[] = [];
+    const client = {
+      focus: vi.fn(async () => void order.push("focus")),
+      postMessage: vi.fn(() => void order.push("navigate")),
+    };
+    await focusAndNavigate(client, `/c/${CH}`);
+    expect(order).toEqual(["focus", "navigate"]);
+    expect(client.postMessage).toHaveBeenCalledWith({ type: "navigate", url: `/c/${CH}` });
+  });
+
+  it("focus 가 거절돼도(InvalidAccessError 등) 이동은 보낸다", async () => {
+    const client = {
+      focus: vi.fn(() =>
+        Promise.reject(new DOMException("Not allowed to focus a window", "InvalidAccessError")),
+      ),
+      postMessage: vi.fn(),
+    };
+    await expect(focusAndNavigate(client, `/c/${CH}/t/${CH}`)).resolves.toBeUndefined();
+    expect(client.postMessage).toHaveBeenCalledWith({ type: "navigate", url: `/c/${CH}/t/${CH}` });
+  });
+
+  it("focus 가 곧바로 던져도 이동은 보낸다", async () => {
+    const client = {
+      focus: vi.fn((): Promise<unknown> => {
+        throw new Error("boom");
+      }),
+      postMessage: vi.fn(),
+    };
+    await focusAndNavigate(client, "/");
+    expect(client.postMessage).toHaveBeenCalledWith({ type: "navigate", url: "/" });
   });
 });
 

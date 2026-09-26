@@ -1,7 +1,13 @@
 /// <reference lib="webworker" />
 import { cleanupOutdatedCaches, createHandlerBoundToURL, precacheAndRoute } from "workbox-precaching";
 import { NavigationRoute, registerRoute } from "workbox-routing";
-import { notificationFromPush, pickClient, safeNotificationUrl, urlBase64ToUint8Array } from "./pwa/sw-logic";
+import {
+  focusAndNavigate,
+  notificationFromPush,
+  pickClient,
+  safeNotificationUrl,
+  urlBase64ToUint8Array,
+} from "./pwa/sw-logic";
 
 // 주입 자리의 타입(Array<PrecacheEntry | string>)은 workbox-precaching 이 ServiceWorkerGlobalScope 에 더한다
 declare const self: ServiceWorkerGlobalScope;
@@ -59,8 +65,7 @@ self.addEventListener("notificationclick", (event) => {
         await self.clients.openWindow(url);
         return;
       }
-      await client.focus();
-      client.postMessage({ type: "navigate", url });
+      await focusAndNavigate(client, url);
     })(),
   );
 });
