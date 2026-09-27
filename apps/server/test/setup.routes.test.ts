@@ -227,7 +227,7 @@ describe("설정 API /api/v1/setup", () => {
     );
     const res = await call(owner, "DELETE", `/bridge-tokens/${issued.record.id}`);
     expect(res.statusCode).toBe(204);
-    expect(adapter.calls.revokeBridgeSessions).toContain(issued.record.id);
+    expect(adapter.calls.revokeTokenSessions).toContain(issued.record.id);
     expect(verifyBridgeTokenDb(app.db, issued.token)).toBeNull();
     const { tokens } = (await call(owner, "GET", "/bridge-tokens")).json() as { tokens: BridgeTokenRecord[] };
     expect(tokens.find((t) => t.id === issued.record.id)?.revokedAt).not.toBeNull();
@@ -239,14 +239,14 @@ describe("설정 API /api/v1/setup", () => {
     const issued = IssueBridgeTokenResult.parse(
       (await call(owner, "POST", "/bridge-tokens", { label: "x" })).json(),
     );
-    const original = adapter.revokeBridgeSessions.bind(adapter);
-    adapter.revokeBridgeSessions = () => {
+    const original = adapter.revokeTokenSessions.bind(adapter);
+    adapter.revokeTokenSessions = () => {
       throw new Error("socket gone");
     };
     try {
       expect((await call(owner, "DELETE", `/bridge-tokens/${issued.record.id}`)).statusCode).toBe(204);
     } finally {
-      adapter.revokeBridgeSessions = original;
+      adapter.revokeTokenSessions = original;
     }
     expect(verifyBridgeTokenDb(app.db, issued.token)).toBeNull();
     expect(log.lines.filter((l) => l.includes("bridge session revoke failed"))).toHaveLength(1);

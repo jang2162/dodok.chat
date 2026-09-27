@@ -1,8 +1,8 @@
-import type { Channel, OpsStatus } from "@dodok/shared";
+import type { Channel, OpenClawAdapterStatus, OpsStatus } from "@dodok/shared";
 import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { render } from "@testing-library/react";
-import type { AdapterStatusResponse } from "@/api/queries";
+import type { AdapterCapabilities } from "@/api/queries";
 import { createQueryClient } from "@/app/queryClient";
 import { createAppRouter } from "@/app/router";
 import { TooltipProvider } from "@/ui/tooltip";
@@ -10,7 +10,7 @@ import { TooltipProvider } from "@/ui/tooltip";
 export const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status });
 /** 로그인한 owner — 관리 화면이 열려 있다. member·admin 을 재는 테스트는 `{ ...ME, role: "member" }` 로 덮는다 */
 export const ME = { user: { id: "u", handle: "owner" }, workspaceId: "w", role: "owner" };
-export const ADAPTER_OK: AdapterStatusResponse = {
+export const ADAPTER_OK: OpenClawAdapterStatus & { capabilities: AdapterCapabilities } = {
   provider: "openclaw",
   gateway: "connected",
   bridge: "connected",

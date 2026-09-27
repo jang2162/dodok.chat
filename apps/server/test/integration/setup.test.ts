@@ -23,6 +23,7 @@ import { testEnv } from "../helpers/env";
 import { bootLiveApp, type LiveApp } from "../helpers/live-app";
 import { makePng } from "../helpers/png";
 import { connectWire, recordEvents, waitFor, type WireClient, type WirePayload } from "../helpers/wire";
+import { openclawStatus } from "../helpers/openclaw";
 
 vi.setConfig({ testTimeout: 20_000, hookTimeout: 20_000 });
 
@@ -169,7 +170,7 @@ describe("설정 마법사 통합 — 브리지 토큰 겹침 교체·폐기", (
       name: "b.png",
       mime: "image/png",
     });
-    expect(app.adapter.status().bridge).toBe("connected");
+    expect(openclawStatus(app.adapter).bridge).toBe("connected");
 
     // .env 토큰을 폐기했으니 envTokenIgnored 가 켜진다(Review Focus 1)
     expect(SetupStatus.parse((await call("GET", "/status")).json()).envTokenIgnored).toBe(true);
@@ -179,7 +180,7 @@ describe("설정 마법사 통합 — 브리지 토큰 겹침 교체·폐기", (
     expect((await call("DELETE", `/bridge-tokens/${tokenB}`)).statusCode).toBe(204);
     const down = await downEvent;
     expect(down.status.bridge.state).toBe("down");
-    expect(app.adapter.status().bridge).toBe("down");
+    expect(openclawStatus(app.adapter).bridge).toBe("down");
     expect(await tryBridge(app.url, issued.token)).toBe("UNAUTHORIZED");
     expect((await pluginB.downloadAttachment(uploaded.id)).status).toBe(401);
 

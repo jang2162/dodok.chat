@@ -72,7 +72,9 @@ export function watchConnections(
   };
   const gateway = watchSide({ kind: "gateway_down", key: "gateway" });
   const bridge = watchSide({ kind: "plugin_down", key: "plugin" });
+  // Gateway·플러그인 줄은 OpenClaw 어댑터의 것이다 — 다른 어댑터의 상태는 이 두 줄을 건드리지 않는다
   const observe = (status: ReturnType<AgentAdapter["status"]>) => {
+    if (status.provider !== "openclaw") return;
     gateway.observe(status.gateway === "connected");
     bridge.observe(status.bridge === "connected");
   };
@@ -128,8 +130,11 @@ export function watchGatewayVersion(
 ): { close(): void } {
   let seen: string | null = null;
   const check = () => {
-    if (adapter.status().gateway !== "connected") return;
-    const version = adapter.setupDetail().gateway.version;
+    const status = adapter.status();
+    const detail = adapter.setupDetail();
+    if (status.provider !== "openclaw" || detail.provider !== "openclaw") return;
+    if (status.gateway !== "connected") return;
+    const version = detail.gateway.version;
     if (version === null || version === seen) return;
     seen = version;
     try {

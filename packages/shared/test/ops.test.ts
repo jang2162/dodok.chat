@@ -55,10 +55,11 @@ describe("OpsEvent", () => {
     expect(OpsEvent.safeParse({ ...EVENT, severity: "debug" }).success).toBe(false);
   });
 
-  it("kind 열거는 운영 보강 3.1 표의 열두 가지 + 팀 설계의 invite_accept_failed·member_remove_failed", () => {
+  it("kind 열거는 운영 보강 3.1 표의 열두 가지 + 팀 설계의 invite_accept_failed·member_remove_failed + 러너의 runner_down", () => {
     expect(OpsEventKind.options).toEqual([
       "gateway_down",
       "plugin_down",
+      "runner_down",
       "gateway_version_changed",
       "gateway_version_untested",
       "run_limit",

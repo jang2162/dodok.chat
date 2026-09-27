@@ -59,7 +59,8 @@ const SHUTDOWN = (clean: boolean | null) =>
 function useLiveConnection(status: OpsStatus) {
   const { data: adapter } = useAdapterStatus();
   const live = useWireStatus((s) => s.status) === "connected";
-  if (adapter && live) return { gateway: adapter.gateway, plugin: adapter.bridge };
+  // 캐시에는 OpenClaw 어댑터 상태만 담긴다(handlers.ts) — 그래도 좁혀 읽는다
+  if (adapter?.provider === "openclaw" && live) return { gateway: adapter.gateway, plugin: adapter.bridge };
   return { gateway: status.gateway.state, plugin: status.plugin.state };
 }
 

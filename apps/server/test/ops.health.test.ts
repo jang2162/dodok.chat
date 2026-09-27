@@ -1,5 +1,5 @@
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
-import type { AdapterStatus, RunState } from "@dodok/shared";
+import type { OpenClawAdapterStatus, RunState } from "@dodok/shared";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -54,11 +54,11 @@ const rowsOf = (kind: string) => rows().filter((r) => r.kind === kind);
 
 describe("watchConnections — 60초 넘는 끊김만 사건(Review Focus 2)", () => {
   function setup(
-    initial: AdapterStatus = { provider: "openclaw", gateway: "connected", bridge: "connected" },
+    initial: OpenClawAdapterStatus = { provider: "openclaw", gateway: "connected", bridge: "connected" },
   ) {
     const adapter = new FakeAdapter();
     adapter.setStatus(initial);
-    const set = (patch: Partial<AdapterStatus>) => {
+    const set = (patch: Partial<OpenClawAdapterStatus>) => {
       adapter.setStatus({ ...adapter.status(), ...patch });
       adapter.emit({ kind: "status", status: adapter.status(), capabilities: adapter.capabilities() });
     };

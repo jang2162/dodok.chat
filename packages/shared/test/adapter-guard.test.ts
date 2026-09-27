@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BridgeAuthGuard } from "../src/bridge/guard";
+import { BridgeAuthGuard } from "../src";
 
 const A = "203.0.113.7";
 const SEC = 1_000;

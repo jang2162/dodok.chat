@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  AdapterStatus,
   ApprovalResolve,
   ChannelSubscribe,
   ComponentInteract,
@@ -44,5 +45,28 @@ describe("wire schemas", () => {
     expect(ApprovalResolve.safeParse({ approvalId: ID, decision: "deny" }).success).toBe(true);
     expect(ApprovalResolve.safeParse({ approvalId: ID, decision: "approve" }).success).toBe(false);
     expect(ApprovalResolve.safeParse({ approvalId: ID, decision: "maybe" }).success).toBe(false);
+  });
+});
+
+describe("AdapterStatus — provider 판별 유니온(러너 계획 판정 P7)", () => {
+  it("openclaw 는 gateway·bridge, claude 는 러너 수", () => {
+    const openclaw = { provider: "openclaw", gateway: "reconnecting", bridge: "down" };
+    const claude = { provider: "claude", runners: { connected: 1, tokens: 2 } };
+    expect(AdapterStatus.parse(openclaw)).toEqual(openclaw);
+    expect(AdapterStatus.parse(claude)).toEqual(claude);
+  });
+  it("변형마다 제 필드가 있어야 하고, 어댑터 없는 provider 는 거절", () => {
+    expect(
+      AdapterStatus.safeParse({ provider: "openclaw", runners: { connected: 0, tokens: 0 } }).success,
+    ).toBe(false);
+    expect(
+      AdapterStatus.safeParse({ provider: "claude", gateway: "connected", bridge: "connected" }).success,
+    ).toBe(false);
+    expect(
+      AdapterStatus.safeParse({ provider: "codex", gateway: "connected", bridge: "connected" }).success,
+    ).toBe(false);
+    expect(
+      AdapterStatus.safeParse({ provider: "claude", runners: { connected: -1, tokens: 0 } }).success,
+    ).toBe(false);
   });
 });

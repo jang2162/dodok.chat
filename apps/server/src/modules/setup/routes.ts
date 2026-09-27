@@ -22,7 +22,7 @@ export type SetupRouteContext = {
   db: Db;
   logger: Logger;
   workspaceId: string;
-  adapter: Pick<AgentAdapter, "setupDetail" | "revokeBridgeSessions">;
+  adapter: Pick<AgentAdapter, "setupDetail" | "revokeTokenSessions">;
   /** 부팅 때 잰 품은 플러그인 파일(없으면 null) */
   pluginFile: PluginFile | null;
   /** 플러그인 계정 설정의 bridgeUrl(status.ts bridgePublicUrl) */
@@ -39,7 +39,10 @@ const pluginFileMissing = () => apiError("NOT_FOUND", "PLUGIN_FILE_MISSING");
 
 export function registerSetupRoutes(fastify: FastifyInstance, ctx: SetupRouteContext): void {
   const owner = { preHandler: requireOwner(ctx) };
-  const connectedTokenId = () => ctx.adapter.setupDetail().bridge.plugin?.tokenId ?? null;
+  const connectedTokenId = () => {
+    const detail = ctx.adapter.setupDetail();
+    return detail.provider === "openclaw" ? (detail.bridge.plugin?.tokenId ?? null) : null;
+  };
 
   fastify.get("/api/v1/setup/status", owner, async () => ctx.status());
 
@@ -69,7 +72,7 @@ export function registerSetupRoutes(fastify: FastifyInstance, ctx: SetupRouteCon
       throw apiError("NOT_FOUND", "bridge token not found");
     // 폐기는 이미 됐다 — 끊기가 실패해도 다음 핸드셰이크부터 거절된다(스펙 6장)
     try {
-      ctx.adapter.revokeBridgeSessions(id);
+      ctx.adapter.revokeTokenSessions(id);
     } catch (err) {
       ctx.logger.warn({ err, tokenId: id }, "bridge session revoke failed");
     }

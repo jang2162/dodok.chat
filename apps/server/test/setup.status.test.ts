@@ -1,4 +1,4 @@
-import { type AdapterSetupDetail, OPENCLAW_PINNED_VERSION } from "@dodok/openclaw-adapter";
+import { OPENCLAW_PINNED_VERSION, type OpenClawSetupDetail } from "@dodok/openclaw-adapter";
 import { SetupStatus } from "@dodok/shared";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
@@ -207,12 +207,17 @@ describe("buildSetupStatus", () => {
     tokenId: "01999999-0000-7000-8000-000000000001",
     connectedAt: "2026-09-24T00:00:00.000Z",
   };
-  const detail = (p: AdapterSetupDetail["bridge"]["plugin"]): AdapterSetupDetail => ({
+  const detail = (p: OpenClawSetupDetail["bridge"]["plugin"]): OpenClawSetupDetail => ({
+    provider: "openclaw",
     gateway: { state: "connected", host: "gw.example:443", version: "2026.9.5", pairing: null },
     bridge: { state: p ? "connected" : "down", plugin: p },
   });
   const file = { path: "/app/plugin/p.tgz", sha256: "c".repeat(64), bundleSha256: BUNDLE_SHA, bytes: 1234 };
-  const build = (p: AdapterSetupDetail["bridge"]["plugin"], f: typeof file | null, envTokenIgnored = false) =>
+  const build = (
+    p: OpenClawSetupDetail["bridge"]["plugin"],
+    f: typeof file | null,
+    envTokenIgnored = false,
+  ) =>
     buildSetupStatus({
       detail: detail(p),
       pluginFile: f,
@@ -238,8 +243,23 @@ describe("buildSetupStatus", () => {
       pluginFile: { available: true, sha256: file.sha256, bundleSha256: BUNDLE_SHA, bytes: 1234 },
       pluginMatches: true,
       envTokenIgnored: false,
+      runners: { list: [], runnerFile: { available: false } },
     });
     expect(JSON.stringify(status)).not.toContain("/app/plugin");
+  });
+
+  it("OpenClaw 상세가 아니면 gateway·bridge 는 붙은 것이 없는 모양 — 러너 목록은 비어 있다", () => {
+    const status = buildSetupStatus({
+      detail: { provider: "claude", runners: [] },
+      pluginFile: null,
+      serverVersion: "1.2.3",
+      publicUrl: "wss://chat.example.com/bridge",
+      envTokenIgnored: false,
+    });
+    expect(SetupStatus.parse(status)).toEqual(status);
+    expect(status.gateway).toMatchObject({ state: "down", version: null, pairing: null });
+    expect(status.bridge).toMatchObject({ state: "down", plugin: null });
+    expect(status.runners).toEqual({ list: [], runnerFile: { available: false } });
   });
 
   it("pluginMatches: 같은 번들 → true, 다른 번들 → false, 파일·플러그인·bundleSha256 이 없으면 null [Review Focus 5]", () => {

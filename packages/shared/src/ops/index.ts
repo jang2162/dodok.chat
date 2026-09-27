@@ -8,6 +8,7 @@ import { AdapterStatus } from "../wire";
 export const OpsEventKind = z.enum([
   "gateway_down",
   "plugin_down",
+  "runner_down", // key 는 러너 토큰 id
   "gateway_version_changed",
   "gateway_version_untested",
   "run_limit",

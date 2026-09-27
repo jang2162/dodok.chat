@@ -23,6 +23,7 @@ export const ErrorCode = z.enum([
   "CONSUMED",
   "TIMEOUT",
   "INSUFFICIENT_STORAGE",
+  "PROVIDER_AUTH", // 러너의 Claude 로그인이 안 됐거나 풀렸다(러너 스펙 8장)
   "INTERNAL",
 ]);
 export type ErrorCode = z.infer<typeof ErrorCode>;

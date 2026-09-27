@@ -39,6 +39,7 @@ const STATUS = {
   pluginFile: { available: false },
   pluginMatches: null,
   envTokenIgnored: false,
+  runners: { list: [], runnerFile: { available: false } },
 };
 
 describe("Sha256Hex", () => {
@@ -161,5 +162,44 @@ describe("SetupStatus", () => {
     expect(
       SetupStatus.safeParse({ ...STATUS, bridge: { ...STATUS.bridge, state: "reconnecting" } }).success,
     ).toBe(false);
+  });
+});
+
+describe("SetupStatus.runners", () => {
+  const runner = {
+    tokenId: ID,
+    label: "노트북",
+    runnerVersion: "0.0.0",
+    sdkVersion: "0.3.283",
+    claudeCodeVersion: "3.1.0",
+    bundleSha256: SHA,
+    capabilities: ["threads", "approvals"],
+    connectedAt: NOW,
+    agents: [{ id: "coder", name: "코더", model: "sonnet", workdirLabel: "my-repo", conflict: false }],
+  };
+  it("붙은 러너·러너 tgz 를 싣는다", () => {
+    const runners = {
+      list: [runner],
+      runnerFile: { available: true, sha256: SHA, bundleSha256: SHA, bytes: 1 },
+    };
+    expect(SetupStatus.parse({ ...STATUS, runners }).runners).toEqual(runners);
+  });
+  it("runners 는 빠질 수 없고, 러너 tgz 가 있으면 해시가 있어야 한다", () => {
+    const { runners: _omit, ...withoutRunners } = STATUS;
+    expect(SetupStatus.safeParse(withoutRunners).success).toBe(false);
+    const runnerFile = { available: true, sha256: SHA, bytes: 1 };
+    expect(SetupStatus.safeParse({ ...STATUS, runners: { list: [], runnerFile } }).success).toBe(false);
+  });
+  it("connectedAt 은 ISO 시각, bundleSha256 은 sha256 hex 또는 null", () => {
+    const bad = [
+      { ...runner, connectedAt: "어제" },
+      { ...runner, bundleSha256: "abc" },
+    ];
+    for (const r of bad) {
+      expect(
+        SetupStatus.safeParse({ ...STATUS, runners: { list: [r], runnerFile: { available: false } } })
+          .success,
+      ).toBe(false);
+    }
   });
 });

@@ -25,6 +25,7 @@ const STATUS: Record<ErrorCode, number> = {
   CONSUMED: 409,
   TIMEOUT: 504,
   INSUFFICIENT_STORAGE: 507,
+  PROVIDER_AUTH: 502, // 러너 쪽 Claude 로그인 — 서버 앞의 제공자가 거절했다
   INTERNAL: 500,
 };
 

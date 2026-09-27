@@ -19,35 +19,12 @@ import {
   ApprovalStatus,
   parseDodokSessionKey,
   type ParsedDodokSessionKey,
+  type ProviderApproval,
 } from "@dodok/shared";
 import { z } from "zod";
 
-/** 런 상관(서버 태스크 4) 전의 승인. `channelId`·`providerAgentId`·`threadRootId` 는 `sessionKey` 에서 푼 값이다. */
-export type ProviderApproval = {
-  providerApprovalId: string;
-  kind: ApprovalKind;
-  sessionKey: string;
-  providerAgentId: string;
-  channelId: string;
-  /** 스레드 세션의 승인만 */
-  threadRootId?: string;
-  toolCallId?: string;
-  toolName?: string;
-  pluginId?: string;
-  title: string;
-  description?: string;
-  detail?: string;
-  severity: ApprovalSeverity;
-  allowedDecisions: ApprovalDecision[];
-  urlPath?: string;
-  status: ApprovalStatus;
-  decision?: ApprovalDecision;
-  reason?: ApprovalReason;
-  /** `*.approval.resolved` 에는 오지 않는다(스파이크 3.4) — 그때는 이미 저장한 행의 값을 지킨다. */
-  createdAt?: string;
-  expiresAt?: string;
-  resolvedAt?: string;
-};
+// 모양은 어댑터 공통 계약(shared) — 러너 어댑터도 같은 모양으로 낸다
+export type { ProviderApproval };
 
 // 계약(shared `Approval`)의 문자열 상한 = Gateway 상한. 보여 주는 값은 넘으면 자르고, 상관 키(`toolCallId`)는 자르지 않는다.
 const MAX = {

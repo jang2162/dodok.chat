@@ -249,7 +249,9 @@ export function recordWire(socket: WireClient): WireLog {
   );
   socket.on(
     "adapter.status",
-    record((p) => adapterStatus.push({ gateway: p.gateway, bridge: p.bridge })),
+    record((p) => {
+      if (p.provider === "openclaw") adapterStatus.push({ gateway: p.gateway, bridge: p.bridge });
+    }),
   );
   socket.on(
     "approval.requested",

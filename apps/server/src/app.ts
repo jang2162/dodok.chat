@@ -1,5 +1,5 @@
 import { BridgeAuthGuard, type BridgeTokenVerifier, createOpenClawAdapter } from "@dodok/openclaw-adapter";
-import type { AdapterStatus, ApiError } from "@dodok/shared";
+import type { ApiError } from "@dodok/shared";
 import cookie from "@fastify/cookie";
 import rateLimit from "@fastify/rate-limit";
 import { sql } from "drizzle-orm";
@@ -9,7 +9,7 @@ import { dirname } from "node:path";
 import { Server } from "socket.io";
 import { v7 as uuidv7 } from "uuid";
 import packageJson from "../package.json" with { type: "json" };
-import type { AgentAdapter } from "./adapters/types";
+import type { AgentAdapter, OpenClawAdapterStatus } from "./adapters/types";
 import { type Auth, createAuth } from "./auth";
 import { bootstrapOwner } from "./auth/owner";
 import { createIpLimit, registerAuthRoutes } from "./auth/routes";
@@ -574,9 +574,9 @@ export function watchGatewayReconnecting(
   logger: Pick<Logger, "warn">,
   delayMs = GATEWAY_RECONNECTING_NOTICE_MS,
 ): { close(): void } {
-  let gateway: AdapterStatus["gateway"] | undefined;
+  let gateway: OpenClawAdapterStatus["gateway"] | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const observe = (next: AdapterStatus["gateway"]) => {
+  const observe = (next: OpenClawAdapterStatus["gateway"]) => {
     if (next === gateway) return;
     gateway = next;
     clearTimeout(timer);
@@ -589,10 +589,12 @@ export function watchGatewayReconnecting(
     }, delayMs);
     timer.unref();
   };
+  // Gateway 는 OpenClaw 어댑터에만 있다
   const off = adapter.onEvent((e) => {
-    if (e.kind === "status") observe(e.status.gateway);
+    if (e.kind === "status" && e.status.provider === "openclaw") observe(e.status.gateway);
   });
-  observe(adapter.status().gateway);
+  const initial = adapter.status();
+  if (initial.provider === "openclaw") observe(initial.gateway);
   return {
     close() {
       off();

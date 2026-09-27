@@ -25,7 +25,7 @@ export function Banners() {
   const owner = useIsOwner();
   const openclawDown =
     wire === "connected" &&
-    adapter !== undefined &&
+    adapter?.provider === "openclaw" &&
     (adapter.gateway !== "connected" || adapter.bridge === "down");
 
   return (

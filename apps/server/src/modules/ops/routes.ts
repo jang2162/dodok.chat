@@ -47,7 +47,10 @@ export function registerOpsRoutes(fastify: FastifyInstance, ctx: OpsRouteContext
   fastify.get("/api/v1/ops/status", admin, async () => {
     const at = now();
     const adapter = ctx.adapter.status();
-    const version = ctx.adapter.setupDetail().gateway.version;
+    const detail = ctx.adapter.setupDetail();
+    // gateway·plugin 줄은 OpenClaw 어댑터의 것 — 다른 어댑터면 붙은 것이 없는 모양
+    const openclaw = adapter.provider === "openclaw" ? adapter : undefined;
+    const version = detail.provider === "openclaw" ? detail.gateway.version : null;
     const midnight = new Date(at.getFullYear(), at.getMonth(), at.getDate());
     const status: OpsStatus = {
       workspaceId: ctx.workspaceId,
@@ -59,8 +62,8 @@ export function registerOpsRoutes(fastify: FastifyInstance, ctx: OpsRouteContext
       db: { bytes: dbBytes(ctx.db) },
       disk: ctx.disk(),
       adapter,
-      gateway: { state: adapter.gateway, version, ...gatewayPin(version) },
-      plugin: { state: adapter.bridge },
+      gateway: { state: openclaw?.gateway ?? "down", version, ...gatewayPin(version) },
+      plugin: { state: openclaw?.bridge ?? "down" },
       runsToday: countRunsTodayInWorkspace(ctx.db, at),
       dailyRunLimit: getOpsSettings(ctx.db, ctx.workspaceId).dailyRunLimit,
       blockedToday: ctx.ops.countsSince("run_limit", midnight).get("workspace") ?? 0,

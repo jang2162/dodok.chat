@@ -35,10 +35,11 @@ function deliver(overrides: Partial<InboundDeliver> = {}): InboundDeliver {
 }
 
 describe("FakeAdapter", () => {
-  it("setupDetail 은 주입한 상세를 돌려주고, revokeBridgeSessions 는 붙은 플러그인 토큰이면 끊고(1) 아니면 0", () => {
+  it("setupDetail 은 주입한 상세를 돌려주고, revokeTokenSessions 는 붙은 플러그인 토큰이면 끊고(1) 아니면 0", () => {
     const adapter = new FakeAdapter();
     const events: AdapterEvent[] = [];
     adapter.onEvent((e) => events.push(e));
+    expect(adapter.setupDetail().provider).toBe("openclaw");
     expect(adapter.setupDetail().bridge.plugin?.tokenId).toBeNull();
 
     const plugin = {
@@ -50,17 +51,18 @@ describe("FakeAdapter", () => {
       connectedAt: "2026-09-24T00:00:00.000Z",
     };
     const detail = {
+      provider: "openclaw" as const,
       gateway: { state: "connected" as const, host: "gw.example:443", version: "2026.9.5", pairing: null },
       bridge: { state: "connected" as const, plugin },
     };
     adapter.setSetupDetail(detail);
     expect(adapter.setupDetail()).toEqual(detail);
 
-    expect(adapter.revokeBridgeSessions("t2")).toBe(0);
+    expect(adapter.revokeTokenSessions("t2")).toBe(0);
     expect(events).toEqual([]);
-    expect(adapter.revokeBridgeSessions("t1")).toBe(1);
+    expect(adapter.revokeTokenSessions("t1")).toBe(1);
     expect(adapter.setupDetail().bridge).toEqual({ state: "down", plugin: null });
-    expect(adapter.calls.revokeBridgeSessions).toEqual(["t2", "t1"]);
+    expect(adapter.calls.revokeTokenSessions).toEqual(["t2", "t1"]);
     expect(events).toEqual([{ kind: "setup" }]);
   });
 
@@ -122,13 +124,31 @@ describe("FakeAdapter", () => {
   it("setStatus·setCapabilities 가 status()·capabilities() 에 반영되고 기본값은 전부 연결·true 다", () => {
     const adapter = new FakeAdapter();
     expect(adapter.status()).toEqual({ provider: "openclaw", gateway: "connected", bridge: "connected" });
-    expect(adapter.capabilities()).toEqual({ sessionReset: true, agentsList: true, configSet: true });
+    expect(adapter.capabilities()).toEqual({
+      sessionReset: true,
+      agentsList: true,
+      configSet: true,
+      promptEveryRun: false,
+      serverSessionIds: false,
+    });
 
     adapter.setStatus({ provider: "openclaw", gateway: "down", bridge: "down" });
-    adapter.setCapabilities({ sessionReset: false, agentsList: true, configSet: true });
+    adapter.setCapabilities({
+      sessionReset: false,
+      agentsList: true,
+      configSet: true,
+      promptEveryRun: false,
+      serverSessionIds: false,
+    });
 
     expect(adapter.status()).toEqual({ provider: "openclaw", gateway: "down", bridge: "down" });
-    expect(adapter.capabilities()).toEqual({ sessionReset: false, agentsList: true, configSet: true });
+    expect(adapter.capabilities()).toEqual({
+      sessionReset: false,
+      agentsList: true,
+      configSet: true,
+      promptEveryRun: false,
+      serverSessionIds: false,
+    });
   });
 
   it("sessionKeyFor 는 원형 키이고 나머지 메서드는 기본값을 돌려주며 호출을 기록한다", async () => {
@@ -205,6 +225,21 @@ describe("FakeAdapter — 승인(서버 테스트용 대본)", () => {
     ]);
   });
 
+  it("Gateway 가 connected 가 아니면 ADAPTER_UNAVAILABLE 로 던지고 호출을 기록하지 않는다(판정 P6)", async () => {
+    const adapter = new FakeAdapter();
+    const a = approval();
+    adapter.emitApproval(a);
+    adapter.scriptResolveApproval(() => a);
+    for (const gateway of ["reconnecting", "down"] as const) {
+      adapter.setStatus({ provider: "openclaw", gateway, bridge: "connected" });
+      await expect(adapter.resolveApproval(a.providerApprovalId, "plugin", "deny")).rejects.toMatchObject({
+        name: "AdapterError",
+        code: "ADAPTER_UNAVAILABLE",
+      });
+    }
+    expect(adapter.calls.resolveApproval).toEqual([]);
+  });
+
   it("모르는 승인은 NOT_FOUND, scriptResolveApproval 로 응답을 바꿀 수 있다", async () => {
     const adapter = new FakeAdapter();
 
@@ -222,17 +257,24 @@ describe("FakeAdapter — 승인(서버 테스트용 대본)", () => {
   });
 });
 
-describe("FakeAdapter.pluginSupports", () => {
+describe("FakeAdapter.supports", () => {
   it("기본은 스레드를 아는 플러그인이 붙어 있다", () => {
-    expect(new FakeAdapter().pluginSupports("threads")).toBe(true);
+    expect(new FakeAdapter().supports("dev", "threads")).toBe(true);
   });
 
   it("setPluginCapabilities 로 옛 플러그인을 흉내 낸다", () => {
     const adapter = new FakeAdapter();
     adapter.setPluginCapabilities([]);
-    expect(adapter.pluginSupports("threads")).toBe(false);
+    expect(adapter.supports("dev", "threads")).toBe(false);
     adapter.setPluginCapabilities(["threads"]);
-    expect(adapter.pluginSupports("threads")).toBe(true);
+    expect(adapter.supports("dev", "threads")).toBe(true);
+  });
+
+  it("에이전트를 가리지 않는다 — 붙은 플러그인 하나를 본다", () => {
+    const adapter = new FakeAdapter();
+    expect(adapter.supports("fin", "threads")).toBe(true);
+    adapter.setPluginCapabilities([]);
+    expect(adapter.supports("fin", "threads")).toBe(false);
   });
 
   it("붙은 플러그인이 없으면 false", () => {
@@ -241,6 +283,6 @@ describe("FakeAdapter.pluginSupports", () => {
       ...adapter.setupDetail(),
       bridge: { state: "down", plugin: null },
     });
-    expect(adapter.pluginSupports("threads")).toBe(false);
+    expect(adapter.supports("dev", "threads")).toBe(false);
   });
 });

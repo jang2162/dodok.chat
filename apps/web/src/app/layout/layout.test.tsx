@@ -1,4 +1,4 @@
-import type { AdapterStatus } from "@dodok/shared";
+import type { OpenClawAdapterStatus } from "@dodok/shared";
 import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -20,7 +20,7 @@ afterEach(() => {
 });
 
 /** 어댑터 상태만 답하는 가짜 서버 — 캐시를 바꾸는 테스트는 그 뒤로 다시 부르지 않는다(staleTime) */
-function renderWithAdapter(ui: ReactNode, adapter: Pick<AdapterStatus, "gateway" | "bridge">) {
+function renderWithAdapter(ui: ReactNode, adapter: Pick<OpenClawAdapterStatus, "gateway" | "bridge">) {
   vi.stubGlobal(
     "fetch",
     vi.fn<typeof fetch>(async (input) =>
@@ -38,8 +38,10 @@ function renderWithAdapter(ui: ReactNode, adapter: Pick<AdapterStatus, "gateway"
     </QueryClientProvider>,
   );
   /** wire `adapter.status` 가 캐시를 고치는 것과 같이 — 관찰자 알림은 notifyManager 가 미뤄 보내므로 화면 단언은 findBy·waitFor 로 */
-  const push = (next: Pick<AdapterStatus, "gateway" | "bridge">) =>
-    queryClient.setQueryData<AdapterStatusResponse>(qk.adapter, (prev) => prev && { ...prev, ...next });
+  const push = (next: Pick<OpenClawAdapterStatus, "gateway" | "bridge">) =>
+    queryClient.setQueryData<AdapterStatusResponse>(qk.adapter, (prev) =>
+      prev?.provider === "openclaw" ? { ...prev, ...next } : prev,
+    );
   return { queryClient, push };
 }
 

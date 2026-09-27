@@ -198,8 +198,11 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
       if (mine?.role !== undefined && mine.role !== me?.role)
         void qc.fetchQuery({ ...meQuery, staleTime: 0 }).catch(() => undefined);
     },
-    "adapter.status": (status: AdapterStatus) =>
-      qc.setQueryData<AdapterStatusResponse>(qk.adapter, (prev) => prev && { ...prev, ...status }),
+    // 어댑터마다 따로 온다(러너 계획 판정 P7) — 캐시·연결 점·배너는 OpenClaw 의 것만 본다, 다른 제공자는 무시한다
+    "adapter.status": (status: AdapterStatus) => {
+      if (status.provider !== "openclaw") return;
+      qc.setQueryData<AdapterStatusResponse>(qk.adapter, (prev) => prev && { ...prev, ...status });
+    },
     /**
      * 연결 설정 상태(owner 에게만 온다) — 통째로 바꾼다. 토큰 목록의 「지금 접속 중」·마지막 사용은 목록 응답에 있어
      * 다시 받게 낡은 것으로 둔다(보고 있는 화면만 곧바로 다시 부른다)

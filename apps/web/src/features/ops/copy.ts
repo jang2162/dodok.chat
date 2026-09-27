@@ -1,7 +1,7 @@
 import type { OpsEvent, OpsEventKind, OpsSeverity } from "@dodok/shared";
 
 /** 끊김 사건 — 줄이 열려 있는 동안이 끊긴 동안이다(스펙 3.1) */
-const DOWN: ReadonlySet<OpsEventKind> = new Set(["gateway_down", "plugin_down"]);
+const DOWN: ReadonlySet<OpsEventKind> = new Set(["gateway_down", "plugin_down", "runner_down"]);
 
 type Detail = OpsEvent["detail"];
 const str = (v: Detail[string] | undefined): string | undefined => (typeof v === "string" ? v : undefined);
@@ -26,6 +26,7 @@ function limitScope(key: string, nameOf: ChannelNameOf | undefined): string {
 const TITLE: Record<OpsEventKind, (e: OpsEvent, nameOf: ChannelNameOf | undefined) => string> = {
   gateway_down: () => "Gateway 연결 끊김",
   plugin_down: () => "플러그인 연결 끊김",
+  runner_down: () => "러너 연결 끊김",
   gateway_version_changed: (e) =>
     `Gateway 버전이 바뀜 (${str(e.detail.from) ?? "?"} → ${str(e.detail.to) ?? "?"})`,
   // 버전은 detail 이 아니라 key(`gateway:<버전>`)에 있다

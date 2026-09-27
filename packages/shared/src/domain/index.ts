@@ -205,6 +205,8 @@ export const RunUsage = z.object({
   inputTokens: z.int().optional(),
   outputTokens: z.int().optional(),
   costUsd: z.number().optional(),
+  // 구독 로그인의 달러 값은 청구액이 아니라 공시 단가 환산이다(ADR 0007 4.8)
+  costKind: z.enum(["api", "subscription_estimate"]).optional(),
   model: z.string().optional(),
 });
 export type RunUsage = z.infer<typeof RunUsage>;
@@ -264,7 +266,8 @@ export const ComponentInteraction = z.object({
 export type ComponentInteraction = z.infer<typeof ComponentInteraction>;
 
 // 승인 계약은 Gateway 실물에 맞춘다(승인 스파이크 3·4·5장, 설계 3.1). 값을 바꾸면 Gateway 가 조용히 거절로 확정한다.
-export const ApprovalKind = z.enum(["exec", "plugin", "system-agent"]);
+// tool — Claude 러너의 도구 승인(러너 스펙 6장)
+export const ApprovalKind = z.enum(["exec", "plugin", "system-agent", "tool"]);
 export type ApprovalKind = z.infer<typeof ApprovalKind>;
 /** `cancelled` 는 런 중단·Gateway 재기동. 만료는 `expired`(+ `reason: "timeout"`). */
 export const ApprovalStatus = z.enum(["pending", "allowed", "denied", "expired", "cancelled"]);

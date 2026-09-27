@@ -227,7 +227,9 @@ export function createApprovalsService(deps: ApprovalsDeps): ApprovalsService {
       if (!approval.allowedDecisions.includes(decision)) {
         throw apiError("VALIDATION", "decision is not allowed for this approval");
       }
-      if (deps.adapter.status().gateway !== "connected") {
+      // OpenClaw 어댑터의 resolveApproval 도 같은 조건으로 막는다(러너 계획 판정 P6) — 두 겹이어도 결과는 같다
+      const adapterStatus = deps.adapter.status();
+      if (adapterStatus.provider === "openclaw" && adapterStatus.gateway !== "connected") {
         throw apiError("ADAPTER_UNAVAILABLE", "gateway is not connected");
       }
 

@@ -3,7 +3,6 @@ import type { Ack } from "../common";
 import { Id } from "../common";
 import {
   ATTACHMENT_LIMITS,
-  AgentProvider,
   Approval,
   ApprovalDecision,
   type Channel,
@@ -87,11 +86,19 @@ export interface ClientToServerEvents {
 }
 
 // ── 서버 → 클라이언트 (룸 channel:<id> 또는 user:<id>) ──
-export const AdapterStatus = z.object({
-  provider: AgentProvider,
-  gateway: z.enum(["connected", "reconnecting", "down"]),
-  bridge: z.enum(["connected", "down"]),
-});
+/** 어댑터마다 따로 나간다(러너 계획 판정 P7) — 소비자는 provider 로 좁혀 읽고 모르는 provider 는 무시한다 */
+export const AdapterStatus = z.discriminatedUnion("provider", [
+  z.object({
+    provider: z.literal("openclaw"),
+    gateway: z.enum(["connected", "reconnecting", "down"]),
+    bridge: z.enum(["connected", "down"]),
+  }),
+  // runners — 지금 붙은 러너 수 / 폐기되지 않은 러너 토큰 수
+  z.object({
+    provider: z.literal("claude"),
+    runners: z.object({ connected: z.int().min(0), tokens: z.int().min(0) }),
+  }),
+]);
 export type AdapterStatus = z.infer<typeof AdapterStatus>;
 
 export interface ServerToClientEvents {

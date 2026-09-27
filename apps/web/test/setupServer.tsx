@@ -71,6 +71,7 @@ export function statusOf(over: StatusOver = {}): SetupStatus {
     pluginFile: over.pluginFile ?? { available: true, sha256: SHA_FILE, bundleSha256: SHA_A, bytes: 123_456 },
     pluginMatches: over.pluginMatches === undefined ? true : over.pluginMatches,
     envTokenIgnored: over.envTokenIgnored ?? false,
+    runners: { list: [], runnerFile: { available: false } },
   };
 }
 

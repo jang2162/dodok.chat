@@ -1,4 +1,4 @@
-import type { AdapterStatus } from "@dodok/shared";
+import type { OpenClawAdapterStatus } from "@dodok/shared";
 import { useAdapterStatus } from "@/api/queries";
 import { cn } from "@/lib/utils";
 import { useWireStatus } from "@/realtime/wire";
@@ -14,12 +14,12 @@ const TONE: Record<Tone, string> = {
   unknown: "bg-muted-foreground/40",
 };
 
-const GATEWAY: Record<AdapterStatus["gateway"], DotState> = {
+const GATEWAY: Record<OpenClawAdapterStatus["gateway"], DotState> = {
   connected: { label: "Gateway 연결됨", tone: "ok" },
   reconnecting: { label: "Gateway 다시 연결 중", tone: "warn" },
   down: { label: "Gateway 끊김", tone: "down" },
 };
-const BRIDGE: Record<AdapterStatus["bridge"], DotState> = {
+const BRIDGE: Record<OpenClawAdapterStatus["bridge"], DotState> = {
   connected: { label: "플러그인 연결됨", tone: "ok" },
   down: { label: "플러그인 끊김", tone: "down" },
 };
@@ -33,7 +33,9 @@ const UNKNOWN_HINT = "서버에 연결되지 않아 지금 상태를 알 수 없
  * 「알 수 없음」(회색)으로 바꾼다(브라우저 검증 결함 6). 살아 있는 값의 유일한 출처가 wire 이므로 기준도 wire 다
  */
 export function ConnectionDots() {
-  const { data } = useAdapterStatus();
+  const { data: adapter } = useAdapterStatus();
+  // 점 두 개는 OpenClaw 어댑터의 것 — 캐시에는 그 상태만 담긴다(handlers.ts)
+  const data = adapter?.provider === "openclaw" ? adapter : undefined;
   const live = useWireStatus((s) => s.status) === "connected";
   const unknown = (what: string): DotState & { hint: string } => ({
     label: `${what} 상태 모름`,

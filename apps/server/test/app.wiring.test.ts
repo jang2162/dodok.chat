@@ -1,6 +1,12 @@
 import { AdapterError } from "@dodok/openclaw-adapter";
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
-import { type AdapterStatus, BRIDGE_PROTOCOL, type Message, WIRE_PROTOCOL } from "@dodok/shared";
+import {
+  type AdapterStatus,
+  BRIDGE_PROTOCOL,
+  type Message,
+  type OpenClawAdapterStatus,
+  WIRE_PROTOCOL,
+} from "@dodok/shared";
 import Database from "better-sqlite3";
 import { and, eq, isNull } from "drizzle-orm";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
@@ -24,6 +30,7 @@ import { sessionRecoverTargets } from "../src/wiring";
 import { bootTestApp, login } from "./helpers/app";
 import { testEnv } from "./helpers/env";
 import { connectWire, openWire, type WireClient, waitFor } from "./helpers/wire";
+import { openclawStatus } from "./helpers/openclaw";
 
 type Method = "GET" | "POST" | "PATCH";
 
@@ -220,7 +227,13 @@ describe("REST·wire 배선 (FakeAdapter)", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     adapter.setStatus({ provider: "openclaw", gateway: "connected", bridge: "connected" });
-    adapter.setCapabilities({ sessionReset: true, agentsList: true, configSet: true });
+    adapter.setCapabilities({
+      sessionReset: true,
+      agentsList: true,
+      configSet: true,
+      promptEveryRun: false,
+      serverSessionIds: false,
+    });
     for (const socket of sockets.splice(0)) socket.close();
   });
   afterAll(async () => {
@@ -318,7 +331,13 @@ describe("REST·wire 배선 (FakeAdapter)", () => {
 
   it("reset — sessionReset capability 가 없으면 409 CONFLICT(ADAPTER_CAPABILITY_MISSING), 어댑터·세션·메시지를 건드리지 않는다", async () => {
     const { channelId } = seedAgentChannel(app, "reset-cap", dev);
-    adapter.setCapabilities({ sessionReset: false, agentsList: true, configSet: true });
+    adapter.setCapabilities({
+      sessionReset: false,
+      agentsList: true,
+      configSet: true,
+      promptEveryRun: false,
+      serverSessionIds: false,
+    });
     const resetsBefore = adapter.calls.reset.length;
 
     const res = await api("POST", `/channels/${channelId}/agents/${dev}/reset`);
@@ -464,14 +483,26 @@ describe("REST·wire 배선 (FakeAdapter)", () => {
 
   it("GET /adapter/status 는 AdapterStatus + capabilities, 인증이 필요하다", async () => {
     adapter.setStatus({ provider: "openclaw", gateway: "reconnecting", bridge: "connected" });
-    adapter.setCapabilities({ sessionReset: false, agentsList: true, configSet: true });
+    adapter.setCapabilities({
+      sessionReset: false,
+      agentsList: true,
+      configSet: true,
+      promptEveryRun: false,
+      serverSessionIds: false,
+    });
     const res = await api("GET", "/adapter/status");
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({
       provider: "openclaw",
       gateway: "reconnecting",
       bridge: "connected",
-      capabilities: { sessionReset: false, agentsList: true, configSet: true },
+      capabilities: {
+        sessionReset: false,
+        agentsList: true,
+        configSet: true,
+        promptEveryRun: false,
+        serverSessionIds: false,
+      },
     });
     const anonymous = await app.fastify.inject({ method: "GET", url: "/api/v1/adapter/status" });
     expect(anonymous.statusCode).toBe(401);
@@ -630,7 +661,10 @@ describe("watchGatewayReconnecting", () => {
     const notices: unknown[] = [];
     bus.on("system.notice", (n) => notices.push(n));
     const logger = { warn: vi.fn() };
-    const status = (gateway: AdapterStatus["gateway"], bridge: AdapterStatus["bridge"] = "down") => {
+    const status = (
+      gateway: OpenClawAdapterStatus["gateway"],
+      bridge: OpenClawAdapterStatus["bridge"] = "down",
+    ) => {
       adapter.setStatus({ provider: "openclaw", gateway, bridge });
       adapter.emit({ kind: "status", status: adapter.status(), capabilities: adapter.capabilities() });
     };
@@ -701,10 +735,12 @@ describe("실제 어댑터(createOpenClawAdapter) 부팅", () => {
       await app.fastify.listen({ host: "127.0.0.1", port: 0 });
       const health = await app.fastify.inject({ method: "GET", url: "/healthz" });
       expect(health.statusCode).toBe(200);
-      expect(["down", "reconnecting"]).toContain(app.adapter.status().gateway);
+      expect(["down", "reconnecting"]).toContain(openclawStatus(app.adapter).gateway);
       // 부팅 뒤 connect() 가 접속 루프를 돌렸다 — 설정의 디바이스 아이덴티티 경로(임시 디렉터리)를 쓰고, 거부되면 reconnecting
       await vi.waitFor(() => expect(existsSync(deviceIdentityPath)).toBe(true));
-      await vi.waitFor(() => expect(app.adapter.status().gateway).toBe("reconnecting"), { timeout: 3_000 });
+      await vi.waitFor(() => expect(openclawStatus(app.adapter).gateway).toBe("reconnecting"), {
+        timeout: 3_000,
+      });
 
       const { agentId, channelId } = seedAgentChannel(app, "real");
       const plugin = connectSocket(`${app.url}/bridge`, {
@@ -728,7 +764,7 @@ describe("실제 어댑터(createOpenClawAdapter) 부팅", () => {
         ok: true,
         data: { serverVersion: packageJson.version, protocol: BRIDGE_PROTOCOL },
       });
-      await vi.waitFor(() => expect(app.adapter.status().bridge).toBe("connected"));
+      await vi.waitFor(() => expect(openclawStatus(app.adapter).bridge).toBe("connected"));
 
       // 브리지 정본 → orchestrator.onCanonical → 에이전트 메시지 저장, 그 id 로 ack
       const ack = (await plugin.emitWithAck("outbound.message", {
@@ -751,7 +787,7 @@ describe("실제 어댑터(createOpenClawAdapter) 부팅", () => {
       await app.close();
       expect(performance.now() - started).toBeLessThan(5_000);
       expect(await notice).toEqual({ reason: "shutdown", message: "server shutting down" });
-      expect(app.adapter.status().gateway).toBe("down");
+      expect(openclawStatus(app.adapter).gateway).toBe("down");
       expect(app.db.$client.open).toBe(false);
     } finally {
       await app.close();

@@ -1,4 +1,4 @@
-import { type AdapterSetupDetail, OPENCLAW_PINNED_VERSION } from "@dodok/openclaw-adapter";
+import { OPENCLAW_PINNED_VERSION, type OpenClawSetupDetail } from "@dodok/openclaw-adapter";
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
 import { OpsEventsPage, OpsRunsSummary, OpsStatus } from "@dodok/shared";
 import { v7 as uuid } from "uuid";
@@ -48,7 +48,7 @@ describe("운영 API /api/v1/ops", () => {
       ...(payload === undefined ? {} : { payload }),
     });
 
-  const detail = (version: string | null): AdapterSetupDetail => ({
+  const detail = (version: string | null): OpenClawSetupDetail => ({
     ...adapter.setupDetail(),
     gateway: { ...adapter.setupDetail().gateway, version },
   });

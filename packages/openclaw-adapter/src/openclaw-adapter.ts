@@ -5,7 +5,6 @@
  * 응답 정본은 브리지 `outbound.message` 이고, 서버가 저장한 id 를 `onCanonical` 훅으로 받아 플러그인에 ack 한다.
  */
 import type {
-  AdapterStatus,
   ApprovalDecision,
   ApprovalKind,
   ConfigSet,
@@ -22,8 +21,9 @@ import {
   type AdapterCapabilities,
   type AdapterEvent,
   type AdapterLogger,
-  type AdapterSetupDetail,
   type AgentAdapter,
+  type OpenClawAdapterStatus,
+  type OpenClawSetupDetail,
 } from "./adapter-types";
 import {
   attachBridge,
@@ -83,11 +83,15 @@ export type OpenClawAdapterOptions = {
   frameDumpPath?: string;
 };
 
-export type OpenClawAdapter = AgentAdapter & {
+/** 상태·설정 상세는 openclaw 변형으로 좁혀 둔다 — 이 어댑터를 직접 쥔 쪽(테스트·dev:fake)은 좁히지 않고 읽는다 */
+export interface OpenClawAdapter extends AgentAdapter {
+  readonly provider: "openclaw";
+  status(): OpenClawAdapterStatus;
+  setupDetail(): OpenClawSetupDetail;
   readonly bridge: BridgeHandle;
   /** 세션 키 → `chat.history` deltaCursor. 서버가 저장했다가 `sessionKeysToRecover` 의 cursor 로 돌려줄 수 있다. */
   readonly historyCursors: Map<string, string>;
-};
+}
 
 // 계약 스펙 8.3 — ack 타임아웃 10s, 없으면 1·4·16s 뒤 재전송(3회). 플러그인 미접속은 120s 기다린다(queued 상한).
 const DELIVER_ACK_TIMEOUT_MS = 10_000;
@@ -114,9 +118,16 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
   // send 재시도 대기 — close() 가 타이머를 지우고 기다리는 send 를 끝낸다
   const retryWaits = new Map<ReturnType<typeof setTimeout>, (error: AdapterError) => void>();
   let closed = false;
-  const capabilities: AdapterCapabilities = { sessionReset: true, agentsList: true, configSet: true };
+  // 채널 프롬프트는 새 세션에서만(ADR 0003), 세션 id 는 Gateway 가 정한다
+  const capabilities: AdapterCapabilities = {
+    sessionReset: true,
+    agentsList: true,
+    configSet: true,
+    promptEveryRun: false,
+    serverSessionIds: false,
+  };
   let gatewayState: GatewayState = "down";
-  let bridgeState: AdapterStatus["bridge"] = "down";
+  let bridgeState: OpenClawAdapterStatus["bridge"] = "down";
   const gatewayHostLabel = gatewayHost(opts.gateway.url);
   // 마지막으로 알린(또는 처음) setupDetail — 같은 상세면 setup 이벤트를 내지 않는다
   let lastSetupKey: string | undefined;
@@ -132,10 +143,14 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
     }
   }
 
-  const status = (): AdapterStatus => ({ provider: "openclaw", gateway: gatewayState, bridge: bridgeState });
+  const status = (): OpenClawAdapterStatus => ({
+    provider: "openclaw",
+    gateway: gatewayState,
+    bridge: bridgeState,
+  });
   const emitStatus = () => emit({ kind: "status", status: status(), capabilities: { ...capabilities } });
 
-  function setBridgeState(next: AdapterStatus["bridge"]) {
+  function setBridgeState(next: OpenClawAdapterStatus["bridge"]) {
     if (bridgeState === next) return;
     bridgeState = next;
     logger.info({ bridge: next }, "bridge status changed");
@@ -286,11 +301,12 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
     onRejected: (reason) => logger.warn({ reason }, "bridge connection rejected"),
   });
 
-  function setupDetail(): AdapterSetupDetail {
+  function setupDetail(): OpenClawSetupDetail {
     const gateway = manager.detail();
     const session = bridge.current();
     const hello = session?.hello;
     return {
+      provider: "openclaw",
       gateway: { state: gatewayState, host: gatewayHostLabel, ...gateway },
       bridge: {
         state: bridgeState,
@@ -415,7 +431,7 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
     capabilities: () => ({ ...capabilities }),
     setupDetail,
 
-    revokeBridgeSessions(tokenId) {
+    revokeTokenSessions(tokenId) {
       const sessions = bridge.revokeSessions(tokenId);
       logger.info({ tokenId, sessions }, "bridge sessions revoked");
       return sessions;
@@ -445,7 +461,9 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
 
     sessionKeyFor,
 
-    pluginSupports: (capability) => bridge.current()?.hello?.capabilities.includes(capability) ?? false,
+    // 에이전트를 가리지 않는다 — Gateway 의 모든 에이전트가 붙은 플러그인 하나를 지난다
+    supports: (_providerAgentId, capability) =>
+      bridge.current()?.hello?.capabilities.includes(capability) ?? false,
 
     async send(input) {
       // 플러그인은 런이 시작될 때(onAgentRunStart) ack 하므로 Gateway 이벤트가 ack 보다 먼저 올 수 있다 — 전송 전에 등록한다
@@ -488,6 +506,9 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
       syncChannelConfig(bridge, logger, channelId, config),
 
     async resolveApproval(providerApprovalId: string, kind: ApprovalKind, decision: ApprovalDecision) {
+      // 재접속 중(reconnecting)에도 결정을 보내지 않는다 — 승인 서비스가 하던 선검사를 어댑터 안으로 옮겼다(러너 계획 판정 P6)
+      if (gatewayState !== "connected")
+        throw new AdapterError("ADAPTER_UNAVAILABLE", "gateway is not connected");
       // 연결이 없으면 manager 가 ADAPTER_UNAVAILABLE 을 던진다(다른 RPC 와 같은 규칙).
       const res = await manager.request(
         "approval.resolve",

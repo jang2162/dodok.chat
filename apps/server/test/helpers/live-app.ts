@@ -106,7 +106,7 @@ export async function bootLiveApp(opts: LiveAppOptions = {}): Promise<LiveApp> {
 export function waitForAdapterConnected(app: App, timeoutMs = CONNECT_TIMEOUT_MS): Promise<void> {
   const up = () => {
     const status = app.adapter.status();
-    return status.gateway === "connected" && status.bridge === "connected";
+    return status.provider === "openclaw" && status.gateway === "connected" && status.bridge === "connected";
   };
   if (up()) return Promise.resolve();
   return new Promise((resolve, reject) => {

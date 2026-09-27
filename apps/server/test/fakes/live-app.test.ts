@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { bootLiveApp, type LiveApp } from "../helpers/live-app";
+import { openclawStatus } from "../helpers/openclaw";
 
 describe("서버 통합 스모크 — 실제 OpenClawAdapter + 가짜 Gateway + 가짜 플러그인", () => {
   let live: LiveApp | undefined;
@@ -28,7 +29,13 @@ describe("서버 통합 스모크 — 실제 OpenClawAdapter + 가짜 Gateway + 
       provider: "openclaw",
       gateway: "connected",
       bridge: "connected",
-      capabilities: { sessionReset: true, agentsList: true, configSet: true },
+      capabilities: {
+        sessionReset: true,
+        agentsList: true,
+        configSet: true,
+        promptEveryRun: false,
+        serverSessionIds: false,
+      },
     });
 
     // 어댑터가 가짜 Gateway 에 자기 기본 scopes 로 붙어 재접속 복구 구독까지 돌렸고, 디바이스 아이덴티티는 임시 경로에 있다
@@ -44,7 +51,7 @@ describe("서버 통합 스모크 — 실제 OpenClawAdapter + 가짜 Gateway + 
     live = undefined;
     expect(existsSync(dir)).toBe(false);
     expect(plugin.notices).toEqual([{ reason: "shutdown", message: "server shutting down" }]);
-    expect(app.adapter.status().gateway).toBe("down");
+    expect(openclawStatus(app.adapter).gateway).toBe("down");
   });
 
   it("OPENCLAW_FRAME_DUMP_PATH 를 주면 어댑터가 받은 Gateway 프레임을 그 파일에 남기고 앱 close() 에서 닫는다", async () => {

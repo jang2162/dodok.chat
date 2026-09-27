@@ -788,12 +788,13 @@ describe("캐시 패치", () => {
     expect(queryClient.getQueryData(qk.adapter)).toBeUndefined();
 
     const capabilities = { sessionReset: true, agentsList: true, configSet: false };
-    queryClient.setQueryData<AdapterStatusResponse>(qk.adapter, {
+    const cached: AdapterStatusResponse = {
       provider: "openclaw",
       gateway: "connected",
       bridge: "connected",
       capabilities,
-    });
+    };
+    queryClient.setQueryData(qk.adapter, cached);
     fake.serverEmit("adapter.status", { provider: "openclaw", gateway: "reconnecting", bridge: "down" });
 
     expect(queryClient.getQueryData(qk.adapter)).toEqual({
@@ -802,6 +803,19 @@ describe("캐시 패치", () => {
       bridge: "down",
       capabilities,
     });
+  });
+
+  it("adapter.status: OpenClaw 가 아닌 어댑터의 상태는 [adapter] 를 건드리지 않는다(판정 P7)", () => {
+    const { fake, queryClient } = setup();
+    const cached: AdapterStatusResponse = {
+      provider: "openclaw",
+      gateway: "connected",
+      bridge: "connected",
+      capabilities: { sessionReset: true, agentsList: true, configSet: true },
+    };
+    queryClient.setQueryData(qk.adapter, cached);
+    fake.serverEmit("adapter.status", { provider: "claude", runners: { connected: 0, tokens: 1 } });
+    expect(queryClient.getQueryData(qk.adapter)).toEqual(cached);
   });
 });
 

@@ -609,7 +609,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         return;
       }
       const trigger = pending.get(runId)?.trigger ?? {};
-      if (run.threadRootId !== undefined && pluginLacksThreads()) {
+      if (run.threadRootId !== undefined && pluginLacksThreads(run.agentId)) {
         applySignal(runId, {
           kind: "gateway_error",
           code: PLUGIN_OUTDATED,
@@ -686,8 +686,12 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
    * 붙은 플러그인이 스레드를 모른다. 붙은 플러그인이 없으면 모른다고 단정하지 않는다 — 어댑터가 플러그인을 기다렸다 보내고,
    * 못 붙으면 ADAPTER_UNAVAILABLE 로 닫힌다(브리지가 잠깐 끊긴 사이의 스레드 멘션에 재설치 안내를 남기지 않게)
    */
-  function pluginLacksThreads(): boolean {
-    return adapter.setupDetail().bridge.plugin !== null && !adapter.pluginSupports("threads");
+  function pluginLacksThreads(agentId: string): boolean {
+    const detail = adapter.setupDetail();
+    if (detail.provider !== "openclaw" || detail.bridge.plugin === null) return false;
+    // 에이전트 행이 없으면 여기서 막지 않는다 — ensureSession 이 그 런을 닫는다
+    const providerAgentId = getAgent(db, agentId)?.providerAgentId;
+    return providerAgentId !== undefined && !adapter.supports(providerAgentId, "threads");
   }
 
   // ── 정본 ────────────────────────────────────────────────────

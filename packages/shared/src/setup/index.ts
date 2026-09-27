@@ -31,6 +31,31 @@ export const IssueBridgeTokenResult = z.object({
 });
 export type IssueBridgeTokenResult = z.infer<typeof IssueBridgeTokenResult>;
 
+/**
+ * 지금 붙은 러너 하나(러너 스펙 5장) — 어댑터 `setupDetail()` 의 claude 변형과 연결 페이지 러너 블록이 같은 모양을 쓴다.
+ * 작업 디렉터리는 라벨만 — 경로 원문은 싣지 않는다. conflict 는 먼저 붙은 러너가 이미 알린 에이전트 id 다
+ */
+export const RunnerConnection = z.object({
+  tokenId: Id,
+  label: z.string(),
+  runnerVersion: z.string(),
+  sdkVersion: z.string(),
+  claudeCodeVersion: z.string(),
+  bundleSha256: Sha256Hex.nullable(),
+  capabilities: z.array(z.string()),
+  connectedAt: IsoDateTime,
+  agents: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      model: z.string(),
+      workdirLabel: z.string(),
+      conflict: z.boolean(),
+    }),
+  ),
+});
+export type RunnerConnection = z.infer<typeof RunnerConnection>;
+
 /** GET /api/v1/setup/status 응답이자 wire setup.status 페이로드 */
 export const SetupStatus = z.object({
   server: z.object({ version: z.string() }),
@@ -67,5 +92,18 @@ export const SetupStatus = z.object({
   ]),
   pluginMatches: z.boolean().nullable(), // 접속 플러그인과 서버가 품은 파일이 같은 빌드인가, 모르면 null
   envTokenIgnored: z.boolean(), // .env 에 BRIDGE_TOKEN 이 있는데 DB 활성 토큰과 다르다
+  runners: z.object({
+    list: z.array(RunnerConnection),
+    // 서버 이미지가 품은 러너 tgz — pluginFile 과 같은 모양
+    runnerFile: z.discriminatedUnion("available", [
+      z.object({
+        available: z.literal(true),
+        sha256: Sha256Hex,
+        bundleSha256: Sha256Hex,
+        bytes: z.int().min(0),
+      }),
+      z.object({ available: z.literal(false) }),
+    ]),
+  }),
 });
 export type SetupStatus = z.infer<typeof SetupStatus>;

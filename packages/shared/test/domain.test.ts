@@ -288,7 +288,7 @@ describe("Approval", () => {
   });
 
   it("열거값 목록은 Gateway 실물 그대로", () => {
-    expect(ApprovalKind.options).toEqual(["exec", "plugin", "system-agent"]);
+    expect(ApprovalKind.options).toEqual(["exec", "plugin", "system-agent", "tool"]);
     expect(ApprovalStatus.options).toEqual(["pending", "allowed", "denied", "expired", "cancelled"]);
     expect(ApprovalDecision.options).toEqual(["allow-once", "allow-always", "deny"]);
     expect(ApprovalReason.options).toEqual([

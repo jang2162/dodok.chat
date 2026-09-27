@@ -18,13 +18,13 @@
  * 끊김 사건 임계는 DODOK_DEVFAKE_DISCONNECT_MS(기본 운영과 같은 60초)로 줄인다. 종료 표지는 <dataDir>/dev-fake-run/ 에 둔다.
  */
 import {
-  type AdapterStatus,
   type ApprovalDecision,
   BridgeHello,
   type InboundDeliver,
   OpsEvent,
   OpsEventKind,
   OpsSeverity,
+  type OpenClawAdapterStatus,
 } from "@dodok/shared";
 import { and, eq } from "drizzle-orm";
 import { mkdirSync, rmSync } from "node:fs";
@@ -670,20 +670,27 @@ function interceptDevFakeRoutes(app: App, routes: ReadonlyMap<string, DevFakeRou
   });
 }
 
+/** 붙은 가짜 플러그인이 통과한 브리지 토큰 id — 로그용 */
+function pluginTokenId(app: App): string | null | undefined {
+  const detail = app.adapter.setupDetail();
+  return detail.provider === "openclaw" ? detail.bridge.plugin?.tokenId : undefined;
+}
+
 /** 어댑터의 Gateway 상태가 want 를 만족할 때까지 기다린다 — timeoutMs 가 지나면 false */
 function waitForGateway(
   app: App,
-  want: (state: AdapterStatus["gateway"]) => boolean,
+  want: (state: OpenClawAdapterStatus["gateway"]) => boolean,
   timeoutMs: number,
 ): Promise<boolean> {
-  if (want(app.adapter.status().gateway)) return Promise.resolve(true);
+  const initial = app.adapter.status();
+  if (initial.provider === "openclaw" && want(initial.gateway)) return Promise.resolve(true);
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
       off();
       resolve(false);
     }, timeoutMs);
     const off = app.adapter.onEvent((e) => {
-      if (e.kind !== "status" || !want(e.status.gateway)) return;
+      if (e.kind !== "status" || e.status.provider !== "openclaw" || !want(e.status.gateway)) return;
       clearTimeout(timer);
       off();
       resolve(true);
@@ -793,10 +800,7 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
           app?.logger.warn({ reason }, `dev:fake plugin ${what} rejected`);
           return { ok: false, reason };
         }
-        app?.logger.info(
-          { tokenId: app.adapter.setupDetail().bridge.plugin?.tokenId },
-          `dev:fake plugin reconnected with ${what}`,
-        );
+        app?.logger.info({ tokenId: pluginTokenId(app) }, `dev:fake plugin reconnected with ${what}`);
         return { ok: true };
       });
       swapping = run;

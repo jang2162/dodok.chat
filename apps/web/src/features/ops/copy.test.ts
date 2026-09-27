@@ -6,6 +6,7 @@ import { eventText, eventTime, formatDowntime } from "./copy";
 describe("사건 한 줄 문구 — kind 별 고정 문구", () => {
   it.each([
     ["plugin_down", "플러그인 연결 끊김 (지금도)"],
+    ["runner_down", "러너 연결 끊김 (지금도)"],
     ["run_limit", "런 한도 도달"],
     ["ratelimit", "요청 제한 발동"],
     ["bridge_auth_blocked", "브리지 인증 실패가 반복돼 주소를 막음"],

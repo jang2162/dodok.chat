@@ -29,6 +29,7 @@ describe("common", () => {
       "CONSUMED",
       "TIMEOUT",
       "INSUFFICIENT_STORAGE",
+      "PROVIDER_AUTH",
       "INTERNAL",
     ]);
     expect(ErrorCode.safeParse("NOPE").success).toBe(false);

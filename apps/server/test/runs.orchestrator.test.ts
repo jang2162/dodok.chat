@@ -1959,7 +1959,13 @@ describe("orchestrator", () => {
     t.adapter.emit({
       kind: "status",
       status,
-      capabilities: { sessionReset: true, agentsList: true, configSet: true },
+      capabilities: {
+        sessionReset: true,
+        agentsList: true,
+        configSet: true,
+        promptEveryRun: false,
+        serverSessionIds: false,
+      },
     });
     expect(statuses).toEqual([status]);
 
