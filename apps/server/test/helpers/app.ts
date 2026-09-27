@@ -54,7 +54,7 @@ export async function bootTestApp(
   try {
     app = await createApp(loadConfig({ ...testEnv, ...overrides, ATTACHMENTS_DIR: dir }), {
       ...deps,
-      adapter: deps.adapter ?? new FakeAdapter(),
+      adapters: deps.adapters ?? [new FakeAdapter()],
       pushSend: deps.pushSend ?? noExternalPush,
       statfs: deps.statfs ?? plentyOfDisk,
     });

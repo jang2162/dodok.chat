@@ -9,6 +9,7 @@ import { type FakeGateway, type FakeGatewayOptions, startFakeGateway } from "../
 import { type FakePlugin, startFakePlugin } from "../fakes/fake-plugin";
 import { login, noExternalPush } from "./app";
 import { testEnv } from "./env";
+import { openclawOf } from "./openclaw";
 
 export type LiveApp = {
   app: App;
@@ -105,12 +106,12 @@ export async function bootLiveApp(opts: LiveAppOptions = {}): Promise<LiveApp> {
 /** 어댑터 status 이벤트로 gateway·bridge 가 모두 connected 가 될 때까지 기다린다. dev:fake(scripts/dev-fake.ts)도 쓴다. */
 export function waitForAdapterConnected(app: App, timeoutMs = CONNECT_TIMEOUT_MS): Promise<void> {
   const up = () => {
-    const status = app.adapter.status();
+    const status = openclawOf(app).status();
     return status.provider === "openclaw" && status.gateway === "connected" && status.bridge === "connected";
   };
   if (up()) return Promise.resolve();
   return new Promise((resolve, reject) => {
-    const off = app.adapter.onEvent((event) => {
+    const off = openclawOf(app).onEvent((event) => {
       if (event.kind !== "status" || !up()) return;
       clearTimeout(timer);
       off();
@@ -119,7 +120,7 @@ export function waitForAdapterConnected(app: App, timeoutMs = CONNECT_TIMEOUT_MS
     const timer = setTimeout(() => {
       off();
       reject(
-        new Error(`adapter not connected within ${timeoutMs}ms: ${JSON.stringify(app.adapter.status())}`),
+        new Error(`adapter not connected within ${timeoutMs}ms: ${JSON.stringify(openclawOf(app).status())}`),
       );
     }, timeoutMs);
   });

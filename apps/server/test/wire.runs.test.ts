@@ -23,7 +23,7 @@ describe("wire 런 핸들러·REST 런 조회 (앱 부팅, FakeAdapter 배선)",
 
   beforeAll(async () => {
     adapter = new FakeAdapter();
-    app = await bootTestApp({}, { adapter });
+    app = await bootTestApp({}, { adapters: [adapter] });
     await app.fastify.listen({ host: "127.0.0.1", port: 0 });
     ({ token, headers } = await login(app));
     channel = createChannel(app.db, {
@@ -363,7 +363,7 @@ describe("wire 런 핸들러·REST 런 조회 (앱 부팅, FakeAdapter 배선)",
 describe("app.close — 배선된 오케스트레이터", () => {
   it("close() 뒤에는 어댑터 이벤트를 받지 않는다(orchestrator.stop)", async () => {
     const adapter = new FakeAdapter();
-    const app = await bootTestApp({}, { adapter });
+    const app = await bootTestApp({}, { adapters: [adapter] });
     const channel = createChannel(app.db, {
       workspaceId: app.workspaceId,
       createdBy: app.ownerUserId,

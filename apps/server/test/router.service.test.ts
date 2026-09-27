@@ -14,6 +14,7 @@ import { createRouter } from "../src/modules/router/service";
 import type { EnqueueTrigger } from "../src/modules/runs/orchestrator";
 import { getRun, insertRun, listOpenRuns } from "../src/modules/runs/store";
 import { ServerBus } from "../src/realtime/bus";
+import { createAdapterRegistry } from "../src/adapters/registry";
 import { createServices } from "../src/wiring";
 import { newTestDb } from "./helpers/db";
 import { seedWorkspace } from "./helpers/seed";
@@ -409,7 +410,7 @@ describe("createServices — 라우터·오케스트레이터 상호 참조", ()
       db: t.db,
       bus: t.bus,
       logger: logger as unknown as Logger,
-      adapter,
+      registry: createAdapterRegistry([adapter]),
       workspaceId: t.workspaceId,
     });
     return { ...t, adapter, services };

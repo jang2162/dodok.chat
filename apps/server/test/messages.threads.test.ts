@@ -395,7 +395,7 @@ describe("wire·REST — 스레드", () => {
   const sockets: WireClient[] = [];
 
   beforeAll(async () => {
-    app = await bootTestApp({}, { adapter: new FakeAdapter() });
+    app = await bootTestApp({}, { adapters: [new FakeAdapter()] });
     await app.fastify.listen({ host: "127.0.0.1", port: 0 });
     // 앱당 login 1회 — /auth/local 은 5회/분 레이트리밋
     ({ token, headers } = await login(app));

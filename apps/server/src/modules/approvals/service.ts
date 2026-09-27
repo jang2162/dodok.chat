@@ -1,13 +1,19 @@
 import { type ProviderApproval, parseSessionKey } from "@dodok/openclaw-adapter";
 import type { Approval, ApprovalDecision, ApprovalReason, ApprovalStatus, RunSignal } from "@dodok/shared";
 import { and, eq } from "drizzle-orm";
-import { AdapterError, type AgentAdapter, type RunEventBody } from "../../adapters/types";
+import type { AdapterRegistry } from "../../adapters/registry";
+import {
+  type AdapterProvider,
+  AdapterError,
+  type AgentAdapter,
+  type RunEventBody,
+} from "../../adapters/types";
 import type { Db, DbOrTx } from "../../db/client";
 import { agents } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
 import type { Logger } from "../../logger";
 import type { ServerBus } from "../../realtime/bus";
-import { providerAgentIdIs } from "../agents/service";
+import { getAgent, providerAgentIdIs } from "../agents/service";
 import { getChannel } from "../channels/service";
 import { findOpenRunBySession } from "../runs/store";
 import * as store from "./store";
@@ -17,11 +23,11 @@ export type ApprovalsLogger = Pick<Logger, "debug" | "warn" | "error">;
 export type ResolveInput = { approvalId: string; decision: ApprovalDecision; userId: string };
 
 export type ApprovalsService = {
-  /** 어댑터 승인 이벤트 1건을 반영한다. 새 사실이면 wire·런 이벤트까지 낸다. 절대 던지지 않는다 */
-  ingest(a: ProviderApproval): void;
+  /** 어댑터 승인 이벤트 1건을 반영한다 — provider 는 승인을 낸 어댑터의 것. 새 사실이면 wire·런 이벤트까지 낸다. 절대 던지지 않는다 */
+  ingest(a: ProviderApproval, provider: AdapterProvider): void;
   /**
-   * 사용자가 카드를 눌렀다 — 설계 4.4 의 검사를 순서대로 통과할 때만 Gateway 로 보낸다.
-   * 검사에 걸리면 `HttpError`(FORBIDDEN·NOT_FOUND·CONFLICT·VALIDATION·ADAPTER_UNAVAILABLE)를 던진다.
+   * 사용자가 카드를 눌렀다 — 설계 4.4 의 검사를 순서대로 통과할 때만 그 에이전트의 어댑터로 보낸다.
+   * 검사에 걸리면 `HttpError`(FORBIDDEN·NOT_FOUND·CONFLICT·VALIDATION)를, 어댑터가 거부하면 그 코드(ADAPTER_UNAVAILABLE 등)를 던진다.
    */
   resolve(input: ResolveInput): Promise<Approval>;
   /** 런이 끝났을 때 남은 승인을 닫는다. 런은 이미 끝나는 중이라 런 신호는 보내지 않는다 */
@@ -37,15 +43,15 @@ export type ApprovalsService = {
   pendingForChannel(channelId: string): Approval[];
 };
 
-/** 승인 서비스가 쓰는 어댑터 면 — 해결 RPC 와 연결 상태(설계 4.4 마지막 검사) */
-export type ApprovalsAdapter = Pick<AgentAdapter, "provider" | "status" | "resolveApproval">;
+/** 승인 서비스가 쓰는 어댑터 면 — 해결 RPC. 연결 검사는 어댑터 안에 있다(러너 계획 판정 P6) */
+export type ApprovalsAdapter = Pick<AgentAdapter, "resolveApproval">;
 
 export type ApprovalsDeps = {
   db: Db;
   bus: ServerBus;
   logger: ApprovalsLogger;
-  /** 세션 키의 에이전트를 찾고, 해결을 Gateway 로 보낸다 */
-  adapter: ApprovalsAdapter;
+  /** 해결을 승인 행의 에이전트 provider 어댑터로 보낸다 */
+  registry: Pick<AdapterRegistry, "forAgent">;
   /** 이 워크스페이스의 채널만 다룬다(REST·wire 와 같은 경계) */
   workspaceId: string;
   now?: () => Date;
@@ -149,7 +155,7 @@ export function createApprovalsService(deps: ApprovalsDeps): ApprovalsService {
   }
 
   return {
-    ingest(a) {
+    ingest(a, provider) {
       try {
         // 어댑터가 이미 걸렀지만 서버도 방어한다 — 토큰·본문·툴 인자는 찍지 않는다
         const session = parseSessionKey(a.sessionKey);
@@ -159,8 +165,7 @@ export function createApprovalsService(deps: ApprovalsDeps): ApprovalsService {
         }
         // workspaceId 를 꼭 넘긴다 — 빠뜨리면 다른 워크스페이스 채널의 승인도 받아 적는다(socket.ts 와 같은 규칙)
         const channel = getChannel(db, session.channelId, deps.workspaceId);
-        const agentId =
-          channel && findAgentId(db, channel.workspaceId, deps.adapter.provider, session.providerAgentId);
+        const agentId = channel && findAgentId(db, channel.workspaceId, provider, session.providerAgentId);
         if (!channel || !agentId) {
           logger.warn({ sessionKey: a.sessionKey }, "approval for unknown session");
           return;
@@ -227,14 +232,18 @@ export function createApprovalsService(deps: ApprovalsDeps): ApprovalsService {
       if (!approval.allowedDecisions.includes(decision)) {
         throw apiError("VALIDATION", "decision is not allowed for this approval");
       }
-      // OpenClaw 어댑터의 resolveApproval 도 같은 조건으로 막는다(러너 계획 판정 P6) — 두 겹이어도 결과는 같다
-      const adapterStatus = deps.adapter.status();
-      if (adapterStatus.provider === "openclaw" && adapterStatus.gateway !== "connected") {
-        throw apiError("ADAPTER_UNAVAILABLE", "gateway is not connected");
+      // 연결 검사는 어댑터가 한다(판정 P6) — Gateway·러너가 없으면 resolveApproval 이 ADAPTER_UNAVAILABLE 을 던진다
+      const agent = getAgent(db, approval.agentId);
+      if (!agent) throw apiError("NOT_FOUND", "approval agent not found");
+      let adapter: ApprovalsAdapter;
+      try {
+        adapter = deps.registry.forAgent(agent);
+      } catch (err) {
+        rethrowAdapterError(err);
       }
 
-      logger.debug({ approvalId, decision, userId }, "approval resolve sent to gateway");
-      const snapshot = await resolveOnGateway(deps.adapter, approval, decision);
+      logger.debug({ approvalId, decision, userId }, "approval resolve sent to adapter");
+      const snapshot = await resolveOnAdapter(adapter, approval, decision);
 
       // 기다리는 사이 Gateway 가 같은 사실을 이벤트로 먼저 줬을 수 있다 — 결과는 먼저 온 쪽이 이긴다(설계 4.4).
       // 그래도 이 승인을 해결한 것은 지금 approval.resolve 를 부른 사용자다 — 사람이 여럿인 팀에서는 누가
@@ -308,8 +317,8 @@ export function createApprovalsService(deps: ApprovalsDeps): ApprovalsService {
   };
 }
 
-/** Gateway RPC 의 실패는 어댑터 코드 그대로 사용자에게 돌려준다(연결 끊김·없는 승인·프로토콜). */
-async function resolveOnGateway(
+/** 어댑터의 실패는 그 코드 그대로 사용자에게 돌려준다(연결 끊김·없는 승인·프로토콜·어댑터 없는 provider). */
+async function resolveOnAdapter(
   adapter: ApprovalsAdapter,
   approval: Approval,
   decision: ApprovalDecision,
@@ -317,12 +326,16 @@ async function resolveOnGateway(
   try {
     return await adapter.resolveApproval(approval.providerApprovalId, approval.kind, decision);
   } catch (err) {
-    // 패키지 경계를 넘어 클래스가 둘일 수 있어 이름도 본다(orchestrator 와 같은 규칙)
-    if (err instanceof AdapterError || (err instanceof Error && err.name === "AdapterError")) {
-      throw apiError((err as AdapterError).code, `approval resolve failed: ${err.message}`);
-    }
-    throw err;
+    rethrowAdapterError(err);
   }
+}
+
+function rethrowAdapterError(err: unknown): never {
+  // 패키지 경계를 넘어 클래스가 둘일 수 있어 이름도 본다(orchestrator 와 같은 규칙)
+  if (err instanceof AdapterError || (err instanceof Error && err.name === "AdapterError")) {
+    throw apiError((err as AdapterError).code, `approval resolve failed: ${err.message}`);
+  }
+  throw err;
 }
 
 /**
@@ -344,7 +357,7 @@ export function resolvedOutcome(approval: Pick<Approval, "status" | "decision" |
 function findAgentId(
   db: DbOrTx,
   workspaceId: string,
-  provider: ApprovalsAdapter["provider"],
+  provider: AdapterProvider,
   providerAgentId: string,
 ): string | undefined {
   return db

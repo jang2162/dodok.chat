@@ -1,6 +1,6 @@
 /** 설정 마법사의 연결 상태 조립(스펙 3장 SetupStatus) — 어댑터 상세·플러그인 파일·서버 버전을 모은다. 입출력 없음 */
 import type { SetupStatus } from "@dodok/shared";
-import type { AdapterSetupDetail, OpenClawSetupDetail } from "../../adapters/types";
+import type { OpenClawSetupDetail } from "../../adapters/types";
 import { gatewayPin } from "../ops/health";
 import type { PluginFile } from "./plugin-file";
 
@@ -15,23 +15,15 @@ export function bridgePublicUrl(config: {
   return `${protocol}//${origin.host}/bridge`;
 }
 
-/** 상세가 OpenClaw 것이 아닐 때 gateway·bridge 블록 — 붙은 것이 없는 모양 */
-const OPENCLAW_ABSENT: OpenClawSetupDetail = {
-  provider: "openclaw",
-  gateway: { state: "down", host: "", version: null, pairing: null },
-  bridge: { state: "down", plugin: null },
-};
-
 export function buildSetupStatus(input: {
-  detail: AdapterSetupDetail;
+  /** gateway·bridge 블록의 재료 — OpenClaw 어댑터의 상세(레지스트리 forProvider("openclaw")) */
+  detail: OpenClawSetupDetail;
   pluginFile: PluginFile | null;
   serverVersion: string;
   publicUrl: string;
   envTokenIgnored: boolean;
 }): SetupStatus {
-  const { pluginFile } = input;
-  // gateway·bridge 블록은 OpenClaw 어댑터의 상세다
-  const detail = input.detail.provider === "openclaw" ? input.detail : OPENCLAW_ABSENT;
+  const { pluginFile, detail } = input;
   const plugin = detail.bridge.plugin;
   // 같은 빌드인가는 tgz 안의 번들 sha256 끼리 — 한쪽이라도 모르면 null(옛 플러그인은 bundleSha256 을 보내지 않는다)
   const pluginMatches =

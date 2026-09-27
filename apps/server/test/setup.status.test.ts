@@ -248,20 +248,6 @@ describe("buildSetupStatus", () => {
     expect(JSON.stringify(status)).not.toContain("/app/plugin");
   });
 
-  it("OpenClaw 상세가 아니면 gateway·bridge 는 붙은 것이 없는 모양 — 러너 목록은 비어 있다", () => {
-    const status = buildSetupStatus({
-      detail: { provider: "claude", runners: [] },
-      pluginFile: null,
-      serverVersion: "1.2.3",
-      publicUrl: "wss://chat.example.com/bridge",
-      envTokenIgnored: false,
-    });
-    expect(SetupStatus.parse(status)).toEqual(status);
-    expect(status.gateway).toMatchObject({ state: "down", version: null, pairing: null });
-    expect(status.bridge).toMatchObject({ state: "down", plugin: null });
-    expect(status.runners).toEqual({ list: [], runnerFile: { available: false } });
-  });
-
   it("pluginMatches: 같은 번들 → true, 다른 번들 → false, 파일·플러그인·bundleSha256 이 없으면 null [Review Focus 5]", () => {
     expect(build(plugin, file).pluginMatches).toBe(true);
     expect(build({ ...plugin, bundleSha256: "d".repeat(64) }, file).pluginMatches).toBe(false);

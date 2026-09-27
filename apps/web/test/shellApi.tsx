@@ -2,7 +2,7 @@ import type { Channel, OpenClawAdapterStatus, OpsStatus } from "@dodok/shared";
 import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { render } from "@testing-library/react";
-import type { AdapterCapabilities } from "@/api/queries";
+import type { AdapterCapabilities, AdapterStatusList } from "@/api/queries";
 import { createQueryClient } from "@/app/queryClient";
 import { createAppRouter } from "@/app/router";
 import { TooltipProvider } from "@/ui/tooltip";
@@ -16,6 +16,14 @@ export const ADAPTER_OK: OpenClawAdapterStatus & { capabilities: AdapterCapabili
   bridge: "connected",
   capabilities: { sessionReset: true, agentsList: true, configSet: true },
 };
+
+/** GET /adapter/status 응답 모양(어댑터 목록) — OpenClaw 줄 하나로 싸서 준다 */
+export function adapterStatusBody(
+  openclaw: OpenClawAdapterStatus & { capabilities: AdapterCapabilities },
+): AdapterStatusList {
+  const { capabilities, ...status } = openclaw;
+  return { statuses: [status], capabilities: { openclaw: capabilities } };
+}
 
 /** 문제 없는 운영 상태(OpsStatus 모양) — 운영 화면 테스트는 test/opsServer 의 `opsStatusOf` 로 칸을 덮는다 */
 export const OPS_STATUS_OK: OpsStatus = {
@@ -52,7 +60,7 @@ export function shellGet(input: RequestInfo | URL, init?: RequestInit): Response
   if ((init?.method ?? "GET") !== "GET") return undefined;
   const url = String(input);
   if (url === "/api/v1/channels") return json(200, { channels: [] });
-  if (url === "/api/v1/adapter/status") return json(200, ADAPTER_OK);
+  if (url === "/api/v1/adapter/status") return json(200, adapterStatusBody(ADAPTER_OK));
   if (url === "/api/v1/agents") return json(200, { agents: [] });
   // 사람 목록(작성자·@ 후보) — 기본은 로그인한 owner 한 명
   if (url === "/api/v1/people")

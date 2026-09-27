@@ -40,7 +40,7 @@ describe("역할 매트릭스(스펙 2장)", () => {
 
   beforeAll(async () => {
     adapter = new FakeAdapter();
-    app = await bootTestApp({}, { adapter });
+    app = await bootTestApp({}, { adapters: [adapter] });
     await app.fastify.listen({ host: "127.0.0.1", port: 0 });
     tokens.owner = (await login(app)).token;
     ids.owner = app.ownerUserId;

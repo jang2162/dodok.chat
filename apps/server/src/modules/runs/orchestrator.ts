@@ -10,7 +10,13 @@ import {
   RunUsage,
 } from "@dodok/shared";
 import { and, eq } from "drizzle-orm";
-import { AdapterError, type AgentAdapter, type RunEventBody } from "../../adapters/types";
+import type { AdapterRegistry } from "../../adapters/registry";
+import {
+  type AdapterProvider,
+  AdapterError,
+  type AgentAdapter,
+  type RunEventBody,
+} from "../../adapters/types";
 import type { Db, DbOrTx } from "../../db/client";
 import { agents, channels, messages } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
@@ -79,8 +85,11 @@ export interface Orchestrator {
   /** 델타 코얼레싱·run_events 저장·팬아웃. seq·ts 는 여기서 붙인다 */
   applyRunEvent(runId: string, event: RunEventBody): Promise<void>;
   abort(runId: string): Promise<void>;
-  /** 브리지 정본 도착. 돌려준 messageId 를 어댑터가 플러그인 ack 로 쓴다 */
-  onCanonical(msg: OutboundMessage): Promise<{ messageId?: string }>;
+  /**
+   * 에이전트 최종 메시지 도착(OpenClaw 는 브리지 정본). 돌려준 messageId 를 어댑터가 ack 로 쓴다.
+   * provider 는 보낸 어댑터의 것 — msg.agentId(제공자 쪽 id)를 그 provider 의 에이전트로 푼다(기본 openclaw)
+   */
+  onCanonical(msg: OutboundMessage, provider?: AdapterProvider): Promise<{ messageId?: string }>;
   activeRuns(channelId: string): RunState[];
   recoverOnBoot(): Promise<number>;
   /** 타이머 전부 해제·어댑터 구독 해제 */
@@ -92,7 +101,8 @@ export type OrchestratorLogger = Pick<Logger, "debug" | "info" | "warn" | "error
 export type OrchestratorDeps = {
   db: Db;
   bus: ServerBus;
-  adapter: AgentAdapter;
+  /** 런은 에이전트 행의 provider 어댑터로 보낸다. 이벤트는 모든 어댑터에서 받는다 */
+  registry: AdapterRegistry;
   logger: OrchestratorLogger;
   /** 라우터(태스크 9) — 정본 저장 직후, canonical_received 신호 전에 부른다 */
   onAgentMessage: (message: Message, run: Run) => Promise<void>;
@@ -102,7 +112,7 @@ export type OrchestratorDeps = {
   timeouts?: Partial<RunTimeouts>;
 };
 
-const USAGE_EVENT = "openclaw.usage";
+const USAGE_EVENTS: ReadonlySet<string> = new Set(["openclaw.usage"]);
 /** queued 에서 이 상태로 나가면 Gateway 가 런을 시작한 것 — RUN_STARTED·startedAt·run 타이머 */
 const STARTED: ReadonlySet<RunStatus> = new Set<RunStatus>([
   "streaming",
@@ -148,7 +158,7 @@ type Pending = { sessionKey: string; order: number; trigger: EnqueueTrigger };
  * DB 쓰기는 동기(better-sqlite3)라 신호 적용은 await 없이 한 번에 끝난다 — 어댑터 이벤트 순서가 그대로 보존된다.
  */
 export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
-  const { db, bus, adapter, logger } = deps;
+  const { db, bus, registry, logger } = deps;
   const now = deps.now ?? (() => new Date());
   const overrides = Object.entries(deps.timeouts ?? {}).filter(([, v]) => v !== undefined);
   const timeouts: RunTimeouts = { ...DEFAULT_RUN_TIMEOUTS, ...Object.fromEntries(overrides) };
@@ -164,6 +174,41 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
   const forgetTimers = new Set<ReturnType<typeof setTimeout>>();
   let order = 0;
   let stopped = false;
+
+  // ── 어댑터 고르기 ───────────────────────────────────────────
+
+  /** 그 에이전트의 provider 어댑터. 행이 없으면 NOT_FOUND, 어댑터가 없으면 AdapterError(ADAPTER_UNAVAILABLE) */
+  function adapterForAgent(agentId: string): AgentAdapter {
+    const agent = getAgent(db, agentId);
+    if (!agent) throw apiError("NOT_FOUND", "agent not found");
+    return registry.forAgent(agent);
+  }
+
+  /** 런을 만들자마자 닫아야 하는 사유 — 세션 키 규칙 밖 id, 어댑터가 없는 provider. 보낼 수 있으면 undefined */
+  function refusalFor(agent: { provider: string; providerAgentId: string }) {
+    if (!isOpenClawAgentId(agent.providerAgentId)) {
+      return {
+        code: INVALID_AGENT_ID,
+        message: "providerAgentId is not a valid OpenClaw agentId",
+        log: "providerAgentId outside session key rule",
+      };
+    }
+    try {
+      registry.forAgent(agent);
+      return undefined;
+    } catch (err) {
+      return { ...dispatchError(err), log: "no adapter for the agent provider" };
+    }
+  }
+
+  /** 멈춤·잊기처럼 best-effort 인 자리 — 보낼 어댑터가 없으면 할 일도 없다 */
+  function adapterOfRun(run: Pick<Run, "agentId">): AgentAdapter | undefined {
+    try {
+      return adapterForAgent(run.agentId);
+    } catch {
+      return undefined;
+    }
+  }
 
   // ── 이벤트 쓰기 ─────────────────────────────────────────────
 
@@ -428,18 +473,18 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       let aborting: Promise<unknown> | undefined;
       if (before && !TERMINAL_STATUSES.has(before.status) && transition(before, s).next !== null) {
         logClosedByTimeout(before, s.kind);
-        aborting = adapter.abort(runId, before.sessionKey).then(
+        aborting = (adapterOfRun(before)?.abort(runId, before.sessionKey) ?? Promise.resolve()).then(
           () => undefined,
           (err: unknown) => err ?? new Error("adapter abort failed"),
         );
       }
       await api.signal(runId, s);
-      if (!aborting) return;
+      if (!aborting || !before) return;
       const failure = await aborting;
       if (failure !== undefined) logger.warn({ err: failure, runId }, "adapter abort after timeout failed");
       const after = store.getRun(db, runId);
       if (!after || !TERMINAL_STATUSES.has(after.status)) return;
-      adapter.forgetRun?.(runId);
+      adapterOfRun(before)?.forgetRun?.(runId);
     } catch (err) {
       logger.error({ err, runId, signal: s.kind }, "run timeout handling failed");
     }
@@ -455,10 +500,11 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       const run = store.getRun(db, runId);
       if (!awaitingAck.has(runId) || run?.status !== "queued") return;
       logClosedByTimeout(run, "undelivered");
+      const adapter = adapterOfRun(run);
       void adapter
-        .abort(runId, run.sessionKey)
+        ?.abort(runId, run.sessionKey)
         .catch((err: unknown) => logger.debug({ err, runId }, "adapter abort after undelivered failed"));
-      adapter.forgetRun?.(runId);
+      adapter?.forgetRun?.(runId);
       applySignal(runId, {
         kind: "gateway_error",
         code: "ADAPTER_UNAVAILABLE",
@@ -609,7 +655,8 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         return;
       }
       const trigger = pending.get(runId)?.trigger ?? {};
-      if (run.threadRootId !== undefined && pluginLacksThreads(run.agentId)) {
+      const adapter = adapterForAgent(run.agentId);
+      if (run.threadRootId !== undefined && lacksThreads(adapter, run.agentId)) {
         applySignal(runId, {
           kind: "gateway_error",
           code: PLUGIN_OUTDATED,
@@ -683,12 +730,12 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
   }
 
   /**
-   * 붙은 플러그인이 스레드를 모른다. 붙은 플러그인이 없으면 모른다고 단정하지 않는다 — 어댑터가 플러그인을 기다렸다 보내고,
-   * 못 붙으면 ADAPTER_UNAVAILABLE 로 닫힌다(브리지가 잠깐 끊긴 사이의 스레드 멘션에 재설치 안내를 남기지 않게)
+   * 그 에이전트를 맡은 쪽이 스레드를 모른다. OpenClaw 는 붙은 플러그인이 없으면 모른다고 단정하지 않는다 — 어댑터가 플러그인을 기다렸다
+   * 보내고, 못 붙으면 ADAPTER_UNAVAILABLE 로 닫힌다(브리지가 잠깐 끊긴 사이의 스레드 멘션에 재설치 안내를 남기지 않게)
    */
-  function pluginLacksThreads(agentId: string): boolean {
+  function lacksThreads(adapter: AgentAdapter, agentId: string): boolean {
     const detail = adapter.setupDetail();
-    if (detail.provider !== "openclaw" || detail.bridge.plugin === null) return false;
+    if (detail.provider === "openclaw" && detail.bridge.plugin === null) return false;
     // 에이전트 행이 없으면 여기서 막지 않는다 — ensureSession 이 그 런을 닫는다
     const providerAgentId = getAgent(db, agentId)?.providerAgentId;
     return providerAgentId !== undefined && !adapter.supports(providerAgentId, "threads");
@@ -719,30 +766,26 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     return thread;
   }
 
-  function agentIdFor(msg: OutboundMessage): string | undefined {
+  function agentIdFor(msg: OutboundMessage, provider: AdapterProvider): string | undefined {
     return db
       .select({ id: agents.id })
       .from(agents)
       .innerJoin(channels, eq(channels.workspaceId, agents.workspaceId))
       .where(
-        and(
-          eq(channels.id, msg.channelId),
-          eq(agents.provider, adapter.provider),
-          providerAgentIdIs(msg.agentId),
-        ),
+        and(eq(channels.id, msg.channelId), eq(agents.provider, provider), providerAgentIdIs(msg.agentId)),
       )
       .get()?.id;
   }
 
   /** 계약 스펙 5.1: runId → sessionKey 의 미종료 런 → replyToInboundId 가 트리거한 런. 다른 채널 런은 쓰지 않는다. */
-  function correlate(msg: OutboundMessage): Run | undefined {
+  function correlate(msg: OutboundMessage, provider: AdapterProvider): Run | undefined {
     const inChannel = (run: Run | undefined) => (run?.channelId === msg.channelId ? run : undefined);
     const byRunId = msg.runId === undefined ? undefined : inChannel(store.getRun(db, msg.runId));
     if (byRunId) return byRunId;
     const bySession = inChannel(store.findOpenRunBySession(db, msg.sessionKey));
     if (bySession) return bySession;
     if (msg.replyToInboundId === undefined) return undefined;
-    const agentId = agentIdFor(msg);
+    const agentId = agentIdFor(msg, provider);
     if (agentId === undefined) return undefined;
     return inChannel(store.findRunByTriggerMessage(db, msg.replyToInboundId, agentId));
   }
@@ -790,7 +833,8 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     if (stopped) return;
     const timer = setTimeout(() => {
       forgetTimers.delete(timer);
-      adapter.forgetRun?.(runId);
+      const run = store.getRun(db, runId);
+      if (run) adapterOfRun(run)?.forgetRun?.(runId);
     }, FORGET_AFTER_FINAL_TIMEOUT_MS);
     timer.unref?.();
     forgetTimers.add(timer);
@@ -856,17 +900,19 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
   const api: Orchestrator = {
     async enqueueRun(plan, trigger) {
       const ts = now();
-      const providerAgentId = getAgent(db, plan.agentId)?.providerAgentId;
-      // 규칙 밖 id 는 세션 키를 못 만든다 — 조용히 던지지 않고 런을 남겨 사유 있는 run_error 로 닫는다
-      const keyable = providerAgentId === undefined || isOpenClawAgentId(providerAgentId);
-      const sessionKey = keyable
-        ? ensureSession(db, adapter, {
-            channelId: plan.channelId,
-            agentId: plan.agentId,
-            threadRootId: plan.threadRootId,
-          }).session.sessionKey
-        : "";
-      const queue = keyable ? (sessionQueues.get(sessionKey) ?? []) : [];
+      const agent = getAgent(db, plan.agentId);
+      // 규칙 밖 id 는 세션 키를 못 만들고, 어댑터가 없는 provider 는 보낼 곳이 없다 — 조용히 던지지 않고 런을 남겨 사유 있는 run_error 로 닫는다.
+      // 행이 없으면 아래 adapterForAgent 가 NOT_FOUND 를 던진다(런을 남기지 않는다)
+      const refusal = agent === undefined ? undefined : refusalFor(agent);
+      const sessionKey =
+        refusal === undefined
+          ? ensureSession(db, adapterForAgent(plan.agentId), {
+              channelId: plan.channelId,
+              agentId: plan.agentId,
+              threadRootId: plan.threadRootId,
+            }).session.sessionKey
+          : "";
+      const queue = refusal === undefined ? (sessionQueues.get(sessionKey) ?? []) : [];
       const { run, event } = db.transaction((tx) => {
         const run = store.insertRun(tx, {
           channelId: plan.channelId,
@@ -890,16 +936,12 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         );
         return { run, event };
       });
-      if (!keyable) {
+      if (refusal !== undefined) {
         emitEvents(run.channelId, [event]);
         bus.emit("run.state", { run: store.toRunState(run) });
-        logger.warn({ runId: run.id, agentId: plan.agentId }, "providerAgentId outside session key rule");
+        logger.warn({ runId: run.id, agentId: plan.agentId, code: refusal.code }, refusal.log);
         return (
-          applySignal(run.id, {
-            kind: "gateway_error",
-            code: INVALID_AGENT_ID,
-            message: "providerAgentId is not a valid OpenClaw agentId",
-          }) ?? run
+          applySignal(run.id, { kind: "gateway_error", code: refusal.code, message: refusal.message }) ?? run
         );
       }
       pending.set(run.id, { sessionKey: run.sessionKey, order: ++order, trigger });
@@ -941,7 +983,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
           logger.warn({ runId, type: event.type }, "run event for unknown run");
           return;
         }
-        if (event.type === "CUSTOM" && event.name === USAGE_EVENT) {
+        if (event.type === "CUSTOM" && USAGE_EVENTS.has(event.name)) {
           recordUsage(run, event.value); // 종료 뒤에 와도 반영한다(usage 는 final 과 순서가 없다)
           return;
         }
@@ -978,19 +1020,20 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       const run = store.getRun(db, runId);
       if (!run) throw apiError("NOT_FOUND", "run not found");
       if (TERMINAL_STATUSES.has(run.status)) return;
+      const adapter = adapterOfRun(run);
       if (inflight.has(runId) || run.providerRunId !== undefined) {
         try {
-          await adapter.abort(runId, run.sessionKey);
+          await adapter?.abort(runId, run.sessionKey);
         } catch (err) {
           logger.warn({ err, runId }, "adapter abort failed");
         }
       }
       // ack 전(플러그인 대기·재시도 중)이면 어댑터가 쥔 전송을 버린다 — 플러그인이 늦게 붙어도 중단한 런을 보내지 않게(sc-t14 리뷰 이월 A)
-      if (awaitingAck.has(runId)) adapter.forgetRun?.(runId);
+      if (awaitingAck.has(runId)) adapter?.forgetRun?.(runId);
       await api.signal(runId, { kind: "abort_requested" });
     },
 
-    async onCanonical(msg) {
+    async onCanonical(msg, provider = "openclaw") {
       const existing = db
         .select({ id: messages.id })
         .from(messages)
@@ -998,10 +1041,10 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         .get();
       if (existing) return { messageId: existing.id };
 
-      const run = correlate(msg);
+      const run = correlate(msg, provider);
       const threadRootId = canonicalThread(msg, run);
       if (!run) {
-        const agentId = agentIdFor(msg);
+        const agentId = agentIdFor(msg, provider);
         const where = { outboundId: msg.outboundId, channelId: msg.channelId, sessionKey: msg.sessionKey };
         if (agentId === undefined) {
           logger.warn({ ...where, providerAgentId: msg.agentId }, "canonical message from unknown agent");
@@ -1061,7 +1104,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     },
   };
 
-  const unsubscribe = adapter.onEvent((e) => {
+  const unsubscribe = registry.onEvent((e, from) => {
     switch (e.kind) {
       case "run_event":
         void api.applyRunEvent(e.runId, e.event);
@@ -1075,13 +1118,13 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         return;
       case "approval":
         // 상관·저장·중계는 승인 서비스가 한다(설계 4.2). ingest 는 던지지 않는다 — 한 건이 이벤트 루프를 끊지 않게
-        if (deps.approvals) deps.approvals.ingest(e.approval);
+        if (deps.approvals) deps.approvals.ingest(e.approval, from.provider);
         else logger.warn({ providerApprovalId: e.approval.providerApprovalId }, "approval without service");
         return;
       case "canonical":
         return; // 저장은 어댑터가 onCanonical 훅으로 직접 부른다 — 이벤트는 알림용
       case "status":
-        bus.emit("adapter.status", e.status);
+        bus.emit("adapter.status", e.status); // 어댑터마다 자기 상태로(판정 P7)
         return;
     }
   });

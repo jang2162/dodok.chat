@@ -1,6 +1,6 @@
 import type { OpenClawAdapterOptions } from "@dodok/openclaw-adapter";
 import { eq } from "drizzle-orm";
-import type { AgentAdapter } from "./adapters/types";
+import type { AdapterRegistry } from "./adapters/registry";
 import type { Db, DbOrTx } from "./db/client";
 import { agentSessions, agents } from "./db/schema.sqlite";
 import { apiError } from "./http/errors";
@@ -19,7 +19,7 @@ export type ServicesDeps = {
   db: Db;
   bus: ServerBus;
   logger: Logger;
-  adapter: AgentAdapter;
+  registry: AdapterRegistry;
   /** 런·메시지의 채널이 이 워크스페이스에 있어야 wire 가 다룬다(REST 와 같은 경계) */
   workspaceId: string;
   timeouts?: Partial<RunTimeouts> | undefined;
@@ -37,7 +37,10 @@ export type SessionRecoverTarget = ReturnType<
   NonNullable<OpenClawAdapterOptions["sessionKeysToRecover"]>
 >[number];
 
-/** 어댑터 재접속 복구 대상 — agent_sessions 전부. agentId 는 Gateway 쪽 id(providerAgentId), 커서는 저장된 것만 싣는다. */
+/**
+ * OpenClaw 어댑터 재접속 복구 대상 — OpenClaw 에이전트의 agent_sessions 전부. agentId 는 Gateway 쪽 id(providerAgentId),
+ * 커서는 저장된 것만 싣는다. 다른 provider 의 세션은 Gateway 에 없다
+ */
 export function sessionRecoverTargets(db: DbOrTx): SessionRecoverTarget[] {
   return db
     .select({
@@ -47,6 +50,7 @@ export function sessionRecoverTargets(db: DbOrTx): SessionRecoverTarget[] {
     })
     .from(agentSessions)
     .innerJoin(agents, eq(agents.id, agentSessions.agentId))
+    .where(eq(agents.provider, "openclaw"))
     .all()
     .map(({ cursor, ...target }) => (cursor === null ? target : { ...target, cursor }));
 }
@@ -56,7 +60,7 @@ export function sessionRecoverTargets(db: DbOrTx): SessionRecoverTarget[] {
  * 오케스트레이터는 정본 저장 직후 라우터로 릴레이를 판단한다.
  */
 export function createServices(deps: ServicesDeps): Services {
-  const { db, bus, logger, adapter, workspaceId } = deps;
+  const { db, bus, logger, registry, workspaceId } = deps;
   const ops = createOpsService({ db, bus, logger, workspaceId });
   // 라우터를 먼저 만든다 — enqueue 는 메시지가 들어올 때(이 함수가 끝난 뒤) 불리므로 그때는 orchestrator 가 있다
   let orchestrator: Orchestrator;
@@ -70,7 +74,7 @@ export function createServices(deps: ServicesDeps): Services {
     db,
     bus,
     logger,
-    adapter,
+    registry,
     workspaceId,
     onSignal: (runId, signal) => void orchestrator.signal(runId, signal),
     appendEvent: (runId, event) => void orchestrator.applyRunEvent(runId, event),
@@ -78,7 +82,7 @@ export function createServices(deps: ServicesDeps): Services {
   orchestrator = createOrchestrator({
     db,
     bus,
-    adapter,
+    registry,
     logger,
     approvals,
     timeouts: deps.timeouts,

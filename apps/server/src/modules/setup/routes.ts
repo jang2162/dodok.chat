@@ -7,7 +7,7 @@ import type { FastifyInstance } from "fastify";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { z } from "zod";
-import type { AgentAdapter } from "../../adapters/types";
+import type { OpenClawSetupDetail } from "../../adapters/types";
 import type { Auth } from "../../auth";
 import { requireOwner } from "../../auth/routes";
 import type { Db } from "../../db/client";
@@ -22,7 +22,8 @@ export type SetupRouteContext = {
   db: Db;
   logger: Logger;
   workspaceId: string;
-  adapter: Pick<AgentAdapter, "setupDetail" | "revokeTokenSessions">;
+  /** 브리지 토큰은 OpenClaw 어댑터의 것 — 붙은 플러그인의 토큰 id·폐기 때 끊기 */
+  openclaw: { setupDetail(): OpenClawSetupDetail; revokeTokenSessions(tokenId: string): number };
   /** 부팅 때 잰 품은 플러그인 파일(없으면 null) */
   pluginFile: PluginFile | null;
   /** 플러그인 계정 설정의 bridgeUrl(status.ts bridgePublicUrl) */
@@ -39,10 +40,7 @@ const pluginFileMissing = () => apiError("NOT_FOUND", "PLUGIN_FILE_MISSING");
 
 export function registerSetupRoutes(fastify: FastifyInstance, ctx: SetupRouteContext): void {
   const owner = { preHandler: requireOwner(ctx) };
-  const connectedTokenId = () => {
-    const detail = ctx.adapter.setupDetail();
-    return detail.provider === "openclaw" ? (detail.bridge.plugin?.tokenId ?? null) : null;
-  };
+  const connectedTokenId = () => ctx.openclaw.setupDetail().bridge.plugin?.tokenId ?? null;
 
   fastify.get("/api/v1/setup/status", owner, async () => ctx.status());
 
@@ -72,7 +70,7 @@ export function registerSetupRoutes(fastify: FastifyInstance, ctx: SetupRouteCon
       throw apiError("NOT_FOUND", "bridge token not found");
     // 폐기는 이미 됐다 — 끊기가 실패해도 다음 핸드셰이크부터 거절된다(스펙 6장)
     try {
-      ctx.adapter.revokeTokenSessions(id);
+      ctx.openclaw.revokeTokenSessions(id);
     } catch (err) {
       ctx.logger.warn({ err, tokenId: id }, "bridge session revoke failed");
     }

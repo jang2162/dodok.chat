@@ -16,6 +16,7 @@ import {
   type RunTimeouts,
   createOrchestrator,
 } from "../src/modules/runs/orchestrator";
+import { createAdapterRegistry } from "../src/adapters/registry";
 import { getRun, insertRun, listRunEvents, updateRun } from "../src/modules/runs/store";
 import { ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
@@ -62,7 +63,7 @@ function setup(opts: { timeouts?: Partial<RunTimeouts>; approvals?: Orchestrator
   const orch = createOrchestrator({
     db,
     bus,
-    adapter,
+    registry: createAdapterRegistry([adapter]),
     logger: logger as unknown as OrchestratorLogger,
     onAgentMessage,
     timeouts: opts.timeouts,
@@ -1290,7 +1291,7 @@ describe("orchestrator", () => {
     const rebooted = createOrchestrator({
       db: t.db,
       bus: t.bus,
-      adapter: rebootAdapter,
+      registry: createAdapterRegistry([rebootAdapter]),
       logger: t.logger as unknown as OrchestratorLogger,
       onAgentMessage: t.onAgentMessage,
     });

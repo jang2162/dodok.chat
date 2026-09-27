@@ -17,7 +17,7 @@ import { createdSockets } from "../../test/fakeSocket";
 import { CH, msg, uid } from "../../test/fixtures";
 import { memoryStorage } from "../../test/memoryStorage";
 import { stubScrollLayout } from "../../test/scrollLayout";
-import { ADAPTER_OK, ME, channelOf, json, shellGet } from "../../test/shellApi";
+import { ADAPTER_OK, ME, adapterStatusBody, channelOf, json, shellGet } from "../../test/shellApi";
 import { PERSIST_KEY, startPersistence, touchRecentChannel } from "./persist";
 
 const OFFLINE = "오프라인 — 저장된 내용을 보여 줍니다";
@@ -94,7 +94,9 @@ describe("Banners — 오프라인", () => {
     let down = true;
     const fetch = vi.fn<typeof globalThis.fetch>(async (input) => {
       if (down) throw new TypeError("Failed to fetch");
-      return String(input) === "/api/v1/adapter/status" ? json(200, ADAPTER_OK) : json(200, ME);
+      return String(input) === "/api/v1/adapter/status"
+        ? json(200, adapterStatusBody(ADAPTER_OK))
+        : json(200, ME);
     });
     vi.stubGlobal("fetch", fetch);
     const qc = createQueryClient(() => {});

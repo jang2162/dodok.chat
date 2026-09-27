@@ -122,7 +122,8 @@ EOF
 (set -a; . data/live-smoke.env; set +a; export DODOK_LOCAL_TOKEN="$LOCAL_AUTH_TOKEN"; pnpm -s wire-cli http://127.0.0.1:$PORT login)
 T=$(jq -r '."http://127.0.0.1:'$PORT'"' data/wire-cli-session.json)   # 출력하지 않는다
 curl -s -H "authorization: Bearer $T" http://127.0.0.1:$PORT/api/v1/adapter/status
-# {"provider":"openclaw","gateway":"connected","bridge":"connected","capabilities":{"sessionReset":true,"agentsList":true,"configSet":true}}
+# {"statuses":[{"provider":"openclaw","gateway":"connected","bridge":"connected"}],"capabilities":{"openclaw":{"sessionReset":true,…}}}
+# 어댑터마다 statuses 한 줄 — 러너 어댑터가 붙으면 {"provider":"claude","runners":{…}} 가 더 나온다
 ```
 
 `bridge` 가 60초 안에 `connected` 가 안 되면 `data/dev-gateway.log` 의 `[dodok] bridge:` 줄을 본다. 서버가 늦게 뜨면 플러그인 백오프가 벌어져 있어

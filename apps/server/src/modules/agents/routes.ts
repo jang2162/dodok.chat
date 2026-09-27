@@ -1,7 +1,8 @@
 import { Agent, Id, isRegistrableAgentId } from "@dodok/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { AdapterError, type AgentAdapter } from "../../adapters/types";
+import type { AdapterRegistry } from "../../adapters/registry";
+import { AdapterError } from "../../adapters/types";
 import type { Auth } from "../../auth";
 import { requireRole } from "../../auth/roles";
 import { requireSession, sessionUser } from "../../auth/routes";
@@ -14,7 +15,7 @@ export type AgentRouteContext = {
   auth: Auth;
   db: Db;
   workspaceId: string;
-  adapter: AgentAdapter | undefined;
+  registry: Pick<AdapterRegistry, "forProvider">;
 };
 
 const AgentParams = z.object({ id: Id });
@@ -65,9 +66,10 @@ export function registerAgentRoutes(fastify: FastifyInstance, ctx: AgentRouteCon
 
   /** Gateway agents.list 를 그대로 — 등록 화면(admin)의 선택지. 자동 동기화는 하지 않는다(스펙 3.5). */
   fastify.get("/api/v1/agents/discover", admin, async () => {
-    if (!ctx.adapter) throw apiError("ADAPTER_UNAVAILABLE", "adapter not configured");
+    const adapter = ctx.registry.forProvider("openclaw");
+    if (!adapter) throw apiError("ADAPTER_UNAVAILABLE", "adapter not configured");
     try {
-      return { agents: await ctx.adapter.listAgents() };
+      return { agents: await adapter.listAgents() };
     } catch (err) {
       if (err instanceof AdapterError) throw apiError(err.code, err.message);
       throw err;

@@ -18,6 +18,7 @@ import {
   type WireLog,
 } from "../helpers/scenario-steps";
 import type { WireClient } from "../helpers/wire";
+import { openclawOf } from "../helpers/openclaw";
 
 vi.setConfig({ testTimeout: 20_000, hookTimeout: 20_000 });
 
@@ -156,7 +157,7 @@ describe("통합 시나리오 8 — 채널 프롬프트 리비전", () => {
       });
       // Gateway 가 MISSING_SCOPE 로 거절했고 어댑터가 capability 를 내렸다 — 두 번째도 같은 409
       expect(live.gateway.requests.filter((r) => r.method === "sessions.reset")).toHaveLength(1);
-      expect(live.app.adapter.capabilities().sessionReset).toBe(false);
+      expect(openclawOf(live.app).capabilities().sessionReset).toBe(false);
       const again = await rest(live, "POST", `/channels/${channel.id}/agents/${dev.id}/reset`);
       expect(again).toEqual({ status: 409, body: reset.body });
       expect(live.gateway.requests.filter((r) => r.method === "sessions.reset")).toHaveLength(1);

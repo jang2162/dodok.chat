@@ -705,7 +705,7 @@ describe("첨부 정리 배선 (스펙 4.7)", () => {
       await expect(
         bootTestApp(
           { ATTACHMENTS_DIR: dir },
-          { adapter: new StatusThrows(), logger, attachmentSweepIntervalMs: 10 },
+          { adapters: [new StatusThrows()], logger, attachmentSweepIntervalMs: 10 },
         ),
       ).rejects.toThrow("status boom");
       // 실패 전에 켜진 부팅 정리를 undo 가 db 를 닫기 전에 끝까지 기다렸다(타이머가 켜졌다는 대조군이기도 하다)
@@ -761,7 +761,9 @@ describe("테스트 헬퍼의 첨부 디렉터리", () => {
   });
 
   it("testEnv 만으로 createApp 을 부르면 부팅이 실패한다 — 앱끼리 디렉터리를 나눠 쓰거나 저장소에 쓰지 않게", async () => {
-    await expect(createApp(loadConfig(testEnv), { adapter: new FakeAdapter() })).rejects.toThrow(/ENOTDIR/);
+    await expect(createApp(loadConfig(testEnv), { adapters: [new FakeAdapter()] })).rejects.toThrow(
+      /ENOTDIR/,
+    );
   });
 });
 

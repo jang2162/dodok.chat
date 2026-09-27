@@ -2,7 +2,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useWireStatus } from "@/realtime/wire";
-import { ADAPTER_OK, ME, json, renderRoute, shellGet } from "../../../test/shellApi";
+import { ADAPTER_OK, ME, adapterStatusBody, json, renderRoute, shellGet } from "../../../test/shellApi";
 import { OWNER, statusOf } from "../../../test/setupServer";
 
 afterEach(() => {
@@ -20,7 +20,7 @@ function stubShell(me: unknown, adapter = ADAPTER_OK) {
     vi.fn<typeof fetch>(async (input, init) => {
       const url = String(input);
       if (url === "/api/v1/auth/me") return json(200, me);
-      if (url === "/api/v1/adapter/status") return json(200, adapter);
+      if (url === "/api/v1/adapter/status") return json(200, adapterStatusBody(adapter));
       if (url.startsWith("/api/v1/setup/")) {
         setupCalls.push(url);
         if (!owner) return json(403, { code: "FORBIDDEN", message: "owner only" });

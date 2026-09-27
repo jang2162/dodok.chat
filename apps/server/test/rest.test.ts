@@ -42,7 +42,7 @@ describe("REST /api/v1 (FakeAdapter)", () => {
 
   beforeAll(async () => {
     adapter = new FakeAdapter();
-    app = await bootTestApp({}, { adapter });
+    app = await bootTestApp({}, { adapters: [adapter] });
     api = await authed(app);
   });
   afterAll(async () => {
@@ -321,7 +321,7 @@ describe("REST /api/v1 (Gateway 미연결 어댑터)", () => {
     vi.spyOn(adapter, "syncChannelConfig").mockRejectedValue(
       new AdapterError("ADAPTER_UNAVAILABLE", "plugin not connected"),
     );
-    const app = await bootTestApp({}, { adapter });
+    const app = await bootTestApp({}, { adapters: [adapter] });
     try {
       const api = await authed(app);
       const res = await api("GET", "/agents/discover");

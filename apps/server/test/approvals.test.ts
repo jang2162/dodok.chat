@@ -14,6 +14,7 @@ import { ServerBus } from "../src/realtime/bus";
 import type { WireServer } from "../src/realtime/types";
 import type { Logger } from "../src/logger";
 import type { RunTimeouts } from "../src/modules/runs/orchestrator";
+import { createAdapterRegistry } from "../src/adapters/registry";
 import { createServices } from "../src/wiring";
 import { bootTestApp, login } from "./helpers/app";
 import { newTestDb } from "./helpers/db";
@@ -85,7 +86,7 @@ describe("승인 저장·런 상관·wire 중계 (앱 부팅, FakeAdapter)", () 
 
   beforeAll(async () => {
     adapter = new FakeAdapter();
-    app = await bootTestApp({}, { adapter });
+    app = await bootTestApp({}, { adapters: [adapter] });
     await app.fastify.listen({ host: "127.0.0.1", port: 0 });
     ({ token } = await login(app));
     dev = createAgent(app.db, {
@@ -1279,7 +1280,7 @@ describe("승인 대기 중 런 시계 (가짜 타이머, 메모리 DB)", () => 
       db,
       bus,
       logger: logger as unknown as Logger,
-      adapter,
+      registry: createAdapterRegistry([adapter]),
       workspaceId: ids.workspaceId,
       timeouts: { runMs: RUN_MS, ...timeouts },
     });

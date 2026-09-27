@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { bootLiveApp, type LiveApp } from "../helpers/live-app";
-import { openclawStatus } from "../helpers/openclaw";
+import { openclawStatus, openclawOf } from "../helpers/openclaw";
 
 describe("서버 통합 스모크 — 실제 OpenClawAdapter + 가짜 Gateway + 가짜 플러그인", () => {
   let live: LiveApp | undefined;
@@ -18,7 +18,7 @@ describe("서버 통합 스모크 — 실제 OpenClawAdapter + 가짜 Gateway + 
     live = await bootLiveApp();
     const { app, gateway, plugin, auth, dir } = live;
 
-    expect(app.adapter).not.toBeInstanceOf(FakeAdapter);
+    expect(openclawOf(app)).not.toBeInstanceOf(FakeAdapter);
     const res = await app.fastify.inject({
       method: "GET",
       url: "/api/v1/adapter/status",
@@ -26,15 +26,15 @@ describe("서버 통합 스모크 — 실제 OpenClawAdapter + 가짜 Gateway + 
     });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({
-      provider: "openclaw",
-      gateway: "connected",
-      bridge: "connected",
+      statuses: [{ provider: "openclaw", gateway: "connected", bridge: "connected" }],
       capabilities: {
-        sessionReset: true,
-        agentsList: true,
-        configSet: true,
-        promptEveryRun: false,
-        serverSessionIds: false,
+        openclaw: {
+          sessionReset: true,
+          agentsList: true,
+          configSet: true,
+          promptEveryRun: false,
+          serverSessionIds: false,
+        },
       },
     });
 
@@ -51,7 +51,7 @@ describe("서버 통합 스모크 — 실제 OpenClawAdapter + 가짜 Gateway + 
     live = undefined;
     expect(existsSync(dir)).toBe(false);
     expect(plugin.notices).toEqual([{ reason: "shutdown", message: "server shutting down" }]);
-    expect(openclawStatus(app.adapter).gateway).toBe("down");
+    expect(openclawStatus(openclawOf(app)).gateway).toBe("down");
   });
 
   it("OPENCLAW_FRAME_DUMP_PATH 를 주면 어댑터가 받은 Gateway 프레임을 그 파일에 남기고 앱 close() 에서 닫는다", async () => {

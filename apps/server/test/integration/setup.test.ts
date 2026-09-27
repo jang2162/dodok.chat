@@ -23,7 +23,7 @@ import { testEnv } from "../helpers/env";
 import { bootLiveApp, type LiveApp } from "../helpers/live-app";
 import { makePng } from "../helpers/png";
 import { connectWire, recordEvents, waitFor, type WireClient, type WirePayload } from "../helpers/wire";
-import { openclawStatus } from "../helpers/openclaw";
+import { openclawStatus, openclawOf } from "../helpers/openclaw";
 
 vi.setConfig({ testTimeout: 20_000, hookTimeout: 20_000 });
 
@@ -170,7 +170,7 @@ describe("설정 마법사 통합 — 브리지 토큰 겹침 교체·폐기", (
       name: "b.png",
       mime: "image/png",
     });
-    expect(openclawStatus(app.adapter).bridge).toBe("connected");
+    expect(openclawStatus(openclawOf(app)).bridge).toBe("connected");
 
     // .env 토큰을 폐기했으니 envTokenIgnored 가 켜진다(Review Focus 1)
     expect(SetupStatus.parse((await call("GET", "/status")).json()).envTokenIgnored).toBe(true);
@@ -180,7 +180,7 @@ describe("설정 마법사 통합 — 브리지 토큰 겹침 교체·폐기", (
     expect((await call("DELETE", `/bridge-tokens/${tokenB}`)).statusCode).toBe(204);
     const down = await downEvent;
     expect(down.status.bridge.state).toBe("down");
-    expect(openclawStatus(app.adapter).bridge).toBe("down");
+    expect(openclawStatus(openclawOf(app)).bridge).toBe("down");
     expect(await tryBridge(app.url, issued.token)).toBe("UNAUTHORIZED");
     expect((await pluginB.downloadAttachment(uploaded.id)).status).toBe(401);
 
@@ -270,7 +270,7 @@ describe("설정 마법사 통합 — 거절 로그 주소", () => {
 describe("설정 마법사 통합 — 어댑터 setup 이벤트", () => {
   it("어댑터 {kind:setup} → 다시 읽은 상태(페어링 requestId 포함)가 owner 소켓에만 간다 — admin·member 는 못 받는다", async () => {
     const adapter = new FakeAdapter();
-    const app = await bootTestApp({}, { adapter, pluginDirs: [] });
+    const app = await bootTestApp({}, { adapters: [adapter], pluginDirs: [] });
     const sockets: WireClient[] = [];
     try {
       await app.fastify.listen({ host: "127.0.0.1", port: 0 });
@@ -321,7 +321,7 @@ describe("설정 마법사 통합 — 어댑터 setup 이벤트", () => {
   it("접속하지 않은 토큰을 폐기해도 서버가 setup.status 를 다시 보낸다 — 어댑터 이벤트(세션 끊김)에 기대지 않는다", async () => {
     // FakeAdapter 의 revokeBridgeSessions 는 기록만 하고 {kind:setup} 을 내지 않는다
     const adapter = new FakeAdapter();
-    const app = await bootTestApp({}, { adapter, pluginDirs: [] });
+    const app = await bootTestApp({}, { adapters: [adapter], pluginDirs: [] });
     const sockets: WireClient[] = [];
     try {
       await app.fastify.listen({ host: "127.0.0.1", port: 0 });

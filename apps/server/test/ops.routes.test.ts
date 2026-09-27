@@ -24,7 +24,7 @@ describe("운영 API /api/v1/ops", () => {
 
   beforeAll(async () => {
     adapter = new FakeAdapter();
-    app = await bootTestApp({}, { adapter });
+    app = await bootTestApp({}, { adapters: [adapter] });
     const session = await login(app);
     owner = session.headers;
     ownerId = app.ownerUserId;

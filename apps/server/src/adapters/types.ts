@@ -2,6 +2,7 @@
 export type {
   AdapterCapabilities,
   AdapterEvent,
+  AdapterProvider,
   AdapterSetupDetail,
   AgentAdapter,
   OpenClawAdapterStatus,

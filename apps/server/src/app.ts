@@ -9,7 +9,8 @@ import { dirname } from "node:path";
 import { Server } from "socket.io";
 import { v7 as uuidv7 } from "uuid";
 import packageJson from "../package.json" with { type: "json" };
-import type { AgentAdapter, OpenClawAdapterStatus } from "./adapters/types";
+import { type AdapterRegistry, createAdapterRegistry } from "./adapters/registry";
+import type { AgentAdapter, OpenClawAdapterStatus, OpenClawSetupDetail } from "./adapters/types";
 import { type Auth, createAuth } from "./auth";
 import { bootstrapOwner } from "./auth/owner";
 import { createIpLimit, registerAuthRoutes } from "./auth/routes";
@@ -76,8 +77,11 @@ export const GATEWAY_RECONNECTING_NOTICE_MS = 60_000;
 export const OPS_SWEEP_INTERVAL_MS = 24 * 3600_000;
 
 export type AppDeps = {
-  /** 없으면 설정으로 실제 어댑터(createOpenClawAdapter — Gateway WS·/bridge)를 만든다. 테스트는 FakeAdapter 를 준다. */
-  adapter?: AgentAdapter | undefined;
+  /**
+   * 레지스트리에 올릴 어댑터(provider 마다 하나, OpenClaw 는 꼭 있어야 한다). 없으면 설정으로 실제 OpenClaw 어댑터
+   * (createOpenClawAdapter — Gateway WS·/bridge) 하나. 테스트는 FakeAdapter 를 준다.
+   */
+  adapters?: AgentAdapter[] | undefined;
   logger?: Logger;
   /** wire 소켓별 미전송 큐 상한(기본 500) — 테스트가 낮춘다 */
   wireMaxPending?: number;
@@ -134,7 +138,8 @@ export type App = {
   auth: Auth;
   /** 부팅 때 보장한 owner 의 id (= Better Auth user.id = users.id) */
   ownerUserId: string;
-  adapter: AgentAdapter;
+  /** 붙은 어댑터들 — 런은 에이전트의 provider 로 고른다 */
+  registry: AdapterRegistry;
   orchestrator: Orchestrator;
   services: Services;
   /** 운영 사건 입구(= services.ops) — 프로세스 예외 처리기(main.ts)도 여기로 남긴다 */
@@ -154,8 +159,8 @@ export type App = {
 };
 
 /**
- * 스펙 2장 부팅 순서: db → auth·owner → bus → Fastify → Socket.IO → 어댑터 생성 → 서비스 배선 → 라우트·wire →
- * 부팅 정리(recoverOnBoot) → ready → adapter.connect(). 도중에 실패하면 만든 것을 역순으로 닫고 그 오류를 다시 던진다.
+ * 스펙 2장 부팅 순서: db → auth·owner → bus → Fastify → Socket.IO → 어댑터 생성(레지스트리) → 서비스 배선 → 라우트·wire →
+ * 부팅 정리(recoverOnBoot) → ready → 어댑터마다 connect(). 도중에 실패하면 만든 것을 역순으로 닫고 그 오류를 다시 던진다.
  */
 export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promise<App> {
   const logger = deps.logger ?? createLogger(config.LOG_LEVEL);
@@ -231,8 +236,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
 
     // 정본 훅은 오케스트레이터를 부르는데 오케스트레이터는 어댑터를 받아 뒤에 만들어진다 — 브리지 연결은 listen 뒤라 그때는 있다
     let orchestrator: Orchestrator;
-    const adapter =
-      deps.adapter ??
+    const adapters = deps.adapters ?? [
       createOpenClawAdapter({
         gateway: {
           url: config.gateway.url,
@@ -255,9 +259,21 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
           ? {}
           : { frameDumpPath: config.OPENCLAW_FRAME_DUMP_PATH }),
         ...(deps.gatewayBackoff === undefined ? {} : { backoff: deps.gatewayBackoff }),
-      });
-    undo.push({ step: "adapter", run: () => adapter.close() });
-    const services = createServices({ db, bus, logger, adapter, workspaceId, timeouts: deps.timeouts });
+      }),
+    ];
+    const closeAdapters = () => Promise.all(adapters.map((adapter) => adapter.close()));
+    undo.push({ step: "adapter", run: closeAdapters });
+    const registry = createAdapterRegistry(adapters);
+    // 설정 마법사·운영 화면의 Gateway·브리지 줄, Gateway 감시는 OpenClaw 어댑터의 것이다
+    const openclaw = registry.forProvider("openclaw");
+    if (!openclaw) throw new Error("an OpenClaw adapter is required");
+    const openclawDetail = (): OpenClawSetupDetail => {
+      const detail = openclaw.setupDetail();
+      if (detail.provider !== "openclaw")
+        throw new Error(`OpenClaw adapter returned ${detail.provider} setup detail`);
+      return detail;
+    };
+    const services = createServices({ db, bus, logger, registry, workspaceId, timeouts: deps.timeouts });
     orchestrator = services.orchestrator;
     ops = services.ops;
     // requireSession·업로드가 request.server.restLimits 로 찾는다(http-limits.ts)
@@ -320,7 +336,15 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       disconnectUser: (userId) => disconnectUser(io, userId),
       disconnectSessions: (sessionIds) => disconnectSessions(io, sessionIds),
     });
-    const routeContext = { auth, db, bus, logger, workspaceId, adapter, orchestrator: services.orchestrator };
+    const routeContext = {
+      auth,
+      db,
+      bus,
+      logger,
+      workspaceId,
+      registry,
+      orchestrator: services.orchestrator,
+    };
     registerChannelRoutes(fastify, routeContext);
     registerAgentRoutes(fastify, routeContext);
     registerMessageRoutes(fastify, routeContext);
@@ -378,14 +402,14 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     const publicUrl = bridgePublicUrl(config);
     const setupStatus = () =>
       buildSetupStatus({
-        detail: adapter.setupDetail(),
+        detail: openclawDetail(),
         pluginFile,
         serverVersion: packageJson.version,
         publicUrl,
         envTokenIgnored:
           config.BRIDGE_TOKEN !== undefined && !isActiveBridgeToken(db, workspaceId, config.BRIDGE_TOKEN),
       });
-    // 어댑터 setup 이벤트(마이크로태스크 뒤)·토큰 발급·폐기 때 owner 에게 다시 읽은 상태를 보낸다
+    // 어느 어댑터든 setup 이벤트(마이크로태스크 뒤)·토큰 발급·폐기 때 owner 에게 다시 읽은 상태를 보낸다
     const emitSetupStatus = () => {
       try {
         bus.emit("setup.status", { status: setupStatus() });
@@ -393,7 +417,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
         logger.error({ err }, "setup status emit failed");
       }
     };
-    const offSetup = adapter.onEvent((event) => {
+    const offSetup = registry.onEvent((event) => {
       if (event.kind === "setup") emitSetupStatus();
     });
     undo.push({ step: "setup-events", run: () => offSetup() });
@@ -402,7 +426,10 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       db,
       logger,
       workspaceId,
-      adapter,
+      openclaw: {
+        setupDetail: openclawDetail,
+        revokeTokenSessions: (id) => openclaw.revokeTokenSessions(id),
+      },
       pluginFile,
       publicUrl,
       status: setupStatus,
@@ -413,7 +440,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       auth,
       db,
       workspaceId,
-      adapter,
+      adapter: openclaw,
       ops,
       disk: () => disk.current(),
       serverVersion: packageJson.version,
@@ -447,12 +474,12 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     });
     const fanout = attachWireFanout(io, bus, { logger, db, workspaceId, maxPending: deps.wireMaxPending });
     undo.push({ step: "fanout", run: () => fanout.close() });
-    const watch = watchGatewayReconnecting(adapter, bus, logger);
+    const watch = watchGatewayReconnecting(openclaw, bus, logger);
     undo.push({ step: "watch", run: () => watch.close() });
     // 운영 사건(스펙 5.2·5.3·3.1 run_failed) — 위 system.notice 감시와 따로 돈다. 부팅 정리(recoverOnBoot)가 닫는 런도 센다
-    const connections = watchConnections(adapter, ops, deps.disconnectEventMs ?? DISCONNECT_EVENT_MS);
+    const connections = watchConnections(openclaw, ops, deps.disconnectEventMs ?? DISCONNECT_EVENT_MS);
     undo.push({ step: "connections", run: () => connections.close() });
-    const gatewayVersion = watchGatewayVersion(adapter, { db, workspaceId, ops, logger });
+    const gatewayVersion = watchGatewayVersion(openclaw, { db, workspaceId, ops, logger });
     undo.push({ step: "gateway-version", run: () => gatewayVersion.close() });
     const runFailures = watchRunFailures(bus, ops);
     undo.push({ step: "run-failures", run: () => runFailures.close() });
@@ -480,10 +507,12 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     await services.orchestrator.recoverOnBoot();
     await fastify.ready();
     // Gateway 접속 실패는 부팅을 막지 않는다(스펙 2장) — connect() 는 던지지 않는 계약이지만 방어한다
-    try {
-      await adapter.connect();
-    } catch (err) {
-      logger.warn({ err }, "adapter connect failed");
+    for (const adapter of adapters) {
+      try {
+        await adapter.connect();
+      } catch (err) {
+        logger.warn({ err, provider: adapter.provider }, "adapter connect failed");
+      }
     }
 
     const closeTimeoutMs = deps.closeTimeoutMs ?? APP_CLOSE_TIMEOUT_MS;
@@ -509,7 +538,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       await step("ops", closeOps);
       await step("orchestrator", () => services.orchestrator.stop()); // ② 타이머·어댑터 구독 해제
       // ③ 브리지 system.notice shutdown → Gateway stop. io.close() 가 /bridge 소켓까지 끊으므로 그보다 먼저
-      await step("adapter", () => adapter.close());
+      await step("adapter", closeAdapters);
       await step("fanout", () => fanout.close());
       await step("io", () => io.close()); // ④ 남은 wire·브리지 소켓
       await step("fastify", () => fastify.close()); // ⑤
@@ -528,7 +557,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       workspaceId,
       auth,
       ownerUserId,
-      adapter,
+      registry,
       orchestrator: services.orchestrator,
       services,
       ops: services.ops,

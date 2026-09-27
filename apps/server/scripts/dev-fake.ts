@@ -18,6 +18,7 @@
  * 끊김 사건 임계는 DODOK_DEVFAKE_DISCONNECT_MS(기본 운영과 같은 60초)로 줄인다. 종료 표지는 <dataDir>/dev-fake-run/ 에 둔다.
  */
 import {
+  type AgentAdapter,
   type ApprovalDecision,
   BridgeHello,
   type InboundDeliver,
@@ -670,9 +671,16 @@ function interceptDevFakeRoutes(app: App, routes: ReadonlyMap<string, DevFakeRou
   });
 }
 
+/** dev:fake 는 실제 OpenClaw 어댑터 하나로 뜬다 */
+function openclawOf(app: App): AgentAdapter {
+  const adapter = app.registry.forProvider("openclaw");
+  if (!adapter) throw new Error("dev:fake app has no OpenClaw adapter");
+  return adapter;
+}
+
 /** 붙은 가짜 플러그인이 통과한 브리지 토큰 id — 로그용 */
 function pluginTokenId(app: App): string | null | undefined {
-  const detail = app.adapter.setupDetail();
+  const detail = openclawOf(app).setupDetail();
   return detail.provider === "openclaw" ? detail.bridge.plugin?.tokenId : undefined;
 }
 
@@ -682,14 +690,14 @@ function waitForGateway(
   want: (state: OpenClawAdapterStatus["gateway"]) => boolean,
   timeoutMs: number,
 ): Promise<boolean> {
-  const initial = app.adapter.status();
+  const initial = openclawOf(app).status();
   if (initial.provider === "openclaw" && want(initial.gateway)) return Promise.resolve(true);
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
       off();
       resolve(false);
     }, timeoutMs);
-    const off = app.adapter.onEvent((e) => {
+    const off = openclawOf(app).onEvent((e) => {
       if (e.kind !== "status" || e.status.provider !== "openclaw" || !want(e.status.gateway)) return;
       clearTimeout(timer);
       off();
@@ -843,8 +851,8 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
             );
             live.logger.info({ state, reached }, "dev:fake gateway hook");
             return reached
-              ? { ok: true, status: live.adapter.status() }
-              : { ok: false, reason: "timeout", status: live.adapter.status() };
+              ? { ok: true, status: openclawOf(live).status() }
+              : { ok: false, reason: "timeout", status: openclawOf(live).status() };
           }),
         ],
         [

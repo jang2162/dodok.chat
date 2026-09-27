@@ -43,7 +43,7 @@ import { DISCONNECT_EVENT_MS } from "../src/modules/ops/health";
 import type { ScenarioApproval } from "./fakes/scenario";
 import { bootTestApp, login, userWithRole } from "./helpers/app";
 import { makePng } from "./helpers/png";
-import { openclawDetail } from "./helpers/openclaw";
+import { openclawDetail, openclawOf } from "./helpers/openclaw";
 
 type Author = { type: "user" | "agent"; handle: string };
 
@@ -966,7 +966,7 @@ describe("startDevFake 가짜 플러그인 토큰 바꾸기 — POST /__devfake/
     return { token, id: record.id };
   }
 
-  const connectedTokenId = () => openclawDetail(dev.app.adapter).bridge.plugin?.tokenId;
+  const connectedTokenId = () => openclawDetail(openclawOf(dev.app)).bridge.plugin?.tokenId;
 
   it("세션이 없으면 401 이고 가짜 플러그인은 그대로 붙어 있다", async () => {
     const before = connectedTokenId();
@@ -1005,7 +1005,7 @@ describe("startDevFake 가짜 플러그인 토큰 바꾸기 — POST /__devfake/
     const body = (await res.json()) as { ok: boolean; reason?: string };
     expect(body.ok).toBe(false);
     expect(body.reason).toContain("UNAUTHORIZED");
-    expect(openclawDetail(dev.app.adapter).bridge.plugin).toBeFalsy();
+    expect(openclawDetail(openclawOf(dev.app)).bridge.plugin).toBeFalsy();
 
     const fresh = await issue("fresh");
     await expect((await swap({ token: fresh.token })).json()).resolves.toEqual({ ok: true });
@@ -1389,7 +1389,7 @@ describe("startDevFake 스레드 — 스레드 답·스레드 릴레이·동시 
         expect(res.status, JSON.stringify(body)).toBe(400);
         await expect(res.json()).resolves.toMatchObject({ code: "VALIDATION" });
       }
-      expect(dev.app.adapter.supports("dev", "threads")).toBe(true);
+      expect(openclawOf(dev.app).supports("dev", "threads")).toBe(true);
     });
 
     it("false → threads 없는 hello 로 다시 붙어 스레드 멘션은 PLUGIN_OUTDATED 카드(채널 멘션은 그대로) → true 로 되돌리고 「다시 실행」하면 스레드에서 답한다", async () => {
@@ -1399,7 +1399,7 @@ describe("startDevFake 스레드 — 스레드 답·스레드 릴레이·동시 
       expect(offBody.ok).toBe(true);
       expect(offBody.capabilities).not.toContain("threads");
       expect(offBody.capabilities).toContain("agents.list");
-      expect(dev.app.adapter.supports("dev", "threads")).toBe(false);
+      expect(openclawOf(dev.app).supports("dev", "threads")).toBe(false);
 
       const w = await channelWire("thread-outdated", ["dev"]);
       const root = await w.send("옛 플러그인 루트");
@@ -1428,7 +1428,7 @@ describe("startDevFake 스레드 — 스레드 답·스레드 릴레이·동시 
       const on = await setCaps({ threads: true });
       expect(on.status).toBe(200);
       expect(((await on.json()) as { capabilities: string[] }).capabilities).toContain("threads");
-      expect(dev.app.adapter.supports("dev", "threads")).toBe(true);
+      expect(openclawOf(dev.app).supports("dev", "threads")).toBe(true);
       const socket = sockets.at(-1);
       const retried = await socket?.emitWithAck("component.interact", {
         messageId: card.id,

@@ -9,7 +9,15 @@ import { createQueryClient } from "@/app/queryClient";
 import { type WireStatus, useWireStatus } from "@/realtime/wire";
 import { TooltipProvider } from "@/ui/tooltip";
 import { stubMedia } from "../../../test/media";
-import { ADAPTER_OK, ME, channelOf, json, renderRoute, shellGet } from "../../../test/shellApi";
+import {
+  ADAPTER_OK,
+  ME,
+  adapterStatusBody,
+  channelOf,
+  json,
+  renderRoute,
+  shellGet,
+} from "../../../test/shellApi";
 import { Banners } from "./Banners";
 import { ConnectionDots } from "./ConnectionDots";
 
@@ -25,7 +33,7 @@ function renderWithAdapter(ui: ReactNode, adapter: Pick<OpenClawAdapterStatus, "
     "fetch",
     vi.fn<typeof fetch>(async (input) =>
       String(input) === "/api/v1/adapter/status"
-        ? json(200, { ...ADAPTER_OK, ...adapter })
+        ? json(200, adapterStatusBody({ ...ADAPTER_OK, ...adapter }))
         : json(404, { code: "NOT_FOUND", message: "x" }),
     ),
   );

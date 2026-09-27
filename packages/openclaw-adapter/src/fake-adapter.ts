@@ -12,7 +12,12 @@ import {
   AdapterError,
   type AdapterCapabilities,
   type AdapterEvent,
+  type AdapterProvider,
+  type AdapterSetupDetail,
+  type AdapterStatus,
   type AgentAdapter,
+  type ClaudeAdapterStatus,
+  type ClaudeSetupDetail,
   type OpenClawAdapterStatus,
   type OpenClawSetupDetail,
   type ProviderApproval,
@@ -25,12 +30,21 @@ type ResolveApprovalScript = (
   decision: ApprovalDecision,
 ) => ProviderApproval | Promise<ProviderApproval>;
 
-/** 테스트·wire-cli 용 메모리 어댑터. 호출을 기록하고, 이벤트는 emit 으로 밀어 넣는다. */
-export class FakeAdapter implements AgentAdapter {
-  readonly provider = "openclaw" as const;
+type StatusOf<P extends AdapterProvider> = P extends "claude" ? ClaudeAdapterStatus : OpenClawAdapterStatus;
+type SetupDetailOf<P extends AdapterProvider> = P extends "claude" ? ClaudeSetupDetail : OpenClawSetupDetail;
+
+/**
+ * 테스트·wire-cli 용 메모리 어댑터. 호출을 기록하고, 이벤트는 emit 으로 밀어 넣는다.
+ * 기본은 OpenClaw 흉내. `provider: "claude"` 는 레지스트리 테스트용 최소 러너 흉내 — 상태·상세가 claude 모양이고
+ * capabilities 가 promptEveryRun·serverSessionIds, 스레드는 늘 안다
+ */
+export class FakeAdapter<P extends AdapterProvider = "openclaw"> implements AgentAdapter {
+  readonly provider: P;
 
   readonly calls: {
     send: InboundDeliver[];
+    /** send 의 두 번째 인자 — calls.send 와 같은 순서 */
+    sendOpts: Array<{ providerSessionId?: string } | undefined>;
     syncChannelConfig: Array<{ channelId: string; config: ConfigSet["config"] }>;
     reset: string[];
     abort: Array<{ runId: string; sessionKey: string }>;
@@ -39,6 +53,7 @@ export class FakeAdapter implements AgentAdapter {
     revokeTokenSessions: string[];
   } = {
     send: [],
+    sendOpts: [],
     syncChannelConfig: [],
     reset: [],
     abort: [],
@@ -52,37 +67,50 @@ export class FakeAdapter implements AgentAdapter {
   /** emitApproval 로 흘린 승인 — 기본 resolveApproval 이 이것의 terminal 스냅샷을 돌려준다. */
   private approvals = new Map<string, ProviderApproval>();
   private handlers = new Set<(e: AdapterEvent) => void>();
-  private currentStatus: OpenClawAdapterStatus = {
-    provider: "openclaw",
-    gateway: "connected",
-    bridge: "connected",
-  };
-  private currentCapabilities: AdapterCapabilities = {
-    sessionReset: true,
-    agentsList: true,
-    configSet: true,
-    promptEveryRun: false,
-    serverSessionIds: false,
-  };
+  private currentStatus: StatusOf<P>;
+  private currentCapabilities: AdapterCapabilities;
   // setStatus 와 따로 둔다 — 설정 상세가 필요한 테스트가 setSetupDetail 로 넣는다
-  private currentSetupDetail: OpenClawSetupDetail = {
-    provider: "openclaw",
-    gateway: { state: "connected", host: "fake-gateway:443", version: null, pairing: null },
-    bridge: {
-      state: "connected",
-      plugin: {
-        version: "0.0.0",
-        sdkVersion: "0.0.0",
-        gatewayVersion: null,
-        bundleSha256: null,
-        tokenId: null,
-        connectedAt: "1970-01-01T00:00:00.000Z",
-      },
-    },
-  };
+  private currentSetupDetail: SetupDetailOf<P>;
 
   // 붙은 플러그인의 hello capabilities. 기본은 스레드를 아는 플러그인 — 옛 플러그인은 setPluginCapabilities([])
   private pluginCapabilities = new Set<BridgeCapability>(["run_id_in_outbound", "config.set", "threads"]);
+
+  constructor(opts: { provider?: P } = {}) {
+    const provider = opts.provider ?? "openclaw";
+    this.provider = provider as P;
+    const claude = provider === "claude";
+    this.currentStatus = (
+      claude
+        ? { provider: "claude", runners: { connected: 1, tokens: 1 } }
+        : { provider: "openclaw", gateway: "connected", bridge: "connected" }
+    ) as StatusOf<P>;
+    this.currentCapabilities = {
+      sessionReset: true,
+      agentsList: true,
+      configSet: true,
+      promptEveryRun: claude,
+      serverSessionIds: claude,
+    };
+    this.currentSetupDetail = (
+      claude
+        ? { provider: "claude", runners: [] }
+        : {
+            provider: "openclaw",
+            gateway: { state: "connected", host: "fake-gateway:443", version: null, pairing: null },
+            bridge: {
+              state: "connected",
+              plugin: {
+                version: "0.0.0",
+                sdkVersion: "0.0.0",
+                gatewayVersion: null,
+                bundleSha256: null,
+                tokenId: null,
+                connectedAt: "1970-01-01T00:00:00.000Z",
+              },
+            },
+          }
+    ) as SetupDetailOf<P>;
+  }
 
   script(fn: SendScript): void {
     this.sendScript = fn;
@@ -102,7 +130,7 @@ export class FakeAdapter implements AgentAdapter {
     this.emit({ kind: "approval", approval });
   }
 
-  setStatus(status: OpenClawAdapterStatus): void {
+  setStatus(status: StatusOf<P>): void {
     this.currentStatus = status;
   }
 
@@ -115,7 +143,7 @@ export class FakeAdapter implements AgentAdapter {
   }
 
   /** setup 이벤트는 내지 않는다 — 알려야 하면 emit({ kind: "setup" }) */
-  setSetupDetail(detail: OpenClawSetupDetail): void {
+  setSetupDetail(detail: SetupDetailOf<P>): void {
     this.currentSetupDetail = detail;
   }
 
@@ -123,7 +151,7 @@ export class FakeAdapter implements AgentAdapter {
 
   async close(): Promise<void> {}
 
-  status(): OpenClawAdapterStatus {
+  status(): StatusOf<P> {
     return this.currentStatus;
   }
 
@@ -131,16 +159,17 @@ export class FakeAdapter implements AgentAdapter {
     return this.currentCapabilities;
   }
 
-  setupDetail(): OpenClawSetupDetail {
+  setupDetail(): SetupDetailOf<P> {
     return this.currentSetupDetail;
   }
 
   /** 붙은 플러그인이 그 토큰이면 끊은 것으로 두고(bridge down) setup 을 한 번 낸다 */
   revokeTokenSessions(tokenId: string): number {
     this.calls.revokeTokenSessions.push(tokenId);
-    const { bridge } = this.currentSetupDetail;
-    if (!bridge.plugin || bridge.plugin.tokenId !== tokenId) return 0;
-    this.currentSetupDetail = { ...this.currentSetupDetail, bridge: { state: "down", plugin: null } };
+    const detail: AdapterSetupDetail = this.currentSetupDetail;
+    if (detail.provider !== "openclaw") return 0;
+    if (!detail.bridge.plugin || detail.bridge.plugin.tokenId !== tokenId) return 0;
+    this.currentSetupDetail = { ...detail, bridge: { state: "down", plugin: null } } as SetupDetailOf<P>;
     this.emit({ kind: "setup" });
     return 1;
   }
@@ -153,13 +182,16 @@ export class FakeAdapter implements AgentAdapter {
     return dodokSessionKey(providerAgentId, channelId, threadRootId);
   }
 
-  /** 실물과 같이 에이전트를 가리지 않고, 붙은 플러그인(setupDetail 의 bridge.plugin)이 없으면 false */
+  /** 실물과 같이 에이전트를 가리지 않고, 붙은 플러그인(setupDetail 의 bridge.plugin)이 없으면 false. claude 흉내는 늘 안다 */
   supports(_providerAgentId: string, capability: "threads"): boolean {
-    return this.currentSetupDetail.bridge.plugin !== null && this.pluginCapabilities.has(capability);
+    const detail: AdapterSetupDetail = this.currentSetupDetail;
+    if (detail.provider !== "openclaw") return true;
+    return detail.bridge.plugin !== null && this.pluginCapabilities.has(capability);
   }
 
-  async send(input: InboundDeliver): Promise<InboundDeliverResult> {
+  async send(input: InboundDeliver, opts?: { providerSessionId?: string }): Promise<InboundDeliverResult> {
     this.calls.send.push(input);
+    this.calls.sendOpts.push(opts);
     return this.sendScript(input);
   }
 
@@ -183,7 +215,8 @@ export class FakeAdapter implements AgentAdapter {
     decision: ApprovalDecision,
   ): Promise<ProviderApproval> {
     // 실물과 같이 Gateway 가 붙어 있지 않으면 보내지 않는다 — 호출 기록에도 남기지 않는다(판정 P6)
-    if (this.currentStatus.gateway !== "connected") {
+    const status: AdapterStatus = this.currentStatus;
+    if (status.provider === "openclaw" && status.gateway !== "connected") {
       throw new AdapterError("ADAPTER_UNAVAILABLE", "gateway is not connected");
     }
     this.calls.resolveApproval.push({ providerApprovalId, kind, decision });

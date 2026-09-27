@@ -80,7 +80,7 @@ describe("설정 API /api/v1/setup", () => {
     log = captureLogger();
     app = await bootTestApp(
       { APP_ORIGIN: "https://chat.example.com" },
-      { adapter, pluginDirs: [pluginDir], logger: log.logger },
+      { adapters: [adapter], pluginDirs: [pluginDir], logger: log.logger },
     );
     owner = (await login(app)).headers;
     member = (await userWithRole(app, "bee", "member")).headers;

@@ -1,7 +1,7 @@
 import { Channel, ChannelMember, Id } from "@dodok/shared";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
-import type { AgentAdapter } from "../../adapters/types";
+import type { AdapterRegistry } from "../../adapters/registry";
 import type { Auth } from "../../auth";
 import {
   assertRole,
@@ -36,7 +36,8 @@ export type ChannelRouteContext = {
   bus: ServerBus;
   logger: Logger;
   workspaceId: string;
-  adapter: AgentAdapter;
+  /** 「새 대화」는 그 에이전트의 어댑터로, 채널 프롬프트 동기화는 OpenClaw 어댑터로 */
+  registry: Pick<AdapterRegistry, "forAgent" | "forProvider">;
   /** 「새 대화」가 그 세션의 진행 런을 멈출 때 */
   orchestrator: Pick<Orchestrator, "activeRuns" | "abort">;
 };
@@ -174,8 +175,11 @@ export function registerChannelRoutes(fastify: FastifyInstance, ctx: ChannelRout
   });
 }
 
+/** Gateway 설정 경로(config.patch)는 OpenClaw 몫이다 — 러너 어댑터는 채널 프롬프트를 매 런 싣는다(판정 P3) */
 function syncChannelPrompt(ctx: ChannelRouteContext, channel: ChannelRecord): void {
-  void ctx.adapter
+  const openclaw = ctx.registry.forProvider("openclaw");
+  if (!openclaw) return;
+  void openclaw
     .syncChannelConfig(channel.id, { systemPrompt: channel.prompt ?? "" })
     .catch((err: unknown) => {
       ctx.logger.warn({ err, channelId: channel.id }, "syncChannelConfig failed");

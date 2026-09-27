@@ -3,6 +3,7 @@ import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { SQLiteUpdateSetSource } from "drizzle-orm/sqlite-core";
 import { v7 as uuidv7 } from "uuid";
 import { z } from "zod";
+import type { AdapterRegistry } from "../../adapters/registry";
 import { AdapterError, type AgentAdapter } from "../../adapters/types";
 import { roleOf } from "../../auth/roles";
 import type { Db, DbOrTx } from "../../db/client";
@@ -382,13 +383,14 @@ export function userMessageParticipants(db: DbOrTx, channelId: string): Particip
 export type ResetAgentSessionDeps = {
   db: Db;
   bus: ServerBus;
-  adapter: AgentAdapter;
+  /** 그 에이전트의 provider 어댑터로 리셋한다 */
+  registry: Pick<AdapterRegistry, "forAgent">;
   orchestrator: Pick<Orchestrator, "activeRuns" | "abort">;
 };
 
 /**
- * 스펙 3.4 「새 대화」 — 채널의 에이전트 멤버만. capability 확인 → 그 세션의 진행 런 abort → Gateway sessions.reset →
- * agent_sessions 리비전·시작 시각 → info 시스템 메시지. threadRootId 가 있으면 그 스레드 세션만 — 채널 세션·다른 스레드는
+ * 스펙 3.4 「새 대화」 — 채널의 에이전트 멤버만. 그 에이전트의 어댑터 capability 확인 → 그 세션의 진행 런 abort → 어댑터 resetSession
+ * (OpenClaw 는 Gateway sessions.reset) → agent_sessions 리비전·시작 시각(서버가 정한 세션 id 는 비움) → info 시스템 메시지. threadRootId 가 있으면 그 스레드 세션만 — 채널 세션·다른 스레드는
  * 그대로이고 info 도 그 스레드에 남는다(스펙 2.4). 이 채널의 루트가 아니면 404. Gateway 리셋은 되돌릴 수 없어서 그 뒤 DB 쓰기가 실패하면 500 이고
  * 세션 행은 옛 리비전으로 남는다(다음 턴이 channelPrompt 를 한 번 더 싣는 정도).
  */
@@ -396,7 +398,7 @@ export async function resetAgentSession(
   deps: ResetAgentSessionDeps,
   input: { channelId: string; agentId: string; threadRootId?: string | undefined },
 ): Promise<void> {
-  const { db, adapter, orchestrator } = deps;
+  const { db, orchestrator } = deps;
   const { threadRootId } = input;
   if (threadRootId !== undefined && !getThreadRoot(db, input.channelId, threadRootId)) {
     throw apiError("NOT_FOUND", "thread not found");
@@ -405,6 +407,9 @@ export async function resetAgentSession(
     (m) => m.memberType === "agent" && m.memberId === input.agentId,
   );
   if (!member) throw apiError("NOT_FOUND", "agent member not found");
+  const agent = getAgent(db, input.agentId);
+  if (!agent) throw apiError("NOT_FOUND", "agent not found");
+  const adapter = adapterForAgent(deps.registry, agent);
   if (!adapter.capabilities().sessionReset) throw capabilityMissing();
   // markSessionReset 이 행을 만들며 키를 따로 조립하지 않게, 세션 행을 먼저 보장하고 그 키로 리셋한다(sc-t7 걱정 1)
   const { session } = ensureSession(db, adapter, input);
@@ -425,7 +430,7 @@ export async function resetAgentSession(
     throw apiError(err.code, err.message);
   }
   markSessionReset(db, input.channelId, input.agentId, reset, threadRootId);
-  const handle = getAgent(db, input.agentId)?.handle ?? "unknown";
+  const handle = agent.handle;
   createSystemMessage(db, deps.bus, {
     channelId: input.channelId,
     ...(threadRootId === undefined ? {} : { threadRootId }),
@@ -433,6 +438,19 @@ export async function resetAgentSession(
     bodyMd: `@${handle} 의 대화를 새로 시작했습니다`,
     systemMeta: { kind: "info" },
   });
+}
+
+/** 그 provider 의 어댑터가 없으면 ADAPTER_UNAVAILABLE(503) */
+function adapterForAgent(
+  registry: Pick<AdapterRegistry, "forAgent">,
+  agent: { provider: string },
+): AgentAdapter {
+  try {
+    return registry.forAgent(agent);
+  } catch (err) {
+    if (err instanceof AdapterError) throw apiError(err.code, err.message);
+    throw err;
+  }
 }
 
 /** 스펙 8장 — sessions.reset 스코프(operator.admin) 부족. 코드는 CONFLICT, 사유는 message 접두사로 구분한다 */

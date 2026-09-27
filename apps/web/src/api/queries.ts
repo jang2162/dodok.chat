@@ -28,7 +28,25 @@ export type MeResponse = {
   role?: string;
 };
 export type AdapterCapabilities = { sessionReset: boolean; agentsList: boolean; configSet: boolean };
-export type AdapterStatusResponse = AdapterStatus & { capabilities: AdapterCapabilities };
+/** GET /adapter/status 응답 — 붙은 어댑터마다 상태 하나, capabilities 는 provider 로 찾는다(러너 계획 판정 P7) */
+export type AdapterStatusList = {
+  statuses: AdapterStatus[];
+  capabilities: Partial<Record<AdapterStatus["provider"], AdapterCapabilities>>;
+};
+/**
+ * `qk.adapter` 캐시 — OpenClaw 어댑터의 상태와 capabilities(연결 점·배너·운영 화면이 본다). 서버에 OpenClaw 어댑터가 없으면 null.
+ * wire `adapter.status` 도 OpenClaw 것만 이 캐시를 고친다
+ */
+export type AdapterStatusResponse = Extract<AdapterStatus, { provider: "openclaw" }> & {
+  capabilities: AdapterCapabilities;
+};
+
+/** 목록 응답에서 OpenClaw 줄을 고른다 */
+export function openclawAdapterStatus(list: AdapterStatusList): AdapterStatusResponse | null {
+  const status = list.statuses.find((s) => s.provider === "openclaw");
+  const capabilities = list.capabilities.openclaw;
+  return status?.provider === "openclaw" && capabilities ? { ...status, capabilities } : null;
+}
 
 export const qk = {
   me: ["me"] as const,
@@ -148,7 +166,10 @@ export const usePeople = () =>
     meta: { silent: true },
   });
 export const useAdapterStatus = () =>
-  useQuery({ queryKey: qk.adapter, queryFn: () => api<AdapterStatusResponse>("GET", "/adapter/status") });
+  useQuery({
+    queryKey: qk.adapter,
+    queryFn: async () => openclawAdapterStatus(await api<AdapterStatusList>("GET", "/adapter/status")),
+  });
 
 /**
  * 활동 탭의 런 목록(설계 5.2). 실시간 `run.state` 는 런 스토어에서 덮는다(`mergeRuns`).
