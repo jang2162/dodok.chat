@@ -1,5 +1,5 @@
 /** 설정 마법사의 연결 상태 조립(스펙 3장 SetupStatus) — 어댑터 상세·플러그인 파일·서버 버전을 모은다. 입출력 없음 */
-import type { SetupStatus } from "@dodok/shared";
+import type { RunnerConnection, SetupStatus } from "@dodok/shared";
 import type { OpenClawSetupDetail } from "../../adapters/types";
 import { gatewayPin } from "../ops/health";
 import type { PluginFile } from "./plugin-file";
@@ -19,6 +19,9 @@ export function buildSetupStatus(input: {
   /** gateway·bridge 블록의 재료 — OpenClaw 어댑터의 상세(레지스트리 forProvider("openclaw")) */
   detail: OpenClawSetupDetail;
   pluginFile: PluginFile | null;
+  /** 러너 블록 — 러너 어댑터가 붙인 러너들(setupDetail 의 claude 변형)과 품은 러너 tgz. 러너 어댑터가 없으면 빈 목록 */
+  runners: RunnerConnection[];
+  runnerFile: PluginFile | null;
   serverVersion: string;
   publicUrl: string;
   envTokenIgnored: boolean;
@@ -38,17 +41,16 @@ export function buildSetupStatus(input: {
       pairing: detail.gateway.pairing,
     },
     bridge: { state: detail.bridge.state, publicUrl: input.publicUrl, plugin: plugin ? { ...plugin } : null },
-    // 서버 안 파일 경로는 싣지 않는다
-    pluginFile: pluginFile
-      ? {
-          available: true,
-          sha256: pluginFile.sha256,
-          bundleSha256: pluginFile.bundleSha256,
-          bytes: pluginFile.bytes,
-        }
-      : { available: false },
+    pluginFile: packedFile(pluginFile),
     pluginMatches,
     envTokenIgnored: input.envTokenIgnored,
-    runners: { list: [], runnerFile: { available: false } }, // 러너 어댑터가 서버에 붙기 전까지는 비어 있다
+    runners: { list: input.runners, runnerFile: packedFile(input.runnerFile) },
   };
+}
+
+/** 서버 안 파일 경로는 싣지 않는다 */
+function packedFile(file: PluginFile | null): SetupStatus["pluginFile"] {
+  return file
+    ? { available: true, sha256: file.sha256, bundleSha256: file.bundleSha256, bytes: file.bytes }
+    : { available: false };
 }

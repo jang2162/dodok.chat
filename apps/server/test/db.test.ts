@@ -10,8 +10,36 @@ import { describe, expect, it } from "vitest";
 import * as authSchema from "../src/db/auth-schema";
 import { createDb, type Db } from "../src/db/client";
 import * as schema from "../src/db/schema.sqlite";
-import { channels, invites, memberships, messages, users, workspaces } from "../src/db/schema.sqlite";
+import {
+  bridgeTokens,
+  channels,
+  invites,
+  memberships,
+  messages,
+  runnerTokens,
+  users,
+  workspaces,
+} from "../src/db/schema.sqlite";
 import { migrationsFolder } from "../src/runtime";
+
+/** 저장소 마이그레이션 가운데 태그가 suffix 로 끝나는 것까지만 담은 폴더를 dir 아래에 만든다 — 옛 DB 를 흉내 낼 때 */
+function migrationsUpTo(dir: string, suffix: string): string {
+  const src = migrationsFolder();
+  const journal = JSON.parse(readFileSync(join(src, "meta/_journal.json"), "utf8")) as {
+    entries: Array<{ tag: string }>;
+  };
+  const idx = journal.entries.findIndex((e) => e.tag.endsWith(suffix)) + 1;
+  expect(idx).toBeGreaterThan(1);
+  const older = join(dir, `upto${suffix}`);
+  mkdirSync(join(older, "meta"), { recursive: true });
+  writeFileSync(
+    join(older, "meta/_journal.json"),
+    JSON.stringify({ ...journal, entries: journal.entries.slice(0, idx) }),
+  );
+  for (const e of journal.entries.slice(0, idx))
+    copyFileSync(join(src, `${e.tag}.sql`), join(older, `${e.tag}.sql`));
+  return older;
+}
 
 function seed(db: Db) {
   const ws = uuid();
@@ -55,7 +83,7 @@ const msg = (ch: string, seq: number, extra: Partial<typeof messages.$inferInser
 });
 
 describe("db", () => {
-  it("마이그레이션이 22개 테이블을 만든다(FTS5 그림자 테이블 제외)", () => {
+  it("마이그레이션이 23개 테이블을 만든다(FTS5 그림자 테이블 제외)", () => {
     const db = createDb(":memory:");
     const rows = db.all<{ name: string }>(sql`select name from sqlite_master where type = 'table'`);
     const names = rows
@@ -79,6 +107,7 @@ describe("db", () => {
       "ops_events",
       "push_subscriptions",
       "run_events",
+      "runner_tokens",
       "runs",
       "session",
       "user",
@@ -173,19 +202,7 @@ describe("db", () => {
     const dir = mkdtempSync(join(tmpdir(), "dodok-db-mig-"));
     try {
       const src = migrationsFolder();
-      const journal = JSON.parse(readFileSync(join(src, "meta/_journal.json"), "utf8")) as {
-        entries: Array<{ tag: string }>;
-      };
-      const idx = journal.entries.findIndex((e) => e.tag.endsWith("_search_fts")) + 1;
-      expect(idx).toBeGreaterThan(1);
-      const older = join(dir, "older");
-      mkdirSync(join(older, "meta"), { recursive: true });
-      writeFileSync(
-        join(older, "meta/_journal.json"),
-        JSON.stringify({ ...journal, entries: journal.entries.slice(0, idx) }),
-      );
-      for (const e of journal.entries.slice(0, idx))
-        copyFileSync(join(src, `${e.tag}.sql`), join(older, `${e.tag}.sql`));
+      const older = migrationsUpTo(dir, "_search_fts");
 
       const sqlite = new Database(join(dir, "app.db"));
       try {
@@ -219,6 +236,51 @@ describe("db", () => {
         });
         expect(db.select().from(memberships).all()).toMatchObject([{ userId: owner, role: "owner" }]);
         expect(db.select().from(invites).all()).toEqual([]);
+      } finally {
+        sqlite.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+  it("0008 까지 적용된 DB 에 0009(runner_tokens)를 얹어도 브리지 토큰 행이 그대로고 러너 토큰 표는 비어 있다", () => {
+    const dir = mkdtempSync(join(tmpdir(), "dodok-db-mig-"));
+    try {
+      const older = migrationsUpTo(dir, "_team_invites");
+      const sqlite = new Database(join(dir, "app.db"));
+      try {
+        const db = drizzle(sqlite, { schema: { ...schema, ...authSchema } });
+        migrate(db, { migrationsFolder: older });
+        const ws = uuid();
+        const tokenId = uuid();
+        const createdAt = new Date("2026-09-25T00:00:00.000Z");
+        db.insert(workspaces).values({ id: ws, name: "w", createdAt }).run();
+        const bridgeRow = {
+          id: tokenId,
+          workspaceId: ws,
+          label: "gw",
+          hash: "b".repeat(64),
+          prefix: "AAAAAA",
+          createdAt,
+          lastUsedAt: null,
+          revokedAt: null,
+        };
+        db.insert(bridgeTokens).values(bridgeRow).run();
+        expect(() => db.select().from(runnerTokens).all()).toThrow(/no such table/);
+
+        migrate(db, { migrationsFolder: migrationsFolder() });
+
+        expect(db.select().from(bridgeTokens).all()).toEqual([bridgeRow]);
+        expect(db.select().from(runnerTokens).all()).toEqual([]);
+        // 같은 해시는 두 번 못 넣는다 — 검증이 해시로 행 하나를 찾는다
+        const runnerRow = { ...bridgeRow, id: uuid(), label: "laptop" };
+        db.insert(runnerTokens).values(runnerRow).run();
+        expect(() =>
+          db
+            .insert(runnerTokens)
+            .values({ ...runnerRow, id: uuid() })
+            .run(),
+        ).toThrow(/UNIQUE/);
       } finally {
         sqlite.close();
       }

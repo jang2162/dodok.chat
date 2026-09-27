@@ -14,8 +14,9 @@
 		max_size 32MB
 	}
 
-	# /bridge/* 는 플러그인의 첨부 HTTP(/bridge/attachments) — 브리지 WebSocket 은 /socket.io/ 의 /bridge 네임스페이스다
-	@backend path /api/* /socket.io/* /bridge/* /healthz
+	# /bridge/*·/runner/* 는 플러그인·러너의 첨부 HTTP(/bridge/attachments·/runner/attachments) — 두 WebSocket 은
+	# /socket.io/ 의 /bridge·/runner 네임스페이스다
+	@backend path /api/* /socket.io/* /bridge/* /runner/* /healthz
 	handle @backend {
 		reverse_proxy {$DODOK_UPSTREAM:app:3000}
 	}

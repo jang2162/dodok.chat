@@ -1,0 +1,179 @@
+import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
+import { Agent } from "@dodok/shared";
+import { v7 as uuid } from "uuid";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import type { App } from "../src/app";
+import { agents } from "../src/db/schema.sqlite";
+import { createAgent } from "../src/modules/agents/service";
+import { bootTestApp, login } from "./helpers/app";
+import { newTestDb } from "./helpers/db";
+import { seedWorkspace } from "./helpers/seed";
+
+// 러너 스펙 2장·판정 P9 — 에이전트 등록의 provider 에 claude 를 연다. Ruling R2 — providerAgentId 는 제공자를 가로질러 유일하다
+// (세션 키 agent:<id>:… 에 provider 가 없어 두 제공자의 같은 id 가 세션 큐·승인 상관을 섞는다)
+
+const conflictOn = (field: string) =>
+  expect.objectContaining({
+    status: 409,
+    body: expect.objectContaining({ code: "CONFLICT", details: { field } }),
+  });
+
+describe("createAgent — providerAgentId 는 제공자를 가로질러 유일하다 [R2]", () => {
+  const setup = () => {
+    const db = newTestDb();
+    return { db, workspaceId: seedWorkspace(db).workspaceId };
+  };
+
+  it("openclaw dev 가 있으면 claude dev 는 409(providerAgentId)", () => {
+    const { db, workspaceId } = setup();
+    createAgent(db, { workspaceId, providerAgentId: "dev", handle: "dev", name: "Dev" });
+    expect(() =>
+      createAgent(db, { workspaceId, provider: "claude", providerAgentId: "dev", handle: "dev2", name: "x" }),
+    ).toThrow(conflictOn("providerAgentId"));
+  });
+
+  it("claude coder 가 있으면 openclaw coder 는 409(providerAgentId)", () => {
+    const { db, workspaceId } = setup();
+    const coder = createAgent(db, {
+      workspaceId,
+      provider: "claude",
+      providerAgentId: "coder",
+      handle: "coder",
+      name: "Coder",
+    });
+    expect(coder.provider).toBe("claude");
+    expect(() =>
+      createAgent(db, { workspaceId, providerAgentId: "coder", handle: "coder2", name: "x" }),
+    ).toThrow(conflictOn("providerAgentId"));
+  });
+
+  it("대소문자만 다른 옛 행(Dev)도 같은 id 로 본다 — 세션 키는 소문자로 접힌다", () => {
+    const { db, workspaceId } = setup();
+    db.insert(agents)
+      .values({
+        id: uuid(),
+        workspaceId,
+        provider: "openclaw",
+        providerAgentId: "Dev",
+        handle: "legacy",
+        name: "Legacy",
+        createdAt: new Date(),
+      })
+      .run();
+    expect(() =>
+      createAgent(db, { workspaceId, provider: "claude", providerAgentId: "dev", handle: "dev", name: "x" }),
+    ).toThrow(conflictOn("providerAgentId"));
+  });
+
+  it("다른 워크스페이스의 같은 id 는 막지 않는다", () => {
+    const { db, workspaceId } = setup();
+    createAgent(db, { workspaceId, providerAgentId: "dev", handle: "dev", name: "Dev" });
+    const other = seedWorkspace(db, { userHandle: "other" }).workspaceId;
+    expect(
+      createAgent(db, {
+        workspaceId: other,
+        provider: "claude",
+        providerAgentId: "dev",
+        handle: "dev",
+        name: "x",
+      }),
+    ).toMatchObject({ provider: "claude", providerAgentId: "dev" });
+  });
+});
+
+describe("REST — claude 에이전트 등록과 discover?provider [P9]", () => {
+  let app: App;
+  let claude: FakeAdapter<"claude">;
+  let headers: { authorization: string };
+
+  beforeAll(async () => {
+    claude = new FakeAdapter({ provider: "claude" });
+    app = await bootTestApp({}, { adapters: [new FakeAdapter(), claude] });
+    headers = (await login(app)).headers;
+  });
+  afterAll(async () => {
+    await app.close();
+  });
+
+  const api = (method: "GET" | "POST", url: string, payload?: object) =>
+    app.fastify.inject({
+      method,
+      url: `/api/v1${url}`,
+      headers,
+      ...(payload === undefined ? {} : { payload }),
+    });
+
+  it("provider claude 로 201, 빠지면 openclaw, 모르는 provider 는 400", async () => {
+    const coder = await api("POST", "/agents", {
+      provider: "claude",
+      providerAgentId: "coder",
+      handle: "coder",
+      name: "Coder",
+    });
+    expect(coder.statusCode).toBe(201);
+    expect(Agent.parse(coder.json().agent)).toMatchObject({ provider: "claude", providerAgentId: "coder" });
+
+    const dev = await api("POST", "/agents", { providerAgentId: "dev", handle: "dev", name: "Dev" });
+    expect(dev.statusCode).toBe(201);
+    expect(dev.json().agent.provider).toBe("openclaw");
+
+    const codex = await api("POST", "/agents", {
+      provider: "codex",
+      providerAgentId: "cx",
+      handle: "cx",
+      name: "Cx",
+    });
+    expect(codex.statusCode).toBe(400);
+    expect(codex.json().code).toBe("VALIDATION");
+  });
+
+  it("REST 로도 제공자를 가로지른 같은 id 는 409(providerAgentId) [R2]", async () => {
+    await api("POST", "/agents", { providerAgentId: "shared", handle: "shared", name: "S" });
+    const res = await api("POST", "/agents", {
+      provider: "claude",
+      providerAgentId: "shared",
+      handle: "shared2",
+      name: "S2",
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ code: "CONFLICT", details: { field: "providerAgentId" } });
+  });
+
+  it("discover?provider=claude 는 claude 어댑터의 listAgents, 빠지면 openclaw, 모르는 값은 400", async () => {
+    const listed = [{ providerAgentId: "coder", name: "Coder", hint: "macbook · repo · sonnet" }];
+    vi.spyOn(claude, "listAgents").mockResolvedValue(listed);
+
+    const fromClaude = await api("GET", "/agents/discover?provider=claude");
+    expect(fromClaude.statusCode).toBe(200);
+    expect(fromClaude.json()).toEqual({ agents: listed });
+
+    const fromOpenclaw = await api("GET", "/agents/discover");
+    expect(fromOpenclaw.statusCode).toBe(200);
+    expect(fromOpenclaw.json().agents.map((a: { providerAgentId: string }) => a.providerAgentId)).toEqual([
+      "dev",
+      "fin",
+    ]);
+    expect((await api("GET", "/agents/discover?provider=openclaw")).json()).toEqual(fromOpenclaw.json());
+
+    const bogus = await api("GET", "/agents/discover?provider=codex");
+    expect(bogus.statusCode).toBe(400);
+  });
+});
+
+describe("REST — claude 어댑터가 없으면 discover?provider=claude 는 503", () => {
+  it("ADAPTER_UNAVAILABLE", async () => {
+    const app = await bootTestApp({}, { adapters: [new FakeAdapter()] });
+    try {
+      const { headers } = await login(app);
+      const res = await app.fastify.inject({
+        method: "GET",
+        url: "/api/v1/agents/discover?provider=claude",
+        headers,
+      });
+      expect(res.statusCode).toBe(503);
+      expect(res.json().code).toBe("ADAPTER_UNAVAILABLE");
+    } finally {
+      await app.close();
+    }
+  });
+});

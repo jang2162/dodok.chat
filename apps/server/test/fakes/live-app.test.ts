@@ -26,7 +26,11 @@ describe("서버 통합 스모크 — 실제 OpenClawAdapter + 가짜 Gateway + 
     });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({
-      statuses: [{ provider: "openclaw", gateway: "connected", bridge: "connected" }],
+      // 기본 어댑터는 OpenClaw 와 Claude 러너 둘 — 러너는 붙은 것도 토큰도 없다
+      statuses: [
+        { provider: "openclaw", gateway: "connected", bridge: "connected" },
+        { provider: "claude", runners: { connected: 0, tokens: 0 } },
+      ],
       capabilities: {
         openclaw: {
           sessionReset: true,
@@ -34,6 +38,13 @@ describe("서버 통합 스모크 — 실제 OpenClawAdapter + 가짜 Gateway + 
           configSet: true,
           promptEveryRun: false,
           serverSessionIds: false,
+        },
+        claude: {
+          sessionReset: true,
+          agentsList: true,
+          configSet: true,
+          promptEveryRun: true,
+          serverSessionIds: true,
         },
       },
     });

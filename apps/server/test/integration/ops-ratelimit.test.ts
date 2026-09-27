@@ -118,7 +118,7 @@ describe("레이트리밋 통합", () => {
 
     const blocked = opsRows(l, "bridge_auth_blocked");
     expect(blocked.map((r) => [r.key, r.severity, r.count])).toEqual([["bridge", "warn", 1]]);
-    expect(blocked[0]?.detail).toEqual({ ipPrefix: "127.0.0.0/24" });
+    expect(blocked[0]?.detail).toEqual({ ipPrefix: "127.0.0.0/24", path: "bridge" });
 
     clock.t += 59_999;
     await expect(l.plugin.reconnect({ token: BRIDGE_TOKEN })).rejects.toThrow(/UNAUTHORIZED/);
@@ -163,7 +163,9 @@ describe("레이트리밋 통합", () => {
     // 다른 주소·프록시 소켓 주소(127.0.0.1)는 막히지 않았다
     expect(await download("198.51.100.8", BRIDGE_TOKEN)).toBe(404);
     expect((await l.plugin.downloadAttachment(attachment.id)).status).toBe(404);
-    expect(opsRows(l, "bridge_auth_blocked").map((r) => r.detail)).toEqual([{ ipPrefix: "198.51.100.0/24" }]);
+    expect(opsRows(l, "bridge_auth_blocked").map((r) => r.detail)).toEqual([
+      { ipPrefix: "198.51.100.0/24", path: "bridge" },
+    ]);
   });
 
   it("REST — 사용자당 분당 상한을 넘으면 429 RATE_LIMITED, 수백 번 걸려도 사건은 라우트 패턴당 한 줄", async () => {

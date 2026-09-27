@@ -28,7 +28,7 @@ export interface OpsService {
    */
   record(input: OpsRecordInput): OpsEvent | null;
   /** 열린 끊김 사건을 닫는다(resolved_at·detail.downMs). 열린 줄이 없으면 null */
-  resolve(kind: "gateway_down" | "plugin_down", key: string, at?: Date): OpsEvent | null;
+  resolve(kind: "gateway_down" | "plugin_down" | "runner_down", key: string, at?: Date): OpsEvent | null;
   ack(upTo?: Date): number;
   list(opts: { cursor?: string; severity?: OpsSeverity; limit?: number }): {
     events: OpsEvent[];

@@ -1,4 +1,5 @@
 import { BridgeAuthGuard, type BridgeTokenVerifier, createOpenClawAdapter } from "@dodok/openclaw-adapter";
+import { createRunnerAdapter, type RunnerTokenVerifier } from "@dodok/runner-adapter";
 import type { ApiError } from "@dodok/shared";
 import cookie from "@fastify/cookie";
 import rateLimit from "@fastify/rate-limit";
@@ -25,6 +26,7 @@ import { registerAttachmentRoutes } from "./modules/attachments/routes";
 import { sweepAttachments } from "./modules/attachments/service";
 import { type BlobLocks, createBlobLocks } from "./modules/attachments/store";
 import { registerChannelRoutes } from "./modules/channels/routes";
+import { getChannel } from "./modules/channels/service";
 import { registerMemberManageRoutes } from "./modules/members/manage.routes";
 import { registerMemberRoutes } from "./modules/members/routes";
 import { registerMessageRoutes } from "./modules/messages/routes";
@@ -35,12 +37,14 @@ import {
   watchConnections,
   watchGatewayVersion,
   watchRunFailures,
+  watchRunners,
 } from "./modules/ops/health";
 import { createRestLimits } from "./modules/ops/http-limits";
 import { ipPrefix } from "./modules/ops/ip";
 import { LIMITS, type Limits } from "./modules/ops/limits";
 import { monotonicNow } from "./modules/ops/ratelimit";
 import { registerOpsRoutes } from "./modules/ops/routes";
+import { providersWithAgents } from "./modules/ops/summary";
 import type { OpsService } from "./modules/ops/service";
 import { createPresence } from "./modules/push/presence";
 import { registerPushRoutes } from "./modules/push/routes";
@@ -53,6 +57,9 @@ import {
 } from "./modules/push/service";
 import { loadVapidKeys } from "./modules/push/vapid";
 import type { Orchestrator, RunTimeouts } from "./modules/runs/orchestrator";
+import { registerRunnerRoutes, runnerServerUrl } from "./modules/runners/routes";
+import { readRunnerFile, runnerDirCandidates } from "./modules/runners/runner-file";
+import { activeRunnerTokenCount, isActiveRunnerTokenId, verifyRunnerTokenDb } from "./modules/runners/tokens";
 import { registerRunRoutes } from "./modules/runs/routes";
 import { registerSearchRoutes } from "./modules/search/routes";
 import { pluginDirCandidates, readPluginFile } from "./modules/setup/plugin-file";
@@ -97,6 +104,15 @@ export type AppDeps = {
   pushSend?: PushSend;
   /** 품은 플러그인 tgz 를 찾을 디렉터리(기본 pluginDirCandidates) — 테스트가 임시 디렉터리나 []를 준다 */
   pluginDirs?: string[];
+  /**
+   * 앱이 실제 러너 어댑터(`/runner`, createRunnerAdapter)를 만들어 레지스트리에 올린다. 기본은 adapters 를 주지 않았을 때만 —
+   * 테스트는 FakeAdapter 곁에 켠다. adapters 에 이미 claude 가 있으면 만들지 않는다
+   */
+  runnerAdapter?: boolean;
+  /** 품은 러너 tgz 를 찾을 디렉터리(기본 runnerDirCandidates) — 테스트가 임시 디렉터리나 []를 준다 */
+  runnerDirs?: string[];
+  /** 러너 도구 승인 기한(기본 RUNNER_APPROVAL_TTL_MS 10분) — 통합 테스트가 실제 시계로 잴 만큼 줄인다 */
+  runnerApprovalTtlMs?: number;
   /** 레이트리밋 숫자(기본 LIMITS, 얕게 덮는다) — 테스트가 수백 번 되풀이할 상한을 줄인다 */
   limits?: Partial<Limits>;
   /** 레이트리밋·브리지 실패 카운터의 시계(ms, 기본 단조 시계 monotonicNow) — 테스트가 창·버킷을 넘긴다. Better Auth·로컬 로그인 상한(@fastify/rate-limit)은 따르지 않는다 */
@@ -181,21 +197,25 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     if (envImport === "ignored") logger.warn(ENV_BRIDGE_TOKEN_IGNORED_WARNING);
     // 핸드셰이크와 첨부 HTTP 가 같은 검증을 쓴다. DB 오류는 던지고, 부르는 쪽이 거절로 본다
     const verifyBridgeToken: BridgeTokenVerifier = (presented) => verifyBridgeTokenDb(db, presented);
+    const verifyRunnerToken: RunnerTokenVerifier = (presented) => verifyRunnerTokenDb(db, presented);
     const bus = new ServerBus();
     const limits: Limits = { ...LIMITS, ...deps.limits };
     const limitClock = deps.limitClock ?? monotonicNow;
     const trustProxy = config.TRUST_PROXY === "true";
-    // 핸드셰이크와 첨부 HTTP 가 같은 실패 카운터를 쓴다(스펙 4.1) — 한쪽에서 막힌 주소는 다른 쪽에서도 막힌다
+    // 브리지·러너의 핸드셰이크와 첨부 HTTP 가 같은 실패 카운터를 쓴다(스펙 4.1·러너 스펙 5장) — 한쪽에서 막힌 주소는 다른
+    // 쪽에서도 막힌다
     const bridgeGuard = new BridgeAuthGuard(limits.bridgeFail);
-    // 사건 서비스는 어댑터 뒤에 만들어진다 — 막힘은 listen 뒤 핸드셰이크에서만 일어나므로 그때는 있다
+    // 사건 서비스는 어댑터 뒤에 만들어진다 — 막힘은 listen 뒤 핸드셰이크에서만 일어나므로 그때는 있다.
+    // 사건은 하나(key bridge)로 묶고 막히게 한 쪽은 detail.path 로 가른다(러너 스펙 8장)
     let ops: OpsService;
-    const onBridgeBlocked = (address: string) =>
+    const onAuthBlocked = (address: string, path: "bridge" | "runner") =>
       ops.record({
         kind: "bridge_auth_blocked",
         key: "bridge",
         severity: "warn",
-        detail: { ipPrefix: ipPrefix(address) },
+        detail: { ipPrefix: ipPrefix(address), path },
       });
+    const onBridgeBlocked = (address: string) => onAuthBlocked(address, "bridge");
 
     // 기본 제네릭(FastifyBaseLogger)으로 추론되게 한다 — pino Logger 로 추론되면 FastifyInstance·플러그인 타입과 어긋난다
     const loggerInstance: FastifyBaseLogger = logger;
@@ -236,31 +256,60 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
 
     // 정본 훅은 오케스트레이터를 부르는데 오케스트레이터는 어댑터를 받아 뒤에 만들어진다 — 브리지 연결은 listen 뒤라 그때는 있다
     let orchestrator: Orchestrator;
-    const adapters = deps.adapters ?? [
-      createOpenClawAdapter({
-        gateway: {
-          url: config.gateway.url,
-          token: config.gateway.token,
-          deviceIdentityPath: config.deviceIdentityPath,
-        },
-        bridge: {
+    const clientAddress = bridgeClientAddress(trustProxy);
+    const adapters: AgentAdapter[] = deps.adapters
+      ? [...deps.adapters]
+      : [
+          createOpenClawAdapter({
+            gateway: {
+              url: config.gateway.url,
+              token: config.gateway.token,
+              deviceIdentityPath: config.deviceIdentityPath,
+            },
+            bridge: {
+              io,
+              verifyToken: verifyBridgeToken,
+              clientAddress,
+              serverVersion: packageJson.version,
+              authGuard: bridgeGuard,
+              onBlocked: onBridgeBlocked,
+              now: limitClock,
+            },
+            logger: logger.child({ mod: "adapter" }),
+            onCanonical: (message) => orchestrator.onCanonical(message, "openclaw"),
+            sessionKeysToRecover: () => sessionRecoverTargets(db),
+            ...(config.OPENCLAW_FRAME_DUMP_PATH === undefined
+              ? {}
+              : { frameDumpPath: config.OPENCLAW_FRAME_DUMP_PATH }),
+            ...(deps.gatewayBackoff === undefined ? {} : { backoff: deps.gatewayBackoff }),
+          }),
+        ];
+    // Claude 러너(러너 스펙 2장) — 사람 머신의 러너가 /runner 로 붙어 온다. 최종 답·post 는 OpenClaw 정본과 같은 자리로 저장한다
+    if (
+      (deps.runnerAdapter ?? deps.adapters === undefined) &&
+      !adapters.some((a) => a.provider === "claude")
+    ) {
+      adapters.push(
+        createRunnerAdapter({
           io,
-          verifyToken: verifyBridgeToken,
-          clientAddress: bridgeClientAddress(trustProxy),
-          serverVersion: packageJson.version,
+          verifyToken: verifyRunnerToken,
+          clientAddress: (socket) => clientAddress(socket.handshake),
           authGuard: bridgeGuard,
-          onBlocked: onBridgeBlocked,
+          onBlocked: (address) => onAuthBlocked(address, "runner"),
           now: limitClock,
-        },
-        logger: logger.child({ mod: "adapter" }),
-        onCanonical: (message) => orchestrator.onCanonical(message, "openclaw"),
-        sessionKeysToRecover: () => sessionRecoverTargets(db),
-        ...(config.OPENCLAW_FRAME_DUMP_PATH === undefined
-          ? {}
-          : { frameDumpPath: config.OPENCLAW_FRAME_DUMP_PATH }),
-        ...(deps.gatewayBackoff === undefined ? {} : { backoff: deps.gatewayBackoff }),
-      }),
-    ];
+          serverVersion: packageJson.version,
+          logger: logger.child({ mod: "runner-adapter" }),
+          channelName: (channelId) => getChannel(db, channelId, workspaceId)?.name,
+          onOutbound: async (message) => {
+            const { messageId } = await orchestrator.onCanonical(message, "claude");
+            if (messageId === undefined) throw new Error("canonical store returned no message id");
+            return { messageId };
+          },
+          tokenCount: () => activeRunnerTokenCount(db, workspaceId),
+          ...(deps.runnerApprovalTtlMs === undefined ? {} : { approvalTtlMs: deps.runnerApprovalTtlMs }),
+        }),
+      );
+    }
     const closeAdapters = () => Promise.all(adapters.map((adapter) => adapter.close()));
     undo.push({ step: "adapter", run: closeAdapters });
     const registry = createAdapterRegistry(adapters);
@@ -370,7 +419,8 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       workspaceId,
       dir: config.attachmentsDir,
       verifyBridgeToken,
-      bridgeGuard: { guard: bridgeGuard, now: limitClock, onBlocked: onBridgeBlocked },
+      verifyRunnerToken,
+      bridgeGuard: { guard: bridgeGuard, now: limitClock, onBlocked: onAuthBlocked },
       locks: blobLocks,
       diskFull: () => disk.current().level === "error",
     });
@@ -399,11 +449,20 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     const pluginFile = readPluginFile(deps.pluginDirs ?? pluginDirCandidates(config));
     if (!pluginFile)
       logger.info("plugin file not found — build it with pnpm -F @dodok/openclaw-plugin run pack:plugin");
+    const runnerFile = readRunnerFile(deps.runnerDirs ?? runnerDirCandidates(config));
+    if (!runnerFile)
+      logger.info("runner file not found — build it with pnpm -F @dodok/claude-runner run pack:runner");
     const publicUrl = bridgePublicUrl(config);
+    const runnerDetail = () => {
+      const detail = registry.forProvider("claude")?.setupDetail();
+      return detail?.provider === "claude" ? detail.runners : [];
+    };
     const setupStatus = () =>
       buildSetupStatus({
         detail: openclawDetail(),
         pluginFile,
+        runners: runnerDetail(),
+        runnerFile,
         serverVersion: packageJson.version,
         publicUrl,
         envTokenIgnored:
@@ -435,13 +494,29 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       status: setupStatus,
       changed: emitSetupStatus,
     });
+    registerRunnerRoutes(fastify, {
+      auth,
+      db,
+      logger,
+      workspaceId,
+      registry,
+      runnerFile,
+      serverUrl: runnerServerUrl(publicUrl),
+      changed: emitSetupStatus,
+    });
     // 운영 API(운영 보강 스펙 6장) — /healthz 에서 뺀 워크스페이스 id·어댑터 상세도 여기서 owner 에게만
     registerOpsRoutes(fastify, {
       auth,
       db,
       workspaceId,
       adapter: openclaw,
-      adapterProviders: adapters.map((adapter) => adapter.provider),
+      // 붙어 있고 에이전트가 등록된 제공자 — 러너 어댑터는 늘 붙으므로, claude 에이전트가 없는 배포는 OpenClaw 만 쓰는 배포와 같다
+      providersInUse: () =>
+        providersWithAgents(
+          db,
+          workspaceId,
+          adapters.map((adapter) => adapter.provider),
+        ),
       ops,
       disk: () => disk.current(),
       serverVersion: packageJson.version,
@@ -480,6 +555,14 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     // 운영 사건(스펙 5.2·5.3·3.1 run_failed) — 위 system.notice 감시와 따로 돈다. 부팅 정리(recoverOnBoot)가 닫는 런도 센다
     const connections = watchConnections(openclaw, ops, deps.disconnectEventMs ?? DISCONNECT_EVENT_MS);
     undo.push({ step: "connections", run: () => connections.close() });
+    const claude = registry.forProvider("claude");
+    const runners = claude
+      ? watchRunners(claude, ops, {
+          isActiveToken: (tokenId) => isActiveRunnerTokenId(db, workspaceId, tokenId),
+          delayMs: deps.disconnectEventMs ?? DISCONNECT_EVENT_MS,
+        })
+      : { close() {} };
+    undo.push({ step: "runners", run: () => runners.close() });
     const gatewayVersion = watchGatewayVersion(openclaw, { db, workspaceId, ops, logger });
     undo.push({ step: "gateway-version", run: () => gatewayVersion.close() });
     const runFailures = watchRunFailures(bus, ops);
@@ -530,6 +613,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       await step("watch", () => watch.close());
       // 사건을 남기는 감시는 ops 를 닫기 전에 끈다 — 그 뒤 기록은 창 없이 즉시 나간다(OpsService.close)
       await step("connections", () => connections.close());
+      await step("runners", () => runners.close());
       await step("gateway-version", () => gatewayVersion.close());
       await step("run-failures", () => runFailures.close());
       await step("disk", () => disk.close());

@@ -90,12 +90,17 @@ function newestTgz(dir: string): string | undefined {
  * tgz 가 없거나, gzip 이 아니거나, 안에 번들이 없으면 null — 받기 대신 만드는 법을 보이게 된다
  */
 export function readPluginFile(candidates: string[]): PluginFile | null {
+  return readBundledTgz(candidates, PLUGIN_BUNDLE_ENTRY);
+}
+
+/** readPluginFile 의 몸통 — 안의 번들 경로(entry)만 다르다. 러너 tgz(runners/runner-file.ts)도 쓴다 */
+export function readBundledTgz(candidates: string[], entry: string): PluginFile | null {
   for (const dir of candidates) {
     const path = newestTgz(dir);
     if (!path) continue;
     try {
       const bytes = readFileSync(path);
-      const bundle = tarEntry(gunzipSync(bytes), PLUGIN_BUNDLE_ENTRY);
+      const bundle = tarEntry(gunzipSync(bytes), entry);
       if (!bundle) return null;
       return { path, sha256: sha256(bytes), bundleSha256: sha256(bundle), bytes: bytes.length };
     } catch {

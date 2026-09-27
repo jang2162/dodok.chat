@@ -1,5 +1,5 @@
 import { OPENCLAW_PINNED_VERSION, type OpenClawSetupDetail } from "@dodok/openclaw-adapter";
-import { SetupStatus } from "@dodok/shared";
+import { type RunnerConnection, SetupStatus } from "@dodok/shared";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -221,6 +221,8 @@ describe("buildSetupStatus", () => {
     buildSetupStatus({
       detail: detail(p),
       pluginFile: f,
+      runners: [],
+      runnerFile: null,
       serverVersion: "1.2.3",
       publicUrl: "wss://chat.example.com/bridge",
       envTokenIgnored,
@@ -248,6 +250,46 @@ describe("buildSetupStatus", () => {
     expect(JSON.stringify(status)).not.toContain("/app/plugin");
   });
 
+  it("러너 블록 — 붙은 러너 목록을 그대로, 러너 파일은 경로 없이", () => {
+    const runner: RunnerConnection = {
+      tokenId: "01999999-0000-7000-8000-000000000002",
+      label: "macbook",
+      runnerVersion: "0.0.0",
+      sdkVersion: "0.3.283",
+      claudeCodeVersion: "2.1.283",
+      bundleSha256: null,
+      capabilities: ["threads"],
+      connectedAt: "2026-09-27T00:00:00.000Z",
+      agents: [{ id: "coder", name: "Coder", model: "sonnet", workdirLabel: "repo", conflict: false }],
+    };
+    const runnerFile = {
+      path: "/app/runner/r.tgz",
+      sha256: "e".repeat(64),
+      bundleSha256: "f".repeat(64),
+      bytes: 99,
+    };
+    const status = buildSetupStatus({
+      detail: detail(null),
+      pluginFile: null,
+      runners: [runner],
+      runnerFile,
+      serverVersion: "1.2.3",
+      publicUrl: "wss://chat.example.com/bridge",
+      envTokenIgnored: false,
+    });
+    expect(SetupStatus.parse(status)).toEqual(status);
+    expect(status.runners).toEqual({
+      list: [runner],
+      runnerFile: {
+        available: true,
+        sha256: runnerFile.sha256,
+        bundleSha256: runnerFile.bundleSha256,
+        bytes: 99,
+      },
+    });
+    expect(JSON.stringify(status)).not.toContain("/app/runner");
+  });
+
   it("pluginMatches: 같은 번들 → true, 다른 번들 → false, 파일·플러그인·bundleSha256 이 없으면 null [Review Focus 5]", () => {
     expect(build(plugin, file).pluginMatches).toBe(true);
     expect(build({ ...plugin, bundleSha256: "d".repeat(64) }, file).pluginMatches).toBe(false);
@@ -264,6 +306,8 @@ describe("buildSetupStatus", () => {
       buildSetupStatus({
         detail: { ...detail(null), gateway: { ...detail(null).gateway, version } },
         pluginFile: null,
+        runners: [],
+        runnerFile: null,
         serverVersion: "1.2.3",
         publicUrl: "wss://chat.example.com/bridge",
         envTokenIgnored: false,

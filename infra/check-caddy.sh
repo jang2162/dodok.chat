@@ -57,6 +57,8 @@ if grep -qi '<html' "$tmp/b"; then fail "없는 /api/v1/… 본문이 HTML 이 �
 check "/socket.io/socket.io.js 는 서버의 400" /socket.io/socket.io.js 400
 # 플러그인의 첨부 HTTP — 토큰 없이 부르면 서버가 거절한다. SPA 폴백이면 200 HTML
 check "/bridge/attachments/… 는 서버로(토큰 없이 401 JSON)" /bridge/attachments/00000000-0000-0000-0000-000000000000 401 application/json
+# 러너의 첨부 HTTP — 같은 규칙
+check "/runner/attachments/… 는 서버로(토큰 없이 401 JSON)" /runner/attachments/00000000-0000-0000-0000-000000000000 401 application/json
 check "/sw.js no-cache" /sw.js 200 "" no-cache
 check "/manifest.webmanifest no-cache" /manifest.webmanifest 200 "" no-cache
 

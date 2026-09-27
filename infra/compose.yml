@@ -22,6 +22,7 @@ services:
       DATA_DIR: /data
       DODOK_MIGRATIONS_DIR: /app/drizzle
       DODOK_PLUGIN_DIR: /app/plugin # 이미지가 품은 플러그인 tgz — .env 의 빈 줄이 덮어 「플러그인 파일 없음」이 되지 않게
+      DODOK_RUNNER_DIR: /app/runner # 이미지가 품은 러너 tgz — 같은 까닭
       # Caddy 뒤라 레이트리밋·브리지 실패 카운터의 주소는 X-Forwarded-For 를 따라야 한다(Caddy 가 클라이언트 XFF 를 덮는다).
       # .env 의 빈 줄이나 false 가 덮으면 모든 요청이 Caddy 주소 하나로 묶여 한 사람의 폭주가 모두를 막는다
       TRUST_PROXY: "true"

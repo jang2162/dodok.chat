@@ -46,6 +46,11 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ ...testEnv, BRIDGE_TOKEN: "short" })).toThrow(/BRIDGE_TOKEN/);
     expect(loadConfig({ ...testEnv, BRIDGE_TOKEN: "b".repeat(16) }).BRIDGE_TOKEN).toBe("b".repeat(16));
   });
+  it("DODOK_RUNNER_DIR 는 선택", () => {
+    expect(loadConfig(testEnv).DODOK_RUNNER_DIR).toBeUndefined();
+    expect(loadConfig({ ...testEnv, DODOK_RUNNER_DIR: "/app/runner" }).DODOK_RUNNER_DIR).toBe("/app/runner");
+  });
+
   it("DODOK_PLUGIN_DIR 는 선택", () => {
     expect(loadConfig(testEnv).DODOK_PLUGIN_DIR).toBeUndefined();
     expect(loadConfig({ ...testEnv, DODOK_PLUGIN_DIR: "/app/plugin" }).DODOK_PLUGIN_DIR).toBe("/app/plugin");

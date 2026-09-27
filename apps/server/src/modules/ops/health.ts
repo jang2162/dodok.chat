@@ -91,6 +91,55 @@ export function watchConnections(
   };
 }
 
+/**
+ * 러너 어댑터(claude)의 붙은 러너를 토큰별로 보고(러너 스펙 5장), 이 프로세스에서 붙은 적이 있는 토큰이 delayMs 넘게 끊겨 있으면
+ * runner_down(key 토큰 id)을 열고 다시 붙으면 닫는다. 한 번도 안 붙은 토큰·끊긴 사이 폐기된 토큰은 사건을 남기지 않는다
+ */
+export function watchRunners(
+  adapter: Pick<AgentAdapter, "setupDetail" | "onEvent">,
+  ops: Pick<OpsService, "record" | "resolve">,
+  opts: { isActiveToken(tokenId: string): boolean; delayMs?: number },
+): { close(): void } {
+  const delayMs = opts.delayMs ?? DISCONNECT_EVENT_MS;
+  let connected = new Set<string>();
+  const timers = new Map<string, ReturnType<typeof setTimeout>>();
+  const observe = () => {
+    const detail = adapter.setupDetail();
+    if (detail.provider !== "claude") return;
+    const next = new Set(detail.runners.map((r) => r.tokenId));
+    for (const tokenId of next) {
+      if (connected.has(tokenId)) continue;
+      clearTimeout(timers.get(tokenId));
+      timers.delete(tokenId);
+      // 열린 줄이 없으면 null — 앞 프로세스가 연 줄도 붙은 순간 닫는다
+      ops.resolve("runner_down", tokenId);
+    }
+    for (const tokenId of connected) {
+      if (next.has(tokenId)) continue;
+      const timer = setTimeout(() => {
+        timers.delete(tokenId);
+        if (!opts.isActiveToken(tokenId)) return;
+        ops.record({ kind: "runner_down", key: tokenId, severity: "warn", detail: { thresholdMs: delayMs } });
+      }, delayMs);
+      timer.unref();
+      timers.set(tokenId, timer);
+    }
+    connected = next;
+  };
+  // hello·끊김마다 어댑터가 status 와 setup 을 함께 낸다 — 같은 목록을 두 번 보면 두 번째는 할 일이 없다
+  const off = adapter.onEvent((e) => {
+    if (e.kind === "status" || e.kind === "setup") observe();
+  });
+  observe();
+  return {
+    close() {
+      off();
+      for (const timer of timers.values()) clearTimeout(timer);
+      timers.clear();
+    },
+  };
+}
+
 /** 받은 Gateway 버전과 저장소 핀 — 버전을 모르면(null) 드리프트로 보지 않는다. 운영 상태·연결 페이지가 같은 판정을 쓴다 */
 export function gatewayPin(version: string | null): { pinned: string; drift: boolean } {
   return { pinned: OPENCLAW_PINNED_VERSION, drift: version !== null && version !== OPENCLAW_PINNED_VERSION };

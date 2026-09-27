@@ -32,6 +32,9 @@ importers:
       '@dodok/openclaw-adapter':
         specifier: workspace:*
         version: link:../../packages/openclaw-adapter
+      '@dodok/runner-adapter':
+        specifier: workspace:*
+        version: link:../../packages/runner-adapter
       '@dodok/shared':
         specifier: workspace:*
         version: link:../../packages/shared

@@ -1,5 +1,5 @@
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
-import type { OpenClawAdapterStatus, RunState } from "@dodok/shared";
+import type { OpenClawAdapterStatus, RunnerConnection, RunState } from "@dodok/shared";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,6 +17,7 @@ import {
   watchConnections,
   watchGatewayVersion,
   watchRunFailures,
+  watchRunners,
 } from "../src/modules/ops/health";
 import { createOpsService, type OpsService } from "../src/modules/ops/service";
 import { getOpsSettings } from "../src/modules/ops/settings";
@@ -158,6 +159,103 @@ describe("watchConnections — 60초 넘는 끊김만 사건(Review Focus 2)", (
     const watch = watchConnections(adapter, ops);
     set({ gateway: "connected" });
     expect(rowsOf("gateway_down")[0]?.resolvedAt).not.toBeNull();
+    watch.close();
+  });
+});
+
+describe("watchRunners — 토큰별 runner_down(러너 스펙 5장)", () => {
+  const A = "01999999-0000-7000-8000-00000000000a";
+  const B = "01999999-0000-7000-8000-00000000000b";
+  const runner = (tokenId: string): RunnerConnection => ({
+    tokenId,
+    label: tokenId === A ? "macbook" : "desktop",
+    runnerVersion: "0.0.0",
+    sdkVersion: "0.3.283",
+    claudeCodeVersion: "2.1.283",
+    bundleSha256: null,
+    capabilities: [],
+    connectedAt: "2026-09-25T00:00:00.000Z",
+    agents: [],
+  });
+  function setup(active = new Set([A, B])) {
+    const adapter = new FakeAdapter({ provider: "claude" });
+    const connect = (...tokenIds: string[]) => {
+      adapter.setSetupDetail({ provider: "claude", runners: tokenIds.map(runner) });
+      adapter.setStatus({ provider: "claude", runners: { connected: tokenIds.length, tokens: active.size } });
+      adapter.emit({ kind: "status", status: adapter.status(), capabilities: adapter.capabilities() });
+      adapter.emit({ kind: "setup" });
+    };
+    const watch = watchRunners(adapter, ops, { isActiveToken: (id) => active.has(id) });
+    return { adapter, connect, watch, active };
+  }
+
+  it("붙었던 토큰이 61초 끊기면 runner_down(key 토큰 id) 한 줄, 다시 붙으면 닫힌다(downMs)", () => {
+    const { connect, watch } = setup();
+    connect(A, B);
+    connect(B);
+    vi.advanceTimersByTime(60 * SEC - 1);
+    expect(rowsOf("runner_down")).toEqual([]);
+    vi.advanceTimersByTime(1 * SEC);
+    expect(rowsOf("runner_down")).toEqual([
+      expect.objectContaining({ key: A, severity: "warn", count: 1, resolvedAt: null }),
+    ]);
+    vi.advanceTimersByTime(29 * SEC);
+    connect(A, B);
+    const [closed] = rowsOf("runner_down");
+    expect(closed?.resolvedAt).not.toBeNull();
+    expect(closed?.detail).toMatchObject({ downMs: 90 * SEC - 1 });
+    watch.close();
+  });
+
+  it("50초 끊김 → 붙음이면 사건 없음, 두 토큰은 따로 잰다", () => {
+    const { connect, watch } = setup();
+    connect(A, B);
+    connect(B);
+    vi.advanceTimersByTime(50 * SEC);
+    connect(A);
+    vi.advanceTimersByTime(61 * SEC);
+    expect(rowsOf("runner_down").map((r) => r.key)).toEqual([B]);
+    watch.close();
+  });
+
+  it("한 번도 붙지 않은 토큰은 사건을 남기지 않는다 — 러너 0대로 시작해도 조용하다", () => {
+    const { connect, watch } = setup();
+    connect();
+    vi.advanceTimersByTime(10 * DISCONNECT_EVENT_MS);
+    expect(rows()).toEqual([]);
+    watch.close();
+  });
+
+  it("끊긴 사이 폐기된 토큰은 사건을 남기지 않는다", () => {
+    const { connect, watch, active } = setup();
+    connect(A);
+    connect();
+    active.delete(A);
+    vi.advanceTimersByTime(61 * SEC);
+    expect(rows()).toEqual([]);
+    watch.close();
+  });
+
+  it("OpenClaw 어댑터의 상태는 보지 않고, close 뒤에는 타이머가 남지 않는다", () => {
+    const { connect, watch } = setup();
+    connect(A);
+    connect();
+    watch.close();
+    vi.advanceTimersByTime(10 * DISCONNECT_EVENT_MS);
+    expect(rows()).toEqual([]);
+    const openclaw = new FakeAdapter();
+    const other = watchRunners(openclaw, ops, { isActiveToken: () => true });
+    openclaw.emit({ kind: "status", status: openclaw.status(), capabilities: openclaw.capabilities() });
+    vi.advanceTimersByTime(10 * DISCONNECT_EVENT_MS);
+    expect(rows()).toEqual([]);
+    other.close();
+  });
+
+  it("앞 프로세스가 열어 둔 runner_down 줄도 그 토큰이 붙는 순간 닫는다", () => {
+    ops.record({ kind: "runner_down", key: A, severity: "warn" });
+    const { connect, watch } = setup();
+    connect(A);
+    expect(rowsOf("runner_down")[0]?.resolvedAt).not.toBeNull();
     watch.close();
   });
 });

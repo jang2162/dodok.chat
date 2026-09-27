@@ -31,6 +31,26 @@ export const IssueBridgeTokenResult = z.object({
 });
 export type IssueBridgeTokenResult = z.infer<typeof IssueBridgeTokenResult>;
 
+/** 러너 토큰 목록·발급 결과의 한 줄(러너 스펙 5장) — 브리지 토큰과 같은 모양. prefix 는 원문의 drn_ 뒤 6자, connected 는 지금 이 토큰으로 붙은 러너가 있다 */
+export const RunnerTokenRecord = BridgeTokenRecord;
+export type RunnerTokenRecord = z.infer<typeof RunnerTokenRecord>;
+
+/** POST /api/v1/setup/runner-tokens 본문 — 라벨은 러너 머신 이름 */
+export const IssueRunnerTokenInput = IssueBridgeTokenInput;
+export type IssueRunnerTokenInput = z.infer<typeof IssueRunnerTokenInput>;
+
+/** 러너 설정 파일에 적을 값 — 토큰 원문은 설정 파일이 아니라 tokenFile 에 둔다 */
+export const RunnerConfigSnippet = z.object({ serverUrl: z.string(), tokenFile: z.string() });
+export type RunnerConfigSnippet = z.infer<typeof RunnerConfigSnippet>;
+
+/** 발급 응답(Cache-Control: no-store) — 원문은 여기에만 있다 */
+export const IssueRunnerTokenResult = z.object({
+  token: z.string().regex(/^drn_[A-Za-z0-9_-]{43}$/),
+  record: RunnerTokenRecord,
+  runnerConfig: RunnerConfigSnippet,
+});
+export type IssueRunnerTokenResult = z.infer<typeof IssueRunnerTokenResult>;
+
 /**
  * 지금 붙은 러너 하나(러너 스펙 5장) — 어댑터 `setupDetail()` 의 claude 변형과 연결 페이지 러너 블록이 같은 모양을 쓴다.
  * 작업 디렉터리는 라벨만 — 경로 원문은 싣지 않는다. conflict 는 먼저 붙은 러너가 이미 알린 에이전트 id 다

@@ -141,7 +141,7 @@ src/
 │                         종료 순서(새 wire 거부 → 푸시 트리거 떼기 → 오케스트레이터 stop → adapter.close → io.close → Fastify → 진행 중 푸시 발송 최대 2s(PUSH_DRAIN_TIMEOUT_MS) → DB, 10s 상한),
 │                         /healthz(`{ok, db}` 뿐 — 워크스페이스 id·어댑터 상세는 ops/status), Gateway 재접속 60s 알림.
 │                         운영(Phase 3 ③): ops 서비스·부팅 sweep + 24시간마다(OPS_SWEEP_INTERVAL_MS), 레이트리밋(`AppDeps.limits`·`limitClock` — 기본 LIMITS·단조 시계)과 REST 상한 데코레이션
-│                         `restLimits`, 브리지 실패 카운터 BridgeAuthGuard 하나(핸드셰이크·`/bridge/attachments`), 감시 넷(watchConnections·watchGatewayVersion·watchRunFailures·
+│                         `restLimits`, 브리지 실패 카운터 BridgeAuthGuard 하나(브리지·러너 핸드셰이크·`/bridge/attachments`·`/runner/attachments` — 사건 bridge_auth_blocked 의 detail.path 로 가른다), 감시 다섯(watchConnections·watchRunners·watchGatewayVersion·watchRunFailures·
 │                         createDiskMonitor — `await disk.ready` 로 부팅이 끝나면 첫 측정이 있다, `App.disk()`·`checkDisk()`)는 종료 때 `"ops"` 단계 **전에** 닫는다.
 │                         테스트·dev:fake 입력: `AppDeps.statfs`·`disconnectEventMs`·`gatewayBackoff`. VAPID 키를 읽고(주체가 로컬 자리값이면 warn 한 줄) 발송기(`AppDeps.pushSend`, 없으면 webPushSender)를 배선한다.
 │                         owner 보장 뒤 `.env` BRIDGE_TOKEN 이어받기(importEnvToken — ignored 면 warn `ENV_BRIDGE_TOKEN_IGNORED_WARNING` 한 줄), 브리지 검증 함수
@@ -262,6 +262,15 @@ src/
 │  │                      routes.ts(`GET /api/v1/setup/status` · `GET`·`POST /api/v1/setup/bridge-tokens`(발급 201, `Cache-Control: no-store` — 원문은 이 응답에만) ·
 │  │                      `DELETE /api/v1/setup/bridge-tokens/:id`(204, 폐기 뒤 revokeBridgeSessions — 끊기 실패는 warn) · `GET /api/v1/setup/plugin.tgz`
 │  │                      (`dodok-openclaw-plugin-<sha 앞 12자>.tgz`, 없으면 404 `PLUGIN_FILE_MISSING`, 부팅 뒤 파일이 바뀌었으면 409 `PLUGIN_FILE_CHANGED`))
+│  ├─ runners/            Phase 4 ③. 연결 페이지 러너 블록 — 전부 owner 세션.
+│  │                      tokens.ts(runner_tokens 저장소 — bridge_tokens 와 같은 규칙, 원문 `drn_`, `.env` 이어받기 없음 · verifyRunnerTokenDb 는 id·라벨 ·
+│  │                      activeRunnerTokenCount(어댑터 상태 runners.tokens) · isActiveRunnerTokenId(runner_down 이 폐기된 토큰에 사건을 남기지 않게)) ·
+│  │                      runner-file.ts(runnerDirCandidates — DODOK_RUNNER_DIR(이미지 /app/runner), 소스 실행이면 packages/claude-runner/dist ·
+│  │                      readRunnerFile — tgz 안 `package/dist/main.js` sha256, 몸통은 plugin-file.ts readBundledTgz) ·
+│  │                      routes.ts(`GET`·`POST /api/v1/setup/runner-tokens`(201 no-store, runnerConfig{serverUrl — 브리지 공개 주소의 오리진을 http(s) 로, tokenFile}) ·
+│  │                      `DELETE /api/v1/setup/runner-tokens/:id`(폐기 → 러너 어댑터 revokeTokenSessions) · `GET /api/v1/setup/runner.tgz`(없으면 404 `RUNNER_FILE_MISSING`)).
+│  │                      러너 어댑터(@dodok/runner-adapter)는 app.ts 가 만든다(deps.adapters 를 안 주면 늘 — 테스트는 runnerAdapter: true). 러너 첨부 HTTP
+│  │                      (`/runner/attachments`)는 attachments/routes.ts 가 브리지와 같은 가드·같은 제한으로 연다(업로더는 bridge — 에이전트 쪽)
 │  ├─ ops/                Phase 3 ③. 운영 사건·런 수 상한·레이트리밋·안정성 — API 는 전부 admin 이상(`requireRole(ctx, "admin")`, 아니면 403).
 │  │                      store.ts(ops_events: 묶기 — 같은 kind·key·미확인·last_at 1시간 안이면 count+1, severity 는 높은 쪽 · 끊김 사건은 resolved_at 전까지 한 줄 ·
 │  │                      resolveEvent(downMs = 닫은 때 − first_at + detail.thresholdMs) · ack(upTo 까지) · 목록(커서 `<last_at ms>:<id>`, 50) · sumCountsSince · 30일 sweep ·
@@ -274,6 +283,7 @@ src/
 │  │                      limits.ts(LIMITS — 레이트리밋 숫자의 유일한 자리) · ratelimit.ts(TokenBucket·KeyedLimiter, 기본 시계 monotonicNow) ·
 │  │                      http-limits.ts(createRestLimits — REST·업로드 상한, recordRateLimit — 사건 key 는 라우트 패턴) ·
 │  │                      health.ts(watchConnections — Gateway·브리지가 DISCONNECT_EVENT_MS(60s) 넘게 끊기면 gateway_down·plugin_down 을 열고 붙으면 닫는다 ·
+│  │                      watchRunners — 이 프로세스에서 붙은 적 있는 러너 토큰이 60s 넘게 끊기면 runner_down(key 토큰 id), 붙으면 닫는다, 폐기된 토큰은 남기지 않는다 ·
 │  │                      gatewayPin·observeGatewayVersion·watchGatewayVersion — 핀과 다르면 gateway_version_untested, 기억한 값과 다르면 gateway_version_changed ·
 │  │                      diskLevel·createDiskMonitor — 부팅 때와 10분마다 statfs, error 면 첨부 업로드 507, check() 로 곧바로 다시 잰다 ·
 │  │                      startRunState — run-state.json 종료 표지, 직전이 clean:false 면 unclean_shutdown · watchRunFailures — error 로 끝난 런마다 run_failed agent:<id>) ·

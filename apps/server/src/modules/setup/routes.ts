@@ -3,7 +3,7 @@
  * 목록·상태·로그·wire 어디에도 원문은 없다.
  */
 import { Id, IssueBridgeTokenInput, type IssueBridgeTokenResult, type SetupStatus } from "@dodok/shared";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply } from "fastify";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { z } from "zod";
@@ -79,22 +79,34 @@ export function registerSetupRoutes(fastify: FastifyInstance, ctx: SetupRouteCon
     return reply.status(204).send();
   });
 
-  fastify.get("/api/v1/setup/plugin.tgz", owner, async (_request, reply) => {
-    const file = ctx.pluginFile;
-    if (!file) throw pluginFileMissing();
-    const bytes = await readFile(file.path).catch((err: NodeJS.ErrnoException) => {
-      if (err.code === "ENOENT") throw pluginFileMissing();
-      throw err;
-    });
-    // 받은 파일의 sha256 이 화면에 보인 값(부팅 때 잰 것)과 같아야 한다 — 그 뒤 다시 빌드됐으면 재시작해야 맞는다
-    if (createHash("sha256").update(bytes).digest("hex") !== file.sha256)
-      throw apiError("CONFLICT", "PLUGIN_FILE_CHANGED: restart the server to serve the rebuilt plugin");
-    return reply
-      .headers({
-        "content-type": "application/gzip",
-        "content-disposition": `attachment; filename="dodok-openclaw-plugin-${file.sha256.slice(0, 12)}.tgz"`,
-        "x-content-type-options": "nosniff",
-      })
-      .send(bytes);
+  fastify.get("/api/v1/setup/plugin.tgz", owner, async (_request, reply) =>
+    sendPackedFile(reply, ctx.pluginFile, {
+      missing: pluginFileMissing,
+      changedMessage: "PLUGIN_FILE_CHANGED: restart the server to serve the rebuilt plugin",
+      fileName: (sha) => `dodok-openclaw-plugin-${sha.slice(0, 12)}.tgz`,
+    }),
+  );
+}
+
+/** 부팅 때 잰 tgz 를 내려 준다 — 플러그인·러너가 같은 규칙(파일이 없으면 missing, 그 뒤 다시 빌드됐으면 CONFLICT) */
+export async function sendPackedFile(
+  reply: FastifyReply,
+  file: PluginFile | null,
+  opts: { missing: () => Error; changedMessage: string; fileName: (sha256: string) => string },
+) {
+  if (!file) throw opts.missing();
+  const bytes = await readFile(file.path).catch((err: NodeJS.ErrnoException) => {
+    if (err.code === "ENOENT") throw opts.missing();
+    throw err;
   });
+  // 받은 파일의 sha256 이 화면에 보인 값(부팅 때 잰 것)과 같아야 한다 — 그 뒤 다시 빌드됐으면 재시작해야 맞는다
+  if (createHash("sha256").update(bytes).digest("hex") !== file.sha256)
+    throw apiError("CONFLICT", opts.changedMessage);
+  return reply
+    .headers({
+      "content-type": "application/gzip",
+      "content-disposition": `attachment; filename="${opts.fileName(file.sha256)}"`,
+      "x-content-type-options": "nosniff",
+    })
+    .send(bytes);
 }

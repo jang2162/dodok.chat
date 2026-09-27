@@ -8,7 +8,7 @@ import { requireRole } from "../../auth/roles";
 import { requireSession, sessionUser } from "../../auth/routes";
 import type { Db } from "../../db/client";
 import { apiError } from "../../http/errors";
-import { parseBody, parseParams } from "../../http/validate";
+import { parseBody, parseParams, parseQuery } from "../../http/validate";
 import { createAgent, getAgent, listAgents, updateAgent } from "./service";
 
 export type AgentRouteContext = {
@@ -19,6 +19,7 @@ export type AgentRouteContext = {
 };
 
 const AgentParams = z.object({ id: Id });
+const DiscoverQuery = z.object({ provider: z.enum(["openclaw", "claude"]).default("openclaw") });
 
 const CreateAgentBody = Agent.pick({
   providerAgentId: true,
@@ -32,7 +33,8 @@ const CreateAgentBody = Agent.pick({
     message:
       "providerAgentId 는 OpenClaw 에이전트 id(영문 소문자·숫자로 시작, 영문 소문자·숫자·_·-, 64자 이하)여야 한다",
   }),
-  provider: z.literal("openclaw").default("openclaw"),
+  // 판정 P9 — 서버는 목록 검사를 하지 않는다(OpenClaw 와 같다). 웹이 discover?provider= 목록에서 고른다
+  provider: z.enum(["openclaw", "claude"]).default("openclaw"),
   enabled: Agent.shape.enabled.default(true),
 });
 
@@ -64,9 +66,13 @@ export function registerAgentRoutes(fastify: FastifyInstance, ctx: AgentRouteCon
     return { agent: updateAgent(ctx.db, id, patch) };
   });
 
-  /** Gateway agents.list 를 그대로 — 등록 화면(admin)의 선택지. 자동 동기화는 하지 않는다(스펙 3.5). */
-  fastify.get("/api/v1/agents/discover", admin, async () => {
-    const adapter = ctx.registry.forProvider("openclaw");
+  /**
+   * 그 제공자 어댑터의 listAgents 를 그대로 — 등록 화면(admin)의 선택지. OpenClaw 는 Gateway agents.list, Claude 러너는 붙은
+   * 러너들이 hello 로 알린 에이전트(충돌 빼고). 자동 동기화는 하지 않는다(스펙 3.5)
+   */
+  fastify.get("/api/v1/agents/discover", admin, async (request) => {
+    const { provider } = parseQuery(DiscoverQuery, request.query);
+    const adapter = ctx.registry.forProvider(provider);
     if (!adapter) throw apiError("ADAPTER_UNAVAILABLE", "adapter not configured");
     try {
       return { agents: await adapter.listAgents() };

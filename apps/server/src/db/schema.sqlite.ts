@@ -359,6 +359,27 @@ export const bridgeTokens = sqliteTable(
   ],
 );
 
+/** 러너 토큰(러너 스펙 5장) — bridge_tokens 와 같은 열. 원문 drn_… 은 발급 응답에만, 여기는 sha256 hex 와 원문 앞 6자 */
+export const runnerTokens = sqliteTable(
+  "runner_tokens",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id),
+    label: text("label").notNull(),
+    hash: text("hash").notNull(),
+    prefix: text("prefix").notNull(),
+    createdAt: ts("created_at").notNull(),
+    lastUsedAt: ts("last_used_at"),
+    revokedAt: ts("revoked_at"),
+  },
+  (t) => [
+    uniqueIndex("runner_tokens_hash").on(t.hash),
+    index("runner_tokens_ws_created").on(t.workspaceId, t.createdAt),
+  ],
+);
+
 /**
  * 운영 사건(운영 보강 스펙 3.1) — 같은 kind·key 는 한 줄로 묶여 count·last_at 만 오른다.
  * detail_json 에는 id·코드·수치만(메시지 본문·토큰·호스트 경로·IP 전체 금지). last_at 이 30일 지나면 지운다

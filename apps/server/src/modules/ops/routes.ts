@@ -28,8 +28,8 @@ export type OpsRouteContext = {
   db: Db;
   workspaceId: string;
   adapter: Pick<AgentAdapter, "status" | "setupDetail">;
-  /** 붙은 어댑터들의 provider — 런 표의 usage 는 이 가운데 믿는 제공자만 합친다 */
-  adapterProviders: readonly string[];
+  /** 쓰이는 제공자(붙은 어댑터 가운데 에이전트가 등록된 것) — 런 표의 usage 는 이 가운데 믿는 제공자만 합친다 */
+  providersInUse(): Iterable<string>;
   ops: Pick<OpsService, "list" | "ack" | "unacked" | "countsSince">;
   disk(): DiskState;
   serverVersion: string;
@@ -81,7 +81,7 @@ export function registerOpsRoutes(fastify: FastifyInstance, ctx: OpsRouteContext
       now: now(),
       ops: ctx.ops,
       workspaceId: ctx.workspaceId,
-      usageTrustedProviders: usageTrustedAmong(ctx.adapterProviders),
+      usageTrustedProviders: usageTrustedAmong(ctx.providersInUse()),
     });
     return parseStored(OpsRunsSummary, summary, "ops runs summary");
   });

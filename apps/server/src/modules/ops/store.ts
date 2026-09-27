@@ -136,7 +136,7 @@ export function recordEventChange(
 export function resolveEvent(
   db: DbOrTx,
   workspaceId: string,
-  kind: "gateway_down" | "plugin_down",
+  kind: "gateway_down" | "plugin_down" | "runner_down",
   key: string,
   at: Date,
 ): OpsEvent | null {

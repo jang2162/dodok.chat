@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { BridgeHello, IssueBridgeTokenInput, IssueBridgeTokenResult, SetupStatus, Sha256Hex } from "../src";
+import {
+  BridgeHello,
+  IssueBridgeTokenInput,
+  IssueBridgeTokenResult,
+  IssueRunnerTokenResult,
+  SetupStatus,
+  Sha256Hex,
+} from "../src";
 
 const ID = "01a09fc9-d204-7551-89d6-38544d07a101";
 const NOW = "2026-09-24T00:00:00Z";
@@ -111,6 +118,23 @@ describe("IssueBridgeTokenResult", () => {
           .success,
       ).toBe(false);
     }
+  });
+});
+
+describe("IssueRunnerTokenResult", () => {
+  const runnerConfig = { serverUrl: "https://chat.example", tokenFile: "~/.dodok-runner/token" };
+  it("drn_ + base64url 43자 토큰은 통과한다", () => {
+    const token = `drn_${"A".repeat(40)}_-9`;
+    expect(IssueRunnerTokenResult.safeParse({ token, record: RECORD, runnerConfig }).success).toBe(true);
+  });
+  it("브리지 토큰 접두어·길이가 틀린 토큰은 거부한다", () => {
+    for (const token of [TOKEN, `drn_${"A".repeat(42)}`, `drn_${"A".repeat(42)}=`]) {
+      expect(IssueRunnerTokenResult.safeParse({ token, record: RECORD, runnerConfig }).success).toBe(false);
+    }
+  });
+  it("runnerConfig 가 없으면 거부한다", () => {
+    const token = `drn_${"A".repeat(43)}`;
+    expect(IssueRunnerTokenResult.safeParse({ token, record: RECORD }).success).toBe(false);
   });
 });
 

@@ -13,11 +13,27 @@ import type { OpsService } from "./service";
 export const USAGE_TRUSTED_PROVIDERS: ReadonlySet<string> = new Set(["claude"]);
 
 /**
- * 이 서버에 붙은 어댑터 가운데 믿는 제공자 — 응답의 usageTrustedProviders 가 비면 웹은 열 대신 「측정 불가」를 보인다.
- * 붙지 않은 제공자까지 실으면 OpenClaw 만 있는 배포에서 토큰·금액 열이 전부 「—」로 켜진다
+ * 쓰이는 제공자 가운데 믿는 제공자 — 응답의 usageTrustedProviders 가 비면 웹은 열 대신 「측정 불가」를 보인다.
+ * 쓰이지 않는 제공자까지 실으면 OpenClaw 만 쓰는 배포에서 토큰·금액 열이 전부 「—」로 켜진다
  */
-export function usageTrustedAmong(attached: Iterable<string>): ReadonlySet<string> {
-  return new Set([...attached].filter((p) => USAGE_TRUSTED_PROVIDERS.has(p)));
+export function usageTrustedAmong(inUse: Iterable<string>): ReadonlySet<string> {
+  return new Set([...inUse].filter((p) => USAGE_TRUSTED_PROVIDERS.has(p)));
+}
+
+/**
+ * 붙은 어댑터의 제공자 가운데 그 워크스페이스에 에이전트가 하나라도 등록된 것 — 러너 어댑터는 모든 배포에 붙어 있으므로
+ * 「붙음」만으로는 러너를 쓰는지 가를 수 없다. 에이전트는 지우지 않으므로 옛 런의 제공자도 남는다
+ */
+export function providersWithAgents(db: Db, workspaceId: string, attached: Iterable<string>): string[] {
+  const registered = new Set(
+    db
+      .selectDistinct({ provider: agents.provider })
+      .from(agents)
+      .where(eq(agents.workspaceId, workspaceId))
+      .all()
+      .map((r) => r.provider),
+  );
+  return [...new Set(attached)].filter((p) => registered.has(p));
 }
 
 const CHANNEL_KEY_PREFIX = "channel:";
