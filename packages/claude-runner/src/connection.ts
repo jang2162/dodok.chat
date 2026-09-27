@@ -1,7 +1,9 @@
 import {
   RUNNER_NAMESPACE,
   RUNNER_PROTOCOL,
+  RunnerApprovalResolve,
   RunnerHelloResult,
+  RunnerOutboundAck,
   RunnerRunAbort,
   RunnerRunStart,
   type RunnerCapability,
@@ -10,8 +12,10 @@ import {
   type RunnerServerToClientEvents,
 } from "@dodok/shared";
 import { io, type Socket } from "socket.io-client";
+import type { ApprovalOutcome } from "./approvals";
+import { type AttachmentsHttp, createAttachmentsHttp } from "./attachments-http";
 import type { ResolvedAgent, ResolvedRunnerConfig } from "./config";
-import { abortedFinal, runOnce, type RunEmitter } from "./run";
+import { abortedFinal, runOnce, type RunBridge, type RunEmitter } from "./run";
 import { createScheduler } from "./scheduler";
 import type { SdkPort } from "./sdk";
 
@@ -22,9 +26,10 @@ export type RunnerVersions = Pick<
   "runnerVersion" | "sdkVersion" | "claudeCodeVersion" | "bundleSha256"
 >;
 
-// approvals·attachments 는 도구 승인·첨부(태스크 6)가 붙을 때 더한다
-const CAPABILITIES: RunnerCapability[] = ["threads", "interrupt"];
+const CAPABILITIES: RunnerCapability[] = ["threads", "interrupt", "approvals", "attachments"];
 const HELLO_TIMEOUT_MS = 15_000;
+/** outbound.post ack — 서버가 메시지를 저장하고 답한다. 넘으면 도구 결과로 실패를 돌려준다 */
+const POST_ACK_TIMEOUT_MS = 30_000;
 // 재접속 백오프 1초~30초(Global Constraints)
 const DEFAULT_BACKOFF = { minMs: 1000, maxMs: 30_000 };
 /** 러너를 끝낼 때 중지한 런이 final 을 낼 때까지 기다리는 상한 — 런 쪽 close 유예(ABORT_CLOSE_MS)와 같다 */
@@ -49,6 +54,9 @@ export type RunnerConnectionOptions = {
   backoff?: { minMs: number; maxMs: number };
   closeGraceMs?: number;
   stopWaitMs?: number;
+  /** 없으면 serverUrl·토큰으로 러너 첨부 HTTP 를 만든다 */
+  attachmentsHttp?: AttachmentsHttp;
+  postAckTimeoutMs?: number;
 };
 
 type RunnerSocket = Socket<RunnerServerToClientEvents, RunnerClientToServerEvents>;
@@ -64,6 +72,10 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
   // 연결마다 올린다 — 끊긴 연결에서 시작한 런의 이벤트가 다시 붙은 연결로 새지 않게(서버는 그 런을 이미 닫았다)
   let generation = 0;
+  const http =
+    opts.attachmentsHttp ?? createAttachmentsHttp({ serverUrl: config.serverUrl, token: opts.token });
+  // 결정을 기다리는 승인(id 는 toolUseID). 런이 멈추면 그 런의 signal 이 기다림을 거둔다
+  const decisions = new Map<string, (outcome: ApprovalOutcome) => void>();
 
   const hello: RunnerHello = {
     runnerProtocol: RUNNER_PROTOCOL,
@@ -139,6 +151,49 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
     };
   }
 
+  function bridgeFor(gen: number): RunBridge {
+    const live = () => socket.connected && gen === generation;
+    return {
+      http,
+      async post(message) {
+        if (!live()) return { ok: false, code: "ADAPTER_UNAVAILABLE", message: "서버와 연결이 끊겼습니다" };
+        try {
+          const raw: unknown = await socket
+            .timeout(opts.postAckTimeoutMs ?? POST_ACK_TIMEOUT_MS)
+            .emitWithAck("outbound.post", message);
+          const parsed = RunnerOutboundAck.safeParse(raw);
+          return parsed.success
+            ? parsed.data
+            : { ok: false, code: "INTERNAL", message: "서버 응답이 계약과 다릅니다" };
+        } catch {
+          return { ok: false, code: "ADAPTER_UNAVAILABLE", message: "서버가 제때 답하지 않았습니다" };
+        }
+      },
+      requestApproval(request) {
+        if (live()) socket.emit("approval.requested", request);
+      },
+      withdrawApproval(providerApprovalId) {
+        decisions.delete(providerApprovalId);
+        if (live()) socket.emit("approval.withdrawn", { providerApprovalId });
+      },
+      waitDecision(providerApprovalId, signal) {
+        return new Promise<ApprovalOutcome>((resolve, reject) => {
+          if (signal.aborted) return reject(new Error("aborted"));
+          const onAbort = () => {
+            decisions.delete(providerApprovalId);
+            reject(new Error("aborted"));
+          };
+          signal.addEventListener("abort", onAbort, { once: true });
+          decisions.set(providerApprovalId, (outcome) => {
+            signal.removeEventListener("abort", onAbort);
+            decisions.delete(providerApprovalId);
+            resolve(outcome);
+          });
+        });
+      },
+    };
+  }
+
   socket.on("connect", () => {
     generation += 1;
     void (async () => {
@@ -206,6 +261,7 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
     const start = parsed.data;
     const runId = start.deliver.runId;
     const emit = emitterFor(runId, generation);
+    const bridge = bridgeFor(generation);
     const agent = agents.get(start.deliver.agentId);
     if (!agent) {
       ack({ runId, admission: "dispatch" });
@@ -219,6 +275,7 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
         logger.info(`dodok-runner: 런 시작 ${runId}(${agent.id})`);
         await runOnce(start, {
           sdk: opts.sdk,
+          bridge,
           agent,
           claudeConfigDir: config.claudeConfigDir,
           baseEnv: opts.baseEnv ?? process.env,
@@ -243,6 +300,17 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
   socket.on("run.abort", (payload) => {
     const parsed = RunnerRunAbort.safeParse(payload);
     if (parsed.success) scheduler.abort(parsed.data.runId);
+  });
+
+  // 기한이 지나면 서버가 deny + reason expired 를 보낸다(판정 P5). 모르는 id(이미 거둔 승인)는 버린다
+  socket.on("approval.resolve", (payload) => {
+    const parsed = RunnerApprovalResolve.safeParse(payload);
+    if (!parsed.success) {
+      logger.warn("dodok-runner: approval.resolve 형식이 틀려 버립니다");
+      return;
+    }
+    const { providerApprovalId, decision, reason } = parsed.data;
+    decisions.get(providerApprovalId)?.({ decision, ...(reason === undefined ? {} : { reason }) });
   });
 
   socket.connect();

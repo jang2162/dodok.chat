@@ -1,4 +1,5 @@
 import type {
+  CanUseTool,
   SdkMcpServer,
   SdkMcpTool,
   SdkMessage,
@@ -15,6 +16,9 @@ import type {
  * - `{ hang }` close() 가 불릴 때까지 멈춘다(interrupt 에 반응하지 않는 CLI)
  * - `{ exit }` 입력이 닫히기를 기다리지 않고 곧바로 끝난다(result 없이 프로세스가 끝남)
  * - `{ sleep }` 그만큼 쉬었다가 뒤의 메시지를 흘린다(interrupt 뒤 턴을 닫는 데 걸리는 시간)
+ * - `{ callTool }` dodok MCP 서버의 그 도구 handler 를 부르고 결과를 `toolResults` 에 적는다(CLI 가 SDK MCP 도구를 부름)
+ * - `{ askPermission }` options.canUseTool 을 부르고 결과를 `permissions` 에 적는다. 콜백 signal 은 interrupt·close 에
+ *   끊긴다(실제 SDK 는 CLI 의 control_cancel_request 를 받아 끊는다 — ADR 0007 4.2)
  */
 export type ScriptStep =
   | SdkMessage
@@ -22,7 +26,19 @@ export type ScriptStep =
   | { waitInterrupt: SdkMessage[] }
   | { hang: true }
   | { exit: true }
-  | { sleep: number };
+  | { sleep: number }
+  | { callTool: { name: string; input: unknown } }
+  | {
+      askPermission: {
+        toolName: string;
+        input: Record<string, unknown>;
+        toolUseID: string;
+        suggestions?: Parameters<CanUseTool>[2]["suggestions"];
+      };
+    };
+
+export type FakeToolResult = { content: Array<{ type: string; text: string }>; isError?: boolean };
+export type FakePermission = Awaited<ReturnType<CanUseTool>>;
 
 export type FakeCall = {
   options: SdkOptions;
@@ -34,6 +50,8 @@ export type FakeCall = {
   /** result 를 흘리는 순간 입력이 이미 끝나 있었는가 — 참이면 권한 콜백·SDK MCP 가 멈춘다(run.ts 입력 주석) */
   inputEndedBeforeResult: boolean;
   finished: boolean;
+  toolResults: FakeToolResult[];
+  permissions: FakePermission[];
 };
 
 export type FakeSdk = SdkPort & {
@@ -63,9 +81,17 @@ export function createFakeSdk(): FakeSdk {
       inputClosed: false,
       inputEndedBeforeResult: false,
       finished: false,
+      toolResults: [],
+      permissions: [],
     };
     calls.push(call);
     let onInterrupt: (() => void) | undefined;
+    // 권한 콜백의 signal — interrupt·close 가 끊는다
+    const permissionControllers = new Set<AbortController>();
+    const cancelPermissions = () => {
+      for (const c of permissionControllers) c.abort();
+      permissionControllers.clear();
+    };
     let onClose: (() => void) | undefined;
     let closed = false;
     const closedSignal = new Promise<void>((resolve) => (onClose = resolve));
@@ -89,8 +115,37 @@ export function createFakeSdk(): FakeSdk {
             await closedSignal;
             return;
           }
+          if ("callTool" in step) {
+            const server = args.options.mcpServers?.dodok as unknown as { tools?: SdkMcpTool[] } | undefined;
+            const found = server?.tools?.find((t) => t.name === step.callTool.name);
+            if (!found) throw new Error(`fake: no dodok tool ${step.callTool.name}`);
+            const handler = found.handler as (a: unknown, extra: unknown) => Promise<FakeToolResult>;
+            call.toolResults.push(await handler(step.callTool.input, {}));
+            continue;
+          }
+          if ("askPermission" in step) {
+            const canUseTool = args.options.canUseTool;
+            if (!canUseTool) throw new Error("fake: no canUseTool");
+            const controller = new AbortController();
+            permissionControllers.add(controller);
+            const { toolName, input, toolUseID, suggestions } = step.askPermission;
+            call.permissions.push(
+              await canUseTool(toolName, input, {
+                signal: controller.signal,
+                toolUseID,
+                requestId: `req-${toolUseID}`,
+                ...(suggestions ? { suggestions } : {}),
+              }),
+            );
+            permissionControllers.delete(controller);
+            continue;
+          }
           if ("waitInterrupt" in step) {
-            const interrupted = new Promise<void>((resolve) => (onInterrupt = resolve));
+            // 앞 단계(권한 대기 등) 중에 이미 interrupt 됐으면 기다리지 않는다
+            const interrupted =
+              call.interrupts > 0
+                ? Promise.resolve()
+                : new Promise<void>((resolve) => (onInterrupt = resolve));
             await Promise.race([interrupted, closedSignal]);
             if (closed) return;
             for (const m of step.waitInterrupt) yield m;
@@ -112,11 +167,13 @@ export function createFakeSdk(): FakeSdk {
       [Symbol.asyncIterator]: () => gen,
       interrupt: async () => {
         call.interrupts += 1;
+        cancelPermissions();
         onInterrupt?.();
       },
       close: () => {
         call.closes += 1;
         closed = true;
+        cancelPermissions();
         onClose?.();
       },
     };
@@ -131,7 +188,8 @@ export function createFakeSdk(): FakeSdk {
     sessionExists: async (sessionId) => sessions.has(sessionId),
     createMcpServer: (tools) => {
       servers.push(tools);
-      return { type: "sdk", name: "dodok", instance: {} } as unknown as SdkMcpServer;
+      // tools 는 가짜만 싣는다 — callTool 단계가 handler 를 찾는다
+      return { type: "sdk", name: "dodok", instance: {}, tools } as unknown as SdkMcpServer;
     },
   };
 }

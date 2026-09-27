@@ -11,6 +11,7 @@ import {
   type RunContext,
 } from "../src/run";
 import { realSdk, type SdkMcpServer } from "../src/sdk";
+import { createFakeBridge, type FakeBridge } from "./helpers/fake-bridge";
 import { createFakeSdk, script, type FakeSdk } from "./helpers/fake-query";
 import { AGENT, runStart, SESSION_ID } from "./helpers/fixtures";
 
@@ -43,7 +44,8 @@ describe("buildQueryOptions", () => {
       cwd: AGENT.workdir,
       model: "sonnet",
       permissionMode: "default",
-      allowedTools: ["Read", "Bash(git status)"],
+      // dodok 도구는 늘 허용 — 승인 콜백이 입력 검증보다 먼저 온다(스펙 6장)
+      allowedTools: ["Read", "Bash(git status)", "mcp__dodok__post"],
       disallowedTools: ["WebFetch"],
       sessionId: SESSION_ID,
       title: "dev · 코더",
@@ -150,8 +152,10 @@ type Emitted =
 function harness(fake: FakeSdk = createFakeSdk(), opts: Partial<RunContext> = {}) {
   const emitted: Emitted[] = [];
   const controller = new AbortController();
+  const bridge: FakeBridge = createFakeBridge();
   const ctx: RunContext = {
     sdk: fake,
+    bridge,
     agent: AGENT,
     claudeConfigDir: "/home/u/.dodok-runner/claude",
     baseEnv: BASE_ENV,
@@ -165,7 +169,7 @@ function harness(fake: FakeSdk = createFakeSdk(), opts: Partial<RunContext> = {}
     },
     ...opts,
   };
-  return { fake, ctx, emitted, controller };
+  return { fake, ctx, emitted, controller, bridge };
 }
 
 const finals = (e: Emitted[]) => e.filter((x) => x.kind === "final");
@@ -187,7 +191,8 @@ describe("runOnce", () => {
     // 입력은 result 까지 열려 있어야 한다 — 닫으면 권한 콜백·SDK MCP 가 멈춘다(리뷰 M2)
     expect(fake.calls[0]!.inputEndedBeforeResult).toBe(false);
     expect(fake.calls[0]!.options.sessionId).toBe(SESSION_ID);
-    expect(fake.servers).toEqual([[]]);
+    expect(fake.servers.map((tools) => tools.map((t) => t.name))).toEqual([["post"]]);
+    expect(fake.calls[0]!.options.canUseTool).toBeTypeOf("function");
     expect(emitted.map((e) => (e.kind === "event" ? e.event.type : e.kind))).toEqual([
       "TEXT_MESSAGE_START",
       "TEXT_MESSAGE_CONTENT",
@@ -518,5 +523,190 @@ describe("runOnce — 전사가 없다고 봤는데 CLI 가 「이미 있는 세
     expect(isSessionInUseText("Session 0192 already exists")).toBe(true);
     expect(isSessionInUseText("address already in use")).toBe(false);
     expect(isSessionInUseText("Claude Code process exited with code 1")).toBe(false);
+  });
+});
+
+describe("runOnce — dodok post 도구·도구 승인·이미지(태스크 6)", () => {
+  const SUGGESTION = {
+    type: "addRules" as const,
+    rules: [{ toolName: "Bash", ruleContent: "npm test" }],
+    behavior: "allow" as const,
+    destination: "localSettings" as const,
+  };
+
+  it("CLI 가 post 도구를 부르면 그 런의 값으로 outbound.post — 도구 결과는 「보냈습니다」", async () => {
+    const { fake, ctx, emitted, bridge } = harness();
+    fake.script(
+      script.init(),
+      { callTool: { name: "post", input: { text: `카드입니다 ${AGENT.workdir}/a.txt` } } },
+      ...script.textTurn("msg_1", ["끝"]),
+    );
+    const start = runStart();
+    await runOnce(start, ctx);
+    const d = start.deliver;
+    expect(bridge.posts).toHaveLength(1);
+    expect(bridge.posts[0]).toMatchObject({
+      channelId: d.channelId,
+      agentId: d.agentId,
+      sessionKey: d.sessionKey,
+      runId: d.runId,
+      replyToInboundId: d.message.id,
+      text: "카드입니다 a.txt",
+      attachmentIds: [],
+    });
+    expect(fake.calls[0]!.toolResults).toEqual([
+      { content: [{ type: "text", text: "보냈습니다(메시지 0192f000-0000-7000-8000-0000000000aa)" }] },
+    ]);
+    expect(finals(emitted)).toHaveLength(1);
+  });
+
+  it("서버가 post 를 거절해도(중지된 런 FORBIDDEN) 도구 결과 오류로 돌려주고 런은 계속된다", async () => {
+    const fake = createFakeSdk();
+    const { ctx, emitted } = harness(fake, {
+      bridge: createFakeBridge({
+        ack: { ok: false, code: "FORBIDDEN", message: "post must belong to an open run" },
+      }),
+    });
+    fake.script({ callTool: { name: "post", input: { text: "x" } } }, ...script.textTurn("msg_1", ["끝"]));
+    await runOnce(runStart(), ctx);
+    expect(fake.calls[0]!.toolResults[0]).toMatchObject({
+      isError: true,
+      content: [{ text: "보내지 못했습니다(FORBIDDEN): post must belong to an open run" }],
+    });
+    expect(finals(emitted)[0]).toMatchObject({ final: { text: "끝" } });
+  });
+
+  it("canUseTool → approval.requested(요약은 가린 명령) → 결정 allow-always 가 destination session 으로 CLI 에", async () => {
+    const { fake, ctx, bridge } = harness();
+    fake.script(
+      script.init(),
+      {
+        askPermission: {
+          toolName: "Bash",
+          input: { command: `npm test --prefix ${AGENT.workdir}` },
+          toolUseID: "toolu_01",
+          suggestions: [SUGGESTION],
+        },
+      },
+      ...script.textTurn("msg_1", ["끝"]),
+    );
+    const start = runStart();
+    const done = runOnce(start, ctx);
+    await bridge.decide("toolu_01", { decision: "allow-always" });
+    await done;
+    expect(bridge.requested).toEqual([
+      {
+        providerApprovalId: "toolu_01",
+        runId: start.deliver.runId,
+        sessionKey: start.deliver.sessionKey,
+        toolCallId: "toolu_01",
+        toolName: "Bash",
+        summary: "npm test --prefix .",
+        canAllowAlways: true,
+      },
+    ]);
+    expect(fake.calls[0]!.permissions).toEqual([
+      {
+        behavior: "allow",
+        updatedInput: { command: `npm test --prefix ${AGENT.workdir}` },
+        updatedPermissions: [{ ...SUGGESTION, destination: "session" }],
+      },
+    ]);
+  });
+
+  it("기한 deny 를 받으면 도구를 거절로 돌려받고 런은 끝까지 간다(Review Focus 4)", async () => {
+    const { fake, ctx, emitted, bridge } = harness();
+    fake.script(
+      { askPermission: { toolName: "Write", input: { file_path: "/etc/hosts" }, toolUseID: "toolu_01" } },
+      ...script.textTurn("msg_1", ["거절돼서 멈춥니다"]),
+    );
+    const done = runOnce(runStart(), ctx);
+    await bridge.decide("toolu_01", { decision: "deny", reason: "expired" });
+    await done;
+    expect(bridge.requested[0]!.summary).toBe("<작업 디렉터리 밖>");
+    expect(fake.calls[0]!.permissions).toEqual([{ behavior: "deny", message: "승인 시간이 지났습니다" }]);
+    expect(finals(emitted)[0]).toMatchObject({ final: { text: "거절돼서 멈춥니다" } });
+  });
+
+  it("승인을 기다리는 중에 중지되면 approval.withdrawn 하고 final aborted", async () => {
+    const { fake, ctx, emitted, bridge, controller } = harness();
+    fake.script(
+      script.messageStart("msg_1"),
+      { askPermission: { toolName: "Bash", input: { command: "make" }, toolUseID: "toolu_01" } },
+      { waitInterrupt: [script.errorResult("error_during_execution", ["interrupted"])] },
+    );
+    const done = runOnce(runStart(), ctx);
+    while (bridge.requested.length === 0) await new Promise((r) => setTimeout(r, 2));
+    controller.abort();
+    await done;
+    expect(bridge.withdrawn).toEqual(["toolu_01"]);
+    expect(fake.calls[0]!.permissions).toEqual([{ behavior: "deny", message: "승인 요청이 철회됐습니다" }]);
+    expect(finals(emitted)).toHaveLength(1);
+    expect(finals(emitted)[0]).toMatchObject({ final: { text: "", stopReason: "aborted" } });
+  });
+
+  it("이미지 첨부 — 받은 것은 이미지 블록으로 글보다 앞에, 못 받은 수는 글 끝 한 줄", async () => {
+    const fake = createFakeSdk();
+    const ok = "0192f000-0000-7000-8000-0000000000f1";
+    const missing = "0192f000-0000-7000-8000-0000000000f2";
+    const bridge = createFakeBridge({ images: { [ok]: Buffer.from([1, 2, 3]) } });
+    const { ctx } = harness(fake, { bridge });
+    fake.script(...script.textTurn("msg_1", ["봤습니다"]));
+    const base = runStart();
+    const img = (id: string) => ({
+      id,
+      kind: "image" as const,
+      url: `artifact://${id}`,
+      name: `${id.slice(-2)}.png`,
+      mime: "image/png",
+      size: 3,
+    });
+    const start = {
+      ...base,
+      deliver: {
+        ...base.deliver,
+        message: { ...base.deliver.message, attachments: [img(ok), img(missing)] },
+      },
+    };
+    await runOnce(start, ctx);
+    expect(bridge.downloads.sort()).toEqual([ok, missing]);
+    expect(fake.calls[0]!.prompt!.message.content).toEqual([
+      { type: "image", source: { type: "base64", media_type: "image/png", data: "AQID" } },
+      { type: "text", text: `${renderRunnerPrompt(start.deliver)}\n첨부 이미지 1장을 불러오지 못했습니다` },
+    ]);
+  });
+
+  it("이미지를 받는 사이 중지되면 CLI 를 띄우지 않고 final aborted", async () => {
+    const fake = createFakeSdk();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const bridge = createFakeBridge();
+    bridge.http.download = async () => {
+      await gate;
+      return { bytes: Buffer.from([1]), mime: "image/png" };
+    };
+    const { ctx, emitted, controller } = harness(fake, { bridge });
+    const base = runStart();
+    const id = "0192f000-0000-7000-8000-0000000000f1";
+    const att = {
+      id,
+      kind: "image" as const,
+      url: `artifact://${id}`,
+      name: "a.png",
+      mime: "image/png",
+      size: 1,
+    };
+    const done = runOnce(
+      { ...base, deliver: { ...base.deliver, message: { ...base.deliver.message, attachments: [att] } } },
+      ctx,
+    );
+    await new Promise((r) => setTimeout(r, 5));
+    controller.abort();
+    release();
+    await done;
+    expect(fake.calls).toEqual([]);
+    expect(finals(emitted)).toEqual([
+      { kind: "final", final: { text: "", stopReason: "aborted", costKind: "subscription_estimate" } },
+    ]);
   });
 });

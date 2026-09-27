@@ -1,13 +1,19 @@
-import { realpathSync } from "node:fs";
 import {
   renderRunnerPrompt,
   type ErrorCode,
   type RunEventBody,
+  type RunnerApprovalRequested,
+  type RunnerOutboundAck,
+  type RunnerOutboundPost,
   type RunnerRunFinal,
   type RunnerRunStart,
 } from "@dodok/shared";
+import { type ApprovalOutcome, createCanUseTool } from "./approvals";
+import type { AttachmentsHttp } from "./attachments-http";
 import type { ResolvedAgent } from "./config";
-import { createPathMasker } from "./mask";
+import { imageFailureNote, loadImageBlocks, type SdkImageBlock } from "./images";
+import { createPathMasker, workdirRoots } from "./mask";
+import { createDodokMcpServer, createPoster, POST_TOOL_FULL_NAME } from "./post-tool";
 import type {
   CanUseTool,
   SdkMcpServer,
@@ -73,7 +79,8 @@ export function buildQueryOptions(
     cwd: agent.workdir,
     model: agent.model,
     permissionMode: agent.permissionMode,
-    allowedTools: agent.allowedTools,
+    // dodok 도구는 늘 허용 — 승인 콜백은 입력 검증보다 먼저 와서 틀린 입력에도 카드가 뜬다(ADR 0007 4.2)
+    allowedTools: [...new Set([...agent.allowedTools, POST_TOOL_FULL_NAME])],
     disallowedTools: agent.disallowedTools,
     // sessionId 와 resume 은 함께 못 쓴다. title 을 주면 새 세션 제목을 짓는 보조 모델 호출이 없어진다(ADR 0007 4.8)
     ...(deps.resume
@@ -128,8 +135,19 @@ export type RunEmitter = {
   error(code: ErrorCode, message: string): void;
 };
 
+/** 런이 서버와 주고받는 길 — 연결이 연결 세대에 묶어 만든다(끊긴 연결의 런은 새 연결로 보내지 않는다) */
+export type RunBridge = {
+  http: AttachmentsHttp;
+  post(message: RunnerOutboundPost): Promise<RunnerOutboundAck>;
+  requestApproval(request: RunnerApprovalRequested): void;
+  withdrawApproval(providerApprovalId: string): void;
+  /** approval.resolve 가 오면 풀리고 signal 이 끊기면 거절된다 */
+  waitDecision(providerApprovalId: string, signal: AbortSignal): Promise<ApprovalOutcome>;
+};
+
 export type RunContext = {
   sdk: SdkPort;
+  bridge: RunBridge;
   agent: ResolvedAgent;
   claudeConfigDir: string;
   baseEnv: NodeJS.ProcessEnv;
@@ -140,14 +158,6 @@ export type RunContext = {
   now?: () => number;
   closeGraceMs?: number;
 };
-
-function workdirRoots(workdir: string): string[] {
-  try {
-    return [workdir, realpathSync(workdir)];
-  } catch {
-    return [workdir];
-  }
-}
 
 /**
  * 런 하나 = query() 하나 = CLI 프로세스 하나, 프롬프트도 하나(ADR 0007 6의 1). 턴 사실은 훅 문맥에만 있으므로
@@ -167,10 +177,23 @@ export async function runOnce(start: RunnerRunStart, ctx: RunContext): Promise<v
     // 전사를 못 읽으면 새 세션으로 연다 — 같은 id 의 전사가 실제로 있으면 CLI 가 거절하고 아래 재시도가 받친다
   }
   if (ctx.signal.aborted) return void ctx.emit.final(abortedFinal());
-  const outcome = await attempt(start, ctx, resume);
+  // 받기 실패는 그 이미지만 뺀다 — loadImageBlocks 는 던지지 않는다
+  const images = await loadImageBlocks(start.deliver, ctx.bridge.http);
+  if (ctx.signal.aborted) return void ctx.emit.final(abortedFinal());
+  const outcome = await attempt(start, ctx, resume, images);
   if (outcome !== "session-in-use") return;
   if (ctx.signal.aborted) return void ctx.emit.final(abortedFinal());
-  await attempt(start, ctx, true);
+  await attempt(start, ctx, true, images);
+}
+
+/** 이미지가 있으면 이미지 블록 뒤에 글(이미지를 글보다 앞에 두기를 Messages API 문서가 권한다), 못 불러온 수는 글 끝 한 줄 */
+function promptContent(
+  start: RunnerRunStart,
+  images: { blocks: SdkImageBlock[]; failed: number },
+): SdkUserMessage["message"]["content"] {
+  const text =
+    renderRunnerPrompt(start.deliver) + (images.failed > 0 ? `\n${imageFailureNote(images.failed)}` : "");
+  return images.blocks.length > 0 ? [...images.blocks, { type: "text", text }] : text;
 }
 
 /** query() 하나. 새 세션으로 열었는데 스트림 전에 「이미 있는 세션」으로 거절됐으면 아무것도 내지 않고 알린다 */
@@ -178,6 +201,7 @@ async function attempt(
   start: RunnerRunStart,
   ctx: RunContext,
   resume: boolean,
+  images: { blocks: SdkImageBlock[]; failed: number },
 ): Promise<"done" | "session-in-use"> {
   const sessionId = start.providerSessionId;
   const now = ctx.now ?? Date.now;
@@ -188,7 +212,7 @@ async function attempt(
   const inputDone = new Promise<void>((resolve) => (finishInput = resolve));
   const promptMessage: SdkUserMessage = {
     type: "user",
-    message: { role: "user", content: renderRunnerPrompt(start.deliver) },
+    message: { role: "user", content: promptContent(start, images) },
     parent_tool_use_id: null,
   };
   // 입력은 런의 끝(프롬프트 턴의 result)까지 열어 둔다 — 닫으면 SDK 가 stdin 을 닫아 권한 콜백·SDK MCP 가 멈춘다
@@ -213,7 +237,26 @@ async function attempt(
       options: buildQueryOptions(ctx.agent, start, {
         claudeConfigDir: ctx.claudeConfigDir,
         baseEnv: ctx.baseEnv,
-        mcpServer: ctx.sdk.createMcpServer([]),
+        mcpServer: createDodokMcpServer({
+          sdk: ctx.sdk,
+          post: createPoster({
+            workdir: ctx.agent.workdir,
+            deliver: start.deliver,
+            http: ctx.bridge.http,
+            send: (m) => ctx.bridge.post(m),
+            mask,
+            now,
+          }),
+        }),
+        canUseTool: createCanUseTool({
+          runId: start.deliver.runId,
+          sessionKey: start.deliver.sessionKey,
+          workdir: ctx.agent.workdir,
+          emit: (p) => ctx.bridge.requestApproval(p),
+          withdraw: (id) => ctx.bridge.withdrawApproval(id),
+          waitDecision: (id, signal) => ctx.bridge.waitDecision(id, signal),
+          signal: ctx.signal,
+        }),
         resume,
       }),
     });

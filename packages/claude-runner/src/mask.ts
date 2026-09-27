@@ -1,10 +1,21 @@
+import { realpathSync } from "node:fs";
+
 // 호스트 경로 원문은 run.event·run.final·오류 문구에 싣지 않는다(러너 계획 Global Constraints) — 작업 디렉터리 안은
-// 상대 경로로, 밖은 표지로 바꾼다. 도구 인자·결과·오류 문구·모델 답 글(델타·최종 답)에 쓴다.
+// 상대 경로로, 밖은 표지로 바꾼다. 도구 인자·결과·오류 문구·모델 답 글(델타·최종 답)·승인 요약·post 글에 쓴다.
 // 보지 않는 것: Windows 경로(`C:\…`), 작업 디렉터리 밖 경로 안의 공백 뒤 꼬리(`/a/My Docs/x` → `<밖> Docs/x` —
 // 경로 키 값은 통째로 본다), 상대 경로(`../../etc/passwd`), 낱말 바로 뒤 경로(`-I/a/include`), 호스트가 붙은
 // URL(`file://localhost/…`·`vscode://file/…`)
 
 export const OUTSIDE_WORKDIR = "<작업 디렉터리 밖>";
+
+/** 작업 디렉터리의 설정 경로와 realpath(다를 수 있다 — macOS /tmp → /private/tmp) */
+export function workdirRoots(workdir: string): string[] {
+  try {
+    return [workdir, realpathSync(workdir)];
+  } catch {
+    return [workdir];
+  }
+}
 
 const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -23,6 +34,8 @@ export type PathMasker = {
   json(text: string): string;
   /** JSON.stringify 하기 전의 값 — stringify 뒤에는 줄바꿈이 `\n` 이 되어 가림이 어긋날 수 있다 */
   value(v: unknown): unknown;
+  /** 값 전체가 경로 하나인 글(공백이 있어도) — 안이면 상대 경로, 밖이면 표지 */
+  path(p: string): string;
   /**
    * 스트리밍 글에서 지금 가려 내보내도 되는 길이. 가림 규칙의 경로는 공백을 품지 않으므로 마지막 공백까지는 안전하고,
    * 그 뒤 꼬리는 다음 조각과 이어질 경로의 앞부분일 수 있어 쥔다. 공백이 든 작업 디렉터리의 앞부분으로 끝나면 그 앞까지
@@ -33,6 +46,7 @@ export type PathMasker = {
 export const NO_MASK: PathMasker = Object.assign((text: string) => text, {
   json: (text: string) => text,
   value: (v: unknown) => v,
+  path: (p: string) => p,
   safeCut: (text: string) => text.length,
 });
 
@@ -85,6 +99,7 @@ export function createPathMasker(roots: readonly string[]): PathMasker {
       return JSON.stringify(value(parsed));
     },
     value: (v: unknown) => value(v),
+    path: maskWholePath,
     safeCut(text: string): number {
       const lastSpace = text.search(/\s\S*$/);
       let cut = lastSpace < 0 ? 0 : lastSpace + 1;

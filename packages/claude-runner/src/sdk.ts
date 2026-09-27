@@ -4,6 +4,7 @@ import {
   createSdkMcpServer,
   getSessionInfo,
   query,
+  tool,
   type CanUseTool,
   type Options,
   type SDKMessage,
@@ -17,6 +18,8 @@ export type { CanUseTool };
 // tool() 은 입력 스키마마다 다른 제네릭을 돌려준다 — createSdkMcpServer 가 받는 원소 타입을 그대로 쓴다
 export type SdkMcpTool = NonNullable<Parameters<typeof createSdkMcpServer>[0]["tools"]>[number];
 export type SdkMcpServer = ReturnType<typeof createSdkMcpServer>;
+/** 도구 정의를 만드는 순수 함수(CLI·MCP 서버를 띄우지 않는다) — 가짜 SdkPort 도 이 정의의 handler 를 부른다 */
+export const defineSdkTool = tool;
 
 export type SdkQuery = AsyncIterable<SdkMessage> & {
   interrupt(): Promise<unknown>;

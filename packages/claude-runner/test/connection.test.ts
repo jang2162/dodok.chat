@@ -3,7 +3,11 @@ import type { AddressInfo } from "node:net";
 import {
   RUNNER_NAMESPACE,
   RUNNER_PROTOCOL,
+  RunnerApprovalRequested,
+  RunnerApprovalWithdrawn,
   RunnerHello,
+  RunnerOutboundPost,
+  type RunnerOutboundAck,
   RunnerRunAck,
   RunnerRunError,
   RunnerRunEvent,
@@ -33,6 +37,10 @@ type FakeServer = {
   events: RunnerRunEvent[];
   finals: RunnerRunFinal[];
   errors: RunnerRunError[];
+  posts: RunnerOutboundPost[];
+  approvals: RunnerApprovalRequested[];
+  withdrawn: RunnerApprovalWithdrawn[];
+  postAck: RunnerOutboundAck;
   sockets: ServerSocket[];
   helloResult: RunnerHelloResult;
   /** n 번째(0부터) 핸드셰이크를 미들웨어에서 거절할 사유 — 없으면 토큰만 본다 */
@@ -50,6 +58,10 @@ async function startFakeServer(): Promise<FakeServer> {
     events: [],
     finals: [],
     errors: [],
+    posts: [],
+    approvals: [],
+    withdrawn: [],
+    postAck: { ok: true, messageId: "0192f000-0000-7000-8000-0000000000aa" },
     sockets: [],
     helloResult: { ok: true, serverVersion: "test", conflicts: [] },
     handshakes: 0,
@@ -73,6 +85,12 @@ async function startFakeServer(): Promise<FakeServer> {
     socket.on("run.event", (p) => void server.events.push(RunnerRunEvent.parse(p)));
     socket.on("run.final", (p) => void server.finals.push(RunnerRunFinal.parse(p)));
     socket.on("run.error", (p) => void server.errors.push(RunnerRunError.parse(p)));
+    socket.on("outbound.post", (p, ack) => {
+      server.posts.push(RunnerOutboundPost.parse(p));
+      ack(server.postAck);
+    });
+    socket.on("approval.requested", (p) => void server.approvals.push(RunnerApprovalRequested.parse(p)));
+    socket.on("approval.withdrawn", (p) => void server.withdrawn.push(RunnerApprovalWithdrawn.parse(p)));
   });
   await new Promise<void>((resolve) => http.listen(0, "127.0.0.1", resolve));
   server.url = `http://127.0.0.1:${(http.address() as AddressInfo).port}/`;
@@ -156,7 +174,7 @@ describe("startRunnerConnection", () => {
       bundleSha256: null,
       agents: [{ id: "coder", name: "코더", model: "sonnet", workdirLabel: "my-repo" }],
     });
-    expect(hello.capabilities).toEqual(expect.arrayContaining(["threads", "interrupt"]));
+    expect(hello.capabilities).toEqual(["threads", "interrupt", "approvals", "attachments"]);
     expect(JSON.stringify(hello)).not.toContain(AGENT.workdir);
     expect(logs.join("\n")).not.toContain(TOKEN);
     expect(logs.join("\n")).not.toContain(AGENT.workdir);
@@ -379,5 +397,65 @@ describe("startRunnerConnection", () => {
     conn.stop();
     await new Promise((r) => setTimeout(r, 80));
     expect(server.hellos).toHaveLength(1);
+  });
+  it("post 도구 → outbound.post(런의 값 그대로) → 서버 ack 가 도구 결과로", async () => {
+    const { server, fake } = await setup();
+    await waitFor(() => server.hellos.length === 1);
+    fake.script({ callTool: { name: "post", input: { text: "카드" } } }, ...script.textTurn("msg_1", ["끝"]));
+    const start = runStart();
+    await sendStart(server.sockets[0]!, start);
+    await waitFor(() => server.finals.length === 1);
+    expect(server.posts).toHaveLength(1);
+    expect(server.posts[0]).toMatchObject({
+      runId: RUN_ID,
+      channelId: start.deliver.channelId,
+      agentId: start.deliver.agentId,
+      sessionKey: start.deliver.sessionKey,
+      text: "카드",
+    });
+    expect(fake.calls[0]!.toolResults[0]!.content[0]!.text).toBe(
+      "보냈습니다(메시지 0192f000-0000-7000-8000-0000000000aa)",
+    );
+  });
+
+  it("approval.requested → 서버의 approval.resolve 가 결정으로 — 모르는 id·틀린 형식은 버린다", async () => {
+    const { server, fake, logs } = await setup();
+    await waitFor(() => server.hellos.length === 1);
+    fake.script(
+      { askPermission: { toolName: "Bash", input: { command: "make" }, toolUseID: "toolu_01" } },
+      ...script.textTurn("msg_1", ["끝"]),
+    );
+    await sendStart(server.sockets[0]!, runStart());
+    await waitFor(() => server.approvals.length === 1);
+    expect(server.approvals[0]).toMatchObject({
+      providerApprovalId: "toolu_01",
+      runId: RUN_ID,
+      summary: "make",
+    });
+    const socket = server.sockets[0]!;
+    socket.emit("approval.resolve", { providerApprovalId: "toolu_other", decision: "allow-once" });
+    socket.emit("approval.resolve", { providerApprovalId: "toolu_01", decision: "maybe" } as never);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(fake.calls[0]!.permissions).toEqual([]);
+    expect(logs.join("\n")).toMatch(/approval\.resolve 형식이 틀려/);
+    socket.emit("approval.resolve", { providerApprovalId: "toolu_01", decision: "deny", reason: "expired" });
+    await waitFor(() => server.finals.length === 1);
+    expect(fake.calls[0]!.permissions).toEqual([{ behavior: "deny", message: "승인 시간이 지났습니다" }]);
+  });
+
+  it("run.abort 로 멈추면 떠 있던 승인은 approval.withdrawn — 런은 final aborted", async () => {
+    const { server, fake } = await setup();
+    await waitFor(() => server.hellos.length === 1);
+    fake.script(
+      script.messageStart("msg_1"),
+      { askPermission: { toolName: "Bash", input: { command: "make" }, toolUseID: "toolu_01" } },
+      { waitInterrupt: [script.errorResult("error_during_execution", ["x"])] },
+    );
+    await sendStart(server.sockets[0]!, runStart());
+    await waitFor(() => server.approvals.length === 1);
+    server.sockets[0]!.emit("run.abort", { runId: RUN_ID });
+    await waitFor(() => server.finals.length === 1);
+    expect(server.withdrawn).toEqual([{ providerApprovalId: "toolu_01" }]);
+    expect(server.finals[0]).toMatchObject({ stopReason: "aborted", text: "" });
   });
 });
