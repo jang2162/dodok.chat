@@ -1,0 +1,26 @@
+{
+  "name": "@dodok/runner-adapter",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@dodok/shared": "workspace:*",
+    "socket.io": "4.8.3",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.4",
+    "socket.io-client": "4.8.3",
+    "typescript": "5.9.3",
+    "vitest": "4.1.11"
+  }
+}
