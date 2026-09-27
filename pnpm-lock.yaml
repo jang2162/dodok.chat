@@ -260,6 +260,9 @@ importers:
         specifier: 4.6.5
         version: 4.6.5
     devDependencies:
+      '@dodok/runner-adapter':
+        specifier: workspace:*
+        version: link:../runner-adapter
       '@dodok/shared':
         specifier: workspace:*
         version: link:../shared
