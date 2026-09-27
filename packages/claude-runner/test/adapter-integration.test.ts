@@ -18,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AttachmentsHttp } from "../src/attachments-http";
 import type { ResolvedAgent } from "../src/config";
 import { startRunnerConnection, type RunnerConnection } from "../src/connection";
+import { POST_STOPPED_MESSAGE } from "../src/post-tool";
 import { createFakeSdk, script, type FakeSdk } from "./helpers/fake-query";
 import { AGENT, CHANNEL_ID } from "./helpers/fixtures";
 
@@ -50,7 +51,7 @@ type ServerSide = {
 };
 
 let n = 0;
-async function startServer(port = 0): Promise<ServerSide> {
+async function startServer(port = 0, opts: { approvalTtlMs?: number } = {}): Promise<ServerSide> {
   const http = createServer();
   const io = new Server(http, { transports: ["websocket"] });
   await new Promise<void>((resolve) => http.listen(port, "127.0.0.1", resolve));
@@ -74,6 +75,7 @@ async function startServer(port = 0): Promise<ServerSide> {
       return { messageId };
     },
     tokenCount: () => 1,
+    ...(opts.approvalTtlMs === undefined ? {} : { approvalTtlMs: opts.approvalTtlMs }),
   });
   adapter.onEvent((e) => events.push(e));
   await adapter.connect();
@@ -89,9 +91,10 @@ async function startServer(port = 0): Promise<ServerSide> {
     async close() {
       if (closed) return;
       closed = true;
-      // io.close 는 전송만 닫는다(서버 종료 — DISCONNECT 패킷 없음). 러너는 transport close 로 보고 다시 붙는다
-      await new Promise<void>((resolve) => void io.close(() => resolve()));
+      // 서버 종료 순서 그대로 — 어댑터가 먼저 전송만 닫고(DISCONNECT 패킷 없음) 그 뒤 io 를 닫는다. 러너는 transport close 로
+      // 보고 다시 붙는다(종료 코드 2 가 아니다)
       await adapter.close();
+      await new Promise<void>((resolve) => void io.close(() => resolve()));
     },
   };
 }
@@ -115,13 +118,14 @@ afterEach(async () => {
   rmSync(workdir, { recursive: true, force: true });
 });
 
-function startRunner(server: { url: string }, fake: FakeSdk) {
+function startRunner(server: { url: string }, fake: FakeSdk, opts: { uploadGate?: Promise<void> } = {}) {
   const fatal: number[] = [];
   const logs: string[] = [];
   const uploads: string[] = [];
   const attachmentsHttp: AttachmentsHttp = {
     upload: async ({ name, bytes }) => {
       uploads.push(name);
+      await opts.uploadGate;
       return {
         id: UPLOADED,
         kind: "file",
@@ -310,7 +314,7 @@ describe("러너 ↔ 실제 러너 어댑터", () => {
     expect(types).not.toContain("RUN_ERROR");
   });
 
-  it("중지 — 떠 있던 승인은 철회로, 중지된 런의 post 는 FORBIDDEN, final aborted 는 메시지 없는 중지로(판정 R1)", async () => {
+  it("중지 — 떠 있던 승인은 철회로, 중지된 런의 post 는 보내지 않고, final aborted 는 메시지 없는 중지로(판정 R1)", async () => {
     const server = await startServer();
     cleanups.push(() => server.close());
     const fake = createFakeSdk();
@@ -323,7 +327,7 @@ describe("러너 ↔ 실제 러너 어댑터", () => {
       script.textDelta(0, "빌드합니다 "),
       script.blockStop(0),
       { askPermission: { toolName: "Bash", input: { command: "make" }, toolUseID: "toolu_02" } },
-      // interrupt 뒤에도 CLI 가 도구를 부르는 경우 — 어댑터는 중지된 런의 글을 받지 않는다
+      // interrupt 뒤에도 CLI 가 도구를 부르는 경우 — 러너가 런 signal 을 보고 보내지 않는다
       { callTool: { name: "post", input: { text: "늦은 글" } } },
       { waitInterrupt: [script.errorResult("error_during_execution", ["interrupted"])] },
     );
@@ -336,16 +340,68 @@ describe("러너 ↔ 실제 러너 어댑터", () => {
     expect(fake.calls[0]!.interrupts).toBeGreaterThanOrEqual(1);
     expect(approvals(server).map((a) => a.status)).toEqual(["pending", "cancelled"]);
     expect(fake.calls[0]!.permissions).toEqual([{ behavior: "deny", message: "승인 요청이 철회됐습니다" }]);
-    expect(fake.calls[0]!.toolResults[0]).toMatchObject({
-      isError: true,
-      content: [{ text: "보내지 못했습니다(FORBIDDEN): post must belong to an open run of this runner" }],
-    });
+    expect(fake.calls[0]!.toolResults).toEqual([
+      { isError: true, content: [{ type: "text", text: POST_STOPPED_MESSAGE }] },
+    ]);
     // 메시지 없는 중지 — 중간 답도 늦은 글도 채널에 가지 않는다
     expect(server.outbound).toEqual([]);
     expect(runEvents(server, RUN_2).filter((e) => e.type === "RUN_ABORTED")).toEqual([
       { type: "RUN_ABORTED", runId: RUN_2, by: "user" },
     ]);
     expect(signals(server, RUN_2).filter((s) => s === "gateway_final" || s === "gateway_error")).toEqual([]);
+  });
+
+  it("서버가 런을 닫은 뒤 run.abort 가 닿기 전에 나간 post 는 어댑터가 FORBIDDEN — 도구 결과로 돌아온다", async () => {
+    const server = await startServer();
+    cleanups.push(() => server.close());
+    const fake = createFakeSdk();
+    let releaseUpload!: () => void;
+    const runner = startRunner(server, fake, { uploadGate: new Promise((r) => (releaseUpload = r)) });
+    await ready(server);
+    fake.script(
+      script.init(),
+      script.messageStart("msg_1"),
+      { callTool: { name: "post", input: { text: "보고서", files: ["report.md"] } } },
+      { waitInterrupt: [script.errorResult("error_during_execution", ["interrupted"])] },
+    );
+    await server.adapter.send(deliver(RUN_2), { providerSessionId: SESSION_ID });
+    await waitFor(() => runner.uploads.length === 1, "올리기 시작");
+
+    // 서버는 곧바로 런을 닫는다 — 같은 틱에 올리기를 풀면 러너는 run.abort 를 받기 전에 post 를 보낸다
+    void server.adapter.abort(RUN_2, dodokSessionKey("coder", CHANNEL_ID));
+    releaseUpload();
+    await waitFor(() => fake.calls[0]!.toolResults.length === 1, "post 결과");
+    await waitFor(() => signals(server, RUN_2).includes("gateway_aborted"), "중지 신호");
+
+    expect(fake.calls[0]!.toolResults[0]).toEqual({
+      isError: true,
+      content: [
+        {
+          type: "text",
+          text: "보내지 못했습니다(FORBIDDEN): post must belong to an open run of this runner",
+        },
+      ],
+    });
+    expect(server.outbound).toEqual([]);
+  });
+
+  it("승인 기한이 지나면 어댑터가 만료로 닫고, 러너는 「승인 시간이 지났습니다」로 거절해 런을 끝까지 간다(Review Focus 4)", async () => {
+    const server = await startServer(0, { approvalTtlMs: 40 });
+    cleanups.push(() => server.close());
+    const fake = createFakeSdk();
+    startRunner(server, fake);
+    await ready(server);
+    fake.script(
+      script.init(),
+      { askPermission: { toolName: "Bash", input: { command: "rm -rf build" }, toolUseID: "toolu_03" } },
+      ...script.textTurn("msg_1", ["거절돼서 멈춥니다"]),
+    );
+    await server.adapter.send(deliver(RUN_1), { providerSessionId: SESSION_ID });
+    await waitFor(() => signals(server, RUN_1).includes("gateway_final"), "최종 답");
+
+    expect(approvals(server).map((a) => a.status)).toEqual(["pending", "expired"]);
+    expect(fake.calls[0]!.permissions).toEqual([{ behavior: "deny", message: "승인 시간이 지났습니다" }]);
+    expect(server.outbound.map((o) => o.message.text)).toEqual(["거절돼서 멈춥니다"]);
   });
 
   it("서버가 재시작하면(전송 끊김) 러너는 도는 런을 멈추고 같은 주소로 다시 붙는다", async () => {
