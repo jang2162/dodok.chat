@@ -4,15 +4,17 @@ import type { InboundContext, InboundDeliver } from "../bridge";
 // 틀 없이 넣은 규칙을 모델이 주입으로 읽었고(5.5), 이 틀의 네 요소(무엇이 세션을 띄웠나·누가 썼나·대화 상대의 글이 아님·앞 블록을 대체)를
 // 갖춘 글은 따랐다. 틀 문장을 바꾸면 그 판정이 더는 이 글의 것이 아니다
 
-// 닮은꼴 `<`(전각 ＜·작은꼴 ﹤)·하이픈 류(‐ ‑ ‒ – — ― − ﹣ －)로 쓴 표식도 모델은 태그로 읽을 수 있다
-const RULE_TAGS = /[<\uFF1C\uFE64](\s*\/?\s*)((?:channel|relay)[-\u2010-\u2015\u2212\uFE63\uFF0D]rules)/giu;
+// `<` 와 그 닮은꼴(전각 ＜·작은꼴 ﹤·‹·˂·⟨·옛 〈 U+2329·CJK 〈 U+3008) — 모델은 닮은꼴로 쓴 표식도 태그로 읽을 수 있다
+const ANGLE_OPEN = /[<\uFF1C\uFE64\u2039\u02C2\u27E8\u2329\u3008]/g;
 
 /**
- * 규칙 안의 여는·닫는 표식이 틀을 일찍 끝내거나 새 틀을 열지 못하게 `<` 만 바꾼다(나머지 글은 그대로). 보이지 않는 서식 글자(`\p{Cf}` —
- * 폭 없는 공백·ZWJ 등)는 먼저 지운다 — 표식 사이에 끼면 정규식은 못 보고 모델은 태그로 읽는다
+ * 규칙 안의 글이 틀을 일찍 끝내거나 새 틀을 열지 못하게 `<` 류를 표식이든 아니든 전부 `&lt;` 로 바꾼다(나머지 글은 그대로).
+ * 표식 모양(슬래시·하이픈·공백 변형)을 정규식으로 쫓으면 닮은꼴 `/`(⁄ ∕ ／ ⧸) 같은 빠진 변형마다 뚫렸다 — `<` 가 없으면
+ * 어떤 변형으로도 태그를 열 수 없다. 대가로 규칙의 평범한 `a < b` 도 `a &lt; b` 로 모델에 간다.
+ * 보이지 않는 서식 글자(`\p{Cf}` — 폭 없는 공백·ZWJ 등)는 따로 지운다 — 모델이 읽는 글에서 뜻이 없고 표식을 가리는 데 쓰인다
  */
 function escapeRuleTags(text: string): string {
-  return text.replace(/\p{Cf}/gu, "").replace(RULE_TAGS, "&lt;$1$2");
+  return text.replace(/\p{Cf}/gu, "").replace(ANGLE_OPEN, "&lt;");
 }
 
 /** 채널 이름은 한 줄로 — 줄바꿈으로 틀 문단을 끊지 못하게 */
@@ -35,7 +37,7 @@ export function buildChannelRulesAppend(input: {
   relayRules: string;
 }): string {
   // 채널 이름은 member 도 바꾼다 — 문단 자리에서도 `"` 를 막아 틀 문단의 따옴표를 닫지 못하게 한다(속성과 같은 이스케이프).
-  // escapeAttribute 가 ASCII `<` 를 먼저 바꾸고, 남은 닮은꼴 표식·서식 글자는 escapeRuleTags 가 막는다
+  // escapeAttribute 가 ASCII `<` 를 먼저 바꾸고, 남은 닮은꼴 `<`·서식 글자는 escapeRuleTags 가 막는다
   const name = escapeRuleTags(escapeAttribute(oneLine(input.channelName)));
   const rules: string[] = [];
   if (input.channelPrompt) rules.push(escapeRuleTags(input.channelPrompt));
