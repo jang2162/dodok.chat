@@ -90,4 +90,41 @@ describe("createAttachmentsHttp — 브리지 첨부 HTTP 와 같은 모양, 경
     expect(err).toBeInstanceOf(AttachmentsHttpError);
     expect((err as Error).message).not.toContain(TOKEN);
   });
+
+  it("런 signal 이 끊기면 제한 시간을 기다리지 않고 끊는다 — 올리기·받기 둘 다", async () => {
+    // 신호가 끊길 때까지 응답하지 않는 fetch
+    const fetch = ((_url: string | URL, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+      })) as typeof globalThis.fetch;
+    const http = createAttachmentsHttp({
+      serverUrl: "https://chat.example.com",
+      token: TOKEN,
+      fetch,
+      timeoutMs: 60_000,
+    });
+    const run = new AbortController();
+    const started = Date.now();
+    const down = http.download(ATT_ID, { signal: run.signal }).catch((e: unknown) => e);
+    const up = http
+      .upload({ channelId: CHANNEL, bytes: new Uint8Array([1]), name: "a", signal: run.signal })
+      .catch((e: unknown) => e);
+    run.abort();
+    const [d, u] = await Promise.all([down, up]);
+    expect(d).toBeInstanceOf(AttachmentsHttpError);
+    expect(u).toBeInstanceOf(AttachmentsHttpError);
+    expect(Date.now() - started).toBeLessThan(5_000);
+  });
+
+  it("런 signal 이 없어도 제한 시간은 그대로 건다", async () => {
+    const seen: Array<AbortSignal | null | undefined> = [];
+    const fetch = (async (_url: string | URL, init?: RequestInit) => {
+      seen.push(init?.signal);
+      return new Response(new Uint8Array([1]));
+    }) as typeof globalThis.fetch;
+    const http = createAttachmentsHttp({ serverUrl: "https://chat.example.com", token: TOKEN, fetch });
+    await http.download(ATT_ID);
+    expect(seen[0]).toBeInstanceOf(AbortSignal);
+  });
 });

@@ -19,7 +19,7 @@ import {
 import { Server, type Socket } from "socket.io";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ResolvedRunnerConfig } from "../src/config";
-import { startRunnerConnection, type RunnerConnection } from "../src/connection";
+import { createRunBridge, startRunnerConnection, type RunnerConnection } from "../src/connection";
 import { createFakeSdk, script, type FakeSdk } from "./helpers/fake-query";
 import { AGENT, RUN_ID, runStart } from "./helpers/fixtures";
 
@@ -418,6 +418,21 @@ describe("startRunnerConnection", () => {
     );
   });
 
+  it("서버의 outbound.post ack 가 계약과 다르면 INTERNAL 로 도구 결과 — 보냈다고 하지 않는다", async () => {
+    const { server, fake } = await setup();
+    await waitFor(() => server.hellos.length === 1);
+    server.postAck = { ok: true } as never;
+    fake.script({ callTool: { name: "post", input: { text: "카드" } } }, ...script.textTurn("msg_1", ["끝"]));
+    await sendStart(server.sockets[0]!, runStart());
+    await waitFor(() => server.finals.length === 1);
+    expect(fake.calls[0]!.toolResults).toEqual([
+      {
+        isError: true,
+        content: [{ type: "text", text: "보내지 못했습니다(INTERNAL): 서버 응답이 계약과 다릅니다" }],
+      },
+    ]);
+  });
+
   it("approval.requested → 서버의 approval.resolve 가 결정으로 — 모르는 id·틀린 형식은 버린다", async () => {
     const { server, fake, logs } = await setup();
     await waitFor(() => server.hellos.length === 1);
@@ -457,5 +472,83 @@ describe("startRunnerConnection", () => {
     await waitFor(() => server.finals.length === 1);
     expect(server.withdrawn).toEqual([{ providerApprovalId: "toolu_01" }]);
     expect(server.finals[0]).toMatchObject({ stopReason: "aborted", text: "" });
+  });
+});
+
+describe("createRunBridge — 런을 시작한 연결 세대가 끊겼으면 보내지 않는다", () => {
+  function fakeSocket() {
+    const emitted: Array<[string, unknown]> = [];
+    const acked: unknown[] = [];
+    const socket = {
+      emit: (event: string, payload: unknown) => {
+        emitted.push([event, payload]);
+        return true;
+      },
+      timeout: () => ({
+        emitWithAck: async (_event: string, payload: unknown) => {
+          acked.push(payload);
+          return { ok: true, messageId: "0192f000-0000-7000-8000-0000000000aa" };
+        },
+      }),
+    };
+    return { socket: socket as never, emitted, acked };
+  }
+  const http = {
+    upload: async () => {
+      throw new Error("not used");
+    },
+    download: async () => {
+      throw new Error("not used");
+    },
+  };
+  const post = {
+    outboundId: "runner-post:x",
+    channelId: runStart().deliver.channelId,
+    agentId: "coder",
+    sessionKey: runStart().deliver.sessionKey,
+    runId: RUN_ID,
+    replyToInboundId: runStart().deliver.message.id,
+    text: "x",
+    attachmentIds: [],
+    ts: "2026-09-27T02:00:00.000Z",
+  };
+  const approval = {
+    providerApprovalId: "toolu_01",
+    runId: RUN_ID,
+    sessionKey: runStart().deliver.sessionKey,
+    toolCallId: "toolu_01",
+    toolName: "Bash",
+    summary: "make",
+    canAllowAlways: false,
+  };
+
+  it("붙어 있으면 post·승인 요청·철회를 보낸다", async () => {
+    const f = fakeSocket();
+    const bridge = createRunBridge({ socket: f.socket, live: () => true, http, decisions: new Map() });
+    expect(await bridge.post(post)).toEqual({ ok: true, messageId: "0192f000-0000-7000-8000-0000000000aa" });
+    bridge.requestApproval(approval);
+    bridge.withdrawApproval("toolu_01");
+    expect(f.acked).toEqual([post]);
+    expect(f.emitted).toEqual([
+      ["approval.requested", approval],
+      ["approval.withdrawn", { providerApprovalId: "toolu_01" }],
+    ]);
+  });
+
+  it("세대가 끊겼으면 post 는 ADAPTER_UNAVAILABLE, 승인 요청·철회는 버린다 — 새 연결로 새지 않는다", async () => {
+    const f = fakeSocket();
+    const decisions = new Map<string, () => void>([["toolu_01", () => {}]]);
+    const bridge = createRunBridge({ socket: f.socket, live: () => false, http, decisions });
+    expect(await bridge.post(post)).toEqual({
+      ok: false,
+      code: "ADAPTER_UNAVAILABLE",
+      message: "서버와 연결이 끊겼습니다",
+    });
+    bridge.requestApproval(approval);
+    bridge.withdrawApproval("toolu_01");
+    expect(f.acked).toEqual([]);
+    expect(f.emitted).toEqual([]);
+    // 기다림은 세대와 상관없이 거둔다
+    expect(decisions.size).toBe(0);
   });
 });

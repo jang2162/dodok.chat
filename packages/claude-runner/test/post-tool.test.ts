@@ -1,14 +1,25 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Attachment, ComponentsV1, RunnerOutboundPost, type RunnerOutboundAck } from "@dodok/shared";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { AttachmentsHttpError, type AttachmentsHttp } from "../src/attachments-http";
+import { type FilesFs, nodeFilesFs } from "../src/files";
 import { createPathMasker, OUTSIDE_WORKDIR, workdirRoots } from "../src/mask";
 import {
   createDodokMcpServer,
   createPoster,
+  POST_COMPONENTS_TOO_LONG,
+  POST_STOPPED_MESSAGE,
   POST_TOOL_FULL_NAME,
   POST_TOOL_NAME,
   PostInputSchema,
@@ -112,13 +123,23 @@ describe("createPoster — 파일 검사 → 올리기 → outbound.post", () =>
   });
   afterEach(() => rmSync(base, { recursive: true, force: true }));
 
-  function harness(opts: { ack?: RunnerOutboundAck; uploadFails?: boolean } = {}) {
+  function harness(
+    opts: {
+      ack?: RunnerOutboundAck;
+      uploadFails?: boolean;
+      signal?: AbortSignal;
+      onUpload?: () => void;
+    } = {},
+  ) {
     const uploads: Array<{ channelId: string; name: string; mime?: string; bytes: number }> = [];
+    const uploadSignals: Array<AbortSignal | undefined> = [];
     const sent: RunnerOutboundPost[] = [];
     let n = 0;
     const http: AttachmentsHttp = {
       upload: async (o) => {
         if (opts.uploadFails) throw new AttachmentsHttpError("첨부 올리기 실패 507", 507);
+        uploadSignals.push(o.signal);
+        opts.onUpload?.();
         uploads.push({
           channelId: o.channelId,
           name: o.name,
@@ -150,10 +171,11 @@ describe("createPoster — 파일 검사 → 올리기 → outbound.post", () =>
         sent.push(RunnerOutboundPost.parse(m));
         return opts.ack ?? { ok: true, messageId: "0192f000-0000-7000-8000-0000000000aa" };
       },
+      ...(opts.signal ? { signal: opts.signal } : {}),
       now: () => Date.parse("2026-09-27T02:00:00.000Z"),
       newId: () => "post-1",
     });
-    return { post, uploads, sent, start };
+    return { post, uploads, uploadSignals, sent, start };
   }
 
   it("거절 파일이 하나라도 섞이면 올리기 0·보내기 0, 결과는 사유 목록(상대 경로만 — Review Focus 2)", async () => {
@@ -239,6 +261,72 @@ describe("createPoster — 파일 검사 → 올리기 → outbound.post", () =>
     expect(h.sent[0]!.text).toBe(`결과는 out/report.md, 설정은 ${OUTSIDE_WORKDIR}`);
   });
 
+  it("components 안 글의 호스트 경로도 가린다 — 가린 뒤에도 ComponentsV1", async () => {
+    const h = harness();
+    const components = ComponentsV1.parse({
+      blocks: [
+        { type: "section", text: `빌드 결과 ${workdir}/dist/app.js, 로그는 /Users/me/.cache/log` },
+        { type: "actions", items: [{ type: "button", id: "open", label: `${workdir}/dist 열기` }] },
+        { type: "file", name: "report final.md", url: "artifact://report%20final.md" },
+      ],
+    });
+    const out = await h.post({ components });
+    expect(out).toEqual({ messageId: "0192f000-0000-7000-8000-0000000000aa" });
+    expect(h.sent[0]!.components).toEqual(
+      ComponentsV1.parse({
+        blocks: [
+          { type: "section", text: `빌드 결과 dist/app.js, 로그는 ${OUTSIDE_WORKDIR}` },
+          { type: "actions", items: [{ type: "button", id: "open", label: "dist 열기" }] },
+          { type: "file", name: "report final.md", url: "artifact://report%20final.md" },
+        ],
+      }),
+    );
+    expect(JSON.stringify(h.sent[0])).not.toContain(workdir);
+  });
+
+  it("가린 표지 때문에 components 가 길이 제한을 넘으면 보내지 않고 도구 결과로 알린다", async () => {
+    const h = harness();
+    const label = `${"a".repeat(76)} /x`;
+    const components = ComponentsV1.parse({
+      blocks: [{ type: "actions", items: [{ type: "button", id: "b", label }] }],
+    });
+    const out = await h.post({ components, files: ["chart.png"] });
+    expect(out).toEqual({ error: POST_COMPONENTS_TOO_LONG });
+    expect(h.uploads).toEqual([]);
+    expect(h.sent).toEqual([]);
+  });
+
+  it("멈춘 런은 올리지도 보내지도 않는다 — 올리는 사이 멈춰도 다음 파일·보내기를 하지 않는다", async () => {
+    const stopped = new AbortController();
+    stopped.abort();
+    const h1 = harness({ signal: stopped.signal });
+    expect(await h1.post({ text: "x", files: ["chart.png"] })).toEqual({ error: POST_STOPPED_MESSAGE });
+    expect(h1.uploads).toEqual([]);
+    expect(h1.sent).toEqual([]);
+
+    const run = new AbortController();
+    const h2 = harness({ signal: run.signal, onUpload: () => run.abort() });
+    expect(await h2.post({ files: ["out/report final.md", "chart.png"] })).toEqual({
+      error: POST_STOPPED_MESSAGE,
+    });
+    expect(h2.uploads).toHaveLength(1);
+    expect(h2.uploadSignals[0]).toBe(run.signal);
+    expect(h2.sent).toEqual([]);
+  });
+
+  it("올리기가 런 중지로 끊기면 올리기 실패가 아니라 중지 사유", async () => {
+    const run = new AbortController();
+    const h = harness({
+      signal: run.signal,
+      onUpload: () => {
+        run.abort();
+        throw new AttachmentsHttpError("첨부 올리기 실패(AbortError)");
+      },
+    });
+    expect(await h.post({ files: ["chart.png"] })).toEqual({ error: POST_STOPPED_MESSAGE });
+    expect(h.sent).toEqual([]);
+  });
+
   it("서버가 거절하면(중지된 런 FORBIDDEN 등) 도구 결과로 사유", async () => {
     const h = harness({
       ack: { ok: false, code: "FORBIDDEN", message: "post must belong to an open run of this runner" },
@@ -246,6 +334,159 @@ describe("createPoster — 파일 검사 → 올리기 → outbound.post", () =>
     expect(await h.post({ text: "x" })).toEqual({
       error: "보내지 못했습니다(FORBIDDEN): post must belong to an open run of this runner",
     });
+  });
+
+  function swapPoster(opts: { onUpload?: (n: number) => void; fs?: FilesFs }) {
+    const uploaded: string[] = [];
+    const sent: RunnerOutboundPost[] = [];
+    const post = createPoster({
+      workdir,
+      deliver: runStart().deliver,
+      mask: createPathMasker(workdirRoots(workdir)),
+      ...(opts.fs ? { fs: opts.fs } : {}),
+      http: {
+        upload: async (o) => {
+          uploaded.push(Buffer.from(o.bytes).toString());
+          opts.onUpload?.(uploaded.length);
+          const id = `0192f000-0000-7000-8000-0000000000${String(uploaded.length).padStart(2, "0")}`;
+          return { id, kind: "file", url: `artifact://${id}`, name: o.name, mime: "text/plain", size: 1 };
+        },
+        download: async () => {
+          throw new Error("not used");
+        },
+      },
+      send: async (m) => {
+        sent.push(m);
+        return { ok: true, messageId: "0192f000-0000-7000-8000-0000000000aa" };
+      },
+    });
+    return { post, uploaded, sent };
+  }
+
+  function prepareSwap() {
+    mkdirSync(join(workdir, "sub"));
+    writeFileSync(join(workdir, "sub", "b.txt"), "bee");
+    mkdirSync(join(base, "secret"));
+    writeFileSync(join(base, "secret", "b.txt"), "PRIVATE-KEY");
+    return () => {
+      renameSync(join(workdir, "sub"), join(workdir, "sub-old"));
+      symlinkSync(join(base, "secret"), join(workdir, "sub"));
+    };
+  }
+
+  /** 검사와 열기 사이에 한 번 끼어드는 fs — 첫 open 직전에 swap */
+  const swapBeforeOpen = (swap: () => void): FilesFs => {
+    let done = false;
+    return {
+      ...nodeFilesFs,
+      open: (p) => {
+        if (!done) {
+          done = true;
+          swap();
+        }
+        return nodeFilesFs.open(p);
+      },
+    };
+  };
+
+  it("앞 파일을 올리는 사이 중간 디렉터리를 밖 링크로 바꿔도 밖 파일은 올라가지 않는다(리뷰 탐침, Review Focus 2)", async () => {
+    const swap = prepareSwap();
+    const h = swapPoster({ onUpload: (n) => n === 1 && swap() });
+    const out = await h.post({ files: ["out/report final.md", "sub/b.txt"] });
+    // 올리기 전에 모두 열어 둔다 — 두 번째도 검사한 그 파일(옮겨진 sub-old/b.txt)에서 읽는다
+    expect(h.uploaded).toEqual(["# 보고", "bee"]);
+    expect(h.uploaded).not.toContain("PRIVATE-KEY");
+    expect(out).toEqual({ messageId: "0192f000-0000-7000-8000-0000000000aa" });
+  });
+
+  it("검사와 열기 사이에 중간 디렉터리를 밖 링크로 바꾸면 그 파일을 거절한다 — 올리기 0·보내기 0, 사유는 상대 경로만", async () => {
+    const swap = prepareSwap();
+    const h = swapPoster({ fs: swapBeforeOpen(swap) });
+    const out = await h.post({ files: ["out/report final.md", "sub/b.txt"] });
+    expect(h.uploaded).toEqual([]);
+    expect(h.sent).toEqual([]);
+    expect(out).toEqual({
+      error:
+        "파일을 보내지 않았습니다 — 아래 파일을 보낼 수 없습니다(작업 디렉터리 안의 파일만, 하나에 20 MiB 까지):\n- sub/b.txt: 검사한 뒤 바뀌었습니다",
+    });
+  });
+
+  it("검사와 열기 사이에 파일 자리를 링크로 바꾸면(O_NOFOLLOW) 거절한다", async () => {
+    const h = swapPoster({
+      fs: swapBeforeOpen(() => {
+        rmSync(join(workdir, "chart.png"));
+        symlinkSync(join(base, ".env"), join(workdir, "chart.png"));
+      }),
+    });
+    const out = await h.post({ files: ["chart.png"] });
+    expect(h.uploaded).toEqual([]);
+    expect(out).toEqual({ error: expect.stringContaining("- chart.png: 검사한 뒤 바뀌었습니다") });
+  });
+
+  it("검사와 열기 사이에 파일 자리를 FIFO 로 바꿔도 막히지 않고 거절한다(O_NONBLOCK)", async () => {
+    const { execFileSync } = await import("node:child_process");
+    const h = swapPoster({
+      fs: swapBeforeOpen(() => {
+        rmSync(join(workdir, "chart.png"));
+        execFileSync("mkfifo", [join(workdir, "chart.png")]);
+      }),
+    });
+    const out = await h.post({ files: ["chart.png"] });
+    expect(h.uploaded).toEqual([]);
+    expect(out).toEqual({ error: expect.stringContaining("- chart.png: 검사한 뒤 바뀌었습니다") });
+  });
+
+  it("거절로 끝나도 연 fd 는 모두 닫는다", async () => {
+    const opened: number[] = [];
+    const closed: number[] = [];
+    let n = 0;
+    const fs: FilesFs = {
+      ...nodeFilesFs,
+      open: (p) => {
+        n += 1;
+        // 두 번째 파일은 여는 순간 바뀐 것으로
+        if (n === 2) writeFileSync(join(workdir, "chart.png"), Buffer.alloc(9));
+        const fd = nodeFilesFs.open(p);
+        opened.push(fd);
+        return fd;
+      },
+      close: (fd) => {
+        closed.push(fd);
+        nodeFilesFs.close(fd);
+      },
+    };
+    const h = swapPoster({ fs });
+    const out = await h.post({ files: ["out/report final.md", "chart.png"] });
+    expect("error" in out).toBe(true);
+    expect(opened).toHaveLength(2);
+    expect(closed.sort()).toEqual([...opened].sort());
+  });
+
+  it("검사한 뒤 크기가 바뀐 파일은 거절한다", async () => {
+    const post = createPoster({
+      workdir,
+      deliver: runStart().deliver,
+      mask: createPathMasker(workdirRoots(workdir)),
+      http: {
+        upload: async (o) => {
+          writeFileSync(join(workdir, "chart.png"), Buffer.alloc(4096));
+          return {
+            id: "0192f000-0000-7000-8000-000000000001",
+            kind: "file",
+            url: "artifact://0192f000-0000-7000-8000-000000000001",
+            name: o.name,
+            mime: "text/plain",
+            size: 1,
+          };
+        },
+        download: async () => {
+          throw new Error("not used");
+        },
+      },
+      send: async () => ({ ok: true, messageId: "0192f000-0000-7000-8000-0000000000aa" }),
+    });
+    const out = await post({ files: ["out/report final.md", "chart.png"] });
+    expect(out).toEqual({ error: expect.stringContaining("- chart.png: 검사한 뒤 바뀌었습니다") });
   });
 
   it("올리기가 실패하면 보내지 않는다 — 사유에 상대 경로만", async () => {

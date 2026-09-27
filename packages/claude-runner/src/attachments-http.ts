@@ -13,9 +13,16 @@ export class AttachmentsHttpError extends Error {
   }
 }
 
+/** signal 은 런의 것 — 멈춘 런은 제한 시간까지 기다리지 않는다 */
 export type AttachmentsHttp = {
-  upload(o: { channelId: string; bytes: Uint8Array; name: string; mime?: string }): Promise<Attachment>;
-  download(id: string): Promise<{ bytes: Buffer; mime: string }>;
+  upload(o: {
+    channelId: string;
+    bytes: Uint8Array;
+    name: string;
+    mime?: string;
+    signal?: AbortSignal;
+  }): Promise<Attachment>;
+  download(id: string, o?: { signal?: AbortSignal }): Promise<{ bytes: Buffer; mime: string }>;
 };
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -31,10 +38,19 @@ export function createAttachmentsHttp(o: {
   const doFetch = o.fetch ?? fetch;
   const timeoutMs = o.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
-  async function request(url: string, init: RequestInit, what: string): Promise<Response> {
+  async function request(
+    url: string,
+    init: RequestInit,
+    what: string,
+    runSignal: AbortSignal | undefined,
+  ): Promise<Response> {
+    const timeout = AbortSignal.timeout(timeoutMs);
     let res: Response;
     try {
-      res = await doFetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+      res = await doFetch(url, {
+        ...init,
+        signal: runSignal ? AbortSignal.any([timeout, runSignal]) : timeout,
+      });
     } catch (error) {
       // fetch 오류 문구는 주소를 담을 수 있다 — 종류만 남긴다
       const kind = error instanceof Error ? error.name : "unknown";
@@ -45,7 +61,7 @@ export function createAttachmentsHttp(o: {
   }
 
   return {
-    async upload({ channelId, bytes, name, mime }) {
+    async upload({ channelId, bytes, name, mime, signal }) {
       const res = await request(
         base,
         {
@@ -59,6 +75,7 @@ export function createAttachmentsHttp(o: {
           body: bytes,
         },
         "올리기",
+        signal,
       );
       let body: unknown;
       try {
@@ -71,11 +88,12 @@ export function createAttachmentsHttp(o: {
       return parsed.data;
     },
 
-    async download(id) {
+    async download(id, opts) {
       const res = await request(
         `${base}/${encodeURIComponent(id)}`,
         { headers: { authorization: `Bearer ${o.token}` } },
         "받기",
+        opts?.signal,
       );
       return {
         bytes: Buffer.from(await res.arrayBuffer()),

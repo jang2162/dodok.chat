@@ -18,7 +18,8 @@ import type {
  * - `{ sleep }` 그만큼 쉬었다가 뒤의 메시지를 흘린다(interrupt 뒤 턴을 닫는 데 걸리는 시간)
  * - `{ callTool }` dodok MCP 서버의 그 도구 handler 를 부르고 결과를 `toolResults` 에 적는다(CLI 가 SDK MCP 도구를 부름)
  * - `{ askPermission }` options.canUseTool 을 부르고 결과를 `permissions` 에 적는다. 콜백 signal 은 interrupt·close 에
- *   끊긴다(실제 SDK 는 CLI 의 control_cancel_request 를 받아 끊는다 — ADR 0007 4.2)
+ *   끊긴다(실제 SDK 는 CLI 의 control_cancel_request 를 받아 끊는다 — ADR 0007 4.2). `lateCancel` 이면 close 에만 끊긴다
+ *   (CLI 가 취소를 늦게 보내는 경우)
  */
 export type ScriptStep =
   | SdkMessage
@@ -65,7 +66,7 @@ export type FakeSdk = SdkPort & {
 /** 테스트용 SDK 메시지 — 쓰는 필드만 채우고 SDK 타입으로 본다 */
 export const sdkMsg = (m: Record<string, unknown>): SdkMessage => m as unknown as SdkMessage;
 
-export function createFakeSdk(): FakeSdk {
+export function createFakeSdk(opts: { lateCancel?: boolean } = {}): FakeSdk {
   const scripts: ScriptStep[][] = [];
   const calls: FakeCall[] = [];
   const sessions = new Set<string>();
@@ -167,7 +168,7 @@ export function createFakeSdk(): FakeSdk {
       [Symbol.asyncIterator]: () => gen,
       interrupt: async () => {
         call.interrupts += 1;
-        cancelPermissions();
+        if (!opts.lateCancel) cancelPermissions();
         onInterrupt?.();
       },
       close: () => {

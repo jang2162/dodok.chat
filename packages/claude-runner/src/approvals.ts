@@ -48,7 +48,35 @@ function clip(text: string, max: number): string {
   return out;
 }
 
-/** 승인 카드의 요약. Bash 는 명령, 파일 도구는 작업 디렉터리 상대 경로, 그 밖은 입력 JSON 앞 200자 — 호스트 경로는 가린다 */
+/** clip 의 뒤쪽판 — 끝에서부터 max 안으로 */
+function clipEnd(text: string, max: number): string {
+  const chars = Array.from(text);
+  let out = "";
+  for (let i = chars.length - 1; i >= 0; i -= 1) {
+    const ch = chars[i]!;
+    if (out.length + ch.length > max) break;
+    out = ch + out;
+  }
+  return out;
+}
+
+const elisionMark = (omitted: number): string => ` …(가운데 ${omitted}자 생략)… `;
+
+/**
+ * max 를 넘으면 가운데를 줄이고 표시를 남긴다 — 앞만 남기면 `echo aaa…; curl … | sh` 의 꼬리를 사람이 못 보고 허용한다.
+ * 앞 약 2/3, 뒤 약 1/3(400 이면 앞 약 250·뒤 약 125). 생략 수는 코드 포인트
+ */
+export function elide(text: string, max: number): string {
+  if (text.length <= max) return text;
+  // 표시 길이는 생략 수의 자릿수에 달렸다 — 글 전체 길이의 자릿수로 넉넉히 잡는다
+  const room = max - elisionMark(text.length).length;
+  const tail = clipEnd(text, Math.floor(room / 3));
+  const head = clip(text, room - tail.length);
+  const omitted = Array.from(text).length - Array.from(head).length - Array.from(tail).length;
+  return head + elisionMark(omitted) + tail;
+}
+
+/** 승인 카드의 요약. Bash 는 명령, 파일 도구는 작업 디렉터리 상대 경로, 그 밖은 입력 JSON 200자 — 호스트 경로는 가리고, 길면 가운데를 줄인다 */
 export function summarizeToolInput(toolName: string, input: unknown, workdir: string): string {
   const mask = createPathMasker(workdirRoots(workdir));
   const record = input !== null && typeof input === "object" ? (input as Record<string, unknown>) : {};
@@ -60,9 +88,9 @@ export function summarizeToolInput(toolName: string, input: unknown, workdir: st
     // 상대 경로는 작업 디렉터리에 붙여 본다 — `../../etc/hosts` 도 밖으로 가려진다
     summary = mask.path(resolve(workdir, record[pathKey]));
   } else {
-    summary = clip(mask.json(JSON.stringify(input) ?? "null"), JSON_SUMMARY_MAX);
+    summary = elide(mask.json(JSON.stringify(input) ?? "null"), JSON_SUMMARY_MAX);
   }
-  return clip(summary, SUMMARY_MAX);
+  return elide(summary, SUMMARY_MAX);
 }
 
 export function createCanUseTool(deps: CanUseToolDeps): CanUseTool {

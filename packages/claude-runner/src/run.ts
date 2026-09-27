@@ -178,7 +178,7 @@ export async function runOnce(start: RunnerRunStart, ctx: RunContext): Promise<v
   }
   if (ctx.signal.aborted) return void ctx.emit.final(abortedFinal());
   // 받기 실패는 그 이미지만 뺀다 — loadImageBlocks 는 던지지 않는다
-  const images = await loadImageBlocks(start.deliver, ctx.bridge.http);
+  const images = await loadImageBlocks(start.deliver, ctx.bridge.http, ctx.signal);
   if (ctx.signal.aborted) return void ctx.emit.final(abortedFinal());
   const outcome = await attempt(start, ctx, resume, images);
   if (outcome !== "session-in-use") return;
@@ -245,6 +245,7 @@ async function attempt(
             http: ctx.bridge.http,
             send: (m) => ctx.bridge.post(m),
             mask,
+            signal: ctx.signal,
             now,
           }),
         }),

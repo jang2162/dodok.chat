@@ -61,6 +61,59 @@ export type RunnerConnectionOptions = {
 
 type RunnerSocket = Socket<RunnerServerToClientEvents, RunnerClientToServerEvents>;
 
+/**
+ * 런 하나가 서버와 주고받는 길. live() 는 그 런을 시작한 연결 세대가 아직 붙어 있는가 — 끊겼거나 다시 붙은 연결로는
+ * 보내지 않는다(서버는 그 런을 이미 닫았다). 끊기면 연결이 런을 먼저 멈추므로 대개는 런 signal 이 앞에서 막는다
+ */
+export function createRunBridge(o: {
+  socket: Pick<RunnerSocket, "emit" | "timeout">;
+  live: () => boolean;
+  http: AttachmentsHttp;
+  /** 결정을 기다리는 승인(id 는 toolUseID) — 연결이 approval.resolve 를 여기로 넘긴다 */
+  decisions: Map<string, (outcome: ApprovalOutcome) => void>;
+  postAckTimeoutMs?: number;
+}): RunBridge {
+  return {
+    http: o.http,
+    async post(message) {
+      if (!o.live()) return { ok: false, code: "ADAPTER_UNAVAILABLE", message: "서버와 연결이 끊겼습니다" };
+      try {
+        const raw: unknown = await o.socket
+          .timeout(o.postAckTimeoutMs ?? POST_ACK_TIMEOUT_MS)
+          .emitWithAck("outbound.post", message);
+        const parsed = RunnerOutboundAck.safeParse(raw);
+        return parsed.success
+          ? parsed.data
+          : { ok: false, code: "INTERNAL", message: "서버 응답이 계약과 다릅니다" };
+      } catch {
+        return { ok: false, code: "ADAPTER_UNAVAILABLE", message: "서버가 제때 답하지 않았습니다" };
+      }
+    },
+    requestApproval(request) {
+      if (o.live()) o.socket.emit("approval.requested", request);
+    },
+    withdrawApproval(providerApprovalId) {
+      o.decisions.delete(providerApprovalId);
+      if (o.live()) o.socket.emit("approval.withdrawn", { providerApprovalId });
+    },
+    waitDecision(providerApprovalId, signal) {
+      return new Promise<ApprovalOutcome>((resolve, reject) => {
+        if (signal.aborted) return reject(new Error("aborted"));
+        const onAbort = () => {
+          o.decisions.delete(providerApprovalId);
+          reject(new Error("aborted"));
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+        o.decisions.set(providerApprovalId, (outcome) => {
+          signal.removeEventListener("abort", onAbort);
+          o.decisions.delete(providerApprovalId);
+          resolve(outcome);
+        });
+      });
+    },
+  };
+}
+
 export function startRunnerConnection(opts: RunnerConnectionOptions) {
   const { config, logger } = opts;
   const backoff = opts.backoff ?? DEFAULT_BACKOFF;
@@ -151,48 +204,14 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
     };
   }
 
-  function bridgeFor(gen: number): RunBridge {
-    const live = () => socket.connected && gen === generation;
-    return {
+  const bridgeFor = (gen: number): RunBridge =>
+    createRunBridge({
+      socket,
+      live: () => socket.connected && gen === generation,
       http,
-      async post(message) {
-        if (!live()) return { ok: false, code: "ADAPTER_UNAVAILABLE", message: "서버와 연결이 끊겼습니다" };
-        try {
-          const raw: unknown = await socket
-            .timeout(opts.postAckTimeoutMs ?? POST_ACK_TIMEOUT_MS)
-            .emitWithAck("outbound.post", message);
-          const parsed = RunnerOutboundAck.safeParse(raw);
-          return parsed.success
-            ? parsed.data
-            : { ok: false, code: "INTERNAL", message: "서버 응답이 계약과 다릅니다" };
-        } catch {
-          return { ok: false, code: "ADAPTER_UNAVAILABLE", message: "서버가 제때 답하지 않았습니다" };
-        }
-      },
-      requestApproval(request) {
-        if (live()) socket.emit("approval.requested", request);
-      },
-      withdrawApproval(providerApprovalId) {
-        decisions.delete(providerApprovalId);
-        if (live()) socket.emit("approval.withdrawn", { providerApprovalId });
-      },
-      waitDecision(providerApprovalId, signal) {
-        return new Promise<ApprovalOutcome>((resolve, reject) => {
-          if (signal.aborted) return reject(new Error("aborted"));
-          const onAbort = () => {
-            decisions.delete(providerApprovalId);
-            reject(new Error("aborted"));
-          };
-          signal.addEventListener("abort", onAbort, { once: true });
-          decisions.set(providerApprovalId, (outcome) => {
-            signal.removeEventListener("abort", onAbort);
-            decisions.delete(providerApprovalId);
-            resolve(outcome);
-          });
-        });
-      },
-    };
-  }
+      decisions,
+      ...(opts.postAckTimeoutMs === undefined ? {} : { postAckTimeoutMs: opts.postAckTimeoutMs }),
+    });
 
   socket.on("connect", () => {
     generation += 1;

@@ -1,8 +1,11 @@
 import {
+  closeSync,
   mkdirSync,
   mkdtempSync,
   realpathSync,
+  renameSync,
   rmSync,
+  statSync,
   symlinkSync,
   truncateSync,
   writeFileSync,
@@ -10,7 +13,14 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { checkPostFiles, describePostFileRejections, POST_FILE_MAX_BYTES } from "../src/files";
+import {
+  checkPostFiles,
+  describePostFileRejections,
+  nodeFilesFs,
+  openCheckedFile,
+  POST_FILE_MAX_BYTES,
+  readCheckedFile,
+} from "../src/files";
 import { OUTSIDE_WORKDIR } from "../src/mask";
 
 let base: string;
@@ -40,10 +50,32 @@ describe("checkPostFiles", () => {
   it("작업 디렉터리 안 상대 경로는 통과 — 절대 경로는 realpath, rel 은 상대", () => {
     const { checks, tooMany } = checkPostFiles(workdir, ["a.txt", "sub/b.txt", "./sub/../a.txt"]);
     expect(tooMany).toBe(false);
+    const id = (p: string) => {
+      const st = statSync(p);
+      return { dev: st.dev, ino: st.ino };
+    };
     expect(checks).toEqual([
-      { ok: true, abs: realpathSync(join(workdir, "a.txt")), rel: "a.txt", bytes: 5 },
-      { ok: true, abs: realpathSync(join(workdir, "sub", "b.txt")), rel: "sub/b.txt", bytes: 3 },
-      { ok: true, abs: realpathSync(join(workdir, "a.txt")), rel: "a.txt", bytes: 5 },
+      {
+        ok: true,
+        abs: realpathSync(join(workdir, "a.txt")),
+        rel: "a.txt",
+        bytes: 5,
+        ...id(join(workdir, "a.txt")),
+      },
+      {
+        ok: true,
+        abs: realpathSync(join(workdir, "sub", "b.txt")),
+        rel: "sub/b.txt",
+        bytes: 3,
+        ...id(join(workdir, "sub", "b.txt")),
+      },
+      {
+        ok: true,
+        abs: realpathSync(join(workdir, "a.txt")),
+        rel: "a.txt",
+        bytes: 5,
+        ...id(join(workdir, "a.txt")),
+      },
     ]);
   });
 
@@ -81,6 +113,18 @@ describe("checkPostFiles", () => {
       "evil-link",
       "evil-dir/id_rsa",
       OUTSIDE_WORKDIR,
+    ]);
+  });
+
+  it("「..」 로 시작하는 이름(..cache/x·..foo)은 안이다 — 부모 디렉터리가 아니다", () => {
+    mkdirSync(join(workdir, "..cache"));
+    writeFileSync(join(workdir, "..cache", "x"), "c");
+    writeFileSync(join(workdir, "..foo"), "f");
+    const { checks } = checkPostFiles(workdir, ["..cache/x", "..foo", join(workdir, "..foo")]);
+    expect(checks.map((c) => (c.ok ? `ok:${c.rel}` : c.reason))).toEqual([
+      "ok:..cache/x",
+      "ok:..foo",
+      "ok:..foo",
     ]);
   });
 
@@ -149,5 +193,85 @@ describe("checkPostFiles", () => {
   it("상대 경로 라벨의 제어 문자는 ? 로 — 줄을 끊어 사유를 흉내 내지 못한다", () => {
     const [check] = checkPostFiles(workdir, ["x\n- a.txt: ok"]).checks;
     expect(check).toMatchObject({ ok: false, reason: "not_found", rel: "x?- a.txt: ok" });
+  });
+});
+
+describe("openCheckedFile·readCheckedFile — 검사한 그 파일에서만 읽는다", () => {
+  const passed = (path: string) => {
+    const [check] = checkPostFiles(workdir, [path]).checks;
+    if (!check?.ok) throw new Error("check failed");
+    return check;
+  };
+
+  it("검사한 그대로면 fd 를 열고 검사한 크기만큼 읽는다", () => {
+    const check = passed("a.txt");
+    const o = openCheckedFile(check);
+    expect(o.ok).toBe(true);
+    if (!o.ok) return;
+    try {
+      expect(readCheckedFile(o.fd, check)?.toString()).toBe("hello");
+    } finally {
+      closeSync(o.fd);
+    }
+  });
+
+  it("같은 크기의 다른 파일로 바뀌면(ino 다름) changed", () => {
+    const check = passed("a.txt");
+    rmSync(join(workdir, "a.txt"));
+    writeFileSync(join(workdir, "a.txt"), "HELLO");
+    expect(openCheckedFile(check)).toEqual({ ok: false, rel: "a.txt", reason: "changed" });
+  });
+
+  it("같은 파일이라도 크기가 바뀌었으면 changed, 파일이 사라졌으면 changed", () => {
+    const check = passed("a.txt");
+    writeFileSync(join(workdir, "a.txt"), "hello!");
+    expect(openCheckedFile(check)).toMatchObject({ ok: false, reason: "changed" });
+    const b = passed("sub/b.txt");
+    rmSync(join(workdir, "sub", "b.txt"));
+    expect(openCheckedFile(b)).toMatchObject({ ok: false, reason: "changed" });
+  });
+
+  it("검사 뒤 파일 자리가 링크가 되면 같은 파일을 가리켜도 열지 않는다(O_NOFOLLOW — 링크 너머 장치 파일 등을 열지 않게)", () => {
+    const check = passed("a.txt");
+    renameSync(join(workdir, "a.txt"), join(workdir, "a-moved.txt"));
+    symlinkSync(join(workdir, "a-moved.txt"), join(workdir, "a.txt"));
+    expect(openCheckedFile(check)).toEqual({ ok: false, rel: "a.txt", reason: "changed" });
+  });
+
+  it("다른 기기(dev)의 같은 ino 도 다른 파일이다", () => {
+    const check = passed("a.txt");
+    expect(openCheckedFile({ ...check, dev: check.dev + 1 })).toMatchObject({ ok: false, reason: "changed" });
+  });
+
+  it("연 뒤 줄었거나 늘었으면 읽기가 undefined", () => {
+    const check = passed("a.txt");
+    const o = openCheckedFile(check);
+    if (!o.ok) throw new Error("open failed");
+    try {
+      truncateSync(join(workdir, "a.txt"), 2);
+      expect(readCheckedFile(o.fd, check)).toBeUndefined();
+      writeFileSync(join(workdir, "a.txt"), "hello world");
+      expect(readCheckedFile(o.fd, check)).toBeUndefined();
+    } finally {
+      closeSync(o.fd);
+    }
+  });
+
+  it("크기는 그대로인데 읽기가 일찍 끝나면(0 바이트) undefined — 0 으로 채운 버퍼를 올리지 않는다", () => {
+    const check = passed("a.txt");
+    const fs = { ...nodeFilesFs, read: () => 0 };
+    const o = openCheckedFile(check, fs);
+    if (!o.ok) throw new Error("open failed");
+    try {
+      expect(readCheckedFile(o.fd, check, fs)).toBeUndefined();
+    } finally {
+      closeSync(o.fd);
+    }
+  });
+
+  it("changed 사유 문구", () => {
+    expect(describePostFileRejections([{ ok: false, rel: "a.txt", reason: "changed" }], false)).toContain(
+      "- a.txt: 검사한 뒤 바뀌었습니다",
+    );
   });
 });

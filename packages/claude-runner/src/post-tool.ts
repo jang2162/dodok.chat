@@ -8,7 +8,14 @@ import {
 } from "@dodok/shared";
 import { z } from "zod";
 import type { AttachmentsHttp } from "./attachments-http";
-import { checkPostFiles, describePostFileRejections, type FilesFs, nodeFilesFs } from "./files";
+import {
+  checkPostFiles,
+  describePostFileRejections,
+  type FilesFs,
+  nodeFilesFs,
+  openCheckedFile,
+  readCheckedFile,
+} from "./files";
 import type { PathMasker } from "./mask";
 import { defineSdkTool, type SdkMcpServer, type SdkPort } from "./sdk";
 
@@ -79,39 +86,75 @@ export type PosterDeps = {
   http: AttachmentsHttp;
   send: (message: RunnerOutboundPost) => Promise<RunnerOutboundAck>;
   mask: PathMasker;
+  /** 런의 signal — 멈춘 런은 올리지 않는다(올린 뒤 서버가 FORBIDDEN 이면 블롭만 24시간 남는다) */
+  signal?: AbortSignal;
   fs?: FilesFs;
   now?: () => number;
   newId?: () => string;
 };
 
+export const POST_STOPPED_MESSAGE = "런이 멈춰 보내지 않았습니다";
+export const POST_COMPONENTS_TOO_LONG =
+  "보내지 않았습니다 — components 안의 호스트 경로를 가리면 길이 제한을 넘습니다. 경로를 작업 디렉터리 상대 경로로 줄여 다시 보내세요";
+
 /** post 도구의 실제 일 — 파일을 모두 검사하고, 하나라도 거절이면 아무것도 올리지 않는다 */
 export function createPoster(deps: PosterDeps): (input: PostInput) => Promise<PostResult> {
   const fs = deps.fs ?? nodeFilesFs;
+  const stopped = () => deps.signal?.aborted === true;
   return async (input) => {
+    // 답 글과 같은 규칙으로 가린다(최종 답 run.final.text 도 가린다). 카드 안 글도 가리고 스키마로 다시 본다 — 가린 표지가
+    // 원문보다 길 수 있다
+    let components: PostInput["components"];
+    if (input.components !== undefined) {
+      const masked = ComponentsV1.safeParse(deps.mask.value(input.components));
+      if (!masked.success) return { error: POST_COMPONENTS_TOO_LONG };
+      components = masked.data;
+    }
     const attachmentIds: string[] = [];
     const files = input.files ?? [];
     if (files.length > 0) {
       const { checks, tooMany } = checkPostFiles(deps.workdir, files, fs);
       if (tooMany || checks.some((c) => !c.ok)) return { error: describePostFileRejections(checks, tooMany) };
-      for (const check of checks) {
-        if (!check.ok) continue;
-        const name = basename(check.rel);
-        try {
-          const mime = MIME_HINTS[extname(name).toLowerCase()];
-          const att = await deps.http.upload({
-            channelId: deps.deliver.channelId,
-            bytes: fs.readFile(check.abs),
-            name,
-            ...(mime ? { mime } : {}),
-          });
-          attachmentIds.push(att.id);
-        } catch (error) {
-          // 앞서 올린 파일은 메시지에 묶이지 않아 서버 정리(24시간)가 치운다
-          const why = error instanceof Error ? deps.mask(error.message) : "알 수 없는 오류";
-          return { error: `파일을 올리지 못했습니다(${check.rel}: ${why}) — 보내지 않았습니다` };
+      const passed = checks.flatMap((c) => (c.ok ? [c] : []));
+      // 올리기 전에 모두 연다 — 이 뒤로는 경로가 아니라 연 fd 에서 읽는다
+      const opened: Array<{ check: (typeof passed)[number]; fd: number }> = [];
+      try {
+        for (const check of passed) {
+          const o = openCheckedFile(check, fs);
+          if (!o.ok) return { error: describePostFileRejections([o], false) };
+          opened.push({ check, fd: o.fd });
         }
+        for (const { check, fd } of opened) {
+          if (stopped()) return { error: POST_STOPPED_MESSAGE };
+          const bytes = readCheckedFile(fd, check, fs);
+          if (bytes === undefined) {
+            return {
+              error: describePostFileRejections([{ ok: false, rel: check.rel, reason: "changed" }], false),
+            };
+          }
+          const name = basename(check.rel);
+          try {
+            const mime = MIME_HINTS[extname(name).toLowerCase()];
+            const att = await deps.http.upload({
+              channelId: deps.deliver.channelId,
+              bytes,
+              name,
+              ...(mime ? { mime } : {}),
+              ...(deps.signal ? { signal: deps.signal } : {}),
+            });
+            attachmentIds.push(att.id);
+          } catch (error) {
+            // 앞서 올린 파일은 메시지에 묶이지 않아 서버 정리(24시간)가 치운다
+            if (stopped()) return { error: POST_STOPPED_MESSAGE };
+            const why = error instanceof Error ? deps.mask(error.message) : "알 수 없는 오류";
+            return { error: `파일을 올리지 못했습니다(${check.rel}: ${why}) — 보내지 않았습니다` };
+          }
+        }
+      } finally {
+        for (const { fd } of opened) fs.close(fd);
       }
     }
+    if (stopped()) return { error: POST_STOPPED_MESSAGE };
     const d = deps.deliver;
     const ack = await deps.send({
       outboundId: `runner-post:${(deps.newId ?? randomUUID)()}`,
@@ -121,9 +164,8 @@ export function createPoster(deps: PosterDeps): (input: PostInput) => Promise<Po
       ...(d.threadId === undefined ? {} : { threadId: d.threadId }),
       runId: d.runId,
       replyToInboundId: d.message.id,
-      // 답 글과 같은 규칙으로 가린다(최종 답 run.final.text 도 가린다) — 카드 안 글은 길이 제약이 있어 두지 않는다
       text: deps.mask(input.text ?? ""),
-      ...(input.components === undefined ? {} : { components: input.components }),
+      ...(components === undefined ? {} : { components }),
       attachmentIds,
       ts: new Date((deps.now ?? Date.now)()).toISOString(),
     });

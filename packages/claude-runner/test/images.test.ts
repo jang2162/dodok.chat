@@ -21,19 +21,21 @@ function deliverWith(attachments: Attachment[]): InboundDeliver {
 
 function fakeHttp(files: Record<string, Buffer | number>) {
   const asked: string[] = [];
+  const signals: Array<AbortSignal | undefined> = [];
   const http: AttachmentsHttp = {
     upload: async () => {
       throw new Error("not used");
     },
-    download: async (attId) => {
+    download: async (attId, o) => {
       asked.push(attId);
+      signals.push(o?.signal);
       const f = files[attId];
       if (f === undefined) throw new AttachmentsHttpError("첨부 받기 실패 404", 404);
       if (typeof f === "number") throw new AttachmentsHttpError(`첨부 받기 실패 ${f}`, f);
       return { bytes: f, mime: "application/octet-stream" };
     },
   };
-  return { http, asked };
+  return { http, asked, signals };
 }
 
 describe("loadImageBlocks", () => {
@@ -84,5 +86,12 @@ describe("loadImageBlocks", () => {
     expect(out.blocks).toHaveLength(10);
     expect(out.failed).toBe(2);
     expect(asked).toHaveLength(10);
+  });
+
+  it("런 signal 을 받기마다 넘긴다 — 멈추면 제한 시간까지 기다리지 않는다", async () => {
+    const { http, signals } = fakeHttp({ [id(1)]: Buffer.from([1]), [id(2)]: Buffer.from([2]) });
+    const run = new AbortController();
+    await loadImageBlocks(deliverWith([image(1), image(2)]), http, run.signal);
+    expect(signals).toEqual([run.signal, run.signal]);
   });
 });

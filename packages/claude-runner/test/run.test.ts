@@ -10,6 +10,7 @@ import {
   runOnce,
   type RunContext,
 } from "../src/run";
+import { POST_STOPPED_MESSAGE } from "../src/post-tool";
 import { realSdk, type SdkMcpServer } from "../src/sdk";
 import { createFakeBridge, type FakeBridge } from "./helpers/fake-bridge";
 import { createFakeSdk, script, type FakeSdk } from "./helpers/fake-query";
@@ -643,6 +644,77 @@ describe("runOnce — dodok post 도구·도구 승인·이미지(태스크 6)",
     expect(fake.calls[0]!.permissions).toEqual([{ behavior: "deny", message: "승인 요청이 철회됐습니다" }]);
     expect(finals(emitted)).toHaveLength(1);
     expect(finals(emitted)[0]).toMatchObject({ final: { text: "", stopReason: "aborted" } });
+  });
+
+  it("CLI 가 권한 취소를 늦게 보내도 중지하면 곧바로 카드를 거둔다 — 런 signal 이 canUseTool 에 이어져 있다", async () => {
+    const { fake, ctx, emitted, bridge, controller } = harness(createFakeSdk({ lateCancel: true }), {
+      closeGraceMs: 60_000,
+    });
+    fake.script(
+      script.messageStart("msg_1"),
+      { askPermission: { toolName: "Bash", input: { command: "make" }, toolUseID: "toolu_01" } },
+      { waitInterrupt: [script.errorResult("error_during_execution", ["interrupted"])] },
+    );
+    const done = runOnce(runStart(), ctx);
+    while (bridge.requested.length === 0) await new Promise((r) => setTimeout(r, 2));
+    const stoppedAt = Date.now();
+    controller.abort();
+    await done;
+    // 유예(60초) 뒤의 close() 가 아니라 중지 즉시 거둔다
+    expect(Date.now() - stoppedAt).toBeLessThan(2_000);
+    expect(bridge.withdrawn).toEqual(["toolu_01"]);
+    expect(fake.calls[0]!.permissions).toEqual([{ behavior: "deny", message: "승인 요청이 철회됐습니다" }]);
+    expect(finals(emitted)[0]).toMatchObject({ final: { stopReason: "aborted" } });
+  });
+
+  it("중지 뒤 CLI 가 post 도구를 부르면 보내지 않고 도구 결과로 알린다 — 런 signal 이 post 에 이어져 있다", async () => {
+    const { fake, ctx, bridge, controller } = harness();
+    fake.script(
+      script.messageStart("msg_1"),
+      { waitInterrupt: [] },
+      { callTool: { name: "post", input: { text: "늦은 카드" } } },
+      script.errorResult("error_during_execution", ["interrupted"]),
+    );
+    const done = runOnce(runStart(), ctx);
+    while (fake.calls.length === 0) await new Promise((r) => setTimeout(r, 2));
+    controller.abort();
+    await done;
+    expect(bridge.posts).toEqual([]);
+    expect(fake.calls[0]!.toolResults).toEqual([
+      { content: [{ type: "text", text: POST_STOPPED_MESSAGE }], isError: true },
+    ]);
+  });
+
+  it("이미지를 받는 사이 중지되면 받기를 끊는다 — 런 signal 이 받기에 이어져 있다", async () => {
+    const fake = createFakeSdk();
+    const bridge = createFakeBridge();
+    // signal 이 끊길 때까지 응답하지 않는 받기
+    bridge.http.download = (_id, o) =>
+      new Promise((_resolve, reject) => {
+        o?.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+      });
+    const { ctx, emitted, controller } = harness(fake, { bridge });
+    const base = runStart();
+    const id = "0192f000-0000-7000-8000-0000000000f1";
+    const att = {
+      id,
+      kind: "image" as const,
+      url: `artifact://${id}`,
+      name: "a.png",
+      mime: "image/png",
+      size: 1,
+    };
+    const done = runOnce(
+      { ...base, deliver: { ...base.deliver, message: { ...base.deliver.message, attachments: [att] } } },
+      ctx,
+    );
+    await new Promise((r) => setTimeout(r, 5));
+    controller.abort();
+    await done;
+    expect(fake.calls).toEqual([]);
+    expect(finals(emitted)).toEqual([
+      { kind: "final", final: { text: "", stopReason: "aborted", costKind: "subscription_estimate" } },
+    ]);
   });
 
   it("이미지 첨부 — 받은 것은 이미지 블록으로 글보다 앞에, 못 받은 수는 글 끝 한 줄", async () => {

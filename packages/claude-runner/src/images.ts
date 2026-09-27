@@ -22,6 +22,8 @@ export const imageFailureNote = (n: number): string => `첨부 이미지 ${n}장
 export async function loadImageBlocks(
   deliver: InboundDeliver,
   http: AttachmentsHttp,
+  /** 런의 signal — 멈추면 받기를 끊는다(제한 시간까지 기다리지 않는다) */
+  signal?: AbortSignal,
 ): Promise<{ blocks: SdkImageBlock[]; failed: number }> {
   const images = deliver.message.attachments.filter((a) => a.kind === "image");
   const taken = images.slice(0, ATTACHMENT_LIMITS.perMessage);
@@ -30,7 +32,7 @@ export async function loadImageBlocks(
       const id = parseArtifactUrl(a.url);
       // MIME 은 서버 기록이 정본이다 — 매직 바이트로 정해졌다. SVG 는 그리지 않는다(첨부 스펙 결정 8)
       if (!id || !isImageMime(a.mime)) throw new Error("not a drawable server image");
-      const { bytes } = await http.download(id);
+      const { bytes } = await http.download(id, signal ? { signal } : undefined);
       if (bytes.length > IMAGE_MAX_BYTES) throw new Error("image too large");
       return {
         type: "image",
