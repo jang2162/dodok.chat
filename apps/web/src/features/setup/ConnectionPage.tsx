@@ -5,6 +5,7 @@ import { OpenSidebarButton } from "@/app/layout/sidebarSheet";
 import { Button } from "@/ui/button";
 import { IssueTokenDialog } from "./IssueTokenDialog";
 import { useBridgeTokens, useSetupStatus } from "./queries";
+import { RunnerSection } from "./RunnerSection";
 import { GatewaySection, PluginSection, Section, ServerSection } from "./sections";
 import { TokenList } from "./TokenList";
 
@@ -77,13 +78,14 @@ function OwnerContent() {
         <Pending what="연결 상태" query={status} />
       )}
       <BridgeTokenSection status={status.data} />
+      <RunnerSection status={status.data} />
     </>
   );
 }
 
 /**
  * 연결 페이지(스펙 `docs/superpowers/specs/2026-09-24-setup-wizard-design.md` 「연결 페이지」): 서버·Gateway·플러그인·
- * 브리지 토큰의 상태와 다음에 할 일. owner 만 본다 — 아니면 setup API 를 부르지 않고 「권한이 없습니다」. role 이 없는 옛 me 도 owner 가 아니다
+ * 브리지 토큰·Claude 러너(러너 스펙 5장)의 상태와 다음에 할 일. owner 만 본다 — 아니면 setup API 를 부르지 않고 「권한이 없습니다」. role 이 없는 옛 me 도 owner 가 아니다
  */
 export function ConnectionPage() {
   const owner = useIsOwner();
@@ -98,7 +100,8 @@ export function ConnectionPage() {
           <h1 className="text-xl font-semibold">연결</h1>
         </div>
         <p className="text-sm text-muted-foreground">
-          OpenClaw Gateway·플러그인과 이 서버가 어떻게 붙어 있는지 보고, 할 일과 명령을 복사합니다.
+          OpenClaw Gateway·플러그인과 Claude 러너가 이 서버에 어떻게 붙어 있는지 보고, 할 일과 명령을
+          복사합니다.
         </p>
       </header>
       {owner ? (

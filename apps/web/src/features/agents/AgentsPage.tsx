@@ -6,7 +6,7 @@ import { AgentRow } from "./AgentRow";
 import { DiscoverDialog } from "./DiscoverDialog";
 
 /**
- * 에이전트 관리(스펙 6.1): 목록·사용 토글·기본 프롬프트, 「Gateway 에서 가져오기」·직접 입력.
+ * 에이전트 관리(스펙 6.1): 목록·사용 토글·기본 프롬프트, 「에이전트 가져오기」(OpenClaw · Claude 러너, 러너 스펙 7장)·직접 입력.
  * 목록 조회 실패의 원인은 전역 토스트가 알린다 — 여기는 받은 목록이 없을 때만 그 자리에 「다시 시도」를 둔다.
  * 이미 받은 목록은 다시 불러오기가 실패해도 그대로 그린다.
  * 등록·수정은 admin 이상(팀 스펙 2장) — 아니면 등록 버튼이 없고 목록은 값만 보인다
@@ -42,7 +42,7 @@ export function AgentsPage() {
     content = (
       <p className="text-sm text-muted-foreground">
         {canManage
-          ? "등록된 에이전트가 없습니다. 「Gateway 에서 가져오기」로 등록하세요."
+          ? "등록된 에이전트가 없습니다. 「에이전트 가져오기」로 등록하세요."
           : "등록된 에이전트가 없습니다."}
       </p>
     );
@@ -65,7 +65,7 @@ export function AgentsPage() {
             <h1 className="text-xl font-semibold">에이전트</h1>
           </div>
           <p className="text-sm text-muted-foreground">
-            OpenClaw 에이전트를 등록하고 사용 여부·기본 프롬프트를 정합니다.
+            OpenClaw·Claude 러너 에이전트를 등록하고 사용 여부·기본 프롬프트를 정합니다.
           </p>
         </div>
         {canManage && <DiscoverDialog registeredIds={registeredIds} disabled={!agents.data} />}

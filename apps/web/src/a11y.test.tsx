@@ -200,8 +200,8 @@ describe("에이전트 화면", () => {
     await within(page).findByRole("switch", { name: "@dev 사용" });
     expect(unnamed()).toEqual(NONE);
 
-    await userEvent.click(within(page).getByRole("button", { name: "Gateway 에서 가져오기" }));
-    const dialog = await screen.findByRole("dialog", { name: "Gateway 에서 가져오기" });
+    await userEvent.click(within(page).getByRole("button", { name: "에이전트 가져오기" }));
+    const dialog = await screen.findByRole("dialog", { name: "에이전트 가져오기" });
     await userEvent.click(await within(dialog).findByRole("checkbox", { name: "Ops" }));
     expect(within(dialog).getByRole("button", { name: "닫기" })).toBeInTheDocument();
     expect(unnamed(dialog)).toEqual(NONE);

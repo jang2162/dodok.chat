@@ -61,7 +61,9 @@ export const qk = {
   /** 멤버 표·대기 초대 둘 다(무효화용 앞머리) */
   team: ["team"] as const,
   invites: ["team", "invites"] as const,
+  /** 등록 화면의 제공자별 목록 — `discover` 는 모든 제공자(무효화·초기화용 앞머리) */
   discover: ["agents", "discover"] as const,
+  discoverOf: (provider: string) => ["agents", "discover", provider] as const,
   adapter: ["adapter"] as const,
   timeline: (id: string) => ["timeline", id] as const,
   /** 스레드 하나(루트·답글) — 채널 타임라인은 루트만 든다. `threads` 는 한 채널의 스레드 전부(무효화용 앞머리) */
@@ -77,6 +79,7 @@ export const qk = {
   /** 연결 설정(owner 만) — 오프라인 사본에 담지 않는다(pwa/persist). 발급 원문은 어느 키에도 넣지 않는다 */
   setupStatus: ["setup", "status"] as const,
   bridgeTokens: ["setup", "bridge-tokens"] as const,
+  runnerTokens: ["setup", "runner-tokens"] as const,
   /** 운영(admin 이상) — 오프라인 사본에 담지 않는다(pwa/persist). 상태의 `unacked` 가 사이드바 배지다 */
   opsStatus: ["ops", "status"] as const,
   opsRuns: (days: 1 | 7) => ["ops", "runs", days] as const,

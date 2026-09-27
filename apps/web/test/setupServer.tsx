@@ -1,4 +1,11 @@
-import type { BridgeTokenRecord, IssueBridgeTokenResult, SetupStatus } from "@dodok/shared";
+import type {
+  BridgeTokenRecord,
+  IssueBridgeTokenResult,
+  IssueRunnerTokenResult,
+  RunnerConnection,
+  RunnerTokenRecord,
+  SetupStatus,
+} from "@dodok/shared";
 import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render } from "@testing-library/react";
 import { RouterContextProvider, createMemoryHistory } from "@tanstack/react-router";
@@ -40,7 +47,24 @@ type StatusOver = {
   pluginFile?: SetupStatus["pluginFile"];
   pluginMatches?: boolean | null;
   envTokenIgnored?: boolean;
+  runners?: Partial<SetupStatus["runners"]>;
 };
+
+/** 붙은 러너 하나 — 기본은 같은 빌드(SHA_A)·에이전트 하나 */
+export function runnerOf(n: number, over: Partial<RunnerConnection> = {}): RunnerConnection {
+  return {
+    tokenId: tokenId(n),
+    label: `러너-${n}`,
+    runnerVersion: "0.0.0",
+    sdkVersion: "0.3.283",
+    claudeCodeVersion: "2.1.283",
+    bundleSha256: SHA_A,
+    capabilities: ["threads", "interrupt", "approvals", "attachments"],
+    connectedAt: "2026-09-27T01:00:00.000Z",
+    agents: [{ id: `coder${n}`, name: `코더${n}`, model: "sonnet", workdirLabel: "my-repo", conflict: false }],
+    ...over,
+  };
+}
 
 /** 기본은 모두 연결됨·같은 빌드 — 테스트가 다른 칸만 덮는다 */
 export function statusOf(over: StatusOver = {}): SetupStatus {
@@ -71,11 +95,13 @@ export function statusOf(over: StatusOver = {}): SetupStatus {
     pluginFile: over.pluginFile ?? { available: true, sha256: SHA_FILE, bundleSha256: SHA_A, bytes: 123_456 },
     pluginMatches: over.pluginMatches === undefined ? true : over.pluginMatches,
     envTokenIgnored: over.envTokenIgnored ?? false,
-    runners: { list: [], runnerFile: { available: false } },
+    runners: { list: [], runnerFile: { available: false }, ...over.runners },
   };
 }
 
 export const RAW_TOKEN = `dbt_${"Z".repeat(43)}`;
+export const RAW_RUNNER_TOKEN = `drn_${"Q".repeat(43)}`;
+export const RUNNER_SERVER_URL = "https://chat.example.com";
 
 export type Call = { method: string; url: string; body: unknown };
 type Reply = Response | Promise<Response>;
@@ -85,12 +111,15 @@ export function stubSetupServer(
   opts: {
     status?: SetupStatus;
     tokens?: BridgeTokenRecord[];
+    runnerTokens?: RunnerTokenRecord[];
     me?: unknown;
     issue?: (label: string) => Reply;
     plugin?: () => Reply;
+    runner?: () => Reply;
   } = {},
 ) {
   const tokens = [...(opts.tokens ?? [])];
+  const runnerTokens = [...(opts.runnerTokens ?? [])];
   const calls: Call[] = [];
   const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
     const url = String(input);
@@ -124,6 +153,38 @@ export function stubSetupServer(
       if (t) t.revokedAt = "2026-09-25T02:00:00.000Z";
       return new Response(null, { status: 204 });
     }
+    if (method === "GET" && url === "/api/v1/setup/runner-tokens")
+      return json(200, { tokens: runnerTokens });
+    if (method === "POST" && url === "/api/v1/setup/runner-tokens") {
+      const label = (body as { label: string }).label;
+      const record = tokenOf(8, {
+        label,
+        prefix: RAW_RUNNER_TOKEN.slice(4, 10),
+        createdAt: "2026-09-27T02:00:00.000Z",
+      });
+      runnerTokens.push(record);
+      const result: IssueRunnerTokenResult = {
+        token: RAW_RUNNER_TOKEN,
+        record,
+        runnerConfig: { serverUrl: RUNNER_SERVER_URL, tokenFile: "~/.dodok-runner/token" },
+      };
+      return json(201, result);
+    }
+    const delRunner = /^\/api\/v1\/setup\/runner-tokens\/([^/]+)$/.exec(url);
+    if (method === "DELETE" && delRunner) {
+      const t = runnerTokens.find((x) => x.id === delRunner[1]);
+      if (t) t.revokedAt = "2026-09-27T03:00:00.000Z";
+      return new Response(null, { status: 204 });
+    }
+    if (method === "GET" && url === "/api/v1/setup/runner.tgz")
+      return opts.runner
+        ? opts.runner()
+        : new Response(new Uint8Array([1, 2, 3]), {
+            status: 200,
+            headers: {
+              "content-disposition": `attachment; filename="dodok-claude-runner-ffffffffffff.tgz"`,
+            },
+          });
     if (method === "GET" && url === "/api/v1/setup/plugin.tgz")
       return opts.plugin
         ? opts.plugin()

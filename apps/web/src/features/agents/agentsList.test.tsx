@@ -83,7 +83,7 @@ describe("목록", () => {
       },
     });
     renderPage();
-    const trigger = screen.getByRole("button", { name: "Gateway 에서 가져오기" });
+    const trigger = screen.getByRole("button", { name: "에이전트 가져오기" });
     expect(trigger).toBeDisabled(); // 목록을 받기 전엔 등록된 것을 가를 수 없다
     expect(await screen.findByText("에이전트 목록을 불러오지 못했습니다")).toBeInTheDocument();
     expect(toastError).toHaveBeenCalledTimes(1);
@@ -109,7 +109,7 @@ describe("목록", () => {
     expect(server.count("GET", "/api/v1/agents")).toBe(2);
     expect(screen.getByText("@dev")).toBeInTheDocument();
     expect(screen.queryByText("에이전트 목록을 불러오지 못했습니다")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Gateway 에서 가져오기" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "에이전트 가져오기" })).toBeEnabled();
   });
 });
 
@@ -157,7 +157,7 @@ describe("member 가 보는 에이전트 화면(팀 스펙 2·6장)", () => {
     const server = stubServer({ agents: [dev()] });
     renderPage(undefined, "member");
     expect(await screen.findByText("@dev")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Gateway 에서 가져오기" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "에이전트 가져오기" })).toBeNull();
     expect(screen.getByRole("switch", { name: "@dev 사용" })).toBeDisabled();
     expect(screen.getByText("기존 프롬프트")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "@dev 기본 프롬프트 편집" })).toBeNull();

@@ -9,7 +9,7 @@ import { useRevokeBridgeToken } from "./mutations";
 export const ENV_LABEL = "env";
 
 const WHEN = new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short" });
-const when = (iso: string) => WHEN.format(new Date(iso));
+export const when = (iso: string) => WHEN.format(new Date(iso));
 
 /**
  * 지금 접속 중인 토큰 id — 실시간 상태(`setup.status`)가 있으면 그것을, 없으면 목록 응답의 `connected` 를 본다.

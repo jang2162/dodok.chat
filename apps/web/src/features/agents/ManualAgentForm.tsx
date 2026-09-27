@@ -1,4 +1,4 @@
-import { Handle } from "@dodok/shared";
+import { type AdapterProvider, Handle } from "@dodok/shared";
 import { type ComponentProps, type FormEvent, useId, useState } from "react";
 import { ApiRequestError } from "@/api/http";
 import { Alert, AlertDescription } from "@/ui/alert";
@@ -7,11 +7,11 @@ import { FieldError } from "@/ui/field-error";
 import { Input } from "@/ui/input";
 import { Label } from "@/ui/label";
 import { handleFrom } from "./handleFrom";
-import { formError, validationField } from "@/api/formErrors";
+import { detailField, formError, validationField } from "@/api/formErrors";
 import { useCreateAgent } from "./mutations";
 
 const NAME_MAX = 80;
-/** OpenClaw 에이전트 id 규칙 안내 — 서버가 shared 세션 키 헬퍼와 같은 규칙에 소문자만으로 거절한다(스레드·검색 태스크 5, 판정 R4) */
+/** 에이전트 id 규칙 안내 — 서버가 shared 세션 키 헬퍼와 같은 규칙에 소문자만으로 거절한다(스레드·검색 태스크 5, 판정 R4). 러너 에이전트 id 도 같은 규칙 */
 export const PROVIDER_ID_HINT = "영문 소문자·숫자로 시작, 영문 소문자·숫자·_·- (64자 이하)";
 
 /** 클라이언트 검사 — shared 규칙(Handle·Agent.name)과 같다. 문구는 폼 안에 그린다 */
@@ -95,22 +95,39 @@ export function AgentFields(props: AgentFieldsProps) {
   );
 }
 
+/** 409 의 details.field 가 providerAgentId — 같은 id 는 제공자가 달라도 하나만 등록된다. 서버 문구 대신 이것을 보인다 */
+export const ID_TAKEN = "이미 등록된 id 입니다 — 다른 제공자의 에이전트도 같은 id 를 쓸 수 없습니다";
+
+/** 등록 오류가 id 중복(409 details.field providerAgentId)이면 고정 문구, 아니면 undefined */
+export const idTaken = (err: unknown): string | undefined =>
+  err instanceof ApiRequestError && err.code === "CONFLICT" && detailField(err, ["providerAgentId"])
+    ? ID_TAKEN
+    : undefined;
+
+/** 제공자마다 id 칸의 이름 */
+export const PROVIDER_ID_LABEL: Record<AdapterProvider, string> = {
+  openclaw: "OpenClaw id",
+  claude: "Claude 러너 에이전트 id",
+};
+
 /**
- * OpenClaw id·핸들·이름을 직접 넣어 등록. 핸들·이름은 손대기 전까지 OpenClaw id 를 따라간다(핸들은 handleFrom).
- * 서버 CONFLICT 는 핸들 칸 아래, providerAgentId 를 가리킨 VALIDATION 은 OpenClaw id 칸 아래, 그 밖의 VALIDATION 은
+ * 제공자의 에이전트 id·핸들·이름을 직접 넣어 등록(서버는 목록 검사를 하지 않는다 — 러너 계획 판정 P9). 핸들·이름은 손대기 전까지 id 를 따라간다(핸들은 handleFrom).
+ * 서버 CONFLICT 는 핸들 칸 아래(id 중복이면 id 칸 아래 고정 문구), providerAgentId 를 가리킨 VALIDATION 은 id 칸 아래, 그 밖의 VALIDATION 은
  * 폼 아래 — 그 밖은 전역 토스트가 알린다
  */
 export function ManualAgentForm({
+  provider,
   registeredIds,
   onCreated,
 }: {
+  provider: AdapterProvider;
   /** 이미 등록된 providerAgentId — 요청 전에 막는다 */
   registeredIds: ReadonlySet<string>;
   onCreated: () => void;
 }) {
   const create = useCreateAgent();
   const [rawId, setRawId] = useState("");
-  const [handle, setHandle] = useState<string>(); // undefined 면 OpenClaw id 를 따른다
+  const [handle, setHandle] = useState<string>(); // undefined 면 id 를 따른다
   const [name, setName] = useState<string>();
   const [serverError, setServerError] = useState<{ field: "id" | "handle" | "form"; message: string }>();
 
@@ -122,7 +139,7 @@ export function ManualAgentForm({
     serverError?.field === "id"
       ? serverError.message
       : registeredIds.has(providerAgentId)
-        ? "이미 등록된 OpenClaw id 입니다"
+        ? `이미 등록된 ${PROVIDER_ID_LABEL[provider]} 입니다`
         : undefined;
   const handleError =
     serverError?.field === "handle"
@@ -148,12 +165,17 @@ export function ManualAgentForm({
     if (!ready || create.isPending) return;
     setServerError(undefined);
     create.mutate(
-      { providerAgentId, handle: currentHandle, name: currentName.trim() },
+      { provider, providerAgentId, handle: currentHandle, name: currentName.trim() },
       {
         onSuccess: onCreated,
         onError: (err) => {
           const message = formError(err);
           if (message === undefined) return;
+          const taken = idTaken(err);
+          if (taken !== undefined) {
+            setServerError({ field: "id", message: taken });
+            return;
+          }
           const code = err instanceof ApiRequestError ? err.code : undefined;
           const field =
             code === "CONFLICT" ? "handle" : validationField(message, ["providerAgentId"]) ? "id" : "form";
@@ -166,7 +188,7 @@ export function ManualAgentForm({
   return (
     <form onSubmit={submit} className="flex flex-col gap-3">
       <Field
-        label="OpenClaw id"
+        label={PROVIDER_ID_LABEL[provider]}
         value={rawId}
         onChange={(e) => edit(setRawId)(e.target.value)}
         error={idError}

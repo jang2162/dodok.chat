@@ -17,7 +17,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("Gateway 에서 가져오기", () => {
+describe("에이전트 가져오기 — OpenClaw", () => {
   const discovered = [
     { providerAgentId: "dev", name: "Dev" },
     { providerAgentId: "Fin Bot", name: "Fin" },
@@ -45,8 +45,8 @@ describe("Gateway 에서 가져오기", () => {
     await userEvent.click(within(dialog).getByRole("button", { name: "2개 등록" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(server.bodies("POST")).toEqual([
-      { providerAgentId: "Fin Bot", handle: "fin-bot", name: "Fin" },
-      { providerAgentId: "ops", handle: "ops", name: "Ops" },
+      { provider: "openclaw", providerAgentId: "Fin Bot", handle: "fin-bot", name: "Fin" },
+      { provider: "openclaw", providerAgentId: "ops", handle: "ops", name: "Ops" },
     ]);
     expect(screen.getByText("@fin-bot")).toBeInTheDocument();
     expect(screen.getByText("@ops")).toBeInTheDocument();
@@ -288,8 +288,8 @@ describe("직접 입력", () => {
     await userEvent.click(within(dialog).getByRole("button", { name: "등록" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(server.bodies("POST")).toEqual([
-      { providerAgentId: "Main Agent", handle: "main-agent", name: "Main Agent" },
-      { providerAgentId: "Main Agent!", handle: "main2", name: "Main Agent!" },
+      { provider: "openclaw", providerAgentId: "Main Agent", handle: "main-agent", name: "Main Agent" },
+      { provider: "openclaw", providerAgentId: "Main Agent!", handle: "main2", name: "Main Agent!" },
     ]);
     expect(screen.getByText("@main2")).toBeInTheDocument();
   });

@@ -1,6 +1,8 @@
 import type { IssueBridgeTokenResult } from "@dodok/shared";
+import type { QueryKey } from "@tanstack/react-query";
 import { KeyRoundIcon } from "lucide-react";
-import { type FormEvent, type RefObject, useEffect, useId, useRef, useState } from "react";
+import { type FormEvent, type ReactNode, type RefObject, useEffect, useId, useRef, useState } from "react";
+import { qk } from "@/api/queries";
 import { formError as serverFormError } from "@/api/formErrors";
 import { useLeaveGuard } from "@/hooks/useLeaveGuard";
 import { Button } from "@/ui/button";
@@ -15,22 +17,43 @@ import {
 } from "@/ui/dialog";
 import { Input } from "@/ui/input";
 import { Label } from "@/ui/label";
-import { useIssueBridgeToken } from "./mutations";
+import { useIssueToken } from "./mutations";
 import { CopyBlock } from "./sections";
 
+type Issued = { token: string; record: { label: string } };
+
 /**
- * 「새 토큰 발급」(스펙 「연결 페이지」 교체 흐름 1) — 라벨 → 발급 → 원문과 플러그인 설정 조각을 한 번 보인다.
+ * 「새 토큰 발급」(스펙 「연결 페이지」 교체 흐름 1) — 라벨 → 발급 → 원문과 설정 조각을 한 번 보인다. 브리지·러너 토큰이 함께 쓴다.
  * 원문이 보이는 동안은 「복사했습니다」로만 닫힌다(Esc·바깥 클릭·X 없음) — 복사하지 못한 채 닫히면 다시 볼 길이 없다.
- * 원문은 이 컴포넌트 상태에만 있고 닫으면 버린다 — 쿼리·뮤테이션 캐시에는 들어가지 않는다(`useIssueBridgeToken`).
+ * 원문은 이 컴포넌트 상태에만 있고 닫으면 버린다 — 쿼리·뮤테이션 캐시에는 들어가지 않는다(`useIssueToken`).
  * 같은 까닭으로 원문이 보이는 동안 페이지를 떠나는 것도 막는다(`useLeaveGuard`): 라우트 이동은 대화상자 안에서 한 번 더 묻고,
  * 탭 닫기·새로고침은 브라우저가 묻게 한다. 「복사했습니다」를 누르면 둘 다 풀린다
  */
-export function IssueTokenDialog({ triggerRef }: { triggerRef?: RefObject<HTMLButtonElement | null> }) {
+export function IssueDialog<T extends Issued>({
+  triggerRef,
+  triggerLabel,
+  title,
+  description,
+  path,
+  listKey,
+  config,
+}: {
+  triggerRef?: RefObject<HTMLButtonElement | null>;
+  triggerLabel: string;
+  /** 라벨 입력 화면의 제목·설명 */
+  title: string;
+  description: string;
+  /** 발급 API 경로(`/api/v1` 뒤)와 다시 받을 목록 키 */
+  path: string;
+  listKey: QueryKey;
+  /** 원문 아래에 그릴 설정 조각 */
+  config: (issued: T) => ReactNode;
+}) {
   const [open, setOpen] = useState(false);
   const [label, setLabel] = useState("");
   const [error, setError] = useState<string>();
-  const [issued, setIssued] = useState<IssueBridgeTokenResult>();
-  const issue = useIssueBridgeToken(setIssued);
+  const [issued, setIssued] = useState<T>();
+  const issue = useIssueToken<T>(path, listKey, setIssued);
   const labelId = useId();
   const errorId = useId();
   const trimmed = label.trim();
@@ -74,7 +97,8 @@ export function IssueTokenDialog({ triggerRef }: { triggerRef?: RefObject<HTMLBu
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTrigger asChild>
         <Button ref={triggerRef} type="button" size="sm">
-          <KeyRoundIcon />새 토큰 발급
+          <KeyRoundIcon />
+          {triggerLabel}
         </Button>
       </DialogTrigger>
       <DialogContent showCloseButton={!issued} closeDisabled={issue.isPending}>
@@ -90,19 +114,7 @@ export function IssueTokenDialog({ triggerRef }: { triggerRef?: RefObject<HTMLBu
               <p className="text-sm font-medium">토큰</p>
               <CopyBlock text={issued.token} label="토큰 복사" wrap />
             </div>
-            <div className="grid min-w-0 gap-1.5">
-              <p className="text-sm font-medium">플러그인 설정</p>
-              <p className="text-xs text-muted-foreground">
-                Gateway 호스트에서 이 조각을 파일로 저장해{" "}
-                <code className="font-mono">openclaw config patch --file</code> 로 적용하고 저장한 파일은
-                지우세요. 옛 토큰도 계속 통하므로 에이전트는 멈추지 않습니다.
-              </p>
-              <CopyBlock
-                text={JSON.stringify(issued.pluginConfig, null, 2)}
-                label="설정 복사"
-                testId="plugin-config"
-              />
-            </div>
+            {config(issued)}
             {leave.status === "blocked" && (
               <div
                 role="alert"
@@ -129,10 +141,8 @@ export function IssueTokenDialog({ triggerRef }: { triggerRef?: RefObject<HTMLBu
         ) : (
           <form onSubmit={submit} className="grid gap-4">
             <DialogHeader>
-              <DialogTitle>새 브리지 토큰</DialogTitle>
-              <DialogDescription>
-                알아볼 라벨을 붙입니다(예: Gateway 호스트 이름). 원문은 발급 직후 한 번만 보입니다.
-              </DialogDescription>
+              <DialogTitle>{title}</DialogTitle>
+              <DialogDescription>{description}</DialogDescription>
             </DialogHeader>
             <div className="grid gap-2">
               <Label htmlFor={labelId}>라벨</Label>
@@ -163,5 +173,34 @@ export function IssueTokenDialog({ triggerRef }: { triggerRef?: RefObject<HTMLBu
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** 브리지 토큰 발급 — 원문과 Gateway 호스트에 넣을 플러그인 설정 조각 */
+export function IssueTokenDialog({ triggerRef }: { triggerRef?: RefObject<HTMLButtonElement | null> }) {
+  return (
+    <IssueDialog<IssueBridgeTokenResult>
+      triggerRef={triggerRef}
+      triggerLabel="새 토큰 발급"
+      title="새 브리지 토큰"
+      description="알아볼 라벨을 붙입니다(예: Gateway 호스트 이름). 원문은 발급 직후 한 번만 보입니다."
+      path="/setup/bridge-tokens"
+      listKey={qk.bridgeTokens}
+      config={(issued) => (
+        <div className="grid min-w-0 gap-1.5">
+          <p className="text-sm font-medium">플러그인 설정</p>
+          <p className="text-xs text-muted-foreground">
+            Gateway 호스트에서 이 조각을 파일로 저장해{" "}
+            <code className="font-mono">openclaw config patch --file</code> 로 적용하고 저장한 파일은
+            지우세요. 옛 토큰도 계속 통하므로 에이전트는 멈추지 않습니다.
+          </p>
+          <CopyBlock
+            text={JSON.stringify(issued.pluginConfig, null, 2)}
+            label="설정 복사"
+            testId="plugin-config"
+          />
+        </div>
+      )}
+    />
   );
 }

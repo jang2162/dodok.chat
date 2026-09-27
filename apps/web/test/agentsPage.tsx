@@ -1,10 +1,12 @@
 import type { Agent } from "@dodok/shared";
 import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
+import { RouterContextProvider, createMemoryHistory } from "@tanstack/react-router";
 import userEvent from "@testing-library/user-event";
 import { expect, vi } from "vitest";
 import { qk } from "@/api/queries";
 import { createQueryClient } from "@/app/queryClient";
+import { createAppRouter } from "@/app/router";
 import { AgentsPage } from "@/features/agents/AgentsPage";
 
 /** 에이전트 페이지 테스트의 가짜 서버·렌더 도우미 — 목록 쪽과 등록 쪽 테스트가 함께 쓴다 */
@@ -44,6 +46,8 @@ export function stubServer(
     agents?: Agent[];
     list?: (fallback: () => Reply) => Reply;
     discover?: () => Reply;
+    /** `GET /agents/discover?provider=claude` — 기본은 빈 목록(붙은 러너 없음) */
+    discoverClaude?: () => Reply;
     create?: (body: Body, fallback: (body: Body) => Reply) => Reply;
     patch?: (id: string, body: Body, fallback: (id: string, body: Body) => Reply) => Reply;
   } = {},
@@ -73,6 +77,8 @@ export function stubServer(
     if (method === "GET" && url === "/api/v1/agents") return (opts.list ?? ((f) => f()))(listDefault);
     if (method === "GET" && url === "/api/v1/agents/discover")
       return (opts.discover ?? (() => json(200, { agents: [] })))();
+    if (method === "GET" && url === "/api/v1/agents/discover?provider=claude")
+      return (opts.discoverClaude ?? (() => json(200, { agents: [] })))();
     if (method === "POST" && url === "/api/v1/agents")
       return (opts.create ?? ((b, f) => f(b)))(body ?? {}, createDefault);
     const m = /^\/api\/v1\/agents\/([^/]+)$/.exec(url);
@@ -91,9 +97,13 @@ export function stubServer(
 export function renderPage(qc: QueryClient = createQueryClient(() => {}), role = "owner") {
   if (qc.getQueryData(qk.me) === undefined)
     qc.setQueryData(qk.me, { user: { id: "u", handle: "owner" }, workspaceId: "w", role });
+  // 라우터는 문맥만 준다 — 「러너 없음」 안내의 연결 페이지 링크가 쓴다
+  const router = createAppRouter(qc, createMemoryHistory({ initialEntries: ["/agents"] }));
   render(
     <QueryClientProvider client={qc}>
-      <AgentsPage />
+      <RouterContextProvider router={router}>
+        <AgentsPage />
+      </RouterContextProvider>
     </QueryClientProvider>,
   );
   return qc;
@@ -110,7 +120,7 @@ export function gate() {
 
 /** 목록을 받기 전엔 가져오기 버튼이 잠겨 있다 — 풀리길 기다려 누른다 */
 export async function openDiscover() {
-  const trigger = await screen.findByRole("button", { name: "Gateway 에서 가져오기" });
+  const trigger = await screen.findByRole("button", { name: "에이전트 가져오기" });
   await waitFor(() => expect(trigger).toBeEnabled());
   await userEvent.click(trigger);
   return screen.findByRole("dialog");

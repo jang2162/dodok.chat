@@ -210,6 +210,7 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
     "setup.status": ({ status }) => {
       qc.setQueryData(qk.setupStatus, status);
       void qc.invalidateQueries({ queryKey: qk.bridgeTokens });
+      void qc.invalidateQueries({ queryKey: qk.runnerTokens });
     },
     /**
      * 운영 사건(owner·admin 에게만 온다) — 배지가 읽는 상태의 `unacked` 는 곧바로 덮는다(상태를 아직 안 받았으면 만들지 않는다).

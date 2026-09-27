@@ -1,7 +1,9 @@
+import type { AdapterProvider } from "@dodok/shared";
 import { useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { type FormEvent, type ReactNode, useId, useState } from "react";
 import { ApiRequestError, NetworkError } from "@/api/http";
-import { qk } from "@/api/queries";
+import { qk, useIsOwner } from "@/api/queries";
 import { Alert, AlertDescription } from "@/ui/alert";
 import { Button } from "@/ui/button";
 import { Checkbox } from "@/ui/checkbox";
@@ -15,14 +17,29 @@ import {
   DialogTrigger,
 } from "@/ui/dialog";
 import { Label } from "@/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/ui/radio-group";
 import { handleFrom } from "./handleFrom";
-import { AgentFields, ManualAgentForm, handleProblem, nameProblem } from "./ManualAgentForm";
+import {
+  AgentFields,
+  ManualAgentForm,
+  PROVIDER_ID_LABEL,
+  handleProblem,
+  idTaken,
+  nameProblem,
+} from "./ManualAgentForm";
 import { formError } from "@/api/formErrors";
 import { type DiscoveredAgent, useCreateAgent, useDiscover } from "./mutations";
 
-/** 스펙 6.1: 503 은 Gateway 끊김, 403 은 agents.list 권한 없음 — 어느 쪽이든 직접 입력으로 안내한다 */
-function discoverErrorText(e: Error): string {
+/** 제공자 고르기의 이름(러너 스펙 7장) */
+const PROVIDER_LABEL: Record<AdapterProvider, string> = { openclaw: "OpenClaw", claude: "Claude 러너" };
+
+/**
+ * 목록을 못 받았을 때의 문구 — 서버 문구는 보이지 않는다. OpenClaw(스펙 6.1): 503 은 Gateway 끊김, 403 은 agents.list 권한 없음.
+ * 어느 쪽이든 직접 입력으로 안내한다
+ */
+function discoverErrorText(e: Error, provider: AdapterProvider): string {
   if (e instanceof NetworkError) return "서버에 연결할 수 없습니다";
+  if (provider === "claude") return "러너 목록을 가져오지 못했습니다";
   if (e instanceof ApiRequestError) {
     if (e.code === "ADAPTER_UNAVAILABLE") return "Gateway 에 연결되지 않았습니다";
     if (e.code === "FORBIDDEN") return "Gateway 권한(agents.list)이 없습니다";
@@ -30,8 +47,27 @@ function discoverErrorText(e: Error): string {
   return "Gateway 에서 목록을 가져오지 못했습니다";
 }
 
+/** Claude 러너 목록이 비었을 때 — 러너를 붙이는 곳은 연결 페이지(owner 만 본다), owner 에게만 링크 */
+function NoRunners() {
+  const owner = useIsOwner();
+  return (
+    <p className="text-sm text-muted-foreground">
+      연결된 러너가 없습니다 —{" "}
+      {owner ? (
+        <Link to="/settings/connection" className="underline underline-offset-4">
+          연결 페이지
+        </Link>
+      ) : (
+        "연결 페이지"
+      )}
+      에서 러너를 붙이세요{owner ? "." : "(워크스페이스 owner 가 할 수 있습니다)."}
+    </p>
+  );
+}
+
 /**
- * 「Gateway 에서 가져오기」 버튼과 대화상자. 열 때마다 discover 를 새로 부르고, 실패하면 직접 입력 폼을 보인다.
+ * 「에이전트 가져오기」 버튼과 대화상자(러너 스펙 7장) — 제공자(OpenClaw · Claude 러너)를 고르고 그 목록에서 고른다. 열 때마다 OpenClaw 부터,
+ * 목록은 열 때·제공자를 바꿀 때마다 새로 부르고, 실패하면 직접 입력 폼을 보인다.
  * 등록된 목록은 페이지가 넘긴다 — 여기서 `useAgents()` 를 새로 붙이면 열 때마다 목록을 다시 불러오고,
  * 그 응답이 등록(POST) 응답보다 늦게 오면 방금 넣은 에이전트를 옛 목록으로 덮는다.
  * 페이지가 목록을 받기 전엔 `disabled` — 등록된 것을 가를 수 없고, 등록한 것을 넣을 캐시도 없다
@@ -46,19 +82,29 @@ export function DiscoverDialog({
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [manual, setManual] = useState(false);
+  const [provider, setProvider] = useState<AdapterProvider>("openclaw");
   // 일괄 등록 중. 이 동안엔 닫지 않는다 — 닫아도 루프는 남은 POST 를 보내고, 그 폼 오류는 보일 곳이 없다
   const [busy, setBusy] = useState(false);
-  const discover = useDiscover(open);
+  const discover = useDiscover(open, provider);
+  const providerId = useId();
 
   function onOpenChange(next: boolean) {
     if (!next && busy) return;
     if (next) {
       // 닫을 때가 아니라 열 때 되돌린다 — 닫히는 애니메이션 동안 목록 화면이 비치지 않게
       setManual(false);
+      setProvider("openclaw");
       // 지난번에 받은 목록은 버린다 — 열 때마다 「불러오는 중」부터, 목록은 이번에 받은 것만 그린다
-      void qc.resetQueries({ queryKey: qk.discover, exact: true });
+      void qc.resetQueries({ queryKey: qk.discover });
     }
     setOpen(next);
+  }
+  function pick(next: AdapterProvider) {
+    if (busy || next === provider) return;
+    setManual(false);
+    // 바꿀 때도 그 제공자의 지난 목록은 버린다 — 고른 항목·편집은 목록과 함께 새로 시작한다
+    void qc.resetQueries({ queryKey: qk.discoverOf(next) });
+    setProvider(next);
   }
   const close = () => setOpen(false);
 
@@ -68,21 +114,23 @@ export function DiscoverDialog({
   if (manual) {
     body = (
       <div className="flex flex-col gap-4">
-        <ManualAgentForm registeredIds={registeredIds} onCreated={close} />
+        <ManualAgentForm provider={provider} registeredIds={registeredIds} onCreated={close} />
         <Button variant="ghost" size="sm" className="self-start" onClick={() => setManual(false)}>
-          Gateway 목록으로
+          목록으로
         </Button>
       </div>
     );
   } else if (discover.isPending) {
     body = (
       <p role="status" className="text-sm text-muted-foreground">
-        Gateway 에서 불러오는 중…
+        {provider === "openclaw" ? "Gateway 에서 불러오는 중…" : "러너 목록을 불러오는 중…"}
       </p>
     );
   } else if (discover.data) {
     body = (
       <DiscoverList
+        key={provider}
+        provider={provider}
         discovered={discover.data}
         registeredIds={registeredIds}
         busy={busy}
@@ -95,15 +143,17 @@ export function DiscoverDialog({
     body = (
       <div className="flex flex-col gap-4">
         <Alert variant="destructive">
-          <AlertDescription>{discoverErrorText(discover.error)}</AlertDescription>
+          <AlertDescription>{discoverErrorText(discover.error, provider)}</AlertDescription>
         </Alert>
         <div className="flex items-center justify-between gap-3">
-          <p className="text-sm text-muted-foreground">OpenClaw id 를 직접 입력해 등록할 수 있습니다.</p>
+          <p className="text-sm text-muted-foreground">
+            {PROVIDER_ID_LABEL[provider]} 를 직접 입력해 등록할 수 있습니다.
+          </p>
           <Button variant="outline" size="sm" onClick={() => void discover.refetch()}>
             다시 시도
           </Button>
         </div>
-        <ManualAgentForm registeredIds={registeredIds} onCreated={close} />
+        <ManualAgentForm provider={provider} registeredIds={registeredIds} onCreated={close} />
       </div>
     );
   }
@@ -111,16 +161,33 @@ export function DiscoverDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTrigger asChild>
-        <Button disabled={disabled}>Gateway 에서 가져오기</Button>
+        <Button disabled={disabled}>에이전트 가져오기</Button>
       </DialogTrigger>
       {/* 등록 중엔 기본 닫기(X)를 잠근다 — Esc·바깥 클릭은 onOpenChange 가 무시 */}
       <DialogContent closeDisabled={busy} className="max-h-[85svh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Gateway 에서 가져오기</DialogTitle>
+          <DialogTitle>에이전트 가져오기</DialogTitle>
           <DialogDescription>
-            OpenClaw Gateway 의 에이전트 중 아직 등록하지 않은 것을 고릅니다.
+            제공자를 고르고, 그 에이전트 중 아직 등록하지 않은 것을 고릅니다.
           </DialogDescription>
         </DialogHeader>
+        <fieldset className="grid gap-2" disabled={busy}>
+          <legend className="mb-1 text-sm font-medium">제공자</legend>
+          <RadioGroup
+            value={provider}
+            onValueChange={(v) => pick(v as AdapterProvider)}
+            className="flex flex-wrap gap-4"
+          >
+            {(["openclaw", "claude"] as const).map((p) => (
+              <div key={p} className="flex items-center gap-2">
+                <RadioGroupItem id={`${providerId}-${p}`} value={p} />
+                <Label htmlFor={`${providerId}-${p}`} className="font-normal">
+                  {PROVIDER_LABEL[p]}
+                </Label>
+              </div>
+            ))}
+          </RadioGroup>
+        </fieldset>
         {body}
       </DialogContent>
     </Dialog>
@@ -136,6 +203,7 @@ type Draft = { handle: string; name: string; error?: string };
  * 모두 등록되면 닫는다. busy 는 대화상자가 든다 — 도는 동안 닫지 못하게
  */
 function DiscoverList({
+  provider,
   discovered,
   registeredIds,
   busy,
@@ -143,6 +211,7 @@ function DiscoverList({
   onDone,
   onManual,
 }: {
+  provider: AdapterProvider;
   discovered: DiscoveredAgent[];
   registeredIds: ReadonlySet<string>;
   busy: boolean;
@@ -191,6 +260,7 @@ function DiscoverList({
     for (const { agent, draft } of chosen) {
       try {
         await create.mutateAsync({
+          provider,
           providerAgentId: agent.providerAgentId,
           handle: draft.handle,
           name: draft.name.trim(),
@@ -199,7 +269,7 @@ function DiscoverList({
         failed = true;
         const message = formError(err);
         if (message === undefined) break;
-        update(agent.providerAgentId, { error: message });
+        update(agent.providerAgentId, { error: idTaken(err) ?? message });
       }
     }
     onBusy(false);
@@ -209,9 +279,13 @@ function DiscoverList({
   return (
     <form onSubmit={(e) => void register(e)} className="flex flex-col gap-4">
       {candidates.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
-          {discovered.length === 0 ? "Gateway 에 에이전트가 없습니다" : "새로 등록할 에이전트가 없습니다"}
-        </p>
+        discovered.length === 0 && provider === "claude" ? (
+          <NoRunners />
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            {discovered.length === 0 ? "Gateway 에 에이전트가 없습니다" : "새로 등록할 에이전트가 없습니다"}
+          </p>
+        )
       ) : (
         <ul className="flex flex-col gap-2">
           {candidates.map((c, i) => {
@@ -236,6 +310,9 @@ function DiscoverList({
                     </code>
                   )}
                 </div>
+                {provider === "claude" && c.hint && (
+                  <p className="mt-1 pl-7 text-xs break-words text-muted-foreground">{c.hint}</p>
+                )}
                 {draft && (
                   <div className="mt-3 grid gap-3 sm:grid-cols-2">
                     <AgentFields

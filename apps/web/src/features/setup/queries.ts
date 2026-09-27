@@ -1,4 +1,4 @@
-import type { BridgeTokenRecord, SetupStatus } from "@dodok/shared";
+import type { BridgeTokenRecord, RunnerTokenRecord, SetupStatus } from "@dodok/shared";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/http";
 import { qk } from "@/api/queries";
@@ -15,4 +15,11 @@ export const useBridgeTokens = () =>
   useQuery({
     queryKey: qk.bridgeTokens,
     queryFn: async () => (await api<{ tokens: BridgeTokenRecord[] }>("GET", "/setup/bridge-tokens")).tokens,
+  });
+
+/** 러너 토큰(러너 스펙 5장) — 폐기된 것도 포함, 원문 없음 */
+export const useRunnerTokens = () =>
+  useQuery({
+    queryKey: qk.runnerTokens,
+    queryFn: async () => (await api<{ tokens: RunnerTokenRecord[] }>("GET", "/setup/runner-tokens")).tokens,
   });
