@@ -219,6 +219,35 @@ describe("runsSummary usage", () => {
     for (const r of [...none.byChannel, ...none.byAgent]) expect(r).not.toHaveProperty("tokens");
   });
 
+  it("costEstimated — 믿는 런 가운데 구독 환산(subscription_estimate)이 하나라도 있으면 true, api 만이면 false", () => {
+    const writer = createAgent(db, {
+      workspaceId,
+      providerAgentId: "writer",
+      handle: "writer",
+      name: "Writer",
+    }).id;
+    db.update(agents).set({ provider: "claude" }).where(eq(agents.id, writer)).run();
+    run(general, coder, DAY(25, 10), "done", { inputTokens: 1, costUsd: 0.1, costKind: "api" });
+    run(general, coder, DAY(25, 10), "done", {
+      inputTokens: 1,
+      costUsd: 0.2,
+      costKind: "subscription_estimate",
+    });
+    run(random, writer, DAY(25, 10), "done", { inputTokens: 1, costUsd: 0.3, costKind: "api" });
+    run(random, writer, DAY(25, 10), "done"); // usage 없음 — 환산 아님
+    // 믿지 않는 제공자(openclaw)의 환산 런은 세지 않는다
+    run(random, dev, DAY(25, 10), "done", { inputTokens: 1, costUsd: 9, costKind: "subscription_estimate" });
+    const s = summary(1);
+    expect(OpsRunsSummary.parse(s)).toEqual(s);
+    expect(row(s.byAgent, coder)).toMatchObject({ costEstimated: true });
+    expect(row(s.byAgent, coder).costUsd).toBeCloseTo(0.3);
+    expect(row(s.byAgent, writer)).toMatchObject({ costUsd: 0.3, costEstimated: false });
+    expect(row(s.byChannel, general)).toMatchObject({ costEstimated: true });
+    expect(row(s.byChannel, random)).toMatchObject({ costUsd: 0.3, costEstimated: false });
+    // 믿는 런이 없는 행에는 키가 없다
+    expect(row(s.byAgent, dev)).not.toHaveProperty("costEstimated");
+  });
+
   it("런 없이 막히기만 한 채널 행에는 믿는 런이 없으니 tokens·costUsd 키가 없다", () => {
     blocked(`channel:${random}`, DAY(25, 11));
     const r = row(summary(1, new Set(["openclaw"])).byChannel, random);

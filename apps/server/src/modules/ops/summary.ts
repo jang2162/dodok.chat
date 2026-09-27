@@ -67,6 +67,8 @@ export function runsSummary(
     // usage 가 없는 런·빠진 필드는 0 으로 더한다
     tokens: sql<number>`coalesce(sum(case when ${trusted} then coalesce(json_extract(${runs.usage}, '$.inputTokens'), 0) + coalesce(json_extract(${runs.usage}, '$.outputTokens'), 0) else 0 end), 0)`,
     costUsd: sql<number>`coalesce(total(case when ${trusted} then json_extract(${runs.usage}, '$.costUsd') end), 0)`,
+    // 믿는 런 가운데 구독 로그인의 공시 단가 환산값(러너 스펙 7장 「환산값」) — 청구액이 아니다
+    estimatedRuns: sql<number>`coalesce(sum(${trusted} and json_extract(${runs.usage}, '$.costKind') = 'subscription_estimate'), 0)`,
   };
   type Tally = { id: string; name: string } & { [K in keyof typeof tally]: number };
 
@@ -93,7 +95,7 @@ export function runsSummary(
   const seen = new Set(channelRows.map((r) => r.id));
   const blockedOnly = [...blocked.keys()].filter((id) => !seen.has(id));
   if (blockedOnly.length > 0) {
-    const zero = { runs: 0, failed: 0, aborted: 0, trustedRuns: 0, tokens: 0, costUsd: 0 };
+    const zero = { runs: 0, failed: 0, aborted: 0, trustedRuns: 0, tokens: 0, costUsd: 0, estimatedRuns: 0 };
     for (const ch of db
       .select({ id: channels.id, name: channels.name })
       .from(channels)
@@ -109,7 +111,9 @@ export function runsSummary(
     failed: r.failed,
     aborted: r.aborted,
     blocked: blockedCount,
-    ...(r.trustedRuns > 0 ? { tokens: r.tokens, costUsd: r.costUsd } : {}),
+    ...(r.trustedRuns > 0
+      ? { tokens: r.tokens, costUsd: r.costUsd, costEstimated: r.estimatedRuns > 0 }
+      : {}),
   });
   const byRuns = (a: OpsRunsRow, b: OpsRunsRow) =>
     b.runs - a.runs || b.blocked - a.blocked || a.name.localeCompare(b.name);

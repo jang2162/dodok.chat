@@ -93,7 +93,7 @@ export const OpsStatus = z.object({
 });
 export type OpsStatus = z.infer<typeof OpsStatus>;
 
-/** 런 표 한 행 — 채널 또는 에이전트. tokens·costUsd 는 usage 값을 믿을 수 있을 때만(스펙 3.3) */
+/** 런 표 한 행 — 채널 또는 에이전트. tokens·costUsd·costEstimated 는 usage 값을 믿을 수 있을 때만(스펙 3.3) */
 export const OpsRunsRow = z.object({
   id: Id,
   name: z.string(),
@@ -103,6 +103,7 @@ export const OpsRunsRow = z.object({
   blocked: z.int().min(0), // 채널 한도 run_limit 사건 count 합 — 에이전트 행은 늘 0
   tokens: z.int().min(0).optional(),
   costUsd: z.number().min(0).optional(),
+  costEstimated: z.boolean().optional(), // 더한 런 가운데 구독 환산값(usage.costKind subscription_estimate)이 있다 — costUsd 와 함께만
 });
 export type OpsRunsRow = z.infer<typeof OpsRunsRow>;
 
