@@ -8,7 +8,7 @@ import type { OpsService } from "./service";
 /**
  * runs.usage_json 의 토큰·금액을 믿을 수 있는 제공자(운영 보강 스펙 3.3, 러너 계획 판정 P8). OpenClaw 는 출력 토큰·비용이 CLI `result` 와
  * 달라 빠진다(ADR 0005), 러너(claude)는 SDK `result` 를 그대로 싣는다(ADR 0007 4.8). 믿는 제공자의 런만 토큰·비용을 합치고,
- * 그런 런이 없는 행에는 tokens·costUsd 키가 없다 — 화면은 「측정 불가」
+ * 그런 런이 없는 행에는 tokens·costUsd 키가 없다 — 화면은 「측정 불가」. 더한 런 수는 measuredRuns — runs 보다 적으면 부분합이다
  */
 export const USAGE_TRUSTED_PROVIDERS: ReadonlySet<string> = new Set(["claude"]);
 
@@ -112,7 +112,12 @@ export function runsSummary(
     aborted: r.aborted,
     blocked: blockedCount,
     ...(r.trustedRuns > 0
-      ? { tokens: r.tokens, costUsd: r.costUsd, costEstimated: r.estimatedRuns > 0 }
+      ? {
+          measuredRuns: r.trustedRuns,
+          tokens: r.tokens,
+          costUsd: r.costUsd,
+          costEstimated: r.estimatedRuns > 0,
+        }
       : {}),
   });
   const byRuns = (a: OpsRunsRow, b: OpsRunsRow) =>

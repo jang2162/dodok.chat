@@ -199,11 +199,13 @@ describe("runsSummary usage", () => {
     run(general, coder, DAY(25, 10), "error"); // usage 없음 — 0 으로 더한다
     const s = summary(1);
     expect(OpsRunsSummary.parse(s)).toEqual(s);
-    expect(row(s.byChannel, general)).toMatchObject({ runs: 5, tokens: 10, costUsd: 0.125 });
-    expect(row(s.byAgent, coder)).toMatchObject({ runs: 2, tokens: 10, costUsd: 0.125 });
+    // 채널 행은 믿는 런만 더한 부분합 — 더한 런 수(measuredRuns)를 함께 실어 웹이 「일부」를 가른다
+    expect(row(s.byChannel, general)).toMatchObject({ runs: 5, measuredRuns: 2, tokens: 10, costUsd: 0.125 });
+    expect(row(s.byAgent, coder)).toMatchObject({ runs: 2, measuredRuns: 2, tokens: 10, costUsd: 0.125 });
     for (const id of [dev, fin]) {
       expect(row(s.byAgent, id)).not.toHaveProperty("tokens");
       expect(row(s.byAgent, id)).not.toHaveProperty("costUsd");
+      expect(row(s.byAgent, id)).not.toHaveProperty("measuredRuns");
     }
   });
 
@@ -243,7 +245,12 @@ describe("runsSummary usage", () => {
     expect(row(s.byAgent, coder)?.costUsd).toBeCloseTo(0.3);
     expect(row(s.byAgent, writer)).toMatchObject({ costUsd: 0.3, costEstimated: false });
     expect(row(s.byChannel, general)).toMatchObject({ costEstimated: true });
-    expect(row(s.byChannel, random)).toMatchObject({ costUsd: 0.3, costEstimated: false });
+    expect(row(s.byChannel, random)).toMatchObject({
+      runs: 3,
+      measuredRuns: 2,
+      costUsd: 0.3,
+      costEstimated: false,
+    });
     // 믿는 런이 없는 행에는 키가 없다
     expect(row(s.byAgent, dev)).not.toHaveProperty("costEstimated");
   });
