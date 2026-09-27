@@ -340,14 +340,29 @@ describe("러너 여러 대", () => {
     expect(b.runStarts).toHaveLength(0);
   });
 
-  it("supports 는 그 에이전트를 가진 러너의 능력을 본다", async () => {
+  it("supports: threads 를 알린 러너의 에이전트는 true", async () => {
     const h = await setup();
     await readyRunner(h, TOKEN_A, [runnerAgent("coder")]);
+    expect(h.adapter.supports("coder", "threads")).toBe(true);
+  });
+
+  it("supports: 그 에이전트를 가진 러너가 threads 를 안 알렸으면 false", async () => {
+    const h = await setup();
     const b = await h.runner(TOKEN_B, [runnerAgent("writer")]);
     await b.hello({ capabilities: ["interrupt"] });
-    expect(h.adapter.supports("coder", "threads")).toBe(true);
     expect(h.adapter.supports("writer", "threads")).toBe(false);
-    expect(h.adapter.supports("nobody", "threads")).toBe(false);
+  });
+
+  it("supports: 그 에이전트를 가진 러너가 없으면 true — 옛 러너로 닫지 않고 send 가 ADAPTER_UNAVAILABLE 로 닫게", async () => {
+    const h = await setup();
+    expect(h.adapter.supports("coder", "threads")).toBe(true);
+    const b = await h.runner(TOKEN_B, [runnerAgent("writer")]);
+    await b.hello({ capabilities: ["interrupt"] });
+    expect(h.adapter.supports("nobody", "threads")).toBe(true);
+    const error = await rejection(
+      h.adapter.send(deliver({ agentId: "nobody" }), { providerSessionId: SESSION_ID }),
+    );
+    expect(error.code).toBe("ADAPTER_UNAVAILABLE");
   });
 
   it("revokeTokenSessions 는 그 토큰의 연결을 끊고 끊은 수를 돌려준다", async () => {

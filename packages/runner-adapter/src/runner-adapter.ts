@@ -686,8 +686,10 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
 
     sessionKeyFor: dodokSessionKey,
 
+    // 모른다고 할 수 있는 것은 그 에이전트를 가진 러너가 알리지 않았을 때뿐이다 — 러너가 없으면 오케스트레이터가 옛 러너로
+    // 닫지 않고 send 가 ADAPTER_UNAVAILABLE 로 닫게 true
     supports: (providerAgentId, capability) =>
-      registry.owner(providerAgentId)?.capabilities.includes(capability) ?? false,
+      registry.owner(providerAgentId)?.capabilities.includes(capability) ?? true,
 
     async send(input, sendOpts) {
       if (closed) throw new AdapterError("ADAPTER_UNAVAILABLE", "adapter closed");
