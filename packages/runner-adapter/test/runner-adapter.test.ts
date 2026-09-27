@@ -1081,7 +1081,7 @@ describe("mayReadAttachment — 러너 토큰의 첨부 읽기 범위(조율자 
     expect(h.adapter.mayReadAttachment(TOKEN_A_ID, dropped.id)).toBe(false);
     r.onRunStart = (start) => ({ runId: start.deliver.runId, admission: "dispatch" });
     const run = await startRun(h, r, withAttachments(forgotten));
-    h.adapter.forgetRun(run.runId);
+    h.adapter.forgetRun?.(run.runId);
     expect(h.adapter.mayReadAttachment(TOKEN_A_ID, forgotten.id)).toBe(false);
   });
 });
