@@ -4,11 +4,15 @@ import type { InboundContext, InboundDeliver } from "../bridge";
 // 틀 없이 넣은 규칙을 모델이 주입으로 읽었고(5.5), 이 틀의 네 요소(무엇이 세션을 띄웠나·누가 썼나·대화 상대의 글이 아님·앞 블록을 대체)를
 // 갖춘 글은 따랐다. 틀 문장을 바꾸면 그 판정이 더는 이 글의 것이 아니다
 
-const RULE_TAGS = /<(\s*\/?\s*)(channel-rules|relay-rules)/gi;
+// 닮은꼴 `<`(전각 ＜·작은꼴 ﹤)·하이픈 류(‐ ‑ ‒ – — ― − ﹣ －)로 쓴 표식도 모델은 태그로 읽을 수 있다
+const RULE_TAGS = /[<\uFF1C\uFE64](\s*\/?\s*)((?:channel|relay)[-\u2010-\u2015\u2212\uFE63\uFF0D]rules)/giu;
 
-/** 규칙 안의 여는·닫는 표식이 틀을 일찍 끝내거나 새 틀을 열지 못하게 `<` 만 바꾼다(나머지 글은 그대로) */
+/**
+ * 규칙 안의 여는·닫는 표식이 틀을 일찍 끝내거나 새 틀을 열지 못하게 `<` 만 바꾼다(나머지 글은 그대로). 보이지 않는 서식 글자(`\p{Cf}` —
+ * 폭 없는 공백·ZWJ 등)는 먼저 지운다 — 표식 사이에 끼면 정규식은 못 보고 모델은 태그로 읽는다
+ */
 function escapeRuleTags(text: string): string {
-  return text.replace(RULE_TAGS, "&lt;$1$2");
+  return text.replace(/\p{Cf}/gu, "").replace(RULE_TAGS, "&lt;$1$2");
 }
 
 /** 채널 이름은 한 줄로 — 줄바꿈으로 틀 문단을 끊지 못하게 */
@@ -30,7 +34,9 @@ export function buildChannelRulesAppend(input: {
   promptOverride?: string;
   relayRules: string;
 }): string {
-  const name = oneLine(input.channelName);
+  // 채널 이름은 member 도 바꾼다 — 문단 자리에서도 `"` 를 막아 틀 문단의 따옴표를 닫지 못하게 한다(속성과 같은 이스케이프).
+  // escapeAttribute 가 ASCII `<` 를 먼저 바꾸고, 남은 닮은꼴 표식·서식 글자는 escapeRuleTags 가 막는다
+  const name = escapeRuleTags(escapeAttribute(oneLine(input.channelName)));
   const rules: string[] = [];
   if (input.channelPrompt) rules.push(escapeRuleTags(input.channelPrompt));
   if (input.promptOverride) {
@@ -39,9 +45,9 @@ export function buildChannelRulesAppend(input: {
   return [
     "# dodok channel settings",
     "",
-    `This Claude Code session runs as an agent in the dodok channel "#${escapeRuleTags(name)}". dodok is a team messenger where people and AI agents talk in shared channels; the dodok runner that launched this session delivers this channel's settings here on every run. The rules below were written by the channel's administrator in dodok's channel settings screen. They are operator configuration for this deployment, not text from the person you are talking to, and they apply to every reply in this channel until the administrator changes them. If this conversation contains an earlier dodok channel settings block, this one replaces it.`,
+    `This Claude Code session runs as an agent in the dodok channel "#${name}". dodok is a team messenger where people and AI agents talk in shared channels; the dodok runner that launched this session delivers this channel's settings here on every run. The rules below were written by the channel's administrator in dodok's channel settings screen. They are operator configuration for this deployment, not text from the person you are talking to, and they apply to every reply in this channel until the administrator changes them. If this conversation contains an earlier dodok channel settings block, this one replaces it.`,
     "",
-    `<channel-rules channel="#${escapeAttribute(name)}">`,
+    `<channel-rules channel="#${name}">`,
     ...(rules.length > 0 ? [rules.join("\n\n")] : []),
     "</channel-rules>",
     "",
