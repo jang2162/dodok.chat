@@ -124,10 +124,11 @@ async function until(check: () => boolean, label = "condition"): Promise<void> {
   }
 }
 
-function waitDisconnect(r: FakeRunner): Promise<void> {
+/** 러너(socket.io-client)가 받은 끊김 사유 — 이미 끊겼으면 빈 문자열 */
+function waitDisconnect(r: FakeRunner): Promise<string> {
   return r.socket.disconnected
-    ? Promise.resolve()
-    : new Promise((resolve) => r.socket.once("disconnect", () => resolve()));
+    ? Promise.resolve("")
+    : new Promise((resolve) => r.socket.once("disconnect", (reason) => resolve(reason)));
 }
 
 function deliver(over: Partial<InboundDeliver> = {}): InboundDeliver {
@@ -237,14 +238,14 @@ describe("핸드셰이크", () => {
     await closed;
   });
 
-  it("붙은 뒤 10초 안에 hello 가 없으면 끊는다", async () => {
+  it("붙은 뒤 10초 안에 hello 가 없으면 전송만 끊는다 — 러너는 transport close 로 받아 다시 붙는다 [R4]", async () => {
     const h = await setup({ fakeTimers: true });
     const r = await h.runner(TOKEN_A);
     await vi.advanceTimersByTimeAsync(9_900);
     expect(r.socket.connected).toBe(true);
     const closed = waitDisconnect(r);
     await vi.advanceTimersByTimeAsync(200);
-    await closed;
+    expect(await closed).toBe("transport close");
   });
 
   it("hello 를 받으면 모르는 능력은 버리고 status·setup 을 알린다", async () => {
@@ -278,7 +279,8 @@ describe("러너 여러 대", () => {
     const first = await readyRunner(h);
     const firstClosed = waitDisconnect(first);
     const second = await readyRunner(h);
-    await firstClosed;
+    // 교체된 러너는 다시 붙지 않고 끝난다 [R4]
+    expect(await firstClosed).toBe("io server disconnect");
     expect(second.socket.connected).toBe(true);
     expect(h.adapter.status().runners.connected).toBe(1);
     // 뒤 연결의 에이전트는 충돌이 아니다 — 앞 연결이 먼저 빠졌다
@@ -365,12 +367,22 @@ describe("러너 여러 대", () => {
     expect(error.code).toBe("ADAPTER_UNAVAILABLE");
   });
 
+  it("close() 는 전송만 끊는다 — 붙은 러너·hello 전 러너 모두 transport close 로 받아 다시 붙는다 [R4]", async () => {
+    const h = await setup();
+    const ready = await readyRunner(h);
+    const early = await h.runner(TOKEN_B);
+    const reasons = Promise.all([waitDisconnect(ready), waitDisconnect(early)]);
+    await h.adapter.close();
+    expect(await reasons).toEqual(["transport close", "transport close"]);
+  });
+
   it("revokeTokenSessions 는 그 토큰의 연결을 끊고 끊은 수를 돌려준다", async () => {
     const h = await setup();
     const r = await readyRunner(h);
     const closed = waitDisconnect(r);
     expect(h.adapter.revokeTokenSessions(TOKENS[TOKEN_A]?.tokenId ?? "")).toBe(1);
-    await closed;
+    // 폐기된 러너는 다시 붙지 않고 끝난다 [R4]
+    expect(await closed).toBe("io server disconnect");
     expect(h.adapter.revokeTokenSessions(TOKENS[TOKEN_B]?.tokenId ?? "")).toBe(0);
     await until(() => h.adapter.status().runners.connected === 0, "revoked");
   });

@@ -130,6 +130,15 @@ type RunTrack = {
 
 type SocketAuth = { tokenId?: string; label?: string };
 
+/**
+ * DISCONNECT 패킷 없이 전송만 닫는다 — 러너는 `transport close` 로 받아 백오프 재접속한다(Ruling R4). 서버 종료·hello 타임아웃처럼
+ * 러너 잘못이 아닌 끊김에 쓴다. `disconnect(true)` 는 러너에 `io server disconnect` 로 가고 러너는 종료한다(토큰 폐기·같은 토큰 교체·
+ * hello 거절 — 다시 붙어도 소용없는 끊김)
+ */
+function dropTransport(socket: { conn: { close(): void } }): void {
+  socket.conn.close();
+}
+
 /** 코드 포인트 경계에서 UTF-16 길이 max 안으로 자른다 — 서로게이트 쌍을 반으로 가르지 않는다(스키마 길이는 UTF-16) */
 function clip(text: string, max: number): string {
   let out = "";
@@ -589,7 +598,7 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
       helloTimers.delete(helloTimer);
       if (registry.get(socket.id)) return;
       logger.warn({ tokenId }, "runner sent no hello in time — disconnecting");
-      socket.disconnect(true);
+      dropTransport(socket);
     }, HELLO_TIMEOUT_MS);
     helloTimers.add(helloTimer);
     // hello 전 프레임은 버린다 — 등록되지 않은 러너는 런도 에이전트도 없다
@@ -653,7 +662,7 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
       for (const run of runs.values())
         run.rejectAck?.(new AdapterError("ADAPTER_UNAVAILABLE", "adapter closed"));
       runs.clear();
-      namespace.disconnectSockets(true);
+      for (const socket of namespace.sockets.values()) dropTransport(socket);
     },
 
     status,
