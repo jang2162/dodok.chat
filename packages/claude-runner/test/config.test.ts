@@ -1,6 +1,12 @@
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { expandHome, loadRunnerConfig, RunnerConfigError, type FsLike } from "../src/config";
+import {
+  expandHome,
+  loadRunnerConfig,
+  resolveConfigPath,
+  RunnerConfigError,
+  type FsLike,
+} from "../src/config";
 
 const HOME = "/home/u";
 const TOKEN = "drn_abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG";
@@ -165,5 +171,11 @@ describe("expandHome — --config 인자와 설정 파일 안 경로가 함께 �
     expect(expandHome("/etc/x.json", "/home/u")).toBe("/etc/x.json");
     expect(expandHome("rel/x.json", "/home/u")).toBe(resolve("rel/x.json"));
     expect(expandHome("~other/x", "/home/u")).toBe(resolve("~other/x"));
+  });
+
+  it("--config 인자 — 없으면 ~/.dodok-runner/config.json, 있으면 `~` 를 푼다(main 이 쓴다)", () => {
+    expect(resolveConfigPath(undefined, "/home/u")).toBe("/home/u/.dodok-runner/config.json");
+    expect(resolveConfigPath("~/alt.json", "/home/u")).toBe("/home/u/alt.json");
+    expect(resolveConfigPath("~", "/home/u")).toBe("/home/u");
   });
 });

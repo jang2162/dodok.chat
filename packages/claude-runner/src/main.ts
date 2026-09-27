@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { parseArgs } from "node:util";
 import { computeBundleSha256 } from "./bundle-hash";
-import { expandHome, loadRunnerConfig, RunnerConfigError } from "./config";
+import { DEFAULT_CONFIG_PATH, loadRunnerConfig, resolveConfigPath, RunnerConfigError } from "./config";
 import { startRunnerConnection, STOP_WAIT_MS, type RunnerLogger } from "./connection";
 import { realSdk } from "./sdk";
 
@@ -15,7 +15,7 @@ const CLAUDE_CODE_VERSION = typeof __CLAUDE_CODE_VERSION__ === "string" ? __CLAU
 // 모듈 스코프에서 — 빌드 스크립트가 이 글자가 번들에 남았는지 확인한다
 const BUNDLE_SHA256 = computeBundleSha256(import.meta.url);
 
-const USAGE = "사용법: dodok-runner [--config <경로>]  (기본 ~/.dodok-runner/config.json)";
+const USAGE = `사용법: dodok-runner [--config <경로>]  (기본 ${DEFAULT_CONFIG_PATH})`;
 
 const stamp = () => new Date().toISOString();
 const logger: RunnerLogger = {
@@ -50,7 +50,7 @@ function main(): void {
   }
 
   const home = process.env.HOME || homedir();
-  const configPath = expandHome(args.config ?? "~/.dodok-runner/config.json", home);
+  const configPath = resolveConfigPath(args.config, home);
 
   let loaded;
   try {

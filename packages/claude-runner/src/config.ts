@@ -56,11 +56,18 @@ function keyPath(path: readonly PropertyKey[]): string {
     .join("");
 }
 
+export const DEFAULT_CONFIG_PATH = "~/.dodok-runner/config.json";
+
 /** `~`·`~/…` 를 홈으로 풀고 상대 경로는 절대로 — --config 인자와 설정 파일 안 경로가 함께 쓴다 */
 export function expandHome(p: string, home: string): string {
   if (p === "~") return home;
   if (p.startsWith("~/")) return resolve(home, p.slice(2));
   return isAbsolute(p) ? p : resolve(p);
+}
+
+/** --config 인자(없으면 기본 자리)를 절대 경로로 */
+export function resolveConfigPath(arg: string | undefined, home: string): string {
+  return expandHome(arg ?? DEFAULT_CONFIG_PATH, home);
 }
 
 /** 라벨이 없으면 디렉터리 이름(hello 의 RunnerAgent.workdirLabel 은 1~64자) */

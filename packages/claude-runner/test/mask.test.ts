@@ -65,6 +65,31 @@ describe("createPathMasker.json — 도구 인자(JSON 원문)", () => {
     expect(out).toBe(`{"content":"a\\n${OUT}`);
   });
 
+  it("값이 작업 디렉터리 자체인 경로 키는 . 으로 — 밖 표지가 아니다", () => {
+    expect(JSON.parse(mask.json(JSON.stringify({ cwd: ROOT, path: `${ROOT}/` })))).toEqual({
+      cwd: ".",
+      path: ".",
+    });
+  });
+
+  it("JSON 키 안의 경로도 가린다(재리뷰 N2)", () => {
+    expect(mask.json('{"files":{"/Users/me/.aws/credentials":"x","/Users/me/proj/a.md":"y"}}')).toBe(
+      `{"files":{"${OUT}":"x","a.md":"y"}}`,
+    );
+  });
+
+  it("경로 키 값이 작업 디렉터리로 시작해도 나머지를 본다 — 줄바꿈·공백 뒤 다른 경로(재리뷰 N3)", () => {
+    const out = JSON.parse(
+      mask.json(
+        JSON.stringify({
+          file_path: "/Users/me/proj/a\n/Users/me/.ssh/id",
+          path: "/Users/me/proj/a /Users/me/.ssh/id /Users/me/proj/b",
+        }),
+      ),
+    ) as Record<string, string>;
+    expect(out).toEqual({ file_path: `a\n${OUT}`, path: `a ${OUT} b` });
+  });
+
   it("JSON 이 아닌 값(숫자·불리언·null)은 그대로", () => {
     expect(JSON.parse(mask.json('{"n":1,"b":true,"z":null}'))).toEqual({ n: 1, b: true, z: null });
   });
@@ -78,6 +103,11 @@ describe("createPathMasker.value — JSON.stringify 전에 값 가림", () => {
     );
     expect(text).not.toContain("/Users");
     expect(JSON.parse(text)).toEqual({ out: `done\n${OUT}`, at: "x" });
+  });
+
+  it("객체 결과의 키 안 경로도 가린다(재리뷰 N2)", () => {
+    const mask = createPathMasker([ROOT]);
+    expect(JSON.stringify(mask.value({ "/Users/me/.ssh/id": 1 }))).toBe(`{"${OUT}":1}`);
   });
 });
 

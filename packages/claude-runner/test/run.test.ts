@@ -378,6 +378,25 @@ describe("runOnce", () => {
     expect(emitted).toEqual([ABORTED]);
   });
 
+  it("result 없이 끝나거나 던진 중지 턴도 init 에서 본 costKind 를 싣는다", async () => {
+    for (const tail of [{ exit: true as const }, { throw: new Error("exited with code 143") }]) {
+      const { fake, ctx, emitted, controller } = harness();
+      fake.script(
+        script.init("ANTHROPIC_API_KEY"),
+        script.messageStart("msg_1"),
+        { waitInterrupt: [] },
+        tail,
+      );
+      const done = runOnce(runStart(), ctx);
+      await new Promise((r) => setTimeout(r, 5));
+      controller.abort();
+      await done;
+      expect(emitted).toEqual([
+        { kind: "final", final: { text: "", stopReason: "aborted", costKind: "api" } },
+      ]);
+    }
+  });
+
   it("시작 전에 중지됐으면 CLI 를 띄우지 않고 final aborted", async () => {
     const { fake, ctx, emitted, controller } = harness();
     controller.abort();
@@ -420,6 +439,49 @@ describe("runOnce — 전사가 없다고 봤는데 CLI 가 「이미 있는 세
     expect(fake.calls[1]!.options.sessionId).toBeUndefined();
     expect(errors(emitted)).toEqual([]);
     expect(finals(emitted)).toMatchObject([{ final: { text: "이어서" } }]);
+  });
+
+  it("query() 가 곧바로 거절로 던져도 resume 으로 한 번 다시 연다", async () => {
+    const fake = createFakeSdk();
+    fake.script(script.init(), ...script.textTurn("msg_1", ["이어서"]));
+    let calls = 0;
+    const { ctx, emitted } = harness({
+      ...fake,
+      query: (args) => {
+        calls += 1;
+        if (calls === 1) throw new Error(IN_USE);
+        return fake.query(args);
+      },
+    });
+    await runOnce(runStart(), ctx);
+    expect(calls).toBe(2);
+    expect(fake.calls[0]!.options.resume).toBe(SESSION_ID);
+    expect(errors(emitted)).toEqual([]);
+    expect(finals(emitted)).toMatchObject([{ final: { text: "이어서" } }]);
+  });
+
+  it("거절과 다시 열기 사이에 중지되면 다시 열지 않고 final aborted", async () => {
+    const fake = createFakeSdk();
+    let calls = 0;
+    const controller = new AbortController();
+    const { ctx, emitted } = harness(
+      {
+        ...fake,
+        query: (args) => {
+          calls += 1;
+          // 첫 시도가 거절된 그 사이에 run.abort 가 왔다 — 첫 시도의 중지 리스너는 아직 없다
+          controller.abort();
+          if (calls === 1) throw new Error(IN_USE);
+          return fake.query(args);
+        },
+      },
+      { signal: controller.signal },
+    );
+    await runOnce(runStart(), ctx);
+    expect(calls).toBe(1);
+    expect(emitted).toEqual([
+      { kind: "final", final: { text: "", stopReason: "aborted", costKind: "subscription_estimate" } },
+    ]);
   });
 
   it("다시 연 것도 거절되면 한 번만 — run.error", async () => {

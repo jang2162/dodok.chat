@@ -1,7 +1,8 @@
 // 호스트 경로 원문은 run.event·run.final·오류 문구에 싣지 않는다(러너 계획 Global Constraints) — 작업 디렉터리 안은
 // 상대 경로로, 밖은 표지로 바꾼다. 도구 인자·결과·오류 문구·모델 답 글(델타·최종 답)에 쓴다.
 // 보지 않는 것: Windows 경로(`C:\…`), 작업 디렉터리 밖 경로 안의 공백 뒤 꼬리(`/a/My Docs/x` → `<밖> Docs/x` —
-// 경로 키 값은 통째로 본다), 상대 경로(`../../etc/passwd`)
+// 경로 키 값은 통째로 본다), 상대 경로(`../../etc/passwd`), 낱말 바로 뒤 경로(`-I/a/include`), 호스트가 붙은
+// URL(`file://localhost/…`·`vscode://file/…`)
 
 export const OUTSIDE_WORKDIR = "<작업 디렉터리 밖>";
 
@@ -57,7 +58,8 @@ export function createPathMasker(roots: readonly string[]): PathMasker {
   const maskWholePath = (s: string): string => {
     for (const root of sorted) {
       if (s === root) return ".";
-      if (s.startsWith(`${root}/`)) return s.slice(root.length).replace(/^\/+/, "") || ".";
+      // 나머지도 본다 — 인자에는 모델이 무엇이든 쓸 수 있다(`<작업 디렉터리>/a\n/밖/경로`)
+      if (s.startsWith(`${root}/`)) return mask(s.slice(root.length).replace(/^\/+/, "")) || ".";
     }
     return /^~?\//.test(s) ? OUTSIDE_WORKDIR : mask(s);
   };
@@ -66,7 +68,8 @@ export function createPathMasker(roots: readonly string[]): PathMasker {
     if (typeof v === "string") return key !== undefined && PATH_KEY.test(key) ? maskWholePath(v) : mask(v);
     if (Array.isArray(v)) return v.map((x) => value(x));
     if (v && typeof v === "object") {
-      return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, value(x, k)]));
+      // 키에도 경로가 올 수 있다(MCP 도구의 맵 인자·구조화 결과). 경로 키 판정은 원래 키로. 가린 키가 겹치면 뒤 것만 남는다
+      return Object.fromEntries(Object.entries(v).map(([k, x]) => [mask(k), value(x, k)]));
     }
     return v;
   };

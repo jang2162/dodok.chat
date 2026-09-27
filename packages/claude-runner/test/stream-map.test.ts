@@ -320,6 +320,22 @@ describe("createStreamMapper — 답 글의 호스트 경로 가림(리뷰 I4)",
     );
   });
 
+  it("인자는 JSON 으로 파싱해 가린다 — 공백 든 경로 키 값·\\u002F 이스케이프도(원문 가림이면 샌다)", () => {
+    const m = mapper({ t: 0 }, createPathMasker([ROOT]));
+    m.map(script.blockStart(0, { type: "tool_use", id: "toolu_j", name: "Read", input: {} }));
+    m.map(
+      script.jsonDelta(
+        0,
+        '{"file_path":"/home/u/My Docs/plan.md","note":"\\u002Fhome\\u002Fu\\u002F.ssh\\u002Fid"}',
+      ),
+    );
+    const [args] = m.map(script.blockStop(0));
+    const event = args?.event;
+    expect(event?.type === "TOOL_CALL_ARGS" && event.delta).toBe(
+      '{"file_path":"<작업 디렉터리 밖>","note":"<작업 디렉터리 밖>"}',
+    );
+  });
+
   it("여러 줄 인자(JSON 원문의 \\n 뒤 경로)도 가린다", () => {
     const m = mapper({ t: 0 }, createPathMasker([ROOT]));
     m.map(script.blockStart(0, { type: "tool_use", id: "toolu_w", name: "Write", input: {} }));

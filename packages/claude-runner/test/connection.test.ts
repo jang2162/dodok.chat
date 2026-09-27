@@ -215,7 +215,8 @@ describe("startRunnerConnection", () => {
     fake.script(script.messageStart("msg_1"), { waitInterrupt: [] }, { hang: true });
     await sendStart(server.sockets[0]!, runStart());
     await waitFor(() => fake.calls.length === 1);
-    // 엔진 소켓을 닫는다 — 서버 재시작·네트워크 끊김과 같은 클라이언트 사유(transport close)
+    // 엔진 소켓을 닫는다 — 서버 종료(러너 어댑터 close 는 DISCONNECT 패킷 없이 전송만 닫는다)·재시작·네트워크 끊김과
+    // 같은 클라이언트 사유(transport close)
     server.sockets[0]!.conn.close();
     await waitFor(() => fake.calls[0]!.interrupts === 1);
     // 유예 뒤 close 까지 — CLI 가 남지 않는다
@@ -360,13 +361,15 @@ describe("startRunnerConnection", () => {
   it("stop — 런이 끝나지 않아도 기다림은 상한까지만", async () => {
     const { server, fake, conn } = await setup({ stopWaitMs: 60 });
     await waitFor(() => server.hellos.length === 1);
-    // closeGraceMs(30) 뒤 close 에도 끝나지 않는 일 — hang 은 close 로 풀리므로 대신 run 을 묶어 둔다
-    fake.script(script.messageStart("msg_1"), { hang: true });
+    // interrupt 에도 closeGraceMs(30) 뒤 close 에도 끝나지 않는 CLI — sleep 은 close 를 보지 않는다
+    fake.script(script.messageStart("msg_1"), { sleep: 1500 });
     await sendStart(server.sockets[0]!, runStart());
     await waitFor(() => fake.calls.length === 1);
     const t0 = Date.now();
     await conn.stop();
-    expect(Date.now() - t0).toBeLessThan(1000);
+    expect(Date.now() - t0).toBeLessThan(600);
+    expect(fake.calls[0]!.closes).toBeGreaterThanOrEqual(1);
+    expect(fake.calls[0]!.finished).toBe(false);
     expect(conn.connected).toBe(false);
   });
 
