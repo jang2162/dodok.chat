@@ -1,4 +1,13 @@
-import { closeSync, constants, fstatSync, openSync, readSync, realpathSync, statSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  openSync,
+  readlinkSync,
+  readSync,
+  realpathSync,
+  statSync,
+} from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { ATTACHMENT_LIMITS } from "@dodok/shared";
 import { OUTSIDE_WORKDIR } from "./mask";
@@ -6,7 +15,10 @@ import { OUTSIDE_WORKDIR } from "./mask";
 // `mcp__dodok__post` 의 files 검사(러너 스펙 4.4, Review Focus 2). 모델이 준 경로는 작업 디렉터리 안 파일만 보낸다 —
 // 글자로 한 번(`..`·절대 경로), realpath 로 한 번(심볼릭 링크) 본다. 거절 문구는 모델에게 가는 도구 결과라 호스트 경로를
 // 싣지 않는다: 작업 디렉터리 상대 경로, 밖이면 `<작업 디렉터리 밖>`. 읽기는 경로 글자가 아니라 검사한 그 파일(dev·ino)에서 한다 —
-// 검사와 읽기 사이(앞 파일 올리기)에 중간 디렉터리를 밖 링크로 바꿔도 밖 파일을 읽지 않게
+// 검사와 읽기 사이(앞 파일 올리기)에 중간 디렉터리를 밖 링크로 바꿔도 밖 파일을 읽지 않게. 경로로 하는 검사는 호출마다 경로를
+// 새로 풀어 원자 교체 경합에 뚫리므로(realpath 와 stat 사이에 바꾸면 기준값부터 밖 파일), 연 fd 가 realpath 그대로의 경로 —
+// 어느 성분도 링크가 아닌 — 에서 열렸는지를 연 쪽에서 본다(createNodeFilesFs). 하드 링크는 막지 않는다: 작업 디렉터리 안의
+// 항목이고, 만들 수 있는 모델은 복사도 할 수 있다
 
 export const POST_FILES_MAX = ATTACHMENT_LIMITS.perMessage;
 export const POST_FILE_MAX_BYTES = ATTACHMENT_LIMITS.agentFileMaxBytes;
@@ -24,24 +36,67 @@ type PassedCheck = Extract<FileCheck, { ok: true }>;
 export type FileStat = { isFile(): boolean; size: number; dev: number; ino: number };
 
 export type FilesFs = {
+  /** false 면 open 이 아래 약속을 지킬 수 없는 플랫폼 — files 를 받지 않는다 */
+  supported: boolean;
   /** 없으면 던진다 */
   realpath(path: string): string;
   stat(path: string): FileStat;
-  /** 읽기 전용 fd — 마지막 성분이 링크면 던지고(O_NOFOLLOW), FIFO 에서 막히지 않는다(O_NONBLOCK) */
+  /**
+   * 읽기 전용 fd — path(realpath 결과)의 어느 성분이든 링크면 열지 않고 던진다. FIFO 에서 막히지 않는다(O_NONBLOCK)
+   */
   open(path: string): number;
   fstat(fd: number): FileStat;
   read(fd: number, buffer: Buffer, offset: number, length: number, position: number): number;
   close(fd: number): void;
 };
 
-export const nodeFilesFs: FilesFs = {
-  realpath: (p) => realpathSync(p),
-  stat: (p) => statSync(p),
-  open: (p) => openSync(p, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK),
-  fstat: (fd) => fstatSync(fd),
-  read: (fd, buffer, offset, length, position) => readSync(fd, buffer, offset, length, position),
-  close: (fd) => closeSync(fd),
-};
+export const POST_FILES_UNSUPPORTED =
+  "파일을 보내지 않았습니다 — 이 플랫폼에서는 파일 보내기를 지원하지 않습니다";
+
+// macOS 11+ 의 open 플래그 — 경로의 어느 성분이든 링크면 ELOOP. fs.constants 에 없어 숫자로 준다. O_NOFOLLOW 와 함께 주면 EINVAL
+const O_NOFOLLOW_ANY = 0x20000000;
+
+export function createNodeFilesFs(
+  platform: NodeJS.Platform = process.platform,
+  // 테스트가 바꿔 끼운다 — Linux 가 아닌 곳에서 Linux 갈래를 돌리려고
+  deps: { fdPath?: (fd: number) => string; close?: (fd: number) => void } = {},
+): FilesFs {
+  const close = deps.close ?? closeSync;
+  const fdPath = deps.fdPath ?? ((fd: number) => readlinkSync(`/proc/self/fd/${fd}`));
+  let open: (path: string) => number;
+  if (platform === "darwin") {
+    open = (p) => openSync(p, constants.O_RDONLY | constants.O_NONBLOCK | O_NOFOLLOW_ANY);
+  } else if (platform === "linux") {
+    // 여는 플래그로는 중간 성분을 막을 수 없다 — 연 뒤 fd 가 가리키는 실제 경로가 연 경로(realpath) 그대로인지 본다
+    open = (p) => {
+      const fd = openSync(p, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      let actual: string | undefined;
+      try {
+        actual = fdPath(fd);
+      } catch {
+        // 못 읽으면 다른 것으로 본다
+      }
+      if (actual === p) return fd;
+      close(fd);
+      throw new Error("opened file is not at the checked path");
+    };
+  } else {
+    open = () => {
+      throw new Error(`no-follow open is not supported on ${platform}`);
+    };
+  }
+  return {
+    supported: platform === "darwin" || platform === "linux",
+    realpath: (p) => realpathSync(p),
+    stat: (p) => statSync(p),
+    open,
+    fstat: (fd) => fstatSync(fd),
+    read: (fd, buffer, offset, length, position) => readSync(fd, buffer, offset, length, position),
+    close,
+  };
+}
+
+export const nodeFilesFs: FilesFs = createNodeFilesFs();
 
 /** base 안이면 base 상대 경로(base 자신은 "."), 밖이면 undefined — 「..foo」 같은 이름은 안이다 */
 function within(base: string, target: string): string | undefined {

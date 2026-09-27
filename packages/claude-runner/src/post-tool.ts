@@ -14,6 +14,7 @@ import {
   type FilesFs,
   nodeFilesFs,
   openCheckedFile,
+  POST_FILES_UNSUPPORTED,
   readCheckedFile,
 } from "./files";
 import type { PathMasker } from "./mask";
@@ -113,6 +114,7 @@ export function createPoster(deps: PosterDeps): (input: PostInput) => Promise<Po
     const attachmentIds: string[] = [];
     const files = input.files ?? [];
     if (files.length > 0) {
+      if (!fs.supported) return { error: POST_FILES_UNSUPPORTED };
       const { checks, tooMany } = checkPostFiles(deps.workdir, files, fs);
       if (tooMany || checks.some((c) => !c.ok)) return { error: describePostFileRejections(checks, tooMany) };
       const passed = checks.flatMap((c) => (c.ok ? [c] : []));

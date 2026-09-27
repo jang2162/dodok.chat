@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   checkPostFiles,
+  createNodeFilesFs,
   describePostFileRejections,
   nodeFilesFs,
   openCheckedFile,
@@ -273,5 +274,52 @@ describe("openCheckedFile·readCheckedFile — 검사한 그 파일에서만 읽
     expect(describePostFileRejections([{ ok: false, rel: "a.txt", reason: "changed" }], false)).toContain(
       "- a.txt: 검사한 뒤 바뀌었습니다",
     );
+  });
+});
+
+describe("createNodeFilesFs — 연 fd 가 경로의 어느 성분도 링크가 아닌 그 파일일 때만(I1 잔여)", () => {
+  it.skipIf(process.platform !== "darwin")(
+    "macOS: 중간 성분이 링크면 열지 않는다(O_NOFOLLOW_ANY) — 링크 없는 경로는 연다",
+    () => {
+      const fs = createNodeFilesFs("darwin");
+      expect(fs.supported).toBe(true);
+      const real = realpathSync(join(workdir, "sub", "b.txt"));
+      closeSync(fs.open(real));
+      // evil-dir → secret. realpath 가 아닌 경로(링크 성분)로는 열지 않는다
+      writeFileSync(join(outside, "b.txt"), "SECRET");
+      expect(() => fs.open(join(realpathSync(workdir), "evil-dir", "b.txt"))).toThrow();
+      // 마지막 성분이 링크여도
+      expect(() => fs.open(join(realpathSync(workdir), "good-link"))).toThrow();
+    },
+  );
+
+  it("Linux: 연 fd 의 실제 경로(/proc/self/fd)가 연 경로와 다르면 닫고 던진다", () => {
+    const real = realpathSync(join(workdir, "a.txt"));
+    const closed: number[] = [];
+    let where = real;
+    const fs = createNodeFilesFs("linux", {
+      fdPath: () => where,
+      close: (fd) => {
+        closed.push(fd);
+        closeSync(fd);
+      },
+    });
+    expect(fs.supported).toBe(true);
+    const fd = fs.open(real);
+    closeSync(fd);
+    where = join(realpathSync(outside), "id_rsa");
+    expect(() => fs.open(real)).toThrow();
+    expect(closed).toHaveLength(1);
+    where = "";
+    expect(() => fs.open(real)).toThrow();
+    expect(closed).toHaveLength(2);
+  });
+
+  it("그 밖 플랫폼은 supported false — 열지 않는다", () => {
+    const fs = createNodeFilesFs("win32");
+    expect(fs.supported).toBe(false);
+    expect(() => fs.open(realpathSync(join(workdir, "a.txt")))).toThrow();
+    // 검사(realpath·stat)는 그대로 된다
+    expect(checkPostFiles(workdir, ["a.txt"], fs).checks[0]).toMatchObject({ ok: true });
   });
 });

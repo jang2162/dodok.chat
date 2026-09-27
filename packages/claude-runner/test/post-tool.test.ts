@@ -7,13 +7,14 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Attachment, ComponentsV1, RunnerOutboundPost, type RunnerOutboundAck } from "@dodok/shared";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { AttachmentsHttpError, type AttachmentsHttp } from "../src/attachments-http";
-import { type FilesFs, nodeFilesFs } from "../src/files";
+import { createNodeFilesFs, type FilesFs, nodeFilesFs, POST_FILES_UNSUPPORTED } from "../src/files";
 import { createPathMasker, OUTSIDE_WORKDIR, workdirRoots } from "../src/mask";
 import {
   createDodokMcpServer,
@@ -424,7 +425,6 @@ describe("createPoster — 파일 검사 → 올리기 → outbound.post", () =>
   });
 
   it("검사와 열기 사이에 파일 자리를 FIFO 로 바꿔도 막히지 않고 거절한다(O_NONBLOCK)", async () => {
-    const { execFileSync } = await import("node:child_process");
     const h = swapPoster({
       fs: swapBeforeOpen(() => {
         rmSync(join(workdir, "chart.png"));
@@ -435,6 +435,98 @@ describe("createPoster — 파일 검사 → 올리기 → outbound.post", () =>
     expect(h.uploaded).toEqual([]);
     expect(out).toEqual({ error: expect.stringContaining("- chart.png: 검사한 뒤 바뀌었습니다") });
   });
+
+  it("검사 안의 realpath 와 stat 사이에 중간 디렉터리를 밖 링크로 바꿔도 밖 파일은 올라가지 않는다(재리뷰 P1)", async () => {
+    const swap = prepareSwap();
+    let done = false;
+    const h = swapPoster({
+      fs: {
+        ...nodeFilesFs,
+        // stat 기준값(dev·ino)부터 밖 파일의 것이 된다 — 경로로 하는 대조는 여기서 통과한다
+        stat: (p) => {
+          if (!done) {
+            done = true;
+            swap();
+          }
+          return nodeFilesFs.stat(p);
+        },
+      },
+    });
+    const out = await h.post({ files: ["sub/b.txt"] });
+    expect(h.uploaded).toEqual([]);
+    expect(h.sent).toEqual([]);
+    expect(out).toEqual({ error: expect.stringContaining("- sub/b.txt: 검사한 뒤 바뀌었습니다") });
+  });
+
+  it("연 fd 를 확인할 수 없는 플랫폼이면 files 를 거절한다 — 글만은 보낸다", async () => {
+    const h = swapPoster({ fs: createNodeFilesFs("win32") });
+    expect(await h.post({ files: ["chart.png"] })).toEqual({ error: POST_FILES_UNSUPPORTED });
+    expect(POST_FILES_UNSUPPORTED).toContain("이 플랫폼에서는 파일 보내기를 지원하지 않습니다");
+    expect(h.uploaded).toEqual([]);
+    expect(h.sent).toEqual([]);
+    expect(await h.post({ text: "x" })).toEqual({ messageId: "0192f000-0000-7000-8000-0000000000aa" });
+  });
+
+  const PYTHON = (() => {
+    try {
+      execFileSync("python3", ["-c", "import ctypes"], { stdio: "ignore" });
+      return "python3";
+    } catch {
+      return undefined;
+    }
+  })();
+
+  // 다른 프로세스가 repo/sub(디렉터리)와 밖 링크를 원자 교체(macOS renamex_np RENAME_SWAP · Linux renameat2
+  // RENAME_EXCHANGE)로 계속 뒤집는다 — 비원자 rename 두 번으로는 경합이 안 난다(재리뷰 P2·P2b). 고치기 전 약 0.5% 가 새었다
+  const RACER = `
+import ctypes, os, sys
+libc = ctypes.CDLL(None, use_errno=True)
+a, b = os.fsencode(sys.argv[1]), os.fsencode(sys.argv[2])
+if sys.platform == "darwin":
+    swap = lambda: libc.renamex_np(a, b, 2)
+else:
+    swap = lambda: libc.renameat2(-100, a, -100, b, 2)
+n = 0
+while True:
+    if swap() != 0:
+        sys.exit("swap failed: " + os.strerror(ctypes.get_errno()))
+    n += 1
+    if n == 1:
+        print("ready", flush=True)
+`;
+
+  it.skipIf(PYTHON === undefined || !["darwin", "linux"].includes(process.platform))(
+    "원자 교체 경합 수천 번에도 밖 파일은 한 번도 올라가지 않는다(재리뷰 P2b)",
+    async () => {
+      prepareSwap();
+      symlinkSync(join(base, "secret"), join(workdir, "swap-link"));
+      const racer = spawn(PYTHON!, ["-c", RACER, join(workdir, "sub"), join(workdir, "swap-link")], {
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let stderr = "";
+      racer.stderr.on("data", (d: Buffer) => (stderr += d.toString()));
+      try {
+        await new Promise<void>((ok, fail) => {
+          racer.stdout.once("data", () => ok());
+          racer.once("exit", () => fail(new Error(`racer exited: ${stderr}`)));
+        });
+        const h = swapPoster({});
+        let rejected = 0;
+        for (let i = 0; i < 5000; i += 1) {
+          const out = await h.post({ files: ["sub/b.txt"] });
+          if ("error" in out) rejected += 1;
+        }
+        expect(racer.exitCode, stderr).toBeNull();
+        expect(h.uploaded.filter((b) => b !== "bee")).toEqual([]);
+        // 경합이 실제로 났고(거절) 정상 경로도 막히지 않았다(올라감)
+        expect(rejected).toBeGreaterThan(0);
+        expect(h.uploaded.length).toBeGreaterThan(0);
+      } finally {
+        racer.kill("SIGKILL");
+      }
+    },
+    30_000,
+  );
 
   it("거절로 끝나도 연 fd 는 모두 닫는다", async () => {
     const opened: number[] = [];
