@@ -1,5 +1,6 @@
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadRunnerConfig, RunnerConfigError, type FsLike } from "../src/config";
+import { expandHome, loadRunnerConfig, RunnerConfigError, type FsLike } from "../src/config";
 
 const HOME = "/home/u";
 const TOKEN = "drn_abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG";
@@ -154,5 +155,15 @@ describe("loadRunnerConfig", () => {
     );
     expect(e.message).toMatch(/--config/);
     expect(e.message).not.toContain("/nope");
+  });
+});
+
+describe("expandHome — --config 인자와 설정 파일 안 경로가 함께 쓴다(리뷰 M6)", () => {
+  it("`~` 하나·`~/…`·상대·절대", () => {
+    expect(expandHome("~", "/home/u")).toBe("/home/u");
+    expect(expandHome("~/.dodok-runner/config.json", "/home/u")).toBe("/home/u/.dodok-runner/config.json");
+    expect(expandHome("/etc/x.json", "/home/u")).toBe("/etc/x.json");
+    expect(expandHome("rel/x.json", "/home/u")).toBe(resolve("rel/x.json"));
+    expect(expandHome("~other/x", "/home/u")).toBe(resolve("~other/x"));
   });
 });

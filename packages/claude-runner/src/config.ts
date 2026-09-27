@@ -56,7 +56,8 @@ function keyPath(path: readonly PropertyKey[]): string {
     .join("");
 }
 
-function expandHome(p: string, home: string): string {
+/** `~`·`~/…` 를 홈으로 풀고 상대 경로는 절대로 — --config 인자와 설정 파일 안 경로가 함께 쓴다 */
+export function expandHome(p: string, home: string): string {
   if (p === "~") return home;
   if (p.startsWith("~/")) return resolve(home, p.slice(2));
   return isAbsolute(p) ? p : resolve(p);

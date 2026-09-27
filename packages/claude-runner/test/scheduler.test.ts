@@ -95,4 +95,38 @@ describe("createScheduler", () => {
     // 비운 뒤에는 새 일을 곧바로 받는다
     expect(s.submit("r9", "s0", deferredJob().run)).toEqual({});
   });
+
+  it("대기열에서 빠진 런은 onDropped 로 알린다 — 시작하지 않은 런도 닫혀야 한다(판정 R1)", async () => {
+    const s = createScheduler(1);
+    const dropped: string[] = [];
+    const a = deferredJob();
+    s.submit("r0", "s0", a.run, () => dropped.push("r0"));
+    s.submit("r1", "s1", deferredJob().run, () => dropped.push("r1"));
+    s.submit("r2", "s2", deferredJob().run, () => dropped.push("r2"));
+    s.submit("r3", "s3", deferredJob().run, () => dropped.push("r3"));
+    s.abort("r1");
+    expect(dropped).toEqual(["r1"]);
+    s.abortAll();
+    // 도는 런(r0)은 onDropped 가 아니라 제 일이 signal 을 보고 닫는다
+    expect(dropped).toEqual(["r1", "r2", "r3"]);
+    a.finish();
+    await tick();
+  });
+
+  it("idle — 도는 런이 모두 끝나면 풀린다", async () => {
+    const s = createScheduler(2);
+    await s.idle();
+    const a = deferredJob();
+    const b = deferredJob();
+    s.submit("r0", "s0", a.run);
+    s.submit("r1", "s1", b.run);
+    let idle = false;
+    void s.idle().then(() => (idle = true));
+    a.finish();
+    await tick();
+    expect(idle).toBe(false);
+    b.finish();
+    await tick();
+    expect(idle).toBe(true);
+  });
 });

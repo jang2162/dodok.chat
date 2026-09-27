@@ -17,9 +17,13 @@ import type {
   SdkQuery,
   SdkUserMessage,
 } from "./sdk";
-import { createStreamMapper, isAuthFailureText } from "./stream-map";
+import { ABORTED_STOP_REASON, createStreamMapper, isAuthFailureText } from "./stream-map";
 
-/** CLI(와 그 도구가 여는 셸)로 넘기는 러너 env — SDK 기본값은 러너 env 전부라 러너 토큰·API 키가 샌다(ADR 0007 5.4) */
+/**
+ * CLI(와 그 도구가 여는 셸)로 넘기는 러너 env — SDK 기본값은 러너 env 전부라 러너 토큰·API 키가 샌다(ADR 0007 5.4).
+ * 프록시·CA 는 사내 프록시·사설 CA 뒤에서 CLI 가 API 에 닿는 데 필요하고 비밀이 아니다(프록시 URL 에 자격을 넣은
+ * 설정이면 그 자격도 CLI 로 간다 — CLI 가 그 프록시를 쓰려면 어차피 필요하다)
+ */
 export const ENV_ALLOWLIST: readonly string[] = [
   "PATH",
   "HOME",
@@ -29,6 +33,14 @@ export const ENV_ALLOWLIST: readonly string[] = [
   "TMPDIR",
   "SHELL",
   "USER",
+  "HTTPS_PROXY",
+  "https_proxy",
+  "HTTP_PROXY",
+  "http_proxy",
+  "NO_PROXY",
+  "no_proxy",
+  "NODE_EXTRA_CA_CERTS",
+  "SSL_CERT_FILE",
 ];
 /** run.abort 뒤 interrupt 에 턴이 끝나지 않으면 close() 까지 기다리는 시간(스펙 4.5) */
 export const ABORT_CLOSE_MS = 5000;
@@ -97,6 +109,19 @@ export function buildQueryOptions(
   };
 }
 
+// `--session-id` 로 연 세션의 전사가 이미 있으면 CLI 가 「Error: Session ID <id> is already in use.」로 끝나고, SDK 는
+// 그 stderr 꼬리를 「Claude Code process exited with code 1」 오류 문구에 붙인다(번들 CLI 2.1.283 의 글자·sdk.mjs
+// getProcessExitError). 판본마다 글이 바뀔 수 있어 넓게 본다 — 「address already in use」 류는 세션 낱말이 없어 빠진다
+const SESSION_IN_USE = /\bsession\b[^\n]{0,120}?\balready (?:in use|exists)/i;
+export const isSessionInUseText = (text: string): boolean => SESSION_IN_USE.test(text);
+
+/** 중지로 끝난 런 — 메시지 없는 final(조율자 판정 R1). 러너는 수명 이벤트를 run.event 로 내지 않는다 */
+export function abortedFinal(
+  costKind: RunnerRunFinal["costKind"] = "subscription_estimate",
+): Omit<RunnerRunFinal, "runId"> {
+  return { text: "", stopReason: ABORTED_STOP_REASON, costKind };
+}
+
 export type RunEmitter = {
   event(event: RunEventBody): void;
   final(final: Omit<RunnerRunFinal, "runId">): void;
@@ -127,22 +152,37 @@ function workdirRoots(workdir: string): string[] {
 /**
  * 런 하나 = query() 하나 = CLI 프로세스 하나, 프롬프트도 하나(ADR 0007 6의 1). 턴 사실은 훅 문맥에만 있으므로
  * 훅 문맥이 요청에서 빠지는 두 경우(앞 턴 처리 중 보낸 프롬프트·interrupt 직후 프롬프트 — 4.5)를 만들지 않도록
- * 이 query() 에 프롬프트를 더 보내지 않는다. 결과는 ctx.emit 으로만 나간다 — 던지지 않는다
+ * 이 query() 에 프롬프트를 더 보내지 않는다. 결과는 ctx.emit 으로 한 번만 나간다(final·error 중 하나) — 던지지 않는다.
+ * 예외 하나: 새 세션으로 연 CLI 가 「이미 있는 세션」으로 거절하면 resume 으로 한 번 다시 연다(첫 query 는 스트림 전에 죽었다)
  */
 export async function runOnce(start: RunnerRunStart, ctx: RunContext): Promise<void> {
-  if (ctx.signal.aborted) return;
+  // 중지로 끝난 런도 final 로 닫는다 — 어댑터가 dispatch 뒤 추적하던 런을 놓아준다(판정 R1)
+  if (ctx.signal.aborted) return void ctx.emit.final(abortedFinal());
+  const sessionId = start.providerSessionId;
+  let resume = false;
+  try {
+    // SDK 는 요약을 뽑을 수 없는 세션도 undefined 로 돌려준다 — 그러면 아래 재시도가 받친다
+    resume = await ctx.sdk.sessionExists(sessionId, ctx.agent.workdir);
+  } catch {
+    // 전사를 못 읽으면 새 세션으로 연다 — 같은 id 의 전사가 실제로 있으면 CLI 가 거절하고 아래 재시도가 받친다
+  }
+  if (ctx.signal.aborted) return void ctx.emit.final(abortedFinal());
+  const outcome = await attempt(start, ctx, resume);
+  if (outcome !== "session-in-use") return;
+  if (ctx.signal.aborted) return void ctx.emit.final(abortedFinal());
+  await attempt(start, ctx, true);
+}
+
+/** query() 하나. 새 세션으로 열었는데 스트림 전에 「이미 있는 세션」으로 거절됐으면 아무것도 내지 않고 알린다 */
+async function attempt(
+  start: RunnerRunStart,
+  ctx: RunContext,
+  resume: boolean,
+): Promise<"done" | "session-in-use"> {
   const sessionId = start.providerSessionId;
   const now = ctx.now ?? Date.now;
   const mask = createPathMasker(workdirRoots(ctx.agent.workdir));
   const mapper = createStreamMapper(now, { runId: start.deliver.runId, mask });
-
-  let resume = false;
-  try {
-    resume = await ctx.sdk.sessionExists(sessionId, ctx.agent.workdir);
-  } catch {
-    // 전사를 못 읽으면 새 세션으로 연다 — 같은 id 의 전사가 실제로 있으면 CLI 가 거절해 run.error 로 드러난다
-  }
-  if (ctx.signal.aborted) return;
 
   let finishInput!: () => void;
   const inputDone = new Promise<void>((resolve) => (finishInput = resolve));
@@ -163,6 +203,8 @@ export async function runOnce(start: RunnerRunStart, ctx: RunContext): Promise<v
     const head = code === "PROVIDER_AUTH" ? "러너의 Claude 로그인을 확인하세요" : "Claude Code 실행 실패";
     ctx.emit.error(code, `${head}: ${mask(text)}`.slice(0, ERROR_MESSAGE_MAX));
   };
+  const retryable = (error: unknown) =>
+    !resume && isSessionInUseText(error instanceof Error ? error.message : String(error));
 
   let q: SdkQuery;
   try {
@@ -176,8 +218,9 @@ export async function runOnce(start: RunnerRunStart, ctx: RunContext): Promise<v
       }),
     });
   } catch (error) {
+    if (retryable(error)) return "session-in-use";
     failed(error);
-    return;
+    return "done";
   }
 
   const graceMs = ctx.closeGraceMs ?? ABORT_CLOSE_MS;
@@ -195,6 +238,7 @@ export async function runOnce(start: RunnerRunStart, ctx: RunContext): Promise<v
   ctx.signal.addEventListener("abort", onAbort, { once: true });
 
   let ended = false;
+  let sawMessage = false;
   let costKind: RunnerRunFinal["costKind"] = "subscription_estimate";
   const end = () => {
     ended = true;
@@ -217,6 +261,7 @@ export async function runOnce(start: RunnerRunStart, ctx: RunContext): Promise<v
 
   try {
     for await (const m of q as AsyncIterable<SdkMessage>) {
+      sawMessage = true;
       if (ended) continue;
       const raw = m as { type?: string; subtype?: string; apiKeySource?: string; total_cost_usd?: number };
       if (raw.type === "system" && raw.subtype === "init" && raw.apiKeySource) {
@@ -225,7 +270,6 @@ export async function runOnce(start: RunnerRunStart, ctx: RunContext): Promise<v
       for (const item of mapper.map(m)) {
         if (item.event) {
           ctx.emit.event(item.event);
-          if (item.event.type === "RUN_ABORTED") end();
         } else if (item.final) {
           const { totalCostUsd, ...rest } = item.final;
           const costUsd = recordCost(totalCostUsd);
@@ -236,17 +280,18 @@ export async function runOnce(start: RunnerRunStart, ctx: RunContext): Promise<v
           end();
         }
       }
-      // 오류·중지로 끝난 턴도 누적 비용을 싣는다 — 다음 런의 차이가 맞도록 기록만 한다
+      // 오류로 끝난 턴도 누적 비용을 싣는다 — 다음 런의 차이가 맞도록 기록만 한다
       if (ended && raw.type === "result" && !costRecorded) recordCost(raw.total_cost_usd);
     }
     if (!ended) {
-      if (interrupted) ctx.emit.event({ type: "RUN_ABORTED", runId: start.deliver.runId, by: "user" });
+      if (interrupted) ctx.emit.final(abortedFinal(costKind));
       else ctx.emit.error("INTERNAL", "Claude Code 가 결과 없이 끝났습니다");
     }
   } catch (error) {
     // 마지막 result 뒤에 CLI 가 exit 1 로 끝나 반복자가 던질 수 있다(ADR 0007 4.4) — 런은 이미 끝났다
     if (!ended) {
-      if (interrupted) ctx.emit.event({ type: "RUN_ABORTED", runId: start.deliver.runId, by: "user" });
+      if (interrupted) ctx.emit.final(abortedFinal(costKind));
+      else if (!sawMessage && retryable(error)) return "session-in-use";
       else failed(error);
     }
   } finally {
@@ -256,4 +301,5 @@ export async function runOnce(start: RunnerRunStart, ctx: RunContext): Promise<v
     if (closeTimer) clearTimeout(closeTimer);
     q.close();
   }
+  return "done";
 }

@@ -2,7 +2,14 @@ import { tool } from "@anthropic-ai/claude-agent-sdk";
 import { renderRunnerPrompt, type ErrorCode, type RunEventBody } from "@dodok/shared";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { ABORT_CLOSE_MS, buildQueryOptions, ENV_ALLOWLIST, runOnce, type RunContext } from "../src/run";
+import {
+  ABORT_CLOSE_MS,
+  buildQueryOptions,
+  ENV_ALLOWLIST,
+  isSessionInUseText,
+  runOnce,
+  type RunContext,
+} from "../src/run";
 import { realSdk, type SdkMcpServer } from "../src/sdk";
 import { createFakeSdk, script, type FakeSdk } from "./helpers/fake-query";
 import { AGENT, runStart, SESSION_ID } from "./helpers/fixtures";
@@ -18,6 +25,9 @@ const BASE_ENV = {
   DODOK_RUNNER_TOKEN: "drn_secret",
   AWS_SECRET_ACCESS_KEY: "aws-secret",
   CLAUDE_CONFIG_DIR: "/home/u/.claude",
+  HTTPS_PROXY: "http://proxy.corp:3128",
+  no_proxy: "localhost,.corp",
+  NODE_EXTRA_CA_CERTS: "/etc/ssl/corp-ca.pem",
 };
 const MCP = { type: "sdk", name: "dodok", instance: { id: 1 } } as unknown as SdkMcpServer;
 
@@ -84,6 +94,9 @@ describe("buildQueryOptions", () => {
       TERM: "xterm-256color",
       SHELL: "/bin/zsh",
       USER: "u",
+      HTTPS_PROXY: "http://proxy.corp:3128",
+      no_proxy: "localhost,.corp",
+      NODE_EXTRA_CA_CERTS: "/etc/ssl/corp-ca.pem",
       CLAUDE_CONFIG_DIR: "/home/u/.dodok-runner/claude",
       CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
     });
@@ -91,7 +104,25 @@ describe("buildQueryOptions", () => {
     for (const secret of ["sk-ant-secret", "drn_secret", "aws-secret", "ANTHROPIC_API_KEY", "AWS_SECRET"]) {
       expect(serialized).not.toContain(secret);
     }
-    expect(ENV_ALLOWLIST).toEqual(["PATH", "HOME", "LANG", "LC_ALL", "TERM", "TMPDIR", "SHELL", "USER"]);
+    expect(ENV_ALLOWLIST).toEqual([
+      "PATH",
+      "HOME",
+      "LANG",
+      "LC_ALL",
+      "TERM",
+      "TMPDIR",
+      "SHELL",
+      "USER",
+      // 사내 프록시·사설 CA 뒤에서 CLI 가 API 에 닿으려면 필요하다 — 비밀이 아니다
+      "HTTPS_PROXY",
+      "https_proxy",
+      "HTTP_PROXY",
+      "http_proxy",
+      "NO_PROXY",
+      "no_proxy",
+      "NODE_EXTRA_CA_CERTS",
+      "SSL_CERT_FILE",
+    ]);
   });
 
   it("UserPromptSubmit 훅이 turnFacts 를 additionalContext 로 돌려준다", async () => {
@@ -143,7 +174,7 @@ const errors = (e: Emitted[]) => e.filter((x) => x.kind === "error");
 describe("runOnce", () => {
   it("프롬프트 하나를 보내고 스트림을 이벤트로, result 를 final 로 — 끝나면 입력을 닫는다", async () => {
     const { fake, ctx, emitted } = harness();
-    fake.script(script.init(), ...script.textTurn("msg_1", ["안녕", "하세요"]));
+    fake.script(script.init(), ...script.textTurn("msg_1", ["안녕 ", "하세요"]));
     const start = runStart();
     await runOnce(start, ctx);
     expect(fake.calls).toHaveLength(1);
@@ -153,6 +184,8 @@ describe("runOnce", () => {
       message: { role: "user", content: renderRunnerPrompt(start.deliver) },
     });
     expect(fake.calls[0]!.inputClosed).toBe(true);
+    // 입력은 result 까지 열려 있어야 한다 — 닫으면 권한 콜백·SDK MCP 가 멈춘다(리뷰 M2)
+    expect(fake.calls[0]!.inputEndedBeforeResult).toBe(false);
     expect(fake.calls[0]!.options.sessionId).toBe(SESSION_ID);
     expect(fake.servers).toEqual([[]]);
     expect(emitted.map((e) => (e.kind === "event" ? e.event.type : e.kind))).toEqual([
@@ -163,7 +196,7 @@ describe("runOnce", () => {
       "final",
     ]);
     expect(finals(emitted)[0]).toMatchObject({
-      final: { text: "안녕하세요", stopReason: "end_turn", costKind: "subscription_estimate" },
+      final: { text: "안녕 하세요", stopReason: "end_turn", costKind: "subscription_estimate" },
     });
   });
 
@@ -271,7 +304,12 @@ describe("runOnce", () => {
     expect(finals(emitted)[0]).toMatchObject({ final: { costKind: "api" } });
   });
 
-  it("중지 — interrupt 를 부르고, interrupt 로 끝난 턴은 RUN_ABORTED", async () => {
+  const ABORTED = {
+    kind: "final",
+    final: { text: "", stopReason: "aborted", costKind: "subscription_estimate" },
+  };
+
+  it("중지 — interrupt 를 부르고, interrupt 로 끝난 턴은 final aborted 한 번(판정 R1) — run.event 로 수명을 내지 않는다", async () => {
     const { fake, ctx, emitted, controller } = harness();
     fake.script(script.messageStart("msg_1"), {
       waitInterrupt: [script.errorResult("error_during_execution", ["[ede_diagnostic] stop_reason=null"])],
@@ -282,11 +320,37 @@ describe("runOnce", () => {
     await done;
     expect(fake.calls[0]!.interrupts).toBe(1);
     expect(emitted).toEqual([
-      { kind: "event", event: expect.objectContaining({ type: "RUN_ABORTED", by: "user" }) },
+      {
+        kind: "final",
+        final: {
+          text: "",
+          stopReason: "aborted",
+          usage: { inputTokens: 0, outputTokens: 0 },
+          costUsd: 0,
+          costKind: "subscription_estimate",
+        },
+      },
     ]);
   });
 
-  it("중지에 반응하지 않으면 유예 뒤 close() — 그래도 RUN_ABORTED 로 닫는다", async () => {
+  it("interrupt 뒤 result 의 누적 비용 차이를 final aborted 의 costUsd 로 싣는다", async () => {
+    const { fake, ctx, emitted, controller } = harness();
+    fake.sessions.add(SESSION_ID);
+    ctx.costs.set(SESSION_ID, 0.5);
+    fake.script(script.messageStart("msg_1"), {
+      waitInterrupt: [script.errorResult("error_during_execution", ["x"], { total_cost_usd: 0.62 })],
+    });
+    const done = runOnce(runStart(), ctx);
+    await new Promise((r) => setTimeout(r, 5));
+    controller.abort();
+    await done;
+    const [f] = finals(emitted);
+    expect(f).toMatchObject({ final: { stopReason: "aborted", text: "" } });
+    expect(f?.kind === "final" && f.final.costUsd).toBeCloseTo(0.12);
+    expect(ctx.costs.get(SESSION_ID)).toBe(0.62);
+  });
+
+  it("중지에 반응하지 않으면 유예 뒤 close() — 그래도 final aborted 로 닫는다", async () => {
     const { fake, ctx, emitted, controller } = harness();
     fake.script(script.messageStart("msg_1"), { hang: true });
     const done = runOnce(runStart(), ctx);
@@ -296,15 +360,101 @@ describe("runOnce", () => {
     expect(fake.calls[0]!.closes).toBe(0);
     await done;
     expect(fake.calls[0]!.closes).toBeGreaterThanOrEqual(1);
-    expect(emitted).toEqual([{ kind: "event", event: expect.objectContaining({ type: "RUN_ABORTED" }) }]);
+    expect(emitted).toEqual([ABORTED]);
     expect(ABORT_CLOSE_MS).toBe(5000);
   });
 
-  it("시작 전에 중지됐으면 CLI 를 띄우지 않는다", async () => {
+  it("중지 뒤 반복자가 던져도 final aborted", async () => {
+    const { fake, ctx, emitted, controller } = harness();
+    fake.script(
+      script.messageStart("msg_1"),
+      { waitInterrupt: [] },
+      { throw: new Error("exited with code 143") },
+    );
+    const done = runOnce(runStart(), ctx);
+    await new Promise((r) => setTimeout(r, 5));
+    controller.abort();
+    await done;
+    expect(emitted).toEqual([ABORTED]);
+  });
+
+  it("시작 전에 중지됐으면 CLI 를 띄우지 않고 final aborted", async () => {
     const { fake, ctx, emitted, controller } = harness();
     controller.abort();
     await runOnce(runStart(), ctx);
     expect(fake.calls).toEqual([]);
-    expect(emitted).toEqual([]);
+    expect(emitted).toEqual([ABORTED]);
+  });
+
+  it("전사를 확인하는 사이 중지되면 CLI 를 띄우지 않고 final aborted", async () => {
+    const fake = createFakeSdk();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const { ctx, emitted, controller } = harness({
+      ...fake,
+      sessionExists: async () => {
+        await gate;
+        return false;
+      },
+    });
+    const done = runOnce(runStart(), ctx);
+    controller.abort();
+    release();
+    await done;
+    expect(fake.calls).toEqual([]);
+    expect(emitted).toEqual([ABORTED]);
+  });
+});
+
+describe("runOnce — 전사가 없다고 봤는데 CLI 가 「이미 있는 세션」으로 거절하면 resume 으로 한 번 다시(리뷰 M3)", () => {
+  const IN_USE = `Claude Code process exited with code 1\nError: Session ID ${SESSION_ID} is already in use.`;
+
+  it("sessionId 로 연 첫 시도가 거절되면 resume 으로 다시 열어 끝낸다 — 오류를 내지 않는다", async () => {
+    const { fake, ctx, emitted } = harness();
+    fake.script({ throw: new Error(IN_USE) });
+    fake.script(script.init(), ...script.textTurn("msg_1", ["이어서"]));
+    await runOnce(runStart(), ctx);
+    expect(fake.calls).toHaveLength(2);
+    expect(fake.calls[0]!.options.sessionId).toBe(SESSION_ID);
+    expect(fake.calls[1]!.options.resume).toBe(SESSION_ID);
+    expect(fake.calls[1]!.options.sessionId).toBeUndefined();
+    expect(errors(emitted)).toEqual([]);
+    expect(finals(emitted)).toMatchObject([{ final: { text: "이어서" } }]);
+  });
+
+  it("다시 연 것도 거절되면 한 번만 — run.error", async () => {
+    const { fake, ctx, emitted } = harness();
+    fake.script({ throw: new Error(IN_USE) });
+    fake.script({ throw: new Error(IN_USE) });
+    await runOnce(runStart(), ctx);
+    expect(fake.calls).toHaveLength(2);
+    expect(errors(emitted)).toMatchObject([{ code: "INTERNAL" }]);
+  });
+
+  it("resume 으로 연 런·다른 오류·스트림이 시작된 뒤의 거절은 다시 열지 않는다", async () => {
+    const resumed = harness();
+    resumed.fake.sessions.add(SESSION_ID);
+    resumed.fake.script({ throw: new Error(IN_USE) });
+    await runOnce(runStart(), resumed.ctx);
+    expect(resumed.fake.calls).toHaveLength(1);
+
+    const other = harness();
+    other.fake.script({ throw: new Error("Claude Code process exited with code 1\nError: boom") });
+    await runOnce(runStart(), other.ctx);
+    expect(other.fake.calls).toHaveLength(1);
+
+    const late = harness();
+    late.fake.script(script.messageStart("msg_1"), { throw: new Error(IN_USE) });
+    await runOnce(runStart(), late.ctx);
+    expect(late.fake.calls).toHaveLength(1);
+    expect(errors(late.emitted)).toHaveLength(1);
+  });
+
+  it("거절 문구 판별 — CLI 문구와 그 변형을 넓게", () => {
+    expect(isSessionInUseText(IN_USE)).toBe(true);
+    expect(isSessionInUseText("error: session id abc is already in use")).toBe(true);
+    expect(isSessionInUseText("Session 0192 already exists")).toBe(true);
+    expect(isSessionInUseText("address already in use")).toBe(false);
+    expect(isSessionInUseText("Claude Code process exited with code 1")).toBe(false);
   });
 });

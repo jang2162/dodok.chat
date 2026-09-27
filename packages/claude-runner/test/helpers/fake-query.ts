@@ -14,13 +14,15 @@ import type {
  * - `{ waitInterrupt }` interrupt() 가 불릴 때까지 멈췄다가 뒤의 메시지를 흘린다
  * - `{ hang }` close() 가 불릴 때까지 멈춘다(interrupt 에 반응하지 않는 CLI)
  * - `{ exit }` 입력이 닫히기를 기다리지 않고 곧바로 끝난다(result 없이 프로세스가 끝남)
+ * - `{ sleep }` 그만큼 쉬었다가 뒤의 메시지를 흘린다(interrupt 뒤 턴을 닫는 데 걸리는 시간)
  */
 export type ScriptStep =
   | SdkMessage
   | { throw: Error }
   | { waitInterrupt: SdkMessage[] }
   | { hang: true }
-  | { exit: true };
+  | { exit: true }
+  | { sleep: number };
 
 export type FakeCall = {
   options: SdkOptions;
@@ -29,6 +31,8 @@ export type FakeCall = {
   closes: number;
   /** 대본을 다 흘린 뒤 입력(stdin)이 닫혔는가 — 러너가 런의 끝에서 입력을 닫아야 CLI 가 끝난다 */
   inputClosed: boolean;
+  /** result 를 흘리는 순간 입력이 이미 끝나 있었는가 — 참이면 권한 콜백·SDK MCP 가 멈춘다(run.ts 입력 주석) */
+  inputEndedBeforeResult: boolean;
   finished: boolean;
 };
 
@@ -57,6 +61,7 @@ export function createFakeSdk(): FakeSdk {
       interrupts: 0,
       closes: 0,
       inputClosed: false,
+      inputEndedBeforeResult: false,
       finished: false,
     };
     calls.push(call);
@@ -69,11 +74,17 @@ export function createFakeSdk(): FakeSdk {
       const input = args.prompt[Symbol.asyncIterator]();
       const first = await input.next();
       if (!first.done) call.prompt = first.value;
+      let inputEnded = false;
+      const rest = input.next().then(() => void (inputEnded = true));
       try {
         for (const step of steps) {
           if (closed) return;
           if ("throw" in step) throw step.throw;
           if ("exit" in step) return;
+          if ("sleep" in step) {
+            await new Promise((r) => setTimeout(r, step.sleep));
+            continue;
+          }
           if ("hang" in step) {
             await closedSignal;
             return;
@@ -85,10 +96,11 @@ export function createFakeSdk(): FakeSdk {
             for (const m of step.waitInterrupt) yield m;
             continue;
           }
+          if ((step as { type?: string }).type === "result" && inputEnded) call.inputEndedBeforeResult = true;
           yield step as SdkMessage;
         }
         // 실제 CLI 는 stdin 이 닫혀야 끝난다 — 러너가 입력을 닫지 않으면 여기서 멈춘다
-        await Promise.race([input.next(), closedSignal]);
+        await Promise.race([rest, closedSignal]);
         call.inputClosed = !closed;
       } finally {
         call.finished = true;

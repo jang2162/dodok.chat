@@ -11,7 +11,7 @@ import {
 } from "@dodok/shared";
 import { io, type Socket } from "socket.io-client";
 import type { ResolvedAgent, ResolvedRunnerConfig } from "./config";
-import { runOnce, type RunEmitter } from "./run";
+import { abortedFinal, runOnce, type RunEmitter } from "./run";
 import { createScheduler } from "./scheduler";
 import type { SdkPort } from "./sdk";
 
@@ -27,6 +27,15 @@ const CAPABILITIES: RunnerCapability[] = ["threads", "interrupt"];
 const HELLO_TIMEOUT_MS = 15_000;
 // 재접속 백오프 1초~30초(Global Constraints)
 const DEFAULT_BACKOFF = { minMs: 1000, maxMs: 30_000 };
+/** 러너를 끝낼 때 중지한 런이 final 을 낼 때까지 기다리는 상한 — 런 쪽 close 유예(ABORT_CLOSE_MS)와 같다 */
+export const STOP_WAIT_MS = 5000;
+const STOP_SETTLE_MS = 50;
+
+// 서버가 이 연결을 스스로 끊었다(socket.io 클라이언트 사유) — 러너 어댑터는 같은 토큰의 새 hello 가 오면 앞 연결을,
+// 토큰을 폐기하면 그 세션을 끊는다. 다시 붙으면 같은 토큰의 두 러너가 서로를 끝없이 밀어낸다(리뷰 I2)
+const SERVER_DISCONNECT = "io server disconnect";
+const SERVER_DISCONNECT_MESSAGE =
+  "서버가 이 러너 연결을 끊었습니다 — 같은 토큰으로 다른 러너가 붙었거나 토큰이 폐기됐습니다";
 
 export type RunnerConnectionOptions = {
   config: ResolvedRunnerConfig;
@@ -34,11 +43,12 @@ export type RunnerConnectionOptions = {
   sdk: SdkPort;
   versions: RunnerVersions;
   logger: RunnerLogger;
-  /** hello 거절 — 러너는 사유를 출력하고 이 코드로 끝난다 */
+  /** 서버가 러너를 받지 않는다(hello 거절·UNAUTHORIZED·서버가 끊음) — 러너는 사유를 출력하고 이 코드로 끝난다 */
   onFatal: (exitCode: number) => void;
   baseEnv?: NodeJS.ProcessEnv;
   backoff?: { minMs: number; maxMs: number };
   closeGraceMs?: number;
+  stopWaitMs?: number;
 };
 
 type RunnerSocket = Socket<RunnerServerToClientEvents, RunnerClientToServerEvents>;
@@ -68,8 +78,8 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
     })),
   };
 
-  // 재연결은 socket.io-client 옵션이 아니라 여기서 한다 — 미들웨어 거절(UNAUTHORIZED 등)과 서버가 끊은 경우에는
-  // socket.io-client 가 다시 붙지 않는다(openclaw-plugin bridge-client 와 같은 까닭)
+  // 재연결은 socket.io-client 옵션이 아니라 여기서 한다 — 미들웨어 거절(RATE_LIMITED)에는 socket.io-client 가
+  // 다시 붙지 않는다(openclaw-plugin bridge-client 와 같은 까닭). UNAUTHORIZED·서버가 끊은 연결은 끝낸다(fatal)
   const socket: RunnerSocket = io(config.serverUrl.replace(/\/+$/, "") + RUNNER_NAMESPACE, {
     autoConnect: false,
     reconnection: false,
@@ -86,6 +96,32 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
       retryTimer = undefined;
       if (!stopped) socket.connect();
     }, delay);
+  }
+
+  // 곧바로 끊으면 방금 낸 run.final 이 서버에서 버려진다 — socket.io 서버는 받은 이벤트를 다음 틱에 「아직 붙어
+  // 있으면」 내보내는데, 같은 읽기에 끊김 패킷이 함께 오면 그 틱에 이미 끊겨 있다(stop 테스트가 잡는다). 전송 버퍼가
+  // 비기를 기다린 뒤 조금 더 둔다
+  async function drained(): Promise<void> {
+    const engine = socket.io.engine;
+    if (engine && (engine.writeBuffer.length > 0 || engine.transport?.writable === false)) {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, 1000);
+        engine.once("drain", () => {
+          clearTimeout(timer);
+          resolve();
+        });
+      });
+    }
+    await new Promise((resolve) => setTimeout(resolve, STOP_SETTLE_MS));
+  }
+
+  function fatal(message: string): void {
+    logger.error(`dodok-runner: ${message}`);
+    stopped = true;
+    if (retryTimer) clearTimeout(retryTimer);
+    retryTimer = undefined;
+    socket.disconnect();
+    opts.onFatal(2);
   }
 
   function emitterFor(runId: string, gen: number): RunEmitter {
@@ -111,10 +147,7 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
         const result = RunnerHelloResult.parse(raw);
         if (!result.ok) {
           const hint = result.code === "PROTOCOL_MISMATCH" ? " — 서버와 러너 판본을 맞추세요" : "";
-          logger.error(`dodok-runner: 서버가 러너를 거절했습니다(${result.code}: ${result.message})${hint}`);
-          stopped = true;
-          socket.disconnect();
-          opts.onFatal(2);
+          fatal(`서버가 러너를 거절했습니다(${result.code}: ${result.message})${hint}`);
           return;
         }
         attempt = 0;
@@ -134,6 +167,16 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
   });
 
   socket.on("connect_error", (error) => {
+    if (stopped) return;
+    // 러너 어댑터 미들웨어의 거절 사유가 message 로 온다. RATE_LIMITED(가드 차단 — 1분)는 끝내지 않고 백오프로 다시
+    // 시도한다(스펙 4장 「사유를 출력하고 종료」와 다르다 — 1분 뒤 풀리는 차단에 사람이 러너를 다시 띄울 까닭이 없다)
+    if (error.message === "UNAUTHORIZED") {
+      fatal(
+        "서버가 러너 토큰을 거절했습니다(UNAUTHORIZED) — 토큰이 틀렸거나 폐기됐습니다. " +
+          "새 토큰을 발급해 tokenFile 에 두고 다시 띄우세요",
+      );
+      return;
+    }
     logger.warn(`dodok-runner: 연결 실패 — ${error.message}`);
     scheduleReconnect("connect_error");
   });
@@ -143,6 +186,11 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
     // 「다시 실행」은 다시 붙은 뒤 같은 세션을 이어 간다
     scheduler.abortAll();
     if (stopped) return;
+    if (reason === SERVER_DISCONNECT) {
+      fatal(SERVER_DISCONNECT_MESSAGE);
+      return;
+    }
+    // 전송 끊김(transport close·ping timeout 등 — 서버 재시작·네트워크·덮개 닫힘)은 다시 붙는다
     logger.warn(`dodok-runner: 서버와 끊겼습니다(${reason}) — 도는 런을 멈췄습니다`);
     scheduleReconnect(`disconnect ${reason}`);
   });
@@ -164,20 +212,26 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
       emit.error("NOT_FOUND", `이 러너의 설정 파일에 없는 에이전트입니다(${start.deliver.agentId})`);
       return;
     }
-    const submitted = scheduler.submit(runId, start.providerSessionId, async (signal) => {
-      logger.info(`dodok-runner: 런 시작 ${runId}(${agent.id})`);
-      await runOnce(start, {
-        sdk: opts.sdk,
-        agent,
-        claudeConfigDir: config.claudeConfigDir,
-        baseEnv: opts.baseEnv ?? process.env,
-        costs,
-        signal,
-        emit,
-        ...(opts.closeGraceMs === undefined ? {} : { closeGraceMs: opts.closeGraceMs }),
-      });
-      logger.info(`dodok-runner: 런 끝 ${runId}(${agent.id})`);
-    });
+    const submitted = scheduler.submit(
+      runId,
+      start.providerSessionId,
+      async (signal) => {
+        logger.info(`dodok-runner: 런 시작 ${runId}(${agent.id})`);
+        await runOnce(start, {
+          sdk: opts.sdk,
+          agent,
+          claudeConfigDir: config.claudeConfigDir,
+          baseEnv: opts.baseEnv ?? process.env,
+          costs,
+          signal,
+          emit,
+          ...(opts.closeGraceMs === undefined ? {} : { closeGraceMs: opts.closeGraceMs }),
+        });
+        logger.info(`dodok-runner: 런 끝 ${runId}(${agent.id})`);
+      },
+      // 대기열에서 중지된 런 — 어댑터가 dispatch 뒤 추적하던 런을 놓게 final 로 닫는다(판정 R1)
+      () => emit.final(abortedFinal()),
+    );
     if ("busy" in submitted) {
       ack({ runId, admission: "dispatch" });
       emit.error("CONFLICT", "같은 세션의 런이 이미 돌고 있습니다");
@@ -197,11 +251,19 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
     get connected(): boolean {
       return socket.connected;
     },
-    stop(): void {
+    /** 도는 런에 interrupt 를 걸고, 그 런들이 final 을 낼 때까지(최대 stopWaitMs) 기다린 뒤 끊는다 */
+    async stop(): Promise<void> {
       stopped = true;
       if (retryTimer) clearTimeout(retryTimer);
       retryTimer = undefined;
       scheduler.abortAll();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        scheduler.idle(),
+        new Promise<void>((resolve) => (timer = setTimeout(resolve, opts.stopWaitMs ?? STOP_WAIT_MS))),
+      ]);
+      clearTimeout(timer);
+      if (socket.connected) await drained();
       socket.disconnect();
     },
   };

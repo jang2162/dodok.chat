@@ -35,6 +35,9 @@ type FakeServer = {
   errors: RunnerRunError[];
   sockets: ServerSocket[];
   helloResult: RunnerHelloResult;
+  /** n 번째(0부터) 핸드셰이크를 미들웨어에서 거절할 사유 — 없으면 토큰만 본다 */
+  reject?: (attempt: number) => string | undefined;
+  handshakes: number;
   close(): Promise<void>;
 };
 
@@ -49,12 +52,16 @@ async function startFakeServer(): Promise<FakeServer> {
     errors: [],
     sockets: [],
     helloResult: { ok: true, serverVersion: "test", conflicts: [] },
+    handshakes: 0,
     close: async () => {
       await io.close();
     },
   };
   const ns = io.of(RUNNER_NAMESPACE);
   ns.use((socket, next) => {
+    const attempt = server.handshakes++;
+    const reason = server.reject?.(attempt);
+    if (reason) return next(new Error(reason));
     next(socket.handshake.auth.token === TOKEN ? undefined : new Error("UNAUTHORIZED"));
   });
   ns.on("connection", (socket) => {
@@ -85,8 +92,16 @@ afterEach(async () => {
   for (const c of cleanups.splice(0).reverse()) await c();
 });
 
-async function setup(opts: { maxConcurrentRuns?: number; token?: string } = {}) {
+async function setup(
+  opts: {
+    maxConcurrentRuns?: number;
+    token?: string;
+    stopWaitMs?: number;
+    reject?: FakeServer["reject"];
+  } = {},
+) {
   const server = await startFakeServer();
+  server.reject = opts.reject;
   cleanups.push(() => server.close());
   const fake: FakeSdk = createFakeSdk();
   const logs: string[] = [];
@@ -116,6 +131,7 @@ async function setup(opts: { maxConcurrentRuns?: number; token?: string } = {}) 
     onFatal: (code) => fatal.push(code),
     backoff: { minMs: 20, maxMs: 50 },
     closeGraceMs: 30,
+    ...(opts.stopWaitMs === undefined ? {} : { stopWaitMs: opts.stopWaitMs }),
   });
   cleanups.push(() => conn.stop());
   return { server, fake, logs, fatal, conn };
@@ -149,7 +165,7 @@ describe("startRunnerConnection", () => {
   it("run.start → 가짜 query 대본 → 서버가 run.event·run.final 을 받는다", async () => {
     const { server, fake } = await setup();
     await waitFor(() => server.sockets.length === 1 && server.hellos.length === 1);
-    fake.script(script.init(), ...script.textTurn("msg_1", ["안녕", "하세요"]));
+    fake.script(script.init(), ...script.textTurn("msg_1", ["안녕 ", "하세요"]));
     const ack = await sendStart(server.sockets[0]!, runStart());
     expect(ack).toEqual({ runId: RUN_ID, admission: "dispatch" });
     await waitFor(() => server.finals.length === 1);
@@ -162,7 +178,7 @@ describe("startRunnerConnection", () => {
     expect(server.events.every((e) => e.runId === RUN_ID && e.event.runId === RUN_ID)).toBe(true);
     expect(server.finals[0]).toMatchObject({
       runId: RUN_ID,
-      text: "안녕하세요",
+      text: "안녕 하세요",
       costKind: "subscription_estimate",
     });
     expect(fake.calls[0]!.options.cwd).toBe(AGENT.workdir);
@@ -193,26 +209,48 @@ describe("startRunnerConnection", () => {
     expect(server.hellos).toHaveLength(1);
   });
 
-  it("서버 쪽에서 소켓을 끊으면 도는 런의 interrupt 가 불린다(Review Focus 1) — 그리고 다시 붙는다", async () => {
-    const { server, fake } = await setup();
+  it("전송이 끊기면(transport close) 도는 런의 interrupt 가 불린다(Review Focus 1) — 그리고 다시 붙는다", async () => {
+    const { server, fake, fatal } = await setup();
+    await waitFor(() => server.hellos.length === 1);
+    fake.script(script.messageStart("msg_1"), { waitInterrupt: [] }, { hang: true });
+    await sendStart(server.sockets[0]!, runStart());
+    await waitFor(() => fake.calls.length === 1);
+    // 엔진 소켓을 닫는다 — 서버 재시작·네트워크 끊김과 같은 클라이언트 사유(transport close)
+    server.sockets[0]!.conn.close();
+    await waitFor(() => fake.calls[0]!.interrupts === 1);
+    // 유예 뒤 close 까지 — CLI 가 남지 않는다
+    await waitFor(() => fake.calls[0]!.closes >= 1);
+    await waitFor(() => server.hellos.length === 2);
+    expect(fatal).toEqual([]);
+    // 끊긴 사이 낸 final 은 새 연결로 몰려 나가지 않는다(서버는 그 런을 ADAPTER_UNAVAILABLE 로 닫았다)
+    await new Promise((r) => setTimeout(r, 40));
+    expect(server.finals).toEqual([]);
+    expect(server.errors).toEqual([]);
+  });
+
+  it("서버가 끊으면(io server disconnect) 다시 붙지 않고 사유를 남긴 뒤 종료 코드 2 — 같은 토큰의 두 러너가 서로 밀어내지 않는다(리뷰 I2)", async () => {
+    const { server, fake, fatal, logs } = await setup();
     await waitFor(() => server.hellos.length === 1);
     fake.script(script.messageStart("msg_1"), { waitInterrupt: [] }, { hang: true });
     await sendStart(server.sockets[0]!, runStart());
     await waitFor(() => fake.calls.length === 1);
     server.sockets[0]!.disconnect(true);
-    await waitFor(() => fake.calls[0]!.interrupts === 1);
-    // 유예 뒤 close 까지 — CLI 가 남지 않는다
-    await waitFor(() => fake.calls[0]!.closes >= 1);
-    await waitFor(() => server.hellos.length === 2);
-    // 끊긴 사이 낸 이벤트는 새 연결로 몰려 나가지 않는다
-    expect(server.events.filter((e) => e.event.type === "RUN_ABORTED")).toEqual([]);
+    await waitFor(() => fatal.length === 1);
+    expect(fatal).toEqual([2]);
+    expect(fake.calls[0]!.interrupts).toBe(1);
+    expect(logs.join("\n")).toContain(
+      "서버가 이 러너 연결을 끊었습니다 — 같은 토큰으로 다른 러너가 붙었거나 토큰이 폐기됐습니다",
+    );
+    await new Promise((r) => setTimeout(r, 100));
+    expect(server.hellos).toHaveLength(1);
   });
 
   it("설정에 없는 agentId 의 run.start → run.error NOT_FOUND", async () => {
     const { server, fake } = await setup();
     await waitFor(() => server.hellos.length === 1);
     const ack = await sendStart(server.sockets[0]!, runStart({ agentId: "ghost" }));
-    expect(ack.runId).toBe(RUN_ID);
+    // drop 이면 어댑터가 런을 놓아 뒤이은 run.error 를 버린다 — 오류 카드가 사라진다(리뷰 M1)
+    expect(ack).toEqual({ runId: RUN_ID, admission: "dispatch" });
     await waitFor(() => server.errors.length === 1);
     expect(server.errors[0]).toMatchObject({ runId: RUN_ID, code: "NOT_FOUND" });
     expect(fake.calls).toEqual([]);
@@ -223,7 +261,10 @@ describe("startRunnerConnection", () => {
     await waitFor(() => server.hellos.length === 1);
     fake.script({ hang: true });
     await sendStart(server.sockets[0]!, runStart());
-    await sendStart(server.sockets[0]!, runStart({ runId: RUN_2 }));
+    expect(await sendStart(server.sockets[0]!, runStart({ runId: RUN_2 }))).toEqual({
+      runId: RUN_2,
+      admission: "dispatch",
+    });
     await waitFor(() => server.errors.length === 1);
     expect(server.errors[0]).toMatchObject({ runId: RUN_2, code: "CONFLICT" });
   });
@@ -240,7 +281,7 @@ describe("startRunnerConnection", () => {
     });
   });
 
-  it("run.abort → interrupt, 끝난 턴은 RUN_ABORTED 로 알린다", async () => {
+  it("run.abort → interrupt, 끝난 턴은 run.final aborted 로 알린다 — run.event 로 수명을 내지 않는다(판정 R1)", async () => {
     const { server, fake } = await setup();
     await waitFor(() => server.hellos.length === 1);
     fake.script(script.messageStart("msg_1"), {
@@ -249,17 +290,84 @@ describe("startRunnerConnection", () => {
     await sendStart(server.sockets[0]!, runStart());
     await waitFor(() => fake.calls.length === 1);
     server.sockets[0]!.emit("run.abort", { runId: RUN_ID });
-    await waitFor(() => server.events.some((e) => e.event.type === "RUN_ABORTED"));
+    await waitFor(() => server.finals.length === 1);
+    expect(server.finals[0]).toMatchObject({ runId: RUN_ID, text: "", stopReason: "aborted" });
     expect(fake.calls[0]!.interrupts).toBe(1);
+    expect(server.events.filter((e) => e.event.type.startsWith("RUN_"))).toEqual([]);
+    expect(server.errors).toEqual([]);
   });
 
-  it("틀린 토큰 — 거절되면 백오프로 다시 시도하고 로그에 토큰을 싣지 않는다", async () => {
+  it("대기열에서 중지된 런도 run.final aborted 로 닫는다 — CLI 는 띄우지 않는다", async () => {
+    const { server, fake } = await setup({ maxConcurrentRuns: 1 });
+    await waitFor(() => server.hellos.length === 1);
+    fake.script({ hang: true });
+    await sendStart(server.sockets[0]!, runStart());
+    await sendStart(server.sockets[0]!, runStart({ runId: RUN_2, sessionId: SESSION_2 }));
+    server.sockets[0]!.emit("run.abort", { runId: RUN_2 });
+    await waitFor(() => server.finals.length === 1);
+    expect(server.finals[0]).toEqual({
+      runId: RUN_2,
+      text: "",
+      stopReason: "aborted",
+      costKind: "subscription_estimate",
+    });
+    expect(fake.calls).toHaveLength(1);
+  });
+
+  it("틀린·폐기된 토큰(UNAUTHORIZED) — 사유(토큰 발급 안내)를 남기고 종료 코드 2, 다시 붙지 않는다(리뷰 I3)", async () => {
     const wrong = "drn_wrong_token_value_zzzzzzzzzzzzzzzzzzzzzzzzz";
     const { server, logs, fatal } = await setup({ token: wrong });
-    await waitFor(() => logs.filter((l) => /UNAUTHORIZED/.test(l)).length >= 2);
-    expect(server.hellos).toEqual([]);
-    expect(fatal).toEqual([]);
+    await waitFor(() => fatal.length === 1);
+    expect(fatal).toEqual([2]);
+    expect(logs.join("\n")).toMatch(/UNAUTHORIZED/);
+    expect(logs.join("\n")).toMatch(/새 토큰을 발급/);
     expect(logs.join("\n")).not.toContain(wrong);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(server.handshakes).toBe(1);
+    expect(server.hellos).toEqual([]);
+  });
+
+  it("RATE_LIMITED 는 끝내지 않고 백오프로 다시 시도한다 — 가드 차단은 1분이라 풀리면 붙는다", async () => {
+    const { server, logs, fatal } = await setup({
+      reject: (n) => (n < 2 ? "RATE_LIMITED" : undefined),
+    });
+    await waitFor(() => server.hellos.length === 1);
+    expect(fatal).toEqual([]);
+    expect(server.handshakes).toBe(3);
+    expect(logs.filter((l) => /RATE_LIMITED/.test(l)).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("stop — 도는 런에 interrupt 를 걸고 그 런이 final 을 낼 때까지 기다린 뒤 끊는다(리뷰 M5)", async () => {
+    const { server, fake, conn } = await setup();
+    await waitFor(() => server.hellos.length === 1);
+    // interrupt 뒤 턴을 닫는 데 200ms 걸리는 CLI
+    fake.script(
+      script.messageStart("msg_1"),
+      { waitInterrupt: [] },
+      { sleep: 200 },
+      script.errorResult("error_during_execution", ["x"]),
+    );
+    await sendStart(server.sockets[0]!, runStart());
+    await waitFor(() => fake.calls.length === 1);
+    await conn.stop();
+    expect(fake.calls[0]!.interrupts).toBe(1);
+    // 끊기 전에 서버가 이미 받았다 — 기다리지 않았으면 끊긴 뒤라 버려진다
+    expect(server.finals).toHaveLength(1);
+    expect(server.finals[0]).toMatchObject({ runId: RUN_ID, stopReason: "aborted" });
+    expect(conn.connected).toBe(false);
+  });
+
+  it("stop — 런이 끝나지 않아도 기다림은 상한까지만", async () => {
+    const { server, fake, conn } = await setup({ stopWaitMs: 60 });
+    await waitFor(() => server.hellos.length === 1);
+    // closeGraceMs(30) 뒤 close 에도 끝나지 않는 일 — hang 은 close 로 풀리므로 대신 run 을 묶어 둔다
+    fake.script(script.messageStart("msg_1"), { hang: true });
+    await sendStart(server.sockets[0]!, runStart());
+    await waitFor(() => fake.calls.length === 1);
+    const t0 = Date.now();
+    await conn.stop();
+    expect(Date.now() - t0).toBeLessThan(1000);
+    expect(conn.connected).toBe(false);
   });
 
   it("stop — 다시 붙지 않는다", async () => {

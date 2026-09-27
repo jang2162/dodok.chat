@@ -1,9 +1,8 @@
 import { homedir } from "node:os";
-import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { computeBundleSha256 } from "./bundle-hash";
-import { loadRunnerConfig, RunnerConfigError } from "./config";
-import { startRunnerConnection, type RunnerLogger } from "./connection";
+import { expandHome, loadRunnerConfig, RunnerConfigError } from "./config";
+import { startRunnerConnection, STOP_WAIT_MS, type RunnerLogger } from "./connection";
 import { realSdk } from "./sdk";
 
 // 빌드(scripts/build.mjs)가 채운다. tsx 로 소스를 돌리면 dev 로 보인다
@@ -51,9 +50,7 @@ function main(): void {
   }
 
   const home = process.env.HOME || homedir();
-  const configPath = args.config
-    ? resolve(args.config.startsWith("~/") ? resolve(home, args.config.slice(2)) : args.config)
-    : resolve(home, ".dodok-runner/config.json");
+  const configPath = expandHome(args.config ?? "~/.dodok-runner/config.json", home);
 
   let loaded;
   try {
@@ -91,14 +88,18 @@ function main(): void {
     onFatal: (code) => process.exit(code),
   });
 
+  let stopping = false;
   const shutdown = (signal: string) => {
-    logger.info(`dodok-runner: ${signal} — 도는 런을 멈추고 끝냅니다`);
-    // stop 이 도는 런마다 interrupt 를 건다. 러너가 끝나면 CLI 의 stdin 이 닫혀 CLI 도 끝난다
-    connection.stop();
-    setTimeout(() => process.exit(0), 200);
+    // 두 번째 신호는 기다리지 않고 끝낸다
+    if (stopping) process.exit(130);
+    stopping = true;
+    logger.info(`dodok-runner: ${signal} — 도는 런을 멈추고 끝냅니다(최대 ${STOP_WAIT_MS / 1000}초)`);
+    // stop 이 도는 런마다 interrupt 를 걸고 그 런이 final 을 낼 때까지 기다린다(리뷰 M5). 러너가 끝나면 CLI 의
+    // stdin 이 닫혀 CLI 도 끝난다 — CLI 가 띄운 도구 손자 프로세스가 남는지는 실연에서 본다
+    void connection.stop().finally(() => process.exit(0));
   };
-  process.once("SIGINT", () => shutdown("SIGINT"));
-  process.once("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
 }
 
 main();

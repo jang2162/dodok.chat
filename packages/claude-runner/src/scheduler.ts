@@ -3,11 +3,18 @@
 
 export type Job = (signal: AbortSignal) => Promise<void>;
 
-type Entry = { runId: string; sessionId: string; job: Job; controller: AbortController };
+type Entry = {
+  runId: string;
+  sessionId: string;
+  job: Job;
+  controller: AbortController;
+  onDropped?: () => void;
+};
 
 export function createScheduler(max: number) {
   const running = new Map<string, Entry>();
   const queue: Entry[] = [];
+  let idleWaiters: Array<() => void> = [];
 
   function start(entry: Entry): void {
     running.set(entry.runId, entry);
@@ -24,6 +31,11 @@ export function createScheduler(max: number) {
         running.delete(entry.runId);
         const next = queue.shift();
         if (next) start(next);
+        else if (running.size === 0) {
+          const waiters = idleWaiters;
+          idleWaiters = [];
+          for (const w of waiters) w();
+        }
       });
   }
 
@@ -31,9 +43,15 @@ export function createScheduler(max: number) {
     [...running.values(), ...queue].some((e) => e.sessionId === sessionId);
 
   return {
-    submit(runId: string, sessionId: string, job: Job): { queuedPosition?: number } | { busy: true } {
+    /** onDropped — 시작하기 전에 대기열에서 빠졌을 때(abort·abortAll). 도는 런의 끝은 일이 스스로 알린다 */
+    submit(
+      runId: string,
+      sessionId: string,
+      job: Job,
+      onDropped?: () => void,
+    ): { queuedPosition?: number } | { busy: true } {
       if (sessionTaken(sessionId)) return { busy: true };
-      const entry: Entry = { runId, sessionId, job, controller: new AbortController() };
+      const entry: Entry = { runId, sessionId, job, controller: new AbortController(), onDropped };
       if (running.size < max) {
         start(entry);
         return {};
@@ -44,12 +62,17 @@ export function createScheduler(max: number) {
     /** 도는 런은 signal 로 멈추게 하고(interrupt → 5초 뒤 close 는 런이 한다), 기다리는 런은 시작하지 않고 뺀다 */
     abort(runId: string): void {
       const index = queue.findIndex((e) => e.runId === runId);
-      if (index >= 0) queue.splice(index, 1);
+      if (index >= 0) queue.splice(index, 1)[0]?.onDropped?.();
       running.get(runId)?.controller.abort();
     },
     abortAll(): void {
-      queue.length = 0;
+      for (const e of queue.splice(0)) e.onDropped?.();
       for (const e of running.values()) e.controller.abort();
+    },
+    /** 도는 런이 하나도 없으면 풀린다 — 러너를 끝낼 때 중지한 런이 final 을 낼 때까지 기다린다 */
+    idle(): Promise<void> {
+      if (running.size === 0) return Promise.resolve();
+      return new Promise((resolve) => idleWaiters.push(resolve));
     },
   };
 }

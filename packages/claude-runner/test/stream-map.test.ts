@@ -1,12 +1,12 @@
 import { RunEventBodySchema } from "@dodok/shared";
 import { describe, expect, it } from "vitest";
-import { createPathMasker } from "../src/mask";
+import { createPathMasker, type PathMasker } from "../src/mask";
 import { createStreamMapper } from "../src/stream-map";
 import { script, sdkMsg } from "./helpers/fake-query";
 
 const RUN = "0192f000-0000-7000-8000-000000000001";
 
-function mapper(clock = { t: 1000 }, mask?: (s: string) => string) {
+function mapper(clock = { t: 1000 }, mask?: PathMasker) {
   return createStreamMapper(() => clock.t, { runId: RUN, mask });
 }
 
@@ -145,11 +145,31 @@ describe("createStreamMapper — ADR 0007 6.4 대응표", () => {
     });
   });
 
-  it("interrupt 로 끝난 턴의 error_during_execution → RUN_ABORTED { by: user }", () => {
+  it("interrupt 로 끝난 턴의 error_during_execution → final { text 빈 글, stopReason aborted } — 사용량·누적 비용도 싣는다(판정 R1)", () => {
     const m = mapper();
     m.markInterrupted();
-    const items = m.map(script.errorResult("error_during_execution", ["[ede_diagnostic] result_type=user"]));
-    expect(items).toEqual([{ event: { type: "RUN_ABORTED", runId: RUN, by: "user" } }]);
+    const items = m.map(
+      script.errorResult("error_during_execution", ["[ede_diagnostic] result_type=user"], {
+        total_cost_usd: 0.07,
+        usage: {
+          input_tokens: 4,
+          output_tokens: 2,
+          cache_creation_input_tokens: 10,
+          cache_read_input_tokens: 0,
+        },
+      }),
+    );
+    expect(items).toEqual([
+      {
+        final: {
+          text: "",
+          stopReason: "aborted",
+          usage: { inputTokens: 14, outputTokens: 2 },
+          totalCostUsd: 0.07,
+        },
+      },
+    ]);
+    expect(items.some((i) => i.event)).toBe(false);
   });
 
   it("interrupt 없이 error_* → error(INTERNAL, errors 를 이어 붙임)", () => {
@@ -233,5 +253,87 @@ describe("createPathMasker", () => {
 describe("createStreamMapper — resume 직후 빈 result", () => {
   it("num_turns 0 인 success 는 런의 끝이 아니다 — 아무것도 내지 않는다", () => {
     expect(mapper().map(script.success("", { num_turns: 0 }))).toEqual([]);
+  });
+});
+
+describe("createStreamMapper — 답 글의 호스트 경로 가림(리뷰 I4)", () => {
+  const ROOT = "/home/u/src/repo";
+  const textOf = (items: ReturnType<ReturnType<typeof mapper>["map"]>) =>
+    items.map((i) => (i.event?.type === "TEXT_MESSAGE_CONTENT" ? i.event.delta : "")).join("");
+
+  function stream(chunks: string[]) {
+    const m = mapper({ t: 0 }, createPathMasker([ROOT]));
+    const items = [
+      script.messageStart("msg_1"),
+      script.blockStart(0, { type: "text", text: "" }),
+      ...chunks.map((c) => script.textDelta(0, c)),
+      script.blockStop(0),
+      script.messageStop(),
+    ].flatMap((x) => m.map(x));
+    return items;
+  }
+
+  it("델타 둘에 걸친 경로도 가린다 — 마지막 공백 뒤 꼬리를 쥐었다가 이어 붙여 가린다", () => {
+    const items = stream(["파일은 /home/u/sr", "c/repo/a.ts 와 /Users/x/.aw", "s/credentials 입니다"]);
+    const text = textOf(items);
+    expect(text).toBe("파일은 a.ts 와 <작업 디렉터리 밖> 입니다");
+    for (const i of items) {
+      if (i.event?.type === "TEXT_MESSAGE_CONTENT") {
+        expect(i.event.delta).not.toMatch(/\/home|\/Users|\.aw|credentials/);
+        expect(RunEventBodySchema.safeParse(i.event).success).toBe(true);
+      }
+    }
+    expect(items.at(-1)?.event?.type).toBe("TEXT_MESSAGE_END");
+  });
+
+  it("경로로 끝나는 메시지 — 쥔 꼬리를 블록 끝에서 가려 내보낸 뒤 END", () => {
+    const items = stream(["다 고쳤습니다: /home/u/src/repo/src/", "main.ts"]);
+    expect(textOf(items)).toBe("다 고쳤습니다: src/main.ts");
+    const types = items.map((i) => i.event?.type);
+    expect(types.at(-1)).toBe("TEXT_MESSAGE_END");
+    expect(types.at(-2)).toBe("TEXT_MESSAGE_CONTENT");
+  });
+
+  it("공백 없는 글이 이어지면 쥐었다가 블록 끝에 한 번에 낸다", () => {
+    const items = stream(["abc", "def"]);
+    expect(items.filter((i) => i.event?.type === "TEXT_MESSAGE_CONTENT")).toHaveLength(1);
+    expect(textOf(items)).toBe("abcdef");
+  });
+
+  it("final.text 는 전체를 가린다", () => {
+    const m = mapper({ t: 0 }, createPathMasker([ROOT]));
+    const [item] = m.map(script.success("/home/u/src/repo/a.ts 와\n/etc/passwd 를 봤습니다"));
+    expect(item?.final?.text).toBe("a.ts 와\n<작업 디렉터리 밖> 를 봤습니다");
+  });
+
+  it("객체 모양 도구 결과도 stringify 전에 가린다 — 줄바꿈 이스케이프 뒤 경로가 새지 않는다", () => {
+    const m = mapper({ t: 0 }, createPathMasker([ROOT]));
+    const [item] = m.map(
+      script.toolResult("toolu_o", {
+        stdout: "ok\n/home/u/.aws/credentials",
+        file_path: "/home/u/My Docs/plan.md",
+      }),
+    );
+    const event = item?.event;
+    expect(event?.type === "TOOL_CALL_RESULT" && event.content).toBe(
+      JSON.stringify({ stdout: "ok\n<작업 디렉터리 밖>", file_path: "<작업 디렉터리 밖>" }),
+    );
+  });
+
+  it("여러 줄 인자(JSON 원문의 \\n 뒤 경로)도 가린다", () => {
+    const m = mapper({ t: 0 }, createPathMasker([ROOT]));
+    m.map(script.blockStart(0, { type: "tool_use", id: "toolu_w", name: "Write", input: {} }));
+    m.map(
+      script.jsonDelta(
+        0,
+        JSON.stringify({ file_path: `${ROOT}/a.md`, content: "see\n/home/u/.aws/credentials\n" }),
+      ),
+    );
+    const [args] = m.map(script.blockStop(0));
+    const event = args?.event;
+    expect(event?.type === "TOOL_CALL_ARGS" && JSON.parse(event.delta)).toEqual({
+      file_path: "a.md",
+      content: "see\n<작업 디렉터리 밖>\n",
+    });
   });
 });
