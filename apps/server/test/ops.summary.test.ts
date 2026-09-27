@@ -240,7 +240,7 @@ describe("runsSummary usage", () => {
     const s = summary(1);
     expect(OpsRunsSummary.parse(s)).toEqual(s);
     expect(row(s.byAgent, coder)).toMatchObject({ costEstimated: true });
-    expect(row(s.byAgent, coder).costUsd).toBeCloseTo(0.3);
+    expect(row(s.byAgent, coder)?.costUsd).toBeCloseTo(0.3);
     expect(row(s.byAgent, writer)).toMatchObject({ costUsd: 0.3, costEstimated: false });
     expect(row(s.byChannel, general)).toMatchObject({ costEstimated: true });
     expect(row(s.byChannel, random)).toMatchObject({ costUsd: 0.3, costEstimated: false });
