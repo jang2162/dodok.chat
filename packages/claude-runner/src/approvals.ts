@@ -76,19 +76,36 @@ export function elide(text: string, max: number): string {
   return head + elisionMark(omitted) + tail;
 }
 
-/** 승인 카드의 요약. Bash 는 명령, 파일 도구는 작업 디렉터리 상대 경로, 그 밖은 입력 JSON 200자 — 호스트 경로는 가리고, 길면 가운데를 줄인다 */
+// 카드에서 글을 숨기거나 뒤집는 글자 — 제어 문자(줄바꿈·탭·CR·ESC 등), 양방향 서식(U+061C·200E·200F·202A–202E·2066–2069),
+// 줄·문단 구분자(U+2028·2029). 줄바꿈 수십 개로 꼬리를 인자 상자 밖으로 밀거나 U+202E 로 꼬리를 뒤집어 보이게 할 수 있다(N1)
+const HIDING_CHARS = /[\p{Cc}\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069\u2028\u2029]/gu;
+const NAMED_ESCAPES: Record<string, string> = { "\n": "⏎", "\r": "\\r", "\t": "\\t" };
+
+/** 숨기는 글자를 보이게 바꾼다 — 줄바꿈은 ⏎ 로 한 줄에 접고, 나머지는 `\r`·`\t`·`\u{202E}` 꼴 */
+function revealHidden(text: string): string {
+  return text.replace(
+    HIDING_CHARS,
+    (ch) => NAMED_ESCAPES[ch] ?? `\\u{${ch.codePointAt(0)!.toString(16).toUpperCase()}}`,
+  );
+}
+
+/**
+ * 승인 카드의 요약. Bash 는 명령, 파일 도구는 작업 디렉터리 상대 경로, 그 밖은 입력 JSON 200자 — 호스트 경로는 가리고,
+ * 숨기는 글자를 보이게 바꾼 뒤(revealHidden), 길면 가운데를 줄인다
+ */
 export function summarizeToolInput(toolName: string, input: unknown, workdir: string): string {
   const mask = createPathMasker(workdirRoots(workdir));
   const record = input !== null && typeof input === "object" ? (input as Record<string, unknown>) : {};
   const pathKey = FILE_TOOL_PATH_KEY[toolName];
   let summary: string;
   if (toolName === "Bash" && typeof record.command === "string") {
-    summary = mask(record.command);
+    summary = revealHidden(mask(record.command));
   } else if (pathKey !== undefined && typeof record[pathKey] === "string") {
     // 상대 경로는 작업 디렉터리에 붙여 본다 — `../../etc/hosts` 도 밖으로 가려진다
-    summary = mask.path(resolve(workdir, record[pathKey]));
+    summary = revealHidden(mask.path(resolve(workdir, record[pathKey])));
   } else {
-    summary = elide(mask.json(JSON.stringify(input) ?? "null"), JSON_SUMMARY_MAX);
+    // JSON.stringify 는 양방향 서식·U+2028 을 이스케이프하지 않는다
+    summary = elide(revealHidden(mask.json(JSON.stringify(input) ?? "null")), JSON_SUMMARY_MAX);
   }
   return elide(summary, SUMMARY_MAX);
 }
