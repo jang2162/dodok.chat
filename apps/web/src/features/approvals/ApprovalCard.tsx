@@ -57,8 +57,12 @@ const LOOK: Record<ApprovalSeverity, { Icon: LucideIcon; label: string; tone: st
   critical: { Icon: ShieldAlertIcon, label: "위험", tone: "text-destructive", bar: "bg-destructive" },
 };
 
-/** Gateway 가 긴 인자를 자를 때 남기는 표시(설계 3.1) */
-const TRUNCATED = /\[\+\d+ chars hidden\]/;
+/** 긴 인자를 줄였다는 표시 — Gateway 의 `[+N chars hidden]`(설계 3.1)과 러너의 `…(가운데 N자 생략)…`(러너 approvals `elide`) */
+const TRUNCATED = /\[\+\d+ chars hidden\]|…\(가운데 \d+자 생략\)…/;
+
+function TruncatedNote({ args }: { args: string }) {
+  return TRUNCATED.test(args) ? <p className="mt-1 text-xs text-muted-foreground">잘렸습니다.</p> : null;
+}
 
 /**
  * `approval.resolve` ack 실패 문구(설계 4.4 표·5.3). wire 오류는 REST 전역 토스트 밖이라 부르는 쪽이 토스트한다.
@@ -91,7 +95,7 @@ export function resolveErrorMessage(e: unknown, kind?: ApprovalKind): string {
  * 클라이언트 시계로 0 이 되면 「만료됨」으로 보이되 서버 사실이 오면 그쪽이 이긴다(설계 5.5).
  * 결정은 admin 이상의 몫이다(팀 스펙 2장) — member 에게는 버튼 대신 「관리자가 결정합니다」.
  * 도구 승인(`kind: "tool"`, 러너 스펙 6장·7장)은 제목이 도구 이름이고 `detail` 이 요약(Bash 명령·작업 디렉터리 상대 경로 등)이다 —
- * 짧은 한 줄이라 접지 않고 코드 글꼴로 바로 보인다
+ * 짧은 한 줄이라 접지 않고 코드 글꼴로 바로 보인다. 러너가 이미 앞·뒤를 남겨 줄였으므로 웹은 더 자르지 않는다 — 꼬리가 대개 위험한 부분이다
  */
 export function ApprovalCard({
   approvalId,
@@ -184,9 +188,12 @@ export function ApprovalCard({
 
           {args &&
             (tool ? (
-              <code className="block rounded bg-muted px-2 py-1.5 font-mono text-xs break-all whitespace-pre-wrap">
-                {args}
-              </code>
+              <div>
+                <code className="block rounded bg-muted px-2 py-1.5 font-mono text-xs break-all whitespace-pre-wrap">
+                  {args}
+                </code>
+                <TruncatedNote args={args} />
+              </div>
             ) : (
               <Arguments args={args} />
             ))}
@@ -231,7 +238,7 @@ export function ApprovalCard({
   );
 }
 
-/** 툴 인자는 접힘이 기본(설계 5.2·5.3). Gateway 가 자른 표시가 있으면 잘렸다고 알린다 */
+/** 툴 인자는 접힘이 기본(설계 5.2·5.3). 자른 표시가 있으면 잘렸다고 알린다 */
 function Arguments({ args }: { args: string }) {
   const [open, setOpen] = useState(false);
   return (
@@ -244,7 +251,7 @@ function Arguments({ args }: { args: string }) {
           <pre className="mt-1 max-h-48 overflow-auto rounded bg-muted px-2 py-1.5 text-xs whitespace-pre-wrap">
             {args}
           </pre>
-          {TRUNCATED.test(args) && <p className="mt-1 text-xs text-muted-foreground">잘렸습니다.</p>}
+          <TruncatedNote args={args} />
         </>
       )}
     </div>

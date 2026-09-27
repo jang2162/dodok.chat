@@ -12,7 +12,13 @@ import {
   roleAtLeast,
   TeamRole as TeamRoleSchema,
 } from "@dodok/shared";
-import { notifyManager, queryOptions, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  notifyManager,
+  type QueryClient,
+  queryOptions,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useCallback, useSyncExternalStore } from "react";
 import { api } from "./http";
 
@@ -179,10 +185,26 @@ export const usePeople = () =>
     queryFn: async () => (await api<{ people: Person[] }>("GET", "/people")).people,
     meta: { silent: true },
   });
+/**
+ * `GET /adapter/status` 한 번을 OpenClaw 줄(`qk.adapter`)·러너 줄(`qk.runnerAdapter`)이 나눠 쓴다 — 둘이 함께 불리면(운영 화면 진입,
+ * `adapter` 앞머리 무효화) 진행 중인 요청 하나를 기다린다. 끝난 응답은 들고 있지 않는다 — 다음 부름은 새로 받는다.
+ * QueryClient 마다 따로 둔다(테스트·로그아웃 뒤 새 클라이언트가 옛 요청을 물려받지 않게)
+ */
+const adapterListInFlight = new WeakMap<QueryClient, Promise<AdapterStatusList>>();
+function fetchAdapterList(client: QueryClient): Promise<AdapterStatusList> {
+  let pending = adapterListInFlight.get(client);
+  if (!pending) {
+    pending = api<AdapterStatusList>("GET", "/adapter/status").finally(() =>
+      adapterListInFlight.delete(client),
+    );
+    adapterListInFlight.set(client, pending);
+  }
+  return pending;
+}
 export const useAdapterStatus = () =>
   useQuery({
     queryKey: qk.adapter,
-    queryFn: async () => openclawAdapterStatus(await api<AdapterStatusList>("GET", "/adapter/status")),
+    queryFn: async ({ client }) => openclawAdapterStatus(await fetchAdapterList(client)),
   });
 /**
  * 러너 줄(러너 스펙 5장 「운영 화면 연결 줄」) — 같은 목록 응답에서 claude 줄만. wire `adapter.status`(claude)가 곧바로 덮는다.
@@ -191,7 +213,7 @@ export const useAdapterStatus = () =>
 export const useRunnerAdapterStatus = ({ poll }: { poll?: number } = {}) =>
   useQuery({
     queryKey: qk.runnerAdapter,
-    queryFn: async () => runnerAdapterStatus(await api<AdapterStatusList>("GET", "/adapter/status")),
+    queryFn: async ({ client }) => runnerAdapterStatus(await fetchAdapterList(client)),
     refetchInterval: poll ?? false,
     meta: { silent: true },
   });

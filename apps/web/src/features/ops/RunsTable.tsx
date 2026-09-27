@@ -17,22 +17,53 @@ const COUNTS: Column[] = [
   { name: "차단", value: (r) => NUM.format(r.blocked) },
 ];
 const UNMEASURED = "측정 불가";
+const TAG = "ml-1 text-xs text-muted-foreground";
+
+/** 믿는 런만 더한 부분합이면(OpenClaw 런이 섞인 채널 등) 「런 m/n개만」 — 더한 런 수는 서버 measuredRuns */
+function partialTag(r: OpsRunsRow) {
+  return r.measuredRuns !== undefined && r.measuredRuns < r.runs
+    ? `런 ${r.measuredRuns}/${r.runs}개만`
+    : undefined;
+}
+const isPartial = (r: OpsRunsRow) => partialTag(r) !== undefined;
+
+/** 값 뒤 꼬리표들 */
+function Measured({ value, tags }: { value: string; tags: (string | undefined)[] }) {
+  return (
+    <>
+      {value}
+      {tags
+        .filter((t) => t !== undefined)
+        .map((t) => (
+          <span key={t} className={TAG}>
+            {t}
+          </span>
+        ))}
+    </>
+  );
+}
+
 /**
  * usage 를 믿는 제공자가 있을 때만(스펙 3.3). 행에 값이 없으면 믿는 제공자의 런이 없는 행(OpenClaw 에이전트 등) — 「측정 불가」.
- * 구독 로그인의 금액은 공시 단가 환산값이라 「환산값」 꼬리표를 붙인다(러너 스펙 7장)
+ * 믿는 런만 더한 부분합이면 「런 m/n개만」. 구독 로그인의 금액은 공시 단가 환산값이라(러너 스펙 7장) 그런 런이 하나라도 든 금액에
+ * 「환산 포함」 — 같은 합에 api 로 청구된 몫이 섞일 수 있어 「환산값」이라 부르지 않는다
  */
 const USAGE: Column[] = [
-  { name: "토큰", value: (r) => (r.tokens === undefined ? UNMEASURED : NUM.format(r.tokens)) },
+  {
+    name: "토큰",
+    value: (r) =>
+      r.tokens === undefined ? UNMEASURED : <Measured value={NUM.format(r.tokens)} tags={[partialTag(r)]} />,
+  },
   {
     name: "금액",
     value: (r) =>
       r.costUsd === undefined ? (
         UNMEASURED
       ) : (
-        <>
-          {USD.format(r.costUsd)}
-          {r.costEstimated && <span className="ml-1 text-xs text-muted-foreground">환산값</span>}
-        </>
+        <Measured
+          value={USD.format(r.costUsd)}
+          tags={[r.costEstimated ? "환산 포함" : undefined, partialTag(r)]}
+        />
       ),
   },
 ];
@@ -157,7 +188,9 @@ export function RunsTable() {
   const data = runs.data;
   // 믿는 제공자가 하나라도 있으면 열을 둔다 — 그 제공자의 런이 없는 행은 「측정 불가」
   const usageTrusted = (data?.usageTrustedProviders.length ?? 0) > 0;
-  const estimated = data !== undefined && [...data.byChannel, ...data.byAgent].some((r) => r.costEstimated);
+  const rows = data ? [...data.byChannel, ...data.byAgent] : [];
+  const estimated = rows.some((r) => r.costEstimated);
+  const partial = usageTrusted && rows.some(isPartial);
   const columns = usageTrusted ? [...COUNTS, ...USAGE] : COUNTS;
   return (
     <Section title="런">
@@ -186,7 +219,14 @@ export function RunsTable() {
           )}
           {estimated && (
             <p className="text-xs text-muted-foreground">
-              환산값은 구독 로그인으로 돈 런을 공시 단가로 환산한 값이며 청구액이 아닙니다.
+              「환산 포함」 금액에는 구독 로그인으로 돈 런을 공시 단가로 환산한 몫이 들어 있습니다 — 그 몫은
+              청구액이 아닙니다.
+            </p>
+          )}
+          {partial && (
+            <p className="text-xs text-muted-foreground">
+              「런 m/n개만」은 사용량을 믿을 수 있는 런만 더한 부분합입니다 — 나머지 런의 토큰·금액은 측정
+              불가입니다.
             </p>
           )}
         </>

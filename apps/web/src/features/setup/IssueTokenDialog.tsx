@@ -3,7 +3,7 @@ import type { QueryKey } from "@tanstack/react-query";
 import { KeyRoundIcon } from "lucide-react";
 import { type FormEvent, type ReactNode, type RefObject, useEffect, useId, useRef, useState } from "react";
 import { qk } from "@/api/queries";
-import { formError as serverFormError } from "@/api/formErrors";
+import { ApiRequestError } from "@/api/http";
 import { useLeaveGuard } from "@/hooks/useLeaveGuard";
 import { Button } from "@/ui/button";
 import {
@@ -23,6 +23,17 @@ import { CopyBlock } from "./sections";
 type Issued = { token: string; record: { label: string } };
 
 /**
+ * 폼에 그리는 발급 실패(스펙 7장 「서버 오류 문구를 그대로 보이지 않는다」) — 서버 문구 대신 고정 문구.
+ * `VALIDATION` 은 라벨 규칙(trim 뒤 1~60자, 대화상자별 금지 라벨은 `reservedLabel`), 그 밖(네트워크·5xx)은 undefined — 전역 토스트가 알린다
+ */
+function issueError(e: unknown, label: string, reservedLabel?: (label: string) => string | undefined) {
+  if (!(e instanceof ApiRequestError)) return undefined;
+  if (e.code === "VALIDATION") return reservedLabel?.(label) ?? "라벨은 1~60자로 적어 주세요.";
+  if (e.code === "CONFLICT") return "토큰을 발급하지 못했습니다. 다시 시도해 주세요.";
+  return undefined;
+}
+
+/**
  * 「새 토큰 발급」(스펙 「연결 페이지」 교체 흐름 1) — 라벨 → 발급 → 원문과 설정 조각을 한 번 보인다. 브리지·러너 토큰이 함께 쓴다.
  * 원문이 보이는 동안은 「복사했습니다」로만 닫힌다(Esc·바깥 클릭·X 없음) — 복사하지 못한 채 닫히면 다시 볼 길이 없다.
  * 원문은 이 컴포넌트 상태에만 있고 닫으면 버린다 — 쿼리·뮤테이션 캐시에는 들어가지 않는다(`useIssueToken`).
@@ -37,6 +48,7 @@ export function IssueDialog<T extends Issued>({
   path,
   listKey,
   config,
+  reservedLabel,
 }: {
   triggerRef?: RefObject<HTMLButtonElement | null>;
   triggerLabel: string;
@@ -48,6 +60,8 @@ export function IssueDialog<T extends Issued>({
   listKey: QueryKey;
   /** 원문 아래에 그릴 설정 조각 */
   config: (issued: T) => ReactNode;
+  /** 서버가 VALIDATION 으로 막는 라벨이면 그 까닭 */
+  reservedLabel?: (label: string) => string | undefined;
 }) {
   const [open, setOpen] = useState(false);
   const [label, setLabel] = useState("");
@@ -90,7 +104,7 @@ export function IssueDialog<T extends Issued>({
     e.preventDefault();
     if (!trimmed || issue.isPending) return;
     setError(undefined);
-    issue.mutate(trimmed, { onError: (err) => setError(serverFormError(err)) });
+    issue.mutate(trimmed, { onError: (err) => setError(issueError(err, trimmed, reservedLabel)) });
   }
 
   return (
@@ -186,6 +200,10 @@ export function IssueTokenDialog({ triggerRef }: { triggerRef?: RefObject<HTMLBu
       description="알아볼 라벨을 붙입니다(예: Gateway 호스트 이름). 원문은 발급 직후 한 번만 보입니다."
       path="/setup/bridge-tokens"
       listKey={qk.bridgeTokens}
+      reservedLabel={(label) =>
+        // 서버 issueBridgeToken 의 ENV_TOKEN_LABEL — 이어받은 토큰을 가르는 표지다
+        label.toLowerCase() === "env" ? "env 는 .env 에서 이어받은 토큰에만 쓰는 라벨입니다" : undefined
+      }
       config={(issued) => (
         <div className="grid min-w-0 gap-1.5">
           <p className="text-sm font-medium">플러그인 설정</p>

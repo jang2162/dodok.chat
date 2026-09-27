@@ -163,6 +163,12 @@ describe("러너 토큰", () => {
     expect(row).toHaveTextContent(`drn_${RAW_RUNNER_TOKEN.slice(4, 10)}…`);
     expect(document.body).not.toHaveTextContent(RAW_RUNNER_TOKEN);
     expect(cacheDump(qc)).not.toContain(RAW_RUNNER_TOKEN);
+
+    // 다시 열면 라벨 입력부터 — 옛 원문이 되살아나지 않는다(브리지 대화상자와 같은 본체)
+    await userEvent.click(within(block).getByRole("button", { name: "새 러너 토큰 발급" }));
+    const again = await screen.findByRole("dialog");
+    expect(within(again).getByLabelText("라벨")).toHaveValue("");
+    expect(document.body).not.toHaveTextContent(RAW_RUNNER_TOKEN);
   });
 
   it("폐기 — 확인을 거치고, 연결 중이면 그 러너가 끊긴다고 알린다", async () => {

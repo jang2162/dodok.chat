@@ -141,8 +141,8 @@ describe("상태 카드 — 실시간(브라우저 검증 D1)", () => {
     const server = stubOpsServer();
     const { fake } = renderLive();
     expect(await statusRow("Gateway")).toHaveTextContent("연결됨");
-    // 연결 줄(OpenClaw)과 러너 줄이 같은 목록을 따로 받는다
-    await waitFor(() => expect(server.count("GET", "/api/v1/adapter/status")).toBe(2));
+    // 연결 줄(OpenClaw)과 러너 줄은 같은 목록 응답 하나를 나눠 쓴다(리뷰 M4)
+    await waitFor(() => expect(server.count("GET", "/api/v1/adapter/status")).toBe(1));
     await waitFor(() => expect(server.count("GET", "/api/v1/ops/status")).toBe(1));
 
     act(() =>
@@ -163,11 +163,16 @@ describe("상태 카드 — 실시간(브라우저 검증 D1)", () => {
   });
 
   it("Claude 러너 줄 — 붙은 수 / 토큰 수, wire adapter.status(claude)가 바로 고친다", async () => {
-    stubOpsServer({ adapter: withRunners(1, 2) });
-    const { fake } = renderLive();
+    const server = stubOpsServer({ adapter: withRunners(1, 2) });
+    const { fake, qc } = renderLive();
     await waitFor(async () =>
       expect(await statusRow("Claude 러너")).toHaveTextContent("1대 붙음 / 토큰 2개"),
     );
+    expect(await statusRow("Gateway")).toHaveTextContent("연결됨");
+    expect(server.count("GET", "/api/v1/adapter/status")).toBe(1);
+    // 재연결 때처럼 `adapter` 앞머리를 무효화하면 두 줄이 함께 다시 받되 요청은 하나
+    await act(() => qc.invalidateQueries({ queryKey: qk.adapter }));
+    expect(server.count("GET", "/api/v1/adapter/status")).toBe(2);
     act(() =>
       fake.serverEmit("adapter.status", { provider: "claude", runners: { connected: 2, tokens: 2 } }),
     );
@@ -300,15 +305,29 @@ describe("런 표", () => {
     expect(within(runs).queryByText(/측정 불가/)).not.toBeInTheDocument();
   });
 
-  it("믿는 제공자(claude)의 에이전트 행은 금액을 — 구독 환산이면 「환산값」, 그 밖의 행은 「측정 불가」", async () => {
+  it("믿는 제공자(claude)의 에이전트 행은 금액을 — 구독 환산이 들었으면 「환산 포함」, 그 밖의 행은 「측정 불가」", async () => {
     stubOpsServer({
       runs: (days) =>
         runsOf({
           days,
           usageTrustedProviders: ["claude"],
           byAgent: [
-            rowOf(21, { name: "coder", runs: 3, tokens: 1_500, costUsd: 0.3, costEstimated: true }),
-            rowOf(22, { name: "writer", runs: 2, tokens: 100, costUsd: 0.25, costEstimated: false }),
+            rowOf(21, {
+              name: "coder",
+              runs: 3,
+              measuredRuns: 3,
+              tokens: 1_500,
+              costUsd: 0.3,
+              costEstimated: true,
+            }),
+            rowOf(22, {
+              name: "writer",
+              runs: 2,
+              measuredRuns: 2,
+              tokens: 100,
+              costUsd: 0.25,
+              costEstimated: false,
+            }),
             rowOf(23, { name: "dev", runs: 5 }),
           ],
         }),
@@ -319,16 +338,46 @@ describe("런 표", () => {
     const rowNamed = (name: string) => within(table).getByText(name).closest("tr") as HTMLElement;
     expect(rowNamed("coder")).toHaveTextContent("1,500");
     expect(rowNamed("coder")).toHaveTextContent("$0.30");
-    expect(rowNamed("coder")).toHaveTextContent("환산값");
+    expect(rowNamed("coder")).toHaveTextContent("환산 포함");
     expect(rowNamed("writer")).toHaveTextContent("$0.25");
-    expect(rowNamed("writer")).not.toHaveTextContent("환산값");
+    expect(rowNamed("writer")).not.toHaveTextContent("환산");
     expect(within(rowNamed("dev")).getAllByText("측정 불가")).toHaveLength(2);
     expect(rowNamed("coder")).not.toHaveTextContent("측정 불가");
-    // 환산값이 무엇인지 한 줄
-    expect(runs).toHaveTextContent(/환산값은 .*청구액이 아닙니다/);
+    // 「환산 포함」이 무엇인지 한 줄 — api 로 청구된 몫과 섞일 수 있어 환산한 몫만 청구액이 아니라고 말한다
+    expect(runs).toHaveTextContent(
+      "「환산 포함」 금액에는 구독 로그인으로 돈 런을 공시 단가로 환산한 몫이 들어 있습니다 — 그 몫은 청구액이 아닙니다.",
+    );
+    // 모든 런을 더한 행뿐이라 부분합 표시·각주가 없다
+    expect(runs).not.toHaveTextContent(/개만/);
+    expect(runs).not.toHaveTextContent("부분합");
   });
 
-  it("좁은 화면 카드에도 「환산값」·「측정 불가」", async () => {
+  it("믿는 런만 더한 행(OpenClaw·Claude 런이 섞인 채널)은 토큰·금액에 「런 m/n개만」, 표 아래 부분합 한 줄", async () => {
+    stubOpsServer({
+      runs: (days) =>
+        runsOf({
+          days,
+          usageTrustedProviders: ["claude"],
+          byChannel: [
+            rowOf(1, { name: "general", runs: 5, measuredRuns: 2, tokens: 10, costUsd: 0.125 }),
+            rowOf(2, { name: "random", runs: 2, measuredRuns: 2, tokens: 4, costUsd: 0.5 }),
+          ],
+        }),
+    });
+    renderOps();
+    const runs = await region("런");
+    const table = await within(runs).findByRole("table", { name: "채널별" });
+    const rowNamed = (name: string) => within(table).getByText(name).closest("tr") as HTMLElement;
+    expect(within(rowNamed("general")).getAllByText("런 2/5개만")).toHaveLength(2);
+    expect(rowNamed("general")).toHaveTextContent("$0.13");
+    expect(rowNamed("random")).not.toHaveTextContent(/개만/);
+    expect(runs).toHaveTextContent(
+      "「런 m/n개만」은 사용량을 믿을 수 있는 런만 더한 부분합입니다 — 나머지 런의 토큰·금액은 측정 불가입니다.",
+    );
+    expect(runs).not.toHaveTextContent("환산 포함");
+  });
+
+  it("좁은 화면 카드에도 「환산 포함」·「런 m/n개만」·「측정 불가」", async () => {
     narrow(true);
     stubOpsServer({
       runs: (days) =>
@@ -336,7 +385,14 @@ describe("런 표", () => {
           days,
           usageTrustedProviders: ["claude"],
           byAgent: [
-            rowOf(21, { name: "coder", runs: 3, tokens: 1, costUsd: 0.3, costEstimated: true }),
+            rowOf(21, {
+              name: "coder",
+              runs: 3,
+              measuredRuns: 1,
+              tokens: 1,
+              costUsd: 0.3,
+              costEstimated: true,
+            }),
             rowOf(23, { name: "dev", runs: 5 }),
           ],
         }),
@@ -344,7 +400,8 @@ describe("런 표", () => {
     renderOps();
     const list = await within(await region("런")).findByRole("list", { name: "에이전트별" });
     const items = within(list).getAllByRole("listitem");
-    expect(items[0]).toHaveTextContent("환산값");
+    expect(items[0]).toHaveTextContent("환산 포함");
+    expect(within(items[0]!).getAllByText("런 1/3개만")).toHaveLength(2);
     expect(items[1]).toHaveTextContent("측정 불가");
   });
 

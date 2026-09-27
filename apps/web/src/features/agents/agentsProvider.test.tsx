@@ -4,6 +4,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { apiErr, dev, json, openDiscover, renderPage, stubServer } from "../../../test/agentsPage";
+import { ID_TAKEN } from "./ManualAgentForm";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -94,6 +95,28 @@ describe("에이전트 가져오기 — 제공자", () => {
     expect(server.bodies("POST")).toEqual([
       { provider: "claude", providerAgentId: "coder", handle: "coder", name: "coder" },
     ]);
+  });
+
+  it("id 중복 409(details.field providerAgentId)는 id 칸 아래 고정 문구 — 서버 문구는 보이지 않는다", async () => {
+    // 다른 탭에서 같은 id 를 먼저 등록한 경합 — 목록은 registeredIds 로 먼저 거르므로 이 경로로만 닿는다
+    stubServer({
+      discoverClaude: () => apiErr(503, "ADAPTER_UNAVAILABLE", "adapter not configured"),
+      create: () =>
+        json(409, {
+          code: "CONFLICT",
+          message: "providerAgentId coder 는 이미 등록돼 있다",
+          details: { field: "providerAgentId" },
+        }),
+    });
+    renderPage();
+    const dialog = await openDiscover();
+    await pickClaude(dialog);
+    const id = await within(dialog).findByRole("textbox", { name: "Claude 러너 에이전트 id" });
+    await userEvent.type(id, "coder");
+    await userEvent.click(within(dialog).getByRole("button", { name: "등록" }));
+    await waitFor(() => expect(id).toHaveAccessibleDescription(ID_TAKEN));
+    expect(id).toHaveAttribute("aria-invalid", "true");
+    expect(dialog).not.toHaveTextContent("이미 등록돼 있다");
   });
 
   it("다시 열면 OpenClaw 로 돌아간다", async () => {
