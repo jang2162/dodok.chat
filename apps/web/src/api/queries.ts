@@ -48,6 +48,15 @@ export function openclawAdapterStatus(list: AdapterStatusList): AdapterStatusRes
   return status?.provider === "openclaw" && capabilities ? { ...status, capabilities } : null;
 }
 
+/** 러너 어댑터의 붙은 러너 수 / 폐기되지 않은 토큰 수(러너 계획 판정 P7) */
+export type RunnerAdapterStatus = Extract<AdapterStatus, { provider: "claude" }>["runners"];
+
+/** 목록 응답에서 Claude 러너 줄을 고른다 — 서버에 러너 어댑터가 없으면 null */
+export function runnerAdapterStatus(list: AdapterStatusList): RunnerAdapterStatus | null {
+  const status = list.statuses.find((s) => s.provider === "claude");
+  return status?.provider === "claude" ? status.runners : null;
+}
+
 export const qk = {
   me: ["me"] as const,
   channels: ["channels"] as const,
@@ -65,6 +74,8 @@ export const qk = {
   discover: ["agents", "discover"] as const,
   discoverOf: (provider: string) => ["agents", "discover", provider] as const,
   adapter: ["adapter"] as const,
+  /** Claude 러너 어댑터 줄(운영 화면 연결 줄) — `adapter` 가 앞머리라 그 무효화에 함께 든다 */
+  runnerAdapter: ["adapter", "claude"] as const,
   timeline: (id: string) => ["timeline", id] as const,
   /** 스레드 하나(루트·답글) — 채널 타임라인은 루트만 든다. `threads` 는 한 채널의 스레드 전부(무효화용 앞머리) */
   thread: (channelId: string, rootId: string) => ["thread", channelId, rootId] as const,
@@ -172,6 +183,17 @@ export const useAdapterStatus = () =>
   useQuery({
     queryKey: qk.adapter,
     queryFn: async () => openclawAdapterStatus(await api<AdapterStatusList>("GET", "/adapter/status")),
+  });
+/**
+ * 러너 줄(러너 스펙 5장 「운영 화면 연결 줄」) — 같은 목록 응답에서 claude 줄만. wire `adapter.status`(claude)가 곧바로 덮는다.
+ * `poll` 이면 주기로 다시 받는다 — wire 가 끊겨 캐시가 멈춘 동안(운영 화면)
+ */
+export const useRunnerAdapterStatus = ({ poll }: { poll?: number } = {}) =>
+  useQuery({
+    queryKey: qk.runnerAdapter,
+    queryFn: async () => runnerAdapterStatus(await api<AdapterStatusList>("GET", "/adapter/status")),
+    refetchInterval: poll ?? false,
+    meta: { silent: true },
   });
 
 /**

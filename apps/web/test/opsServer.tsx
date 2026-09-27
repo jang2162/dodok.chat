@@ -12,12 +12,12 @@ import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render } from "@testing-library/react";
 import { RouterContextProvider, createMemoryHistory } from "@tanstack/react-router";
 import { vi } from "vitest";
-import { qk } from "@/api/queries";
+import { type AdapterStatusList, qk } from "@/api/queries";
 import { createQueryClient } from "@/app/queryClient";
 import { createAppRouter } from "@/app/router";
 import { OpsPage } from "@/features/ops/OpsPage";
 import { uid } from "./fixtures";
-import { OPS_STATUS_OK, json, shellGet } from "./shellApi";
+import { ADAPTER_OK, OPS_STATUS_OK, adapterStatusBody, json, shellGet } from "./shellApi";
 import { OWNER } from "./setupServer";
 
 /** 운영 화면 테스트의 가짜 서버·렌더 도우미. 픽스처는 shared 스키마를 통과시켜 계약과 맞춘다 */
@@ -61,6 +61,18 @@ export function eventOf(n: number, over: Partial<OpsEvent> = {}): OpsEvent {
   });
 }
 
+/** OpenClaw 줄에 Claude 러너 줄(붙은 수 / 토큰 수)을 더한 GET /adapter/status 응답 */
+export function withRunners(connected: number, tokens: number): AdapterStatusList {
+  const body = adapterStatusBody(ADAPTER_OK);
+  return {
+    statuses: [...body.statuses, { provider: "claude", runners: { connected, tokens } }],
+    capabilities: {
+      ...body.capabilities,
+      claude: { sessionReset: true, agentsList: true, configSet: false },
+    },
+  };
+}
+
 export type Call = { method: string; url: string; body: unknown };
 type Reply = Response | Promise<Response>;
 
@@ -80,6 +92,8 @@ export function stubOpsServer(
     ack?: () => Reply;
     /** GET /channels 응답 — 사건 문구가 채널 이름을 찾는 캐시. 없으면 셸 기본(빈 목록) */
     channels?: Channel[];
+    /** GET /adapter/status 응답 — 없으면 셸 기본(OpenClaw 줄 하나) */
+    adapter?: AdapterStatusList;
   } = {},
 ) {
   const calls: Call[] = [];
@@ -92,6 +106,7 @@ export function stubOpsServer(
     calls.push({ method, url, body });
     const me = opts.me ?? OWNER;
     if (url === "/api/v1/auth/me") return json(200, me);
+    if (opts.adapter && method === "GET" && url === "/api/v1/adapter/status") return json(200, opts.adapter);
     if (opts.channels && method === "GET" && url === "/api/v1/channels")
       return json(200, { channels: opts.channels });
     if (url.startsWith("/api/v1/ops/")) {

@@ -454,6 +454,58 @@ describe("ApprovalCard", () => {
   });
 });
 
+describe("ApprovalCard — 도구 승인(kind tool, 러너 스펙 6장)", () => {
+  const tool = (over: Partial<Approval> = {}) =>
+    approval({
+      providerApprovalId: "runner:toolu_9",
+      kind: "tool",
+      toolName: "Bash",
+      title: "Bash",
+      description: undefined,
+      detail: "git push origin main",
+      ...over,
+    });
+
+  it("제목에 도구 이름, 요약은 접지 않고 코드 글꼴(<code>)로 보인다", () => {
+    renderCard(tool());
+    expect(screen.getByRole("group", { name: "승인 요청 — Bash" })).toBeInTheDocument();
+    const summary = screen.getByText("git push origin main");
+    expect(summary.tagName).toBe("CODE");
+    // 390px 에서 넘치지 않게 — 아무 글자 사이에서나 줄을 바꾼다
+    expect(summary).toHaveClass("break-all");
+    expect(screen.queryByRole("button", { name: "인자 보기" })).not.toBeInTheDocument();
+    // 도구 이름이 제목이라 부제에 한 번 더 적지 않는다
+    expect(screen.getByText("@dev")).toBeInTheDocument();
+  });
+
+  it("allow-always 가 없는 요청은 버튼 둘 — allowedDecisions 그대로", () => {
+    renderCard(tool({ allowedDecisions: ["allow-once", "deny"] }));
+    expect(screen.getAllByRole("button").map((b) => b.textContent)).toEqual(["이번만 허용", "거절"]);
+  });
+
+  it("allow-always 가 있으면 셋", () => {
+    renderCard(tool({ allowedDecisions: ["allow-once", "allow-always", "deny"] }));
+    expect(screen.getAllByRole("button").map((b) => b.textContent)).toEqual([
+      "이번만 허용",
+      "항상 허용",
+      "거절",
+    ]);
+  });
+
+  it("ADAPTER_UNAVAILABLE 이면 Gateway 가 아니라 러너에 연결되지 않았다고 알린다", async () => {
+    const user = userEvent.setup();
+    fake.onAck("approval.resolve", () => fail("ADAPTER_UNAVAILABLE"));
+    renderCard(tool());
+    await user.click(button("이번만 허용"));
+    expect(toast.error).toHaveBeenCalledWith("러너에 연결되지 않았습니다", expect.anything());
+  });
+
+  it("요약이 없으면 요약 줄이 없다", () => {
+    renderCard(tool({ detail: undefined }));
+    expect(document.querySelector("code")).toBeNull();
+  });
+});
+
 describe("resolveErrorMessage", () => {
   it("wire 오류가 아니면 일반 문구", () => {
     expect(resolveErrorMessage(new Error("boom"))).toBe("승인을 처리하지 못했습니다");

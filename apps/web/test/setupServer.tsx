@@ -61,7 +61,9 @@ export function runnerOf(n: number, over: Partial<RunnerConnection> = {}): Runne
     bundleSha256: SHA_A,
     capabilities: ["threads", "interrupt", "approvals", "attachments"],
     connectedAt: "2026-09-27T01:00:00.000Z",
-    agents: [{ id: `coder${n}`, name: `코더${n}`, model: "sonnet", workdirLabel: "my-repo", conflict: false }],
+    agents: [
+      { id: `coder${n}`, name: `코더${n}`, model: "sonnet", workdirLabel: "my-repo", conflict: false },
+    ],
     ...over,
   };
 }
@@ -153,8 +155,7 @@ export function stubSetupServer(
       if (t) t.revokedAt = "2026-09-25T02:00:00.000Z";
       return new Response(null, { status: 204 });
     }
-    if (method === "GET" && url === "/api/v1/setup/runner-tokens")
-      return json(200, { tokens: runnerTokens });
+    if (method === "GET" && url === "/api/v1/setup/runner-tokens") return json(200, { tokens: runnerTokens });
     if (method === "POST" && url === "/api/v1/setup/runner-tokens") {
       const label = (body as { label: string }).label;
       const record = tokenOf(8, {

@@ -198,10 +198,12 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
       if (mine?.role !== undefined && mine.role !== me?.role)
         void qc.fetchQuery({ ...meQuery, staleTime: 0 }).catch(() => undefined);
     },
-    // 어댑터마다 따로 온다(러너 계획 판정 P7) — 캐시·연결 점·배너는 OpenClaw 의 것만 본다, 다른 제공자는 무시한다
+    // 어댑터마다 따로 온다(러너 계획 판정 P7) — 연결 점·배너가 보는 캐시는 OpenClaw 의 것만, 러너 줄은 운영 화면 캐시에.
+    // 모르는 제공자는 무시한다
     "adapter.status": (status: AdapterStatus) => {
-      if (status.provider !== "openclaw") return;
-      qc.setQueryData<AdapterStatusResponse>(qk.adapter, (prev) => prev && { ...prev, ...status });
+      if (status.provider === "openclaw")
+        qc.setQueryData<AdapterStatusResponse>(qk.adapter, (prev) => prev && { ...prev, ...status });
+      else if (status.provider === "claude") qc.setQueryData(qk.runnerAdapter, status.runners);
     },
     /**
      * 연결 설정 상태(owner 에게만 온다) — 통째로 바꾼다. 토큰 목록의 「지금 접속 중」·마지막 사용은 목록 응답에 있어
@@ -211,6 +213,8 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
       qc.setQueryData(qk.setupStatus, status);
       void qc.invalidateQueries({ queryKey: qk.bridgeTokens });
       void qc.invalidateQueries({ queryKey: qk.runnerTokens });
+      // 러너 토큰 수는 발급·폐기 때 wire adapter.status 로 바로 안 나갈 수 있다 — 상태가 바뀌면 러너 줄도 다시 받는다
+      void qc.invalidateQueries({ queryKey: qk.runnerAdapter });
     },
     /**
      * 운영 사건(owner·admin 에게만 온다) — 배지가 읽는 상태의 `unacked` 는 곧바로 덮는다(상태를 아직 안 받았으면 만들지 않는다).

@@ -1,10 +1,11 @@
 import type { OpsStatus } from "@dodok/shared";
 import type { ReactNode } from "react";
-import { useAdapterStatus } from "@/api/queries";
+import { useAdapterStatus, useRunnerAdapterStatus } from "@/api/queries";
 import { formatSize } from "@/features/attachments/format";
 import { Section } from "@/features/setup/sections";
 import { cn } from "@/lib/utils";
 import { useWireStatus } from "@/realtime/wire";
+import { OPS_STATUS_POLL_MS } from "./queries";
 
 const WHEN = new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short" });
 
@@ -65,12 +66,23 @@ function useLiveConnection(status: OpsStatus) {
 }
 
 /**
- * 상태 카드(스펙 7장): 연결(Gateway·플러그인), 버전(드리프트 한 줄), 디스크 여유, 직전 종료. 문제가 있는 줄만 강조한다 —
- * 모르는 값(디스크를 못 잼·종료 표지 없음)은 문제로 보지 않는다
+ * 러너 줄의 값(러너 스펙 5장) — 운영 상태 응답에는 러너가 없어 어댑터 목록의 claude 줄을 본다. wire `adapter.status` 가 곧바로
+ * 고치고, wire 가 끊긴 동안은 운영 상태와 같은 주기로 다시 받는다. 러너 어댑터가 없는 서버면 null(줄을 그리지 않는다)
+ */
+function useRunners() {
+  const live = useWireStatus((s) => s.status) === "connected";
+  return useRunnerAdapterStatus({ poll: live ? undefined : OPS_STATUS_POLL_MS }).data ?? null;
+}
+
+/**
+ * 상태 카드(스펙 7장): 연결(OpenClaw Gateway·플러그인, Claude 러너), 버전(드리프트 한 줄), 디스크 여유, 직전 종료. 문제가 있는 줄만
+ * 강조한다 — 모르는 값(디스크를 못 잼·종료 표지 없음)은 문제로 보지 않는다. 러너가 덜 붙은 것은 문제로 보지 않는다 — 러너는 사람의
+ * PC 라 꺼져 있을 수 있고, 60초 넘는 끊김은 사건(runner_down)이 알린다
  */
 export function StatusCard({ status }: { status: OpsStatus }) {
   const { gateway, disk, server } = status;
   const connection = useLiveConnection(status);
+  const runners = useRunners();
   return (
     <Section title="상태">
       <dl className="flex flex-col gap-0.5">
@@ -80,6 +92,11 @@ export function StatusCard({ status }: { status: OpsStatus }) {
         <Row name="플러그인" problem={connection.plugin !== "connected"}>
           {PLUGIN_STATE[connection.plugin]}
         </Row>
+        {runners && (
+          <Row name="Claude 러너">
+            {runners.connected}대 붙음 / 토큰 {runners.tokens}개
+          </Row>
+        )}
         <Row name="Gateway 버전" problem={gateway.drift}>
           {gateway.version ?? "모름"}
           {gateway.drift && <> — 저장소가 검증한 버전({gateway.pinned})과 다릅니다</>}

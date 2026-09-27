@@ -10,7 +10,15 @@ import { OWNER } from "../../../test/setupServer";
 import { uid } from "../../../test/fixtures";
 import { createQueryClient } from "@/app/queryClient";
 import { ME, channelOf, json } from "../../../test/shellApi";
-import { eventOf, opsStatusOf, renderOps, rowOf, runsOf, stubOpsServer } from "../../../test/opsServer";
+import {
+  eventOf,
+  opsStatusOf,
+  renderOps,
+  rowOf,
+  runsOf,
+  stubOpsServer,
+  withRunners,
+} from "../../../test/opsServer";
 
 afterEach(() => {
   useWireStatus.getState().setStatus("idle");
@@ -133,7 +141,8 @@ describe("상태 카드 — 실시간(브라우저 검증 D1)", () => {
     const server = stubOpsServer();
     const { fake } = renderLive();
     expect(await statusRow("Gateway")).toHaveTextContent("연결됨");
-    await waitFor(() => expect(server.count("GET", "/api/v1/adapter/status")).toBe(1));
+    // 연결 줄(OpenClaw)과 러너 줄이 같은 목록을 따로 받는다
+    await waitFor(() => expect(server.count("GET", "/api/v1/adapter/status")).toBe(2));
     await waitFor(() => expect(server.count("GET", "/api/v1/ops/status")).toBe(1));
 
     act(() =>
@@ -151,6 +160,30 @@ describe("상태 카드 — 실시간(브라우저 검증 D1)", () => {
     expect(await statusRow("플러그인")).not.toHaveAttribute("data-problem");
     // 상태를 다시 부르지 않았다 — 캐시만 바뀌었다
     expect(server.count("GET", "/api/v1/ops/status")).toBe(1);
+  });
+
+  it("Claude 러너 줄 — 붙은 수 / 토큰 수, wire adapter.status(claude)가 바로 고친다", async () => {
+    stubOpsServer({ adapter: withRunners(1, 2) });
+    const { fake } = renderLive();
+    await waitFor(async () =>
+      expect(await statusRow("Claude 러너")).toHaveTextContent("1대 붙음 / 토큰 2개"),
+    );
+    act(() =>
+      fake.serverEmit("adapter.status", { provider: "claude", runners: { connected: 2, tokens: 2 } }),
+    );
+    await waitFor(async () =>
+      expect(await statusRow("Claude 러너")).toHaveTextContent("2대 붙음 / 토큰 2개"),
+    );
+    // OpenClaw 줄은 그대로
+    expect(await statusRow("Gateway")).toHaveTextContent("연결됨");
+  });
+
+  it("러너 어댑터가 없는 서버면 Claude 러너 줄이 없다", async () => {
+    stubOpsServer();
+    renderOps();
+    const card = await region("상태");
+    await within(card).findByText("Gateway", { selector: "dt" });
+    await waitFor(() => expect(within(card).queryByText("Claude 러너", { selector: "dt" })).toBeNull());
   });
 
   it("wire 가 끊겨 있으면 연결 줄은 운영 상태 응답의 값 — 멈춘 어댑터 캐시를 믿지 않는다", async () => {
@@ -265,6 +298,54 @@ describe("런 표", () => {
     expect(table).toHaveTextContent("12,345");
     expect(table).toHaveTextContent("$0.50");
     expect(within(runs).queryByText(/측정 불가/)).not.toBeInTheDocument();
+  });
+
+  it("믿는 제공자(claude)의 에이전트 행은 금액을 — 구독 환산이면 「환산값」, 그 밖의 행은 「측정 불가」", async () => {
+    stubOpsServer({
+      runs: (days) =>
+        runsOf({
+          days,
+          usageTrustedProviders: ["claude"],
+          byAgent: [
+            rowOf(21, { name: "coder", runs: 3, tokens: 1_500, costUsd: 0.3, costEstimated: true }),
+            rowOf(22, { name: "writer", runs: 2, tokens: 100, costUsd: 0.25, costEstimated: false }),
+            rowOf(23, { name: "dev", runs: 5 }),
+          ],
+        }),
+    });
+    renderOps();
+    const runs = await region("런");
+    const table = await within(runs).findByRole("table", { name: "에이전트별" });
+    const rowNamed = (name: string) => within(table).getByText(name).closest("tr") as HTMLElement;
+    expect(rowNamed("coder")).toHaveTextContent("1,500");
+    expect(rowNamed("coder")).toHaveTextContent("$0.30");
+    expect(rowNamed("coder")).toHaveTextContent("환산값");
+    expect(rowNamed("writer")).toHaveTextContent("$0.25");
+    expect(rowNamed("writer")).not.toHaveTextContent("환산값");
+    expect(within(rowNamed("dev")).getAllByText("측정 불가")).toHaveLength(2);
+    expect(rowNamed("coder")).not.toHaveTextContent("측정 불가");
+    // 환산값이 무엇인지 한 줄
+    expect(runs).toHaveTextContent(/환산값은 .*청구액이 아닙니다/);
+  });
+
+  it("좁은 화면 카드에도 「환산값」·「측정 불가」", async () => {
+    narrow(true);
+    stubOpsServer({
+      runs: (days) =>
+        runsOf({
+          days,
+          usageTrustedProviders: ["claude"],
+          byAgent: [
+            rowOf(21, { name: "coder", runs: 3, tokens: 1, costUsd: 0.3, costEstimated: true }),
+            rowOf(23, { name: "dev", runs: 5 }),
+          ],
+        }),
+    });
+    renderOps();
+    const list = await within(await region("런")).findByRole("list", { name: "에이전트별" });
+    const items = within(list).getAllByRole("listitem");
+    expect(items[0]).toHaveTextContent("환산값");
+    expect(items[1]).toHaveTextContent("측정 불가");
   });
 
   it("런이 없으면 「런이 없습니다」", async () => {

@@ -1,4 +1,10 @@
-import type { ApprovalDecision, ApprovalReason, ApprovalSeverity, ApprovalStatus } from "@dodok/shared";
+import type {
+  ApprovalDecision,
+  ApprovalKind,
+  ApprovalReason,
+  ApprovalSeverity,
+  ApprovalStatus,
+} from "@dodok/shared";
 import { InfoIcon, type LucideIcon, ShieldAlertIcon, TriangleAlertIcon } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { type ReactElement, useEffect, useRef, useState } from "react";
@@ -56,9 +62,10 @@ const TRUNCATED = /\[\+\d+ chars hidden\]/;
 
 /**
  * `approval.resolve` ack 실패 문구(설계 4.4 표·5.3). wire 오류는 REST 전역 토스트 밖이라 부르는 쪽이 토스트한다.
- * `CONFLICT`·`ADAPTER_UNAVAILABLE` 뒤에도 행은 `pending` 으로 남아 다시 누를 수 있다(p2-t5 보고서 1)
+ * `CONFLICT`·`ADAPTER_UNAVAILABLE` 뒤에도 행은 `pending` 으로 남아 다시 누를 수 있다(p2-t5 보고서 1).
+ * 도구 승인(`tool`)은 러너에서 온다 — 연결이 없다는 말도 러너로(러너 계획 판정 P6)
  */
-export function resolveErrorMessage(e: unknown): string {
+export function resolveErrorMessage(e: unknown, kind?: ApprovalKind): string {
   if (!(e instanceof WireAckError)) return "승인을 처리하지 못했습니다";
   switch (e.code) {
     case "CONFLICT":
@@ -68,7 +75,7 @@ export function resolveErrorMessage(e: unknown): string {
     case "FORBIDDEN":
       return "권한이 없습니다";
     case "ADAPTER_UNAVAILABLE":
-      return "Gateway 에 연결되지 않았습니다";
+      return kind === "tool" ? "러너에 연결되지 않았습니다" : "Gateway 에 연결되지 않았습니다";
     case "NOT_FOUND":
       return "없는 승인입니다";
     case "TIMEOUT":
@@ -82,7 +89,9 @@ export function resolveErrorMessage(e: unknown): string {
  * 승인 카드(설계 5.3). 자리 둘 — 채널 메시지 흐름(시간 순서)과 활동 탭 맨 위 — 이 같은 스토어를 본다.
  * 미해결이면 남은 시간과 버튼, 확정되면 **사라지지 않고** 결과 한 줄로 바뀐다(기록).
  * 클라이언트 시계로 0 이 되면 「만료됨」으로 보이되 서버 사실이 오면 그쪽이 이긴다(설계 5.5).
- * 결정은 admin 이상의 몫이다(팀 스펙 2장) — member 에게는 버튼 대신 「관리자가 결정합니다」
+ * 결정은 admin 이상의 몫이다(팀 스펙 2장) — member 에게는 버튼 대신 「관리자가 결정합니다」.
+ * 도구 승인(`kind: "tool"`, 러너 스펙 6장·7장)은 제목이 도구 이름이고 `detail` 이 요약(Bash 명령·작업 디렉터리 상대 경로 등)이다 —
+ * 짧은 한 줄이라 접지 않고 코드 글꼴로 바로 보인다
  */
 export function ApprovalCard({
   approvalId,
@@ -126,7 +135,11 @@ export function ApprovalCard({
   const note = approval.reason && REASON_NOTE[approval.reason];
   const outcome =
     approval.status === "pending" ? undefined : OUTCOME[approval.status] + (note ? ` (${note})` : "");
+  const tool = approval.kind === "tool";
   const args = approval.detail ?? approval.description;
+  // 도구 승인은 제목이 곧 도구 이름이라 부제에 다시 적지 않는다
+  const toolLabel =
+    approval.toolName && !(tool && approval.toolName === approval.title) ? approval.toolName : "";
 
   return (
     <div className="flex justify-center px-4 py-1.5">
@@ -151,7 +164,7 @@ export function ApprovalCard({
               <p className="font-medium break-words">{approval.title}</p>
               <p className="text-xs text-muted-foreground">
                 {agent.handle ? `@${agent.handle}` : agent.name}
-                {approval.toolName ? ` · ${approval.toolName}` : ""}
+                {toolLabel ? ` · ${toolLabel}` : ""}
               </p>
             </div>
             {/*
@@ -169,7 +182,14 @@ export function ApprovalCard({
             </span>
           </div>
 
-          {args && <Arguments args={args} />}
+          {args &&
+            (tool ? (
+              <code className="block rounded bg-muted px-2 py-1.5 font-mono text-xs break-all whitespace-pre-wrap">
+                {args}
+              </code>
+            ) : (
+              <Arguments args={args} />
+            ))}
 
           {answerable && !canDecide && <p className="text-xs text-muted-foreground">관리자가 결정합니다</p>}
           {answerable && canDecide && (
@@ -178,6 +198,7 @@ export function ApprovalCard({
                 <DecisionButton
                   key={d.decision}
                   approvalId={approval.id}
+                  kind={approval.kind}
                   decision={d.decision}
                   label={d.label}
                   variant={d.variant}
@@ -237,6 +258,7 @@ function Arguments({ args }: { args: string }) {
  */
 function DecisionButton({
   approvalId,
+  kind,
   decision,
   label,
   variant,
@@ -244,6 +266,7 @@ function DecisionButton({
   onActed,
 }: {
   approvalId: string;
+  kind: ApprovalKind;
   decision: ApprovalDecision;
   label: string;
   variant: "default" | "secondary" | "outline";
@@ -264,7 +287,7 @@ function DecisionButton({
     setSending(approvalId, decision);
     onActed(true);
     emitAck(socket, "approval.resolve", { approvalId, decision }).catch((e: unknown) => {
-      const message = resolveErrorMessage(e);
+      const message = resolveErrorMessage(e, kind);
       toast.error(message, { id: `approval-resolve:${message}` });
       // 역할이 내려갔다 — me 를 다시 받아 버튼을 거둔다(REST 403 의 전역 처리와 같은 규칙, app/queryClient)
       if (e instanceof WireAckError && e.code === "FORBIDDEN")

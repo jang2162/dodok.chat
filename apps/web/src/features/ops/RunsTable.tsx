@@ -1,6 +1,6 @@
 import type { OpsRunsRow } from "@dodok/shared";
 import { Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { Section } from "@/features/setup/sections";
 import { useIsNarrow } from "@/hooks/useIsNarrow";
 import { Button } from "@/ui/button";
@@ -9,17 +9,32 @@ import { useOpsRuns } from "./queries";
 const NUM = new Intl.NumberFormat("ko-KR");
 const USD = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
-type Column = { name: string; value: (r: OpsRunsRow) => string };
+type Column = { name: string; value: (r: OpsRunsRow) => ReactNode };
 const COUNTS: Column[] = [
   { name: "런", value: (r) => NUM.format(r.runs) },
   { name: "실패", value: (r) => NUM.format(r.failed) },
   { name: "중지", value: (r) => NUM.format(r.aborted) },
   { name: "차단", value: (r) => NUM.format(r.blocked) },
 ];
-/** usage 값을 믿을 수 있을 때만(스펙 3.3) */
+const UNMEASURED = "측정 불가";
+/**
+ * usage 를 믿는 제공자가 있을 때만(스펙 3.3). 행에 값이 없으면 믿는 제공자의 런이 없는 행(OpenClaw 에이전트 등) — 「측정 불가」.
+ * 구독 로그인의 금액은 공시 단가 환산값이라 「환산값」 꼬리표를 붙인다(러너 스펙 7장)
+ */
 const USAGE: Column[] = [
-  { name: "토큰", value: (r) => (r.tokens === undefined ? "—" : NUM.format(r.tokens)) },
-  { name: "금액", value: (r) => (r.costUsd === undefined ? "—" : USD.format(r.costUsd)) },
+  { name: "토큰", value: (r) => (r.tokens === undefined ? UNMEASURED : NUM.format(r.tokens)) },
+  {
+    name: "금액",
+    value: (r) =>
+      r.costUsd === undefined ? (
+        UNMEASURED
+      ) : (
+        <>
+          {USD.format(r.costUsd)}
+          {r.costEstimated && <span className="ml-1 text-xs text-muted-foreground">환산값</span>}
+        </>
+      ),
+  },
 ];
 
 /** 채널 이름은 그 채널로 가는 링크, 에이전트는 이름만 */
@@ -131,7 +146,8 @@ function Group(props: {
 }
 
 /**
- * 런 표(스펙 7장): 「오늘 / 7일」, 채널별·에이전트별 런·실패·중지·차단. usage 가 맞을 때만 토큰·금액 열 — 아니면 「측정 불가」 한 줄.
+ * 런 표(스펙 7장): 「오늘 / 7일」, 채널별·에이전트별 런·실패·중지·차단. usage 를 믿는 제공자(러너 계획 판정 P8)가 있을 때만 토큰·금액 열 —
+ * 아니면 「측정 불가」 한 줄. 열이 있어도 믿는 제공자의 런이 없는 행은 칸마다 「측정 불가」.
  * 좁은 화면(768px 미만)은 표 대신 카드 목록
  */
 export function RunsTable() {
@@ -139,8 +155,9 @@ export function RunsTable() {
   const runs = useOpsRuns(days);
   const narrow = useIsNarrow();
   const data = runs.data;
-  // 믿는 제공자가 하나라도 있으면 열을 둔다 — 그 제공자의 런이 없는 행은 「—」(제공자별 표시는 러너 계획 태스크 7)
+  // 믿는 제공자가 하나라도 있으면 열을 둔다 — 그 제공자의 런이 없는 행은 「측정 불가」
   const usageTrusted = (data?.usageTrustedProviders.length ?? 0) > 0;
+  const estimated = data !== undefined && [...data.byChannel, ...data.byAgent].some((r) => r.costEstimated);
   const columns = usageTrusted ? [...COUNTS, ...USAGE] : COUNTS;
   return (
     <Section title="런">
@@ -165,6 +182,11 @@ export function RunsTable() {
           {!usageTrusted && (
             <p className="text-xs text-muted-foreground">
               토큰·금액은 측정 불가 — Gateway 가 주는 사용량 값을 아직 믿을 수 없습니다 (ADR 0005)
+            </p>
+          )}
+          {estimated && (
+            <p className="text-xs text-muted-foreground">
+              환산값은 구독 로그인으로 돈 런을 공시 단가로 환산한 값이며 청구액이 아닙니다.
             </p>
           )}
         </>
