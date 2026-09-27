@@ -33,6 +33,7 @@ import {
 } from "./bridge/server";
 import { syncChannelConfig } from "./config-sync";
 import {
+  GatewayApprovalKind,
   isApprovalEvent,
   mergeApproval,
   parseApprovalFrame,
@@ -509,13 +510,17 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
       // 재접속 중(reconnecting)에도 결정을 보내지 않는다 — 승인 서비스가 하던 선검사를 어댑터 안으로 옮겼다(러너 계획 판정 P6)
       if (gatewayState !== "connected")
         throw new AdapterError("ADAPTER_UNAVAILABLE", "gateway is not connected");
+      // tool 은 러너 어댑터의 승인이다 — 여기로 왔다면 잘못 짝지어진 것이라 Gateway 에 보내지 않는다
+      const gatewayKind = GatewayApprovalKind.safeParse(kind).data;
+      if (!gatewayKind)
+        throw new AdapterError("INTERNAL", `approval kind ${kind} is not an OpenClaw approval`);
       // 연결이 없으면 manager 가 ADAPTER_UNAVAILABLE 을 던진다(다른 RPC 와 같은 규칙).
       const res = await manager.request(
         "approval.resolve",
-        resolveParams({ providerApprovalId, kind }, decision),
+        resolveParams({ providerApprovalId, kind: gatewayKind }, decision),
       );
       // 이미 확정된 승인은 `applied:false` 로 오지만 스냅샷은 그대로다 — 오류가 아니다(스파이크 4.4).
-      const approval = parseResolveResult(res, kind);
+      const approval = parseResolveResult(res, gatewayKind);
       if (!approval) {
         throw new AdapterError("INTERNAL", "ADAPTER_PROTOCOL: approval.resolve terminal snapshot unreadable");
       }

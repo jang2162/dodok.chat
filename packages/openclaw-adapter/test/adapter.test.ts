@@ -1362,6 +1362,17 @@ describe("승인 — 수신·병합·해결 RPC", () => {
     ]);
   });
 
+  it("resolveApproval 은 Gateway kind 가 아닌 tool 을 approval.resolve 로 보내지 않는다(Gateway 는 모르는 kind 를 거절로 확정한다)", async () => {
+    gatewayResponses["approval.resolve"] = () => f.approvalResolveResult();
+    await connectedGateway();
+
+    await expect(adapter.resolveApproval(f.APPROVAL_ID, "tool", "allow-once")).rejects.toMatchObject({
+      name: "AdapterError",
+      code: "INTERNAL",
+    });
+    expect(gatewayCalls.filter((c) => c.method === "approval.resolve")).toEqual([]);
+  });
+
   it("재접속 중이면 approval.resolve 를 보내지 않고 ADAPTER_UNAVAILABLE(판정 P6)", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     connectFailures = [new Error("connect ECONNREFUSED")];

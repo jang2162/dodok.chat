@@ -2,6 +2,7 @@ import { Approval, ApprovalKind } from "@dodok/shared";
 import type { EventFrame } from "@openclaw/gateway-protocol";
 import { describe, expect, it } from "vitest";
 import {
+  GatewayApprovalKind,
   isApprovalEvent,
   mergeApproval,
   parseApprovalFrame,
@@ -283,6 +284,36 @@ describe("parseApprovalFrame — kind 유도(resolved 에는 approvalKind 가 �
     };
     expect(parsed("session.approval", payload).kind).toBe("exec");
   });
+
+  // `tool` 은 러너의 도구 승인 몫이다 — OpenClaw 쪽 단서로 들어와도 Gateway 세 kind 로만 읽고, 모르는 값처럼 다음 단서로 넘긴다
+  it.each([
+    ["approvalKind", "openclaw.approval.requested", "533fe246", "system-agent"],
+    ["presentation.kind", "session.approval", "exec:533fe246", "exec"],
+    ["id 접두사", "session.approval", "tool:533fe246", "plugin"],
+  ])(
+    "tool 단서(%s)는 Gateway kind 가 아니다 — 전과 같은 다음 단서 → %s·%s → %s",
+    (_where, event, id, kind) => {
+      const payload =
+        event === "session.approval"
+          ? {
+              sessionKey: f.SESSION_KEY,
+              approval: {
+                id,
+                status: "pending",
+                presentation: {
+                  kind: "tool",
+                  title: "t",
+                  severity: "warning",
+                  allowedDecisions: ["allow-once", "deny"],
+                },
+                createdAtMs: 1_789_897_787_988,
+                expiresAtMs: 1_789_897_907_988,
+              },
+            }
+          : { ...base(), approvalKind: "tool" };
+      expect(parsed(event, payload).kind).toBe(kind);
+    },
+  );
 
   it("아무 단서도 없으면 plugin 으로 둔다(승인을 버리지 않는다)", () => {
     const payload = {
@@ -605,7 +636,12 @@ describe("parseApprovalReplay — 재접속 되감기(5.3)", () => {
 
 describe("resolveParams / parseResolveResult — approval.resolve 왕복(4.1)", () => {
   // `kind` 는 wire 에 없어 저장된 행에서만 온다 — 한 값으로 굳으면 exec·system-agent 승인이 어긋난 kind 로 나간다.
-  it.each(ApprovalKind.options)("resolveParams 는 저장된 행의 kind(%s)를 그대로 싣는다", (kind) => {
+  it("Gateway kind 는 셋뿐 — 러너의 tool 은 Gateway 로 나가지 않는다", () => {
+    expect(GatewayApprovalKind.options).toEqual(["exec", "plugin", "system-agent"]);
+    expect(ApprovalKind.options).toContain("tool");
+  });
+
+  it.each(GatewayApprovalKind.options)("resolveParams 는 저장된 행의 kind(%s)를 그대로 싣는다", (kind) => {
     expect(resolveParams({ providerApprovalId: f.APPROVAL_ID, kind }, "allow-once")).toEqual({
       id: f.APPROVAL_ID,
       kind,

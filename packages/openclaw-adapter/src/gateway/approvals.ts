@@ -26,6 +26,13 @@ import { z } from "zod";
 // 모양은 어댑터 공통 계약(shared) — 러너 어댑터도 같은 모양으로 낸다
 export type { ProviderApproval };
 
+/**
+ * Gateway 가 아는 kind 셋. shared `ApprovalKind` 의 `tool` 은 러너의 도구 승인 몫이라 OpenClaw 단서로 읽지도, Gateway 로 보내지도 않는다
+ * — Gateway 는 모르는 kind 를 조용히 거절로 확정한다
+ */
+export const GatewayApprovalKind = ApprovalKind.exclude(["tool"]);
+export type GatewayApprovalKind = z.infer<typeof GatewayApprovalKind>;
+
 // 계약(shared `Approval`)의 문자열 상한 = Gateway 상한. 보여 주는 값은 넘으면 자르고, 상관 키(`toolCallId`)는 자르지 않는다.
 const MAX = {
   title: 200,
@@ -136,7 +143,7 @@ type Normalizable = {
   resolvedAtMs?: number;
   /** 이벤트 이름으로 알 수 없을 때(스냅샷 경로) 해결 여부를 정하는 값. */
   resolvedPhase?: boolean;
-  fallbackKind?: ApprovalKind;
+  fallbackKind?: GatewayApprovalKind;
 };
 
 /**
@@ -257,9 +264,9 @@ export function sameApproval(a: ProviderApproval, b: ProviderApproval): boolean 
 
 /** `approval.resolve` 인자(스파이크 4.1). `kind` 는 wire 에 없으므로 저장된 행에서 받는다. */
 export function resolveParams(
-  approval: Pick<ProviderApproval, "providerApprovalId" | "kind">,
+  approval: { providerApprovalId: string; kind: GatewayApprovalKind },
   decision: ApprovalDecision,
-): { id: string; kind: ApprovalKind; decision: ApprovalDecision } {
+): { id: string; kind: GatewayApprovalKind; decision: ApprovalDecision } {
   return { id: approval.providerApprovalId, kind: approval.kind, decision };
 }
 
@@ -267,7 +274,10 @@ export function resolveParams(
  * `approval.resolve` 응답(`{ applied, approval }`)의 terminal 스냅샷을 같은 정규화로 돌려준다.
  * `applied:false`(이미 확정된 승인)도 스냅샷은 그대로 온다 — 오류가 아니다(스파이크 4.4).
  */
-export function parseResolveResult(response: unknown, kind: ApprovalKind): ProviderApproval | undefined {
+export function parseResolveResult(
+  response: unknown,
+  kind: GatewayApprovalKind,
+): ProviderApproval | undefined {
   const parsed = ResolveResult.safeParse(response);
   if (!parsed.success) return undefined;
   const { approval } = parsed.data;
@@ -280,7 +290,7 @@ export function parseResolveResult(response: unknown, kind: ApprovalKind): Provi
 
 function normalizeSnapshot(
   snapshot: z.infer<typeof Snapshot>,
-  o: { sessionKey: string | undefined; resolvedPhase?: boolean; fallbackKind?: ApprovalKind },
+  o: { sessionKey: string | undefined; resolvedPhase?: boolean; fallbackKind?: GatewayApprovalKind },
 ): ProviderApproval | undefined {
   return normalize({
     id: snapshot.id,
@@ -344,15 +354,16 @@ function normalize(input: Normalizable): ProviderApproval | undefined {
 }
 
 /** `approvalKind` → `presentation.kind` → 이벤트 이름 접두사 → id 접두사 → plugin(승인을 버리지 않는다). */
-function deriveKind(input: Normalizable): ApprovalKind {
+function deriveKind(input: Normalizable): GatewayApprovalKind {
   const explicit =
-    ApprovalKind.safeParse(input.kindHint).data ?? ApprovalKind.safeParse(input.details?.kind).data;
+    GatewayApprovalKind.safeParse(input.kindHint).data ??
+    GatewayApprovalKind.safeParse(input.details?.kind).data;
   if (explicit) return explicit;
   const prefix = input.event?.split(".")[0];
   if (prefix === "plugin" || prefix === "exec") return prefix;
   if (prefix === "openclaw") return "system-agent";
   const idPrefix = input.id.includes(":") ? input.id.slice(0, input.id.indexOf(":")) : undefined;
-  return ApprovalKind.safeParse(idPrefix).data ?? input.fallbackKind ?? "plugin";
+  return GatewayApprovalKind.safeParse(idPrefix).data ?? input.fallbackKind ?? "plugin";
 }
 
 /**
@@ -400,7 +411,7 @@ function normalizeDecisions(raw: unknown[] | undefined): ApprovalDecision[] {
 }
 
 /** 제목이 비었을 때 — 카드가 뜨는 것이 빈 제목으로 버려지는 것보다 낫다(exec·system-agent 는 모양을 못 봤다, 10.1). */
-function fallbackTitle(kind: ApprovalKind, toolName: string | undefined): string {
+function fallbackTitle(kind: GatewayApprovalKind, toolName: string | undefined): string {
   return toolName ? `툴 승인: ${toolName}` : `승인 요청 (${kind})`;
 }
 
