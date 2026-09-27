@@ -1816,6 +1816,17 @@ describe("orchestrator", () => {
       t.orch.stop();
     });
 
+    // 에이전트별로 가르는 어댑터(러너)는 내부 id 를 모른다 — 내부 id 를 넘기면 스레드 런이 조용히 PLUGIN_OUTDATED 로 닫힌다
+    it("스레드 지원 여부는 내부 에이전트 id 가 아니라 providerAgentId 로 묻는다", async () => {
+      const t = setup();
+      const supports = vi.spyOn(t.adapter, "supports");
+      await threadRun(t);
+      await t.flush();
+      expect(supports).toHaveBeenCalledWith("dev", "threads");
+      expect(supports.mock.calls.map(([agentId]) => agentId)).not.toContain(t.agentId);
+      t.orch.stop();
+    });
+
     it("붙은 플러그인이 없으면 PLUGIN_OUTDATED 로 단정하지 않고 보낸다(어댑터가 플러그인을 기다린다)", async () => {
       const t = setup();
       t.adapter.setPluginCapabilities([]);
