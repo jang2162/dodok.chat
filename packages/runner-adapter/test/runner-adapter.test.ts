@@ -23,6 +23,7 @@ const TOKENS: Record<string, { tokenId: string; label: string }> = {
   [TOKEN_B]: { tokenId: "7a0e2d3c-2d1f-4f5e-9a6b-000000000002", label: "desktop" },
 };
 const CH = "01a09fc9-d204-7551-89d6-38544d07a102";
+const CH2 = "01a09fc9-d204-7551-89d6-38544d07a103";
 const SESSION_ID = "5f0c8a52-3f7e-4c1b-8d2a-1b2c3d4e5f60";
 
 type LogLine = { level: string; obj: object; msg?: string };
@@ -36,6 +37,7 @@ type Harness = {
   blocked: string[];
   runners: FakeRunner[];
   setNow(ms: number): void;
+  setChannelName(channelId: string, name: string): void;
   failOutbound(on: boolean): void;
   runner(token: string, agents?: ReturnType<typeof runnerAgent>[]): Promise<FakeRunner>;
 };
@@ -56,6 +58,7 @@ async function setup(opts: { fakeTimers?: boolean } = {}): Promise<Harness> {
   const runners: FakeRunner[] = [];
   let nowMs = Date.parse("2026-09-27T00:00:00.000Z");
   let outboundFails = false;
+  const channelNames = new Map([[CH, "general"]]);
   const log = (level: string) => (obj: object, msg?: string) => logs.push({ level, obj, msg });
   const adapter = createRunnerAdapter({
     io,
@@ -66,7 +69,7 @@ async function setup(opts: { fakeTimers?: boolean } = {}): Promise<Harness> {
     now: () => nowMs,
     serverVersion: "test-server",
     logger: { info: log("info"), warn: log("warn"), error: log("error"), debug: log("debug") },
-    channelName: (channelId) => (channelId === CH ? "general" : undefined),
+    channelName: (channelId) => channelNames.get(channelId),
     onOutbound: async (m) => {
       if (outboundFails) throw new Error("db is locked");
       outbound.push(m);
@@ -87,6 +90,9 @@ async function setup(opts: { fakeTimers?: boolean } = {}): Promise<Harness> {
     runners,
     setNow: (ms) => {
       nowMs = ms;
+    },
+    setChannelName: (channelId, name) => {
+      channelNames.set(channelId, name);
     },
     failOutbound: (on) => {
       outboundFails = on;
@@ -315,6 +321,25 @@ describe("러너 여러 대", () => {
     });
   });
 
+  it("같은 토큰으로 다시 붙은 러너는 옛 자리를 잇는다 — 충돌한 뒤 러너가 에이전트를 가져가지 않는다", async () => {
+    const h = await setup();
+    const a = await readyRunner(h, TOKEN_A, [runnerAgent("coder")]);
+    const b = await h.runner(TOKEN_B, [runnerAgent("coder", { model: "opus" })]);
+    expect(await b.hello()).toMatchObject({ ok: true, conflicts: ["coder"] });
+    const aClosed = waitDisconnect(a);
+    const a2 = await h.runner(TOKEN_A, [runnerAgent("coder")]);
+    expect(await a2.hello()).toMatchObject({ ok: true, conflicts: [] });
+    await aClosed;
+    expect(h.adapter.setupDetail().runners.map((c) => [c.label, c.agents[0]?.conflict])).toEqual([
+      ["laptop", false],
+      ["desktop", true],
+    ]);
+    expect(h.logs.some((l) => l.msg === "runner agent taken over")).toBe(false);
+    const input = await startRun(h, a2);
+    expect(a2.runStarts[0]?.deliver.runId).toBe(input.runId);
+    expect(b.runStarts).toHaveLength(0);
+  });
+
   it("supports 는 그 에이전트를 가진 러너의 능력을 본다", async () => {
     const h = await setup();
     await readyRunner(h, TOKEN_A, [runnerAgent("coder")]);
@@ -412,6 +437,35 @@ describe("send", () => {
     expect(runEvents(h, input.runId)).toEqual([]);
   });
 
+  it("PROBE-8: dispatch ack 와 끊김이 같은 틱이면 send 가 dispatch 를 돌려줘도 RUN_ERROR 가 한 번 나간다", async () => {
+    const h = await setup();
+    const r = await readyRunner(h);
+    r.onRunStart = (p) => {
+      queueMicrotask(() => r.socket.disconnect());
+      return { runId: p.deliver.runId, admission: "dispatch" };
+    };
+    const input = deliver();
+    expect(await h.adapter.send(input, { providerSessionId: SESSION_ID })).toEqual({
+      admission: "dispatch",
+      providerRunId: input.runId,
+    });
+    await until(() => signals(h, input.runId).includes("gateway_error"), "run error");
+    await until(() => h.adapter.status().runners.connected === 0, "runner gone");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(runEvents(h, input.runId)).toEqual([
+      { type: "RUN_ERROR", runId: input.runId, code: "ADAPTER_UNAVAILABLE", message: "runner disconnected" },
+    ]);
+    expect(signals(h, input.runId)).toEqual(["gateway_error"]);
+  });
+
+  it("sessionTitle 은 코드 포인트로 자른다 — 서로게이트 쌍을 반으로 가르지 않는다", async () => {
+    const h = await setup();
+    const r = await readyRunner(h);
+    h.setChannelName(CH2, `${"a".repeat(119)}😀😀`);
+    await startRun(h, r, { channelId: CH2, sessionKey: dodokSessionKey("coder", CH2) });
+    expect(r.runStarts[0]?.sessionTitle).toBe("a".repeat(119));
+  });
+
   it("providerSessionId 가 없으면 보내지 않는다", async () => {
     const h = await setup();
     const r = await readyRunner(h);
@@ -482,6 +536,38 @@ describe("런 이벤트", () => {
     await until(() => runEvents(h, runId).length === 1, "last event");
     expect(runEvents(h, runId)).toEqual([{ type: "STEP_STARTED", runId, stepName: "last" }]);
     expect(h.logs.filter((l) => l.level === "warn").length).toBeGreaterThanOrEqual(bad.length);
+  });
+
+  it("hello 전 소켓의 프레임은 어느 러너의 것으로도 넘기지 않는다", async () => {
+    const h = await setup();
+    const a = await readyRunner(h);
+    const { runId } = await startRun(h, a);
+    const stranger = await h.runner(TOKEN_B);
+    stranger.send("run.event", { runId, event: { type: "STEP_STARTED", runId, stepName: "evil" } });
+    stranger.send("run.final", { runId, text: "가로챔", stopReason: "end_turn", costKind: "api" });
+    a.send("run.event", { runId, event: { type: "STEP_STARTED", runId, stepName: "ok" } });
+    await until(() => runEvents(h, runId).length === 1, "own event");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(runEvents(h, runId)).toEqual([{ type: "STEP_STARTED", runId, stepName: "ok" }]);
+    expect(signals(h, runId)).toEqual(["gateway_started"]);
+    expect(h.outbound).toHaveLength(0);
+  });
+
+  it("모르는 프레임 이름은 버리고 소켓마다 1분에 한 줄 warn 한다", async () => {
+    const h = await setup();
+    const r = await readyRunner(h);
+    const unknownWarns = () => h.logs.filter((l) => l.msg === "runner sent an unknown frame — dropped");
+    r.send("nope.frame", { x: 1 });
+    r.send("nope.frame", { x: 2 });
+    r.send("other.frame", {});
+    await until(() => unknownWarns().length === 1, "first warn");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(unknownWarns()).toHaveLength(1);
+    expect(unknownWarns()[0]?.obj).toMatchObject({ event: "nope.frame" });
+    h.setNow(Date.parse("2026-09-27T00:01:00.000Z"));
+    r.send("third.frame", {});
+    await until(() => unknownWarns().length === 2, "second warn");
+    expect(unknownWarns()[1]?.obj).toMatchObject({ event: "third.frame", suppressed: 2 });
   });
 
   it("다른 러너의 런에 보낸 이벤트는 버린다", async () => {
@@ -580,23 +666,56 @@ describe("런 이벤트", () => {
     });
   });
 
-  it("abort 는 run.abort 를 보내고, 중지된 런의 최종 답은 올리지 않는다", async () => {
+  it("abort 는 run.abort 를 보내고, 중지된 턴의 최종 답은 메시지 없이 중지 신호 한 번이 된다", async () => {
     const h = await setup();
     const r = await readyRunner(h);
     const { runId, sessionKey } = await startRun(h, r);
     await h.adapter.abort(runId, sessionKey);
     await until(() => r.aborts.length === 1, "abort");
     expect(r.aborts).toEqual([{ runId }]);
-    r.send("run.final", {
-      runId,
-      text: "중간까지",
-      stopReason: "interrupted",
-      costUsd: 0.01,
-      costKind: "api",
-    });
-    await until(() => runEvents(h, runId).some((e) => e.type === "CUSTOM"), "usage");
+    r.send("run.final", { runId, text: "", stopReason: "aborted", costUsd: 0.01, costKind: "api" });
+    await until(() => signals(h, runId).length > 0, "stop signal");
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(h.outbound).toHaveLength(0);
+    expect(signals(h, runId)).toEqual(["gateway_aborted"]);
+    expect(runEvents(h, runId)).toEqual([
+      {
+        type: "CUSTOM",
+        runId,
+        name: "dodok.usage",
+        value: { costUsd: 0.01, costKind: "api", model: "sonnet" },
+      },
+      { type: "RUN_ABORTED", runId, by: "user" },
+    ]);
+  });
+
+  it("서버가 중지한 런이면 stopReason 이 무엇이든 중간 답을 올리지 않는다", async () => {
+    const h = await setup();
+    const r = await readyRunner(h);
+    const { runId, sessionKey } = await startRun(h, r);
+    await h.adapter.abort(runId, sessionKey);
+    r.send("run.final", { runId, text: "중간까지", stopReason: "end_turn", costKind: "api" });
+    await until(() => signals(h, runId).length > 0, "stop signal");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(h.outbound).toHaveLength(0);
+    expect(signals(h, runId)).toEqual(["gateway_aborted"]);
+    expect(runEvents(h, runId).filter((e) => e.type === "RUN_ABORTED")).toEqual([
+      { type: "RUN_ABORTED", runId, by: "user" },
+    ]);
+  });
+
+  it("서버 abort 없이 러너 쪽에서 중지된 턴(aborted final)도 메시지 없이 중지 신호 한 번이다", async () => {
+    const h = await setup();
+    const r = await readyRunner(h);
+    const { runId } = await startRun(h, r);
+    r.send("run.final", { runId, text: "중간까지", stopReason: "aborted", costKind: "api" });
+    await until(() => signals(h, runId).length > 0, "stop signal");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(h.outbound).toHaveLength(0);
+    expect(signals(h, runId)).toEqual(["gateway_aborted"]);
+    expect(runEvents(h, runId).filter((e) => e.type === "RUN_ABORTED")).toEqual([
+      { type: "RUN_ABORTED", runId, by: "user" },
+    ]);
   });
 
   it("outbound.post 는 onOutbound 로 메시지를 만들고 messageId 로 답한다", async () => {
@@ -626,6 +745,98 @@ describe("런 이벤트", () => {
     const invalid = await r.post({ text: "x" });
     expect(invalid).toMatchObject({ ok: false, code: "VALIDATION" });
     expect(h.outbound).toHaveLength(1);
+  });
+});
+
+describe("outbound.post 는 그 러너의 열린 런에 묶인다", () => {
+  function postFor(input: InboundDeliver, over: Record<string, unknown> = {}) {
+    return {
+      outboundId: randomUUID(),
+      channelId: input.channelId,
+      agentId: input.agentId,
+      sessionKey: input.sessionKey,
+      runId: input.runId,
+      text: "중간 보고",
+      ts: "2026-09-27T00:00:01.000Z",
+      ...over,
+    };
+  }
+
+  async function expectDenied(h: Harness, r: FakeRunner, post: object) {
+    expect(await r.post(post)).toMatchObject({ ok: false, code: "FORBIDDEN" });
+  }
+
+  it("런의 채널·에이전트·세션 키·스레드·runId 중 하나라도 다르면 거절하고 저장하지 않는다", async () => {
+    const h = await setup();
+    const r = await readyRunner(h, TOKEN_A, [runnerAgent("coder"), runnerAgent("fin")]);
+    const input = await startRun(h, r);
+    const root = randomUUID();
+    const { runId: _runId, ...withoutRunId } = postFor(input);
+    const variants: object[] = [
+      // PROBE-1: 다른 채널
+      postFor(input, { channelId: CH2 }),
+      // PROBE-3: 같은 러너가 맡은 다른 에이전트 이름
+      postFor(input, { agentId: "fin" }),
+      postFor(input, { sessionKey: dodokSessionKey("coder", CH, root) }),
+      postFor(input, { threadId: root }),
+      postFor(input, { runId: randomUUID() }),
+      withoutRunId,
+    ];
+    const warnsBefore = h.logs.filter((l) => l.level === "warn").length;
+    for (const post of variants) await expectDenied(h, r, post);
+    expect(h.outbound).toHaveLength(0);
+    expect(h.logs.filter((l) => l.level === "warn").length - warnsBefore).toBe(variants.length);
+    // 모든 값이 런과 같으면 받는다
+    expect(await r.post(postFor(input))).toMatchObject({ ok: true });
+    expect(h.outbound).toHaveLength(1);
+  });
+
+  it("스레드 런은 그 스레드 id 를 실어야 받는다", async () => {
+    const h = await setup();
+    const r = await readyRunner(h);
+    const root = randomUUID();
+    const input = await startRun(h, r, { threadId: root, sessionKey: dodokSessionKey("coder", CH, root) });
+    // postFor 는 threadId 를 싣지 않는다
+    await expectDenied(h, r, postFor(input));
+    expect(await r.post(postFor(input, { threadId: root }))).toMatchObject({ ok: true });
+    expect(h.outbound).toHaveLength(1);
+  });
+
+  it("다른 러너의 살아 있는 런 id 로는 그 런의 값을 모두 맞춰도 못 쓴다", async () => {
+    const h = await setup();
+    const a = await readyRunner(h, TOKEN_A, [runnerAgent("coder")]);
+    const b = await readyRunner(h, TOKEN_B, [runnerAgent("fin")]);
+    const theirs = await startRun(h, b, { agentId: "fin" });
+    await expectDenied(h, a, postFor(theirs));
+    expect(h.outbound).toHaveLength(0);
+  });
+
+  it("PROBE-2: 끝난 런 id 로는 못 쓴다 — 자기 런이든 남의 런이든", async () => {
+    const h = await setup();
+    const a = await readyRunner(h, TOKEN_A, [runnerAgent("coder")]);
+    const b = await readyRunner(h, TOKEN_B, [runnerAgent("fin")]);
+    const mine = await startRun(h, a);
+    const theirs = await startRun(h, b, { agentId: "fin" });
+    a.send("run.final", { runId: mine.runId, text: "", stopReason: "end_turn", costKind: "api" });
+    b.send("run.final", { runId: theirs.runId, text: "", stopReason: "end_turn", costKind: "api" });
+    await until(
+      () =>
+        signals(h, mine.runId).includes("gateway_final") &&
+        signals(h, theirs.runId).includes("gateway_final"),
+      "finals",
+    );
+    await expectDenied(h, a, postFor(mine));
+    await expectDenied(h, a, postFor(mine, { runId: theirs.runId }));
+    expect(h.outbound).toHaveLength(0);
+  });
+
+  it("중지한 런에는 못 쓴다", async () => {
+    const h = await setup();
+    const r = await readyRunner(h);
+    const input = await startRun(h, r);
+    await h.adapter.abort(input.runId, input.sessionKey);
+    await expectDenied(h, r, postFor(input));
+    expect(h.outbound).toHaveLength(0);
   });
 });
 
@@ -743,6 +954,48 @@ describe("승인", () => {
     r.send("run.event", { runId, event: { type: "STEP_STARTED", runId, stepName: "after" } });
     await until(() => runEvents(h, runId).length === 1, "after");
     expect(approvals(h)).toEqual([]);
+  });
+
+  it("중지한 런의 승인 요청은 카드로 만들지 않고 warn 한다", async () => {
+    const h = await setup();
+    const r = await readyRunner(h);
+    const { runId, sessionKey } = await startRun(h, r);
+    await h.adapter.abort(runId, sessionKey);
+    r.send("approval.requested", {
+      providerApprovalId: "perm-late",
+      runId,
+      sessionKey,
+      toolCallId: "t",
+      toolName: "Bash",
+      summary: "rm",
+      canAllowAlways: false,
+    });
+    const dropped = () => h.logs.filter((l) => l.msg === "runner approval for an aborted run — dropped");
+    await until(() => dropped().length === 1, "warn");
+    expect(approvals(h)).toEqual([]);
+  });
+
+  it("같은 토큰으로 다시 붙은 러너가 옛 승인의 id 를 다시 쓰면 버리고 warn 한다", async () => {
+    const h = await setup();
+    const first = await readyRunner(h);
+    const one = await startRun(h, first);
+    await requestApproval(h, first, one.runId, one.sessionKey);
+    const second = await readyRunner(h);
+    await waitDisconnect(first);
+    const two = await startRun(h, second);
+    second.send("approval.requested", {
+      providerApprovalId: "perm-1",
+      runId: two.runId,
+      sessionKey: two.sessionKey,
+      toolCallId: "toolu_10",
+      toolName: "Write",
+      summary: "src/b.ts",
+      canAllowAlways: true,
+    });
+    const dropped = () => h.logs.filter((l) => l.msg === "runner approval id already used — dropped");
+    await until(() => dropped().length === 1, "warn");
+    expect(dropped()[0]?.obj).toMatchObject({ runId: two.runId, providerApprovalId: "perm-1" });
+    expect(approvals(h).filter((a) => a.status === "pending")).toHaveLength(1);
   });
 });
 

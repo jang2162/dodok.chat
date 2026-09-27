@@ -42,11 +42,15 @@ export class RunnerApprovals {
     this.#opts = opts;
   }
 
-  /** 새 요청이면 pending 을 내고 기한 타이머를 건다. 같은 id 를 다시 보내면 무시한다. sessionKey 는 호출자가 런과 대조했다 */
-  request(runner: Runner, req: RunnerApprovalRequested): boolean {
+  /**
+   * 새 요청이면 pending 을 내고 기한 타이머를 건다. 이미 쓴 id(같은 토큰으로 다시 붙은 러너가 옛 승인의 id 를 다시 쓴 경우 포함)면
+   * 무시한다 — 버린 까닭은 돌려주는 값으로 호출자가 로그에 남긴다. sessionKey 는 호출자가 런과 대조했다
+   */
+  request(runner: Runner, req: RunnerApprovalRequested): "requested" | "duplicate" | "invalid-session" {
     const id = this.#id(runner, req.providerApprovalId);
+    if (this.#entries.has(id)) return "duplicate";
     const session = parseDodokSessionKey(req.sessionKey);
-    if (this.#entries.has(id) || !session) return false;
+    if (!session) return "invalid-session";
     const at = this.#opts.now();
     const approval: ProviderApproval = {
       providerApprovalId: id,
@@ -69,7 +73,7 @@ export class RunnerApprovals {
     entry.timer = setTimeout(() => this.#expire(entry), this.#opts.ttlMs);
     this.#entries.set(id, entry);
     this.#opts.emit(approval);
-    return true;
+    return "requested";
   }
 
   /** 러너가 콜백 signal 끊김을 알렸다 */

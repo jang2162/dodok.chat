@@ -19,7 +19,6 @@ import {
   ErrorCode,
   type InboundDeliver,
   type OutboundMessage,
-  parseDodokSessionKey,
   type RunEventBody,
   type RunEventType,
   RUNNER_NAMESPACE,
@@ -82,6 +81,20 @@ const RUN_START_ACK_TIMEOUT_MS = 15_000;
 const REJECT_LOG_INTERVAL_MS = 60_000;
 const REJECT_LOG_MAX_ADDRESSES = 1_024;
 const USAGE_EVENT = "dodok.usage";
+/** interrupt 로 끝난 턴의 run.final stopReason */
+const ABORTED_STOP_REASON = "aborted";
+const UNKNOWN_FRAME_LOG_INTERVAL_MS = 60_000;
+const SESSION_TITLE_MAX = 120;
+// 러너가 보낼 수 있는 프레임 이름 — 나머지는 Socket.IO 가 조용히 버리므로 따로 warn 한다
+const RUNNER_FRAMES: ReadonlySet<string> = new Set<keyof RunnerClientToServerEvents>([
+  "hello",
+  "run.event",
+  "run.final",
+  "run.error",
+  "outbound.post",
+  "approval.requested",
+  "approval.withdrawn",
+]);
 
 /**
  * 러너가 `run.event` 로 보낼 수 있는 변형. 수명(RUN_*)·승인(APPROVAL_*)·대기(RUN_QUEUED)·상태(STATE_SNAPSHOT)는 서버와 이 어댑터가
@@ -111,11 +124,21 @@ type RunTrack = {
   started: boolean;
   openTools: Set<string>;
   aborted: boolean;
-  /** run.start ack 를 기다리는 중이면 — 러너가 끊기면 곧바로 send 를 끝낸다 */
+  /** run.start 의 dispatch ack 전이면 — 러너가 끊기면 곧바로 send 를 끝낸다 */
   rejectAck?: (error: AdapterError) => void;
 };
 
 type SocketAuth = { tokenId?: string; label?: string };
+
+/** 코드 포인트 경계에서 UTF-16 길이 max 안으로 자른다 — 서로게이트 쌍을 반으로 가르지 않는다(스키마 길이는 UTF-16) */
+function clip(text: string, max: number): string {
+  let out = "";
+  for (const ch of text) {
+    if (out.length + ch.length > max) break;
+    out += ch;
+  }
+  return out;
+}
 
 function issues(error: { issues: Array<{ path: PropertyKey[]; message: string }> }): string {
   return error.issues.map((i) => `${i.path.join(".") || "<root>"}: ${i.message}`).join("; ");
@@ -229,11 +252,21 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
     if (!registry.remove(runner.socket.id)) return;
     logger.info({ tokenId: runner.tokenId, label: runner.label, reason }, "runner disconnected");
     if (closed) return;
+    releaseRunner(runner);
+    for (const agentId of owned) {
+      const next = registry.owner(agentId);
+      if (next) logger.info({ agentId, tokenId: next.tokenId, label: next.label }, "runner agent taken over");
+    }
+    announceRunners();
+  }
+
+  /** 레지스트리에서 빠진 러너의 런은 오류로, 떠 있던 승인은 철회로 닫는다 */
+  function releaseRunner(runner: Runner) {
     for (const run of runs.values()) {
       if (run.runner !== runner) continue;
       runs.delete(run.runId);
       const error = new AdapterError("ADAPTER_UNAVAILABLE", "runner disconnected");
-      // ack 전이면 send 가 던지고 오케스트레이터가 닫는다 — 여기서 RUN_ERROR 를 겹쳐 내지 않는다
+      // dispatch ack 전이면 send 가 던지고 오케스트레이터가 닫는다 — 여기서 RUN_ERROR 를 겹쳐 내지 않는다
       if (run.rejectAck) {
         run.rejectAck(error);
         continue;
@@ -242,11 +275,6 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
       emitSignal(run.runId, { kind: "gateway_error", code: error.code, message: error.message });
     }
     approvals.cancelForRunner(runner);
-    for (const agentId of owned) {
-      const next = registry.owner(agentId);
-      if (next) logger.info({ agentId, tokenId: next.tokenId, label: next.label }, "runner agent taken over");
-    }
-    announceRunners();
   }
 
   function onHello(socket: RunnerSocket, auth: Required<SocketAuth>, payload: unknown, ack: unknown) {
@@ -271,12 +299,6 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
         runnerProtocol: parsed.data.runnerProtocol,
       });
     }
-    // 토큰 하나 = 러너 하나. 뒤 연결이 이긴다 — 앞 연결을 먼저 빼야 뒤 연결의 에이전트가 자기와 충돌하지 않는다
-    const previous = registry.byToken(auth.tokenId);
-    if (previous) {
-      dropRunner(previous, "replaced");
-      previous.socket.disconnect(true);
-    }
     const runner = createRunner({
       socket,
       tokenId: auth.tokenId,
@@ -284,7 +306,20 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
       hello: parsed.data,
       connectedAt: new Date(now()).toISOString(),
     });
-    registry.add(runner);
+    // 토큰 하나 = 러너 하나. 뒤 연결이 이기고 앞 연결의 자리를 그대로 잇는다 — 뒤 연결의 에이전트가 자기와 충돌하지 않고,
+    // 앞 연결이 빠진 틈에 다른 러너가 에이전트를 가져가지도 않는다. 앞 연결의 런은 그 소켓과 함께 끝난다
+    const previous = registry.byToken(auth.tokenId);
+    if (previous) {
+      registry.replace(previous, runner);
+      logger.info(
+        { tokenId: previous.tokenId, label: previous.label, reason: "replaced" },
+        "runner disconnected",
+      );
+      releaseRunner(previous);
+      previous.socket.disconnect(true);
+    } else {
+      registry.add(runner);
+    }
     const conflicts = registry.conflicts(runner);
     if (conflicts.length > 0) {
       logger.warn(
@@ -382,8 +417,15 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
     if (final.usage?.outputTokens !== undefined) usage.outputTokens = final.usage.outputTokens;
     if (final.costUsd !== undefined) usage.costUsd = final.costUsd;
     emitEvent(run.runId, { type: "CUSTOM", runId: run.runId, name: USAGE_EVENT, value: usage });
-    // 중지한 런의 중간 답은 올리지 않는다 — 오케스트레이터가 이미 aborted 로 닫았고, 정본 저장은 끝난 런에도 메시지를 만든다
-    if (run.aborted || final.text.trim() === "") {
+    // 중지된 턴(서버가 abort 했거나 러너 쪽에서 interrupt — 러너는 수명 이벤트를 run.event 로 보내지 않는다)은 메시지 없이
+    // 중지로 닫는다. 중간 답을 올리면 안 된다 — 정본 저장은 끝난 런에도 메시지를 만든다. 서버가 이미 aborted 로 닫은 런이면
+    // 오케스트레이터가 이 둘을 버린다
+    if (run.aborted || final.stopReason === ABORTED_STOP_REASON) {
+      emitEvent(run.runId, { type: "RUN_ABORTED", runId: run.runId, by: "user" });
+      emitSignal(run.runId, { kind: "gateway_aborted" });
+      return;
+    }
+    if (final.text.trim() === "") {
       emitSignal(run.runId, { kind: "gateway_final" });
       return;
     }
@@ -448,13 +490,20 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
       logger.warn({ tokenId: runner.tokenId, agentId: post.agentId, runId: post.runId }, message);
       reply({ ok: false, code: "FORBIDDEN", message });
     };
-    // 러너는 자기가 맡은 에이전트로만, 그 에이전트의 세션으로만, 자기 런에만 쓴다
-    if (registry.owner(post.agentId) !== runner) return deny("agent is not assigned to this runner");
-    if (parseDodokSessionKey(post.sessionKey)?.providerAgentId !== post.agentId) {
-      return deny("sessionKey does not belong to the agent");
-    }
+    // 러너는 자기에게 배정된 열린 런에만, 그 런의 채널·에이전트·세션·스레드 그대로 쓴다. 끝난 런 id 를 실으면 서버가 그 런의
+    // 에이전트 글로 저장하고, 런 없는 글은 다른 채널에도 저장된다 — 어느 쪽도 이 러너가 흉내 낼 자리가 아니다
     const run = post.runId === undefined ? undefined : runs.get(post.runId);
-    if (run && run.runner !== runner) return deny("run belongs to another runner");
+    if (!run || run.runner !== runner || run.aborted)
+      return deny("post must belong to an open run of this runner");
+    const d = run.deliver;
+    if (
+      post.channelId !== d.channelId ||
+      post.agentId !== d.agentId ||
+      post.sessionKey !== d.sessionKey ||
+      post.threadId !== d.threadId
+    ) {
+      return deny("post does not match its run");
+    }
     let pending = inflightPosts.get(post.outboundId);
     if (!pending) {
       pending = opts.onOutbound(post).finally(() => inflightPosts.delete(post.outboundId));
@@ -485,6 +534,14 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
     }
     const run = ownRun(runner, parsed.data.runId, "approval.requested");
     if (!run) return;
+    // 서버는 이미 그 런을 닫았다 — 카드가 런 없이 남거나 같은 세션의 다음 런에 붙는다. 러너에는 run.abort 가 가 있다
+    if (run.aborted) {
+      logger.warn(
+        { tokenId: runner.tokenId, runId: run.runId, providerApprovalId: parsed.data.providerApprovalId },
+        "runner approval for an aborted run — dropped",
+      );
+      return;
+    }
     // 세션 키로 채널·에이전트를 푼다 — 런의 키와 다르면 다른 채널의 카드를 띄우려는 것이다
     if (parsed.data.sessionKey !== run.deliver.sessionKey) {
       logger.warn(
@@ -493,7 +550,19 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
       );
       return;
     }
-    approvals.request(runner, parsed.data);
+    const result = approvals.request(runner, parsed.data);
+    if (result === "duplicate") {
+      // 러너는 결정을 영영 못 받는다 — 런이 runMs 까지 매달리는 원인을 찾을 수 있게 남긴다
+      logger.warn(
+        { tokenId: runner.tokenId, runId: run.runId, providerApprovalId: parsed.data.providerApprovalId },
+        "runner approval id already used — dropped",
+      );
+    } else if (result === "invalid-session") {
+      logger.warn(
+        { tokenId: runner.tokenId, runId: run.runId },
+        "runner approval sessionKey invalid — dropped",
+      );
+    }
   }
 
   function onApprovalWithdrawn(runner: Runner, payload: unknown) {
@@ -532,6 +601,21 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
       });
     };
 
+    // 스펙 3장 「모르는 프레임 종류는 버리고 warn」 — 되풀이하는 러너가 로그를 채우지 않게 소켓마다 1분에 한 줄
+    let unknownFrames: { at: number; suppressed: number } | undefined;
+    socket.onAny((event: string) => {
+      if (RUNNER_FRAMES.has(event)) return;
+      const at = now();
+      if (unknownFrames && at - unknownFrames.at < UNKNOWN_FRAME_LOG_INTERVAL_MS) {
+        unknownFrames.suppressed += 1;
+        return;
+      }
+      logger.warn(
+        { tokenId, event: event.slice(0, 64), suppressed: unknownFrames?.suppressed ?? 0 },
+        "runner sent an unknown frame — dropped",
+      );
+      unknownFrames = { at, suppressed: 0 };
+    });
     (socket as unknown as Socket).on("hello", (payload: unknown, ack: unknown) => {
       if (registry.get(socket.id) === undefined) {
         clearTimeout(helloTimer);
@@ -627,7 +711,7 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
           participants: input.context.participants,
           thread: input.threadId !== undefined,
         }),
-        sessionTitle: `${channelName} · ${agent.name}`.slice(0, 120),
+        sessionTitle: clip(`${channelName} · ${agent.name}`, SESSION_TITLE_MAX),
       });
       if (!start.success) throw new AdapterError("INTERNAL", `run.start invalid: ${issues(start.error)}`);
 
@@ -642,13 +726,25 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
         aborted: false,
       };
       runs.set(run.runId, run);
-      let raw: unknown;
+      let ack: RunnerRunAck;
       try {
-        raw = await new Promise((resolve, reject) => {
+        ack = await new Promise<RunnerRunAck>((resolve, reject) => {
           run.rejectAck = reject;
-          runner.socket.timeout(RUN_START_ACK_TIMEOUT_MS).emit("run.start", start.data, (err, res) => {
-            if (err) reject(new AdapterError("ADAPTER_UNAVAILABLE", "runner did not ack run.start in time"));
-            else resolve(res);
+          runner.socket.timeout(RUN_START_ACK_TIMEOUT_MS).emit("run.start", start.data, (err, raw) => {
+            if (err) {
+              reject(new AdapterError("ADAPTER_UNAVAILABLE", "runner did not ack run.start in time"));
+              return;
+            }
+            const parsed = RunnerRunAck.safeParse(raw);
+            if (!parsed.success || parsed.data.runId !== run.runId) {
+              const why = parsed.success ? "runId mismatch" : issues(parsed.error);
+              reject(new AdapterError("INTERNAL", `ADAPTER_PROTOCOL: run.ack ${why}`));
+              return;
+            }
+            // 받아들인 런은 이 콜백에서 곧바로 「러너의 런」이 된다 — ack 와 끊김이 같은 틱에 와서 send 가 이어지기 전에
+            // dropRunner 가 돌아도 RUN_ERROR 를 낸다(send 는 dispatch 를 돌려주고 오케스트레이터는 이미 닫힌 런으로 본다)
+            if (parsed.data.admission === "dispatch") run.rejectAck = undefined;
+            resolve(parsed.data);
           });
         });
       } catch (error) {
@@ -657,27 +753,19 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
       } finally {
         run.rejectAck = undefined;
       }
-      const ack = RunnerRunAck.safeParse(raw);
-      if (!ack.success || ack.data.runId !== run.runId) {
+      if (ack.admission === "drop") {
         runs.delete(run.runId);
-        const why = ack.success ? "runId mismatch" : issues(ack.error);
-        throw new AdapterError("INTERNAL", `ADAPTER_PROTOCOL: run.ack ${why}`);
+        return ack.reason === undefined ? { admission: "drop" } : { admission: "drop", reason: ack.reason };
       }
-      if (ack.data.admission === "drop") {
-        runs.delete(run.runId);
-        return ack.data.reason === undefined
-          ? { admission: "drop" }
-          : { admission: "drop", reason: ack.data.reason };
-      }
-      if (ack.data.queuedPosition !== undefined) {
-        emitEvent(run.runId, { type: "RUN_QUEUED", runId: run.runId, position: ack.data.queuedPosition });
+      if (ack.queuedPosition !== undefined && runs.get(run.runId) === run) {
+        emitEvent(run.runId, { type: "RUN_QUEUED", runId: run.runId, position: ack.queuedPosition });
       }
       logger.info(
         {
           runId: run.runId,
           deliveryId: input.deliveryId,
           tokenId: runner.tokenId,
-          queuedPosition: ack.data.queuedPosition,
+          queuedPosition: ack.queuedPosition,
         },
         "runner run started",
       );

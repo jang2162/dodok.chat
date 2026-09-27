@@ -53,6 +53,18 @@ export class RunnerRegistry {
     this.#runners.set(runner.socket.id, runner);
   }
 
+  /**
+   * 같은 토큰의 새 연결이 옛 연결의 자리(hello 순서)를 잇는다 — 순간 재접속 한 번에 충돌해 있던 뒤 러너가 에이전트를 가져가면
+   * 세션 전사가 없는 머신으로 대화가 넘어간다
+   */
+  replace(previous: Runner, runner: Runner): void {
+    const entries = [...this.#runners].map(([id, r]): [string, Runner] =>
+      r === previous ? [runner.socket.id, runner] : [id, r],
+    );
+    this.#runners.clear();
+    for (const [id, r] of entries) this.#runners.set(id, r);
+  }
+
   /** 빠진 러너. 이미 없으면 undefined — 교체와 disconnect 가 같은 러너를 두 번 뺄 수 있다 */
   remove(socketId: string): Runner | undefined {
     const runner = this.#runners.get(socketId);
