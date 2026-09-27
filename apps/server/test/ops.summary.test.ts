@@ -4,11 +4,11 @@ import pino from "pino";
 import { v7 as uuid } from "uuid";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Db } from "../src/db/client";
-import { runs } from "../src/db/schema.sqlite";
+import { agents, runs } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
 import { createChannel } from "../src/modules/channels/service";
 import { createOpsService, type OpsService } from "../src/modules/ops/service";
-import { runsSummary, USAGE_TRUSTED } from "../src/modules/ops/summary";
+import { runsSummary, USAGE_TRUSTED_PROVIDERS } from "../src/modules/ops/summary";
 import { insertRun } from "../src/modules/runs/store";
 import { ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
@@ -75,13 +75,13 @@ function blocked(key: string, at: Date): void {
   clock = NOW;
 }
 
-const summary = (days: 1 | 7, usageTrusted?: boolean) =>
+const summary = (days: 1 | 7, usageTrustedProviders?: ReadonlySet<string>) =>
   runsSummary(db, {
     days,
     now: NOW,
     ops,
     workspaceId,
-    ...(usageTrusted === undefined ? {} : { usageTrusted }),
+    ...(usageTrustedProviders === undefined ? {} : { usageTrustedProviders }),
   });
 const row = (rows: OpsRunsSummary["byChannel"], id: string) => rows.find((r) => r.id === id);
 
@@ -175,33 +175,54 @@ describe("runsSummary 합계", () => {
 });
 
 describe("runsSummary usage", () => {
+  let coder: string;
   beforeEach(() => {
+    coder = createAgent(db, { workspaceId, providerAgentId: "coder", handle: "coder", name: "Coder" }).id;
+    db.update(agents).set({ provider: "claude" }).where(eq(agents.id, coder)).run();
     run(general, dev, DAY(25, 9), "done", { inputTokens: 100, outputTokens: 20, costUsd: 0.25 });
     run(general, dev, DAY(25, 9), "done", { inputTokens: 5, costUsd: 0.5 });
     run(general, fin, DAY(25, 9), "done"); // usage 없음 — 0 으로 더한다
   });
 
-  it("USAGE_TRUSTED 는 아직 false — 기본 경로는 tokens·costUsd 키가 없다", () => {
-    expect(USAGE_TRUSTED).toBe(false);
+  it("믿는 제공자는 claude 뿐 — OpenClaw 런만 있으면 tokens·costUsd 키가 없다", () => {
+    expect([...USAGE_TRUSTED_PROVIDERS]).toEqual(["claude"]);
     const s = summary(1);
-    expect(s.usageTrusted).toBe(false);
+    expect(s.usageTrustedProviders).toEqual(["claude"]);
     for (const r of [...s.byChannel, ...s.byAgent]) {
       expect(r).not.toHaveProperty("tokens");
       expect(r).not.toHaveProperty("costUsd");
     }
   });
 
-  it("믿을 수 있으면(태스크 7) 입력+출력 토큰과 costUsd 를 더한다", () => {
-    const s = summary(1, true);
-    expect(s.usageTrusted).toBe(true);
+  it("믿는 제공자의 런만 입력+출력 토큰과 costUsd 를 더한다 — 채널 행도 그 런만", () => {
+    run(general, coder, DAY(25, 10), "done", { inputTokens: 7, outputTokens: 3, costUsd: 0.125 });
+    run(general, coder, DAY(25, 10), "error"); // usage 없음 — 0 으로 더한다
+    const s = summary(1);
     expect(OpsRunsSummary.parse(s)).toEqual(s);
+    expect(row(s.byChannel, general)).toMatchObject({ runs: 5, tokens: 10, costUsd: 0.125 });
+    expect(row(s.byAgent, coder)).toMatchObject({ runs: 2, tokens: 10, costUsd: 0.125 });
+    for (const id of [dev, fin]) {
+      expect(row(s.byAgent, id)).not.toHaveProperty("tokens");
+      expect(row(s.byAgent, id)).not.toHaveProperty("costUsd");
+    }
+  });
+
+  it("믿는 제공자 집합을 바꾸면 그 제공자로 — 비우면 어느 행에도 키가 없다", () => {
+    const s = summary(1, new Set(["openclaw"]));
+    expect(s.usageTrustedProviders).toEqual(["openclaw"]);
     expect(row(s.byChannel, general)).toMatchObject({ tokens: 125, costUsd: 0.75 });
     expect(row(s.byAgent, dev)).toMatchObject({ tokens: 125, costUsd: 0.75 });
     expect(row(s.byAgent, fin)).toMatchObject({ tokens: 0, costUsd: 0 });
+
+    const none = summary(1, new Set());
+    expect(none.usageTrustedProviders).toEqual([]);
+    for (const r of [...none.byChannel, ...none.byAgent]) expect(r).not.toHaveProperty("tokens");
   });
 
-  it("믿을 수 있을 때 런 없이 막히기만 한 채널 행은 0 을 싣는다", () => {
+  it("런 없이 막히기만 한 채널 행에는 믿는 런이 없으니 tokens·costUsd 키가 없다", () => {
     blocked(`channel:${random}`, DAY(25, 11));
-    expect(row(summary(1, true).byChannel, random)).toMatchObject({ runs: 0, tokens: 0, costUsd: 0 });
+    const r = row(summary(1, new Set(["openclaw"])).byChannel, random);
+    expect(r).toMatchObject({ runs: 0, blocked: 1 });
+    expect(r).not.toHaveProperty("tokens");
   });
 });

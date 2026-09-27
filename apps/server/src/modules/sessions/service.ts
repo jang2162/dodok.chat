@@ -1,5 +1,6 @@
 import { dodokSessionKey, isOpenClawAgentId } from "@dodok/shared";
 import { and, eq, isNull, sql } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
 import { v7 as uuidv7 } from "uuid";
 import type { AgentAdapter } from "../../adapters/types";
 import type { Db, DbOrTx } from "../../db/client";
@@ -64,9 +65,29 @@ export function ensureSession(
 }
 
 /**
+ * 서버가 정하는 제공자 세션 id(러너 계획 판정 P4 — serverSessionIds 어댑터만 부른다). 비었으면 새 UUID 를 써 두고 돌려준다 —
+ * 같은 세션 행의 다음 런은 같은 값을 받는다. 「새 대화」가 비우면(markSessionReset) 다음 런이 새 값을 쓴다
+ */
+export function ensureProviderSessionId(db: Db, sessionId: string): string {
+  return db.transaction((tx) => {
+    const row = tx
+      .select({ providerSessionId: agentSessions.providerSessionId })
+      .from(agentSessions)
+      .where(eq(agentSessions.id, sessionId))
+      .get();
+    if (!row) throw apiError("NOT_FOUND", "agent session not found");
+    if (row.providerSessionId !== null) return row.providerSessionId;
+    const providerSessionId = randomUUID();
+    tx.update(agentSessions).set({ providerSessionId }).where(eq(agentSessions.id, sessionId)).run();
+    return providerSessionId;
+  });
+}
+
+/**
  * 우리 resetSession 이 성공한 뒤 부른다 — 새 세션은 현재 채널 프롬프트를 설정 경로로 받으므로 리비전을 맞춘다.
  * 응답에 없는 sessionStartedAt·lifecycleRevision 은 null(옛 세션 값을 남기지 않는다). 행이 없으면 만든다.
- * threadRootId 가 있으면 그 스레드 세션 행만 바꾼다.
+ * threadRootId 가 있으면 그 스레드 세션 행만 바꾼다. clearProviderSessionId 면 서버가 정한 세션 id 도 비운다(판정 P4) —
+ * OpenClaw 는 그 열이 Gateway 식별용이라 두지 않는다
  */
 export function markSessionReset(
   db: Db,
@@ -74,6 +95,7 @@ export function markSessionReset(
   agentId: string,
   reset: SessionResetInfo,
   threadRootId?: string,
+  opts: { clearProviderSessionId?: boolean } = {},
 ): AgentSessionRow {
   return db.transaction((tx) => {
     const now = new Date();
@@ -82,6 +104,7 @@ export function markSessionReset(
       sessionStartedAt: isoToDate(reset.sessionStartedAt),
       lifecycleRevision: reset.lifecycleRevision ?? null,
       lastSyncedAt: now,
+      ...(opts.clearProviderSessionId ? { providerSessionId: null } : {}),
     };
     const row = {
       id: uuidv7(),

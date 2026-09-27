@@ -303,7 +303,7 @@ describe("운영 API /api/v1/ops", () => {
         expect(res.statusCode).toBe(200);
         const summary = OpsRunsSummary.parse(res.json());
         expect(summary.days).toBe(days);
-        expect(summary.usageTrusted).toBe(false);
+        expect(summary.usageTrustedProviders).toEqual(["claude"]);
       }
       for (const query of ["?days=3", "", "?days=x", "?days=1.0"]) {
         const res = await call(owner, "GET", `/runs${query}`);

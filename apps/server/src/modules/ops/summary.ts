@@ -6,10 +6,11 @@ import { agents, channels, runs } from "../../db/schema.sqlite";
 import type { OpsService } from "./service";
 
 /**
- * runs.usage_json 의 토큰·금액을 믿을 수 있는가(스펙 3.3). 출력 토큰·비용이 CLI `result` 와 같을 때만 true — 판정·다시 재는 법은 ADR 0005.
- * false 인 동안 응답 행에 tokens·costUsd 키가 없고 화면은 「측정 불가」를 보인다
+ * runs.usage_json 의 토큰·금액을 믿을 수 있는 제공자(운영 보강 스펙 3.3, 러너 계획 판정 P8). OpenClaw 는 출력 토큰·비용이 CLI `result` 와
+ * 달라 빠진다(ADR 0005), 러너(claude)는 SDK `result` 를 그대로 싣는다(ADR 0007 4.8). 믿는 제공자의 런만 토큰·비용을 합치고,
+ * 그런 런이 없는 행에는 tokens·costUsd 키가 없다 — 화면은 「측정 불가」
  */
-export const USAGE_TRUSTED = false;
+export const USAGE_TRUSTED_PROVIDERS: ReadonlySet<string> = new Set(["claude"]);
 
 const CHANNEL_KEY_PREFIX = "channel:";
 
@@ -25,20 +26,23 @@ export function runsSummary(
     now: Date;
     ops: Pick<OpsService, "countsSince">;
     workspaceId: string;
-    usageTrusted?: boolean;
+    usageTrustedProviders?: ReadonlySet<string>;
   },
 ): OpsRunsSummary {
   const { days, now, workspaceId } = opts;
-  const usageTrusted = opts.usageTrusted ?? USAGE_TRUSTED;
+  const trustedProviders = [...(opts.usageTrustedProviders ?? USAGE_TRUSTED_PROVIDERS)].sort();
   const since = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (days - 1));
 
+  // 런의 에이전트가 믿는 제공자인가 — 채널 행도 에이전트를 조인해 그 런만 더한다
+  const trusted = trustedProviders.length > 0 ? inArray(agents.provider, trustedProviders) : sql`0`;
   const tally = {
     runs: sql<number>`count(*)`,
     failed: sql<number>`coalesce(sum(${runs.status} = 'error'), 0)`,
     aborted: sql<number>`coalesce(sum(${runs.status} = 'aborted'), 0)`,
+    trustedRuns: sql<number>`coalesce(sum(${trusted}), 0)`,
     // usage 가 없는 런·빠진 필드는 0 으로 더한다
-    tokens: sql<number>`coalesce(sum(coalesce(json_extract(${runs.usage}, '$.inputTokens'), 0) + coalesce(json_extract(${runs.usage}, '$.outputTokens'), 0)), 0)`,
-    costUsd: sql<number>`coalesce(total(json_extract(${runs.usage}, '$.costUsd')), 0)`,
+    tokens: sql<number>`coalesce(sum(case when ${trusted} then coalesce(json_extract(${runs.usage}, '$.inputTokens'), 0) + coalesce(json_extract(${runs.usage}, '$.outputTokens'), 0) else 0 end), 0)`,
+    costUsd: sql<number>`coalesce(total(case when ${trusted} then json_extract(${runs.usage}, '$.costUsd') end), 0)`,
   };
   type Tally = { id: string; name: string } & { [K in keyof typeof tally]: number };
 
@@ -46,6 +50,7 @@ export function runsSummary(
     .select({ id: channels.id, name: channels.name, ...tally })
     .from(runs)
     .innerJoin(channels, eq(runs.channelId, channels.id))
+    .innerJoin(agents, eq(runs.agentId, agents.id))
     .where(and(eq(channels.workspaceId, workspaceId), gte(runs.createdAt, since)))
     .groupBy(channels.id)
     .all();
@@ -64,7 +69,7 @@ export function runsSummary(
   const seen = new Set(channelRows.map((r) => r.id));
   const blockedOnly = [...blocked.keys()].filter((id) => !seen.has(id));
   if (blockedOnly.length > 0) {
-    const zero = { runs: 0, failed: 0, aborted: 0, tokens: 0, costUsd: 0 };
+    const zero = { runs: 0, failed: 0, aborted: 0, trustedRuns: 0, tokens: 0, costUsd: 0 };
     for (const ch of db
       .select({ id: channels.id, name: channels.name })
       .from(channels)
@@ -80,7 +85,7 @@ export function runsSummary(
     failed: r.failed,
     aborted: r.aborted,
     blocked: blockedCount,
-    ...(usageTrusted ? { tokens: r.tokens, costUsd: r.costUsd } : {}),
+    ...(r.trustedRuns > 0 ? { tokens: r.tokens, costUsd: r.costUsd } : {}),
   });
   const byRuns = (a: OpsRunsRow, b: OpsRunsRow) =>
     b.runs - a.runs || b.blocked - a.blocked || a.name.localeCompare(b.name);
@@ -88,6 +93,6 @@ export function runsSummary(
     days,
     byChannel: channelRows.map((r) => toRow(r, blocked.get(r.id) ?? 0)).sort(byRuns),
     byAgent: agentRows.map((r) => toRow(r, 0)).sort(byRuns),
-    usageTrusted,
+    usageTrustedProviders: trustedProviders,
   };
 }

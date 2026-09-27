@@ -429,7 +429,9 @@ export async function resetAgentSession(
     if (err.code === "FORBIDDEN") throw capabilityMissing();
     throw apiError(err.code, err.message);
   }
-  markSessionReset(db, input.channelId, input.agentId, reset, threadRootId);
+  markSessionReset(db, input.channelId, input.agentId, reset, threadRootId, {
+    clearProviderSessionId: adapter.capabilities().serverSessionIds,
+  });
   const handle = agent.handle;
   createSystemMessage(db, deps.bus, {
     channelId: input.channelId,

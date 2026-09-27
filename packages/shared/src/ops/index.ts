@@ -111,6 +111,7 @@ export const OpsRunsSummary = z.object({
   days: z.union([z.literal(1), z.literal(7)]),
   byChannel: z.array(OpsRunsRow),
   byAgent: z.array(OpsRunsRow),
-  usageTrusted: z.boolean(),
+  /** usage 를 믿는 제공자(러너 계획 판정 P8) — 그 제공자의 런만 행의 tokens·costUsd 에 더한다. 비었으면 화면은 「측정 불가」 */
+  usageTrustedProviders: z.array(z.string()),
 });
 export type OpsRunsSummary = z.infer<typeof OpsRunsSummary>;

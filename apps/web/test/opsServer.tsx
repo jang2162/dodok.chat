@@ -44,7 +44,7 @@ export const rowOf = (n: number, over: Partial<OpsRunsRow> = {}): OpsRunsRow =>
   OpsRunsRow.parse({ id: uid(n), name: `이름-${n}`, runs: 0, failed: 0, aborted: 0, blocked: 0, ...over });
 
 export const runsOf = (over: Partial<OpsRunsSummary> = {}): OpsRunsSummary =>
-  OpsRunsSummary.parse({ days: 1, byChannel: [], byAgent: [], usageTrusted: false, ...over });
+  OpsRunsSummary.parse({ days: 1, byChannel: [], byAgent: [], usageTrustedProviders: [], ...over });
 
 export function eventOf(n: number, over: Partial<OpsEvent> = {}): OpsEvent {
   return OpsEvent.parse({

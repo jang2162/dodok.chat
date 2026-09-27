@@ -176,7 +176,7 @@ describe("OpsStatus", () => {
 describe("OpsRunsSummary", () => {
   const ROW = { id: ID, name: "general", runs: 2, failed: 1, aborted: 0, blocked: 0 };
   it("days 는 1·7 만, 토큰·금액은 선택", () => {
-    const summary = { days: 7, byChannel: [ROW], byAgent: [], usageTrusted: false };
+    const summary = { days: 7, byChannel: [ROW], byAgent: [], usageTrustedProviders: [] };
     expect(OpsRunsSummary.safeParse(summary).success).toBe(true);
     expect(OpsRunsSummary.safeParse({ ...summary, days: 3 }).success).toBe(false);
     expect(OpsRunsRow.safeParse({ ...ROW, tokens: 10, costUsd: 0.5 }).success).toBe(true);

@@ -28,7 +28,7 @@ import { createAgentMessage, createSystemMessage } from "../messages/service";
 import type { ApprovalsService } from "../approvals/service";
 import type { RunPlan } from "../router/decide";
 import { RETRY_RUN_ITEM } from "../router/service";
-import { ensureSession, INVALID_AGENT_ID_REASON } from "../sessions/service";
+import { ensureProviderSessionId, ensureSession, INVALID_AGENT_ID_REASON } from "../sessions/service";
 import { buildInboundDeliver } from "./context";
 import {
   createMediaLineFilter,
@@ -112,7 +112,8 @@ export type OrchestratorDeps = {
   timeouts?: Partial<RunTimeouts>;
 };
 
-const USAGE_EVENTS: ReadonlySet<string> = new Set(["openclaw.usage"]);
+/** usage CUSTOM 이벤트 — OpenClaw 어댑터와 러너 어댑터(판정 P8)가 같은 모양으로 낸다 */
+const USAGE_EVENTS: ReadonlySet<string> = new Set(["openclaw.usage", "dodok.usage"]);
 /** queued 에서 이 상태로 나가면 Gateway 가 런을 시작한 것 — RUN_STARTED·startedAt·run 타이머 */
 const STARTED: ReadonlySet<RunStatus> = new Set<RunStatus>([
   "streaming",
@@ -669,7 +670,19 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         agentId: run.agentId,
         threadRootId: run.threadRootId,
       });
-      const inbound = buildInboundDeliver(db, { run, trigger, session, needsPromptContext, now: now() });
+      const capabilities = adapter.capabilities();
+      // 채널 프롬프트를 매 런 싣는 어댑터(판정 P3)는 리비전과 무관하게 늘 — 바뀐 뒤에는 채널 행의 새 값만 실린다
+      const inbound = buildInboundDeliver(db, {
+        run,
+        trigger,
+        session,
+        needsPromptContext: needsPromptContext || capabilities.promptEveryRun,
+        now: now(),
+      });
+      // 서버가 세션 id 를 정하는 어댑터(판정 P4)만 두 번째 인자를 받는다
+      const providerSessionId = capabilities.serverSessionIds
+        ? ensureProviderSessionId(db, session.id)
+        : undefined;
       // ack 전 상한 — 어댑터는 플러그인이 없으면 120s, ack 가 없으면 재시도로 더 기다린다. 그동안에도 런은 queued 이므로
       // queuedMs 안에 전달되지 않으면 닫는다(스펙 8장 「브리지 단절·ack 없음 → ADAPTER_UNAVAILABLE」). ack 뒤에는 아래에서 다시 건다.
       awaitingAck.add(runId);
@@ -678,7 +691,9 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       });
       let result: Awaited<ReturnType<AgentAdapter["send"]>>;
       try {
-        result = await adapter.send(inbound);
+        result = await (providerSessionId === undefined
+          ? adapter.send(inbound)
+          : adapter.send(inbound, { providerSessionId }));
       } finally {
         awaitingAck.delete(runId);
       }

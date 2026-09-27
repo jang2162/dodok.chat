@@ -239,8 +239,8 @@ describe("런 표", () => {
     expect(link).toHaveAttribute("href", `/c/${uid(1)}`);
   });
 
-  it("usage 를 믿을 수 없으면 토큰·금액 열이 없고 「측정 불가」 한 줄", async () => {
-    stubOpsServer({ runs: (days) => runsOf({ days, byChannel: [CHANNEL], usageTrusted: false }) });
+  it("usage 를 믿는 제공자가 없으면 토큰·금액 열이 없고 「측정 불가」 한 줄", async () => {
+    stubOpsServer({ runs: (days) => runsOf({ days, byChannel: [CHANNEL], usageTrustedProviders: [] }) });
     renderOps();
     const runs = await region("런");
     const table = await within(runs).findByRole("table", { name: "채널별" });
@@ -248,10 +248,14 @@ describe("런 표", () => {
     expect(within(runs).getByText(/측정 불가/)).toBeInTheDocument();
   });
 
-  it("usage 를 믿을 수 있으면 토큰·금액 열", async () => {
+  it("usage 를 믿는 제공자가 있으면 토큰·금액 열", async () => {
     stubOpsServer({
       runs: (days) =>
-        runsOf({ days, usageTrusted: true, byChannel: [{ ...CHANNEL, tokens: 12_345, costUsd: 0.5 }] }),
+        runsOf({
+          days,
+          usageTrustedProviders: ["claude"],
+          byChannel: [{ ...CHANNEL, tokens: 12_345, costUsd: 0.5 }],
+        }),
     });
     renderOps();
     const runs = await region("런");

@@ -139,7 +139,9 @@ export function RunsTable() {
   const runs = useOpsRuns(days);
   const narrow = useIsNarrow();
   const data = runs.data;
-  const columns = data?.usageTrusted ? [...COUNTS, ...USAGE] : COUNTS;
+  // 믿는 제공자가 하나라도 있으면 열을 둔다 — 그 제공자의 런이 없는 행은 「—」(제공자별 표시는 러너 계획 태스크 7)
+  const usageTrusted = (data?.usageTrustedProviders.length ?? 0) > 0;
+  const columns = usageTrusted ? [...COUNTS, ...USAGE] : COUNTS;
   return (
     <Section title="런">
       <div role="group" aria-label="기간" className="flex gap-1">
@@ -160,7 +162,7 @@ export function RunsTable() {
         <>
           <Group title="채널별" rows={data.byChannel} columns={columns} channel narrow={narrow} />
           <Group title="에이전트별" rows={data.byAgent} columns={columns} channel={false} narrow={narrow} />
-          {!data.usageTrusted && (
+          {!usageTrusted && (
             <p className="text-xs text-muted-foreground">
               토큰·금액은 측정 불가 — Gateway 가 주는 사용량 값을 아직 믿을 수 없습니다 (ADR 0005)
             </p>
