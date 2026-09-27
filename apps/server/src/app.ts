@@ -253,7 +253,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
           now: limitClock,
         },
         logger: logger.child({ mod: "adapter" }),
-        onCanonical: (message) => orchestrator.onCanonical(message),
+        onCanonical: (message) => orchestrator.onCanonical(message, "openclaw"),
         sessionKeysToRecover: () => sessionRecoverTargets(db),
         ...(config.OPENCLAW_FRAME_DUMP_PATH === undefined
           ? {}
@@ -441,6 +441,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       db,
       workspaceId,
       adapter: openclaw,
+      adapterProviders: adapters.map((adapter) => adapter.provider),
       ops,
       disk: () => disk.current(),
       serverVersion: packageJson.version,

@@ -239,7 +239,7 @@ describe("런 표", () => {
     expect(link).toHaveAttribute("href", `/c/${uid(1)}`);
   });
 
-  it("usage 를 믿는 제공자가 없으면 토큰·금액 열이 없고 「측정 불가」 한 줄", async () => {
+  it("usage 를 믿는 제공자가 없으면(OpenClaw 만 붙은 서버) 토큰·금액 열이 없고 「측정 불가」 한 줄", async () => {
     stubOpsServer({ runs: (days) => runsOf({ days, byChannel: [CHANNEL], usageTrustedProviders: [] }) });
     renderOps();
     const runs = await region("런");

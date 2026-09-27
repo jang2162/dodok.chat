@@ -66,7 +66,7 @@ export function ensureSession(
 
 /**
  * 서버가 정하는 제공자 세션 id(러너 계획 판정 P4 — serverSessionIds 어댑터만 부른다). 비었으면 새 UUID 를 써 두고 돌려준다 —
- * 같은 세션 행의 다음 런은 같은 값을 받는다. 「새 대화」가 비우면(markSessionReset) 다음 런이 새 값을 쓴다
+ * 같은 세션 행의 다음 런은 같은 값을 받는다. 「새 대화」가 비우면(clearProviderSessionId) 다음 런이 새 값을 쓴다
  */
 export function ensureProviderSessionId(db: Db, sessionId: string): string {
   return db.transaction((tx) => {
@@ -84,10 +84,17 @@ export function ensureProviderSessionId(db: Db, sessionId: string): string {
 }
 
 /**
+ * 「새 대화」가 서버가 정한 세션 id 를 비운다(판정 P4 — serverSessionIds 어댑터만). 어댑터 리셋을 기다리기 전에 부른다 —
+ * 그 사이 디스패치된 런이 옛 id 로 옛 대화를 잇지 않고, 리셋 뒤에 비우면 그 런이 새로 쓴 id 까지 지워 대화가 갈린다
+ */
+export function clearProviderSessionId(db: Db, sessionId: string): void {
+  db.update(agentSessions).set({ providerSessionId: null }).where(eq(agentSessions.id, sessionId)).run();
+}
+
+/**
  * 우리 resetSession 이 성공한 뒤 부른다 — 새 세션은 현재 채널 프롬프트를 설정 경로로 받으므로 리비전을 맞춘다.
  * 응답에 없는 sessionStartedAt·lifecycleRevision 은 null(옛 세션 값을 남기지 않는다). 행이 없으면 만든다.
- * threadRootId 가 있으면 그 스레드 세션 행만 바꾼다. clearProviderSessionId 면 서버가 정한 세션 id 도 비운다(판정 P4) —
- * OpenClaw 는 그 열이 Gateway 식별용이라 두지 않는다
+ * threadRootId 가 있으면 그 스레드 세션 행만 바꾼다. 서버가 정한 세션 id 는 건드리지 않는다(clearProviderSessionId)
  */
 export function markSessionReset(
   db: Db,
@@ -95,7 +102,6 @@ export function markSessionReset(
   agentId: string,
   reset: SessionResetInfo,
   threadRootId?: string,
-  opts: { clearProviderSessionId?: boolean } = {},
 ): AgentSessionRow {
   return db.transaction((tx) => {
     const now = new Date();
@@ -104,7 +110,6 @@ export function markSessionReset(
       sessionStartedAt: isoToDate(reset.sessionStartedAt),
       lifecycleRevision: reset.lifecycleRevision ?? null,
       lastSyncedAt: now,
-      ...(opts.clearProviderSessionId ? { providerSessionId: null } : {}),
     };
     const row = {
       id: uuidv7(),

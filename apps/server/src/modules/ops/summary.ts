@@ -12,6 +12,14 @@ import type { OpsService } from "./service";
  */
 export const USAGE_TRUSTED_PROVIDERS: ReadonlySet<string> = new Set(["claude"]);
 
+/**
+ * 이 서버에 붙은 어댑터 가운데 믿는 제공자 — 응답의 usageTrustedProviders 가 비면 웹은 열 대신 「측정 불가」를 보인다.
+ * 붙지 않은 제공자까지 실으면 OpenClaw 만 있는 배포에서 토큰·금액 열이 전부 「—」로 켜진다
+ */
+export function usageTrustedAmong(attached: Iterable<string>): ReadonlySet<string> {
+  return new Set([...attached].filter((p) => USAGE_TRUSTED_PROVIDERS.has(p)));
+}
+
 const CHANNEL_KEY_PREFIX = "channel:";
 
 /**

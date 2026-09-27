@@ -21,13 +21,15 @@ import { countRunsTodayInWorkspace } from "../runs/store";
 import { type DiskState, gatewayPin } from "./health";
 import type { OpsService } from "./service";
 import { getOpsSettings, patchOpsSettings } from "./settings";
-import { runsSummary } from "./summary";
+import { runsSummary, usageTrustedAmong } from "./summary";
 
 export type OpsRouteContext = {
   auth: Auth;
   db: Db;
   workspaceId: string;
   adapter: Pick<AgentAdapter, "status" | "setupDetail">;
+  /** 붙은 어댑터들의 provider — 런 표의 usage 는 이 가운데 믿는 제공자만 합친다 */
+  adapterProviders: readonly string[];
   ops: Pick<OpsService, "list" | "ack" | "unacked" | "countsSince">;
   disk(): DiskState;
   serverVersion: string;
@@ -74,7 +76,13 @@ export function registerOpsRoutes(fastify: FastifyInstance, ctx: OpsRouteContext
 
   fastify.get("/api/v1/ops/runs", admin, async (request) => {
     const { days } = parseQuery(RunsQuery, request.query);
-    const summary = runsSummary(ctx.db, { days, now: now(), ops: ctx.ops, workspaceId: ctx.workspaceId });
+    const summary = runsSummary(ctx.db, {
+      days,
+      now: now(),
+      ops: ctx.ops,
+      workspaceId: ctx.workspaceId,
+      usageTrustedProviders: usageTrustedAmong(ctx.adapterProviders),
+    });
     return parseStored(OpsRunsSummary, summary, "ops runs summary");
   });
 

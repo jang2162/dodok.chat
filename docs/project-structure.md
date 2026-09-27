@@ -277,7 +277,7 @@ src/
 │  │                      gatewayPin·observeGatewayVersion·watchGatewayVersion — 핀과 다르면 gateway_version_untested, 기억한 값과 다르면 gateway_version_changed ·
 │  │                      diskLevel·createDiskMonitor — 부팅 때와 10분마다 statfs, error 면 첨부 업로드 507, check() 로 곧바로 다시 잰다 ·
 │  │                      startRunState — run-state.json 종료 표지, 직전이 clean:false 면 unclean_shutdown · watchRunFailures — error 로 끝난 런마다 run_failed agent:<id>) ·
-│  │                      summary.ts(runsSummary — 오늘·7일 채널별·에이전트별 런·실패·중지·차단, USAGE_TRUSTED — false 면 토큰·금액 없음, ADR 0005) ·
+│  │                      summary.ts(runsSummary — 오늘·7일 채널별·에이전트별 런·실패·중지·차단, 토큰·금액은 붙은 어댑터 가운데 USAGE_TRUSTED_PROVIDERS 의 런만 — 없으면 키가 없고 화면은 「측정 불가」, ADR 0005) ·
 │  │                      routes.ts(`GET /api/v1/ops/status` · `GET /api/v1/ops/runs?days=1|7` · `GET /api/v1/ops/events?cursor&severity` · `POST /api/v1/ops/events/ack` ·
 │  │                      `PATCH /api/v1/ops/settings` {dailyRunLimit} — 응답은 전부 shared 스키마로 한 번 더 파싱)
 │  ├─ members/            Phase 4 ② 팀. 초대·재설정 링크·가입·멤버 관리·「내 계정」·사람 목록 — 원문 토큰은 발급 응답 한 번뿐(`Cache-Control: no-store`), 로그·사건·목록·wire 에 없다.

@@ -185,6 +185,44 @@ describe("어댑터 레지스트리 배선 (앱 부팅, OpenClaw·Claude 가짜 
     expect(openclaw.calls.send.length).toBe(openclawBefore);
   });
 
+  it("「새 대화」는 어댑터 리셋을 기다리기 전에 세션 UUID 를 비운다 — 그 사이 나간 런도 새 UUID, 리셋이 끝나도 그 값을 잇는다", async () => {
+    const channel = channelWith([coder]);
+    const socket = await connect(channel.id);
+    const first = await mention(claude, socket, channel.id, "@coder 옛 대화");
+    const oldId = first.opts?.providerSessionId;
+    expect(oldId).toMatch(UUID);
+    await finish(first.input.runId);
+
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const resetStarted = vi.fn();
+    vi.spyOn(claude, "resetSession").mockImplementationOnce(async () => {
+      resetStarted();
+      await held;
+      return {};
+    });
+    const reset = app.fastify.inject({
+      method: "POST",
+      url: `/api/v1/channels/${channel.id}/agents/${coder.id}/reset`,
+      headers,
+    });
+    await vi.waitFor(() => expect(resetStarted).toHaveBeenCalled());
+
+    const during = await mention(claude, socket, channel.id, "@coder 리셋 중에 보냄");
+    const newId = during.opts?.providerSessionId;
+    expect(newId).toMatch(UUID);
+    expect(newId).not.toBe(oldId);
+    await finish(during.input.runId);
+
+    release();
+    expect((await reset).statusCode).toBe(200);
+    const after = await mention(claude, socket, channel.id, "@coder 리셋 뒤");
+    expect(after.opts?.providerSessionId).toBe(newId);
+    await finish(after.input.runId);
+  });
+
   it("OpenClaw 에이전트에는 세션 id 를 넘기지 않는다 — 두 번째 인자 없이 보낸다", async () => {
     const channel = channelWith([dev]);
     const socket = await connect(channel.id);
@@ -234,16 +272,19 @@ describe("어댑터 레지스트리 배선 (앱 부팅, OpenClaw·Claude 가짜 
 
     const devSend = await mention(openclaw, socket, channel.id, "@dev 시작");
     const claudeBefore = claude.calls.send.length;
-    await app.orchestrator.onCanonical({
-      outboundId: `out-${uuid()}`,
-      channelId: channel.id,
-      agentId: "dev",
-      sessionKey: devSend.input.sessionKey,
-      runId: devSend.input.runId,
-      text: "@coder 이어서 부탁",
-      attachmentIds: [],
-      ts: new Date().toISOString(),
-    });
+    await app.orchestrator.onCanonical(
+      {
+        outboundId: `out-${uuid()}`,
+        channelId: channel.id,
+        agentId: "dev",
+        sessionKey: devSend.input.sessionKey,
+        runId: devSend.input.runId,
+        text: "@coder 이어서 부탁",
+        attachmentIds: [],
+        ts: new Date().toISOString(),
+      },
+      "openclaw",
+    );
     const relay = await nextSend(claude, claudeBefore);
     expect(relay.input).toMatchObject({ kind: "message", agentId: "coder" });
     expect(getRun(app.db, relay.input.runId)).toMatchObject({

@@ -87,9 +87,10 @@ export interface Orchestrator {
   abort(runId: string): Promise<void>;
   /**
    * 에이전트 최종 메시지 도착(OpenClaw 는 브리지 정본). 돌려준 messageId 를 어댑터가 ack 로 쓴다.
-   * provider 는 보낸 어댑터의 것 — msg.agentId(제공자 쪽 id)를 그 provider 의 에이전트로 푼다(기본 openclaw)
+   * provider 는 보낸 어댑터의 것 — msg.agentId(제공자 쪽 id)를 그 provider 의 에이전트로 푼다. 틀리면 replyTo 상관·런 없는
+   * 정본이 「unknown agent」로 버려진다
    */
-  onCanonical(msg: OutboundMessage, provider?: AdapterProvider): Promise<{ messageId?: string }>;
+  onCanonical(msg: OutboundMessage, provider: AdapterProvider): Promise<{ messageId?: string }>;
   activeRuns(channelId: string): RunState[];
   recoverOnBoot(): Promise<number>;
   /** 타이머 전부 해제·어댑터 구독 해제 */
@@ -1048,7 +1049,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       await api.signal(runId, { kind: "abort_requested" });
     },
 
-    async onCanonical(msg, provider = "openclaw") {
+    async onCanonical(msg, provider) {
       const existing = db
         .select({ id: messages.id })
         .from(messages)

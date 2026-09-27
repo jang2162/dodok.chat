@@ -427,16 +427,19 @@ describe("createServices — 라우터·오케스트레이터 상호 참조", ()
       const devRun = getRun(t.db, first?.runId ?? "");
       expect(devRun).toMatchObject({ triggerKind: "mention", relayDepth: 0, rootMessageId: message.id });
 
-      await t.services.orchestrator.onCanonical({
-        outboundId: "out-dev-1",
-        channelId: t.channel.id,
-        agentId: "dev",
-        sessionKey: devRun?.sessionKey ?? "",
-        runId: devRun?.id,
-        text: "@fin 이어서 부탁",
-        attachmentIds: [],
-        ts: new Date().toISOString(),
-      });
+      await t.services.orchestrator.onCanonical(
+        {
+          outboundId: "out-dev-1",
+          channelId: t.channel.id,
+          agentId: "dev",
+          sessionKey: devRun?.sessionKey ?? "",
+          runId: devRun?.id,
+          text: "@fin 이어서 부탁",
+          attachmentIds: [],
+          ts: new Date().toISOString(),
+        },
+        "openclaw",
+      );
       await vi.waitFor(() => expect(t.adapter.calls.send).toHaveLength(2));
       const relay = t.adapter.calls.send[1];
       expect(relay).toMatchObject({ kind: "message", agentId: "fin" });

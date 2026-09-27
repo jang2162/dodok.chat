@@ -15,7 +15,7 @@ import type { ServerBus } from "../../realtime/bus";
 import { getAgent } from "../agents/service";
 import { createSystemMessage, getThreadRoot } from "../messages/service";
 import type { Orchestrator } from "../runs/orchestrator";
-import { ensureSession, markSessionReset } from "../sessions/service";
+import { clearProviderSessionId, ensureSession, markSessionReset } from "../sessions/service";
 
 type ChannelRow = typeof channels.$inferSelect;
 type MemberRow = typeof channelMembers.$inferSelect;
@@ -413,6 +413,9 @@ export async function resetAgentSession(
   if (!adapter.capabilities().sessionReset) throw capabilityMissing();
   // markSessionReset 이 행을 만들며 키를 따로 조립하지 않게, 세션 행을 먼저 보장하고 그 키로 리셋한다(sc-t7 걱정 1)
   const { session } = ensureSession(db, adapter, input);
+  // 아래 abort·리셋을 기다리는 동안 디스패치되는 런부터 새 세션 id 를 받는다(clearProviderSessionId). 리셋이 실패해도
+  // 되살리지 않는다 — 다음 런은 새 대화로 간다
+  if (adapter.capabilities().serverSessionIds) clearProviderSessionId(db, session.id);
   // 세션은 (채널, 에이전트, 스레드)당 하나 — 그 에이전트의 같은 스레드(채널이면 스레드 없음) 미종료 런이 곧 이 세션의 런이다.
   // 옛 세션에서 먼저 멈춘다. 대기 런(뒤)부터 거꾸로 닫는다 — 진행 런을 먼저 닫으면 pump 가 다음 대기 런을 Gateway 로
   // 보내 버린다(sc-t12 리뷰 R1)
@@ -429,9 +432,7 @@ export async function resetAgentSession(
     if (err.code === "FORBIDDEN") throw capabilityMissing();
     throw apiError(err.code, err.message);
   }
-  markSessionReset(db, input.channelId, input.agentId, reset, threadRootId, {
-    clearProviderSessionId: adapter.capabilities().serverSessionIds,
-  });
+  markSessionReset(db, input.channelId, input.agentId, reset, threadRootId);
   const handle = agent.handle;
   createSystemMessage(db, deps.bus, {
     channelId: input.channelId,

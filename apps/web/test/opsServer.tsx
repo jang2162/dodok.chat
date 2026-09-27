@@ -43,6 +43,7 @@ export function opsStatusOf(over: StatusOver = {}): OpsStatus {
 export const rowOf = (n: number, over: Partial<OpsRunsRow> = {}): OpsRunsRow =>
   OpsRunsRow.parse({ id: uid(n), name: `이름-${n}`, runs: 0, failed: 0, aborted: 0, blocked: 0, ...over });
 
+/** 기본은 OpenClaw 만 붙은 서버가 주는 모양 — usageTrustedProviders 가 비어 있다(서버 ops.routes.test 「GET /runs」 가 고정) */
 export const runsOf = (over: Partial<OpsRunsSummary> = {}): OpsRunsSummary =>
   OpsRunsSummary.parse({ days: 1, byChannel: [], byAgent: [], usageTrustedProviders: [], ...over });
 

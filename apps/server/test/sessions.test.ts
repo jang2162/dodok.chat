@@ -3,7 +3,12 @@ import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { agentSessions, agents } from "../src/db/schema.sqlite";
 import { updateChannel } from "../src/modules/channels/service";
-import { ensureProviderSessionId, ensureSession, markSessionReset } from "../src/modules/sessions/service";
+import {
+  clearProviderSessionId,
+  ensureProviderSessionId,
+  ensureSession,
+  markSessionReset,
+} from "../src/modules/sessions/service";
 import { newTestDb } from "./helpers/db";
 import { seedChannelWithAgent } from "./helpers/seed";
 
@@ -83,7 +88,7 @@ describe("sessions service", () => {
     });
   });
 
-  it("ensureProviderSessionId 는 비었을 때 UUID 를 써 두고 다음에는 같은 값 — 리셋이 비우라고 할 때만 비운다", () => {
+  it("ensureProviderSessionId 는 비었을 때 UUID 를 써 두고 다음에는 같은 값 — 비우는 것은 clearProviderSessionId 만", () => {
     const { db, adapter, channelId, agentId } = setup();
     const { session } = ensureSession(db, adapter, { channelId, agentId });
     expect(session.providerSessionId).toBeNull();
@@ -92,12 +97,10 @@ describe("sessions service", () => {
     expect(first).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     expect(ensureProviderSessionId(db, session.id)).toBe(first);
 
-    // OpenClaw 리셋은 그 열을 건드리지 않는다
+    // 리셋 표시는 그 열을 건드리지 않는다 — 비우는 것은 clearProviderSessionId 만
     expect(markSessionReset(db, channelId, agentId, {}).providerSessionId).toBe(first);
-    expect(
-      markSessionReset(db, channelId, agentId, {}, undefined, { clearProviderSessionId: true })
-        .providerSessionId,
-    ).toBeNull();
+    clearProviderSessionId(db, session.id);
+    expect(ensureSession(db, adapter, { channelId, agentId }).session.providerSessionId).toBeNull();
     const next = ensureProviderSessionId(db, session.id);
     expect(next).not.toBe(first);
     expect(() => ensureProviderSessionId(db, "01a09fc9-d204-7551-89d6-38544d07a1ff")).toThrow();
