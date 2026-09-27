@@ -1,6 +1,6 @@
 # Phase 4 ③ Claude 러너 — Claude Agent SDK 어댑터 설계
 
-**상태**: 설계 확정(2026-09-27). 계획은 `docs/superpowers/plans/2026-09-27-claude-runner.md`(작성 예정).
+**상태**: 설계 확정(2026-09-27). 계획 `docs/superpowers/plans/2026-09-27-claude-runner.md`(태스크 1~9, 계획 판정 P1~P10).
 **범위**:
 - 사람의 머신에서 도는 러너(`@dodok/claude-runner`)가 Claude Agent SDK 로 에이전트를 돌리고, 서버 `/runner` 로 나가는 WSS 하나로 dodok 에 붙는다
 - 서버는 에이전트의 `provider` 로 어댑터를 고른다(`openclaw` · `claude`) — 한 채널에 두 종류 에이전트가 함께 있고 서로 @멘션 릴레이한다
