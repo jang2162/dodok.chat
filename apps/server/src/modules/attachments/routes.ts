@@ -22,7 +22,7 @@ import type { Db } from "../../db/client";
 import { apiError } from "../../http/errors";
 import { parseParams, parseQuery } from "../../http/validate";
 import { getChannel } from "../channels/service";
-import { type AttachmentDeps, findReadable, uploadAttachment } from "./service";
+import { type AttachmentDeps, findReadable, type Uploader, uploadAttachment } from "./service";
 import type { BlobLocks } from "./store";
 
 /** locks 는 정리 타이머와 같은 객체여야 한다(app.ts 가 하나를 만들어 둘에 준다) */
@@ -33,8 +33,14 @@ export type AttachmentRouteContext = {
   dir: string;
   /** 브리지 핸드셰이크와 같은 검증(DB 브리지 토큰) — 던지면 401 */
   verifyBridgeToken: TokenVerifier;
-  /** `/runner` 핸드셰이크와 같은 검증(DB 러너 토큰) — 있으면 러너 첨부 경로(RUNNER_ATTACHMENTS_PATH)를 연다. 던지면 401 */
-  verifyRunnerToken?: TokenVerifier;
+  /**
+   * 있으면 러너 첨부 경로(RUNNER_ATTACHMENTS_PATH)를 연다. verifyToken 은 `/runner` 핸드셰이크와 같은 검증(DB 러너 토큰 — 던지면 401).
+   * GET 은 그 토큰이 올린 첨부와 mayRead(러너 어댑터의 mayReadAttachment — 그 토큰의 러너에 열린 런의 deliver 첨부)만 준다(판정 R5)
+   */
+  runner?: {
+    verifyToken: (presented: unknown) => { tokenId: string } | null;
+    mayRead: (tokenId: string, attachmentId: string) => boolean;
+  };
   /**
    * 브리지·러너 핸드셰이크와 같은 실패 카운터 인스턴스(app.ts 가 하나를 만들어 넷에 준다 — 러너 스펙 5장). 주소는 request.ip —
    * TRUST_PROXY 일 때 X-Forwarded-For 를 따르는 것이 핸드셰이크의 bridgeClientAddress 와 같다. onBlocked 의 path 는 막히게 한 쪽
@@ -137,11 +143,15 @@ async function sendBlob(
   return reply.send(handle.createReadStream());
 }
 
-/** 에이전트 쪽(브리지·러너) 토큰 인증 — 두 경로가 같은 가드를 지나므로 한쪽에서 막힌 주소는 다른 쪽에서도 막힌다 */
+/**
+ * 에이전트 쪽(브리지·러너) 토큰 인증 — 두 경로가 같은 가드를 지나므로 한쪽에서 막힌 주소는 다른 쪽에서도 막힌다.
+ * 통과한 검증 결과는 verified 에 요청별로 남긴다(러너 GET·POST 가 토큰 id 를 읽는다)
+ */
 function requireToken(
   verify: TokenVerifier,
   bridgeGuard: AttachmentRouteContext["bridgeGuard"],
   path: TokenPath,
+  verified: WeakMap<FastifyRequest, unknown>,
 ) {
   return async (request: FastifyRequest): Promise<void> => {
     const { guard, now, onBlocked } = bridgeGuard;
@@ -151,16 +161,19 @@ function requireToken(
     if (guard.isBlocked(address, at)) throw apiError("RATE_LIMITED", "인증 실패가 너무 많습니다");
     const header = request.headers.authorization;
     const provided = header?.slice(0, 7).toLowerCase() === "bearer " ? header.slice(7).trim() : undefined;
-    let verified: unknown;
+    let result: unknown;
     try {
-      verified = verify(provided);
+      result = verify(provided);
     } catch (err) {
       // 검증 오류(저장소 등)는 통과가 아니라 거절이다(fail-closed) — 원인만 남기고 토큰은 싣지 않는다.
       // 플러그인·러너 잘못이 아니라 실패로 세지 않는다(핸드셰이크와 같다)
       request.log.error({ err }, `${path} token verification failed`);
       throw apiError("UNAUTHORIZED", `${path} 토큰이 틀렸다`);
     }
-    if (verified) return;
+    if (result) {
+      verified.set(request, result);
+      return;
+    }
     if (guard.fail(address, at)) onBlocked(address, path);
     throw apiError("UNAUTHORIZED", `${path} 토큰이 틀렸다`);
   };
@@ -172,7 +185,8 @@ export function registerAttachmentRoutes(fastify: FastifyInstance, ctx: Attachme
     scope.addContentTypeParser("*", { parseAs: "buffer" }, (_req, body, done) => done(null, body));
     const deps: AttachmentDeps = { db: ctx.db, dir: ctx.dir, locks: ctx.locks };
     const session = requireSession(ctx);
-    const bridge = requireToken(ctx.verifyBridgeToken, ctx.bridgeGuard, "bridge");
+    const verified = new WeakMap<FastifyRequest, unknown>();
+    const bridge = requireToken(ctx.verifyBridgeToken, ctx.bridgeGuard, "bridge", verified);
     // 업로드 상한은 본문을 받기 전에 — 세션(REST 상한) 뒤에 한 번 더
     const uploadLimit = async (request: FastifyRequest): Promise<void> =>
       request.server.restLimits?.upload(request, sessionUser(request).id);
@@ -210,14 +224,41 @@ export function registerAttachmentRoutes(fastify: FastifyInstance, ctx: Attachme
     });
 
     // 에이전트 쪽 경로 둘 — 브리지(플러그인)와 러너가 같은 규칙(20 MiB·매직 바이트·디스크 여유 507). 러너가 올린 파일도
-    // uploader 는 bridge(에이전트 쪽)다 — 정본 저장이 같은 claimBridgeAttachments 로 묶는다
-    const agentPaths: Array<[string, ReturnType<typeof requireToken>]> = [[BRIDGE_ATTACHMENTS_PATH, bridge]];
-    if (ctx.verifyRunnerToken)
-      agentPaths.push([
-        RUNNER_ATTACHMENTS_PATH,
-        requireToken(ctx.verifyRunnerToken, ctx.bridgeGuard, "runner"),
-      ]);
-    for (const [path, agent] of agentPaths) {
+    // uploader 는 bridge(에이전트 쪽)다 — 정본 저장이 같은 claimBridgeAttachments 로 묶는다. 러너는 uploader_id 에 토큰 id 를
+    // 남기고, 읽기는 그 토큰의 범위로 좁힌다(판정 R5 — 범위 밖은 없는 id 와 같은 404)
+    type AgentPath = {
+      path: string;
+      auth: ReturnType<typeof requireToken>;
+      uploader: (request: FastifyRequest) => Uploader;
+      viewer: (request: FastifyRequest) => Parameters<typeof findReadable>[2];
+    };
+    const agentPaths: AgentPath[] = [
+      {
+        path: BRIDGE_ATTACHMENTS_PATH,
+        auth: bridge,
+        uploader: () => ({ type: "bridge" }),
+        viewer: () => ({ type: "bridge" }),
+      },
+    ];
+    const { runner } = ctx;
+    if (runner) {
+      const tokenIdOf = (request: FastifyRequest): string => {
+        const tokenId = (verified.get(request) as { tokenId?: unknown } | undefined)?.tokenId;
+        // 인증 훅이 통과시킨 요청에는 늘 있다 — 없으면 배선 버그라 거절로 떨어진다
+        if (typeof tokenId !== "string") throw apiError("UNAUTHORIZED", "runner 토큰이 틀렸다");
+        return tokenId;
+      };
+      agentPaths.push({
+        path: RUNNER_ATTACHMENTS_PATH,
+        auth: requireToken(runner.verifyToken, ctx.bridgeGuard, "runner", verified),
+        uploader: (request) => ({ type: "bridge", runnerTokenId: tokenIdOf(request) }),
+        viewer: (request) => {
+          const tokenId = tokenIdOf(request);
+          return { type: "runner", tokenId, mayRead: (id) => runner.mayRead(tokenId, id) };
+        },
+      });
+    }
+    for (const { path, auth: agent, uploader, viewer } of agentPaths) {
       scope.post(
         path,
         { onRequest: [agent, storage], bodyLimit: ATTACHMENT_LIMITS.agentFileMaxBytes },
@@ -228,7 +269,7 @@ export function registerAttachmentRoutes(fastify: FastifyInstance, ctx: Attachme
             throw apiError("NOT_FOUND", "channel not found");
           return uploadAttachment(deps, {
             channelId: channelId.data,
-            uploader: { type: "bridge" },
+            uploader: uploader(request),
             bytes: bodyBytes(request),
             nameHint: fileNameHeader(request),
             mimeHint: contentTypeHint(request),
@@ -238,7 +279,7 @@ export function registerAttachmentRoutes(fastify: FastifyInstance, ctx: Attachme
 
       scope.get(`${path}/:id`, { onRequest: agent }, async (request, reply) => {
         const { id } = parseParams(IdParams, request.params);
-        const found = findReadable(deps, id, { type: "bridge" });
+        const found = findReadable(deps, id, viewer(request));
         if (!found) throw apiError("NOT_FOUND", "attachment not found");
         return sendBlob(reply, found, true);
       });

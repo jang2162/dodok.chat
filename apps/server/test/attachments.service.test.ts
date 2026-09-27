@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readdir, rm, utimes, writeFile } from "node:fs/promises
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ATTACHMENT_LIMITS } from "@dodok/shared";
+import { eq } from "drizzle-orm";
 import { v7 as uuid } from "uuid";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Db } from "../src/db/client";
@@ -286,6 +287,45 @@ describe("attachments service", () => {
     expect(
       findReadable({ db, dir }, "01a0cc16-0000-7000-8000-000000000000", { type: "bridge" }),
     ).toBeUndefined();
+  });
+
+  it("findReadable 러너: 자기 토큰이 올린 것(묶이기 전후)과 mayRead 가 허락한 것만 — 묶였어도 나머지는 못 본다(판정 R5)", async () => {
+    const [tokenA, tokenB] = ["runner-token-a", "runner-token-b"];
+    const runner = (tokenId: string, allowed: string[] = []) =>
+      ({ type: "runner", tokenId, mayRead: (id: string) => allowed.includes(id) }) as const;
+    const own = await uploadAttachment(
+      { db, dir },
+      { channelId: chA, uploader: { type: "bridge", runnerTokenId: tokenA }, bytes: makePng(3, 1) },
+    );
+    expect(db.select().from(attachments).where(eq(attachments.id, own.id)).get()).toMatchObject({
+      uploaderType: "bridge",
+      uploaderId: tokenA,
+    });
+    expect(findReadable({ db, dir }, own.id, runner(tokenA))).toBeDefined();
+    expect(findReadable({ db, dir }, own.id, runner(tokenB))).toBeUndefined();
+    // 러너가 올린 것도 에이전트 쪽 파일이다 — 묶이면 브리지 뷰어도 본다
+    expect(findReadable({ db, dir }, own.id, { type: "bridge" })).toBeUndefined();
+    db.transaction((tx) => markBound(tx, [own.id], msgInA));
+    expect(findReadable({ db, dir }, own.id, runner(tokenA))).toBeDefined();
+    expect(findReadable({ db, dir }, own.id, runner(tokenB))).toBeUndefined();
+    expect(findReadable({ db, dir }, own.id, { type: "bridge" })).toBeDefined();
+
+    const human = await uploadAttachment(
+      { db, dir },
+      { channelId: chA, uploader: { type: "user", userId: alice }, bytes: makePng(3, 2) },
+    );
+    const bridged = await uploadAttachment(
+      { db, dir },
+      { channelId: chA, uploader: { type: "bridge" }, bytes: makePng(3, 3) },
+    );
+    db.transaction((tx) => markBound(tx, [human.id, bridged.id], msgInA));
+    for (const id of [human.id, bridged.id]) {
+      expect(findReadable({ db, dir }, id, runner(tokenA))).toBeUndefined();
+      expect(findReadable({ db, dir }, id, runner(tokenA, [id]))).toBeDefined();
+    }
+    // 허락은 행이 있을 때만 뜻이 있다 — 없는 id 는 허락돼도 undefined
+    const missing = "01a0cc16-0000-7000-8000-000000000000";
+    expect(findReadable({ db, dir }, missing, runner(tokenA, [missing]))).toBeUndefined();
   });
 
   it("[결함 3] 정리가 블롭을 지우는 사이 같은 바이트 업로드가 끼어도 새 행의 블롭은 남는다", async () => {

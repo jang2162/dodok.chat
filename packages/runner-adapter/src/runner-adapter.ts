@@ -74,6 +74,11 @@ export interface RunnerAdapter extends AgentAdapter {
   readonly provider: "claude";
   status(): ClaudeAdapterStatus;
   setupDetail(): ClaudeSetupDetail;
+  /**
+   * 러너 첨부 GET 의 읽기 범위(조율자 판정 R5) — 그 토큰의 러너에 지금 열린 런의 deliver 로 보낸 첨부면 true. 런이 끝나거나
+   * 러너가 끊기면 곧바로 false 다(열린 런 추적에서 빠진다)
+   */
+  mayReadAttachment(tokenId: string, attachmentId: string): boolean;
 }
 
 const HELLO_TIMEOUT_MS = 10_000;
@@ -668,6 +673,14 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
     status,
     capabilities: () => ({ ...capabilities }),
     setupDetail,
+
+    mayReadAttachment(tokenId, attachmentId) {
+      for (const run of runs.values()) {
+        if (run.runner.tokenId !== tokenId) continue;
+        if (run.deliver.message.attachments.some((a) => a.id === attachmentId)) return true;
+      }
+      return false;
+    },
 
     revokeTokenSessions(tokenId) {
       let count = 0;

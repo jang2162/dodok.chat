@@ -12,6 +12,7 @@ import type { Db } from "../../db/client";
 import { apiError } from "../../http/errors";
 import { parseBody, parseParams } from "../../http/validate";
 import type { Logger } from "../../logger";
+import type { OpsService } from "../ops/service";
 import { sendPackedFile } from "../setup/routes";
 import type { RunnerFile } from "./runner-file";
 import { issueRunnerToken, listRunnerTokens, revokeRunnerToken } from "./tokens";
@@ -33,6 +34,8 @@ export type RunnerRouteContext = {
   workspaceId: string;
   /** 러너 어댑터(claude) — 목록의 connected·폐기 때 그 토큰의 연결 끊기. 붙지 않았으면 둘 다 할 일이 없다 */
   registry: Pick<AdapterRegistry, "forProvider">;
+  /** 폐기 때 그 토큰의 열린 runner_down 을 닫는다 — 폐기된 토큰은 다시 붙지 못해 붙음으로 닫힐 일이 없다(리뷰 M2) */
+  ops: Pick<OpsService, "resolve">;
   /** 부팅 때 잰 품은 러너 파일(없으면 null) */
   runnerFile: RunnerFile | null;
   serverUrl: string;
@@ -79,6 +82,11 @@ export function registerRunnerRoutes(fastify: FastifyInstance, ctx: RunnerRouteC
       ctx.registry.forProvider("claude")?.revokeTokenSessions(id);
     } catch (err) {
       ctx.logger.warn({ err, tokenId: id }, "runner session revoke failed");
+    }
+    try {
+      ctx.ops.resolve("runner_down", id);
+    } catch (err) {
+      ctx.logger.warn({ err, tokenId: id }, "runner_down resolve on revoke failed");
     }
     ctx.logger.info({ tokenId: id }, "runner token revoked");
     ctx.changed();

@@ -24,7 +24,13 @@ import {
 
 /** locks 는 없으면 모듈 하나(defaultBlobLocks) — 같은 dir 을 쓰는 업로드·정리는 같은 잠금을 지나야 한다 */
 export type AttachmentDeps = { db: Db; dir: string; now?: () => Date; locks?: BlobLocks };
-export type Uploader = { type: "user"; userId: string } | { type: "bridge" };
+/** 러너가 올린 것도 에이전트 쪽(bridge)이다 — runnerTokenId 는 uploader_id 에 남아 그 러너의 읽기 범위가 된다(판정 R5) */
+export type Uploader = { type: "user"; userId: string } | { type: "bridge"; runnerTokenId?: string };
+/**
+ * 러너 토큰 뷰어(판정 R5) — 자기 토큰이 올린 것과, mayRead 가 허락한 것(그 러너에 열린 런의 deliver 첨부)만 본다.
+ * 브리지 뷰어와 달리 「묶였다」는 것만으로는 못 본다
+ */
+export type RunnerViewer = { type: "runner"; tokenId: string; mayRead: (attachmentId: string) => boolean };
 type Row = typeof attachments.$inferSelect;
 
 export const UNBOUND_TTL_MS = 24 * 3600_000;
@@ -74,7 +80,8 @@ export async function uploadAttachment(
         id: uuidv7(),
         channelId: input.channelId,
         uploaderType: input.uploader.type,
-        uploaderId: input.uploader.type === "user" ? input.uploader.userId : null,
+        uploaderId:
+          input.uploader.type === "user" ? input.uploader.userId : (input.uploader.runnerTokenId ?? null),
         kind: s.kind,
         name: sanitizeAttachmentName(input.nameHint ?? fallback),
         mime: s.mime,
@@ -151,16 +158,18 @@ export function markBound(tx: DbOrTx, ids: string[], messageId: string): void {
 export function findReadable(
   deps: AttachmentDeps,
   id: string,
-  viewer: { type: "user"; userId: string; workspaceId: string } | { type: "bridge" },
+  viewer: { type: "user"; userId: string; workspaceId: string } | { type: "bridge" } | RunnerViewer,
 ): { attachment: Attachment; path: string } | undefined {
   const row = deps.db.select().from(attachments).where(eq(attachments.id, id)).get();
   if (!row) return undefined;
   const ok =
-    viewer.type === "bridge"
-      ? row.messageId !== null // 브리지는 묶인 첨부만 — 사람이 올리고 아직 안 보낸 것은 못 본다
-      : row.messageId === null
-        ? row.uploaderType === "user" && row.uploaderId === viewer.userId
-        : getChannel(deps.db, row.channelId, viewer.workspaceId) !== undefined;
+    viewer.type === "runner"
+      ? (row.uploaderType === "bridge" && row.uploaderId === viewer.tokenId) || viewer.mayRead(row.id)
+      : viewer.type === "bridge"
+        ? row.messageId !== null // 브리지는 묶인 첨부만 — 사람이 올리고 아직 안 보낸 것은 못 본다
+        : row.messageId === null
+          ? row.uploaderType === "user" && row.uploaderId === viewer.userId
+          : getChannel(deps.db, row.channelId, viewer.workspaceId) !== undefined;
   return ok ? { attachment: toAttachment(row), path: blobPath(deps.dir, row.sha256) } : undefined;
 }
 

@@ -192,7 +192,7 @@ export const attachments = sqliteTable(
       .notNull()
       .references(() => channels.id),
     uploaderType: text("uploader_type").notNull(), // "user" | "bridge"
-    uploaderId: text("uploader_id"), // 사용자 id, 브리지면 null
+    uploaderId: text("uploader_id"), // 사용자 id, 러너가 올렸으면 러너 토큰 id, 플러그인(브리지)이면 null
     kind: text("kind").notNull(), // "image" | "file"
     name: text("name").notNull(),
     mime: text("mime").notNull(),

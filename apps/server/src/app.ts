@@ -1,5 +1,5 @@
 import { BridgeAuthGuard, type BridgeTokenVerifier, createOpenClawAdapter } from "@dodok/openclaw-adapter";
-import { createRunnerAdapter, type RunnerTokenVerifier } from "@dodok/runner-adapter";
+import { createRunnerAdapter, type RunnerAdapter, type RunnerTokenVerifier } from "@dodok/runner-adapter";
 import type { ApiError } from "@dodok/shared";
 import cookie from "@fastify/cookie";
 import rateLimit from "@fastify/rate-limit";
@@ -285,30 +285,31 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
           }),
         ];
     // Claude 러너(러너 스펙 2장) — 사람 머신의 러너가 /runner 로 붙어 온다. 최종 답·post 는 OpenClaw 정본과 같은 자리로 저장한다
+    // 러너 첨부 GET 의 읽기 범위를 이 어댑터에 묻는다(판정 R5) — 어댑터가 없으면(테스트의 가짜 claude) 열린 런도 없다
+    let runnerAdapter: RunnerAdapter | undefined;
     if (
       (deps.runnerAdapter ?? deps.adapters === undefined) &&
       !adapters.some((a) => a.provider === "claude")
     ) {
-      adapters.push(
-        createRunnerAdapter({
-          io,
-          verifyToken: verifyRunnerToken,
-          clientAddress: (socket) => clientAddress(socket.handshake),
-          authGuard: bridgeGuard,
-          onBlocked: (address) => onAuthBlocked(address, "runner"),
-          now: limitClock,
-          serverVersion: packageJson.version,
-          logger: logger.child({ mod: "runner-adapter" }),
-          channelName: (channelId) => getChannel(db, channelId, workspaceId)?.name,
-          onOutbound: async (message) => {
-            const { messageId } = await orchestrator.onCanonical(message, "claude");
-            if (messageId === undefined) throw new Error("canonical store returned no message id");
-            return { messageId };
-          },
-          tokenCount: () => activeRunnerTokenCount(db, workspaceId),
-          ...(deps.runnerApprovalTtlMs === undefined ? {} : { approvalTtlMs: deps.runnerApprovalTtlMs }),
-        }),
-      );
+      runnerAdapter = createRunnerAdapter({
+        io,
+        verifyToken: verifyRunnerToken,
+        clientAddress: (socket) => clientAddress(socket.handshake),
+        authGuard: bridgeGuard,
+        onBlocked: (address) => onAuthBlocked(address, "runner"),
+        now: limitClock,
+        serverVersion: packageJson.version,
+        logger: logger.child({ mod: "runner-adapter" }),
+        channelName: (channelId) => getChannel(db, channelId, workspaceId)?.name,
+        onOutbound: async (message) => {
+          const { messageId } = await orchestrator.onCanonical(message, "claude");
+          if (messageId === undefined) throw new Error("canonical store returned no message id");
+          return { messageId };
+        },
+        tokenCount: () => activeRunnerTokenCount(db, workspaceId),
+        ...(deps.runnerApprovalTtlMs === undefined ? {} : { approvalTtlMs: deps.runnerApprovalTtlMs }),
+      });
+      adapters.push(runnerAdapter);
     }
     const closeAdapters = () => Promise.all(adapters.map((adapter) => adapter.close()));
     undo.push({ step: "adapter", run: closeAdapters });
@@ -419,7 +420,10 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       workspaceId,
       dir: config.attachmentsDir,
       verifyBridgeToken,
-      verifyRunnerToken,
+      runner: {
+        verifyToken: verifyRunnerToken,
+        mayRead: (tokenId, attachmentId) => runnerAdapter?.mayReadAttachment(tokenId, attachmentId) ?? false,
+      },
       bridgeGuard: { guard: bridgeGuard, now: limitClock, onBlocked: onAuthBlocked },
       locks: blobLocks,
       diskFull: () => disk.current().level === "error",
@@ -500,6 +504,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       logger,
       workspaceId,
       registry,
+      ops,
       runnerFile,
       serverUrl: runnerServerUrl(publicUrl),
       changed: emitSetupStatus,

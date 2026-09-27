@@ -32,6 +32,8 @@ export type LiveAppOptions = FakeGatewayOptions & {
   timeouts?: Partial<RunTimeouts>;
   /** 가짜 플러그인 hello — 옛 플러그인(스레드 모름)을 흉내 낼 때 */
   pluginHello?: BridgeHello;
+  /** listen 포트(기본 0 — 빈 포트). 재시작을 흉내 낼 때 앞 부팅의 포트를 준다 — 밖에서 붙은 클라이언트가 같은 주소로 돌아온다 */
+  port?: number;
 };
 
 const CONNECT_TIMEOUT_MS = 5_000;
@@ -88,7 +90,7 @@ export async function bootLiveApp(opts: LiveAppOptions = {}): Promise<LiveApp> {
         ...(opts.timeouts === undefined ? {} : { timeouts: { ...opts.deps?.timeouts, ...opts.timeouts } }),
       },
     );
-    await app.fastify.listen({ host: "127.0.0.1", port: 0 });
+    await app.fastify.listen({ host: "127.0.0.1", port: opts.port ?? 0 });
     plugin = await startFakePlugin({
       bridgeUrl: app.url,
       token: testEnv.BRIDGE_TOKEN as string,

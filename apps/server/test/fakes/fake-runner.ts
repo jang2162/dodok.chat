@@ -64,6 +64,11 @@ export type FakeRunnerOptions = {
   agents?: RunnerAgent[];
   hello?: Partial<RunnerHello>;
   script?: FakeRunnerScript;
+  /**
+   * 실제 러너의 재접속 규칙(claude-runner connection.ts)을 흉내 낸다 — 서버가 끊은 것(`io server disconnect`)이 아닌 끊김이면
+   * minMs·2^n(상한 maxMs) 뒤 다시 붙어 hello 까지 한다. 붙지 못하면(서버가 아직 없음) 같은 규칙으로 또. 없으면 스스로 다시 붙지 않는다
+   */
+  autoReconnect?: { minMs: number; maxMs: number };
 };
 
 export type FakeRunner = {
@@ -76,10 +81,12 @@ export type FakeRunner = {
   readonly aborts: RunnerRunAbort[];
   readonly resolves: RunnerApprovalResolve[];
   readonly helloResult: RunnerHelloResult | undefined;
+  /** 성공한 hello 수 — 처음 붙은 것 포함. autoReconnect 가 다시 붙으면 는다 */
+  readonly helloCount: number;
   readonly connected: boolean;
   /**
    * 서버가 끊은 사유(socket.io-client disconnect reason), 도착 순서. 실제 러너는 `transport close` 면 다시 붙고
-   * `io server disconnect` 면 종료한다(Ruling R4) — 가짜는 스스로 다시 붙지 않는다
+   * `io server disconnect` 면 종료한다(Ruling R4) — 가짜는 autoReconnect 를 줄 때만 그 규칙대로 다시 붙는다
    */
   readonly disconnectReasons: string[];
   /** 소켓만 끊는다 — 진행 중인 런은 실제 러너처럼 멈춘다(프레임을 더 보내지 않는다) */
@@ -124,6 +131,10 @@ export async function startFakeRunner(opts: FakeRunnerOptions): Promise<FakeRunn
   let agents = opts.agents ?? [FAKE_RUNNER_AGENT];
   let socket: Socket | undefined;
   let helloResult: RunnerHelloResult | undefined;
+  let helloCount = 0;
+  let closed = false;
+  let attempt = 0;
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
   const runStarts: RunnerRunStart[] = [];
   const aborts: RunnerRunAbort[] = [];
   const resolves: RunnerApprovalResolve[] = [];
@@ -141,6 +152,9 @@ export async function startFakeRunner(opts: FakeRunnerOptions): Promise<FakeRunn
     get helloResult() {
       return helloResult;
     },
+    get helloCount() {
+      return helloCount;
+    },
     get connected() {
       return socket?.connected ?? false;
     },
@@ -154,10 +168,29 @@ export async function startFakeRunner(opts: FakeRunnerOptions): Promise<FakeRunn
       return connect();
     },
     close() {
+      closed = true;
+      clearTimeout(retryTimer);
       socket?.removeAllListeners();
       socket?.disconnect();
     },
   };
+
+  function scheduleReconnect(): void {
+    const backoff = opts.autoReconnect;
+    if (!backoff || closed || retryTimer) return;
+    const delay = Math.min(backoff.maxMs, backoff.minMs * 2 ** attempt);
+    attempt += 1;
+    retryTimer = setTimeout(() => {
+      retryTimer = undefined;
+      if (closed) return;
+      connect().then(
+        () => {
+          attempt = 0;
+        },
+        () => scheduleReconnect(),
+      );
+    }, delay);
+  }
 
   function handleRun(s: Socket, start: RunnerRunStart) {
     const runId = start.deliver.runId;
@@ -270,7 +303,9 @@ export async function startFakeRunner(opts: FakeRunnerOptions): Promise<FakeRunn
     });
     socket = s;
     s.on("disconnect", (reason) => {
-      if (reason !== "io client disconnect") disconnectReasons.push(reason);
+      if (reason === "io client disconnect") return;
+      disconnectReasons.push(reason);
+      if (reason !== "io server disconnect" && socket === s) scheduleReconnect();
     });
     s.on("run.start", (raw: unknown, ack: (r: RunnerRunAck) => void) => {
       const parsed = RunnerRunStart.safeParse(raw);
@@ -300,6 +335,7 @@ export async function startFakeRunner(opts: FakeRunnerOptions): Promise<FakeRunn
           (raw: unknown) => {
             clearTimeout(timer);
             helloResult = RunnerHelloResult.parse(raw);
+            helloCount += 1;
             resolve(helloResult);
           },
           (error: unknown) => {

@@ -20,6 +20,8 @@ import { v7 as uuid } from "uuid";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { App } from "../src/app";
 import { opsEvents } from "../src/db/schema.sqlite";
+import { markBound } from "../src/modules/attachments/service";
+import { createUserMessage } from "../src/modules/messages/service";
 import { RUNNER_BUNDLE_ENTRY } from "../src/modules/runners/runner-file";
 import { RUNNER_TOKEN_FILE } from "../src/modules/runners/routes";
 import { bootTestApp, login, userWithRole } from "./helpers/app";
@@ -306,6 +308,75 @@ describe("연결 페이지 러너 API /api/v1/setup/runner-*", () => {
 
       await call(owner, "DELETE", `/runner-tokens/${issued.record.id}`);
       expect((await download(issued.token)).statusCode).toBe(401);
+    });
+
+    // 조율자 판정 R5 — 러너 토큰은 열린 런의 deliver 첨부와 자기가 올린 것만. 나머지는 없는 id 와 같은 404
+    it("러너가 안 붙은 채널의 사람 첨부는 404 — 에이전트 없는 채널에 묶여 있어도(리뷰 I1 재현)", async () => {
+      const issued = await issue("scope-human");
+      const channel = await app.fastify.inject({
+        method: "POST",
+        url: "/api/v1/channels",
+        headers: owner,
+        payload: { name: "secret" },
+      });
+      const secretId = channel.json().channel.id as string;
+      const human = await app.fastify.inject({
+        method: "POST",
+        url: `/api/v1/attachments?channelId=${secretId}`,
+        headers: { ...owner, "content-type": "image/png" },
+        payload: Buffer.from(makePng(3, 3)),
+      });
+      const attachment = Attachment.parse(human.json());
+      const message = createUserMessage(app.db, app.bus, {
+        channelId: secretId,
+        authorId: app.ownerUserId,
+        bodyMd: "비밀",
+        clientMsgId: "runner-scope-human",
+      });
+      markBound(app.db, [attachment.id], message.id);
+      // 같은 id 를 사람 세션은 받는다 — 404 는 없어서가 아니라 범위 밖이어서다
+      const asOwner = await app.fastify.inject({
+        method: "GET",
+        url: `/api/v1/attachments/${attachment.id}`,
+        headers: owner,
+      });
+      expect(asOwner.statusCode).toBe(200);
+      const res = await download(issued.token, attachment.id);
+      expect(res.statusCode).toBe(404);
+      expect(res.json()).toEqual({ code: "NOT_FOUND", message: "attachment not found" });
+    });
+
+    it("그 토큰으로 올린 첨부는 묶이기 전후 모두 200, 다른 러너 토큰·브리지가 올린 것은 404", async () => {
+      const [mine, other] = [await issue("scope-mine"), await issue("scope-other")];
+      const own = Attachment.parse((await upload(mine.token)).json());
+      const got = await download(mine.token, own.id);
+      expect(got.statusCode).toBe(200);
+      expect(Buffer.from(got.rawPayload)).toEqual(Buffer.from(makePng(4, 4)));
+      expect((await download(other.token, own.id)).statusCode).toBe(404);
+
+      const message = createUserMessage(app.db, app.bus, {
+        channelId,
+        authorId: app.ownerUserId,
+        bodyMd: "묶음",
+        clientMsgId: "runner-scope-mine",
+      });
+      markBound(app.db, [own.id], message.id);
+      expect((await download(mine.token, own.id)).statusCode).toBe(200);
+      expect((await download(other.token, own.id)).statusCode).toBe(404);
+
+      const bridged = await app.fastify.inject({
+        method: "POST",
+        url: BRIDGE_ATTACHMENTS_PATH,
+        headers: {
+          authorization: `Bearer ${BRIDGE_TOKEN}`,
+          "content-type": "image/png",
+          [BRIDGE_ATTACHMENT_HEADERS.channelId]: channelId,
+        },
+        payload: Buffer.from(makePng(5, 5)),
+      });
+      const fromBridge = Attachment.parse(bridged.json());
+      markBound(app.db, [fromBridge.id], message.id);
+      expect((await download(mine.token, fromBridge.id)).statusCode).toBe(404);
     });
   });
 });

@@ -4,6 +4,7 @@ import type { AddressInfo } from "node:net";
 import {
   type AdapterEvent,
   AdapterError,
+  artifactUrl,
   BridgeAuthGuard,
   dodokSessionKey,
   type InboundDeliver,
@@ -1023,6 +1024,65 @@ describe("승인", () => {
     await until(() => dropped().length === 1, "warn");
     expect(dropped()[0]?.obj).toMatchObject({ runId: two.runId, providerApprovalId: "perm-1" });
     expect(approvals(h).filter((a) => a.status === "pending")).toHaveLength(1);
+  });
+});
+
+describe("mayReadAttachment — 러너 토큰의 첨부 읽기 범위(조율자 판정 R5)", () => {
+  const TOKEN_A_ID = TOKENS[TOKEN_A]?.tokenId ?? "";
+  const TOKEN_B_ID = TOKENS[TOKEN_B]?.tokenId ?? "";
+  function image(): InboundDeliver["message"]["attachments"][number] {
+    const id = randomUUID();
+    return { id, kind: "image", url: artifactUrl(id), name: "shot.png", mime: "image/png", size: 73 };
+  }
+  function withAttachments(...list: ReturnType<typeof image>[]): Partial<InboundDeliver> {
+    const base = deliver();
+    return { message: { ...base.message, attachments: list } };
+  }
+
+  it("그 토큰의 러너에 열린 런의 deliver 첨부만 true — 다른 토큰·다른 첨부는 false", async () => {
+    const h = await setup();
+    const a = await readyRunner(h, TOKEN_A, [runnerAgent("coder")]);
+    await readyRunner(h, TOKEN_B, [runnerAgent("fin")]);
+    const [shot, other] = [image(), image()];
+    await startRun(h, a, withAttachments(shot));
+    expect(h.adapter.mayReadAttachment(TOKEN_A_ID, shot.id)).toBe(true);
+    expect(h.adapter.mayReadAttachment(TOKEN_B_ID, shot.id)).toBe(false);
+    expect(h.adapter.mayReadAttachment(TOKEN_A_ID, other.id)).toBe(false);
+  });
+
+  it("런이 run.final·run.error·끊김으로 닫히면 false", async () => {
+    const h = await setup();
+    const r = await readyRunner(h);
+    const [f, e, d] = [image(), image(), image()];
+    const finalRun = await startRun(h, r, withAttachments(f));
+    const errorRun = await startRun(h, r, withAttachments(e));
+    await startRun(h, r, withAttachments(d));
+    for (const x of [f, e, d]) expect(h.adapter.mayReadAttachment(TOKEN_A_ID, x.id)).toBe(true);
+
+    r.send("run.final", { runId: finalRun.runId, text: "", stopReason: "end_turn", costKind: "api" });
+    await until(() => signals(h, finalRun.runId).includes("gateway_final"), "final");
+    expect(h.adapter.mayReadAttachment(TOKEN_A_ID, f.id)).toBe(false);
+
+    r.send("run.error", { runId: errorRun.runId, code: "INTERNAL", message: "boom" });
+    await until(() => signals(h, errorRun.runId).includes("gateway_error"), "error");
+    expect(h.adapter.mayReadAttachment(TOKEN_A_ID, e.id)).toBe(false);
+    expect(h.adapter.mayReadAttachment(TOKEN_A_ID, d.id)).toBe(true);
+
+    r.close();
+    await until(() => !h.adapter.mayReadAttachment(TOKEN_A_ID, d.id), "disconnect closes the run");
+  });
+
+  it("drop 으로 받은 런·forgetRun 한 런의 첨부도 false", async () => {
+    const h = await setup();
+    const r = await readyRunner(h);
+    const [dropped, forgotten] = [image(), image()];
+    r.onRunStart = (start) => ({ runId: start.deliver.runId, admission: "drop" });
+    await h.adapter.send(deliver(withAttachments(dropped)), { providerSessionId: SESSION_ID });
+    expect(h.adapter.mayReadAttachment(TOKEN_A_ID, dropped.id)).toBe(false);
+    r.onRunStart = (start) => ({ runId: start.deliver.runId, admission: "dispatch" });
+    const run = await startRun(h, r, withAttachments(forgotten));
+    h.adapter.forgetRun(run.runId);
+    expect(h.adapter.mayReadAttachment(TOKEN_A_ID, forgotten.id)).toBe(false);
   });
 });
 

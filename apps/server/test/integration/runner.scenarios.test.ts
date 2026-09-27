@@ -5,21 +5,33 @@
  */
 import {
   type Agent,
+  BRIDGE_ATTACHMENTS_PATH,
   type Channel,
   dodokSessionKey,
   IssueRunnerTokenResult,
   type Message,
   OpsRunsSummary,
   type Result,
+  RUNNER_ATTACHMENTS_PATH,
   SetupStatus,
 } from "@dodok/shared";
 import { and, eq } from "drizzle-orm";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { io } from "socket.io-client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { opsEvents, runs } from "../../src/db/schema.sqlite";
 import { createScenario } from "../fakes/scenario";
-import { type FakeRunner, type FakeRunnerScript, startFakeRunner } from "../fakes/fake-runner";
+import {
+  FAKE_RUNNER_AGENT,
+  type FakeRunner,
+  type FakeRunnerScript,
+  startFakeRunner,
+} from "../fakes/fake-runner";
 import { bootLiveApp, type LiveApp, type LiveAppOptions } from "../helpers/live-app";
-import { openChannelWire, rest, sendMessage, type WireLog } from "../helpers/scenario-steps";
+import { makePng } from "../helpers/png";
+import { openChannelWire, rest, sendMessage, uploadImage, type WireLog } from "../helpers/scenario-steps";
 import type { WireClient } from "../helpers/wire";
 
 vi.setConfig({ testTimeout: 30_000, hookTimeout: 20_000 });
@@ -434,25 +446,64 @@ describe("Claude 러너 통합 시나리오", () => {
     expect(rowsOf()[0]?.detail).toMatchObject({ thresholdMs: 300, downMs: expect.any(Number) });
   });
 
-  it("서버 종료 → 러너는 transport close 로 받는다(다시 붙는 사유), 토큰 폐기는 io server disconnect(종료하는 사유) [R4]", async () => {
-    const { runner } = await start();
-    const other = await connectRunner((await issueToken("desktop")).token);
-    const second = await issueToken("revoked");
-    const revoked = await connectRunner(second.token);
-    const res = await live.app.fastify.inject({
-      method: "DELETE",
-      url: `/api/v1/setup/runner-tokens/${second.record.id}`,
-      headers: live.auth.headers,
-    });
-    expect(res.statusCode).toBe(204);
-    await vi.waitFor(() => expect(revoked.disconnectReasons).toEqual(["io server disconnect"]));
+  it("서버 재시작 → 러너는 transport close 로 받고 러너 규칙대로 다시 붙어 hello 까지, 토큰 폐기는 io server disconnect 라 돌아오지 않는다 [R4]", async () => {
+    // 재시작 뒤에도 토큰이 살아 있게 파일 DB — live.dir 은 close() 가 지우므로 따로 둔다
+    const dbDir = mkdtempSync(join(tmpdir(), "dodok-runner-restart-"));
+    const env = { DB_PATH: join(dbDir, "dodok.sqlite") };
+    const autoReconnect = { minMs: 50, maxMs: 200 };
+    try {
+      live = await bootLiveApp({ env });
+      const port = Number(new URL(live.app.url).port);
+      const connectAuto = async (label: string) => {
+        const runner = await startFakeRunner({
+          url: live.app.url,
+          token: (await issueToken(label)).token,
+          agents: [{ ...FAKE_RUNNER_AGENT, id: label }],
+          autoReconnect,
+        });
+        runners.push(runner);
+        return runner;
+      };
+      const [macbook, desktop] = [await connectAuto("macbook"), await connectAuto("desktop")];
+      const second = await issueToken("revoked");
+      const revoked = await startFakeRunner({ url: live.app.url, token: second.token, autoReconnect });
+      runners.push(revoked);
+      const res = await live.app.fastify.inject({
+        method: "DELETE",
+        url: `/api/v1/setup/runner-tokens/${second.record.id}`,
+        headers: live.auth.headers,
+      });
+      expect(res.statusCode).toBe(204);
+      await vi.waitFor(() => expect(revoked.disconnectReasons).toEqual(["io server disconnect"]));
 
-    // 종료 순서: 어댑터 close(전송만 닫음) → io.close
-    await live.app.close();
-    await vi.waitFor(() => {
-      expect(runner.disconnectReasons).toEqual(["transport close"]);
-      expect(other.disconnectReasons).toEqual(["transport close"]);
-    });
+      // 종료 순서: 어댑터 close(전송만 닫음) → io.close
+      await live.close();
+      await vi.waitFor(() => {
+        expect(macbook.disconnectReasons).toEqual(["transport close"]);
+        expect(desktop.disconnectReasons).toEqual(["transport close"]);
+      });
+      expect(macbook.connected).toBe(false);
+
+      // 같은 주소·같은 DB 로 다시 띄우면 러너가 스스로 돌아와 hello 가 통한다
+      live = await bootLiveApp({ env, port });
+      await vi.waitFor(
+        () => {
+          expect(macbook.helloCount).toBe(2);
+          expect(desktop.helloCount).toBe(2);
+        },
+        { timeout: 10_000 },
+      );
+      expect(macbook.helloResult).toMatchObject({ ok: true, conflicts: [] });
+      expect(macbook.connected).toBe(true);
+      const status = await setupStatus();
+      expect(status.runners.list.map((r) => r.label).sort()).toEqual(["desktop", "macbook"]);
+      // 폐기된 러너는 규칙대로 멈춰 있다 — 돌아온 러너들보다 먼저 끊겼으므로 다시 붙을 틈이 충분했다
+      expect(revoked.helloCount).toBe(1);
+      expect(revoked.connected).toBe(false);
+    } finally {
+      await live.close();
+      rmSync(dbDir, { recursive: true, force: true });
+    }
   });
 
   it("시나리오 10 — 운영 요약에 러너 런 비용이 합쳐진다(usageTrustedProviders claude)", async () => {
@@ -468,5 +519,76 @@ describe("Claude 러너 통합 시나리오", () => {
       costUsd: 0.01,
     });
     expect(summary.byChannel.find((r) => r.id === channel.id)).toMatchObject({ tokens: 15, costUsd: 0.01 });
+  });
+
+  it("러너 토큰의 첨부 GET — 열린 런의 deliver 첨부는 200, 런이 끝나면 404, 러너 없는 채널의 사람 첨부는 404 [R5]", async () => {
+    const seen: number[] = [];
+    let token = "";
+    const fetchAttachment = async (id: string, path = RUNNER_ATTACHMENTS_PATH) =>
+      (await fetch(`${live.app.url}${path}/${id}`, { headers: { authorization: `Bearer ${token}` } })).status;
+    const { issued, runner, coder, channel, log } = await start(async (run) => {
+      for (const a of run.start.deliver.message.attachments) seen.push(await fetchAttachment(a.id));
+      run.final("봤습니다");
+    });
+    token = issued.token;
+    const image = await uploadImage(live, channel.id, makePng(6, 6), "shot.png");
+    await sendMessage(log.socket, channel.id, "@coder 이 그림 봐", { attachments: [image.id] });
+    const run = await runOf(log, coder.id);
+    expect((await log.terminal(run.id)).status).toBe("done");
+    expect(runner.runStarts[0]?.deliver.message.attachments.map((a) => a.id)).toEqual([image.id]);
+    expect(seen).toEqual([200]);
+    expect(await fetchAttachment(image.id)).toBe(404);
+
+    // 리뷰 I1 재현 — 에이전트가 없는 채널에 묶인 사람 첨부
+    const secret = await channelWith([], "secret");
+    const hidden = await uploadImage(live, secret.id, makePng(7, 7), "secret.png");
+    await sendMessage(log.socket, secret.id, "비밀", { attachments: [hidden.id] });
+    expect(await fetchAttachment(hidden.id)).toBe(404);
+    // 러너 토큰은 브리지 경로에서 통하지 않는다(리뷰 M1)
+    expect(await fetchAttachment(image.id, BRIDGE_ATTACHMENTS_PATH)).toBe(401);
+  });
+
+  it("러너 토큰으로 /bridge 핸드셰이크는 UNAUTHORIZED, 브리지는 그대로 붙어 있다 [리뷰 M1]", async () => {
+    const { issued } = await start();
+    const reason = await new Promise<string>((resolve) => {
+      const socket = io(`${live.app.url}/bridge`, {
+        auth: { token: issued.token },
+        transports: ["websocket"],
+        reconnection: false,
+        forceNew: true,
+      });
+      socket.once("connect", () => {
+        socket.close();
+        resolve("connected");
+      });
+      socket.once("connect_error", (err) => {
+        socket.close();
+        resolve(err.message);
+      });
+    });
+    expect(reason).toBe("UNAUTHORIZED");
+    // 브리지 슬롯은 그대로 가짜 플러그인의 것이다 — 러너 토큰이 그 자리를 밀어내지 않았다
+    expect((await setupStatus()).bridge.state).toBe("connected");
+  });
+
+  it("열린 runner_down 은 그 토큰을 폐기하면 닫힌다 — 폐기된 토큰은 다시 붙을 수 없다 [리뷰 M2]", async () => {
+    const { issued, runner } = await start(undefined, { deps: { disconnectEventMs: 300 } });
+    const rowsOf = () =>
+      live.app.db
+        .select()
+        .from(opsEvents)
+        .where(and(eq(opsEvents.kind, "runner_down"), eq(opsEvents.key, issued.record.id)))
+        .all();
+    runner.disconnect();
+    await vi.waitFor(() => expect(rowsOf()).toEqual([expect.objectContaining({ resolvedAt: null })]), {
+      timeout: 5_000,
+    });
+    const res = await live.app.fastify.inject({
+      method: "DELETE",
+      url: `/api/v1/setup/runner-tokens/${issued.record.id}`,
+      headers: live.auth.headers,
+    });
+    expect(res.statusCode).toBe(204);
+    expect(rowsOf()).toEqual([expect.objectContaining({ resolvedAt: expect.any(Date) })]);
   });
 });
