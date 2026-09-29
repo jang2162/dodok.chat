@@ -199,7 +199,7 @@ function InstallSteps({ status }: { status: SetupStatus }) {
 }
 
 /**
- * 연결 페이지 러너 블록(러너 스펙 5장·7장, owner): 붙은 러너, 러너 토큰(목록·발급·폐기), 설치 안내, 그리고 드러나는 것 둘.
+ * 연결 페이지 러너 블록(러너 스펙 5장·7장, owner): 붙은 러너, 러너 토큰(목록·발급·폐기), 설치 안내, 그리고 드러나는 것 셋.
  * 연결 여부·러너 목록은 `setup.status` 를 믿는다 — 토큰 수 같은 wire `adapter.status` 는 발급·폐기 때 바로 안 나갈 수 있다
  */
 export function RunnerSection({ status }: { status: SetupStatus | undefined }) {
@@ -219,6 +219,10 @@ export function RunnerSection({ status }: { status: SetupStatus | undefined }) {
           <li>
             채널 멤버는 에이전트를 통해 러너 작업 디렉터리 안의 파일을 읽을 수 있습니다. 그 에이전트를 어느
             채널에 둘지는 admin 이 판단합니다.
+          </li>
+          <li>
+            러너 토큰 하나로 워크스페이스의 모든 Claude 러너 에이전트 id 를 맡을 수 있습니다(먼저 알린 러너가
+            맡습니다). 토큰은 믿는 머신에만 주십시오.
           </li>
         </ul>
       </div>

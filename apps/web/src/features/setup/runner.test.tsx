@@ -34,7 +34,7 @@ describe("러너 블록 — 권한", () => {
     expect(server.calls.filter((c) => c.url.includes("runner"))).toEqual([]);
   });
 
-  it("owner 는 러너 블록과 드러나는 것 둘을 본다", async () => {
+  it("owner 는 러너 블록과 드러나는 것 셋을 본다 [최종 리뷰 M5]", async () => {
     stubSetupServer();
     renderConnection();
     const block = await runnerRegion();
@@ -45,6 +45,10 @@ describe("러너 블록 — 권한", () => {
       "채널 멤버는 에이전트를 통해 러너 작업 디렉터리 안의 파일을 읽을 수 있습니다",
     );
     expect(block).toHaveTextContent("어느 채널에 둘지는 admin 이 판단합니다");
+    expect(block).toHaveTextContent(
+      "러너 토큰 하나로 워크스페이스의 모든 Claude 러너 에이전트 id 를 맡을 수 있습니다",
+    );
+    expect(block).toHaveTextContent("토큰은 믿는 머신에만 주십시오");
   });
 });
 
