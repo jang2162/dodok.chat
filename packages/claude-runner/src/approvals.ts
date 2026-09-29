@@ -76,9 +76,12 @@ export function elide(text: string, max: number): string {
   return head + elisionMark(omitted) + tail;
 }
 
-// 카드에서 글을 숨기거나 뒤집는 글자 — 제어 문자(줄바꿈·탭·CR·ESC 등), 양방향 서식(U+061C·200E·200F·202A–202E·2066–2069),
-// 줄·문단 구분자(U+2028·2029). 줄바꿈 수십 개로 꼬리를 인자 상자 밖으로 밀거나 U+202E 로 꼬리를 뒤집어 보이게 할 수 있다(N1)
-const HIDING_CHARS = /[\p{Cc}\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069\u2028\u2029]/gu;
+// 카드에서 글을 숨기거나 뒤집는 글자 — 목록이 아니라 부류로 잡는다. 제어 문자 \p{Cc}(줄바꿈·탭·CR·ESC 등), 서식 문자 \p{Cf}
+// (양방향 서식·ZWSP·BOM·소프트 하이픈·태그 — ZWJ 만 빼 ZWJ 이모지를 살린다), 줄·문단 구분자 \p{Zl}·\p{Zp}, U+0020 이 아닌 공백
+// \p{Zs}(NBSP·U+3000 등), 폭은 있고 글리프가 빈 한글 채움 문자(U+115F·1160·3164·FFA0)와 점자 빈칸(U+2800).
+// 줄바꿈이나 빈 글자 수백 개로 꼬리를 인자 상자 밖으로 밀거나 U+202E 로 꼬리를 뒤집어 보이게 할 수 있다(N1·N1′)
+const HIDING_CHARS =
+  /(?![\u{20}\u{200D}])[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Zs}\u{115F}\u{1160}\u{3164}\u{FFA0}\u{2800}]/gu;
 const NAMED_ESCAPES: Record<string, string> = { "\n": "⏎", "\r": "\\r", "\t": "\\t" };
 
 /** 숨기는 글자를 보이게 바꾼다 — 줄바꿈은 ⏎ 로 한 줄에 접고, 나머지는 `\r`·`\t`·`\u{202E}` 꼴 */

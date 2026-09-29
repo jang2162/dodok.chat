@@ -314,8 +314,40 @@ describe("summarizeToolInput", () => {
     });
 
     it("보통 글자(한글·이모지·ZWJ 이모지·공백)는 그대로", () => {
-      const command = "echo 안녕 😀 👨‍👩‍👧 'a  b'";
+      const command = "echo 안녕 ㅎㅎ 😀 👨‍👩‍👧 'a  b'";
       expect(summarizeToolInput("Bash", { command }, WORKDIR)).toBe(command);
+    });
+
+    // 폭은 있고 보이지 않는 글자 — 지금 CSS 에서 빈 줄이 되거나, 줄바꿈 CSS 를 넣으면 빈 줄이 되는 것(N1′)
+    const BLANKS: [string, string][] = [
+      ["U+3164 한글 채움", "\u{3164}"],
+      ["U+00A0 NBSP", "\u{A0}"],
+      ["U+2800 점자 빈칸", "\u{2800}"],
+      ["U+3000 전각 공백", "\u{3000}"],
+      ["U+FFA0 반각 한글 채움", "\u{FFA0}"],
+      ["U+200B ZWSP", "\u{200B}"],
+    ];
+    for (const [name, blank] of BLANKS) {
+      for (const count of [360, 5000]) {
+        it(`${name} × ${count} 로 앞을 채워도 원문이 남지 않고 생략 표시와 꼬리가 보인다`, () => {
+          const command = "echo ok " + blank.repeat(count) + "; " + TAIL;
+          const s = summarizeToolInput("Bash", { command }, WORKDIR);
+          expect(s).not.toContain(blank);
+          expect(s.length).toBeLessThanOrEqual(400);
+          expect(s).toMatch(/ …\(가운데 \d+자 생략\)… /);
+          expect(s.endsWith(TAIL)).toBe(true);
+          // 생략 표시 밖은 보이는 ASCII 뿐 — 400칸 안이라 297px 인자 상자(한 줄 약 41칸)에서 약 10줄, 꼬리가 11줄 안에 든다
+          expect(s.replace(/ …\(가운데 \d+자 생략\)… /, "")).toMatch(/^[\x20-\x7E]+$/);
+        });
+      }
+    }
+
+    it("서식·공백 부류의 다른 글자도 이스케이프 — ZWJ 와 U+0020 만 그대로", () => {
+      const raw =
+        "a\u{AD}b\u{FEFF}c\u{2060}d\u{E0041}e\u{115F}f\u{1160}g\u{202F}h\u{205F}i\u{1680}j\u{200D}k l";
+      expect(summarizeToolInput("Bash", { command: raw }, WORKDIR)).toBe(
+        "a\\u{AD}b\\u{FEFF}c\\u{2060}d\\u{E0041}e\\u{115F}f\\u{1160}g\\u{202F}h\\u{205F}i\\u{1680}j\u{200D}k l",
+      );
     });
   });
 
