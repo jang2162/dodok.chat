@@ -1,6 +1,6 @@
 # dev Gateway 실연(live smoke) — 서버 코어를 실제 Gateway·플러그인·모델로 한 번 돌리기
 
-작성: 2026-09-15 (서버 코어 계획 태스크 15) · 근거: 서버 코어 스펙 9.3, ADR 0002 2절·9절, ADR 0003 2절 · 7절 2026-09-20 (웹 MVP 계획 태스크 15) · 8~9절 2026-09-21 (활동 패널·승인 계획 태스크 11) · 10절 2026-09-23 (components v1 계획 태스크 11) · 11절 2026-09-23 (c2-t14 하네스, ADR 0004) · 12절 2026-09-23 (c2-t16 고침 실물 확인) · 13절 2026-09-23 (a3-t11 첨부 실연) · 13.7 2026-09-23 (a3-t13 결함 A 고침 실물 확인) · 14절 2026-09-24 (PWA·푸시 계획 태스크 8 — p4-t7 브라우저 검증 절차) · 15절 2026-09-25 (설정 마법사 계획 태스크 7 — s2-t7 실연) · 16절 2026-09-25 (운영 보강 계획 태스크 9 — o3-t9a 실연) · 17절 2026-09-26 (스레드·검색 계획 태스크 9 — p4t-t9a 실연) · 「팀(Phase 4 ②) 실연」 절 2026-09-27 (팀 계획 태스크 8 — p4m-t8a 실연) · 「Claude 러너 런 0회 하네스」 절 2026-09-29 (Claude 러너 계획 태스크 9 — p4c-t9a) · 「Claude 러너(Phase 4 ③) 실연」 절은 절차만
+작성: 2026-09-15 (서버 코어 계획 태스크 15) · 근거: 서버 코어 스펙 9.3, ADR 0002 2절·9절, ADR 0003 2절 · 7절 2026-09-20 (웹 MVP 계획 태스크 15) · 8~9절 2026-09-21 (활동 패널·승인 계획 태스크 11) · 10절 2026-09-23 (components v1 계획 태스크 11) · 11절 2026-09-23 (c2-t14 하네스, ADR 0004) · 12절 2026-09-23 (c2-t16 고침 실물 확인) · 13절 2026-09-23 (a3-t11 첨부 실연) · 13.7 2026-09-23 (a3-t13 결함 A 고침 실물 확인) · 14절 2026-09-24 (PWA·푸시 계획 태스크 8 — p4-t7 브라우저 검증 절차) · 15절 2026-09-25 (설정 마법사 계획 태스크 7 — s2-t7 실연) · 16절 2026-09-25 (운영 보강 계획 태스크 9 — o3-t9a 실연) · 17절 2026-09-26 (스레드·검색 계획 태스크 9 — p4t-t9a 실연) · 「팀(Phase 4 ②) 실연」 절 2026-09-27 (팀 계획 태스크 8 — p4m-t8a 실연) · 「Claude 러너 런 0회 하네스」 절 2026-09-29 (Claude 러너 계획 태스크 9 — p4c-t9a) 
 
 ## 1. 목적
 
@@ -1720,9 +1720,9 @@ final = "FAKE_CLI_DONE approval=" + (res.response?.behavior ?? res.subtype);   /
 
 Claude 러너 어댑터는 번들 CLI 에 `ANTHROPIC_BASE_URL`(로컬 가짜 Messages API)·가짜 API 키·스크래치 `CLAUDE_CONFIG_DIR` 을 주어 모델 없이 실제 요청 본문과 권한·도구·interrupt 흐름을 두드린다(ADR 0007 「다시 재는 법」).
 **실제 서버**(`dev:fake` — 가짜는 Gateway·플러그인뿐이고 러너 어댑터·`/runner`·첨부 HTTP·승인·오케스트레이터는 운영 코드 그대로) + **실제 러너**(서버가 내려준 tgz 를 `npm install -g` 한 설치본) + **실제 번들 CLI**(SDK 가 찾는 그 바이너리)를 끝까지 돌린다. 가짜는 모델 자리의 `packages/claude-runner/scripts/fake-messages-api.ts` 하나다.
-러너·SDK·CLI 판본을 올렸을 때, 러너의 `buildQueryOptions`·권한·도구·중지를 고쳤을 때, 그리고 **모델 런 실연(20절) 전에** 한 번 돌린다.
+러너·SDK·CLI 판본을 올렸을 때, 러너의 `buildQueryOptions`·권한·도구·중지를 고쳤을 때, 그리고 **모델 런 실연(「Claude 러너(Phase 4 ③) 실연」 절) 전에** 한 번 돌린다.
 
-**판정: 합격 기준 12/12 통과. 제품 결함 0.** 새로 안 것은 19.4 — 그중 「러너를 `SIGKILL` 로 죽이면 CLI 가 고아로 남아 그 턴을 끝까지 돈다」가 비용·이력 판단 거리다.
+**판정: 합격 기준 12/12 통과. 제품 결함 0.** 새로 안 것은 「새로 찾은 것」 — 그중 「러너를 `SIGKILL` 로 죽이면 CLI 가 고아로 남아 그 턴을 끝까지 돈다」가 비용·이력 판단 거리다.
 
 ### 19.1 구성
 
@@ -1730,7 +1730,7 @@ Claude 러너 어댑터는 번들 CLI 에 `ANTHROPIC_BASE_URL`(로컬 가짜 Mes
 | --- | --- |
 | 서버 | `PORT=3121 APP_ORIGIN=http://localhost:5199 LOG_LEVEL=debug pnpm -F @dodok/server dev:fake`(웹은 띄우지 않는다), 기동 전에 `pnpm -F @dodok/claude-runner pack:runner` — 서버는 부팅 때 `packages/claude-runner/dist` 의 tgz 를 잰다. dev:fake 의 가짜 러너는 `POST /__devfake/runner {"connected":false}` 로 내린다 |
 | 러너 | owner 로 `POST /api/v1/setup/runner-tokens` → 원문을 스크래치 `home/.dodok-runner/token`(0600)에만 → `GET /api/v1/setup/runner.tgz` → `npm install -g --prefix <스크래치>/runner <받은 tgz>` → 아래 감싸개 → `env -i PATH=<스크래치>/runner/bin:<node bin>:/usr/bin:/bin HOME=<스크래치>/home LANG=en_US.UTF-8 TMPDIR=<스크래치>/tmp SHELL=/bin/bash USER=$USER dodok-runner --config <스크래치>/runner-config.json` |
-| 러너 설정 | `serverUrl` `http://127.0.0.1:3121`(발급 응답의 `runnerConfig.serverUrl` 은 `APP_ORIGIN` 파생이라 dev 에서는 웹 오리진이다 — 19.4), `tokenFile` `~/.dodok-runner/token`(스크래치 `HOME` 기준), `claudeConfigDir` 스크래치 `cfg/`, 에이전트 `hx`(작업 디렉터리 스크래치 `ws/` — 커밋 하나 있는 git 저장소, 라벨 `hx-ws`, 모델 `sonnet`) |
+| 러너 설정 | `serverUrl` `http://127.0.0.1:3121`(발급 응답의 `runnerConfig.serverUrl` 은 `APP_ORIGIN` 파생이라 dev 에서는 웹 오리진이다 — 「새로 찾은 것」), `tokenFile` `~/.dodok-runner/token`(스크래치 `HOME` 기준), `claudeConfigDir` 스크래치 `cfg/`, 에이전트 `hx`(작업 디렉터리 스크래치 `ws/` — 커밋 하나 있는 git 저장소, 라벨 `hx-ws`, 모델 `sonnet`) |
 | 가짜 API | `node packages/claude-runner/scripts/fake-messages-api.ts --port 3197 --out <스크래치>/api` — 대본 키워드는 그 파일 머리 주석의 표. 요청마다 `requests.jsonl` 한 줄과 본문 `NNN.json` |
 | 작업 파일 | 작업 디렉터리 안 `hx-out.txt`, 밖 `<스크래치>/hx-outside.txt`, 사람 이미지 8×8 PNG |
 
@@ -1752,7 +1752,7 @@ chmod +x "$B/claude"
 - `ENABLE_TOOL_SEARCH=true` — 가짜 키 모드는 도구 검색이 꺼져 있어 지연 로드를 볼 수 없다(ADR 0007 「함정」의 SDK MCP 도구 지연 로드). 켜야 `alwaysLoad` 를 잰다.
 - 러너 전용 로그인(`~/.dodok-runner/claude`)은 쓰지 않는다 — `HOME` 도 `CLAUDE_CONFIG_DIR` 도 스크래치다. 가짜 키라 CLI 의 `apiKeySource` 는 `ANTHROPIC_API_KEY` 이고 런 비용은 `costKind: "api"` 로 온다.
 
-**드라이버.** 사람 쪽(REST·wire)은 `wire-cli` 가 못 하는 것(승인 결정·중지·버튼·러너 토큰 첨부 GET)이 있어 18.3 처럼 워크트리 `data/`(ignored)에 드라이버를 두고 `pnpm -s exec tsx data/<파일>.mts <명령>` 으로 돌렸다(끝나고 지웠다). `socket.io-client` 로 `auth: {token: <세션>, protocol: 1}`, 이벤트는 스크래치 `wire.jsonl` 에 받은 시각과 함께.
+**드라이버.** 사람 쪽(REST·wire)은 `wire-cli` 가 못 하는 것(승인 결정·중지·버튼·러너 토큰 첨부 GET)이 있어 「팀(Phase 4 ②) 실연」 절의 「절차」 처럼 워크트리 `data/`(ignored)에 드라이버를 두고 `pnpm -s exec tsx data/<파일>.mts <명령>` 으로 돌렸다(끝나고 지웠다). `socket.io-client` 로 `auth: {token: <세션>, protocol: 1}`, 이벤트는 스크래치 `wire.jsonl` 에 받은 시각과 함께.
 
 | 명령 | 하는 일 |
 | --- | --- |
@@ -1776,7 +1776,7 @@ chmod +x "$B/claude"
 | 4 | `mcp__dodok__post` 가 지연 목록에 없음(`alwaysLoad`) | **통과** | `tools[]` 14개 중 `mcp__dodok__post` 가 `input_schema`(`text`·`components`·`files`)째 있고 `defer_loading` 없음. 같은 요청의 「The following deferred tools are now available via ToolSearch」 블록은 12개(`CronCreate` … `WebSearch`)이고 `mcp__dodok__post` 는 없다 |
 | 5 | 쓰기 Bash `tool_use` → `canUseTool` → 승인 카드 → 허용 → 도구 결과 | **통과** | `HX-BASH`(`touch hx-note.txt`) — `TOOL_CALL_START Bash` +479 → `approval.requested` +529(`kind: tool`·`toolName: Bash`·`detail: "touch hx-note.txt"`·결정 셋) → `allow-once` +1032 → `approval.resolved allowed` +1034 → `TOOL_CALL_RESULT ok:true "(Bash completed with no output)"` `durationMs` 592 +1069 → 다음 요청의 `tool_result is_error:false` → 최종 답 `HX-BASH-DONE is_error=false …` +1148, 런 `done`, 작업 디렉터리에 `hx-note.txt` 생김. **거절**: `tool_result is_error:true` 「사람이 거절했습니다」 → 답에 그대로, 파일 없음. **항상 허용**: 허용되고 작업 디렉터리에 `.claude/` 가 생기지 않았다(규칙이 `session` 으로만) |
 | 6 | 중지 → 메시지 없는 중지 | **통과** | `HX-SLOW` 델타 3개 뒤 `run.abort` +1783 → `RUN_ABORTED {by:"user"}`·런 `aborted` +1785, 러너 「런 끝」 +10ms. 그 런의 에이전트 메시지 0, 가짜 API 에 응답 중 끊김 1건, 남은 CLI 프로세스 0 |
-| 7 | 러너를 죽이면 run_error 카드 | **통과** | `HX-SLOW` 델타 3개 뒤 러너 PID 에 `SIGKILL` +1783 → `RUN_ERROR {code:"ADAPTER_UNAVAILABLE", message:"runner disconnected"}` +1787 → 채널 「@hx 실행이 실패했습니다: ADAPTER_UNAVAILABLE」 + 「다시 실행」(`retry_run`) +1790. 러너를 다시 띄우자 6ms 만에 붙고, 「다시 실행」 → 새 런(`parentRunId` = 죽은 런)이 **같은 세션 `--resume`** 으로 끝까지 `done`. 고아 CLI 는 19.4 |
+| 7 | 러너를 죽이면 run_error 카드 | **통과** | `HX-SLOW` 델타 3개 뒤 러너 PID 에 `SIGKILL` +1783 → `RUN_ERROR {code:"ADAPTER_UNAVAILABLE", message:"runner disconnected"}` +1787 → 채널 「@hx 실행이 실패했습니다: ADAPTER_UNAVAILABLE」 + 「다시 실행」(`retry_run`) +1790. 러너를 다시 띄우자 6ms 만에 붙고, 「다시 실행」 → 새 런(`parentRunId` = 죽은 런)이 **같은 세션 `--resume`** 으로 끝까지 `done`. 고아 CLI 는 「새로 찾은 것」 |
 | 8 | 서버 재시작 → 러너 재접속(판정 R4) | **통과** | 서버 SIGINT → 러너 「서버와 끊겼습니다(transport close) — 도는 런을 멈췄습니다」 → 1초·2초 백오프 → **3.0초 뒤 「연결됨」**, 서버 로그 `runner hello`(같은 토큰 id). 러너는 끝나지 않았다(종료 2 아님). `dev:fake --keep` 로 다시 띄운 뒤 멘션 → `--resume` 으로 답 |
 | 9 | 러너가 남의 첨부 GET 404(판정 R5) | **통과** | 러너 토큰 `GET /runner/attachments/<id>`: 사람이 `hx-lab` 에 올린 이미지 — 런 전 **404**, 그 이미지를 단 멘션의 런 안에서 러너가 받은 것 **200**(요청에 `image/png` 블록, 바이트가 원본과 같다), 런 뒤 **404** · `hx-other`(러너 에이전트 없는 채널) 이미지 **404** · 러너가 `post` 로 올린 `hx-out.txt` **200** · 없는 id **404**(본문 53바이트 — 넷 모두 같은 응답) |
 | 10 | 파일 보내기 — 안의 파일은 채널 카드, 밖은 거절 | **통과** | `HX-POST-IN`(`files: ["hx-out.txt"]`) → 승인 없이 `message.created` 「하네스가 파일을 보냅니다.」 + 첨부 `{kind:"file", name:"hx-out.txt", size:30}`(최종 답보다 먼저) → 도구 결과 「보냈습니다(메시지 <id>)」. owner 가 받은 파일이 원본과 같다(`cmp`). `HX-POST-OUT`(`files: ["../hx-outside.txt"]`) → 도구 결과 `is_error` 「파일을 보내지 않았습니다 — … - <작업 디렉터리 밖>: 작업 디렉터리 밖을 가리킵니다」, 첨부 메시지 0, 런은 계속돼 `done` |
@@ -1806,13 +1806,13 @@ chmod +x "$B/claude"
 
 ## 20. Claude 러너(Phase 4 ③) 실연 — 절차 (모델 런, 실행 직전 사용자 승인)
 
-19절 하네스를 먼저 끝까지 돌린 뒤에 한다. 모델 런은 **3회 이내**, 러너 전용 로그인(`CLAUDE_CONFIG_DIR=~/.dodok-runner/claude` — `docs/guides/deploy.md` 「Claude 러너 설치」 절의 로그인)으로. 결과는 이 절 아래에 런별 비용과 함께 적는다.
+「Claude 러너 런 0회 하네스」 절을 먼저 끝까지 돌린 뒤에 한다. 모델 런은 **3회 이내**, 러너 전용 로그인(`CLAUDE_CONFIG_DIR=~/.dodok-runner/claude` — `docs/guides/deploy.md` 「Claude 러너 설치」 절의 로그인)으로. 결과는 이 절 아래에 런별 비용과 함께 적는다.
 
-**구성** — 3절 (a)~(e) 그대로(실제 서버 + dev Gateway, OpenClaw 에이전트 `dev`) + 러너 하나:
+**구성** — 「절차」 절의 (a)~(e) 그대로(실제 서버 + dev Gateway, OpenClaw 에이전트 `dev`) + 러너 하나:
 
 | 항목 | 값 |
 | --- | --- |
-| 러너 설치 | 19.1 과 같이 서버의 `GET /api/v1/setup/runner.tgz` 를 스크래치 prefix 에 `npm install -g`. **감싸개를 두지 않는다**(실제 API) |
+| 러너 설치 | 「구성」 절과 같이 서버의 `GET /api/v1/setup/runner.tgz` 를 스크래치 prefix 에 `npm install -g`. **감싸개를 두지 않는다**(실제 API) |
 | 러너 설정 | `serverUrl` 은 로컬 서버, `claudeConfigDir` `~/.dodok-runner/claude`, 에이전트 `coder`(작업 디렉터리는 스크래치의 git 저장소 — 사람 저장소가 아니다), 모델 `sonnet` |
 | 러너 env | `HOME` 은 실제 홈(키체인 로그인을 찾게 — ADR 0007 「질문별」 인증), 토큰은 스크래치 0600 `tokenFile` |
 | 채널 | `dev`·`coder` 둘을 넣은 채널 하나, 채널 프롬프트에 표식 규칙(첫 줄 표식 등 모델 답에서 셀 수 있는 것) |
@@ -1820,7 +1820,7 @@ chmod +x "$B/claude"
 **런 배분**
 
 1. **멘션** — `@coder` 에 짧은 질문. 스트리밍 버블·최종 답·활동 탭 도구 타임라인, 운영 화면 런 비용(`costKind` — 구독 로그인이면 「환산 포함」). 런 비용은 러너가 보낸 `costUsd`(`total_cost_usd` 의 런 전후 차이).
-2. **규칙 변경 뒤 `resume`** — 채널 프롬프트의 표식을 바꾸고 같은 세션에 다시 멘션. 요청에 새 규칙만 실리는 것은 19절이 봤다 — 여기서는 **앞 답들이 옛 표식으로 시작하는 이력 위에서 모델이 새 규칙을 따르는가**(ADR 0007 「확인 못 한 것」 1).
+2. **규칙 변경 뒤 `resume`** — 채널 프롬프트의 표식을 바꾸고 같은 세션에 다시 멘션. 요청에 새 규칙만 실리는 것은 「Claude 러너 런 0회 하네스」 절이 봤다 — 여기서는 **앞 답들이 옛 표식으로 시작하는 이력 위에서 모델이 새 규칙을 따르는가**(ADR 0007 「확인 못 한 것」 1).
 3. **승인·`post`·릴레이** — 쓰기 도구를 부르게 하는 요청(작업 디렉터리 안 파일 만들기) → 승인 카드 허용 → `post` 로 카드(components)와 그 파일 → 카드 누르기 → `@dev` ↔ `@coder` 릴레이 한 번.
 
-**끝나면** — 러너를 SIGTERM 으로 내리고, 만든 세션 전사(`~/.dodok-runner/claude/projects/<작업 디렉터리 경로>/`·`session-env/<세션>/`)와 `/private/tmp/claude-<uid>/<작업 디렉터리 경로>/` 를 지운다. dev Gateway 쪽은 17.3 의 `sessions.delete` 로. 로그 위생은 19.2 의 11번과 같이 센다(러너 계정 이메일도 대상에 넣는다 — ADR 0007 「함정」의 계정 문맥).
+**끝나면** — 러너를 SIGTERM 으로 내리고, 만든 세션 전사(`~/.dodok-runner/claude/projects/<작업 디렉터리 경로>/`·`session-env/<세션>/`)와 `/private/tmp/claude-<uid>/<작업 디렉터리 경로>/` 를 지운다. dev Gateway 쪽은 「스레드(Phase 4 ①) 실연」 절 「절차」 의 `sessions.delete` 로. 로그 위생은 「합격 기준」 의 「로그 위생」 줄과 같이 센다(러너 계정 이메일도 대상에 넣는다 — ADR 0007 「함정」의 계정 문맥).

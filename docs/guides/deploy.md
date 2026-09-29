@@ -201,12 +201,12 @@ Claude 러너(`@dodok/claude-runner`, 명령 `dodok-runner`)는 **사람의 머�
 
 표기: **[R]** 러너를 돌릴 머신(macOS 또는 Linux, Node — 저장소가 재는 판은 24, npm 레지스트리에 닿는 네트워크), **[웹]** owner 로 연 연결 페이지(`/settings/connection`)의 「Claude 러너」 블록.
 
-1. **[웹] 러너 토큰** — 「새 러너 토큰 발급」 → 라벨(머신 이름) → 원문 `drn_…` 이 **한 번만** 보인다(서버는 해시만 저장). [R] 에서 `~/.dodok-runner/token` 파일에 원문 한 줄로 두고 `chmod 600 ~/.dodok-runner/token`(0600 이 아니면 러너가 켤 때마다 경고한다). 대화상자 아래의 「러너 설정」 조각은 3번 설정 파일의 뼈대다 — 둘 다 복사한 뒤 「복사했습니다」로 닫는다. 토큰은 설정 파일 본문에 적지 않는다(적으면 러너가 설정 오류로 거절한다) — 파일 대신 env `DODOK_RUNNER_TOKEN` 으로 줘도 된다.
+1. **[웹] 러너 토큰** — 「새 러너 토큰 발급」 → 라벨(머신 이름) → 원문 `drn_…` 이 **한 번만** 보인다(서버는 해시만 저장). [R] 에서 `~/.dodok-runner/token` 파일에 원문 한 줄로 두고 `chmod 600 ~/.dodok-runner/token`(0600 이 아니면 러너가 켤 때마다 경고한다). 대화상자 아래의 「러너 설정」 조각은 3번 설정 파일의 뼈대다 — 둘 다 복사한 뒤 「복사했습니다」로 닫는다. 토큰은 설정 파일 본문에 적지 않는다(적으면 러너가 설정 오류로 거절한다) — 파일 대신 env `DODOK_RUNNER_TOKEN` 으로 줘도 된다. env 로 줄 때는 설정 파일에서 `tokenFile` 키를 뺀다 — 키가 있으면 env 는 무시되고 파일을 못 읽으면 끝난다.
 2. **[웹 → R] 받기·설치** — 「러너 받기」 → `dodok-claude-runner-<sha 12자>.tgz` 를 [R] 로 옮기고 `npm install -g ./dodok-claude-runner-<sha 12자>.tgz`. 서버 이미지가 같은 커밋의 러너를 품고 내려준다. 러너는 Claude Agent SDK 를 품지 않는다 — 설치할 때 npm 에서 SDK(과 플랫폼별 번들 CLI, 약 225 MB)·`socket.io-client`·`zod` 를 받는다.
 3. **[R] 러너 전용 로그인** — 러너는 평소 `~/.claude` 가 아니라 **러너 전용 디렉터리**의 로그인을 쓴다(세션·메모리·설정이 섞이지 않고, macOS 키체인 항목도 디렉터리마다 따로다 — ADR 0007 「함정」). `/login` 을 마치고 나온다.
    ```bash
    CLAUDE_CONFIG_DIR=~/.dodok-runner/claude claude
-   # claude 명령이 없으면 러너가 품은 번들 CLI 로(musl Linux 는 디렉터리 이름 끝에 -musl):
+   # claude 명령이 없으면 러너가 품은 번들 CLI 로(플랫폼별 패키지 디렉터리 이름은 `ls "$(npm root -g)/@dodok/claude-runner/node_modules/@anthropic-ai"` 로 본다 — 아래 경로의 이름과 다르면 그 이름으로 바꾼다):
    CLAUDE_CONFIG_DIR=~/.dodok-runner/claude "$(npm root -g)/@dodok/claude-runner/node_modules/@anthropic-ai/claude-agent-sdk-$(node -p 'process.platform+"-"+process.arch')/claude"
    ```
    러너 **전용 Claude 계정**을 권한다 — 아래 「드러나는 것」 1.
@@ -249,7 +249,7 @@ Claude 러너(`@dodok/claude-runner`, 명령 `dodok-runner`)는 **사람의 머�
 **끊김·끄기**
 
 - **서버 재시작·네트워크 끊김·덮개 닫힘** — 러너가 그때 돌던 런을 멈추고, 1초~30초 백오프로 **스스로 다시 붙는다**. 서버는 그 런을 「@<에이전트> 실행이 실패했습니다: ADAPTER_UNAVAILABLE」 + 「다시 실행」으로 닫는다 — 다시 붙은 뒤 「다시 실행」은 같은 세션을 잇는다. 60초 넘게 끊겨 있으면 운영 사건 「러너 연결 끊김」이 열리고, 붙으면 닫힌다.
-- **토큰 폐기·같은 토큰으로 다른 러너가 붙음·토큰 거절** — 서버가 끊은 것이라 러너는 사유를 한 줄 찍고 **끝난다**(종료 코드 2 — 같은 토큰의 두 러너가 서로를 밀어내지 않게). 다시 띄워야 한다. 판본이 안 맞으면(`PROTOCOL_MISMATCH`) 역시 끝난다 — 러너를 다시 받는다. 인증 실패가 반복돼 주소가 막힌 것(`RATE_LIMITED`)은 끝나지 않고 풀릴 때까지 다시 시도한다(아래 「운영 화면」 레이트리밋 표의 `bridgeFail`).
+- **토큰 폐기·같은 토큰으로 다른 러너가 붙음** — 서버가 끊은 것이라 러너는 사유를 한 줄 찍고 **끝난다**(종료 코드 2 — 같은 토큰의 두 러너가 서로를 밀어내지 않게). 다시 띄워야 한다. 서버가 러너를 거절하면(hello 거절 — 토큰 거절 `UNAUTHORIZED`, 판본 불일치 `PROTOCOL_MISMATCH`) 역시 끝난다 — 토큰을 확인하거나 러너를 다시 받는다. 인증 실패가 반복돼 주소가 막힌 것(`RATE_LIMITED`)은 끝나지 않고 풀릴 때까지 다시 시도한다(아래 「운영 화면」 레이트리밋 표의 `bridgeFail`).
 - **끄기** — `Ctrl+C`(SIGINT) 또는 SIGTERM. 러너가 도는 런을 멈추고(최대 5초) 끝난다 — 그 런은 채널에서 사람이 중지한 것과 같이 메시지 없이 「중지됨」으로 닫힌다(「다시 실행」 카드 없음). 한 번 더 누르면 기다리지 않고 끝난다. ⚠ `kill -9` 는 쓰지 않는다 — 러너만 죽고 CLI 가 남아 그 턴을 끝까지 돈다(모델 비용이 들고, 채널에 없던 답이 세션 이력에 남는다 — `docs/guides/live-smoke.md` 「Claude 러너 런 0회 하네스」 절).
 
 **토큰 교체** — 1번으로 새 토큰을 발급해 `~/.dodok-runner/token` 을 바꾸고 러너를 다시 띄운다 → 토큰 목록에서 「지금 접속 중」이 새 줄로 옮겨 간 것을 보고 → 옛 줄 「폐기」. 폐기하면 그 토큰으로 붙은 러너는 곧바로 끊기고(위 — 끝난다) 그 러너에서 돌던 런은 「다시 실행」 카드로 닫힌다.
