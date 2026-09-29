@@ -17,7 +17,8 @@
   안 서는 확인이 많고, 그때 필요한 것이 **콘솔 로그와 네트워크(WebSocket 프레임)** 다. 둘 다 neo 가
   못 하는 것에 들어가므로, 실시간 동작을 재는 검증은 처음부터 Playwright 를 neo 에 붙여서 한다.
 - **`.mcp.json` 에 `playwright-neo`(neo 의 CDP 에 붙는 Playwright MCP)를 넣어 두었다.** 저장소에 커밋되어 있어
-  워커 세션도 같은 설정을 받는다.
+  워커 세션도 같은 설정을 받는다. 포트는 9110 고정이라 neo 의 `ports.cdp` 가 다른 머신에서는 붙지 않는다 — 그때는
+  `playwright-core` 로 설정 파일의 포트에 직접 붙는다.
 - `scripts/orca-worker.sh spawn` 은 워커를 띄우기 전에 neo 가 꺼져 있으면 켠다(`ensure_browser`) —
   그러나 **메인 세션 자신**이 시작될 때 꺼져 있었던 것은 스크립트가 고치지 못한다.
 - ⚠ **프로필이 하나라 쿠키·localStorage 는 호스트 단위로 공유된다.** 지금 MVP 의 로컬 토큰

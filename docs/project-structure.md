@@ -372,8 +372,9 @@ DB 는 `data/dev-fake.sqlite`(시작마다 새로, `--keep` 이면 유지), 기�
 - `POST /__devfake/ops/event { kind, key, severity, detail? }`(`DEV_FAKE_OPS_EVENT_PATH`) — `app.ops.record` 만 부른다(ops_events 를 직접 쓰지 않아 unacked 캐시·`ops.event`·로그가 함께 돈다). 200 `{ ok: true, event }`.
 - `POST /__devfake/gateway { state: "down" | "connected" }`(`DEV_FAKE_GATEWAY_PATH`) — down 이면 가짜 Gateway 가 연결을 끊고 그 뒤 `connect` 를 `UNAVAILABLE` 로 거절한다(끊기만 하면 `@openclaw/gateway-client` 가 자기 백오프로 속에서 재시도해 어댑터가 모른다). dev:fake 만 어댑터 재접속 백오프 상한을 1초로 준다(`AppDeps.gatewayBackoff`). 플러그인(브리지)은 그대로. 200 `{ ok: true, status }`, 10초 안에 안 바뀌면 `{ ok: false, reason: "timeout", status }`.
 - `POST /__devfake/disk { freeBytes, totalBytes } | { reset: true }`(`DEV_FAKE_DISK_PATH`) — 디스크 감시의 statfs 를 그 값으로 바꾸고 곧바로 다시 잰다(error 면 응답 전에 `disk_low`·첨부 507 이 반영된다). reset 이면 실제 statfs. 값은 메모리에만 있어 다시 띄우면 실제로 돌아간다.
+- `POST /__devfake/runner { connected: boolean, token?: string }`(`DEV_FAKE_RUNNER_PATH`) — false 면 가짜 Claude 러너를 끊고 어댑터의 붙은 러너 수가 줄 때까지(5초) 기다린다, true 면 다시 붙는다(`token` 을 주면 그 러너 토큰으로 — 연결 페이지에서 발급한 토큰). 가짜 러너는 스스로 다시 붙지 않는다(토큰 폐기 뒤 포함). 200 `{ ok: true, status }` 또는 `{ ok: false, reason }`. 고정 러너 토큰 `dev-fake-runner-token`(라벨 dev-fake)·에이전트 `coder`(provider claude)는 시작 때 넣어 둔다.
 
-다섯 훅 공통: owner 세션(쿠키 또는 Bearer) — 판정은 같은 헤더로 앱의 `GET /api/v1/setup/status` 를 inject 해 그 401·403 을 그대로 돌려준다, 본문은 판정 뒤에 읽는다, `content-type` 이 `application/json` 이 아니면 415(단순 요청으로 못 부르게), 경로는 쿼리 앞까지 정확히 일치(아니면 원래 리스너 → 앱 404), 본문 16 KB 상한, 모양이 틀리면 400 `VALIDATION`.
+여섯 훅 공통: owner 세션(쿠키 또는 Bearer) — 판정은 같은 헤더로 앱의 `GET /api/v1/setup/status` 를 inject 해 그 401·403 을 그대로 돌려준다, 본문은 판정 뒤에 읽는다, `content-type` 이 `application/json` 이 아니면 415(단순 요청으로 못 부르게), 경로는 쿼리 앞까지 정확히 일치(아니면 원래 리스너 → 앱 404), 본문 16 KB 상한, 모양이 틀리면 400 `VALIDATION`.
 서버 오리진으로 직접 부른다 — 웹 페이지 안 `fetch` 는 CORS 와 415 에 걸린다. Playwright 면 `context.cookies()` 의 `dodok.session` 을 `request.post(…, { headers: { cookie }, data })` 로 싣는다.
 ⚠ 쿠키는 **웹 오리진**(APP_ORIGIN, 예 `http://localhost:5180`) 기준으로 읽는다 — Vite 가 `/api` 를 프록시해 브라우저는 API 오리진(`127.0.0.1:3100`)에 직접 요청하지 않으므로 세션 쿠키는 웹 오리진에 저장된다.
 API 오리진으로 `context.cookies(…)` 를 거르면 공유 프로필에 이전 dev:fake 실행에서 남은 낡은 `dodok.session`(같은 127.0.0.1:포트 조합을 다시 쓴 적이 있으면)을 집어 훅 호출이 조용히 401 `UNAUTHORIZED` 로 실패한다.
@@ -384,6 +385,7 @@ curl -s -b $J -X POST $O/__devfake/ops/event -H 'content-type: application/json'
 curl -s -b $J -X POST $O/__devfake/gateway   -H 'content-type: application/json' -d '{"state":"down"}'
 curl -s -b $J -X POST $O/__devfake/disk      -H 'content-type: application/json' -d '{"freeBytes":104857600,"totalBytes":10737418240}'
 curl -s -b $J -X POST $O/__devfake/plugin-capabilities -H 'content-type: application/json' -d '{"threads":false}'
+curl -s -b $J -X POST $O/__devfake/runner -H 'content-type: application/json' -d '{"connected":false}'
 ```
 `createApp` 은 ready 뒤라 경로를 더할 수 없어 HTTP 서버의 request 리스너를 감싼다(이 경로들만 받고 나머지는 engine.io → Fastify). 운영 `createApp`·번들에는 이 경로가 없다(404).
 **`DODOK_DEVFAKE_DISCONNECT_MS`**(dev:fake 전용, 양의 정수 ms — 없거나 비면 운영과 같은 60000, 그 밖이면 시작하지 않는다) — 끊김 사건 임계(`AppDeps.disconnectEventMs`). 사건 `detail.thresholdMs` 에 실린다.
