@@ -20,6 +20,7 @@
 - **웹**(`apps/web`) — React + Vite PWA.
 - **서버**(`apps/server`) — Fastify + Socket.IO. 채널·메시지·스레드·검색·런·릴레이 라우터·components·첨부·푸시·멤버(초대·역할)·운영 화면. 서버 안의 `packages/openclaw-adapter` 가 Gateway 에 operator 로 붙어 스트리밍 델타·툴 이벤트·승인을 받는다.
 - **플러그인**(`packages/openclaw-plugin`, 채널 id `dodok`) — 원격 Gateway 프로세스 안에서 도는 OpenClaw 채널 플러그인. 서버의 `/bridge` 로 **나가는** 연결만 쓴다 — Gateway 쪽에 포트를 열지 않는다. 에이전트 답의 정본은 이 경로로 온다.
+- **러너**(`packages/claude-runner`, 명령 `dodok-runner`) — 사람의 머신에서 Claude Agent SDK 로 Claude Code 에이전트를 돌려 서버 `/runner` 로 **나가는** 연결 하나로 붙는다. 서버 쪽은 `packages/runner-adapter` 다. 에이전트의 `provider` 로 어댑터가 갈리고 한 채널에서 OpenClaw 에이전트와 서로 릴레이한다.
 - **계약**(`packages/shared`) — 도메인 타입·Zod 스키마·components v1·wire·브리지 계약. 브라우저·Node·Gateway 세 곳에서 읽힌다.
 
 패키지별 책임과 핵심 파일은 `docs/project-structure.md`.
@@ -56,10 +57,10 @@ pnpm -F @dodok/web dev             # 터미널 2 — 웹(포트 5173)
 | --- | --- |
 | `docs/plan.md` | 무엇을 왜 만드는가 — 요구사항·아키텍처·로드맵·확정된 결정(「결정 사항」)·남은 문제(「로드맵」 장의 「이월」) |
 | `docs/project-structure.md` | 어느 코드가 어디에 있고 무슨 책임을 지는가 |
-| `docs/guides/deploy.md` | 설치·설정(`.env`)·멤버 초대·백업·복원·업데이트·운영 화면 — 설치 절차의 정본 |
-| `docs/guides/agent-guide.md` | 에이전트가 채널에서 무엇을 받고 어떻게 답하는가(릴레이·components·파일·승인), 에이전트 지시 파일에 붙여 넣을 블록 |
-| `docs/guides/live-smoke.md` | 실제 Gateway·플러그인·모델로 돌려 보는 절차와 그 결과 기록 |
-| `docs/adr/` | OpenClaw Gateway·플러그인을 실측해서 내린 결정 — 스파이크 결과마다 한 장 |
+| `docs/guides/deploy.md` | 설치·설정(`.env`)·Claude 러너 설치·멤버 초대·백업·복원·업데이트·운영 화면 — 설치 절차의 정본 |
+| `docs/guides/agent-guide.md` | 에이전트가 채널에서 무엇을 받고 어떻게 답하는가(릴레이·components·파일·승인·Claude 러너 에이전트), 에이전트 지시 파일에 붙여 넣을 블록 |
+| `docs/guides/live-smoke.md` | 실제 Gateway·플러그인·모델로 돌려 보는 절차와 그 결과 기록, 모델 없이 실물 경로를 두드리는 런 0회 하네스(OpenClaw·Claude 러너) |
+| `docs/adr/` | OpenClaw Gateway·플러그인과 Claude Agent SDK 를 실측해서 내린 결정 — 스파이크 결과마다 한 장 |
 | `docs/superpowers/specs/`·`plans/` | 기능마다의 설계와 구현 계획 — 발행 시점 기록이다. 구현과 달라진 것은 각 스펙의 「구현과 맞춘 것」 장 |
 | `docs/guides/worktree-workflow.md` | 이 저장소의 작업 방식(워크트리·Orca 워커·커밋 규칙) |
 | `CLAUDE.md` | 코딩 에이전트가 이 저장소에서 따르는 지침 |

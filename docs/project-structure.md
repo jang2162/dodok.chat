@@ -14,14 +14,16 @@ dodok.chat/
 ├─ packages/
 │  ├─ shared/                 # @dodok/shared — 도메인 타입·Zod 스키마·components v1 규약·RunEvent(AG-UI 매핑)·wire 계약
 │  ├─ openclaw-plugin/        # @dodok/openclaw-plugin — OpenClaw 채널 플러그인 (원격 Gateway 안에서 실행)
-│  └─ openclaw-adapter/       # @dodok/openclaw-adapter — 서버 측 OpenClaw 어댑터 (브리지 서버 + Gateway WS 클라이언트)
+│  ├─ openclaw-adapter/       # @dodok/openclaw-adapter — 서버 측 OpenClaw 어댑터 (브리지 서버 + Gateway WS 클라이언트)
+│  ├─ runner-adapter/         # @dodok/runner-adapter — 서버 측 Claude 러너 어댑터 (/runner 네임스페이스·러너 연결·승인 기한·AgentAdapter 구현)
+│  └─ claude-runner/          # @dodok/claude-runner — 사람의 머신에서 도는 러너 CLI dodok-runner (Claude Agent SDK, 설정·재접속·런·post 도구·승인·첨부)
 ├─ infra/                    # 배포(Docker Compose) — 절차 docs/guides/deploy.md, 각 파일의 까닭은 그 파일 머리 주석
-│  ├─ compose.yml             # 운영: 서비스 app(서버, 포트 안 엶)·caddy(80·443), 볼륨 dodok-data·caddy-data·caddy-config. app 의 HOST·PORT·DATA_DIR·DODOK_MIGRATIONS_DIR·DODOK_PLUGIN_DIR(/app/plugin) 고정
+│  ├─ compose.yml             # 운영: 서비스 app(서버, 포트 안 엶)·caddy(80·443), 볼륨 dodok-data·caddy-data·caddy-config. app 의 HOST·PORT·DATA_DIR·DODOK_MIGRATIONS_DIR·DODOK_PLUGIN_DIR(/app/plugin)·DODOK_RUNNER_DIR(/app/runner) 고정
 │  ├─ compose.local.yml       # 이 Mac 의 로컬 검증 겹침: 127.0.0.1:8443·Caddy 내부 CA·devfake 프로필(dev:fake 를 Caddy 뒤에)
 │  ├─ Dockerfile.server       # 단계 build(번들) → deploy(런타임 의존성 닫힘) · plugin(pack:plugin — 플러그인 tgz, openclaw devDependency 는 이 단계에만)
-│  │                          # → runtime(운영, node:24.21.0-bookworm-slim, 비루트 — 번들·닫힘·마이그레이션·/app/plugin/*.tgz) · devfake(로컬 검증 전용)
+│  │                          # → runtime(운영, node:24.21.0-bookworm-slim, 비루트 — 번들·닫힘·마이그레이션·/app/plugin/*.tgz·/app/runner/*.tgz) · devfake(로컬 검증 전용)
 │  ├─ Dockerfile.web          # 웹 빌드(ARG VITE_BUILD_ID) → caddy:2.11.4 에 dist 와 Caddyfile
-│  ├─ Caddyfile               # 자동 HTTPS·/api·/socket.io·/bridge/*·/healthz 프록시, /assets immutable·나머지 no-cache·SPA 폴백, 보안 헤더, 본문 32MB
+│  ├─ Caddyfile               # 자동 HTTPS·/api·/socket.io·/bridge/*·/runner/*·/healthz 프록시, /assets immutable·나머지 no-cache·SPA 폴백, 보안 헤더, 본문 32MB
 │  ├─ check-caddy.sh          # Caddy 앞단 검사(curl — 라우팅·폴백·캐시·보안 헤더), `bash infra/check-caddy.sh https://localhost:8443`
 │  ├─ local.env.example       # 로컬 검증 설정의 틀 — 사본 infra/local.env 는 git 제외
 │  └─ .env → ../.env          # 배포 호스트에서 손으로 만드는 링크(git 제외) — compose 변수 치환이 infra/ 의 .env 만 읽는다
@@ -51,7 +53,7 @@ dodok.chat/
 └─ .env.example
 ```
 
-패키지 의존 방향: `web → shared`, `server → shared, openclaw-adapter`, `openclaw-adapter → shared`, `openclaw-plugin → shared`. `shared`는 아무것도 의존하지 않는다(브라우저·Node·Gateway 세 곳에서 다 로드되므로 Node 전용 API 금지).
+패키지 의존 방향: `web → shared`, `server → shared, openclaw-adapter, runner-adapter`, `openclaw-adapter → shared`, `runner-adapter → shared`, `openclaw-plugin → shared`, `claude-runner → shared`(번들에 넣는다 — devDependency) + `@anthropic-ai/claude-agent-sdk`(정확 핀, 번들에 넣지 않는다). `shared`는 아무것도 의존하지 않는다(브라우저·Node·Gateway 세 곳에서 다 로드되므로 Node 전용 API 금지).
 
 OpenClaw 패키지 버전은 세 곳(`openclaw-adapter`의 `@openclaw/gateway-client`·`@openclaw/gateway-protocol`, `openclaw-plugin`의 `openclaw` devDependency) 모두 **배포 Gateway와 같은 버전으로 정확 핀**한다. 시작 버전 2026.9.4.
 
@@ -111,6 +113,9 @@ test/agent-guide-examples.test.ts   docs/guides/agent-guide.md 의 `json dodok-c
 ```
 
 규칙: 여기의 Zod 스키마가 단일 진실. 서버 입력 검증·클라이언트 폼·플러그인 아웃바운드 검증·브리지 양단 검증이 전부 같은 스키마를 import한다. 브리지 계약이 `shared`에 있는 이유는 플러그인과 서버가 서로 다른 프로세스·호스트에서 같은 메시지를 파싱하기 때문이다.
+
+- `src/adapter/` — 어댑터 계약 `AgentAdapter`·`AdapterEvent`·`AdapterError`·`AdapterStatus`(provider 판별 유니온)·`ProviderApproval`, 인증 실패 가드 `BridgeAuthGuard`(`guard.ts` — 브리지·러너 핸드셰이크와 두 첨부 HTTP 가 한 카운터). 두 어댑터 패키지와 서버가 여기서 가져간다.
+- `src/runner/` — `/runner` 프레임 Zod(`index.ts` — `RunnerHello`·`RunnerRunStart`·`RunnerRunFinal`·`RunnerOutboundPost`·승인 프레임, `RUNNER_PROTOCOL`·`RUNNER_ATTACHMENTS_PATH`)와 러너 프롬프트 문장(`prompt.ts` — 채널 규칙 틀 `buildChannelRulesAppend`, 턴 사실 `buildTurnFacts`, 사용자 메시지 `renderRunnerPrompt`).
 
 ### 2.2 `apps/server`
 
@@ -313,7 +318,7 @@ src/
 │  │                      `DELETE /api/v1/members/:userId`(admin 은 member 만, owner 는 owner 를 뺀 모두)). 가입·역할·표시 이름·내보내기 뒤 broadcastPeople
 │  └─ adapter/            GET /api/v1/adapter/status
 ├─ adapters/
-│  └─ types.ts            AgentAdapter 계열 타입 재수출(구현은 packages/openclaw-adapter)
+│  └─ types.ts            AgentAdapter 계열 타입 재수출(계약은 packages/shared/src/adapter)
 ├─ util/
 │  └─ josa.ts             받침에 따른 조사(시스템 메시지 병기형). 웹 `lib/josa.ts` 와 두 벌 — 한쪽만 고치면 어긋난다
 └─ realtime/
@@ -488,6 +493,21 @@ src/
 SDK import 경로: `openclaw/plugin-sdk/plugin-entry`, `openclaw/plugin-sdk/channel-message`, `openclaw/plugin-sdk/channel-config-schema` 등 서브패스만 사용한다. `openclaw`는 devDependency이며 번들 시 external로 두어 Gateway가 제공하는 런타임을 쓴다.
 
 배포: Gateway 호스트에서 `openclaw plugins install <tarball> --force --accept-capabilities`(초기; tarball 은 `pnpm pack` — 배포 서버 이미지가 같은 커밋의 tgz 를 `/app/plugin/` 에 품고 웹 연결 페이지가 내려준다(`docs/guides/deploy.md` 「[웹 → B] 플러그인 설치·브리지 토큰」 절), `openclaw plugins pack` 은 채널 플러그인 거부, RPC `plugins.install` 은 clawhub/official 만 — ADR 0002 9절), 안정화 후 npm `@dodok/openclaw-plugin` 퍼블리시. Gateway 설정에 우리 채널 계정(브리지 URL·토큰 — 토큰은 연결 페이지에서 발급한 `dbt_…`, 발급 대화상자가 설정 조각을 준다)을 넣는다. 플러그인이 **아웃바운드**로 접속하므로 Gateway 호스트에 인바운드 포트를 열 필요는 없다.
+
+### 2.4a `packages/runner-adapter` (서버 프로세스 안에서 실행)
+
+서버 측 Claude 러너 어댑터 — `AgentAdapter` 의 `provider: "claude"` 구현. 설계는 `docs/superpowers/specs/2026-09-27-claude-runner-design.md`(구현과 달라진 것은 그 스펙의 「구현과 맞춘 것」 장).
+- `src/runner-adapter.ts` — `/runner` 네임스페이스(러너 토큰 핸드셰이크·hello·같은 토큰 교체는 옛 자리를 잇는다), `send`→`run.start`(채널 규칙 틀·턴 사실은 여기서 만든다), `run.event` 허용 목록·runId 대조, `run.final`→정본·usage(`dodok.usage`), 중지(`run.final aborted` → 메시지 없는 `RUN_ABORTED`), `outbound.post` 를 열린 런에 묶기, `mayReadAttachment`(러너 토큰 첨부 읽기 범위 — 열린 런의 트리거 첨부만), `supports`(러너가 없으면 true), 서버 종료·hello 타임아웃은 전송만 닫고 교체·폐기만 `disconnect(true)`.
+- `src/connections.ts` — 붙은 러너와 에이전트 배정(먼저 알린 러너가 맡고 뒤 러너의 같은 id 는 「충돌」, 교체는 자리 잇기).
+- `src/approvals.ts` — 러너 승인 정규화(서버 쪽 id `runner:<토큰 id>:<러너 id>`)와 10분 기한 타이머(지나면 러너에 `deny`, `expired`).
+
+### 2.4b `packages/claude-runner` (사람의 머신에서 실행 — CLI `dodok-runner`)
+
+Claude Agent SDK 로 Claude Code 에이전트를 돌려 서버 `/runner` 에 붙는 러너. 서버 이미지가 같은 커밋의 tgz 를 품고(`/app/runner`, `pack:runner`) 연결 페이지가 내려준다 — SDK 는 번들에 넣지 않고 설치 때 npm 에서 받는다. 설치·운영은 `docs/guides/deploy.md` 「Claude 러너 설치」 절.
+- `src/main.ts` — 인자·설정 읽기·SIGINT/SIGTERM(도는 런을 멈추고 최대 5초). `src/config.ts` — 설정 파일 `RunnerConfig`(strict)·토큰 파일 0600 경고. `src/connection.ts` — 연결·hello·재접속 백오프(1~30초)·서버가 끊으면 종료 2·연결 세대. `src/scheduler.ts` — 동시 상한·대기.
+- `src/run.ts` — 런 하나(`query()` 하나, `buildQueryOptions` — preset·`append`·`snapshot: false`·훅·`strictMcpConfig`·`settingSources: []`·env 허용 목록, 「이미 있는 세션」이면 `resume` 재시도, 런 비용 차이). `src/stream-map.ts` — SDK 스트림 → `RunEvent`. `src/sdk.ts` — SDK 를 import 하는 유일한 파일(`SdkPort`).
+- `src/post-tool.ts`·`src/files.ts` — `mcp__dodok__post`(카드·파일, 작업 디렉터리 경계, macOS `O_NOFOLLOW_ANY`·Linux `/proc/self/fd`). `src/approvals.ts` — `canUseTool` → 승인 프레임·요약 이스케이프. `src/images.ts`·`src/attachments-http.ts` — 트리거 이미지 받기·파일 올리기. `src/mask.ts` — 호스트 경로 가림(못 알아보는 모양은 머리 주석).
+- `scripts/build.mjs` — esbuild 단일 번들 `dist/main.js`(SDK external, 정확 핀 확인). `scripts/fake-messages-api.ts` — 런 0회 하네스의 로컬 가짜 Messages API(`docs/guides/live-smoke.md` 「Claude 러너 런 0회 하네스」 절).
 
 ### 2.5 `apps/web`
 
@@ -777,6 +797,7 @@ src/
 | `VAPID_SUBJECT` | `mailto:dodok@localhost` | 푸시 서비스가 연락할 주체 — `mailto:…` 또는 `https://…`. 호스트가 `localhost`·`127.0.0.1`·`*.local` 이면 시작 때 warn(Apple Push 는 `403 BadJwtToken`) — 배포는 실제 연락처로(`docs/guides/live-smoke.md` 14.2) |
 | `DODOK_MIGRATIONS_DIR` | 소스 `apps/server/drizzle` | drizzle 마이그레이션 폴더. 운영 번들은 **필수**(없으면 설정 오류) — 이미지·compose 가 `/app/drizzle` 로 준다 |
 | `DODOK_PLUGIN_DIR` | — | 연결 페이지가 내려줄 플러그인 tgz 를 찾을 디렉터리(가장 최근 tgz). 소스 실행이면 그 뒤에 `packages/openclaw-plugin/dist` 도 본다. 배포에서는 이미지·compose 가 `/app/plugin` 으로 고정한다(그때 `.env` 의 값은 무시된다) |
+| `DODOK_RUNNER_DIR` | — | 연결 페이지가 내려줄 러너 tgz 를 찾을 디렉터리(가장 최근 tgz). 소스 실행이면 그 뒤에 `packages/claude-runner/dist` 도 본다. 배포에서는 이미지·compose 가 `/app/runner` 로 고정한다(그때 `.env` 의 값은 무시된다) |
 | `DODOK_DOMAIN` | — | **배포 전용**(서버는 읽지 않음) — Caddy 가 인증서를 받을 공개 도메인. compose 변수 치환이라 배포 호스트에 `infra/.env → ../.env` 링크가 필요하다 |
 | `BRIDGE_URL` | — | **스파이크 러너 전용**(서버는 읽지 않음) — 러너가 브리지를 리슨할 오리진(`/bridge` 없음) |
 
