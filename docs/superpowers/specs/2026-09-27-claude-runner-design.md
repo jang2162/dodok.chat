@@ -1,6 +1,6 @@
 # Phase 4 ③ Claude 러너 — Claude Agent SDK 어댑터 설계
 
-**상태**: 설계 확정(2026-09-27), 구현·브라우저 검증·런 0회 하네스 완료(2026-09-29 — 계획 태스크 1~8 과 태스크 9 의 하네스·문서, 하네스 합격 기준 12/12) — 구현이 이 설계와 달라진 것은 「구현과 맞춘 것」 장(계획 판정 P1~P10·판정 R1~R5·M4). 계획 `docs/superpowers/plans/2026-09-27-claude-runner.md`(태스크 1~9), 하네스는 `docs/guides/live-smoke.md` 「Claude 러너 런 0회 하네스」 절, 모델 런 실연(태스크 9 의 나머지)은 같은 문서 「Claude 러너(Phase 4 ③) 실연」 절.
+**상태**: 설계 확정(2026-09-27), 구현·브라우저 검증·런 0회 하네스 완료(2026-09-29 — 계획 태스크 1~8 과 태스크 9 의 하네스·문서, 하네스 합격 기준 12/12) — 구현이 이 설계와 달라진 것은 「구현과 맞춘 것」 장(계획 판정 P1~P10·판정 R1~R5·M4). 계획 `docs/superpowers/plans/2026-09-27-claude-runner.md`(태스크 1~9), 하네스는 `docs/guides/live-smoke.md` 「Claude 러너 런 0회 하네스」 절, 모델 런 실연(2026-09-29, 모델 런 3회 — 규칙 변경 뒤 이어 간 세션의 결과는 「구현과 맞춘 것」 장 끝)은 같은 문서 「Claude 러너(Phase 4 ③) 실연」 절.
 **범위**:
 - 사람의 머신에서 도는 러너(`@dodok/claude-runner`)가 Claude Agent SDK 로 에이전트를 돌리고, 서버 `/runner` 로 나가는 WSS 하나로 dodok 에 붙는다
 - 서버는 에이전트의 `provider` 로 어댑터를 고른다(`openclaw` · `claude`) — 한 채널에 두 종류 에이전트가 함께 있고 서로 @멘션 릴레이한다
@@ -304,3 +304,4 @@ ADR 0007 「설계에 주는 제약과 추천」의 대응표를 그대로 따�
 - 운영 화면 상태 카드의 러너 줄은 「<n>대 붙음 / 토큰 <m>개」이고 강조하지 않는다(러너는 사람 PC 라 꺼져 있을 수 있다 — 60초 넘는 끊김은 `runner_down`).
 - 러너 토큰 발급 결과 `IssueRunnerTokenResult` 에 `runnerConfig { serverUrl, tokenFile }` — `serverUrl` 은 `BRIDGE_PUBLIC_URL`(없으면 `APP_ORIGIN`)의 오리진. 설치 명령은 `npm install -g ./dodok-claude-runner-<sha 12자>.tgz`.
 - 8장 `PROVIDER_AUTH` 의 「러너의 Claude 로그인을 확인하세요」는 런 오류 문구(활동 탭)에 있고, 채널 run_error 카드는 다른 코드와 같이 「@<에이전트> 실행이 실패했습니다: PROVIDER_AUTH」다 — 카드 본문에 사유를 쓰는 것은 이월.
+- **10장 완료 기준 2 의 뒷부분(「규칙을 바꾸면 다음 런부터 새 규칙을 따른다」)은 요청까지만 참이다** — 서버는 바뀐 규칙만 싣지만, 이어 가는 세션의 모델은 자기 앞 답의 형식을 따를 수 있어 규칙 변경 뒤에는 「새 대화」가 필요하다(`docs/guides/live-smoke.md` 「Claude 러너(Phase 4 ③) 실연」 절 — 새 세션은 새 규칙을 따랐다). 고칠 길 후보는 `docs/plan.md` 8장 이월.
