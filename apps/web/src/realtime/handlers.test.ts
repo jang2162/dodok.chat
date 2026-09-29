@@ -817,6 +817,15 @@ describe("캐시 패치", () => {
     fake.serverEmit("adapter.status", { provider: "claude", runners: { connected: 0, tokens: 1 } });
     expect(queryClient.getQueryData(qk.adapter)).toEqual(cached);
   });
+
+  it("adapter.status(claude): 등록 화면의 러너 목록(discover)을 낡게 한다 — OpenClaw 것은 아니다", () => {
+    const { fake, queryClient } = setup();
+    queryClient.setQueryData(qk.discoverOf("claude"), []);
+    queryClient.setQueryData(qk.discoverOf("openclaw"), []);
+    fake.serverEmit("adapter.status", { provider: "claude", runners: { connected: 1, tokens: 1 } });
+    expect(queryClient.getQueryState(qk.discoverOf("claude"))?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(qk.discoverOf("openclaw"))?.isInvalidated).toBe(false);
+  });
 });
 
 describe("작성 중·알림", () => {

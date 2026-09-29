@@ -7,6 +7,7 @@ import { FieldError } from "@/ui/field-error";
 import { Input } from "@/ui/input";
 import { Label } from "@/ui/label";
 import { handleFrom } from "./handleFrom";
+import { PROVIDER_ID_LABEL } from "./providerLabels";
 import { detailField, formError, validationField } from "@/api/formErrors";
 import { useCreateAgent } from "./mutations";
 
@@ -103,12 +104,6 @@ export const idTaken = (err: unknown): string | undefined =>
   err instanceof ApiRequestError && err.code === "CONFLICT" && detailField(err, ["providerAgentId"])
     ? ID_TAKEN
     : undefined;
-
-/** 제공자마다 id 칸의 이름 */
-export const PROVIDER_ID_LABEL: Record<AdapterProvider, string> = {
-  openclaw: "OpenClaw id",
-  claude: "Claude 러너 에이전트 id",
-};
 
 /**
  * 제공자의 에이전트 id·핸들·이름을 직접 넣어 등록(서버는 목록 검사를 하지 않는다 — 러너 계획 판정 P9). 핸들·이름은 손대기 전까지 id 를 따라간다(핸들은 handleFrom).

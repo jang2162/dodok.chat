@@ -31,6 +31,19 @@ describe("목록", () => {
     expect(screen.getByTestId("page-agents")).toBeInTheDocument();
   });
 
+  it("제공자별 id 라벨 — claude 에이전트는 「Claude 러너 에이전트 id」, openclaw 는 「OpenClaw id」", async () => {
+    stubServer({
+      agents: [
+        dev(),
+        { ...fin(), provider: "claude", providerAgentId: "coder", handle: "coder", name: "Coder" },
+      ],
+    });
+    renderPage();
+    expect(await screen.findByText("@coder")).toBeInTheDocument();
+    expect(screen.getByText(/^Claude 러너 에이전트 id/)).toBeInTheDocument();
+    expect(screen.getAllByText(/^OpenClaw id/)).toHaveLength(1);
+  });
+
   it("사용 스위치를 끄면 요청 중엔 잠그고, PATCH { enabled: false } 응답으로 캐시를 고친다 — 다시 불러오지 않는다", async () => {
     const agent = dev();
     const g = gate();

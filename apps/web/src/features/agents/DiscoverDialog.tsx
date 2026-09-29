@@ -19,15 +19,9 @@ import {
 import { Label } from "@/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/ui/radio-group";
 import { handleFrom } from "./handleFrom";
-import {
-  AgentFields,
-  ManualAgentForm,
-  PROVIDER_ID_LABEL,
-  handleProblem,
-  idTaken,
-  nameProblem,
-} from "./ManualAgentForm";
+import { AgentFields, ManualAgentForm, handleProblem, idTaken, nameProblem } from "./ManualAgentForm";
 import { formError } from "@/api/formErrors";
+import { PROVIDER_ID_LABEL } from "./providerLabels";
 import { type DiscoveredAgent, useCreateAgent, useDiscover } from "./mutations";
 
 /** 제공자 고르기의 이름(러너 스펙 7장) */

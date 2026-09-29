@@ -203,7 +203,11 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
     "adapter.status": (status: AdapterStatus) => {
       if (status.provider === "openclaw")
         qc.setQueryData<AdapterStatusResponse>(qk.adapter, (prev) => prev && { ...prev, ...status });
-      else if (status.provider === "claude") qc.setQueryData(qk.runnerAdapter, status.runners);
+      else if (status.provider === "claude") {
+        qc.setQueryData(qk.runnerAdapter, status.runners);
+        // 등록 대화상자가 열린 채 러너가 붙거나 떨어져도 그 목록이 낡지 않게
+        void qc.invalidateQueries({ queryKey: qk.discoverOf("claude") });
+      }
     },
     /**
      * 연결 설정 상태(owner 에게만 온다) — 통째로 바꾼다. 토큰 목록의 「지금 접속 중」·마지막 사용은 목록 응답에 있어

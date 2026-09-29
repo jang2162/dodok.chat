@@ -8,11 +8,12 @@ import { Switch } from "@/ui/switch";
 import { Textarea } from "@/ui/textarea";
 import { formError } from "@/api/formErrors";
 import { usePatchAgent } from "./mutations";
+import { providerIdLabel } from "./providerLabels";
 
 const PROMPT_MAX = 20_000;
 
 /**
- * 목록 한 줄: 이름·핸들·OpenClaw id·사용 토글·기본 프롬프트. 토글은 낙관적 갱신 없이 요청 중에만 잠근다(실패는 전역 토스트).
+ * 목록 한 줄: 이름·핸들·제공자별 id·사용 토글·기본 프롬프트. 토글은 낙관적 갱신 없이 요청 중에만 잠근다(실패는 전역 토스트).
  * `readOnly`(admin 미만 — 팀 스펙 2장)면 토글을 잠그고 프롬프트는 미리보기만
  */
 export function AgentRow({ agent, readOnly = false }: { agent: Agent; readOnly?: boolean }) {
@@ -32,7 +33,7 @@ export function AgentRow({ agent, readOnly = false }: { agent: Agent; readOnly?:
             <span className="text-sm text-muted-foreground">{handle}</span>
           </div>
           <p className="text-xs text-muted-foreground">
-            OpenClaw id <code className="font-mono">{agent.providerAgentId}</code>
+            {providerIdLabel(agent.provider)} <code className="font-mono">{agent.providerAgentId}</code>
           </p>
         </div>
         <Switch
