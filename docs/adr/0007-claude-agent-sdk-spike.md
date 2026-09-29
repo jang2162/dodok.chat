@@ -1,9 +1,9 @@
 # ADR 0007 — Claude Agent SDK 스파이크 (Phase 4 로컬 러너 어댑터 설계의 근거)
 
-- 상태: 완료 (실측 — 가짜 CLI, 번들 CLI + 로컬 가짜 Messages API, **모델 런 5회**) — 로컬 러너 스펙이 「설계에 주는 제약과 추천」 절을 입력으로 받는다
+- 상태: 완료 (실측 — 가짜 CLI, 번들 CLI + 로컬 가짜 Messages API, **모델 런 5회**) — 로컬 러너 스펙이 「설계에 주는 제약과 추천」 절을 입력으로 받았고, 구현이 고른 것은 「구현이 고른 것」 절이다
 - 날짜: 2026-09-27
 - 대상: `docs/plan.md` 「5.7 에이전트 어댑터 인터페이스 (후속 연동 대비)」 절·기술 표의 「에이전트 이벤트 표준」, `packages/openclaw-adapter/src/adapter-types.ts` 의 `AgentAdapter`·`AdapterEvent`
-- 산출 코드: 없음 — 가짜 CLI·가짜 Messages API·드라이버·스크래치 설치본·스파이크 세션 전사는 버렸다
+- 산출 코드: 스파이크의 것은 없다 — 가짜 CLI·드라이버·스크래치 설치본·스파이크 세션 전사는 버렸다. 가짜 Messages API 는 러너 구현의 하네스로 다시 만들어 `packages/claude-runner/scripts/fake-messages-api.ts` 에 있다(「다시 재는 법」 6)
 - 근거 원장(git 제외): `.superpowers/sdd/2026-09-27-claude-runner-spike/` 의 `p4c-spike-report.md`(모델 없이 잰 것)·`p4c-spike2-report.md`(모델 런 1~3)·`p4c-spike3-report.md`(채널 규칙 전달 경로·`alwaysLoad`, 모델 런 4·5)
 
 ## 1. 결론
@@ -313,15 +313,37 @@ SDK 기본값은 `{ ...process.env }`. 러너가 가진 브리지 토큰 같은 
 3. 드라이버 — `query({ prompt, options: { cwd: $SP/ws, settingSources: [], env: <허용 목록>, includePartialMessages: true, systemPrompt: { type: "preset", preset: "claude_code", append, snapshot }, hooks: { UserPromptSubmit: [...] }, mcpServers: { dodok }, allowedTools, canUseTool, … } })` 를 `CLAUDE_CONFIG_DIR=<같은 값> node <드라이버>` 로. 턴 여럿은 `AsyncIterable<SDKUserMessage>` 로 보내되 **앞 턴의 `result` 를 받고 1.5초 뒤에** 다음 턴을 보낸다(틈이 없으면 훅 문맥이 빠진다 — 4.5). 소비 쪽 메시지를 `{ t, m }` 로 한 줄씩, 콜백·핸들러·훅·interrupt 를 사건 파일로 적는다. 반복자는 `try` 로 감싼다(4.4). 동시성은 `query()` N개를 `Promise.all` 로.
 4. 정적 조회 — `LC_ALL=C strings -n 12 <번들 CLI> > cli-strings.txt` 로 한 번 뽑고 찾는다: `subtype:"can_use_tool"`(권한 경로·타이머 유무), `-credentials"`(키체인 이름), `"projects"`(전사 위치), env 이름(`ENABLE_CLAUDEAI_MCP_SERVERS`·`CLAUDE_CODE_DISABLE_*`). SDK 쪽은 `sdk.mjs` 의 `processControlRequest`·`waitForFirstResult`·`"SIGKILL"`·`process.env.CLAUDE_CONFIG_DIR`, 옵션 뜻은 `sdk.d.ts`.
 5. 번들 CLI 유휴(모델 호출 없음): `env -i PATH=… HOME=<스크래치> CLAUDE_CONFIG_DIR=<스크래치> CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 DISABLE_TELEMETRY=1 DISABLE_ERROR_REPORTING=1 DISABLE_AUTOUPDATER=1` 로 3절 argv 를 붙여 띄우고 stdin 에 `initialize` 한 줄만 쓴다(사용자 메시지는 보내지 않는다). `ps -o rss= -p <pid>`·`ps -M -p <pid> | wc -l`·`lsof -nP -a -p <pid> -i` → 그 PID 에 SIGTERM.
-6. **가짜 Messages API 리허설(모델 호출 없음)** — 로컬 HTTP 서버가 `POST /v1/messages` 의 본문을 파일로 적고(헤더는 적지 않는다) SSE 로 `message_start`·`content_block_*`(사고·텍스트·`tool_use`)·`message_delta`·`message_stop` 을 돌려준다. 마지막 사용자 글의 키워드로 `tool_use` 를 고른다. 드라이버 env 를 `ANTHROPIC_BASE_URL=http://127.0.0.1:<포트>`·`ANTHROPIC_API_KEY=sk-ant-fake-…`·`CLAUDE_CONFIG_DIR=<스크래치>`·`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` 로 바꾸면 **번들 CLI 가 실제로 보내는 요청**과 CLI 의 권한 판단·도구 실행·interrupt 모양을 본다. 요청 본문에서 `system[].text` 의 채널 규칙, `messages[]` 의 `<system-reminder>` 블록 자리, `thinking`·`output_config`·`tools[].name` 을 읽는다. **모델 런 드라이버는 먼저 여기서 끝까지 돌려 본다.** 계정별 롤아웃 기능은 이 모드에서 기본값이라 실제 계정과 다를 수 있다 — 달라도 되는 것은 전사의 `prompt_snapshot` 플래그(`systemTurns`·`contextRendering`)로 비교한다. 이 모드는 도구 검색이 꺼져 있다 — 지연 로드·`alwaysLoad` 를 볼 때는 env `ENABLE_TOOL_SEARCH=true` 를 더한다. 채널 규칙 경로를 볼 때는 규칙 문장이 `system[].text` 에 있는지(가), `messages[]` 의 `UserPromptSubmit hook additional context` 블록에 있는지(나), `Contents of … CLAUDE.md` 블록에 있는지(다)를 요청마다 세고, 규칙을 바꾼 턴·`resume` 에서 옛 규칙이 요청에 남는지를 본다.
+6. **가짜 Messages API 리허설(모델 호출 없음)** — 로컬 HTTP 서버가 `POST /v1/messages` 의 본문을 파일로 적고(헤더는 적지 않는다) SSE 로 `message_start`·`content_block_*`(사고·텍스트·`tool_use`)·`message_delta`·`message_stop` 을 돌려준다. 마지막 사용자 글의 키워드로 `tool_use` 를 고른다. 드라이버 env 를 `ANTHROPIC_BASE_URL=http://127.0.0.1:<포트>`·`ANTHROPIC_API_KEY=sk-ant-fake-…`·`CLAUDE_CONFIG_DIR=<스크래치>`·`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` 로 바꾸면 **번들 CLI 가 실제로 보내는 요청**과 CLI 의 권한 판단·도구 실행·interrupt 모양을 본다. 요청 본문에서 `system[].text` 의 채널 규칙, `messages[]` 의 `<system-reminder>` 블록 자리, `thinking`·`output_config`·`tools[].name` 을 읽는다. **모델 런 드라이버는 먼저 여기서 끝까지 돌려 본다.** 가짜 API 는 `packages/claude-runner/scripts/fake-messages-api.ts`(대본 키워드는 그 파일 머리), 실제 서버·러너 설치본까지 붙인 절차는 `docs/guides/live-smoke.md` 「Claude 러너 런 0회 하네스」 절 — 러너의 env 허용 목록은 `ANTHROPIC_*` 를 넘기지 않으므로 번들 CLI 자리에 env 를 얹는 감싸개를 둔다. 계정별 롤아웃 기능은 이 모드에서 기본값이라 실제 계정과 다를 수 있다 — 달라도 되는 것은 전사의 `prompt_snapshot` 플래그(`systemTurns`·`contextRendering`)로 비교한다. 이 모드는 도구 검색이 꺼져 있다 — 지연 로드·`alwaysLoad` 를 볼 때는 env `ENABLE_TOOL_SEARCH=true` 를 더한다. 채널 규칙 경로를 볼 때는 규칙 문장이 `system[].text` 에 있는지(가), `messages[]` 의 `UserPromptSubmit hook additional context` 블록에 있는지(나), `Contents of … CLAUDE.md` 블록에 있는지(다)를 요청마다 세고, 규칙을 바꾼 턴·`resume` 에서 옛 규칙이 요청에 남는지를 본다.
 7. 모델 런(사람 승인 사항 — 횟수를 먼저 정한다) — 6과 같은 드라이버를 러너 로그인의 `CLAUDE_CONFIG_DIR`·실제 `HOME` 으로. 드라이버가 250ms 마다 `ps -A -o pid=,ppid=,rss=,comm=` 에서 자기 자손 중 `claude` 의 RSS 를 적고, 소비 쪽 메시지 시각에서 `system/init`·첫 `content_block_delta`·첫 `text_delta` 를 뽑는다. 채널 규칙 판정은 전사의 `prompt_snapshot`(`systemPrompt` 조각에서 규칙 문장)과 모델에게 규칙 문장을 그대로 인용하게 한 답을 함께 본다. 비용은 런 전후 `total_cost_usd` 차이, 단가 검증은 `result.usage` × 공시 단가. 끝나면 `CLAUDE_CONFIG_DIR/projects/<cwd 경로>/`·`session-env/<세션>/`·`/private/tmp/claude-<uid>/<cwd 경로>/` 를 지운다.
 8. 계정 커넥터(모델 호출 없음) — 사용자 메시지를 보내지 않는 프롬프트(끝나지 않는 `AsyncIterable`)로 `query()` 를 열고 8초 기다려 `q.mcpServerStatus()` 의 `name`·`scope`·`status` 를 적은 뒤 `q.close()`. 기본값·`strictMcpConfig: true`·env `ENABLE_CLAUDEAI_MCP_SERVERS=false` 셋을 비교한다. 같은 방법으로 `q.accountInfo()` 에서 인증을 본다(이메일·조직은 적지 않는다).
 9. 끝나면 `rm -rf $SP`.
 
 ## 8. 확인 못 한 것 — 모델 런이 있어야 아는 것
 
-1. **바뀐 채널 규칙을 `resume` 한 세션이 따르는가(경로 (가))** — 요청에 새 규칙만 실리는 것은 봤지만(가짜 Messages API), 앞 답들이 옛 표식으로 시작하는 이력 위에서 모델이 새 규칙을 따르는지는 재지 않았다. 경로마다 새 세션 표본이 하나씩이고, 해로운 일을 시키는 규칙(모델이 거부해야 하는 규칙)과 `CLAUDE.md`(다)는 모델로 재지 않았다.
+1. **바뀐 채널 규칙을 `resume` 한 세션이 따르는가(경로 (가))** — 요청에 새 규칙만 실리는 것은 봤다(스파이크의 가짜 Messages API, 그리고 실제 러너·서버를 붙인 하네스 — `docs/guides/live-smoke.md` 「Claude 러너 런 0회 하네스」 절). 앞 답들이 옛 표식으로 시작하는 이력 위에서 모델이 새 규칙을 따르는지는 재지 않았다 — 러너 실연(같은 문서 「Claude 러너(Phase 4 ③) 실연」 절)이 본다. 경로마다 새 세션 표본이 하나씩이고, 해로운 일을 시키는 규칙(모델이 거부해야 하는 규칙)과 `CLAUDE.md`(다)는 모델로 재지 않았다.
 2. **실제 모델에서 전경 도구 실행 중 interrupt** — 번들 CLI + 가짜 API 로 모양(4.4)은 봤지만, 실제 모델이 전경으로 돈 긴 도구를 멈춘 경우와 `tool_progress` 주기는 보지 못했다(모델이 백그라운드로 돌렸다).
 3. **읽기 전용 Bash 자동 허용의 경계** — CLI 가 어떤 명령을 묻지 않는지(이 스파이크는 `git status`·`git log`·`sleep … && echo` 가 묻지 않고, `touch` 가 물었다는 것만 안다). `permissionMode: "dontAsk"`·`PreToolUse` 훅과의 조합.
 4. **스크래치 `HOME` 에서의 로그인**과 `CLAUDE_SECURESTORAGE_CONFIG_DIR=""` 로 기본 로그인을 공유하는 길.
 5. **`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` 가 백그라운드 실행을 막는가**, 계정 이메일(`session_context`)을 문맥에서 뺄 수 있는가.
+6. **대화형·예약 도구** — 러너 에이전트의 `tools[]` 에 `AskUserQuestion`·`Agent`·`Workflow`·`ScheduleWakeup`·`Skill` 이 그대로 있다(하네스 요청 본문). 모델이 `AskUserQuestion`(4.2 — `request_user_dialog` 경로, 기본 5분)이나 예약 도구를 부르면 러너 런 안에서 어떻게 끝나는지는 재지 않았다.
+7. **러너 프로세스가 갑자기 죽을 때의 실제 비용** — 하네스에서 러너를 `SIGKILL` 로 죽이자 CLI 가 고아로 남아 그 턴을 끝까지 돌고 답을 전사에 남겼다(가짜 API 스트림은 끊기지 않았다). 실제 모델에서 그 턴이 얼마나 더 돌고 청구되는지는 재지 않았다.
+
+## 9. 구현이 고른 것
+
+6절 추천을 러너 구현(`packages/claude-runner`·`packages/runner-adapter`·`packages/shared/src/runner/`)이 어떻게 받았는가. 스펙과 달라진 까닭은 러너 스펙(`docs/superpowers/specs/2026-09-27-claude-runner-design.md`)의 「구현과 맞춘 것」 장이 정본이다.
+
+| 6절 | 구현 |
+| --- | --- |
+| 1 프로세스 단위 | 그대로 — 런 하나 = `query()` 하나 = CLI 하나, 프롬프트 하나를 보내고 그 턴의 `result` 까지 입력을 열어 둔다(`run.ts` 의 `runOnce`). 새 세션인지는 러너가 SDK `getSessionInfo` 로 전사를 보고 가르고(`sessionId` 또는 `resume`), `--session-id` 가 「이미 있는 세션」으로 거절되면 `resume` 으로 한 번 다시 연다 |
+| 2 채널 규칙 | 경로 (가) 그대로 — 틀은 shared `buildChannelRulesAppend`(4.5 틀 문단 + `<channel-rules>` + 틀 밖 `<relay-rules>`, 규칙 안의 `<` 닮은꼴은 모두 `&lt;`), `snapshot: false`. 턴 사실은 `buildTurnFacts` 를 `UserPromptSubmit` 훅으로. 서버는 러너 에이전트에게 채널 프롬프트를 **매 런** 싣는다 |
+| 3 세션 | 그대로 — Claude 세션 UUID 는 서버 세션 행의 `providerSessionId` 가 정본, 서버가 정하고 「새 대화」는 그 열을 비운다 |
+| 4 `/runner` 계약 | Socket.IO `/runner` 네임스페이스(이벤트 + ack, `ping`/`pong` 프레임 없이 Socket.IO 하트비트). `run.start` 에 `resume` 을 싣지 않는다(서버는 전사가 있는지 모른다). **중지로 끝난 턴은 `run.event RUN_ABORTED` 가 아니라 `run.final { text: "", stopReason: "aborted" }`** — 어댑터가 `run.event` 의 수명 변형을 허용 목록으로 걸러 러너 쪽 수명 이벤트를 받지 않는다. 결과 오류는 `run.error` |
+| 5 어댑터 자리 | `AgentAdapter` 계약을 `packages/shared/src/adapter/` 로 옮기고 서버가 `provider`(`"openclaw" \| "claude"`)로 어댑터를 고른다(`AdapterRegistry`) |
+| 6 승인 | 그대로 — 기한은 러너 어댑터가 쥔 10분, 지나면 러너에 `deny`(모델에게 「승인 시간이 지났습니다」). 「항상 허용」은 제안을 `destination: "session"` 으로 바꿔 싣는다. 승인 종류 `tool`. 요약은 Bash 명령·파일 도구 상대 경로·입력 JSON 앞부분이고, 제어·양방향·보이지 않는 폭 글자를 부류로 이스케이프한다 |
+| 7 도구 노출 | `mcp__dodok__post` 하나(`{ text?, components?, files? }`) — `createSdkMcpServer({ alwaysLoad: true })`, 늘 `allowedTools`. `files` 는 작업 디렉터리 안만, 연 fd 가 검사한 경로 그대로인지 macOS `O_NOFOLLOW_ANY`·Linux `/proc/self/fd` 로 보고 그 밖 플랫폼은 거절 |
+| 8 격리 | 그대로에 더해 env 허용 목록에 프록시(`HTTPS_PROXY` 등 대·소문자)·`NODE_EXTRA_CA_CERTS`·`SSL_CERT_FILE`·`LC_ALL`·`TERM`. `ANTHROPIC_*` 는 넘기지 않는다 |
+| 9 동시 상한 | 설정 `maxConcurrentRuns`(기본 3), 넘치면 `run.ack` 의 `queuedPosition` → 서버 `RUN_QUEUED` |
+| 10 비용 | 런 비용은 `total_cost_usd` 의 런 전후 차이(러너 메모리), `costKind` 는 `system/init` 의 `apiKeySource` 로 가른다(`none` 이면 구독 환산). 운영 화면은 제공자별로 믿음을 가른다 — 러너 런만 토큰·금액을 더한다 |
+| 11 라이선스 | 러너 tgz 는 SDK 를 품지 않는다(esbuild `external`) — 설치할 때 npm 에서 받는다 |
+
+**호스트 경로 가림**(6절 밖) — 러너는 모델이 내는 글(델타·최종 답·`post` 의 `text`·카드 안 글)과 도구 인자·결과·오류 문구에서 작업 디렉터리 경로를 상대 경로로, 밖은 `<작업 디렉터리 밖>` 으로 바꾼다(`mask.ts` — 못 알아보는 모양은 그 파일 머리 주석).

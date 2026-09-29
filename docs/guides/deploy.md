@@ -1,6 +1,6 @@
 # 배포 — 한 호스트에 dodok 을 올리고 원격 Gateway·폰까지 잇기
 
-dodok 서버·웹을 Docker Compose 로 한 호스트에 올리고, Caddy 가 공개 도메인에 자동 HTTPS 를 붙인다. 원격 Gateway 의 플러그인이 그 도메인의 브리지로 붙고, 폰이 PWA·푸시로 붙는다.
+dodok 서버·웹을 Docker Compose 로 한 호스트에 올리고, Caddy 가 공개 도메인에 자동 HTTPS 를 붙인다. 원격 Gateway 의 플러그인이 그 도메인의 브리지로 붙고, 폰이 PWA·푸시로 붙는다. 사람의 머신에서 Claude Code 에이전트를 돌리는 Claude 러너도 같은 도메인으로 붙는다(「Claude 러너 설치」 절).
 설계는 `docs/superpowers/specs/2026-09-24-deploy-packaging-design.md`, 웹의 연결 페이지(플러그인 받기·브리지 토큰)는 `docs/superpowers/specs/2026-09-24-setup-wizard-design.md` 다(구현과 달라진 것은 각 스펙의 「구현과 맞춘 것」 장). 각 파일이 **왜 그렇게 생겼는지는 그 파일의 머리 주석이 정본**이다 — `infra/compose.yml`·`infra/compose.local.yml`·`infra/Caddyfile`·`infra/Dockerfile.server`·`infra/Dockerfile.web`·`infra/check-caddy.sh`.
 
 표기: **[A]** dodok 호스트(Docker·Compose v2 이상, git), **[B]** Gateway 호스트, **[PC]** 개발 PC(이 저장소, Node·pnpm — `mise.toml`), **[폰]**.
@@ -195,6 +195,67 @@ docker compose -f infra/compose.yml exec app node dist/backup.js
 
 `.env` 에서 이어받은 토큰(목록의 라벨 `env`, 알아보기용 앞자리 대신 「.env 에서 이어받음」)도 같은 절차로 바꾼다. 폐기한 뒤에는 `.env` 의 `BRIDGE_TOKEN` 줄을 지워도 되고, 남겨 두면 부팅 때 warn 한 줄과 연결 페이지 한 줄(「.env 의 BRIDGE_TOKEN 은 더 이상 쓰지 않습니다 — 연결 페이지에서 발급하세요」)이 계속 보인다.
 
+## Claude 러너 설치
+
+Claude 러너(`@dodok/claude-runner`, 명령 `dodok-runner`)는 **사람의 머신에서** Claude Agent SDK 로 Claude Code 에이전트를 돌려 dodok 채널에 붙인다 — 그 머신의 저장소를 작업 디렉터리로 쓰는 에이전트를 팀 채널에서 부르는 길이다. OpenClaw Gateway 는 거치지 않는다. 러너는 **나가는 연결만** 쓴다 — Socket.IO `/runner` 네임스페이스(`/socket.io/`)와 첨부 HTTP `/runner/attachments` 둘 다 [A] 의 공개 도메인 443 으로 간다(Caddy 가 둘 다 서버로 넘긴다 — `infra/Caddyfile` 의 `@backend`). 머신 쪽 포트는 열지 않는다. 설계는 `docs/superpowers/specs/2026-09-27-claude-runner-design.md`(구현과 달라진 것은 그 스펙의 「구현과 맞춘 것」 장).
+
+표기: **[R]** 러너를 돌릴 머신(macOS 또는 Linux, Node — 저장소가 재는 판은 24, npm 레지스트리에 닿는 네트워크), **[웹]** owner 로 연 연결 페이지(`/settings/connection`)의 「Claude 러너」 블록.
+
+1. **[웹] 러너 토큰** — 「새 러너 토큰 발급」 → 라벨(머신 이름) → 원문 `drn_…` 이 **한 번만** 보인다(서버는 해시만 저장). [R] 에서 `~/.dodok-runner/token` 파일에 원문 한 줄로 두고 `chmod 600 ~/.dodok-runner/token`(0600 이 아니면 러너가 켤 때마다 경고한다). 대화상자 아래의 「러너 설정」 조각은 3번 설정 파일의 뼈대다 — 둘 다 복사한 뒤 「복사했습니다」로 닫는다. 토큰은 설정 파일 본문에 적지 않는다(적으면 러너가 설정 오류로 거절한다) — 파일 대신 env `DODOK_RUNNER_TOKEN` 으로 줘도 된다.
+2. **[웹 → R] 받기·설치** — 「러너 받기」 → `dodok-claude-runner-<sha 12자>.tgz` 를 [R] 로 옮기고 `npm install -g ./dodok-claude-runner-<sha 12자>.tgz`. 서버 이미지가 같은 커밋의 러너를 품고 내려준다. 러너는 Claude Agent SDK 를 품지 않는다 — 설치할 때 npm 에서 SDK(과 플랫폼별 번들 CLI, 약 225 MB)·`socket.io-client`·`zod` 를 받는다.
+3. **[R] 러너 전용 로그인** — 러너는 평소 `~/.claude` 가 아니라 **러너 전용 디렉터리**의 로그인을 쓴다(세션·메모리·설정이 섞이지 않고, macOS 키체인 항목도 디렉터리마다 따로다 — ADR 0007 「함정」). `/login` 을 마치고 나온다.
+   ```bash
+   CLAUDE_CONFIG_DIR=~/.dodok-runner/claude claude
+   # claude 명령이 없으면 러너가 품은 번들 CLI 로(musl Linux 는 디렉터리 이름 끝에 -musl):
+   CLAUDE_CONFIG_DIR=~/.dodok-runner/claude "$(npm root -g)/@dodok/claude-runner/node_modules/@anthropic-ai/claude-agent-sdk-$(node -p 'process.platform+"-"+process.arch')/claude"
+   ```
+   러너 **전용 Claude 계정**을 권한다 — 아래 「드러나는 것」 1.
+4. **[R] 설정 파일** `~/.dodok-runner/config.json`(다른 자리면 `dodok-runner --config <경로>`). 1번의 조각에서 `agents` 를 고친다. 정본은 `packages/claude-runner/src/config.ts` 의 `RunnerConfig` — 모르는 키는 거절한다.
+   ```json
+   {
+     "serverUrl": "https://<도메인>",
+     "tokenFile": "~/.dodok-runner/token",
+     "claudeConfigDir": "~/.dodok-runner/claude",
+     "maxConcurrentRuns": 3,
+     "agents": [
+       {
+         "id": "coder",
+         "name": "코더",
+         "workdir": "~/src/my-repo",
+         "workdirLabel": "my-repo",
+         "model": "sonnet",
+         "permissionMode": "default",
+         "allowedTools": ["Read", "Grep", "Glob"],
+         "disallowedTools": []
+       }
+     ]
+   }
+   ```
+   - `serverUrl` — 공개 주소(`https://<도메인>`). 조각의 값은 `BRIDGE_PUBLIC_URL`(없으면 `APP_ORIGIN`)의 오리진이다.
+   - `maxConcurrentRuns` — 동시 CLI 수(1~16, 기본 3). 런 중 CLI 하나가 약 300 MiB 다. 넘치면 서버 쪽에 대기(`RUN_QUEUED`)로 보인다.
+   - `agents[].id` — 영문 소문자·숫자로 시작하는 소문자 id. 워크스페이스에서 **OpenClaw 에이전트를 포함해** 겹칠 수 없다(대소문자 무시 — 등록이 409 로 막는다). `workdir` 는 있는 디렉터리여야 하고, 서버로는 `workdirLabel`(없으면 디렉터리 이름)만 간다 — 경로는 서버에 가지 않는다.
+   - `permissionMode`·`allowedTools`·`disallowedTools` — Claude Code 의 권한 설정 그대로다. **에이전트가 이 머신에서 할 수 있는 일의 천장은 이 파일**이다 — 서버나 러너 토큰이 털려도 이 범위를 넘지 못한다. 여기서 미리 허용하지 않은 쓰기 도구(파일 쓰기·명령 실행 등)를 CLI 가 물으면 채널에 **도구 승인 카드**가 뜨고 admin 이상이 결정한다(10분 안에 아무도 안 누르면 거절). 「항상 허용」은 그 세션에만 걸리고 이 파일·작업 디렉터리의 설정에는 쓰지 않는다. CLI 가 읽기 전용으로 보는 명령 일부(`git log` 등)는 규칙이 없어도 묻지 않고 돌린다(ADR 0007 「질문별」 권한 콜백). 러너는 `mcp__dodok__post`(채널에 카드·파일 보내기)를 늘 허용한다.
+   - 러너는 작업 디렉터리의 `CLAUDE.md`·`.claude/settings.json` 을 읽지 않는다(`settingSources: []`). 계정의 claude.ai 커넥터도 붙이지 않는다.
+5. **[R] 실행** — `dodok-runner`. 첫 줄에 러너·SDK·Claude Code 판본과 에이전트(작업 디렉터리 라벨)·동시 수, 이어서 `연결됨(서버 …)`. 연결 페이지 「Claude 러너」에 카드(라벨·판본·「서버와 같은 빌드입니다」·붙은 시각·에이전트)가 생기고, 토큰 목록의 그 줄에 「지금 접속 중」이 붙는다. v1 은 사람이 터미널에서 띄운다(OS 서비스로 자동 시작하지 않는다).
+6. **[웹] 에이전트 등록** — 「에이전트」 → 「에이전트 가져오기」 → 제공자 「Claude 러너」 → 붙은 러너들이 알린 에이전트(러너 라벨·작업 디렉터리 라벨·모델) 중에서 고른다(admin 이상). 러너가 끊겨도 등록한 에이전트는 남는다. 채널에 넣고 멘션한다 — 채널 프롬프트는 **매 런** 요청에 실린다(바꾸면 「새 대화」 없이 다음 런의 요청부터 새 규칙만).
+
+**드러나는 것 둘** — 연결 페이지 같은 블록에도 적혀 있다.
+
+1. 러너 계정의 **이메일이 에이전트 문맥에 들어간다**(끌 방법이 없다) — 에이전트가 채널에 그 이메일을 쓸 수 있다. 러너 전용 계정을 권한다.
+2. 채널 멤버는 **에이전트를 통해 러너 작업 디렉터리 안의 파일을 읽을 수 있다** — 그 에이전트를 어느 채널에 둘지는 admin 이 판단한다.
+
+**파일 보내기는 macOS·Linux 만** — 에이전트가 `post` 로 작업 디렉터리 안의 파일을 채널에 보낼 때 러너는 경로의 어느 성분도 링크가 아닌지 macOS 는 `O_NOFOLLOW_ANY`, Linux 는 `/proc/self/fd` 로 확인한다. 둘 다 없는 플랫폼에서는 파일을 거절한다(카드·글은 보낸다). 작업 디렉터리 밖(`..`·밖을 가리키는 링크·밖의 절대 경로)은 어느 플랫폼에서든 거절하고, 사유만 에이전트에게 돌려준다.
+
+**끊김·끄기**
+
+- **서버 재시작·네트워크 끊김·덮개 닫힘** — 러너가 그때 돌던 런을 멈추고, 1초~30초 백오프로 **스스로 다시 붙는다**. 서버는 그 런을 「@<에이전트> 실행이 실패했습니다: ADAPTER_UNAVAILABLE」 + 「다시 실행」으로 닫는다 — 다시 붙은 뒤 「다시 실행」은 같은 세션을 잇는다. 60초 넘게 끊겨 있으면 운영 사건 「러너 연결 끊김」이 열리고, 붙으면 닫힌다.
+- **토큰 폐기·같은 토큰으로 다른 러너가 붙음·토큰 거절** — 서버가 끊은 것이라 러너는 사유를 한 줄 찍고 **끝난다**(종료 코드 2 — 같은 토큰의 두 러너가 서로를 밀어내지 않게). 다시 띄워야 한다. 판본이 안 맞으면(`PROTOCOL_MISMATCH`) 역시 끝난다 — 러너를 다시 받는다. 인증 실패가 반복돼 주소가 막힌 것(`RATE_LIMITED`)은 끝나지 않고 풀릴 때까지 다시 시도한다(아래 「운영 화면」 레이트리밋 표의 `bridgeFail`).
+- **끄기** — `Ctrl+C`(SIGINT) 또는 SIGTERM. 러너가 도는 런을 멈추고(최대 5초) 끝난다 — 그 런은 채널에서 사람이 중지한 것과 같이 메시지 없이 「중지됨」으로 닫힌다(「다시 실행」 카드 없음). 한 번 더 누르면 기다리지 않고 끝난다. ⚠ `kill -9` 는 쓰지 않는다 — 러너만 죽고 CLI 가 남아 그 턴을 끝까지 돈다(모델 비용이 들고, 채널에 없던 답이 세션 이력에 남는다 — `docs/guides/live-smoke.md` 「Claude 러너 런 0회 하네스」 절).
+
+**토큰 교체** — 1번으로 새 토큰을 발급해 `~/.dodok-runner/token` 을 바꾸고 러너를 다시 띄운다 → 토큰 목록에서 「지금 접속 중」이 새 줄로 옮겨 간 것을 보고 → 옛 줄 「폐기」. 폐기하면 그 토큰으로 붙은 러너는 곧바로 끊기고(위 — 끝난다) 그 러너에서 돌던 런은 「다시 실행」 카드로 닫힌다.
+
+**업데이트** — 서버를 올리면(아래 「업데이트」) 새 이미지가 그 커밋의 러너 tgz 를 품는다. 연결 페이지 러너 카드가 「다른 빌드입니다 — 러너를 받아서 다시 설치하세요」면 2번 받기·설치를 다시 하고 러너를 다시 띄운다(`npm install -g` 가 같은 이름을 덮는다). 토큰·설정 파일·로그인은 그대로다. SDK 판본은 러너가 정확 핀으로 들고 오므로 [R] 에서 따로 올리지 않는다.
+
 ## 멤버 초대·비밀번호 재설정·내보내기
 
 사람은 초대 링크로 들인다 — 공개 가입은 없고 메일도 보내지 않는다. 역할은 셋이다: **owner**(한 명 — `LOCAL_AUTH_TOKEN` 으로 로그인하는 계정), **admin**(에이전트 동작·비용 설정·「새 대화」·도구 승인·에이전트 등록·member 관리·운영 화면), **member**(채널에서 대화하기·채널 만들기·이름·설명·에이전트 넣기·빼기). 무엇을 누가 하는지의 표는 팀 스펙 `docs/superpowers/specs/2026-09-26-team-members-design.md` 「역할과 권한」 절이고, 서버가 요청마다 막는다(화면에서 숨기는 것은 편의다). 화면은 사이드바 「멤버」(`/settings/members`, owner·admin).
@@ -226,8 +287,8 @@ docker compose -f infra/compose.yml exec app node dist/backup.js
 
 웹 사이드바 「운영」(`/settings/operations`, owner·admin — member 에게는 메뉴가 없고 직접 주소는 「권한이 없습니다」)이 「어젯밤 무슨 일이 있었나」에 답한다. 외부 모니터링 스택·푸시·웹훅 알림은 없다 — 사이드바 「운영」 옆 배지로 알아챈다. 설계는 `docs/superpowers/specs/2026-09-25-ops-hardening-design.md`(구현과 달라진 것은 그 스펙의 「구현과 맞춘 것」 장).
 
-- **상태**(맨 위 카드) — Gateway·플러그인 연결, Gateway 버전, 디스크 여유, 직전 종료, 서버·DB. 문제가 있는 줄만 강조한다. 연결 두 줄은 wire 로 실시간이고, 나머지 칸은 사건이 올 때와 화면을 보는 동안 30초마다 다시 받는다. Gateway 버전이 저장소 핀(`packages/openclaw-adapter/src/version.ts` 의 `OPENCLAW_PINNED_VERSION`)과 다르면 「저장소가 검증한 버전(<핀>)과 다릅니다」 — 연결 페이지 Gateway 줄에도 같은 문구가 붙는다.
-- **런**(표) — 「오늘 / 7일」, 채널별·에이전트별 런·실패·중지·차단. 토큰·금액은 「측정 불가」다 — Gateway 가 주는 출력 토큰·비용 값이 틀린다(`docs/adr/0005-usage-values.md`).
+- **상태**(맨 위 카드) — Gateway·플러그인 연결, Claude 러너 연결(「<n>대 붙음 / 토큰 <m>개」 — 러너는 사람 PC 라 꺼져 있을 수 있어 이 줄은 강조하지 않고, 60초 넘는 끊김은 사건 「러너 연결 끊김」이 알린다), Gateway 버전, 디스크 여유, 직전 종료, 서버·DB. 문제가 있는 줄만 강조한다. 연결 두 줄은 wire 로 실시간이고, 나머지 칸은 사건이 올 때와 화면을 보는 동안 30초마다 다시 받는다. Gateway 버전이 저장소 핀(`packages/openclaw-adapter/src/version.ts` 의 `OPENCLAW_PINNED_VERSION`)과 다르면 「저장소가 검증한 버전(<핀>)과 다릅니다」 — 연결 페이지 Gateway 줄에도 같은 문구가 붙는다.
+- **런**(표) — 「오늘 / 7일」, 채널별·에이전트별 런·실패·중지·차단. OpenClaw 에이전트 런의 토큰·금액은 「측정 불가」다 — Gateway 가 주는 출력 토큰·비용 값이 틀린다(`docs/adr/0005-usage-values.md`). Claude 러너 에이전트 런은 러너가 CLI 의 값으로 보낸 토큰·금액이 보인다(ADR 0007 「질문별」 usage·비용). 러너가 구독 로그인이면 금액은 청구액이 아니라 공시 단가 환산이라 「환산 포함」이 붙고, 한 행에 두 종류 런이 섞이면 더한 것은 러너 런뿐이라 「런 m/n개만」이 붙는다.
 - **한도** — 워크스페이스 일일 런 상한. 값을 정한 적이 없으면(새 배포도, 이 판으로 올린 기존 배포도) **300**, 1~10000, 비우면 무제한. 채널별 상한은 각 채널 설정 「릴레이 정책」의 「일일 실행 상한」이다. 둘 다 그 채널·워크스페이스에서 오늘 **만들어진 모든 런**(사람 멘션·자동 응답·릴레이·컴포넌트 상호작용·다시 실행)을 센다 — 한도로 막혀 만들지 않은 런은 세지 않는다. 막히면 런을 만들지 않고, 그 채널에 「오늘 런 한도(N)에 도달했습니다 — 내일 0시에 풀립니다」(채널 상한이면 「이 채널의」가 붙는다)를 범위마다 **하루 한 번** 남기며, 사람이 보낸 메시지는 그대로 저장된다. 「하루」는 `TZ` 의 자정이다(위 「설정 — `.env`」).
 - **최근 사건** — 심각도 필터·「모두 확인」·「더 보기」. 같은 종류·대상의 사건은 확인하기 전 1시간 안이면 한 줄로 묶여 「×n」이 오르고, 30일 지난 줄은 지워진다. 끊김 사건(Gateway·플러그인)은 **60초 넘게** 끊겨야 열리고(그 안에 돌아오면 남지 않는다), 붙으면 같은 줄이 「(n분 동안)」으로 닫힌다. 「(n분 동안)」은 서버가 다시 붙은 때까지다 — Gateway 가 먼저 떠도 서버의 재접속 백오프(최대 30초)만큼 길게 나온다.
 - **배지** — 확인 안 한 주의·오류 사건 수(100 이상은 「99+」). 좁은 화면에서는 채널 목록 메뉴 버튼의 빨간 점. 「모두 확인」 뒤 사라진다.
@@ -258,7 +319,7 @@ docker compose -f infra/compose.yml logs app | grep '"event":"ops.'
 | wire `approval.resolve` | `wire.approval` | ack `RATE_LIMITED` |
 | wire `typing`·`presence.update` | `wire.chatter` | 조용히 버린다(ack 없음) |
 | wire 동시 소켓 | `socketsPerUser`(사용자당) | 새 연결을 핸드셰이크에서 거절 |
-| `/bridge` 핸드셰이크·`/bridge/attachments` | `bridgeFail`(**실패만** 센다 — 한 주소가 창 안에 정해진 수만큼 틀리면 그 주소를 막는다) | 막힌 동안은 토큰을 보지 않고 거절(첨부 HTTP 는 429 「인증 실패가 너무 많습니다」), 사건 「브리지 인증 실패가 반복돼 주소를 막음」. 성공은 카운터를 비우지 않아 막힌 주소의 정상 플러그인도 막힌 동안은 거절되고, 풀리면 저절로 붙는다 |
+| `/bridge`·`/runner` 핸드셰이크, `/bridge/attachments`·`/runner/attachments` | `bridgeFail`(**넷이 한 카운터**, **실패만** 센다 — 한 주소가 창 안에 정해진 수만큼 틀리면 그 주소를 막는다) | 막힌 동안은 토큰을 보지 않고 거절(첨부 HTTP 는 429 「인증 실패가 너무 많습니다」), 사건 「브리지 인증 실패가 반복돼 주소를 막음」. 성공은 카운터를 비우지 않아 막힌 주소의 정상 플러그인도 막힌 동안은 거절되고, 풀리면 저절로 붙는다 |
 
 토큰을 바꾼 직후 옛 토큰으로 재접속을 되풀이하는 플러그인이 [B] 와 같은 주소의 정상 플러그인까지 잠시 막을 수 있다 — 옛 플러그인 설정을 먼저 고치고, 풀리기를 기다린다(아래 「오류」).
 
@@ -337,7 +398,7 @@ DODOK_WEB_BUILD_ID=$(git log -1 --format=%h -- apps/web packages/shared pnpm-loc
 docker compose -f infra/compose.yml ps                              # app·caddy (healthy)
 ```
 
-마이그레이션은 부팅 때 자동이다. 새 이미지는 그 커밋의 플러그인 tgz 를 품는다 — 연결 페이지 「플러그인」 섹션이 「다른 빌드입니다 — 받아서 다시 설치하세요」면 체크리스트 4 의 받기·[B] 설치를 다시 한다(토큰은 그대로 — 계정 설정 패치 줄은 건너뛴다). 「서버와 같은 빌드입니다」면 플러그인은 그대로 둔다.
+마이그레이션은 부팅 때 자동이다. Claude 러너를 쓰면 러너 카드의 빌드 줄도 본다 — 위 「Claude 러너 설치」 절의 「업데이트」. 새 이미지는 그 커밋의 플러그인 tgz 를 품는다 — 연결 페이지 「플러그인」 섹션이 「다른 빌드입니다 — 받아서 다시 설치하세요」면 체크리스트 4 의 받기·[B] 설치를 다시 한다(토큰은 그대로 — 계정 설정 패치 줄은 건너뛴다). 「서버와 같은 빌드입니다」면 플러그인은 그대로 둔다.
 
 **스레드가 있는 판(Phase 4 ① 이후)으로 올릴 때는 플러그인을 반드시 다시 설치한다.** 스레드 런은 hello 에 `threads` 를 싣는 플러그인이 붙어 있어야 돈다. 옛 플러그인이 붙어 있으면 스레드에서 에이전트를 부를 때마다 스레드에 「@dev 가 스레드에서 답하지 못했습니다 — 플러그인을 새로 설치해야 합니다(연결 페이지)」 run_error 카드(`PLUGIN_OUTDATED`)가 남고, 채널 최상위 멘션은 그대로 돈다. 다시 설치한 뒤 그 카드의 「다시 실행」을 누르면 스레드에서 답한다.
 
@@ -404,6 +465,13 @@ docker compose -f infra/compose.yml ps     # app·caddy (healthy)
 | 요청이 429 `RATE_LIMITED`, 운영 화면 「요청 제한 발동」 | 레이트리밋(위 「운영 화면」의 표) — 한 사람·한 탭의 폭주 | 1분 안에 저절로 풀린다. 되풀이되면 그 사건의 `key`(경로·이벤트 이름)로 무엇이 두드리는지 본다 |
 | 플러그인이 안 붙고 로그 `bridge connection rejected … blocked after repeated failures`, 운영 화면 「브리지 인증 실패가 반복돼 주소를 막음」 | 한 주소에서 틀린 토큰이 되풀이됐다(옛 토큰으로 재접속하는 플러그인 등) | 틀린 토큰을 쓰는 쪽을 고친 뒤 막힘이 풀리기를 기다린다(`LIMITS.bridgeFail.blockMs`) — 재시작해도 풀린다 |
 | 에이전트 파일 업로드 413 | 32 MB 초과면 Caddy 의 413, 20 MiB~32 MB 면 서버의 413 JSON `{"code":"VALIDATION","message":"Request body is too large"}` — 첨부 전용 고정 문구가 아니다(`docs/plan.md` 8장 이월). 웹과 플러그인은 올리기 전에 크기를 걸러 자기 문구를 낸다 | 파일을 줄인다 |
+| 러너가 `dodok-runner: 설정 파일 오류 — agents[0].workdir: 디렉터리가 없습니다(라벨 …)` 처럼 한 줄 찍고 끝남 | 설정 파일(`~/.dodok-runner/config.json`)이 틀렸다 — 어느 키가 왜 틀렸는지가 그 줄에 있다. 연결은 시도하지 않는다 | 그 키를 고치고 다시 띄운다(「Claude 러너 설치」 4) |
+| 러너가 `서버가 러너 토큰을 거절했습니다(UNAUTHORIZED) — 토큰이 틀렸거나 폐기됐습니다 …` 로 끝남(종료 코드 2) | 토큰 파일의 값이 활성 러너 토큰이 아니다 | 새 러너 토큰 발급 → 토큰 파일 교체 → 다시 띄우기 |
+| 러너가 `서버가 이 러너 연결을 끊었습니다 — 같은 토큰으로 다른 러너가 붙었거나 토큰이 폐기됐습니다` 로 끝남 | 같은 토큰을 두 머신에서 썼거나 연결 페이지에서 폐기했다 | 머신마다 토큰을 따로 발급한다 |
+| 러너가 `서버가 러너를 거절했습니다(PROTOCOL_MISMATCH: …) — 서버와 러너 판본을 맞추세요` 로 끝남 | 서버를 올렸는데 러너가 옛 판이다(또는 그 반대) | 「Claude 러너 설치」 2 로 러너를 다시 받는다 |
+| 러너 에이전트를 멘션하면 「@<에이전트> 실행이 실패했습니다: ADAPTER_UNAVAILABLE」 | 그 에이전트를 알린 러너가 붙어 있지 않다(꺼짐·끊김) | 러너를 띄운 뒤 「다시 실행」 |
+| 「@<에이전트> 실행이 실패했습니다: PROVIDER_AUTH」 | 러너 전용 로그인이 없거나 만료됐다 — 활동 탭의 그 런 오류에 「러너의 Claude 로그인을 확인하세요」 | [R] 에서 「Claude 러너 설치」 3 의 로그인을 다시 |
+| 연결 페이지 러너 카드의 에이전트에 「다른 러너와 id 가 겹쳐 배정되지 않습니다」 | 다른 러너가 먼저 같은 id 를 알렸다 — 뒤 러너의 그 에이전트는 배정되지 않는다(런은 먼저 붙은 러너로 간다) | 한쪽 설정의 `agents[].id` 를 바꾼다 |
 
 ## 보안
 

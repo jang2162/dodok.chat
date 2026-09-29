@@ -1,6 +1,6 @@
 # Phase 4 ③ Claude 러너 — Claude Agent SDK 어댑터 설계
 
-**상태**: 설계 확정(2026-09-27). 계획 `docs/superpowers/plans/2026-09-27-claude-runner.md`(태스크 1~9, 계획 판정 P1~P10).
+**상태**: 설계 확정(2026-09-27), 구현·브라우저 검증·런 0회 하네스 완료(2026-09-29 — 계획 태스크 1~8 과 태스크 9 의 하네스·문서, 하네스 합격 기준 12/12) — 구현이 이 설계와 달라진 것은 「구현과 맞춘 것」 장(계획 판정 P1~P10·판정 R1~R5·M4). 계획 `docs/superpowers/plans/2026-09-27-claude-runner.md`(태스크 1~9), 하네스는 `docs/guides/live-smoke.md` 「Claude 러너 런 0회 하네스」 절, 모델 런 실연(태스크 9 의 나머지)은 같은 문서 「Claude 러너(Phase 4 ③) 실연」 절.
 **범위**:
 - 사람의 머신에서 도는 러너(`@dodok/claude-runner`)가 Claude Agent SDK 로 에이전트를 돌리고, 서버 `/runner` 로 나가는 WSS 하나로 dodok 에 붙는다
 - 서버는 에이전트의 `provider` 로 어댑터를 고른다(`openclaw` · `claude`) — 한 채널에 두 종류 에이전트가 함께 있고 서로 @멘션 릴레이한다
@@ -229,3 +229,71 @@ ADR 0007 「설계에 주는 제약과 추천」의 대응표를 그대로 따�
 - 계정 이메일을 에이전트 문맥에서 빼는 법(ADR 0007 「확인 못 한 것」).
 - 읽기 전용 Bash 자동 허용의 경계, `PreToolUse` 훅으로 dodok 이 묻는 범위를 정하는 길.
 - 러너가 서버 호스트에서 도는 배치(컨테이너 안 러너).
+
+## 12. 구현과 맞춘 것 (2026-09-29)
+
+구현(계획 태스크 1~8)·리뷰·dev:fake 브라우저 검증·런 0회 하네스(계획 태스크 9)에서 이 설계와 달라지거나 설계가 정하지 않은 것을 정한 자리만 모았다. main `aacc979` 기준이다.
+정본 근거는 실행 원장 `.superpowers/sdd/2026-09-27-claude-runner/ledger.md`(git 제외)의 계획 판정 P1~P10·조율자 판정 R1~R5·M4 와, 원장이 가리키는 보고서·리뷰(`p4c-t*`)다. 하네스 결과는 `docs/guides/live-smoke.md` 「Claude 러너 런 0회 하네스」 절, 남은 문제는 `docs/plan.md` 8장 「이월」 한곳에 있다. 각 파일이 왜 그렇게 생겼는지는 그 파일의 머리 주석이 정본이다.
+
+**계약 — `/runner`·어댑터(계획 판정 P1~P10)**
+
+- **P1 — `/runner` 는 Socket.IO 네임스페이스다**(브리지 `/bridge` 와 같은 `io` 서버). 프레임은 이벤트 이름 + ack 이고 **3장 표의 `ping`/`pong` 프레임은 없다** — Socket.IO 하트비트가 그 몫이다. 첨부 HTTP 는 `RUNNER_ATTACHMENTS_PATH = "/runner/attachments"`. 배포는 Caddy 가 `/socket.io/*` 와 `/runner/*` 를 서버로 넘긴다(`infra/Caddyfile`).
+- **P2 — `run.start` 에 `resume` 을 싣지 않는다.** 서버는 그 세션이 CLI 에 실제로 만들어졌는지 모른다(첫 런이 CLI 기동 전에 실패할 수 있다). 러너가 SDK `getSessionInfo` 로 그 `providerSessionId` 의 전사가 작업 디렉터리에 있으면 `resume`, 없으면 `sessionId` 로 연다. SDK 는 요약을 뽑을 수 없는 세션도 「없음」으로 돌려준다 — 그래서 `--session-id` 로 연 CLI 가 「이미 있는 세션」으로 거절하면(스트림 전) **`resume` 으로 한 번 다시 연다**.
+- **P3 — 채널 규칙 틀·턴 사실은 러너 어댑터(서버 쪽)가 만든다.** `run.start` = `InboundDeliver` + `providerSessionId` + `channelRulesAppend` + `turnFacts`(+ 새 세션이면 `sessionTitle`). 문장은 shared `buildChannelRulesAppend`·`buildTurnFacts`·`renderRunnerPrompt` 한곳. 러너 어댑터는 `capabilities().promptEveryRun = true` 라 오케스트레이터가 채널 프롬프트를 **매 런** 싣는다(OpenClaw 는 새 세션에서만). 채널 지시(`promptOverride`)는 `<channel-rules>` 안 「Instructions for you (this agent) in this channel:」 아래, 릴레이 규칙은 관리자가 쓴 글이 아니라 틀 밖 `<relay-rules>` 에 둔다. 규칙 안의 `<` 와 닮은꼴(＜ ﹤ ‹ ˂ ⟨ 〈 〈)은 표식이든 아니든 모두 `&lt;` 로, 보이지 않는 서식 글자(`\p{Cf}`)는 지운다 — 대가로 규칙의 평범한 `a < b`·책 제목 괄호 〈…〉 도 바뀌어 모델에 간다. 턴 사실·프롬프트 머리는 플러그인 헤더와 같은 한국어 꼴이고, 프롬프트에 `보낸 사람:` 줄을 더했다(참여자·릴레이 규칙은 한 요청에 두 번 싣지 않게 프롬프트에서 뺐다). `InboundDeliver` 에 릴레이 깊이가 없어 턴 사실에 `릴레이:` 줄은 실리지 않는다.
+- **P4 — Claude 세션 UUID 는 오케스트레이터가 정한다.** `capabilities().serverSessionIds = true` 인 어댑터면 `agent_sessions.provider_session_id` 가 비었을 때 `randomUUID()` 를 쓰고 `send(input, { providerSessionId })` 로 넘긴다. 「새 대화」는 그 열을 비운다 — 앞 세션 전사는 러너 머신의 `CLAUDE_CONFIG_DIR` 에 남는다.
+- **P5 — 승인 기한 타이머는 러너 어댑터가 쥔다**(6장의 「서버가 정한다」를 어댑터 자리로). `ProviderApproval.expiresAt = now + 10분`, 그때까지 결정이 없으면 러너에 `approval.resolve { decision: "deny" }` 를 보내고 `expired`(+`timeout`)로 갱신한다. 서버의 기존 만료 감시도 같은 시각에 돈다.
+- **P6 — 승인 결정 전 「Gateway 연결」 검사는 어댑터 안으로.** OpenClaw 어댑터의 `resolveApproval` 이 `ADAPTER_UNAVAILABLE` 로 던지고, 러너 어댑터는 그 승인의 러너가 없으면 같은 코드로 던진다. 러너 어댑터의 판정 순서: 모름 `NOT_FOUND` → 만료 `EXPIRED` → 이미 결정됨이면 그 스냅숏 → 러너 끊김 `ADAPTER_UNAVAILABLE` → 철회됨 `CONFLICT` → 허용 목록 밖 결정 `VALIDATION`.
+- **P7 — `AdapterStatus` 는 `provider` 판별 유니온**(`{ provider: "openclaw", gateway, bridge }` | `{ provider: "claude", runners: { connected, tokens } }`). wire `adapter.status` 는 어댑터마다 따로 나가고, 웹의 연결 점·배너는 `openclaw` 만 본다.
+- **P8 — usage 이벤트 이름은 `dodok.usage`**, `RunUsage.costKind?: "api" | "subscription_estimate"`. 운영 요약이 토큰·금액을 더하는 제공자는 **붙은 어댑터 ∩ 에이전트가 등록된 제공자 ∩ `USAGE_TRUSTED_PROVIDERS`(`claude`)** 다 — 러너 어댑터는 모든 배포에 붙으므로 「붙음」만으로 가르면 OpenClaw 만 쓰는 배포에서 「측정 불가」가 사라진다.
+- **P9 — 에이전트 등록은 서버에서 목록 검사를 하지 않는다**(2장 「붙은 러너가 알린 에이전트 중에서만」은 웹이 `GET /agents/discover?provider=claude` 목록으로 고르게 하는 것). `POST /agents` 의 `provider` 는 `"openclaw" | "claude"`, `discover` 의 모르는 `provider` 는 400, claude 어댑터가 없으면 503 `ADAPTER_UNAVAILABLE`. 웹의 트리거 이름은 「에이전트 가져오기」.
+- **P10 — `BridgeAuthGuard` 는 shared 로 옮겼다**(가져오는 것이 없는 순수 클래스). `/bridge`·`/runner` 핸드셰이크와 두 첨부 HTTP 가 **한 카운터**를 쓰고, 운영 사건 `bridge_auth_blocked` 의 `detail.path`(`"bridge"`|`"runner"`)로 가른다(key 는 그대로 `bridge`).
+- **서버는 OpenClaw 어댑터 없이는 부팅하지 않는다** — 설정 마법사·운영 Gateway 줄·Gateway 감시가 OpenClaw 어댑터를 전제한다. OpenClaw 없는 배포는 범위 밖. 어댑터가 없는 `provider` 의 에이전트 런은 만들자마자 `ADAPTER_UNAVAILABLE` 로 닫고 「다시 실행」을 붙인다.
+
+**런의 끝과 중지(조율자 판정 R1)**
+
+- **러너는 수명 이벤트를 `run.event` 로 내지 않는다.** 어댑터가 `run.event` 를 허용 목록(TEXT_MESSAGE_*·TOOL_CALL_*·STEP_*·CUSTOM — CUSTOM 중 `dodok.usage`·`openclaw.usage` 는 막음)으로 거르고 `event.runId` 를 바깥 `runId` 와 대조한다. 그래서 4.3 의 「`interrupt()` 로 끝난 턴은 `RUN_ABORTED`」는 **`run.final { text: "", stopReason: "aborted" }`** 로, 「`result` 의 `error_*` 는 `RUN_ERROR`」는 **`run.error`** 로 알린다. 어댑터는 `stopReason: "aborted"` 이거나 서버가 abort 한 런이면 메시지 없이 `RUN_ABORTED { by: "user" }` + 종료 신호를 낸다. 중지한 런의 `outbound.post` 는 `FORBIDDEN`(최종 답도 올리지 않는 런에 중간 글만 올라가지 않게).
+- 최종 답은 `dodok.usage` → 정본 저장(outboundId `runner-final:<runId>`, 트리거에 `replyTo`) → 종료 신호 순이다 — 정본이 먼저 있어 곧바로 `done`. 빈 답은 메시지 없이 끝난다. `TOOL_CALL_END` 는 입력 블록이 닫힌 것뿐이라 오케스트레이터의 `tool_end` 신호는 `TOOL_CALL_RESULT` 에서 낸다. `TOOL_CALL_ARGS` 는 경로를 가리려고 델타마다가 아니라 도구 블록이 끝날 때 한 번에 낸다.
+- ack 를 기다리는 중에 러너가 끊기면 `send` 가 15초를 기다리지 않고 닫는다. 설정에 없는 에이전트·같은 세션 겹침은 ack `dispatch` 뒤 `run.error`(`NOT_FOUND`·`CONFLICT`).
+
+**러너 연결·끊김(조율자 판정 R4·M4, 러너 태스크의 달라진 것)**
+
+- **3장 `hello.reject` 의 「러너는 사유를 출력하고 종료한다」는 `UNAUTHORIZED`·`PROTOCOL_MISMATCH` 만이다.** `RATE_LIMITED`(인증 실패 가드 차단 — 풀리는 차단)는 끝내지 않고 백오프로 다시 붙는다. 핸드셰이크 거절 사유는 가드 차단 `RATE_LIMITED`, 토큰 틀림 `UNAUTHORIZED` 로 가른다(브리지는 둘 다 `UNAUTHORIZED`).
+- **4.5 의 「서버 연결이 끊기면 재접속」은 전송 끊김(transport close·ping timeout — 서버 재시작·네트워크·덮개)만이다.** 서버가 스스로 끊은 연결(`io server disconnect` — 같은 토큰의 새 러너, 토큰 폐기)이면 러너는 사유를 찍고 종료 코드 2 로 끝난다 — 같은 토큰의 두 러너가 서로를 끝없이 밀어내지 않게. 그래서 **R4**: 러너 어댑터는 서버 종료·hello 타임아웃에는 전송만 닫아(러너가 다시 붙는다) 교체·폐기만 `disconnect(true)` 로 끊는다. 대가: 러너 쪽에서는 교체와 폐기를 가르지 못한다(문구 하나).
+- **같은 토큰 교체는 hello 때**다 — 뒤 연결의 hello 가 실패하면 앞 연결이 산다. **M4**: 교체된 러너는 옛 러너의 자리(에이전트 배정 순서)를 잇는다 — 순간 재접속 한 번에 충돌해 있던 다른 러너로 에이전트가 넘어가(세션 전사가 없는 머신) 맥락이 끊기지 않게. 5장 「먼저 러너가 끊기면 뒤가 이어받는다」는 교체가 아닌 끊김에만 선다.
+- **러너를 SIGINT·SIGTERM 으로 끄면** 도는 런마다 `interrupt()` 를 걸고 `run.final aborted` 를 낼 때까지 최대 5초 기다린 뒤 끊는다 — 그 런은 서버에서 `ADAPTER_UNAVAILABLE` 이 아니라 메시지 없는 중지(`RUN_ABORTED by: "user"`)로 닫힌다. 대기열의 런도 중지로 닫힌다. 두 번째 신호는 기다리지 않는다.
+- **`runner_down`**(5장)은 `watchConnections` 가 아니라 `watchRunners` 가 맡는다 — 규칙은 **이 서버 프로세스에서 붙은 적 있는 토큰**이 `DISCONNECT_EVENT_MS`(60초) 넘게 끊기면 열고(key 토큰 id), 붙으면 닫는다(앞 프로세스가 연 줄도). 끊긴 사이 폐기되면 남기지 않는다. 서버 재시작 뒤 한 번도 안 붙은 토큰은 사건이 없다.
+- **R3 — 러너 어댑터 `supports(agentId, cap)`** 는 그 에이전트를 가진 붙은 러너가 있고 그 러너가 `cap` 을 알리지 않았을 때만 false 다. 러너가 없으면 true — `send` 가 `ADAPTER_UNAVAILABLE` 로 닫게(없음이 `PLUGIN_OUTDATED` 문구로 닫혀 원인을 잘못 가리키지 않게).
+- 연결 세대 — 끊긴 연결에서 시작한 런의 이벤트는 다시 붙은 연결로 보내지 않는다(서버는 그 런을 이미 닫았다). 재접속은 socket.io-client 옵션이 아니라 러너가 직접 백오프(1초~30초)한다.
+
+**에이전트 id(조율자 판정 R2)** — 같은 워크스페이스에서 `providerAgentId` 는 **제공자를 가로질러** 유일하다(대소문자 무시). 등록이 다른 제공자의 같은 id 를 409 로 막고 웹은 고정 문구 「이미 등록된 id 입니다 — 다른 제공자의 에이전트도 같은 id 를 쓸 수 없습니다」. 까닭: 세션 키(`dodokSessionKey`)에 제공자가 없어 세션 큐·승인 상관이 섞인다. 러너 설정의 id 는 `isRegistrableAgentId`(소문자)로 검사한다.
+
+**러너 — 설정·옵션·경로 가림**
+
+- **env 허용 목록**(4.2)에 프록시(`HTTPS_PROXY`·`HTTP_PROXY`·`NO_PROXY` 대·소문자)·`NODE_EXTRA_CA_CERTS`·`SSL_CERT_FILE` 을 더했다 — 사내 프록시·사설 CA 뒤에서 CLI 가 API 에 닿으려면 필요하고 비밀이 아니다(프록시 URL 에 자격을 넣은 설정이면 그 자격도 CLI 로 간다). `ANTHROPIC_*` 는 넘기지 않는다.
+- **`costKind` 는 `accountInfo` 가 아니라 `system/init` 의 `apiKeySource`** 로 가른다(3장). `accountInfo()` 는 CLI 를 띄워야 부를 수 있다. `ANTHROPIC_API_KEY`·`apiKeyHelper`·`/login managed key` 면 `api`, 그 밖(`none` — claude.ai 로그인)이면 `subscription_estimate`, init 을 못 봤으면 `subscription_estimate`.
+- **`alwaysLoad`** 는 서버 설정 필드가 아니라 `createSdkMcpServer({ alwaysLoad: true })` 가 도구마다 `_meta` 로 싣는다(SDK 0.3.283). SDK import 는 `packages/claude-runner/src/sdk.ts` 한 파일이다.
+- **답 글도 가린다.** 러너는 델타·최종 답·`post` 의 `text`·카드 안 글·도구 인자·도구 결과·오류 문구에서 작업 디렉터리 경로를 상대 경로로, 밖을 `<작업 디렉터리 밖>` 으로 바꾼다(`mask.ts`). 델타는 공백 경계로 쥐었다 내므로 공백 없이 긴 글은 늦게 보인다. 가린 표지가 원문보다 길어 카드 스키마를 넘기면 보내지 않고 도구 결과로 알린다.
+- 설정 스키마는 strict(모르는 키·본문 `token` 거절), `serverUrl` 은 http/https 만, 같은 에이전트 id 둘은 거절, `tokenFile` 을 적었는데 못 읽으면 env 로 넘어가지 않는다. `@dodok/shared` 는 번들에 들어가므로 러너 `devDependencies`. 번들 해시는 굽지 않고 런타임에 번들 파일을 읽어 잰다.
+- hello `capabilities` 는 `threads`·`interrupt`·`approvals`·`attachments`.
+
+**`mcp__dodok__post`·첨부(조율자 판정 R5, 러너 태스크의 달라진 것)**
+
+- **`files` 는 작업 디렉터리 안을 가리키는 절대 경로도 받는다**(4.4 「상대 경로만」의 글자와 다름) — CLI 의 파일 도구가 절대 경로를 써서 모델도 그렇게 줄 공산이 크다. 경계는 같다(글자 + `realpath`).
+- **파일 경계는 경로 기준이고 파일 보내기는 macOS·Linux 만이다.** 모든 파일을 검사한 뒤 올리기 직전에 한 번에 열고, 연 fd 가 `realpath` 그대로의 경로(어느 성분도 링크가 아님)에서 열렸는지 macOS 는 `O_NOFOLLOW_ANY`, Linux 는 `/proc/self/fd` 로 보고 dev·ino 를 대조한다. 둘 다 없는 플랫폼은 `files` 를 거절한다(카드·글은 된다). 하드 링크·복사는 막지 않는다. 하나라도 거절이면 아무것도 올리지 않는다.
+- `outbound.post` 의 `outboundId` 는 `runner-post:<uuid>`, 채널·에이전트·세션·스레드·런은 `run.start.deliver` 그대로 — 어댑터가 열린 런과 대조해 다른 채널·남의 런이면 `FORBIDDEN`. 파일 MIME 힌트는 서버가 힌트를 받는 글 종류(`.txt`·`.md`·`.log`·`.json`·`.csv`·`.zip`)만.
+- **R5 — 러너 토큰의 첨부 GET 은 그 러너에 열린 런의 트리거 첨부와 그 토큰이 올린 첨부만** 읽는다(나머지는 없는 id 와 같은 404). 러너는 사람 머신이라 브리지보다 신뢰가 한 단계 낮다. 러너가 올린 파일은 업로더 `bridge` + `uploader_id` = 토큰 id 로 남는다. 대가: 런이 끝난 뒤에는 그 런의 첨부를 다시 못 받는다(러너는 런 중에만 받는다).
+- 이미지는 글보다 앞에 두고(Messages API 권고), 못 받은 장(5 MiB 초과·SVG·서버 첨부가 아닌 URL 포함)은 빼고 본문 끝에 「첨부 이미지 N장을 불러오지 못했습니다」. 10장 상한을 러너도 지킨다.
+
+**승인(6장 구체화)**
+
+- 서버 쪽 승인 id 는 `runner:<토큰 id>:<러너 id>` — `providerApprovalId` 유일 인덱스가 제공자를 가리지 않아 러너가 고른 id 가 다른 행을 덮지 않게. 러너에 보내는 `approval.resolve` 는 원래 id. 심각도는 `warning`.
+- 철회(런 중지·러너 끊김)는 `status: "cancelled", reason: "run-aborted"`, 기한 만료만 `expired`+`deny`+`timeout`. 런이 끝나면 남은 승인을 `cancelled` 로 닫는다.
+- 러너는 CLI 의 취소 요청이 없어도 런 signal 로 카드를 거둔다(CLI 가 늦거나 반응하지 않을 때 승인 대기에 매달리지 않게). `suppressAlwaysAllowRule` 이면 「항상 허용」을 내지 않는다.
+- 요약(6장)은 400자에서 앞·뒤를 남기고 가운데를 생략 표시로 줄이고(JSON 은 200자), 제어·양방향 서식·보이지 않는 폭 글자(Cc·Cf(ZWJ 제외)·Zl·Zp·공백 아닌 Zs·한글 채움·점자 빈칸)를 `\u{…}` 로, 줄바꿈을 `⏎` 로 보인다 — 명령 꼬리를 줄·폭으로 숨기지 못하게. 도구에 넘기는 입력은 바뀌지 않는다. 웹 카드는 요약을 줄바꿈·`break-all` 로 그린다.
+
+**웹·운영(7장 구체화)**
+
+- 운영 런 표의 구독 환산 꼬리표는 **「환산 포함」**이다(7장의 「환산값」) — 같은 합에 api 청구분이 섞일 수 있어 합 전체를 환산값이라 부르지 않는다(`OpsRunsRow.costEstimated`). 믿는 런만 더한 행은 **「런 m/n개만」**(서버 `measuredRuns`), 믿는 런이 없는 행은 「측정 불가」. 행에 제공자 칸은 없다.
+- 운영 화면 상태 카드의 러너 줄은 「<n>대 붙음 / 토큰 <m>개」이고 강조하지 않는다(러너는 사람 PC 라 꺼져 있을 수 있다 — 60초 넘는 끊김은 `runner_down`).
+- 러너 토큰 발급 결과 `IssueRunnerTokenResult` 에 `runnerConfig { serverUrl, tokenFile }` — `serverUrl` 은 `BRIDGE_PUBLIC_URL`(없으면 `APP_ORIGIN`)의 오리진. 설치 명령은 `npm install -g ./dodok-claude-runner-<sha 12자>.tgz`.
+- 8장 `PROVIDER_AUTH` 의 「러너의 Claude 로그인을 확인하세요」는 런 오류 문구(활동 탭)에 있고, 채널 run_error 카드는 다른 코드와 같이 「@<에이전트> 실행이 실패했습니다: PROVIDER_AUTH」다 — 카드 본문에 사유를 쓰는 것은 이월.
