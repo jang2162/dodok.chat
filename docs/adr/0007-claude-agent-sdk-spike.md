@@ -325,7 +325,7 @@ SDK 기본값은 `{ ...process.env }`. 러너가 가진 브리지 토큰 같은 
 3. **읽기 전용 Bash 자동 허용의 경계** — CLI 가 어떤 명령을 묻지 않는지(이 스파이크는 `git status`·`git log`·`sleep … && echo` 가 묻지 않고, `touch` 가 물었다는 것만 안다). `permissionMode: "dontAsk"`·`PreToolUse` 훅과의 조합.
 4. **스크래치 `HOME` 에서의 로그인**과 `CLAUDE_SECURESTORAGE_CONFIG_DIR=""` 로 기본 로그인을 공유하는 길.
 5. **`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` 가 백그라운드 실행을 막는가**, 계정 이메일(`session_context`)을 문맥에서 뺄 수 있는가.
-6. **대화형·예약 도구** — 러너 에이전트의 `tools[]` 에 `AskUserQuestion`·`Agent`·`Workflow`·`ScheduleWakeup`·`Skill` 이 그대로 있다(하네스 요청 본문). 모델이 `AskUserQuestion`(4.2 — `request_user_dialog` 경로, 기본 5분)이나 예약 도구를 부르면 러너 런 안에서 어떻게 끝나는지는 재지 않았다.
+6. **대화형·예약 도구** — 러너 에이전트의 `tools[]` 에 `AskUserQuestion`·`Agent`·`Workflow`·`ScheduleWakeup`·`Skill` 이 그대로 있다(하네스 요청 본문). 모델이 `AskUserQuestion`(4.2 — `request_user_dialog` 경로, 기본 5분)이나 예약 도구를 부르면 러너 런 안에서 어떻게 끝나는지는 재지 않았다. 러너는 재는 대신 `AskUserQuestion`·`PushNotification`·예약·원격 실행 도구를 늘 막는다(`packages/claude-runner/src/run.ts` 의 `RUNNER_DISALLOWED_TOOLS`) — `Agent`·`Workflow`·`Skill` 은 그대로다.
 7. **러너 프로세스가 갑자기 죽을 때의 실제 비용** — 하네스에서 러너를 `SIGKILL` 로 죽이자 CLI 가 고아로 남아 그 턴을 끝까지 돌고 답을 전사에 남겼다(가짜 API 스트림은 끊기지 않았다). 실제 모델에서 그 턴이 얼마나 더 돌고 청구되는지는 재지 않았다.
 
 ## 9. 구현이 고른 것

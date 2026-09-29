@@ -254,13 +254,17 @@ ADR 0007 「설계에 주는 제약과 추천」의 대응표를 그대로 따�
 - **러너는 수명 이벤트를 `run.event` 로 내지 않는다.** 어댑터가 `run.event` 를 허용 목록(TEXT_MESSAGE_*·TOOL_CALL_*·STEP_*·CUSTOM — CUSTOM 중 `dodok.usage`·`openclaw.usage` 는 막음)으로 거르고 `event.runId` 를 바깥 `runId` 와 대조한다. 그래서 4.3 의 「`interrupt()` 로 끝난 턴은 `RUN_ABORTED`」는 **`run.final { text: "", stopReason: "aborted" }`** 로, 「`result` 의 `error_*` 는 `RUN_ERROR`」는 **`run.error`** 로 알린다. 어댑터는 `stopReason: "aborted"` 이거나 서버가 abort 한 런이면 메시지 없이 `RUN_ABORTED { by: "user" }` + 종료 신호를 낸다. 중지한 런의 `outbound.post` 는 `FORBIDDEN`(최종 답도 올리지 않는 런에 중간 글만 올라가지 않게).
 - 최종 답은 `dodok.usage` → 정본 저장(outboundId `runner-final:<runId>`, 트리거에 `replyTo`) → 종료 신호 순이다 — 정본이 먼저 있어 곧바로 `done`. 빈 답은 메시지 없이 끝난다. `TOOL_CALL_END` 는 입력 블록이 닫힌 것뿐이라 오케스트레이터의 `tool_end` 신호는 `TOOL_CALL_RESULT` 에서 낸다. `TOOL_CALL_ARGS` 는 경로를 가리려고 델타마다가 아니라 도구 블록이 끝날 때 한 번에 낸다.
 - ack 를 기다리는 중에 러너가 끊기면 `send` 가 15초를 기다리지 않고 닫는다. 설정에 없는 에이전트·같은 세션 겹침은 ack `dispatch` 뒤 `run.error`(`NOT_FOUND`·`CONFLICT`).
+- **러너 대기열에 선 런은 `queuedMs`(120초)로 닫지 않는다.** ack 에 `queuedPosition` 이 있으면 어댑터가 `send` 결과에 `queued: true`(`AdapterSendResult` — 브리지 wire 의 `InboundDeliverResult` 에는 없다)를 싣고, 오케스트레이터는 그 런을 런 상한(`runMs`)으로 잰다 — 앞 런이 몇 분 도는 것이 흔해서다. 시작하면 런 상한이 새로 걸린다. 러너가 끊기거나 토큰이 폐기되면 어댑터가 `ADAPTER_UNAVAILABLE` 로 닫는다.
+- **최종 답은 어댑터가 10만 자(UTF-16, 코드 포인트 경계) 안으로 자르고 `(길어서 잘렸습니다)` 를 붙인다** — `RunnerRunFinal.text` 에는 상한이 없고, 넘치면 정본 저장과 스냅숏이 같은 글로 실패해 답이 조용히 사라진다. 러너가 아니라 어댑터에서 자르는 까닭은 어느 판본의 러너가 붙어도 막히게 하려는 것이다. 멘션 토큰화(`@핸들` → `<@a:…>`)로 늘어나는 몫은 따지지 않는다.
+- **`dodok.usage` 는 비용·토큰 중 하나라도 있을 때만 낸다** — 러너가 CLI 를 띄우기 전에 멈춘 런(대기열째 중지)의 final 은 `costKind` 만 기본값(`subscription_estimate`)이라, 그대로 내면 API 키 러너 행에 「환산 포함」이 켜진다.
 
 **러너 연결·끊김(조율자 판정 R4·M4, 러너 태스크의 달라진 것)**
 
-- **3장 `hello.reject` 의 「러너는 사유를 출력하고 종료한다」는 `UNAUTHORIZED`·`PROTOCOL_MISMATCH` 만이다.** `RATE_LIMITED`(인증 실패 가드 차단 — 풀리는 차단)는 끝내지 않고 백오프로 다시 붙는다. 핸드셰이크 거절 사유는 가드 차단 `RATE_LIMITED`, 토큰 틀림 `UNAUTHORIZED` 로 가른다(브리지는 둘 다 `UNAUTHORIZED`).
+- **3장 `hello.reject` 의 거절 코드는 `PROTOCOL_MISMATCH` 하나다**(`RunnerHelloResult`). 토큰 틀림 `UNAUTHORIZED`·가드 차단 `RATE_LIMITED` 는 hello 가 아니라 핸드셰이크 미들웨어가 `connect_error` 로 거절한다(브리지는 둘 다 `UNAUTHORIZED`). 러너는 `PROTOCOL_MISMATCH`·`UNAUTHORIZED` 면 끝나고, `RATE_LIMITED`(풀리는 차단)와 계약 밖의 hello 응답은 끝내지 않고 백오프로 다시 붙는다.
 - **4.5 의 「서버 연결이 끊기면 재접속」은 전송 끊김(transport close·ping timeout — 서버 재시작·네트워크·덮개)만이다.** 서버가 스스로 끊은 연결(`io server disconnect` — 같은 토큰의 새 러너, 토큰 폐기)이면 러너는 사유를 찍고 종료 코드 2 로 끝난다 — 같은 토큰의 두 러너가 서로를 끝없이 밀어내지 않게. 그래서 **R4**: 러너 어댑터는 서버 종료·hello 타임아웃에는 전송만 닫아(러너가 다시 붙는다) 교체·폐기만 `disconnect(true)` 로 끊는다. 대가: 러너 쪽에서는 교체와 폐기를 가르지 못한다(문구 하나).
 - **같은 토큰 교체는 hello 때**다 — 뒤 연결의 hello 가 실패하면 앞 연결이 산다. **M4**: 교체된 러너는 옛 러너의 자리(에이전트 배정 순서)를 잇는다 — 순간 재접속 한 번에 충돌해 있던 다른 러너로 에이전트가 넘어가(세션 전사가 없는 머신) 맥락이 끊기지 않게. 5장 「먼저 러너가 끊기면 뒤가 이어받는다」는 교체가 아닌 끊김에만 선다.
 - **러너를 SIGINT·SIGTERM 으로 끄면** 도는 런마다 `interrupt()` 를 걸고 `run.final aborted` 를 낼 때까지 최대 5초 기다린 뒤 끊는다 — 그 런은 서버에서 `ADAPTER_UNAVAILABLE` 이 아니라 메시지 없는 중지(`RUN_ABORTED by: "user"`)로 닫힌다. 대기열의 런도 중지로 닫힌다. 두 번째 신호는 기다리지 않는다.
+- **러너가 스스로 끝나는 경로(서버가 끊음·`UNAUTHORIZED`·hello 거절)도 같은 유예를 쓴다** — 도는 런에 `interrupt()` 를 걸고 끝날 때까지 최대 5초 기다린 뒤 종료 코드 2. 곧바로 끝나면 interrupt 가 CLI 에 닿기 전에 러너가 끝나 CLI 가 고아로 남아 그 턴을 이어 간다(토큰 폐기 뒤에도 미리 허용된 도구가 돈다). 서버는 그 런을 이미 닫았으므로 이때의 final 은 버려진다.
 - **`runner_down`**(5장)은 `watchConnections` 가 아니라 `watchRunners` 가 맡는다 — 규칙은 **이 서버 프로세스에서 붙은 적 있는 토큰**이 `DISCONNECT_EVENT_MS`(60초) 넘게 끊기면 열고(key 토큰 id), 붙으면 닫는다(앞 프로세스가 연 줄도). 끊긴 사이 폐기되면 남기지 않는다. 서버 재시작 뒤 한 번도 안 붙은 토큰은 사건이 없다.
 - **R3 — 러너 어댑터 `supports(agentId, cap)`** 는 그 에이전트를 가진 붙은 러너가 있고 그 러너가 `cap` 을 알리지 않았을 때만 false 다. 러너가 없으면 true — `send` 가 `ADAPTER_UNAVAILABLE` 로 닫게(없음이 `PLUGIN_OUTDATED` 문구로 닫혀 원인을 잘못 가리키지 않게).
 - 연결 세대 — 끊긴 연결에서 시작한 런의 이벤트는 다시 붙은 연결로 보내지 않는다(서버는 그 런을 이미 닫았다). 재접속은 socket.io-client 옵션이 아니라 러너가 직접 백오프(1초~30초)한다.
@@ -275,12 +279,13 @@ ADR 0007 「설계에 주는 제약과 추천」의 대응표를 그대로 따�
 - **답 글도 가린다.** 러너는 델타·최종 답·`post` 의 `text`·카드 안 글·도구 인자·도구 결과·오류 문구에서 작업 디렉터리 경로를 상대 경로로, 밖을 `<작업 디렉터리 밖>` 으로 바꾼다(`mask.ts`). 델타는 공백 경계로 쥐었다 내므로 공백 없이 긴 글은 늦게 보인다. 가린 표지가 원문보다 길어 카드 스키마를 넘기면 보내지 않고 도구 결과로 알린다.
 - 설정 스키마는 strict(모르는 키·본문 `token` 거절), `serverUrl` 은 http/https 만, 같은 에이전트 id 둘은 거절, `tokenFile` 을 적었는데 못 읽으면 env 로 넘어가지 않는다. `@dodok/shared` 는 번들에 들어가므로 러너 `devDependencies`. 번들 해시는 굽지 않고 런타임에 번들 파일을 읽어 잰다.
 - hello `capabilities` 는 `threads`·`interrupt`·`approvals`·`attachments`.
+- **러너는 `AskUserQuestion`·`PushNotification` 과 예약·원격 실행 도구(`ScheduleWakeup`·`CronCreate`·`CronDelete`·`CronList`·`RemoteTrigger`)를 늘 막는다**(`RUNNER_DISALLOWED_TOOLS`, 설정의 `disallowedTools` 와 합침). 앞의 둘은 채널이 아니라 러너 머신에 묻거나 알리고(`AskUserQuestion` 은 승인 카드로 뜨고 허용해도 답이 없다), 예약 도구는 턴이 끝난 뒤에 돌아 결과가 채널에 닿지 않는다. 계획 모드 도구는 `permissionMode: "plan"` 이 쓰므로 두고, `Monitor`·`Agent`·`Skill` 도 둔다.
 
 **`mcp__dodok__post`·첨부(조율자 판정 R5, 러너 태스크의 달라진 것)**
 
 - **`files` 는 작업 디렉터리 안을 가리키는 절대 경로도 받는다**(4.4 「상대 경로만」의 글자와 다름) — CLI 의 파일 도구가 절대 경로를 써서 모델도 그렇게 줄 공산이 크다. 경계는 같다(글자 + `realpath`).
 - **파일 경계는 경로 기준이고 파일 보내기는 macOS·Linux 만이다.** 모든 파일을 검사한 뒤 올리기 직전에 한 번에 열고, 연 fd 가 `realpath` 그대로의 경로(어느 성분도 링크가 아님)에서 열렸는지 macOS 는 `O_NOFOLLOW_ANY`, Linux 는 `/proc/self/fd` 로 보고 dev·ino 를 대조한다. 둘 다 없는 플랫폼은 `files` 를 거절한다(카드·글은 된다). 하드 링크·복사는 막지 않는다. 하나라도 거절이면 아무것도 올리지 않는다.
-- `outbound.post` 의 `outboundId` 는 `runner-post:<uuid>`, 채널·에이전트·세션·스레드·런은 `run.start.deliver` 그대로 — 어댑터가 열린 런과 대조해 다른 채널·남의 런이면 `FORBIDDEN`. 파일 MIME 힌트는 서버가 힌트를 받는 글 종류(`.txt`·`.md`·`.log`·`.json`·`.csv`·`.zip`)만.
+- `outbound.post` 의 `outboundId` 는 `runner-post:<uuid>` — 계약(`RunnerOutboundPost`)이 접두사 `RUNNER_POST_ID_PREFIX` 를 강제하고 아니면 `VALIDATION`(최종 답 `runner-final:<runId>` 를 먼저 써서 막거나 다른 메시지의 `external_id` 로 그 id 를 돌려받지 못하게). 채널·에이전트·세션·스레드·런은 `run.start.deliver` 그대로 — 어댑터가 열린 런과 대조해 다른 채널·남의 런이면 `FORBIDDEN`. 파일 MIME 힌트는 서버가 힌트를 받는 글 종류(`.txt`·`.md`·`.log`·`.json`·`.csv`·`.zip`)만.
 - **R5 — 러너 토큰의 첨부 GET 은 그 러너에 열린 런의 트리거 첨부와 그 토큰이 올린 첨부만** 읽는다(나머지는 없는 id 와 같은 404). 러너는 사람 머신이라 브리지보다 신뢰가 한 단계 낮다. 러너가 올린 파일은 업로더 `bridge` + `uploader_id` = 토큰 id 로 남는다. 대가: 런이 끝난 뒤에는 그 런의 첨부를 다시 못 받는다(러너는 런 중에만 받는다).
 - 이미지는 글보다 앞에 두고(Messages API 권고), 못 받은 장(5 MiB 초과·SVG·서버 첨부가 아닌 URL 포함)은 빼고 본문 끝에 「첨부 이미지 N장을 불러오지 못했습니다」. 10장 상한을 러너도 지킨다.
 
@@ -290,6 +295,8 @@ ADR 0007 「설계에 주는 제약과 추천」의 대응표를 그대로 따�
 - 철회(런 중지·러너 끊김)는 `status: "cancelled", reason: "run-aborted"`, 기한 만료만 `expired`+`deny`+`timeout`. 런이 끝나면 남은 승인을 `cancelled` 로 닫는다.
 - 러너는 CLI 의 취소 요청이 없어도 런 signal 로 카드를 거둔다(CLI 가 늦거나 반응하지 않을 때 승인 대기에 매달리지 않게). `suppressAlwaysAllowRule` 이면 「항상 허용」을 내지 않는다.
 - 요약(6장)은 400자에서 앞·뒤를 남기고 가운데를 생략 표시로 줄이고(JSON 은 200자), 제어·양방향 서식·보이지 않는 폭 글자(Cc·Cf(ZWJ 제외)·Zl·Zp·공백 아닌 Zs·한글 채움·점자 빈칸)를 `\u{…}` 로, 줄바꿈을 `⏎` 로 보인다 — 명령 꼬리를 줄·폭으로 숨기지 못하게. 도구에 넘기는 입력은 바뀌지 않는다. 웹 카드는 요약을 줄바꿈·`break-all` 로 그린다.
+
+**드러나는 것(5장)** — 연결 페이지 러너 블록과 `docs/guides/deploy.md` 「Claude 러너 설치」 절의 「드러나는 것」은 **셋**이다. 셋째: 러너 토큰 하나로 워크스페이스의 모든 Claude 러너 에이전트 id 를 맡을 수 있다(에이전트는 토큰에 묶이지 않고 먼저 알린 러너가 맡는다) — 토큰은 믿는 머신에만 준다.
 
 **웹·운영(7장 구체화)**
 
