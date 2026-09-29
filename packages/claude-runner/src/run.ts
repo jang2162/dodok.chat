@@ -55,6 +55,23 @@ const ERROR_MESSAGE_MAX = 2000;
 // system/init 의 apiKeySource — 'none' 은 claude.ai 로그인(구독)이다. 구독의 달러는 청구액이 아니라 공시 단가 환산(ADR 0007 4.8)
 const API_KEY_SOURCES = new Set(["ANTHROPIC_API_KEY", "apiKeyHelper", "/login managed key"]);
 
+/**
+ * 러너 에이전트에 늘 막는 도구 — 설정의 disallowedTools 와 합친다(최종 리뷰 P2). 이름은 번들 CLI 바이너리에서 `grep -a "\"<이름>\""` 로 확인한다(SDK 를 올리면 다시 본다).
+ * AskUserQuestion 은 채널이 아니라 CLI 의 대화 상자에 묻고(승인 카드로 뜨고 허용해도 답이 없다 — ADR 0007 「확인 못 한 것」 6),
+ * PushNotification 은 채널 밖 러너 머신 주인에게 알린다. 예약·원격 실행 도구는 턴이 끝난 뒤 세션을 다시 깨우거나 러너 밖에서 도는데,
+ * 러너는 턴마다 CLI 를 닫으므로 그 결과가 채널에 닿지 않는다. 계획 모드 도구는 permissionMode "plan" 이 쓰므로 두고,
+ * Monitor 는 한 턴 안에서도 쓸모가 있어 둔다
+ */
+export const RUNNER_DISALLOWED_TOOLS: readonly string[] = [
+  "AskUserQuestion",
+  "PushNotification",
+  "ScheduleWakeup",
+  "CronCreate",
+  "CronDelete",
+  "CronList",
+  "RemoteTrigger",
+];
+
 export function buildQueryOptions(
   agent: ResolvedAgent,
   start: RunnerRunStart,
@@ -81,7 +98,7 @@ export function buildQueryOptions(
     permissionMode: agent.permissionMode,
     // dodok 도구는 늘 허용 — 승인 콜백은 입력 검증보다 먼저 와서 틀린 입력에도 카드가 뜬다(ADR 0007 4.2)
     allowedTools: [...new Set([...agent.allowedTools, POST_TOOL_FULL_NAME])],
-    disallowedTools: agent.disallowedTools,
+    disallowedTools: [...new Set([...RUNNER_DISALLOWED_TOOLS, ...agent.disallowedTools])],
     // sessionId 와 resume 은 함께 못 쓴다. title 을 주면 새 세션 제목을 짓는 보조 모델 호출이 없어진다(ADR 0007 4.8)
     ...(deps.resume
       ? { resume: start.providerSessionId }

@@ -116,6 +116,8 @@ async function setup(
     token?: string;
     stopWaitMs?: number;
     reject?: FakeServer["reject"];
+    /** onFatal 이 불린 그 순간을 보려고 — fatal 목록에 넣은 뒤 부른다 */
+    onFatal?: (code: number) => void;
   } = {},
 ) {
   const server = await startFakeServer();
@@ -146,7 +148,10 @@ async function setup(
       warn: (m) => logs.push(m),
       error: (m) => logs.push(m),
     },
-    onFatal: (code) => fatal.push(code),
+    onFatal: (code) => {
+      fatal.push(code);
+      opts.onFatal?.(code);
+    },
     backoff: { minMs: 20, maxMs: 50 },
     closeGraceMs: 30,
     ...(opts.stopWaitMs === undefined ? {} : { stopWaitMs: opts.stopWaitMs }),
@@ -227,6 +232,23 @@ describe("startRunnerConnection", () => {
     expect(server.hellos).toHaveLength(1);
   });
 
+  it("계약 밖 hello 거절 코드(RATE_LIMITED 등)는 끝내지 않고 백오프로 다시 붙는다 — hello 거절은 판본 불일치뿐 [최종 리뷰 M3]", async () => {
+    const { server, fatal, logs } = await setup();
+    server.helloResult = {
+      ok: false,
+      code: "RATE_LIMITED",
+      message: "slow down",
+    } as unknown as RunnerHelloResult;
+    await waitFor(() => server.hellos.length >= 2);
+    expect(fatal).toEqual([]);
+    expect(logs.join("\n")).toMatch(/hello 실패/);
+    server.helloResult = { ok: true, serverVersion: "test", conflicts: [] };
+    const before = server.hellos.length;
+    await waitFor(() => logs.some((l) => l.includes("연결됨")));
+    expect(server.hellos.length).toBeGreaterThan(before);
+    expect(fatal).toEqual([]);
+  });
+
   it("전송이 끊기면(transport close) 도는 런의 interrupt 가 불린다(Review Focus 1) — 그리고 다시 붙는다", async () => {
     const { server, fake, fatal } = await setup();
     await waitFor(() => server.hellos.length === 1);
@@ -262,6 +284,43 @@ describe("startRunnerConnection", () => {
     );
     await new Promise((r) => setTimeout(r, 100));
     expect(server.hellos).toHaveLength(1);
+  });
+
+  it("서버가 끊으면 stop() 처럼 도는 CLI 가 턴을 닫을 때까지 기다린 뒤 종료한다 — 곧바로 끝나면 CLI 가 고아로 남는다 [최종 리뷰 P1]", async () => {
+    const finishedAtFatal: boolean[] = [];
+    let call: FakeSdk["calls"][number] | undefined;
+    const { server, fake, fatal } = await setup({
+      onFatal: () => finishedAtFatal.push(call?.finished ?? false),
+    });
+    await waitFor(() => server.hellos.length === 1);
+    // interrupt 뒤 턴을 닫는 데 200ms 걸리는 CLI
+    fake.script(
+      script.messageStart("msg_1"),
+      { waitInterrupt: [] },
+      { sleep: 200 },
+      script.errorResult("error_during_execution", ["x"]),
+    );
+    await sendStart(server.sockets[0]!, runStart());
+    await waitFor(() => fake.calls.length === 1);
+    call = fake.calls[0];
+    server.sockets[0]!.disconnect(true);
+    await waitFor(() => fatal.length === 1, 3000);
+    expect(fatal).toEqual([2]);
+    expect(call!.interrupts).toBe(1);
+    expect(finishedAtFatal).toEqual([true]);
+  });
+
+  it("서버가 끊은 뒤 CLI 가 끝나지 않아도 종료 기다림은 stopWaitMs 까지만 [최종 리뷰 P1]", async () => {
+    const { server, fake, fatal } = await setup({ stopWaitMs: 60 });
+    await waitFor(() => server.hellos.length === 1);
+    fake.script(script.messageStart("msg_1"), { sleep: 1500 });
+    await sendStart(server.sockets[0]!, runStart());
+    await waitFor(() => fake.calls.length === 1);
+    const t0 = Date.now();
+    server.sockets[0]!.disconnect(true);
+    await waitFor(() => fatal.length === 1);
+    expect(Date.now() - t0).toBeLessThan(600);
+    expect(fake.calls[0]!.finished).toBe(false);
   });
 
   it("설정에 없는 agentId 의 run.start → run.error NOT_FOUND", async () => {

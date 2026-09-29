@@ -3,6 +3,7 @@ import { basename, extname } from "node:path";
 import {
   ComponentsV1,
   type InboundDeliver,
+  RUNNER_POST_ID_PREFIX,
   type RunnerOutboundAck,
   type RunnerOutboundPost,
 } from "@dodok/shared";
@@ -159,7 +160,7 @@ export function createPoster(deps: PosterDeps): (input: PostInput) => Promise<Po
     if (stopped()) return { error: POST_STOPPED_MESSAGE };
     const d = deps.deliver;
     const ack = await deps.send({
-      outboundId: `runner-post:${(deps.newId ?? randomUUID)()}`,
+      outboundId: `${RUNNER_POST_ID_PREFIX}${(deps.newId ?? randomUUID)()}`,
       channelId: d.channelId,
       agentId: d.agentId,
       sessionKey: d.sessionKey,

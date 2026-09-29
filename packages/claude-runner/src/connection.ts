@@ -48,7 +48,7 @@ export type RunnerConnectionOptions = {
   sdk: SdkPort;
   versions: RunnerVersions;
   logger: RunnerLogger;
-  /** 서버가 러너를 받지 않는다(hello 거절·UNAUTHORIZED·서버가 끊음) — 러너는 사유를 출력하고 이 코드로 끝난다 */
+  /** 서버가 러너를 받지 않는다(hello 판본 거절·UNAUTHORIZED·서버가 끊음) — 러너는 도는 런을 멈추고(최대 stopWaitMs) 사유를 출력한 뒤 이 코드로 끝난다 */
   onFatal: (exitCode: number) => void;
   baseEnv?: NodeJS.ProcessEnv;
   backoff?: { minMs: number; maxMs: number };
@@ -180,13 +180,26 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
     await new Promise((resolve) => setTimeout(resolve, STOP_SETTLE_MS));
   }
 
+  /** 도는 런에 interrupt 를 걸고 그 런들이 끝날 때까지(최대 stopWaitMs) 기다린다 */
+  async function settleRuns(): Promise<void> {
+    scheduler.abortAll();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      scheduler.idle(),
+      new Promise<void>((resolve) => (timer = setTimeout(resolve, opts.stopWaitMs ?? STOP_WAIT_MS))),
+    ]);
+    clearTimeout(timer);
+  }
+
   function fatal(message: string): void {
     logger.error(`dodok-runner: ${message}`);
     stopped = true;
     if (retryTimer) clearTimeout(retryTimer);
     retryTimer = undefined;
     socket.disconnect();
-    opts.onFatal(2);
+    // stop() 과 같은 유예 — 곧바로 끝나면 interrupt 가 CLI 에 닿기 전에 러너가 끝나 CLI 가 고아로 남아 턴을 이어 간다
+    // (토큰 폐기 뒤에도 미리 허용된 도구가 돈다 — 최종 리뷰 P1). 서버는 그 런을 이미 닫았으므로 final 은 버려져도 된다
+    void settleRuns().then(() => opts.onFatal(2));
   }
 
   function emitterFor(runId: string, gen: number): RunEmitter {
@@ -219,9 +232,11 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
       try {
         const raw: unknown = await socket.timeout(HELLO_TIMEOUT_MS).emitWithAck("hello", hello);
         const result = RunnerHelloResult.parse(raw);
+        // hello 거절은 판본 불일치뿐이다(최종 리뷰 M3) — 다른 코드는 파싱에서 떨어져 아래 catch 가 백오프로 다시 붙는다
         if (!result.ok) {
-          const hint = result.code === "PROTOCOL_MISMATCH" ? " — 서버와 러너 판본을 맞추세요" : "";
-          fatal(`서버가 러너를 거절했습니다(${result.code}: ${result.message})${hint}`);
+          fatal(
+            `서버가 러너를 거절했습니다(${result.code}: ${result.message}) — 서버와 러너 판본을 맞추세요`,
+          );
           return;
         }
         attempt = 0;
@@ -343,13 +358,7 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
       stopped = true;
       if (retryTimer) clearTimeout(retryTimer);
       retryTimer = undefined;
-      scheduler.abortAll();
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      await Promise.race([
-        scheduler.idle(),
-        new Promise<void>((resolve) => (timer = setTimeout(resolve, opts.stopWaitMs ?? STOP_WAIT_MS))),
-      ]);
-      clearTimeout(timer);
+      await settleRuns();
       if (socket.connected) await drained();
       socket.disconnect();
     },

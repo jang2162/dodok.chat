@@ -8,6 +8,7 @@ import {
   ENV_ALLOWLIST,
   isSessionInUseText,
   runOnce,
+  RUNNER_DISALLOWED_TOOLS,
   type RunContext,
 } from "../src/run";
 import { POST_STOPPED_MESSAGE } from "../src/post-tool";
@@ -47,7 +48,7 @@ describe("buildQueryOptions", () => {
       permissionMode: "default",
       // dodok 도구는 늘 허용 — 승인 콜백이 입력 검증보다 먼저 온다(스펙 6장)
       allowedTools: ["Read", "Bash(git status)", "mcp__dodok__post"],
-      disallowedTools: ["WebFetch"],
+      disallowedTools: [...RUNNER_DISALLOWED_TOOLS, "WebFetch"],
       sessionId: SESSION_ID,
       title: "dev · 코더",
       systemPrompt: {
@@ -62,6 +63,24 @@ describe("buildQueryOptions", () => {
     });
     expect(o.resume).toBeUndefined();
     expect(o.pathToClaudeCodeExecutable).toBeUndefined();
+  });
+
+  it("사람 대화형·예약 도구는 기본으로 막는다 — 설정의 disallowedTools 와 합치고 겹치면 한 번 [최종 리뷰 P2]", () => {
+    expect(RUNNER_DISALLOWED_TOOLS).toEqual([
+      "AskUserQuestion",
+      "PushNotification",
+      "ScheduleWakeup",
+      "CronCreate",
+      "CronDelete",
+      "CronList",
+      "RemoteTrigger",
+    ]);
+    const o = buildQueryOptions(
+      { ...AGENT, disallowedTools: ["AskUserQuestion", "WebFetch"] },
+      runStart(),
+      deps(false),
+    );
+    expect(o.disallowedTools).toEqual([...RUNNER_DISALLOWED_TOOLS, "WebFetch"]);
   });
 
   it("resume — sessionId·title 없이 resume 만(판정 P2)", () => {
