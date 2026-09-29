@@ -11,6 +11,7 @@ import {
   RunnerApprovalWithdrawn,
   RunnerCapability,
   RunnerHello,
+  RUNNER_POST_ID_PREFIX,
   RunnerHelloResult,
   RunnerOutboundAck,
   RunnerOutboundPost,
@@ -122,7 +123,7 @@ describe("/runner 프레임 — 유효 예 왕복", () => {
       "RunnerOutboundPost",
       RunnerOutboundPost,
       {
-        outboundId: "o-1",
+        outboundId: "runner-post:o-1",
         channelId: CH,
         agentId: "coder",
         sessionKey: `agent:coder:dodok:channel:${CH}`,
@@ -194,8 +195,30 @@ describe("/runner 프레임 — 거절", () => {
     expect(RunnerRunError.safeParse({ runId: ID, code: "OOPS", message: "x" }).success).toBe(false);
   });
 
-  it("RunnerHelloResult — 거절 코드는 셋뿐", () => {
-    expect(RunnerHelloResult.safeParse({ ok: false, code: "INTERNAL", message: "x" }).success).toBe(false);
+  it("RunnerHelloResult — hello 거절 코드는 서버가 실제로 내는 PROTOCOL_MISMATCH 하나뿐 — 토큰·가드 거절은 핸드셰이크(connect_error)로 간다 [최종 리뷰 M3]", () => {
+    for (const code of ["INTERNAL", "UNAUTHORIZED", "RATE_LIMITED"])
+      expect(RunnerHelloResult.safeParse({ ok: false, code, message: "x" }).success).toBe(false);
+  });
+
+  it("RunnerOutboundPost — outboundId 는 runner-post: 접두사 뒤에 한 글자 이상 [최종 리뷰 M4]", () => {
+    const post = {
+      channelId: CH,
+      agentId: "coder",
+      sessionKey: `agent:coder:dodok:channel:${CH}`,
+      runId: ID,
+      text: "카드",
+      ts: NOW,
+    };
+    for (const outboundId of [
+      `runner-final:${ID}`,
+      "o-1",
+      RUNNER_POST_ID_PREFIX,
+      ` ${RUNNER_POST_ID_PREFIX}x`,
+    ])
+      expect(RunnerOutboundPost.safeParse({ ...post, outboundId }).success).toBe(false);
+    expect(RunnerOutboundPost.safeParse({ ...post, outboundId: `${RUNNER_POST_ID_PREFIX}x` }).success).toBe(
+      true,
+    );
   });
 });
 

@@ -8,7 +8,7 @@ import {
   BridgeAuthGuard,
   dodokSessionKey,
   type InboundDeliver,
-  type OutboundMessage,
+  OutboundMessage,
   type ProviderApproval,
   type RunEventBody,
 } from "@dodok/shared";
@@ -390,13 +390,13 @@ describe("러너 여러 대", () => {
 });
 
 describe("send", () => {
-  it("run.start 에 채널 규칙·턴 사실·세션 id·제목을 싣고, 대기 순번이 있으면 RUN_QUEUED 를 낸다", async () => {
+  it("run.start 에 채널 규칙·턴 사실·세션 id·제목을 싣고, 대기 순번이 있으면 RUN_QUEUED 를 내고 결과에 queued 를 싣는다 [최종 리뷰 I1]", async () => {
     const h = await setup();
     const r = await readyRunner(h);
     r.onRunStart = (p) => ({ runId: p.deliver.runId, admission: "dispatch", queuedPosition: 2 });
     const input = deliver();
     const result = await h.adapter.send(input, { providerSessionId: SESSION_ID });
-    expect(result).toEqual({ admission: "dispatch", providerRunId: input.runId });
+    expect(result).toEqual({ admission: "dispatch", providerRunId: input.runId, queued: true });
     const [start] = r.runStarts;
     expect(start?.providerSessionId).toBe(SESSION_ID);
     expect(start?.deliver).toEqual(input);
@@ -746,12 +746,109 @@ describe("런 이벤트", () => {
     ]);
   });
 
+  it("최종 답이 10만 자를 넘으면 코드 포인트 경계로 잘라 꼬리를 붙인다 — 저장 상한에 걸려 답이 사라지지 않게 [최종 리뷰 M1]", async () => {
+    const h = await setup();
+    const r = await readyRunner(h);
+    const { runId } = await startRun(h, r);
+    // 자르는 자리에 서로게이트 쌍이 걸치게 — 반쪽이 남으면 안 된다
+    const long = "가".repeat(99_980) + "😀".repeat(20);
+    r.send("run.final", { runId, text: long, stopReason: "end_turn", costKind: "api" });
+    await until(() => signals(h, runId).includes("gateway_final"), "final");
+    const text = h.outbound[0]?.text ?? "";
+    expect(text.length).toBeLessThanOrEqual(100_000);
+    expect(text.endsWith("(길어서 잘렸습니다)")).toBe(true);
+    expect(text.startsWith("가".repeat(99_980))).toBe(true);
+    expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(text)).toBe(false);
+    expect(OutboundMessage.safeParse(h.outbound[0]).success).toBe(true);
+  });
+
+  it("10만 자 딱 맞는 최종 답은 그대로, 넘는 답의 저장 실패 스냅숏도 잘린 글이다 [최종 리뷰 M1]", async () => {
+    const h = await setup();
+    const r = await readyRunner(h);
+    const first = await startRun(h, r);
+    const exact = "a".repeat(100_000);
+    r.send("run.final", { runId: first.runId, text: exact, stopReason: "end_turn", costKind: "api" });
+    await until(() => signals(h, first.runId).includes("gateway_final"), "final");
+    expect(h.outbound[0]?.text).toBe(exact);
+
+    const second = await startRun(h, r, { channelId: CH2, sessionKey: dodokSessionKey("coder", CH2) });
+    h.failOutbound(true);
+    r.send("run.final", {
+      runId: second.runId,
+      text: "b".repeat(100_001),
+      stopReason: "end_turn",
+      costKind: "api",
+    });
+    await until(() => signals(h, second.runId).includes("gateway_final"), "final");
+    const snapshot = h.events.find(
+      (e) => e.kind === "run_signal" && e.runId === second.runId && e.signal.kind === "gateway_final",
+    );
+    const snapshotText = snapshot?.kind === "run_signal" ? (snapshot.snapshotText ?? "") : "";
+    expect(snapshotText.length).toBeLessThanOrEqual(100_000);
+    expect(snapshotText.endsWith("(길어서 잘렸습니다)")).toBe(true);
+  });
+
+  it("비용·토큰이 하나도 없는 최종(대기열에서 중지된 런)은 dodok.usage 를 내지 않는다 — 환산 표시가 켜지지 않게 [최종 리뷰 M2]", async () => {
+    const h = await setup();
+    const r = await readyRunner(h);
+    const { runId } = await startRun(h, r);
+    // 러너 abortedFinal() 그대로 — init 을 못 봐 costKind 는 subscription_estimate 기본값
+    r.send("run.final", { runId, text: "", stopReason: "aborted", costKind: "subscription_estimate" });
+    await until(() => signals(h, runId).length > 0, "stop signal");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(runEvents(h, runId)).toEqual([{ type: "RUN_ABORTED", runId, by: "user" }]);
+  });
+
+  it("토큰만 있어도 dodok.usage 를 낸다 [최종 리뷰 M2]", async () => {
+    const h = await setup();
+    const r = await readyRunner(h);
+    const { runId } = await startRun(h, r);
+    r.send("run.final", {
+      runId,
+      text: "",
+      stopReason: "aborted",
+      usage: { inputTokens: 5 },
+      costKind: "api",
+    });
+    await until(() => signals(h, runId).length > 0, "stop signal");
+    expect(runEvents(h, runId)).toContainEqual({
+      type: "CUSTOM",
+      runId,
+      name: "dodok.usage",
+      value: { inputTokens: 5, costKind: "api", model: "sonnet" },
+    });
+  });
+
+  it("outbound.post 의 outboundId 는 runner-post: 접두사여야 한다 — 최종 답 runner-final:<runId> 를 선점하지 못하게 [최종 리뷰 M4]", async () => {
+    const h = await setup();
+    const r = await readyRunner(h);
+    const { runId, sessionKey } = await startRun(h, r);
+    const post = {
+      channelId: CH,
+      agentId: "coder",
+      sessionKey,
+      runId,
+      text: "중간",
+      ts: "2026-09-27T00:00:01.000Z",
+    };
+    for (const outboundId of [`runner-final:${runId}`, "post-1", randomUUID(), "runner-post:"])
+      expect(await r.post({ ...post, outboundId })).toMatchObject({ ok: false, code: "VALIDATION" });
+    expect(h.outbound).toEqual([]);
+    expect(await r.post({ ...post, outboundId: `runner-post:${randomUUID()}` })).toMatchObject({ ok: true });
+    r.send("run.final", { runId, text: "최종", stopReason: "end_turn", costKind: "api" });
+    await until(() => signals(h, runId).includes("gateway_final"), "final");
+    expect(h.outbound.map((m) => m.outboundId)).toEqual([
+      expect.stringMatching(/^runner-post:/),
+      `runner-final:${runId}`,
+    ]);
+  });
+
   it("outbound.post 는 onOutbound 로 메시지를 만들고 messageId 로 답한다", async () => {
     const h = await setup();
     const r = await readyRunner(h);
     const { runId, sessionKey } = await startRun(h, r);
     const post = {
-      outboundId: "post-1",
+      outboundId: "runner-post:1",
       channelId: CH,
       agentId: "coder",
       sessionKey,
@@ -765,7 +862,7 @@ describe("런 이벤트", () => {
     // 다른 에이전트 이름으로는 못 쓴다
     const denied = await r.post({
       ...post,
-      outboundId: "post-2",
+      outboundId: "runner-post:2",
       agentId: "writer",
       sessionKey: dodokSessionKey("writer", CH),
     });
@@ -779,7 +876,7 @@ describe("런 이벤트", () => {
 describe("outbound.post 는 그 러너의 열린 런에 묶인다", () => {
   function postFor(input: InboundDeliver, over: Record<string, unknown> = {}) {
     return {
-      outboundId: randomUUID(),
+      outboundId: `runner-post:${randomUUID()}`,
       channelId: input.channelId,
       agentId: input.agentId,
       sessionKey: input.sessionKey,

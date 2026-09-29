@@ -118,6 +118,12 @@ export type AdapterEvent =
   // setupDetail() 이 바뀌었다(페어링 시작·해소, 플러그인 hello·끊김 등) — 값은 setupDetail() 로 읽는다. 같은 상세면 내지 않는다
   | { kind: "setup" };
 
+/**
+ * 어댑터가 받은 전달의 결과. `queued` 는 제공자가 받아들였지만 자기 쪽에서 기다린다는 뜻이다(러너 동시 상한 — ack `queuedPosition`) —
+ * 오케스트레이터는 그 런을 queuedMs 가 아니라 runMs 로 잰다. 브리지 wire 의 InboundDeliverResult 에는 없다(플러그인은 싣지 않는다)
+ */
+export type AdapterSendResult = InboundDeliverResult & { queued?: boolean };
+
 export interface AgentAdapter {
   readonly provider: AdapterProvider;
   connect(): Promise<void>;
@@ -133,7 +139,7 @@ export interface AgentAdapter {
   /** 그 에이전트를 맡은 쪽(OpenClaw 는 붙은 플러그인, 러너는 그 에이전트를 알린 러너)이 능력을 hello 로 알렸는가 — 없으면 false */
   supports(providerAgentId: string, capability: "threads"): boolean;
   /** ok:false 는 throw AdapterError(code). providerSessionId 는 serverSessionIds 어댑터에만 넘긴다 */
-  send(input: InboundDeliver, opts?: { providerSessionId?: string }): Promise<InboundDeliverResult>;
+  send(input: InboundDeliver, opts?: { providerSessionId?: string }): Promise<AdapterSendResult>;
   abort(runId: string, sessionKey: string): Promise<void>;
   resetSession(sessionKey: string): Promise<{ sessionStartedAt?: string; lifecycleRevision?: string }>;
   syncChannelConfig(channelId: string, config: ConfigSet["config"]): Promise<ConfigSetResult>;

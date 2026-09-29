@@ -11,6 +11,7 @@ import { addMember, createChannel } from "../src/modules/channels/service";
 import { createUserMessage, getMessage, rowToMessage } from "../src/modules/messages/service";
 import type { RunPlan } from "../src/modules/router/decide";
 import {
+  DEFAULT_RUN_TIMEOUTS,
   type OrchestratorDeps,
   type OrchestratorLogger,
   type RunTimeouts,
@@ -976,6 +977,39 @@ describe("orchestrator", () => {
     expect(t.runOf(run.id).error).toBeUndefined();
     expect(t.adapter.calls.forget).toEqual([]);
     expect(systemMessages(t.db)).toEqual([]);
+    t.orch.stop();
+  });
+
+  it("send 가 queued 를 돌려주면(제공자 쪽 대기열) queuedMs 를 넘겨도 닫지 않고 runMs 로 잰다, 시작하면 runMs 가 새로 걸린다 [최종 리뷰 I1]", async () => {
+    const t = setup();
+    t.adapter.script((input) => ({ admission: "dispatch", providerRunId: input.runId, queued: true }));
+    const run = await t.enqueue();
+    await t.flush();
+    await vi.advanceTimersByTimeAsync(DEFAULT_RUN_TIMEOUTS.queuedMs * 2);
+    expect(t.runOf(run.id)).toMatchObject({ status: "queued" });
+    expect(t.runOf(run.id).error).toBeUndefined();
+
+    await t.orch.signal(run.id, { kind: "gateway_started" });
+    await vi.advanceTimersByTimeAsync(DEFAULT_RUN_TIMEOUTS.runMs - 1_000);
+    expect(t.runOf(run.id)).toMatchObject({ status: "streaming" });
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(t.runOf(run.id)).toMatchObject({
+      status: "error",
+      error: { code: "TIMEOUT", message: "run timeout" },
+    });
+    t.orch.stop();
+  });
+
+  it("queued 런이 제공자 대기열에서 시작되지 않은 채 runMs 가 지나면 run timeout 으로 닫힌다 [최종 리뷰 I1]", async () => {
+    const t = setup();
+    t.adapter.script((input) => ({ admission: "dispatch", providerRunId: input.runId, queued: true }));
+    const run = await t.enqueue();
+    await t.flush();
+    await vi.advanceTimersByTimeAsync(DEFAULT_RUN_TIMEOUTS.runMs + 1_000);
+    expect(t.runOf(run.id)).toMatchObject({
+      status: "error",
+      error: { code: "TIMEOUT", message: "run timeout" },
+    });
     t.orch.stop();
   });
 

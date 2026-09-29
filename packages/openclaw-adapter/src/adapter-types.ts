@@ -5,6 +5,7 @@ export {
   type AdapterEvent,
   type AdapterLogger,
   type AdapterProvider,
+  type AdapterSendResult,
   type AdapterSetupDetail,
   type AdapterStatus,
   type AgentAdapter,

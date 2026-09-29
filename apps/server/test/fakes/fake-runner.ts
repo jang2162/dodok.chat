@@ -9,6 +9,7 @@
 import {
   type ComponentsV1,
   RUNNER_NAMESPACE,
+  RUNNER_POST_ID_PREFIX,
   RUNNER_PROTOCOL,
   type RunEventBody,
   type RunnerAgent,
@@ -261,7 +262,7 @@ export async function startFakeRunner(opts: FakeRunnerOptions): Promise<FakeRunn
       async post(input) {
         const d = start.deliver;
         const post: RunnerOutboundPost = {
-          outboundId: randomUUID(),
+          outboundId: `${RUNNER_POST_ID_PREFIX}${randomUUID()}`,
           channelId: d.channelId,
           agentId: d.agentId,
           sessionKey: d.sessionKey,
@@ -283,8 +284,9 @@ export async function startFakeRunner(opts: FakeRunnerOptions): Promise<FakeRunn
         if (finish()) s.emit("run.error", { runId, code, message });
       },
     };
-    // 실제 러너: interrupt 로 끝난 턴은 빈 답 + stopReason "aborted"(조율자 판정 R1)
-    void aborted.then(() => run.final("", { stopReason: "aborted" }));
+    // 실제 러너: interrupt 로 끝난 턴은 빈 답 + stopReason "aborted"(조율자 판정 R1). 비용·토큰 없이 costKind 는
+    // abortedFinal() 기본값 그대로 — 대기열에서 중지된 런과 같은 모양(최종 리뷰 M2)
+    void aborted.then(() => run.final("", { stopReason: "aborted", costKind: "subscription_estimate" }));
     void (async () => {
       try {
         await runner.script(run);

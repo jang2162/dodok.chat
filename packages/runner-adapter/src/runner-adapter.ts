@@ -90,6 +90,9 @@ const USAGE_EVENT = "dodok.usage";
 const ABORTED_STOP_REASON = "aborted";
 const UNKNOWN_FRAME_LOG_INTERVAL_MS = 60_000;
 const SESSION_TITLE_MAX = 120;
+/** 최종 답 글 상한 — 정본 OutboundMessage.text·Message.bodyMd 의 상한과 같다 */
+const FINAL_TEXT_MAX = 100_000;
+const FINAL_TRUNCATED_TAIL = "\n\n(길어서 잘렸습니다)";
 // 러너가 보낼 수 있는 프레임 이름 — 나머지는 Socket.IO 가 조용히 버리므로 따로 warn 한다
 const RUNNER_FRAMES: ReadonlySet<string> = new Set<keyof RunnerClientToServerEvents>([
   "hello",
@@ -146,12 +149,19 @@ function dropTransport(socket: { conn: { close(): void } }): void {
 
 /** 코드 포인트 경계에서 UTF-16 길이 max 안으로 자른다 — 서로게이트 쌍을 반으로 가르지 않는다(스키마 길이는 UTF-16) */
 function clip(text: string, max: number): string {
-  let out = "";
-  for (const ch of text) {
-    if (out.length + ch.length > max) break;
-    out += ch;
-  }
-  return out;
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max);
+  const last = cut.charCodeAt(cut.length - 1);
+  return last >= 0xd800 && last <= 0xdbff ? cut.slice(0, -1) : cut;
+}
+
+/**
+ * 최종 답을 정본 상한 안으로 — 넘치면 꼬리를 붙여 자른다. 러너 계약(RunnerRunFinal.text)에는 상한이 없고 저장이 스키마에 걸리면
+ * 스냅숏도 같은 글로 실패해 답이 조용히 사라진다(최종 리뷰 M1). 어느 판본의 러너가 붙어도 막히게 러너가 아니라 여기서 자른다
+ */
+function fitFinalText(text: string): string {
+  if (text.length <= FINAL_TEXT_MAX) return text;
+  return clip(text, FINAL_TEXT_MAX - FINAL_TRUNCATED_TAIL.length) + FINAL_TRUNCATED_TAIL;
 }
 
 function issues(error: { issues: Array<{ path: PropertyKey[]; message: string }> }): string {
@@ -430,7 +440,11 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
     if (final.usage?.inputTokens !== undefined) usage.inputTokens = final.usage.inputTokens;
     if (final.usage?.outputTokens !== undefined) usage.outputTokens = final.usage.outputTokens;
     if (final.costUsd !== undefined) usage.costUsd = final.costUsd;
-    emitEvent(run.runId, { type: "CUSTOM", runId: run.runId, name: USAGE_EVENT, value: usage });
+    // 잴 것이 하나도 없으면(대기열에서 중지된 런 — init 을 못 봐 costKind 는 기본값) 내지 않는다 — 비용 없는 런이
+    // API 키 러너 행에 「환산 포함」을 켜지 않게(최종 리뷰 M2)
+    const measured =
+      usage.inputTokens !== undefined || usage.outputTokens !== undefined || usage.costUsd !== undefined;
+    if (measured) emitEvent(run.runId, { type: "CUSTOM", runId: run.runId, name: USAGE_EVENT, value: usage });
     // 중지된 턴(서버가 abort 했거나 러너 쪽에서 interrupt — 러너는 수명 이벤트를 run.event 로 보내지 않는다)은 메시지 없이
     // 중지로 닫는다. 중간 답을 올리면 안 된다 — 정본 저장은 끝난 런에도 메시지를 만든다. 서버가 이미 aborted 로 닫은 런이면
     // 오케스트레이터가 이 둘을 버린다
@@ -444,6 +458,7 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
       return;
     }
     const d = run.deliver;
+    const text = fitFinalText(final.text);
     const message: OutboundMessage = {
       // 같은 런의 최종 답은 하나 — 메시지 external_id 유일 인덱스가 재전송을 흡수한다
       outboundId: `runner-final:${run.runId}`,
@@ -453,7 +468,7 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
       ...(d.threadId === undefined ? {} : { threadId: d.threadId }),
       runId: run.runId,
       replyToInboundId: d.message.id,
-      text: final.text,
+      text,
       attachmentIds: [],
       ts: new Date(now()).toISOString(),
     };
@@ -471,7 +486,7 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
         kind: "run_signal",
         runId: run.runId,
         signal: { kind: "gateway_final" },
-        snapshotText: final.text,
+        snapshotText: text,
       });
     }
   }
@@ -793,7 +808,12 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
         },
         "runner run started",
       );
-      return { admission: "dispatch", providerRunId: run.runId };
+      // 러너 대기열에 선 런 — 오케스트레이터가 queuedMs 로 닫지 않게 알린다(최종 리뷰 I1). 끊김·폐기는 dropRunner 가 닫는다
+      return {
+        admission: "dispatch",
+        providerRunId: run.runId,
+        ...(ack.queuedPosition === undefined ? {} : { queued: true }),
+      };
     },
 
     async abort(runId) {

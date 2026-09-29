@@ -39,15 +39,14 @@ export const RunnerHello = z.object({
 });
 export type RunnerHello = z.infer<typeof RunnerHello>;
 
-/** 거절이면 러너는 사유를 출력하고 종료한다 */
+/**
+ * 거절이면 러너는 사유를 출력하고 종료한다. hello 거절은 판본 불일치뿐이다 — 토큰 틀림(UNAUTHORIZED)·가드 차단(RATE_LIMITED)은
+ * 핸드셰이크 미들웨어가 connect_error 로 거절하고, 러너는 거기서 가른다(RATE_LIMITED 는 끝내지 않는다 — 최종 리뷰 M3)
+ */
 export const RunnerHelloResult = z.discriminatedUnion("ok", [
   // conflicts — 다른 러너가 먼저 알려 이 러너에 배정하지 않는 에이전트 id
   z.object({ ok: z.literal(true), serverVersion: z.string(), conflicts: z.array(z.string()) }),
-  z.object({
-    ok: z.literal(false),
-    code: z.enum(["PROTOCOL_MISMATCH", "UNAUTHORIZED", "RATE_LIMITED"]),
-    message: z.string(),
-  }),
+  z.object({ ok: z.literal(false), code: z.literal("PROTOCOL_MISMATCH"), message: z.string() }),
 ]);
 export type RunnerHelloResult = z.infer<typeof RunnerHelloResult>;
 
@@ -104,8 +103,20 @@ export type RunnerRunError = z.infer<typeof RunnerRunError>;
 export const RunnerRunAbort = z.object({ runId: Id });
 export type RunnerRunAbort = z.infer<typeof RunnerRunAbort>;
 
+/**
+ * 러너 `post` 의 outboundId 접두사. 어댑터가 최종 답을 `runner-final:<runId>` 로 저장하므로 러너가 고른 id 는 이 접두사로 묶는다 —
+ * 그 키(와 다른 메시지의 external_id)를 먼저 써서 최종 답을 막거나 남의 메시지 id 를 돌려받지 못하게(최종 리뷰 M4)
+ */
+export const RUNNER_POST_ID_PREFIX = "runner-post:";
+
 /** dodok 도구 `mcp__dodok__post` — 첨부는 먼저 /runner/attachments 로 올린 artifact id */
-export const RunnerOutboundPost = OutboundMessage;
+export const RunnerOutboundPost = OutboundMessage.extend({
+  outboundId: z
+    .string()
+    .min(RUNNER_POST_ID_PREFIX.length + 1)
+    .max(128)
+    .startsWith(RUNNER_POST_ID_PREFIX),
+});
 export type RunnerOutboundPost = z.infer<typeof RunnerOutboundPost>;
 export const RunnerOutboundAck = z.union([
   z.object({ ok: z.literal(true), messageId: Id }),

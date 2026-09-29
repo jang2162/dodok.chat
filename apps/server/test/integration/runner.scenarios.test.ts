@@ -521,6 +521,27 @@ describe("Claude 러너 통합 시나리오", () => {
     expect(summary.byChannel.find((r) => r.id === channel.id)).toMatchObject({ tokens: 15, costUsd: 0.01 });
   });
 
+  it("러너 쪽에서 대기열째 중지된 런(비용·토큰 없음 — 러너 종료 등)은 API 키 러너 행에 「환산 포함」을 켜지 않는다 [최종 리뷰 M2]", async () => {
+    const { runner, coder, channel, log } = await start();
+    await sendMessage(log.socket, channel.id, "@coder 하나");
+    const first = await runOf(log, coder.id);
+    expect((await log.terminal(first.id)).status).toBe("done");
+
+    // 러너 동시 상한에 걸려 기다리다 러너가 꺼진다 — CLI 를 띄우지 않았으니 abortedFinal() 그대로(비용·토큰 없음,
+    // costKind 기본값). 서버가 중지한 런이면 어댑터가 런을 먼저 놓아 이 final 은 버려진다
+    runner.onRunStart = (s) => ({ runId: s.deliver.runId, admission: "dispatch", queuedPosition: 1 });
+    runner.script = (run) => run.final("", { stopReason: "aborted", costKind: "subscription_estimate" });
+    await sendMessage(log.socket, channel.id, "@coder 둘");
+    const second = await runOf(log, coder.id, 1);
+    expect((await log.terminal(second.id)).status).toBe("aborted");
+    expect(live.app.db.select().from(runs).where(eq(runs.id, second.id)).get()?.usage ?? null).toBeNull();
+
+    const summary = OpsRunsSummary.parse(ok("GET /ops/runs", await rest(live, "GET", "/ops/runs?days=1")));
+    const row = summary.byAgent.find((r) => r.id === coder.id);
+    expect(row).toMatchObject({ runs: 2, aborted: 1, costUsd: 0.01 });
+    expect(row?.costEstimated).toBe(false);
+  });
+
   it("러너 토큰의 첨부 GET — 열린 런의 deliver 첨부는 200, 런이 끝나면 404, 러너 없는 채널의 사람 첨부는 404 [R5]", async () => {
     const seen: number[] = [];
     let token = "";
@@ -590,5 +611,54 @@ describe("Claude 러너 통합 시나리오", () => {
     });
     expect(res.statusCode).toBe(204);
     expect(rowsOf()).toEqual([expect.objectContaining({ resolvedAt: expect.any(Date) })]);
+  });
+
+  it("러너 동시 상한(maxConcurrentRuns 1 흉내)에 걸려 러너 대기열에 선 런은 queuedMs 를 넘겨도 TIMEOUT 이 아니다 — 앞 런이 끝나면 돌아 답한다 [최종 리뷰 I1]", async () => {
+    const QUEUED_MS = 300;
+    const { runner, coder, channel, log } = await start(undefined, {
+      timeouts: { queuedMs: QUEUED_MS, runMs: 10_000 },
+    });
+    // 실제 러너 scheduler 처럼 — 한 자리가 차 있으면 queuedPosition 으로 받고, 앞 런이 끝나면 차례로 돈다
+    let admitted = 0;
+    runner.onRunStart = (s) =>
+      admitted++ === 0
+        ? { runId: s.deliver.runId, admission: "dispatch" }
+        : { runId: s.deliver.runId, admission: "dispatch", queuedPosition: admitted - 1 };
+    let releaseFirst = () => {};
+    const firstHeld = new Promise<void>((resolve) => (releaseFirst = resolve));
+    const waiting: Array<() => void> = [];
+    let turns = 0;
+    runner.script = async (run) => {
+      const turn = turns++;
+      if (turn > 0) await new Promise<void>((resolve) => waiting.push(resolve));
+      run.text(`런 ${turn}`);
+      if (turn === 0) await firstHeld;
+      run.final(`답 ${turn}`);
+      waiting.shift()?.();
+    };
+    const other = await channelWith([coder], "runner-2");
+    const otherLog = await openChannelWire(live, other.id, sockets);
+
+    await sendMessage(log.socket, channel.id, "@coder 첫째");
+    const first = await runOf(log, coder.id);
+    await log.until(() => log.statesOf(first.id).some((s) => s.status === "streaming"), "첫 런 streaming");
+    await sendMessage(otherLog.socket, other.id, "@coder 둘째");
+    const second = await runOf(otherLog, coder.id);
+    await otherLog.until(
+      () => otherLog.eventsOf(second.id).find((e) => e.type === "RUN_QUEUED"),
+      "둘째 런 RUN_QUEUED",
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, QUEUED_MS * 3));
+    expect(otherLog.statesOf(second.id).map((s) => s.status)).not.toContain("error");
+    expect(runner.aborts).toEqual([]);
+
+    releaseFirst();
+    expect((await log.terminal(first.id)).status).toBe("done");
+    expect((await otherLog.terminal(second.id)).status).toBe("done");
+    expect((await agentMessage(otherLog, second.id)).bodyMd).toBe("답 1");
+    expect(
+      otherLog.created.filter((m) => m.systemMeta?.kind === "run_error" && m.systemMeta.runId === second.id),
+    ).toEqual([]);
   });
 });

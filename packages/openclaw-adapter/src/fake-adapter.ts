@@ -6,13 +6,13 @@ import {
   type ConfigSet,
   type ConfigSetResult,
   type InboundDeliver,
-  type InboundDeliverResult,
 } from "@dodok/shared";
 import {
   AdapterError,
   type AdapterCapabilities,
   type AdapterEvent,
   type AdapterProvider,
+  type AdapterSendResult,
   type AdapterSetupDetail,
   type AdapterStatus,
   type AgentAdapter,
@@ -23,7 +23,7 @@ import {
   type ProviderApproval,
 } from "./adapter-types";
 
-type SendScript = (input: InboundDeliver) => InboundDeliverResult | Promise<InboundDeliverResult>;
+type SendScript = (input: InboundDeliver) => AdapterSendResult | Promise<AdapterSendResult>;
 type ResolveApprovalScript = (
   providerApprovalId: string,
   kind: ApprovalKind,
@@ -189,7 +189,7 @@ export class FakeAdapter<P extends AdapterProvider = "openclaw"> implements Agen
     return detail.bridge.plugin !== null && this.pluginCapabilities.has(capability);
   }
 
-  async send(input: InboundDeliver, opts?: { providerSessionId?: string }): Promise<InboundDeliverResult> {
+  async send(input: InboundDeliver, opts?: { providerSessionId?: string }): Promise<AdapterSendResult> {
     this.calls.send.push(input);
     this.calls.sendOpts.push(opts);
     return this.sendScript(input);

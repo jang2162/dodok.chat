@@ -713,9 +713,16 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         store.updateRun(db, runId, { providerRunId: result.providerRunId });
       }
       if (current.status === "queued") {
-        timers.set(runId, "queued", timeouts.queuedMs, () => {
-          void timeOut(runId, { kind: "queue_timeout" });
-        });
+        if (result.queued === true) {
+          // 제공자 쪽 대기열(러너 동시 상한)에 섰다 — 앞 런이 몇 분 도는 것이 흔하니 queuedMs 로 닫지 않고 런 상한으로 잰다.
+          // 러너가 끊기거나 토큰이 폐기되면 어댑터가 ADAPTER_UNAVAILABLE 로 닫는다(최종 리뷰 I1)
+          timers.clear(runId, "queued");
+          armRunTimer(runId);
+        } else {
+          timers.set(runId, "queued", timeouts.queuedMs, () => {
+            void timeOut(runId, { kind: "queue_timeout" });
+          });
+        }
       }
     } catch (err) {
       if (stopped) {
