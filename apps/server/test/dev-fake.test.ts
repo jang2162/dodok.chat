@@ -7,11 +7,13 @@ import {
   type Message,
   PushPayload,
   type RunEvent,
+  type RunnerApprovalResolve,
   type RunState,
   type ServerToClientEvents,
   WIRE_PROTOCOL,
 } from "@dodok/shared";
 import { and, eq } from "drizzle-orm";
+import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -30,16 +32,23 @@ import {
   DEV_FAKE_OPS_EVENT_PATH,
   DEV_FAKE_PLUGIN_CAPABILITIES_PATH,
   DEV_FAKE_PLUGIN_TOKEN_PATH,
+  DEV_FAKE_RUNNER_LABEL,
+  DEV_FAKE_RUNNER_PATH,
+  DEV_FAKE_RUNNER_TOKEN,
   type DevFake,
   devFakeCliOptions,
   fakeAgentScript,
+  fakeRunnerScript,
+  RUNNER_APPROVAL_COMMAND,
+  RUNNER_POST_TEXT,
   startDevFake,
 } from "../scripts/dev-fake";
 import type { App } from "../src/app";
 import { findItem, formatInteractionText } from "../src/modules/components/interact";
-import { users } from "../src/db/schema.sqlite";
+import { agents, runnerTokens, runs, users } from "../src/db/schema.sqlite";
 import { normalizeEmail } from "../src/modules/members/accept";
 import { DISCONNECT_EVENT_MS } from "../src/modules/ops/health";
+import type { FakeRunnerRun } from "./fakes/fake-runner";
 import type { ScenarioApproval } from "./fakes/scenario";
 import { bootTestApp, login, userWithRole } from "./helpers/app";
 import { makePng } from "./helpers/png";
@@ -431,6 +440,132 @@ describe("fakeAgentScript", () => {
       for (const keyword of DEV_FAKE_KEYWORDS)
         expect(text, `${JSON.stringify(text)} ⊃ ${keyword}`).not.toContain(keyword);
     }
+  });
+});
+
+type RunnerCall =
+  | { kind: "text"; delta: string }
+  | { kind: "tool"; name: string; args: unknown }
+  | { kind: "approval"; toolName: string; summary: string }
+  | { kind: "post"; text?: string; components?: unknown }
+  | { kind: "final"; text: string; opts: unknown }
+  | { kind: "error"; code: string };
+
+/** 가짜 러너의 런 손잡이를 흉내 낸다 — 대본이 부른 순서를 남기고, 승인은 decision 으로 곧바로 답한다 */
+async function runRunnerScript(text: string, decision: RunnerApprovalResolve | null = null) {
+  const calls: RunnerCall[] = [];
+  const run = {
+    start: { deliver: delivery(text, { type: "user", handle: "owner" }, "coder", ["coder", "dev"]) },
+    runId: "r1",
+    isAborted: false,
+    aborted: new Promise<void>(() => {}),
+    text: (delta: string) => calls.push({ kind: "text", delta }),
+    tool: (name: string, args: unknown) => calls.push({ kind: "tool", name, args }),
+    approval: async (input: { toolName: string; summary: string }) => {
+      calls.push({ kind: "approval", ...input });
+      return decision;
+    },
+    post: async (input: { text?: string; components?: unknown }) => {
+      calls.push({ kind: "post", ...input });
+      return { ok: true, messageId: "m1" };
+    },
+    final: (t: string, opts: unknown) => calls.push({ kind: "final", text: t, opts }),
+    error: (code: string) => calls.push({ kind: "error", code }),
+  } as unknown as FakeRunnerRun;
+  // 델타 사이 쉼(150ms~1.5s)을 가짜 시계로 흘린다
+  vi.useFakeTimers();
+  try {
+    const done = fakeRunnerScript(run);
+    await vi.runAllTimersAsync();
+    await done;
+  } finally {
+    vi.useRealTimers();
+  }
+  const final = calls.find((c) => c.kind === "final");
+  const streamed = calls.flatMap((c) => (c.kind === "text" ? [c.delta] : [])).join("");
+  return { calls, final, streamed };
+}
+
+describe("fakeRunnerScript", () => {
+  const allow: RunnerApprovalResolve = { providerApprovalId: "p", decision: "allow-once" };
+
+  it("도구(Read)를 먼저 부르고, 델타를 이어 붙이면 최종 답 — fakeAgentScript 와 같은 답·릴레이 꼬리, api 비용", async () => {
+    const { calls, final, streamed } = await runRunnerScript("@coder @dev 안녕");
+    expect(calls[0]).toMatchObject({ kind: "tool", name: "Read" });
+    expect(final).toMatchObject({
+      text: streamed,
+      opts: { costKind: "api", usage: { inputTokens: 1_200, outputTokens: 80 }, costUsd: 0.02 },
+    });
+    expect(streamed).toBe(
+      fakeAgentScript(
+        "coder",
+        delivery("@coder @dev 안녕", { type: "user", handle: "owner" }, "coder", ["coder", "dev"]),
+      ).reply,
+    );
+    expect(streamed).toContain("@dev 이어서 부탁해요");
+  });
+
+  it("승인 → Bash 승인 요청(작업 디렉터리 상대 명령만), 허용이면 Bash 도구가 돌고 답 첫 줄이 결과, 거절·만료·중지는 도구 없음", async () => {
+    const allowed = await runRunnerScript("@coder 승인", allow);
+    expect(allowed.calls.find((c) => c.kind === "approval")).toEqual({
+      kind: "approval",
+      toolName: "Bash",
+      summary: `Bash: ${RUNNER_APPROVAL_COMMAND}`,
+    });
+    expect(`Bash: ${RUNNER_APPROVAL_COMMAND}`.length).toBeLessThanOrEqual(400);
+    expect(allowed.calls.filter((c) => c.kind === "tool").map((c) => c.kind === "tool" && c.name)).toEqual([
+      "Read",
+      "Bash",
+    ]);
+    expect(allowed.final && allowed.final.kind === "final" && allowed.final.text).toMatch(
+      /^허용받아 실행했습니다\.\n\n/,
+    );
+
+    const denied = await runRunnerScript("@coder 승인", { providerApprovalId: "p", decision: "deny" });
+    expect(denied.calls.filter((c) => c.kind === "tool")).toHaveLength(1);
+    expect(denied.streamed).toMatch(/^거절받아 실행하지 않았습니다\./);
+    const expired = await runRunnerScript("@coder 승인", {
+      providerApprovalId: "p",
+      decision: "deny",
+      reason: "expired",
+    });
+    expect(expired.streamed).toMatch(/^기한이 지나 실행하지 않았습니다\./);
+    // 중지(approval 이 null) — 더 보내지 않는다. 끝은 가짜 러너가 aborted 로 낸다
+    const stopped = await runRunnerScript("@coder 승인", null);
+    expect(stopped.calls.map((c) => c.kind)).toEqual(["tool", "approval"]);
+  });
+
+  it("게시 → post 로 고정 글 + ComponentsV1 카드, 구독 → subscription_estimate, 실패 → run.error(최종 답 없음)", async () => {
+    const posted = await runRunnerScript("@coder 게시");
+    const post = posted.calls.find((c) => c.kind === "post");
+    expect(post).toMatchObject({ text: RUNNER_POST_TEXT });
+    expect(ComponentsV1.safeParse(post?.kind === "post" && post.components).success).toBe(true);
+    expect(posted.streamed).toMatch(/^요약을 채널에 올렸습니다\./);
+
+    const sub = await runRunnerScript("@coder 구독");
+    expect(sub.final).toMatchObject({ opts: { costKind: "subscription_estimate" } });
+
+    const failed = await runRunnerScript("@coder 실패");
+    expect(failed.calls.map((c) => c.kind)).toEqual(["tool", "error"]);
+  });
+
+  it("러너 대본이 내는 글·카드 라벨·승인 요약에는 어떤 키워드도 없다", async () => {
+    const texts: string[] = [];
+    for (const keyword of [...DEV_FAKE_KEYWORDS, "승인 게시"]) {
+      for (const decision of [allow, { providerApprovalId: "p", decision: "deny" as const }]) {
+        const { calls } = await runRunnerScript(`@coder ${keyword}`, decision);
+        for (const c of calls) {
+          // 델타는 인용 「」 을 가르므로 이어 붙인 최종 답으로 본다 — 인용은 대본 글이 아니다
+          if (c.kind === "final") texts.push(c.text.replace(/「[^」]*」/g, "「」"));
+          if (c.kind === "post") texts.push(...stringsIn(c.text), ...stringsIn(c.components));
+          if (c.kind === "approval") texts.push(c.summary);
+        }
+      }
+    }
+    expect(texts).toEqual(expect.arrayContaining([RUNNER_POST_TEXT, "더 설명해 주세요"]));
+    for (const text of texts)
+      for (const keyword of DEV_FAKE_KEYWORDS)
+        expect(text, `${JSON.stringify(text)} ⊃ ${keyword}`).not.toContain(keyword);
   });
 });
 
@@ -1059,6 +1194,8 @@ describe("startDevFake 운영 훅 — /__devfake/ops/event·gateway·disk", () =
     [DEV_FAKE_DISK_PATH, { reset: true }],
     // 되돌림(true) — 가드를 지난 호출이 옛 플러그인으로 바꿔 두지 않게
     [DEV_FAKE_PLUGIN_CAPABILITIES_PATH, { threads: true }],
+    // 이미 붙어 있으면 그대로 — 가드를 지난 호출이 가짜 러너를 끊지 않게
+    [DEV_FAKE_RUNNER_PATH, { connected: true }],
   ] as const)("%s 공통 가드", (path, body) => {
     it("세션 없음 401 · member 403 — 앱의 requireOwner 응답 그대로", async () => {
       const anon = await post(path, body, { "content-type": "application/json" });
@@ -1548,12 +1685,156 @@ describe("startDevFake 고정 member 계정 — mia", () => {
   }, 20_000);
 });
 
+describe("startDevFake 가짜 Claude 러너 — 고정 러너 토큰·coder·/__devfake/runner", () => {
+  let dir: string;
+  let dev: DevFake;
+  let owner: { sessionToken: string; cookie: string };
+  const sockets: WireSocket[] = [];
+  const sha256 = (v: string) => createHash("sha256").update(v).digest("hex");
+
+  beforeAll(async () => {
+    dir = mkdtempSync(join(tmpdir(), "dodok-dev-fake-runner-"));
+    dev = await startDevFake({ port: 0, dataDir: dir, logLevel: "warn" });
+    owner = await loginOwner(dev.url);
+  });
+
+  afterAll(async () => {
+    for (const socket of sockets.splice(0)) socket.close();
+    await dev?.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const rest = <T>(method: "GET" | "POST" | "PATCH", path: string, body?: unknown) =>
+    restAs<T>(dev.url, owner.cookie, method, path, body);
+  const hook = async (body: unknown) => {
+    const res = await fetch(`${dev.url}${DEV_FAKE_RUNNER_PATH}`, {
+      method: "POST",
+      headers: { cookie: owner.cookie, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+  };
+  const runnersConnected = () => {
+    const status = dev.app.registry.forProvider("claude")?.status();
+    return status?.provider === "claude" ? status.runners.connected : -1;
+  };
+
+  /** coder 가 멤버인 채널을 만들고 wire 로 구독한다 — 받은 이벤트를 모은다 */
+  async function coderChannel(name: string) {
+    const { agents: list } = await rest<{ agents: Array<{ id: string; providerAgentId: string }> }>(
+      "GET",
+      "/agents",
+    );
+    const coderId = list.find((a) => a.providerAgentId === "coder")?.id ?? "";
+    const { channel } = await rest<{ channel: { id: string } }>("POST", "/channels", { name });
+    await rest("POST", `/channels/${channel.id}/members`, { memberType: "agent", memberId: coderId });
+    const socket: WireSocket = io(dev.url, {
+      transports: ["websocket"],
+      reconnection: false,
+      forceNew: true,
+      auth: { protocol: WIRE_PROTOCOL, token: owner.sessionToken },
+    });
+    sockets.push(socket);
+    const created: Message[] = [];
+    socket.on("message.created", ({ message }) => created.push(message));
+    const res = await socket.emitWithAck("channel.subscribe", { channelId: channel.id });
+    if (!res.ok) throw new Error(`channel.subscribe → ${res.error.code}`);
+    const send = (bodyMd: string) =>
+      socket.emitWithAck("message.send", { channelId: channel.id, clientMsgId: bodyMd, bodyMd });
+    return { channelId: channel.id, coderId, socket, created, send };
+  }
+
+  it("시작하면 고정 러너 토큰(라벨 dev-fake) 행으로 가짜 러너가 붙어 있고, coder 는 claude 에이전트로 등록돼 discover 에 hint 와 함께 보인다", async () => {
+    const row = dev.app.db
+      .select()
+      .from(runnerTokens)
+      .where(eq(runnerTokens.hash, sha256(DEV_FAKE_RUNNER_TOKEN)))
+      .get();
+    expect(row).toMatchObject({ label: DEV_FAKE_RUNNER_LABEL, revokedAt: null });
+    const { tokens } = await rest<{ tokens: Array<{ id: string; connected: boolean }> }>(
+      "GET",
+      "/setup/runner-tokens",
+    );
+    expect(tokens).toEqual([expect.objectContaining({ id: row?.id, connected: true })]);
+    const { agents: list } = await rest<{ agents: Array<{ provider: string; providerAgentId: string }> }>(
+      "GET",
+      "/agents",
+    );
+    expect(list).toEqual([
+      expect.objectContaining({ provider: "claude", providerAgentId: "coder", handle: "coder" }),
+    ]);
+    const { agents: found } = await rest<{ agents: unknown[] }>("GET", "/agents/discover?provider=claude");
+    expect(found).toEqual([{ providerAgentId: "coder", name: "Coder", hint: "dev-fake · dodok · sonnet" }]);
+  });
+
+  it("@coder 「승인 게시」 → 승인 카드를 허용하면 post 카드 메시지와 최종 답이 오고, 런 usage 는 api 비용이다", async () => {
+    const ch = await coderChannel("runner-approve");
+    const requested = new Promise<string>((resolve) =>
+      ch.socket.on("approval.requested", ({ approval }) => resolve(approval.id)),
+    );
+    expect((await ch.send(`<@a:${ch.coderId}> 승인 게시`)).ok).toBe(true);
+    const approvalId = await requested;
+    const decided = await ch.socket.emitWithAck("approval.resolve", { approvalId, decision: "allow-once" });
+    expect(decided.ok).toBe(true);
+    await vi.waitFor(
+      () => {
+        const agentMessages = ch.created.filter((m) => m.authorType === "agent");
+        expect(agentMessages.map((m) => m.bodyMd)).toEqual([
+          RUNNER_POST_TEXT,
+          expect.stringMatching(/^허용받아 실행했습니다\.\n\n요약을 채널에 올렸습니다\.\n\n/),
+        ]);
+        expect(agentMessages[0]?.components?.blocks).toHaveLength(2);
+      },
+      { timeout: 10_000 },
+    );
+    const final = ch.created.find((m) => m.authorType === "agent" && m.bodyMd.startsWith("허용받아"));
+    const stored = dev.app.db
+      .select()
+      .from(runs)
+      .where(eq(runs.id, final?.runId ?? ""))
+      .get();
+    expect(stored?.usage).toMatchObject({ costUsd: 0.02, costKind: "api" });
+  }, 20_000);
+
+  it("runner 훅 — false 면 끊기고 멘션은 run_error 카드, 틀린 token 이면 ok:false, true 면 다시 붙어 답한다", async () => {
+    const ch = await coderChannel("runner-hook");
+    expect(await hook({ connected: "yes" })).toMatchObject({ status: 400 });
+    const off = await hook({ connected: false });
+    expect(off).toMatchObject({ status: 200, body: { ok: true } });
+    expect(runnersConnected()).toBe(0);
+
+    expect((await ch.send(`<@a:${ch.coderId}> 안녕`)).ok).toBe(true);
+    await vi.waitFor(() => expect(ch.created.some((m) => m.systemMeta?.kind === "run_error")).toBe(true), {
+      timeout: 10_000,
+    });
+
+    const wrong = await hook({ connected: true, token: "nope" });
+    expect(wrong).toMatchObject({ status: 200, body: { ok: false } });
+    expect(runnersConnected()).toBe(0);
+
+    const on = await hook({ connected: true, token: DEV_FAKE_RUNNER_TOKEN });
+    expect(on).toMatchObject({ status: 200, body: { ok: true } });
+    expect(runnersConnected()).toBe(1);
+    expect((await ch.send(`<@a:${ch.coderId}> 다시`)).ok).toBe(true);
+    await vi.waitFor(
+      () =>
+        expect(ch.created.some((m) => m.authorType === "agent" && m.bodyMd.includes("잘 받았어요"))).toBe(
+          true,
+        ),
+      { timeout: 10_000 },
+    );
+  }, 30_000);
+});
+
 describe("운영 createApp 에는 dev:fake 경로가 없다", () => {
   let app: App;
+  let headers: { authorization: string };
   beforeAll(async () => {
     app = await bootTestApp();
     // 훅은 HTTP 서버의 request 리스너 층에 있다 — inject 는 그 층을 지나지 않으므로 실제로 듣고 fetch 로 부른다
     await app.fastify.listen({ host: "127.0.0.1", port: 0 });
+    // /api/v1/auth/local 은 5회/분 — 경로마다 로그인하지 않고 한 번만
+    ({ headers } = await login(app));
   });
   afterAll(async () => {
     await app?.close();
@@ -1565,8 +1846,8 @@ describe("운영 createApp 에는 dev:fake 경로가 없다", () => {
     [DEV_FAKE_GATEWAY_PATH, { state: "down" }],
     [DEV_FAKE_DISK_PATH, { reset: true }],
     [DEV_FAKE_PLUGIN_CAPABILITIES_PATH, { threads: false }],
+    [DEV_FAKE_RUNNER_PATH, { connected: false }],
   ])("POST %s → 404 (실제 fetch, owner 세션)", async (path, body) => {
-    const { headers } = await login(app);
     const res = await fetch(`${app.url}${path}`, {
       method: "POST",
       headers: { ...headers, "content-type": "application/json" },
@@ -1575,7 +1856,6 @@ describe("운영 createApp 에는 dev:fake 경로가 없다", () => {
     expect(res.status).toBe(404);
   });
 
-  // /api/v1/auth/local 은 5회/분 — 위 it.each 가 이미 그 버킷을 쓰므로 로그인을 한 번 더 부르지 않고 DB 로 직접 본다
   it("dev:fake 고정 member 계정도 없다 — 그 이메일의 users 행이 없다", () => {
     const email = normalizeEmail(DEV_FAKE_MEMBER_EMAIL);
     const row = app.db
@@ -1584,5 +1864,11 @@ describe("운영 createApp 에는 dev:fake 경로가 없다", () => {
       .where(and(eq(users.workspaceId, app.workspaceId), eq(users.email, email)))
       .get();
     expect(row).toBeUndefined();
+  });
+
+  it("dev:fake 고정 러너 토큰·coder 에이전트도 없다", () => {
+    const hash = createHash("sha256").update(DEV_FAKE_RUNNER_TOKEN).digest("hex");
+    expect(app.db.select().from(runnerTokens).where(eq(runnerTokens.hash, hash)).get()).toBeUndefined();
+    expect(app.db.select().from(agents).where(eq(agents.providerAgentId, "coder")).get()).toBeUndefined();
   });
 });
