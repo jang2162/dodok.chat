@@ -158,7 +158,7 @@ src/
 │                         브리지·러너 거절 로그도 app.ts 가 어댑터 옵션 logAddress 로 ipPrefix 를 준다(가드·스로틀 키는 전체 주소)
 ├─ wiring.ts              createServices(라우터 ⇄ 오케스트레이터 상호 참조, RunsFacade), sessionRecoverTargets(재접속 복구 대상)
 ├─ db/
-│  ├─ schema.sqlite.ts    Drizzle 스키마 (계획서 6장 테이블 + agent_sessions + approvals + attachments + bridge_tokens + ops_events + invites — FK cascade 는 push_subscriptions.session_id 하나뿐).
+│  ├─ schema.sqlite.ts    Drizzle 스키마 (계획서 6장 테이블 + agent_sessions + approvals + attachments + bridge_tokens + ops_events + invites + runner_tokens — 마이그레이션 0000~0011, FK cascade 는 push_subscriptions.session_id 하나뿐).
 │  │                      스레드(0006): messages.thread_root_id(인덱스 messages_channel_thread_seq (channel_id, thread_root_id, seq))·agent_sessions.thread_root_id·runs.thread_root_id —
 │  │                      세 열 모두 FK 없음(저장 경로 검증이 지킨다). agent_sessions 의 유일 제약은 **부분 유일 인덱스 둘** — 스레드 행 agent_sessions_channel_agent_thread
 │  │                      (channel_id, agent_id, thread_root_id), 채널 행 agent_sessions_channel_session (channel_id, agent_id) WHERE thread_root_id IS NULL(coalesce 표현식 인덱스는
@@ -278,7 +278,10 @@ src/
 │  │                      runner-file.ts(runnerDirCandidates — DODOK_RUNNER_DIR(이미지 /app/runner), 소스 실행이면 packages/claude-runner/dist ·
 │  │                      readRunnerFile — tgz 안 `package/dist/main.js` sha256, 몸통은 plugin-file.ts readBundledTgz) ·
 │  │                      routes.ts(`GET`·`POST /api/v1/setup/runner-tokens`(201 no-store, runnerConfig{serverUrl — 브리지 공개 주소의 오리진을 http(s) 로, tokenFile}) ·
-│  │                      `DELETE /api/v1/setup/runner-tokens/:id`(폐기 → 러너 어댑터 revokeTokenSessions) · `GET /api/v1/setup/runner.tgz`(없으면 404 `RUNNER_FILE_MISSING`)).
+│  │                      `DELETE /api/v1/setup/runner-tokens/:id`(폐기 → 러너 어댑터 revokeTokenSessions — 묶임은 남는다) ·
+│  │                      `PUT /api/v1/setup/runner-tokens/:id/agents/:agentId`(다시 묶기 — 활성 토큰만, 폐기면 409) · `GET /api/v1/setup/runner.tgz`(없으면 404 `RUNNER_FILE_MISSING`)) ·
+│  │                      bindings.ts(agents.runner_token_id — boundRunnerToken·claimRunnerToken(묶임 없는 등록 claude 행만, 조건부 UPDATE)·bindRunnerToken.
+│  │                      러너 어댑터의 bindings 옵션이 앞의 둘을 부르고, 에이전트 등록은 그 id 를 맡는 러너의 토큰(servingTokenId)을 INSERT 에 싣는다).
 │  │                      러너 어댑터(@dodok/runner-adapter)는 app.ts 가 만든다(deps.adapters 를 안 주면 늘 — 테스트는 runnerAdapter: true). 러너 첨부 HTTP
 │  │                      (`/runner/attachments`)는 attachments/routes.ts 가 브리지와 같은 가드·같은 제한으로 연다(업로더는 bridge — 에이전트 쪽)
 │  ├─ ops/                Phase 3 ③. 운영 사건·런 수 상한·레이트리밋·안정성 — API 는 전부 admin 이상(`requireRole(ctx, "admin")`, 아니면 403).
@@ -504,7 +507,8 @@ SDK import 경로: `openclaw/plugin-sdk/plugin-entry`, `openclaw/plugin-sdk/chan
 
 서버 측 Claude 러너 어댑터 — `AgentAdapter` 의 `provider: "claude"` 구현. 설계는 `docs/superpowers/specs/2026-09-27-claude-runner-design.md`(구현과 달라진 것은 그 스펙의 「구현과 맞춘 것」 장).
 - `src/runner-adapter.ts` — `/runner` 네임스페이스(러너 토큰 핸드셰이크·hello·같은 토큰 교체는 옛 자리를 잇는다), `send`→`run.start`(채널 규칙 틀·턴 사실은 여기서 만든다), `run.event` 허용 목록·runId 대조, `run.final`→정본·usage(`dodok.usage`), 중지(`run.final aborted` → 메시지 없는 `RUN_ABORTED`, 러너 종료 `run.final runner_shutdown` → `ADAPTER_UNAVAILABLE`), `outbound.post` 를 열린 런에 묶기, `mayReadAttachment`(러너 토큰 첨부 읽기 범위 — 열린 런의 트리거 첨부만), `supports`(러너가 없으면 true), 서버 종료·hello 타임아웃은 전송만 닫고 교체·폐기만 `disconnect(true)`.
-- `src/connections.ts` — 붙은 러너와 에이전트 배정(먼저 알린 러너가 맡고 뒤 러너의 같은 id 는 「충돌」, 교체는 자리 잇기).
+- `src/connections.ts` — 붙은 러너와 에이전트 배정(러너 토큰에 묶인 등록 에이전트는 그 토큰의 러너만, 묶임이 없으면 먼저 알린 러너가 맡고 뒤 러너의 같은 id 는 「충돌」, 교체는 자리 잇기). 묶임 없는 등록 에이전트는 hello·러너가 빠진 뒤 지금 맡는 러너 토큰에 묶는다(`claimUnbound`).
+- 러너 프레임 속도 제한 — 소켓마다 버킷 둘(`run.event` 와 나머지, 숫자는 서버 `LIMITS.runner`, 옵션 `frameLimit` 로 받는다). 넘친 프레임은 버리고 warn·`onLimited`(운영 사건)는 주소별 1분에 한 번.
 - `src/approvals.ts` — 러너 승인 정규화(서버 쪽 id `runner:<토큰 id>:<러너 id>`)와 10분 기한 타이머(지나면 러너에 `deny`, `expired`).
 
 ### 2.4b `packages/claude-runner` (사람의 머신에서 실행 — CLI `dodok-runner`)
@@ -695,7 +699,7 @@ src/
 │  │                       `threadRootId` 면 루트를 싣고 보내는 중·확정은 스레드 캐시에) · useTyping·TypingIndicator(스레드 작성기는 typing 을 보내지 않는다 — wire Typing 이 채널 단위) ·
 │  │                       PendingAttachments.tsx(칩 — 미리보기·진행 막대·사유·「<이름> 빼기」, 빼면 초점을 옆 칩·「이미지 첨부」로). Composer 는 「이미지 첨부」 버튼·붙여넣기·
 │  │                       작성기 상자 전체의 끌어다 놓기로 칩을 넣고, 올리기가 끝나야 보낸다(사유: 끊김 → 「이미지를 올리는 중입니다」 → 「올리지 못한 이미지를 빼 주세요」). 글 없이 이미지만 보낼 수 있다
-│  ├─ agents/              AgentsPage·AgentRow(사용 토글·기본 프롬프트 — member 에게는 값만, 등록 버튼 없음) · DiscoverDialog(「Gateway 에서 가져오기」) · ManualAgentForm·handleFrom ·
+│  ├─ agents/              AgentsPage·AgentRow(사용 토글·기본 프롬프트 — member 에게는 값만, 등록 버튼 없음 · claude 면 묶인 러너 라벨, 폐기됐으면 다시 묶으라는 안내 — 다시 묶기는 연결 페이지 러너 카드) · DiscoverDialog(「Gateway 에서 가져오기」) · ManualAgentForm·handleFrom ·
 │  │                       resetSession·ResetSessionDialog(「새 대화」 — 작성기 `/new` 와 설정 패널이 함께 쓴다) · mutations
 │  ├─ search/              Phase 4 ①. SearchDialog.tsx(`⌘K` 대화상자 — 390px 전체 시트, 필터 채널·사람/에이전트·기간, 결과를 누르면 requestJump 뒤 그 채널·스레드로, 닫으면 연 자리로 초점 —
 │  │                       Trigger 없이 여는 대화상자라 `onOpenAutoFocus` 에서 기억한 요소로 돌려준다) · SearchResults.tsx(2글자면 「2글자는 최근 90일에서 50개까지만 찾습니다」·「더 보기」 없음,
