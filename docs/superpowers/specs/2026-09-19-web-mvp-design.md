@@ -208,7 +208,7 @@ MVP 코드 블록은 틀·복사 버튼까지다. 한국어 강조(`**"인용"**
 ### 5.4 components — 버튼만
 
 - `components.blocks` 중 `actions` 블록의 `button` 아이템만 버튼으로 그린다(`style` → shadcn variant, 링크 버튼은 새 탭). 그 밖의 블록·아이템은 「이 메시지의 입력 요소는 Phase 2 에서 지원합니다」 한 줄.
-- 누르면 `component.interact { messageId, componentId, blockId?, itemId, values: {} }`. 성공하면 서버의 `message.updated`(소비 상태)로 버튼이 바뀐다. 오류 코드별 토스트: `EXPIRED` 「만료된 항목입니다」, `CONSUMED` 「이미 처리된 항목입니다」, `FORBIDDEN` 「이 항목을 쓸 권한이 없습니다」, `VALIDATION` 「처리할 수 없는 요청입니다」(셀렉트·모달도 같은 표를 쓰므로 「버튼」이 아니라 「항목」 — `apps/web/src/features/components/useInteract.ts` 의 `ERR`).
+- 누르면 `component.interact { messageId, componentId, blockId?, itemId, values: {} }`. 성공하면 서버의 `message.updated`(소비 상태)로 버튼이 바뀐다. 오류 코드별 토스트: `EXPIRED` 「만료된 버튼입니다」, `CONSUMED` 「이미 처리된 버튼입니다」, `FORBIDDEN` 「이 버튼을 누를 권한이 없습니다」, `VALIDATION` 「처리할 수 없는 요청입니다」.
 - `componentState.consumed` 에 든 아이템과 `expiresAt` 이 지난 메시지의 버튼은 비활성으로 그린다.
 
 ### 5.5 메시지 목록
