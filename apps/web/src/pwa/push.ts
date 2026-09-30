@@ -175,8 +175,9 @@ export async function disablePush(): Promise<void> {
 }
 
 /**
- * 세션이 이미 없을 때(401) — 서버에 물을 수 없으니 기기 구독만 해지한다. 서버 행은 다음 발송의 404·410 이
- * 지우거나 다음 사용자가 같은 endpoint 를 켜면 그 사람으로 옮겨진다. 해지된 endpoint 로는 아무것도 오지 않는다
+ * 세션이 이미 없을 때(401) — 서버에 물을 수 없으니 기기 구독만 해지한다. 서버 행은 그 세션이 지워지거나
+ * 만료되면 서버가 지우고(구독은 등록한 세션에 묶인다), 그 전에는 다음 발송의 404·410 이 지운다. 해지된
+ * endpoint 로는 아무것도 오지 않는다
  */
 export async function dropLocalPush(): Promise<void> {
   const sub = await currentSubscription();

@@ -47,6 +47,7 @@
 - ⚠ **Claude-in-Chrome 은 인증서 오류를 넘기지 못한다** — `net::ERR_CERT_AUTHORITY_INVALID` 에서 멈추고 예외를 거는 옵션이 없다.
 - ⚠ **Playwright 의 `ignoreHTTPSErrors` 만으로는 서비스 워커가 등록되지 않는다** — 페이지는 열리지만 SW 스크립트 가져오기가 `An SSL certificate error occurred when fetching the script` 로 거절된다. 브라우저 인자 `--ignore-certificate-errors` 가 있어야 한다.
 - ⚠ **Playwright 의 임시 컨텍스트(`browser.newContext()`)에는 Push API 가 없다** — Chromium 이 임시 프로필을 시크릿으로 취급해 `Chrome currently does not support the Push API in incognito mode` 로 구독이 실패한다. 푸시 켜기까지 보려면 **`launchPersistentContext`** 로 띄운다.
+- ⚠ **서비스 워커 안의 콘솔(CSP 위반 포함)은 Playwright 컨텍스트 `console` 이벤트로 오지 않는다** — SW 안에서 일부러 위반을 내도 0건이다. 「SW 위반 0」을 그 수로 보고하지 않는다. SW 의 문자열 코드 실행은 빌드된 `dist/sw.js` 를 Node 에서 가짜 `self` 로 평가하며 `Function` 을 Proxy 로 세어 본다(양성 대조: zod 설정의 `jitless:!0` 을 `!1` 로 바꾼 사본은 1건).
 - neo 로 이 인증서를 넘길 수 있는지는 재지 않았다(neo 의 CDP 는 Playwright `connectOverCDP` 를 `Browser context management is not supported` 로 거절했다). 로그인이 필요 없는 검증이라 독립 브라우저로 한다.
 
 ```js
