@@ -1,7 +1,14 @@
 import { z } from "zod";
 import { Id, IsoDateTime } from "../common";
 
-export const ItemId = z.string().regex(/^[a-z0-9_-]{1,40}$/);
+// constructor·__proto__ 는 뺀다 — 서버가 id 를 객체 키로 써서 상속 값을 읽거나 프로토타입 세터를 탄다
+// (Object.prototype 의 다른 이름은 대문자가 섞여 정규식에 안 걸린다). refine 이라 JSON Schema 의 pattern 은 그대로다.
+export const ItemId = z
+  .string()
+  .regex(/^[a-z0-9_-]{1,40}$/)
+  .refine((id) => id !== "constructor" && id !== "__proto__", {
+    message: "id 로 constructor·__proto__ 는 쓸 수 없다",
+  });
 export const SafeUrl = z.string().regex(/^(https:\/\/|artifact:\/\/)\S+$/);
 const AllowedUsers = z.array(Id).max(50).optional();
 

@@ -292,10 +292,16 @@ describe("submitValues — 보내는 모양", () => {
   });
 });
 
-describe("칸 id 가 Object.prototype 의 이름이어도(계약 ItemId 가 받는다)", () => {
+// 계약은 두 이름을 거절한다 — 옛 행이나 계약을 우회한 칸을 흉내 내려고 자리 id 로 파싱한 뒤 그 이름으로 바꾼다
+const unchecked = (raw: Record<string, unknown> & { id: string }): Field => ({
+  ...f({ ...raw, id: "x" }),
+  id: raw.id,
+});
+
+describe("칸 id 가 Object.prototype 의 이름이어도(옛 행·계약 우회)", () => {
   const fields = [
-    f({ type: "text", id: "__proto__", required: true }),
-    f({ type: "select", id: "constructor", multi: true, options: OPTS }),
+    unchecked({ type: "text", id: "__proto__", required: true }),
+    unchecked({ type: "select", id: "constructor", multi: true, options: OPTS }),
   ];
 
   it("initialValues 가 그 칸을 제 키로 든다 — `__proto__` 에 써도 프로토타입 세터를 타지 않는다", () => {
@@ -313,7 +319,7 @@ describe("칸 id 가 Object.prototype 의 이름이어도(계약 ItemId 가 받�
   });
 
   it("못 읽는 입력의 칸이 `__proto__` 여도 형식 오류로 막는다", () => {
-    const d = [f({ type: "date", id: "__proto__" })];
+    const d = [unchecked({ type: "date", id: "__proto__" })];
     expect(Object.entries(validateFields(d, initialValues(d), ["__proto__"]))).toEqual([
       ["__proto__", "날짜 형식이 올바르지 않습니다"],
     ]);

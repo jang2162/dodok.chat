@@ -525,15 +525,25 @@ describe("모달 — 제출", () => {
   });
 });
 
-describe("모달 — 칸 id 가 Object.prototype 의 이름이어도(계약 ItemId 가 받는다)", () => {
+// 계약은 두 이름을 거절한다 — 옛 행이나 계약을 우회한 카드를 흉내 내려고 자리 id 로 파싱한 뒤 그 이름으로 바꾼다
+function unchecked(message: Message): Message {
+  const json = JSON.stringify(message.components)
+    .replaceAll('"risky-proto"', '"__proto__"')
+    .replaceAll('"risky-ctor"', '"constructor"');
+  return { ...message, components: JSON.parse(json) as Message["components"] };
+}
+
+describe("모달 — 칸 id 가 Object.prototype 의 이름이어도(옛 행·계약 우회)", () => {
   it("열리고, 필수 오류가 그 칸에 뜨고, 고치면 그 칸만 내려가고, 채운 값이 그 id 로 나간다", async () => {
     fake?.onAck("component.interact", () => OK);
-    const message = withModal({
-      fields: [
-        { type: "text", id: "__proto__", label: "제목", required: true },
-        { type: "number", id: "constructor", label: "개수", required: true },
-      ],
-    });
+    const message = unchecked(
+      withModal({
+        fields: [
+          { type: "text", id: "risky-proto", label: "제목", required: true },
+          { type: "number", id: "risky-ctor", label: "개수", required: true },
+        ],
+      }),
+    );
     renderWithClient(<Components message={message} />);
     const dialog = await open();
     const title = within(dialog).getByLabelText("제목");
@@ -557,13 +567,15 @@ describe("모달 — 칸 id 가 Object.prototype 의 이름이어도(계약 Item
 
   it("비워 둔 선택 칸은 그 이름이어도 빈 칸이다 — 막지 않고 빼고 보낸다", async () => {
     fake?.onAck("component.interact", () => OK);
-    const message = withModal({
-      fields: [
-        { type: "date", id: "__proto__", label: "마감" },
-        { type: "select", id: "constructor", label: "태그", multi: true, options: OPTS },
-        { type: "text", id: "title", label: "제목", required: true },
-      ],
-    });
+    const message = unchecked(
+      withModal({
+        fields: [
+          { type: "date", id: "risky-proto", label: "마감" },
+          { type: "select", id: "risky-ctor", label: "태그", multi: true, options: OPTS },
+          { type: "text", id: "title", label: "제목", required: true },
+        ],
+      }),
+    );
     renderWithClient(<Components message={message} />);
     const dialog = await open();
     expect(within(dialog).getByLabelText("마감")).not.toHaveAttribute("aria-invalid");
@@ -582,13 +594,15 @@ describe("모달 — 칸 id 가 Object.prototype 의 이름이어도(계약 Item
         details: { issues: [{ path: ["fields", "n"], message: "Too big" }] },
       },
     }));
-    const message = withModal({
-      fields: [
-        { type: "text", id: "__proto__", label: "제목" },
-        { type: "text", id: "constructor", label: "부제" },
-        { type: "number", id: "n", label: "개수" },
-      ],
-    });
+    const message = unchecked(
+      withModal({
+        fields: [
+          { type: "text", id: "risky-proto", label: "제목" },
+          { type: "text", id: "risky-ctor", label: "부제" },
+          { type: "number", id: "n", label: "개수" },
+        ],
+      }),
+    );
     renderWithClient(<Components message={message} />);
     const dialog = await open();
     await userEvent.type(within(dialog).getByLabelText("개수"), "2");

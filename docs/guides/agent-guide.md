@@ -244,7 +244,7 @@
 - **셀렉트** — `id`, `placeholder`(150자 — 결과 줄과 다음 턴의 글에서 이 셀렉트의 이름으로 쓰인다. 없으면 `id`), `multi`(기본 `false`), `minValues`(0~25)·`maxValues`(1~25), `options`(1~25개: `value`·`label` 각 1~100자, `description` 100자, `emoji`), `allowedUsers`. 웹은 단일·다중 모두 목록에서 고른 뒤 「보내기」로 확정한다.
 - **모달** — `id`, `title`(1~45자), `triggerLabel`(1~80자 — 이 글의 버튼이 카드에 생겨 모달을 연다. **여는 버튼을 따로 만들지 않는다**), `fields`(**1~5개**), `allowedUsers`.
 - **모달 칸** — 모두 `id`·`label`(1~45자)·`required`(기본 `false`). 종류별로 `text`(`placeholder` 100자·`minLength`·`maxLength` 4,000 이하·`default`) · `textarea`(`placeholder`·`maxLength`·`default`) · `number`(`min`·`max`·`step`·`default`) · `date`(`default` 는 `YYYY-MM-DD`) · `select`(`multi`·`options` 1~25개·`default` 는 값 배열) · `checkbox`(`default`) · `radio`(`options` **2~10개**·`default`). `checkbox` 의 `required` 는 아무것도 강제하지 않는다 — 체크하지 않은 채로도 제출된다.
-- **id** — 블록 `id`·아이템 `id`·모달 `id`·칸 `id` 모두 `[a-z0-9_-]` 1~40자이고, **카드 안에서 겹치지 않는다.** 대문자·공백·한글은 안 된다.
+- **id** — 블록 `id`·아이템 `id`·모달 `id`·칸 `id` 모두 `[a-z0-9_-]` 1~40자이고, **카드 안에서 겹치지 않는다.** 대문자·공백·한글은 안 되고, `constructor`·`__proto__` 두 이름도 안 된다.
 - **`url`** — `https://` 또는 `artifact://` 만. `http://`·상대 주소는 스키마가 막는다.
 - **`allowedUsers`** — 누를 수 있는 사람의 **사용자 id(UUID)** 목록(50개). 헤더에는 핸들만 있고 id 가 없으므로 에이전트는 대개 쓰지 않는다. 핸들(`"owner"`)을 넣으면 스키마 위반이다. 빈 배열은 제한 없음이다.
 
@@ -534,6 +534,19 @@
 }
 ```
 
+**`constructor`·`__proto__` id** — 정규식에는 맞아도 두 이름은 id 로 못 쓴다.
+
+```json dodok-components-invalid blocks.0.items.0.id custom
+{
+  "blocks": [
+    {
+      "type": "actions",
+      "items": [{ "type": "button", "id": "constructor", "label": "만들기" }]
+    }
+  ]
+}
+```
+
 **`http://` 링크** — `url` 은 `https://` 또는 `artifact://` 만.
 
 ```json dodok-components-invalid blocks.0.items.0.url invalid_format
@@ -669,7 +682,7 @@ OpenClaw 에이전트는 작업 공간의 `AGENTS.md`(운영 지시)를 세션�
 - `@핸들`은 호출이다. 다른 에이전트에게 일을 넘길 때만 쓰고, 넘길 일을 그 메시지 하나에 다 적는다. 이름을 언급만 할 때는 @ 없이 쓰거나 백틱으로 감싼다.
 - 릴레이는 턴 상한과 반복 감지로 멈춘다. 같은 에이전트에게 같은 말을 다시 보내지 않는다.
 - 사람에게 고르게 하거나 입력을 받을 때는 `ask_user` 가 아니라 `message` 툴(action `send`)의 `components` 로 카드를 보낸다. `ask_user` 는 이 채널에서 동작하지 않는다.
-- 카드 제약: `actions` 블록 하나에 버튼 1~5개 또는 셀렉트 정확히 1개(섞지 않는다). 셀렉트 옵션 25개, 블록 10개까지. 모달은 카드당 1개, 칸 5개까지이고 `triggerLabel` 이 여는 버튼이 된다(여는 버튼을 따로 만들지 않는다). 모든 id 는 `[a-z0-9_-]` 1~40자이고 카드 안에서 겹치지 않는다. `url` 은 `https://` 또는 `artifact://` 만.
+- 카드 제약: `actions` 블록 하나에 버튼 1~5개 또는 셀렉트 정확히 1개(섞지 않는다). 셀렉트 옵션 25개, 블록 10개까지. 모달은 카드당 1개, 칸 5개까지이고 `triggerLabel` 이 여는 버튼이 된다(여는 버튼을 따로 만들지 않는다). 모든 id 는 `[a-z0-9_-]` 1~40자(`constructor`·`__proto__` 는 안 된다)이고 카드 안에서 겹치지 않는다. `url` 은 `https://` 또는 `artifact://` 만.
 - 카드는 기본 1회용(버튼·셀렉트·모달마다 한 번)이고 30분 뒤 만료된다(`ttlMs`, 최대 86400000). 여럿 중 하나만 받을 때는 셀렉트 하나로 묻는다. 여러 번 눌려야 하면 `"reusable": true`.
 - 카드와 함께 할 말은 `message` 본문에 다 쓴다 — 같은 채널에 `message` 툴을 쓴 뒤의 최종 답은 채널에 안 올라갈 수 있다.
 - 누른 결과는 `[dodok interaction] user=@… kind=… component=… item=<id>` 로 시작하는 새 메시지로 온다. `item` 과 값으로 일을 이어 간다.

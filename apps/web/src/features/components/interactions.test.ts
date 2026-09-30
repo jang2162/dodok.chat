@@ -123,20 +123,26 @@ describe("summarize — 결과 줄 문구(서버 formatInteractionText 의 사�
     });
   });
 
-  it("실려 오지 않은 칸은 건너뛴다 — 칸 id 가 Object.prototype 의 이름이어도 상속된 것을 읽지 않는다", () => {
-    const risky = ComponentsV1.parse({
+  it("실려 오지 않은 칸은 건너뛴다 — 칸 id 가 Object.prototype 의 이름이어도(옛 행·계약 우회) 상속된 것을 읽지 않는다", () => {
+    // 계약은 두 이름을 거절한다 — 자리 id 로 파싱한 뒤 그 이름으로 바꾼다
+    const parsed = ComponentsV1.parse({
       id: "cmp_3",
       modal: {
         id: "risky",
         title: "위험한 칸",
         triggerLabel: "열기",
         fields: [
-          { type: "text", id: "constructor", label: "생성자" },
-          { type: "text", id: "__proto__", label: "원형" },
+          { type: "text", id: "risky-ctor", label: "생성자" },
+          { type: "text", id: "risky-proto", label: "원형" },
           { type: "text", id: "ok", label: "보통" },
         ],
       },
     });
+    const risky = JSON.parse(
+      JSON.stringify(parsed)
+        .replaceAll('"risky-ctor"', '"constructor"')
+        .replaceAll('"risky-proto"', '"__proto__"'),
+    ) as ComponentsV1;
     const at = (fields: unknown) =>
       summarize(risky, { ...IX, componentId: "cmp_3", itemId: "risky", values: { fields } });
     expect(at({ ok: "값" })).toStrictEqual({ itemLabel: "위험한 칸", valueText: "보통: 값" });

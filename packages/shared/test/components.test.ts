@@ -136,6 +136,47 @@ describe("ComponentsV1", () => {
       ComponentsV1.safeParse({ blocks: [{ type: "file", url: "artifact://abc", name: "f" }] }).success,
     ).toBe(true);
   });
+  // 서버가 id 를 객체 키로 쓴다 — 두 이름은 상속된 값을 읽거나(constructor) 프로토타입 세터를 탄다(__proto__)
+  it.each(["constructor", "__proto__"])(
+    "id %s 는 버튼·셀렉트·블록·모달·칸·소비 목록 어디서든 거부",
+    (bad) => {
+      const button = { type: "button", id: bad, label: "B" };
+      const select = { type: "select", id: bad, options: [{ value: "v", label: "V" }] };
+      const field = { type: "text", id: bad, label: "L" };
+      const cases = [
+        { blocks: [{ type: "actions", items: [button] }] },
+        { blocks: [{ type: "actions", items: [select] }] },
+        { blocks: [{ type: "actions", id: bad, items: [{ type: "button", id: "ok", label: "B" }] }] },
+        {
+          modal: { id: bad, title: "t", triggerLabel: "o", fields: [{ type: "text", id: "f", label: "L" }] },
+        },
+        { modal: { id: "m", title: "t", triggerLabel: "o", fields: [field] } },
+      ];
+      for (const c of cases) {
+        const r = ComponentsV1.safeParse(c);
+        expect(r.success, JSON.stringify(c)).toBe(false);
+        expect(r.error?.issues.map((i) => i.path.at(-1))).toEqual(["id"]);
+      }
+      expect(
+        ComponentState.safeParse({ expiresAt: "2026-09-14T00:00:00.000Z", consumed: [bad] }).success,
+      ).toBe(false);
+    },
+  );
+  it("이름이 비슷한 id(constructors·proto)는 허용", () => {
+    const r = ComponentsV1.safeParse({
+      blocks: [
+        {
+          type: "actions",
+          items: [
+            { type: "button", id: "constructors", label: "A" },
+            { type: "button", id: "proto", label: "B" },
+            { type: "button", id: "_proto_", label: "C" },
+          ],
+        },
+      ],
+    });
+    expect(r.error?.issues ?? []).toEqual([]);
+  });
   it("블록 11개 거부, 10개 허용", () => {
     const blocks11 = Array.from({ length: 11 }, () => ({ type: "separator" }));
     expect(ComponentsV1.safeParse({ blocks: blocks11 }).success).toBe(false);
