@@ -2,6 +2,7 @@ import { type ReactNode, createContext, memo, useContext, useMemo } from "react"
 import { cn } from "@/lib/utils";
 import { cjk } from "@streamdown/cjk";
 import { type Components, defaultRehypePlugins, defaultRemarkPlugins, Streamdown } from "streamdown";
+import { codeHighlighter } from "./codeHighlight";
 import { MENTION_HREF_PREFIX, mentionsToMarkdown } from "./mentionMarkdown";
 import { MentionChip } from "./MentionChip";
 import { remarkSoftBreaks } from "./softBreaks";
@@ -22,6 +23,11 @@ const REMARK = [...Object.values(defaultRemarkPlugins), remarkSoftBreaks];
  * 와야 해서 remarkPlugins 배열에 직접 끼우지 않고 Streamdown 의 plugins 로 넘긴다 — 그쪽이 앞뒤를 갈라 끼운다
  */
 const PLUGINS = { cjk };
+/**
+ * 확정 본문만 코드를 칠한다(codeHighlight.ts). 스트리밍 버블은 칠하지 않는다 — 델타마다 코드가 바뀌어 블록마다 다시
+ * 토큰화하고, 닫히지 않은 펜스·문자열이 뒤 줄 색을 통째로 바꿔 깜빡인다. 런이 끝나면 버블이 확정 메시지로 바뀌며 한 번 칠해진다
+ */
+const PLUGINS_WITH_CODE = { cjk, code: codeHighlighter };
 const CONTROLS = { code: { copy: true, download: false }, table: false, mermaid: false, image: false };
 const TRANSLATIONS = { copyCode: "코드 복사", copied: "복사됨" };
 
@@ -119,7 +125,7 @@ export const MessageBody = memo(function MessageBody({
       {...(caret ? { caret: "block" as const, isAnimating: true } : {})}
       remarkPlugins={REMARK}
       rehypePlugins={REHYPE}
-      plugins={PLUGINS}
+      plugins={streaming ? PLUGINS : PLUGINS_WITH_CODE}
       components={COMPONENTS}
       controls={CONTROLS}
       translations={TRANSLATIONS}

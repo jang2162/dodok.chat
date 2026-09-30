@@ -47,7 +47,12 @@ export default defineConfig({
       },
       // 아이콘은 globPatterns 가 이미 담는다 — 매니페스트 아이콘을 따로 더하면 같은 항목이 두 번 들어간다
       includeManifestIcons: false,
-      injectManifest: { globPatterns: ["**/*.{js,css,html,svg,png,woff2}"] },
+      // 코드 하이라이트 조각(hl-*, 아래 chunkFileNames)은 미리 저장하지 않는다 — 코드 블록이 처음 보일 때만 받는 지연 로딩이라,
+      // 미리 저장하면 설치마다 쓰지 않을 문법까지 전부 받는다. 오프라인에서 못 받으면 코드 블록은 칠하지 않은 모양 그대로다
+      injectManifest: {
+        globPatterns: ["**/*.{js,css,html,svg,png,woff2}"],
+        globIgnores: ["**/node_modules/**/*", "**/hl-*.js"],
+      },
       // navigateFallback 은 두지 않는다 — 두면 개발 SW 가 Vite 가 변환한 dev index.html 을 미리 저장해 탐색을 가로챈다
       devOptions: { enabled: pwaDev, type: "module" },
     }),
@@ -59,13 +64,20 @@ export default defineConfig({
     rolldownOptions: {
       output: {
         // 라우트 조각(코드 분할) 위에, 잘 바뀌지 않는 큰 라이브러리를 따로 둔다 — 받는 양은 같고 캐시가 오래 간다.
-        // rolldown 1.2 에서 advancedChunks 는 codeSplitting 으로 옮겨졌다(모양은 그대로) — 옛 이름은 경고를 낸다
+        // rolldown 1.2 에서 advancedChunks 는 codeSplitting 으로 옮겨졌다(모양은 그대로) — 옛 이름은 경고를 낸다.
+        // markdown 은 초기 조각이다 — shiki 만 쓰는 hast-util-to-html·character-entities-html4·-legacy 를 여기로 끌어오지 않게
+        // 정규식에서 뺀다(끌려오면 지연 로딩할 하이라이트 의존성이 첫 화면에 실린다)
+        // shiki 가 든 조각(엔진·언어 문법)은 hl- 를 붙인다 — 서비스 워커 사전 저장에서 이름으로 뺀다(위 globIgnores)
+        chunkFileNames: (chunk) =>
+          chunk.moduleIds.some((id) => /node_modules[\\/](shiki|@shikijs)[\\/]/.test(id))
+            ? "assets/hl-[name]-[hash].js"
+            : "assets/[name]-[hash].js",
         codeSplitting: {
           groups: [
             { name: "editor", test: /node_modules[\\/](@tiptap|prosemirror-|@floating-ui)/ },
             {
               name: "markdown",
-              test: /node_modules[\\/](streamdown|remark|rehype|micromark|mdast|hast|unist|vfile|property-information|parse5|decode-named|character-entities|comma-separated|space-separated|html-|web-namespaces|zwitch|longest-streak|markdown-table|ccount|escape-string-regexp|devlop|trim-lines|bail|is-plain-obj|trough|extend|unified)/,
+              test: /node_modules[\\/](streamdown|remark|rehype|micromark|mdast|hast(?!-util-to-html)|unist|vfile|property-information|parse5|decode-named|character-entities(?!-html4|-legacy)|comma-separated|space-separated|html-|web-namespaces|zwitch|longest-streak|markdown-table|ccount|escape-string-regexp|devlop|trim-lines|bail|is-plain-obj|trough|extend|unified)/,
             },
           ],
         },

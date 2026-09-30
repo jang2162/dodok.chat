@@ -527,6 +527,7 @@ Phase 3 ③ 운영 화면(스펙 `docs/superpowers/specs/2026-09-25-ops-hardenin
 Phase 4 ① 스레드·검색(스펙 `docs/superpowers/specs/2026-09-25-threads-search-design.md`, 계획 `docs/superpowers/plans/2026-09-25-threads-search.md`, 구현과 달라진 것은 스펙 「구현과 맞춘 것」 장)이 얹혔다.
 React 19 + Vite 8 + TanStack(Query·Router·Virtual) + Tiptap 작성기 + Streamdown 렌더 + Tailwind 4·shadcn. 의존성은 전부 정확 핀이고 웹 MVP 태스크 2 에서 한 번에 넣었다(Phase 2 ③ 은 0).
 Phase 2 ④ 가 PWA·오프라인 사본 몫으로 더했다 — `vite-plugin-pwa`(dev)·`workbox-precaching`·`workbox-routing`·`workbox-window`·`@tanstack/query-persist-client-core`·`@tanstack/query-async-storage-persister`·`idb-keyval`.
+코드 하이라이트는 `shiki` — `shiki/core`·JS 정규식 엔진·언어 문법을 하나씩 동적 import 한다(초기 조각에 없다). shiki 가 든 조각은 `hl-` 이름을 달고 서비스 워커 사전 저장에서 빠진다(`vite.config.ts` 의 `chunkFileNames`·`globIgnores`).
 서버 상태의 진실은 Query 캐시이고 wire 이벤트가 그것을 패치한다. 스트리밍 중인 런만 Zustand 스토어에 둔다(스펙 4장, 데이터 흐름 A).
 캐시 모양: 채널 `["timeline", ch]` 은 **루트만**(답글은 seq 만 기록 — 채널 `lastSeq` 는 루트·답글 모두의 최대 seq 라 답글 뒤의 루트가 거짓 빈틈이 되지 않는다),
 스레드 `["thread", ch, root]` 는 루트+답글 seq 순 한 목록(REST 로 처음 받고 그 뒤는 wire 가 고친다, 캐시가 없는 스레드의 답글은 버린다 — 칩은 루트 `message.updated` 가 맞춘다).
@@ -667,7 +668,8 @@ src/
 │  │                       useJump(구독 응답 뒤(`lastSeq > 0`)에만 around, 목표 행으로 스크롤·강조)·useNewerPages(떨어진 창의 아래 끝에서 다음 쪽),
 │  │                       MessageList.tsx(TanStack Virtual, 끝 붙기·「새 메시지」 칩 — 기준은 가진 마지막 메시지의 seq, 떨어진 창이면 「최신 메시지로」·`followOnAppend` 끔·보내는 중 항목이 생기면 먼저 최신으로(loadLatest), `threadRootId` 면 영역 이름
 │  │                       「스레드 메시지」에 칩·메뉴 없음), MessageItem(루트 아래 ThreadChip·「스레드에서 답하기」)·MessageBody(Streamdown, 원시 HTML 끔,
-│  │                       단일 개행 → br, 마크다운 이미지는 링크로)·MentionChip·mentionMarkdown·SystemCard(MessageItem 과 SystemCard 의 components 는 `features/components` 의 `<Components>` 가 그린다)·
+│  │                       단일 개행 → br, 마크다운 이미지는 링크로, 확정 본문만 코드 하이라이트 — codeHighlight.ts(Streamdown 플러그인·언어 목록과 별칭, 실패는 페이지 수명 동안 칠하지 않음)·
+│  │                       shikiEngine.ts(지연 로딩되는 shiki 엔진 — 밝음·어두움 github 테마, 바탕은 앱 토큰))·MentionChip·mentionMarkdown·SystemCard(MessageItem 과 SystemCard 의 components 는 `features/components` 의 `<Components>` 가 그린다)·
 │  │                       PendingItem(보내는 중 첨부는 서버 경로로, 크게 보기 없음, 사유 rate_limited 면 rateLimited.ts 의 「너무 빠르게 보내고 있습니다 — 잠시 뒤 다시」)·pendingActions·MessageErrorBoundary,
 │  │                       SystemCard 의 run_limit 은 admin 이상에게만 링크 — scope workspace 면 「운영에서 한도 바꾸기」, channel 이면 「채널 설정에서 한도 바꾸기」, 모르는 kind 는 정보 모양, ChannelPage.tsx(채널 확인 뒤에만 안을 그린다, 확인되면 touchRecentChannel).
 │  │                       MessageItem 은 본문이 비면 본문을 그리지 않고, 본문 아래 `MessageAttachments` → components 카드 순으로 그린다
