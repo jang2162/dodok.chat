@@ -9,6 +9,7 @@ import { Label } from "@/ui/label";
 import { Switch } from "@/ui/switch";
 import { usePatchChannel } from "./mutations";
 import { type RelayForm, type RelayFormField, fromForm, toForm } from "./relayPolicyForm";
+import { RUNNER_RENEW_NOTICE } from "./PromptSection";
 import { Saved, Section } from "./Section";
 
 /**
@@ -119,9 +120,9 @@ export function RelayPolicySection({ channel, agents }: { channel: Channel; agen
             {error.message}
           </p>
         )}
+        {saved && <Saved>저장했습니다. {RUNNER_RENEW_NOTICE}</Saved>}
         {!locked && (
           <div className="flex items-center justify-end gap-3">
-            {saved && <Saved />}
             <Button type="submit" size="sm" disabled={draft === undefined || save.isPending}>
               {save.isPending ? "저장 중…" : "저장"}
             </Button>

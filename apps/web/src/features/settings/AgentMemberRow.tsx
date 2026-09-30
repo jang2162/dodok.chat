@@ -14,8 +14,8 @@ import { Textarea } from "@/ui/textarea";
 import { type AutoRespondStep, autoRespondPlan } from "./autoRespond";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { usePatchMember, useRemoveMember } from "./mutations";
-import { PROMPT_MAX } from "./PromptSection";
-import { LockedNotice } from "./Section";
+import { PROMPT_MAX, RUNNER_RENEW_NOTICE } from "./PromptSection";
+import { LockedNotice, Saved } from "./Section";
 
 /**
  * 채널의 에이전트 한 줄(스펙 6.4): 이름·핸들, 자동 응답, 채널 오버라이드 프롬프트(펼침), 「새 대화」, 제거.
@@ -179,30 +179,37 @@ function OverrideEditor({
   const [error, setError] = useState<string>();
   // 편집을 닫으면(저장·취소) 다시 그려지는 편집 버튼으로 초점 — 편집칸이 사라져 body 로 떨어지지 않게
   const [refocus, setRefocus] = useState(false);
+  const [saved, setSaved] = useState(false);
   const id = useId();
 
   if (draft === undefined || readOnly) {
     return (
-      <div className="flex items-start justify-between gap-2">
-        <p
-          className={cn(
-            "line-clamp-2 min-w-0 text-xs whitespace-pre-wrap",
-            member.promptOverride === undefined && "text-muted-foreground",
-          )}
-        >
-          {member.promptOverride ?? "채널 프롬프트 오버라이드 없음"}
-        </p>
-        {!readOnly && (
-          <Button
-            variant="outline"
-            size="xs"
-            aria-label={`${handle} 채널 프롬프트 편집`}
-            autoFocus={refocus}
-            onClick={() => setDraft(member.promptOverride ?? "")}
+      <div className="flex flex-col gap-2">
+        <div className="flex items-start justify-between gap-2">
+          <p
+            className={cn(
+              "line-clamp-2 min-w-0 text-xs whitespace-pre-wrap",
+              member.promptOverride === undefined && "text-muted-foreground",
+            )}
           >
-            편집
-          </Button>
-        )}
+            {member.promptOverride ?? "채널 프롬프트 오버라이드 없음"}
+          </p>
+          {!readOnly && (
+            <Button
+              variant="outline"
+              size="xs"
+              aria-label={`${handle} 채널 프롬프트 편집`}
+              autoFocus={refocus}
+              onClick={() => {
+                setDraft(member.promptOverride ?? "");
+                setSaved(false);
+              }}
+            >
+              편집
+            </Button>
+          )}
+        </div>
+        {saved && !readOnly && <Saved>다음 턴부터 반영됩니다. {RUNNER_RENEW_NOTICE}</Saved>}
       </div>
     );
   }
@@ -219,7 +226,13 @@ function OverrideEditor({
     setError(undefined);
     save.mutate(
       { memberId: member.memberId, patch: { promptOverride: draft.trim() === "" ? null : draft } },
-      { onSuccess: close, onError: (err) => setError(formError(err)) },
+      {
+        onSuccess: () => {
+          close();
+          setSaved(true);
+        },
+        onError: (err) => setError(formError(err)),
+      },
     );
   }
 

@@ -180,6 +180,15 @@ describe("채널 프롬프트 오버라이드", () => {
     await userEvent.click(within(list).getByRole("button", { name: "저장" }));
     expect(await within(list).findByText("숫자는 표로")).toBeInTheDocument();
     expect(within(list).queryByRole("textbox")).not.toBeInTheDocument();
+    // 채널 지시가 바뀌면 러너 세션이 새로 시작한다(ADR 0007) — 저장 안내가 그 대가를 알린다
+    expect(within(list).getByRole("status")).toHaveTextContent(
+      "다음 턴부터 반영됩니다. Claude 러너 에이전트는 다음 런을 새 대화로 시작합니다",
+    );
+
+    // 다시 펼치면 안내를 내린다 — 취소로 접어도 다시 뜨지 않는다
+    await userEvent.click(within(list).getByRole("button", { name: "@dev 채널 프롬프트 편집" }));
+    await userEvent.click(within(list).getByRole("button", { name: "취소" }));
+    expect(within(list).queryByRole("status")).not.toBeInTheDocument();
 
     await userEvent.click(within(list).getByRole("button", { name: "@dev 채널 프롬프트 편집" }));
     await userEvent.clear(within(list).getByRole("textbox", { name: "@dev 채널 프롬프트 오버라이드" }));

@@ -341,7 +341,9 @@ describe("릴레이 정책", () => {
         },
       ]),
     );
-    expect(await within(section).findByRole("status")).toHaveTextContent("저장했습니다");
+    expect(await within(section).findByRole("status")).toHaveTextContent(
+      "저장했습니다. Claude 러너 에이전트는 다음 런을 새 대화로 시작합니다",
+    );
     expect(queryClient.getQueryData<Channel>(qk.channel(CH))?.relayPolicy).toEqual({
       maxRelayTurns: 2,
       allowPairs: [{ from: DEV, to: FIN }],
