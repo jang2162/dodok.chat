@@ -314,3 +314,51 @@ describe("media·file — 계약 밖 주소", () => {
     expect(screen.queryByText(ATTACHMENT_MISSING)).toBeNull();
   });
 });
+
+describe("긴 라벨 — 카드 안 버튼은 줄을 바꾼다", () => {
+  // 계약은 버튼 라벨·triggerLabel 을 80자까지 받는다. 공용 ui/button 은 whitespace-nowrap·shrink-0 이라 390px 에서 카드 밖으로
+  // 넘쳤다 — 카드 안 버튼만 줄바꿈과 줄 폭 상한을 받는다(jsdom 은 배치를 재지 못해 클래스로 본다, 실측은 브라우저)
+  const LONG = "이 작업을 지금 바로 시작하고 끝나면 결과를 채널에 요약해서 올려 주세요 부탁합니다 정말로";
+  const wraps = (el: HTMLElement) => {
+    expect(el).toHaveClass("whitespace-normal", "max-w-full", "h-auto");
+    expect(el).not.toHaveClass("whitespace-nowrap", "shrink-0", "h-8");
+  };
+
+  it("액션 버튼·링크 버튼·막힌 링크 버튼·모달 트리거", () => {
+    renderWithClient(
+      <Components
+        message={msg(1, {
+          components: ComponentsV1.parse({
+            id: "cmp_1",
+            blocks: [
+              {
+                type: "actions",
+                items: [
+                  { type: "button", id: "go", label: LONG },
+                  {
+                    type: "button",
+                    id: "link",
+                    label: `링크 ${LONG}`.slice(0, 80),
+                    url: "https://example.com/",
+                  },
+                  { type: "button", id: "gone", label: `없음 ${LONG}`.slice(0, 80), url: ART },
+                ],
+              },
+            ],
+            modal: {
+              id: "form",
+              title: "새 작업",
+              triggerLabel: `모달 ${LONG}`.slice(0, 80),
+              fields: [{ type: "text", id: "title", label: "제목" }],
+            },
+          }),
+          componentState: { expiresAt: "2999-01-01T00:00:00.000Z", consumed: [] },
+        })}
+      />,
+    );
+    wraps(screen.getByRole("button", { name: LONG }));
+    wraps(screen.getByRole("link", { name: `링크 ${LONG}`.slice(0, 80) }));
+    wraps(screen.getByRole("button", { name: `없음 ${LONG}`.slice(0, 80) }));
+    wraps(screen.getByRole("button", { name: `모달 ${LONG}`.slice(0, 80) }));
+  });
+});

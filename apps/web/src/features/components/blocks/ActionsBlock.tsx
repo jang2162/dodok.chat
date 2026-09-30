@@ -4,6 +4,7 @@ import { useMe } from "@/api/queries";
 import { resolveRef } from "@/features/attachments/resolve";
 import { attachmentHref } from "@/features/attachments/url";
 import { Button } from "@/ui/button";
+import { CARD_BUTTON_WRAP } from "../cardButton";
 import { ReasonHint } from "../DisabledHint";
 import { DISABLED_REASON_TEXT, itemState } from "../state";
 import type { Interact } from "../useInteract";
@@ -83,14 +84,21 @@ export function ActionsBlock({ block, message, io, expired }: Props) {
       {rows.map((row) => {
         if (row.kind === "blocked") {
           return (
-            <Button key={row.item.id} variant="outline" size="sm" disabled aria-describedby={hintId(row.why)}>
+            <Button
+              key={row.item.id}
+              variant="outline"
+              size="sm"
+              className={CARD_BUTTON_WRAP}
+              disabled
+              aria-describedby={hintId(row.why)}
+            >
               {row.label}
             </Button>
           );
         }
         if (row.kind === "link") {
           return (
-            <Button key={row.item.id} asChild variant="outline" size="sm">
+            <Button key={row.item.id} asChild variant="outline" size="sm" className={CARD_BUTTON_WRAP}>
               <a href={row.href} target="_blank" rel="noopener noreferrer">
                 {row.label}
               </a>
@@ -103,6 +111,7 @@ export function ActionsBlock({ block, message, io, expired }: Props) {
             key={item.id}
             size="sm"
             variant={STYLE[item.style]}
+            className={CARD_BUTTON_WRAP}
             disabled={state.disabled}
             aria-describedby={hintId(row.why)}
             onClick={() => void io.send(item.id, {}, block.id ? { blockId: block.id } : {})}

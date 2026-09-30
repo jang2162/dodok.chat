@@ -12,6 +12,7 @@ import {
   DialogTrigger,
 } from "@/ui/dialog";
 import { FieldError } from "@/ui/field-error";
+import { CARD_BUTTON_WRAP } from "../cardButton";
 import { DisabledHint, reasonProps } from "../DisabledHint";
 import { itemState } from "../state";
 import type { Interact } from "../useInteract";
@@ -128,7 +129,13 @@ export function ComponentModal({ modal, message, io, expired }: Props) {
     <div className="flex flex-wrap items-center gap-2" data-slot="modal-trigger">
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogTrigger asChild>
-          <Button size="sm" variant="secondary" disabled={state.disabled} {...reasonProps(state, hintId)}>
+          <Button
+            size="sm"
+            variant="secondary"
+            className={CARD_BUTTON_WRAP}
+            disabled={state.disabled}
+            {...reasonProps(state, hintId)}
+          >
             {modal.triggerLabel}
           </Button>
         </DialogTrigger>
