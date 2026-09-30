@@ -220,6 +220,29 @@ describe("멤버 관리 REST", () => {
       });
     });
 
+    it("admin 이 낸 재설정 링크는 대상이 admin 으로 오를 때 폐기된다 — 다시 member 로 내려가도 되살아나지 않는다", async () => {
+      const admin = await person("admin");
+      const target = await person("member");
+      const reset = await issueReset(admin.token, target.id);
+      const ownerReset = await issueReset(ownerToken, (await person("member")).id);
+      const row = findValidInvite(app.db, reset, new Date());
+      if (!row) throw new Error("reset link not found");
+
+      for (const role of ["admin", "member"] as const) {
+        expect((await call(ownerToken, "PATCH", `/api/v1/members/${target.id}`, { role })).statusCode).toBe(
+          200,
+        );
+      }
+      expect(app.db.select().from(invites).where(eq(invites.id, row.id)).get()?.revokedAt).not.toBeNull();
+      expect((await open("/api/v1/invites/lookup", { token: reset })).statusCode).toBe(404);
+      expect((await open("/api/v1/invites/reset", { token: reset, password: PASSWORD })).statusCode).toBe(
+        404,
+      );
+      expect((await call(target.token, "GET", "/api/v1/auth/me")).statusCode).toBe(200);
+      // 다른 사람을 겨눈 링크는 그대로
+      expect((await open("/api/v1/invites/lookup", { token: ownerReset })).statusCode).toBe(200);
+    });
+
     it("owner 가 낸 재설정 링크는 대상이 admin 으로 올라도 조회·수락된다", async () => {
       const target = await person("member");
       const reset = await issueReset(ownerToken, target.id);

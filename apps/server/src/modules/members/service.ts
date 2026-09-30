@@ -50,7 +50,9 @@ export function listMembers(db: DbOrTx, workspaceId: string): MemberRow[] {
 
 /**
  * owner 만. owner 를 대상으로 하면(owner 자신 포함) 403, membership 이 없으면 404.
- * admin → member 면 그 사람이 발급한 쓰이지 않은 초대·재설정 링크를 같은 트랜잭션에서 폐기한다 — 발급 권한을 잃었다
+ * admin → member 면 그 사람이 발급한 쓰이지 않은 초대·재설정 링크를 같은 트랜잭션에서 폐기한다 — 발급 권한을 잃었다.
+ * member → admin 이면 그 사람을 겨눈 owner 아닌 사람이 발급한 쓰이지 않은 재설정 링크를 폐기한다 — 조회·수락이 지금 역할로
+ * 막아도(resetLinkUsable) 다시 member 로 내려가면 되살아나지 않게. owner 가 낸 링크는 admin 에게도 유효라 남긴다
  */
 export function changeRole(
   db: Db,
@@ -73,6 +75,25 @@ export function changeRole(
         .set({ revokedAt: new Date() })
         .where(and(eq(invites.createdBy, userId), isNull(invites.usedBy), isNull(invites.revokedAt)))
         .run();
+    }
+    if (current === "member" && role === "admin") {
+      const ids = tx
+        .select({ id: invites.id, createdBy: invites.createdBy })
+        .from(invites)
+        .where(
+          and(
+            eq(invites.workspaceId, workspaceId),
+            eq(invites.kind, "reset"),
+            eq(invites.targetUserId, userId),
+            isNull(invites.usedBy),
+            isNull(invites.revokedAt),
+          ),
+        )
+        .all()
+        .filter((r) => roleOf(tx, workspaceId, r.createdBy) !== "owner")
+        .map((r) => r.id);
+      if (ids.length > 0)
+        tx.update(invites).set({ revokedAt: new Date() }).where(inArray(invites.id, ids)).run();
     }
     const row = listMembers(tx, workspaceId).find((m) => m.id === userId);
     if (!row) throw apiError("NOT_FOUND", "member not found");
