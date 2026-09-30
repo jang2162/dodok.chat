@@ -166,6 +166,7 @@ docker compose -f infra/compose.yml logs app | grep -E 'bridge plugin hello|brid
 3. 앱의 알림 설정에서 「푸시 알림 켜기」 → OS 권한 허용.
 4. [PC] 브라우저에서 에이전트에게 사람을 부르는 답을 내게 한다(예: 「@<핸들> 불러 줘」 류) — 또는 승인 요청.
 5. 폰을 잠근 채 푸시가 오는지, 누르면 그 채널이 열리는지 본다.
+6. **CSP 확인** — 처음 배포에서는 PC 브라우저 개발자 도구 콘솔(가능하면 iOS 는 Mac Safari 웹 속성)에서 `Content-Security-Policy` 위반 줄이 0 인지, 서비스 워커가 등록되는지, wire 가 붙는지(연결 점) 본다. 로컬 검증은 Chromium 과 Caddy 내부 CA 로만 쟀다(`infra/Caddyfile` 의 CSP 주석). 위반이 나면 결과 표에 그 줄을 적는다.
 
 결과는 아래 「사람이 한 번 따라 한 결과」 절에 적는다.
 
