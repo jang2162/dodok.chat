@@ -11,6 +11,7 @@ import * as authSchema from "../src/db/auth-schema";
 import { createDb, type Db } from "../src/db/client";
 import * as schema from "../src/db/schema.sqlite";
 import {
+  agents,
   bridgeTokens,
   channels,
   invites,
@@ -338,6 +339,65 @@ describe("db", () => {
         ).toThrow(/FOREIGN KEY/);
         db.delete(authSchema.session).where(eq(authSchema.session.id, sessionId)).run();
         expect(db.select().from(schema.pushSubscriptions).all()).toEqual([]);
+      } finally {
+        sqlite.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+  it("0010 까지 적용된 DB 에 0011(agents.runner_token_id)을 얹어도 에이전트 행이 그대로고 묶임은 null — 첫 연결 러너가 묶는다", () => {
+    const dir = mkdtempSync(join(tmpdir(), "dodok-db-mig-"));
+    try {
+      const older = migrationsUpTo(dir, "_push_session");
+      const sqlite = new Database(join(dir, "app.db"));
+      try {
+        const db = drizzle(sqlite, { schema: { ...schema, ...authSchema } });
+        migrate(db, { migrationsFolder: older });
+        const ws = uuid();
+        const createdAt = new Date("2026-09-29T00:00:00.000Z");
+        db.insert(workspaces).values({ id: ws, name: "w", createdAt }).run();
+        // 옛 스키마에는 runner_token_id 가 없다 — 지금 스키마의 insert 를 쓰지 않고 SQL 로 넣는다
+        const insertAgent = sqlite.prepare(
+          "INSERT INTO agents (id, workspace_id, provider, provider_agent_id, handle, name, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?)",
+        );
+        const coderId = uuid();
+        const devId = uuid();
+        insertAgent.run(coderId, ws, "claude", "coder", "coder", "Coder", createdAt.getTime());
+        insertAgent.run(devId, ws, "openclaw", "dev", "dev", "Dev", createdAt.getTime());
+
+        migrate(db, { migrationsFolder: migrationsFolder() });
+
+        const rows = db
+          .select({ id: agents.id, provider: agents.provider, runnerTokenId: agents.runnerTokenId })
+          .from(agents)
+          .all();
+        expect([...rows].sort((a, b) => a.provider.localeCompare(b.provider))).toEqual([
+          { id: coderId, provider: "claude", runnerTokenId: null },
+          { id: devId, provider: "openclaw", runnerTokenId: null },
+        ]);
+        // 러너 토큰을 가리킬 수 있고, 없는 토큰은 외래 키가 막는다
+        const tokenId = uuid();
+        db.insert(runnerTokens)
+          .values({
+            id: tokenId,
+            workspaceId: ws,
+            label: "laptop",
+            hash: "c".repeat(64),
+            prefix: "AAAAAA",
+            createdAt,
+          })
+          .run();
+        db.update(agents).set({ runnerTokenId: tokenId }).where(eq(agents.id, coderId)).run();
+        expect(
+          db.select({ t: agents.runnerTokenId }).from(agents).where(eq(agents.id, coderId)).get(),
+        ).toEqual({
+          t: tokenId,
+        });
+        sqlite.pragma("foreign_keys = ON");
+        expect(() =>
+          db.update(agents).set({ runnerTokenId: uuid() }).where(eq(agents.id, devId)).run(),
+        ).toThrow(/FOREIGN KEY/);
       } finally {
         sqlite.close();
       }

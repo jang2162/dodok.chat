@@ -40,6 +40,11 @@ export const Agent = z.object({
   basePrompt: z.string().max(20_000).optional(),
   enabled: z.boolean(),
   createdAt: IsoDateTime,
+  /**
+   * Claude 러너 에이전트가 묶인 러너 토큰 — 그 토큰의 러너만 이 에이전트를 맡는다. REST 에이전트 응답에만 싣는다. 없으면 아직 묶이지
+   * 않았다(처음 알리는 러너에 묶인다). revoked 면 맡을 러너가 없다 — 연결 페이지에서 다른 러너에 다시 묶는다
+   */
+  runner: z.object({ tokenId: Id, label: z.string(), revoked: z.boolean() }).optional(),
 });
 export type Agent = z.infer<typeof Agent>;
 

@@ -17,7 +17,8 @@
  * - `POST /__devfake/plugin-capabilities { threads: boolean }` — false 면 threads 없는 hello 로 다시 붙는다(옛 플러그인 흉내), true 면 되돌린다
  * - `POST /__devfake/runner { connected: boolean, token? }` — 가짜 Claude 러너를 끊고(false) 붙인다(true, token 을 주면 그 러너 토큰으로)
  * 가짜 Claude 러너(`test/fakes/fake-runner.ts`)도 붙는다 — 고정 러너 토큰 `dev-fake-runner-token`(라벨 dev-fake) 행을 시작 때 넣고,
- * 그 러너가 알리는 에이전트 `coder`(provider claude)를 등록해 둔다. 가짜 러너는 스스로 다시 붙지 않는다 — 폐기·끊기 뒤에는 훅으로 붙인다.
+ * 그 러너가 알리는 에이전트 `coder`(provider claude)를 등록해 둔다(처음 붙은 러너 토큰에 묶인다). 가짜 러너는 스스로 다시 붙지 않는다 —
+ * 폐기·끊기 뒤에는 훅으로 붙인다. 폐기 뒤 새 토큰으로 붙이면 coder 는 폐기된 토큰에 묶인 채라 연결 페이지 「이 러너로 묶기」로 옮긴다.
  * 끊김 사건 임계는 DODOK_DEVFAKE_DISCONNECT_MS(기본 운영과 같은 60초)로 줄인다. 종료 표지는 <dataDir>/dev-fake-run/ 에 둔다.
  */
 import {
@@ -835,7 +836,8 @@ function waitForRunners(app: App, want: (connected: number) => boolean, timeoutM
 
 /**
  * 고정 러너 토큰 행과 가짜 러너의 에이전트 coder 를 보장한다. 해시가 같은 행이 이미 있으면(`--keep`) 폐기됐어도 그대로 둔다 —
- * 폐기된 채로 이어받으면 가짜 러너는 못 붙고, 연결 페이지에서 새 토큰을 발급해 runner 훅의 token 으로 붙인다
+ * 폐기된 채로 이어받으면 가짜 러너는 못 붙고, 연결 페이지에서 새 토큰을 발급해 runner 훅의 token 으로 붙인 뒤 coder 를 그 러너에 다시
+ * 묶는다
  */
 function ensureDevFakeRunner(app: App): void {
   const { db, workspaceId } = app;

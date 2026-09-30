@@ -13,7 +13,14 @@ import type {
   SystemMeta,
 } from "@dodok/shared";
 import { sql } from "drizzle-orm";
-import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import {
+  type AnySQLiteColumn,
+  index,
+  integer,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from "drizzle-orm/sqlite-core";
 import { session } from "./auth-schema";
 
 const ts = (name: string) => integer(name, { mode: "timestamp_ms" });
@@ -79,6 +86,8 @@ export const agents = sqliteTable(
     basePrompt: text("base_prompt"),
     enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
     createdAt: ts("created_at").notNull(),
+    // Claude 러너 에이전트가 묶인 러너 토큰 — 그 토큰의 러너만 맡는다. null 이면 처음 알린 러너에 묶인다. 폐기돼도 남는다
+    runnerTokenId: text("runner_token_id").references((): AnySQLiteColumn => runnerTokens.id),
   },
   (t) => [
     uniqueIndex("agents_ws_handle").on(t.workspaceId, t.handle),

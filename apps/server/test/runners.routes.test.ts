@@ -1,5 +1,6 @@
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
 import {
+  type Agent,
   Attachment,
   BRIDGE_ATTACHMENT_HEADERS,
   BRIDGE_ATTACHMENTS_PATH,
@@ -105,7 +106,7 @@ describe("연결 페이지 러너 API /api/v1/setup/runner-*", () => {
 
   const call = (
     headers: Record<string, string> | undefined,
-    method: "GET" | "POST" | "DELETE",
+    method: "GET" | "POST" | "PUT" | "DELETE",
     url: string,
     payload?: object,
   ) =>
@@ -128,10 +129,11 @@ describe("연결 페이지 러너 API /api/v1/setup/runner-*", () => {
   };
 
   it("admin·member 는 네 경로 모두 403, 세션이 없으면 401 — 러너 토큰은 owner 몫", async () => {
-    const routes: Array<["GET" | "POST" | "DELETE", string, object?]> = [
+    const routes: Array<["GET" | "POST" | "PUT" | "DELETE", string, object?]> = [
       ["GET", "/runner-tokens"],
       ["POST", "/runner-tokens", { label: "x" }],
       ["DELETE", `/runner-tokens/${uuid()}`],
+      ["PUT", `/runner-tokens/${uuid()}/agents/coder`],
       ["GET", "/runner.tgz"],
     ];
     for (const [method, url, body] of routes) {
@@ -233,6 +235,103 @@ describe("연결 페이지 러너 API /api/v1/setup/runner-*", () => {
     expect(after.tokens.find((t) => t.id === issued.record.id)?.revokedAt).not.toBeNull();
     // 폐기된 토큰은 다시 못 붙는다
     expect(await tryRunner(app.url, issued.token)).toBe("UNAUTHORIZED");
+  });
+
+  describe("에이전트↔러너 토큰 묶임", () => {
+    const agentsApi = (method: "GET" | "POST", payload?: object) =>
+      app.fastify.inject({
+        method,
+        url: "/api/v1/agents",
+        headers: owner,
+        ...(payload === undefined ? {} : { payload }),
+      });
+    const register = async (providerAgentId: string, provider: "claude" | "openclaw" = "claude") => {
+      const res = await agentsApi("POST", {
+        provider,
+        providerAgentId,
+        handle: providerAgentId,
+        name: providerAgentId,
+      });
+      expect(res.statusCode).toBe(201);
+      return (res.json() as { agent: Agent }).agent;
+    };
+    const listed = async (providerAgentId: string) =>
+      ((await agentsApi("GET")).json() as { agents: Agent[] }).agents.find(
+        (a) => a.providerAgentId === providerAgentId,
+      );
+    const connectWith = async (token: string, id: string) => {
+      const runner = await startFakeRunner({
+        url: app.url,
+        token,
+        agents: [{ id, name: id, model: "sonnet", workdirLabel: "repo" }],
+      });
+      runners.push(runner);
+      return runner;
+    };
+
+    it("등록 때 그 id 를 알린 러너 토큰에 묶이고, 다른 토큰 러너는 충돌 — PUT 으로 그 러너에 다시 묶는다", async () => {
+      const a = await issue("bind-a");
+      const b = await issue("bind-b");
+      await connectWith(a.token, "binder");
+      const agent = await register("binder");
+      expect(agent.runner).toEqual({ tokenId: a.record.id, label: "bind-a", revoked: false });
+      const other = await connectWith(b.token, "binder");
+      expect(other.helloResult).toMatchObject({ ok: true, conflicts: ["binder"] });
+      const card = (label: string) => status().then((s) => s.runners.list.find((r) => r.label === label));
+      expect((await card("bind-b"))?.agents).toEqual([
+        expect.objectContaining({ id: "binder", conflict: true, boundTokenId: a.record.id }),
+      ]);
+
+      const setupEvents: unknown[] = [];
+      const off = app.bus.on("setup.status", (p) => setupEvents.push(p));
+      const res = await call(owner, "PUT", `/runner-tokens/${b.record.id}/agents/binder`);
+      off();
+      expect(res.statusCode).toBe(200);
+      expect((res.json() as { agent: Agent }).agent.runner).toEqual({
+        tokenId: b.record.id,
+        label: "bind-b",
+        revoked: false,
+      });
+      expect(setupEvents.length).toBeGreaterThan(0);
+      expect((await card("bind-b"))?.agents[0]).toMatchObject({ conflict: false, boundTokenId: b.record.id });
+      expect((await card("bind-a"))?.agents[0]).toMatchObject({ conflict: true, boundTokenId: b.record.id });
+      expect((await listed("binder"))?.runner).toMatchObject({ tokenId: b.record.id, label: "bind-b" });
+    });
+
+    it("폐기해도 묶임은 남는다 — 목록에 revoked, 폐기된 토큰으로 다시 묶기는 409, 없는 에이전트·openclaw 에이전트·없는 토큰은 404", async () => {
+      const a = await issue("gone");
+      await connectWith(a.token, "keeper");
+      await register("keeper");
+      expect((await call(owner, "DELETE", `/runner-tokens/${a.record.id}`)).statusCode).toBe(204);
+      expect((await listed("keeper"))?.runner).toEqual({
+        tokenId: a.record.id,
+        label: "gone",
+        revoked: true,
+      });
+
+      const again = await call(owner, "PUT", `/runner-tokens/${a.record.id}/agents/keeper`);
+      expect(again.statusCode).toBe(409);
+      expect(again.json().code).toBe("CONFLICT");
+      const live = await issue("live");
+      await register("oc-agent", "openclaw");
+      for (const url of [
+        `/runner-tokens/${live.record.id}/agents/nobody`,
+        `/runner-tokens/${live.record.id}/agents/oc-agent`,
+        `/runner-tokens/${uuid()}/agents/keeper`,
+      ]) {
+        const res = await call(owner, "PUT", url);
+        expect(res.statusCode, url).toBe(404);
+      }
+      expect((await listed("oc-agent"))?.runner).toBeUndefined();
+    });
+
+    it("알리는 러너 없이 등록한 claude 에이전트는 묶임 없음 — 처음 알린 러너에 묶인다", async () => {
+      const agent = await register("latecomer");
+      expect(agent.runner).toBeUndefined();
+      const a = await issue("late");
+      await connectWith(a.token, "latecomer");
+      await vi.waitFor(async () => expect((await listed("latecomer"))?.runner?.tokenId).toBe(a.record.id));
+    });
   });
 
   it("없는 id 폐기는 404", async () => {

@@ -2,7 +2,14 @@
  * 레이트리밋 통합(운영 보강 스펙 4장) — 가짜 Gateway·플러그인 위 실제 앱. 시계는 AppDeps.limitClock 으로 주입해 창·버킷을 넘긴다.
  * 숫자는 LIMITS 그대로 쓰되, 수백 번을 되풀이해야 하는 REST·업로드·Better Auth 는 AppDeps.limits 로 줄인다.
  */
-import { BRIDGE_ATTACHMENTS_PATH, type OpsEventKind, WIRE_PROTOCOL } from "@dodok/shared";
+import {
+  BRIDGE_ATTACHMENTS_PATH,
+  IssueRunnerTokenResult,
+  type OpsEventKind,
+  RUNNER_NAMESPACE,
+  RUNNER_PROTOCOL,
+  WIRE_PROTOCOL,
+} from "@dodok/shared";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { io } from "socket.io-client";
@@ -258,5 +265,54 @@ describe("레이트리밋 통합", () => {
     const res = await l.app.fastify.inject({ method: "GET", url: "/healthz" });
     expect(res.statusCode).toBe(200);
     expect(Object.keys(res.json()).sort()).toEqual(["db", "ok"]);
+  });
+
+  it("러너 run.event 가 버킷을 넘기면 버리고 ratelimit 사건(runner:run.event)은 주소별 1분에 한 번 — 버린 수를 detail.dropped 에", async () => {
+    const l = await boot({
+      limits: { runner: { events: { perMin: 60, burst: 2 }, control: LIMITS.runner.control } },
+    });
+    const issued = IssueRunnerTokenResult.parse(
+      (await rest(l, "POST", "/setup/runner-tokens", { label: "flood" })).body,
+    );
+    const socket = io(`${l.app.url}${RUNNER_NAMESPACE}`, {
+      auth: { token: issued.token },
+      transports: ["websocket"],
+      reconnection: false,
+      forceNew: true,
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        socket.once("connect", () => resolve());
+        socket.once("connect_error", reject);
+      });
+      const hello = await socket.emitWithAck("hello", {
+        runnerProtocol: RUNNER_PROTOCOL,
+        runnerVersion: "0.0.0",
+        sdkVersion: "0.0.0",
+        claudeCodeVersion: "0.0.0",
+        bundleSha256: null,
+        capabilities: [],
+        agents: [],
+      });
+      expect(hello).toMatchObject({ ok: true });
+      const runId = randomUUID();
+      const frame = () =>
+        socket.emit("run.event", { runId, event: { type: "STEP_STARTED", runId, stepName: "x" } });
+      for (let i = 0; i < 4; i++) frame();
+      const row = () => opsRows(l, "ratelimit").find((r) => r.key === "runner:run.event");
+      await vi.waitFor(() =>
+        expect(row()).toMatchObject({ count: 1, severity: "info", detail: { dropped: 1 } }),
+      );
+      expect(row()?.detail).toHaveProperty("ipPrefix");
+      // 넷째는 같은 창이라 사건을 새로 쓰지 않는다
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(row()?.count).toBe(1);
+
+      clock.t += 60_000; // 창이 지나고 버킷도 찬다(분당 60 — 60초면 가득)
+      for (let i = 0; i < 3; i++) frame();
+      await vi.waitFor(() => expect(row()).toMatchObject({ count: 2, detail: { dropped: 2 } }));
+    } finally {
+      socket.close();
+    }
   });
 });

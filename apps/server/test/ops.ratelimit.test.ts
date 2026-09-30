@@ -23,6 +23,11 @@ describe("LIMITS — 스펙 4장 숫자", () => {
         approval: { perMin: 60, burst: 20 },
         chatter: { perMin: 120, burst: 30 },
       },
+      // 스펙 밖 — 이월 「러너 프레임 속도 제한」 결정(근거는 limits.ts 주석)
+      runner: {
+        events: { perMin: 60_000, burst: 2_000 },
+        control: { perMin: 600, burst: 100 },
+      },
       socketsPerUser: 20,
       bridgeFail: { maxFailures: 10, windowMs: 60_000, blockMs: 60_000, maxAddresses: 1024 },
     });

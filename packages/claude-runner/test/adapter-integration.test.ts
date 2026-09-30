@@ -75,6 +75,12 @@ async function startServer(port = 0, opts: { approvalTtlMs?: number } = {}): Pro
       return { messageId };
     },
     tokenCount: () => 1,
+    // 등록 에이전트가 없는 서버 — 옛 규칙(먼저 hello 한 러너), 프레임 제한 없음
+    bindings: { boundToken: () => null, claim: () => false },
+    frameLimit: {
+      buckets: () => ({ events: { take: () => true }, control: { take: () => true } }),
+      onLimited: () => {},
+    },
     ...(opts.approvalTtlMs === undefined ? {} : { approvalTtlMs: opts.approvalTtlMs }),
   });
   adapter.onEvent((e) => events.push(e));

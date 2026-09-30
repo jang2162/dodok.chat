@@ -199,7 +199,16 @@ describe("SetupStatus.runners", () => {
     bundleSha256: SHA,
     capabilities: ["threads", "approvals"],
     connectedAt: NOW,
-    agents: [{ id: "coder", name: "코더", model: "sonnet", workdirLabel: "my-repo", conflict: false }],
+    agents: [
+      {
+        id: "coder",
+        name: "코더",
+        model: "sonnet",
+        workdirLabel: "my-repo",
+        conflict: false,
+        boundTokenId: null,
+      },
+    ],
   };
   it("붙은 러너·러너 tgz 를 싣는다", () => {
     const runners = {
@@ -214,10 +223,14 @@ describe("SetupStatus.runners", () => {
     const runnerFile = { available: true, sha256: SHA, bytes: 1 };
     expect(SetupStatus.safeParse({ ...STATUS, runners: { list: [], runnerFile } }).success).toBe(false);
   });
-  it("connectedAt 은 ISO 시각, bundleSha256 은 sha256 hex 또는 null", () => {
+  it("connectedAt 은 ISO 시각, bundleSha256 은 sha256 hex 또는 null, 에이전트 boundTokenId 는 uuid 또는 null", () => {
+    const agent = runner.agents[0];
     const bad = [
       { ...runner, connectedAt: "어제" },
       { ...runner, bundleSha256: "abc" },
+      // 묶인 토큰은 토큰 id(uuid) 또는 null — 빠지면 웹이 「다른 러너에 묶임」을 가를 수 없다
+      { ...runner, agents: [{ ...agent, boundTokenId: "laptop" }] },
+      { ...runner, agents: [{ ...agent, boundTokenId: undefined }] },
     ];
     for (const r of bad) {
       expect(

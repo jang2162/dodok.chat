@@ -26,6 +26,18 @@ export const LIMITS = {
     approval: { perMin: 60, burst: 20 }, // approval.resolve
     chatter: { perMin: 120, burst: 30 }, // typing·presence.update
   },
+  /**
+   * 러너가 보내는 프레임 — 러너 소켓마다 토큰 버킷(러너 어댑터 FRAME_BUCKET). 가장 잦은 것은 텍스트 델타다 — 러너는 모델 텍스트 델타를
+   * 하나씩 run.event 로 보내고(도구 입력은 블록이 끝날 때 한 번에), 간격 중앙값은 26ms(Haiku 4.5)·46ms(Sonnet 5) — 런 하나 초당 약 40
+   * (ADR 0007 「스트리밍 (질문 1)」 절). 러너 동시 런 상한(maxConcurrentRuns 최대 16)이 모두 텍스트를 흘려도 초당 약 640 이라 지속
+   * 1,000/초 안이고, 네트워크가 델타를 몰아 보내는 순간은 2,000 버스트가 받는다. 기본 3런(초당 약 120)이면 여덟 배 남는다
+   */
+  runner: {
+    events: { perMin: 60_000, burst: 2_000 }, // run.event
+    // hello·run.final·run.error·outbound.post·approval.* — 런마다 몇 번뿐이다. 도구 병렬 호출(한 메시지에 다섯)이 16런에서 겹쳐도
+    // 버스트 안이다
+    control: { perMin: 600, burst: 100 },
+  },
   /** 사용자당 동시 wire 소켓 */
   socketsPerUser: 20,
   /** 브리지 인증 실패 카운터(BridgeAuthGuard) — 핸드셰이크와 /bridge/attachments 가 같이 쓴다 */
@@ -41,6 +53,7 @@ export type Limits = {
   searchPerMin: number;
   inviteIssuePerMin: number;
   wire: Record<keyof (typeof LIMITS)["wire"], { perMin: number; burst: number }>;
+  runner: Record<keyof (typeof LIMITS)["runner"], { perMin: number; burst: number }>;
   socketsPerUser: number;
   bridgeFail: { maxFailures: number; windowMs: number; blockMs: number; maxAddresses: number };
 };

@@ -260,7 +260,16 @@ describe("buildSetupStatus", () => {
       bundleSha256: null,
       capabilities: ["threads"],
       connectedAt: "2026-09-27T00:00:00.000Z",
-      agents: [{ id: "coder", name: "Coder", model: "sonnet", workdirLabel: "repo", conflict: false }],
+      agents: [
+        {
+          id: "coder",
+          name: "Coder",
+          model: "sonnet",
+          workdirLabel: "repo",
+          conflict: false,
+          boundTokenId: null,
+        },
+      ],
     };
     const runnerFile = {
       path: "/app/runner/r.tgz",

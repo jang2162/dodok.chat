@@ -16,6 +16,8 @@ export type AgentRouteContext = {
   db: Db;
   workspaceId: string;
   registry: Pick<AdapterRegistry, "forProvider">;
+  /** claude 에이전트 등록이 묶을 러너 토큰 — 그 id 를 지금 맡는 러너의 토큰(러너 어댑터 servingTokenId). 없으면 묶임 없이 등록 */
+  runnerTokenFor?: (providerAgentId: string) => string | undefined;
 };
 
 const AgentParams = z.object({ id: Id });
@@ -54,7 +56,12 @@ export function registerAgentRoutes(fastify: FastifyInstance, ctx: AgentRouteCon
 
   fastify.post("/api/v1/agents", admin, async (request, reply) => {
     const body = parseBody(CreateAgentBody, request.body);
-    const agent = createAgent(ctx.db, { ...body, workspaceId: sessionUser(request).workspaceId });
+    const runnerTokenId = body.provider === "claude" ? ctx.runnerTokenFor?.(body.providerAgentId) : undefined;
+    const agent = createAgent(ctx.db, {
+      ...body,
+      workspaceId: sessionUser(request).workspaceId,
+      ...(runnerTokenId === undefined ? {} : { runnerTokenId }),
+    });
     return reply.code(201).send({ agent });
   });
 

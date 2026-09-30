@@ -40,12 +40,21 @@ type Harness = {
   setNow(ms: number): void;
   setChannelName(channelId: string, name: string): void;
   failOutbound(on: boolean): void;
+  /** frameLimit.onLimited 가 받은 것 — [주소, 프레임, 버린 수] */
+  limited: Array<[string, string, number]>;
+  /** 등록된 claude 에이전트의 묶인 토큰 id(null 이면 묶임 없음) — bindings 옵션이 읽고 claim 이 쓴다 */
+  bound: Map<string, string | null>;
   runner(token: string, agents?: ReturnType<typeof runnerAgent>[]): Promise<FakeRunner>;
 };
 
 let current: { http: HttpServer; io: Server; adapter: RunnerAdapter; runners: FakeRunner[] } | undefined;
 
-async function setup(opts: { fakeTimers?: boolean } = {}): Promise<Harness> {
+/** 소켓마다 새 버킷 — 각 버킷은 처음 n 번만 통과한다(시간으로 차지 않는다) */
+type FrameAllowance = { events: number; control: number };
+
+async function setup(
+  opts: { fakeTimers?: boolean; frames?: FrameAllowance; bound?: Record<string, string | null> } = {},
+): Promise<Harness> {
   // 가짜 시계로 10분을 건너뛰어도 Socket.IO 하트비트가 끊지 않게 핑 간격을 늘린다
   if (opts.fakeTimers) vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
   const http = createServer();
@@ -60,6 +69,13 @@ async function setup(opts: { fakeTimers?: boolean } = {}): Promise<Harness> {
   let nowMs = Date.parse("2026-09-27T00:00:00.000Z");
   let outboundFails = false;
   const channelNames = new Map([[CH, "general"]]);
+  const limited: Array<[string, string, number]> = [];
+  const bound = new Map<string, string | null>(Object.entries(opts.bound ?? {}));
+  const frames = opts.frames ?? { events: Number.POSITIVE_INFINITY, control: Number.POSITIVE_INFINITY };
+  const allowance = (n: number) => {
+    let left = n;
+    return { take: () => left-- > 0 };
+  };
   const log = (level: string) => (obj: object, msg?: string) => logs.push({ level, obj, msg });
   const adapter = createRunnerAdapter({
     io,
@@ -77,6 +93,18 @@ async function setup(opts: { fakeTimers?: boolean } = {}): Promise<Harness> {
       return { messageId: randomUUID() };
     },
     tokenCount: () => 2,
+    bindings: {
+      boundToken: (agentId) => bound.get(agentId) ?? null,
+      claim: (agentId, tokenId) => {
+        if (!bound.has(agentId) || bound.get(agentId) !== null) return false;
+        bound.set(agentId, tokenId);
+        return true;
+      },
+    },
+    frameLimit: {
+      buckets: () => ({ events: allowance(frames.events), control: allowance(frames.control) }),
+      onLimited: (address, frame, dropped) => limited.push([address, frame, dropped]),
+    },
   });
   adapter.onEvent((e) => events.push(e));
   await adapter.connect();
@@ -98,6 +126,8 @@ async function setup(opts: { fakeTimers?: boolean } = {}): Promise<Harness> {
     failOutbound: (on) => {
       outboundFails = on;
     },
+    limited,
+    bound,
     async runner(token, agents = [runnerAgent("coder")]) {
       const r = await connectRunner(url, token, agents);
       runners.push(r);
@@ -1286,5 +1316,184 @@ describe("나머지 계약", () => {
     expect(await h.adapter.syncChannelConfig(CH, { systemPrompt: "x" })).toEqual({ applied: "live" });
     expect(h.adapter.sessionKeyFor("coder", CH)).toBe(dodokSessionKey("coder", CH));
     expect(h.adapter.status()).toEqual({ provider: "claude", runners: { connected: 0, tokens: 2 } });
+  });
+});
+
+describe("러너 프레임 속도 제한 — 소켓마다 버킷, 넘치면 버리고 주소별 1분에 한 번 warn·onLimited", () => {
+  const limitWarns = (h: Harness) => h.logs.filter((l) => l.msg === "runner frames rate limited — dropped");
+
+  it("run.event 가 events 버킷을 넘기면 버리고, warn·onLimited 는 1분에 한 번 버린 수와 함께", async () => {
+    const h = await setup({ frames: { events: 2, control: 100 } });
+    const r = await readyRunner(h);
+    const { runId } = await startRun(h, r);
+    for (const stepName of ["a", "b", "c", "d"])
+      r.send("run.event", { runId, event: { type: "STEP_STARTED", runId, stepName } });
+    await until(() => h.limited.length === 1, "onLimited");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(runEvents(h, runId)).toEqual([
+      { type: "STEP_STARTED", runId, stepName: "a" },
+      { type: "STEP_STARTED", runId, stepName: "b" },
+    ]);
+    expect(h.limited).toEqual([["127.0.0.1", "run.event", 1]]);
+    expect(limitWarns(h)).toHaveLength(1);
+    expect(limitWarns(h)[0]?.obj).toMatchObject({ address: "127.0.0.1", frame: "run.event", dropped: 1 });
+
+    h.setNow(Date.parse("2026-09-27T00:01:00.000Z"));
+    r.send("run.event", { runId, event: { type: "STEP_STARTED", runId, stepName: "e" } });
+    await until(() => h.limited.length === 2, "second onLimited");
+    // 앞 창에서 말없이 버린 d 까지 센다
+    expect(h.limited[1]).toEqual(["127.0.0.1", "run.event", 2]);
+    expect(limitWarns(h)).toHaveLength(2);
+  });
+
+  it("control 버킷이 비면 outbound.post 는 저장하지 않고 RATE_LIMITED 로 답한다 — run.event 는 제 버킷이라 그대로 흐른다", async () => {
+    // hello 가 control 하나를 쓴다
+    const h = await setup({ frames: { events: 100, control: 1 } });
+    const r = await readyRunner(h);
+    const input = await startRun(h, r);
+    const ack = await r.post({
+      outboundId: `runner-post:${randomUUID()}`,
+      channelId: input.channelId,
+      agentId: input.agentId,
+      sessionKey: input.sessionKey,
+      runId: input.runId,
+      text: "중간 보고",
+      ts: "2026-09-27T00:00:01.000Z",
+    });
+    expect(ack).toMatchObject({ ok: false, code: "RATE_LIMITED" });
+    expect(h.outbound).toHaveLength(0);
+    r.send("run.event", {
+      runId: input.runId,
+      event: { type: "STEP_STARTED", runId: input.runId, stepName: "x" },
+    });
+    await until(() => runEvents(h, input.runId).length === 1, "event");
+    expect(h.limited).toEqual([["127.0.0.1", "outbound.post", 1]]);
+  });
+
+  it("control 버킷은 run.final·approval.* 도 센다 — 넘친 run.final 은 런을 닫지 않는다", async () => {
+    const h = await setup({ frames: { events: 100, control: 1 } });
+    const r = await readyRunner(h);
+    const { runId } = await startRun(h, r);
+    r.send("run.final", { runId, text: "끝", stopReason: "end_turn", costKind: "api" });
+    r.send("approval.withdrawn", { providerApprovalId: "x" });
+    await until(() => h.limited.length === 1, "onLimited");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(signals(h, runId)).not.toContain("gateway_final");
+    expect(h.outbound).toHaveLength(0);
+    expect(h.limited).toEqual([["127.0.0.1", "run.final", 1]]);
+  });
+
+  it("버킷은 소켓마다 — 다른 러너는 자기 버킷을 쓴다", async () => {
+    const h = await setup({ frames: { events: 1, control: 100 } });
+    const a = await readyRunner(h, TOKEN_A, [runnerAgent("coder")]);
+    const b = await readyRunner(h, TOKEN_B, [runnerAgent("writer")]);
+    const one = await startRun(h, a);
+    const two = await startRun(h, b, { agentId: "writer", sessionKey: dodokSessionKey("writer", CH) });
+    a.send("run.event", {
+      runId: one.runId,
+      event: { type: "STEP_STARTED", runId: one.runId, stepName: "a" },
+    });
+    b.send("run.event", {
+      runId: two.runId,
+      event: { type: "STEP_STARTED", runId: two.runId, stepName: "b" },
+    });
+    await until(() => runEvents(h, one.runId).length === 1 && runEvents(h, two.runId).length === 1, "events");
+    expect(h.limited).toEqual([]);
+  });
+});
+
+describe("에이전트↔러너 토큰 묶임 — 묶인 에이전트는 그 토큰의 러너만 맡는다", () => {
+  const A_ID = TOKENS[TOKEN_A]?.tokenId ?? "";
+  const B_ID = TOKENS[TOKEN_B]?.tokenId ?? "";
+
+  it("B 에 묶인 coder 는 먼저 붙은 A 가 알려도 B 가 맡고, A 의 coder 가 충돌이다", async () => {
+    const h = await setup({ bound: { coder: B_ID } });
+    const a = await h.runner(TOKEN_A, [runnerAgent("coder")]);
+    expect(await a.hello()).toMatchObject({ ok: true, conflicts: ["coder"] });
+    const b = await h.runner(TOKEN_B, [runnerAgent("coder")]);
+    expect(await b.hello()).toMatchObject({ ok: true, conflicts: [] });
+    expect(
+      h.adapter
+        .setupDetail()
+        .runners.map((c) => [c.label, c.agents.map((x) => [x.conflict, x.boundTokenId])]),
+    ).toEqual([
+      ["laptop", [[true, B_ID]]],
+      ["desktop", [[false, B_ID]]],
+    ]);
+    expect(h.adapter.servingTokenId("coder")).toBe(B_ID);
+    const input = await startRun(h, b);
+    expect(b.runStarts[0]?.deliver.runId).toBe(input.runId);
+    expect(a.runStarts).toHaveLength(0);
+  });
+
+  it("묶인 토큰의 러너가 없으면 다른 토큰 러너가 알려도 맡지 않는다 — send 는 ADAPTER_UNAVAILABLE, 목록에도 없다", async () => {
+    const h = await setup({ bound: { coder: B_ID } });
+    await readyRunner(h, TOKEN_A, [runnerAgent("coder"), runnerAgent("writer")]);
+    const error = await rejection(h.adapter.send(deliver(), { providerSessionId: SESSION_ID }));
+    expect(error.code).toBe("ADAPTER_UNAVAILABLE");
+    expect(h.adapter.servingTokenId("coder")).toBeUndefined();
+    expect((await h.adapter.listAgents()).map((x) => x.providerAgentId)).toEqual(["writer"]);
+  });
+
+  it("묶임 없는 등록 에이전트는 처음 알린 러너에 묶이고, 그 러너가 빠져도 다른 토큰 러너가 이어받지 않는다", async () => {
+    const h = await setup({ bound: { coder: null } });
+    const a = await readyRunner(h, TOKEN_A, [runnerAgent("coder")]);
+    expect(h.bound.get("coder")).toBe(A_ID);
+    expect(h.logs.some((l) => l.msg === "runner agent bound")).toBe(true);
+    const b = await h.runner(TOKEN_B, [runnerAgent("coder")]);
+    expect(await b.hello()).toMatchObject({ ok: true, conflicts: ["coder"] });
+
+    const aClosed = waitDisconnect(a);
+    a.close();
+    await aClosed;
+    await until(() => h.adapter.status().runners.connected === 1, "runner a gone");
+    expect(h.bound.get("coder")).toBe(A_ID);
+    expect(h.adapter.setupDetail().runners[0]?.agents[0]?.conflict).toBe(true);
+    const error = await rejection(h.adapter.send(deliver(), { providerSessionId: SESSION_ID }));
+    expect(error.code).toBe("ADAPTER_UNAVAILABLE");
+    expect(b.runStarts).toHaveLength(0);
+
+    // 같은 토큰으로 돌아오면 다시 맡는다
+    const a2 = await readyRunner(h, TOKEN_A, [runnerAgent("coder")]);
+    const input = await startRun(h, a2);
+    expect(a2.runStarts[0]?.deliver.runId).toBe(input.runId);
+  });
+
+  it("미등록 id 는 묶지 않는다 — 옛 규칙(먼저 hello 한 러너)", async () => {
+    const h = await setup();
+    await readyRunner(h, TOKEN_A, [runnerAgent("coder")]);
+    expect(h.bound.has("coder")).toBe(false);
+    expect(h.adapter.setupDetail().runners[0]?.agents[0]?.boundTokenId).toBeNull();
+    expect(h.adapter.servingTokenId("coder")).toBe(A_ID);
+  });
+
+  it("러너가 빠진 뒤 이어받은 러너가 그사이 등록된(묶임 없는) 에이전트를 묶는다", async () => {
+    const h = await setup();
+    const a = await readyRunner(h, TOKEN_A, [runnerAgent("coder")]);
+    await readyRunner(h, TOKEN_B, [runnerAgent("coder")]);
+    h.bound.set("coder", null); // A 가 붙은 뒤 등록됐는데 묶임이 비었다(등록 때 맡는 러너를 못 봤다)
+    const aClosed = waitDisconnect(a);
+    a.close();
+    await aClosed;
+    await until(() => h.bound.get("coder") === B_ID, "claimed by b");
+  });
+
+  it("묶임을 읽다 던지면 아무 러너도 맡지 않는다 — 다른 토큰 러너로 새지 않는다", async () => {
+    const h = await setup();
+    await readyRunner(h, TOKEN_A, [runnerAgent("coder")]);
+    h.bound.set("coder", A_ID);
+    const original = h.bound.get.bind(h.bound);
+    h.bound.get = (key: string) => {
+      if (key === "coder") throw new Error("db is locked");
+      return original(key);
+    };
+    expect(h.adapter.servingTokenId("coder")).toBeUndefined();
+    expect(h.adapter.setupDetail().runners[0]?.agents[0]).toMatchObject({
+      conflict: true,
+      boundTokenId: null,
+    });
+    expect(h.logs.some((l) => l.level === "error" && l.msg === "runner agent binding lookup failed")).toBe(
+      true,
+    );
   });
 });

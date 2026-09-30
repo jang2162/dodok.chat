@@ -43,12 +43,40 @@ import {
 } from "@dodok/shared";
 import type { Namespace, Server, Socket } from "socket.io";
 import { RUNNER_APPROVAL_TTL_MS, RunnerApprovals } from "./approvals";
-import { createRunner, type Runner, RunnerRegistry, type RunnerSocket } from "./connections";
+import {
+  createRunner,
+  type Runner,
+  RunnerRegistry,
+  type RunnerSocket,
+  UNREADABLE_BINDING,
+} from "./connections";
 
 export { RUNNER_APPROVAL_TTL_MS };
 
 /** 핸드셰이크 `auth.token`(외부 입력 그대로)을 보고 통과면 그 토큰의 id·라벨, 아니면 null */
 export type RunnerTokenVerifier = (presented: unknown) => { tokenId: string; label: string } | null;
+
+/** 러너 프레임 버킷 이름 — `run.event`(스트리밍 델타)와 나머지(수명·post·승인)를 나눈다 */
+export type RunnerFrameBucket = "events" | "control";
+
+/**
+ * 러너가 보내는 프레임의 속도 제한 — 러너 소켓마다 buckets() 를 한 번 부른다(숫자는 서버 LIMITS.runner). 넘친 프레임은 버리고
+ * onLimited 는 주소별 1분에 한 번, 그사이 버린 수(dropped)와 함께 부른다
+ */
+export type RunnerFrameLimit = {
+  buckets: () => Record<RunnerFrameBucket, { take(): boolean }>;
+  onLimited: (address: string, frame: string, dropped: number) => void;
+};
+
+/**
+ * 등록된 Claude 에이전트와 러너 토큰의 묶임(정본은 서버 DB — agents.runner_token_id). 묶인 에이전트는 그 토큰의 러너만 맡는다
+ */
+export type RunnerAgentBindings = {
+  /** 그 id 의 등록 에이전트가 묶인 토큰 id. 묶이지 않았거나 등록되지 않았으면 null */
+  boundToken(agentId: string): string | null;
+  /** 묶이지 않은 등록 에이전트를 그 토큰에 묶는다(첫 연결). 묶었으면 true — 등록되지 않았거나 이미 묶였으면 false */
+  claim(agentId: string, tokenId: string): boolean;
+};
 
 export type RunnerAdapterOptions = {
   /** 서버의 Socket.IO — 이 어댑터가 `io.of(RUNNER_NAMESPACE)` 를 맡는다 */
@@ -71,6 +99,8 @@ export type RunnerAdapterOptions = {
   /** AdapterStatus.runners.tokens */
   tokenCount: () => number;
   approvalTtlMs?: number;
+  bindings: RunnerAgentBindings;
+  frameLimit: RunnerFrameLimit;
 };
 
 export interface RunnerAdapter extends AgentAdapter {
@@ -82,12 +112,15 @@ export interface RunnerAdapter extends AgentAdapter {
    * 러너가 끊기면 곧바로 false 다(열린 런 추적에서 빠진다)
    */
   mayReadAttachment(tokenId: string, attachmentId: string): boolean;
+  /** 그 id 를 지금 맡을 러너의 토큰 id — 에이전트 등록이 이 토큰에 묶는다. 맡을 러너가 없으면 undefined */
+  servingTokenId(agentId: string): string | undefined;
 }
 
 const HELLO_TIMEOUT_MS = 10_000;
 const RUN_START_ACK_TIMEOUT_MS = 15_000;
 const REJECT_LOG_INTERVAL_MS = 60_000;
 const REJECT_LOG_MAX_ADDRESSES = 1_024;
+const LIMIT_LOG_INTERVAL_MS = 60_000;
 const USAGE_EVENT = "dodok.usage";
 /** interrupt 로 끝난 턴의 run.final stopReason */
 const ABORTED_STOP_REASON = "aborted";
@@ -106,6 +139,16 @@ const RUNNER_FRAMES: ReadonlySet<string> = new Set<keyof RunnerClientToServerEve
   "approval.requested",
   "approval.withdrawn",
 ]);
+// 프레임이 쓰는 버킷 — run.event 는 모델 델타마다 오므로 따로 넉넉하게, 나머지는 런마다 몇 번뿐이다
+const FRAME_BUCKET: Record<keyof RunnerClientToServerEvents, RunnerFrameBucket> = {
+  hello: "control",
+  "run.event": "events",
+  "run.final": "control",
+  "run.error": "control",
+  "outbound.post": "control",
+  "approval.requested": "control",
+  "approval.withdrawn": "control",
+};
 
 /**
  * 러너가 `run.event` 로 보낼 수 있는 변형. 수명(RUN_*)·승인(APPROVAL_*)·대기(RUN_QUEUED)·상태(STATE_SNAPSHOT)는 서버와 이 어댑터가
@@ -178,12 +221,20 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
     RunnerServerToClientEvents
   >;
   const handlers = new Set<(e: AdapterEvent) => void>();
-  const registry = new RunnerRegistry();
+  const registry = new RunnerRegistry((agentId) => {
+    try {
+      return opts.bindings.boundToken(agentId);
+    } catch (error) {
+      logger.error({ err: error, agentId }, "runner agent binding lookup failed");
+      return UNREADABLE_BINDING;
+    }
+  });
   const runs = new Map<string, RunTrack>();
   // hello 전 연결까지 — 폐기는 hello 여부와 무관하게 그 토큰의 연결을 전부 끊는다
   const sockets = new Map<string, { socket: RunnerSocket; tokenId: string }>();
   const helloTimers = new Set<ReturnType<typeof setTimeout>>();
   const rejectLog = new Map<string, { at: number; suppressed: number }>();
+  const limitLog = new Map<string, { at: number; suppressed: number }>();
   const inflightPosts = new Map<string, Promise<{ messageId: string }>>();
   let closed = false;
   // 러너는 매 런 채널 규칙을 싣고(판정 P3) 세션 UUID 는 서버가 정한다(판정 P4)
@@ -217,6 +268,21 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
     emit({ kind: "setup" });
   }
 
+  /**
+   * 첫 연결 묶기 — 지금 맡는 러너가 있는데 묶임이 없는 등록 에이전트를 그 러너 토큰에 묶는다. 묶임 없는 기존 행(묶임이 생기기
+   * 전에 등록된 것)도, 맡을 러너 없이 등록된 것도 이 길로 묶인다. 미등록 id 는 claim 이 false 라 그대로다
+   */
+  function claimUnbound() {
+    for (const { agentId, runner } of registry.unboundOwned()) {
+      try {
+        if (opts.bindings.claim(agentId, runner.tokenId))
+          logger.info({ agentId, tokenId: runner.tokenId, label: runner.label }, "runner agent bound");
+      } catch (error) {
+        logger.error({ err: error, agentId, tokenId: runner.tokenId }, "runner agent bind failed");
+      }
+    }
+  }
+
   const isLive = (runner: Runner) => registry.get(runner.socket.id) === runner;
   const approvals = new RunnerApprovals({
     ttlMs: opts.approvalTtlMs ?? RUNNER_APPROVAL_TTL_MS,
@@ -246,6 +312,29 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
       rejectLog.delete(rejectLog.keys().next().value as string);
     const shown = opts.logAddress ? opts.logAddress(address) : address;
     logger.warn({ address: shown, reason, suppressed: entry?.suppressed ?? 0 }, "runner connection rejected");
+  }
+
+  /**
+   * 넘친 프레임 — 주소별 1분에 한 줄 warn 과 onLimited(운영 사건). 버릴 때마다 쓰면 러너 한 소켓이 초당 수천 번 버릴 때
+   * 막으려던 로그·DB 쓰기를 이것이 대신 만든다. dropped 는 이 줄까지 버린 수(앞 줄 뒤로 말없이 버린 것 포함)
+   */
+  function onFrameLimited(address: string, frame: string, tokenId: string) {
+    const at = now();
+    const entry = limitLog.get(address);
+    if (entry && at - entry.at < LIMIT_LOG_INTERVAL_MS) {
+      entry.suppressed += 1;
+      return;
+    }
+    limitLog.delete(address);
+    limitLog.set(address, { at, suppressed: 0 });
+    while (limitLog.size > REJECT_LOG_MAX_ADDRESSES) limitLog.delete(limitLog.keys().next().value as string);
+    const dropped = (entry?.suppressed ?? 0) + 1;
+    logger.warn({ address, tokenId, frame, dropped }, "runner frames rate limited — dropped");
+    try {
+      opts.frameLimit.onLimited(address, frame, dropped);
+    } catch (error) {
+      logger.error({ err: error }, "runner frame limit handler threw");
+    }
   }
 
   // 브리지 핸드셰이크(openclaw-adapter bridge/server.ts)와 같은 순서 — 막혔으면 토큰을 보지 않는다, 검증 실패만 센다
@@ -281,10 +370,12 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
     logger.info({ tokenId: runner.tokenId, label: runner.label, reason }, "runner disconnected");
     if (closed) return;
     releaseRunner(runner);
+    // 묶인 에이전트는 이어받지 않는다 — 이어받는 것은 묶임 없는 id 뿐이고, 그중 등록된 것은 여기서 새 러너에 묶인다
     for (const agentId of owned) {
       const next = registry.owner(agentId);
       if (next) logger.info({ agentId, tokenId: next.tokenId, label: next.label }, "runner agent taken over");
     }
+    claimUnbound();
     announceRunners();
   }
 
@@ -348,6 +439,7 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
     } else {
       registry.add(runner);
     }
+    claimUnbound();
     const conflicts = registry.conflicts(runner);
     if (conflicts.length > 0) {
       logger.warn(
@@ -632,10 +724,29 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
       dropTransport(socket);
     }, HELLO_TIMEOUT_MS);
     helloTimers.add(helloTimer);
+    const buckets = opts.frameLimit.buckets();
+    const address = remoteAddress(socket as unknown as Socket);
+    /** 버킷에서 하나 꺼낸다 — 비었으면 false. ack 를 기다리는 프레임이면 RATE_LIMITED 로 답한다 */
+    const admit = (event: keyof RunnerClientToServerEvents, args: unknown[]): boolean => {
+      if (buckets[FRAME_BUCKET[event]].take()) return true;
+      onFrameLimited(address, event, tokenId);
+      const ack = args.at(-1);
+      if (event === "outbound.post" && typeof ack === "function")
+        (ack as (r: RunnerOutboundAck) => void)({
+          ok: false,
+          code: "RATE_LIMITED",
+          message: "too many frames",
+        });
+      return false;
+    };
     // hello 전 프레임은 버린다 — 등록되지 않은 러너는 런도 에이전트도 없다
     const ready = (): Runner | undefined => registry.get(socket.id);
-    const on = <A extends unknown[]>(event: string, handler: (runner: Runner, ...args: A) => unknown) => {
+    const on = <A extends unknown[]>(
+      event: keyof RunnerClientToServerEvents,
+      handler: (runner: Runner, ...args: A) => unknown,
+    ) => {
       (socket as unknown as Socket).on(event, (...args: unknown[]) => {
+        if (!admit(event, args)) return;
         const runner = ready();
         if (runner) void handler(runner, ...(args as A));
       });
@@ -657,6 +768,7 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
       unknownFrames = { at, suppressed: 0 };
     });
     (socket as unknown as Socket).on("hello", (payload: unknown, ack: unknown) => {
+      if (!admit("hello", [payload, ack])) return;
       if (registry.get(socket.id) === undefined) {
         clearTimeout(helloTimer);
         helloTimers.delete(helloTimer);
@@ -707,6 +819,8 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
       }
       return false;
     },
+
+    servingTokenId: (agentId) => registry.owner(agentId)?.tokenId,
 
     revokeTokenSessions(tokenId) {
       let count = 0;

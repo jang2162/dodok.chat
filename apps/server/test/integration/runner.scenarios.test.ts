@@ -366,6 +366,42 @@ describe("Claude 러너 통합 시나리오", () => {
     expect(other.runStarts).toHaveLength(0);
   });
 
+  it("시나리오 6′ — coder 는 등록 때 붙어 있던 러너 토큰에 묶인다: 그 러너가 끊기면 다른 토큰 러너가 알려도 맡지 않고, 연결 페이지에서 다시 묶으면 그 러너가 맡는다", async () => {
+    const { runner, coder, channel, log } = await start();
+    const listed = async () =>
+      ok("GET /agents", await rest<{ agents: Agent[] }>(live, "GET", "/agents")).agents.find(
+        (a) => a.id === coder.id,
+      );
+    expect(coder.runner).toMatchObject({ label: "macbook", revoked: false });
+
+    runner.close();
+    const second = await issueToken("desktop");
+    const other = await connectRunner(second.token);
+    expect(other.helloResult).toMatchObject({ ok: true, conflicts: ["coder"] });
+    await sendMessage(log.socket, channel.id, "@coder 거기 있어?");
+    const lost = await runOf(log, coder.id);
+    expect(await log.terminal(lost.id)).toMatchObject({
+      status: "error",
+      error: { code: "ADAPTER_UNAVAILABLE" },
+    });
+    expect(other.runStarts).toHaveLength(0);
+
+    const res = await live.app.fastify.inject({
+      method: "PUT",
+      url: `/api/v1/setup/runner-tokens/${second.record.id}/agents/coder`,
+      headers: live.auth.headers,
+    });
+    expect(res.statusCode).toBe(200);
+    expect((await listed())?.runner).toMatchObject({ tokenId: second.record.id, label: "desktop" });
+    expect((await setupStatus()).runners.list.map((r) => [r.label, r.agents[0]?.conflict])).toEqual([
+      ["desktop", false],
+    ]);
+    await sendMessage(log.socket, channel.id, "@coder 이제는?");
+    const moved = await runOf(log, coder.id, 1);
+    expect((await log.terminal(moved.id)).status).toBe("done");
+    expect(other.runStarts.map((s) => s.deliver.runId)).toEqual([moved.id]);
+  });
+
   const ruleNotices = (log: WireLog) =>
     log.created.filter((m) => m.systemMeta?.kind === "info" && m.bodyMd.startsWith("채널 규칙이 바뀌어"));
 

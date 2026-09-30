@@ -42,7 +42,7 @@ import {
 import { createRestLimits } from "./modules/ops/http-limits";
 import { ipPrefix } from "./modules/ops/ip";
 import { LIMITS, type Limits } from "./modules/ops/limits";
-import { monotonicNow } from "./modules/ops/ratelimit";
+import { monotonicNow, TokenBucket } from "./modules/ops/ratelimit";
 import { registerOpsRoutes } from "./modules/ops/routes";
 import { providersWithAgents } from "./modules/ops/summary";
 import type { OpsService } from "./modules/ops/service";
@@ -58,6 +58,7 @@ import {
 import { loadVapidKeys } from "./modules/push/vapid";
 import type { Orchestrator, RunTimeouts } from "./modules/runs/orchestrator";
 import { registerRunnerRoutes, runnerServerUrl } from "./modules/runners/routes";
+import { boundRunnerToken, claimRunnerToken } from "./modules/runners/bindings";
 import { readRunnerFile, runnerDirCandidates } from "./modules/runners/runner-file";
 import { activeRunnerTokenCount, isActiveRunnerTokenId, verifyRunnerTokenDb } from "./modules/runners/tokens";
 import { registerRunRoutes } from "./modules/runs/routes";
@@ -317,6 +318,24 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
           return { messageId };
         },
         tokenCount: () => activeRunnerTokenCount(db, workspaceId),
+        bindings: {
+          boundToken: (agentId) => boundRunnerToken(db, workspaceId, agentId),
+          claim: (agentId, tokenId) => claimRunnerToken(db, workspaceId, agentId, tokenId),
+        },
+        // 러너 소켓마다 버킷(러너 스펙 밖 — 이월 「러너 프레임 속도 제한」). 사건은 어댑터가 주소별 1분에 한 번만 부른다
+        frameLimit: {
+          buckets: () => ({
+            events: new TokenBucket({ ...limits.runner.events, now: limitClock }),
+            control: new TokenBucket({ ...limits.runner.control, now: limitClock }),
+          }),
+          onLimited: (address, frame, dropped) =>
+            ops.record({
+              kind: "ratelimit",
+              key: `runner:${frame}`,
+              severity: "info",
+              detail: { ipPrefix: ipPrefix(address), dropped },
+            }),
+        },
         ...(deps.runnerApprovalTtlMs === undefined ? {} : { approvalTtlMs: deps.runnerApprovalTtlMs }),
       });
       adapters.push(runnerAdapter);
@@ -423,7 +442,10 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       orchestrator: services.orchestrator,
     };
     registerChannelRoutes(fastify, routeContext);
-    registerAgentRoutes(fastify, routeContext);
+    registerAgentRoutes(fastify, {
+      ...routeContext,
+      runnerTokenFor: (providerAgentId) => runnerAdapter?.servingTokenId(providerAgentId),
+    });
     registerMessageRoutes(fastify, routeContext);
     registerMemberManageRoutes(fastify, {
       auth,

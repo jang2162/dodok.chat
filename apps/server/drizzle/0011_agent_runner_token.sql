@@ -1,0 +1,1 @@
+ALTER TABLE `agents` ADD `runner_token_id` text REFERENCES runner_tokens(id);

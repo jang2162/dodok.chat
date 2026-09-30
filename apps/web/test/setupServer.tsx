@@ -62,7 +62,14 @@ export function runnerOf(n: number, over: Partial<RunnerConnection> = {}): Runne
     capabilities: ["threads", "interrupt", "approvals", "attachments"],
     connectedAt: "2026-09-27T01:00:00.000Z",
     agents: [
-      { id: `coder${n}`, name: `코더${n}`, model: "sonnet", workdirLabel: "my-repo", conflict: false },
+      {
+        id: `coder${n}`,
+        name: `코더${n}`,
+        model: "sonnet",
+        workdirLabel: "my-repo",
+        conflict: false,
+        boundTokenId: null,
+      },
     ],
     ...over,
   };

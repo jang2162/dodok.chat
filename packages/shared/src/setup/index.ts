@@ -53,7 +53,8 @@ export type IssueRunnerTokenResult = z.infer<typeof IssueRunnerTokenResult>;
 
 /**
  * 지금 붙은 러너 하나(러너 스펙 5장) — 어댑터 `setupDetail()` 의 claude 변형과 연결 페이지 러너 블록이 같은 모양을 쓴다.
- * 작업 디렉터리는 라벨만 — 경로 원문은 싣지 않는다. conflict 는 먼저 붙은 러너가 이미 알린 에이전트 id 다
+ * 작업 디렉터리는 라벨만 — 경로 원문은 싣지 않는다. conflict 는 이 러너가 맡지 못하는 id — 등록 에이전트가 다른 토큰에 묶였거나
+ * (boundTokenId), 묶임이 없으면 먼저 붙은 러너가 이미 알린 id 다. boundTokenId 는 그 id 의 등록 에이전트가 묶인 러너 토큰(없으면 null)
  */
 export const RunnerConnection = z.object({
   tokenId: Id,
@@ -71,6 +72,7 @@ export const RunnerConnection = z.object({
       model: z.string(),
       workdirLabel: z.string(),
       conflict: z.boolean(),
+      boundTokenId: Id.nullable(),
     }),
   ),
 });
