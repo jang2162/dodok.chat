@@ -59,7 +59,7 @@ export type RunnerTokenVerifier = (presented: unknown) => { tokenId: string; lab
 
 /**
  * 러너 프레임 버킷 이름 — `run.event`(스트리밍 델타)와 나머지(hello·post·수명·승인)를 나눈다. 열린 런·기다리는 승인을 가리키는
- * 종결·승인 프레임은 어느 버킷도 세지 않는다(namesOpenWork)
+ * 종결·승인 프레임 가운데 처리기가 받아들일 것은 버킷을 거치지 않는다(namesOpenWork)
  */
 export type RunnerFrameBucket = "events" | "control";
 
@@ -125,7 +125,7 @@ const RUN_START_ACK_TIMEOUT_MS = 15_000;
 const REJECT_LOG_INTERVAL_MS = 60_000;
 const REJECT_LOG_MAX_ADDRESSES = 1_024;
 const LIMIT_LOG_INTERVAL_MS = 60_000;
-/** 한 런이 control 버킷을 거치지 않고 띄울 수 있는 기다리는 승인 수 — 넘으면 그다음 요청부터 버킷을 센다 */
+/** 한 런이 control 버킷을 거치지 않고 받을 수 있는 승인 요청의 누계 — 넘으면 그다음 요청부터 버킷을 센다 */
 export const RUN_FREE_APPROVALS = 32;
 const USAGE_EVENT = "dodok.usage";
 /** interrupt 로 끝난 턴의 run.final stopReason */
@@ -146,7 +146,7 @@ const RUNNER_FRAMES: ReadonlySet<string> = new Set<keyof RunnerClientToServerEve
   "approval.withdrawn",
 ]);
 // 프레임이 쓰는 버킷 — run.event 는 모델 델타마다 오므로 따로 넉넉하게, 나머지는 런마다 몇 번뿐이다. 열린 런·기다리는 승인을
-// 가리키는 종결·승인 프레임은 버킷을 거치지 않는다(namesOpenWork)
+// 가리키는 종결·승인 프레임 가운데 처리기가 받아들일 것은 버킷을 거치지 않는다(namesOpenWork)
 export const FRAME_BUCKET: Record<keyof RunnerClientToServerEvents, RunnerFrameBucket> = {
   hello: "control",
   "run.event": "events",
@@ -185,6 +185,8 @@ type RunTrack = {
   started: boolean;
   openTools: Set<string>;
   aborted: boolean;
+  /** control 버킷 밖으로 받은 승인 요청의 누계 — 철회·결정에도 줄지 않는다(까닭은 namesOpenWork) */
+  freeApprovals: number;
   /** run.start 의 dispatch ack 전이면 — 러너가 끊기면 곧바로 send 를 끝낸다 */
   rejectAck?: (error: AdapterError) => void;
 };
@@ -722,11 +724,13 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
    * 비웠다고 이 런까지 매달리면 안 된다.
    *
    * 처리기가 받아들일 프레임만 예외다 — 처리기와 같은 조건(계약 스키마, 이 러너가 연 런, 승인은 중지 안 된 런·그 런의 세션 키·
-   * 안 쓴 id, 철회는 기다리는 승인)을 먼저 본다. 그래서 수가 본래 묶인다: 종결은 열린 런마다 한 번(처리가 런을 곧바로 지운다),
-   * 철회는 기다리는 승인마다 한 번, 요청은 런마다 기다리는 것 RUN_FREE_APPROVALS 개까지. 처리기가 버리고 warn 을 쓸 프레임(계약
-   * 위반·남의 런·끝난 런·세션 키 불일치·이미 쓴 id)과 그 수를 넘은 요청은 control 버킷을 센다 — 열린 runId 하나로 warn 줄을
-   * 버킷 밖에서 되풀이하지 못하게. 파싱은 처리기가 한 번 더 한다(예외로 통과하는 수가 묶여 있어 두 번이 싸다). 싼 소유 대조를
-   * 먼저 해서, 남의 것·모르는 것을 가리키는 프레임은 파싱하지 않고 버킷으로 간다
+   * 안 쓴 id, 철회는 기다리는 승인)을 먼저 본다. 그래서 한 런의 예외 프레임은 종결 1(처리가 런을 곧바로 지운다) + 요청 누계
+   * RUN_FREE_APPROVALS + 그 철회(기다리는 승인마다 한 번 — 받아들인 요청 수 이하)로 묶인다. 요청은 지금 기다리는 수가 아니라
+   * 누계(RunTrack.freeApprovals)로 센다 — 철회하면 기다리는 수가 도로 주므로, 요청·철회를 되풀이해 승인 카드·푸시를 버킷을 한
+   * 번도 안 세고 끝없이 만든다. 처리기가 버리고 warn 을 쓸 프레임(계약 위반·남의 런·끝난 런·세션 키 불일치·이미 쓴 id)과 누계를
+   * 넘은 요청은 control 버킷을 센다 — 열린 runId 하나로 warn 줄을 버킷 밖에서 되풀이하지 못하게. 파싱은 처리기가 한 번 더 한다
+   * (예외로 통과하는 수가 묶여 있어 두 번이 싸다). 싼 소유 대조를 먼저 해서, 남의 것·모르는 것을 가리키는 프레임은 파싱하지 않고
+   * 버킷으로 간다
    */
   function namesOpenWork(
     runner: Runner | undefined,
@@ -748,15 +752,18 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
           run.aborted ||
           typeof providerApprovalId !== "string" ||
           approvals.used(runner, providerApprovalId) ||
-          approvals.pendingCount(run.runId) >= RUN_FREE_APPROVALS
+          run.freeApprovals >= RUN_FREE_APPROVALS
         )
           return false;
         const parsed = RunnerApprovalRequested.safeParse(payload);
-        return (
-          parsed.success &&
-          parsed.data.sessionKey === run.deliver.sessionKey &&
-          parseDodokSessionKey(parsed.data.sessionKey) !== undefined
-        );
+        if (
+          !parsed.success ||
+          parsed.data.sessionKey !== run.deliver.sessionKey ||
+          parseDodokSessionKey(parsed.data.sessionKey) === undefined
+        )
+          return false;
+        run.freeApprovals += 1;
+        return true;
       }
       case "approval.withdrawn":
         return (
@@ -949,6 +956,7 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
         started: false,
         openTools: new Set(),
         aborted: false,
+        freeApprovals: 0,
       };
       runs.set(run.runId, run);
       let ack: RunnerRunAck;

@@ -1463,7 +1463,7 @@ describe("러너 프레임 속도 제한 — 소켓마다 버킷, 넘치면 버�
     ).toEqual(["toolu_perm-1"]);
   });
 
-  it(`한 런이 기다리는 승인이 ${RUN_FREE_APPROVALS}개면 그다음 approval.requested 는 control 버킷을 센다`, async () => {
+  it(`한 런이 버킷 밖으로 받은 승인 요청이 ${RUN_FREE_APPROVALS}개면 그다음 approval.requested 는 control 버킷을 센다`, async () => {
     const h = await setup({ frames: { events: 100, control: 1 } });
     const { r, runId, sessionKey } = await drainedControl(h);
     h.setNow(Date.parse("2026-09-27T00:01:00.000Z"));
@@ -1472,6 +1472,22 @@ describe("러너 프레임 속도 제한 — 소켓마다 버킷, 넘치면 버�
     await until(() => h.limited.length === 2, "limited");
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(approvals(h)).toHaveLength(RUN_FREE_APPROVALS);
+    expect(h.limited[1]).toEqual(["127.0.0.1", "approval.requested", 1]);
+  });
+
+  it(`버킷 밖 승인 요청은 런마다 누계 ${RUN_FREE_APPROVALS}개 — 요청·철회를 되풀이해도 그다음 요청은 control 버킷을 센다`, async () => {
+    const h = await setup({ frames: { events: 100, control: 1 } });
+    const { r, runId, sessionKey } = await drainedControl(h);
+    h.setNow(Date.parse("2026-09-27T00:01:00.000Z"));
+    for (let i = 0; i < RUN_FREE_APPROVALS; i++) {
+      r.send("approval.requested", approvalFrame(runId, sessionKey, `cyc-${i}`));
+      r.send("approval.withdrawn", { providerApprovalId: `cyc-${i}` });
+    }
+    r.send("approval.requested", approvalFrame(runId, sessionKey, `cyc-${RUN_FREE_APPROVALS}`));
+    await until(() => h.limited.length === 2, "limited");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(approvals(h)).toHaveLength(RUN_FREE_APPROVALS * 2);
+    expect(approvals(h).filter((a) => a.status === "pending")).toHaveLength(RUN_FREE_APPROVALS);
     expect(h.limited[1]).toEqual(["127.0.0.1", "approval.requested", 1]);
   });
 
@@ -1560,7 +1576,7 @@ describe("러너 프레임 속도 제한 — 소켓마다 버킷, 넘치면 버�
     expect(h.limited).toEqual([]);
   });
 
-  it("control 버킷이 세는 프레임은 hello·outbound.post 와 가리키는 것이 없는 종결·승인 프레임, events 는 run.event 뿐", () => {
+  it("control 버킷이 세는 프레임은 hello·outbound.post 와 처리기가 받아들이지 않을 종결·승인 프레임, events 는 run.event 뿐", () => {
     expect(FRAME_BUCKET).toEqual({
       hello: "control",
       "run.event": "events",

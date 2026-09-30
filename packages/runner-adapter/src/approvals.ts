@@ -86,14 +86,6 @@ export class RunnerApprovals {
     return this.#entries.get(this.#id(runner, rawId))?.approval.status === "pending";
   }
 
-  /** 그 런에서 기다리는 승인 수 */
-  pendingCount(runId: string): number {
-    let n = 0;
-    for (const entry of this.#entries.values())
-      if (entry.runId === runId && entry.approval.status === "pending") n += 1;
-    return n;
-  }
-
   /** 러너가 콜백 signal 끊김을 알렸다 */
   withdraw(runner: Runner, rawId: string): void {
     const entry = this.#entries.get(this.#id(runner, rawId));
