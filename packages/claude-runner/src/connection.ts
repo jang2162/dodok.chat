@@ -1,6 +1,7 @@
 import {
   RUNNER_NAMESPACE,
   RUNNER_PROTOCOL,
+  RUNNER_SHUTDOWN_STOP_REASON,
   RunnerApprovalResolve,
   RunnerHelloResult,
   RunnerOutboundAck,
@@ -180,9 +181,12 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
     await new Promise((resolve) => setTimeout(resolve, STOP_SETTLE_MS));
   }
 
-  /** 도는 런에 interrupt 를 걸고 그 런들이 끝날 때까지(최대 stopWaitMs) 기다린다 */
+  /**
+   * 도는 런에 interrupt 를 걸고 그 런들이 끝날 때까지(최대 stopWaitMs) 기다린다. 러너가 끝나는 길이라 런은 사람 중지가 아닌
+   * runner_shutdown 으로 닫는다
+   */
   async function settleRuns(): Promise<void> {
-    scheduler.abortAll();
+    scheduler.abortAll(RUNNER_SHUTDOWN_STOP_REASON);
     let timer: ReturnType<typeof setTimeout> | undefined;
     await Promise.race([
       scheduler.idle(),
@@ -321,7 +325,7 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
         logger.info(`dodok-runner: 런 끝 ${runId}(${agent.id})`);
       },
       // 대기열에서 중지된 런 — 어댑터가 dispatch 뒤 추적하던 런을 놓게 final 로 닫는다(판정 R1)
-      () => emit.final(abortedFinal()),
+      (reason) => emit.final(abortedFinal(undefined, reason)),
     );
     if ("busy" in submitted) {
       ack({ runId, admission: "dispatch" });

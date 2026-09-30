@@ -7,7 +7,7 @@ import type { SdkMessage } from "./sdk";
 // - 도구 인자는 델타마다가 아니라 블록이 끝날 때 한 번에 낸다(OpenClaw 경로도 인자를 한 번에 싣는다). 델타 조각에
 //   걸친 호스트 경로를 가리려면 전체 글이 있어야 한다
 // - 러너는 수명 변형(RUN_*)을 내지 않는다(조율자 판정 R1) — interrupt 로 끝난 턴은 `final`(text 빈 글·stopReason
-//   "aborted"), result 의 오류는 `error`(run.error)로. 러너 어댑터가 run.event 의 수명 변형을 허용 목록으로 거른다(태스크 3)
+//   "aborted", 러너를 끄느라 멈췄으면 "runner_shutdown"), result 의 오류는 `error`(run.error)로. 러너 어댑터가 run.event 의 수명 변형을 허용 목록으로 거른다(태스크 3)
 // - 답 글 델타는 마지막 공백 뒤 꼬리를 쥐었다가 다음 델타·블록 끝에서 가려 낸다 — 델타 둘에 걸친 경로를 가리려면
 //   이어 붙여야 한다(mask.ts safeCut)
 // - 서브에이전트 안(parent_tool_use_id 가 있는) 스트림은 본 답 버블에 섞이지 않게 버린다
@@ -106,7 +106,7 @@ function finalOf(r: Loose, text: string, stopReason: string): RunnerRunFinalBody
 export function createStreamMapper(
   now: () => number,
   opts: { runId: string; mask?: PathMasker },
-): { map(m: SdkMessage): MapItem[]; markInterrupted(): void } {
+): { map(m: SdkMessage): MapItem[]; markInterrupted(stopReason?: string): void } {
   const { runId } = opts;
   const mask = opts.mask ?? NO_MASK;
   let messageId = "";
@@ -114,6 +114,7 @@ export function createStreamMapper(
   let blocks = new Map<number, Block>();
   const toolStartedAt = new Map<string, number>();
   let interrupted = false;
+  let interruptStopReason = ABORTED_STOP_REASON;
   let authFailed = false;
 
   const errorItem = (code: ErrorCode, message: string): MapItem => ({
@@ -255,15 +256,17 @@ export function createStreamMapper(
       return [{ final: finalOf(r, mask(r.result ?? ""), r.stop_reason ?? "end_turn") }];
     }
     if (interrupted && r.subtype === "error_during_execution") {
-      return [{ final: finalOf(r, "", ABORTED_STOP_REASON) }];
+      return [{ final: finalOf(r, "", interruptStopReason) }];
     }
     const text = (r.errors ?? []).join("; ") || r.subtype || "error";
     return [errorItem(authFailed || isAuthFailureText(text) ? "PROVIDER_AUTH" : "INTERNAL", text)];
   }
 
   return {
-    markInterrupted: () => {
+    /** stopReason — interrupt 로 끝난 턴의 final 에 실을 값(러너 종료면 runner_shutdown, 기본 aborted) */
+    markInterrupted: (stopReason: string = ABORTED_STOP_REASON) => {
       interrupted = true;
+      interruptStopReason = stopReason;
     },
     map(m) {
       const x = m as unknown as Loose;

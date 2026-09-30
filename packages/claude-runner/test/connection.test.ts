@@ -431,8 +431,26 @@ describe("startRunnerConnection", () => {
     expect(fake.calls[0]!.interrupts).toBe(1);
     // 끊기 전에 서버가 이미 받았다 — 기다리지 않았으면 끊긴 뒤라 버려진다
     expect(server.finals).toHaveLength(1);
-    expect(server.finals[0]).toMatchObject({ runId: RUN_ID, stopReason: "aborted" });
+    // 사람 중지(aborted)와 가른다 — 어댑터가 ADAPTER_UNAVAILABLE(「다시 실행」)로 닫는다
+    expect(server.finals[0]).toMatchObject({ runId: RUN_ID, text: "", stopReason: "runner_shutdown" });
     expect(conn.connected).toBe(false);
+  });
+
+  it("stop — 대기열의 런도 runner_shutdown 으로 닫는다, CLI 는 띄우지 않는다", async () => {
+    const { server, fake, conn } = await setup({ maxConcurrentRuns: 1 });
+    await waitFor(() => server.hellos.length === 1);
+    fake.script(script.messageStart("msg_1"), {
+      waitInterrupt: [script.errorResult("error_during_execution", ["x"])],
+    });
+    await sendStart(server.sockets[0]!, runStart());
+    await sendStart(server.sockets[0]!, runStart({ runId: RUN_2, sessionId: SESSION_2 }));
+    await waitFor(() => fake.calls.length === 1);
+    await conn.stop();
+    expect(fake.calls).toHaveLength(1);
+    expect(server.finals.map((f) => [f.runId, f.stopReason])).toEqual([
+      [RUN_2, "runner_shutdown"],
+      [RUN_ID, "runner_shutdown"],
+    ]);
   });
 
   it("stop — 런이 끝나지 않아도 기다림은 상한까지만", async () => {

@@ -311,6 +311,22 @@ describe("Claude 러너 통합 시나리오", () => {
     expect(b?.providerSessionId).toBe(a?.providerSessionId);
   });
 
+  it("러너를 끄느라 멈춘 런(final runner_shutdown) → 사람 중지가 아니라 ADAPTER_UNAVAILABLE run_error 카드와 「다시 실행」", async () => {
+    const { runner, coder, channel, log } = await start((run) =>
+      run.final("", { stopReason: "runner_shutdown", costKind: "subscription_estimate" }),
+    );
+    await sendMessage(log.socket, channel.id, "@coder 하나");
+    const run = await runOf(log, coder.id);
+    expect(await log.terminal(run.id)).toMatchObject({
+      status: "error",
+      error: { code: "ADAPTER_UNAVAILABLE" },
+    });
+    const notice = await runErrorNotice(log, run.id);
+    expect(notice.bodyMd).toBe("@coder 실행이 실패했습니다: ADAPTER_UNAVAILABLE");
+    expect(notice.components).toMatchObject(RETRY_COMPONENTS);
+    expect(runner.runStarts).toHaveLength(1);
+  });
+
   it("시나리오 5 — 토큰 폐기 → 러너가 곧바로 끊기고, 다음 멘션은 run_error 카드", async () => {
     const { issued, runner, coder, channel, log } = await start();
     const res = await live.app.fastify.inject({
@@ -637,13 +653,13 @@ describe("Claude 러너 통합 시나리오", () => {
     expect(summary.byChannel.find((r) => r.id === channel.id)).toMatchObject({ tokens: 15, costUsd: 0.01 });
   });
 
-  it("러너 쪽에서 대기열째 중지된 런(비용·토큰 없음 — 러너 종료 등)은 API 키 러너 행에 「환산 포함」을 켜지 않는다 [최종 리뷰 M2]", async () => {
+  it("러너 쪽에서 대기열째 중지된 런(비용·토큰 없음)은 API 키 러너 행에 「환산 포함」을 켜지 않는다 [최종 리뷰 M2]", async () => {
     const { runner, coder, channel, log } = await start();
     await sendMessage(log.socket, channel.id, "@coder 하나");
     const first = await runOf(log, coder.id);
     expect((await log.terminal(first.id)).status).toBe("done");
 
-    // 러너 동시 상한에 걸려 기다리다 러너가 꺼진다 — CLI 를 띄우지 않았으니 abortedFinal() 그대로(비용·토큰 없음,
+    // 러너 동시 상한에 걸려 기다리다 중지된다 — CLI 를 띄우지 않았으니 abortedFinal() 그대로(비용·토큰 없음,
     // costKind 기본값). 서버가 중지한 런이면 어댑터가 런을 먼저 놓아 이 final 은 버려진다
     runner.onRunStart = (s) => ({ runId: s.deliver.runId, admission: "dispatch", queuedPosition: 1 });
     runner.script = (run) => run.final("", { stopReason: "aborted", costKind: "subscription_estimate" });

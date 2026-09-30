@@ -1,5 +1,6 @@
 import {
   renderRunnerPrompt,
+  RUNNER_SHUTDOWN_STOP_REASON,
   type ErrorCode,
   type RunEventBody,
   type RunnerApprovalRequested,
@@ -139,11 +140,19 @@ export function buildQueryOptions(
 const SESSION_IN_USE = /\bsession\b[^\n]{0,120}?\balready (?:in use|exists)/i;
 export const isSessionInUseText = (text: string): boolean => SESSION_IN_USE.test(text);
 
-/** 중지로 끝난 런 — 메시지 없는 final(조율자 판정 R1). 러너는 수명 이벤트를 run.event 로 내지 않는다 */
+/**
+ * 중지로 끝난 런 — 메시지 없는 final(조율자 판정 R1). 러너는 수명 이벤트를 run.event 로 내지 않는다.
+ * reason 은 중지 signal 의 reason — 러너를 끄느라 멈췄으면 stopReason 이 runner_shutdown 이다
+ */
 export function abortedFinal(
   costKind: RunnerRunFinal["costKind"] = "subscription_estimate",
+  reason?: unknown,
 ): Omit<RunnerRunFinal, "runId"> {
-  return { text: "", stopReason: ABORTED_STOP_REASON, costKind };
+  return { text: "", stopReason: abortStopReason(reason), costKind };
+}
+
+function abortStopReason(reason: unknown): string {
+  return reason === RUNNER_SHUTDOWN_STOP_REASON ? RUNNER_SHUTDOWN_STOP_REASON : ABORTED_STOP_REASON;
 }
 
 export type RunEmitter = {
@@ -184,7 +193,7 @@ export type RunContext = {
  */
 export async function runOnce(start: RunnerRunStart, ctx: RunContext): Promise<void> {
   // 중지로 끝난 런도 final 로 닫는다 — 어댑터가 dispatch 뒤 추적하던 런을 놓아준다(판정 R1)
-  if (ctx.signal.aborted) return void ctx.emit.final(abortedFinal());
+  if (ctx.signal.aborted) return void ctx.emit.final(abortedFinal(undefined, ctx.signal.reason));
   const sessionId = start.providerSessionId;
   let resume = false;
   try {
@@ -193,13 +202,13 @@ export async function runOnce(start: RunnerRunStart, ctx: RunContext): Promise<v
   } catch {
     // 전사를 못 읽으면 새 세션으로 연다 — 같은 id 의 전사가 실제로 있으면 CLI 가 거절하고 아래 재시도가 받친다
   }
-  if (ctx.signal.aborted) return void ctx.emit.final(abortedFinal());
+  if (ctx.signal.aborted) return void ctx.emit.final(abortedFinal(undefined, ctx.signal.reason));
   // 받기 실패는 그 이미지만 뺀다 — loadImageBlocks 는 던지지 않는다
   const images = await loadImageBlocks(start.deliver, ctx.bridge.http, ctx.signal);
-  if (ctx.signal.aborted) return void ctx.emit.final(abortedFinal());
+  if (ctx.signal.aborted) return void ctx.emit.final(abortedFinal(undefined, ctx.signal.reason));
   const outcome = await attempt(start, ctx, resume, images);
   if (outcome !== "session-in-use") return;
-  if (ctx.signal.aborted) return void ctx.emit.final(abortedFinal());
+  if (ctx.signal.aborted) return void ctx.emit.final(abortedFinal(undefined, ctx.signal.reason));
   await attempt(start, ctx, true, images);
 }
 
@@ -292,7 +301,7 @@ async function attempt(
   let interrupted = false;
   const onAbort = () => {
     interrupted = true;
-    mapper.markInterrupted();
+    mapper.markInterrupted(abortStopReason(ctx.signal.reason));
     q.interrupt().catch(() => {});
     closeLater();
   };
@@ -345,13 +354,13 @@ async function attempt(
       if (ended && raw.type === "result" && !costRecorded) recordCost(raw.total_cost_usd);
     }
     if (!ended) {
-      if (interrupted) ctx.emit.final(abortedFinal(costKind));
+      if (interrupted) ctx.emit.final(abortedFinal(costKind, ctx.signal.reason));
       else ctx.emit.error("INTERNAL", "Claude Code 가 결과 없이 끝났습니다");
     }
   } catch (error) {
     // 마지막 result 뒤에 CLI 가 exit 1 로 끝나 반복자가 던질 수 있다(ADR 0007 4.4) — 런은 이미 끝났다
     if (!ended) {
-      if (interrupted) ctx.emit.final(abortedFinal(costKind));
+      if (interrupted) ctx.emit.final(abortedFinal(costKind, ctx.signal.reason));
       else if (!sawMessage && retryable(error)) return "session-in-use";
       else failed(error);
     }

@@ -497,7 +497,7 @@ SDK import 경로: `openclaw/plugin-sdk/plugin-entry`, `openclaw/plugin-sdk/chan
 ### 2.4a `packages/runner-adapter` (서버 프로세스 안에서 실행)
 
 서버 측 Claude 러너 어댑터 — `AgentAdapter` 의 `provider: "claude"` 구현. 설계는 `docs/superpowers/specs/2026-09-27-claude-runner-design.md`(구현과 달라진 것은 그 스펙의 「구현과 맞춘 것」 장).
-- `src/runner-adapter.ts` — `/runner` 네임스페이스(러너 토큰 핸드셰이크·hello·같은 토큰 교체는 옛 자리를 잇는다), `send`→`run.start`(채널 규칙 틀·턴 사실은 여기서 만든다), `run.event` 허용 목록·runId 대조, `run.final`→정본·usage(`dodok.usage`), 중지(`run.final aborted` → 메시지 없는 `RUN_ABORTED`), `outbound.post` 를 열린 런에 묶기, `mayReadAttachment`(러너 토큰 첨부 읽기 범위 — 열린 런의 트리거 첨부만), `supports`(러너가 없으면 true), 서버 종료·hello 타임아웃은 전송만 닫고 교체·폐기만 `disconnect(true)`.
+- `src/runner-adapter.ts` — `/runner` 네임스페이스(러너 토큰 핸드셰이크·hello·같은 토큰 교체는 옛 자리를 잇는다), `send`→`run.start`(채널 규칙 틀·턴 사실은 여기서 만든다), `run.event` 허용 목록·runId 대조, `run.final`→정본·usage(`dodok.usage`), 중지(`run.final aborted` → 메시지 없는 `RUN_ABORTED`, 러너 종료 `run.final runner_shutdown` → `ADAPTER_UNAVAILABLE`), `outbound.post` 를 열린 런에 묶기, `mayReadAttachment`(러너 토큰 첨부 읽기 범위 — 열린 런의 트리거 첨부만), `supports`(러너가 없으면 true), 서버 종료·hello 타임아웃은 전송만 닫고 교체·폐기만 `disconnect(true)`.
 - `src/connections.ts` — 붙은 러너와 에이전트 배정(먼저 알린 러너가 맡고 뒤 러너의 같은 id 는 「충돌」, 교체는 자리 잇기).
 - `src/approvals.ts` — 러너 승인 정규화(서버 쪽 id `runner:<토큰 id>:<러너 id>`)와 10분 기한 타이머(지나면 러너에 `deny`, `expired`).
 

@@ -85,6 +85,12 @@ export const RunEventBodySchema = z.discriminatedUnion("type", runEventBodyOptio
 export const RunnerRunEvent = z.object({ runId: Id, event: RunEventBodySchema });
 export type RunnerRunEvent = z.infer<typeof RunnerRunEvent>;
 
+/**
+ * 러너가 꺼지느라(SIGINT·SIGTERM) 멈춘 턴의 run.final stopReason — 어댑터가 사람 중지(`aborted`)와 가르고
+ * `ADAPTER_UNAVAILABLE` 로 닫는다(「다시 실행」이 붙게)
+ */
+export const RUNNER_SHUTDOWN_STOP_REASON = "runner_shutdown";
+
 /** 그 프롬프트 턴의 result. costUsd 는 세션 누적 비용의 런 전후 차이(ADR 0007 5.9) */
 export const RunnerRunFinal = z.object({
   runId: Id,

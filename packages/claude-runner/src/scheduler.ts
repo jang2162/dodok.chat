@@ -8,7 +8,7 @@ type Entry = {
   sessionId: string;
   job: Job;
   controller: AbortController;
-  onDropped?: () => void;
+  onDropped?: (reason?: unknown) => void;
 };
 
 export function createScheduler(max: number) {
@@ -48,7 +48,7 @@ export function createScheduler(max: number) {
       runId: string,
       sessionId: string,
       job: Job,
-      onDropped?: () => void,
+      onDropped?: (reason?: unknown) => void,
     ): { queuedPosition?: number } | { busy: true } {
       if (sessionTaken(sessionId)) return { busy: true };
       const entry: Entry = { runId, sessionId, job, controller: new AbortController(), onDropped };
@@ -65,9 +65,10 @@ export function createScheduler(max: number) {
       if (index >= 0) queue.splice(index, 1)[0]?.onDropped?.();
       running.get(runId)?.controller.abort();
     },
-    abortAll(): void {
-      for (const e of queue.splice(0)) e.onDropped?.();
-      for (const e of running.values()) e.controller.abort();
+    /** reason 은 도는 런의 signal.reason·기다리던 런의 onDropped 로 간다 — 러너 종료 중지를 사람 중지와 가른다 */
+    abortAll(reason?: unknown): void {
+      for (const e of queue.splice(0)) e.onDropped?.(reason);
+      for (const e of running.values()) e.controller.abort(reason);
     },
     /** 도는 런이 하나도 없으면 풀린다 — 러너를 끝낼 때 중지한 런이 final 을 낼 때까지 기다린다 */
     idle(): Promise<void> {

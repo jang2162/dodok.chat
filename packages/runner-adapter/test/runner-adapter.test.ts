@@ -746,6 +746,54 @@ describe("런 이벤트", () => {
     ]);
   });
 
+  it("러너를 끄느라 멈춘 턴(runner_shutdown final)은 중지가 아니라 ADAPTER_UNAVAILABLE 오류로 닫는다 — 채널에 「다시 실행」이 뜨게", async () => {
+    const h = await setup();
+    const r = await readyRunner(h);
+    const { runId } = await startRun(h, r);
+    r.send("run.final", {
+      runId,
+      text: "중간까지",
+      stopReason: "runner_shutdown",
+      costUsd: 0.01,
+      costKind: "api",
+    });
+    await until(() => signals(h, runId).length > 0, "stop signal");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(h.outbound).toHaveLength(0);
+    expect(signals(h, runId)).toEqual(["gateway_error"]);
+    expect(runEvents(h, runId)).toEqual([
+      {
+        type: "CUSTOM",
+        runId,
+        name: "dodok.usage",
+        value: { costUsd: 0.01, costKind: "api", model: "sonnet" },
+      },
+      { type: "RUN_ERROR", runId, code: "ADAPTER_UNAVAILABLE", message: "runner stopped" },
+    ]);
+    expect(h.events).toContainEqual({
+      kind: "run_signal",
+      runId,
+      signal: { kind: "gateway_error", code: "ADAPTER_UNAVAILABLE", message: "runner stopped" },
+    });
+  });
+
+  it("서버가 먼저 중지한 런은 러너가 꺼지며 runner_shutdown 으로 닫아도 사람 중지 그대로다", async () => {
+    const h = await setup();
+    const r = await readyRunner(h);
+    const { runId, sessionKey } = await startRun(h, r);
+    await h.adapter.abort(runId, sessionKey);
+    r.send("run.final", {
+      runId,
+      text: "",
+      stopReason: "runner_shutdown",
+      costKind: "subscription_estimate",
+    });
+    await until(() => signals(h, runId).length > 0, "stop signal");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(signals(h, runId)).toEqual(["gateway_aborted"]);
+    expect(runEvents(h, runId)).toEqual([{ type: "RUN_ABORTED", runId, by: "user" }]);
+  });
+
   it("최종 답이 10만 자를 넘으면 코드 포인트 경계로 잘라 꼬리를 붙인다 — 저장 상한에 걸려 답이 사라지지 않게 [최종 리뷰 M1]", async () => {
     const h = await setup();
     const r = await readyRunner(h);

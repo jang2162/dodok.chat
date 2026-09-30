@@ -422,6 +422,32 @@ describe("runOnce", () => {
     }
   });
 
+  it("러너를 끄느라 멈춘 턴(signal reason runner_shutdown)은 어느 끝이든 final runner_shutdown — 사람 중지와 가른다", async () => {
+    const tails = [
+      [script.errorResult("error_during_execution", ["x"])],
+      [{ exit: true as const }],
+      [{ throw: new Error("exited with code 143") }],
+    ];
+    for (const tail of tails) {
+      const { fake, ctx, emitted, controller } = harness();
+      fake.script(script.messageStart("msg_1"), { waitInterrupt: [] }, ...tail);
+      const done = runOnce(runStart(), ctx);
+      await new Promise((r) => setTimeout(r, 5));
+      controller.abort("runner_shutdown");
+      await done;
+      expect(finals(emitted)).toEqual([
+        expect.objectContaining({
+          final: expect.objectContaining({ text: "", stopReason: "runner_shutdown" }),
+        }),
+      ]);
+    }
+    const { fake, ctx, emitted, controller } = harness();
+    controller.abort("runner_shutdown");
+    await runOnce(runStart(), ctx);
+    expect(fake.calls).toEqual([]);
+    expect(emitted).toEqual([{ ...ABORTED, final: { ...ABORTED.final, stopReason: "runner_shutdown" } }]);
+  });
+
   it("시작 전에 중지됐으면 CLI 를 띄우지 않고 final aborted", async () => {
     const { fake, ctx, emitted, controller } = harness();
     controller.abort();

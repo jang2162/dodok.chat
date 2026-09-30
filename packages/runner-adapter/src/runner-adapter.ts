@@ -23,6 +23,7 @@ import {
   type RunEventType,
   RUNNER_NAMESPACE,
   RUNNER_PROTOCOL,
+  RUNNER_SHUTDOWN_STOP_REASON,
   type RunnerAgent,
   RunnerApprovalRequested,
   RunnerApprovalWithdrawn,
@@ -451,6 +452,13 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
     if (run.aborted || final.stopReason === ABORTED_STOP_REASON) {
       emitEvent(run.runId, { type: "RUN_ABORTED", runId: run.runId, by: "user" });
       emitSignal(run.runId, { kind: "gateway_aborted" });
+      return;
+    }
+    // 러너를 끄느라 멈춘 턴 — 사람 중지가 아니다. 러너가 끊긴 런과 같이 닫아 채널에 「다시 실행」 카드가 뜨게 한다
+    if (final.stopReason === RUNNER_SHUTDOWN_STOP_REASON) {
+      const error = new AdapterError("ADAPTER_UNAVAILABLE", "runner stopped");
+      emitEvent(run.runId, { type: "RUN_ERROR", runId: run.runId, code: error.code, message: error.message });
+      emitSignal(run.runId, { kind: "gateway_error", code: error.code, message: error.message });
       return;
     }
     if (final.text.trim() === "") {
