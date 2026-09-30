@@ -247,7 +247,7 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
         logger.info(`dodok-runner: 연결됨(서버 ${result.serverVersion})`);
         if (result.conflicts.length > 0) {
           logger.warn(
-            `dodok-runner: 다른 러너가 먼저 알린 에이전트는 이 러너에 배정되지 않습니다: ${result.conflicts.join(", ")}`,
+            `dodok-runner: 이 러너에 배정되지 않는 에이전트(다른 러너 토큰에 묶였거나 다른 러너가 먼저 알림 — 연결 페이지에서 「이 러너로 묶기」): ${result.conflicts.join(", ")}`,
           );
         }
       } catch (error) {
