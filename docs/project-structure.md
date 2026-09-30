@@ -239,7 +239,7 @@ src/
 │  │                      store.ts(runs·run_events — runs.thread_root_id ↔ Run.threadRootId), context.ts(인바운드 InboundDeliver 조립 — 트리거 첨부를 싣고, 이전 메시지 줄의 첨부는 `[이미지 N장]`·`[파일: 이름]` 자리표시로만.
 │  │                      채널 런 recentMessages 는 thread_root_id IS NULL 만, 스레드 런은 recentMessages 가 비고 context.thread = 루트(THREAD_ROOT_TEXT_MAX 4000자)·그 스레드 normal 답글 최근 20(트리거 앞 — 상호작용이면 카드까지)),
 │  │                      media-lines.ts(순수: Gateway 폴백 스냅샷의 단독 `MEDIA:` 줄 걷기 — 줄이 있으면 finalizing 을 줄당 30s, 최대 120s 늘린다), timers.ts, routes.ts(런 목록·상세·이벤트 REST)
-│  ├─ sessions/           agent_sessions — 채널×에이전트(스레드면 ×루트) 세션 키 보장(키는 어댑터 sessionKeyFor → shared dodokSessionKey), 리셋 뒤 프롬프트 리비전 갱신.
+│  ├─ sessions/           agent_sessions — 채널×에이전트(스레드면 ×루트) 세션 키 보장(키는 어댑터 sessionKeyFor → shared dodokSessionKey), 리셋 뒤 프롬프트 리비전 갱신, 서버가 정하는 러너 세션 id(ensureProviderSessionId — 채널 규칙 리비전이 바뀌면 renewSessionOnPromptChange 가 비우고 오케스트레이터가 info 한 번).
 │  │                      세션 시작 리비전은 행마다(스레드 세션 행도 따로). providerAgentId 가 규칙 밖이면 키를 만들기 전에 VALIDATION(INVALID_AGENT_ID_REASON — run_error 카드와 같은 문장)
 │  ├─ components/         interact.ts(순수: 검사 순서·값 스키마·인바운드 텍스트) + service.ts(저장·소비·continue/interaction/retry 런.
 │  │                      상호작용마다 message.updated — reusable 카드도 결과 줄이 실시간으로 는다. 소비(consumed)는 1회용만.

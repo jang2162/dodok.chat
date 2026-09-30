@@ -336,7 +336,7 @@ SDK 기본값은 `{ ...process.env }`. 러너가 가진 브리지 토큰 같은 
 | --- | --- |
 | 1 프로세스 단위 | 그대로 — 런 하나 = `query()` 하나 = CLI 하나, 프롬프트 하나를 보내고 그 턴의 `result` 까지 입력을 열어 둔다(`run.ts` 의 `runOnce`). 새 세션인지는 러너가 SDK `getSessionInfo` 로 전사를 보고 가르고(`sessionId` 또는 `resume`), `--session-id` 가 「이미 있는 세션」으로 거절되면 `resume` 으로 한 번 다시 연다 |
 | 2 채널 규칙 | 경로 (가) 그대로 — 틀은 shared `buildChannelRulesAppend`(4.5 틀 문단 + `<channel-rules>` + 틀 밖 `<relay-rules>`, 규칙 안의 `<` 닮은꼴은 모두 `&lt;`), `snapshot: false`. 턴 사실은 `buildTurnFacts` 를 `UserPromptSubmit` 훅으로. 서버는 러너 에이전트에게 채널 프롬프트를 **매 런** 싣는다 |
-| 3 세션 | 그대로 — Claude 세션 UUID 는 서버 세션 행의 `providerSessionId` 가 정본, 서버가 정하고 「새 대화」는 그 열을 비운다 |
+| 3 세션 | 그대로 — Claude 세션 UUID 는 서버 세션 행의 `providerSessionId` 가 정본, 서버가 정하고 「새 대화」는 그 열을 비운다. 채널 규칙 리비전이 세션 행의 `promptRevisionAtStart` 와 다르면 디스패치 때 서버가 같은 일을 하고 info 를 한 번 남긴다(`renewSessionOnPromptChange` — 10.2 의 1) |
 | 4 `/runner` 계약 | Socket.IO `/runner` 네임스페이스(이벤트 + ack, `ping`/`pong` 프레임 없이 Socket.IO 하트비트). `run.start` 에 `resume` 을 싣지 않는다(서버는 전사가 있는지 모른다). **중지로 끝난 턴은 `run.event RUN_ABORTED` 가 아니라 `run.final { text: "", stopReason: "aborted" }`** — 어댑터가 `run.event` 의 수명 변형을 허용 목록으로 걸러 러너 쪽 수명 이벤트를 받지 않는다. 결과 오류는 `run.error` |
 | 5 어댑터 자리 | `AgentAdapter` 계약을 `packages/shared/src/adapter/` 로 옮기고 서버가 `provider`(`"openclaw" \| "claude"`)로 어댑터를 고른다(`AdapterRegistry`) |
 | 6 승인 | 그대로 — 기한은 러너 어댑터가 쥔 10분, 지나면 러너에 `deny`(모델에게 「승인 시간이 지났습니다」). 「항상 허용」은 제안을 `destination: "session"` 으로 바꿔 싣는다. 승인 종류 `tool`. 요약은 Bash 명령·파일 도구 상대 경로·입력 JSON 앞부분이고, 제어·양방향·보이지 않는 폭 글자를 부류로 이스케이프한다 |
