@@ -76,6 +76,24 @@ export class RunnerApprovals {
     return "requested";
   }
 
+  /** 그 러너가 그 id 를 이미 썼는가(기다리는 중이든 끝났든) */
+  used(runner: Runner, rawId: string): boolean {
+    return this.#entries.has(this.#id(runner, rawId));
+  }
+
+  /** 그 러너의 그 id 승인이 아직 기다리는 중인가 */
+  isPending(runner: Runner, rawId: string): boolean {
+    return this.#entries.get(this.#id(runner, rawId))?.approval.status === "pending";
+  }
+
+  /** 그 런에서 기다리는 승인 수 */
+  pendingCount(runId: string): number {
+    let n = 0;
+    for (const entry of this.#entries.values())
+      if (entry.runId === runId && entry.approval.status === "pending") n += 1;
+    return n;
+  }
+
   /** 러너가 콜백 signal 끊김을 알렸다 */
   withdraw(runner: Runner, rawId: string): void {
     const entry = this.#entries.get(this.#id(runner, rawId));

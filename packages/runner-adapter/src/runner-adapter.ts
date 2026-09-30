@@ -56,7 +56,10 @@ export { RUNNER_APPROVAL_TTL_MS };
 /** 핸드셰이크 `auth.token`(외부 입력 그대로)을 보고 통과면 그 토큰의 id·라벨, 아니면 null */
 export type RunnerTokenVerifier = (presented: unknown) => { tokenId: string; label: string } | null;
 
-/** 러너 프레임 버킷 이름 — `run.event`(스트리밍 델타)와 나머지(수명·post·승인)를 나눈다 */
+/**
+ * 러너 프레임 버킷 이름 — `run.event`(스트리밍 델타)와 나머지(hello·post·수명·승인)를 나눈다. 열린 런·기다리는 승인을 가리키는
+ * 종결·승인 프레임은 어느 버킷도 세지 않는다(namesOpenWork)
+ */
 export type RunnerFrameBucket = "events" | "control";
 
 /**
@@ -121,6 +124,8 @@ const RUN_START_ACK_TIMEOUT_MS = 15_000;
 const REJECT_LOG_INTERVAL_MS = 60_000;
 const REJECT_LOG_MAX_ADDRESSES = 1_024;
 const LIMIT_LOG_INTERVAL_MS = 60_000;
+/** 한 런이 control 버킷을 거치지 않고 띄울 수 있는 기다리는 승인 수 — 넘으면 그다음 요청부터 버킷을 센다 */
+export const RUN_FREE_APPROVALS = 32;
 const USAGE_EVENT = "dodok.usage";
 /** interrupt 로 끝난 턴의 run.final stopReason */
 const ABORTED_STOP_REASON = "aborted";
@@ -139,8 +144,9 @@ const RUNNER_FRAMES: ReadonlySet<string> = new Set<keyof RunnerClientToServerEve
   "approval.requested",
   "approval.withdrawn",
 ]);
-// 프레임이 쓰는 버킷 — run.event 는 모델 델타마다 오므로 따로 넉넉하게, 나머지는 런마다 몇 번뿐이다
-const FRAME_BUCKET: Record<keyof RunnerClientToServerEvents, RunnerFrameBucket> = {
+// 프레임이 쓰는 버킷 — run.event 는 모델 델타마다 오므로 따로 넉넉하게, 나머지는 런마다 몇 번뿐이다. 열린 런·기다리는 승인을
+// 가리키는 종결·승인 프레임은 버킷을 거치지 않는다(namesOpenWork)
+export const FRAME_BUCKET: Record<keyof RunnerClientToServerEvents, RunnerFrameBucket> = {
   hello: "control",
   "run.event": "events",
   "run.final": "control",
@@ -444,7 +450,7 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
     if (conflicts.length > 0) {
       logger.warn(
         { tokenId: runner.tokenId, label: runner.label, conflicts },
-        "runner agent ids already taken",
+        "runner agent ids not assigned to this runner (bound to another token or announced first by another runner)",
       );
     }
     logger.info(
@@ -709,6 +715,41 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
     approvals.withdraw(runner, parsed.data.providerApprovalId);
   }
 
+  /**
+   * 버킷을 거치지 않는 프레임(리뷰 M1) — 이 러너의 열린 런을 닫는 run.final·run.error, 그 런의 새 승인 요청, 기다리는 승인의 철회.
+   * 이것을 버리면 런은 runMs(기본 10분)에서야 닫히고 러너의 canUseTool 도 그때까지 기다린다. post 를 쏟는 다른 런이 control 을
+   * 비웠다고 이 런까지 매달리면 안 된다. 수는 본래 묶여 있다 — 종결은 열린 런마다 한 번(처리가 런을 곧바로 지운다), 철회는 기다리는
+   * 승인마다 한 번, 요청은 런마다 기다리는 것 RUN_FREE_APPROVALS 개까지. 아무것도 가리키지 않거나(끝난 런·모르는 id·이미 쓴 id)
+   * 그 수를 넘은 프레임은 control 버킷을 센다 — 되풀이하는 러너의 warn 줄이 버킷 밖에서 쌓이지 않게
+   */
+  function namesOpenWork(
+    runner: Runner | undefined,
+    event: keyof RunnerClientToServerEvents,
+    payload: unknown,
+  ): boolean {
+    if (!runner || typeof payload !== "object" || payload === null) return false;
+    const { runId, providerApprovalId } = payload as { runId?: unknown; providerApprovalId?: unknown };
+    switch (event) {
+      case "run.final":
+      case "run.error":
+        return typeof runId === "string" && runs.get(runId)?.runner === runner;
+      case "approval.requested": {
+        if (typeof runId !== "string" || typeof providerApprovalId !== "string") return false;
+        const run = runs.get(runId);
+        return (
+          run?.runner === runner &&
+          !run.aborted &&
+          !approvals.used(runner, providerApprovalId) &&
+          approvals.pendingCount(runId) < RUN_FREE_APPROVALS
+        );
+      }
+      case "approval.withdrawn":
+        return typeof providerApprovalId === "string" && approvals.isPending(runner, providerApprovalId);
+      default:
+        return false;
+    }
+  }
+
   namespace.on("connection", (socket) => {
     const { tokenId, label } = socket.data as SocketAuth;
     if (tokenId === undefined || label === undefined) {
@@ -726,8 +767,11 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
     helloTimers.add(helloTimer);
     const buckets = opts.frameLimit.buckets();
     const address = remoteAddress(socket as unknown as Socket);
+    // hello 전 프레임은 버린다 — 등록되지 않은 러너는 런도 에이전트도 없다
+    const ready = (): Runner | undefined => registry.get(socket.id);
     /** 버킷에서 하나 꺼낸다 — 비었으면 false. ack 를 기다리는 프레임이면 RATE_LIMITED 로 답한다 */
     const admit = (event: keyof RunnerClientToServerEvents, args: unknown[]): boolean => {
+      if (namesOpenWork(ready(), event, args[0])) return true;
       if (buckets[FRAME_BUCKET[event]].take()) return true;
       onFrameLimited(address, event, tokenId);
       const ack = args.at(-1);
@@ -739,8 +783,6 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
         });
       return false;
     };
-    // hello 전 프레임은 버린다 — 등록되지 않은 러너는 런도 에이전트도 없다
-    const ready = (): Runner | undefined => registry.get(socket.id);
     const on = <A extends unknown[]>(
       event: keyof RunnerClientToServerEvents,
       handler: (runner: Runner, ...args: A) => unknown,

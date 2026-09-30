@@ -44,7 +44,7 @@ export type RunnerHello = z.infer<typeof RunnerHello>;
  * 핸드셰이크 미들웨어가 connect_error 로 거절하고, 러너는 거기서 가른다(RATE_LIMITED 는 끝내지 않는다 — 최종 리뷰 M3)
  */
 export const RunnerHelloResult = z.discriminatedUnion("ok", [
-  // conflicts — 다른 러너가 먼저 알려 이 러너에 배정하지 않는 에이전트 id
+  // conflicts — 이 러너에 배정하지 않는 에이전트 id: 다른 러너 토큰에 묶였거나, 묶임이 없는데 다른 러너가 먼저 알렸다
   z.object({ ok: z.literal(true), serverVersion: z.string(), conflicts: z.array(z.string()) }),
   z.object({ ok: z.literal(false), code: z.literal("PROTOCOL_MISMATCH"), message: z.string() }),
 ]);

@@ -34,8 +34,9 @@ export const LIMITS = {
    */
   runner: {
     events: { perMin: 60_000, burst: 2_000 }, // run.event
-    // hello·run.final·run.error·outbound.post·approval.* — 런마다 몇 번뿐이다. 도구 병렬 호출(한 메시지에 다섯)이 16런에서 겹쳐도
-    // 버스트 안이다
+    // hello·outbound.post, 그리고 가리키는 것이 없는 run.final·run.error·approval.* — 런마다 몇 번뿐이다. 도구 병렬 호출(한 메시지에
+    // 다섯)이 16런에서 겹쳐도 버스트 안이다. 열린 런을 닫는 종결 프레임·그 런의 승인 요청(런마다 기다리는 것 RUN_FREE_APPROVALS 개까지)·기다리는 승인의
+    // 철회는 세지 않는다 — post 가 이 버킷을 비워도 런이 runMs 까지 매달리지 않게(러너 어댑터 namesOpenWork)
     control: { perMin: 600, burst: 100 },
   },
   /** 사용자당 동시 wire 소켓 */

@@ -15,6 +15,7 @@ import {
 import { Server } from "socket.io";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRunnerAdapter, RUNNER_APPROVAL_TTL_MS, type RunnerAdapter } from "../src";
+import { FRAME_BUCKET, RUN_FREE_APPROVALS } from "../src/runner-adapter";
 import { connectRunner, type FakeRunner, runnerAgent } from "./helpers/fake-runner-client";
 
 const TOKEN_A = "drn_token-a";
@@ -1370,17 +1371,120 @@ describe("러너 프레임 속도 제한 — 소켓마다 버킷, 넘치면 버�
     expect(h.limited).toEqual([["127.0.0.1", "outbound.post", 1]]);
   });
 
-  it("control 버킷은 run.final·approval.* 도 센다 — 넘친 run.final 은 런을 닫지 않는다", async () => {
-    const h = await setup({ frames: { events: 100, control: 1 } });
+  /** hello 가 control 하나를 쓰고 넘친 outbound.post 로 control 이 빈 것을 확인한 러너와 그 런 */
+  async function drainedControl(h: Harness) {
     const r = await readyRunner(h);
-    const { runId } = await startRun(h, r);
+    const input = await startRun(h, r);
+    const ack = await r.post({
+      outboundId: `runner-post:${randomUUID()}`,
+      channelId: input.channelId,
+      agentId: input.agentId,
+      sessionKey: input.sessionKey,
+      runId: input.runId,
+      text: "중간 보고",
+      ts: "2026-09-27T00:00:01.000Z",
+    });
+    expect(ack).toMatchObject({ ok: false, code: "RATE_LIMITED" });
+    return { r, ...input };
+  }
+  const approvalFrame = (runId: string, sessionKey: string, providerApprovalId: string) => ({
+    providerApprovalId,
+    runId,
+    sessionKey,
+    toolCallId: `toolu_${providerApprovalId}`,
+    toolName: "Write",
+    summary: "src/a.ts",
+    canAllowAlways: false,
+  });
+
+  it("control 이 빈 뒤에도 열린 런을 가리키는 approval.requested·approval.withdrawn·run.final 은 버킷을 거치지 않는다 — 런이 runMs 까지 매달리지 않는다", async () => {
+    const h = await setup({ frames: { events: 100, control: 1 } });
+    const { r, runId, sessionKey } = await drainedControl(h);
+    r.send("approval.requested", approvalFrame(runId, sessionKey, "perm-1"));
+    await until(() => approvals(h).length === 1, "approval");
+    expect(approvals(h)[0]).toMatchObject({ status: "pending", toolName: "Write" });
+    r.send("approval.withdrawn", { providerApprovalId: "perm-1" });
+    await until(() => approvals(h).length === 2, "withdrawn");
+    expect(approvals(h)[1]).toMatchObject({ status: "cancelled" });
     r.send("run.final", { runId, text: "끝", stopReason: "end_turn", costKind: "api" });
-    r.send("approval.withdrawn", { providerApprovalId: "x" });
-    await until(() => h.limited.length === 1, "onLimited");
+    await until(() => signals(h, runId).includes("gateway_final"), "final");
+    expect(h.outbound.map((m) => m.text)).toEqual(["끝"]);
+    expect(h.limited).toEqual([["127.0.0.1", "outbound.post", 1]]);
+  });
+
+  it("control 이 빈 뒤에도 열린 런의 run.error 는 런을 닫는다", async () => {
+    const h = await setup({ frames: { events: 100, control: 1 } });
+    const { r, runId } = await drainedControl(h);
+    r.send("run.error", { runId, code: "INTERNAL", message: "boom" });
+    await until(() => signals(h, runId).includes("gateway_error"), "error");
+    expect(h.limited).toEqual([["127.0.0.1", "outbound.post", 1]]);
+  });
+
+  it("열린 런·기다리는 승인을 가리키지 않는 종결·승인 프레임은 control 버킷을 센다", async () => {
+    const h = await setup({ frames: { events: 100, control: 1 } });
+    const { r, runId, sessionKey } = await drainedControl(h);
+    const minute = (n: number) => h.setNow(Date.parse("2026-09-27T00:00:00.000Z") + n * 60_000);
+    minute(1);
+    r.send("run.final", { runId: randomUUID(), text: "끝", stopReason: "end_turn", costKind: "api" });
+    await until(() => h.limited.length === 2, "run.final limited");
+    minute(2);
+    r.send("run.error", { runId: randomUUID(), code: "INTERNAL", message: "boom" });
+    await until(() => h.limited.length === 3, "run.error limited");
+    minute(3);
+    r.send("approval.withdrawn", { providerApprovalId: "nothing" });
+    await until(() => h.limited.length === 4, "withdrawn limited");
+    minute(4);
+    r.send("approval.requested", approvalFrame(randomUUID(), sessionKey, "perm-x"));
+    await until(() => h.limited.length === 5, "requested limited");
+    // 이미 쓴 id 를 되풀이하는 요청도 버킷을 센다 — 버킷 밖이면 되풀이마다 warn 줄이 생긴다
+    r.send("approval.requested", approvalFrame(runId, sessionKey, "perm-1"));
+    await until(() => approvals(h).length === 1, "approval");
+    minute(5);
+    r.send("approval.requested", approvalFrame(runId, sessionKey, "perm-1"));
+    await until(() => h.limited.length === 6, "duplicate limited");
+    // 서버가 중지한 런의 새 요청도 — 처리가 카드 없이 버리고 warn 한다
+    await h.adapter.abort(runId, sessionKey);
+    minute(6);
+    r.send("approval.requested", approvalFrame(runId, sessionKey, "perm-2"));
+    await until(() => h.limited.length === 7, "aborted run limited");
+    expect(h.limited.map(([, frame]) => frame)).toEqual([
+      "outbound.post",
+      "run.final",
+      "run.error",
+      "approval.withdrawn",
+      "approval.requested",
+      "approval.requested",
+      "approval.requested",
+    ]);
+    expect(
+      approvals(h)
+        .filter((a) => a.status === "pending")
+        .map((a) => a.toolCallId),
+    ).toEqual(["toolu_perm-1"]);
+  });
+
+  it(`한 런이 기다리는 승인이 ${RUN_FREE_APPROVALS}개면 그다음 approval.requested 는 control 버킷을 센다`, async () => {
+    const h = await setup({ frames: { events: 100, control: 1 } });
+    const { r, runId, sessionKey } = await drainedControl(h);
+    h.setNow(Date.parse("2026-09-27T00:01:00.000Z"));
+    for (let i = 0; i <= RUN_FREE_APPROVALS; i++)
+      r.send("approval.requested", approvalFrame(runId, sessionKey, `perm-${i}`));
+    await until(() => h.limited.length === 2, "limited");
     await new Promise((resolve) => setTimeout(resolve, 30));
-    expect(signals(h, runId)).not.toContain("gateway_final");
-    expect(h.outbound).toHaveLength(0);
-    expect(h.limited).toEqual([["127.0.0.1", "run.final", 1]]);
+    expect(approvals(h)).toHaveLength(RUN_FREE_APPROVALS);
+    expect(h.limited[1]).toEqual(["127.0.0.1", "approval.requested", 1]);
+  });
+
+  it("control 버킷이 세는 프레임은 hello·outbound.post 와 가리키는 것이 없는 종결·승인 프레임, events 는 run.event 뿐", () => {
+    expect(FRAME_BUCKET).toEqual({
+      hello: "control",
+      "run.event": "events",
+      "run.final": "control",
+      "run.error": "control",
+      "outbound.post": "control",
+      "approval.requested": "control",
+      "approval.withdrawn": "control",
+    });
   });
 
   it("버킷은 소켓마다 — 다른 러너는 자기 버킷을 쓴다", async () => {
