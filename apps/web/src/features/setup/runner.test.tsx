@@ -1,6 +1,7 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { qk } from "@/api/queries";
 import { json } from "../../../test/shellApi";
 import {
   RAW_RUNNER_TOKEN,
@@ -216,7 +217,7 @@ describe("러너 블록 — 에이전트 묶임", () => {
       ],
     });
 
-  it("다른 토큰에 묶인 충돌 에이전트는 그 토큰 라벨과 「이 러너로 묶기」 — 누르면 PUT 하고 상태를 다시 받는다", async () => {
+  it("다른 토큰에 묶인 충돌 에이전트는 그 토큰 라벨과 「이 러너로 묶기」 — 누르면 PUT 하고 상태와 에이전트 목록을 다시 받는다", async () => {
     const server = stubSetupServer({
       status: statusOf({ runners: { list: [bound(tokenId(1))] } }),
       runnerTokens: [
@@ -224,7 +225,9 @@ describe("러너 블록 — 에이전트 묶임", () => {
         tokenOf(2, { label: "데스크톱" }),
       ],
     });
-    renderConnection();
+    const qc = renderConnection();
+    // 에이전트 화면이 받아 둔 목록 — 묶은 뒤 러너 라벨이 옛것으로 남지 않게 무효가 돼야 한다
+    qc.setQueryData(qk.agents, []);
     const desk = await within(await runnerRegion()).findByRole("article", { name: "데스크톱" });
     const item = await within(desk).findByRole("listitem", { name: "코더" });
     await waitFor(() => expect(item).toHaveTextContent("맥북(폐기됨)에 묶여 있어 배정되지 않습니다"));
@@ -236,6 +239,7 @@ describe("러너 블록 — 에이전트 묶임", () => {
       expect(server.count("PUT", `/api/v1/setup/runner-tokens/${tokenId(2)}/agents/coder`)).toBe(1),
     );
     await waitFor(() => expect(statusCalls()).toBeGreaterThan(before));
+    await waitFor(() => expect(qc.getQueryState(qk.agents)?.isInvalidated).toBe(true));
   });
 
   it("묶임 없는 충돌(미등록 id 가 겹침)은 옛 문구, 버튼 없음", async () => {

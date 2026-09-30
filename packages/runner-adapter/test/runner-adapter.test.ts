@@ -1475,6 +1475,91 @@ describe("러너 프레임 속도 제한 — 소켓마다 버킷, 넘치면 버�
     expect(h.limited[1]).toEqual(["127.0.0.1", "approval.requested", 1]);
   });
 
+  it("열린 런을 가리켜도 처리기가 버릴 프레임(계약 위반·세션 키 불일치·모르는 오류 코드·끝난 승인의 철회)은 control 버킷을 센다", async () => {
+    const h = await setup({ frames: { events: 100, control: 1 } });
+    const { r, runId, sessionKey } = await drainedControl(h);
+    const minute = (n: number) => h.setNow(Date.parse("2026-09-27T00:00:00.000Z") + n * 60_000);
+    minute(1);
+    // stopReason·costKind 가 없다
+    r.send("run.final", { runId, text: "끝" });
+    await until(() => h.limited.length === 2, "invalid run.final limited");
+    minute(2);
+    r.send("approval.requested", {
+      ...approvalFrame(runId, sessionKey, "perm-1"),
+      sessionKey: dodokSessionKey("coder", randomUUID()),
+    });
+    await until(() => h.limited.length === 3, "session mismatch limited");
+    minute(3);
+    r.send("run.error", { runId, code: "NOPE", message: "boom" });
+    await until(() => h.limited.length === 4, "unknown code limited");
+    minute(4);
+    r.send("approval.withdrawn", { providerApprovalId: 7 });
+    await until(() => h.limited.length === 5, "invalid withdrawn limited");
+    minute(5);
+    const { toolName: _, ...noToolName } = approvalFrame(runId, sessionKey, "perm-2");
+    r.send("approval.requested", noToolName);
+    await until(() => h.limited.length === 6, "invalid requested limited");
+    // 끝난 승인의 철회는 기다리는 승인이 아니다
+    r.send("approval.requested", approvalFrame(runId, sessionKey, "perm-3"));
+    r.send("approval.withdrawn", { providerApprovalId: "perm-3" });
+    await until(() => approvals(h).length === 2, "withdrawn");
+    minute(6);
+    r.send("approval.withdrawn", { providerApprovalId: "perm-3" });
+    await until(() => h.limited.length === 7, "settled withdrawn limited");
+    expect(h.limited.map(([, frame]) => frame)).toEqual([
+      "outbound.post",
+      "run.final",
+      "approval.requested",
+      "run.error",
+      "approval.withdrawn",
+      "approval.requested",
+      "approval.withdrawn",
+    ]);
+    expect(approvals(h).map((a) => a.status)).toEqual(["pending", "cancelled"]);
+    expect(signals(h, runId)).toEqual([]);
+  });
+
+  it("다른 러너의 열린 런을 가리키는 run.final·approval.requested 는 control 버킷을 센다", async () => {
+    const h = await setup({ frames: { events: 100, control: 1 } });
+    const b = await readyRunner(h, TOKEN_B, [runnerAgent("writer")]);
+    const other = await startRun(h, b, { agentId: "writer", sessionKey: dodokSessionKey("writer", CH) });
+    const { r } = await drainedControl(h);
+    const minute = (n: number) => h.setNow(Date.parse("2026-09-27T00:00:00.000Z") + n * 60_000);
+    minute(1);
+    r.send("run.final", { runId: other.runId, text: "끝", stopReason: "end_turn", costKind: "api" });
+    await until(() => h.limited.length === 2, "run.final limited");
+    minute(2);
+    r.send("approval.requested", approvalFrame(other.runId, other.sessionKey, "perm-1"));
+    await until(() => h.limited.length === 3, "approval.requested limited");
+    expect(h.limited.map(([, frame]) => frame)).toEqual(["outbound.post", "run.final", "approval.requested"]);
+    expect(signals(h, other.runId)).toEqual([]);
+    expect(approvals(h)).toEqual([]);
+  });
+
+  it("버킷을 거치지 않는 프레임은 control 을 쓰지 않는다 — 그 뒤 outbound.post 가 통과한다", async () => {
+    // hello 가 하나, 남은 하나를 post 가 쓴다
+    const h = await setup({ frames: { events: 100, control: 2 } });
+    const r = await readyRunner(h);
+    const input = await startRun(h, r);
+    const second = await startRun(h, r);
+    r.send("approval.requested", approvalFrame(input.runId, input.sessionKey, "perm-1"));
+    r.send("approval.withdrawn", { providerApprovalId: "perm-1" });
+    r.send("run.error", { runId: second.runId, code: "INTERNAL", message: "boom" });
+    await until(() => signals(h, second.runId).includes("gateway_error"), "error");
+    const ack = await r.post({
+      outboundId: `runner-post:${randomUUID()}`,
+      channelId: input.channelId,
+      agentId: input.agentId,
+      sessionKey: input.sessionKey,
+      runId: input.runId,
+      text: "중간 보고",
+      ts: "2026-09-27T00:00:01.000Z",
+    });
+    expect(ack).toMatchObject({ ok: true });
+    expect(approvals(h).map((a) => a.status)).toEqual(["pending", "cancelled"]);
+    expect(h.limited).toEqual([]);
+  });
+
   it("control 버킷이 세는 프레임은 hello·outbound.post 와 가리키는 것이 없는 종결·승인 프레임, events 는 run.event 뿐", () => {
     expect(FRAME_BUCKET).toEqual({
       hello: "control",

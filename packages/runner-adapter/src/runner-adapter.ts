@@ -16,6 +16,7 @@ import {
   type ClaudeAdapterStatus,
   type ClaudeSetupDetail,
   dodokSessionKey,
+  parseDodokSessionKey,
   ErrorCode,
   type InboundDeliver,
   type OutboundMessage,
@@ -716,11 +717,16 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
   }
 
   /**
-   * 버킷을 거치지 않는 프레임(리뷰 M1) — 이 러너의 열린 런을 닫는 run.final·run.error, 그 런의 새 승인 요청, 기다리는 승인의 철회.
+   * 버킷을 거치지 않는 프레임 — 이 러너의 열린 런을 닫는 run.final·run.error, 그 런의 새 승인 요청, 기다리는 승인의 철회.
    * 이것을 버리면 런은 runMs(기본 10분)에서야 닫히고 러너의 canUseTool 도 그때까지 기다린다. post 를 쏟는 다른 런이 control 을
-   * 비웠다고 이 런까지 매달리면 안 된다. 수는 본래 묶여 있다 — 종결은 열린 런마다 한 번(처리가 런을 곧바로 지운다), 철회는 기다리는
-   * 승인마다 한 번, 요청은 런마다 기다리는 것 RUN_FREE_APPROVALS 개까지. 아무것도 가리키지 않거나(끝난 런·모르는 id·이미 쓴 id)
-   * 그 수를 넘은 프레임은 control 버킷을 센다 — 되풀이하는 러너의 warn 줄이 버킷 밖에서 쌓이지 않게
+   * 비웠다고 이 런까지 매달리면 안 된다.
+   *
+   * 처리기가 받아들일 프레임만 예외다 — 처리기와 같은 조건(계약 스키마, 이 러너가 연 런, 승인은 중지 안 된 런·그 런의 세션 키·
+   * 안 쓴 id, 철회는 기다리는 승인)을 먼저 본다. 그래서 수가 본래 묶인다: 종결은 열린 런마다 한 번(처리가 런을 곧바로 지운다),
+   * 철회는 기다리는 승인마다 한 번, 요청은 런마다 기다리는 것 RUN_FREE_APPROVALS 개까지. 처리기가 버리고 warn 을 쓸 프레임(계약
+   * 위반·남의 런·끝난 런·세션 키 불일치·이미 쓴 id)과 그 수를 넘은 요청은 control 버킷을 센다 — 열린 runId 하나로 warn 줄을
+   * 버킷 밖에서 되풀이하지 못하게. 파싱은 처리기가 한 번 더 한다(예외로 통과하는 수가 묶여 있어 두 번이 싸다). 싼 소유 대조를
+   * 먼저 해서, 남의 것·모르는 것을 가리키는 프레임은 파싱하지 않고 버킷으로 간다
    */
   function namesOpenWork(
     runner: Runner | undefined,
@@ -729,22 +735,35 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
   ): boolean {
     if (!runner || typeof payload !== "object" || payload === null) return false;
     const { runId, providerApprovalId } = payload as { runId?: unknown; providerApprovalId?: unknown };
+    const run = typeof runId === "string" ? runs.get(runId) : undefined;
+    const own = run !== undefined && run.runner === runner;
     switch (event) {
       case "run.final":
+        return own && RunnerRunFinal.safeParse(payload).success;
       case "run.error":
-        return typeof runId === "string" && runs.get(runId)?.runner === runner;
+        return own && RunnerRunError.safeParse(payload).success;
       case "approval.requested": {
-        if (typeof runId !== "string" || typeof providerApprovalId !== "string") return false;
-        const run = runs.get(runId);
+        if (
+          !own ||
+          run.aborted ||
+          typeof providerApprovalId !== "string" ||
+          approvals.used(runner, providerApprovalId) ||
+          approvals.pendingCount(run.runId) >= RUN_FREE_APPROVALS
+        )
+          return false;
+        const parsed = RunnerApprovalRequested.safeParse(payload);
         return (
-          run?.runner === runner &&
-          !run.aborted &&
-          !approvals.used(runner, providerApprovalId) &&
-          approvals.pendingCount(runId) < RUN_FREE_APPROVALS
+          parsed.success &&
+          parsed.data.sessionKey === run.deliver.sessionKey &&
+          parseDodokSessionKey(parsed.data.sessionKey) !== undefined
         );
       }
       case "approval.withdrawn":
-        return typeof providerApprovalId === "string" && approvals.isPending(runner, providerApprovalId);
+        return (
+          typeof providerApprovalId === "string" &&
+          approvals.isPending(runner, providerApprovalId) &&
+          RunnerApprovalWithdrawn.safeParse(payload).success
+        );
       default:
         return false;
     }
