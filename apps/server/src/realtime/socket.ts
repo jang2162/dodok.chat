@@ -14,7 +14,7 @@ import {
   Typing,
   WIRE_PROTOCOL,
 } from "@dodok/shared";
-import { eq } from "drizzle-orm";
+import { and, eq, gt, lte } from "drizzle-orm";
 import { z } from "zod";
 import { type Auth, verifySessionToken } from "../auth";
 import { roleOf } from "../auth/roles";
@@ -106,9 +106,29 @@ export function disconnectSessions(io: WireServer, sessionIds: readonly string[]
   io.in(sessionIds.map(sessionRoom)).disconnectSockets(true);
 }
 
-/** 세션 행이 아직 있는가 — 동기(better-sqlite3). connection 에서 방 참가와 같은 구간에 본다 */
-function sessionAlive(db: Db, sessionId: string): boolean {
-  return !!db.select({ id: authSession.id }).from(authSession).where(eq(authSession.id, sessionId)).get();
+/** 세션 행이 아직 있고 만료 전인가 — 동기(better-sqlite3). connection 에서 방 참가와 같은 구간에 본다 */
+export function sessionAlive(db: Db, sessionId: string, now: Date = new Date()): boolean {
+  return !!db
+    .select({ id: authSession.id })
+    .from(authSession)
+    .where(and(eq(authSession.id, sessionId), gt(authSession.expiresAt, now)))
+    .get();
+}
+
+/**
+ * 만료된 세션 행을 지우고 그 세션들의 열린 wire 소켓을 끊는다 — 소켓은 핸드셰이크·connection 에서만 세션을 보므로, REST 없이 wire 만
+ * 쓰는 탭은 이것이 없으면 만료 뒤에도 산다. 지우기와 끊기를 한 동기 구간에 둔다(connection 의 sessionAlive 와 엇갈리지 않게).
+ * REST 호출로 늘어난 세션은 expires_at 이 이미 뒤로 가 있어 걸리지 않는다. 앱이 SESSION_SWEEP_INTERVAL_MS 마다 부른다
+ */
+export function sweepExpiredSessions(io: WireServer, db: Db, now: Date = new Date()): string[] {
+  const ids = db
+    .delete(authSession)
+    .where(lte(authSession.expiresAt, now))
+    .returning({ id: authSession.id })
+    .all()
+    .map((r) => r.id);
+  disconnectSessions(io, ids);
+  return ids;
 }
 
 /** 기본 네임스페이스에 인증 미들웨어와 클라이언트 → 서버 핸들러를 붙인다(계약 스펙 7장). 팬아웃은 events.ts. */

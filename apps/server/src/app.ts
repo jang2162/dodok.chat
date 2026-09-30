@@ -68,7 +68,7 @@ import { bridgePublicUrl, buildSetupStatus } from "./modules/setup/status";
 import { importEnvToken, isActiveBridgeToken, verifyBridgeTokenDb } from "./modules/setup/tokens";
 import { ServerBus } from "./realtime/bus";
 import { attachWireFanout } from "./realtime/events";
-import { attachWire, disconnectSessions, disconnectUser } from "./realtime/socket";
+import { attachWire, disconnectSessions, disconnectUser, sweepExpiredSessions } from "./realtime/socket";
 import type { WireServer } from "./realtime/types";
 import { createServices, type Services, sessionRecoverTargets } from "./wiring";
 
@@ -82,6 +82,8 @@ export const PUSH_DRAIN_TIMEOUT_MS = 2_000;
 export const GATEWAY_RECONNECTING_NOTICE_MS = 60_000;
 /** 운영 사건 보존 정리 주기(운영 보강 스펙 3.1 — 부팅 때 한 번, 그 뒤 하루 한 번) */
 export const OPS_SWEEP_INTERVAL_MS = 24 * 3600_000;
+/** 만료 세션 청소 주기 — 만료 행을 지우고 그 wire 소켓을 끊는다(socket.ts sweepExpiredSessions). 만료 뒤 소켓은 최대 이만큼 산다 */
+export const SESSION_SWEEP_INTERVAL_MS = 60_000;
 
 export type AppDeps = {
   /**
@@ -100,6 +102,8 @@ export type AppDeps = {
   blobLocks?: BlobLocks;
   /** 첨부 정리 주기(기본 ATTACHMENT_SWEEP_INTERVAL_MS) — 테스트가 낮춘다 */
   attachmentSweepIntervalMs?: number;
+  /** 만료 세션 청소 주기(기본 SESSION_SWEEP_INTERVAL_MS) — 테스트가 낮춘다 */
+  sessionSweepIntervalMs?: number;
   /** 웹 푸시 발송기(기본은 VAPID 키로 만든 실제 web-push). 테스트는 가짜를 준다 — 밖으로 보내지 않게 */
   pushSend?: PushSend;
   /** 품은 플러그인 tgz 를 찾을 디렉터리(기본 pluginDirCandidates) — 테스트가 임시 디렉터리나 []를 준다 */
@@ -345,6 +349,23 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       services.ops.close(); // 모으던 ops.event·로그를 내보낸다 — io 를 닫기 전에
     };
     undo.push({ step: "ops", run: closeOps });
+    // 만료 세션: 지금 한 번, 그 뒤 주기마다. 실패는 로그만 남기고 부팅·주기를 막지 않는다
+    const sweepSessions = () => {
+      try {
+        const ids = sweepExpiredSessions(io, db);
+        if (ids.length > 0) logger.info({ count: ids.length }, "expired sessions swept");
+      } catch (err) {
+        logger.error({ err }, "session sweep failed");
+      }
+    };
+    sweepSessions();
+    const sessionSweepTimer = setInterval(
+      sweepSessions,
+      deps.sessionSweepIntervalMs ?? SESSION_SWEEP_INTERVAL_MS,
+    );
+    sessionSweepTimer.unref();
+    const closeSessionSweep = () => clearInterval(sessionSweepTimer);
+    undo.push({ step: "session-sweep", run: closeSessionSweep });
     // 디스크 여유(운영 보강 스펙 5.4): 지금 한 번, 그 뒤 10분마다. 사건을 남기므로 ops 뒤에 만들고 ops 보다 먼저 닫는다
     const disk = createDiskMonitor({
       dataDir: config.DATA_DIR,
@@ -625,6 +646,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       await step("setup-events", () => offSetup());
       await step("push-triggers", () => pushTriggers.close()); // 새 발송을 받지 않는다 — 이미 나간 것은 ⑥ 앞에서 잠깐 기다린다
       await step("attachments-sweep", () => sweeper.close()); // 진행 중인 정리가 db 를 닫기 전에 끝나게
+      await step("session-sweep", closeSessionSweep);
       await step("ops", closeOps);
       await step("orchestrator", () => services.orchestrator.stop()); // ② 타이머·어댑터 구독 해제
       // ③ 브리지 system.notice shutdown → Gateway stop. io.close() 가 /bridge 소켓까지 끊으므로 그보다 먼저
