@@ -33,14 +33,23 @@ function continues(prev: Message, m: Message): boolean {
 
 const NO_APPROVALS: readonly Approval[] = [];
 const approvalRow = (a: Approval): Row => ({ kind: "approval", key: `approval:${a.id}`, approvalId: a.id });
+/**
+ * 목록에서 승인이 서는 시각 — 미해결은 요구 시각, 확정은 **결정 시각**(없으면 요구 시각). 대기 카드는 맨 아래에 있으므로
+ * 결정 시각에 서야 확정 순간 자리가 그대로다 — 요구 시각으로 돌아가면 대기 중 뒤에 낀 메시지 위로 한 프레임에 튄다(D4)
+ */
+const placedAt = (a: Approval): string =>
+  a.status === "pending" ? a.createdAt : (a.decidedAt ?? a.createdAt);
 /** 승인은 이른 것부터. 같은 시각이면 id 순(uuid v7 = 생성 순) */
-const byAge = (a: Approval, b: Approval): number =>
-  a.createdAt === b.createdAt ? (a.id < b.id ? -1 : 1) : a.createdAt < b.createdAt ? -1 : 1;
+const byPlace = (a: Approval, b: Approval): number => {
+  const x = placedAt(a);
+  const y = placedAt(b);
+  return x === y ? (a.id < b.id ? -1 : 1) : x < y ? -1 : 1;
+};
 
 /**
  * 타임라인 → 목록 행(스펙 5.3·5.5, 설계 5.3). 날짜가 바뀌는 자리에 구분선, 같은 작성자 5분 안 연속은 `head: false`,
  * 시스템 메시지는 늘 머리이고 앞뒤 묶음을 끊는다. 순서는 확정 → 미해결 승인 → 스트리밍 버블 → 보내는 중.
- * 확정된 승인 카드는 **사라지지 않고** `createdAt` 자리에 남는다(기록) — 승인 행도 시스템 카드처럼 앞뒤 묶음을 끊는다.
+ * 확정된 승인 카드는 **사라지지 않고** 결정 자리(`placedAt`)에 남는다(기록) — 승인 행도 시스템 카드처럼 앞뒤 묶음을 끊는다.
  * 더 옛 메시지가 남아 있으면(`hasOlder`) 맨 위 구분선은 두지 않는다 — 그 날의 첫 메시지인지 아직 모르고,
  * 과거 페이지를 붙일 때 구분선이 맨 위에 남아 있으면 스크롤 기준 행이 되어 위치가 튄다
  */
@@ -51,8 +60,8 @@ export function groupRows(
   tz?: string,
 ): Row[] {
   const rows: Row[] = [];
-  const sorted = [...approvals].sort(byAge);
-  // 확정된 승인은 시간 자리에, 아직 답하지 않은 승인은 맨 아래로 — 시간이 흐르는 카드라 끝에 붙어 있어야 눈에 든다
+  const sorted = [...approvals].sort(byPlace);
+  // 확정된 승인은 결정 시각 자리에, 아직 답하지 않은 승인은 맨 아래로 — 시간이 흐르는 카드라 끝에 붙어 있어야 눈에 든다
   const settled = sorted.filter((a) => a.status !== "pending");
   const open = sorted.filter((a) => a.status === "pending");
   let next = 0;
@@ -60,7 +69,7 @@ export function groupRows(
   let prevDay: string | undefined;
   for (const message of timeline.items) {
     // 이 메시지보다 먼저 만들어진 확정 승인을 여기에 끼운다 — 승인 행은 시스템 카드처럼 묶음을 끊는다(prev 를 버린다)
-    for (let a = settled[next]; a && a.createdAt <= message.createdAt; a = settled[next]) {
+    for (let a = settled[next]; a && placedAt(a) <= message.createdAt; a = settled[next]) {
       rows.push(approvalRow(a));
       next += 1;
       prev = undefined;

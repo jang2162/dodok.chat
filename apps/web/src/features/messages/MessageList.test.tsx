@@ -438,11 +438,17 @@ describe("MessageList 승인 카드", () => {
     expect(text.indexOf("본문 2")).toBeLessThan(text.indexOf("claude-cli native tool: Write"));
   });
 
-  it("확정된 승인 카드는 사라지지 않고 createdAt 자리에 결과로 남는다", async () => {
+  it("확정된 승인 카드는 사라지지 않고 결정 자리(decidedAt)에 결과로 남는다", async () => {
     act(() =>
-      useApprovalStore
-        .getState()
-        .apply(approval({ createdAt: between, status: "allowed", decision: "allow-once", reason: "user" })),
+      useApprovalStore.getState().apply(
+        approval({
+          createdAt: after,
+          status: "allowed",
+          decision: "allow-once",
+          reason: "user",
+          decidedAt: between,
+        }),
+      ),
     );
     const { container } = setup(timelineOf(range(1, 2)));
 
@@ -455,7 +461,7 @@ describe("MessageList 승인 카드", () => {
     expect(text.indexOf("claude-cli native tool: Write")).toBeLessThan(text.indexOf("본문 2"));
   });
 
-  it("승인이 확정되면 카드가 맨 아래에서 시간 자리로 옮겨 간다", async () => {
+  it("승인이 확정돼도 카드는 제자리 — 대기 중 뒤에 낀 메시지 위로 튀지 않는다(D4)", async () => {
     act(() => useApprovalStore.getState().apply(approval({ createdAt: between })));
     const { container } = setup(timelineOf(range(1, 2)));
     await screen.findByRole("group", { name: /승인 요청/ });
@@ -463,13 +469,19 @@ describe("MessageList 승인 카드", () => {
     expect(before.indexOf("본문 2")).toBeLessThan(before.indexOf("claude-cli native tool: Write"));
 
     act(() =>
-      useApprovalStore
-        .getState()
-        .apply(approval({ createdAt: between, status: "denied", decision: "deny", reason: "user" })),
+      useApprovalStore.getState().apply(
+        approval({
+          createdAt: between,
+          status: "denied",
+          decision: "deny",
+          reason: "user",
+          decidedAt: after,
+        }),
+      ),
     );
     await waitFor(() => expect(screen.getByText("거절됨")).toBeInTheDocument());
     const text = container.textContent ?? "";
-    expect(text.indexOf("claude-cli native tool: Write")).toBeLessThan(text.indexOf("본문 2"));
+    expect(text.indexOf("본문 2")).toBeLessThan(text.indexOf("claude-cli native tool: Write"));
   });
 
   it("다른 채널의 승인은 행도 만들지 않는다 — 빈 행이 끼지 않게", async () => {

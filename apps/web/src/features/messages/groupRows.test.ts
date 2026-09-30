@@ -98,7 +98,7 @@ describe("groupRows", () => {
 });
 
 describe("groupRows 승인 행", () => {
-  it("확정된 승인은 createdAt 자리에, 미해결 승인은 맨 아래 버블 앞에", () => {
+  it("확정된 승인은 결정 자리(decidedAt, 없으면 createdAt)에, 미해결 승인은 맨 아래 버블 앞에", () => {
     const items = [msg(1, at("2027-01-15T08:00:00Z")), msg(2, at("2027-01-15T08:10:00Z"))];
     const settled = approval({
       id: APPROVAL,
@@ -166,6 +166,52 @@ describe("groupRows 승인 행", () => {
       `approval:${APPROVAL}`,
       "date:2027-01-16",
       `msg:${items[1]?.id}`,
+    ]);
+  });
+
+  it("확정 순간 자리가 그대로다 — 확정 승인은 decidedAt 자리라 대기 중 뒤에 낀 메시지보다 뒤에 남는다(D4)", () => {
+    // 08:00 요구 → 대기 중 08:01 메시지 → 08:02 허용. createdAt 자리로 돌아가면 한 프레임에 메시지 위로 튀었다
+    const items = [msg(1, at("2027-01-15T07:59:00Z")), msg(2, at("2027-01-15T08:01:00Z"))];
+    const waiting = approval({ id: APPROVAL, createdAt: "2027-01-15T08:00:00.000Z" });
+    const decided = { ...waiting, status: "allowed" as const, decidedAt: "2027-01-15T08:02:00.000Z" };
+
+    const before = groupRows(timeline({ items }), [RUN], [waiting], TZ).map((r) => r.key);
+    const after = groupRows(timeline({ items }), [RUN], [decided], TZ).map((r) => r.key);
+    expect(after).toEqual(before);
+    expect(after).toEqual([
+      "date:2027-01-15",
+      `msg:${items[0]?.id}`,
+      `msg:${items[1]?.id}`,
+      `approval:${APPROVAL}`,
+      `run:${RUN}`,
+    ]);
+
+    // 결정 뒤에 온 메시지는 카드 뒤 — 다시 그려도(새 메시지가 붙어도) 카드는 결정한 자리에 있다
+    const later = [...items, msg(3, at("2027-01-15T08:03:00Z"))];
+    expect(groupRows(timeline({ items: later }), [], [decided], TZ).map((r) => r.key)).toEqual([
+      "date:2027-01-15",
+      `msg:${items[0]?.id}`,
+      `msg:${items[1]?.id}`,
+      `approval:${APPROVAL}`,
+      `msg:${later[2]?.id}`,
+    ]);
+  });
+
+  it("확정 승인끼리도 결정 순서 — decidedAt 이 없으면 createdAt 으로 센다", () => {
+    const items = [msg(1, at("2027-01-15T08:00:00Z"))];
+    const first = approval({
+      id: APPROVAL,
+      status: "denied",
+      createdAt: "2027-01-15T08:01:00.000Z",
+      decidedAt: "2027-01-15T08:09:00.000Z",
+    });
+    const second = approval({ id: APPROVAL2, status: "expired", createdAt: "2027-01-15T08:05:00.000Z" });
+
+    expect(groupRows(timeline({ items }), [], [first, second], TZ).map((r) => r.key)).toEqual([
+      "date:2027-01-15",
+      `msg:${items[0]?.id}`,
+      `approval:${APPROVAL2}`,
+      `approval:${APPROVAL}`,
     ]);
   });
 
