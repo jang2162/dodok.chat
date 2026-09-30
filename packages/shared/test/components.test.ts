@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { ComponentState, ComponentsV1, collectIds, componentsToolJsonSchema } from "../src/components";
+import {
+  ComponentState,
+  ComponentsV1,
+  collectIds,
+  componentsToolJsonSchema,
+  isReservedItemId,
+  StoredComponentState,
+  StoredComponentsV1,
+} from "../src/components";
+import { Message } from "../src/domain";
 
 const U1 = "01a09fc9-d204-7551-89d6-38544d07a13c";
 
@@ -162,6 +171,71 @@ describe("ComponentsV1", () => {
       ).toBe(false);
     },
   );
+  // 거절은 쓰기 경계만 — 거절 전에 저장된 옛 행이 그 메시지가 든 페이지 전체를 500 으로 만들지 않게
+  it.each(["constructor", "__proto__"])(
+    "읽기 스키마(Stored*·Message)는 id %s 가 든 옛 카드를 받는다",
+    (bad) => {
+      const variants = [
+        { blocks: [{ type: "actions", id: bad, items: [{ type: "button", id: "ok", label: "B" }] }] },
+        {
+          blocks: [
+            { type: "actions", items: [{ type: "select", id: bad, options: [{ value: "v", label: "V" }] }] },
+          ],
+        },
+        {
+          modal: { id: bad, title: "t", triggerLabel: "o", fields: [{ type: "text", id: "f", label: "L" }] },
+        },
+        {
+          modal: { id: "m", title: "t", triggerLabel: "o", fields: [{ type: "text", id: bad, label: "L" }] },
+        },
+      ];
+      for (const v of variants) expect(StoredComponentsV1.safeParse(v).error?.issues ?? []).toEqual([]);
+      const card = {
+        id: "cmp_1",
+        blocks: [{ type: "actions", items: [{ type: "button", id: bad, label: "B" }] }],
+      };
+      const state = { expiresAt: "2026-09-14T00:00:00.000Z", consumed: [bad] };
+      expect(StoredComponentsV1.safeParse(card).error?.issues ?? []).toEqual([]);
+      expect(StoredComponentState.safeParse(state).error?.issues ?? []).toEqual([]);
+      const message = Message.safeParse({
+        id: U1,
+        channelId: U1,
+        seq: 1,
+        kind: "normal",
+        authorType: "agent",
+        authorId: U1,
+        bodyMd: "old",
+        mentions: { users: [], agents: [] },
+        components: card,
+        componentState: state,
+        interactions: [
+          { id: U1, componentId: "cmp_1", userId: U1, itemId: bad, values: {}, createdAt: state.expiresAt },
+        ],
+        createdAt: state.expiresAt,
+      });
+      expect(message.error?.issues ?? []).toEqual([]);
+      expect(isReservedItemId(bad)).toBe(true);
+    },
+  );
+  it("읽기 스키마도 정규식·유일성은 그대로 본다", () => {
+    const dup = {
+      blocks: [
+        {
+          type: "actions",
+          items: [
+            { type: "button", id: "a", label: "A" },
+            { type: "button", id: "a", label: "B" },
+          ],
+        },
+      ],
+    };
+    expect(StoredComponentsV1.safeParse(dup).success).toBe(false);
+    const upper = {
+      blocks: [{ type: "actions", items: [{ type: "button", id: "Constructor", label: "A" }] }],
+    };
+    expect(StoredComponentsV1.safeParse(upper).success).toBe(false);
+    expect(isReservedItemId("constructors")).toBe(false);
+  });
   it("이름이 비슷한 id(constructors·proto)는 허용", () => {
     const r = ComponentsV1.safeParse({
       blocks: [

@@ -48,7 +48,7 @@ export function summarize(
   const modal = components.modal;
   if (modal?.id !== itemId) return undefined;
   const fields = isRecord(values.fields) ? values.fields : {};
-  // 자기 키만 — 칸 id 가 「constructor」「__proto__」여도(계약 ItemId 가 받는다) 상속된 것을 값으로 읽지 않게
+  // 자기 키만 — 칸 id 가 「constructor」「__proto__」여도(계약은 쓰기에서 거절하지만 옛 행에는 있고 Message 가 받는다) 상속된 것을 값으로 읽지 않게
   const parts = modal.fields.flatMap((f) =>
     Object.hasOwn(fields, f.id) && fields[f.id] !== undefined
       ? [`${f.label}: ${fieldText(f, fields[f.id])}`]

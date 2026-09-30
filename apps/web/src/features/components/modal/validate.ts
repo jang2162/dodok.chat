@@ -7,7 +7,7 @@ import type { Field, SelectOption } from "@dodok/shared";
 export type FieldValues = Record<string, unknown>;
 
 /**
- * 칸 id 로 찾는 객체(화면 값·오류) — 프로토타입 없이 만든다. 계약 ItemId 는 「__proto__」「constructor」도 받는다:
+ * 칸 id 로 찾는 객체(화면 값·오류) — 프로토타입 없이 만든다. 계약 ItemId 는 「__proto__」「constructor」를 거절하지만 옛 행에는 있을 수 있다(Message 의 StoredItemId 가 받는다):
  * `{}` 면 없는 칸을 읽을 때 Object.prototype 의 것이 나오고(오류 자리에 객체가 그려져 렌더가 던진다),
  * `__proto__` 에 쓰면 칸이 아니라 프로토타입 세터를 탄다. 서버로 나가는 값만은 평범한 객체다(`submitValues`)
  */

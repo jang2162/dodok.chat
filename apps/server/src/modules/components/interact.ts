@@ -1,12 +1,13 @@
-import type {
-  ApiError,
-  Button,
-  ComponentState,
-  ComponentsV1,
-  Field,
-  Modal,
-  Select,
-  SelectOption,
+import {
+  type ApiError,
+  type Button,
+  type ComponentState,
+  type ComponentsV1,
+  type Field,
+  isReservedItemId,
+  type Modal,
+  type Select,
+  type SelectOption,
 } from "@dodok/shared";
 import { z } from "zod";
 
@@ -124,9 +125,17 @@ export function validateInteraction(input: InteractionInput): InteractionResult 
   if (allowed && allowed.length > 0 && !allowed.includes(input.userId))
     return fail("FORBIDDEN", "user not allowed");
   if (!c.reusable && state.consumed.includes(input.itemId)) return fail("CONSUMED", "item already used");
+  // 계약이 거절하기 전에 저장된 옛 카드 — 이 id 들은 아래 values 스키마(칸 id 를 객체 키로)와 소비 기록에 쓰지 않는다
+  if (usesReservedId(found)) return fail("VALIDATION", "item uses a reserved id");
   const parsed = valuesSchemaFor(found).safeParse(input.values);
   if (!parsed.success) return fail("VALIDATION", "invalid values", { issues: parsed.error.issues });
   return { ok: true, found, values: parsed.data as Record<string, unknown> };
+}
+
+function usesReservedId(found: FoundItem): boolean {
+  const ids =
+    found.kind === "modal" ? [found.item.id, ...found.item.fields.map((f) => f.id)] : [found.item.id];
+  return ids.some(isReservedItemId);
 }
 
 const labelOf = (options: SelectOption[], value: string) =>

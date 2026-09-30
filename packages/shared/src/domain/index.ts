@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { Id, IsoDateTime } from "../common";
-import { ComponentState, ComponentsV1, ItemId } from "../components";
+import { StoredComponentState, StoredComponentsV1, StoredItemId } from "../components";
 import { MentionSet } from "../mention"; // MentionSet은 mention.ts가 소유. 루트 index가 export하므로 여기서 재export하지 않는다(export * 충돌 방지).
 
 export const Handle = z.string().regex(/^[a-z0-9_-]{2,32}$/);
@@ -142,7 +142,7 @@ export const MessageInteraction = z.object({
   id: Id,
   componentId: z.string().max(100),
   userId: Id,
-  itemId: ItemId,
+  itemId: StoredItemId,
   values: z.record(z.string(), z.unknown()),
   createdAt: IsoDateTime,
 });
@@ -169,8 +169,9 @@ export const Message = z.object({
   bodyMd: z.string().max(100_000),
   mentions: MentionSet,
   attachments: z.array(Attachment).max(ATTACHMENT_LIMITS.perMessage).default([]),
-  components: ComponentsV1.optional(),
-  componentState: ComponentState.optional(), // components가 있을 때 서버가 부여 (만료 시각·소비된 아이템)
+  // 읽기 스키마 — 저장된 행·서버가 내보내는 메시지. 새 카드는 쓰는 자리가 ComponentsV1 로 막는다(StoredItemId)
+  components: StoredComponentsV1.optional(),
+  componentState: StoredComponentState.optional(), // components가 있을 때 서버가 부여 (만료 시각·소비된 아이템)
   /**
    * 이 메시지 카드에 일어난 상호작용(설계 3장). **기본값이 있어 경계를 넘는 Message 에는 항상 있다** —
    * 없는 채로 message.updated 가 오면 웹 캐시가 기존 결과 줄을 지워 버린다.
