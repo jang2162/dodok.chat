@@ -144,13 +144,19 @@ const RETRY_COMPONENTS = {
 const PLUGIN_OUTDATED = "PLUGIN_OUTDATED";
 /** 저장된 providerAgentId 가 세션 키 규칙 밖 — 키를 못 만들어 런을 보낼 수 없다. 다시 실행해도 같다 */
 const INVALID_AGENT_ID = "INVALID_AGENT_ID";
-/** 사람에게 run_error 시스템 메시지로 알리는 코드(디스패치 실패·타임아웃). SERVER_RESTART·INTERNAL·Gateway 오류는 알리지 않는다 */
+/** 러너의 Claude 로그인이 없거나 풀렸다(러너 스펙 8장) — 사람이 러너 머신에서 다시 로그인한 뒤 다시 실행으로 푼다 */
+const PROVIDER_AUTH = "PROVIDER_AUTH";
+/**
+ * 사람에게 run_error 시스템 메시지로 알리는 코드(디스패치 실패·타임아웃·러너 로그인). SERVER_RESTART·INTERNAL·Gateway 오류는
+ * 알리지 않는다
+ */
 const NOTIFY_CODES: ReadonlySet<string> = new Set([
   "TIMEOUT",
   "ADAPTER_UNAVAILABLE",
   "ADAPTER_PROTOCOL",
   PLUGIN_OUTDATED,
   INVALID_AGENT_ID,
+  PROVIDER_AUTH,
 ]);
 /** 다시 실행해도 같은 사유로 떨어지는 코드 — 누를 때마다 카드만 는다 */
 const NO_RETRY_CODES: ReadonlySet<string> = new Set(["DROPPED:bot-loop-protection", INVALID_AGENT_ID]);
@@ -1187,6 +1193,8 @@ function runErrorBody(code: string, handle: string): string {
       return `@${handle} ${josa(handle, "이", "가")} 스레드에서 답하지 못했습니다 — 플러그인을 새로 설치해야 합니다(연결 페이지)`;
     case INVALID_AGENT_ID:
       return `@${handle} 실행이 실패했습니다: ${INVALID_AGENT_ID_REASON}`;
+    case PROVIDER_AUTH:
+      return `@${handle} 실행이 실패했습니다: 러너의 Claude 로그인을 확인하세요`;
     default:
       return `@${handle} 실행이 실패했습니다: ${code}`;
   }

@@ -1999,6 +1999,28 @@ describe("orchestrator", () => {
     t.orch.stop();
   });
 
+  it("러너 로그인 실패(PROVIDER_AUTH)는 사유 있는 run_error 카드 — 코드가 아니라 할 일을 보이고, 다시 로그인한 뒤 「다시 실행」", async () => {
+    const t = setup();
+    const run = await t.enqueue();
+    await t.flush();
+    t.adapter.emit({
+      kind: "run_signal",
+      runId: run.id,
+      signal: { kind: "gateway_error", code: "PROVIDER_AUTH", message: "Not logged in" },
+    });
+    expect(t.runOf(run.id)).toMatchObject({ status: "error", error: { code: "PROVIDER_AUTH" } });
+    expect(systemMessages(t.db)).toEqual([
+      expect.objectContaining({
+        bodyMd: "@dev 실행이 실패했습니다: 러너의 Claude 로그인을 확인하세요",
+        systemMeta: { kind: "run_error", runId: run.id },
+        components: expect.objectContaining({
+          blocks: [expect.objectContaining({ items: [expect.objectContaining({ id: "retry_run" })] })],
+        }),
+      }),
+    ]);
+    t.orch.stop();
+  });
+
   it("usage CUSTOM 은 저장하지 않고 runs.usage 를 갱신하고, 어댑터 status 는 bus adapter.status 로", async () => {
     const t = setup();
     const statuses: AdapterStatus[] = [];
