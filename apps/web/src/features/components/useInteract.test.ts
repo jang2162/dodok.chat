@@ -185,7 +185,7 @@ describe("useInteract — 결정 뒤 초점 표식", () => {
 
 describe("interactErrorText", () => {
   it("표에 있는 코드는 웹 문구, 없는 코드는 서버 문구", () => {
-    expect(interactErrorText("EXPIRED", "server says")).toBe("만료된 버튼입니다");
+    expect(interactErrorText("EXPIRED", "server says")).toBe("만료된 항목입니다");
     expect(interactErrorText("TIMEOUT", "server says")).toBe("서버 응답이 없습니다");
     expect(interactErrorText("INTERNAL", "터졌다")).toBe("터졌다");
   });

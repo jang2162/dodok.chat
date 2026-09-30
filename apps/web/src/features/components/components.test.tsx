@@ -292,9 +292,9 @@ describe("Components — 버튼", () => {
   });
 
   it.each([
-    ["CONSUMED", "이미 처리된 버튼입니다"],
-    ["EXPIRED", "만료된 버튼입니다"],
-    ["FORBIDDEN", "이 버튼을 누를 권한이 없습니다"],
+    ["CONSUMED", "이미 처리된 항목입니다"],
+    ["EXPIRED", "만료된 항목입니다"],
+    ["FORBIDDEN", "이 항목을 쓸 권한이 없습니다"],
     ["VALIDATION", "처리할 수 없는 요청입니다"],
   ] as const)("ack %s → 토스트 「%s」", async (code, text) => {
     const error = vi.spyOn(toast, "error");

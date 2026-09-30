@@ -6,11 +6,14 @@ import { RATE_LIMITED_TEXT } from "@/features/messages/rateLimited";
 import { useWire } from "@/realtime/WireProvider";
 import { DISABLED_REASON_TEXT } from "./state";
 
-/** component.interact ack 오류(스펙 6장). wire 오류는 REST 전역 토스트 밖이라 여기서 알린다 */
+/**
+ * component.interact ack 오류(스펙 6장). wire 오류는 REST 전역 토스트 밖이라 여기서 알린다.
+ * 버튼·셀렉트·모달이 함께 쓰므로 「버튼」이 아니라 「항목」이라 부른다(비활성 사유 `DISABLED_REASON_TEXT` 와 같은 말)
+ */
 const ERR: Partial<Record<ErrorCode, string>> = {
-  EXPIRED: "만료된 버튼입니다",
-  CONSUMED: "이미 처리된 버튼입니다",
-  FORBIDDEN: "이 버튼을 누를 권한이 없습니다",
+  EXPIRED: "만료된 항목입니다",
+  CONSUMED: "이미 처리된 항목입니다",
+  FORBIDDEN: "이 항목을 쓸 권한이 없습니다",
   VALIDATION: "처리할 수 없는 요청입니다",
   TIMEOUT: "서버 응답이 없습니다",
   // 「다시 실행」이 런 한도에 걸린 것 — 버튼은 소비되지 않아 한도가 풀리면 다시 누른다(채널에는 한도 시스템 메시지가 따로 뜬다)

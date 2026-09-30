@@ -142,10 +142,10 @@ describe("모달 — 트리거와 대화상자", () => {
     // 하단 줄
     await userEvent.type(within(dialog).getByLabelText("제목"), "보고서");
     await submit(dialog);
-    expect(await within(dialog).findByText("만료된 버튼입니다")).toBeVisible();
+    expect(await within(dialog).findByText("만료된 항목입니다")).toBeVisible();
     await close(dialog);
     dialog = await open();
-    expect(within(dialog).queryByText("만료된 버튼입니다")).toBeNull();
+    expect(within(dialog).queryByText("만료된 항목입니다")).toBeNull();
     expect(within(dialog).getByRole("button", { name: "제출" })).not.toHaveAttribute("aria-describedby");
   });
 });
@@ -611,14 +611,14 @@ describe("모달 — ack 오류는 대화상자 안에", () => {
     const dialog = await open();
     await userEvent.type(within(dialog).getByLabelText("제목"), "보고서");
     await submit(dialog);
-    expect(await within(dialog).findByText("만료된 버튼입니다")).toBeVisible();
+    expect(await within(dialog).findByText("만료된 항목입니다")).toBeVisible();
     // 대화상자 안 한 곳에만 — 밖(가려지는 자리)에 겹쳐 내지 않는다
-    expect(screen.getAllByText("만료된 버튼입니다")).toHaveLength(1);
+    expect(screen.getAllByText("만료된 항목입니다")).toHaveLength(1);
     expect(screen.getByRole("dialog")).toBe(dialog);
     // 입력은 그대로 남는다 — 다시 보낼 수 있게
     expect(within(dialog).getByLabelText("제목")).toHaveValue("보고서");
     expect(within(dialog).getByRole("button", { name: "제출" })).toHaveAccessibleDescription(
-      "만료된 버튼입니다",
+      "만료된 항목입니다",
     );
     expect(error).not.toHaveBeenCalled();
   });
@@ -633,9 +633,9 @@ describe("모달 — ack 오류는 대화상자 안에", () => {
     const title = within(dialog).getByLabelText("제목");
     await userEvent.type(title, "보고서");
     await submit(dialog);
-    expect(await within(dialog).findByText("만료된 버튼입니다")).toBeVisible();
+    expect(await within(dialog).findByText("만료된 항목입니다")).toBeVisible();
     await userEvent.type(title, "!");
-    expect(within(dialog).queryByText("만료된 버튼입니다")).toBeNull();
+    expect(within(dialog).queryByText("만료된 항목입니다")).toBeNull();
     expect(within(dialog).getByRole("button", { name: "제출" })).not.toHaveAttribute("aria-describedby");
   });
 
