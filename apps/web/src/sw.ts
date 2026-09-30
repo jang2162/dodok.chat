@@ -1,4 +1,5 @@
 /// <reference lib="webworker" />
+import "./lib/zodJitless";
 import { cleanupOutdatedCaches, createHandlerBoundToURL, precacheAndRoute } from "workbox-precaching";
 import { NavigationRoute, registerRoute } from "workbox-routing";
 import {

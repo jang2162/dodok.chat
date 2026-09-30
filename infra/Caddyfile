@@ -42,4 +42,9 @@
 	header Strict-Transport-Security "max-age=31536000"
 	header X-Content-Type-Options nosniff
 	header Referrer-Policy strict-origin-when-cross-origin
+	# CSP — 스크립트는 이 오리진의 파일만(인라인·eval 없음 — zod 는 웹이 jitless 로 둔다, apps/web/src/lib/zodJitless.ts).
+	# 스타일만 'unsafe-inline': 라이브러리가 런타임에 <style> 을 꽂는다(Tiptap·sonner·스크롤 잠금 — 내용이 달라져 해시로 못 막는다).
+	# img https: 는 components media 블록의 외부 이미지, blob: 은 작성기 첨부 미리보기, data: 는 인라인 이미지.
+	# connect 'self' 가 같은 오리진의 wss(Socket.IO)도 덮는다. worker 는 /sw.js, frame-ancestors 로 다른 사이트의 틀 안에 못 넣는다
+	header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
 }

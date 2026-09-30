@@ -2,7 +2,7 @@
 # Caddy 앞단 검사 — 라우팅·SPA 폴백·캐시·보안 헤더를 curl 로 단언한다. 줄마다 PASS/FAIL, 하나라도 FAIL 이면 exit 1.
 # 사용: bash infra/check-caddy.sh https://localhost:8443   (로컬 검증은 compose.local.yml 머리의 명령으로 띄운 뒤)
 # 인증서는 검사하지 않는다(-k) — 로컬 검증은 Caddy 내부 CA 다. 운영 도메인에 쓰면 인증서 확인은 따로 한다.
-# 보지 않는 것: 업로드 상한(19·21 MiB)·WebSocket 연결·X-Forwarded-For 가 서버의 request.ip 로 들어가는지 — 브라우저·서버 로그 검증 몫
+# CSP 는 헤더 글자만 본다 — 정책이 앱을 깨지 않는지(위반 0)는 브라우저 검증 몫이다. 보지 않는 것: 업로드 상한(19·21 MiB)·WebSocket 연결·X-Forwarded-For 가 서버의 request.ip 로 들어가는지 — 브라우저·서버 로그 검증 몫
 set -uo pipefail
 
 origin="${1:?사용: bash infra/check-caddy.sh <https://호스트:포트>}"
@@ -85,6 +85,14 @@ for path in / /healthz; do
     pass "보안 헤더 HSTS·nosniff·Referrer-Policy ($path)"
   else
     fail "보안 헤더 HSTS·nosniff·Referrer-Policy ($path)" "HSTS='$hsts' nosniff='$nosniff' referrer='$referrer'"
+  fi
+  # CSP 는 강제(Report-Only 가 아니다)이고 스크립트는 'self' 만 — 인라인·eval 허용이 끼면 FAIL
+  csp="$(header content-security-policy)"
+  script_src="$(tr ';' '\n' <<<"$csp" | sed 's/^ *//' | grep '^script-src ' || true)"
+  if [[ "$script_src" == "script-src 'self'" && "$csp" == *"default-src 'self'"* && "$csp" == *"frame-ancestors 'none'"* ]]; then
+    pass "CSP 강제 · script-src 'self' 만 ($path)"
+  else
+    fail "CSP 강제 · script-src 'self' 만 ($path)" "Content-Security-Policy '$csp'"
   fi
 done
 

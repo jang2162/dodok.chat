@@ -74,6 +74,9 @@ export default defineConfig({
             : "assets/[name]-[hash].js",
         codeSplitting: {
           groups: [
+            // zod 와 jitless 설정(src/lib/zodJitless.ts)을 한 조각에 — 설정이 zod 를 import 하므로 따로 두면 zod 가 든 공용 조각이
+            // 먼저 평가되고, 그 조각이 shared 스키마를 만들며 Function("") 탐지(CSP 위반 보고)를 한다
+            { name: "zod", test: /node_modules[\\/]zod[\\/]|src[\\/]lib[\\/]zodJitless\.ts$/ },
             { name: "editor", test: /node_modules[\\/](@tiptap|prosemirror-|@floating-ui)/ },
             {
               name: "markdown",

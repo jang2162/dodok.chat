@@ -23,7 +23,7 @@ dodok.chat/
 │  ├─ Dockerfile.server       # 단계 build(번들) → deploy(런타임 의존성 닫힘) · plugin(pack:plugin — 플러그인 tgz, openclaw devDependency 는 이 단계에만)
 │  │                          # → runtime(운영, node:24.21.0-bookworm-slim, 비루트 — 번들·닫힘·마이그레이션·/app/plugin/*.tgz·/app/runner/*.tgz) · devfake(로컬 검증 전용)
 │  ├─ Dockerfile.web          # 웹 빌드(ARG VITE_BUILD_ID) → caddy:2.11.4 에 dist 와 Caddyfile
-│  ├─ Caddyfile               # 자동 HTTPS·/api·/socket.io·/bridge/*·/runner/*·/healthz 프록시, /assets immutable·나머지 no-cache·SPA 폴백, 보안 헤더, 본문 32MB
+│  ├─ Caddyfile               # 자동 HTTPS·/api·/socket.io·/bridge/*·/runner/*·/healthz 프록시, /assets immutable·나머지 no-cache·SPA 폴백, 보안 헤더·CSP(강제), 본문 32MB
 │  ├─ check-caddy.sh          # Caddy 앞단 검사(curl — 라우팅·폴백·캐시·보안 헤더), `bash infra/check-caddy.sh https://localhost:8443`
 │  ├─ local.env.example       # 로컬 검증 설정의 틀 — 사본 infra/local.env 는 git 제외
 │  └─ .env → ../.env          # 배포 호스트에서 손으로 만드는 링크(git 제외) — compose 변수 치환이 infra/ 의 .env 만 읽는다
@@ -528,6 +528,7 @@ Phase 4 ① 스레드·검색(스펙 `docs/superpowers/specs/2026-09-25-threads-
 React 19 + Vite 8 + TanStack(Query·Router·Virtual) + Tiptap 작성기 + Streamdown 렌더 + Tailwind 4·shadcn. 의존성은 전부 정확 핀이고 웹 MVP 태스크 2 에서 한 번에 넣었다(Phase 2 ③ 은 0).
 Phase 2 ④ 가 PWA·오프라인 사본 몫으로 더했다 — `vite-plugin-pwa`(dev)·`workbox-precaching`·`workbox-routing`·`workbox-window`·`@tanstack/query-persist-client-core`·`@tanstack/query-async-storage-persister`·`idb-keyval`.
 코드 하이라이트는 `shiki` — `shiki/core`·JS 정규식 엔진·언어 문법을 하나씩 동적 import 한다(초기 조각에 없다). shiki 가 든 조각은 `hl-` 이름을 달고 서비스 워커 사전 저장에서 빠진다(`vite.config.ts` 의 `chunkFileNames`·`globIgnores`).
+`zod` 는 CSP 때문에 웹이 직접 의존한다 — 앱(`main.tsx`)과 서비스 워커(`sw.ts`)의 첫 import 인 `lib/zodJitless.ts` 가 `config({ jitless: true })` 로 스키마를 만들기 전에 문자열 코드 실행(`Function`)을 끈다. 빌드에서는 zod 와 그 설정을 `zod` 조각 하나에 묶는다(`codeSplitting` 그룹) — 따로 두면 zod 가 든 공용 조각이 설정보다 먼저 평가돼 CSP 위반 보고가 난다(앱은 돈다). 조각 배치를 바꿨으면 `docs/guides/deploy.md` 「보안」의 CSP 확인을 다시 한다.
 서버 상태의 진실은 Query 캐시이고 wire 이벤트가 그것을 패치한다. 스트리밍 중인 런만 Zustand 스토어에 둔다(스펙 4장, 데이터 흐름 A).
 캐시 모양: 채널 `["timeline", ch]` 은 **루트만**(답글은 seq 만 기록 — 채널 `lastSeq` 는 루트·답글 모두의 최대 seq 라 답글 뒤의 루트가 거짓 빈틈이 되지 않는다),
 스레드 `["thread", ch, root]` 는 루트+답글 seq 순 한 목록(REST 로 처음 받고 그 뒤는 wire 가 고친다, 캐시가 없는 스레드의 답글은 버린다 — 칩은 루트 `message.updated` 가 맞춘다).
