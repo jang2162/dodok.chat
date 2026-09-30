@@ -111,6 +111,23 @@ describe("LoginPage — 이메일·비밀번호(기본)", () => {
     });
   });
 
+  it.each([
+    ["401", json(401, { code: "UNAUTHORIZED", message: "x" })],
+    ["429", json(429, { code: "RATE_LIMITED", message: "Rate limit exceeded" })],
+  ])(
+    "실패(%s) 뒤 초점은 비워진 비밀번호 칸으로 — 비활성이 된 「로그인」 버튼과 함께 body 로 떨어지지 않게(n1)",
+    async (_code, reply) => {
+      stubServer(() => reply);
+      renderAt("/login");
+      await userEvent.type(await screen.findByLabelText("이메일"), "mia@example.com");
+      const password = screen.getByLabelText("비밀번호");
+      await userEvent.type(password, "wrong-password");
+      await userEvent.click(screen.getByRole("button", { name: "로그인" }));
+      await screen.findByRole("alert");
+      await waitFor(() => expect(password).toHaveFocus());
+    },
+  );
+
   it("429 면 레이트리밋 문구", async () => {
     stubServer(() => json(429, { code: "RATE_LIMITED", message: "Rate limit exceeded" }));
     renderAt("/login");
@@ -148,6 +165,17 @@ describe("LoginPage — owner 로컬 토큰(접힘)", () => {
     expect(input).toHaveAttribute("type", "password");
     expect(await screen.findByText("토큰이 맞지 않습니다")).toBeInTheDocument();
     expect(router.state.location.pathname).toBe("/login");
+  });
+
+  it("실패 뒤 초점은 비워진 토큰 칸으로 — 비활성이 된 버튼과 함께 body 로 떨어지지 않게(n1)", async () => {
+    stubServer(() => json(401, { code: "UNAUTHORIZED", message: "x" }));
+    renderAt("/login");
+    await userEvent.click(await screen.findByRole("button", { name: "owner 로컬 토큰으로 로그인" }));
+    const input = screen.getByLabelText("로컬 토큰");
+    await userEvent.type(input, "wrong");
+    await userEvent.click(screen.getByRole("button", { name: "토큰으로 로그인" }));
+    await screen.findByText("토큰이 맞지 않습니다");
+    await waitFor(() => expect(input).toHaveFocus());
   });
 
   it("429 면 레이트리밋 문구", async () => {

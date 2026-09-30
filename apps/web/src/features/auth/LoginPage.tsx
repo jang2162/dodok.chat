@@ -1,6 +1,6 @@
 import { Navigate, type RegisteredRouter, getRouteApi } from "@tanstack/react-router";
 import { ChevronDownIcon } from "lucide-react";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, type RefObject, useEffect, useRef, useState } from "react";
 import { ApiRequestError } from "@/api/http";
 import { useMe } from "@/api/queries";
 import { cn } from "@/lib/utils";
@@ -27,6 +27,16 @@ function emailErrorText(error: Error): string {
 
 /** me 가 풀렸으면 LoginPage 가 이미 이동한다 — 성공했는데 폼이 남았다면 쿠키가 안 구워진 것(http 에서 secureCookie 등) */
 const NO_SESSION = "로그인했지만 세션을 확인하지 못했습니다";
+
+/**
+ * 실패 문구가 뜨면 비워진 칸(비밀번호·토큰)으로 초점을 옮긴다(가입·「내 계정」의 오류 칸 초점과 같다) — 제출한 버튼이
+ * 비활성으로 바뀌며 초점이 body 로 떨어지지 않게. 문구가 뜨는 렌더에서는 이미 제출 중이 꺼져 칸이 잠기지 않는다
+ */
+function useFocusOnError(error: string | undefined, field: RefObject<HTMLInputElement | null>) {
+  useEffect(() => {
+    if (error !== undefined) field.current?.focus();
+  }, [error, field]);
+}
 
 function FormError({ error }: { error?: string }) {
   return error ? (
@@ -81,6 +91,8 @@ function EmailForm() {
   const [password, setPassword] = useState("");
   // 문구는 뮤테이션 상태가 아니라 여기 둔다 — 뮤테이션은 끝나자마자 비운다(비밀번호가 variables 로 남지 않게)
   const [error, setError] = useState<string>();
+  const passwordRef = useRef<HTMLInputElement>(null);
+  useFocusOnError(error, passwordRef);
   const ready = email.trim() !== "" && password !== "";
 
   function submit(e: FormEvent<HTMLFormElement>) {
@@ -115,6 +127,7 @@ function EmailForm() {
         label="비밀번호"
         type="password"
         autoComplete="current-password"
+        ref={passwordRef}
         value={password}
         onChange={(e) => setPassword(e.target.value)}
         disabled={login.isPending}
@@ -132,6 +145,8 @@ function TokenForm() {
   const login = useLogin();
   const [token, setToken] = useState("");
   const [error, setError] = useState<string>();
+  const tokenRef = useRef<HTMLInputElement>(null);
+  useFocusOnError(error, tokenRef);
 
   function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -154,6 +169,7 @@ function TokenForm() {
         <Label htmlFor="login-token">로컬 토큰</Label>
         <Input
           id="login-token"
+          ref={tokenRef}
           type="password"
           autoComplete="current-password"
           autoFocus
