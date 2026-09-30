@@ -225,6 +225,8 @@ describe("멤버 관리 REST", () => {
       const target = await person("member");
       const reset = await issueReset(admin.token, target.id);
       const ownerReset = await issueReset(ownerToken, (await person("member")).id);
+      // 같은 admin 이 다른 member 에게 낸 링크 — owner 거르기에 안 걸려 대상 범위만이 이것을 남긴다
+      const otherReset = await issueReset(admin.token, (await person("member")).id);
       const row = findValidInvite(app.db, reset, new Date());
       if (!row) throw new Error("reset link not found");
 
@@ -240,6 +242,7 @@ describe("멤버 관리 REST", () => {
       );
       expect((await call(target.token, "GET", "/api/v1/auth/me")).statusCode).toBe(200);
       // 다른 사람을 겨눈 링크는 그대로
+      expect((await open("/api/v1/invites/lookup", { token: otherReset })).statusCode).toBe(200);
       expect((await open("/api/v1/invites/lookup", { token: ownerReset })).statusCode).toBe(200);
     });
 
