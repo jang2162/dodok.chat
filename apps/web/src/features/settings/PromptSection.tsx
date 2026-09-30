@@ -9,9 +9,12 @@ import { Saved, Section } from "./Section";
 
 export const PROMPT_MAX = 20_000;
 
-/** ADR 0003 — 기존 세션에는 채널 프롬프트가 온전히 반영되지 않는다 */
+/**
+ * OpenClaw 는 기존 세션에 채널 프롬프트가 온전히 반영되지 않는다(ADR 0003). Claude 러너 세션은 서버가 리비전이 바뀌면 다음 런을
+ * 새 세션으로 연다(ADR 0007 「규칙이 바뀐 뒤 이어 간 세션」)
+ */
 export const PROMPT_SAVED_NOTICE =
-  "다음 턴부터 반영됩니다. 이미 진행 중인 대화에 온전히 반영하려면 에이전트별 「새 대화」를 누르세요";
+  "다음 턴부터 반영됩니다. Claude 러너 에이전트는 다음 런을 새 대화로 시작합니다. OpenClaw 에이전트의 진행 중인 대화에 온전히 반영하려면 에이전트별 「새 대화」를 누르세요";
 
 /**
  * 채널 프롬프트(스펙 6.3). 공백뿐이면 지운다(null). VALIDATION·CONFLICT 만 섹션 안에, 그 밖은 전역 토스트.

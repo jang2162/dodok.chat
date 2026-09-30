@@ -239,7 +239,7 @@ describe("채널 프롬프트", () => {
     expect(within(section).getByText("19,996자 남음")).toBeInTheDocument();
     await userEvent.click(within(section).getByRole("button", { name: "저장" }));
     expect(await within(section).findByRole("status")).toHaveTextContent(
-      "다음 턴부터 반영됩니다. 이미 진행 중인 대화에 온전히 반영하려면 에이전트별 「새 대화」를 누르세요",
+      "다음 턴부터 반영됩니다. Claude 러너 에이전트는 다음 런을 새 대화로 시작합니다. OpenClaw 에이전트의 진행 중인 대화에 온전히 반영하려면 에이전트별 「새 대화」를 누르세요",
     );
     expect(box).toHaveValue("간결하게");
 
