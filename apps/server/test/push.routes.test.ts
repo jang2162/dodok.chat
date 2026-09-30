@@ -6,8 +6,10 @@ import pino from "pino";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { App } from "../src/app";
 import { isLocalVapidSubject, loadConfig } from "../src/config";
+import { session as authSession } from "../src/db/auth-schema";
 import { pushSubscriptions } from "../src/db/schema.sqlite";
 import { listSubscriptions } from "../src/modules/push/service";
+import { sweepExpiredSessions } from "../src/realtime/socket";
 import { bootTestApp, login, userWithRole } from "./helpers/app";
 import { testEnv } from "./helpers/env";
 
@@ -159,6 +161,111 @@ describe("푸시 경로 /api/v1/push", () => {
     expect((await call(a, "DELETE", "/subscriptions", {})).statusCode).toBe(400);
     expect((await call(a, "DELETE", "/subscriptions", { endpoint: "x".repeat(2049) })).statusCode).toBe(400);
     expect(rows()).toHaveLength(before);
+  });
+});
+
+describe("구독은 등록한 세션에 묶인다 — 세션이 지워지거나 만료되면 보내지 않는다", () => {
+  let app: App;
+  let userId: string;
+  const password = "p".repeat(16);
+
+  beforeAll(async () => {
+    app = await bootTestApp();
+    ({ id: userId } = await userWithRole(app, "sess", "member"));
+    const ctx = await app.auth.$context;
+    await ctx.internalAdapter.linkAccount({
+      userId,
+      providerId: "credential",
+      accountId: userId,
+      password: await ctx.password.hash(password),
+    });
+  });
+  afterAll(async () => {
+    await app.close();
+  });
+
+  const newSession = async () => {
+    const s = await (await app.auth.$context).internalAdapter.createSession(userId);
+    return { id: s.id, token: s.token, headers: { authorization: `Bearer ${s.token}` } };
+  };
+  const subscribe = async (who: { headers: { authorization: string } }, endpoint: string) => {
+    const res = await app.fastify.inject({
+      method: "POST",
+      url: "/api/v1/push/subscriptions",
+      headers: who.headers,
+      payload: { endpoint, keys: KEYS },
+    });
+    expect(res.statusCode).toBe(204);
+  };
+  const endpoints = () =>
+    listSubscriptions(app.db, userId)
+      .map((s) => s.endpoint)
+      .sort();
+  const rowOf = (endpoint: string) =>
+    app.db.select().from(pushSubscriptions).where(eq(pushSubscriptions.endpoint, endpoint)).get();
+
+  it("행에 등록한 세션 id 가 남고, 같은 endpoint 를 다른 세션이 다시 등록하면 그 세션으로 옮긴다", async () => {
+    const s1 = await newSession();
+    const s2 = await newSession();
+    await subscribe(s1, "https://push.example/move");
+    expect(rowOf("https://push.example/move")).toMatchObject({ userId, sessionId: s1.id });
+    await subscribe(s2, "https://push.example/move");
+    expect(rowOf("https://push.example/move")).toMatchObject({ userId, sessionId: s2.id });
+  });
+
+  it("로그아웃하면 그 세션의 구독만 지워진다 — 다른 세션의 구독은 남는다", async () => {
+    const s1 = await newSession();
+    const s2 = await newSession();
+    await subscribe(s1, "https://push.example/logout-1");
+    await subscribe(s2, "https://push.example/logout-2");
+    const res = await app.fastify.inject({ method: "POST", url: "/api/v1/auth/logout", headers: s1.headers });
+    expect(res.statusCode).toBe(200);
+    expect(rowOf("https://push.example/logout-1")).toBeUndefined();
+    expect(rowOf("https://push.example/logout-2")).toMatchObject({ sessionId: s2.id });
+  });
+
+  it("비밀번호를 바꾸면 이 세션의 구독은 남고 끊긴 다른 세션의 구독은 지워진다", async () => {
+    const keep = await newSession();
+    const other = await newSession();
+    await subscribe(keep, "https://push.example/pw-keep");
+    await subscribe(other, "https://push.example/pw-other");
+    const res = await app.fastify.inject({
+      method: "POST",
+      url: "/api/v1/me/password",
+      headers: keep.headers,
+      payload: { current: password, next: password },
+    });
+    expect(res.statusCode).toBe(204);
+    expect(rowOf("https://push.example/pw-keep")).toMatchObject({ sessionId: keep.id });
+    expect(rowOf("https://push.example/pw-other")).toBeUndefined();
+  });
+
+  it("사용자의 세션을 모두 지우면(재설정·내보내기·owner 토큰 교체가 쓰는 deleteUserSessions) 그 사용자의 구독이 모두 지워진다", async () => {
+    await subscribe(await newSession(), "https://push.example/all-1");
+    await subscribe(await newSession(), "https://push.example/all-2");
+    await (await app.auth.$context).internalAdapter.deleteUserSessions(userId);
+    expect(app.db.select().from(pushSubscriptions).where(eq(pushSubscriptions.userId, userId)).all()).toEqual(
+      [],
+    );
+  });
+
+  it("만료된 세션의 구독은 청소 전에도 발송 목록에서 빠지고, 청소가 행을 지운다", async () => {
+    const live = await newSession();
+    const stale = await newSession();
+    await subscribe(live, "https://push.example/exp-live");
+    await subscribe(stale, "https://push.example/exp-stale");
+    app.db
+      .update(authSession)
+      .set({ expiresAt: new Date(Date.now() - 1000) })
+      .where(eq(authSession.id, stale.id))
+      .run();
+    expect(endpoints()).toContain("https://push.example/exp-live");
+    expect(endpoints()).not.toContain("https://push.example/exp-stale");
+    expect(rowOf("https://push.example/exp-stale")).toBeDefined();
+
+    sweepExpiredSessions(app.io, app.db);
+    expect(rowOf("https://push.example/exp-stale")).toBeUndefined();
+    expect(rowOf("https://push.example/exp-live")).toMatchObject({ sessionId: live.id });
   });
 });
 

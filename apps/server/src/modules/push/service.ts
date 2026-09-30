@@ -1,9 +1,10 @@
 /** 푸시 구독 저장(스펙 5.1)·발송(5.4)·버스 배선 */
 import type { PushSubscriptionInput } from "@dodok/shared";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, gt, inArray } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { v7 as uuidv7 } from "uuid";
 import webpush from "web-push";
+import { session } from "../../db/auth-schema";
 import type { Db, DbOrTx } from "../../db/client";
 import { agents, memberships, pushSubscriptions, users } from "../../db/schema.sqlite";
 import type { Logger } from "../../logger";
@@ -14,20 +15,23 @@ import { type PushTarget, type TriggerLookups, targetsForApproval, targetsForMes
 
 /**
  * endpoint 로 upsert. 이미 다른 사용자에게 묶여 있으면 지금 사용자로 옮긴다 — 같은 브라우저에서 사람이 바뀌면
- * 앞 사람에게 뒷사람의 알림이 가지 않게(Review Focus 1). 행 id 는 처음 것을 그대로 둔다
+ * 앞 사람에게 뒷사람의 알림이 가지 않게(Review Focus 1). 등록한 세션도 지금 세션으로 옮긴다 — 구독은 그 세션이 사는 동안만
+ * 쓰인다(스키마 pushSubscriptions 주석). 행 id 는 처음 것을 그대로 둔다
  */
 export function upsertSubscription(
   db: DbOrTx,
-  userId: string,
+  owner: { userId: string; sessionId: string },
   input: PushSubscriptionInput,
   userAgent?: string,
 ): void {
+  const { userId, sessionId } = owner;
   const now = new Date();
   const userAgentValue = userAgent ?? null;
   db.insert(pushSubscriptions)
     .values({
       id: uuidv7(),
       userId,
+      sessionId,
       endpoint: input.endpoint,
       keys: input.keys,
       userAgent: userAgentValue,
@@ -35,7 +39,7 @@ export function upsertSubscription(
     })
     .onConflictDoUpdate({
       target: pushSubscriptions.endpoint,
-      set: { userId, keys: input.keys, userAgent: userAgentValue, createdAt: now },
+      set: { userId, sessionId, keys: input.keys, userAgent: userAgentValue, createdAt: now },
     })
     .run();
 }
@@ -47,14 +51,20 @@ export function removeSubscription(db: DbOrTx, userId: string, endpoint: string)
     .run();
 }
 
+/**
+ * 발송 대상 — 등록한 세션이 아직 만료 전인 구독만. 만료 세션 행은 청소(sweepExpiredSessions)가 지울 때 구독도 함께 지워지지만,
+ * 청소 주기 사이에도 만료된 세션의 기기로는 보내지 않는다
+ */
 export function listSubscriptions(
   db: DbOrTx,
   userId: string,
+  now: Date = new Date(),
 ): Array<{ id: string; endpoint: string; keys: { p256dh: string; auth: string } }> {
   return db
     .select({ id: pushSubscriptions.id, endpoint: pushSubscriptions.endpoint, keys: pushSubscriptions.keys })
     .from(pushSubscriptions)
-    .where(eq(pushSubscriptions.userId, userId))
+    .innerJoin(session, eq(session.id, pushSubscriptions.sessionId))
+    .where(and(eq(pushSubscriptions.userId, userId), gt(session.expiresAt, now)))
     .all();
 }
 

@@ -1,4 +1,5 @@
 import { v7 as uuid } from "uuid";
+import { session, user } from "../../src/db/auth-schema";
 import type { DbOrTx } from "../../src/db/client";
 import { agents, channelMembers, channels, users, workspaces } from "../../src/db/schema.sqlite";
 
@@ -71,4 +72,25 @@ export function seedChannelWithAgent(
     .run();
 
   return { workspaceId, userId, agentId, channelId };
+}
+
+/**
+ * 푸시 구독의 주인(사용자 + 등록한 세션). 구독은 세션 FK 가 있어야 들어간다 — Better Auth user 행이 없으면 넣고(이메일은 id 로
+ * 만든 자리값) 세션 행을 새로 만든다. 부를 때마다 새 세션이다
+ */
+export function seedSession(
+  db: DbOrTx,
+  userId: string,
+  expiresAt: Date = new Date(Date.now() + 30 * 24 * 3600_000),
+): { userId: string; sessionId: string } {
+  const now = new Date();
+  db.insert(user)
+    .values({ id: userId, name: userId, email: `${userId}@seed.local`, createdAt: now, updatedAt: now })
+    .onConflictDoNothing()
+    .run();
+  const sessionId = uuid();
+  db.insert(session)
+    .values({ id: sessionId, token: uuid(), userId, expiresAt, createdAt: now, updatedAt: now })
+    .run();
+  return { userId, sessionId };
 }

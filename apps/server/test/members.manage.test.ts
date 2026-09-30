@@ -306,10 +306,15 @@ describe("멤버 관리 REST", () => {
         bodyMd: "나 간다",
         clientMsgId: `c${++n}`,
       });
-      upsertSubscription(app.db, member.id, {
-        endpoint: `https://push.example/${member.handle}`,
-        keys: { p256dh: "p", auth: "a" },
-      });
+      const memberSession = await (await app.auth.$context).internalAdapter.createSession(member.id);
+      upsertSubscription(
+        app.db,
+        { userId: member.id, sessionId: memberSession.id },
+        {
+          endpoint: `https://push.example/${member.handle}`,
+          keys: { p256dh: "p", auth: "a" },
+        },
+      );
       const reset = uuid();
       app.db
         .insert(invites)

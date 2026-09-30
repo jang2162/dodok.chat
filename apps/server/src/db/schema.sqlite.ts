@@ -14,6 +14,7 @@ import type {
 } from "@dodok/shared";
 import { sql } from "drizzle-orm";
 import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { session } from "./auth-schema";
 
 const ts = (name: string) => integer(name, { mode: "timestamp_ms" });
 const json = <T>(name: string) => text(name, { mode: "json" }).$type<T>();
@@ -320,6 +321,11 @@ export const approvals = sqliteTable(
   ],
 );
 
+/**
+ * 웹 푸시 구독. session_id 는 구독을 등록한 Better Auth 세션 — 그 세션 행이 지워지면(로그아웃·비밀번호 변경·재설정·내보내기·
+ * 만료 청소, 모두 session 행 DELETE) 구독도 함께 지워진다(ON DELETE CASCADE, createDb 가 foreign_keys 를 켠다).
+ * 청소 전의 만료 세션은 listSubscriptions 가 거른다
+ */
 export const pushSubscriptions = sqliteTable(
   "push_subscriptions",
   {
@@ -327,12 +333,18 @@ export const pushSubscriptions = sqliteTable(
     userId: text("user_id")
       .notNull()
       .references(() => users.id),
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => session.id, { onDelete: "cascade" }),
     endpoint: text("endpoint").notNull(),
     keys: json<{ p256dh: string; auth: string }>("keys_json").notNull(),
     userAgent: text("user_agent"),
     createdAt: ts("created_at").notNull(),
   },
-  (t) => [uniqueIndex("push_subscriptions_endpoint").on(t.endpoint)],
+  (t) => [
+    uniqueIndex("push_subscriptions_endpoint").on(t.endpoint),
+    index("push_subscriptions_session").on(t.sessionId),
+  ],
 );
 
 /**

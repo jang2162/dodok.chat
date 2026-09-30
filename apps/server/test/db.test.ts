@@ -288,4 +288,61 @@ describe("db", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+  it("0009 까지 적용된 DB 에 0010(push_subscriptions.session_id)을 얹으면 세션을 모르는 옛 구독 행은 지워지고, 새 행은 세션과 함께 지워진다", () => {
+    const dir = mkdtempSync(join(tmpdir(), "dodok-db-mig-"));
+    try {
+      const older = migrationsUpTo(dir, "_runner_tokens");
+      const sqlite = new Database(join(dir, "app.db"));
+      try {
+        sqlite.pragma("foreign_keys = ON");
+        const db = drizzle(sqlite, { schema: { ...schema, ...authSchema } });
+        migrate(db, { migrationsFolder: older });
+        const ws = uuid();
+        const userId = uuid();
+        const at = Date.parse("2026-09-25T00:00:00.000Z");
+        db.run(sql`INSERT INTO workspaces (id, name, created_at) VALUES (${ws}, 'w', ${at})`);
+        db.run(sql`INSERT INTO users (id, workspace_id, handle, display_name, auth_provider, created_at)
+          VALUES (${userId}, ${ws}, 'mia', 'Mia', 'local', ${at})`);
+        // 0009 의 push_subscriptions 에는 session_id 가 없다 — 스키마 객체 대신 SQL 로 넣는다
+        db.run(sql`INSERT INTO push_subscriptions (id, user_id, endpoint, keys_json, user_agent, created_at)
+          VALUES (${uuid()}, ${userId}, 'https://push.example/old', '{"p256dh":"p","auth":"a"}', NULL, ${at})`);
+
+        migrate(db, { migrationsFolder: migrationsFolder() });
+
+        expect(db.select().from(schema.pushSubscriptions).all()).toEqual([]);
+        const now = new Date();
+        db.insert(authSchema.user)
+          .values({ id: userId, name: "mia", email: "mia@dodok.local", createdAt: now, updatedAt: now })
+          .run();
+        const sessionId = uuid();
+        db.insert(authSchema.session)
+          .values({ id: sessionId, token: uuid(), userId, expiresAt: now, createdAt: now, updatedAt: now })
+          .run();
+        const row = {
+          id: uuid(),
+          userId,
+          sessionId,
+          endpoint: "https://push.example/new",
+          keys: { p256dh: "p", auth: "a" },
+          userAgent: null,
+          createdAt: now,
+        };
+        db.insert(schema.pushSubscriptions).values(row).run();
+        expect(db.select().from(schema.pushSubscriptions).all()).toEqual([row]);
+        // 세션이 없는 구독은 넣을 수 없다
+        expect(() =>
+          db
+            .insert(schema.pushSubscriptions)
+            .values({ ...row, id: uuid(), endpoint: "https://push.example/x", sessionId: uuid() })
+            .run(),
+        ).toThrow(/FOREIGN KEY/);
+        db.delete(authSchema.session).where(eq(authSchema.session.id, sessionId)).run();
+        expect(db.select().from(schema.pushSubscriptions).all()).toEqual([]);
+      } finally {
+        sqlite.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

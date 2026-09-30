@@ -1,4 +1,4 @@
-/** 푸시 경로(스펙 2.2·5.1). 모두 세션 사용자 — 구독은 그 사람에게 묶인다 */
+/** 푸시 경로(스펙 2.2·5.1). 모두 세션 사용자 — 구독은 그 사람과 등록한 세션에 묶인다 */
 import { PushSubscriptionInput, PushUnsubscribeInput } from "@dodok/shared";
 import type { FastifyInstance } from "fastify";
 import type { Auth } from "../../auth";
@@ -26,7 +26,8 @@ export function registerPushRoutes(fastify: FastifyInstance, ctx: PushRouteConte
   fastify.post("/api/v1/push/subscriptions", authed, async (request, reply) => {
     const input = parseBody(PushSubscriptionInput, request.body);
     const userAgent = request.headers["user-agent"]?.slice(0, USER_AGENT_MAX);
-    upsertSubscription(ctx.db, sessionUser(request).id, input, userAgent);
+    const { id: userId, sessionId } = sessionUser(request);
+    upsertSubscription(ctx.db, { userId, sessionId }, input, userAgent);
     return reply.code(204).send();
   });
 

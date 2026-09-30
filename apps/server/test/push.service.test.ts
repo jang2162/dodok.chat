@@ -21,7 +21,7 @@ import {
 import { ServerBus } from "../src/realtime/bus";
 import type { PushTarget } from "../src/modules/push/triggers";
 import { newTestDb } from "./helpers/db";
-import { seedChannelWithAgent, seedWorkspace } from "./helpers/seed";
+import { seedChannelWithAgent, seedSession, seedWorkspace } from "./helpers/seed";
 
 const KEYS_A = {
   p256dh: "BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCA_0QTpQtUbVlUls0VJXg7A8u-Ts1XbjhazAkj7I99e8QcYP7DkM",
@@ -62,9 +62,9 @@ describe("push service — listSubscriptions·deleteSubscriptionById", () => {
         createdAt: new Date(),
       })
       .run();
-    upsertSubscription(db, alice, { endpoint: EP_A1, keys: KEYS_A }, "ua-a1");
-    upsertSubscription(db, alice, { endpoint: EP_A2, keys: KEYS_A2 });
-    upsertSubscription(db, bob, { endpoint: EP_B, keys: KEYS_B }, "ua-b");
+    upsertSubscription(db, seedSession(db, alice), { endpoint: EP_A1, keys: KEYS_A }, "ua-a1");
+    upsertSubscription(db, seedSession(db, alice), { endpoint: EP_A2, keys: KEYS_A2 });
+    upsertSubscription(db, seedSession(db, bob), { endpoint: EP_B, keys: KEYS_B }, "ua-b");
   });
 
   it("사용자마다 자기 구독만 { id, endpoint, keys } 로 낸다(남의 구독·user_agent 는 없다)", () => {
@@ -175,9 +175,9 @@ describe("createPushDispatcher — 발송·거르기·결과 분기(스펙 5.3·
         createdAt: new Date(),
       })
       .run();
-    upsertSubscription(db, alice, { endpoint: EP_A1, keys: KEYS_A });
-    upsertSubscription(db, alice, { endpoint: EP_A2, keys: KEYS_A2 });
-    upsertSubscription(db, bob, { endpoint: EP_B, keys: KEYS_B });
+    upsertSubscription(db, seedSession(db, alice), { endpoint: EP_A1, keys: KEYS_A });
+    upsertSubscription(db, seedSession(db, alice), { endpoint: EP_A2, keys: KEYS_A2 });
+    upsertSubscription(db, seedSession(db, bob), { endpoint: EP_B, keys: KEYS_B });
     calls = [];
     respond = async () => ({ statusCode: 201 });
     cap = captureLogger();
@@ -276,8 +276,8 @@ describe("createPushDispatcher — 발송·거르기·결과 분기(스펙 5.3·
     expect(endpoints(bob)).toEqual([EP_B]);
 
     // 하나만 410
-    upsertSubscription(db, alice, { endpoint: EP_A1, keys: KEYS_A });
-    upsertSubscription(db, alice, { endpoint: EP_A2, keys: KEYS_A2 });
+    upsertSubscription(db, seedSession(db, alice), { endpoint: EP_A1, keys: KEYS_A });
+    upsertSubscription(db, seedSession(db, alice), { endpoint: EP_A2, keys: KEYS_A2 });
     respond = async (c) => ({ statusCode: c.endpoint === EP_A2 ? 410 : 201 });
     await dispatcher().dispatch([{ userId: alice, payload: mention() }]);
     expect(endpoints(alice)).toEqual([EP_A1]);
@@ -443,7 +443,7 @@ describe("createPushDispatcher — 발송·거르기·결과 분기(스펙 5.3·
     for (const c of cases) {
       cap = captureLogger();
       respond = c.respond;
-      upsertSubscription(db, bob, { endpoint: EP_B, keys: KEYS_B }); // 410 이 지운 뒤에도 다음 경우를 위해
+      upsertSubscription(db, seedSession(db, bob), { endpoint: EP_B, keys: KEYS_B }); // 410 이 지운 뒤에도 다음 경우를 위해
       await dispatcher().dispatch([{ userId: bob, payload: mention() }]);
       expect(cap.lines, c.name).toHaveLength(1);
       expect(cap.lines[0], c.name).toMatchObject({

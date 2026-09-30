@@ -355,7 +355,7 @@ runs(id, channel_id, agent_id, trigger_message_id, session_key, provider_run_id,
 run_events(id, run_id, seq, type, payload_json, created_at)
 component_interactions(id, message_id, component_id, user_id, payload_json, delivered_at)
 approvals(id, run_id, provider_approval_id, kind, status, decided_by, decided_at, expires_at)
-push_subscriptions(id, user_id, endpoint, keys_json, user_agent, created_at)
+push_subscriptions(id, user_id, session_id, endpoint, keys_json, user_agent, created_at)
 ```
 
 SQLite(WAL)로 시작, Drizzle ORM으로 스키마 정의해 Postgres 전환 시 마이그레이션만 교체.
@@ -614,7 +614,6 @@ Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-comp
 - **푸시 서비스로 가는 메타데이터(언제·몇 번)는 드러난다** — 페이로드는 암호화되고 누가·어디·무엇만 싣지만, 발송 시각과 횟수는 FCM·APNs 가 본다. 출처: 스펙 10장. 미룬 까닭: 웹 푸시의 구조다. 줄이려면 알림 종류를 끄는 설정(스펙 1장 「후속」)이 먼저다.
 - **presence 가 틀리는 두 방향** — ① 서버 재시작 직후 presence 가 빈 몇 초 동안은 보고 있어도 푸시가 간다(스펙 10장). ② 네트워크 단절·절전처럼 연결이 닫히지 않고 끊긴 탭의 소켓은 socket.io ping 제한(25초+20초)까지 presence 에 남아, 그동안 그 채널 푸시가 과하게 걸러진다. 탭 닫기·하드 이동은 해당하지 않는다 — p4-c1 이 닫기 방식 다섯·프록시 경유/직접 17조합을 재 보니 서버 disconnect 가 9~590ms 안에 왔고 그 전에 `visible:false` 가 먼저 도착했다(실연 p4-t9 가 본 「45초 억제」는 서버 로그 없이 도착 여부로만 본 것이라 GCM 연결 지연과 섞였다 — `docs/guides/live-smoke.md` 14.4.3-B 정정). p4-t7 「확인됨」 2 는 강제 종료된 스크립트의 브라우저 페이지가 떠 있던 것. 또 서버는 `presence.update` 의 `channelId` 를 검증하지 않고 사용자당 소켓 수 상한도 없다(p4-t3 보고서 걱정 — 남의 채널 id 는 자기 알림을 덜 받게 할 뿐이고, 끊김마다 지워 새지는 않는다). 미룬 까닭: 모두 몇 초~수십 초의 틈이거나 자기 자신에게만 닿는다. presence 를 저장하거나 ping 을 줄이는 것은 비용이 이득보다 크다.
 - **가려졌지만 `visible` 인 창이 있으면 승인 알림이 아무 데도 안 뜰 수 있다** — 같은 채널을 연 창이 다른 창에 **부분적으로 가려졌거나 포커스가 없어도** `document.visibilityState` 는 `visible` 이다. 그러면 서버는 「보고 있음」으로 푸시를 거르고(스펙 결정 2), 이 기기에 푸시가 켜져 있으면 탭 안 승인 알림도 쉰다(결정 8). 사람이 그 창을 안 보고 있으면 승인 요청을 놓친다. 출처: 원장 「이월(판단 필요)」, p4-t7 뒤. 미룬 까닭: 판단이 필요하다 — `document.hasFocus()` 를 presence 에 더하면 반대로 옆 창에서 보고 있는 사람에게도 푸시가 간다. 실제로 놓치는지는 사람이 본다(`docs/guides/live-smoke.md` 14.3).
-- **구독 행이 세션과 묶이지 않는다 — 세션이 모두 만료된 사용자에게도 보낸다** — 서버는 `push_subscriptions` 의 사용자에게 살아 있는 세션이 있는지 보지 않는다. 로그아웃 없이 떠난 공유 브라우저에서는 그 사람의 알림이 세션 만료(30일, 쓸 때마다 연장) 뒤에도 계속 뜬다. 로그아웃의 서버 해지가 3초를 넘기거나 실패해도 행이 남는다(기기 구독은 해지되므로 다음 발송의 404·410 이 지운다). 출처: p4-t5 리뷰 「못 잰 것」 5, 원장 「이월(서버, 범위 밖)」. 미룬 까닭: 웹 쪽은 R8(401 에서 기기 구독 해지)로 「누군가 앱을 연 뒤」부터는 막았다. 근본은 서버 설계다 — 「발송 전에 살아 있는 세션이 없으면 보내지 않음/행 정리」를 정하려면 세션 테이블 조회를 발송 경로에 넣어야 해서 태스크 5(웹) 범위 밖이었다.
 - **실연 모델 런의 알림이 브라우저에 뜨지 않았다(1회 관찰) — 새 프로필 첫 몇 분의 FCM 누락과 같은 줄기로 보인다** — p4-t9 모델 런에서 서버는 발송했고 `chrome://gcm-internals` 에 `Data msg received 723 bytes` 가 찍혔지만 15초 안에 `getNotifications()` 가 비어 있었다(직후 하네스 재현은 2초 도착). p4-c1 도 새 프로필에서 서버 201 인데 20초 안에 5건 중 3건이 안 온 것을 봤다(데워진 프로필은 3/3, 1.7~1.9초). 출처: p4-t9 보고서 「새로 찾은 것」 3, p4-c1 보고서 걱정. 미룬 까닭: 발송(서버 201)·수신(GCM 기록)까지 dodok 쪽 증거는 정상이고 원인이 Chromium·FCM 쪽으로 보인다. 사람이 실제 Chrome(자동화 인자 없음)에서 한 번 본다(14.3). 이제 `LOG_LEVEL=debug` 서버 로그로 거름·발송을 가를 수 있다.
 - **dev:fake 진입점은 로그 레벨이 info 로 고정이다** — p4-c1 이 더한 `push skipped — watching`·`push sent`(debug)를 dev:fake 에서 보려면 진입점을 고쳐야 한다. 출처: p4-c1 보고서 걱정. 미룬 까닭: 손 확인 편의라 낮음 — 필요할 때 `LOG_LEVEL` 을 따르게 한다.
 - **bfcache 로 돌아온 탭(`pageshow` persisted)에 대칭 전송이 없다** — `pagehide` 에서 「안 보임」을 보낸 탭이 뒤로 가기 캐시로 돌아오면 재연결 강제 전송과 `visibilitychange` 가 덮는 것에 기댄다. 출처: p4-c1 리뷰 비차단 관찰. 미룬 까닭: 재연결 때 강제 전송이 있어 실제 틈은 재연결 전 잠깐이다(낮음).
