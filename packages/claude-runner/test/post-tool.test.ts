@@ -522,7 +522,13 @@ while True:
         expect(rejected).toBeGreaterThan(0);
         expect(h.uploaded.length).toBeGreaterThan(0);
       } finally {
+        // 끝난 것을 보고 나서 돌아간다 — 아직 교체 중인데 afterEach 가 base 를 지우면 ENOTEMPTY 로 실패한다
+        const exited =
+          racer.exitCode !== null || racer.signalCode !== null
+            ? Promise.resolve()
+            : new Promise<void>((done) => racer.once("exit", () => done()));
         racer.kill("SIGKILL");
+        await exited;
       }
     },
     30_000,
