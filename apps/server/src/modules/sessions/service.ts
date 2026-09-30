@@ -92,6 +92,40 @@ export function clearProviderSessionId(db: Db, sessionId: string): void {
 }
 
 /**
+ * 서버가 세션 id 를 정하는 어댑터(러너)의 디스패치 직전 — 세션 시작 뒤 채널 리비전이 올랐으면 「새 대화」와 같은 결과로 만든다:
+ * 세션 id 를 비우고(다음 ensureProviderSessionId 가 새 UUID) 리비전·시작 표지를 맞춘다. 이어 간 세션은 자기 앞 답의 옛 형식을
+ * 따른다(ADR 0007 「규칙이 바뀐 뒤 이어 간 세션」). 리비전은 채널 하나라 promptOverride 가 바뀌어도 그 채널의 모든 행이 해당한다.
+ * 버린 대화가 있었을 때만 true — 세션 id 가 아직 없으면 리비전만 맞춘다. 한 트랜잭션이라 같은 리비전 변화에 두 번 true 가 없다
+ */
+export function renewSessionOnPromptChange(db: Db, sessionId: string): boolean {
+  return db.transaction((tx) => {
+    const row = tx
+      .select({
+        channelId: agentSessions.channelId,
+        promptRevisionAtStart: agentSessions.promptRevisionAtStart,
+        providerSessionId: agentSessions.providerSessionId,
+      })
+      .from(agentSessions)
+      .where(eq(agentSessions.id, sessionId))
+      .get();
+    if (!row) throw apiError("NOT_FOUND", "agent session not found");
+    const promptRevision = currentPromptRevision(tx, row.channelId);
+    if (row.promptRevisionAtStart === promptRevision) return false;
+    tx.update(agentSessions)
+      .set({
+        providerSessionId: null,
+        promptRevisionAtStart: promptRevision,
+        sessionStartedAt: null,
+        lifecycleRevision: null,
+        lastSyncedAt: new Date(),
+      })
+      .where(eq(agentSessions.id, sessionId))
+      .run();
+    return row.providerSessionId !== null;
+  });
+}
+
+/**
  * 우리 resetSession 이 성공한 뒤 부른다 — 새 세션은 현재 채널 프롬프트를 설정 경로로 받으므로 리비전을 맞춘다.
  * 응답에 없는 sessionStartedAt·lifecycleRevision 은 null(옛 세션 값을 남기지 않는다). 행이 없으면 만든다.
  * threadRootId 가 있으면 그 스레드 세션 행만 바꾼다. 서버가 정한 세션 id 는 건드리지 않는다(clearProviderSessionId)

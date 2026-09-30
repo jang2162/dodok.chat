@@ -28,7 +28,12 @@ import { createAgentMessage, createSystemMessage } from "../messages/service";
 import type { ApprovalsService } from "../approvals/service";
 import type { RunPlan } from "../router/decide";
 import { RETRY_RUN_ITEM } from "../router/service";
-import { ensureProviderSessionId, ensureSession, INVALID_AGENT_ID_REASON } from "../sessions/service";
+import {
+  ensureProviderSessionId,
+  ensureSession,
+  INVALID_AGENT_ID_REASON,
+  renewSessionOnPromptChange,
+} from "../sessions/service";
 import { buildInboundDeliver } from "./context";
 import {
   createMediaLineFilter,
@@ -534,6 +539,22 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     if (queue.length === 0) sessionQueues.delete(info.sessionKey);
   }
 
+  /** 채널 규칙이 바뀌어 러너 세션을 새로 열었다 — 「새 대화」 info 와 같은 모양으로 그 자리(스레드면 스레드)에 */
+  function notifyRenewed(run: Run): void {
+    try {
+      const handle = getAgent(db, run.agentId)?.handle ?? "unknown";
+      createSystemMessage(db, bus, {
+        channelId: run.channelId,
+        ...(run.threadRootId === undefined ? {} : { threadRootId: run.threadRootId }),
+        kind: "info",
+        bodyMd: `채널 규칙이 바뀌어 @${handle} 의 대화를 새로 시작했습니다`,
+        systemMeta: { kind: "info" },
+      });
+    } catch (err) {
+      logger.error({ err, runId: run.id }, "session renewed notice failed");
+    }
+  }
+
   function notifyRunError(run: Run): void {
     const code = run.error?.code;
     if (run.status !== "error" || code === undefined) return;
@@ -680,7 +701,9 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         needsPromptContext: needsPromptContext || capabilities.promptEveryRun,
         now: now(),
       });
-      // 서버가 세션 id 를 정하는 어댑터(판정 P4)만 두 번째 인자를 받는다
+      // 서버가 세션 id 를 정하는 어댑터(판정 P4)만 두 번째 인자를 받는다. 채널 규칙이 바뀐 뒤면 새 세션으로 연다 — 세션 큐가
+      // 같은 세션의 런을 하나씩 보내므로 같은 리비전 변화에 한 번만 걸린다
+      if (capabilities.serverSessionIds && renewSessionOnPromptChange(db, session.id)) notifyRenewed(run);
       const providerSessionId = capabilities.serverSessionIds
         ? ensureProviderSessionId(db, session.id)
         : undefined;

@@ -350,6 +350,122 @@ describe("Claude 러너 통합 시나리오", () => {
     expect(other.runStarts).toHaveLength(0);
   });
 
+  const ruleNotices = (log: WireLog) =>
+    log.created.filter((m) => m.systemMeta?.kind === "info" && m.bodyMd.startsWith("채널 규칙이 바뀌어"));
+
+  const patchPrompt = async (channelId: string, prompt: string) =>
+    ok("PATCH prompt", await rest(live, "PATCH", `/channels/${channelId}`, { prompt }));
+
+  it("채널 규칙이 바뀌면 러너 세션은 다음 런에서 새 세션 id — 알림 한 번, 그 다음 런은 같은 새 id [p4r-fix]", async () => {
+    const { runner, coder, channel, log } = await start();
+    await sendMessage(log.socket, channel.id, "@coder 하나");
+    expect((await log.terminal((await runOf(log, coder.id, 0)).id)).status).toBe("done");
+
+    await patchPrompt(channel.id, "답 첫 줄에 [NEW] 를 붙인다");
+    await sendMessage(log.socket, channel.id, "@coder 둘");
+    const second = await runOf(log, coder.id, 1);
+    expect((await log.terminal(second.id)).status).toBe("done");
+    await sendMessage(log.socket, channel.id, "@coder 셋");
+    expect((await log.terminal((await runOf(log, coder.id, 2)).id)).status).toBe("done");
+
+    const [a, b, c] = runner.runStarts;
+    expect(b?.providerSessionId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(b?.providerSessionId).not.toBe(a?.providerSessionId);
+    expect(c?.providerSessionId).toBe(b?.providerSessionId);
+    expect(b?.deliver.sessionKey).toBe(a?.deliver.sessionKey);
+    const notices = ruleNotices(log);
+    expect(notices.map((m) => m.bodyMd)).toEqual(["채널 규칙이 바뀌어 @coder 의 대화를 새로 시작했습니다"]);
+    expect(notices[0]?.threadRootId).toBeUndefined();
+  });
+
+  it("스레드 하위 세션도 각각 — 규칙이 바뀌면 스레드 런은 그 스레드에, 채널 런은 채널에 알림 [p4r-fix]", async () => {
+    const { runner, coder, channel, log } = await start();
+    const root = await sendMessage(log.socket, channel.id, "루트");
+    await sendMessage(log.socket, channel.id, "@coder 채널에서", {});
+    expect((await log.terminal((await runOf(log, coder.id, 0)).id)).status).toBe("done");
+    await sendMessage(log.socket, channel.id, "@coder 스레드에서", { threadRootId: root.id });
+    expect((await log.terminal((await runOf(log, coder.id, 1)).id)).status).toBe("done");
+
+    await patchPrompt(channel.id, "새 규칙");
+    await sendMessage(log.socket, channel.id, "@coder 스레드 다시", { threadRootId: root.id });
+    expect((await log.terminal((await runOf(log, coder.id, 2)).id)).status).toBe("done");
+    expect(ruleNotices(log).map((m) => m.threadRootId)).toEqual([root.id]);
+    await sendMessage(log.socket, channel.id, "@coder 채널 다시");
+    expect((await log.terminal((await runOf(log, coder.id, 3)).id)).status).toBe("done");
+
+    const [chan1, thread1, thread2, chan2] = runner.runStarts;
+    expect(thread2?.deliver.sessionKey).toBe(dodokSessionKey("coder", channel.id, root.id));
+    expect(thread2?.providerSessionId).not.toBe(thread1?.providerSessionId);
+    expect(chan2?.providerSessionId).not.toBe(chan1?.providerSessionId);
+    expect(chan2?.providerSessionId).not.toBe(thread2?.providerSessionId);
+    expect(ruleNotices(log).map((m) => m.threadRootId)).toEqual([root.id, undefined]);
+  });
+
+  it("규칙이 바뀐 뒤 같은 세션에 멘션 둘이 겹쳐도 새 세션 id·알림은 한 번 [p4r-fix]", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let index = 0;
+    const { runner, coder, channel, log } = await start(async (run) => {
+      const mine = index++;
+      if (mine === 1) await gate; // 규칙이 바뀐 뒤 첫 런이 도는 동안 둘째 멘션이 뒤에 선다
+      run.final(`답 ${mine}`);
+    });
+    await sendMessage(log.socket, channel.id, "@coder 처음");
+    expect((await log.terminal((await runOf(log, coder.id, 0)).id)).status).toBe("done");
+
+    await patchPrompt(channel.id, "새 규칙");
+    await sendMessage(log.socket, channel.id, "@coder 하나");
+    await sendMessage(log.socket, channel.id, "@coder 둘");
+    const second = await runOf(log, coder.id, 1);
+    const third = await runOf(log, coder.id, 2);
+    await vi.waitFor(() => expect(runner.runStarts).toHaveLength(2));
+    release();
+    expect((await log.terminal(second.id)).status).toBe("done");
+    expect((await log.terminal(third.id)).status).toBe("done");
+
+    const [a, b, c] = runner.runStarts;
+    expect(b?.providerSessionId).not.toBe(a?.providerSessionId);
+    expect(c?.providerSessionId).toBe(b?.providerSessionId);
+    expect(ruleNotices(log)).toHaveLength(1);
+  });
+
+  it("OpenClaw 에이전트는 규칙이 바뀌어도 새 대화가 아니다 — 같은 세션 키, 다음 인바운드에 channelPrompt, 알림 없음 [p4r-fix]", async () => {
+    const { coder } = await start();
+    const { agent: dev } = ok(
+      "POST /agents dev",
+      await rest<{ agent: Agent }>(live, "POST", "/agents", {
+        providerAgentId: "dev",
+        handle: "dev",
+        name: "Dev",
+      }),
+    );
+    const channel = await channelWith([dev, coder], "mixed");
+    const log = await openChannelWire(live, channel.id, sockets);
+    const scenario = createScenario({
+      gateway: live.gateway,
+      plugin: live.plugin,
+      agents: { dev: () => ({ reply: "네" }) },
+    });
+    await sendMessage(log.socket, channel.id, "@dev 하나");
+    expect((await log.terminal((await runOf(log, dev.id, 0)).id)).status).toBe("done");
+    await patchPrompt(channel.id, "새 규칙");
+    await sendMessage(log.socket, channel.id, "@dev 둘");
+    expect((await log.terminal((await runOf(log, dev.id, 1)).id)).status).toBe("done");
+    await sendMessage(log.socket, channel.id, "@dev 셋");
+    expect((await log.terminal((await runOf(log, dev.id, 2)).id)).status).toBe("done");
+
+    // 이어 간 OpenClaw 세션은 「새 대화」 전까지 매 턴 새 프롬프트를 받는다(ADR 0003) — 리비전을 몰래 맞추면 셋째 턴에서 빠진다
+    const delivered = live.plugin.received.filter((d) => d.channelId === channel.id);
+    expect(delivered).toHaveLength(3);
+    expect(new Set(delivered.map((d) => d.sessionKey)).size).toBe(1);
+    expect(delivered[0]?.context.channelPrompt).toBeUndefined();
+    expect(delivered.slice(1).map((d) => d.context.channelPrompt)).toEqual(["새 규칙", "새 규칙"]);
+    expect(ruleNotices(log)).toEqual([]);
+    expect(scenario.errors).toEqual([]);
+  });
+
   it("시나리오 7 — OpenClaw dev 와 Claude coder 가 한 채널에서 서로 @멘션 릴레이, 깊이 한도에서 멈춤", async () => {
     const { coder } = await start((run) => {
       run.final("@dev 확인했습니다");

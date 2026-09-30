@@ -8,6 +8,7 @@ import {
   ensureProviderSessionId,
   ensureSession,
   markSessionReset,
+  renewSessionOnPromptChange,
 } from "../src/modules/sessions/service";
 import { newTestDb } from "./helpers/db";
 import { seedChannelWithAgent } from "./helpers/seed";
@@ -104,6 +105,61 @@ describe("sessions service", () => {
     const next = ensureProviderSessionId(db, session.id);
     expect(next).not.toBe(first);
     expect(() => ensureProviderSessionId(db, "01a09fc9-d204-7551-89d6-38544d07a1ff")).toThrow();
+  });
+
+  it("renewSessionOnPromptChange — 리비전이 그대로면 아무것도 안 바꾸고 false", () => {
+    const { db, adapter, channelId, agentId } = setup();
+    const { session } = ensureSession(db, adapter, { channelId, agentId });
+    const id = ensureProviderSessionId(db, session.id);
+    updateChannel(db, channelId, { prompt: null, topic: "주제만" });
+    expect(renewSessionOnPromptChange(db, session.id)).toBe(false);
+    expect(ensureProviderSessionId(db, session.id)).toBe(id);
+  });
+
+  it("renewSessionOnPromptChange — 리비전이 오르면 세션 id 를 비우고 「새 대화」처럼 리비전·시작 표지를 맞춘다, 한 번만 true", () => {
+    const { db, adapter, channelId, agentId } = setup();
+    const { session } = ensureSession(db, adapter, { channelId, agentId });
+    const old = ensureProviderSessionId(db, session.id);
+    markSessionReset(db, channelId, agentId, {
+      sessionStartedAt: "2026-09-15T01:02:03.456Z",
+      lifecycleRevision: "0f7c2b8e-1d2a-4c55-9a51-0b8f3f0d6e11",
+    });
+    updateChannel(db, channelId, { prompt: "짧게 답해" });
+
+    expect(renewSessionOnPromptChange(db, session.id)).toBe(true);
+    const row = db.select().from(agentSessions).where(eq(agentSessions.id, session.id)).get();
+    expect(row).toMatchObject({
+      providerSessionId: null,
+      promptRevisionAtStart: 2,
+      sessionStartedAt: null,
+      lifecycleRevision: null,
+    });
+    expect(ensureSession(db, adapter, { channelId, agentId }).needsPromptContext).toBe(false);
+    expect(renewSessionOnPromptChange(db, session.id)).toBe(false);
+    expect(ensureProviderSessionId(db, session.id)).not.toBe(old);
+  });
+
+  it("renewSessionOnPromptChange — 아직 세션 id 가 없으면(대화 전) 리비전만 맞추고 false", () => {
+    const { db, adapter, channelId, agentId } = setup();
+    const { session } = ensureSession(db, adapter, { channelId, agentId });
+    updateChannel(db, channelId, { prompt: "짧게 답해" });
+    expect(renewSessionOnPromptChange(db, session.id)).toBe(false);
+    expect(ensureSession(db, adapter, { channelId, agentId }).session.promptRevisionAtStart).toBe(2);
+  });
+
+  it("renewSessionOnPromptChange — 스레드 세션 행은 채널 행과 따로 센다", () => {
+    const { db, adapter, channelId, agentId } = setup();
+    const threadRootId = "01a09fc9-d204-7551-89d6-38544d07a1ff";
+    const channelSession = ensureSession(db, adapter, { channelId, agentId }).session;
+    const threadSession = ensureSession(db, adapter, { channelId, agentId, threadRootId }).session;
+    ensureProviderSessionId(db, channelSession.id);
+    const threadId = ensureProviderSessionId(db, threadSession.id);
+    updateChannel(db, channelId, { prompt: "짧게 답해" });
+
+    expect(renewSessionOnPromptChange(db, channelSession.id)).toBe(true);
+    const threadRow = db.select().from(agentSessions).where(eq(agentSessions.id, threadSession.id)).get();
+    expect(threadRow).toMatchObject({ providerSessionId: threadId, promptRevisionAtStart: 1 });
+    expect(renewSessionOnPromptChange(db, threadSession.id)).toBe(true);
   });
 
   it("스레드 세션은 (에이전트, 채널, 스레드)마다 따로 — 키에 스레드 접미사, 채널 세션과 섞이지 않는다", () => {
