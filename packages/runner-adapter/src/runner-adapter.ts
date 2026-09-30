@@ -59,7 +59,8 @@ export type RunnerTokenVerifier = (presented: unknown) => { tokenId: string; lab
 
 /**
  * 러너 프레임 버킷 이름 — `run.event`(스트리밍 델타)와 나머지(hello·post·수명·승인)를 나눈다. 열린 런·기다리는 승인을 가리키는
- * 종결·승인 프레임 가운데 처리기가 받아들일 것은 버킷을 거치지 않는다(namesOpenWork)
+ * 종결·승인 프레임 가운데 처리기가 받아들일 것은 버킷을 거치지 않는다(승인 요청은 런마다 누계 RUN_FREE_APPROVALS 개까지 —
+ * namesOpenWork)
  */
 export type RunnerFrameBucket = "events" | "control";
 
@@ -146,7 +147,8 @@ const RUNNER_FRAMES: ReadonlySet<string> = new Set<keyof RunnerClientToServerEve
   "approval.withdrawn",
 ]);
 // 프레임이 쓰는 버킷 — run.event 는 모델 델타마다 오므로 따로 넉넉하게, 나머지는 런마다 몇 번뿐이다. 열린 런·기다리는 승인을
-// 가리키는 종결·승인 프레임 가운데 처리기가 받아들일 것은 버킷을 거치지 않는다(namesOpenWork)
+// 가리키는 종결·승인 프레임 가운데 처리기가 받아들일 것은 버킷을 거치지 않는다(승인 요청은 런마다 누계 RUN_FREE_APPROVALS 개까지
+// — namesOpenWork)
 export const FRAME_BUCKET: Record<keyof RunnerClientToServerEvents, RunnerFrameBucket> = {
   hello: "control",
   "run.event": "events",

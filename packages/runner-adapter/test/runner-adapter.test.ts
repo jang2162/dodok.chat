@@ -1576,7 +1576,7 @@ describe("러너 프레임 속도 제한 — 소켓마다 버킷, 넘치면 버�
     expect(h.limited).toEqual([]);
   });
 
-  it("control 버킷이 세는 프레임은 hello·outbound.post 와 처리기가 받아들이지 않을 종결·승인 프레임, events 는 run.event 뿐", () => {
+  it("control 버킷이 세는 프레임은 hello·outbound.post 와 처리기가 받아들이지 않을 종결·승인 프레임과 누계를 넘은 승인 요청, events 는 run.event 뿐", () => {
     expect(FRAME_BUCKET).toEqual({
       hello: "control",
       "run.event": "events",

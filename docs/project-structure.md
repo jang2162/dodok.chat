@@ -508,7 +508,7 @@ SDK import 경로: `openclaw/plugin-sdk/plugin-entry`, `openclaw/plugin-sdk/chan
 서버 측 Claude 러너 어댑터 — `AgentAdapter` 의 `provider: "claude"` 구현. 설계는 `docs/superpowers/specs/2026-09-27-claude-runner-design.md`(구현과 달라진 것은 그 스펙의 「구현과 맞춘 것」 장).
 - `src/runner-adapter.ts` — `/runner` 네임스페이스(러너 토큰 핸드셰이크·hello·같은 토큰 교체는 옛 자리를 잇는다), `send`→`run.start`(채널 규칙 틀·턴 사실은 여기서 만든다), `run.event` 허용 목록·runId 대조, `run.final`→정본·usage(`dodok.usage`), 중지(`run.final aborted` → 메시지 없는 `RUN_ABORTED`, 러너 종료 `run.final runner_shutdown` → `ADAPTER_UNAVAILABLE`), `outbound.post` 를 열린 런에 묶기, `mayReadAttachment`(러너 토큰 첨부 읽기 범위 — 열린 런의 트리거 첨부만), `supports`(러너가 없으면 true), 서버 종료·hello 타임아웃은 전송만 닫고 교체·폐기만 `disconnect(true)`.
 - `src/connections.ts` — 붙은 러너와 에이전트 배정(러너 토큰에 묶인 등록 에이전트는 그 토큰의 러너만, 묶임이 없으면 먼저 알린 러너가 맡고 뒤 러너의 같은 id 는 「충돌」, 교체는 자리 잇기). 묶임 없는 등록 에이전트는 hello·러너가 빠진 뒤 지금 맡는 러너 토큰에 묶는다(`claimUnbound`).
-- 러너 프레임 속도 제한 — 소켓마다 버킷 둘(`run.event` 와 나머지, 숫자는 서버 `LIMITS.runner`, 옵션 `frameLimit` 로 받는다). 넘친 프레임은 버리고 warn·`onLimited`(운영 사건)는 주소별 1분에 한 번. 열린 런·기다리는 승인을 가리키는 종결·승인 프레임 가운데 처리기가 받아들일 것은 버킷을 거치지 않는다(`namesOpenWork` — 까닭과 상한은 그 머리 주석).
+- 러너 프레임 속도 제한 — 소켓마다 버킷 둘(`run.event` 와 나머지, 숫자는 서버 `LIMITS.runner`, 옵션 `frameLimit` 로 받는다). 넘친 프레임은 버리고 warn·`onLimited`(운영 사건)는 주소별 1분에 한 번. 열린 런·기다리는 승인을 가리키는 종결·승인 프레임 가운데 처리기가 받아들일 것은 버킷을 거치지 않는다(승인 요청은 런마다 누계 32개까지 — `namesOpenWork`, 까닭과 상한은 그 머리 주석).
 - `src/approvals.ts` — 러너 승인 정규화(서버 쪽 id `runner:<토큰 id>:<러너 id>`)와 10분 기한 타이머(지나면 러너에 `deny`, `expired`).
 
 ### 2.4b `packages/claude-runner` (사람의 머신에서 실행 — CLI `dodok-runner`)
