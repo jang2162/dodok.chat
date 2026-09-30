@@ -81,6 +81,9 @@ export function createApprovalsService(deps: ApprovalsDeps): ApprovalsService {
    * `announce:false` 는 같은 승인을 **두 번째로 읽었을 때** — 어댑터가 두 프레임을 병합해 다시 주면 값이 늦게 찬다
    * (대기 카드의 `urlPath`, 확정 짝 뒤엣것의 `decision`). 값은 wire 로 갱신하되 타임라인에 같은 카드를 또 쌓거나
    * 런을 다시 깨우지 않는다 — 요구도 해결도 마찬가지다.
+   * 그래서 wire 에는 같은 승인 id 의 `approval.requested`(또는 `approval.resolved`)가 두 번 갈 수 있고, 둘째는 결함이 아니라
+   * 늦게 찬 값(`toolCallId` — 웹이 툴 행과 승인을 잇는 값 — ·`urlPath`·`decision`)의 갱신이다. 받는 쪽은 id 로 병합한다
+   * (웹 `features/approvals/approvalStore.ts` 의 mergeApproval). 막으면 그 값이 웹에 닿지 않는다. 푸시는 첫 번만(push seenApprovals).
    */
   function publish(
     approval: Approval,
