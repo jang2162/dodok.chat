@@ -305,7 +305,7 @@ src/
 │  │                      invites.ts(invites 저장소: issueInvite(7일)·issueResetLink(24시간 — 대상의 앞선 재설정 링크를 같은 트랜잭션에서 폐기)·canIssueResetLink(발급 규칙 — 발급·조회·수락이 같이 쓴다)·
 │  │                      resetLinkUsable(조회·수락 때 발급자·대상의 지금 역할로 canIssueResetLink)·listPendingInvites(kind invite 만)·getPendingInvite·
 │  │                      revokeInvite·findValidInvite(무효 까닭은 가르지 않는다)·claimInvite(`used_at IS NULL AND revoked_at IS NULL AND expires_at > now` 원자적 잡기)·unclaimInvite(`used_at` 만 되돌린다)) ·
-│  │                      accept.ts(acceptInvite — 초대 확인 → Better Auth 쪽 이메일·비밀번호 해시(await) → await 없이 핸들·이메일 검사와 claim → Better Auth 내부 어댑터로 사용자·credential →
+│  │                      accept.ts(acceptInvite — 초대 확인 → 같은 이메일의 수락이 이 프로세스에서 진행 중이면 409(DB 연결별 표시, 첫 await 전) → Better Auth 쪽 이메일(우리 users 행이 없고 owner 이메일이 아닌 고아 Better Auth 사용자는 세션·계정과 함께 지우고 warn — 수락이 Better Auth 생성 뒤·우리 행 앞에서 죽은 자리)·비밀번호 해시(await) → await 없이 핸들·이메일 검사와 claim → Better Auth 내부 어댑터로 사용자·credential →
 │  │                      users·memberships 한 트랜잭션 → 세션 발급 { userId, sessionToken }. 실패하면 Better Auth 사용자 삭제·claim 되돌림, 되돌리기도 실패하면 운영 사건 invite_accept_failed ·
 │  │                      resetPassword — resetLinkUsable 을 못 지나면 404(링크 미소비), 비밀번호 교체 → 대상 세션 삭제 → 곧바로 disconnectUser → 새 세션 · normalizeEmail(소문자 — 이메일을 넣거나 찾는 경로는 모두 지난다)) ·
 │  │                      account.ts(updateDisplayName · changePassword — 현재 비밀번호 확인(틀리면 400 VALIDATION field current), 이 세션을 뺀 세션 삭제 → 지운 세션만 disconnectSessions) ·

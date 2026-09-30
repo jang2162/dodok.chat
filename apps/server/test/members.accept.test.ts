@@ -4,7 +4,7 @@ import pino from "pino";
 import { v7 as uuidv7 } from "uuid";
 import { afterEach, describe, expect, it } from "vitest";
 import type { App } from "../src/app";
-import { user as authUser } from "../src/db/auth-schema";
+import { account as authAccount, session as authSession, user as authUser } from "../src/db/auth-schema";
 import { agents, invites, memberships, opsEvents, users } from "../src/db/schema.sqlite";
 import { findValidInvite } from "../src/modules/members/invites";
 import { bootTestApp, login, userWithRole } from "./helpers/app";
@@ -324,6 +324,131 @@ describe("POST /api/v1/invites/lookup·accept", () => {
       memberships: before.memberships,
       authUsers: before.authUsers,
     });
+  });
+});
+
+describe("초대 수락 — 고아 Better Auth 사용자(우리 users 행 없음)는 지우고 새로 만든다", () => {
+  /** 수락 도중(Better Auth 생성 뒤·우리 행 앞) 프로세스가 죽은 자리를 흉내 낸다 — 사용자·계정·세션만 있고 users 행이 없다 */
+  async function orphan(a: App, email: string) {
+    const ctx = await a.auth.$context;
+    const id = uuidv7();
+    await ctx.internalAdapter.createUser(
+      { id, email, name: "ghost", emailVerified: true },
+      { method: "email-password" },
+    );
+    await ctx.internalAdapter.linkAccount({
+      userId: id,
+      providerId: "credential",
+      accountId: id,
+      password: await ctx.password.hash("ghost-password-123"),
+    });
+    const session = await ctx.internalAdapter.createSession(id);
+    return { id, sessionToken: session.token };
+  }
+  const authRows = (a: App, userId: string) => ({
+    user: a.db.select().from(authUser).where(eq(authUser.id, userId)).all().length,
+    accounts: a.db.select().from(authAccount).where(eq(authAccount.userId, userId)).all().length,
+    sessions: a.db.select().from(authSession).where(eq(authSession.userId, userId)).all().length,
+  });
+
+  it("같은 이메일의 고아가 있으면 그 사용자·계정·세션을 지우고 가입한다 — 새 비밀번호로 로그인되고 고아의 것은 안 된다", async () => {
+    app = await bootTestApp({}, roomy);
+    const owner = await login(app);
+    const ghost = await orphan(app, "bee@example.com");
+    const issued = await issue(app, owner.headers);
+    const before = counts(app);
+
+    const res = await accept(app, joinBody(issued.token, { email: "Bee@Example.com" }));
+    expect(res.statusCode).toBe(200);
+    const { user } = res.json() as { user: User };
+    expect(user.id).not.toBe(ghost.id);
+    expect(authRows(app, ghost.id)).toEqual({ user: 0, accounts: 0, sessions: 0 });
+    expect(counts(app)).toEqual({
+      users: before.users + 1,
+      memberships: before.memberships + 1,
+      authUsers: before.authUsers,
+    });
+    expect((await me(app, ghost.sessionToken)).statusCode).toBe(401);
+    const signIn = (password: string) =>
+      app!.fastify.inject({
+        method: "POST",
+        url: "/api/v1/auth/local",
+        payload: { email: "bee@example.com", password },
+      });
+    expect((await signIn(PASSWORD)).statusCode).toBe(200);
+    expect((await signIn("ghost-password-123")).statusCode).toBe(401);
+  });
+
+  it("우리 users 행이 있는 사용자는 절대 지우지 않는다 — 409 field:email, 그 사람의 세션·계정 그대로, 초대 미소비", async () => {
+    app = await bootTestApp({}, roomy);
+    const owner = await login(app);
+    const member = await userWithRole(app, "mem", "member");
+    const ctx = await app.auth.$context;
+    await ctx.internalAdapter.linkAccount({
+      userId: member.id,
+      providerId: "credential",
+      accountId: member.id,
+      password: await ctx.password.hash(PASSWORD),
+    });
+    const issued = await issue(app, owner.headers);
+    const before = authRows(app, member.id);
+
+    const res = await accept(app, joinBody(issued.token, { email: "mem@dodok.local" }));
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ code: "CONFLICT", details: { field: "email" } });
+    expect(authRows(app, member.id)).toEqual(before);
+    expect(before).toEqual({ user: 1, accounts: 1, sessions: 1 });
+    expect((await me(app, member.token)).statusCode).toBe(200);
+    expect(findValidInvite(app.db, issued.token, new Date())?.id).toBe(issued.invite.id);
+  });
+
+  it("owner 이메일의 Better Auth 사용자는 users 행이 없어도 지우지 않는다 — 409", async () => {
+    app = await bootTestApp({}, roomy);
+    const owner = await login(app);
+    const issued = await issue(app, owner.headers);
+    // owner 부트스트랩 중간(Better Auth 사용자만 있고 users 행 전)을 흉내 낸다 — 다음 부팅이 그 사용자로 users 행을 채운다
+    app.db.delete(memberships).where(eq(memberships.userId, app.ownerUserId)).run();
+    app.db.$client.pragma("foreign_keys = OFF");
+    app.db.delete(users).where(eq(users.id, app.ownerUserId)).run();
+    app.db.$client.pragma("foreign_keys = ON");
+
+    const res = await accept(app, joinBody(issued.token, { email: "owner@dodok.local" }));
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ code: "CONFLICT", details: { field: "email" } });
+    expect(authRows(app, app.ownerUserId).user).toBe(1);
+  });
+
+  it("같은 이메일의 수락이 진행 중이면(Better Auth 생성 뒤·우리 행 앞) 그 사용자를 고아로 보지 않는다 — 뒤 요청 409, 앞 요청 성공", async () => {
+    app = await bootTestApp({}, roomy);
+    const owner = await login(app);
+    const first = await issue(app, owner.headers);
+    const second = await issue(app, owner.headers);
+    const ctx = await app.auth.$context;
+    const linkAccount = ctx.internalAdapter.linkAccount.bind(ctx.internalAdapter);
+    let entered!: () => void;
+    const reached = new Promise<void>((resolve) => (entered = resolve));
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    ctx.internalAdapter.linkAccount = (async (...args: Parameters<typeof linkAccount>) => {
+      entered();
+      await gate;
+      return linkAccount(...args);
+    }) as typeof linkAccount;
+
+    const pending = accept(app, joinBody(first.token));
+    await reached;
+    ctx.internalAdapter.linkAccount = linkAccount;
+    const rival = await accept(app, joinBody(second.token, { handle: "wasp" }));
+    expect(rival.statusCode).toBe(409);
+    expect(rival.json()).toMatchObject({ code: "CONFLICT", details: { field: "email" } });
+    expect(findValidInvite(app.db, second.token, new Date())?.id).toBe(second.invite.id);
+
+    release();
+    const res = await pending;
+    expect(res.statusCode).toBe(200);
+    const { user, sessionToken } = res.json() as { user: User; sessionToken: string };
+    expect(authRows(app, user.id)).toEqual({ user: 1, accounts: 1, sessions: 1 });
+    expect((await me(app, sessionToken)).statusCode).toBe(200);
   });
 });
 

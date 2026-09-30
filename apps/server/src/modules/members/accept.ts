@@ -1,12 +1,13 @@
 /**
  * 초대 수락·재설정 수락(팀 스펙 3.3). 가입은 공개 경로가 아니라 Better Auth 내부 어댑터로 한다 — bootstrapOwner 와 같은 길.
  * SQLite 동기 드라이버라 Better Auth 호출과 우리 행을 한 트랜잭션으로 묶을 수 없다 — 초대를 먼저 원자적으로 잡고,
- * 뒤가 실패하면 만든 Better Auth 사용자를 지우고 초대를 되돌린다.
+ * 뒤가 실패하면 만든 Better Auth 사용자를 지우고 초대를 되돌린다. 그 사이에서 프로세스가 죽어 남은 고아 Better Auth 사용자는
+ * 같은 이메일의 다음 수락이 지운다(clearOrphanAndAssertEmailFree).
  */
 import type { AcceptInviteBody, ResetPasswordBody } from "@dodok/shared";
 import { and, eq } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
-import type { Auth } from "../../auth";
+import { type Auth, OWNER_EMAIL } from "../../auth";
 import type { Db, DbOrTx } from "../../db/client";
 import { invites, memberships, users } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
@@ -52,6 +53,38 @@ async function assertEmailFree(deps: AcceptDeps, email: string): Promise<void> {
   if (await ctx.internalAdapter.findUserByEmail(email)) throw emailConflict();
 }
 
+/**
+ * 이 프로세스에서 수락이 진행 중인 이메일(DB 연결마다) — 그 수락이 만든 Better Auth 사용자는 우리 행을 넣기 전까지 고아처럼 보인다.
+ * 진행 중인 수락이 없는데 users 행 없는 Better Auth 사용자가 있으면, 앞선 수락이 그 사이에서 죽은 것이다(단일 프로세스 서버)
+ */
+const acceptingEmails = new WeakMap<DbOrTx, Set<string>>();
+
+function acceptingSet(db: DbOrTx): Set<string> {
+  let set = acceptingEmails.get(db);
+  if (!set) acceptingEmails.set(db, (set = new Set()));
+  return set;
+}
+
+/**
+ * assertEmailFree 와 같되, 같은 이메일의 고아 Better Auth 사용자 — 우리 users 행(어느 워크스페이스든 같은 id)이 없고 owner 이메일이
+ * 아닌 것 — 는 그 세션·계정과 함께 지운다. 고아는 수락이 Better Auth 생성 뒤·우리 행 앞에서 죽은 자리라 membership 이 없어
+ * 로그인해도 401 이고, 그대로 두면 그 이메일은 DB 를 손으로 고치기 전까지 가입할 수 없다. 진행 중인 수락의 사용자는 호출자가
+ * acceptingSet 으로 먼저 막는다. owner 이메일은 다음 부팅의 bootstrapOwner 가 그 사용자로 users 행을 채우므로 지우지 않는다
+ */
+async function clearOrphanAndAssertEmailFree(deps: AcceptDeps, email: string): Promise<void> {
+  if (emailTaken(deps.db, deps.workspaceId, email)) throw emailConflict();
+  const adapter = (await deps.auth.$context).internalAdapter;
+  const found = await adapter.findUserByEmail(email);
+  if (!found) return;
+  const orphanId = found.user.id;
+  const ours = deps.db.select({ id: users.id }).from(users).where(eq(users.id, orphanId)).get();
+  if (ours || email === OWNER_EMAIL) throw emailConflict();
+  await adapter.deleteUserSessions(orphanId);
+  await adapter.deleteAccounts(orphanId);
+  await adapter.deleteUser(orphanId);
+  deps.logger.warn({ userId: orphanId }, "orphan auth user removed before invite accept");
+}
+
 function validInvite(deps: AcceptDeps, token: string, kind: InviteRow["kind"], now: Date): InviteRow {
   const invite = findValidInvite(deps.db, token, now);
   if (!invite || invite.kind !== kind || invite.workspaceId !== deps.workspaceId) throw inviteNotFound();
@@ -80,12 +113,30 @@ export async function acceptInvite(
   deps: AcceptDeps,
   body: AcceptInviteBody,
 ): Promise<{ userId: string; sessionToken: string }> {
-  const { db, workspaceId } = deps;
   const email = normalizeEmail(body.email);
   const invite = validInvite(deps, body.token, "invite", deps.now());
+  // 같은 이메일의 다른 수락이 이 프로세스에서 진행 중이면 409 — 그쪽이 만든 Better Auth 사용자를 고아로 지우지 않게.
+  // 표시는 첫 await 전에 건다(검사와 표시 사이에 다른 수락이 끼지 않는다). 이 요청의 초대는 잡기 전이라 소비되지 않는다
+  const accepting = acceptingSet(deps.db);
+  if (accepting.has(email)) throw emailConflict();
+  accepting.add(email);
+  try {
+    return await acceptHoldingEmail(deps, body, email, invite);
+  } finally {
+    accepting.delete(email);
+  }
+}
+
+async function acceptHoldingEmail(
+  deps: AcceptDeps,
+  body: AcceptInviteBody,
+  email: string,
+  invite: InviteRow,
+): Promise<{ userId: string; sessionToken: string }> {
+  const { db, workspaceId } = deps;
   const ctx = await deps.auth.$context;
   const adapter = ctx.internalAdapter;
-  await assertEmailFree(deps, email);
+  await clearOrphanAndAssertEmailFree(deps, email);
   const passwordHash = await ctx.password.hash(body.password);
 
   // 여기서 claim 까지는 await 가 없다 — 검사와 잡기 사이에 다른 가입이 끼지 않는다. 그 전의 await 사이에 낀 경합은
