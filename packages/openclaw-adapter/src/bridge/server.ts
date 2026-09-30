@@ -66,6 +66,10 @@ export type BridgeServerOptions = BridgeServerCallbacks & {
    */
   clientAddress?: (handshake: BridgeSocket["handshake"]) => string;
   /**
+   * 거절 로그(`onRejected`)에 싣는 주소 꼴 — 서버가 IP 를 가려 준다. 기본은 주소 그대로. 스로틀·실패 카운터는 원래 주소를 쓴다
+   */
+  logAddress?: (address: string) => string;
+  /**
    * 인증 실패 카운터(`clientAddress` 주소별, 시계는 `now`). 막힌 주소는 토큰을 보지 않고 거절하고, 검증 실패만 센다 —
    * 성공은 카운터를 건드리지 않는다. 서버의 첨부 HTTP 인증도 같은 인스턴스를 받는다
    */
@@ -149,7 +153,8 @@ export function attachBridge(io: Server, opts: BridgeServerOptions): BridgeHandl
       const logged = rejectLog.take(address, at);
       if (logged) {
         const suppressed = logged.suppressed > 0 ? ` (${logged.suppressed} more suppressed)` : "";
-        opts.onRejected?.(`${reason} from ${address}${suppressed}`);
+        const shown = opts.logAddress ? opts.logAddress(address) : address;
+        opts.onRejected?.(`${reason} from ${shown}${suppressed}`);
       }
       next(new Error("UNAUTHORIZED"));
     };

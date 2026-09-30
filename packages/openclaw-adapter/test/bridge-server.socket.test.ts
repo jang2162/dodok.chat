@@ -62,7 +62,8 @@ function outbound(outboundId: string) {
   };
 }
 
-beforeEach(async () => {
+/** 앱·Socket.IO·브리지를 띄운다 — extra 는 이 테스트 파일의 기본 옵션 위에 얹는다 */
+async function start(extra: Partial<Parameters<typeof attachBridge>[1]> = {}) {
   received = [];
   storeDelayMs = 0;
   rejected = [];
@@ -84,17 +85,21 @@ beforeEach(async () => {
       if (storeDelayMs > 0) await new Promise((done) => setTimeout(done, storeDelayMs));
       return { messageId: randomUUID() };
     },
+    ...extra,
   });
   await app.listen({ host: "127.0.0.1", port: 0 });
   url = `ws://127.0.0.1:${(app.server.address() as AddressInfo).port}/bridge`;
-});
+}
 
-afterEach(async () => {
+async function stop() {
   for (const socket of clients.splice(0)) socket.disconnect();
   bridge.close();
   ioServer.close();
   await app.close();
-});
+}
+
+beforeEach(() => start());
+afterEach(() => stop());
 
 describe("attachBridge (실제 Socket.IO)", () => {
   it("토큰이 다르면 핸드셰이크에서 UNAUTHORIZED 로 거부한다", async () => {
@@ -121,6 +126,22 @@ describe("attachBridge (실제 Socket.IO)", () => {
     expect(rejected).toHaveLength(1);
     expect(rejected[0]).toMatch(/^token mismatch from \S+$/);
     expect(rejected.join("\n")).not.toContain(TOKEN);
+  });
+
+  it("logAddress 를 주면 거절 로그의 주소는 그 값이고, 스로틀은 원래 주소로 센다", async () => {
+    await stop();
+    const seen: string[] = [];
+    await start({
+      logAddress: (address) => {
+        seen.push(address);
+        return "203.0.113.0/24";
+      },
+    });
+    for (let i = 0; i < 3; i += 1) await waitFor(client("wrong"), "connect_error");
+    expect(rejected).toEqual(["token mismatch from 203.0.113.0/24"]);
+    // 가리는 함수는 원래 주소를 받는다 — 줄이 남을 때만 부른다
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatch(/127\.0\.0\.1$/);
   });
 
   it("같은 주소에서 거절이 10번 와도 onRejected 는 1분에 한 번이고, 1분 뒤 한 번 더 — 눌러 둔 수를 싣는다", async () => {

@@ -250,7 +250,9 @@ describe("설정 마법사 통합 — 거절 로그 주소", () => {
     expect(await tryBridge(live.app.url, "wrong", { "x-forwarded-for": " 203.0.113.9 , 10.0.0.1" })).toBe(
       "UNAUTHORIZED",
     );
-    expect(rejectedReasons(lines)).toEqual(["token mismatch from 203.0.113.9"]);
+    // 로그의 주소는 가린 값(ipPrefix) — 스로틀·가드 키는 전체 주소 그대로다
+    expect(rejectedReasons(lines)).toEqual(["token mismatch from 203.0.113.0/24"]);
+    expect(lines.join("\n")).not.toContain("203.0.113.9");
   });
 
   it("TRUST_PROXY=false 면 X-Forwarded-For 를 읽지 않는다 — 꾸민 헤더로 주소를 바꿀 수 없다", async () => {
@@ -263,7 +265,7 @@ describe("설정 마법사 통합 — 거절 로그 주소", () => {
     );
     const reasons = rejectedReasons(lines);
     expect(reasons).toHaveLength(1);
-    expect(reasons[0]).toMatch(/^token mismatch from \S*127\.0\.0\.1$/);
+    expect(reasons[0]).toBe("token mismatch from 127.0.0.0/24");
   });
 });
 

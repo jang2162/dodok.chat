@@ -66,6 +66,8 @@ export type OpenClawAdapterOptions = {
     ackTimeoutMs?: number;
     verifyToken: BridgeTokenVerifier;
     clientAddress?: BridgeServerOptions["clientAddress"];
+    /** 거절 로그의 주소 꼴(`BridgeServerOptions.logAddress`) — 서버가 IP 를 가린다 */
+    logAddress?: BridgeServerOptions["logAddress"];
     /** 인증 실패 카운터 — 서버가 첨부 HTTP 와 같은 인스턴스를 준다(`BridgeServerOptions.authGuard`) */
     authGuard?: BridgeServerOptions["authGuard"];
     onBlocked?: BridgeServerOptions["onBlocked"];
@@ -267,6 +269,7 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
   const bridge = attachBridge(opts.bridge.io, {
     verifyToken: opts.bridge.verifyToken,
     ...(opts.bridge.clientAddress === undefined ? {} : { clientAddress: opts.bridge.clientAddress }),
+    ...(opts.bridge.logAddress === undefined ? {} : { logAddress: opts.bridge.logAddress }),
     ...(opts.bridge.authGuard === undefined ? {} : { authGuard: opts.bridge.authGuard }),
     ...(opts.bridge.onBlocked === undefined ? {} : { onBlocked: opts.bridge.onBlocked }),
     ...(opts.bridge.now === undefined ? {} : { now: opts.bridge.now }),

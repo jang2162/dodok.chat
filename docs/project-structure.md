@@ -153,7 +153,9 @@ src/
 │                         (verifyBridgeTokenDb — 어댑터 핸드셰이크와 `/bridge/attachments` 가 같이 쓴다), 부팅 때 한 번 readPluginFile, setup 상태 조립·`setup.status` 발행
 ├─ config.ts              env 를 zod 로 검증한 ServerConfig. OPENCLAW_TARGET 이 원격/dev Gateway 쌍과 디바이스 파일을 고른다
 ├─ logger.ts              pino, 토큰·비밀 키 redact(VAPID_PRIVATE_KEY·privateKey 포함, 깊이 0~3 의 token·`set-cookie` — 새 토큰 헤더를 만들면 이름을 이 파일에 적는다:
-│                         redact 는 헤더 이름 와일드카드를 받지 못한다). 사건 줄은 `event: "ops.<kind>"`(modules/ops/service.ts)
+│                         redact 는 헤더 이름 와일드카드를 받지 못한다). 사건 줄은 `event: "ops.<kind>"`(modules/ops/service.ts).
+│                         requestLogSerializer — Fastify 요청 로그의 req(원격 주소만 ipPrefix 로 가림, app.ts 가 Fastify 에 준 자식 로거의 serializers.req — Fastify 기본을 이긴다).
+│                         브리지·러너 거절 로그도 app.ts 가 어댑터 옵션 logAddress 로 ipPrefix 를 준다(가드·스로틀 키는 전체 주소)
 ├─ wiring.ts              createServices(라우터 ⇄ 오케스트레이터 상호 참조, RunsFacade), sessionRecoverTargets(재접속 복구 대상)
 ├─ db/
 │  ├─ schema.sqlite.ts    Drizzle 스키마 (계획서 6장 테이블 + agent_sessions + approvals + attachments + bridge_tokens + ops_events + invites — FK cascade 는 push_subscriptions.session_id 하나뿐).

@@ -56,6 +56,8 @@ export type RunnerAdapterOptions = {
   verifyToken: RunnerTokenVerifier;
   /** 거절 로그·실패 카운터의 원격 주소. 던지면 `handshake.address` */
   clientAddress: (socket: Socket) => string;
+  /** 거절 로그의 주소 꼴(서버가 IP 를 가린다). 없으면 그대로 — 실패 카운터·스로틀은 원래 주소 */
+  logAddress?: (address: string) => string;
   /** 브리지·첨부 HTTP 와 같은 인스턴스(러너 스펙 5장) — 막힌 주소는 토큰을 보지 않고 거절한다 */
   authGuard: BridgeAuthGuard;
   onBlocked: (address: string) => void;
@@ -242,7 +244,8 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
     rejectLog.set(address, { at, suppressed: 0 });
     while (rejectLog.size > REJECT_LOG_MAX_ADDRESSES)
       rejectLog.delete(rejectLog.keys().next().value as string);
-    logger.warn({ address, reason, suppressed: entry?.suppressed ?? 0 }, "runner connection rejected");
+    const shown = opts.logAddress ? opts.logAddress(address) : address;
+    logger.warn({ address: shown, reason, suppressed: entry?.suppressed ?? 0 }, "runner connection rejected");
   }
 
   // 브리지 핸드셰이크(openclaw-adapter bridge/server.ts)와 같은 순서 — 막혔으면 토큰을 보지 않는다, 검증 실패만 센다

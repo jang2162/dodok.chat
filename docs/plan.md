@@ -666,7 +666,7 @@ Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-comp
 - **Gateway 쪽 실패(`unknown`)에는 「다시 실행」 버튼이 없다** — `NOTIFY_CODES` 가 디스패치 실패·타임아웃만 알린다. 실제 CLI 가 인증 만료·한도 초과로 죽어도 `unknown` 으로 올 가능성이 크다 — 버튼을 둘지는 사람 판단(자리 `apps/server/src/modules/runs/orchestrator.ts` 의 `notifyRunError`). 출처: `docs/guides/live-smoke.md` 「운영 보강(Phase 3 ③) 실연」 절의 「새로 찾은 것」(o3-t9a).
 - **`downMs` 는 서버가 본 끊김이다** — Gateway 가 다시 떠도 어댑터 재접속 백오프(`packages/openclaw-adapter/src/gateway/connection-manager.ts` 의 `backoff.maxMs`, 상한 30초)만큼 더 센다. 운영자용 설명은 `docs/guides/deploy.md` 「운영 화면」 절의 최근 사건 항목. 사람 판단. 출처: `docs/guides/live-smoke.md` 「운영 보강(Phase 3 ③) 실연」 절의 「새로 찾은 것」(o3-t9a).
 - **`run_failed` 는 에이전트별 한 줄이라 코드가 마지막 것만 남는다** — key `agent:<id>` 로 묶이며 `detail.code` 를 덮어써, 앞 실패의 코드는 목록에서 사라진다. 출처: `docs/guides/live-smoke.md` 「운영 보강(Phase 3 ③) 실연」 절의 「새로 찾은 것」(o3-t9a).
-- **서버 요청 로그에 IP 전체가 남는다** — Fastify 기본 `incoming request` 줄의 `req.remoteAddress`. 스펙이 IP 를 줄인 곳은 사건·집계뿐이다(배포에서는 Caddy 뒤라 컨테이너 네트워크 주소). 로그 보존·공유 정책이 필요하면 판단 거리. 출처: `docs/guides/live-smoke.md` 「운영 보강(Phase 3 ③) 실연」 절의 「새로 찾은 것」(o3-t9a).
+- **Better Auth 세션 행에 로그인 IP 전체가 남는다** — `session.ip_address`(Better Auth 가 로그인 요청에서 채운다 — `TRUST_PROXY=true` 면 `X-Forwarded-For` 첫 값). 서버 로그의 주소는 IPv4 /24·IPv6 /48 로 줄였지만 이 열은 로그가 아니라 그 밖이다. 세션이 지워지면 함께 지워진다(로그아웃·만료 청소 등). 우리 코드는 이 열을 읽지 않는다. 고칠 방향: Better Auth `advanced.ipAddress.disableIpTracking` 또는 세션 생성 훅으로 줄인 값만 넣기 — 같은 옵션이 Better Auth 자체 레이트리밋의 IP 추적도 끄므로 그 관계를 먼저 본다. 출처: cd-srv 항목 3(로그 IP 가림)의 확인. 미룬 까닭: 사용자가 고른 길은 「로그에만 영향」이었다.
 
 **문서화(Phase 3 ④, 2026-09-25)** — `docs/guides/agent-guide.md`. 아래 출처의 보고서는 `.superpowers/sdd/2026-09-25-docs/`(git 제외)에 있다.
 

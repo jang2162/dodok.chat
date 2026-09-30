@@ -244,6 +244,17 @@ describe("연결 페이지 러너 API /api/v1/setup/runner-*", () => {
     expect(await tryRunner(app.url, BRIDGE_TOKEN)).toBe("UNAUTHORIZED");
   });
 
+  it("러너 거절 로그의 주소는 가린 값(ipPrefix)이다 — 원래 주소는 그 줄에 없다", async () => {
+    expect(await tryRunner(app.url, "drn_not-a-token")).toBe("UNAUTHORIZED");
+    // 거절 줄은 주소별 1분에 한 번 — 앞 테스트의 거절이 이미 남겼을 수 있어 파일 전체의 줄을 본다
+    const rejected = log.lines.filter((l) => l.includes('"runner connection rejected"'));
+    expect(rejected.length).toBeGreaterThan(0);
+    for (const line of rejected) {
+      expect((JSON.parse(line) as { address?: string }).address).toBe("127.0.0.0/24");
+      expect(line).not.toContain("127.0.0.1");
+    }
+  });
+
   it("runner.tgz — 부팅 때 잰 파일을 내려 주고 status 에는 경로 없이 해시·크기", async () => {
     const res = await call(owner, "GET", "/runner.tgz");
     expect(res.statusCode).toBe(200);
