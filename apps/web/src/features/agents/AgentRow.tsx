@@ -35,6 +35,7 @@ export function AgentRow({ agent, readOnly = false }: { agent: Agent; readOnly?:
           <p className="text-xs text-muted-foreground">
             {providerIdLabel(agent.provider)} <code className="font-mono">{agent.providerAgentId}</code>
           </p>
+          {agent.provider === "claude" && <RunnerLine runner={agent.runner} />}
         </div>
         <Switch
           aria-label={`${handle} 사용`}
@@ -45,6 +46,18 @@ export function AgentRow({ agent, readOnly = false }: { agent: Agent; readOnly?:
       </div>
       <BasePromptEditor agent={agent} readOnly={readOnly} />
     </li>
+  );
+}
+
+/** Claude 러너 에이전트를 맡는 러너(묶인 러너 토큰의 라벨) — 다시 묶기는 연결 페이지(owner)에서 한다 */
+function RunnerLine({ runner }: { runner: Agent["runner"] }) {
+  if (!runner)
+    return <p className="text-xs text-muted-foreground">러너 미정 — 처음 알리는 러너에 묶입니다</p>;
+  if (!runner.revoked) return <p className="text-xs text-muted-foreground">러너 {runner.label}</p>;
+  return (
+    <p className="text-xs font-medium text-destructive">
+      러너 {runner.label} — 토큰이 폐기돼 맡을 러너가 없습니다. 연결 페이지에서 다시 묶으세요
+    </p>
   );
 }
 

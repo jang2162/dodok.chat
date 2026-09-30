@@ -281,50 +281,57 @@ function DiscoverList({
           </p>
         )
       ) : (
-        <ul className="flex flex-col gap-2">
-          {candidates.map((c, i) => {
-            const label = c.name ?? c.providerAgentId;
-            const draft = drafts[c.providerAgentId];
-            const checkboxId = `${baseId}-${i}`;
-            return (
-              <li key={c.providerAgentId} className="rounded-md border bg-card p-3">
-                <div className="flex items-center gap-3">
-                  <Checkbox
-                    id={checkboxId}
-                    checked={draft !== undefined}
-                    onCheckedChange={(checked) => choose(c, checked === true)}
-                    disabled={busy}
-                  />
-                  <Label htmlFor={checkboxId} className="min-w-0 flex-1 truncate">
-                    {label}
-                  </Label>
-                  {label !== c.providerAgentId && (
-                    <code className="truncate font-mono text-xs text-muted-foreground">
-                      {c.providerAgentId}
-                    </code>
-                  )}
-                </div>
-                {provider === "claude" && c.hint && (
-                  <p className="mt-1 pl-7 text-xs break-words text-muted-foreground">{c.hint}</p>
-                )}
-                {draft && (
-                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                    <AgentFields
-                      labelPrefix={label}
-                      handle={draft.handle}
-                      name={draft.name}
-                      onHandle={(handle) => update(c.providerAgentId, { handle, error: undefined })}
-                      onName={(name) => update(c.providerAgentId, { name, error: undefined })}
-                      handleError={draft.error ?? handleProblem(draft.handle)}
-                      nameError={nameProblem(draft.name)}
+        <div className="flex flex-col gap-2">
+          {provider === "claude" && (
+            <p className="text-xs text-muted-foreground">
+              등록하면 지금 그 id 를 알린 러너(줄 맨 앞 이름)에 묶여, 그 러너만 이 에이전트를 맡습니다.
+            </p>
+          )}
+          <ul className="flex flex-col gap-2">
+            {candidates.map((c, i) => {
+              const label = c.name ?? c.providerAgentId;
+              const draft = drafts[c.providerAgentId];
+              const checkboxId = `${baseId}-${i}`;
+              return (
+                <li key={c.providerAgentId} className="rounded-md border bg-card p-3">
+                  <div className="flex items-center gap-3">
+                    <Checkbox
+                      id={checkboxId}
+                      checked={draft !== undefined}
+                      onCheckedChange={(checked) => choose(c, checked === true)}
                       disabled={busy}
                     />
+                    <Label htmlFor={checkboxId} className="min-w-0 flex-1 truncate">
+                      {label}
+                    </Label>
+                    {label !== c.providerAgentId && (
+                      <code className="truncate font-mono text-xs text-muted-foreground">
+                        {c.providerAgentId}
+                      </code>
+                    )}
                   </div>
-                )}
-              </li>
-            );
-          })}
-        </ul>
+                  {provider === "claude" && c.hint && (
+                    <p className="mt-1 pl-7 text-xs break-words text-muted-foreground">{c.hint}</p>
+                  )}
+                  {draft && (
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                      <AgentFields
+                        labelPrefix={label}
+                        handle={draft.handle}
+                        name={draft.name}
+                        onHandle={(handle) => update(c.providerAgentId, { handle, error: undefined })}
+                        onName={(name) => update(c.providerAgentId, { name, error: undefined })}
+                        handleError={draft.error ?? handleProblem(draft.handle)}
+                        nameError={nameProblem(draft.name)}
+                        disabled={busy}
+                      />
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
       )}
       <DialogFooter>
         <Button type="button" variant="ghost" onClick={onManual} disabled={busy}>

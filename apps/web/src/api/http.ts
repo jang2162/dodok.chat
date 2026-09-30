@@ -1,6 +1,6 @@
 import { ApiError, type ErrorCode } from "@dodok/shared";
 
-export type HttpMethod = "GET" | "POST" | "PATCH" | "DELETE";
+export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 export class ApiRequestError extends Error {
   constructor(

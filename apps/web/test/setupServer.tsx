@@ -125,6 +125,8 @@ export function stubSetupServer(
     issue?: (label: string) => Reply;
     plugin?: () => Reply;
     runner?: () => Reply;
+    /** PUT runner-tokens/:id/agents/:agentId — 기본은 200 */
+    bind?: (tokenId: string, agentId: string) => Reply;
   } = {},
 ) {
   const tokens = [...(opts.tokens ?? [])];
@@ -183,6 +185,11 @@ export function stubSetupServer(
       const t = runnerTokens.find((x) => x.id === delRunner[1]);
       if (t) t.revokedAt = "2026-09-27T03:00:00.000Z";
       return new Response(null, { status: 204 });
+    }
+    const bind = /^\/api\/v1\/setup\/runner-tokens\/([^/]+)\/agents\/([^/]+)$/.exec(url);
+    if (method === "PUT" && bind) {
+      if (opts.bind) return opts.bind(bind[1] ?? "", bind[2] ?? "");
+      return json(200, { agent: { providerAgentId: bind[2] } });
     }
     if (method === "GET" && url === "/api/v1/setup/runner.tgz")
       return opts.runner

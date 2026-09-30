@@ -37,11 +37,16 @@ describe("에이전트 가져오기 — 제공자", () => {
     expect(within(dialog).queryByRole("checkbox", { name: "Ops" })).not.toBeInTheDocument();
     expect(dialog).toHaveTextContent("맥북 · my-repo · sonnet");
     expect(dialog).toHaveTextContent("데스크톱 · docs · haiku");
+    // 등록하면 그 러너 토큰에 묶인다
+    expect(dialog).toHaveTextContent(
+      "등록하면 지금 그 id 를 알린 러너(줄 맨 앞 이름)에 묶여, 그 러너만 이 에이전트를 맡습니다",
+    );
     expect(server.count("GET", "/api/v1/agents/discover?provider=claude")).toBe(1);
 
     // 되돌리면 OpenClaw 목록
     await userEvent.click(within(dialog).getByRole("radio", { name: "OpenClaw" }));
     expect(await within(dialog).findByRole("checkbox", { name: "Ops" })).toBeInTheDocument();
+    expect(dialog).not.toHaveTextContent("에 묶여");
     expect(within(dialog).queryByRole("checkbox", { name: "코더" })).not.toBeInTheDocument();
   });
 

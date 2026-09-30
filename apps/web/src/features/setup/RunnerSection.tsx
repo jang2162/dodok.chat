@@ -1,4 +1,4 @@
-import type { RunnerConnection, SetupStatus } from "@dodok/shared";
+import type { RunnerConnection, RunnerTokenRecord, SetupStatus } from "@dodok/shared";
 import { DownloadIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { useRef } from "react";
@@ -11,7 +11,7 @@ import {
   RUNNER_CONFIG_PATH,
   runnerConfigExample,
 } from "./IssueRunnerTokenDialog";
-import { useDownloadRunner } from "./mutations";
+import { useBindRunnerAgent, useDownloadRunner } from "./mutations";
 import { useRunnerTokens } from "./queries";
 import { RunnerTokenList } from "./RunnerTokenList";
 import { CopyBlock, Section } from "./sections";
@@ -66,13 +66,57 @@ function RunnerBuild({
   );
 }
 
-/** 러너 하나 — 판본·붙은 시각·같은 빌드·알린 에이전트(충돌이면 배정되지 않는다고) */
+/**
+ * 충돌 에이전트 한 줄의 사유 — 다른 토큰에 묶인 등록 에이전트면 그 토큰 이름과 「이 러너로 묶기」, 묶임이 없으면 id 가 겹친 것이다
+ * (먼저 붙은 러너가 맡는다)
+ */
+function AgentConflict({
+  runner,
+  agent,
+  tokens,
+}: {
+  runner: RunnerConnection;
+  agent: RunnerConnection["agents"][number];
+  tokens: RunnerTokenRecord[] | undefined;
+}) {
+  const bind = useBindRunnerAgent();
+  if (agent.boundTokenId === null || agent.boundTokenId === runner.tokenId)
+    return <p className="text-xs font-medium text-destructive">다른 러너와 id 가 겹쳐 배정되지 않습니다</p>;
+  const token = tokens?.find((t) => t.id === agent.boundTokenId);
+  const name = token ? `${token.label}${token.revokedAt === null ? "" : "(폐기됨)"}` : "다른 러너 토큰";
+  return (
+    <div className="flex flex-col items-start gap-1">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <p className="text-xs font-medium text-destructive">{name}에 묶여 있어 배정되지 않습니다</p>
+        <Button
+          type="button"
+          variant="outline"
+          size="xs"
+          aria-label={`${agent.name} 이 러너로 묶기`}
+          disabled={bind.isPending}
+          onClick={() => bind.mutate({ tokenId: runner.tokenId, agentId: agent.id })}
+        >
+          이 러너로 묶기
+        </Button>
+      </div>
+      {bind.isError && (
+        <p role="alert" className="text-xs text-destructive">
+          묶지 못했습니다 — 토큰이 폐기됐거나 에이전트가 등록돼 있지 않습니다. 새로고침한 뒤 다시 시도하세요.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** 러너 하나 — 판본·붙은 시각·같은 빌드·알린 에이전트(충돌이면 배정되지 않는다고, 다른 토큰에 묶였으면 다시 묶기) */
 function RunnerCard({
   runner,
   file,
+  tokens,
 }: {
   runner: RunnerConnection;
   file: SetupStatus["runners"]["runnerFile"];
+  tokens: RunnerTokenRecord[] | undefined;
 }) {
   return (
     <article aria-label={runner.label} className="flex flex-col gap-2 rounded-md border p-3">
@@ -102,11 +146,7 @@ function RunnerCard({
                   {agent.workdirLabel} · {agent.model}
                 </span>
               </div>
-              {agent.conflict && (
-                <p className="text-xs font-medium text-destructive">
-                  다른 러너와 id 가 겹쳐 배정되지 않습니다
-                </p>
-              )}
+              {agent.conflict && <AgentConflict runner={runner} agent={agent} tokens={tokens} />}
             </li>
           ))}
         </ul>
@@ -221,8 +261,10 @@ export function RunnerSection({ status }: { status: SetupStatus | undefined }) {
             채널에 둘지는 admin 이 판단합니다.
           </li>
           <li>
-            러너 토큰 하나로 워크스페이스의 모든 Claude 러너 에이전트 id 를 맡을 수 있습니다(먼저 알린 러너가
-            맡습니다). 토큰은 믿는 머신에만 주십시오.
+            에이전트는 러너 토큰에 묶여 그 토큰의 러너만 맡습니다 — 등록할 때 그 id 를 알리던 러너, 그때
+            없었으면 처음 알리는 러너에 묶입니다. 러너 없이 등록한 에이전트는 먼저 붙은 러너가 가져가니 토큰은
+            믿는 머신에만 주십시오. 토큰을 폐기해도 묶임은 남습니다 — 새 러너로 옮길 때는 그 러너 카드의 「이
+            러너로 묶기」를 누릅니다.
           </li>
         </ul>
       </div>
@@ -232,7 +274,12 @@ export function RunnerSection({ status }: { status: SetupStatus | undefined }) {
         ) : (
           <div className="flex flex-col gap-2">
             {status.runners.list.map((runner) => (
-              <RunnerCard key={runner.tokenId} runner={runner} file={status.runners.runnerFile} />
+              <RunnerCard
+                key={runner.tokenId}
+                runner={runner}
+                file={status.runners.runnerFile}
+                tokens={tokens.data}
+              />
             ))}
           </div>
         ))}
