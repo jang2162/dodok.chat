@@ -12,7 +12,15 @@ import type { DbOrTx } from "../../db/client";
 import { agents, channelMembers, channels, users } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
 import { parseStored } from "../../http/validate";
-import { type Glyph, glyphRange, type HandleOf, plainGlyphs, readableGlyphs } from "./readable";
+import {
+  type Glyph,
+  glyphRange,
+  type HandleOf,
+  plainGlyphs,
+  readableGlyphs,
+  readableWindow,
+  type Span,
+} from "./readable";
 
 /** 전문 검색(스레드·검색 스펙 5장). 색인은 drizzle/*_search_fts.sql 의 FTS5 가상 테이블·트리거가 채운다 */
 
@@ -24,8 +32,13 @@ export const SHORT_QUERY_LIMITS = { maxAgeDays: 90, maxHits: 50 } as const;
 // (zod 4 의 문자열 길이는 코드 포인트로 센다 — 아스트랄 문자가 가득해도 넘치지 않는다)
 const SNIPPET_CONTEXT = 64;
 const SNIPPET_BUDGET = 396;
-/** 검색어 안 `@핸들` 이 여러 사람·에이전트로 풀릴 때 만드는 대체 검색어 수 상한 — 넘치면 뒤 핸들은 글자 그대로 찾는다 */
-const MAX_ALTERNATIVES = 8;
+/**
+ * 검색어 하나가 만드는 needles 수 상한 — 원래 검색어(글자 그대로) 몫 하나를 늘 남기고, `@핸들` 이 여러 사람·에이전트로 풀린
+ * 대체 검색어는 나머지 안에서 만든다. 넘치면 뒤 핸들은 글자 그대로 찾는다
+ */
+const MAX_NEEDLES = 8;
+/** 스니펫 — 강조를 그릴 수 있는 일치를 찾아 변환해 보는 창 수 상한. 일치가 모두 숨은 글(링크 주소 등) 안인 긴 본문에서 창을 끝없이 변환하지 않게 */
+export const MAX_SNIPPET_WINDOWS = 4;
 const DAY_MS = 86_400_000;
 
 type HitRow = {
@@ -153,9 +166,11 @@ function mentionDirectory(db: DbOrTx, workspaceId: string, channelId: string | u
 }
 
 /**
- * 검색어 안 `@핸들` 을 멘션 토큰으로 바꾼 대체 검색어들 — 색인(원문)에는 토큰이 들어 있어서다. 핸들 하나가 여럿으로 풀리면(사람과
- * 에이전트가 같은 핸들 등) 경우마다 하나씩 만들어 OR 로 찾는다. 모르는 핸들은 글자 그대로. 핸들을 찾는 꼴은 shared tokenize 와 같은
- * PLAIN_MENTION_RE 다 — 본문을 토큰으로 바꾼 규칙과 같아야 같은 자리가 찾힌다
+ * 원래 검색어와, 그 안의 `@핸들` 을 멘션 토큰으로 바꾼 대체 검색어들 — 색인(원문)에는 토큰이 들어 있어서다. 핸들 하나가 여럿으로
+ * 풀리면(사람과 에이전트가 같은 핸들 등) 경우마다 하나씩 만들어 OR 로 찾는다. 모르는 핸들은 글자 그대로. 핸들을 찾는 꼴은 shared
+ * tokenize 와 같은 PLAIN_MENTION_RE 다 — 본문을 토큰으로 바꾼 규칙과 같아야 같은 자리가 찾힌다.
+ * 원래 검색어를 늘 함께 찾는 까닭: tokenize 는 그 채널 참가자만 토큰으로 바꾸고 코드 안은 건드리지 않아, 화면에 `@dev` 로 보이는
+ * 글자 그대로의 본문이 흔하다(dev 가 없는 채널, 코드 안)
  */
 function expandHandles(q: string, mentions: MentionDirectory): string[] {
   let alts = [""];
@@ -165,12 +180,12 @@ function expandHandles(q: string, mentions: MentionDirectory): string[] {
     const end = (m.index as number) + m[0].length;
     const tokens = mentions.tokensOf(m[2] as string);
     const choices =
-      tokens.length > 0 && alts.length * tokens.length <= MAX_ALTERNATIVES ? tokens : [q.slice(at, end)];
+      tokens.length > 0 && alts.length * tokens.length <= MAX_NEEDLES - 1 ? tokens : [q.slice(at, end)];
     const between = q.slice(last, at);
     alts = alts.flatMap((a) => choices.map((c) => a + between + c));
     last = end;
   }
-  return alts.map((a) => a + q.slice(last));
+  return [...new Set([q, ...alts.map((a) => a + q.slice(last))])];
 }
 
 /**
@@ -247,15 +262,24 @@ function toHit(row: HitRow, needles: string[], handleOf: HandleOf): SearchHit {
 }
 
 /**
- * 본문에서 첫 일치를 자른다. 첨부 이름으로만 찾힌 행은 이름에서, 그래도 없으면(대소문자 접기 차이 등) 본문 머리를 표시 없이.
- * 본문은 읽는 글(readable.ts — 멘션은 @핸들, 마크다운 문법은 걷음)로 보인다. 일치는 원문에서 찾고 강조는 그 원문 범위를 낳은 화면 글자에 둔다
+ * 본문에서 강조를 그릴 수 있는 첫 일치를 자른다. 첨부 이름으로만 찾힌 행은 이름에서, 그래도 없으면(대소문자 접기 차이 등) 본문 머리를 표시 없이.
+ * 본문은 읽는 글(readable.ts — 멘션은 @핸들, 마크다운 문법은 걷음)로 보인다. 일치는 원문에서 찾고 강조는 그 원문 범위를 낳은 화면 글자에 둔다.
+ * 본문은 일치 주변 창만 변환한다(readable.ts 머리 주석의 ⚠)
  */
 function snippetOf(row: HitRow, needles: string[], handleOf: HandleOf): string {
   const body = stripMarks(row.bodyMd);
-  const bodyGlyphs = readableGlyphs(body, handleOf);
   const names = stripMarks(attachmentNames(row.attachmentsJson));
+  const bodyIn = (w: Span) => readableGlyphs(body, handleOf, w);
+  const whole = (s: string): Span => ({ from: 0, to: s.length });
   return (
-    cutAround(body, bodyGlyphs, needles) ?? cutAround(names, plainGlyphs(names), needles) ?? head(bodyGlyphs)
+    cutAround(body, needles, bodyIn, (from, to) => readableWindow(body, from, to)) ??
+    cutAround(
+      names,
+      needles,
+      () => plainGlyphs(names),
+      () => whole(names),
+    ) ??
+    head(body, bodyIn)
   );
 }
 
@@ -270,28 +294,55 @@ function attachmentNames(json: string): string {
 
 /**
  * FTS snippet() 을 쓰지 않는 까닭: 토큰 단위라 trigram 에서는 잘리는 글자 수가 흔들린다. 그래서 원문에서 직접 찾는다.
- * 대체 검색어 가운데 원문에서 가장 앞에 나오는 일치를 쓴다. 일치가 화면 글자를 하나도 낳지 않으면(코드 펜스 표시만 찾은 경우 등) 일치 없음
+ * 모든 needles 의 일치를 원문 앞에서부터 보며 화면 글자를 낳는 첫 일치를 쓴다 — 링크 주소·코드 펜스 표시처럼 보이지 않는 자리의
+ * 일치는 건너뛴다. 창 MAX_SNIPPET_WINDOWS 개 안에서 못 찾으면 일치 없음
  */
-function cutAround(raw: string, glyphs: Glyph[], needles: string[]): string | undefined {
-  let found: [number, number] | undefined;
-  for (const needle of needles) {
-    const m = indexOfFolded(raw, needle);
-    if (m && (found === undefined || m[0] < found[0])) found = m;
+function cutAround(
+  raw: string,
+  needles: string[],
+  render: (w: Span) => Glyph[],
+  windowOf: (from: number, to: number) => Span,
+): string | undefined {
+  let win: Span | undefined;
+  let glyphs: Glyph[] = [];
+  let windows = 0;
+  for (const [from, to] of matchesFolded(raw, needles)) {
+    if (win === undefined || from < win.from || to > win.to) {
+      if (windows++ === MAX_SNIPPET_WINDOWS) return undefined;
+      win = windowOf(from, to);
+      glyphs = render(win);
+    }
+    if (glyphRange(glyphs, from, to) === undefined) continue;
+    // 앞 일치를 보려고 만든 창이면 이 일치를 가운데 둔 창으로 다시 — 뒤쪽 문맥이 창 끝에서 잘리지 않게
+    const centered = windowOf(from, to);
+    if (centered.from !== win.from || centered.to !== win.to) {
+      const again = render(centered);
+      if (glyphRange(again, from, to) !== undefined) {
+        win = centered;
+        glyphs = again;
+      }
+    }
+    return cut(glyphs, glyphRange(glyphs, from, to) as [number, number], win.from > 0, win.to < raw.length);
   }
-  const range = found && glyphRange(glyphs, found[0], found[1]);
-  if (range === undefined) return undefined;
+  return undefined;
+}
+
+/** 강조 범위 앞뒤로 SNIPPET_CONTEXT 글자. 창 밖에도 원문이 있으면(before·after) 창 끝에서도 말줄임 */
+function cut(glyphs: Glyph[], range: [number, number], before: boolean, after: boolean): string {
   const at = range[0];
   const end = Math.min(range[1] + 1, at + SNIPPET_BUDGET);
   const context = Math.min(SNIPPET_CONTEXT, Math.floor((SNIPPET_BUDGET - (end - at)) / 2));
   const start = Math.max(0, at - context);
   const stop = Math.min(glyphs.length, end + context);
   const part = (from: number, to: number) => text(glyphs.slice(from, to));
-  return `${start > 0 ? "…" : ""}${part(start, at)}${SEARCH_SNIPPET_OPEN}${part(at, end)}${SEARCH_SNIPPET_CLOSE}${part(end, stop)}${stop < glyphs.length ? "…" : ""}`;
+  return `${start > 0 || before ? "…" : ""}${part(start, at)}${SEARCH_SNIPPET_OPEN}${part(at, end)}${SEARCH_SNIPPET_CLOSE}${part(end, stop)}${stop < glyphs.length || after ? "…" : ""}`;
 }
 
-function head(glyphs: Glyph[]): string {
+function head(raw: string, render: (w: Span) => Glyph[]): string {
+  const win = readableWindow(raw, 0, 0);
+  const glyphs = render(win);
   const shown = glyphs.slice(0, SNIPPET_CONTEXT * 2);
-  return `${text(shown)}${shown.length < glyphs.length ? "…" : ""}`;
+  return `${text(shown)}${shown.length < glyphs.length || win.to < raw.length ? "…" : ""}`;
 }
 
 const text = (glyphs: Glyph[]): string => glyphs.map((g) => g.ch).join("");
@@ -305,15 +356,18 @@ function fold(ch: string): string {
   return lower.length === ch.length ? lower : ch;
 }
 
-/** 대소문자를 접어 찾은 첫 일치의 원문 범위(UTF-16 오프셋 [from, to)). 비교는 코드 포인트 단위 */
-function indexOfFolded(raw: string, needle: string): [number, number] | undefined {
-  const chars = Array.from(raw);
-  const hay = chars.map(fold);
-  const want = Array.from(needle).map(fold);
-  outer: for (let i = 0; i + want.length <= hay.length; i++) {
-    for (let j = 0; j < want.length; j++) if (hay[i + j] !== want[j]) continue outer;
-    const from = chars.slice(0, i).join("").length;
-    return [from, from + chars.slice(i, i + want.length).join("").length];
+/**
+ * 모든 needles 의 일치를 원문 범위(UTF-16 오프셋 [from, to))로, 앞에서부터. 대소문자를 접은 글은 글자마다 길이가 같아(fold)
+ * 원문과 오프셋이 같으므로 접은 글에서 indexOf 로 찾는다(짝 없는 서로게이트가 든 검색어는 쌍 한가운데에 걸릴 수 있다 —
+ * 강조가 그 글자 하나를 통째로 감쌀 뿐이다)
+ */
+function matchesFolded(raw: string, needles: string[]): Array<[number, number]> {
+  const hay = Array.from(raw, fold).join("");
+  const found: Array<[number, number]> = [];
+  for (const needle of needles) {
+    const want = Array.from(needle, fold).join("");
+    if (want.length === 0) continue;
+    for (let i = hay.indexOf(want); i >= 0; i = hay.indexOf(want, i + 1)) found.push([i, i + want.length]);
   }
-  return undefined;
+  return found.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
 }

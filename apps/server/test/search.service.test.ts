@@ -443,6 +443,33 @@ describe("스니펫 — 읽는 글(멘션 풀기·마크다운 걷기)", () => {
     expect(t.search("목표어").hits[0]?.snippet).toBe(`…${"가".repeat(64)}${O}목표어${C}${"나".repeat(64)}…`);
   });
 
+  it("첫 일치가 숨은 링크 주소 안이면 뒤에 보이는 일치를 감싼다", () => {
+    const t = setup();
+    t.say(`[x](http://a/보고서) ${"가".repeat(200)} 보고서 정리`);
+    expect(t.search("보고서").hits[0]?.snippet).toBe(`…${"가".repeat(63)} ${O}보고서${C} 정리`);
+  });
+
+  it("숨은 첫 일치의 창 끝 가까이에서 보이는 일치를 찾아도 뒤 문맥을 다 싣는다", () => {
+    const t = setup();
+    t.say(`[x](http://a/보고서) ${"가".repeat(1990)} 보고서 ${"나".repeat(200)}`);
+    expect(t.search("보고서").hits[0]?.snippet).toBe(
+      `…${"가".repeat(63)} ${O}보고서${C} ${"나".repeat(63)}…`,
+    );
+  });
+
+  it("100 KB 한 줄의 짝 없는 강조·링크 표시 본문도 일치를 감싼다(변환은 일치 주변 창만)", () => {
+    const t = setup();
+    for (const unit of ["*a ", "![a"]) {
+      const m = t.say("임시");
+      const body = `${unit.repeat(16_000)}목표어${unit.repeat(16_000)}`;
+      setBody(t, m.id, body);
+      const snippet = t.search("목표어").hits.find((h) => h.messageId === m.id)?.snippet ?? "";
+      expect(snippet).toContain(`${O}목표어${C}`);
+      expect(snippet.startsWith("…")).toBe(true);
+      expect(snippet.endsWith("…")).toBe(true);
+    }
+  });
+
   it("2글자(LIKE) 경로의 스니펫도 읽는 글로", () => {
     const t = setup();
     const m = t.say("임시");
@@ -573,6 +600,106 @@ describe("@핸들 검색 — 멘션 토큰으로 바꿔 찾는다(색인은 그�
     expect([...snippet].length).toBe(400);
     expect(snippet.startsWith(`…${O}@${long} @${long}`)).toBe(true);
     expect(snippet.endsWith(`${C}…`)).toBe(true);
+  });
+
+  it("멘션이 되지 않고 글자로 남은 @dev(채널 밖·코드 안)도 「@dev」로 찾는다", () => {
+    const t = setup();
+    const token = t.say("@dev 보고서 줘");
+    // random 에는 dev 가 없어 tokenize 가 풀지 않는다 — 본문에 글자 @dev 로 남는다
+    const outside = t.say("@dev 보고서 여기 없어", { channelId: t.otherId });
+    expect(t.db.select().from(messages).where(eq(messages.id, outside.id)).get()?.bodyMd).toBe(
+      "@dev 보고서 여기 없어",
+    );
+    const code = t.say("`@dev` 코드 안");
+    expect(ids(t.search("@dev")).sort()).toEqual([token.id, outside.id, code.id].sort());
+    expect(ids(t.search("@dev 보고서")).sort()).toEqual([token.id, outside.id].sort());
+    expect(t.search("@dev 보고서", { channelId: t.otherId }).hits[0]?.snippet).toBe(
+      `${O}@dev 보고서${C} 여기 없어`,
+    );
+  });
+
+  it("대소문자가 달라도 — 「@DEV」는 dev 멘션을 찾는다", () => {
+    const t = setup();
+    const hit = t.say("@dev 보고서 줘");
+    expect(ids(t.search("@DEV"))).toEqual([hit.id]);
+  });
+
+  it("두 대체 검색어가 다 든 본문은 원문에서 더 앞에 있는 일치를 감싼다", () => {
+    const t = setup();
+    const person = uuid();
+    t.db
+      .insert(users)
+      .values({
+        id: person,
+        workspaceId: t.workspaceId,
+        handle: "dev",
+        displayName: "Dev 사람",
+        authProvider: "local",
+        createdAt: NOW,
+      })
+      .run();
+    const m = t.say("임시");
+    // 대체 검색어는 에이전트 토큰이 먼저다 — 원문에서는 사람 토큰이 앞에 있다
+    t.db
+      .update(messages)
+      .set({ bodyMd: `<@u:${person}> 먼저 그리고 <@a:${t.devId}> 나중` })
+      .where(eq(messages.id, m.id))
+      .run();
+    expect(t.search("@dev").hits[0]?.snippet).toBe(`${O}@dev${C} 먼저 그리고 @dev 나중`);
+  });
+
+  it("channelId 로 좁히면 다른 채널의 별칭은 풀지 않는다", () => {
+    const t = setup();
+    const writer = createAgent(t.db, {
+      workspaceId: t.workspaceId,
+      providerAgentId: "writer",
+      handle: "writer",
+      name: "W",
+    });
+    addMember(
+      t.db,
+      t.channelId,
+      { memberType: "agent", memberId: writer.id, aliases: ["wr"] },
+      { warn: () => {} },
+    );
+    const m = t.say("임시", { channelId: t.otherId });
+    t.db
+      .update(messages)
+      .set({ bodyMd: `<@a:${writer.id}> 초안 부탁` })
+      .where(eq(messages.id, m.id))
+      .run();
+    expect(ids(t.search("@wr", { channelId: t.otherId }))).toEqual([]);
+    expect(ids(t.search("@wr"))).toEqual([m.id]);
+  });
+
+  it("대체 검색어가 상한을 채워도 원래 검색어(글자 그대로)는 늘 찾는다", () => {
+    const t = setup();
+    const person = uuid();
+    t.db
+      .insert(users)
+      .values({
+        id: person,
+        workspaceId: t.workspaceId,
+        handle: "dev",
+        displayName: "Dev 사람",
+        authProvider: "local",
+        createdAt: NOW,
+      })
+      .run();
+    const q = "@dev @dev @dev";
+    const plain = t.say("임시", { channelId: t.otherId });
+    t.db
+      .update(messages)
+      .set({ bodyMd: `${q} 끝` })
+      .where(eq(messages.id, plain.id))
+      .run();
+    const mixed = t.say("임시");
+    t.db
+      .update(messages)
+      .set({ bodyMd: `<@u:${person}> <@a:${t.devId}> @dev 끝` })
+      .where(eq(messages.id, mixed.id))
+      .run();
+    expect(ids(t.search(q)).sort()).toEqual([plain.id, mixed.id].sort());
   });
 
   it("2글자(LIKE) 경로 — 「@d」는 핸들이 될 수 없어(핸들 2자 이상) 글자 그대로", () => {
