@@ -1,4 +1,4 @@
-import type { Agent } from "@dodok/shared";
+import type { Agent, Person } from "@dodok/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, renderHook, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
@@ -28,7 +28,14 @@ const agentOf = (n: number, handle: string): Agent => ({
   createdAt: "2026-09-19T00:00:00.000Z",
 });
 const DEV = agentOf(21, "dev");
-const FIN = agentOf(22, "fin");
+const personOf = (n: number, handle: string): Person => ({
+  id: uid(n),
+  handle,
+  displayName: handle,
+  role: "member",
+});
+const MIA = personOf(31, "mia");
+const JO = personOf(32, "jo");
 
 let fake: FakeSocket;
 let qc: QueryClient;
@@ -38,9 +45,13 @@ beforeEach(() => {
   wire.socket = fake.wire;
   useWireStatus.getState().setStatus("connected");
   useTypingStore.setState({ byChannel: {} });
-  qc = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, retry: false } } });
+  // gcTime: Infinity — 표시기가 읽지 않는 qk.agents 의 GC 타이머가 「타이머 0」 검사에 섞이지 않게
+  qc = new QueryClient({
+    defaultOptions: { queries: { staleTime: Infinity, gcTime: Infinity, retry: false } },
+  });
   qc.setQueryData(qk.me, { user: { id: USER, handle: "owner" }, workspaceId: uid(900) });
-  qc.setQueryData(qk.agents, [DEV, FIN]);
+  qc.setQueryData(qk.agents, [DEV]); // 목록에 있는 에이전트도 typing 으로는 보이지 않는다
+  qc.setQueryData(qk.people, [{ id: USER, handle: "owner", displayName: "owner", role: "owner" }, MIA, JO]);
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -82,37 +93,37 @@ it("useTyping: 3초에 한 번 typing { channelId }, connected 일 때만", () =
   expect(fake.sentOf("typing")).toHaveLength(3);
 });
 
-it("받은 작성 중: 에이전트 핸들로, 여럿이면 쉼표 — 자기 자신(me)과 다른 채널은 숨긴다", () => {
+it("받은 작성 중: 다른 사람은 people 로 푼 핸들로, 여럿이면 쉼표 — 자기 자신(다른 탭)과 다른 채널은 숨긴다", () => {
   render(<TypingIndicator channelId={CH} />, { wrapper });
   expect(screen.queryByText(/작성 중/)).not.toBeInTheDocument();
 
   note("user", USER); // 같은 사용자의 다른 탭
-  note("agent", DEV.id, CH2);
+  note("user", MIA.id, CH2);
   expect(screen.queryByText(/작성 중/)).not.toBeInTheDocument();
 
-  note("agent", DEV.id);
-  expect(screen.getByText("@dev 작성 중…")).toBeInTheDocument();
-  note("agent", FIN.id);
-  expect(screen.getByText("@dev, @fin 작성 중…")).toBeInTheDocument();
+  note("user", MIA.id);
+  expect(screen.getByText("@mia 작성 중…")).toBeInTheDocument();
+  note("user", JO.id);
+  expect(screen.getByText("@mia, @jo 작성 중…")).toBeInTheDocument();
 });
 
 it("5초가 지나면 1초 안에 사라진다(다시 그리기 타이머)", () => {
   render(<TypingIndicator channelId={CH} />, { wrapper });
-  note("agent", DEV.id);
+  note("user", MIA.id);
   act(() => vi.advanceTimersByTime(3_000));
-  note("agent", FIN.id);
-  expect(screen.getByText("@dev, @fin 작성 중…")).toBeInTheDocument();
+  note("user", JO.id);
+  expect(screen.getByText("@mia, @jo 작성 중…")).toBeInTheDocument();
 
-  act(() => vi.advanceTimersByTime(2_000)); // dev 만료
-  expect(screen.getByText("@fin 작성 중…")).toBeInTheDocument();
-  act(() => vi.advanceTimersByTime(3_000)); // fin 만료
+  act(() => vi.advanceTimersByTime(2_000)); // mia 만료
+  expect(screen.getByText("@jo 작성 중…")).toBeInTheDocument();
+  act(() => vi.advanceTimersByTime(3_000)); // jo 만료
   expect(screen.queryByText(/작성 중/)).not.toBeInTheDocument();
   expect(vi.getTimerCount()).toBe(0); // 보일 것이 없으면 타이머도 멈춘다
 });
 
-it("모르는 행위자(목록에 없는 에이전트·다른 사람)는 이름을 모르니 보이지 않는다", () => {
+it("사람만 보인다 — 에이전트 typing(목록에 있는 에이전트라도)과 people 에 없는 사람은 건너뛴다", () => {
   render(<TypingIndicator channelId={CH} />, { wrapper });
-  note("agent", uid(77));
+  note("agent", DEV.id);
   note("user", uid(78));
   expect(screen.queryByText(/작성 중/)).not.toBeInTheDocument();
 });

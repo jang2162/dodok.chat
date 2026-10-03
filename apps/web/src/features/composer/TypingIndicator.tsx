@@ -1,18 +1,19 @@
 import { useEffect, useState } from "react";
-import { useAgents, useMe } from "@/api/queries";
+import { useMe, usePeople } from "@/api/queries";
 import { typingActors, useTypingStore } from "@/realtime/typing";
 
 /** 보이는 동안 이 간격으로 다시 계산한다 — 받은 typing 은 5초 뒤 만료(`TYPING_TTL_MS`) */
 const TICK_MS = 1_000;
 
 /**
- * 작성기 위 「@dev 작성 중…」(스펙 4.7). 자기 자신(서버는 같은 사용자의 다른 탭에도 보낸다)은 숨긴다.
- * 이름은 에이전트 목록과 me 로 푼다 — 모르는 행위자(목록에 아직 없는 에이전트, 사용자 목록이 없는 다른 사람)는 건너뛴다
+ * 작성기 위 「@mia 작성 중…」(스펙 4.7) — 사람만. 핸들은 사람 목록(people)으로 풀고, 목록에 없는 사람은 건너뛴다.
+ * 자기 자신(서버는 같은 사용자의 다른 탭에도 보낸다)은 숨긴다. 에이전트 typing 은 보이지 않는다 — 플러그인이 typing 을
+ * 내지 않고, 에이전트가 일하는 중이라는 표시는 런 버블(대기 중·스트리밍·도구 사용 중)이 맡는다
  */
 export function TypingIndicator({ channelId }: { channelId: string }) {
   const byChannel = useTypingStore((s) => s.byChannel);
   const me = useMe().data?.user;
-  const agents = useAgents().data;
+  const people = usePeople().data;
   const [now, setNow] = useState(() => Date.now());
 
   // 새로 받으면 시계를 맞춘다 — 타이머가 멈춰 있던 동안 `now` 는 옛값이다
@@ -20,15 +21,9 @@ export function TypingIndicator({ channelId }: { channelId: string }) {
   useEffect(() => setNow(Date.now()), [entries]);
 
   const handles = typingActors({ byChannel }, channelId, now).flatMap((a) => {
-    const handle =
-      a.actorType === "agent"
-        ? agents?.find((x) => x.id === a.actorId)?.handle
-        : a.actorId === me?.id
-          ? me.handle
-          : undefined;
-    // 이름을 알아도 자기 자신은 숨긴다
-    const self = a.actorType === "user" && a.actorId === me?.id;
-    return handle && !self ? [`@${handle}`] : [];
+    if (a.actorType !== "user" || a.actorId === me?.id) return [];
+    const handle = people?.find((p) => p.id === a.actorId)?.handle;
+    return handle ? [`@${handle}`] : [];
   });
   const active = handles.length > 0;
 
