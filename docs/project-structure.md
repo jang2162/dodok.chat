@@ -231,7 +231,10 @@ src/
 │  │                      threadRootsOf — lastSeq 재동기화 때 페이지 밖 옛 루트를 질의 한 번으로(구독 ack `threadRoots`)
 │  ├─ search/             Phase 4 ①. service.ts(searchMessages — 3글자 이상은 `messages_fts MATCH` 에 사용자 입력을 따옴표 구절 하나로, bm25 다음 최신순, 페이지 20·커서.
 │  │                      2글자(코드 포인트)는 `body_md LIKE … ESCAPE '\'` 최근 90일·최대 50개, 커서 없이 `limited: true`. NUL 이 든 검색어는 400.
-│  │                      멤버인 채널만, kind normal 만. 스니펫은 앞뒤 64 코드 포인트 — 본문에 없으면 첨부 이름, 그래도 없으면 본문 머리 128자, 본문의 STX·ETX 는 먼저 걷는다) ·
+│  │                      멤버인 채널만, kind normal 만. 검색어 안 `@핸들`(shared PLAIN_MENTION_RE)은 아는 에이전트·사람(나갔으면 옛 핸들)·범위 채널 별칭이면 멘션 토큰으로 바꿔 찾는다 —
+│  │                      색인은 원문 그대로, 한 핸들이 여럿으로 풀리면 대체 검색어를 OR(최대 8). 스니펫은 readable.ts 의 읽는 글(멘션 → @핸들, 모르면 「@알 수 없음」, 마크다운 표시 걷음,
+│  │                      글자마다 원문 범위)에서 앞뒤 64 글자 — 일치는 원문에서 찾고 강조는 그 범위를 낳은 글자에, 강조가 길면 문맥을 줄여 400 안. 본문에 없으면 첨부 이름,
+│  │                      그래도 없으면 본문 머리 128자, 본문의 STX·ETX 는 먼저 걷는다) ·
 │  │                      routes.ts(`GET /api/v1/search` — requireSession 뒤 REST 상한 위에 검색 전용 사용자당 분당 LIMITS.searchPerMin(60), 넘으면 429 + 사건 ratelimit)
 │  ├─ router/             decide.ts(순수: 멘션·릴레이 판정, maxRelayTurns·allowPairs·반복 해시 — 일일 상한은 ops 관문, isPairAllowed 는 다시 실행도 쓴다.
 │  │                      스레드 답글(사람): 멘션된 에이전트마다 스레드 런, 멘션이 없으면 루트를 쓴 에이전트(활성·멤버) → 채널 자동 응답. 스레드 답글(에이전트)의 멘션은 같은 스레드 릴레이) +
