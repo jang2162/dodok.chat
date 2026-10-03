@@ -17,7 +17,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Db } from "../src/db/client";
 import * as authSchema from "../src/db/auth-schema";
 import * as schema from "../src/db/schema.sqlite";
-import { messages } from "../src/db/schema.sqlite";
+import { agents, messages, users } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
 import { addMember, createChannel } from "../src/modules/channels/service";
 import { createAgentMessage, createSystemMessage, createUserMessage } from "../src/modules/messages/service";
@@ -376,6 +376,210 @@ describe("스니펫", () => {
     t.say(`${"😀".repeat(100)}${"🎉".repeat(200)}${"😀".repeat(100)}`);
     const snippet = t.search("🎉".repeat(200)).hits[0]?.snippet; // setup 의 search 가 SearchResult 로 파싱한다
     expect(snippet).toBe(`…${"😀".repeat(64)}${O}${"🎉".repeat(200)}${C}${"😀".repeat(64)}…`);
+  });
+});
+
+describe("스니펫 — 읽는 글(멘션 풀기·마크다운 걷기)", () => {
+  const O = SEARCH_SNIPPET_OPEN;
+  const C = SEARCH_SNIPPET_CLOSE;
+  const setBody = (t: ReturnType<typeof setup>, id: string, bodyMd: string) =>
+    t.db.update(messages).set({ bodyMd }).where(eq(messages.id, id)).run();
+
+  it("멘션 토큰은 자르지 않고 @핸들로 푼다 — 앞뒤 64자는 푼 글자로 센다", () => {
+    const t = setup();
+    // 원문으로 세면 64자 창이 토큰(41자) 한가운데서 잘린다
+    t.say(`${"가".repeat(10)} @dev ${"나".repeat(30)}보고서`);
+    expect(t.search("보고서").hits[0]?.snippet).toBe(
+      `${"가".repeat(10)} @dev ${"나".repeat(30)}${O}보고서${C}`,
+    );
+  });
+
+  it("사람 멘션은 사람 핸들, 나간 멤버는 옛 핸들, 모르는 id 는 「@알 수 없음」(웹 칩과 같은 표기)", () => {
+    const t = setup();
+    const m = t.say("@jang 님 확인 부탁");
+    expect(t.search("확인 부탁").hits[0]?.snippet).toBe(`@jang 님 ${O}확인 부탁${C}`);
+    t.db.update(users).set({ handle: "left-x1", leftHandle: "jang" }).where(eq(users.id, t.userId)).run();
+    expect(t.search("확인 부탁").hits[0]?.snippet).toBe(`@jang 님 ${O}확인 부탁${C}`);
+    setBody(t, m.id, `<@a:${uuid()}> 님 확인 부탁`);
+    expect(t.search("확인 부탁").hits[0]?.snippet).toBe(`@알 수 없음 님 ${O}확인 부탁${C}`);
+  });
+
+  it("일치가 토큰 안에 걸리면 푼 @핸들 전체를 감싼다", () => {
+    const t = setup();
+    t.say("@dev 보고서 줘");
+    expect(t.search(t.devId.slice(0, 8)).hits[0]?.snippet).toBe(`${O}@dev${C} 보고서 줘`);
+  });
+
+  it("마크다운 표시(제목·강조·목록·인라인 코드·링크·인용)를 걷는다", () => {
+    const t = setup();
+    t.say("## 주간 **보고서** 정리\n- 첫 `항목`\n> 인용 [링크 글](https://x.y/z) _기울임_ ~~취소~~");
+    expect(t.search("보고서").hits[0]?.snippet).toBe(
+      `주간 ${O}보고서${C} 정리 첫 항목 인용 링크 글 기울임 취소`,
+    );
+  });
+
+  it("코드 펜스 줄은 걷고 코드는 글자 그대로 — 코드 안 별표·밑줄은 남긴다", () => {
+    const t = setup();
+    t.say("앞 글\n```ts\nconst a_b = 2 * 3 // 보고서\n```\n뒤 글");
+    expect(t.search("보고서").hits[0]?.snippet).toBe(`앞 글 const a_b = 2 * 3 // ${O}보고서${C} 뒤 글`);
+  });
+
+  it("단어 안 밑줄·짝 없는 별표는 그대로 둔다", () => {
+    const t = setup();
+    t.say("snake_case_name 과 2 * 3 보고서");
+    expect(t.search("보고서").hits[0]?.snippet).toBe(`snake_case_name 과 2 * 3 ${O}보고서${C}`);
+  });
+
+  it("검색어에 마크다운 표시가 들어 있어도 강조는 걷은 뒤의 일치 글자를 정확히 감싼다", () => {
+    const t = setup();
+    t.say("주간 **보고서** 정리");
+    expect(t.search("**보고서**").hits[0]?.snippet).toBe(`주간 ${O}보고서${C} 정리`);
+    expect(t.search("보고서** 정").hits[0]?.snippet).toBe(`주간 ${O}보고서 정${C}리`);
+  });
+
+  it("앞뒤 64자는 걷은 뒤의 글자로 센다", () => {
+    const t = setup();
+    t.say(`${"[가](https://x.y)".repeat(70)}목표어**${"나".repeat(70)}**`);
+    expect(t.search("목표어").hits[0]?.snippet).toBe(`…${"가".repeat(64)}${O}목표어${C}${"나".repeat(64)}…`);
+  });
+
+  it("2글자(LIKE) 경로의 스니펫도 읽는 글로", () => {
+    const t = setup();
+    const m = t.say("임시");
+    setBody(t, m.id, "## **머리** <@a:00000000-0000-4000-8000-000000000000> 끝");
+    expect(t.search("머리").hits[0]?.snippet).toBe(`${O}머리${C} @알 수 없음 끝`);
+  });
+});
+
+describe("@핸들 검색 — 멘션 토큰으로 바꿔 찾는다(색인은 그대로)", () => {
+  const O = SEARCH_SNIPPET_OPEN;
+  const C = SEARCH_SNIPPET_CLOSE;
+
+  it("「@dev」는 dev 멘션이 든 메시지를 찾고, 글자 dev 만 든 메시지는 찾지 않는다", () => {
+    const t = setup();
+    const hit = t.say("@dev 보고서 줘");
+    t.say("dev 서버 재시작");
+    expect(ids(t.search("@dev"))).toEqual([hit.id]);
+    expect(t.search("@dev").hits[0]?.snippet).toBe(`${O}@dev${C} 보고서 줘`);
+  });
+
+  it("「@dev 보고서」처럼 섞인 검색어도 된다", () => {
+    const t = setup();
+    const hit = t.say("@dev 보고서 줘");
+    t.say("@dev 회의록 줘");
+    expect(ids(t.search("@dev 보고서"))).toEqual([hit.id]);
+    expect(t.search("@dev 보고서").hits[0]?.snippet).toBe(`${O}@dev 보고서${C} 줘`);
+  });
+
+  it("사람 핸들도 — 「@jang」", () => {
+    const t = setup();
+    const hit = t.say("@jang 확인 부탁");
+    expect(ids(t.search("@jang"))).toEqual([hit.id]);
+  });
+
+  it("핸들이 바뀐 뒤에도 옛 메시지를 지금 핸들로 찾는다", () => {
+    const t = setup();
+    const hit = t.say("@dev 보고서 줘");
+    t.db.update(agents).set({ handle: "devops" }).where(eq(agents.id, t.devId)).run();
+    expect(ids(t.search("@devops"))).toEqual([hit.id]);
+    expect(t.search("@devops").hits[0]?.snippet).toBe(`${O}@devops${C} 보고서 줘`);
+    expect(ids(t.search("@dev 보고서"))).toEqual([]);
+  });
+
+  it("채널 별칭도 그 에이전트로 찾는다", () => {
+    const t = setup();
+    const writer = createAgent(t.db, {
+      workspaceId: t.workspaceId,
+      providerAgentId: "writer",
+      handle: "writer",
+      name: "W",
+    });
+    addMember(
+      t.db,
+      t.channelId,
+      { memberType: "agent", memberId: writer.id, aliases: ["wr"] },
+      { warn: () => {} },
+    );
+    const hit = t.say("@wr 초안 부탁");
+    expect(ids(t.search("@wr"))).toEqual([hit.id]);
+    expect(ids(t.search("@writer 초안"))).toEqual([hit.id]);
+  });
+
+  it("모르는 핸들은 글자 그대로 찾는다", () => {
+    const t = setup();
+    const hit = t.say("`@nobody` 는 없는 사람");
+    expect(ids(t.search("@nobody"))).toEqual([hit.id]);
+  });
+
+  it("다른 워크스페이스의 같은 핸들은 바꾸지 않는다", () => {
+    const t = setup();
+    const otherWs = seedWorkspace(t.db, { userHandle: "ghost" });
+    createAgent(t.db, {
+      workspaceId: otherWs.workspaceId,
+      providerAgentId: "ghostbot",
+      handle: "ghostbot",
+      name: "G",
+    });
+    const hit = t.say("`@ghostbot` 글자");
+    expect(ids(t.search("@ghostbot"))).toEqual([hit.id]);
+  });
+
+  it("같은 핸들이 사람·에이전트 둘이면 둘 다 찾는다", () => {
+    const t = setup();
+    const person = uuid();
+    t.db
+      .insert(users)
+      .values({
+        id: person,
+        workspaceId: t.workspaceId,
+        handle: "dev",
+        displayName: "Dev 사람",
+        authProvider: "local",
+        createdAt: NOW,
+      })
+      .run();
+    const toAgent = t.say("@dev 에이전트에게");
+    const toPerson = t.say("임시");
+    t.db
+      .update(messages)
+      .set({ bodyMd: `<@u:${person}> 사람에게` })
+      .where(eq(messages.id, toPerson.id))
+      .run();
+    expect(ids(t.search("@dev")).sort()).toEqual([toAgent.id, toPerson.id].sort());
+    expect(t.search("@dev 사람").hits[0]?.snippet).toBe(`${O}@dev 사람${C}에게`);
+  });
+
+  it("풀린 핸들이 길어 강조가 길어져도 스니펫은 스키마 상한(400) 안이다", () => {
+    const t = setup();
+    const long = "l".repeat(32);
+    const agent = createAgent(t.db, {
+      workspaceId: t.workspaceId,
+      providerAgentId: long,
+      handle: long,
+      name: "L",
+    });
+    addMember(
+      t.db,
+      t.channelId,
+      { memberType: "agent", memberId: agent.id, aliases: ["wr"] },
+      { warn: () => {} },
+    );
+    const q = "@wr ".repeat(50).trim();
+    const hit = t.say(`앞 ${q} 뒤`);
+    const r = t.search(q); // setup 의 search 가 SearchResult 로 파싱한다 — 넘치면 여기서 던진다
+    expect(ids(r)).toEqual([hit.id]);
+    const snippet = r.hits[0]?.snippet ?? "";
+    // 강조가 상한을 다 쓰면 앞뒤 문맥 없이 강조를 자르고 말줄임
+    expect([...snippet].length).toBe(400);
+    expect(snippet.startsWith(`…${O}@${long} @${long}`)).toBe(true);
+    expect(snippet.endsWith(`${C}…`)).toBe(true);
+  });
+
+  it("2글자(LIKE) 경로 — 「@d」는 핸들이 될 수 없어(핸들 2자 이상) 글자 그대로", () => {
+    const t = setup();
+    const hit = t.say("메모 @d 끝");
+    t.say("@dev 보고서");
+    expect(ids(t.search("@d"))).toEqual([hit.id]);
   });
 });
 
