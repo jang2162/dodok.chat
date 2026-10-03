@@ -319,7 +319,7 @@ oc --dev plugins inspect dodok --json | jq .plugin.status     # 여전히 "loade
 DODOK_API_ORIGIN=http://127.0.0.1:$PORT pnpm -F @dodok/web dev      # 5173, strictPort
 ```
 
-- 브라우저는 **`http://localhost:5173`** 으로 연다. `127.0.0.1:5173` 으로 열면 `Origin` 이 달라 wire 가 `UNAUTHORIZED` 를 주고, 앱은 REST 세션이 살아 있는 것을 보고
+- 브라우저는 **`http://localhost:5173`** 으로 연다. 웹을 `--host 127.0.0.1` 로 띄운 뒤 `127.0.0.1:5173` 으로 열면 `Origin` 이 달라 wire 가 `UNAUTHORIZED` 를 주고, 앱은 REST 세션이 살아 있는 것을 보고
   재연결을 멈춘 뒤 「실시간 연결이 거부되었습니다 — 이 주소(http://127.0.0.1:5173)가 서버의 APP_ORIGIN 과 다릅니다」 배너를 띄운다(설계대로다 — 헷갈리지 말 것).
   Vite 기본값(`localhost`)은 macOS 에서 `::1` 에만 열려 `127.0.0.1:5173` 은 그 전에 연결 거부(`ERR_CONNECTION_REFUSED`)다 — 배너를 일부러 보려면 웹을 `--host 127.0.0.1` 로 띄운다.
 - **로그인 토큰을 화면·전사에 남기지 않고 넣는 법.** 토큰은 `data/live-smoke.env` 의 `LOCAL_AUTH_TOKEN`(실연 전용으로 새로 뽑은 값 — `.env` 의 것이 아니다)이다.

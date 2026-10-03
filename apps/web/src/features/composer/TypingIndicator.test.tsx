@@ -124,6 +124,7 @@ it("5초가 지나면 1초 안에 사라진다(다시 그리기 타이머)", () 
 it("사람만 보인다 — 에이전트 typing(목록에 있는 에이전트라도)과 people 에 없는 사람은 건너뛴다", () => {
   render(<TypingIndicator channelId={CH} />, { wrapper });
   note("agent", DEV.id);
+  note("agent", MIA.id); // people 에 있는 id 라도 에이전트면 숨는다
   note("user", uid(78));
   expect(screen.queryByText(/작성 중/)).not.toBeInTheDocument();
 });
