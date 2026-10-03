@@ -8,7 +8,11 @@
  *
  * ⚠ 강조·링크는 여는 표시마다 줄 끝까지 닫는 짝을 찾으므로 한 줄 안에서 길이의 제곱으로 느려진다 — 100 KB(본문 상한) 한 줄의
  * `*a ` 반복이 수 초다(`readableGlyphs("*a ".repeat(33_333), () => undefined)` 를 window 없이 tsx 로 잰다). 그래서 본문은
- * readableWindow 로 고른 창만 변환한다 — 창 하나는 같은 꼴에서 몇 ms 이고, search.snippet-window.test.ts 가 창 길이를 지킨다
+ * readableWindow 로 고른 창만 변환한다 — 창 하나는 같은 꼴에서 몇 ms 이고, search.snippet-window.test.ts 가 창 길이를 지킨다.
+ * 줄머리 표시 되풀이(`- - - … x`)도 표시마다 가로줄 검사가 줄 끝까지 훑으면 길이의 제곱이고, 창 앞 줄머리 훑기에는 창 상한이
+ * 없다 — 그렇게 돌리면 `"- ".repeat(48_000) + "x\n목표어"` 한 행이 16 s 다(lineHead 의 가로줄 시도를 되풀이마다 하게 바꾸고
+ * search.snippet-window.test.ts 를 돌려 잰다). 그래서 가로줄은 줄마다 한 번만 시도하고, 창 앞은 펜스 표시가 든 줄만 본다
+ * (fenceBefore). 표시마다 100 KB 되풀이한 최악 입력은 search.snippet-worst.test.ts 가 행마다 200 ms 상한으로 잰다
  */
 
 /** 화면 글자 하나(코드 포인트)와 그 글자를 낳은 원문 범위(UTF-16 오프셋, [from, to)) */
@@ -46,28 +50,46 @@ function at(re: RegExp, text: string, pos: number): RegExpExecArray | null {
 /** 일치 앞뒤로 변환할 원문 길이(UTF-16) — 스니펫에 보이는 글자(앞뒤 64·강조 396)보다 넉넉하고, 창 하나의 최악 변환이 몇 ms 안이다 */
 export const READABLE_WINDOW_SPAN = 2048;
 
+/** 줄 경계로 줄인 창에 남아야 할 일치 쪽 문맥(UTF-16) — 스니펫 앞뒤 64 글자를 마크다운 표시가 섞여도 채울 만큼 */
+const LINE_CUT_KEEP = 256;
+
 /**
- * 원문 [from, to) 를 스니펫으로 보일 때 변환할 창 — 앞뒤 READABLE_WINDOW_SPAN 안. 창 안에 줄 경계가 있으면 일치가 든 줄 쪽으로
- * 줄 경계에 맞춰 줄인다(넓히면 긴 줄에서 다시 느려진다). 줄 한가운데서 자르면 그 자리의 멘션 토큰은 통째로 넣고, 잘린 강조·링크는
- * 짝을 못 찾아 원문 글자로 남는다
+ * 원문 [from, to) 를 스니펫으로 보일 때 변환할 창 — 앞뒤 READABLE_WINDOW_SPAN 안. 창 안에 줄 경계가 있고 거기서 줄여도 일치 쪽
+ * 문맥이 LINE_CUT_KEEP 이상 남으면 줄 경계에 맞춘다(넓히면 긴 줄에서 다시 느려진다). 아니면 줄 한가운데서 자른다 — 옆 줄이 길 때
+ * 줄 경계에 맞추면 그쪽 문맥이 통째로 빠진다. 줄 한가운데서 자르면 그 자리의 멘션 토큰은 통째로 넣고, 잘린 강조·링크는 짝을 못 찾아
+ * 원문 글자로 남는다. 양 끝은 서로게이트 쌍을 가르지 않는다 — 가르면 스니펫에 짝 없는 서로게이트가 실린다
  */
 export function readableWindow(raw: string, from: number, to: number): Span {
   let start = Math.max(0, from - READABLE_WINDOW_SPAN);
   let end = Math.min(raw.length, to + READABLE_WINDOW_SPAN);
   if (start > 0) {
     const nl = raw.indexOf("\n", start - 1);
-    if (nl >= 0 && nl < from) start = nl + 1;
+    if (nl >= 0 && from - (nl + 1) >= LINE_CUT_KEEP) start = nl + 1;
     else start = tokenAcross(raw, start) ?? start;
   }
   if (end < raw.length) {
     const nl = raw.lastIndexOf("\n", end);
-    if (nl >= to) end = nl;
+    if (nl >= to && nl - to >= LINE_CUT_KEEP) end = nl;
     else {
       const token = tokenAcross(raw, end);
       if (token !== undefined) end = token + TOKEN_LENGTH;
     }
   }
+  if (isLow(raw.charCodeAt(start)) && isHigh(raw.charCodeAt(start - 1))) start -= 1;
+  if (isHigh(raw.charCodeAt(end - 1)) && isLow(raw.charCodeAt(end))) end += 1;
   return { from: start, to: end };
+}
+
+// 범위 밖 charCodeAt 은 NaN 이라 둘 다 거짓이다
+const isHigh = (c: number) => c >= 0xd800 && c <= 0xdbff;
+const isLow = (c: number) => c >= 0xdc00 && c <= 0xdfff;
+
+/**
+ * pos 의 글자(코드 포인트) 끝. codePointAt 으로 정하지 않는다 — Node 24(V8)의 최적화된 codePointAt 은 잘린 문자열(slice) 끝의
+ * high surrogate 에서 끝 너머 원본의 low surrogate 까지 읽을 때가 있어, 길이를 그걸로 정하면 루프가 어긋나 던진다
+ */
+function glyphEnd(raw: string, pos: number): number {
+  return isHigh(raw.charCodeAt(pos)) && isLow(raw.charCodeAt(pos + 1)) ? pos + 2 : pos + 1;
 }
 
 const TOKEN_LENGTH = "<@a:00000000-0000-0000-0000-000000000000>".length;
@@ -92,9 +114,9 @@ export function readableGlyphs(raw: string, handleOf: HandleOf, window?: Span): 
   const literal = (from: number, to: number) => {
     let i = from;
     while (i < to) {
-      const ch = String.fromCodePoint(raw.codePointAt(i) as number);
-      out.push({ ch, from: i, to: i + ch.length });
-      i += ch.length;
+      const next = glyphEnd(raw, i);
+      out.push({ ch: raw.slice(i, next), from: i, to: next });
+      i = next;
     }
   };
   // 링크·강조의 닫는 쪽 — 여는 쪽을 만났을 때 적어 두고, 그 자리에 오면 건너뛴다
@@ -128,7 +150,7 @@ export function readableGlyphs(raw: string, handleOf: HandleOf, window?: Span): 
     }
     const step = inline(raw, pos, ch);
     if (step === undefined) {
-      const next = pos + String.fromCodePoint(raw.codePointAt(pos) as number).length;
+      const next = glyphEnd(raw, pos);
       literal(pos, next);
       pos = next;
       continue;
@@ -157,13 +179,18 @@ export function readableGlyphs(raw: string, handleOf: HandleOf, window?: Span): 
 
 /**
  * 줄머리 — 코드 펜스 줄이면 펜스를 열거나 닫고 그 줄을 먹는다. 펜스 밖이면 줄머리 표시(제목·인용·목록·가로줄)를 먹는다.
- * 「> - 항목」 처럼 표시가 겹칠 수 있어 되풀이한다. 돌려준 pos 부터가 줄 안의 글이다
+ * 「> - 항목」 처럼 표시가 겹칠 수 있어 되풀이한다. 돌려준 pos 부터가 줄 안의 글이다.
+ * 가로줄 검사는 줄 끝까지 훑으므로 되풀이마다 하면 길이의 제곱이다(머리 주석의 ⚠) — 가로줄이 시작될 수 있는 꼬리(hrTail) 안에서만,
+ * 한 번만 한다. 꼬리 안에서 한 번 실패하면 뒤 자리에서도 실패한다 — 표시를 먹을수록 가로줄 글자만 줄어든다
  */
 function lineHead(
   raw: string,
   pos: number,
   fence: string | undefined,
 ): { pos: number; fence: string | undefined } {
+  const nl = raw.indexOf("\n", pos);
+  const hrFrom = hrTail(raw, pos, nl < 0 ? raw.length : nl);
+  let hrTried = false;
   for (;;) {
     const f = at(FENCE_LINE, raw, pos);
     if (f) {
@@ -174,19 +201,51 @@ function lineHead(
       return { pos, fence };
     }
     if (fence !== undefined) return { pos, fence };
-    const m = at(HR_LINE, raw, pos) ?? at(LINE_MARKER, raw, pos);
+    let m: RegExpExecArray | null = null;
+    if (!hrTried && pos >= hrFrom) {
+      hrTried = true;
+      m = at(HR_LINE, raw, pos);
+    }
+    m ??= at(LINE_MARKER, raw, pos);
     if (!m || m[0].length === 0) return { pos, fence };
     pos += m[0].length;
   }
 }
 
-/** upTo 앞에서 시작한 줄들의 줄머리만 훑어 upTo 자리의 코드 펜스 상태를 구한다 */
+/** 줄 [pos, end) 에서 가로줄이 시작될 수 있는 꼬리의 시작 — 끝에서부터 가로줄 글자(한 종류)와 공백만 이어진 자리 */
+function hrTail(raw: string, pos: number, end: number): number {
+  let mark: string | undefined;
+  let i = end;
+  while (i > pos) {
+    const ch = raw[i - 1] as string;
+    if (ch !== " " && ch !== "\t") {
+      mark ??= ch === "-" || ch === "*" || ch === "_" ? ch : "";
+      if (ch !== mark) break;
+    }
+    i -= 1;
+  }
+  return i;
+}
+
+/**
+ * upTo 앞에서 시작한 줄들의 줄머리를 훑어 upTo 자리의 코드 펜스 상태를 구한다. 펜스를 열고 닫는 줄에는 ``` 이나 ~~~ 가 들어
+ * 있으므로 그런 줄만 훑는다(머리 주석의 ⚠). 다음 표시 자리는 지나쳤을 때만 다시 찾는다 — 줄마다 찾으면 줄 수 × 길이다
+ */
 function fenceBefore(raw: string, upTo: number): string | undefined {
+  const next = (mark: string, pos: number) => {
+    const i = raw.indexOf(mark, pos);
+    return i < 0 ? raw.length : i;
+  };
   let fence: string | undefined;
+  let tick = next("```", 0);
+  let tilde = next("~~~", 0);
   let pos = 0;
   while (pos < upTo) {
-    fence = lineHead(raw, pos, fence).fence;
     const nl = raw.indexOf("\n", pos);
+    const end = nl < 0 ? raw.length : nl;
+    if (tick < pos) tick = next("```", pos);
+    if (tilde < pos) tilde = next("~~~", pos);
+    if (tick < end || tilde < end) fence = lineHead(raw, pos, fence).fence;
     if (nl < 0) break;
     pos = nl + 1;
   }

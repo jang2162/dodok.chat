@@ -79,6 +79,9 @@ function at(db: Db, id: string, createdAt: Date) {
   db.update(messages).set({ createdAt }).where(eq(messages.id, id)).run();
 }
 
+// 짝 없는 서로게이트가 없는가 — String.prototype.isWellFormed(ES2024)는 이 패키지의 lib 밖이다
+const wellFormed = (s: string) =>
+  !/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(s);
 const ids = (r: SearchResult) => r.hits.map((h) => h.messageId);
 const ftsCount = (db: Db) => db.get<{ n: number }>(sql`SELECT count(*) AS n FROM messages_fts`)?.n;
 
@@ -468,6 +471,36 @@ describe("스니펫 — 읽는 글(멘션 풀기·마크다운 걷기)", () => {
       expect(snippet.startsWith("…")).toBe(true);
       expect(snippet.endsWith("…")).toBe(true);
     }
+  });
+
+  it("창 경계가 이모지 한가운데에 걸려도 스니펫에 짝 없는 서로게이트가 없다", () => {
+    const t = setup();
+    // 창 시작(일치 - 2048)이 low surrogate 자리 · 창 끝(일치 끝 + 2048)이 high surrogate 바로 뒤
+    const cases: Array<[string, string]> = [
+      [`${"x".repeat(10)}😀${" ".repeat(2047)}목표어 뒤`, `…😀 ${O}목표어${C} 뒤`],
+      [`앞 목표어${" ".repeat(2047)}😀${"뒤".repeat(100)}`, `앞 ${O}목표어${C} 😀…`],
+    ];
+    for (const [body, want] of cases) {
+      const m = t.say("임시");
+      setBody(t, m.id, body);
+      const snippet = t.search("목표어").hits.find((h) => h.messageId === m.id)?.snippet ?? "";
+      expect(wellFormed(snippet)).toBe(true);
+      expect(snippet).toBe(want);
+    }
+  });
+
+  it("옆 줄이 길어도 일치 앞뒤 문맥을 버리지 않는다", () => {
+    const t = setup();
+    const before = t.say("임시");
+    setBody(t, before.id, `${"가".repeat(3000)}\n목표어 뒤`);
+    const after = t.say("임시");
+    setBody(t, after.id, `앞 목표어\n${"나".repeat(3000)}`);
+    const head = t.say("임시");
+    setBody(t, head.id, `제목\n${"다".repeat(3000)} [x](http://a/숨은말)`);
+    const snippetOf = (q: string, id: string) => t.search(q).hits.find((h) => h.messageId === id)?.snippet;
+    expect(snippetOf("목표어", before.id)).toBe(`…${"가".repeat(63)} ${O}목표어${C} 뒤`);
+    expect(snippetOf("목표어", after.id)).toBe(`앞 ${O}목표어${C} ${"나".repeat(63)}…`);
+    expect(snippetOf("숨은말", head.id)).toBe(`제목 ${"다".repeat(125)}…`);
   });
 
   it("2글자(LIKE) 경로의 스니펫도 읽는 글로", () => {

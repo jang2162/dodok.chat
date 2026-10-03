@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   glyphRange,
   plainGlyphs,
@@ -25,6 +25,7 @@ describe("readableGlyphs — 읽는 글", () => {
     ],
     ["인용 안 목록·할 일", "> - [x] 했다\n> 1. 둘째", "했다 둘째"],
     ["가로줄", "위\n\n---\n아래", "위 아래"],
+    ["인용·목록 안 가로줄 — 표시를 먹은 뒤에도 가로줄", "> ---\n- * * *\n뒤", "뒤"],
     ["~~~ 펜스·안쪽 표시는 그대로", "~~~\n# **아님**\n~~~", "# **아님**"],
     ["닫히지 않은 펜스는 끝까지 코드", "```\n*그대로*", "*그대로*"],
     ["펜스 안의 정보 문자열 줄은 닫는 줄이 아니다", "```\n```js\n본문\n```", "```js 본문"],
@@ -105,6 +106,36 @@ describe("readableGlyphs — 읽는 글", () => {
     ).toBe("# 제목 아님");
   });
 
+  it("창 끝이 쌍을 갈라도 같은 창을 수만 번 변환해 던지지 않는다 — 최적화된 codePointAt 은 잘린 문자열 끝 너머를 읽는다", () => {
+    const raw = `${"가".repeat(100)}😀${"나".repeat(100)}`;
+    const high = raw.indexOf("😀");
+    const window = { from: high - 20, to: high + 1 };
+    for (let i = 0; i < 50_000; i++) {
+      const glyphs = readableGlyphs(raw, handleOf, window);
+      if (glyphs.length !== 21 || glyphs.at(-1)?.to !== high + 1) {
+        throw new Error(`${i}번째: ${JSON.stringify(glyphs.at(-1))}`);
+      }
+    }
+  });
+
+  it("창 앞은 펜스 표시가 든 줄만 줄머리로 훑는다", () => {
+    const raw = `${"- 항목\n".repeat(10_000)}\`\`\`\n코드\n\`\`\`\n${"- 항목\n".repeat(10_000)}목표어`;
+    const from = raw.indexOf("목표어");
+    // 줄머리 훑기는 늘 FENCE_LINE 부터 시도한다 — 그 시도 수로 줄머리를 훑은 줄 수를 센다
+    const exec = vi.spyOn(RegExp.prototype, "exec");
+    try {
+      expect(
+        readableGlyphs(raw, handleOf, { from, to: raw.length })
+          .map((g) => g.ch)
+          .join(""),
+      ).toBe("목표어");
+      const fenceTries = exec.mock.contexts.filter((re) => (re as RegExp).source.includes("`{3,}")).length;
+      expect(fenceTries).toBeLessThanOrEqual(3);
+    } finally {
+      exec.mockRestore();
+    }
+  });
+
   describe("readableWindow — 변환할 원문 창", () => {
     it("100 KB 한 줄이어도 일치 앞뒤 READABLE_WINDOW_SPAN 남짓만 고른다", () => {
       for (const unit of ["*a ", "![a", "[a"]) {
@@ -131,6 +162,28 @@ describe("readableGlyphs — 읽는 글", () => {
       expect(w.to === raw.length || raw[w.to] === "\n").toBe(true);
       expect(w.from).toBeLessThan(from);
       expect(w.to).toBeGreaterThan(from + 3);
+    });
+
+    it("양 끝은 서로게이트 쌍을 가르지 않는다", () => {
+      const isLow = (c: number) => c >= 0xdc00 && c <= 0xdfff;
+      const raw = "😀".repeat(3000);
+      for (let from = 2040; from < 2060; from++) {
+        // 홀수 from 은 쌍 한가운데 — 창 시작(from - SPAN)·끝(from + 1 + SPAN)이 쌍을 가를 자리다
+        const w = readableWindow(raw, from, from + 1);
+        expect(isLow(raw.charCodeAt(w.from))).toBe(false);
+        expect(w.to === raw.length || !isLow(raw.charCodeAt(w.to))).toBe(true);
+      }
+    });
+
+    it("옆 줄이 길어 줄 경계로 줄이면 그쪽 문맥이 남지 않을 때는 줄 한가운데서 자른다", () => {
+      const before = `${"가".repeat(3000)}\n목표어 뒤`;
+      const b = before.indexOf("목표어");
+      expect(readableWindow(before, b, b + 3).from).toBe(b - READABLE_WINDOW_SPAN);
+      const after = `앞 목표어\n${"나".repeat(3000)}`;
+      const a = after.indexOf("목표어");
+      expect(readableWindow(after, a, a + 3).to).toBe(a + 3 + READABLE_WINDOW_SPAN);
+      const head = `제목\n${"다".repeat(3000)}`;
+      expect(readableWindow(head, 0, 0).to).toBe(READABLE_WINDOW_SPAN);
     });
 
     it("줄 한가운데서 자르는 자리가 멘션 토큰 안이면 토큰을 통째로 넣는다", () => {

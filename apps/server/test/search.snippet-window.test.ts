@@ -52,6 +52,29 @@ describe("스니펫 변환 창", () => {
     }
   });
 
+  it("창 앞의 긴 `- - - … x` 줄 — 펜스 상태 이어받기가 줄 길이의 제곱으로 돌지 않는다", () => {
+    const db = newTestDb();
+    const bus = new ServerBus();
+    const { workspaceId, userId } = seedWorkspace(db);
+    const channel = createChannel(db, { workspaceId, createdBy: userId, name: "general" });
+    const m = createUserMessage(db, bus, {
+      channelId: channel.id,
+      authorId: userId,
+      bodyMd: "임시",
+      clientMsgId: "c0",
+    });
+    // 줄머리를 길이의 제곱으로 훑으면 행 하나에 16 s 남짓, 선형이면 수 ms — 1 s 상한은 흔들리지 않는다. 첫째는 펜스 표시가
+    // 없는 줄이라 창 앞 훑기가 건너뛰어야 하고, 둘째는 펜스 표시가 든 줄이라 훑되 가로줄 검사를 줄마다 한 번만 해야 빠르다
+    for (const bodyMd of [`${"- ".repeat(48_000)}x\n목표어`, `${"- ".repeat(48_000)}x \`\`\`\n목표어`]) {
+      db.update(messages).set({ bodyMd }).where(eq(messages.id, m.id)).run();
+      const started = performance.now();
+      expect(
+        searchMessages(db, workspaceId, userId, SearchQuery.parse({ q: "목표어" }), NOW).hits,
+      ).toHaveLength(1);
+      expect(performance.now() - started).toBeLessThan(1_000);
+    }
+  }, 60_000);
+
   it("일치가 모두 숨은 자리에 있는 긴 본문은 창 MAX_SNIPPET_WINDOWS 개까지만 변환하고 본문 머리로", () => {
     const db = newTestDb();
     const bus = new ServerBus();
