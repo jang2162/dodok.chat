@@ -40,7 +40,7 @@ ${EDITOR:-vi} .env      # 아래 표의 나머지 값 — OPENCLAW_GATEWAY_TOKEN
 | 값 | 배포에서 | 뜻 |
 | --- | --- | --- |
 | `DODOK_DOMAIN` | **필수** | Caddy 가 인증서를 받을 공개 도메인(예 `dodok.example.com`). 비면 compose 가 먼저 멈춘다 |
-| `APP_ORIGIN` | **필수** | `https://<도메인>` — 슬래시 없이 정확히. 쿠키·wire 핸드셰이크 `Origin` 검사 기준이라 브라우저 주소와 다르면 웹이 「rejected」 배너로 막힌다 |
+| `APP_ORIGIN` | **필수** | `https://<도메인>` — 슬래시 없이 정확히. 쿠키·wire 핸드셰이크 `Origin` 검사 기준이라 브라우저 주소와 다르면 웹이 「실시간 연결이 거부되었습니다 — …」 배너로 막힌다 |
 | `LOCAL_AUTH_TOKEN` | **필수**(≥16자) | 로그인 토큰 = owner 비밀번호. 바꾸면 기존 세션이 끊긴다 |
 | `BETTER_AUTH_SECRET` | **필수**(≥32자) | 세션 서명 비밀 |
 | `OPENCLAW_GATEWAY_URL` · `OPENCLAW_GATEWAY_TOKEN` | **필수** | 원격 Gateway(`wss://…`)와 그 공유 토큰. `OPENCLAW_TARGET` 은 비워 둔다(기본 `remote`) |
