@@ -21,10 +21,10 @@
   `playwright-core` 로 설정 파일의 포트에 직접 붙는다.
 - `scripts/orca-worker.sh spawn` 은 워커를 띄우기 전에 neo 가 꺼져 있으면 켠다(`ensure_browser`) —
   그러나 **메인 세션 자신**이 시작될 때 꺼져 있었던 것은 스크립트가 고치지 못한다.
-- ⚠ **프로필이 하나라 쿠키·localStorage 는 호스트 단위로 공유된다.** 지금 MVP 의 로컬 토큰
-  인증은 이 영향이 작지만, **쿠키 세션(Better Auth)이 들어오는 순간 같은 호스트에 붙은 두 인스턴스는
-  세션 쿠키 한 칸을 두고 서로를 덮는다** — 쿠키는 포트를 구분하지 않는다. 그때는 인스턴스마다
-  세션 쿠키 이름을 갈라야 하고, 그 규칙은 인증을 넣는 작업이 이 절에 적는다.
+- ⚠ **프로필이 하나라 쿠키·localStorage 는 호스트 단위로 공유되고, 로그인은 쿠키 세션(`dodok.session`)이다.**
+  쿠키는 포트를 가리지 않으므로 neo 로 `localhost:<다른 포트>` 의 dev 인스턴스에 로그인하면 같은 호스트에 붙은
+  다른 인스턴스(사람이 보고 있는 것 등)의 세션을 덮는다. 다른 인스턴스가 neo 에서 로그인돼 있을 수 있으면
+  독립 브라우저(playwright-core 임시 컨텍스트)로 본다.
 - ⚠ **같은 오리진(포트)에서 빌드본(`vite preview`)을 본 뒤 dev 로 돌아오면 빌드본의 서비스 워커가 남아 옛 빌드를 계속 내준다** — 고친 코드가 안 보이는데 오류도 없다.
   빌드본 검증을 끝낼 때와 dev 로 바꿀 때 `navigator.serviceWorker.getRegistrations()` 를 전부 `unregister()` 하고 `caches` 를 지운다.
   빌드본을 두 번째로 올릴 때는 새 SW 가 `waiting` 에 머무므로(새 버전은 토스트로만 넘어간다 — PWA 스펙 `docs/superpowers/specs/2026-09-23-pwa-push-design.md` 결정 7)
