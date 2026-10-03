@@ -86,8 +86,8 @@ describe("readableGlyphs — 읽는 글", () => {
     expect(part).toEqual(all.filter((g) => g.from >= from && g.to <= to));
   });
 
-  it("창 — 창 앞에서 열린 코드 펜스 안이면 창 안도 코드로 본다", () => {
-    const raw = `\`\`\`\n${"x\n".repeat(10)}**그대로** <@a:${DEV}>\n\`\`\`\n**걷음**`;
+  it.each(["```", "~~~"])("창 — 창 앞에서 열린 코드 펜스(%s) 안이면 창 안도 코드로 본다", (fence) => {
+    const raw = `${fence}\n${"x\n".repeat(10)}**그대로** <@a:${DEV}>\n${fence}\n**걷음**`;
     const from = raw.indexOf("**그대로");
     expect(
       readableGlyphs(raw, handleOf, { from, to: raw.length })
