@@ -9,7 +9,9 @@ import { Button } from "@/ui/button";
 /**
  * 연결 문제 배너(스펙 6.5·8장) — wire 자체와 OpenClaw 연결, 둘은 함께 보일 수 있다.
  * wire 는 `reconnecting` 만 끊김으로 본다(`offline` 은 이쪽에서 끊은 것이라 머물지 않는다).
- * `protocol_mismatch`·`rejected` 는 재연결을 멈춘 상태라 사용자가 할 일을 알린다.
+ * `protocol_mismatch`·`rejected` 는 재연결을 멈춘 상태라 사용자가 할 일을 알린다. `rejected` 는 REST 세션은 살아 있는데
+ * wire 가 UNAUTHORIZED 일 때라(`realtime/handlers.ts` `verifySession`) 원인은 브라우저 주소와 서버 APP_ORIGIN 의 불일치뿐이다 —
+ * 그래서 지금 연 주소를 그대로 보인다(운영 주소는 배포마다 달라 박을 수 없다).
  * OpenClaw 배너는 점(ConnectionDots)과 같은 규칙을 따른다 — wire 가 끊기면 `adapter.status` 가 더는 오지 않아
  * 마지막 값이 남으므로 「모름」으로 보고 띄우지 않는다. 그 사정은 끊김 배너가 이미 알린다(브라우저 재검증 걱정 3).
  * 오프라인(스펙 4장 — 브라우저 오프라인이거나 me 가 네트워크 오류)이면 「오프라인」 배너 하나만 — 그동안 wire 도
@@ -42,7 +44,7 @@ export function Banners() {
         )}
         {wire === "rejected" && (
           <div className="bg-destructive/10 px-4 py-1.5 text-center text-sm">
-            실시간 연결이 거부되었습니다 — 주소(localhost:5173)를 확인하세요
+            실시간 연결이 거부되었습니다 — 이 주소({window.location.origin})가 서버의 APP_ORIGIN 과 다릅니다
           </div>
         )}
       </div>

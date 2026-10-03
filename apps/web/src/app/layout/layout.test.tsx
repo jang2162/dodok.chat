@@ -97,7 +97,7 @@ describe("ConnectionDots", () => {
 describe("Banners", () => {
   const WIRE_RECONNECTING = "서버에 다시 연결하는 중…";
   const OPENCLAW_DOWN = "OpenClaw 에 연결되지 않아 에이전트가 답하지 못합니다. 메시지는 저장됩니다.";
-  const REJECTED = "실시간 연결이 거부되었습니다 — 주소(localhost:5173)를 확인하세요";
+  const REJECTED = `실시간 연결이 거부되었습니다 — 이 주소(${window.location.origin})가 서버의 APP_ORIGIN 과 다릅니다`;
 
   const setWire = (s: WireStatus) => act(() => useWireStatus.getState().setStatus(s));
 
@@ -129,6 +129,16 @@ describe("Banners", () => {
     // 내용이 바뀌어도 영역은 처음 그 요소 그대로 — 스크린 리더는 새로 끼운 라이브 영역을 놓칠 수 있다
     expect(screen.getByRole("status")).toBe(status);
     expect(screen.getByRole("alert")).toBe(alert);
+  });
+
+  it("rejected 배너는 박힌 개발 주소가 아니라 지금 연 주소를 보인다", async () => {
+    renderWithAdapter(<Banners />, { gateway: "connected", bridge: "connected" });
+    vi.stubGlobal("location", { ...window.location, origin: "https://chat.example.com" });
+    setWire("rejected");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "실시간 연결이 거부되었습니다 — 이 주소(https://chat.example.com)가 서버의 APP_ORIGIN 과 다릅니다",
+    );
+    expect(screen.getByRole("alert")).not.toHaveTextContent("localhost:5173");
   });
 
   it("「새로고침」은 페이지를 다시 불러온다", async () => {
