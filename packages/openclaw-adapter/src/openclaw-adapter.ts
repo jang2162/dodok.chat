@@ -300,7 +300,8 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
       emit({ kind: "canonical", message });
       return { messageId: stored.messageId ?? message.outboundId };
     },
-    onTyping: () => undefined, // Phase 2
+    // 받으면 버린다 — 플러그인은 typing 을 내지 않고(capability "typing" 없음), 에이전트가 일하는 중이라는 표시는 웹 런 버블이 맡는다
+    onTyping: () => undefined,
     onStatus: (_session, pluginStatus) => logger.debug({ pluginStatus }, "bridge plugin status"),
     onRejected: (reason) => logger.warn({ reason }, "bridge connection rejected"),
   });
