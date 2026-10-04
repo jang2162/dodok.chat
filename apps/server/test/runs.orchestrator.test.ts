@@ -1965,6 +1965,26 @@ describe("orchestrator", () => {
       t.orch.stop();
     });
 
+    // 어댑터 목록에 없는 Gateway(부팅 때 못 넣었거나 그 사이 빠진 것) — 실물 supports 는 모르는 연결이면 false 라, 첫 Gateway
+    // 플러그인으로 대신 보면 재설치 안내(PLUGIN_OUTDATED)가 잘못 뜬다. 단정하지 않고 보내면 실물 send 가 ADAPTER_UNAVAILABLE 로 닫는다
+    it("그 런의 Gateway 가 어댑터 목록에 없으면 첫 Gateway 에 플러그인이 붙어 있어도 PLUGIN_OUTDATED 로 단정하지 않고 보낸다", async () => {
+      const t = setup();
+      const unknown = insertGateway(t.db, t.workspaceId, { id: uuid(), name: "모름" });
+      t.db.update(agents).set({ gatewayId: unknown.id }).where(eq(agents.id, t.agentId)).run();
+      const detail = t.adapter.setupDetail();
+      expect(detail.provider === "openclaw" && detail.bridge.plugin).toBeTruthy();
+      expect(t.adapter.gatewaySetupDetails().map((g) => g.id)).toEqual([FAKE_GATEWAY_ID]);
+      const known = new Set(t.adapter.gatewaySetupDetails().map((g) => g.id));
+      vi.spyOn(t.adapter, "supports").mockImplementation((_agent, connectionId) =>
+        known.has(connectionId ?? ""),
+      );
+      const { run } = await threadRun(t);
+      await t.flush();
+      expect(t.adapter.calls.connections.send).toEqual([unknown.id]);
+      expect(t.runOf(run.id).status).toBe("queued");
+      t.orch.stop();
+    });
+
     it("정본의 threadId 가 세션 키·런의 스레드와 다르면 저장하지 않고 VALIDATION·warn", async () => {
       const t = setup();
       const { root, run } = await threadRun(t);
