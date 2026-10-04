@@ -245,6 +245,21 @@ describe("다시 붙으면 끊긴 사이 놓친 상태를 다시 받는다(재�
     await waitFor(() => expect(opsEvents).toHaveBeenCalledTimes(2));
   });
 
+  it("에이전트 목록도 다시 받는다 — 끊긴 사이 Gateway 이름 바꾸기·지우기를 놓치지 않게(찾기 목록은 아니다)", async () => {
+    const { fake, queryClient, subscriptions } = setup();
+    vi.spyOn(subscriptions, "resubscribeAll").mockResolvedValue();
+    const agents = observe(queryClient, qk.agents);
+    const discover = observe(queryClient, qk.discoverOf("openclaw"));
+    await waitFor(() => expect(discover).toHaveBeenCalledTimes(1));
+
+    fake.serverEmit("connect");
+    fake.serverEmit("disconnect", "transport close");
+    fake.serverEmit("connect");
+    await waitFor(() => expect(agents).toHaveBeenCalledTimes(2));
+    // 지운 Gateway 의 찾기를 다시 부르면 404 다 — [agents] 아래 키라도 건드리지 않는다
+    expect(discover).toHaveBeenCalledTimes(1);
+  });
+
   it("member — 어댑터만 다시 받고 ops 요청은 0 이다", async () => {
     const { fake, queryClient, subscriptions } = setup();
     vi.spyOn(subscriptions, "resubscribeAll").mockResolvedValue();

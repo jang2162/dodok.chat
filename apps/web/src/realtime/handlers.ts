@@ -269,6 +269,9 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
     // 떠 있는 쿼리만 다시 부른다: member 의 ops 쿼리는 관찰자가 없거나 꺼져 있어(owner 만 켠다) 요청이 나가지 않는다
     if (connectedOnce) {
       void qc.invalidateQueries({ queryKey: qk.adapter });
+      // 에이전트 줄·멘션 후보의 Gateway 이름은 adapter.status 처리기만 고친다 — 재연결은 그 처리를 거치지 않아 끊긴 사이
+      // 이름 바꾸기·지우기를 놓친다(재리뷰 N2). exact: [agents] 아래 찾기 목록까지 다시 부르면 지운 Gateway 가 404 다
+      void qc.invalidateQueries({ queryKey: qk.agents, exact: true });
       void qc.invalidateQueries({ queryKey: qk.opsStatus });
       void qc.invalidateQueries({ queryKey: qk.opsEventsAll });
     }
