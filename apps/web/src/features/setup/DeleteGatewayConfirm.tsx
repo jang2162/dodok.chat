@@ -25,6 +25,16 @@ export function DeleteGatewayConfirm({
   const remove = useDeleteGateway(gateway.id);
   const cancelRef = useRef<HTMLButtonElement>(null);
   useEffect(() => cancelRef.current?.focus(), []);
+  // 같은 틱의 둘째 클릭은 렌더된 `isPending` 이 아직 false 라 통과한다(GatewayForm 과 같은 까닭). 성공하면 카드째 사라진다
+  const sending = useRef(false);
+  function confirm() {
+    if (sending.current) return;
+    sending.current = true;
+    // 실패는 전역 토스트가 알린다
+    remove.mutateAsync().then(onDeleted, () => {
+      sending.current = false;
+    });
+  }
 
   const agentCount = agents.data?.filter((a) => a.gateway?.id === gateway.id).length;
   const tokenCount = tokens.data?.length;
@@ -53,8 +63,7 @@ export function DeleteGatewayConfirm({
           size="sm"
           variant="destructive"
           disabled={!ready || remove.isPending}
-          // 실패는 전역 토스트가 알린다
-          onClick={() => remove.mutateAsync().then(onDeleted, () => {})}
+          onClick={confirm}
         >
           {remove.isPending ? "삭제하는 중…" : "삭제"}
         </Button>

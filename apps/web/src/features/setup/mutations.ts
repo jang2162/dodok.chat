@@ -46,6 +46,25 @@ const gatewaysChanged = (qc: ReturnType<typeof useQueryClient>) =>
     qc.invalidateQueries({ queryKey: qk.gateways }),
   ]);
 
+const GATEWAY_GONE = "이미 삭제된 Gateway 입니다";
+const isGone = (e: unknown) => e instanceof ApiRequestError && e.code === "NOT_FOUND";
+
+/**
+ * 수정·끄기·삭제의 API 오류 토스트 — 서버 문구 대신 고정 문구. 404 는 다른 탭·사람이 먼저 지운 것이다
+ * (그 카드는 `setup.status` 가 오기 전까지 남아 있다)
+ */
+const gatewayErrorMeta = {
+  apiErrorText: (e: ApiRequestError) =>
+    isGone(e) ? GATEWAY_GONE : "Gateway 를 바꾸지 못했습니다. 다시 시도해 주세요.",
+};
+
+/** 지운 Gateway 의 카드를 캐시에서 곧바로 걷는다 — 이유는 `useDeleteGateway` */
+const dropGateway = (qc: ReturnType<typeof useQueryClient>, id: string) =>
+  qc.setQueryData<SetupStatus>(
+    qk.setupStatus,
+    (s) => s && { ...s, gateways: s.gateways.filter((g) => g.id !== id) },
+  );
+
 /** Gateway 추가(멀티 Gateway 스펙 6.2) — 칸 오류(VALIDATION·CONFLICT)는 폼이 그린다 */
 export function useCreateGateway() {
   const qc = useQueryClient();
@@ -60,7 +79,11 @@ export function useUpdateGateway(id: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: UpdateGatewayBody) => api<GatewaySummary>("PATCH", `/gateways/${id}`, body),
+    meta: gatewayErrorMeta,
     onSuccess: () => gatewaysChanged(qc),
+    onError: (e) => {
+      if (isGone(e)) void qc.invalidateQueries({ queryKey: qk.setupStatus });
+    },
   });
 }
 
@@ -75,11 +98,15 @@ export function useDeleteGateway(id: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => api<DeleteGatewayResult>("DELETE", `/gateways/${id}`),
+    meta: gatewayErrorMeta,
     onSuccess: () => {
-      qc.setQueryData<SetupStatus>(
-        qk.setupStatus,
-        (s) => s && { ...s, gateways: s.gateways.filter((g) => g.id !== id) },
-      );
+      dropGateway(qc, id);
+      return Promise.all([gatewaysChanged(qc), qc.invalidateQueries({ queryKey: qk.agents })]);
+    },
+    // 먼저 지운 쪽과 결과가 같다 — 카드를 걷고 에이전트(「Gateway 가 삭제됨」)를 다시 받는다
+    onError: (e) => {
+      if (!isGone(e)) return;
+      dropGateway(qc, id);
       return Promise.all([gatewaysChanged(qc), qc.invalidateQueries({ queryKey: qk.agents })]);
     },
   });

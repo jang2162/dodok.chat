@@ -1,5 +1,6 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { toast } from "sonner";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { json } from "../../../test/shellApi";
 import { agentOf } from "../../../test/settingsServer";
@@ -126,6 +127,50 @@ describe("Gateway 추가", () => {
     );
     expect(dialog).not.toHaveTextContent("already used");
     expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+});
+
+describe("두 번 보내지 않기(태스크 6 리뷰 Minor 1)", () => {
+  it("「추가」를 같은 틱에 두 번 내도 POST 는 한 번 — 둘째가 409 로 대화상자를 붙잡지 않게", async () => {
+    const server = stubSetupServer();
+    renderConnection();
+    const dialog = await openAdd();
+    await userEvent.type(within(dialog).getByLabelText("이름"), "집");
+    await userEvent.type(within(dialog).getByLabelText("주소"), "wss://home.example.com");
+    await userEvent.type(within(dialog).getByLabelText("토큰"), "t");
+    const form = dialog.querySelector("form");
+    if (!form) throw new Error("form 이 없다");
+    act(() => {
+      fireEvent.submit(form);
+      fireEvent.submit(form);
+    });
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(server.count("POST", "/api/v1/gateways")).toBe(1);
+  });
+
+  it("실패한 뒤에는 다시 보낼 수 있다", async () => {
+    let first = true;
+    const server = stubSetupServer({
+      createGateway: (body) => {
+        if (!first) return json(201, { ...gatewayOf(2), ...(body as object) });
+        first = false;
+        return json(409, { code: "CONFLICT", message: "dup", details: { field: "name" } });
+      },
+    });
+    renderConnection();
+    const dialog = await openAdd();
+    await userEvent.type(within(dialog).getByLabelText("이름"), "집");
+    await userEvent.type(within(dialog).getByLabelText("주소"), "wss://home.example.com");
+    await userEvent.type(within(dialog).getByLabelText("토큰"), "t");
+    await userEvent.click(within(dialog).getByRole("button", { name: "추가" }));
+    await waitFor(() =>
+      expect(within(dialog).getByLabelText("이름")).toHaveAccessibleDescription(
+        "이미 쓰이는 이름입니다 — 다른 이름을 입력하세요.",
+      ),
+    );
+    await userEvent.click(within(dialog).getByRole("button", { name: "추가" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(server.count("POST", "/api/v1/gateways")).toBe(2);
   });
 });
 
@@ -274,6 +319,35 @@ describe("끄기·켜기", () => {
   });
 });
 
+describe("지워진 Gateway·서버 실패 문구(태스크 6 리뷰 Minor 2)", () => {
+  it("끄기가 404 면 「이미 삭제된 Gateway 입니다」 — 서버 문구는 보이지 않고 상태를 다시 받는다", async () => {
+    const toastError = vi.spyOn(toast, "error");
+    const server = stubSetupServer({
+      status: TWO,
+      updateGateway: () => json(404, { code: "NOT_FOUND", message: "gateway not found" }),
+    });
+    renderConnection();
+    await userEvent.click(within(await region("집")).getByRole("button", { name: "집 끄기" }));
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith("이미 삭제된 Gateway 입니다"));
+    expect(toastError).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(server.count("GET", "/api/v1/setup/status")).toBe(2));
+  });
+
+  it("그 밖의 서버 실패도 서버 문구 대신 고정 문구", async () => {
+    const toastError = vi.spyOn(toast, "error");
+    stubSetupServer({
+      status: TWO,
+      updateGateway: () => json(500, { code: "INTERNAL", message: "sqlite busy" }),
+    });
+    renderConnection();
+    await userEvent.click(within(await region("집")).getByRole("button", { name: "집 끄기" }));
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith("Gateway 를 바꾸지 못했습니다. 다시 시도해 주세요."),
+    );
+    expect(toastError).not.toHaveBeenCalledWith("sqlite busy");
+  });
+});
+
 describe("삭제", () => {
   const AGENTS = [
     agentOf("0190a000-0000-7000-8000-0000000000b1", "main-home", {
@@ -321,6 +395,50 @@ describe("삭제", () => {
     expect(within(home).queryByRole("group", { name: "「집」 Gateway 삭제" })).not.toBeInTheDocument();
     expect(within(home).getByRole("button", { name: "집 삭제" })).toHaveFocus();
     expect(server.calls.filter((c) => c.method === "DELETE")).toEqual([]);
+  });
+
+  it("「삭제」를 같은 틱에 두 번 눌러도 DELETE 는 한 번", async () => {
+    let deleted = false;
+    const server = stubSetupServer({
+      status: () => (deleted ? statusOf() : TWO),
+      gatewayTokens: { [gatewayId(2)]: HOME_TOKENS },
+      deleteGateway: () => {
+        deleted = true;
+        return json(200, { unboundAgents: 0, deletedTokens: 3 });
+      },
+    });
+    renderConnection();
+    const { confirm } = await openDelete();
+    const del = within(confirm).getByRole("button", { name: "삭제" });
+    await waitFor(() => expect(del).toBeEnabled());
+    act(() => {
+      fireEvent.click(del);
+      fireEvent.click(del);
+    });
+    await waitFor(() => expect(screen.queryByRole("region", { name: "집" })).not.toBeInTheDocument());
+    expect(server.count("DELETE", `/api/v1/gateways/${gatewayId(2)}`)).toBe(1);
+  });
+
+  it("그새 다른 곳에서 지워졌으면(404) 서버 문구 대신 「이미 삭제된 Gateway 입니다」 — 카드를 걷는다", async () => {
+    const toastError = vi.spyOn(toast, "error");
+    let gone = false;
+    stubSetupServer({
+      // 서버에는 이미 없다 — 다시 받은 상태에도 없다
+      status: () => (gone ? statusOf() : TWO),
+      gatewayTokens: { [gatewayId(2)]: HOME_TOKENS },
+      deleteGateway: () => {
+        gone = true;
+        return json(404, { code: "NOT_FOUND", message: "gateway not found" });
+      },
+    });
+    renderConnection();
+    const { confirm } = await openDelete();
+    const del = within(confirm).getByRole("button", { name: "삭제" });
+    await waitFor(() => expect(del).toBeEnabled());
+    await userEvent.click(del);
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith("이미 삭제된 Gateway 입니다"));
+    expect(toastError).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.queryByRole("region", { name: "집" })).not.toBeInTheDocument());
   });
 
   it("다시 받기를 기다리지 않고 카드를 걷는다 — 응답이 늦어도 지운 카드가 남지 않는다", async () => {

@@ -1,5 +1,5 @@
 import { type GatewaySetup, GatewayName, GatewayUrl, type UpdateGatewayBody } from "@dodok/shared";
-import { type ComponentProps, type FormEvent, type ReactNode, useId, useState } from "react";
+import { type ComponentProps, type FormEvent, type ReactNode, useId, useRef, useState } from "react";
 import { ApiRequestError } from "@/api/http";
 import { detailField, validationField } from "@/api/formErrors";
 import { Button } from "@/ui/button";
@@ -190,6 +190,9 @@ function GatewayFields({
   const [url, setUrl] = useState(initial.url);
   const [token, setToken] = useState("");
   const [errors, setErrors] = useState<Errors>({});
+  // 렌더된 `pending` 만으로는 같은 틱의 둘째 제출을 못 막는다 — TanStack 이 관찰자에게 알리는 것이 다음 태스크라서다.
+  // 성공하면 대화상자가 닫혀 이 폼이 사라지고, 실패하면 `fail` 이 표지를 내린다
+  const sending = useRef(false);
 
   function edit(field: FieldName, set: (v: string) => void) {
     return (e: { target: { value: string } }) => {
@@ -200,12 +203,16 @@ function GatewayFields({
 
   function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (pending) return;
+    if (pending || sending.current) return;
     const values = { name: name.trim(), url: url.trim(), token: token.trim() };
     const found = problems(values.name, values.url, values.token, tokenRequired);
     setErrors(found);
     if (Object.keys(found).length > 0) return;
-    onSubmit(values, (server) => setErrors(server ?? {}));
+    sending.current = true;
+    onSubmit(values, (server) => {
+      sending.current = false;
+      setErrors(server ?? {});
+    });
   }
 
   return (

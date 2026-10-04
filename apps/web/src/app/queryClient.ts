@@ -3,8 +3,11 @@ import { toast } from "sonner";
 import { ApiRequestError, NetworkError } from "@/api/http";
 import { meQuery, qk } from "@/api/queries";
 
-/** 쿼리·뮤테이션 meta. `silent` 면 전역 오류 토스트를 내지 않는다(401 처리는 그대로) — 오류를 스스로 보이는 곳이 쓴다 */
-export type RequestMeta = { silent?: boolean };
+/**
+ * 쿼리·뮤테이션 meta. `silent` 면 전역 오류 토스트를 내지 않는다(401 처리는 그대로) — 오류를 스스로 보이는 곳이 쓴다.
+ * `apiErrorText` 는 API 오류 토스트의 서버 message 를 고정 문구로 바꾼다(네트워크·권한 토스트는 그대로)
+ */
+export type RequestMeta = { silent?: boolean; apiErrorText?: (e: ApiRequestError) => string };
 
 declare module "@tanstack/react-query" {
   interface Register {
@@ -24,11 +27,11 @@ const isFormError = (e: unknown) =>
 const isRetryable = (e: unknown) =>
   e instanceof NetworkError || (e instanceof ApiRequestError && e.status >= 500);
 
-/** 스펙 8장: 네트워크 실패는 한 id 로 모아 하나만, API 오류는 서버 message. 그 밖(코드 오류)은 토스트하지 않는다 */
-function toastError(e: unknown) {
+/** 스펙 8장: 네트워크 실패는 한 id 로 모아 하나만, API 오류는 서버 message(`apiErrorText` 가 있으면 그 문구). 그 밖(코드 오류)은 토스트하지 않는다 */
+function toastError(e: unknown, meta: RequestMeta | undefined) {
   if (isForbidden(e)) toast.error("권한이 없습니다", { id: "forbidden" });
   else if (e instanceof NetworkError) toast.error("서버에 연결할 수 없습니다", { id: "network" });
-  else if (e instanceof ApiRequestError) toast.error(e.message);
+  else if (e instanceof ApiRequestError) toast.error(meta?.apiErrorText?.(e) ?? e.message);
 }
 
 /**
@@ -54,14 +57,14 @@ export function createQueryClient(onUnauthorized: () => void): QueryClient {
         }
         refreshRole(e);
         if (is401(e)) onUnauthorized();
-        else if (!query.meta?.silent) toastError(e);
+        else if (!query.meta?.silent) toastError(e, query.meta);
       },
     }),
     mutationCache: new MutationCache({
       onError: (e, _variables, _onMutateResult, mutation) => {
         refreshRole(e);
         if (is401(e)) onUnauthorized();
-        else if (!mutation.meta?.silent && !isFormError(e)) toastError(e);
+        else if (!mutation.meta?.silent && !isFormError(e)) toastError(e, mutation.meta);
       },
     }),
     defaultOptions: {
