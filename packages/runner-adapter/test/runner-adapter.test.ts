@@ -1744,7 +1744,7 @@ describe("에이전트↔러너 토큰 묶임 — 묶인 에이전트는 그 토
   });
 });
 
-describe("연결 id — 러너 토큰 id 가 send 결과·이벤트·정본에 실린다(멀티 Gateway 스펙 4장)", () => {
+describe("연결 id — 러너 토큰 id 가 send 결과·이벤트·정본에 실린다(멀티 Gateway 스펙 「어댑터 계약」 절)", () => {
   it("묶임 없는 에이전트(연결 null)는 먼저 알린 러너가 맡고, 그 러너의 토큰 id 가 결과·이벤트·정본 훅에 실린다", async () => {
     const h = await setup();
     const r = await readyRunner(h, TOKEN_B);

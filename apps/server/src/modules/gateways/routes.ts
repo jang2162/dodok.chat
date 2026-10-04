@@ -1,5 +1,5 @@
 /**
- * Gateway API(멀티 Gateway 스펙 6.2) — 전부 owner 세션만. 저장하면 곧바로 어댑터에 반영한다(재시작 없음). Gateway 공유 토큰은
+ * Gateway API(멀티 Gateway 스펙 「Gateway API」 절) — 전부 owner 세션만. 저장하면 곧바로 어댑터에 반영한다(재시작 없음). Gateway 공유 토큰은
  * 응답·로그 어디에도 싣지 않는다. 브리지 토큰은 Gateway 아래에서 발급·목록·폐기한다(계획 판정 PG6) — 원문은 발급 응답에만 싣고
  * 그 응답은 `Cache-Control: no-store`.
  */

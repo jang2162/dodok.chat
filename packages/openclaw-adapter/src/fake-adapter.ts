@@ -89,7 +89,7 @@ export class FakeAdapter<P extends AdapterProvider = "openclaw"> implements Agen
     resolveApproval: Array<{ providerApprovalId: string; kind: ApprovalKind; decision: ApprovalDecision }>;
     revokeTokenSessions: string[];
     /**
-     * 실물 OpenClaw 어댑터의 Gateway 조작(멀티 Gateway 스펙 5.1) — 기록하고 Gateway 목록(gatewaySetupDetails·gatewayStatuses)만
+     * 실물 OpenClaw 어댑터의 Gateway 조작(멀티 Gateway 스펙 「연결 관리자」 절) — 기록하고 Gateway 목록(gatewaySetupDetails·gatewayStatuses)만
      * 바꾼 뒤 status 이벤트를 낸다. 연결·런은 건드리지 않는다
      */
     upsertGateway: GatewayConnectionConfig[];

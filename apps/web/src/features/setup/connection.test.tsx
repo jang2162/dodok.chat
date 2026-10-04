@@ -316,7 +316,7 @@ describe("브리지 토큰", () => {
     });
     renderConnection();
     const br = await region("브리지 토큰");
-    // env 라벨도 다른 라벨과 같다 — .env 에서 이어받는 토큰은 없다(멀티 Gateway 스펙 3.4)
+    // env 라벨도 다른 라벨과 같다 — .env 에서 이어받는 토큰은 없다(멀티 Gateway 스펙 「.env」 절)
     const envRow = await within(br).findByRole("listitem", { name: "env" });
     expect(envRow).toHaveTextContent("dbt_abc123…");
     expect(envRow).toHaveTextContent("지금 접속 중");

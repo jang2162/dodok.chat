@@ -292,7 +292,7 @@ describe("attachments service", () => {
     });
   });
 
-  it("claimBridgeAttachments: 정본을 낸 Gateway 가 올린 것만 — 다른 Gateway·러너의 정본은 묶지 못한다(멀티 Gateway 스펙 6.4)", async () => {
+  it("claimBridgeAttachments: 정본을 낸 Gateway 가 올린 것만 — 다른 Gateway·러너의 정본은 묶지 못한다(멀티 Gateway 스펙 「브리지 첨부 범위」 절)", async () => {
     const [office, home] = [uuid(), uuid()];
     for (const id of [office, home]) insertGateway(db, ws, { id, name: id.slice(-6) });
     const fromOffice = await uploadAttachment(

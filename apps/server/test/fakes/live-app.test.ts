@@ -61,7 +61,7 @@ describe("서버 통합 스모크 — 실제 OpenClawAdapter + 가짜 Gateway + 
     });
 
     // 어댑터가 가짜 Gateway 에 자기 기본 scopes 로 붙어 재접속 복구 구독까지 돌렸고, 디바이스 아이덴티티는 임시 DATA_DIR 의
-    // gateways/<Gateway id>/ 에 있다(멀티 Gateway 스펙 3.3)
+    // gateways/<Gateway id>/ 에 있다(멀티 Gateway 스펙 「디바이스 아이덴티티」 절)
     await vi.waitFor(() =>
       expect(gateway.requests.map((r) => r.method)).toEqual(
         expect.arrayContaining(["connect", "sessions.subscribe"]),

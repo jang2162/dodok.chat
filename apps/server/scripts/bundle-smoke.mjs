@@ -162,7 +162,7 @@ function startBundle(port, extraEnv) {
         APP_ORIGIN: `http://localhost:${port}`,
         LOCAL_AUTH_TOKEN: secret(),
         BETTER_AUTH_SECRET: secret(),
-        // OpenClaw Gateway·브리지 토큰 변수는 없다 — Gateway 0개로 뜬다(멀티 Gateway 스펙 3.4)
+        // OpenClaw Gateway·브리지 토큰 변수는 없다 — Gateway 0개로 뜬다(멀티 Gateway 스펙 「.env」 절)
         VAPID_SUBJECT: "mailto:smoke@example.com",
         LOG_LEVEL: "warn",
         ...extraEnv,

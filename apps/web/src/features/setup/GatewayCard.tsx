@@ -13,7 +13,7 @@ import { useBridgeTokens } from "./queries";
 import { CopyBlock, Field, PAIRING_STALE_MS, Pending, Section } from "./sections";
 import { TokenList } from "./TokenList";
 
-/** 카드 머리의 상태(멀티 Gateway 스펙 7장 — 연결됨·재연결 중·페어링 대기·꺼짐). 페어링 대기는 상태 값이 아니라 `pairing` 으로 안다 */
+/** 카드 머리의 상태(멀티 Gateway 스펙 「웹」 절 — 연결됨·재연결 중·페어링 대기·꺼짐). 페어링 대기는 상태 값이 아니라 `pairing` 으로 안다 */
 export function gatewayStateLabel(g: GatewaySetup): string {
   if (!g.enabled || g.gateway.state === "disabled") return "꺼짐";
   if (g.gateway.pairing) return "페어링 대기";
@@ -23,7 +23,7 @@ export function gatewayStateLabel(g: GatewaySetup): string {
 }
 
 /**
- * Gateway 하나(멀티 Gateway 스펙 7장 「연결 페이지」) — 상태·플러그인·이 Gateway 의 브리지 토큰과 메뉴(수정·끄기/켜기·삭제).
+ * Gateway 하나(멀티 Gateway 스펙 「웹」 절의 「연결 페이지」) — 상태·플러그인·이 Gateway 의 브리지 토큰과 메뉴(수정·끄기/켜기·삭제).
  * 삭제는 카드 안에서 한 번 더 묻고(`DeleteGatewayConfirm`), 지운 뒤에는 카드가 사라지므로 `onDeleted` 가 초점을 옮긴다
  */
 export function GatewayCard({
@@ -206,7 +206,7 @@ function PluginStatus({ gateway }: { gateway: GatewaySetup }) {
   );
 }
 
-/** 이 Gateway 의 브리지 토큰 — 토큰은 Gateway 에 묶인다(멀티 Gateway 스펙 3.2). 발급 대화상자는 그대로 */
+/** 이 Gateway 의 브리지 토큰 — 토큰은 Gateway 에 묶인다(멀티 Gateway 스펙 「바뀌는 표」 절). 발급 대화상자는 그대로 */
 function BridgeTokens({ gateway, status }: { gateway: GatewaySetup; status: SetupStatus }) {
   const tokens = useBridgeTokens(gateway.id);
   const issueButton = useRef<HTMLButtonElement>(null);

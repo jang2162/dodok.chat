@@ -17,7 +17,7 @@ const Raw = z.object({
   OWNER_HANDLE: Handle.default("owner"),
   LOCAL_AUTH_TOKEN: z.string().min(16),
   BETTER_AUTH_SECRET: z.string().min(32),
-  // OpenClaw Gateway 주소·토큰은 .env 가 아니라 DB(연결 페이지)에 둔다(멀티 Gateway 스펙 3.4)
+  // OpenClaw Gateway 주소·토큰은 .env 가 아니라 DB(연결 페이지)에 둔다(멀티 Gateway 스펙 「.env」 절)
   // 진단용 — 있으면 어댑터가 받은 Gateway chat·agent·session.message 프레임을 Gateway 마다 이 경로 + .<Gateway id> 파일에 JSONL 로
   // append(본문 포함)
   OPENCLAW_FRAME_DUMP_PATH: z.string().optional(),

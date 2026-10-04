@@ -266,7 +266,7 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
       }
     }
   }
-  // 연결 id 는 그 런을 맡은 러너의 토큰 id(멀티 Gateway 스펙 4장) — 서버가 런의 연결과 대조한다
+  // 연결 id 는 그 런을 맡은 러너의 토큰 id(멀티 Gateway 스펙 「어댑터 계약」 절) — 서버가 런의 연결과 대조한다
   const emitEvent = (connectionId: string, runId: string, event: RunEventBody) =>
     emit({ kind: "run_event", runId, connectionId, event });
   const emitSignal = (connectionId: string, runId: string, signal: RunSignal) =>

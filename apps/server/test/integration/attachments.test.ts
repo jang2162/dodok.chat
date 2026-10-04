@@ -83,7 +83,7 @@ describe("통합 시나리오 11 — 첨부", () => {
     const l = await boot();
     const setup = await setupRelayChannel(l, RELAY_POLICY);
     const log = await openChannelWire(l, setup.channel.id, sockets);
-    // 런을 열어 둔다 — 브리지는 열린 런의 트리거 첨부만 받는다(멀티 Gateway 스펙 6.4). 실제 플러그인은 ack 전에 받는다
+    // 런을 열어 둔다 — 브리지는 열린 런의 트리거 첨부만 받는다(멀티 Gateway 스펙 「브리지 첨부 범위」 절). 실제 플러그인은 ack 전에 받는다
     createScenario({
       gateway: l.gateway,
       plugin: l.plugin,

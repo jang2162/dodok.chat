@@ -19,7 +19,7 @@ import {
 import { GatewayPairingRequiredError, type GatewayConnectOptions } from "../src/gateway/client";
 import * as f from "./fixtures/gateway-events";
 
-// 멀티 Gateway 스펙 5장 — 어댑터 하나가 Gateway 연결 둘을 품는다. 실제 attachBridge + socket.io-client 가짜 플러그인 둘,
+// 멀티 Gateway 스펙 「OpenClaw 어댑터·브리지」 절 — 어댑터 하나가 Gateway 연결 둘을 품는다. 실제 attachBridge + socket.io-client 가짜 플러그인 둘,
 // Gateway 둘은 주소로 가르는 주입 connector(adapter.test.ts 와 같은 가짜). 네트워크는 루프백뿐.
 
 const G1: GatewayConnectionConfig = {

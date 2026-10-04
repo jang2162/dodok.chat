@@ -72,7 +72,7 @@ export const memberships = sqliteTable(
 );
 
 /**
- * OpenClaw Gateway 연결(멀티 Gateway 스펙 3.1) — id 가 어댑터 계약의 연결 id 다. token 은 Gateway 공유 토큰 평문(결정 4 — 같은 DATA_DIR 의
+ * OpenClaw Gateway 연결(멀티 Gateway 스펙 「gateways (새 표)」 절) — id 가 어댑터 계약의 연결 id 다. token 은 Gateway 공유 토큰 평문(결정 4 — 같은 DATA_DIR 의
  * 디바이스 아이덴티티도 평문이다). API 응답·로그·사건·wire 에 싣지 않는다. owner_user_id 는 사람마다 붙이기의 자리 — 지금은 늘 null
  */
 export const gateways = sqliteTable(
@@ -235,7 +235,7 @@ export const attachments = sqliteTable(
       .references(() => channels.id),
     uploaderType: text("uploader_type").notNull(), // "user" | "bridge"
     uploaderId: text("uploader_id"), // 사용자 id, 러너가 올렸으면 러너 토큰 id, 플러그인(브리지)이면 null
-    // 플러그인이 올렸으면 그 브리지 토큰의 Gateway — 그 Gateway 만 읽고 정본에 묶는다(멀티 Gateway 스펙 6.4). Gateway 를 지우면 비어
+    // 플러그인이 올렸으면 그 브리지 토큰의 Gateway — 그 Gateway 만 읽고 정본에 묶는다(멀티 Gateway 스펙 「브리지 첨부 범위」 절). Gateway 를 지우면 비어
     // 아무도 묶지 못한다(러너 정본은 uploader_id 가 자기 토큰인 것만 묶는다)
     gatewayId: text("gateway_id").references(() => gateways.id, { onDelete: "set null" }),
     kind: text("kind").notNull(), // "image" | "file"

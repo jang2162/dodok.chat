@@ -11,7 +11,7 @@ import { RunnerSection } from "./RunnerSection";
 import { NO_GATEWAY, Pending, PluginDownload, Section, ServerSection } from "./sections";
 
 /**
- * OpenClaw 블록(멀티 Gateway 스펙 7장 「연결 페이지」) — 머리에 「플러그인 받기」와 「Gateway 추가」, 그 아래 Gateway 카드 목록.
+ * OpenClaw 블록(멀티 Gateway 스펙 「웹」 절의 「연결 페이지」) — 머리에 「플러그인 받기」와 「Gateway 추가」, 그 아래 Gateway 카드 목록.
  * 카드를 지우면 그 자리가 사라지므로 초점을 「Gateway 추가」로 옮기고 결과를 늘 두는 라이브 영역에 알린다
  */
 function OpenClawSection({ status }: { status: SetupStatus }) {

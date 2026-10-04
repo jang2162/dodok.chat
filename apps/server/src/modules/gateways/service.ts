@@ -1,5 +1,5 @@
 /**
- * OpenClaw Gateway 저장소(멀티 Gateway 스펙 3.1·6.2). 주소·공유 토큰의 정본은 이 표다 — 어댑터는 부팅 때(`bootGateways`)와 저장할
+ * OpenClaw Gateway 저장소(멀티 Gateway 스펙 「gateways (새 표)」·「Gateway API」 절). 주소·공유 토큰의 정본은 이 표다 — 어댑터는 부팅 때(`bootGateways`)와 저장할
  * 때마다(라우트) `upsertGateway` 로 따라온다. 공유 토큰은 평문으로 두고(스펙 결정 4) 이 모듈 밖으로는 어댑터 설정으로만 나간다 —
  * 응답(`GatewaySummary`)·로그에는 싣지 않는다.
  */
@@ -178,7 +178,7 @@ export function bootGateways(
 }
 
 /**
- * 그 Gateway 에서 마지막으로 본 버전(`last_version`, 멀티 Gateway 스펙 3.1)을 version 으로 바꾼다 — 지운 Gateway 면 아무것도
+ * 그 Gateway 에서 마지막으로 본 버전(`last_version`, 멀티 Gateway 스펙 「gateways (새 표)」 절)을 version 으로 바꾼다 — 지운 Gateway 면 아무것도
  * 하지 않는다. 설정이 아니라 관측값이라 `updated_at` 은 건드리지 않는다
  */
 export function setGatewayLastVersion(db: Db, workspaceId: string, id: string, version: string): void {

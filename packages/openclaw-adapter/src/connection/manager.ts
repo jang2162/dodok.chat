@@ -1,5 +1,5 @@
 /**
- * Gateway 연결 목록 — 멀티 Gateway 스펙 5.1. 연결을 만들고·바꾸고·지우고, 연결 id 로 찾는다. 브리지는 어댑터가 쥐고 넘겨준다.
+ * Gateway 연결 목록 — 멀티 Gateway 스펙 「연결 관리자」 절. 연결을 만들고·바꾸고·지우고, 연결 id 로 찾는다. 브리지는 어댑터가 쥐고 넘겨준다.
  */
 import { join } from "node:path";
 import type { OutboundMessage } from "@dodok/shared";

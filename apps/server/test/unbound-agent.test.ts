@@ -1,5 +1,5 @@
 /**
- * Gateway 가 빈 OpenClaw 에이전트(Gateway 가 지워져 옮기기를 기다림 — 멀티 Gateway 스펙 8장) — 연결 id 가 null 이라 어댑터가
+ * Gateway 가 빈 OpenClaw 에이전트(Gateway 가 지워져 옮기기를 기다림 — 멀티 Gateway 스펙 「오류 처리」 절) — 연결 id 가 null 이라 어댑터가
  * ADAPTER_UNAVAILABLE 로 거절하고 「다시 실행」 카드가 남는다. 스레드 런도 재설치 안내(PLUGIN_OUTDATED)가 아니라 같은 사유다.
  * 그 런은 대기열에 남지 않는다(조율자 판정 2 — 연결이 null 인 런과 묶인 뒤 런의 대기열 키가 갈리는 경계).
  */

@@ -1,5 +1,5 @@
 /**
- * OpenClaw 에이전트를 Gateway 별로 찾고·등록하고·옮긴다(멀티 Gateway 스펙 6.3·8장, Review Focus 4). 같은 id(`main`)도 Gateway 가
+ * OpenClaw 에이전트를 Gateway 별로 찾고·등록하고·옮긴다(멀티 Gateway 스펙 「에이전트 API」·「오류 처리」 절, Review Focus 4). 같은 id(`main`)도 Gateway 가
  * 다르면 둘 다 등록되고, 지운 Gateway 의 에이전트는 남아 다른 Gateway 로 옮긴 뒤 「다시 실행」이 통한다.
  */
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";

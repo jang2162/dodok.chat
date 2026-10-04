@@ -202,7 +202,7 @@ export function createAgent(db: Db, input: CreateAgentInput): Agent {
 }
 
 /**
- * OpenClaw 에이전트를 다른 Gateway 로 옮긴다(멀티 Gateway 스펙 6.3, owner). 대상에 같은 id 가 있으면 409, 러너 에이전트는 400.
+ * OpenClaw 에이전트를 다른 Gateway 로 옮긴다(멀티 Gateway 스펙 「에이전트 API」 절, owner). 대상에 같은 id 가 있으면 409, 러너 에이전트는 400.
  * 도는 런은 맡은 연결(runs.connection_id)에서 끝까지 가고, 아직 보내지 않은 런은 디스패치 때 닫힌다(runs/orchestrator.ts dispatch).
  * previousGatewayId 는 채널 프롬프트 동기화가 새로 들어온 Gateway 를 가를 때 쓴다
  */

@@ -1,7 +1,7 @@
 /**
  * 브리지 토큰 저장소(설정 마법사 스펙 2.1·2.2). 원문은 발급 결과에만 있고 DB 에는 sha256 hex 만 둔다.
  * 검증은 해시로 행을 찾은 뒤 해시 버퍼끼리 timingSafeEqual — 플러그인 핸드셰이크와 첨부 HTTP 가 같은 함수를 쓴다.
- * 토큰은 Gateway 하나에 묶인다(멀티 Gateway 스펙 3.2) — 플러그인은 토큰만 보내고 서버가 그 행으로 Gateway 를 안다.
+ * 토큰은 Gateway 하나에 묶인다(멀티 Gateway 스펙 「바뀌는 표」 절) — 플러그인은 토큰만 보내고 서버가 그 행으로 Gateway 를 안다.
  */
 import { type BridgeTokenRecord, IssueBridgeTokenInput } from "@dodok/shared";
 import { and, desc, eq, isNull } from "drizzle-orm";

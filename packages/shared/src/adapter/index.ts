@@ -109,7 +109,7 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K>
 export type RunEventBody = DistributiveOmit<RunEvent, "seq" | "ts">;
 
 /**
- * 에이전트를 맡은 연결(멀티 Gateway 스펙 2장) — OpenClaw 는 Gateway id, Claude 러너는 러너 토큰 id. 서버는 런·세션·승인을
+ * 에이전트를 맡은 연결(멀티 Gateway 스펙 「구성」 절) — OpenClaw 는 Gateway id, Claude 러너는 러너 토큰 id. 서버는 런·세션·승인을
  * 「연결 id + 세션 키」로 찾는다 — 두 Gateway 의 같은 id 에이전트(`main`)는 세션 키가 같다
  */
 export type ConnectionId = string;

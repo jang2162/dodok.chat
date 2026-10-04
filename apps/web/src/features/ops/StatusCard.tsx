@@ -9,7 +9,7 @@ import { OPS_STATUS_POLL_MS } from "./queries";
 
 const WHEN = new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short" });
 
-/** 켜진 Gateway 의 상태만 줄로 그린다 — 꺼진 것은 줄이 없다. 낱말은 연결 페이지 카드(멀티 Gateway 스펙 7장)와 같다 */
+/** 켜진 Gateway 의 상태만 줄로 그린다 — 꺼진 것은 줄이 없다. 낱말은 연결 페이지 카드(멀티 Gateway 스펙 「웹」 절)와 같다 */
 const GATEWAY_STATE: Record<Exclude<OpenClawGatewayStatus["gateway"], "disabled">, string> = {
   connected: "연결됨",
   reconnecting: "재연결 중",

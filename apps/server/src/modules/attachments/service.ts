@@ -27,7 +27,7 @@ import {
 export type AttachmentDeps = { db: Db; dir: string; now?: () => Date; locks?: BlobLocks };
 /**
  * 러너가 올린 것도 에이전트 쪽(bridge)이다 — runnerTokenId 는 uploader_id 에 남아 그 러너의 읽기 범위가 된다(판정 R5). 플러그인이
- * 올린 것은 gatewayId(그 브리지 토큰의 Gateway)가 gateway_id 에 남아 그 Gateway 의 읽기·묶기 범위가 된다(멀티 Gateway 스펙 6.4)
+ * 올린 것은 gatewayId(그 브리지 토큰의 Gateway)가 gateway_id 에 남아 그 Gateway 의 읽기·묶기 범위가 된다(멀티 Gateway 스펙 「브리지 첨부 범위」 절)
  */
 export type Uploader =
   | { type: "user"; userId: string }
@@ -38,7 +38,7 @@ export type Uploader =
  */
 export type RunnerViewer = { type: "runner"; tokenId: string; mayRead: (attachmentId: string) => boolean };
 /**
- * 브리지 토큰 뷰어(멀티 Gateway 스펙 6.4 — 러너 R5 와 같게) — 그 Gateway 가 올린 것과, 그 Gateway 에서 열린 런(runs.connection_id)의
+ * 브리지 토큰 뷰어(멀티 Gateway 스펙 「브리지 첨부 범위」 절 — 러너 R5 와 같게) — 그 Gateway 가 올린 것과, 그 Gateway 에서 열린 런(runs.connection_id)의
  * 트리거 메시지에 묶인 것만 본다. 「묶였다」는 것만으로는 못 본다
  */
 export type BridgeViewer = { type: "bridge"; gatewayId: string };
@@ -137,7 +137,7 @@ export function claimUserAttachments(
 }
 
 /**
- * 정본을 낸 쪽 — OpenClaw 면 그 Gateway, 러너면 그 러너 토큰. 그쪽이 올린 첨부만 묶는다(멀티 Gateway 스펙 6.4·러너 판정 R5).
+ * 정본을 낸 쪽 — OpenClaw 면 그 Gateway, 러너면 그 러너 토큰. 그쪽이 올린 첨부만 묶는다(멀티 Gateway 스펙 「브리지 첨부 범위」 절·러너 판정 R5).
  * 러너 쪽을 「gateway_id 가 빈 행」으로 가르지 않는다 — Gateway 를 지우면 그 Gateway 가 올린 행도 비어 러너 정본에 묶이게 된다
  */
 export type UploadedBy = { gatewayId: string } | { runnerTokenId: string };

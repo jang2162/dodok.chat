@@ -124,7 +124,7 @@ export class OutboundDedupe {
 /**
  * 플러그인 연결 1개. hello 전에는 아무것도 받지 않는다. 중복 판정은 넘겨받은(연결을 넘어 공유되는) `OutboundDedupe` 로 한다.
  * `tokenId` 는 핸드셰이크에서 이 연결을 통과시킨 브리지 토큰의 id — 폐기 때 이 값으로 끊는다. `gatewayId` 는 그 토큰이 묶인
- * Gateway(멀티 Gateway 스펙 5.2) — 브리지는 이 값으로 「활성 플러그인 하나」·전송 대상을 가른다
+ * Gateway(멀티 Gateway 스펙 「브리지」 절) — 브리지는 이 값으로 「활성 플러그인 하나」·전송 대상을 가른다
  */
 export class BridgeSessionState {
   readonly connectionId: string;

@@ -34,7 +34,7 @@ export function diskLevel(freeBytes: number, totalBytes: number): "ok" | "warn" 
 
 type DownKind = "gateway_down" | "plugin_down";
 
-/** 운영 사건 key — Gateway 의 끊김·버전 사건은 Gateway 마다 따로 묶인다(멀티 Gateway 스펙 6.5) */
+/** 운영 사건 key — Gateway 의 끊김·버전 사건은 Gateway 마다 따로 묶인다(멀티 Gateway 스펙 「운영」 절) */
 export const gatewayEventKey = (gatewayId: string): string => `gateway:${gatewayId}`;
 
 /**

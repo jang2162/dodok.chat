@@ -9,7 +9,7 @@ describe("loadConfig", () => {
     expect(c.dbPath).toBe("tmp-data/dodok.sqlite");
     expect(c.PORT).toBe(3000);
   });
-  it("OpenClaw Gateway·브리지 토큰 변수 없이 읽힌다 — 옛 .env 에 남은 값은 읽지 않는다(멀티 Gateway 스펙 3.4)", () => {
+  it("OpenClaw Gateway·브리지 토큰 변수 없이 읽힌다 — 옛 .env 에 남은 값은 읽지 않는다(멀티 Gateway 스펙 「.env」 절)", () => {
     const old = {
       OPENCLAW_TARGET: "remote",
       OPENCLAW_GATEWAY_URL: "wss://gw.example",

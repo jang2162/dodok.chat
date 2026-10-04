@@ -61,7 +61,7 @@ export const OPS_DEFAULT_DAILY_RUN_LIMIT = 300;
 export const OpsAckResult = z.object({ acked: z.int().min(0) });
 export type OpsAckResult = z.infer<typeof OpsAckResult>;
 
-/** 운영 상태의 Gateway 한 줄(멀티 Gateway 스펙 6.5) — 꺼진 Gateway 는 enabled false·state disabled */
+/** 운영 상태의 Gateway 한 줄(멀티 Gateway 스펙 「운영」 절) — 꺼진 Gateway 는 enabled false·state disabled */
 export const OpsGatewayStatus = z.object({
   id: Id,
   name: z.string(),

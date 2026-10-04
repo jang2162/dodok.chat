@@ -16,7 +16,7 @@ export { AdapterError } from "@dodok/shared";
 export type { GatewayConnectionConfig, GatewaySetupEntry } from "@dodok/openclaw-adapter";
 
 /**
- * OpenClaw 어댑터가 서버에 내는 Gateway 조작(멀티 Gateway 스펙 5.1) — 계약(`AgentAdapter`) 밖이라 따로 묶는다. 실물
+ * OpenClaw 어댑터가 서버에 내는 Gateway 조작(멀티 Gateway 스펙 「연결 관리자」 절) — 계약(`AgentAdapter`) 밖이라 따로 묶는다. 실물
  * (`createOpenClawAdapter`)과 테스트의 `FakeAdapter` 가 갖는다
  */
 export type OpenClawGateways = Pick<

@@ -11,7 +11,7 @@ import { FAKE_GATEWAY_ID, insertGateway } from "./helpers/gateways";
 import { seedWorkspace } from "./helpers/seed";
 
 // 러너 스펙 2장·판정 P9 — 에이전트 등록의 provider 에 claude 를 연다. providerAgentId 는 같은 제공자·같은 연결 안에서만 유일하다 —
-// 서버가 런·정본·승인을 「연결 id + 세션 키」로 가르므로 제공자를 가로지른 같은 id 는 섞이지 않는다(멀티 Gateway 스펙 3.2)
+// 서버가 런·정본·승인을 「연결 id + 세션 키」로 가르므로 제공자를 가로지른 같은 id 는 섞이지 않는다(멀티 Gateway 스펙 「바뀌는 표」 절)
 
 const conflictOn = (field: string) =>
   expect.objectContaining({

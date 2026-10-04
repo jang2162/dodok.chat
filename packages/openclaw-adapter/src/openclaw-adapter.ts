@@ -1,5 +1,5 @@
 /**
- * `AgentAdapter` 의 OpenClaw 구현 — 서버 코어 스펙 6장·8장, 멀티 Gateway 스펙 5장.
+ * `AgentAdapter` 의 OpenClaw 구현 — 서버 코어 스펙 6장·8장, 멀티 Gateway 스펙 「OpenClaw 어댑터·브리지」 절.
  *
  * 어댑터 하나가 Gateway 연결 여럿을 품는다(`connection/manager`). 연결마다 Gateway WS(델타·툴 이벤트·세션 요청)와 브리지 자리
  * (인바운드 전송·정본·채널 설정)를 따로 두고, 이벤트·send 결과에 그 연결 id 를 싣는다. 브리지 네임스페이스 `/bridge` 는 하나이고

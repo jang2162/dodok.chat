@@ -65,7 +65,7 @@ const dropGateway = (qc: ReturnType<typeof useQueryClient>, id: string) =>
     (s) => s && { ...s, gateways: s.gateways.filter((g) => g.id !== id) },
   );
 
-/** Gateway 추가(멀티 Gateway 스펙 6.2) — 칸 오류(VALIDATION·CONFLICT)는 폼이 그린다 */
+/** Gateway 추가(멀티 Gateway 스펙 「Gateway API」 절) — 칸 오류(VALIDATION·CONFLICT)는 폼이 그린다 */
 export function useCreateGateway() {
   const qc = useQueryClient();
   return useMutation({

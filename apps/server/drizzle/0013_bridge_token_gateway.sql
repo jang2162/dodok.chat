@@ -1,4 +1,4 @@
--- bridge_tokens.gateway_id 를 NOT NULL 로 — 브리지 토큰은 Gateway 에 묶인다(멀티 Gateway 스펙 3.2). 생성기가 낸 표 다시 만들기에서
+-- bridge_tokens.gateway_id 를 NOT NULL 로 — 브리지 토큰은 Gateway 에 묶인다(멀티 Gateway 스펙 「바뀌는 표」 절). 생성기가 낸 표 다시 만들기에서
 -- 옛 행 복사(INSERT … SELECT)에만 `WHERE gateway_id IS NOT NULL` 을 손으로 붙였다: Gateway 에 묶이지 않은 토큰(.env 에서 이어받은
 -- 것·Gateway 아래 발급 전에 만든 것)은 새 모델에서 어느 Gateway 에도 붙지 못하고, 그대로 옮기면 NOT NULL 에 걸려 마이그레이션이
 -- 실패해 서버가 뜨지 않는다. 스냅숏(meta/0013_snapshot.json)은 생성기 출력 그대로다

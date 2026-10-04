@@ -4,7 +4,7 @@ import type { DbOrTx } from "../db/client";
 import { agents } from "../db/schema.sqlite";
 
 /**
- * 에이전트를 맡은 연결(멀티 Gateway 스펙 2장) — OpenClaw 는 gateway_id, 러너는 runner_token_id. 없으면 null — gateway_id 가 빈
+ * 에이전트를 맡은 연결(멀티 Gateway 스펙 「구성」 절) — OpenClaw 는 gateway_id, 러너는 runner_token_id. 없으면 null — gateway_id 가 빈
  * OpenClaw 에이전트(Gateway 가 지워져 옮기기를 기다림)는 어느 연결의 것도 아니고 send 는 ADAPTER_UNAVAILABLE 이다.
  * 같은 규칙의 SQL 판이 아래 agentOnConnection 이다 — 하나를 바꾸면 둘 다 바꾼다(connection-rule 테스트가 둘을 견준다)
  */

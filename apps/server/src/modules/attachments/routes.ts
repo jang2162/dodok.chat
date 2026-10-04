@@ -34,12 +34,12 @@ export type AttachmentRouteContext = {
   dir: string;
   /**
    * 브리지 핸드셰이크와 같은 검증(DB 브리지 토큰) — 던지면 401. 통과면 그 토큰의 Gateway 로 올린 첨부를 표시하고, GET 은 그
-   * Gateway 의 범위만 준다(멀티 Gateway 스펙 6.4 — 범위 밖은 없는 id 와 같은 404)
+   * Gateway 의 범위만 준다(멀티 Gateway 스펙 「브리지 첨부 범위」 절 — 범위 밖은 없는 id 와 같은 404)
    */
   verifyBridgeToken: (presented: unknown) => { tokenId: string; gatewayId: string } | null;
   /**
    * 그 Gateway 가 켜져 있는가 — 꺼진 Gateway 의 토큰은 핸드셰이크처럼 401 로 거절하고 실패로 세지 않는다(끈 것은 고장이 아니다,
-   * 멀티 Gateway 스펙 8장). 검증(verifyBridgeToken)에 넣지 않는 것은 그쪽의 null 이 실패 카운터에 들어가기 때문이다
+   * 멀티 Gateway 스펙 「오류 처리」 절). 검증(verifyBridgeToken)에 넣지 않는 것은 그쪽의 null 이 실패 카운터에 들어가기 때문이다
    */
   acceptBridgeGateway: (gatewayId: string) => boolean;
   /**
@@ -245,7 +245,7 @@ export function registerAttachmentRoutes(fastify: FastifyInstance, ctx: Attachme
 
     // 에이전트 쪽 경로 둘 — 브리지(플러그인)와 러너가 같은 규칙(20 MiB·매직 바이트·디스크 여유 507). 러너가 올린 파일도
     // uploader 는 bridge(에이전트 쪽)다 — 정본 저장이 같은 claimBridgeAttachments 로 묶는다. 러너는 uploader_id 에 토큰 id 를,
-    // 플러그인은 gateway_id 에 토큰의 Gateway 를 남기고, 읽기는 그 토큰·Gateway 의 범위로 좁힌다(판정 R5·멀티 Gateway 스펙 6.4 —
+    // 플러그인은 gateway_id 에 토큰의 Gateway 를 남기고, 읽기는 그 토큰·Gateway 의 범위로 좁힌다(판정 R5·멀티 Gateway 스펙 「브리지 첨부 범위」 절 —
     // 범위 밖은 없는 id 와 같은 404)
     type AgentPath = {
       path: string;

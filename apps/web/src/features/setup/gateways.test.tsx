@@ -15,7 +15,7 @@ import {
   tokensPath,
 } from "../../../test/setupServer";
 
-// 연결 페이지의 Gateway 카드 목록(멀티 Gateway 스펙 7장 「연결 페이지」)
+// 연결 페이지의 Gateway 카드 목록(멀티 Gateway 스펙 「웹」 절의 「연결 페이지」)
 
 afterEach(() => {
   vi.unstubAllGlobals();

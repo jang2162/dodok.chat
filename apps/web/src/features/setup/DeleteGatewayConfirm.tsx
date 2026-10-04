@@ -7,7 +7,7 @@ import { useBridgeTokens } from "./queries";
 import { Pending } from "./sections";
 
 /**
- * Gateway 삭제를 페이지 안에서 한 번 더 묻는다(멀티 Gateway 스펙 7장 「연결 페이지」·결정 7). 에이전트는 남아 연결이 비고,
+ * Gateway 삭제를 페이지 안에서 한 번 더 묻는다(멀티 Gateway 스펙 「웹」 절의 「연결 페이지」·결정 7). 에이전트는 남아 연결이 비고,
  * 그 Gateway 의 브리지 토큰은 폐기된 것까지 모두 지워진다(서버 응답 `deletedTokens` 와 같은 수). 두 수를 다 받기 전에는 지울 수 없다.
  * 열리면 초점은 「취소」 — 「삭제」를 두 번 눌러 곧장 지우지 않게
  */

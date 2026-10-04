@@ -92,7 +92,7 @@ export function registerAgentRoutes(fastify: FastifyInstance, ctx: AgentRouteCon
   });
 
   /**
-   * OpenClaw 에이전트를 다른 Gateway 로(멀티 Gateway 스펙 6.3, owner) — Gateway 가 지워져 연결이 빈 에이전트를 살리는 길이다.
+   * OpenClaw 에이전트를 다른 Gateway 로(멀티 Gateway 스펙 「에이전트 API」 절, owner) — Gateway 가 지워져 연결이 빈 에이전트를 살리는 길이다.
    * 그 Gateway 가 이 에이전트의 채널에 새로 들어오면 그 채널의 프롬프트를 한 번 보낸다(계획 판정 PG10)
    */
   fastify.put("/api/v1/agents/:id/gateway", owner, async (request) => {

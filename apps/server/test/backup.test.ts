@@ -122,7 +122,7 @@ describe("runBackup", () => {
     expect(r.removed).toEqual([]);
   });
 
-  it("Gateway 마다의 디바이스 디렉터리 DATA_DIR/gateways/ 를 통째로 담는다(멀티 Gateway 스펙 3.3)", async () => {
+  it("Gateway 마다의 디바이스 디렉터리 DATA_DIR/gateways/ 를 통째로 담는다(멀티 Gateway 스펙 「디바이스 아이덴티티」 절)", async () => {
     makeDb();
     const gw1 = join(dataDir, "gateways", "0f0f0f0f-0000-4000-8000-000000000001");
     const gw2 = join(dataDir, "gateways", "0f0f0f0f-0000-4000-8000-000000000002");

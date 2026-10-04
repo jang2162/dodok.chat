@@ -259,7 +259,7 @@ describe("역할 매트릭스(스펙 2장)", () => {
       ok: 200,
       request: () => ({ method: "GET", url: "/api/v1/setup/status" }),
     },
-    // Gateway·브리지 토큰은 owner 만(멀티 Gateway 스펙 6.6)
+    // Gateway·브리지 토큰은 owner 만(멀티 Gateway 스펙 「권한」 절)
     {
       name: "GET /gateways",
       min: "owner",

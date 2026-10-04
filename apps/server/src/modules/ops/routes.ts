@@ -50,7 +50,7 @@ export function registerOpsRoutes(fastify: FastifyInstance, ctx: OpsRouteContext
   fastify.get("/api/v1/ops/status", admin, async () => {
     const at = now();
     const adapter = ctx.adapter.status();
-    // Gateway 줄은 OpenClaw 어댑터의 것(멀티 Gateway 스펙 6.5) — 다른 어댑터면 빈 목록. 꺼진 Gateway 는 버전을 싣지 않는다
+    // Gateway 줄은 OpenClaw 어댑터의 것(멀티 Gateway 스펙 「운영」 절) — 다른 어댑터면 빈 목록. 꺼진 Gateway 는 버전을 싣지 않는다
     const versions = new Map(ctx.adapter.gatewaySetupDetails().map((d) => [d.id, d.gateway.version]));
     const gateways = (adapter.provider === "openclaw" ? adapter.gateways : []).map((g) => {
       const version = g.enabled ? (versions.get(g.id) ?? null) : null;

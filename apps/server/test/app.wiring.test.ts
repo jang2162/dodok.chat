@@ -752,7 +752,7 @@ describe("실제 어댑터(createOpenClawAdapter) 부팅", () => {
       });
       expect(added.statusCode).toBe(201);
       const gatewayId = (added.json() as { id: string }).id;
-      // 디바이스 아이덴티티는 Gateway 마다 DATA_DIR/gateways/<Gateway id>/(멀티 Gateway 스펙 3.3)
+      // 디바이스 아이덴티티는 Gateway 마다 DATA_DIR/gateways/<Gateway id>/(멀티 Gateway 스펙 「디바이스 아이덴티티」 절)
       const deviceIdentityPath = join(base, "gateways", gatewayId, "device.json");
       const issued = await app.fastify.inject({
         method: "POST",

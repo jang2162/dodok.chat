@@ -265,7 +265,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     const adapters: AgentAdapter[] = deps.adapters
       ? [...deps.adapters]
       : [
-          // Gateway 연결은 아래 bootGateways 가 DB 에서 넣는다 — 0개여도 뜬다(멀티 Gateway 스펙 3.4)
+          // Gateway 연결은 아래 bootGateways 가 DB 에서 넣는다 — 0개여도 뜬다(멀티 Gateway 스펙 「.env」 절)
           createOpenClawAdapter({
             dataDir: config.DATA_DIR,
             bridge: {
@@ -728,7 +728,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
 
 /**
  * 어댑터 status 이벤트로 Gateway 마다 상태를 본다. 한 Gateway 의 reconnecting 이 delayMs 동안 이어지면 그 Gateway 이름을 넣은
- * system.notice warn 을 한 번 보낸다(멀티 Gateway 스펙 6.5). reconnecting 을 벗어나면 다시 잰다. 꺼진·지운 Gateway 는 재지 않는다.
+ * system.notice warn 을 한 번 보낸다(멀티 Gateway 스펙 「운영」 절). reconnecting 을 벗어나면 다시 잰다. 꺼진·지운 Gateway 는 재지 않는다.
  * 타이머는 unref — 프로세스를 붙잡지 않는다.
  */
 export function watchGatewayReconnecting(

@@ -1,5 +1,5 @@
 /**
- * Gateway 연결 하나 — 멀티 Gateway 스펙 5.1. 그 Gateway 의 WS 루프(`gateway/connection-manager`)·디바이스 디렉터리·이벤트 매핑·승인 병합·
+ * Gateway 연결 하나 — 멀티 Gateway 스펙 「연결 관리자」 절. 그 Gateway 의 WS 루프(`gateway/connection-manager`)·디바이스 디렉터리·이벤트 매핑·승인 병합·
  * 프레임 덤프·브리지 자리(`GatewayBridge`)를 쥐고, 이 연결에서 나간 런을 추적한다.
  *
  * 연결 사이에 나누는 상태가 없다 — 런 id·승인 id 기억이 연결마다 따로라 두 Gateway 가 같은 승인 id 를 내도 섞이지 않는다.

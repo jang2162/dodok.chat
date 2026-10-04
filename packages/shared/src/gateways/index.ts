@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { Id, IsoDateTime } from "../common";
 
-// Gateway API 계약(멀티 Gateway 스펙 3.1·6.2) — owner 전용. Gateway 공유 토큰 원문은 요청 본문에만 있고 응답에는 tokenSet 만 싣는다
+// Gateway API 계약(멀티 Gateway 스펙 「gateways (새 표)」·「Gateway API」 절) — owner 전용. Gateway 공유 토큰 원문은 요청 본문에만 있고 응답에는 tokenSet 만 싣는다
 
 /** 화면 이름(예: 사무실·집) — 앞뒤 공백을 걷고 1~32자, 워크스페이스 안에서 유일(서버가 CONFLICT) */
 export const GatewayName = z.string().trim().min(1).max(32);

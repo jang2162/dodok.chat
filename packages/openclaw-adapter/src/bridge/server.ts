@@ -5,7 +5,7 @@
  * (`hello`·`outbound.message`·`outbound.typing`·`status`) 수신, 서버 → 플러그인 요청
  * (`inbound.deliver`·`config.set`·`agents.list`) 송신. 저장·라우팅 같은 런타임 로직은 콜백으로 밖에 둔다.
  * 네임스페이스는 하나이고 Gateway 마다 자리(`forGateway`)를 따로 둔다 — 「활성 플러그인 하나」·중복 흡수·ready 대기는 그 자리 안에서만
- * 오간다(멀티 Gateway 스펙 5.2).
+ * 오간다(멀티 Gateway 스펙 「브리지」 절).
  * 플러그인 ack 는 외부 입력이라 Result 봉투와 data 를 Zod 로 파싱한다 — 틀리면 `INTERNAL` + `ADAPTER_PROTOCOL: …`.
  *
  * HTTP 경로는 Socket.IO 기본 `/socket.io/` 이고 `/bridge` 는 네임스페이스다 — 리버스 프록시는 `/socket.io` 를 넘기면 된다.
@@ -60,7 +60,7 @@ export type BridgeServerOptions = BridgeServerCallbacks & {
   verifyToken: BridgeTokenVerifier;
   /**
    * 그 Gateway 의 플러그인을 받는가 — 켜진 Gateway 만 참. 거짓이면 핸드셰이크·hello 를 토큰 틀림과 같은 경로로 거절한다
-   * (멀티 Gateway 스펙 8장). 실패 카운터는 세지 않는다 — 꺼진 Gateway 의 플러그인은 자기 백오프로 계속 다시 붙는데, 그걸 세면
+   * (멀티 Gateway 스펙 「오류 처리」 절). 실패 카운터는 세지 않는다 — 꺼진 Gateway 의 플러그인은 자기 백오프로 계속 다시 붙는데, 그걸 세면
    * 같은 호스트의 다른 Gateway 플러그인까지 주소째 막힌다
    */
   acceptGateway: (gatewayId: string) => boolean;

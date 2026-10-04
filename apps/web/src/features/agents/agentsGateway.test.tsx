@@ -27,7 +27,7 @@ const mainOffice = () => makeAgent({ providerAgentId: "main", handle: "main-offi
 const mainHome = () =>
   makeAgent({ providerAgentId: "main", handle: "main-home", name: "Main 집", gateway: HOME });
 
-describe("에이전트 줄 — Gateway(멀티 Gateway 스펙 7장)", () => {
+describe("에이전트 줄 — Gateway(멀티 Gateway 스펙 「웹」 절)", () => {
   it("두 Gateway 의 같은 id(main)는 두 줄로, 핸들 옆에 Gateway 이름", async () => {
     stubServer({ agents: [mainOffice(), mainHome()], gateways: [TEST_GATEWAY, HOME_GATEWAY] });
     renderPage();

@@ -153,7 +153,7 @@ describe("listBridgeTokens·revokeBridgeToken", () => {
   });
 });
 
-describe("Gateway 단위(멀티 Gateway 스펙 3.2)", () => {
+describe("Gateway 단위(멀티 Gateway 스펙 「바뀌는 표」 절)", () => {
   it("토큰은 발급한 Gateway 에 묶이고 검증이 그 Gateway 를 돌려준다", () => {
     const a = issueFor(db, ws, GW, "a", T0);
     const b = issueFor(db, ws, GW2, "b", T0);

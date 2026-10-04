@@ -1,7 +1,7 @@
 /**
  * 가짜 에이전트 개발 모드 — 가짜 Gateway·가짜 플러그인·대본을 묶어 서버를 띄운다. 모델 런·실제 Gateway 없이 웹 전체를 돌린다(웹 MVP 스펙 9.2).
  * 테스트와 같은 가짜(`test/fakes/*`)를 쓴다. 운영 코드(`src/`)는 그대로 — 실제 OpenClawAdapter 가 가짜 Gateway 를 붙는다.
- * 가짜 Gateway 는 둘이다(멀티 Gateway 스펙 9장, `DEV_FAKE_GATEWAYS`): 「사무실」(에이전트 dev·fin)·「집」(main·dev — dev 가 일부러 겹친다).
+ * 가짜 Gateway 는 둘이다(멀티 Gateway 스펙 「테스트·검증」 절, `DEV_FAKE_GATEWAYS`): 「사무실」(에이전트 dev·fin)·「집」(main·dev — dev 가 일부러 겹친다).
  * 시작 때 둘을 DB 에 넣고(연결 페이지 「Gateway 추가」와 같은 행, 고정 id — `--keep` 이면 주소·토큰만 이번 가짜로 바꾼다) Gateway 마다
  * 고정 브리지 토큰 행·가짜 플러그인·대본을 하나씩 둔다. OpenClaw 에이전트도 시작 때 등록한다 — 핸들 dev·fin(사무실)·main·dev-home(집),
  * 그 핸들이 이미 있거나 그 Gateway 에 같은 id 가 있으면 그대로 둔다. DB 에 넣지 않은 셋째 가짜 Gateway 를 하나 더 열어 그 주소·토큰을

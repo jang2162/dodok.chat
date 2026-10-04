@@ -15,7 +15,7 @@ import { join } from "node:path";
 import Database from "better-sqlite3";
 
 const SIDE_FILES = ["vapid.json"];
-// Gateway 마다 디바이스 아이덴티티·디바이스 토큰 디렉터리(멀티 Gateway 스펙 3.3) — 통째로 담는다. 빠지면 복원 뒤 Gateway 마다 다시
+// Gateway 마다 디바이스 아이덴티티·디바이스 토큰 디렉터리(멀티 Gateway 스펙 「디바이스 아이덴티티」 절) — 통째로 담는다. 빠지면 복원 뒤 Gateway 마다 다시
 // 페어링해야 한다
 const SIDE_DIRS = ["gateways"];
 // 이 이름만 보관 개수로 세고 지운다 — 사람이 backups/ 에 둔 다른 것은 건드리지 않는다

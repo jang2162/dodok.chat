@@ -1,5 +1,5 @@
 /**
- * 멀티 Gateway 스펙 9장 서버 통합 — 실제 서버(실제 OpenClawAdapter) + 가짜 Gateway·플러그인 둘(「사무실」·「집」) + wire 클라이언트.
+ * 멀티 Gateway 스펙 「테스트·검증」 절 서버 통합 — 실제 서버(실제 OpenClawAdapter) + 가짜 Gateway·플러그인 둘(「사무실」·「집」) + wire 클라이언트.
  * 두 Gateway 에 같은 id `main` 을 두고 핸들 main-office·main-home 으로 같은 채널에서 부른다(세션 키가 글자까지 같다).
  * 실제 시계. 기다림은 전부 wire 이벤트(WireLog.until)로 한다.
  */

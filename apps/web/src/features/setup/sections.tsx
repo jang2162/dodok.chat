@@ -150,7 +150,7 @@ export function ServerSection({ status }: { status: SetupStatus }) {
   );
 }
 
-/** Gateway 가 없을 때(멀티 Gateway 스펙 7장 빈 상태) */
+/** Gateway 가 없을 때(멀티 Gateway 스펙 「웹」 절의 빈 상태) */
 export const NO_GATEWAY = "OpenClaw Gateway 를 추가하면 그 안의 에이전트를 채널에 데려올 수 있습니다";
 
 /**

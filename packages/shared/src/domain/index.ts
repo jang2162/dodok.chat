@@ -47,7 +47,7 @@ export const Agent = z.object({
   runner: z.object({ tokenId: Id, label: z.string(), revoked: z.boolean() }).optional(),
   /**
    * OpenClaw 에이전트의 Gateway — REST 에이전트 응답에만, OpenClaw 에이전트에만 키가 있다. null 이면 Gateway 가 지워져 연결이 비었다
-   * (owner 가 다른 Gateway 로 옮기기를 기다린다 — 멀티 Gateway 스펙 6.3)
+   * (owner 가 다른 Gateway 로 옮기기를 기다린다 — 멀티 Gateway 스펙 「에이전트 API」 절)
    */
   gateway: z.object({ id: Id, name: z.string() }).nullable().optional(),
 });

@@ -1,5 +1,5 @@
 /**
- * Gateway API(멀티 Gateway 스펙 6.2·계획 판정 PG6·PG7·PG9) — `.env` 없이 Gateway 0개로 뜨고, 연결 페이지 API 로 추가·수정·삭제하면
+ * Gateway API(멀티 Gateway 스펙 「Gateway API」 절·계획 판정 PG6·PG7·PG9) — `.env` 없이 Gateway 0개로 뜨고, 연결 페이지 API 로 추가·수정·삭제하면
  * 재시작 없이 어댑터가 따라온다. 공유 토큰 원문은 응답·목록·로그·설정 상태 어디에도 없다. 브리지 토큰은 Gateway 아래.
  */
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
@@ -155,7 +155,7 @@ describe("Gateway 추가·브리지 토큰·삭제 — 실제 어댑터 + 가짜
     for (const body of [res.body, list.body, status.body, live.lines.join("\n")]) {
       expect(body).not.toContain(gw.token);
     }
-    // 디바이스 아이덴티티는 그 Gateway 의 디렉터리에(멀티 Gateway 스펙 3.3)
+    // 디바이스 아이덴티티는 그 Gateway 의 디렉터리에(멀티 Gateway 스펙 「디바이스 아이덴티티」 절)
     expect(existsSync(join(live.dir, "gateways", summary.id, "device.json"))).toBe(true);
   });
 
