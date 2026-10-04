@@ -36,16 +36,30 @@ describe("에이전트 줄 — Gateway(멀티 Gateway 스펙 7장)", () => {
     expect(screen.getAllByText("main", { selector: "code" })).toHaveLength(2);
   });
 
-  it("연결이 빈 OpenClaw 에이전트는 「Gateway 가 삭제됨」 — owner 에게만 「Gateway 옮기기」", async () => {
+  it("연결이 빈 OpenClaw 에이전트 — owner 에게는 「옮기거나 지우세요」와 「Gateway 옮기기」", async () => {
     const orphan = makeAgent({ providerAgentId: "main", handle: "main", name: "Main", gateway: null });
     stubServer({ agents: [orphan] });
-    renderPage(undefined, "admin");
+    renderPage();
     expect(
       await screen.findByText("Gateway 가 삭제됨 — 다른 Gateway 로 옮기거나 지우세요"),
     ).toBeInTheDocument();
-    expect(screen.getByText("@main")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "@main Gateway 옮기기" })).toBeNull();
+    expect(screen.getByRole("button", { name: "@main Gateway 옮기기" })).toBeInTheDocument();
   });
+
+  it.each(["admin", "member"])(
+    "연결이 빈 OpenClaw 에이전트 — %s 에게는 할 수 없는 조치를 권하지 않고 「Gateway 옮기기」도 없다",
+    async (role) => {
+      const orphan = makeAgent({ providerAgentId: "main", handle: "main", name: "Main", gateway: null });
+      stubServer({ agents: [orphan] });
+      renderPage(undefined, role);
+      expect(
+        await screen.findByText("Gateway 가 삭제됨 — owner 가 다른 Gateway 로 옮길 때까지 답하지 못합니다"),
+      ).toBeInTheDocument();
+      expect(screen.getByText("@main")).toBeInTheDocument();
+      expect(screen.queryByText(/옮기거나 지우세요/)).toBeNull();
+      expect(screen.queryByRole("button", { name: "@main Gateway 옮기기" })).toBeNull();
+    },
+  );
 
   it("owner 는 「Gateway 옮기기」로 다른 Gateway 를 골라 PUT — 줄이 새 Gateway 이름으로 바뀐다", async () => {
     const orphan = makeAgent({ providerAgentId: "main", handle: "main", name: "Main", gateway: null });
