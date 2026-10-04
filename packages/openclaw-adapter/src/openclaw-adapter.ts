@@ -55,6 +55,11 @@ import { type FrameDump, openFrameDump } from "./gateway/frame-dump";
 import { parseSessionsReset, sessionKeyFor } from "./gateway/sessions";
 
 export type OpenClawAdapterOptions = {
+  /**
+   * 이 Gateway 연결의 id — 이벤트·send 결과·정본 훅에 싣는다(멀티 Gateway 스펙 4장). 아직 연결은 하나라 메서드가 받는 연결 id 는
+   * 보지 않는다(멀티 Gateway 계획 판정 PG1)
+   */
+  connectionId: string;
   gateway: { url: string; token: string; deviceIdentityPath: string; deviceTokenStorePath?: string };
   /**
    * 플러그인 핸드셰이크 인증은 `verifyToken`(통과면 토큰 id — 세션이 기억하고 폐기 때 그 id 로 끊는다).
@@ -75,10 +80,10 @@ export type OpenClawAdapterOptions = {
     now?: BridgeServerOptions["now"];
   };
   logger: AdapterLogger;
-  /** 서버가 정본을 저장하고 id 를 돌려준다. 그 id 가 플러그인 ack 의 messageId 가 된다. */
-  onCanonical: (message: OutboundMessage) => Promise<{ messageId?: string }>;
-  /** 재접속 복구 대상(서버 agent_sessions). */
-  sessionKeysToRecover?: () => RecoverTarget[];
+  /** 서버가 정본을 저장하고 id 를 돌려준다. 그 id 가 플러그인 ack 의 messageId 가 된다. connectionId 는 정본이 온 연결 */
+  onCanonical: (message: OutboundMessage, connectionId: string) => Promise<{ messageId?: string }>;
+  /** 그 연결의 재접속 복구 대상(서버 agent_sessions). */
+  sessionKeysToRecover?: (connectionId: string) => RecoverTarget[];
   /** 기본 `connectGateway` (테스트 주입) */
   connector?: GatewayConnector;
   backoff?: { initialMs?: number; maxMs?: number; pairingRetryMs?: number };
@@ -112,7 +117,7 @@ const AgentsListResult = z.looseObject({
 });
 
 export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAdapter {
-  const { logger } = opts;
+  const { logger, connectionId } = opts;
   const handlers = new Set<(e: AdapterEvent) => void>();
   const knownRunIds = new Set<string>();
   // `providerApprovalId` → 마지막으로 낸 병합본. 같은 승인이 정본·세션·되감기 세 경로로, 경로마다 다른 필드를 채워 온다(스파이크 3.1).
@@ -221,7 +226,7 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
       if (emittedApprovals.size <= APPROVAL_DEDUPE_MAX) break;
       emittedApprovals.delete(oldest);
     }
-    emit({ kind: "approval", approval });
+    emit({ kind: "approval", connectionId, approval });
   }
 
   function onGatewayEvent(frame: EventFrame) {
@@ -234,11 +239,12 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
       return;
     }
     for (const item of mapper.map(frame)) {
-      if (item.event) emit({ kind: "run_event", runId: item.runId, event: item.event });
+      if (item.event) emit({ kind: "run_event", runId: item.runId, connectionId, event: item.event });
       if (!item.signal) continue;
       emit({
         kind: "run_signal",
         runId: item.runId,
+        connectionId,
         signal: item.signal,
         ...(item.snapshotText === undefined ? {} : { snapshotText: item.snapshotText }),
       });
@@ -262,7 +268,9 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
     onApprovalReplay: (approvals) => {
       for (const approval of approvals) emitApproval(approval);
     },
-    ...(opts.sessionKeysToRecover ? { sessionKeysToRecover: opts.sessionKeysToRecover } : {}),
+    ...(opts.sessionKeysToRecover
+      ? { sessionKeysToRecover: () => opts.sessionKeysToRecover?.(connectionId) ?? [] }
+      : {}),
     ...(opts.backoff ? { backoff: opts.backoff } : {}),
   });
 
@@ -296,8 +304,8 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
       if (!bridge.current()) setBridgeState("down");
     },
     onOutboundMessage: async (_session, message) => {
-      const stored = await opts.onCanonical(message);
-      emit({ kind: "canonical", message });
+      const stored = await opts.onCanonical(message, connectionId);
+      emit({ kind: "canonical", connectionId, message });
       return { messageId: stored.messageId ?? message.outboundId };
     },
     // 받으면 버린다 — 플러그인은 typing 을 내지 않고(capability "typing" 없음), 에이전트가 일하는 중이라는 표시는 웹 런 버블이 맡는다
@@ -442,7 +450,7 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
       return sessions;
     },
 
-    async listAgents() {
+    async listAgents(_connectionId) {
       let res: unknown;
       try {
         res = await manager.request("agents.list", {});
@@ -467,10 +475,10 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
     sessionKeyFor,
 
     // 에이전트를 가리지 않는다 — Gateway 의 모든 에이전트가 붙은 플러그인 하나를 지난다
-    supports: (_providerAgentId, capability) =>
+    supports: (_providerAgentId, _connectionId, capability) =>
       bridge.current()?.hello?.capabilities.includes(capability) ?? false,
 
-    async send(input) {
+    async send(input, _opts) {
       // 플러그인은 런이 시작될 때(onAgentRunStart) ack 하므로 Gateway 이벤트가 ack 보다 먼저 올 수 있다 — 전송 전에 등록한다
       knownRunIds.add(input.runId);
       // 접속 뒤 새로 생긴 세션은 재접속 복구 구독에 없다 — 전송 전에 구독해야 Gateway 델타·툴 이벤트가 온다(Phase 1 실연에서 발견).
@@ -487,18 +495,18 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
       try {
         const result = await deliver(input);
         if (result.admission === "drop") forgetRun(input.runId);
-        return result;
+        return { ...result, connectionId };
       } catch (error) {
         forgetRun(input.runId);
         throw error;
       }
     },
 
-    async abort(runId, sessionKey) {
+    async abort(runId, sessionKey, _connectionId) {
       await manager.request("chat.abort", { sessionKey, runId });
     },
 
-    async resetSession(sessionKey) {
+    async resetSession(sessionKey, _connectionId) {
       try {
         return parseSessionsReset(await manager.request("sessions.reset", { key: sessionKey }));
       } catch (error) {
@@ -507,10 +515,18 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
       }
     },
 
-    syncChannelConfig: (channelId: string, config: ConfigSet["config"]): Promise<ConfigSetResult> =>
-      syncChannelConfig(bridge, logger, channelId, config),
+    syncChannelConfig: (
+      channelId: string,
+      config: ConfigSet["config"],
+      _connectionId: string,
+    ): Promise<ConfigSetResult> => syncChannelConfig(bridge, logger, channelId, config),
 
-    async resolveApproval(providerApprovalId: string, kind: ApprovalKind, decision: ApprovalDecision) {
+    async resolveApproval(
+      providerApprovalId: string,
+      kind: ApprovalKind,
+      decision: ApprovalDecision,
+      _connectionId: string,
+    ) {
       // 재접속 중(reconnecting)에도 결정을 보내지 않는다 — 승인 서비스가 하던 선검사를 어댑터 안으로 옮겼다(러너 계획 판정 P6)
       if (gatewayState !== "connected")
         throw new AdapterError("ADAPTER_UNAVAILABLE", "gateway is not connected");

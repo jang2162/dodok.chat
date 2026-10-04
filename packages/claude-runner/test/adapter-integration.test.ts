@@ -213,7 +213,7 @@ describe("러너 ↔ 실제 러너 어댑터", () => {
     cleanups.push(() => server.close());
     startRunner(server, createFakeSdk());
     await ready(server);
-    expect(await server.adapter.listAgents()).toEqual([
+    expect(await server.adapter.listAgents(null)).toEqual([
       { providerAgentId: "coder", name: "코더", hint: "laptop · my-repo · sonnet" },
     ]);
     expect(server.adapter.setupDetail().runners[0]!.capabilities).toEqual([
@@ -254,8 +254,11 @@ describe("러너 ↔ 실제 러너 어댑터", () => {
       ...script.textTurn("msg_2", ["끝났습니다"]),
     );
 
-    const sent = await server.adapter.send(deliver(RUN_1), { providerSessionId: SESSION_ID });
-    expect(sent).toEqual({ admission: "dispatch", providerRunId: RUN_1 });
+    const sent = await server.adapter.send(deliver(RUN_1), {
+      connectionId: null,
+      providerSessionId: SESSION_ID,
+    });
+    expect(sent).toEqual({ admission: "dispatch", providerRunId: RUN_1, connectionId: TOKEN_ID });
 
     // 승인 카드가 서버에 뜬다 — 요약은 명령, 항상 허용 가능
     await waitFor(() => approvals(server).some((a) => a.status === "pending"), "승인 요청");
@@ -269,7 +272,12 @@ describe("러너 ↔ 실제 러너 어댑터", () => {
       detail: "npm test",
       allowedDecisions: ["allow-once", "allow-always", "deny"],
     });
-    const resolved = await server.adapter.resolveApproval(pending.providerApprovalId, "tool", "allow-always");
+    const resolved = await server.adapter.resolveApproval(
+      pending.providerApprovalId,
+      "tool",
+      "allow-always",
+      TOKEN_ID,
+    );
     expect(resolved).toMatchObject({ status: "allowed", decision: "allow-always" });
 
     await waitFor(() => signals(server, RUN_1).includes("gateway_final"), "최종 답");
@@ -296,7 +304,11 @@ describe("러너 ↔ 실제 러너 어댑터", () => {
     expect(fake.calls[0]!.toolResults).toEqual([
       { content: [{ type: "text", text: `보냈습니다(메시지 ${post!.messageId})` }] },
     ]);
-    expect(server.events).toContainEqual({ kind: "canonical", message: post!.message });
+    expect(server.events).toContainEqual({
+      kind: "canonical",
+      connectionId: TOKEN_ID,
+      message: post!.message,
+    });
     expect(final!.message).toMatchObject({
       outboundId: `runner-final:${RUN_1}`,
       text: "끝났습니다",
@@ -337,10 +349,10 @@ describe("러너 ↔ 실제 러너 어댑터", () => {
       { callTool: { name: "post", input: { text: "늦은 글" } } },
       { waitInterrupt: [script.errorResult("error_during_execution", ["interrupted"])] },
     );
-    await server.adapter.send(deliver(RUN_2), { providerSessionId: SESSION_ID });
+    await server.adapter.send(deliver(RUN_2), { connectionId: null, providerSessionId: SESSION_ID });
     await waitFor(() => approvals(server).some((a) => a.status === "pending"), "승인 요청");
 
-    await server.adapter.abort(RUN_2, dodokSessionKey("coder", CHANNEL_ID));
+    await server.adapter.abort(RUN_2, dodokSessionKey("coder", CHANNEL_ID), null);
     await waitFor(() => signals(server, RUN_2).includes("gateway_aborted"), "중지 신호");
 
     expect(fake.calls[0]!.interrupts).toBeGreaterThanOrEqual(1);
@@ -370,11 +382,11 @@ describe("러너 ↔ 실제 러너 어댑터", () => {
       { callTool: { name: "post", input: { text: "보고서", files: ["report.md"] } } },
       { waitInterrupt: [script.errorResult("error_during_execution", ["interrupted"])] },
     );
-    await server.adapter.send(deliver(RUN_2), { providerSessionId: SESSION_ID });
+    await server.adapter.send(deliver(RUN_2), { connectionId: null, providerSessionId: SESSION_ID });
     await waitFor(() => runner.uploads.length === 1, "올리기 시작");
 
     // 서버는 곧바로 런을 닫는다 — 같은 틱에 올리기를 풀면 러너는 run.abort 를 받기 전에 post 를 보낸다
-    void server.adapter.abort(RUN_2, dodokSessionKey("coder", CHANNEL_ID));
+    void server.adapter.abort(RUN_2, dodokSessionKey("coder", CHANNEL_ID), null);
     releaseUpload();
     await waitFor(() => fake.calls[0]!.toolResults.length === 1, "post 결과");
     await waitFor(() => signals(server, RUN_2).includes("gateway_aborted"), "중지 신호");
@@ -402,7 +414,7 @@ describe("러너 ↔ 실제 러너 어댑터", () => {
       { askPermission: { toolName: "Bash", input: { command: "rm -rf build" }, toolUseID: "toolu_03" } },
       ...script.textTurn("msg_1", ["거절돼서 멈춥니다"]),
     );
-    await server.adapter.send(deliver(RUN_1), { providerSessionId: SESSION_ID });
+    await server.adapter.send(deliver(RUN_1), { connectionId: null, providerSessionId: SESSION_ID });
     await waitFor(() => signals(server, RUN_1).includes("gateway_final"), "최종 답");
 
     expect(approvals(server).map((a) => a.status)).toEqual(["pending", "expired"]);
@@ -417,7 +429,7 @@ describe("러너 ↔ 실제 러너 어댑터", () => {
     const runner = startRunner(first, fake);
     await ready(first);
     fake.script(script.messageStart("msg_1"), { hang: true });
-    await first.adapter.send(deliver(RUN_1), { providerSessionId: SESSION_ID });
+    await first.adapter.send(deliver(RUN_1), { connectionId: null, providerSessionId: SESSION_ID });
     await waitFor(() => fake.calls.length === 1, "런 시작");
 
     await first.close();
@@ -448,7 +460,7 @@ describe("러너 ↔ 실제 러너 어댑터", () => {
     await waitFor(() => b.conn.connected && server.adapter.status().runners.connected === 1, "뒤 러너");
     // 뒤 러너가 그 에이전트를 받는다 — 런이 뒤 러너로 간다
     fakeB.script(...script.textTurn("msg_1", ["뒤 러너"]));
-    await server.adapter.send(deliver(RUN_1), { providerSessionId: SESSION_ID });
+    await server.adapter.send(deliver(RUN_1), { connectionId: null, providerSessionId: SESSION_ID });
     await waitFor(() => signals(server, RUN_1).includes("gateway_final"), "뒤 러너의 최종 답");
     expect(server.outbound.map((o) => o.message.text)).toEqual(["뒤 러너"]);
     // 앞 러너는 다시 붙지 않는다

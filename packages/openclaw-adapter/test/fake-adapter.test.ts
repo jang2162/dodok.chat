@@ -70,14 +70,19 @@ describe("FakeAdapter", () => {
     const adapter = new FakeAdapter();
     const input = deliver();
 
-    await expect(adapter.send(input)).resolves.toEqual({ admission: "dispatch", providerRunId: RUN });
+    await expect(adapter.send(input, { connectionId: "env" })).resolves.toEqual({
+      connectionId: "env",
+      admission: "dispatch",
+      providerRunId: RUN,
+    });
     expect(adapter.calls.send).toEqual([input]);
   });
 
   it("script 로 send 응답을 바꾸고, script 가 던진 AdapterError 는 그대로 전파한다", async () => {
     const adapter = new FakeAdapter();
     adapter.script(async () => ({ admission: "drop", reason: "bot-loop-protection" }));
-    await expect(adapter.send(deliver())).resolves.toEqual({
+    await expect(adapter.send(deliver(), { connectionId: "env" })).resolves.toEqual({
+      connectionId: "env",
       admission: "drop",
       reason: "bot-loop-protection",
     });
@@ -86,7 +91,7 @@ describe("FakeAdapter", () => {
     adapter.script(() => {
       throw failure;
     });
-    const rejected = adapter.send(deliver());
+    const rejected = adapter.send(deliver(), { connectionId: "env" });
     await expect(rejected).rejects.toBe(failure);
     await expect(rejected).rejects.toMatchObject({ code: "ADAPTER_UNAVAILABLE", name: "AdapterError" });
     expect(adapter.calls.send).toHaveLength(2);
@@ -96,7 +101,7 @@ describe("FakeAdapter", () => {
     const adapter = new FakeAdapter();
     const seen: AdapterEvent[] = [];
     const off = adapter.onEvent((e) => seen.push(e));
-    const signal: AdapterEvent = { kind: "run_signal", runId: RUN, signal: { kind: "gateway_started" } };
+    const signal = { kind: "run_signal", runId: RUN, signal: { kind: "gateway_started" } } as const;
     const body = {
       type: "TEXT_MESSAGE_CONTENT",
       runId: RUN,
@@ -109,7 +114,33 @@ describe("FakeAdapter", () => {
     off();
     adapter.emit(signal);
 
-    expect(seen).toEqual([signal, { kind: "run_event", runId: RUN, event: body }]);
+    // 연결 id 없이 낸 이벤트에는 지금 고른 연결(OpenClaw 흉내의 기본은 env)이 실린다
+    expect(seen).toEqual([
+      { ...signal, connectionId: "env" },
+      { kind: "run_event", runId: RUN, connectionId: "env", event: body },
+    ]);
+  });
+
+  it("useConnection·연결 id 를 실은 emit·send 의 연결 — 한 어댑터로 연결 여럿을 흉내 낸다", async () => {
+    const adapter = new FakeAdapter();
+    const seen: AdapterEvent[] = [];
+    adapter.onEvent((e) => seen.push(e));
+    expect(adapter.connectionId).toBe("env");
+    adapter.useConnection("g2");
+    adapter.emit({ kind: "run_signal", runId: RUN, signal: { kind: "gateway_started" } });
+    adapter.emit({ kind: "run_signal", runId: RUN, connectionId: "g1", signal: { kind: "gateway_started" } });
+    expect(seen.map((e) => (e.kind === "status" || e.kind === "setup" ? undefined : e.connectionId))).toEqual(
+      ["g2", "g1"],
+    );
+    // 받은 연결을 결과에 싣고, null 이면 지금 고른 연결
+    await expect(adapter.send(deliver(), { connectionId: "g1" })).resolves.toMatchObject({
+      connectionId: "g1",
+    });
+    await expect(adapter.send(deliver(), { connectionId: null })).resolves.toMatchObject({
+      connectionId: "g2",
+    });
+    expect(adapter.calls.connections.send).toEqual(["g1", null]);
+    expect(new FakeAdapter({ provider: "claude" }).connectionId).toBe("fake-runner");
   });
 
   it("RunEventBody 는 판별 유니온에 분배된다 — 변형별 필드를 받고 누락은 잡는다", () => {
@@ -157,19 +188,19 @@ describe("FakeAdapter", () => {
     expect(key).toBe(`agent:dev:dodok:channel:${CH}`);
     expect(adapter.sessionKeyFor("dev", CH, MSG)).toBe(`agent:dev:dodok:channel:${CH}:thread:${MSG}`);
 
-    await expect(adapter.listAgents()).resolves.toEqual([
+    await expect(adapter.listAgents("env")).resolves.toEqual([
       { providerAgentId: "dev", name: "dev" },
       { providerAgentId: "fin" },
     ]);
 
-    const reset = await adapter.resetSession(key);
+    const reset = await adapter.resetSession(key, "env");
     expect(typeof reset.sessionStartedAt).toBe("string");
     expect(reset.lifecycleRevision).toBe("fake-1");
 
-    await expect(adapter.syncChannelConfig(CH, { requireMention: true })).resolves.toEqual({
+    await expect(adapter.syncChannelConfig(CH, { requireMention: true }, "env")).resolves.toEqual({
       applied: "live",
     });
-    await adapter.abort(RUN, key);
+    await adapter.abort(RUN, key, "env");
     adapter.forgetRun(RUN);
 
     expect(adapter.calls.forget).toEqual([RUN]);
@@ -205,7 +236,7 @@ describe("FakeAdapter — 승인(서버 테스트용 대본)", () => {
 
     adapter.emitApproval(a);
 
-    expect(seen).toEqual([{ kind: "approval", approval: a }]);
+    expect(seen).toEqual([{ kind: "approval", connectionId: "env", approval: a }]);
   });
 
   it("resolveApproval 은 호출을 기록하고 emitApproval 한 승인의 terminal 스냅샷을 돌려준다", async () => {
@@ -213,7 +244,9 @@ describe("FakeAdapter — 승인(서버 테스트용 대본)", () => {
     const a = approval();
     adapter.emitApproval(a);
 
-    await expect(adapter.resolveApproval(a.providerApprovalId, "plugin", "deny")).resolves.toMatchObject({
+    await expect(
+      adapter.resolveApproval(a.providerApprovalId, "plugin", "deny", "env"),
+    ).resolves.toMatchObject({
       providerApprovalId: a.providerApprovalId,
       status: "denied",
       decision: "deny",
@@ -232,7 +265,9 @@ describe("FakeAdapter — 승인(서버 테스트용 대본)", () => {
     adapter.scriptResolveApproval(() => a);
     for (const gateway of ["reconnecting", "down"] as const) {
       adapter.setStatus({ provider: "openclaw", gateway, bridge: "connected" });
-      await expect(adapter.resolveApproval(a.providerApprovalId, "plugin", "deny")).rejects.toMatchObject({
+      await expect(
+        adapter.resolveApproval(a.providerApprovalId, "plugin", "deny", "env"),
+      ).rejects.toMatchObject({
         name: "AdapterError",
         code: "ADAPTER_UNAVAILABLE",
       });
@@ -243,13 +278,17 @@ describe("FakeAdapter — 승인(서버 테스트용 대본)", () => {
   it("모르는 승인은 NOT_FOUND, scriptResolveApproval 로 응답을 바꿀 수 있다", async () => {
     const adapter = new FakeAdapter();
 
-    await expect(adapter.resolveApproval("plugin:nope", "plugin", "allow-once")).rejects.toMatchObject({
-      name: "AdapterError",
-      code: "NOT_FOUND",
-    });
+    await expect(adapter.resolveApproval("plugin:nope", "plugin", "allow-once", "env")).rejects.toMatchObject(
+      {
+        name: "AdapterError",
+        code: "NOT_FOUND",
+      },
+    );
 
     adapter.scriptResolveApproval(() => approval({ status: "expired", decision: "deny", reason: "timeout" }));
-    await expect(adapter.resolveApproval("plugin:nope", "plugin", "allow-once")).resolves.toMatchObject({
+    await expect(
+      adapter.resolveApproval("plugin:nope", "plugin", "allow-once", "env"),
+    ).resolves.toMatchObject({
       status: "expired",
       reason: "timeout",
     });
@@ -259,22 +298,22 @@ describe("FakeAdapter — 승인(서버 테스트용 대본)", () => {
 
 describe("FakeAdapter.supports", () => {
   it("기본은 스레드를 아는 플러그인이 붙어 있다", () => {
-    expect(new FakeAdapter().supports("dev", "threads")).toBe(true);
+    expect(new FakeAdapter().supports("dev", "env", "threads")).toBe(true);
   });
 
   it("setPluginCapabilities 로 옛 플러그인을 흉내 낸다", () => {
     const adapter = new FakeAdapter();
     adapter.setPluginCapabilities([]);
-    expect(adapter.supports("dev", "threads")).toBe(false);
+    expect(adapter.supports("dev", "env", "threads")).toBe(false);
     adapter.setPluginCapabilities(["threads"]);
-    expect(adapter.supports("dev", "threads")).toBe(true);
+    expect(adapter.supports("dev", "env", "threads")).toBe(true);
   });
 
   it("에이전트를 가리지 않는다 — 붙은 플러그인 하나를 본다", () => {
     const adapter = new FakeAdapter();
-    expect(adapter.supports("fin", "threads")).toBe(true);
+    expect(adapter.supports("fin", "env", "threads")).toBe(true);
     adapter.setPluginCapabilities([]);
-    expect(adapter.supports("fin", "threads")).toBe(false);
+    expect(adapter.supports("fin", "env", "threads")).toBe(false);
   });
 
   it("붙은 플러그인이 없으면 false", () => {
@@ -283,6 +322,6 @@ describe("FakeAdapter.supports", () => {
       ...adapter.setupDetail(),
       bridge: { state: "down", plugin: null },
     });
-    expect(adapter.supports("dev", "threads")).toBe(false);
+    expect(adapter.supports("dev", "env", "threads")).toBe(false);
   });
 });

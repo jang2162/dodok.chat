@@ -108,13 +108,32 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K>
 /** seq·ts 는 오케스트레이터가 부여한다. 판별 유니온이라 Omit 을 변형마다 분배한다. */
 export type RunEventBody = DistributiveOmit<RunEvent, "seq" | "ts">;
 
+/**
+ * 에이전트를 맡은 연결(멀티 Gateway 스펙 2장) — OpenClaw 는 Gateway id, Claude 러너는 러너 토큰 id. 서버는 런·세션·승인을
+ * 「연결 id + 세션 키」로 찾는다 — 두 Gateway 의 같은 id 에이전트(`main`)는 세션 키가 같다
+ */
+export type ConnectionId = string;
+
+/**
+ * send 의 두 번째 인자. `connectionId` 는 서버가 에이전트 행에서 꺼낸 값이다 — null 이면 OpenClaw 는 ADAPTER_UNAVAILABLE,
+ * 러너는 묶임 없는 에이전트를 먼저 알린 러너에 보낸다. providerSessionId 는 serverSessionIds 어댑터에만 넘긴다
+ */
+export type SendOptions = { connectionId: ConnectionId | null; providerSessionId?: string };
+
 export type AdapterEvent =
-  | { kind: "run_event"; runId: string; event: RunEventBody }
-  | { kind: "run_signal"; runId: string; signal: RunSignal; snapshotText?: string } // snapshotText 는 gateway_final 에만
-  | { kind: "canonical"; message: OutboundMessage }
+  | { kind: "run_event"; runId: string; connectionId: ConnectionId; event: RunEventBody }
+  // snapshotText 는 gateway_final 에만
+  | {
+      kind: "run_signal";
+      runId: string;
+      connectionId: ConnectionId;
+      signal: RunSignal;
+      snapshotText?: string;
+    }
+  | { kind: "canonical"; connectionId: ConnectionId; message: OutboundMessage }
   | { kind: "status"; status: AdapterStatus; capabilities: AdapterCapabilities }
-  // 승인은 런 이벤트가 아니다 — 런 상관(sessionKey + toolCallId)은 서버가 한다(설계 4.1·4.2)
-  | { kind: "approval"; approval: ProviderApproval }
+  // 승인은 런 이벤트가 아니다 — 런 상관(연결 id + sessionKey + toolCallId)은 서버가 한다(설계 4.1·4.2)
+  | { kind: "approval"; connectionId: ConnectionId; approval: ProviderApproval }
   // setupDetail() 이 바뀌었다(페어링 시작·해소, 플러그인 hello·끊김 등) — 값은 setupDetail() 로 읽는다. 같은 상세면 내지 않는다
   | { kind: "setup" };
 
@@ -122,7 +141,14 @@ export type AdapterEvent =
  * 어댑터가 받은 전달의 결과. `queued` 는 제공자가 받아들였지만 자기 쪽에서 기다린다는 뜻이다(러너 동시 상한 — ack `queuedPosition`) —
  * 오케스트레이터는 그 런을 queuedMs 가 아니라 runMs 로 잰다. 브리지 wire 의 InboundDeliverResult 에는 없다(플러그인은 싣지 않는다)
  */
-export type AdapterSendResult = InboundDeliverResult & { queued?: boolean };
+export type AdapterSendResult = InboundDeliverResult & {
+  queued?: boolean;
+  /**
+   * 그 런을 실제로 맡은 연결 — admission 이 dispatch 면 꼭 싣는다. 서버가 runs.connection_id 에 남겨 그 뒤 이벤트·정본·승인과
+   * 대조한다(러너가 묶임 없는 에이전트를 가져간 런도 그 러너의 토큰 id 로)
+   */
+  connectionId?: ConnectionId;
+};
 
 export interface AgentAdapter {
   readonly provider: AdapterProvider;
@@ -133,16 +159,26 @@ export interface AgentAdapter {
   setupDetail(): AdapterSetupDetail;
   /** 그 토큰(브리지 토큰·러너 토큰 — 어댑터마다 자기 종류)으로 붙은 연결을 끊고 끊은 수를 돌려준다 — 토큰 폐기 때 */
   revokeTokenSessions(tokenId: string): number;
-  listAgents(): Promise<Array<{ providerAgentId: string; name?: string; hint?: string }>>;
+  /** 그 연결의 에이전트 — 러너는 null 이면 붙은 러너 전부(러너 찾기는 연결을 고르지 않는다) */
+  listAgents(
+    connectionId: ConnectionId | null,
+  ): Promise<Array<{ providerAgentId: string; name?: string; hint?: string }>>;
   /** 스레드 루트를 주면 그 스레드의 하위 세션 키 */
   sessionKeyFor(providerAgentId: string, channelId: string, threadRootId?: string): string;
-  /** 그 에이전트를 맡은 쪽(OpenClaw 는 붙은 플러그인, 러너는 그 에이전트를 알린 러너)이 능력을 hello 로 알렸는가 — 없으면 false */
-  supports(providerAgentId: string, capability: "threads"): boolean;
-  /** ok:false 는 throw AdapterError(code). providerSessionId 는 serverSessionIds 어댑터에만 넘긴다 */
-  send(input: InboundDeliver, opts?: { providerSessionId?: string }): Promise<AdapterSendResult>;
-  abort(runId: string, sessionKey: string): Promise<void>;
-  resetSession(sessionKey: string): Promise<{ sessionStartedAt?: string; lifecycleRevision?: string }>;
-  syncChannelConfig(channelId: string, config: ConfigSet["config"]): Promise<ConfigSetResult>;
+  /** 그 에이전트를 맡은 쪽(OpenClaw 는 그 연결에 붙은 플러그인, 러너는 그 에이전트를 알린 러너)이 능력을 hello 로 알렸는가 — 없으면 false */
+  supports(providerAgentId: string, connectionId: ConnectionId | null, capability: "threads"): boolean;
+  /** ok:false 는 throw AdapterError(code) */
+  send(input: InboundDeliver, opts: SendOptions): Promise<AdapterSendResult>;
+  abort(runId: string, sessionKey: string, connectionId: ConnectionId | null): Promise<void>;
+  resetSession(
+    sessionKey: string,
+    connectionId: ConnectionId | null,
+  ): Promise<{ sessionStartedAt?: string; lifecycleRevision?: string }>;
+  syncChannelConfig(
+    channelId: string,
+    config: ConfigSet["config"],
+    connectionId: ConnectionId,
+  ): Promise<ConfigSetResult>;
   /**
    * 승인 결정을 제공자에 보낸다. `kind` 는 저장된 행에서 받는다(OpenClaw wire 에 없다 — 스파이크 4.1).
    * 돌아온 terminal 스냅샷을 같은 정규화로 돌려준다. 보낼 수 없으면(연결 없음) ADAPTER_UNAVAILABLE, 그 밖의 ok:false 도 throw AdapterError.
@@ -151,6 +187,7 @@ export interface AgentAdapter {
     providerApprovalId: string,
     kind: ApprovalKind,
     decision: ApprovalDecision,
+    connectionId: ConnectionId,
   ): Promise<ProviderApproval>;
   onEvent(handler: (e: AdapterEvent) => void): () => void;
   /** 서버가 종료 신호 없이 닫은 런(타임아웃)의 추적 상태를 버린다 — 그 뒤 그 런의 제공자 프레임은 무시한다 */

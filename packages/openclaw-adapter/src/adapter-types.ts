@@ -11,8 +11,10 @@ export {
   type AgentAdapter,
   type ClaudeAdapterStatus,
   type ClaudeSetupDetail,
+  type ConnectionId,
   type OpenClawAdapterStatus,
   type OpenClawSetupDetail,
   type ProviderApproval,
   type RunEventBody,
+  type SendOptions,
 } from "@dodok/shared";

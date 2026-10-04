@@ -20,8 +20,10 @@ import { connectRunner, type FakeRunner, runnerAgent } from "./helpers/fake-runn
 
 const TOKEN_A = "drn_token-a";
 const TOKEN_B = "drn_token-b";
+/** 러너 A 의 연결 id(= 토큰 id) — 이벤트·send 결과에 실린다. 승인·설정 동기화가 받는 연결 자리에도 쓴다(러너 어댑터는 보지 않는다) */
+const RUNNER_A_CONNECTION = "7a0e2d3c-2d1f-4f5e-9a6b-000000000001";
 const TOKENS: Record<string, { tokenId: string; label: string }> = {
-  [TOKEN_A]: { tokenId: "7a0e2d3c-2d1f-4f5e-9a6b-000000000001", label: "laptop" },
+  [TOKEN_A]: { tokenId: RUNNER_A_CONNECTION, label: "laptop" },
   [TOKEN_B]: { tokenId: "7a0e2d3c-2d1f-4f5e-9a6b-000000000002", label: "desktop" },
 };
 const CH = "01a09fc9-d204-7551-89d6-38544d07a102";
@@ -35,6 +37,8 @@ type Harness = {
   url: string;
   events: AdapterEvent[];
   outbound: OutboundMessage[];
+  /** onOutbound 이 받은 연결 id — outbound 와 같은 순서 */
+  outboundConnections: string[];
   logs: LogLine[];
   blocked: string[];
   runners: FakeRunner[];
@@ -64,6 +68,7 @@ async function setup(
   const url = `http://127.0.0.1:${(http.address() as AddressInfo).port}`;
   const events: AdapterEvent[] = [];
   const outbound: OutboundMessage[] = [];
+  const outboundConnections: string[] = [];
   const logs: LogLine[] = [];
   const blocked: string[] = [];
   const runners: FakeRunner[] = [];
@@ -88,9 +93,10 @@ async function setup(
     serverVersion: "test-server",
     logger: { info: log("info"), warn: log("warn"), error: log("error"), debug: log("debug") },
     channelName: (channelId) => channelNames.get(channelId),
-    onOutbound: async (m) => {
+    onOutbound: async (m, connectionId) => {
       if (outboundFails) throw new Error("db is locked");
       outbound.push(m);
+      outboundConnections.push(connectionId);
       return { messageId: randomUUID() };
     },
     tokenCount: () => 2,
@@ -115,6 +121,7 @@ async function setup(
     url,
     events,
     outbound,
+    outboundConnections,
     logs,
     blocked,
     runners,
@@ -222,7 +229,7 @@ async function startRun(
   over: Partial<InboundDeliver> = {},
 ): Promise<InboundDeliver> {
   const input = deliver(over);
-  await h.adapter.send(input, { providerSessionId: SESSION_ID });
+  await h.adapter.send(input, { connectionId: null, providerSessionId: SESSION_ID });
   await until(() => r.runStarts.some((s) => s.deliver.runId === input.runId), "run.start");
   return input;
 }
@@ -329,7 +336,7 @@ describe("러너 여러 대", () => {
     expect(await b.hello()).toMatchObject({ ok: true, conflicts: ["coder"] });
     expect(h.logs.some((l) => l.level === "warn" && JSON.stringify(l.obj).includes("coder"))).toBe(true);
 
-    const agents = await h.adapter.listAgents();
+    const agents = await h.adapter.listAgents(null);
     expect(agents).toEqual([
       { providerAgentId: "coder", name: "Coder", hint: "laptop · coder-repo · sonnet" },
       { providerAgentId: "writer", name: "Writer", hint: "desktop · writer-repo · sonnet" },
@@ -349,7 +356,7 @@ describe("러너 여러 대", () => {
     const input = await startRun(h, b);
     expect(b.runStarts[0]?.deliver.runId).toBe(input.runId);
     expect(h.adapter.setupDetail().runners[0]?.agents.map((x) => x.conflict)).toEqual([false, false]);
-    expect((await h.adapter.listAgents())[0]).toMatchObject({
+    expect((await h.adapter.listAgents(null))[0]).toMatchObject({
       providerAgentId: "coder",
       hint: "desktop · coder-repo · opus",
     });
@@ -377,24 +384,24 @@ describe("러너 여러 대", () => {
   it("supports: threads 를 알린 러너의 에이전트는 true", async () => {
     const h = await setup();
     await readyRunner(h, TOKEN_A, [runnerAgent("coder")]);
-    expect(h.adapter.supports("coder", "threads")).toBe(true);
+    expect(h.adapter.supports("coder", null, "threads")).toBe(true);
   });
 
   it("supports: 그 에이전트를 가진 러너가 threads 를 안 알렸으면 false", async () => {
     const h = await setup();
     const b = await h.runner(TOKEN_B, [runnerAgent("writer")]);
     await b.hello({ capabilities: ["interrupt"] });
-    expect(h.adapter.supports("writer", "threads")).toBe(false);
+    expect(h.adapter.supports("writer", null, "threads")).toBe(false);
   });
 
   it("supports: 그 에이전트를 가진 러너가 없으면 true — 옛 러너로 닫지 않고 send 가 ADAPTER_UNAVAILABLE 로 닫게", async () => {
     const h = await setup();
-    expect(h.adapter.supports("coder", "threads")).toBe(true);
+    expect(h.adapter.supports("coder", null, "threads")).toBe(true);
     const b = await h.runner(TOKEN_B, [runnerAgent("writer")]);
     await b.hello({ capabilities: ["interrupt"] });
-    expect(h.adapter.supports("nobody", "threads")).toBe(true);
+    expect(h.adapter.supports("nobody", null, "threads")).toBe(true);
     const error = await rejection(
-      h.adapter.send(deliver({ agentId: "nobody" }), { providerSessionId: SESSION_ID }),
+      h.adapter.send(deliver({ agentId: "nobody" }), { connectionId: null, providerSessionId: SESSION_ID }),
     );
     expect(error.code).toBe("ADAPTER_UNAVAILABLE");
   });
@@ -426,8 +433,13 @@ describe("send", () => {
     const r = await readyRunner(h);
     r.onRunStart = (p) => ({ runId: p.deliver.runId, admission: "dispatch", queuedPosition: 2 });
     const input = deliver();
-    const result = await h.adapter.send(input, { providerSessionId: SESSION_ID });
-    expect(result).toEqual({ admission: "dispatch", providerRunId: input.runId, queued: true });
+    const result = await h.adapter.send(input, { connectionId: null, providerSessionId: SESSION_ID });
+    expect(result).toEqual({
+      admission: "dispatch",
+      providerRunId: input.runId,
+      connectionId: RUNNER_A_CONNECTION,
+      queued: true,
+    });
     const [start] = r.runStarts;
     expect(start?.providerSessionId).toBe(SESSION_ID);
     expect(start?.deliver).toEqual(input);
@@ -452,7 +464,9 @@ describe("send", () => {
   it("그 에이전트를 가진 러너가 없으면 ADAPTER_UNAVAILABLE", async () => {
     const h = await setup();
     await readyRunner(h, TOKEN_A, [runnerAgent("writer")]);
-    const error = await rejection(h.adapter.send(deliver(), { providerSessionId: SESSION_ID }));
+    const error = await rejection(
+      h.adapter.send(deliver(), { connectionId: null, providerSessionId: SESSION_ID }),
+    );
     expect(error.code).toBe("ADAPTER_UNAVAILABLE");
   });
 
@@ -461,9 +475,10 @@ describe("send", () => {
     const r = await readyRunner(h);
     r.onRunStart = (p) => ({ runId: p.deliver.runId, admission: "drop", reason: "busy" });
     const input = deliver();
-    expect(await h.adapter.send(input, { providerSessionId: SESSION_ID })).toEqual({
+    expect(await h.adapter.send(input, { connectionId: null, providerSessionId: SESSION_ID })).toEqual({
       admission: "drop",
       reason: "busy",
+      connectionId: RUNNER_A_CONNECTION,
     });
     r.send("run.event", {
       runId: input.runId,
@@ -477,7 +492,9 @@ describe("send", () => {
     const h = await setup({ fakeTimers: true });
     const r = await readyRunner(h);
     r.onRunStart = () => undefined;
-    const pending = rejection(h.adapter.send(deliver(), { providerSessionId: SESSION_ID }));
+    const pending = rejection(
+      h.adapter.send(deliver(), { connectionId: null, providerSessionId: SESSION_ID }),
+    );
     await until(() => r.runStarts.length === 1, "run.start");
     await vi.advanceTimersByTimeAsync(15_000);
     expect((await pending).code).toBe("ADAPTER_UNAVAILABLE");
@@ -488,7 +505,7 @@ describe("send", () => {
     const r = await readyRunner(h);
     r.onRunStart = () => undefined;
     const input = deliver();
-    const pending = rejection(h.adapter.send(input, { providerSessionId: SESSION_ID }));
+    const pending = rejection(h.adapter.send(input, { connectionId: null, providerSessionId: SESSION_ID }));
     await until(() => r.runStarts.length === 1, "run.start");
     r.close();
     expect((await pending).code).toBe("ADAPTER_UNAVAILABLE");
@@ -504,9 +521,10 @@ describe("send", () => {
       return { runId: p.deliver.runId, admission: "dispatch" };
     };
     const input = deliver();
-    expect(await h.adapter.send(input, { providerSessionId: SESSION_ID })).toEqual({
+    expect(await h.adapter.send(input, { connectionId: null, providerSessionId: SESSION_ID })).toEqual({
       admission: "dispatch",
       providerRunId: input.runId,
+      connectionId: RUNNER_A_CONNECTION,
     });
     await until(() => signals(h, input.runId).includes("gateway_error"), "run error");
     await until(() => h.adapter.status().runners.connected === 0, "runner gone");
@@ -528,7 +546,7 @@ describe("send", () => {
   it("providerSessionId 가 없으면 보내지 않는다", async () => {
     const h = await setup();
     const r = await readyRunner(h);
-    const error = await rejection(h.adapter.send(deliver()));
+    const error = await rejection(h.adapter.send(deliver(), { connectionId: null }));
     expect(error.code).toBe("INTERNAL");
     expect(r.runStarts).toHaveLength(0);
   });
@@ -680,7 +698,12 @@ describe("런 이벤트", () => {
     });
     // 정본이 저장된 뒤에 종료를 알린다 — 오케스트레이터가 finalizing 을 거치지 않고 끝낸다
     const final = h.events.find((e) => e.kind === "run_signal" && e.signal.kind === "gateway_final");
-    expect(final).toEqual({ kind: "run_signal", runId, signal: { kind: "gateway_final" } });
+    expect(final).toEqual({
+      kind: "run_signal",
+      runId,
+      connectionId: RUNNER_A_CONNECTION,
+      signal: { kind: "gateway_final" },
+    });
     expect(h.events.some((e) => e.kind === "canonical")).toBe(false);
   });
 
@@ -695,6 +718,7 @@ describe("런 이벤트", () => {
     expect(final).toEqual({
       kind: "run_signal",
       runId,
+      connectionId: RUNNER_A_CONNECTION,
       signal: { kind: "gateway_final" },
       snapshotText: "답",
     });
@@ -721,6 +745,7 @@ describe("런 이벤트", () => {
     expect(h.events).toContainEqual({
       kind: "run_signal",
       runId,
+      connectionId: RUNNER_A_CONNECTION,
       signal: { kind: "gateway_error", code: "PROVIDER_AUTH", message: "not logged in" },
     });
   });
@@ -729,7 +754,7 @@ describe("런 이벤트", () => {
     const h = await setup();
     const r = await readyRunner(h);
     const { runId, sessionKey } = await startRun(h, r);
-    await h.adapter.abort(runId, sessionKey);
+    await h.adapter.abort(runId, sessionKey, null);
     await until(() => r.aborts.length === 1, "abort");
     expect(r.aborts).toEqual([{ runId }]);
     r.send("run.final", { runId, text: "", stopReason: "aborted", costUsd: 0.01, costKind: "api" });
@@ -752,7 +777,7 @@ describe("런 이벤트", () => {
     const h = await setup();
     const r = await readyRunner(h);
     const { runId, sessionKey } = await startRun(h, r);
-    await h.adapter.abort(runId, sessionKey);
+    await h.adapter.abort(runId, sessionKey, null);
     r.send("run.final", { runId, text: "중간까지", stopReason: "end_turn", costKind: "api" });
     await until(() => signals(h, runId).length > 0, "stop signal");
     await new Promise((resolve) => setTimeout(resolve, 30));
@@ -804,6 +829,7 @@ describe("런 이벤트", () => {
     expect(h.events).toContainEqual({
       kind: "run_signal",
       runId,
+      connectionId: RUNNER_A_CONNECTION,
       signal: { kind: "gateway_error", code: "ADAPTER_UNAVAILABLE", message: "runner stopped" },
     });
   });
@@ -812,7 +838,7 @@ describe("런 이벤트", () => {
     const h = await setup();
     const r = await readyRunner(h);
     const { runId, sessionKey } = await startRun(h, r);
-    await h.adapter.abort(runId, sessionKey);
+    await h.adapter.abort(runId, sessionKey, null);
     r.send("run.final", {
       runId,
       text: "",
@@ -1038,7 +1064,7 @@ describe("outbound.post 는 그 러너의 열린 런에 묶인다", () => {
     const h = await setup();
     const r = await readyRunner(h);
     const input = await startRun(h, r);
-    await h.adapter.abort(input.runId, input.sessionKey);
+    await h.adapter.abort(input.runId, input.sessionKey, null);
     await expectDenied(h, r, postFor(input));
     expect(h.outbound).toHaveLength(0);
   });
@@ -1086,7 +1112,12 @@ describe("승인", () => {
       expiresAt: "2026-09-27T00:10:00.000Z",
     });
     expect(pending.providerApprovalId).not.toBe("perm-1");
-    const resolved = await h.adapter.resolveApproval(pending.providerApprovalId, "tool", "allow-always");
+    const resolved = await h.adapter.resolveApproval(
+      pending.providerApprovalId,
+      "tool",
+      "allow-always",
+      RUNNER_A_CONNECTION,
+    );
     expect(resolved).toMatchObject({ status: "allowed", decision: "allow-always", reason: "user" });
     await until(() => r.resolves.length === 1, "resolve");
     expect(r.resolves).toEqual([{ providerApprovalId: "perm-1", decision: "allow-always" }]);
@@ -1099,7 +1130,7 @@ describe("승인", () => {
     const pending = await requestApproval(h, r, runId, sessionKey, false);
     expect(pending.allowedDecisions).toEqual(["allow-once", "deny"]);
     const error = await rejection(
-      h.adapter.resolveApproval(pending.providerApprovalId, "tool", "allow-always"),
+      h.adapter.resolveApproval(pending.providerApprovalId, "tool", "allow-always", RUNNER_A_CONNECTION),
     );
     expect(error.code).toBe("VALIDATION");
   });
@@ -1122,7 +1153,7 @@ describe("승인", () => {
       reason: "timeout",
     });
     const error = await rejection(
-      h.adapter.resolveApproval(pending.providerApprovalId, "tool", "allow-once"),
+      h.adapter.resolveApproval(pending.providerApprovalId, "tool", "allow-once", RUNNER_A_CONNECTION),
     );
     expect(error.code).toBe("EXPIRED");
     expect(r.resolves).toHaveLength(1);
@@ -1164,7 +1195,7 @@ describe("승인", () => {
     const h = await setup();
     const r = await readyRunner(h);
     const { runId, sessionKey } = await startRun(h, r);
-    await h.adapter.abort(runId, sessionKey);
+    await h.adapter.abort(runId, sessionKey, null);
     r.send("approval.requested", {
       providerApprovalId: "perm-late",
       runId,
@@ -1253,7 +1284,10 @@ describe("mayReadAttachment — 러너 토큰의 첨부 읽기 범위(조율자 
     const r = await readyRunner(h);
     const [dropped, forgotten] = [image(), image()];
     r.onRunStart = (start) => ({ runId: start.deliver.runId, admission: "drop" });
-    await h.adapter.send(deliver(withAttachments(dropped)), { providerSessionId: SESSION_ID });
+    await h.adapter.send(deliver(withAttachments(dropped)), {
+      connectionId: null,
+      providerSessionId: SESSION_ID,
+    });
     expect(h.adapter.mayReadAttachment(TOKEN_A_ID, dropped.id)).toBe(false);
     r.onRunStart = (start) => ({ runId: start.deliver.runId, admission: "dispatch" });
     const run = await startRun(h, r, withAttachments(forgotten));
@@ -1287,6 +1321,7 @@ describe("러너 끊김", () => {
     expect(h.events).toContainEqual({
       kind: "run_signal",
       runId,
+      connectionId: RUNNER_A_CONNECTION,
       signal: { kind: "gateway_error", code: "ADAPTER_UNAVAILABLE", message: "runner disconnected" },
     });
     expect(approvals(h)).toEqual([expect.objectContaining({ providerApprovalId: id, status: "cancelled" })]);
@@ -1297,7 +1332,7 @@ describe("러너 끊김", () => {
       }),
     );
     expect(h.events.some((e) => e.kind === "setup")).toBe(true);
-    const error = await rejection(h.adapter.resolveApproval(id, "tool", "allow-once"));
+    const error = await rejection(h.adapter.resolveApproval(id, "tool", "allow-once", RUNNER_A_CONNECTION));
     expect(error.code).toBe("ADAPTER_UNAVAILABLE");
   });
 });
@@ -1313,8 +1348,10 @@ describe("나머지 계약", () => {
       promptEveryRun: true,
       serverSessionIds: true,
     });
-    expect(await h.adapter.resetSession(dodokSessionKey("coder", CH))).toEqual({});
-    expect(await h.adapter.syncChannelConfig(CH, { systemPrompt: "x" })).toEqual({ applied: "live" });
+    expect(await h.adapter.resetSession(dodokSessionKey("coder", CH), null)).toEqual({});
+    expect(await h.adapter.syncChannelConfig(CH, { systemPrompt: "x" }, RUNNER_A_CONNECTION)).toEqual({
+      applied: "live",
+    });
     expect(h.adapter.sessionKeyFor("coder", CH)).toBe(dodokSessionKey("coder", CH));
     expect(h.adapter.status()).toEqual({ provider: "claude", runners: { connected: 0, tokens: 2 } });
   });
@@ -1443,7 +1480,7 @@ describe("러너 프레임 속도 제한 — 소켓마다 버킷, 넘치면 버�
     r.send("approval.requested", approvalFrame(runId, sessionKey, "perm-1"));
     await until(() => h.limited.length === 6, "duplicate limited");
     // 서버가 중지한 런의 새 요청도 — 처리가 카드 없이 버리고 warn 한다
-    await h.adapter.abort(runId, sessionKey);
+    await h.adapter.abort(runId, sessionKey, null);
     minute(6);
     r.send("approval.requested", approvalFrame(runId, sessionKey, "perm-2"));
     await until(() => h.limited.length === 7, "aborted run limited");
@@ -1634,10 +1671,12 @@ describe("에이전트↔러너 토큰 묶임 — 묶인 에이전트는 그 토
   it("묶인 토큰의 러너가 없으면 다른 토큰 러너가 알려도 맡지 않는다 — send 는 ADAPTER_UNAVAILABLE, 목록에도 없다", async () => {
     const h = await setup({ bound: { coder: B_ID } });
     await readyRunner(h, TOKEN_A, [runnerAgent("coder"), runnerAgent("writer")]);
-    const error = await rejection(h.adapter.send(deliver(), { providerSessionId: SESSION_ID }));
+    const error = await rejection(
+      h.adapter.send(deliver(), { connectionId: null, providerSessionId: SESSION_ID }),
+    );
     expect(error.code).toBe("ADAPTER_UNAVAILABLE");
     expect(h.adapter.servingTokenId("coder")).toBeUndefined();
-    expect((await h.adapter.listAgents()).map((x) => x.providerAgentId)).toEqual(["writer"]);
+    expect((await h.adapter.listAgents(null)).map((x) => x.providerAgentId)).toEqual(["writer"]);
   });
 
   it("묶임 없는 등록 에이전트는 처음 알린 러너에 묶이고, 그 러너가 빠져도 다른 토큰 러너가 이어받지 않는다", async () => {
@@ -1654,7 +1693,9 @@ describe("에이전트↔러너 토큰 묶임 — 묶인 에이전트는 그 토
     await until(() => h.adapter.status().runners.connected === 1, "runner a gone");
     expect(h.bound.get("coder")).toBe(A_ID);
     expect(h.adapter.setupDetail().runners[0]?.agents[0]?.conflict).toBe(true);
-    const error = await rejection(h.adapter.send(deliver(), { providerSessionId: SESSION_ID }));
+    const error = await rejection(
+      h.adapter.send(deliver(), { connectionId: null, providerSessionId: SESSION_ID }),
+    );
     expect(error.code).toBe("ADAPTER_UNAVAILABLE");
     expect(b.runStarts).toHaveLength(0);
 
@@ -1700,5 +1741,50 @@ describe("에이전트↔러너 토큰 묶임 — 묶인 에이전트는 그 토
     expect(h.logs.some((l) => l.level === "error" && l.msg === "runner agent binding lookup failed")).toBe(
       true,
     );
+  });
+});
+
+describe("연결 id — 러너 토큰 id 가 send 결과·이벤트·정본에 실린다(멀티 Gateway 스펙 4장)", () => {
+  it("묶임 없는 에이전트(연결 null)는 먼저 알린 러너가 맡고, 그 러너의 토큰 id 가 결과·이벤트·정본 훅에 실린다", async () => {
+    const h = await setup();
+    const r = await readyRunner(h, TOKEN_B);
+    const tokenB = TOKENS[TOKEN_B]?.tokenId ?? "";
+    const input = await startRun(h, r);
+    const { runId } = input;
+    r.send("run.event", {
+      runId,
+      event: { type: "TEXT_MESSAGE_START", runId, messageId: "m1", role: "assistant" },
+    });
+    r.send("run.final", { runId, text: "끝", stopReason: "end_turn", costKind: "subscription_estimate" });
+    await until(() => signals(h, runId).includes("gateway_final"), "final");
+    const ofRun = h.events.flatMap((e) =>
+      (e.kind === "run_event" || e.kind === "run_signal") && e.runId === runId ? [e.connectionId] : [],
+    );
+    expect(ofRun.length).toBeGreaterThan(0);
+    expect(new Set(ofRun)).toEqual(new Set([tokenB]));
+    expect(h.outboundConnections).toEqual([tokenB]);
+  });
+
+  it("send 결과의 connectionId 는 맡은 러너의 토큰 id, 다른 토큰을 연결로 주면 ADAPTER_UNAVAILABLE", async () => {
+    const h = await setup();
+    await readyRunner(h, TOKEN_B);
+    const tokenB = TOKENS[TOKEN_B]?.tokenId ?? "";
+    const result = await h.adapter.send(deliver(), { connectionId: tokenB, providerSessionId: SESSION_ID });
+    expect(result).toMatchObject({ admission: "dispatch", connectionId: tokenB });
+    const error = await rejection(
+      h.adapter.send(deliver(), { connectionId: RUNNER_A_CONNECTION, providerSessionId: SESSION_ID }),
+    );
+    expect(error.code).toBe("ADAPTER_UNAVAILABLE");
+  });
+
+  it("listAgents 는 연결을 주면 그 토큰의 러너가 알린 것만, null 이면 전부", async () => {
+    const h = await setup();
+    await readyRunner(h, TOKEN_A, [runnerAgent("coder")]);
+    await readyRunner(h, TOKEN_B, [runnerAgent("writer")]);
+    const ids = async (connectionId: string | null) =>
+      (await h.adapter.listAgents(connectionId)).map((a) => a.providerAgentId).sort();
+    expect(await ids(null)).toEqual(["coder", "writer"]);
+    expect(await ids(RUNNER_A_CONNECTION)).toEqual(["coder"]);
+    expect(await ids(TOKENS[TOKEN_B]?.tokenId ?? "")).toEqual(["writer"]);
   });
 });

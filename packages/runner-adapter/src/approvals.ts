@@ -25,7 +25,8 @@ type Entry = {
 export type RunnerApprovalsOptions = {
   ttlMs: number;
   now: () => number;
-  emit: (approval: ProviderApproval) => void;
+  /** runner 는 그 승인을 낸 러너 — 어댑터가 이벤트의 연결 id(러너 토큰 id)로 싣는다 */
+  emit: (approval: ProviderApproval, runner: Runner) => void;
   /** 그 러너가 아직 붙어 있는가 — 끊긴 러너에는 결정을 보낼 수 없다(판정 P6) */
   isLive: (runner: Runner) => boolean;
 };
@@ -72,7 +73,7 @@ export class RunnerApprovals {
     const entry: Entry = { approval, runner, rawId: req.providerApprovalId, runId: req.runId };
     entry.timer = setTimeout(() => this.#expire(entry), this.#opts.ttlMs);
     this.#entries.set(id, entry);
-    this.#opts.emit(approval);
+    this.#opts.emit(approval, runner);
     return "requested";
   }
 
@@ -184,7 +185,7 @@ export class RunnerApprovals {
       this.#entries.delete(key);
       settled -= 1;
     }
-    if (emit) this.#opts.emit(approval);
+    if (emit) this.#opts.emit(approval, entry.runner);
     return approval;
   }
 }

@@ -99,8 +99,8 @@ export type RunnerAdapterOptions = {
   logger: AdapterLogger;
   /** run.start 에 실을 채널 이름·새 세션 제목 */
   channelName: (channelId: string) => string | undefined;
-  /** outbound.post·최종 답을 서버가 받아 메시지를 만든다 — 오케스트레이터의 onCanonical 과 같은 자리 */
-  onOutbound: (m: OutboundMessage) => Promise<{ messageId: string }>;
+  /** outbound.post·최종 답을 서버가 받아 메시지를 만든다 — 오케스트레이터의 onCanonical 과 같은 자리. connectionId 는 보낸 러너의 토큰 id */
+  onOutbound: (m: OutboundMessage, connectionId: string) => Promise<{ messageId: string }>;
   /** AdapterStatus.runners.tokens */
   tokenCount: () => number;
   approvalTtlMs?: number;
@@ -266,8 +266,11 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
       }
     }
   }
-  const emitEvent = (runId: string, event: RunEventBody) => emit({ kind: "run_event", runId, event });
-  const emitSignal = (runId: string, signal: RunSignal) => emit({ kind: "run_signal", runId, signal });
+  // 연결 id 는 그 런을 맡은 러너의 토큰 id(멀티 Gateway 스펙 4장) — 서버가 런의 연결과 대조한다
+  const emitEvent = (connectionId: string, runId: string, event: RunEventBody) =>
+    emit({ kind: "run_event", runId, connectionId, event });
+  const emitSignal = (connectionId: string, runId: string, signal: RunSignal) =>
+    emit({ kind: "run_signal", runId, connectionId, signal });
 
   const status = (): ClaudeAdapterStatus => ({
     provider: "claude",
@@ -299,7 +302,7 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
     ttlMs: opts.approvalTtlMs ?? RUNNER_APPROVAL_TTL_MS,
     now,
     isLive,
-    emit: (approval) => emit({ kind: "approval", approval }),
+    emit: (approval, runner) => emit({ kind: "approval", connectionId: runner.tokenId, approval }),
   });
 
   function remoteAddress(socket: Socket): string {
@@ -401,8 +404,17 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
         run.rejectAck(error);
         continue;
       }
-      emitEvent(run.runId, { type: "RUN_ERROR", runId: run.runId, code: error.code, message: error.message });
-      emitSignal(run.runId, { kind: "gateway_error", code: error.code, message: error.message });
+      emitEvent(run.runner.tokenId, run.runId, {
+        type: "RUN_ERROR",
+        runId: run.runId,
+        code: error.code,
+        message: error.message,
+      });
+      emitSignal(run.runner.tokenId, run.runId, {
+        kind: "gateway_error",
+        code: error.code,
+        message: error.message,
+      });
     }
     approvals.cancelForRunner(runner);
   }
@@ -509,22 +521,22 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
     }
     if (!run.started) {
       run.started = true;
-      emitSignal(runId, { kind: "gateway_started" });
+      emitSignal(runner.tokenId, runId, { kind: "gateway_started" });
     }
-    emitEvent(runId, event);
+    emitEvent(runner.tokenId, runId, event);
     switch (event.type) {
       case "TEXT_MESSAGE_CONTENT":
       case "TEXT_MESSAGE_REPLACE":
-        emitSignal(runId, { kind: "text_delta" });
+        emitSignal(runner.tokenId, runId, { kind: "text_delta" });
         return;
       case "TOOL_CALL_START":
         run.openTools.add(event.toolCallId);
-        emitSignal(runId, { kind: "tool_start" });
+        emitSignal(runner.tokenId, runId, { kind: "tool_start" });
         return;
       // 도구가 끝나는 것은 결과가 왔을 때다 — TOOL_CALL_END 는 입력 블록이 닫힌 것뿐이고 도구는 그 뒤에 돈다(ADR 0007 6의 4 대응표)
       case "TOOL_CALL_RESULT":
         run.openTools.delete(event.toolCallId);
-        emitSignal(runId, { kind: "tool_end", openTools: run.openTools.size });
+        emitSignal(runner.tokenId, runId, { kind: "tool_end", openTools: run.openTools.size });
         return;
     }
   }
@@ -551,24 +563,39 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
     // API 키 러너 행에 「환산 포함」을 켜지 않게(최종 리뷰 M2)
     const measured =
       usage.inputTokens !== undefined || usage.outputTokens !== undefined || usage.costUsd !== undefined;
-    if (measured) emitEvent(run.runId, { type: "CUSTOM", runId: run.runId, name: USAGE_EVENT, value: usage });
+    if (measured)
+      emitEvent(run.runner.tokenId, run.runId, {
+        type: "CUSTOM",
+        runId: run.runId,
+        name: USAGE_EVENT,
+        value: usage,
+      });
     // 중지된 턴(서버가 abort 했거나 러너 쪽에서 interrupt — 러너는 수명 이벤트를 run.event 로 보내지 않는다)은 메시지 없이
     // 중지로 닫는다. 중간 답을 올리면 안 된다 — 정본 저장은 끝난 런에도 메시지를 만든다. 서버가 이미 aborted 로 닫은 런이면
     // 오케스트레이터가 이 둘을 버린다
     if (run.aborted || final.stopReason === ABORTED_STOP_REASON) {
-      emitEvent(run.runId, { type: "RUN_ABORTED", runId: run.runId, by: "user" });
-      emitSignal(run.runId, { kind: "gateway_aborted" });
+      emitEvent(run.runner.tokenId, run.runId, { type: "RUN_ABORTED", runId: run.runId, by: "user" });
+      emitSignal(run.runner.tokenId, run.runId, { kind: "gateway_aborted" });
       return;
     }
     // 러너를 끄느라 멈춘 턴 — 사람 중지가 아니다. 러너가 끊긴 런과 같이 닫아 채널에 「다시 실행」 카드가 뜨게 한다
     if (final.stopReason === RUNNER_SHUTDOWN_STOP_REASON) {
       const error = new AdapterError("ADAPTER_UNAVAILABLE", "runner stopped");
-      emitEvent(run.runId, { type: "RUN_ERROR", runId: run.runId, code: error.code, message: error.message });
-      emitSignal(run.runId, { kind: "gateway_error", code: error.code, message: error.message });
+      emitEvent(run.runner.tokenId, run.runId, {
+        type: "RUN_ERROR",
+        runId: run.runId,
+        code: error.code,
+        message: error.message,
+      });
+      emitSignal(run.runner.tokenId, run.runId, {
+        kind: "gateway_error",
+        code: error.code,
+        message: error.message,
+      });
       return;
     }
     if (final.text.trim() === "") {
-      emitSignal(run.runId, { kind: "gateway_final" });
+      emitSignal(run.runner.tokenId, run.runId, { kind: "gateway_final" });
       return;
     }
     const d = run.deliver;
@@ -588,8 +615,8 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
     };
     try {
       // 정본이 먼저 저장되면 종료 신호에서 곧바로 done 이다 — finalizing 상한을 기다리지 않는다
-      await opts.onOutbound(message);
-      emitSignal(run.runId, { kind: "gateway_final" });
+      await opts.onOutbound(message, run.runner.tokenId);
+      emitSignal(run.runner.tokenId, run.runId, { kind: "gateway_final" });
     } catch (error) {
       // 저장이 실패하면 스냅숏을 싣는다 — 오케스트레이터가 finalizing 상한에서 그 글로 메시지를 만든다
       logger.warn(
@@ -599,6 +626,7 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
       emit({
         kind: "run_signal",
         runId: run.runId,
+        connectionId: run.runner.tokenId,
         signal: { kind: "gateway_final" },
         snapshotText: text,
       });
@@ -618,8 +646,8 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
     if (!ownRun(runner, runId, "run.error")) return;
     runs.delete(runId);
     approvals.cancelForRun(runId);
-    emitEvent(runId, { type: "RUN_ERROR", runId, code, message });
-    emitSignal(runId, { kind: "gateway_error", code, message });
+    emitEvent(runner.tokenId, runId, { type: "RUN_ERROR", runId, code, message });
+    emitSignal(runner.tokenId, runId, { kind: "gateway_error", code, message });
   }
 
   async function onOutboundPost(runner: Runner, payload: unknown, ack: unknown) {
@@ -649,12 +677,12 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
     }
     let pending = inflightPosts.get(post.outboundId);
     if (!pending) {
-      pending = opts.onOutbound(post).finally(() => inflightPosts.delete(post.outboundId));
+      pending = opts.onOutbound(post, runner.tokenId).finally(() => inflightPosts.delete(post.outboundId));
       inflightPosts.set(post.outboundId, pending);
     }
     try {
       const { messageId } = await pending;
-      emit({ kind: "canonical", message: post });
+      emit({ kind: "canonical", connectionId: runner.tokenId, message: post });
       reply({ ok: true, messageId });
     } catch (error) {
       const code = ErrorCode.safeParse((error as { code?: unknown } | null)?.code).data ?? "INTERNAL";
@@ -904,15 +932,18 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
       return count;
     },
 
-    async listAgents() {
+    // 연결을 주면 그 토큰의 러너가 알린 것만, null 이면 붙은 러너 전부
+    async listAgents(connectionId) {
       return registry.all().flatMap((runner) =>
-        runner.agents
-          .filter((a) => registry.owner(a.id) === runner)
-          .map((a) => ({
-            providerAgentId: a.id,
-            name: a.name,
-            hint: `${runner.label} · ${a.workdirLabel} · ${a.model}`,
-          })),
+        connectionId !== null && runner.tokenId !== connectionId
+          ? []
+          : runner.agents
+              .filter((a) => registry.owner(a.id) === runner)
+              .map((a) => ({
+                providerAgentId: a.id,
+                name: a.name,
+                hint: `${runner.label} · ${a.workdirLabel} · ${a.model}`,
+              })),
       );
     },
 
@@ -920,7 +951,7 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
 
     // 모른다고 할 수 있는 것은 그 에이전트를 가진 러너가 알리지 않았을 때뿐이다 — 러너가 없으면 오케스트레이터가 옛 러너로
     // 닫지 않고 send 가 ADAPTER_UNAVAILABLE 로 닫게 true
-    supports: (providerAgentId, capability) =>
+    supports: (providerAgentId, _connectionId, capability) =>
       registry.owner(providerAgentId)?.capabilities.includes(capability) ?? true,
 
     async send(input, sendOpts) {
@@ -928,9 +959,12 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
       if (sendOpts?.providerSessionId === undefined) {
         throw new AdapterError("INTERNAL", "runner adapter needs a server-chosen providerSessionId");
       }
+      // 연결이 null 이면 묶임 없는 에이전트 — 먼저 알린 러너가 맡는다(registry.owner). 연결을 주면 그 토큰의 러너만 맡는다
       const runner = registry.owner(input.agentId);
       const agent = runner?.agents.find((a) => a.id === input.agentId);
       if (!runner || !agent) throw new AdapterError("ADAPTER_UNAVAILABLE", "no runner serves this agent");
+      if (sendOpts.connectionId !== null && runner.tokenId !== sendOpts.connectionId)
+        throw new AdapterError("ADAPTER_UNAVAILABLE", "the bound runner does not serve this agent");
       const channelName = opts.channelName(input.channelId) ?? input.channelId;
       const start = RunnerRunStart.safeParse({
         deliver: input,
@@ -990,10 +1024,16 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
       }
       if (ack.admission === "drop") {
         runs.delete(run.runId);
-        return ack.reason === undefined ? { admission: "drop" } : { admission: "drop", reason: ack.reason };
+        return ack.reason === undefined
+          ? { admission: "drop", connectionId: runner.tokenId }
+          : { admission: "drop", reason: ack.reason, connectionId: runner.tokenId };
       }
       if (ack.queuedPosition !== undefined && runs.get(run.runId) === run) {
-        emitEvent(run.runId, { type: "RUN_QUEUED", runId: run.runId, position: ack.queuedPosition });
+        emitEvent(run.runner.tokenId, run.runId, {
+          type: "RUN_QUEUED",
+          runId: run.runId,
+          position: ack.queuedPosition,
+        });
       }
       logger.info(
         {
@@ -1008,11 +1048,12 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
       return {
         admission: "dispatch",
         providerRunId: run.runId,
+        connectionId: runner.tokenId,
         ...(ack.queuedPosition === undefined ? {} : { queued: true }),
       };
     },
 
-    async abort(runId) {
+    async abort(runId, _sessionKey, _connectionId) {
       const run = runs.get(runId);
       if (!run) return;
       run.aborted = true;
@@ -1020,16 +1061,17 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
     },
 
     // 러너에 할 일이 없다 — 「새 대화」는 서버가 세션 행의 UUID 를 비우는 것으로 끝난다(판정 P4)
-    async resetSession() {
+    async resetSession(_sessionKey, _connectionId) {
       return {};
     },
 
     // 러너는 채널 규칙을 매 런 run.start 에 싣는다 — 따로 밀어 넣을 설정이 없다
-    async syncChannelConfig() {
+    async syncChannelConfig(_channelId, _config, _connectionId) {
       return { applied: "live" };
     },
 
-    async resolveApproval(providerApprovalId, kind, decision) {
+    // 러너 승인 id 는 이미 토큰 id 를 품는다(approvals.ts #id) — 연결 id 를 따로 보지 않는다
+    async resolveApproval(providerApprovalId, kind, decision, _connectionId) {
       if (kind !== "tool")
         throw new AdapterError("INTERNAL", `approval kind ${kind} is not a runner approval`);
       return approvals.resolve(providerApprovalId, decision);

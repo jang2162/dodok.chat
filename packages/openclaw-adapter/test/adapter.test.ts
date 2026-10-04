@@ -16,6 +16,8 @@ import * as f from "./fixtures/gateway-events";
 // 실제 attachBridge + socket.io-client 가짜 플러그인, Gateway 는 주입한 가짜 connector. 네트워크는 루프백뿐.
 
 const TOKEN = "bridge-test-token";
+/** 어댑터가 이벤트·send 결과·정본 훅에 싣는 연결 id */
+const CONNECTION_ID = "gw-1";
 const OTHER_TOKEN = "bridge-other-token";
 // 검증 함수가 아는 토큰 → 토큰 id
 const TOKEN_IDS: Record<string, string> = { [TOKEN]: "t1", [OTHER_TOKEN]: "t2" };
@@ -58,6 +60,7 @@ beforeEach(async () => {
   app = Fastify({ logger: false });
   ioServer = new Server(app.server, { transports: ["websocket"] });
   adapter = createOpenClawAdapter({
+    connectionId: CONNECTION_ID,
     gateway: {
       url: "wss://operator:pw@gateway.example.test/gw?t=1",
       token: "gw-token",
@@ -260,28 +263,28 @@ describe("createOpenClawAdapter — 상태", () => {
 
 describe("createOpenClawAdapter — supports", () => {
   it("붙은 플러그인이 없으면 false", () => {
-    expect(adapter.supports("dev", "threads")).toBe(false);
+    expect(adapter.supports("dev", CONNECTION_ID, "threads")).toBe(false);
   });
 
   it("마지막 hello 의 capabilities 를 따른다 — 옛 플러그인은 false, 새 플러그인은 true, 끊기면 false", async () => {
     const old = await plugin();
-    expect(adapter.supports("dev", "threads")).toBe(false);
+    expect(adapter.supports("dev", CONNECTION_ID, "threads")).toBe(false);
 
     await plugin({}, { ...hello, capabilities: ["config.set", "threads"] });
     await until(() => old.disconnected, "replaced socket closed");
-    expect(adapter.supports("dev", "threads")).toBe(true);
+    expect(adapter.supports("dev", CONNECTION_ID, "threads")).toBe(true);
     // 에이전트를 가리지 않는다 — 모든 에이전트가 붙은 플러그인 하나를 지난다
-    expect(adapter.supports("fin", "threads")).toBe(true);
+    expect(adapter.supports("fin", CONNECTION_ID, "threads")).toBe(true);
 
     clients.at(-1)?.disconnect();
     await until(() => adapter.status().bridge === "down", "bridge down");
-    expect(adapter.supports("dev", "threads")).toBe(false);
+    expect(adapter.supports("dev", CONNECTION_ID, "threads")).toBe(false);
   });
 
   it("모르는 capability 가 섞인 hello 도 받는다(판정 R1)", async () => {
     await plugin({}, { ...hello, capabilities: ["future.cap", "threads"] });
     expect(adapter.status().bridge).toBe("connected");
-    expect(adapter.supports("dev", "threads")).toBe(true);
+    expect(adapter.supports("dev", CONNECTION_ID, "threads")).toBe(true);
   });
 });
 
@@ -408,7 +411,7 @@ describe("createOpenClawAdapter — 설정 상세(setupDetail)", () => {
     gatewayResponses["agents.list"] = () => {
       throw Object.assign(new Error("missing scope"), { details: { code: "MISSING_SCOPE" } });
     };
-    await adapter.listAgents().catch(() => undefined);
+    await adapter.listAgents(CONNECTION_ID).catch(() => undefined);
     expect(adapter.capabilities().agentsList).toBe(false);
     expect(ofKind("setup")).toHaveLength(before);
   });
@@ -446,6 +449,7 @@ describe("createOpenClawAdapter — bridge.clientAddress", () => {
     const ownIo = new Server(ownApp.server, { transports: ["websocket"] });
     const ownLogger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
     const own = createOpenClawAdapter({
+      connectionId: CONNECTION_ID,
       gateway: { url: "ws://127.0.0.1:1", token: "gw", deviceIdentityPath: "/data/device.json" },
       bridge: {
         io: ownIo,
@@ -493,7 +497,11 @@ describe("createOpenClawAdapter — send", () => {
     });
     const input = delivery();
 
-    await expect(adapter.send(input)).resolves.toEqual({ admission: "dispatch", providerRunId: input.runId });
+    await expect(adapter.send(input, { connectionId: CONNECTION_ID })).resolves.toEqual({
+      admission: "dispatch",
+      providerRunId: input.runId,
+      connectionId: CONNECTION_ID,
+    });
     expect(received).toEqual([input]);
     expect(deliveredLines(input)).toEqual([
       {
@@ -511,7 +519,7 @@ describe("createOpenClawAdapter — send", () => {
     const deliver = vi.fn((_payload: InboundDeliver, ack: Ack) => ack({ ok: true, data: {} }));
     await plugin({ "inbound.deliver": deliver });
 
-    const error = await adapter.send(delivery()).catch((e: unknown) => e);
+    const error = await adapter.send(delivery(), { connectionId: CONNECTION_ID }).catch((e: unknown) => e);
 
     expect(error).toBeInstanceOf(AdapterError);
     expect(error).toMatchObject({ code: "INTERNAL", message: expect.stringMatching(/^ADAPTER_PROTOCOL: /) });
@@ -524,7 +532,7 @@ describe("createOpenClawAdapter — send", () => {
     );
     await plugin({ "inbound.deliver": deliver });
 
-    await expect(adapter.send(delivery())).rejects.toMatchObject({
+    await expect(adapter.send(delivery(), { connectionId: CONNECTION_ID })).rejects.toMatchObject({
       code: "VALIDATION",
       message: "runId: Invalid UUID",
     });
@@ -543,7 +551,7 @@ describe("createOpenClawAdapter — send", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
 
     const input = delivery();
-    const sending = adapter.send(input);
+    const sending = adapter.send(input, { connectionId: CONNECTION_ID });
     await until(() => deliveries === 1, "first delivery");
     await vi.advanceTimersByTimeAsync(10_000);
     await vi.advanceTimersByTimeAsync(999);
@@ -552,7 +560,11 @@ describe("createOpenClawAdapter — send", () => {
     expect(spy).toHaveBeenCalledTimes(2);
     expect(spy).toHaveBeenLastCalledWith(expect.objectContaining({ runId: f.RUN_ID }), 10_000);
 
-    await expect(sending).resolves.toEqual({ admission: "dispatch", providerRunId: f.RUN_ID });
+    await expect(sending).resolves.toEqual({
+      admission: "dispatch",
+      providerRunId: f.RUN_ID,
+      connectionId: CONNECTION_ID,
+    });
     expect(deliveries).toBe(2);
     // ackMs 는 첫 전송 시도부터 — ack 타임아웃 10s + 재시도 대기 1s
     expect(deliveredLines(input)).toEqual([
@@ -597,7 +609,7 @@ describe("createOpenClawAdapter — send", () => {
         attachment("file", 99),
       ];
 
-      const sending = adapter.send(input);
+      const sending = adapter.send(input, { connectionId: CONNECTION_ID });
       await until(() => deliveries === 1, "first delivery");
       expect(spy).toHaveBeenLastCalledWith(expect.objectContaining({ runId: f.RUN_ID }), ackMs);
       // 상한 - 1ms 에는 아직 기다리고, 상한 + 재시도 대기 1s 에 두 번째를 보낸다
@@ -606,7 +618,11 @@ describe("createOpenClawAdapter — send", () => {
       await vi.advanceTimersByTimeAsync(1);
       expect(spy).toHaveBeenCalledTimes(2);
       expect(spy).toHaveBeenLastCalledWith(expect.objectContaining({ runId: f.RUN_ID }), ackMs);
-      await expect(sending).resolves.toEqual({ admission: "dispatch", providerRunId: f.RUN_ID });
+      await expect(sending).resolves.toEqual({
+        admission: "dispatch",
+        providerRunId: f.RUN_ID,
+        connectionId: CONNECTION_ID,
+      });
     },
   );
 
@@ -615,7 +631,7 @@ describe("createOpenClawAdapter — send", () => {
     const spy = vi.spyOn(adapter.bridge, "deliverInbound");
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 
-    const result = adapter.send(delivery()).catch((e: unknown) => e);
+    const result = adapter.send(delivery(), { connectionId: CONNECTION_ID }).catch((e: unknown) => e);
     // [전진 ms, 그 뒤 전송 횟수] — ack 타임아웃 10s 뒤 각 대기(1s·4s·16s)가 끝나기 1ms 전과 끝난 순간을 잰다
     const script: Array<[number, number]> = [
       [10_000, 1],
@@ -642,12 +658,16 @@ describe("createOpenClawAdapter — send", () => {
   it("플러그인이 없으면 waitForReady 로 기다렸다가 붙으면 보낸다", async () => {
     const spy = vi.spyOn(adapter.bridge, "deliverInbound");
     const input = delivery();
-    const sending = adapter.send(input);
+    const sending = adapter.send(input, { connectionId: CONNECTION_ID });
     await until(() => spy.mock.calls.length === 1, "first attempt");
 
     await plugin({ "inbound.deliver": dispatchAck });
 
-    await expect(sending).resolves.toEqual({ admission: "dispatch", providerRunId: f.RUN_ID });
+    await expect(sending).resolves.toEqual({
+      admission: "dispatch",
+      providerRunId: f.RUN_ID,
+      connectionId: CONNECTION_ID,
+    });
     expect(spy).toHaveBeenCalledTimes(2);
     expect(deliveredLines(input)).toEqual([
       expect.objectContaining({ admission: "dispatch", retries: 0, waitedForPlugin: true }),
@@ -660,7 +680,9 @@ describe("createOpenClawAdapter — send", () => {
         ack({ ok: true, data: { admission: "drop", reason: "bot-loop-protection" } }),
     });
     const dropped = delivery();
-    await expect(adapter.send(dropped)).resolves.toMatchObject({ admission: "drop" });
+    await expect(adapter.send(dropped, { connectionId: CONNECTION_ID })).resolves.toMatchObject({
+      admission: "drop",
+    });
     expect(deliveredLines(dropped)).toEqual([
       expect.objectContaining({
         runId: dropped.runId,
@@ -676,14 +698,16 @@ describe("createOpenClawAdapter — send", () => {
         ack({ ok: false, error: { code: "VALIDATION", message: "bad" } }),
     });
     const rejected = delivery();
-    await expect(adapter.send(rejected)).rejects.toMatchObject({ code: "VALIDATION" });
+    await expect(adapter.send(rejected, { connectionId: CONNECTION_ID })).rejects.toMatchObject({
+      code: "VALIDATION",
+    });
     expect(deliveredLines(rejected)).toEqual([]);
   });
 
   it("플러그인을 기다리는 동안 forgetRun 된 런은 플러그인이 붙어도 보내지 않고 ADAPTER_UNAVAILABLE 로 끝난다", async () => {
     const deliverSpy = vi.spyOn(adapter.bridge, "deliverInbound");
     const waitSpy = vi.spyOn(adapter.bridge, "waitForReady");
-    const result = adapter.send(delivery()).catch((e: unknown) => e);
+    const result = adapter.send(delivery(), { connectionId: CONNECTION_ID }).catch((e: unknown) => e);
     await until(() => waitSpy.mock.calls.length === 1, "waitForReady");
 
     // 서버 오케스트레이터가 queued 상한으로 런을 닫았다
@@ -710,7 +734,7 @@ describe("createOpenClawAdapter — send", () => {
     });
     const deliverSpy = vi.spyOn(adapter.bridge, "deliverInbound");
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    const result = adapter.send(delivery()).catch((e: unknown) => e);
+    const result = adapter.send(delivery(), { connectionId: CONNECTION_ID }).catch((e: unknown) => e);
     await until(() => received === 1, "first delivery");
     await vi.advanceTimersByTimeAsync(10_000); // ack 타임아웃 → 1s 재시도 대기
 
@@ -724,7 +748,7 @@ describe("createOpenClawAdapter — send", () => {
 
   it("플러그인이 120s 안에 붙지 않으면 AdapterError(ADAPTER_UNAVAILABLE)", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    const result = adapter.send(delivery()).catch((e: unknown) => e);
+    const result = adapter.send(delivery(), { connectionId: CONNECTION_ID }).catch((e: unknown) => e);
 
     await vi.advanceTimersByTimeAsync(119_999);
     await vi.advanceTimersByTimeAsync(1);
@@ -738,7 +762,7 @@ describe("createOpenClawAdapter — send", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     let settled = false;
     const result = adapter
-      .send(delivery())
+      .send(delivery(), { connectionId: CONNECTION_ID })
       .catch((e: unknown) => e)
       .finally(() => {
         settled = true;
@@ -756,7 +780,7 @@ describe("createOpenClawAdapter — send", () => {
     });
     await expectNoTimersLeft();
     // 닫힌 어댑터의 새 send 는 브리지에 가지 않고 거부된다
-    await expect(adapter.send(delivery())).rejects.toMatchObject({
+    await expect(adapter.send(delivery(), { connectionId: CONNECTION_ID })).rejects.toMatchObject({
       code: "ADAPTER_UNAVAILABLE",
       message: "adapter closed",
     });
@@ -774,7 +798,7 @@ describe("createOpenClawAdapter — send", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     let settled = false;
     const result = adapter
-      .send(delivery())
+      .send(delivery(), { connectionId: CONNECTION_ID })
       .catch((e: unknown) => e)
       .finally(() => {
         settled = true;
@@ -842,7 +866,9 @@ describe("createOpenClawAdapter — 정본 훅", () => {
 
     expect(ack).toEqual({ ok: true, data: { messageId: STORED_MESSAGE_ID } });
     expect(canonical).toEqual([{ ...message, attachmentIds: [] }]);
-    expect(ofKind("canonical")).toEqual([{ kind: "canonical", message: { ...message, attachmentIds: [] } }]);
+    expect(ofKind("canonical")).toEqual([
+      { kind: "canonical", connectionId: CONNECTION_ID, message: { ...message, attachmentIds: [] } },
+    ]);
   });
 
   it("onCanonical 이 messageId 를 주지 않으면 outboundId 로 ack 한다", async () => {
@@ -866,7 +892,7 @@ describe("createOpenClawAdapter — Gateway 이벤트", () => {
   async function sentRun(ackWith: (payload: InboundDeliver, ack: Ack) => void = dispatchAck) {
     await connectedGateway();
     await plugin({ "inbound.deliver": ackWith });
-    return adapter.send(delivery());
+    return adapter.send(delivery(), { connectionId: CONNECTION_ID });
   }
 
   it("우리 런의 프레임은 run_signal·run_event 로 내보내고, 모르는 runId 는 무시한다", async () => {
@@ -878,18 +904,25 @@ describe("createOpenClawAdapter — Gateway 이벤트", () => {
     gatewayEvent(f.chatDelta("X", { runId: "01a09fc9-d204-7551-89d6-38544d07a2ee" }));
 
     expect(events).toEqual([
-      { kind: "run_signal", runId: f.RUN_ID, signal: { kind: "gateway_started" } },
+      {
+        kind: "run_signal",
+        runId: f.RUN_ID,
+        connectionId: CONNECTION_ID,
+        signal: { kind: "gateway_started" },
+      },
       {
         kind: "run_event",
         runId: f.RUN_ID,
+        connectionId: CONNECTION_ID,
         event: { type: "TEXT_MESSAGE_START", runId: f.RUN_ID, messageId: f.RUN_ID, role: "assistant" },
       },
       {
         kind: "run_event",
         runId: f.RUN_ID,
+        connectionId: CONNECTION_ID,
         event: { type: "TEXT_MESSAGE_CONTENT", runId: f.RUN_ID, messageId: f.RUN_ID, delta: "P" },
       },
-      { kind: "run_signal", runId: f.RUN_ID, signal: { kind: "text_delta" } },
+      { kind: "run_signal", runId: f.RUN_ID, connectionId: CONNECTION_ID, signal: { kind: "text_delta" } },
     ]);
   });
 
@@ -903,7 +936,7 @@ describe("createOpenClawAdapter — Gateway 이벤트", () => {
       },
     });
 
-    await adapter.send(delivery());
+    await adapter.send(delivery(), { connectionId: CONNECTION_ID });
 
     expect(ofKind("run_signal").map((e) => e.signal.kind)).toEqual(["gateway_started"]);
   });
@@ -927,7 +960,13 @@ describe("createOpenClawAdapter — Gateway 이벤트", () => {
 
     gatewayEvent(f.chatFinal("PONG"));
     expect(ofKind("run_signal")).toEqual([
-      { kind: "run_signal", runId: f.RUN_ID, signal: { kind: "gateway_final" }, snapshotText: "PONG" },
+      {
+        kind: "run_signal",
+        runId: f.RUN_ID,
+        connectionId: CONNECTION_ID,
+        signal: { kind: "gateway_final" },
+        snapshotText: "PONG",
+      },
     ]);
 
     events = [];
@@ -971,7 +1010,7 @@ describe("createOpenClawAdapter — Gateway 이벤트", () => {
     expect(events).toEqual([]);
 
     // final 로 잊기 타이머가 걸린 런도 곧바로 잊는다
-    await adapter.send(delivery());
+    await adapter.send(delivery(), { connectionId: CONNECTION_ID });
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     gatewayEvent(f.chatFinal("PONG"));
     expect(vi.getTimerCount()).toBe(1);
@@ -992,7 +1031,14 @@ describe("createOpenClawAdapter — Gateway 이벤트", () => {
 
     gatewayEvent(f.lifecycleStart());
 
-    expect(second).toEqual([{ kind: "run_signal", runId: f.RUN_ID, signal: { kind: "gateway_started" } }]);
+    expect(second).toEqual([
+      {
+        kind: "run_signal",
+        runId: f.RUN_ID,
+        connectionId: CONNECTION_ID,
+        signal: { kind: "gateway_started" },
+      },
+    ]);
     expect(logger.error).toHaveBeenCalled();
   });
 });
@@ -1006,7 +1052,7 @@ describe("createOpenClawAdapter — Gateway 요청·브리지 설정", () => {
       entry: { sessionStartedAt: 1_789_399_629_480, lifecycleRevision: "rev-2" },
     });
 
-    await expect(adapter.resetSession(f.SESSION_KEY)).resolves.toEqual({
+    await expect(adapter.resetSession(f.SESSION_KEY, CONNECTION_ID)).resolves.toEqual({
       sessionStartedAt: new Date(1_789_399_629_480).toISOString(),
       lifecycleRevision: "rev-2",
     });
@@ -1023,7 +1069,9 @@ describe("createOpenClawAdapter — Gateway 요청·브리지 설정", () => {
     };
     events = [];
 
-    await expect(adapter.resetSession(f.SESSION_KEY)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(adapter.resetSession(f.SESSION_KEY, CONNECTION_ID)).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
 
     expect(adapter.capabilities().sessionReset).toBe(false);
     expect(ofKind("status")).toEqual([
@@ -1042,7 +1090,7 @@ describe("createOpenClawAdapter — Gateway 요청·브리지 설정", () => {
   });
 
   it("Gateway 가 붙기 전 요청은 AdapterError(ADAPTER_UNAVAILABLE)", async () => {
-    await expect(adapter.abort(f.RUN_ID, f.SESSION_KEY)).rejects.toMatchObject({
+    await expect(adapter.abort(f.RUN_ID, f.SESSION_KEY, CONNECTION_ID)).rejects.toMatchObject({
       code: "ADAPTER_UNAVAILABLE",
     });
   });
@@ -1050,7 +1098,7 @@ describe("createOpenClawAdapter — Gateway 요청·브리지 설정", () => {
   it("abort → chat.abort({ sessionKey, runId })", async () => {
     await connectedGateway();
 
-    await adapter.abort(f.RUN_ID, f.SESSION_KEY);
+    await adapter.abort(f.RUN_ID, f.SESSION_KEY, CONNECTION_ID);
 
     expect(gatewayCalls.at(-1)).toEqual({
       method: "chat.abort",
@@ -1067,14 +1115,14 @@ describe("createOpenClawAdapter — Gateway 요청·브리지 설정", () => {
       agents: [{ id: "dev", name: "Dev", workspace: "/w" }, { id: "fin" }],
     });
 
-    await expect(adapter.listAgents()).resolves.toEqual([
+    await expect(adapter.listAgents(CONNECTION_ID)).resolves.toEqual([
       { providerAgentId: "dev", name: "Dev" },
       { providerAgentId: "fin" },
     ]);
     expect(gatewayCalls.at(-1)).toEqual({ method: "agents.list", params: {} });
 
     gatewayResponses["agents.list"] = () => ({ agents: "nope" });
-    await expect(adapter.listAgents()).rejects.toMatchObject({
+    await expect(adapter.listAgents(CONNECTION_ID)).rejects.toMatchObject({
       code: "INTERNAL",
       message: expect.stringMatching(/^ADAPTER_PROTOCOL: /),
     });
@@ -1082,7 +1130,7 @@ describe("createOpenClawAdapter — Gateway 요청·브리지 설정", () => {
     gatewayResponses["agents.list"] = () => {
       throw Object.assign(new Error("forbidden"), { code: "FORBIDDEN" });
     };
-    await expect(adapter.listAgents()).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(adapter.listAgents(CONNECTION_ID)).rejects.toMatchObject({ code: "FORBIDDEN" });
     expect(adapter.capabilities().agentsList).toBe(false);
   });
 
@@ -1097,21 +1145,25 @@ describe("createOpenClawAdapter — Gateway 요청·브리지 설정", () => {
     });
 
     await expect(
-      adapter.syncChannelConfig(CH, { systemPrompt: "be brief", requireMention: true }),
+      adapter.syncChannelConfig(CH, { systemPrompt: "be brief", requireMention: true }, CONNECTION_ID),
     ).resolves.toEqual({
       applied: "live",
     });
     expect(received).toEqual([{ channelId: CH, config: { systemPrompt: "be brief", requireMention: true } }]);
 
     reply = { ok: false, error: { code: "ADAPTER_UNAVAILABLE", message: "config.set 미지원" } };
-    await expect(adapter.syncChannelConfig(CH, { requireMention: false })).rejects.toMatchObject({
+    await expect(
+      adapter.syncChannelConfig(CH, { requireMention: false }, CONNECTION_ID),
+    ).rejects.toMatchObject({
       name: "AdapterError",
       code: "ADAPTER_UNAVAILABLE",
     });
   });
 
   it("syncChannelConfig 는 플러그인이 없으면 기다리지 않고 ADAPTER_UNAVAILABLE", async () => {
-    await expect(adapter.syncChannelConfig(CH, { requireMention: true })).rejects.toMatchObject({
+    await expect(
+      adapter.syncChannelConfig(CH, { requireMention: true }, CONNECTION_ID),
+    ).rejects.toMatchObject({
       code: "ADAPTER_UNAVAILABLE",
     });
   });
@@ -1125,6 +1177,7 @@ describe("Gateway 프레임 덤프(frameDumpPath)", () => {
     const io = new Server();
     let onEvent: ((frame: EventFrame) => void) | undefined;
     const dumping = createOpenClawAdapter({
+      connectionId: CONNECTION_ID,
       gateway: {
         url: "wss://gateway.example.test",
         token: "gw-token",
@@ -1174,8 +1227,8 @@ describe("send 전 세션 구독", () => {
       },
     });
 
-    await adapter.send(delivery());
-    await adapter.send(delivery(randomUUID()));
+    await adapter.send(delivery(), { connectionId: CONNECTION_ID });
+    await adapter.send(delivery(randomUUID()), { connectionId: CONNECTION_ID });
 
     expect(gatewayCalls.filter((c) => c.method === "sessions.messages.subscribe")).toEqual([
       {
@@ -1201,15 +1254,20 @@ describe("send 전 세션 구독", () => {
     });
     const threadKey = `${f.SESSION_KEY}:thread:${THREAD_ROOT}`;
 
-    await adapter.send(delivery());
-    await adapter.send({ ...delivery(randomUUID()), sessionKey: threadKey, threadId: THREAD_ROOT });
+    await adapter.send(delivery(), { connectionId: CONNECTION_ID });
+    await adapter.send(
+      { ...delivery(randomUUID()), sessionKey: threadKey, threadId: THREAD_ROOT },
+      { connectionId: CONNECTION_ID },
+    );
 
     expect(subscribedKeysAtDeliver).toEqual([[f.SESSION_KEY], [f.SESSION_KEY, threadKey]]);
   });
 
   it("Gateway 가 끊겨 있으면 구독 없이 전송한다(정본은 플러그인 경로) — 붙을 때 recover 가 agent_sessions 로 구독한다", async () => {
     await plugin({ "inbound.deliver": dispatchAck });
-    await expect(adapter.send(delivery())).resolves.toMatchObject({ admission: "dispatch" });
+    await expect(adapter.send(delivery(), { connectionId: CONNECTION_ID })).resolves.toMatchObject({
+      admission: "dispatch",
+    });
     expect(gatewayCalls.filter((c) => c.method === "sessions.messages.subscribe")).toEqual([]);
     expect(logger.debug).toHaveBeenCalledWith(
       expect.objectContaining({ sessionKey: f.SESSION_KEY }),
@@ -1312,7 +1370,7 @@ describe("승인 — 수신·병합·해결 RPC", () => {
     await connectedGateway();
     await plugin({ "inbound.deliver": dispatchAck });
 
-    await adapter.send(delivery());
+    await adapter.send(delivery(), { connectionId: CONNECTION_ID });
 
     expect(gatewayCalls.filter((c) => c.method === "sessions.messages.subscribe")).toEqual([
       {
@@ -1336,7 +1394,9 @@ describe("승인 — 수신·병합·해결 RPC", () => {
     gatewayResponses["approval.resolve"] = () => f.approvalResolveResult();
     await connectedGateway();
 
-    await expect(adapter.resolveApproval(f.APPROVAL_ID, "plugin", "allow-once")).resolves.toMatchObject({
+    await expect(
+      adapter.resolveApproval(f.APPROVAL_ID, "plugin", "allow-once", CONNECTION_ID),
+    ).resolves.toMatchObject({
       providerApprovalId: f.APPROVAL_ID,
       status: "allowed",
       decision: "allow-once",
@@ -1353,8 +1413,8 @@ describe("승인 — 수신·병합·해결 RPC", () => {
     gatewayResponses["approval.resolve"] = () => f.approvalResolveResult();
     await connectedGateway();
 
-    await adapter.resolveApproval(f.APPROVAL_ID, "exec", "allow-once");
-    await adapter.resolveApproval(f.APPROVAL_ID, "system-agent", "deny");
+    await adapter.resolveApproval(f.APPROVAL_ID, "exec", "allow-once", CONNECTION_ID);
+    await adapter.resolveApproval(f.APPROVAL_ID, "system-agent", "deny", CONNECTION_ID);
 
     expect(gatewayCalls.filter((c) => c.method === "approval.resolve").map((c) => c.params)).toEqual([
       { id: f.APPROVAL_ID, kind: "exec", decision: "allow-once" },
@@ -1366,7 +1426,9 @@ describe("승인 — 수신·병합·해결 RPC", () => {
     gatewayResponses["approval.resolve"] = () => f.approvalResolveResult();
     await connectedGateway();
 
-    await expect(adapter.resolveApproval(f.APPROVAL_ID, "tool", "allow-once")).rejects.toMatchObject({
+    await expect(
+      adapter.resolveApproval(f.APPROVAL_ID, "tool", "allow-once", CONNECTION_ID),
+    ).rejects.toMatchObject({
       name: "AdapterError",
       code: "INTERNAL",
     });
@@ -1379,7 +1441,9 @@ describe("승인 — 수신·병합·해결 RPC", () => {
     await adapter.connect();
     await until(() => adapter.status().gateway === "reconnecting", "gateway reconnecting");
 
-    await expect(adapter.resolveApproval(f.APPROVAL_ID, "plugin", "deny")).rejects.toMatchObject({
+    await expect(
+      adapter.resolveApproval(f.APPROVAL_ID, "plugin", "deny", CONNECTION_ID),
+    ).rejects.toMatchObject({
       name: "AdapterError",
       code: "ADAPTER_UNAVAILABLE",
     });
@@ -1387,7 +1451,9 @@ describe("승인 — 수신·병합·해결 RPC", () => {
   });
 
   it("Gateway 가 끊겨 있으면 ADAPTER_UNAVAILABLE, 응답 모양이 다르면 ADAPTER_PROTOCOL", async () => {
-    await expect(adapter.resolveApproval(f.APPROVAL_ID, "plugin", "deny")).rejects.toMatchObject({
+    await expect(
+      adapter.resolveApproval(f.APPROVAL_ID, "plugin", "deny", CONNECTION_ID),
+    ).rejects.toMatchObject({
       name: "AdapterError",
       code: "ADAPTER_UNAVAILABLE",
     });
@@ -1395,7 +1461,9 @@ describe("승인 — 수신·병합·해결 RPC", () => {
     gatewayResponses["approval.resolve"] = () => ({ applied: true });
     await connectedGateway();
 
-    await expect(adapter.resolveApproval(f.APPROVAL_ID, "plugin", "deny")).rejects.toMatchObject({
+    await expect(
+      adapter.resolveApproval(f.APPROVAL_ID, "plugin", "deny", CONNECTION_ID),
+    ).rejects.toMatchObject({
       code: "INTERNAL",
       message: expect.stringMatching(/^ADAPTER_PROTOCOL: approval\.resolve/),
     });
