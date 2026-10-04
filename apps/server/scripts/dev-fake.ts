@@ -1401,7 +1401,18 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
       const scenarioAgents: Record<string, ScenarioAgent> = {};
       for (const { id, handle } of spec.agents)
         scenarioAgents[id] = ({ delivery }) => fakeAgentScript(handle, delivery);
-      createScenario({ gateway: pair.gateway, plugin, agents: scenarioAgents });
+      // 그 Gateway 에 없는 id(다른 Gateway 에서 옮겨 온 에이전트)도 답한다 — 「삭제 → 옮기기 → 다시 실행 → 답」을 끝까지 보게.
+      // 이름표는 채널 참여자 가운데 자기 핸들
+      createScenario({
+        gateway: pair.gateway,
+        plugin,
+        agents: scenarioAgents,
+        fallback: ({ delivery }) =>
+          fakeAgentScript(
+            delivery.context.participants.find((p) => p.isSelf)?.handle ?? delivery.agentId,
+            delivery,
+          ),
+      });
     }
     try {
       runner = await connectRunner(DEV_FAKE_RUNNER_TOKEN);

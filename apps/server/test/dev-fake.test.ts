@@ -1850,6 +1850,79 @@ describe("startDevFake --keep — 고정 Gateway 를 지우고 같은 이름을 
   }, 30_000);
 });
 
+describe("startDevFake — Gateway 를 지우고 다른 Gateway 로 옮긴 에이전트도 답한다", () => {
+  let dir: string;
+  let dev: DevFake | undefined;
+  let socket: WireSocket | undefined;
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), "dodok-dev-fake-moved-"));
+  });
+
+  afterAll(async () => {
+    socket?.close();
+    await dev?.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("사무실 삭제 → @fin 을 집으로 옮기기 → @fin 멘션에 집 플러그인이 기본 대본(이름표 fin)으로 답한다", async () => {
+    dev = await startDevFake({ port: 0, dataDir: dir, logLevel: "error" });
+    const owner = await loginOwner(dev.url);
+    const del = await fetch(`${dev.url}/api/v1/gateways/${DEV_FAKE_OFFICE_GATEWAY_ID}`, {
+      method: "DELETE",
+      headers: { cookie: owner.cookie },
+    });
+    expect(del.status).toBe(200);
+    const finId = await agentIdByHandle(dev.url, owner.cookie, "fin");
+    const moved = await fetch(`${dev.url}/api/v1/agents/${finId}/gateway`, {
+      method: "PUT",
+      headers: { cookie: owner.cookie, "content-type": "application/json" },
+      body: JSON.stringify({ gatewayId: DEV_FAKE_HOME_GATEWAY_ID }),
+    });
+    expect(moved.status).toBe(200);
+    const { channel } = await restAs<{ channel: { id: string } }>(
+      dev.url,
+      owner.cookie,
+      "POST",
+      "/channels",
+      {
+        name: "moved",
+      },
+    );
+    await restAs(dev.url, owner.cookie, "POST", `/channels/${channel.id}/members`, {
+      memberType: "agent",
+      memberId: finId,
+    });
+
+    socket = io(dev.url, {
+      transports: ["websocket"],
+      reconnection: false,
+      forceNew: true,
+      auth: { protocol: WIRE_PROTOCOL, token: owner.sessionToken },
+    });
+    const sub = await socket.emitWithAck("channel.subscribe", { channelId: channel.id });
+    expect(sub.ok).toBe(true);
+    const reply = new Promise<string>((resolve) => {
+      socket?.on("message.created", ({ message }) => {
+        if (message.authorType === "agent") resolve(message.bodyMd);
+      });
+    });
+    const sent = await socket.emitWithAck("message.send", {
+      channelId: channel.id,
+      clientMsgId: "moved-1",
+      bodyMd: `<@a:${finId}> 집에서도`,
+    });
+    expect(sent.ok).toBe(true);
+    await expect(reply).resolves.toMatch(/^\*\*fin\*\*: 「fin 집에서도」/);
+    const [run] = dev.app.db
+      .select({ connectionId: runs.connectionId })
+      .from(runs)
+      .where(eq(runs.channelId, channel.id))
+      .all();
+    expect(run?.connectionId).toBe(DEV_FAKE_HOME_GATEWAY_ID);
+  }, 30_000);
+});
+
 describe("startDevFake 고정 member 계정 — mia", () => {
   let dir: string;
   let dev: DevFake;

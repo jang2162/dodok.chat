@@ -413,7 +413,7 @@ Gateway 0개 부팅, 검증 함수가 던지면 거절, 거절 로그 주소(TRU
 가짜 Gateway 는 둘이다(`DEV_FAKE_GATEWAYS`) — 「사무실」(고정 id `DEV_FAKE_OFFICE_GATEWAY_ID`, 에이전트 `dev`·`fin`, 고정 브리지 토큰 `dev-fake-bridge-token-office`)·
 「집」(`DEV_FAKE_HOME_GATEWAY_ID`, `main`·`dev`, `dev-fake-bridge-token-home`). `dev` 가 두 Gateway 에 일부러 겹친다. 시작 때 둘을 DB 에 넣고(`--keep` 이면 주소·토큰만 이번 가짜로 — 지운 고정 Gateway 는 다시 만들되 그 이름을 사람이 다른 Gateway 에 썼으면 「<이름> (dev:fake)」)
 Gateway 마다 토큰 행·가짜 플러그인·대본을 하나씩 둔다. 시작은 가짜 플러그인이 붙은 고정 짝만 기다린다 — 사람이 더한 Gateway 는 닿지 않아도 되고, 사람이 끈 고정 Gateway·폐기한 고정 토큰이면 그 짝의 플러그인은 warn 만 남기고 붙지 않는다. 그 밖의 원인(사람 손이 닿지 않은 새 DB 등)으로 고정 짝이 못 붙으면 시작이 실패한다. OpenClaw 에이전트도 시작 때 등록한다 — 핸들 `dev`·`fin`(사무실)·`main`·`dev-home`(집), 그 핸들이나 그 Gateway 의 같은 id 가 이미 있으면 그대로 둔다.
-대본의 이름표는 핸들이라(`**dev-home**: …`) 답만 보고 어느 Gateway 가 답했는지 안다. DB 에 넣지 않은 셋째 가짜 Gateway 도 하나 연다 — 시작 로그 `spareGateway` 의 주소·토큰(가짜는 토큰을 검사하지 않는다)을 연결 페이지 「Gateway 추가」에 넣어 붙여 본다(플러그인 없이 Gateway 줄만 붙는다). `.env` 를 읽지 않고 개발 전용 고정값을 쓴다(로그인 토큰 `dev-fake-local-token` — 시크릿이 아니라 로그에 찍는다),
+대본의 이름표는 핸들이라(`**dev-home**: …`) 답만 보고 어느 Gateway 가 답했는지 안다. 그 Gateway 에 없는 id(다른 Gateway 에서 옮겨 온 에이전트)도 같은 기본 대본으로 답한다 — 「Gateway 삭제 → 옮기기 → 다시 실행 → 답」을 끝까지 본다. DB 에 넣지 않은 셋째 가짜 Gateway 도 하나 연다 — 시작 로그 `spareGateway` 의 주소·토큰(가짜는 토큰을 검사하지 않는다)을 연결 페이지 「Gateway 추가」에 넣어 붙여 본다(플러그인 없이 Gateway 줄만 붙는다). `.env` 를 읽지 않고 개발 전용 고정값을 쓴다(로그인 토큰 `dev-fake-local-token` — 시크릿이 아니라 로그에 찍는다),
 DB 는 `data/dev-fake.sqlite`(시작마다 새로, `--keep` 이면 유지), 기본 포트 3000(Vite 프록시 대상). 운영 코드(`src/`)는 건드리지 않는다.
 부팅 때 고정 member 계정(이메일 `member@dodok.local`, 비밀번호 `dev-fake-member-password`, 핸들 `mia`, 표시 이름 「미아」)도 owner 와 같은 자리에서 보장한다 —
 사람을 만드는 서버 경로(`members/accept.ts` 의 `acceptInvite`)를 그대로 써 초대를 내부에서 하나 내 곧바로 수락한다, `--keep` 이면 이미 있을 때 그대로, 운영 `createApp` 에는 없다.

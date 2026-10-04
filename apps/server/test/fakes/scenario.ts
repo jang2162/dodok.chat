@@ -98,6 +98,8 @@ export function createScenario(opts: {
   plugin: FakePlugin;
   /** providerAgentId → 대본 */
   agents: Record<string, ScenarioAgent>;
+  /** `agents` 에 없는 에이전트의 대본 — 없으면 그 인바운드를 INTERNAL 로 거절한다 */
+  fallback?: ScenarioAgent;
 }): Scenario {
   const { gateway, plugin } = opts;
   const turns: Scenario["turns"] = [];
@@ -217,7 +219,7 @@ export function createScenario(opts: {
   }
 
   plugin.onInbound = (delivery) => {
-    const agent = opts.agents[delivery.agentId];
+    const agent = opts.agents[delivery.agentId] ?? opts.fallback;
     if (!agent) throw new Error(`scenario: no script for agent "${delivery.agentId}"`);
     const index = counts.get(delivery.agentId) ?? 0;
     counts.set(delivery.agentId, index + 1);

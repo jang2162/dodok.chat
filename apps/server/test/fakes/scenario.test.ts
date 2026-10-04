@@ -424,4 +424,21 @@ describe("시나리오 — 인바운드 대본을 Gateway 이벤트와 플러그
       error: { code: "INTERNAL", message: expect.stringContaining("ghost") },
     });
   });
+
+  it("fallback 을 주면 대본이 없는 에이전트(다른 Gateway 에서 옮겨 온 것)도 그 대본으로 답한다 — 대본이 있으면 그것", async () => {
+    createScenario({
+      gateway,
+      plugin,
+      agents: { dev: () => ({ reply: "dev 대본" }) },
+      fallback: ({ delivery: d }) => ({ reply: `기본 대본 ${d.agentId}` }),
+    });
+    await bridge.forGateway("env").deliverInbound(delivery("fin", "옮겨 왔어요"), 2_000);
+    await vi.waitFor(() => expect(outbound).toHaveLength(1));
+    await bridge.forGateway("env").deliverInbound(delivery("dev", "그대로"), 2_000);
+    await vi.waitFor(() => expect(outbound).toHaveLength(2));
+    expect(outbound.map((m) => [m.agentId, m.text])).toEqual([
+      ["fin", "기본 대본 fin"],
+      ["dev", "dev 대본"],
+    ]);
+  });
 });
