@@ -1070,6 +1070,23 @@ function seedDevFakeGateway(
 }
 
 /**
+ * 고정 짝의 가짜 플러그인이 못 붙을 만한, 사람이 바꾼 것 — 고정 Gateway 를 껐거나 고정 토큰을 폐기했으면(`--keep` 으로 이어받은 것)
+ * 다시 붙이는 안내를, 아니면 undefined 를 돌려준다. 시드가 시작마다 행을 되살리므로 새 DB 는 늘 undefined 다
+ */
+function changedByHand(db: DbOrTx, workspaceId: string, spec: DevFakeGatewaySpec): string | undefined {
+  if (getGatewayRow(db, workspaceId, spec.id)?.enabled === false)
+    return "enable the Gateway on the connection page";
+  const hash = createHash("sha256").update(spec.bridgeToken).digest("hex");
+  const token = db
+    .select({ revokedAt: bridgeTokens.revokedAt })
+    .from(bridgeTokens)
+    .where(eq(bridgeTokens.hash, hash))
+    .get();
+  if (token?.revokedAt != null) return "POST /__devfake/plugin-token { gatewayId, token } with a new token";
+  return undefined;
+}
+
+/**
  * 가짜 Gateway 둘의 OpenClaw 에이전트를 등록해 둔다(핸들은 `DEV_FAKE_GATEWAYS`). 그 핸들이 이미 쓰이거나 그 Gateway 에 같은 id 가
  * 이미 있으면(`--keep`, 사람이 바꾼 것) 건드리지 않는다 — 지운 에이전트는 다음 시작에 다시 생긴다(coder 와 같다)
  */
@@ -1368,12 +1385,15 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
           agents: spec.agents.map((a) => ({ agentId: a.id })),
         });
       } catch (error) {
-        // --keep 으로 사람이 끈 고정 Gateway·폐기한 고정 토큰을 이어받았으면 여기(UNAUTHORIZED) — 서버는 그대로 뜬다(러너와 같다)
         const reason = error instanceof Error ? error.message : String(error);
-        app.logger.warn(
-          { reason, gatewayId: spec.id },
-          "dev:fake plugin could not connect — enable the Gateway and POST /__devfake/plugin-token { gatewayId, token }",
-        );
+        const changed = changedByHand(app.db, app.workspaceId, spec);
+        // 사람 손이 닿지 않았는데 못 붙었으면 시딩·브리지 회귀다 — 띄우면 브라우저 검증이 그것을 앱 결함으로 오인한다
+        if (!changed)
+          throw new Error(`dev:fake plugin for fixed Gateway ${spec.name} could not connect: ${reason}`, {
+            cause: error,
+          });
+        // --keep 으로 사람이 끈 고정 Gateway·폐기한 고정 토큰을 이어받았으면 서버는 그대로 뜬다(러너와 같다)
+        app.logger.warn({ reason, gatewayId: spec.id }, `dev:fake plugin could not connect — ${changed}`);
         continue;
       }
       pair.plugin = plugin;
