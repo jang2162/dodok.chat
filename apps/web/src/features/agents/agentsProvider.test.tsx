@@ -119,7 +119,7 @@ describe("에이전트 가져오기 — 제공자", () => {
     const id = await within(dialog).findByRole("textbox", { name: "Claude 러너 에이전트 id" });
     await userEvent.type(id, "coder");
     await userEvent.click(within(dialog).getByRole("button", { name: "등록" }));
-    await waitFor(() => expect(id).toHaveAccessibleDescription(ID_TAKEN));
+    await waitFor(() => expect(id).toHaveAccessibleDescription(ID_TAKEN.claude));
     expect(id).toHaveAttribute("aria-invalid", "true");
     expect(dialog).not.toHaveTextContent("이미 등록돼 있다");
   });

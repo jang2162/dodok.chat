@@ -1,4 +1,4 @@
-import type { OpsSeverity } from "@dodok/shared";
+import type { OpsGatewayStatus, OpsSeverity } from "@dodok/shared";
 import { CircleXIcon, InfoIcon, type LucideIcon, TriangleAlertIcon } from "lucide-react";
 import { useCallback, useState } from "react";
 import { useChannels } from "@/api/queries";
@@ -28,15 +28,17 @@ const FILTERS: Array<{ value: OpsSeverity | undefined; label: string }> = [
 /**
  * 최근 사건(스펙 7장): 심각도 필터, 「모두 확인」, 한 줄 = 고정 문구 + ×n + 시각(끊김은 끊긴 때), 「더 보기」로 다음 페이지.
  * 확인 안 한 줄은 굵게, 확인한 줄은 흐리게. 좁은 화면에서는 문구와 시각이 줄을 바꿔 흐른다.
- * 런 한도 줄의 채널 이름은 채널 목록 캐시에서 찾는다(사이드바가 이미 받은 것)
+ * 런 한도 줄의 채널 이름은 채널 목록 캐시에서(사이드바가 이미 받은 것), Gateway 사건의 이름은 운영 상태의 Gateway 목록에서 찾는다
+ * (화면이 이미 받아 주기로 다시 받는 것 — 아직 없으면 사건이 남긴 이름)
  */
-export function EventList() {
+export function EventList({ gateways }: { gateways?: readonly Pick<OpsGatewayStatus, "id" | "name">[] }) {
   const [severity, setSeverity] = useState<OpsSeverity>();
   const events = useOpsEvents(severity);
   const ack = useAckEvents();
   const list = events.data?.pages.flatMap((p) => p.events);
   const channels = useChannels().data;
   const nameOf = useCallback((id: string) => channels?.find((c) => c.id === id)?.name, [channels]);
+  const gatewayOf = useCallback((id: string) => gateways?.find((g) => g.id === id)?.name, [gateways]);
   return (
     <Section title="최근 사건">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -104,7 +106,7 @@ export function EventList() {
                       e.ackedAt === undefined ? "font-medium" : "text-muted-foreground",
                     )}
                   >
-                    {eventText(e, nameOf)}
+                    {eventText(e, nameOf, gatewayOf)}
                   </span>
                   <time dateTime={at.toISOString()} className="text-xs text-muted-foreground">
                     {WHEN.format(at)}

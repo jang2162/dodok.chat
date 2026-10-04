@@ -99,3 +99,15 @@ it("사람 목록이 있으면 사람 후보는 그 목록의 멤버 전원(가�
     enabled: true,
   });
 });
+
+it("OpenClaw 에이전트 후보는 Gateway 이름을 함께 싣는다 — 연결이 비었거나 러너 에이전트면 싣지 않는다", () => {
+  const office = agent(31, "main-office", { gateway: { id: uid(41), name: "사무실" } });
+  const orphan = agent(32, "main-home", { gateway: null });
+  const runner = agent(33, "coder", { provider: "claude" });
+  const list = mentionCandidates(
+    [member("agent", office.id), member("agent", orphan.id), member("agent", runner.id)],
+    [office, orphan, runner],
+    ME,
+  );
+  expect(list.slice(0, 3).map((c) => c.gateway)).toEqual(["사무실", undefined, undefined]);
+});

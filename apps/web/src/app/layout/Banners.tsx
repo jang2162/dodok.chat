@@ -5,6 +5,7 @@ import { useOffline } from "@/pwa/offline";
 import { useWireStatus } from "@/realtime/wire";
 import { Alert, AlertDescription } from "@/ui/alert";
 import { Button } from "@/ui/button";
+import { gatewayDown } from "./gatewayHealth";
 
 /**
  * 연결 문제 배너(스펙 6.5·8장) — wire 자체와 OpenClaw 연결, 둘은 함께 보일 수 있다.
@@ -18,19 +19,18 @@ import { Button } from "@/ui/button";
  * `reconnecting` 이지만 같은 사실을 두 번 말하지 않는다. OpenClaw 배너는 wire 가 붙어 있을 때만이라 겹치지 않는다.
  * 라이브 영역(alert — 할 일이 있는 것, status — 기다리면 되는 것)은 비어 있는 채로 늘 두고 안의 배너만 바꾼다 —
  * 새로 끼운 라이브 영역은 스크린 리더가 놓칠 수 있다. 두 wire 상태는 함께 올 수 없어 alert 를 위에 두어도 순서가 같다.
- * OpenClaw 배너의 「연결 설정 보기」는 owner 에게만 — 연결 페이지는 owner 만 쓴다
+ * OpenClaw 배너는 끊긴 Gateway 를 이름으로 부르고 둘 이상이면 수로 묶는다(멀티 Gateway 스펙 「웹」 절) — Gateway 가 없거나 모두 꺼졌으면
+ * 끊긴 연결이 없다. 「연결 설정 보기」는 owner 에게만 — 연결 페이지는 owner 만 쓴다
  */
 export function Banners() {
   const wire = useWireStatus((s) => s.status);
   const offline = useOffline();
   const { data: adapter } = useAdapterStatus();
   const owner = useIsOwner();
-  // Gateway 가 없거나 모두 꺼졌으면 띄우지 않는다 — 끊긴 연결이 없고, 끈 것은 고장이 아니다
-  const openclawDown =
-    wire === "connected" &&
-    adapter?.provider === "openclaw" &&
-    adapter.gateways.some((g) => g.enabled) &&
-    (adapter.gateway !== "connected" || adapter.bridge === "down");
+  const down =
+    wire === "connected" && adapter?.provider === "openclaw" ? adapter.gateways.filter(gatewayDown) : [];
+  const [first] = down;
+  const which = down.length === 1 && first ? `「${first.name}」` : `${down.length}개`;
 
   return (
     <>
@@ -62,12 +62,15 @@ export function Banners() {
             </div>
           )
         )}
-        {openclawDown && (
+        {down.length > 0 && (
           // 바깥 status 영역이 읽는다 — Alert 의 기본 role="alert" 는 뺀다
           <Alert role={undefined} className="rounded-none border-x-0 border-t-0">
             <UnplugIcon />
             <AlertDescription>
-              <p>OpenClaw 에 연결되지 않아 에이전트가 답하지 못합니다. 메시지는 저장됩니다.</p>
+              <p>
+                OpenClaw Gateway {which}에 연결되지 않아 그 Gateway 의 에이전트가 답하지 못합니다. 메시지는
+                저장됩니다.
+              </p>
               {owner && (
                 <Link to="/settings/connection" className="text-foreground underline underline-offset-4">
                   연결 설정 보기

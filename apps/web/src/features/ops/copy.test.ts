@@ -59,8 +59,28 @@ describe("사건 한 줄 문구 — kind 별 고정 문구", () => {
       key: "gateway:00000000-0000-4000-8000-0000000000a1:2026.9.5",
       detail: { gatewayName: "사무실", version: "2026.9.5" },
     });
-    expect(eventText(e)).toBe("검증 안 된 Gateway 버전 (2026.9.5)");
+    expect(eventText(e)).toBe("Gateway 「사무실」 검증 안 된 버전 (2026.9.5)");
     expect(eventText({ ...e, detail: {} })).toBe("검증 안 된 Gateway 버전 (?)");
+  });
+
+  it("Gateway 사건의 이름은 key 의 id 로 지금 이름을 먼저 찾는다 — 못 찾으면 detail, 둘 다 없으면 이름 없는 문구", () => {
+    const e = eventOf(1, {
+      kind: "gateway_down",
+      key: "gateway:00000000-0000-4000-8000-0000000000a1",
+      detail: { thresholdMs: 60_000, gatewayName: "옛 이름" },
+    });
+    const now = (id: string) => (id === "00000000-0000-4000-8000-0000000000a1" ? "새 이름" : undefined);
+    expect(eventText(e, undefined, now)).toBe("Gateway 「새 이름」 연결 끊김 (지금도)");
+    expect(eventText(e)).toBe("Gateway 「옛 이름」 연결 끊김 (지금도)");
+    expect(eventText({ ...e, detail: { thresholdMs: 60_000 } })).toBe("Gateway 연결 끊김 (지금도)");
+    // 버전 key 의 끝 버전은 id 에 섞이지 않는다
+    const untested = {
+      ...e,
+      kind: "gateway_version_untested" as const,
+      key: `${e.key}:2026.9.5`,
+      detail: { version: "2026.9.5" },
+    };
+    expect(eventText(untested, undefined, now)).toBe("Gateway 「새 이름」 검증 안 된 버전 (2026.9.5)");
   });
 
   it("런 실패는 detail.code — 코드가 없으면 괄호 없이", () => {

@@ -1,8 +1,6 @@
 import {
   type Agent,
   type AdapterStatus,
-  type GatewayLinkState,
-  type OpenClawGatewayStatus,
   type Channel,
   type ChannelMember,
   type Person,
@@ -41,45 +39,19 @@ export type AdapterStatusList = {
   statuses: AdapterStatus[];
   capabilities: Partial<Record<AdapterStatus["provider"], AdapterCapabilities>>;
 };
-/** 연결 점·배너·운영 상태 카드가 읽는 OpenClaw 한 값 — Gateway 들을 모은 것 */
-export type OpenClawSummary = {
-  gateway: Exclude<GatewayLinkState, "disabled">;
-  bridge: OpenClawGatewayStatus["bridge"];
+/**
+ * `qk.adapter` 캐시 — OpenClaw 어댑터의 Gateway 별 상태와 capabilities. 연결 점·배너·운영 화면·에이전트 화면이 Gateway 목록을 읽어
+ * 저마다 모은다(멀티 Gateway 스펙 「웹」 절). 서버에 OpenClaw 어댑터가 없으면 null. wire `adapter.status` 도 OpenClaw 것만 이 캐시를 고친다
+ */
+export type AdapterStatusResponse = Extract<AdapterStatus, { provider: "openclaw" }> & {
+  capabilities: AdapterCapabilities;
 };
-
-const GATEWAY_RANK: Record<OpenClawSummary["gateway"], number> = { connected: 0, reconnecting: 1, down: 2 };
-
-/**
- * 켜진 Gateway 가운데 가장 나쁜 gateway(down > reconnecting > connected), 플러그인은 켜진 Gateway 모두에 붙어야 connected.
- * 꺼진 Gateway 는 세지 않는다(끈 것은 고장이 아니다). 켜진 Gateway 가 없으면 down/down — 배너는 그때 따로 거른다(Banners)
- */
-export function summarizeGateways(
-  gateways: ReadonlyArray<Pick<OpenClawGatewayStatus, "enabled" | "gateway" | "bridge">>,
-): OpenClawSummary {
-  const enabled = gateways.filter((g) => g.enabled);
-  if (enabled.length === 0) return { gateway: "down", bridge: "down" };
-  let gateway: OpenClawSummary["gateway"] = "connected";
-  for (const g of enabled) {
-    const state = g.gateway === "disabled" ? "down" : g.gateway;
-    if (GATEWAY_RANK[state] > GATEWAY_RANK[gateway]) gateway = state;
-  }
-  return { gateway, bridge: enabled.every((g) => g.bridge === "connected") ? "connected" : "down" };
-}
-
-/**
- * `qk.adapter` 캐시 — OpenClaw 어댑터의 Gateway 별 상태와 그것을 모은 값(summarizeGateways), capabilities(연결 점·배너·운영 화면이
- * 본다). 서버에 OpenClaw 어댑터가 없으면 null. wire `adapter.status` 도 OpenClaw 것만 이 캐시를 고친다
- */
-export type AdapterStatusResponse = Extract<AdapterStatus, { provider: "openclaw" }> &
-  OpenClawSummary & { capabilities: AdapterCapabilities };
 
 /** 목록 응답에서 OpenClaw 줄을 고른다 */
 export function openclawAdapterStatus(list: AdapterStatusList): AdapterStatusResponse | null {
   const status = list.statuses.find((s) => s.provider === "openclaw");
   const capabilities = list.capabilities.openclaw;
-  return status?.provider === "openclaw" && capabilities
-    ? { ...status, ...summarizeGateways(status.gateways), capabilities }
-    : null;
+  return status?.provider === "openclaw" && capabilities ? { ...status, capabilities } : null;
 }
 
 /** 러너 어댑터의 붙은 러너 수 / 폐기되지 않은 토큰 수(러너 계획 판정 P7) */

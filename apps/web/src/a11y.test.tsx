@@ -189,7 +189,7 @@ describe("에이전트 화면", () => {
   it("목록·스위치·편집 버튼, 「Gateway 에서 가져오기」 대화상자(제목·닫기)까지 이름이 있다", async () => {
     stubSettingsServer({
       override: ({ method, url }) =>
-        method === "GET" && url === "/api/v1/agents/discover"
+        method === "GET" && url.startsWith("/api/v1/agents/discover?provider=openclaw&gatewayId=")
           ? new Response(JSON.stringify({ agents: [{ providerAgentId: "ops", name: "Ops" }] }), {
               status: 200,
             })

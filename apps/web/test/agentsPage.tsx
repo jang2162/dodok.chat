@@ -1,4 +1,4 @@
-import type { Agent } from "@dodok/shared";
+import type { Agent, OpenClawGatewayStatus } from "@dodok/shared";
 import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import { RouterContextProvider, createMemoryHistory } from "@tanstack/react-router";
@@ -8,6 +8,7 @@ import { qk } from "@/api/queries";
 import { createQueryClient } from "@/app/queryClient";
 import { createAppRouter } from "@/app/router";
 import { AgentsPage } from "@/features/agents/AgentsPage";
+import { ADAPTER_OK, TEST_GATEWAY, adapterStatusBody } from "./shellApi";
 
 /** 에이전트 페이지 테스트의 가짜 서버·렌더 도우미 — 목록 쪽과 등록 쪽 테스트가 함께 쓴다 */
 
@@ -18,17 +19,32 @@ export type Call = { method: string; url: string; body: unknown };
 export const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status });
 export const apiErr = (status: number, code: string, message: string) => json(status, { code, message });
 
+/** 둘째 Gateway — 같은 id 의 에이전트가 두 Gateway 에 있을 때 */
+export const HOME_GATEWAY: OpenClawGatewayStatus = {
+  ...TEST_GATEWAY,
+  id: "01a00000-0000-7000-8000-0000000000a2",
+  name: "집",
+};
+/** OpenClaw 찾기 주소 — Gateway 를 고른다(멀티 Gateway 스펙 「에이전트 API」 절) */
+export const discoverUrl = (gatewayId: string = TEST_GATEWAY.id) =>
+  `/api/v1/agents/discover?provider=openclaw&gatewayId=${gatewayId}`;
+const GATEWAY_OF = (id: string | undefined) =>
+  [TEST_GATEWAY, HOME_GATEWAY].find((g) => g.id === id) ?? TEST_GATEWAY;
+
 let seq = 0;
+/** OpenClaw 에이전트는 따로 주지 않으면 TEST_GATEWAY 에 묶여 있다(서버 응답의 `gateway` 요약) */
 export function makeAgent(
   fields: Partial<Agent> & Pick<Agent, "providerAgentId" | "handle" | "name">,
 ): Agent {
   seq += 1;
+  const provider = fields.provider ?? "openclaw";
   return {
     id: `0190a000-0000-7000-8000-${String(seq).padStart(12, "0")}`,
     workspaceId: "0190a000-0000-7000-8000-00000000ffff",
-    provider: "openclaw",
+    provider,
     enabled: true,
     createdAt: "2026-09-19T00:00:00.000Z",
+    ...(provider === "openclaw" ? { gateway: { id: TEST_GATEWAY.id, name: TEST_GATEWAY.name } } : {}),
     ...fields,
   };
 }
@@ -45,18 +61,28 @@ export function stubServer(
   opts: {
     agents?: Agent[];
     list?: (fallback: () => Reply) => Reply;
-    discover?: () => Reply;
+    /** OpenClaw 찾기 — 고른 Gateway id 를 받는다 */
+    discover?: (gatewayId: string) => Reply;
     /** `GET /agents/discover?provider=claude` — 기본은 빈 목록(붙은 러너 없음) */
     discoverClaude?: () => Reply;
     create?: (body: Body, fallback: (body: Body) => Reply) => Reply;
     patch?: (id: string, body: Body, fallback: (id: string, body: Body) => Reply) => Reply;
+    /** PUT /agents/:id/gateway(owner) — 기본은 서버 상태를 고쳐 `{ agent }` */
+    move?: (id: string, body: Body, fallback: (id: string, body: Body) => Reply) => Reply;
+    /** GET /adapter/status 의 OpenClaw Gateway 목록 — 기본은 TEST_GATEWAY 하나 */
+    gateways?: OpenClawGatewayStatus[];
   } = {},
 ) {
   const state = [...(opts.agents ?? [])];
   const calls: Call[] = [];
   const listDefault = () => json(200, { agents: state });
   const createDefault = (body: Body) => {
-    const agent = makeAgent(body as Pick<Agent, "providerAgentId" | "handle" | "name">);
+    const { gatewayId, ...fields } = body;
+    const gateway = typeof gatewayId === "string" ? GATEWAY_OF(gatewayId) : undefined;
+    const agent = makeAgent({
+      ...(fields as Pick<Agent, "providerAgentId" | "handle" | "name">),
+      ...(gateway ? { gateway: { id: gateway.id, name: gateway.name } } : {}),
+    });
     state.push(agent);
     return json(201, { agent });
   };
@@ -69,18 +95,35 @@ export function stubServer(
     state[i] = next;
     return json(200, { agent: next });
   };
+  const moveDefault = (id: string, body: Body) => {
+    const i = state.findIndex((a) => a.id === id);
+    const current = state[i];
+    if (!current) return apiErr(404, "NOT_FOUND", "agent not found");
+    const gateway = GATEWAY_OF(String(body.gatewayId));
+    const next: Agent = { ...current, gateway: { id: gateway.id, name: gateway.name } };
+    state[i] = next;
+    return json(200, { agent: next });
+  };
+  const gateways = opts.gateways ?? [TEST_GATEWAY];
   const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
     const url = String(input);
     const method = init?.method ?? "GET";
     const body: Body | undefined = init?.body === undefined ? undefined : JSON.parse(String(init.body));
     calls.push({ method, url, body });
     if (method === "GET" && url === "/api/v1/agents") return (opts.list ?? ((f) => f()))(listDefault);
-    if (method === "GET" && url === "/api/v1/agents/discover")
-      return (opts.discover ?? (() => json(200, { agents: [] })))();
+    if (method === "GET" && url === "/api/v1/adapter/status") {
+      return json(200, { ...adapterStatusBody(ADAPTER_OK), statuses: [{ provider: "openclaw", gateways }] });
+    }
+    const discover = /^\/api\/v1\/agents\/discover\?provider=openclaw&gatewayId=([^&]+)$/.exec(url);
+    if (method === "GET" && discover?.[1])
+      return (opts.discover ?? (() => json(200, { agents: [] })))(discover[1]);
     if (method === "GET" && url === "/api/v1/agents/discover?provider=claude")
       return (opts.discoverClaude ?? (() => json(200, { agents: [] })))();
     if (method === "POST" && url === "/api/v1/agents")
       return (opts.create ?? ((b, f) => f(b)))(body ?? {}, createDefault);
+    const moved = /^\/api\/v1\/agents\/([^/]+)\/gateway$/.exec(url);
+    if (method === "PUT" && moved?.[1])
+      return (opts.move ?? ((i, b, f) => f(i, b)))(moved[1], body ?? {}, moveDefault);
     const m = /^\/api\/v1\/agents\/([^/]+)$/.exec(url);
     if (method === "PATCH" && m?.[1])
       return (opts.patch ?? ((i, b, f) => f(i, b)))(m[1], body ?? {}, patchDefault);

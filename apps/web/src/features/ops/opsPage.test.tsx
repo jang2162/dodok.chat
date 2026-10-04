@@ -27,6 +27,17 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+const HOME_ID = uid(902);
+const OFFICE_OFF = (() => {
+  const [office] = opsStatusOf().gateways;
+  if (!office) throw new Error("기본 Gateway 가 없다");
+  return {
+    ...office,
+    enabled: false,
+    gateway: { ...office.gateway, state: "disabled" as const, version: null },
+  };
+})();
+
 const region = (name: string) => screen.findByRole("region", { name });
 /** 상태 카드의 한 줄 — 이름(dt)으로 찾는다 */
 const statusRow = async (name: string) => {
@@ -87,9 +98,9 @@ describe("상태 카드 — 문제가 있는 줄만 강조", () => {
       }),
     });
     renderOps();
-    expect(await statusRow("Gateway")).toHaveAttribute("data-problem");
-    expect(await statusRow("플러그인")).toHaveAttribute("data-problem");
-    const version = await statusRow("Gateway 버전");
+    expect(await statusRow("Gateway 「사무실」")).toHaveAttribute("data-problem");
+    expect(await statusRow("플러그인 「사무실」")).toHaveAttribute("data-problem");
+    const version = await statusRow("Gateway 「사무실」 버전");
     expect(version).toHaveAttribute("data-problem");
     expect(version).toHaveTextContent("저장소가 검증한 버전(2026.9.4)과 다릅니다");
     const disk = await statusRow("디스크 여유");
@@ -102,10 +113,62 @@ describe("상태 카드 — 문제가 있는 줄만 강조", () => {
   it("드리프트가 아니면 버전 줄에 핀 문구가 없다", async () => {
     stubOpsServer();
     renderOps();
-    const version = await statusRow("Gateway 버전");
+    const version = await statusRow("Gateway 「사무실」 버전");
     expect(version).toHaveTextContent("2026.9.4");
     expect(version).not.toHaveTextContent("저장소가 검증한");
   });
+
+  it("Gateway 마다 Gateway·플러그인·버전 줄을 반복한다 — 꺼진 Gateway 는 줄이 없다", async () => {
+    const [office] = opsStatusOf().gateways;
+    if (!office) throw new Error("기본 Gateway 가 없다");
+    stubOpsServer({
+      status: opsStatusOf({
+        gateways: [
+          office,
+          {
+            ...office,
+            id: HOME_ID,
+            name: "집",
+            gateway: { state: "down", version: "2026.9.5", pinned: "2026.9.4", drift: true },
+            plugin: { state: "down" },
+          },
+          {
+            ...office,
+            id: uid(903),
+            name: "창고",
+            enabled: false,
+            gateway: { ...office.gateway, state: "disabled" },
+          },
+        ],
+      }),
+    });
+    renderOps();
+    expect(await statusRow("Gateway 「사무실」")).not.toHaveAttribute("data-problem");
+    expect(await statusRow("플러그인 「사무실」")).not.toHaveAttribute("data-problem");
+    expect(await statusRow("Gateway 「사무실」 버전")).toHaveTextContent("2026.9.4");
+    expect(await statusRow("Gateway 「집」")).toHaveAttribute("data-problem");
+    expect(await statusRow("플러그인 「집」")).toHaveAttribute("data-problem");
+    expect(await statusRow("Gateway 「집」 버전")).toHaveTextContent(
+      "저장소가 검증한 버전(2026.9.4)과 다릅니다",
+    );
+    const card = await region("상태");
+    expect(within(card).queryByText(/창고/)).toBeNull();
+  });
+
+  it.each([
+    ["Gateway 0개", []],
+    ["모두 꺼짐", [{ ...OFFICE_OFF }]],
+  ])(
+    "%s 면 Gateway·플러그인·버전 줄이 없고 강조도 없다(멀티 Gateway Review Focus 5)",
+    async (_, gateways) => {
+      stubOpsServer({ status: opsStatusOf({ gateways, adapter: { provider: "openclaw", gateways: [] } }) });
+      renderOps();
+      const card = await region("상태");
+      await within(card).findByText("디스크 여유", { selector: "dt" });
+      expect(within(card).queryByText(/Gateway|플러그인/, { selector: "dt" })).toBeNull();
+      expect(card.querySelectorAll("[data-problem]")).toHaveLength(0);
+    },
+  );
 
   it("디스크를 못 쟀으면 「알 수 없음」, 직전 종료 표지가 없으면 「알 수 없음」 — 강조하지 않는다", async () => {
     stubOpsServer({ status: opsStatusOf({ disk: { level: "unknown" }, server: { previousClean: null } }) });
@@ -140,7 +203,7 @@ describe("상태 카드 — 실시간(브라우저 검증 D1)", () => {
   it("연결 줄은 wire 어댑터 상태를 따른다 — 끊김 사건(60초)을 기다리지 않고 바로 바뀌고, 돌아오면 바로 돌아온다", async () => {
     const server = stubOpsServer();
     const { fake } = renderLive();
-    expect(await statusRow("Gateway")).toHaveTextContent("연결됨");
+    expect(await statusRow("Gateway 「사무실」")).toHaveTextContent("연결됨");
     // 연결 줄(OpenClaw)과 러너 줄은 같은 목록 응답 하나를 나눠 쓴다(리뷰 M4)
     await waitFor(() => expect(server.count("GET", "/api/v1/adapter/status")).toBe(1));
     await waitFor(() => expect(server.count("GET", "/api/v1/ops/status")).toBe(1));
@@ -151,14 +214,14 @@ describe("상태 카드 — 실시간(브라우저 검증 D1)", () => {
         gateways: [{ ...TEST_GATEWAY, gateway: "reconnecting", bridge: "down" }],
       }),
     );
-    expect(await statusRow("Gateway")).toHaveTextContent("다시 연결하는 중");
-    expect(await statusRow("Gateway")).toHaveAttribute("data-problem");
-    expect(await statusRow("플러그인")).toHaveTextContent("연결 안 됨");
-    expect(await statusRow("플러그인")).toHaveAttribute("data-problem");
+    expect(await statusRow("Gateway 「사무실」")).toHaveTextContent("다시 연결하는 중");
+    expect(await statusRow("Gateway 「사무실」")).toHaveAttribute("data-problem");
+    expect(await statusRow("플러그인 「사무실」")).toHaveTextContent("연결 안 됨");
+    expect(await statusRow("플러그인 「사무실」")).toHaveAttribute("data-problem");
 
     act(() => fake.serverEmit("adapter.status", { provider: "openclaw", gateways: [TEST_GATEWAY] }));
-    expect(await statusRow("Gateway")).not.toHaveAttribute("data-problem");
-    expect(await statusRow("플러그인")).not.toHaveAttribute("data-problem");
+    expect(await statusRow("Gateway 「사무실」")).not.toHaveAttribute("data-problem");
+    expect(await statusRow("플러그인 「사무실」")).not.toHaveAttribute("data-problem");
     // 상태를 다시 부르지 않았다 — 캐시만 바뀌었다
     expect(server.count("GET", "/api/v1/ops/status")).toBe(1);
   });
@@ -169,7 +232,7 @@ describe("상태 카드 — 실시간(브라우저 검증 D1)", () => {
     await waitFor(async () =>
       expect(await statusRow("Claude 러너")).toHaveTextContent("1대 붙음 / 토큰 2개"),
     );
-    expect(await statusRow("Gateway")).toHaveTextContent("연결됨");
+    expect(await statusRow("Gateway 「사무실」")).toHaveTextContent("연결됨");
     expect(server.count("GET", "/api/v1/adapter/status")).toBe(1);
     // 재연결 때처럼 `adapter` 앞머리를 무효화하면 두 줄이 함께 다시 받되 요청은 하나
     await act(() => qc.invalidateQueries({ queryKey: qk.adapter }));
@@ -181,22 +244,22 @@ describe("상태 카드 — 실시간(브라우저 검증 D1)", () => {
       expect(await statusRow("Claude 러너")).toHaveTextContent("2대 붙음 / 토큰 2개"),
     );
     // OpenClaw 줄은 그대로
-    expect(await statusRow("Gateway")).toHaveTextContent("연결됨");
+    expect(await statusRow("Gateway 「사무실」")).toHaveTextContent("연결됨");
   });
 
   it("러너 어댑터가 없는 서버면 Claude 러너 줄이 없다", async () => {
     stubOpsServer();
     renderOps();
     const card = await region("상태");
-    await within(card).findByText("Gateway", { selector: "dt" });
+    await within(card).findByText("Gateway 「사무실」", { selector: "dt" });
     await waitFor(() => expect(within(card).queryByText("Claude 러너", { selector: "dt" })).toBeNull());
   });
 
   it("wire 가 끊겨 있으면 연결 줄은 운영 상태 응답의 값 — 멈춘 어댑터 캐시를 믿지 않는다", async () => {
     stubOpsServer({ status: opsStatusOf({ gateway: { state: "down" }, plugin: { state: "down" } }) });
     renderOps();
-    expect(await statusRow("Gateway")).toHaveTextContent("연결 안 됨");
-    expect(await statusRow("플러그인")).toHaveAttribute("data-problem");
+    expect(await statusRow("Gateway 「사무실」")).toHaveTextContent("연결 안 됨");
+    expect(await statusRow("플러그인 「사무실」")).toHaveAttribute("data-problem");
   });
 
   it("ops.event(disk_low) 가 오면 상태를 다시 받아 디스크 줄이 바뀐다", async () => {
@@ -224,7 +287,7 @@ describe("상태 카드 — 실시간(브라우저 검증 D1)", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const server = stubOpsServer();
     renderOps();
-    await statusRow("Gateway");
+    await statusRow("Gateway 「사무실」");
     await waitFor(() => expect(server.count("GET", "/api/v1/ops/status")).toBe(1));
     server.setStatus(opsStatusOf({ runsToday: 42 }));
     await act(() => vi.advanceTimersByTimeAsync(29_000));
@@ -555,12 +618,38 @@ describe("최근 사건", () => {
     expect(item.querySelector("time")).toHaveAttribute("datetime", "2026-09-25T01:00:00.000Z");
   });
 
+  it("Gateway 사건에는 Gateway 이름 — 지금 이름을 key 의 id 로 찾고, 못 찾으면 사건이 남긴 이름", async () => {
+    const down = eventOf(5, {
+      kind: "gateway_down",
+      key: `gateway:${TEST_GATEWAY.id}`,
+      detail: { thresholdMs: 60_000, gatewayName: "옛 이름" },
+    });
+    const plugin = eventOf(6, {
+      kind: "plugin_down",
+      key: "gateway:01a00000-0000-7000-8000-0000000000ff",
+      detail: { thresholdMs: 60_000, gatewayName: "지운 Gateway" },
+      resolvedAt: "2026-09-25T01:05:00.000Z",
+    });
+    const changed = eventOf(7, {
+      kind: "gateway_version_changed",
+      severity: "info",
+      key: `gateway:${TEST_GATEWAY.id}`,
+      detail: { from: "2026.9.4", to: "2026.9.5", gatewayName: "사무실" },
+    });
+    stubOpsServer({ pages: [[down, plugin, changed]] });
+    renderOps();
+    const items = within(await list()).getAllByRole("listitem");
+    await waitFor(() => expect(items[0]).toHaveTextContent("Gateway 「사무실」 연결 끊김 (지금도)"));
+    expect(items[1]).toHaveTextContent("Gateway 「지운 Gateway」 플러그인 연결 끊김");
+    expect(items[2]).toHaveTextContent("Gateway 「사무실」 버전이 바뀜 (2026.9.4 → 2026.9.5)");
+  });
+
   it("심각도 필터 — 「오류」면 severity=error 로 부른다", async () => {
     const server = stubOpsServer({ pages: [[FAILED, CRASH, UNTESTED]] });
     renderOps();
     const items = within(await list()).getAllByRole("listitem");
     expect(items).toHaveLength(3);
-    expect(items[2]).toHaveTextContent("검증 안 된 Gateway 버전 (2026.9.5)");
+    expect(items[2]).toHaveTextContent("Gateway 「사무실」 검증 안 된 버전 (2026.9.5)");
     const events = await region("최근 사건");
     await userEvent.click(within(events).getByRole("button", { name: "오류" }));
     await waitFor(() => expect(within(events).getAllByRole("listitem")).toHaveLength(1));

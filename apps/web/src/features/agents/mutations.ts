@@ -5,8 +5,10 @@ import { qk } from "@/api/queries";
 
 /** 에이전트 화면의 서버 상태 — 등록·수정 뮤테이션과 제공자별 목록(discover) 쿼리 */
 
+/** OpenClaw 는 gatewayId 가 있어야 한다(멀티 Gateway 스펙 「에이전트 API」 절) — 러너 에이전트는 싣지 않는다 */
 export type CreateAgentInput = {
   provider: AdapterProvider;
+  gatewayId?: string;
   providerAgentId: string;
   handle: string;
   name: string;
@@ -35,6 +37,16 @@ export function useCreateAgent() {
   });
 }
 
+/** 에이전트를 다른 Gateway 로 옮긴다(owner, 멀티 Gateway 스펙 「에이전트 API」 절). CONFLICT·VALIDATION 은 대화상자가 그린다 */
+export function useMoveAgentGateway() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, gatewayId }: { id: string; gatewayId: string }) =>
+      (await api<{ agent: Agent }>("PUT", `/agents/${id}/gateway`, { gatewayId })).agent,
+    onSuccess: (agent) => putAgent(qc, agent),
+  });
+}
+
 export function usePatchAgent() {
   const qc = useQueryClient();
   return useMutation({
@@ -45,17 +57,21 @@ export function usePatchAgent() {
 }
 
 /**
- * 제공자의 등록 후보 — OpenClaw 는 Gateway agents.list, Claude 러너는 붙은 러너들이 알린 에이전트(러너 계획 판정 P9).
- * 대화상자가 열렸을 때만(`enabled`), 열 때마다 새로(`staleTime: 0`). OpenClaw 는 provider 를 싣지 않는다 — 서버 기본값이다.
+ * 제공자의 등록 후보 — OpenClaw 는 고른 Gateway 의 agents.list(멀티 Gateway 스펙 「에이전트 API」 절), Claude 러너는 붙은 러너들이 알린 에이전트
+ * (러너 계획 판정 P9). 대화상자가 열렸을 때만(`enabled`, OpenClaw 는 Gateway 를 골랐을 때만), 열 때마다 새로(`staleTime: 0`).
  * 503·403 은 대화상자 안에 그리므로 전역 토스트를 끄고(`silent`), 재시도하지 않는다 — 다시 부르기는 사용자가 누른다.
  * 네트워크가 돌아와도 다시 부르지 않는다 — 열려 있는 동안엔 고르고 고치는 중이다
  */
-export function useDiscover(enabled: boolean, provider: AdapterProvider) {
-  const path = provider === "openclaw" ? "/agents/discover" : `/agents/discover?provider=${provider}`;
+export function useDiscover(enabled: boolean, provider: AdapterProvider, gatewayId: string | undefined) {
+  const openclaw = provider === "openclaw";
+  const path = openclaw
+    ? `/agents/discover?provider=openclaw&gatewayId=${encodeURIComponent(gatewayId ?? "")}`
+    : `/agents/discover?provider=${provider}`;
   return useQuery({
-    queryKey: qk.discoverOf(provider),
+    // 제공자 키 아래 Gateway 마다 — 제공자 키로 초기화하면 그 Gateway 들이 함께 지워진다
+    queryKey: openclaw ? [...qk.discoverOf(provider), gatewayId ?? ""] : qk.discoverOf(provider),
     queryFn: async () => (await api<{ agents: DiscoveredAgent[] }>("GET", path)).agents,
-    enabled,
+    enabled: enabled && (!openclaw || gatewayId !== undefined),
     staleTime: 0,
     retry: false,
     refetchOnReconnect: false,

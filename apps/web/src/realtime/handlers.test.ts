@@ -798,12 +798,10 @@ describe("캐시 패치", () => {
     const reconnecting = { ...TEST_GATEWAY, gateway: "reconnecting", bridge: "down" } as const;
     fake.serverEmit("adapter.status", { provider: "openclaw", gateways: [reconnecting] });
 
-    // Gateway 목록과 그것을 모은 값(점·배너가 읽는다)을 함께 바꾼다
+    // Gateway 목록을 통째로 바꾼다 — 점·배너·운영 화면이 저마다 모은다
     expect(queryClient.getQueryData(qk.adapter)).toEqual({
       provider: "openclaw",
       gateways: [reconnecting],
-      gateway: "reconnecting",
-      bridge: "down",
       capabilities,
     });
   });

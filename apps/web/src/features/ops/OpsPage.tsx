@@ -29,7 +29,7 @@ function ManagerContent() {
           불러오는 중…
         </p>
       )}
-      <EventList />
+      <EventList gateways={status.data?.gateways} />
     </>
   );
 }

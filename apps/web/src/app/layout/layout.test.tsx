@@ -3,8 +3,11 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { type AdapterStatusResponse, type OpenClawSummary, qk } from "@/api/queries";
+import type { OpenClawGatewayStatus } from "@dodok/shared";
+import { type AdapterStatusResponse, qk } from "@/api/queries";
+import { RouterContextProvider, createMemoryHistory } from "@tanstack/react-router";
 import { createQueryClient } from "@/app/queryClient";
+import { createAppRouter } from "@/app/router";
 import { type WireStatus, useWireStatus } from "@/realtime/wire";
 import { TooltipProvider } from "@/ui/tooltip";
 import { stubMedia } from "../../../test/media";
@@ -27,59 +30,117 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/** Gateway 하나의 상태 — 이름·id 는 TEST_GATEWAY(사무실) 를 덮는다 */
+const gw = (over: Partial<OpenClawGatewayStatus> = {}): OpenClawGatewayStatus => ({
+  ...TEST_GATEWAY,
+  ...over,
+});
+const HOME = (over: Partial<OpenClawGatewayStatus> = {}) =>
+  gw({ id: "01a00000-0000-7000-8000-0000000000a2", name: "집", ...over });
+
 /** 어댑터 상태만 답하는 가짜 서버 — 캐시를 바꾸는 테스트는 그 뒤로 다시 부르지 않는다(staleTime) */
-function renderWithAdapter(ui: ReactNode, adapter: OpenClawSummary) {
+function renderWithAdapter(ui: ReactNode, gateways: OpenClawGatewayStatus[]) {
   vi.stubGlobal(
     "fetch",
     vi.fn<typeof fetch>(async (input) =>
       String(input) === "/api/v1/adapter/status"
-        ? json(200, adapterStatusBody({ ...ADAPTER_OK, ...adapter }))
+        ? json(200, {
+            ...adapterStatusBody(ADAPTER_OK),
+            statuses: [{ provider: "openclaw", gateways }],
+          })
         : json(404, { code: "NOT_FOUND", message: "x" }),
     ),
   );
   const queryClient: QueryClient = createQueryClient(() => {});
   // 점은 wire 가 살아 있을 때만 값을 보인다 — 값 자체를 보는 테스트는 연결된 상태에서 본다
   useWireStatus.getState().setStatus("connected");
+  // 라우터는 문맥만 준다 — 배너의 「연결 설정 보기」 링크가 쓴다
+  const router = createAppRouter(queryClient, createMemoryHistory({ initialEntries: ["/"] }));
   render(
     <QueryClientProvider client={queryClient}>
-      <TooltipProvider>{ui}</TooltipProvider>
+      <RouterContextProvider router={router}>
+        <TooltipProvider>{ui}</TooltipProvider>
+      </RouterContextProvider>
     </QueryClientProvider>,
   );
   /** wire `adapter.status` 가 캐시를 고치는 것과 같이 — 관찰자 알림은 notifyManager 가 미뤄 보내므로 화면 단언은 findBy·waitFor 로 */
-  const push = (next: OpenClawSummary) =>
-    queryClient.setQueryData<AdapterStatusResponse>(qk.adapter, (prev) =>
-      prev?.provider === "openclaw" ? { ...prev, ...next } : prev,
-    );
+  const push = (next: OpenClawGatewayStatus[]) =>
+    act(() => {
+      queryClient.setQueryData<AdapterStatusResponse>(qk.adapter, (prev) =>
+        prev?.provider === "openclaw" ? { ...prev, gateways: next } : prev,
+      );
+    });
   return { queryClient, push };
 }
 
 describe("ConnectionDots", () => {
-  it("adapter.status 값마다 Gateway·플러그인 점의 이름이 바뀐다", async () => {
-    const { push } = renderWithAdapter(<ConnectionDots />, { gateway: "connected", bridge: "connected" });
+  it("Gateway 하나 — 상태마다 Gateway·플러그인 점의 이름이 바뀐다", async () => {
+    const { push } = renderWithAdapter(<ConnectionDots />, [gw()]);
     expect(await screen.findByRole("img", { name: "Gateway 연결됨" })).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "플러그인 연결됨" })).toBeInTheDocument();
 
-    push({ gateway: "reconnecting", bridge: "down" });
+    push([gw({ gateway: "reconnecting", bridge: "down" })]);
     expect(await screen.findByRole("img", { name: "Gateway 다시 연결 중" })).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "플러그인 끊김" })).toBeInTheDocument();
 
-    push({ gateway: "down", bridge: "down" });
+    push([gw({ gateway: "down", bridge: "down" })]);
     expect(await screen.findByRole("img", { name: "Gateway 끊김" })).toBeInTheDocument();
   });
 
-  it("점은 색으로만 보이므로 키보드로도 닿는다 — Tab 으로 초점이 가면 상태 이름·설명 툴팁", async () => {
-    renderWithAdapter(<ConnectionDots />, { gateway: "connected", bridge: "down" });
-    const gateway = await screen.findByRole("img", { name: "Gateway 연결됨" });
+  it("Gateway 를 하나로 모은다 — 모두 연결됨 초록·일부 끊김 노랑·모두 끊김 빨강·없음 회색", async () => {
+    const { push } = renderWithAdapter(<ConnectionDots />, [gw(), HOME()]);
+    expect(await screen.findByRole("img", { name: "Gateway 연결됨" })).toHaveClass("bg-success");
+    expect(screen.getByRole("img", { name: "플러그인 연결됨" })).toHaveClass("bg-success");
+
+    push([gw(), HOME({ gateway: "down", bridge: "down" })]);
+    expect(await screen.findByRole("img", { name: "Gateway 일부 끊김" })).toHaveClass("bg-warning");
+    expect(screen.getByRole("img", { name: "플러그인 일부 끊김" })).toHaveClass("bg-warning");
+
+    push([gw({ gateway: "down", bridge: "down" }), HOME({ gateway: "down", bridge: "down" })]);
+    expect(await screen.findByRole("img", { name: "Gateway 끊김" })).toHaveClass("bg-destructive");
+    expect(screen.getByRole("img", { name: "플러그인 끊김" })).toHaveClass("bg-destructive");
+
+    push([]);
+    expect(await screen.findByRole("img", { name: "Gateway 없음" })).toHaveClass("bg-muted-foreground/40");
+    expect(screen.getByRole("img", { name: "플러그인 없음" })).toHaveClass("bg-muted-foreground/40");
+  });
+
+  it("꺼진 Gateway 는 세지 않는다 — 모두 꺼졌으면 회색, 켜진 것만 연결됐으면 초록", async () => {
+    const { push } = renderWithAdapter(<ConnectionDots />, [
+      gw({ enabled: false, gateway: "disabled", bridge: "down" }),
+    ]);
+    expect(await screen.findByRole("img", { name: "Gateway 없음" })).toHaveClass("bg-muted-foreground/40");
+    push([gw({ enabled: false, gateway: "disabled", bridge: "down" }), HOME()]);
+    expect(await screen.findByRole("img", { name: "Gateway 연결됨" })).toHaveClass("bg-success");
+  });
+
+  it("툴팁에 Gateway 별 상태 — 꺼진 것은 「꺼짐」", async () => {
+    renderWithAdapter(<ConnectionDots />, [
+      gw({ bridge: "down" }),
+      HOME({ gateway: "reconnecting", bridge: "down" }),
+      gw({
+        id: "01a00000-0000-7000-8000-0000000000a3",
+        name: "창고",
+        enabled: false,
+        gateway: "disabled",
+        bridge: "down",
+      }),
+    ]);
+    const gateway = await screen.findByRole("img", { name: "Gateway 일부 끊김" });
     await userEvent.tab();
     expect(gateway).toHaveFocus();
-    expect(await screen.findByRole("tooltip")).toHaveTextContent("Gateway 연결됨");
+    const tip = await screen.findByRole("tooltip");
+    expect(tip).toHaveTextContent("사무실 — 연결됨");
+    expect(tip).toHaveTextContent("집 — 다시 연결 중");
+    expect(tip).toHaveTextContent("창고 — 꺼짐");
     await userEvent.tab();
     expect(screen.getByRole("img", { name: "플러그인 끊김" })).toHaveFocus();
-    await waitFor(() => expect(screen.getByRole("tooltip")).toHaveTextContent("플러그인 끊김"));
+    await waitFor(() => expect(screen.getByRole("tooltip")).toHaveTextContent("사무실 — 끊김"));
+    expect(screen.getByRole("tooltip")).toHaveTextContent("창고 — 꺼짐");
   });
 
   it("wire 가 끊기면 마지막 값을 초록으로 두지 않는다 — 둘 다 「상태 모름」(회색), 다시 붙으면 돌아온다", async () => {
-    renderWithAdapter(<ConnectionDots />, { gateway: "connected", bridge: "connected" });
+    renderWithAdapter(<ConnectionDots />, [gw()]);
     const gateway = await screen.findByRole("img", { name: "Gateway 연결됨" });
     expect(gateway).toHaveClass("bg-success");
 
@@ -96,13 +157,15 @@ describe("ConnectionDots", () => {
 
 describe("Banners", () => {
   const WIRE_RECONNECTING = "서버에 다시 연결하는 중…";
-  const OPENCLAW_DOWN = "OpenClaw 에 연결되지 않아 에이전트가 답하지 못합니다. 메시지는 저장됩니다.";
+  const DOWN_OFFICE = "OpenClaw Gateway 「사무실」에 연결되지 않아 그 Gateway 의 에이전트가 답하지 못합니다";
+  const DOWN_TWO = "OpenClaw Gateway 2개에 연결되지 않아 그 Gateway 의 에이전트가 답하지 못합니다";
   const REJECTED = `실시간 연결이 거부되었습니다 — 이 주소(${window.location.origin})가 서버의 APP_ORIGIN 과 다릅니다`;
+  const openclawBanner = () => screen.queryByText(/OpenClaw Gateway/);
 
   const setWire = (s: WireStatus) => act(() => useWireStatus.getState().setStatus(s));
 
   it("wire 상태별 배너 — reconnecting 은 status, protocol_mismatch·rejected 는 alert, 우리가 끊은 offline 은 없다", async () => {
-    const { queryClient } = renderWithAdapter(<Banners />, { gateway: "connected", bridge: "connected" });
+    const { queryClient } = renderWithAdapter(<Banners />, [gw()]);
     await waitFor(() => expect(queryClient.getQueryData(qk.adapter)).toBeDefined());
     setWire("connected");
     // 라이브 영역은 비어 있는 채로 먼저 있다 — 배너 없음
@@ -132,7 +195,7 @@ describe("Banners", () => {
   });
 
   it("rejected 배너는 박힌 개발 주소가 아니라 지금 연 주소를 보인다", async () => {
-    renderWithAdapter(<Banners />, { gateway: "connected", bridge: "connected" });
+    renderWithAdapter(<Banners />, [gw()]);
     vi.stubGlobal("location", { ...window.location, origin: "https://chat.example.com" });
     setWire("rejected");
     expect(screen.getByRole("alert")).toHaveTextContent(
@@ -143,7 +206,7 @@ describe("Banners", () => {
 
   it("「새로고침」은 페이지를 다시 불러온다", async () => {
     const reload = vi.fn();
-    renderWithAdapter(<Banners />, { gateway: "connected", bridge: "connected" });
+    renderWithAdapter(<Banners />, [gw()]);
     // jsdom 의 location.reload 는 다시 정의할 수 없어 location 을 통째로 바꾼다(afterEach 가 되돌린다)
     vi.stubGlobal("location", { ...window.location, reload });
     setWire("protocol_mismatch");
@@ -151,48 +214,62 @@ describe("Banners", () => {
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
-  it("Gateway ≠ connected 또는 플러그인 down 이면 OpenClaw 배너", async () => {
-    const { push } = renderWithAdapter(<Banners />, { gateway: "reconnecting", bridge: "connected" });
-    expect(await screen.findByText(OPENCLAW_DOWN)).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent(OPENCLAW_DOWN);
+  it("끊긴 Gateway 하나면 그 이름 — Gateway ≠ connected 또는 플러그인 down", async () => {
+    const { push } = renderWithAdapter(<Banners />, [gw({ gateway: "reconnecting" }), HOME()]);
+    expect(await screen.findByText(DOWN_OFFICE, { exact: false })).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(DOWN_OFFICE);
 
-    push({ gateway: "connected", bridge: "connected" });
-    await waitFor(() => expect(screen.queryByText(OPENCLAW_DOWN)).not.toBeInTheDocument());
+    push([gw(), HOME()]);
+    await waitFor(() => expect(openclawBanner()).not.toBeInTheDocument());
 
-    push({ gateway: "connected", bridge: "down" });
-    expect(await screen.findByText(OPENCLAW_DOWN)).toBeInTheDocument();
+    push([gw({ bridge: "down" }), HOME()]);
+    expect(await screen.findByText(DOWN_OFFICE, { exact: false })).toBeInTheDocument();
   });
 
-  it("Gateway 가 없거나 모두 꺼졌으면 OpenClaw 배너를 띄우지 않는다 — 모은 값이 down 이어도 끊긴 연결이 없다", async () => {
-    const { queryClient } = renderWithAdapter(<Banners />, { gateway: "down", bridge: "down" });
-    expect(await screen.findByText(OPENCLAW_DOWN)).toBeInTheDocument();
+  it("둘 이상 끊기면 「Gateway 2개」로 묶는다", async () => {
+    renderWithAdapter(<Banners />, [gw({ gateway: "down", bridge: "down" }), HOME({ bridge: "down" })]);
+    expect(await screen.findByText(DOWN_TWO, { exact: false })).toBeInTheDocument();
+    expect(screen.queryByText(/「사무실」/)).toBeNull();
+  });
 
-    const only = (gateways: AdapterStatusResponse["gateways"]) =>
-      act(() =>
-        queryClient.setQueryData<AdapterStatusResponse>(qk.adapter, (prev) => prev && { ...prev, gateways }),
-      );
-    only([]);
-    await waitFor(() => expect(screen.queryByText(OPENCLAW_DOWN)).not.toBeInTheDocument());
-    only([{ ...TEST_GATEWAY, enabled: false, gateway: "disabled", bridge: "down" }]);
-    await waitFor(() => expect(screen.queryByText(OPENCLAW_DOWN)).not.toBeInTheDocument());
-    only([{ ...TEST_GATEWAY, gateway: "down", bridge: "down" }]);
-    expect(await screen.findByText(OPENCLAW_DOWN)).toBeInTheDocument();
+  it("「연결 설정 보기」는 owner 에게만, 연결 페이지로", async () => {
+    const { queryClient } = renderWithAdapter(<Banners />, [gw({ gateway: "down" })]);
+    act(() => queryClient.setQueryData(qk.me, ME));
+    expect(await screen.findByRole("link", { name: "연결 설정 보기" })).toHaveAttribute(
+      "href",
+      "/settings/connection",
+    );
+    act(() => queryClient.setQueryData(qk.me, { ...ME, role: "member" }));
+    await waitFor(() => expect(screen.queryByRole("link", { name: "연결 설정 보기" })).toBeNull());
+    expect(screen.getByText(DOWN_OFFICE, { exact: false })).toBeInTheDocument();
+  });
+
+  it("Gateway 가 없거나 모두 꺼졌으면 OpenClaw 배너를 띄우지 않는다 — 꺼진 Gateway 는 끊김이 아니다", async () => {
+    const { push } = renderWithAdapter(<Banners />, [gw({ gateway: "down", bridge: "down" })]);
+    expect(await screen.findByText(DOWN_OFFICE, { exact: false })).toBeInTheDocument();
+
+    push([]);
+    await waitFor(() => expect(openclawBanner()).not.toBeInTheDocument());
+    push([gw({ enabled: false, gateway: "disabled", bridge: "down" })]);
+    await waitFor(() => expect(openclawBanner()).not.toBeInTheDocument());
+    push([gw({ enabled: false, gateway: "disabled", bridge: "down" }), HOME({ gateway: "down" })]);
+    expect(await screen.findByText(/「집」에 연결되지 않아/)).toBeInTheDocument();
   });
 
   it("wire 가 끊기면 OpenClaw 배너를 띄우지 않는다 — 마지막 값은 「모름」이고 끊김 배너가 사정을 알린다(점과 같은 규칙)", async () => {
-    const { push } = renderWithAdapter(<Banners />, { gateway: "down", bridge: "connected" });
-    expect(await screen.findByText(OPENCLAW_DOWN)).toBeInTheDocument();
+    const { push } = renderWithAdapter(<Banners />, [gw({ gateway: "down" })]);
+    expect(await screen.findByText(DOWN_OFFICE, { exact: false })).toBeInTheDocument();
 
     setWire("reconnecting");
-    expect(screen.queryByText(OPENCLAW_DOWN)).not.toBeInTheDocument();
+    expect(openclawBanner()).not.toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent(WIRE_RECONNECTING);
     // 끊긴 동안 들어온 값도 믿지 않는다
-    push({ gateway: "connected", bridge: "down" });
+    push([gw({ bridge: "down" })]);
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(WIRE_RECONNECTING));
-    expect(screen.queryByText(OPENCLAW_DOWN)).not.toBeInTheDocument();
+    expect(openclawBanner()).not.toBeInTheDocument();
 
     setWire("connected");
-    expect(await screen.findByText(OPENCLAW_DOWN)).toBeInTheDocument();
+    expect(await screen.findByText(DOWN_OFFICE, { exact: false })).toBeInTheDocument();
   });
 });
 

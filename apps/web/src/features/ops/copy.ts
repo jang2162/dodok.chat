@@ -9,6 +9,26 @@ const num = (v: Detail[string] | undefined): number | undefined => (typeof v ===
 
 /** 채널 id → 이름. 못 찾으면 undefined(캐시에 없거나 지운 채널) */
 export type ChannelNameOf = (channelId: string) => string | undefined;
+/** Gateway id → 지금 이름. 못 찾으면 undefined(지운 Gateway·목록을 아직 못 받음) */
+export type GatewayNameOf = (gatewayId: string) => string | undefined;
+
+/**
+ * Gateway 사건(key `gateway:<id>`·`gateway:<id>:<version>`, 멀티 Gateway 스펙 「운영」 절)의 Gateway 이름. 지금 이름을 key 의 id 로 먼저 찾는다 —
+ * 사건 detail 의 `gatewayName` 은 줄을 연 때의 이름이라 그 뒤 이름을 바꾸면 옛 이름이다. 못 찾으면(지운 Gateway) detail 의 이름
+ */
+function gatewayNameOf(e: OpsEvent, nameOf: GatewayNameOf | undefined): string | undefined {
+  const id = /^gateway:([^:]+)/.exec(e.key)?.[1];
+  return (id === undefined ? undefined : nameOf?.(id)) ?? str(e.detail.gatewayName);
+}
+
+/** Gateway 이름이 있을 때의 문구 — key 로도 detail 로도 이름을 못 찾는 줄은 TITLE 의 문구 그대로 */
+const NAMED: Partial<Record<OpsEventKind, (e: OpsEvent, name: string) => string>> = {
+  gateway_down: (_, n) => `Gateway 「${n}」 연결 끊김`,
+  plugin_down: (_, n) => `Gateway 「${n}」 플러그인 연결 끊김`,
+  gateway_version_changed: (e, n) =>
+    `Gateway 「${n}」 버전이 바뀜 (${str(e.detail.from) ?? "?"} → ${str(e.detail.to) ?? "?"})`,
+  gateway_version_untested: (e, n) => `Gateway 「${n}」 검증 안 된 버전 (${str(e.detail.version) ?? "?"})`,
+};
 
 /**
  * 런 한도 사건의 범위 — key 가 `workspace` 면 워크스페이스, `channel:<id>` 면 그 채널(이름을 찾으면 「#이름」).
@@ -58,12 +78,19 @@ export function formatDowntime(ms: number): string {
 
 /**
  * 사건 한 줄 = 고정 문구 + 끊긴 시간 + 「×n」. 끊김이 닫혔으면 실제 끊긴 시간(`detail.downMs`), 열려 있으면 「(지금도)」.
- * `nameOf` 는 런 한도 줄의 채널 이름을 찾는다
+ * `nameOf` 는 런 한도 줄의 채널 이름을, `gatewayOf` 는 Gateway 사건의 지금 Gateway 이름을 찾는다
  */
-export function eventText(e: OpsEvent, nameOf?: ChannelNameOf): string {
+export function eventText(e: OpsEvent, nameOf?: ChannelNameOf, gatewayOf?: GatewayNameOf): string {
   // 응답은 파싱하지 않으므로 이 웹보다 새 서버가 늘린 kind 가 온다(PWA 는 새 버전을 토스트로만 받는다) — 그 줄만 일반 문구
   const title = TITLE[e.kind] as ((e: OpsEvent, nameOf: ChannelNameOf | undefined) => string) | undefined;
-  let text = title ? title(e, nameOf) : `알 수 없는 사건 (${e.kind})`;
+  const named = NAMED[e.kind];
+  const gateway = named ? gatewayNameOf(e, gatewayOf) : undefined;
+  let text =
+    named && gateway !== undefined
+      ? named(e, gateway)
+      : title
+        ? title(e, nameOf)
+        : `알 수 없는 사건 (${e.kind})`;
   if (DOWN.has(e.kind)) {
     const downMs = num(e.detail.downMs);
     text +=

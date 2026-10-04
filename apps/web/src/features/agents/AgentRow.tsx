@@ -7,18 +7,23 @@ import { Label } from "@/ui/label";
 import { Switch } from "@/ui/switch";
 import { Textarea } from "@/ui/textarea";
 import { formError } from "@/api/formErrors";
+import { useIsOwner } from "@/api/queries";
+import { MoveGatewayDialog } from "./MoveGatewayDialog";
 import { usePatchAgent } from "./mutations";
 import { providerIdLabel } from "./providerLabels";
 
 const PROMPT_MAX = 20_000;
 
 /**
- * 목록 한 줄: 이름·핸들·제공자별 id·사용 토글·기본 프롬프트. 토글은 낙관적 갱신 없이 요청 중에만 잠근다(실패는 전역 토스트).
- * `readOnly`(admin 미만 — 팀 스펙 2장)면 토글을 잠그고 프롬프트는 미리보기만
+ * 목록 한 줄: 이름·핸들(OpenClaw 면 「@핸들 · Gateway 이름」)·제공자별 id·사용 토글·기본 프롬프트. 토글은 낙관적 갱신 없이 요청 중에만
+ * 잠근다(실패는 전역 토스트). `readOnly`(admin 미만 — 팀 스펙 2장)면 토글을 잠그고 프롬프트는 미리보기만.
+ * OpenClaw 에이전트의 「Gateway 옮기기」는 owner 에게만(멀티 Gateway 스펙 「권한」 절) — 연결이 빈 줄뿐 아니라 어느 줄에서나 옮길 수 있다
  */
 export function AgentRow({ agent, readOnly = false }: { agent: Agent; readOnly?: boolean }) {
   const toggle = usePatchAgent();
+  const owner = useIsOwner();
   const handle = `@${agent.handle}`;
+  const openclaw = agent.provider === "openclaw";
   return (
     <li className="flex flex-col gap-3 rounded-lg border bg-card p-4">
       <div className="flex items-start gap-3">
@@ -30,13 +35,22 @@ export function AgentRow({ agent, readOnly = false }: { agent: Agent; readOnly?:
         <div className={cn("min-w-0 flex-1", !agent.enabled && "opacity-60")}>
           <div className="flex flex-wrap items-baseline gap-x-2">
             <span className="font-medium">{agent.name}</span>
-            <span className="text-sm text-muted-foreground">{handle}</span>
+            <span className="text-sm text-muted-foreground">
+              <span>{handle}</span>
+              {openclaw && agent.gateway && <> · {agent.gateway.name}</>}
+            </span>
           </div>
           <p className="text-xs text-muted-foreground">
             {providerIdLabel(agent.provider)} <code className="font-mono">{agent.providerAgentId}</code>
           </p>
           {agent.provider === "claude" && <RunnerLine runner={agent.runner} />}
+          {openclaw && agent.gateway === null && (
+            <p className="text-xs font-medium text-destructive">
+              Gateway 가 삭제됨 — 다른 Gateway 로 옮기거나 지우세요
+            </p>
+          )}
         </div>
+        {openclaw && owner && <MoveGatewayDialog agent={agent} />}
         <Switch
           aria-label={`${handle} 사용`}
           checked={agent.enabled}

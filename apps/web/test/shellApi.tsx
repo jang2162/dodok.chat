@@ -22,8 +22,6 @@ export const TEST_GATEWAY: OpenClawGatewayStatus = {
 export const ADAPTER_OK: AdapterStatusResponse = {
   provider: "openclaw",
   gateways: [TEST_GATEWAY],
-  gateway: "connected",
-  bridge: "connected",
   capabilities: { sessionReset: true, agentsList: true, configSet: true },
 };
 
@@ -32,9 +30,11 @@ export const ADAPTER_OK: AdapterStatusResponse = {
  * gateway·bridge 다(`{ ...ADAPTER_OK, gateway: "down" }` 이 그 Gateway 가 끊긴 서버가 된다)
  */
 export function adapterStatusBody(
-  openclaw: Pick<AdapterStatusResponse, "gateway" | "bridge"> & { capabilities: AdapterCapabilities },
+  openclaw: Partial<Pick<OpenClawGatewayStatus, "gateway" | "bridge">> & {
+    capabilities: AdapterCapabilities;
+  },
 ): AdapterStatusList {
-  const { capabilities, gateway, bridge } = openclaw;
+  const { capabilities, gateway = "connected", bridge = "connected" } = openclaw;
   return {
     statuses: [{ provider: "openclaw", gateways: [{ ...TEST_GATEWAY, gateway, bridge }] }],
     capabilities: { openclaw: capabilities },

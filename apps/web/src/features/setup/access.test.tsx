@@ -12,7 +12,7 @@ afterEach(() => {
 });
 
 /** 셸 기본 응답 + me·어댑터 상태·setup API(owner 가 아니면 403 — 서버와 같이) */
-function stubShell(me: unknown, adapter = ADAPTER_OK) {
+function stubShell(me: unknown, adapter: Parameters<typeof adapterStatusBody>[0] = ADAPTER_OK) {
   const setupCalls: string[] = [];
   const owner = (me as { role?: string }).role === "owner";
   vi.stubGlobal(
@@ -64,7 +64,7 @@ describe("진입점과 권한 — owner 에게만", () => {
     stubShell(OWNER, { ...ADAPTER_OK, gateway: "down" });
     useWireStatus.getState().setStatus("connected");
     const { router } = renderRoute("/agents");
-    const banner = await screen.findByText(/OpenClaw 에 연결되지 않아/);
+    const banner = await screen.findByText(/OpenClaw Gateway 「사무실」에 연결되지 않아/);
     const status = banner.closest("[role=status]") as HTMLElement;
     const link = await within(status).findByRole("link", { name: "연결 설정 보기" });
     await userEvent.click(link);
@@ -75,7 +75,7 @@ describe("진입점과 권한 — owner 에게만", () => {
     stubShell({ ...ME, role: "member" }, { ...ADAPTER_OK, gateway: "down" });
     useWireStatus.getState().setStatus("connected");
     renderRoute("/agents");
-    const banner = await screen.findByText(/OpenClaw 에 연결되지 않아/);
+    const banner = await screen.findByText(/OpenClaw Gateway 「사무실」에 연결되지 않아/);
     const status = banner.closest("[role=status]") as HTMLElement;
     expect(within(status).queryByRole("link")).not.toBeInTheDocument();
   });

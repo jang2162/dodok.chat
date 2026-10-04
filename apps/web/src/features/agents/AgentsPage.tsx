@@ -14,7 +14,6 @@ import { DiscoverDialog } from "./DiscoverDialog";
 export function AgentsPage() {
   const agents = useAgents();
   const canManage = useCanManage();
-  const registeredIds = new Set((agents.data ?? []).map((a) => a.providerAgentId));
 
   let content;
   if (agents.isPending) {
@@ -68,7 +67,7 @@ export function AgentsPage() {
             OpenClaw·Claude 러너 에이전트를 등록하고 사용 여부·기본 프롬프트를 정합니다.
           </p>
         </div>
-        {canManage && <DiscoverDialog registeredIds={registeredIds} disabled={!agents.data} />}
+        {canManage && <DiscoverDialog agents={agents.data ?? []} disabled={!agents.data} />}
       </header>
       {!canManage && <p className="-mt-3 text-xs text-muted-foreground">{LOCKED_NOTICE}</p>}
       {content}

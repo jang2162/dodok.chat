@@ -71,6 +71,33 @@ describe("멘션", () => {
     expect(ref.current?.onKeyDown(new KeyboardEvent("keydown", { key: "a" }))).toBe(false);
   });
 
+  it("OpenClaw 에이전트 줄에는 Gateway 이름을 작게 — 두 Gateway 의 main 이 갈린다", () => {
+    const items: MentionCandidate[] = [
+      {
+        id: "a:1",
+        label: "main-office",
+        name: "Main",
+        kind: "agent",
+        aliases: [],
+        enabled: true,
+        gateway: "사무실",
+      },
+      {
+        id: "a:2",
+        label: "main-home",
+        name: "Main",
+        kind: "agent",
+        aliases: [],
+        enabled: true,
+        gateway: "집",
+      },
+    ];
+    render(<MentionList items={items} command={vi.fn()} />);
+    const options = screen.getAllByRole("option");
+    expect(options.map((o) => o.textContent)).toEqual(["@main-officeMain사무실AI", "@main-homeMain집AI"]);
+    expect(within(options[1] as HTMLElement).getByText("집")).toHaveClass("text-xs");
+  });
+
   it("@ 로 연 후보 목록에서 Enter 는 전송이 아니라 선택 — 닫힌 뒤 Enter 가 전송", async () => {
     fake.onAck("message.send", confirmed);
     const { box, editor } = renderComposer();

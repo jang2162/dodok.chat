@@ -16,7 +16,7 @@ type MentionListProps = {
 };
 
 /**
- * @ 후보 팝업(스펙 5.1): 핸들·이름·「AI」 배지, 꺼진 에이전트는 흐리게 + 「꺼짐」(고를 수 있으므로 aria-disabled 는 달지 않는다).
+ * @ 후보 팝업(스펙 5.1): 핸들·이름·(OpenClaw 에이전트면 Gateway 이름을 작게)·「AI」 배지, 꺼진 에이전트는 흐리게 + 「꺼짐」(고를 수 있으므로 aria-disabled 는 달지 않는다).
  * ↑↓ 이동, Enter·Tab 선택(Esc 는 suggestion 플러그인이 닫는다). 후보가 없으면 그리지 않는다.
  * 목록·줄에 id 를 두고 지금 줄을 `onActive` 로 알린다 — 편집기(텍스트 상자)가 그 id 를 가리켜야 스크린 리더가 이동을 읽는다
  */
@@ -73,6 +73,9 @@ export function MentionList({ items, command, onActive, ref }: MentionListProps)
         >
           <span className="font-medium">@{c.label}</span>
           <span className="truncate text-muted-foreground">{c.name}</span>
+          {c.gateway !== undefined && (
+            <span className="shrink-0 text-xs text-muted-foreground">{c.gateway}</span>
+          )}
           {c.kind === "agent" && (
             <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
               AI

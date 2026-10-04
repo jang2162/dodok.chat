@@ -11,6 +11,8 @@ export type MentionCandidate = {
   aliases: string[];
   /** 꺼진 에이전트는 흐리게 + 「꺼짐」(부를 수는 있다 — 서버가 알린다) */
   enabled: boolean;
+  /** OpenClaw 에이전트가 속한 Gateway 이름 — 두 Gateway 의 같은 id 를 가른다(멀티 Gateway 스펙 「웹」 절). 연결이 비었으면 없다 */
+  gateway?: string;
 };
 
 /** 후보 목록에 보이는 최대 수 */
@@ -38,6 +40,7 @@ export function mentionCandidates(
             kind: "agent",
             aliases: m.aliases,
             enabled: a.enabled,
+            ...(a.gateway ? { gateway: a.gateway.name } : {}),
           },
         ]
       : [];
