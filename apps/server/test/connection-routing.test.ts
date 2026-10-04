@@ -5,7 +5,7 @@ import pino from "pino";
 import { v7 as uuid } from "uuid";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAdapterRegistry } from "../src/adapters/registry";
-import { agents, approvals, gateways, messages, runs } from "../src/db/schema.sqlite";
+import { agents, approvals, gateways, messages, runnerTokens, runs } from "../src/db/schema.sqlite";
 import { addMember, createChannel } from "../src/modules/channels/service";
 import { createUserMessage } from "../src/modules/messages/service";
 import { getRun } from "../src/modules/runs/store";
@@ -105,6 +105,20 @@ function setup() {
     ...over,
   });
   const flush = () => vi.advanceTimersByTimeAsync(0);
+  // 러너 재접속의 claimUnbound 와 같은 상태 — 묶임 없던 러너 에이전트가 그 토큰에 묶인다
+  const bindCoder = (tokenId: string) => {
+    db.insert(runnerTokens)
+      .values({
+        id: tokenId,
+        workspaceId,
+        label: tokenId,
+        hash: tokenId.padEnd(64, "0"),
+        prefix: "AAAAAA",
+        createdAt: now,
+      })
+      .run();
+    db.update(agents).set({ runnerTokenId: tokenId }).where(eq(agents.id, coder)).run();
+  };
   return {
     db,
     openclaw,
@@ -121,6 +135,7 @@ function setup() {
     outbound,
     approval,
     flush,
+    bindCoder,
   };
 }
 
@@ -322,5 +337,60 @@ describe("연결 단위 대조", () => {
       .where(eq(messages.id, messageId ?? ""))
       .get();
     expect(stored).toMatchObject({ authorId: t.coder, runId: run.id });
+  });
+  it("기다리던 런이 그 사이 묶인 러너로 나가면 send 결과의 연결이 런에 남고 그 런의 승인이 그 런에 붙는다", async () => {
+    t.claude.script((input, opts) => ({
+      admission: "dispatch",
+      providerRunId: input.runId,
+      connectionId: opts.connectionId ?? "tok-laptop",
+    }));
+    const a = await t.mention(t.coder);
+    const b = await t.mention(t.coder);
+    await t.flush();
+    expect(t.claude.calls.send.map((s) => s.runId)).toEqual([a.id]);
+    t.bindCoder("tok-laptop");
+    t.claude.emit({
+      kind: "run_signal",
+      runId: a.id,
+      connectionId: "tok-laptop",
+      signal: { kind: "gateway_error", code: "X", message: "x" },
+    });
+    await t.flush();
+    expect(t.claude.calls.connections.send).toEqual([null, "tok-laptop"]);
+    expect(t.connectionOf(b.id)).toBe("tok-laptop");
+    t.claude.emitApproval(
+      t.approval({
+        providerApprovalId: "runner:b",
+        sessionKey: `agent:coder:dodok:channel:${t.channelId}`,
+        providerAgentId: "coder",
+      }),
+      "tok-laptop",
+    );
+    await t.flush();
+    const row = t.db.select().from(approvals).where(eq(approvals.providerApprovalId, "runner:b")).get();
+    expect(row).toMatchObject({ agentId: t.coder, runId: b.id, connectionId: "tok-laptop" });
+    expect(getRun(t.db, b.id)?.status).toBe("awaiting_approval");
+  });
+
+  it("묶임 없는 러너 에이전트의 승인·런 없는 정본은 어느 러너 토큰 연결로 와도 그 에이전트에 붙는다", async () => {
+    const coderKey = `agent:coder:dodok:channel:${t.channelId}`;
+    t.claude.emitApproval(
+      t.approval({ providerApprovalId: "runner:x", sessionKey: coderKey, providerAgentId: "coder" }),
+      "tok-other",
+    );
+    await t.flush();
+    const row = t.db.select().from(approvals).where(eq(approvals.providerApprovalId, "runner:x")).get();
+    expect(row).toMatchObject({ agentId: t.coder, connectionId: "tok-other" });
+    const { messageId } = await t.services.orchestrator.onCanonical(
+      t.outbound({ agentId: "coder", sessionKey: coderKey }),
+      "claude",
+      "tok-other",
+    );
+    const stored = t.db
+      .select()
+      .from(messages)
+      .where(eq(messages.id, messageId ?? ""))
+      .get();
+    expect(stored?.authorId).toBe(t.coder);
   });
 });

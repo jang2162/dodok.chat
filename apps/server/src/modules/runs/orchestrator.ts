@@ -774,9 +774,10 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         applySignal(runId, { kind: "gateway_error", code: `DROPPED:${reason}`, message: reason });
         return;
       }
-      // 실제로 맡은 연결(판정 PG4) — 묶임 없는 러너 에이전트는 여기서 처음 정해진다. 제공자 런 id 는 연결 안에서만 유일하므로 한 번에 쓴다
+      // 실제로 맡은 연결(판정 PG4) — 묶임 없는 러너 에이전트는 여기서 처음 정해진다. 제공자 런 id 는 연결 안에서만 유일하므로 한 번에 쓴다.
+      // 보낸 연결(저장값 ?? 에이전트의 지금 연결)이 아니라 저장값과 견준다 — 기다리는 사이 에이전트가 묶이면 둘이 같아도 저장값은 비어 있다
       const patch: store.RunRowPatch = {};
-      if (result.connectionId !== undefined && result.connectionId !== connectionId)
+      if (result.connectionId !== undefined && result.connectionId !== store.getRunConnectionId(db, runId))
         patch.connectionId = result.connectionId;
       if (result.providerRunId !== undefined && current.providerRunId === undefined)
         patch.providerRunId = result.providerRunId;
