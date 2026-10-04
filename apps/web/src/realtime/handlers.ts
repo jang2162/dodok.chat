@@ -218,7 +218,12 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
      */
     "setup.status": ({ status }) => {
       qc.setQueryData(qk.setupStatus, status);
-      void qc.invalidateQueries({ queryKey: qk.bridgeTokens });
+      // 상태에 남은 Gateway 의 토큰 목록만 — 지워진 Gateway 의 카드가 아직 붙어 있는 틈에 다시 부르면 404 가 전역 토스트로 뜬다
+      const live = new Set(status.gateways.map((g) => g.id));
+      void qc.invalidateQueries({
+        queryKey: qk.bridgeTokens,
+        predicate: (q) => live.has(String(q.queryKey[qk.bridgeTokens.length])),
+      });
       void qc.invalidateQueries({ queryKey: qk.runnerTokens });
       // 러너 토큰 수는 발급·폐기 때 wire adapter.status 로 바로 안 나갈 수 있다 — 상태가 바뀌면 러너 줄도 다시 받는다
       void qc.invalidateQueries({ queryKey: qk.runnerAdapter });

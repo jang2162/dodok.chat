@@ -43,7 +43,7 @@ describe("진입점과 권한 — owner 에게만", () => {
     await userEvent.click(link);
     await waitFor(() => expect(router.state.location.pathname).toBe("/settings/connection"));
     expect(await screen.findByRole("heading", { level: 1, name: "연결" })).toBeInTheDocument();
-    expect(await screen.findByRole("region", { name: "Gateway" })).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "OpenClaw Gateway" })).toBeInTheDocument();
   });
 
   it("owner 가 아니면 사이드바에 「연결」이 없다", async () => {

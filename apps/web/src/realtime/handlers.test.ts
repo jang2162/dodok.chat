@@ -757,13 +757,16 @@ describe("캐시 패치", () => {
     }
   });
 
-  it("setup.status: [setup, status] 를 통째로 바꾸고 토큰 목록은 다시 받게 낡은 것으로 둔다", () => {
+  it("setup.status: [setup, status] 를 통째로 바꾸고 남은 Gateway 의 토큰 목록만 다시 받게 낡은 것으로 둔다", () => {
     const { fake, queryClient } = setup();
-    queryClient.setQueryData(qk.bridgeTokens, []);
-    const status = { gateways: [] } as unknown as SetupStatus;
+    queryClient.setQueryData([...qk.bridgeTokens, "gw-live"], []);
+    queryClient.setQueryData([...qk.bridgeTokens, "gw-gone"], []);
+    const status = { gateways: [{ id: "gw-live" }] } as unknown as SetupStatus;
     fake.serverEmit("setup.status", { status });
     expect(queryClient.getQueryData(qk.setupStatus)).toBe(status);
-    expect(queryClient.getQueryState(qk.bridgeTokens)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState([...qk.bridgeTokens, "gw-live"])?.isInvalidated).toBe(true);
+    // 지워진 Gateway 의 목록을 다시 부르면 404 — 그대로 둔다(쓰는 카드가 사라지면 gcTime 뒤 걷힌다)
+    expect(queryClient.getQueryState([...qk.bridgeTokens, "gw-gone"])?.isInvalidated).toBe(false);
   });
 
   it("ops.event: [ops, status] 의 unacked 를 곧바로 덮고 상태·사건 목록은 다시 받게 낡은 것으로 둔다 — 상태가 아직 없으면 만들지 않는다", () => {

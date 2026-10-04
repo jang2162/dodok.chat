@@ -50,10 +50,11 @@ describe("서버·Gateway", () => {
     stubSetupServer({ status: statusOf({ server: { version: "1.2.3" } }) });
     renderConnection();
     expect(await within(await region("서버")).findByText(/1\.2\.3/)).toBeInTheDocument();
-    const gw = await region("Gateway");
+    const gw = await region("사무실");
     expect(within(gw).getByText("연결됨")).toBeInTheDocument();
     expect(within(gw).getByText("gateway.example.com")).toBeInTheDocument();
-    expect(within(gw).getByText(/2026\.9\.5/)).toBeInTheDocument();
+    // 카드 안의 플러그인 블록도 Gateway 버전을 보이므로 상태 줄의 「버전」 칸으로 좁힌다
+    expect(within(gw).getByText("버전").parentElement).toHaveTextContent("2026.9.5");
     expect(screen.getByRole("heading", { level: 1, name: "연결" })).toBeInTheDocument();
   });
 
@@ -62,7 +63,7 @@ describe("서버·Gateway", () => {
       status: statusOf({ gateway: { version: "2026.9.5", pinned: "2026.9.4", drift: true } }),
     });
     renderConnection();
-    const gw = await region("Gateway");
+    const gw = await region("사무실");
     expect(await within(gw).findByText(/저장소가 검증한 버전\(2026\.9\.4\)과 다릅니다/)).toBeInTheDocument();
   });
 
@@ -71,7 +72,7 @@ describe("서버·Gateway", () => {
       status: statusOf({ gateway: { version: "2026.9.4", pinned: "2026.9.4", drift: false } }),
     });
     renderConnection();
-    const gw = await region("Gateway");
+    const gw = await region("사무실");
     await within(gw).findByText("연결됨");
     expect(gw).not.toHaveTextContent("저장소가 검증한");
   });
@@ -79,7 +80,7 @@ describe("서버·Gateway", () => {
   it("down 이면 Gateway 주소·토큰과 서버 로그를 보라고 안내한다 — .env 는 더 말하지 않는다", async () => {
     stubSetupServer({ status: statusOf({ gateway: { state: "down", version: null } }) });
     renderConnection();
-    const gw = await region("Gateway");
+    const gw = await region("사무실");
     expect(await within(gw).findByText("연결 안 됨")).toBeInTheDocument();
     expect(gw).toHaveTextContent("Gateway 주소·토큰과 서버 로그를 확인하세요.");
     expect(gw).not.toHaveTextContent(".env");
@@ -89,7 +90,8 @@ describe("서버·Gateway", () => {
   it("Gateway 가 없으면 빈 상태 한 줄, 브리지 토큰 블록은 없다(Review Focus 5)", async () => {
     const server = stubSetupServer({ status: statusOf({ noGateway: true, plugin: null }) });
     renderConnection();
-    const gw = await region("Gateway");
+    const gw = await region("OpenClaw Gateway");
+    expect(within(gw).getByRole("button", { name: "Gateway 추가" })).toBeInTheDocument();
     expect(
       await within(gw).findByText(
         "OpenClaw Gateway 를 추가하면 그 안의 에이전트를 채널에 데려올 수 있습니다",
@@ -99,10 +101,10 @@ describe("서버·Gateway", () => {
     expect(server.calls.filter((c) => c.url.includes("bridge-tokens"))).toEqual([]);
   });
 
-  it("꺼 둔 Gateway 는 「꺼짐」, 첫 Gateway 의 이름을 보인다", async () => {
+  it("꺼 둔 Gateway 는 「꺼짐」, 카드 제목이 Gateway 이름이다", async () => {
     stubSetupServer({ status: statusOf({ gateway: { state: "disabled", version: null } }) });
     renderConnection();
-    const gw = await region("Gateway");
+    const gw = await region("사무실");
     expect(await within(gw).findByText("꺼짐")).toBeInTheDocument();
     expect(gw).toHaveTextContent("사무실");
   });
@@ -112,10 +114,8 @@ describe("서버·Gateway", () => {
     async (state) => {
       stubSetupServer({ status: statusOf({ gateway: { state } }) });
       renderConnection();
-      const gw = await region("Gateway");
-      expect(
-        await within(gw).findByText(state === "connected" ? "연결됨" : "다시 연결하는 중"),
-      ).toBeInTheDocument();
+      const gw = await region("사무실");
+      expect(await within(gw).findByText(state === "connected" ? "연결됨" : "재연결 중")).toBeInTheDocument();
       expect(gw).not.toHaveTextContent("서버 로그");
     },
   );
@@ -128,8 +128,9 @@ describe("서버·Gateway", () => {
     const writeText = vi.fn(async () => {});
     vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
     renderConnection();
-    const gw = await region("Gateway");
+    const gw = await region("사무실");
     expect(await within(gw).findByText("openclaw devices approve req-123")).toBeInTheDocument();
+    expect(within(gw).getByText("페어링 대기")).toBeInTheDocument();
     expect(gw).toHaveTextContent("req-123");
     expect(within(gw).queryByText(/5분 넘게/)).not.toBeInTheDocument();
     await userEvent.click(within(gw).getByRole("button", { name: "승인 명령 복사" }));
@@ -143,7 +144,7 @@ describe("서버·Gateway", () => {
       status: statusOf({ gateway: { state: "reconnecting", pairing: { requestId: "req-123", since } } }),
     });
     renderConnection();
-    const gw = await region("Gateway");
+    const gw = await region("사무실");
     expect(await within(gw).findByText(/5분 넘게 승인을 기다리고 있습니다/)).toBeInTheDocument();
   });
 
@@ -154,7 +155,7 @@ describe("서버·Gateway", () => {
       }),
     });
     renderConnection();
-    const gw = await region("Gateway");
+    const gw = await region("사무실");
     expect(await within(gw).findByText(/요청 id 를 받지 못했습니다/)).toBeInTheDocument();
     expect(within(gw).getByText("openclaw devices list")).toBeInTheDocument();
     expect(gw).not.toHaveTextContent("devices approve");
@@ -171,7 +172,7 @@ describe("서버·Gateway", () => {
       clipboard: { writeText: vi.fn(async () => Promise.reject(new Error("denied"))) },
     });
     renderConnection();
-    const gw = await region("Gateway");
+    const gw = await region("사무실");
     await userEvent.click(await within(gw).findByRole("button", { name: "승인 명령 복사" }));
     expect(await within(gw).findByText(/직접 선택해 복사하세요/)).toBeInTheDocument();
   });
@@ -183,17 +184,21 @@ describe("플러그인", () => {
     renderConnection();
     const pl = await region("플러그인");
     expect(await within(pl).findByText("서버와 같은 빌드입니다")).toBeInTheDocument();
+    expect(pl).toHaveTextContent("접속됨");
     expect(pl).toHaveTextContent("2026.9.4");
     expect(pl).toHaveTextContent("2026.9.5");
-    expect(pl).toHaveTextContent(SHA_FILE);
-    expect(within(pl).getByRole("button", { name: "플러그인 받기" })).toBeInTheDocument();
+    // 받기·설치 명령은 Gateway 카드가 아니라 OpenClaw 블록 머리에 한 번(멀티 Gateway 스펙 결정 10)
+    expect(pl).not.toHaveTextContent(SHA_FILE);
+    const head = await region("플러그인 받기");
+    expect(head).toHaveTextContent(SHA_FILE);
+    expect(within(head).getByRole("button", { name: "플러그인 받기" })).toBeInTheDocument();
     // 받은 파일 이름·번들 sha256(파일 sha 가 아니다)을 넣은 deploy.md [B] 줄들 — 대조는 아래 테스트
-    const cmd = within(pl).getByTestId("plugin-install-commands").textContent ?? "";
+    const cmd = within(head).getByTestId("plugin-install-commands").textContent ?? "";
     expect(cmd).toBe(installCommands("dodok-openclaw-plugin-ffffffffffff.tgz", SHA_A));
     expect(cmd).toContain("openclaw plugins install /tmp/dodok-openclaw-plugin-ffffffffffff.tgz ");
     expect(cmd).not.toContain(SHA_FILE);
     // 명령은 줄 구조를 지키고 넘치는 폭은 제 상자 안에서 스크롤한다(줄을 바꾸면 한 명령이 두 줄로 읽힌다)
-    const block = within(pl).getByTestId("plugin-install-commands");
+    const block = within(head).getByTestId("plugin-install-commands");
     expect(block).toHaveClass("whitespace-pre", "overflow-x-auto");
     expect(block.parentElement).toHaveClass("min-w-0");
   });
@@ -249,9 +254,12 @@ describe("플러그인", () => {
   it("서버에 플러그인 파일이 없으면 받기 대신 만드는 법", async () => {
     stubSetupServer({ status: statusOf({ pluginFile: { available: false }, pluginMatches: null }) });
     renderConnection();
+    const head = await region("플러그인 받기");
+    expect(
+      await within(head).findByText("pnpm -F @dodok/openclaw-plugin run pack:plugin"),
+    ).toBeInTheDocument();
+    expect(within(head).queryByRole("button", { name: "플러그인 받기" })).not.toBeInTheDocument();
     const pl = await region("플러그인");
-    expect(await within(pl).findByText("pnpm -F @dodok/openclaw-plugin run pack:plugin")).toBeInTheDocument();
-    expect(within(pl).queryByRole("button", { name: "플러그인 받기" })).not.toBeInTheDocument();
     // 번들 sha 를 보낸 플러그인이어도 서버 쪽을 모르면 「새로 받아」라고 하지 않는다
     expect(within(pl).queryByText(/새로 받아 설치하세요/)).not.toBeInTheDocument();
   });
@@ -266,8 +274,8 @@ describe("플러그인", () => {
       clicks.push(`${this.download}|${this.getAttribute("href")}`);
     });
     renderConnection();
-    const pl = await region("플러그인");
-    await userEvent.click(await within(pl).findByRole("button", { name: "플러그인 받기" }));
+    const head = await region("플러그인 받기");
+    await userEvent.click(await within(head).findByRole("button", { name: "플러그인 받기" }));
     await waitFor(() => expect(clicks).toEqual(["dodok-openclaw-plugin-ffffffffffff.tgz|blob:plugin"]));
     expect(server.count("GET", "/api/v1/setup/plugin.tgz")).toBe(1);
     await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith("blob:plugin"));
@@ -277,7 +285,7 @@ describe("플러그인", () => {
     let reply = () => json(404, { code: "NOT_FOUND", message: "PLUGIN_FILE_MISSING" });
     stubSetupServer({ plugin: () => reply() });
     renderConnection();
-    const pl = await region("플러그인");
+    const pl = await region("플러그인 받기");
     const button = await within(pl).findByRole("button", { name: "플러그인 받기" });
     await userEvent.click(button);
     expect(await within(pl).findByRole("alert")).toHaveTextContent(

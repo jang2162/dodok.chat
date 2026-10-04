@@ -1,4 +1,11 @@
-import { ApiError } from "@dodok/shared";
+import {
+  ApiError,
+  type CreateGatewayBody,
+  type DeleteGatewayResult,
+  type GatewaySummary,
+  type SetupStatus,
+  type UpdateGatewayBody,
+} from "@dodok/shared";
 import { type QueryKey, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ApiRequestError, NetworkError, api } from "@/api/http";
 import { qk } from "@/api/queries";
@@ -29,6 +36,52 @@ export function useRevokeBridgeToken(gatewayId: string) {
         qc.invalidateQueries({ queryKey: qk.bridgeTokens }),
         qc.invalidateQueries({ queryKey: qk.setupStatus }),
       ]),
+  });
+}
+
+/** Gateway 를 바꾼 뒤 — 서버가 어댑터에 곧바로 반영하므로 연결 상태와 목록을 다시 받는다 */
+const gatewaysChanged = (qc: ReturnType<typeof useQueryClient>) =>
+  Promise.all([
+    qc.invalidateQueries({ queryKey: qk.setupStatus }),
+    qc.invalidateQueries({ queryKey: qk.gateways }),
+  ]);
+
+/** Gateway 추가(멀티 Gateway 스펙 6.2) — 칸 오류(VALIDATION·CONFLICT)는 폼이 그린다 */
+export function useCreateGateway() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CreateGatewayBody) => api<GatewaySummary>("POST", "/gateways", body),
+    onSuccess: () => gatewaysChanged(qc),
+  });
+}
+
+/** Gateway 수정·끄기·켜기 — 본문에 실은 칸만 바뀐다(빈 토큰은 싣지 않는다) */
+export function useUpdateGateway(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: UpdateGatewayBody) => api<GatewaySummary>("PATCH", `/gateways/${id}`, body),
+    onSuccess: () => gatewaysChanged(qc),
+  });
+}
+
+/**
+ * Gateway 삭제 — 서버가 그 브리지 토큰을 지우고 에이전트의 연결을 비운다. 카드는 응답을 받자마자 캐시에서 걷는다: 다시 받기를
+ * 기다리는 동안 카드가 남아 있으면 그 카드의 토큰 목록이 지워진 Gateway 를 다시 불러 404 가 전역 토스트로 뜬다. 같은 까닭으로
+ * 토큰 목록은 무효화하지도 버리지도(removeQueries) 않는다 — 버리면 아직 붙은 관찰자가 새로 만들어 다시 부른다. 쓰는 곳이 사라진
+ * 캐시는 gcTime 뒤에 걷힌다. 에이전트 목록(Gateway 이름·「Gateway 가 삭제됨」)은 다시 받는다.
+ * 카드가 먼저 사라지므로 부르는 쪽은 `mutate` 의 콜백이 아니라 `mutateAsync` 로 결과를 받는다(언마운트된 관찰자의 콜백은 불리지 않는다)
+ */
+export function useDeleteGateway(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api<DeleteGatewayResult>("DELETE", `/gateways/${id}`),
+    onSuccess: () => {
+      qc.setQueryData<SetupStatus>(
+        qk.setupStatus,
+        (s) => s && { ...s, gateways: s.gateways.filter((g) => g.id !== id) },
+      );
+      return Promise.all([gatewaysChanged(qc), qc.invalidateQueries({ queryKey: qk.agents })]);
+    },
   });
 }
 
