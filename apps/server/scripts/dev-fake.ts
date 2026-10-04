@@ -74,7 +74,6 @@ import {
   type ScenarioApproval,
   type ScenarioScript,
 } from "../test/fakes/scenario";
-import { waitForAdapterConnected } from "../test/helpers/live-app";
 import { makePng, PDF_BYTES } from "../test/helpers/png";
 
 const DEFAULT_APP_ORIGIN = "http://localhost:5173";
@@ -178,6 +177,8 @@ export type PluginTokenResult = { ok: true } | { ok: false; reason: string };
 const DEV_FAKE_GATEWAY_BACKOFF = { initialMs: 250, maxMs: 1_000 };
 /** 400 응답 문구에 싣는 고를 수 있는 gatewayId */
 const GATEWAY_IDS_USAGE = DEV_FAKE_GATEWAYS.map((g) => `"${g.id}"`).join(" | ");
+/** 시작 때 고정 짝이 붙기를 기다리는 상한 */
+const FAKE_PAIRS_TIMEOUT_MS = 5_000;
 /** gateway 훅이 어댑터 status 가 바뀌기를 기다리는 상한 */
 const GATEWAY_HOOK_TIMEOUT_MS = 10_000;
 /** 종료 표지 자리 — 같은 data/ 를 쓰는 운영 서버(`pnpm -F @dodok/server dev`)의 run-state.json 과 섞이지 않게 따로 둔다 */
@@ -892,6 +893,40 @@ function waitForGateway(
   });
 }
 
+/**
+ * 가짜 플러그인이 붙은 고정 짝(사무실·집)이 gateway·bridge 모두 connected 가 될 때까지 기다린다. 사람이 더한 Gateway 는 보지
+ * 않는다 — `--keep` 으로 이어받은 그 행은 지난 시작의 셋째 가짜 주소처럼 이제 닿지 않거나 플러그인이 없어, 기다리면 시작이 죽는다.
+ * 플러그인이 못 붙은 짝(사람이 끈 고정 Gateway·폐기한 고정 토큰)도 부르는 쪽이 뺀다
+ */
+function waitForFakePairs(
+  app: App,
+  ids: readonly string[],
+  timeoutMs = FAKE_PAIRS_TIMEOUT_MS,
+): Promise<void> {
+  const up = (status: AdapterStatus) =>
+    ids.every((id) => {
+      const line = fakeGatewayLine(status, id);
+      return line?.gateway === "connected" && line.bridge === "connected";
+    });
+  if (up(openclawOf(app).status())) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const off = openclawOf(app).onEvent((e) => {
+      if (e.kind !== "status" || !up(e.status)) return;
+      clearTimeout(timer);
+      off();
+      resolve();
+    });
+    const timer = setTimeout(() => {
+      off();
+      reject(
+        new Error(
+          `fake Gateways not connected within ${timeoutMs}ms: ${JSON.stringify(openclawOf(app).status())}`,
+        ),
+      );
+    }, timeoutMs);
+  });
+}
+
 /** dev:fake 는 실제 러너 어댑터 하나로도 뜬다(`createApp` 이 만든다) */
 function claudeOf(app: App): AgentAdapter {
   const adapter = app.registry.forProvider("claude");
@@ -961,9 +996,31 @@ function ensureDevFakeRunner(app: App): void {
 }
 
 /**
+ * 되살리는 고정 Gateway 의 이름 — 사람이 그 Gateway 를 지우고 같은 이름으로 다른 Gateway 를 만들었으면(`--keep`) 이름이 워크스페이스
+ * 안에서 겹쳐 넣기가 UNIQUE 로 죽는다. 그때는 「<이름> (dev:fake)」(그것도 있으면 뒤에 번호)로 넣는다 — 건너뛰면 그 짝의 가짜
+ * 플러그인이 붙을 Gateway 가 없다
+ */
+function freeGatewayName(db: DbOrTx, workspaceId: string, name: string): string {
+  const taken = new Set(
+    db
+      .select({ name: gateways.name })
+      .from(gateways)
+      .where(eq(gateways.workspaceId, workspaceId))
+      .all()
+      .map((g) => g.name),
+  );
+  if (!taken.has(name)) return name;
+  for (let n = 1; ; n++) {
+    const candidate = n === 1 ? `${name} (dev:fake)` : `${name} (dev:fake ${n})`;
+    if (!taken.has(candidate)) return candidate;
+  }
+}
+
+/**
  * 가짜 Gateway 행과 그 Gateway 에 묶인 고정 브리지 토큰 행을 보장한다 — createApp 전에 Gateway 마다 부른다(부팅이 DB 의 Gateway 를
  * 어댑터에 넣으므로 첫 부팅이 「Gateway 없음」으로 시작하지 않는다). 가짜 Gateway 는 시작마다 포트가 바뀌므로 `--keep` 으로 이어받은
- * 행은 주소·토큰만 이번 것으로 바꾼다(이름·켜짐은 사람이 연결 페이지에서 바꾼 대로 둔다). 지운 Gateway 는 다시 만든다. 고정 토큰 행이
+ * 행은 주소·토큰만 이번 것으로 바꾼다(이름·켜짐은 사람이 연결 페이지에서 바꾼 대로 둔다). 지운 Gateway 는 다시 만든다(이름이 겹치면
+ * `freeGatewayName`). 고정 토큰 행이
  * 이미 있으면(폐기됐어도) 그대로 둔다 — 고정 러너 토큰과 같은 규칙
  */
 function seedDevFakeGateway(
@@ -983,7 +1040,7 @@ function seedDevFakeGateway(
       .values({
         id: spec.id,
         workspaceId,
-        name: spec.name,
+        name: freeGatewayName(db, workspaceId, spec.name),
         url: gateway.url,
         token: gateway.token,
         enabled: true,
@@ -1303,11 +1360,22 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
     // app.url 은 리슨 주소와 무관하게 127.0.0.1 — 0.0.0.0 으로 들어도 가짜 플러그인은 루프백으로 붙는다
     for (const pair of pairs) {
       const { spec } = pair;
-      const plugin = await startFakePlugin({
-        bridgeUrl: app.url,
-        token: spec.bridgeToken,
-        agents: spec.agents.map((a) => ({ agentId: a.id })),
-      });
+      let plugin: FakePlugin;
+      try {
+        plugin = await startFakePlugin({
+          bridgeUrl: app.url,
+          token: spec.bridgeToken,
+          agents: spec.agents.map((a) => ({ agentId: a.id })),
+        });
+      } catch (error) {
+        // --keep 으로 사람이 끈 고정 Gateway·폐기한 고정 토큰을 이어받았으면 여기(UNAUTHORIZED) — 서버는 그대로 뜬다(러너와 같다)
+        const reason = error instanceof Error ? error.message : String(error);
+        app.logger.warn(
+          { reason, gatewayId: spec.id },
+          "dev:fake plugin could not connect — enable the Gateway and POST /__devfake/plugin-token { gatewayId, token }",
+        );
+        continue;
+      }
       pair.plugin = plugin;
       // 대본의 이름표는 시작 때 등록한 핸들(집 dev 는 dev-home) — 답만 보고 어느 Gateway 가 답했는지 안다
       const scenarioAgents: Record<string, ScenarioAgent> = {};
@@ -1326,7 +1394,10 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
       );
     }
     // adapter.connect() 는 기다리지 않는다 — 돌려주자마자 discover·전송이 되게
-    await waitForAdapterConnected(app);
+    await waitForFakePairs(
+      app,
+      pairs.filter((p) => p.plugin).map((p) => p.spec.id),
+    );
     return { app, url: app.url, spareGateway: { url: spare.url, token: spare.token }, close };
   } catch (error) {
     await close().catch(() => undefined);

@@ -1792,6 +1792,64 @@ describe("startDevFake 종료 표지 — 운영 화면 「직전 종료」", () 
   }, 30_000);
 });
 
+describe("startDevFake --keep — 고정 Gateway 를 지우고 같은 이름을 쓴 뒤(태스크 8 리뷰 Minor 2)", () => {
+  let dir: string;
+  let dev: DevFake | undefined;
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), "dodok-dev-fake-keep-gw-"));
+  });
+
+  afterAll(async () => {
+    await dev?.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("죽지 않고 고정 「집」을 겹치지 않는 이름으로 되살린다 — 사람이 만든 「집」은 그대로, 가짜 플러그인도 붙는다", async () => {
+    dev = await startDevFake({ port: 0, dataDir: dir, logLevel: "warn" });
+    const owner = await loginOwner(dev.url);
+    const del = await fetch(`${dev.url}/api/v1/gateways/${DEV_FAKE_HOME_GATEWAY_ID}`, {
+      method: "DELETE",
+      headers: { cookie: owner.cookie },
+    });
+    expect(del.status).toBe(200);
+    // 사람이 더한 Gateway 는 닿지 않는 주소 — 시작은 이것이 붙기를 기다리지 않는다
+    const mine = await restAs<{ id: string }>(dev.url, owner.cookie, "POST", "/gateways", {
+      name: "집",
+      url: "ws://127.0.0.1:9",
+      token: "mine",
+    });
+    // 사람이 끈 고정 Gateway 도 기다리지 않는다
+    await restAs(dev.url, owner.cookie, "PATCH", `/gateways/${DEV_FAKE_OFFICE_GATEWAY_ID}`, {
+      enabled: false,
+    });
+    await dev.close();
+    dev = undefined;
+
+    dev = await startDevFake({ port: 0, dataDir: dir, keep: true, logLevel: "error" });
+    const again = await loginOwner(dev.url);
+    const listed = await restAs<Array<{ id: string; name: string; enabled: boolean }>>(
+      dev.url,
+      again.cookie,
+      "GET",
+      "/gateways",
+    );
+    expect(listed.map((g) => [g.id, g.name, g.enabled]).sort()).toEqual(
+      [
+        [DEV_FAKE_OFFICE_GATEWAY_ID, "사무실", false],
+        [DEV_FAKE_HOME_GATEWAY_ID, "집 (dev:fake)", true],
+        [mine.id, "집", true],
+      ].sort(),
+    );
+    const status = openclawOf(dev.app).status();
+    const home =
+      status.provider === "openclaw"
+        ? status.gateways.find((g) => g.id === DEV_FAKE_HOME_GATEWAY_ID)
+        : undefined;
+    expect([home?.gateway, home?.bridge]).toEqual(["connected", "connected"]);
+  }, 30_000);
+});
+
 describe("startDevFake 고정 member 계정 — mia", () => {
   let dir: string;
   let dev: DevFake;

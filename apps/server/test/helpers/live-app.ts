@@ -203,7 +203,6 @@ function addFakeGateway(
 
 /**
  * 어댑터 status 이벤트로 Gateway 가 하나 이상이고 모두 gateway·bridge connected 가 될 때까지 기다린다.
- * dev:fake(scripts/dev-fake.ts)도 쓴다.
  */
 export function waitForAdapterConnected(app: App, timeoutMs = CONNECT_TIMEOUT_MS): Promise<void> {
   const up = () => {
