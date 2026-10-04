@@ -48,7 +48,7 @@ export function AgentRow({ agent, readOnly = false }: { agent: Agent; readOnly?:
           {openclaw && agent.gateway === null && (
             <p className="text-xs font-medium text-destructive">
               {owner
-                ? "Gateway 가 삭제됨 — 다른 Gateway 로 옮기거나 지우세요"
+                ? "Gateway 가 삭제됨 — 다른 Gateway 로 옮기세요"
                 : "Gateway 가 삭제됨 — owner 가 다른 Gateway 로 옮길 때까지 답하지 못합니다"}
             </p>
           )}

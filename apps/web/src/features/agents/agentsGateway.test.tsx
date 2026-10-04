@@ -36,13 +36,11 @@ describe("에이전트 줄 — Gateway(멀티 Gateway 스펙 7장)", () => {
     expect(screen.getAllByText("main", { selector: "code" })).toHaveLength(2);
   });
 
-  it("연결이 빈 OpenClaw 에이전트 — owner 에게는 「옮기거나 지우세요」와 「Gateway 옮기기」", async () => {
+  it("연결이 빈 OpenClaw 에이전트 — owner 에게는 「다른 Gateway 로 옮기세요」와 「Gateway 옮기기」", async () => {
     const orphan = makeAgent({ providerAgentId: "main", handle: "main", name: "Main", gateway: null });
     stubServer({ agents: [orphan] });
     renderPage();
-    expect(
-      await screen.findByText("Gateway 가 삭제됨 — 다른 Gateway 로 옮기거나 지우세요"),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("Gateway 가 삭제됨 — 다른 Gateway 로 옮기세요")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "@main Gateway 옮기기" })).toBeInTheDocument();
   });
 
@@ -56,7 +54,7 @@ describe("에이전트 줄 — Gateway(멀티 Gateway 스펙 7장)", () => {
         await screen.findByText("Gateway 가 삭제됨 — owner 가 다른 Gateway 로 옮길 때까지 답하지 못합니다"),
       ).toBeInTheDocument();
       expect(screen.getByText("@main")).toBeInTheDocument();
-      expect(screen.queryByText(/옮기거나 지우세요/)).toBeNull();
+      expect(screen.queryByText(/다른 Gateway 로 옮기세요/)).toBeNull();
       expect(screen.queryByRole("button", { name: "@main Gateway 옮기기" })).toBeNull();
     },
   );
