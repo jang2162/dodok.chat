@@ -460,7 +460,7 @@ docker compose -f infra/compose.yml ps     # app·caddy (healthy)
 | 웹 배너 「실시간 연결이 거부되었습니다 — …」 | 브라우저 주소와 `APP_ORIGIN` 이 다르다(스킴·포트·끝 슬래시까지) | `APP_ORIGIN=https://<도메인>` |
 | 에이전트 목록이 비고 로그에 Gateway 재시도 | Gateway URL·토큰, 방화벽 — 서버는 멈추지 않고 재시도만 한다 | 체크리스트 3 |
 | `bridge plugin hello` 가 안 나옴 | 플러그인 `bridgeUrl`·`token`, [B] → [A] 443. `bridge connection rejected` 의 `token mismatch` 면 토큰이 활성 토큰과 맞지 않는다 | 체크리스트 5 |
-| 연결 페이지 브리지 토큰 섹션 「토큰이 없습니다 — 발급하세요」 | 활성 토큰이 0개다(새 배포, 또는 전부 폐기) — 브리지 접속은 모두 거절된다 | 체크리스트 4 「브리지 토큰 발급」 |
+| 연결 페이지 브리지 토큰 섹션 「쓸 수 있는 토큰이 없습니다 — 발급하세요」 | 활성 토큰이 0개다(새 배포, 또는 전부 폐기) — 브리지 접속은 모두 거절된다 | 체크리스트 4 「브리지 토큰 발급」 |
 | `.env` 의 `BRIDGE_TOKEN` 을 바꿨는데 플러그인이 안 붙음, 로그 warn `BRIDGE_TOKEN in .env is ignored — manage bridge tokens in the connection page` | `.env` 값은 토큰 행이 하나도 없을 때(폐기된 행 포함) 한 번만 이어받는다 | 「브리지 토큰 교체」 |
 | 연결 페이지 「다른 빌드입니다」·「빌드를 알 수 없습니다」 | [B] 의 플러그인이 이 서버 이미지가 품은 번들과 다르다(또는 번들 sha256 을 보내지 않는 옛 플러그인) | 체크리스트 4 의 받기·설치 |
 | 「플러그인 받기」가 「플러그인 파일이 그새 다시 빌드됐습니다」 | 부팅 때 잰 tgz 와 지금 파일이 다르다(서버 409 `PLUGIN_FILE_CHANGED`) — 이미지로 돌면 나지 않는다 | 서버 재시작 |
@@ -510,7 +510,7 @@ for k in LOCAL_AUTH_TOKEN BETTER_AUTH_SECRET OPENCLAW_GATEWAY_TOKEN; do
   sed -i.bak "s/^$k=\$/$k=$(openssl rand -hex 32)/" infra/local.env; done; rm infra/local.env.bak
 ```
 
-`BRIDGE_TOKEN` 은 비워 둔다 — 운영 모드의 연결 페이지에서 「토큰이 없습니다 — 발급하세요」와 첫 발급을 본다(값을 넣으면 `.env` 이어받기 경로를 본다). `infra/local.env` 는 git 제외다. 이 파일은 `app` 의 `env_file` 이면서 compose 의 `--env-file`(변수 치환)이라, **모든** compose 명령에 같은 조합을 붙인다.
+`BRIDGE_TOKEN` 은 비워 둔다 — 운영 모드의 연결 페이지에서 「쓸 수 있는 토큰이 없습니다 — 발급하세요」와 첫 발급을 본다(값을 넣으면 `.env` 이어받기 경로를 본다). `infra/local.env` 는 git 제외다. 이 파일은 `app` 의 `env_file` 이면서 compose 의 `--env-file`(변수 치환)이라, **모든** compose 명령에 같은 조합을 붙인다.
 
 ```bash
 # zsh 는 따옴표 없는 변수를 낱말로 쪼개지 않는다 — 변수 대신 함수로 둔다

@@ -329,14 +329,15 @@ describe("브리지 토큰", () => {
     expect(br).toHaveTextContent(PUBLIC_URL);
   });
 
-  it("활성 토큰이 0개면 「토큰이 없습니다 — 발급하세요」", async () => {
+  it("활성 토큰이 0개면 「쓸 수 있는 토큰이 없습니다 — 발급하세요」 — 폐기된 줄과 함께 보여도 모순되지 않는다", async () => {
     stubSetupServer({
       status: statusOf({ plugin: null, pluginMatches: null }),
       tokens: [tokenOf(1, { revokedAt: "2026-09-24T00:00:00.000Z" })],
     });
     renderConnection();
     const br = await region("브리지 토큰");
-    expect(await within(br).findByText("토큰이 없습니다 — 발급하세요")).toBeInTheDocument();
+    expect(await within(br).findByText("쓸 수 있는 토큰이 없습니다 — 발급하세요")).toBeInTheDocument();
+    expect(within(br).getByRole("listitem", { name: "토큰-1" })).toHaveTextContent("폐기됨");
   });
 
   it("폐기된 줄이 있어도 활성 토큰이 하나라도 있으면 「토큰이 없습니다」가 없다", async () => {
@@ -348,6 +349,7 @@ describe("브리지 토큰", () => {
     const br = await region("브리지 토큰");
     await within(br).findByRole("listitem", { name: "토큰-2" });
     expect(br).not.toHaveTextContent("토큰이 없습니다");
+    expect(br).not.toHaveTextContent("쓸 수 있는 토큰");
   });
 
   it("교체 — setup.status 로 접속 토큰이 새 것으로 옮겨 가면 「지금 접속 중」이 옮고 옛 줄에 「이제 폐기해도 됩니다」", async () => {

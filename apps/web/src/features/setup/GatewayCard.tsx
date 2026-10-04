@@ -221,7 +221,10 @@ function BridgeTokens({ gateway, status }: { gateway: GatewaySetup; status: Setu
         </p>
         <IssueTokenDialog gatewayId={gateway.id} triggerRef={issueButton} />
       </div>
-      {none && <p className="text-sm font-medium text-destructive">토큰이 없습니다 — 발급하세요</p>}
+      {/* 「쓸 수 있는」 — 폐기된 줄이 아래 목록에 함께 보여도 모순되지 않게 */}
+      {none && (
+        <p className="text-sm font-medium text-destructive">쓸 수 있는 토큰이 없습니다 — 발급하세요</p>
+      )}
       {tokens.data ? (
         tokens.data.length > 0 && (
           <TokenList

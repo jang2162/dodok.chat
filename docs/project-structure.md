@@ -773,7 +773,7 @@ src/
 │  │                       openSearch.ts(isSearchShortcut — `e.code === "KeyK"` 도 받는다(한글 입력기), otherModalOpen — 검색 표지가 없는 열린 대화상자가 있으면 ⌘K 무시)
 │  ├─ setup/               Phase 3 ②. 연결 페이지 `/settings/connection` — owner 만(아니면 setup API 를 부르지 않고 「권한이 없습니다」).
 │  │                       ConnectionPage.tsx(섹션 넷: 서버·Gateway·플러그인·브리지 토큰 — 지금은 첫 Gateway 하나를 그린다(Gateway 카드 목록은 멀티 Gateway 태스크 6),
-│  │                       Gateway 가 없으면 빈 상태 한 줄이고 브리지 토큰 블록은 없다, 활성 토큰 0 이면 「토큰이 없습니다 — 발급하세요」) ·
+│  │                       Gateway 가 없으면 빈 상태 한 줄이고 브리지 토큰 블록은 없다, 활성 토큰 0 이면 「쓸 수 있는 토큰이 없습니다 — 발급하세요」) ·
 │  │                       sections.tsx(Section · CopyBlock — 기본은 줄 구조를 지키고 제 상자 안에서 가로 스크롤, `wrap` 이면 아무 글자에서나 줄바꿈(토큰), 래퍼 min-w-0 ·
 │  │                       GatewaySection — 페어링 대기면 `openclaw devices approve <requestId>`, requestId 가 빈 문자열이면 `openclaw devices list`, 5분 넘으면 강조 ·
 │  │                       PluginSection — 같은 빌드 문구 셋, 받기는 `pluginFile.available` 로만, installCommands(`docs/guides/deploy.md` 「[웹 → B] 플러그인 설치·브리지 토큰」 절의 [B] 블록을 글자 그대로 —
