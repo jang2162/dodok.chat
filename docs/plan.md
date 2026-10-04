@@ -1,6 +1,6 @@
-# dodok.chat — 에이전트 네이티브 메신저 개발 계획서 (v0.22)
+# dodok.chat — 에이전트 네이티브 메신저 개발 계획서 (v0.23)
 
-작성일: 2026-09-14 · 상태: v0.22 (2026-09-30) — 결정이 필요했던 이월 여덟 건을 사용자 결정대로 닫았다(CSP 강제·Shiki 지연 로딩·푸시 구독과 세션 묶기·로그 IP 가림·초대 수락 때 고아 Better Auth 사용자 교체·러너 토큰에 에이전트 묶기·러너 프레임 속도 제한, 하나는 두기로). 「이월」에는 미정 둘과 이번 정리가 남긴 것
+작성일: 2026-09-14 · 상태: v0.23 (2026-10-05) — 멀티 Gateway 를 마쳤다: OpenClaw 연결을 `.env` 가 아니라 연결 페이지에서 구성하고, Gateway 여럿을 한 워크스페이스에 붙인다(8장 Phase 4 「멀티 Gateway」). 이 사이클이 남긴 것은 8장 「이월」의 「멀티 Gateway」 묶음.
 
 ### 변경 이력
 
@@ -26,6 +26,7 @@
 | v0.20 | Phase 4 ③ **Claude 러너 종료**(2026-09-29, 런 0회 하네스까지) — 8장 Phase 4 「어댑터」에 Claude Agent SDK 러너 완료 표시·구성 요약·확인 방법(패키지 테스트 · 서버 통합 러너 시나리오 · dev:fake 브라우저 11/11 · 런 0회 하네스 12/12 · 전체 브랜치 최종 리뷰), 「이월」 머리를 Phase 4 ③ 종료 시점으로, 러너가 남긴 것(SIGKILL 고아 CLI · SIGTERM 중지 모양 · `PROVIDER_AUTH` 카드 · 에이전트↔토큰 묶기 · 러너 프레임 속도 제한 · 첨부 claim 토큰 대조 · `runner_down` 재시작 · 경로 가림 빈틈 · 승인 요약 가운데 생략 등)을 새 묶음으로, 「실물 확인」에 하네스·실연 줄 |
 | v0.21 | 이월 정리(2026-09-30) — 결정 없이 고칠 수 있던 12건을 닫고 8장 「이월」에서 지웠다: components 칸 id `constructor`·`__proto__`(쓰기 계약만 거절, 저장된 옛 행은 읽기 계약이 받는다) · 승격 때 비-owner 재설정 링크 폐기 · 만료 세션 1분 청소와 소켓 끊기 · 검색 색인 가드(이미 있음 확인) · `approval.requested` 둘째는 의도된 갱신(주석) · 러너 `PROVIDER_AUTH` run_error 카드 · 러너 종료 런은 `ADAPTER_UNAVAILABLE`+「다시 실행」 · 채널 지시·릴레이 정책 저장 안내 · 상호작용 오류 문구 「항목」 · 긴 라벨 버튼 줄바꿈 · 로그인 실패 뒤 초점 · 확정 승인은 `decidedAt` 자리. 러너 규칙 변경 뒤 자동 「새 대화」(ADR 0007 「규칙이 바뀐 뒤 이어 간 세션」)도 이 판에 든다 |
 | v0.22 | 결정이 필요했던 이월 정리(2026-09-30) — 사용자 결정대로 닫고 8장 「이월」에서 지웠다: Caddy 가 CSP 를 강제(`script-src 'self'`, 스타일만 `'unsafe-inline'`, zod jitless) · 코드 강조 `shiki` 지연 로딩 · 푸시 구독 행을 등록한 세션에 묶음(세션이 지워지면 cascade) · 요청·핸드셰이크 거절 로그의 IP 를 IPv4 /24·IPv6 /48 로 · 초대 수락 때 고아 Better Auth 사용자 교체 · Claude 에이전트를 러너 토큰에 묶기(`agents.runner_token_id`, 연결 페이지 「이 러너로 묶기」) · 러너 소켓마다 프레임 버킷 둘(열린 런·승인을 닫는 프레임 가운데 처리기가 받아들일 것은 버킷 밖, 승인 요청은 런마다 누계 32). 하나(8)는 두기로 정해 그 줄에 적었다. 미정 둘(6·9)은 그대로 남았다. 이번 정리가 남긴 것(업그레이드 직후 러너 묶임이 재시작 순서로 굳음 · Better Auth 세션 행의 로그인 IP 등)을 「이월」에 |
+| v0.23 | Phase 4 **멀티 Gateway 종료**(2026-10-05, 실연까지) — 8장 Phase 4 에 「멀티 Gateway」 완료 표시·구성 요약·확인 방법(통합 multi-gateway 시나리오 · dev:fake 가짜 Gateway 둘 위 브라우저 7항목 · 실물 dev Gateway 둘 실연 12/12, 모델 런 0), 팀 「남은 것」에서 멀티 Gateway 를 뺌, 「이월」 머리를 이 시점으로, 새 묶음 「멀티 Gateway」, 러너 묶음의 「`claimBridgeAttachments` 가 올린 토큰을 대조하지 않는다」를 지움(러너 claim 은 그 토큰이 올린 것만), 「실물 확인」에 실연 줄 |
 
 ---
 
@@ -505,7 +506,11 @@ SQLite(WAL)로 시작, Drizzle ORM으로 스키마 정의해 Postgres 전환 시
   **멤버 관리** — `/settings/members`(admin 이상): 멤버 표·역할 바꾸기(owner)·재설정 링크·내보내기·초대·대기 중인 초대 폐기. 내보내면 곧바로 REST 401·wire 끊김·푸시 구독 삭제, 쓴 메시지는 「나간 멤버 @<옛 핸들>」로 남고 같은 이메일·핸들로 다시 초대받을 수 있다. 내보내거나 admin 을 member 로 내리면 그 사람이 발급한 쓰이지 않은 링크도 폐기된다. 「내 계정」(사이드바 하단)은 표시 이름·비밀번호. 비밀번호를 재설정·변경하거나 로그아웃하면 지운 세션의 열린 wire 소켓도 서버가 끊는다.
   **채널 참여** — 채널은 지금처럼 워크스페이스 전원이 본다. 사람은 그 채널에 처음 쓰거나 멘션받으면 저절로 참여하고, 에이전트 헤더 「참여자:」에는 참여한 사람만 실린다(나간 사람은 빠진다). 핸들은 사람과 에이전트를 통틀어 유일하고, `left-` 로 시작하는 핸들은 나간 사람 몫으로 예약돼 있다.
   **확인 방법**: 서버 단위·통합(`apps/server/test/roles.matrix.test.ts` — 스펙 「역할과 권한」 표의 경로 × 역할 허용·거부 전부, `PATCH`·`POST /channels` 필드별, 채널 멤버 필드별, `approval.resolve`, 승인 푸시 수신자, membership 없는 세션 401 · `members.invites`·`members.accept`·`members.manage`·`people`·`auth.login`·`auth.test` — 두 번 제출·핸들 충돌 양쪽·재가입·링크 폐기·세션 소켓 끊기·핸드셰이크 틈·버킷 분리·Better Auth 폐기 경로 404 · `integration/ops-events`·`setup` — 역할별 방) · 웹 단위 · 태스크마다 독립 리뷰(변이)·수정·범위 재리뷰 · `dev:fake`(고정 member 계정 `mia`) 위 브라우저 검증(Playwright 브라우저 컨텍스트 7개, 390·1280px) 11항목 중 **9 통과**, Review Focus 1~5(동시 가입 · 에이전트와 같은 핸들 · 내보낸 사람의 열린 탭 · member 의 `{ name, prompt }` · 강등 직후 누른 관리 버튼) 실제 화면 통과 — 결함 D2(재설정·비밀번호 변경 뒤 옛 세션의 열린 소켓이 계속 말함 — 보안)·D1(390px 멤버 화면 가로 스크롤)과 관찰 o1~o5(서버 문구가 화면에 그대로 · 409 뒤 초점 · owner 역할 이름 · member 에게 보이는 등록 링크 · 초대 경로가 로그인 버킷을 같이 씀)는 곁가지 p4m-c1·c2 가 고쳤고 고친 뒤 브라우저 재검증 7/7 통과·새 결함 0(p4m-c3 — 옛 세션 소켓이 비밀번호 변경·재설정·로그아웃 응답과 같은 시점에 끊기고 직후 전송 저장 0, 390px 멤버 화면 scrollWidth 566→390, 로그인 429 뒤에도 초대 조회·가입 200) · 실연(dev Gateway, 모델 런 0회)은 `docs/guides/live-smoke.md` 「팀(Phase 4 ②) 실연」 절. 테스트 3538(shared 260·plugin 146·adapter 264·server 1382·web 1486). 이 사이클의 보고서·리뷰·원장은 `.superpowers/sdd/2026-09-26-team-members/`(git 제외).
-  **남은 것(팀의 다음 사이클)** — OIDC(Google·Okta 등)·패스키, 비공개 채널·채널별 권한과 채널 참여·나가기 UI, 멀티 Gateway(워크스페이스 하나에 Gateway 여럿), owner 넘기기·owner 둘, 초대·재설정 메일 발송, 멤버 아바타·접속 상태. 알고 넘긴 것은 아래 「이월」의 「팀(Phase 4 ②)」.
+  **남은 것(팀의 다음 사이클)** — OIDC(Google·Okta 등)·패스키, 비공개 채널·채널별 권한과 채널 참여·나가기 UI, 사람마다 자기 Gateway(멀티 Gateway 스펙 「열린 문제」 장), owner 넘기기·owner 둘, 초대·재설정 메일 발송, 멤버 아바타·접속 상태. 알고 넘긴 것은 아래 「이월」의 「팀(Phase 4 ②)」.
+- 멀티 Gateway → **완료(실연까지, 2026-10-05 — 모델 런 0회)** — 스펙 `docs/superpowers/specs/2026-10-04-multi-gateway-design.md`(구현과 달라진 것은 스펙 「구현과 맞춘 것」 장), 계획 `docs/superpowers/plans/2026-10-04-multi-gateway.md`(태스크 1~10), 운영 절차 `docs/guides/deploy.md` 「[웹] Gateway 추가·페어링 확인」·「Gateway 수정·끄기·삭제」 절, 사용법 `docs/guides/user-guide.md`.
+  **구성** — OpenClaw 연결은 `.env` 가 아니라 owner 연결 페이지의 Gateway 카드에서 만든다(이름·주소·공유 토큰, 켜기/끄기, 삭제). Gateway 마다 WS·디바이스 아이덴티티(`DATA_DIR/gateways/<id>/`)·브리지 토큰이 따로고, 모든 플러그인은 같은 `/bridge` 주소로 붙어 토큰으로 갈린다. 어댑터 계약은 연결 id 를 싣고(OpenClaw 는 에이전트의 Gateway, 러너는 러너 토큰) 서버는 런·정본·승인·대기열을 「연결 id + 세션 키」로 가른다 — 세션 키 꼴은 그대로다.
+  **에이전트** — 정체는 「Gateway + Gateway 안 id」라 Gateway 마다 `main` 이 있어도 되고, 채널에서 부르는 핸들은 워크스페이스에서 유일하다. 가져오기는 Gateway 를 고르고, Gateway 를 지우면 그 에이전트는 남아 owner 가 「Gateway 옮기기」로 다른 Gateway 에 묶는다. 닫힌 연결의 열린 런은 `ADAPTER_UNAVAILABLE` 카드와 「다시 실행」으로 끝난다. 연결 점·배너·멘션 후보·운영 화면이 Gateway 이름을 단다.
+  **확인 방법**: 서버 통합 `apps/server/test/multi-gateway.integration.test.ts`(가짜 Gateway·플러그인 둘 — 같은 id 두 에이전트·같은 승인 id·대기열 독립·두 Gateway 사이 릴레이·삭제 → 옮기기 → 다시 실행·첨부 범위·프롬프트 동기화·끄기/켜기) · 어댑터 연결 관리자 단위 · 웹 단위 · 태스크마다 독립 리뷰(변이)·수정·범위 재리뷰 · `dev:fake`(가짜 Gateway 둘) 위 브라우저 7항목 — 결함 넷은 고쳐 다시 봤다 · 실연 `docs/guides/live-smoke.md` 「멀티 Gateway 실연」 절(실물 dev Gateway 둘을 `OPENCLAW_HOME` 으로 갈라 띄움, 런 0회 하네스 12/12).
 - 어댑터: Claude Agent SDK 러너 → **완료(실연까지, 2026-09-29 — 모델 런 3회)** — 스펙 `docs/superpowers/specs/2026-09-27-claude-runner-design.md`(구현과 달라진 것은 스펙 「구현과 맞춘 것」 장), 계획 `docs/superpowers/plans/2026-09-27-claude-runner.md`(태스크 1~9), 실측 `docs/adr/0007-claude-agent-sdk-spike.md`, 설치 `docs/guides/deploy.md` 「Claude 러너 설치」 절, 에이전트 쪽 `docs/guides/agent-guide.md` 「Claude 러너 에이전트」 절. → Codex app-server 러너 → Hermes(API 서버 경로).
   **러너** — 사람의 머신에서 `dodok-runner`(`packages/claude-runner`)가 Claude Agent SDK 로 Claude Code 를 그 머신의 작업 디렉터리에서 돌리고, 서버 `/runner`(Socket.IO 네임스페이스, 러너 토큰 `drn_`)로 나가는 연결 하나로 붙는다. 서버는 에이전트의 `provider`(`openclaw`·`claude`)로 어댑터를 고르고(`AdapterRegistry`), 한 채널에서 두 종류 에이전트가 서로 @멘션 릴레이한다. 런 하나 = `query()` 하나, 채널 규칙은 틀을 입힌 `systemPrompt.append`(`snapshot: false` — 매 런), 턴 사실은 `UserPromptSubmit` 훅, 카드·파일은 `mcp__dodok__post`(작업 디렉터리 안만, 파일은 macOS·Linux), 쓰기 도구는 도구 승인 카드(10분 기한). 운영 화면은 러너 런의 토큰·금액을 보인다(구독이면 「환산 포함」).
   **확인 방법**: 패키지 테스트(가짜 `query`), 서버 통합 러너 시나리오(가짜 러너 WS), dev:fake 가짜 러너 위 브라우저 11/11, 런 0회 하네스 12/12(`docs/guides/live-smoke.md` 「Claude 러너 런 0회 하네스」 절 — 실제 서버·러너 설치본·번들 CLI + 로컬 가짜 Messages API), 전체 브랜치 최종 리뷰, 실연(같은 문서 「Claude 러너(Phase 4 ③) 실연」 절 — 모델 런 3회: 멘션·도구·스트리밍·운영 비용 통과, 채널 규칙을 바꾼 뒤 이어 간 세션은 옛 형식으로 답함 — 아래 이월 첫 줄).
@@ -516,9 +521,9 @@ SQLite(WAL)로 시작, Drizzle ORM으로 스키마 정의해 Postgres 전환 시
   **확인 방법**: 서버 통합 `apps/server/test/integration/threads.test.ts` 11건(가짜 Gateway·플러그인 — 스레드 키·`context.thread`(채널 대화 없음)·정본이 스레드에·루트 요약, activeRuns 의 `threadRootId`, 멘션 없는 답글, 채널·스레드 병렬과 같은 스레드 직렬, 스레드 릴레이·relay_limit, 한도가 스레드 런도 셈, 스레드 「새 대화」, `PLUGIN_OUTDATED` → 재설치 → 다시 실행, `threadId` 불일치 거절, 카드 버튼, 스레드 멘션 푸시) · 검색 단위(`apps/server/test/search.service.test.ts`·`search.routes.test.ts`·`db.fts.test.ts` — 트리거 셋·rowid 재사용·백필 가드·FTS 연산자 주입·2글자·NUL 400·레이트리밋) · 플러그인·어댑터·웹 단위 · 태스크마다 독립 리뷰(변이)·수정·범위 재리뷰 · `dev:fake` 위 브라우저 검증(BrowserOS neo + Playwright — 스레드 대본·「오래」·훅 `plugin-capabilities`) 11항목 중 **9 통과**, 항목 8(재접속)이 찾은 결함 — wire 가 핸드셰이크 전에 깨끗이 닫히면 socket.io Manager 가 연결 제한시간 20초까지 다시 붙지 않는다(Phase 4 이전부터 있던 것) — 은 곁가지 p4t-c1 이 원인을 확정하고 `WireManager` 로 고쳤다(같은 재현에서 다시 붙기 22~24초 → 약 3초), 항목 9(푸시 링크)는 합성 클릭이라 부분 확인, 칩 닫기 초점(m5)·알림 클릭의 focus 실패도 p4t-c1 이 고쳤다 · 실연(dev Gateway)은 `docs/guides/live-smoke.md` 「스레드(Phase 4 ①) 실연」 절. 테스트 3193(shared 247·plugin 146·adapter 264·server 1151·web 1385). 남은 것은 아래 「이월」의 「스레드·검색(Phase 4 ①)」.
 - 에이전트 내부 위임 결과 요약 게시, 채널 템플릿.
 
-### 이월 — 남은 문제(Phase 4 ③ 뒤 이월 정리 시점, 2026-09-30)
+### 이월 — 남은 문제(멀티 Gateway 뒤 시점, 2026-10-05)
 
-Phase 1 ①·②, Phase 2 ①·②·③·④, Phase 3 ①·②·③·④, Phase 4 ①·②·③ 을 돌면서 「고치지 않고 알고 넘긴 것」을 한곳에 모았다. 상세 근거는 각 줄에 적은 문서에 있다. 위 Phase 2·3 항목과 겹치면 그쪽을 가리킨다.
+Phase 1 ①·②, Phase 2 ①·②·③·④, Phase 3 ①·②·③·④, Phase 4 ①·②·③·멀티 Gateway 를 돌면서 「고치지 않고 알고 넘긴 것」을 한곳에 모았다. 상세 근거는 각 줄에 적은 문서에 있다. 위 Phase 2·3 항목과 겹치면 그쪽을 가리킨다.
 Phase 1 이 남긴 아홉(서버 넷·웹 넷·`wire-cli` typecheck)은 Phase 2 ① 태스크 0·1 에서, Phase 2 ① 이 남긴 초점·타이머 셋(D6 카운트다운 어긋남 · 자리값 소요가 계속 흐름 · 넓은 화면 「설정 닫기」 초점)은 Phase 2 ② 태스크 8 에서 정리해 지웠다.
 Phase 2 ② 가 남긴 「`media` 이미지를 크게 볼 수 없다」·「`media`·`file` 문구 비대칭」은 Phase 2 ③ 이 닫아 지웠다(크게 보기 `ImageViewer`, 세 블록이 해석기 하나로 「첨부를 찾을 수 없습니다」·「열 수 없는 링크입니다」를 같이 쓴다).
 Phase 2 ② 가 남긴 「`infra/` 가 없는데 두 문서가 있다고 말한다」는 Phase 3 ① 이 `infra/` 를 만들고 `docs/project-structure.md` 를 고쳐 지웠다(`CLAUDE.md` 「명령」 줄은 조율자가 고친다).
@@ -722,7 +727,6 @@ Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-comp
 
 - **러너 세션은 채널 규칙이 바뀌면 세션 이력을 잃는다** — 서버가 리비전이 바뀐 뒤 첫 런을 새 Claude 세션으로 연다(「최근 대화」 인용 밖의 앞 도구 결과·긴 작업 문맥이 사라진다). 리비전은 채널 하나라 한 에이전트의 채널 지시만 바꿔도 그 채널의 모든 러너 세션이 새로 시작한다. 이력을 살리는 길은 ADR 0007 「규칙이 바뀐 뒤 이어 간 세션」 절의 ⓑ′(규칙이 바뀐 뒤 첫 런에만 시스템 쪽 틀 안에 알림 — 세션 행에 「마지막으로 실은 리비전」 열이 필요하고, 의심 없이 따르는지 모델 런으로 재야 한다), 에이전트만 좁히려면 세션 행이 채널 지시의 리비전을 따로 기억해야 한다. 값을 되돌려 저장해도(A→B→A) 새로 시작한다. 채널 지시·릴레이 정책 변경이 새 세션으로 이어지는 통합 테스트는 없다(채널 프롬프트 변경만 있다 — 코드는 같은 리비전을 본다). 미룬 까닭: 새 세션은 새 규칙을 따른다는 것만 확실하고, ⓑ′ 는 모델 런이 드는 판단이다.
 - **러너를 `SIGKILL` 로 죽이면 CLI 가 고아로 남아 그 턴을 끝까지 돈다** — 러너 프로세스만 죽고 CLI 가 API 스트림을 끝까지 받아 답을 세션 전사에 남긴다. 모델이면 아무도 못 볼 답에 비용이 들고, 「다시 실행」의 `resume` 요청에 채널에 없던 답이 이력으로 실린다. 덮개 닫기·서버 끊김은 러너가 `interrupt()` 하므로 해당하지 않는다. 출처: `docs/guides/live-smoke.md` 「Claude 러너 런 0회 하네스」 절. 미룬 까닭: 러너 프로세스가 갑자기 죽을 때만이다 — 사람이 두기로 정했다. 고칠 길은 CLI 를 러너와 함께 끝나게 묶거나, 다음 런 시작 때 그 세션의 남은 CLI 를 찾아 끝내기.
-- **러너 outbound 의 `claimBridgeAttachments` 가 올린 토큰을 대조하지 않는다** — 러너가 다른 토큰이 올린(묶이지 않은) 첨부 id 를 `post` 에 실으면 묶인다. 읽기는 러너 첨부 범위로 막히고 id 는 추측할 수 없다.
 - **`runner_down` 은 이 서버 프로세스에서 붙은 적 있는 토큰만 본다** — 서버 재시작 뒤 한 번도 안 붙은 러너는 사건이 없다.
 - **업그레이드 직후 러너 묶임이 재시작 순서로 굳는다** — 러너 토큰 묶기가 들어오기 전의 묶이지 않은 Claude 에이전트는 서버 재시작 뒤 그 id 를 알리며 **먼저 다시 붙은** 러너 토큰에 묶인다(hello 의 `claimUnbound`). 같은 id 를 두 러너가 알리던 배포라면 재시작 전에 맡던 러너와 다른 쪽으로 굳을 수 있다. 연결 페이지 「이 러너로 묶기」로 되돌린다(`deploy.md` 「Claude 러너 설치」 「드러나는 것」). 고칠 길: 그 id 를 알리는 연결 러너가 하나뿐일 때만 묶고, 둘 이상이면 묶지 않은 채 두 카드 모두에 묶기 버튼(웹의 「묶임 없는 충돌엔 버튼 없음」 규칙도 함께 바뀐다). 또 다른 탭·사용자의 에이전트 목록 러너 라벨은 다시 받기 전까지 옛 값이다(에이전트 변경은 wire 로 밀지 않는 기존 관례). 출처: cd-run 리뷰 M2·M5.
 - **경로 가림이 못 알아보는 모양** — `-I/…`, `file://localhost/…`, 잘린 JSON 폴백 안 `\/`, 작업 디렉터리 밖 공백 든 경로의 꼬리, Windows 경로, 가린 키가 겹칠 때 뒤 것만 남음. 목록은 `packages/claude-runner/src/mask.ts` 머리 주석 「보지 않는 것」. 거꾸로 작업 디렉터리 밖 절대 경로는 시스템 경로도 가린다 — 활동 탭 도구 결과에서 셰뱅 `#!/bin/sh` 가 `#!<작업 디렉터리 밖>` 으로 보인다(실연). 모델은 원문을 받는다.
@@ -740,8 +744,19 @@ Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-comp
 - **스펙 「열린 문제」** — SDK 라이선스(러너 공개 배포는 법무 판단), 계정 이메일을 문맥에서 빼는 법, 읽기 전용 Bash 자동 허용의 경계·`PreToolUse` 훅, 서버 호스트 안 러너. 미룬 까닭: 이번 범위 밖.
 - **사람이 볼 것** — 실제 러너 머신에서 `npm install -g` 부터 로그인·실행까지(`deploy.md` 「Claude 러너 설치」).
 
+**멀티 Gateway(2026-10-05)** — 스펙 `docs/superpowers/specs/2026-10-04-multi-gateway-design.md` 「열린 문제」·「구현과 맞춘 것」 장. 아래 출처의 보고서·리뷰(t*·c*)와 원장은 `.superpowers/sdd/2026-10-04-multi-gateway/`(git 제외)에 있다.
+
+- **같은 id 를 이름 그대로 가져온 두 에이전트가 운영 화면 「에이전트별」 표와 채널 메시지 작성자에서 갈리지 않는다** — 둘 다 이름이 `main` 이고, 핸들·Gateway 는 멘션 칩·에이전트 화면·채널 설정에만 보인다. 고칠 길: 운영 표에 핸들·Gateway, 가져오기에서 이름 겹침 경고. 출처: `docs/guides/live-smoke.md` 「멀티 Gateway 실연」 절.
+- **옮기기로 닫힌 대기 런의 카드가 일반 문구다** — 「@<에이전트> 실행이 실패했습니다: ADAPTER_UNAVAILABLE」. 「옮겨서 닫힘」을 가를 사유 코드가 서버에 없다. 출처: t4 리뷰 m3·t7 판단.
+- **끊긴(켜진) Gateway 의 에이전트를 멘션하면 120초 「대기 중」 뒤에야 실패한다** — 인바운드 제한시간 그대로다. 꺼진 Gateway 는 곧바로 실패한다. 출처: t10 실연.
+- **연결 점 「모두 끊김 빨강」은 거의 나오지 않는다** — 끊긴 켜진 Gateway 는 `reconnecting` 이라 노랑이다(스펙 「구현과 맞춘 것」 판정 S1 — 배너가 함께 뜬다). 빨강을 보이려면 「붙은 것 0」의 기준을 다시 정해야 한다.
+- **`dev:fake` 가 손으로 바꾼 고정 Gateway 에 내는 warn 안내가 막다른 길이다** — 안내대로 `plugin-token` 훅을 불러도 가짜 플러그인이 시작되지 않은 짝이면 「fake plugin not started」로 거절한다. 출처: c1 리뷰 Minor.
+- **테스트 빈틈 몇** — `dev:fake` 대체 대본의 핸들 라벨 갈래(c1 리뷰 Nit, 변이 생존) · `live-smoke` 「멀티 Gateway」 절 (e) 의 `tokenSet` 확인 줄이 실패할 수 없는 모양(t10 재리뷰 Nit).
+- **스펙 「열린 문제」** — 사람마다 자기 Gateway(`owner_user_id`), 한 Gateway 를 dodok 서버 여러 곳에, Gateway 공유 토큰 암호화, 다른 에이전트 러너. 미룬 까닭: 이번 범위 밖.
+
 **실물 확인**
 
+- **멀티 Gateway 를 실물로 본 것은 실연(`docs/guides/live-smoke.md` 「멀티 Gateway 실연」 절 — 로컬 실물 dev Gateway 둘, 런 0회 하네스, 모델 런 0회)이다.** 같은 id 두 에이전트의 멘션·한쪽 끄기/지우기·hello 때 프롬프트 다시 보내기·다시 실행·옮기기 충돌을 그 절이 본다. 원격 Gateway 판에서는 아직 안 봤다(위 「플러그인·OpenClaw 버전」).
 - **Claude 러너를 실제 번들 CLI 로 본 것은 런 0회 하네스(`docs/guides/live-smoke.md` 「Claude 러너 런 0회 하네스」 절 — 모델 자리만 로컬 가짜 Messages API)와 실연(같은 문서 「Claude 러너(Phase 4 ③) 실연」 절 — 모델 런 3회, OpenClaw 쪽은 `dev:fake` 가짜 Gateway)이다.** 실연은 멘션·도구·스트리밍·운영 비용과 규칙 변경 뒤 `resume`(위 이월 첫 줄)을 봤다. **승인 카드·`post` 카드·파일·`@dev` 릴레이는 모델로 보지 않았다** — 기계 경로는 하네스가 봤고, 모델이 `post` 의 `components` 를 스키마에 맞게 쓰는지는 모른다.
 - **팀을 실물 dev Gateway(2026.9.5)로 본 것은 실연(`docs/guides/live-smoke.md` 「팀(Phase 4 ②) 실연」 절 — 모델 런 0회)이다.** 사람 둘이 쓴 채널에서 에이전트 헤더 「참여자:」가 실제로 온 사람만 싣는지와 member 의 승인 거부를 그 절이 본다. 실연이 새로 찾은 것은 그 절에 있다. 원격 Gateway 판에서는 아직 안 봤다(위 「플러그인·OpenClaw 버전」).
 - **스레드를 실물 dev Gateway(2026.9.5)로 본 것은 스파이크(ADR 0006 — 모델 런 0회)와 실연(`docs/guides/live-smoke.md` 「스레드(Phase 4 ①) 실연」 절)이다.** 실연이 새로 찾은 것은 그 절에 있다. 원격 Gateway 판에서는 아직 안 봤다(위 「플러그인·OpenClaw 버전」).
