@@ -524,8 +524,8 @@ describe("최근 사건", () => {
   const UNTESTED = eventOf(3, {
     kind: "gateway_version_untested",
     severity: "info",
-    key: "gateway:2026.9.5",
-    detail: {},
+    key: "gateway:00000000-0000-4000-8000-0000000000a1:2026.9.5",
+    detail: { gatewayName: "사무실", version: "2026.9.5" },
   });
   const list = async () => within(await region("최근 사건")).findByRole("list", { name: "사건" });
 
@@ -558,7 +558,9 @@ describe("최근 사건", () => {
   it("심각도 필터 — 「오류」면 severity=error 로 부른다", async () => {
     const server = stubOpsServer({ pages: [[FAILED, CRASH, UNTESTED]] });
     renderOps();
-    expect(within(await list()).getAllByRole("listitem")).toHaveLength(3);
+    const items = within(await list()).getAllByRole("listitem");
+    expect(items).toHaveLength(3);
+    expect(items[2]).toHaveTextContent("검증 안 된 Gateway 버전 (2026.9.5)");
     const events = await region("최근 사건");
     await userEvent.click(within(events).getByRole("button", { name: "오류" }));
     await waitFor(() => expect(within(events).getAllByRole("listitem")).toHaveLength(1));

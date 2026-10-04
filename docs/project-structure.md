@@ -330,9 +330,9 @@ src/
 │  │                      run_limit 시스템 메시지가 없을 때만 하나 + 사건 run_limit. 스레드 런이면 그 알림을 스레드에 — 「오늘 이미 남겼나」는 채널 단위) ·
 │  │                      limits.ts(LIMITS — 레이트리밋 숫자의 유일한 자리) · ratelimit.ts(TokenBucket·KeyedLimiter, 기본 시계 monotonicNow) ·
 │  │                      http-limits.ts(createRestLimits — REST·업로드 상한, recordRateLimit — 사건 key 는 라우트 패턴) ·
-│  │                      health.ts(watchConnections — Gateway·브리지가 DISCONNECT_EVENT_MS(60s) 넘게 끊기면 gateway_down·plugin_down 을 열고 붙으면 닫는다 ·
+│  │                      health.ts(watchConnections — 켜진 Gateway 마다 Gateway·브리지가 DISCONNECT_EVENT_MS(60s) 넘게 끊기면 gateway_down·plugin_down(key gateway:<id>)을 열고 붙거나 끄거나 지우면 닫는다 ·
 │  │                      watchRunners — 이 프로세스에서 붙은 적 있는 러너 토큰이 60s 넘게 끊기면 runner_down(key 토큰 id), 붙으면 닫는다, 폐기된 토큰은 남기지 않는다 ·
-│  │                      gatewayPin·observeGatewayVersion·watchGatewayVersion — 핀과 다르면 gateway_version_untested, 기억한 값과 다르면 gateway_version_changed ·
+│  │                      gatewayPin·observeGatewayVersion·watchGatewayVersion — 기억은 Gateway 마다 gateways.last_version, 핀과 다르면 gateway_version_untested(key gateway:<id>:<버전>, detail.version), 기억한 값과 다르면 gateway_version_changed(key gateway:<id>) — detail 에 Gateway 이름 ·
 │  │                      diskLevel·createDiskMonitor — 부팅 때와 10분마다 statfs, error 면 첨부 업로드 507, check() 로 곧바로 다시 잰다 ·
 │  │                      startRunState — run-state.json 종료 표지, 직전이 clean:false 면 unclean_shutdown · watchRunFailures — error 로 끝난 런마다 run_failed agent:<id>) ·
 │  │                      summary.ts(runsSummary — 오늘·7일 채널별·에이전트별 런·실패·중지·차단, 토큰·금액은 붙은 어댑터 가운데 USAGE_TRUSTED_PROVIDERS 의 런만 — 없으면 키가 없고 화면은 「측정 불가」, ADR 0005) ·

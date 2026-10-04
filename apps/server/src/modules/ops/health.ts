@@ -7,7 +7,7 @@ import type { AgentAdapter, OpenClawGateways } from "../../adapters/types";
 import type { Db } from "../../db/client";
 import type { Logger } from "../../logger";
 import type { ServerBus } from "../../realtime/bus";
-import { swapGatewayVersion } from "../gateways/service";
+import { getGatewayRow, setGatewayLastVersion } from "../gateways/service";
 import type { OpsService } from "./service";
 
 // 운영 보강 스펙 5장 — 끊김·Gateway 버전·디스크·종료 표지·실패한 런을 운영 사건으로 남긴다
@@ -204,7 +204,8 @@ export function gatewayPin(version: string | null): { pinned: string; drift: boo
 }
 
 /**
- * 접속 때 받은 그 Gateway 의 버전을 기억(gateways.last_version)과 핀에 대조해 사건을 남긴다(key 에 Gateway id, detail 에 이름).
+ * 접속 때 받은 그 Gateway 의 버전을 기억(gateways.last_version)과 핀에 대조해 사건을 남긴다(key 에 Gateway id, detail 에 이름 —
+ * untested 는 버전도. 웹은 key 를 풀지 않고 detail 을 읽는다).
  * 기억과 같으면 아무것도 하지 않는다 — untested 는 그 Gateway 의 버전이 바뀔 때마다 한 번. 지운 Gateway 면 아무것도 하지 않는다.
  * DB 오류는 던진다(부르는 쪽이 로그로 끝낸다)
  */
@@ -215,8 +216,9 @@ export function observeGatewayVersion(
 ): void {
   if (version === null) return;
   const { db, workspaceId, ops } = deps;
-  const last = swapGatewayVersion(db, workspaceId, gateway.id, version);
-  if (last === undefined || last === version) return;
+  const row = getGatewayRow(db, workspaceId, gateway.id);
+  if (!row || row.lastVersion === version) return;
+  const last = row.lastVersion;
   const key = gatewayEventKey(gateway.id);
   if (last !== null)
     ops.record({
@@ -230,8 +232,10 @@ export function observeGatewayVersion(
       kind: "gateway_version_untested",
       key: `${key}:${version}`,
       severity: "info",
-      detail: { gatewayName: gateway.name },
+      detail: { gatewayName: gateway.name, version },
     });
+  // 사건 → 기억 차례 — 사건 쓰기가 던지면 기억하지 않아 다음 관측이 다시 쓴다
+  setGatewayLastVersion(db, workspaceId, gateway.id, version);
 }
 
 /**

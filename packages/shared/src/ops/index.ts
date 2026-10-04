@@ -2,7 +2,7 @@ import { z } from "zod";
 import { Id, IsoDateTime } from "../common";
 import { AdapterStatus, GatewayLinkState, OpenClawGatewayStatus } from "../wire";
 
-// 운영 보강 계약(스펙 2026-09-25-ops-hardening-design.md 2.3·3.1·6장). 사건 detail 에는 id·코드·수치만 싣는다(8장)
+// 운영 보강 계약(스펙 2026-09-25-ops-hardening-design.md 2.3·3.1·6장). 사건 detail 에는 id·코드·수치와 Gateway 이름(owner 가 붙인 이름)만 싣는다(8장)
 
 /** 사건 종류 — 스펙 3.1 표 */
 export const OpsEventKind = z.enum([

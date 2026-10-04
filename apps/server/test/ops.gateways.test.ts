@@ -184,6 +184,22 @@ describe("감시 — Gateway 마다 따로(가짜 시계)", () => {
     watch.close();
   });
 
+  it("재연결 중에 지운 Gateway 는 임계가 지나도 알림을 내지 않는다", async () => {
+    const adapter = twoGateways();
+    const bus = new ServerBus();
+    const notices: Array<{ message: string }> = [];
+    bus.on("system.notice", (n) => notices.push(n));
+    const watch = watchGatewayReconnecting(adapter, bus, { warn: vi.fn() });
+    adapter.setGatewayState({ gateway: "reconnecting" }, G1.id);
+    adapter.emitStatus();
+    vi.advanceTimersByTime(30 * SEC);
+    await adapter.removeGateway(G1.id);
+    vi.advanceTimersByTime(60 * SEC);
+    expect(notices).toEqual([]);
+    expect(vi.getTimerCount()).toBe(0);
+    watch.close();
+  });
+
   it("버전 사건은 Gateway 마다 — 둘의 버전이 다르면 각자, 기억은 그 Gateway 행에", () => {
     insertGateway(db, ws, G1);
     insertGateway(db, ws, G2);
@@ -200,7 +216,7 @@ describe("감시 — Gateway 마다 따로(가짜 시계)", () => {
       logger: pino({ level: "silent" }),
     });
     expect(rows().map((r) => [r.kind, r.key, r.detail])).toEqual([
-      ["gateway_version_untested", `${key(G2)}:2026.9.5`, { gatewayName: "집" }],
+      ["gateway_version_untested", `${key(G2)}:2026.9.5`, { gatewayName: "집", version: "2026.9.5" }],
     ]);
     expect(getGatewayRow(db, ws, G1.id)?.lastVersion).toBe(OPENCLAW_PINNED_VERSION);
     expect(getGatewayRow(db, ws, G2.id)?.lastVersion).toBe("2026.9.5");

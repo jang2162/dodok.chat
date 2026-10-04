@@ -178,20 +178,12 @@ export function bootGateways(
 }
 
 /**
- * 그 Gateway 에서 마지막으로 본 버전(`last_version`, 멀티 Gateway 스펙 3.1)을 version 으로 바꾸고 앞의 값을 돌려준다 — 처음이면 null,
- * 지운 Gateway 면 undefined. 같은 값이면 쓰지 않는다. 설정이 아니라 관측값이라 `updated_at` 은 건드리지 않는다
+ * 그 Gateway 에서 마지막으로 본 버전(`last_version`, 멀티 Gateway 스펙 3.1)을 version 으로 바꾼다 — 지운 Gateway 면 아무것도
+ * 하지 않는다. 설정이 아니라 관측값이라 `updated_at` 은 건드리지 않는다
  */
-export function swapGatewayVersion(
-  db: Db,
-  workspaceId: string,
-  id: string,
-  version: string,
-): string | null | undefined {
-  return db.transaction((tx) => {
-    const row = getGatewayRow(tx, workspaceId, id);
-    if (!row) return undefined;
-    if (row.lastVersion !== version)
-      tx.update(gateways).set({ lastVersion: version }).where(eq(gateways.id, id)).run();
-    return row.lastVersion;
-  });
+export function setGatewayLastVersion(db: Db, workspaceId: string, id: string, version: string): void {
+  db.update(gateways)
+    .set({ lastVersion: version })
+    .where(and(eq(gateways.workspaceId, workspaceId), eq(gateways.id, id)))
+    .run();
 }

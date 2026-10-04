@@ -52,14 +52,15 @@ describe("사건 한 줄 문구 — kind 별 고정 문구", () => {
     expect(eventText(e)).toBe("Gateway 버전이 바뀜 (2026.9.4 → 2026.9.5)");
   });
 
-  it("검증 안 된 버전은 key 의 버전(gateway:<버전>)", () => {
+  it("검증 안 된 버전은 detail.version — key(gateway:<id>:<버전>)는 풀지 않는다", () => {
     const e = eventOf(1, {
       kind: "gateway_version_untested",
       severity: "info",
-      key: "gateway:2026.9.5",
-      detail: {},
+      key: "gateway:00000000-0000-4000-8000-0000000000a1:2026.9.5",
+      detail: { gatewayName: "사무실", version: "2026.9.5" },
     });
     expect(eventText(e)).toBe("검증 안 된 Gateway 버전 (2026.9.5)");
+    expect(eventText({ ...e, detail: {} })).toBe("검증 안 된 Gateway 버전 (?)");
   });
 
   it("런 실패는 detail.code — 코드가 없으면 괄호 없이", () => {

@@ -225,7 +225,7 @@ export function createGatewayConnection(deps: GatewayConnectionDeps): GatewayCon
   function stopWs(target: ConnectionManager) {
     void target.stop().catch((error: unknown) => {
       // stopAndWait 5s 초과 등 — 연결 객체는 이미 버렸다
-      logger.warn({ err: error, gatewayId: id }, "gateway stop failed");
+      logger.warn({ err: error }, "gateway stop failed");
     });
   }
 
@@ -313,10 +313,7 @@ export function createGatewayConnection(deps: GatewayConnectionDeps): GatewayCon
     try {
       await Promise.race([link.request("chat.abort", target, ABORT_ON_CLOSE_TIMEOUT_MS), timeout]);
     } catch (error) {
-      logger.warn(
-        { err: error, gatewayId: id, runId: target.runId },
-        "chat.abort on connection close failed",
-      );
+      logger.warn({ err: error, runId: target.runId }, "chat.abort on connection close failed");
     } finally {
       clearTimeout(timer);
     }
@@ -527,7 +524,7 @@ export function createGatewayConnection(deps: GatewayConnectionDeps): GatewayCon
           try {
             rmSync(join(deps.deviceDir, DEVICE_TOKENS_FILE), { force: true });
           } catch (error) {
-            logger.warn({ err: error, gatewayId: id }, "gateway device token removal failed");
+            logger.warn({ err: error }, "gateway device token removal failed");
           }
         }
         ws = createWs();
@@ -712,14 +709,14 @@ export function createGatewayConnection(deps: GatewayConnectionDeps): GatewayCon
       try {
         await ws.stop();
       } catch (error) {
-        logger.warn({ err: error, gatewayId: id }, "gateway stop failed during remove");
+        logger.warn({ err: error }, "gateway stop failed during remove");
       }
       await frameDump?.close();
       // 못 지워도 삭제는 끝까지 간다 — 연결은 이미 목록에서 빠졌다. 남은 디렉터리는 같은 id 를 다시 쓰지 않으면 읽히지 않는다
       try {
         rmSync(deps.deviceDir, { recursive: true, force: true });
       } catch (error) {
-        logger.warn({ err: error, gatewayId: id }, "gateway device directory removal failed");
+        logger.warn({ err: error }, "gateway device directory removal failed");
       }
     },
   };

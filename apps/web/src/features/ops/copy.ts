@@ -22,15 +22,14 @@ function limitScope(key: string, nameOf: ChannelNameOf | undefined): string {
   return name === undefined ? " (채널)" : ` (#${name})`;
 }
 
-/** kind → 고정 문구(계획 태스크 6). detail 에는 id·코드·수치만 있다 — 본문·경로는 애초에 없다(스펙 8장) */
+/** kind → 고정 문구(계획 태스크 6). detail 에는 id·코드·수치와 Gateway 이름만 있다 — 본문·경로는 애초에 없다(스펙 8장) */
 const TITLE: Record<OpsEventKind, (e: OpsEvent, nameOf: ChannelNameOf | undefined) => string> = {
   gateway_down: () => "Gateway 연결 끊김",
   plugin_down: () => "플러그인 연결 끊김",
   runner_down: () => "러너 연결 끊김",
   gateway_version_changed: (e) =>
     `Gateway 버전이 바뀜 (${str(e.detail.from) ?? "?"} → ${str(e.detail.to) ?? "?"})`,
-  // 버전은 detail 이 아니라 key(`gateway:<버전>`)에 있다
-  gateway_version_untested: (e) => `검증 안 된 Gateway 버전 (${e.key.replace(/^gateway:/, "")})`,
+  gateway_version_untested: (e) => `검증 안 된 Gateway 버전 (${str(e.detail.version) ?? "?"})`,
   run_limit: (e, nameOf) => `런 한도 도달${limitScope(e.key, nameOf)}`,
   run_failed: (e) => {
     const code = str(e.detail.code);

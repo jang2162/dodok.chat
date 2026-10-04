@@ -30,7 +30,7 @@ export const workspaces = sqliteTable("workspaces", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   createdAt: ts("created_at").notNull(),
-  /** 운영 설정 { dailyRunLimit?, lastGatewayVersion? } — 망가진 값도 읽을 수 있게 json 모드가 아니다(modules/ops/settings.ts 가 파싱) */
+  /** 운영 설정 { dailyRunLimit? } — 망가진 값도 읽을 수 있게 json 모드가 아니다(modules/ops/settings.ts 가 파싱) */
   opsJson: text("ops_json").notNull().default("{}"),
 });
 

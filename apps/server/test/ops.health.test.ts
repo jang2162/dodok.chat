@@ -422,7 +422,7 @@ describe("observeGatewayVersion — Gateway 별 gateways.last_version", () => {
     const updatedAt = getGatewayRow(db, ws, GW.id)?.updatedAt;
     observeGatewayVersion(GW, "2026.9.5", deps);
     expect(rows().map((r) => [r.kind, r.key, r.severity, r.detail])).toEqual([
-      ["gateway_version_untested", `${KEY}:2026.9.5`, "info", { gatewayName: "사무실" }],
+      ["gateway_version_untested", `${KEY}:2026.9.5`, "info", { gatewayName: "사무실", version: "2026.9.5" }],
     ]);
     expect(lastVersion()).toBe("2026.9.5");
     // 관측값이라 설정의 updated_at 은 그대로
@@ -459,6 +459,21 @@ describe("observeGatewayVersion — Gateway 별 gateways.last_version", () => {
         .map((r) => r.kind)
         .sort(),
     ).toEqual(["gateway_version_changed", "gateway_version_untested"]);
+  });
+
+  it("사건을 쓰다 던지면 기억하지 않는다 — 다음 관측이 다시 쓴다", () => {
+    const failing = {
+      record: vi.fn(() => {
+        throw new Error("boom");
+      }),
+    };
+    expect(() => observeGatewayVersion(GW, "2026.9.5", { db, workspaceId: ws, ops: failing })).toThrow(
+      "boom",
+    );
+    expect(lastVersion()).toBeNull();
+    observeGatewayVersion(GW, "2026.9.5", { db, workspaceId: ws, ops });
+    expect(rowsOf("gateway_version_untested")).toHaveLength(1);
+    expect(lastVersion()).toBe("2026.9.5");
   });
 
   it("지운 Gateway(행 없음)는 사건도 기억도 남기지 않는다", () => {
