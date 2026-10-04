@@ -77,6 +77,22 @@ describe("에이전트 줄 — Gateway(멀티 Gateway 스펙 7장)", () => {
     expect(within(dialog).queryByText(/이미 등록돼 있다/)).toBeNull();
   });
 
+  it("고른 Gateway 가 그새 지워졌으면(400) 대화상자 안에 고정 문구 — 서버 문구는 보이지 않는다", async () => {
+    const orphan = makeAgent({ providerAgentId: "main", handle: "main", name: "Main", gateway: null });
+    stubServer({
+      agents: [orphan],
+      move: () => apiErr(400, "VALIDATION", "body — gatewayId: gateway not found"),
+    });
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "@main Gateway 옮기기" }));
+    const dialog = await screen.findByRole("dialog", { name: "Gateway 옮기기" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "옮기기" }));
+    expect(
+      await within(dialog).findByText("그 Gateway 를 찾지 못했습니다 — 다시 고르세요"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/gateway not found/)).toBeNull();
+  });
+
   it("옮기기 대화상자는 지금 Gateway 를 후보에서 뺀다", async () => {
     stubServer({ agents: [mainOffice()], gateways: [TEST_GATEWAY, HOME_GATEWAY] });
     renderPage();
@@ -179,6 +195,21 @@ describe("에이전트 가져오기 — Gateway 고르기", () => {
     const dialog = await openDiscover();
     expect(await within(dialog).findByText(/Gateway 를 먼저 추가하세요/)).toBeInTheDocument();
     expect(within(dialog).queryByRole("link")).toBeNull();
+  });
+
+  it("직접 입력 중에 Gateway 를 바꾸면 그 Gateway 의 목록으로 돌아간다", async () => {
+    stubServer({
+      gateways: [TEST_GATEWAY, HOME_GATEWAY],
+      discover: () => json(200, { agents: [{ providerAgentId: "ops" }] }),
+    });
+    renderPage();
+    const dialog = await openDiscover();
+    await within(dialog).findByRole("checkbox", { name: "ops" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "직접 입력" }));
+    expect(within(dialog).getByRole("textbox", { name: "OpenClaw id" })).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole("radio", { name: "집" }));
+    expect(await within(dialog).findByRole("checkbox", { name: "ops" })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("textbox", { name: "OpenClaw id" })).toBeNull();
   });
 
   it("직접 입력도 고른 Gateway 로 등록한다", async () => {

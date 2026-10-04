@@ -112,6 +112,8 @@ describe("ConnectionDots", () => {
     expect(await screen.findByRole("img", { name: "Gateway 없음" })).toHaveClass("bg-muted-foreground/40");
     push([gw({ enabled: false, gateway: "disabled", bridge: "down" }), HOME()]);
     expect(await screen.findByRole("img", { name: "Gateway 연결됨" })).toHaveClass("bg-success");
+    // 꺼진 Gateway 의 플러그인은 늘 down 이다 — 세면 「일부 끊김」이 된다
+    expect(screen.getByRole("img", { name: "플러그인 연결됨" })).toHaveClass("bg-success");
   });
 
   it("툴팁에 Gateway 별 상태 — 꺼진 것은 「꺼짐」", async () => {
