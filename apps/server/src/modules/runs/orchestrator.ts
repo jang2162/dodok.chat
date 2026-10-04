@@ -928,8 +928,10 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     return inChannel(store.findRunByTriggerMessage(db, msg.replyToInboundId, agentId));
   }
 
+  /** gatewayId 는 정본을 낸 OpenClaw 연결 — 그 Gateway 가 올린 첨부만 묶인다(러너면 undefined) */
   function storeAgentMessage(
     msg: OutboundMessage,
+    gatewayId: string | undefined,
     agentId: string,
     runId: string | undefined,
     threadRootId: string | undefined,
@@ -947,6 +949,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         bodyMd: msg.text, // 평문 @handle — createAgentMessage 가 토큰화한다
         components: msg.components,
         attachmentIds: msg.attachmentIds,
+        ...(gatewayId === undefined ? {} : { gatewayId }),
         replyTo: msg.replyToInboundId,
       },
       {
@@ -1212,6 +1215,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
 
       const run = correlate(msg, provider, connectionId);
       const threadRootId = canonicalThread(msg, run);
+      const gatewayId = provider === "openclaw" ? connectionId : undefined;
       if (!run) {
         const agentId = agentIdFor(msg, provider, connectionId);
         const where = { outboundId: msg.outboundId, channelId: msg.channelId, sessionKey: msg.sessionKey };
@@ -1219,14 +1223,14 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
           logger.warn({ ...where, providerAgentId: msg.agentId }, "canonical message from unknown agent");
           throw apiError("NOT_FOUND", "agent not found");
         }
-        const message = storeAgentMessage(msg, agentId, undefined, threadRootId);
+        const message = storeAgentMessage(msg, gatewayId, agentId, undefined, threadRootId);
         logger.warn({ ...where, runId: msg.runId, messageId: message.id }, "canonical message without run");
         return { messageId: message.id };
       }
 
       if (lateAfterConnectionClosed(run)) {
         // 그 런의 답으로 채널에 남긴다. 릴레이·푸시는 하지 않는다 — 사람이 닫힌 런으로 보고 이미 다음 일을 했을 수 있다
-        const message = storeAgentMessage(msg, run.agentId, run.id, threadRootId, true);
+        const message = storeAgentMessage(msg, gatewayId, run.agentId, run.id, threadRootId, true);
         closeRetryCards(run);
         logger.info(
           { runId: run.id, messageId: message.id, outboundId: msg.outboundId, connectionId },
@@ -1234,7 +1238,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         );
         return { messageId: message.id };
       }
-      const message = storeAgentMessage(msg, run.agentId, run.id, threadRootId);
+      const message = storeAgentMessage(msg, gatewayId, run.agentId, run.id, threadRootId);
       await routeAgentMessage(message, run);
       await api.signal(run.id, { kind: "canonical_received" }); // 종료된 런이면 ignored — 저장·라우팅만
       return { messageId: message.id };

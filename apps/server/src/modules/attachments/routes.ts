@@ -31,8 +31,11 @@ export type AttachmentRouteContext = {
   db: Db;
   workspaceId: string;
   dir: string;
-  /** 브리지 핸드셰이크와 같은 검증(DB 브리지 토큰) — 던지면 401 */
-  verifyBridgeToken: TokenVerifier;
+  /**
+   * 브리지 핸드셰이크와 같은 검증(DB 브리지 토큰) — 던지면 401. 통과면 그 토큰의 Gateway 로 올린 첨부를 표시하고, GET 은 그
+   * Gateway 의 범위만 준다(멀티 Gateway 스펙 6.4 — 범위 밖은 없는 id 와 같은 404)
+   */
+  verifyBridgeToken: (presented: unknown) => { tokenId: string; gatewayId: string } | null;
   /**
    * 있으면 러너 첨부 경로(RUNNER_ATTACHMENTS_PATH)를 연다. verifyToken 은 `/runner` 핸드셰이크와 같은 검증(DB 러너 토큰 — 던지면 401).
    * GET 은 그 토큰이 올린 첨부와 mayRead(러너 어댑터의 mayReadAttachment — 그 토큰의 러너에 열린 런의 deliver 첨부)만 준다(판정 R5)
@@ -224,20 +227,27 @@ export function registerAttachmentRoutes(fastify: FastifyInstance, ctx: Attachme
     });
 
     // 에이전트 쪽 경로 둘 — 브리지(플러그인)와 러너가 같은 규칙(20 MiB·매직 바이트·디스크 여유 507). 러너가 올린 파일도
-    // uploader 는 bridge(에이전트 쪽)다 — 정본 저장이 같은 claimBridgeAttachments 로 묶는다. 러너는 uploader_id 에 토큰 id 를
-    // 남기고, 읽기는 그 토큰의 범위로 좁힌다(판정 R5 — 범위 밖은 없는 id 와 같은 404)
+    // uploader 는 bridge(에이전트 쪽)다 — 정본 저장이 같은 claimBridgeAttachments 로 묶는다. 러너는 uploader_id 에 토큰 id 를,
+    // 플러그인은 gateway_id 에 토큰의 Gateway 를 남기고, 읽기는 그 토큰·Gateway 의 범위로 좁힌다(판정 R5·멀티 Gateway 스펙 6.4 —
+    // 범위 밖은 없는 id 와 같은 404)
     type AgentPath = {
       path: string;
       auth: ReturnType<typeof requireToken>;
       uploader: (request: FastifyRequest) => Uploader;
       viewer: (request: FastifyRequest) => Parameters<typeof findReadable>[2];
     };
+    const gatewayIdOf = (request: FastifyRequest): string => {
+      const gatewayId = (verified.get(request) as { gatewayId?: unknown } | undefined)?.gatewayId;
+      // 인증 훅이 통과시킨 요청에는 늘 있다 — 없으면 배선 버그라 거절로 떨어진다
+      if (typeof gatewayId !== "string") throw apiError("UNAUTHORIZED", "bridge 토큰이 틀렸다");
+      return gatewayId;
+    };
     const agentPaths: AgentPath[] = [
       {
         path: BRIDGE_ATTACHMENTS_PATH,
         auth: bridge,
-        uploader: () => ({ type: "bridge" }),
-        viewer: () => ({ type: "bridge" }),
+        uploader: (request) => ({ type: "bridge", gatewayId: gatewayIdOf(request) }),
+        viewer: (request) => ({ type: "bridge", gatewayId: gatewayIdOf(request) }),
       },
     ];
     const { runner } = ctx;

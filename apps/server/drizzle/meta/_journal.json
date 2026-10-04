@@ -99,6 +99,13 @@
       "when": 1791125398534,
       "tag": "0013_bridge_token_gateway",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1791130747716,
+      "tag": "0014_attachment_gateway",
+      "breakpoints": true
     }
   ]
 }

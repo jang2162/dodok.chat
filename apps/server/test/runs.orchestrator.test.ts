@@ -30,8 +30,8 @@ function systemMessages(db: DbOrTx): Message[] {
   return db.select().from(messages).where(eq(messages.kind, "system")).all().map(rowToMessage);
 }
 
-/** 브리지가 올린 미묶음 첨부 행 — 블롭 없이 묶기만 볼 때 */
-function bridgeAttachment(db: DbOrTx, channelId: string): string {
+/** 브리지(그 Gateway 의 플러그인)가 올린 미묶음 첨부 행 — 블롭 없이 묶기만 볼 때 */
+function bridgeAttachment(db: DbOrTx, channelId: string, gatewayId = FAKE_GATEWAY_ID): string {
   const id = uuid();
   db.insert(attachments)
     .values({
@@ -39,6 +39,7 @@ function bridgeAttachment(db: DbOrTx, channelId: string): string {
       channelId,
       uploaderType: "bridge",
       uploaderId: null,
+      gatewayId,
       kind: "file",
       name: "r.pdf",
       mime: "application/pdf",

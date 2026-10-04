@@ -162,11 +162,11 @@ src/
 │                         브리지·러너 거절 로그도 app.ts 가 어댑터 옵션 logAddress 로 ipPrefix 를 준다(가드·스로틀 키는 전체 주소)
 ├─ wiring.ts              createServices(라우터 ⇄ 오케스트레이터 상호 참조, RunsFacade), sessionRecoverTargets(재접속 복구 대상 — 연결 id 별 Map, OpenClaw 에이전트 세션만)
 ├─ db/
-│  ├─ schema.sqlite.ts    Drizzle 스키마 (계획서 6장 테이블 + agent_sessions + approvals + attachments + bridge_tokens + ops_events + invites + runner_tokens + gateways — 마이그레이션 0000~0012,
-│  │                      FK ON DELETE 는 push_subscriptions.session_id·bridge_tokens.gateway_id(cascade)와 agents.gateway_id(set null)뿐).
+│  ├─ schema.sqlite.ts    Drizzle 스키마 (계획서 6장 테이블 + agent_sessions + approvals + attachments + bridge_tokens + ops_events + invites + runner_tokens + gateways — 마이그레이션 0000~0014,
+│  │                      FK ON DELETE 는 push_subscriptions.session_id·bridge_tokens.gateway_id(cascade)와 agents.gateway_id·attachments.gateway_id(set null)뿐).
 │  │                      ⚠ drizzle-kit 은 기존 표에 FK 열을 더하는 `ALTER TABLE … ADD … REFERENCES` 에서 스냅숏의 ON DELETE 를 빠뜨린다 — SQLite 가 받아도 조용히 다르게 동작하므로,
 │  │                      FK 열을 더하면 생성 SQL 의 ON DELETE 를 스냅숏과 대조하고 다르면 그 줄만 손으로 고친 뒤(SQLite 가 ALTER 를 받지 않으면 표를 다시 만든다) 머리 주석에
-│  │                      까닭을 적는다. 스냅숏은 생성기 출력 그대로 두고 다음 generate 가 「No schema changes」인지 본다(0010·0012).
+│  │                      까닭을 적는다. 스냅숏은 생성기 출력 그대로 두고 다음 generate 가 「No schema changes」인지 본다(0010·0012·0014).
 │  │                      스레드(0006): messages.thread_root_id(인덱스 messages_channel_thread_seq (channel_id, thread_root_id, seq))·agent_sessions.thread_root_id·runs.thread_root_id —
 │  │                      세 열 모두 FK 없음(저장 경로 검증이 지킨다). agent_sessions 의 유일 제약은 **부분 유일 인덱스 둘** — 스레드 행 agent_sessions_channel_agent_thread
 │  │                      (channel_id, agent_id, thread_root_id), 채널 행 agent_sessions_channel_session (channel_id, agent_id) WHERE thread_root_id IS NULL(coalesce 표현식 인덱스는
@@ -183,7 +183,8 @@ src/
 │  │                      runs.connection_id·approvals.connection_id(그 런·승인의 연결 — 공유 Run·Approval 에 싣지 않고 store 의 getRunConnectionId·getApprovalConnectionId 로 읽는다).
 │  │                      유일: OpenClaw 에이전트 agents_openclaw_gateway_agent (gateway_id, provider_agent_id) · 러너 에이전트 agents_claude_ws_agent (workspace_id, provider, provider_agent_id) ·
 │  │                      runs_connection_provider_run (connection_id, provider_run_id) · approvals_connection_provider (connection_id, provider_approval_id) — 제공자 id 는 연결 안에서만 유일하다.
-│  │                      `drizzle/0012_multi_gateway.sql` 의 `ADD gateway_id … REFERENCES` 두 줄은 ON DELETE 를 손으로 붙였다(생성기가 빠뜨린다 — 그 파일 머리 주석).
+│  │                      attachments.gateway_id(0014 — 플러그인이 올린 첨부의 Gateway. 그 Gateway 만 읽고 정본에 묶는다, Gateway 를 지우면 비어 아무도 묶지 못한다).
+│  │                      `drizzle/0012_multi_gateway.sql`·`0014_attachment_gateway.sql` 의 `ADD gateway_id … REFERENCES` 줄은 ON DELETE 를 손으로 붙였다(생성기가 빠뜨린다 — 그 파일 머리 주석).
 │  │                      팀(0008): invites — id·workspace_id·kind(invite·reset)·role(invite 만)·target_user_id(reset 만)·token_hash(sha256 hex, 유일 invites_token_hash)·prefix·
 │  │                      created_by·created_at·expires_at·used_at·used_by(FK 없음)·revoked_at — 원문 없음, 유효 = used_at·revoked_at 이 비고 만료 전. users.left_handle(나간 멤버의 옛 핸들 —
 │  │                      그 행의 handle 은 `left-<id 뒤 27자>`, email 은 NULL), 유일 인덱스 users_ws_email (workspace_id, email)(NULL 여럿 허용 — 이메일은 넣기 전에 소문자로).
@@ -221,15 +222,21 @@ src/
 │  │                      24시간 넘은 미묶음 행, 행 없는 블롭, 1시간 넘은 .tmp) ·
 │  │                      routes.ts(`POST`·`GET /api/v1/attachments`(세션), `POST`·`GET /bridge/attachments`(브리지 토큰) — 원시 바이트 본문, 인증은 onRequest,
 │  │                      GET 은 블롭을 먼저 열어 없으면 404, nosniff·CSP sandbox·immutable, Content-Disposition 은 RFC 5987).
+│  │                      브리지 범위(멀티 Gateway 스펙 6.4): 브리지 토큰의 Gateway 가 올린 것과 그 Gateway 에서 열린 런(runs.connection_id)의 트리거 첨부만 읽고(범위 밖은 404),
+│  │                      정본에 묶는 것(claimBridgeAttachments)도 그 Gateway 가 올린 것만 — 러너 정본은 Gateway 가 올린 것을 묶지 못한다
 │  │                      정리 타이머 startAttachmentSweeper 는 app.ts 에 있다(부팅 때 한 번, 그 뒤 1시간마다, 닫을 때 진행 중인 정리를 기다린다)
 │  ├─ approvals/          store.ts(approvals 테이블 — (연결, providerApprovalId) 유일 upsert, 중복은 병합 후 재발행, 채널 미해결 목록),
 │  │                      service.ts(상관 — 승인이 온 연결의 에이전트·findOpenRunBySession(연결, 세션 키) → 저장 → APPROVAL_REQUESTED/RESOLVED 런 이벤트 → 버스,
 │  │                      resolve 는 승인 설계 4.4 의 문지기 검사 뒤 승인이 온 연결로 어댑터 RPC).
 │  │                      REST 라우트는 없다 — 요구·확정은 wire 로만 오간다
 │  ├─ channels/           CRUD·멤버(에이전트 promptOverride·autoRespond·aliases, 사람은 membership 이 있는 사람만 — 나간 사람 404)·프롬프트 리비전(역할: 만들기·`PATCH` 는 name·topic 밖 필드면 admin, 채널 멤버는 aliases 밖 필드면 admin, 「새 대화」는 admin — auth/roles.ts),
-│  │                      사람의 자동 참여 joinChannelIfAbsent·사람 메시지의 멘션 후보 userMessageParticipants(채널 밖의 워크스페이스 사람 + 채널 참가자)·에이전트 헤더의 channelParticipants, 프롬프트 변경 시 어댑터 config.set, 「새 대화」(resetAgentSession —
+│  │                      사람의 자동 참여 joinChannelIfAbsent·사람 메시지의 멘션 후보 userMessageParticipants(채널 밖의 워크스페이스 사람 + 채널 참가자)·에이전트 헤더의 channelParticipants,
+│  │                      채널 프롬프트 동기화 prompt-sync.ts(OpenClaw config.set — 바꿀 때 그 채널 에이전트의 켜진 Gateway 마다, 에이전트를 넣거나 옮겨 Gateway 가 채널에 처음 들어올 때 그 Gateway 에,
+│  │                      플러그인 hello 때 그 Gateway 의 채널들을 다시 — watchPluginHellos, app.ts 가 건다), 「새 대화」(resetAgentSession —
 │  │                      `POST …/agents/:agentId/reset?threadRootId=` 면 그 스레드 세션만 reset·그 스레드 런만 abort, info 도 스레드에. 루트가 아니면 404, UUID 가 아니면 400)
 │  ├─ agents/             에이전트 등록·수정(admin 이상, 핸들은 members/handles.ts 의 assertHandleFree), GET /agents/discover(Gateway agents.list, admin 이상). 등록은 providerAgentId 를 shared `isRegistrableAgentId`(소문자)로 400 VALIDATION,
+│  │                      OpenClaw 는 등록·찾기 모두 gatewayId 필수(워크스페이스의 Gateway 가 아니면 400, 찾기는 꺼진 Gateway 면 ADAPTER_UNAVAILABLE), 같은 Gateway 에 같은 id 면 409.
+│  │                      `PUT /agents/:id/gateway`(owner) — 다른 Gateway 로 옮기기(대상에 같은 id 409, 러너 에이전트 400). 응답 Agent 에 OpenClaw 면 gateway({id,name} 또는 null),
 │  │                      조회는 `providerAgentIdIs`(lower() 비교 — 승인 findAgentId·런 없는 정본 agentIdFor 가 같이 쓴다: 코어가 세션 키를 소문자로 접는다)
 │  ├─ messages/           seq 발급(seq.ts)·사람/에이전트/시스템 메시지 저장·bus 통지·히스토리 페이징. 저장과 같은 트랜잭션에서 첨부를 묶는다
 │  │                      (사람 메시지는 같은 트랜잭션에서 쓴 사람·멘션된 사람을 채널에 참여시키고 커밋 뒤 `channel.member.changed` 한 번 — 에이전트 메시지는 아무도 참여시키지 않는다)

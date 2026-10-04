@@ -5,12 +5,13 @@
 import { ATTACHMENT_LIMITS, type Attachment, artifactUrl, sanitizeAttachmentName } from "@dodok/shared";
 import { readdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { and, eq, inArray, isNull, lt, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, lt, notInArray, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import type { Db, DbOrTx } from "../../db/client";
-import { attachments } from "../../db/schema.sqlite";
+import { attachments, runs } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
 import { getChannel } from "../channels/service";
+import { TERMINAL_STATUSES } from "../runs/machine";
 import { sniff } from "./sniff";
 import {
   type BlobLocks,
@@ -24,13 +25,23 @@ import {
 
 /** locks 는 없으면 모듈 하나(defaultBlobLocks) — 같은 dir 을 쓰는 업로드·정리는 같은 잠금을 지나야 한다 */
 export type AttachmentDeps = { db: Db; dir: string; now?: () => Date; locks?: BlobLocks };
-/** 러너가 올린 것도 에이전트 쪽(bridge)이다 — runnerTokenId 는 uploader_id 에 남아 그 러너의 읽기 범위가 된다(판정 R5) */
-export type Uploader = { type: "user"; userId: string } | { type: "bridge"; runnerTokenId?: string };
+/**
+ * 러너가 올린 것도 에이전트 쪽(bridge)이다 — runnerTokenId 는 uploader_id 에 남아 그 러너의 읽기 범위가 된다(판정 R5). 플러그인이
+ * 올린 것은 gatewayId(그 브리지 토큰의 Gateway)가 gateway_id 에 남아 그 Gateway 의 읽기·묶기 범위가 된다(멀티 Gateway 스펙 6.4)
+ */
+export type Uploader =
+  | { type: "user"; userId: string }
+  | { type: "bridge"; runnerTokenId?: string; gatewayId?: string };
 /**
  * 러너 토큰 뷰어(판정 R5) — 자기 토큰이 올린 것과, mayRead 가 허락한 것(그 러너에 열린 런의 deliver 첨부)만 본다.
  * 브리지 뷰어와 달리 「묶였다」는 것만으로는 못 본다
  */
 export type RunnerViewer = { type: "runner"; tokenId: string; mayRead: (attachmentId: string) => boolean };
+/**
+ * 브리지 토큰 뷰어(멀티 Gateway 스펙 6.4 — 러너 R5 와 같게) — 그 Gateway 가 올린 것과, 그 Gateway 에서 열린 런(runs.connection_id)의
+ * 트리거 메시지에 묶인 것만 본다. 「묶였다」는 것만으로는 못 본다
+ */
+export type BridgeViewer = { type: "bridge"; gatewayId: string };
 type Row = typeof attachments.$inferSelect;
 
 export const UNBOUND_TTL_MS = 24 * 3600_000;
@@ -82,6 +93,7 @@ export async function uploadAttachment(
         uploaderType: input.uploader.type,
         uploaderId:
           input.uploader.type === "user" ? input.uploader.userId : (input.uploader.runnerTokenId ?? null),
+        gatewayId: input.uploader.type === "bridge" ? (input.uploader.gatewayId ?? null) : null,
         kind: s.kind,
         name: sanitizeAttachmentName(input.nameHint ?? fallback),
         mime: s.mime,
@@ -124,9 +136,13 @@ export function claimUserAttachments(
   });
 }
 
+/**
+ * 에이전트 정본에 묶을 첨부를 고른다 — 같은 채널·미묶음·에이전트 쪽이 올린 것만. gatewayId 는 정본을 낸 Gateway 로, 그 Gateway 가
+ * 올린 것만 받는다(멀티 Gateway 스펙 6.4). null 이면 러너의 정본이다 — Gateway 가 올린 것은 받지 않는다
+ */
 export function claimBridgeAttachments(
   tx: DbOrTx,
-  input: { ids: string[]; channelId: string },
+  input: { ids: string[]; channelId: string; gatewayId: string | null },
 ): { accepted: Attachment[]; dropped: string[] } {
   const byId = rowsInOrder(tx, input.ids);
   const accepted: Attachment[] = [];
@@ -138,6 +154,7 @@ export function claimBridgeAttachments(
       !r ||
       seen.has(id) ||
       r.uploaderType !== "bridge" ||
+      r.gatewayId !== input.gatewayId ||
       r.channelId !== input.channelId ||
       r.messageId !== null
     ) {
@@ -158,7 +175,7 @@ export function markBound(tx: DbOrTx, ids: string[], messageId: string): void {
 export function findReadable(
   deps: AttachmentDeps,
   id: string,
-  viewer: { type: "user"; userId: string; workspaceId: string } | { type: "bridge" } | RunnerViewer,
+  viewer: { type: "user"; userId: string; workspaceId: string } | BridgeViewer | RunnerViewer,
 ): { attachment: Attachment; path: string } | undefined {
   const row = deps.db.select().from(attachments).where(eq(attachments.id, id)).get();
   if (!row) return undefined;
@@ -166,11 +183,29 @@ export function findReadable(
     viewer.type === "runner"
       ? (row.uploaderType === "bridge" && row.uploaderId === viewer.tokenId) || viewer.mayRead(row.id)
       : viewer.type === "bridge"
-        ? row.messageId !== null // 브리지는 묶인 첨부만 — 사람이 올리고 아직 안 보낸 것은 못 본다
+        ? (row.uploaderType === "bridge" && row.gatewayId === viewer.gatewayId) ||
+          (row.messageId !== null && triggersOpenRun(deps.db, row.messageId, viewer.gatewayId))
         : row.messageId === null
           ? row.uploaderType === "user" && row.uploaderId === viewer.userId
           : getChannel(deps.db, row.channelId, viewer.workspaceId) !== undefined;
   return ok ? { attachment: toAttachment(row), path: blobPath(deps.dir, row.sha256) } : undefined;
+}
+
+/** 그 메시지를 트리거로 그 연결에서 열린 런이 있는가 — 런의 연결은 맡을 때 정해져 플러그인이 deliver 를 받기 전에 있다 */
+function triggersOpenRun(db: DbOrTx, messageId: string, connectionId: string): boolean {
+  return (
+    db
+      .select({ id: runs.id })
+      .from(runs)
+      .where(
+        and(
+          eq(runs.connectionId, connectionId),
+          eq(runs.triggerMessageId, messageId),
+          notInArray(runs.status, [...TERMINAL_STATUSES]),
+        ),
+      )
+      .get() !== undefined
+  );
 }
 
 function countRows(db: Db, sha: string): number {

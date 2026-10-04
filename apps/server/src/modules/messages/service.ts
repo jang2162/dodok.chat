@@ -55,6 +55,11 @@ export type CreateAgentMessageInput = {
   components?: z.input<typeof ComponentsV1>;
   /** 브리지가 올린 같은 채널·미묶음 첨부만 묶고 나머지는 뺀다(스펙 4.4) */
   attachmentIds?: string[];
+  /**
+   * 정본을 낸 Gateway — 그 Gateway 가 올린 첨부만 묶는다(멀티 Gateway 스펙 6.4). 없으면(러너·스냅숏 답) Gateway 가 올린 첨부는 묶지
+   * 않는다
+   */
+  gatewayId?: string;
   replyTo?: string;
   threadRootId?: string;
 };
@@ -327,6 +332,7 @@ export function createAgentMessage(
     const { accepted, dropped } = claimBridgeAttachments(tx, {
       ids: input.attachmentIds ?? [],
       channelId: input.channelId,
+      gatewayId: input.gatewayId ?? null,
     });
     const message = storeMessage(tx, input.channelId, input.threadRootId, () => {
       const now = new Date();

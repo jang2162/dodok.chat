@@ -437,7 +437,7 @@ describe("첨부 HTTP (스펙 4.3)", () => {
     expect(up.json()).toMatchObject({ name: "file" });
   });
 
-  it("브리지 GET: 미묶음은 404(사람이 올린 것도), 묶인 것은 바이트", async () => {
+  it("브리지 GET: 그 Gateway 가 올린 것은 묶이기 전후로 바이트, 사람이 올린 것은 묶여도 404(열린 런의 트리거 첨부만 — attachments.bridge-scope)", async () => {
     const bget = (id: string, token = BRIDGE_TOKEN) =>
       app.fastify.inject({
         method: "GET",
@@ -446,7 +446,7 @@ describe("첨부 HTTP (스펙 4.3)", () => {
       });
     const mine = (await bridgeUpload(PDF_BYTES, { "x-dodok-file-name": "r.pdf" })).json() as Attachment;
     const human = (await upload(makePng(6, 2))).json() as Attachment;
-    expect((await bget(mine.id)).statusCode).toBe(404);
+    expect((await bget(mine.id)).statusCode).toBe(200);
     expect((await bget(human.id)).statusCode).toBe(404);
     bind([mine.id, human.id]);
     expect((await bget(mine.id, "wrong-token-xxxxxxxx")).statusCode).toBe(401);
@@ -454,10 +454,12 @@ describe("첨부 HTTP (스펙 4.3)", () => {
     expect(got.statusCode).toBe(200);
     expect(got.rawPayload.equals(PDF_BYTES)).toBe(true);
     expect(got.headers["x-content-type-options"]).toBe("nosniff");
-    const img = await bget(human.id);
+    expect((await bget(human.id)).statusCode).toBe(404);
+    const png = (await bridgeUpload(makePng(6, 3))).json() as Attachment;
+    const img = await bget(png.id);
     expect(img.statusCode).toBe(200);
     expect(img.headers["content-type"]).toBe("image/png");
-    expect(img.rawPayload.equals(makePng(6, 2))).toBe(true);
+    expect(img.rawPayload.equals(makePng(6, 3))).toBe(true);
     // 브리지 GET 은 이미지도 inline 이 아니라 내려받기다
     expect(img.headers["content-disposition"]).toMatch(/^attachment; filename="[^"]*"; filename\*=UTF-8''/);
   });
@@ -776,7 +778,7 @@ describe("브리지 첨부 인증 — 실패 카운터(운영 보강 스펙 4.1)
     const app = await bootTestApp();
     const fastify = Fastify();
     const guard = new BridgeAuthGuard({ maxFailures: 1 });
-    let verify: () => { tokenId: string } | null = () => {
+    let verify: () => { tokenId: string; gatewayId: string } | null = () => {
       throw new Error("db locked");
     };
     registerAttachmentRoutes(fastify, {

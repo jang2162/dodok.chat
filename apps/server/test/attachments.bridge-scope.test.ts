@@ -1,0 +1,168 @@
+/**
+ * 브리지 첨부 범위(멀티 Gateway 스펙 6.4 — 러너 판정 R5 와 같게). 브리지 토큰으로 읽을 수 있는 첨부는 그 토큰의 Gateway 에서 열린
+ * 런이 받은 트리거 첨부와 그 Gateway 가 올린 첨부뿐이고, 정본에 묶을 수 있는 것은 그 Gateway 가 올린 첨부뿐이다. 범위 밖은 없는
+ * id 와 같은 404 다.
+ */
+import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
+import type { Attachment, OutboundMessage } from "@dodok/shared";
+import { afterEach, describe, expect, it } from "vitest";
+import { hasGateways } from "../src/adapters/types";
+import type { App } from "../src/app";
+import { attachments } from "../src/db/schema.sqlite";
+import { createAgent } from "../src/modules/agents/service";
+import { addMember, createChannel } from "../src/modules/channels/service";
+import { createUserMessage, getMessage } from "../src/modules/messages/service";
+import { getRun } from "../src/modules/runs/store";
+import { issueBridgeToken } from "../src/modules/setup/tokens";
+import { bootTestApp, login } from "./helpers/app";
+import { FAKE_GATEWAY_ID, insertGateway } from "./helpers/gateways";
+import { makePng, PDF_BYTES } from "./helpers/png";
+
+const HOME_ID = "00000000-0000-4000-8000-0000000000b2";
+
+const apps: App[] = [];
+afterEach(async () => {
+  for (const app of apps.splice(0)) await app.close();
+});
+
+/** 사무실(FAKE_GATEWAY_ID)·집 두 Gateway, 각자의 브리지 토큰, 두 Gateway 의 main 이 든 채널 */
+async function setup() {
+  const app = await bootTestApp({}, { adapters: [new FakeAdapter()] });
+  apps.push(app);
+  const home = insertGateway(app.db, app.workspaceId, { id: HOME_ID, name: "집" });
+  const openclaw = app.registry.forProvider("openclaw");
+  if (openclaw && hasGateways(openclaw)) openclaw.upsertGateway(home);
+  const tokens = {
+    office: issueBridgeToken(app.db, app.workspaceId, FAKE_GATEWAY_ID, "office").token,
+    home: issueBridgeToken(app.db, app.workspaceId, HOME_ID, "home").token,
+  };
+  const channel = createChannel(app.db, {
+    workspaceId: app.workspaceId,
+    createdBy: app.ownerUserId,
+    name: "att",
+  });
+  for (const [gatewayId, handle] of [
+    [FAKE_GATEWAY_ID, "main-office"],
+    [HOME_ID, "main-home"],
+  ] as const) {
+    const agent = createAgent(app.db, {
+      workspaceId: app.workspaceId,
+      providerAgentId: "main",
+      handle,
+      name: handle,
+      gatewayId,
+    });
+    addMember(app.db, channel.id, { memberType: "agent", memberId: agent.id }, app.logger);
+  }
+  const { headers } = await login(app);
+
+  const userUpload = async () => {
+    const res = await app.fastify.inject({
+      method: "POST",
+      url: `/api/v1/attachments?channelId=${channel.id}`,
+      headers: { ...headers, "content-type": "image/png" },
+      payload: makePng(4, 4),
+    });
+    expect(res.statusCode).toBe(200);
+    return res.json() as Attachment;
+  };
+  const bridgeUpload = async (token: string) => {
+    const res = await app.fastify.inject({
+      method: "POST",
+      url: "/bridge/attachments",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "x-dodok-channel-id": channel.id,
+        "content-type": "application/octet-stream",
+      },
+      payload: PDF_BYTES,
+    });
+    expect(res.statusCode).toBe(200);
+    return res.json() as Attachment;
+  };
+  const bridgeGet = async (token: string, id: string) =>
+    (
+      await app.fastify.inject({
+        method: "GET",
+        url: `/bridge/attachments/${id}`,
+        headers: { authorization: `Bearer ${token}` },
+      })
+    ).statusCode;
+  /** 사람이 이미지를 붙여 그 핸들을 멘션 — 그 에이전트의 런이 열린다 */
+  const mentionWithImage = async (handle: string) => {
+    const image = await userUpload();
+    const message = createUserMessage(app.db, app.bus, {
+      channelId: channel.id,
+      authorId: app.ownerUserId,
+      bodyMd: `@${handle} 이 그림`,
+      clientMsgId: `img-${handle}-${image.id}`,
+      attachments: [image.id],
+    });
+    await app.services.router.routeMessage(message);
+    const run = app.db.$client.prepare("SELECT id FROM runs WHERE trigger_message_id = ?").get(message.id) as
+      | { id: string }
+      | undefined;
+    expect(run).toBeDefined();
+    return { image, runId: run?.id as string };
+  };
+  /** 그 연결의 플러그인이 보낸 정본(어댑터가 onCanonical 을 부르는 길) — 저장된 메시지의 첨부 id */
+  const canonical = async (connectionId: string, attachmentIds: string[]) => {
+    const message: OutboundMessage = {
+      outboundId: `out-${connectionId}-${attachmentIds.join(",")}`,
+      channelId: channel.id,
+      agentId: "main",
+      sessionKey: `agent:main:dodok:channel:${channel.id}`,
+      text: "파일입니다",
+      attachmentIds,
+      ts: new Date().toISOString(),
+    };
+    const { messageId } = await app.orchestrator.onCanonical(message, "openclaw", connectionId);
+    return getMessage(app.db, messageId ?? "")?.attachments.map((a) => a.id);
+  };
+  return { app, tokens, channel, bridgeUpload, bridgeGet, mentionWithImage, canonical };
+}
+
+describe("브리지 첨부 범위 — 토큰의 Gateway 로", () => {
+  it("집 런의 트리거 첨부는 집 토큰만 읽는다 — 사무실 토큰은 404, 런이 닫히면 집 토큰도 404", async () => {
+    const { app, tokens, bridgeGet, mentionWithImage } = await setup();
+    const { image, runId } = await mentionWithImage("main-home");
+    expect(getRun(app.db, runId)?.status).not.toBe("error");
+    expect(await bridgeGet(tokens.office, image.id)).toBe(404);
+    expect(await bridgeGet(tokens.home, image.id)).toBe(200);
+
+    await app.orchestrator.signal(runId, { kind: "gateway_aborted" });
+    expect(await bridgeGet(tokens.home, image.id)).toBe(404);
+  });
+
+  it("사무실 런의 트리거 첨부는 사무실 토큰이 읽는다", async () => {
+    const { tokens, bridgeGet, mentionWithImage } = await setup();
+    const { image } = await mentionWithImage("main-office");
+    expect(await bridgeGet(tokens.office, image.id)).toBe(200);
+    expect(await bridgeGet(tokens.home, image.id)).toBe(404);
+  });
+
+  it("그 Gateway 가 올린 첨부는 묶이기 전에도 그 Gateway 만 읽는다", async () => {
+    const { tokens, bridgeUpload, bridgeGet } = await setup();
+    const own = await bridgeUpload(tokens.office);
+    expect(await bridgeGet(tokens.office, own.id)).toBe(200);
+    expect(await bridgeGet(tokens.home, own.id)).toBe(404);
+  });
+
+  it("업로드 행에 올린 Gateway 가 남는다", async () => {
+    const { app, tokens, bridgeUpload } = await setup();
+    const own = await bridgeUpload(tokens.home);
+    const row = app.db
+      .select()
+      .from(attachments)
+      .all()
+      .find((r) => r.id === own.id);
+    expect(row).toMatchObject({ uploaderType: "bridge", gatewayId: HOME_ID });
+  });
+
+  it("다른 Gateway 가 올린 첨부는 정본에 묶이지 않는다 — 자기 것은 묶인다", async () => {
+    const { tokens, bridgeUpload, canonical } = await setup();
+    const fromOffice = await bridgeUpload(tokens.office);
+    expect(await canonical(HOME_ID, [fromOffice.id])).toEqual([]);
+    expect(await canonical(FAKE_GATEWAY_ID, [fromOffice.id])).toEqual([fromOffice.id]);
+  });
+});

@@ -83,7 +83,12 @@ describe("통합 시나리오 11 — 첨부", () => {
     const l = await boot();
     const setup = await setupRelayChannel(l, RELAY_POLICY);
     const log = await openChannelWire(l, setup.channel.id, sockets);
-    createScenario({ gateway: l.gateway, plugin: l.plugin, agents: { dev: () => ({ reply: "봤어요" }) } });
+    // 런을 열어 둔다 — 브리지는 열린 런의 트리거 첨부만 받는다(멀티 Gateway 스펙 6.4). 실제 플러그인은 ack 전에 받는다
+    createScenario({
+      gateway: l.gateway,
+      plugin: l.plugin,
+      agents: { dev: () => ({ reply: "봤어요", holdFinal: true }) },
+    });
     const png = makePng(8, 6);
     const att = await uploadImage(l, setup.channel.id, png, "스샷.png");
     expect(att).toMatchObject({ kind: "image", url: `artifact://${att.id}`, width: 8, height: 6 });
@@ -97,7 +102,6 @@ describe("통합 시나리오 11 — 첨부", () => {
     const got = await l.plugin.downloadAttachment(att.id);
     expect(got.status).toBe(200);
     expect(got.bytes.equals(png)).toBe(true);
-    await log.until(() => log.created.find((m) => m.authorType === "agent"), "에이전트 답");
   });
 
   it("11a′ [Review Focus 3] 본문 없는 이미지 메시지도 에이전트 인바운드까지 — text 는 빈 문자열, 이미지 하나", async () => {

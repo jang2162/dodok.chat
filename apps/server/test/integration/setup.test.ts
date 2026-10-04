@@ -144,8 +144,8 @@ describe("설정 마법사 통합 — 브리지 토큰 겹침 교체·폐기", (
     await movedEvent;
     expect((await tokens()).filter((t) => t.connected).map((t) => t.id)).toEqual([tokenB]);
 
-    // 첨부 하나(B 로 올린다 — 2xx 가 인증 통과다). 브리지 받기는 메시지에 묶인 첨부만 주므로 이 첨부는 인증을 지나면 404,
-    // 인증에서 막히면 401 이다(인증은 onRequest 라 존재 확인보다 먼저)
+    // 첨부 하나(B 로 올린다 — 2xx 가 인증 통과다). 브리지 받기는 그 토큰의 Gateway 가 올린 첨부를 주므로(멀티 Gateway 스펙 6.4)
+    // 같은 Gateway 의 A 로도 인증을 지나면 200, 인증에서 막히면 401 이다(인증은 onRequest 라 범위 확인보다 먼저)
     const createdChannel = await app.fastify.inject({
       method: "POST",
       url: "/api/v1/channels",
@@ -159,13 +159,13 @@ describe("설정 마법사 통합 — 브리지 토큰 겹침 교체·폐기", (
       name: "a.png",
       mime: "image/png",
     });
-    expect((await pluginB.downloadAttachment(uploaded.id, { token: TOKEN_A })).status).toBe(404);
+    expect((await pluginB.downloadAttachment(uploaded.id, { token: TOKEN_A })).status).toBe(200);
 
     // A 폐기 — 재접속·첨부 모두 거절, B 는 그대로
     expect((await call("DELETE", `${tokensPath}/${tokenA}`)).statusCode).toBe(204);
     expect(await tryBridge(app.url, TOKEN_A)).toBe("UNAUTHORIZED");
     expect((await pluginB.downloadAttachment(uploaded.id, { token: TOKEN_A })).status).toBe(401);
-    expect((await pluginB.downloadAttachment(uploaded.id)).status).toBe(404);
+    expect((await pluginB.downloadAttachment(uploaded.id)).status).toBe(200);
     await pluginB.uploadAttachment({
       channelId: channel.id,
       bytes: makePng(3, 3),

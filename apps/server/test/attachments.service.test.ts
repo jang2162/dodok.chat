@@ -22,6 +22,7 @@ import { createChannel } from "../src/modules/channels/service";
 import { createUserMessage } from "../src/modules/messages/service";
 import { ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
+import { insertGateway } from "./helpers/gateways";
 import { makePng, PDF_BYTES, SVG_BYTES } from "./helpers/png";
 import { seedWorkspace } from "./helpers/seed";
 
@@ -259,34 +260,70 @@ describe("attachments service", () => {
       { channelId: chA, uploader: { type: "user", userId: alice }, bytes: makePng(1, 1) },
     );
     const r = db.transaction((tx) =>
-      claimBridgeAttachments(tx, { ids: [f2.id, wrongCh.id, human.id, f1.id, f2.id], channelId: chA }),
+      claimBridgeAttachments(tx, {
+        ids: [f2.id, wrongCh.id, human.id, f1.id, f2.id],
+        channelId: chA,
+        gatewayId: null,
+      }),
     );
     expect(r.accepted.map((a) => a.name)).toEqual(["b.png", "a.pdf"]);
     expect(r.dropped).toEqual([wrongCh.id, human.id, f2.id]);
     db.transaction((tx) => markBound(tx, [f1.id], msgInA));
-    expect(db.transaction((tx) => claimBridgeAttachments(tx, { ids: [f1.id], channelId: chA }))).toEqual({
+    expect(
+      db.transaction((tx) => claimBridgeAttachments(tx, { ids: [f1.id], channelId: chA, gatewayId: null })),
+    ).toEqual({
       accepted: [],
       dropped: [f1.id],
     });
   });
 
-  it("findReadable: 묶인 것은 같은 워크스페이스 채널 사용자·브리지, 미묶음은 올린 사람만", async () => {
+  it("claimBridgeAttachments: 정본을 낸 Gateway 가 올린 것만 — 다른 Gateway·러너의 정본은 묶지 못한다(멀티 Gateway 스펙 6.4)", async () => {
+    const [office, home] = [uuid(), uuid()];
+    for (const id of [office, home]) insertGateway(db, ws, { id, name: id.slice(-6) });
+    const fromOffice = await uploadAttachment(
+      { db, dir },
+      { channelId: chA, uploader: { type: "bridge", gatewayId: office }, bytes: PDF_BYTES },
+    );
+    const claim = (gatewayId: string | null) =>
+      db.transaction((tx) => claimBridgeAttachments(tx, { ids: [fromOffice.id], channelId: chA, gatewayId }));
+    expect(claim(home)).toEqual({ accepted: [], dropped: [fromOffice.id] });
+    expect(claim(null)).toEqual({ accepted: [], dropped: [fromOffice.id] });
+    expect(claim(office).accepted.map((a) => a.id)).toEqual([fromOffice.id]);
+  });
+
+  it("findReadable: 묶인 것은 같은 워크스페이스 채널 사용자, 미묶음은 올린 사람만", async () => {
     const a = await uploadAttachment(
       { db, dir },
       { channelId: chA, uploader: { type: "user", userId: alice }, bytes: makePng(1, 1) },
     );
     expect(findReadable({ db, dir }, a.id, { type: "user", userId: alice, workspaceId: ws })).toBeDefined();
     expect(findReadable({ db, dir }, a.id, { type: "user", userId: bob, workspaceId: ws })).toBeUndefined();
-    expect(findReadable({ db, dir }, a.id, { type: "bridge" })).toBeUndefined();
     db.transaction((tx) => markBound(tx, [a.id], msgInA));
     expect(findReadable({ db, dir }, a.id, { type: "user", userId: bob, workspaceId: ws })).toBeDefined();
     expect(
       findReadable({ db, dir }, a.id, { type: "user", userId: bob, workspaceId: "other-ws" }),
     ).toBeUndefined();
-    expect(findReadable({ db, dir }, a.id, { type: "bridge" })).toBeDefined();
-    expect(
-      findReadable({ db, dir }, "01a0cc16-0000-7000-8000-000000000000", { type: "bridge" }),
-    ).toBeUndefined();
+  });
+
+  it("findReadable 브리지: 그 Gateway 가 올린 것(묶이기 전후)만 — 묶였다는 것만으로는 못 본다(트리거 첨부는 attachments.bridge-scope)", async () => {
+    const [office, home] = [uuid(), uuid()];
+    for (const id of [office, home]) insertGateway(db, ws, { id, name: id.slice(-6) });
+    const bridge = (gatewayId: string) => ({ type: "bridge", gatewayId }) as const;
+    const own = await uploadAttachment(
+      { db, dir },
+      { channelId: chA, uploader: { type: "bridge", gatewayId: office }, bytes: PDF_BYTES },
+    );
+    const human = await uploadAttachment(
+      { db, dir },
+      { channelId: chA, uploader: { type: "user", userId: alice }, bytes: makePng(1, 1) },
+    );
+    expect(findReadable({ db, dir }, own.id, bridge(office))).toBeDefined();
+    expect(findReadable({ db, dir }, own.id, bridge(home))).toBeUndefined();
+    db.transaction((tx) => markBound(tx, [own.id, human.id], msgInA));
+    expect(findReadable({ db, dir }, own.id, bridge(office))).toBeDefined();
+    expect(findReadable({ db, dir }, own.id, bridge(home))).toBeUndefined();
+    expect(findReadable({ db, dir }, human.id, bridge(office))).toBeUndefined();
+    expect(findReadable({ db, dir }, "01a0cc16-0000-7000-8000-000000000000", bridge(office))).toBeUndefined();
   });
 
   it("findReadable 러너: 자기 토큰이 올린 것(묶이기 전후)과 mayRead 가 허락한 것만 — 묶였어도 나머지는 못 본다(판정 R5)", async () => {
@@ -303,12 +340,13 @@ describe("attachments service", () => {
     });
     expect(findReadable({ db, dir }, own.id, runner(tokenA))).toBeDefined();
     expect(findReadable({ db, dir }, own.id, runner(tokenB))).toBeUndefined();
-    // 러너가 올린 것도 에이전트 쪽 파일이다 — 묶이면 브리지 뷰어도 본다
-    expect(findReadable({ db, dir }, own.id, { type: "bridge" })).toBeUndefined();
+    // 러너가 올린 것은 어느 Gateway 의 것도 아니다 — 묶여도 브리지 뷰어는 못 본다
+    const gateway = insertGateway(db, ws, { id: uuid() });
+    expect(findReadable({ db, dir }, own.id, { type: "bridge", gatewayId: gateway.id })).toBeUndefined();
     db.transaction((tx) => markBound(tx, [own.id], msgInA));
     expect(findReadable({ db, dir }, own.id, runner(tokenA))).toBeDefined();
     expect(findReadable({ db, dir }, own.id, runner(tokenB))).toBeUndefined();
-    expect(findReadable({ db, dir }, own.id, { type: "bridge" })).toBeDefined();
+    expect(findReadable({ db, dir }, own.id, { type: "bridge", gatewayId: gateway.id })).toBeUndefined();
 
     const human = await uploadAttachment(
       { db, dir },
@@ -342,7 +380,7 @@ describe("attachments service", () => {
     expect(swept.rows).toBe(1);
     expect(db.select().from(attachments).all()).toHaveLength(1);
     db.transaction((tx) => markBound(tx, [b.id], msgInA));
-    const readable = findReadable({ db, dir }, b.id, { type: "bridge" });
+    const readable = findReadable({ db, dir }, b.id, { type: "user", userId: alice, workspaceId: ws });
     expect(readable && existsSync(readable.path)).toBe(true);
   });
 
