@@ -1,6 +1,6 @@
 import type { GatewaySetup, SetupStatus } from "@dodok/shared";
 import { PencilIcon, PowerIcon, Trash2Icon } from "lucide-react";
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { useNowTick } from "@/hooks/useNowTick";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/ui/badge";
@@ -37,6 +37,7 @@ export function GatewayCard({
 }) {
   const [confirming, setConfirming] = useState(false);
   const deleteButton = useRef<HTMLButtonElement>(null);
+  const confirmId = useId();
   const toggle = useUpdateGateway(gateway.id);
   const label = gatewayStateLabel(gateway);
 
@@ -72,6 +73,7 @@ export function GatewayCard({
           variant="outline"
           aria-label={`${gateway.name} 삭제`}
           aria-expanded={confirming}
+          aria-controls={confirming ? confirmId : undefined}
           onClick={() => setConfirming(true)}
         >
           <Trash2Icon />
@@ -80,6 +82,7 @@ export function GatewayCard({
       </div>
       {confirming && (
         <DeleteGatewayConfirm
+          id={confirmId}
           gateway={gateway}
           onCancel={() => {
             setConfirming(false);

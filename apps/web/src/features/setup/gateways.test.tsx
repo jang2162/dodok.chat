@@ -376,8 +376,11 @@ describe("삭제", () => {
       gatewayTokens: { [gatewayId(2)]: HOME_TOKENS },
     });
     renderConnection();
-    const { confirm } = await openDelete();
+    const { home, confirm } = await openDelete();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    const menu = within(home).getByRole("button", { name: "집 삭제" });
+    expect(menu).toHaveAttribute("aria-expanded", "true");
+    expect(menu).toHaveAttribute("aria-controls", confirm.id);
     await waitFor(() =>
       expect(confirm).toHaveTextContent(
         "이 Gateway 의 에이전트 2개는 남고 연결이 비어 옮기기를 기다립니다 · 브리지 토큰 3개가 지워집니다",
@@ -394,6 +397,8 @@ describe("삭제", () => {
     await userEvent.click(within(confirm).getByRole("button", { name: "취소" }));
     expect(within(home).queryByRole("group", { name: "「집」 Gateway 삭제" })).not.toBeInTheDocument();
     expect(within(home).getByRole("button", { name: "집 삭제" })).toHaveFocus();
+    // 접힌 동안에는 가리킬 영역이 없다
+    expect(within(home).getByRole("button", { name: "집 삭제" })).not.toHaveAttribute("aria-controls");
     expect(server.calls.filter((c) => c.method === "DELETE")).toEqual([]);
   });
 

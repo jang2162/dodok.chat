@@ -12,10 +12,13 @@ import { Pending } from "./sections";
  * 열리면 초점은 「취소」 — 「삭제」를 두 번 눌러 곧장 지우지 않게
  */
 export function DeleteGatewayConfirm({
+  id,
   gateway,
   onCancel,
   onDeleted,
 }: {
+  /** 「삭제」 메뉴 버튼의 aria-controls 가 가리킨다 */
+  id: string;
   gateway: GatewaySetup;
   onCancel: () => void;
   onDeleted: () => void;
@@ -42,6 +45,7 @@ export function DeleteGatewayConfirm({
 
   return (
     <div
+      id={id}
       role="group"
       aria-label={`「${gateway.name}」 Gateway 삭제`}
       className="flex flex-col gap-3 rounded-md border border-destructive bg-destructive/10 p-3 text-sm"
