@@ -160,6 +160,9 @@ src/
 ├─ db/
 │  ├─ schema.sqlite.ts    Drizzle 스키마 (계획서 6장 테이블 + agent_sessions + approvals + attachments + bridge_tokens + ops_events + invites + runner_tokens + gateways — 마이그레이션 0000~0012,
 │  │                      FK ON DELETE 는 push_subscriptions.session_id·bridge_tokens.gateway_id(cascade)와 agents.gateway_id(set null)뿐).
+│  │                      ⚠ drizzle-kit 은 기존 표에 FK 열을 더하는 `ALTER TABLE … ADD … REFERENCES` 에서 스냅숏의 ON DELETE 를 빠뜨린다 — SQLite 가 받아도 조용히 다르게 동작하므로,
+│  │                      FK 열을 더하면 생성 SQL 의 ON DELETE 를 스냅숏과 대조하고 다르면 그 줄만 손으로 고친 뒤(SQLite 가 ALTER 를 받지 않으면 표를 다시 만든다) 머리 주석에
+│  │                      까닭을 적는다. 스냅숏은 생성기 출력 그대로 두고 다음 generate 가 「No schema changes」인지 본다(0010·0012).
 │  │                      스레드(0006): messages.thread_root_id(인덱스 messages_channel_thread_seq (channel_id, thread_root_id, seq))·agent_sessions.thread_root_id·runs.thread_root_id —
 │  │                      세 열 모두 FK 없음(저장 경로 검증이 지킨다). agent_sessions 의 유일 제약은 **부분 유일 인덱스 둘** — 스레드 행 agent_sessions_channel_agent_thread
 │  │                      (channel_id, agent_id, thread_root_id), 채널 행 agent_sessions_channel_session (channel_id, agent_id) WHERE thread_root_id IS NULL(coalesce 표현식 인덱스는
@@ -253,7 +256,7 @@ src/
 │  │                      DROPPED:*·ADAPTER_ERROR:*)에 트리거 메시지가 있으면 1회용 「다시 실행」 버튼(retry_run, 24시간) — bot-loop-protection 으로 떨어진 런은 빼고), machine.ts(순수 상태머신),
 │  │                      세션 큐·열린 런 찾기·정본의 에이전트 찾기는 「연결 id + 세션 키」 단위(두 Gateway 의 같은 id 에이전트는 서로 기다리지 않는다), runs.connection_id 는 만들 때
 │  │                      에이전트의 연결 → send 결과의 connectionId 로 덮는다. 어댑터 이벤트·정본이 다른 연결의 런 id 를 실으면 그 런에 반영하지 않는다(warn).
-│  │                      스레드 런(Phase 4 ①): 세션 큐는 세션 키 단위라 채널과 병렬·같은 스레드는 직렬. 붙은 플러그인이 있고 그 hello 에 threads 가 없으면 곧바로 error PLUGIN_OUTDATED
+│  │                      스레드 런(Phase 4 ①): 세션 큐는 (연결, 세션 키) 단위라 채널과 병렬·같은 스레드는 직렬. 붙은 플러그인이 있고 그 hello 에 threads 가 없으면 곧바로 error PLUGIN_OUTDATED
 │  │                      (붙은 플러그인이 없으면 채널 런처럼 기다린다), 저장된 providerAgentId 가 규칙 밖이면 INVALID_AGENT_ID(다시 실행 버튼 없음). 정본은 세션 키의 스레드·threadId·런의 스레드가
 │  │                      같아야 저장하고(다르면 VALIDATION — 어댑터가 ack 에 INTERNAL 로 싣는다), 에이전트·스냅샷·run_error 메시지의 threadRootId 는 런에서 온다.
 │  │                      store.ts(runs·run_events — runs.thread_root_id ↔ Run.threadRootId), context.ts(인바운드 InboundDeliver 조립 — 트리거 첨부를 싣고, 이전 메시지 줄의 첨부는 `[이미지 N장]`·`[파일: 이름]` 자리표시로만.
@@ -343,6 +346,7 @@ src/
 ├─ adapters/
 │  ├─ connection.ts       connectionIdOf(에이전트 → 연결 id — OpenClaw 는 gateway_id, 러너는 runner_token_id) · agentConnectionId · agentOnConnection(어댑터 이벤트의 연결로
 │  │                      에이전트를 찾는 SQL 조건). 서버는 런·세션·승인을 「연결 id + 세션 키」로 찾는다 — 두 Gateway 의 같은 id 에이전트는 세션 키가 같다
+│  ├─ registry.ts         AdapterRegistry(제공자당 어댑터 하나 — all·forProvider·forAgent·onEvent)
 │  └─ types.ts            AgentAdapter 계열 타입 재수출(계약은 packages/shared/src/adapter)
 ├─ util/
 │  └─ josa.ts             받침에 따른 조사(시스템 메시지 병기형). 웹 `lib/josa.ts` 와 두 벌 — 한쪽만 고치면 어긋난다
@@ -363,7 +367,7 @@ src/
    └─ types.ts            WireServer·RunsFacade 타입
 ```
 
-아직 없는 것: 어댑터 `registry.ts`(MVP 는 openclaw 하나). 업로드는 Phase 2 ③ 의 `modules/attachments/`, 웹 푸시는 Phase 2 ④ 의 `modules/push/` 가 맡는다.
+업로드는 `modules/attachments/`, 웹 푸시는 `modules/push/` 가 맡는다.
 
 테스트(`apps/server/test/`): 모듈 단위(인메모리 SQLite), `fakes/`(가짜 Gateway·가짜 플러그인·시나리오 대본 — 대본의 `components` 는 실물 플러그인
 `buildOutboundMessage` 를 지나 스키마를 어기면 거절된다), `integration/`(시나리오 1~8 `relay`·`prompt`·`recovery`, 시나리오 9a~9g `approvals`(9c′ 포함 8건),
