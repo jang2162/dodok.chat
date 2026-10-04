@@ -21,7 +21,7 @@ import { createAdapterRegistry } from "../src/adapters/registry";
 import { getRun, insertRun, listRunEvents, updateRun } from "../src/modules/runs/store";
 import { ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
-import { FAKE_GATEWAY_ID } from "./helpers/gateways";
+import { FAKE_GATEWAY_ID, insertGateway } from "./helpers/gateways";
 import { seedChannelWithAgent } from "./helpers/seed";
 
 type Ids = ReturnType<typeof seedChannelWithAgent>;
@@ -58,6 +58,8 @@ function setup(opts: { timeouts?: Partial<RunTimeouts>; approvals?: Orchestrator
   const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
   const onAgentMessage = vi.fn(async (_message: Message, _run: Run) => {});
   const ids = seedChannelWithAgent(db);
+  // 앱 부팅처럼 에이전트의 Gateway 를 어댑터에도 넣는다(연결별 플러그인 상태가 여기서 나온다)
+  adapter.upsertGateway(insertGateway(db, ids.workspaceId));
   const states: RunState[] = [];
   const events: RunEvent[] = [];
   bus.on("run.state", (p) => states.push(p.run));
@@ -1909,6 +1911,53 @@ describe("orchestrator", () => {
       await t.flush();
       expect(t.adapter.calls.send.map((d) => d.runId)).toEqual([run.id]);
       expect(t.runOf(run.id).status).toBe("queued");
+      t.orch.stop();
+    });
+
+    // Gateway 둘 — 「플러그인 붙음」은 첫 Gateway(setupDetail)가 아니라 그 런의 연결을 본다. 에이전트는 둘째 Gateway(B)에 묶는다
+    function onSecondGateway(t: ReturnType<typeof setup>, plugins: { a: boolean; b: boolean }, bThreads: boolean) {
+      const b = insertGateway(t.db, t.workspaceId, { id: uuid(), name: "둘째" });
+      t.db.update(agents).set({ gatewayId: b.id }).where(eq(agents.id, t.agentId)).run();
+      const base = t.adapter.setupDetail();
+      if (base.provider !== "openclaw") throw new Error("openclaw fake expected");
+      const plugin = base.bridge.plugin;
+      const entry = (id: string, attached: boolean) => ({
+        id,
+        name: id,
+        url: "ws://127.0.0.1:19001",
+        enabled: true,
+        gateway: base.gateway,
+        bridge: attached ? base.bridge : { state: "down" as const, plugin: null },
+      });
+      // 계약의 단수 상세는 첫 Gateway(A) 것이다
+      t.adapter.setSetupDetail({ ...base, bridge: entry(FAKE_GATEWAY_ID, plugins.a).bridge });
+      vi.spyOn(t.adapter, "gatewaySetupDetails").mockReturnValue([
+        entry(FAKE_GATEWAY_ID, plugins.a),
+        entry(b.id, plugins.b),
+      ]);
+      vi.spyOn(t.adapter, "supports").mockImplementation(
+        (_agent, connectionId) => connectionId === b.id && plugins.b && plugin !== null && bThreads,
+      );
+      return b;
+    }
+
+    it("첫 Gateway 에 플러그인이 붙어 있어도 그 런의 Gateway 에 없으면 PLUGIN_OUTDATED 로 단정하지 않고 보낸다", async () => {
+      const t = setup();
+      const b = onSecondGateway(t, { a: true, b: false }, false);
+      const { run } = await threadRun(t);
+      await t.flush();
+      expect(t.adapter.calls.connections.send).toEqual([b.id]);
+      expect(t.runOf(run.id).status).toBe("queued");
+      t.orch.stop();
+    });
+
+    it("첫 Gateway 에 플러그인이 없어도 그 런의 Gateway 플러그인이 스레드를 모르면 PLUGIN_OUTDATED", async () => {
+      const t = setup();
+      onSecondGateway(t, { a: false, b: true }, false);
+      const { run } = await threadRun(t);
+      await t.flush();
+      expect(t.runOf(run.id)).toMatchObject({ status: "error", error: { code: "PLUGIN_OUTDATED" } });
+      expect(t.adapter.calls.send).toEqual([]);
       t.orch.stop();
     });
 

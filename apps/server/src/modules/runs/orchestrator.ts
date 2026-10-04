@@ -16,6 +16,7 @@ import {
   type AdapterProvider,
   AdapterError,
   type AgentAdapter,
+  hasGateways,
   type RunEventBody,
 } from "../../adapters/types";
 import type { Db, DbOrTx } from "../../db/client";
@@ -830,12 +831,18 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
   /**
    * 그 에이전트를 맡은 쪽이 스레드를 모른다. OpenClaw 는 붙은 플러그인이 없으면 모른다고 단정하지 않는다 — 어댑터가 플러그인을 기다렸다
    * 보내고, 못 붙으면 ADAPTER_UNAVAILABLE 로 닫힌다(브리지가 잠깐 끊긴 사이의 스레드 멘션에 재설치 안내를 남기지 않게). Gateway 가
-   * 빈 에이전트(연결 null)도 같다 — send 가 ADAPTER_UNAVAILABLE 로 닫는다(재설치 안내가 아니라 「옮기세요」가 맞다)
+   * 빈 에이전트(연결 null)도 같다 — send 가 ADAPTER_UNAVAILABLE 로 닫는다(재설치 안내가 아니라 「옮기세요」가 맞다). 플러그인은 그 런의
+   * Gateway 것을 본다 — 계약의 단수 setupDetail 은 첫 Gateway 것이라 Gateway 가 둘이면 다른 Gateway 의 플러그인을 보게 된다
    */
   function lacksThreads(adapter: AgentAdapter, agentId: string, connectionId: string | null): boolean {
     const detail = adapter.setupDetail();
-    if (detail.provider === "openclaw" && (connectionId === null || detail.bridge.plugin === null))
-      return false;
+    if (detail.provider === "openclaw") {
+      if (connectionId === null) return false;
+      const plugin = hasGateways(adapter)
+        ? (adapter.gatewaySetupDetails().find((g) => g.id === connectionId)?.bridge.plugin ?? null)
+        : detail.bridge.plugin;
+      if (plugin === null) return false;
+    }
     // 에이전트 행이 없으면 여기서 막지 않는다 — ensureSession 이 그 런을 닫는다
     const providerAgentId = getAgent(db, agentId)?.providerAgentId;
     return providerAgentId !== undefined && !adapter.supports(providerAgentId, connectionId, "threads");
