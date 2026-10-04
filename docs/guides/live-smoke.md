@@ -28,8 +28,8 @@
 | OpenClaw CLI | **스크래치 디렉터리에 설치한 `openclaw@2026.9.5`** 를 저장소 mise Node 24.21 로 돌린다(설치·`oc` 정의는 3절 머리). `OpenClaw.app` 번들에는 CLI 가 없다 — 앱 2026.9.6(2026-09-24 자동 업데이트)의 `Resources/node-worker/*/lib/node_modules/openclaw` 는 맥 노드 워커 전용이라 `bin/openclaw`·`openclaw.mjs` 가 없고 `package.json` 의 `bin` 이 비었다. 저장소 devDependency(`2026.9.4`)는 dev 설정을 `Config was last written by OpenClaw 2026.9.5, but you are running 2026.9.4` 로 거부하므로 쓰지 않는다 — 그 메시지가 권하는 `doctor --fix` 는 dev 설정을 옛 판으로 고쳐 쓰니 하지 않는다. `gateway install`·글로벌 설치·시스템 Node 교체 금지, 설치본은 스크래치에만 두고 끝나면 지운다. ⚠ npm 의 `2026.9.5` 는 빌드 `ec9c1a1`(`gatewayBuildId` `2026.9.5-release-ec9c1a13db89-2026-09-18T18-51-37.323Z`)로, 앱 번들 9.5 의 `f396007` 과 버전 문자열은 같고 빌드가 다르다. 저장소 핀은 `2026.9.4` 그대로라 **실연 전에 `oc --version` 을 적는다**. 서버 로그로도 보인다: `"gateway connected"`·`"bridge plugin hello"` 의 `gatewayVersion`. ⚠ 같은 줄의 `pluginBuiltWithSdk`(옛 이름 `sdkVersion`)는 **빌드 때 박힌 devDependency 상수**라 9.5 위에서도 `2026.9.4` 다 — Gateway 버전으로 읽지 않는다 |
 | 프로필 | **dev 만**: 모든 CLI 호출에 `--dev`(상태 `~/.openclaw-dev`). 원격 프로필 `~/.openclaw` 는 건드리지 않는다. Gateway 를 여럿 띄우거나 사람의 dev 상태를 건드리지 않으려면 `--dev` 대신 `OPENCLAW_HOME=<스크래치 디렉터리>`(상태가 `<그 디렉터리>/.openclaw` 로 간다)로 가른다 — 「멀티 Gateway 실연」 절 |
 | 에이전트 | `dev`·`fin`, 모델 `anthropic/claude-opus-5` + `agentRuntime claude-cli`(ADR 0002 2절) |
-| 플러그인 계정 | `channels.dodok.accounts.default = { bridgeUrl: "ws://127.0.0.1:19100/bridge", token: <브리지 토큰> }` — 토큰은 연결 페이지의 그 Gateway 카드에서 발급한 것(3절 (e)) |
-| Gateway 공유 토큰 | 실연 쪽이 만들어 0600 파일 `data/dev-gateway.token` 에만 둔다(3절 (c)) — Gateway 를 띄울 때 OpenClaw CLI 의 env `OPENCLAW_GATEWAY_TOKEN` 으로 넘기고, 연결 페이지 「Gateway 추가」의 토큰 칸에 같은 값을 넣는다. 서버는 Gateway 주소·토큰을 `.env` 에서 읽지 않는다(DB). **`.env` 는 고치지 않는다** |
+| 플러그인 계정 | `channels.dodok.accounts.default = { bridgeUrl: "ws://127.0.0.1:19100/bridge", token: <브리지 토큰> }` — 토큰은 연결 페이지의 그 Gateway 카드에서 발급한 것(「절차」 절 (e)) |
+| Gateway 공유 토큰 | 실연 쪽이 만들어 0600 파일 `data/dev-gateway.token` 에만 둔다(「절차」 절 (c)) — Gateway 를 띄울 때 OpenClaw CLI 의 env `OPENCLAW_GATEWAY_TOKEN` 으로 넘기고, 연결 페이지 「Gateway 추가」의 토큰 칸에 같은 값을 넣는다. 서버는 Gateway 주소·토큰을 `.env` 에서 읽지 않는다(DB). **`.env` 는 고치지 않는다** |
 | 저장소 | Node 24.21.0 · pnpm 11.16.0, `pnpm install` 끝 |
 
 ### 시크릿 규칙
@@ -104,6 +104,7 @@ PORT=$(oc --dev config get channels.dodok.accounts.default.bridgeUrl | sed -E 's
 cat > data/live-smoke.env <<EOF
 APP_ORIGIN=http://localhost:5173
 PORT=$PORT
+BRIDGE_PUBLIC_URL=ws://127.0.0.1:$PORT/bridge
 DB_PATH=data/live-smoke.sqlite
 LOCAL_AUTH_TOKEN=$(openssl rand -hex 24)
 BETTER_AUTH_SECRET=$(openssl rand -hex 32)
@@ -112,6 +113,7 @@ EOF
 (set -a; . data/live-smoke.env; set +a; nohup pnpm -F @dodok/server dev >> data/phase1-live-$(date +%Y%m%d).log 2>&1 < /dev/null &)
 ```
 
+- `BRIDGE_PUBLIC_URL` 은 발급 조각의 `bridgeUrl` 이 된다 — 비우면 `APP_ORIGIN`(웹 5173)에서 만들어져, (e) 에서 조각을 patch 하면 플러그인이 Vite 포트로 붙으려다 실패한다.
 - 첫 부팅 로그에 `"url":"http://127.0.0.1:<PORT>"` 와, Gateway 가 아직 없으면 `no OpenClaw gateway configured — add one in the connection page` 한 줄.
 - 디바이스 아이덴티티·디바이스 토큰은 Gateway 마다 `data/gateways/<Gateway id>/` 에 생긴다(`device.json`, Gateway 가 디바이스 토큰을 내주면 `device-tokens.json`) — 환경 변수로 옮기지 않는다. dev Gateway 와 원격 Gateway 는 서로 다른 Gateway 행이라 페어링이 섞이지 않는다. 실연 DB 를 새로 만들면 Gateway 행도 새로 생기므로 그 Gateway 와 처음부터 다시 페어링한다.
 
@@ -123,9 +125,10 @@ EOF
 W() { (set -a; . data/live-smoke.env; set +a; export DODOK_LOCAL_TOKEN="$LOCAL_AUTH_TOKEN"; pnpm -s wire-cli http://127.0.0.1:$PORT "$@"); }
 W login >/dev/null
 T=$(jq -r '."http://127.0.0.1:'$PORT'"' data/wire-cli-session.json)   # 출력하지 않는다
-jq -n --rawfile t data/dev-gateway.token '{name: "dev", url: "ws://127.0.0.1:19001", token: ($t | rtrimstr("\n"))}' \
+GW=$(jq -n --rawfile t data/dev-gateway.token '{name: "dev", url: "ws://127.0.0.1:19001", token: ($t | rtrimstr("\n"))}' \
   | curl -s -H "authorization: Bearer $T" -H 'content-type: application/json' -d @- http://127.0.0.1:$PORT/api/v1/gateways \
-  | jq '{id, name, url, tokenSet}'                                    # 이 id 를 GW 에
+  | jq -r .id)
+curl -s -H "authorization: Bearer $T" http://127.0.0.1:$PORT/api/v1/gateways | jq --arg id "$GW" '.[] | select(.id == $id) | {id, name, url, tokenSet}'   # tokenSet: true 인지
 ( umask 077; curl -s -H "authorization: Bearer $T" -H 'content-type: application/json' -d '{"label":"live-smoke"}' \
     http://127.0.0.1:$PORT/api/v1/gateways/$GW/bridge-tokens | jq .pluginConfig > data/bridge-token.patch.json )
 oc --dev config patch --file data/bridge-token.patch.json && rm data/bridge-token.patch.json   # 9.5 는 Gateway 재기동 없이 dodok 채널만 다시 띄운다(핫 리로드)
@@ -135,7 +138,7 @@ curl -s -H "authorization: Bearer $T" http://127.0.0.1:$PORT/api/v1/adapter/stat
 
 - 루프백 + 공유 토큰이면 페어링이 자동 승인되고 `operator.admin` 까지 붙는다(ADR 0003 2절) — 「Gateway 추가」 직후 서버 로그 `"msg":"gateway connected"`(scopes 에 `operator.admin`, `gatewayId`, `gatewayVersion`·`gatewayBuildId` 가 `oc --version` 의 `<버전> (<빌드>)` 와 같은지).
 - 발급 응답의 `pluginConfig` 가 계정 설정 조각(`channels.dodok.accounts.default` 의 `bridgeUrl`·`token`)이다 — 원문이 든 파일이라 패치한 뒤 곧바로 지운다. 브리지 토큰은 **그 Gateway 에 묶인다** — 다른 Gateway 의 계정에 넣으면 서버는 그 플러그인을 발급한 Gateway 의 것으로 안다.
-- `wire-cli add-agent` 는 Gateway 가 하나면 `gatewayId` 를 빼도 된다(4절 표).
+- `wire-cli add-agent` 는 Gateway 가 하나면 `gatewayId` 를 빼도 된다(「`wire-cli`」 절 표).
 
 `bridge` 가 60초 안에 `connected` 가 안 되면 `data/dev-gateway.log` 의 `[dodok] bridge:` 줄을 본다. 서버가 늦게 뜨면 플러그인 백오프가 벌어져 있어
 첫 연결에 그만큼 걸린다(상한 10s, 지터 포함 ~12s — 30s 상한이던 이번 실연은 21s). `UNAUTHORIZED` 면 계정 토큰이 그 Gateway 의 활성 토큰과 다르다. **브리지 토큰의 정본은 DB 고 Gateway 마다 따로다** — 실연 DB 를 새로 만들었으면 위처럼 새로 발급해 패치한다. 교체 절차는 이 문서 「브리지 토큰 교체 — 사람이 따라 할 절차」 절 · `docs/guides/deploy.md` 「브리지 토큰 교체」.
@@ -1888,7 +1891,7 @@ OpenClaw 쪽은 실제 dev Gateway 대신 **`dev:fake` 의 가짜 Gateway·가�
 
 | 항목 | 값 |
 | --- | --- |
-| OpenClaw CLI | 스크래치 설치 `openclaw@2026.9.5`(`OpenClaw 2026.9.5 (ec9c1a1)`, 3절 머리와 같은 설치), 저장소 mise Node 24.21 |
+| OpenClaw CLI | 스크래치 설치 `openclaw@2026.9.5`(`OpenClaw 2026.9.5 (ec9c1a1)`, 「절차」 절 머리와 같은 설치), 저장소 mise Node 24.21 |
 | Gateway 둘 | 「사무실」 `OPENCLAW_HOME=<스크래치>/gwA`·포트 19011, 「집」 `OPENCLAW_HOME=<스크래치>/gwB`·포트 19021. 둘 다 `gateway run --auth token --bind loopback`(`--dev` 없음), 공유 토큰은 Gateway 마다 새로 만든 0600 파일 → env `OPENCLAW_GATEWAY_TOKEN` |
 | Gateway 설정 | 새 상태의 기본 에이전트 `main` 하나. `config patch` 한 번 — `gateway.mode "local"`·`agents.defaults.model "anthropic/claude-opus-5"`·`agents.defaults.models["anthropic/claude-opus-5"].agentRuntime.id "claude-cli"`·`heartbeat.every "0m"`·`tools.agentToAgent.enabled false`·`tools.sessions.visibility "tree"`·`plugins.entries.bonjour.enabled false`·`plugins.entries.memory-core.config.dreaming.enabled false`(ADR 0002 2절의 dev 설정과 같은 꼴) |
 | 모델 | Gateway 마다 PATH 앞에 가짜 claude CLI — 11.4 스크립트에서 `message`·`ask_user` 호출을 빼고, 답 글을 `FAKE_CLI_DONE gateway=<A·B>` 로(어느 Gateway 가 답했는지), 세션 id 는 argv 의 `--session-id`·`--resume` 값을 되돌린다 |
@@ -1916,7 +1919,7 @@ gw config patch --file $SP/base.patch.json5          # 21.1 「Gateway 설정」
 
 ### 21.3 절차 — 3절에 더한 것
 
-1. **Gateway 추가** — `POST /api/v1/gateways { name, url: "ws://127.0.0.1:<포트>", token }`(본문은 `jq --rawfile` 로 토큰 파일에서, 3절 (e)). 화면의 「Gateway 추가」와 같은 경로다.
+1. **Gateway 추가** — `POST /api/v1/gateways { name, url: "ws://127.0.0.1:<포트>", token }`(본문은 `jq --rawfile` 로 토큰 파일에서, 「절차」 절 (e)). 화면의 「Gateway 추가」와 같은 경로다.
 2. **플러그인** — `GET /api/v1/setup/plugin.tgz`(연결 페이지 「플러그인 받기」)로 받은 파일 → **Gateway 둘을 내린 뒤** `gw plugins install <받은 파일> --force --accept-capabilities` 를 Gateway 마다 → 설치본 `dist/index.js` sha 를 대조.
 3. **브리지 토큰** — Gateway 마다 `POST /api/v1/gateways/<id>/bridge-tokens` → 응답의 `pluginConfig` 를 0600 파일로 → `gw config patch --file …` → 파일 삭제 → Gateway 를 다시 띄운다.
 4. **에이전트** — 화면 「에이전트 가져오기」에서 Gateway 「사무실」의 `main` 을 핸들 `main` 으로, 「집」의 `main` 을 핸들 `main-home` 으로. 채널 하나에 둘 다 넣는다(`POST /channels/:id/members`).

@@ -321,7 +321,7 @@ hello 모양(`BridgeHello`)과 설정 조각(`channels.dodok.accounts.default` �
 
 **서버 (태스크 1·3·4)**
 
-- **shared Gateway 스키마(`packages/shared/src/gateways/`)는 태스크 3 이 만들었다**(계획은 태스크 1 몫). 주소의 사용자 정보는 정규식 `^[a-z]+://[^/?#]*@` 로 거절한다 — shared 의 `lib` 에 `URL` 타입이 없어서다. `ws://a\b@host` 처럼 사용자 정보가 아닌 꼴도 거절되는 더 엄격한 쪽이다(t3 판단 1, t3 수정 보고 M1).
+- **shared Gateway 스키마(`packages/shared/src/gateways/`)는 태스크 3 이 만들었다**(계획은 태스크 1 몫). 주소의 사용자 정보는 접속하는 쪽과 같은 WHATWG URL 파서(`globalThis.URL` — shared 의 `lib` 에 `URL` 선언이 없어 생성자 타입만 손으로 단다)로 가른다. 문자열 정규식으로 가르면 `wss:/u:p@h`·`wss:u:p@h`·`wss:\u:p@h` 처럼 파서가 사용자 정보로 읽는 꼴이 빠져, 비밀번호가 응답·설정 상태에 실린다. 파싱이 안 되는 값은 `z.url` 이 먼저 거절한다(t3 판단 1, t3 재리뷰 M1′, t3 수정 2 보고).
 - **0013 은 Gateway 에 묶이지 않은 `bridge_tokens` 행을 버린다** — `bridge_tokens.gateway_id` 를 NOT NULL 로 바꾸며 생성기가 표를 다시 만들 때, 복사에 `WHERE gateway_id IS NOT NULL` 을 손으로 붙였다(null 행이 남으면 마이그레이션이 실패해 서버가 뜨지 않는다). 0012·0014 의 `ADD gateway_id … REFERENCES` 줄은 생성기가 빠뜨린 ON DELETE 를 손으로 붙였다(t1 판단 6, t3 판단 2, t4).
 - **연결 id 는 공유 `Run`·`Approval` 에 싣지 않는다** — store 의 `getRunConnectionId`·`getApprovalConnectionId` 로 읽는다. `Run` 은 REST 로, `Approval` 은 wire 로 멤버에게 나가 Gateway uuid·러너 토큰 id 를 드러내게 된다(t1 판단 1).
 - **`listAgents(connectionId | null)`** — 러너 찾기는 연결을 고르지 않는다(붙은 러너 전부). 이벤트의 에이전트 찾기(`agentOnConnection`)는 OpenClaw 면 `gateway_id = 연결`, 러너면 `runner_token_id = 연결 OR runner_token_id IS NULL`(묶임 없는 러너 에이전트는 먼저 알린 러너가 맡는다)(t1 판단 2·3).
