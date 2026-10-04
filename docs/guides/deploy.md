@@ -1,7 +1,7 @@
 # 배포 — 한 호스트에 dodok 을 올리고 원격 Gateway·폰까지 잇기
 
-dodok 서버·웹을 Docker Compose 로 한 호스트에 올리고, Caddy 가 공개 도메인에 자동 HTTPS 를 붙인다. 원격 Gateway 의 플러그인이 그 도메인의 브리지로 붙고, 폰이 PWA·푸시로 붙는다. 사람의 머신에서 Claude Code 에이전트를 돌리는 Claude 러너도 같은 도메인으로 붙는다(「Claude 러너 설치」 절).
-설계는 `docs/superpowers/specs/2026-09-24-deploy-packaging-design.md`, 웹의 연결 페이지(플러그인 받기·브리지 토큰)는 `docs/superpowers/specs/2026-09-24-setup-wizard-design.md` 다(구현과 달라진 것은 각 스펙의 「구현과 맞춘 것」 장). 각 파일이 **왜 그렇게 생겼는지는 그 파일의 머리 주석이 정본**이다 — `infra/compose.yml`·`infra/compose.local.yml`·`infra/Caddyfile`·`infra/Dockerfile.server`·`infra/Dockerfile.web`·`infra/check-caddy.sh`.
+dodok 서버·웹을 Docker Compose 로 한 호스트에 올리고, Caddy 가 공개 도메인에 자동 HTTPS 를 붙인다. 웹의 연결 페이지에서 원격 OpenClaw Gateway 를 하나 이상 추가하면 서버가 Gateway 마다 붙고, Gateway 마다 설치한 플러그인이 그 도메인의 브리지로 붙고, 폰이 PWA·푸시로 붙는다. 사람의 머신에서 Claude Code 에이전트를 돌리는 Claude 러너도 같은 도메인으로 붙는다(「Claude 러너 설치」 절).
+설계는 `docs/superpowers/specs/2026-09-24-deploy-packaging-design.md`, 웹의 연결 페이지(플러그인 받기·브리지 토큰)는 `docs/superpowers/specs/2026-09-24-setup-wizard-design.md`, Gateway 여럿(Gateway 추가·Gateway 마다 브리지 토큰)은 `docs/superpowers/specs/2026-10-04-multi-gateway-design.md` 다(구현과 달라진 것은 각 스펙의 「구현과 맞춘 것」 장). 각 파일이 **왜 그렇게 생겼는지는 그 파일의 머리 주석이 정본**이다 — `infra/compose.yml`·`infra/compose.local.yml`·`infra/Caddyfile`·`infra/Dockerfile.server`·`infra/Dockerfile.web`·`infra/check-caddy.sh`.
 
 표기: **[A]** dodok 호스트(Docker·Compose v2 이상, git), **[B]** Gateway 호스트, **[PC]** 개발 PC(이 저장소, Node·pnpm — `mise.toml`), **[폰]**.
 명령은 [A] 의 저장소 루트에서 부른다(따로 적지 않으면).
@@ -32,10 +32,10 @@ ln -s ../.env infra/.env
 cp .env.example .env && chmod 600 .env
 for k in LOCAL_AUTH_TOKEN BETTER_AUTH_SECRET; do
   sed -i.bak "s/^$k=\$/$k=$(openssl rand -hex 32)/" .env; done; rm .env.bak
-${EDITOR:-vi} .env      # 아래 표의 나머지 값 — OPENCLAW_GATEWAY_TOKEN 은 [B] 에서 받은 값을 여기서 붙여 넣는다
+${EDITOR:-vi} .env      # 아래 표의 나머지 값
 ```
 
-`BRIDGE_TOKEN` 은 만들지 않는다 — 브리지 토큰은 웹의 연결 페이지에서 발급한다(체크리스트 4).
+OpenClaw Gateway 의 주소·공유 토큰과 브리지 토큰은 `.env` 에 두지 않는다 — 웹의 연결 페이지에서 Gateway 를 추가하고(체크리스트 3) 그 Gateway 의 브리지 토큰을 발급한다(체크리스트 4). 둘 다 DB 에 들어간다. 서버는 Gateway 가 하나도 없어도 뜬다(시작 로그 `no OpenClaw gateway configured — add one in the connection page`).
 
 | 값 | 배포에서 | 뜻 |
 | --- | --- | --- |
@@ -43,16 +43,14 @@ ${EDITOR:-vi} .env      # 아래 표의 나머지 값 — OPENCLAW_GATEWAY_TOKEN
 | `APP_ORIGIN` | **필수** | `https://<도메인>` — 슬래시 없이 정확히. 쿠키·wire 핸드셰이크 `Origin` 검사 기준이라 브라우저 주소와 다르면 웹이 「실시간 연결이 거부되었습니다 — …」 배너로 막힌다 |
 | `LOCAL_AUTH_TOKEN` | **필수**(≥16자) | 로그인 토큰 = owner 비밀번호. 바꾸면 기존 세션이 끊긴다 |
 | `BETTER_AUTH_SECRET` | **필수**(≥32자) | 세션 서명 비밀 |
-| `OPENCLAW_GATEWAY_URL` · `OPENCLAW_GATEWAY_TOKEN` | **필수** | 원격 Gateway(`wss://…`)와 그 공유 토큰. `OPENCLAW_TARGET` 은 비워 둔다(기본 `remote`) |
-| `BRIDGE_TOKEN` | 선택(있으면 ≥16자) — 새 배포는 비워 둔다 | 브리지 토큰의 정본은 DB 다. 이 값은 **부팅 때 토큰 행이 하나도 없으면(폐기된 행 포함) 라벨 `env` 로 한 번 이어받을 뿐**이다(이미 이 값을 플러그인에 넣어 둔 배포가 그대로 붙게). 그 뒤로 `.env` 를 바꾸고 재시작해도 새 값은 통하지 않는다 — 서버 로그 warn `BRIDGE_TOKEN in .env is ignored — manage bridge tokens in the connection page`, 연결 페이지 「.env 의 BRIDGE_TOKEN 은 더 이상 쓰지 않습니다 — 연결 페이지에서 발급하세요」. 교체는 아래 「브리지 토큰 교체」 |
-| `BRIDGE_PUBLIC_URL` | 선택 | `wss://<도메인>/bridge`. 비우면 `APP_ORIGIN` 의 `https:` → `wss:` + `/bridge` 로 같은 값이 된다. 연결 페이지가 보여 주고, 발급한 설정 조각의 `bridgeUrl` 에 들어간다(서버는 이 값으로 리슨하지 않는다) |
+| `BRIDGE_PUBLIC_URL` | 선택 | `wss://<도메인>/bridge`. 비우면 `APP_ORIGIN` 의 `https:` → `wss:` + `/bridge` 로 같은 값이 된다. 연결 페이지가 보여 주고, 발급한 설정 조각의 `bridgeUrl` 에 들어간다(서버는 이 값으로 리슨하지 않는다). 모든 Gateway 의 플러그인이 이 한 주소로 붙고, 서버는 토큰으로 어느 Gateway 의 플러그인인지 가른다 |
 | `VAPID_SUBJECT` | **필수**(실제 연락처) | `mailto:<실제 주소>` 또는 `https://…`. 로컬 자리값(`localhost`·`*.local`)이면 Apple Push 가 `403 BadJwtToken` 으로 거부한다 — 폰 푸시가 안 온다 |
 | `LOG_LEVEL` · `OWNER_HANDLE` · `DODOK_WORKSPACE_NAME` | 선택 | 기본 `info` · `owner` · `dodok` |
 | `TZ` | 선택(IANA 이름, 예 `Asia/Seoul`) | 「하루」의 경계다 — 일일 런 상한(워크스페이스·채널)이 서버 현지 자정에 풀리고, 한도 문구 「내일 0시에 풀립니다」와 운영 화면의 「오늘」 집계도 그 자정을 따른다. 비우면 이미지 기본인 UTC 라 한국에서는 오전 9시에 하루가 바뀐다. 이미지가 시간대 데이터를 품고 있어 값만 주면 된다(`docker run --rm -e TZ=Asia/Seoul node:24.21.0-bookworm-slim node -e 'console.log(new Date(0).getHours())'` → `9`) |
 | `VAPID_PUBLIC_KEY` · `VAPID_PRIVATE_KEY` | 선택 | 비우면 서버가 `/data/vapid.json` 을 만들어 쓴다(볼륨에 남는다). 키가 바뀌면 모든 기기의 푸시 구독이 무효가 된다 |
-| `DB_PATH` · `ATTACHMENTS_DIR` · `OPENCLAW_DEVICE_IDENTITY_PATH` | **비워 둔다** | 기본값이 `/data` 아래다. 볼륨 밖 경로를 주면 컨테이너를 다시 만들 때 그 데이터가 사라진다 |
+| `DB_PATH` · `ATTACHMENTS_DIR` | **비워 둔다** | 기본값이 `/data` 아래다. 볼륨 밖 경로를 주면 컨테이너를 다시 만들 때 그 데이터가 사라진다 |
 | `HOST` · `PORT` · `DATA_DIR` · `DODOK_MIGRATIONS_DIR` · `DODOK_PLUGIN_DIR` · `DODOK_RUNNER_DIR` · `TRUST_PROXY` | 무시된다 | compose 가 `environment` 로 `0.0.0.0`·`3000`·`/data`·`/app/drizzle`·`/app/plugin`(이미지가 품은 플러그인 tgz 자리)·`/app/runner`(이미지가 품은 Claude 러너 tgz 자리)·`true` 를 고정한다. `.env.example` 을 복사해 생긴 빈 줄(`HOST=`)이 그대로 있어도 된다. `TRUST_PROXY` 는 Caddy 뒤라 늘 `true` 다 — 레이트리밋·브리지 실패 카운터가 Caddy 가 붙인 클라이언트 IP 로 걸린다(아래 「보안」). compose 가 고정하지 않으면 `.env` 의 빈 줄이나 `false` 가 모든 요청을 Caddy 주소 하나로 묶어 한 사람의 폭주가 모두를 막는다 — 그래서 `environment` 에 둔다 |
-| `OPENCLAW_DEV_*` · `OPENCLAW_FRAME_DUMP_PATH` · `BRIDGE_URL` | 쓰지 않는다 | 개발·진단·스파이크 전용 |
+| `OPENCLAW_FRAME_DUMP_PATH` · `BRIDGE_URL` | 쓰지 않는다 | 진단·스파이크 전용 |
 
 compose 가 `.env` 와 상관없이 더 고정하는 것 — 로그 로테이션(`app`·`caddy` 둘 다 `json-file`, 파일 10 MB × 5개 — 서비스마다 최대 50 MB)과 `app` 의 `stop_grace_period: 15s`(앱의 종료 상한 10초보다 길게 — 짧으면 SIGKILL 이 먼저 와 깨끗한 종료 표지를 못 쓰고, 다음 부팅의 운영 화면에 사건 「직전 종료가 비정상」이 뜬다). 컨테이너에 먹었는지는 `docker inspect <컨테이너> --format '{{json .HostConfig.LogConfig}} {{.Config.StopTimeout}}'`.
 
@@ -88,33 +86,48 @@ curl -fsS https://<도메인>/healthz              # {"ok":true,"db":"ok"}
 - `app` 은 호스트에 포트를 열지 않는다(`expose` 만). 열리는 것은 Caddy 의 80·443 뿐이다.
 - `caddy` 의 헬스는 관리 API 다 — **인증서 발급에 실패해도 healthy 다.** `/healthz` 가 안 되면 `docker compose -f infra/compose.yml logs caddy` 를 본다(아래 「오류」).
 
-### 3. [A] Gateway 접속·페어링 확인
+### 3. [웹] Gateway 추가·페어링 확인
+
+Gateway 는 dodok 웹의 **연결 페이지**(`https://<도메인>/settings/connection`)에서 붙인다. 개발 PC 는 필요 없다. Gateway 가 여럿이면 Gateway 마다 이 단계와 4·5 를 되풀이한다.
+
+**연결 페이지 열기** — 브라우저로 `https://<도메인>` 에 로그인(로그인 화면 아래 「owner 로컬 토큰으로 로그인」을 펼쳐 `LOCAL_AUTH_TOKEN`)하고 사이드바 하단 「연결」. owner 에게만 보인다(owner 가 아니면 그 주소도 「권한이 없습니다」). Gateway 가 하나도 없으면 「OpenClaw Gateway」 블록이 「OpenClaw Gateway 를 추가하면 그 안의 에이전트를 채널에 데려올 수 있습니다」를 보인다. OpenClaw 가 끊겼다는 배너의 「연결 설정 보기」도 같은 곳으로 간다.
+
+**Gateway 추가** — 「OpenClaw Gateway」 블록 머리의 「Gateway 추가」 → 이름·주소·토큰 → 「추가」.
+
+- **이름** — 화면에 보일 이름(예: 사무실). 1~32자, 워크스페이스 안에서 겹치지 않는다(겹치면 「이미 쓰이는 이름입니다 — 다른 이름을 입력하세요.」).
+- **주소** — [B] Gateway 의 WS 주소. `ws://` 또는 `wss://` 만(원격이면 `wss://…`), 주소에 사용자 이름·비밀번호를 넣을 수 없다.
+- **토큰** — [B] Gateway 의 공유 토큰. 서버는 DB 에 평문으로 두고 화면·API·로그 어디에도 다시 내보내지 않는다(같은 볼륨에 그것만으로 Gateway 에 붙는 디바이스 아이덴티티가 평문으로 있어, 토큰만 암호화해도 방어가 늘지 않는다). 카드의 「수정」 대화상자에서 토큰 칸은 「바꾸려면 입력」이고, 비워 두면 그대로다.
+
+저장하면 서버가 재시작 없이 곧바로 붙는다. 카드 머리의 배지가 상태다 — 「연결됨」·「재연결 중」·「페어링 대기」·「꺼짐」·「연결 안 됨」. 그 아래 주소·호스트·버전이 보이고, 버전이 저장소 핀(`packages/openclaw-adapter/src/version.ts` 의 `OPENCLAW_PINNED_VERSION`)과 다르면 「<버전> — 저장소가 검증한 버전(<핀>)과 다릅니다」가 붙는다. 「연결 안 됨」이면 카드가 「Gateway 주소·토큰과 서버 로그를 확인하세요.」라고 한다. 카드 머리의 「수정」·「끄기」(꺼져 있으면 「켜기」)·「삭제」는 아래 「Gateway 수정·끄기·삭제」 절.
+
+**페어링** — 공유 토큰이면 보통 몇 초 안에 자동 승인이라 할 일이 없다(ADR 0001 — 루프백 Gateway 는 곧바로 붙는다, `docs/guides/live-smoke.md` 「멀티 Gateway 실연」 절). 카드에 「Gateway 가 이 서버의 기기 페어링 승인을 기다립니다 (요청 id …).」가 계속 보이면 「승인 명령 복사」로 `openclaw devices approve <requestId>` 를 복사해 [B] 에서 돌린다. 요청 id 를 못 받았으면 「목록 명령 복사」(`openclaw devices list`)로 목록에서 이 서버의 요청을 골라 승인한다. 5분 넘게 기다리면 「5분 넘게 승인을 기다리고 있습니다.」로 붉게 강조한다.
+
+서버 로그로도 본다 — Gateway 연결의 줄에는 `gatewayId` 가 붙는다.
 
 ```bash
 docker compose -f infra/compose.yml logs app | grep -E 'gateway connected|pairing required'
 ```
 
 - `"gateway connected"` 줄의 `gatewayVersion` 이 저장소가 핀한 OpenClaw 버전(`packages/openclaw-adapter/package.json` 의 `@openclaw/gateway-client`)과 같은지 본다. 원격이 `2026.9.5` 이상이면 플러그인은 ADR 0004 이후 번들이어야 한다(`docs/guides/live-smoke.md` 「원격 Gateway 에서 같은 절차를」 절).
-- `"gateway pairing required; retrying"` 줄이 **계속** 나오면 그 줄의 `requestId` 필드 값으로 [B] 에서 `openclaw devices approve <requestId>`. 공유 토큰이면 보통 몇 초 뒤 자동 승인이라 필요 없다(ADR 0001).
-- 디바이스 아이덴티티는 `/data/openclaw-device.json` 에 생긴다(볼륨 — 재시작해도 다시 페어링하지 않는다).
-- 웹에 로그인했으면 연결 페이지(아래 체크리스트 4)의 「Gateway」 섹션이 같은 것을 보인다 — 상태·호스트·버전, 페어링 대기면 요청 id 와 복사할 `openclaw devices approve <requestId>`(요청 id 를 못 받았으면 `openclaw devices list` — 목록에서 이 서버의 요청을 골라 승인한다), 5분 넘게 기다리면 붉게 강조한다.
+- `"gateway pairing required; retrying"` 줄이 **계속** 나오면 그 줄의 `requestId` 필드 값으로 [B] 에서 `openclaw devices approve <requestId>`.
+- 디바이스 아이덴티티와 디바이스 토큰은 Gateway 마다 `/data/gateways/<Gateway id>/` 에 생긴다 — `device.json`, 그리고 Gateway 가 디바이스 토큰을 내주면 `device-tokens.json`(볼륨 — 재시작해도 다시 페어링하지 않는다). 주소를 바꾸면 그 Gateway 의 `device-tokens.json` 이 지워져 다시 페어링하고, Gateway 를 지우면 그 디렉터리가 지워진다.
 
 ### 4. [웹 → B] 플러그인 설치·브리지 토큰
 
-플러그인 파일과 브리지 토큰은 dodok 웹의 **연결 페이지**(`https://<도메인>/settings/connection`)에서 받는다. 개발 PC 는 필요 없다.
+플러그인 파일과 브리지 토큰도 연결 페이지에서 받는다. 플러그인 파일은 서버에 하나라 「OpenClaw Gateway」 블록 머리에서 한 번 받고, 브리지 토큰은 **Gateway 카드마다** 발급한다 — Gateway 가 여럿이면 [B] 호스트마다 같은 파일을 설치하고, 그 Gateway 카드에서 발급한 토큰을 넣는다.
 
-**연결 페이지 열기** — 브라우저로 `https://<도메인>` 에 로그인(로그인 화면 아래 「owner 로컬 토큰으로 로그인」을 펼쳐 `LOCAL_AUTH_TOKEN`)하고 사이드바 하단 「연결」. owner 에게만 보인다(owner 가 아니면 그 주소도 「권한이 없습니다」). OpenClaw 가 끊겼다는 배너의 「연결 설정 보기」도 같은 곳으로 간다.
-
-**플러그인 받기** — 「플러그인」 섹션의 「플러그인 받기」가 서버 이미지가 품은 tgz(같은 커밋에서 빌드한 것)를 내려준다. 파일 이름은 `dodok-openclaw-plugin-<파일 sha256 앞 12자>.tgz` 다. 받은 파일을 화면의 「파일 sha256」과 대조하고 [B] 로 옮긴다.
+**플러그인 받기** — 「OpenClaw Gateway」 블록 머리의 「플러그인 받기」가 서버 이미지가 품은 tgz(같은 커밋에서 빌드한 것)를 내려준다. 파일 이름은 `dodok-openclaw-plugin-<파일 sha256 앞 12자>.tgz` 다. 받은 파일을 화면의 「파일 sha256」과 대조하고 [B] 로 옮긴다.
 
 ```bash
 shasum -a 256 <받은 파일>          # 화면의 「파일 sha256」과 같아야 한다
 scp <받은 파일> <B>:/tmp/
 ```
 
-화면의 「번들 sha256」은 tgz 전체가 아니라 **안의 번들 파일**(`dist/index.js`)의 sha256 이다 — [B] 에 설치한 뒤 대조하는 값이고, 서버가 「같은 빌드」를 가르는 값도 이것이다. 섹션에 받기 대신 「서버에 플러그인 파일이 없습니다」가 보이면 이미지가 파일을 품지 못한 것이다(소스 실행의 개발 서버에서만 난다 — `pnpm -F @dodok/openclaw-plugin run pack:plugin` 뒤 서버 재시작).
+화면의 「번들 sha256」은 tgz 전체가 아니라 **안의 번들 파일**(`dist/index.js`)의 sha256 이다 — [B] 에 설치한 뒤 대조하는 값이고, 서버가 「같은 빌드」를 가르는 값도 이것이다. 받기 대신 「서버에 플러그인 파일이 없습니다. 저장소에서 만든 뒤 서버를 재시작하세요.」가 보이면 이미지가 파일을 품지 못한 것이다(소스 실행의 개발 서버에서만 난다 — `pnpm -F @dodok/openclaw-plugin run pack:plugin` 뒤 서버 재시작).
 
-**브리지 토큰 발급** — 「브리지 토큰」 섹션의 「새 토큰 발급」 → 라벨(알아볼 이름, 예: Gateway 호스트 이름. `env` 는 `.env` 에서 이어받은 토큰에만 쓰는 라벨이라 거절된다) → 「발급」.
+**브리지 토큰 발급** — 그 Gateway 카드의 「브리지 토큰」에서 「새 토큰 발급」 → 라벨(알아볼 이름, 예: Gateway 호스트 이름 — 1~60자) → 「발급」.
+
+- ⚠ **토큰은 발급한 카드의 Gateway 에 묶인다.** 서버는 플러그인이 낸 토큰만으로 어느 Gateway 의 플러그인인지 안다 — 다른 Gateway 호스트에 넣으면 그 플러그인은 발급한 카드의 Gateway 로 붙어, 에이전트 답이 엉뚱한 Gateway 로 간다.
 
 - **원문은 이 대화상자에서 한 번만 보인다.** 서버는 해시만 두고, 목록·로그·새로고침·뒤로 가기 어디에서도 원문을 다시 볼 수 없다. 원문이 보이는 동안 대화상자는 「복사했습니다」로만 닫히고, 다른 곳으로 가려 하면 한 번 더 묻는다(탭 닫기·새로고침은 브라우저가 묻는다. 세션이 끝나 로그인 화면으로 보내질 때만은 묻지 않고 원문이 사라진다). 복사하지 못한 채 닫았으면 그 토큰을 폐기하고 새로 발급한다.
 - 「플러그인 설정」 조각(`channels.dodok.accounts.default` 의 `bridgeUrl`·`token`)을 「플러그인 설정」 아래의 「복사」로 복사해 [B] 에서 파일로 둔다 — 붙여 넣기로 쓰면 토큰이 셸 기록·`ps` 에 남지 않는다.
@@ -123,7 +136,7 @@ scp <받은 파일> <B>:/tmp/
   ```
 - 파일을 둔 뒤 「복사했습니다」.
 
-**[B] 설치** — 연결 페이지 「플러그인」 섹션 설치 명령 상자 아래의 「복사」가 아래 블록과 같은 명령에 받은 파일 이름과 대조할 「번들 sha256」 값을 채워 준다(계정 설정 패치 줄은 빼고 — 토큰은 발급 대화상자가 따로 준다). 아래 블록의 파일 이름 `dodok-openclaw-plugin-0.0.0.tgz` 는 개발 PC 에서 `pnpm -F @dodok/openclaw-plugin run pack:plugin` 으로 만든 파일의 이름이고, sha 줄의 대조 값은 연결 페이지의 「번들 sha256」이다.
+**[B] 설치** — 「플러그인 받기」의 설치 명령 상자 아래 「복사」(「설치 명령 복사」)가 아래 블록과 같은 명령에 받은 파일 이름과 대조할 「번들 sha256」 값을 채워 준다(계정 설정 패치 줄은 빼고 — 토큰은 발급 대화상자가 따로 준다). 아래 블록의 파일 이름 `dodok-openclaw-plugin-0.0.0.tgz` 는 개발 PC 에서 `pnpm -F @dodok/openclaw-plugin run pack:plugin` 으로 만든 파일의 이름이고, sha 줄의 대조 값은 연결 페이지의 「번들 sha256」이다.
 
 처음 설치라면 복사한 명령의 마지막 줄(Gateway 올리기) 전에 `openclaw config patch --file /tmp/dodok.patch.json5 && rm /tmp/dodok.patch.json5` 를 돌린다 — 아래 블록이 그 순서다. 블록을 손으로 칠 때는 파일 이름을 받은 파일 이름으로 바꾼다.
 
@@ -146,8 +159,8 @@ openclaw config patch --file /tmp/dodok.patch.json5 && rm /tmp/dodok.patch.json5
 
 연결 페이지가 실시간으로 바뀐다(새로고침하지 않아도 된다).
 
-- 「플러그인」 섹션: 상태 「접속됨」, 플러그인·SDK·Gateway 버전, **「서버와 같은 빌드입니다」**. 「다른 빌드입니다 — 받아서 다시 설치하세요」면 [B] 에 다른 번들이 깔려 있다 — 체크리스트 4 의 받기·설치를 다시 한다. 「빌드를 알 수 없습니다 — 새로 받아 설치하세요」면 번들 sha256 을 보내지 않는 옛 플러그인이다.
-- 「브리지 토큰」 섹션: 방금 발급한 줄에 「지금 접속 중」.
+- 그 Gateway 카드의 「플러그인」: 상태 「접속됨」, 플러그인·SDK·Gateway 버전, **「서버와 같은 빌드입니다」**. 「다른 빌드입니다 — 받아서 다시 설치하세요」면 [B] 에 다른 번들이 깔려 있다 — 체크리스트 4 의 받기·설치를 다시 한다. 「빌드를 알 수 없습니다 — 새로 받아 설치하세요」면 번들 sha256 을 보내지 않는 옛 플러그인이다.
+- 같은 카드의 「브리지 토큰」: 방금 발급한 줄에 「지금 접속 중」. 이 카드가 아니라 다른 Gateway 카드가 「접속됨」으로 바뀌었으면 다른 카드에서 발급한 토큰을 넣은 것이다 — 체크리스트 4 의 ⚠.
 
 서버 로그로도 본다.
 
@@ -156,8 +169,8 @@ docker compose -f infra/compose.yml logs app | grep -E 'bridge plugin hello|brid
 ```
 
 `"bridge plugin hello"` 줄이 있으면 플러그인이 `wss://<도메인>/bridge` 로 붙었다(Socket.IO `/socket.io/` 의 `/bridge` 네임스페이스). 그 줄의 `gatewayVersion` 은 플러그인이 보낸 Gateway 런타임 버전이다. 같은 줄의 `pluginBuiltWithSdk` 는 플러그인 빌드 때 박힌 SDK 버전이라 Gateway 버전이 아니다.
-안 붙으면: [B] 계정 설정의 `bridgeUrl` 이 연결 페이지 「브리지 토큰」 섹션의 브리지 주소(`wss://`, 경로 `/bridge`)와 같은지, [B] 에서 `https://<도메인>/healthz` 가 닿는지. `"bridge connection rejected"` 의 `token mismatch from <주소>` 는 토큰이 활성 토큰 어느 것과도 맞지 않는다는 뜻이다(틀린 값·폐기된 토큰 — 재접속이 되풀이돼도 주소마다 1분에 한 줄, 넘친 수는 `(N more suppressed)`).
-첨부 바이트는 같은 오리진의 HTTP `/bridge/attachments` 로 오간다 — Caddy 가 `/bridge/*` 를 서버로 넘긴다(`infra/Caddyfile` 의 `@backend`). 폐기된 토큰은 첨부 HTTP 에서도 401 이다.
+안 붙으면: [B] 계정 설정의 `bridgeUrl` 이 카드 「브리지 토큰」 설명의 브리지 주소(`wss://`, 경로 `/bridge`)와 같은지, [B] 에서 `https://<도메인>/healthz` 가 닿는지. `"bridge connection rejected"` 의 `token mismatch from <주소>` 는 토큰이 켜진 Gateway 의 활성 토큰 어느 것과도 맞지 않는다는 뜻이다(틀린 값·폐기된 토큰·꺼졌거나 지운 Gateway 의 토큰 — 마지막 것은 아래 「운영 화면」 레이트리밋 표의 `bridgeFail` 에 세지 않는다. 재접속이 되풀이돼도 주소마다 1분에 한 줄, 넘친 수는 `(N more suppressed)`).
+첨부 바이트는 같은 오리진의 HTTP `/bridge/attachments` 로 오간다 — Caddy 가 `/bridge/*` 를 서버로 넘긴다(`infra/Caddyfile` 의 `@backend`). 폐기된 토큰과 꺼진 Gateway 의 토큰은 첨부 HTTP 에서도 401 이다.
 
 ### 6. [폰] 로그인·설치·푸시
 
@@ -181,20 +194,28 @@ docker compose -f infra/compose.yml exec app node dist/backup.js
 
 ## 브리지 토큰 교체
 
-토큰은 겹쳐서 바꾼다 — 새 토큰을 넣고 다시 붙는 동안 옛 토큰도 통하므로 토큰 때문에 에이전트가 멈추지는 않는다(Gateway 재시작 동안의 짧은 끊김은 있다). `.env` 의 `BRIDGE_TOKEN` 을 고쳐서는 바꿀 수 없다(위 `.env` 표).
+브리지 토큰은 Gateway 마다 따로다 — 아래는 바꿀 Gateway 의 카드에서 한다. 토큰은 겹쳐서 바꾼다 — 새 토큰을 넣고 다시 붙는 동안 옛 토큰도 통하므로 토큰 때문에 에이전트가 멈추지는 않는다(Gateway 재시작 동안의 짧은 끊김은 있다).
 
-1. **발급** — 연결 페이지 「새 토큰 발급」(체크리스트 4 「브리지 토큰 발급」과 같다 — 원문은 한 번만 보인다). 「플러그인 설정」 아래의 「복사」로 복사한 조각을 [B] 의 `/tmp/dodok.patch.json5` 로 두고 「복사했습니다」.
+1. **발급** — 그 Gateway 카드의 「브리지 토큰」에서 「새 토큰 발급」(체크리스트 4 「브리지 토큰 발급」과 같다 — 원문은 한 번만 보인다). 「플러그인 설정」 아래의 「복사」로 복사한 조각을 [B] 의 `/tmp/dodok.patch.json5` 로 두고 「복사했습니다」.
 2. **[B] 설정 교체** — 플러그인은 다시 설치하지 않는다.
    ```bash
    openclaw config patch --file /tmp/dodok.patch.json5 && rm /tmp/dodok.patch.json5
    # Gateway 를 재시작한다(호스트가 Gateway 를 돌리는 방식대로)
    ```
-3. **접속 이동 확인** — 연결 페이지 「브리지 토큰」에서 「지금 접속 중」이 새 줄로 옮겨 가고, 옛 줄에 「이제 폐기해도 됩니다 — 플러그인이 새 토큰으로 접속해 있습니다」가 뜬다. 옮겨 가지 않으면 [B] 의 설정·재시작을 다시 본다 — 이 단계 전에는 옛 토큰을 폐기하지 않는다.
+3. **접속 이동 확인** — 같은 카드의 「브리지 토큰」에서 「지금 접속 중」이 새 줄로 옮겨 가고, 옛 줄에 「이제 폐기해도 됩니다 — 플러그인이 새 토큰으로 접속해 있습니다」가 뜬다. 옮겨 가지 않으면 [B] 의 설정·재시작을 다시 본다 — 이 단계 전에는 옛 토큰을 폐기하지 않는다.
 4. **옛 토큰 폐기** — 옛 줄의 「폐기」 → 확인. 그 토큰으로 붙은 세션은 곧바로 끊기고, 그 뒤 핸드셰이크·첨부 HTTP 모두 거절된다. 되돌릴 수 없다.
    - 지금 접속 중인 토큰이면 확인 대화상자가 「폐기하면 곧바로 끊기고 에이전트가 멈춥니다」라고 알린다.
    - 활성 토큰이 하나도 남지 않게 되면 두 번째 확인(「그래도 폐기」)이 뜬다. 첫 확인 버튼이 있던 자리에는 「취소」가 오고(초점도 거기), 「그래도 폐기」는 반대쪽에 잠시(600ms) 누를 수 없게 나타난다 — 두 번 누르기·Enter 연타가 두 번째 확인으로 번지지 않는다.
 
-`.env` 에서 이어받은 토큰(목록의 라벨 `env`, 알아보기용 앞자리 대신 「.env 에서 이어받음」)도 같은 절차로 바꾼다. 폐기한 뒤에는 `.env` 의 `BRIDGE_TOKEN` 줄을 지워도 되고, 남겨 두면 부팅 때 warn 한 줄과 연결 페이지 한 줄(「.env 의 BRIDGE_TOKEN 은 더 이상 쓰지 않습니다 — 연결 페이지에서 발급하세요」)이 계속 보인다.
+## Gateway 수정·끄기·삭제
+
+연결 페이지 Gateway 카드 머리의 버튼 셋이다 — 「수정」·「끄기」(꺼져 있으면 「켜기」)·「삭제」(화면 읽기 프로그램에는 「<이름> 수정」처럼 Gateway 이름이 붙는다). owner 만 하고, 저장하면 재시작 없이 곧바로 반영된다.
+
+- **수정** — 이름·주소·토큰. 이름만 바꾸면 다시 붙지 않는다. 주소나 토큰을 바꾸면 이 Gateway 만 다시 붙고, 진행 중인 런은 「다시 실행」 카드로 닫힌다. 주소를 바꾸면 디바이스 토큰이 지워져 다시 페어링한다(체크리스트 3 「페어링」). 플러그인과 브리지 토큰은 그대로다 — 브리지 토큰은 Gateway 주소와 상관없다.
+- **끄기** — 확인 없이 바로 끈다. Gateway 연결과 그 Gateway 플러그인의 브리지 세션을 끊고, 진행 중인 런은 `ADAPTER_UNAVAILABLE` run_error 카드(「다시 실행」)로 닫는다. 꺼진 동안 그 Gateway 의 에이전트를 부르면 곧바로 같은 카드가 남는다. 꺼진 Gateway 의 브리지 토큰은 핸드셰이크·첨부 HTTP 모두 거절된다(인증 실패로는 세지 않는다). 꺼진 Gateway 는 연결 점·배너·운영 화면 상태 카드·끊김 사건에서 빠진다. 「켜기」로 다시 붙으면 그 Gateway 의 플러그인이 hello 할 때 그 Gateway 에 에이전트를 둔 채널의 프롬프트를 다시 보낸다.
+- **삭제** — 카드 안에서 한 번 더 묻는다: 「「<이름>」 Gateway 를 삭제할까요?」 + 「이 Gateway 의 에이전트 N개는 남고 연결이 비어 옮기기를 기다립니다 · 브리지 토큰 M개가 지워집니다」(M 은 폐기된 토큰도 센다). 지우면 그 Gateway 의 브리지 토큰과 디바이스 디렉터리(`/data/gateways/<Gateway id>/`)가 지워지고, 에이전트는 남아 연결이 빈다 — 에이전트 화면의 그 줄에 「Gateway 가 삭제됨 — 다른 Gateway 로 옮기세요」.
+  - **옮기기** — 그 줄의 「Gateway 옮기기」(owner)에서 옮길 Gateway 를 고른다. 그 Gateway 의 OpenClaw 에 같은 id 의 에이전트가 있어야 답하고, 그 Gateway 로 이미 등록된 같은 id 가 있으면 옮길 수 없다(「옮길 Gateway 에 같은 id 의 에이전트가 이미 있습니다」). 옮긴 뒤 그 에이전트의 run_error 카드 「다시 실행」은 새 Gateway 로 간다. 「Gateway 옮기기」는 연결된 에이전트 줄에도 있다 — 잘못 고른 Gateway 를 바로잡는 길도 같다.
+  - 지운 Gateway 의 [B] 플러그인은 계속 다시 붙으려다 `token mismatch` 로 거절된다(카운터에는 세지 않는다) — [B] 에서 플러그인을 내리거나 계정 설정을 지운다.
 
 ## Claude 러너 설치
 
@@ -289,10 +310,10 @@ Claude 러너(`@dodok/claude-runner`, 명령 `dodok-runner`)는 **사람의 머�
 
 웹 사이드바 「운영」(`/settings/operations`, owner·admin — member 에게는 메뉴가 없고 직접 주소는 「권한이 없습니다」)이 「어젯밤 무슨 일이 있었나」에 답한다. 외부 모니터링 스택·푸시·웹훅 알림은 없다 — 사이드바 「운영」 옆 배지로 알아챈다. 설계는 `docs/superpowers/specs/2026-09-25-ops-hardening-design.md`(구현과 달라진 것은 그 스펙의 「구현과 맞춘 것」 장).
 
-- **상태**(맨 위 카드) — Gateway·플러그인 연결, Claude 러너 연결(「<n>대 붙음 / 토큰 <m>개」 — 러너는 사람 PC 라 꺼져 있을 수 있어 이 줄은 강조하지 않고, 60초 넘는 끊김은 사건 「러너 연결 끊김」이 알린다), Gateway 버전, 디스크 여유, 직전 종료, 서버·DB. 문제가 있는 줄만 강조한다. 연결 두 줄은 wire 로 실시간이고, 나머지 칸은 사건이 올 때와 화면을 보는 동안 30초마다 다시 받는다. Gateway 버전이 저장소 핀(`packages/openclaw-adapter/src/version.ts` 의 `OPENCLAW_PINNED_VERSION`)과 다르면 「저장소가 검증한 버전(<핀>)과 다릅니다」 — 연결 페이지 Gateway 줄에도 같은 문구가 붙는다.
+- **상태**(맨 위 카드) — 켜진 Gateway 마다 Gateway·플러그인 연결과 Gateway 버전 세 줄(줄 이름에 Gateway 이름 — 「Gateway 「사무실」」·「플러그인 「사무실」」·「Gateway 「사무실」 버전」, 꺼진 Gateway 는 줄이 없다), Claude 러너 연결(「<n>대 붙음 / 토큰 <m>개」 — 러너는 사람 PC 라 꺼져 있을 수 있어 이 줄은 강조하지 않고, 60초 넘는 끊김은 사건 「러너 연결 끊김」이 알린다), 디스크 여유, 직전 종료, 서버·DB. 문제가 있는 줄만 강조한다. 연결 줄은 wire 로 실시간이고, 나머지 칸은 사건이 올 때와 화면을 보는 동안 30초마다 다시 받는다. Gateway 버전이 저장소 핀(`packages/openclaw-adapter/src/version.ts` 의 `OPENCLAW_PINNED_VERSION`)과 다르면 「저장소가 검증한 버전(<핀>)과 다릅니다」 — 연결 페이지 Gateway 카드에도 같은 문구가 붙는다.
 - **런**(표) — 「오늘 / 7일」, 채널별·에이전트별 런·실패·중지·차단. OpenClaw 에이전트 런의 토큰·금액은 「측정 불가」다 — Gateway 가 주는 출력 토큰·비용 값이 틀린다(`docs/adr/0005-usage-values.md`). Claude 러너 에이전트 런은 러너가 CLI 의 값으로 보낸 토큰·금액이 보인다(ADR 0007 「질문별」 usage·비용). 러너가 구독 로그인이면 금액은 청구액이 아니라 공시 단가 환산이라 「환산 포함」이 붙고, 한 행에 두 종류 런이 섞이면 더한 것은 러너 런뿐이라 「런 m/n개만」이 붙는다.
 - **한도** — 워크스페이스 일일 런 상한. 값을 정한 적이 없으면(새 배포도, 이 판으로 올린 기존 배포도) **300**, 1~10000, 비우면 무제한. 채널별 상한은 각 채널 설정 「릴레이 정책」의 「일일 실행 상한」이다. 둘 다 그 채널·워크스페이스에서 오늘 **만들어진 모든 런**(사람 멘션·자동 응답·릴레이·컴포넌트 상호작용·다시 실행)을 센다 — 한도로 막혀 만들지 않은 런은 세지 않는다. 막히면 런을 만들지 않고, 그 채널에 「오늘 런 한도(N)에 도달했습니다 — 내일 0시에 풀립니다」(채널 상한이면 「이 채널의」가 붙는다)를 범위마다 **하루 한 번** 남기며, 사람이 보낸 메시지는 그대로 저장된다. 「하루」는 `TZ` 의 자정이다(위 「설정 — `.env`」).
-- **최근 사건** — 심각도 필터·「모두 확인」·「더 보기」. 같은 종류·대상의 사건은 확인하기 전 1시간 안이면 한 줄로 묶여 「×n」이 오르고, 30일 지난 줄은 지워진다. 끊김 사건(Gateway·플러그인)은 **60초 넘게** 끊겨야 열리고(그 안에 돌아오면 남지 않는다), 붙으면 같은 줄이 「(n분 동안)」으로 닫힌다. 「(n분 동안)」은 서버가 다시 붙은 때까지다 — Gateway 가 먼저 떠도 서버의 재접속 백오프(최대 30초)만큼 길게 나온다.
+- **최근 사건** — 심각도 필터·「모두 확인」·「더 보기」. 같은 종류·대상의 사건은 확인하기 전 1시간 안이면 한 줄로 묶여 「×n」이 오르고, 30일 지난 줄은 지워진다. Gateway 사건은 이름이 붙는다(「Gateway 「집」 연결 끊김」·「Gateway 「집」 플러그인 연결 끊김」·「Gateway 「집」 검증 안 된 버전 (…)」 — 이름을 바꿨으면 지금 이름, 지운 Gateway 는 사건을 연 때의 이름). 끊김 사건(Gateway·플러그인)은 Gateway 마다 **60초 넘게** 끊겨야 열리고(그 안에 돌아오면 남지 않는다), 붙으면 같은 줄이 「(n분 동안)」으로 닫힌다. 「(n분 동안)」은 서버가 다시 붙은 때까지다 — Gateway 가 먼저 떠도 서버의 재접속 백오프(최대 30초)만큼 길게 나온다.
 - **배지** — 확인 안 한 주의·오류 사건 수(100 이상은 「99+」). 좁은 화면에서는 채널 목록 메뉴 버튼의 빨간 점. 「모두 확인」 뒤 사라진다.
 - **다시 실행** — 디스패치 실패·타임아웃으로 끝난 런의 채널 알림 「@<에이전트> 실행이 실패했습니다: <코드>」에 1회용 「다시 실행」 버튼이 붙는다(채널의 사람 누구나, 24시간). 같은 트리거로 새 런을 만들고, 한도에 걸리면 버튼은 소비되지 않는다.
 
@@ -334,7 +355,7 @@ docker compose -f infra/compose.yml exec app node dist/backup.js [--keep N]
 ```
 
 - 서버를 멈추지 않는다 — better-sqlite3 온라인 백업을 **한 번에 전부** 복사한다(한 읽기 트랜잭션의 스냅숏이라 쓰기와 겹쳐도 온전하다). 그동안 서버는 계속 쓰고, WAL 이 잠시 자랄 수 있다.
-- 결과는 `/data/backups/<UTC 시각>/` 에 `dodok.sqlite` 와 `vapid.json`·`openclaw-device.json`(있으면 `openclaw-device-dev.json`) 사본, 전부 0600.
+- 결과는 `/data/backups/<UTC 시각>/` 에 `dodok.sqlite` 와 `vapid.json` 사본, 그리고 `gateways/` 디렉터리 통째(Gateway 마다 디바이스 아이덴티티·디바이스 토큰). 파일은 0600, 디렉터리는 0700.
 - **보관**: 최근 7개(기본), `--keep N` 으로 바꾼다. 넘친 것은 오래된 것부터 지운다. 보관 개수는 **백업 이름 형식(`YYYY-MM-DDTHH-MM-SS-mmmZ`)** 인 디렉터리만 센다 — 오래 둘 백업은 다른 이름으로 옮겨 둔다(그대로 두면 정리가 센다).
 - **`.partial-*`**: 백업은 `backups/.partial-<시각>-XXXXXX/` 에서 만든 뒤 다 되면 `<시각>/` 으로 옮긴다. 중단(Ctrl-C·`SIGTERM` 은 스스로 지운다, `SIGKILL`·전원 끊김은 남는다)으로 남은 `.partial-*` 는 **복원에 쓰지 않는다** — 1시간이 지나면 다음 백업이 지운다.
 - 출력은 한 줄(시크릿 없음), 실패는 exit 1 과 `백업 실패: <사유>` 한 줄(디스크 부족이면 부분 디렉터리를 지운다).
@@ -349,7 +370,7 @@ docker compose -f infra/compose.yml exec app node dist/backup.js [--keep N]
 
 ### 볼륨째 옮기기(첨부 포함)
 
-데이터는 볼륨 `dodok_dodok-data` 하나다(`dodok.sqlite`·WAL·`attachments/`·`vapid.json`·`openclaw-device.json`·`backups/`). 통째로 옮기면 서버를 옮길 수 있다.
+데이터는 볼륨 `dodok_dodok-data` 하나다(`dodok.sqlite`·WAL·`attachments/`·`vapid.json`·`gateways/`·`backups/`). 통째로 옮기면 서버를 옮길 수 있다.
 
 ```bash
 docker compose -f infra/compose.yml stop app
@@ -375,7 +396,7 @@ ls /data/backups                       # .partial-* 는 고르지 않는다
 B=/data/backups/<고른 이름>
 cp "$B/dodok.sqlite" /data/dodok.sqlite
 rm -f /data/dodok.sqlite-wal /data/dodok.sqlite-shm
-# 필요할 때만: cp -p "$B/vapid.json" /data/   ·   cp -p "$B/openclaw-device.json" /data/
+# 필요할 때만: cp -p "$B/vapid.json" /data/   ·   rm -rf /data/gateways && cp -pR "$B/gateways" /data/
 exit
 ```
 
@@ -389,7 +410,7 @@ docker compose -f infra/compose.yml ps     # app (healthy)
 정상 정지(`docker compose stop`)는 서버가 DB 를 닫으며 WAL 을 합치고 지우므로 **지울 WAL 이 없는 게 정상**이다. WAL 이 남는 것은 비정상 종료(kill·크래시·OOM·전원) 뒤다 — 그래서 늘 지운다(없으면 `rm -f` 는 아무 일도 하지 않는다).
 
 - `vapid.json` 을 되돌리면 그 백업 뒤에 켠 기기의 푸시 구독이 무효가 된다(키가 바뀐다). 키를 잃은 경우에만 되돌린다.
-- `openclaw-device.json` 을 되돌리지 않고 지우면 Gateway 와 다시 페어링한다(체크리스트 3).
+- `gateways/<Gateway id>/` 를 되돌리지 않고 지우면 그 Gateway 와 다시 페어링한다(체크리스트 3). 디바이스 디렉터리는 DB 의 Gateway 행과 짝이라, DB 를 되돌리면 같은 백업의 `gateways/` 를 함께 되돌리는 것이 안전하다 — 그 백업 뒤에 추가한 Gateway 는 DB 에 없으니 디렉터리가 남아도 쓰이지 않는다.
 
 ## 업데이트
 
@@ -402,7 +423,7 @@ DODOK_WEB_BUILD_ID=$(git log -1 --format=%h -- apps/web packages/shared pnpm-loc
 docker compose -f infra/compose.yml ps                              # app·caddy (healthy)
 ```
 
-마이그레이션은 부팅 때 자동이다. Claude 러너를 쓰면 러너 카드의 빌드 줄도 본다 — 위 「Claude 러너 설치」 절의 「업데이트」. 새 이미지는 그 커밋의 플러그인 tgz 를 품는다 — 연결 페이지 「플러그인」 섹션이 「다른 빌드입니다 — 받아서 다시 설치하세요」면 체크리스트 4 의 받기·[B] 설치를 다시 한다(토큰은 그대로 — 계정 설정 패치 줄은 건너뛴다). 「서버와 같은 빌드입니다」면 플러그인은 그대로 둔다.
+마이그레이션은 부팅 때 자동이다. Claude 러너를 쓰면 러너 카드의 빌드 줄도 본다 — 위 「Claude 러너 설치」 절의 「업데이트」. 새 이미지는 그 커밋의 플러그인 tgz 를 품는다 — 연결 페이지 Gateway 카드의 「플러그인」이 「다른 빌드입니다 — 받아서 다시 설치하세요」면 그 Gateway 의 [B] 에 체크리스트 4 의 받기·설치를 다시 한다(토큰은 그대로 — 계정 설정 패치 줄은 건너뛴다). 「서버와 같은 빌드입니다」면 플러그인은 그대로 둔다.
 
 **푸시 구독이 세션에 묶이는 판(마이그레이션 `0010_push_session`)으로 올리면 기존 푸시 구독 행은 모두 지워진다** — 어느 세션이 등록했는지 몰라서다. 로그인한 채 앱을 한 번 열면 그 기기의 구독이 지금 세션으로 다시 등록된다(웹이 앱을 열 때마다 하는 동기화). 그때까지 그 기기에는 푸시가 가지 않는다.
 
@@ -441,7 +462,7 @@ docker compose -f infra/compose.yml ps     # app·caddy (healthy)
 | 서버 | 플러그인 | 결과 |
 | --- | --- | --- |
 | 모르는 hello capability 를 버리는 서버(Phase 4 ① 이후) | 새 판(`threads` 를 싣는다) | 붙는다 — 서버가 모르는 값만 버린다 |
-| Phase 4 ① 이전 서버(Phase 3) | 새 판 | **붙지 못한다** — 옛 서버는 모르는 capability 가 든 hello 를 통째로 거절한다. 서버를 Phase 3 으로 되돌릴 때는 플러그인도 같은 커밋의 tgz 로 다시 설치한다(옛 이미지의 연결 페이지 「플러그인」 섹션에서 받는다) |
+| Phase 4 ① 이전 서버(Phase 3) | 새 판 | **붙지 못한다** — 옛 서버는 모르는 capability 가 든 hello 를 통째로 거절한다. 서버를 Phase 3 으로 되돌릴 때는 플러그인도 같은 커밋의 tgz 로 다시 설치한다(옛 이미지의 연결 페이지 「플러그인 받기」에서 받는다) |
 | Phase 4 ① 이후 서버 | 옛 판(`threads` 없음) | 채널만 돈다 — 스레드 멘션은 `PLUGIN_OUTDATED` 카드 |
 
 ⚠ **되돌릴 때는 반드시 업데이트 직전 백업으로 복원한다.** 마이그레이션은 앞으로만 간다 — 새 코드가 이미 올린 스키마를 옛 코드가 읽지 못한다. 더 오래된 백업이면 그 뒤의 데이터를 잃고, 더 새 백업(업데이트 뒤)이면 옛 코드가 못 연다. 백업 뒤 업데이트 사이에 쓰인 것은 잃는다.
@@ -458,11 +479,12 @@ docker compose -f infra/compose.yml ps     # app·caddy (healthy)
 | Caddy 502 | `app` 이 아직 안 떴거나 재시작 중 | `ps`·`logs app` |
 | 업데이트 뒤 `app` unhealthy | 마이그레이션·부팅 실패 — `logs app` | 위 「되돌리기」 |
 | 웹 배너 「실시간 연결이 거부되었습니다 — …」 | 브라우저 주소와 `APP_ORIGIN` 이 다르다(스킴·포트·끝 슬래시까지) | `APP_ORIGIN=https://<도메인>` |
-| 에이전트 목록이 비고 로그에 Gateway 재시도 | Gateway URL·토큰, 방화벽 — 서버는 멈추지 않고 재시도만 한다 | 체크리스트 3 |
+| Gateway 카드 「재연결 중」·「연결 안 됨」, 로그에 그 `gatewayId` 의 재시도, 1분 뒤 「OpenClaw Gateway 「<이름>」에 연결하지 못하고 있습니다」 알림 | 그 Gateway 의 주소·토큰, 방화벽 — 서버는 멈추지 않고 그 Gateway 만 재시도한다(다른 Gateway 는 그대로) | 카드 「수정」(「Gateway 수정·끄기·삭제」), 체크리스트 3 |
+| 에이전트 가져오기가 「Gateway 에 연결되지 않았습니다」 | 고른 Gateway 가 끊겼거나 꺼졌다 | 연결 페이지 그 Gateway 카드 |
+| 에이전트 화면 「Gateway 가 삭제됨 — 다른 Gateway 로 옮기세요」, 멘션하면 `ADAPTER_UNAVAILABLE` 카드 | 그 에이전트의 Gateway 를 지웠다 | 「Gateway 옮기기」 뒤 카드의 「다시 실행」(「Gateway 수정·끄기·삭제」) |
 | `bridge plugin hello` 가 안 나옴 | 플러그인 `bridgeUrl`·`token`, [B] → [A] 443. `bridge connection rejected` 의 `token mismatch` 면 토큰이 활성 토큰과 맞지 않는다 | 체크리스트 5 |
-| 연결 페이지 브리지 토큰 섹션 「쓸 수 있는 토큰이 없습니다 — 발급하세요」 | 활성 토큰이 0개다(새 배포, 또는 전부 폐기) — 브리지 접속은 모두 거절된다 | 체크리스트 4 「브리지 토큰 발급」 |
-| `.env` 의 `BRIDGE_TOKEN` 을 바꿨는데 플러그인이 안 붙음, 로그 warn `BRIDGE_TOKEN in .env is ignored — manage bridge tokens in the connection page` | `.env` 값은 토큰 행이 하나도 없을 때(폐기된 행 포함) 한 번만 이어받는다 | 「브리지 토큰 교체」 |
-| 연결 페이지 「다른 빌드입니다」·「빌드를 알 수 없습니다」 | [B] 의 플러그인이 이 서버 이미지가 품은 번들과 다르다(또는 번들 sha256 을 보내지 않는 옛 플러그인) | 체크리스트 4 의 받기·설치 |
+| Gateway 카드 「브리지 토큰」의 「쓸 수 있는 토큰이 없습니다 — 발급하세요」 | 그 Gateway 의 활성 토큰이 0개다(막 추가했거나 전부 폐기) — 그 Gateway 의 브리지 접속은 모두 거절된다 | 체크리스트 4 「브리지 토큰 발급」 |
+| 연결 페이지 Gateway 카드 「다른 빌드입니다」·「빌드를 알 수 없습니다」 | 그 Gateway 의 [B] 플러그인이 이 서버 이미지가 품은 번들과 다르다(또는 번들 sha256 을 보내지 않는 옛 플러그인) | 체크리스트 4 의 받기·설치 |
 | 「플러그인 받기」가 「플러그인 파일이 그새 다시 빌드됐습니다」 | 부팅 때 잰 tgz 와 지금 파일이 다르다(서버 409 `PLUGIN_FILE_CHANGED`) — 이미지로 돌면 나지 않는다 | 서버 재시작 |
 | 폰에 푸시가 안 옴(앱의 알림 설정이 꺼져 보임) | 푸시 구독은 등록한 세션에 묶인다 — 그 세션이 끝나면(로그아웃·비밀번호 변경·재설정·내보내기·30일 미사용 만료) 서버가 구독을 지우고, 웹도 401 을 보면 기기 구독을 해지한다 | 다시 로그인한 뒤 알림 설정에서 「푸시 알림 켜기」 |
 | 폰에 푸시가 안 옴(iOS) | `VAPID_SUBJECT` 가 로컬 자리값이면 Apple 이 `403 BadJwtToken` — 서버 시작 로그에 warn 한 줄 | 실제 연락처로 바꾸고 `up -d` |
@@ -506,21 +528,21 @@ docker compose -f infra/compose.yml ps     # app·caddy (healthy)
 
 ```bash
 cp infra/local.env.example infra/local.env
-for k in LOCAL_AUTH_TOKEN BETTER_AUTH_SECRET OPENCLAW_GATEWAY_TOKEN; do
+for k in LOCAL_AUTH_TOKEN BETTER_AUTH_SECRET; do
   sed -i.bak "s/^$k=\$/$k=$(openssl rand -hex 32)/" infra/local.env; done; rm infra/local.env.bak
 ```
 
-`BRIDGE_TOKEN` 은 비워 둔다 — 운영 모드의 연결 페이지에서 「쓸 수 있는 토큰이 없습니다 — 발급하세요」와 첫 발급을 본다(값을 넣으면 `.env` 이어받기 경로를 본다). `infra/local.env` 는 git 제외다. 이 파일은 `app` 의 `env_file` 이면서 compose 의 `--env-file`(변수 치환)이라, **모든** compose 명령에 같은 조합을 붙인다.
+운영 모드는 Gateway 0개로 뜬다 — 연결 페이지의 빈 상태(「OpenClaw Gateway 를 추가하면 그 안의 에이전트를 채널에 데려올 수 있습니다」)와 「Gateway 추가」를 본다. 닿지 않는 Gateway 로 카드의 「재연결 중」·경고를 볼 때는 `wss://host.invalid:9` 처럼 `wss://` 로 넣는다(루프백이 아닌 `ws://` 는 Gateway 클라이언트가 보안 오류로 거절해 「닿지 않음」과 다른 경고가 된다). 추가한 Gateway 카드에서 「쓸 수 있는 토큰이 없습니다 — 발급하세요」와 첫 발급을 본다. `infra/local.env` 는 git 제외다. 이 파일은 `app` 의 `env_file` 이면서 compose 의 `--env-file`(변수 치환)이라, **모든** compose 명령에 같은 조합을 붙인다.
 
 ```bash
 # zsh 는 따옴표 없는 변수를 낱말로 쪼개지 않는다 — 변수 대신 함수로 둔다
 lc() { docker compose --env-file infra/local.env -f infra/compose.yml -f infra/compose.local.yml "$@"; }
 
-# 운영 모드 — Gateway 는 닿지 않는 주소(부팅은 막지 않는다). 로그인·채널·사람 메시지·첨부·PWA·푸시 구독까지
+# 운영 모드 — Gateway 0개로 뜬다(연결 페이지에서 추가). 로그인·채널·사람 메시지·첨부·PWA·푸시 구독까지
 lc up -d --build
 bash infra/check-caddy.sh https://localhost:8443      # 줄마다 PASS/FAIL, 끝 줄 「check-caddy: 전부 PASS」 — 새 볼륨으로 막 뜬 직후면 아래 첫 항목
 
-# devfake 모드 — 가짜 Gateway·플러그인(dev:fake)을 Caddy 뒤에 둔다. 에이전트 스트리밍·카드·승인·에이전트 첨부가 Caddy 를 지나는지
+# devfake 모드 — 가짜 Gateway·플러그인 둘(dev:fake — 「사무실」·「집」)을 Caddy 뒤에 둔다. 에이전트 스트리밍·카드·승인·에이전트 첨부가 Caddy 를 지나는지
 DODOK_UPSTREAM=devfake:3000 lc --profile devfake up -d --build
 # 로그인 토큰은 dev-fake-local-token(개발 전용 고정값)
 ```
@@ -548,10 +570,11 @@ DODOK_UPSTREAM=devfake:3000 lc --profile devfake up -d --build
 | --- | --- | --- |
 | 1. 도메인·포트·저장소·`.env` | | |
 | 2. 기동(healthy·`/healthz`) | | |
-| 3. Gateway 접속·페어링(`gatewayVersion`, 연결 페이지 「Gateway」 — 페어링 대기였으면 요청 id·승인 명령이 보였나) | | |
-| 4. 연결 페이지 — 플러그인 받기(파일 sha256 대조)·[B] 설치(번들 sha256 대조)·토큰 발급·계정 설정 | | |
+| 3. 연결 페이지 「Gateway 추가」·페어링(`gatewayVersion`, Gateway 카드 — 페어링 대기였으면 요청 id·승인 명령이 보였나) | | |
+| 4. 연결 페이지 — 플러그인 받기(파일 sha256 대조)·[B] 설치(번들 sha256 대조)·Gateway 카드에서 토큰 발급·계정 설정 | | |
 | 5. 브리지 접속(「지금 접속 중」·「서버와 같은 빌드입니다」·`bridge plugin hello`) | | |
 | 브리지 토큰 교체(발급 → [B] 설정 교체 → 「지금 접속 중」 이동 → 옛 토큰 폐기) | | |
+| 둘째 Gateway(있으면) — 추가·설치·토큰, 같은 id 에이전트를 핸들을 달리해 가져와 각각 멘션 | | |
 | 6. 폰 — iOS 홈 화면 PWA 푸시·누르기 | | |
 | 6. 폰 — 안드로이드 Chrome 푸시·누르기 | | |
 | 멤버 초대 — 다른 브라우저·폰에서 가입, 서로 멘션해 폰에 푸시가 오는가, 내보내기 뒤 그 화면 | | |

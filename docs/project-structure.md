@@ -143,11 +143,11 @@ src/
 ├─ runtime.ts             실행 모드: isBundled(esbuild define __DODOK_BUNDLED__)·migrationsFolder(DODOK_MIGRATIONS_DIR, 없으면 apps/server/drizzle)·
 │                         unwritableDataPath·dataDirErrorMessage(비루트 컨테이너 + 다른 UID 볼륨 → chown 명령이 든 한 줄)
 ├─ backup.ts              runBackup: 온라인 백업을 한 번에 전부 복사(읽기 트랜잭션 스냅숏) → <DATA_DIR>/backups/.partial-* 에서 만들고 rename,
-│                         vapid.json·디바이스 아이덴티티 사본(0600), 보관 개수(기본 7, 백업 이름 형식만 센다), 1시간 넘은 .partial-* 정리
+│                         vapid.json 사본(0600)·`gateways/` 디렉터리 통째(Gateway 마다 디바이스 아이덴티티·디바이스 토큰 — 파일 0600·디렉터리 0700), 보관 개수(기본 7, 백업 이름 형식만 센다), 1시간 넘은 .partial-* 정리
 ├─ backup-main.ts         백업 CLI(번들 dist/backup.js — `docker compose -f infra/compose.yml exec app node dist/backup.js [--keep N]`), 한 줄 출력·실패 exit 1, SIGINT·SIGTERM 에 자기 .partial-* 삭제(복사 도중의 신호는 복사가 끝난 뒤 완료·exit 0)
 ├─ app.ts                 createApp: 부팅 순서(DB → 워크스페이스 → 인증·owner → Fastify → Socket.IO → 어댑터 → 서비스 → 라우트 → wire → 부팅 정리 → adapter.connect),
 │                         종료 순서(새 wire 거부 → 푸시 트리거 떼기 → 오케스트레이터 stop → adapter.close → io.close → Fastify → 진행 중 푸시 발송 최대 2s(PUSH_DRAIN_TIMEOUT_MS) → DB, 10s 상한),
-│                         /healthz(`{ok, db}` 뿐 — 워크스페이스 id·어댑터 상세는 ops/status), Gateway 재접속 60s 알림.
+│                         /healthz(`{ok, db}` 뿐 — 워크스페이스 id·어댑터 상세는 ops/status), Gateway 마다 재접속 60s 알림(Gateway 이름을 넣은 system.notice).
 │                         운영(Phase 3 ③): ops 서비스·부팅 sweep + 24시간마다(OPS_SWEEP_INTERVAL_MS), 레이트리밋(`AppDeps.limits`·`limitClock` — 기본 LIMITS·단조 시계)과 REST 상한 데코레이션
 │                         `restLimits`, 브리지 실패 카운터 BridgeAuthGuard 하나(브리지·러너 핸드셰이크·`/bridge/attachments`·`/runner/attachments` — 사건 bridge_auth_blocked 의 detail.path 로 가른다), 감시 다섯(watchConnections·watchRunners·watchGatewayVersion·watchRunFailures·
 │                         createDiskMonitor — `await disk.ready` 로 부팅이 끝나면 첫 측정이 있다, `App.disk()`·`checkDisk()`)는 종료 때 `"ops"` 단계 **전에** 닫는다.
@@ -167,6 +167,8 @@ src/
 │  │                      ⚠ drizzle-kit 은 기존 표에 FK 열을 더하는 `ALTER TABLE … ADD … REFERENCES` 에서 스냅숏의 ON DELETE 를 빠뜨린다 — SQLite 가 받아도 조용히 다르게 동작하므로,
 │  │                      FK 열을 더하면 생성 SQL 의 ON DELETE 를 스냅숏과 대조하고 다르면 그 줄만 손으로 고친 뒤(SQLite 가 ALTER 를 받지 않으면 표를 다시 만든다) 머리 주석에
 │  │                      까닭을 적는다. 스냅숏은 생성기 출력 그대로 두고 다음 generate 가 「No schema changes」인지 본다(0010·0012·0014).
+│  │                      ⚠ 열을 NOT NULL 로 바꾸면 drizzle-kit 은 표를 다시 만들며 옛 행을 그대로 복사한다 — null 행이 남아 있으면 마이그레이션이 실패해 서버가 뜨지 않으므로,
+│  │                      그 행을 버릴지 채울지 정해 복사 SQL 에만 손을 대고 머리 주석에 까닭을 적는다(0013 — Gateway 에 묶이지 않은 bridge_tokens 행을 버린다).
 │  │                      스레드(0006): messages.thread_root_id(인덱스 messages_channel_thread_seq (channel_id, thread_root_id, seq))·agent_sessions.thread_root_id·runs.thread_root_id —
 │  │                      세 열 모두 FK 없음(저장 경로 검증이 지킨다). agent_sessions 의 유일 제약은 **부분 유일 인덱스 둘** — 스레드 행 agent_sessions_channel_agent_thread
 │  │                      (channel_id, agent_id, thread_root_id), 채널 행 agent_sessions_channel_session (channel_id, agent_id) WHERE thread_root_id IS NULL(coalesce 표현식 인덱스는
@@ -641,9 +643,11 @@ src/
 │     ├─ Sidebar.tsx       워크스페이스 이름·검색 칸(누르면 검색 대화상자, `⌘K` 표시)·채널 목록·「채널 만들기」·「에이전트」·「멤버」·「운영」(admin 이상 — useCanManage)·「연결」(owner — useIsOwner)·연결 상태·「내 계정」·로그아웃.
 │     │                    「운영」 옆 배지 = ops/status 의 unacked warn + error(0 이면 없음, 100 이상 「99+」, sr-only 「(확인 안 한 사건 n건)」) — `ops.event` 로 실시간, 주기 재조회는 없다
 │     ├─ ChannelHeader.tsx 채널 이름·주제, 에이전트 아바타 묶음(+N), 설정 패널 여닫기, 좁은 화면 메뉴 버튼
-│     ├─ Banners.tsx       wire 끊김·`rejected`·`protocol_mismatch` 배너 + OpenClaw 미연결 배너(둘은 함께 보일 수 있다, owner 에게는 「연결 설정 보기」 링크) + 오프라인 배너
+│     ├─ Banners.tsx       wire 끊김·`rejected`·`protocol_mismatch` 배너 + OpenClaw 미연결 배너(켜진 Gateway 가운데 끊긴 것 — 하나면 「「<이름>」」, 둘 이상이면 「<N>개」. 둘은 함께 보일 수 있다,
+│     │                    owner 에게는 「연결 설정 보기」 링크) + 오프라인 배너
 │     │                    「오프라인 — 저장된 내용을 보여 줍니다」(useOffline — 그때는 「서버에 다시 연결하는 중…」을 내지 않는다)
-│     ├─ ConnectionDots.tsx Gateway·플러그인 점 — wire 가 끊기면 마지막 값을 믿지 않고 「알 수 없음」
+│     ├─ ConnectionDots.tsx Gateway·플러그인 점 — 켜진 Gateway 를 모아 하나로(모두 연결 초록 · 일부 끊김 노랑 · 붙은 것이 없어도 다시 붙는 중이면 노랑 「Gateway 다시 연결 중」 ·
+│     │                    모두 끊김 빨강 · 켜진 Gateway 없음 회색 「Gateway 없음」), 툴팁에 Gateway 마다 한 줄. wire 가 끊기면 마지막 값을 믿지 않고 「알 수 없음」
 │     ├─ NotifySettings.tsx 사이드바 하단 「알림」(벨) → Dialog 패널(Phase 2 ④, 옛 NotifyToggle 을 흡수) — 이 기기의 푸시 상태 다섯(미지원·설치 필요(iOS)·거절됨·꺼짐·켜짐)·
 │     │                    「푸시 알림 켜기」·「끄기」·실패 이유(role=alert, 거절이면 상태 줄 하나)·「앱 설치」. 켜고 끄는 동안 닫히지 않는다.
 │     │                    푸시가 없는 브라우저(iOS 아님)에서 권한이 default 면 「탭이 열려 있을 때만 알림 켜기」(옛 동작)
@@ -745,8 +749,8 @@ src/
 │  │                       MessageItem 은 본문이 비면 본문을 그리지 않고, 본문 아래 `MessageAttachments` → components 카드 순으로 그린다
 │  ├─ ops/                 Phase 3 ③. 운영 화면 `/settings/operations` — admin 이상(member·role 없는 옛 me 는 ops API 를 부르지 않고 「권한이 없습니다」).
 │  │                       OpsPage.tsx(섹션 넷 — 상태를 30초마다 다시 받는 것은 이 화면만(OPS_STATUS_POLL_MS, 탭이 가려지면 쉰다)) ·
-│  │                       StatusCard.tsx(Gateway·플러그인·Gateway 버전(drift 면 「저장소가 검증한 버전(<핀>)과 다릅니다」)·디스크·직전 종료·서버·DB, 문제가 있는 줄만 `data-problem` 강조 + sr-only 「문제:」.
-│  │                       연결 두 줄은 wire 가 connected 이고 어댑터 캐시가 있으면 `useAdapterStatus`(배너·연결 점과 같은 캐시), 아니면 ops/status 값) ·
+│  │                       StatusCard.tsx(켜진 Gateway 마다 Gateway·플러그인·Gateway 버전 세 줄(줄 이름에 Gateway 이름, 꺼진 Gateway 는 줄 없음, drift 면 「저장소가 검증한 버전(<핀>)과 다릅니다」)·디스크·직전 종료·서버·DB, 문제가 있는 줄만 `data-problem` 강조 + sr-only 「문제:」.
+│  │                       연결 줄은 wire 가 connected 이고 어댑터 캐시가 있으면 `useAdapterStatus`(배너·연결 점과 같은 캐시), 아니면 ops/status 값) ·
 │  │                       RunsTable.tsx(「오늘 / 7일」, 채널별·에이전트별 런·실패·중지·차단, 채널 이름은 채널 링크. usageTrusted 가 false 면 「토큰·금액은 측정 불가 — … (ADR 0005)」 한 줄,
 │  │                       768px 미만은 표 대신 카드 목록) ·
 │  │                       LimitForm.tsx(워크스페이스 일일 상한 — 빈칸 null(무제한), 1~10000 정수 아니면 보내지 않음, 오늘 사용량 막대 또는 「오늘 n회 · 무제한」, 「오늘 워크스페이스 상한으로 막힌 런 n회」,
@@ -764,7 +768,10 @@ src/
 │  │                       `threadRootId` 면 루트를 싣고 보내는 중·확정은 스레드 캐시에) · useTyping·TypingIndicator(스레드 작성기는 typing 을 보내지 않는다 — wire Typing 이 채널 단위) ·
 │  │                       PendingAttachments.tsx(칩 — 미리보기·진행 막대·사유·「<이름> 빼기」, 빼면 초점을 옆 칩·「이미지 첨부」로). Composer 는 「이미지 첨부」 버튼·붙여넣기·
 │  │                       작성기 상자 전체의 끌어다 놓기로 칩을 넣고, 올리기가 끝나야 보낸다(사유: 끊김 → 「이미지를 올리는 중입니다」 → 「올리지 못한 이미지를 빼 주세요」). 글 없이 이미지만 보낼 수 있다
-│  ├─ agents/              AgentsPage·AgentRow(사용 토글·기본 프롬프트 — member 에게는 값만, 등록 버튼 없음 · claude 면 묶인 러너 라벨, 폐기됐으면 다시 묶으라는 안내 — 다시 묶기는 연결 페이지 러너 카드) · DiscoverDialog(「Gateway 에서 가져오기」) · ManualAgentForm·handleFrom ·
+│  ├─ agents/              AgentsPage·AgentRow(사용 토글·기본 프롬프트 — member 에게는 값만, 등록 버튼 없음 · claude 면 묶인 러너 라벨, 폐기됐으면 다시 묶으라는 안내 — 다시 묶기는 연결 페이지 러너 카드) · DiscoverDialog(「에이전트 가져오기」 — 제공자, OpenClaw 면 Gateway 고르기(Gateway 목록은 어댑터 상태 — admin 도 읽는다, `GET /gateways` 는 owner 전용), 같은 Gateway·같은 id 만 숨김,
+│  │                       핸들 겹침은 「이미 쓰이는 핸들입니다 — 다른 핸들을 입력하세요」) · MoveGatewayDialog(「Gateway 옮기기」 — owner, OpenClaw 줄마다) ·
+│  │                       gatewaySuffix(「 · <Gateway 이름>」 — 에이전트 줄·멘션 후보·채널 설정이 같이 쓴다) · AgentRow 의 연결이 빈 줄 안내(owner 「…다른 Gateway 로 옮기세요」,
+│  │                       admin·member 「…owner 가 다른 Gateway 로 옮길 때까지 답하지 못합니다」) · ManualAgentForm·handleFrom ·
 │  │                       resetSession·ResetSessionDialog(「새 대화」 — 작성기 `/new` 와 설정 패널이 함께 쓴다) · mutations
 │  ├─ search/              Phase 4 ①. SearchDialog.tsx(`⌘K` 대화상자 — 390px 전체 시트, 필터 채널·사람/에이전트·기간, 결과를 누르면 requestJump 뒤 그 채널·스레드로, 닫으면 연 자리로 초점 —
 │  │                       Trigger 없이 여는 대화상자라 `onOpenAutoFocus` 에서 기억한 요소로 돌려준다) · SearchResults.tsx(2글자면 「2글자는 최근 90일에서 50개까지만 찾습니다」·「더 보기」 없음,
@@ -772,17 +779,22 @@ src/
 │  │                       useSearch.ts(useInfiniteQuery, 디바운스 300ms, 재시도·전역 토스트 없음) · highlight.tsx(STX·ETX 스니펫 → 강조 조각) ·
 │  │                       openSearch.ts(isSearchShortcut — `e.code === "KeyK"` 도 받는다(한글 입력기), otherModalOpen — 검색 표지가 없는 열린 대화상자가 있으면 ⌘K 무시)
 │  ├─ setup/               Phase 3 ②. 연결 페이지 `/settings/connection` — owner 만(아니면 setup API 를 부르지 않고 「권한이 없습니다」).
-│  │                       ConnectionPage.tsx(섹션 넷: 서버·Gateway·플러그인·브리지 토큰 — 지금은 첫 Gateway 하나를 그린다(Gateway 카드 목록은 멀티 Gateway 태스크 6),
-│  │                       Gateway 가 없으면 빈 상태 한 줄이고 브리지 토큰 블록은 없다, 활성 토큰 0 이면 「쓸 수 있는 토큰이 없습니다 — 발급하세요」) ·
-│  │                       sections.tsx(Section · CopyBlock — 기본은 줄 구조를 지키고 제 상자 안에서 가로 스크롤, `wrap` 이면 아무 글자에서나 줄바꿈(토큰), 래퍼 min-w-0 ·
-│  │                       GatewaySection — 페어링 대기면 `openclaw devices approve <requestId>`, requestId 가 빈 문자열이면 `openclaw devices list`, 5분 넘으면 강조 ·
-│  │                       PluginSection — 같은 빌드 문구 셋, 받기는 `pluginFile.available` 로만, installCommands(`docs/guides/deploy.md` 「[웹 → B] 플러그인 설치·브리지 토큰」 절의 [B] 블록을 글자 그대로 —
+│  │                       ConnectionPage.tsx(서버 · OpenClaw Gateway 블록 · Claude 러너 블록. OpenClaw 블록 머리에 「Gateway 추가」(GatewayForm)와 PluginDownload 한 번,
+│  │                       그 아래 Gateway 카드 목록 — Gateway 가 없으면 빈 상태 한 줄 NO_GATEWAY) ·
+│  │                       GatewayCard.tsx(Gateway 하나 — 상태 배지(gatewayStateLabel: 연결됨·재연결 중·페어링 대기·꺼짐·연결 안 됨)·버튼 셋 「수정」·「끄기」/「켜기」·「삭제」
+│  │                       (접근 이름 「<이름> 수정」 등 — 드롭다운 메뉴가 아니다)·주소·호스트·버전(drift 문구)·페어링 대기면 `openclaw devices approve <requestId>`,
+│  │                       requestId 가 빈 문자열이면 `openclaw devices list`, 5분 넘으면 강조 · 플러그인(같은 빌드 문구 넷) · 이 Gateway 의 브리지 토큰(TokenList·IssueTokenDialog),
+│  │                       활성 토큰 0 이면 「쓸 수 있는 토큰이 없습니다 — 발급하세요」) ·
+│  │                       GatewayForm.tsx(추가·수정 대화상자 — 이름·주소·토큰(수정이면 「바꾸려면 입력」), 서버 400·409 를 칸 오류로, 문구는 고정(스키마 문구를 보이지 않는다)) ·
+│  │                       DeleteGatewayConfirm.tsx(카드 안 한 번 더 확인 — 에이전트 수·토큰 수를 다 받기 전에는 지울 수 없다) ·
+│  │                       sections.tsx(Section · CopyBlock — 기본은 줄 구조를 지키고 제 상자 안에서 가로 스크롤, `wrap` 이면 아무 글자에서나 줄바꿈(토큰), 래퍼 min-w-0 · ServerSection ·
+│  │                       PluginDownload — 받기는 `pluginFile.available` 로만, installCommands(`docs/guides/deploy.md` 「[웹 → B] 플러그인 설치·브리지 토큰」 절의 [B] 블록을 글자 그대로 —
 │  │                       패치 줄만 빼고 파일 이름·번들 sha 를 채운다, `connection.test.tsx` 가 그 블록과 대조한다)) ·
 │  │                       IssueTokenDialog.tsx(라벨 → 발급 → 원문·설정 조각 한 번. 원문은 컴포넌트 상태에만 — 「복사했습니다」로만 닫히고, 그동안 라우트 이동은 useBlocker 로 한 번 더 묻고
 │  │                       탭 닫기·새로고침은 beforeunload. 막힌 채 언마운트되면 이동을 이어 보낸다) ·
-│  │                       TokenList.tsx(라벨·`dbt_` + 앞 6자(라벨 `env` 는 「.env 에서 이어받음」)·만든 때·마지막 사용·「지금 접속 중」·폐기됨·「이제 폐기해도 됩니다」, 폐기는
+│  │                       TokenList.tsx(라벨·`dbt_` + 앞 6자·만든 때·마지막 사용·「지금 접속 중」·폐기됨·「이제 폐기해도 됩니다」, 폐기는
 │  │                       ConfirmDialog — 접속 중이면 경고, 마지막 활성 토큰이면 `escalated` 두 번째 확인(600ms 무장), 폐기 뒤 초점은 아래 줄 「폐기」 또는 「새 토큰 발급」) ·
-│  │                       queries.ts(setupStatus·bridgeTokens — `setup.status` wire 가 상태를 덮는다) · mutations.ts(발급은 결과를 뮤테이션 캐시에 두지 않고 콜백으로만(gcTime 0),
+│  │                       queries.ts(setupStatus·bridgeTokens(Gateway 마다) — `setup.status` wire 가 상태를 덮는다) · mutations.ts(Gateway 추가·수정·삭제, 발급은 결과를 뮤테이션 캐시에 두지 않고 콜백으로만(gcTime 0),
 │  │                       폐기, 플러그인 받기는 fetch → blob — 404·409 를 문구로). setup 쿼리는 오프라인 사본(`pwa/persist.ts`)에서 먼저 뺀다
 │  ├─ threads/             Phase 4 ①. ThreadPanel.tsx(`/c/$channelId/t/$rootId` — 오른쪽 패널의 스레드 탭·좁은 화면 시트, MessageList 를 `threadRootId` 로 재사용(버블·카드·첨부·승인 행 그대로),
 │  │                       스레드 작성기, 에이전트 줄의 「새 대화」(그 스레드 세션), 404·VALIDATION 이면 「스레드를 찾을 수 없습니다」, 답글 결과면 첫 페이지 뒤 around 로 갈아 끼운다) ·
@@ -840,7 +852,7 @@ src/
 
 - 기본값: 본인이 운영하는 원격 Gateway에 연결(연결 페이지에서 Gateway 주소 `wss://...`·공유 토큰을 추가 — 여럿 붙일 수 있다). 플러그인은 그 Gateway에 설치되어 `BRIDGE_PUBLIC_URL`로 우리 서버에 접속하고, 서버는 브리지 토큰으로 어느 Gateway 의 플러그인인지 가른다.
 - 배포: `infra/compose.yml` 로 서버 A 에 `app`·`caddy` 를 띄운다(`docs/guides/deploy.md`). Caddy 가 `/api`·`/socket.io`(wire·브리지 WebSocket)·`/bridge/*`(플러그인의 첨부 HTTP)·`/healthz` 를 서버로 넘기고 나머지는 웹 정적이다. Gateway 는 Compose 밖이다(동반 기동 프로필은 뺐다 — 배포 패키징 스펙 결정 5).
-- 로컬 개발: Gateway 는 원격에 붙거나 `openclaw --dev`(`docs/guides/live-smoke.md`). 원격 Gateway의 플러그인을 개발 PC의 브리지에 붙이려면 터널(cloudflared/tailscale 등)로 `BRIDGE_PUBLIC_URL`을 만든다.
+- 로컬 개발: Gateway 는 원격에 붙거나 로컬 dev Gateway 를 연결 페이지 「Gateway 추가」로 붙인다(`docs/guides/live-smoke.md` 「전제」 — 상태 디렉터리를 갈라 여럿 띄울 수 있다). 원격 Gateway의 플러그인을 개발 PC의 브리지에 붙이려면 터널(cloudflared/tailscale 등)로 `BRIDGE_PUBLIC_URL`을 만든다.
 - 응답 정본은 플러그인 경로, WS 경로는 미리보기(델타)·툴 이벤트·승인. `runId`로 dedupe.
 
 ---
