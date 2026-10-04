@@ -13,14 +13,32 @@ import {
 } from "../../src/modules/gateways/service";
 import { issueBridgeToken } from "../../src/modules/setup/tokens";
 import type { RunTimeouts } from "../../src/modules/runs/orchestrator";
-import { type FakeGateway, type FakeGatewayOptions, startFakeGateway } from "../fakes/fake-gateway";
+import {
+  type FakeGateway,
+  type FakeGatewayAgent,
+  type FakeGatewayOptions,
+  startFakeGateway,
+} from "../fakes/fake-gateway";
 import { type FakePlugin, startFakePlugin } from "../fakes/fake-plugin";
 import { login, noExternalPush } from "./app";
 import { testEnv } from "./env";
 import { openclawOf } from "./openclaw";
 
+/** 앱에 붙은 가짜 Gateway 하나와 그 짝 가짜 플러그인 */
+export type LiveGateway = {
+  name: string;
+  gateway: FakeGateway;
+  /** DB 행 id(= 어댑터 연결 id) */
+  gatewayId: string;
+  /** 그 Gateway 에 발급한 브리지 토큰 원문 */
+  bridgeToken: string;
+  plugin: FakePlugin;
+};
+
 export type LiveApp = {
   app: App;
+  /** 붙은 Gateway 전부, 더한 차례 — 첫 줄이 아래 gateway·gatewayId·bridgeToken·plugin 이다 */
+  gateways: LiveGateway[];
   gateway: FakeGateway;
   /** 가짜 Gateway 의 DB 행 id(= 어댑터 연결 id) — OpenClaw 에이전트를 등록할 때 gatewayId 로 준다 */
   gatewayId: string;
@@ -46,24 +64,28 @@ export type LiveAppOptions = FakeGatewayOptions & {
   pluginHello?: BridgeHello;
   /** listen 포트(기본 0 — 빈 포트). 재시작을 흉내 낼 때 앞 부팅의 포트를 준다 — 밖에서 붙은 클라이언트가 같은 주소로 돌아온다 */
   port?: number;
+  /** 첫 Gateway 의 이름(기본 「가짜 Gateway」) */
+  gatewayName?: string;
+  /** 첫 Gateway 뒤에 더 붙일 가짜 Gateway·플러그인 짝(멀티 Gateway) — 각자 이름·agents.list 를 준다 */
+  extraGateways?: Array<{ name: string; agents?: FakeGatewayAgent[] }>;
 };
 
 const CONNECT_TIMEOUT_MS = 5_000;
 
 /**
  * 네트워크 없이 서버 전체를 띄운다: 가짜 Gateway 기동 → createApp(실제 OpenClawAdapter) → 가짜 Gateway 를 DB 에 넣고 어댑터에
- * 넣음(연결 페이지 「Gateway 추가」와 같다 — DB 에 이미 Gateway 가 있으면(파일 DB 재부팅) 첫 Gateway 의 주소·토큰을 새 가짜로
- * 바꾼다) → 그 Gateway 의 브리지 토큰 발급 → listen(0) → 가짜 플러그인 /bridge 접속 → 어댑터가 gateway·bridge 모두 connected →
- * owner 로그인.
+ * 넣음(연결 페이지 「Gateway 추가」와 같다 — DB 에 이미 Gateway 가 있으면(파일 DB 재부팅) 같은 차례의 Gateway 의 주소·토큰을 새
+ * 가짜로 바꾼다) → 그 Gateway 의 브리지 토큰 발급 → listen(0) → 가짜 플러그인 /bridge 접속 → 어댑터가 gateway·bridge 모두
+ * connected → owner 로그인. `extraGateways` 가 있으면 Gateway·플러그인 짝마다 같은 일을 한다.
  * 도중에 실패하면 만든 것을 닫고 던진다.
  * 첨부 블롭은 앱마다 따로인 join(live.dir, "attachments") 에 쌓이고 close() 가 지운다(blobPath(그 경로, sha) 로 디스크를 본다).
  * 재부팅 뒤에도 블롭이 남아야 하면 두 부팅에 같은 env.ATTACHMENTS_DIR(과 파일 DB_PATH)을 주고 스스로 지운다 — 동시에 띄우지 않는다.
  */
 export async function bootLiveApp(opts: LiveAppOptions = {}): Promise<LiveApp> {
   const dir = mkdtempSync(join(tmpdir(), "dodok-live-"));
-  let gateway: FakeGateway | undefined;
+  const fakeGateways: FakeGateway[] = [];
+  const plugins: FakePlugin[] = [];
   let app: App | undefined;
-  let plugin: FakePlugin | undefined;
   let closing: Promise<void> | undefined;
 
   const close = () => {
@@ -71,8 +93,8 @@ export async function bootLiveApp(opts: LiveAppOptions = {}): Promise<LiveApp> {
       // 앱이 먼저 닫혀야 플러그인이 shutdown notice 를 받고, 어댑터가 Gateway 연결을 스스로 끊는다
       try {
         await app?.close();
-        plugin?.close();
-        await gateway?.close();
+        for (const plugin of plugins) plugin.close();
+        await Promise.all(fakeGateways.map((gateway) => gateway.close()));
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }
@@ -81,10 +103,22 @@ export async function bootLiveApp(opts: LiveAppOptions = {}): Promise<LiveApp> {
   };
 
   try {
-    gateway = await startFakeGateway({
-      ...(opts.grantAdmin === undefined ? {} : { grantAdmin: opts.grantAdmin }),
-      ...(opts.serverVersion === undefined ? {} : { serverVersion: opts.serverVersion }),
-    });
+    const specs = [
+      {
+        name: opts.gatewayName ?? "가짜 Gateway",
+        ...(opts.agents === undefined ? {} : { agents: opts.agents }),
+      },
+      ...(opts.extraGateways ?? []),
+    ];
+    for (const spec of specs) {
+      fakeGateways.push(
+        await startFakeGateway({
+          ...(opts.grantAdmin === undefined ? {} : { grantAdmin: opts.grantAdmin }),
+          ...(opts.serverVersion === undefined ? {} : { serverVersion: opts.serverVersion }),
+          ...(spec.agents === undefined ? {} : { agents: spec.agents }),
+        }),
+      );
+    }
     app = await createApp(
       loadConfig({
         ...testEnv,
@@ -100,32 +134,65 @@ export async function bootLiveApp(opts: LiveAppOptions = {}): Promise<LiveApp> {
         ...(opts.timeouts === undefined ? {} : { timeouts: { ...opts.deps?.timeouts, ...opts.timeouts } }),
       },
     );
-    const { gatewayId, bridgeToken } = addFakeGateway(app, gateway);
+    const added = specs.map((spec, index) => ({
+      name: spec.name,
+      gateway: fakeGateways[index] as FakeGateway,
+      ...addFakeGateway(app as App, fakeGateways[index] as FakeGateway, index, spec.name),
+    }));
     await app.fastify.listen({ host: "127.0.0.1", port: opts.port ?? 0 });
-    plugin = await startFakePlugin({
-      bridgeUrl: app.url,
-      token: bridgeToken,
-      ...(opts.pluginHello === undefined ? {} : { hello: opts.pluginHello }),
-    });
+    const gateways: LiveGateway[] = [];
+    for (const [index, entry] of added.entries()) {
+      const spec = specs[index];
+      const plugin = await startFakePlugin({
+        bridgeUrl: app.url,
+        token: entry.bridgeToken,
+        ...(opts.pluginHello === undefined ? {} : { hello: opts.pluginHello }),
+        ...(spec?.agents === undefined
+          ? {}
+          : {
+              agents: spec.agents.map((a) => ({
+                agentId: a.id,
+                ...(a.name === undefined ? {} : { name: a.name }),
+              })),
+            }),
+      });
+      plugins.push(plugin);
+      gateways.push({ ...entry, plugin });
+    }
     await waitForAdapterConnected(app);
     const auth = await login(app);
-    return { app, gateway, gatewayId, bridgeToken, plugin, auth, dir, close };
+    const [first] = gateways as [LiveGateway];
+    return {
+      app,
+      gateways,
+      gateway: first.gateway,
+      gatewayId: first.gatewayId,
+      bridgeToken: first.bridgeToken,
+      plugin: first.plugin,
+      auth,
+      dir,
+      close,
+    };
   } catch (error) {
     await close().catch(() => undefined);
     throw error;
   }
 }
 
-/** 가짜 Gateway 를 그 앱의 DB 와 OpenClaw 어댑터에 넣고(이미 있으면 첫 Gateway 를 이 주소로) 그 Gateway 의 브리지 토큰을 발급한다 */
-function addFakeGateway(app: App, gateway: FakeGateway): { gatewayId: string; bridgeToken: string } {
-  const existing = listGatewayRows(app.db, app.workspaceId)[0];
+/**
+ * 가짜 Gateway 를 그 앱의 DB 와 OpenClaw 어댑터에 넣고(DB 에 index 번째 Gateway 가 이미 있으면 그 행을 이 주소로) 그 Gateway 의
+ * 브리지 토큰을 발급한다
+ */
+function addFakeGateway(
+  app: App,
+  gateway: FakeGateway,
+  index: number,
+  name: string,
+): { gatewayId: string; bridgeToken: string } {
+  const existing = listGatewayRows(app.db, app.workspaceId)[index];
   const row = existing
     ? updateGateway(app.db, app.workspaceId, existing.id, { url: gateway.url, token: gateway.token }).row
-    : createGateway(app.db, app.workspaceId, {
-        name: "가짜 Gateway",
-        url: gateway.url,
-        token: gateway.token,
-      });
+    : createGateway(app.db, app.workspaceId, { name, url: gateway.url, token: gateway.token });
   const openclaw = app.registry.forProvider("openclaw");
   if (!openclaw || !hasGateways(openclaw))
     throw new Error("live app has no gateway-managing OpenClaw adapter");

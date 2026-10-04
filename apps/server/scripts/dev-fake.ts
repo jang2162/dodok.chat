@@ -1,8 +1,11 @@
 /**
  * 가짜 에이전트 개발 모드 — 가짜 Gateway·가짜 플러그인·대본을 묶어 서버를 띄운다. 모델 런·실제 Gateway 없이 웹 전체를 돌린다(웹 MVP 스펙 9.2).
- * 테스트와 같은 가짜(`test/fakes/*`)를 쓴다. 운영 코드(`src/`)는 그대로 — 실제 OpenClawAdapter 가 가짜 Gateway 를 붙는다. 그 Gateway 는
- * 시작 때 DB 에 넣는다(연결 페이지 「Gateway 추가」와 같은 행, 고정 id `DEV_FAKE_GATEWAY_ID` — `--keep` 이면 주소·토큰만 이번 가짜로
- * 바꾼다) — 등록할 OpenClaw 에이전트는 이 Gateway 에 묶는다(gatewayId).
+ * 테스트와 같은 가짜(`test/fakes/*`)를 쓴다. 운영 코드(`src/`)는 그대로 — 실제 OpenClawAdapter 가 가짜 Gateway 를 붙는다.
+ * 가짜 Gateway 는 둘이다(멀티 Gateway 스펙 9장, `DEV_FAKE_GATEWAYS`): 「사무실」(에이전트 dev·fin)·「집」(main·dev — dev 가 일부러 겹친다).
+ * 시작 때 둘을 DB 에 넣고(연결 페이지 「Gateway 추가」와 같은 행, 고정 id — `--keep` 이면 주소·토큰만 이번 가짜로 바꾼다) Gateway 마다
+ * 고정 브리지 토큰 행·가짜 플러그인·대본을 하나씩 둔다. OpenClaw 에이전트도 시작 때 등록한다 — 핸들 dev·fin(사무실)·main·dev-home(집),
+ * 그 핸들이 이미 있거나 그 Gateway 에 같은 id 가 있으면 그대로 둔다. DB 에 넣지 않은 셋째 가짜 Gateway 를 하나 더 열어 그 주소·토큰을
+ * 시작 로그(`spareGateway`)에 찍는다 — 화면의 「Gateway 추가」로 붙여 본다.
  *
  * .env 를 읽지 않는다: 토큰·비밀은 아래 개발 전용 고정값이고(로그에 찍어도 된다), loadConfig 에는 여기서 정한 값만 넘긴다.
  * 고정 member 계정(이메일 member@dodok.local·비밀번호 dev-fake-member-password·핸들 mia)도 owner 와 함께 보장한다 —
@@ -11,12 +14,14 @@
  * VAPID 키 <dataDir>/vapid.json 은 지우지 않는다 — 새로 만들면 브라우저의 푸시 구독이 매번 무효가 된다.
  * 웹 오리진은 APP_ORIGIN(없으면 http://localhost:5173). 5173 이 차 있으면 5180 으로:
  * `PORT=3100 APP_ORIGIN=http://localhost:5180 pnpm -F @dodok/server dev:fake` + `DODOK_API_ORIGIN=http://127.0.0.1:3100 pnpm -F @dodok/web dev --port 5180`.
- * 개발 전용 훅(owner 세션, `content-type: application/json`, 경로 정확 일치 — 운영 `createApp` 에는 없다):
- * - `POST /__devfake/plugin-token { token }` — 가짜 플러그인의 브리지 토큰을 바꿔 다시 붙인다
+ * 개발 전용 훅(owner 세션, `content-type: application/json`, 경로 정확 일치 — 운영 `createApp` 에는 없다). Gateway 를 고르는 훅은
+ * `gatewayId`(사무실·집의 고정 id)가 없거나 그 둘이 아니면 400:
+ * - `POST /__devfake/plugin-token { gatewayId, token }` — 그 Gateway 가짜 플러그인의 브리지 토큰을 바꿔 다시 붙인다
  * - `POST /__devfake/ops/event { kind, key, severity, detail? }` — 운영 사건을 `app.ops.record` 로 남긴다
- * - `POST /__devfake/gateway { state: "down" | "connected" }` — 가짜 Gateway 를 끊고 붙인다(어댑터 status 가 실제로 바뀐다)
+ * - `POST /__devfake/gateway { gatewayId, state: "down" | "connected" }` — 그 가짜 Gateway 를 끊고 붙인다(어댑터 status 가 실제로 바뀐다)
  * - `POST /__devfake/disk { freeBytes, totalBytes } | { reset: true }` — 디스크 감시가 그 값을 보게 하고 곧바로 다시 잰다
- * - `POST /__devfake/plugin-capabilities { threads: boolean }` — false 면 threads 없는 hello 로 다시 붙는다(옛 플러그인 흉내), true 면 되돌린다
+ * - `POST /__devfake/plugin-capabilities { gatewayId, threads: boolean }` — false 면 그 Gateway 플러그인이 threads 없는 hello 로 다시
+ *   붙는다(옛 플러그인 흉내), true 면 되돌린다
  * - `POST /__devfake/runner { connected: boolean, token? }` — 가짜 Claude 러너를 끊고(false) 붙인다(true, token 을 주면 그 러너 토큰으로)
  * 가짜 Claude 러너(`test/fakes/fake-runner.ts`)도 붙는다 — 고정 러너 토큰 `dev-fake-runner-token`(라벨 dev-fake) 행을 시작 때 넣고,
  * 그 러너가 알리는 에이전트 `coder`(provider claude)를 등록해 둔다(처음 붙은 러너 토큰에 묶인다). 가짜 러너는 스스로 다시 붙지 않는다 —
@@ -35,7 +40,7 @@ import {
   OpsEventKind,
   OpsSeverity,
 } from "@dodok/shared";
-import { and, eq } from "drizzle-orm";
+import { and, eq, or } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { mkdirSync, rmSync } from "node:fs";
 import { statfs as fsStatfs } from "node:fs/promises";
@@ -49,6 +54,7 @@ import { loadConfig } from "../src/config";
 import { createDb, type DbOrTx } from "../src/db/client";
 import { agents, bridgeTokens, gateways, runnerTokens, users } from "../src/db/schema.sqlite";
 import { createAgent, providerAgentIdIs } from "../src/modules/agents/service";
+import { hasGateways } from "../src/adapters/types";
 import { getGatewayRow } from "../src/modules/gateways/service";
 import { acceptInvite, normalizeEmail } from "../src/modules/members/accept";
 import { issueInvite } from "../src/modules/members/invites";
@@ -75,20 +81,49 @@ const DEFAULT_APP_ORIGIN = "http://localhost:5173";
 export const DEV_FAKE_LOCAL_TOKEN = "dev-fake-local-token";
 const DEV_FAKE_SECRET = "dev-fake-better-auth-secret-00000000";
 /**
- * 개발 전용 고정 브리지 토큰(시크릿이 아니다). 시작 때 가짜 Gateway 에 묶인 토큰 행(라벨 dev-fake)으로 넣는다 — 실제 토큰(`dbt_` +
- * 43자)과 모양이 달라도 핸드셰이크는 해시만 본다
+ * 개발 전용 고정 브리지 토큰(시크릿이 아니다) — Gateway 마다 하나. 시작 때 그 Gateway 에 묶인 토큰 행(라벨 dev-fake)으로 넣는다 —
+ * 실제 토큰(`dbt_` + 43자)과 모양이 달라도 핸드셰이크는 해시만 본다
  */
-export const DEV_FAKE_BRIDGE_TOKEN = "dev-fake-bridge-token";
-/** 가짜 Gateway 의 DB 행 id(= 어댑터 연결 id) — `--keep` 으로 다시 띄워도 같은 행이다 */
-export const DEV_FAKE_GATEWAY_ID = "00000000-0000-4000-8000-00000000def1";
-const DEV_FAKE_GATEWAY_NAME = "가짜 Gateway";
+export const DEV_FAKE_OFFICE_BRIDGE_TOKEN = "dev-fake-bridge-token-office";
+export const DEV_FAKE_HOME_BRIDGE_TOKEN = "dev-fake-bridge-token-home";
+/** 가짜 Gateway 둘의 DB 행 id(= 어댑터 연결 id) — `--keep` 으로 다시 띄워도 같은 행이다 */
+export const DEV_FAKE_OFFICE_GATEWAY_ID = "00000000-0000-4000-8000-00000000def1";
+export const DEV_FAKE_HOME_GATEWAY_ID = "00000000-0000-4000-8000-00000000def2";
+
+export type DevFakeGatewaySpec = {
+  id: string;
+  name: string;
+  bridgeToken: string;
+  /** 가짜 Gateway `agents.list` 의 id 와 시작 때 등록할 핸들 — 이 id 마다 대본을 건다 */
+  agents: ReadonlyArray<{ id: string; handle: string }>;
+};
+
+/** 「사무실」·「집」 — 같은 id dev 가 두 Gateway 에 있다(집 dev 의 핸들은 dev-home) */
+export const DEV_FAKE_GATEWAYS: readonly DevFakeGatewaySpec[] = [
+  {
+    id: DEV_FAKE_OFFICE_GATEWAY_ID,
+    name: "사무실",
+    bridgeToken: DEV_FAKE_OFFICE_BRIDGE_TOKEN,
+    agents: [
+      { id: "dev", handle: "dev" },
+      { id: "fin", handle: "fin" },
+    ],
+  },
+  {
+    id: DEV_FAKE_HOME_GATEWAY_ID,
+    name: "집",
+    bridgeToken: DEV_FAKE_HOME_BRIDGE_TOKEN,
+    agents: [
+      { id: "main", handle: "main" },
+      { id: "dev", handle: "dev-home" },
+    ],
+  },
+];
 /** 고정 member 계정(팀 스펙 태스크 7a) — 시크릿이 아닌 개발 전용 고정값이라 owner 토큰과 같이 로그에 찍는다 */
 export const DEV_FAKE_MEMBER_EMAIL = "member@dodok.local";
 export const DEV_FAKE_MEMBER_PASSWORD = "dev-fake-member-password";
 export const DEV_FAKE_MEMBER_HANDLE = "mia";
 export const DEV_FAKE_MEMBER_DISPLAY_NAME = "미아";
-/** 가짜 Gateway `agents.list` 와 같다 — 이 providerAgentId 마다 대본을 건다 */
-const AGENT_IDS = ["dev", "fin"] as const;
 /** 실제 클라이언트는 hello 의 tickIntervalMs(30s)×2 동안 프레임이 없으면 끊는다 */
 const TICK_INTERVAL_MS = 15_000;
 const DELTA_PARTS = 4;
@@ -106,17 +141,18 @@ const SHORT_COMPONENTS_TTL_MS = 20_000;
  */
 const LOCAL_HTTPS = "https://localhost/dodok-dev-fake";
 /**
- * 개발 전용 — `POST { token }` 이면 가짜 플러그인을 끊고 그 토큰으로 다시 붙인다(연결 페이지의 토큰 교체를 브라우저로 잴 때).
+ * 개발 전용 — `POST { gatewayId, token }` 이면 그 Gateway 의 가짜 플러그인을 끊고 그 토큰으로 다시 붙인다(연결 페이지의 토큰 교체를
+ * 브라우저로 잴 때).
  * dev:fake 에만 있다 — 운영 `createApp` 에는 없다. owner 세션(쿠키 또는 Bearer)이 있어야 한다
  */
 export const DEV_FAKE_PLUGIN_TOKEN_PATH = "/__devfake/plugin-token";
 /** 개발 전용 — 운영 사건 하나를 `app.ops.record` 로 남긴다(ops_events 를 직접 쓰지 않는다 — unacked 캐시·ops.event 팬아웃이 함께 돈다) */
 export const DEV_FAKE_OPS_EVENT_PATH = "/__devfake/ops/event";
-/** 개발 전용 — 가짜 Gateway 를 끊고(down) 붙인다(connected). 어댑터가 실제로 끊겨 끊김 감시(watchConnections)가 돈다 */
+/** 개발 전용 — 고른 가짜 Gateway 를 끊고(down) 붙인다(connected). 어댑터가 실제로 끊겨 끊김 감시(watchConnections)가 돈다 */
 export const DEV_FAKE_GATEWAY_PATH = "/__devfake/gateway";
 /** 개발 전용 — 디스크 감시가 볼 여유·전체 바이트를 정하거나(reset 이면 실제 statfs 로) 곧바로 다시 잰다 */
 export const DEV_FAKE_DISK_PATH = "/__devfake/disk";
-/** 개발 전용 — 가짜 플러그인을 끊고 hello capabilities 의 threads 를 빼거나(false, 옛 플러그인) 되돌려(true) 다시 붙인다 */
+/** 개발 전용 — 고른 Gateway 의 가짜 플러그인을 끊고 hello capabilities 의 threads 를 빼거나(false, 옛 플러그인) 되돌려(true) 다시 붙인다 */
 export const DEV_FAKE_PLUGIN_CAPABILITIES_PATH = "/__devfake/plugin-capabilities";
 /** 개발 전용 — 가짜 Claude 러너를 끊고(connected false) 붙인다(true — token 을 주면 그 러너 토큰으로 바꿔 붙는다) */
 export const DEV_FAKE_RUNNER_PATH = "/__devfake/runner";
@@ -139,6 +175,8 @@ const DEV_FAKE_BODY_MAX = 16 * 1024;
 export type PluginTokenResult = { ok: true } | { ok: false; reason: string };
 /** 끊김 훅 뒤 곧바로 붙게 줄인 재접속 백오프 — 운영 기본(상한 30초)이면 오래 끊긴 뒤 connected 가 30초까지 늦는다 */
 const DEV_FAKE_GATEWAY_BACKOFF = { initialMs: 250, maxMs: 1_000 };
+/** 400 응답 문구에 싣는 고를 수 있는 gatewayId */
+const GATEWAY_IDS_USAGE = DEV_FAKE_GATEWAYS.map((g) => `"${g.id}"`).join(" | ");
 /** gateway 훅이 어댑터 status 가 바뀌기를 기다리는 상한 */
 const GATEWAY_HOOK_TIMEOUT_MS = 10_000;
 /** 종료 표지 자리 — 같은 data/ 를 쓰는 운영 서버(`pnpm -F @dodok/server dev`)의 run-state.json 과 섞이지 않게 따로 둔다 */
@@ -189,7 +227,13 @@ export function devFakeCliOptions(
     disconnectEventMs: disconnectMsFromEnv(env.DODOK_DEVFAKE_DISCONNECT_MS),
   };
 }
-export type DevFake = { app: App; url: string; close(): Promise<void> };
+export type DevFake = {
+  app: App;
+  url: string;
+  /** DB 에 넣지 않은 셋째 가짜 Gateway — 연결 페이지 「Gateway 추가」에 넣을 주소·공유 토큰 */
+  spareGateway: { url: string; token: string };
+  close(): Promise<void>;
+};
 
 /** 코드 포인트 단위로 대략 같은 길이 parts 개로 나눈다(서로게이트 쌍을 가르지 않는다) */
 function splitDeltas(text: string, parts: number): string[] {
@@ -693,8 +737,9 @@ function route<T>(input: z.ZodType<T>, usage: string, run: (value: T) => Promise
   };
 }
 
-const PluginTokenInput = z.object({ token: z.string().min(1) });
-const PluginCapabilitiesInput = z.strictObject({ threads: z.boolean() });
+const GatewayIdInput = z.string().min(1);
+const PluginTokenInput = z.object({ gatewayId: GatewayIdInput, token: z.string().min(1) });
+const PluginCapabilitiesInput = z.strictObject({ gatewayId: GatewayIdInput, threads: z.boolean() });
 /** key·detail 모양은 shared OpsEvent 그대로(key 는 비지 않게) — record 가 거절할 것을 여기서 400 으로 먼저 돌려준다 */
 const OpsEventInput = z.strictObject({
   kind: OpsEventKind,
@@ -702,7 +747,7 @@ const OpsEventInput = z.strictObject({
   severity: OpsSeverity,
   detail: OpsEvent.shape.detail.optional(),
 });
-const GatewayInput = z.strictObject({ state: z.enum(["down", "connected"]) });
+const GatewayInput = z.strictObject({ gatewayId: GatewayIdInput, state: z.enum(["down", "connected"]) });
 const RunnerInput = z.strictObject({ connected: z.boolean(), token: z.string().min(1).optional() });
 const Bytes = z.int().min(0).max(Number.MAX_SAFE_INTEGER);
 const DiskInput = z.union([
@@ -789,38 +834,38 @@ function openclawOf(app: App): AgentAdapter {
   return adapter;
 }
 
-/** 붙은 가짜 플러그인이 통과한 브리지 토큰 id — 로그용 */
-function pluginTokenId(app: App): string | null | undefined {
-  const detail = openclawOf(app).setupDetail();
-  return detail.provider === "openclaw" ? detail.bridge.plugin?.tokenId : undefined;
+/** 그 Gateway 에 붙은 가짜 플러그인이 통과한 브리지 토큰 id — 로그용 */
+function pluginTokenId(app: App, gatewayId: string): string | null | undefined {
+  const adapter = openclawOf(app);
+  if (!hasGateways(adapter)) return undefined;
+  return adapter.gatewaySetupDetails().find((g) => g.id === gatewayId)?.bridge.plugin?.tokenId;
 }
 
-/** 어댑터 상태에서 가짜 Gateway(DEV_FAKE_GATEWAY_ID)의 줄 — 목록에 없으면 undefined */
-function fakeGatewayLine(status: AdapterStatus): OpenClawGatewayStatus | undefined {
-  return status.provider === "openclaw"
-    ? status.gateways.find((g) => g.id === DEV_FAKE_GATEWAY_ID)
-    : undefined;
+/** 어댑터 상태에서 그 Gateway 의 줄 — 목록에 없으면 undefined */
+function fakeGatewayLine(status: AdapterStatus, gatewayId: string): OpenClawGatewayStatus | undefined {
+  return status.provider === "openclaw" ? status.gateways.find((g) => g.id === gatewayId) : undefined;
 }
 
-/** 가짜 Gateway 의 상태 — 목록에 없으면 undefined */
-function fakeGatewayState(status: AdapterStatus): GatewayLinkState | undefined {
-  return fakeGatewayLine(status)?.gateway;
+/** 그 Gateway 의 상태 — 목록에 없으면 undefined */
+function fakeGatewayState(status: AdapterStatus, gatewayId: string): GatewayLinkState | undefined {
+  return fakeGatewayLine(status, gatewayId)?.gateway;
 }
 
-/** 가짜 Gateway 의 상태가 want 를 만족할 때까지 기다린다 — timeoutMs 가 지나면 false */
+/** 그 Gateway 의 상태가 want 를 만족할 때까지 기다린다 — timeoutMs 가 지나면 false */
 function waitForGateway(
   app: App,
+  gatewayId: string,
   want: (state: GatewayLinkState | undefined) => boolean,
   timeoutMs: number,
 ): Promise<boolean> {
-  if (want(fakeGatewayState(openclawOf(app).status()))) return Promise.resolve(true);
+  if (want(fakeGatewayState(openclawOf(app).status(), gatewayId))) return Promise.resolve(true);
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
       off();
       resolve(false);
     }, timeoutMs);
     const off = openclawOf(app).onEvent((e) => {
-      if (e.kind !== "status" || !want(fakeGatewayState(e.status))) return;
+      if (e.kind !== "status" || !want(fakeGatewayState(e.status, gatewayId))) return;
       clearTimeout(timer);
       off();
       resolve(true);
@@ -897,24 +942,29 @@ function ensureDevFakeRunner(app: App): void {
 }
 
 /**
- * 가짜 Gateway 행과 그 Gateway 에 묶인 고정 브리지 토큰 행을 보장한다 — createApp 전에 부른다(부팅이 DB 의 Gateway 를 어댑터에
- * 넣으므로 첫 부팅이 「Gateway 없음」으로 시작하지 않는다). 가짜 Gateway 는 시작마다 포트가 바뀌므로 `--keep` 으로 이어받은 행은
- * 주소·토큰만 이번 것으로 바꾼다(이름·켜짐은 사람이 연결 페이지에서 바꾼 대로 둔다). 고정 토큰 행이 이미 있으면(폐기됐어도) 그대로
- * 둔다 — 고정 러너 토큰과 같은 규칙
+ * 가짜 Gateway 행과 그 Gateway 에 묶인 고정 브리지 토큰 행을 보장한다 — createApp 전에 Gateway 마다 부른다(부팅이 DB 의 Gateway 를
+ * 어댑터에 넣으므로 첫 부팅이 「Gateway 없음」으로 시작하지 않는다). 가짜 Gateway 는 시작마다 포트가 바뀌므로 `--keep` 으로 이어받은
+ * 행은 주소·토큰만 이번 것으로 바꾼다(이름·켜짐은 사람이 연결 페이지에서 바꾼 대로 둔다). 지운 Gateway 는 다시 만든다. 고정 토큰 행이
+ * 이미 있으면(폐기됐어도) 그대로 둔다 — 고정 러너 토큰과 같은 규칙
  */
-function seedDevFakeGateway(db: DbOrTx, workspaceId: string, gateway: FakeGateway): void {
+function seedDevFakeGateway(
+  db: DbOrTx,
+  workspaceId: string,
+  spec: DevFakeGatewaySpec,
+  gateway: FakeGateway,
+): void {
   const now = new Date();
-  if (getGatewayRow(db, workspaceId, DEV_FAKE_GATEWAY_ID)) {
+  if (getGatewayRow(db, workspaceId, spec.id)) {
     db.update(gateways)
       .set({ url: gateway.url, token: gateway.token, updatedAt: now })
-      .where(eq(gateways.id, DEV_FAKE_GATEWAY_ID))
+      .where(eq(gateways.id, spec.id))
       .run();
   } else {
     db.insert(gateways)
       .values({
-        id: DEV_FAKE_GATEWAY_ID,
+        id: spec.id,
         workspaceId,
-        name: DEV_FAKE_GATEWAY_NAME,
+        name: spec.name,
         url: gateway.url,
         token: gateway.token,
         enabled: true,
@@ -925,7 +975,7 @@ function seedDevFakeGateway(db: DbOrTx, workspaceId: string, gateway: FakeGatewa
       })
       .run();
   }
-  const hash = createHash("sha256").update(DEV_FAKE_BRIDGE_TOKEN).digest("hex");
+  const hash = createHash("sha256").update(spec.bridgeToken).digest("hex");
   if (!db.select({ id: bridgeTokens.id }).from(bridgeTokens).where(eq(bridgeTokens.hash, hash)).get()) {
     db.insert(bridgeTokens)
       .values({
@@ -933,13 +983,52 @@ function seedDevFakeGateway(db: DbOrTx, workspaceId: string, gateway: FakeGatewa
         workspaceId,
         label: "dev-fake",
         hash,
-        prefix: DEV_FAKE_BRIDGE_TOKEN.slice(0, 6),
+        prefix: spec.bridgeToken.slice(0, 6),
         createdAt: now,
         lastUsedAt: null,
         revokedAt: null,
-        gatewayId: DEV_FAKE_GATEWAY_ID,
+        gatewayId: spec.id,
       })
       .run();
+  }
+}
+
+/**
+ * 가짜 Gateway 둘의 OpenClaw 에이전트를 등록해 둔다(핸들은 `DEV_FAKE_GATEWAYS`). 그 핸들이 이미 쓰이거나 그 Gateway 에 같은 id 가
+ * 이미 있으면(`--keep`, 사람이 바꾼 것) 건드리지 않는다 — 지운 에이전트는 다음 시작에 다시 생긴다(coder 와 같다)
+ */
+function ensureDevFakeAgents(app: App): void {
+  const { db, workspaceId } = app;
+  for (const spec of DEV_FAKE_GATEWAYS) {
+    for (const agent of spec.agents) {
+      const taken = db
+        .select({ id: agents.id })
+        .from(agents)
+        .where(
+          and(
+            eq(agents.workspaceId, workspaceId),
+            or(
+              eq(agents.handle, agent.handle),
+              and(eq(agents.gatewayId, spec.id), providerAgentIdIs(agent.id)),
+            ),
+          ),
+        )
+        .get();
+      if (taken) continue;
+      try {
+        createAgent(db, {
+          workspaceId,
+          provider: "openclaw",
+          providerAgentId: agent.id,
+          handle: agent.handle,
+          name: agent.handle,
+          gatewayId: spec.id,
+        });
+      } catch (err) {
+        // 사람 핸들과 겹치는 등 — 서버는 그대로 뜬다
+        app.logger.warn({ err, handle: agent.handle }, "dev:fake agent not registered");
+      }
+    }
   }
 }
 
@@ -970,7 +1059,10 @@ async function ensureDevFakeMember(app: App): Promise<void> {
   );
 }
 
-/** 가짜 Gateway → createApp(실제 OpenClawAdapter) → listen → 가짜 플러그인 → 대본 → 어댑터 gateway·bridge connected. 실패하면 만든 것을 닫고 던진다 */
+/**
+ * 가짜 Gateway 둘(+ 셋째) → createApp(실제 OpenClawAdapter) → listen → Gateway 마다 가짜 플러그인·대본 → 어댑터의 두 Gateway 가
+ * gateway·bridge connected. 실패하면 만든 것을 닫고 던진다
+ */
 export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> {
   const dataDir = opts.dataDir ?? "data";
   const port = opts.port ?? 3000;
@@ -987,9 +1079,16 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
       ? Promise.resolve({ bavail: fakeDisk.freeBytes, bsize: 1, blocks: fakeDisk.totalBytes })
       : fsStatfs(path, { bigint: true });
 
-  const gateway: FakeGateway = await startFakeGateway({ tickIntervalMs: TICK_INTERVAL_MS });
+  /** Gateway 하나와 그 짝 — 플러그인은 listen 뒤에 붙는다. 다시 붙이기(토큰·hello 바꾸기)는 짝마다 한 번에 하나씩 */
+  type Pair = {
+    spec: DevFakeGatewaySpec;
+    gateway: FakeGateway;
+    plugin?: FakePlugin;
+    swapping: Promise<unknown>;
+  };
+  const pairs: Pair[] = [];
+  const fakeGateways: FakeGateway[] = [];
   let app: App | undefined;
-  let plugin: FakePlugin | undefined;
   let runner: FakeRunner | undefined;
   let runState: ReturnType<typeof startRunState> | undefined;
   let closing: Promise<void> | undefined;
@@ -998,13 +1097,24 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
     closing ??= (async () => {
       await app?.close();
       runState?.markClean(); // main.ts 처럼 닫힌 뒤에 — 강제 종료(kill -9)면 다음 시작이 unclean_shutdown 을 남긴다
-      plugin?.close();
+      for (const pair of pairs) pair.plugin?.close();
       runner?.close();
-      await gateway.close();
+      await Promise.all(fakeGateways.map((gateway) => gateway.close()));
     })();
     return closing;
   };
   try {
+    for (const spec of DEV_FAKE_GATEWAYS) {
+      const gateway = await startFakeGateway({
+        tickIntervalMs: TICK_INTERVAL_MS,
+        agents: spec.agents.map((a) => ({ id: a.id, name: a.id })),
+      });
+      fakeGateways.push(gateway);
+      pairs.push({ spec, gateway, swapping: Promise.resolve() });
+    }
+    // 셋째 — DB 에 넣지 않는다. 사람이 연결 페이지에서 붙여 본다(플러그인 없이 Gateway 줄만 connected)
+    const spare = await startFakeGateway({ tickIntervalMs: TICK_INTERVAL_MS });
+    fakeGateways.push(spare);
     const config = loadConfig({
       HOST: host,
       PORT: String(port),
@@ -1017,7 +1127,8 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
     });
     const seedDb = createDb(config.dbPath);
     try {
-      seedDevFakeGateway(seedDb, ensureWorkspace(seedDb, config.DODOK_WORKSPACE_NAME), gateway);
+      const workspaceId = ensureWorkspace(seedDb, config.DODOK_WORKSPACE_NAME);
+      for (const { spec, gateway } of pairs) seedDevFakeGateway(seedDb, workspaceId, spec, gateway);
     } finally {
       seedDb.$client.close();
     }
@@ -1032,28 +1143,35 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
     app.setPreviousClean(runState.previousClean);
     await ensureDevFakeMember(app);
     ensureDevFakeRunner(app);
-    // 다시 붙이기(토큰·hello 바꾸기)는 한 번에 하나씩 — 겹치면 소켓 하나를 두 핸드셰이크가 다툰다
-    let swapping: Promise<unknown> = Promise.resolve();
+    ensureDevFakeAgents(app);
+    const live: App = app;
+    /** 훅의 gatewayId 로 짝을 고른다 — 사무실·집이 아니면 undefined(400) */
+    const pairOf = (gatewayId: string) => pairs.find((p) => p.spec.id === gatewayId);
+    // 다시 붙이기(토큰·hello 바꾸기)는 짝마다 한 번에 하나씩 — 겹치면 소켓 하나를 두 핸드셰이크가 다툰다
     const reconnectPlugin = (
+      pair: Pair,
       over: { token: string } | { hello: BridgeHello },
       what: string,
     ): Promise<PluginTokenResult> => {
-      const run = swapping.then(async (): Promise<PluginTokenResult> => {
-        if (!plugin) return { ok: false, reason: "fake plugin not started" };
+      const gatewayId = pair.spec.id;
+      const run = pair.swapping.then(async (): Promise<PluginTokenResult> => {
+        if (!pair.plugin) return { ok: false, reason: "fake plugin not started" };
         try {
-          await plugin.reconnect(over);
+          await pair.plugin.reconnect(over);
         } catch (error) {
           const reason = error instanceof Error ? error.message : String(error);
-          app?.logger.warn({ reason }, `dev:fake plugin ${what} rejected`);
+          live.logger.warn({ reason, gatewayId }, `dev:fake plugin ${what} rejected`);
           return { ok: false, reason };
         }
-        app?.logger.info({ tokenId: pluginTokenId(app) }, `dev:fake plugin reconnected with ${what}`);
+        live.logger.info(
+          { tokenId: pluginTokenId(live, gatewayId), gatewayId },
+          `dev:fake plugin reconnected with ${what}`,
+        );
         return { ok: true };
       });
-      swapping = run;
+      pair.swapping = run;
       return run;
     };
-    const live: App = app;
     const connectRunner = (token: string) =>
       startFakeRunner({ url: live.url, token, script: fakeRunnerScript });
     // 러너 끊기·붙이기도 한 번에 하나씩
@@ -1091,17 +1209,28 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
       new Map([
         [
           DEV_FAKE_PLUGIN_TOKEN_PATH,
-          route(PluginTokenInput, "{ token: string }", ({ token }) =>
-            reconnectPlugin({ token }, "swapped token"),
+          route(
+            PluginTokenInput,
+            `{ gatewayId: ${GATEWAY_IDS_USAGE}, token: string }`,
+            async ({ gatewayId, token }) => {
+              const pair = pairOf(gatewayId);
+              return pair ? reconnectPlugin(pair, { token }, "swapped token") : invalid;
+            },
           ),
         ],
         [
           DEV_FAKE_PLUGIN_CAPABILITIES_PATH,
-          route(PluginCapabilitiesInput, "{ threads: boolean }", async ({ threads }) => {
-            const hello = threads ? FAKE_PLUGIN_HELLO : OLD_PLUGIN_HELLO;
-            const result = await reconnectPlugin({ hello }, threads ? "threads hello" : "old hello");
-            return result.ok ? { ok: true, capabilities: hello.capabilities } : result;
-          }),
+          route(
+            PluginCapabilitiesInput,
+            `{ gatewayId: ${GATEWAY_IDS_USAGE}, threads: boolean }`,
+            async ({ gatewayId, threads }) => {
+              const pair = pairOf(gatewayId);
+              if (!pair) return invalid;
+              const hello = threads ? FAKE_PLUGIN_HELLO : OLD_PLUGIN_HELLO;
+              const result = await reconnectPlugin(pair, { hello }, threads ? "threads hello" : "old hello");
+              return result.ok ? { ok: true, capabilities: hello.capabilities } : result;
+            },
+          ),
         ],
         [
           DEV_FAKE_OPS_EVENT_PATH,
@@ -1113,18 +1242,25 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
         ],
         [
           DEV_FAKE_GATEWAY_PATH,
-          route(GatewayInput, '{ state: "down" | "connected" }', async ({ state }) => {
-            gateway.setAccepting(state === "connected");
-            const reached = await waitForGateway(
-              live,
-              (g) => (state === "connected" ? g === "connected" : g !== "connected"),
-              GATEWAY_HOOK_TIMEOUT_MS,
-            );
-            live.logger.info({ state, reached }, "dev:fake gateway hook");
-            // status 는 가짜 Gateway 한 줄(어댑터 status().gateways 의 그 Gateway)
-            const status = fakeGatewayLine(openclawOf(live).status());
-            return reached ? { ok: true, status } : { ok: false, reason: "timeout", status };
-          }),
+          route(
+            GatewayInput,
+            `{ gatewayId: ${GATEWAY_IDS_USAGE}, state: "down" | "connected" }`,
+            async ({ gatewayId, state }) => {
+              const pair = pairOf(gatewayId);
+              if (!pair) return invalid;
+              pair.gateway.setAccepting(state === "connected");
+              const reached = await waitForGateway(
+                live,
+                gatewayId,
+                (g) => (state === "connected" ? g === "connected" : g !== "connected"),
+                GATEWAY_HOOK_TIMEOUT_MS,
+              );
+              live.logger.info({ gatewayId, state, reached }, "dev:fake gateway hook");
+              // status 는 그 Gateway 한 줄(어댑터 status().gateways 의 그 Gateway)
+              const status = fakeGatewayLine(openclawOf(live).status(), gatewayId);
+              return reached ? { ok: true, status } : { ok: false, reason: "timeout", status };
+            },
+          ),
         ],
         [DEV_FAKE_RUNNER_PATH, route(RunnerInput, "{ connected: boolean, token?: string }", setRunner)],
         [
@@ -1138,10 +1274,20 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
     );
     await app.fastify.listen({ host, port });
     // app.url 은 리슨 주소와 무관하게 127.0.0.1 — 0.0.0.0 으로 들어도 가짜 플러그인은 루프백으로 붙는다
-    plugin = await startFakePlugin({ bridgeUrl: app.url, token: DEV_FAKE_BRIDGE_TOKEN });
-    const scenarioAgents: Record<string, ScenarioAgent> = {};
-    for (const id of AGENT_IDS) scenarioAgents[id] = ({ delivery }) => fakeAgentScript(id, delivery);
-    createScenario({ gateway, plugin, agents: scenarioAgents });
+    for (const pair of pairs) {
+      const { spec } = pair;
+      const plugin = await startFakePlugin({
+        bridgeUrl: app.url,
+        token: spec.bridgeToken,
+        agents: spec.agents.map((a) => ({ agentId: a.id })),
+      });
+      pair.plugin = plugin;
+      // 대본의 이름표는 시작 때 등록한 핸들(집 dev 는 dev-home) — 답만 보고 어느 Gateway 가 답했는지 안다
+      const scenarioAgents: Record<string, ScenarioAgent> = {};
+      for (const { id, handle } of spec.agents)
+        scenarioAgents[id] = ({ delivery }) => fakeAgentScript(handle, delivery);
+      createScenario({ gateway: pair.gateway, plugin, agents: scenarioAgents });
+    }
     try {
       runner = await connectRunner(DEV_FAKE_RUNNER_TOKEN);
     } catch (error) {
@@ -1154,7 +1300,7 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
     }
     // adapter.connect() 는 기다리지 않는다 — 돌려주자마자 discover·전송이 되게
     await waitForAdapterConnected(app);
-    return { app, url: app.url, close };
+    return { app, url: app.url, spareGateway: { url: spare.url, token: spare.token }, close };
   } catch (error) {
     await close().catch(() => undefined);
     throw error;
@@ -1172,7 +1318,14 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
       memberEmail: DEV_FAKE_MEMBER_EMAIL,
       memberPassword: DEV_FAKE_MEMBER_PASSWORD,
       runnerToken: DEV_FAKE_RUNNER_TOKEN,
-      gatewayId: DEV_FAKE_GATEWAY_ID,
+      gateways: DEV_FAKE_GATEWAYS.map((g) => ({
+        id: g.id,
+        name: g.name,
+        bridgeToken: g.bridgeToken,
+        agents: g.agents.map((a) => a.handle),
+      })),
+      // 키 token 은 로거가 가린다 — 가짜 Gateway 는 토큰을 검사하지 않는 고정값이라 이름을 바꿔 그대로 찍는다
+      spareGateway: { url: dev.spareGateway.url, gatewayToken: dev.spareGateway.token },
       runnerAgent: FAKE_RUNNER_AGENT.id,
       web5180:
         "PORT=3100 APP_ORIGIN=http://localhost:5180 pnpm -F @dodok/server dev:fake + DODOK_API_ORIGIN=http://127.0.0.1:3100 pnpm -F @dodok/web dev --port 5180",

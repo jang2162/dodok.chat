@@ -97,7 +97,16 @@ export type FakeGatewayOptions = {
   tickIntervalMs?: number;
   /** hello-ok 의 server.version(기본은 저장소 핀 2026.9.4) — 서버의 Gateway 버전 사건을 잴 때 바꾼다 */
   serverVersion?: string;
+  /** `agents.list` 가 내는 에이전트(기본 FAKE_GATEWAY_AGENTS) — Gateway 둘에 같은 id 를 일부러 겹칠 때 바꾼다 */
+  agents?: FakeGatewayAgent[];
 };
+
+export type FakeGatewayAgent = { id: string; name?: string };
+
+export const FAKE_GATEWAY_AGENTS: readonly FakeGatewayAgent[] = [
+  { id: "dev", name: "dev" },
+  { id: "fin", name: "fin" },
+];
 
 export type FakeGateway = {
   readonly url: string;
@@ -507,15 +516,7 @@ export async function startFakeGateway(opts: FakeGatewayOptions = {}): Promise<F
     },
 
     "agents.list": (_params, reply) =>
-      reply({
-        ok: true,
-        payload: {
-          agents: [
-            { id: "dev", name: "dev" },
-            { id: "fin", name: "fin" },
-          ],
-        },
-      }),
+      reply({ ok: true, payload: { agents: opts.agents ?? FAKE_GATEWAY_AGENTS } }),
   };
 
   function onMessage(socket: WebSocket, raw: string) {

@@ -40,10 +40,13 @@ import {
   fakeAgentScript,
   fakeRunnerScript,
   RUNNER_APPROVAL_COMMAND,
-  DEV_FAKE_GATEWAY_ID,
+  DEV_FAKE_GATEWAYS,
+  DEV_FAKE_HOME_GATEWAY_ID,
+  DEV_FAKE_OFFICE_GATEWAY_ID,
   RUNNER_POST_TEXT,
   startDevFake,
 } from "../scripts/dev-fake";
+import { hasGateways } from "../src/adapters/types";
 import type { App } from "../src/app";
 import { findItem, formatInteractionText } from "../src/modules/components/interact";
 import { agents, runnerTokens, runs, users } from "../src/db/schema.sqlite";
@@ -53,7 +56,7 @@ import type { FakeRunnerRun } from "./fakes/fake-runner";
 import type { ScenarioApproval } from "./fakes/scenario";
 import { bootTestApp, login, userWithRole } from "./helpers/app";
 import { makePng } from "./helpers/png";
-import { openclawDetail, openclawOf } from "./helpers/openclaw";
+import { openclawOf } from "./helpers/openclaw";
 
 type Author = { type: "user" | "agent"; handle: string };
 
@@ -632,7 +635,7 @@ describe("startDevFake", () => {
       providerAgentId: handle,
       handle,
       name: handle,
-      gatewayId: DEV_FAKE_GATEWAY_ID,
+      gatewayId: DEV_FAKE_OFFICE_GATEWAY_ID,
     });
     return agent.id;
   }
@@ -684,9 +687,14 @@ describe("startDevFake", () => {
   it("고정 토큰으로 로그인 → discover 에 dev·fin → 등록·채널·멤버 → @dev 에 에이전트 답이 온다", async () => {
     const { agents: found } = await api<{ agents: Array<{ providerAgentId: string }> }>(
       "GET",
-      `/agents/discover?gatewayId=${DEV_FAKE_GATEWAY_ID}`,
+      `/agents/discover?gatewayId=${DEV_FAKE_OFFICE_GATEWAY_ID}`,
     );
     expect(found.map((a) => a.providerAgentId).sort()).toEqual(["dev", "fin"]);
+    const { agents: homeFound } = await api<{ agents: Array<{ providerAgentId: string }> }>(
+      "GET",
+      `/agents/discover?gatewayId=${DEV_FAKE_HOME_GATEWAY_ID}`,
+    );
+    expect(homeFound.map((a) => a.providerAgentId).sort()).toEqual(["dev", "main"]);
     const channelId = await channelWith("t", ["dev"]);
     const devId = await agentId("dev");
 
@@ -703,6 +711,113 @@ describe("startDevFake", () => {
     });
     expect(sent.ok).toBe(true);
     await expect(reply).resolves.toContain("잘 받았어요");
+  }, 20_000);
+
+  it("Gateway 둘(사무실·집)이 DB 에 있고 둘 다 붙어 있다 — OpenClaw 에이전트 넷이 시작 때 그 Gateway 에 등록돼 있다", async () => {
+    const listed = await api<Array<{ id: string; name: string; enabled: boolean }>>("GET", "/gateways");
+    expect(listed.map((g) => [g.id, g.name, g.enabled])).toEqual([
+      [DEV_FAKE_OFFICE_GATEWAY_ID, "사무실", true],
+      [DEV_FAKE_HOME_GATEWAY_ID, "집", true],
+    ]);
+    const status = openclawOf(dev.app).status();
+    expect(
+      status.provider === "openclaw" ? status.gateways.map((g) => [g.id, g.gateway, g.bridge]) : [],
+    ).toEqual([
+      [DEV_FAKE_OFFICE_GATEWAY_ID, "connected", "connected"],
+      [DEV_FAKE_HOME_GATEWAY_ID, "connected", "connected"],
+    ]);
+    const { agents: registered } = await api<{
+      agents: Array<{
+        provider: string;
+        handle: string;
+        providerAgentId: string;
+        gateway?: { id: string } | null;
+      }>;
+    }>("GET", "/agents");
+    expect(
+      registered
+        .filter((a) => a.provider === "openclaw")
+        .map((a) => [a.handle, a.providerAgentId, a.gateway?.id])
+        .sort(),
+    ).toEqual(
+      [
+        ["dev", "dev", DEV_FAKE_OFFICE_GATEWAY_ID],
+        ["fin", "fin", DEV_FAKE_OFFICE_GATEWAY_ID],
+        ["main", "main", DEV_FAKE_HOME_GATEWAY_ID],
+        ["dev-home", "dev", DEV_FAKE_HOME_GATEWAY_ID],
+      ].sort(),
+    );
+    expect(DEV_FAKE_GATEWAYS.map((g) => g.bridgeToken)).toEqual([
+      "dev-fake-bridge-token-office",
+      "dev-fake-bridge-token-home",
+    ]);
+  });
+
+  it("같은 id 의 두 dev — @dev 는 사무실, @dev-home 은 집 플러그인이 답한다(대본 이름표가 핸들)", async () => {
+    const devHomeId = await agentIdByHandle(dev.url, cookie, "dev-home");
+    const channelId = await channelWith("two-devs", ["dev"]);
+    await api("POST", `/channels/${channelId}/members`, { memberType: "agent", memberId: devHomeId });
+    const devId = await agentId("dev");
+    const socket = await openWire(channelId);
+    const replies = new Map<string, string>();
+    const both = new Promise<void>((resolve) => {
+      socket.on("message.created", ({ message }) => {
+        if (message.authorType !== "agent" || message.authorId === undefined) return;
+        replies.set(message.authorId, message.bodyMd);
+        if (replies.size === 2) resolve();
+      });
+    });
+    for (const [id, text] of [
+      [devId, "사무실에"],
+      [devHomeId, "집에"],
+    ] as const) {
+      const sent = await socket.emitWithAck("message.send", {
+        channelId,
+        clientMsgId: `two-${id}`,
+        bodyMd: `<@a:${id}> ${text}`,
+      });
+      expect(sent.ok).toBe(true);
+    }
+    await both;
+    // 대본은 받은 글(멘션은 핸들로 풀린다)을 @ 없이 인용한다
+    expect(replies.get(devId)).toMatch(/^\*\*dev\*\*: 「dev 사무실에」/);
+    expect(replies.get(devHomeId)).toMatch(/^\*\*dev-home\*\*: 「dev-home 집에」/);
+    const connections = dev.app.db
+      .select({ agentId: runs.agentId, connectionId: runs.connectionId })
+      .from(runs)
+      .where(eq(runs.channelId, channelId))
+      .all();
+    expect(connections).toEqual(
+      expect.arrayContaining([
+        { agentId: devId, connectionId: DEV_FAKE_OFFICE_GATEWAY_ID },
+        { agentId: devHomeId, connectionId: DEV_FAKE_HOME_GATEWAY_ID },
+      ]),
+    );
+  }, 20_000);
+
+  it("셋째 가짜 Gateway 는 DB 에 없다 — 주소·토큰으로 「Gateway 추가」하면 붙는다", async () => {
+    const { url, token } = dev.spareGateway;
+    expect(url).toMatch(/^ws:\/\/127\.0\.0\.1:\d+$/);
+    const before = await api<Array<{ url: string }>>("GET", "/gateways");
+    expect(before.map((g) => g.url)).not.toContain(url);
+    const created = await api<{ id: string }>("POST", "/gateways", { name: "셋째", url, token });
+    try {
+      await vi.waitFor(
+        () => {
+          const status = openclawOf(dev.app).status();
+          const line =
+            status.provider === "openclaw" ? status.gateways.find((g) => g.id === created.id) : undefined;
+          expect(line?.gateway).toBe("connected");
+        },
+        { timeout: 5_000 },
+      );
+    } finally {
+      const res = await fetch(`${dev.url}/api/v1/gateways/${created.id}`, {
+        method: "DELETE",
+        headers: { cookie },
+      });
+      expect(res.status).toBe(200);
+    }
   }, 20_000);
 
   it("「카드 짧게」 → 플러그인·서버를 지나 블록 다섯 종이 든 카드가 저장되고, 만료는 20초 뒤다", async () => {
@@ -814,6 +929,19 @@ async function loginOwner(url: string): Promise<{ sessionToken: string; ownerId:
   return { sessionToken, ownerId: user.id, cookie: `dodok.session=${sessionToken}` };
 }
 
+/** dev:fake 가 시작 때 등록한 에이전트의 id — 핸들로 찾는다 */
+async function agentIdByHandle(url: string, cookie: string, handle: string): Promise<string> {
+  const { agents: list } = await restAs<{ agents: Array<{ id: string; handle: string }> }>(
+    url,
+    cookie,
+    "GET",
+    "/agents",
+  );
+  const found = list.find((a) => a.handle === handle);
+  if (!found) throw new Error(`no agent @${handle}`);
+  return found.id;
+}
+
 async function restAs<T>(
   url: string,
   cookie: string,
@@ -867,12 +995,7 @@ describe("startDevFake 푸시 — 「나 불러」", () => {
   it("「나 불러」 → 에이전트 답의 mentions.users 에 owner, 채널을 보고 있지 않은 owner 의 구독으로 멘션 푸시 한 건", async () => {
     const { sessionToken, ownerId, cookie } = await loginOwner(dev.url);
     await restAs(dev.url, cookie, "POST", "/push/subscriptions", PUSH_SUB);
-    const { agent } = await restAs<{ agent: { id: string } }>(dev.url, cookie, "POST", "/agents", {
-      providerAgentId: "dev",
-      handle: "dev",
-      name: "dev",
-      gatewayId: DEV_FAKE_GATEWAY_ID,
-    });
+    const agent = { id: await agentIdByHandle(dev.url, cookie, "dev") };
     const { channel } = await restAs<{ channel: { id: string } }>(dev.url, cookie, "POST", "/channels", {
       name: "push",
     });
@@ -1094,7 +1217,7 @@ describe("startDevFake 가짜 플러그인 토큰 바꾸기 — POST /__devfake/
     });
 
   async function issue(label: string): Promise<{ token: string; id: string }> {
-    const res = await fetch(`${dev.url}/api/v1/gateways/${DEV_FAKE_GATEWAY_ID}/bridge-tokens`, {
+    const res = await fetch(`${dev.url}/api/v1/gateways/${DEV_FAKE_OFFICE_GATEWAY_ID}/bridge-tokens`, {
       method: "POST",
       headers: { cookie, "content-type": "application/json" },
       body: JSON.stringify({ label }),
@@ -1104,26 +1227,35 @@ describe("startDevFake 가짜 플러그인 토큰 바꾸기 — POST /__devfake/
     return { token, id: record.id };
   }
 
-  const connectedTokenId = () => openclawDetail(openclawOf(dev.app)).bridge.plugin?.tokenId;
+  const OFFICE = DEV_FAKE_OFFICE_GATEWAY_ID;
+  const pluginOf = (gatewayId: string) => {
+    const adapter = openclawOf(dev.app);
+    if (!hasGateways(adapter)) throw new Error("no gateway-managing adapter");
+    return adapter.gatewaySetupDetails().find((g) => g.id === gatewayId)?.bridge.plugin;
+  };
+  const connectedTokenId = () => pluginOf(OFFICE)?.tokenId;
 
   it("세션이 없으면 401 이고 가짜 플러그인은 그대로 붙어 있다", async () => {
     const before = connectedTokenId();
     expect(before).toBeTruthy();
-    const res = await swap({ token: "whatever" }, {});
+    const res = await swap({ gatewayId: OFFICE, token: "whatever" }, {});
     expect(res.status).toBe(401);
     expect(connectedTokenId()).toBe(before);
   });
 
-  it("본문에 token 이 없으면 400", async () => {
-    const res = await swap({});
+  it("본문에 token 이나 gatewayId 가 없거나 gatewayId 가 사무실·집이 아니면 400", async () => {
+    const res = await swap({ gatewayId: OFFICE });
     expect(res.status).toBe(400);
     await expect(res.json()).resolves.toMatchObject({ code: "VALIDATION" });
-    expect((await swap({ token: "" })).status).toBe(400);
+    expect((await swap({ gatewayId: OFFICE, token: "" })).status).toBe(400);
+    expect((await swap({ token: "x" })).status).toBe(400);
+    expect((await swap({ gatewayId: "nope", token: "x" })).status).toBe(400);
+    expect(connectedTokenId()).toBeTruthy();
   });
 
   it("DB 로 발급한 새 토큰으로 바꾸면 { ok: true } 이고 붙은 플러그인의 tokenId 가 그 행이다", async () => {
     const issued = await issue("rotate");
-    const res = await swap({ token: issued.token });
+    const res = await swap({ gatewayId: OFFICE, token: issued.token });
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toEqual({ ok: true });
     expect(connectedTokenId()).toBe(issued.id);
@@ -1131,22 +1263,29 @@ describe("startDevFake 가짜 플러그인 토큰 바꾸기 — POST /__devfake/
 
   it("폐기한 토큰으로 바꾸면 { ok: false, reason } — 새 토큰으로 다시 바꾸면 돌아온다", async () => {
     const old = await issue("old");
-    await expect((await swap({ token: old.token })).json()).resolves.toEqual({ ok: true });
-    const revoke = await fetch(`${dev.url}/api/v1/gateways/${DEV_FAKE_GATEWAY_ID}/bridge-tokens/${old.id}`, {
-      method: "DELETE",
-      headers: { cookie },
-    });
+    await expect((await swap({ gatewayId: OFFICE, token: old.token })).json()).resolves.toEqual({ ok: true });
+    const revoke = await fetch(
+      `${dev.url}/api/v1/gateways/${DEV_FAKE_OFFICE_GATEWAY_ID}/bridge-tokens/${old.id}`,
+      {
+        method: "DELETE",
+        headers: { cookie },
+      },
+    );
     expect(revoke.status).toBe(204);
 
-    const res = await swap({ token: old.token });
+    const res = await swap({ gatewayId: OFFICE, token: old.token });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { ok: boolean; reason?: string };
     expect(body.ok).toBe(false);
     expect(body.reason).toContain("UNAUTHORIZED");
-    expect(openclawDetail(openclawOf(dev.app)).bridge.plugin).toBeFalsy();
+    expect(pluginOf(OFFICE)).toBeFalsy();
+    // 집 플러그인은 그대로
+    expect(pluginOf(DEV_FAKE_HOME_GATEWAY_ID)).toBeTruthy();
 
     const fresh = await issue("fresh");
-    await expect((await swap({ token: fresh.token })).json()).resolves.toEqual({ ok: true });
+    await expect((await swap({ gatewayId: OFFICE, token: fresh.token })).json()).resolves.toEqual({
+      ok: true,
+    });
     expect(connectedTokenId()).toBe(fresh.id);
   }, 20_000);
 
@@ -1188,15 +1327,16 @@ describe("startDevFake 운영 훅 — /__devfake/ops/event·gateway·disk", () =
   ) => fetch(`${dev.url}${path}`, { method: "POST", headers, body: JSON.stringify(body) });
 
   const events = (kind: string) => dev.app.ops.list({ limit: 100 }).events.filter((e) => e.kind === kind);
+  const HOME = DEV_FAKE_HOME_GATEWAY_ID;
 
   describe.each([
     // 빈 토큰(400) — 가드를 지난 호출이 실제로 토큰을 바꿔 가짜 플러그인을 끊지 않게
-    [DEV_FAKE_PLUGIN_TOKEN_PATH, { token: "" }],
+    [DEV_FAKE_PLUGIN_TOKEN_PATH, { gatewayId: DEV_FAKE_OFFICE_GATEWAY_ID, token: "" }],
     [DEV_FAKE_OPS_EVENT_PATH, { kind: "ratelimit", key: "guard", severity: "warn" }],
-    [DEV_FAKE_GATEWAY_PATH, { state: "connected" }],
+    [DEV_FAKE_GATEWAY_PATH, { gatewayId: DEV_FAKE_OFFICE_GATEWAY_ID, state: "connected" }],
     [DEV_FAKE_DISK_PATH, { reset: true }],
     // 되돌림(true) — 가드를 지난 호출이 옛 플러그인으로 바꿔 두지 않게
-    [DEV_FAKE_PLUGIN_CAPABILITIES_PATH, { threads: true }],
+    [DEV_FAKE_PLUGIN_CAPABILITIES_PATH, { gatewayId: DEV_FAKE_OFFICE_GATEWAY_ID, threads: true }],
     // 이미 붙어 있으면 그대로 — 가드를 지난 호출이 가짜 러너를 끊지 않게
     [DEV_FAKE_RUNNER_PATH, { connected: true }],
   ] as const)("%s 공통 가드", (path, body) => {
@@ -1317,34 +1457,52 @@ describe("startDevFake 운영 훅 — /__devfake/ops/event·gateway·disk", () =
   });
 
   it("gateway down → 어댑터 status 가 connected 가 아니고 임계 뒤 gateway_down 이 열린다 → connected 면 다시 붙고 사건이 닫힌다", async () => {
-    const down = await post(DEV_FAKE_GATEWAY_PATH, { state: "down" });
+    const down = await post(DEV_FAKE_GATEWAY_PATH, { gatewayId: HOME, state: "down" });
     expect(down.status).toBe(200);
-    const downBody = (await down.json()) as { ok: boolean; status: { gateway: string; bridge: string } };
+    const downBody = (await down.json()) as {
+      ok: boolean;
+      status: { id: string; gateway: string; bridge: string };
+    };
     expect(downBody.ok).toBe(true);
+    expect(downBody.status.id).toBe(HOME);
     expect(downBody.status.gateway).not.toBe("connected");
     expect(downBody.status.bridge).toBe("connected"); // 플러그인은 그대로
     await vi.waitFor(() => expect(events("gateway_down")).toHaveLength(1), { timeout: DISCONNECT_MS * 10 });
+    expect(events("gateway_down")[0]).toMatchObject({ key: `gateway:${HOME}` });
     expect(events("gateway_down")[0]?.resolvedAt).toBeUndefined();
+    // 다른 Gateway(사무실)는 그대로 붙어 있다
+    const status = openclawOf(dev.app).status();
+    expect(
+      status.provider === "openclaw"
+        ? status.gateways.find((g) => g.id === DEV_FAKE_OFFICE_GATEWAY_ID)?.gateway
+        : null,
+    ).toBe("connected");
 
-    const up = await post(DEV_FAKE_GATEWAY_PATH, { state: "connected" });
+    const up = await post(DEV_FAKE_GATEWAY_PATH, { gatewayId: HOME, state: "connected" });
     expect(up.status).toBe(200);
     await expect(up.json()).resolves.toMatchObject({ ok: true, status: { gateway: "connected" } });
     expect(events("gateway_down")[0]?.resolvedAt).toBeDefined();
   }, 20_000);
 
   it("gateway — 오래 끊겨 있었어도 connected 는 몇 초 안에 붙는다(dev:fake 는 재접속 백오프 상한을 줄인다)", async () => {
-    await post(DEV_FAKE_GATEWAY_PATH, { state: "down" });
+    await post(DEV_FAKE_GATEWAY_PATH, { gatewayId: HOME, state: "down" });
     // 운영 백오프(1s 부터 두 배, ±20%)면 8초 끊긴 뒤 다음 시도는 11초 이후 — 줄인 상한이면 1초 남짓
     await new Promise((r) => setTimeout(r, 8_000));
     const started = Date.now();
-    const up = await post(DEV_FAKE_GATEWAY_PATH, { state: "connected" });
+    const up = await post(DEV_FAKE_GATEWAY_PATH, { gatewayId: HOME, state: "connected" });
     await expect(up.json()).resolves.toMatchObject({ ok: true, status: { gateway: "connected" } });
     expect(Date.now() - started).toBeLessThan(3_000);
   }, 20_000);
 
-  it("gateway — state 가 down·connected 가 아니면 400", async () => {
-    expect((await post(DEV_FAKE_GATEWAY_PATH, { state: "up" })).status).toBe(400);
+  it("gateway — state 가 down·connected 가 아니거나 gatewayId 가 없거나 사무실·집이 아니면 400", async () => {
+    expect((await post(DEV_FAKE_GATEWAY_PATH, { gatewayId: HOME, state: "up" })).status).toBe(400);
     expect((await post(DEV_FAKE_GATEWAY_PATH, {})).status).toBe(400);
+    expect((await post(DEV_FAKE_GATEWAY_PATH, { state: "down" })).status).toBe(400);
+    expect((await post(DEV_FAKE_GATEWAY_PATH, { gatewayId: "nope", state: "down" })).status).toBe(400);
+    const status = openclawOf(dev.app).status();
+    expect(
+      status.provider === "openclaw" ? status.gateways.every((g) => g.gateway === "connected") : false,
+    ).toBe(true);
   });
 });
 
@@ -1360,15 +1518,8 @@ describe("startDevFake 스레드 — 스레드 답·스레드 릴레이·동시 
     dir = mkdtempSync(join(tmpdir(), "dodok-dev-fake-threads-"));
     dev = await startDevFake({ port: 0, dataDir: dir, logLevel: "warn" });
     ({ sessionToken, cookie } = await loginOwner(dev.url));
-    for (const handle of ["dev", "fin"] as const) {
-      const { agent } = await restAs<{ agent: { id: string } }>(dev.url, cookie, "POST", "/agents", {
-        providerAgentId: handle,
-        handle,
-        name: handle,
-        gatewayId: DEV_FAKE_GATEWAY_ID,
-      });
-      agentIds[handle] = agent.id;
-    }
+    for (const handle of ["dev", "fin"] as const)
+      agentIds[handle] = await agentIdByHandle(dev.url, cookie, handle);
   });
 
   afterAll(async () => {
@@ -1525,22 +1676,28 @@ describe("startDevFake 스레드 — 스레드 답·스레드 릴레이·동시 
       });
 
     it("threads 가 boolean 이 아니거나 모르는 키가 있으면 400, 플러그인은 그대로", async () => {
-      for (const body of [{}, { threads: "no" }, { threads: false, extra: 1 }]) {
+      for (const body of [
+        {},
+        { gatewayId: DEV_FAKE_OFFICE_GATEWAY_ID, threads: "no" },
+        { gatewayId: DEV_FAKE_OFFICE_GATEWAY_ID, threads: false, extra: 1 },
+        { threads: false },
+        { gatewayId: "nope", threads: false },
+      ]) {
         const res = await setCaps(body);
         expect(res.status, JSON.stringify(body)).toBe(400);
         await expect(res.json()).resolves.toMatchObject({ code: "VALIDATION" });
       }
-      expect(openclawOf(dev.app).supports("dev", DEV_FAKE_GATEWAY_ID, "threads")).toBe(true);
+      expect(openclawOf(dev.app).supports("dev", DEV_FAKE_OFFICE_GATEWAY_ID, "threads")).toBe(true);
     });
 
     it("false → threads 없는 hello 로 다시 붙어 스레드 멘션은 PLUGIN_OUTDATED 카드(채널 멘션은 그대로) → true 로 되돌리고 「다시 실행」하면 스레드에서 답한다", async () => {
-      const off = await setCaps({ threads: false });
+      const off = await setCaps({ gatewayId: DEV_FAKE_OFFICE_GATEWAY_ID, threads: false });
       expect(off.status).toBe(200);
       const offBody = (await off.json()) as { ok: boolean; capabilities: string[] };
       expect(offBody.ok).toBe(true);
       expect(offBody.capabilities).not.toContain("threads");
       expect(offBody.capabilities).toContain("agents.list");
-      expect(openclawOf(dev.app).supports("dev", DEV_FAKE_GATEWAY_ID, "threads")).toBe(false);
+      expect(openclawOf(dev.app).supports("dev", DEV_FAKE_OFFICE_GATEWAY_ID, "threads")).toBe(false);
 
       const w = await channelWire("thread-outdated", ["dev"]);
       const root = await w.send("옛 플러그인 루트");
@@ -1566,10 +1723,10 @@ describe("startDevFake 스레드 — 스레드 답·스레드 릴레이·동시 
         { timeout: 15_000 },
       );
 
-      const on = await setCaps({ threads: true });
+      const on = await setCaps({ gatewayId: DEV_FAKE_OFFICE_GATEWAY_ID, threads: true });
       expect(on.status).toBe(200);
       expect(((await on.json()) as { capabilities: string[] }).capabilities).toContain("threads");
-      expect(openclawOf(dev.app).supports("dev", DEV_FAKE_GATEWAY_ID, "threads")).toBe(true);
+      expect(openclawOf(dev.app).supports("dev", DEV_FAKE_OFFICE_GATEWAY_ID, "threads")).toBe(true);
       const socket = sockets.at(-1);
       const retried = await socket?.emitWithAck("component.interact", {
         messageId: card.id,
@@ -1764,7 +1921,8 @@ describe("startDevFake 가짜 Claude 러너 — 고정 러너 토큰·coder·/__
       "GET",
       "/agents",
     );
-    expect(list).toEqual([
+    // OpenClaw 에이전트 넷(사무실·집)과 함께 — 러너 에이전트는 coder 하나
+    expect(list.filter((a) => a.provider === "claude")).toEqual([
       expect.objectContaining({ provider: "claude", providerAgentId: "coder", handle: "coder" }),
     ]);
     const { agents: found } = await rest<{ agents: unknown[] }>("GET", "/agents/discover?provider=claude");

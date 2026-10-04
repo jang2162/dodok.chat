@@ -28,6 +28,8 @@ const deniedToolResult = (toolName: string) =>
  * 결정이 날 때까지 툴 result 를 내지 않는다 — 승인 대기는 「start 는 왔는데 result 가 안 오는 구간」이다.
  */
 export type ScenarioApproval = {
+  /** 기본 `plugin:<uuid>` — Gateway 둘이 같은 승인 id 를 내는 경우를 잴 때 고정한다 */
+  approvalId?: string;
   /** 기본 `claude-cli native tool: Write` */
   title?: string;
   /** 기본 `Write` */
@@ -140,6 +142,7 @@ export function createScenario(opts: {
         outcome: gateway.requestApproval(runId, sessionKey, agentId, {
           toolCallId,
           ttlMs: approval.ttlMs,
+          ...(approval.approvalId === undefined ? {} : { approvalId: approval.approvalId }),
           ...(approval.title === undefined ? {} : { title: approval.title }),
           ...(approval.toolName === undefined ? {} : { toolName: approval.toolName }),
           ...(approval.allowedDecisions === undefined ? {} : { allowedDecisions: approval.allowedDecisions }),

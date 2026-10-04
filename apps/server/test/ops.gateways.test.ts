@@ -200,6 +200,23 @@ describe("감시 — Gateway 마다 따로(가짜 시계)", () => {
     watch.close();
   });
 
+  it("재연결 중에 마지막 Gateway 를 지워 목록이 비어도 그 타이머를 버린다 — 임계가 지나도 알림 없음(재리뷰 R1)", async () => {
+    const adapter = new FakeAdapter();
+    adapter.upsertGateway(G1);
+    const bus = new ServerBus();
+    const notices: Array<{ message: string }> = [];
+    bus.on("system.notice", (n) => notices.push(n));
+    const watch = watchGatewayReconnecting(adapter, bus, { warn: vi.fn() });
+    adapter.setGatewayState({ gateway: "reconnecting" }, G1.id);
+    adapter.emitStatus();
+    vi.advanceTimersByTime(30 * SEC);
+    await adapter.removeGateway(G1.id);
+    vi.advanceTimersByTime(60 * SEC);
+    expect(notices).toEqual([]);
+    expect(vi.getTimerCount()).toBe(0);
+    watch.close();
+  });
+
   it("버전 사건은 Gateway 마다 — 둘의 버전이 다르면 각자, 기억은 그 Gateway 행에", () => {
     insertGateway(db, ws, G1);
     insertGateway(db, ws, G2);

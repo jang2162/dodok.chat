@@ -228,23 +228,32 @@ describe("브리지 첨부 범위 — 토큰의 Gateway 로", () => {
       });
     expect((await patch(false)).statusCode).toBe(200);
 
-    const post = await app.fastify.inject({
-      method: "POST",
-      url: "/bridge/attachments",
-      headers: {
-        authorization: `Bearer ${tokens.home}`,
-        "x-dodok-channel-id": channel.id,
-        "content-type": "application/octet-stream",
-      },
-      payload: PDF_BYTES,
-    });
-    expect([post.statusCode, post.json().code]).toEqual([401, "UNAUTHORIZED"]);
-    const get = await app.fastify.inject({
-      method: "GET",
-      url: `/bridge/attachments/${own.id}`,
-      headers: { authorization: `Bearer ${tokens.home}` },
-    });
-    expect([get.statusCode, get.json().code]).toEqual([401, "UNAUTHORIZED"]);
+    const post = (token: string) =>
+      app.fastify.inject({
+        method: "POST",
+        url: "/bridge/attachments",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "x-dodok-channel-id": channel.id,
+          "content-type": "application/octet-stream",
+        },
+        payload: PDF_BYTES,
+      });
+    const get = (token: string) =>
+      app.fastify.inject({
+        method: "GET",
+        url: `/bridge/attachments/${own.id}`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+    const offPost = await post(tokens.home);
+    expect([offPost.statusCode, offPost.json().code]).toEqual([401, "UNAUTHORIZED"]);
+    const offGet = await get(tokens.home);
+    expect([offGet.statusCode, offGet.json().code]).toEqual([401, "UNAUTHORIZED"]);
+    // 토큰이 맞았다는 것을 응답으로 알리지 않는다 — 상태·본문이 틀린 토큰과 같다(재리뷰 R2)
+    const wrongPost = await post("dbt_nope");
+    const wrongGet = await get("dbt_nope");
+    expect([offPost.statusCode, offPost.json()]).toEqual([wrongPost.statusCode, wrongPost.json()]);
+    expect([offGet.statusCode, offGet.json()]).toEqual([wrongGet.statusCode, wrongGet.json()]);
     // 다른 Gateway 는 그대로
     expect(await bridgeGet(tokens.office, (await bridgeUpload(tokens.office)).id)).toBe(200);
     // 끈 것은 고장이 아니다 — 거듭 거절돼도 주소가 막히지 않아 다시 켜면 곧바로 통한다

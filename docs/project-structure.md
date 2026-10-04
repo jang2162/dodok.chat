@@ -402,14 +402,18 @@ Gateway 0개 부팅, 검증 함수가 던지면 거절, 거절 로그 주소(TRU
 팀은 단위(`roles.matrix` — 팀 스펙 「역할과 권한」 표의 경로 × 역할 허용·거부 전부·필드별·`approval.resolve`·승인 푸시 수신자·membership 없는 세션 · `members.invites`·`members.accept`·`members.manage`·`people`·`auth.login`·`auth` —
 두 번 제출·핸들 충돌 양쪽·재가입·링크 폐기·세션 소켓 끊기와 지우기 → 끊기 순서·핸드셰이크 틈·버킷 분리·Better Auth 폐기 경로 404),
 `helpers/`(`bootLiveApp`·wire 클라이언트·시나리오 단계·`png.ts`(테스트 PNG 생성기 `makePng`·`PDF_BYTES`) — `bootTestApp` 은 앱마다 임시 `ATTACHMENTS_DIR` 을 만들고 닫으면 지운다.
+`bootLiveApp` 의 `extraGateways`(이름·`agents`)는 가짜 Gateway·플러그인 짝을 더 붙인다 — `live.gateways` 가 더한 차례의 짝 목록이고(첫 줄이 `live.gateway`·`live.plugin`), 가짜 Gateway `agents.list` 는 `agents` 옵션(기본 `dev`·`fin`)이다. 멀티 Gateway 통합은 `test/multi-gateway.integration.test.ts`.
 `bootTestApp`·`bootLiveApp` 은 `deps.pushSend` 가 없으면 가짜 발송기 `noExternalPush` 를 넣고, `env.ts` 의 `testEnv` 는 프로세스마다 만든 VAPID 키를 환경변수로 준다 — 테스트가 밖으로 푸시를 보내거나 `data/vapid.json` 을 만들지 않는다).
 가짜 플러그인은 브리지 HTTP 로 첨부를 받고 올리며(`uploadAttachment`·`downloadAttachment`), 대본 `ScenarioScript` 에 `attachments`·`attachmentIds`·`withholdCanonical` 이 있다.
 가짜 플러그인 hello(`FAKE_PLUGIN_HELLO`)는 `threads` 를 싣고, `hello` 옵션·`reconnect({ hello })` 로 옛 플러그인·재설치를 흉내 낸다. 대본은 정본에 `delivery.threadId` 를 싣는다.
 손으로 두드리는 실연 도구는 루트 `scripts/wire-cli.ts`(`pnpm wire-cli`, `docs/guides/live-smoke.md`).
 
 개발 모드 `apps/server/scripts/dev-fake.ts`(`pnpm -F @dodok/server dev:fake`, 웹 MVP 스펙 9.2): 위 `test/fakes/` 를 그대로 가져다 가짜 Gateway·가짜 플러그인·대본과 함께 서버를 띄운다 —
-실제 `OpenClawAdapter` 가 가짜 Gateway 에 붙으므로(시작 때 그 Gateway 를 고정 id `DEV_FAKE_GATEWAY_ID` 로 DB 에 넣고 고정 브리지 토큰 `dev-fake-bridge-token` 행을 그 Gateway 에 묶는다 —
-OpenClaw 에이전트는 이 Gateway 에 묶어 등록한다) 모델 런·실제 Gateway 없이 웹 전체를 돌릴 수 있다. `.env` 를 읽지 않고 개발 전용 고정값을 쓴다(로그인 토큰 `dev-fake-local-token` — 시크릿이 아니라 로그에 찍는다),
+실제 `OpenClawAdapter` 가 가짜 Gateway 에 붙으므로 모델 런·실제 Gateway 없이 웹 전체를 돌릴 수 있다.
+가짜 Gateway 는 둘이다(`DEV_FAKE_GATEWAYS`) — 「사무실」(고정 id `DEV_FAKE_OFFICE_GATEWAY_ID`, 에이전트 `dev`·`fin`, 고정 브리지 토큰 `dev-fake-bridge-token-office`)·
+「집」(`DEV_FAKE_HOME_GATEWAY_ID`, `main`·`dev`, `dev-fake-bridge-token-home`). `dev` 가 두 Gateway 에 일부러 겹친다. 시작 때 둘을 DB 에 넣고(`--keep` 이면 주소·토큰만 이번 가짜로)
+Gateway 마다 토큰 행·가짜 플러그인·대본을 하나씩 둔다. OpenClaw 에이전트도 시작 때 등록한다 — 핸들 `dev`·`fin`(사무실)·`main`·`dev-home`(집), 그 핸들이나 그 Gateway 의 같은 id 가 이미 있으면 그대로 둔다.
+대본의 이름표는 핸들이라(`**dev-home**: …`) 답만 보고 어느 Gateway 가 답했는지 안다. DB 에 넣지 않은 셋째 가짜 Gateway 도 하나 연다 — 시작 로그 `spareGateway` 의 주소·토큰(가짜는 토큰을 검사하지 않는다)을 연결 페이지 「Gateway 추가」에 넣어 붙여 본다(플러그인 없이 Gateway 줄만 붙는다). `.env` 를 읽지 않고 개발 전용 고정값을 쓴다(로그인 토큰 `dev-fake-local-token` — 시크릿이 아니라 로그에 찍는다),
 DB 는 `data/dev-fake.sqlite`(시작마다 새로, `--keep` 이면 유지), 기본 포트 3000(Vite 프록시 대상). 운영 코드(`src/`)는 건드리지 않는다.
 부팅 때 고정 member 계정(이메일 `member@dodok.local`, 비밀번호 `dev-fake-member-password`, 핸들 `mia`, 표시 이름 「미아」)도 owner 와 같은 자리에서 보장한다 —
 사람을 만드는 서버 경로(`members/accept.ts` 의 `acceptInvite`)를 그대로 써 초대를 내부에서 하나 내 곧바로 수락한다, `--keep` 이면 이미 있을 때 그대로, 운영 `createApp` 에는 없다.
@@ -419,13 +423,14 @@ DB 는 `data/dev-fake.sqlite`(시작마다 새로, `--keep` 이면 유지), 기�
 푸시(Phase 2 ④)는 「나 불러」(답 `@<부른 사람> 확인해 주세요` — 멘션 푸시, 「느리게」와 함께면 채널을 옮길 시간이 난다). 사람이 첨부를 붙여 부르면 답 앞에 `받은 첨부 N개, 첫 이미지 W×H` 줄을 붙인다. 대본이 내는 글·라벨·파일 이름에 키워드가 없음을 `DEV_FAKE_KEYWORDS` 전수 테스트가 본다.
 스레드(Phase 4 ①)는 따로 키워드가 없다 — 스레드에서 멘션하면 대본이 그 스레드로 답하고(정본에 `threadId`, 델타 포함), 스레드 안 답의 「@핸들 이어서 부탁해요」는 같은 스레드에서 릴레이한다. 가짜 플러그인 hello 는 `threads` 를 싣는다.
 웹을 다른 포트로 띄우면 `PORT=3100 APP_ORIGIN=http://localhost:5180 pnpm -F @dodok/server dev:fake` + `DODOK_API_ORIGIN=http://127.0.0.1:3100 pnpm -F @dodok/web dev --port 5180`(`APP_ORIGIN` 기본은 `http://localhost:5173`).
-가짜 플러그인은 `.env` 가 아니라 dev:fake 고정 브리지 토큰으로 붙는다 — 빈 DB 에 라벨 `env` 로 이어받는 경로라, 연결 페이지 토큰 목록의 첫 줄이 「.env 에서 이어받음」이다.
-**개발 전용 훅 `POST /__devfake/plugin-token { "token": "<원문>" }`**(`DEV_FAKE_PLUGIN_TOKEN_PATH`): 가짜 플러그인을 끊고 그 토큰으로 다시 붙인다 — 연결 페이지의 토큰 교체(발급 → 「지금 접속 중」 이동 → 옛 토큰 폐기 → 옛 토큰 재접속 거절)를 브라우저로 잴 때.
+가짜 플러그인은 `.env` 가 아니라 그 Gateway 의 고정 브리지 토큰(라벨 `dev-fake`)으로 붙는다 — 연결 페이지의 각 Gateway 카드 토큰 목록에 그 줄이 있다.
+Gateway 를 고르는 훅(`plugin-token`·`plugin-capabilities`·`gateway`)은 본문에 `gatewayId`(사무실·집의 고정 id)가 있어야 한다 — 없거나 그 둘이 아니면 400 `VALIDATION`(문구에 고를 수 있는 id 가 실린다).
+**개발 전용 훅 `POST /__devfake/plugin-token { "gatewayId": "<id>", "token": "<원문>" }`**(`DEV_FAKE_PLUGIN_TOKEN_PATH`): 그 Gateway 의 가짜 플러그인을 끊고 그 토큰으로 다시 붙인다 — 연결 페이지의 토큰 교체(발급 → 「지금 접속 중」 이동 → 옛 토큰 폐기 → 옛 토큰 재접속 거절)를 브라우저로 잴 때. 다른 Gateway 의 플러그인은 그대로다.
 응답은 200 `{ ok: true }` 또는 `{ ok: false, reason }`(예 `UNAUTHORIZED` — 모르는 토큰을 주면 가짜 플러그인이 끊긴 채 남아 임계 뒤 `plugin_down` 이 열린다).
-**개발 전용 훅 `POST /__devfake/plugin-capabilities { "threads": boolean }`**(`DEV_FAKE_PLUGIN_CAPABILITIES_PATH`): 옛 플러그인 흉내 — false 면 가짜 플러그인을 끊고 hello capabilities 에서 `threads` 를 뺀 채 다시 붙는다(스레드 멘션은 곧바로 `PLUGIN_OUTDATED` run_error 카드, 채널 멘션은 그대로), true 면 되돌린다(재설치 — 그 카드의 「다시 실행」이 스레드에서 답한다). 토큰은 그대로. 응답은 200 `{ ok: true, capabilities }` 또는 `{ ok: false, reason }`. 값은 메모리에만 있어 다시 띄우면 `threads` 가 있다.
+**개발 전용 훅 `POST /__devfake/plugin-capabilities { "gatewayId": "<id>", "threads": boolean }`**(`DEV_FAKE_PLUGIN_CAPABILITIES_PATH`): 옛 플러그인 흉내 — false 면 그 Gateway 의 가짜 플러그인을 끊고 hello capabilities 에서 `threads` 를 뺀 채 다시 붙는다(스레드 멘션은 곧바로 `PLUGIN_OUTDATED` run_error 카드, 채널 멘션은 그대로), true 면 되돌린다(재설치 — 그 카드의 「다시 실행」이 스레드에서 답한다). 토큰은 그대로. 응답은 200 `{ ok: true, capabilities }` 또는 `{ ok: false, reason }`. 값은 메모리에만 있어 다시 띄우면 `threads` 가 있다.
 **운영 훅**(Phase 3 ③) — 운영 화면의 배지·끊김·디스크를 브라우저로 잴 때:
 - `POST /__devfake/ops/event { kind, key, severity, detail? }`(`DEV_FAKE_OPS_EVENT_PATH`) — `app.ops.record` 만 부른다(ops_events 를 직접 쓰지 않아 unacked 캐시·`ops.event`·로그가 함께 돈다). 200 `{ ok: true, event }`.
-- `POST /__devfake/gateway { state: "down" | "connected" }`(`DEV_FAKE_GATEWAY_PATH`) — down 이면 가짜 Gateway 가 연결을 끊고 그 뒤 `connect` 를 `UNAVAILABLE` 로 거절한다(끊기만 하면 `@openclaw/gateway-client` 가 자기 백오프로 속에서 재시도해 어댑터가 모른다). dev:fake 만 어댑터 재접속 백오프 상한을 1초로 준다(`AppDeps.gatewayBackoff`). 플러그인(브리지)은 그대로. 200 `{ ok: true, status }`, 10초 안에 안 바뀌면 `{ ok: false, reason: "timeout", status }`.
+- `POST /__devfake/gateway { gatewayId, state: "down" | "connected" }`(`DEV_FAKE_GATEWAY_PATH`) — down 이면 그 가짜 Gateway 가 연결을 끊고 그 뒤 `connect` 를 `UNAVAILABLE` 로 거절한다(끊기만 하면 `@openclaw/gateway-client` 가 자기 백오프로 속에서 재시도해 어댑터가 모른다). dev:fake 만 어댑터 재접속 백오프 상한을 1초로 준다(`AppDeps.gatewayBackoff`). 플러그인(브리지)과 다른 Gateway 는 그대로. 200 `{ ok: true, status }`(`status` 는 그 Gateway 한 줄), 10초 안에 안 바뀌면 `{ ok: false, reason: "timeout", status }`.
 - `POST /__devfake/disk { freeBytes, totalBytes } | { reset: true }`(`DEV_FAKE_DISK_PATH`) — 디스크 감시의 statfs 를 그 값으로 바꾸고 곧바로 다시 잰다(error 면 응답 전에 `disk_low`·첨부 507 이 반영된다). reset 이면 실제 statfs. 값은 메모리에만 있어 다시 띄우면 실제로 돌아간다.
 - `POST /__devfake/runner { connected: boolean, token?: string }`(`DEV_FAKE_RUNNER_PATH`) — false 면 가짜 Claude 러너를 끊고 어댑터의 붙은 러너 수가 줄 때까지(5초) 기다린다, true 면 다시 붙는다(`token` 을 주면 그 러너 토큰으로 — 연결 페이지에서 발급한 토큰). 가짜 러너는 스스로 다시 붙지 않는다(토큰 폐기 뒤 포함). 200 `{ ok: true, status }` 또는 `{ ok: false, reason }`. 고정 러너 토큰 `dev-fake-runner-token`(라벨 dev-fake)·에이전트 `coder`(provider claude)는 시작 때 넣어 둔다.
 
@@ -437,15 +442,15 @@ API 오리진으로 `context.cookies(…)` 를 거르면 공유 프로필에 이
 O=http://127.0.0.1:3100; J=<스크래치>/jar     # dev:fake 를 PORT=3100 으로 띄웠을 때
 curl -s -c $J -o /dev/null -X POST $O/api/v1/auth/local -H 'content-type: application/json' -d '{"token":"dev-fake-local-token"}'
 curl -s -b $J -X POST $O/__devfake/ops/event -H 'content-type: application/json' -d '{"kind":"ratelimit","key":"wire:message.send","severity":"warn"}'
-curl -s -b $J -X POST $O/__devfake/gateway   -H 'content-type: application/json' -d '{"state":"down"}'
+curl -s -b $J -X POST $O/__devfake/gateway   -H 'content-type: application/json' -d '{"gatewayId":"00000000-0000-4000-8000-00000000def2","state":"down"}'
 curl -s -b $J -X POST $O/__devfake/disk      -H 'content-type: application/json' -d '{"freeBytes":104857600,"totalBytes":10737418240}'
-curl -s -b $J -X POST $O/__devfake/plugin-capabilities -H 'content-type: application/json' -d '{"threads":false}'
+curl -s -b $J -X POST $O/__devfake/plugin-capabilities -H 'content-type: application/json' -d '{"gatewayId":"00000000-0000-4000-8000-00000000def1","threads":false}'
 curl -s -b $J -X POST $O/__devfake/runner -H 'content-type: application/json' -d '{"connected":false}'
 ```
 `createApp` 은 ready 뒤라 경로를 더할 수 없어 HTTP 서버의 request 리스너를 감싼다(이 경로들만 받고 나머지는 engine.io → Fastify). 운영 `createApp`·번들에는 이 경로가 없다(404).
 **`DODOK_DEVFAKE_DISCONNECT_MS`**(dev:fake 전용, 양의 정수 ms — 없거나 비면 운영과 같은 60000, 그 밖이면 시작하지 않는다) — 끊김 사건 임계(`AppDeps.disconnectEventMs`). 사건 `detail.thresholdMs` 에 실린다.
 종료 표지는 `<dataDir>/dev-fake-run/run-state.json` — `pnpm -F @dodok/server dev` 의 표지와 섞이지 않는다. 처음 띄우면 운영 화면 「직전 종료」가 알 수 없음, Ctrl-C·SIGTERM 뒤면 깨끗, `kill -9` 뒤면 비정상 + `unclean_shutdown`.
-run_error 「다시 실행」 카드는 대본 「실패」 키워드(코드 `unknown` — 알리지 않는 코드)나 Gateway down(런이 기다렸다 돈다)으로는 생기지 않는다 — `plugin-token {"token":"nope"}` 로 가짜 플러그인을 끊고 멘션하면 120초(`queuedMs`) 뒤 `ADAPTER_UNAVAILABLE` 로 생긴다. 스레드 안이면 `plugin-capabilities {"threads":false}` 뒤 스레드 멘션으로 곧바로(`PLUGIN_OUTDATED`) 생긴다. 되붙이기는 `{"token":"dev-fake-bridge-token"}`(이어받은 행을 폐기하지 않았다면). 같은 채널·에이전트에 여럿 걸면 세션 큐 때문에 120초씩 이어지니 채널을 나눈다.
+run_error 「다시 실행」 카드는 대본 「실패」 키워드(코드 `unknown` — 알리지 않는 코드)나 Gateway down(런이 기다렸다 돈다)으로는 생기지 않는다 — `plugin-token {"gatewayId":"<id>","token":"nope"}` 로 그 Gateway 의 가짜 플러그인을 끊고 그 Gateway 의 에이전트를 멘션하면 120초(`queuedMs`) 뒤 `ADAPTER_UNAVAILABLE` 로 생긴다. 스레드 안이면 `plugin-capabilities {"gatewayId":"<id>","threads":false}` 뒤 스레드 멘션으로 곧바로(`PLUGIN_OUTDATED`) 생긴다. 되붙이기는 `{"gatewayId":"<id>","token":"dev-fake-bridge-token-office"}`(집이면 `…-home`, 그 행을 폐기하지 않았다면). 같은 채널·에이전트에 여럿 걸면 세션 큐 때문에 120초씩 이어지니 채널을 나눈다.
 ⚠ `dev:fake` 는 **실제 `web-push` 발송기**를 쓴다 — 브라우저에서 푸시를 켜고 트리거를 일으키면 실제 푸시 서비스(FCM 등)로 나간다(`startDevFake` 의 `pushSend` 옵션으로만 바꾼다). `<dataDir>/vapid.json` 은 시작마다 지우지 않는다 — 새 키면 브라우저 구독이 매번 무효가 된다.
 
 ### 2.3 `packages/openclaw-adapter` (서버 프로세스 안에서 실행)

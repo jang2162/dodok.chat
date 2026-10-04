@@ -33,6 +33,8 @@ export type FakePluginOptions = {
   onInbound?: InboundHandler;
   /** 기본 FAKE_PLUGIN_HELLO — 옛 플러그인(스레드 모름)을 흉내 낼 때 capabilities 를 바꿔 준다 */
   hello?: BridgeHello;
+  /** 브리지 `agents.list` 의 답(기본 FAKE_PLUGIN_AGENTS) — 짝인 가짜 Gateway 의 에이전트와 맞출 때 */
+  agents?: Array<{ agentId: string; name?: string }>;
 };
 
 export type OutboundInput = Omit<OutboundMessage, "outboundId" | "ts"> &
@@ -166,7 +168,7 @@ export async function startFakePlugin(opts: FakePluginOptions): Promise<FakePlug
   });
 
   socket.on("agents.list", (_payload, ack) => {
-    ack({ ok: true, data: { agents: FAKE_PLUGIN_AGENTS } });
+    ack({ ok: true, data: { agents: opts.agents ?? FAKE_PLUGIN_AGENTS } });
   });
 
   socket.on("system.notice", (notice) => {
