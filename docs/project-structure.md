@@ -183,7 +183,7 @@ src/
 │  │                      runs.connection_id·approvals.connection_id(그 런·승인의 연결 — 공유 Run·Approval 에 싣지 않고 store 의 getRunConnectionId·getApprovalConnectionId 로 읽는다).
 │  │                      유일: OpenClaw 에이전트 agents_openclaw_gateway_agent (gateway_id, provider_agent_id) · 러너 에이전트 agents_claude_ws_agent (workspace_id, provider, provider_agent_id) ·
 │  │                      runs_connection_provider_run (connection_id, provider_run_id) · approvals_connection_provider (connection_id, provider_approval_id) — 제공자 id 는 연결 안에서만 유일하다.
-│  │                      attachments.gateway_id(0014 — 플러그인이 올린 첨부의 Gateway. 그 Gateway 만 읽고 정본에 묶는다, Gateway 를 지우면 비어 아무도 묶지 못한다).
+│  │                      attachments.gateway_id(0014 — 플러그인이 올린 첨부의 Gateway. 그 Gateway 만 읽고 정본에 묶는다, Gateway 를 지우면 비어 아무도 묶지 못한다 — 러너 정본은 uploader_id 가 자기 러너 토큰인 것만 묶는다).
 │  │                      `drizzle/0012_multi_gateway.sql`·`0014_attachment_gateway.sql` 의 `ADD gateway_id … REFERENCES` 줄은 ON DELETE 를 손으로 붙였다(생성기가 빠뜨린다 — 그 파일 머리 주석).
 │  │                      팀(0008): invites — id·workspace_id·kind(invite·reset)·role(invite 만)·target_user_id(reset 만)·token_hash(sha256 hex, 유일 invites_token_hash)·prefix·
 │  │                      created_by·created_at·expires_at·used_at·used_by(FK 없음)·revoked_at — 원문 없음, 유효 = used_at·revoked_at 이 비고 만료 전. users.left_handle(나간 멤버의 옛 핸들 —
@@ -223,7 +223,8 @@ src/
 │  │                      routes.ts(`POST`·`GET /api/v1/attachments`(세션), `POST`·`GET /bridge/attachments`(브리지 토큰) — 원시 바이트 본문, 인증은 onRequest,
 │  │                      GET 은 블롭을 먼저 열어 없으면 404, nosniff·CSP sandbox·immutable, Content-Disposition 은 RFC 5987).
 │  │                      브리지 범위(멀티 Gateway 스펙 6.4): 브리지 토큰의 Gateway 가 올린 것과 그 Gateway 에서 열린 런(runs.connection_id)의 트리거 첨부만 읽고(범위 밖은 404),
-│  │                      정본에 묶는 것(claimBridgeAttachments)도 그 Gateway 가 올린 것만 — 러너 정본은 Gateway 가 올린 것을 묶지 못한다
+│  │                      정본에 묶는 것(claimBridgeAttachments)도 그 Gateway 가 올린 것만 — 러너 정본은 자기 러너 토큰이 올린 것만 묶는다.
+│  │                      꺼진 Gateway 의 브리지 토큰은 핸드셰이크와 같게 401(acceptBridgeGateway — 실패 카운터에 세지 않는다)
 │  │                      정리 타이머 startAttachmentSweeper 는 app.ts 에 있다(부팅 때 한 번, 그 뒤 1시간마다, 닫을 때 진행 중인 정리를 기다린다)
 │  ├─ approvals/          store.ts(approvals 테이블 — (연결, providerApprovalId) 유일 upsert, 중복은 병합 후 재발행, 채널 미해결 목록),
 │  │                      service.ts(상관 — 승인이 온 연결의 에이전트·findOpenRunBySession(연결, 세션 키) → 저장 → APPROVAL_REQUESTED/RESOLVED 런 이벤트 → 버스,

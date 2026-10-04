@@ -787,6 +787,7 @@ describe("브리지 첨부 인증 — 실패 카운터(운영 보강 스펙 4.1)
       workspaceId: app.workspaceId,
       dir: attachmentsDirOf(app) as string,
       verifyBridgeToken: () => verify(),
+      acceptBridgeGateway: () => true,
       bridgeGuard: { guard, now: () => 0, onBlocked: () => {} },
       locks: createBlobLocks(),
     });

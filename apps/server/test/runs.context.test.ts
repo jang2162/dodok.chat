@@ -19,6 +19,9 @@ import { seedChannelWithAgent } from "./helpers/seed";
 const rule = (turns: number) =>
   `다른 에이전트에게 일을 넘길 때만 @핸들을 쓰세요 — @멘션하면 그 에이전트가 이어받습니다(최대 ${turns}턴). 언급만 할 때는 @ 없이 이름만 쓰세요.`;
 
+/** 브리지 첨부를 올린 러너 토큰 — 에이전트 정본은 uploadedBy 로 이 토큰을 대야 묶는다 */
+const RUNNER = "runner-token-1";
+
 /** 첨부 행을 바로 넣는다 — 블롭 없이 묶기·문맥만 볼 때 */
 function insertAttachment(
   db: DbOrTx,
@@ -37,7 +40,7 @@ function insertAttachment(
       id: uuid(),
       channelId: opts.channelId,
       uploaderType: opts.uploaderType ?? "user",
-      uploaderId: opts.uploaderType === "bridge" ? null : (opts.uploaderId ?? null),
+      uploaderId: opts.uploaderType === "bridge" ? RUNNER : (opts.uploaderId ?? null),
       kind: opts.kind ?? "image",
       name: opts.name ?? "a.png",
       mime: file ? "application/pdf" : "image/png",
@@ -225,6 +228,7 @@ describe("buildInboundDeliver", () => {
         externalId: "o-chart",
         bodyMd: "@fin 이 차트 봐",
         attachmentIds: [chart.id],
+        uploadedBy: { runnerTokenId: RUNNER },
       });
       const { inbound: toFin } = deliver(
         { message: relay },
@@ -245,6 +249,7 @@ describe("buildInboundDeliver", () => {
           insertAttachment(db, { channelId, uploaderType: "bridge", kind: "file", name: "a.pdf" }).id,
           insertAttachment(db, { channelId, uploaderType: "bridge", name: "y.png" }).id,
         ],
+        uploadedBy: { runnerTokenId: RUNNER },
       });
       expect(withBody.attachments).toHaveLength(3);
       createAgentMessage(db, bus, {
@@ -257,6 +262,7 @@ describe("buildInboundDeliver", () => {
           insertAttachment(db, { channelId, uploaderType: "bridge", name: "y.png" }).id,
           insertAttachment(db, { channelId, uploaderType: "bridge", kind: "file", name: "a.pdf" }).id,
         ],
+        uploadedBy: { runnerTokenId: RUNNER },
       });
       say("글만");
       const img = insertAttachment(db, { channelId, uploaderId: userId });

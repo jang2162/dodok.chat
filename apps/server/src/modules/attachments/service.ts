@@ -137,13 +137,25 @@ export function claimUserAttachments(
 }
 
 /**
- * 에이전트 정본에 묶을 첨부를 고른다 — 같은 채널·미묶음·에이전트 쪽이 올린 것만. gatewayId 는 정본을 낸 Gateway 로, 그 Gateway 가
- * 올린 것만 받는다(멀티 Gateway 스펙 6.4). null 이면 러너의 정본이다 — Gateway 가 올린 것은 받지 않는다
+ * 정본을 낸 쪽 — OpenClaw 면 그 Gateway, 러너면 그 러너 토큰. 그쪽이 올린 첨부만 묶는다(멀티 Gateway 스펙 6.4·러너 판정 R5).
+ * 러너 쪽을 「gateway_id 가 빈 행」으로 가르지 않는다 — Gateway 를 지우면 그 Gateway 가 올린 행도 비어 러너 정본에 묶이게 된다
+ */
+export type UploadedBy = { gatewayId: string } | { runnerTokenId: string };
+
+/**
+ * 에이전트 정본에 묶을 첨부를 고른다 — 같은 채널·미묶음·에이전트 쪽(bridge)이 올린 것 가운데 by 가 올린 것만. by 가 없으면(정본이
+ * 아닌 스냅숏 답) 아무것도 묶지 않는다
  */
 export function claimBridgeAttachments(
   tx: DbOrTx,
-  input: { ids: string[]; channelId: string; gatewayId: string | null },
+  input: { ids: string[]; channelId: string; by: UploadedBy | undefined },
 ): { accepted: Attachment[]; dropped: string[] } {
+  const { by } = input;
+  const uploadedByOwner = (r: Row) =>
+    by !== undefined &&
+    ("gatewayId" in by
+      ? r.gatewayId === by.gatewayId
+      : r.gatewayId === null && r.uploaderId === by.runnerTokenId);
   const byId = rowsInOrder(tx, input.ids);
   const accepted: Attachment[] = [];
   const dropped: string[] = [];
@@ -154,7 +166,7 @@ export function claimBridgeAttachments(
       !r ||
       seen.has(id) ||
       r.uploaderType !== "bridge" ||
-      r.gatewayId !== input.gatewayId ||
+      !uploadedByOwner(r) ||
       r.channelId !== input.channelId ||
       r.messageId !== null
     ) {

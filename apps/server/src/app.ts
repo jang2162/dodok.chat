@@ -29,7 +29,7 @@ import { watchPluginHellos } from "./modules/channels/prompt-sync";
 import { registerChannelRoutes } from "./modules/channels/routes";
 import { getChannel } from "./modules/channels/service";
 import { registerGatewayRoutes } from "./modules/gateways/routes";
-import { bootGateways, listGatewayRows } from "./modules/gateways/service";
+import { bootGateways, getGatewayRow, listGatewayRows } from "./modules/gateways/service";
 import { registerMemberManageRoutes } from "./modules/members/manage.routes";
 import { registerMemberRoutes } from "./modules/members/routes";
 import { registerMessageRoutes } from "./modules/messages/routes";
@@ -195,8 +195,8 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     const workspaceId = ensureWorkspace(db, config.DODOK_WORKSPACE_NAME);
     const auth = createAuth(db, config, logger);
     const { userId: ownerUserId } = await bootstrapOwner(db, auth, config, workspaceId);
-    // 핸드셰이크와 첨부 HTTP 가 같은 검증을 쓴다 — 토큰 id 와 그 토큰의 Gateway. 꺼진 Gateway 의 토큰은 핸드셰이크에서 어댑터가
-    // 거절한다. DB 오류는 던지고, 부르는 쪽이 거절로 본다
+    // 핸드셰이크와 첨부 HTTP 가 같은 검증을 쓴다 — 토큰 id 와 그 토큰의 Gateway. 꺼진 Gateway 의 토큰은 핸드셰이크에서 어댑터가,
+    // 첨부 HTTP 에서 acceptBridgeGateway 가 거절한다. DB 오류는 던지고, 부르는 쪽이 거절로 본다
     const verifyBridgeToken = (presented: unknown) => verifyBridgeTokenDb(db, presented);
     const verifyRunnerToken: RunnerTokenVerifier = (presented) => verifyRunnerTokenDb(db, presented);
     const bus = new ServerBus();
@@ -463,6 +463,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       workspaceId,
       dir: config.attachmentsDir,
       verifyBridgeToken,
+      acceptBridgeGateway: (gatewayId) => getGatewayRow(db, workspaceId, gatewayId)?.enabled === true,
       runner: {
         verifyToken: verifyRunnerToken,
         mayRead: (tokenId, attachmentId) => runnerAdapter?.mayReadAttachment(tokenId, attachmentId) ?? false,

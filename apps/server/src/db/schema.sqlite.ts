@@ -236,7 +236,7 @@ export const attachments = sqliteTable(
     uploaderType: text("uploader_type").notNull(), // "user" | "bridge"
     uploaderId: text("uploader_id"), // 사용자 id, 러너가 올렸으면 러너 토큰 id, 플러그인(브리지)이면 null
     // 플러그인이 올렸으면 그 브리지 토큰의 Gateway — 그 Gateway 만 읽고 정본에 묶는다(멀티 Gateway 스펙 6.4). Gateway 를 지우면 비어
-    // 어느 Gateway 도 묶지 못한다
+    // 아무도 묶지 못한다(러너 정본은 uploader_id 가 자기 토큰인 것만 묶는다)
     gatewayId: text("gateway_id").references(() => gateways.id, { onDelete: "set null" }),
     kind: text("kind").notNull(), // "image" | "file"
     name: text("name").notNull(),

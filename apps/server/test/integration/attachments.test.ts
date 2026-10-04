@@ -170,7 +170,7 @@ describe("통합 시나리오 11 — 첨부", () => {
       .run();
     const foreign = await uploadAttachment(depsOf(l), {
       channelId: foreignChannel,
-      uploader: { type: "bridge" },
+      uploader: { type: "bridge", runnerTokenId: "runner-token-1" },
       bytes: makePng(4, 4),
     });
     const bound = createAgentMessage(l.app.db, l.app.bus, {
@@ -179,6 +179,7 @@ describe("통합 시나리오 11 — 첨부", () => {
       externalId: uuid(),
       bodyMd: "",
       attachmentIds: [foreign.id],
+      uploadedBy: { runnerTokenId: "runner-token-1" },
     });
     expect(bound.attachments).toEqual([foreign]);
     const got = await humanGet(l, foreign.id);

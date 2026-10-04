@@ -15,6 +15,8 @@ import {
   findReadable,
   markBound,
   sweepAttachments,
+  type UploadedBy,
+  type Uploader,
   uploadAttachment,
 } from "../src/modules/attachments/service";
 import { type BlobLocks, blobPath, createBlobLocks } from "../src/modules/attachments/store";
@@ -26,6 +28,7 @@ import { insertGateway } from "./helpers/gateways";
 import { makePng, PDF_BYTES, SVG_BYTES } from "./helpers/png";
 import { seedWorkspace } from "./helpers/seed";
 
+const RUNNER = "runner-token-1";
 const sha256Of = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 
 describe("attachments service", () => {
@@ -245,15 +248,25 @@ describe("attachments service", () => {
   it("claimBridgeAttachments: 틀린 것은 빼고 순서를 지킨다", async () => {
     const f1 = await uploadAttachment(
       { db, dir },
-      { channelId: chA, uploader: { type: "bridge" }, bytes: PDF_BYTES, nameHint: "a.pdf" },
+      {
+        channelId: chA,
+        uploader: { type: "bridge", runnerTokenId: RUNNER },
+        bytes: PDF_BYTES,
+        nameHint: "a.pdf",
+      },
     );
     const f2 = await uploadAttachment(
       { db, dir },
-      { channelId: chA, uploader: { type: "bridge" }, bytes: makePng(1, 1), nameHint: "b.png" },
+      {
+        channelId: chA,
+        uploader: { type: "bridge", runnerTokenId: RUNNER },
+        bytes: makePng(1, 1),
+        nameHint: "b.png",
+      },
     );
     const wrongCh = await uploadAttachment(
       { db, dir },
-      { channelId: chB, uploader: { type: "bridge" }, bytes: PDF_BYTES },
+      { channelId: chB, uploader: { type: "bridge", runnerTokenId: RUNNER }, bytes: PDF_BYTES },
     );
     const human = await uploadAttachment(
       { db, dir },
@@ -263,14 +276,16 @@ describe("attachments service", () => {
       claimBridgeAttachments(tx, {
         ids: [f2.id, wrongCh.id, human.id, f1.id, f2.id],
         channelId: chA,
-        gatewayId: null,
+        by: { runnerTokenId: RUNNER },
       }),
     );
     expect(r.accepted.map((a) => a.name)).toEqual(["b.png", "a.pdf"]);
     expect(r.dropped).toEqual([wrongCh.id, human.id, f2.id]);
     db.transaction((tx) => markBound(tx, [f1.id], msgInA));
     expect(
-      db.transaction((tx) => claimBridgeAttachments(tx, { ids: [f1.id], channelId: chA, gatewayId: null })),
+      db.transaction((tx) =>
+        claimBridgeAttachments(tx, { ids: [f1.id], channelId: chA, by: { runnerTokenId: RUNNER } }),
+      ),
     ).toEqual({
       accepted: [],
       dropped: [f1.id],
@@ -284,11 +299,29 @@ describe("attachments service", () => {
       { db, dir },
       { channelId: chA, uploader: { type: "bridge", gatewayId: office }, bytes: PDF_BYTES },
     );
-    const claim = (gatewayId: string | null) =>
-      db.transaction((tx) => claimBridgeAttachments(tx, { ids: [fromOffice.id], channelId: chA, gatewayId }));
-    expect(claim(home)).toEqual({ accepted: [], dropped: [fromOffice.id] });
-    expect(claim(null)).toEqual({ accepted: [], dropped: [fromOffice.id] });
-    expect(claim(office).accepted.map((a) => a.id)).toEqual([fromOffice.id]);
+    const claim = (by: UploadedBy | undefined) =>
+      db.transaction((tx) => claimBridgeAttachments(tx, { ids: [fromOffice.id], channelId: chA, by }));
+    expect(claim({ gatewayId: home })).toEqual({ accepted: [], dropped: [fromOffice.id] });
+    expect(claim({ runnerTokenId: RUNNER })).toEqual({ accepted: [], dropped: [fromOffice.id] });
+    expect(claim(undefined)).toEqual({ accepted: [], dropped: [fromOffice.id] });
+    expect(claim({ gatewayId: office }).accepted.map((a) => a.id)).toEqual([fromOffice.id]);
+  });
+
+  it("claimBridgeAttachments: 러너 정본은 자기 토큰이 올린 것만 — 다른 러너·Gateway 가 비어 버린 업로드는 묶지 못한다", async () => {
+    const upload = (uploader: Uploader) =>
+      uploadAttachment({ db, dir }, { channelId: chA, uploader, bytes: PDF_BYTES });
+    const own = await upload({ type: "bridge", runnerTokenId: RUNNER });
+    const otherRunner = await upload({ type: "bridge", runnerTokenId: "other-runner" });
+    const orphan = await upload({ type: "bridge" }); // Gateway 를 지워 gateway_id 가 빈 플러그인 업로드와 같은 행
+    const r = db.transaction((tx) =>
+      claimBridgeAttachments(tx, {
+        ids: [orphan.id, otherRunner.id, own.id],
+        channelId: chA,
+        by: { runnerTokenId: RUNNER },
+      }),
+    );
+    expect(r.accepted.map((a) => a.id)).toEqual([own.id]);
+    expect(r.dropped).toEqual([orphan.id, otherRunner.id]);
   });
 
   it("findReadable: 묶인 것은 같은 워크스페이스 채널 사용자, 미묶음은 올린 사람만", async () => {

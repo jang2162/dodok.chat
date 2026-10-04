@@ -32,6 +32,9 @@ function setup() {
   return { db, bus, created, userId, workspaceId, channelId: channel.id, devId: dev.id };
 }
 
+/** 브리지 첨부를 올린 러너 토큰 — 에이전트 정본은 uploadedBy 로 이 토큰을 대야 묶는다 */
+const RUNNER = "runner-token-1";
+
 /** 첨부 행을 바로 넣는다 — 블롭 없이 묶기만 볼 때(올리기는 attachments.service 테스트가 잰다) */
 function insertAttachment(
   db: Db,
@@ -49,7 +52,7 @@ function insertAttachment(
       id: uuid(),
       channelId: opts.channelId,
       uploaderType: opts.uploaderType ?? "user",
-      uploaderId: opts.uploaderType === "bridge" ? null : (opts.uploaderId ?? null),
+      uploaderId: opts.uploaderType === "bridge" ? RUNNER : (opts.uploaderId ?? null),
       kind: opts.kind ?? "image",
       name: opts.name ?? "a.png",
       mime: opts.kind === "file" ? "application/pdf" : "image/png",
@@ -259,6 +262,7 @@ describe("messages service", () => {
           externalId: "o1",
           bodyMd: "파일",
           attachmentIds: [f2.id, stray.id, f1.id],
+          uploadedBy: { runnerTokenId: RUNNER },
         },
         { onDroppedAttachments: onDropped },
       );
@@ -274,7 +278,14 @@ describe("messages service", () => {
       const m = createAgentMessage(
         db,
         bus,
-        { channelId, agentId: devId, externalId: "o1", bodyMd: "", attachmentIds: [f.id] },
+        {
+          channelId,
+          agentId: devId,
+          externalId: "o1",
+          bodyMd: "",
+          attachmentIds: [f.id],
+          uploadedBy: { runnerTokenId: RUNNER },
+        },
         { onDroppedAttachments: onDropped },
       );
       expect(m).toMatchObject({ bodyMd: "", attachments: [f] });
@@ -284,8 +295,16 @@ describe("messages service", () => {
     it("에이전트: 같은 externalId 재전송은 같은 메시지 — 이미 묶인 첨부를 빠진 것으로 알리지 않는다", () => {
       const { db, bus, created, channelId, devId } = setup();
       const f = insertAttachment(db, { channelId, uploaderType: "bridge" });
-      const input = { channelId, agentId: devId, externalId: "o1", bodyMd: "파일", attachmentIds: [f.id] };
+      const input = {
+        channelId,
+        agentId: devId,
+        externalId: "o1",
+        bodyMd: "파일",
+        attachmentIds: [f.id],
+        uploadedBy: { runnerTokenId: RUNNER },
+      };
       const first = createAgentMessage(db, bus, input);
+      expect(first.attachments).toEqual([f]);
       const onDropped = vi.fn();
       expect(createAgentMessage(db, bus, input, { onDroppedAttachments: onDropped })).toEqual(first);
       expect(created).toHaveLength(1);

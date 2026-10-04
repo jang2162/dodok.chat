@@ -22,6 +22,7 @@ import type { Db } from "../../db/client";
 import { apiError } from "../../http/errors";
 import { parseParams, parseQuery } from "../../http/validate";
 import { getChannel } from "../channels/service";
+import { ipPrefix } from "../ops/ip";
 import { type AttachmentDeps, findReadable, type Uploader, uploadAttachment } from "./service";
 import type { BlobLocks } from "./store";
 
@@ -36,6 +37,11 @@ export type AttachmentRouteContext = {
    * Gateway 의 범위만 준다(멀티 Gateway 스펙 6.4 — 범위 밖은 없는 id 와 같은 404)
    */
   verifyBridgeToken: (presented: unknown) => { tokenId: string; gatewayId: string } | null;
+  /**
+   * 그 Gateway 가 켜져 있는가 — 꺼진 Gateway 의 토큰은 핸드셰이크처럼 401 로 거절하고 실패로 세지 않는다(끈 것은 고장이 아니다,
+   * 멀티 Gateway 스펙 8장). 검증(verifyBridgeToken)에 넣지 않는 것은 그쪽의 null 이 실패 카운터에 들어가기 때문이다
+   */
+  acceptBridgeGateway: (gatewayId: string) => boolean;
   /**
    * 있으면 러너 첨부 경로(RUNNER_ATTACHMENTS_PATH)를 연다. verifyToken 은 `/runner` 핸드셰이크와 같은 검증(DB 러너 토큰 — 던지면 401).
    * GET 은 그 토큰이 올린 첨부와 mayRead(러너 어댑터의 mayReadAttachment — 그 토큰의 러너에 열린 런의 deliver 첨부)만 준다(판정 R5)
@@ -155,6 +161,7 @@ function requireToken(
   bridgeGuard: AttachmentRouteContext["bridgeGuard"],
   path: TokenPath,
   verified: WeakMap<FastifyRequest, unknown>,
+  accept?: (result: unknown) => boolean,
 ) {
   return async (request: FastifyRequest): Promise<void> => {
     const { guard, now, onBlocked } = bridgeGuard;
@@ -174,6 +181,14 @@ function requireToken(
       throw apiError("UNAUTHORIZED", `${path} 토큰이 틀렸다`);
     }
     if (result) {
+      if (accept && !accept(result)) {
+        // 핸드셰이크 거절(브리지 서버 미들웨어)과 같은 사유·문구 — 토큰이 맞았다는 것을 응답으로 알리지 않는다
+        request.log.warn(
+          { reason: `token mismatch from ${ipPrefix(address)}`, route: "attachments" },
+          `${path} connection rejected`,
+        );
+        throw apiError("UNAUTHORIZED", `${path} 토큰이 틀렸다`);
+      }
       verified.set(request, result);
       return;
     }
@@ -189,7 +204,9 @@ export function registerAttachmentRoutes(fastify: FastifyInstance, ctx: Attachme
     const deps: AttachmentDeps = { db: ctx.db, dir: ctx.dir, locks: ctx.locks };
     const session = requireSession(ctx);
     const verified = new WeakMap<FastifyRequest, unknown>();
-    const bridge = requireToken(ctx.verifyBridgeToken, ctx.bridgeGuard, "bridge", verified);
+    const bridge = requireToken(ctx.verifyBridgeToken, ctx.bridgeGuard, "bridge", verified, (result) =>
+      ctx.acceptBridgeGateway((result as { gatewayId: string }).gatewayId),
+    );
     // 업로드 상한은 본문을 받기 전에 — 세션(REST 상한) 뒤에 한 번 더
     const uploadLimit = async (request: FastifyRequest): Promise<void> =>
       request.server.restLimits?.upload(request, sessionUser(request).id);

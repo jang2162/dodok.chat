@@ -5,13 +5,18 @@
  */
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
 import type { Attachment, OutboundMessage } from "@dodok/shared";
-import { afterEach, describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, onTestFinished } from "vitest";
 import { hasGateways } from "../src/adapters/types";
 import type { App } from "../src/app";
 import { attachments } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
+import { uploadAttachment } from "../src/modules/attachments/service";
 import { addMember, createChannel } from "../src/modules/channels/service";
 import { createUserMessage, getMessage } from "../src/modules/messages/service";
+import { issueRunnerToken } from "../src/modules/runners/tokens";
 import { getRun } from "../src/modules/runs/store";
 import { issueBridgeToken } from "../src/modules/setup/tokens";
 import { bootTestApp, login } from "./helpers/app";
@@ -119,7 +124,7 @@ async function setup() {
     const { messageId } = await app.orchestrator.onCanonical(message, "openclaw", connectionId);
     return getMessage(app.db, messageId ?? "")?.attachments.map((a) => a.id);
   };
-  return { app, tokens, channel, bridgeUpload, bridgeGet, mentionWithImage, canonical };
+  return { app, headers, tokens, channel, bridgeUpload, bridgeGet, mentionWithImage, canonical };
 }
 
 describe("브리지 첨부 범위 — 토큰의 Gateway 로", () => {
@@ -164,5 +169,87 @@ describe("브리지 첨부 범위 — 토큰의 Gateway 로", () => {
     const fromOffice = await bridgeUpload(tokens.office);
     expect(await canonical(HOME_ID, [fromOffice.id])).toEqual([]);
     expect(await canonical(FAKE_GATEWAY_ID, [fromOffice.id])).toEqual([fromOffice.id]);
+  });
+
+  it("Gateway 를 지운 뒤 비어 버린 플러그인 업로드는 러너 정본도 묶지 못한다 — 러너는 자기 토큰이 올린 것만", async () => {
+    const { app, headers, tokens, channel, bridgeUpload } = await setup();
+    const orphan = await bridgeUpload(tokens.home);
+    const del = await app.fastify.inject({ method: "DELETE", url: `/api/v1/gateways/${HOME_ID}`, headers });
+    expect(del.statusCode).toBe(200);
+    const row = app.db
+      .select()
+      .from(attachments)
+      .all()
+      .find((r) => r.id === orphan.id);
+    expect(row).toMatchObject({ gatewayId: null, uploaderId: null });
+
+    const runner = issueRunnerToken(app.db, app.workspaceId, "laptop").record.id;
+    const other = issueRunnerToken(app.db, app.workspaceId, "desktop").record.id;
+    const coder = createAgent(app.db, {
+      workspaceId: app.workspaceId,
+      provider: "claude",
+      providerAgentId: "coder",
+      handle: "coder",
+      name: "coder",
+      runnerTokenId: runner,
+    });
+    addMember(app.db, channel.id, { memberType: "agent", memberId: coder.id }, app.logger);
+    // 묶기는 행만 본다 — 블롭은 버리는 디렉터리에
+    const dir = mkdtempSync(join(tmpdir(), "dodok-bscope-"));
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
+    const upload = (runnerTokenId: string) =>
+      uploadAttachment(
+        { db: app.db, dir },
+        { channelId: channel.id, uploader: { type: "bridge", runnerTokenId }, bytes: PDF_BYTES },
+      );
+    const [own, others] = [await upload(runner), await upload(other)];
+    const message: OutboundMessage = {
+      outboundId: "out-runner",
+      channelId: channel.id,
+      agentId: "coder",
+      sessionKey: `agent:coder:dodok:channel:${channel.id}`,
+      text: "파일입니다",
+      attachmentIds: [orphan.id, others.id, own.id],
+      ts: new Date().toISOString(),
+    };
+    const { messageId } = await app.orchestrator.onCanonical(message, "claude", runner);
+    expect(getMessage(app.db, messageId ?? "")?.attachments.map((a) => a.id)).toEqual([own.id]);
+  });
+
+  it("꺼진 Gateway 의 브리지 토큰은 첨부 HTTP 에서도 거절된다 — 핸드셰이크와 같은 401, 실패로 세지 않는다", async () => {
+    const { app, headers, tokens, channel, bridgeUpload, bridgeGet } = await setup();
+    const own = await bridgeUpload(tokens.home);
+    const patch = (enabled: boolean) =>
+      app.fastify.inject({
+        method: "PATCH",
+        url: `/api/v1/gateways/${HOME_ID}`,
+        headers,
+        payload: { enabled },
+      });
+    expect((await patch(false)).statusCode).toBe(200);
+
+    const post = await app.fastify.inject({
+      method: "POST",
+      url: "/bridge/attachments",
+      headers: {
+        authorization: `Bearer ${tokens.home}`,
+        "x-dodok-channel-id": channel.id,
+        "content-type": "application/octet-stream",
+      },
+      payload: PDF_BYTES,
+    });
+    expect([post.statusCode, post.json().code]).toEqual([401, "UNAUTHORIZED"]);
+    const get = await app.fastify.inject({
+      method: "GET",
+      url: `/bridge/attachments/${own.id}`,
+      headers: { authorization: `Bearer ${tokens.home}` },
+    });
+    expect([get.statusCode, get.json().code]).toEqual([401, "UNAUTHORIZED"]);
+    // 다른 Gateway 는 그대로
+    expect(await bridgeGet(tokens.office, (await bridgeUpload(tokens.office)).id)).toBe(200);
+    // 끈 것은 고장이 아니다 — 거듭 거절돼도 주소가 막히지 않아 다시 켜면 곧바로 통한다
+    for (let i = 0; i < 30; i++) expect(await bridgeGet(tokens.home, own.id)).toBe(401);
+    expect((await patch(true)).statusCode).toBe(200);
+    expect(await bridgeGet(tokens.home, own.id)).toBe(200);
   });
 });
