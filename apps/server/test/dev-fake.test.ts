@@ -1253,6 +1253,17 @@ describe("startDevFake 가짜 플러그인 토큰 바꾸기 — POST /__devfake/
     expect(connectedTokenId()).toBeTruthy();
   });
 
+  it("다른 Gateway 의 토큰이면 400 — 이 플러그인이 그 Gateway 자리를 차지해 짝이 섞이지 않게(두 플러그인 그대로)", async () => {
+    const office = connectedTokenId();
+    const home = pluginOf(DEV_FAKE_HOME_GATEWAY_ID)?.tokenId;
+    expect(home).toBeTruthy();
+    const res = await swap({ gatewayId: OFFICE, token: DEV_FAKE_GATEWAYS[1]?.bridgeToken });
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({ code: "VALIDATION" });
+    expect(connectedTokenId()).toBe(office);
+    expect(pluginOf(DEV_FAKE_HOME_GATEWAY_ID)?.tokenId).toBe(home);
+  });
+
   it("DB 로 발급한 새 토큰으로 바꾸면 { ok: true } 이고 붙은 플러그인의 tokenId 가 그 행이다", async () => {
     const issued = await issue("rotate");
     const res = await swap({ gatewayId: OFFICE, token: issued.token });

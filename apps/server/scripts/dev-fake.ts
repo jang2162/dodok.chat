@@ -16,7 +16,8 @@
  * `PORT=3100 APP_ORIGIN=http://localhost:5180 pnpm -F @dodok/server dev:fake` + `DODOK_API_ORIGIN=http://127.0.0.1:3100 pnpm -F @dodok/web dev --port 5180`.
  * 개발 전용 훅(owner 세션, `content-type: application/json`, 경로 정확 일치 — 운영 `createApp` 에는 없다). Gateway 를 고르는 훅은
  * `gatewayId`(사무실·집의 고정 id)가 없거나 그 둘이 아니면 400:
- * - `POST /__devfake/plugin-token { gatewayId, token }` — 그 Gateway 가짜 플러그인의 브리지 토큰을 바꿔 다시 붙인다
+ * - `POST /__devfake/plugin-token { gatewayId, token }` — 그 Gateway 가짜 플러그인의 브리지 토큰을 바꿔 다시 붙인다(다른 Gateway 의
+ *   토큰이면 400 — 짝이 섞이지 않게. DB 에 없는 토큰은 받아 UNAUTHORIZED 를 돌려준다)
  * - `POST /__devfake/ops/event { kind, key, severity, detail? }` — 운영 사건을 `app.ops.record` 로 남긴다
  * - `POST /__devfake/gateway { gatewayId, state: "down" | "connected" }` — 그 가짜 Gateway 를 끊고 붙인다(어댑터 status 가 실제로 바뀐다)
  * - `POST /__devfake/disk { freeBytes, totalBytes } | { reset: true }` — 디스크 감시가 그 값을 보게 하고 곧바로 다시 잰다
@@ -723,6 +724,10 @@ function readBody(req: IncomingMessage): Promise<string | undefined> {
 
 /** 본문이 JSON 이 아니거나 모양이 틀렸다 — 400 */
 const invalid = Symbol("invalid");
+/** 모양은 맞지만 받을 수 없는 값 — 400 과 그 까닭 */
+class Rejected {
+  constructor(readonly message: string) {}
+}
 
 /** 훅 하나 — 본문을 input 으로 파싱해 run 에 넘기고, 돌려준 값을 200 JSON 으로 낸다. usage 는 400 응답 문구 */
 type DevFakeRoute = { usage: string; handle(body: unknown): Promise<unknown> };
@@ -801,6 +806,10 @@ async function handleDevFakeRoute(
     sendJson(res, 400, { code: "VALIDATION", message: `body must be ${hook.usage}` });
     return;
   }
+  if (result instanceof Rejected) {
+    sendJson(res, 400, { code: "VALIDATION", message: result.message });
+    return;
+  }
   sendJson(res, 200, result);
 }
 
@@ -832,6 +841,16 @@ function openclawOf(app: App): AgentAdapter {
   const adapter = app.registry.forProvider("openclaw");
   if (!adapter) throw new Error("dev:fake app has no OpenClaw adapter");
   return adapter;
+}
+
+/** 그 토큰 원문의 브리지 토큰 행이 묶인 Gateway id(폐기된 행 포함) — 행이 없으면 undefined */
+function bridgeTokenGatewayId(app: App, token: string): string | undefined {
+  const hash = createHash("sha256").update(token).digest("hex");
+  return app.db
+    .select({ gatewayId: bridgeTokens.gatewayId })
+    .from(bridgeTokens)
+    .where(eq(bridgeTokens.hash, hash))
+    .get()?.gatewayId;
 }
 
 /** 그 Gateway 에 붙은 가짜 플러그인이 통과한 브리지 토큰 id — 로그용 */
@@ -1214,7 +1233,15 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
             `{ gatewayId: ${GATEWAY_IDS_USAGE}, token: string }`,
             async ({ gatewayId, token }) => {
               const pair = pairOf(gatewayId);
-              return pair ? reconnectPlugin(pair, { token }, "swapped token") : invalid;
+              if (!pair) return invalid;
+              // 다른 Gateway 의 토큰이면 서버는 이 플러그인을 그 Gateway 로 받아 원래 플러그인을 밀어낸다 — 그 Gateway 의 런에 이
+              // 짝의 대본이 답한다. 모르는 토큰은 그대로 보내 UNAUTHORIZED 를 잴 수 있게 둔다
+              const owner = bridgeTokenGatewayId(live, token);
+              if (owner !== undefined && owner !== gatewayId)
+                return new Rejected(
+                  `token belongs to another Gateway (${owner}) — use that Gateway's gatewayId`,
+                );
+              return reconnectPlugin(pair, { token }, "swapped token");
             },
           ),
         ],
