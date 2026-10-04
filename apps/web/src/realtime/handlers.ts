@@ -3,6 +3,7 @@ import {
   type Agent,
   type Channel,
   type Message,
+  type OpenClawGatewayStatus,
   type OpsStatus,
   roleAtLeast,
   type ServerToClientEvents,
@@ -35,6 +36,13 @@ export function nextRetryDelay(attempt: number, random: () => number = Math.rand
   const base = Math.min(WIRE_RETRY_BASE_MS * 2 ** attempt, WIRE_RETRY_MAX_MS);
   return Math.round(base * (0.8 + 0.4 * random()));
 }
+
+/** 에이전트 줄이 보이는 Gateway 의 얼굴(id·이름) — 순서가 달라도 같은 집합이면 같다 */
+const gatewayNames = (gateways: readonly OpenClawGatewayStatus[]) =>
+  gateways
+    .map((g) => `${g.id}:${g.name}`)
+    .sort()
+    .join("\n");
 
 /** 재연결을 멈춘 상태 — 끊김·전송 실패가 덮어쓰지 않는다 */
 const STOPPED: ReadonlySet<WireStatus> = new Set(["protocol_mismatch", "rejected"]);
@@ -201,9 +209,15 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
     // 어댑터마다 따로 온다(러너 계획 판정 P7) — 연결 점·배너가 보는 캐시는 OpenClaw 의 것만, 러너 줄은 운영 화면 캐시에.
     // 모르는 제공자는 무시한다
     "adapter.status": (status: AdapterStatus) => {
-      if (status.provider === "openclaw")
+      if (status.provider === "openclaw") {
+        const prev = qc.getQueryData<AdapterStatusResponse>(qk.adapter);
         qc.setQueryData<AdapterStatusResponse>(qk.adapter, (prev) => prev && { ...prev, ...status });
-      else if (status.provider === "claude") {
+        // 에이전트 줄·멘션 후보는 Gateway 이름을 에이전트 목록(`Agent.gateway`)에서 읽는다 — 다른 탭에서 Gateway 를 지우거나
+        // 이름을 바꾸면 그 목록을 다시 받아야 「Gateway 가 삭제됨」·새 이름이 보인다. exact: 찾기 목록도 [agents] 아래라,
+        // 지운 Gateway 의 찾기를 다시 부르면 404 가 난다
+        if (prev && gatewayNames(prev.gateways) !== gatewayNames(status.gateways))
+          void qc.invalidateQueries({ queryKey: qk.agents, exact: true });
+      } else if (status.provider === "claude") {
         qc.setQueryData(qk.runnerAdapter, status.runners);
         // 등록 대화상자가 열린 채 러너가 붙거나 떨어져도 그 목록이 낡지 않게
         void qc.invalidateQueries({ queryKey: qk.discoverOf("claude") });

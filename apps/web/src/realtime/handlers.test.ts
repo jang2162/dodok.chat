@@ -806,6 +806,43 @@ describe("캐시 패치", () => {
     });
   });
 
+  it("adapter.status: Gateway 의 id·이름 집합이 바뀌면 에이전트 목록을 낡게 한다 — 상태만 바뀌면 그대로(리뷰 I1)", () => {
+    const { fake, queryClient } = setup();
+    const HOME = { ...TEST_GATEWAY, id: "gw-home", name: "집" } as const;
+    queryClient.setQueryData(qk.adapter, { ...ADAPTER_OK, gateways: [TEST_GATEWAY, HOME] });
+    queryClient.setQueryData(qk.agents, []);
+    queryClient.setQueryData(qk.discoverOf("openclaw"), []);
+    const agentsStale = () => queryClient.getQueryState(qk.agents)?.isInvalidated;
+
+    // 상태만 바뀜 — 에이전트 줄이 보이는 이름은 그대로라 다시 받지 않는다
+    fake.serverEmit("adapter.status", {
+      provider: "openclaw",
+      gateways: [TEST_GATEWAY, { ...HOME, gateway: "reconnecting", bridge: "down" }],
+    });
+    expect(agentsStale()).toBe(false);
+
+    // 이름 바꿈
+    fake.serverEmit("adapter.status", {
+      provider: "openclaw",
+      gateways: [TEST_GATEWAY, { ...HOME, name: "본가" }],
+    });
+    expect(agentsStale()).toBe(true);
+
+    // 지움 — 다른 탭의 에이전트 줄이 「Gateway 가 삭제됨」을 보이게
+    queryClient.setQueryData(qk.agents, []);
+    fake.serverEmit("adapter.status", { provider: "openclaw", gateways: [TEST_GATEWAY] });
+    expect(agentsStale()).toBe(true);
+    // 찾기 목록은 [agents] 아래 키지만 건드리지 않는다 — 지운 Gateway 의 찾기를 다시 부르면 404 다
+    expect(queryClient.getQueryState(qk.discoverOf("openclaw"))?.isInvalidated).toBe(false);
+  });
+
+  it("adapter.status: 어댑터 캐시가 아직 없으면 에이전트 목록을 건드리지 않는다", () => {
+    const { fake, queryClient } = setup();
+    queryClient.setQueryData(qk.agents, []);
+    fake.serverEmit("adapter.status", { provider: "openclaw", gateways: [TEST_GATEWAY] });
+    expect(queryClient.getQueryState(qk.agents)?.isInvalidated).toBe(false);
+  });
+
   it("adapter.status: OpenClaw 가 아닌 어댑터의 상태는 [adapter] 를 건드리지 않는다(판정 P7)", () => {
     const { fake, queryClient } = setup();
     const cached: AdapterStatusResponse = ADAPTER_OK;
