@@ -33,6 +33,7 @@ export type GatewayManagerOptions = {
 };
 
 export type GatewayManager = {
+  /** 같은 id 를 지우는 중이면 지우기가 끝난 뒤에 적용한다(그동안 그 id 는 없는 연결이다) */
   upsert(config: GatewayConnectionConfig): void;
   remove(id: string): Promise<void>;
   get(id: string): GatewayConnection | undefined;
@@ -60,7 +61,10 @@ function withGateway(logger: AdapterLogger, gatewayId: string): AdapterLogger {
 
 export function createGatewayManager(opts: GatewayManagerOptions): GatewayManager {
   const connections = new Map<string, GatewayConnection>();
+  // 지우는 중인 id — 같은 id 의 새 연결이 같은 디바이스 디렉터리를 쓰므로, 옛 remove 가 디렉터리를 지운 뒤에 만든다(리뷰 M2)
+  const removing = new Map<string, Promise<void>>();
   let started = false;
+  let closed = false;
 
   function create(config: GatewayConnectionConfig): GatewayConnection {
     const { id } = config;
@@ -83,28 +87,55 @@ export function createGatewayManager(opts: GatewayManagerOptions): GatewayManage
     });
   }
 
+  function apply(config: GatewayConnectionConfig) {
+    const existing = connections.get(config.id);
+    if (existing) {
+      existing.update(config);
+      return;
+    }
+    const connection = create(config);
+    connections.set(config.id, connection);
+    opts.logger.info({ gatewayId: config.id, enabled: config.enabled }, "gateway connection added");
+    if (started) connection.start();
+    opts.onStatusChange();
+    opts.onDetailChange();
+  }
+
   return {
     upsert(config) {
       if (!SAFE_ID.test(config.id)) throw new Error(`invalid gateway id: ${JSON.stringify(config.id)}`);
-      const existing = connections.get(config.id);
-      if (existing) {
-        existing.update(config);
+      const pending = removing.get(config.id);
+      if (!pending) {
+        apply(config);
         return;
       }
-      const connection = create(config);
-      connections.set(config.id, connection);
-      opts.logger.info({ gatewayId: config.id, enabled: config.enabled }, "gateway connection added");
-      if (started) connection.start();
-      opts.onStatusChange();
-      opts.onDetailChange();
+      // 같은 id 의 upsert 여럿은 약속 차례대로 붙어 부른 차례대로 적용된다
+      // 지우기가 실패해도 적용한다(그 실패는 remove 를 부른 쪽이 받는다)
+      void pending
+        .catch(() => undefined)
+        .then(() => {
+          if (closed) return;
+          try {
+            apply(config);
+          } catch (error) {
+            opts.logger.error({ err: error, gatewayId: config.id }, "deferred gateway upsert failed");
+          }
+        });
     },
 
     async remove(id) {
       const connection = connections.get(id);
-      if (!connection) return;
+      if (!connection) {
+        await removing.get(id);
+        return;
+      }
       // 먼저 목록에서 뺀다 — 지우는 사이 들어온 send·핸드셰이크는 모르는 연결로 거절된다
       connections.delete(id);
-      await connection.remove();
+      const done = connection.remove().finally(() => {
+        if (removing.get(id) === done) removing.delete(id);
+      });
+      removing.set(id, done);
+      await done;
       opts.logger.info({ gatewayId: id }, "gateway connection removed");
       opts.onStatusChange();
       opts.onDetailChange();
@@ -127,6 +158,7 @@ export function createGatewayManager(opts: GatewayManagerOptions): GatewayManage
     },
 
     async close() {
+      closed = true;
       await Promise.all([...connections.values()].map((connection) => connection.close()));
     },
   };

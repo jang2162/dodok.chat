@@ -1,14 +1,15 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { InboundDeliver } from "@dodok/shared";
 import type { EventFrame } from "@openclaw/gateway-protocol";
 import Fastify, { type FastifyInstance } from "fastify";
 import { Server } from "socket.io";
 import { io as connect, type Socket } from "socket.io-client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { BridgeAuthGuard } from "../src/bridge/guard";
 import {
   type AdapterEvent,
   createOpenClawAdapter,
@@ -55,6 +56,8 @@ type FakeGateway = {
   responses: Record<string, (params: Record<string, unknown>) => unknown>;
   pairingFailures: Error[];
   current?: GatewayConnectOptions;
+  /** 있으면 stop() 이 이것을 기다린다 — 지우는 사이를 벌린다 */
+  stopGate?: Promise<void>;
 };
 
 let app: FastifyInstance;
@@ -64,6 +67,12 @@ let url: string;
 let dataDir: string;
 let events: AdapterEvent[];
 let gateways: Map<string, FakeGateway>;
+// 가짜 Gateway 요청·stop 과 PG5 신호의 차례 — `<주소> <메서드>`·`<주소> stop`·`signal <런 id>`
+let order: string[];
+// 참이면 가짜 Gateway 가 접속 때 디바이스 파일을 만든다(실물 클라이언트처럼)
+let writeIdentityOnConnect: boolean;
+// 실패 카운터 — 틀린 토큰 3번이면 그 주소가 막힌다
+let authGuard: BridgeAuthGuard;
 const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
 const clients: Socket[] = [];
 
@@ -85,8 +94,12 @@ function down(gw: FakeGateway) {
 }
 
 beforeEach(async () => {
+  for (const log of Object.values(logger)) log.mockClear();
   events = [];
   gateways = new Map();
+  order = [];
+  writeIdentityOnConnect = false;
+  authGuard = new BridgeAuthGuard({ maxFailures: 3 });
   dataDir = mkdtempSync(join(tmpdir(), "dodok-mgw-"));
   app = Fastify({ logger: false });
   ioServer = new Server(app.server, { transports: ["websocket"] });
@@ -96,6 +109,7 @@ beforeEach(async () => {
       io: ioServer,
       verifyToken: (presented) => (typeof presented === "string" ? (BRIDGE_TOKENS[presented] ?? null) : null),
       serverVersion: "test",
+      authGuard,
     },
     logger,
     onCanonical: async () => ({}),
@@ -106,21 +120,31 @@ beforeEach(async () => {
       const pairing = gw.pairingFailures.shift();
       if (pairing) throw pairing;
       if (!gw.up) throw new Error("ECONNREFUSED");
+      if (writeIdentityOnConnect && options.deviceIdentityPath) {
+        mkdirSync(dirname(options.deviceIdentityPath), { recursive: true });
+        writeFileSync(options.deviceIdentityPath, "{}");
+      }
       gw.current = options;
       return {
         request: async (method: string, params?: unknown) => {
           gw.calls.push({ method, params });
+          order.push(`${options.url} ${method}`);
           const respond = gw.responses[method];
           return (respond ? await respond(params as Record<string, unknown>) : {}) as never;
         },
         stop: async () => {
           gw.stops += 1;
+          order.push(`${options.url} stop`);
+          await gw.stopGate;
           if (gw.current === options) gw.current = undefined;
         },
       };
     },
   });
-  adapter.onEvent((e) => events.push(e));
+  adapter.onEvent((e) => {
+    events.push(e);
+    if (e.kind === "run_signal" && e.signal.kind === "gateway_error") order.push(`signal ${e.runId}`);
+  });
   await app.listen({ host: "127.0.0.1", port: 0 });
   url = `ws://127.0.0.1:${(app.server.address() as AddressInfo).port}/bridge`;
 });
@@ -224,10 +248,18 @@ function closedRun(runId: string, connectionId: string) {
       kind: "run_signal",
       runId,
       connectionId,
-      signal: { kind: "gateway_error", code: "ADAPTER_UNAVAILABLE", message: expect.any(String) },
+      signal: {
+        kind: "gateway_error",
+        code: "ADAPTER_UNAVAILABLE",
+        message: expect.any(String),
+        connectionClosed: true,
+      },
     },
   ];
 }
+
+/** 그 가짜 Gateway 가 받은 chat.abort 의 인자 */
+const abortsOf = (gw: FakeGateway) => gw.calls.filter((c) => c.method === "chat.abort").map((c) => c.params);
 
 const eventsOfRun = (runId: string) =>
   events.filter((e) => (e.kind === "run_event" || e.kind === "run_signal") && e.runId === runId);
@@ -413,7 +445,7 @@ describe("멀티 Gateway — upsertGateway·removeGateway", () => {
     adapter.upsertGateway({ ...G1, enabled: false });
 
     await until(() => p1.disconnected, "g1 plugin disconnected");
-    expect(gw1.stops).toBe(1);
+    await until(() => gw1.stops === 1, "g1 link stopped");
     expect(gatewayOf("g1")).toEqual({
       id: "g1",
       name: "사무실",
@@ -422,6 +454,7 @@ describe("멀티 Gateway — upsertGateway·removeGateway", () => {
       bridge: "down",
     });
     expect(setupOf("g1")?.gateway.state).toBe("disabled");
+    await until(() => eventsOfRun(r1).length === 2, "r1 closed");
     expect(eventsOfRun(r1)).toEqual(closedRun(r1, "g1"));
     expect(eventsOfRun(r2)).toEqual([]);
     expect(p2.connected).toBe(true);
@@ -487,7 +520,7 @@ describe("멀티 Gateway — upsertGateway·removeGateway", () => {
     await until(() => fakeGateway("wss://office2.example.test").connects.length === 1, "new url connect");
     await until(() => gatewayOf("g1")?.gateway === "connected", "g1 connected again");
 
-    expect(fakeGateway(G1.url).stops).toBe(1);
+    await until(() => fakeGateway(G1.url).stops === 1, "old g1 link stopped");
     expect(existsSync(join(dir1, "device-tokens.json"))).toBe(false);
     expect(existsSync(join(dir1, "device.json"))).toBe(true);
     expect(readFileSync(join(dir2, "device-tokens.json"), "utf8")).toBe("{}");
@@ -509,6 +542,7 @@ describe("멀티 Gateway — upsertGateway·removeGateway", () => {
 
     adapter.upsertGateway({ ...G1, token: "gw-1-new" });
     await until(() => gw1.connects.length === 2, "g1 reconnect");
+    await until(() => eventsOfRun(r1).length === 2, "r1 closed");
 
     expect(gw1.connects[1]?.token).toBe("gw-1-new");
     expect(existsSync(join(dir1, "device-tokens.json"))).toBe(true);
@@ -538,6 +572,17 @@ describe("멀티 Gateway — upsertGateway·removeGateway", () => {
     await expect(adapter.removeGateway("g1")).resolves.toBeUndefined();
   });
 
+  it("removeGateway 는 브리지 자리(중복 흡수 기억)도 버린다 — 같은 id 의 다음 자리는 새 것", async () => {
+    await bothConnected();
+    const before = adapter.bridge.forGateway("g1");
+    const other = adapter.bridge.forGateway("g2");
+
+    await adapter.removeGateway("g1");
+
+    expect(adapter.bridge.forGateway("g1")).not.toBe(before);
+    expect(adapter.bridge.forGateway("g2")).toBe(other);
+  });
+
   it("플러그인을 기다리던 send 는 그 Gateway 를 끄면 곧바로 ADAPTER_UNAVAILABLE 로 끝난다", async () => {
     await bothConnected();
     const waiting = adapter.send(delivery(), { connectionId: "g1" }).catch((e: unknown) => e);
@@ -557,7 +602,16 @@ describe("멀티 Gateway — upsertGateway·removeGateway", () => {
         received += 1;
       },
     });
-    const waiting = adapter.send(delivery(), { connectionId: "g1" }).catch((e: unknown) => e);
+    const view = adapter.bridge.forGateway("g1");
+    const bridgeWaits: Array<Promise<unknown>> = [];
+    const original = view.deliverInbound.bind(view);
+    vi.spyOn(view, "deliverInbound").mockImplementation((payload, timeoutMs) => {
+      const pending = original(payload, timeoutMs);
+      bridgeWaits.push(pending);
+      return pending;
+    });
+    const input = delivery();
+    const waiting = adapter.send(input, { connectionId: "g1" }).catch((e: unknown) => e);
     await until(() => received === 1, "delivered to plugin");
     const startedAt = performance.now();
 
@@ -565,6 +619,17 @@ describe("멀티 Gateway — upsertGateway·removeGateway", () => {
 
     expect(await waiting).toMatchObject({ name: "AdapterError", code: "ADAPTER_UNAVAILABLE" });
     expect(performance.now() - startedAt).toBeLessThan(1_000);
+    // 브리지의 ack 대기도 끝났다 — ack 제한시간까지 남지 않는다
+    expect(bridgeWaits).toHaveLength(1);
+    expect(
+      await Promise.race([
+        bridgeWaits[0],
+        new Promise((resolve) => setTimeout(() => resolve("pending"), 500)),
+      ]),
+    ).toMatchObject({ ok: false, error: { code: "ADAPTER_UNAVAILABLE" } });
+    // 플러그인이 ack 전에 이미 디스패치했을 수 있다 — 그 런도 옛 링크로 멈춘다
+    await until(() => abortsOf(fakeGateway(G1.url)).length === 1, "abort for the pending send");
+    expect(abortsOf(fakeGateway(G1.url))).toEqual([{ sessionKey: f.SESSION_KEY, runId: input.runId }]);
   });
 
   it("id 가 경로가 될 수 없는 꼴이면 upsertGateway 가 던진다", () => {
@@ -621,6 +686,243 @@ describe("멀티 Gateway — upsertGateway·removeGateway", () => {
     }
     expect(readFileSync(`${dumpPath}.g1`, "utf8")).toContain('"event":"chat"');
     expect(existsSync(dumpPath)).toBe(false);
+  });
+});
+
+describe("멀티 Gateway — 연결을 닫을 때 Gateway 안의 런 멈추기(리뷰 I1)", () => {
+  const OTHER_URL = "wss://office2.example.test";
+
+  /** g1 에 런 둘, g2 에 런 하나를 연다(플러그인 dispatch ack 까지) */
+  async function openRunsOnBoth() {
+    await bothConnected();
+    await plugin("bridge-g1");
+    await plugin("bridge-g2");
+    const r1 = randomUUID();
+    const r1b = randomUUID();
+    const r2 = randomUUID();
+    await adapter.send(delivery(r1), { connectionId: "g1" });
+    await adapter.send(delivery(r1b), { connectionId: "g1" });
+    await adapter.send(delivery(r2), { connectionId: "g2" });
+    events = [];
+    order = [];
+    return { r1, r1b, r2 };
+  }
+
+  it.each<[string, () => unknown]>([
+    ["끄기", () => adapter.upsertGateway({ ...G1, enabled: false })],
+    ["주소 변경", () => adapter.upsertGateway({ ...G1, url: OTHER_URL })],
+    ["토큰 변경", () => adapter.upsertGateway({ ...G1, token: "gw-1-new" })],
+    ["삭제", () => adapter.removeGateway("g1")],
+  ])(
+    "%s — 옛 링크를 멈추기 전에 그 링크로 열린 런마다 chat.abort 를 한 번씩, 그 뒤 PG5 신호, 다른 Gateway 에는 0번",
+    async (_name, act) => {
+      const { r1, r1b, r2 } = await openRunsOnBoth();
+      const gw1 = fakeGateway(G1.url);
+      const gw2 = fakeGateway(G2.url);
+
+      await act();
+      await until(() => gw1.stops === 1, "old g1 link stopped");
+      await until(() => eventsOfRun(r1).length === 2 && eventsOfRun(r1b).length === 2, "g1 runs closed");
+
+      const aborts = abortsOf(gw1) as Array<{ sessionKey: string; runId: string }>;
+      expect(aborts.map((a) => a.runId).sort()).toEqual([r1, r1b].sort());
+      expect(aborts.every((a) => a.sessionKey === f.SESSION_KEY)).toBe(true);
+      expect(abortsOf(gw2)).toEqual([]);
+      expect(abortsOf(fakeGateway(OTHER_URL))).toEqual([]);
+      expect(eventsOfRun(r1)).toEqual(closedRun(r1, "g1"));
+      expect(eventsOfRun(r2)).toEqual([]);
+      // 차례: chat.abort 둘 → PG5 신호 둘 → 옛 링크 stop
+      const abortAt = order.lastIndexOf(`${G1.url} chat.abort`);
+      const signalAt = Math.min(order.indexOf(`signal ${r1}`), order.indexOf(`signal ${r1b}`));
+      const stopAt = order.indexOf(`${G1.url} stop`);
+      expect(abortAt).toBeGreaterThanOrEqual(0);
+      expect(abortAt).toBeLessThan(signalAt);
+      expect(Math.max(order.indexOf(`signal ${r1}`), order.indexOf(`signal ${r1b}`))).toBeLessThan(stopAt);
+    },
+  );
+
+  it("chat.abort 가 실패하거나 답이 없어도 PG5 신호는 나고 옛 링크는 멈춘다 — 실패는 warn, 기다림은 런마다 상한", async () => {
+    const { r1, r1b } = await openRunsOnBoth();
+    const gw1 = fakeGateway(G1.url);
+    gw1.responses["chat.abort"] = (params) => {
+      if (params.runId === r1) throw new Error("abort refused");
+      return new Promise(() => undefined); // r1b 는 답이 없다
+    };
+    const startedAt = performance.now();
+
+    adapter.upsertGateway({ ...G1, enabled: false });
+
+    const deadline = startedAt + 5_000;
+    while (gw1.stops === 0 || eventsOfRun(r1b).length < 2) {
+      if (performance.now() > deadline) throw new Error("timed out waiting for close");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect(performance.now() - startedAt).toBeLessThan(4_000);
+    expect(eventsOfRun(r1)).toEqual(closedRun(r1, "g1"));
+    expect(eventsOfRun(r1b)).toEqual(closedRun(r1b, "g1"));
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ gatewayId: "g1", runId: r1 }),
+      "chat.abort on connection close failed",
+    );
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ gatewayId: "g1", runId: r1b }),
+      "chat.abort on connection close failed",
+    );
+  }, 10_000);
+
+  it("Gateway WS 가 끊겨 있으면 chat.abort 없이 곧바로 PG5 신호를 낸다", async () => {
+    const { r1 } = await openRunsOnBoth();
+    const gw1 = fakeGateway(G1.url);
+    down(gw1);
+    await until(() => gatewayOf("g1")?.gateway === "reconnecting", "g1 reconnecting");
+
+    adapter.upsertGateway({ ...G1, enabled: false });
+
+    await until(() => eventsOfRun(r1).length === 2, "r1 closed");
+    expect(abortsOf(gw1)).toEqual([]);
+    expect(logger.warn).not.toHaveBeenCalledWith(expect.anything(), "chat.abort on connection close failed");
+  });
+
+  it("ack 를 기다리던 send 의 Gateway 를 끄면 그 전송은 플러그인을 다시 기다리지 않는다", async () => {
+    await bothConnected();
+    let received = 0;
+    await plugin("bridge-g1", {
+      "inbound.deliver": () => {
+        received += 1;
+      },
+    });
+    const input = delivery();
+    const waiting = adapter.send(input, { connectionId: "g1" }).catch((e: unknown) => e);
+    await until(() => received === 1, "delivered to plugin");
+
+    adapter.upsertGateway({ ...G1, enabled: false });
+
+    expect(await waiting).toMatchObject({ code: "ADAPTER_UNAVAILABLE" });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    // 닫힌 런은 120s 플러그인 대기에 들어가지 않는다
+    expect(logger.info).not.toHaveBeenCalledWith(
+      expect.objectContaining({ runId: input.runId }),
+      "plugin not connected; waiting",
+    );
+  });
+
+  it("어댑터 close() 는 옛 링크 정리(abort 상한 → stop)를 기다린다", async () => {
+    const { r1 } = await openRunsOnBoth();
+    const gw1 = fakeGateway(G1.url);
+    gw1.responses["chat.abort"] = () => new Promise(() => undefined);
+
+    adapter.upsertGateway({ ...G1, enabled: false });
+    await adapter.close();
+
+    expect(gw1.stops).toBe(1);
+    expect(eventsOfRun(r1)).toEqual(closedRun(r1, "g1"));
+  }, 10_000);
+
+  it("끄고 곧바로 다시 켜도 링크는 새 것 하나만 붙고, 옛 링크는 abort 뒤 멈춘다", async () => {
+    await openRunsOnBoth();
+    const gw1 = fakeGateway(G1.url);
+    const connectsBefore = gw1.connects.length;
+
+    adapter.upsertGateway({ ...G1, enabled: false });
+    adapter.upsertGateway(G1);
+
+    await until(() => gatewayOf("g1")?.gateway === "connected", "g1 connected again");
+    await until(() => gw1.stops === 1, "old g1 link stopped");
+    expect(gw1.connects.length).toBe(connectsBefore + 1);
+    expect(gw1.current).toBeDefined();
+  });
+});
+
+describe("멀티 Gateway — 지우기·디바이스 파일 경합(리뷰 M1·M2·M3)", () => {
+  it("주소를 바꿀 때 디바이스 토큰 파일을 못 지워도 warn 만 남기고 새 주소로 붙는다(탐침 P7)", async () => {
+    const dir1 = join(dataDir, "gateways", "g1");
+    // 파일 자리에 비지 않은 디렉터리 — rmSync(force) 도 던진다
+    mkdirSync(join(dir1, "device-tokens.json", "x"), { recursive: true });
+    await bothConnected();
+
+    expect(() => adapter.upsertGateway({ ...G1, url: "wss://office2.example.test" })).not.toThrow();
+
+    await until(() => fakeGateway("wss://office2.example.test").connects.length === 1, "new url connect");
+    await until(() => gatewayOf("g1")?.gateway === "connected", "g1 connected again");
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ gatewayId: "g1" }),
+      "gateway device token removal failed",
+    );
+  });
+
+  it("removeGateway 가 디바이스 디렉터리를 못 지워도 끝까지 간다 — 목록에서 빠지고 warn", async () => {
+    await bothConnected();
+    const dir1 = join(dataDir, "gateways", "g1");
+    mkdirSync(join(dir1, "sub"), { recursive: true });
+    writeFileSync(join(dir1, "sub", "f"), "x");
+    // sub 를 읽기·실행만으로 — 그 안의 파일을 지울 수 없어 rmSync 가 던진다
+    chmodSync(join(dir1, "sub"), 0o500);
+    try {
+      await expect(adapter.removeGateway("g1")).resolves.toBeUndefined();
+    } finally {
+      chmodSync(join(dir1, "sub"), 0o700);
+    }
+    expect(existsSync(dir1)).toBe(true);
+    expect(adapter.gatewayStatuses().map((g) => g.id)).toEqual(["g2"]);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ gatewayId: "g1" }),
+      "gateway device directory removal failed",
+    );
+  });
+
+  it("지우는 사이 같은 id 를 다시 더하면 지우기가 끝난 뒤에 만든다 — 새 연결의 디바이스 파일이 지워지지 않는다(탐침 P6)", async () => {
+    writeIdentityOnConnect = true;
+    await bothConnected();
+    const gw1 = fakeGateway(G1.url);
+    let release!: () => void;
+    gw1.stopGate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const removing = adapter.removeGateway("g1");
+    await until(() => gw1.stops === 1, "stop in progress");
+
+    try {
+      adapter.upsertGateway(G1);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      // 지우는 동안은 아직 없다 — 옛 연결도 새 연결도 받지 않는다
+      expect(gatewayOf("g1")).toBeUndefined();
+    } finally {
+      gw1.stopGate = undefined;
+      release();
+      await removing;
+    }
+    await until(() => gatewayOf("g1")?.gateway === "connected", "g1 added again after removal");
+    expect(existsSync(join(dataDir, "gateways", "g1", "device.json"))).toBe(true);
+  });
+
+  it("꺼진 Gateway 토큰의 거절은 실패 카운터에 세지 않는다 — 같은 주소의 다른 Gateway 토큰이 통한다(변이 Mb)", async () => {
+    await bothConnected();
+    adapter.upsertGateway({ ...G1, enabled: false });
+    for (let i = 0; i < 4; i += 1) expect(await rejectedHandshake("bridge-g1")).toBe("UNAUTHORIZED");
+
+    await expect(plugin("bridge-g2")).resolves.toBeDefined();
+
+    // 대조 — 틀린 토큰 3번이면 같은 주소가 막혀 g2 토큰도 거절된다(카운터가 이 브리지에 붙어 있다)
+    for (let i = 0; i < 3; i += 1) expect(await rejectedHandshake("nope")).toBe("UNAUTHORIZED");
+    expect(await rejectedHandshake("bridge-g2")).toBe("UNAUTHORIZED");
+  });
+
+  it("removeGateway 가 WS stop 을 기다리는 사이 그 Gateway 토큰 핸드셰이크는 거절된다(변이 Me)", async () => {
+    await bothConnected();
+    const gw1 = fakeGateway(G1.url);
+    let release!: () => void;
+    gw1.stopGate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const removing = adapter.removeGateway("g1");
+    await until(() => gw1.stops === 1, "stop in progress");
+
+    try {
+      expect(await rejectedHandshake("bridge-g1")).toBe("UNAUTHORIZED");
+    } finally {
+      release();
+      await removing;
+    }
   });
 });
 

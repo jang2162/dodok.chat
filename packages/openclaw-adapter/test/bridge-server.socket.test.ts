@@ -264,6 +264,75 @@ describe("attachBridge (실제 Socket.IO)", () => {
     });
   });
 
+  it("핸드셰이크 뒤 hello 전에 그 Gateway 가 꺼지면 hello 를 UNAUTHORIZED 로 거절하고 끊는다", async () => {
+    await stop();
+    let accepting = true;
+    await start({ acceptGateway: () => accepting });
+    const socket = client(TOKEN);
+    await waitFor(socket, "connect");
+    accepting = false;
+
+    expect(await socket.emitWithAck("hello", hello)).toMatchObject({
+      ok: false,
+      error: { code: "UNAUTHORIZED" },
+    });
+    while (socket.connected) await new Promise((resolve) => setImmediate(resolve));
+    expect(bridge.forGateway(GATEWAY).current()).toBeUndefined();
+  });
+
+  /** 받기만 하고 ack 하지 않는 플러그인 — ack 함수는 받은 차례대로 모아 둔다 */
+  async function silentPlugin(): Promise<Array<(res: unknown) => void>> {
+    const acks: Array<(res: unknown) => void> = [];
+    const socket = client(TOKEN);
+    socket.on("inbound.deliver", (_payload: InboundDeliver, ack: (res: unknown) => void) => acks.push(ack));
+    await waitFor(socket, "connect");
+    await socket.emitWithAck("hello", hello);
+    return acks;
+  }
+
+  async function settles<T>(promise: Promise<T>, withinMs: number): Promise<T | "pending"> {
+    return Promise.race([
+      promise,
+      new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), withinMs)),
+    ]);
+  }
+
+  it("disconnectGateway 는 ack 를 기다리던 deliverInbound 를 ack 제한시간을 기다리지 않고 ADAPTER_UNAVAILABLE 로 끝낸다", async () => {
+    const acks = await silentPlugin();
+    const pending = bridge
+      .forGateway(GATEWAY)
+      .deliverInbound({ deliveryId: randomUUID() } as InboundDeliver, 30_000);
+    while (acks.length === 0) await new Promise((resolve) => setImmediate(resolve));
+
+    bridge.disconnectGateway(GATEWAY);
+
+    expect(await settles(pending, 1_000)).toMatchObject({
+      ok: false,
+      error: { code: "ADAPTER_UNAVAILABLE" },
+    });
+  });
+
+  it("abandonDelivery 는 그 전송의 ack 대기만 끝낸다 — 플러그인은 붙은 채, 다른 전송은 ack 를 받는다", async () => {
+    const acks = await silentPlugin();
+    const view = bridge.forGateway(GATEWAY);
+    const a = { deliveryId: randomUUID() } as InboundDeliver;
+    const b = { deliveryId: randomUUID() } as InboundDeliver;
+    const pendingA = view.deliverInbound(a, 30_000);
+    const pendingB = view.deliverInbound(b, 30_000);
+    while (acks.length < 2) await new Promise((resolve) => setImmediate(resolve));
+
+    view.abandonDelivery(a.deliveryId);
+
+    expect(await settles(pendingA, 1_000)).toMatchObject({
+      ok: false,
+      error: { code: "ADAPTER_UNAVAILABLE" },
+    });
+    expect(await settles(pendingB, 50)).toBe("pending");
+    expect(view.current()).toBeDefined();
+    acks[1]?.({ ok: true, data: { admission: "dispatch", providerRunId: "r-b" } });
+    expect(await pendingB).toEqual({ ok: true, data: { admission: "dispatch", providerRunId: "r-b" } });
+  });
+
   it.each([
     ["data 가 InboundDeliverResult 가 아님(옛 번들의 {})", { ok: true, data: {} }],
     ["Result 봉투가 아님", {}],

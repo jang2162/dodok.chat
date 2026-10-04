@@ -93,6 +93,11 @@ export type GatewayBridge = {
   current(): BridgeSessionState | undefined;
   waitForReady(timeoutMs: number): Promise<BridgeSessionState>;
   deliverInbound(payload: InboundDeliver, timeoutMs?: number): Promise<Result<InboundDeliverResult>>;
+  /**
+   * 그 전송(`deliveryId`)의 ack 대기를 곧바로 ADAPTER_UNAVAILABLE 로 끝낸다 — 연결을 닫으며 그 런을 닫을 때. 플러그인에 이미 간
+   * 프레임은 되돌리지 못한다(그 런은 부르는 쪽이 chat.abort 로 멈춘다)
+   */
+  abandonDelivery(deliveryId: string): void;
   setConfig(payload: ConfigSet, timeoutMs?: number): Promise<Result<ConfigSetResult>>;
   listAgents(timeoutMs?: number): Promise<Result<{ agents: Array<{ agentId: string; name?: string }> }>>;
 };
@@ -103,7 +108,7 @@ export type BridgeHandle = {
   /** 그 토큰으로 통과한 연결(hello 전 포함)을 모두 끊고 끊은 수를 돌려준다 — 토큰 폐기 때 */
   revokeSessions(tokenId: string): number;
   /**
-   * 그 Gateway 의 연결(hello 전 포함)을 모두 끊고 ready 대기를 끝낸다 — Gateway 끄기·삭제 때. `forget` 이면 자리(중복 흡수 기억)도
+   * 그 Gateway 의 연결(hello 전 포함)을 모두 끊고 ready 대기·ack 를 기다리는 inbound.deliver 를 끝낸다 — Gateway 끄기·삭제 때. `forget` 이면 자리(중복 흡수 기억)도
    * 버린다(삭제). 끊은 수를 돌려준다
    */
   disconnectGateway(gatewayId: string, opts?: { forget?: boolean }): number;
@@ -147,6 +152,8 @@ type Slot = {
   // 중복 흡수는 연결이 아니라 Gateway(플러그인 id) 단위 — 플러그인은 ack 를 못 받은 head 를 재연결 뒤 같은 outboundId 로 다시 보낸다
   dedupe: OutboundDedupe;
   inflight: Map<string, Promise<{ messageId: string }>>;
+  // ack 를 기다리는 inbound.deliver(`deliveryId` → 끝내기). 소켓을 끊어도 socket.io 의 ack 대기는 제한시간까지 남는다
+  deliveries: Map<string, (result: Result<never>) => void>;
 };
 
 export function attachBridge(io: Server, opts: BridgeServerOptions): BridgeHandle {
@@ -181,6 +188,7 @@ export function attachBridge(io: Server, opts: BridgeServerOptions): BridgeHandl
       readyWaiters: new Set(),
       dedupe: new OutboundDedupe(),
       inflight: new Map(),
+      deliveries: new Map(),
     };
     slot.view = gatewayView(gatewayId, slot);
     slots.set(gatewayId, slot);
@@ -190,6 +198,8 @@ export function attachBridge(io: Server, opts: BridgeServerOptions): BridgeHandl
   function rejectWaiters(slot: Slot, message: string) {
     for (const waiter of slot.readyWaiters) waiter.reject(new Error(message));
     slot.readyWaiters.clear();
+    for (const end of slot.deliveries.values()) end(errorResult("ADAPTER_UNAVAILABLE", message));
+    slot.deliveries.clear();
   }
 
   namespace.use((socket, next) => {
@@ -357,13 +367,26 @@ export function attachBridge(io: Server, opts: BridgeServerOptions): BridgeHandl
           slot.readyWaiters.add(waiter);
         });
       },
-      deliverInbound: (payload, timeoutMs = ackTimeoutMs) =>
-        request(
+      deliverInbound(payload, timeoutMs = ackTimeoutMs) {
+        let end!: (result: Result<never>) => void;
+        const ended = new Promise<Result<never>>((resolve) => {
+          end = resolve;
+        });
+        slot.deliveries.set(payload.deliveryId, end);
+        const acked = request(
           slot,
           InboundDeliverResult,
           (socket, ms) => socket.timeout(ms).emitWithAck("inbound.deliver", payload),
           timeoutMs,
-        ),
+        );
+        return Promise.race([acked, ended]).finally(() => {
+          if (slot.deliveries.get(payload.deliveryId) === end) slot.deliveries.delete(payload.deliveryId);
+        });
+      },
+      abandonDelivery(deliveryId) {
+        slot.deliveries.get(deliveryId)?.(errorResult("ADAPTER_UNAVAILABLE", "delivery abandoned"));
+        slot.deliveries.delete(deliveryId);
+      },
       setConfig: (payload, timeoutMs = ackTimeoutMs) =>
         request(
           slot,

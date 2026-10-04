@@ -4,6 +4,8 @@
  *
  * 연결 사이에 나누는 상태가 없다 — 런 id·승인 id 기억이 연결마다 따로라 두 Gateway 가 같은 승인 id 를 내도 섞이지 않는다.
  * 끄기·삭제·주소나 토큰 바꾸기는 이 연결의 열린 런만 러너가 끊길 때와 같은 신호(ADAPTER_UNAVAILABLE)로 닫는다(계획 판정 PG5).
+ * 닫기 전에 옛 링크로 그 런들에 `chat.abort` 를 보낸다 — 플러그인은 주소·토큰을 바꿔도 붙은 채라, 멈추지 않으면 「다시 실행」 카드
+ * 뒤에 진짜 답이 따라 올라온다(태스크 2 리뷰 I1).
  */
 import { rmSync } from "node:fs";
 import { join } from "node:path";
@@ -100,6 +102,9 @@ const PLUGIN_READY_WAIT_MS = 120_000;
 const FORGET_AFTER_FINAL_MS = 60_000;
 // 승인 병합 기억 상한. Gateway 의 세션 되감기 상한과 같은 1000 — 넘으면 오래 손대지 않은 것부터 버린다.
 const APPROVAL_DEDUPE_MAX = 1_000;
+// 연결을 닫을 때 보내는 chat.abort 의 런마다 상한(런끼리는 함께 보낸다) — 답 없는 Gateway 가 옛 링크 정리를 오래 붙잡지 않게.
+// 가짜 connector 는 요청 제한시간을 보지 않으므로 여기서 직접 끊는다
+const ABORT_ON_CLOSE_TIMEOUT_MS = 2_000;
 
 const AgentsListResult = z.looseObject({
   agents: z.array(z.looseObject({ id: z.string().min(1), name: z.string().optional().catch(undefined) })),
@@ -166,12 +171,18 @@ export function createGatewayConnection(deps: GatewayConnectionDeps): GatewayCon
   let closed = false;
   let gatewayState: GatewayState = "down";
   let bridgeState: "connected" | "down" = "down";
-  // Gateway 이벤트를 우리 런으로 볼 id(send 시작부터 final 뒤 60s 까지)와, 그 가운데 아직 끝나지 않은 디스패치된 런
+  // Gateway 이벤트를 우리 런으로 볼 id(send 시작부터 final 뒤 60s 까지)와, 그 가운데 아직 끝나지 않은 디스패치된 런(→ 세션 키,
+  // 연결을 닫을 때 chat.abort 에 쓴다)
   const knownRunIds = new Set<string>();
-  const openRuns = new Set<string>();
+  const openRuns = new Map<string, string>();
   const finalRuns = new Set<string>();
-  // 플러그인 ack 를 기다리는 send — 끄기·삭제가 곧바로 끝낸다
-  const pendingSends = new Map<string, (error: AdapterError) => void>();
+  // 플러그인 ack 를 기다리는 send — 끄기·삭제·주소/토큰 변경이 곧바로 끝낸다
+  const pendingSends = new Map<
+    string,
+    { sessionKey: string; deliveryId: string; reject: (error: AdapterError) => void }
+  >();
+  // 옛 링크로 abort 를 보내고 멈추는 중인 정리 — close() 가 기다린다
+  const closings = new Set<Promise<void>>();
   const forgetTimers = new Map<string, ReturnType<typeof setTimeout>>();
   // send 재시도 대기 — close() 가 타이머를 지우고 기다리는 send 를 끝낸다
   const retryWaits = new Map<ReturnType<typeof setTimeout>, (error: AdapterError) => void>();
@@ -243,32 +254,83 @@ export function createGatewayConnection(deps: GatewayConnectionDeps): GatewayCon
   }
 
   /**
-   * 이 연결의 열린 런을 닫는다 — ack 를 기다리는 send 는 그 send 가 던지고(오케스트레이터가 닫는다), 디스패치된 런은 러너 어댑터가
-   * 러너를 잃을 때와 같은 RUN_ERROR + gateway_error 로 닫는다(서버가 「다시 실행」 카드를 단다). 닫은 런은 잊는다 — 그 런의 늦은
-   * 프레임은 버린다
+   * 이 연결의 열린 런을 닫는다 — ack 를 기다리는 send 는 곧바로 그 send 가 던지고(오케스트레이터가 닫는다), 디스패치된 런은 러너
+   * 어댑터가 러너를 잃을 때와 같은 RUN_ERROR + gateway_error 로 닫는다(서버가 「다시 실행」 카드를 단다). 닫은 런은 곧바로 잊는다 —
+   * 그 런의 늦은 프레임은 버린다.
+   *
+   * 신호를 내기 전에 `link`(닫히는 옛 링크)로 두 쪽 런 모두에 chat.abort 를 보낸다 — ack 전 런도 플러그인이 이미 디스패치했을 수
+   * 있다. 최선 노력이다: 링크가 붙어 있지 않으면 보내지 않고, 실패는 warn, 런마다 상한까지만 기다린다. 끝나면 돌려준 약속이 풀린다 —
+   * 부르는 쪽은 그 뒤에 옛 링크를 멈춘다
    */
-  function closeOpenRuns(reason: string) {
+  function closeOpenRuns(reason: string, link: ConnectionManager, linkUp: boolean): Promise<void> {
     const error = new AdapterError("ADAPTER_UNAVAILABLE", reason);
     for (const [timer, reject] of retryWaits) {
       clearTimeout(timer);
       reject(error);
     }
     retryWaits.clear();
-    for (const [runId, reject] of pendingSends) {
+    const targets: Array<{ runId: string; sessionKey: string }> = [];
+    for (const [runId, pending] of pendingSends) {
       pendingSends.delete(runId);
       forgetRun(runId);
-      reject(error);
+      // 플러그인이 붙은 채라 브리지 ack 대기는 혼자 끝나지 않는다 — ack 타임아웃까지 남지 않게 끝낸다
+      view.abandonDelivery(pending.deliveryId);
+      pending.reject(error);
+      targets.push({ runId, sessionKey: pending.sessionKey });
     }
-    for (const runId of openRuns) {
+    const dispatched = [...openRuns];
+    for (const [runId, sessionKey] of dispatched) {
       forgetRun(runId);
-      deps.emit({
-        kind: "run_event",
-        runId,
-        connectionId: id,
-        event: { type: "RUN_ERROR", runId, code: error.code, message: error.message },
-      });
-      emitRunSignal(runId, { kind: "gateway_error", code: error.code, message: error.message });
+      targets.push({ runId, sessionKey });
     }
+    const signal = () => {
+      for (const [runId] of dispatched) {
+        deps.emit({
+          kind: "run_event",
+          runId,
+          connectionId: id,
+          event: { type: "RUN_ERROR", runId, code: error.code, message: error.message },
+        });
+        emitRunSignal(runId, {
+          kind: "gateway_error",
+          code: error.code,
+          message: error.message,
+          connectionClosed: true,
+        });
+      }
+    };
+    if (!linkUp || targets.length === 0) {
+      signal();
+      return Promise.resolve();
+    }
+    return Promise.all(targets.map((target) => abortOnClose(link, target))).then(signal);
+  }
+
+  async function abortOnClose(link: ConnectionManager, target: { runId: string; sessionKey: string }) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`no answer within ${ABORT_ON_CLOSE_TIMEOUT_MS}ms`)),
+        ABORT_ON_CLOSE_TIMEOUT_MS,
+      );
+    });
+    try {
+      await Promise.race([link.request("chat.abort", target, ABORT_ON_CLOSE_TIMEOUT_MS), timeout]);
+    } catch (error) {
+      logger.warn(
+        { err: error, gatewayId: id, runId: target.runId },
+        "chat.abort on connection close failed",
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /** 닫는 링크의 정리(abort → 신호 → stop)를 기억해 둔다 — close() 가 기다린다 */
+  function retire(link: ConnectionManager, closing: Promise<void>) {
+    const done = closing.then(() => stopWs(link));
+    closings.add(done);
+    void done.finally(() => closings.delete(done));
   }
 
   /**
@@ -372,6 +434,8 @@ export function createGatewayConnection(deps: GatewayConnectionDeps): GatewayCon
       }
       if (closed) throw adapterClosed();
       const { code, message } = res.error;
+      // 기다리는 사이 연결을 닫으며 이 런을 닫았다 — 다시 보내지도, 플러그인을 기다리지도 않는다
+      if (!knownRunIds.has(input.runId)) throw unavailable("run forgotten before delivery");
       const delayMs = DELIVER_RETRY_DELAYS_MS[timeoutRetries];
       if (code === "TIMEOUT" && delayMs !== undefined) {
         timeoutRetries += 1;
@@ -446,21 +510,30 @@ export function createGatewayConnection(deps: GatewayConnectionDeps): GatewayCon
       const addressChanged = next.url !== previous.url;
       const credentialsChanged = addressChanged || next.token !== previous.token;
       const disabling = previous.enabled && !next.enabled;
-      if (disabling || (previous.enabled && credentialsChanged)) {
-        closeOpenRuns(
-          disabling
-            ? "gateway disabled"
-            : addressChanged
-              ? "gateway address changed"
-              : "gateway token changed",
-        );
+      const closing = disabling || (previous.enabled && credentialsChanged);
+      if (closing) {
+        const old = ws;
+        const reason = disabling
+          ? "gateway disabled"
+          : addressChanged
+            ? "gateway address changed"
+            : "gateway token changed";
+        // 옛 링크는 abort 를 보낸 뒤에 멈춘다. 새 링크는 기다리지 않고 곧바로 만든다 — 끄기도 새 루프로 바꿔 두어, 곧바로 다시 켤 때
+        // 멈추는 중인 옛 루프를 되살리지 않게 한다
+        retire(old, closeOpenRuns(reason, old, gatewayState === "connected"));
+        if (disabling) deps.bridge.disconnectGateway(id);
       }
-      if (disabling) deps.bridge.disconnectGateway(id);
       // 꺼진 동안 주소·토큰을 바꿔도 루프를 새로 만들어 둔다 — 켤 때 옛 주소로 붙지 않게
-      if (disabling || (previous.enabled && credentialsChanged)) stopWs(ws);
-      if (credentialsChanged) {
-        // 다른 Gateway 일 수 있다 — 옛 Gateway 가 준 디바이스 토큰으로 붙지 않고 다시 페어링한다. 디바이스 키는 그대로 쓴다
-        if (addressChanged) rmSync(join(deps.deviceDir, DEVICE_TOKENS_FILE), { force: true });
+      if (closing || credentialsChanged) {
+        // 다른 Gateway 일 수 있다 — 옛 Gateway 가 준 디바이스 토큰으로 붙지 않고 다시 페어링한다. 디바이스 키는 그대로 쓴다.
+        // 못 지워도 새 주소로 붙는다 — 남은 토큰은 새 Gateway 가 거절하고 클라이언트가 지운다(던지면 연결이 down 에 멈춘다, 리뷰 M1)
+        if (addressChanged) {
+          try {
+            rmSync(join(deps.deviceDir, DEVICE_TOKENS_FILE), { force: true });
+          } catch (error) {
+            logger.warn({ err: error, gatewayId: id }, "gateway device token removal failed");
+          }
+        }
         ws = createWs();
         gatewayState = "down";
       }
@@ -502,11 +575,18 @@ export function createGatewayConnection(deps: GatewayConnectionDeps): GatewayCon
       // 끄기·삭제가 이 send 를 곧바로 끝낼 수 있게 경주시킨다. 진 deliver 의 늦은 실패는 버린다(런은 이미 잊었다)
       const delivering = deliver(input);
       delivering.catch(() => undefined);
-      const aborted = new Promise<never>((_resolve, reject) => pendingSends.set(input.runId, reject));
+      const aborted = new Promise<never>((_resolve, reject) =>
+        pendingSends.set(input.runId, {
+          sessionKey: input.sessionKey,
+          deliveryId: input.deliveryId,
+          reject,
+        }),
+      );
       try {
         const result = await Promise.race([delivering, aborted]);
         if (result.admission === "drop") forgetRun(input.runId);
-        else if (knownRunIds.has(input.runId) && !finalRuns.has(input.runId)) openRuns.add(input.runId);
+        else if (knownRunIds.has(input.runId) && !finalRuns.has(input.runId))
+          openRuns.set(input.runId, input.sessionKey);
         return { ...result, connectionId: id };
       } catch (error) {
         forgetRun(input.runId);
@@ -615,6 +695,8 @@ export function createGatewayConnection(deps: GatewayConnectionDeps): GatewayCon
         reject(adapterClosed());
       }
       retryWaits.clear();
+      // 옛 링크 정리는 런마다 상한이 있다 — 끝까지 기다려 종료 뒤에 남는 타이머·링크가 없게 한다
+      await Promise.all(closings);
       try {
         await ws.stop();
       } catch (error) {
@@ -625,17 +707,24 @@ export function createGatewayConnection(deps: GatewayConnectionDeps): GatewayCon
     },
 
     async remove() {
-      closeOpenRuns("gateway removed");
+      const closing = closeOpenRuns("gateway removed", ws, config.enabled && gatewayState === "connected");
       deps.bridge.disconnectGateway(id, { forget: true });
       closed = true;
+      await closing;
       clearRunMemory();
+      await Promise.all(closings);
       try {
         await ws.stop();
       } catch (error) {
         logger.warn({ err: error, gatewayId: id }, "gateway stop failed during remove");
       }
       await frameDump?.close();
-      rmSync(deps.deviceDir, { recursive: true, force: true });
+      // 못 지워도 삭제는 끝까지 간다 — 연결은 이미 목록에서 빠졌다. 남은 디렉터리는 같은 id 를 다시 쓰지 않으면 읽히지 않는다
+      try {
+        rmSync(deps.deviceDir, { recursive: true, force: true });
+      } catch (error) {
+        logger.warn({ err: error, gatewayId: id }, "gateway device directory removal failed");
+      }
     },
   };
 }

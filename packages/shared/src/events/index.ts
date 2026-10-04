@@ -102,7 +102,9 @@ export type RunSignal =
   | { kind: "gateway_final" } // chat state: final
   | { kind: "canonical_received" } // 브리지 outbound.message 도착
   | { kind: "final_timeout" } // finalizing 상한(기본 10s)
-  | { kind: "gateway_error"; code: string; message: string }
+  // connectionClosed — 어댑터가 연결을 닫으며(OpenClaw Gateway 끄기·삭제·주소/토큰 변경) 닫은 런. Gateway 안의 런은 멈추라고
+  // 했지만(chat.abort, 최선 노력) 그 런의 정본이 늦게 올 수 있다
+  | { kind: "gateway_error"; code: string; message: string; connectionClosed?: true }
   | { kind: "gateway_aborted" }
   | { kind: "abort_requested" }
   | { kind: "queue_timeout" }

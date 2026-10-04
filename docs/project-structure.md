@@ -446,13 +446,16 @@ src/
 │                         상세 목록이 바뀔 때(같으면 안 냄). 능력(sessionReset·agentsList)은 어댑터에 하나 — 어느 Gateway 든 FORBIDDEN 이면 내린다.
 │                         revokeTokenSessions(tokenId) — 그 토큰으로 붙은 세션만 끊고 수를 돌려준다
 ├─ connection/
-│  ├─ manager.ts          Gateway 연결 목록 — 만들기·바꾸기·지우기·연결 id 로 찾기. 연결 id 는 디렉터리 이름이 되므로 영숫자로 시작하고 영숫자·`.`·`_`·`-` 만
+│  ├─ manager.ts          Gateway 연결 목록 — 만들기·바꾸기·지우기·연결 id 로 찾기. 연결 id 는 디렉터리 이름이 되므로 영숫자로 시작하고 영숫자·`.`·`_`·`-` 만.
+│                         같은 id 를 지우는 중에 온 upsert 는 지우기(디렉터리 삭제까지)가 끝난 뒤에 적용한다
 │  └─ gateway-connection.ts  Gateway 연결 하나: WS 루프(gateway/connection-manager)·디바이스 디렉터리 `<DATA_DIR>/gateways/<id>/`(device.json·device-tokens.json)·
 │                         이벤트 매퍼·승인 병합(기억은 연결마다 — 두 Gateway 가 같은 승인 id 를 내도 따로)·프레임 덤프(`<path>.<id>`)·브리지 자리.
 │                         send = 런 id 등록 → 세션 구독 → inbound.deliver(플러그인 미접속 120s 대기, ack 타임아웃 10s + 트리거 이미지 첨부당 30s·재시도 1s·4s·16s) → admission.
 │                         abort(chat.abort)·resetSession(sessions.reset, FORBIDDEN 이면 capability 내림)·listAgents(그 Gateway 의 agents.list)·syncChannelConfig·forgetRun.
 │                         이름만 바뀌면 다시 붙지 않는다. 끄기·주소/토큰 바꾸기·삭제는 그 연결의 열린 런만 닫는다 — ack 를 기다리던 send 는 ADAPTER_UNAVAILABLE 로
-│                         던지고, 디스패치된 런은 러너가 끊길 때와 같은 RUN_ERROR + gateway_error(ADAPTER_UNAVAILABLE)(서버가 「다시 실행」 카드를 단다).
+│                         던지고(브리지 ack 대기도 끝냄), 디스패치된 런은 러너가 끊길 때와 같은 RUN_ERROR + gateway_error(ADAPTER_UNAVAILABLE,
+│                         connectionClosed: true)(서버가 「다시 실행」 카드를 단다). 신호 전에 옛 링크가 붙어 있으면 두 쪽 런 모두에 chat.abort 를 보내고(런마다 2s 상한,
+│                         실패는 warn) 그 뒤 옛 링크를 멈춘다 — 새 링크는 기다리지 않고 곧바로 만든다. 디바이스 파일을 못 지우면 warn 만 남기고 이어 간다.
 │                         끄면 그 Gateway 의 플러그인 소켓도 끊고, 주소가 바뀌면 device-tokens.json 을 지워 다시 페어링하고(디바이스 키는 그대로), 지우면 디렉터리를 지운다.
 │                         Gateway WS 가 끊기기만 한 것(재접속 루프)은 런을 닫지 않는다 — 정본은 플러그인 경로다.
 │                         스레드: supports("threads") — 그 연결에 **지금 붙은** 플러그인 hello 의 capabilities(붙은 플러그인이 없으면 false). send 전 구독은 키를 가리지 않아
