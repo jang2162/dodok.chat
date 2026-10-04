@@ -12,7 +12,7 @@
  * 줄머리 표시 되풀이(`- - - … x`)도 표시마다 가로줄 검사가 줄 끝까지 훑으면 길이의 제곱이고, 창 앞 줄머리 훑기에는 창 상한이
  * 없다 — 그렇게 돌리면 `"- ".repeat(48_000) + "x\n목표어"` 한 행이 16 s 다(lineHead 의 가로줄 시도를 되풀이마다 하게 바꾸고
  * search.snippet-window.test.ts 를 돌려 잰다). 그래서 가로줄은 줄마다 한 번만 시도하고, 창 앞은 펜스 표시가 든 줄만 본다
- * (fenceBefore). 표시마다 100 KB 되풀이한 최악 입력은 search.snippet-worst.test.ts 가 행마다 200 ms 상한으로 잰다
+ * (fenceBefore). 표시마다 100 KB 되풀이한 최악 입력은 search.snippet-worst.test.ts 가 행마다 2 s 상한으로 잰다
  */
 
 /** 화면 글자 하나(코드 포인트)와 그 글자를 낳은 원문 범위(UTF-16 오프셋, [from, to)) */

@@ -69,7 +69,11 @@ const wellFormed = (s: string) =>
   !/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(s);
 const NEEDLE = "목표어";
 const LIMIT = 99_990;
-const BOUND_MS = 200;
+// 상한은 회귀를 잡을 만큼만 낮게 — 행 하나가 단독 실행에서 몇 ms 인데 루트 병렬 실행(7 패키지)의 부하에서는 한 행이 수백 ms 로
+// 튄다. 잡으려는 것은 제곱 꼴 회귀이고 그 꼴은 행 하나가 수 초다: readable.ts 의 lineHead 가 가로줄을 되풀이마다 시도하고
+// fenceBefore 가 모든 줄을 lineHead 로 훑게 되돌리면 넘는 행이 4.5 s·17.5 s 다(BOUND_MS 를 -1 로 두고 이 파일을 돌려 실패 목록에서 읽는다).
+// 비율(같은 길이 보통 글과 견주기)로 재지 않는 까닭: 튀는 것은 한 행의 순간 부하라 다른 순간에 잰 기준이 함께 튀지 않는다
+const BOUND_MS = 2_000;
 
 /** 되풀이 덩어리를 n 등분한 길이만큼 */
 const fill = (unit: string, parts: number) => unit.repeat(Math.floor(LIMIT / unit.length / parts));
