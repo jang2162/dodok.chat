@@ -12,6 +12,8 @@ const TOKEN = "bridge-test-token";
 const OTHER_TOKEN = "bridge-other-token";
 // 검증 함수가 아는 토큰 → 토큰 id
 const TOKEN_IDS: Record<string, string> = { [TOKEN]: "t1", [OTHER_TOKEN]: "t2" };
+// 두 토큰 모두 이 Gateway 에 묶였다 — Gateway 를 가르는 브리지 동작은 multi-gateway.test.ts
+const GATEWAY = "gw-1";
 const BUNDLE_SHA = "a".repeat(64);
 const CH = "01a09fc9-d204-7551-89d6-38544d07a102";
 
@@ -75,8 +77,9 @@ async function start(extra: Partial<Parameters<typeof attachBridge>[1]> = {}) {
     verifyToken: (presented) => {
       if (verifyThrows) throw new Error("SqliteError: no such table: bridge_tokens");
       const tokenId = typeof presented === "string" ? TOKEN_IDS[presented] : undefined;
-      return tokenId ? { tokenId } : null;
+      return tokenId ? { tokenId, gatewayId: GATEWAY } : null;
     },
+    acceptGateway: () => true,
     serverVersion: "test",
     now: () => nowMs,
     onRejected: (reason) => rejected.push(reason),
@@ -112,8 +115,8 @@ describe("attachBridge (실제 Socket.IO)", () => {
     const socket = client(OTHER_TOKEN);
     await waitFor(socket, "connect");
     await socket.emitWithAck("hello", { ...hello, bundleSha256: BUNDLE_SHA });
-    expect(bridge.current()?.tokenId).toBe("t2");
-    expect(bridge.current()?.hello?.bundleSha256).toBe(BUNDLE_SHA);
+    expect(bridge.forGateway(GATEWAY).current()?.tokenId).toBe("t2");
+    expect(bridge.forGateway(GATEWAY).current()?.hello?.bundleSha256).toBe(BUNDLE_SHA);
   });
 
   it("검증 함수가 던지면 통과가 아니라 UNAUTHORIZED 로 거절하고, 거절 로그에는 토큰이 없다", async () => {
@@ -122,7 +125,7 @@ describe("attachBridge (실제 Socket.IO)", () => {
     const error = (await waitFor(socket, "connect_error")) as Error;
     expect(error.message).toBe("UNAUTHORIZED");
     expect(socket.connected).toBe(false);
-    expect(bridge.current()).toBeUndefined();
+    expect(bridge.forGateway(GATEWAY).current()).toBeUndefined();
     expect(rejected).toHaveLength(1);
     expect(rejected[0]).toMatch(/^token mismatch from \S+$/);
     expect(rejected.join("\n")).not.toContain(TOKEN);
@@ -171,12 +174,12 @@ describe("attachBridge (실제 Socket.IO)", () => {
     expect(bridge.revokeSessions("t1")).toBe(1);
     await disconnected;
     expect(kept.connected).toBe(true);
-    expect(bridge.current()?.tokenId).toBe("t2");
+    expect(bridge.forGateway(GATEWAY).current()?.tokenId).toBe("t2");
     expect(bridge.revokeSessions("unknown")).toBe(0);
 
     expect(bridge.revokeSessions("t2")).toBe(1);
     await new Promise((resolve) => kept.once("disconnect", resolve));
-    expect(bridge.current()).toBeUndefined();
+    expect(bridge.forGateway(GATEWAY).current()).toBeUndefined();
   });
 
   it("hello → ready, 같은 outboundId 재전송은 한 번만 저장하고 같은 messageId 를 돌려준다", async () => {
@@ -184,7 +187,7 @@ describe("attachBridge (실제 Socket.IO)", () => {
     await waitFor(socket, "connect");
     const helloAck = await socket.emitWithAck("hello", hello);
     expect(helloAck).toEqual({ ok: true, data: { serverVersion: "test", protocol: 1 } });
-    expect(bridge.current()?.hello?.pluginId).toBe("dodok");
+    expect(bridge.forGateway(GATEWAY).current()?.hello?.pluginId).toBe("dodok");
 
     const message = {
       outboundId: "o-1",
@@ -244,7 +247,7 @@ describe("attachBridge (실제 Socket.IO)", () => {
 
   it("deliverInbound 는 플러그인 ack 를 돌려주고, 연결이 없으면 ADAPTER_UNAVAILABLE", async () => {
     const delivery = { deliveryId: randomUUID() } as InboundDeliver;
-    expect(await bridge.deliverInbound(delivery, 1_000)).toMatchObject({
+    expect(await bridge.forGateway(GATEWAY).deliverInbound(delivery, 1_000)).toMatchObject({
       ok: false,
       error: { code: "ADAPTER_UNAVAILABLE" },
     });
@@ -255,7 +258,7 @@ describe("attachBridge (실제 Socket.IO)", () => {
     });
     await waitFor(socket, "connect");
     await socket.emitWithAck("hello", hello);
-    expect(await bridge.deliverInbound(delivery, 1_000)).toEqual({
+    expect(await bridge.forGateway(GATEWAY).deliverInbound(delivery, 1_000)).toEqual({
       ok: true,
       data: { admission: "dispatch", providerRunId: delivery.deliveryId },
     });
@@ -271,7 +274,9 @@ describe("attachBridge (실제 Socket.IO)", () => {
     await waitFor(socket, "connect");
     await socket.emitWithAck("hello", hello);
 
-    const res = await bridge.deliverInbound({ deliveryId: randomUUID() } as InboundDeliver, 1_000);
+    const res = await bridge
+      .forGateway(GATEWAY)
+      .deliverInbound({ deliveryId: randomUUID() } as InboundDeliver, 1_000);
     expect(res).toMatchObject({ ok: false, error: { code: "INTERNAL" } });
     expect(res.ok ? "" : res.error.message).toMatch(/^ADAPTER_PROTOCOL: /);
   });
@@ -290,13 +295,17 @@ describe("attachBridge (실제 Socket.IO)", () => {
     await waitFor(socket, "connect");
     await socket.emitWithAck("hello", hello);
 
-    expect(await bridge.deliverInbound({ deliveryId: randomUUID() } as InboundDeliver, 1_000)).toEqual({
+    expect(
+      await bridge.forGateway(GATEWAY).deliverInbound({ deliveryId: randomUUID() } as InboundDeliver, 1_000),
+    ).toEqual({
       ok: false,
       error: { code: "VALIDATION", message: "bad" },
     });
-    const config = await bridge.setConfig({ channelId: CH, config: { requireMention: true } }, 1_000);
+    const config = await bridge
+      .forGateway(GATEWAY)
+      .setConfig({ channelId: CH, config: { requireMention: true } }, 1_000);
     expect(config).toMatchObject({ ok: false, error: { code: "INTERNAL" } });
-    expect(await bridge.listAgents(1_000)).toEqual({
+    expect(await bridge.forGateway(GATEWAY).listAgents(1_000)).toEqual({
       ok: true,
       data: { agents: [{ agentId: "dev", name: "Dev" }] },
     });
@@ -310,6 +319,7 @@ describe("attachBridge — 거절 로그 주소(clientAddress)", () => {
     const logged: string[] = [];
     const ownBridge = attachBridge(ownIo, {
       verifyToken: () => null,
+      acceptGateway: () => true,
       serverVersion: "test",
       now: () => 0,
       clientAddress: (handshake) => String(handshake.headers["x-test-client"] ?? "none"),
@@ -346,6 +356,7 @@ describe("attachBridge — 거절 로그 주소(clientAddress)", () => {
     const logged: string[] = [];
     const ownBridge = attachBridge(ownIo, {
       verifyToken: () => null,
+      acceptGateway: () => true,
       serverVersion: "test",
       clientAddress: () => {
         throw new Error("boom");
@@ -389,8 +400,9 @@ describe("attachBridge — 인증 실패 카운터(authGuard)", () => {
       verifyToken: (presented) => {
         state.verified.push(presented);
         if (state.throws) throw new Error("SqliteError: database is locked");
-        return presented === TOKEN ? { tokenId: "t1" } : null;
+        return presented === TOKEN ? { tokenId: "t1", gatewayId: GATEWAY } : null;
       },
+      acceptGateway: () => true,
       serverVersion: "test",
       now: () => state.nowMs,
       clientAddress: () => "203.0.113.7",

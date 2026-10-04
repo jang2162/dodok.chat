@@ -432,21 +432,34 @@ run_error 「다시 실행」 카드는 대본 「실패」 키워드(코드 `un
 
 ```
 src/
-├─ index.ts               배럴: adapter-types · createOpenClawAdapter · FakeAdapter · ProviderApproval·parseSessionKey(서버 승인 상관이 쓴다) · BridgeAuthGuard · OPENCLAW_PINNED_VERSION
+├─ index.ts               배럴: adapter-types · createOpenClawAdapter(+ GatewayConnectionConfig·GatewayStatusEntry·GatewaySetupEntry) · FakeAdapter · ProviderApproval·parseSessionKey(서버 승인 상관이 쓴다) · BridgeAuthGuard · OPENCLAW_PINNED_VERSION
 ├─ version.ts             OPENCLAW_PINNED_VERSION — 저장소가 검증한 OpenClaw 버전. package.json 의 OpenClaw 패키지 정확 핀과 같아야 한다(test/version.test.ts).
 │                         서버가 접속한 Gateway 버전과 비교해 gateway_version_untested·운영 화면·연결 페이지의 드리프트 문구를 낸다
 ├─ adapter-types.ts       AgentAdapter 인터페이스(스펙 6.1), AdapterEvent(+ kind:"approval")·RunEventBody, AdapterCapabilities(sessionReset·agentsList·configSet),
 │                         resolveApproval(providerApprovalId, kind, decision), AdapterError
-├─ openclaw-adapter.ts    createOpenClawAdapter: 연결 관리자 + 브리지 + 매퍼 조립. send = 런 id 등록 → 세션 구독 → inbound.deliver(플러그인 미접속 120s 대기,
-│                         ack 타임아웃 10s + 트리거 이미지 첨부당 30s·재시도 1s·4s·16s) → admission. 정본 outbound.message → onCanonical. abort(chat.abort)·resetSession(sessions.reset,
-│                         FORBIDDEN 이면 capability 내림)·listAgents·syncChannelConfig·forgetRun·status 이벤트.
-│                         설정 마법사: 옵션 `bridge.verifyToken`(BridgeTokenVerifier — 통과면 토큰 id), setupDetail()(gateway{state,host,version,pairing}·
-│                         bridge{state,plugin{…, bundleSha256, tokenId, connectedAt}} — AdapterStatus 와 따로), 상세가 바뀌면 이벤트 { kind: "setup" }(같은 상세면 안 냄),
-│                         revokeBridgeSessions(tokenId) — 그 토큰으로 붙은 세션을 끊고 수를 돌려준다.
-│                         스레드: pluginSupports("threads") — **지금 붙은** 플러그인 hello 의 capabilities(붙은 플러그인이 없으면 false). send 전 구독은 키를 가리지 않아
-│                         스레드 키도 인바운드보다 먼저 sessions.messages.subscribe 된다. 재접속 복구 대상은 서버 sessionRecoverTargets(agent_sessions 전부 — 스레드 행 포함)라 어댑터가 따로 기억하지 않는다
-├─ fake-adapter.ts        FakeAdapter — 서버 단위 테스트용(`@dodok/openclaw-adapter/fake` 서브패스), calls 기록·이벤트 주입, setPluginCapabilities(옛 플러그인 흉내 — 기본은 threads 있음)
-├─ config-sync.ts         채널 설정 → 브리지 config.set(10s). 플러그인이 없으면 기다리지 않고 ADAPTER_UNAVAILABLE
+├─ openclaw-adapter.ts    createOpenClawAdapter: 브리지 + Gateway 연결 목록(connection/manager) 조립 — 어댑터 하나가 Gateway 연결 여럿을 품는다(멀티 Gateway 스펙 5장).
+│                         upsertGateway({ id, name, url, token, enabled })·removeGateway(id) 로 연결을 넣고 빼고(서버가 부른다 — 재시작 없음), 메서드는 연결 id 로
+│                         그 연결에 보낸다(null·모르는 id·꺼진 연결이면 ADAPTER_UNAVAILABLE). 정본 outbound.message → onCanonical(message, 연결 id).
+│                         gatewayStatuses()·gatewaySetupDetails() 가 Gateway 별 상태·상세(더한 차례, 상세에 공유 토큰 없음). 계약의 status()·setupDetail() 은
+│                         단수 모양 — status 는 켜진 Gateway 가운데 가장 나쁜 gateway(down > reconnecting > connected)와 「켜진 Gateway 모두에 플러그인」이면 connected 인
+│                         bridge(켜진 Gateway 가 없으면 down/down), setupDetail 은 첫 켜진 Gateway 의 것(없으면 host 가 빈 down/null). setup 이벤트는 Gateway 별
+│                         상세 목록이 바뀔 때(같으면 안 냄). 능력(sessionReset·agentsList)은 어댑터에 하나 — 어느 Gateway 든 FORBIDDEN 이면 내린다.
+│                         revokeTokenSessions(tokenId) — 그 토큰으로 붙은 세션만 끊고 수를 돌려준다
+├─ connection/
+│  ├─ manager.ts          Gateway 연결 목록 — 만들기·바꾸기·지우기·연결 id 로 찾기. 연결 id 는 디렉터리 이름이 되므로 영숫자로 시작하고 영숫자·`.`·`_`·`-` 만
+│  └─ gateway-connection.ts  Gateway 연결 하나: WS 루프(gateway/connection-manager)·디바이스 디렉터리 `<DATA_DIR>/gateways/<id>/`(device.json·device-tokens.json)·
+│                         이벤트 매퍼·승인 병합(기억은 연결마다 — 두 Gateway 가 같은 승인 id 를 내도 따로)·프레임 덤프(`<path>.<id>`)·브리지 자리.
+│                         send = 런 id 등록 → 세션 구독 → inbound.deliver(플러그인 미접속 120s 대기, ack 타임아웃 10s + 트리거 이미지 첨부당 30s·재시도 1s·4s·16s) → admission.
+│                         abort(chat.abort)·resetSession(sessions.reset, FORBIDDEN 이면 capability 내림)·listAgents(그 Gateway 의 agents.list)·syncChannelConfig·forgetRun.
+│                         이름만 바뀌면 다시 붙지 않는다. 끄기·주소/토큰 바꾸기·삭제는 그 연결의 열린 런만 닫는다 — ack 를 기다리던 send 는 ADAPTER_UNAVAILABLE 로
+│                         던지고, 디스패치된 런은 러너가 끊길 때와 같은 RUN_ERROR + gateway_error(ADAPTER_UNAVAILABLE)(서버가 「다시 실행」 카드를 단다).
+│                         끄면 그 Gateway 의 플러그인 소켓도 끊고, 주소가 바뀌면 device-tokens.json 을 지워 다시 페어링하고(디바이스 키는 그대로), 지우면 디렉터리를 지운다.
+│                         Gateway WS 가 끊기기만 한 것(재접속 루프)은 런을 닫지 않는다 — 정본은 플러그인 경로다.
+│                         스레드: supports("threads") — 그 연결에 **지금 붙은** 플러그인 hello 의 capabilities(붙은 플러그인이 없으면 false). send 전 구독은 키를 가리지 않아
+│                         스레드 키도 인바운드보다 먼저 sessions.messages.subscribe 된다. 재접속 복구 대상은 서버가 연결 id 별로 준다(sessionRecoverTargets — 스레드 행 포함)
+├─ fake-adapter.ts        FakeAdapter — 서버 단위 테스트용(`@dodok/openclaw-adapter/fake` 서브패스), calls 기록(upsertGateway·removeGateway 포함 — 기록만)·이벤트 주입,
+│                         setPluginCapabilities(옛 플러그인 흉내 — 기본은 threads 있음)
+├─ config-sync.ts         채널 설정 → 그 Gateway 의 브리지 config.set(10s). 플러그인이 없으면 기다리지 않고 ADAPTER_UNAVAILABLE
 ├─ gateway/
 │  ├─ approvals.ts        Gateway 승인 프레임 → ProviderApproval 정규화(순수). 정본 전역 plugin|exec|openclaw.approval.requested/resolved(request 블록·toolCallId 있음)와
 │  │                      보조 session.approval(presentation 블록·toolCallId 없음)·재접속 approvalReplay 를 한 모양으로 모으고, 만료의 비대칭
@@ -463,7 +476,7 @@ src/
 │  ├─ device-identity.ts  Ed25519 아이덴티티 생성·저장(0600)·서명 (스파이크 1에서 확정)
 │  ├─ events.ts           chat(delta/final/error/aborted)·agent(lifecycle·stream:"tool")·session.message(usage) → RunEvent + RunSignal.
 │  │                      우리 런(runId = 우리 런 uuid, ADR 0002 4.3)만. deltaText → TEXT_MESSAGE_CONTENT(replace 면 TEXT_MESSAGE_REPLACE), final 스냅샷은 정본 대체용
-│  ├─ frame-dump.ts       OPENCLAW_FRAME_DUMP_PATH — 받은 chat·agent·session.message·session.approval·plugin|exec.approval.requested/resolved 프레임 JSONL append
+│  ├─ frame-dump.ts       OPENCLAW_FRAME_DUMP_PATH — 받은 chat·agent·session.message·session.approval·plugin|exec.approval.requested/resolved 프레임 JSONL append(연결마다 `<path>.<id>`)
 │  │                      (스트림, 쓰기 오류면 warn 뒤 끔, close 에서 닫음)
 │  └─ sessions.ts         sessionKeyFor(providerAgentId, channelId, threadRootId?) = shared dodokSessionKey(`agent:<agentId>:dodok:channel:<channelId>[:thread:<rootId>]` —
 │                         「새 대화」는 sessions.reset, 세대 접미사 없음: 계획서 10장 #15·#19), parseSessionKey = shared parseDodokSessionKey(승인 상관 — 스레드 키면
@@ -472,11 +485,14 @@ src/
 │  ├─ guard.ts            BridgeAuthGuard(Phase 3 ③) — 브리지 인증 **실패만** 세는 주소별 카운터(isBlocked·fail). 창 안에 maxFailures 번 틀리면 blockMs 동안 막고,
 │  │                      성공은 카운터를 건드리지 않는다(그런 메서드가 없다 — 막힌 주소의 정상 토큰도 막힌 동안 거절되고 저절로 풀린다), 주소 maxAddresses 개까지.
 │  │                      서버가 인스턴스 하나를 만들어 핸드셰이크(옵션 `bridge.authGuard`·`onBlocked`)와 `/bridge/attachments` 에 같이 준다. 숫자는 서버 LIMITS.bridgeFail
-│  ├─ server.ts           attachBridge: Socket.IO 네임스페이스 /bridge(HTTP 경로는 /socket.io/). 막힌 주소(authGuard)는 토큰을 보지 않고 거절(`blocked after repeated failures`) →
-│  │                      verifyToken 인증(던지면 거절 — 실패 카운터에는 세지 않는다) → 세션이 tokenId 를 기억 → hello →
+│  ├─ server.ts           attachBridge: Socket.IO 네임스페이스 /bridge 하나(HTTP 경로는 /socket.io/). 막힌 주소(authGuard)는 토큰을 보지 않고 거절(`blocked after repeated failures`) →
+│  │                      verifyToken 인증(통과면 { tokenId, gatewayId } — 던지면 거절, 실패 카운터에는 세지 않는다) → acceptGateway(켜진 Gateway 인가 — 아니면 같은
+│  │                      `token mismatch` 로 거절하되 실패로 세지 않는다: 꺼진 Gateway 의 플러그인은 백오프로 계속 다시 붙는다) → 세션이 tokenId·gatewayId 를 기억 → hello →
 │  │                      inbound.deliver·config.set·agents.list 요청, outbound.message·status 수신, close 때 system.notice { reason: "shutdown" }.
-│  │                      거절 로그 `token mismatch from <주소>` 는 주소별 1분에 한 줄(넘친 수는 `(N more suppressed)`), revokeSessions(tokenId) 는 사유 revoked 로 끊는다
-│  └─ session.ts          RejectLogThrottle·클라이언트 이벤트 Zod 파싱·연결 단계(tokenId 포함)·outboundId 중복 제거, verifyBridgeToken(상수 시간 비교 — 스파이크 러너용)
+│  │                      Gateway 마다 자리(forGateway(id) — 같은 id 에 같은 객체): 활성 플러그인 하나(새 hello 는 같은 Gateway 의 앞 연결만 replaced)·ready 대기·outboundId 중복 흡수.
+│  │                      disconnectGateway(id, { forget? }) 는 그 Gateway 의 소켓만 끊고 ready 대기를 끝낸다(끄기·삭제).
+│  │                      거절 로그 `token mismatch from <주소>` 는 주소별 1분에 한 줄(넘친 수는 `(N more suppressed)`), revokeSessions(tokenId) 는 사유 revoked 로 그 토큰의 소켓만 끊는다
+│  └─ session.ts          RejectLogThrottle·클라이언트 이벤트 Zod 파싱·연결 단계(tokenId·gatewayId 포함)·outboundId 중복 제거, verifyBridgeToken(상수 시간 비교 — 스파이크 러너용)
 └─ spike/                 Phase 0 스파이크 러너(gateway-spike·bridge-spike·prompt-spike·admin-scope-probe·bridge-serve) — 서버는 쓰지 않는다
 ```
 
@@ -820,11 +836,11 @@ src/
 | `OWNER_HANDLE` | `owner` | owner 핸들(`left-` 예약 검사는 지나지 않는다 — `left-` 로 시작하게 두지 않는다) |
 | `LOCAL_AUTH_TOKEN` | (필수, ≥16자) | 로컬 로그인 토큰 = owner 비밀번호. 바꾸면 기존 세션이 끊긴다 |
 | `BETTER_AUTH_SECRET` | (필수, ≥32자) | Better Auth 서명 비밀 |
-| `OPENCLAW_TARGET` | `remote` | `remote` \| `dev` — 어댑터가 붙을 Gateway 쌍과 디바이스 파일을 고른다 |
+| `OPENCLAW_TARGET` | `remote` | `remote` \| `dev` — 어댑터가 붙을 Gateway 쌍을 고른다 |
 | `OPENCLAW_GATEWAY_URL` · `OPENCLAW_GATEWAY_TOKEN` | — | 원격 Gateway(`wss://…`). `remote` 면 둘 다 필수 |
 | `OPENCLAW_DEV_GATEWAY_URL` · `OPENCLAW_DEV_GATEWAY_TOKEN` | — | 로컬 dev Gateway(`ws://127.0.0.1:19001`, `openclaw --dev gateway run`). `dev` 면 둘 다 필수 |
-| `OPENCLAW_DEVICE_IDENTITY_PATH` | `<DATA_DIR>/openclaw-device.json` (dev: `openclaw-device-dev.json`) | Ed25519 디바이스 아이덴티티 — 원격·dev 페어링이 섞이지 않게 대상별로 나뉜다 |
-| `OPENCLAW_FRAME_DUMP_PATH` | — | 진단용 — 어댑터가 받은 Gateway `chat`·`agent`·`session.message` 프레임을 이 파일에 JSONL(`{ receivedAt, frame }`)로 append. 본문이 들어가므로 `data/` 아래에. usage 출처 확인용(live-smoke 5.4) |
+| `OPENCLAW_DEVICE_IDENTITY_PATH` | — | 서버는 읽지 않는다. Ed25519 디바이스 아이덴티티와 디바이스 토큰은 Gateway 연결마다 `<DATA_DIR>/gateways/<연결 id>/`(`device.json`·`device-tokens.json`)에 생긴다 — `.env` 의 Gateway 는 연결 id `env` |
+| `OPENCLAW_FRAME_DUMP_PATH` | — | 진단용 — 어댑터가 받은 Gateway `chat`·`agent`·`session.message` 프레임을 Gateway 연결마다 `<이 경로>.<연결 id>` 파일에 JSONL(`{ receivedAt, frame }`)로 append. 본문이 들어가므로 `data/` 아래에. usage 출처 확인용(live-smoke 5.4) |
 | `BRIDGE_TOKEN` | — (선택, 있으면 ≥16자) | 브리지 토큰의 정본은 DB `bridge_tokens`(웹 연결 페이지에서 발급·폐기). 이 값은 부팅 때 그 워크스페이스의 토큰 행이 **0개일 때만** 라벨 `env` 로 한 번 이어받는다. 행이 있는데 활성 토큰과 다르면 이어받지 않고 warn 한 줄·연결 페이지 한 줄(`envTokenIgnored`) — 그 뒤 `.env` 를 바꿔도 통하지 않는다 |
 | `BRIDGE_PUBLIC_URL` | `APP_ORIGIN` 의 `https:`→`wss:`(`http:`→`ws:`) + `/bridge` | 플러그인 계정 설정 `bridgeUrl` 에 적을 공개 주소 — 연결 페이지가 보여 주고 발급 결과의 설정 조각에 들어간다(서버는 이 값으로 리슨하지 않는다). 예 `wss://dodok.example.com/bridge` |
 | `VAPID_PUBLIC_KEY` · `VAPID_PRIVATE_KEY` | — | 웹 푸시 VAPID 키 쌍 — **둘 다** 있어야 쓴다. 없으면 `<DATA_DIR>/vapid.json` 을 만들어(0600) 쓴다. 키가 바뀌면 모든 기기의 푸시 구독이 무효가 된다. 비밀 키는 로그에서 가린다 |

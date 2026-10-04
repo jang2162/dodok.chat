@@ -1,0 +1,641 @@
+/**
+ * Gateway 연결 하나 — 멀티 Gateway 스펙 5.1. 그 Gateway 의 WS 루프(`gateway/connection-manager`)·디바이스 디렉터리·이벤트 매핑·승인 병합·
+ * 프레임 덤프·브리지 자리(`GatewayBridge`)를 쥐고, 이 연결에서 나간 런을 추적한다.
+ *
+ * 연결 사이에 나누는 상태가 없다 — 런 id·승인 id 기억이 연결마다 따로라 두 Gateway 가 같은 승인 id 를 내도 섞이지 않는다.
+ * 끄기·삭제·주소나 토큰 바꾸기는 이 연결의 열린 런만 러너가 끊길 때와 같은 신호(ADAPTER_UNAVAILABLE)로 닫는다(계획 판정 PG5).
+ */
+import { rmSync } from "node:fs";
+import { join } from "node:path";
+import type {
+  ApprovalDecision,
+  ApprovalKind,
+  BridgeHello,
+  ConfigSet,
+  ConfigSetResult,
+  InboundDeliver,
+  InboundDeliverResult,
+  OutboundMessage,
+} from "@dodok/shared";
+import type { EventFrame } from "@openclaw/gateway-protocol";
+import { z } from "zod";
+import {
+  AdapterError,
+  type AdapterCapabilities,
+  type AdapterEvent,
+  type AdapterLogger,
+  type AdapterSendResult,
+  type OpenClawSetupDetail,
+} from "../adapter-types";
+import type { BridgeHandle } from "../bridge/server";
+import type { BridgeSessionState } from "../bridge/session";
+import { syncChannelConfig } from "../config-sync";
+import {
+  GatewayApprovalKind,
+  isApprovalEvent,
+  mergeApproval,
+  parseApprovalFrame,
+  parseResolveResult,
+  resolveParams,
+  sameApproval,
+  type ProviderApproval,
+} from "../gateway/approvals";
+import {
+  type ConnectionManager,
+  createConnectionManager,
+  gatewayHost,
+  type GatewayConnector,
+  type GatewayState,
+  type RecoverTarget,
+} from "../gateway/connection-manager";
+import { createGatewayEventMapper } from "../gateway/events";
+import { type FrameDump, openFrameDump } from "../gateway/frame-dump";
+import { parseSessionsReset } from "../gateway/sessions";
+
+export type GatewayConnectionConfig = {
+  id: string;
+  name: string;
+  url: string;
+  token: string;
+  enabled: boolean;
+};
+
+/** Gateway WS 상태 + 꺼진 연결 */
+export type GatewayConnectionState = GatewayState | "disabled";
+
+export type GatewayStatusEntry = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  gateway: GatewayConnectionState;
+  bridge: "connected" | "down";
+};
+
+/** 연결 페이지의 재료 — Gateway 공유 토큰은 싣지 않는다 */
+export type GatewaySetupEntry = {
+  id: string;
+  name: string;
+  url: string;
+  enabled: boolean;
+  gateway: {
+    state: GatewayConnectionState;
+    host: string;
+    version: string | null;
+    pairing: { requestId: string; since: string } | null;
+  };
+  bridge: OpenClawSetupDetail["bridge"];
+};
+
+/** `DATA_DIR/gateways/<id>/` 아래 두 파일. 주소가 바뀌면 토큰 파일만 지워 다시 페어링한다(스펙 3.3) */
+export const DEVICE_IDENTITY_FILE = "device.json";
+export const DEVICE_TOKENS_FILE = "device-tokens.json";
+
+// 계약 스펙 8.3 — ack 타임아웃 10s, 없으면 1·4·16s 뒤 재전송(3회). 플러그인 미접속은 120s 기다린다(queued 상한).
+const DELIVER_ACK_TIMEOUT_MS = 10_000;
+// 플러그인은 트리거 이미지를 받은 뒤에야 런을 시작해 ack 한다(장당 받기 상한 30s) — 그 전에 재전송하면 이중 디스패치다(Ruling 1)
+const DELIVER_ACK_PER_IMAGE_MS = 30_000;
+const DELIVER_RETRY_DELAYS_MS = [1_000, 4_000, 16_000];
+const PLUGIN_READY_WAIT_MS = 120_000;
+// final 뒤에도 같은 런의 늦은 프레임(usage 등)이 온다 — 그동안은 우리 런으로 본다.
+const FORGET_AFTER_FINAL_MS = 60_000;
+// 승인 병합 기억 상한. Gateway 의 세션 되감기 상한과 같은 1000 — 넘으면 오래 손대지 않은 것부터 버린다.
+const APPROVAL_DEDUPE_MAX = 1_000;
+
+const AgentsListResult = z.looseObject({
+  agents: z.array(z.looseObject({ id: z.string().min(1), name: z.string().optional().catch(undefined) })),
+});
+
+export type GatewayConnectionDeps = {
+  config: GatewayConnectionConfig;
+  /** 디바이스 아이덴티티·토큰 디렉터리 `DATA_DIR/gateways/<id>/` */
+  deviceDir: string;
+  bridge: BridgeHandle;
+  connector: GatewayConnector;
+  logger: AdapterLogger;
+  /** 이 연결의 WS 루프가 쓰는 로거 — 재접속·페어링 줄에 Gateway id 가 붙는다 */
+  gatewayLogger: AdapterLogger;
+  backoff?: { initialMs?: number; maxMs?: number; pairingRetryMs?: number };
+  sessionKeysToRecover?: () => RecoverTarget[];
+  frameDumpPath?: string;
+  onCanonical: (message: OutboundMessage) => Promise<{ messageId?: string }>;
+  /** 런·승인·정본 이벤트 — 연결 id 는 이 연결이 싣는다 */
+  emit: (event: AdapterEvent) => void;
+  /** 상태(WS·플러그인)가 바뀌었다 */
+  onStatusChange: () => void;
+  /** 설정 상세가 바뀌었을 수 있다 */
+  onDetailChange: () => void;
+  /** Gateway 가 FORBIDDEN 으로 답한 능력 */
+  onForbidden: (capability: keyof AdapterCapabilities) => void;
+};
+
+export type GatewayConnection = {
+  readonly id: string;
+  config(): GatewayConnectionConfig;
+  /** 이름만 바뀌면 다시 붙지 않는다. 주소·토큰이 바뀌면 열린 런을 닫고 다시 붙고, 주소면 디바이스 토큰을 지운다. 끄면 끊는다 */
+  update(next: GatewayConnectionConfig): void;
+  /** 어댑터 connect() — 켜져 있으면 WS 루프를 시작한다. 그 뒤로는 켤 때·다시 붙을 때 곧바로 시작한다 */
+  start(): void;
+  status(): GatewayStatusEntry;
+  setupEntry(): GatewaySetupEntry;
+  send(input: InboundDeliver): Promise<AdapterSendResult>;
+  abort(runId: string, sessionKey: string): Promise<void>;
+  resetSession(sessionKey: string): Promise<{ sessionStartedAt?: string; lifecycleRevision?: string }>;
+  listAgents(): Promise<Array<{ providerAgentId: string; name?: string }>>;
+  resolveApproval(
+    providerApprovalId: string,
+    kind: ApprovalKind,
+    decision: ApprovalDecision,
+  ): Promise<ProviderApproval>;
+  syncChannelConfig(channelId: string, config: ConfigSet["config"]): Promise<ConfigSetResult>;
+  supports(capability: "threads"): boolean;
+  forgetRun(runId: string): void;
+  onPluginHello(session: BridgeSessionState, hello: BridgeHello): void;
+  onPluginClose(session: BridgeSessionState): void;
+  onOutbound(message: OutboundMessage): Promise<{ messageId: string }>;
+  /** 어댑터 close() — 기다리는 send 를 끝내고 WS 를 닫는다. 브리지는 어댑터가 먼저 닫는다 */
+  close(): Promise<void>;
+  /** 열린 런을 닫고, 플러그인을 끊고, WS 를 닫고, 디바이스 디렉터리를 지운다 */
+  remove(): Promise<void>;
+};
+
+export function createGatewayConnection(deps: GatewayConnectionDeps): GatewayConnection {
+  const { id, logger } = { id: deps.config.id, logger: deps.logger };
+  let config = { ...deps.config };
+  const view = deps.bridge.forGateway(id);
+  let started = false;
+  let closed = false;
+  let gatewayState: GatewayState = "down";
+  let bridgeState: "connected" | "down" = "down";
+  // Gateway 이벤트를 우리 런으로 볼 id(send 시작부터 final 뒤 60s 까지)와, 그 가운데 아직 끝나지 않은 디스패치된 런
+  const knownRunIds = new Set<string>();
+  const openRuns = new Set<string>();
+  const finalRuns = new Set<string>();
+  // 플러그인 ack 를 기다리는 send — 끄기·삭제가 곧바로 끝낸다
+  const pendingSends = new Map<string, (error: AdapterError) => void>();
+  const forgetTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  // send 재시도 대기 — close() 가 타이머를 지우고 기다리는 send 를 끝낸다
+  const retryWaits = new Map<ReturnType<typeof setTimeout>, (error: AdapterError) => void>();
+  // `providerApprovalId` → 마지막으로 낸 병합본. 같은 승인이 정본·세션·되감기 세 경로로, 경로마다 다른 필드를 채워 온다(스파이크 3.1).
+  const emittedApprovals = new Map<string, ProviderApproval>();
+  const mapper = createGatewayEventMapper({ isOurRun: (runId) => knownRunIds.has(runId) });
+  const frameDump: FrameDump | undefined =
+    deps.frameDumpPath === undefined ? undefined : openFrameDump(`${deps.frameDumpPath}.${id}`, logger);
+  let ws = createWs();
+
+  function createWs(): ConnectionManager {
+    const created: ConnectionManager = createConnectionManager({
+      gateway: {
+        url: config.url,
+        token: config.token,
+        deviceIdentityPath: join(deps.deviceDir, DEVICE_IDENTITY_FILE),
+        deviceTokenStorePath: join(deps.deviceDir, DEVICE_TOKENS_FILE),
+      },
+      connector: deps.connector,
+      logger: deps.gatewayLogger,
+      onEvent: (frame) => {
+        if (ws === created) onGatewayEvent(frame);
+      },
+      onState: (next) => {
+        // 주소·토큰을 바꾸며 버린 루프의 stop() 도 down 을 알린다 — 지금 루프의 것만 받는다
+        if (ws !== created) return;
+        gatewayState = next;
+        deps.onStatusChange();
+        deps.onDetailChange();
+      },
+      onDetail: () => {
+        if (ws === created) deps.onDetailChange();
+      },
+      onApprovalReplay: (approvals) => {
+        if (ws !== created) return;
+        for (const approval of approvals) emitApproval(approval);
+      },
+      ...(deps.sessionKeysToRecover ? { sessionKeysToRecover: deps.sessionKeysToRecover } : {}),
+      ...(deps.backoff ? { backoff: deps.backoff } : {}),
+    });
+    return created;
+  }
+
+  function stopWs(target: ConnectionManager) {
+    void target.stop().catch((error: unknown) => {
+      // stopAndWait 5s 초과 등 — 연결 객체는 이미 버렸다
+      logger.warn({ err: error, gatewayId: id }, "gateway stop failed");
+    });
+  }
+
+  function emitRunSignal(runId: string, signal: Extract<AdapterEvent, { kind: "run_signal" }>["signal"]) {
+    deps.emit({ kind: "run_signal", runId, connectionId: id, signal });
+  }
+
+  function forgetRun(runId: string) {
+    clearTimeout(forgetTimers.get(runId));
+    forgetTimers.delete(runId);
+    knownRunIds.delete(runId);
+    openRuns.delete(runId);
+    finalRuns.delete(runId);
+    mapper.forget(runId);
+  }
+
+  function forgetRunLater(runId: string) {
+    clearTimeout(forgetTimers.get(runId));
+    const timer = setTimeout(() => forgetRun(runId), FORGET_AFTER_FINAL_MS);
+    timer.unref();
+    forgetTimers.set(runId, timer);
+  }
+
+  /**
+   * 이 연결의 열린 런을 닫는다 — ack 를 기다리는 send 는 그 send 가 던지고(오케스트레이터가 닫는다), 디스패치된 런은 러너 어댑터가
+   * 러너를 잃을 때와 같은 RUN_ERROR + gateway_error 로 닫는다(서버가 「다시 실행」 카드를 단다). 닫은 런은 잊는다 — 그 런의 늦은
+   * 프레임은 버린다
+   */
+  function closeOpenRuns(reason: string) {
+    const error = new AdapterError("ADAPTER_UNAVAILABLE", reason);
+    for (const [timer, reject] of retryWaits) {
+      clearTimeout(timer);
+      reject(error);
+    }
+    retryWaits.clear();
+    for (const [runId, reject] of pendingSends) {
+      pendingSends.delete(runId);
+      forgetRun(runId);
+      reject(error);
+    }
+    for (const runId of openRuns) {
+      forgetRun(runId);
+      deps.emit({
+        kind: "run_event",
+        runId,
+        connectionId: id,
+        event: { type: "RUN_ERROR", runId, code: error.code, message: error.message },
+      });
+      emitRunSignal(runId, { kind: "gateway_error", code: error.code, message: error.message });
+    }
+  }
+
+  /**
+   * 같은 승인의 여러 프레임을 **병합해서** 낸다 — 뒤엣것을 버리지 않는다(p2-t6 실측 C).
+   *
+   * 실물은 같은 승인을 `plugin.approval.requested`(`toolCallId` 있음·`urlPath` 없음)와
+   * `session.approval`(`urlPath` 있음·`toolCallId` 없음)로 나눠 준다. 먼저 온 쪽만 남기면 어느 순서든 한쪽 값을 잃는다.
+   * 상태도 그대로고 새로 채운 필드도 없으면 — 같은 사실을 또 읽은 것이라 — 내지 않는다.
+   * 기억은 오래 손대지 않은 것부터 버려 무한히 자라지 않게 한다.
+   */
+  function emitApproval(incoming: ProviderApproval) {
+    const approvalId = incoming.providerApprovalId;
+    const previous = emittedApprovals.get(approvalId);
+    const approval = previous ? mergeApproval(previous, incoming) : incoming;
+    if (previous && sameApproval(previous, approval)) return;
+    // 다시 넣어 맨 뒤로 보낸다 — 아직 오가는 승인이 먼저 밀려나지 않게
+    emittedApprovals.delete(approvalId);
+    emittedApprovals.set(approvalId, approval);
+    for (const oldest of emittedApprovals.keys()) {
+      if (emittedApprovals.size <= APPROVAL_DEDUPE_MAX) break;
+      emittedApprovals.delete(oldest);
+    }
+    deps.emit({ kind: "approval", connectionId: id, approval });
+  }
+
+  function onGatewayEvent(frame: EventFrame) {
+    frameDump?.write(frame);
+    if (isApprovalEvent(frame.event)) {
+      const approval = parseApprovalFrame(frame.event, frame.payload);
+      // 우리 세션이 아닌 승인(다른 채널 플러그인·TUI)도 전역으로 온다 — 버린다. 세션 키·본문은 남기지 않는다.
+      if (approval) emitApproval(approval);
+      else logger.debug({ event: frame.event }, "gateway approval frame ignored");
+      return;
+    }
+    for (const item of mapper.map(frame)) {
+      if (item.event)
+        deps.emit({ kind: "run_event", runId: item.runId, connectionId: id, event: item.event });
+      if (!item.signal) continue;
+      deps.emit({
+        kind: "run_signal",
+        runId: item.runId,
+        connectionId: id,
+        signal: item.signal,
+        ...(item.snapshotText === undefined ? {} : { snapshotText: item.snapshotText }),
+      });
+      if (item.signal.kind === "gateway_final") {
+        openRuns.delete(item.runId);
+        finalRuns.add(item.runId);
+        forgetRunLater(item.runId);
+      } else if (item.signal.kind === "gateway_error" || item.signal.kind === "gateway_aborted") {
+        forgetRun(item.runId);
+      }
+    }
+  }
+
+  function setBridgeState(next: "connected" | "down") {
+    if (bridgeState === next) return;
+    bridgeState = next;
+    logger.info({ bridge: next }, "bridge status changed");
+    deps.onStatusChange();
+  }
+
+  const unavailable = (reason: string) => new AdapterError("ADAPTER_UNAVAILABLE", reason);
+  const adapterClosed = () => unavailable("adapter closed");
+
+  function retryDelay(ms: number): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        retryWaits.delete(timer);
+        resolve();
+      }, ms);
+      retryWaits.set(timer, reject);
+    });
+  }
+
+  async function deliver(input: InboundDeliver): Promise<InboundDeliverResult> {
+    const images = input.message.attachments.filter((a) => a.kind === "image").length;
+    const ackTimeoutMs = DELIVER_ACK_TIMEOUT_MS + DELIVER_ACK_PER_IMAGE_MS * images;
+    let timeoutRetries = 0;
+    let waitedForPlugin = false;
+    const firstAttemptAt = performance.now();
+    for (;;) {
+      if (closed) throw adapterClosed();
+      // 플러그인·재시도를 기다리는 사이 서버가 런을 닫고 forgetRun 했다(queued 상한) — 닫힌 런을 늦게 보내지 않는다
+      if (!knownRunIds.has(input.runId)) throw unavailable("run forgotten before delivery");
+      const res = await view.deliverInbound(input, ackTimeoutMs);
+      if (res.ok) {
+        // 진단용 — 본문·토큰은 싣지 않는다. ackMs 는 첫 전송 시도부터(플러그인 대기·재시도 포함)
+        logger.info(
+          {
+            runId: input.runId,
+            deliveryId: input.deliveryId,
+            admission: res.data.admission,
+            ackMs: Math.round(performance.now() - firstAttemptAt),
+            retries: timeoutRetries,
+            waitedForPlugin,
+          },
+          "inbound delivered",
+        );
+        return res.data;
+      }
+      if (closed) throw adapterClosed();
+      const { code, message } = res.error;
+      const delayMs = DELIVER_RETRY_DELAYS_MS[timeoutRetries];
+      if (code === "TIMEOUT" && delayMs !== undefined) {
+        timeoutRetries += 1;
+        logger.warn(
+          { runId: input.runId, deliveryId: input.deliveryId, retry: timeoutRetries, delayMs },
+          "inbound.deliver ack timeout; retrying",
+        );
+        await retryDelay(delayMs);
+        continue;
+      }
+      if (code === "ADAPTER_UNAVAILABLE" && !waitedForPlugin) {
+        waitedForPlugin = true;
+        logger.info({ runId: input.runId, waitMs: PLUGIN_READY_WAIT_MS }, "plugin not connected; waiting");
+        try {
+          await view.waitForReady(PLUGIN_READY_WAIT_MS);
+        } catch {
+          // 브리지 close()·Gateway 끄기도 대기자를 reject 한다
+          if (closed) throw adapterClosed();
+          throw unavailable(`plugin not connected within ${PLUGIN_READY_WAIT_MS}ms`);
+        }
+        continue;
+      }
+      throw new AdapterError(code, message);
+    }
+  }
+
+  function setupEntry(): GatewaySetupEntry {
+    const detail = ws.detail();
+    const session = view.current();
+    const hello = session?.hello;
+    return {
+      id,
+      name: config.name,
+      url: config.url,
+      enabled: config.enabled,
+      gateway: {
+        state: config.enabled ? gatewayState : "disabled",
+        host: gatewayHost(config.url),
+        version: detail.version,
+        pairing: detail.pairing,
+      },
+      bridge: {
+        state: bridgeState,
+        plugin:
+          session && hello
+            ? {
+                version: hello.version,
+                sdkVersion: hello.sdkVersion,
+                gatewayVersion: hello.gatewayVersion ?? null,
+                bundleSha256: hello.bundleSha256 ?? null,
+                tokenId: session.tokenId,
+                connectedAt: session.connectedAt.toISOString(),
+              }
+            : null,
+      },
+    };
+  }
+
+  function clearRunMemory() {
+    emittedApprovals.clear();
+    for (const timer of forgetTimers.values()) clearTimeout(timer);
+    forgetTimers.clear();
+  }
+
+  return {
+    id,
+    config: () => ({ ...config }),
+
+    update(next) {
+      const previous = config;
+      config = { ...next };
+      const addressChanged = next.url !== previous.url;
+      const credentialsChanged = addressChanged || next.token !== previous.token;
+      const disabling = previous.enabled && !next.enabled;
+      if (disabling || (previous.enabled && credentialsChanged)) {
+        closeOpenRuns(
+          disabling
+            ? "gateway disabled"
+            : addressChanged
+              ? "gateway address changed"
+              : "gateway token changed",
+        );
+      }
+      if (disabling) deps.bridge.disconnectGateway(id);
+      // 꺼진 동안 주소·토큰을 바꿔도 루프를 새로 만들어 둔다 — 켤 때 옛 주소로 붙지 않게
+      if (disabling || (previous.enabled && credentialsChanged)) stopWs(ws);
+      if (credentialsChanged) {
+        // 다른 Gateway 일 수 있다 — 옛 Gateway 가 준 디바이스 토큰으로 붙지 않고 다시 페어링한다. 디바이스 키는 그대로 쓴다
+        if (addressChanged) rmSync(join(deps.deviceDir, DEVICE_TOKENS_FILE), { force: true });
+        ws = createWs();
+        gatewayState = "down";
+      }
+      if (next.enabled && started && (credentialsChanged || !previous.enabled)) ws.start();
+      deps.onStatusChange();
+      deps.onDetailChange();
+    },
+
+    start() {
+      started = true;
+      if (config.enabled) ws.start();
+    },
+
+    status: () => ({
+      id,
+      name: config.name,
+      enabled: config.enabled,
+      gateway: config.enabled ? gatewayState : "disabled",
+      bridge: bridgeState,
+    }),
+    setupEntry,
+
+    async send(input) {
+      if (closed) throw adapterClosed();
+      if (!config.enabled) throw unavailable("gateway is disabled");
+      // 플러그인은 런이 시작될 때(onAgentRunStart) ack 하므로 Gateway 이벤트가 ack 보다 먼저 올 수 있다 — 전송 전에 등록한다
+      knownRunIds.add(input.runId);
+      // 접속 뒤 새로 생긴 세션은 재접속 복구 구독에 없다 — 전송 전에 구독해야 Gateway 델타·툴 이벤트가 온다(Phase 1 실연에서 발견).
+      // Gateway 가 끊겨 있으면 건너뛴다(정본은 플러그인 경로) — 다시 붙을 때 recover 가 agent_sessions 로 구독한다.
+      try {
+        await ws.subscribeSession(input.sessionKey, input.agentId);
+      } catch (error) {
+        const notConnected = (error as { code?: unknown }).code === "ADAPTER_UNAVAILABLE";
+        logger[notConnected ? "debug" : "warn"](
+          { err: error, sessionKey: input.sessionKey },
+          "gateway session subscribe before send failed",
+        );
+      }
+      // 끄기·삭제가 이 send 를 곧바로 끝낼 수 있게 경주시킨다. 진 deliver 의 늦은 실패는 버린다(런은 이미 잊었다)
+      const delivering = deliver(input);
+      delivering.catch(() => undefined);
+      const aborted = new Promise<never>((_resolve, reject) => pendingSends.set(input.runId, reject));
+      try {
+        const result = await Promise.race([delivering, aborted]);
+        if (result.admission === "drop") forgetRun(input.runId);
+        else if (knownRunIds.has(input.runId) && !finalRuns.has(input.runId)) openRuns.add(input.runId);
+        return { ...result, connectionId: id };
+      } catch (error) {
+        forgetRun(input.runId);
+        throw error;
+      } finally {
+        pendingSends.delete(input.runId);
+      }
+    },
+
+    async abort(runId, sessionKey) {
+      await ws.request("chat.abort", { sessionKey, runId });
+    },
+
+    async resetSession(sessionKey) {
+      try {
+        return parseSessionsReset(await ws.request("sessions.reset", { key: sessionKey }));
+      } catch (error) {
+        if (error instanceof AdapterError && error.code === "FORBIDDEN") deps.onForbidden("sessionReset");
+        throw error;
+      }
+    },
+
+    async listAgents() {
+      let res: unknown;
+      try {
+        res = await ws.request("agents.list", {});
+      } catch (error) {
+        if (error instanceof AdapterError && error.code === "FORBIDDEN") deps.onForbidden("agentsList");
+        throw error;
+      }
+      const parsed = AgentsListResult.safeParse(res);
+      if (!parsed.success) {
+        const issues = parsed.error.issues
+          .map((i) => `${i.path.join(".") || "<root>"}: ${i.message}`)
+          .join("; ");
+        throw new AdapterError("INTERNAL", `ADAPTER_PROTOCOL: agents.list ${issues}`);
+      }
+      return parsed.data.agents.map((agent) =>
+        agent.name === undefined
+          ? { providerAgentId: agent.id }
+          : { providerAgentId: agent.id, name: agent.name },
+      );
+    },
+
+    async resolveApproval(providerApprovalId, kind, decision) {
+      // 재접속 중(reconnecting)에도 결정을 보내지 않는다 — 승인 서비스가 하던 선검사를 어댑터 안으로 옮겼다(러너 계획 판정 P6)
+      if (!config.enabled || gatewayState !== "connected") throw unavailable("gateway is not connected");
+      // tool 은 러너 어댑터의 승인이다 — 여기로 왔다면 잘못 짝지어진 것이라 Gateway 에 보내지 않는다
+      const gatewayKind = GatewayApprovalKind.safeParse(kind).data;
+      if (!gatewayKind)
+        throw new AdapterError("INTERNAL", `approval kind ${kind} is not an OpenClaw approval`);
+      // 연결이 없으면 ws 가 ADAPTER_UNAVAILABLE 을 던진다(다른 RPC 와 같은 규칙).
+      const res = await ws.request(
+        "approval.resolve",
+        resolveParams({ providerApprovalId, kind: gatewayKind }, decision),
+      );
+      // 이미 확정된 승인은 `applied:false` 로 오지만 스냅샷은 그대로다 — 오류가 아니다(스파이크 4.4).
+      const approval = parseResolveResult(res, gatewayKind);
+      if (!approval) {
+        throw new AdapterError("INTERNAL", "ADAPTER_PROTOCOL: approval.resolve terminal snapshot unreadable");
+      }
+      return approval;
+    },
+
+    syncChannelConfig: (channelId, channelConfig) =>
+      syncChannelConfig(view, logger, channelId, channelConfig),
+
+    // 에이전트를 가리지 않는다 — 그 Gateway 의 모든 에이전트가 붙은 플러그인 하나를 지난다
+    supports: (capability) => view.current()?.hello?.capabilities.includes(capability) ?? false,
+
+    forgetRun,
+
+    onPluginHello(_session, hello) {
+      // gatewayVersion 은 플러그인이 돌고 있는 Gateway 의 runtime.version. pluginBuiltWithSdk 는 빌드 때 박힌
+      // openclaw devDependency 버전이라 Gateway 버전이 아니다(9.5 위에서도 2026.9.4 로 찍힌다)
+      logger.info(
+        {
+          pluginVersion: hello.version,
+          pluginBuiltWithSdk: hello.sdkVersion,
+          gatewayVersion: hello.gatewayVersion ?? null,
+        },
+        "bridge plugin hello",
+      );
+      setBridgeState("connected");
+      deps.onDetailChange();
+    },
+
+    onPluginClose(session) {
+      deps.onDetailChange();
+      // 새 연결이 이전 연결을 교체할 때는 down 을 거치지 않는다
+      if (session.closeReason === "replaced") return;
+      if (!view.current()) setBridgeState("down");
+    },
+
+    async onOutbound(message) {
+      const stored = await deps.onCanonical(message);
+      deps.emit({ kind: "canonical", connectionId: id, message });
+      return { messageId: stored.messageId ?? message.outboundId };
+    },
+
+    async close() {
+      closed = true;
+      clearRunMemory();
+      for (const [timer, reject] of retryWaits) {
+        clearTimeout(timer);
+        reject(adapterClosed());
+      }
+      retryWaits.clear();
+      try {
+        await ws.stop();
+      } catch (error) {
+        // stopAndWait 5s 초과 등 — 종료는 계속한다
+        logger.warn({ err: error }, "gateway stop failed during close");
+      }
+      await frameDump?.close(); // Gateway 가 닫힌 뒤 — 마지막 프레임까지 남긴다
+    },
+
+    async remove() {
+      closeOpenRuns("gateway removed");
+      deps.bridge.disconnectGateway(id, { forget: true });
+      closed = true;
+      clearRunMemory();
+      try {
+        await ws.stop();
+      } catch (error) {
+        logger.warn({ err: error, gatewayId: id }, "gateway stop failed during remove");
+      }
+      await frameDump?.close();
+      rmSync(deps.deviceDir, { recursive: true, force: true });
+    },
+  };
+}

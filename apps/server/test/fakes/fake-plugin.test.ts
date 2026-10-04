@@ -49,7 +49,9 @@ describe("가짜 플러그인 — 실제 attachBridge 에 붙는다", () => {
     const http = createServer();
     io = new Server(http);
     bridge = attachBridge(io, {
-      verifyToken: (presented) => (verifyBridgeToken(TOKEN, presented) ? { tokenId: "env" } : null),
+      verifyToken: (presented) =>
+        verifyBridgeToken(TOKEN, presented) ? { tokenId: "env", gatewayId: "env" } : null,
+      acceptGateway: () => true,
       serverVersion: "9.9.9",
       onHello: (_session, hello) => hellos.push(hello),
       onOutboundMessage: async (_session, message) => {
@@ -81,7 +83,7 @@ describe("가짜 플러그인 — 실제 attachBridge 에 붙는다", () => {
     await start();
     expect(hellos).toEqual([FAKE_PLUGIN_HELLO]);
     expect(FAKE_PLUGIN_HELLO).toMatchObject({ pluginId: "dodok", sdkVersion: "2026.9.4" });
-    expect(bridge.current()?.phase).toBe("ready");
+    expect(bridge.forGateway("env").current()?.phase).toBe("ready");
   });
 
   it("토큰이 틀리면 startFakePlugin 이 reject 한다", async () => {
@@ -91,7 +93,7 @@ describe("가짜 플러그인 — 실제 attachBridge 에 붙는다", () => {
   it("inbound.deliver 를 onInbound 에 넘기고 그 결과로 ack 한다 — 기본은 dispatch(providerRunId = runId)", async () => {
     const plugin = await start();
     const delivery = sampleDelivery();
-    await expect(bridge.deliverInbound(delivery, 2_000)).resolves.toEqual({
+    await expect(bridge.forGateway("env").deliverInbound(delivery, 2_000)).resolves.toEqual({
       ok: true,
       data: { admission: "dispatch", providerRunId: RUN_ID },
     });
@@ -101,7 +103,7 @@ describe("가짜 플러그인 — 실제 attachBridge 에 붙는다", () => {
   it("onInbound 를 나중에 바꿔 끼울 수 있고, 던지면 INTERNAL 로 ack 한다", async () => {
     const plugin = await start();
     plugin.onInbound = async () => ({ admission: "drop", reason: "bot-loop-protection" });
-    await expect(bridge.deliverInbound(sampleDelivery(), 2_000)).resolves.toEqual({
+    await expect(bridge.forGateway("env").deliverInbound(sampleDelivery(), 2_000)).resolves.toEqual({
       ok: true,
       data: { admission: "drop", reason: "bot-loop-protection" },
     });
@@ -109,7 +111,7 @@ describe("가짜 플러그인 — 실제 attachBridge 에 붙는다", () => {
     plugin.onInbound = async () => {
       throw new Error("대본 없음");
     };
-    await expect(bridge.deliverInbound(sampleDelivery(), 2_000)).resolves.toEqual({
+    await expect(bridge.forGateway("env").deliverInbound(sampleDelivery(), 2_000)).resolves.toEqual({
       ok: false,
       error: { code: "INTERNAL", message: "대본 없음" },
     });
@@ -119,7 +121,9 @@ describe("가짜 플러그인 — 실제 attachBridge 에 붙는다", () => {
   it("계약에 맞지 않는 inbound.deliver 는 실제 플러그인처럼 VALIDATION 으로 ack 하고 onInbound 를 부르지 않는다", async () => {
     const onInbound = vi.fn(async () => ({ admission: "dispatch" as const }));
     const plugin = await start(onInbound);
-    const res = await bridge.deliverInbound({ ...sampleDelivery(), runId: "not-a-uuid" }, 2_000);
+    const res = await bridge
+      .forGateway("env")
+      .deliverInbound({ ...sampleDelivery(), runId: "not-a-uuid" }, 2_000);
     expect(res).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
     expect(onInbound).not.toHaveBeenCalled();
     expect(plugin.received).toEqual([]);
@@ -173,10 +177,13 @@ describe("가짜 플러그인 — 실제 attachBridge 에 붙는다", () => {
   it("config.set 은 applied live 로 ack 하고 configSets 에 기록한다, agents.list 는 dev·fin 을 준다", async () => {
     const plugin = await start();
     const payload = { channelId: CHANNEL_ID, config: { systemPrompt: "정중하게" } };
-    await expect(bridge.setConfig(payload, 2_000)).resolves.toEqual({ ok: true, data: { applied: "live" } });
+    await expect(bridge.forGateway("env").setConfig(payload, 2_000)).resolves.toEqual({
+      ok: true,
+      data: { applied: "live" },
+    });
     expect(plugin.configSets).toEqual([payload]);
 
-    await expect(bridge.listAgents(2_000)).resolves.toEqual({
+    await expect(bridge.forGateway("env").listAgents(2_000)).resolves.toEqual({
       ok: true,
       data: { agents: [{ agentId: "dev", name: "dev" }, { agentId: "fin" }] },
     });
@@ -193,12 +200,14 @@ describe("가짜 플러그인 — 실제 attachBridge 에 붙는다", () => {
   it("disconnect() 뒤 서버에서 사라지고, reconnect() 는 다시 hello 해서 ready 가 된다", async () => {
     const plugin = await start();
     plugin.disconnect();
-    await vi.waitFor(() => expect(bridge.current()).toBeUndefined());
+    await vi.waitFor(() => expect(bridge.forGateway("env").current()).toBeUndefined());
 
     await plugin.reconnect();
-    expect(bridge.current()?.phase).toBe("ready");
+    expect(bridge.forGateway("env").current()?.phase).toBe("ready");
     expect(hellos).toHaveLength(2);
-    await expect(bridge.deliverInbound(sampleDelivery(), 2_000)).resolves.toMatchObject({ ok: true });
+    await expect(bridge.forGateway("env").deliverInbound(sampleDelivery(), 2_000)).resolves.toMatchObject({
+      ok: true,
+    });
   });
 
   it("hello ack 의 protocol 을 확인한다", async () => {

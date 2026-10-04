@@ -735,13 +735,13 @@ describe("실제 어댑터(createOpenClawAdapter) 부팅", () => {
 
   it("deps.adapter 없이 부팅하면 실제 어댑터를 만들고, Gateway 접속 실패는 부팅을 막지 않으며, 정본 훅·브리지 토큰이 배선되고, close() 는 플러그인에 shutdown 을 알리고 5초 안에 끝난다", async () => {
     const base = tempDir();
-    const deviceIdentityPath = join(base, "device-dev.json");
+    // 디바이스 아이덴티티는 Gateway 마다 DATA_DIR/gateways/<연결 id>/ — env 의 Gateway 는 연결 id env(멀티 Gateway 계획 판정 PG1)
+    const deviceIdentityPath = join(base, "gateways", "env", "device.json");
     const { logger } = captureLogger();
     const app = await createApp(
       loadConfig({
         ...testEnv,
         OPENCLAW_DEV_GATEWAY_URL: "ws://127.0.0.1:1", // 닫힌 포트 — 어떤 Gateway 에도 닿지 않는다
-        OPENCLAW_DEVICE_IDENTITY_PATH: deviceIdentityPath,
         DATA_DIR: base,
         ATTACHMENTS_DIR: join(base, "attachments"),
       }),
@@ -753,7 +753,7 @@ describe("실제 어댑터(createOpenClawAdapter) 부팅", () => {
       const health = await app.fastify.inject({ method: "GET", url: "/healthz" });
       expect(health.statusCode).toBe(200);
       expect(["down", "reconnecting"]).toContain(openclawStatus(openclawOf(app)).gateway);
-      // 부팅 뒤 connect() 가 접속 루프를 돌렸다 — 설정의 디바이스 아이덴티티 경로(임시 디렉터리)를 쓰고, 거부되면 reconnecting
+      // 부팅 뒤 connect() 가 접속 루프를 돌렸다 — DATA_DIR(임시 디렉터리) 아래 디바이스 아이덴티티를 쓰고, 거부되면 reconnecting
       await vi.waitFor(() => expect(existsSync(deviceIdentityPath)).toBe(true));
       await vi.waitFor(() => expect(openclawStatus(openclawOf(app)).gateway).toBe("reconnecting"), {
         timeout: 3_000,

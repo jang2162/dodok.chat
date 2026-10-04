@@ -948,7 +948,6 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
         OPENCLAW_TARGET: "dev",
         OPENCLAW_DEV_GATEWAY_URL: gateway.url,
         OPENCLAW_DEV_GATEWAY_TOKEN: gateway.token,
-        OPENCLAW_DEVICE_IDENTITY_PATH: join(dataDir, "dev-fake-device.json"),
       }),
       {
         ...(opts.pushSend ? { pushSend: opts.pushSend } : {}),

@@ -80,7 +80,7 @@ export function parseBridgeClientEvent<E extends BridgeClientEventName>(
 }
 
 export type BridgeSessionPhase = "awaiting_hello" | "ready" | "closed";
-export type BridgeCloseReason = "disconnect" | "replaced" | "shutdown" | "revoked";
+export type BridgeCloseReason = "disconnect" | "replaced" | "shutdown" | "revoked" | "gateway_off";
 
 export type OutboundAcceptance =
   | { kind: "new" }
@@ -88,7 +88,7 @@ export type OutboundAcceptance =
   | { kind: "reject"; code: ErrorCode };
 
 /**
- * 플러그인이 보낸 `outboundId` → 서버 messageId 기억. `attachBridge` 하나(= 플러그인 id 하나)가 연결을 넘어 공유하고,
+ * 플러그인이 보낸 `outboundId` → 서버 messageId 기억. 브리지가 Gateway 마다 하나를 두고 그 Gateway 의 연결을 넘어 공유하고,
  * 최근 `max` 개만 남긴다(LRU — 조회해도 최근으로 올린다). 창 밖으로 밀린 id·서버 재시작 전 id 는 잊는다.
  */
 export class OutboundDedupe {
@@ -123,11 +123,13 @@ export class OutboundDedupe {
 
 /**
  * 플러그인 연결 1개. hello 전에는 아무것도 받지 않는다. 중복 판정은 넘겨받은(연결을 넘어 공유되는) `OutboundDedupe` 로 한다.
- * `tokenId` 는 핸드셰이크에서 이 연결을 통과시킨 브리지 토큰의 id — 폐기 때 이 값으로 끊는다.
+ * `tokenId` 는 핸드셰이크에서 이 연결을 통과시킨 브리지 토큰의 id — 폐기 때 이 값으로 끊는다. `gatewayId` 는 그 토큰이 묶인
+ * Gateway(멀티 Gateway 스펙 5.2) — 브리지는 이 값으로 「활성 플러그인 하나」·전송 대상을 가른다
  */
 export class BridgeSessionState {
   readonly connectionId: string;
   readonly tokenId: string | null;
+  readonly gatewayId: string | null;
   readonly connectedAt = new Date();
   phase: BridgeSessionPhase = "awaiting_hello";
   hello: BridgeHello | undefined;
@@ -135,9 +137,13 @@ export class BridgeSessionState {
   lastStatus: BridgeStatus | undefined;
   readonly #dedupe: OutboundDedupe;
 
-  constructor(connectionId: string, opts: { dedupe?: OutboundDedupe; tokenId?: string } = {}) {
+  constructor(
+    connectionId: string,
+    opts: { dedupe?: OutboundDedupe; tokenId?: string; gatewayId?: string } = {},
+  ) {
     this.connectionId = connectionId;
     this.tokenId = opts.tokenId ?? null;
+    this.gatewayId = opts.gatewayId ?? null;
     this.#dedupe = opts.dedupe ?? new OutboundDedupe();
   }
 

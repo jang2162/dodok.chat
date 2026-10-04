@@ -32,6 +32,7 @@ type Ack = (res: unknown) => void;
 
 let app: FastifyInstance;
 let ioServer: Server;
+let dataDir: string;
 let adapter: OpenClawAdapter;
 let url: string;
 let events: AdapterEvent[];
@@ -59,18 +60,14 @@ beforeEach(async () => {
   gatewayHello = undefined;
   app = Fastify({ logger: false });
   ioServer = new Server(app.server, { transports: ["websocket"] });
+  dataDir = mkdtempSync(join(tmpdir(), "dodok-adapter-"));
   adapter = createOpenClawAdapter({
-    connectionId: CONNECTION_ID,
-    gateway: {
-      url: "wss://operator:pw@gateway.example.test/gw?t=1",
-      token: "gw-token",
-      deviceIdentityPath: "/data/device.json",
-    },
+    dataDir,
     bridge: {
       io: ioServer,
       verifyToken: (presented) => {
         const tokenId = typeof presented === "string" ? TOKEN_IDS[presented] : undefined;
-        return tokenId ? { tokenId } : null;
+        return tokenId ? { tokenId, gatewayId: CONNECTION_ID } : null;
       },
       serverVersion: "test",
     },
@@ -94,9 +91,19 @@ beforeEach(async () => {
       };
     },
   });
+  // 이 파일은 Gateway 하나 — 멀티 Gateway 는 multi-gateway.test.ts
+  adapter.upsertGateway({
+    id: CONNECTION_ID,
+    name: "gateway",
+    url: "wss://operator:pw@gateway.example.test/gw?t=1",
+    token: "gw-token",
+    enabled: true,
+  });
   adapter.onEvent((e) => events.push(e));
   await app.listen({ host: "127.0.0.1", port: 0 });
   url = `ws://127.0.0.1:${(app.server.address() as AddressInfo).port}/bridge`;
+  // Gateway 를 더한 setup 이벤트(마이크로태스크로 모인다)는 준비 단계의 것이다 — 단언은 그 뒤 변화만 센다
+  events = [];
 });
 
 afterEach(async () => {
@@ -109,6 +116,7 @@ afterEach(async () => {
     vi.useRealTimers();
     ioServer.close();
     await app.close();
+    rmSync(dataDir, { recursive: true, force: true });
   }
 });
 
@@ -449,8 +457,7 @@ describe("createOpenClawAdapter — bridge.clientAddress", () => {
     const ownIo = new Server(ownApp.server, { transports: ["websocket"] });
     const ownLogger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
     const own = createOpenClawAdapter({
-      connectionId: CONNECTION_ID,
-      gateway: { url: "ws://127.0.0.1:1", token: "gw", deviceIdentityPath: "/data/device.json" },
+      dataDir,
       bridge: {
         io: ownIo,
         verifyToken: () => null,
@@ -547,7 +554,7 @@ describe("createOpenClawAdapter — send", () => {
         if (deliveries >= 2) dispatchAck(payload, ack);
       },
     });
-    const spy = vi.spyOn(adapter.bridge, "deliverInbound");
+    const spy = vi.spyOn(adapter.bridge.forGateway(CONNECTION_ID), "deliverInbound");
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
 
     const input = delivery();
@@ -586,7 +593,7 @@ describe("createOpenClawAdapter — send", () => {
           if (deliveries >= 2) dispatchAck(payload, ack);
         },
       });
-      const spy = vi.spyOn(adapter.bridge, "deliverInbound");
+      const spy = vi.spyOn(adapter.bridge.forGateway(CONNECTION_ID), "deliverInbound");
       vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
       const input = delivery();
       const attachment = (kind: "image" | "file", i: number) => {
@@ -628,7 +635,7 @@ describe("createOpenClawAdapter — send", () => {
 
   it("ack 가 끝내 오지 않으면 1s·4s·16s 로 3회 재시도한 뒤 AdapterError(TIMEOUT)", async () => {
     await plugin({ "inbound.deliver": () => undefined });
-    const spy = vi.spyOn(adapter.bridge, "deliverInbound");
+    const spy = vi.spyOn(adapter.bridge.forGateway(CONNECTION_ID), "deliverInbound");
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 
     const result = adapter.send(delivery(), { connectionId: CONNECTION_ID }).catch((e: unknown) => e);
@@ -656,7 +663,7 @@ describe("createOpenClawAdapter — send", () => {
   });
 
   it("플러그인이 없으면 waitForReady 로 기다렸다가 붙으면 보낸다", async () => {
-    const spy = vi.spyOn(adapter.bridge, "deliverInbound");
+    const spy = vi.spyOn(adapter.bridge.forGateway(CONNECTION_ID), "deliverInbound");
     const input = delivery();
     const sending = adapter.send(input, { connectionId: CONNECTION_ID });
     await until(() => spy.mock.calls.length === 1, "first attempt");
@@ -705,8 +712,8 @@ describe("createOpenClawAdapter — send", () => {
   });
 
   it("플러그인을 기다리는 동안 forgetRun 된 런은 플러그인이 붙어도 보내지 않고 ADAPTER_UNAVAILABLE 로 끝난다", async () => {
-    const deliverSpy = vi.spyOn(adapter.bridge, "deliverInbound");
-    const waitSpy = vi.spyOn(adapter.bridge, "waitForReady");
+    const deliverSpy = vi.spyOn(adapter.bridge.forGateway(CONNECTION_ID), "deliverInbound");
+    const waitSpy = vi.spyOn(adapter.bridge.forGateway(CONNECTION_ID), "waitForReady");
     const result = adapter.send(delivery(), { connectionId: CONNECTION_ID }).catch((e: unknown) => e);
     await until(() => waitSpy.mock.calls.length === 1, "waitForReady");
 
@@ -732,7 +739,7 @@ describe("createOpenClawAdapter — send", () => {
         received += 1;
       },
     });
-    const deliverSpy = vi.spyOn(adapter.bridge, "deliverInbound");
+    const deliverSpy = vi.spyOn(adapter.bridge.forGateway(CONNECTION_ID), "deliverInbound");
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const result = adapter.send(delivery(), { connectionId: CONNECTION_ID }).catch((e: unknown) => e);
     await until(() => received === 1, "first delivery");
@@ -757,8 +764,8 @@ describe("createOpenClawAdapter — send", () => {
   });
 
   it("플러그인을 기다리는 중 close() 하면 send 는 곧바로 ADAPTER_UNAVAILABLE(adapter closed)로 끝나고 타이머가 남지 않는다", async () => {
-    const deliverSpy = vi.spyOn(adapter.bridge, "deliverInbound");
-    const waitSpy = vi.spyOn(adapter.bridge, "waitForReady");
+    const deliverSpy = vi.spyOn(adapter.bridge.forGateway(CONNECTION_ID), "deliverInbound");
+    const waitSpy = vi.spyOn(adapter.bridge.forGateway(CONNECTION_ID), "waitForReady");
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     let settled = false;
     const result = adapter
@@ -794,7 +801,7 @@ describe("createOpenClawAdapter — send", () => {
         received += 1;
       },
     });
-    const deliverSpy = vi.spyOn(adapter.bridge, "deliverInbound");
+    const deliverSpy = vi.spyOn(adapter.bridge.forGateway(CONNECTION_ID), "deliverInbound");
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     let settled = false;
     const result = adapter
@@ -1177,13 +1184,8 @@ describe("Gateway 프레임 덤프(frameDumpPath)", () => {
     const io = new Server();
     let onEvent: ((frame: EventFrame) => void) | undefined;
     const dumping = createOpenClawAdapter({
-      connectionId: CONNECTION_ID,
-      gateway: {
-        url: "wss://gateway.example.test",
-        token: "gw-token",
-        deviceIdentityPath: "/data/device.json",
-      },
-      bridge: { io, verifyToken: () => ({ tokenId: "t1" }), serverVersion: "test" },
+      dataDir: dir,
+      bridge: { io, verifyToken: () => ({ tokenId: "t1", gatewayId: CONNECTION_ID }), serverVersion: "test" },
       logger,
       onCanonical: async () => ({}),
       frameDumpPath: path,
@@ -1191,6 +1193,13 @@ describe("Gateway 프레임 덤프(frameDumpPath)", () => {
         onEvent = options.onEvent;
         return { request: async () => ({}) as never, stop: async () => undefined };
       },
+    });
+    dumping.upsertGateway({
+      id: CONNECTION_ID,
+      name: "gateway",
+      url: "wss://gateway.example.test",
+      token: "gw-token",
+      enabled: true,
     });
     try {
       await dumping.connect();
@@ -1201,7 +1210,8 @@ describe("Gateway 프레임 덤프(frameDumpPath)", () => {
       onEvent?.(f.sessionMessage());
       await dumping.close();
 
-      const events = readFileSync(path, "utf8")
+      // 연결마다 <path>.<연결 id>
+      const events = readFileSync(`${path}.${CONNECTION_ID}`, "utf8")
         .trim()
         .split("\n")
         .map((line) => (JSON.parse(line) as { frame: EventFrame }).frame.event);

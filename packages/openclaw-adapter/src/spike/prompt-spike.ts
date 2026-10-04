@@ -42,7 +42,7 @@ import type { InboundDeliver, InboundDeliverResult, OutboundMessage, Result } fr
 import type { EventFrame } from "@openclaw/gateway-protocol";
 import Fastify from "fastify";
 import { Server } from "socket.io";
-import { attachBridge, type BridgeHandle } from "../bridge/server";
+import { attachBridge, type GatewayBridge } from "../bridge/server";
 import { verifyBridgeToken } from "../bridge/session";
 import { connectGateway, GatewayPairingRequiredError, type GatewayConnection } from "../gateway/client";
 
@@ -609,7 +609,7 @@ async function runTurn(params: {
 }
 
 async function inboundTurn(
-  bridge: BridgeHandle,
+  bridge: GatewayBridge,
   params: { name: string; description: string; setup: Json[]; deliver: InboundDeliver },
 ): Promise<TurnRecord> {
   const { deliver } = params;
@@ -701,7 +701,7 @@ function promptVerdict(record: TurnRecord, expected: string): Record<string, Jso
   };
 }
 
-async function setSystemPrompt(bridge: BridgeHandle, channelId: string, prompt: string): Promise<Json> {
+async function setSystemPrompt(bridge: GatewayBridge, channelId: string, prompt: string): Promise<Json> {
   const t0 = Date.now();
   const result = await bridge.setConfig({ channelId, config: { systemPrompt: prompt } }, 30_000);
   const afterMs = Date.now() - t0;
@@ -728,7 +728,7 @@ async function resetSession(key: string): Promise<Json> {
   return { via: "cli", wsError, cli: viaCli.record };
 }
 
-async function reopenPluginConnection(bridge: BridgeHandle): Promise<Json> {
+async function reopenPluginConnection(bridge: GatewayBridge): Promise<Json> {
   const t0 = Date.now();
   const closed = await waitFor(() => bridge.current() === undefined, 30_000);
   const session = await bridge.waitForReady(HELLO_TIMEOUT_MS);
@@ -789,8 +789,10 @@ async function main(): Promise<void> {
 
   const app = Fastify({ logger: false });
   const io = new Server(app.server, { transports: ["websocket"] });
-  const bridge = attachBridge(io, {
-    verifyToken: (presented) => (verifyBridgeToken(BRIDGE_TOKEN, presented) ? { tokenId: "spike" } : null),
+  const bridgeServer = attachBridge(io, {
+    verifyToken: (presented) =>
+      verifyBridgeToken(BRIDGE_TOKEN, presented) ? { tokenId: "spike", gatewayId: "spike" } : null,
+    acceptGateway: () => true,
     serverVersion: "spike-3",
     ackTimeoutMs: 15_000,
     onHello: (session, hello) => {
@@ -814,6 +816,8 @@ async function main(): Promise<void> {
     onRejected: (reason) =>
       observations.bridgeSideEvents.push({ at: new Date().toISOString(), event: "rejected", reason }),
   });
+  // 스파이크는 Gateway 하나 — 브리지 자리도 하나만 쓴다
+  const bridge = bridgeServer.forGateway("spike");
   await app.listen({ host: BRIDGE_URL.hostname, port: Number(BRIDGE_URL.port) });
   console.log(`브리지 서버 ${BRIDGE_URL.hostname}:${BRIDGE_URL.port} 네임스페이스 /bridge`);
 
@@ -1165,7 +1169,7 @@ async function main(): Promise<void> {
     writeObservations();
     console.log(`\n누적 모델 런 ${observations.ledgerAtEnd}/${MAX_RUNS}. 관찰 기록: ${OBSERVATIONS_PATH}`);
     if (observer) await observer.stop().catch(() => undefined);
-    bridge.close();
+    bridgeServer.close();
     io.close();
     await app.close();
     if (STOP_GATEWAY) {

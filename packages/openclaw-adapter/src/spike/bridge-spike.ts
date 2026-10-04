@@ -34,7 +34,7 @@ import type { InboundDeliver, InboundDeliverResult, OutboundMessage, Result } fr
 import type { EventFrame } from "@openclaw/gateway-protocol";
 import Fastify from "fastify";
 import { Server } from "socket.io";
-import { attachBridge, type BridgeHandle } from "../bridge/server";
+import { attachBridge, type GatewayBridge } from "../bridge/server";
 import { verifyBridgeToken } from "../bridge/session";
 import { connectGateway, type GatewayConnection } from "../gateway/client";
 
@@ -259,7 +259,7 @@ function baseDeliver(params: {
 const HUMAN = { type: "user" as const, handle: "jang", displayName: "장병현" };
 
 async function runScenario(params: {
-  bridge: BridgeHandle;
+  bridge: GatewayBridge;
   observer: GatewayConnection | null;
   name: string;
   description: string;
@@ -384,8 +384,10 @@ function outboundsOf(record: ScenarioRecord): OutboundMessage[] {
 async function main(): Promise<void> {
   const app = Fastify({ logger: false });
   const io = new Server(app.server, { transports: ["websocket"] });
-  const bridge = attachBridge(io, {
-    verifyToken: (presented) => (verifyBridgeToken(BRIDGE_TOKEN, presented) ? { tokenId: "spike" } : null),
+  const bridgeServer = attachBridge(io, {
+    verifyToken: (presented) =>
+      verifyBridgeToken(BRIDGE_TOKEN, presented) ? { tokenId: "spike", gatewayId: "spike" } : null,
+    acceptGateway: () => true,
     serverVersion: "spike-2",
     ackTimeoutMs: 15_000,
     onHello: (session, hello) => {
@@ -412,6 +414,8 @@ async function main(): Promise<void> {
     onRejected: (reason) =>
       observations.bridgeSideEvents.push({ at: new Date().toISOString(), event: "rejected", reason }),
   });
+  // 스파이크는 Gateway 하나 — 브리지 자리도 하나만 쓴다
+  const bridge = bridgeServer.forGateway("spike");
   await app.listen({ host: BRIDGE_URL.hostname, port: Number(BRIDGE_URL.port) });
   console.log(
     `브리지 서버 ${BRIDGE_URL.hostname}:${BRIDGE_URL.port} 네임스페이스 /bridge — 플러그인 hello 대기`,
@@ -736,7 +740,7 @@ async function main(): Promise<void> {
     writeObservations();
     console.log(`\n모델 런 ${observations.runsUsed}/${MAX_RUNS}. 관찰 기록: ${OBSERVATIONS_PATH}`);
     if (observer) await observer.stop().catch(() => undefined);
-    bridge.close();
+    bridgeServer.close();
     io.close();
     await app.close();
   }

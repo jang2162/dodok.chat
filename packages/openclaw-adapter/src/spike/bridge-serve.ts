@@ -90,8 +90,10 @@ function toDelivery(line: string): InboundDeliver | null {
 
 const app = Fastify({ logger: false });
 const io = new Server(app.server, { transports: ["websocket"] });
-const bridge = attachBridge(io, {
-  verifyToken: (presented) => (verifyBridgeToken(BRIDGE_TOKEN, presented) ? { tokenId: "spike" } : null),
+const bridgeServer = attachBridge(io, {
+  verifyToken: (presented) =>
+    verifyBridgeToken(BRIDGE_TOKEN, presented) ? { tokenId: "spike", gatewayId: "spike" } : null,
+  acceptGateway: () => true,
   serverVersion: "spike-2-serve",
   onHello: (_session, hello) => console.log(`플러그인 hello: ${JSON.stringify(hello)}`),
   onOutboundMessage: async (_session, message) => {
@@ -102,6 +104,8 @@ const bridge = attachBridge(io, {
   onClose: (session) => console.log(`플러그인 연결 닫힘 (${session.closeReason ?? "?"})`),
   onRejected: (reason) => console.log(`핸드셰이크 거부: ${reason}`),
 });
+// 스파이크는 Gateway 하나 — 브리지 자리도 하나만 쓴다
+const bridge = bridgeServer.forGateway("spike");
 
 await app.listen({ host: BRIDGE_URL.hostname, port: Number(BRIDGE_URL.port) });
 console.log(
@@ -121,6 +125,6 @@ for await (const line of rl) {
   );
 }
 
-bridge.close();
+bridgeServer.close();
 io.close();
 await app.close();

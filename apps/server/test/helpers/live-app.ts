@@ -77,7 +77,6 @@ export async function bootLiveApp(opts: LiveAppOptions = {}): Promise<LiveApp> {
         OPENCLAW_TARGET: "dev",
         OPENCLAW_DEV_GATEWAY_URL: gateway.url,
         OPENCLAW_DEV_GATEWAY_TOKEN: gateway.token,
-        OPENCLAW_DEVICE_IDENTITY_PATH: join(dir, "openclaw-device.json"),
         DATA_DIR: dir,
         DB_PATH: ":memory:",
         // 앱마다 따로(testEnv 주석) — dir 아래라 close() 가 함께 지운다

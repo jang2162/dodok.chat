@@ -74,7 +74,9 @@ describe("시나리오 — 인바운드 대본을 Gateway 이벤트와 플러그
     const http = createServer();
     io = new Server(http);
     bridge = attachBridge(io, {
-      verifyToken: (presented) => (verifyBridgeToken(TOKEN, presented) ? { tokenId: "env" } : null),
+      verifyToken: (presented) =>
+        verifyBridgeToken(TOKEN, presented) ? { tokenId: "env", gatewayId: "env" } : null,
+      acceptGateway: () => true,
       serverVersion: "9.9.9",
       onOutboundMessage: async (_session, message) => {
         outbound.push(message);
@@ -106,7 +108,7 @@ describe("시나리오 — 인바운드 대본을 Gateway 이벤트와 플러그
     const scenario = createScenario({ gateway, plugin, agents: { dev } });
     const d = delivery("dev", "@dev 안녕");
 
-    await expect(bridge.deliverInbound(d, 2_000)).resolves.toEqual({
+    await expect(bridge.forGateway("env").deliverInbound(d, 2_000)).resolves.toEqual({
       ok: true,
       data: { admission: "dispatch", providerRunId: d.runId },
     });
@@ -155,7 +157,7 @@ describe("시나리오 — 인바운드 대본을 Gateway 이벤트와 플러그
       agents: { dev: () => ({ reply: "안 보냄", drop: "bot-loop-protection" }) },
     });
     const d = delivery("dev", "@dev 반복");
-    await expect(bridge.deliverInbound(d, 2_000)).resolves.toEqual({
+    await expect(bridge.forGateway("env").deliverInbound(d, 2_000)).resolves.toEqual({
       ok: true,
       data: { admission: "drop", reason: "bot-loop-protection" },
     });
@@ -182,11 +184,11 @@ describe("시나리오 — 인바운드 대본을 Gateway 이벤트와 플러그
         },
       },
     });
-    await bridge.deliverInbound(delivery("dev", "하나"), 2_000);
+    await bridge.forGateway("env").deliverInbound(delivery("dev", "하나"), 2_000);
     await vi.waitFor(() => expect(outbound).toHaveLength(1));
-    await bridge.deliverInbound(delivery("fin", "둘"), 2_000);
+    await bridge.forGateway("env").deliverInbound(delivery("fin", "둘"), 2_000);
     await vi.waitFor(() => expect(outbound).toHaveLength(2));
-    await bridge.deliverInbound(delivery("dev", "셋"), 2_000);
+    await bridge.forGateway("env").deliverInbound(delivery("dev", "셋"), 2_000);
     await vi.waitFor(() => expect(outbound).toHaveLength(3));
 
     expect(seen).toEqual(["dev#0:하나", "fin#0", "dev#1:셋"]);
@@ -209,7 +211,7 @@ describe("시나리오 — 인바운드 대본을 Gateway 이벤트와 플러그
       },
     });
     const failed = delivery("dev", "@dev 실패");
-    await expect(bridge.deliverInbound(failed, 2_000)).resolves.toMatchObject({
+    await expect(bridge.forGateway("env").deliverInbound(failed, 2_000)).resolves.toMatchObject({
       ok: true,
       data: { admission: "dispatch" },
     });
@@ -239,7 +241,7 @@ describe("시나리오 — 인바운드 대본을 Gateway 이벤트와 플러그
     });
     // 재생은 이 시각 뒤에 시작하므로 n 번째 델타는 아무리 빨라도 여기서 n×DELAY 뒤에 나간다
     const sentAt = performance.now();
-    await bridge.deliverInbound(delivery("dev", "@dev 느리게"), 2_000);
+    await bridge.forGateway("env").deliverInbound(delivery("dev", "@dev 느리게"), 2_000);
     await vi.waitFor(() => expect(outbound).toHaveLength(1));
 
     const deltas = arrivals.filter((a) => a.event === "chat").slice(0, 2);
@@ -269,7 +271,7 @@ describe("시나리오 — 인바운드 대본을 Gateway 이벤트와 플러그
         resolve(connection.request("chat.abort", { sessionKey: stopped.sessionKey, runId: stopped.runId }));
       });
     });
-    await bridge.deliverInbound(stopped, 2_000);
+    await bridge.forGateway("env").deliverInbound(stopped, 2_000);
     await expect(aborting).resolves.toEqual({ ok: true });
     await scenario.idle();
     await connection.request("sessions.list", {});
@@ -293,7 +295,7 @@ describe("시나리오 — 인바운드 대본을 Gateway 이벤트와 플러그
       },
     });
     const sent = delivery("dev", "@dev 승인");
-    await bridge.deliverInbound(sent, 2_000);
+    await bridge.forGateway("env").deliverInbound(sent, 2_000);
     const requested = await vi.waitFor(() => {
       const found = frames.find((f) => f.event === "plugin.approval.requested");
       expect(found).toBeDefined();
@@ -346,7 +348,7 @@ describe("시나리오 — 인바운드 대본을 Gateway 이벤트와 플러그
       // TTL 이 짧고 아무도 누르지 않는다 → 만료 → 툴 오류
       agents: { dev: () => ({ approval: { toolName: "Read", ttlMs: 20 }, reply: "그래도 답합니다" }) },
     });
-    await bridge.deliverInbound(delivery("dev", "@dev 승인"), 2_000);
+    await bridge.forGateway("env").deliverInbound(delivery("dev", "@dev 승인"), 2_000);
     await scenario.idle();
 
     const result = frames.find(
@@ -376,7 +378,7 @@ describe("시나리오 — 인바운드 대본을 Gateway 이벤트와 플러그
         }),
       },
     });
-    await bridge.deliverInbound(delivery("dev", "@dev 승인 둘"), 2_000);
+    await bridge.forGateway("env").deliverInbound(delivery("dev", "@dev 승인 둘"), 2_000);
     const requested = await vi.waitFor(() => {
       const found = frames.filter((f) => f.event === "plugin.approval.requested");
       expect(found).toHaveLength(2);
@@ -407,15 +409,17 @@ describe("시나리오 — 인바운드 대본을 Gateway 이벤트와 플러그
       agents: { dev: () => ({ deltas: ["a", "b"], reply: "ab", deltaDelayMs: 20 }) },
     });
     await scenario.idle(); // 재생 중인 것이 없으면 곧바로
-    await bridge.deliverInbound(delivery("dev", "하나"), 2_000);
-    await bridge.deliverInbound(delivery("dev", "둘"), 2_000);
+    await bridge.forGateway("env").deliverInbound(delivery("dev", "하나"), 2_000);
+    await bridge.forGateway("env").deliverInbound(delivery("dev", "둘"), 2_000);
     await scenario.idle();
     expect(outbound.map((m) => m.text)).toEqual(["ab", "ab"]);
   });
 
   it("대본이 없는 에이전트면 INTERNAL 로 ack 한다", async () => {
     createScenario({ gateway, plugin, agents: {} });
-    await expect(bridge.deliverInbound(delivery("ghost", "누구"), 2_000)).resolves.toMatchObject({
+    await expect(
+      bridge.forGateway("env").deliverInbound(delivery("ghost", "누구"), 2_000),
+    ).resolves.toMatchObject({
       ok: false,
       error: { code: "INTERNAL", message: expect.stringContaining("ghost") },
     });

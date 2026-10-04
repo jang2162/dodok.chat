@@ -1,4 +1,10 @@
-import { BridgeAuthGuard, type BridgeTokenVerifier, createOpenClawAdapter } from "@dodok/openclaw-adapter";
+import {
+  BridgeAuthGuard,
+  type BridgeTokenVerifier,
+  createOpenClawAdapter,
+  type OpenClawAdapter,
+  type OpenClawAdapterOptions,
+} from "@dodok/openclaw-adapter";
 import { createRunnerAdapter, type RunnerAdapter, type RunnerTokenVerifier } from "@dodok/runner-adapter";
 import type { ApiError } from "@dodok/shared";
 import cookie from "@fastify/cookie";
@@ -135,6 +141,25 @@ export const ENV_BRIDGE_TOKEN_IGNORED_WARNING =
   "BRIDGE_TOKEN in .env is ignored — manage bridge tokens in the connection page";
 
 /**
+ * `.env` 의 Gateway 하나를 연결 id `OPENCLAW_ENV_CONNECTION_ID` 로 넣은 OpenClaw 어댑터 — Gateway 를 앱에서 구성하기 전까지의
+ * 자리(멀티 Gateway 계획 판정 PG1). 디바이스 아이덴티티는 어댑터가 `DATA_DIR/gateways/env/` 에 둔다
+ */
+function createEnvOpenClawAdapter(
+  options: OpenClawAdapterOptions,
+  gateway: ServerConfig["gateway"],
+): OpenClawAdapter {
+  const adapter = createOpenClawAdapter(options);
+  adapter.upsertGateway({
+    id: OPENCLAW_ENV_CONNECTION_ID,
+    name: OPENCLAW_ENV_CONNECTION_ID,
+    url: gateway.url,
+    token: gateway.token,
+    enabled: true,
+  });
+  return adapter;
+}
+
+/**
  * 브리지 거절 로그·실패 카운터와 wire 레이트리밋 사건의 원격 주소. 리버스 프록시를 믿을 때(TRUST_PROXY=true)만 X-Forwarded-For 첫 값을 쓴다 —
  * 믿지 않는데 읽으면 클라이언트가 헤더를 꾸며 스로틀·귀속을 피한다. Caddy 는 클라이언트 XFF 를 자기가 본 IP 로 덮는다
  */
@@ -201,7 +226,13 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     if (envImport === "imported") logger.info({ label: "env" }, "bridge token imported from .env");
     if (envImport === "ignored") logger.warn(ENV_BRIDGE_TOKEN_IGNORED_WARNING);
     // 핸드셰이크와 첨부 HTTP 가 같은 검증을 쓴다. DB 오류는 던지고, 부르는 쪽이 거절로 본다
-    const verifyBridgeToken: BridgeTokenVerifier = (presented) => verifyBridgeTokenDb(db, presented);
+    const verifyBridgeToken = (presented: unknown) => verifyBridgeTokenDb(db, presented);
+    // 플러그인 핸드셰이크는 토큰이 묶인 Gateway 도 본다 — 아직 Gateway 는 env 의 하나뿐이라 모든 토큰이 그 연결의 것이다
+    // (멀티 Gateway 계획 판정 PG1)
+    const verifyPluginToken: BridgeTokenVerifier = (presented) => {
+      const verified = verifyBridgeToken(presented);
+      return verified && { tokenId: verified.tokenId, gatewayId: OPENCLAW_ENV_CONNECTION_ID };
+    };
     const verifyRunnerToken: RunnerTokenVerifier = (presented) => verifyRunnerTokenDb(db, presented);
     const bus = new ServerBus();
     const limits: Limits = { ...LIMITS, ...deps.limits };
@@ -269,32 +300,30 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     const adapters: AgentAdapter[] = deps.adapters
       ? [...deps.adapters]
       : [
-          createOpenClawAdapter({
-            connectionId: OPENCLAW_ENV_CONNECTION_ID,
-            gateway: {
-              url: config.gateway.url,
-              token: config.gateway.token,
-              deviceIdentityPath: config.deviceIdentityPath,
+          createEnvOpenClawAdapter(
+            {
+              dataDir: config.DATA_DIR,
+              bridge: {
+                io,
+                verifyToken: verifyPluginToken,
+                clientAddress,
+                logAddress: ipPrefix,
+                serverVersion: packageJson.version,
+                authGuard: bridgeGuard,
+                onBlocked: onBridgeBlocked,
+                now: limitClock,
+              },
+              logger: logger.child({ mod: "adapter" }),
+              onCanonical: (message, connectionId) =>
+                orchestrator.onCanonical(message, "openclaw", connectionId),
+              sessionKeysToRecover: (connectionId) => sessionRecoverTargets(db).get(connectionId) ?? [],
+              ...(config.OPENCLAW_FRAME_DUMP_PATH === undefined
+                ? {}
+                : { frameDumpPath: config.OPENCLAW_FRAME_DUMP_PATH }),
+              ...(deps.gatewayBackoff === undefined ? {} : { backoff: deps.gatewayBackoff }),
             },
-            bridge: {
-              io,
-              verifyToken: verifyBridgeToken,
-              clientAddress,
-              logAddress: ipPrefix,
-              serverVersion: packageJson.version,
-              authGuard: bridgeGuard,
-              onBlocked: onBridgeBlocked,
-              now: limitClock,
-            },
-            logger: logger.child({ mod: "adapter" }),
-            onCanonical: (message, connectionId) =>
-              orchestrator.onCanonical(message, "openclaw", connectionId),
-            sessionKeysToRecover: (connectionId) => sessionRecoverTargets(db).get(connectionId) ?? [],
-            ...(config.OPENCLAW_FRAME_DUMP_PATH === undefined
-              ? {}
-              : { frameDumpPath: config.OPENCLAW_FRAME_DUMP_PATH }),
-            ...(deps.gatewayBackoff === undefined ? {} : { backoff: deps.gatewayBackoff }),
-          }),
+            config.gateway,
+          ),
         ];
     // Claude 러너(러너 스펙 2장) — 사람 머신의 러너가 /runner 로 붙어 온다. 최종 답·post 는 OpenClaw 정본과 같은 자리로 저장한다
     // 러너 첨부 GET 의 읽기 범위를 이 어댑터에 묻는다(판정 R5) — 어댑터가 없으면(테스트의 가짜 claude) 열린 런도 없다

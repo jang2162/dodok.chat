@@ -24,6 +24,7 @@ import {
   type ProviderApproval,
   type SendOptions,
 } from "./adapter-types";
+import type { GatewayConnectionConfig } from "./connection/gateway-connection";
 
 type SendScript = (
   input: InboundDeliver,
@@ -70,6 +71,9 @@ export class FakeAdapter<P extends AdapterProvider = "openclaw"> implements Agen
     forget: string[];
     resolveApproval: Array<{ providerApprovalId: string; kind: ApprovalKind; decision: ApprovalDecision }>;
     revokeTokenSessions: string[];
+    /** 실물 OpenClaw 어댑터의 Gateway 조작(멀티 Gateway 스펙 5.1) — 기록만 하고 상태는 바꾸지 않는다 */
+    upsertGateway: GatewayConnectionConfig[];
+    removeGateway: string[];
     /** 메서드마다 받은 연결 id — 같은 메서드의 기록과 같은 순서 */
     connections: {
       send: Array<ConnectionId | null>;
@@ -89,6 +93,8 @@ export class FakeAdapter<P extends AdapterProvider = "openclaw"> implements Agen
     forget: [],
     resolveApproval: [],
     revokeTokenSessions: [],
+    upsertGateway: [],
+    removeGateway: [],
     connections: {
       send: [],
       abort: [],
@@ -202,6 +208,14 @@ export class FakeAdapter<P extends AdapterProvider = "openclaw"> implements Agen
   /** setup 이벤트는 내지 않는다 — 알려야 하면 emit({ kind: "setup" }) */
   setSetupDetail(detail: SetupDetailOf<P>): void {
     this.currentSetupDetail = detail;
+  }
+
+  upsertGateway(config: GatewayConnectionConfig): void {
+    this.calls.upsertGateway.push({ ...config });
+  }
+
+  async removeGateway(id: string): Promise<void> {
+    this.calls.removeGateway.push(id);
   }
 
   async connect(): Promise<void> {}

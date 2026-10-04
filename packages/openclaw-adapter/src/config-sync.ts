@@ -1,6 +1,6 @@
 import type { ConfigSet, ConfigSetResult } from "@dodok/shared";
 import { AdapterError, type AdapterLogger } from "./adapter-types";
-import type { BridgeHandle } from "./bridge/server";
+import type { GatewayBridge } from "./bridge/server";
 
 // 서버 코어 스펙 6.4 — 채널 설정을 브리지 config.set 으로 플러그인에 넘긴다. 플러그인이 없으면 기다리지 않고 거부한다
 // (채널 모듈이 system.notice warn 으로 알린다). restart_required 는 MVP 에서 로그만.
@@ -8,7 +8,7 @@ import type { BridgeHandle } from "./bridge/server";
 const CONFIG_SET_TIMEOUT_MS = 10_000;
 
 export async function syncChannelConfig(
-  bridge: Pick<BridgeHandle, "setConfig">,
+  bridge: Pick<GatewayBridge, "setConfig">,
   logger: AdapterLogger,
   channelId: string,
   config: ConfigSet["config"],
