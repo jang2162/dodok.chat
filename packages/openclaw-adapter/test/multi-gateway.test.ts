@@ -829,6 +829,32 @@ describe("멀티 Gateway — 연결을 닫을 때 Gateway 안의 런 멈추기(�
     );
   });
 
+  it("g1 을 끄는 사이 g2 에 ack 를 기다리던 전송은 그대로 — g2 플러그인이 받는 inbound.deliver 는 한 번(탐침 PE)", async () => {
+    await bothConnected();
+    await plugin("bridge-g1");
+    const acks: Ack[] = [];
+    // g2 플러그인은 받기만 하고 ack 를 미룬다 — 그 사이 g1 을 끈다
+    await plugin("bridge-g2", {
+      "inbound.deliver": (_payload: InboundDeliver, ack: Ack) => {
+        acks.push(ack);
+      },
+    });
+    const input = delivery();
+    const waiting = adapter.send(input, { connectionId: "g2" });
+    await until(() => acks.length === 1, "delivered to g2 plugin");
+
+    adapter.upsertGateway({ ...G1, enabled: false });
+    await until(() => fakeGateway(G1.url).stops === 1, "old g1 link stopped");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // g1 끄기가 g2 의 ack 대기를 끝냈다면 플러그인 대기를 거쳐 같은 전달을 다시 보낸다
+    expect(acks).toHaveLength(1);
+    acks[0]?.({ ok: true, data: { admission: "dispatch", providerRunId: input.runId } });
+    await expect(waiting).resolves.toMatchObject({ connectionId: "g2" });
+    expect(acks).toHaveLength(1);
+    expect(abortsOf(fakeGateway(G2.url))).toEqual([]);
+  });
+
   it("어댑터 close() 는 옛 링크 정리(abort 상한 → stop)를 기다린다", async () => {
     const { r1 } = await openRunsOnBoth();
     const gw1 = fakeGateway(G1.url);
@@ -916,6 +942,29 @@ describe("멀티 Gateway — 지우기·디바이스 파일 경합(리뷰 M1·M2
     }
     await until(() => gatewayOf("g1")?.gateway === "connected", "g1 added again after removal");
     expect(existsSync(join(dataDir, "gateways", "g1", "device.json"))).toBe(true);
+  });
+
+  it("지우는 사이 미뤄 둔 같은 id 의 upsert 는 어댑터 close() 뒤에 적용되지 않는다 — 닫힌 어댑터에 연결이 되살아나지 않는다(탐침 PF)", async () => {
+    await bothConnected();
+    const gw1 = fakeGateway(G1.url);
+    const connectsBefore = gw1.connects.length;
+    let release!: () => void;
+    gw1.stopGate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const removing = adapter.removeGateway("g1");
+    await until(() => gw1.stops === 1, "stop in progress");
+
+    adapter.upsertGateway(G1);
+    const closing = adapter.close();
+    gw1.stopGate = undefined;
+    release();
+    await removing;
+    await closing;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(gw1.connects).toHaveLength(connectsBefore);
+    expect(gatewayOf("g1")).toBeUndefined();
   });
 
   it("꺼진 Gateway 토큰의 거절은 실패 카운터에 세지 않는다 — 같은 주소의 다른 Gateway 토큰이 통한다(변이 Mb)", async () => {
