@@ -19,6 +19,7 @@ import { changeRole, leftHandleOf, removeMember } from "../src/modules/members/s
 import { createUserMessage } from "../src/modules/messages/service";
 import { upsertSubscription } from "../src/modules/push/service";
 import { bootTestApp, login, userWithRole } from "./helpers/app";
+import { FAKE_GATEWAY_ID } from "./helpers/gateways";
 import { connectWire, openWire, recordEvents, type WireClient } from "./helpers/wire";
 
 // 멤버 관리(팀 스펙 「멤버 관리」 절) — 목록·역할 바꾸기·내보내기, 그리고 에이전트 등록 쪽 핸들 유일(Review Focus 2 반대쪽)
@@ -635,6 +636,7 @@ describe("멤버 관리 REST", () => {
         providerAgentId: `pa${++n}`,
         handle: member.handle,
         name: "겹침",
+        gatewayId: FAKE_GATEWAY_ID,
       });
       expect(res.statusCode).toBe(409);
       expect(res.json()).toMatchObject({ code: "CONFLICT", details: { field: "handle" } });
@@ -646,6 +648,7 @@ describe("멤버 관리 REST", () => {
         providerAgentId: `pa${++n}`,
         handle: `ag${n}`,
         name: "에이전트",
+        gatewayId: FAKE_GATEWAY_ID,
       });
       const { agent } = created.json() as { agent: { id: string } };
       const res = await call(ownerToken, "PATCH", `/api/v1/agents/${agent.id}`, { handle: member.handle });
@@ -658,6 +661,7 @@ describe("멤버 관리 REST", () => {
         providerAgentId: `pa${++n}`,
         handle: "left-agent",
         name: "예약",
+        gatewayId: FAKE_GATEWAY_ID,
       });
       expect(created.statusCode).toBe(400);
       expect(created.json()).toMatchObject({ code: "VALIDATION", details: { field: "handle" } });
@@ -666,6 +670,7 @@ describe("멤버 관리 REST", () => {
         providerAgentId: `pa${++n}`,
         handle: `ag${n}`,
         name: "에이전트",
+        gatewayId: FAKE_GATEWAY_ID,
       });
       const { agent } = ok.json() as { agent: { id: string } };
       const patched = await call(ownerToken, "PATCH", `/api/v1/agents/${agent.id}`, { handle: "left-agent" });
@@ -687,6 +692,7 @@ describe("멤버 관리 REST", () => {
         providerAgentId: `pa${++n}`,
         handle: member.handle,
         name: "옛 핸들",
+        gatewayId: FAKE_GATEWAY_ID,
       });
       expect(res.statusCode).toBe(201);
     });

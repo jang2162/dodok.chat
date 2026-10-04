@@ -17,6 +17,7 @@ import { parseBody, parseParams, parseQuery } from "../../http/validate";
 import type { Logger } from "../../logger";
 import type { ServerBus } from "../../realtime/bus";
 import type { Orchestrator } from "../runs/orchestrator";
+import { syncChannelPrompt, syncPromptToGateway } from "./prompt-sync";
 import {
   addMember,
   type ChannelRecord,
@@ -142,8 +143,14 @@ export function registerChannelRoutes(fastify: FastifyInstance, ctx: ChannelRout
     const body = parseBody(AddMemberBody, request.body);
     // 사람 멤버는 promptOverride·autoRespond 를 못 가진다 — 서비스가 400 으로 막는다
     if (body.memberType === "agent") assertFields(request, MEMBER_EDITABLE_AGENT_MEMBER_FIELDS);
+    const gatewaysBefore = body.memberType === "agent" ? channelGatewayIds(ctx.db, id) : [];
     const member = addMember(ctx.db, id, body, ctx.logger);
     emitMembers(id);
+    // 다른 Gateway 의 에이전트가 처음 들어오면 그 Gateway 에 이 채널의 프롬프트를 한 번(계획 판정 PG10)
+    if (body.memberType === "agent") {
+      for (const gatewayId of channelGatewayIds(ctx.db, id))
+        if (!gatewaysBefore.includes(gatewayId)) syncPromptToGateway(ctx, id, gatewayId);
+    }
     return reply.code(201).send({ member });
   });
 
@@ -174,25 +181,4 @@ export function registerChannelRoutes(fastify: FastifyInstance, ctx: ChannelRout
     await resetAgentSession(ctx, { channelId: id, agentId, threadRootId });
     return { ok: true };
   });
-}
-
-/**
- * Gateway 설정 경로(config.patch)는 OpenClaw 몫이다 — 러너 어댑터는 채널 프롬프트를 매 런 싣는다(판정 P3). 보낼 곳은 그 채널의
- * 에이전트 멤버가 속한 Gateway 들이다(멀티 Gateway 계획 판정 PG10) — OpenClaw 에이전트가 없는 채널은 보내지 않는다
- */
-function syncChannelPrompt(ctx: ChannelRouteContext, channel: ChannelRecord): void {
-  const openclaw = ctx.registry.forProvider("openclaw");
-  if (!openclaw) return;
-  for (const gatewayId of channelGatewayIds(ctx.db, channel.id)) {
-    void openclaw
-      .syncChannelConfig(channel.id, { systemPrompt: channel.prompt ?? "" }, gatewayId)
-      .catch((err: unknown) => {
-        ctx.logger.warn({ err, channelId: channel.id, gatewayId }, "syncChannelConfig failed");
-        const reason = err instanceof Error ? err.message : String(err);
-        ctx.bus.emit("system.notice", {
-          level: "warn",
-          message: `#${channel.name} 채널 프롬프트를 Gateway 에 반영하지 못했다: ${reason}`,
-        });
-      });
-  }
 }

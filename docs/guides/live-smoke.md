@@ -161,7 +161,7 @@ oc --dev plugins inspect dodok --json | jq .plugin.status     # 여전히 "loade
 | `login` | 새로 로그인(캐시 갱신) → `GET /auth/me` 출력 |
 | `channels` | `GET /channels` |
 | `create-channel <name>` | `POST /channels` |
-| `add-agent <channelId> <providerAgentId> <handle>` | `GET /agents` 에 그 `providerAgentId` 가 없으면 `POST /agents { providerAgentId, handle, name: handle }`, 있으면 재사용 → `POST /channels/:id/members { memberType: "agent", memberId }` |
+| `add-agent <channelId> <providerAgentId> <handle> [gatewayId]` | `GET /agents` 에 그 Gateway 의 그 `providerAgentId` 가 없으면 `POST /agents { providerAgentId, handle, name: handle, gatewayId }`, 있으면 재사용 → `POST /channels/:id/members { memberType: "agent", memberId }`. `gatewayId` 를 빼면 `GET /gateways` 가 하나일 때 그것(둘 이상이면 USAGE 오류) |
 | `patch-channel <channelId> <json>` | `PATCH /channels/:id` (예: `'{"relayPolicy":{"maxRelayTurns":2,"allowPairs":"all"},"prompt":"…"}'`) |
 | `send <channelId> <text> [--watch-ms 60000]` | wire 접속 → `channel.subscribe` → `message.send` → 서버 이벤트를 `[+ms] <event> <요약>` 으로 `--watch-ms` 동안 |
 | `interact <channelId> <messageId> <itemId> [--watch-ms 60000]` | 최근 200개에서 메시지를 찾아 `component.interact { messageId, componentId: components.id, itemId, values: {} }` → ack → 이벤트 |

@@ -320,7 +320,8 @@ export function listMembers(db: DbOrTx, channelId: string): ChannelMember[] {
 
 /**
  * 그 채널의 OpenClaw 에이전트 멤버가 속한 켜진 Gateway 들(멀티 Gateway 계획 판정 PG10) — Gateway 가 빈 에이전트와 꺼진 Gateway 는
- * 빠진다. 꺼진 Gateway 에는 보내도 실패해 경고 알림만 남는다 — 다시 켤 때 그 사이 바뀐 프롬프트를 다시 보내는 길은 아직 없다
+ * 빠진다. 꺼진 Gateway 에는 보내도 실패해 경고 알림만 남는다 — 다시 켜면 그 Gateway 의 플러그인 hello 때 다시 보낸다
+ * (channels/prompt-sync.ts watchPluginHellos)
  */
 export function channelGatewayIds(db: DbOrTx, channelId: string): string[] {
   return db
@@ -339,6 +340,36 @@ export function channelGatewayIds(db: DbOrTx, channelId: string): string[] {
     )
     .all()
     .flatMap((row) => (row.gatewayId === null ? [] : [row.gatewayId]));
+}
+
+/** 그 Gateway 에 OpenClaw 에이전트 멤버를 둔 채널들 — 그 Gateway 의 플러그인이 hello 하면 이 채널들의 프롬프트를 다시 보낸다 */
+export function channelsOnGateway(db: DbOrTx, gatewayId: string): string[] {
+  return db
+    .selectDistinct({ channelId: channelMembers.channelId })
+    .from(channelMembers)
+    .innerJoin(agents, eq(agents.id, channelMembers.memberId))
+    .where(
+      and(
+        eq(channelMembers.memberType, "agent"),
+        eq(agents.provider, "openclaw"),
+        eq(agents.gatewayId, gatewayId),
+      ),
+    )
+    .all()
+    .map((row) => row.channelId);
+}
+
+/** 그 에이전트가 멤버인 채널마다 지금 동기화 대상 Gateway 들(channelGatewayIds) — 옮기기 전에 읽어 새로 들어오는 Gateway 를 가른다 */
+export function agentChannelGateways(
+  db: DbOrTx,
+  agentId: string,
+): Array<{ channelId: string; gatewayIds: string[] }> {
+  return db
+    .select({ channelId: channelMembers.channelId })
+    .from(channelMembers)
+    .where(and(eq(channelMembers.memberType, "agent"), eq(channelMembers.memberId, agentId)))
+    .all()
+    .map(({ channelId }) => ({ channelId, gatewayIds: channelGatewayIds(db, channelId) }));
 }
 
 /**

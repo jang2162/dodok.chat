@@ -1394,6 +1394,30 @@ describe("orchestrator", () => {
     t.orch.stop();
   });
 
+  it.each([
+    ["다른 Gateway 로", "office"],
+    ["Gateway 가 빈 채로 기다리다 Gateway 로", "none"],
+  ] as const)(
+    "maxInflight 를 기다리는 사이 에이전트를 옮기면(%s) 맡을 때의 연결로 보내지 않고 ADAPTER_UNAVAILABLE 로 닫는다",
+    async (_label, from) => {
+      const t = setup({ timeouts: { maxInflight: 1, queuedMs: undefined } });
+      const other = seedChannelWithAgent(t.db, { gatewayId: uuid() });
+      const a = await t.enqueue(t.say("@dev hi", other), { agentId: other.agentId });
+      if (from === "none") t.db.update(agents).set({ gatewayId: null }).where(eq(agents.id, t.agentId)).run();
+      const b = await t.enqueue();
+      await t.flush();
+      expect(t.adapter.calls.send.map((s) => s.runId)).toEqual([a.id]);
+
+      const home = insertGateway(t.db, t.workspaceId, { id: uuid(), name: "집" });
+      t.db.update(agents).set({ gatewayId: home.id }).where(eq(agents.id, t.agentId)).run();
+      await t.orch.signal(a.id, { kind: "gateway_aborted" });
+      await t.flush();
+      expect(t.adapter.calls.send.map((s) => s.runId)).toEqual([a.id]);
+      expect(t.runOf(b.id)).toMatchObject({ status: "error", error: { code: "ADAPTER_UNAVAILABLE" } });
+      t.orch.stop();
+    },
+  );
+
   it("런을 못 찾는 정본은 런 없이 저장되고 warn 로그", async () => {
     const t = setup();
     const ack = await t.orch.onCanonical(

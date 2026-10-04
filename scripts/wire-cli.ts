@@ -26,7 +26,9 @@ const USAGE = `사용: pnpm wire-cli <origin> [localToken] <명령> …   (local
   login                                            세션을 새로 얻고 me 출력
   channels                                         GET /channels
   create-channel <name>                            POST /channels
-  add-agent <channelId> <providerAgentId> <handle> 에이전트가 없으면 POST /agents, 있으면 재사용 → POST members
+  add-agent <channelId> <providerAgentId> <handle> [gatewayId]
+                                                   그 Gateway 에 에이전트가 없으면 POST /agents, 있으면 재사용 → POST members
+                                                   (gatewayId 를 빼면 Gateway 가 하나일 때 그것)
   patch-channel <channelId> <json>                 PATCH /channels/:id
   send <channelId> <text> [--watch-ms 60000]       구독 → message.send → 서버 이벤트를 시간표로
   interact <channelId> <messageId> <itemId> [--watch-ms 60000]
@@ -433,10 +435,25 @@ async function run(args: Args): Promise<void> {
         string,
       ];
       const { session: token } = await session(args);
+      // OpenClaw 에이전트는 Gateway 에 묶여 등록된다(멀티 Gateway 스펙 6.3) — 같은 id 도 Gateway 가 다르면 다른 에이전트다
+      let gatewayId = rest[3];
+      if (gatewayId === undefined) {
+        const gateways = ok(
+          "GET /gateways",
+          await request(origin, "GET", "/gateways", { session: token }),
+        ) as Json[];
+        if (gateways.length !== 1)
+          fail("USAGE", `Gateway 가 ${gateways.length}개다 — add-agent 의 넷째 인자로 gatewayId 를 준다`);
+        gatewayId = gateways[0]?.["id"] as string;
+      }
       const agents = ok("GET /agents", await request(origin, "GET", "/agents", { session: token }))[
         "agents"
       ] as Json[];
-      let agent = agents.find((a) => a["providerAgentId"] === providerAgentId);
+      let agent = agents.find(
+        (a) =>
+          a["providerAgentId"] === providerAgentId &&
+          (a["gateway"] as Json | null | undefined)?.["id"] === gatewayId,
+      );
       if (agent) {
         console.log(
           `에이전트 재사용: id=${agent["id"]} providerAgentId=${providerAgentId} handle=@${agent["handle"]}`,
@@ -444,7 +461,7 @@ async function run(args: Args): Promise<void> {
       } else {
         const created = await request(origin, "POST", "/agents", {
           session: token,
-          body: { providerAgentId, handle, name: handle },
+          body: { providerAgentId, handle, name: handle, gatewayId },
         });
         ok("POST /agents", created);
         printRest("POST", "/agents", created);

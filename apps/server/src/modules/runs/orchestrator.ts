@@ -726,6 +726,20 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       const trigger = pending.get(runId)?.trigger ?? {};
       const adapter = adapterForAgent(run.agentId);
       const connectionId = connectionOfRun(run);
+      // OpenClaw 런은 맡을 때 남긴 연결이 에이전트의 지금 Gateway 와 같을 때만 보낸다 — 다르면 maxInflight 를 기다리는 사이 owner 가
+      // 에이전트를 옮겼다. 옛 Gateway 로 보내면 옮긴 뜻과 어긋나고, 빈 연결에서 묶인 런은 대기열 키(빈 연결)가 새 Gateway 의 같은 세션
+      // 런과 갈려 함께 나간다. 「다시 실행」은 새 Gateway 로 간다
+      if (
+        adapter.provider === "openclaw" &&
+        store.getRunConnectionId(db, runId) !== agentConnectionId(db, run.agentId)
+      ) {
+        applySignal(runId, {
+          kind: "gateway_error",
+          code: "ADAPTER_UNAVAILABLE",
+          message: "agent moved to another gateway before the run was sent",
+        });
+        return;
+      }
       if (run.threadRootId !== undefined && lacksThreads(adapter, run.agentId, connectionId)) {
         applySignal(runId, {
           kind: "gateway_error",

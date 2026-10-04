@@ -222,7 +222,12 @@ describe("REST /api/v1 (FakeAdapter)", () => {
     const agent = await newAgent("rest-dev");
     expect(Agent.parse(agent)).toMatchObject({ handle: "rest-dev", provider: "openclaw", enabled: true });
 
-    const dup = await api("POST", "/agents", { providerAgentId: "other", handle: "rest-dev", name: "x" });
+    const dup = await api("POST", "/agents", {
+      providerAgentId: "other",
+      handle: "rest-dev",
+      name: "x",
+      gatewayId: FAKE_GATEWAY_ID,
+    });
     expect(dup.statusCode).toBe(409);
     expect(dup.json()).toMatchObject({ code: "CONFLICT" });
 
@@ -235,7 +240,14 @@ describe("REST /api/v1 (FakeAdapter)", () => {
     expect(patched.json()).toEqual({ agent: { ...agent, enabled: false, name: "Dev" } });
     expect((await api("PATCH", `/agents/${uuid()}`, { name: "x" })).statusCode).toBe(404);
     expect(
-      (await api("POST", "/agents", { handle: "Bad Handle", providerAgentId: "x", name: "x" })).statusCode,
+      (
+        await api("POST", "/agents", {
+          handle: "Bad Handle",
+          providerAgentId: "x",
+          name: "x",
+          gatewayId: FAKE_GATEWAY_ID,
+        })
+      ).statusCode,
     ).toBe(400);
   });
 
@@ -250,7 +262,12 @@ describe("REST /api/v1 (FakeAdapter)", () => {
       "Dev",
       "DEV-MAIN",
     ]) {
-      const res = await api("POST", "/agents", { providerAgentId, handle: "rest-badid", name: "x" });
+      const res = await api("POST", "/agents", {
+        providerAgentId,
+        handle: "rest-badid",
+        name: "x",
+        gatewayId: FAKE_GATEWAY_ID,
+      });
       expect(res.statusCode).toBe(400);
       expect(res.json()).toMatchObject({
         code: "VALIDATION",
@@ -263,6 +280,7 @@ describe("REST /api/v1 (FakeAdapter)", () => {
       providerAgentId: "dev_main-2",
       handle: "rest-goodid",
       name: "x",
+      gatewayId: FAKE_GATEWAY_ID,
     });
     expect(ok.statusCode).toBe(201);
   });
@@ -273,6 +291,7 @@ describe("REST /api/v1 (FakeAdapter)", () => {
       providerAgentId: "rest-field-other",
       handle: agent.handle,
       name: "x",
+      gatewayId: FAKE_GATEWAY_ID,
     });
     expect(dupHandle.statusCode).toBe(409);
     expect(dupHandle.json()).toMatchObject({ code: "CONFLICT", details: { field: "handle" } });

@@ -25,6 +25,7 @@ import { registerAgentRoutes } from "./modules/agents/routes";
 import { registerAttachmentRoutes } from "./modules/attachments/routes";
 import { sweepAttachments } from "./modules/attachments/service";
 import { type BlobLocks, createBlobLocks } from "./modules/attachments/store";
+import { watchPluginHellos } from "./modules/channels/prompt-sync";
 import { registerChannelRoutes } from "./modules/channels/routes";
 import { getChannel } from "./modules/channels/service";
 import { registerGatewayRoutes } from "./modules/gateways/routes";
@@ -525,6 +526,8 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       if (event.kind === "setup") emitSetupStatus();
     });
     undo.push({ step: "setup-events", run: () => offSetup() });
+    const offPromptResync = watchPluginHellos({ db, bus, logger, registry });
+    undo.push({ step: "prompt-resync", run: () => offPromptResync() });
     registerSetupRoutes(fastify, { auth, db, workspaceId, pluginFile, status: setupStatus });
     registerGatewayRoutes(fastify, {
       auth,
@@ -660,6 +663,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       await step("run-failures", () => runFailures.close());
       await step("disk", () => disk.close());
       await step("setup-events", () => offSetup());
+      await step("prompt-resync", () => offPromptResync());
       await step("push-triggers", () => pushTriggers.close()); // 새 발송을 받지 않는다 — 이미 나간 것은 ⑥ 앞에서 잠깐 기다린다
       await step("attachments-sweep", () => sweeper.close()); // 진행 중인 정리가 db 를 닫기 전에 끝나게
       await step("session-sweep", closeSessionSweep);

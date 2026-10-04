@@ -7,7 +7,7 @@ import { agents } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
 import { bootTestApp, login } from "./helpers/app";
 import { newTestDb } from "./helpers/db";
-import { FAKE_GATEWAY_ID } from "./helpers/gateways";
+import { FAKE_GATEWAY_ID, insertGateway } from "./helpers/gateways";
 import { seedWorkspace } from "./helpers/seed";
 
 // 러너 스펙 2장·판정 P9 — 에이전트 등록의 provider 에 claude 를 연다. providerAgentId 는 같은 제공자·같은 연결 안에서만 유일하다 —
@@ -20,9 +20,11 @@ const conflictOn = (field: string) =>
   });
 
 describe("createAgent — providerAgentId 는 같은 제공자 안에서 유일하다", () => {
+  /** 워크스페이스 하나와 그 Gateway 하나 — OpenClaw 에이전트의 id 는 같은 Gateway 안에서 유일하다 */
   const setup = () => {
     const db = newTestDb();
-    return { db, workspaceId: seedWorkspace(db).workspaceId };
+    const workspaceId = seedWorkspace(db).workspaceId;
+    return { db, workspaceId, gatewayId: insertGateway(db, workspaceId, { id: uuid() }).id };
   };
 
   it("openclaw dev 가 있어도 claude dev 는 등록된다 — 제공자를 가로지른 유일 규칙은 없다", () => {
@@ -33,12 +35,12 @@ describe("createAgent — providerAgentId 는 같은 제공자 안에서 유일�
     ).toMatchObject({ provider: "claude", providerAgentId: "dev" });
   });
 
-  it("같은 제공자의 같은 id 는 409(providerAgentId) — openclaw·claude 둘 다", () => {
-    const { db, workspaceId } = setup();
-    createAgent(db, { workspaceId, providerAgentId: "dev", handle: "dev", name: "Dev" });
-    expect(() => createAgent(db, { workspaceId, providerAgentId: "dev", handle: "dev2", name: "x" })).toThrow(
-      conflictOn("providerAgentId"),
-    );
+  it("같은 제공자의 같은 id 는 409(providerAgentId) — openclaw(같은 Gateway)·claude 둘 다", () => {
+    const { db, workspaceId, gatewayId } = setup();
+    createAgent(db, { workspaceId, providerAgentId: "dev", handle: "dev", name: "Dev", gatewayId });
+    expect(() =>
+      createAgent(db, { workspaceId, providerAgentId: "dev", handle: "dev2", name: "x", gatewayId }),
+    ).toThrow(conflictOn("providerAgentId"));
     createAgent(db, {
       workspaceId,
       provider: "claude",
@@ -58,7 +60,7 @@ describe("createAgent — providerAgentId 는 같은 제공자 안에서 유일�
   });
 
   it("대소문자만 다른 옛 행(Dev)도 같은 id 로 본다 — 세션 키는 소문자로 접힌다", () => {
-    const { db, workspaceId } = setup();
+    const { db, workspaceId, gatewayId } = setup();
     db.insert(agents)
       .values({
         id: uuid(),
@@ -68,11 +70,12 @@ describe("createAgent — providerAgentId 는 같은 제공자 안에서 유일�
         handle: "legacy",
         name: "Legacy",
         createdAt: new Date(),
+        gatewayId,
       })
       .run();
-    expect(() => createAgent(db, { workspaceId, providerAgentId: "dev", handle: "dev", name: "x" })).toThrow(
-      conflictOn("providerAgentId"),
-    );
+    expect(() =>
+      createAgent(db, { workspaceId, providerAgentId: "dev", handle: "dev", name: "x", gatewayId }),
+    ).toThrow(conflictOn("providerAgentId"));
   });
 
   it("다른 워크스페이스의 같은 id 는 막지 않는다", () => {
@@ -117,9 +120,16 @@ describe("REST — claude 에이전트 등록과 discover?provider [P9]", () => 
     expect(coder.statusCode).toBe(201);
     expect(Agent.parse(coder.json().agent)).toMatchObject({ provider: "claude", providerAgentId: "coder" });
 
-    const dev = await api("POST", "/agents", { providerAgentId: "dev", handle: "dev", name: "Dev" });
+    const dev = await api("POST", "/agents", {
+      providerAgentId: "dev",
+      handle: "dev",
+      name: "Dev",
+      gatewayId: FAKE_GATEWAY_ID,
+    });
     expect(dev.statusCode).toBe(201);
     expect(dev.json().agent.provider).toBe("openclaw");
+    // claude 에이전트에는 Gateway 키가 없다
+    expect(coder.json().agent).not.toHaveProperty("gateway");
 
     const codex = await api("POST", "/agents", {
       provider: "codex",
@@ -132,7 +142,12 @@ describe("REST — claude 에이전트 등록과 discover?provider [P9]", () => 
   });
 
   it("REST 로도 제공자를 가로지른 같은 id 는 등록되고, 같은 제공자의 같은 id 는 409(providerAgentId)", async () => {
-    await api("POST", "/agents", { providerAgentId: "shared", handle: "shared", name: "S" });
+    await api("POST", "/agents", {
+      providerAgentId: "shared",
+      handle: "shared",
+      name: "S",
+      gatewayId: FAKE_GATEWAY_ID,
+    });
     const res = await api("POST", "/agents", {
       provider: "claude",
       providerAgentId: "shared",
@@ -140,7 +155,12 @@ describe("REST — claude 에이전트 등록과 discover?provider [P9]", () => 
       name: "S2",
     });
     expect(res.statusCode).toBe(201);
-    const again = await api("POST", "/agents", { providerAgentId: "shared", handle: "shared3", name: "S3" });
+    const again = await api("POST", "/agents", {
+      providerAgentId: "shared",
+      handle: "shared3",
+      name: "S3",
+      gatewayId: FAKE_GATEWAY_ID,
+    });
     expect(again.statusCode).toBe(409);
     expect(again.json()).toMatchObject({ code: "CONFLICT", details: { field: "providerAgentId" } });
   });

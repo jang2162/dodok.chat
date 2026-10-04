@@ -253,6 +253,7 @@ describe("연결 페이지 러너 API /api/v1/setup/runner-*", () => {
         providerAgentId,
         handle: providerAgentId,
         name: providerAgentId,
+        ...(provider === "openclaw" ? { gatewayId: FAKE_GATEWAY_ID } : {}),
       });
       expect(res.statusCode).toBe(201);
       return (res.json() as { agent: Agent }).agent;

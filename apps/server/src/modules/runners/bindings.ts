@@ -8,7 +8,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import type { Db } from "../../db/client";
 import { agents, runnerTokens } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
-import { agentWithRunner, providerAgentIdIs } from "../agents/service";
+import { apiAgent, providerAgentIdIs } from "../agents/service";
 
 const claudeAgent = (workspaceId: string, providerAgentId: string) =>
   and(eq(agents.workspaceId, workspaceId), eq(agents.provider, "claude"), providerAgentIdIs(providerAgentId));
@@ -65,6 +65,6 @@ export function bindRunnerToken(
       .returning()
       .get();
     if (!row) throw apiError("NOT_FOUND", "agent not found");
-    return agentWithRunner(tx, row);
+    return apiAgent(tx, row);
   });
 }

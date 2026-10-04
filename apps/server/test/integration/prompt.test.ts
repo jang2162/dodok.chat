@@ -69,7 +69,7 @@ describe("통합 시나리오 8 — 채널 프롬프트 리비전", () => {
       await boot();
     });
 
-    it("8(a)·(b) — PATCH prompt → config.set 1건 + 다음 인바운드 channelPrompt, 「새 대화」 리셋 → promptRevisionAtStart 갱신·info 메시지·다음 인바운드 channelPrompt 없음", async () => {
+    it("8(a)·(b) — PATCH prompt → config.set 1건(채널에 처음 들어올 때의 1건 뒤) + 다음 인바운드 channelPrompt, 「새 대화」 리셋 → promptRevisionAtStart 갱신·info 메시지·다음 인바운드 channelPrompt 없음", async () => {
       const setup = await setupRelayChannel(live, RELAY_POLICY);
       const { channel, dev } = setup;
       const log = await openChannelWire(live, channel.id, sockets);
@@ -95,8 +95,10 @@ describe("통합 시나리오 8 — 채널 프롬프트 리비전", () => {
       expect(revision).toBe((revisionAtStart as number) + 1);
 
       const second = await devTurn(setup, log, "둘째 턴");
-      // config.set 은 같은 브리지 연결에서 인바운드보다 먼저 나갔다 — 인바운드를 받았으면 이미 기록돼 있다
+      // config.set 은 같은 브리지 연결에서 인바운드보다 먼저 나갔다 — 인바운드를 받았으면 이미 기록돼 있다. 앞의 한 건은 dev 를
+      // 채널에 넣을 때 이 Gateway 가 채널에 처음 들어와 보낸 빈 프롬프트다(멀티 Gateway 계획 판정 PG10 — fin 때는 이미 있어 없다)
       expect(live.plugin.configSets).toEqual([
+        { channelId: channel.id, config: { systemPrompt: "" } },
         { channelId: channel.id, config: { systemPrompt: "정중하게" } },
       ]);
       expect(second.context.channelPrompt).toBe("정중하게");
@@ -128,8 +130,8 @@ describe("통합 시나리오 8 — 채널 프롬프트 리비전", () => {
       const third = await devTurn(setup, log, "셋째 턴");
       expect(third.context.channelPrompt).toBeUndefined();
       expect(third.sessionKey).toBe(sessionKey);
-      // 리셋은 설정을 다시 보내지 않는다 — config.set 은 여전히 1건
-      expect(live.plugin.configSets).toHaveLength(1);
+      // 리셋은 설정을 다시 보내지 않는다 — config.set 은 여전히 위의 2건
+      expect(live.plugin.configSets).toHaveLength(2);
       expect(scenario.errors).toEqual([]);
     });
   });

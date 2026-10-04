@@ -20,7 +20,7 @@ import { connectWire, openWire, type WireClient } from "./helpers/wire";
 // 역할 매트릭스(팀 스펙 2장 표) — owner·admin·member 세 세션으로 경로마다 허용·거부를 본다.
 // 거부는 REST 403 FORBIDDEN·wire ack FORBIDDEN, membership 이 없는 세션은 어디서나 401
 
-type Method = "GET" | "POST" | "PATCH" | "DELETE";
+type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 type Case = {
   name: string;
   min: TeamRole;
@@ -117,7 +117,7 @@ describe("역할 매트릭스(스펙 2장)", () => {
         return {
           method: "POST",
           url: "/api/v1/agents",
-          payload: { providerAgentId: handle, handle, name: handle },
+          payload: { providerAgentId: handle, handle, name: handle, gatewayId: FAKE_GATEWAY_ID },
         };
       },
     },
@@ -136,6 +136,16 @@ describe("역할 매트릭스(스펙 2장)", () => {
       min: "admin",
       ok: 200,
       request: () => ({ method: "GET", url: `/api/v1/agents/discover?gatewayId=${FAKE_GATEWAY_ID}` }),
+    },
+    {
+      name: "PUT /agents/:id/gateway",
+      min: "owner",
+      ok: 200,
+      request: () => ({
+        method: "PUT",
+        url: `/api/v1/agents/${newAgent().id}/gateway`,
+        payload: { gatewayId: newGateway() },
+      }),
     },
     ...(
       [

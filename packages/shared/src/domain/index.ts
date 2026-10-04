@@ -45,6 +45,11 @@ export const Agent = z.object({
    * 않았다(처음 알리는 러너에 묶인다). revoked 면 맡을 러너가 없다 — 연결 페이지에서 다른 러너에 다시 묶는다
    */
   runner: z.object({ tokenId: Id, label: z.string(), revoked: z.boolean() }).optional(),
+  /**
+   * OpenClaw 에이전트의 Gateway — REST 에이전트 응답에만, OpenClaw 에이전트에만 키가 있다. null 이면 Gateway 가 지워져 연결이 비었다
+   * (owner 가 다른 Gateway 로 옮기기를 기다린다 — 멀티 Gateway 스펙 6.3)
+   */
+  gateway: z.object({ id: Id, name: z.string() }).nullable().optional(),
 });
 export type Agent = z.infer<typeof Agent>;
 
