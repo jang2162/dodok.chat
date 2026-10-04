@@ -16,7 +16,7 @@ import { type Auth, createAuth } from "./auth";
 import { bootstrapOwner } from "./auth/owner";
 import { createIpLimit, registerAuthRoutes } from "./auth/routes";
 import { isLocalVapidSubject, type ServerConfig } from "./config";
-import { createDb, type Db } from "./db/client";
+import { createDb, type Db, type DbOrTx } from "./db/client";
 import { workspaces } from "./db/schema.sqlite";
 import { HttpError, httpStatusToErrorCode } from "./http/errors";
 import { createLogger, type Logger, requestLogSerializer } from "./logger";
@@ -795,7 +795,8 @@ export function startAttachmentSweeper(
   };
 }
 
-function ensureWorkspace(db: Db, name: string): string {
+/** 워크스페이스는 하나 — 있으면 그 id, 없으면 만든다. dev:fake 가 createApp 전에 시드를 넣을 때도 쓴다 */
+export function ensureWorkspace(db: DbOrTx, name: string): string {
   const existing = db.select().from(workspaces).get();
   if (existing) return existing.id;
   const id = uuidv7();

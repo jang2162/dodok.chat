@@ -42,12 +42,12 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { v7 as uuidv7 } from "uuid";
 import { z } from "zod";
-import { type App, type AppDeps, createApp } from "../src/app";
+import { type App, type AppDeps, createApp, ensureWorkspace } from "../src/app";
 import { loadConfig } from "../src/config";
-import { hasGateways } from "../src/adapters/types";
+import { createDb, type DbOrTx } from "../src/db/client";
 import { agents, bridgeTokens, gateways, runnerTokens, users } from "../src/db/schema.sqlite";
 import { createAgent, providerAgentIdIs } from "../src/modules/agents/service";
-import { gatewayConfig, getGatewayRow } from "../src/modules/gateways/service";
+import { getGatewayRow } from "../src/modules/gateways/service";
 import { acceptInvite, normalizeEmail } from "../src/modules/members/accept";
 import { issueInvite } from "../src/modules/members/invites";
 import { DISCONNECT_EVENT_MS, startRunState } from "../src/modules/ops/health";
@@ -884,12 +884,12 @@ function ensureDevFakeRunner(app: App): void {
 }
 
 /**
- * 가짜 Gateway 행과 그 Gateway 에 묶인 고정 브리지 토큰 행을 보장하고 어댑터에 넣는다. 가짜 Gateway 는 시작마다 포트가 바뀌므로
- * `--keep` 으로 이어받은 행은 주소·토큰만 이번 것으로 바꾼다(이름·켜짐은 사람이 연결 페이지에서 바꾼 대로 둔다). 고정 토큰 행이
- * 이미 있으면(폐기됐어도) 그대로 둔다 — 고정 러너 토큰과 같은 규칙
+ * 가짜 Gateway 행과 그 Gateway 에 묶인 고정 브리지 토큰 행을 보장한다 — createApp 전에 부른다(부팅이 DB 의 Gateway 를 어댑터에
+ * 넣으므로 첫 부팅이 「Gateway 없음」으로 시작하지 않는다). 가짜 Gateway 는 시작마다 포트가 바뀌므로 `--keep` 으로 이어받은 행은
+ * 주소·토큰만 이번 것으로 바꾼다(이름·켜짐은 사람이 연결 페이지에서 바꾼 대로 둔다). 고정 토큰 행이 이미 있으면(폐기됐어도) 그대로
+ * 둔다 — 고정 러너 토큰과 같은 규칙
  */
-function ensureDevFakeGateway(app: App, gateway: FakeGateway): void {
-  const { db, workspaceId } = app;
+function seedDevFakeGateway(db: DbOrTx, workspaceId: string, gateway: FakeGateway): void {
   const now = new Date();
   if (getGatewayRow(db, workspaceId, DEV_FAKE_GATEWAY_ID)) {
     db.update(gateways)
@@ -928,10 +928,6 @@ function ensureDevFakeGateway(app: App, gateway: FakeGateway): void {
       })
       .run();
   }
-  const row = getGatewayRow(db, workspaceId, DEV_FAKE_GATEWAY_ID);
-  const openclaw = app.registry.forProvider("openclaw");
-  if (!row || !openclaw || !hasGateways(openclaw)) throw new Error("dev:fake could not add the fake gateway");
-  openclaw.upsertGateway(gatewayConfig(row));
 }
 
 /**
@@ -996,28 +992,31 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
     return closing;
   };
   try {
-    app = await createApp(
-      loadConfig({
-        HOST: host,
-        PORT: String(port),
-        APP_ORIGIN: opts.appOrigin ?? DEFAULT_APP_ORIGIN,
-        DATA_DIR: dataDir,
-        DB_PATH: dbPath,
-        LOG_LEVEL: opts.logLevel ?? "info",
-        LOCAL_AUTH_TOKEN: DEV_FAKE_LOCAL_TOKEN,
-        BETTER_AUTH_SECRET: DEV_FAKE_SECRET,
-      }),
-      {
-        ...(opts.pushSend ? { pushSend: opts.pushSend } : {}),
-        statfs,
-        disconnectEventMs: opts.disconnectEventMs ?? DISCONNECT_EVENT_MS,
-        gatewayBackoff: DEV_FAKE_GATEWAY_BACKOFF,
-      },
-    );
+    const config = loadConfig({
+      HOST: host,
+      PORT: String(port),
+      APP_ORIGIN: opts.appOrigin ?? DEFAULT_APP_ORIGIN,
+      DATA_DIR: dataDir,
+      DB_PATH: dbPath,
+      LOG_LEVEL: opts.logLevel ?? "info",
+      LOCAL_AUTH_TOKEN: DEV_FAKE_LOCAL_TOKEN,
+      BETTER_AUTH_SECRET: DEV_FAKE_SECRET,
+    });
+    const seedDb = createDb(config.dbPath);
+    try {
+      seedDevFakeGateway(seedDb, ensureWorkspace(seedDb, config.DODOK_WORKSPACE_NAME), gateway);
+    } finally {
+      seedDb.$client.close();
+    }
+    app = await createApp(config, {
+      ...(opts.pushSend ? { pushSend: opts.pushSend } : {}),
+      statfs,
+      disconnectEventMs: opts.disconnectEventMs ?? DISCONNECT_EVENT_MS,
+      gatewayBackoff: DEV_FAKE_GATEWAY_BACKOFF,
+    });
     // main.ts 와 같다 — 운영 화면 「직전 종료」가 null 로만 보이지 않게
     runState = startRunState(runStateDir, app.ops, app.logger);
     app.setPreviousClean(runState.previousClean);
-    ensureDevFakeGateway(app, gateway);
     await ensureDevFakeMember(app);
     ensureDevFakeRunner(app);
     // 다시 붙이기(토큰·hello 바꾸기)는 한 번에 하나씩 — 겹치면 소켓 하나를 두 핸드셰이크가 다툰다
