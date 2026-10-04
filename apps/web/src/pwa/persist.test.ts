@@ -306,7 +306,7 @@ describe("startPersistence", () => {
     qc.setQueryData(qk.timeline(CH2), timelineOf(2));
     qc.setQueryData(qk.channelRuns(CH), []);
     qc.setQueryData(qk.setupStatus, { server: { version: "0.1.0" } });
-    qc.setQueryData(qk.bridgeTokens, [{ id: "t", label: "env", prefix: "abc123" }]);
+    qc.setQueryData([...qk.bridgeTokens, "gateway-1"], [{ id: "t", label: "env", prefix: "abc123" }]);
   }
 
   it("골라서 저장한다 — 최근 채널의 것·me·목록만, 타임라인은 잘라서", async () => {

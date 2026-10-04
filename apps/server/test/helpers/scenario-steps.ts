@@ -85,12 +85,14 @@ export async function setupRelayChannel(live: LiveApp, policy: PolicyInput): Pro
     providerAgentId: "dev",
     handle: "dev",
     name: "Dev",
+    gatewayId: live.gatewayId,
   });
   const dev = ok("POST /agents dev", devRes).agent;
   const finRes = await rest<{ agent: Agent }>(live, "POST", "/agents", {
     providerAgentId: "fin",
     handle: "fin",
     name: "Fin",
+    gatewayId: live.gatewayId,
   });
   const fin = ok("POST /agents fin", finRes).agent;
   const devMember = await rest(live, "POST", `/channels/${channelId}/members`, {

@@ -276,9 +276,21 @@ describe("db", () => {
           .run(tokenId, ws, bridgeRow.label, bridgeRow.hash, bridgeRow.prefix, createdAt.getTime());
         expect(() => db.select().from(runnerTokens).all()).toThrow(/no such table/);
 
-        migrate(db, { migrationsFolder: migrationsFolder() });
+        // 0009 경계에서 본다 — 뒤 마이그레이션(0013)은 Gateway 에 묶이지 않은 브리지 토큰을 버린다(아래 0013 테스트)
+        migrate(db, { migrationsFolder: migrationsUpTo(dir, "_runner_tokens") });
 
-        expect(db.select().from(bridgeTokens).all()).toEqual([{ ...bridgeRow, gatewayId: null }]);
+        expect(
+          sqlite.prepare("SELECT id, workspace_id, label, hash, prefix, created_at FROM bridge_tokens").all(),
+        ).toEqual([
+          {
+            id: tokenId,
+            workspace_id: ws,
+            label: bridgeRow.label,
+            hash: bridgeRow.hash,
+            prefix: bridgeRow.prefix,
+            created_at: createdAt.getTime(),
+          },
+        ]);
         expect(db.select().from(runnerTokens).all()).toEqual([]);
         // 같은 해시는 두 번 못 넣는다 — 검증이 해시로 행 하나를 찾는다
         const runnerRow = { ...bridgeRow, id: uuid(), label: "laptop" };
@@ -437,7 +449,7 @@ describe("db", () => {
           )
           .run(tokenId, ws, "a".repeat(64), createdAt.getTime());
 
-        migrate(db, { migrationsFolder: migrationsFolder() });
+        migrate(db, { migrationsFolder: migrationsUpTo(dir, "_multi_gateway") });
 
         expect(db.select({ g: agents.gatewayId }).from(agents).all()).toEqual([{ g: null }]);
         expect(db.select({ g: bridgeTokens.gatewayId }).from(bridgeTokens).all()).toEqual([{ g: null }]);
@@ -505,6 +517,55 @@ describe("db", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+  it("0012 까지 적용된 DB 에 0013 을 얹으면 Gateway 에 묶인 브리지 토큰만 남고, gateway_id 는 필수·지우면 함께 지워진다", () => {
+    const dir = mkdtempSync(join(tmpdir(), "dodok-db-mig-"));
+    try {
+      const sqlite = new Database(join(dir, "app.db"));
+      try {
+        const db = drizzle(sqlite, { schema: { ...schema, ...authSchema } });
+        migrate(db, { migrationsFolder: migrationsUpTo(dir, "_multi_gateway") });
+        const ws = uuid();
+        const createdAt = new Date("2026-10-04T00:00:00.000Z");
+        db.insert(workspaces).values({ id: ws, name: "w", createdAt }).run();
+        const gw = uuid();
+        db.insert(gateways)
+          .values({
+            id: gw,
+            workspaceId: ws,
+            name: "사무실",
+            url: "wss://gw",
+            token: "t",
+            createdAt,
+            updatedAt: createdAt,
+          })
+          .run();
+        const insertToken = (id: string, hash: string, gatewayId: string | null) =>
+          sqlite
+            .prepare(
+              "INSERT INTO bridge_tokens (id, workspace_id, label, hash, prefix, created_at, gateway_id) VALUES (?, ?, 'x', ?, 'AAAAAA', ?, ?)",
+            )
+            .run(id, ws, hash, createdAt.getTime(), gatewayId);
+        const bound = uuid();
+        insertToken(bound, "a".repeat(64), gw);
+        insertToken(uuid(), "b".repeat(64), null); // .env 에서 이어받은 꼴
+
+        migrate(db, { migrationsFolder: migrationsFolder() });
+
+        expect(
+          db.select({ id: bridgeTokens.id, g: bridgeTokens.gatewayId }).from(bridgeTokens).all(),
+        ).toEqual([{ id: bound, g: gw }]);
+        expect(() => insertToken(uuid(), "c".repeat(64), null)).toThrow(/NOT NULL/);
+        sqlite.pragma("foreign_keys = ON");
+        db.delete(gateways).where(eq(gateways.id, gw)).run();
+        expect(db.select().from(bridgeTokens).all()).toEqual([]);
+      } finally {
+        sqlite.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("runs·approvals 의 제공자 id 는 연결 안에서만 유일하다", () => {
     const db = createDb(":memory:");
     const { ws, ch } = seed(db);

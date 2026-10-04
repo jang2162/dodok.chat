@@ -8,7 +8,8 @@ type Payload<K extends keyof ServerToClientEvents> = Parameters<ServerToClientEv
  * 페이로드는 wire ServerToClientEvents(계약 스펙 7.2) 와 같고, run.event 만 룸을 고르도록 channelId 를 더 싣는다.
  */
 export type BusEvents = {
-  "message.created": Payload<"message.created">;
+  // silent — 서버 안에서만(팬아웃이 걷는다): 푸시 트리거가 건너뛴다. 연결을 닫으며 끝낸 런에 늦게 온 정본(runs/orchestrator.ts onCanonical)
+  "message.created": Payload<"message.created"> & { silent?: true };
   "message.updated": Payload<"message.updated">;
   "run.state": Payload<"run.state">;
   "run.event": { event: RunEvent; channelId: Id };

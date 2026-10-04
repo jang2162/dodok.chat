@@ -9,6 +9,7 @@ export * from "./members";
 export * from "./wire";
 export * from "./push";
 export * from "./setup";
+export * from "./gateways";
 export * from "./ops";
 export * from "./search";
 export * from "./session-key";

@@ -274,7 +274,8 @@ export const runs = sqliteTable(
     hasCanonical: integer("has_canonical", { mode: "boolean" }).notNull().default(false),
     finalSource: text("final_source"),
     usage: json<RunUsage>("usage_json"),
-    error: json<{ code: string; message: string }>("error_json"),
+    // connectionClosed — 어댑터가 연결을 닫으며 닫은 런(재시작 뒤에도 늦은 정본을 가른다, runs/orchestrator.ts onCanonical)
+    error: json<{ code: string; message: string; connectionClosed?: true }>("error_json"),
     relayHash: text("relay_hash"), // hash(from, to, 정규화 본문)
     threadRootId: text("thread_root_id"), // 스레드 런이면 그 루트 메시지 id
     // 그 런을 맡은 연결(OpenClaw Gateway id·러너 토큰 id) — 만들 때 에이전트 행의 연결, send 가 돌려준 값으로 덮는다. 에이전트를
@@ -413,7 +414,9 @@ export const bridgeTokens = sqliteTable(
     lastUsedAt: ts("last_used_at"),
     revokedAt: ts("revoked_at"),
     // 토큰이 붙이는 Gateway — 플러그인은 토큰만 보내고 서버가 이것으로 Gateway 를 안다. Gateway 를 지우면 함께 지운다
-    gatewayId: text("gateway_id").references(() => gateways.id, { onDelete: "cascade" }),
+    gatewayId: text("gateway_id")
+      .notNull()
+      .references(() => gateways.id, { onDelete: "cascade" }),
   },
   (t) => [
     uniqueIndex("bridge_tokens_hash").on(t.hash),

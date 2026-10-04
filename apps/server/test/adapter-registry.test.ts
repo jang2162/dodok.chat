@@ -12,6 +12,7 @@ import { addMember, type ChannelRecord, createChannel } from "../src/modules/cha
 import { listMessages } from "../src/modules/messages/service";
 import { getRun } from "../src/modules/runs/store";
 import { bootTestApp, login } from "./helpers/app";
+import { FAKE_GATEWAY_ID } from "./helpers/gateways";
 import { connectWire, type WireClient } from "./helpers/wire";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -96,6 +97,7 @@ describe("어댑터 레지스트리 배선 (앱 부팅, OpenClaw·Claude 가짜 
       providerAgentId,
       handle: providerAgentId,
       name: providerAgentId,
+      ...(provider === "openclaw" ? { gatewayId: FAKE_GATEWAY_ID } : {}),
     });
     app.db.update(agents).set({ provider }).where(eq(agents.id, agent.id)).run();
     return { ...agent, provider };
@@ -284,7 +286,7 @@ describe("어댑터 레지스트리 배선 (앱 부팅, OpenClaw·Claude 가짜 
         ts: new Date().toISOString(),
       },
       "openclaw",
-      "env",
+      FAKE_GATEWAY_ID,
     );
     const relay = await nextSend(claude, claudeBefore);
     expect(relay.input).toMatchObject({ kind: "message", agentId: "coder" });

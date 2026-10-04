@@ -21,8 +21,11 @@ const RECORD = {
   revokedAt: null,
   connected: false,
 };
-const STATUS = {
-  server: { version: "0.0.0" },
+const GATEWAY = {
+  id: ID,
+  name: "사무실",
+  url: "wss://gw.example",
+  enabled: true,
   gateway: {
     state: "connected",
     host: "gw.example",
@@ -33,7 +36,6 @@ const STATUS = {
   },
   bridge: {
     state: "connected",
-    publicUrl: "wss://chat.example/bridge",
     plugin: {
       version: "0.0.0",
       sdkVersion: "2026.9.4",
@@ -43,11 +45,17 @@ const STATUS = {
       connectedAt: NOW,
     },
   },
-  pluginFile: { available: false },
   pluginMatches: null,
-  envTokenIgnored: false,
+};
+const STATUS = {
+  server: { version: "0.0.0" },
+  bridge: { publicUrl: "wss://chat.example/bridge" },
+  pluginFile: { available: false },
+  gateways: [GATEWAY],
   runners: { list: [], runnerFile: { available: false } },
 };
+/** Gateway 하나를 바꾼 상태 */
+const withGateway = (patch: Record<string, unknown>) => ({ ...STATUS, gateways: [{ ...GATEWAY, ...patch }] });
 
 describe("Sha256Hex", () => {
   it("소문자 hex 64자만 통과한다", () => {
@@ -139,14 +147,27 @@ describe("IssueRunnerTokenResult", () => {
 });
 
 describe("SetupStatus", () => {
-  it("gateway 에 핀·드리프트가 있어야 한다(운영 보강 5.2)", () => {
-    const { pinned: _p, ...noPinned } = STATUS.gateway;
-    const { drift: _d, ...noDrift } = STATUS.gateway;
-    expect(SetupStatus.safeParse({ ...STATUS, gateway: noPinned }).success).toBe(false);
-    expect(SetupStatus.safeParse({ ...STATUS, gateway: noDrift }).success).toBe(false);
+  it("Gateway 의 gateway 블록에 핀·드리프트가 있어야 한다(운영 보강 5.2)", () => {
+    const { pinned: _p, ...noPinned } = GATEWAY.gateway;
+    const { drift: _d, ...noDrift } = GATEWAY.gateway;
+    expect(SetupStatus.safeParse(withGateway({ gateway: noPinned })).success).toBe(false);
+    expect(SetupStatus.safeParse(withGateway({ gateway: noDrift })).success).toBe(false);
   });
   it("pluginFile 없음·gateway.pairing null 은 통과한다", () => {
     expect(SetupStatus.parse(STATUS)).toEqual(STATUS);
+  });
+  it("Gateway 가 없어도 통과한다(빈 목록)", () => {
+    expect(SetupStatus.parse({ ...STATUS, gateways: [] }).gateways).toEqual([]);
+  });
+  it("Gateway 공유 토큰·옛 머리 값은 싣지 않는다(모르는 키는 걷힌다)", () => {
+    const parsed = SetupStatus.parse({
+      ...withGateway({ token: "secret" }),
+      envTokenIgnored: true,
+      gateway: GATEWAY.gateway,
+    });
+    expect(parsed.gateways[0]).not.toHaveProperty("token");
+    expect(parsed).not.toHaveProperty("envTokenIgnored");
+    expect(parsed).not.toHaveProperty("gateway");
   });
   it("pluginFile 있음은 sha256·bundleSha256·bytes 가 있어야 한다", () => {
     const file = { available: true, sha256: SHA, bundleSha256: "b".repeat(64), bytes: 1234 };
@@ -159,33 +180,43 @@ describe("SetupStatus", () => {
     expect(SetupStatus.safeParse({ ...STATUS, pluginFile: { ...file, bytes: -1 } }).success).toBe(false);
   });
   it("페어링 대기는 requestId·since 를 싣는다", () => {
-    const gateway = { ...STATUS.gateway, state: "reconnecting", pairing: { requestId: "req-1", since: NOW } };
-    expect(SetupStatus.parse({ ...STATUS, gateway }).gateway.pairing).toEqual({
+    const gateway = {
+      ...GATEWAY.gateway,
+      state: "reconnecting",
+      pairing: { requestId: "req-1", since: NOW },
+    };
+    expect(SetupStatus.parse(withGateway({ gateway })).gateways[0]?.gateway.pairing).toEqual({
       requestId: "req-1",
       since: NOW,
     });
   });
-  it("Gateway 에 아직 못 붙었으면 gateway.version 은 null", () => {
-    const gateway = { ...STATUS.gateway, state: "down", version: null };
-    expect(SetupStatus.parse({ ...STATUS, gateway }).gateway.version).toBeNull();
+  it("Gateway 에 아직 못 붙었으면 gateway.version 은 null, 꺼 둔 Gateway 는 disabled", () => {
+    const down = { ...GATEWAY.gateway, state: "down", version: null };
+    expect(SetupStatus.parse(withGateway({ gateway: down })).gateways[0]?.gateway.version).toBeNull();
+    const off = { ...GATEWAY.gateway, state: "disabled", version: null };
+    expect(SetupStatus.safeParse(withGateway({ enabled: false, gateway: off })).success).toBe(true);
   });
   it("pairing.since·connectedAt 은 ISO 시각만", () => {
     const pairing = { requestId: "req-1", since: "어제" };
-    expect(SetupStatus.safeParse({ ...STATUS, gateway: { ...STATUS.gateway, pairing } }).success).toBe(false);
-    const plugin = { ...STATUS.bridge.plugin, connectedAt: "2026-09-24" };
-    expect(SetupStatus.safeParse({ ...STATUS, bridge: { ...STATUS.bridge, plugin } }).success).toBe(false);
+    expect(SetupStatus.safeParse(withGateway({ gateway: { ...GATEWAY.gateway, pairing } })).success).toBe(
+      false,
+    );
+    const plugin = { ...GATEWAY.bridge.plugin, connectedAt: "2026-09-24" };
+    expect(SetupStatus.safeParse(withGateway({ bridge: { ...GATEWAY.bridge, plugin } })).success).toBe(false);
   });
   it("플러그인이 접속하지 않았으면 bridge.plugin 은 null", () => {
-    const bridge = { state: "down", publicUrl: "wss://chat.example/bridge", plugin: null };
-    expect(SetupStatus.safeParse({ ...STATUS, bridge }).success).toBe(true);
+    expect(SetupStatus.safeParse(withGateway({ bridge: { state: "down", plugin: null } })).success).toBe(
+      true,
+    );
   });
-  it("상태 값은 닫힌 목록", () => {
-    expect(SetupStatus.safeParse({ ...STATUS, gateway: { ...STATUS.gateway, state: "up" } }).success).toBe(
+  it("상태 값은 닫힌 목록, Gateway id 는 uuid", () => {
+    expect(SetupStatus.safeParse(withGateway({ gateway: { ...GATEWAY.gateway, state: "up" } })).success).toBe(
       false,
     );
     expect(
-      SetupStatus.safeParse({ ...STATUS, bridge: { ...STATUS.bridge, state: "reconnecting" } }).success,
+      SetupStatus.safeParse(withGateway({ bridge: { ...GATEWAY.bridge, state: "reconnecting" } })).success,
     ).toBe(false);
+    expect(SetupStatus.safeParse(withGateway({ id: "env" })).success).toBe(false);
   });
 });
 

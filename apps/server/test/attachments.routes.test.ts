@@ -19,11 +19,14 @@ import { blobPath, type BlobLocks, createBlobLocks, sha256Of } from "../src/modu
 import { registerAttachmentRoutes } from "../src/modules/attachments/routes";
 import { markBound, uploadAttachment } from "../src/modules/attachments/service";
 import { createUserMessage } from "../src/modules/messages/service";
+import { issueBridgeToken } from "../src/modules/setup/tokens";
 import { attachmentsDirOf, bootTestApp, login } from "./helpers/app";
 import { testEnv } from "./helpers/env";
+import { FAKE_GATEWAY_ID } from "./helpers/gateways";
 import { makePng, PDF_BYTES } from "./helpers/png";
 
-const BRIDGE_TOKEN = testEnv.BRIDGE_TOKEN as string;
+/** 그 테스트의 앱 가짜 Gateway 에 발급한 브리지 토큰 — beforeEach 가 채운다 */
+let BRIDGE_TOKEN: string;
 const NAME = '보고서 "최종" 😀.pdf';
 
 /** 로그를 줄 단위로 모은다 — 오류 로그 단언용 */
@@ -59,6 +62,7 @@ describe("첨부 HTTP (스펙 4.3)", () => {
   beforeAll(async () => {
     dir = mkdtempSync(join(tmpdir(), "dodok-att-routes-"));
     app = await bootTestApp({ ATTACHMENTS_DIR: dir }, { logger });
+    BRIDGE_TOKEN = issueBridgeToken(app.db, app.workspaceId, FAKE_GATEWAY_ID, "gw").token;
     const l = await login(app);
     session = l.headers;
     sessionToken = l.token;

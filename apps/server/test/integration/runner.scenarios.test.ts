@@ -491,6 +491,7 @@ describe("Claude 러너 통합 시나리오", () => {
         providerAgentId: "dev",
         handle: "dev",
         name: "Dev",
+        gatewayId: live.gatewayId,
       }),
     );
     const channel = await channelWith([dev, coder], "mixed");
@@ -528,6 +529,7 @@ describe("Claude 러너 통합 시나리오", () => {
         providerAgentId: "dev",
         handle: "dev",
         name: "Dev",
+        gatewayId: live.gatewayId,
       }),
     );
     const channel = await channelWith([dev, coder], "relay");
@@ -757,7 +759,7 @@ describe("Claude 러너 통합 시나리오", () => {
     });
     expect(reason).toBe("UNAUTHORIZED");
     // 브리지 슬롯은 그대로 가짜 플러그인의 것이다 — 러너 토큰이 그 자리를 밀어내지 않았다
-    expect((await setupStatus()).bridge.state).toBe("connected");
+    expect((await setupStatus()).gateways[0]?.bridge.state).toBe("connected");
   });
 
   it("열린 runner_down 은 그 토큰을 폐기하면 닫힌다 — 폐기된 토큰은 다시 붙을 수 없다 [리뷰 M2]", async () => {

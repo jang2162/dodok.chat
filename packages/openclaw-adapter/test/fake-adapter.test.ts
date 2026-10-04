@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   type AdapterEvent,
   AdapterError,
+  FAKE_GATEWAY_ID,
   FakeAdapter,
   type ProviderApproval,
   type RunEventBody,
@@ -70,8 +71,8 @@ describe("FakeAdapter", () => {
     const adapter = new FakeAdapter();
     const input = deliver();
 
-    await expect(adapter.send(input, { connectionId: "env" })).resolves.toEqual({
-      connectionId: "env",
+    await expect(adapter.send(input, { connectionId: FAKE_GATEWAY_ID })).resolves.toEqual({
+      connectionId: FAKE_GATEWAY_ID,
       admission: "dispatch",
       providerRunId: RUN,
     });
@@ -81,8 +82,8 @@ describe("FakeAdapter", () => {
   it("script 로 send 응답을 바꾸고, script 가 던진 AdapterError 는 그대로 전파한다", async () => {
     const adapter = new FakeAdapter();
     adapter.script(async () => ({ admission: "drop", reason: "bot-loop-protection" }));
-    await expect(adapter.send(deliver(), { connectionId: "env" })).resolves.toEqual({
-      connectionId: "env",
+    await expect(adapter.send(deliver(), { connectionId: FAKE_GATEWAY_ID })).resolves.toEqual({
+      connectionId: FAKE_GATEWAY_ID,
       admission: "drop",
       reason: "bot-loop-protection",
     });
@@ -91,7 +92,7 @@ describe("FakeAdapter", () => {
     adapter.script(() => {
       throw failure;
     });
-    const rejected = adapter.send(deliver(), { connectionId: "env" });
+    const rejected = adapter.send(deliver(), { connectionId: FAKE_GATEWAY_ID });
     await expect(rejected).rejects.toBe(failure);
     await expect(rejected).rejects.toMatchObject({ code: "ADAPTER_UNAVAILABLE", name: "AdapterError" });
     expect(adapter.calls.send).toHaveLength(2);
@@ -116,8 +117,8 @@ describe("FakeAdapter", () => {
 
     // 연결 id 없이 낸 이벤트에는 지금 고른 연결(OpenClaw 흉내의 기본은 env)이 실린다
     expect(seen).toEqual([
-      { ...signal, connectionId: "env" },
-      { kind: "run_event", runId: RUN, connectionId: "env", event: body },
+      { ...signal, connectionId: FAKE_GATEWAY_ID },
+      { kind: "run_event", runId: RUN, connectionId: FAKE_GATEWAY_ID, event: body },
     ]);
   });
 
@@ -125,21 +126,18 @@ describe("FakeAdapter", () => {
     const adapter = new FakeAdapter();
     const seen: AdapterEvent[] = [];
     adapter.onEvent((e) => seen.push(e));
-    expect(adapter.connectionId).toBe("env");
+    expect(adapter.connectionId).toBe(FAKE_GATEWAY_ID);
     adapter.useConnection("g2");
     adapter.emit({ kind: "run_signal", runId: RUN, signal: { kind: "gateway_started" } });
     adapter.emit({ kind: "run_signal", runId: RUN, connectionId: "g1", signal: { kind: "gateway_started" } });
     expect(seen.map((e) => (e.kind === "status" || e.kind === "setup" ? undefined : e.connectionId))).toEqual(
       ["g2", "g1"],
     );
-    // 받은 연결을 결과에 싣고, null 이면 지금 고른 연결
+    // 받은 연결을 결과에 싣는다. null 은 OpenClaw 흉내가 거절한다(아래 「연결이 없는 에이전트」)
     await expect(adapter.send(deliver(), { connectionId: "g1" })).resolves.toMatchObject({
       connectionId: "g1",
     });
-    await expect(adapter.send(deliver(), { connectionId: null })).resolves.toMatchObject({
-      connectionId: "g2",
-    });
-    expect(adapter.calls.connections.send).toEqual(["g1", null]);
+    expect(adapter.calls.connections.send).toEqual(["g1"]);
     expect(new FakeAdapter({ provider: "claude" }).connectionId).toBe("fake-runner");
   });
 
@@ -188,19 +186,19 @@ describe("FakeAdapter", () => {
     expect(key).toBe(`agent:dev:dodok:channel:${CH}`);
     expect(adapter.sessionKeyFor("dev", CH, MSG)).toBe(`agent:dev:dodok:channel:${CH}:thread:${MSG}`);
 
-    await expect(adapter.listAgents("env")).resolves.toEqual([
+    await expect(adapter.listAgents(FAKE_GATEWAY_ID)).resolves.toEqual([
       { providerAgentId: "dev", name: "dev" },
       { providerAgentId: "fin" },
     ]);
 
-    const reset = await adapter.resetSession(key, "env");
+    const reset = await adapter.resetSession(key, FAKE_GATEWAY_ID);
     expect(typeof reset.sessionStartedAt).toBe("string");
     expect(reset.lifecycleRevision).toBe("fake-1");
 
-    await expect(adapter.syncChannelConfig(CH, { requireMention: true }, "env")).resolves.toEqual({
+    await expect(adapter.syncChannelConfig(CH, { requireMention: true }, FAKE_GATEWAY_ID)).resolves.toEqual({
       applied: "live",
     });
-    await adapter.abort(RUN, key, "env");
+    await adapter.abort(RUN, key, FAKE_GATEWAY_ID);
     adapter.forgetRun(RUN);
 
     expect(adapter.calls.forget).toEqual([RUN]);
@@ -236,7 +234,7 @@ describe("FakeAdapter — 승인(서버 테스트용 대본)", () => {
 
     adapter.emitApproval(a);
 
-    expect(seen).toEqual([{ kind: "approval", connectionId: "env", approval: a }]);
+    expect(seen).toEqual([{ kind: "approval", connectionId: FAKE_GATEWAY_ID, approval: a }]);
   });
 
   it("resolveApproval 은 호출을 기록하고 emitApproval 한 승인의 terminal 스냅샷을 돌려준다", async () => {
@@ -245,7 +243,7 @@ describe("FakeAdapter — 승인(서버 테스트용 대본)", () => {
     adapter.emitApproval(a);
 
     await expect(
-      adapter.resolveApproval(a.providerApprovalId, "plugin", "deny", "env"),
+      adapter.resolveApproval(a.providerApprovalId, "plugin", "deny", FAKE_GATEWAY_ID),
     ).resolves.toMatchObject({
       providerApprovalId: a.providerApprovalId,
       status: "denied",
@@ -266,7 +264,7 @@ describe("FakeAdapter — 승인(서버 테스트용 대본)", () => {
     for (const gateway of ["reconnecting", "down"] as const) {
       adapter.setStatus({ provider: "openclaw", gateway, bridge: "connected" });
       await expect(
-        adapter.resolveApproval(a.providerApprovalId, "plugin", "deny", "env"),
+        adapter.resolveApproval(a.providerApprovalId, "plugin", "deny", FAKE_GATEWAY_ID),
       ).rejects.toMatchObject({
         name: "AdapterError",
         code: "ADAPTER_UNAVAILABLE",
@@ -278,16 +276,16 @@ describe("FakeAdapter — 승인(서버 테스트용 대본)", () => {
   it("모르는 승인은 NOT_FOUND, scriptResolveApproval 로 응답을 바꿀 수 있다", async () => {
     const adapter = new FakeAdapter();
 
-    await expect(adapter.resolveApproval("plugin:nope", "plugin", "allow-once", "env")).rejects.toMatchObject(
-      {
-        name: "AdapterError",
-        code: "NOT_FOUND",
-      },
-    );
+    await expect(
+      adapter.resolveApproval("plugin:nope", "plugin", "allow-once", FAKE_GATEWAY_ID),
+    ).rejects.toMatchObject({
+      name: "AdapterError",
+      code: "NOT_FOUND",
+    });
 
     adapter.scriptResolveApproval(() => approval({ status: "expired", decision: "deny", reason: "timeout" }));
     await expect(
-      adapter.resolveApproval("plugin:nope", "plugin", "allow-once", "env"),
+      adapter.resolveApproval("plugin:nope", "plugin", "allow-once", FAKE_GATEWAY_ID),
     ).resolves.toMatchObject({
       status: "expired",
       reason: "timeout",
@@ -298,22 +296,22 @@ describe("FakeAdapter — 승인(서버 테스트용 대본)", () => {
 
 describe("FakeAdapter.supports", () => {
   it("기본은 스레드를 아는 플러그인이 붙어 있다", () => {
-    expect(new FakeAdapter().supports("dev", "env", "threads")).toBe(true);
+    expect(new FakeAdapter().supports("dev", FAKE_GATEWAY_ID, "threads")).toBe(true);
   });
 
   it("setPluginCapabilities 로 옛 플러그인을 흉내 낸다", () => {
     const adapter = new FakeAdapter();
     adapter.setPluginCapabilities([]);
-    expect(adapter.supports("dev", "env", "threads")).toBe(false);
+    expect(adapter.supports("dev", FAKE_GATEWAY_ID, "threads")).toBe(false);
     adapter.setPluginCapabilities(["threads"]);
-    expect(adapter.supports("dev", "env", "threads")).toBe(true);
+    expect(adapter.supports("dev", FAKE_GATEWAY_ID, "threads")).toBe(true);
   });
 
   it("에이전트를 가리지 않는다 — 붙은 플러그인 하나를 본다", () => {
     const adapter = new FakeAdapter();
-    expect(adapter.supports("fin", "env", "threads")).toBe(true);
+    expect(adapter.supports("fin", FAKE_GATEWAY_ID, "threads")).toBe(true);
     adapter.setPluginCapabilities([]);
-    expect(adapter.supports("fin", "env", "threads")).toBe(false);
+    expect(adapter.supports("fin", FAKE_GATEWAY_ID, "threads")).toBe(false);
   });
 
   it("붙은 플러그인이 없으면 false", () => {
@@ -322,6 +320,51 @@ describe("FakeAdapter.supports", () => {
       ...adapter.setupDetail(),
       bridge: { state: "down", plugin: null },
     });
-    expect(adapter.supports("dev", "env", "threads")).toBe(false);
+    expect(adapter.supports("dev", FAKE_GATEWAY_ID, "threads")).toBe(false);
+  });
+});
+
+describe("FakeAdapter — 연결이 없는 에이전트(OpenClaw 흉내)", () => {
+  it("연결이 null 이면 send·abort·resetSession·listAgents 가 ADAPTER_UNAVAILABLE, supports 는 false", async () => {
+    const adapter = new FakeAdapter();
+    for (const call of [
+      () => adapter.send(deliver(), { connectionId: null }),
+      () => adapter.abort(RUN, "agent:dev:dodok:channel:x", null),
+      () => adapter.resetSession("agent:dev:dodok:channel:x", null),
+      () => adapter.listAgents(null),
+    ]) {
+      await expect(call()).rejects.toMatchObject({ name: "AdapterError", code: "ADAPTER_UNAVAILABLE" });
+    }
+    expect(adapter.supports("dev", null, "threads")).toBe(false);
+    expect(adapter.supports("dev", FAKE_GATEWAY_ID, "threads")).toBe(true);
+  });
+  it("러너 흉내는 null 연결을 받는다(묶임 없는 러너 에이전트)", async () => {
+    const adapter = new FakeAdapter({ provider: "claude" });
+    await expect(adapter.send(deliver(), { connectionId: null })).resolves.toMatchObject({
+      connectionId: "fake-runner",
+    });
+  });
+});
+
+describe("FakeAdapter — Gateway 목록", () => {
+  it("upsertGateway·removeGateway 가 목록을 바꾸고, 켜진 Gateway 는 주입한 상세·상태를 비춘다", async () => {
+    const adapter = new FakeAdapter();
+    expect(adapter.gatewaySetupDetails()).toEqual([]);
+    adapter.upsertGateway({ id: "g1", name: "사무실", url: "ws://a", token: "t1", enabled: true });
+    adapter.upsertGateway({ id: "g2", name: "집", url: "ws://b", token: "t2", enabled: false });
+    const [g1, g2] = adapter.gatewaySetupDetails();
+    expect(g1).toMatchObject({ id: "g1", name: "사무실", url: "ws://a", enabled: true });
+    expect(g1?.gateway.state).toBe("connected");
+    expect(g1?.bridge.plugin).not.toBeNull();
+    expect(g2).toMatchObject({ id: "g2", enabled: false, bridge: { state: "down", plugin: null } });
+    expect(g2?.gateway.state).toBe("disabled");
+    expect(JSON.stringify(adapter.gatewaySetupDetails())).not.toContain("t1");
+    expect(adapter.gatewayStatuses().map((g) => [g.id, g.gateway])).toEqual([
+      ["g1", "connected"],
+      ["g2", "disabled"],
+    ]);
+    await adapter.removeGateway("g1");
+    expect(adapter.gatewaySetupDetails().map((g) => g.id)).toEqual(["g2"]);
+    expect(adapter.calls.removeGateway).toEqual(["g1"]);
   });
 });

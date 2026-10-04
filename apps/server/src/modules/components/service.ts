@@ -2,12 +2,12 @@ import type { ComponentInteract, Message, Run } from "@dodok/shared";
 import { eq } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import type { Db, DbOrTx } from "../../db/client";
-import { componentInteractions, messages, users } from "../../db/schema.sqlite";
+import { componentInteractions, users } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
 import type { ServerBus } from "../../realtime/bus";
 import { getAgent } from "../agents/service";
 import { getChannel, listMembers } from "../channels/service";
-import { getMessage, rowToMessage } from "../messages/service";
+import { consumeComponentItem, getMessage } from "../messages/service";
 import type { RunGate } from "../ops/budget";
 import { isPairAllowed } from "../router/decide";
 import { CONTINUE_RELAY_ITEM, RETRY_RUN_ITEM } from "../router/service";
@@ -77,16 +77,7 @@ export async function interact(deps: InteractDeps, input: InteractInput): Promis
       .run();
 
     // 재사용 카드도 결과 줄이 실시간으로 늘어야 하므로 상호작용마다 방송한다 — 소비는 1회용만(설계 4.3)
-    let updated: Message = message;
-    if (!components.reusable) {
-      const row = tx
-        .update(messages)
-        .set({ componentState: { ...state, consumed: [...state.consumed, input.itemId] } })
-        .where(eq(messages.id, message.id))
-        .returning()
-        .get();
-      if (row) updated = rowToMessage(row);
-    }
+    const updated = components.reusable ? message : consumeComponentItem(tx, message, input.itemId);
     const interactionText = formatInteractionText({
       userHandle: user.handle,
       components,

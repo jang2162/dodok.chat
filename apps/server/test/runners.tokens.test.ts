@@ -14,6 +14,7 @@ import {
 } from "../src/modules/runners/tokens";
 import { issueBridgeToken, verifyBridgeTokenDb } from "../src/modules/setup/tokens";
 import { newTestDb } from "./helpers/db";
+import { FAKE_GATEWAY_ID, insertGateway } from "./helpers/gateways";
 import { seedWorkspace } from "./helpers/seed";
 
 const T0 = new Date("2026-09-27T00:00:00.000Z");
@@ -80,7 +81,8 @@ describe("verifyRunnerTokenDb", () => {
   });
 
   it("브리지 토큰으로는 러너가 못 붙고, 러너 토큰으로는 브리지가 못 붙는다", () => {
-    const bridge = issueBridgeToken(db, ws, "gw", T0).token;
+    insertGateway(db, ws);
+    const bridge = issueBridgeToken(db, ws, FAKE_GATEWAY_ID, "gw", T0).token;
     const runner = issueRunnerToken(db, ws, "laptop", T0).token;
     expect(verifyRunnerTokenDb(db, bridge, T0)).toBeNull();
     expect(verifyBridgeTokenDb(db, runner, T0)).toBeNull();

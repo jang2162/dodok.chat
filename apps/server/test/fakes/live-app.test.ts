@@ -50,13 +50,13 @@ describe("서버 통합 스모크 — 실제 OpenClawAdapter + 가짜 Gateway + 
     });
 
     // 어댑터가 가짜 Gateway 에 자기 기본 scopes 로 붙어 재접속 복구 구독까지 돌렸고, 디바이스 아이덴티티는 임시 DATA_DIR 의
-    // gateways/<연결 id>/ 에 있다(.env 의 Gateway 는 연결 id env — 멀티 Gateway 계획 판정 PG1)
+    // gateways/<Gateway id>/ 에 있다(멀티 Gateway 스펙 3.3)
     await vi.waitFor(() =>
       expect(gateway.requests.map((r) => r.method)).toEqual(
         expect.arrayContaining(["connect", "sessions.subscribe"]),
       ),
     );
-    expect(existsSync(join(dir, "gateways", "env", "device.json"))).toBe(true);
+    expect(existsSync(join(dir, "gateways", live.gatewayId, "device.json"))).toBe(true);
     expect(plugin.helloResult?.protocol).toBe(1);
 
     await live.close();
@@ -71,6 +71,7 @@ describe("서버 통합 스모크 — 실제 OpenClawAdapter + 가짜 Gateway + 
     const path = join(dumpDir, "frames.jsonl");
     try {
       live = await bootLiveApp({ env: { OPENCLAW_FRAME_DUMP_PATH: path } });
+      const { gatewayId } = live;
       // sessionKey 가 없는 프레임은 구독과 무관하게 모든 연결에 간다
       await live.gateway.emitEvent("agent", {
         runId: "not-ours",
@@ -81,8 +82,8 @@ describe("서버 통합 스모크 — 실제 OpenClawAdapter + 가짜 Gateway + 
       await live.close();
       live = undefined;
 
-      // 연결마다 <경로>.<연결 id>
-      const frames = readFileSync(`${path}.env`, "utf8")
+      // 연결마다 <경로>.<Gateway id>
+      const frames = readFileSync(`${path}.${gatewayId}`, "utf8")
         .trim()
         .split("\n")
         .map((line) => (JSON.parse(line) as { frame: { event: string; payload: { runId?: string } } }).frame);

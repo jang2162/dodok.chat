@@ -19,13 +19,11 @@ import { LIMITS } from "../../src/modules/ops/limits";
 import { bootLiveApp, type LiveApp, type LiveAppOptions } from "../helpers/live-app";
 import { makePng } from "../helpers/png";
 import { openChannelWire, rest, setupRelayChannel } from "../helpers/scenario-steps";
-import { testEnv } from "../helpers/env";
 import { connectWire, openWire, type WireClient } from "../helpers/wire";
 
 vi.setConfig({ testTimeout: 20_000, hookTimeout: 20_000 });
 
 const RELAY_POLICY = { maxRelayTurns: 2, allowPairs: "all" as const };
-const BRIDGE_TOKEN = testEnv.BRIDGE_TOKEN as string;
 
 describe("레이트리밋 통합", () => {
   const sockets: WireClient[] = [];
@@ -118,8 +116,8 @@ describe("레이트리밋 통합", () => {
     for (let i = 0; i < 5; i++)
       expect((await l.plugin.downloadAttachment(attachment.id, { token: "wrong" })).status).toBe(401);
 
-    await expect(l.plugin.reconnect({ token: BRIDGE_TOKEN })).rejects.toThrow(/UNAUTHORIZED/);
-    const blockedHttp = await l.plugin.downloadAttachment(attachment.id, { token: BRIDGE_TOKEN });
+    await expect(l.plugin.reconnect({ token: l.bridgeToken })).rejects.toThrow(/UNAUTHORIZED/);
+    const blockedHttp = await l.plugin.downloadAttachment(attachment.id, { token: l.bridgeToken });
     expect(blockedHttp.status).toBe(429);
     expect(JSON.parse(blockedHttp.bytes.toString())).toMatchObject({ code: "RATE_LIMITED" });
 
@@ -128,9 +126,9 @@ describe("레이트리밋 통합", () => {
     expect(blocked[0]?.detail).toEqual({ ipPrefix: "127.0.0.0/24", path: "bridge" });
 
     clock.t += 59_999;
-    await expect(l.plugin.reconnect({ token: BRIDGE_TOKEN })).rejects.toThrow(/UNAUTHORIZED/);
+    await expect(l.plugin.reconnect({ token: l.bridgeToken })).rejects.toThrow(/UNAUTHORIZED/);
     clock.t += 1;
-    await l.plugin.reconnect({ token: BRIDGE_TOKEN });
+    await l.plugin.reconnect({ token: l.bridgeToken });
     expect((await l.plugin.downloadAttachment(attachment.id)).status).toBe(404);
   });
 
@@ -165,10 +163,10 @@ describe("레이트리밋 통합", () => {
     for (let i = 0; i < 5; i++) expect(await handshake("198.51.100.7", "wrong")).toBe("rejected");
     for (let i = 0; i < 5; i++) expect(await download("198.51.100.7", "wrong")).toBe(401);
 
-    expect(await download("198.51.100.7", BRIDGE_TOKEN)).toBe(429);
-    expect(await handshake("198.51.100.7", BRIDGE_TOKEN)).toBe("rejected");
+    expect(await download("198.51.100.7", l.bridgeToken)).toBe(429);
+    expect(await handshake("198.51.100.7", l.bridgeToken)).toBe("rejected");
     // 다른 주소·프록시 소켓 주소(127.0.0.1)는 막히지 않았다
-    expect(await download("198.51.100.8", BRIDGE_TOKEN)).toBe(404);
+    expect(await download("198.51.100.8", l.bridgeToken)).toBe(404);
     expect((await l.plugin.downloadAttachment(attachment.id)).status).toBe(404);
     expect(opsRows(l, "bridge_auth_blocked").map((r) => r.detail)).toEqual([
       { ipPrefix: "198.51.100.0/24", path: "bridge" },

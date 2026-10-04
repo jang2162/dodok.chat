@@ -3,7 +3,15 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type App, type AppDeps, createApp } from "../../src/app";
+import { hasGateways } from "../../src/adapters/types";
 import { loadConfig } from "../../src/config";
+import {
+  createGateway,
+  gatewayConfig,
+  listGatewayRows,
+  updateGateway,
+} from "../../src/modules/gateways/service";
+import { issueBridgeToken } from "../../src/modules/setup/tokens";
 import type { RunTimeouts } from "../../src/modules/runs/orchestrator";
 import { type FakeGateway, type FakeGatewayOptions, startFakeGateway } from "../fakes/fake-gateway";
 import { type FakePlugin, startFakePlugin } from "../fakes/fake-plugin";
@@ -14,6 +22,10 @@ import { openclawOf } from "./openclaw";
 export type LiveApp = {
   app: App;
   gateway: FakeGateway;
+  /** 가짜 Gateway 의 DB 행 id(= 어댑터 연결 id) — OpenClaw 에이전트를 등록할 때 gatewayId 로 준다 */
+  gatewayId: string;
+  /** 그 Gateway 에 발급한 브리지 토큰 원문 — 가짜 플러그인이 이것으로 붙는다 */
+  bridgeToken: string;
   plugin: FakePlugin;
   /** owner 로그인 세션 */
   auth: Awaited<ReturnType<typeof login>>;
@@ -39,8 +51,10 @@ export type LiveAppOptions = FakeGatewayOptions & {
 const CONNECT_TIMEOUT_MS = 5_000;
 
 /**
- * 네트워크 없이 서버 전체를 띄운다: 가짜 Gateway 기동 → 그 주소를 dev Gateway 로 설정 → createApp(실제 OpenClawAdapter)
- * → listen(0) → 가짜 플러그인 /bridge 접속 → 어댑터가 gateway·bridge 모두 connected → owner 로그인.
+ * 네트워크 없이 서버 전체를 띄운다: 가짜 Gateway 기동 → createApp(실제 OpenClawAdapter) → 가짜 Gateway 를 DB 에 넣고 어댑터에
+ * 넣음(연결 페이지 「Gateway 추가」와 같다 — DB 에 이미 Gateway 가 있으면(파일 DB 재부팅) 첫 Gateway 의 주소·토큰을 새 가짜로
+ * 바꾼다) → 그 Gateway 의 브리지 토큰 발급 → listen(0) → 가짜 플러그인 /bridge 접속 → 어댑터가 gateway·bridge 모두 connected →
+ * owner 로그인.
  * 도중에 실패하면 만든 것을 닫고 던진다.
  * 첨부 블롭은 앱마다 따로인 join(live.dir, "attachments") 에 쌓이고 close() 가 지운다(blobPath(그 경로, sha) 로 디스크를 본다).
  * 재부팅 뒤에도 블롭이 남아야 하면 두 부팅에 같은 env.ATTACHMENTS_DIR(과 파일 DB_PATH)을 주고 스스로 지운다 — 동시에 띄우지 않는다.
@@ -74,9 +88,6 @@ export async function bootLiveApp(opts: LiveAppOptions = {}): Promise<LiveApp> {
     app = await createApp(
       loadConfig({
         ...testEnv,
-        OPENCLAW_TARGET: "dev",
-        OPENCLAW_DEV_GATEWAY_URL: gateway.url,
-        OPENCLAW_DEV_GATEWAY_TOKEN: gateway.token,
         DATA_DIR: dir,
         DB_PATH: ":memory:",
         // 앱마다 따로(testEnv 주석) — dir 아래라 close() 가 함께 지운다
@@ -89,19 +100,38 @@ export async function bootLiveApp(opts: LiveAppOptions = {}): Promise<LiveApp> {
         ...(opts.timeouts === undefined ? {} : { timeouts: { ...opts.deps?.timeouts, ...opts.timeouts } }),
       },
     );
+    const { gatewayId, bridgeToken } = addFakeGateway(app, gateway);
     await app.fastify.listen({ host: "127.0.0.1", port: opts.port ?? 0 });
     plugin = await startFakePlugin({
       bridgeUrl: app.url,
-      token: testEnv.BRIDGE_TOKEN as string,
+      token: bridgeToken,
       ...(opts.pluginHello === undefined ? {} : { hello: opts.pluginHello }),
     });
     await waitForAdapterConnected(app);
     const auth = await login(app);
-    return { app, gateway, plugin, auth, dir, close };
+    return { app, gateway, gatewayId, bridgeToken, plugin, auth, dir, close };
   } catch (error) {
     await close().catch(() => undefined);
     throw error;
   }
+}
+
+/** 가짜 Gateway 를 그 앱의 DB 와 OpenClaw 어댑터에 넣고(이미 있으면 첫 Gateway 를 이 주소로) 그 Gateway 의 브리지 토큰을 발급한다 */
+function addFakeGateway(app: App, gateway: FakeGateway): { gatewayId: string; bridgeToken: string } {
+  const existing = listGatewayRows(app.db, app.workspaceId)[0];
+  const row = existing
+    ? updateGateway(app.db, app.workspaceId, existing.id, { url: gateway.url, token: gateway.token }).row
+    : createGateway(app.db, app.workspaceId, {
+        name: "가짜 Gateway",
+        url: gateway.url,
+        token: gateway.token,
+      });
+  const openclaw = app.registry.forProvider("openclaw");
+  if (!openclaw || !hasGateways(openclaw))
+    throw new Error("live app has no gateway-managing OpenClaw adapter");
+  openclaw.upsertGateway(gatewayConfig(row));
+  const { token } = issueBridgeToken(app.db, app.workspaceId, row.id, "live-app");
+  return { gatewayId: row.id, bridgeToken: token };
 }
 
 /** 어댑터 status 이벤트로 gateway·bridge 가 모두 connected 가 될 때까지 기다린다. dev:fake(scripts/dev-fake.ts)도 쓴다. */

@@ -25,12 +25,14 @@ import { markBound } from "../src/modules/attachments/service";
 import { createUserMessage } from "../src/modules/messages/service";
 import { RUNNER_BUNDLE_ENTRY } from "../src/modules/runners/runner-file";
 import { RUNNER_TOKEN_FILE } from "../src/modules/runners/routes";
+import { issueBridgeToken } from "../src/modules/setup/tokens";
 import { bootTestApp, login, userWithRole } from "./helpers/app";
-import { testEnv } from "./helpers/env";
+import { FAKE_GATEWAY_ID } from "./helpers/gateways";
 import { type FakeRunner, startFakeRunner } from "./fakes/fake-runner";
 import { makePng } from "./helpers/png";
 
-const BRIDGE_TOKEN = testEnv.BRIDGE_TOKEN as string;
+/** 그 앱의 가짜 Gateway(bootTestApp 이 넣는다)에 브리지 토큰 하나 — 원문 */
+const bridgeTokenOf = (app: App) => issueBridgeToken(app.db, app.workspaceId, FAKE_GATEWAY_ID, "gw").token;
 const sha = (b: Buffer | string) => createHash("sha256").update(b).digest("hex");
 
 function captureLogger() {
@@ -340,7 +342,7 @@ describe("연결 페이지 러너 API /api/v1/setup/runner-*", () => {
   });
 
   it("브리지 토큰으로는 /runner 에 못 붙는다", async () => {
-    expect(await tryRunner(app.url, BRIDGE_TOKEN)).toBe("UNAUTHORIZED");
+    expect(await tryRunner(app.url, bridgeTokenOf(app))).toBe("UNAUTHORIZED");
   });
 
   it("러너 거절 로그의 주소는 가린 값(ipPrefix)이다 — 원래 주소는 그 줄에 없다", async () => {
@@ -409,7 +411,7 @@ describe("연결 페이지 러너 API /api/v1/setup/runner-*", () => {
       expect(Attachment.parse(posted.json())).toMatchObject({ kind: "image", name: "shot.png" });
       expect((await download(issued.token)).statusCode).toBe(404);
 
-      for (const token of [BRIDGE_TOKEN, "wrong"]) {
+      for (const token of [bridgeTokenOf(app), "wrong"]) {
         expect((await upload(token)).statusCode).toBe(401);
         expect((await download(token)).statusCode).toBe(401);
       }
@@ -478,7 +480,7 @@ describe("연결 페이지 러너 API /api/v1/setup/runner-*", () => {
         method: "POST",
         url: BRIDGE_ATTACHMENTS_PATH,
         headers: {
-          authorization: `Bearer ${BRIDGE_TOKEN}`,
+          authorization: `Bearer ${bridgeTokenOf(app)}`,
           "content-type": "image/png",
           [BRIDGE_ATTACHMENT_HEADERS.channelId]: channelId,
         },
@@ -504,14 +506,16 @@ describe("러너 경로 인증 실패는 브리지와 같은 가드에 쌓인다
       },
     );
     await app.fastify.listen({ host: "127.0.0.1", port: 0 });
+    bridgeToken = bridgeTokenOf(app);
   });
   afterEach(async () => {
     await app.close();
   });
 
+  let bridgeToken: string;
   const bridgeDownload = () =>
     fetch(`${app.url}${BRIDGE_ATTACHMENTS_PATH}/${uuid()}`, {
-      headers: { authorization: `Bearer ${BRIDGE_TOKEN}` },
+      headers: { authorization: `Bearer ${bridgeToken}` },
     });
   const runnerDownload = async () =>
     (

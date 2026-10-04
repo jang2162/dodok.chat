@@ -118,20 +118,6 @@ describe("새 토큰 발급", () => {
     expect(screen.getByRole("dialog")).toBe(dialog);
   });
 
-  it("서버가 막은 라벨(env)은 대화상자 안에 고정 문구로 — 서버 문구는 보이지 않는다", async () => {
-    stubSetupServer({
-      issue: () => json(400, { code: "VALIDATION", message: "server said: label env is reserved" }),
-    });
-    renderConnection();
-    const dialog = await issue("env");
-    const alert = await within(dialog).findByRole("alert");
-    expect(alert).toHaveTextContent("env 는 .env 에서 이어받은 토큰에만 쓰는 라벨입니다");
-    expect(alert).not.toHaveTextContent("server said");
-    // 실패했으면 그냥 닫을 수 있다
-    await userEvent.keyboard("{Escape}");
-    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-  });
-
   it("그 밖의 VALIDATION·CONFLICT 도 고정 문구로", async () => {
     let code = "VALIDATION";
     stubSetupServer({

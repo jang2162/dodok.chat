@@ -21,6 +21,7 @@ import { createAdapterRegistry } from "../src/adapters/registry";
 import { getRun, insertRun, listRunEvents, updateRun } from "../src/modules/runs/store";
 import { ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
+import { FAKE_GATEWAY_ID } from "./helpers/gateways";
 import { seedChannelWithAgent } from "./helpers/seed";
 
 type Ids = ReturnType<typeof seedChannelWithAgent>;
@@ -352,7 +353,7 @@ describe("orchestrator", () => {
         { kind: "gateway_final" },
         { message: "끝났어요.\n\nMEDIA:/Users/someone/.openclaw-dev/workspace/hello.txt" },
       );
-      await t.orch.onCanonical(t.outbound({ text: "끝났어요.", runId: run.id }), "openclaw", "env");
+      await t.orch.onCanonical(t.outbound({ text: "끝났어요.", runId: run.id }), "openclaw", FAKE_GATEWAY_ID);
       await t.flush();
 
       expect(texts(t.eventsOf(run.id))).toEqual(["끝났어요.\n\n"]);
@@ -431,7 +432,11 @@ describe("orchestrator", () => {
       a.content("앞\nMEDIA:/Users/x/a.png\n뒤");
       a.emit({ type: "TEXT_MESSAGE_END", runId: a.run.id, messageId: a.run.id });
       await a.t.orch.signal(a.run.id, { kind: "gateway_final" });
-      await a.t.orch.onCanonical(a.t.outbound({ text: "앞\n뒤", runId: a.run.id }), "openclaw", "env");
+      await a.t.orch.onCanonical(
+        a.t.outbound({ text: "앞\n뒤", runId: a.run.id }),
+        "openclaw",
+        FAKE_GATEWAY_ID,
+      );
       await a.t.flush();
       expect(a.t.runOf(a.run.id).status).toBe("done");
       const seqA = a.t.eventsOf(a.run.id).length;
@@ -495,7 +500,7 @@ describe("orchestrator", () => {
     });
 
     const out = t.outbound({ runId: run.id, text: "끝났어요 @owner", replyToInboundId: trigger.id });
-    const ack = await t.orch.onCanonical(out, "openclaw", "env");
+    const ack = await t.orch.onCanonical(out, "openclaw", FAKE_GATEWAY_ID);
     const stored = getMessage(t.db, ack.messageId ?? "");
     expect(stored).toMatchObject({
       authorType: "agent",
@@ -511,7 +516,7 @@ describe("orchestrator", () => {
     expect(t.runOf(run.id)).toMatchObject({ status: "streaming", hasCanonical: true });
 
     // 같은 outboundId 재전송은 같은 메시지, 라우팅 없음
-    expect(await t.orch.onCanonical(out, "openclaw", "env")).toEqual({ messageId: ack.messageId });
+    expect(await t.orch.onCanonical(out, "openclaw", FAKE_GATEWAY_ID)).toEqual({ messageId: ack.messageId });
     expect(t.onAgentMessage).toHaveBeenCalledTimes(1);
 
     await t.orch.signal(run.id, { kind: "gateway_final" });
@@ -577,7 +582,7 @@ describe("orchestrator", () => {
       const ack = await t.orch.onCanonical(
         t.outbound({ runId: run.id, text: "정본", replyToInboundId: trigger.id }),
         "openclaw",
-        "env",
+        FAKE_GATEWAY_ID,
       );
       expect(t.runOf(run.id)).toMatchObject({ status: "finalizing", hasCanonical: true });
       expect(t.runOf(run.id).startedAt).toEqual(expect.any(String));
@@ -616,7 +621,11 @@ describe("orchestrator", () => {
       const t = setup();
       const run = await t.enqueue();
       await t.flush();
-      const ack = await t.orch.onCanonical(t.outbound({ runId: run.id, text: "정본" }), "openclaw", "env");
+      const ack = await t.orch.onCanonical(
+        t.outbound({ runId: run.id, text: "정본" }),
+        "openclaw",
+        FAKE_GATEWAY_ID,
+      );
       expect(t.runOf(run.id).status).toBe("finalizing");
 
       // 늦게 온 Gateway 시작·델타는 finalizing 을 되돌리지 않는다
@@ -645,7 +654,7 @@ describe("orchestrator", () => {
       const t = setup();
       const run = await t.enqueue();
       await t.flush();
-      await t.orch.onCanonical(t.outbound({ runId: run.id }), "openclaw", "env");
+      await t.orch.onCanonical(t.outbound({ runId: run.id }), "openclaw", FAKE_GATEWAY_ID);
       await vi.advanceTimersByTimeAsync(10_000);
       expect(t.runOf(run.id)).toMatchObject({ status: "done", finalSource: "plugin" });
       expect(t.adapter.calls.forget).toEqual([]);
@@ -657,7 +666,7 @@ describe("orchestrator", () => {
 
       const second = await t.enqueue(t.say("@dev 둘"));
       await t.flush();
-      await t.orch.onCanonical(t.outbound({ runId: second.id }), "openclaw", "env");
+      await t.orch.onCanonical(t.outbound({ runId: second.id }), "openclaw", FAKE_GATEWAY_ID);
       await vi.advanceTimersByTimeAsync(10_000);
       expect(t.runOf(second.id)).toMatchObject({ status: "done", finalSource: "plugin" });
       t.orch.stop();
@@ -681,7 +690,7 @@ describe("orchestrator", () => {
       for (const step of steps) {
         if (step === "started") await t.orch.signal(run.id, { kind: "gateway_started" });
         else if (step === "canonical")
-          await t.orch.onCanonical(t.outbound({ runId: run.id }), "openclaw", "env");
+          await t.orch.onCanonical(t.outbound({ runId: run.id }), "openclaw", FAKE_GATEWAY_ID);
         else if (step === "final")
           await t.orch.signal(run.id, { kind: "gateway_final" }, { message: "스냅샷" });
         else if (step === "late_timeout") await t.orch.signal(run.id, { kind: "final_timeout" });
@@ -721,7 +730,7 @@ describe("orchestrator", () => {
       await t.orch.signal(run.id, { kind: "gateway_started" });
       for (const step of steps) {
         if (step === "canonical")
-          await t.orch.onCanonical(t.outbound({ runId: run.id, text: "정본" }), "openclaw", "env");
+          await t.orch.onCanonical(t.outbound({ runId: run.id, text: "정본" }), "openclaw", FAKE_GATEWAY_ID);
         else if (step === "final")
           await t.orch.signal(run.id, { kind: "gateway_final" }, { message: "스냅샷" });
         else await vi.advanceTimersByTimeAsync(10_000);
@@ -1290,7 +1299,11 @@ describe("orchestrator", () => {
     t.adapter.emit({ kind: "run_signal", runId: run.id, signal: { kind: "gateway_started" } });
     vi.advanceTimersByTime(50);
 
-    const ack = await t.orch.onCanonical(t.outbound({ runId: run.id, text: "늦은 답" }), "openclaw", "env");
+    const ack = await t.orch.onCanonical(
+      t.outbound({ runId: run.id, text: "늦은 답" }),
+      "openclaw",
+      FAKE_GATEWAY_ID,
+    );
     expect(getMessage(t.db, ack.messageId ?? "")).toMatchObject({ runId: run.id, bodyMd: "늦은 답" });
     expect(t.runOf(run.id)).toMatchObject({ status: "aborted", hasCanonical: false });
     expect(t.eventsOf(run.id)).toEqual(before);
@@ -1360,8 +1373,9 @@ describe("orchestrator", () => {
 
   it("maxInflight(2)를 넘는 런은 앞 런이 끝날 때까지 send 되지 않는다", async () => {
     const t = setup({ timeouts: { maxInflight: 2, queuedMs: undefined } }); // undefined 는 기본값을 덮지 않는다
-    const other1 = seedChannelWithAgent(t.db);
-    const other2 = seedChannelWithAgent(t.db);
+    // 워크스페이스마다 자기 Gateway — 한 Gateway 에 같은 id(dev) 에이전트는 하나뿐이다
+    const other1 = seedChannelWithAgent(t.db, { gatewayId: uuid() });
+    const other2 = seedChannelWithAgent(t.db, { gatewayId: uuid() });
     const a = await t.enqueue();
     const b = await t.enqueue(t.say("@dev hi", other1), { agentId: other1.agentId });
     const c = await t.enqueue(t.say("@dev hi", other2), { agentId: other2.agentId });
@@ -1383,7 +1397,7 @@ describe("orchestrator", () => {
     const ack = await t.orch.onCanonical(
       t.outbound({ text: "혼잣말", replyToInboundId: uuid() }),
       "openclaw",
-      "env",
+      FAKE_GATEWAY_ID,
     );
     expect(getMessage(t.db, ack.messageId ?? "")).toMatchObject({ authorId: t.agentId, bodyMd: "혼잣말" });
     expect(getMessage(t.db, ack.messageId ?? "")?.runId).toBeUndefined();
@@ -1395,7 +1409,7 @@ describe("orchestrator", () => {
 
     // 모르는 에이전트의 정본은 저장하지 않고 거부한다
     await expect(
-      t.orch.onCanonical(t.outbound({ agentId: "ghost" }), "openclaw", "env"),
+      t.orch.onCanonical(t.outbound({ agentId: "ghost" }), "openclaw", FAKE_GATEWAY_ID),
     ).rejects.toMatchObject({
       body: { code: "NOT_FOUND" },
     });
@@ -1415,7 +1429,7 @@ describe("orchestrator", () => {
     const ack = await t.orch.onCanonical(
       t.outbound({ text: "혼잣말", agentId: "dev", sessionKey: t.sessionKey }),
       "openclaw",
-      "env",
+      FAKE_GATEWAY_ID,
     );
     expect(getMessage(t.db, ack.messageId ?? "")).toMatchObject({ authorId: t.agentId, bodyMd: "혼잣말" });
     t.orch.stop();
@@ -1426,7 +1440,7 @@ describe("orchestrator", () => {
     const trigger = t.say("@dev 하나");
     const run = await t.enqueue(trigger);
     await t.flush();
-    const bySession = await t.orch.onCanonical(t.outbound(), "openclaw", "env");
+    const bySession = await t.orch.onCanonical(t.outbound(), "openclaw", FAKE_GATEWAY_ID);
     expect(getMessage(t.db, bySession.messageId ?? "")?.runId).toBe(run.id);
 
     await t.orch.signal(run.id, { kind: "gateway_final" });
@@ -1434,7 +1448,7 @@ describe("orchestrator", () => {
     const byReply = await t.orch.onCanonical(
       t.outbound({ sessionKey: "agent:dev:dodok:channel:other", replyToInboundId: trigger.id }),
       "openclaw",
-      "env",
+      FAKE_GATEWAY_ID,
     );
     expect(getMessage(t.db, byReply.messageId ?? "")?.runId).toBe(run.id);
 
@@ -1444,7 +1458,7 @@ describe("orchestrator", () => {
     const crossed = await t.orch.onCanonical(
       t.outbound({ channelId: second.id, runId: run.id, sessionKey: `agent:dev:dodok:channel:${second.id}` }),
       "openclaw",
-      "env",
+      FAKE_GATEWAY_ID,
     );
     expect(getMessage(t.db, crossed.messageId ?? "")).toMatchObject({
       channelId: second.id,
@@ -1493,7 +1507,11 @@ describe("orchestrator", () => {
     await t.flush();
     await t.orch.signal(run.id, { kind: "gateway_final" }, { message: "snapshot" });
     t.onAgentMessage.mockImplementation(() => new Promise((resolve) => setTimeout(resolve, 20_000)));
-    const pendingAck = t.orch.onCanonical(t.outbound({ runId: run.id, text: "정본" }), "openclaw", "env");
+    const pendingAck = t.orch.onCanonical(
+      t.outbound({ runId: run.id, text: "정본" }),
+      "openclaw",
+      FAKE_GATEWAY_ID,
+    );
     await vi.advanceTimersByTimeAsync(10_000);
     expect(t.runOf(run.id)).toMatchObject({ status: "done", finalSource: "gateway" });
     await vi.advanceTimersByTimeAsync(10_000);
@@ -1581,7 +1599,7 @@ describe("orchestrator", () => {
       const run = await finalWith(t, "답\nMEDIA:/Users/x/a.png\nMEDIA:/Users/x/b.png");
       await vi.advanceTimersByTimeAsync(40_000); // 옛 상한(10초)은 지났다 — 플러그인이 아직 올리는 중
       expect(t.runOf(run.id).status).toBe("finalizing");
-      await t.orch.onCanonical(t.outbound({ runId: run.id, text: "답" }), "openclaw", "env");
+      await t.orch.onCanonical(t.outbound({ runId: run.id, text: "답" }), "openclaw", FAKE_GATEWAY_ID);
       await vi.advanceTimersByTimeAsync(120_000);
       expect(t.runOf(run.id)).toMatchObject({ status: "done", finalSource: "plugin" });
       expect(bodiesOf(t, run.id)).toEqual(["답"]);
@@ -1621,7 +1639,7 @@ describe("orchestrator", () => {
       const run = await t.enqueue();
       await t.flush();
       const out = t.outbound({ runId: run.id, text: "", attachmentIds: [ok, stray] });
-      const { messageId } = await t.orch.onCanonical(out, "openclaw", "env");
+      const { messageId } = await t.orch.onCanonical(out, "openclaw", FAKE_GATEWAY_ID);
       const stored = getMessage(t.db, messageId ?? "");
       expect(stored).toMatchObject({ bodyMd: "", attachments: [{ id: ok }] });
       expect(t.logger.warn).toHaveBeenCalledWith(
@@ -1655,7 +1673,7 @@ describe("orchestrator", () => {
       await t.flush();
       await t.orch.signal(run.id, { kind: "gateway_started" });
       await vi.advanceTimersByTimeAsync(3_000);
-      await t.orch.onCanonical(t.outbound({ runId: run.id, text: "비밀 답" }), "openclaw", "env");
+      await t.orch.onCanonical(t.outbound({ runId: run.id, text: "비밀 답" }), "openclaw", FAKE_GATEWAY_ID);
       await t.orch.signal(run.id, { kind: "gateway_final" }, { message: "비밀 답" });
 
       const ended = lines(t.logger.info, "run ended");
@@ -1751,7 +1769,7 @@ describe("orchestrator", () => {
       const t = setup();
       const early = await t.enqueue(t.say("@dev 하나"));
       await t.flush();
-      await t.orch.onCanonical(t.outbound({ runId: early.id, text: "비밀 답" }), "openclaw", "env");
+      await t.orch.onCanonical(t.outbound({ runId: early.id, text: "비밀 답" }), "openclaw", FAKE_GATEWAY_ID);
       await vi.advanceTimersByTimeAsync(10_000);
       const late = await t.enqueue(t.say("@dev 둘"));
       await t.flush();
@@ -1833,7 +1851,7 @@ describe("orchestrator", () => {
       const { messageId } = await t.orch.onCanonical(
         t.outbound({ runId: run.id, sessionKey: threadKey, threadId: root.id }),
         "openclaw",
-        "env",
+        FAKE_GATEWAY_ID,
       );
       expect(getMessage(t.db, messageId ?? "")).toMatchObject({ runId: run.id, threadRootId: root.id });
       t.orch.stop();
@@ -1875,7 +1893,7 @@ describe("orchestrator", () => {
       const supports = vi.spyOn(t.adapter, "supports");
       await threadRun(t);
       await t.flush();
-      expect(supports).toHaveBeenCalledWith("dev", "env", "threads");
+      expect(supports).toHaveBeenCalledWith("dev", FAKE_GATEWAY_ID, "threads");
       expect(supports.mock.calls.map(([agentId]) => agentId)).not.toContain(t.agentId);
       t.orch.stop();
     });
@@ -1907,9 +1925,11 @@ describe("orchestrator", () => {
         { runId: run.id, sessionKey: t.sessionKey }, // 스레드 런에 채널 키
       ];
       for (const over of cases) {
-        await expect(t.orch.onCanonical(t.outbound(over), "openclaw", "env")).rejects.toMatchObject({
-          body: { code: "VALIDATION" },
-        });
+        await expect(t.orch.onCanonical(t.outbound(over), "openclaw", FAKE_GATEWAY_ID)).rejects.toMatchObject(
+          {
+            body: { code: "VALIDATION" },
+          },
+        );
       }
       expect(t.db.select().from(messages).where(eq(messages.kind, "normal")).all()).toHaveLength(3);
       expect(t.logger.warn).toHaveBeenCalledWith(
@@ -1928,7 +1948,7 @@ describe("orchestrator", () => {
         t.orch.onCanonical(
           t.outbound({ runId: run.id, sessionKey: t.sessionKey, threadId: root.id }),
           "openclaw",
-          "env",
+          FAKE_GATEWAY_ID,
         ),
       ).rejects.toMatchObject({
         body: { code: "VALIDATION", message: expect.stringContaining("threadId does not match") },
@@ -1943,7 +1963,7 @@ describe("orchestrator", () => {
       const { messageId } = await t.orch.onCanonical(
         t.outbound({ text: "혼잣말", sessionKey: `${t.sessionKey}:thread:${root.id}`, threadId: root.id }),
         "openclaw",
-        "env",
+        FAKE_GATEWAY_ID,
       );
       expect(getMessage(t.db, messageId ?? "")).toMatchObject({ authorId: t.agentId, threadRootId: root.id });
       expect(getMessage(t.db, messageId ?? "")?.runId).toBeUndefined();
@@ -1952,7 +1972,7 @@ describe("orchestrator", () => {
         t.orch.onCanonical(
           t.outbound({ text: "샌 말", sessionKey: t.sessionKey, threadId: root.id }),
           "openclaw",
-          "env",
+          FAKE_GATEWAY_ID,
         ),
       ).rejects.toMatchObject({ body: { code: "VALIDATION" } });
       expect(t.db.select().from(messages).where(eq(messages.bodyMd, "샌 말")).all()).toEqual([]);
@@ -1968,7 +1988,7 @@ describe("orchestrator", () => {
         t.orch.onCanonical(
           t.outbound({ runId: run.id, sessionKey: `${t.sessionKey}:thread:${root.id}`, threadId: root.id }),
           "openclaw",
-          "env",
+          FAKE_GATEWAY_ID,
         ),
       ).rejects.toMatchObject({ body: { code: "VALIDATION" } });
       t.orch.stop();

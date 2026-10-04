@@ -2,7 +2,6 @@ import { Channel, ChannelMember, Id } from "@dodok/shared";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { AdapterRegistry } from "../../adapters/registry";
-import { OPENCLAW_ENV_CONNECTION_ID } from "../../config";
 import type { Auth } from "../../auth";
 import {
   assertRole,
@@ -21,6 +20,7 @@ import type { Orchestrator } from "../runs/orchestrator";
 import {
   addMember,
   type ChannelRecord,
+  channelGatewayIds,
   createChannel,
   getChannel,
   listChannels,
@@ -176,18 +176,23 @@ export function registerChannelRoutes(fastify: FastifyInstance, ctx: ChannelRout
   });
 }
 
-/** Gateway 설정 경로(config.patch)는 OpenClaw 몫이다 — 러너 어댑터는 채널 프롬프트를 매 런 싣는다(판정 P3) */
+/**
+ * Gateway 설정 경로(config.patch)는 OpenClaw 몫이다 — 러너 어댑터는 채널 프롬프트를 매 런 싣는다(판정 P3). 보낼 곳은 그 채널의
+ * 에이전트 멤버가 속한 Gateway 들이다(멀티 Gateway 계획 판정 PG10) — OpenClaw 에이전트가 없는 채널은 보내지 않는다
+ */
 function syncChannelPrompt(ctx: ChannelRouteContext, channel: ChannelRecord): void {
   const openclaw = ctx.registry.forProvider("openclaw");
   if (!openclaw) return;
-  void openclaw
-    .syncChannelConfig(channel.id, { systemPrompt: channel.prompt ?? "" }, OPENCLAW_ENV_CONNECTION_ID)
-    .catch((err: unknown) => {
-      ctx.logger.warn({ err, channelId: channel.id }, "syncChannelConfig failed");
-      const reason = err instanceof Error ? err.message : String(err);
-      ctx.bus.emit("system.notice", {
-        level: "warn",
-        message: `#${channel.name} 채널 프롬프트를 Gateway 에 반영하지 못했다: ${reason}`,
+  for (const gatewayId of channelGatewayIds(ctx.db, channel.id)) {
+    void openclaw
+      .syncChannelConfig(channel.id, { systemPrompt: channel.prompt ?? "" }, gatewayId)
+      .catch((err: unknown) => {
+        ctx.logger.warn({ err, channelId: channel.id, gatewayId }, "syncChannelConfig failed");
+        const reason = err instanceof Error ? err.message : String(err);
+        ctx.bus.emit("system.notice", {
+          level: "warn",
+          message: `#${channel.name} 채널 프롬프트를 Gateway 에 반영하지 못했다: ${reason}`,
+        });
       });
-    });
+  }
 }

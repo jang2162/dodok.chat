@@ -1,3 +1,4 @@
+import { FAKE_GATEWAY_ID, insertGateway } from "./helpers/gateways";
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
 import { type Agent, ComponentsV1, type Message, type RelayPolicy, type Run } from "@dodok/shared";
 import { v7 as uuid } from "uuid";
@@ -33,9 +34,11 @@ function setup(relayPolicy?: z.input<typeof RelayPolicy>) {
   const bus = new ServerBus();
   const logger = { warn: vi.fn(), error: vi.fn() };
   const { workspaceId, userId } = seedWorkspace(db, { userHandle: "jang" });
+  insertGateway(db, workspaceId);
   const channel = createChannel(db, { workspaceId, createdBy: userId, name: "general", relayPolicy });
   const member = (handle: string): Agent => {
     const agent = createAgent(db, {
+      gatewayId: FAKE_GATEWAY_ID,
       workspaceId,
       providerAgentId: handle,
       handle,
@@ -439,7 +442,7 @@ describe("createServices — 라우터·오케스트레이터 상호 참조", ()
           ts: new Date().toISOString(),
         },
         "openclaw",
-        "env",
+        FAKE_GATEWAY_ID,
       );
       await vi.waitFor(() => expect(t.adapter.calls.send).toHaveLength(2));
       const relay = t.adapter.calls.send[1];

@@ -8,6 +8,7 @@ import { addMember, type ChannelRecord, createChannel } from "../src/modules/cha
 import { createAgentMessage } from "../src/modules/messages/service";
 import { getRun, insertRun, listOpenRuns } from "../src/modules/runs/store";
 import { bootTestApp, login } from "./helpers/app";
+import { FAKE_GATEWAY_ID } from "./helpers/gateways";
 import { seedWorkspace } from "./helpers/seed";
 import { connectWire, type WireClient, waitFor } from "./helpers/wire";
 
@@ -32,6 +33,7 @@ describe("wire 런 핸들러·REST 런 조회 (앱 부팅, FakeAdapter 배선)",
       name: "runs",
     });
     dev = createAgent(app.db, {
+      gatewayId: FAKE_GATEWAY_ID,
       workspaceId: app.workspaceId,
       providerAgentId: "dev",
       handle: "dev",
@@ -370,6 +372,7 @@ describe("app.close — 배선된 오케스트레이터", () => {
       name: "c",
     });
     const agent = createAgent(app.db, {
+      gatewayId: FAKE_GATEWAY_ID,
       workspaceId: app.workspaceId,
       providerAgentId: "dev",
       handle: "dev",

@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useWireStatus } from "@/realtime/wire";
 import { ADAPTER_OK, ME, adapterStatusBody, json, renderRoute, shellGet } from "../../../test/shellApi";
-import { OWNER, statusOf } from "../../../test/setupServer";
+import { OWNER, statusOf, TOKENS_PATH } from "../../../test/setupServer";
 
 afterEach(() => {
   useWireStatus.getState().setStatus("idle");
@@ -21,11 +21,11 @@ function stubShell(me: unknown, adapter = ADAPTER_OK) {
       const url = String(input);
       if (url === "/api/v1/auth/me") return json(200, me);
       if (url === "/api/v1/adapter/status") return json(200, adapterStatusBody(adapter));
-      if (url.startsWith("/api/v1/setup/")) {
+      if (url.startsWith("/api/v1/setup/") || url.startsWith("/api/v1/gateways")) {
         setupCalls.push(url);
         if (!owner) return json(403, { code: "FORBIDDEN", message: "owner only" });
         if (url === "/api/v1/setup/status") return json(200, statusOf());
-        if (url === "/api/v1/setup/bridge-tokens") return json(200, { tokens: [] });
+        if (url === TOKENS_PATH) return json(200, { tokens: [] });
       }
       return shellGet(input, init) ?? json(404, { code: "NOT_FOUND", message: "x" });
     }),

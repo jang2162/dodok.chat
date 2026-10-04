@@ -1,22 +1,19 @@
-import type { BridgeTokenRecord, SetupStatus } from "@dodok/shared";
+import type { BridgeTokenRecord, GatewaySetup } from "@dodok/shared";
 import { type RefObject, useRef, useState } from "react";
 import { ConfirmDialog } from "@/features/settings/ConfirmDialog";
 import { Badge } from "@/ui/badge";
 import { Button } from "@/ui/button";
 import { useRevokeBridgeToken } from "./mutations";
 
-/** `.env` 의 BRIDGE_TOKEN 을 이어받은 줄의 라벨(서버 ENV_TOKEN_LABEL) — 사람은 이 라벨로 발급할 수 없다 */
-export const ENV_LABEL = "env";
-
 const WHEN = new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short" });
 export const when = (iso: string) => WHEN.format(new Date(iso));
 
 /**
- * 지금 접속 중인 토큰 id — 실시간 상태(`setup.status`)가 있으면 그것을, 없으면 목록 응답의 `connected` 를 본다.
+ * 지금 접속 중인 토큰 id — 그 Gateway 의 실시간 상태(`setup.status`)가 있으면 그것을, 없으면 목록 응답의 `connected` 를 본다.
  * 상태는 wire 로 바로 오고 목록은 다시 받아야 하므로 상태가 먼저 옳다
  */
-export function connectedTokenId(tokens: readonly BridgeTokenRecord[], status: SetupStatus | undefined) {
-  if (status) return status.bridge.plugin?.tokenId ?? null;
+export function connectedTokenId(tokens: readonly BridgeTokenRecord[], gateway: GatewaySetup | undefined) {
+  if (gateway) return gateway.bridge.plugin?.tokenId ?? null;
   return tokens.find((t) => t.connected)?.id ?? null;
 }
 
@@ -36,25 +33,27 @@ function replaced(token: BridgeTokenRecord, current: BridgeTokenRecord | undefin
 type Step = "confirm" | "last";
 
 /**
- * 토큰 목록(스펙 「연결 페이지」) — 라벨·`dbt_` + 앞 6자·만든 때·마지막 사용·「지금 접속 중」·폐기됨. 이어받은 줄(라벨 `env`)은 prefix 대신
- * 「.env 에서 이어받음」 — 그 prefix 는 원문이 아니라 해시 앞자리라 보여도 알아볼 수 없다.
+ * 그 Gateway 의 토큰 목록(스펙 「연결 페이지」) — 라벨·`dbt_` + 앞 6자·만든 때·마지막 사용·「지금 접속 중」·폐기됨.
  * 폐기는 확인을 거친다: 접속 중이면 에이전트가 멈춘다고, 활성 토큰이 0개가 되면 한 번 더(`ConfirmDialog` 의 `escalated`).
  * 폐기한 줄에는 「폐기」 버튼이 없어 초점을 돌려줄 자리가 사라진다 — 아래 줄의 「폐기」, 없으면 `issueButton`(「새 토큰 발급」)으로 옮긴다
  */
 export function TokenList({
+  gatewayId,
   tokens,
-  status,
+  gateway,
   issueButton,
 }: {
+  gatewayId: string;
   tokens: BridgeTokenRecord[];
-  status: SetupStatus | undefined;
+  /** 그 Gateway 의 실시간 상태 — 없으면(상태를 아직 못 받음) 목록의 connected 를 본다 */
+  gateway: GatewaySetup | undefined;
   issueButton?: RefObject<HTMLButtonElement | null>;
 }) {
-  const revoke = useRevokeBridgeToken();
+  const revoke = useRevokeBridgeToken(gatewayId);
   const [target, setTarget] = useState<{ token: BridgeTokenRecord; step: Step }>();
   const returnFocus = useRef<HTMLElement | null>(null);
   const revokeButtons = useRef(new Map<string, HTMLButtonElement>());
-  const connectedId = connectedTokenId(tokens, status);
+  const connectedId = connectedTokenId(tokens, gateway);
   const current = tokens.find((t) => t.id === connectedId);
   const active = tokens.filter((t) => t.revokedAt === null);
 
@@ -106,7 +105,6 @@ export function TokenList({
     <>
       <ul className="flex flex-col divide-y rounded-md border">
         {tokens.map((token) => {
-          const inherited = token.label === ENV_LABEL;
           const revoked = token.revokedAt !== null;
           return (
             <li
@@ -121,9 +119,7 @@ export function TokenList({
                   >
                     {token.label}
                   </span>
-                  <span className="font-mono text-xs text-muted-foreground">
-                    {inherited ? ".env 에서 이어받음" : `dbt_${token.prefix}…`}
-                  </span>
+                  <span className="font-mono text-xs text-muted-foreground">{`dbt_${token.prefix}…`}</span>
                   {token.id === connectedId && <Badge>지금 접속 중</Badge>}
                   {revoked && <Badge variant="outline">폐기됨</Badge>}
                 </div>

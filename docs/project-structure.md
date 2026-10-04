@@ -83,9 +83,12 @@ src/
 │                 `BridgeHello.capabilities` 는 아는 값만 남기고 모르는 값은 버린다(닫힌 enum 이면 옛 서버가 새 플러그인 hello 를 통째로 거절한다).
 │                 스레드: `BridgeCapability "threads"`, `InboundDeliver.threadId?`·`context.thread?`({ root, recentMessages }), `OutboundMessage.threadId?`,
 │                 `threadMatchesSessionKey`(threadId 와 세션 키의 스레드 접미사 대조 — 우리 모양이 아닌 키면 false)
-├─ setup/         Phase 3 ②. 설정 마법사 계약 — Sha256Hex·SetupStatus(server·gateway{state,host,version,pairing}·bridge{state,publicUrl,plugin}·pluginFile·
-│                 pluginMatches·envTokenIgnored)·BridgeTokenRecord(원문·해시 없음, prefix 6자, connected)·IssueBridgeTokenInput(라벨 trim 1~60)·
+├─ setup/         Phase 3 ②. 설정 마법사 계약 — Sha256Hex·SetupStatus(server·bridge{publicUrl}·pluginFile·gateways: GatewaySetup[]·runners)·
+│                 GatewaySetup(id·name·url·enabled·gateway{state(+disabled),host,version,pinned,drift,pairing}·bridge{state,plugin}·pluginMatches — 공유 토큰 없음)·
+│                 BridgeTokenRecord(원문·해시 없음, prefix 6자, connected)·IssueBridgeTokenInput(라벨 trim 1~60)·
 │                 IssueBridgeTokenResult(token `dbt_` + 43자 — 원문은 여기에만, record, pluginConfig). wire server→client `setup.status`({ status })는 `wire/` 에
+├─ gateways/      멀티 Gateway. Gateway API 계약 — CreateGatewayBody(name trim 1~32·url `ws://`·`wss://` 만·token)·UpdateGatewayBody(모두 선택, 빈 token 은 「바꾸지 않음」)·
+│                 GatewaySummary(공유 토큰 대신 `tokenSet: true`, ownerUserId — v1 은 null)·DeleteGatewayResult{unboundAgents,deletedTokens}
 ├─ ops/           Phase 3 ③. 운영 계약 — OpsEventKind(14종 — 팀의 invite_accept_failed·member_remove_failed 포함)·OpsSeverity(info·warn·error)·OpsEvent(detail 은 평평한 원시값만 — id·코드·수치, key 1~200자)·OpsUnacked{warn,error}·
 │                 OpsEventsPage·OpsSettingsPatch(dailyRunLimit 1~10000 또는 null)·`OPS_DEFAULT_DAILY_RUN_LIMIT`=300·OpsAckResult·OpsStatus(서버·DB·디스크·Gateway{pinned,drift}·
 │                 플러그인·adapter·오늘 런 수·상한·blockedToday·unacked·workspaceId)·OpsRunsRow·OpsRunsSummary(usageTrusted 가 false 면 행에 tokens·costUsd 가 없다).
@@ -149,9 +152,10 @@ src/
 │                         `restLimits`, 브리지 실패 카운터 BridgeAuthGuard 하나(브리지·러너 핸드셰이크·`/bridge/attachments`·`/runner/attachments` — 사건 bridge_auth_blocked 의 detail.path 로 가른다), 감시 다섯(watchConnections·watchRunners·watchGatewayVersion·watchRunFailures·
 │                         createDiskMonitor — `await disk.ready` 로 부팅이 끝나면 첫 측정이 있다, `App.disk()`·`checkDisk()`)는 종료 때 `"ops"` 단계 **전에** 닫는다.
 │                         테스트·dev:fake 입력: `AppDeps.statfs`·`disconnectEventMs`·`gatewayBackoff`. VAPID 키를 읽고(주체가 로컬 자리값이면 warn 한 줄) 발송기(`AppDeps.pushSend`, 없으면 webPushSender)를 배선한다.
-│                         owner 보장 뒤 `.env` BRIDGE_TOKEN 이어받기(importEnvToken — ignored 면 warn `ENV_BRIDGE_TOKEN_IGNORED_WARNING` 한 줄), 브리지 검증 함수
-│                         (verifyBridgeTokenDb — 어댑터 핸드셰이크와 `/bridge/attachments` 가 같이 쓴다), 부팅 때 한 번 readPluginFile, setup 상태 조립·`setup.status` 발행
-├─ config.ts              env 를 zod 로 검증한 ServerConfig. OPENCLAW_TARGET 이 원격/dev Gateway 쌍과 디바이스 파일을 고른다
+│                         브리지 검증 함수(verifyBridgeTokenDb — 토큰 id 와 그 토큰의 Gateway, 어댑터 핸드셰이크와 `/bridge/attachments` 가 같이 쓴다),
+│                         부팅 때 DB 의 Gateway 를 모두 어댑터에 넣음(bootGateways — 꺼진 것도 `enabled: false`, 0개여도 뜬다), 부팅 때 한 번 readPluginFile,
+│                         setup 상태 조립(Gateway 행 + 어댑터 gatewaySetupDetails)·`setup.status` 발행
+├─ config.ts              env 를 zod 로 검증한 ServerConfig. OpenClaw Gateway 는 env 가 아니라 DB(`modules/gateways/`)
 ├─ logger.ts              pino, 토큰·비밀 키 redact(VAPID_PRIVATE_KEY·privateKey 포함, 깊이 0~3 의 token·`set-cookie` — 새 토큰 헤더를 만들면 이름을 이 파일에 적는다:
 │                         redact 는 헤더 이름 와일드카드를 받지 못한다). 사건 줄은 `event: "ops.<kind>"`(modules/ops/service.ts).
 │                         requestLogSerializer — Fastify 요청 로그의 req(원격 주소만 ipPrefix 로 가림, app.ts 가 Fastify 에 준 자식 로거의 serializers.req — Fastify 기본을 이긴다).
@@ -278,17 +282,23 @@ src/
 │  │                      같은 승인 id 는 한 번만, 최근 1000개), createPushDispatcher(보고 있으면 거름 → 구독마다 병렬 발송, TTL 3600·approval 만 urgency high·topic=tag 의 sha256 앞 32자,
 │  │                      404·410 삭제 / 400·403·413 error / 그 밖 warn, 로그에 keys·endpoint·본문 없음, drain), webPushSender(web-push, 요청 timeout 10s)) ·
 │  │                      routes.ts(`GET /api/v1/push/vapid-public-key` · `POST`·`DELETE /api/v1/push/subscriptions` — 세션, user-agent 512자)
+│  ├─ gateways/           멀티 Gateway. OpenClaw Gateway 저장소·API — 전부 owner 세션(`requireOwner`, 아니면 403). 공유 토큰은 DB 평문, 응답·로그에 없다.
+│  │                      service.ts(listGatewayRows(더한 차례) · createGateway·updateGateway(이름은 워크스페이스 안 유일 — CONFLICT details.field name,
+│  │                      빈 토큰은 그대로, 바뀐 것이 없으면 쓰지 않음) · deleteGateway(한 트랜잭션 — 에이전트 gateway_id 비움, 행 삭제, 브리지 토큰은 FK cascade) ·
+│  │                      gatewayConfig(어댑터에 넘기는 설정 — 공유 토큰이 나가는 유일한 자리) · bootGateways) ·
+│  │                      routes.ts(`GET`·`POST /api/v1/gateways` · `PATCH`·`DELETE /api/v1/gateways/:id` — 저장 뒤 어댑터 upsertGateway·removeGateway ·
+│  │                      `GET`·`POST /api/v1/gateways/:id/bridge-tokens`(발급 201, `Cache-Control: no-store` — 원문은 이 응답에만) ·
+│  │                      `DELETE /api/v1/gateways/:id/bridge-tokens/:tokenId`(204, 폐기 뒤 revokeTokenSessions — 끊기 실패는 warn))
 │  ├─ setup/              Phase 3 ②. 설정 마법사 — 전부 owner 세션(`requireOwner`, 아니면 403).
-│  │                      tokens.ts(bridge_tokens 저장소: 원문 `dbt_` + randomBytes(32) base64url, DB 는 sha256 hex·prefix(원문 `dbt_` 뒤 6자)만 ·
-│  │                      issueBridgeToken(라벨 trim 1~60, 라벨 `env`(대소문자 무시)는 VALIDATION) · verifyBridgeTokenDb(해시로 활성 행 → timingSafeEqual, lastUsedAt 1분에 한 번) ·
-│  │                      isActiveBridgeToken(읽기만) · listBridgeTokens(폐기 포함, 새것부터) · revokeBridgeToken · importEnvToken(그 워크스페이스에 행이 0개일 때만 라벨 `env` 로 —
-│  │                      imported·skipped·ignored, env 줄의 prefix 는 원문이 아니라 해시 앞 6자)) ·
-│  │                      status.ts(순수: bridgePublicUrl(BRIDGE_PUBLIC_URL, 없으면 APP_ORIGIN 의 wss:/ws: + /bridge)·buildSetupStatus — 어댑터 setupDetail + 품은 파일 + 서버 버전,
-│  │                      pluginMatches 는 접속 플러그인의 bundleSha256 과 품은 tgz **안의 번들** sha256 비교, 모르면 null) ·
+│  │                      tokens.ts(bridge_tokens 저장소 — 토큰은 Gateway 하나에 묶인다: 원문 `dbt_` + randomBytes(32) base64url, DB 는 sha256 hex·prefix(원문 `dbt_` 뒤 6자)만 ·
+│  │                      issueBridgeToken(그 Gateway 에, 라벨 trim 1~60) · verifyBridgeTokenDb(해시로 활성 행 → timingSafeEqual → { tokenId, gatewayId }, lastUsedAt 1분에 한 번) ·
+│  │                      listBridgeTokens(그 Gateway 의 것, 폐기 포함, 새것부터) · revokeBridgeToken(그 Gateway 의 행만)) ·
+│  │                      status.ts(순수: bridgePublicUrl(BRIDGE_PUBLIC_URL, 없으면 APP_ORIGIN 의 wss:/ws: + /bridge)·buildSetupStatus — Gateway 행(목록·차례·켜짐의 정본) +
+│  │                      어댑터 Gateway 별 상세(id 로 짝 — 모르는 행은 down, 꺼졌으면 disabled) + 품은 파일 + 서버 버전,
+│  │                      pluginMatches 는 Gateway 마다 접속 플러그인의 bundleSha256 과 품은 tgz **안의 번들** sha256 비교, 모르면 null) ·
 │  │                      plugin-file.ts(pluginDirCandidates — DODOK_PLUGIN_DIR(이미지 /app/plugin), 소스 실행이면 저장소 packages/openclaw-plugin/dist ·
 │  │                      readPluginFile — 가장 최근 tgz 의 sha256·크기·`package/dist/index.js` sha256, tar 는 의존성 없이 읽는다) ·
-│  │                      routes.ts(`GET /api/v1/setup/status` · `GET`·`POST /api/v1/setup/bridge-tokens`(발급 201, `Cache-Control: no-store` — 원문은 이 응답에만) ·
-│  │                      `DELETE /api/v1/setup/bridge-tokens/:id`(204, 폐기 뒤 revokeBridgeSessions — 끊기 실패는 warn) · `GET /api/v1/setup/plugin.tgz`
+│  │                      routes.ts(`GET /api/v1/setup/status` · `GET /api/v1/setup/plugin.tgz`
 │  │                      (`dodok-openclaw-plugin-<sha 앞 12자>.tgz`, 없으면 404 `PLUGIN_FILE_MISSING`, 부팅 뒤 파일이 바뀌었으면 409 `PLUGIN_FILE_CHANGED`))
 │  ├─ runners/            Phase 4 ③. 연결 페이지 러너 블록 — 전부 owner 세션.
 │  │                      tokens.ts(runner_tokens 저장소 — bridge_tokens 와 같은 규칙, 원문 `drn_`, `.env` 이어받기 없음 · verifyRunnerTokenDb 는 id·라벨 ·
@@ -376,7 +386,8 @@ src/
 `ops-events`·`ops-limits`·`ops-ratelimit`·`ops-health`(운영 보강 — `ops.event` 는 owner·admin 소켓에만, 워크스페이스·채널 한도와 하루 한 번 메시지·다시 실행, REST·wire·브리지 실패 카운터·XFF,
 끊김 사건 열고 닫기·버전·디스크 507·run_failed — 60초는 가짜 타이머 단위 테스트가 재고 통합은 줄인 임계 `disconnectEventMs`),
 `setup`(설정 마법사 — 토큰 겹침 교체·폐기 뒤 핸드셰이크·첨부 HTTP 거절·접속 중 폐기의 즉시 끊김, `setup.status` 는 owner 소켓에만(admin 소켓은 못 받는다), 원문이 로그·목록·wire 에 없음,
-BRIDGE_TOKEN 없는 부팅, 검증 함수가 던지면 거절, 거절 로그 주소(TRUST_PROXY)),
+Gateway 0개 부팅, 검증 함수가 던지면 거절, 거절 로그 주소(TRUST_PROXY)), `gateways`(Gateway API — 0개 부팅·추가·수정·삭제·Gateway 아래 브리지 토큰·부팅 때 넣기),
+`late-canonical`(연결을 닫으며 끝낸 런의 늦은 정본 — 저장만, 릴레이·푸시 없음, 「다시 실행」 카드 소비, 재시작 뒤도),
 `threads`(스레드 11건 — 스레드 키·문맥(채널 대화 없음)·정본·루트 요약·activeRuns 의 threadRootId, 멘션 없는 답글, 채널·스레드 병렬과 같은 스레드 직렬, 스레드 릴레이·relay_limit,
 한도, 스레드 「새 대화」, PLUGIN_OUTDATED → 재설치 → 다시 실행, threadId 불일치 거절, 카드 버튼, 스레드 멘션 푸시), 실제 어댑터 + 가짜 둘),
 검색은 단위(`search.service`·`search.routes`·`db.fts` — 트리거 셋·rowid 재사용·백필 가드·주입·2글자·NUL·레이트리밋),
@@ -389,7 +400,8 @@ BRIDGE_TOKEN 없는 부팅, 검증 함수가 던지면 거절, 거절 로그 주
 손으로 두드리는 실연 도구는 루트 `scripts/wire-cli.ts`(`pnpm wire-cli`, `docs/guides/live-smoke.md`).
 
 개발 모드 `apps/server/scripts/dev-fake.ts`(`pnpm -F @dodok/server dev:fake`, 웹 MVP 스펙 9.2): 위 `test/fakes/` 를 그대로 가져다 가짜 Gateway·가짜 플러그인·대본과 함께 서버를 띄운다 —
-실제 `OpenClawAdapter` 가 가짜 Gateway 에 `OPENCLAW_TARGET=dev` 로 붙으므로 모델 런·실제 Gateway 없이 웹 전체를 돌릴 수 있다. `.env` 를 읽지 않고 개발 전용 고정값을 쓴다(로그인 토큰 `dev-fake-local-token` — 시크릿이 아니라 로그에 찍는다),
+실제 `OpenClawAdapter` 가 가짜 Gateway 에 붙으므로(시작 때 그 Gateway 를 고정 id `DEV_FAKE_GATEWAY_ID` 로 DB 에 넣고 고정 브리지 토큰 `dev-fake-bridge-token` 행을 그 Gateway 에 묶는다 —
+OpenClaw 에이전트는 이 Gateway 에 묶어 등록한다) 모델 런·실제 Gateway 없이 웹 전체를 돌릴 수 있다. `.env` 를 읽지 않고 개발 전용 고정값을 쓴다(로그인 토큰 `dev-fake-local-token` — 시크릿이 아니라 로그에 찍는다),
 DB 는 `data/dev-fake.sqlite`(시작마다 새로, `--keep` 이면 유지), 기본 포트 3000(Vite 프록시 대상). 운영 코드(`src/`)는 건드리지 않는다.
 부팅 때 고정 member 계정(이메일 `member@dodok.local`, 비밀번호 `dev-fake-member-password`, 핸들 `mia`, 표시 이름 「미아」)도 owner 와 같은 자리에서 보장한다 —
 사람을 만드는 서버 경로(`members/accept.ts` 의 `acceptInvite`)를 그대로 써 초대를 내부에서 하나 내 곧바로 수락한다, `--keep` 이면 이미 있을 때 그대로, 운영 `createApp` 에는 없다.
@@ -747,8 +759,8 @@ src/
 │  │                       useSearch.ts(useInfiniteQuery, 디바운스 300ms, 재시도·전역 토스트 없음) · highlight.tsx(STX·ETX 스니펫 → 강조 조각) ·
 │  │                       openSearch.ts(isSearchShortcut — `e.code === "KeyK"` 도 받는다(한글 입력기), otherModalOpen — 검색 표지가 없는 열린 대화상자가 있으면 ⌘K 무시)
 │  ├─ setup/               Phase 3 ②. 연결 페이지 `/settings/connection` — owner 만(아니면 setup API 를 부르지 않고 「권한이 없습니다」).
-│  │                       ConnectionPage.tsx(섹션 넷: 서버·Gateway·플러그인·브리지 토큰, envTokenIgnored 면 「.env 의 BRIDGE_TOKEN 은 더 이상 쓰지 않습니다 — 연결 페이지에서 발급하세요」,
-│  │                       활성 토큰 0 이면 「토큰이 없습니다 — 발급하세요」) ·
+│  │                       ConnectionPage.tsx(섹션 넷: 서버·Gateway·플러그인·브리지 토큰 — 지금은 첫 Gateway 하나를 그린다(Gateway 카드 목록은 멀티 Gateway 태스크 6),
+│  │                       Gateway 가 없으면 빈 상태 한 줄이고 브리지 토큰 블록은 없다, 활성 토큰 0 이면 「토큰이 없습니다 — 발급하세요」) ·
 │  │                       sections.tsx(Section · CopyBlock — 기본은 줄 구조를 지키고 제 상자 안에서 가로 스크롤, `wrap` 이면 아무 글자에서나 줄바꿈(토큰), 래퍼 min-w-0 ·
 │  │                       GatewaySection — 페어링 대기면 `openclaw devices approve <requestId>`, requestId 가 빈 문자열이면 `openclaw devices list`, 5분 넘으면 강조 ·
 │  │                       PluginSection — 같은 빌드 문구 셋, 받기는 `pluginFile.available` 로만, installCommands(`docs/guides/deploy.md` 「[웹 → B] 플러그인 설치·브리지 토큰」 절의 [B] 블록을 글자 그대로 —
@@ -813,7 +825,7 @@ src/
                                                    └─ operator 클라이언트 ⇒ wss:// ⇒ [OpenClaw Gateway]   ← 본인 서버 B (원격)
 ```
 
-- 기본값: 본인이 운영하는 원격 Gateway에 연결(`OPENCLAW_GATEWAY_URL=wss://...`). 플러그인은 그 Gateway에 설치되어 `BRIDGE_PUBLIC_URL`로 우리 서버에 접속한다.
+- 기본값: 본인이 운영하는 원격 Gateway에 연결(연결 페이지에서 Gateway 주소 `wss://...`·공유 토큰을 추가 — 여럿 붙일 수 있다). 플러그인은 그 Gateway에 설치되어 `BRIDGE_PUBLIC_URL`로 우리 서버에 접속하고, 서버는 브리지 토큰으로 어느 Gateway 의 플러그인인지 가른다.
 - 배포: `infra/compose.yml` 로 서버 A 에 `app`·`caddy` 를 띄운다(`docs/guides/deploy.md`). Caddy 가 `/api`·`/socket.io`(wire·브리지 WebSocket)·`/bridge/*`(플러그인의 첨부 HTTP)·`/healthz` 를 서버로 넘기고 나머지는 웹 정적이다. Gateway 는 Compose 밖이다(동반 기동 프로필은 뺐다 — 배포 패키징 스펙 결정 5).
 - 로컬 개발: Gateway 는 원격에 붙거나 `openclaw --dev`(`docs/guides/live-smoke.md`). 원격 Gateway의 플러그인을 개발 PC의 브리지에 붙이려면 터널(cloudflared/tailscale 등)로 `BRIDGE_PUBLIC_URL`을 만든다.
 - 응답 정본은 플러그인 경로, WS 경로는 미리보기(델타)·툴 이벤트·승인. `runId`로 dedupe.
@@ -823,6 +835,7 @@ src/
 ## 4. 환경 변수 (`.env.example`)
 
 정본은 `apps/server/src/config.ts`(zod). 소스 실행의 서버는 저장소 루트를 작업 디렉터리로 삼고 루트 `.env` 를 읽는다(운영 번들은 `.env` 파일을 읽지 않고 compose 의 `env_file` 로 받는다 — 배포 값은 `docs/guides/deploy.md` 「설정 — `.env`」) — **이미 설정된 환경 변수는 `.env` 가 덮지 않는다**(`process.loadEnvFile`, 실연에서 확인). 빈 값(`KEY=`)은 설정하지 않은 것으로 보고 기본값을 쓴다.
+OpenClaw Gateway 주소·공유 토큰과 브리지 토큰은 env 가 아니라 DB 다(연결 페이지 — `modules/gateways/`). 서버는 Gateway 가 0개여도 뜨고, 옛 `.env` 에 남은 `OPENCLAW_*`·`BRIDGE_TOKEN` 은 읽지 않는다.
 
 | 변수 | 기본값 | 뜻 |
 | --- | --- | --- |
@@ -831,7 +844,7 @@ src/
 | `APP_ORIGIN` | (필수) | 웹 앱 오리진 — Socket.IO CORS·Better Auth `baseURL`/`trustedOrigins`·세션 쿠키 Secure(https 일 때)·초대·재설정 링크(`<APP_ORIGIN>/join/<token>`·`/reset/<token>`). 로컬 `http://localhost:5173` |
 | `TRUST_PROXY` | `false` | 리버스 프록시 뒤면 `true` — 레이트리밋·브리지 실패 카운터·브리지 거절 로그의 주소가 X-Forwarded-For 첫 값이 된다. 배포 compose 는 `true` 로 고정한다 |
 | `TZ` | 프로세스 기본(컨테이너는 UTC) | 「하루」의 경계 — 일일 런 상한이 이 시간대의 자정에 풀리고 운영 화면 「오늘」·「7일」 집계도 그 자정을 따른다(`docs/guides/deploy.md` 「설정 — `.env`」). `.env.example` 에는 없다 — Node 가 읽는 표준 변수라 config.ts 가 검증하지 않는다 |
-| `DATA_DIR` | `./data` | 런타임 데이터(DB·첨부 블롭·디바이스 아이덴티티·VAPID 키 `vapid.json`) |
+| `DATA_DIR` | `./data` | 런타임 데이터(DB·첨부 블롭·VAPID 키 `vapid.json`·Gateway 마다 Ed25519 디바이스 아이덴티티와 디바이스 토큰 `gateways/<Gateway id>/`(`device.json`·`device-tokens.json`)) |
 | `DB_PATH` | `<DATA_DIR>/dodok.sqlite` | SQLite 파일 |
 | `ATTACHMENTS_DIR` | `<DATA_DIR>/attachments` | 첨부 블롭 디렉터리(`<sha 앞 2자>/<sha256>`). 부팅 때 만든다. 한 서버 프로세스만 쓴다 — sha 잠금이 프로세스 안에서만 맞다 |
 | `LOG_LEVEL` | `info` | `fatal`~`trace` (pino, 토큰 키는 redact) |
@@ -839,12 +852,7 @@ src/
 | `OWNER_HANDLE` | `owner` | owner 핸들(`left-` 예약 검사는 지나지 않는다 — `left-` 로 시작하게 두지 않는다) |
 | `LOCAL_AUTH_TOKEN` | (필수, ≥16자) | 로컬 로그인 토큰 = owner 비밀번호. 바꾸면 기존 세션이 끊긴다 |
 | `BETTER_AUTH_SECRET` | (필수, ≥32자) | Better Auth 서명 비밀 |
-| `OPENCLAW_TARGET` | `remote` | `remote` \| `dev` — 어댑터가 붙을 Gateway 쌍을 고른다 |
-| `OPENCLAW_GATEWAY_URL` · `OPENCLAW_GATEWAY_TOKEN` | — | 원격 Gateway(`wss://…`). `remote` 면 둘 다 필수 |
-| `OPENCLAW_DEV_GATEWAY_URL` · `OPENCLAW_DEV_GATEWAY_TOKEN` | — | 로컬 dev Gateway(`ws://127.0.0.1:19001`, `openclaw --dev gateway run`). `dev` 면 둘 다 필수 |
-| `OPENCLAW_DEVICE_IDENTITY_PATH` | — | 서버는 읽지 않는다. Ed25519 디바이스 아이덴티티와 디바이스 토큰은 Gateway 연결마다 `<DATA_DIR>/gateways/<연결 id>/`(`device.json`·`device-tokens.json`)에 생긴다 — `.env` 의 Gateway 는 연결 id `env` |
-| `OPENCLAW_FRAME_DUMP_PATH` | — | 진단용 — 어댑터가 받은 Gateway `chat`·`agent`·`session.message` 프레임을 Gateway 연결마다 `<이 경로>.<연결 id>` 파일에 JSONL(`{ receivedAt, frame }`)로 append. 본문이 들어가므로 `data/` 아래에. usage 출처 확인용(live-smoke 5.4) |
-| `BRIDGE_TOKEN` | — (선택, 있으면 ≥16자) | 브리지 토큰의 정본은 DB `bridge_tokens`(웹 연결 페이지에서 발급·폐기). 이 값은 부팅 때 그 워크스페이스의 토큰 행이 **0개일 때만** 라벨 `env` 로 한 번 이어받는다. 행이 있는데 활성 토큰과 다르면 이어받지 않고 warn 한 줄·연결 페이지 한 줄(`envTokenIgnored`) — 그 뒤 `.env` 를 바꿔도 통하지 않는다 |
+| `OPENCLAW_FRAME_DUMP_PATH` | — | 진단용 — 어댑터가 받은 Gateway `chat`·`agent`·`session.message` 프레임을 Gateway 마다 `<이 경로>.<Gateway id>` 파일에 JSONL(`{ receivedAt, frame }`)로 append. 본문이 들어가므로 `data/` 아래에. usage 출처 확인용(live-smoke 5.4) |
 | `BRIDGE_PUBLIC_URL` | `APP_ORIGIN` 의 `https:`→`wss:`(`http:`→`ws:`) + `/bridge` | 플러그인 계정 설정 `bridgeUrl` 에 적을 공개 주소 — 연결 페이지가 보여 주고 발급 결과의 설정 조각에 들어간다(서버는 이 값으로 리슨하지 않는다). 예 `wss://dodok.example.com/bridge` |
 | `VAPID_PUBLIC_KEY` · `VAPID_PRIVATE_KEY` | — | 웹 푸시 VAPID 키 쌍 — **둘 다** 있어야 쓴다. 없으면 `<DATA_DIR>/vapid.json` 을 만들어(0600) 쓴다. 키가 바뀌면 모든 기기의 푸시 구독이 무효가 된다. 비밀 키는 로그에서 가린다 |
 | `VAPID_SUBJECT` | `mailto:dodok@localhost` | 푸시 서비스가 연락할 주체 — `mailto:…` 또는 `https://…`. 호스트가 `localhost`·`127.0.0.1`·`*.local` 이면 시작 때 warn(Apple Push 는 `403 BadJwtToken`) — 배포는 실제 연락처로(`docs/guides/live-smoke.md` 14.2) |

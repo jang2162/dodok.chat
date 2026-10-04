@@ -40,6 +40,7 @@ import {
   fakeAgentScript,
   fakeRunnerScript,
   RUNNER_APPROVAL_COMMAND,
+  DEV_FAKE_GATEWAY_ID,
   RUNNER_POST_TEXT,
   startDevFake,
 } from "../scripts/dev-fake";
@@ -48,7 +49,6 @@ import { findItem, formatInteractionText } from "../src/modules/components/inter
 import { agents, runnerTokens, runs, users } from "../src/db/schema.sqlite";
 import { normalizeEmail } from "../src/modules/members/accept";
 import { DISCONNECT_EVENT_MS } from "../src/modules/ops/health";
-import { OPENCLAW_ENV_CONNECTION_ID } from "../src/config";
 import type { FakeRunnerRun } from "./fakes/fake-runner";
 import type { ScenarioApproval } from "./fakes/scenario";
 import { bootTestApp, login, userWithRole } from "./helpers/app";
@@ -632,6 +632,7 @@ describe("startDevFake", () => {
       providerAgentId: handle,
       handle,
       name: handle,
+      gatewayId: DEV_FAKE_GATEWAY_ID,
     });
     return agent.id;
   }
@@ -683,7 +684,7 @@ describe("startDevFake", () => {
   it("고정 토큰으로 로그인 → discover 에 dev·fin → 등록·채널·멤버 → @dev 에 에이전트 답이 온다", async () => {
     const { agents: found } = await api<{ agents: Array<{ providerAgentId: string }> }>(
       "GET",
-      "/agents/discover",
+      `/agents/discover?gatewayId=${DEV_FAKE_GATEWAY_ID}`,
     );
     expect(found.map((a) => a.providerAgentId).sort()).toEqual(["dev", "fin"]);
     const channelId = await channelWith("t", ["dev"]);
@@ -870,6 +871,7 @@ describe("startDevFake 푸시 — 「나 불러」", () => {
       providerAgentId: "dev",
       handle: "dev",
       name: "dev",
+      gatewayId: DEV_FAKE_GATEWAY_ID,
     });
     const { channel } = await restAs<{ channel: { id: string } }>(dev.url, cookie, "POST", "/channels", {
       name: "push",
@@ -1092,7 +1094,7 @@ describe("startDevFake 가짜 플러그인 토큰 바꾸기 — POST /__devfake/
     });
 
   async function issue(label: string): Promise<{ token: string; id: string }> {
-    const res = await fetch(`${dev.url}/api/v1/setup/bridge-tokens`, {
+    const res = await fetch(`${dev.url}/api/v1/gateways/${DEV_FAKE_GATEWAY_ID}/bridge-tokens`, {
       method: "POST",
       headers: { cookie, "content-type": "application/json" },
       body: JSON.stringify({ label }),
@@ -1130,7 +1132,7 @@ describe("startDevFake 가짜 플러그인 토큰 바꾸기 — POST /__devfake/
   it("폐기한 토큰으로 바꾸면 { ok: false, reason } — 새 토큰으로 다시 바꾸면 돌아온다", async () => {
     const old = await issue("old");
     await expect((await swap({ token: old.token })).json()).resolves.toEqual({ ok: true });
-    const revoke = await fetch(`${dev.url}/api/v1/setup/bridge-tokens/${old.id}`, {
+    const revoke = await fetch(`${dev.url}/api/v1/gateways/${DEV_FAKE_GATEWAY_ID}/bridge-tokens/${old.id}`, {
       method: "DELETE",
       headers: { cookie },
     });
@@ -1363,6 +1365,7 @@ describe("startDevFake 스레드 — 스레드 답·스레드 릴레이·동시 
         providerAgentId: handle,
         handle,
         name: handle,
+        gatewayId: DEV_FAKE_GATEWAY_ID,
       });
       agentIds[handle] = agent.id;
     }
@@ -1527,7 +1530,7 @@ describe("startDevFake 스레드 — 스레드 답·스레드 릴레이·동시 
         expect(res.status, JSON.stringify(body)).toBe(400);
         await expect(res.json()).resolves.toMatchObject({ code: "VALIDATION" });
       }
-      expect(openclawOf(dev.app).supports("dev", OPENCLAW_ENV_CONNECTION_ID, "threads")).toBe(true);
+      expect(openclawOf(dev.app).supports("dev", DEV_FAKE_GATEWAY_ID, "threads")).toBe(true);
     });
 
     it("false → threads 없는 hello 로 다시 붙어 스레드 멘션은 PLUGIN_OUTDATED 카드(채널 멘션은 그대로) → true 로 되돌리고 「다시 실행」하면 스레드에서 답한다", async () => {
@@ -1537,7 +1540,7 @@ describe("startDevFake 스레드 — 스레드 답·스레드 릴레이·동시 
       expect(offBody.ok).toBe(true);
       expect(offBody.capabilities).not.toContain("threads");
       expect(offBody.capabilities).toContain("agents.list");
-      expect(openclawOf(dev.app).supports("dev", OPENCLAW_ENV_CONNECTION_ID, "threads")).toBe(false);
+      expect(openclawOf(dev.app).supports("dev", DEV_FAKE_GATEWAY_ID, "threads")).toBe(false);
 
       const w = await channelWire("thread-outdated", ["dev"]);
       const root = await w.send("옛 플러그인 루트");
@@ -1566,7 +1569,7 @@ describe("startDevFake 스레드 — 스레드 답·스레드 릴레이·동시 
       const on = await setCaps({ threads: true });
       expect(on.status).toBe(200);
       expect(((await on.json()) as { capabilities: string[] }).capabilities).toContain("threads");
-      expect(openclawOf(dev.app).supports("dev", OPENCLAW_ENV_CONNECTION_ID, "threads")).toBe(true);
+      expect(openclawOf(dev.app).supports("dev", DEV_FAKE_GATEWAY_ID, "threads")).toBe(true);
       const socket = sockets.at(-1);
       const retried = await socket?.emitWithAck("component.interact", {
         messageId: card.id,

@@ -1,4 +1,4 @@
-import type { SetupStatus } from "@dodok/shared";
+import type { GatewaySetup, SetupStatus } from "@dodok/shared";
 import { CheckIcon, CopyIcon, DownloadIcon } from "lucide-react";
 import { type ReactNode, useId, useState } from "react";
 import { ApiRequestError } from "@/api/http";
@@ -108,18 +108,33 @@ export function ServerSection({ status }: { status: SetupStatus }) {
   );
 }
 
-const GATEWAY_STATE: Record<SetupStatus["gateway"]["state"], string> = {
+const GATEWAY_STATE: Record<GatewaySetup["gateway"]["state"], string> = {
   connected: "연결됨",
   reconnecting: "다시 연결하는 중",
   down: "연결 안 됨",
+  disabled: "꺼짐",
 };
+
+/** Gateway 가 없을 때(멀티 Gateway 스펙 7장 빈 상태) */
+export const NO_GATEWAY = "OpenClaw Gateway 를 추가하면 그 안의 에이전트를 채널에 데려올 수 있습니다";
 
 /**
  * Gateway — 상태·호스트·버전(핀과 다르면 드리프트 한 줄 — 운영 보강 스펙 7장)과 다음에 할 일(스펙 「연결 페이지」). 페어링 대기면 승인 명령(요청 id 를 못 받았으면 목록 명령)을,
- * 대기가 5분을 넘으면 강조한다. 그 밖에 `down` 이면 `.env`·서버 로그를 보라고 한다
+ * 대기가 5분을 넘으면 강조한다. 그 밖에 `down` 이면 주소·토큰·서버 로그를 보라고 한다. Gateway 가 여럿이어도 지금은 첫 Gateway 하나를
+ * 그린다(Gateway 카드 목록은 멀티 Gateway 태스크 6)
  */
-export function GatewaySection({ status }: { status: SetupStatus }) {
-  const { gateway } = status;
+export function GatewaySection({ gatewaySetup }: { gatewaySetup: GatewaySetup | undefined }) {
+  if (!gatewaySetup)
+    return (
+      <Section title="Gateway">
+        <p className="text-sm text-muted-foreground">{NO_GATEWAY}</p>
+      </Section>
+    );
+  return <GatewayDetail gatewaySetup={gatewaySetup} />;
+}
+
+function GatewayDetail({ gatewaySetup }: { gatewaySetup: GatewaySetup }) {
+  const { gateway } = gatewaySetup;
   const pairing = gateway.pairing;
   // 기다리는 동안만 1초마다 다시 본다 — 5분 경계를 넘는 순간 강조가 켜진다
   const now = useNowTick(pairing !== null);
@@ -127,6 +142,7 @@ export function GatewaySection({ status }: { status: SetupStatus }) {
   return (
     <Section title="Gateway">
       <dl className="flex flex-col gap-1">
+        <Field name="이름">{gatewaySetup.name}</Field>
         <Field name="상태">{GATEWAY_STATE[gateway.state]}</Field>
         <Field name="호스트">{gateway.host}</Field>
         <Field name="버전">
@@ -174,11 +190,7 @@ export function GatewaySection({ status }: { status: SetupStatus }) {
         </div>
       ) : (
         gateway.state === "down" && (
-          <p className="text-sm text-muted-foreground">
-            서버의 <code className="font-mono">.env</code> 에 있는{" "}
-            <code className="font-mono">OPENCLAW_GATEWAY_URL</code>·
-            <code className="font-mono">OPENCLAW_GATEWAY_TOKEN</code> 과 서버 로그를 확인하세요.
-          </p>
+          <p className="text-sm text-muted-foreground">Gateway 주소·토큰과 서버 로그를 확인하세요.</p>
         )
       )}
     </Section>
@@ -214,12 +226,12 @@ function downloadError(e: unknown): string {
 }
 
 /** 접속 플러그인이 서버가 품은 파일과 같은 빌드인가(스펙 「연결 페이지」·「오류 처리」) */
-function BuildMatch({ status }: { status: SetupStatus }) {
-  const plugin = status.bridge.plugin;
-  if (!plugin) return null;
-  if (status.pluginMatches === true)
+function BuildMatch({ gatewaySetup }: { gatewaySetup: GatewaySetup | undefined }) {
+  const plugin = gatewaySetup?.bridge.plugin;
+  if (!gatewaySetup || !plugin) return null;
+  if (gatewaySetup.pluginMatches === true)
     return <p className="text-sm text-muted-foreground">서버와 같은 빌드입니다</p>;
-  if (status.pluginMatches === false)
+  if (gatewaySetup.pluginMatches === false)
     return (
       <p role="alert" className="text-sm font-medium text-destructive">
         다른 빌드입니다 — 받아서 다시 설치하세요
@@ -234,11 +246,17 @@ function BuildMatch({ status }: { status: SetupStatus }) {
 }
 
 /**
- * 플러그인 — 접속 여부·버전·같은 빌드인가, 「플러그인 받기」(sha256)와 설치 명령. 받기는 `pluginFile.available` 로만 그리고,
- * 없으면 만드는 법을 보인다
+ * 플러그인 — 접속 여부·버전·같은 빌드인가(첫 Gateway 의 플러그인), 「플러그인 받기」(sha256)와 설치 명령. 받기는
+ * `pluginFile.available` 로만 그리고, 없으면 만드는 법을 보인다
  */
-export function PluginSection({ status }: { status: SetupStatus }) {
-  const plugin = status.bridge.plugin;
+export function PluginSection({
+  status,
+  gatewaySetup,
+}: {
+  status: SetupStatus;
+  gatewaySetup: GatewaySetup | undefined;
+}) {
+  const plugin = gatewaySetup?.bridge.plugin ?? null;
   const file = status.pluginFile;
   const download = useDownloadPlugin();
   const fileName = file.available ? `dodok-openclaw-plugin-${file.sha256.slice(0, 12)}.tgz` : "";
@@ -254,7 +272,7 @@ export function PluginSection({ status }: { status: SetupStatus }) {
       ) : (
         <p className="text-sm">접속한 플러그인이 없습니다.</p>
       )}
-      <BuildMatch status={status} />
+      <BuildMatch gatewaySetup={gatewaySetup} />
       {file.available ? (
         <div className="flex flex-col gap-3">
           <div className="flex flex-col items-start gap-1.5">

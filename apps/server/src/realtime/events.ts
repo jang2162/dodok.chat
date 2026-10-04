@@ -98,8 +98,8 @@ export function attachWireFanout(io: WireServer, bus: ServerBus, opts: WireFanou
   const hydrateUpdated = (message: Message): Message => hydrateForClient(opts.db, [message])[0] ?? message;
 
   const offs = [
-    on("message.created", (p) =>
-      io.to(channelRoom(p.message.channelId)).emit("message.created", { ...p, message: hydrate(p.message) }),
+    on("message.created", ({ message }) =>
+      io.to(channelRoom(message.channelId)).emit("message.created", { message: hydrate(message) }),
     ),
     on("message.updated", (p) =>
       io

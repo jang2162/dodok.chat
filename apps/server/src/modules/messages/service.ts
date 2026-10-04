@@ -311,12 +311,15 @@ export function createUserMessage(db: Db, bus: ServerBus, input: CreateUserMessa
   return result.message;
 }
 
-/** externalId 가 이미 있으면 그 메시지를 돌려준다(이벤트 없음). components 에는 서버 id 와 componentState 를 붙인다. */
+/**
+ * externalId 가 이미 있으면 그 메시지를 돌려준다(이벤트 없음). components 에는 서버 id 와 componentState 를 붙인다.
+ * opts.silent 면 message.created 에 표지를 달아 푸시가 건너뛴다(채널에는 그대로 보인다)
+ */
 export function createAgentMessage(
   db: Db,
   bus: ServerBus,
   input: CreateAgentMessageInput,
-  opts: { onDroppedAttachments?: (ids: string[]) => void } = {},
+  opts: { onDroppedAttachments?: (ids: string[]) => void; silent?: boolean } = {},
 ): Message {
   const result = db.transaction((tx) => {
     const existing = tx.select().from(messages).where(eq(messages.externalId, input.externalId)).get();
@@ -351,7 +354,7 @@ export function createAgentMessage(
   });
   // 트랜잭션 밖에서 — 호출자의 로그가 커밋을 붙잡지 않게
   if (result.dropped.length > 0) opts.onDroppedAttachments?.(result.dropped);
-  if (result.created) emitCreated(bus, result.message, result.root);
+  if (result.created) emitCreated(bus, result.message, result.root, opts.silent === true);
   return result.message;
 }
 
@@ -444,6 +447,39 @@ function rootSeqAt(db: DbOrTx, channelId: string, seq: number): number {
   return root?.seq ?? seq;
 }
 
+/**
+ * 1회용 컴포넌트 아이템을 쓴 것으로 남긴다(설계 4.3) — 사람의 상호작용(components/service.ts interact)과 서버가 닫는 카드가 같은
+ * 길을 쓴다. 상태가 없거나 이미 쓴 아이템이면 그대로 돌려준다
+ */
+export function consumeComponentItem(tx: DbOrTx, message: Message, itemId: string): Message {
+  const state = message.componentState;
+  if (!state || state.consumed.includes(itemId)) return message;
+  const row = tx
+    .update(messages)
+    .set({ componentState: { ...state, consumed: [...state.consumed, itemId] } })
+    .where(eq(messages.id, message.id))
+    .returning()
+    .get();
+  return row ? rowToMessage(row) : message;
+}
+
+/** 그 런의 run_error 시스템 메시지(「다시 실행」 카드) — 런마다 하나지만 목록으로 돌려준다 */
+export function runErrorMessages(db: DbOrTx, channelId: string, runId: string): Message[] {
+  return db
+    .select()
+    .from(messages)
+    .where(
+      and(
+        eq(messages.channelId, channelId),
+        eq(messages.kind, "system"),
+        sql`json_extract(${messages.systemMeta}, '$.kind') = 'run_error'`,
+        sql`json_extract(${messages.systemMeta}, '$.runId') = ${runId}`,
+      ),
+    )
+    .all()
+    .map(rowToMessage);
+}
+
 export function getMessage(db: DbOrTx, id: string): Message | undefined {
   const row = db.select().from(messages).where(eq(messages.id, id)).get();
   return row ? rowToMessage(row) : undefined;
@@ -502,8 +538,8 @@ function updatedRoot(tx: DbOrTx, message: Message): Message | undefined {
   return summary ? { ...rowToMessage(row), threadSummary: summary } : rowToMessage(row);
 }
 
-function emitCreated(bus: ServerBus, message: Message, root: Message | undefined): void {
-  bus.emit("message.created", { message });
+function emitCreated(bus: ServerBus, message: Message, root: Message | undefined, silent = false): void {
+  bus.emit("message.created", silent ? { message, silent: true } : { message });
   if (root) bus.emit("message.updated", { message: root });
 }
 

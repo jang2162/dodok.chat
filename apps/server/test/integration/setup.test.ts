@@ -18,16 +18,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { App } from "../../src/app";
 import { bridgeTokens, memberships, users } from "../../src/db/schema.sqlite";
 import { type FakePlugin, startFakePlugin } from "../fakes/fake-plugin";
+import { issueBridgeToken } from "../../src/modules/setup/tokens";
 import { bootTestApp, login } from "../helpers/app";
-import { testEnv } from "../helpers/env";
+import { FAKE_GATEWAY_ID } from "../helpers/gateways";
 import { bootLiveApp, type LiveApp } from "../helpers/live-app";
 import { makePng } from "../helpers/png";
 import { connectWire, recordEvents, waitFor, type WireClient, type WirePayload } from "../helpers/wire";
 import { openclawStatus, openclawOf } from "../helpers/openclaw";
 
 vi.setConfig({ testTimeout: 20_000, hookTimeout: 20_000 });
-
-const ENV_TOKEN = testEnv.BRIDGE_TOKEN as string;
 
 function captureLogger() {
   const lines: string[] = [];
@@ -99,16 +98,19 @@ describe("설정 마법사 통합 — 브리지 토큰 겹침 교체·폐기", (
   it("A 로 붙은 플러그인 → B 발급 → B 로 재접속 → A 폐기 → A 는 핸드셰이크·첨부 모두 거절, B 는 통한다 → B 폐기는 즉시 끊는다", async () => {
     const { logger, lines } = captureLogger();
     live = await bootLiveApp({ deps: { logger, pluginDirs: [] } });
-    const { app } = live;
+    const { app, gatewayId } = live;
+    const TOKEN_A = live.bridgeToken;
     const call = (method: "GET" | "POST" | "DELETE", url: string, payload?: object) =>
       app.fastify.inject({
         method,
-        url: `/api/v1/setup${url}`,
+        url: `/api/v1${url}`,
         headers: live?.auth.headers ?? {},
         ...(payload === undefined ? {} : { payload }),
       });
+    const tokensPath = `/gateways/${gatewayId}/bridge-tokens`;
     const tokens = async () =>
-      ((await call("GET", "/bridge-tokens")).json() as { tokens: BridgeTokenRecord[] }).tokens;
+      ((await call("GET", tokensPath)).json() as { tokens: BridgeTokenRecord[] }).tokens;
+    const pluginOf = (status: SetupStatus) => status.gateways[0]?.bridge.plugin ?? null;
 
     const ownerWire = await connectWire(app, live.auth.token);
     sockets.push(ownerWire);
@@ -118,17 +120,17 @@ describe("설정 마법사 통합 — 브리지 토큰 겹침 교체·폐기", (
     const memberSeen = recordEvents(memberWire, ["setup.status"]);
     const ownerSeen = recordEvents(ownerWire, ["setup.status"]);
 
-    // 부팅 때 .env 토큰(A)을 이어받았고 가짜 플러그인이 그것으로 붙어 있다
-    const [envRow] = await tokens();
-    expect(envRow).toMatchObject({ label: "env", connected: true, revokedAt: null });
-    const tokenA = envRow?.id as string;
-    const status0 = SetupStatus.parse((await call("GET", "/status")).json());
-    expect(status0.bridge.plugin?.tokenId).toBe(tokenA);
+    // Gateway 를 추가하며 발급한 토큰(A)으로 가짜 플러그인이 붙어 있다
+    const [rowA] = await tokens();
+    expect(rowA).toMatchObject({ label: "live-app", connected: true, revokedAt: null });
+    const tokenA = rowA?.id as string;
+    const status0 = SetupStatus.parse((await call("GET", "/setup/status")).json());
+    expect(pluginOf(status0)?.tokenId).toBe(tokenA);
     expect(status0.bridge.publicUrl).toBe("ws://localhost:5173/bridge");
 
     // B 발급 — owner 에게 setup.status 가 간다
     const issuedEvent = waitFor(ownerWire, "setup.status");
-    const issuedRes = await call("POST", "/bridge-tokens", { label: "rotate" });
+    const issuedRes = await call("POST", tokensPath, { label: "rotate" });
     expect(issuedRes.statusCode).toBe(201);
     expect(issuedRes.headers["cache-control"]).toBe("no-store");
     const issued = IssueBridgeTokenResult.parse(issuedRes.json());
@@ -136,7 +138,7 @@ describe("설정 마법사 통합 — 브리지 토큰 겹침 교체·폐기", (
     SetupStatus.parse((await issuedEvent).status);
 
     // 가짜 플러그인이 B 로 다시 붙는다 — 이전 연결은 replaced, connected 가 B 로 옮겨 간다
-    const movedEvent = waitFor(ownerWire, "setup.status", (p) => p.status.bridge.plugin?.tokenId === tokenB);
+    const movedEvent = waitFor(ownerWire, "setup.status", (p) => pluginOf(p.status)?.tokenId === tokenB);
     const pluginB = await startFakePlugin({ bridgeUrl: app.url, token: issued.token });
     plugins.push(pluginB);
     await movedEvent;
@@ -157,12 +159,12 @@ describe("설정 마법사 통합 — 브리지 토큰 겹침 교체·폐기", (
       name: "a.png",
       mime: "image/png",
     });
-    expect((await pluginB.downloadAttachment(uploaded.id, { token: ENV_TOKEN })).status).toBe(404);
+    expect((await pluginB.downloadAttachment(uploaded.id, { token: TOKEN_A })).status).toBe(404);
 
     // A 폐기 — 재접속·첨부 모두 거절, B 는 그대로
-    expect((await call("DELETE", `/bridge-tokens/${tokenA}`)).statusCode).toBe(204);
-    expect(await tryBridge(app.url, ENV_TOKEN)).toBe("UNAUTHORIZED");
-    expect((await pluginB.downloadAttachment(uploaded.id, { token: ENV_TOKEN })).status).toBe(401);
+    expect((await call("DELETE", `${tokensPath}/${tokenA}`)).statusCode).toBe(204);
+    expect(await tryBridge(app.url, TOKEN_A)).toBe("UNAUTHORIZED");
+    expect((await pluginB.downloadAttachment(uploaded.id, { token: TOKEN_A })).status).toBe(401);
     expect((await pluginB.downloadAttachment(uploaded.id)).status).toBe(404);
     await pluginB.uploadAttachment({
       channelId: channel.id,
@@ -172,14 +174,11 @@ describe("설정 마법사 통합 — 브리지 토큰 겹침 교체·폐기", (
     });
     expect(openclawStatus(openclawOf(app)).bridge).toBe("connected");
 
-    // .env 토큰을 폐기했으니 envTokenIgnored 가 켜진다(Review Focus 1)
-    expect(SetupStatus.parse((await call("GET", "/status")).json()).envTokenIgnored).toBe(true);
-
     // 접속 중인 B 폐기 → 그 세션이 곧바로 끊기고 owner 는 plugin null 상태를 받는다
-    const downEvent = waitFor(ownerWire, "setup.status", (p) => p.status.bridge.plugin === null);
-    expect((await call("DELETE", `/bridge-tokens/${tokenB}`)).statusCode).toBe(204);
+    const downEvent = waitFor(ownerWire, "setup.status", (p) => pluginOf(p.status) === null);
+    expect((await call("DELETE", `${tokensPath}/${tokenB}`)).statusCode).toBe(204);
     const down = await downEvent;
-    expect(down.status.bridge.state).toBe("down");
+    expect(down.status.gateways[0]?.bridge.state).toBe("down");
     expect(openclawStatus(openclawOf(app)).bridge).toBe("down");
     expect(await tryBridge(app.url, issued.token)).toBe("UNAUTHORIZED");
     expect((await pluginB.downloadAttachment(uploaded.id)).status).toBe(401);
@@ -192,27 +191,22 @@ describe("설정 마법사 통합 — 브리지 토큰 겹침 교체·폐기", (
     // 원문(두 토큰)은 로그·wire 이벤트·목록 어디에도 없다
     const secret = issued.token.slice(4);
     expect(lines.join("\n")).not.toContain(secret);
-    expect(lines.join("\n")).not.toContain(ENV_TOKEN);
+    expect(lines.join("\n")).not.toContain(TOKEN_A.slice(4));
     expect(JSON.stringify(ownerSeen)).not.toContain(secret);
     expect(JSON.stringify(await tokens())).not.toContain(secret);
     // 거절 로그는 남았다 — 토큰 없이 주소만
     expect(lines.some((l) => l.includes("bridge connection rejected"))).toBe(true);
   });
 
-  it("BRIDGE_TOKEN 없이 부팅 — 활성 토큰 0, 브리지 접속은 모두 거절, 상태는 정상", async () => {
-    const { logger } = captureLogger();
-    // 실제 어댑터: bootLiveApp 은 testEnv 의 토큰으로 가짜 플러그인을 붙이는데 DB 에 토큰이 없어 핸드셰이크에서 거절된다
-    await expect(
-      bootLiveApp({ env: { BRIDGE_TOKEN: "" }, deps: { logger, pluginDirs: [] } }),
-    ).rejects.toThrow(/UNAUTHORIZED/);
-    // 상태: 같은 설정(BRIDGE_TOKEN 없음)으로 FakeAdapter 앱을 띄워 REST 를 본다
-    const app = await bootTestApp({ BRIDGE_TOKEN: "" }, { pluginDirs: [] });
+  // 실제 어댑터로 Gateway 0개 부팅·브리지 거절은 gateways.test.ts 가 본다
+  it("Gateway 0개로 부팅 — 브리지 토큰 0, 설정 상태의 Gateway 목록은 비었다", async () => {
+    const app = await bootTestApp({}, { pluginDirs: [] }, { gateway: false });
     try {
       expect(app.db.select().from(bridgeTokens).all()).toHaveLength(0);
       const { headers } = await login(app);
       const res = await app.fastify.inject({ method: "GET", url: "/api/v1/setup/status", headers });
       expect(res.statusCode).toBe(200);
-      expect(SetupStatus.parse(res.json()).envTokenIgnored).toBe(false);
+      expect(SetupStatus.parse(res.json()).gateways).toEqual([]);
     } finally {
       await app.close();
     }
@@ -223,11 +217,11 @@ describe("설정 마법사 통합 — 브리지 토큰 겹침 교체·폐기", (
     live = await bootLiveApp({ deps: { logger, pluginDirs: [] } });
     const { app, plugin } = live;
     app.db.$client.exec("DROP TABLE bridge_tokens");
-    expect(await tryBridge(app.url, ENV_TOKEN)).toBe("UNAUTHORIZED");
+    expect(await tryBridge(app.url, live.bridgeToken)).toBe("UNAUTHORIZED");
     const res = await plugin.downloadAttachment(uuid());
     expect(res.status).toBe(401);
     expect(lines.some((l) => l.includes("bridge token verification failed"))).toBe(true);
-    expect(lines.join("\n")).not.toContain(ENV_TOKEN);
+    expect(lines.join("\n")).not.toContain(live.bridgeToken.slice(4));
   });
 });
 
@@ -300,14 +294,17 @@ describe("설정 마법사 통합 — 어댑터 setup 이벤트", () => {
       const got: Promise<WirePayload<"setup.status">> = waitFor(owner, "setup.status");
       adapter.emit({ kind: "setup" });
       const { status } = await got;
-      expect(SetupStatus.parse(status).gateway.pairing).toEqual({ requestId: "req-1", since });
+      expect(SetupStatus.parse(status).gateways[0]?.gateway.pairing).toEqual({ requestId: "req-1", since });
 
       const rest = await app.fastify.inject({
         method: "GET",
         url: "/api/v1/setup/status",
         headers: { authorization: `Bearer ${token}` },
       });
-      expect(rest.json().gateway.pairing).toEqual({ requestId: "req-1", since });
+      expect(SetupStatus.parse(rest.json()).gateways[0]?.gateway.pairing).toEqual({
+        requestId: "req-1",
+        since,
+      });
 
       // member·admin 은 받지 않는다 — owner 가 받은 뒤 각 연결의 왕복을 한 번 더 기다린다
       await roundTrip(member);
@@ -321,7 +318,7 @@ describe("설정 마법사 통합 — 어댑터 setup 이벤트", () => {
   });
 
   it("접속하지 않은 토큰을 폐기해도 서버가 setup.status 를 다시 보낸다 — 어댑터 이벤트(세션 끊김)에 기대지 않는다", async () => {
-    // FakeAdapter 의 revokeBridgeSessions 는 기록만 하고 {kind:setup} 을 내지 않는다
+    // 붙지 않은 토큰이라 FakeAdapter 의 revokeTokenSessions 는 {kind:setup} 을 내지 않는다
     const adapter = new FakeAdapter();
     const app = await bootTestApp({}, { adapters: [adapter], pluginDirs: [] });
     const sockets: WireClient[] = [];
@@ -333,18 +330,17 @@ describe("설정 마법사 통합 — 어댑터 setup 이벤트", () => {
       const seen = recordEvents(owner, ["setup.status"]);
       await roundTrip(owner);
       seen.length = 0; // 접속 때 온 것이 있으면 버린다
-      const [envRow] = app.db.select().from(bridgeTokens).all();
+      const { record } = issueBridgeToken(app.db, app.workspaceId, FAKE_GATEWAY_ID, "idle");
       const res = await app.fastify.inject({
         method: "DELETE",
-        url: `/api/v1/setup/bridge-tokens/${envRow?.id}`,
+        url: `/api/v1/gateways/${FAKE_GATEWAY_ID}/bridge-tokens/${record.id}`,
         headers,
       });
       expect(res.statusCode).toBe(204);
       await roundTrip(owner);
       expect(seen).toHaveLength(1);
-      // BRIDGE_TOKEN 은 그대로인데 그 값이 이제 활성 토큰이 아니다
       const payload = seen[0]?.payload as WirePayload<"setup.status"> | undefined;
-      expect(SetupStatus.parse(payload?.status).envTokenIgnored).toBe(true);
+      expect(SetupStatus.parse(payload?.status).gateways.map((g) => g.id)).toEqual([FAKE_GATEWAY_ID]);
     } finally {
       for (const socket of sockets) socket.close();
       await app.close();

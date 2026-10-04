@@ -2,12 +2,6 @@ import { join } from "node:path";
 import { Handle } from "@dodok/shared";
 import { z } from "zod";
 
-/**
- * .env 의 Gateway 하나가 쓰는 연결 id(멀티 Gateway 계획 판정 PG1) — OpenClaw 어댑터가 이벤트·send 결과에 싣고, gateway_id 가 빈
- * OpenClaw 에이전트 행은 이 연결로 본다(adapters/connection.ts connectionIdOf). Gateway 를 DB 에서 읽게 되면 함께 없어진다
- */
-export const OPENCLAW_ENV_CONNECTION_ID = "env";
-
 const Raw = z.object({
   HOST: z.string().default("127.0.0.1"),
   PORT: z.coerce.number().int().min(0).max(65535).default(3000),
@@ -23,16 +17,10 @@ const Raw = z.object({
   OWNER_HANDLE: Handle.default("owner"),
   LOCAL_AUTH_TOKEN: z.string().min(16),
   BETTER_AUTH_SECRET: z.string().min(32),
-  OPENCLAW_TARGET: z.enum(["remote", "dev"]).default("remote"),
-  OPENCLAW_GATEWAY_URL: z.url().optional(),
-  OPENCLAW_GATEWAY_TOKEN: z.string().min(1).optional(),
-  OPENCLAW_DEV_GATEWAY_URL: z.url().optional(),
-  OPENCLAW_DEV_GATEWAY_TOKEN: z.string().min(1).optional(),
-  OPENCLAW_DEVICE_IDENTITY_PATH: z.string().optional(),
-  // 진단용 — 있으면 어댑터가 받은 Gateway chat·agent·session.message 프레임을 이 파일에 JSONL 로 append(본문 포함)
+  // OpenClaw Gateway 주소·토큰은 .env 가 아니라 DB(연결 페이지)에 둔다(멀티 Gateway 스펙 3.4)
+  // 진단용 — 있으면 어댑터가 받은 Gateway chat·agent·session.message 프레임을 Gateway 마다 이 경로 + .<Gateway id> 파일에 JSONL 로
+  // append(본문 포함)
   OPENCLAW_FRAME_DUMP_PATH: z.string().optional(),
-  // 선택(설정 마법사 결정 3) — 브리지 토큰의 정본은 DB 다. 있으면 DB 가 비었을 때만 첫 토큰(라벨 env)으로 이어받는다
-  BRIDGE_TOKEN: z.string().min(16).optional(),
   BRIDGE_PUBLIC_URL: z.url().optional(),
   // 서버가 품은 플러그인 tgz 디렉터리(이미지가 /app/plugin). 없으면 소스 실행에서 packages/openclaw-plugin/dist
   DODOK_PLUGIN_DIR: z.string().optional(),
@@ -54,8 +42,6 @@ const Raw = z.object({
 export type ServerConfig = z.infer<typeof Raw> & {
   dbPath: string;
   attachmentsDir: string;
-  deviceIdentityPath: string;
-  gateway: { url: string; token: string };
   vapid: { publicKey?: string; privateKey?: string; subject: string };
 };
 
@@ -67,28 +53,10 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     throw new Error(`설정 오류:\n${lines.join("\n")}`);
   }
   const c = parsed.data;
-  const pair =
-    c.OPENCLAW_TARGET === "dev"
-      ? {
-          url: c.OPENCLAW_DEV_GATEWAY_URL,
-          token: c.OPENCLAW_DEV_GATEWAY_TOKEN,
-          names: "OPENCLAW_DEV_GATEWAY_URL / OPENCLAW_DEV_GATEWAY_TOKEN",
-        }
-      : {
-          url: c.OPENCLAW_GATEWAY_URL,
-          token: c.OPENCLAW_GATEWAY_TOKEN,
-          names: "OPENCLAW_GATEWAY_URL / OPENCLAW_GATEWAY_TOKEN",
-        };
-  if (!pair.url || !pair.token) {
-    throw new Error(`설정 오류: OPENCLAW_TARGET=${c.OPENCLAW_TARGET} 에는 ${pair.names} 가 필요하다`);
-  }
-  const suffix = c.OPENCLAW_TARGET === "dev" ? "-dev" : "";
   return {
     ...c,
     dbPath: c.DB_PATH ?? join(c.DATA_DIR, "dodok.sqlite"),
     attachmentsDir: c.ATTACHMENTS_DIR ?? join(c.DATA_DIR, "attachments"),
-    deviceIdentityPath: c.OPENCLAW_DEVICE_IDENTITY_PATH ?? join(c.DATA_DIR, `openclaw-device${suffix}.json`),
-    gateway: { url: pair.url, token: pair.token },
     vapid: { publicKey: c.VAPID_PUBLIC_KEY, privateKey: c.VAPID_PRIVATE_KEY, subject: c.VAPID_SUBJECT },
   };
 }

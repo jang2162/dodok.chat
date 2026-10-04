@@ -234,7 +234,10 @@ export const Run = z.object({
   hasCanonical: z.boolean().default(false),
   finalSource: z.enum(["plugin", "gateway"]).optional(),
   usage: RunUsage.optional(),
-  error: z.object({ code: z.string(), message: z.string() }).optional(),
+  // connectionClosed — 어댑터가 연결을 닫으며 닫은 런(RunSignal gateway_error 의 같은 표지). 늦게 온 정본을 가른다
+  error: z
+    .object({ code: z.string(), message: z.string(), connectionClosed: z.literal(true).optional() })
+    .optional(),
   createdAt: IsoDateTime,
   startedAt: IsoDateTime.optional(),
   endedAt: IsoDateTime.optional(),

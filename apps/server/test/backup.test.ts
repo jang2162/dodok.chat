@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   rmSync,
   statSync,
   utimesSync,
@@ -102,27 +103,58 @@ describe("runBackup", () => {
     copy.close();
   }, 30_000);
 
-  it("백업 디렉터리는 UTC 시각 이름이고 vapid.json·openclaw-device*.json 사본을 0600 으로 둔다", async () => {
+  it("백업 디렉터리는 UTC 시각 이름이고 vapid.json 사본을 0600 으로 둔다", async () => {
     makeDb();
-    for (const f of ["vapid.json", "openclaw-device.json", "openclaw-device-dev.json"])
-      writeFileSync(join(dataDir, f), `{"name":"${f}"}`, { mode: 0o644 });
+    writeFileSync(join(dataDir, "vapid.json"), `{"name":"vapid"}`, { mode: 0o644 });
+    // 옛 단일 Gateway 의 디바이스 파일 이름 — 더는 쓰지 않는다
+    writeFileSync(join(dataDir, "openclaw-device.json"), "{}");
     writeFileSync(join(dataDir, "other.json"), "{}");
 
     const r = await runBackup({ dataDir, now: new Date("2026-09-24T01:02:03.456Z") });
 
     expect(r.dir).toBe(join(backupsRoot(), "2026-09-24T01-02-03-456Z"));
-    expect(readdirSync(r.dir).sort()).toEqual([
-      "dodok.sqlite",
-      "openclaw-device-dev.json",
-      "openclaw-device.json",
-      "vapid.json",
-    ]);
+    expect(readdirSync(r.dir).sort()).toEqual(["dodok.sqlite", "vapid.json"]);
     for (const f of readdirSync(r.dir)) expect(mode(join(r.dir, f))).toBe(0o600);
     expect(mode(r.dir)).toBe(0o700);
     expect(mode(backupsRoot())).toBe(0o700);
     expect(r.dbBytes).toBe(statSync(join(r.dir, "dodok.sqlite")).size);
     expect(r.dbBytes).toBeGreaterThan(0);
     expect(r.removed).toEqual([]);
+  });
+
+  it("Gateway 마다의 디바이스 디렉터리 DATA_DIR/gateways/ 를 통째로 담는다(멀티 Gateway 스펙 3.3)", async () => {
+    makeDb();
+    const gw1 = join(dataDir, "gateways", "0f0f0f0f-0000-4000-8000-000000000001");
+    const gw2 = join(dataDir, "gateways", "0f0f0f0f-0000-4000-8000-000000000002");
+    mkdirSync(gw1, { recursive: true });
+    mkdirSync(gw2, { recursive: true });
+    writeFileSync(join(gw1, "device.json"), `{"id":"gw1"}`, { mode: 0o644 });
+    writeFileSync(join(gw1, "device-tokens.json"), `{"t":"gw1"}`, { mode: 0o644 });
+    writeFileSync(join(gw2, "device.json"), `{"id":"gw2"}`, { mode: 0o644 });
+
+    const r = await runBackup({ dataDir });
+
+    const copied = join(r.dir, "gateways");
+    expect(readdirSync(copied).sort()).toEqual(readdirSync(join(dataDir, "gateways")).sort());
+    for (const [dir, files] of [
+      [gw1, ["device-tokens.json", "device.json"]],
+      [gw2, ["device.json"]],
+    ] as const) {
+      const copy = join(copied, dir.split("/").pop() as string);
+      expect(readdirSync(copy).sort()).toEqual(files);
+      expect(mode(copy)).toBe(0o700);
+      for (const f of files) {
+        expect(readFileSync(join(copy, f), "utf8")).toBe(readFileSync(join(dir, f), "utf8"));
+        expect(mode(join(copy, f))).toBe(0o600);
+      }
+    }
+    expect(mode(copied)).toBe(0o700);
+  });
+
+  it("Gateway 디렉터리가 없어도 백업한다", async () => {
+    makeDb();
+    const r = await runBackup({ dataDir });
+    expect(readdirSync(r.dir)).toEqual(["dodok.sqlite"]);
   });
 
   it("dbPath 를 주면 DATA_DIR 밖의 DB 를 백업한다", async () => {
@@ -293,8 +325,9 @@ describe("runBackup", () => {
     // 체크포인트되지 않은 커밋이 WAL 에만 있는 상태에서 백업한다 — 열어 둔 연결이 WAL 을 붙들고 있다
     const live = new Database(dbPath());
     live.pragma("wal_autocheckpoint = 0");
-    live.exec("CREATE TABLE probe (id INTEGER PRIMARY KEY)");
-    live.prepare("INSERT INTO probe DEFAULT VALUES").run();
+    // 행을 크게 — 마이그레이션이 표를 다시 만들며 남긴 빈 페이지에 다 들어가면 원본 파일 크기가 우연히 사본과 같아진다
+    live.exec("CREATE TABLE probe (id INTEGER PRIMARY KEY, pad TEXT)");
+    live.prepare("INSERT INTO probe (pad) VALUES (?)").run("x".repeat(256 * 1024));
     expect(existsSync(`${dbPath()}-wal`)).toBe(true);
 
     const r = await runBackup({ dataDir });

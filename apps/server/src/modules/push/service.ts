@@ -255,9 +255,10 @@ export function attachPushTriggers(
     }
   };
   const offs = [
-    bus.on("message.created", ({ message }) =>
-      guard("message.created", () => targetsForMessage(message, lookups)),
-    ),
+    bus.on("message.created", ({ message, silent }) => {
+      if (silent) return;
+      guard("message.created", () => targetsForMessage(message, lookups));
+    }),
     bus.on("approval.requested", ({ approval }) => {
       if (seenApprovals.has(approval.id)) return;
       seenApprovals.add(approval.id);

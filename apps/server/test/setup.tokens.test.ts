@@ -7,17 +7,17 @@ import { bridgeTokens } from "../src/db/schema.sqlite";
 import { HttpError } from "../src/http/errors";
 import {
   BRIDGE_TOKEN_LAST_USED_INTERVAL_MS,
-  importEnvToken,
-  isActiveBridgeToken,
-  issueBridgeToken,
-  listBridgeTokens,
-  revokeBridgeToken,
+  issueBridgeToken as issueFor,
+  listBridgeTokens as listFor,
+  revokeBridgeToken as revokeFor,
   verifyBridgeTokenDb,
 } from "../src/modules/setup/tokens";
 import { newTestDb } from "./helpers/db";
+import { insertGateway } from "./helpers/gateways";
 import { seedWorkspace } from "./helpers/seed";
 
-const ENV_TOKEN = "e".repeat(32);
+const GW = "0f0f0f0f-0000-4000-8000-0000000000a1";
+const GW2 = "0f0f0f0f-0000-4000-8000-0000000000a2";
 const T0 = new Date("2026-09-24T00:00:00.000Z");
 const at = (ms: number) => new Date(T0.getTime() + ms);
 
@@ -27,7 +27,15 @@ let ws: string;
 beforeEach(() => {
   db = newTestDb();
   ws = seedWorkspace(db).workspaceId;
+  insertGateway(db, ws, { id: GW, name: "사무실" });
+  insertGateway(db, ws, { id: GW2, name: "집" });
 });
+
+// 대부분은 Gateway 하나(GW)로 본다 — Gateway 를 가르는 것은 아래 「Gateway 단위」
+const issueBridgeToken = (d: Db, w: string, label: string, now?: Date) => issueFor(d, w, GW, label, now);
+const listBridgeTokens = (d: Db, w: string, connected: string | null) =>
+  listFor(d, w, GW, new Set(connected === null ? [] : [connected]));
+const revokeBridgeToken = (d: Db, w: string, id: string, now?: Date) => revokeFor(d, w, GW, id, now);
 
 const rows = () => db.select().from(bridgeTokens).all();
 
@@ -74,31 +82,12 @@ describe("issueBridgeToken", () => {
     expect(rows()).toHaveLength(0);
     expect(issueBridgeToken(db, ws, "x".repeat(60)).record.label).toHaveLength(60);
   });
-
-  it("라벨 env 는 대소문자·앞뒤 공백과 무관하게 VALIDATION — 이어받은 토큰의 표지다. envoy 처럼 env 를 품은 라벨은 된다", () => {
-    for (const label of ["env", "ENV", " Env ", "\tenv\n"]) {
-      let error: unknown;
-      try {
-        issueBridgeToken(db, ws, label);
-      } catch (e) {
-        error = e;
-      }
-      expect(error, JSON.stringify(label)).toBeInstanceOf(HttpError);
-      expect((error as HttpError).body).toMatchObject({
-        code: "VALIDATION",
-        message: "env 는 .env 에서 이어받은 토큰에만 쓰는 라벨입니다",
-      });
-    }
-    expect(rows()).toHaveLength(0);
-    expect(issueBridgeToken(db, ws, "envoy").record.label).toBe("envoy");
-    expect(issueBridgeToken(db, ws, "my env").record.label).toBe("my env");
-  });
 });
 
 describe("verifyBridgeTokenDb", () => {
   it("맞으면 토큰 id, 틀림·빈 값·비문자열·폐기됨은 null", () => {
     const { token, record } = issueBridgeToken(db, ws, "a", T0);
-    expect(verifyBridgeTokenDb(db, token, at(1))).toEqual({ tokenId: record.id });
+    expect(verifyBridgeTokenDb(db, token, at(1))).toEqual({ tokenId: record.id, gatewayId: GW });
     for (const bad of [`${token}x`, token.slice(0, -1), "", undefined, null, 42, { token }, [token]])
       expect(verifyBridgeTokenDb(db, bad, at(2))).toBeNull();
     expect(revokeBridgeToken(db, ws, record.id, at(3))).toBe(true);
@@ -123,19 +112,12 @@ describe("verifyBridgeTokenDb", () => {
   it("검증한 토큰의 행만 lastUsedAt 을 채운다 — 다른 행은 그대로", () => {
     const a = issueBridgeToken(db, ws, "a", T0);
     const b = issueBridgeToken(db, ws, "b", T0);
-    importEnvToken(db, seedWorkspace(db, { userHandle: "o" }).workspaceId, ENV_TOKEN, T0);
+    issueFor(db, ws, GW2, "c", T0);
     verifyBridgeTokenDb(db, a.token, at(1_000));
     const byId = new Map(rows().map((r) => [r.id, r.lastUsedAt]));
     expect(byId.get(a.record.id)).toEqual(at(1_000));
     expect(byId.get(b.record.id)).toBeNull();
     expect([...byId.values()].filter((v) => v !== null)).toHaveLength(1);
-  });
-
-  it("isActiveBridgeToken 은 같은 판정을 하지만 lastUsedAt 을 건드리지 않는다", () => {
-    const { token } = issueBridgeToken(db, ws, "a", T0);
-    expect(isActiveBridgeToken(db, ws, token)).toBe(true);
-    expect(isActiveBridgeToken(db, ws, "nope")).toBe(false);
-    expect(rows()[0]?.lastUsedAt).toBeNull();
   });
 });
 
@@ -158,58 +140,42 @@ describe("listBridgeTokens·revokeBridgeToken", () => {
 
   it("없는 id·다른 워크스페이스 id 는 false, 두 번 폐기해도 처음 revokedAt 을 지킨다", () => {
     const other = seedWorkspace(db, { userHandle: "o" }).workspaceId;
-    const { record } = issueBridgeToken(db, other, "o", T0);
+    insertGateway(db, other, { id: "0f0f0f0f-0000-4000-8000-0000000000a3", name: "남의 것" });
+    const { record } = issueFor(db, other, "0f0f0f0f-0000-4000-8000-0000000000a3", "o", T0);
     expect(revokeBridgeToken(db, ws, record.id, at(1))).toBe(false);
     expect(rows()[0]?.revokedAt).toBeNull();
     expect(revokeBridgeToken(db, ws, "01999999-0000-7000-8000-000000000000", at(1))).toBe(false);
-    expect(revokeBridgeToken(db, other, record.id, at(2))).toBe(true);
-    expect(revokeBridgeToken(db, other, record.id, at(3))).toBe(true);
+    const revokeOther = (now: Date) =>
+      revokeFor(db, other, "0f0f0f0f-0000-4000-8000-0000000000a3", record.id, now);
+    expect(revokeOther(at(2))).toBe(true);
+    expect(revokeOther(at(3))).toBe(true);
     expect(rows()[0]?.revokedAt).toEqual(at(2));
   });
 });
 
-describe("importEnvToken", () => {
-  it("빈 테이블 → imported(라벨 env) — 그 값으로 검증되고 DB 에 원문은 없다", () => {
-    expect(importEnvToken(db, ws, ENV_TOKEN, T0)).toBe("imported");
-    const [row] = rows();
-    expect(row?.label).toBe("env");
-    expect(JSON.stringify(rows())).not.toContain(ENV_TOKEN);
-    // prefix 는 원문이 아니라 해시에서 — .env 토큰은 짧을 수 있어 원문 조각을 DB 에 두지 않는다
-    expect(row?.prefix).toBe(row?.hash.slice(0, 6));
-    expect(ENV_TOKEN).not.toContain(row?.prefix);
-    expect(verifyBridgeTokenDb(db, ENV_TOKEN)).toEqual({ tokenId: row?.id });
+describe("Gateway 단위(멀티 Gateway 스펙 3.2)", () => {
+  it("토큰은 발급한 Gateway 에 묶이고 검증이 그 Gateway 를 돌려준다", () => {
+    const a = issueFor(db, ws, GW, "a", T0);
+    const b = issueFor(db, ws, GW2, "b", T0);
+    expect(verifyBridgeTokenDb(db, a.token)).toEqual({ tokenId: a.record.id, gatewayId: GW });
+    expect(verifyBridgeTokenDb(db, b.token)).toEqual({ tokenId: b.record.id, gatewayId: GW2 });
   });
 
-  it("같은 값 다시 → skipped(행 그대로 하나)", () => {
-    importEnvToken(db, ws, ENV_TOKEN, T0);
-    expect(importEnvToken(db, ws, ENV_TOKEN, at(1))).toBe("skipped");
-    expect(rows()).toHaveLength(1);
+  it("목록은 그 Gateway 의 토큰만, 다른 Gateway 의 토큰 id 로 폐기하면 false 이고 그 토큰은 그대로 통한다", () => {
+    const a = issueFor(db, ws, GW, "a", T0);
+    const b = issueFor(db, ws, GW2, "b", T0);
+    expect(listFor(db, ws, GW, new Set()).map((t) => t.id)).toEqual([a.record.id]);
+    expect(listFor(db, ws, GW2, new Set([a.record.id, b.record.id])).map((t) => [t.id, t.connected])).toEqual(
+      [[b.record.id, true]],
+    );
+    expect(revokeFor(db, ws, GW, b.record.id, at(1))).toBe(false);
+    expect(verifyBridgeTokenDb(db, b.token)).not.toBeNull();
   });
 
-  it("다른 값 → ignored, 이어받지 않는다 — 옛 값은 계속 통하고 새 값은 안 통한다 [Review Focus 1]", () => {
-    importEnvToken(db, ws, ENV_TOKEN, T0);
-    const edited = "f".repeat(32);
-    expect(importEnvToken(db, ws, edited, at(1))).toBe("ignored");
-    expect(rows()).toHaveLength(1);
-    expect(verifyBridgeTokenDb(db, edited)).toBeNull();
-    expect(verifyBridgeTokenDb(db, ENV_TOKEN)).not.toBeNull();
-  });
-
-  it("웹에서 발급한 토큰만 있거나 env 토큰을 폐기했으면 → ignored", () => {
-    issueBridgeToken(db, ws, "web", T0);
-    expect(importEnvToken(db, ws, ENV_TOKEN, at(1))).toBe("ignored");
-
-    const fresh = newTestDb();
-    const freshWs = seedWorkspace(fresh).workspaceId;
-    importEnvToken(fresh, freshWs, ENV_TOKEN, T0);
-    const id = fresh.select().from(bridgeTokens).get()?.id as string;
-    revokeBridgeToken(fresh, freshWs, id, at(1));
-    expect(importEnvToken(fresh, freshWs, ENV_TOKEN, at(2))).toBe("ignored");
-    expect(fresh.select().from(bridgeTokens).all()).toHaveLength(1);
-  });
-
-  it("값이 없으면 아무것도 하지 않는다", () => {
-    expect(importEnvToken(db, ws, undefined, T0)).toBe("skipped");
-    expect(rows()).toHaveLength(0);
+  it("Gateway 를 지우면 그 Gateway 의 토큰 행도 지워진다(FK cascade)", () => {
+    issueFor(db, ws, GW, "a", T0);
+    const b = issueFor(db, ws, GW2, "b", T0);
+    db.$client.prepare("DELETE FROM gateways WHERE id = ?").run(GW);
+    expect(rows().map((r) => r.id)).toEqual([b.record.id]);
   });
 });

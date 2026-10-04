@@ -9,9 +9,12 @@ import { channelMembers, channels, memberships } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
 import * as approvalStore from "../src/modules/approvals/store";
 import { addMember, type ChannelRecord, createChannel } from "../src/modules/channels/service";
+import { createGateway } from "../src/modules/gateways/service";
 import { createTriggerLookups } from "../src/modules/push/service";
 import { targetsForApproval } from "../src/modules/push/triggers";
+import { issueBridgeToken } from "../src/modules/setup/tokens";
 import { bootTestApp, login, userWithRole } from "./helpers/app";
+import { FAKE_GATEWAY_ID } from "./helpers/gateways";
 import { connectWire, openWire, type WireClient } from "./helpers/wire";
 
 // 역할 매트릭스(팀 스펙 2장 표) — owner·admin·member 세 세션으로 경로마다 허용·거부를 본다.
@@ -67,11 +70,14 @@ describe("역할 매트릭스(스펙 2장)", () => {
 
   const newAgent = (): Agent =>
     createAgent(app.db, {
+      gatewayId: FAKE_GATEWAY_ID,
       workspaceId: app.workspaceId,
       providerAgentId: `ag${++n}`,
       handle: `ag${n}`,
       name: `ag${n}`,
     });
+  const newGateway = (): string =>
+    createGateway(app.db, app.workspaceId, { name: `gw${++n}`, url: "ws://127.0.0.1:1", token: "t" }).id;
   const newChannel = (): ChannelRecord =>
     createChannel(app.db, { workspaceId: app.workspaceId, createdBy: app.ownerUserId, name: `role-${++n}` });
   /** 에이전트가 들어간 채널 */
@@ -129,7 +135,7 @@ describe("역할 매트릭스(스펙 2장)", () => {
       name: "GET /agents/discover",
       min: "admin",
       ok: 200,
-      request: () => ({ method: "GET", url: "/api/v1/agents/discover" }),
+      request: () => ({ method: "GET", url: `/api/v1/agents/discover?gatewayId=${FAKE_GATEWAY_ID}` }),
     },
     ...(
       [
@@ -242,6 +248,65 @@ describe("역할 매트릭스(스펙 2장)", () => {
       min: "owner",
       ok: 200,
       request: () => ({ method: "GET", url: "/api/v1/setup/status" }),
+    },
+    // Gateway·브리지 토큰은 owner 만(멀티 Gateway 스펙 6.6)
+    {
+      name: "GET /gateways",
+      min: "owner",
+      ok: 200,
+      request: () => ({ method: "GET", url: "/api/v1/gateways" }),
+    },
+    {
+      name: "POST /gateways",
+      min: "owner",
+      ok: 201,
+      request: () => ({
+        method: "POST",
+        url: "/api/v1/gateways",
+        payload: { name: `gw${++n}`, url: "ws://127.0.0.1:1", token: "t" },
+      }),
+    },
+    {
+      name: "PATCH /gateways/:id",
+      min: "owner",
+      ok: 200,
+      request: () => ({
+        method: "PATCH",
+        url: `/api/v1/gateways/${newGateway()}`,
+        payload: { name: `gw${++n}` },
+      }),
+    },
+    {
+      name: "DELETE /gateways/:id",
+      min: "owner",
+      ok: 200,
+      request: () => ({ method: "DELETE", url: `/api/v1/gateways/${newGateway()}` }),
+    },
+    {
+      name: "GET /gateways/:id/bridge-tokens",
+      min: "owner",
+      ok: 200,
+      request: () => ({ method: "GET", url: `/api/v1/gateways/${newGateway()}/bridge-tokens` }),
+    },
+    {
+      name: "POST /gateways/:id/bridge-tokens",
+      min: "owner",
+      ok: 201,
+      request: () => ({
+        method: "POST",
+        url: `/api/v1/gateways/${newGateway()}/bridge-tokens`,
+        payload: { label: "x" },
+      }),
+    },
+    {
+      name: "DELETE /gateways/:id/bridge-tokens/:tokenId",
+      min: "owner",
+      ok: 204,
+      request: () => {
+        const gatewayId = newGateway();
+        const { record } = issueBridgeToken(app.db, app.workspaceId, gatewayId, "x");
+        return { method: "DELETE", url: `/api/v1/gateways/${gatewayId}/bridge-tokens/${record.id}` };
+      },
     },
   ];
 

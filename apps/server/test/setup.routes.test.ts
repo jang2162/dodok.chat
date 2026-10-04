@@ -1,5 +1,5 @@
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
-import { BridgeTokenRecord, IssueBridgeTokenResult, SetupStatus } from "@dodok/shared";
+import { SetupStatus } from "@dodok/shared";
 import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -9,13 +9,11 @@ import { v7 as uuid } from "uuid";
 import { gzipSync } from "node:zlib";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { App } from "../src/app";
-import { bridgeTokens, memberships, users } from "../src/db/schema.sqlite";
+import { memberships, users } from "../src/db/schema.sqlite";
 import { PLUGIN_BUNDLE_ENTRY } from "../src/modules/setup/plugin-file";
-import { verifyBridgeTokenDb } from "../src/modules/setup/tokens";
 import { bootTestApp, login } from "./helpers/app";
-import { testEnv } from "./helpers/env";
+import { FAKE_GATEWAY_ID } from "./helpers/gateways";
 
-const ENV_TOKEN = testEnv.BRIDGE_TOKEN as string;
 const sha = (b: Buffer | string) => createHash("sha256").update(b).digest("hex");
 
 function captureLogger() {
@@ -112,16 +110,12 @@ describe("설정 API /api/v1/setup", () => {
     expect((await me(noMembership)).statusCode).toBe(401);
   });
 
-  it("member 는 다섯 경로 모두 403, membership 이 없거나 세션이 없으면 401 [Review Focus 4]", async () => {
-    const id = uuid();
+  // 브리지 토큰 경로는 Gateway 아래로 옮겼다 — gateways.test.ts·roles.matrix.test.ts
+  it("member 는 두 경로 모두 403, membership 이 없거나 세션이 없으면 401 [Review Focus 4]", async () => {
     const routes: Array<["GET" | "POST" | "DELETE", string, object?]> = [
       ["GET", "/status"],
-      ["GET", "/bridge-tokens"],
-      ["POST", "/bridge-tokens", { label: "x" }],
-      ["DELETE", `/bridge-tokens/${id}`],
       ["GET", "/plugin.tgz"],
     ];
-    const before = app.db.select().from(bridgeTokens).all().length;
     for (const [method, url, body] of routes) {
       const forbidden = await call(member, method, url, body);
       expect(forbidden.statusCode, `${method} ${url}`).toBe(403);
@@ -129,7 +123,12 @@ describe("설정 API /api/v1/setup", () => {
       expect((await call(noMembership, method, url, body)).statusCode, `${method} ${url}`).toBe(401);
       expect((await call(undefined, method, url, body)).statusCode, `${method} ${url}`).toBe(401);
     }
-    expect(app.db.select().from(bridgeTokens).all()).toHaveLength(before);
+  });
+
+  it("옛 브리지 토큰 경로 /api/v1/setup/bridge-tokens 는 없다(멀티 Gateway 계획 판정 PG6)", async () => {
+    expect((await call(owner, "GET", "/bridge-tokens")).statusCode).toBe(404);
+    expect((await call(owner, "POST", "/bridge-tokens", { label: "x" })).statusCode).toBe(404);
+    expect((await call(owner, "DELETE", `/bridge-tokens/${uuid()}`)).statusCode).toBe(404);
   });
 
   it("GET /status — 계약 모양, publicUrl 은 APP_ORIGIN 에서, 품은 파일 정보(번들 sha)", async () => {
@@ -143,113 +142,36 @@ describe("설정 API /api/v1/setup", () => {
       bundleSha256: sha(BUNDLE),
       bytes: tgz.length,
     });
-    expect(status.envTokenIgnored).toBe(false);
+    expect(status.gateways.map((g) => [g.id, g.gateway.state, g.bridge.state])).toEqual([
+      [FAKE_GATEWAY_ID, "connected", "connected"],
+    ]);
     expect(res.body).not.toContain(pluginDir);
+    expect(res.body).not.toContain("fake-gateway-token");
   });
 
-  it("POST 발급 — 201·no-store, 원문은 이 응답에만(목록·상태·로그에 없다), pluginConfig 는 publicUrl·원문", async () => {
-    const res = await call(owner, "POST", "/bridge-tokens", { label: " rotate " });
-    expect(res.statusCode).toBe(201);
-    expect(res.headers["cache-control"]).toBe("no-store");
-    const issued = IssueBridgeTokenResult.parse(res.json());
-    expect(issued.record.label).toBe("rotate");
-    expect(issued.pluginConfig).toEqual({
-      channels: {
-        dodok: { accounts: { default: { bridgeUrl: "wss://chat.example.com/bridge", token: issued.token } } },
-      },
-    });
-    expect(verifyBridgeTokenDb(app.db, issued.token)).toEqual({ tokenId: issued.record.id });
-
-    const list = await call(owner, "GET", "/bridge-tokens");
-    expect(list.body).not.toContain(issued.token);
-    expect(list.body).not.toContain(issued.token.slice(4));
-    const status = await call(owner, "GET", "/status");
-    expect(status.body).not.toContain(issued.token.slice(4));
-    expect(log.lines.join("\n")).not.toContain(issued.token.slice(4));
-  });
-
-  it("POST 라벨 검증 — 빈 값·61자 400, 본문 없음 400", async () => {
-    expect((await call(owner, "POST", "/bridge-tokens", { label: "" })).statusCode).toBe(400);
-    expect((await call(owner, "POST", "/bridge-tokens", { label: "x".repeat(61) })).statusCode).toBe(400);
-    expect((await call(owner, "POST", "/bridge-tokens")).statusCode).toBe(400);
-  });
-
-  it("POST 라벨 env(대소문자·앞뒤 공백 무시)는 400 VALIDATION — 목록의 env 줄은 이어받은 토큰 하나뿐이다", async () => {
-    const before = app.db.select().from(bridgeTokens).all().length;
-    for (const label of ["env", " ENV ", "Env"]) {
-      const res = await call(owner, "POST", "/bridge-tokens", { label });
-      expect(res.statusCode, label).toBe(400);
-      expect(res.json()).toMatchObject({
-        code: "VALIDATION",
-        message: "env 는 .env 에서 이어받은 토큰에만 쓰는 라벨입니다",
-      });
-    }
-    expect(app.db.select().from(bridgeTokens).all()).toHaveLength(before);
-    const { tokens } = (await call(owner, "GET", "/bridge-tokens")).json() as { tokens: BridgeTokenRecord[] };
-    expect(tokens.filter((t) => t.label.toLowerCase() === "env")).toHaveLength(1);
-  });
-
-  it("GET 목록 — env 이어받은 줄 포함, 새것부터, 지금 접속 중인 토큰이 connected", async () => {
-    const issued = IssueBridgeTokenResult.parse(
-      (await call(owner, "POST", "/bridge-tokens", { label: "now" })).json(),
-    );
+  it("GET /status — pluginMatches 는 Gateway 마다 붙은 플러그인의 번들 sha 와 품은 파일을 견준다", async () => {
     const detail = adapter.setupDetail();
-    adapter.setSetupDetail({
-      ...detail,
-      bridge: {
-        state: "connected",
-        plugin: {
-          version: "0.0.0",
-          sdkVersion: "2026.9.4",
-          gatewayVersion: null,
-          bundleSha256: null,
-          tokenId: issued.record.id,
-          connectedAt: new Date().toISOString(),
-        },
-      },
-    });
+    const plugin = {
+      version: "0.0.0",
+      sdkVersion: "2026.9.4",
+      gatewayVersion: null,
+      tokenId: null,
+      connectedAt: new Date().toISOString(),
+    };
+    const matchesWith = async (bundleSha256: string | null) => {
+      adapter.setSetupDetail({
+        ...detail,
+        bridge: { state: "connected", plugin: { ...plugin, bundleSha256 } },
+      });
+      return SetupStatus.parse((await call(owner, "GET", "/status")).json()).gateways[0]?.pluginMatches;
+    };
     try {
-      const { tokens } = (await call(owner, "GET", "/bridge-tokens")).json() as {
-        tokens: BridgeTokenRecord[];
-      };
-      for (const t of tokens) BridgeTokenRecord.strict().parse(t);
-      expect(tokens[0]).toMatchObject({ id: issued.record.id, connected: true });
-      expect(tokens.filter((t) => t.connected)).toHaveLength(1);
-      expect(tokens.at(-1)?.label).toBe("env");
+      expect(await matchesWith(sha(BUNDLE))).toBe(true);
+      expect(await matchesWith("f".repeat(64))).toBe(false);
+      expect(await matchesWith(null)).toBeNull();
     } finally {
       adapter.setSetupDetail(detail);
     }
-  });
-
-  it("DELETE — 204·폐기·그 토큰의 브리지 세션 끊기, 없는 id 는 404, 잘못된 id 는 400", async () => {
-    const issued = IssueBridgeTokenResult.parse(
-      (await call(owner, "POST", "/bridge-tokens", { label: "gone" })).json(),
-    );
-    const res = await call(owner, "DELETE", `/bridge-tokens/${issued.record.id}`);
-    expect(res.statusCode).toBe(204);
-    expect(adapter.calls.revokeTokenSessions).toContain(issued.record.id);
-    expect(verifyBridgeTokenDb(app.db, issued.token)).toBeNull();
-    const { tokens } = (await call(owner, "GET", "/bridge-tokens")).json() as { tokens: BridgeTokenRecord[] };
-    expect(tokens.find((t) => t.id === issued.record.id)?.revokedAt).not.toBeNull();
-    expect((await call(owner, "DELETE", `/bridge-tokens/${uuid()}`)).statusCode).toBe(404);
-    expect((await call(owner, "DELETE", "/bridge-tokens/not-an-id")).statusCode).toBe(400);
-  });
-
-  it("DELETE — 세션 끊기가 던져도 폐기는 되고 warn 한 줄", async () => {
-    const issued = IssueBridgeTokenResult.parse(
-      (await call(owner, "POST", "/bridge-tokens", { label: "x" })).json(),
-    );
-    const original = adapter.revokeTokenSessions.bind(adapter);
-    adapter.revokeTokenSessions = () => {
-      throw new Error("socket gone");
-    };
-    try {
-      expect((await call(owner, "DELETE", `/bridge-tokens/${issued.record.id}`)).statusCode).toBe(204);
-    } finally {
-      adapter.revokeTokenSessions = original;
-    }
-    expect(verifyBridgeTokenDb(app.db, issued.token)).toBeNull();
-    expect(log.lines.filter((l) => l.includes("bridge session revoke failed"))).toHaveLength(1);
   });
 
   it("GET plugin.tgz — 파일 그대로, attachment 이름에 sha 앞 12자", async () => {
@@ -281,14 +203,11 @@ describe("설정 API /api/v1/setup", () => {
   });
 });
 
-describe("설정 API — 플러그인 파일이 없을 때·BRIDGE_TOKEN 설정", () => {
+describe("설정 API — 플러그인 파일이 없을 때", () => {
   let app: App | undefined;
-  let dir: string | undefined;
   afterEach(async () => {
     await app?.close();
     app = undefined;
-    if (dir) rmSync(dir, { recursive: true, force: true });
-    dir = undefined;
   });
 
   it("품은 파일이 없으면 plugin.tgz 는 404 PLUGIN_FILE_MISSING, 상태는 available:false", async () => {
@@ -299,43 +218,5 @@ describe("설정 API — 플러그인 파일이 없을 때·BRIDGE_TOKEN 설정"
     expect(res.json()).toMatchObject({ code: "NOT_FOUND", message: "PLUGIN_FILE_MISSING" });
     const status = await app.fastify.inject({ method: "GET", url: "/api/v1/setup/status", headers });
     expect(status.json().pluginFile).toEqual({ available: false });
-  });
-
-  it("BRIDGE_TOKEN 없이 부팅 — 활성 토큰 0, 상태 정상(envTokenIgnored false)", async () => {
-    app = await bootTestApp({ BRIDGE_TOKEN: "" }, { pluginDirs: [] });
-    expect(app.db.select().from(bridgeTokens).all()).toHaveLength(0);
-    const { headers } = await login(app);
-    const res = await app.fastify.inject({ method: "GET", url: "/api/v1/setup/status", headers });
-    expect(res.statusCode).toBe(200);
-    expect(SetupStatus.parse(res.json()).envTokenIgnored).toBe(false);
-  });
-
-  it("이어받은 뒤 .env 를 바꿔 재시작 — warn 한 줄, 새 값은 안 통하고 envTokenIgnored true [Review Focus 1]", async () => {
-    dir = mkdtempSync(join(tmpdir(), "dodok-setup-env-"));
-    const DB_PATH = join(dir, "db.sqlite");
-    app = await bootTestApp({ DB_PATH, BRIDGE_TOKEN: ENV_TOKEN }, { pluginDirs: [] });
-    expect(
-      app.db
-        .select()
-        .from(bridgeTokens)
-        .all()
-        .map((r) => r.label),
-    ).toEqual(["env"]);
-    await app.close();
-
-    const { logger, lines } = captureLogger();
-    const edited = "z".repeat(24);
-    app = await bootTestApp({ DB_PATH, BRIDGE_TOKEN: edited }, { pluginDirs: [], logger });
-    const warns = lines.filter((l) =>
-      l.includes("BRIDGE_TOKEN in .env is ignored — manage bridge tokens in the connection page"),
-    );
-    expect(warns).toHaveLength(1);
-    expect(JSON.parse(warns[0] as string).level).toBe(40);
-    expect(lines.join("\n")).not.toContain(edited);
-    expect(verifyBridgeTokenDb(app.db, edited)).toBeNull();
-    expect(verifyBridgeTokenDb(app.db, ENV_TOKEN)).not.toBeNull();
-    const { headers } = await login(app);
-    const res = await app.fastify.inject({ method: "GET", url: "/api/v1/setup/status", headers });
-    expect(SetupStatus.parse(res.json()).envTokenIgnored).toBe(true);
   });
 });

@@ -4,6 +4,7 @@ import { v7 as uuidv7 } from "uuid";
 import type { Db, DbOrTx } from "../../db/client";
 import { agents, runnerTokens } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
+import { getGatewayRow } from "../gateways/service";
 import { parseStored } from "../../http/validate";
 import { assertHandleFree } from "../members/handles";
 
@@ -31,6 +32,8 @@ export type CreateAgentInput = {
   enabled?: boolean;
   /** provider claude 일 때 묶을 러너 토큰 — 지금 그 id 를 맡는 러너의 토큰. 없으면 처음 알리는 러너에 묶인다 */
   runnerTokenId?: string;
+  /** provider openclaw 일 때 그 에이전트의 Gateway(같은 워크스페이스). 없으면 연결이 빈 에이전트 — 런은 ADAPTER_UNAVAILABLE */
+  gatewayId?: string;
 };
 
 /** null 은 값을 지운다 */
@@ -89,6 +92,9 @@ export function createAgent(db: Db, input: CreateAgentInput): Agent {
   const provider = input.provider ?? "openclaw";
   return db.transaction((tx) => {
     assertHandleFree(tx, input.workspaceId, input.handle);
+    const gatewayId = provider === "openclaw" ? (input.gatewayId ?? null) : null;
+    if (gatewayId !== null && !getGatewayRow(tx, input.workspaceId, gatewayId))
+      throw apiError("VALIDATION", "gateway not found", { field: "gatewayId" });
     // 같은 제공자·같은 연결 안에서만, 대소문자 무시로 본다(유일 인덱스는 대소문자를 가린다). 제공자·Gateway 가 다르면 같은 id 도
     // 된다 — 서버가 런·정본·승인을 「연결 id + 세션 키」로 가른다(adapters/connection.ts)
     const taken = tx
@@ -98,7 +104,11 @@ export function createAgent(db: Db, input: CreateAgentInput): Agent {
         and(
           eq(agents.workspaceId, input.workspaceId),
           eq(agents.provider, provider),
-          provider === "openclaw" ? isNull(agents.gatewayId) : undefined,
+          provider !== "openclaw"
+            ? undefined
+            : gatewayId === null
+              ? isNull(agents.gatewayId)
+              : eq(agents.gatewayId, gatewayId),
           providerAgentIdIs(input.providerAgentId),
         ),
       )
@@ -122,6 +132,7 @@ export function createAgent(db: Db, input: CreateAgentInput): Agent {
         enabled: input.enabled ?? true,
         createdAt: new Date(),
         runnerTokenId: provider === "claude" ? (input.runnerTokenId ?? null) : null,
+        gatewayId,
       })
       .returning()
       .get();

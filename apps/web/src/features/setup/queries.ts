@@ -10,11 +10,12 @@ import { qk } from "@/api/queries";
 export const useSetupStatus = () =>
   useQuery({ queryKey: qk.setupStatus, queryFn: () => api<SetupStatus>("GET", "/setup/status") });
 
-/** 폐기된 것도 포함, 원문 없음 */
-export const useBridgeTokens = () =>
+/** 그 Gateway 의 브리지 토큰 — 폐기된 것도 포함, 원문 없음. 키는 qk.bridgeTokens 아래라 그 접두로 함께 낡게 한다 */
+export const useBridgeTokens = (gatewayId: string) =>
   useQuery({
-    queryKey: qk.bridgeTokens,
-    queryFn: async () => (await api<{ tokens: BridgeTokenRecord[] }>("GET", "/setup/bridge-tokens")).tokens,
+    queryKey: [...qk.bridgeTokens, gatewayId],
+    queryFn: async () =>
+      (await api<{ tokens: BridgeTokenRecord[] }>("GET", `/gateways/${gatewayId}/bridge-tokens`)).tokens,
   });
 
 /** 러너 토큰(러너 스펙 5장) — 폐기된 것도 포함, 원문 없음 */

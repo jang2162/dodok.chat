@@ -24,7 +24,11 @@ import {
   type ProviderApproval,
   type SendOptions,
 } from "./adapter-types";
-import type { GatewayConnectionConfig } from "./connection/gateway-connection";
+import type {
+  GatewayConnectionConfig,
+  GatewaySetupEntry,
+  GatewayStatusEntry,
+} from "./connection/gateway-connection";
 
 type SendScript = (
   input: InboundDeliver,
@@ -45,18 +49,25 @@ export type FakeAdapterEvent =
     });
 
 /**
- * 연결 하나짜리 어댑터의 기본 연결 id — OpenClaw 흉내는 서버의 OPENCLAW_ENV_CONNECTION_ID(서버 config.ts)와 같아야 gateway_id 가
- * 빈 에이전트 행과 짝이 맞는다
+ * OpenClaw 흉내의 기본 연결 id — 서버 테스트가 이 id 의 Gateway 행을 넣고 에이전트를 묶는다(gateways.id 는 uuid 라 uuid 꼴)
  */
-const DEFAULT_CONNECTION: Record<AdapterProvider, ConnectionId> = { openclaw: "env", claude: "fake-runner" };
+export const FAKE_GATEWAY_ID = "00000000-0000-4000-8000-0000000000f1";
+
+/** 연결 하나짜리 어댑터의 기본 연결 id */
+const DEFAULT_CONNECTION: Record<AdapterProvider, ConnectionId> = {
+  openclaw: FAKE_GATEWAY_ID,
+  claude: "fake-runner",
+};
 
 type StatusOf<P extends AdapterProvider> = P extends "claude" ? ClaudeAdapterStatus : OpenClawAdapterStatus;
 type SetupDetailOf<P extends AdapterProvider> = P extends "claude" ? ClaudeSetupDetail : OpenClawSetupDetail;
 
 /**
  * 테스트·wire-cli 용 메모리 어댑터. 호출을 기록하고, 이벤트는 emit 으로 밀어 넣는다.
- * 기본은 OpenClaw 흉내. `provider: "claude"` 는 레지스트리 테스트용 최소 러너 흉내 — 상태·상세가 claude 모양이고
- * capabilities 가 promptEveryRun·serverSessionIds, 스레드는 늘 안다
+ * 기본은 OpenClaw 흉내 — 실물처럼 연결이 null(Gateway 가 빈 에이전트)이면 send·abort·resetSession·listAgents 가
+ * ADAPTER_UNAVAILABLE 을 던지고 supports 는 false 다. 모르는 연결 id 는 막지 않는다(연결 목록 없이도 쓰게).
+ * `provider: "claude"` 는 레지스트리 테스트용 최소 러너 흉내 — 상태·상세가 claude 모양이고 capabilities 가
+ * promptEveryRun·serverSessionIds, 스레드는 늘 안다. null 연결은 받는다(묶임 없는 러너 에이전트)
  */
 export class FakeAdapter<P extends AdapterProvider = "openclaw"> implements AgentAdapter {
   readonly provider: P;
@@ -71,7 +82,10 @@ export class FakeAdapter<P extends AdapterProvider = "openclaw"> implements Agen
     forget: string[];
     resolveApproval: Array<{ providerApprovalId: string; kind: ApprovalKind; decision: ApprovalDecision }>;
     revokeTokenSessions: string[];
-    /** 실물 OpenClaw 어댑터의 Gateway 조작(멀티 Gateway 스펙 5.1) — 기록만 하고 상태는 바꾸지 않는다 */
+    /**
+     * 실물 OpenClaw 어댑터의 Gateway 조작(멀티 Gateway 스펙 5.1) — 기록하고 Gateway 목록(gatewaySetupDetails·gatewayStatuses)만
+     * 바꾼다. 연결·런은 건드리지 않는다
+     */
     upsertGateway: GatewayConnectionConfig[];
     removeGateway: string[];
     /** 메서드마다 받은 연결 id — 같은 메서드의 기록과 같은 순서 */
@@ -121,6 +135,9 @@ export class FakeAdapter<P extends AdapterProvider = "openclaw"> implements Agen
 
   /** 연결 id 없이 emit 한 이벤트·send 결과에 싣는 연결 */
   private eventConnection: ConnectionId;
+
+  /** upsertGateway 로 넣은 Gateway(더한 차례) — 상태·상세는 setStatus·setSetupDetail 의 값을 켜진 Gateway 마다 그대로 비춘다 */
+  private gateways = new Map<string, GatewayConnectionConfig>();
 
   constructor(opts: { provider?: P; connectionId?: ConnectionId } = {}) {
     const provider = opts.provider ?? "openclaw";
@@ -212,10 +229,46 @@ export class FakeAdapter<P extends AdapterProvider = "openclaw"> implements Agen
 
   upsertGateway(config: GatewayConnectionConfig): void {
     this.calls.upsertGateway.push({ ...config });
+    this.gateways.set(config.id, { ...config });
   }
 
   async removeGateway(id: string): Promise<void> {
     this.calls.removeGateway.push(id);
+    this.gateways.delete(id);
+  }
+
+  gatewaySetupDetails(): GatewaySetupEntry[] {
+    const detail: AdapterSetupDetail = this.currentSetupDetail;
+    if (detail.provider !== "openclaw") return [];
+    return [...this.gateways.values()].map(({ id, name, url, enabled }) => ({
+      id,
+      name,
+      url,
+      enabled,
+      gateway: enabled
+        ? { ...detail.gateway }
+        : { state: "disabled", host: detail.gateway.host, version: null, pairing: null },
+      bridge: enabled ? { ...detail.bridge } : { state: "down", plugin: null },
+    }));
+  }
+
+  gatewayStatuses(): GatewayStatusEntry[] {
+    const status: AdapterStatus = this.currentStatus;
+    if (status.provider !== "openclaw") return [];
+    return [...this.gateways.values()].map(({ id, name, enabled }) => ({
+      id,
+      name,
+      enabled,
+      gateway: enabled ? status.gateway : "disabled",
+      bridge: enabled ? status.bridge : "down",
+    }));
+  }
+
+  /** OpenClaw 흉내는 실물처럼 연결이 없으면(Gateway 가 빈 에이전트) 보내지 않는다 */
+  private requireConnection(connectionId: ConnectionId | null): void {
+    if (connectionId === null && this.provider === "openclaw") {
+      throw new AdapterError("ADAPTER_UNAVAILABLE", "agent has no gateway");
+    }
   }
 
   async connect(): Promise<void> {}
@@ -249,6 +302,7 @@ export class FakeAdapter<P extends AdapterProvider = "openclaw"> implements Agen
     connectionId: ConnectionId | null,
   ): Promise<Array<{ providerAgentId: string; name?: string }>> {
     this.calls.connections.listAgents.push(connectionId);
+    this.requireConnection(connectionId);
     return [{ providerAgentId: "dev", name: "dev" }, { providerAgentId: "fin" }];
   }
 
@@ -261,16 +315,18 @@ export class FakeAdapter<P extends AdapterProvider = "openclaw"> implements Agen
     this.calls.connections.supports.push(connectionId);
     const detail: AdapterSetupDetail = this.currentSetupDetail;
     if (detail.provider !== "openclaw") return true;
+    if (connectionId === null) return false;
     return detail.bridge.plugin !== null && this.pluginCapabilities.has(capability);
   }
 
-  /** 대본이 연결을 정하지 않으면 받은 연결(null 이면 지금 고른 연결)을 결과에 싣는다 */
+  /** 대본이 연결을 정하지 않으면 받은 연결(null 이면 — 러너 흉내만 — 지금 고른 연결)을 결과에 싣는다 */
   async send(input: InboundDeliver, opts: SendOptions): Promise<AdapterSendResult> {
     this.calls.send.push(input);
     this.calls.sendOpts.push(
       opts.providerSessionId === undefined ? undefined : { providerSessionId: opts.providerSessionId },
     );
     this.calls.connections.send.push(opts.connectionId);
+    this.requireConnection(opts.connectionId);
     const result = await this.sendScript(input, opts);
     return { connectionId: opts.connectionId ?? this.eventConnection, ...result };
   }
@@ -278,6 +334,7 @@ export class FakeAdapter<P extends AdapterProvider = "openclaw"> implements Agen
   async abort(runId: string, sessionKey: string, connectionId: ConnectionId | null): Promise<void> {
     this.calls.abort.push({ runId, sessionKey });
     this.calls.connections.abort.push(connectionId);
+    this.requireConnection(connectionId);
   }
 
   async resetSession(
@@ -286,6 +343,7 @@ export class FakeAdapter<P extends AdapterProvider = "openclaw"> implements Agen
   ): Promise<{ sessionStartedAt?: string; lifecycleRevision?: string }> {
     this.calls.reset.push(sessionKey);
     this.calls.connections.reset.push(connectionId);
+    this.requireConnection(connectionId);
     return { sessionStartedAt: new Date().toISOString(), lifecycleRevision: "fake-1" };
   }
 

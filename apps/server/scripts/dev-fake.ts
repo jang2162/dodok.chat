@@ -1,6 +1,8 @@
 /**
  * 가짜 에이전트 개발 모드 — 가짜 Gateway·가짜 플러그인·대본을 묶어 서버를 띄운다. 모델 런·실제 Gateway 없이 웹 전체를 돌린다(웹 MVP 스펙 9.2).
- * 테스트와 같은 가짜(`test/fakes/*`)를 쓴다. 운영 코드(`src/`)는 그대로 — 실제 OpenClawAdapter 가 가짜 Gateway 를 dev Gateway 로 붙는다.
+ * 테스트와 같은 가짜(`test/fakes/*`)를 쓴다. 운영 코드(`src/`)는 그대로 — 실제 OpenClawAdapter 가 가짜 Gateway 를 붙는다. 그 Gateway 는
+ * 시작 때 DB 에 넣는다(연결 페이지 「Gateway 추가」와 같은 행, 고정 id `DEV_FAKE_GATEWAY_ID` — `--keep` 이면 주소·토큰만 이번 가짜로
+ * 바꾼다) — 등록할 OpenClaw 에이전트는 이 Gateway 에 묶는다(gatewayId).
  *
  * .env 를 읽지 않는다: 토큰·비밀은 아래 개발 전용 고정값이고(로그에 찍어도 된다), loadConfig 에는 여기서 정한 값만 넘긴다.
  * 고정 member 계정(이메일 member@dodok.local·비밀번호 dev-fake-member-password·핸들 mia)도 owner 와 함께 보장한다 —
@@ -42,8 +44,10 @@ import { v7 as uuidv7 } from "uuid";
 import { z } from "zod";
 import { type App, type AppDeps, createApp } from "../src/app";
 import { loadConfig } from "../src/config";
-import { agents, runnerTokens, users } from "../src/db/schema.sqlite";
+import { hasGateways } from "../src/adapters/types";
+import { agents, bridgeTokens, gateways, runnerTokens, users } from "../src/db/schema.sqlite";
 import { createAgent, providerAgentIdIs } from "../src/modules/agents/service";
+import { gatewayConfig, getGatewayRow } from "../src/modules/gateways/service";
 import { acceptInvite, normalizeEmail } from "../src/modules/members/accept";
 import { issueInvite } from "../src/modules/members/invites";
 import { DISCONNECT_EVENT_MS, startRunState } from "../src/modules/ops/health";
@@ -68,7 +72,14 @@ const DEFAULT_APP_ORIGIN = "http://localhost:5173";
 /** 개발 전용 고정 로그인 토큰(= owner 비밀번호). 시크릿이 아니다 — 로그에 찍는다 */
 export const DEV_FAKE_LOCAL_TOKEN = "dev-fake-local-token";
 const DEV_FAKE_SECRET = "dev-fake-better-auth-secret-00000000";
-const DEV_FAKE_BRIDGE_TOKEN = "dev-fake-bridge-token";
+/**
+ * 개발 전용 고정 브리지 토큰(시크릿이 아니다). 시작 때 가짜 Gateway 에 묶인 토큰 행(라벨 dev-fake)으로 넣는다 — 실제 토큰(`dbt_` +
+ * 43자)과 모양이 달라도 핸드셰이크는 해시만 본다
+ */
+export const DEV_FAKE_BRIDGE_TOKEN = "dev-fake-bridge-token";
+/** 가짜 Gateway 의 DB 행 id(= 어댑터 연결 id) — `--keep` 으로 다시 띄워도 같은 행이다 */
+export const DEV_FAKE_GATEWAY_ID = "00000000-0000-4000-8000-00000000def1";
+const DEV_FAKE_GATEWAY_NAME = "가짜 Gateway";
 /** 고정 member 계정(팀 스펙 태스크 7a) — 시크릿이 아닌 개발 전용 고정값이라 owner 토큰과 같이 로그에 찍는다 */
 export const DEV_FAKE_MEMBER_EMAIL = "member@dodok.local";
 export const DEV_FAKE_MEMBER_PASSWORD = "dev-fake-member-password";
@@ -873,6 +884,57 @@ function ensureDevFakeRunner(app: App): void {
 }
 
 /**
+ * 가짜 Gateway 행과 그 Gateway 에 묶인 고정 브리지 토큰 행을 보장하고 어댑터에 넣는다. 가짜 Gateway 는 시작마다 포트가 바뀌므로
+ * `--keep` 으로 이어받은 행은 주소·토큰만 이번 것으로 바꾼다(이름·켜짐은 사람이 연결 페이지에서 바꾼 대로 둔다). 고정 토큰 행이
+ * 이미 있으면(폐기됐어도) 그대로 둔다 — 고정 러너 토큰과 같은 규칙
+ */
+function ensureDevFakeGateway(app: App, gateway: FakeGateway): void {
+  const { db, workspaceId } = app;
+  const now = new Date();
+  if (getGatewayRow(db, workspaceId, DEV_FAKE_GATEWAY_ID)) {
+    db.update(gateways)
+      .set({ url: gateway.url, token: gateway.token, updatedAt: now })
+      .where(eq(gateways.id, DEV_FAKE_GATEWAY_ID))
+      .run();
+  } else {
+    db.insert(gateways)
+      .values({
+        id: DEV_FAKE_GATEWAY_ID,
+        workspaceId,
+        name: DEV_FAKE_GATEWAY_NAME,
+        url: gateway.url,
+        token: gateway.token,
+        enabled: true,
+        ownerUserId: null,
+        lastVersion: null,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .run();
+  }
+  const hash = createHash("sha256").update(DEV_FAKE_BRIDGE_TOKEN).digest("hex");
+  if (!db.select({ id: bridgeTokens.id }).from(bridgeTokens).where(eq(bridgeTokens.hash, hash)).get()) {
+    db.insert(bridgeTokens)
+      .values({
+        id: uuidv7(),
+        workspaceId,
+        label: "dev-fake",
+        hash,
+        prefix: DEV_FAKE_BRIDGE_TOKEN.slice(0, 6),
+        createdAt: now,
+        lastUsedAt: null,
+        revokedAt: null,
+        gatewayId: DEV_FAKE_GATEWAY_ID,
+      })
+      .run();
+  }
+  const row = getGatewayRow(db, workspaceId, DEV_FAKE_GATEWAY_ID);
+  const openclaw = app.registry.forProvider("openclaw");
+  if (!row || !openclaw || !hasGateways(openclaw)) throw new Error("dev:fake could not add the fake gateway");
+  openclaw.upsertGateway(gatewayConfig(row));
+}
+
+/**
  * 고정 member 계정을 보장한다(팀 스펙 태스크 7a) — 사람을 만드는 서버 경로(members/accept.ts 의 `acceptInvite`)를 그대로 쓴다:
  * 초대를 하나 내부에서 내 곧바로 그 초대로 수락한다(따로 흉내 내지 않는다). 이미 있으면(`--keep` 으로 이어받은 DB) 그대로 둔다
  */
@@ -944,10 +1006,6 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
         LOG_LEVEL: opts.logLevel ?? "info",
         LOCAL_AUTH_TOKEN: DEV_FAKE_LOCAL_TOKEN,
         BETTER_AUTH_SECRET: DEV_FAKE_SECRET,
-        BRIDGE_TOKEN: DEV_FAKE_BRIDGE_TOKEN,
-        OPENCLAW_TARGET: "dev",
-        OPENCLAW_DEV_GATEWAY_URL: gateway.url,
-        OPENCLAW_DEV_GATEWAY_TOKEN: gateway.token,
       }),
       {
         ...(opts.pushSend ? { pushSend: opts.pushSend } : {}),
@@ -959,6 +1017,7 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
     // main.ts 와 같다 — 운영 화면 「직전 종료」가 null 로만 보이지 않게
     runState = startRunState(runStateDir, app.ops, app.logger);
     app.setPreviousClean(runState.previousClean);
+    ensureDevFakeGateway(app, gateway);
     await ensureDevFakeMember(app);
     ensureDevFakeRunner(app);
     // 다시 붙이기(토큰·hello 바꾸기)는 한 번에 하나씩 — 겹치면 소켓 하나를 두 핸드셰이크가 다툰다
@@ -1101,6 +1160,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
       memberEmail: DEV_FAKE_MEMBER_EMAIL,
       memberPassword: DEV_FAKE_MEMBER_PASSWORD,
       runnerToken: DEV_FAKE_RUNNER_TOKEN,
+      gatewayId: DEV_FAKE_GATEWAY_ID,
       runnerAgent: FAKE_RUNNER_AGENT.id,
       web5180:
         "PORT=3100 APP_ORIGIN=http://localhost:5180 pnpm -F @dodok/server dev:fake + DODOK_API_ORIGIN=http://127.0.0.1:3100 pnpm -F @dodok/web dev --port 5180",

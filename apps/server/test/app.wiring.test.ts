@@ -18,7 +18,7 @@ import { v7 as uuid } from "uuid";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import packageJson from "../package.json" with { type: "json" };
 import { type App, createApp, watchGatewayReconnecting } from "../src/app";
-import { loadConfig, OPENCLAW_ENV_CONNECTION_ID } from "../src/config";
+import { loadConfig } from "../src/config";
 import { agentSessions, agents } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
 import { addMember, createChannel } from "../src/modules/channels/service";
@@ -29,6 +29,7 @@ import { ServerBus } from "../src/realtime/bus";
 import { sessionRecoverTargets } from "../src/wiring";
 import { bootTestApp, login } from "./helpers/app";
 import { testEnv } from "./helpers/env";
+import { FAKE_GATEWAY_ID } from "./helpers/gateways";
 import { connectWire, openWire, type WireClient, waitFor } from "./helpers/wire";
 import { openclawOf, openclawStatus } from "./helpers/openclaw";
 
@@ -58,10 +59,11 @@ function captureLogger() {
   return { logger, lines };
 }
 
-function seedAgentChannel(app: App, name: string, agentId?: string) {
+function seedAgentChannel(app: App, name: string, agentId?: string, gatewayId = FAKE_GATEWAY_ID) {
   const agent =
     agentId === undefined
       ? createAgent(app.db, {
+          gatewayId,
           workspaceId: app.workspaceId,
           providerAgentId: "dev",
           handle: "dev",
@@ -171,6 +173,7 @@ describe("부팅 정리 — 파일 DB 로 두 번 부팅", () => {
     try {
       const { agentId, channelId } = seedAgentChannel(app, "recover");
       const other = createAgent(app.db, {
+        gatewayId: FAKE_GATEWAY_ID,
         workspaceId: app.workspaceId,
         providerAgentId: "fin-provider",
         handle: "fin",
@@ -189,8 +192,8 @@ describe("부팅 정리 — 파일 DB 로 두 번 부팅", () => {
 
       // gateway_id 가 빈 OpenClaw 에이전트는 .env 의 Gateway 하나(연결 env)로 모인다
       const targets = sessionRecoverTargets(app.db);
-      expect([...targets.keys()]).toEqual([OPENCLAW_ENV_CONNECTION_ID]);
-      expect(targets.get(OPENCLAW_ENV_CONNECTION_ID)).toEqual(
+      expect([...targets.keys()]).toEqual([FAKE_GATEWAY_ID]);
+      expect(targets.get(FAKE_GATEWAY_ID)).toEqual(
         expect.arrayContaining([
           { sessionKey: `agent:dev:dodok:channel:${channelId}`, agentId: "dev" },
           {
@@ -200,16 +203,13 @@ describe("부팅 정리 — 파일 DB 로 두 번 부팅", () => {
           },
         ]),
       );
-      expect(targets.get(OPENCLAW_ENV_CONNECTION_ID)).toHaveLength(2);
+      expect(targets.get(FAKE_GATEWAY_ID)).toHaveLength(2);
 
       // OpenClaw 가 아닌 에이전트의 세션은 Gateway 에 없다 — 복구 대상이 아니다
       app.db.update(agents).set({ provider: "claude" }).where(eq(agents.id, other.id)).run();
       expect(sessionRecoverTargets(app.db)).toEqual(
         new Map([
-          [
-            OPENCLAW_ENV_CONNECTION_ID,
-            [{ sessionKey: `agent:dev:dodok:channel:${channelId}`, agentId: "dev" }],
-          ],
+          [FAKE_GATEWAY_ID, [{ sessionKey: `agent:dev:dodok:channel:${channelId}`, agentId: "dev" }]],
         ]),
       );
     } finally {
@@ -232,6 +232,7 @@ describe("REST·wire 배선 (FakeAdapter)", () => {
     await app.fastify.listen({ host: "127.0.0.1", port: 0 });
     ({ token, api } = await authed(app));
     dev = createAgent(app.db, {
+      gatewayId: FAKE_GATEWAY_ID,
       workspaceId: app.workspaceId,
       providerAgentId: "dev",
       handle: "dev",
@@ -277,6 +278,7 @@ describe("REST·wire 배선 (FakeAdapter)", () => {
   it("POST /channels/:id/agents/:agentId/reset — 진행 런 abort → resetSession(ensureSession 키) → 세션 리비전·시작 시각 갱신 → info 시스템 메시지", async () => {
     const { channelId } = seedAgentChannel(app, "reset-ok", dev);
     const fin = createAgent(app.db, {
+      gatewayId: FAKE_GATEWAY_ID,
       workspaceId: app.workspaceId,
       providerAgentId: "fin",
       handle: "fin",
@@ -301,7 +303,7 @@ describe("REST·wire 배선 (FakeAdapter)", () => {
     expect(res.json()).toEqual({ ok: true });
     expect(adapter.calls.reset.slice(resetsBefore)).toEqual([session?.sessionKey]);
     expect(abortSpy).toHaveBeenCalledTimes(1);
-    expect(abortSpy).toHaveBeenCalledWith(run.id, session?.sessionKey, OPENCLAW_ENV_CONNECTION_ID);
+    expect(abortSpy).toHaveBeenCalledWith(run.id, session?.sessionKey, FAKE_GATEWAY_ID);
     expect(getRun(app.db, otherRun.id)?.status).toBe("queued");
     expect(abortSpy.mock.invocationCallOrder[0]).toBeLessThan(resetSpy.mock.invocationCallOrder[0] ?? 0);
     expect(getRun(app.db, run.id)?.status).toBe("aborted");
@@ -341,7 +343,7 @@ describe("REST·wire 배선 (FakeAdapter)", () => {
     expect(getRun(app.db, first.id)?.status).toBe("aborted");
     expect(getRun(app.db, second.id)?.status).toBe("aborted");
     expect(abortSpy).toHaveBeenCalledTimes(1);
-    expect(abortSpy).toHaveBeenCalledWith(first.id, expect.any(String), OPENCLAW_ENV_CONNECTION_ID);
+    expect(abortSpy).toHaveBeenCalledWith(first.id, expect.any(String), FAKE_GATEWAY_ID);
   });
 
   it("reset — sessionReset capability 가 없으면 409 CONFLICT(ADAPTER_CAPABILITY_MISSING), 어댑터·세션·메시지를 건드리지 않는다", async () => {
@@ -390,6 +392,7 @@ describe("REST·wire 배선 (FakeAdapter)", () => {
     expect(systemMessages(app, channelId)).toEqual([]);
 
     const outsider = createAgent(app.db, {
+      gatewayId: FAKE_GATEWAY_ID,
       workspaceId: app.workspaceId,
       providerAgentId: "ops",
       handle: "ops",
@@ -402,6 +405,7 @@ describe("REST·wire 배선 (FakeAdapter)", () => {
 
   it("reset — 저장된 providerAgentId 가 세션 키 규칙 밖이면 500 이 아니라 400 VALIDATION(런 경로와 같은 사유), 어댑터를 건드리지 않는다", async () => {
     const bad = createAgent(app.db, {
+      gatewayId: FAKE_GATEWAY_ID,
       workspaceId: app.workspaceId,
       providerAgentId: "bad:id",
       handle: "badid",
@@ -447,9 +451,7 @@ describe("REST·wire 배선 (FakeAdapter)", () => {
 
     expect(res.statusCode).toBe(200);
     expect(adapter.calls.reset.slice(resetsBefore)).toEqual([threadSession?.sessionKey]);
-    expect(abortSpy.mock.calls).toEqual([
-      [threadRun.id, threadSession?.sessionKey, OPENCLAW_ENV_CONNECTION_ID],
-    ]);
+    expect(abortSpy.mock.calls).toEqual([[threadRun.id, threadSession?.sessionKey, FAKE_GATEWAY_ID]]);
     expect(getRun(app.db, threadRun.id)?.status).toBe("aborted");
     expect(getRun(app.db, channelRun.id)?.status).toBe("queued");
     expect(sessionRow(app, channelId, dev, root.id)).toMatchObject({ lifecycleRevision: "fake-1" });
@@ -735,16 +737,9 @@ describe("실제 어댑터(createOpenClawAdapter) 부팅", () => {
 
   it("deps.adapter 없이 부팅하면 실제 어댑터를 만들고, Gateway 접속 실패는 부팅을 막지 않으며, 정본 훅·브리지 토큰이 배선되고, close() 는 플러그인에 shutdown 을 알리고 5초 안에 끝난다", async () => {
     const base = tempDir();
-    // 디바이스 아이덴티티는 Gateway 마다 DATA_DIR/gateways/<연결 id>/ — env 의 Gateway 는 연결 id env(멀티 Gateway 계획 판정 PG1)
-    const deviceIdentityPath = join(base, "gateways", "env", "device.json");
     const { logger } = captureLogger();
     const app = await createApp(
-      loadConfig({
-        ...testEnv,
-        OPENCLAW_DEV_GATEWAY_URL: "ws://127.0.0.1:1", // 닫힌 포트 — 어떤 Gateway 에도 닿지 않는다
-        DATA_DIR: base,
-        ATTACHMENTS_DIR: join(base, "attachments"),
-      }),
+      loadConfig({ ...testEnv, DATA_DIR: base, ATTACHMENTS_DIR: join(base, "attachments") }),
       { logger },
     );
     try {
@@ -752,6 +747,25 @@ describe("실제 어댑터(createOpenClawAdapter) 부팅", () => {
       await app.fastify.listen({ host: "127.0.0.1", port: 0 });
       const health = await app.fastify.inject({ method: "GET", url: "/healthz" });
       expect(health.statusCode).toBe(200);
+      // Gateway 0개로 떴다 — 연결 페이지 「Gateway 추가」(REST)로 붙인다. 닫힌 포트라 어떤 Gateway 에도 닿지 않는다
+      const { headers } = await login(app);
+      const added = await app.fastify.inject({
+        method: "POST",
+        url: "/api/v1/gateways",
+        headers,
+        payload: { name: "닫힌 포트", url: "ws://127.0.0.1:1", token: "t" },
+      });
+      expect(added.statusCode).toBe(201);
+      const gatewayId = (added.json() as { id: string }).id;
+      // 디바이스 아이덴티티는 Gateway 마다 DATA_DIR/gateways/<Gateway id>/(멀티 Gateway 스펙 3.3)
+      const deviceIdentityPath = join(base, "gateways", gatewayId, "device.json");
+      const issued = await app.fastify.inject({
+        method: "POST",
+        url: `/api/v1/gateways/${gatewayId}/bridge-tokens`,
+        headers,
+        payload: { label: "real" },
+      });
+      const bridgeToken = (issued.json() as { token: string }).token;
       expect(["down", "reconnecting"]).toContain(openclawStatus(openclawOf(app)).gateway);
       // 부팅 뒤 connect() 가 접속 루프를 돌렸다 — DATA_DIR(임시 디렉터리) 아래 디바이스 아이덴티티를 쓰고, 거부되면 reconnecting
       await vi.waitFor(() => expect(existsSync(deviceIdentityPath)).toBe(true));
@@ -759,10 +773,10 @@ describe("실제 어댑터(createOpenClawAdapter) 부팅", () => {
         timeout: 3_000,
       });
 
-      const { agentId, channelId } = seedAgentChannel(app, "real");
+      const { agentId, channelId } = seedAgentChannel(app, "real", undefined, gatewayId);
       const plugin = connectSocket(`${app.url}/bridge`, {
         transports: ["websocket"],
-        auth: { token: testEnv.BRIDGE_TOKEN },
+        auth: { token: bridgeToken },
         reconnection: false,
         forceNew: true,
       });

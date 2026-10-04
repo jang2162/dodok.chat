@@ -1,5 +1,5 @@
 import { Channel, ChannelMember, type Participant, RelayPolicy, TeamRole } from "@dodok/shared";
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import type { SQLiteUpdateSetSource } from "drizzle-orm/sqlite-core";
 import { v7 as uuidv7 } from "uuid";
 import { z } from "zod";
@@ -316,6 +316,24 @@ export function listMembers(db: DbOrTx, channelId: string): ChannelMember[] {
     .orderBy(asc(channelMembers.joinedAt), asc(channelMembers.id))
     .all()
     .map(rowToMember);
+}
+
+/** 그 채널의 OpenClaw 에이전트 멤버가 속한 Gateway 들(멀티 Gateway 계획 판정 PG10) — Gateway 가 빈 에이전트는 빠진다 */
+export function channelGatewayIds(db: DbOrTx, channelId: string): string[] {
+  return db
+    .selectDistinct({ gatewayId: agents.gatewayId })
+    .from(channelMembers)
+    .innerJoin(agents, eq(agents.id, channelMembers.memberId))
+    .where(
+      and(
+        eq(channelMembers.channelId, channelId),
+        eq(channelMembers.memberType, "agent"),
+        eq(agents.provider, "openclaw"),
+        isNotNull(agents.gatewayId),
+      ),
+    )
+    .all()
+    .flatMap((row) => (row.gatewayId === null ? [] : [row.gatewayId]));
 }
 
 /**

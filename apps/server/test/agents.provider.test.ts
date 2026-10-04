@@ -7,6 +7,7 @@ import { agents } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
 import { bootTestApp, login } from "./helpers/app";
 import { newTestDb } from "./helpers/db";
+import { FAKE_GATEWAY_ID } from "./helpers/gateways";
 import { seedWorkspace } from "./helpers/seed";
 
 // 러너 스펙 2장·판정 P9 — 에이전트 등록의 provider 에 claude 를 연다. providerAgentId 는 같은 제공자·같은 연결 안에서만 유일하다 —
@@ -144,7 +145,7 @@ describe("REST — claude 에이전트 등록과 discover?provider [P9]", () => 
     expect(again.json()).toMatchObject({ code: "CONFLICT", details: { field: "providerAgentId" } });
   });
 
-  it("discover?provider=claude 는 claude 어댑터의 listAgents, 빠지면 openclaw, 모르는 값은 400", async () => {
+  it("discover?provider=claude 는 claude 어댑터의 listAgents, 빠지면 openclaw(그 Gateway), 모르는 값은 400", async () => {
     const listed = [{ providerAgentId: "coder", name: "Coder", hint: "macbook · repo · sonnet" }];
     vi.spyOn(claude, "listAgents").mockResolvedValue(listed);
 
@@ -152,13 +153,15 @@ describe("REST — claude 에이전트 등록과 discover?provider [P9]", () => 
     expect(fromClaude.statusCode).toBe(200);
     expect(fromClaude.json()).toEqual({ agents: listed });
 
-    const fromOpenclaw = await api("GET", "/agents/discover");
+    const fromOpenclaw = await api("GET", `/agents/discover?gatewayId=${FAKE_GATEWAY_ID}`);
     expect(fromOpenclaw.statusCode).toBe(200);
     expect(fromOpenclaw.json().agents.map((a: { providerAgentId: string }) => a.providerAgentId)).toEqual([
       "dev",
       "fin",
     ]);
-    expect((await api("GET", "/agents/discover?provider=openclaw")).json()).toEqual(fromOpenclaw.json());
+    expect(
+      (await api("GET", `/agents/discover?provider=openclaw&gatewayId=${FAKE_GATEWAY_ID}`)).json(),
+    ).toEqual(fromOpenclaw.json());
 
     const bogus = await api("GET", "/agents/discover?provider=codex");
     expect(bogus.statusCode).toBe(400);

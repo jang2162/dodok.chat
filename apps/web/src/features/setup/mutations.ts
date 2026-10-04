@@ -20,10 +20,10 @@ export function useIssueToken<T>(path: string, listKey: QueryKey, onIssued: (res
 }
 
 /** 폐기 — 서버가 그 토큰의 브리지 세션도 끊는다. 목록·상태를 다시 받는다(`setup.status` 도 따라온다) */
-export function useRevokeBridgeToken() {
+export function useRevokeBridgeToken(gatewayId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => api<void>("DELETE", `/setup/bridge-tokens/${id}`),
+    mutationFn: (id: string) => api<void>("DELETE", `/gateways/${gatewayId}/bridge-tokens/${id}`),
     onSuccess: () =>
       Promise.all([
         qc.invalidateQueries({ queryKey: qk.bridgeTokens }),

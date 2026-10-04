@@ -9,6 +9,7 @@ import { channels } from "../src/db/schema.sqlite";
 import { createUserMessage } from "../src/modules/messages/service";
 import type { BusEvents } from "../src/realtime/bus";
 import { bootTestApp, login } from "./helpers/app";
+import { FAKE_GATEWAY_ID } from "./helpers/gateways";
 
 type Method = "GET" | "POST" | "PATCH" | "DELETE";
 
@@ -55,9 +56,23 @@ describe("REST /api/v1 (FakeAdapter)", () => {
     return res.json().channel as Channel & { promptRevision: number };
   };
   const newAgent = async (handle: string) => {
-    const res = await api("POST", "/agents", { providerAgentId: handle, handle, name: handle });
+    const res = await api("POST", "/agents", {
+      providerAgentId: handle,
+      handle,
+      name: handle,
+      gatewayId: FAKE_GATEWAY_ID,
+    });
     expect(res.statusCode).toBe(201);
     return res.json().agent as Agent;
+  };
+  /** 채널 프롬프트는 그 채널의 OpenClaw 에이전트가 속한 Gateway 로만 간다(멀티 Gateway 계획 판정 PG10) */
+  const withAgent = async (channel: Channel, handle: string) => {
+    const agent = await newAgent(handle);
+    const res = await api("POST", `/channels/${channel.id}/members`, {
+      memberType: "agent",
+      memberId: agent.id,
+    });
+    expect(res.statusCode).toBe(201);
   };
 
   it("인증 없으면 401 UNAUTHORIZED", async () => {
@@ -126,9 +141,11 @@ describe("REST /api/v1 (FakeAdapter)", () => {
     app.db.delete(channels).where(eq(channels.id, id)).run();
   });
 
-  it("PATCH /channels/:id { prompt } 는 리비전 2 와 syncChannelConfig 1건, channel.updated 를 낸다", async () => {
+  it("PATCH /channels/:id { prompt } 는 리비전 2 와 에이전트의 Gateway 에 syncChannelConfig 1건, channel.updated 를 낸다", async () => {
     const channel = await newChannel("rest-prompt");
+    await withAgent(channel, "rest-prompt-dev");
     const before = adapter.calls.syncChannelConfig.length;
+    const beforeConnections = adapter.calls.connections.syncChannelConfig.length;
     const updated = nextBusEvent(app, "channel.updated");
 
     const res = await api("PATCH", `/channels/${channel.id}`, { prompt: "짧게 답해" });
@@ -137,6 +154,7 @@ describe("REST /api/v1 (FakeAdapter)", () => {
     expect(adapter.calls.syncChannelConfig.slice(before)).toEqual([
       { channelId: channel.id, config: { systemPrompt: "짧게 답해" } },
     ]);
+    expect(adapter.calls.connections.syncChannelConfig.slice(beforeConnections)).toEqual([FAKE_GATEWAY_ID]);
     expect((await updated).channel).toMatchObject({ id: channel.id, prompt: "짧게 답해" });
 
     // 이름만 바꾸면 리비전·동기화 없음
@@ -150,8 +168,17 @@ describe("REST /api/v1 (FakeAdapter)", () => {
     ]);
   });
 
+  it("OpenClaw 에이전트가 없는 채널의 프롬프트는 어느 Gateway 에도 보내지 않는다", async () => {
+    const channel = await newChannel("rest-prompt-alone");
+    const before = adapter.calls.syncChannelConfig.length;
+    const res = await api("PATCH", `/channels/${channel.id}`, { prompt: "혼자" });
+    expect(res.json().channel.promptRevision).toBe(2);
+    expect(adapter.calls.syncChannelConfig.slice(before)).toEqual([]);
+  });
+
   it("syncChannelConfig 가 실패해도 PATCH 는 200 이고 system.notice warn 이 나간다", async () => {
     const channel = await newChannel("rest-sync-fail");
+    await withAgent(channel, "rest-sync-fail-dev");
     const spy = vi.spyOn(adapter, "syncChannelConfig").mockRejectedValueOnce(new Error("gateway down"));
     const notice = nextBusEvent(app, "system.notice");
     const res = await api("PATCH", `/channels/${channel.id}`, { prompt: "p" });
@@ -220,10 +247,12 @@ describe("REST /api/v1 (FakeAdapter)", () => {
     expect(dupHandle.statusCode).toBe(409);
     expect(dupHandle.json()).toMatchObject({ code: "CONFLICT", details: { field: "handle" } });
 
+    // 같은 Gateway 안에서만 겹친다
     const dupProvider = await api("POST", "/agents", {
       providerAgentId: agent.providerAgentId,
       handle: "rest-field-2",
       name: "x",
+      gatewayId: FAKE_GATEWAY_ID,
     });
     expect(dupProvider.statusCode).toBe(409);
     expect(dupProvider.json()).toMatchObject({ code: "CONFLICT", details: { field: "providerAgentId" } });
@@ -235,10 +264,15 @@ describe("REST /api/v1 (FakeAdapter)", () => {
     expect(patched.json()).toMatchObject({ code: "CONFLICT", details: { field: "handle" } });
   });
 
-  it("GET /agents/discover 는 어댑터 listAgents 결과", async () => {
-    const res = await api("GET", "/agents/discover");
+  it("GET /agents/discover 는 그 Gateway 의 어댑터 listAgents 결과, OpenClaw 는 gatewayId 가 없으면 400", async () => {
+    const before = adapter.calls.connections.listAgents.length;
+    const res = await api("GET", `/agents/discover?gatewayId=${FAKE_GATEWAY_ID}`);
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ agents: await adapter.listAgents("env") });
+    expect(adapter.calls.connections.listAgents.slice(before)).toEqual([FAKE_GATEWAY_ID]);
+    expect(res.json()).toEqual({ agents: await adapter.listAgents(FAKE_GATEWAY_ID) });
+    const missing = await api("GET", "/agents/discover");
+    expect(missing.statusCode).toBe(400);
+    expect(missing.json()).toMatchObject({ code: "VALIDATION", details: { field: "gatewayId" } });
   });
 
   it("멤버 POST 201·GET·PATCH·DELETE 와 channel.member.changed", async () => {
@@ -324,7 +358,7 @@ describe("REST /api/v1 (Gateway 미연결 어댑터)", () => {
     const app = await bootTestApp({}, { adapters: [adapter] });
     try {
       const api = await authed(app);
-      const res = await api("GET", "/agents/discover");
+      const res = await api("GET", `/agents/discover?gatewayId=${FAKE_GATEWAY_ID}`);
       expect(res.statusCode).toBe(503);
       expect(res.json()).toMatchObject({ code: "ADAPTER_UNAVAILABLE" });
 

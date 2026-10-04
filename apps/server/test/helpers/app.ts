@@ -2,12 +2,14 @@ import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { hasGateways } from "../../src/adapters/types";
 import { type App, type AppDeps, createApp } from "../../src/app";
 import { loadConfig } from "../../src/config";
 import { memberships, users } from "../../src/db/schema.sqlite";
 import type { PushSend } from "../../src/modules/push/service";
 import { v7 as uuid } from "uuid";
 import { testEnv } from "./env";
+import { insertGateway } from "./gateways";
 
 /**
  * 테스트 앱의 기본 발송기 — 밖(FCM 등)으로 아무것도 보내지 않고 201 을 낸다. 구독을 만든 테스트에서 멘션이 나도
@@ -42,10 +44,14 @@ export function attachmentsDirOf(app: App): string | undefined {
  * 첨부 디렉터리: overrides.ATTACHMENTS_DIR 을 안 주면 앱마다 새 임시 디렉터리를 만들어 쓰고 app.close() 뒤(부팅이 실패하면
  * 바로) 지운다 — 같은 파일 안 여러 앱이 서로의 블롭을 정리로 지우지 않는다(testEnv 주석). 그 경로는 attachmentsDirOf(app).
  * 부팅 사이에 블롭을 남겨야 하는 테스트(재부팅)만 ATTACHMENTS_DIR 을 직접 주고 스스로 지운다 — 그때 두 앱을 동시에 띄우지 않는다
+ *
+ * Gateway: 기본으로 FakeAdapter 의 기본 연결(FAKE_GATEWAY_ID) Gateway 를 DB 에 넣고 어댑터에도 넣는다 — 에이전트를 그 Gateway 에
+ * 묶으면(createAgent 의 gatewayId) 런이 간다. Gateway 0개로 시작할 테스트는 opts.gateway=false
  */
 export async function bootTestApp(
   overrides: Partial<Record<string, string>> = {},
   deps: AppDeps = {},
+  opts: { gateway?: boolean } = {},
 ): Promise<App> {
   const own = overrides.ATTACHMENTS_DIR === undefined;
   const dir = overrides.ATTACHMENTS_DIR ?? mkdtempSync(join(tmpdir(), "dodok-test-attachments-"));
@@ -62,11 +68,19 @@ export async function bootTestApp(
     remove();
     throw err;
   }
+  if (opts.gateway !== false) seedAppGateway(app);
   attachmentsDirs.set(app, dir);
   const close = app.close.bind(app);
   let closing: Promise<void> | undefined;
   app.close = () => (closing ??= close().finally(remove));
   return app;
+}
+
+/** FakeAdapter 기본 연결의 Gateway 를 그 앱의 DB 와 OpenClaw 어댑터에 넣는다 — 부팅 뒤 Gateway 를 넣은 것과 같다 */
+export function seedAppGateway(app: App): void {
+  const gateway = insertGateway(app.db, app.workspaceId);
+  const openclaw = app.registry.forProvider("openclaw");
+  if (openclaw && hasGateways(openclaw)) openclaw.upsertGateway(gateway);
 }
 
 /** 로컬 토큰으로 로그인한다. `/auth/local` 은 5회/분 레이트리밋이라 한 앱에서 여러 번 부르지 않는다. */

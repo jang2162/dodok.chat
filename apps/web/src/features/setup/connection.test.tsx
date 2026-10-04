@@ -13,6 +13,7 @@ import {
   SHA_FILE,
   renderConnection,
   statusOf,
+  TOKENS_PATH,
   stubSetupServer,
   tokenId,
   tokenOf,
@@ -75,18 +76,39 @@ describe("서버·Gateway", () => {
     expect(gw).not.toHaveTextContent("저장소가 검증한");
   });
 
-  it("down 이면 .env 의 Gateway URL·토큰과 서버 로그를 보라고 안내한다", async () => {
+  it("down 이면 Gateway 주소·토큰과 서버 로그를 보라고 안내한다 — .env 는 더 말하지 않는다", async () => {
     stubSetupServer({ status: statusOf({ gateway: { state: "down", version: null } }) });
     renderConnection();
     const gw = await region("Gateway");
     expect(await within(gw).findByText("연결 안 됨")).toBeInTheDocument();
-    expect(gw).toHaveTextContent("OPENCLAW_GATEWAY_URL");
-    expect(gw).toHaveTextContent("OPENCLAW_GATEWAY_TOKEN");
-    expect(gw).toHaveTextContent("서버 로그");
+    expect(gw).toHaveTextContent("Gateway 주소·토큰과 서버 로그를 확인하세요.");
+    expect(gw).not.toHaveTextContent(".env");
+    expect(gw).not.toHaveTextContent("OPENCLAW_GATEWAY_URL");
+  });
+
+  it("Gateway 가 없으면 빈 상태 한 줄, 브리지 토큰 블록은 없다(Review Focus 5)", async () => {
+    const server = stubSetupServer({ status: statusOf({ noGateway: true, plugin: null }) });
+    renderConnection();
+    const gw = await region("Gateway");
+    expect(
+      await within(gw).findByText(
+        "OpenClaw Gateway 를 추가하면 그 안의 에이전트를 채널에 데려올 수 있습니다",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "브리지 토큰" })).not.toBeInTheDocument();
+    expect(server.calls.filter((c) => c.url.includes("bridge-tokens"))).toEqual([]);
+  });
+
+  it("꺼 둔 Gateway 는 「꺼짐」, 첫 Gateway 의 이름을 보인다", async () => {
+    stubSetupServer({ status: statusOf({ gateway: { state: "disabled", version: null } }) });
+    renderConnection();
+    const gw = await region("Gateway");
+    expect(await within(gw).findByText("꺼짐")).toBeInTheDocument();
+    expect(gw).toHaveTextContent("사무실");
   });
 
   it.each(["connected", "reconnecting"] as const)(
-    "%s 이면(페어링 대기도 아니면) .env·서버 로그 안내가 없다",
+    "%s 이면(페어링 대기도 아니면) 주소·서버 로그 안내가 없다",
     async (state) => {
       stubSetupServer({ status: statusOf({ gateway: { state } }) });
       renderConnection();
@@ -94,7 +116,6 @@ describe("서버·Gateway", () => {
       expect(
         await within(gw).findByText(state === "connected" ? "연결됨" : "다시 연결하는 중"),
       ).toBeInTheDocument();
-      expect(gw).not.toHaveTextContent("OPENCLAW_GATEWAY_URL");
       expect(gw).not.toHaveTextContent("서버 로그");
     },
   );
@@ -277,7 +298,7 @@ describe("플러그인", () => {
 });
 
 describe("브리지 토큰", () => {
-  it("목록 — 라벨·dbt_ 앞 6자·지금 접속 중·폐기됨, 이어받은 env 줄은 prefix 대신 「.env 에서 이어받음」", async () => {
+  it("목록 — 라벨·dbt_ 앞 6자·지금 접속 중·폐기됨(그 Gateway 의 토큰)", async () => {
     stubSetupServer({
       tokens: [
         tokenOf(1, { label: "env", prefix: "abc123", connected: true }),
@@ -287,9 +308,9 @@ describe("브리지 토큰", () => {
     });
     renderConnection();
     const br = await region("브리지 토큰");
+    // env 라벨도 다른 라벨과 같다 — .env 에서 이어받는 토큰은 없다(멀티 Gateway 스펙 3.4)
     const envRow = await within(br).findByRole("listitem", { name: "env" });
-    expect(envRow).toHaveTextContent(".env 에서 이어받음");
-    expect(envRow).not.toHaveTextContent("abc123");
+    expect(envRow).toHaveTextContent("dbt_abc123…");
     expect(envRow).toHaveTextContent("지금 접속 중");
     const row2 = within(br).getByRole("listitem", { name: "노트북" });
     expect(row2).toHaveTextContent("dbt_xyz789…");
@@ -298,15 +319,6 @@ describe("브리지 토큰", () => {
     expect(row3).toHaveTextContent("폐기됨");
     expect(within(row3).queryByRole("button", { name: /폐기/ })).not.toBeInTheDocument();
     expect(br).toHaveTextContent(PUBLIC_URL);
-  });
-
-  it("라벨이 env 와 정확히 같을 때만 이어받은 줄이다", async () => {
-    stubSetupServer({ tokens: [tokenOf(1, { label: "env2", prefix: "abc123" })] });
-    renderConnection();
-    const br = await region("브리지 토큰");
-    const row = await within(br).findByRole("listitem", { name: "env2" });
-    expect(row).toHaveTextContent("dbt_abc123…");
-    expect(row).not.toHaveTextContent(".env 에서 이어받음");
   });
 
   it("활성 토큰이 0개면 「토큰이 없습니다 — 발급하세요」", async () => {
@@ -328,25 +340,6 @@ describe("브리지 토큰", () => {
     const br = await region("브리지 토큰");
     await within(br).findByRole("listitem", { name: "토큰-2" });
     expect(br).not.toHaveTextContent("토큰이 없습니다");
-  });
-
-  it("envTokenIgnored 면 .env 의 BRIDGE_TOKEN 은 더 이상 쓰지 않는다고 한 줄", async () => {
-    stubSetupServer({ status: statusOf({ envTokenIgnored: true }), tokens: [tokenOf(1)] });
-    renderConnection();
-    const br = await region("브리지 토큰");
-    expect(
-      await within(br).findByText(
-        ".env 의 BRIDGE_TOKEN 은 더 이상 쓰지 않습니다 — 연결 페이지에서 발급하세요",
-      ),
-    ).toBeInTheDocument();
-  });
-
-  it("envTokenIgnored 가 거짓이면 그 줄이 없다", async () => {
-    stubSetupServer({ tokens: [tokenOf(1)] });
-    renderConnection();
-    const br = await region("브리지 토큰");
-    await within(br).findByRole("listitem", { name: "토큰-1" });
-    expect(within(br).queryByText(/BRIDGE_TOKEN/)).not.toBeInTheDocument();
   });
 
   it("교체 — setup.status 로 접속 토큰이 새 것으로 옮겨 가면 「지금 접속 중」이 옮고 옛 줄에 「이제 폐기해도 됩니다」", async () => {
@@ -400,7 +393,7 @@ describe("브리지 토큰", () => {
       expect(dialog).not.toHaveTextContent("에이전트가 멈춥니다");
       await userEvent.click(within(dialog).getByRole("button", { name: "폐기" }));
       await waitFor(() => expect(row).toHaveTextContent("폐기됨"));
-      expect(server.count("DELETE", `/api/v1/setup/bridge-tokens/${tokenId(1)}`)).toBe(1);
+      expect(server.count("DELETE", `${TOKENS_PATH}/${tokenId(1)}`)).toBe(1);
     });
 
     it("접속 중인 토큰 — 「에이전트가 멈춥니다」 확인, 다른 활성 토큰이 있으면 한 번으로 끝", async () => {
@@ -415,9 +408,7 @@ describe("브리지 토큰", () => {
       const dialog = await screen.findByRole("dialog");
       expect(dialog).toHaveTextContent("에이전트가 멈춥니다");
       await userEvent.click(within(dialog).getByRole("button", { name: "폐기" }));
-      await waitFor(() =>
-        expect(server.count("DELETE", `/api/v1/setup/bridge-tokens/${tokenId(1)}`)).toBe(1),
-      );
+      await waitFor(() => expect(server.count("DELETE", `${TOKENS_PATH}/${tokenId(1)}`)).toBe(1));
     });
 
     it("마지막 활성 토큰 — 두 번째 확인까지 가야 DELETE, 두 번째에서 취소하면 보내지 않는다", async () => {
@@ -428,7 +419,7 @@ describe("브리지 토큰", () => {
       renderConnection();
       const br = await region("브리지 토큰");
       const row = await within(br).findByRole("listitem", { name: "토큰-1" });
-      const url = `/api/v1/setup/bridge-tokens/${tokenId(1)}`;
+      const url = `${TOKENS_PATH}/${tokenId(1)}`;
 
       await userEvent.click(within(row).getByRole("button", { name: "토큰-1 폐기" }));
       await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "폐기" }));
@@ -451,7 +442,7 @@ describe("브리지 토큰", () => {
     });
 
     describe("마지막 활성 토큰의 두 번째 확인은 첫 확인의 입력이 번지지 않는다", () => {
-      const url = `/api/v1/setup/bridge-tokens/${tokenId(1)}`;
+      const url = `${TOKENS_PATH}/${tokenId(1)}`;
       async function openFirst() {
         const server = stubSetupServer({
           status: statusOf({ plugin: { tokenId: tokenId(1) } }),

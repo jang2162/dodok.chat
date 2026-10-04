@@ -1,5 +1,5 @@
 export * from "./adapter-types";
-export { FakeAdapter } from "./fake-adapter";
+export { FAKE_GATEWAY_ID, FakeAdapter } from "./fake-adapter";
 export {
   createOpenClawAdapter,
   type GatewayConnectionConfig,

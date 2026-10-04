@@ -25,7 +25,12 @@ import type { Logger } from "../../logger";
 import type { ServerBus } from "../../realtime/bus";
 import { josa } from "../../util/josa";
 import { getAgent, providerAgentIdIs } from "../agents/service";
-import { createAgentMessage, createSystemMessage } from "../messages/service";
+import {
+  consumeComponentItem,
+  createAgentMessage,
+  createSystemMessage,
+  runErrorMessages,
+} from "../messages/service";
 import type { ApprovalsService } from "../approvals/service";
 import type { RunPlan } from "../router/decide";
 import { RETRY_RUN_ITEM } from "../router/service";
@@ -824,11 +829,13 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
 
   /**
    * 그 에이전트를 맡은 쪽이 스레드를 모른다. OpenClaw 는 붙은 플러그인이 없으면 모른다고 단정하지 않는다 — 어댑터가 플러그인을 기다렸다
-   * 보내고, 못 붙으면 ADAPTER_UNAVAILABLE 로 닫힌다(브리지가 잠깐 끊긴 사이의 스레드 멘션에 재설치 안내를 남기지 않게)
+   * 보내고, 못 붙으면 ADAPTER_UNAVAILABLE 로 닫힌다(브리지가 잠깐 끊긴 사이의 스레드 멘션에 재설치 안내를 남기지 않게). Gateway 가
+   * 빈 에이전트(연결 null)도 같다 — send 가 ADAPTER_UNAVAILABLE 로 닫는다(재설치 안내가 아니라 「옮기세요」가 맞다)
    */
   function lacksThreads(adapter: AgentAdapter, agentId: string, connectionId: string | null): boolean {
     const detail = adapter.setupDetail();
-    if (detail.provider === "openclaw" && detail.bridge.plugin === null) return false;
+    if (detail.provider === "openclaw" && (connectionId === null || detail.bridge.plugin === null))
+      return false;
     // 에이전트 행이 없으면 여기서 막지 않는다 — ensureSession 이 그 런을 닫는다
     const providerAgentId = getAgent(db, agentId)?.providerAgentId;
     return providerAgentId !== undefined && !adapter.supports(providerAgentId, connectionId, "threads");
@@ -905,6 +912,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     agentId: string,
     runId: string | undefined,
     threadRootId: string | undefined,
+    silent = false,
   ): Message {
     return createAgentMessage(
       db,
@@ -923,8 +931,35 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       {
         onDroppedAttachments: (ids) =>
           logger.warn({ outboundId: msg.outboundId, dropped: ids }, "outbound attachments dropped"),
+        silent,
       },
     );
+  }
+
+  /**
+   * 어댑터가 연결을 닫으며 끝낸 런(Gateway 끄기·삭제·주소/토큰 변경 — RunSignal connectionClosed)에 늦게 온 정본인가. 어댑터의 멈춤
+   * 요청은 최선 노력이라(링크가 끊겼거나 abort 가 실패·무응답이거나 abort 뒤에 디스패치됐으면) Gateway 안 런은 끝까지 돌 수 있다.
+   * 표지는 런 행(error JSON)에 있어 서버를 다시 띄운 뒤에도 가른다
+   */
+  function lateAfterConnectionClosed(run: Run): boolean {
+    return run.status === "error" && run.error?.connectionClosed === true;
+  }
+
+  /**
+   * 답이 이미 왔으니 그 런의 「다시 실행」 카드를 쓴 것으로 닫는다 — 눌러서 같은 일을 두 번 돌리지 않게. 사람이 누른 것과 같은
+   * 1회용 소비 길(consumeComponentItem)이고, 카드는 채널에서 「이미 사용됨」으로 바뀐다
+   */
+  function closeRetryCards(run: Run): void {
+    try {
+      const updated = db.transaction((tx) =>
+        runErrorMessages(tx, run.channelId, run.id)
+          .filter((card) => card.componentState?.consumed.includes(RETRY_RUN_ITEM) === false)
+          .map((card) => consumeComponentItem(tx, card, RETRY_RUN_ITEM)),
+      );
+      for (const message of updated) bus.emit("message.updated", { message });
+    } catch (err) {
+      logger.error({ err, runId: run.id }, "closing retry card after late canonical failed");
+    }
   }
 
   async function routeAgentMessage(message: Message, run: Run): Promise<void> {
@@ -1168,6 +1203,16 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         return { messageId: message.id };
       }
 
+      if (lateAfterConnectionClosed(run)) {
+        // 그 런의 답으로 채널에 남긴다. 릴레이·푸시는 하지 않는다 — 사람이 닫힌 런으로 보고 이미 다음 일을 했을 수 있다
+        const message = storeAgentMessage(msg, run.agentId, run.id, threadRootId, true);
+        closeRetryCards(run);
+        logger.info(
+          { runId: run.id, messageId: message.id, outboundId: msg.outboundId, connectionId },
+          "late canonical after connection closed — stored without relay",
+        );
+        return { messageId: message.id };
+      }
       const message = storeAgentMessage(msg, run.agentId, run.id, threadRootId);
       await routeAgentMessage(message, run);
       await api.signal(run.id, { kind: "canonical_received" }); // 종료된 런이면 ignored — 저장·라우팅만

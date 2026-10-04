@@ -18,6 +18,7 @@ import { createAdapterRegistry } from "../src/adapters/registry";
 import { createServices } from "../src/wiring";
 import { bootTestApp, login } from "./helpers/app";
 import { newTestDb } from "./helpers/db";
+import { FAKE_GATEWAY_ID } from "./helpers/gateways";
 import { seedChannelWithAgent } from "./helpers/seed";
 import { connectWire, recordEvents, type WireClient, waitFor } from "./helpers/wire";
 
@@ -90,6 +91,7 @@ describe("승인 저장·런 상관·wire 중계 (앱 부팅, FakeAdapter)", () 
     await app.fastify.listen({ host: "127.0.0.1", port: 0 });
     ({ token } = await login(app));
     dev = createAgent(app.db, {
+      gatewayId: FAKE_GATEWAY_ID,
       workspaceId: app.workspaceId,
       providerAgentId: "dev",
       handle: "dev",
@@ -221,6 +223,7 @@ describe("승인 저장·런 상관·wire 중계 (앱 부팅, FakeAdapter)", () 
 
   it("대문자로 저장된 providerAgentId 에도 소문자 세션 키의 승인이 붙는다(코어가 키를 소문자로 접는다)", async () => {
     const upper = createAgent(app.db, {
+      gatewayId: FAKE_GATEWAY_ID,
       workspaceId: app.workspaceId,
       providerAgentId: "UpperDev",
       handle: "upperdev",

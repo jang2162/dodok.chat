@@ -1,10 +1,4 @@
-import {
-  BridgeAuthGuard,
-  type BridgeTokenVerifier,
-  createOpenClawAdapter,
-  type OpenClawAdapter,
-  type OpenClawAdapterOptions,
-} from "@dodok/openclaw-adapter";
+import { BridgeAuthGuard, createOpenClawAdapter } from "@dodok/openclaw-adapter";
 import { createRunnerAdapter, type RunnerAdapter, type RunnerTokenVerifier } from "@dodok/runner-adapter";
 import type { ApiError } from "@dodok/shared";
 import cookie from "@fastify/cookie";
@@ -17,11 +11,11 @@ import { Server } from "socket.io";
 import { v7 as uuidv7 } from "uuid";
 import packageJson from "../package.json" with { type: "json" };
 import { type AdapterRegistry, createAdapterRegistry } from "./adapters/registry";
-import type { AgentAdapter, OpenClawAdapterStatus, OpenClawSetupDetail } from "./adapters/types";
+import { type AgentAdapter, hasGateways, type OpenClawAdapterStatus } from "./adapters/types";
 import { type Auth, createAuth } from "./auth";
 import { bootstrapOwner } from "./auth/owner";
 import { createIpLimit, registerAuthRoutes } from "./auth/routes";
-import { isLocalVapidSubject, OPENCLAW_ENV_CONNECTION_ID, type ServerConfig } from "./config";
+import { isLocalVapidSubject, type ServerConfig } from "./config";
 import { createDb, type Db } from "./db/client";
 import { workspaces } from "./db/schema.sqlite";
 import { HttpError, httpStatusToErrorCode } from "./http/errors";
@@ -33,6 +27,8 @@ import { sweepAttachments } from "./modules/attachments/service";
 import { type BlobLocks, createBlobLocks } from "./modules/attachments/store";
 import { registerChannelRoutes } from "./modules/channels/routes";
 import { getChannel } from "./modules/channels/service";
+import { registerGatewayRoutes } from "./modules/gateways/routes";
+import { bootGateways, listGatewayRows } from "./modules/gateways/service";
 import { registerMemberManageRoutes } from "./modules/members/manage.routes";
 import { registerMemberRoutes } from "./modules/members/routes";
 import { registerMessageRoutes } from "./modules/messages/routes";
@@ -72,7 +68,7 @@ import { registerSearchRoutes } from "./modules/search/routes";
 import { pluginDirCandidates, readPluginFile } from "./modules/setup/plugin-file";
 import { registerSetupRoutes } from "./modules/setup/routes";
 import { bridgePublicUrl, buildSetupStatus } from "./modules/setup/status";
-import { importEnvToken, isActiveBridgeToken, verifyBridgeTokenDb } from "./modules/setup/tokens";
+import { verifyBridgeTokenDb } from "./modules/setup/tokens";
 import { ServerBus } from "./realtime/bus";
 import { attachWireFanout } from "./realtime/events";
 import { attachWire, disconnectSessions, disconnectUser, sweepExpiredSessions } from "./realtime/socket";
@@ -136,29 +132,6 @@ export type AppDeps = {
   gatewayBackoff?: { initialMs?: number; maxMs?: number };
 };
 
-/** 이어받지 않은 .env 토큰 경고(Review Focus 1) — 사람이 로그에서 이 문장을 찾는다 */
-export const ENV_BRIDGE_TOKEN_IGNORED_WARNING =
-  "BRIDGE_TOKEN in .env is ignored — manage bridge tokens in the connection page";
-
-/**
- * `.env` 의 Gateway 하나를 연결 id `OPENCLAW_ENV_CONNECTION_ID` 로 넣은 OpenClaw 어댑터 — Gateway 를 앱에서 구성하기 전까지의
- * 자리(멀티 Gateway 계획 판정 PG1). 디바이스 아이덴티티는 어댑터가 `DATA_DIR/gateways/env/` 에 둔다
- */
-function createEnvOpenClawAdapter(
-  options: OpenClawAdapterOptions,
-  gateway: ServerConfig["gateway"],
-): OpenClawAdapter {
-  const adapter = createOpenClawAdapter(options);
-  adapter.upsertGateway({
-    id: OPENCLAW_ENV_CONNECTION_ID,
-    name: OPENCLAW_ENV_CONNECTION_ID,
-    url: gateway.url,
-    token: gateway.token,
-    enabled: true,
-  });
-  return adapter;
-}
-
 /**
  * 브리지 거절 로그·실패 카운터와 wire 레이트리밋 사건의 원격 주소. 리버스 프록시를 믿을 때(TRUST_PROXY=true)만 X-Forwarded-For 첫 값을 쓴다 —
  * 믿지 않는데 읽으면 클라이언트가 헤더를 꾸며 스로틀·귀속을 피한다. Caddy 는 클라이언트 XFF 를 자기가 본 IP 로 덮는다
@@ -221,18 +194,9 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     const workspaceId = ensureWorkspace(db, config.DODOK_WORKSPACE_NAME);
     const auth = createAuth(db, config, logger);
     const { userId: ownerUserId } = await bootstrapOwner(db, auth, config, workspaceId);
-    // 브리지 토큰의 정본은 DB — .env 값은 비었을 때만 첫 토큰(라벨 env)으로 이어받는다(설정 마법사 결정 3)
-    const envImport = importEnvToken(db, workspaceId, config.BRIDGE_TOKEN);
-    if (envImport === "imported") logger.info({ label: "env" }, "bridge token imported from .env");
-    if (envImport === "ignored") logger.warn(ENV_BRIDGE_TOKEN_IGNORED_WARNING);
-    // 핸드셰이크와 첨부 HTTP 가 같은 검증을 쓴다. DB 오류는 던지고, 부르는 쪽이 거절로 본다
+    // 핸드셰이크와 첨부 HTTP 가 같은 검증을 쓴다 — 토큰 id 와 그 토큰의 Gateway. 꺼진 Gateway 의 토큰은 핸드셰이크에서 어댑터가
+    // 거절한다. DB 오류는 던지고, 부르는 쪽이 거절로 본다
     const verifyBridgeToken = (presented: unknown) => verifyBridgeTokenDb(db, presented);
-    // 플러그인 핸드셰이크는 토큰이 묶인 Gateway 도 본다 — 아직 Gateway 는 env 의 하나뿐이라 모든 토큰이 그 연결의 것이다
-    // (멀티 Gateway 계획 판정 PG1)
-    const verifyPluginToken: BridgeTokenVerifier = (presented) => {
-      const verified = verifyBridgeToken(presented);
-      return verified && { tokenId: verified.tokenId, gatewayId: OPENCLAW_ENV_CONNECTION_ID };
-    };
     const verifyRunnerToken: RunnerTokenVerifier = (presented) => verifyRunnerTokenDb(db, presented);
     const bus = new ServerBus();
     const limits: Limits = { ...LIMITS, ...deps.limits };
@@ -300,30 +264,28 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     const adapters: AgentAdapter[] = deps.adapters
       ? [...deps.adapters]
       : [
-          createEnvOpenClawAdapter(
-            {
-              dataDir: config.DATA_DIR,
-              bridge: {
-                io,
-                verifyToken: verifyPluginToken,
-                clientAddress,
-                logAddress: ipPrefix,
-                serverVersion: packageJson.version,
-                authGuard: bridgeGuard,
-                onBlocked: onBridgeBlocked,
-                now: limitClock,
-              },
-              logger: logger.child({ mod: "adapter" }),
-              onCanonical: (message, connectionId) =>
-                orchestrator.onCanonical(message, "openclaw", connectionId),
-              sessionKeysToRecover: (connectionId) => sessionRecoverTargets(db).get(connectionId) ?? [],
-              ...(config.OPENCLAW_FRAME_DUMP_PATH === undefined
-                ? {}
-                : { frameDumpPath: config.OPENCLAW_FRAME_DUMP_PATH }),
-              ...(deps.gatewayBackoff === undefined ? {} : { backoff: deps.gatewayBackoff }),
+          // Gateway 연결은 아래 bootGateways 가 DB 에서 넣는다 — 0개여도 뜬다(멀티 Gateway 스펙 3.4)
+          createOpenClawAdapter({
+            dataDir: config.DATA_DIR,
+            bridge: {
+              io,
+              verifyToken: verifyBridgeToken,
+              clientAddress,
+              logAddress: ipPrefix,
+              serverVersion: packageJson.version,
+              authGuard: bridgeGuard,
+              onBlocked: onBridgeBlocked,
+              now: limitClock,
             },
-            config.gateway,
-          ),
+            logger: logger.child({ mod: "adapter" }),
+            onCanonical: (message, connectionId) =>
+              orchestrator.onCanonical(message, "openclaw", connectionId),
+            sessionKeysToRecover: (connectionId) => sessionRecoverTargets(db).get(connectionId) ?? [],
+            ...(config.OPENCLAW_FRAME_DUMP_PATH === undefined
+              ? {}
+              : { frameDumpPath: config.OPENCLAW_FRAME_DUMP_PATH }),
+            ...(deps.gatewayBackoff === undefined ? {} : { backoff: deps.gatewayBackoff }),
+          }),
         ];
     // Claude 러너(러너 스펙 2장) — 사람 머신의 러너가 /runner 로 붙어 온다. 최종 답·post 는 OpenClaw 정본과 같은 자리로 저장한다
     // 러너 첨부 GET 의 읽기 범위를 이 어댑터에 묻는다(판정 R5) — 어댑터가 없으면(테스트의 가짜 claude) 열린 런도 없다
@@ -377,12 +339,12 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     // 설정 마법사·운영 화면의 Gateway·브리지 줄, Gateway 감시는 OpenClaw 어댑터의 것이다
     const openclaw = registry.forProvider("openclaw");
     if (!openclaw) throw new Error("an OpenClaw adapter is required");
-    const openclawDetail = (): OpenClawSetupDetail => {
-      const detail = openclaw.setupDetail();
-      if (detail.provider !== "openclaw")
-        throw new Error(`OpenClaw adapter returned ${detail.provider} setup detail`);
-      return detail;
-    };
+    if (!hasGateways(openclaw)) throw new Error("the OpenClaw adapter does not manage gateways");
+    // DB 의 Gateway 를 모두 넣는다(꺼진 것은 enabled: false) — 연결은 아래 connect() 가 시작한다
+    const gatewayCount = bootGateways(db, workspaceId, openclaw, (gatewayId, err) =>
+      logger.error({ err, gatewayId }, "gateway config rejected by the adapter"),
+    );
+    if (gatewayCount === 0) logger.info("no OpenClaw gateway configured — add one in the connection page");
     const services = createServices({ db, bus, logger, registry, workspaceId, timeouts: deps.timeouts });
     orchestrator = services.orchestrator;
     ops = services.ops;
@@ -543,16 +505,15 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     };
     const setupStatus = () =>
       buildSetupStatus({
-        detail: openclawDetail(),
+        gateways: listGatewayRows(db, workspaceId),
+        details: openclaw.gatewaySetupDetails(),
         pluginFile,
         runners: runnerDetail(),
         runnerFile,
         serverVersion: packageJson.version,
         publicUrl,
-        envTokenIgnored:
-          config.BRIDGE_TOKEN !== undefined && !isActiveBridgeToken(db, workspaceId, config.BRIDGE_TOKEN),
       });
-    // 어느 어댑터든 setup 이벤트(마이크로태스크 뒤)·토큰 발급·폐기 때 owner 에게 다시 읽은 상태를 보낸다
+    // 어느 어댑터든 setup 이벤트(마이크로태스크 뒤)·Gateway 저장·토큰 발급·폐기 때 owner 에게 다시 읽은 상태를 보낸다
     const emitSetupStatus = () => {
       try {
         bus.emit("setup.status", { status: setupStatus() });
@@ -564,18 +525,14 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       if (event.kind === "setup") emitSetupStatus();
     });
     undo.push({ step: "setup-events", run: () => offSetup() });
-    registerSetupRoutes(fastify, {
+    registerSetupRoutes(fastify, { auth, db, workspaceId, pluginFile, status: setupStatus });
+    registerGatewayRoutes(fastify, {
       auth,
       db,
       logger,
       workspaceId,
-      openclaw: {
-        setupDetail: openclawDetail,
-        revokeTokenSessions: (id) => openclaw.revokeTokenSessions(id),
-      },
-      pluginFile,
+      gateways: openclaw,
       publicUrl,
-      status: setupStatus,
       changed: emitSetupStatus,
     });
     registerRunnerRoutes(fastify, {

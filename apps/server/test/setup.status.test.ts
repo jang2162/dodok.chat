@@ -1,4 +1,4 @@
-import { OPENCLAW_PINNED_VERSION, type OpenClawSetupDetail } from "@dodok/openclaw-adapter";
+import { type GatewaySetupEntry, OPENCLAW_PINNED_VERSION } from "@dodok/openclaw-adapter";
 import { type RunnerConnection, SetupStatus } from "@dodok/shared";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
@@ -199,6 +199,7 @@ describe("bridgePublicUrl", () => {
 
 describe("buildSetupStatus", () => {
   const BUNDLE_SHA = "b".repeat(64);
+  const GW = "01999999-0000-7000-8000-0000000000a1";
   const plugin = {
     version: "0.0.0",
     sdkVersion: "2026.9.4",
@@ -207,47 +208,92 @@ describe("buildSetupStatus", () => {
     tokenId: "01999999-0000-7000-8000-000000000001",
     connectedAt: "2026-09-24T00:00:00.000Z",
   };
-  const detail = (p: OpenClawSetupDetail["bridge"]["plugin"]): OpenClawSetupDetail => ({
-    provider: "openclaw",
-    gateway: { state: "connected", host: "gw.example:443", version: "2026.9.5", pairing: null },
+  const row = { id: GW, name: "사무실", url: "wss://gw.example:443", enabled: true };
+  const entry = (
+    p: GatewaySetupEntry["bridge"]["plugin"],
+    version: string | null = "2026.9.5",
+  ): GatewaySetupEntry => ({
+    ...row,
+    gateway: { state: "connected", host: "gw.example:443", version, pairing: null },
     bridge: { state: p ? "connected" : "down", plugin: p },
   });
   const file = { path: "/app/plugin/p.tgz", sha256: "c".repeat(64), bundleSha256: BUNDLE_SHA, bytes: 1234 };
-  const build = (
-    p: OpenClawSetupDetail["bridge"]["plugin"],
-    f: typeof file | null,
-    envTokenIgnored = false,
-  ) =>
-    buildSetupStatus({
-      detail: detail(p),
-      pluginFile: f,
-      runners: [],
-      runnerFile: null,
-      serverVersion: "1.2.3",
-      publicUrl: "wss://chat.example.com/bridge",
-      envTokenIgnored,
-    });
+  const base = {
+    runners: [],
+    runnerFile: null,
+    serverVersion: "1.2.3",
+    publicUrl: "wss://chat.example.com/bridge",
+  };
+  const build = (p: GatewaySetupEntry["bridge"]["plugin"], f: typeof file | null) =>
+    buildSetupStatus({ ...base, gateways: [row], details: [entry(p)], pluginFile: f });
+  const first = (status: SetupStatus) => {
+    const gateway = status.gateways[0];
+    if (!gateway) throw new Error("no gateway");
+    return gateway;
+  };
 
   it("계약 모양 — 파일 경로는 싣지 않는다", () => {
     const status = build(plugin, file);
     expect(SetupStatus.parse(status)).toEqual(status);
     expect(status).toEqual({
       server: { version: "1.2.3" },
-      gateway: {
-        state: "connected",
-        host: "gw.example:443",
-        version: "2026.9.5",
-        pinned: OPENCLAW_PINNED_VERSION,
-        drift: true,
-        pairing: null,
-      },
-      bridge: { state: "connected", publicUrl: "wss://chat.example.com/bridge", plugin },
+      bridge: { publicUrl: "wss://chat.example.com/bridge" },
       pluginFile: { available: true, sha256: file.sha256, bundleSha256: BUNDLE_SHA, bytes: 1234 },
-      pluginMatches: true,
-      envTokenIgnored: false,
+      gateways: [
+        {
+          ...row,
+          gateway: {
+            state: "connected",
+            host: "gw.example:443",
+            version: "2026.9.5",
+            pinned: OPENCLAW_PINNED_VERSION,
+            drift: true,
+            pairing: null,
+          },
+          bridge: { state: "connected", plugin },
+          pluginMatches: true,
+        },
+      ],
       runners: { list: [], runnerFile: { available: false } },
     });
     expect(JSON.stringify(status)).not.toContain("/app/plugin");
+  });
+
+  it("Gateway 가 없으면 빈 목록 — 머리 값(publicUrl·pluginFile)은 그대로 [Review Focus 5]", () => {
+    const status = buildSetupStatus({ ...base, gateways: [], details: [], pluginFile: file });
+    expect(SetupStatus.parse(status)).toEqual(status);
+    expect(status.gateways).toEqual([]);
+    expect(status.bridge.publicUrl).toBe("wss://chat.example.com/bridge");
+    expect(status.pluginFile.available).toBe(true);
+  });
+
+  it("목록은 DB 행의 차례·이름·주소·켜짐을 따르고 상세는 id 로 짝짓는다 — 어댑터가 모르는 행은 down(꺼졌으면 disabled)", () => {
+    const off = {
+      id: "01999999-0000-7000-8000-0000000000a2",
+      name: "집",
+      url: "ws://home:18789",
+      enabled: false,
+    };
+    const unknown = {
+      id: "01999999-0000-7000-8000-0000000000a3",
+      name: "새로",
+      url: "ws://new:1",
+      enabled: true,
+    };
+    const status = buildSetupStatus({
+      ...base,
+      gateways: [off, row, unknown],
+      // 어댑터 차례는 다르다 — 꺼진 Gateway 의 상세가 아직 붙은 것처럼 남아 있어도 행의 켜짐이 이긴다
+      details: [entry(plugin), { ...entry(plugin), ...off }],
+      pluginFile: null,
+    });
+    expect(SetupStatus.parse(status)).toEqual(status);
+    expect(status.gateways.map((g) => [g.name, g.gateway.state, g.bridge.state, g.gateway.host])).toEqual([
+      ["집", "disabled", "down", "gw.example:443"],
+      ["사무실", "connected", "connected", "gw.example:443"],
+      ["새로", "down", "down", "new:1"],
+    ]);
+    expect(status.gateways[0]?.bridge.plugin).toBeNull();
   });
 
   it("러너 블록 — 붙은 러너 목록을 그대로, 러너 파일은 경로 없이", () => {
@@ -278,13 +324,12 @@ describe("buildSetupStatus", () => {
       bytes: 99,
     };
     const status = buildSetupStatus({
-      detail: detail(null),
+      ...base,
+      gateways: [],
+      details: [],
       pluginFile: null,
       runners: [runner],
       runnerFile,
-      serverVersion: "1.2.3",
-      publicUrl: "wss://chat.example.com/bridge",
-      envTokenIgnored: false,
     });
     expect(SetupStatus.parse(status)).toEqual(status);
     expect(status.runners).toEqual({
@@ -300,38 +345,22 @@ describe("buildSetupStatus", () => {
   });
 
   it("pluginMatches: 같은 번들 → true, 다른 번들 → false, 파일·플러그인·bundleSha256 이 없으면 null [Review Focus 5]", () => {
-    expect(build(plugin, file).pluginMatches).toBe(true);
-    expect(build({ ...plugin, bundleSha256: "d".repeat(64) }, file).pluginMatches).toBe(false);
+    expect(first(build(plugin, file)).pluginMatches).toBe(true);
+    expect(first(build({ ...plugin, bundleSha256: "d".repeat(64) }, file)).pluginMatches).toBe(false);
     // tgz 전체 sha 와 같아도 번들 sha 가 다르면 다른 빌드다
-    expect(build({ ...plugin, bundleSha256: file.sha256 }, file).pluginMatches).toBe(false);
-    expect(build(plugin, null).pluginMatches).toBeNull();
-    expect(build(null, file).pluginMatches).toBeNull();
-    expect(build({ ...plugin, bundleSha256: null }, file).pluginMatches).toBeNull();
+    expect(first(build({ ...plugin, bundleSha256: file.sha256 }, file)).pluginMatches).toBe(false);
+    expect(first(build(plugin, null)).pluginMatches).toBeNull();
+    expect(first(build(null, file)).pluginMatches).toBeNull();
+    expect(first(build({ ...plugin, bundleSha256: null }, file)).pluginMatches).toBeNull();
     expect(build(plugin, null).pluginFile).toEqual({ available: false });
   });
 
   it("gateway.drift: 받은 버전이 핀과 다를 때만 — 같거나 모르면(null) false [운영 보강 5.2]", () => {
     const withVersion = (version: string | null) =>
-      buildSetupStatus({
-        detail: { ...detail(null), gateway: { ...detail(null).gateway, version } },
-        pluginFile: null,
-        runners: [],
-        runnerFile: null,
-        serverVersion: "1.2.3",
-        publicUrl: "wss://chat.example.com/bridge",
-        envTokenIgnored: false,
-      }).gateway;
+      first(buildSetupStatus({ ...base, gateways: [row], details: [entry(null, version)], pluginFile: null }))
+        .gateway;
     expect(withVersion("2026.9.5")).toMatchObject({ pinned: OPENCLAW_PINNED_VERSION, drift: true });
     expect(withVersion(OPENCLAW_PINNED_VERSION)).toMatchObject({ drift: false });
     expect(withVersion(null)).toMatchObject({ version: null, drift: false });
-  });
-
-  it("envTokenIgnored 를 그대로 싣는다", () => {
-    expect(build(null, null, true).envTokenIgnored).toBe(true);
-    expect(SetupStatus.parse(build(null, null, true)).bridge).toEqual({
-      state: "down",
-      publicUrl: "wss://chat.example.com/bridge",
-      plugin: null,
-    });
   });
 });

@@ -61,7 +61,13 @@ export function transition(run: Pick<Run, "status" | "hasCanonical">, s: RunSign
       if (st !== "finalizing") return IGNORED;
       return go("done", { finalSource: run.hasCanonical ? "plugin" : "gateway" });
     case "gateway_error":
-      return go("error", { error: { code: s.code, message: s.message } });
+      return go("error", {
+        error: {
+          code: s.code,
+          message: s.message,
+          ...(s.connectionClosed === true ? { connectionClosed: true as const } : {}),
+        },
+      });
     case "queue_timeout":
       return st === "queued"
         ? go("error", { error: { code: "TIMEOUT", message: "queued timeout" } })

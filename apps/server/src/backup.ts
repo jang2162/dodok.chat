@@ -2,6 +2,7 @@
 import {
   chmodSync,
   copyFileSync,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -13,8 +14,10 @@ import {
 import { join } from "node:path";
 import Database from "better-sqlite3";
 
-// 디바이스 아이덴티티는 dev Gateway 면 -dev 접미사가 붙는다(config.ts deviceIdentityPath)
-const SIDE_FILES = ["vapid.json", "openclaw-device.json", "openclaw-device-dev.json"];
+const SIDE_FILES = ["vapid.json"];
+// Gateway 마다 디바이스 아이덴티티·디바이스 토큰 디렉터리(멀티 Gateway 스펙 3.3) — 통째로 담는다. 빠지면 복원 뒤 Gateway 마다 다시
+// 페어링해야 한다
+const SIDE_DIRS = ["gateways"];
 // 이 이름만 보관 개수로 세고 지운다 — 사람이 backups/ 에 둔 다른 것은 건드리지 않는다
 const BACKUP_NAME = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z(-\d+)?$/;
 // 백업은 이 접두어의 임시 디렉터리에서 만들고 다 된 뒤에 rename 한다 — 신호·SIGKILL 로 중단돼도
@@ -74,6 +77,10 @@ export async function runBackup(opts: {
         chmodSync(join(tmp, f), 0o600);
       }
     }
+    for (const d of SIDE_DIRS) {
+      const p = join(opts.dataDir, d);
+      if (existsSync(p)) copyPrivateTree(p, join(tmp, d));
+    }
     dir = join(root, stamp);
     for (let n = 1; existsSync(dir); n++) dir = join(root, `${stamp}-${n}`);
     renameSync(tmp, dir);
@@ -90,6 +97,18 @@ export async function runBackup(opts: {
   const removed = older.slice(0, Math.max(0, older.length - (keep - 1))).map((d) => join(root, d));
   for (const d of removed) rmSync(d, { recursive: true, force: true });
   return { dir, dbBytes, ms: Date.now() - started, removed, removedPartials };
+}
+
+/** 디렉터리를 통째로 복사하고 사본을 주인만 읽게(디렉터리 0700·파일 0600) 둔다 */
+function copyPrivateTree(from: string, to: string): void {
+  cpSync(from, to, { recursive: true });
+  const walk = (p: string) => {
+    if (statSync(p).isDirectory()) {
+      chmodSync(p, 0o700);
+      for (const f of readdirSync(p)) walk(join(p, f));
+    } else chmodSync(p, 0o600);
+  };
+  walk(to);
 }
 
 /** 디렉터리와 그 안 파일의 mtime 이 모두 STALE_PARTIAL_MS 보다 오래된 .partial-* 를 지운다.

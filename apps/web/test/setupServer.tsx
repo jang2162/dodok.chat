@@ -1,5 +1,6 @@
 import type {
   BridgeTokenRecord,
+  GatewaySetup,
   IssueBridgeTokenResult,
   IssueRunnerTokenResult,
   RunnerConnection,
@@ -23,6 +24,9 @@ export const SHA_A = "a".repeat(64);
 export const SHA_B = "b".repeat(64);
 export const SHA_FILE = "f".repeat(64);
 export const PUBLIC_URL = "wss://chat.example.com/bridge";
+/** 연결 페이지가 그리는 첫 Gateway — 브리지 토큰 경로가 이 아래다 */
+export const GATEWAY_ID = "0190a000-0000-7000-8000-00000000a001";
+export const TOKENS_PATH = `/api/v1/gateways/${GATEWAY_ID}/bridge-tokens`;
 
 export const tokenId = (n: number) => `0190a000-0000-7000-8000-${String(n).padStart(12, "0")}`;
 
@@ -41,12 +45,15 @@ export function tokenOf(n: number, over: Partial<BridgeTokenRecord> = {}): Bridg
 
 type StatusOver = {
   server?: Partial<SetupStatus["server"]>;
-  gateway?: Partial<SetupStatus["gateway"]>;
+  /** 첫 Gateway 의 gateway 블록 */
+  gateway?: Partial<GatewaySetup["gateway"]>;
   bridge?: Partial<SetupStatus["bridge"]>;
-  plugin?: Partial<NonNullable<SetupStatus["bridge"]["plugin"]>> | null;
+  /** 첫 Gateway 에 붙은 플러그인 */
+  plugin?: Partial<NonNullable<GatewaySetup["bridge"]["plugin"]>> | null;
   pluginFile?: SetupStatus["pluginFile"];
   pluginMatches?: boolean | null;
-  envTokenIgnored?: boolean;
+  /** 참이면 Gateway 가 하나도 없다 */
+  noGateway?: boolean;
   runners?: Partial<SetupStatus["runners"]>;
 };
 
@@ -89,8 +96,11 @@ export function statusOf(over: StatusOver = {}): SetupStatus {
           connectedAt: "2026-09-25T00:00:00.000Z",
           ...over.plugin,
         };
-  return {
-    server: { version: "0.1.0", ...over.server },
+  const gateway: GatewaySetup = {
+    id: GATEWAY_ID,
+    name: "사무실",
+    url: "wss://gateway.example.com",
+    enabled: true,
     gateway: {
       state: "connected",
       host: "gateway.example.com",
@@ -100,10 +110,14 @@ export function statusOf(over: StatusOver = {}): SetupStatus {
       pairing: null,
       ...over.gateway,
     },
-    bridge: { state: plugin ? "connected" : "down", publicUrl: PUBLIC_URL, plugin, ...over.bridge },
-    pluginFile: over.pluginFile ?? { available: true, sha256: SHA_FILE, bundleSha256: SHA_A, bytes: 123_456 },
+    bridge: { state: plugin ? "connected" : "down", plugin },
     pluginMatches: over.pluginMatches === undefined ? true : over.pluginMatches,
-    envTokenIgnored: over.envTokenIgnored ?? false,
+  };
+  return {
+    server: { version: "0.1.0", ...over.server },
+    bridge: { publicUrl: PUBLIC_URL, ...over.bridge },
+    pluginFile: over.pluginFile ?? { available: true, sha256: SHA_FILE, bundleSha256: SHA_A, bytes: 123_456 },
+    gateways: over.noGateway ? [] : [gateway],
     runners: { list: [], runnerFile: { available: false }, ...over.runners },
   };
 }
@@ -139,8 +153,8 @@ export function stubSetupServer(
     calls.push({ method, url, body });
     if (url === "/api/v1/auth/me") return json(200, opts.me ?? OWNER);
     if (method === "GET" && url === "/api/v1/setup/status") return json(200, opts.status ?? statusOf());
-    if (method === "GET" && url === "/api/v1/setup/bridge-tokens") return json(200, { tokens });
-    if (method === "POST" && url === "/api/v1/setup/bridge-tokens") {
+    if (method === "GET" && url === TOKENS_PATH) return json(200, { tokens });
+    if (method === "POST" && url === TOKENS_PATH) {
       const label = (body as { label: string }).label;
       if (opts.issue) return opts.issue(label);
       const record = tokenOf(9, {
@@ -158,7 +172,7 @@ export function stubSetupServer(
       };
       return json(201, result);
     }
-    const del = /^\/api\/v1\/setup\/bridge-tokens\/([^/]+)$/.exec(url);
+    const del = url.startsWith(`${TOKENS_PATH}/`) ? [url, url.slice(TOKENS_PATH.length + 1)] : null;
     if (method === "DELETE" && del) {
       const t = tokens.find((x) => x.id === del[1]);
       if (t) t.revokedAt = "2026-09-25T02:00:00.000Z";
@@ -218,7 +232,9 @@ export function stubSetupServer(
   return {
     calls,
     count: (method: string, url: string) => calls.filter((c) => c.method === method && c.url === url).length,
-    setupCalls: () => calls.filter((c) => c.url.startsWith("/api/v1/setup")),
+    // 연결 페이지 API — 설정 상태·tgz 와 Gateway 아래 브리지 토큰
+    setupCalls: () =>
+      calls.filter((c) => c.url.startsWith("/api/v1/setup") || c.url.startsWith("/api/v1/gateways")),
   };
 }
 

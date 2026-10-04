@@ -2,7 +2,6 @@ import { Agent, Id, isRegistrableAgentId } from "@dodok/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { AdapterRegistry } from "../../adapters/registry";
-import { OPENCLAW_ENV_CONNECTION_ID } from "../../config";
 import { AdapterError } from "../../adapters/types";
 import type { Auth } from "../../auth";
 import { requireRole } from "../../auth/roles";
@@ -22,7 +21,11 @@ export type AgentRouteContext = {
 };
 
 const AgentParams = z.object({ id: Id });
-const DiscoverQuery = z.object({ provider: z.enum(["openclaw", "claude"]).default("openclaw") });
+// OpenClaw 는 그 Gateway 의 agents.list — gatewayId 가 있어야 한다. 러너는 붙은 러너 전부(연결을 고르지 않는다)
+const DiscoverQuery = z.object({
+  provider: z.enum(["openclaw", "claude"]).default("openclaw"),
+  gatewayId: Id.optional(),
+});
 
 const CreateAgentBody = Agent.pick({
   providerAgentId: true,
@@ -39,6 +42,8 @@ const CreateAgentBody = Agent.pick({
   // 판정 P9 — 서버는 목록 검사를 하지 않는다(OpenClaw 와 같다). 웹이 discover?provider= 목록에서 고른다
   provider: z.enum(["openclaw", "claude"]).default("openclaw"),
   enabled: Agent.shape.enabled.default(true),
+  // OpenClaw 에이전트의 Gateway — 없으면 연결이 빈 에이전트로 등록된다(런은 ADAPTER_UNAVAILABLE). 러너 에이전트는 무시한다
+  gatewayId: Id.optional(),
 });
 
 /** avatarUrl·basePrompt 는 null 로 지운다 */
@@ -79,14 +84,13 @@ export function registerAgentRoutes(fastify: FastifyInstance, ctx: AgentRouteCon
    * 러너들이 hello 로 알린 에이전트(충돌 빼고). 자동 동기화는 하지 않는다(스펙 3.5)
    */
   fastify.get("/api/v1/agents/discover", admin, async (request) => {
-    const { provider } = parseQuery(DiscoverQuery, request.query);
+    const { provider, gatewayId } = parseQuery(DiscoverQuery, request.query);
+    if (provider === "openclaw" && gatewayId === undefined)
+      throw apiError("VALIDATION", "gatewayId is required for OpenClaw", { field: "gatewayId" });
     const adapter = ctx.registry.forProvider(provider);
     if (!adapter) throw apiError("ADAPTER_UNAVAILABLE", "adapter not configured");
     try {
-      // OpenClaw 는 아직 .env 의 Gateway 하나, 러너 찾기는 붙은 러너 전부(연결을 고르지 않는다)
-      return {
-        agents: await adapter.listAgents(provider === "openclaw" ? OPENCLAW_ENV_CONNECTION_ID : null),
-      };
+      return { agents: await adapter.listAgents(provider === "openclaw" ? (gatewayId ?? null) : null) };
     } catch (err) {
       if (err instanceof AdapterError) throw apiError(err.code, err.message);
       throw err;

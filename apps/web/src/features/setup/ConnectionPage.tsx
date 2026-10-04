@@ -1,4 +1,4 @@
-import type { SetupStatus } from "@dodok/shared";
+import type { GatewaySetup, SetupStatus } from "@dodok/shared";
 import { useRef } from "react";
 import { useIsOwner } from "@/api/queries";
 import { OpenSidebarButton } from "@/app/layout/sidebarSheet";
@@ -8,9 +8,6 @@ import { useBridgeTokens, useSetupStatus } from "./queries";
 import { RunnerSection } from "./RunnerSection";
 import { GatewaySection, PluginSection, Section, ServerSection } from "./sections";
 import { TokenList } from "./TokenList";
-
-/** `.env` 의 BRIDGE_TOKEN 을 고쳐 교체하려는 사람이 「왜 안 붙지?」 대신 보게 할 문장(스펙 「오류 처리」) */
-export const ENV_TOKEN_IGNORED = ".env 의 BRIDGE_TOKEN 은 더 이상 쓰지 않습니다 — 연결 페이지에서 발급하세요";
 
 /** 받은 값이 없을 때만 그리는 불러오기·실패 자리 — 이미 받은 값은 다시 불러오기가 실패해도 그대로 그린다 */
 function Pending({ what, query }: { what: string; query: { isPending: boolean; refetch: () => unknown } }) {
@@ -30,8 +27,17 @@ function Pending({ what, query }: { what: string; query: { isPending: boolean; r
   );
 }
 
-function BridgeTokenSection({ status }: { status: SetupStatus | undefined }) {
-  const tokens = useBridgeTokens();
+/** 그 Gateway 의 브리지 토큰 — 토큰은 Gateway 에 묶인다(멀티 Gateway 스펙 3.2) */
+function BridgeTokenSection({
+  status,
+  gatewayId,
+  gatewaySetup,
+}: {
+  status: SetupStatus | undefined;
+  gatewayId: string;
+  gatewaySetup: GatewaySetup | undefined;
+}) {
+  const tokens = useBridgeTokens(gatewayId);
   const issueButton = useRef<HTMLButtonElement>(null);
   const none = tokens.data !== undefined && tokens.data.every((t) => t.revokedAt !== null);
   return (
@@ -47,16 +53,18 @@ function BridgeTokenSection({ status }: { status: SetupStatus | undefined }) {
             </>
           )}
         </p>
-        <IssueTokenDialog triggerRef={issueButton} />
+        <IssueTokenDialog gatewayId={gatewayId} triggerRef={issueButton} />
       </div>
-      {status?.envTokenIgnored && (
-        <p role="note" className="text-sm font-medium text-amber-700 dark:text-amber-400">
-          {ENV_TOKEN_IGNORED}
-        </p>
-      )}
       {none && <p className="text-sm font-medium text-destructive">토큰이 없습니다 — 발급하세요</p>}
       {tokens.data ? (
-        tokens.data.length > 0 && <TokenList tokens={tokens.data} status={status} issueButton={issueButton} />
+        tokens.data.length > 0 && (
+          <TokenList
+            gatewayId={gatewayId}
+            tokens={tokens.data}
+            gateway={gatewaySetup}
+            issueButton={issueButton}
+          />
+        )
       ) : (
         <Pending what="토큰 목록" query={tokens} />
       )}
@@ -64,20 +72,22 @@ function BridgeTokenSection({ status }: { status: SetupStatus | undefined }) {
   );
 }
 
+/** Gateway 가 여럿이어도 지금은 첫 Gateway 하나를 그린다 — Gateway 카드 목록은 멀티 Gateway 태스크 6 */
 function OwnerContent() {
   const status = useSetupStatus();
+  const first = status.data?.gateways[0];
   return (
     <>
       {status.data ? (
         <>
           <ServerSection status={status.data} />
-          <GatewaySection status={status.data} />
-          <PluginSection status={status.data} />
+          <GatewaySection gatewaySetup={first} />
+          <PluginSection status={status.data} gatewaySetup={first} />
         </>
       ) : (
         <Pending what="연결 상태" query={status} />
       )}
-      <BridgeTokenSection status={status.data} />
+      {first && <BridgeTokenSection status={status.data} gatewayId={first.id} gatewaySetup={first} />}
       <RunnerSection status={status.data} />
     </>
   );

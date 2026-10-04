@@ -190,20 +190,22 @@ export function IssueDialog<T extends Issued>({
   );
 }
 
-/** 브리지 토큰 발급 — 원문과 Gateway 호스트에 넣을 플러그인 설정 조각 */
-export function IssueTokenDialog({ triggerRef }: { triggerRef?: RefObject<HTMLButtonElement | null> }) {
+/** 브리지 토큰 발급(그 Gateway 에 묶인다) — 원문과 Gateway 호스트에 넣을 플러그인 설정 조각 */
+export function IssueTokenDialog({
+  gatewayId,
+  triggerRef,
+}: {
+  gatewayId: string;
+  triggerRef?: RefObject<HTMLButtonElement | null>;
+}) {
   return (
     <IssueDialog<IssueBridgeTokenResult>
       triggerRef={triggerRef}
       triggerLabel="새 토큰 발급"
       title="새 브리지 토큰"
       description="알아볼 라벨을 붙입니다(예: Gateway 호스트 이름). 원문은 발급 직후 한 번만 보입니다."
-      path="/setup/bridge-tokens"
+      path={`/gateways/${gatewayId}/bridge-tokens`}
       listKey={qk.bridgeTokens}
-      reservedLabel={(label) =>
-        // 서버 issueBridgeToken 의 ENV_TOKEN_LABEL — 이어받은 토큰을 가르는 표지다
-        label.toLowerCase() === "env" ? "env 는 .env 에서 이어받은 토큰에만 쓰는 라벨입니다" : undefined
-      }
       config={(issued) => (
         <div className="grid min-w-0 gap-1.5">
           <p className="text-sm font-medium">플러그인 설정</p>

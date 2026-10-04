@@ -759,7 +759,7 @@ describe("캐시 패치", () => {
   it("setup.status: [setup, status] 를 통째로 바꾸고 토큰 목록은 다시 받게 낡은 것으로 둔다", () => {
     const { fake, queryClient } = setup();
     queryClient.setQueryData(qk.bridgeTokens, []);
-    const status = { envTokenIgnored: true } as unknown as SetupStatus;
+    const status = { gateways: [] } as unknown as SetupStatus;
     fake.serverEmit("setup.status", { status });
     expect(queryClient.getQueryData(qk.setupStatus)).toBe(status);
     expect(queryClient.getQueryState(qk.bridgeTokens)?.isInvalidated).toBe(true);
