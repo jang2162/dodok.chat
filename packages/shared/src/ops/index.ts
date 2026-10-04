@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { Id, IsoDateTime } from "../common";
-import { AdapterStatus } from "../wire";
+import { AdapterStatus, GatewayLinkState, OpenClawGatewayStatus } from "../wire";
 
 // 운영 보강 계약(스펙 2026-09-25-ops-hardening-design.md 2.3·3.1·6장). 사건 detail 에는 id·코드·수치만 싣는다(8장)
 
@@ -61,6 +61,21 @@ export const OPS_DEFAULT_DAILY_RUN_LIMIT = 300;
 export const OpsAckResult = z.object({ acked: z.int().min(0) });
 export type OpsAckResult = z.infer<typeof OpsAckResult>;
 
+/** 운영 상태의 Gateway 한 줄(멀티 Gateway 스펙 6.5) — 꺼진 Gateway 는 enabled false·state disabled */
+export const OpsGatewayStatus = z.object({
+  id: Id,
+  name: z.string(),
+  enabled: z.boolean(),
+  gateway: z.object({
+    state: GatewayLinkState,
+    version: z.string().nullable(),
+    pinned: z.string(), // 저장소가 검증한 버전
+    drift: z.boolean(), // 받은 버전이 있고 핀과 다르다
+  }),
+  plugin: z.object({ state: OpenClawGatewayStatus.shape.bridge }),
+});
+export type OpsGatewayStatus = z.infer<typeof OpsGatewayStatus>;
+
 /** GET /api/v1/ops/status 응답(스펙 6장) */
 export const OpsStatus = z.object({
   workspaceId: Id, // /healthz 에서 뺀 것(스펙 8장) — owner 에게만
@@ -79,13 +94,7 @@ export const OpsStatus = z.object({
     z.object({ level: z.literal("unknown") }), // 첫 측정 전·statfs 실패
   ]),
   adapter: AdapterStatus, // /healthz 에서 뺀 어댑터 상세
-  gateway: z.object({
-    state: z.enum(["connected", "reconnecting", "down"]),
-    version: z.string().nullable(),
-    pinned: z.string(), // 저장소가 검증한 버전
-    drift: z.boolean(), // 받은 버전이 있고 핀과 다르다
-  }),
-  plugin: z.object({ state: z.enum(["connected", "down"]) }),
+  gateways: z.array(OpsGatewayStatus), // 더한 차례 — Gateway 가 없으면 빈 목록
   runsToday: z.int().min(0),
   dailyRunLimit: z.int().nullable(), // null 은 무제한
   blockedToday: z.int().min(0), // 오늘 워크스페이스 상한으로 막힌 수 — 채널 한도 차단은 런 표의 행에

@@ -21,7 +21,7 @@ import { createAdapterRegistry } from "../src/adapters/registry";
 import { getRun, insertRun, listRunEvents, updateRun } from "../src/modules/runs/store";
 import { ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
-import { FAKE_GATEWAY_ID, insertGateway } from "./helpers/gateways";
+import { FAKE_GATEWAY_ID, fakeGatewayStatus, insertGateway } from "./helpers/gateways";
 import { seedChannelWithAgent } from "./helpers/seed";
 
 type Ids = ReturnType<typeof seedChannelWithAgent>;
@@ -2171,7 +2171,10 @@ describe("orchestrator", () => {
     expect(t.runOf(run.id).usage).toEqual({ inputTokens: 10, outputTokens: 5, model: "m" });
     expect(t.eventsOf(run.id).map((e) => e.type)).toEqual(["RUN_QUEUED"]);
 
-    const status: AdapterStatus = { provider: "openclaw", gateway: "reconnecting", bridge: "down" };
+    const status: AdapterStatus = {
+      provider: "openclaw",
+      gateways: [fakeGatewayStatus({ gateway: "reconnecting", bridge: "down" })],
+    };
     t.adapter.emit({
       kind: "status",
       status,

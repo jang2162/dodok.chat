@@ -12,7 +12,7 @@ import {
 } from "@dodok/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import type { AgentAdapter } from "../../adapters/types";
+import type { AgentAdapter, OpenClawGateways } from "../../adapters/types";
 import type { Auth } from "../../auth";
 import { requireRole } from "../../auth/roles";
 import type { Db } from "../../db/client";
@@ -27,7 +27,8 @@ export type OpsRouteContext = {
   auth: Auth;
   db: Db;
   workspaceId: string;
-  adapter: Pick<AgentAdapter, "status" | "setupDetail">;
+  /** OpenClaw 어댑터 — Gateway 줄은 Gateway 별 상태와 상세(버전)에서 만든다 */
+  adapter: Pick<AgentAdapter, "status"> & Pick<OpenClawGateways, "gatewaySetupDetails">;
   /** 쓰이는 제공자(붙은 어댑터 가운데 에이전트가 등록된 것) — 런 표의 usage 는 이 가운데 믿는 제공자만 합친다 */
   providersInUse(): Iterable<string>;
   ops: Pick<OpsService, "list" | "ack" | "unacked" | "countsSince">;
@@ -49,10 +50,18 @@ export function registerOpsRoutes(fastify: FastifyInstance, ctx: OpsRouteContext
   fastify.get("/api/v1/ops/status", admin, async () => {
     const at = now();
     const adapter = ctx.adapter.status();
-    const detail = ctx.adapter.setupDetail();
-    // gateway·plugin 줄은 OpenClaw 어댑터의 것 — 다른 어댑터면 붙은 것이 없는 모양
-    const openclaw = adapter.provider === "openclaw" ? adapter : undefined;
-    const version = detail.provider === "openclaw" ? detail.gateway.version : null;
+    // Gateway 줄은 OpenClaw 어댑터의 것(멀티 Gateway 스펙 6.5) — 다른 어댑터면 빈 목록. 꺼진 Gateway 는 버전을 싣지 않는다
+    const versions = new Map(ctx.adapter.gatewaySetupDetails().map((d) => [d.id, d.gateway.version]));
+    const gateways = (adapter.provider === "openclaw" ? adapter.gateways : []).map((g) => {
+      const version = g.enabled ? (versions.get(g.id) ?? null) : null;
+      return {
+        id: g.id,
+        name: g.name,
+        enabled: g.enabled,
+        gateway: { state: g.gateway, version, ...gatewayPin(version) },
+        plugin: { state: g.bridge },
+      };
+    });
     const midnight = new Date(at.getFullYear(), at.getMonth(), at.getDate());
     const status: OpsStatus = {
       workspaceId: ctx.workspaceId,
@@ -64,8 +73,7 @@ export function registerOpsRoutes(fastify: FastifyInstance, ctx: OpsRouteContext
       db: { bytes: dbBytes(ctx.db) },
       disk: ctx.disk(),
       adapter,
-      gateway: { state: openclaw?.gateway ?? "down", version, ...gatewayPin(version) },
-      plugin: { state: openclaw?.bridge ?? "down" },
+      gateways,
       runsToday: countRunsTodayInWorkspace(ctx.db, at),
       dailyRunLimit: getOpsSettings(ctx.db, ctx.workspaceId).dailyRunLimit,
       blockedToday: ctx.ops.countsSince("run_limit", midnight).get("workspace") ?? 0,

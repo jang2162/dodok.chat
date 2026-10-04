@@ -190,7 +190,7 @@ src/
 │  │                      그 행의 handle 은 `left-<id 뒤 27자>`, email 은 NULL), 유일 인덱스 users_ws_email (workspace_id, email)(NULL 여럿 허용 — 이메일은 넣기 전에 소문자로).
 │  │                      직전 마이그레이션까지 적용된 DB 를 만드는 테스트는 행을 **SQL 로** 넣는다 — drizzle 스키마 객체는 뒤 마이그레이션의 열(`left_handle` 등)까지 INSERT 에 싣는다.
 │  │                      ops_events(0005): id·workspace_id·kind·severity·key·detail_json·count·first_at·last_at·resolved_at(끊김 사건)·acked_at, 인덱스 ops_events_ws_last(workspace_id, last_at)·
-│  │                      ops_events_open(workspace_id, kind, key, acked_at). workspaces.ops_json(0005, text 기본 `'{}'`) — { dailyRunLimit?: number | null, lastGatewayVersion?: string },
+│  │                      ops_events_open(workspace_id, kind, key, acked_at). workspaces.ops_json(0005, text 기본 `'{}'`) — { dailyRunLimit?: number | null }(Gateway 버전 기억은 gateways.last_version),
 │  │                      키가 없으면 상한 300, null 이면 무제한(json 모드가 아닌 까닭: 망가진 값을 {} 로 읽고 warn 하려고)
 │  │                      push_subscriptions(0010): session_id(구독을 등록한 Better Auth 세션, NOT NULL, FK ON DELETE CASCADE, 인덱스 push_subscriptions_session) —
 │  │                      세션 행을 지우는 모든 자리(로그아웃·비밀번호 변경·재설정·내보내기·owner 토큰 교체·만료 청소)가 구독도 지운다. 0010 은 표를 다시 만들고 옛 행(세션 모름)을 버린다 —

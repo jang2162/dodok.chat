@@ -86,12 +86,28 @@ export interface ClientToServerEvents {
 }
 
 // ── 서버 → 클라이언트 (룸 channel:<id> 또는 user:<id>) ──
-/** 어댑터마다 따로 나간다(러너 계획 판정 P7) — 소비자는 provider 로 좁혀 읽고 모르는 provider 는 무시한다 */
+/** Gateway WS 하나의 상태 — 꺼진 Gateway 는 disabled(멀티 Gateway 스펙 7장 「꺼짐」) */
+export const GatewayLinkState = z.enum(["connected", "reconnecting", "down", "disabled"]);
+export type GatewayLinkState = z.infer<typeof GatewayLinkState>;
+
+/** OpenClaw Gateway 하나의 연결 상태 — 꺼진 Gateway 는 enabled false·gateway disabled */
+export const OpenClawGatewayStatus = z.object({
+  id: Id,
+  name: z.string(),
+  enabled: z.boolean(),
+  gateway: GatewayLinkState,
+  bridge: z.enum(["connected", "down"]),
+});
+export type OpenClawGatewayStatus = z.infer<typeof OpenClawGatewayStatus>;
+
+/**
+ * 어댑터마다 따로 나간다(러너 계획 판정 P7) — 소비자는 provider 로 좁혀 읽고 모르는 provider 는 무시한다.
+ * OpenClaw 는 Gateway 마다 한 줄(더한 차례, 멀티 Gateway 스펙 4장) — Gateway 가 없으면 빈 목록이다
+ */
 export const AdapterStatus = z.discriminatedUnion("provider", [
   z.object({
     provider: z.literal("openclaw"),
-    gateway: z.enum(["connected", "reconnecting", "down"]),
-    bridge: z.enum(["connected", "down"]),
+    gateways: z.array(OpenClawGatewayStatus),
   }),
   // runners — 지금 붙은 러너 수 / 폐기되지 않은 러너 토큰 수
   z.object({

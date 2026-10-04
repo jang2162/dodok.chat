@@ -1,5 +1,4 @@
-import type { OpenClawAdapterStatus } from "@dodok/shared";
-import { useAdapterStatus } from "@/api/queries";
+import { type OpenClawSummary, useAdapterStatus } from "@/api/queries";
 import { cn } from "@/lib/utils";
 import { useWireStatus } from "@/realtime/wire";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/ui/tooltip";
@@ -14,12 +13,12 @@ const TONE: Record<Tone, string> = {
   unknown: "bg-muted-foreground/40",
 };
 
-const GATEWAY: Record<OpenClawAdapterStatus["gateway"], DotState> = {
+const GATEWAY: Record<OpenClawSummary["gateway"], DotState> = {
   connected: { label: "Gateway 연결됨", tone: "ok" },
   reconnecting: { label: "Gateway 다시 연결 중", tone: "warn" },
   down: { label: "Gateway 끊김", tone: "down" },
 };
-const BRIDGE: Record<OpenClawAdapterStatus["bridge"], DotState> = {
+const BRIDGE: Record<OpenClawSummary["bridge"], DotState> = {
   connected: { label: "플러그인 연결됨", tone: "ok" },
   down: { label: "플러그인 끊김", tone: "down" },
 };

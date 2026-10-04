@@ -10,7 +10,7 @@ import {
 import type { QueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ApiRequestError } from "@/api/http";
-import { type AdapterStatusResponse, type MeResponse, meQuery, qk } from "@/api/queries";
+import { type AdapterStatusResponse, type MeResponse, meQuery, qk, summarizeGateways } from "@/api/queries";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
 import { forgetApproval, notifyApproval } from "@/features/approvals/notify";
 import { hasGap, noteSeq, type Timeline, upsert } from "@/features/messages/timeline";
@@ -202,7 +202,10 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
     // 모르는 제공자는 무시한다
     "adapter.status": (status: AdapterStatus) => {
       if (status.provider === "openclaw")
-        qc.setQueryData<AdapterStatusResponse>(qk.adapter, (prev) => prev && { ...prev, ...status });
+        qc.setQueryData<AdapterStatusResponse>(
+          qk.adapter,
+          (prev) => prev && { ...prev, ...status, ...summarizeGateways(status.gateways) },
+        );
       else if (status.provider === "claude") {
         qc.setQueryData(qk.runnerAdapter, status.runners);
         // 등록 대화상자가 열린 채 러너가 붙거나 떨어져도 그 목록이 낡지 않게

@@ -1,4 +1,5 @@
 import {
+  type AdapterStatus,
   ApiError,
   type Approval,
   type ApprovalDecision,
@@ -24,6 +25,7 @@ import { ServerBus } from "../src/realtime/bus";
 import { attachWire, type WireContext } from "../src/realtime/socket";
 import type { RunsFacade, WireServer } from "../src/realtime/types";
 import { bootTestApp, login } from "./helpers/app";
+import { fakeGatewayStatus } from "./helpers/gateways";
 import { seedWorkspace } from "./helpers/seed";
 import { connectWire, openWire, recordEvents, type WireClient, waitFor } from "./helpers/wire";
 
@@ -391,7 +393,11 @@ describe("wire (앱 부팅, FakeAdapter)", () => {
     app.bus.emit("channel.updated", { channel: record });
     app.bus.emit("channel.member.changed", { channelId: channel.id, members });
     app.bus.emit("typing", { channelId: channel.id, actorType: "agent", actorId: run.agentId });
-    app.bus.emit("adapter.status", { provider: "openclaw", gateway: "reconnecting", bridge: "down" });
+    const adapterStatus: AdapterStatus = {
+      provider: "openclaw",
+      gateways: [fakeGatewayStatus({ gateway: "reconnecting", bridge: "down" })],
+    };
+    app.bus.emit("adapter.status", adapterStatus);
     app.bus.emit("system.notice", { level: "warn", message: "notice" });
 
     const [
@@ -415,7 +421,7 @@ describe("wire (앱 부팅, FakeAdapter)", () => {
     expect(channelUpdated.channel.id).toBe(channel.id);
     expect(memberChanged).toEqual({ channelId: channel.id, members });
     expect(typing).toEqual({ channelId: channel.id, actorType: "agent", actorId: run.agentId });
-    expect(status).toEqual({ provider: "openclaw", gateway: "reconnecting", bridge: "down" });
+    expect(status).toEqual(adapterStatus);
     expect(outsiderStatus).toEqual(status);
     expect(notice).toEqual({ level: "warn", message: "notice" });
 

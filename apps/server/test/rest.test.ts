@@ -397,7 +397,7 @@ describe("REST /api/v1 (FakeAdapter)", () => {
 describe("REST /api/v1 (Gateway 미연결 어댑터)", () => {
   it("GET /agents/discover 는 503 ADAPTER_UNAVAILABLE, 채널 프롬프트 변경은 그대로 된다", async () => {
     const adapter = new FakeAdapter();
-    adapter.setStatus({ provider: "openclaw", gateway: "reconnecting", bridge: "down" });
+    adapter.setGatewayState({ gateway: "reconnecting", bridge: "down" });
     vi.spyOn(adapter, "listAgents").mockRejectedValue(
       new AdapterError("ADAPTER_UNAVAILABLE", "agents.list: gateway not connected"),
     );

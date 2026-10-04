@@ -19,7 +19,7 @@ import {
   subscribe,
 } from "../helpers/scenario-steps";
 import { connectWire, reconnectWire, type WireClient } from "../helpers/wire";
-import { openclawOf } from "../helpers/openclaw";
+import { openclawOf, soleGateway } from "../helpers/openclaw";
 
 vi.setConfig({ testTimeout: 20_000, hookTimeout: 20_000 });
 
@@ -100,7 +100,7 @@ describe("통합 시나리오 6·7 — 드롭·끊김·재접속·재시작", ()
 
       live.plugin.disconnect();
       await log.until(() => log.adapterStatus.find((s) => s.bridge === "down"), "adapter.status bridge down");
-      expect(openclawOf(live.app).status()).toMatchObject({ gateway: "connected", bridge: "down" });
+      expect(soleGateway(openclawOf(live.app))).toMatchObject({ gateway: "connected", bridge: "down" });
 
       const sentAt = Date.now();
       await sendMessage(log.socket, channel.id, "@dev 안녕");

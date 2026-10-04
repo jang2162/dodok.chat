@@ -7,12 +7,11 @@ import { apiError } from "../../http/errors";
 import type { Logger } from "../../logger";
 
 /** 워크스페이스 운영 설정. dailyRunLimit 이 null 이면 무제한 */
-export type OpsSettings = { dailyRunLimit: number | null; lastGatewayVersion?: string };
+export type OpsSettings = { dailyRunLimit: number | null };
 
 /** workspaces.ops_json 의 모양 — dailyRunLimit 키가 없으면 기본값(300). 모르는 키는 patch 가 그대로 남긴다 */
 const StoredOps = z.looseObject({
   dailyRunLimit: OpsSettingsPatch.shape.dailyRunLimit.optional(),
-  lastGatewayVersion: z.string().optional(),
 });
 type StoredOps = z.infer<typeof StoredOps>;
 
@@ -56,6 +55,5 @@ function readStored(db: DbOrTx, workspaceId: string, logger?: Pick<Logger, "warn
 function toSettings(stored: StoredOps): OpsSettings {
   return {
     dailyRunLimit: stored.dailyRunLimit === undefined ? OPS_DEFAULT_DAILY_RUN_LIMIT : stored.dailyRunLimit,
-    ...(stored.lastGatewayVersion === undefined ? {} : { lastGatewayVersion: stored.lastGatewayVersion }),
   };
 }

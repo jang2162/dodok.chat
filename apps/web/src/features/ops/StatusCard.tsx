@@ -1,6 +1,11 @@
 import type { OpsStatus } from "@dodok/shared";
 import type { ReactNode } from "react";
-import { useAdapterStatus, useRunnerAdapterStatus } from "@/api/queries";
+import {
+  type OpenClawSummary,
+  summarizeGateways,
+  useAdapterStatus,
+  useRunnerAdapterStatus,
+} from "@/api/queries";
 import { formatSize } from "@/features/attachments/format";
 import { Section } from "@/features/setup/sections";
 import { cn } from "@/lib/utils";
@@ -9,12 +14,12 @@ import { OPS_STATUS_POLL_MS } from "./queries";
 
 const WHEN = new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short" });
 
-const GATEWAY_STATE: Record<OpsStatus["gateway"]["state"], string> = {
+const GATEWAY_STATE: Record<OpenClawSummary["gateway"], string> = {
   connected: "연결됨",
   reconnecting: "다시 연결하는 중",
   down: "연결 안 됨",
 };
-const PLUGIN_STATE: Record<OpsStatus["plugin"]["state"], string> = {
+const PLUGIN_STATE: Record<OpenClawSummary["bridge"], string> = {
   connected: "연결됨",
   down: "연결 안 됨",
 };
@@ -61,8 +66,17 @@ function useLiveConnection(status: OpsStatus) {
   const { data: adapter } = useAdapterStatus();
   const live = useWireStatus((s) => s.status) === "connected";
   // 캐시에는 OpenClaw 어댑터 상태만 담긴다(handlers.ts) — 그래도 좁혀 읽는다
-  if (adapter?.provider === "openclaw" && live) return { gateway: adapter.gateway, plugin: adapter.bridge };
-  return { gateway: status.gateway.state, plugin: status.plugin.state };
+  const summary =
+    adapter?.provider === "openclaw" && live
+      ? adapter
+      : summarizeGateways(
+          status.gateways.map((g) => ({
+            enabled: g.enabled,
+            gateway: g.gateway.state,
+            bridge: g.plugin.state,
+          })),
+        );
+  return { gateway: summary.gateway, plugin: summary.bridge };
 }
 
 /**
@@ -80,7 +94,13 @@ function useRunners() {
  * PC 라 꺼져 있을 수 있고, 60초 넘는 끊김은 사건(runner_down)이 알린다
  */
 export function StatusCard({ status }: { status: OpsStatus }) {
-  const { gateway, disk, server } = status;
+  const { disk, server } = status;
+  // 버전 줄은 하나 — 첫 켜진 Gateway 의 것. Gateway 마다 반복하는 화면은 멀티 Gateway 스펙 「웹」 절의 운영 화면
+  const gateway = status.gateways.find((g) => g.enabled)?.gateway ?? {
+    version: null,
+    pinned: "",
+    drift: false,
+  };
   const connection = useLiveConnection(status);
   const runners = useRunners();
   return (

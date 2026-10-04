@@ -1,5 +1,5 @@
-import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
-import type { OpenClawAdapterStatus, RunnerConnection, RunState } from "@dodok/shared";
+import { FAKE_GATEWAY_ID, FakeAdapter, type FakeGatewayState } from "@dodok/openclaw-adapter/fake";
+import type { RunnerConnection, RunState } from "@dodok/shared";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,10 +20,22 @@ import {
   watchRunners,
 } from "../src/modules/ops/health";
 import { createOpsService, type OpsService } from "../src/modules/ops/service";
-import { getOpsSettings } from "../src/modules/ops/settings";
+import { getGatewayRow } from "../src/modules/gateways/service";
 import { ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
+import { insertGateway } from "./helpers/gateways";
+import { openclawDetail } from "./helpers/openclaw";
 import { seedWorkspace } from "./helpers/seed";
+
+const GW = { id: FAKE_GATEWAY_ID, name: "사무실", url: "ws://office", token: "t1", enabled: true };
+const OTHER_GW = {
+  id: "00000000-0000-4000-8000-0000000000f2",
+  name: "집",
+  url: "ws://home",
+  token: "t2",
+  enabled: true,
+};
+const KEY = `gateway:${FAKE_GATEWAY_ID}`;
 
 const MIB = 1024 * 1024;
 const GIB = 1024 * MIB;
@@ -54,14 +66,13 @@ const rows = () => db.select().from(opsEvents).all();
 const rowsOf = (kind: string) => rows().filter((r) => r.kind === kind);
 
 describe("watchConnections — 60초 넘는 끊김만 사건(Review Focus 2)", () => {
-  function setup(
-    initial: OpenClawAdapterStatus = { provider: "openclaw", gateway: "connected", bridge: "connected" },
-  ) {
+  function setup(initial: Partial<FakeGatewayState> = {}) {
     const adapter = new FakeAdapter();
-    adapter.setStatus(initial);
-    const set = (patch: Partial<OpenClawAdapterStatus>) => {
-      adapter.setStatus({ ...adapter.status(), ...patch });
-      adapter.emit({ kind: "status", status: adapter.status(), capabilities: adapter.capabilities() });
+    adapter.upsertGateway(GW);
+    adapter.setGatewayState({ gateway: "connected", bridge: "connected", ...initial });
+    const set = (patch: Partial<FakeGatewayState>) => {
+      adapter.setGatewayState(patch);
+      adapter.emitStatus();
     };
     return { adapter, set };
   }
@@ -88,7 +99,13 @@ describe("watchConnections — 60초 넘는 끊김만 사건(Review Focus 2)", (
     set({ gateway: "down" }); // reconnecting ↔ down 은 끊김이 이어지는 것이다 — 다시 재지 않는다
     vi.advanceTimersByTime(31 * SEC);
     expect(rowsOf("gateway_down")).toEqual([
-      expect.objectContaining({ key: "gateway", severity: "warn", count: 1, resolvedAt: null }),
+      expect.objectContaining({
+        key: KEY,
+        severity: "warn",
+        count: 1,
+        resolvedAt: null,
+        detail: { thresholdMs: DISCONNECT_EVENT_MS, gatewayName: "사무실" },
+      }),
     ]);
     expect(rowsOf("plugin_down")).toEqual([]);
 
@@ -116,14 +133,14 @@ describe("watchConnections — 60초 넘는 끊김만 사건(Review Focus 2)", (
     watch.close();
   });
 
-  it("브리지 down 61초 → plugin_down/plugin, 복구 때 닫힘. Gateway 와 따로 잰다", () => {
+  it("브리지 down 61초 → plugin_down(key 는 그 Gateway), 복구 때 닫힘. Gateway 와 따로 잰다", () => {
     const { adapter, set } = setup();
     const watch = watchConnections(adapter, ops);
     set({ bridge: "down" });
     vi.advanceTimersByTime(40 * SEC);
     set({ gateway: "reconnecting" });
     vi.advanceTimersByTime(21 * SEC);
-    expect(rows().map((r) => [r.kind, r.key])).toEqual([["plugin_down", "plugin"]]);
+    expect(rows().map((r) => [r.kind, r.key])).toEqual([["plugin_down", KEY]]);
     set({ bridge: "connected" });
     expect(rowsOf("plugin_down")[0]?.resolvedAt).not.toBeNull();
     vi.advanceTimersByTime(40 * SEC);
@@ -132,7 +149,7 @@ describe("watchConnections — 60초 넘는 끊김만 사건(Review Focus 2)", (
   });
 
   it("부팅 뒤 한 번도 붙지 않은 채 61초면 gateway_down 1줄", () => {
-    const { adapter } = setup({ provider: "openclaw", gateway: "down", bridge: "connected" });
+    const { adapter } = setup({ gateway: "down" });
     const watch = watchConnections(adapter, ops);
     vi.advanceTimersByTime(60 * SEC - 1);
     expect(rows()).toEqual([]);
@@ -154,8 +171,8 @@ describe("watchConnections — 60초 넘는 끊김만 사건(Review Focus 2)", (
   });
 
   it("앞 프로세스가 열어 둔 끊김 줄도 붙는 순간 닫는다", () => {
-    ops.record({ kind: "gateway_down", key: "gateway", severity: "warn" });
-    const { adapter, set } = setup({ provider: "openclaw", gateway: "reconnecting", bridge: "connected" });
+    ops.record({ kind: "gateway_down", key: KEY, severity: "warn" });
+    const { adapter, set } = setup({ gateway: "reconnecting" });
     const watch = watchConnections(adapter, ops);
     set({ gateway: "connected" });
     expect(rowsOf("gateway_down")[0]?.resolvedAt).not.toBeNull();
@@ -396,65 +413,81 @@ describe("createDiskMonitor", () => {
   });
 });
 
-describe("observeGatewayVersion", () => {
+describe("observeGatewayVersion — Gateway 별 gateways.last_version", () => {
+  const lastVersion = () => getGatewayRow(db, ws, GW.id)?.lastVersion;
+  beforeEach(() => void insertGateway(db, ws, { id: GW.id, name: GW.name }));
+
   it("처음 본 버전이 핀과 다르면 untested 1·changed 0, 같은 값은 0, 바뀌면 changed(from·to)와 새 key 의 untested", () => {
     const deps = { db, workspaceId: ws, ops };
-    observeGatewayVersion("2026.9.5", deps);
-    expect(rows().map((r) => [r.kind, r.key, r.severity])).toEqual([
-      ["gateway_version_untested", "gateway:2026.9.5", "info"],
+    const updatedAt = getGatewayRow(db, ws, GW.id)?.updatedAt;
+    observeGatewayVersion(GW, "2026.9.5", deps);
+    expect(rows().map((r) => [r.kind, r.key, r.severity, r.detail])).toEqual([
+      ["gateway_version_untested", `${KEY}:2026.9.5`, "info", { gatewayName: "사무실" }],
     ]);
-    expect(getOpsSettings(db, ws).lastGatewayVersion).toBe("2026.9.5");
+    expect(lastVersion()).toBe("2026.9.5");
+    // 관측값이라 설정의 updated_at 은 그대로
+    expect(getGatewayRow(db, ws, GW.id)?.updatedAt).toEqual(updatedAt);
 
-    observeGatewayVersion("2026.9.5", deps);
+    observeGatewayVersion(GW, "2026.9.5", deps);
     expect(rows()).toHaveLength(1);
 
-    observeGatewayVersion("2026.9.6", deps);
+    observeGatewayVersion(GW, "2026.9.6", deps);
     expect(rowsOf("gateway_version_changed")).toEqual([
       expect.objectContaining({
-        key: "gateway",
+        key: KEY,
         severity: "warn",
-        detail: { from: "2026.9.5", to: "2026.9.6" },
+        detail: { from: "2026.9.5", to: "2026.9.6", gatewayName: "사무실" },
       }),
     ]);
     expect(rowsOf("gateway_version_untested").map((r) => r.key)).toEqual([
-      "gateway:2026.9.5",
-      "gateway:2026.9.6",
+      `${KEY}:2026.9.5`,
+      `${KEY}:2026.9.6`,
     ]);
-    expect(getOpsSettings(db, ws).lastGatewayVersion).toBe("2026.9.6");
+    expect(lastVersion()).toBe("2026.9.6");
   });
 
   it("핀과 같은 버전은 untested 가 없고, null 은 아무것도 하지 않는다", () => {
     const deps = { db, workspaceId: ws, ops };
-    observeGatewayVersion(null, deps);
-    expect(getOpsSettings(db, ws).lastGatewayVersion).toBeUndefined();
-    observeGatewayVersion("2026.9.4", deps);
+    observeGatewayVersion(GW, null, deps);
+    expect(lastVersion()).toBeNull();
+    observeGatewayVersion(GW, "2026.9.4", deps);
     expect(rows()).toEqual([]);
-    expect(getOpsSettings(db, ws).lastGatewayVersion).toBe("2026.9.4");
-    observeGatewayVersion("2026.9.5", deps);
+    expect(lastVersion()).toBe("2026.9.4");
+    observeGatewayVersion(GW, "2026.9.5", deps);
     expect(
       rows()
         .map((r) => r.kind)
         .sort(),
     ).toEqual(["gateway_version_changed", "gateway_version_untested"]);
   });
+
+  it("지운 Gateway(행 없음)는 사건도 기억도 남기지 않는다", () => {
+    observeGatewayVersion({ id: OTHER_GW.id, name: OTHER_GW.name }, "2026.9.5", { db, workspaceId: ws, ops });
+    expect(rows()).toEqual([]);
+    expect(getGatewayRow(db, ws, OTHER_GW.id)).toBeUndefined();
+  });
 });
 
 describe("watchGatewayVersion", () => {
+  beforeEach(() => void insertGateway(db, ws, { id: GW.id, name: GW.name }));
+
   it("Gateway 가 connected 일 때 setup·status 이벤트에서 바뀐 버전만 대조한다", () => {
     const adapter = new FakeAdapter();
-    const detail = adapter.setupDetail();
+    adapter.upsertGateway(GW);
+    const detail = openclawDetail(adapter);
     const setVersion = (version: string | null) =>
       adapter.setSetupDetail({ ...detail, gateway: { ...detail.gateway, version } });
+    const lastVersion = () => getGatewayRow(db, ws, GW.id)?.lastVersion;
     const { logger } = captureLogger();
-    adapter.setStatus({ provider: "openclaw", gateway: "reconnecting", bridge: "connected" });
+    adapter.setGatewayState({ gateway: "reconnecting" });
     setVersion("2026.9.5");
     const watch = watchGatewayVersion(adapter, { db, workspaceId: ws, ops, logger });
     adapter.emit({ kind: "setup" });
-    expect(getOpsSettings(db, ws).lastGatewayVersion).toBeUndefined(); // 붙기 전에는 보지 않는다
+    expect(lastVersion()).toBeNull(); // 붙기 전에는 보지 않는다
 
-    adapter.setStatus({ provider: "openclaw", gateway: "connected", bridge: "connected" });
-    adapter.emit({ kind: "status", status: adapter.status(), capabilities: adapter.capabilities() });
-    expect(getOpsSettings(db, ws).lastGatewayVersion).toBe("2026.9.5");
+    adapter.setGatewayState({ gateway: "connected" });
+    adapter.emitStatus();
+    expect(lastVersion()).toBe("2026.9.5");
     adapter.emit({ kind: "setup" });
     expect(rowsOf("gateway_version_untested")).toHaveLength(1);
 
@@ -464,18 +497,19 @@ describe("watchGatewayVersion", () => {
     watch.close();
     setVersion("2026.9.7");
     adapter.emit({ kind: "setup" });
-    expect(getOpsSettings(db, ws).lastGatewayVersion).toBe("2026.9.6");
+    expect(lastVersion()).toBe("2026.9.6");
   });
 
-  it("DB 오류는 logger.error 한 줄로 끝내고 던지지 않는다", () => {
+  it("DB 오류는 logger.error 한 줄(Gateway id)로 끝내고 던지지 않는다", () => {
     const adapter = new FakeAdapter();
-    const detail = adapter.setupDetail();
+    adapter.upsertGateway(GW);
+    const detail = openclawDetail(adapter);
     adapter.setSetupDetail({ ...detail, gateway: { ...detail.gateway, version: "2026.9.5" } });
     const { logger, lines: logged } = captureLogger();
     db.$client.close();
     expect(() => watchGatewayVersion(adapter, { db, workspaceId: ws, ops, logger })).not.toThrow();
     expect(logged).toContainEqual(
-      expect.objectContaining({ level: 50, msg: "gateway version check failed" }),
+      expect.objectContaining({ level: 50, gatewayId: GW.id, msg: "gateway version check failed" }),
     );
   });
 });

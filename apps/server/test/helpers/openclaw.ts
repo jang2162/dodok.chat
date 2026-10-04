@@ -1,4 +1,9 @@
-import type { AgentAdapter, OpenClawAdapterStatus, OpenClawSetupDetail } from "@dodok/shared";
+import type {
+  AgentAdapter,
+  OpenClawAdapterStatus,
+  OpenClawGatewayStatus,
+  OpenClawSetupDetail,
+} from "@dodok/shared";
 
 /** 앱 레지스트리의 OpenClaw 어댑터 — 앱은 늘 하나 가진다(createApp) */
 export function openclawOf(app: {
@@ -15,6 +20,14 @@ export function openclawStatus(adapter: Pick<AgentAdapter, "status">): OpenClawA
   const status = adapter.status();
   if (status.provider !== "openclaw") throw new Error(`not an OpenClaw adapter: ${status.provider}`);
   return status;
+}
+
+/** Gateway 하나뿐인 앱의 그 Gateway 상태 줄 — 하나가 아니면 테스트가 틀렸다 */
+export function soleGateway(adapter: Pick<AgentAdapter, "status">): OpenClawGatewayStatus {
+  const { gateways } = openclawStatus(adapter);
+  const [only] = gateways;
+  if (!only || gateways.length !== 1) throw new Error(`expected one gateway, got ${gateways.length}`);
+  return only;
 }
 
 export function openclawDetail(adapter: Pick<AgentAdapter, "setupDetail">): OpenClawSetupDetail {

@@ -30,7 +30,7 @@ import type {
 } from "./connection/gateway-connection";
 import { createGatewayManager } from "./connection/manager";
 import { connectGateway } from "./gateway/client";
-import type { GatewayConnector, GatewayState, RecoverTarget } from "./gateway/connection-manager";
+import type { GatewayConnector, RecoverTarget } from "./gateway/connection-manager";
 import { sessionKeyFor } from "./gateway/sessions";
 
 export type {
@@ -80,10 +80,7 @@ export type OpenClawAdapterOptions = {
 /** 상태·설정 상세는 openclaw 변형으로 좁혀 둔다 — 이 어댑터를 직접 쥔 쪽(테스트·dev:fake)은 좁히지 않고 읽는다 */
 export interface OpenClawAdapter extends AgentAdapter {
   readonly provider: "openclaw";
-  /**
-   * 켜진 Gateway 들을 모은 하나 — gateway 는 가장 나쁜 상태(down > reconnecting > connected), bridge 는 켜진 Gateway 모두에
-   * 플러그인이 붙어야 connected. 켜진 Gateway 가 없으면 down/down. Gateway 별 상태는 `gatewayStatuses()`
-   */
+  /** Gateway 마다 한 줄(더한 차례) — `gatewayStatuses()` 와 같은 목록. Gateway 가 없으면 빈 목록 */
   status(): OpenClawAdapterStatus;
   /** 첫 켜진 Gateway(더한 차례)의 상세. 없으면 host 가 빈 down/null 블록. Gateway 별 상세는 `gatewaySetupDetails()` */
   setupDetail(): OpenClawSetupDetail;
@@ -101,8 +98,6 @@ export interface OpenClawAdapter extends AgentAdapter {
   /** Gateway 별 설정 상세(더한 차례) — 공유 토큰은 없다 */
   gatewaySetupDetails(): GatewaySetupEntry[];
 }
-
-const GATEWAY_RANK: Record<GatewayState, number> = { connected: 0, reconnecting: 1, down: 2 };
 
 export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAdapter {
   const { logger } = opts;
@@ -173,18 +168,12 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
     return gatewayId === null ? undefined : manager.get(gatewayId);
   }
 
+  function gatewayStatuses(): GatewayStatusEntry[] {
+    return manager.all().map((connection) => connection.status());
+  }
+
   function status(): OpenClawAdapterStatus {
-    const enabled = manager.all().filter((c) => c.config().enabled);
-    if (enabled.length === 0) return { provider: "openclaw", gateway: "down", bridge: "down" };
-    let gateway: GatewayState = "connected";
-    let bridgeUp = true;
-    for (const connection of enabled) {
-      const entry = connection.status();
-      const state = entry.gateway === "disabled" ? "down" : entry.gateway;
-      if (GATEWAY_RANK[state] > GATEWAY_RANK[gateway]) gateway = state;
-      if (entry.bridge !== "connected") bridgeUp = false;
-    }
-    return { provider: "openclaw", gateway, bridge: bridgeUp ? "connected" : "down" };
+    return { provider: "openclaw", gateways: gatewayStatuses() };
   }
 
   const emitStatus = () => emit({ kind: "status", status: status(), capabilities: { ...capabilities } });
@@ -251,7 +240,7 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
 
     removeGateway: (id) => manager.remove(id),
 
-    gatewayStatuses: () => manager.all().map((connection) => connection.status()),
+    gatewayStatuses,
     gatewaySetupDetails,
 
     async connect() {

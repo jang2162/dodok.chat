@@ -24,7 +24,7 @@ import { FAKE_GATEWAY_ID } from "../helpers/gateways";
 import { bootLiveApp, type LiveApp } from "../helpers/live-app";
 import { makePng } from "../helpers/png";
 import { connectWire, recordEvents, waitFor, type WireClient, type WirePayload } from "../helpers/wire";
-import { openclawStatus, openclawOf } from "../helpers/openclaw";
+import { openclawOf, soleGateway } from "../helpers/openclaw";
 
 vi.setConfig({ testTimeout: 20_000, hookTimeout: 20_000 });
 
@@ -172,14 +172,14 @@ describe("설정 마법사 통합 — 브리지 토큰 겹침 교체·폐기", (
       name: "b.png",
       mime: "image/png",
     });
-    expect(openclawStatus(openclawOf(app)).bridge).toBe("connected");
+    expect(soleGateway(openclawOf(app)).bridge).toBe("connected");
 
     // 접속 중인 B 폐기 → 그 세션이 곧바로 끊기고 owner 는 plugin null 상태를 받는다
     const downEvent = waitFor(ownerWire, "setup.status", (p) => pluginOf(p.status) === null);
     expect((await call("DELETE", `${tokensPath}/${tokenB}`)).statusCode).toBe(204);
     const down = await downEvent;
     expect(down.status.gateways[0]?.bridge.state).toBe("down");
-    expect(openclawStatus(openclawOf(app)).bridge).toBe("down");
+    expect(soleGateway(openclawOf(app)).bridge).toBe("down");
     expect(await tryBridge(app.url, issued.token)).toBe("UNAUTHORIZED");
     expect((await pluginB.downloadAttachment(uploaded.id)).status).toBe(401);
 

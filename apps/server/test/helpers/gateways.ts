@@ -1,4 +1,5 @@
 import { FAKE_GATEWAY_ID } from "@dodok/openclaw-adapter/fake";
+import type { OpenClawGatewayStatus } from "@dodok/shared";
 import type { DbOrTx } from "../../src/db/client";
 import { gateways } from "../../src/db/schema.sqlite";
 
@@ -28,4 +29,18 @@ export function insertGateway(
     .onConflictDoNothing()
     .run();
   return row;
+}
+
+/** insertGateway 기본 Gateway 의 어댑터 상태 줄(`status().gateways` 의 한 줄) — 기본은 둘 다 connected */
+export function fakeGatewayStatus(
+  state: Partial<Pick<OpenClawGatewayStatus, "gateway" | "bridge">> = {},
+): OpenClawGatewayStatus {
+  return {
+    id: FAKE_GATEWAY_ID,
+    name: "가짜 Gateway",
+    enabled: true,
+    gateway: "connected",
+    bridge: "connected",
+    ...state,
+  };
 }

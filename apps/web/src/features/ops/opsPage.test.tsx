@@ -9,7 +9,7 @@ import { createFakeSocket } from "../../../test/fakeSocket";
 import { OWNER } from "../../../test/setupServer";
 import { uid } from "../../../test/fixtures";
 import { createQueryClient } from "@/app/queryClient";
-import { ME, channelOf, json } from "../../../test/shellApi";
+import { ME, TEST_GATEWAY, channelOf, json } from "../../../test/shellApi";
 import {
   eventOf,
   opsStatusOf,
@@ -146,16 +146,17 @@ describe("상태 카드 — 실시간(브라우저 검증 D1)", () => {
     await waitFor(() => expect(server.count("GET", "/api/v1/ops/status")).toBe(1));
 
     act(() =>
-      fake.serverEmit("adapter.status", { provider: "openclaw", gateway: "reconnecting", bridge: "down" }),
+      fake.serverEmit("adapter.status", {
+        provider: "openclaw",
+        gateways: [{ ...TEST_GATEWAY, gateway: "reconnecting", bridge: "down" }],
+      }),
     );
     expect(await statusRow("Gateway")).toHaveTextContent("다시 연결하는 중");
     expect(await statusRow("Gateway")).toHaveAttribute("data-problem");
     expect(await statusRow("플러그인")).toHaveTextContent("연결 안 됨");
     expect(await statusRow("플러그인")).toHaveAttribute("data-problem");
 
-    act(() =>
-      fake.serverEmit("adapter.status", { provider: "openclaw", gateway: "connected", bridge: "connected" }),
-    );
+    act(() => fake.serverEmit("adapter.status", { provider: "openclaw", gateways: [TEST_GATEWAY] }));
     expect(await statusRow("Gateway")).not.toHaveAttribute("data-problem");
     expect(await statusRow("플러그인")).not.toHaveAttribute("data-problem");
     // 상태를 다시 부르지 않았다 — 캐시만 바뀌었다

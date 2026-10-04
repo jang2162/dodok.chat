@@ -7,10 +7,11 @@ import type { App } from "../src/app";
 import { opsEvents, runs } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
 import { createChannel } from "../src/modules/channels/service";
-import { getOpsSettings, patchOpsSettings } from "../src/modules/ops/settings";
+import { getOpsSettings } from "../src/modules/ops/settings";
 import { insertRun } from "../src/modules/runs/store";
 import packageJson from "../package.json" with { type: "json" };
 import { bootTestApp, login, userWithRole } from "./helpers/app";
+import { FAKE_GATEWAY_ID, fakeGatewayStatus } from "./helpers/gateways";
 
 type Method = "GET" | "POST" | "PATCH";
 
@@ -90,25 +91,36 @@ describe("운영 API /api/v1/ops", () => {
 
   describe("GET /status", () => {
     it("계약 모양 — /healthz 에서 뺀 워크스페이스 id·어댑터 상세, 서버 버전, 기본 상한 300, 디스크 수치", async () => {
-      adapter.setStatus({ provider: "openclaw", gateway: "reconnecting", bridge: "down" });
+      adapter.setGatewayState({ gateway: "reconnecting", bridge: "down" });
       const res = await call(owner, "GET", "/status");
       expect(res.statusCode).toBe(200);
       const status = OpsStatus.parse(res.json());
       expect(status.workspaceId).toBe(app.workspaceId);
-      expect(status.adapter).toEqual({ provider: "openclaw", gateway: "reconnecting", bridge: "down" });
-      expect(status.gateway.state).toBe("reconnecting");
-      expect(status.plugin).toEqual({ state: "down" });
+      expect(status.adapter).toEqual({
+        provider: "openclaw",
+        gateways: [fakeGatewayStatus({ gateway: "reconnecting", bridge: "down" })],
+      });
+      expect(status.gateways).toEqual([
+        {
+          id: FAKE_GATEWAY_ID,
+          name: "가짜 Gateway",
+          enabled: true,
+          gateway: { state: "reconnecting", version: null, pinned: OPENCLAW_PINNED_VERSION, drift: false },
+          plugin: { state: "down" },
+        },
+      ]);
       expect(status.server.version).toBe(packageJson.version);
       expect(Date.parse(status.server.startedAt)).toBeLessThanOrEqual(Date.now());
       expect(status.dailyRunLimit).toBe(300);
       // helpers/app plentyOfDisk: bavail 2^20·blocks 2^21 블록, 4096 바이트
       expect(status.disk).toEqual({ level: "ok", freeBytes: 2 ** 20 * 4096, totalBytes: 2 ** 21 * 4096 });
       expect(status.db.bytes).toBeGreaterThan(0);
-      adapter.setStatus({ provider: "openclaw", gateway: "connected", bridge: "connected" });
+      adapter.setGatewayState({ gateway: "connected", bridge: "connected" });
     });
 
     it("Gateway 버전·핀·드리프트 — 모르면(null) 드리프트 아님", async () => {
-      const gatewayOf = async () => OpsStatus.parse((await call(owner, "GET", "/status")).json()).gateway;
+      const gatewayOf = async () =>
+        OpsStatus.parse((await call(owner, "GET", "/status")).json()).gateways[0]?.gateway;
       adapter.setSetupDetail(detail("2026.9.5"));
       expect(await gatewayOf()).toMatchObject({
         version: "2026.9.5",
@@ -189,12 +201,12 @@ describe("운영 API /api/v1/ops", () => {
     });
 
     it("응답이 계약을 어기면 500 INTERNAL(서버 버그) — 어긴 값을 내보내지 않는다", async () => {
-      adapter.setStatus({ provider: "bogus", gateway: "connected", bridge: "connected" } as never);
+      adapter.setGatewayState({ gateway: "bogus" } as never);
       const res = await call(owner, "GET", "/status");
       expect(res.statusCode).toBe(500);
       expect(res.json().code).toBe("INTERNAL");
       expect(res.body).not.toContain("bogus");
-      adapter.setStatus({ provider: "openclaw", gateway: "connected", bridge: "connected" });
+      adapter.setGatewayState({ gateway: "connected", bridge: "connected" });
     });
   });
 
@@ -228,15 +240,6 @@ describe("운영 API /api/v1/ops", () => {
         expect(res.json().code).toBe("VALIDATION");
       }
       expect(await limitNow()).toBe(42);
-    });
-
-    it("lastGatewayVersion 은 건드리지 않는다", async () => {
-      patchOpsSettings(app.db, app.workspaceId, { lastGatewayVersion: "2026.9.5" });
-      await call(owner, "PATCH", "/settings", { dailyRunLimit: 9 });
-      expect(getOpsSettings(app.db, app.workspaceId)).toEqual({
-        dailyRunLimit: 9,
-        lastGatewayVersion: "2026.9.5",
-      });
     });
   });
 

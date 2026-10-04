@@ -8,7 +8,7 @@ import { threadFromPage, type Timeline } from "@/features/messages/timeline";
 import { touchRecentThread } from "@/features/threads/queries";
 import { CH, CH2, msg, uid } from "../../test/fixtures";
 import { memoryStorage } from "../../test/memoryStorage";
-import { channelOf, ME } from "../../test/shellApi";
+import { ADAPTER_OK, channelOf, ME } from "../../test/shellApi";
 import {
   PERSIST_KEY,
   PERSIST_MAX_AGE_MS,
@@ -298,7 +298,7 @@ describe("startPersistence", () => {
     qc.setQueryData(qk.me, ME);
     qc.setQueryData(qk.channels, [channelOf(CH), channelOf(CH2)]);
     qc.setQueryData(qk.agents, []);
-    qc.setQueryData(qk.adapter, { provider: "openclaw", gateway: "connected", bridge: "connected" });
+    qc.setQueryData(qk.adapter, ADAPTER_OK);
     touchRecentChannel(qc, CH);
     qc.setQueryData(qk.channel(CH), channelOf(CH));
     qc.setQueryData(qk.members(CH), []);

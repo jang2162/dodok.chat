@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { bootLiveApp, type LiveApp } from "../helpers/live-app";
-import { openclawStatus, openclawOf } from "../helpers/openclaw";
+import { openclawOf, soleGateway } from "../helpers/openclaw";
 
 describe("서버 통합 스모크 — 실제 OpenClawAdapter + 가짜 Gateway + 가짜 플러그인", () => {
   let live: LiveApp | undefined;
@@ -14,7 +14,7 @@ describe("서버 통합 스모크 — 실제 OpenClawAdapter + 가짜 Gateway + 
     live = undefined;
   });
 
-  it("bootLiveApp 뒤 GET /api/v1/adapter/status 가 gateway·bridge 모두 connected 를 내고, close() 는 임시 디렉터리를 지운다", async () => {
+  it("bootLiveApp 뒤 GET /api/v1/adapter/status 가 그 Gateway 한 줄의 gateway·bridge 모두 connected 를 내고, close() 는 임시 디렉터리를 지운다", async () => {
     live = await bootLiveApp();
     const { app, gateway, plugin, auth, dir } = live;
 
@@ -28,7 +28,18 @@ describe("서버 통합 스모크 — 실제 OpenClawAdapter + 가짜 Gateway + 
     expect(res.json()).toEqual({
       // 기본 어댑터는 OpenClaw 와 Claude 러너 둘 — 러너는 붙은 것도 토큰도 없다
       statuses: [
-        { provider: "openclaw", gateway: "connected", bridge: "connected" },
+        {
+          provider: "openclaw",
+          gateways: [
+            {
+              id: live.gatewayId,
+              name: expect.any(String),
+              enabled: true,
+              gateway: "connected",
+              bridge: "connected",
+            },
+          ],
+        },
         { provider: "claude", runners: { connected: 0, tokens: 0 } },
       ],
       capabilities: {
@@ -63,7 +74,7 @@ describe("서버 통합 스모크 — 실제 OpenClawAdapter + 가짜 Gateway + 
     live = undefined;
     expect(existsSync(dir)).toBe(false);
     expect(plugin.notices).toEqual([{ reason: "shutdown", message: "server shutting down" }]);
-    expect(openclawStatus(openclawOf(app)).gateway).toBe("down");
+    expect(soleGateway(openclawOf(app)).gateway).toBe("down");
   });
 
   it("OPENCLAW_FRAME_DUMP_PATH 를 주면 어댑터가 받은 Gateway 프레임을 그 파일에 남기고 앱 close() 에서 닫는다", async () => {

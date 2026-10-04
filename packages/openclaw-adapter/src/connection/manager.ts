@@ -74,7 +74,6 @@ export function createGatewayManager(opts: GatewayManagerOptions): GatewayManage
       deviceDir: join(opts.dataDir, "gateways", id),
       bridge: opts.bridge,
       connector: opts.connector,
-      logger: opts.logger,
       gatewayLogger: withGateway(opts.logger, id),
       ...(opts.backoff ? { backoff: opts.backoff } : {}),
       ...(recover ? { sessionKeysToRecover: () => recover(id) } : {}),

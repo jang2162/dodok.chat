@@ -705,14 +705,14 @@ describe("승인 저장·런 상관·wire 중계 (앱 부팅, FakeAdapter)", () 
     const live = providerApproval(sessionKeyOf("dev", channel.id));
     adapter.emitApproval(live);
     await vi.waitFor(() => expect(stored(live)?.status).toBe("pending"));
-    adapter.setStatus({ provider: "openclaw", gateway: "down", bridge: "connected" });
+    adapter.setGatewayState({ gateway: "down" });
     try {
       expect(await resolve(socket, stored(live)?.id ?? "", "allow-once")).toMatchObject({
         ok: false,
         error: { code: "ADAPTER_UNAVAILABLE" },
       });
     } finally {
-      adapter.setStatus({ provider: "openclaw", gateway: "connected", bridge: "connected" });
+      adapter.setGatewayState({ gateway: "connected" });
     }
 
     expect(adapter.calls.resolveApproval.slice(sent)).toEqual([]);

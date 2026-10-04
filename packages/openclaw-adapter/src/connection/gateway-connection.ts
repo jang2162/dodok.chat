@@ -17,6 +17,7 @@ import type {
   ConfigSetResult,
   InboundDeliver,
   InboundDeliverResult,
+  OpenClawGatewayStatus,
   OutboundMessage,
 } from "@dodok/shared";
 import type { EventFrame } from "@openclaw/gateway-protocol";
@@ -65,13 +66,8 @@ export type GatewayConnectionConfig = {
 /** Gateway WS 상태 + 꺼진 연결 */
 export type GatewayConnectionState = GatewayState | "disabled";
 
-export type GatewayStatusEntry = {
-  id: string;
-  name: string;
-  enabled: boolean;
-  gateway: GatewayConnectionState;
-  bridge: "connected" | "down";
-};
+/** shared 의 `OpenClawGatewayStatus` 그대로 — 어댑터 상태(`status().gateways`)의 한 줄 */
+export type GatewayStatusEntry = OpenClawGatewayStatus;
 
 /** 연결 페이지의 재료 — Gateway 공유 토큰은 싣지 않는다 */
 export type GatewaySetupEntry = {
@@ -116,8 +112,7 @@ export type GatewayConnectionDeps = {
   deviceDir: string;
   bridge: BridgeHandle;
   connector: GatewayConnector;
-  logger: AdapterLogger;
-  /** 이 연결의 WS 루프가 쓰는 로거 — 재접속·페어링 줄에 Gateway id 가 붙는다 */
+  /** 이 연결의 모든 줄(WS 루프의 재접속·페어링, 전달·플러그인 hello·브리지 상태)이 쓰는 로거 — Gateway id 가 붙는다 */
   gatewayLogger: AdapterLogger;
   backoff?: { initialMs?: number; maxMs?: number; pairingRetryMs?: number };
   sessionKeysToRecover?: () => RecoverTarget[];
@@ -164,7 +159,8 @@ export type GatewayConnection = {
 };
 
 export function createGatewayConnection(deps: GatewayConnectionDeps): GatewayConnection {
-  const { id, logger } = { id: deps.config.id, logger: deps.logger };
+  // 이 연결의 줄에는 모두 Gateway id 가 붙는다 — 운영자가 어느 Gateway 의 일인지 알게(토큰·주소는 싣지 않는다)
+  const { id, logger } = { id: deps.config.id, logger: deps.gatewayLogger };
   let config = { ...deps.config };
   const view = deps.bridge.forGateway(id);
   let started = false;

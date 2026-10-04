@@ -175,9 +175,22 @@ async function expectNoTimersLeft() {
   expect(vi.getTimerCount(), "fake timers left after close()").toBe(0);
 }
 
+/** 이 파일의 Gateway 하나의 상태 줄 */
+function gw(target: Pick<OpenClawAdapter, "status"> = adapter) {
+  const [entry] = target.status().gateways;
+  if (!entry) throw new Error("no gateway");
+  return entry;
+}
+
+/** status 이벤트·status() 의 모양 — Gateway 하나 */
+const oneGateway = (gateway: string, bridge: string) => ({
+  provider: "openclaw",
+  gateways: [{ id: CONNECTION_ID, name: "gateway", enabled: true, gateway, bridge }],
+});
+
 async function connectedGateway() {
   await adapter.connect();
-  await until(() => adapter.status().gateway === "connected", "gateway connected");
+  await until(() => gw().gateway === "connected", "gateway connected");
 }
 
 function gatewayEvent(frame: EventFrame) {
@@ -193,7 +206,7 @@ function deliveredLines(input: InboundDeliver) {
     .filter((line) => line.deliveryId === input.deliveryId);
   for (const line of lines) {
     expect(Object.keys(line).sort()).toEqual(
-      ["ackMs", "admission", "deliveryId", "retries", "runId", "waitedForPlugin"].sort(),
+      ["ackMs", "admission", "deliveryId", "gatewayId", "retries", "runId", "waitedForPlugin"].sort(),
     );
     expect(JSON.stringify(line)).not.toContain(input.message.text);
   }
@@ -205,7 +218,7 @@ const ofKind = <K extends AdapterEvent["kind"]>(kind: K) =>
 
 describe("createOpenClawAdapter — 상태", () => {
   it("connect() 는 Gateway 루프를 시작해 gateway connected 를 알리고, close() 는 down 으로 내린다", async () => {
-    expect(adapter.status()).toEqual({ provider: "openclaw", gateway: "down", bridge: "down" });
+    expect(adapter.status()).toEqual(oneGateway("down", "down"));
     expect(adapter.capabilities()).toEqual({
       sessionReset: true,
       agentsList: true,
@@ -217,7 +230,7 @@ describe("createOpenClawAdapter — 상태", () => {
     await connectedGateway();
     expect(ofKind("status").at(-1)).toEqual({
       kind: "status",
-      status: { provider: "openclaw", gateway: "connected", bridge: "down" },
+      status: oneGateway("connected", "down"),
       capabilities: {
         sessionReset: true,
         agentsList: true,
@@ -228,8 +241,8 @@ describe("createOpenClawAdapter — 상태", () => {
     });
 
     await adapter.close();
-    expect(adapter.status().gateway).toBe("down");
-    expect(ofKind("status").at(-1)?.status).toMatchObject({ provider: "openclaw", gateway: "down" });
+    expect(gw().gateway).toBe("down");
+    expect(ofKind("status").at(-1)?.status).toEqual(oneGateway("down", "down"));
   });
 
   it("플러그인 hello 로그에 gatewayVersion(runtime.version)과 빌드 때 박힌 SDK 버전을 다른 이름으로 싣는다", async () => {
@@ -240,24 +253,34 @@ describe("createOpenClawAdapter — 상태", () => {
       .map((call) => call[0])
       .slice(-2);
     expect(lines).toEqual([
-      { pluginVersion: "0.0.0", pluginBuiltWithSdk: "2026.9.4", gatewayVersion: "2026.9.5" },
-      { pluginVersion: "0.0.0", pluginBuiltWithSdk: "2026.9.4", gatewayVersion: null },
+      {
+        pluginVersion: "0.0.0",
+        pluginBuiltWithSdk: "2026.9.4",
+        gatewayVersion: "2026.9.5",
+        gatewayId: CONNECTION_ID,
+      },
+      {
+        pluginVersion: "0.0.0",
+        pluginBuiltWithSdk: "2026.9.4",
+        gatewayVersion: null,
+        gatewayId: CONNECTION_ID,
+      },
     ]);
   });
 
   it("플러그인 hello → bridge connected, 새 연결로 교체될 때는 down 을 거치지 않고, 마지막 연결이 끊기면 down", async () => {
     const first = await plugin();
-    expect(adapter.status().bridge).toBe("connected");
+    expect(gw().bridge).toBe("connected");
 
     await plugin();
     await until(() => first.disconnected, "replaced socket closed");
     const second = clients.at(-1);
     second?.disconnect();
-    await until(() => adapter.status().bridge === "down", "bridge down");
+    await until(() => gw().bridge === "down", "bridge down");
 
     expect(ofKind("status").map((e) => e.status)).toMatchObject([
-      { bridge: "connected" },
-      { bridge: "down" },
+      { gateways: [{ bridge: "connected" }] },
+      { gateways: [{ bridge: "down" }] },
     ]);
   });
 
@@ -285,13 +308,13 @@ describe("createOpenClawAdapter — supports", () => {
     expect(adapter.supports("fin", CONNECTION_ID, "threads")).toBe(true);
 
     clients.at(-1)?.disconnect();
-    await until(() => adapter.status().bridge === "down", "bridge down");
+    await until(() => gw().bridge === "down", "bridge down");
     expect(adapter.supports("dev", CONNECTION_ID, "threads")).toBe(false);
   });
 
   it("모르는 capability 가 섞인 hello 도 받는다(판정 R1)", async () => {
     await plugin({}, { ...hello, capabilities: ["future.cap", "threads"] });
-    expect(adapter.status().bridge).toBe("connected");
+    expect(gw().bridge).toBe("connected");
     expect(adapter.supports("dev", CONNECTION_ID, "threads")).toBe(true);
   });
 });
@@ -444,7 +467,7 @@ describe("createOpenClawAdapter — revokeTokenSessions", () => {
     const setupBefore = ofKind("setup").length;
     expect(adapter.revokeTokenSessions("t1")).toBe(1);
     await until(() => socket.disconnected, "revoked socket closed");
-    await until(() => adapter.status().bridge === "down", "bridge down");
+    await until(() => gw().bridge === "down", "bridge down");
     expect(adapter.setupDetail().bridge).toEqual({ state: "down", plugin: null });
     expect(ofKind("setup")).toHaveLength(setupBefore + 1);
     expect(adapter.revokeTokenSessions("t1")).toBe(0);
@@ -518,6 +541,7 @@ describe("createOpenClawAdapter — send", () => {
         ackMs: expect.any(Number),
         retries: 0,
         waitedForPlugin: false,
+        gatewayId: CONNECTION_ID,
       },
     ]);
   });
@@ -852,7 +876,7 @@ describe("createOpenClawAdapter — close", () => {
     expect(logger.warn).toHaveBeenCalledWith(expect.objectContaining({ err: stopError }), expect.any(String));
     await until(() => notices.length === 1 && socket.disconnected, "shutdown notice and disconnect");
     expect(notices).toEqual([{ reason: "shutdown", message: "server shutting down" }]);
-    expect(adapter.status()).toMatchObject({ gateway: "down" });
+    expect(gw().gateway).toBe("down");
   });
 });
 
@@ -1084,7 +1108,7 @@ describe("createOpenClawAdapter — Gateway 요청·브리지 설정", () => {
     expect(ofKind("status")).toEqual([
       {
         kind: "status",
-        status: { provider: "openclaw", gateway: "connected", bridge: "down" },
+        status: oneGateway("connected", "down"),
         capabilities: {
           sessionReset: false,
           agentsList: true,
@@ -1203,7 +1227,7 @@ describe("Gateway 프레임 덤프(frameDumpPath)", () => {
     });
     try {
       await dumping.connect();
-      await until(() => dumping.status().gateway === "connected", "dump adapter connected");
+      await until(() => gw(dumping).gateway === "connected", "dump adapter connected");
       onEvent?.(f.lifecycleStart());
       onEvent?.(f.sessionsChanged());
       onEvent?.(f.chatDelta("안"));
@@ -1226,7 +1250,7 @@ describe("Gateway 프레임 덤프(frameDumpPath)", () => {
 describe("send 전 세션 구독", () => {
   it("접속 뒤 새로 생긴 세션은 전송 전에 sessions.messages.subscribe 한다 — 같은 키는 연결당 한 번", async () => {
     await adapter.connect();
-    await until(() => adapter.status().gateway === "connected", "gateway connected");
+    await until(() => gw().gateway === "connected", "gateway connected");
     const subscribesAtDeliver: number[] = [];
     await plugin({
       "inbound.deliver": (payload: InboundDeliver, ack: Ack) => {
@@ -1368,7 +1392,7 @@ describe("승인 — 수신·병합·해결 RPC", () => {
 
     expect(ofKind("approval")).toHaveLength(0);
     expect(logger.debug).toHaveBeenCalledWith(
-      { event: "plugin.approval.requested" },
+      { event: "plugin.approval.requested", gatewayId: CONNECTION_ID },
       "gateway approval frame ignored",
     );
     // 토큰·본문·남의 세션 키를 남기지 않는다
@@ -1449,7 +1473,7 @@ describe("승인 — 수신·병합·해결 RPC", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     connectFailures = [new Error("connect ECONNREFUSED")];
     await adapter.connect();
-    await until(() => adapter.status().gateway === "reconnecting", "gateway reconnecting");
+    await until(() => gw().gateway === "reconnecting", "gateway reconnecting");
 
     await expect(
       adapter.resolveApproval(f.APPROVAL_ID, "plugin", "deny", CONNECTION_ID),

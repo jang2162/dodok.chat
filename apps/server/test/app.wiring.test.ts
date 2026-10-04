@@ -1,12 +1,6 @@
 import { AdapterError } from "@dodok/openclaw-adapter";
-import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
-import {
-  type AdapterStatus,
-  BRIDGE_PROTOCOL,
-  type Message,
-  type OpenClawAdapterStatus,
-  WIRE_PROTOCOL,
-} from "@dodok/shared";
+import { FakeAdapter, type FakeGatewayState } from "@dodok/openclaw-adapter/fake";
+import { type AdapterStatus, BRIDGE_PROTOCOL, type Message, WIRE_PROTOCOL } from "@dodok/shared";
 import Database from "better-sqlite3";
 import { and, eq, isNull } from "drizzle-orm";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
@@ -29,9 +23,9 @@ import { ServerBus } from "../src/realtime/bus";
 import { sessionRecoverTargets } from "../src/wiring";
 import { bootTestApp, login } from "./helpers/app";
 import { testEnv } from "./helpers/env";
-import { FAKE_GATEWAY_ID } from "./helpers/gateways";
+import { FAKE_GATEWAY_ID, fakeGatewayStatus } from "./helpers/gateways";
 import { connectWire, openWire, type WireClient, waitFor } from "./helpers/wire";
-import { openclawOf, openclawStatus } from "./helpers/openclaw";
+import { openclawOf, soleGateway } from "./helpers/openclaw";
 
 type Method = "GET" | "POST" | "PATCH";
 
@@ -241,7 +235,7 @@ describe("REST·wire 배선 (FakeAdapter)", () => {
   });
   afterEach(() => {
     vi.restoreAllMocks();
-    adapter.setStatus({ provider: "openclaw", gateway: "connected", bridge: "connected" });
+    adapter.setGatewayState({ gateway: "connected", bridge: "connected" });
     adapter.setCapabilities({
       sessionReset: true,
       agentsList: true,
@@ -501,7 +495,7 @@ describe("REST·wire 배선 (FakeAdapter)", () => {
   });
 
   it("GET /adapter/status 는 어댑터마다 AdapterStatus 와 provider 별 capabilities, 인증이 필요하다", async () => {
-    adapter.setStatus({ provider: "openclaw", gateway: "reconnecting", bridge: "connected" });
+    adapter.setGatewayState({ gateway: "reconnecting" });
     adapter.setCapabilities({
       sessionReset: false,
       agentsList: true,
@@ -512,7 +506,7 @@ describe("REST·wire 배선 (FakeAdapter)", () => {
     const res = await api("GET", "/adapter/status");
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({
-      statuses: [{ provider: "openclaw", gateway: "reconnecting", bridge: "connected" }],
+      statuses: [{ provider: "openclaw", gateways: [fakeGatewayStatus({ gateway: "reconnecting" })] }],
       capabilities: {
         openclaw: {
           sessionReset: false,
@@ -530,7 +524,10 @@ describe("REST·wire 배선 (FakeAdapter)", () => {
   it("어댑터 status 이벤트 → bus adapter.status → wire adapter.status", async () => {
     const socket = await connectWire(app, token);
     sockets.push(socket);
-    const status: AdapterStatus = { provider: "openclaw", gateway: "reconnecting", bridge: "down" };
+    const status: AdapterStatus = {
+      provider: "openclaw",
+      gateways: [fakeGatewayStatus({ gateway: "reconnecting", bridge: "down" })],
+    };
     const received = waitFor(socket, "adapter.status");
     adapter.emit({ kind: "status", status, capabilities: adapter.capabilities() });
     expect(await received).toEqual(status);
@@ -674,22 +671,20 @@ describe("watchGatewayReconnecting", () => {
     vi.useRealTimers();
   });
 
-  it("Gateway 가 60초 넘게 reconnecting 이면 system.notice warn 을 한 번 보내고, 벗어났다 돌아오면 다시 잰다", () => {
+  it("Gateway 가 60초 넘게 reconnecting 이면 그 이름을 넣은 system.notice warn 을 한 번 보내고, 벗어났다 돌아오면 다시 잰다", () => {
     const adapter = new FakeAdapter();
+    adapter.upsertGateway({ id: FAKE_GATEWAY_ID, name: "집", url: "ws://a", token: "t", enabled: true });
     const bus = new ServerBus();
     const notices: unknown[] = [];
     bus.on("system.notice", (n) => notices.push(n));
     const logger = { warn: vi.fn() };
-    const status = (
-      gateway: OpenClawAdapterStatus["gateway"],
-      bridge: OpenClawAdapterStatus["bridge"] = "down",
-    ) => {
-      adapter.setStatus({ provider: "openclaw", gateway, bridge });
-      adapter.emit({ kind: "status", status: adapter.status(), capabilities: adapter.capabilities() });
+    const status = (gateway: FakeGatewayState["gateway"], bridge: FakeGatewayState["bridge"] = "down") => {
+      adapter.setGatewayState({ gateway, bridge });
+      adapter.emitStatus();
     };
-    const notice = { level: "warn", message: "OpenClaw Gateway 에 연결하지 못하고 있습니다" };
+    const notice = { level: "warn", message: "OpenClaw Gateway 「집」에 연결하지 못하고 있습니다" };
 
-    adapter.setStatus({ provider: "openclaw", gateway: "down", bridge: "down" });
+    adapter.setGatewayState({ gateway: "down", bridge: "down" });
     const watch = watchGatewayReconnecting(adapter, bus, logger);
     status("reconnecting");
     vi.advanceTimersByTime(59_999);
@@ -766,10 +761,10 @@ describe("실제 어댑터(createOpenClawAdapter) 부팅", () => {
         payload: { label: "real" },
       });
       const bridgeToken = (issued.json() as { token: string }).token;
-      expect(["down", "reconnecting"]).toContain(openclawStatus(openclawOf(app)).gateway);
+      expect(["down", "reconnecting"]).toContain(soleGateway(openclawOf(app)).gateway);
       // 부팅 뒤 connect() 가 접속 루프를 돌렸다 — DATA_DIR(임시 디렉터리) 아래 디바이스 아이덴티티를 쓰고, 거부되면 reconnecting
       await vi.waitFor(() => expect(existsSync(deviceIdentityPath)).toBe(true));
-      await vi.waitFor(() => expect(openclawStatus(openclawOf(app)).gateway).toBe("reconnecting"), {
+      await vi.waitFor(() => expect(soleGateway(openclawOf(app)).gateway).toBe("reconnecting"), {
         timeout: 3_000,
       });
 
@@ -795,7 +790,7 @@ describe("실제 어댑터(createOpenClawAdapter) 부팅", () => {
         ok: true,
         data: { serverVersion: packageJson.version, protocol: BRIDGE_PROTOCOL },
       });
-      await vi.waitFor(() => expect(openclawStatus(openclawOf(app)).bridge).toBe("connected"));
+      await vi.waitFor(() => expect(soleGateway(openclawOf(app)).bridge).toBe("connected"));
 
       // 브리지 정본 → orchestrator.onCanonical → 에이전트 메시지 저장, 그 id 로 ack
       const ack = (await plugin.emitWithAck("outbound.message", {
@@ -818,7 +813,7 @@ describe("실제 어댑터(createOpenClawAdapter) 부팅", () => {
       await app.close();
       expect(performance.now() - started).toBeLessThan(5_000);
       expect(await notice).toEqual({ reason: "shutdown", message: "server shutting down" });
-      expect(openclawStatus(openclawOf(app)).gateway).toBe("down");
+      expect(soleGateway(openclawOf(app)).gateway).toBe("down");
       expect(app.db.$client.open).toBe(false);
     } finally {
       await app.close();

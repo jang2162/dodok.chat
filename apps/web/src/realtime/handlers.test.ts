@@ -20,6 +20,7 @@ import { stubNotification } from "../../test/domStubs";
 import { createFakeSocket } from "../../test/fakeSocket";
 import { eventOf, opsStatusOf } from "../../test/opsServer";
 import { agentOf } from "../../test/settingsServer";
+import { ADAPTER_OK, TEST_GATEWAY } from "../../test/shellApi";
 import {
   AGENT,
   APPROVAL,
@@ -784,21 +785,20 @@ describe("캐시 패치", () => {
 
   it("adapter.status: [adapter] 에 병합한다 — capabilities 는 유지, 아직 없으면 만들지 않는다", () => {
     const { fake, queryClient } = setup();
-    fake.serverEmit("adapter.status", { provider: "openclaw", gateway: "down", bridge: "down" });
+    const down = { ...TEST_GATEWAY, gateway: "down", bridge: "down" } as const;
+    fake.serverEmit("adapter.status", { provider: "openclaw", gateways: [down] });
     expect(queryClient.getQueryData(qk.adapter)).toBeUndefined();
 
     const capabilities = { sessionReset: true, agentsList: true, configSet: false };
-    const cached: AdapterStatusResponse = {
-      provider: "openclaw",
-      gateway: "connected",
-      bridge: "connected",
-      capabilities,
-    };
+    const cached: AdapterStatusResponse = { ...ADAPTER_OK, capabilities };
     queryClient.setQueryData(qk.adapter, cached);
-    fake.serverEmit("adapter.status", { provider: "openclaw", gateway: "reconnecting", bridge: "down" });
+    const reconnecting = { ...TEST_GATEWAY, gateway: "reconnecting", bridge: "down" } as const;
+    fake.serverEmit("adapter.status", { provider: "openclaw", gateways: [reconnecting] });
 
+    // Gateway 목록과 그것을 모은 값(점·배너가 읽는다)을 함께 바꾼다
     expect(queryClient.getQueryData(qk.adapter)).toEqual({
       provider: "openclaw",
+      gateways: [reconnecting],
       gateway: "reconnecting",
       bridge: "down",
       capabilities,
@@ -807,12 +807,7 @@ describe("캐시 패치", () => {
 
   it("adapter.status: OpenClaw 가 아닌 어댑터의 상태는 [adapter] 를 건드리지 않는다(판정 P7)", () => {
     const { fake, queryClient } = setup();
-    const cached: AdapterStatusResponse = {
-      provider: "openclaw",
-      gateway: "connected",
-      bridge: "connected",
-      capabilities: { sessionReset: true, agentsList: true, configSet: true },
-    };
+    const cached: AdapterStatusResponse = ADAPTER_OK;
     queryClient.setQueryData(qk.adapter, cached);
     fake.serverEmit("adapter.status", { provider: "claude", runners: { connected: 0, tokens: 1 } });
     expect(queryClient.getQueryData(qk.adapter)).toEqual(cached);

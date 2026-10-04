@@ -6,7 +6,7 @@
 import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { opsEvents } from "../../src/db/schema.sqlite";
-import { getOpsSettings } from "../../src/modules/ops/settings";
+import { getGatewayRow } from "../../src/modules/gateways/service";
 import { bootLiveApp, type LiveApp, type LiveAppOptions } from "../helpers/live-app";
 import { makePng } from "../helpers/png";
 import { openChannelWire, sendMessage, setupRelayChannel } from "../helpers/scenario-steps";
@@ -66,7 +66,12 @@ describe("운영 안정성 — 끊김·실패한 런·Gateway 버전·디스크"
     );
     l.plugin.disconnect();
     const payload = await opened;
-    expect(payload.event).toMatchObject({ kind: "plugin_down", key: "plugin", severity: "warn", count: 1 });
+    expect(payload.event).toMatchObject({
+      kind: "plugin_down",
+      key: `gateway:${l.gatewayId}`,
+      severity: "warn",
+      count: 1,
+    });
     expect(payload.unacked.warn).toBeGreaterThanOrEqual(1);
     const rows = eventsOf(l, "plugin_down");
     expect(rows).toHaveLength(bootRows.length + 1);
@@ -125,10 +130,11 @@ describe("운영 안정성 — 끊김·실패한 런·Gateway 버전·디스크"
     });
   });
 
-  it("Gateway 버전 — 핀과 같으면 사건 없이 기억만, 다르면 gateway_version_untested", async () => {
+  it("Gateway 버전 — 핀과 같으면 사건 없이 그 Gateway 에 기억만, 다르면 그 Gateway 의 gateway_version_untested", async () => {
+    const lastVersion = (l: LiveApp) => getGatewayRow(l.app.db, l.app.workspaceId, l.gatewayId)?.lastVersion;
     const pinned = await boot();
-    await until(() => getOpsSettings(pinned.app.db, pinned.app.workspaceId).lastGatewayVersion, "기억");
-    expect(getOpsSettings(pinned.app.db, pinned.app.workspaceId).lastGatewayVersion).toBe("2026.9.4");
+    await until(() => lastVersion(pinned), "기억");
+    expect(lastVersion(pinned)).toBe("2026.9.4");
     expect(eventsOf(pinned, "gateway_version_untested")).toEqual([]);
     await pinned.close();
 
@@ -140,8 +146,8 @@ describe("운영 안정성 — 끊김·실패한 런·Gateway 버전·디스크"
           : undefined,
       "untested",
     );
-    expect(row).toMatchObject({ key: "gateway:2026.9.5", severity: "info" });
-    expect(getOpsSettings(drifted.app.db, drifted.app.workspaceId).lastGatewayVersion).toBe("2026.9.5");
+    expect(row).toMatchObject({ key: `gateway:${drifted.gatewayId}:2026.9.5`, severity: "info" });
+    expect(lastVersion(drifted)).toBe("2026.9.5");
   });
 
   it("createApp 은 첫 디스크 측정이 끝나야 풀린다 — 부팅 직후 disk() 가 unknown 이 아니다", async () => {

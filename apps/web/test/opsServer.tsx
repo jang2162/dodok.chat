@@ -22,21 +22,26 @@ import { OWNER } from "./setupServer";
 
 /** 운영 화면 테스트의 가짜 서버·렌더 도우미. 픽스처는 shared 스키마를 통과시켜 계약과 맞춘다 */
 
-type StatusOver = Partial<Omit<OpsStatus, "server" | "gateway" | "plugin">> & {
+type GatewayRow = OpsStatus["gateways"][number];
+/** gateway·plugin 은 TEST_GATEWAY 한 줄을 덮는다 */
+type StatusOver = Partial<Omit<OpsStatus, "server">> & {
   server?: Partial<OpsStatus["server"]>;
-  gateway?: Partial<OpsStatus["gateway"]>;
-  plugin?: Partial<OpsStatus["plugin"]>;
+  gateway?: Partial<GatewayRow["gateway"]>;
+  plugin?: Partial<GatewayRow["plugin"]>;
 };
 
 /** 기본은 문제 없음 — 모두 연결됨·핀과 같은 버전·디스크 넉넉·직전 종료 정상 */
 export function opsStatusOf(over: StatusOver = {}): OpsStatus {
+  const { gateway, plugin, ...rest } = over;
+  const [base] = OPS_STATUS_OK.gateways;
   return OpsStatus.parse({
     ...OPS_STATUS_OK,
     runsToday: 12,
-    ...over,
+    ...rest,
     server: { ...OPS_STATUS_OK.server, ...over.server },
-    gateway: { ...OPS_STATUS_OK.gateway, ...over.gateway },
-    plugin: { ...OPS_STATUS_OK.plugin, ...over.plugin },
+    gateways: rest.gateways ?? [
+      { ...base, gateway: { ...base?.gateway, ...gateway }, plugin: { ...base?.plugin, ...plugin } },
+    ],
   });
 }
 

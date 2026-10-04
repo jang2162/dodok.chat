@@ -115,15 +115,11 @@ const api = (
 const setupStatus = async (live: Live) => SetupStatus.parse((await api(live, "GET", "/setup/status")).json());
 
 describe("Gateway 0개 — .env 에 OpenClaw 변수 없이 뜬다(Review Focus 5)", () => {
-  it("목록·설정 상태의 Gateway 가 비고, 어댑터는 down/down, 어떤 토큰으로도 브리지에 붙지 못한다", async () => {
+  it("목록·설정 상태·어댑터 상태의 Gateway 가 비고, 어떤 토큰으로도 브리지에 붙지 못한다", async () => {
     const live = await bootReal();
     expect((await api(live, "GET", "/gateways")).json()).toEqual([]);
     expect((await setupStatus(live)).gateways).toEqual([]);
-    expect(openclawStatus(openclawOf(live.app))).toEqual({
-      provider: "openclaw",
-      gateway: "down",
-      bridge: "down",
-    });
+    expect(openclawStatus(openclawOf(live.app))).toEqual({ provider: "openclaw", gateways: [] });
     expect(await tryBridge(live.app.url, `dbt_${"A".repeat(43)}`)).toBe("UNAUTHORIZED");
     expect(live.lines.some((l) => l.includes("no OpenClaw gateway configured"))).toBe(true);
   });

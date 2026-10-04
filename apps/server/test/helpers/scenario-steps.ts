@@ -191,7 +191,8 @@ export type WireLog = {
   readonly events: RunEvent[];
   readonly created: Message[];
   readonly updated: Message[];
-  readonly adapterStatus: Array<{ gateway: string; bridge: string }>;
+  /** adapter.status 의 OpenClaw Gateway 줄 — 이벤트마다 Gateway 수만큼 */
+  readonly adapterStatus: Array<{ gatewayId: string; gateway: string; bridge: string }>;
   /** approval.requested 의 approval, 도착 순서 */
   readonly approvals: Approval[];
   /** approval.resolved 의 approval, 도착 순서(만료·취소도 여기로 온다) */
@@ -252,7 +253,9 @@ export function recordWire(socket: WireClient): WireLog {
   socket.on(
     "adapter.status",
     record((p) => {
-      if (p.provider === "openclaw") adapterStatus.push({ gateway: p.gateway, bridge: p.bridge });
+      if (p.provider !== "openclaw") return;
+      for (const g of p.gateways)
+        adapterStatus.push({ gatewayId: g.id, gateway: g.gateway, bridge: g.bridge });
     }),
   );
   socket.on(

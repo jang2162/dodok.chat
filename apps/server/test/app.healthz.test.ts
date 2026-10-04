@@ -16,7 +16,7 @@ afterEach(async () => {
 describe("createApp", () => {
   it("/healthz 는 인증 없이 {ok, db} 만 낸다 — 워크스페이스 id·어댑터 상태는 싣지 않는다", async () => {
     const adapter = new FakeAdapter();
-    adapter.setStatus({ provider: "openclaw", gateway: "down", bridge: "down" });
+    adapter.setGatewayState({ gateway: "down", bridge: "down" });
     app = await bootTestApp({}, { adapters: [adapter] });
     const res = await app.fastify.inject({ method: "GET", url: "/healthz" });
     expect(res.statusCode).toBe(200);

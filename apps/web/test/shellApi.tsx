@@ -1,8 +1,8 @@
-import type { Channel, OpenClawAdapterStatus, OpsStatus } from "@dodok/shared";
+import type { Channel, OpenClawGatewayStatus, OpsStatus } from "@dodok/shared";
 import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { render } from "@testing-library/react";
-import type { AdapterCapabilities, AdapterStatusList } from "@/api/queries";
+import type { AdapterCapabilities, AdapterStatusList, AdapterStatusResponse } from "@/api/queries";
 import { createQueryClient } from "@/app/queryClient";
 import { createAppRouter } from "@/app/router";
 import { TooltipProvider } from "@/ui/tooltip";
@@ -10,19 +10,35 @@ import { TooltipProvider } from "@/ui/tooltip";
 export const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status });
 /** 로그인한 owner — 관리 화면이 열려 있다. member·admin 을 재는 테스트는 `{ ...ME, role: "member" }` 로 덮는다 */
 export const ME = { user: { id: "u", handle: "owner" }, workspaceId: "w", role: "owner" };
-export const ADAPTER_OK: OpenClawAdapterStatus & { capabilities: AdapterCapabilities } = {
+/** 테스트 서버의 Gateway 하나 — 셸 테스트는 이것 하나로 붙어 있다 */
+export const TEST_GATEWAY: OpenClawGatewayStatus = {
+  id: "01a00000-0000-7000-8000-0000000000a1",
+  name: "사무실",
+  enabled: true,
+  gateway: "connected",
+  bridge: "connected",
+};
+
+export const ADAPTER_OK: AdapterStatusResponse = {
   provider: "openclaw",
+  gateways: [TEST_GATEWAY],
   gateway: "connected",
   bridge: "connected",
   capabilities: { sessionReset: true, agentsList: true, configSet: true },
 };
 
-/** GET /adapter/status 응답 모양(어댑터 목록) — OpenClaw 줄 하나로 싸서 준다 */
+/**
+ * GET /adapter/status 응답 모양(어댑터 목록) — OpenClaw 줄 하나로 싸서 준다. Gateway 는 TEST_GATEWAY 하나이고 그 상태는 준 값의
+ * gateway·bridge 다(`{ ...ADAPTER_OK, gateway: "down" }` 이 그 Gateway 가 끊긴 서버가 된다)
+ */
 export function adapterStatusBody(
-  openclaw: OpenClawAdapterStatus & { capabilities: AdapterCapabilities },
+  openclaw: Pick<AdapterStatusResponse, "gateway" | "bridge"> & { capabilities: AdapterCapabilities },
 ): AdapterStatusList {
-  const { capabilities, ...status } = openclaw;
-  return { statuses: [status], capabilities: { openclaw: capabilities } };
+  const { capabilities, gateway, bridge } = openclaw;
+  return {
+    statuses: [{ provider: "openclaw", gateways: [{ ...TEST_GATEWAY, gateway, bridge }] }],
+    capabilities: { openclaw: capabilities },
+  };
 }
 
 /** 문제 없는 운영 상태(OpsStatus 모양) — 운영 화면 테스트는 test/opsServer 의 `opsStatusOf` 로 칸을 덮는다 */
@@ -31,9 +47,16 @@ export const OPS_STATUS_OK: OpsStatus = {
   server: { version: "0.1.0", startedAt: "2026-09-25T00:00:00.000Z", previousClean: true },
   db: { bytes: 1_048_576 },
   disk: { level: "ok", freeBytes: 50 * 1024 ** 3, totalBytes: 100 * 1024 ** 3 },
-  adapter: { provider: "openclaw", gateway: "connected", bridge: "connected" },
-  gateway: { state: "connected", version: "2026.9.4", pinned: "2026.9.4", drift: false },
-  plugin: { state: "connected" },
+  adapter: { provider: "openclaw", gateways: [TEST_GATEWAY] },
+  gateways: [
+    {
+      id: TEST_GATEWAY.id,
+      name: TEST_GATEWAY.name,
+      enabled: true,
+      gateway: { state: "connected", version: "2026.9.4", pinned: "2026.9.4", drift: false },
+      plugin: { state: "connected" },
+    },
+  ],
   runsToday: 0,
   dailyRunLimit: 300,
   blockedToday: 0,

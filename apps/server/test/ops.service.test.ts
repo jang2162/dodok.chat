@@ -364,9 +364,9 @@ describe("운영 설정(ops_json)", () => {
     expect(getOpsSettings(db, ws)).toEqual({ dailyRunLimit: 300 });
   });
 
-  it("null 은 무제한, 숫자는 그대로, lastGatewayVersion 도 읽는다", () => {
-    setRaw(JSON.stringify({ dailyRunLimit: null, lastGatewayVersion: "2026.9.5" }));
-    expect(getOpsSettings(db, ws)).toEqual({ dailyRunLimit: null, lastGatewayVersion: "2026.9.5" });
+  it("null 은 무제한, 숫자는 그대로 — 모르는 키는 설정에 싣지 않는다", () => {
+    setRaw(JSON.stringify({ dailyRunLimit: null, future: "x" }));
+    expect(getOpsSettings(db, ws)).toEqual({ dailyRunLimit: null });
     setRaw(JSON.stringify({ dailyRunLimit: 20 }));
     expect(getOpsSettings(db, ws)).toEqual({ dailyRunLimit: 20 });
   });
@@ -381,18 +381,11 @@ describe("운영 설정(ops_json)", () => {
   });
 
   it("patch 는 준 키만 바꾸고 다른 키(모르는 키 포함)는 남긴다", () => {
-    setRaw(JSON.stringify({ lastGatewayVersion: "2026.9.4", future: 1 }));
-    expect(patchOpsSettings(db, ws, { dailyRunLimit: null })).toEqual({
-      dailyRunLimit: null,
-      lastGatewayVersion: "2026.9.4",
-    });
-    expect(patchOpsSettings(db, ws, { lastGatewayVersion: "2026.9.5" })).toEqual({
-      dailyRunLimit: null,
-      lastGatewayVersion: "2026.9.5",
-    });
+    setRaw(JSON.stringify({ future: 1 }));
+    expect(patchOpsSettings(db, ws, { dailyRunLimit: null })).toEqual({ dailyRunLimit: null });
     expect(patchOpsSettings(db, ws, { dailyRunLimit: 50 }).dailyRunLimit).toBe(50);
     const raw = db.select({ opsJson: workspaces.opsJson }).from(workspaces).get()?.opsJson ?? "";
-    expect(JSON.parse(raw)).toEqual({ dailyRunLimit: 50, lastGatewayVersion: "2026.9.5", future: 1 });
+    expect(JSON.parse(raw)).toEqual({ dailyRunLimit: 50, future: 1 });
   });
 
   it("patch 가 범위 밖이면 VALIDATION 으로 던지고 저장하지 않는다", () => {

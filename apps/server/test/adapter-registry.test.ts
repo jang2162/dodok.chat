@@ -1,5 +1,11 @@
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
-import { AdapterError, type Agent, type AgentProvider, type ProviderApproval } from "@dodok/shared";
+import {
+  AdapterError,
+  type AdapterStatus,
+  type Agent,
+  type AgentProvider,
+  type ProviderApproval,
+} from "@dodok/shared";
 import { eq } from "drizzle-orm";
 import { v7 as uuid } from "uuid";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -12,7 +18,7 @@ import { addMember, type ChannelRecord, createChannel } from "../src/modules/cha
 import { listMessages } from "../src/modules/messages/service";
 import { getRun } from "../src/modules/runs/store";
 import { bootTestApp, login } from "./helpers/app";
-import { FAKE_GATEWAY_ID } from "./helpers/gateways";
+import { FAKE_GATEWAY_ID, fakeGatewayStatus } from "./helpers/gateways";
 import { connectWire, type WireClient } from "./helpers/wire";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -492,7 +498,7 @@ describe("어댑터 레지스트리 배선 (앱 부팅, OpenClaw·Claude 가짜 
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({
       statuses: [
-        { provider: "openclaw", gateway: "connected", bridge: "connected" },
+        { provider: "openclaw", gateways: [fakeGatewayStatus()] },
         { provider: "claude", runners: { connected: 1, tokens: 1 } },
       ],
       capabilities: {
@@ -513,7 +519,10 @@ describe("어댑터 레지스트리 배선 (앱 부팅, OpenClaw·Claude 가짜 
     const socket = await connect(channel.id);
     const seen: unknown[] = [];
     socket.on("adapter.status", (s) => seen.push(s));
-    const openclawStatus = { provider: "openclaw", gateway: "reconnecting", bridge: "connected" } as const;
+    const openclawStatus: AdapterStatus = {
+      provider: "openclaw",
+      gateways: [fakeGatewayStatus({ gateway: "reconnecting" })],
+    };
     const claudeStatus = { provider: "claude", runners: { connected: 0, tokens: 1 } } as const;
     openclaw.emit({ kind: "status", status: openclawStatus, capabilities: openclaw.capabilities() });
     claude.emit({ kind: "status", status: claudeStatus, capabilities: claude.capabilities() });

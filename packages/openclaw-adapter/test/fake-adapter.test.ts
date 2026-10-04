@@ -150,9 +150,15 @@ describe("FakeAdapter", () => {
     expect(ok).not.toHaveProperty("seq");
   });
 
-  it("setStatus·setCapabilities 가 status()·capabilities() 에 반영되고 기본값은 전부 연결·true 다", () => {
+  it("setGatewayState·setCapabilities 가 status()·capabilities() 에 반영되고 기본값은 전부 연결·true 다", () => {
     const adapter = new FakeAdapter();
-    expect(adapter.status()).toEqual({ provider: "openclaw", gateway: "connected", bridge: "connected" });
+    expect(adapter.status()).toEqual({ provider: "openclaw", gateways: [] });
+    adapter.upsertGateway({ id: FAKE_GATEWAY_ID, name: "gw", url: "ws://a", token: "t", enabled: true });
+    const line = (gateway: string, bridge: string) => ({
+      provider: "openclaw",
+      gateways: [{ id: FAKE_GATEWAY_ID, name: "gw", enabled: true, gateway, bridge }],
+    });
+    expect(adapter.status()).toEqual(line("connected", "connected"));
     expect(adapter.capabilities()).toEqual({
       sessionReset: true,
       agentsList: true,
@@ -161,7 +167,7 @@ describe("FakeAdapter", () => {
       serverSessionIds: false,
     });
 
-    adapter.setStatus({ provider: "openclaw", gateway: "down", bridge: "down" });
+    adapter.setGatewayState({ gateway: "down", bridge: "down" });
     adapter.setCapabilities({
       sessionReset: false,
       agentsList: true,
@@ -170,7 +176,7 @@ describe("FakeAdapter", () => {
       serverSessionIds: false,
     });
 
-    expect(adapter.status()).toEqual({ provider: "openclaw", gateway: "down", bridge: "down" });
+    expect(adapter.status()).toEqual(line("down", "down"));
     expect(adapter.capabilities()).toEqual({
       sessionReset: false,
       agentsList: true,
@@ -262,7 +268,7 @@ describe("FakeAdapter — 승인(서버 테스트용 대본)", () => {
     adapter.emitApproval(a);
     adapter.scriptResolveApproval(() => a);
     for (const gateway of ["reconnecting", "down"] as const) {
-      adapter.setStatus({ provider: "openclaw", gateway, bridge: "connected" });
+      adapter.setGatewayState({ gateway });
       await expect(
         adapter.resolveApproval(a.providerApprovalId, "plugin", "deny", FAKE_GATEWAY_ID),
       ).rejects.toMatchObject({
@@ -363,8 +369,20 @@ describe("FakeAdapter — Gateway 목록", () => {
       ["g1", "connected"],
       ["g2", "disabled"],
     ]);
+    // Gateway 하나만 상태·상세를 바꾼다 — 다른 Gateway 는 기본값 그대로
+    adapter.upsertGateway({ id: "g3", name: "별장", url: "ws://c", token: "t3", enabled: true });
+    adapter.setGatewayState({ gateway: "reconnecting" }, "g3");
+    const detail = adapter.setupDetail();
+    if (detail.provider !== "openclaw") throw new Error("openclaw detail");
+    adapter.setSetupDetail({ ...detail, gateway: { ...detail.gateway, version: "2026.9.9" } }, "g3");
+    expect(adapter.gatewayStatuses().map((g) => [g.id, g.gateway])).toEqual([
+      ["g1", "connected"],
+      ["g2", "disabled"],
+      ["g3", "reconnecting"],
+    ]);
+    expect(adapter.gatewaySetupDetails().map((g) => g.gateway.version)).toEqual([null, null, "2026.9.9"]);
     await adapter.removeGateway("g1");
-    expect(adapter.gatewaySetupDetails().map((g) => g.id)).toEqual(["g2"]);
+    expect(adapter.gatewaySetupDetails().map((g) => g.id)).toEqual(["g2", "g3"]);
     expect(adapter.calls.removeGateway).toEqual(["g1"]);
   });
 });

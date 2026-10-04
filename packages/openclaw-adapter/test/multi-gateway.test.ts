@@ -324,6 +324,29 @@ describe("멀티 Gateway — 연결 둘", () => {
     expect(gw2.calls.some((c) => c.method === "sessions.messages.subscribe")).toBe(true);
   });
 
+  it("전달·플러그인 hello·브리지 상태 로그 줄은 그 Gateway 의 id 를 싣고, 공유 토큰·브리지 토큰은 싣지 않는다", async () => {
+    await bothConnected();
+    logger.info.mockClear();
+    const socket = await plugin("bridge-g2");
+    const input = delivery();
+    await adapter.send(input, { connectionId: "g2" });
+    socket.disconnect();
+    await until(() => gatewayOf("g2")?.bridge === "down", "g2 plugin down");
+
+    const linesOf = (msg: string) =>
+      logger.info.mock.calls
+        .filter((call) => call[1] === msg)
+        .map((call) => call[0] as Record<string, unknown>);
+    expect(linesOf("bridge plugin hello").map((l) => l.gatewayId)).toEqual(["g2"]);
+    expect(linesOf("inbound delivered").map((l) => [l.gatewayId, l.runId])).toEqual([["g2", input.runId]]);
+    expect(linesOf("bridge status changed").map((l) => [l.gatewayId, l.bridge])).toEqual([
+      ["g2", "connected"],
+      ["g2", "down"],
+    ]);
+    const text = JSON.stringify(logger.info.mock.calls);
+    for (const secret of [G1.token, G2.token, "bridge-g2"]) expect(text).not.toContain(secret);
+  });
+
   it("send·listAgents 는 연결을 가린다 — null·모르는 id 는 ADAPTER_UNAVAILABLE, listAgents 는 그 Gateway 의 agents.list", async () => {
     await bothConnected();
     fakeGateway(G1.url).responses["agents.list"] = () => ({ agents: [{ id: "dev" }, { id: "fin" }] });
@@ -926,9 +949,9 @@ describe("멀티 Gateway — 지우기·디바이스 파일 경합(리뷰 M1·M2
   });
 });
 
-describe("멀티 Gateway — 단수 상태·상세(계약 status()·setupDetail())", () => {
-  it("Gateway 가 없으면 down/down, 상세는 빈 블록", () => {
-    expect(adapter.status()).toEqual({ provider: "openclaw", gateway: "down", bridge: "down" });
+describe("멀티 Gateway — 상태 목록·단수 상세(계약 status()·setupDetail())", () => {
+  it("Gateway 가 없으면 빈 목록, 상세는 빈 블록", () => {
+    expect(adapter.status()).toEqual({ provider: "openclaw", gateways: [] });
     expect(adapter.setupDetail()).toEqual({
       provider: "openclaw",
       gateway: { state: "down", host: "", version: null, pairing: null },
@@ -937,19 +960,33 @@ describe("멀티 Gateway — 단수 상태·상세(계약 status()·setupDetail(
     expect(adapter.gatewayStatuses()).toEqual([]);
   });
 
-  it("켜진 Gateway 가운데 가장 나쁜 상태를 모으고, 플러그인은 켜진 Gateway 모두에 붙어야 connected — 꺼진 Gateway 는 세지 않는다", async () => {
+  it("status() 는 Gateway 마다 한 줄(더한 차례) — 꺼진 Gateway 는 enabled false·disabled 이고, 지운 Gateway 는 빠진다", async () => {
     await bothConnected();
     await plugin("bridge-g1");
-    expect(adapter.status()).toEqual({ provider: "openclaw", gateway: "connected", bridge: "down" });
-    await plugin("bridge-g2");
-    expect(adapter.status()).toEqual({ provider: "openclaw", gateway: "connected", bridge: "connected" });
+    const line = (g: typeof G1, gateway: string, bridge: string, enabled = true) => ({
+      id: g.id,
+      name: g.name,
+      enabled,
+      gateway,
+      bridge,
+    });
+    expect(adapter.status()).toEqual({
+      provider: "openclaw",
+      gateways: [line(G1, "connected", "connected"), line(G2, "connected", "down")],
+    });
 
     down(fakeGateway(G2.url));
-    await until(() => adapter.status().gateway === "reconnecting", "aggregate reconnecting");
+    await until(() => adapter.status().gateways[1]?.gateway === "reconnecting", "g2 reconnecting");
+    expect(adapter.status().gateways[0]?.gateway).toBe("connected");
 
     adapter.upsertGateway({ ...G2, enabled: false });
-    await until(() => adapter.status().gateway === "connected", "disabled g2 not counted");
-    expect(adapter.status().bridge).toBe("connected");
+    expect(adapter.status().gateways[1]).toEqual(line(G2, "disabled", "down", false));
+
+    await adapter.removeGateway(G2.id);
+    expect(adapter.status()).toEqual({
+      provider: "openclaw",
+      gateways: [line(G1, "connected", "connected")],
+    });
   });
 
   it("상세는 첫 켜진 Gateway 의 것", async () => {

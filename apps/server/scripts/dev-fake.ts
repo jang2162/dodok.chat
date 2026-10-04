@@ -24,14 +24,16 @@
  * 끊김 사건 임계는 DODOK_DEVFAKE_DISCONNECT_MS(기본 운영과 같은 60초)로 줄인다. 종료 표지는 <dataDir>/dev-fake-run/ 에 둔다.
  */
 import {
+  type AdapterStatus,
   type AgentAdapter,
   type ApprovalDecision,
   BridgeHello,
+  type GatewayLinkState,
   type InboundDeliver,
+  type OpenClawGatewayStatus,
   OpsEvent,
   OpsEventKind,
   OpsSeverity,
-  type OpenClawAdapterStatus,
 } from "@dodok/shared";
 import { and, eq } from "drizzle-orm";
 import { createHash } from "node:crypto";
@@ -793,21 +795,32 @@ function pluginTokenId(app: App): string | null | undefined {
   return detail.provider === "openclaw" ? detail.bridge.plugin?.tokenId : undefined;
 }
 
-/** 어댑터의 Gateway 상태가 want 를 만족할 때까지 기다린다 — timeoutMs 가 지나면 false */
+/** 어댑터 상태에서 가짜 Gateway(DEV_FAKE_GATEWAY_ID)의 줄 — 목록에 없으면 undefined */
+function fakeGatewayLine(status: AdapterStatus): OpenClawGatewayStatus | undefined {
+  return status.provider === "openclaw"
+    ? status.gateways.find((g) => g.id === DEV_FAKE_GATEWAY_ID)
+    : undefined;
+}
+
+/** 가짜 Gateway 의 상태 — 목록에 없으면 undefined */
+function fakeGatewayState(status: AdapterStatus): GatewayLinkState | undefined {
+  return fakeGatewayLine(status)?.gateway;
+}
+
+/** 가짜 Gateway 의 상태가 want 를 만족할 때까지 기다린다 — timeoutMs 가 지나면 false */
 function waitForGateway(
   app: App,
-  want: (state: OpenClawAdapterStatus["gateway"]) => boolean,
+  want: (state: GatewayLinkState | undefined) => boolean,
   timeoutMs: number,
 ): Promise<boolean> {
-  const initial = openclawOf(app).status();
-  if (initial.provider === "openclaw" && want(initial.gateway)) return Promise.resolve(true);
+  if (want(fakeGatewayState(openclawOf(app).status()))) return Promise.resolve(true);
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
       off();
       resolve(false);
     }, timeoutMs);
     const off = openclawOf(app).onEvent((e) => {
-      if (e.kind !== "status" || e.status.provider !== "openclaw" || !want(e.status.gateway)) return;
+      if (e.kind !== "status" || !want(fakeGatewayState(e.status))) return;
       clearTimeout(timer);
       off();
       resolve(true);
@@ -1108,9 +1121,9 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
               GATEWAY_HOOK_TIMEOUT_MS,
             );
             live.logger.info({ state, reached }, "dev:fake gateway hook");
-            return reached
-              ? { ok: true, status: openclawOf(live).status() }
-              : { ok: false, reason: "timeout", status: openclawOf(live).status() };
+            // status 는 가짜 Gateway 한 줄(어댑터 status().gateways 의 그 Gateway)
+            const status = fakeGatewayLine(openclawOf(live).status());
+            return reached ? { ok: true, status } : { ok: false, reason: "timeout", status };
           }),
         ],
         [DEV_FAKE_RUNNER_PATH, route(RunnerInput, "{ connected: boolean, token?: string }", setRunner)],

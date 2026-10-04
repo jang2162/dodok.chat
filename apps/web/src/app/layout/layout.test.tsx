@@ -1,10 +1,9 @@
-import type { OpenClawAdapterStatus } from "@dodok/shared";
 import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { type AdapterStatusResponse, qk } from "@/api/queries";
+import { type AdapterStatusResponse, type OpenClawSummary, qk } from "@/api/queries";
 import { createQueryClient } from "@/app/queryClient";
 import { type WireStatus, useWireStatus } from "@/realtime/wire";
 import { TooltipProvider } from "@/ui/tooltip";
@@ -17,6 +16,7 @@ import {
   json,
   renderRoute,
   shellGet,
+  TEST_GATEWAY,
 } from "../../../test/shellApi";
 import { Banners } from "./Banners";
 import { ConnectionDots } from "./ConnectionDots";
@@ -28,7 +28,7 @@ afterEach(() => {
 });
 
 /** 어댑터 상태만 답하는 가짜 서버 — 캐시를 바꾸는 테스트는 그 뒤로 다시 부르지 않는다(staleTime) */
-function renderWithAdapter(ui: ReactNode, adapter: Pick<OpenClawAdapterStatus, "gateway" | "bridge">) {
+function renderWithAdapter(ui: ReactNode, adapter: OpenClawSummary) {
   vi.stubGlobal(
     "fetch",
     vi.fn<typeof fetch>(async (input) =>
@@ -46,7 +46,7 @@ function renderWithAdapter(ui: ReactNode, adapter: Pick<OpenClawAdapterStatus, "
     </QueryClientProvider>,
   );
   /** wire `adapter.status` 가 캐시를 고치는 것과 같이 — 관찰자 알림은 notifyManager 가 미뤄 보내므로 화면 단언은 findBy·waitFor 로 */
-  const push = (next: Pick<OpenClawAdapterStatus, "gateway" | "bridge">) =>
+  const push = (next: OpenClawSummary) =>
     queryClient.setQueryData<AdapterStatusResponse>(qk.adapter, (prev) =>
       prev?.provider === "openclaw" ? { ...prev, ...next } : prev,
     );
@@ -160,6 +160,22 @@ describe("Banners", () => {
     await waitFor(() => expect(screen.queryByText(OPENCLAW_DOWN)).not.toBeInTheDocument());
 
     push({ gateway: "connected", bridge: "down" });
+    expect(await screen.findByText(OPENCLAW_DOWN)).toBeInTheDocument();
+  });
+
+  it("Gateway 가 없거나 모두 꺼졌으면 OpenClaw 배너를 띄우지 않는다 — 모은 값이 down 이어도 끊긴 연결이 없다", async () => {
+    const { queryClient } = renderWithAdapter(<Banners />, { gateway: "down", bridge: "down" });
+    expect(await screen.findByText(OPENCLAW_DOWN)).toBeInTheDocument();
+
+    const only = (gateways: AdapterStatusResponse["gateways"]) =>
+      act(() =>
+        queryClient.setQueryData<AdapterStatusResponse>(qk.adapter, (prev) => prev && { ...prev, gateways }),
+      );
+    only([]);
+    await waitFor(() => expect(screen.queryByText(OPENCLAW_DOWN)).not.toBeInTheDocument());
+    only([{ ...TEST_GATEWAY, enabled: false, gateway: "disabled", bridge: "down" }]);
+    await waitFor(() => expect(screen.queryByText(OPENCLAW_DOWN)).not.toBeInTheDocument());
+    only([{ ...TEST_GATEWAY, gateway: "down", bridge: "down" }]);
     expect(await screen.findByText(OPENCLAW_DOWN)).toBeInTheDocument();
   });
 

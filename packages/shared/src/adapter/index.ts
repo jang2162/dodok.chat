@@ -16,7 +16,7 @@ import type {
 } from "../domain";
 import type { RunEvent, RunSignal } from "../events";
 import type { RunnerConnection } from "../setup";
-import type { AdapterStatus } from "../wire";
+import type { AdapterStatus, GatewayLinkState, OpenClawGatewayStatus } from "../wire";
 
 // 어댑터 계약(서버 코어 스펙 6.1, 러너 스펙 2장). 두 어댑터 패키지와 서버가 여기서 가져간다 — 순수 타입과 AdapterError 만
 
@@ -83,13 +83,13 @@ export type AdapterSetupDetail =
   | {
       provider: "openclaw";
       gateway: {
-        state: OpenClawAdapterStatus["gateway"];
+        state: Exclude<GatewayLinkState, "disabled">;
         host: string;
         version: string | null;
         pairing: { requestId: string; since: string } | null;
       };
       bridge: {
-        state: OpenClawAdapterStatus["bridge"];
+        state: OpenClawGatewayStatus["bridge"];
         plugin: {
           version: string;
           sdkVersion: string;

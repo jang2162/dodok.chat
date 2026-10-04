@@ -1,6 +1,6 @@
 import { BridgeAuthGuard, createOpenClawAdapter } from "@dodok/openclaw-adapter";
 import { createRunnerAdapter, type RunnerAdapter, type RunnerTokenVerifier } from "@dodok/runner-adapter";
-import type { ApiError } from "@dodok/shared";
+import type { AdapterStatus, ApiError, GatewayLinkState } from "@dodok/shared";
 import cookie from "@fastify/cookie";
 import rateLimit from "@fastify/rate-limit";
 import { sql } from "drizzle-orm";
@@ -11,7 +11,7 @@ import { Server } from "socket.io";
 import { v7 as uuidv7 } from "uuid";
 import packageJson from "../package.json" with { type: "json" };
 import { type AdapterRegistry, createAdapterRegistry } from "./adapters/registry";
-import { type AgentAdapter, hasGateways, type OpenClawAdapterStatus } from "./adapters/types";
+import { type AgentAdapter, hasGateways } from "./adapters/types";
 import { type Auth, createAuth } from "./auth";
 import { bootstrapOwner } from "./auth/owner";
 import { createIpLimit, registerAuthRoutes } from "./auth/routes";
@@ -726,8 +726,9 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
 }
 
 /**
- * 어댑터 status 이벤트로 Gateway 상태를 본다. reconnecting 이 delayMs 동안 이어지면 system.notice warn 을 한 번 보낸다.
- * reconnecting 을 벗어나면 다시 잰다. 타이머는 unref — 프로세스를 붙잡지 않는다.
+ * 어댑터 status 이벤트로 Gateway 마다 상태를 본다. 한 Gateway 의 reconnecting 이 delayMs 동안 이어지면 그 Gateway 이름을 넣은
+ * system.notice warn 을 한 번 보낸다(멀티 Gateway 스펙 6.5). reconnecting 을 벗어나면 다시 잰다. 꺼진·지운 Gateway 는 재지 않는다.
+ * 타이머는 unref — 프로세스를 붙잡지 않는다.
  */
 export function watchGatewayReconnecting(
   adapter: Pick<AgentAdapter, "status" | "onEvent">,
@@ -735,32 +736,48 @@ export function watchGatewayReconnecting(
   logger: Pick<Logger, "warn">,
   delayMs = GATEWAY_RECONNECTING_NOTICE_MS,
 ): { close(): void } {
-  let gateway: OpenClawAdapterStatus["gateway"] | undefined;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const observe = (next: OpenClawAdapterStatus["gateway"]) => {
-    if (next === gateway) return;
-    gateway = next;
-    clearTimeout(timer);
-    timer = undefined;
-    if (next !== "reconnecting") return;
-    timer = setTimeout(() => {
-      timer = undefined;
-      logger.warn({ delayMs }, "gateway still reconnecting");
-      bus.emit("system.notice", { level: "warn", message: "OpenClaw Gateway 에 연결하지 못하고 있습니다" });
-    }, delayMs);
-    timer.unref();
+  type Watched = { name: string; state: GatewayLinkState; timer?: ReturnType<typeof setTimeout> };
+  const watched = new Map<string, Watched>();
+  const observe = (status: AdapterStatus) => {
+    // Gateway 는 OpenClaw 어댑터에만 있다
+    if (status.provider !== "openclaw") return;
+    const listed = new Set<string>();
+    for (const entry of status.gateways) {
+      listed.add(entry.id);
+      const w = watched.get(entry.id) ?? { name: entry.name, state: entry.gateway };
+      const changed = !watched.has(entry.id) || w.state !== entry.gateway;
+      watched.set(entry.id, w);
+      w.name = entry.name;
+      if (!changed) continue;
+      w.state = entry.gateway;
+      clearTimeout(w.timer);
+      w.timer = undefined;
+      if (entry.gateway !== "reconnecting") continue;
+      w.timer = setTimeout(() => {
+        w.timer = undefined;
+        logger.warn({ delayMs, gatewayId: entry.id }, "gateway still reconnecting");
+        bus.emit("system.notice", {
+          level: "warn",
+          message: `OpenClaw Gateway 「${w.name}」에 연결하지 못하고 있습니다`,
+        });
+      }, delayMs);
+      w.timer.unref();
+    }
+    for (const [id, w] of watched) {
+      if (listed.has(id)) continue;
+      clearTimeout(w.timer);
+      watched.delete(id);
+    }
   };
-  // Gateway 는 OpenClaw 어댑터에만 있다
   const off = adapter.onEvent((e) => {
-    if (e.kind === "status" && e.status.provider === "openclaw") observe(e.status.gateway);
+    if (e.kind === "status") observe(e.status);
   });
-  const initial = adapter.status();
-  if (initial.provider === "openclaw") observe(initial.gateway);
+  observe(adapter.status());
   return {
     close() {
       off();
-      clearTimeout(timer);
-      timer = undefined;
+      for (const w of watched.values()) clearTimeout(w.timer);
+      watched.clear();
     },
   };
 }

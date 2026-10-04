@@ -138,9 +138,19 @@ const STATUS = {
   server: { version: "0.0.0", startedAt: NOW, previousClean: null },
   db: { bytes: 4096 },
   disk: { level: "ok", freeBytes: 10, totalBytes: 20 },
-  adapter: { provider: "openclaw", gateway: "connected", bridge: "down" },
-  gateway: { state: "connected", version: "2026.9.5", pinned: "2026.9.4", drift: true },
-  plugin: { state: "down" },
+  adapter: {
+    provider: "openclaw",
+    gateways: [{ id: ID, name: "집", enabled: true, gateway: "connected", bridge: "down" }],
+  },
+  gateways: [
+    {
+      id: ID,
+      name: "집",
+      enabled: true,
+      gateway: { state: "connected", version: "2026.9.5", pinned: "2026.9.4", drift: true },
+      plugin: { state: "down" },
+    },
+  ],
   runsToday: 3,
   dailyRunLimit: 300,
   blockedToday: 0,
@@ -150,6 +160,18 @@ const STATUS = {
 describe("OpsStatus", () => {
   it("디스크 unknown 은 수치 없이, 상한 null(무제한)·직전 종료 불리언을 받는다", () => {
     expect(OpsStatus.safeParse(STATUS).success).toBe(true);
+    // Gateway 가 없으면 빈 목록, 꺼진 Gateway 는 disabled
+    expect(
+      OpsStatus.safeParse({ ...STATUS, adapter: { provider: "openclaw", gateways: [] }, gateways: [] })
+        .success,
+    ).toBe(true);
+    const [gw] = STATUS.gateways;
+    expect(
+      OpsStatus.safeParse({
+        ...STATUS,
+        gateways: [{ ...gw, enabled: false, gateway: { ...gw?.gateway, state: "disabled", version: null } }],
+      }).success,
+    ).toBe(true);
     expect(OpsStatus.safeParse({ ...STATUS, disk: { level: "unknown" }, dailyRunLimit: null }).success).toBe(
       true,
     );
@@ -162,7 +184,10 @@ describe("OpsStatus", () => {
     expect(OpsStatus.safeParse({ ...STATUS, disk: { level: "ok" } }).success).toBe(false);
     expect(OpsStatus.safeParse({ ...STATUS, runsToday: -1 }).success).toBe(false);
     expect(OpsStatus.safeParse({ ...STATUS, blockedToday: -1 }).success).toBe(false);
-    expect(OpsStatus.safeParse({ ...STATUS, plugin: { state: "reconnecting" } }).success).toBe(false);
+    const [gw] = STATUS.gateways;
+    expect(
+      OpsStatus.safeParse({ ...STATUS, gateways: [{ ...gw, plugin: { state: "reconnecting" } }] }).success,
+    ).toBe(false);
   });
 
   it("/healthz 에서 뺀 워크스페이스 id·어댑터 상세가 있어야 한다(스펙 6장)", () => {

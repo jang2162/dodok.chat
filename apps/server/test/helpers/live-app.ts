@@ -134,11 +134,18 @@ function addFakeGateway(app: App, gateway: FakeGateway): { gatewayId: string; br
   return { gatewayId: row.id, bridgeToken: token };
 }
 
-/** 어댑터 status 이벤트로 gateway·bridge 가 모두 connected 가 될 때까지 기다린다. dev:fake(scripts/dev-fake.ts)도 쓴다. */
+/**
+ * 어댑터 status 이벤트로 Gateway 가 하나 이상이고 모두 gateway·bridge connected 가 될 때까지 기다린다.
+ * dev:fake(scripts/dev-fake.ts)도 쓴다.
+ */
 export function waitForAdapterConnected(app: App, timeoutMs = CONNECT_TIMEOUT_MS): Promise<void> {
   const up = () => {
     const status = openclawOf(app).status();
-    return status.provider === "openclaw" && status.gateway === "connected" && status.bridge === "connected";
+    return (
+      status.provider === "openclaw" &&
+      status.gateways.length > 0 &&
+      status.gateways.every((g) => g.gateway === "connected" && g.bridge === "connected")
+    );
   };
   if (up()) return Promise.resolve();
   return new Promise((resolve, reject) => {

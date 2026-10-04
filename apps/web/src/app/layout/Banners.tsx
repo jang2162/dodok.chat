@@ -25,9 +25,11 @@ export function Banners() {
   const offline = useOffline();
   const { data: adapter } = useAdapterStatus();
   const owner = useIsOwner();
+  // Gateway 가 없거나 모두 꺼졌으면 띄우지 않는다 — 끊긴 연결이 없고, 끈 것은 고장이 아니다
   const openclawDown =
     wire === "connected" &&
     adapter?.provider === "openclaw" &&
+    adapter.gateways.some((g) => g.enabled) &&
     (adapter.gateway !== "connected" || adapter.bridge === "down");
 
   return (
