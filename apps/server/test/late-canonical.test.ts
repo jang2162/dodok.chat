@@ -19,6 +19,7 @@ import { runs } from "../src/db/schema.sqlite";
 import { eq } from "drizzle-orm";
 import { bootTestApp, login } from "./helpers/app";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
+import { connectWire, waitFor, type WireClient } from "./helpers/wire";
 
 const KEYS = {
   p256dh: "BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCA_0QTpQtUbVlUls0VJXg7A8u-Ts1XbjhazAkj7I99e8QcYP7DkM",
@@ -35,7 +36,9 @@ type Setup = {
 
 const apps: App[] = [];
 const dirs: string[] = [];
+const sockets: WireClient[] = [];
 afterEach(async () => {
+  for (const socket of sockets.splice(0)) socket.close();
   for (const app of apps.splice(0)) await app.close();
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
@@ -184,6 +187,24 @@ describe("연결을 닫으며 끝낸 런에 늦게 온 정본", () => {
       }),
     ).rejects.toMatchObject({ body: { code: "CONSUMED" } });
     expect(getRun(app.db, runId)?.status).toBe("error");
+  });
+
+  it("푸시만 건너뛰는 표지(silent)는 서버 안에만 있다 — wire 의 message.created 에는 없다", async () => {
+    const { app, adapter, pushes } = await boot();
+    const s = { app, adapter, pushes, ...(await seed(app)) };
+    const runId = await closedRun(s, true);
+    await app.fastify.listen({ host: "127.0.0.1", port: 0 });
+    const socket = await connectWire(app, (await login(app)).token);
+    sockets.push(socket);
+    const subscribed = await socket.emitWithAck("channel.subscribe", { channelId: s.channelId });
+    expect(subscribed.ok).toBe(true);
+    const received = waitFor(socket, "message.created", (p) => p.message.runId === runId);
+
+    await app.orchestrator.onCanonical(late(s, runId), "openclaw", FAKE_GATEWAY_ID);
+
+    const payload = await received;
+    expect(payload.message).toMatchObject({ runId, authorType: "agent" });
+    expect(Object.keys(payload)).toEqual(["message"]);
   });
 
   it("같은 정본이 다시 와도(재전송) 메시지는 하나, 카드는 한 번만 닫힌다", async () => {
