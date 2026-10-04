@@ -25,6 +25,8 @@ type ApprovalInsert = typeof approvals.$inferInsert;
  */
 export type ApprovalRowInput = {
   providerApprovalId: string;
+  /** 승인이 온 연결 — 제공자 승인 id 는 그 연결 안에서만 유일하다. 새 행에만 쓴다 */
+  connectionId?: string | undefined;
   kind: ApprovalKind;
   /** 새 행에만 쓴다 — 세션 키에서 푼 값이라 승인이 사는 동안 바뀌지 않는다 */
   channelId: string;
@@ -90,7 +92,7 @@ export function rowToApproval(row: ApprovalRow): Approval {
 }
 
 /**
- * `providerApprovalId` 유일 인덱스로 upsert 한다(설계 4.2 ④).
+ * `(connectionId, providerApprovalId)` 유일 인덱스로 upsert 한다(설계 4.2 ④ — 두 Gateway 가 같은 승인 id 를 낼 수 있다).
  *
  * `changed` 는 「새로 알게 된 사실」이다 — 새 행이거나 저장된 열이 실제로 바뀌었을 때만 참이다.
  * `created` 는 그중 **이 승인을 처음 본 것**인지다 — 어댑터가 같은 승인의 두 번째 프레임을 병합해 다시 주므로
@@ -108,7 +110,7 @@ export function upsertApproval(
   const existing = db
     .select()
     .from(approvals)
-    .where(eq(approvals.providerApprovalId, input.providerApprovalId))
+    .where(byProviderId(input.providerApprovalId, input.connectionId))
     .get();
 
   if (!existing) {
@@ -151,6 +153,7 @@ function insertApproval(db: DbOrTx, input: ApprovalRowInput): ApprovalRow {
     .values({
       id: uuidv7(),
       providerApprovalId: input.providerApprovalId,
+      connectionId: input.connectionId ?? null,
       kind: input.kind,
       channelId: input.channelId,
       agentId: input.agentId,
@@ -214,9 +217,37 @@ export function getApproval(db: DbOrTx, id: string): Approval | undefined {
   return row ? rowToApproval(row) : undefined;
 }
 
-export function getApprovalByProviderId(db: DbOrTx, providerApprovalId: string): Approval | undefined {
-  const row = db.select().from(approvals).where(eq(approvals.providerApprovalId, providerApprovalId)).get();
+/** connectionId 를 주지 않으면 연결이 빈 행만 찾는다 — SQLite 유일 인덱스는 NULL 끼리를 다르게 봐서 이 조건이 중복을 막는다 */
+function byProviderId(providerApprovalId: string, connectionId: string | undefined) {
+  return and(
+    eq(approvals.providerApprovalId, providerApprovalId),
+    connectionId === undefined ? isNull(approvals.connectionId) : eq(approvals.connectionId, connectionId),
+  );
+}
+
+/** 테스트가 쓴다. connectionId 를 주지 않으면 그 제공자 승인 id 의 첫 행(연결 무관) */
+export function getApprovalByProviderId(
+  db: DbOrTx,
+  providerApprovalId: string,
+  connectionId?: string,
+): Approval | undefined {
+  const row = db
+    .select()
+    .from(approvals)
+    .where(
+      connectionId === undefined
+        ? eq(approvals.providerApprovalId, providerApprovalId)
+        : byProviderId(providerApprovalId, connectionId),
+    )
+    .get();
   return row ? rowToApproval(row) : undefined;
+}
+
+/** 승인이 온 연결(approvals.connection_id) — 공유 Approval 에는 싣지 않는다(wire 로 나가지 않게). 없거나 비었으면 null */
+export function getApprovalConnectionId(db: DbOrTx, id: string): string | null {
+  return (
+    db.select({ c: approvals.connectionId }).from(approvals).where(eq(approvals.id, id)).get()?.c ?? null
+  );
 }
 
 /** 그 채널의 아직 살아 있는 승인 — 만료 시각이 지난 것은 빼고 준다(화면이 죽은 카드를 그리지 않게) */

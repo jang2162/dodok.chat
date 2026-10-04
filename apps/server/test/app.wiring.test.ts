@@ -18,7 +18,7 @@ import { v7 as uuid } from "uuid";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import packageJson from "../package.json" with { type: "json" };
 import { type App, createApp, watchGatewayReconnecting } from "../src/app";
-import { loadConfig } from "../src/config";
+import { loadConfig, OPENCLAW_ENV_CONNECTION_ID } from "../src/config";
 import { agentSessions, agents } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
 import { addMember, createChannel } from "../src/modules/channels/service";
@@ -177,7 +177,7 @@ describe("부팅 정리 — 파일 DB 로 두 번 부팅", () => {
         name: "Fin",
       });
       addMember(app.db, channelId, { memberType: "agent", memberId: other.id }, app.logger);
-      expect(sessionRecoverTargets(app.db)).toEqual([]);
+      expect(sessionRecoverTargets(app.db).size).toBe(0);
 
       ensureSession(app.db, openclawOf(app), { channelId, agentId });
       ensureSession(app.db, openclawOf(app), { channelId, agentId: other.id });
@@ -187,7 +187,10 @@ describe("부팅 정리 — 파일 DB 로 두 번 부팅", () => {
         .where(eq(agentSessions.agentId, other.id))
         .run();
 
-      expect(sessionRecoverTargets(app.db)).toEqual(
+      // gateway_id 가 빈 OpenClaw 에이전트는 .env 의 Gateway 하나(연결 env)로 모인다
+      const targets = sessionRecoverTargets(app.db);
+      expect([...targets.keys()]).toEqual([OPENCLAW_ENV_CONNECTION_ID]);
+      expect(targets.get(OPENCLAW_ENV_CONNECTION_ID)).toEqual(
         expect.arrayContaining([
           { sessionKey: `agent:dev:dodok:channel:${channelId}`, agentId: "dev" },
           {
@@ -197,13 +200,18 @@ describe("부팅 정리 — 파일 DB 로 두 번 부팅", () => {
           },
         ]),
       );
-      expect(sessionRecoverTargets(app.db)).toHaveLength(2);
+      expect(targets.get(OPENCLAW_ENV_CONNECTION_ID)).toHaveLength(2);
 
       // OpenClaw 가 아닌 에이전트의 세션은 Gateway 에 없다 — 복구 대상이 아니다
       app.db.update(agents).set({ provider: "claude" }).where(eq(agents.id, other.id)).run();
-      expect(sessionRecoverTargets(app.db)).toEqual([
-        { sessionKey: `agent:dev:dodok:channel:${channelId}`, agentId: "dev" },
-      ]);
+      expect(sessionRecoverTargets(app.db)).toEqual(
+        new Map([
+          [
+            OPENCLAW_ENV_CONNECTION_ID,
+            [{ sessionKey: `agent:dev:dodok:channel:${channelId}`, agentId: "dev" }],
+          ],
+        ]),
+      );
     } finally {
       await app.close();
     }
@@ -293,7 +301,7 @@ describe("REST·wire 배선 (FakeAdapter)", () => {
     expect(res.json()).toEqual({ ok: true });
     expect(adapter.calls.reset.slice(resetsBefore)).toEqual([session?.sessionKey]);
     expect(abortSpy).toHaveBeenCalledTimes(1);
-    expect(abortSpy).toHaveBeenCalledWith(run.id, session?.sessionKey);
+    expect(abortSpy).toHaveBeenCalledWith(run.id, session?.sessionKey, OPENCLAW_ENV_CONNECTION_ID);
     expect(getRun(app.db, otherRun.id)?.status).toBe("queued");
     expect(abortSpy.mock.invocationCallOrder[0]).toBeLessThan(resetSpy.mock.invocationCallOrder[0] ?? 0);
     expect(getRun(app.db, run.id)?.status).toBe("aborted");
@@ -333,7 +341,7 @@ describe("REST·wire 배선 (FakeAdapter)", () => {
     expect(getRun(app.db, first.id)?.status).toBe("aborted");
     expect(getRun(app.db, second.id)?.status).toBe("aborted");
     expect(abortSpy).toHaveBeenCalledTimes(1);
-    expect(abortSpy).toHaveBeenCalledWith(first.id, expect.any(String));
+    expect(abortSpy).toHaveBeenCalledWith(first.id, expect.any(String), OPENCLAW_ENV_CONNECTION_ID);
   });
 
   it("reset — sessionReset capability 가 없으면 409 CONFLICT(ADAPTER_CAPABILITY_MISSING), 어댑터·세션·메시지를 건드리지 않는다", async () => {
@@ -439,7 +447,9 @@ describe("REST·wire 배선 (FakeAdapter)", () => {
 
     expect(res.statusCode).toBe(200);
     expect(adapter.calls.reset.slice(resetsBefore)).toEqual([threadSession?.sessionKey]);
-    expect(abortSpy.mock.calls).toEqual([[threadRun.id, threadSession?.sessionKey]]);
+    expect(abortSpy.mock.calls).toEqual([
+      [threadRun.id, threadSession?.sessionKey, OPENCLAW_ENV_CONNECTION_ID],
+    ]);
     expect(getRun(app.db, threadRun.id)?.status).toBe("aborted");
     expect(getRun(app.db, channelRun.id)?.status).toBe("queued");
     expect(sessionRow(app, channelId, dev, root.id)).toMatchObject({ lifecycleRevision: "fake-1" });

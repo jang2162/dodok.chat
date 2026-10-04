@@ -1,6 +1,7 @@
 import { type ProviderApproval, parseSessionKey } from "@dodok/openclaw-adapter";
 import type { Approval, ApprovalDecision, ApprovalReason, ApprovalStatus, RunSignal } from "@dodok/shared";
 import { and, eq } from "drizzle-orm";
+import { agentConnectionId, agentOnConnection } from "../../adapters/connection";
 import type { AdapterRegistry } from "../../adapters/registry";
 import {
   type AdapterProvider,
@@ -23,8 +24,11 @@ export type ApprovalsLogger = Pick<Logger, "debug" | "warn" | "error">;
 export type ResolveInput = { approvalId: string; decision: ApprovalDecision; userId: string };
 
 export type ApprovalsService = {
-  /** 어댑터 승인 이벤트 1건을 반영한다 — provider 는 승인을 낸 어댑터의 것. 새 사실이면 wire·런 이벤트까지 낸다. 절대 던지지 않는다 */
-  ingest(a: ProviderApproval, provider: AdapterProvider): void;
+  /**
+   * 어댑터 승인 이벤트 1건을 반영한다 — provider·connectionId 는 승인을 낸 어댑터와 그 연결. 새 사실이면 wire·런 이벤트까지 낸다.
+   * 절대 던지지 않는다
+   */
+  ingest(a: ProviderApproval, provider: AdapterProvider, connectionId: string): void;
   /**
    * 사용자가 카드를 눌렀다 — 설계 4.4 의 검사를 순서대로 통과할 때만 그 에이전트의 어댑터로 보낸다.
    * 검사에 걸리면 `HttpError`(FORBIDDEN·NOT_FOUND·CONFLICT·VALIDATION)를, 어댑터가 거부하면 그 코드(ADAPTER_UNAVAILABLE 등)를 던진다.
@@ -62,9 +66,9 @@ export type ApprovalsDeps = {
 };
 
 /**
- * 설계 4.2 — 승인의 저장·상관·중계. Gateway 페이로드에 `runId` 가 없어 `sessionKey` 로 채널·에이전트·열린 런을 찾는다.
+ * 설계 4.2 — 승인의 저장·상관·중계. Gateway 페이로드에 `runId` 가 없어 연결 id + `sessionKey` 로 채널·에이전트·열린 런을 찾는다.
  * 같은 승인이 두 경로(전역 `plugin.approval.*` · 세션 `session.approval` 되감기)로 오므로
- * `providerApprovalId` 유일 인덱스 upsert 가 중복을 흡수하고, **새 사실일 때만** 런 이벤트·신호·wire 를 낸다.
+ * `(연결, providerApprovalId)` 유일 인덱스 upsert 가 중복을 흡수하고, **새 사실일 때만** 런 이벤트·신호·wire 를 낸다.
  */
 export function createApprovalsService(deps: ApprovalsDeps): ApprovalsService {
   const { db, bus, logger } = deps;
@@ -158,7 +162,7 @@ export function createApprovalsService(deps: ApprovalsDeps): ApprovalsService {
   }
 
   return {
-    ingest(a, provider) {
+    ingest(a, provider, connectionId) {
       try {
         // 어댑터가 이미 걸렀지만 서버도 방어한다 — 토큰·본문·툴 인자는 찍지 않는다
         const session = parseSessionKey(a.sessionKey);
@@ -168,14 +172,15 @@ export function createApprovalsService(deps: ApprovalsDeps): ApprovalsService {
         }
         // workspaceId 를 꼭 넘긴다 — 빠뜨리면 다른 워크스페이스 채널의 승인도 받아 적는다(socket.ts 와 같은 규칙)
         const channel = getChannel(db, session.channelId, deps.workspaceId);
-        const agentId = channel && findAgentId(db, channel.workspaceId, provider, session.providerAgentId);
+        const agentId =
+          channel && findAgentId(db, channel.workspaceId, provider, connectionId, session.providerAgentId);
         if (!channel || !agentId) {
           logger.warn({ sessionKey: a.sessionKey }, "approval for unknown session");
           return;
         }
         const receivedAt = now();
         // FIFO 직렬화라 그 세션의 열린 런 중 맨 앞(가장 먼저 만든 것)이 지금 Gateway 에서 도는 런이다
-        const run = findOpenRunBySession(db, a.sessionKey);
+        const run = findOpenRunBySession(db, connectionId, a.sessionKey);
         // 승인을 요구하기 직전의 런 상태를 기억해 둔다 — 해결 뒤 그 상태로 돌아간다(설계 4.3).
         // 이미 대기 중이면(같은 런의 두 번째 승인) 먼저 기억한 값이 진짜 「직전」이다
         if (run && a.status === "pending" && run.status !== "awaiting_approval") {
@@ -183,6 +188,7 @@ export function createApprovalsService(deps: ApprovalsDeps): ApprovalsService {
         }
         const { approval, changed, created, filled } = store.upsertApproval(db, {
           providerApprovalId: a.providerApprovalId,
+          connectionId,
           kind: a.kind,
           channelId: channel.id,
           agentId,
@@ -245,8 +251,11 @@ export function createApprovalsService(deps: ApprovalsDeps): ApprovalsService {
         rethrowAdapterError(err);
       }
 
+      // 승인이 온 연결로 보낸다 — 연결이 빈 행(연결 id 가 생기기 전에 저장된 것)은 에이전트의 지금 연결로
+      const connectionId = store.getApprovalConnectionId(db, approvalId) ?? agentConnectionId(db, agent.id);
+      if (connectionId === null) throw apiError("ADAPTER_UNAVAILABLE", "approval agent has no connection");
       logger.debug({ approvalId, decision, userId }, "approval resolve sent to adapter");
-      const snapshot = await resolveOnAdapter(adapter, approval, decision);
+      const snapshot = await resolveOnAdapter(adapter, approval, decision, connectionId);
 
       // 기다리는 사이 Gateway 가 같은 사실을 이벤트로 먼저 줬을 수 있다 — 결과는 먼저 온 쪽이 이긴다(설계 4.4).
       // 그래도 이 승인을 해결한 것은 지금 approval.resolve 를 부른 사용자다 — 사람이 여럿인 팀에서는 누가
@@ -325,9 +334,10 @@ async function resolveOnAdapter(
   adapter: ApprovalsAdapter,
   approval: Approval,
   decision: ApprovalDecision,
+  connectionId: string,
 ): Promise<ProviderApproval> {
   try {
-    return await adapter.resolveApproval(approval.providerApprovalId, approval.kind, decision);
+    return await adapter.resolveApproval(approval.providerApprovalId, approval.kind, decision, connectionId);
   } catch (err) {
     rethrowAdapterError(err);
   }
@@ -356,11 +366,12 @@ export function resolvedOutcome(approval: Pick<Approval, "status" | "decision" |
   return { decision, reason };
 }
 
-/** 세션 키의 `providerAgentId` → 우리 agents.id (워크스페이스·provider 안에서 유일하다) */
+/** 세션 키의 `providerAgentId` → 우리 agents.id (워크스페이스·provider·연결 안에서 유일하다) */
 function findAgentId(
   db: DbOrTx,
   workspaceId: string,
   provider: AdapterProvider,
+  connectionId: string,
   providerAgentId: string,
 ): string | undefined {
   return db
@@ -370,6 +381,7 @@ function findAgentId(
       and(
         eq(agents.workspaceId, workspaceId),
         eq(agents.provider, provider),
+        agentOnConnection(provider, connectionId),
         providerAgentIdIs(providerAgentId),
       ),
     )

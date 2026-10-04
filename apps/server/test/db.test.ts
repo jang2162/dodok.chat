@@ -14,6 +14,7 @@ import {
   agents,
   bridgeTokens,
   channels,
+  gateways,
   invites,
   memberships,
   messages,
@@ -84,7 +85,7 @@ const msg = (ch: string, seq: number, extra: Partial<typeof messages.$inferInser
 });
 
 describe("db", () => {
-  it("마이그레이션이 23개 테이블을 만든다(FTS5 그림자 테이블 제외)", () => {
+  it("마이그레이션이 24개 테이블을 만든다(FTS5 그림자 테이블 제외)", () => {
     const db = createDb(":memory:");
     const rows = db.all<{ name: string }>(sql`select name from sqlite_master where type = 'table'`);
     const names = rows
@@ -101,6 +102,7 @@ describe("db", () => {
       "channel_members",
       "channels",
       "component_interactions",
+      "gateways",
       "invites",
       "memberships",
       "messages",
@@ -266,12 +268,17 @@ describe("db", () => {
           lastUsedAt: null,
           revokedAt: null,
         };
-        db.insert(bridgeTokens).values(bridgeRow).run();
+        // 지금 스키마의 insert 는 뒤 마이그레이션의 열(gateway_id)까지 싣는다 — SQL 로 넣는다
+        sqlite
+          .prepare(
+            "INSERT INTO bridge_tokens (id, workspace_id, label, hash, prefix, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+          )
+          .run(tokenId, ws, bridgeRow.label, bridgeRow.hash, bridgeRow.prefix, createdAt.getTime());
         expect(() => db.select().from(runnerTokens).all()).toThrow(/no such table/);
 
         migrate(db, { migrationsFolder: migrationsFolder() });
 
-        expect(db.select().from(bridgeTokens).all()).toEqual([bridgeRow]);
+        expect(db.select().from(bridgeTokens).all()).toEqual([{ ...bridgeRow, gatewayId: null }]);
         expect(db.select().from(runnerTokens).all()).toEqual([]);
         // 같은 해시는 두 번 못 넣는다 — 검증이 해시로 행 하나를 찾는다
         const runnerRow = { ...bridgeRow, id: uuid(), label: "laptop" };
@@ -404,5 +411,154 @@ describe("db", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+  it("0011 까지 적용된 DB 에 0012(gateways·연결 id)를 얹으면 옛 행의 연결은 비고, Gateway 를 지우면 토큰은 함께·에이전트는 연결만 비워진다", () => {
+    const dir = mkdtempSync(join(tmpdir(), "dodok-db-mig-"));
+    try {
+      const older = migrationsUpTo(dir, "_agent_runner_token");
+      const sqlite = new Database(join(dir, "app.db"));
+      try {
+        const db = drizzle(sqlite, { schema: { ...schema, ...authSchema } });
+        migrate(db, { migrationsFolder: older });
+        const ws = uuid();
+        const createdAt = new Date("2026-10-04T00:00:00.000Z");
+        db.insert(workspaces).values({ id: ws, name: "w", createdAt }).run();
+        // 옛 스키마에는 gateway_id 가 없다 — 지금 스키마의 insert 를 쓰지 않고 SQL 로 넣는다
+        const devId = uuid();
+        sqlite
+          .prepare(
+            "INSERT INTO agents (id, workspace_id, provider, provider_agent_id, handle, name, enabled, created_at) VALUES (?, ?, 'openclaw', 'dev', 'dev', 'Dev', 1, ?)",
+          )
+          .run(devId, ws, createdAt.getTime());
+        const tokenId = uuid();
+        sqlite
+          .prepare(
+            "INSERT INTO bridge_tokens (id, workspace_id, label, hash, prefix, created_at) VALUES (?, ?, 'old', ?, 'AAAAAA', ?)",
+          )
+          .run(tokenId, ws, "a".repeat(64), createdAt.getTime());
+
+        migrate(db, { migrationsFolder: migrationsFolder() });
+
+        expect(db.select({ g: agents.gatewayId }).from(agents).all()).toEqual([{ g: null }]);
+        expect(db.select({ g: bridgeTokens.gatewayId }).from(bridgeTokens).all()).toEqual([{ g: null }]);
+
+        sqlite.pragma("foreign_keys = ON");
+        const gw = uuid();
+        db.insert(gateways)
+          .values({
+            id: gw,
+            workspaceId: ws,
+            name: "사무실",
+            url: "wss://gw",
+            token: "t",
+            createdAt,
+            updatedAt: createdAt,
+          })
+          .run();
+        expect(() =>
+          db
+            .insert(gateways)
+            .values({
+              id: uuid(),
+              workspaceId: ws,
+              name: "사무실",
+              url: "wss://gw2",
+              token: "t",
+              createdAt,
+              updatedAt: createdAt,
+            })
+            .run(),
+        ).toThrow(/UNIQUE/);
+        db.update(agents).set({ gatewayId: gw }).where(eq(agents.id, devId)).run();
+        db.update(bridgeTokens).set({ gatewayId: gw }).where(eq(bridgeTokens.id, tokenId)).run();
+        // 같은 Gateway 에 같은 id 는 둘이 될 수 없고, 다른 Gateway(또는 러너)의 같은 id 는 된다
+        const insertAgent = (handle: string, provider: string, gatewayId: string | null) =>
+          db
+            .insert(agents)
+            .values({
+              id: uuid(),
+              workspaceId: ws,
+              provider,
+              providerAgentId: "dev",
+              handle,
+              name: handle,
+              createdAt,
+              gatewayId,
+            })
+            .run();
+        expect(() => insertAgent("dev-2", "openclaw", gw)).toThrow(/UNIQUE/);
+        insertAgent("dev-claude", "claude", null);
+        expect(() => insertAgent("dev-claude-2", "claude", null)).toThrow(/UNIQUE/);
+
+        db.delete(gateways).where(eq(gateways.id, gw)).run();
+        expect(db.select().from(bridgeTokens).all()).toEqual([]);
+        expect(
+          db.select({ id: agents.id, g: agents.gatewayId }).from(agents).where(eq(agents.id, devId)).get(),
+        ).toEqual({
+          id: devId,
+          g: null,
+        });
+      } finally {
+        sqlite.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+  it("runs·approvals 의 제공자 id 는 연결 안에서만 유일하다", () => {
+    const db = createDb(":memory:");
+    const { ws, ch } = seed(db);
+    const agentId = uuid();
+    db.insert(agents)
+      .values({
+        id: agentId,
+        workspaceId: ws,
+        provider: "openclaw",
+        providerAgentId: "main",
+        handle: "main",
+        name: "main",
+        createdAt: new Date(),
+      })
+      .run();
+    const run = (connectionId: string) =>
+      db
+        .insert(schema.runs)
+        .values({
+          id: uuid(),
+          channelId: ch,
+          agentId,
+          triggerKind: "mention",
+          rootMessageId: uuid(),
+          sessionKey: "agent:main:dodok:channel:x",
+          providerRunId: "same",
+          status: "queued",
+          connectionId,
+          createdAt: new Date(),
+        })
+        .run();
+    run("g1");
+    run("g2");
+    expect(() => run("g1")).toThrow(/UNIQUE/);
+    const approval = (connectionId: string) =>
+      db
+        .insert(schema.approvals)
+        .values({
+          id: uuid(),
+          providerApprovalId: "plugin:same",
+          kind: "plugin",
+          channelId: ch,
+          agentId,
+          title: "t",
+          severity: "warning",
+          allowedDecisions: ["deny"],
+          status: "pending",
+          expiresAt: new Date(),
+          createdAt: new Date(),
+          connectionId,
+        })
+        .run();
+    approval("g1");
+    approval("g2");
+    expect(() => approval("g2")).toThrow(/UNIQUE/);
   });
 });

@@ -3,6 +3,7 @@ import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { SQLiteUpdateSetSource } from "drizzle-orm/sqlite-core";
 import { v7 as uuidv7 } from "uuid";
 import { z } from "zod";
+import { agentConnectionId } from "../../adapters/connection";
 import type { AdapterRegistry } from "../../adapters/registry";
 import { AdapterError, type AgentAdapter } from "../../adapters/types";
 import { roleOf } from "../../auth/roles";
@@ -425,7 +426,7 @@ export async function resetAgentSession(
   for (const run of mine.reverse()) await orchestrator.abort(run.id);
   let reset: Awaited<ReturnType<AgentAdapter["resetSession"]>>;
   try {
-    reset = await adapter.resetSession(session.sessionKey);
+    reset = await adapter.resetSession(session.sessionKey, agentConnectionId(db, agent.id));
   } catch (err) {
     if (!(err instanceof AdapterError)) throw err;
     // capability 가 아직 true 였던 첫 시도 — 어댑터가 MISSING_SCOPE 를 FORBIDDEN 으로 올리고 capability 를 내린다

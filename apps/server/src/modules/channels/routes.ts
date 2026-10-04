@@ -2,6 +2,7 @@ import { Channel, ChannelMember, Id } from "@dodok/shared";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { AdapterRegistry } from "../../adapters/registry";
+import { OPENCLAW_ENV_CONNECTION_ID } from "../../config";
 import type { Auth } from "../../auth";
 import {
   assertRole,
@@ -180,7 +181,7 @@ function syncChannelPrompt(ctx: ChannelRouteContext, channel: ChannelRecord): vo
   const openclaw = ctx.registry.forProvider("openclaw");
   if (!openclaw) return;
   void openclaw
-    .syncChannelConfig(channel.id, { systemPrompt: channel.prompt ?? "" })
+    .syncChannelConfig(channel.id, { systemPrompt: channel.prompt ?? "" }, OPENCLAW_ENV_CONNECTION_ID)
     .catch((err: unknown) => {
       ctx.logger.warn({ err, channelId: channel.id }, "syncChannelConfig failed");
       const reason = err instanceof Error ? err.message : String(err);

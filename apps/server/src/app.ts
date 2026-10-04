@@ -15,7 +15,7 @@ import type { AgentAdapter, OpenClawAdapterStatus, OpenClawSetupDetail } from ".
 import { type Auth, createAuth } from "./auth";
 import { bootstrapOwner } from "./auth/owner";
 import { createIpLimit, registerAuthRoutes } from "./auth/routes";
-import { isLocalVapidSubject, type ServerConfig } from "./config";
+import { isLocalVapidSubject, OPENCLAW_ENV_CONNECTION_ID, type ServerConfig } from "./config";
 import { createDb, type Db } from "./db/client";
 import { workspaces } from "./db/schema.sqlite";
 import { HttpError, httpStatusToErrorCode } from "./http/errors";
@@ -270,6 +270,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       ? [...deps.adapters]
       : [
           createOpenClawAdapter({
+            connectionId: OPENCLAW_ENV_CONNECTION_ID,
             gateway: {
               url: config.gateway.url,
               token: config.gateway.token,
@@ -286,8 +287,9 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
               now: limitClock,
             },
             logger: logger.child({ mod: "adapter" }),
-            onCanonical: (message) => orchestrator.onCanonical(message, "openclaw"),
-            sessionKeysToRecover: () => sessionRecoverTargets(db),
+            onCanonical: (message, connectionId) =>
+              orchestrator.onCanonical(message, "openclaw", connectionId),
+            sessionKeysToRecover: (connectionId) => sessionRecoverTargets(db).get(connectionId) ?? [],
             ...(config.OPENCLAW_FRAME_DUMP_PATH === undefined
               ? {}
               : { frameDumpPath: config.OPENCLAW_FRAME_DUMP_PATH }),
@@ -312,8 +314,8 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
         serverVersion: packageJson.version,
         logger: logger.child({ mod: "runner-adapter" }),
         channelName: (channelId) => getChannel(db, channelId, workspaceId)?.name,
-        onOutbound: async (message) => {
-          const { messageId } = await orchestrator.onCanonical(message, "claude");
+        onOutbound: async (message, connectionId) => {
+          const { messageId } = await orchestrator.onCanonical(message, "claude", connectionId);
           if (messageId === undefined) throw new Error("canonical store returned no message id");
           return { messageId };
         },

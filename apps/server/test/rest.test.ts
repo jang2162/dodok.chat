@@ -238,7 +238,7 @@ describe("REST /api/v1 (FakeAdapter)", () => {
   it("GET /agents/discover 는 어댑터 listAgents 결과", async () => {
     const res = await api("GET", "/agents/discover");
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ agents: await adapter.listAgents() });
+    expect(res.json()).toEqual({ agents: await adapter.listAgents("env") });
   });
 
   it("멤버 POST 201·GET·PATCH·DELETE 와 channel.member.changed", async () => {

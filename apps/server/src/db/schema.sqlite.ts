@@ -71,6 +71,29 @@ export const memberships = sqliteTable(
   (t) => [uniqueIndex("memberships_ws_user").on(t.workspaceId, t.userId)],
 );
 
+/**
+ * OpenClaw Gateway 연결(멀티 Gateway 스펙 3.1) — id 가 어댑터 계약의 연결 id 다. token 은 Gateway 공유 토큰 평문(결정 4 — 같은 DATA_DIR 의
+ * 디바이스 아이덴티티도 평문이다). API 응답·로그·사건·wire 에 싣지 않는다. owner_user_id 는 사람마다 붙이기의 자리 — 지금은 늘 null
+ */
+export const gateways = sqliteTable(
+  "gateways",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id),
+    name: text("name").notNull(),
+    url: text("url").notNull(),
+    token: text("token").notNull(),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    ownerUserId: text("owner_user_id").references(() => users.id),
+    lastVersion: text("last_version"),
+    createdAt: ts("created_at").notNull(),
+    updatedAt: ts("updated_at").notNull(),
+  },
+  (t) => [uniqueIndex("gateways_ws_name").on(t.workspaceId, t.name)],
+);
+
 export const agents = sqliteTable(
   "agents",
   {
@@ -88,10 +111,19 @@ export const agents = sqliteTable(
     createdAt: ts("created_at").notNull(),
     // Claude 러너 에이전트가 묶인 러너 토큰 — 그 토큰의 러너만 맡는다. null 이면 처음 알린 러너에 묶인다. 폐기돼도 남는다
     runnerTokenId: text("runner_token_id").references((): AnySQLiteColumn => runnerTokens.id),
+    // OpenClaw 에이전트를 맡은 Gateway — null 이면 연결이 빈 에이전트(Gateway 를 지웠다 — 옮기기를 기다린다)
+    gatewayId: text("gateway_id").references(() => gateways.id, { onDelete: "set null" }),
   },
   (t) => [
     uniqueIndex("agents_ws_handle").on(t.workspaceId, t.handle),
-    uniqueIndex("agents_ws_provider_agent").on(t.workspaceId, t.provider, t.providerAgentId),
+    // 에이전트의 정체는 「연결 + 제공자 쪽 id」다 — 두 Gateway 의 main 은 둘 다 등록된다. 러너는 id 로 에이전트를 가져가므로 워크스페이스에 하나.
+    // 대소문자 무시는 등록(createAgent)이 본다
+    uniqueIndex("agents_openclaw_gateway_agent")
+      .on(t.gatewayId, t.providerAgentId)
+      .where(sql`provider = 'openclaw'`),
+    uniqueIndex("agents_claude_ws_agent")
+      .on(t.workspaceId, t.provider, t.providerAgentId)
+      .where(sql`provider = 'claude'`),
   ],
 );
 
@@ -245,15 +277,20 @@ export const runs = sqliteTable(
     error: json<{ code: string; message: string }>("error_json"),
     relayHash: text("relay_hash"), // hash(from, to, 정규화 본문)
     threadRootId: text("thread_root_id"), // 스레드 런이면 그 루트 메시지 id
+    // 그 런을 맡은 연결(OpenClaw Gateway id·러너 토큰 id) — 만들 때 에이전트 행의 연결, send 가 돌려준 값으로 덮는다. 에이전트를
+    // 옮겨도 옛 런의 대조가 흔들리지 않게 런에 남긴다. 세션 키가 같은 두 Gateway 의 런을 이것으로 가른다
+    connectionId: text("connection_id"),
     createdAt: ts("created_at").notNull(),
     startedAt: ts("started_at"),
     endedAt: ts("ended_at"),
   },
   (t) => [
-    uniqueIndex("runs_provider_run").on(t.providerRunId),
+    // 제공자 런 id 는 연결 안에서만 유일하다 — 두 Gateway 가 같은 id 를 낼 수 있다
+    uniqueIndex("runs_connection_provider_run").on(t.connectionId, t.providerRunId),
     index("runs_channel_created").on(t.channelId, t.createdAt),
     index("runs_root").on(t.rootMessageId),
     index("runs_session_status").on(t.sessionKey, t.status),
+    index("runs_connection_session_status").on(t.connectionId, t.sessionKey, t.status),
   ],
 );
 
@@ -322,9 +359,11 @@ export const approvals = sqliteTable(
     decidedAt: ts("decided_at"),
     expiresAt: ts("expires_at").notNull(), // 카운트다운의 근거
     createdAt: ts("created_at").notNull(),
+    connectionId: text("connection_id"), // 승인이 온 연결 — 해결도 그 연결로 보낸다
   },
   (t) => [
-    uniqueIndex("approvals_provider").on(t.providerApprovalId),
+    // 제공자 승인 id 는 연결 안에서만 유일하다(runs 와 같은 까닭)
+    uniqueIndex("approvals_connection_provider").on(t.connectionId, t.providerApprovalId),
     index("approvals_channel_status").on(t.channelId, t.status),
     index("approvals_run").on(t.runId),
   ],
@@ -373,6 +412,8 @@ export const bridgeTokens = sqliteTable(
     createdAt: ts("created_at").notNull(),
     lastUsedAt: ts("last_used_at"),
     revokedAt: ts("revoked_at"),
+    // 토큰이 붙이는 Gateway — 플러그인은 토큰만 보내고 서버가 이것으로 Gateway 를 안다. Gateway 를 지우면 함께 지운다
+    gatewayId: text("gateway_id").references(() => gateways.id, { onDelete: "cascade" }),
   },
   (t) => [
     uniqueIndex("bridge_tokens_hash").on(t.hash),

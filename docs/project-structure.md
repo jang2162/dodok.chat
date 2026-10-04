@@ -156,9 +156,10 @@ src/
 │                         redact 는 헤더 이름 와일드카드를 받지 못한다). 사건 줄은 `event: "ops.<kind>"`(modules/ops/service.ts).
 │                         requestLogSerializer — Fastify 요청 로그의 req(원격 주소만 ipPrefix 로 가림, app.ts 가 Fastify 에 준 자식 로거의 serializers.req — Fastify 기본을 이긴다).
 │                         브리지·러너 거절 로그도 app.ts 가 어댑터 옵션 logAddress 로 ipPrefix 를 준다(가드·스로틀 키는 전체 주소)
-├─ wiring.ts              createServices(라우터 ⇄ 오케스트레이터 상호 참조, RunsFacade), sessionRecoverTargets(재접속 복구 대상)
+├─ wiring.ts              createServices(라우터 ⇄ 오케스트레이터 상호 참조, RunsFacade), sessionRecoverTargets(재접속 복구 대상 — 연결 id 별 Map, OpenClaw 에이전트 세션만)
 ├─ db/
-│  ├─ schema.sqlite.ts    Drizzle 스키마 (계획서 6장 테이블 + agent_sessions + approvals + attachments + bridge_tokens + ops_events + invites + runner_tokens — 마이그레이션 0000~0011, FK cascade 는 push_subscriptions.session_id 하나뿐).
+│  ├─ schema.sqlite.ts    Drizzle 스키마 (계획서 6장 테이블 + agent_sessions + approvals + attachments + bridge_tokens + ops_events + invites + runner_tokens + gateways — 마이그레이션 0000~0012,
+│  │                      FK ON DELETE 는 push_subscriptions.session_id·bridge_tokens.gateway_id(cascade)와 agents.gateway_id(set null)뿐).
 │  │                      스레드(0006): messages.thread_root_id(인덱스 messages_channel_thread_seq (channel_id, thread_root_id, seq))·agent_sessions.thread_root_id·runs.thread_root_id —
 │  │                      세 열 모두 FK 없음(저장 경로 검증이 지킨다). agent_sessions 의 유일 제약은 **부분 유일 인덱스 둘** — 스레드 행 agent_sessions_channel_agent_thread
 │  │                      (channel_id, agent_id, thread_root_id), 채널 행 agent_sessions_channel_session (channel_id, agent_id) WHERE thread_root_id IS NULL(coalesce 표현식 인덱스는
@@ -169,7 +170,13 @@ src/
 │  │                      오류 없이 검색만 낡는다(지운 말로 다른 메시지가 찾힌다). 그 뒤에 `0007_search_fts.sql` 의 트리거 셋과 백필을 새 커스텀 마이그레이션으로 다시 넣는다.
 │  │                      가드: `test/search.service.test.ts` 의 백필 테스트(모든 마이그레이션 뒤 트리거 셋 존재·남은 행마다 제 id 로만 찾힘)가 빨갛게 된다.
 │  │                      `VACUUM` 도 text PK 테이블의 rowid 를 바꿀 수 있다(SQLite 문서 — 번들 SQLite 에서는 보존됐다) — 운영자가 돌렸다면 `0007_search_fts.sql` 의 백필(`DELETE FROM messages_fts` 뒤 `INSERT … SELECT`)을 다시 한다.
-│  │                      bridge_tokens: id·workspace_id·label·hash(sha256 hex, 유일)·prefix·created_at·last_used_at·revoked_at — 원문 없음.
+│  │                      bridge_tokens: id·workspace_id·label·hash(sha256 hex, 유일)·prefix·created_at·last_used_at·revoked_at·gateway_id — 원문 없음.
+│  │                      멀티 Gateway(0012): gateways — id(= 어댑터 계약의 연결 id)·workspace_id·name(유일 gateways_ws_name)·url·token(Gateway 공유 토큰 평문 — API·로그·wire 에 싣지 않는다)·
+│  │                      enabled·owner_user_id·last_version·created_at·updated_at. agents.gateway_id(OpenClaw 에이전트의 Gateway, null 이면 연결이 빈 에이전트)·
+│  │                      runs.connection_id·approvals.connection_id(그 런·승인의 연결 — 공유 Run·Approval 에 싣지 않고 store 의 getRunConnectionId·getApprovalConnectionId 로 읽는다).
+│  │                      유일: OpenClaw 에이전트 agents_openclaw_gateway_agent (gateway_id, provider_agent_id) · 러너 에이전트 agents_claude_ws_agent (workspace_id, provider, provider_agent_id) ·
+│  │                      runs_connection_provider_run (connection_id, provider_run_id) · approvals_connection_provider (connection_id, provider_approval_id) — 제공자 id 는 연결 안에서만 유일하다.
+│  │                      `drizzle/0012_multi_gateway.sql` 의 `ADD gateway_id … REFERENCES` 두 줄은 ON DELETE 를 손으로 붙였다(생성기가 빠뜨린다 — 그 파일 머리 주석).
 │  │                      팀(0008): invites — id·workspace_id·kind(invite·reset)·role(invite 만)·target_user_id(reset 만)·token_hash(sha256 hex, 유일 invites_token_hash)·prefix·
 │  │                      created_by·created_at·expires_at·used_at·used_by(FK 없음)·revoked_at — 원문 없음, 유효 = used_at·revoked_at 이 비고 만료 전. users.left_handle(나간 멤버의 옛 핸들 —
 │  │                      그 행의 handle 은 `left-<id 뒤 27자>`, email 은 NULL), 유일 인덱스 users_ws_email (workspace_id, email)(NULL 여럿 허용 — 이메일은 넣기 전에 소문자로).
@@ -208,8 +215,9 @@ src/
 │  │                      routes.ts(`POST`·`GET /api/v1/attachments`(세션), `POST`·`GET /bridge/attachments`(브리지 토큰) — 원시 바이트 본문, 인증은 onRequest,
 │  │                      GET 은 블롭을 먼저 열어 없으면 404, nosniff·CSP sandbox·immutable, Content-Disposition 은 RFC 5987).
 │  │                      정리 타이머 startAttachmentSweeper 는 app.ts 에 있다(부팅 때 한 번, 그 뒤 1시간마다, 닫을 때 진행 중인 정리를 기다린다)
-│  ├─ approvals/          store.ts(approvals 테이블 — providerApprovalId 유일 upsert, 중복은 병합 후 재발행, 채널 미해결 목록),
-│  │                      service.ts(상관 findOpenRunBySession → 저장 → APPROVAL_REQUESTED/RESOLVED 런 이벤트 → 버스, resolve 는 승인 설계 4.4 의 문지기 검사 뒤 어댑터 RPC).
+│  ├─ approvals/          store.ts(approvals 테이블 — (연결, providerApprovalId) 유일 upsert, 중복은 병합 후 재발행, 채널 미해결 목록),
+│  │                      service.ts(상관 — 승인이 온 연결의 에이전트·findOpenRunBySession(연결, 세션 키) → 저장 → APPROVAL_REQUESTED/RESOLVED 런 이벤트 → 버스,
+│  │                      resolve 는 승인 설계 4.4 의 문지기 검사 뒤 승인이 온 연결로 어댑터 RPC).
 │  │                      REST 라우트는 없다 — 요구·확정은 wire 로만 오간다
 │  ├─ channels/           CRUD·멤버(에이전트 promptOverride·autoRespond·aliases, 사람은 membership 이 있는 사람만 — 나간 사람 404)·프롬프트 리비전(역할: 만들기·`PATCH` 는 name·topic 밖 필드면 admin, 채널 멤버는 aliases 밖 필드면 admin, 「새 대화」는 admin — auth/roles.ts),
 │  │                      사람의 자동 참여 joinChannelIfAbsent·사람 메시지의 멘션 후보 userMessageParticipants(채널 밖의 워크스페이스 사람 + 채널 참가자)·에이전트 헤더의 channelParticipants, 프롬프트 변경 시 어댑터 config.set, 「새 대화」(resetAgentSession —
@@ -243,6 +251,8 @@ src/
 │  │                      service.ts(관문 `RunGate.enqueue` 로 런, relay_limit·relay_denied 시스템 메시지와 continue_relay 버튼 — 스레드면 그 스레드에, RETRY_RUN_ITEM = "retry_run")
 │  ├─ runs/               orchestrator.ts(세션 직렬화·타이머·신호 → 상태 전이·run_events·정본 상관·부팅 정리. run_error 시스템 메시지(TIMEOUT·ADAPTER_UNAVAILABLE·ADAPTER_PROTOCOL·
 │  │                      DROPPED:*·ADAPTER_ERROR:*)에 트리거 메시지가 있으면 1회용 「다시 실행」 버튼(retry_run, 24시간) — bot-loop-protection 으로 떨어진 런은 빼고), machine.ts(순수 상태머신),
+│  │                      세션 큐·열린 런 찾기·정본의 에이전트 찾기는 「연결 id + 세션 키」 단위(두 Gateway 의 같은 id 에이전트는 서로 기다리지 않는다), runs.connection_id 는 만들 때
+│  │                      에이전트의 연결 → send 결과의 connectionId 로 덮는다. 어댑터 이벤트·정본이 다른 연결의 런 id 를 실으면 그 런에 반영하지 않는다(warn).
 │  │                      스레드 런(Phase 4 ①): 세션 큐는 세션 키 단위라 채널과 병렬·같은 스레드는 직렬. 붙은 플러그인이 있고 그 hello 에 threads 가 없으면 곧바로 error PLUGIN_OUTDATED
 │  │                      (붙은 플러그인이 없으면 채널 런처럼 기다린다), 저장된 providerAgentId 가 규칙 밖이면 INVALID_AGENT_ID(다시 실행 버튼 없음). 정본은 세션 키의 스레드·threadId·런의 스레드가
 │  │                      같아야 저장하고(다르면 VALIDATION — 어댑터가 ack 에 INTERNAL 로 싣는다), 에이전트·스냅샷·run_error 메시지의 threadRootId 는 런에서 온다.
@@ -331,6 +341,8 @@ src/
 │  │                      `DELETE /api/v1/members/:userId`(admin 은 member 만, owner 는 owner 를 뺀 모두)). 가입·역할·표시 이름·내보내기 뒤 broadcastPeople
 │  └─ adapter/            GET /api/v1/adapter/status
 ├─ adapters/
+│  ├─ connection.ts       connectionIdOf(에이전트 → 연결 id — OpenClaw 는 gateway_id, 러너는 runner_token_id) · agentConnectionId · agentOnConnection(어댑터 이벤트의 연결로
+│  │                      에이전트를 찾는 SQL 조건). 서버는 런·세션·승인을 「연결 id + 세션 키」로 찾는다 — 두 Gateway 의 같은 id 에이전트는 세션 키가 같다
 │  └─ types.ts            AgentAdapter 계열 타입 재수출(계약은 packages/shared/src/adapter)
 ├─ util/
 │  └─ josa.ts             받침에 따른 조사(시스템 메시지 병기형). 웹 `lib/josa.ts` 와 두 벌 — 한쪽만 고치면 어긋난다

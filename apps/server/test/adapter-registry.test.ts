@@ -284,6 +284,7 @@ describe("어댑터 레지스트리 배선 (앱 부팅, OpenClaw·Claude 가짜 
         ts: new Date().toISOString(),
       },
       "openclaw",
+      "env",
     );
     const relay = await nextSend(claude, claudeBefore);
     expect(relay.input).toMatchObject({ kind: "message", agentId: "coder" });
@@ -308,6 +309,7 @@ describe("어댑터 레지스트리 배선 (앱 부팅, OpenClaw·Claude 가짜 
         ts: new Date().toISOString(),
       },
       "claude",
+      "fake-runner",
     );
     const back = await nextSend(openclaw, openclawBefore);
     expect(back.input).toMatchObject({ kind: "message", agentId: "dev" });
@@ -337,6 +339,7 @@ describe("어댑터 레지스트리 배선 (앱 부팅, OpenClaw·Claude 가짜 
         ts: new Date().toISOString(),
       },
       "claude",
+      "fake-runner",
     );
     const orphan = await app.orchestrator.onCanonical(
       {
@@ -349,6 +352,7 @@ describe("어댑터 레지스트리 배선 (앱 부팅, OpenClaw·Claude 가짜 
         ts: new Date().toISOString(),
       },
       "claude",
+      "fake-runner",
     );
 
     const stored = listMessages(app.db, channel.id, { limit: 50 }).messages;

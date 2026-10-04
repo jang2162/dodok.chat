@@ -10,6 +10,7 @@ import {
   RunUsage,
 } from "@dodok/shared";
 import { and, eq } from "drizzle-orm";
+import { agentConnectionId, agentOnConnection } from "../../adapters/connection";
 import type { AdapterRegistry } from "../../adapters/registry";
 import {
   type AdapterProvider,
@@ -92,10 +93,14 @@ export interface Orchestrator {
   abort(runId: string): Promise<void>;
   /**
    * 에이전트 최종 메시지 도착(OpenClaw 는 브리지 정본). 돌려준 messageId 를 어댑터가 ack 로 쓴다.
-   * provider 는 보낸 어댑터의 것 — msg.agentId(제공자 쪽 id)를 그 provider 의 에이전트로 푼다. 틀리면 replyTo 상관·런 없는
-   * 정본이 「unknown agent」로 버려진다
+   * provider·connectionId 는 보낸 어댑터와 그 연결 — msg.agentId(제공자 쪽 id)를 그 연결의 에이전트로 푼다. 틀리면 replyTo 상관·런
+   * 없는 정본이 「unknown agent」로 버려진다
    */
-  onCanonical(msg: OutboundMessage, provider: AdapterProvider): Promise<{ messageId?: string }>;
+  onCanonical(
+    msg: OutboundMessage,
+    provider: AdapterProvider,
+    connectionId: string,
+  ): Promise<{ messageId?: string }>;
   activeRuns(channelId: string): RunState[];
   recoverOnBoot(): Promise<number>;
   /** 타이머 전부 해제·어댑터 구독 해제 */
@@ -164,7 +169,15 @@ const NO_RETRY_CODES: ReadonlySet<string> = new Set(["DROPPED:bot-loop-protectio
 type Coalescable = Extract<RunEventBody, { type: "TEXT_MESSAGE_CONTENT" | "TOOL_CALL_ARGS" }>;
 type DeltaBuffer = { channelId: string; type: Coalescable["type"]; key: string; delta: string };
 type TextFilter = { channelId: string; messageId: string; state: MediaLineFilter };
-type Pending = { sessionKey: string; order: number; trigger: EnqueueTrigger };
+type Pending = { queueKey: string; order: number; trigger: EnqueueTrigger };
+
+/**
+ * 세션 큐 키 — 연결 id + 세션 키(멀티 Gateway 계획 판정 PG3). 두 Gateway 의 같은 id 에이전트는 세션 키가 같지만 서로 다른 Gateway
+ * 세션이라 서로를 기다리지 않는다. 연결이 아직 없는 런(묶임 없는 러너 에이전트)은 빈 연결로 모인다
+ */
+function queueKeyOf(connectionId: string | null, sessionKey: string): string {
+  return `${connectionId ?? ""}\u0000${sessionKey}`;
+}
 
 /**
  * 스펙 3.8 — 프로세스에 하나. 런의 진실은 runs 행이고, 메모리에는 세션 큐·타이머·스트리밍 버퍼·WS 스냅샷만 둔다.
@@ -177,7 +190,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
   const timeouts: RunTimeouts = { ...DEFAULT_RUN_TIMEOUTS, ...Object.fromEntries(overrides) };
   const timers = createRunTimers();
 
-  const sessionQueues = new Map<string, string[]>(); // sessionKey → FIFO runId (맨 앞이 디스패치 대상)
+  const sessionQueues = new Map<string, string[]>(); // queueKeyOf(연결, 세션 키) → FIFO runId (맨 앞이 디스패치 대상)
   const pending = new Map<string, Pending>(); // 이 프로세스가 enqueue 한 미종료 런
   const inflight = new Set<string>();
   const awaitingAck = new Set<string>(); // adapter.send 를 기다리는 런(플러그인 대기·ack 재시도 중)
@@ -212,6 +225,25 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     } catch (err) {
       return { ...dispatchError(err), log: "no adapter for the agent provider" };
     }
+  }
+
+  /** 그 런을 맡은 연결 — send 가 돌려준 값, 그 전이면 에이전트 행의 연결 */
+  function connectionOfRun(run: Pick<Run, "id" | "agentId">): string | null {
+    return store.getRunConnectionId(db, run.id) ?? agentConnectionId(db, run.agentId);
+  }
+
+  /**
+   * 어댑터 이벤트가 그 런을 맡은 연결에서 왔는가 — 런 id 는 서버가 만든 것이라 연결을 가로질러 겹치지 않지만, 다른 Gateway·러너가
+   * 남의 런 id 를 실어 그 런을 움직이지 못하게 한다. 연결이 아직 없는 런(send 결과 전 — 러너는 ack 전에도 이벤트를 보낸다)은 받는다
+   */
+  function fromRunConnection(runId: string, connectionId: string, kind: string): boolean {
+    const owner = store.getRunConnectionId(db, runId);
+    if (owner === null || owner === connectionId) return true;
+    logger.warn(
+      { runId, connectionId, runConnectionId: owner, kind },
+      "adapter event from another connection dropped",
+    );
+    return false;
   }
 
   /** 멈춤·잊기처럼 best-effort 인 자리 — 보낼 어댑터가 없으면 할 일도 없다 */
@@ -486,7 +518,9 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       let aborting: Promise<unknown> | undefined;
       if (before && !TERMINAL_STATUSES.has(before.status) && transition(before, s).next !== null) {
         logClosedByTimeout(before, s.kind);
-        aborting = (adapterOfRun(before)?.abort(runId, before.sessionKey) ?? Promise.resolve()).then(
+        aborting = (
+          adapterOfRun(before)?.abort(runId, before.sessionKey, connectionOfRun(before)) ?? Promise.resolve()
+        ).then(
           () => undefined,
           (err: unknown) => err ?? new Error("adapter abort failed"),
         );
@@ -515,7 +549,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       logClosedByTimeout(run, "undelivered");
       const adapter = adapterOfRun(run);
       void adapter
-        ?.abort(runId, run.sessionKey)
+        ?.abort(runId, run.sessionKey, connectionOfRun(run))
         .catch((err: unknown) => logger.debug({ err, runId }, "adapter abort after undelivered failed"));
       adapter?.forgetRun?.(runId);
       applySignal(runId, {
@@ -538,11 +572,11 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     textFilters.delete(runId);
     snapshots.delete(runId);
     if (!info) return;
-    const queue = sessionQueues.get(info.sessionKey);
+    const queue = sessionQueues.get(info.queueKey);
     if (!queue) return;
     const i = queue.indexOf(runId);
     if (i >= 0) queue.splice(i, 1);
-    if (queue.length === 0) sessionQueues.delete(info.sessionKey);
+    if (queue.length === 0) sessionQueues.delete(info.queueKey);
   }
 
   /** 채널 규칙이 바뀌어 러너 세션을 새로 열었다 — 「새 대화」 info 와 같은 모양으로 그 자리(스레드면 스레드)에 */
@@ -685,7 +719,8 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       }
       const trigger = pending.get(runId)?.trigger ?? {};
       const adapter = adapterForAgent(run.agentId);
-      if (run.threadRootId !== undefined && lacksThreads(adapter, run.agentId)) {
+      const connectionId = connectionOfRun(run);
+      if (run.threadRootId !== undefined && lacksThreads(adapter, run.agentId, connectionId)) {
         applySignal(runId, {
           kind: "gateway_error",
           code: PLUGIN_OUTDATED,
@@ -721,9 +756,10 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       });
       let result: Awaited<ReturnType<AgentAdapter["send"]>>;
       try {
-        result = await (providerSessionId === undefined
-          ? adapter.send(inbound)
-          : adapter.send(inbound, { providerSessionId }));
+        result = await adapter.send(inbound, {
+          connectionId,
+          ...(providerSessionId === undefined ? {} : { providerSessionId }),
+        });
       } finally {
         awaitingAck.delete(runId);
       }
@@ -738,9 +774,13 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         applySignal(runId, { kind: "gateway_error", code: `DROPPED:${reason}`, message: reason });
         return;
       }
-      if (result.providerRunId !== undefined && current.providerRunId === undefined) {
-        store.updateRun(db, runId, { providerRunId: result.providerRunId });
-      }
+      // 실제로 맡은 연결(판정 PG4) — 묶임 없는 러너 에이전트는 여기서 처음 정해진다. 제공자 런 id 는 연결 안에서만 유일하므로 한 번에 쓴다
+      const patch: store.RunRowPatch = {};
+      if (result.connectionId !== undefined && result.connectionId !== connectionId)
+        patch.connectionId = result.connectionId;
+      if (result.providerRunId !== undefined && current.providerRunId === undefined)
+        patch.providerRunId = result.providerRunId;
+      if (Object.keys(patch).length > 0) store.updateRun(db, runId, patch);
       if (current.status === "queued") {
         if (result.queued === true) {
           // 제공자 쪽 대기열(러너 동시 상한)에 섰다 — 앞 런이 몇 분 도는 것이 흔하니 queuedMs 로 닫지 않고 런 상한으로 잰다.
@@ -785,12 +825,12 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
    * 그 에이전트를 맡은 쪽이 스레드를 모른다. OpenClaw 는 붙은 플러그인이 없으면 모른다고 단정하지 않는다 — 어댑터가 플러그인을 기다렸다
    * 보내고, 못 붙으면 ADAPTER_UNAVAILABLE 로 닫힌다(브리지가 잠깐 끊긴 사이의 스레드 멘션에 재설치 안내를 남기지 않게)
    */
-  function lacksThreads(adapter: AgentAdapter, agentId: string): boolean {
+  function lacksThreads(adapter: AgentAdapter, agentId: string, connectionId: string | null): boolean {
     const detail = adapter.setupDetail();
     if (detail.provider === "openclaw" && detail.bridge.plugin === null) return false;
     // 에이전트 행이 없으면 여기서 막지 않는다 — ensureSession 이 그 런을 닫는다
     const providerAgentId = getAgent(db, agentId)?.providerAgentId;
-    return providerAgentId !== undefined && !adapter.supports(providerAgentId, "threads");
+    return providerAgentId !== undefined && !adapter.supports(providerAgentId, connectionId, "threads");
   }
 
   // ── 정본 ────────────────────────────────────────────────────
@@ -818,26 +858,43 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     return thread;
   }
 
-  function agentIdFor(msg: OutboundMessage, provider: AdapterProvider): string | undefined {
+  /** 그 연결의 에이전트 가운데 msg.agentId — 두 Gateway 의 main 은 연결로 가른다 */
+  function agentIdFor(
+    msg: OutboundMessage,
+    provider: AdapterProvider,
+    connectionId: string,
+  ): string | undefined {
     return db
       .select({ id: agents.id })
       .from(agents)
       .innerJoin(channels, eq(channels.workspaceId, agents.workspaceId))
       .where(
-        and(eq(channels.id, msg.channelId), eq(agents.provider, provider), providerAgentIdIs(msg.agentId)),
+        and(
+          eq(channels.id, msg.channelId),
+          eq(agents.provider, provider),
+          agentOnConnection(provider, connectionId),
+          providerAgentIdIs(msg.agentId),
+        ),
       )
       .get()?.id;
   }
 
-  /** 계약 스펙 5.1: runId → sessionKey 의 미종료 런 → replyToInboundId 가 트리거한 런. 다른 채널 런은 쓰지 않는다. */
-  function correlate(msg: OutboundMessage, provider: AdapterProvider): Run | undefined {
+  /**
+   * 계약 스펙 5.1: runId → 연결·sessionKey 의 미종료 런 → replyToInboundId 가 트리거한 런. 다른 채널 런은 쓰지 않는다.
+   * runId 가 다른 연결의 런을 가리키면 쓰지 않는다(fromRunConnection 과 같은 까닭)
+   */
+  function correlate(msg: OutboundMessage, provider: AdapterProvider, connectionId: string): Run | undefined {
     const inChannel = (run: Run | undefined) => (run?.channelId === msg.channelId ? run : undefined);
-    const byRunId = msg.runId === undefined ? undefined : inChannel(store.getRun(db, msg.runId));
+    const ours = (run: Run | undefined) => {
+      const owner = run === undefined ? null : store.getRunConnectionId(db, run.id);
+      return owner === null || owner === connectionId ? run : undefined;
+    };
+    const byRunId = msg.runId === undefined ? undefined : ours(inChannel(store.getRun(db, msg.runId)));
     if (byRunId) return byRunId;
-    const bySession = inChannel(store.findOpenRunBySession(db, msg.sessionKey));
+    const bySession = inChannel(store.findOpenRunBySession(db, connectionId, msg.sessionKey));
     if (bySession) return bySession;
     if (msg.replyToInboundId === undefined) return undefined;
-    const agentId = agentIdFor(msg, provider);
+    const agentId = agentIdFor(msg, provider, connectionId);
     if (agentId === undefined) return undefined;
     return inChannel(store.findRunByTriggerMessage(db, msg.replyToInboundId, agentId));
   }
@@ -964,7 +1021,9 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
               threadRootId: plan.threadRootId,
             }).session.sessionKey
           : "";
-      const queue = refusal === undefined ? (sessionQueues.get(sessionKey) ?? []) : [];
+      const connectionId = agentConnectionId(db, plan.agentId);
+      const queueKey = queueKeyOf(connectionId, sessionKey);
+      const queue = refusal === undefined ? (sessionQueues.get(queueKey) ?? []) : [];
       const { run, event } = db.transaction((tx) => {
         const run = store.insertRun(tx, {
           channelId: plan.channelId,
@@ -978,6 +1037,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
           parentRunId: plan.parentRunId,
           sessionKey,
           threadRootId: plan.threadRootId,
+          connectionId,
           createdAt: ts,
         });
         const event = store.appendRunEvent(
@@ -996,9 +1056,9 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
           applySignal(run.id, { kind: "gateway_error", code: refusal.code, message: refusal.message }) ?? run
         );
       }
-      pending.set(run.id, { sessionKey: run.sessionKey, order: ++order, trigger });
+      pending.set(run.id, { queueKey, order: ++order, trigger });
       queue.push(run.id);
-      sessionQueues.set(run.sessionKey, queue);
+      sessionQueues.set(queueKey, queue);
       try {
         emitEvents(run.channelId, [event]);
         bus.emit("run.state", { run: store.toRunState(run) });
@@ -1075,7 +1135,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       const adapter = adapterOfRun(run);
       if (inflight.has(runId) || run.providerRunId !== undefined) {
         try {
-          await adapter?.abort(runId, run.sessionKey);
+          await adapter?.abort(runId, run.sessionKey, connectionOfRun(run));
         } catch (err) {
           logger.warn({ err, runId }, "adapter abort failed");
         }
@@ -1085,7 +1145,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       await api.signal(runId, { kind: "abort_requested" });
     },
 
-    async onCanonical(msg, provider) {
+    async onCanonical(msg, provider, connectionId) {
       const existing = db
         .select({ id: messages.id })
         .from(messages)
@@ -1093,10 +1153,10 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         .get();
       if (existing) return { messageId: existing.id };
 
-      const run = correlate(msg, provider);
+      const run = correlate(msg, provider, connectionId);
       const threadRootId = canonicalThread(msg, run);
       if (!run) {
-        const agentId = agentIdFor(msg, provider);
+        const agentId = agentIdFor(msg, provider, connectionId);
         const where = { outboundId: msg.outboundId, channelId: msg.channelId, sessionKey: msg.sessionKey };
         if (agentId === undefined) {
           logger.warn({ ...where, providerAgentId: msg.agentId }, "canonical message from unknown agent");
@@ -1159,9 +1219,10 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
   const unsubscribe = registry.onEvent((e, from) => {
     switch (e.kind) {
       case "run_event":
-        void api.applyRunEvent(e.runId, e.event);
+        if (fromRunConnection(e.runId, e.connectionId, e.kind)) void api.applyRunEvent(e.runId, e.event);
         return;
       case "run_signal":
+        if (!fromRunConnection(e.runId, e.connectionId, e.kind)) return;
         void api.signal(
           e.runId,
           e.signal,
@@ -1170,7 +1231,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         return;
       case "approval":
         // 상관·저장·중계는 승인 서비스가 한다(설계 4.2). ingest 는 던지지 않는다 — 한 건이 이벤트 루프를 끊지 않게
-        if (deps.approvals) deps.approvals.ingest(e.approval, from.provider);
+        if (deps.approvals) deps.approvals.ingest(e.approval, from.provider, e.connectionId);
         else logger.warn({ providerApprovalId: e.approval.providerApprovalId }, "approval without service");
         return;
       case "canonical":

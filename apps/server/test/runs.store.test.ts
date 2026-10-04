@@ -118,19 +118,23 @@ describe("runs store", () => {
     expect(db.select().from(runEvents).all()).toHaveLength(4);
   });
 
-  it("findOpenRunBySession 은 그 세션의 가장 오래된 미종료 런, listOpenRuns 는 미종료 전부", () => {
+  it("findOpenRunBySession 은 그 연결·세션의 가장 오래된 미종료 런, listOpenRuns 는 미종료 전부", () => {
     const { db, newRun, sessionKey } = setup();
     const t = (s: number) => new Date(Date.UTC(2026, 8, 15, 0, 0, s));
-    const done = newRun({ createdAt: t(1) });
+    const done = newRun({ createdAt: t(1), connectionId: "g1" });
     updateRun(db, done.id, { status: "done" });
-    const head = newRun({ createdAt: t(2) });
+    // 다른 연결의 같은 세션 키(두 Gateway 의 같은 id 에이전트) — 더 먼저 만들었어도 g1 의 런이 아니다
+    const elsewhere = newRun({ createdAt: t(1), connectionId: "g2" });
+    const head = newRun({ createdAt: t(2), connectionId: "g1" });
     updateRun(db, head.id, { status: "streaming" });
-    const waiting = newRun({ createdAt: t(3) });
-    const other = newRun({ createdAt: t(4), sessionKey: "agent:fin:dodok:channel:x" });
+    const waiting = newRun({ createdAt: t(3), connectionId: "g1" });
+    const other = newRun({ createdAt: t(4), sessionKey: "agent:fin:dodok:channel:x", connectionId: "g1" });
 
-    expect(findOpenRunBySession(db, sessionKey)?.id).toBe(head.id);
-    expect(findOpenRunBySession(db, "agent:nobody:dodok:channel:x")).toBeUndefined();
-    expect(listOpenRuns(db).map((r) => r.id)).toEqual([head.id, waiting.id, other.id]);
+    expect(findOpenRunBySession(db, "g1", sessionKey)?.id).toBe(head.id);
+    expect(findOpenRunBySession(db, "g2", sessionKey)?.id).toBe(elsewhere.id);
+    expect(findOpenRunBySession(db, "g1", "agent:nobody:dodok:channel:x")).toBeUndefined();
+    expect(findOpenRunBySession(db, "g3", sessionKey)).toBeUndefined();
+    expect(listOpenRuns(db).map((r) => r.id)).toEqual([elsewhere.id, head.id, waiting.id, other.id]);
   });
 
   it("findRunByTriggerMessage 는 트리거 메시지(와 에이전트)로 가장 최근 런을 찾는다", () => {

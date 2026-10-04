@@ -2,6 +2,12 @@ import { join } from "node:path";
 import { Handle } from "@dodok/shared";
 import { z } from "zod";
 
+/**
+ * .env 의 Gateway 하나가 쓰는 연결 id(멀티 Gateway 계획 판정 PG1) — OpenClaw 어댑터가 이벤트·send 결과에 싣고, gateway_id 가 빈
+ * OpenClaw 에이전트 행은 이 연결로 본다(adapters/connection.ts connectionIdOf). Gateway 를 DB 에서 읽게 되면 함께 없어진다
+ */
+export const OPENCLAW_ENV_CONNECTION_ID = "env";
+
 const Raw = z.object({
   HOST: z.string().default("127.0.0.1"),
   PORT: z.coerce.number().int().min(0).max(65535).default(3000),

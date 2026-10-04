@@ -24,6 +24,8 @@ export type InsertRunInput = {
   sessionKey: string;
   /** 스레드 하위 세션의 런이면 그 루트 */
   threadRootId?: string | undefined;
+  /** 만들 때 에이전트 행의 연결(adapters/connection.ts connectionIdOf) — send 가 돌려준 값으로 덮는다 */
+  connectionId?: string | null | undefined;
   createdAt: Date;
 };
 
@@ -31,7 +33,15 @@ export type InsertRunInput = {
 export type RunRowPatch = Partial<
   Pick<
     RunInsert,
-    "status" | "hasCanonical" | "finalSource" | "usage" | "error" | "providerRunId" | "startedAt" | "endedAt"
+    | "status"
+    | "hasCanonical"
+    | "finalSource"
+    | "usage"
+    | "error"
+    | "providerRunId"
+    | "connectionId"
+    | "startedAt"
+    | "endedAt"
   >
 >;
 
@@ -87,6 +97,7 @@ export function insertRun(db: DbOrTx, input: InsertRunInput): Run {
       parentRunId: input.parentRunId ?? null,
       sessionKey: input.sessionKey,
       threadRootId: input.threadRootId ?? null,
+      connectionId: input.connectionId ?? null,
       status: "queued",
       hasCanonical: false,
       createdAt: input.createdAt,
@@ -107,6 +118,11 @@ export function getRun(db: DbOrTx, id: string): Run | undefined {
   return row ? rowToRun(row) : undefined;
 }
 
+/** 그 런을 맡은 연결(runs.connection_id) — 공유 Run 에는 싣지 않는다(REST·wire 로 나가지 않게). 런이 없거나 비었으면 null */
+export function getRunConnectionId(db: DbOrTx, id: string): string | null {
+  return db.select({ c: runs.connectionId }).from(runs).where(eq(runs.id, id)).get()?.c ?? null;
+}
+
 /** 채널이 그 워크스페이스에 있는 런 — REST·wire 가 다른 워크스페이스 런을 NOT_FOUND 로 가린다 */
 export function getRunInWorkspace(db: DbOrTx, id: string, workspaceId: string): Run | undefined {
   const row = db
@@ -118,12 +134,21 @@ export function getRunInWorkspace(db: DbOrTx, id: string, workspaceId: string): 
   return row ? rowToRun(row.run) : undefined;
 }
 
-/** 그 세션의 종료되지 않은 런 중 가장 먼저 만든 것 — FIFO 직렬화라 디스패치된 런이 맨 앞이다. */
-export function findOpenRunBySession(db: DbOrTx, sessionKey: string): Run | undefined {
+/**
+ * 그 연결·세션의 종료되지 않은 런 중 가장 먼저 만든 것 — FIFO 직렬화라 디스패치된 런이 맨 앞이다. 세션 키만으로는 두 Gateway 의
+ * 같은 id 에이전트(main)를 가르지 못한다
+ */
+export function findOpenRunBySession(db: DbOrTx, connectionId: string, sessionKey: string): Run | undefined {
   const row = db
     .select()
     .from(runs)
-    .where(and(eq(runs.sessionKey, sessionKey), notInArray(runs.status, TERMINAL)))
+    .where(
+      and(
+        eq(runs.connectionId, connectionId),
+        eq(runs.sessionKey, sessionKey),
+        notInArray(runs.status, TERMINAL),
+      ),
+    )
     .orderBy(asc(runs.createdAt), asc(runs.id))
     .limit(1)
     .get();

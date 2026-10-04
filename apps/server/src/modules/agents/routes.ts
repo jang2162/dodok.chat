@@ -2,6 +2,7 @@ import { Agent, Id, isRegistrableAgentId } from "@dodok/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { AdapterRegistry } from "../../adapters/registry";
+import { OPENCLAW_ENV_CONNECTION_ID } from "../../config";
 import { AdapterError } from "../../adapters/types";
 import type { Auth } from "../../auth";
 import { requireRole } from "../../auth/roles";
@@ -82,7 +83,10 @@ export function registerAgentRoutes(fastify: FastifyInstance, ctx: AgentRouteCon
     const adapter = ctx.registry.forProvider(provider);
     if (!adapter) throw apiError("ADAPTER_UNAVAILABLE", "adapter not configured");
     try {
-      return { agents: await adapter.listAgents() };
+      // OpenClaw 는 아직 .env 의 Gateway 하나, 러너 찾기는 붙은 러너 전부(연결을 고르지 않는다)
+      return {
+        agents: await adapter.listAgents(provider === "openclaw" ? OPENCLAW_ENV_CONNECTION_ID : null),
+      };
     } catch (err) {
       if (err instanceof AdapterError) throw apiError(err.code, err.message);
       throw err;

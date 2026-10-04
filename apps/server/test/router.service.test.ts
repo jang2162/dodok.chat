@@ -439,6 +439,7 @@ describe("createServices — 라우터·오케스트레이터 상호 참조", ()
           ts: new Date().toISOString(),
         },
         "openclaw",
+        "env",
       );
       await vi.waitFor(() => expect(t.adapter.calls.send).toHaveLength(2));
       const relay = t.adapter.calls.send[1];

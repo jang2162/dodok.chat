@@ -70,6 +70,8 @@ export function issueBridgeToken(
     createdAt: now,
     lastUsedAt: null,
     revokedAt: null,
+    // Gateway 에 묶는 것은 Gateway 아래 발급 경로가 맡는다(멀티 Gateway 계획 판정 PG6) — 그 전에는 비어 있다
+    gatewayId: null,
   };
   db.insert(bridgeTokens).values(row).run();
   return { token, record: toRecord(row, null) };

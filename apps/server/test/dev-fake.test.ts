@@ -48,6 +48,7 @@ import { findItem, formatInteractionText } from "../src/modules/components/inter
 import { agents, runnerTokens, runs, users } from "../src/db/schema.sqlite";
 import { normalizeEmail } from "../src/modules/members/accept";
 import { DISCONNECT_EVENT_MS } from "../src/modules/ops/health";
+import { OPENCLAW_ENV_CONNECTION_ID } from "../src/config";
 import type { FakeRunnerRun } from "./fakes/fake-runner";
 import type { ScenarioApproval } from "./fakes/scenario";
 import { bootTestApp, login, userWithRole } from "./helpers/app";
@@ -1526,7 +1527,7 @@ describe("startDevFake 스레드 — 스레드 답·스레드 릴레이·동시 
         expect(res.status, JSON.stringify(body)).toBe(400);
         await expect(res.json()).resolves.toMatchObject({ code: "VALIDATION" });
       }
-      expect(openclawOf(dev.app).supports("dev", "threads")).toBe(true);
+      expect(openclawOf(dev.app).supports("dev", OPENCLAW_ENV_CONNECTION_ID, "threads")).toBe(true);
     });
 
     it("false → threads 없는 hello 로 다시 붙어 스레드 멘션은 PLUGIN_OUTDATED 카드(채널 멘션은 그대로) → true 로 되돌리고 「다시 실행」하면 스레드에서 답한다", async () => {
@@ -1536,7 +1537,7 @@ describe("startDevFake 스레드 — 스레드 답·스레드 릴레이·동시 
       expect(offBody.ok).toBe(true);
       expect(offBody.capabilities).not.toContain("threads");
       expect(offBody.capabilities).toContain("agents.list");
-      expect(openclawOf(dev.app).supports("dev", "threads")).toBe(false);
+      expect(openclawOf(dev.app).supports("dev", OPENCLAW_ENV_CONNECTION_ID, "threads")).toBe(false);
 
       const w = await channelWire("thread-outdated", ["dev"]);
       const root = await w.send("옛 플러그인 루트");
@@ -1565,7 +1566,7 @@ describe("startDevFake 스레드 — 스레드 답·스레드 릴레이·동시 
       const on = await setCaps({ threads: true });
       expect(on.status).toBe(200);
       expect(((await on.json()) as { capabilities: string[] }).capabilities).toContain("threads");
-      expect(openclawOf(dev.app).supports("dev", "threads")).toBe(true);
+      expect(openclawOf(dev.app).supports("dev", OPENCLAW_ENV_CONNECTION_ID, "threads")).toBe(true);
       const socket = sockets.at(-1);
       const retried = await socket?.emitWithAck("component.interact", {
         messageId: card.id,

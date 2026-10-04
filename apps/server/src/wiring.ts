@@ -1,5 +1,6 @@
 import type { OpenClawAdapterOptions } from "@dodok/openclaw-adapter";
 import { eq } from "drizzle-orm";
+import { connectionIdOf } from "./adapters/connection";
 import type { AdapterRegistry } from "./adapters/registry";
 import type { Db, DbOrTx } from "./db/client";
 import { agentSessions, agents } from "./db/schema.sqlite";
@@ -38,21 +39,31 @@ export type SessionRecoverTarget = ReturnType<
 >[number];
 
 /**
- * OpenClaw 어댑터 재접속 복구 대상 — OpenClaw 에이전트의 agent_sessions 전부. agentId 는 Gateway 쪽 id(providerAgentId),
- * 커서는 저장된 것만 싣는다. 다른 provider 의 세션은 Gateway 에 없다
+ * OpenClaw 어댑터 재접속 복구 대상 — OpenClaw 에이전트의 agent_sessions 전부를 연결(Gateway)별로. agentId 는 Gateway 쪽 id
+ * (providerAgentId), 커서는 저장된 것만 싣는다. 다른 provider 의 세션은 Gateway 에 없다
  */
-export function sessionRecoverTargets(db: DbOrTx): SessionRecoverTarget[] {
-  return db
+export function sessionRecoverTargets(db: DbOrTx): Map<string, SessionRecoverTarget[]> {
+  const rows = db
     .select({
       sessionKey: agentSessions.sessionKey,
       agentId: agents.providerAgentId,
       cursor: agentSessions.historyCursor,
+      provider: agents.provider,
+      gatewayId: agents.gatewayId,
     })
     .from(agentSessions)
     .innerJoin(agents, eq(agents.id, agentSessions.agentId))
     .where(eq(agents.provider, "openclaw"))
-    .all()
-    .map(({ cursor, ...target }) => (cursor === null ? target : { ...target, cursor }));
+    .all();
+  const byConnection = new Map<string, SessionRecoverTarget[]>();
+  for (const { cursor, provider, gatewayId, ...target } of rows) {
+    const connectionId = connectionIdOf({ provider, gatewayId, runnerTokenId: null });
+    if (connectionId === null) continue;
+    const list = byConnection.get(connectionId) ?? [];
+    list.push(cursor === null ? target : { ...target, cursor });
+    byConnection.set(connectionId, list);
+  }
+  return byConnection;
 }
 
 /**
