@@ -96,8 +96,6 @@ export const qk = {
   /** 연결 설정(owner 만) — 오프라인 사본에 담지 않는다(pwa/persist). 발급 원문은 어느 키에도 넣지 않는다 */
   setupStatus: ["setup", "status"] as const,
   bridgeTokens: ["setup", "bridge-tokens"] as const,
-  /** Gateway 목록(owner 만, `GET /gateways`) — 연결 페이지가 Gateway 를 바꾸면 낡게 한다 */
-  gateways: ["gateways"] as const,
   runnerTokens: ["setup", "runner-tokens"] as const,
   /** 운영(admin 이상) — 오프라인 사본에 담지 않는다(pwa/persist). 상태의 `unacked` 가 사이드바 배지다 */
   opsStatus: ["ops", "status"] as const,

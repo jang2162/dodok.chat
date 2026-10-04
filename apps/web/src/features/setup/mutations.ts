@@ -39,12 +39,12 @@ export function useRevokeBridgeToken(gatewayId: string) {
   });
 }
 
-/** Gateway 를 바꾼 뒤 — 서버가 어댑터에 곧바로 반영하므로 연결 상태와 목록을 다시 받는다 */
+/**
+ * Gateway 를 바꾼 뒤 — 서버가 어댑터에 곧바로 반영하므로 연결 상태를 다시 받는다. 웹은 Gateway 목록을 `GET /gateways` 로
+ * 따로 받지 않는다: 연결 페이지는 설정 상태, 나머지 화면은 어댑터 상태(wire `adapter.status`)에서 읽는다
+ */
 const gatewaysChanged = (qc: ReturnType<typeof useQueryClient>) =>
-  Promise.all([
-    qc.invalidateQueries({ queryKey: qk.setupStatus }),
-    qc.invalidateQueries({ queryKey: qk.gateways }),
-  ]);
+  qc.invalidateQueries({ queryKey: qk.setupStatus });
 
 const GATEWAY_GONE = "이미 삭제된 Gateway 입니다";
 const isGone = (e: unknown) => e instanceof ApiRequestError && e.code === "NOT_FOUND";
