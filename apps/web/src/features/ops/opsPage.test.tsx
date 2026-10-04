@@ -214,7 +214,7 @@ describe("상태 카드 — 실시간(브라우저 검증 D1)", () => {
         gateways: [{ ...TEST_GATEWAY, gateway: "reconnecting", bridge: "down" }],
       }),
     );
-    expect(await statusRow("Gateway 「사무실」")).toHaveTextContent("다시 연결하는 중");
+    expect(await statusRow("Gateway 「사무실」")).toHaveTextContent("재연결 중");
     expect(await statusRow("Gateway 「사무실」")).toHaveAttribute("data-problem");
     expect(await statusRow("플러그인 「사무실」")).toHaveTextContent("연결 안 됨");
     expect(await statusRow("플러그인 「사무실」")).toHaveAttribute("data-problem");
