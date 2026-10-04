@@ -40,6 +40,7 @@ export function MoveGatewayDialog({ agent }: { agent: Agent }) {
   );
   const target = targets.some((g) => g.id === picked) ? picked : targets[0]?.id;
   const handle = `@${agent.handle}`;
+  const id = agent.providerAgentId;
   const error = move.isError ? moveErrorText(move.error) : undefined;
 
   function change(next: boolean) {
@@ -62,8 +63,9 @@ export function MoveGatewayDialog({ agent }: { agent: Agent }) {
         <DialogHeader>
           <DialogTitle>Gateway 옮기기</DialogTitle>
           <DialogDescription>
-            {handle} {josa(agent.handle, "이", "가")} 답할 Gateway 를 고릅니다. 옮길 Gateway 에도 같은 id(
-            {agent.providerAgentId})의 에이전트가 있어야 합니다.
+            {handle} {josa(agent.handle, "이", "가")} 답할 Gateway 를 고릅니다. 그 Gateway 에 OpenClaw
+            에이전트 {id} {josa(id, "이", "가")} 있어야 하고, 그 Gateway 로 이미 등록된 {id}{" "}
+            {josa(id, "이", "가")} 없어야 합니다.
           </DialogDescription>
         </DialogHeader>
         {targets.length === 0 ? (

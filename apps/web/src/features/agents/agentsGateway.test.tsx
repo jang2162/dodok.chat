@@ -93,6 +93,16 @@ describe("에이전트 줄 — Gateway(멀티 Gateway 스펙 7장)", () => {
     expect(screen.queryByText(/gateway not found/)).toBeNull();
   });
 
+  it("옮기기 안내는 실제 규칙 — 그 Gateway 에 OpenClaw 에이전트는 있어야 하고, 이미 등록된 같은 id 는 없어야 한다", async () => {
+    stubServer({ agents: [mainOffice()], gateways: [TEST_GATEWAY, HOME_GATEWAY] });
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "@main-office Gateway 옮기기" }));
+    const dialog = await screen.findByRole("dialog", { name: "Gateway 옮기기" });
+    expect(dialog).toHaveAccessibleDescription(
+      "@main-office 가 답할 Gateway 를 고릅니다. 그 Gateway 에 OpenClaw 에이전트 main 이 있어야 하고, 그 Gateway 로 이미 등록된 main 이 없어야 합니다.",
+    );
+  });
+
   it("옮기기 대화상자는 지금 Gateway 를 후보에서 뺀다", async () => {
     stubServer({ agents: [mainOffice()], gateways: [TEST_GATEWAY, HOME_GATEWAY] });
     renderPage();
