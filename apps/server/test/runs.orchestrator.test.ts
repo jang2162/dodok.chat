@@ -1915,7 +1915,11 @@ describe("orchestrator", () => {
     });
 
     // Gateway 둘 — 「플러그인 붙음」은 첫 Gateway(setupDetail)가 아니라 그 런의 연결을 본다. 에이전트는 둘째 Gateway(B)에 묶는다
-    function onSecondGateway(t: ReturnType<typeof setup>, plugins: { a: boolean; b: boolean }, bThreads: boolean) {
+    function onSecondGateway(
+      t: ReturnType<typeof setup>,
+      plugins: { a: boolean; b: boolean },
+      bThreads: boolean,
+    ) {
       const b = insertGateway(t.db, t.workspaceId, { id: uuid(), name: "둘째" });
       t.db.update(agents).set({ gatewayId: b.id }).where(eq(agents.id, t.agentId)).run();
       const base = t.adapter.setupDetail();
