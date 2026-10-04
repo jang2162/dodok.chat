@@ -343,6 +343,22 @@ describe("Gateway 수정·부팅 — 어댑터에 넘기는 값(FakeAdapter)", (
     ]);
   });
 
+  // FakeAdapter 는 upsertGateway 에 setup 이벤트를 내지 않는다 — 알림은 라우트가 낸 것뿐이다
+  it("추가하면 setup.status 를 한 번 알리고, 그 상태에 새 Gateway 가 있다", async () => {
+    const live = await bootFake();
+    const statuses: SetupStatus[] = [];
+    live.app.bus.on("setup.status", ({ status }) => statuses.push(status));
+    const res = await api(live, "POST", "/gateways", {
+      name: "사무실",
+      url: "ws://gw:1",
+      token: SHARED_TOKEN,
+    });
+    const { id } = GatewaySummary.parse(res.json());
+    expect(statuses).toHaveLength(1);
+    expect(statuses[0]?.gateways.map((g) => g.id)).toEqual([id]);
+    expect(JSON.stringify(statuses)).not.toContain(SHARED_TOKEN);
+  });
+
   it("이름만 바꾸면 이름만 바뀐 설정으로 넣고(어댑터는 다시 붙지 않는다 — 태스크 2), 빈 토큰은 「바꾸지 않음」, 바뀐 것이 없으면 넣지 않는다", async () => {
     const live = await bootFake();
     const { id } = GatewaySummary.parse(
