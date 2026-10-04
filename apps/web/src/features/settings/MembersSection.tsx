@@ -4,6 +4,7 @@ import { type FormEvent, type RefObject, useEffect, useId, useRef, useState } fr
 import { toast } from "sonner";
 import { formError } from "@/api/formErrors";
 import { useCanManage } from "@/api/queries";
+import { gatewaySuffix } from "@/features/agents/gatewaySuffix";
 import { cn } from "@/lib/utils";
 import { Button } from "@/ui/button";
 import { FieldError } from "@/ui/field-error";
@@ -229,7 +230,7 @@ function AddAgentForm({
           <option value="">에이전트 선택</option>
           {candidates.map((a) => (
             <option key={a.id} value={a.id}>
-              {`@${a.handle} — ${a.name}${a.enabled ? "" : " (꺼짐)"}`}
+              {`@${a.handle}${gatewaySuffix(a)} — ${a.name}${a.enabled ? "" : " (꺼짐)"}`}
             </option>
           ))}
         </select>

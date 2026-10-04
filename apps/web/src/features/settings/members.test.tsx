@@ -18,6 +18,7 @@ import {
   membersUrl,
   stubSettingsServer,
 } from "../../../test/settingsServer";
+import { uid } from "../../../test/fixtures";
 import { renderRoute } from "../../../test/shellApi";
 
 let toastError: MockInstance<typeof toast.error>;
@@ -217,6 +218,31 @@ describe("제거 실패·초점·목록 상태", () => {
         .getAllByRole("option")
         .map((o) => o.textContent),
     ).toEqual(["에이전트 선택", "@fin — FIN 봇 (꺼짐)"]);
+  });
+
+  it("OpenClaw 에이전트는 셀렉트·멤버 행에 Gateway 이름 — 두 Gateway 의 같은 id 를 가른다", async () => {
+    const office = { id: uid(30), name: "사무실" };
+    const home = { id: uid(31), name: "집" };
+    stubSettingsServer({
+      agents: [
+        agentOf(DEV, "dev", { gateway: office }),
+        agentOf(FIN, "dev-home", { providerAgentId: "dev", gateway: home }),
+      ],
+      members: members([DEV]),
+    });
+    renderRoute(`/c/${CH}/settings`);
+    const section = await membersSection();
+    const select = await within(section).findByRole("combobox", { name: "에이전트 추가" });
+    await waitFor(() => expect(select).toBeEnabled());
+    expect(
+      within(select)
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual(["에이전트 선택", "@dev-home · 집 — DEV-HOME 봇"]);
+    const list = await agentList();
+    expect(
+      await within(list).findByText((_, el) => el?.tagName === "SPAN" && el.textContent === "@dev · 사무실"),
+    ).toBeInTheDocument();
   });
 
   it("추가 CONFLICT 는 고른 칸에 이어 붙는다(aria-invalid·설명)", async () => {

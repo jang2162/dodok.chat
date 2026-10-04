@@ -2,6 +2,7 @@ import type { Agent, ChannelMember } from "@dodok/shared";
 import { type FormEvent, useId, useRef, useState } from "react";
 import { formError } from "@/api/formErrors";
 import { useCanManage } from "@/api/queries";
+import { gatewaySuffix } from "@/features/agents/gatewaySuffix";
 import { ResetSessionDialog } from "@/features/agents/ResetSessionDialog";
 import { josa } from "@/lib/josa";
 import { cn } from "@/lib/utils";
@@ -71,7 +72,10 @@ export function AgentMemberRow({
         <div className={cn("min-w-0 flex-1", !agent.enabled && "opacity-60")}>
           <div className="flex flex-wrap items-baseline gap-x-2">
             <span className="truncate font-medium">{agent.name}</span>
-            <span className="text-sm text-muted-foreground">{handle}</span>
+            <span className="text-sm text-muted-foreground">
+              {handle}
+              {gatewaySuffix(agent)}
+            </span>
             {!agent.enabled && <Badge variant="outline">꺼짐</Badge>}
           </div>
         </div>
