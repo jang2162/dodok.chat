@@ -16,9 +16,38 @@ describe("CreateGatewayBody", () => {
     }
   });
   it("사용자 정보(user:pass@)가 든 주소는 거부한다 — 응답·설정 상태에 주소가 그대로 나간다", () => {
-    for (const url of ["wss://bob:pw@gw.example", "wss://bob@gw.example", "ws://:pw@127.0.0.1:19001"]) {
+    for (const url of [
+      "wss://bob:pw@gw.example",
+      "wss://bob@gw.example",
+      "ws://:pw@127.0.0.1:19001",
+      "wss://a%40b@gw.example",
+      "WSS://bob:pw@gw.example",
+      // WHATWG 파서는 특수 스킴의 : 뒤 슬래시 개수·역슬래시를 너그럽게 받아 모두 wss://bob:pw@gw.example/ 로 읽는다
+      "wss:/bob:pw@gw.example",
+      "wss:bob:pw@gw.example",
+      "wss:\\bob:pw@gw.example",
+      "wss:////bob:pw@gw.example",
+    ]) {
       expect(CreateGatewayBody.safeParse({ ...body, url }).success, url).toBe(false);
     }
+  });
+  it("호스트 뒤(경로·쿼리·조각)의 @, IPv6, 대문자 스킴은 받는다", () => {
+    for (const url of [
+      "wss://gw.example/path@x",
+      "wss://gw.example?q=a@b",
+      "wss://gw.example#a@b",
+      "wss://[::1]:19001",
+      "WSS://gw.example:18789",
+      // 파서가 \ 에서 호스트를 끊어 호스트 a·경로 /b@gw.example 로 읽는다 — 사용자 정보가 아니다
+      "ws://a\\b@gw.example",
+    ]) {
+      expect(CreateGatewayBody.safeParse({ ...body, url }).success, url).toBe(true);
+    }
+  });
+  it("주소는 입력 그대로 둔다(파서가 정규화한 문자열로 바꾸지 않는다)", () => {
+    expect(CreateGatewayBody.parse({ ...body, url: "wss://gw.example:18789" }).url).toBe(
+      "wss://gw.example:18789",
+    );
   });
   it("이름은 1~32자, 토큰은 비어 있을 수 없다", () => {
     expect(CreateGatewayBody.safeParse({ ...body, name: "x".repeat(32) }).success).toBe(true);
@@ -41,6 +70,7 @@ describe("UpdateGatewayBody", () => {
   it("주소·이름 규칙은 추가와 같다", () => {
     expect(UpdateGatewayBody.safeParse({ url: "http://gw.example" }).success).toBe(false);
     expect(UpdateGatewayBody.safeParse({ url: "wss://bob:pw@gw.example" }).success).toBe(false);
+    expect(UpdateGatewayBody.safeParse({ url: "wss:/bob:pw@gw.example" }).success).toBe(false);
     expect(UpdateGatewayBody.safeParse({ name: "" }).success).toBe(false);
   });
 });

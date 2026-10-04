@@ -182,6 +182,7 @@ describe("Gateway 추가·브리지 토큰·삭제 — 실제 어댑터 + 가짜
       { name: "a", url: "ws://gw", token: "" },
       { name: "a", url: "ws://gw", token: "   " },
       { name: "a", url: "wss://bob:pw@gw.example", token: "t" },
+      { name: "a", url: "wss:/bob:pw@gw.example", token: "t" },
     ]) {
       const res = await api(live, "POST", "/gateways", body);
       expect(res.statusCode, JSON.stringify(body)).toBe(400);

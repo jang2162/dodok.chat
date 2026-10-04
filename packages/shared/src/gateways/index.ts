@@ -7,14 +7,31 @@ import { Id, IsoDateTime } from "../common";
 export const GatewayName = z.string().trim().min(1).max(32);
 export type GatewayName = z.infer<typeof GatewayName>;
 
+// lib ES2022 에는 URL 선언이 없다 — 런타임은 브라우저·Node 공통 WHATWG 전역이고 z.url 도 이것으로 검증한다
+const WhatwgUrl = (
+  globalThis as unknown as { URL: new (input: string) => { username: string; password: string } }
+).URL;
+
 /**
  * Gateway WS 주소 — ws:// 또는 wss:// 만. 사용자 정보(user:pass@)는 받지 않는다 — 주소는 응답·설정 상태에 그대로 나가므로 비밀을
- * 담으면 공유 토큰을 응답에서 빼는 규칙을 우회한다
+ * 담으면 공유 토큰을 응답에서 빼는 규칙을 우회한다. 값은 입력 그대로 둔다(정규화하면 흔한 주소에도 끝 / 가 붙어 owner 가 넣은
+ * 글자와 달라진다)
  */
 export const GatewayUrl = z
   .url({ protocol: /^wss?$/, error: "ws:// 또는 wss:// 주소여야 한다" })
-  // shared 는 URL 전역을 쓰지 않는다(lib ES2022) — 호스트 칸(첫 / ? # 앞)에 @ 가 있으면 사용자 정보다
-  .refine((url) => !/^[a-z]+:\/\/[^/?#]*@/i.test(url), { error: "주소에 사용자 정보를 넣을 수 없다" });
+  // 사용자 정보는 문자열 모양이 아니라 접속하는 쪽과 같은 WHATWG 파서로 가른다 — wss:/u:p@h·wss:u:p@h·wss:\u:p@h 도 파서는
+  // wss://u:p@h/ 로 읽는다. 파싱이 안 되는 값은 z.url 이 이미 거절했으므로 여기서는 통과시킨다(zod 4 는 실패해도 refine 을 부른다)
+  .refine(
+    (url) => {
+      try {
+        const parsed = new WhatwgUrl(url);
+        return parsed.username === "" && parsed.password === "";
+      } catch {
+        return true;
+      }
+    },
+    { error: "주소에 사용자 정보를 넣을 수 없다" },
+  );
 export type GatewayUrl = z.infer<typeof GatewayUrl>;
 
 /** POST /api/v1/gateways 본문 */
