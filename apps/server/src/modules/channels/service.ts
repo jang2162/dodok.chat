@@ -8,7 +8,7 @@ import type { AdapterRegistry } from "../../adapters/registry";
 import { AdapterError, type AgentAdapter } from "../../adapters/types";
 import { roleOf } from "../../auth/roles";
 import type { Db, DbOrTx } from "../../db/client";
-import { agents, channelMembers, channels, memberships, users } from "../../db/schema.sqlite";
+import { agents, channelMembers, channels, gateways, memberships, users } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
 import { parseStored } from "../../http/validate";
 import type { Logger } from "../../logger";
@@ -318,18 +318,23 @@ export function listMembers(db: DbOrTx, channelId: string): ChannelMember[] {
     .map(rowToMember);
 }
 
-/** 그 채널의 OpenClaw 에이전트 멤버가 속한 Gateway 들(멀티 Gateway 계획 판정 PG10) — Gateway 가 빈 에이전트는 빠진다 */
+/**
+ * 그 채널의 OpenClaw 에이전트 멤버가 속한 켜진 Gateway 들(멀티 Gateway 계획 판정 PG10) — Gateway 가 빈 에이전트와 꺼진 Gateway 는
+ * 빠진다. 꺼진 Gateway 에는 보내도 실패해 경고 알림만 남는다 — 다시 켤 때 그 사이 바뀐 프롬프트를 다시 보내는 길은 아직 없다
+ */
 export function channelGatewayIds(db: DbOrTx, channelId: string): string[] {
   return db
     .selectDistinct({ gatewayId: agents.gatewayId })
     .from(channelMembers)
     .innerJoin(agents, eq(agents.id, channelMembers.memberId))
+    .innerJoin(gateways, eq(gateways.id, agents.gatewayId))
     .where(
       and(
         eq(channelMembers.channelId, channelId),
         eq(channelMembers.memberType, "agent"),
         eq(agents.provider, "openclaw"),
         isNotNull(agents.gatewayId),
+        eq(gateways.enabled, true),
       ),
     )
     .all()

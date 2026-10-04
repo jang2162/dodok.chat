@@ -9,7 +9,8 @@ import { channels } from "../src/db/schema.sqlite";
 import { createUserMessage } from "../src/modules/messages/service";
 import type { BusEvents } from "../src/realtime/bus";
 import { bootTestApp, login } from "./helpers/app";
-import { FAKE_GATEWAY_ID } from "./helpers/gateways";
+import { createAgent } from "../src/modules/agents/service";
+import { FAKE_GATEWAY_ID, insertGateway } from "./helpers/gateways";
 
 type Method = "GET" | "POST" | "PATCH" | "DELETE";
 
@@ -174,6 +175,35 @@ describe("REST /api/v1 (FakeAdapter)", () => {
     const res = await api("PATCH", `/channels/${channel.id}`, { prompt: "혼자" });
     expect(res.json().channel.promptRevision).toBe(2);
     expect(adapter.calls.syncChannelConfig.slice(before)).toEqual([]);
+  });
+
+  // 꺼진 Gateway 는 보내도 실패하고 warn 알림만 남는다 — 다시 켤 때의 재동기화는 플러그인 hello 몫
+  it("꺼진 Gateway 에는 채널 프롬프트를 보내지 않는다", async () => {
+    const channel = await newChannel("rest-prompt-off");
+    await withAgent(channel, "rest-prompt-off-on");
+    const off = insertGateway(app.db, app.workspaceId, { id: uuid(), name: "꺼짐", enabled: false });
+    const agent = createAgent(app.db, {
+      workspaceId: app.workspaceId,
+      providerAgentId: "rest-prompt-off-agent",
+      handle: "rest-prompt-off-agent",
+      name: "off",
+      gatewayId: off.id,
+    });
+    const added = await api("POST", `/channels/${channel.id}/members`, {
+      memberType: "agent",
+      memberId: agent.id,
+    });
+    expect(added.statusCode).toBe(201);
+    const notices: unknown[] = [];
+    const offNotice = app.bus.on("system.notice", (p) => notices.push(p));
+    const before = adapter.calls.connections.syncChannelConfig.length;
+
+    const res = await api("PATCH", `/channels/${channel.id}`, { prompt: "꺼진 곳은 빼고" });
+    expect(res.statusCode).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    offNotice();
+    expect(adapter.calls.connections.syncChannelConfig.slice(before)).toEqual([FAKE_GATEWAY_ID]);
+    expect(notices).toEqual([]);
   });
 
   it("syncChannelConfig 가 실패해도 PATCH 는 200 이고 system.notice warn 이 나간다", async () => {
