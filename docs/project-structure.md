@@ -411,8 +411,8 @@ Gateway 0개 부팅, 검증 함수가 던지면 거절, 거절 로그 주소(TRU
 개발 모드 `apps/server/scripts/dev-fake.ts`(`pnpm -F @dodok/server dev:fake`, 웹 MVP 스펙 9.2): 위 `test/fakes/` 를 그대로 가져다 가짜 Gateway·가짜 플러그인·대본과 함께 서버를 띄운다 —
 실제 `OpenClawAdapter` 가 가짜 Gateway 에 붙으므로 모델 런·실제 Gateway 없이 웹 전체를 돌릴 수 있다.
 가짜 Gateway 는 둘이다(`DEV_FAKE_GATEWAYS`) — 「사무실」(고정 id `DEV_FAKE_OFFICE_GATEWAY_ID`, 에이전트 `dev`·`fin`, 고정 브리지 토큰 `dev-fake-bridge-token-office`)·
-「집」(`DEV_FAKE_HOME_GATEWAY_ID`, `main`·`dev`, `dev-fake-bridge-token-home`). `dev` 가 두 Gateway 에 일부러 겹친다. 시작 때 둘을 DB 에 넣고(`--keep` 이면 주소·토큰만 이번 가짜로)
-Gateway 마다 토큰 행·가짜 플러그인·대본을 하나씩 둔다. OpenClaw 에이전트도 시작 때 등록한다 — 핸들 `dev`·`fin`(사무실)·`main`·`dev-home`(집), 그 핸들이나 그 Gateway 의 같은 id 가 이미 있으면 그대로 둔다.
+「집」(`DEV_FAKE_HOME_GATEWAY_ID`, `main`·`dev`, `dev-fake-bridge-token-home`). `dev` 가 두 Gateway 에 일부러 겹친다. 시작 때 둘을 DB 에 넣고(`--keep` 이면 주소·토큰만 이번 가짜로 — 지운 고정 Gateway 는 다시 만들되 그 이름을 사람이 다른 Gateway 에 썼으면 「<이름> (dev:fake)」)
+Gateway 마다 토큰 행·가짜 플러그인·대본을 하나씩 둔다. 시작은 가짜 플러그인이 붙은 고정 짝만 기다린다 — 사람이 더한 Gateway 는 닿지 않아도 되고, 사람이 끈 고정 Gateway·폐기한 고정 토큰이면 그 짝의 플러그인은 warn 만 남기고 붙지 않는다. OpenClaw 에이전트도 시작 때 등록한다 — 핸들 `dev`·`fin`(사무실)·`main`·`dev-home`(집), 그 핸들이나 그 Gateway 의 같은 id 가 이미 있으면 그대로 둔다.
 대본의 이름표는 핸들이라(`**dev-home**: …`) 답만 보고 어느 Gateway 가 답했는지 안다. DB 에 넣지 않은 셋째 가짜 Gateway 도 하나 연다 — 시작 로그 `spareGateway` 의 주소·토큰(가짜는 토큰을 검사하지 않는다)을 연결 페이지 「Gateway 추가」에 넣어 붙여 본다(플러그인 없이 Gateway 줄만 붙는다). `.env` 를 읽지 않고 개발 전용 고정값을 쓴다(로그인 토큰 `dev-fake-local-token` — 시크릿이 아니라 로그에 찍는다),
 DB 는 `data/dev-fake.sqlite`(시작마다 새로, `--keep` 이면 유지), 기본 포트 3000(Vite 프록시 대상). 운영 코드(`src/`)는 건드리지 않는다.
 부팅 때 고정 member 계정(이메일 `member@dodok.local`, 비밀번호 `dev-fake-member-password`, 핸들 `mia`, 표시 이름 「미아」)도 owner 와 같은 자리에서 보장한다 —
@@ -425,7 +425,7 @@ DB 는 `data/dev-fake.sqlite`(시작마다 새로, `--keep` 이면 유지), 기�
 웹을 다른 포트로 띄우면 `PORT=3100 APP_ORIGIN=http://localhost:5180 pnpm -F @dodok/server dev:fake` + `DODOK_API_ORIGIN=http://127.0.0.1:3100 pnpm -F @dodok/web dev --port 5180`(`APP_ORIGIN` 기본은 `http://localhost:5173`).
 가짜 플러그인은 `.env` 가 아니라 그 Gateway 의 고정 브리지 토큰(라벨 `dev-fake`)으로 붙는다 — 연결 페이지의 각 Gateway 카드 토큰 목록에 그 줄이 있다.
 Gateway 를 고르는 훅(`plugin-token`·`plugin-capabilities`·`gateway`)은 본문에 `gatewayId`(사무실·집의 고정 id)가 있어야 한다 — 없거나 그 둘이 아니면 400 `VALIDATION`(문구에 고를 수 있는 id 가 실린다).
-**개발 전용 훅 `POST /__devfake/plugin-token { "gatewayId": "<id>", "token": "<원문>" }`**(`DEV_FAKE_PLUGIN_TOKEN_PATH`): 그 Gateway 의 가짜 플러그인을 끊고 그 토큰으로 다시 붙인다 — 연결 페이지의 토큰 교체(발급 → 「지금 접속 중」 이동 → 옛 토큰 폐기 → 옛 토큰 재접속 거절)를 브라우저로 잴 때. 다른 Gateway 의 플러그인은 그대로다.
+**개발 전용 훅 `POST /__devfake/plugin-token { "gatewayId": "<id>", "token": "<원문>" }`**(`DEV_FAKE_PLUGIN_TOKEN_PATH`): 그 Gateway 의 가짜 플러그인을 끊고 그 토큰으로 다시 붙인다 — 연결 페이지의 토큰 교체(발급 → 「지금 접속 중」 이동 → 옛 토큰 폐기 → 옛 토큰 재접속 거절)를 브라우저로 잴 때. 다른 Gateway 의 플러그인은 그대로다. 다른 Gateway 에 묶인 토큰이면 400 `VALIDATION`(받으면 이 플러그인이 그 Gateway 자리를 차지해 그 Gateway 의 런에 이 짝의 대본이 답한다). DB 에 없는 토큰은 받아 `{ ok: false, reason: "UNAUTHORIZED" }` 를 돌려준다.
 응답은 200 `{ ok: true }` 또는 `{ ok: false, reason }`(예 `UNAUTHORIZED` — 모르는 토큰을 주면 가짜 플러그인이 끊긴 채 남아 임계 뒤 `plugin_down` 이 열린다).
 **개발 전용 훅 `POST /__devfake/plugin-capabilities { "gatewayId": "<id>", "threads": boolean }`**(`DEV_FAKE_PLUGIN_CAPABILITIES_PATH`): 옛 플러그인 흉내 — false 면 그 Gateway 의 가짜 플러그인을 끊고 hello capabilities 에서 `threads` 를 뺀 채 다시 붙는다(스레드 멘션은 곧바로 `PLUGIN_OUTDATED` run_error 카드, 채널 멘션은 그대로), true 면 되돌린다(재설치 — 그 카드의 「다시 실행」이 스레드에서 답한다). 토큰은 그대로. 응답은 200 `{ ok: true, capabilities }` 또는 `{ ok: false, reason }`. 값은 메모리에만 있어 다시 띄우면 `threads` 가 있다.
 **운영 훅**(Phase 3 ③) — 운영 화면의 배지·끊김·디스크를 브라우저로 잴 때:
