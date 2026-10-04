@@ -15,12 +15,19 @@ describe("CreateGatewayBody", () => {
       expect(CreateGatewayBody.safeParse({ ...body, url }).success).toBe(false);
     }
   });
+  it("사용자 정보(user:pass@)가 든 주소는 거부한다 — 응답·설정 상태에 주소가 그대로 나간다", () => {
+    for (const url of ["wss://bob:pw@gw.example", "wss://bob@gw.example", "ws://:pw@127.0.0.1:19001"]) {
+      expect(CreateGatewayBody.safeParse({ ...body, url }).success, url).toBe(false);
+    }
+  });
   it("이름은 1~32자, 토큰은 비어 있을 수 없다", () => {
     expect(CreateGatewayBody.safeParse({ ...body, name: "x".repeat(32) }).success).toBe(true);
     for (const name of ["x".repeat(33), "   ", ""]) {
       expect(CreateGatewayBody.safeParse({ ...body, name }).success).toBe(false);
     }
     expect(CreateGatewayBody.safeParse({ ...body, token: "" }).success).toBe(false);
+    expect(CreateGatewayBody.safeParse({ ...body, token: "   " }).success).toBe(false);
+    expect(CreateGatewayBody.parse({ ...body, token: " t " }).token).toBe("t");
   });
 });
 
@@ -28,10 +35,12 @@ describe("UpdateGatewayBody", () => {
   it("모든 칸이 선택이고, 빈 토큰은 받는다(바꾸지 않음)", () => {
     expect(UpdateGatewayBody.parse({})).toEqual({});
     expect(UpdateGatewayBody.parse({ token: "" })).toEqual({ token: "" });
+    expect(UpdateGatewayBody.parse({ token: "   " })).toEqual({ token: "" });
     expect(UpdateGatewayBody.parse({ enabled: false })).toEqual({ enabled: false });
   });
   it("주소·이름 규칙은 추가와 같다", () => {
     expect(UpdateGatewayBody.safeParse({ url: "http://gw.example" }).success).toBe(false);
+    expect(UpdateGatewayBody.safeParse({ url: "wss://bob:pw@gw.example" }).success).toBe(false);
     expect(UpdateGatewayBody.safeParse({ name: "" }).success).toBe(false);
   });
 });

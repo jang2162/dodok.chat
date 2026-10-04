@@ -7,23 +7,30 @@ import { Id, IsoDateTime } from "../common";
 export const GatewayName = z.string().trim().min(1).max(32);
 export type GatewayName = z.infer<typeof GatewayName>;
 
-/** Gateway WS 주소 — ws:// 또는 wss:// 만 */
-export const GatewayUrl = z.url({ protocol: /^wss?$/, error: "ws:// 또는 wss:// 주소여야 한다" });
+/**
+ * Gateway WS 주소 — ws:// 또는 wss:// 만. 사용자 정보(user:pass@)는 받지 않는다 — 주소는 응답·설정 상태에 그대로 나가므로 비밀을
+ * 담으면 공유 토큰을 응답에서 빼는 규칙을 우회한다
+ */
+export const GatewayUrl = z
+  .url({ protocol: /^wss?$/, error: "ws:// 또는 wss:// 주소여야 한다" })
+  // shared 는 URL 전역을 쓰지 않는다(lib ES2022) — 호스트 칸(첫 / ? # 앞)에 @ 가 있으면 사용자 정보다
+  .refine((url) => !/^[a-z]+:\/\/[^/?#]*@/i.test(url), { error: "주소에 사용자 정보를 넣을 수 없다" });
 export type GatewayUrl = z.infer<typeof GatewayUrl>;
 
 /** POST /api/v1/gateways 본문 */
 export const CreateGatewayBody = z.object({
   name: GatewayName,
   url: GatewayUrl,
-  token: z.string().min(1),
+  // 앞뒤 공백을 걷고 1자 이상
+  token: z.string().trim().min(1),
 });
 export type CreateGatewayBody = z.infer<typeof CreateGatewayBody>;
 
-/** PATCH /api/v1/gateways/:id 본문 — token 이 빈 문자열이면 바꾸지 않는다(수정 대화상자의 「바꾸려면 입력」 칸) */
+/** PATCH /api/v1/gateways/:id 본문 — token 이 앞뒤 공백을 걷고 빈 문자열이면 바꾸지 않는다(수정 대화상자의 「바꾸려면 입력」 칸) */
 export const UpdateGatewayBody = z.object({
   name: GatewayName.optional(),
   url: GatewayUrl.optional(),
-  token: z.string().optional(),
+  token: z.string().trim().optional(),
   enabled: z.boolean().optional(),
 });
 export type UpdateGatewayBody = z.infer<typeof UpdateGatewayBody>;

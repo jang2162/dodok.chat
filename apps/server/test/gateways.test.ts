@@ -180,6 +180,8 @@ describe("Gateway 추가·브리지 토큰·삭제 — 실제 어댑터 + 가짜
       { name: "", url: "ws://gw", token: "t" },
       { name: "x".repeat(33), url: "ws://gw", token: "t" },
       { name: "a", url: "ws://gw", token: "" },
+      { name: "a", url: "ws://gw", token: "   " },
+      { name: "a", url: "wss://bob:pw@gw.example", token: "t" },
     ]) {
       const res = await api(live, "POST", "/gateways", body);
       expect(res.statusCode, JSON.stringify(body)).toBe(400);
@@ -359,6 +361,10 @@ describe("Gateway 수정·부팅 — 어댑터에 넘기는 값(FakeAdapter)", (
     expect(live.adapter.calls.upsertGateway).toEqual([
       { id, name: "본사", url: "ws://gw:1", token: SHARED_TOKEN, enabled: true },
     ]);
+    expect(tokenRow()).toBe(SHARED_TOKEN);
+
+    // 공백만 든 토큰도 「바꾸지 않음」
+    await api(live, "PATCH", `/gateways/${id}`, { token: "   " });
     expect(tokenRow()).toBe(SHARED_TOKEN);
 
     // 같은 값·빈 토큰뿐이면 아무것도 넣지 않는다
