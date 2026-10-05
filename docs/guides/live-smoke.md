@@ -347,7 +347,7 @@ DODOK_API_ORIGIN=http://127.0.0.1:$PORT pnpm -F @dodok/web dev      # 5173, stri
   사람이 누르는 것을 흉내 내는 확인은 탭을 앞으로 꺼낸 뒤 한다(CDP `Page.bringToFront`). 델타 렌더 자체는 배경 탭에서도 정상이다 — WS 수신은 조이지 않는다.
 - **프레임 원본은 늘 남긴다.** `data/live-smoke.env` 에 `OPENCLAW_FRAME_DUMP_PATH=data/frames-<날짜>.jsonl` 을 더한다(파일은 Gateway 연결마다 `<경로>.<연결 id>` — `.env` 의 Gateway 는 `data/frames-<날짜>.jsonl.env`). usage 출처(5.4-2)는 이 덤프로 갈랐다 — 7.6.
 - 3절 (a) 가 `Config path not found: channels.dodok.channels. Nothing was changed.` 를 찍으면 **이미 깨끗하다는 뜻**이다(정상 — 오류가 아니다).
-- 에이전트는 웹에서 등록한다: `/agents` → 「Gateway 에서 가져오기」 → `dev`·`fin`. dev 의 표시 이름은 `C3-PO` 이고 **핸들 칸은 `dev` 로 채워진다**(멘션은 `@dev`).
+- 에이전트는 웹에서 등록한다: `/settings/agents` → 「에이전트 가져오기」 → `dev`·`fin`. dev 의 표시 이름은 `C3-PO` 이고 **핸들 칸은 `dev` 로 채워진다**(멘션은 `@dev`).
 - **스크린샷·콘솔·WS 프레임.** BrowserOS neo 는 스크린샷을 파일로 주지 않고 `console.log`·네트워크·WS 프레임을 못 본다(browser-verification.md).
   저장소 `.mcp.json` 의 `playwright-neo` 가 세션에 붙지 않았으면, neo 의 CDP(`~/Library/Application Support/BrowserClaw/.browseros/config.json` 의 `ports.cdp`, 기본 9110)에
   **Node 24 내장 `WebSocket`** 으로 직접 붙어 `Page.captureScreenshot`·`Runtime.enable`·`Network.enable` 로 대신한다 — 의존성이 필요 없다(2026-09-20 에 그렇게 했다).
@@ -554,7 +554,7 @@ oc --dev config unset agents.entries.dev.tools                 # 빈 껍데기�
 재검증이 대신 무엇을 확인했고 **어떻게 흉내 냈는지**는 9.2 에 적어 뒀다 — 같은 방법을 그대로 쓰면 준비가 빨라진다.
 `dev:fake` 로도 되고 실물로도 된다 — 8절로 승인을 한 번 일으킨 김에 같이 본다. 브라우저는 `http://localhost:5173` 고정(알림 권한은 **출처별**이라 주소가 다르면 다시 묻는다).
 
-Phase 2 ④ 뒤: 옛 「알림 켜기」 토글은 사이드바 하단 「알림」 패널로 옮겨졌고, **이 기기에 푸시가 켜져 있으면 탭 안 승인 알림은 쉰다** — preview(14.1)에서 이 절을 볼 때는 14.3 끝의 순서(권한 허용 → 푸시 「끄기」)를 먼저 한다. 아래 고정 주소 5173(dev 서버, 서비스 워커 없음)에서는 「푸시 알림 켜기」가 권한만 받고 10초 뒤 「서비스 워커가 준비되지 않았습니다」로 끝나 「끄기」 버튼이 생기지 않는다 — 플래그가 없으므로 그대로 탭 안 알림이 돈다. 아래 「알림 켜기」는 그 패널의 「푸시 알림 켜기」(권한을 묻는 자리)로 읽는다.
+Phase 2 ④ 뒤: 옛 「알림 켜기」 토글은 「설정」 → 「알림」 탭(`/settings/notifications`)으로 옮겨졌고, **이 기기에 푸시가 켜져 있으면 탭 안 승인 알림은 쉰다** — preview(14.1)에서 이 절을 볼 때는 14.3 끝의 순서(권한 허용 → 푸시 「끄기」)를 먼저 한다. 아래 고정 주소 5173(dev 서버, 서비스 워커 없음)에서는 「푸시 알림 켜기」가 권한만 받고 10초 뒤 「서비스 워커가 준비되지 않았습니다」로 끝나 「끄기」 버튼이 생기지 않는다 — 플래그가 없으므로 그대로 탭 안 알림이 돈다. 아래 「알림 켜기」는 그 패널의 「푸시 알림 켜기」(권한을 묻는 자리)로 읽는다.
 
 ⚠ **순서가 있다**: `granted` 를 **먼저** 본다. 권한을 한 번 `denied` 로 만들면 「알림 켜기」 토글이 영영 사라지고(설계대로), 같은 출처에서 다시 묻지 못한다.
 되돌리려면 브라우저 사이트 설정에서 손으로 초기화해야 한다.
@@ -641,7 +641,7 @@ DOM 사실은 이미 확인돼 있다: 확정·만료 안내는 **텍스트를 �
 
 (b) 웹: `DODOK_API_ORIGIN=http://127.0.0.1:19100 pnpm -F @dodok/web dev --port 5180` — pnpm 11 은 스크립트 뒤 인자를 그대로 `vite` 에 넘긴다(`$ vite --port 5180`). 브라우저는 `http://localhost:5180`. 로그인은 7.1 의 `/@fs` 방법.
 
-(c) 준비(런 0회): `/agents` → 「Gateway 에서 가져오기」 → `dev` 만 등록(`fin` 은 릴레이로 런을 더 쓴다) → 채널 만들기 → 설정 「멤버」에서 `@dev — C3-PO` 추가.
+(c) 준비(런 0회): `/settings/agents` → 「에이전트 가져오기」 → `dev` 만 등록(`fin` 은 릴레이로 런을 더 쓴다) → 채널 만들기 → 설정 「멤버」에서 `@dev — C3-PO` 추가.
 런 중 wire 이벤트는 `pnpm -s wire-cli http://127.0.0.1:19100 watch <채널 id> --watch-ms 3600000 > data/wire-watch-<날짜>.log` 을 백그라운드로 두면 시각표가 한 파일에 남는다.
 
 (d) **모델 없이 `message` 툴을 두드리는 법**(10.4 결함 1 을 가를 때, 그리고 모델이 만든 카드를 올릴 때). 토큰은 env 로만, `--url` 대신 `--port`:
@@ -1173,7 +1173,7 @@ DODOK_API_ORIGIN=http://127.0.0.1:3100 pnpm -F @dodok/web exec vite preview --po
 p4-t7 은 Playwright 가 받아 둔 Chromium(`~/Library/Caches/ms-playwright`, Google Chrome for Testing — 없으면 `pnpm dlx playwright@1.62.1 install chromium` — 저장소의 playwright-core 1.62.1 과 같은 버전이어야 그 Chromium 빌드를 찾는다)을 `playwright-core`(openclaw 가 끌어오는 전이 의존성 — 브라우저를 내려받지 않는다)로 **headed** 로, `--window-position=-2400,-2400` 으로 화면 밖에 띄워 사람 화면을 가리지 않았다. 이 빌드는 Google Chrome for Testing 이라 **실제 FCM 수신까지 된다** — 시스템 Chrome 으로 갈아탈 필요가 없었다. 프로필은 스크래치패드의 영구 프로필(`launchPersistentContext`)이고, 권한은 `context.grantPermissions(["notifications"], { origin: "http://localhost:5180" })` 로 준다.
 BrowserOS neo 를 쓸 수 있으면 neo 의 CDP(`docs/guides/browser-verification.md`)에 붙여도 된다 — 권한은 `Browser.grantPermissions`, 끝나면 `Browser.resetPermissions`(9.2).
 
-**켜기** — 로그인 → 사이드바 하단 「알림」 → 「푸시 알림 켜기」 → 「이 기기에서 알림을 받습니다」. 서버 행은 읽기 전용으로 본다: `sqlite3 -readonly data/dev-fake.sqlite "select user_id, substr(endpoint,1,40) from push_subscriptions"`(endpoint 는 `https://…google.com/fcm/send/…`). 브라우저 쪽 플래그는 `localStorage["dodok.push"]`(= 켠 사용자 id).
+**켜기** — 로그인 → 「설정」 → 「알림」 탭 → 「푸시 알림 켜기」 → 「이 기기에서 알림을 받습니다」. 서버 행은 읽기 전용으로 본다: `sqlite3 -readonly data/dev-fake.sqlite "select user_id, substr(endpoint,1,40) from push_subscriptions"`(endpoint 는 `https://…google.com/fcm/send/…`). 브라우저 쪽 플래그는 `localStorage["dodok.push"]`(= 켠 사용자 id).
 
 **푸시를 직접 넣기 — CDP `ServiceWorker.deliverPushMessage`**(서버·푸시 서비스를 거치지 않는다):
 
@@ -1958,3 +1958,63 @@ gw config patch --file $SP/base.patch.json5          # 21.1 「Gateway 설정」
 - Gateway 둘·서버(LISTEN 하는 node 에 SIGINT, tsx 부모)·웹을 자기 PID 로 내렸다 — 19011·19021·3950·6150 LISTEN 0.
 - 스크래치의 Gateway 상태 디렉터리 둘·서버 `DATA_DIR`·CLI 설치본·토큰 파일·발급 응답·세션 파일을 지웠다. 워크트리 `data/wire-cli-session.json`(이 실연의 오리진 하나뿐)도 지웠다.
 - 남긴 것: 공용 `/tmp/openclaw/openclaw-<날짜>.log`(다른 Gateway 도 쓰는 날짜 파일이라 지우지 않았다 — 시크릿 0), 스크래치의 화면 사진·로그(커밋하지 않는다).
+
+## 22. llms.txt 실연 — 2026-10-05 결과 (sal-t6, 설정 통합 계획 태스크 6, 모델 런 0회)
+
+설계는 `docs/superpowers/specs/2026-10-05-settings-agents-llms-design.md`(구현과 달라진 것은 그 스펙의 「구현과 맞춘 것」 장), 운영 절차는 `docs/guides/deploy.md` 「[웹 → B] 플러그인 설치·브리지 토큰」·「Claude 러너 설치」 절의 「AI 에게 맡기는 길」.
+owner 로 Gateway 를 추가하고 브리지·러너 토큰을 발급한 뒤, 「AI 에게 맡기기」 한 줄이 가리키는 `llms.txt` 의 두 절을 노드 자리에서 **명령 그대로** 돌렸다 — AI 가 할 일을 실연자가 손으로 대신했다(모델 런 금지라 실제 AI 에게 건네지 않았다).
+사람의 dev 상태(`~/.openclaw-dev`·`~/.openclaw`)와 `.env` 는 읽지도 쓰지도 않았다 — Gateway 상태·노드 홈·서버 DB 를 모두 스크래치에 새로 만들었다.
+
+**판정: 두 절 모두 통과** — Gateway 카드 「연결됨」·플러그인 「접속됨 · 서버와 같은 빌드입니다」, 러너 카드 「연결됨 · 서버와 같은 빌드입니다」. 안내서가 맞지 않는 자리는 「새로 찾은 것」 — dev 에서만 틀리는 연결 페이지 주소, 경로에 UUID 가 든 npm 전역 자리에서 깨지는 `$(npm root -g)`.
+
+### 22.1 환경 실물
+
+| 항목 | 값 |
+| --- | --- |
+| OpenClaw CLI | 스크래치 설치 `openclaw@2026.9.5`(`OpenClaw 2026.9.5 (ec9c1a1)`, 「절차」 절 머리와 같은 설치), 저장소 mise Node 24.21 |
+| 노드 자리 | 모든 노드 명령을 `HOME=<스크래치>/home OPENCLAW_HOME=<같은 곳> npm_config_prefix=<스크래치>/npm-global` 로 돌렸다 — 안내서의 `~/.dodok-bridge-token`·`~/.openclaw/extensions/…`·`~/.dodok-runner/…` 와 `npm install -g`·`$(npm root -g)` 가 고치지 않은 글자 그대로 스크래치를 가리킨다(전역 설치 없음) |
+| Gateway | `gateway run --auth token --port 19051 --bind loopback`(`--dev` 없음), 공유 토큰은 0600 파일 → env `OPENCLAW_GATEWAY_TOKEN`. 설정은 「멀티 Gateway 실연」 절 「Gateway 설정」과 같은 `config patch` 한 번. PATH 앞에 가짜 `claude`(불리면 argv 를 적고 exit 1 — 모델 런이 생겨도 비용 0) |
+| 서버 | `pnpm -F @dodok/openclaw-plugin run pack:plugin`·`pnpm -F @dodok/claude-runner pack:runner` 뒤 소스 실행 `node --import tsx src/main.ts`, 포트 3950, `DATA_DIR=<스크래치>/data`, `APP_ORIGIN=http://localhost:6150`, `BRIDGE_PUBLIC_URL=ws://127.0.0.1:3950/bridge`, `LOG_LEVEL=debug`. 루트 `.env` 가 끼어들지 않게 설정 키를 전부 환경에 줬다(「멀티 Gateway 실연」 절과 같다) |
+| 웹 | Vite dev 6150(`DODOK_API_ORIGIN=http://127.0.0.1:3950`) |
+| 브라우저 | 독립 headless Chromium(`playwright-core` 1.62.1) — 연결 페이지를 읽고 찍기만. neo 를 쓰지 않은 까닭은 「멀티 Gateway 실연」 절과 같다(`localhost` 쿠키가 neo 의 다른 세션을 덮는다). 세션 토큰은 파일에서 쿠키로만 넣었다 |
+| 러너 | 안내서 2번으로 설치한 설치본. 3번(러너 전용 Claude 로그인)은 사람 단계라 하지 않고, 번들 CLI 자리에 「Claude 러너 런 0회 하네스」 절의 감싸개를 얹었다 — `ANTHROPIC_BASE_URL` 은 닫힌 로컬 포트(런을 돌리지 않아 가짜 Messages API 는 띄우지 않았다) |
+
+### 22.2 절차
+
+1. **토큰** — owner 로그인(`POST /api/v1/auth/local`, 본문은 `jq --arg` 로) → `POST /api/v1/gateways`(본문은 Gateway 토큰 파일에서 `jq --rawfile`) → `POST /api/v1/gateways/<id>/bridge-tokens` → 원문을 `jq -r .token` 으로 0600 파일에만. 러너 토큰(`POST /api/v1/setup/runner-tokens`)도 같게. owner 세션 토큰은 `curl -K -` 로만 실었다. 세션 토큰을 파일로 실을 때 `-K -` 와 `-d @-` 는 표준 입력을 함께 쓸 수 없다 — 본문은 0600 파일에서 `-d @<파일>`.
+2. **「AI 에게 맡기기」 한 줄** — 웹의 `llmsHandoffLine`(토큰 자리만 바꿔 실행)이 만드는 줄은 `http://127.0.0.1:3950/llms.txt 를 읽고 「OpenClaw Gateway 호스트」 절대로 이 호스트에 dodok 플러그인을 설치해 줘. 브리지 토큰: <원문>`(러너는 「Claude 러너 머신」·「러너 토큰:」) — 안내서 주소의 오리진은 연결 상태 `bridge.publicUrl` 의 오리진이다. 그 주소의 본문은 웹 6150 프록시로 받은 것과 바이트가 같았다(`text/plain; charset=utf-8`·`nosniff`).
+3. **두 절** — 각 bash 블록을 글자 그대로 `bash -c` 로 돌렸다. 토큰 한 줄은 1번 블록의 표준 입력으로만 넣었다. 사람 몫인 「Gateway 를 내린다·올린다」는 이 호스트의 방식(LISTEN 하는 PID 에 `kill`, 「멀티 Gateway 실연」 절 꼴의 `nohup … gateway run`)으로, 러너 4번의 에이전트는 `llmsbot`(이름 「실연 러너」, 작업 디렉터리 `~/src/my-repo` 를 만들어서)로 답했다. 러너 5번의 전경 명령은 뒤에서 띄우고 출력의 `연결됨` 을 기다렸다.
+
+### 22.3 합격 기준
+
+| # | 기준 | 결과 | 증거 |
+| --- | --- | --- | --- |
+| 1 | 안내서가 로그인 없이 서버 값을 채운다 | **통과** | 200, 오리진 `http://127.0.0.1:3950`, `bridgeUrl` `ws://127.0.0.1:3950/bridge`, 두 파일의 파일·번들 sha256 이 연결 페이지 「플러그인 받기」·러너 「설치」의 값과 같다 |
+| 2 | Gateway 1번 — 토큰 파일 | **통과** | `~/.dodok-bridge-token` `-rw-------` |
+| 3 | Gateway 2번 — 토큰으로 받기·파일 sha256 | **통과** | `shasum -a 256` = 안내서의 파일 sha256(`90ac8f36…bca5`) |
+| 4 | Gateway 3번 — 내린 뒤 설치·`loaded`·번들 sha256 | **통과** | 「Installed plugin: dodok」·「Saved for the next Gateway start.」, `"loaded"`·`["dodok"]`, `~/.openclaw/extensions/dodok/dist/index.js` = 안내서의 번들 sha256(`b59bfae2…2b06`) |
+| 5 | Gateway 4번 — 패치·정리 | **통과** | 「Applied 2 config update(s). …」 exit 0, `TMPDIR` 안의 `dodok.*` 디렉터리와 토큰 파일이 모두 사라짐, `config get channels.dodok.accounts.default.bridgeUrl` = `ws://127.0.0.1:3950/bridge` |
+| 6 | Gateway 5번 — 「접속됨 · 서버와 같은 빌드입니다」 | **통과** | 올린 지 약 5s 에 브리지 `connected`, `GET /api/v1/setup/status` 의 `pluginMatches: true`. 연결 페이지 카드 「실연」 「연결됨」, 「플러그인 — 상태 접속됨 … 서버와 같은 빌드입니다」, 토큰 줄 「지금 접속 중」. 루프백이라 페어링은 자동(`devices approve` 필요 없음) |
+| 7 | 러너 1번 — 토큰 파일 | **통과** | `~/.dodok-runner` `drwx------`, `token` `-rw-------` |
+| 8 | 러너 2번 — 받기·파일 sha256·설치·번들 sha256 | **통과**(「새로 찾은 것」 2 뒤) | 파일 `700a35c7…9754`, 설치본 `dist/main.js` `1955e0bd…6cea` — 안내서 값과 같다 |
+| 9 | 러너 3번 — 번들 CLI 줄 | **통과** | 둘째 줄의 경로 `$(npm root -g)/@dodok/claude-runner/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude` 가 있다(로그인은 사람 단계라 띄우지 않았다) |
+| 10 | 러너 4·5번 — `연결됨`·카드 | **통과** | 출력 「dodok-runner 0.0.0 · Claude Agent SDK 0.3.283 · Claude Code 2.1.283 · 에이전트 llmsbot(my-repo) · 동시 3」 → 「dodok-runner: 연결됨(서버 0.0.0)」. 연결 페이지 러너 카드 「llms-live-runner」 「연결됨」 … 「서버와 같은 빌드입니다」, 에이전트 줄 「실연 러너 · llmsbot · my-repo · sonnet」, 토큰 줄 「지금 접속 중」 |
+| 11 | 시크릿 | **통과** | 브리지·러너·Gateway 공유·로컬 로그인·세션 토큰의 출현 수(`grep -a -c -F -f <토큰 파일>`) — 서버·Gateway·러너·웹 로그, 공용 `/tmp/openclaw/openclaw-<날짜>.log`, 가짜 `claude` 기록, 연결 페이지 글, 안내서 본문에서 모두 **0**. DB 덤프에는 Gateway 공유 토큰 1(설계 — 평문 저장), 브리지·러너 토큰 0(해시만). 양성 대조(토큰 파일 자신) 1 |
+| 12 | 모델 런 0 | **통과** | 번들 CLI 감싸개 기록 0줄. Gateway 쪽 가짜 `claude` 는 3번 불렸고 모두 `auth status --json`(`config patch`·Gateway 기동 때 OpenClaw 가 CLI 로그인 상태를 묻는 것)이다 |
+
+### 22.4 새로 찾은 것 (코드·안내서는 고치지 않았다)
+
+1. **dev 에서는 5번의 연결 페이지 주소가 웹이 아니다.** 두 절 5번이 「사람에게 dodok 연결 페이지(http://127.0.0.1:3950/settings/connection)의 …」라고 말하는데, 이 오리진은 공개 오리진(`BRIDGE_PUBLIC_URL` 의 오리진)이라 dev(서버 3950·웹 6150 이 다른 오리진)에서는 404(JSON)다. 배포(Caddy 한 오리진)에서는 맞다. 기존 이월 「발급 조각 bridgeUrl 이 공개 주소 파생」과 같은 줄기다 — 서버는 웹 오리진(`APP_ORIGIN`)을 따로 알지만 안내서는 공개 오리진 하나만 쓴다.
+2. **`npm root -g` 가 경로 속 UUID 꼴을 `***` 로 가려 내놓는다.** 처음에 npm 전역 자리를 세션 UUID 가 든 스크래치 경로로 두었더니 `$(npm root -g)` 가 `…/***/…` 를 내 2번 마지막 줄 `shasum -a 256 "$(npm root -g)/@dodok/claude-runner/dist/main.js"` 가 「No such file or directory」로 실패했다(설치 자체는 됐다). npm 11.19.0 이 출력의 UUID 를 비밀로 보고 가린 것이다. UUID 없는 링크 경로를 전역 자리로 주고 2번을 처음부터 다시 돌려 통과했다. 사람 머신의 전역 자리에 UUID 가 들어가는 일은 드물지만, 그러면 안내서의 `$(npm root -g)` 세 자리(2번 번들 대조·3번 번들 CLI 줄·3번 `ls`)가 함께 깨진다.
+3. **받은 설치 파일은 고정 `/tmp` 이름이고 지우는 줄이 없다** — `/tmp/dodok-openclaw-plugin.tgz`·`/tmp/dodok-claude-runner.tgz` 는 패치 파일과 달리 `mktemp` 자리가 아니다(실연 뒤 손으로 지웠다). 토큰은 들어 있지 않고 sha256 대조가 바꿔치기를 잡지만, 공유 `/tmp` 에서 다른 사용자가 같은 이름을 미리 만들어 두면 `curl -o` 가 실패하거나 대조와 설치 사이에 바뀔 수 있다.
+
+### 22.5 사람이 볼 것
+
+- 실제 AI(Claude Code 등)에게 「AI 에게 맡기기」 한 줄을 건넸을 때 안내서의 규칙(토큰을 화면·명령 인자에 싣지 않는다, 사람 단계에서 멈춘다, sha256 이 다르면 멈춘다)을 지키는지 — 이번 실연은 명령을 사람이 그대로 돌렸다.
+- 루프백이 아닌 원격 Gateway 의 페어링 대기에서 요청 id 를 AI 에게 넘기는 5번, Linux 노드(`sha256sum`, musl 의 번들 CLI 디렉터리 이름).
+
+### 22.6 정리·잔여물
+
+- 러너(SIGTERM)·Gateway·서버(SIGINT)·웹을 자기 PID 로 내렸다 — 19051·3950·6150 LISTEN 0, 남은 `dodok-runner`·`claude.real` 0.
+- 스크래치(노드 홈 — OpenClaw 상태·토큰·러너 설정·npm 전역 자리, 서버 `DATA_DIR`, CLI 설치본, 로그)와 안내서 명령이 `/tmp` 에 만든 tgz 둘, `packages/openclaw-plugin/dist`·`packages/claude-runner/dist` 의 tgz 를 지웠다. 홈의 `~/.openclaw`·`~/.openclaw-dev` 는 시작 전후 목록이 같다(홈 디렉터리 자체의 수정 시각만 다르다).
+- 남긴 것: 공용 `/tmp/openclaw/openclaw-<날짜>.log`(다른 Gateway 도 쓰는 날짜 파일이라 지우지 않았다 — 시크릿 0).
