@@ -618,6 +618,61 @@ describe("db", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("0016 까지 적용된 DB 에 0017(channels.archived_at)을 얹으면 옛 채널은 살아 있고(null), 스키마 객체 INSERT·보관 쓰기가 된다", () => {
+    const dir = mkdtempSync(join(tmpdir(), "dodok-db-mig-"));
+    try {
+      const older = migrationsUpTo(dir, "_member_deactivate");
+      const sqlite = new Database(join(dir, "app.db"));
+      try {
+        const db = drizzle(sqlite, { schema: { ...schema, ...authSchema } });
+        migrate(db, { migrationsFolder: older });
+        const ws = uuid();
+        const user = uuid();
+        const old = uuid();
+        const createdAt = new Date("2026-10-05T00:00:00.000Z");
+        db.insert(workspaces).values({ id: ws, name: "w", createdAt }).run();
+        sqlite
+          .prepare(
+            "INSERT INTO users (id, workspace_id, handle, display_name, auth_provider, created_at) VALUES (?, ?, 'jang', '장', 'local', ?)",
+          )
+          .run(user, ws, createdAt.getTime());
+        // 옛 스키마에는 archived_at 이 없다 — 지금 스키마의 insert 를 쓰지 않고 SQL 로 넣는다
+        sqlite
+          .prepare(
+            "INSERT INTO channels (id, workspace_id, name, relay_policy_json, visibility, created_by, created_at) VALUES (?, ?, 'general', '{\"maxRelayTurns\":4,\"allowPairs\":\"all\"}', 'public', ?, ?)",
+          )
+          .run(old, ws, user, createdAt.getTime());
+
+        migrate(db, { migrationsFolder: migrationsFolder() });
+
+        expect(db.select({ id: channels.id, a: channels.archivedAt }).from(channels).all()).toEqual([
+          { id: old, a: null },
+        ]);
+        const fresh = uuid();
+        db.insert(channels)
+          .values({
+            id: fresh,
+            workspaceId: ws,
+            name: "fresh",
+            relayPolicy: { maxRelayTurns: 4, allowPairs: "all" },
+            visibility: "public",
+            createdBy: user,
+            createdAt,
+            archivedAt: createdAt,
+          })
+          .run();
+        expect(
+          db.select({ a: channels.archivedAt }).from(channels).where(eq(channels.id, fresh)).get(),
+        ).toEqual({ a: createdAt });
+      } finally {
+        sqlite.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("runs·approvals 의 제공자 id 는 연결 안에서만 유일하다", () => {
     const db = createDb(":memory:");
     const { ws, ch } = seed(db);

@@ -149,6 +149,8 @@ export const channels = sqliteTable("channels", {
   lastSeq: integer("last_seq").notNull().default(0), // 메시지 seq 카운터
   promptRevision: integer("prompt_revision").notNull().default(1), // prompt·promptOverride·relayPolicy 가 바뀔 때마다 +1
   createdAt: ts("created_at").notNull(),
+  // 보관한 시각 — null 이면 살아 있다. 보관해도 메시지·스레드·런·멤버·세션·첨부는 남아 보관 해제하면 그대로 돌아온다
+  archivedAt: ts("archived_at"),
 });
 
 export const agentSessions = sqliteTable(

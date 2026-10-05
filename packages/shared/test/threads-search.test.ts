@@ -182,6 +182,7 @@ describe("검색 계약", () => {
       messageId: ID(1),
       channelId: ID(2),
       seq: 7,
+      channelArchived: false,
       authorType: "user",
       authorId: ID(3),
       createdAt: NOW,
@@ -194,6 +195,9 @@ describe("검색 계약", () => {
     const { seq: _, ...noSeq } = hit;
     expect(SearchHit.safeParse(noSeq).success).toBe(false);
     expect(SearchHit.safeParse({ ...hit, seq: 0 }).success).toBe(false);
+    // 보관한 채널 표시는 빠질 수 없다 — 웹이 「보관됨」을 붙인다
+    const { channelArchived: __, ...noArchived } = hit;
+    expect(SearchHit.safeParse(noArchived).success).toBe(false);
     expect(SearchResult.parse({ hits: [hit], limited: false })).toEqual({ hits: [hit], limited: false });
     expect(SearchResult.safeParse({ hits: [], nextCursor: "n" }).success).toBe(false);
   });

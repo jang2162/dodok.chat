@@ -32,6 +32,7 @@ describe("common", () => {
       "PROVIDER_AUTH",
       "AGENT_ARCHIVED",
       "MEMBER_DEACTIVATED",
+      "CHANNEL_ARCHIVED",
       "INTERNAL",
     ]);
     expect(ErrorCode.safeParse("NOPE").success).toBe(false);

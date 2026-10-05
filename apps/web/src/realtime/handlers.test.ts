@@ -56,6 +56,7 @@ const channel = (over: Partial<Channel> = {}): Channel =>
     visibility: "public",
     createdBy: USER,
     createdAt: "2027-01-15T08:00:00.000Z",
+    archivedAt: null,
     ...over,
   });
 

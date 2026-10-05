@@ -9,7 +9,7 @@ import type { Db, DbOrTx } from "../../db/client";
 import { agents, memberships, pushSubscriptions, users } from "../../db/schema.sqlite";
 import type { Logger } from "../../logger";
 import type { ServerBus } from "../../realtime/bus";
-import { channelParticipants, getChannel } from "../channels/service";
+import { channelParticipants, getChannel, isChannelArchived } from "../channels/service";
 import type { Presence } from "./presence";
 import { type PushTarget, type TriggerLookups, targetsForApproval, targetsForMessage } from "./triggers";
 
@@ -236,6 +236,7 @@ export function createTriggerLookups(db: DbOrTx, workspaceId: string): TriggerLo
         )
         .all()
         .map((row) => row.userId),
+    channelArchived: (id) => isChannelArchived(db, id),
   };
 }
 
@@ -253,9 +254,10 @@ export function attachPushTriggers(
   logger: Pick<Logger, "error">,
 ): { close(): void } {
   const seenApprovals = new Set<string>();
+  // 보관한 채널을 겨눈 알림은 트리거마다 따로 보지 않고 여기서 한 번 거른다 — 정본·승인이 보관과 엇갈려 와도 사람을 부르지 않게
   const guard = (event: string, targets: () => PushTarget[]) => {
     try {
-      void dispatcher.dispatch(targets());
+      void dispatcher.dispatch(targets().filter((t) => !lookups.channelArchived(t.payload.channelId)));
     } catch (err) {
       logger.error({ event, reason: shortReason(err) }, "push trigger failed");
     }

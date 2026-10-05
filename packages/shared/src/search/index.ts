@@ -20,6 +20,8 @@ export const SearchHit = z.object({
   /** 결과로 가기가 `?around=<seq>` 로 그 자리를 받는다 — 답글이면 채널 타임라인은 서버가 그 루트를 가운데로 둔다 */
   seq: z.number().int().min(1),
   threadRootId: Id.optional(),
+  /** 보관한 채널의 메시지 — 웹은 「보관됨」을 붙이고, 결과로 가기는 읽기 전용 채널 화면으로 간다 */
+  channelArchived: z.boolean(),
   authorType: z.enum(["user", "agent"]),
   authorId: Id.optional(),
   createdAt: IsoDateTime,

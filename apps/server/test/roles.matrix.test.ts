@@ -259,6 +259,24 @@ describe("역할 매트릭스(스펙 2장)", () => {
       },
     },
     {
+      name: "GET /channels?archived=1",
+      min: "member",
+      ok: 200,
+      request: () => ({ method: "GET", url: "/api/v1/channels?archived=1" }),
+    },
+    {
+      name: "POST /channels/:id/archive",
+      min: "admin",
+      ok: 200,
+      request: () => ({ method: "POST", url: `/api/v1/channels/${newChannel().id}/archive` }),
+    },
+    {
+      name: "POST /channels/:id/unarchive",
+      min: "admin",
+      ok: 200,
+      request: () => ({ method: "POST", url: `/api/v1/channels/${newChannel().id}/unarchive` }),
+    },
+    {
       name: "POST /channels/:id/agents/:agentId/reset",
       min: "admin",
       ok: 200,

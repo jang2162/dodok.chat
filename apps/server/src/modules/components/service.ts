@@ -6,7 +6,7 @@ import { componentInteractions, users } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
 import type { ServerBus } from "../../realtime/bus";
 import { getAgent, isAgentActive } from "../agents/service";
-import { getChannel, listMembers } from "../channels/service";
+import { assertChannelWritable, getChannel, listMembers } from "../channels/service";
 import { consumeComponentItem, getMessage } from "../messages/service";
 import type { RunGate } from "../ops/budget";
 import { isPairAllowed } from "../router/decide";
@@ -38,7 +38,7 @@ type Checked = {
 };
 
 /**
- * 스펙 3.10·계약 9.3 — 검사(NOT_FOUND → EXPIRED → FORBIDDEN → CONSUMED → VALIDATION) → 관문(RUN_LIMIT) → component_interactions 저장
+ * 스펙 3.10·계약 9.3 — 검사(NOT_FOUND → CHANNEL_ARCHIVED → EXPIRED → FORBIDDEN → CONSUMED → VALIDATION) → 관문(RUN_LIMIT) → component_interactions 저장
  * → 1회용이면 consumed 갱신 → message.updated(상호작용마다, 설계 4.3) → 대상 에이전트에 continue | interaction | 다시 실행 런.
  * 검사·저장·소비는 한 동기 트랜잭션이라 같은 아이템을 동시에 눌러도 한 번만 통과한다.
  * 버스로 내보내는 Message 에는 상호작용 기록을 붙이지 않는다 — 붙이는 것은 wire 팬아웃(realtime/events.ts)이다.
@@ -131,12 +131,16 @@ function withThread(threadRootId: string | undefined): { threadRootId?: string }
   return threadRootId === undefined ? {} : { threadRootId };
 }
 
-/** 저장 없이 검사만 — 통과하면 메시지·검사 결과·대상을 돌려주고, 아니면 그 사유의 apiError 를 던진다 */
+/**
+ * 저장 없이 검사만 — 통과하면 메시지·검사 결과·대상을 돌려주고, 아니면 그 사유의 apiError 를 던진다. 보관한 채널의 카드는 다른 사유보다
+ * 먼저 409 CHANNEL_ARCHIVED 다(계획 판정 PC1) — 저장·소비 전이라 보관 해제하면 같은 카드를 다시 누른다
+ */
 function checkInteraction(tx: DbOrTx, workspaceId: string, input: InteractInput, now: Date): Checked {
   const message = getMessage(tx, input.messageId);
   if (!message || !getChannel(tx, message.channelId, workspaceId)) {
     throw apiError("NOT_FOUND", "message not found");
   }
+  assertChannelWritable(tx, message.channelId, workspaceId);
   const checked = validateInteraction({
     message,
     componentId: input.componentId,

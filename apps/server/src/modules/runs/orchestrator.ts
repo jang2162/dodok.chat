@@ -26,6 +26,7 @@ import type { Logger } from "../../logger";
 import type { ServerBus } from "../../realtime/bus";
 import { josa } from "../../util/josa";
 import { getAgent, providerAgentIdIs } from "../agents/service";
+import { isChannelArchived } from "../channels/service";
 import {
   consumeComponentItem,
   createAgentMessage,
@@ -697,6 +698,11 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     }
   }
 
+  /** 보관한 에이전트의 런이거나 보관한 채널의 런 — 보내지 않고, 늦은 정본은 저장만 한다(채널 보관 계획 판정 PC2) */
+  function archivedTarget(run: Pick<Run, "agentId" | "channelId">): boolean {
+    return getAgent(db, run.agentId)?.archivedAt != null || isChannelArchived(db, run.channelId);
+  }
+
   // ── 직렬화·디스패치 ─────────────────────────────────────────
 
   /** 세션 큐 맨 앞(디스패치 안 된 것) 중 먼저 enqueue 한 것부터, 진행 중 런이 maxInflight 미만인 동안 보낸다. */
@@ -724,9 +730,9 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         pump();
         return;
       }
-      // 대기하는 사이 에이전트를 보관했다 — 보관의 훑기(agents/service.ts archiveAgent)와 같은 「중지」로 닫고 보내지 않는다
-      const target = getAgent(db, run.agentId);
-      if (target && target.archivedAt !== null) {
+      // 대기하는 사이 에이전트나 채널을 보관했다 — 보관의 훑기(agents/service.ts archiveAgent·channels/service.ts archiveChannel)와
+      // 같은 「중지」로 닫고 보내지 않는다
+      if (archivedTarget(run)) {
         applySignal(runId, { kind: "abort_requested" });
         return;
       }
@@ -1231,7 +1237,9 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
           logger.warn({ ...where, providerAgentId: msg.agentId }, "canonical message from unknown agent");
           throw apiError("NOT_FOUND", "agent not found");
         }
-        const message = storeAgentMessage(msg, uploadedBy, agentId, undefined, threadRootId);
+        // 런 없는 정본은 라우팅하지 않지만 푸시는 간다 — 보관한 채널이면 그것도 하지 않는다
+        const silent = isChannelArchived(db, msg.channelId);
+        const message = storeAgentMessage(msg, uploadedBy, agentId, undefined, threadRootId, silent);
         logger.warn({ ...where, runId: msg.runId, messageId: message.id }, "canonical message without run");
         return { messageId: message.id };
       }
@@ -1246,13 +1254,13 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         );
         return { messageId: message.id };
       }
-      if (getAgent(db, run.agentId)?.archivedAt != null) {
-        // 보관한 에이전트의 답 — 채널에는 남기되(웹은 「삭제됨」으로 그린다) 릴레이·푸시는 하지 않는다. 보관 뒤 그 에이전트가 다른
-        // 에이전트를 깨우거나 사람을 부르지 않게
+      if (archivedTarget(run)) {
+        // 보관한 에이전트나 보관한 채널의 답 — 채널에는 남기되(웹은 「삭제됨」·「보관됨」으로 그린다) 릴레이·푸시는 하지 않는다. 보관 뒤
+        // 그 에이전트가 다른 에이전트를 깨우거나 사람을 부르지 않게
         const message = storeAgentMessage(msg, uploadedBy, run.agentId, run.id, threadRootId, true);
         logger.info(
           { runId: run.id, messageId: message.id, outboundId: msg.outboundId, agentId: run.agentId },
-          "late canonical from archived agent — stored without relay",
+          "late canonical from archived agent or channel — stored without relay",
         );
         await api.signal(run.id, { kind: "canonical_received" });
         return { messageId: message.id };

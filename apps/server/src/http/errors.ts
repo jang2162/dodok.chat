@@ -28,6 +28,7 @@ const STATUS: Record<ErrorCode, number> = {
   PROVIDER_AUTH: 502, // 러너 쪽 Claude 로그인 — 서버 앞의 제공자가 거절했다
   AGENT_ARCHIVED: 409, // 보관한 에이전트 — 같은 자리를 이미 잡고 있다(CONFLICT 와 같은 상태)
   MEMBER_DEACTIVATED: 409, // 비활성 멤버의 이메일로 가입 — 로그인(auth/routes.ts signInMember)은 403 을 직접 준다
+  CHANNEL_ARCHIVED: 409, // 보관한 채널에 쓰기 — 지금 상태와 맞지 않는 요청(CONFLICT 와 같은 상태)
   INTERNAL: 500,
 };
 

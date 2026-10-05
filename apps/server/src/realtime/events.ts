@@ -22,7 +22,7 @@ export type WireFanoutOptions = {
 };
 
 /**
- * bus → Socket.IO 팬아웃. 채널 이벤트는 channel:<id> 룸, 승인 둘·people.changed·agents.changed 는 workspace:<id> 룸,
+ * bus → Socket.IO 팬아웃. 채널 이벤트는 channel:<id> 룸, 승인 둘·channel.created·updated·people.changed·agents.changed 는 workspace:<id> 룸,
  * adapter.status·system.notice 는 전체(단일 사용자 MVP), setup.status 는 owner·ops.event 는 owner·admin 사용자 룸에만(설정 마법사 결정 6·팀 스펙 「역할과 권한」 표).
  * message.created·updated 는 여기서 상호작용 기록을 붙인다 — 버스 페이로드는 가볍게 두고, 클라이언트가 보는 Message 는
  * wire 경계에서 한 번 하이드레이션한다(설계 4.2 「클라이언트가 볼 Message 는 항상 하이드레이션을 거친다」).
@@ -128,7 +128,9 @@ export function attachWireFanout(io: WireServer, bus: ServerBus, opts: WireFanou
     on("approval.requested", (p) => io.to(workspaceRoom(opts.workspaceId)).emit("approval.requested", p)),
     on("approval.resolved", (p) => io.to(workspaceRoom(opts.workspaceId)).emit("approval.resolved", p)),
     on("channel.created", (p) => io.to(workspaceRoom(p.channel.workspaceId)).emit("channel.created", p)),
-    on("channel.updated", (p) => io.to(channelRoom(p.channel.id)).emit("channel.updated", p)),
+    // 워크스페이스 룸 — 보관·보관 해제·이름 바꾸기가 그 채널을 구독하지 않은 탭의 사이드바에도 닿게(채널 보관 스펙 「채널 보관」 절의 API).
+    // 노출은 늘지 않는다: channel.created 와 목록 REST 가 이미 워크스페이스의 모든 채널을 준다
+    on("channel.updated", (p) => io.to(workspaceRoom(p.channel.workspaceId)).emit("channel.updated", p)),
     on("channel.member.changed", (p) => io.to(channelRoom(p.channelId)).emit("channel.member.changed", p)),
     on("people.changed", (p) => io.to(workspaceRoom(opts.workspaceId)).emit("people.changed", p)),
     on("agents.changed", (p) => io.to(workspaceRoom(opts.workspaceId)).emit("agents.changed", p)),

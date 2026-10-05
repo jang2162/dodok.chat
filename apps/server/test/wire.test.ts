@@ -327,7 +327,7 @@ describe("wire (앱 부팅, FakeAdapter)", () => {
     expect(seenA).toEqual([]);
   });
 
-  it("bus 팬아웃 — 채널 이벤트는 channel 룸, adapter.status·system.notice 는 전체", async () => {
+  it("bus 팬아웃 — 채널 이벤트는 channel 룸, channel.updated 는 workspace 룸, adapter.status·system.notice 는 전체", async () => {
     const member = await connect();
     const outsider = await connect();
     const channel = newChannel("wire-fanout");
@@ -337,7 +337,6 @@ describe("wire (앱 부팅, FakeAdapter)", () => {
       "message.updated",
       "run.state",
       "run.event",
-      "channel.updated",
       "channel.member.changed",
       "typing",
     ]);
@@ -385,6 +384,8 @@ describe("wire (앱 부팅, FakeAdapter)", () => {
       waitFor(member, "adapter.status"),
       waitFor(outsider, "adapter.status"),
       waitFor(outsider, "system.notice"),
+      // 채널을 구독하지 않은 탭도 받는다 — 보관·이름 바꾸기가 사이드바에 닿게
+      waitFor(outsider, "channel.updated"),
     ]);
     app.bus.emit("message.created", { message: card });
     app.bus.emit("message.updated", { message });
@@ -411,6 +412,7 @@ describe("wire (앱 부팅, FakeAdapter)", () => {
       status,
       outsiderStatus,
       notice,
+      outsiderChannelUpdated,
     ] = await expected;
     expect(card.interactions).toEqual([]);
     expect(cardCreated.message.interactions).toMatchObject([{ itemId: "ok", userId: app.ownerUserId }]);
@@ -419,6 +421,7 @@ describe("wire (앱 부팅, FakeAdapter)", () => {
     // bus 의 channelId 는 룸 선택용 — wire 페이로드에는 싣지 않는다
     expect(runEvent).toEqual({ event });
     expect(channelUpdated.channel.id).toBe(channel.id);
+    expect(outsiderChannelUpdated).toEqual(channelUpdated);
     expect(memberChanged).toEqual({ channelId: channel.id, members });
     expect(typing).toEqual({ channelId: channel.id, actorType: "agent", actorId: run.agentId });
     expect(status).toEqual(adapterStatus);

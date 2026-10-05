@@ -749,7 +749,7 @@ describe("@핸들 검색 — 멘션 토큰으로 바꿔 찾는다(색인은 그�
 });
 
 describe("결과 모양", () => {
-  it("messageId·channelId·seq·authorType·authorId·createdAt", () => {
+  it("messageId·channelId·seq·channelArchived·authorType·authorId·createdAt", () => {
     const t = setup();
     t.say("앞 메시지");
     const m = t.agentSays("모양검사 본문");
@@ -758,6 +758,7 @@ describe("결과 모양", () => {
       messageId: m.id,
       channelId: t.channelId,
       seq: m.seq,
+      channelArchived: false,
       authorType: "agent",
       authorId: t.devId,
       createdAt: m.createdAt,
@@ -824,7 +825,9 @@ describe("마이그레이션 — 기존 DB 에 색인을 채운다", () => {
       );
       db.run(sql`INSERT INTO users (id, workspace_id, handle, display_name, auth_provider, created_at)
         VALUES (${userId}, ${workspaceId}, 'owner', 'owner', 'local', ${NOW.getTime()})`);
-      const ch = createChannel(db as unknown as Db, { workspaceId, createdBy: userId, name: "g" });
+      const ch = { id: uuid() };
+      db.run(sql`INSERT INTO channels (id, workspace_id, name, relay_policy_json, visibility, created_by, created_at)
+        VALUES (${ch.id}, ${workspaceId}, 'g', '{"maxRelayTurns":4,"allowPairs":"all"}', 'public', ${userId}, ${NOW.getTime()})`);
       let seq = 0;
       const insert = (id: string, kind: string, body: string, attachmentsJson = "[]") =>
         db.run(sql`INSERT INTO messages (id, channel_id, seq, kind, author_type, author_id, body_md, mentions_json,

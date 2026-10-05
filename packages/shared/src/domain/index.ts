@@ -76,6 +76,8 @@ export const Channel = z.object({
   visibility: z.enum(["public", "private"]),
   createdBy: Id,
   createdAt: IsoDateTime,
+  /** 보관한 시각 — null 이면 살아 있다. 보관한 채널은 누구나 읽고 아무도 쓰지 못한다(보관 해제만 받는다) */
+  archivedAt: IsoDateTime.nullable(),
 });
 export type Channel = z.infer<typeof Channel>;
 

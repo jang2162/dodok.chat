@@ -69,6 +69,7 @@ describe("Channel", () => {
         visibility: "public",
         createdBy: ID(3),
         createdAt: NOW,
+        archivedAt: null,
       }).success,
     ).toBe(false);
     expect(
@@ -80,8 +81,24 @@ describe("Channel", () => {
         visibility: "public",
         createdBy: ID(3),
         createdAt: NOW,
+        archivedAt: null,
       }).success,
     ).toBe(true);
+  });
+  it("archivedAt — null 이면 살아 있고, 시각이면 보관한 것이다. 키는 빠질 수 없다", () => {
+    const channel = {
+      id: ID(1),
+      workspaceId: ID(2),
+      name: "general",
+      relayPolicy: {},
+      visibility: "public",
+      createdBy: ID(3),
+      createdAt: NOW,
+    };
+    expect(Channel.safeParse({ ...channel, archivedAt: null }).success).toBe(true);
+    expect(Channel.safeParse({ ...channel, archivedAt: NOW }).success).toBe(true);
+    expect(Channel.safeParse(channel).success).toBe(false);
+    expect(Channel.safeParse({ ...channel, archivedAt: "어제" }).success).toBe(false);
   });
 });
 

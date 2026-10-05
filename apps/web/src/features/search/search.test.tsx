@@ -36,6 +36,7 @@ const hitOf = (m: Message, over: Partial<SearchHit> = {}): SearchHit => ({
   messageId: m.id,
   channelId: m.channelId,
   seq: m.seq,
+  channelArchived: false,
   authorType: "user",
   authorId: ME.user.id,
   createdAt: m.createdAt,

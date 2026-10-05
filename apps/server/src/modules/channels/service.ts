@@ -73,6 +73,7 @@ export function rowToChannel(row: ChannelRow): ChannelRecord {
       visibility: row.visibility,
       createdBy: row.createdBy,
       createdAt: row.createdAt.toISOString(),
+      archivedAt: row.archivedAt?.toISOString() ?? null,
       promptRevision: row.promptRevision,
     },
     "channel",
@@ -160,11 +161,21 @@ export function updateChannel(
   });
 }
 
-export function listChannels(db: DbOrTx, workspaceId: string): ChannelRecord[] {
+/** 기본은 살아 있는 채널만, archived 면 보관한 채널만(채널 보관 스펙 「채널 보관」 절의 API) */
+export function listChannels(
+  db: DbOrTx,
+  workspaceId: string,
+  opts: { archived?: boolean } = {},
+): ChannelRecord[] {
   return db
     .select()
     .from(channels)
-    .where(eq(channels.workspaceId, workspaceId))
+    .where(
+      and(
+        eq(channels.workspaceId, workspaceId),
+        opts.archived ? isNotNull(channels.archivedAt) : isNull(channels.archivedAt),
+      ),
+    )
     .orderBy(asc(channels.createdAt), asc(channels.id))
     .all()
     .map(rowToChannel);
@@ -180,6 +191,70 @@ export function getChannel(db: DbOrTx, id: string, workspaceId?: string): Channe
     )
     .get();
   return row ? rowToChannel(row) : undefined;
+}
+
+/**
+ * 쓰기 전에 부르는 채널 검사(계획 판정 PC1) — 없으면 404, 보관했으면 409 CHANNEL_ARCHIVED. 보관한 채널에서 막는 쓰기(보내기·카드
+ * 상호작용·채널 수정·멤버·「새 대화」·첨부 올리기)가 모두 이 한 함수를 지난다. workspaceId 를 주면 그 워크스페이스 것만 찾는다
+ */
+export function assertChannelWritable(db: DbOrTx, channelId: string, workspaceId?: string): ChannelRecord {
+  const channel = getChannel(db, channelId, workspaceId);
+  if (!channel) throw apiError("NOT_FOUND", "channel not found");
+  if (channel.archivedAt !== null) throw apiError("CHANNEL_ARCHIVED", "보관된 채널입니다");
+  return channel;
+}
+
+/** 보관한 채널인가 — 런 관문·늦은 정본·푸시처럼 던지지 않고 가르는 자리가 쓴다. 없는 채널은 false */
+export function isChannelArchived(db: DbOrTx, channelId: string): boolean {
+  const row = db
+    .select({ archivedAt: channels.archivedAt })
+    .from(channels)
+    .where(eq(channels.id, channelId))
+    .get();
+  return row?.archivedAt != null;
+}
+
+export type ArchiveChannelDeps = {
+  db: Db;
+  /** 사람 「중지」와 같은 길(run.abort) — 진행 런은 어댑터에 중단을 보내고, 대기 런은 보내지 않고 닫는다. 걸린 승인은 cancelled 로 닫힌다 */
+  orchestrator: Pick<Orchestrator, "activeRuns" | "abort">;
+};
+
+/**
+ * 보관(채널 보관 스펙 「보관할 때 서버가 하는 일」 절) — archived_at 을 쓰고 그 채널의 열린 런을 멈춘다. 이미 보관했으면 그대로(멱등),
+ * 메시지·스레드·멤버·세션·첨부는 남는다. 새 런은 런 관문이 막는다(ops/budget.ts) — 쓰기가 끝난 뒤 들어온 멘션은 런을 만들지 않고, 쓰기
+ * 전에 만든 런은 아래 훑기가 닫는다. 대기 런을 보내지 않는 것은 에이전트 보관(agents/service.ts archiveAgent)과 같이 두 겹이다 — 훑기는
+ * 대기 런(뒤)부터 거꾸로 닫아 pump 가 꺼낼 런을 남기지 않고, 그래도 꺼낸 런은 디스패치 가드(runs/orchestrator.ts dispatch)가 보관을 보고
+ * 보내지 않은 채 닫는다
+ */
+export async function archiveChannel(
+  deps: ArchiveChannelDeps,
+  id: string,
+  workspaceId: string,
+): Promise<ChannelRecord> {
+  const { db } = deps;
+  const row = db
+    .update(channels)
+    .set({ archivedAt: new Date() })
+    .where(and(eq(channels.id, id), eq(channels.workspaceId, workspaceId), isNull(channels.archivedAt)))
+    .returning()
+    .get();
+  const current = row ? rowToChannel(row) : getChannel(db, id, workspaceId);
+  if (!current) throw apiError("NOT_FOUND", "channel not found");
+  for (const run of deps.orchestrator.activeRuns(id).reverse()) await deps.orchestrator.abort(run.id);
+  return current;
+}
+
+/** 보관 해제 — archived_at 을 비운다. 살아 있으면 그대로. 멤버·세션이 그대로라 다음 멘션은 같은 세션으로 이어 답한다 */
+export function unarchiveChannel(db: DbOrTx, id: string, workspaceId: string): ChannelRecord {
+  const row = db
+    .update(channels)
+    .set({ archivedAt: null })
+    .where(and(eq(channels.id, id), eq(channels.workspaceId, workspaceId)))
+    .returning()
+    .get();
+  if (!row) throw apiError("NOT_FOUND", "channel not found");
+  return rowToChannel(row);
 }
 
 /** 멤버는 채널과 같은 워크스페이스의 사용자(membership 이 있는)·에이전트여야 한다. autoRespond=true 가 둘 이상이 되면 저장하고 경고한다. */

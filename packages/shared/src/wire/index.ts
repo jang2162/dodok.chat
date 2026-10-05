@@ -126,7 +126,7 @@ export interface ServerToClientEvents {
   "approval.requested": (p: { approval: Approval }) => void;
   "approval.resolved": (p: { approval: Approval }) => void;
   "channel.created": (p: { channel: Channel }) => void; // workspace 룸 — 채널 룸에는 아직 아무도 없다
-  "channel.updated": (p: { channel: Channel }) => void;
+  "channel.updated": (p: { channel: Channel }) => void; // workspace 룸 — 보관·보관 해제가 다른 탭의 사이드바에도 닿게
   "channel.member.changed": (p: { channelId: Id; members: ChannelMember[] }) => void;
   "people.changed": (p: { people: Person[] }) => void; // workspace 룸 — 가입·역할·표시 이름·비활성화·다시 활성화 뒤 전체 목록
   // workspace 룸 — 에이전트 등록·수정·옮기기·보관·되살리기 뒤. 본문이 없다: 받은 쪽이 에이전트·채널 멤버 목록을 다시 받는다

@@ -51,6 +51,8 @@ type HitRow = {
   bodyMd: string;
   attachmentsJson: string;
   threadRootId: string | null;
+  /** 보관한 채널의 메시지면 1 — SQLite 는 불을 정수로 준다 */
+  channelArchived: number;
   rank?: number;
 };
 
@@ -59,7 +61,8 @@ type MatchCursor = z.infer<typeof MatchCursor>;
 
 const SELECT_HIT = sql`m.id AS id, m.channel_id AS channelId, m.seq AS seq, m.author_type AS authorType, m.author_id AS authorId,
   m.created_at AS createdAt, m.body_md AS bodyMd, m.attachments_json AS attachmentsJson,
-  m.thread_root_id AS threadRootId`;
+  m.thread_root_id AS threadRootId,
+  (SELECT c.archived_at IS NOT NULL FROM channels c WHERE c.id = m.channel_id) AS channelArchived`;
 
 /**
  * 3글자 이상은 FTS MATCH(bm25 다음 최신순, 커서 페이지), 2글자는 LIKE(최근 90일·50개, 커서 없음 — `limited: true`).
@@ -253,6 +256,7 @@ function toHit(row: HitRow, needles: string[], handleOf: HandleOf): SearchHit {
       authorType: row.authorType,
       authorId: row.authorId ?? undefined,
       threadRootId: row.threadRootId ?? undefined,
+      channelArchived: row.channelArchived === 1,
       createdAt: new Date(row.createdAt).toISOString(),
       snippet: snippetOf(row, needles, handleOf),
     },

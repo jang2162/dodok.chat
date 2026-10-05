@@ -10,6 +10,8 @@ export type TriggerLookups = {
   humanMembers(channelId: string): string[];
   /** 워크스페이스의 owner·admin id — 승인은 관리 일이라 채널 참여와 무관하게 이들에게만 간다 */
   admins(): string[];
+  /** 보관한 채널이면 true — 그 채널을 겨눈 알림은 보내지 않는다(채널 보관 스펙 「보관할 때 서버가 하는 일」 절) */
+  channelArchived(id: string): boolean;
 };
 export type PushTarget = { userId: string; payload: PushPayload };
 

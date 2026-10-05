@@ -622,6 +622,7 @@ describe("attachPushTriggers — 버스 배선", () => {
     agentHandle: () => "dev",
     humanMembers: () => [ALICE_ID],
     admins: () => [ALICE_ID],
+    channelArchived: () => false,
   };
   const message = {
     id: uuid(),

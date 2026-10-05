@@ -72,6 +72,7 @@ export const channelOf = (id: string, over: Partial<Channel> = {}): Channel => (
   visibility: "public",
   createdBy: "u",
   createdAt: "2026-09-19T00:00:00.000Z",
+  archivedAt: null,
   ...over,
 });
 
