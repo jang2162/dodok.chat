@@ -24,6 +24,7 @@ export const ErrorCode = z.enum([
   "TIMEOUT",
   "INSUFFICIENT_STORAGE",
   "PROVIDER_AUTH", // 러너의 Claude 로그인이 안 됐거나 풀렸다(러너 스펙 8장)
+  "AGENT_ARCHIVED", // 보관(삭제)한 에이전트 — 등록 대신 되살리기, 다시 실행은 거절(details.agentId)
   "INTERNAL",
 ]);
 export type ErrorCode = z.infer<typeof ErrorCode>;

@@ -8,12 +8,13 @@ import {
   type Run,
   type RunTriggerKind,
 } from "@dodok/shared";
+import { isAgentActive } from "../agents/service";
 
 export type RoutingInput = {
   message: Message; // 방금 저장된 메시지 (user | agent | system)
   channel: Channel;
   members: ChannelMember[];
-  agents: Agent[]; // 채널 소속 에이전트 (enabled 여부 포함)
+  agents: Agent[]; // 채널 소속 에이전트 (enabled·archivedAt 포함)
   sourceRun?: Run; // message가 에이전트 메시지일 때 그 런
   threadRoot?: Message; // message가 스레드 답글일 때 그 루트
   chainHashes: Set<string>; // 같은 rootMessageId 체인의 relayHash 집합
@@ -69,7 +70,10 @@ export function decideRuns(input: RoutingInput): { runs: RunPlan[]; blocked: Blo
   const agentById = new Map(agents.map((a) => [a.id, a]));
   const agentMembers = members.filter((m) => m.memberType === "agent");
   const memberIds = new Set(agentMembers.map((m) => m.memberId));
-  const isActive = (id: string) => memberIds.has(id) && agentById.get(id)?.enabled === true;
+  const isActive = (id: string) => {
+    const agent = agentById.get(id);
+    return memberIds.has(id) && agent !== undefined && isAgentActive(agent);
+  };
 
   const thread = message.threadRootId === undefined ? {} : { threadRootId: message.threadRootId };
 

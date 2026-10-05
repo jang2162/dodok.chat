@@ -113,6 +113,8 @@ export const agents = sqliteTable(
     runnerTokenId: text("runner_token_id").references((): AnySQLiteColumn => runnerTokens.id),
     // OpenClaw 에이전트를 맡은 Gateway — null 이면 연결이 빈 에이전트(Gateway 를 지웠다 — 옮기기를 기다린다)
     gatewayId: text("gateway_id").references(() => gateways.id, { onDelete: "set null" }),
+    // 보관(삭제)한 시각 — null 이면 살아 있다. 보관해도 행·핸들·채널 참여·세션은 남아 되살리면 그대로 돌아온다
+    archivedAt: ts("archived_at"),
   },
   (t) => [
     uniqueIndex("agents_ws_handle").on(t.workspaceId, t.handle),

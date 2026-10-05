@@ -3,6 +3,7 @@ import { and, eq, gte, sql } from "drizzle-orm";
 import type { Db } from "../../db/client";
 import { messages } from "../../db/schema.sqlite";
 import type { ServerBus } from "../../realtime/bus";
+import { getAgent, isAgentActive } from "../agents/service";
 import { getChannel } from "../channels/service";
 import { createSystemMessage } from "../messages/service";
 import type { RunPlan } from "../router/decide";
@@ -13,14 +14,20 @@ import { getOpsSettings } from "./settings";
 
 export type LimitHit = { scope: "channel" | "workspace"; limit: number };
 
-/** 런을 만드는 모든 경로(라우터·컴포넌트 상호작용·다시 실행)가 지나는 일일 런 수 관문(스펙 3.2) */
+/**
+ * 런을 만드는 모든 경로(라우터·컴포넌트 상호작용·다시 실행)가 지나는 관문 — 일일 런 수(스펙 3.2)와 활성 에이전트(계획 판정 PS2:
+ * 보관·끈 에이전트는 런을 만들지 않는다)
+ */
 export interface RunGate {
   /**
    * 한도 안이면 null. 넘으면 LimitHit — 그 채널에 오늘 같은 scope 의 run_limit 시스템 메시지가 없으면 남기고 사건 run_limit 을 기록한다.
    * 스레드에서 막혔으면 알림은 그 스레드에 남는다(하루 한 번은 채널 단위 그대로)
    */
   check(channelId: string, threadRootId?: string): LimitHit | null;
-  /** check 가 null 이면 orchestrator.enqueueRun, 아니면 null */
+  /**
+   * 대상이 활성이고 check 가 null 이면 orchestrator.enqueueRun, 아니면 null. 활성 검사는 런 행을 넣는 enqueueRun 과 await 없이
+   * 이어진다 — 보관 쓰기와 엇갈려도 「보관 뒤 새 런」이 생기지 않는다(쓰기 전에 들어온 런은 보관이 훑어 닫는다)
+   */
   enqueue(plan: RunPlan & { channelId: string }, trigger: EnqueueTrigger): Promise<Run | null>;
 }
 
@@ -93,6 +100,8 @@ export function createRunGate(deps: {
   return {
     check,
     async enqueue(plan, trigger) {
+      const agent = getAgent(db, plan.agentId);
+      if (agent && !isAgentActive(agent)) return null;
       if (check(plan.channelId, plan.threadRootId)) return null;
       return deps.enqueue(plan, trigger);
     },

@@ -15,6 +15,7 @@ const agent = (n: number, handle: string, over: Partial<Agent> = {}): Agent =>
     name: handle.toUpperCase(),
     enabled: true,
     createdAt: TS,
+    archivedAt: null,
     ...over,
   });
 const member = (memberType: "user" | "agent", memberId: string, aliases: string[] = []): ChannelMember =>

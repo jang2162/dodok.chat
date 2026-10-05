@@ -8,7 +8,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import type { Db } from "../../db/client";
 import { agents, runnerTokens } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
-import { apiAgent, providerAgentIdIs } from "../agents/service";
+import { agentNotArchived, apiAgent, providerAgentIdIs } from "../agents/service";
 
 const claudeAgent = (workspaceId: string, providerAgentId: string) =>
   and(eq(agents.workspaceId, workspaceId), eq(agents.provider, "claude"), providerAgentIdIs(providerAgentId));
@@ -24,7 +24,10 @@ export function boundRunnerToken(db: Db, workspaceId: string, providerAgentId: s
   );
 }
 
-/** 묶이지 않은 등록 claude 에이전트를 그 토큰에 묶는다(첫 연결). 조건부 UPDATE 라 둘이 겹쳐도 한쪽만 묶는다 */
+/**
+ * 묶이지 않은 등록 claude 에이전트를 그 토큰에 묶는다(첫 연결). 조건부 UPDATE 라 둘이 겹쳐도 한쪽만 묶는다. 보관한 에이전트는 러너가
+ * hello 로 알려도 묶지 않는다 — 되살린 뒤에는 묶임 없는 에이전트처럼 그 id 를 알린 러너가 맡고, 다음 claim(러너 접속·끊김) 때 묶인다
+ */
 export function claimRunnerToken(
   db: Db,
   workspaceId: string,
@@ -35,7 +38,7 @@ export function claimRunnerToken(
     db
       .update(agents)
       .set({ runnerTokenId: tokenId })
-      .where(and(claudeAgent(workspaceId, providerAgentId), isNull(agents.runnerTokenId)))
+      .where(and(claudeAgent(workspaceId, providerAgentId), isNull(agents.runnerTokenId), agentNotArchived))
       .run().changes > 0
   );
 }

@@ -483,21 +483,14 @@ describe("db", () => {
         ).toThrow(/UNIQUE/);
         db.update(agents).set({ gatewayId: gw }).where(eq(agents.id, devId)).run();
         db.update(bridgeTokens).set({ gatewayId: gw }).where(eq(bridgeTokens.id, tokenId)).run();
-        // 같은 Gateway 에 같은 id 는 둘이 될 수 없고, 다른 Gateway(또는 러너)의 같은 id 는 된다
+        // 같은 Gateway 에 같은 id 는 둘이 될 수 없고, 다른 Gateway(또는 러너)의 같은 id 는 된다. SQL 로 넣는다 — 스키마 객체는
+        // 뒤 마이그레이션의 열(archived_at 등)까지 싣는다
         const insertAgent = (handle: string, provider: string, gatewayId: string | null) =>
-          db
-            .insert(agents)
-            .values({
-              id: uuid(),
-              workspaceId: ws,
-              provider,
-              providerAgentId: "dev",
-              handle,
-              name: handle,
-              createdAt,
-              gatewayId,
-            })
-            .run();
+          sqlite
+            .prepare(
+              "INSERT INTO agents (id, workspace_id, provider, provider_agent_id, handle, name, created_at, gateway_id) VALUES (?, ?, ?, 'dev', ?, ?, ?, ?)",
+            )
+            .run(uuid(), ws, provider, handle, handle, createdAt.getTime(), gatewayId);
         expect(() => insertAgent("dev-2", "openclaw", gw)).toThrow(/UNIQUE/);
         insertAgent("dev-claude", "claude", null);
         expect(() => insertAgent("dev-claude-2", "claude", null)).toThrow(/UNIQUE/);

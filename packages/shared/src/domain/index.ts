@@ -41,6 +41,11 @@ export const Agent = z.object({
   enabled: z.boolean(),
   createdAt: IsoDateTime,
   /**
+   * 보관(삭제)한 시각 — null 이면 살아 있다. 보관한 에이전트도 행·핸들·채널 참여·세션이 남고 목록에 실린다(채팅 기록의 작성자·멘션
+   * 칩을 그리려면 웹이 알아야 한다). 고르는 자리는 이 값으로 거른다
+   */
+  archivedAt: IsoDateTime.nullable(),
+  /**
    * Claude 러너 에이전트가 묶인 러너 토큰 — 그 토큰의 러너만 이 에이전트를 맡는다. REST 에이전트 응답에만 싣는다. 없으면 아직 묶이지
    * 않았다(처음 알리는 러너에 묶인다). revoked 면 맡을 러너가 없다 — 연결 페이지에서 다른 러너에 다시 묶는다
    */

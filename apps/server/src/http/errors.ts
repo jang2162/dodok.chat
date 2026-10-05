@@ -26,6 +26,7 @@ const STATUS: Record<ErrorCode, number> = {
   TIMEOUT: 504,
   INSUFFICIENT_STORAGE: 507,
   PROVIDER_AUTH: 502, // 러너 쪽 Claude 로그인 — 서버 앞의 제공자가 거절했다
+  AGENT_ARCHIVED: 409, // 보관한 에이전트 — 같은 자리를 이미 잡고 있다(CONFLICT 와 같은 상태)
   INTERNAL: 500,
 };
 

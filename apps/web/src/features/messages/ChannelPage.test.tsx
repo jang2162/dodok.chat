@@ -27,6 +27,7 @@ const agentOf = (id: string, handle: string): Agent => ({
   name: handle.toUpperCase(),
   enabled: true,
   createdAt: "2026-09-19T00:00:00.000Z",
+  archivedAt: null,
 });
 const memberOf = (memberType: ChannelMember["memberType"], memberId: string): ChannelMember => ({
   id: `m-${memberId}`,

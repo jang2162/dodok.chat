@@ -724,6 +724,12 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         pump();
         return;
       }
+      // 대기하는 사이 에이전트를 보관했다 — 보관의 훑기(agents/service.ts archiveAgent)와 같은 「중지」로 닫고 보내지 않는다
+      const target = getAgent(db, run.agentId);
+      if (target && target.archivedAt !== null) {
+        applySignal(runId, { kind: "abort_requested" });
+        return;
+      }
       const trigger = pending.get(runId)?.trigger ?? {};
       const adapter = adapterForAgent(run.agentId);
       const connectionId = connectionOfRun(run);

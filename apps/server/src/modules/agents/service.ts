@@ -1,5 +1,5 @@
 import { Agent } from "@dodok/shared";
-import { and, asc, eq, ne, type SQL, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, ne, type SQL, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import type { Db, DbOrTx } from "../../db/client";
 import { agents, gateways, runnerTokens } from "../../db/schema.sqlite";
@@ -7,6 +7,8 @@ import { apiError } from "../../http/errors";
 import { getGatewayRow } from "../gateways/service";
 import { parseStored } from "../../http/validate";
 import { assertHandleFree } from "../members/handles";
+import type { Orchestrator } from "../runs/orchestrator";
+import { listOpenRuns } from "../runs/store";
 
 type AgentRow = typeof agents.$inferSelect;
 
@@ -62,10 +64,22 @@ export function rowToAgent(row: AgentRow): Agent {
       basePrompt: row.basePrompt ?? undefined,
       enabled: row.enabled,
       createdAt: row.createdAt.toISOString(),
+      archivedAt: row.archivedAt?.toISOString() ?? null,
     },
     "agent",
   );
 }
+
+/**
+ * 런을 받을 수 있는 에이전트인가 — 켜져 있고 보관되지 않았다(계획 판정 PS2). 런을 만드는 판정 자리(라우터·상호작용·러너 묶기)가
+ * 이 한 함수로 본다
+ */
+export function isAgentActive(agent: Pick<Agent, "enabled" | "archivedAt">): boolean {
+  return agent.enabled && agent.archivedAt === null;
+}
+
+/** 살아 있는(보관하지 않은) 에이전트만 고르는 조건 — 채널 멤버·참가자·러너 묶기 조회가 함께 쓴다 */
+export const agentNotArchived: SQL = isNull(agents.archivedAt);
 
 type RunnerTokenRow = Pick<typeof runnerTokens.$inferSelect, "id" | "label" | "revokedAt">;
 type GatewayNameRow = Pick<typeof gateways.$inferSelect, "id" | "name">;
@@ -148,11 +162,57 @@ function assertWorkspaceGateway(tx: DbOrTx, workspaceId: string, gatewayId: stri
   return row;
 }
 
+/**
+ * 같은 자리(OpenClaw 는 같은 Gateway·id, 러너는 같은 id)의 보관한 에이전트 — 다시 가져오면 새로 만들지 않고 되살린다(스펙 「에이전트
+ * 보관」 절의 API). 대소문자는 유일 규칙과 같이 무시한다
+ */
+export function findArchivedAgent(
+  db: DbOrTx,
+  input: { workspaceId: string; provider: string; providerAgentId: string; gatewayId: string | null },
+): string | undefined {
+  return db
+    .select({ id: agents.id })
+    .from(agents)
+    .where(
+      and(
+        eq(agents.workspaceId, input.workspaceId),
+        eq(agents.provider, input.provider),
+        input.provider === "openclaw"
+          ? input.gatewayId === null
+            ? isNull(agents.gatewayId)
+            : eq(agents.gatewayId, input.gatewayId)
+          : undefined,
+        providerAgentIdIs(input.providerAgentId),
+        sql`${agents.archivedAt} IS NOT NULL`,
+      ),
+    )
+    .get()?.id;
+}
+
+function assertNotArchived(
+  tx: DbOrTx,
+  input: { workspaceId: string; provider: string; providerAgentId: string; gatewayId: string | null },
+): void {
+  const archived = findArchivedAgent(tx, input);
+  if (archived !== undefined) {
+    throw apiError("AGENT_ARCHIVED", "삭제된 에이전트입니다", { agentId: archived });
+  }
+}
+
 export function createAgent(db: Db, input: CreateAgentInput): Agent {
   const provider = input.provider ?? "openclaw";
   return db.transaction((tx) => {
-    assertHandleFree(tx, input.workspaceId, input.handle);
     const gatewayId = provider === "openclaw" ? (input.gatewayId ?? null) : null;
+    // 보관한 에이전트는 핸들도 쥐고 있다 — 같은 자리면 핸들 409 보다 되살리기 안내가 먼저다
+    if (gatewayId !== null || provider !== "openclaw") {
+      assertNotArchived(tx, {
+        workspaceId: input.workspaceId,
+        provider,
+        providerAgentId: input.providerAgentId,
+        gatewayId,
+      });
+    }
+    assertHandleFree(tx, input.workspaceId, input.handle);
     if (gatewayId !== null) {
       assertWorkspaceGateway(tx, input.workspaceId, gatewayId);
       assertFreeOnGateway(tx, {
@@ -259,7 +319,54 @@ export function updateAgent(db: Db, id: string, patch: AgentPatch): Agent {
   });
 }
 
-/** REST 목록 — 묶인 러너 토큰(라벨·폐기 여부)과 Gateway(이름)를 붙인다 */
+export type ArchiveDeps = {
+  /** 사람 「중지」와 같은 길(run.abort) — 진행 런은 어댑터에 중단을 보내고, 대기 런은 보내지 않고 닫는다. 걸린 승인은 cancelled 로 닫힌다 */
+  orchestrator: Pick<Orchestrator, "abort">;
+};
+
+/**
+ * 보관(스펙 「에이전트 보관」 절) — archived_at 을 쓰고 그 에이전트의 열린 런을 멈춘다. 이미 보관했으면 그대로(멱등), 행·핸들·채널
+ * 참여·세션은 남는다. 새 런은 런 관문이 막는다(ops/budget.ts) — 쓰기가 끝난 뒤 들어온 멘션은 런을 만들지 않고, 쓰기 전에 만든 런은
+ * 아래 훑기가 닫는다. 대기 런(뒤)부터 거꾸로 닫는다 — 진행 런을 먼저 닫으면 pump 가 다음 대기 런을 보내 버린다
+ */
+export async function archiveAgent(
+  db: Db,
+  deps: ArchiveDeps,
+  id: string,
+  workspaceId: string,
+): Promise<Agent> {
+  const row = db
+    .update(agents)
+    .set({ archivedAt: new Date() })
+    .where(and(eq(agents.id, id), eq(agents.workspaceId, workspaceId), isNull(agents.archivedAt)))
+    .returning()
+    .get();
+  const current =
+    row ??
+    db
+      .select()
+      .from(agents)
+      .where(and(eq(agents.id, id), eq(agents.workspaceId, workspaceId)))
+      .get();
+  if (!current) throw apiError("NOT_FOUND", "agent not found");
+  const open = listOpenRuns(db).filter((run) => run.agentId === id);
+  for (const run of open.reverse()) await deps.orchestrator.abort(run.id);
+  return apiAgent(db, current);
+}
+
+/** 되살리기 — archived_at 을 비운다. 살아 있으면 그대로. 핸들은 보관 중에도 이 에이전트 몫이라 겹칠 수 없다 */
+export function restoreAgent(db: Db, id: string, workspaceId: string): Agent {
+  const row = db
+    .update(agents)
+    .set({ archivedAt: null })
+    .where(and(eq(agents.id, id), eq(agents.workspaceId, workspaceId)))
+    .returning()
+    .get();
+  if (!row) throw apiError("NOT_FOUND", "agent not found");
+  return apiAgent(db, row);
+}
+
+/** REST 목록 — 묶인 러너 토큰(라벨·폐기 여부)과 Gateway(이름)를 붙인다. 보관한 에이전트도 싣는다(archivedAt 으로 가른다) */
 export function listAgents(db: DbOrTx, workspaceId: string): Agent[] {
   return db
     .select({ agent: agents, token: runnerTokenColumns, gateway: gatewayNameColumns })

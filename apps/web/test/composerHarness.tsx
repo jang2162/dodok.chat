@@ -20,6 +20,7 @@ export const DEV: Agent = {
   name: "개발봇",
   enabled: true,
   createdAt: TS,
+  archivedAt: null,
 };
 export const FIN: Agent = {
   ...DEV,

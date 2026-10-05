@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  Agent,
   Approval,
   ApprovalDecision,
   ApprovalKind,
@@ -18,6 +19,25 @@ import {
 
 const ID = (n: number) => `01a09fc9-d204-7551-89d6-38544d07a1${n.toString(16).padStart(2, "0")}`;
 const NOW = "2026-09-14T09:12:00+09:00";
+
+describe("Agent.archivedAt", () => {
+  const agent = {
+    id: ID(1),
+    workspaceId: ID(2),
+    provider: "openclaw",
+    providerAgentId: "dev",
+    handle: "dev",
+    name: "Dev",
+    enabled: true,
+    createdAt: NOW,
+  };
+  it("null 이면 살아 있고, 시각이면 보관한 것이다 — 키는 빠질 수 없다", () => {
+    expect(Agent.safeParse({ ...agent, archivedAt: null }).success).toBe(true);
+    expect(Agent.safeParse({ ...agent, archivedAt: NOW }).success).toBe(true);
+    expect(Agent.safeParse(agent).success).toBe(false);
+    expect(Agent.safeParse({ ...agent, archivedAt: "어제" }).success).toBe(false);
+  });
+});
 
 describe("Handle", () => {
   it("소문자·숫자·_·- 2~32자만", () => {

@@ -25,6 +25,7 @@ const agent = (id: string, handle: string, enabled = true): Agent => ({
   name: handle,
   enabled,
   createdAt: NOW,
+  archivedAt: null,
 });
 const member = (memberId: string, extra: Partial<ChannelMember> = {}): ChannelMember => ({
   id: ID(20),
@@ -103,6 +104,19 @@ describe("decideRuns — 사람 메시지", () => {
       { agentId: A, triggerKind: "mention", rootMessageId: ID(30), relayDepth: 0 },
       { agentId: B, triggerKind: "mention", rootMessageId: ID(30), relayDepth: 0 },
     ]);
+  });
+  it("보관한 에이전트는 켜져 있어도 멘션·자동 응답 대상이 아니다(계획 판정 PS2)", () => {
+    const archived = { ...agent(A, "a"), archivedAt: NOW };
+    const mention = decideRuns(input({ message: userMsg([A]), agents: [archived, agent(B, "b")] }));
+    expect(mention.runs).toEqual([]);
+    const auto = decideRuns(
+      input({
+        message: userMsg([]),
+        members: [member(A, { autoRespond: true })],
+        agents: [archived],
+      }),
+    );
+    expect(auto.runs).toEqual([]);
   });
   it("비활성·비소속 에이전트는 조용히 제외", () => {
     const r = decideRuns(

@@ -20,6 +20,7 @@ export const agentOf = (id: string, handle: string, over: Partial<Agent> = {}): 
   name: `${handle.toUpperCase()} 봇`,
   enabled: true,
   createdAt: "2026-09-19T00:00:00.000Z",
+  archivedAt: null,
   ...over,
 });
 

@@ -1,5 +1,5 @@
 import { Channel, ChannelMember, type Participant, RelayPolicy, TeamRole } from "@dodok/shared";
-import { and, asc, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import type { SQLiteUpdateSetSource } from "drizzle-orm/sqlite-core";
 import { v7 as uuidv7 } from "uuid";
 import { z } from "zod";
@@ -13,7 +13,7 @@ import { apiError } from "../../http/errors";
 import { parseStored } from "../../http/validate";
 import type { Logger } from "../../logger";
 import type { ServerBus } from "../../realtime/bus";
-import { getAgent } from "../agents/service";
+import { agentNotArchived, getAgent } from "../agents/service";
 import { createSystemMessage, getThreadRoot } from "../messages/service";
 import type { Orchestrator } from "../runs/orchestrator";
 import { clearProviderSessionId, ensureSession, markSessionReset } from "../sessions/service";
@@ -207,11 +207,13 @@ export function addMember(
         throw apiError("NOT_FOUND", "user not found");
     } else {
       const agent = tx
-        .select({ id: agents.id })
+        .select({ id: agents.id, archivedAt: agents.archivedAt })
         .from(agents)
         .where(and(eq(agents.id, input.memberId), eq(agents.workspaceId, channel.workspaceId)))
         .get();
       if (!agent) throw apiError("NOT_FOUND", "agent not found");
+      if (agent.archivedAt !== null)
+        throw apiError("AGENT_ARCHIVED", "삭제된 에이전트입니다", { agentId: agent.id });
     }
     const existing = tx
       .select({ id: channelMembers.id })
@@ -307,15 +309,24 @@ export function joinChannelIfAbsent(tx: DbOrTx, channelId: string, userId: strin
   return inserted.length > 0;
 }
 
-/** joinedAt 순 */
+/**
+ * joinedAt 순. 보관한 에이전트는 빠진다(계획 판정 PS3) — 행은 남아 되살리면 그대로 돌아온다. 멤버 응답·channel.member.changed·
+ * 런 판정이 모두 이 조회라 한곳에서 거른다
+ */
 export function listMembers(db: DbOrTx, channelId: string): ChannelMember[] {
   return db
-    .select()
+    .select({ member: channelMembers })
     .from(channelMembers)
-    .where(eq(channelMembers.channelId, channelId))
+    .leftJoin(agents, and(eq(channelMembers.memberType, "agent"), eq(agents.id, channelMembers.memberId)))
+    .where(
+      and(
+        eq(channelMembers.channelId, channelId),
+        or(eq(channelMembers.memberType, "user"), isNull(agents.id), agentNotArchived),
+      ),
+    )
     .orderBy(asc(channelMembers.joinedAt), asc(channelMembers.id))
     .all()
-    .map(rowToMember);
+    .map(({ member }) => rowToMember(member));
 }
 
 /**
@@ -374,7 +385,8 @@ export function agentChannelGateways(
 
 /**
  * tokenize·renderForAgent 용 참가자. 사람 먼저, 에이전트 나중 — tokenize 는 뒤에 온 참가자가 같은 핸들을 덮으므로
- * 사람과 에이전트(또는 별칭)가 같은 핸들이면 에이전트로 풀린다.
+ * 사람과 에이전트(또는 별칭)가 같은 핸들이면 에이전트로 풀린다. 보관한 에이전트는 빠진다 — 손으로 친 @핸들 은 글자로 남고
+ * 에이전트 헤더 「참여자:」에도 실리지 않는다
  */
 export function channelParticipants(db: DbOrTx, channelId: string): Participant[] {
   const people = db
@@ -393,7 +405,9 @@ export function channelParticipants(db: DbOrTx, channelId: string): Participant[
     })
     .from(channelMembers)
     .innerJoin(agents, eq(agents.id, channelMembers.memberId))
-    .where(and(eq(channelMembers.channelId, channelId), eq(channelMembers.memberType, "agent")))
+    .where(
+      and(eq(channelMembers.channelId, channelId), eq(channelMembers.memberType, "agent"), agentNotArchived),
+    )
     .orderBy(asc(channelMembers.joinedAt), asc(channelMembers.id))
     .all();
   return [

@@ -5,7 +5,7 @@ import type { Db, DbOrTx } from "../../db/client";
 import { componentInteractions, users } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
 import type { ServerBus } from "../../realtime/bus";
-import { getAgent } from "../agents/service";
+import { getAgent, isAgentActive } from "../agents/service";
 import { getChannel, listMembers } from "../channels/service";
 import { consumeComponentItem, getMessage } from "../messages/service";
 import type { RunGate } from "../ops/budget";
@@ -195,12 +195,17 @@ function retryTarget(tx: DbOrTx, message: Message): Target {
 }
 
 /**
- * 카드가 만들어진 뒤 대상이 비활성됐거나 채널에서 빠졌을 수 있다 — 라우터를 거치지 않는 경로라 여기서 다시 본다(sc-t9 리뷰 R1).
- * 저장·소비 전에 던지므로 버튼은 살아 있고, 대상을 되살리면 다시 누를 수 있다.
+ * 카드가 만들어진 뒤 대상이 비활성·보관됐거나 채널에서 빠졌을 수 있다 — 라우터를 거치지 않는 경로라 여기서 다시 본다(sc-t9 리뷰 R1).
+ * 저장·소비 전에 던지므로 버튼은 살아 있고, 대상을 되살리면 다시 누를 수 있다. 보관한 에이전트는 채널 멤버 조회에서 빠지므로 먼저
+ * 가른다 — 사람에게 「삭제된 에이전트입니다」로 보인다
  */
 function assertDeliverable(tx: DbOrTx, channelId: string, agentId: string): void {
+  const agent = getAgent(tx, agentId);
+  if (agent && agent.archivedAt !== null) {
+    throw apiError("AGENT_ARCHIVED", "삭제된 에이전트입니다", { agentId });
+  }
   const isMember = listMembers(tx, channelId).some((m) => m.memberType === "agent" && m.memberId === agentId);
-  if (!isMember || !getAgent(tx, agentId)?.enabled) {
+  if (!isMember || !agent || !isAgentActive(agent)) {
     throw apiError("VALIDATION", "target agent is disabled or not in the channel");
   }
 }

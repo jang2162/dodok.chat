@@ -129,6 +129,8 @@ export interface ServerToClientEvents {
   "channel.updated": (p: { channel: Channel }) => void;
   "channel.member.changed": (p: { channelId: Id; members: ChannelMember[] }) => void;
   "people.changed": (p: { people: Person[] }) => void; // workspace 룸 — 가입·역할·표시 이름·내보내기 뒤 전체 목록
+  // workspace 룸 — 에이전트 등록·수정·옮기기·보관·되살리기 뒤. 본문이 없다: 받은 쪽이 에이전트·채널 멤버 목록을 다시 받는다
+  "agents.changed": (p: Record<string, never>) => void;
   typing: (p: { channelId: Id; actorType: "user" | "agent"; actorId: Id }) => void;
   "adapter.status": (p: AdapterStatus) => void; // user 룸
   "setup.status": (p: { status: SetupStatus }) => void; // owner 사용자 룸에만

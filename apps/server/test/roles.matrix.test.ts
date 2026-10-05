@@ -132,6 +132,18 @@ describe("역할 매트릭스(스펙 2장)", () => {
       }),
     },
     {
+      name: "DELETE /agents/:id",
+      min: "admin",
+      ok: 200,
+      request: () => ({ method: "DELETE", url: `/api/v1/agents/${newAgent().id}` }),
+    },
+    {
+      name: "POST /agents/:id/restore",
+      min: "admin",
+      ok: 200,
+      request: () => ({ method: "POST", url: `/api/v1/agents/${newAgent().id}/restore` }),
+    },
+    {
       name: "GET /agents/discover",
       min: "admin",
       ok: 200,

@@ -44,6 +44,7 @@ export function makeAgent(
     provider,
     enabled: true,
     createdAt: "2026-09-19T00:00:00.000Z",
+    archivedAt: null,
     ...(provider === "openclaw" ? { gateway: { id: TEST_GATEWAY.id, name: TEST_GATEWAY.name } } : {}),
     ...fields,
   };
