@@ -134,6 +134,30 @@ describe("멤버 표", () => {
     await waitFor(() => expect(toggle).toHaveFocus());
   });
 
+  it("「비활성화」가 실패하면 대화상자가 남고, 다시 누르면 POST 를 한 번 더 보낸다 — 연속 클릭 가드가 풀린다", async () => {
+    let failures = 1;
+    const server = stubMembersServer({
+      override: ({ url }) =>
+        url.endsWith("/deactivate") && failures-- > 0
+          ? json(500, { code: "INTERNAL", message: "boom" })
+          : undefined,
+    });
+    renderRoute("/settings/members");
+    const mina = await rowOf("mina");
+    await userEvent.click(mina.getByRole("button", { name: "@mina 비활성화" }));
+    const dialog = await screen.findByRole("dialog", { name: "멤버 비활성화" });
+    const confirm = within(dialog).getByRole("button", { name: "비활성화" });
+    await userEvent.click(confirm);
+    await waitFor(() => expect(toastError).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(confirm).toBeEnabled());
+    expect(screen.getByRole("dialog", { name: "멤버 비활성화" })).toBe(dialog);
+
+    await userEvent.click(confirm);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const deactivate = { method: "POST", url: `/api/v1/members/${MINA_ID}/deactivate`, body: undefined };
+    expect(server.writes()).toEqual([deactivate, deactivate]);
+  });
+
   it("「비활성 멤버 N」은 접혀 있고, 펼치면 줄마다 「다시 활성화」 — POST 뒤 표로 돌아온다", async () => {
     const server = stubMembersServer({
       members: [OWNER_ROW, ADMIN_ROW, { ...MINA_ROW, deactivatedAt: DEACTIVATED_AT }],
