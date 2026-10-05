@@ -24,7 +24,7 @@ export const SidebarTriggerContext = createContext<SidebarTrigger | undefined>(u
 export const useOpenSidebar = (): (() => void) | undefined => useContext(OpenSidebarContext);
 
 /**
- * 페이지 헤더 왼쪽의 「채널 목록 열기」 — 넓은 화면에서는 아무것도 그리지 않는다. 좁은 화면에서는 사이드바의 「운영」 배지가
+ * 페이지 헤더 왼쪽의 「채널 목록 열기」 — 넓은 화면에서는 아무것도 그리지 않는다. 좁은 화면에서는 사이드바 「설정」의 운영 배지가
  * 서랍 안에 숨으므로, admin 이상에게 확인 안 한 warn·error 가 있으면 버튼에 점을 찍고 이름에 그 수를 싣는다(브라우저 검증 O3)
  */
 export function OpenSidebarButton() {

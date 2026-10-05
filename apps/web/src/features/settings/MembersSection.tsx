@@ -170,7 +170,7 @@ function AddAgentForm({
         {canManage && (
           <>
             {" "}
-            <Link to="/agents" className="text-primary underline-offset-4 hover:underline">
+            <Link to="/settings/agents" className="text-primary underline-offset-4 hover:underline">
               에이전트 화면에서 등록하세요
             </Link>
           </>
@@ -199,7 +199,7 @@ function AddAgentForm({
         {canManage && (
           <>
             {" "}
-            <Link to="/agents" className="text-primary underline-offset-4 hover:underline">
+            <Link to="/settings/agents" className="text-primary underline-offset-4 hover:underline">
               에이전트 등록
             </Link>
           </>

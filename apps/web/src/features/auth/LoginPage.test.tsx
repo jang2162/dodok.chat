@@ -138,10 +138,10 @@ describe("LoginPage — 이메일·비밀번호(기본)", () => {
   it("성공하면 next 로 가고 비밀번호가 뮤테이션 캐시에 남지 않는다", async () => {
     stubServer(() => json(200, { sessionToken: "session-secret", user: ME.user }));
     const queryClient = createQueryClient(() => {});
-    const router = renderAt("/login?next=%2Fagents", queryClient);
+    const router = renderAt("/login?next=%2Fsettings%2Fagents", queryClient);
     await submitEmail("mia@example.com", "correct-horse-battery");
     expect(await screen.findByTestId("page-agents")).toBeInTheDocument();
-    expect(router.state.location.pathname).toBe("/agents");
+    expect(router.state.location.pathname).toBe("/settings/agents");
     await waitFor(() => expect(mutationStates(queryClient)).not.toContain("correct-horse-battery"));
   });
 
@@ -160,7 +160,7 @@ describe("LoginPage — 이메일·비밀번호(기본)", () => {
 describe("LoginPage — owner 로컬 토큰(접힘)", () => {
   it("토큰 입력은 password 이고, 틀린 토큰(401)이면 「토큰이 맞지 않습니다」", async () => {
     stubServer(() => json(401, { code: "UNAUTHORIZED", message: "토큰이 맞지 않는다" }));
-    const router = renderAt("/login?next=%2Fagents");
+    const router = renderAt("/login?next=%2Fsettings%2Fagents");
     const input = await submitToken("wrong");
     expect(input).toHaveAttribute("type", "password");
     expect(await screen.findByText("토큰이 맞지 않습니다")).toBeInTheDocument();
@@ -220,10 +220,10 @@ describe("LoginPage — owner 로컬 토큰(접힘)", () => {
 
   it("성공하면 /auth/me 를 다시 불러 next 로 간다", async () => {
     const fetch = stubServer(() => json(200, { sessionToken: "s", user: ME.user }));
-    const router = renderAt("/login?next=%2Fagents");
+    const router = renderAt("/login?next=%2Fsettings%2Fagents");
     await submitToken("right");
     expect(await screen.findByTestId("page-agents")).toBeInTheDocument();
-    expect(router.state.location.pathname).toBe("/agents");
+    expect(router.state.location.pathname).toBe("/settings/agents");
     const meCalls = fetch.mock.calls.filter(([url]) => String(url) === "/api/v1/auth/me");
     expect(meCalls.length).toBeGreaterThanOrEqual(2); // 로그인 전 401 → 로그인 뒤 200
   });
@@ -238,7 +238,7 @@ describe("LoginPage — owner 로컬 토큰(접힘)", () => {
 
   it("로그인은 200 인데 세션을 확인하지 못하면(me 가 계속 401) 폼에 알린다", async () => {
     stubServer(() => json(200, { sessionToken: "s", user: ME.user }), { cookieSticks: false });
-    const router = renderAt("/login?next=%2Fagents");
+    const router = renderAt("/login?next=%2Fsettings%2Fagents");
     await submitToken("right");
     expect(await screen.findByText("로그인했지만 세션을 확인하지 못했습니다")).toBeInTheDocument();
     expect(router.state.location.pathname).toBe("/login");
@@ -256,7 +256,7 @@ describe("LoginPage — owner 로컬 토큰(접힘)", () => {
     it("성공 — next 로 간 뒤 뮤테이션 캐시 어디에도 토큰이 없다", async () => {
       stubServer(() => json(200, { sessionToken: "session-secret", user: ME.user }));
       const queryClient = createQueryClient(() => {});
-      renderAt("/login?next=%2Fagents", queryClient);
+      renderAt("/login?next=%2Fsettings%2Fagents", queryClient);
       await submitToken("secret-token");
       expect(await screen.findByTestId("page-agents")).toBeInTheDocument();
       await waitFor(() => expect(mutationStates(queryClient)).not.toContain("secret-token"));

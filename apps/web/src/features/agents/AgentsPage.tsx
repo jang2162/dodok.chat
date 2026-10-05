@@ -1,5 +1,4 @@
 import { useAgents, useCanManage } from "@/api/queries";
-import { OpenSidebarButton } from "@/app/layout/sidebarSheet";
 import { Button } from "@/ui/button";
 import { LOCKED_NOTICE } from "@/features/settings/Section";
 import { AgentRow } from "./AgentRow";
@@ -60,7 +59,6 @@ export function AgentsPage() {
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-2">
-            <OpenSidebarButton />
             <h1 className="text-xl font-semibold">에이전트</h1>
           </div>
           <p className="text-sm text-muted-foreground">

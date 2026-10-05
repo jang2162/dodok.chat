@@ -1,5 +1,4 @@
 import { useCanManage } from "@/api/queries";
-import { OpenSidebarButton } from "@/app/layout/sidebarSheet";
 import { Button } from "@/ui/button";
 import { EventList } from "./EventList";
 import { LimitForm } from "./LimitForm";
@@ -47,7 +46,6 @@ export function OpsPage() {
     >
       <header className="flex flex-col gap-1">
         <div className="flex items-center gap-2">
-          <OpenSidebarButton />
           <h1 className="text-xl font-semibold">운영</h1>
         </div>
         <p className="text-sm text-muted-foreground">

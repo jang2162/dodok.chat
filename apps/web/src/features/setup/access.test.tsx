@@ -36,9 +36,9 @@ function stubShell(me: unknown, adapter: Parameters<typeof adapterStatusBody>[0]
 const sidebarLink = () => screen.queryByRole("link", { name: "연결" });
 
 describe("진입점과 권한 — owner 에게만", () => {
-  it("owner 는 사이드바 「연결」로 /settings/connection 에 간다", async () => {
+  it("owner 는 설정 탭 「연결」로 /settings/connection 에 간다", async () => {
     stubShell(OWNER);
-    const { router } = renderRoute("/agents");
+    const { router } = renderRoute("/settings/agents");
     const link = await screen.findByRole("link", { name: "연결" });
     await userEvent.click(link);
     await waitFor(() => expect(router.state.location.pathname).toBe("/settings/connection"));
@@ -46,9 +46,9 @@ describe("진입점과 권한 — owner 에게만", () => {
     expect(await screen.findByRole("region", { name: "OpenClaw Gateway" })).toBeInTheDocument();
   });
 
-  it("owner 가 아니면 사이드바에 「연결」이 없다", async () => {
+  it("owner 가 아니면 설정 탭에 「연결」이 없다", async () => {
     stubShell({ ...ME, role: "member" });
-    renderRoute("/agents");
+    renderRoute("/settings/agents");
     await screen.findByRole("link", { name: "에이전트" });
     expect(sidebarLink()).not.toBeInTheDocument();
   });
@@ -63,7 +63,7 @@ describe("진입점과 권한 — owner 에게만", () => {
   it("OpenClaw 연결 배너의 「연결 설정 보기」는 owner 에게만", async () => {
     stubShell(OWNER, { ...ADAPTER_OK, gateway: "down" });
     useWireStatus.getState().setStatus("connected");
-    const { router } = renderRoute("/agents");
+    const { router } = renderRoute("/settings/agents");
     const banner = await screen.findByText(/OpenClaw Gateway 「사무실」에 연결되지 않아/);
     const status = banner.closest("[role=status]") as HTMLElement;
     const link = await within(status).findByRole("link", { name: "연결 설정 보기" });
@@ -74,7 +74,7 @@ describe("진입점과 권한 — owner 에게만", () => {
   it("owner 가 아니면 배너에 링크가 없다", async () => {
     stubShell({ ...ME, role: "member" }, { ...ADAPTER_OK, gateway: "down" });
     useWireStatus.getState().setStatus("connected");
-    renderRoute("/agents");
+    renderRoute("/settings/agents");
     const banner = await screen.findByText(/OpenClaw Gateway 「사무실」에 연결되지 않아/);
     const status = banner.closest("[role=status]") as HTMLElement;
     expect(within(status).queryByRole("link")).not.toBeInTheDocument();

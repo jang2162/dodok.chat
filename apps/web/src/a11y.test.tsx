@@ -195,7 +195,7 @@ describe("에이전트 화면", () => {
             })
           : undefined,
     });
-    renderRoute("/agents");
+    renderRoute("/settings/agents");
     const page = await screen.findByTestId("page-agents");
     await within(page).findByRole("switch", { name: "@dev 사용" });
     expect(unnamed()).toEqual(NONE);

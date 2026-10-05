@@ -10,6 +10,7 @@ import {
 } from "@tanstack/react-router";
 import { ApiRequestError } from "@/api/http";
 import { meQuery } from "@/api/queries";
+import { SETTINGS_SCROLL_ID, SettingsIndex, SettingsLayout } from "@/features/settings-shell/SettingsLayout";
 import { NotFound } from "./NotFound";
 import { RouteError } from "./RouteError";
 import { AppShell, PAGE_SCROLL_ID } from "./layout/AppShell";
@@ -123,33 +124,66 @@ export const channelThreadRoute = createRoute({
   path: "t/$rootId",
   component: lazyPage(() => import("@/features/threads/ThreadPanel"), "ThreadPanel"),
 });
-export const agentsRoute = createRoute({
+/**
+ * 설정(설정 통합 스펙 「설정 통합」 장, 계획 판정 PS5) — 레이아웃 라우트 하나 아래 탭 라우트. 넓은 화면의 탭 목록은 레이아웃이
+ * 그리고, `/settings` 자체는 좁은 화면이면 탭 목록 페이지·넓은 화면이면 「내 계정」으로 넘긴다(`SettingsIndex`).
+ * 채널 아래의 `settings` 자식(`/c/$channelId/settings`)과 겹치지 않는 최상위 경로다. 레이아웃은 조각으로 나누지 않는다 — 탭 목록은
+ * 사이드바가 이미 받은 것(역할·운영 상태)만 쓴다
+ */
+export const settingsRoute = createRoute({
   getParentRoute: () => appRoute,
-  path: "/agents",
+  path: "/settings",
+  component: SettingsLayout,
+});
+export const settingsIndexRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: "/",
+  component: SettingsIndex,
+});
+export const accountRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: "account",
+  component: lazyPage(() => import("@/features/settings-shell/AccountPage"), "AccountPage"),
+});
+export const notificationsRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: "notifications",
+  component: lazyPage(() => import("@/features/settings-shell/NotificationsPage"), "NotificationsPage"),
+});
+export const agentsRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: "agents",
   component: lazyPage(() => import("@/features/agents/AgentsPage"), "AgentsPage"),
 });
-
-/**
- * 연결 설정(owner 만 — 페이지가 가른다). 채널 아래의 `settings` 자식(`/c/$channelId/settings`)과 겹치지 않는 최상위 경로
- */
+/** 멤버 관리(admin 이상 — 페이지가 가른다, 팀 스펙 6장) */
+export const membersRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: "members",
+  component: lazyPage(() => import("@/features/members/MembersPage"), "MembersPage"),
+});
+/** 연결 설정(owner 만 — 페이지가 가른다) */
 export const connectionRoute = createRoute({
-  getParentRoute: () => appRoute,
-  path: "/settings/connection",
+  getParentRoute: () => settingsRoute,
+  path: "connection",
   component: lazyPage(() => import("@/features/setup/ConnectionPage"), "ConnectionPage"),
 });
-
 /** 운영(admin 이상 — 페이지가 가른다, 스펙 7장·팀 스펙 2장) */
 export const operationsRoute = createRoute({
-  getParentRoute: () => appRoute,
-  path: "/settings/operations",
+  getParentRoute: () => settingsRoute,
+  path: "operations",
   component: lazyPage(() => import("@/features/ops/OpsPage"), "OpsPage"),
 });
 
-/** 멤버 관리(admin 이상 — 페이지가 가른다, 팀 스펙 6장) */
-export const membersRoute = createRoute({
+/**
+ * 옛 에이전트 주소 — 즐겨찾기·푸시 알림 링크가 깨지지 않게 넘긴다. 로그인 가드(appRoute) 아래라 로그인 전이면 `next` 가 이 옛 주소로
+ * 남고, 로그인 뒤 다시 여기를 지나 넘어간다. 기록을 바꿔 쓴다 — 뒤로 가기가 이 주소로 돌아와 다시 넘겨지지 않게
+ */
+export const legacyAgentsRoute = createRoute({
   getParentRoute: () => appRoute,
-  path: "/settings/members",
-  component: lazyPage(() => import("@/features/members/MembersPage"), "MembersPage"),
+  path: "/agents",
+  beforeLoad: () => {
+    throw redirect({ to: "/settings/agents", replace: true });
+  },
 });
 
 const routeTree = rootRoute.addChildren([
@@ -159,10 +193,16 @@ const routeTree = rootRoute.addChildren([
   appRoute.addChildren([
     indexRoute,
     channelRoute.addChildren([channelSettingsRoute, channelActivityRoute, channelThreadRoute]),
-    agentsRoute,
-    connectionRoute,
-    operationsRoute,
-    membersRoute,
+    settingsRoute.addChildren([
+      settingsIndexRoute,
+      accountRoute,
+      notificationsRoute,
+      agentsRoute,
+      membersRoute,
+      connectionRoute,
+      operationsRoute,
+    ]),
+    legacyAgentsRoute,
   ]),
 ]);
 
@@ -171,7 +211,7 @@ export function createAppRouter(queryClient: QueryClient, history?: RouterHistor
     routeTree,
     context: { queryClient },
     defaultNotFoundComponent: NotFound,
-    scrollToTopSelectors: [`#${PAGE_SCROLL_ID}`],
+    scrollToTopSelectors: [`#${PAGE_SCROLL_ID}`, `#${SETTINGS_SCROLL_ID}`],
     ...(history ? { history } : {}),
   });
 }

@@ -1,7 +1,9 @@
 import { DisplayName } from "@dodok/shared";
-import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import { LogOutIcon } from "lucide-react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { detailField } from "@/api/formErrors";
 import { useMe } from "@/api/queries";
+import { useChangePassword, useUpdateMe } from "@/features/account/mutations";
 import {
   AuthField,
   CONFIRM_MISMATCH,
@@ -10,55 +12,56 @@ import {
   fieldErrorText,
   passwordProblem,
 } from "@/features/auth/fields";
+import { useLogout } from "@/features/auth/mutations";
 import { Alert, AlertDescription } from "@/ui/alert";
 import { Button } from "@/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/ui/dialog";
 import { Separator } from "@/ui/separator";
-import { useChangePassword, useUpdateMe } from "./mutations";
 
 /**
- * 「내 계정」(팀 스펙 3.5·6장) — 표시 이름, 비밀번호 바꾸기. owner 는 비밀번호 칸 대신 안내만: owner 의 비밀번호는 로컬 토큰이라
- * 서버가 `POST /me/password` 를 403 으로 막는다. `children` 이 여는 버튼이다. 닫으면 칸을 버린다(다시 열면 처음부터)
+ * 설정 「내 계정」 탭(`/settings/account`, 팀 스펙 3.5·6장) — 표시 이름, 비밀번호 바꾸기, 로그아웃. owner 는 비밀번호 칸 대신 안내만:
+ * owner 의 비밀번호는 로컬 토큰이라 서버가 `POST /me/password` 를 403 으로 막는다. 칸은 탭에 들어올 때마다 처음부터다
  */
-export function AccountDialog({ children }: { children: ReactNode }) {
-  const [open, setOpen] = useState(false);
+export function AccountPage() {
   const me = useMe().data;
+  const logout = useLogout();
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>{children}</DialogTrigger>
-      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>내 계정</DialogTitle>
-          <DialogDescription className="break-all">
-            {me ? [`@${me.user.handle}`, me.user.email].filter(Boolean).join(" · ") : ""}
-          </DialogDescription>
-        </DialogHeader>
-        {me && open && (
-          <>
-            <DisplayNameForm current={me.user.displayName} />
-            <Separator />
-            {me.role === "owner" ? (
-              <section className="flex flex-col gap-2">
-                <h3 className="text-sm font-medium">비밀번호</h3>
-                <p className="text-sm text-muted-foreground">
-                  owner 비밀번호는 로컬 토큰입니다 — 서버 <code>.env</code> 의 <code>LOCAL_AUTH_TOKEN</code>{" "}
-                  으로 바꿉니다
-                </p>
-              </section>
-            ) : (
-              <PasswordForm />
-            )}
-          </>
-        )}
-      </DialogContent>
-    </Dialog>
+    <section data-testid="page-account" className="mx-auto flex w-full max-w-3xl flex-col gap-6 p-4 sm:p-6">
+      <header className="flex flex-col gap-1">
+        <h1 className="text-xl font-semibold">내 계정</h1>
+        <p className="text-sm break-all text-muted-foreground">
+          {me ? [`@${me.user.handle}`, me.user.email].filter(Boolean).join(" · ") : ""}
+        </p>
+      </header>
+      {me && (
+        <div className="flex max-w-md flex-col gap-6">
+          <DisplayNameForm current={me.user.displayName} />
+          <Separator />
+          {me.role === "owner" ? (
+            <section className="flex flex-col gap-2">
+              <h2 className="text-sm font-medium">비밀번호</h2>
+              <p className="text-sm text-muted-foreground">
+                owner 비밀번호는 로컬 토큰입니다 — 서버 <code>.env</code> 의 <code>LOCAL_AUTH_TOKEN</code>{" "}
+                으로 바꿉니다
+              </p>
+            </section>
+          ) : (
+            <PasswordForm />
+          )}
+          <Separator />
+          {/* /login 이동·상태 비우기는 훅이 한다 */}
+          <Button
+            variant="outline"
+            size="sm"
+            className="self-start"
+            disabled={logout.isPending}
+            onClick={() => logout.mutate()}
+          >
+            <LogOutIcon />
+            로그아웃
+          </Button>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -176,7 +179,7 @@ function PasswordForm() {
 
   return (
     <form onSubmit={submit} noValidate className="flex flex-col gap-3">
-      <h3 className="text-sm font-medium">비밀번호 바꾸기</h3>
+      <h2 className="text-sm font-medium">비밀번호 바꾸기</h2>
       <AuthField label="현재 비밀번호" autoComplete="current-password" {...bind("current")} />
       <AuthField label="새 비밀번호" autoComplete="new-password" hint={PASSWORD_HINT} {...bind("next")} />
       <AuthField label="새 비밀번호 확인" autoComplete="new-password" {...bind("confirm")} />

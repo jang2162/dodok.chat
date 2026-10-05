@@ -2,7 +2,6 @@ import type { SetupStatus } from "@dodok/shared";
 import { PlusIcon } from "lucide-react";
 import { useRef, useState } from "react";
 import { useIsOwner } from "@/api/queries";
-import { OpenSidebarButton } from "@/app/layout/sidebarSheet";
 import { Button } from "@/ui/button";
 import { GatewayCard } from "./GatewayCard";
 import { GatewayForm } from "./GatewayForm";
@@ -88,7 +87,6 @@ export function ConnectionPage() {
     >
       <header className="flex flex-col gap-1">
         <div className="flex items-center gap-2">
-          <OpenSidebarButton />
           <h1 className="text-xl font-semibold">연결</h1>
         </div>
         <p className="text-sm text-muted-foreground">

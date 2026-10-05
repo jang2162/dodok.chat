@@ -174,7 +174,7 @@ describe("원문이 보이는 동안 페이지를 떠나지 않게", () => {
     const dialog = await issue("새것");
     await within(dialog).findByText(RAW_TOKEN);
 
-    act(() => void router.navigate({ to: "/agents" }));
+    act(() => void router.navigate({ to: "/settings/agents" }));
     const alert = await within(dialog).findByRole("alert");
     expect(alert).toHaveTextContent("토큰 원문을 다시 볼 수 없습니다");
     expect(alert).toHaveTextContent("「복사했습니다」를 누르세요. 닫고 이어서 이동합니다");
@@ -186,9 +186,9 @@ describe("원문이 보이는 동안 페이지를 떠나지 않게", () => {
     expect(router.state.location.pathname).toBe("/settings/connection");
     expect(within(dialog).getByText(RAW_TOKEN)).toBeInTheDocument();
 
-    act(() => void router.navigate({ to: "/agents" }));
+    act(() => void router.navigate({ to: "/settings/agents" }));
     await userEvent.click(await within(dialog).findByRole("button", { name: "원문을 버리고 떠나기" }));
-    await waitFor(() => expect(router.state.location.pathname).toBe("/agents"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/settings/agents"));
     expect(document.body.innerHTML).not.toContain(RAW_TOKEN);
     expect(beforeUnloadPrevented()).toBe(false);
   });
@@ -199,8 +199,8 @@ describe("원문이 보이는 동안 페이지를 떠나지 않게", () => {
     const dialog = await issue("새것");
     await userEvent.click(await within(dialog).findByRole("button", { name: "복사했습니다" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    act(() => void router.navigate({ to: "/agents" }));
-    await waitFor(() => expect(router.state.location.pathname).toBe("/agents"));
+    act(() => void router.navigate({ to: "/settings/agents" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/settings/agents"));
   });
 
   it("막힌 이동이 있을 때 「복사했습니다」를 누르면 닫고 이어서 이동한다", async () => {
@@ -208,10 +208,10 @@ describe("원문이 보이는 동안 페이지를 떠나지 않게", () => {
     const { router } = renderRoute("/settings/connection");
     const dialog = await issue("새것");
     await within(dialog).findByText(RAW_TOKEN);
-    act(() => void router.navigate({ to: "/agents" }));
+    act(() => void router.navigate({ to: "/settings/agents" }));
     await within(dialog).findByRole("alert");
     await userEvent.click(within(dialog).getByRole("button", { name: "복사했습니다" }));
-    await waitFor(() => expect(router.state.location.pathname).toBe("/agents"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/settings/agents"));
     expect(document.body.innerHTML).not.toContain(RAW_TOKEN);
   });
 
@@ -245,11 +245,11 @@ describe("원문이 보이는 동안 페이지를 떠나지 않게", () => {
     const { router, queryClient } = renderRoute("/settings/connection");
     const dialog = await issue("새것");
     await within(dialog).findByText(RAW_TOKEN);
-    act(() => void router.navigate({ to: "/agents" }));
+    act(() => void router.navigate({ to: "/settings/agents" }));
     await within(dialog).findByRole("alert");
 
     act(() => queryClient.setQueryData(qk.me, { ...OWNER, role: "member" }));
-    await waitFor(() => expect(router.state.location.pathname).toBe("/agents"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/settings/agents"));
     expect(document.body.innerHTML).not.toContain(RAW_TOKEN);
   });
 });

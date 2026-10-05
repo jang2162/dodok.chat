@@ -1,69 +1,22 @@
 import { Link } from "@tanstack/react-router";
-import {
-  ActivityIcon,
-  BotIcon,
-  CableIcon,
-  LogOutIcon,
-  PlusIcon,
-  SearchIcon,
-  UserIcon,
-  UsersIcon,
-} from "lucide-react";
-import { useCanManage, useIsOwner, useMe } from "@/api/queries";
-import { AccountDialog } from "@/features/account/AccountDialog";
+import { PlusIcon, SearchIcon, SettingsIcon } from "lucide-react";
+import { useCanManage, useMe } from "@/api/queries";
 import { ChannelList } from "@/features/channels/ChannelList";
 import { CreateChannelDialog } from "@/features/channels/CreateChannelDialog";
-import { useLogout } from "@/features/auth/mutations";
-import { useOpsStatus } from "@/features/ops/queries";
 import { useOpenSearch } from "@/features/search/openSearch";
+import { OpsBadge } from "@/features/settings-shell/OpsBadge";
 import { Button } from "@/ui/button";
 import { ConnectionDots } from "./ConnectionDots";
-import { NotifySettings } from "./NotifySettings";
-
-/** 사이드바 하단 링크(에이전트·연결)의 꼴 */
-const NAV_LINK =
-  "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-sidebar-foreground/80 outline-none hover:not-aria-[current=page]:bg-sidebar-accent hover:not-aria-[current=page]:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:ring-offset-1 focus-visible:ring-offset-sidebar aria-[current=page]:bg-sidebar-primary aria-[current=page]:font-medium aria-[current=page]:text-sidebar-primary-foreground";
-
-/** 배지에 그리는 수 — 그 위는 「99+」 */
-const BADGE_MAX = 99;
 
 /**
- * 「운영」 링크와 확인 안 한 warn·error 수 배지(운영 보강 스펙 7장). admin 이상일 때만 그린다 — 그래서 member 는 ops/status 를 부르지 않는다.
- * 수는 상태 캐시의 `unacked` 이고 실시간 `ops.event` 가 그 칸을 덮는다(realtime/handlers)
- */
-function OpsLink({ onNavigate }: { onNavigate?: () => void }) {
-  const unacked = useOpsStatus().data?.unacked;
-  const n = unacked ? unacked.warn + unacked.error : 0;
-  return (
-    <Link to="/settings/operations" onClick={onNavigate} className={NAV_LINK}>
-      <ActivityIcon className="size-4 shrink-0 opacity-70" aria-hidden />
-      운영
-      {n > 0 && (
-        <>
-          <span
-            data-ops-badge
-            aria-hidden
-            className="ml-auto rounded-full bg-destructive px-1.5 text-xs leading-5 font-medium text-white tabular-nums"
-          >
-            {n > BADGE_MAX ? `${BADGE_MAX}+` : n}
-          </span>
-          <span className="sr-only"> (확인 안 한 사건 {n}건)</span>
-        </>
-      )}
-    </Link>
-  );
-}
-
-/**
- * 왼쪽 사이드바(스펙 2.4): 워크스페이스 이름, 검색 칸(검색 대화상자를 연다 — 스레드·검색 스펙 5.4), 채널 목록·「채널 만들기」, 「에이전트」,
- * 「멤버」·「운영」(admin 이상)·「연결」(owner 만 — 팀 스펙 6장), 하단 연결 상태와 「내 계정」·로그아웃.
+ * 왼쪽 사이드바(스펙 2.4): 워크스페이스 이름, 검색 칸(검색 대화상자를 연다 — 스레드·검색 스펙 5.4), 채널 목록·「채널 만들기」,
+ * 하단은 연결 상태와 「설정」 하나(설정 통합 스펙 「사이드바」 절 — 에이전트·멤버·연결·운영·알림·내 계정·로그아웃은 `/settings` 의 탭).
+ * 「설정」의 배지는 admin 이상에게만 — 확인 안 한 운영 사건 수(운영 탭과 같은 값).
  * 이름은 `GET /auth/me` 의 `workspace.name` — 아직 못 받았거나 주지 않는 서버면 「dodok」.
  * `onNavigate` 는 이동할 때마다 부른다(좁은 화면 시트 닫기)
  */
 export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
-  const logout = useLogout();
   const me = useMe();
-  const owner = useIsOwner();
   const manager = useCanManage();
   const openSearch = useOpenSearch();
   return (
@@ -99,42 +52,17 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           </Button>
         </CreateChannelDialog>
       </nav>
-      <div className="border-t px-2 py-2">
-        <Link to="/agents" onClick={onNavigate} className={NAV_LINK}>
-          <BotIcon className="size-4 shrink-0 opacity-70" aria-hidden />
-          에이전트
-        </Link>
-        {manager && (
-          <Link to="/settings/members" onClick={onNavigate} className={NAV_LINK}>
-            <UsersIcon className="size-4 shrink-0 opacity-70" aria-hidden />
-            멤버
-          </Link>
-        )}
-        {/* 연결 설정은 owner 만 쓴다(설정 마법사 스펙 「결정」 — setup 은 owner 만) — 아닌 사람에게는 진입점이 없다 */}
-        {owner && (
-          <Link to="/settings/connection" onClick={onNavigate} className={NAV_LINK}>
-            <CableIcon className="size-4 shrink-0 opacity-70" aria-hidden />
-            연결
-          </Link>
-        )}
-        {manager && <OpsLink onNavigate={onNavigate} />}
-        {/* 이 기기의 알림 — 푸시 켜기·끄기·앱 설치(스펙 6장) */}
-        <NotifySettings />
-      </div>
-      <div className="flex h-11 shrink-0 items-center justify-between border-t pr-2 pl-4">
+      <div className="flex h-11 shrink-0 items-center justify-between gap-2 border-t pr-2 pl-4">
         <ConnectionDots />
-        <div className="flex items-center">
-          <AccountDialog>
-            <Button variant="ghost" size="sm">
-              <UserIcon />내 계정
-            </Button>
-          </AccountDialog>
-          {/* /login 이동·상태 비우기는 훅이 한다 */}
-          <Button variant="ghost" size="sm" disabled={logout.isPending} onClick={() => logout.mutate()}>
-            <LogOutIcon />
-            로그아웃
-          </Button>
-        </div>
+        <Link
+          to="/settings"
+          onClick={onNavigate}
+          className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-sm text-sidebar-foreground/80 outline-none hover:not-aria-[current=page]:bg-sidebar-accent hover:not-aria-[current=page]:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:ring-offset-1 focus-visible:ring-offset-sidebar aria-[current=page]:bg-sidebar-primary aria-[current=page]:font-medium aria-[current=page]:text-sidebar-primary-foreground"
+        >
+          <SettingsIcon className="size-4 shrink-0 opacity-70" aria-hidden />
+          설정
+          {manager && <OpsBadge />}
+        </Link>
       </div>
     </div>
   );

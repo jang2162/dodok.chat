@@ -302,7 +302,7 @@ describe("AppShell", () => {
         return shellGet(input, init) ?? json(404, { code: "NOT_FOUND", message: "x" });
       }),
     );
-    const { queryClient } = renderRoute("/agents");
+    const { queryClient } = renderRoute("/settings/agents");
     expect(await screen.findByText("두독 팀")).toBeInTheDocument();
 
     // workspace 없이 답하는 서버(ME 그대로)면 기본 이름으로 돌아간다
@@ -318,7 +318,7 @@ describe("AppShell", () => {
     renderRoute("/c/a");
     const nav = await screen.findByRole("navigation", { name: "채널" });
     expect(await within(nav).findByRole("link", { name: /random/ })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "에이전트" })).toHaveAttribute("href", "/agents");
+    expect(screen.getByRole("link", { name: "설정" })).toHaveAttribute("href", "/settings");
     expect(screen.queryByRole("button", { name: "채널 목록 열기" })).not.toBeInTheDocument();
   });
 
@@ -376,9 +376,9 @@ describe("AppShell", () => {
     const header = await screen.findByTestId("channel-header");
     await userEvent.click(within(header).getByRole("button", { name: "채널 목록 열기" }));
     const sheet = await screen.findByRole("dialog", { name: "채널 목록" });
-    await userEvent.click(within(sheet).getByRole("link", { name: "에이전트" }));
-    await waitFor(() => expect(router.state.location.pathname).toBe("/agents"));
-    const page = await screen.findByTestId("page-agents");
+    await userEvent.click(within(sheet).getByRole("link", { name: "설정" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/settings"));
+    const page = await screen.findByTestId("page-settings");
     await waitFor(() => expect(within(page).getByRole("button", { name: "채널 목록 열기" })).toHaveFocus());
   });
 
@@ -404,7 +404,7 @@ describe("AppShell", () => {
   // jsdom 은 레이아웃을 재지 않는다 — 실제 높이·스크롤은 브라우저 확인이 보고, 여기서는 그 구조를 고정한다
   it("긴 화면은 셸 안 스크롤 상자에서만 스크롤한다 — 사이드바·배너는 그 밖에 남는다", async () => {
     stubChannels();
-    renderRoute("/agents");
+    renderRoute("/settings/agents");
     const page = await screen.findByTestId("page-agents");
     const scroller = screen.getByTestId("page-scroll");
 
@@ -427,36 +427,12 @@ describe("AppShell", () => {
   it("화면을 옮기면 스크롤 상자를 맨 위로 돌린다", async () => {
     const scrollTo = vi.spyOn(Element.prototype, "scrollTo");
     stubChannels();
-    const { router } = renderRoute("/agents");
+    const { router } = renderRoute("/settings/agents");
     await screen.findByTestId("page-agents");
     scrollTo.mockClear();
 
     await act(() => router.navigate({ to: "/c/$channelId", params: { channelId: "a" } }));
     await screen.findByTestId("page-channel");
     await waitFor(() => expect(scrollTo.mock.contexts).toContain(screen.getByTestId("page-scroll")));
-  });
-
-  it("로그아웃 버튼은 POST /auth/logout 뒤 로그인 화면으로 한 번 간다", async () => {
-    let loggedOut = false;
-    const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
-      const url = String(input);
-      if (url === "/api/v1/auth/logout") {
-        loggedOut = true;
-        return json(200, { ok: true });
-      }
-      if (url === "/api/v1/auth/me")
-        return loggedOut ? json(401, { code: "UNAUTHORIZED", message: "x" }) : json(200, ME);
-      return shellGet(input, init) ?? json(404, { code: "NOT_FOUND", message: "x" });
-    });
-    vi.stubGlobal("fetch", fetch);
-    const { history } = renderRoute("/agents");
-    const moves: string[] = [];
-    history.subscribe(({ location }) => moves.push(location.pathname));
-
-    await userEvent.click(await screen.findByRole("button", { name: "로그아웃" }));
-
-    expect(await screen.findByRole("heading", { name: "로그인" })).toBeInTheDocument();
-    expect(fetch.mock.calls.filter(([url]) => String(url) === "/api/v1/auth/logout")).toHaveLength(1);
-    expect(moves).toEqual(["/login"]);
   });
 });

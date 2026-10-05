@@ -1,7 +1,6 @@
 import type { Invite, MemberRow, TeamRole } from "@dodok/shared";
 import { useId } from "react";
 import { useCachedMe, useRole } from "@/api/queries";
-import { OpenSidebarButton } from "@/app/layout/sidebarSheet";
 import { Button } from "@/ui/button";
 import { InviteDialog } from "./InviteDialog";
 import { MemberRowActions } from "./MemberRowActions";
@@ -24,7 +23,6 @@ export function MembersPage() {
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-2">
-            <OpenSidebarButton />
             <h1 className="text-xl font-semibold">멤버</h1>
           </div>
           <p className="text-sm text-muted-foreground">
