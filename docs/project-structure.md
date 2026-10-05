@@ -249,7 +249,7 @@ src/
 │  │                      보관(삭제)·되살리기(admin 이상): `DELETE /agents/:id`(archived_at 을 쓰고 열린 런을 사람 「중지」와 같은 orchestrator.abort 로 닫은 뒤 응답, 멱등)·
 │  │                      `POST /agents/:id/restore`(되살린 쪽의 자동 응답이 같은 채널의 살아 있는 다른 자동 응답과 겹치면 되살린 쪽을 끄고 그 채널에 `channel.member.changed`).
 │  │                      「활성」 판정은 isAgentActive(enabled && 보관 안 됨) 한 함수 — router/decide.ts·components assertDeliverable·런 관문(ops/budget.ts)이 쓴다. SQL 조건 agentNotArchived 는
-│  │                      채널 멤버 조회·러너 묶기(claimRunnerToken — 끈 에이전트는 묶는다)가 쓴다. 목록 `GET /agents` 는 보관한 것도 archivedAt 과 함께 준다(기록의 작성자·멘션 칩).
+│  │                      채널 멤버 조회·러너 묶기(claimRunnerToken — 끈 에이전트는 묶는다)·되살리기 겹침 검사(clearContestedAutoRespond)가 쓴다. 목록 `GET /agents` 는 보관한 것도 archivedAt 과 함께 준다(기록의 작성자·멘션 칩).
 │  │                      discover 는 같은 자리의 보관한 에이전트에 archivedAgentId, 같은 자리 등록·보관한 에이전트를 채널에 넣기는 409 AGENT_ARCHIVED(「삭제된 에이전트입니다」).
 │  │                      등록·수정·옮기기·보관·되살리기·러너 「이 러너로 묶기」·에이전트가 묶인 Gateway 삭제 뒤 wire `agents.changed`(본문 없음)
 │  ├─ messages/           seq 발급(seq.ts)·사람/에이전트/시스템 메시지 저장·bus 통지·히스토리 페이징. 저장과 같은 트랜잭션에서 첨부를 묶는다
