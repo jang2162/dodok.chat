@@ -115,7 +115,14 @@ describe("보관한 채널 화면", () => {
     expect(screen.getByText("보관된 채널입니다.")).toBeInTheDocument();
     expect(composerBox()).toBeNull();
     expect(screen.getByRole("button", { name: "보관 해제" })).toBeInTheDocument();
-    // 빈 채널 안내가 멘션을 권하지 않는다
+  });
+
+  it("빈 보관 채널의 안내는 「메시지가 없습니다.」 — 멘션을 권하지 않는다", async () => {
+    const queryClient = createQueryClient(() => {});
+    // 타임라인이 있어야 빈 상태 문구가 그려진다 — 구독은 가짜라 받아 오지 않는다
+    queryClient.setQueryData<Timeline>(qk.timeline(CH2), emptyTimeline());
+    renderRoute(`/c/${CH2}`, queryClient);
+    expect(await screen.findByText("메시지가 없습니다.")).toBeInTheDocument();
     expect(screen.queryByText(/@멘션으로/)).toBeNull();
   });
 
@@ -162,7 +169,7 @@ describe("보관한 채널 화면", () => {
     expect(screen.queryByRole("button", { name: "채널 보관" })).toBeNull();
   });
 
-  it("스레드 패널도 읽기 전용 — 작성기와 「새 대화」 줄이 없다", async () => {
+  it("스레드 패널도 읽기 전용 — 작성기·「새 대화」 줄·「보관 해제」가 없다", async () => {
     const queryClient = createQueryClient(() => {});
     const root = msg(1, { channelId: CH2 });
     queryClient.setQueryData(qk.thread(CH2, root.id), threadFromPage(undefined, root, [], false));
@@ -187,6 +194,9 @@ describe("보관한 채널 화면", () => {
     expect(within(panel).getByText("보관된 채널입니다.")).toBeInTheDocument();
     expect(within(panel).queryByRole("textbox", { name: /입력/ })).toBeNull();
     expect(within(panel).queryByText("새 대화")).toBeNull();
+    // owner 라도 「보관 해제」는 채널 작성기 자리 하나뿐 — 스레드 패널에는 두지 않는다
+    expect(within(panel).queryByRole("button", { name: "보관 해제" })).toBeNull();
+    expect(screen.getAllByRole("button", { name: "보관 해제" })).toHaveLength(1);
   });
 });
 
@@ -279,6 +289,23 @@ describe("열린 채널이 다른 탭에서 보관될 때(Review Focus 1)", () =
     const nav = screen.getByRole("navigation", { name: "채널" });
     expect(within(nav).queryByRole("link", { name: /general/ })).toBeNull();
     expect(toastError).not.toHaveBeenCalled();
+    detach();
+  });
+
+  it("설정 패널이 열려 있어도 초점이 패널 밖(사이드바)에 있으면 보관 이벤트가 초점을 뺏지 않는다", async () => {
+    const { queryClient, detach } = withHandlers();
+    renderRoute(`/c/${CH}/settings`, queryClient);
+    expect(await screen.findByRole("textbox", { name: "이름" })).toBeInTheDocument();
+    // 모달 대화상자는 초점 가두기가 초점을 되돌려 이 가드를 가린다 — 가두지 않는 사이드바 단추로 잰다
+    const outside = within(screen.getByRole("navigation", { name: "채널" })).getByRole("button", {
+      name: "채널 만들기",
+    });
+    act(() => outside.focus());
+
+    act(() => fake.serverEmit("channel.updated", { channel: { ...LIVE, archivedAt: ARCHIVED_AT } }));
+
+    expect(await screen.findByTestId("channel-settings-archived")).toBeInTheDocument();
+    expect(outside).toHaveFocus();
     detach();
   });
 
