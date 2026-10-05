@@ -48,6 +48,11 @@ async function expectHandoff(dialog: HTMLElement, line: string) {
   expect(document.body).not.toHaveTextContent("llms.txt 를 읽고");
 }
 
+/** 원문 화면은 길다(원문·맡기기 줄·설정 조각) — 낮은 화면에서도 「복사했습니다」까지 스크롤해 닿게 대화상자가 화면 높이 안에서 스크롤된다 */
+function expectScrollsWithinViewport(dialog: HTMLElement) {
+  expect(dialog).toHaveClass("max-h-[calc(100dvh-2rem)]", "overflow-y-auto");
+}
+
 function stubClipboard() {
   vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText: vi.fn(async (_text: string) => {}) } });
 }
@@ -65,6 +70,7 @@ describe("발급 대화상자의 「AI 에게 맡기기」", () => {
     await userEvent.type(within(dialog).getByLabelText("라벨"), "gw");
     await userEvent.click(within(dialog).getByRole("button", { name: "발급" }));
     await within(dialog).findByText(RAW_TOKEN);
+    expectScrollsWithinViewport(dialog);
     await expectHandoff(dialog, llmsHandoffLine("bridge", ORIGIN, RAW_TOKEN));
   });
 
@@ -79,6 +85,7 @@ describe("발급 대화상자의 「AI 에게 맡기기」", () => {
     await userEvent.type(within(dialog).getByLabelText("라벨"), "맥북");
     await userEvent.click(within(dialog).getByRole("button", { name: "발급" }));
     await within(dialog).findByText(RAW_RUNNER_TOKEN);
+    expectScrollsWithinViewport(dialog);
     await expectHandoff(dialog, llmsHandoffLine("runner", RUNNER_SERVER_URL, RAW_RUNNER_TOKEN));
   });
 });

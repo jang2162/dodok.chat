@@ -45,13 +45,15 @@ function DialogContent({
   /** 기본 닫기(X)를 잠근다 — 진행 중인 작업을 잃지 않게. Esc·바깥 클릭은 부르는 쪽 onOpenChange 가 막는다 */
   closeDisabled?: boolean;
 }) {
+  // 높이도 너비처럼 화면 안(위아래 1rem)에 가두고 넘치면 안에서 스크롤한다 — 가운데 정렬이라 넘치면 위아래가 함께 잘리고,
+  // 닫는 길이 맨 아래 단추뿐인 대화상자(토큰 발급의 「복사했습니다」)는 낮은 화면에서 닫을 수 없게 된다
   return (
     <DialogPortal data-slot="dialog-portal">
       <DialogOverlay />
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(
-          "fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border bg-background p-6 shadow-lg duration-200 outline-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 sm:max-w-lg",
+          "fixed top-[50%] left-[50%] z-50 grid max-h-[calc(100dvh-2rem)] w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border bg-background p-6 shadow-lg duration-200 outline-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 overflow-y-auto sm:max-w-lg",
           className,
         )}
         {...props}
