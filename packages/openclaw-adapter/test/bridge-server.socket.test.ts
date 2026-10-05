@@ -253,6 +253,8 @@ describe("attachBridge (실제 Socket.IO)", () => {
         calls += 1;
         if (message.outboundId === "o-archived")
           throw new AdapterError("CHANNEL_ARCHIVED", "channel is archived");
+        if (message.outboundId === "o-busy")
+          throw Object.assign(new Error("database is locked"), { code: "SQLITE_BUSY" });
         throw new Error("disk full");
       },
     });
@@ -264,8 +266,11 @@ describe("attachBridge (실제 Socket.IO)", () => {
     });
     const failed = await socket.emitWithAck("outbound.message", outbound("o-broken"));
     expect(failed).toMatchObject({ ok: false, error: { code: "INTERNAL" } });
+    // 계약 밖 문자열 code(SQLite·Node 시스템 오류)는 ack 에 싣지 않는다
+    const busy = await socket.emitWithAck("outbound.message", outbound("o-busy"));
+    expect(busy).toMatchObject({ ok: false, error: { code: "INTERNAL" } });
     await socket.emitWithAck("outbound.message", outbound("o-archived"));
-    expect(calls).toBe(3);
+    expect(calls).toBe(4);
   });
 
   it("deliverInbound 는 플러그인 ack 를 돌려주고, 연결이 없으면 ADAPTER_UNAVAILABLE", async () => {
