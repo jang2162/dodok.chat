@@ -214,6 +214,10 @@ describe("채널 설정 패널 「채널 보관」", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(composerBox()).toBeNull();
     expect(server.posts).toEqual([`archive:${CH}`]);
+    // 누른 단추가 사라졌다 — 초점은 body 가 아니라 패널의 안내로
+    await waitFor(() =>
+      expect(screen.getByTestId("channel-settings-archived").querySelector("p")).toHaveFocus(),
+    );
     const nav = screen.getByRole("navigation", { name: "채널" });
     expect(within(nav).queryByRole("link", { name: /general/ })).toBeNull();
   });
@@ -274,6 +278,30 @@ describe("열린 채널이 다른 탭에서 보관될 때(Review Focus 1)", () =
     expect(within(nav).queryByRole("link", { name: /general/ })).toBeNull();
     expect(toastError).not.toHaveBeenCalled();
     detach();
+  });
+
+  it("이벤트보다 먼저 누른 카드가 409 CHANNEL_ARCHIVED 면 채널을 다시 받아 카드가 「보관된 채널입니다」로 잠긴다", async () => {
+    const queryClient = createQueryClient(() => {});
+    const card = msg(1, {
+      components: ComponentsV1.parse({
+        id: "cmp_1",
+        blocks: [{ type: "actions", items: [{ type: "button", id: "ok", label: "확인" }] }],
+      }),
+      componentState: { expiresAt: "2999-01-01T00:00:00.000Z", consumed: [] },
+    });
+    queryClient.setQueryData<Timeline>(qk.timeline(CH), { ...emptyTimeline(), items: [card], lastSeq: 1 });
+    renderRoute(`/c/${CH}`, queryClient);
+    const button = await screen.findByRole("button", { name: "확인" });
+    expect(button).toBeEnabled();
+    server.live = [];
+    server.archived = [{ ...LIVE, archivedAt: ARCHIVED_AT }, OLD];
+    fake.onAck("component.interact", () => ({
+      ok: false,
+      error: { code: "CHANNEL_ARCHIVED", message: "보관된 채널입니다" },
+    }));
+    await userEvent.click(button);
+    await waitFor(() => expect(screen.getByRole("button", { name: "확인" })).toBeDisabled());
+    expect(screen.getByRole("button", { name: "확인" })).toHaveAccessibleDescription("보관된 채널입니다");
   });
 
   it("이벤트보다 먼저 보낸 글이 409 CHANNEL_ARCHIVED 면 토스트 없이 그 항목에 사유, 화면은 채널을 다시 받아 읽기 전용", async () => {
