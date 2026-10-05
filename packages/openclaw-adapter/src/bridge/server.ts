@@ -19,6 +19,7 @@ import {
   type BridgeServerToClientEvents,
   type BridgeStatus,
   type ConfigSet,
+  ErrorCode,
   ConfigSetResult,
   type InboundDeliver,
   InboundDeliverResult,
@@ -117,6 +118,13 @@ export type BridgeHandle = {
 
 function errorResult(code: "TIMEOUT" | "ADAPTER_UNAVAILABLE" | "INTERNAL", message: string): Result<never> {
   return { ok: false, error: { code, message } };
+}
+
+/** 저장이 계약 오류 코드를 실어 던졌으면(AdapterError — 예: 보관한 채널의 CHANNEL_ARCHIVED) 플러그인에 그 코드로, 아니면 INTERNAL */
+function outboundError(error: unknown): ApiError {
+  const code = ErrorCode.safeParse((error as { code?: unknown } | null)?.code);
+  if (code.success && error instanceof Error) return { code: code.data, message: error.message };
+  return { code: "INTERNAL", message: String(error) };
 }
 
 const AckEnvelope = z.discriminatedUnion("ok", [
@@ -301,7 +309,7 @@ export function attachBridge(io: Server, opts: BridgeServerOptions): BridgeHandl
       }
       pending.then(
         (data) => ack({ ok: true, data }),
-        (error: unknown) => ack({ ok: false, error: { code: "INTERNAL", message: String(error) } }),
+        (error: unknown) => ack({ ok: false, error: outboundError(error) }),
       );
     });
 

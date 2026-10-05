@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
-import type { InboundDeliver, OutboundMessage } from "@dodok/shared";
+import { AdapterError, type InboundDeliver, type OutboundMessage } from "@dodok/shared";
 import Fastify, { type FastifyInstance } from "fastify";
 import { Server } from "socket.io";
 import { io as connect, type Socket } from "socket.io-client";
@@ -243,6 +243,29 @@ describe("attachBridge (실제 Socket.IO)", () => {
       ts: new Date().toISOString(),
     });
     expect(res).toMatchObject({ ok: false, error: { code: "PROTOCOL_MISMATCH" } });
+  });
+
+  it("저장이 계약 오류 코드를 실어 던지면 그 코드로, 아니면 INTERNAL 로 거절하고 기록하지 않는다 — 재전송이 다시 저장을 부른다", async () => {
+    await stop();
+    let calls = 0;
+    await start({
+      onOutboundMessage: async (_session, message) => {
+        calls += 1;
+        if (message.outboundId === "o-archived")
+          throw new AdapterError("CHANNEL_ARCHIVED", "channel is archived");
+        throw new Error("disk full");
+      },
+    });
+    const socket = await readyClient();
+    const archived = await socket.emitWithAck("outbound.message", outbound("o-archived"));
+    expect(archived).toEqual({
+      ok: false,
+      error: { code: "CHANNEL_ARCHIVED", message: "channel is archived" },
+    });
+    const failed = await socket.emitWithAck("outbound.message", outbound("o-broken"));
+    expect(failed).toMatchObject({ ok: false, error: { code: "INTERNAL" } });
+    await socket.emitWithAck("outbound.message", outbound("o-archived"));
+    expect(calls).toBe(3);
   });
 
   it("deliverInbound 는 플러그인 ack 를 돌려주고, 연결이 없으면 ADAPTER_UNAVAILABLE", async () => {

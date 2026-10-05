@@ -1239,6 +1239,14 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         }
         // 런 없는 정본은 라우팅하지 않지만 푸시는 간다 — 보관한 채널이면 그것도 하지 않는다
         const silent = isChannelArchived(db, msg.channelId);
+        // 보관한 채널의 예외는 그 채널 세션의 늦은 답뿐이다. 다른 채널 세션이 message 툴로 쓰는 새 글은 거절해 에이전트가 실패를 받게 한다
+        if (silent && parseDodokSessionKey(msg.sessionKey)?.channelId !== msg.channelId.toLowerCase()) {
+          logger.warn(
+            { ...where, agentId },
+            "canonical message to archived channel from another session refused",
+          );
+          throw new AdapterError("CHANNEL_ARCHIVED", "channel is archived");
+        }
         const message = storeAgentMessage(msg, uploadedBy, agentId, undefined, threadRootId, silent);
         logger.warn({ ...where, runId: msg.runId, messageId: message.id }, "canonical message without run");
         return { messageId: message.id };

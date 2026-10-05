@@ -4,10 +4,17 @@
  */
 import { AdapterError, type ProviderApproval } from "@dodok/openclaw-adapter";
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
-import type { Channel, Message, OutboundMessage, SearchHit } from "@dodok/shared";
+import {
+  type Channel,
+  dodokSessionKey,
+  type Message,
+  type OutboundMessage,
+  type SearchHit,
+} from "@dodok/shared";
 import { v7 as uuid } from "uuid";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { App, AppDeps } from "../src/app";
+import { workspaces } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
 import { addMember, assertChannelWritable, createChannel } from "../src/modules/channels/service";
 import {
@@ -115,6 +122,29 @@ describe("보관·보관 해제 REST", () => {
     expect((await unarchive(uuid())).statusCode).toBe(404);
   });
 
+  it("다른 워크스페이스의 채널은 보관·보관 해제 모두 404 이고 그 채널은 바뀌지 않는다", async () => {
+    const { app, archive, unarchive } = await setup();
+    const otherWorkspace = uuid();
+    app.db.insert(workspaces).values({ id: otherWorkspace, name: "other", createdAt: new Date() }).run();
+    const foreign = createChannel(app.db, {
+      workspaceId: otherWorkspace,
+      createdBy: app.ownerUserId,
+      name: "foreign",
+    });
+    const archivedAt = () =>
+      (
+        app.db.$client.prepare("SELECT archived_at AS a FROM channels WHERE id = ?").get(foreign.id) as {
+          a: number | null;
+        }
+      ).a;
+
+    expect((await archive(foreign.id)).statusCode).toBe(404);
+    expect(archivedAt()).toBeNull();
+    app.db.$client.prepare("UPDATE channels SET archived_at = ? WHERE id = ?").run(Date.now(), foreign.id);
+    expect((await unarchive(foreign.id)).statusCode).toBe(404);
+    expect(archivedAt()).not.toBeNull();
+  });
+
   it("목록은 기본이 살아 있는 채널만, ?archived=1 은 보관한 채널만 — member 도 읽는다", async () => {
     const { app, channel, inject, archive } = await setup();
     const live = createChannel(app.db, {
@@ -194,6 +224,30 @@ describe("보관한 채널의 쓰기 — 409 CHANNEL_ARCHIVED(계획 판정 PC1)
         )
         .get(channel.id) as { n: number };
       expect(stored.n).toBe(0);
+    } finally {
+      socket.close();
+    }
+  });
+
+  it("보관 전에 저장된 메시지를 같은 clientMsgId 로 다시 보내면 409 가 아니라 그 메시지 — ack 를 잃은 탭의 재전송", async () => {
+    const { app, token, channel, archive } = await setup();
+    await app.fastify.listen({ host: "127.0.0.1", port: 0 });
+    const socket = await connectWire(app, token);
+    try {
+      const send = () =>
+        socket.emitWithAck("message.send", {
+          channelId: channel.id,
+          clientMsgId: "before-archive",
+          bodyMd: "보관 전에 보낸 글",
+        });
+      const first = await send();
+      expect(first.ok).toBe(true);
+      await archive();
+      const again = await send();
+      expect(again).toMatchObject({
+        ok: true,
+        data: { message: { id: first.ok ? first.data.message.id : "" } },
+      });
     } finally {
       socket.close();
     }
@@ -557,7 +611,7 @@ describe("보관과 런(계획 판정 PC2)", () => {
     });
 
     const ack = await app.orchestrator.onCanonical(late("late-archived"), "openclaw", FAKE_GATEWAY_ID);
-    // 런을 모르는 정본도 보관한 채널이면 조용히 저장만
+    // 그 채널 세션의 런을 모르는 정본도 보관한 채널이면 조용히 저장만(다른 채널 세션의 새 글은 아래 테스트 — 거절)
     await app.orchestrator.onCanonical(late("late-no-run", uuid()), "openclaw", FAKE_GATEWAY_ID);
     await new Promise((resolve) => setTimeout(resolve, 100));
     expect(ack.messageId).toBeDefined();
@@ -573,6 +627,57 @@ describe("보관과 런(계획 판정 PC2)", () => {
     await app.orchestrator.onCanonical(late("late-unarchived"), "openclaw", FAKE_GATEWAY_ID);
     await vi.waitFor(() => expect(adapter.calls.send).toHaveLength(2));
     await vi.waitFor(() => expect(pushes).toHaveLength(1));
+  });
+
+  it("다른 채널 세션의 에이전트가 보관한 채널에 쓰는 런 없는 새 글은 CHANNEL_ARCHIVED 로 거절한다 — 같은 채널 세션(스레드 포함)의 런 없는 답은 저장만", async () => {
+    const { app, channel, say, archive } = await setup();
+    const root = await say("스레드 루트");
+    const other = createChannel(app.db, {
+      workspaceId: app.workspaceId,
+      createdBy: app.ownerUserId,
+      name: "other",
+    });
+    await archive();
+    const created: Array<{ message: Message; silent?: true }> = [];
+    app.bus.on("message.created", (p) => created.push(p));
+    const post = (outboundId: string, sessionKey: string, threadId?: string): OutboundMessage => ({
+      outboundId,
+      channelId: channel.id,
+      ...(threadId === undefined ? {} : { threadId }),
+      agentId: "dev",
+      sessionKey,
+      runId: uuid(),
+      text: "#archive 에 올립니다",
+      attachmentIds: [],
+      ts: new Date().toISOString(),
+    });
+    const stored = (outboundId: string) =>
+      app.db.$client.prepare("SELECT count(*) AS n FROM messages WHERE external_id = ?").get(outboundId) as {
+        n: number;
+      };
+
+    await expect(
+      app.orchestrator.onCanonical(
+        post("cross-channel", dodokSessionKey("dev", other.id)),
+        "openclaw",
+        FAKE_GATEWAY_ID,
+      ),
+    ).rejects.toMatchObject({ code: "CHANNEL_ARCHIVED" });
+    expect(stored("cross-channel").n).toBe(0);
+    // 세션 키를 풀 수 없으면 어느 채널의 답인지 모른다 — 새 글로 보고 거절한다
+    await expect(
+      app.orchestrator.onCanonical(post("unparsable", "agent:dev:main"), "openclaw", FAKE_GATEWAY_ID),
+    ).rejects.toMatchObject({ code: "CHANNEL_ARCHIVED" });
+    expect(stored("unparsable").n).toBe(0);
+    expect(created).toEqual([]);
+
+    await app.orchestrator.onCanonical(
+      post("same-thread", dodokSessionKey("dev", channel.id, root.id), root.id),
+      "openclaw",
+      FAKE_GATEWAY_ID,
+    );
+    expect(stored("same-thread").n).toBe(1);
+    expect(created).toEqual([expect.objectContaining({ silent: true })]);
   });
 
   it("보관한 채널을 겨눈 승인 요청은 푸시하지 않는다", async () => {
