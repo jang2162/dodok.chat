@@ -6,7 +6,8 @@
  *
  * ⚠ 토큰은 어떤 외부 명령의 인자에도 나오지 않게 쓴다 — `curl` 은 `-K -`(표준 입력의 설정)로 머리를 받고, 패치 파일은 셸 내장
  * `printf` 가 쓴다(`ps` 에 보이지 않는다). 스펙 예시의 `curl -H "Authorization: Bearer $(cat …)"` 는 curl 의 argv 에 토큰이 남아
- * 같은 문서의 첫 규칙을 어긴다
+ * 같은 문서의 첫 규칙을 어긴다. 토큰이 든 파일은 이미 있어도(토큰 교체·재설치) `chmod 600` 으로 좁히고, 패치 파일은 `mktemp -d`
+ * 자리에 두어(템플릿을 줘야 macOS 도 `TMPDIR` 을 따른다) 적용이 실패해도 `trap` 이 지운다 — 고정 `/tmp` 경로는 다른 사용자가 미리 만들어 둘 수 있다
  */
 import { RUNNER_TOKEN_FILE } from "../runners/routes";
 
@@ -50,6 +51,7 @@ function gatewaySection(input: LlmsInput, file: LlmsFileInfo): string {
 
    \`\`\`bash
    ( umask 077; cat > ${BRIDGE_TOKEN_FILE} )
+   chmod 600 ${BRIDGE_TOKEN_FILE}
    \`\`\`
 
 2. 플러그인 파일을 받아 파일 sha256 을 대조한다. 다르면 멈춘다.
@@ -67,12 +69,17 @@ function gatewaySection(input: LlmsInput, file: LlmsFileInfo): string {
    shasum -a 256 ~/.openclaw/extensions/dodok/dist/index.js   # 기본 상태 디렉터리일 때
    \`\`\`
 
-4. 계정 설정 패치 파일을 0600 으로 만들어 적용하고, 패치 파일과 토큰 파일을 지운다.
+4. 계정 설정 패치 파일을 임시 디렉터리에 0600 으로 만들어 적용한다. 패치 파일과 토큰 파일은 성공·실패와 상관없이 지워진다. 종료 코드가 0 이 아니면 멈추고 사람에게 알린다(다시 하려면 1번부터 토큰을 다시 받는다).
 
    \`\`\`bash
-   ( umask 077; printf '{"channels":{"dodok":{"accounts":{"default":{"bridgeUrl":"%s","token":"%s"}}}}}\\n' \\
-       '${bridgeUrl}' "$(cat ${BRIDGE_TOKEN_FILE})" > /tmp/dodok.patch.json5 )
-   openclaw config patch --file /tmp/dodok.patch.json5 && rm /tmp/dodok.patch.json5 ${BRIDGE_TOKEN_FILE}
+   (
+     token="$(cat ${BRIDGE_TOKEN_FILE})" && [ -n "$token" ] || exit 1
+     dir="$(mktemp -d "\${TMPDIR:-/tmp}/dodok.XXXXXX")" || exit 1
+     trap 'rm -rf "$dir" ${BRIDGE_TOKEN_FILE}' EXIT
+     patch="$dir/dodok.patch.json5"
+     ( umask 077; printf '{"channels":{"dodok":{"accounts":{"default":{"bridgeUrl":"%s","token":"%s"}}}}}\\n' \\
+         '${bridgeUrl}' "$token" > "$patch" ) && chmod 600 "$patch" && openclaw config patch --file "$patch"
+   )
    \`\`\`
 
    패치 파일의 모양(토큰 자리는 위 명령이 토큰 파일에서 채운다):
@@ -109,6 +116,7 @@ function runnerSection(input: LlmsInput, file: LlmsFileInfo): string {
 
    \`\`\`bash
    ( umask 077; mkdir -p ~/.dodok-runner; cat > ${RUNNER_TOKEN_FILE} )
+   chmod 600 ${RUNNER_TOKEN_FILE}
    \`\`\`
 
 2. 러너 파일을 받아 파일 sha256 을 대조하고(다르면 멈춘다) 설치한 뒤 번들 sha256 을 대조한다(다르면 멈춘다).
@@ -120,10 +128,11 @@ function runnerSection(input: LlmsInput, file: LlmsFileInfo): string {
    shasum -a 256 "$(npm root -g)/@dodok/claude-runner/dist/main.js"
    \`\`\`
 
-3. 러너 전용 Claude 로그인은 사람이 한다. 아래 명령을 사람에게 보여 주고, 로그인을 마쳤다고 할 때까지 멈춘다.
+3. 러너 전용 Claude 로그인은 사람이 한다. 아래 명령을 사람에게 보여 주고, 로그인을 마쳤다고 할 때까지 멈춘다. 이 머신에 claude 명령이 없으면(command -v claude 가 비면) 둘째 줄 — 러너가 설치할 때 받은 번들 CLI — 을 보여 준다. 그 경로가 없으면 ls "$(npm root -g)/@dodok/claude-runner/node_modules/@anthropic-ai" 로 플랫폼별 디렉터리 이름을 보고(Linux musl 이면 -musl 이 붙는다) 그 이름으로 바꾼다.
 
    \`\`\`bash
    CLAUDE_CONFIG_DIR=${RUNNER_CLAUDE_DIR} claude
+   CLAUDE_CONFIG_DIR=${RUNNER_CLAUDE_DIR} "$(npm root -g)/@dodok/claude-runner/node_modules/@anthropic-ai/claude-agent-sdk-$(node -p 'process.platform+"-"+process.arch')/claude"
    \`\`\`
 
 4. 설정 파일 ${RUNNER_CONFIG_PATH} 을 만든다. agents 의 id(영문 소문자로 시작)·이름·작업 디렉터리·모델은 사람에게 묻는다. 토큰은 이 파일에 적지 않는다(적으면 러너가 거절한다).
@@ -132,7 +141,7 @@ function runnerSection(input: LlmsInput, file: LlmsFileInfo): string {
    ${JSON.stringify(config, null, 2).replaceAll("\n", "\n   ")}
    \`\`\`
 
-5. dodok-runner 를 실행하고 출력에 「연결됨」이 보이는지 확인한다. 사람에게 dodok 연결 페이지(${origin}/settings/connection)의 「Claude 러너」에 이 머신의 카드가 생겼는지 확인받는다.
+5. dodok-runner 를 실행한다. 이 명령은 끝나지 않고 전경에 머문다 — 출력에 \`연결됨\` 이 보이면 사람에게 넘기고(끄려면 Ctrl+C) 이 명령이 끝나기를 기다리지 않는다. 사람에게 dodok 연결 페이지(${origin}/settings/connection)의 「Claude 러너」에 이 머신의 카드가 생겼는지 확인받는다.
 
    \`\`\`bash
    dodok-runner

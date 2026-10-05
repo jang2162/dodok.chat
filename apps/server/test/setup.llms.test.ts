@@ -1,8 +1,20 @@
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import { v7 as uuid } from "uuid";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -38,6 +50,23 @@ function section(body: string, title: string): string {
   if (start === -1) throw new Error(`절 「${title}」이 없다`);
   const end = body.indexOf("\n## ", start + 1);
   return body.slice(start, end === -1 ? undefined : end);
+}
+
+/** 절 안의 ```bash 블록들 — 번호 목록의 들여쓰기를 걷은 본문 */
+function bashBlocks(text: string): string[] {
+  return [...text.matchAll(/^( *)```bash\n([\s\S]*?)\n *```/gm)].map(([, indent = "", body = ""]) =>
+    body
+      .split("\n")
+      .map((l) => (l.startsWith(indent) ? l.slice(indent.length) : l))
+      .join("\n"),
+  );
+}
+
+/** 블록 가운데 needle 을 품은 하나 */
+function blockWith(blocks: string[], needle: string): string {
+  const found = blocks.filter((b) => b.includes(needle));
+  expect(found, needle).toHaveLength(1);
+  return found[0] ?? "";
 }
 
 /** 절 안의 ```json 블록들 */
@@ -194,6 +223,159 @@ describe("renderLlmsTxt — 파일이 없을 때", () => {
     });
     expect(section(noRunner, "Claude 러너 머신")).toContain("서버에 파일이 없습니다");
     expect(section(noRunner, "OpenClaw Gateway 호스트")).toContain("b".repeat(64));
+  });
+});
+
+const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
+
+describe("renderLlmsTxt — 안내서 명령이 기대는 것", () => {
+  const body = renderLlmsTxt({
+    origin: "https://x.example",
+    bridgeUrl: "wss://x.example/bridge",
+    plugin: { sha256: "a".repeat(64), bundleSha256: "b".repeat(64) },
+    runner: { sha256: "c".repeat(64), bundleSha256: "d".repeat(64) },
+  });
+  const gateway = section(body, "OpenClaw Gateway 호스트");
+  const runner = section(body, "Claude 러너 머신");
+
+  it("러너 3번 — claude 가 없는 머신의 번들 CLI 줄은 deploy.md 「Claude 러너 설치」와 같고 경로 성분이 러너 패키지와 맞다", () => {
+    const runnerSteps = bashBlocks(runner);
+    expect(blockWith(runnerSteps, "CLAUDE_CONFIG_DIR=")).toContain(
+      "CLAUDE_CONFIG_DIR=~/.dodok-runner/claude claude\n",
+    );
+    const deploy = readFileSync(join(ROOT, "docs/guides/deploy.md"), "utf8");
+    const line = deploy
+      .split("\n")
+      .map((l) => l.trim())
+      .find((l) => l.includes("/claude-agent-sdk-$("));
+    expect(line).toBeDefined();
+    expect(runner).toContain(line);
+
+    const pkg = JSON.parse(readFileSync(join(ROOT, "packages/claude-runner/package.json"), "utf8")) as {
+      name: string;
+      dependencies: Record<string, string>;
+    };
+    const sdk = "@anthropic-ai/claude-agent-sdk";
+    expect(pkg.dependencies).toHaveProperty(sdk);
+    expect(line).toContain(
+      `"$(npm root -g)/${pkg.name}/node_modules/${sdk}-$(node -p 'process.platform+"-"+process.arch')/claude"`,
+    );
+    // 플랫폼별 번들 CLI 패키지 이름이 <SDK>-<platform>-<arch> 꼴이다(이 머신의 판으로)
+    const sdkPkg = JSON.parse(
+      readFileSync(join(ROOT, "packages/claude-runner/node_modules", sdk, "package.json"), "utf8"),
+    ) as { optionalDependencies: Record<string, string> };
+    expect(Object.keys(sdkPkg.optionalDependencies)).toContain(`${sdk}-${process.platform}-${process.arch}`);
+  });
+
+  it("러너 5번 — 끝나지 않는 명령이라 「연결됨」을 보면 사람에게 넘긴다(러너가 실제로 찍는 말)", () => {
+    const step5 = runner.slice(runner.indexOf("\n5. "));
+    expect(step5).toContain("`연결됨`");
+    expect(step5).toContain("사람에게 넘기");
+    expect(step5).toContain("Ctrl+C");
+    expect(readFileSync(join(ROOT, "packages/claude-runner/src/connection.ts"), "utf8")).toContain(
+      "dodok-runner: 연결됨(",
+    );
+  });
+
+  describe("토큰·패치 파일 명령을 bash 로 그대로 돌린다", () => {
+    let home: string;
+    let tmp: string;
+    let bin: string;
+    let log: string;
+
+    beforeAll(() => {
+      bin = mkdtempSync(join(tmpdir(), "dodok-llms-bin-"));
+      // 가짜 openclaw — 패치 파일의 경로·권한·본문을 한 줄씩 남기고 OPENCLAW_EXIT 로 끝난다
+      writeFileSync(
+        join(bin, "openclaw"),
+        [
+          "#!/bin/sh",
+          '[ "$1 $2 $3" = "config patch --file" ] || exit 64',
+          'printf "%s\\n" "$4" > "$OPENCLAW_LOG"',
+          'ls -l "$4" | cut -c1-10 >> "$OPENCLAW_LOG"',
+          'cat "$4" >> "$OPENCLAW_LOG"',
+          'exit "${OPENCLAW_EXIT:-0}"',
+          "",
+        ].join("\n"),
+      );
+      chmodSync(join(bin, "openclaw"), 0o755);
+    });
+    afterAll(() => rmSync(bin, { recursive: true, force: true }));
+
+    const fresh = () => {
+      home = mkdtempSync(join(tmpdir(), "dodok-llms-home-"));
+      tmp = join(home, "tmp");
+      mkdirSync(tmp);
+      log = join(home, "openclaw.log");
+    };
+    const run = (script: string, opts: { input?: string; exit?: number } = {}) =>
+      spawnSync("bash", ["-c", script], {
+        input: opts.input ?? "",
+        encoding: "utf8",
+        env: {
+          HOME: home,
+          TMPDIR: tmp,
+          PATH: `${bin}:/usr/bin:/bin`,
+          OPENCLAW_LOG: log,
+          OPENCLAW_EXIT: String(opts.exit ?? 0),
+        },
+      });
+    const mode = (path: string) => statSync(path).mode & 0o777;
+
+    it("토큰 파일 두기는 이미 있는 파일(0644)도 0600 으로 좁히고 새 토큰으로 바꾼다 — Gateway·러너 1번", () => {
+      for (const [section_, file] of [
+        [gateway, ".dodok-bridge-token"],
+        [runner, ".dodok-runner/token"],
+      ] as const) {
+        fresh();
+        mkdirSync(join(home, ".dodok-runner"));
+        writeFileSync(join(home, file), "old\n", { mode: 0o644 });
+        chmodSync(join(home, file), 0o644);
+        const res = run(blockWith(bashBlocks(section_), "cat >"), { input: "dbt_new\n" });
+        expect(res.status, res.stderr).toBe(0);
+        expect(readFileSync(join(home, file), "utf8"), file).toBe("dbt_new\n");
+        expect(mode(join(home, file)), file).toBe(0o600);
+      }
+    });
+
+    it("Gateway 4번 — 패치 파일은 mktemp 자리의 0600 이고, 적용이 끝나면 패치·토큰 파일이 모두 사라진다", () => {
+      fresh();
+      writeFileSync(join(home, ".dodok-bridge-token"), "dbt_secret\n", { mode: 0o600 });
+      const res = run(blockWith(bashBlocks(gateway), "openclaw config patch"));
+      expect(res.status, res.stderr).toBe(0);
+      const [path = "", perm, patch = ""] = readFileSync(log, "utf8").split("\n");
+      expect(path.startsWith(`${tmp}/`), path).toBe(true); // mktemp 자리 — 고정 /tmp 경로가 아니다
+      expect(perm).toBe("-rw-------");
+      expect(JSON.parse(patch)).toEqual({
+        channels: {
+          dodok: { accounts: { default: { bridgeUrl: "wss://x.example/bridge", token: "dbt_secret" } } },
+        },
+      });
+      expect(existsSync(join(home, ".dodok-bridge-token"))).toBe(false);
+      expect(readdirSync(tmp)).toEqual([]);
+      expect(gateway).not.toContain("/tmp/dodok.patch");
+    });
+
+    it("Gateway 4번 — 적용이 실패해도 패치·토큰 파일을 지우고 실패 코드를 그대로 낸다", () => {
+      fresh();
+      writeFileSync(join(home, ".dodok-bridge-token"), "dbt_secret\n", { mode: 0o600 });
+      const res = run(blockWith(bashBlocks(gateway), "openclaw config patch"), { exit: 3 });
+      expect(res.status).toBe(3);
+      expect(existsSync(log)).toBe(true);
+      expect(existsSync(join(home, ".dodok-bridge-token"))).toBe(false);
+      expect(readdirSync(tmp)).toEqual([]);
+    });
+
+    it("Gateway 4번 — 토큰 파일이 없거나 비면 빈 토큰으로 패치하지 않는다", () => {
+      for (const token of [null, ""]) {
+        fresh();
+        if (token !== null) writeFileSync(join(home, ".dodok-bridge-token"), token, { mode: 0o600 });
+        const res = run(blockWith(bashBlocks(gateway), "openclaw config patch"));
+        expect(res.status, String(token)).not.toBe(0);
+        expect(existsSync(log), String(token)).toBe(false);
+        expect(readdirSync(tmp)).toEqual([]);
+      }
+    });
   });
 });
 
