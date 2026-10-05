@@ -18,6 +18,7 @@ import { createIpLimit, registerAuthRoutes } from "./auth/routes";
 import { isLocalVapidSubject, type ServerConfig } from "./config";
 import { createDb, type Db, type DbOrTx } from "./db/client";
 import { workspaces } from "./db/schema.sqlite";
+import { type AgentTokenGuard, requireAgentToken } from "./http/agent-token";
 import { HttpError, httpStatusToErrorCode } from "./http/errors";
 import { createLogger, type Logger, requestLogSerializer } from "./logger";
 import { registerAdapterRoutes } from "./modules/adapter/routes";
@@ -66,6 +67,7 @@ import { readRunnerFile, runnerDirCandidates } from "./modules/runners/runner-fi
 import { activeRunnerTokenCount, isActiveRunnerTokenId, verifyRunnerTokenDb } from "./modules/runners/tokens";
 import { registerRunRoutes } from "./modules/runs/routes";
 import { registerSearchRoutes } from "./modules/search/routes";
+import { renderLlmsTxt } from "./modules/setup/llms";
 import { pluginDirCandidates, readPluginFile } from "./modules/setup/plugin-file";
 import { registerSetupRoutes } from "./modules/setup/routes";
 import { bridgePublicUrl, buildSetupStatus } from "./modules/setup/status";
@@ -457,18 +459,26 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     // 이 한 변수로만 넘긴다(App.blobLocks 로도 내보내 테스트가 잠근다)
     mkdirSync(config.attachmentsDir, { recursive: true });
     const blobLocks = deps.blobLocks ?? createBlobLocks();
+    // 꺼진 Gateway 의 토큰은 401 이되 실패로 세지 않는다 — 첨부 HTTP·설치 파일이 같은 판정(핸드셰이크는 어댑터가 가른다)
+    const acceptBridgeGateway = (gatewayId: string) =>
+      getGatewayRow(db, workspaceId, gatewayId)?.enabled === true;
+    const agentTokenGuard: AgentTokenGuard = {
+      guard: bridgeGuard,
+      now: limitClock,
+      onBlocked: onAuthBlocked,
+    };
     registerAttachmentRoutes(fastify, {
       auth,
       db,
       workspaceId,
       dir: config.attachmentsDir,
       verifyBridgeToken,
-      acceptBridgeGateway: (gatewayId) => getGatewayRow(db, workspaceId, gatewayId)?.enabled === true,
+      acceptBridgeGateway,
       runner: {
         verifyToken: verifyRunnerToken,
         mayRead: (tokenId, attachmentId) => runnerAdapter?.mayReadAttachment(tokenId, attachmentId) ?? false,
       },
-      bridgeGuard: { guard: bridgeGuard, now: limitClock, onBlocked: onAuthBlocked },
+      bridgeGuard: agentTokenGuard,
       locks: blobLocks,
       diskFull: () => disk.current().level === "error",
     });
@@ -529,7 +539,29 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     undo.push({ step: "setup-events", run: () => offSetup() });
     const offPromptResync = watchPluginHellos({ db, bus, logger, registry });
     undo.push({ step: "prompt-resync", run: () => offPromptResync() });
-    registerSetupRoutes(fastify, { auth, db, workspaceId, pluginFile, status: setupStatus });
+    const serverUrl = runnerServerUrl(publicUrl);
+    registerSetupRoutes(fastify, {
+      auth,
+      db,
+      workspaceId,
+      pluginFile,
+      status: setupStatus,
+      bridgeToken: requireAgentToken({
+        verify: verifyBridgeToken,
+        guard: agentTokenGuard,
+        path: "bridge",
+        route: "installer",
+        accept: (result) => acceptBridgeGateway((result as { gatewayId: string }).gatewayId),
+      }),
+      // 파일은 부팅 때 한 번 잰다 — 본문도 그때 한 번(다시 빌드된 파일은 재시작해야 내려 주는 것과 같다)
+      llmsTxt: renderLlmsTxt({
+        origin: serverUrl,
+        bridgeUrl: publicUrl,
+        plugin: pluginFile,
+        runner: runnerFile,
+      }),
+      llmsLimit: createIpLimit(fastify, { perMin: limits.llmsTxtPerMin, ops }),
+    });
     registerGatewayRoutes(fastify, {
       auth,
       db,
@@ -548,7 +580,13 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       registry,
       ops,
       runnerFile,
-      serverUrl: runnerServerUrl(publicUrl),
+      serverUrl,
+      runnerToken: requireAgentToken({
+        verify: verifyRunnerToken,
+        guard: agentTokenGuard,
+        path: "runner",
+        route: "installer",
+      }),
       changed: emitSetupStatus,
       agentsChanged: () => bus.emit("agents.changed", {}),
     });

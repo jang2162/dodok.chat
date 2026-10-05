@@ -59,6 +59,9 @@ check "/socket.io/socket.io.js 는 서버의 400" /socket.io/socket.io.js 400
 check "/bridge/attachments/… 는 서버로(토큰 없이 401 JSON)" /bridge/attachments/00000000-0000-0000-0000-000000000000 401 application/json
 # 러너의 첨부 HTTP — 같은 규칙
 check "/runner/attachments/… 는 서버로(토큰 없이 401 JSON)" /runner/attachments/00000000-0000-0000-0000-000000000000 401 application/json
+# 노드 설치 안내서 — 서버가 채우는 평문. SPA 폴백이면 200 HTML 이라 content-type 과 본문의 절 제목을 본다
+check "/llms.txt 는 서버의 평문" /llms.txt 200 text/plain
+if grep -qF '## OpenClaw Gateway 호스트' "$tmp/b"; then pass "/llms.txt 본문이 서버의 안내서"; else fail "/llms.txt 본문이 서버의 안내서" "본문 '$(head -c 120 "$tmp/b" | tr '\n' ' ')'"; fi
 check "/sw.js no-cache" /sw.js 200 "" no-cache
 check "/manifest.webmanifest no-cache" /manifest.webmanifest 200 "" no-cache
 

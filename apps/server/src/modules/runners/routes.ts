@@ -1,9 +1,10 @@
 /**
- * 연결 페이지 러너 API(러너 스펙 5장) — 전부 owner 세션만. 토큰 원문은 발급 응답에만 싣고 그 응답은 `Cache-Control: no-store`.
+ * 연결 페이지 러너 API(러너 스펙 5장) — owner 세션만(러너 tgz 만 owner 세션 또는 러너 토큰 — 설정 통합 스펙 「토큰으로 설치 파일
+ * 받기」 절). 토큰 원문은 발급 응답에만 싣고 그 응답은 `Cache-Control: no-store`.
  * 목록·상태·로그·wire 어디에도 원문은 없다(브리지 토큰 API — setup/routes.ts — 와 같은 규칙)
  */
 import { Id, IssueRunnerTokenInput, type IssueRunnerTokenResult } from "@dodok/shared";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { AdapterRegistry } from "../../adapters/registry";
 import type { Auth } from "../../auth";
@@ -13,6 +14,7 @@ import { apiError } from "../../http/errors";
 import { parseBody, parseParams } from "../../http/validate";
 import type { Logger } from "../../logger";
 import type { OpsService } from "../ops/service";
+import { requireOwnerOrToken } from "../setup/installer-auth";
 import { sendPackedFile } from "../setup/routes";
 import type { RunnerFile } from "./runner-file";
 import { bindRunnerToken } from "./bindings";
@@ -40,6 +42,8 @@ export type RunnerRouteContext = {
   /** 부팅 때 잰 품은 러너 파일(없으면 null) */
   runnerFile: RunnerFile | null;
   serverUrl: string;
+  /** 러너 토큰 인증(requireAgentToken — 첨부 HTTP·핸드셰이크와 같은 실패 카운터) */
+  runnerToken: (request: FastifyRequest) => Promise<void>;
   /** 토큰 발급·폐기·다시 묶기 뒤 — setup.status 를 다시 알린다 */
   changed(): void;
   /** 다시 묶기 뒤 — 에이전트의 묶인 러너가 바뀌었다(wire agents.changed) */
@@ -108,11 +112,14 @@ export function registerRunnerRoutes(fastify: FastifyInstance, ctx: RunnerRouteC
     return { agent };
   });
 
-  fastify.get("/api/v1/setup/runner.tgz", owner, async (_request, reply) =>
-    sendPackedFile(reply, ctx.runnerFile, {
-      missing: runnerFileMissing,
-      changedMessage: "RUNNER_FILE_CHANGED: restart the server to serve the rebuilt runner",
-      fileName: (sha) => `dodok-claude-runner-${sha.slice(0, 12)}.tgz`,
-    }),
+  fastify.get(
+    "/api/v1/setup/runner.tgz",
+    { preHandler: requireOwnerOrToken(ctx, ctx.runnerToken) },
+    async (_request, reply) =>
+      sendPackedFile(reply, ctx.runnerFile, {
+        missing: runnerFileMissing,
+        changedMessage: "RUNNER_FILE_CHANGED: restart the server to serve the rebuilt runner",
+        fileName: (sha) => `dodok-claude-runner-${sha.slice(0, 12)}.tgz`,
+      }),
   );
 }

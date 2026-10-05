@@ -9,6 +9,8 @@ export const LIMITS = {
    * 한 사무실(NAT)에서 여러 사람이 링크를 동시에 열어도 로그인 실패 몇 번에 가입이 막히지 않게
    */
   invitePublicPerMin: 20,
+  /** GET /llms.txt(로그인 없음) — IP 당 분당. 부팅 때 만든 평문이라 비싸지 않다 — 폭주 방어다 */
+  llmsTxtPerMin: 30,
   /** REST /api/v1/* — 사용자당 분당 */
   restPerMin: 300,
   /** 첨부 업로드 — 사용자당 분당(REST 상한 위에 한 번 더) */
@@ -41,7 +43,7 @@ export const LIMITS = {
   },
   /** 사용자당 동시 wire 소켓 */
   socketsPerUser: 20,
-  /** 브리지 인증 실패 카운터(BridgeAuthGuard) — 핸드셰이크와 /bridge/attachments 가 같이 쓴다 */
+  /** 브리지 인증 실패 카운터(BridgeAuthGuard) — 핸드셰이크·첨부 HTTP·설치 파일(plugin.tgz·runner.tgz) 토큰 받기가 같이 쓴다 */
   bridgeFail: { maxFailures: 10, windowMs: 60_000, blockMs: 60_000, maxAddresses: 1024 },
 } as const;
 
@@ -49,6 +51,7 @@ export type Limits = {
   betterAuthPerMin: number;
   localLoginPerMin: number;
   invitePublicPerMin: number;
+  llmsTxtPerMin: number;
   restPerMin: number;
   uploadPerMin: number;
   searchPerMin: number;

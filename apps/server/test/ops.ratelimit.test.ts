@@ -13,6 +13,8 @@ describe("LIMITS — 스펙 4장 숫자", () => {
       betterAuthPerMin: 30,
       localLoginPerMin: 5,
       invitePublicPerMin: 20,
+      // 설정 통합 스펙 「`llms.txt`」 절
+      llmsTxtPerMin: 30,
       restPerMin: 300,
       uploadPerMin: 30,
       inviteIssuePerMin: 20,

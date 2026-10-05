@@ -8,7 +8,6 @@ import {
   type Attachment,
   BRIDGE_ATTACHMENT_HEADERS as H,
   BRIDGE_ATTACHMENTS_PATH,
-  type BridgeAuthGuard,
   Id,
   RUNNER_ATTACHMENTS_PATH,
 } from "@dodok/shared";
@@ -19,10 +18,10 @@ import { z } from "zod";
 import type { Auth } from "../../auth";
 import { requireSession, sessionUser } from "../../auth/routes";
 import type { Db } from "../../db/client";
+import { type AgentTokenGuard, requireAgentToken } from "../../http/agent-token";
 import { apiError } from "../../http/errors";
 import { parseParams, parseQuery } from "../../http/validate";
 import { getChannel } from "../channels/service";
-import { ipPrefix } from "../ops/ip";
 import { type AttachmentDeps, findReadable, type Uploader, uploadAttachment } from "./service";
 import type { BlobLocks } from "./store";
 
@@ -50,23 +49,12 @@ export type AttachmentRouteContext = {
     verifyToken: (presented: unknown) => { tokenId: string } | null;
     mayRead: (tokenId: string, attachmentId: string) => boolean;
   };
-  /**
-   * 브리지·러너 핸드셰이크와 같은 실패 카운터 인스턴스(app.ts 가 하나를 만들어 넷에 준다 — 러너 스펙 5장). 주소는 request.ip —
-   * TRUST_PROXY 일 때 X-Forwarded-For 를 따르는 것이 핸드셰이크의 bridgeClientAddress 와 같다. onBlocked 의 path 는 막히게 한 쪽
-   */
-  bridgeGuard: {
-    guard: BridgeAuthGuard;
-    now: () => number;
-    onBlocked: (address: string, path: TokenPath) => void;
-  };
+  /** 브리지·러너 핸드셰이크와 같은 실패 카운터 인스턴스(app.ts 가 하나를 만들어 핸드셰이크·첨부·설치 파일에 준다 — 러너 스펙 5장) */
+  bridgeGuard: AgentTokenGuard;
   locks: BlobLocks;
   /** true 면 업로드(사람·브리지)를 507 INSUFFICIENT_STORAGE 로 거절한다 — 디스크 여유 error(운영 보강 스펙 5.4). 없으면 막지 않는다 */
   diskFull?: () => boolean;
 };
-
-/** 외부 입력(Bearer 값) 그대로 받아 통과면 무엇이든, 아니면 null */
-type TokenVerifier = (presented: unknown) => unknown;
-type TokenPath = "bridge" | "runner";
 
 const IdParams = z.object({ id: Id });
 const UploadQuery = z.object({ channelId: Id });
@@ -152,51 +140,6 @@ async function sendBlob(
   return reply.send(handle.createReadStream());
 }
 
-/**
- * 에이전트 쪽(브리지·러너) 토큰 인증 — 두 경로가 같은 가드를 지나므로 한쪽에서 막힌 주소는 다른 쪽에서도 막힌다.
- * 통과한 검증 결과는 verified 에 요청별로 남긴다(러너 GET·POST 가 토큰 id 를 읽는다)
- */
-function requireToken(
-  verify: TokenVerifier,
-  bridgeGuard: AttachmentRouteContext["bridgeGuard"],
-  path: TokenPath,
-  verified: WeakMap<FastifyRequest, unknown>,
-  accept?: (result: unknown) => boolean,
-) {
-  return async (request: FastifyRequest): Promise<void> => {
-    const { guard, now, onBlocked } = bridgeGuard;
-    const address = request.ip;
-    const at = now();
-    // 막힌 주소는 토큰을 보지 않는다 — 성공도 카운터를 비우지 않으므로 정상 토큰도 막힌 동안은 429
-    if (guard.isBlocked(address, at)) throw apiError("RATE_LIMITED", "인증 실패가 너무 많습니다");
-    const header = request.headers.authorization;
-    const provided = header?.slice(0, 7).toLowerCase() === "bearer " ? header.slice(7).trim() : undefined;
-    let result: unknown;
-    try {
-      result = verify(provided);
-    } catch (err) {
-      // 검증 오류(저장소 등)는 통과가 아니라 거절이다(fail-closed) — 원인만 남기고 토큰은 싣지 않는다.
-      // 플러그인·러너 잘못이 아니라 실패로 세지 않는다(핸드셰이크와 같다)
-      request.log.error({ err }, `${path} token verification failed`);
-      throw apiError("UNAUTHORIZED", `${path} 토큰이 틀렸다`);
-    }
-    if (result) {
-      if (accept && !accept(result)) {
-        // 핸드셰이크 거절(브리지 서버 미들웨어)과 같은 사유·문구 — 토큰이 맞았다는 것을 응답으로 알리지 않는다
-        request.log.warn(
-          { reason: `token mismatch from ${ipPrefix(address)}`, route: "attachments" },
-          `${path} connection rejected`,
-        );
-        throw apiError("UNAUTHORIZED", `${path} 토큰이 틀렸다`);
-      }
-      verified.set(request, result);
-      return;
-    }
-    if (guard.fail(address, at)) onBlocked(address, path);
-    throw apiError("UNAUTHORIZED", `${path} 토큰이 틀렸다`);
-  };
-}
-
 export function registerAttachmentRoutes(fastify: FastifyInstance, ctx: AttachmentRouteContext): void {
   void fastify.register(async (scope) => {
     scope.removeAllContentTypeParsers();
@@ -204,9 +147,14 @@ export function registerAttachmentRoutes(fastify: FastifyInstance, ctx: Attachme
     const deps: AttachmentDeps = { db: ctx.db, dir: ctx.dir, locks: ctx.locks };
     const session = requireSession(ctx);
     const verified = new WeakMap<FastifyRequest, unknown>();
-    const bridge = requireToken(ctx.verifyBridgeToken, ctx.bridgeGuard, "bridge", verified, (result) =>
-      ctx.acceptBridgeGateway((result as { gatewayId: string }).gatewayId),
-    );
+    const bridge = requireAgentToken({
+      verify: ctx.verifyBridgeToken,
+      guard: ctx.bridgeGuard,
+      path: "bridge",
+      route: "attachments",
+      verified,
+      accept: (result) => ctx.acceptBridgeGateway((result as { gatewayId: string }).gatewayId),
+    });
     // 업로드 상한은 본문을 받기 전에 — 세션(REST 상한) 뒤에 한 번 더
     const uploadLimit = async (request: FastifyRequest): Promise<void> =>
       request.server.restLimits?.upload(request, sessionUser(request).id);
@@ -249,7 +197,7 @@ export function registerAttachmentRoutes(fastify: FastifyInstance, ctx: Attachme
     // 범위 밖은 없는 id 와 같은 404)
     type AgentPath = {
       path: string;
-      auth: ReturnType<typeof requireToken>;
+      auth: ReturnType<typeof requireAgentToken>;
       uploader: (request: FastifyRequest) => Uploader;
       viewer: (request: FastifyRequest) => Parameters<typeof findReadable>[2];
     };
@@ -277,7 +225,13 @@ export function registerAttachmentRoutes(fastify: FastifyInstance, ctx: Attachme
       };
       agentPaths.push({
         path: RUNNER_ATTACHMENTS_PATH,
-        auth: requireToken(runner.verifyToken, ctx.bridgeGuard, "runner", verified),
+        auth: requireAgentToken({
+          verify: runner.verifyToken,
+          guard: ctx.bridgeGuard,
+          path: "runner",
+          route: "attachments",
+          verified,
+        }),
         uploader: (request) => ({ type: "bridge", runnerTokenId: tokenIdOf(request) }),
         viewer: (request) => {
           const tokenId = tokenIdOf(request);

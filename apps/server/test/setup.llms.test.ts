@@ -1,0 +1,302 @@
+import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { gzipSync } from "node:zlib";
+import { v7 as uuid } from "uuid";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { RunnerConfig } from "../../../packages/claude-runner/src/config";
+import { DodokAccountConfig } from "../../../packages/openclaw-plugin/src/config";
+import type { App } from "../src/app";
+import { RUNNER_BUNDLE_ENTRY } from "../src/modules/runners/runner-file";
+import { issueRunnerToken, revokeRunnerToken } from "../src/modules/runners/tokens";
+import { renderLlmsTxt } from "../src/modules/setup/llms";
+import { PLUGIN_BUNDLE_ENTRY } from "../src/modules/setup/plugin-file";
+import { issueBridgeToken, revokeBridgeToken } from "../src/modules/setup/tokens";
+import { bootTestApp, login, userWithRole } from "./helpers/app";
+import { FAKE_GATEWAY_ID, insertGateway } from "./helpers/gateways";
+
+const sha = (b: Buffer | string) => createHash("sha256").update(b).digest("hex");
+
+/** entry 하나만 든 tgz(ustar 한 블록 — 체크섬은 읽는 쪽이 보지 않는다) */
+function tinyTgz(entry: string, bundle: Buffer): Buffer {
+  const header = Buffer.alloc(512);
+  header.write(entry, 0);
+  header.write(`${bundle.length.toString(8).padStart(11, "0")}\0`, 124);
+  header.write("0", 156);
+  header.write("ustar\0", 257);
+  const body = Buffer.alloc(Math.ceil(bundle.length / 512) * 512);
+  bundle.copy(body);
+  return gzipSync(Buffer.concat([header, body, Buffer.alloc(1024)]));
+}
+
+/** 본문에서 「## <제목>」 절 하나(다음 「## 」 앞까지) */
+function section(body: string, title: string): string {
+  const start = body.indexOf(`\n## ${title}\n`);
+  if (start === -1) throw new Error(`절 「${title}」이 없다`);
+  const end = body.indexOf("\n## ", start + 1);
+  return body.slice(start, end === -1 ? undefined : end);
+}
+
+/** 절 안의 ```json 블록들 */
+function jsonBlocks(text: string): unknown[] {
+  return [...text.matchAll(/```json\n([\s\S]*?)\n\s*```/g)].map((m) => JSON.parse(m[1] ?? ""));
+}
+
+const PLUGIN_BUNDLE = Buffer.from("export const dodok = 1;\n");
+const RUNNER_BUNDLE = Buffer.from("#!/usr/bin/env node\n");
+const OTHER_GATEWAY = "비밀사무실게이트웨이";
+const MEMBER_EMAIL = "bee@dodok.local";
+
+describe("GET /llms.txt — 노드 설치 안내서", () => {
+  let app: App;
+  let dir: string;
+  let pluginTgz: Buffer;
+  let runnerTgz: Buffer;
+  let bridgeToken: string;
+  let runnerToken: string;
+
+  beforeAll(async () => {
+    dir = mkdtempSync(join(tmpdir(), "dodok-llms-"));
+    pluginTgz = tinyTgz(PLUGIN_BUNDLE_ENTRY, PLUGIN_BUNDLE);
+    runnerTgz = tinyTgz(RUNNER_BUNDLE_ENTRY, RUNNER_BUNDLE);
+    writeFileSync(join(dir, "dodok-openclaw-plugin-0.0.0.tgz"), pluginTgz);
+    const runnerDir = join(dir, "runner");
+    mkdirSync(runnerDir);
+    writeFileSync(join(runnerDir, "dodok-claude-runner-0.0.0.tgz"), runnerTgz);
+    app = await bootTestApp(
+      { APP_ORIGIN: "https://chat.example.com" },
+      { adapters: [new FakeAdapter()], pluginDirs: [dir], runnerDirs: [runnerDir] },
+    );
+    // 토큰·다른 Gateway·사람이 있는 상태에서도 본문에 실리지 않아야 한다
+    bridgeToken = issueBridgeToken(app.db, app.workspaceId, FAKE_GATEWAY_ID, "gw").token;
+    runnerToken = issueRunnerToken(app.db, app.workspaceId, "mac").token;
+    insertGateway(app.db, app.workspaceId, { id: uuid(), name: OTHER_GATEWAY, enabled: true });
+    await userWithRole(app, "bee", "member");
+  });
+  afterAll(async () => {
+    await app.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const get = (remoteAddress = "10.0.0.1") =>
+    app.fastify.inject({ method: "GET", url: "/llms.txt", remoteAddress });
+
+  it("로그인 없이 200 text/plain — 공개 오리진·bridgeUrl·두 파일의 sha·두 절 제목·AI 규칙 네 줄", async () => {
+    const res = await get();
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["content-type"]).toBe("text/plain; charset=utf-8");
+    const body = res.body;
+    expect(body).toContain("https://chat.example.com");
+    expect(body).toContain("wss://chat.example.com/bridge");
+    expect(body).toContain(sha(pluginTgz));
+    expect(body).toContain(sha(PLUGIN_BUNDLE));
+    expect(body).toContain(sha(runnerTgz));
+    expect(body).toContain(sha(RUNNER_BUNDLE));
+    expect(body).toContain("\n## OpenClaw Gateway 호스트\n");
+    expect(body).toContain("\n## Claude 러너 머신\n");
+    for (const rule of [
+      "토큰을 화면·로그·명령 줄 인자에 찍지 않는다 — 파일(0600)이나 표준 입력으로 넘긴다.",
+      "토큰은 이 안내서가 지정한 자리에만 둔다.",
+      "사람이 할 단계(Claude 로그인, 기기 페어링 승인 확인)에서는 멈추고 사람에게 묻는다.",
+      "받은 파일은 이 안내서의 sha256 과 대조하고, 다르면 멈춘다.",
+    ])
+      expect(body).toContain(rule);
+  });
+
+  it("토큰·Gateway 이름·사람 이메일을 싣지 않는다", async () => {
+    const body = (await get()).body;
+    expect(body).not.toContain("dbt_");
+    expect(body).not.toContain("drn_");
+    expect(body).not.toContain(bridgeToken);
+    expect(body).not.toContain(runnerToken);
+    expect(body).not.toContain(OTHER_GATEWAY);
+    expect(body).not.toContain("가짜 Gateway");
+    expect(body).not.toContain(MEMBER_EMAIL);
+    expect(body).not.toContain("owner@dodok.local");
+    expect(body).not.toContain(dir); // 서버 안 파일 경로
+  });
+
+  it("같은 IP 31번째 요청은 429, 다른 IP 는 그대로", async () => {
+    for (let i = 0; i < 30; i++) expect((await get("10.0.0.31")).statusCode, `요청 ${i + 1}`).toBe(200);
+    expect((await get("10.0.0.31")).statusCode).toBe(429);
+    expect((await get("10.0.0.32")).statusCode).toBe(200);
+  });
+
+  // 계획 판정 PS6 — 안내서의 명령·키가 플러그인·러너 코드와 어긋나면 노드의 AI 가 망가진 설정을 만든다
+  it("대조: 플러그인 계정 키는 플러그인 설정 스키마, 러너 설정은 RunnerConfig 를 그대로 지난다", async () => {
+    const body = (await get("10.0.0.2")).body;
+    const gateway = section(body, "OpenClaw Gateway 호스트");
+    const [patch] = jsonBlocks(gateway) as Array<{
+      channels: { dodok: { accounts: { default: Record<string, unknown> } } };
+    }>;
+    const account = patch?.channels.dodok.accounts.default;
+    expect(Object.keys(account ?? {}).sort()).toEqual(["bridgeUrl", "token"]);
+    expect(DodokAccountConfig.safeParse(account).success).toBe(true);
+    expect(account?.bridgeUrl).toBe("wss://chat.example.com/bridge");
+    // 패치를 만드는 명령도 같은 키를 쓴다
+    expect(gateway).toContain(
+      `{"channels":{"dodok":{"accounts":{"default":{"bridgeUrl":"%s","token":"%s"}}}}}`,
+    );
+    expect(gateway).toContain("https://chat.example.com/api/v1/setup/plugin.tgz");
+
+    const runner = section(body, "Claude 러너 머신");
+    const [config] = jsonBlocks(runner);
+    const parsed = RunnerConfig.safeParse(config);
+    expect(parsed.success, JSON.stringify(parsed.error?.issues)).toBe(true);
+    expect(Object.keys(config as object)).toEqual(
+      expect.arrayContaining(["serverUrl", "tokenFile", "claudeConfigDir", "agents"]),
+    );
+    expect((config as { serverUrl: string }).serverUrl).toBe("https://chat.example.com");
+    expect(runner).toContain("https://chat.example.com/api/v1/setup/runner.tgz");
+  });
+
+  it("대조: 안내서가 부르는 설치 경로는 이 서버에 있다(owner 로 200)", async () => {
+    const { headers } = await login(app);
+    for (const path of ["/api/v1/setup/plugin.tgz", "/api/v1/setup/runner.tgz"]) {
+      expect((await get("10.0.0.3")).body).toContain(path);
+      expect((await app.fastify.inject({ method: "GET", url: path, headers })).statusCode, path).toBe(200);
+    }
+  });
+});
+
+describe("renderLlmsTxt — 파일이 없을 때", () => {
+  it("파일이 없는 절은 「서버에 파일이 없습니다」, 있는 절은 sha 를 싣는다", () => {
+    const file = { sha256: "a".repeat(64), bundleSha256: "b".repeat(64) };
+    const noPlugin = renderLlmsTxt({
+      origin: "https://x.example",
+      bridgeUrl: "wss://x.example/bridge",
+      plugin: null,
+      runner: file,
+    });
+    expect(section(noPlugin, "OpenClaw Gateway 호스트")).toContain("서버에 파일이 없습니다");
+    expect(section(noPlugin, "OpenClaw Gateway 호스트")).not.toContain("plugin.tgz");
+    expect(section(noPlugin, "Claude 러너 머신")).not.toContain("서버에 파일이 없습니다");
+    expect(section(noPlugin, "Claude 러너 머신")).toContain("a".repeat(64));
+
+    const noRunner = renderLlmsTxt({
+      origin: "https://x.example",
+      bridgeUrl: "wss://x.example/bridge",
+      plugin: file,
+      runner: null,
+    });
+    expect(section(noRunner, "Claude 러너 머신")).toContain("서버에 파일이 없습니다");
+    expect(section(noRunner, "OpenClaw Gateway 호스트")).toContain("b".repeat(64));
+  });
+});
+
+describe("설치 파일을 발급 토큰으로 받기 [Review Focus 5]", () => {
+  let app: App;
+  let dir: string;
+  let pluginTgz: Buffer;
+  let runnerTgz: Buffer;
+
+  beforeAll(async () => {
+    dir = mkdtempSync(join(tmpdir(), "dodok-installer-"));
+    pluginTgz = tinyTgz(PLUGIN_BUNDLE_ENTRY, PLUGIN_BUNDLE);
+    runnerTgz = tinyTgz(RUNNER_BUNDLE_ENTRY, RUNNER_BUNDLE);
+    writeFileSync(join(dir, "dodok-openclaw-plugin-0.0.0.tgz"), pluginTgz);
+    const runnerDir = join(dir, "runner");
+    mkdirSync(runnerDir);
+    writeFileSync(join(runnerDir, "dodok-claude-runner-0.0.0.tgz"), runnerTgz);
+    app = await bootTestApp(
+      {},
+      {
+        adapters: [new FakeAdapter()],
+        pluginDirs: [dir],
+        runnerDirs: [runnerDir],
+        // 두 번째 실패에서 막힌다 — 한 번 센 것과 안 센 것을 가른다
+        limits: { bridgeFail: { maxFailures: 2, windowMs: 60_000, blockMs: 60_000, maxAddresses: 1024 } },
+      },
+    );
+  });
+  afterAll(async () => {
+    await app.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** 주소마다 실패 카운터가 따로라 시험마다 다른 주소를 쓴다 */
+  let nextIp = 1;
+  const freshIp = () => `10.1.0.${nextIp++}`;
+  const download = (file: "plugin.tgz" | "runner.tgz", token: string | undefined, remoteAddress: string) =>
+    app.fastify.inject({
+      method: "GET",
+      url: `/api/v1/setup/${file}`,
+      remoteAddress,
+      ...(token === undefined ? {} : { headers: { authorization: `Bearer ${token}` } }),
+    });
+  const bridge = () => issueBridgeToken(app.db, app.workspaceId, FAKE_GATEWAY_ID, "gw");
+  const runner = () => issueRunnerToken(app.db, app.workspaceId, "mac");
+
+  it("owner 세션은 둘 다 200, member 세션은 403", async () => {
+    const { headers } = await login(app);
+    const member = { authorization: `Bearer ${(await userWithRole(app, "bee", "member")).token}` };
+    for (const file of ["plugin.tgz", "runner.tgz"]) {
+      const url = `/api/v1/setup/${file}`;
+      expect((await app.fastify.inject({ method: "GET", url, headers })).statusCode, file).toBe(200);
+      expect((await app.fastify.inject({ method: "GET", url, headers: member })).statusCode, file).toBe(403);
+    }
+  });
+
+  it("plugin.tgz — 유효한 브리지 토큰이면 파일 그대로", async () => {
+    const res = await download("plugin.tgz", bridge().token, freshIp());
+    expect(res.statusCode).toBe(200);
+    expect(res.rawPayload.equals(pluginTgz)).toBe(true);
+    expect(res.headers["content-type"]).toBe("application/gzip");
+  });
+
+  it("runner.tgz — 유효한 러너 토큰이면 파일 그대로", async () => {
+    const res = await download("runner.tgz", runner().token, freshIp());
+    expect(res.statusCode).toBe(200);
+    expect(res.rawPayload.equals(runnerTgz)).toBe(true);
+  });
+
+  it("plugin.tgz — 폐기한 브리지 토큰 401, 그 실패를 센다(두 번째에 막혀 유효한 토큰도 429)", async () => {
+    const ip = freshIp();
+    const revoked = bridge();
+    revokeBridgeToken(app.db, app.workspaceId, FAKE_GATEWAY_ID, revoked.record.id);
+    expect((await download("plugin.tgz", revoked.token, ip)).statusCode).toBe(401);
+    expect((await download("plugin.tgz", bridge().token, ip)).statusCode).toBe(200);
+    expect((await download("plugin.tgz", revoked.token, ip)).statusCode).toBe(401);
+    expect((await download("plugin.tgz", bridge().token, ip)).statusCode).toBe(429);
+  });
+
+  it("plugin.tgz — 꺼진 Gateway 의 토큰은 401 이되 세지 않는다", async () => {
+    const ip = freshIp();
+    const off = insertGateway(app.db, app.workspaceId, { id: uuid(), name: "꺼짐", enabled: false });
+    const offToken = issueBridgeToken(app.db, app.workspaceId, off.id, "off").token;
+    for (let i = 0; i < 3; i++) expect((await download("plugin.tgz", offToken, ip)).statusCode).toBe(401);
+    expect((await download("plugin.tgz", bridge().token, ip)).statusCode).toBe(200);
+  });
+
+  it("plugin.tgz — 러너 토큰 401, runner.tgz — 브리지 토큰 401(경로마다 자기 토큰만)", async () => {
+    expect((await download("plugin.tgz", runner().token, freshIp())).statusCode).toBe(401);
+    expect((await download("runner.tgz", bridge().token, freshIp())).statusCode).toBe(401);
+  });
+
+  it("runner.tgz — 폐기한 러너 토큰 401", async () => {
+    const revoked = runner();
+    revokeRunnerToken(app.db, app.workspaceId, revoked.record.id);
+    expect((await download("runner.tgz", revoked.token, freshIp())).statusCode).toBe(401);
+  });
+
+  it("틀린 토큰은 401 이고 한 번 센다 — 두 번째에 막혀 유효한 토큰도 429", async () => {
+    for (const file of ["plugin.tgz", "runner.tgz"] as const) {
+      const ip = freshIp();
+      const valid = () => (file === "plugin.tgz" ? bridge().token : runner().token);
+      const wrong = await download(file, "nope", ip);
+      expect(wrong.statusCode, file).toBe(401);
+      expect(wrong.json().code).toBe("UNAUTHORIZED");
+      expect((await download(file, valid(), ip)).statusCode, file).toBe(200);
+      expect((await download(file, "nope", ip)).statusCode, file).toBe(401);
+      expect((await download(file, valid(), ip)).statusCode, file).toBe(429);
+    }
+  });
+
+  it("토큰도 세션도 없으면 401 이고 세지 않는다(맞혀 보는 시도가 아니다)", async () => {
+    const ip = freshIp();
+    for (let i = 0; i < 3; i++) expect((await download("plugin.tgz", undefined, ip)).statusCode).toBe(401);
+    expect((await download("plugin.tgz", bridge().token, ip)).statusCode).toBe(200);
+  });
+});
