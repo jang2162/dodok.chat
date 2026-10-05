@@ -538,6 +538,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       gateways: openclaw,
       publicUrl,
       changed: emitSetupStatus,
+      agentsChanged: () => bus.emit("agents.changed", {}),
     });
     registerRunnerRoutes(fastify, {
       auth,
@@ -549,6 +550,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       runnerFile,
       serverUrl: runnerServerUrl(publicUrl),
       changed: emitSetupStatus,
+      agentsChanged: () => bus.emit("agents.changed", {}),
     });
     // 운영 API(운영 보강 스펙 6장) — /healthz 에서 뺀 워크스페이스 id·어댑터 상세도 여기서 owner 에게만
     registerOpsRoutes(fastify, {

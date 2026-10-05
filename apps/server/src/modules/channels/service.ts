@@ -386,9 +386,14 @@ export function agentChannelGateways(
 /**
  * tokenize·renderForAgent 용 참가자. 사람 먼저, 에이전트 나중 — tokenize 는 뒤에 온 참가자가 같은 핸들을 덮으므로
  * 사람과 에이전트(또는 별칭)가 같은 핸들이면 에이전트로 풀린다. 보관한 에이전트는 빠진다 — 손으로 친 @핸들 은 글자로 남고
- * 에이전트 헤더 「참여자:」에도 실리지 않는다
+ * 에이전트 헤더 「참여자:」에도 실리지 않는다. includeArchived 는 이미 토큰이 된 옛 메시지를 에이전트에게 풀 때만 쓴다 — 보관한
+ * 에이전트를 가리키던 <@agent:…> 가 @unknown 이 아니라 그 핸들로 읽히게
  */
-export function channelParticipants(db: DbOrTx, channelId: string): Participant[] {
+export function channelParticipants(
+  db: DbOrTx,
+  channelId: string,
+  opts: { includeArchived?: boolean } = {},
+): Participant[] {
   const people = db
     .select({ id: users.id, handle: users.handle, displayName: users.displayName })
     .from(channelMembers)
@@ -406,7 +411,11 @@ export function channelParticipants(db: DbOrTx, channelId: string): Participant[
     .from(channelMembers)
     .innerJoin(agents, eq(agents.id, channelMembers.memberId))
     .where(
-      and(eq(channelMembers.channelId, channelId), eq(channelMembers.memberType, "agent"), agentNotArchived),
+      and(
+        eq(channelMembers.channelId, channelId),
+        eq(channelMembers.memberType, "agent"),
+        opts.includeArchived ? undefined : agentNotArchived,
+      ),
     )
     .orderBy(asc(channelMembers.joinedAt), asc(channelMembers.id))
     .all();

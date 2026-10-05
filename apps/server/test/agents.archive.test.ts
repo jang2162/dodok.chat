@@ -4,10 +4,10 @@
  */
 import { AdapterError, type ProviderApproval } from "@dodok/openclaw-adapter";
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
-import type { Agent, ChannelMember } from "@dodok/shared";
+import type { Agent, ChannelMember, Message, OutboundMessage } from "@dodok/shared";
 import { v7 as uuid } from "uuid";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { App } from "../src/app";
+import type { App, AppDeps } from "../src/app";
 import { createAgent } from "../src/modules/agents/service";
 import { addMember, createChannel } from "../src/modules/channels/service";
 import { createUserMessage, runErrorMessages } from "../src/modules/messages/service";
@@ -15,7 +15,7 @@ import { createRunGate } from "../src/modules/ops/budget";
 import { RETRY_RUN_ITEM } from "../src/modules/router/service";
 import { getRun } from "../src/modules/runs/store";
 import { bootTestApp, login, userWithRole } from "./helpers/app";
-import { FAKE_GATEWAY_ID } from "./helpers/gateways";
+import { FAKE_GATEWAY_ID, insertGateway } from "./helpers/gateways";
 import { connectWire, waitFor } from "./helpers/wire";
 import { type FakeRunner, startFakeRunner } from "./fakes/fake-runner";
 
@@ -27,7 +27,7 @@ afterEach(async () => {
 });
 
 /** dev·fin 을 둔 채널 하나 + owner 세션 + 멘션·런 도우미 */
-async function setup(deps: { runnerAdapter?: boolean } = {}) {
+async function setup(deps: Pick<AppDeps, "runnerAdapter" | "pushSend"> = {}) {
   const adapter = new FakeAdapter();
   const app = await bootTestApp({}, { adapters: [adapter], ...deps });
   apps.push(app);
@@ -191,6 +191,46 @@ describe("보관·되살리기 REST", () => {
   });
 });
 
+describe("에이전트를 바꾸는 다른 동작의 agents.changed", () => {
+  it("러너 「이 러너로 묶기」와 에이전트가 묶인 Gateway 삭제도 한 번씩 보낸다 — 에이전트가 없는 Gateway 삭제는 보내지 않는다", async () => {
+    const { app, inject } = await setup();
+    const seen: unknown[] = [];
+    app.bus.on("agents.changed", (p) => seen.push(p));
+
+    createAgent(app.db, {
+      workspaceId: app.workspaceId,
+      provider: "claude",
+      providerAgentId: "coder",
+      handle: "coder",
+      name: "coder",
+    });
+    const issued = await inject("POST", "/api/v1/setup/runner-tokens", { label: "laptop" });
+    expect(issued.statusCode).toBe(201);
+    const tokenId = issued.json().record.id as string;
+    expect((await inject("PUT", `/api/v1/setup/runner-tokens/${tokenId}/agents/coder`)).statusCode).toBe(200);
+    expect(seen).toEqual([{}]);
+
+    const home = insertGateway(app.db, app.workspaceId, { id: uuid(), name: "집" });
+    createAgent(app.db, {
+      workspaceId: app.workspaceId,
+      providerAgentId: "main",
+      handle: "main",
+      name: "main",
+      gatewayId: home.id,
+    });
+    const deleted = await inject("DELETE", `/api/v1/gateways/${home.id}`);
+    expect(deleted.statusCode).toBe(200);
+    expect(deleted.json()).toMatchObject({ unboundAgents: 1 });
+    expect(seen).toEqual([{}, {}]);
+
+    const empty = insertGateway(app.db, app.workspaceId, { id: uuid(), name: "빈" });
+    expect((await inject("DELETE", `/api/v1/gateways/${empty.id}`)).json()).toMatchObject({
+      unboundAgents: 0,
+    });
+    expect(seen).toEqual([{}, {}]);
+  });
+});
+
 describe("보관과 런", () => {
   it("보관 뒤 멘션은 런을 만들지 않는다 — 손으로 친 @핸들 은 글자로 남는다", async () => {
     const { dev, say, runs, archive } = await setup();
@@ -332,6 +372,63 @@ describe("보관과 런", () => {
     expect(runs()[1]?.parentRunId).toBe(runs()[0]?.id);
   });
 
+  it("보관한 에이전트의 늦은 정본은 저장만 한다 — 릴레이·푸시 없음, 되살린 뒤에 온 정본은 지금처럼 릴레이·푸시", async () => {
+    const pushes: unknown[] = [];
+    const { app, adapter, headers, inject, dev, channel, say, runs, archive, restore } = await setup({
+      pushSend: async (sub) => {
+        pushes.push(sub);
+        return { statusCode: 201 };
+      },
+    });
+    const subscribed = await inject(
+      "POST",
+      "/api/v1/push/subscriptions",
+      {
+        endpoint: "https://push.invalid/archive",
+        keys: {
+          p256dh: "BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCA_0QTpQtUbVlUls0VJXg7A8u-Ts1XbjhazAkj7I99e8QcYP7DkM",
+          auth: "tBHItJI5svbpez7KI4CCXg",
+        },
+      },
+      headers,
+    );
+    expect(subscribed.statusCode).toBe(204);
+    await say("@dev 정리해 줘");
+    await vi.waitFor(() => expect(adapter.calls.send).toHaveLength(1));
+    const [run] = runs();
+    await archive(dev.id);
+    await vi.waitFor(() => expect(runs()[0]?.status).toBe("aborted"));
+    const created: Array<{ message: Message; silent?: true }> = [];
+    app.bus.on("message.created", (p) => created.push(p));
+    const late = (outboundId: string): OutboundMessage => ({
+      outboundId,
+      channelId: channel.id,
+      agentId: "dev",
+      sessionKey: run?.sessionKey ?? "",
+      runId: run?.id ?? "",
+      // 릴레이(@fin)와 푸시(@owner)가 날 수 있는 본문
+      text: "@fin @owner 늦었지만 정리했습니다",
+      attachmentIds: [],
+      ts: new Date().toISOString(),
+    });
+
+    const ack = await app.orchestrator.onCanonical(late("late-archived"), "openclaw", FAKE_GATEWAY_ID);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(ack.messageId).toBeDefined();
+    expect(created).toEqual([expect.objectContaining({ silent: true })]);
+    expect(created[0]?.message).toMatchObject({ runId: run?.id, authorType: "agent" });
+    expect(runs()).toHaveLength(1);
+    expect(adapter.calls.send).toHaveLength(1);
+    expect(pushes).toEqual([]);
+
+    // 가르는 것은 에이전트의 보관 상태다 — 같은 런이라도 되살린 뒤면 지금처럼 릴레이·푸시한다
+    await restore(dev.id);
+    await app.orchestrator.onCanonical(late("late-restored"), "openclaw", FAKE_GATEWAY_ID);
+    await vi.waitFor(() => expect(adapter.calls.send).toHaveLength(2));
+    await vi.waitFor(() => expect(pushes).toHaveLength(1));
+    expect(adapter.calls.send[1]?.sessionKey).toBe(adapter.sessionKeyFor("fin", channel.id));
+  });
+
   it("[Review Focus 2] 보관 → 되살리기 → 멘션은 같은 agent_sessions 행·세션 키로 런을 만든다", async () => {
     const { app, adapter, dev, channel, say, runs, archive, restore } = await setup();
     await say("@dev 처음");
@@ -396,6 +493,20 @@ describe("보관과 채널 멤버(계획 판정 PS3)", () => {
       .prepare("SELECT count(*) AS n FROM channel_members WHERE channel_id = ? AND member_id = ?")
       .get(channel.id, dev.id) as { n: number };
     expect(rows.n).toBe(1);
+  });
+
+  it("다른 에이전트가 받는 옛 메시지 속 멘션은 보관한 에이전트도 그 핸들로 풀린다 — 「참여자:」에서만 빠진다", async () => {
+    const { adapter, dev, say, archive } = await setup();
+    const before = await say("@dev 이거 맡아 줘");
+    expect(before.mentions.agents).toEqual([dev.id]);
+    await vi.waitFor(() => expect(adapter.calls.send).toHaveLength(1));
+    await archive(dev.id);
+
+    await say("@fin dev 가 뭘 맡았지?");
+    await vi.waitFor(() => expect(adapter.calls.send).toHaveLength(2));
+    const context = adapter.calls.send[1]?.context;
+    expect(context?.recentMessages.map((m) => m.text)).toContain("@dev 이거 맡아 줘");
+    expect(context?.participants.map((p) => p.handle)).not.toContain("dev");
   });
 
   it("자동 응답 에이전트를 보관하면 멘션 없는 메시지에 런이 없다", async () => {

@@ -42,6 +42,8 @@ export type RunnerRouteContext = {
   serverUrl: string;
   /** 토큰 발급·폐기·다시 묶기 뒤 — setup.status 를 다시 알린다 */
   changed(): void;
+  /** 다시 묶기 뒤 — 에이전트의 묶인 러너가 바뀌었다(wire agents.changed) */
+  agentsChanged(): void;
 };
 
 const TokenParams = z.object({ id: Id });
@@ -102,6 +104,7 @@ export function registerRunnerRoutes(fastify: FastifyInstance, ctx: RunnerRouteC
     ctx.logger.info({ tokenId: id, agentId: agent.providerAgentId }, "runner agent rebound");
     // 배정은 러너 어댑터가 묶임(DB)에서 매번 계산한다 — 다음 런부터 새 러너로 가고, 연결 페이지의 충돌 표시만 다시 알린다
     ctx.changed();
+    ctx.agentsChanged();
     return { agent };
   });
 

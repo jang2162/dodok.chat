@@ -56,6 +56,8 @@ export function buildInboundDeliver(db: DbOrTx, input: BuildInboundInput): Inbou
     .get();
   if (!agent) throw apiError("NOT_FOUND", "agent not found");
   const participants = channelParticipants(db, run.channelId);
+  // 글 풀기는 보관한 에이전트까지 — 옛 멘션이 @unknown 이 되지 않게. 헤더 「참여자:」·릴레이 규칙은 participants 만
+  const renderable = channelParticipants(db, run.channelId, { includeArchived: true });
 
   let message: InboundDeliver["message"];
   let recentUpTo: { seq: number; inclusive: boolean };
@@ -65,7 +67,7 @@ export function buildInboundDeliver(db: DbOrTx, input: BuildInboundInput): Inbou
       id: m.id,
       author: resolveAuthors(db, [m])(m),
       // 텍스트는 그대로 — 트리거 첨부의 알림 줄은 플러그인이 붙인다(스펙 5.1-4)
-      text: renderForAgent(m.bodyMd, participants),
+      text: renderForAgent(m.bodyMd, renderable),
       attachments: m.attachments,
       ts: m.createdAt,
     };
@@ -116,7 +118,7 @@ export function buildInboundDeliver(db: DbOrTx, input: BuildInboundInput): Inbou
   const authorOf = resolveAuthors(db, root ? [...rows, root] : rows);
   const toContext = (r: (typeof rows)[number]) => ({
     author: authorOf(r),
-    text: withPlaceholder(renderForAgent(r.bodyMd, participants), r.attachments),
+    text: withPlaceholder(renderForAgent(r.bodyMd, renderable), r.attachments),
     ts: r.createdAt.toISOString(),
   });
   const rootLine = root ? toContext(root) : undefined;

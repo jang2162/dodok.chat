@@ -42,6 +42,8 @@ export type GatewayRouteContext = {
   publicUrl: string;
   /** Gateway·토큰이 바뀐 뒤 — setup.status 를 다시 알린다 */
   changed(): void;
+  /** 삭제가 에이전트의 Gateway 를 비웠을 때 — wire agents.changed */
+  agentsChanged(): void;
 };
 
 const GatewayParams = z.object({ id: Id });
@@ -109,6 +111,7 @@ export function registerGatewayRoutes(fastify: FastifyInstance, ctx: GatewayRout
     }
     ctx.logger.info({ gatewayId: id, ...result }, "gateway removed");
     ctx.changed();
+    if (result.unboundAgents > 0) ctx.agentsChanged();
     return result;
   });
 

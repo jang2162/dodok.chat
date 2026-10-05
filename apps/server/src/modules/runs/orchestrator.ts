@@ -1246,6 +1246,17 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         );
         return { messageId: message.id };
       }
+      if (getAgent(db, run.agentId)?.archivedAt != null) {
+        // 보관한 에이전트의 답 — 채널에는 남기되(웹은 「삭제됨」으로 그린다) 릴레이·푸시는 하지 않는다. 보관 뒤 그 에이전트가 다른
+        // 에이전트를 깨우거나 사람을 부르지 않게
+        const message = storeAgentMessage(msg, uploadedBy, run.agentId, run.id, threadRootId, true);
+        logger.info(
+          { runId: run.id, messageId: message.id, outboundId: msg.outboundId, agentId: run.agentId },
+          "late canonical from archived agent — stored without relay",
+        );
+        await api.signal(run.id, { kind: "canonical_received" });
+        return { messageId: message.id };
+      }
       const message = storeAgentMessage(msg, uploadedBy, run.agentId, run.id, threadRootId);
       await routeAgentMessage(message, run);
       await api.signal(run.id, { kind: "canonical_received" }); // 종료된 런이면 ignored — 저장·라우팅만
