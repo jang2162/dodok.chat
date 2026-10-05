@@ -1,13 +1,19 @@
 import { ApiRequestError } from "./http";
 
+/** `AGENT_ARCHIVED`(보관한 에이전트를 등록·채널에 넣기·다시 실행)의 화면 문구 — 스펙 「오류」 절 */
+export const AGENT_ARCHIVED_TEXT = "삭제된 에이전트입니다";
+
+/** 폼이 그리는 409·400 — 전역 뮤테이션 토스트(app/queryClient)도 이 판정으로 뺀다 */
+export const isFormErrorCode = (code: string): boolean =>
+  code === "VALIDATION" || code === "CONFLICT" || code === "AGENT_ARCHIVED";
+
 /**
- * 폼 안에 그리는 서버 오류(스펙 8장) — `VALIDATION`·`CONFLICT` 는 전역 토스트에서 저절로 빠지므로 폼이 그린다.
+ * 폼 안에 그리는 서버 오류(스펙 8장) — `VALIDATION`·`CONFLICT`·`AGENT_ARCHIVED` 는 전역 토스트에서 저절로 빠지므로 폼이 그린다.
  * 그 밖(네트워크·5xx·404)은 undefined — 전역 토스트가 알린다
  */
 export function formError(e: unknown): string | undefined {
-  return e instanceof ApiRequestError && (e.code === "VALIDATION" || e.code === "CONFLICT")
-    ? e.message
-    : undefined;
+  if (!(e instanceof ApiRequestError) || !isFormErrorCode(e.code)) return undefined;
+  return e.code === "AGENT_ARCHIVED" ? AGENT_ARCHIVED_TEXT : e.message;
 }
 
 /**

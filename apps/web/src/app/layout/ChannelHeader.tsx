@@ -3,6 +3,7 @@ import { Link, useMatchRoute } from "@tanstack/react-router";
 import { HashIcon, SettingsIcon } from "lucide-react";
 import type { RefObject } from "react";
 import { useAgents, useChannel, useMembers } from "@/api/queries";
+import { isArchived } from "@/features/agents/archived";
 import { agentColorVar } from "@/theme/agentColor";
 import { Avatar, AvatarFallback, AvatarGroup, AvatarGroupCount, AvatarImage } from "@/ui/avatar";
 import { Button } from "@/ui/button";
@@ -32,7 +33,8 @@ export function ChannelHeader({
   const byId = new Map((agents.data ?? []).map((a) => [a.id, a]));
   const channelAgents = (members.data ?? []).flatMap((m): Agent[] => {
     const agent = m.memberType === "agent" ? byId.get(m.memberId) : undefined;
-    return agent ? [agent] : [];
+    // 보관(삭제)한 에이전트는 서버 멤버 응답이 빼지만, 다른 탭의 보관 뒤 멤버를 다시 받기 전 틈에도 머리에 남지 않게
+    return agent && !isArchived(agent) ? [agent] : [];
   });
   const shown = channelAgents.slice(0, MAX_AVATARS);
   const hidden = channelAgents.length - shown.length;

@@ -1,4 +1,5 @@
 import {
+  type Agent,
   type Channel,
   OpsEvent,
   OpsEventsPage,
@@ -99,6 +100,8 @@ export function stubOpsServer(
     channels?: Channel[];
     /** GET /adapter/status 응답 — 없으면 셸 기본(OpenClaw 줄 하나) */
     adapter?: AdapterStatusList;
+    /** GET /agents 응답 — 에이전트별 표의 「삭제됨」이 보는 목록. 없으면 셸 기본(빈 목록) */
+    agents?: Agent[];
   } = {},
 ) {
   const calls: Call[] = [];
@@ -112,6 +115,8 @@ export function stubOpsServer(
     const me = opts.me ?? OWNER;
     if (url === "/api/v1/auth/me") return json(200, me);
     if (opts.adapter && method === "GET" && url === "/api/v1/adapter/status") return json(200, opts.adapter);
+    if (opts.agents && method === "GET" && url === "/api/v1/agents")
+      return json(200, { agents: opts.agents });
     if (opts.channels && method === "GET" && url === "/api/v1/channels")
       return json(200, { channels: opts.channels });
     if (url.startsWith("/api/v1/ops/")) {

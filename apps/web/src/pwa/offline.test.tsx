@@ -1,7 +1,7 @@
-import { ComponentsV1, type Message, type MessageInteraction } from "@dodok/shared";
+import { type Agent, ComponentsV1, type Message, type MessageInteraction } from "@dodok/shared";
 import { onlineManager, QueryClientProvider, type QueryClient } from "@tanstack/react-query";
 import { createMemoryHistory } from "@tanstack/react-router";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NetworkError } from "@/api/http";
 import { meQuery, qk } from "@/api/queries";
@@ -16,6 +16,7 @@ import { TooltipProvider } from "@/ui/tooltip";
 import { createdSockets } from "../../test/fakeSocket";
 import { CH, msg, uid } from "../../test/fixtures";
 import { memoryStorage } from "../../test/memoryStorage";
+import { agentOf } from "../../test/settingsServer";
 import { stubScrollLayout } from "../../test/scrollLayout";
 import { ADAPTER_OK, ME, adapterStatusBody, channelOf, json, shellGet } from "../../test/shellApi";
 import { PERSIST_KEY, startPersistence, touchRecentChannel } from "./persist";
@@ -130,13 +131,13 @@ describe("Banners — 오프라인", () => {
 
 describe("오프라인 사본으로 띄우기 (createApp + 메모리 히스토리 + 가짜 fetch)", () => {
   /** 앞선 세션이 남긴 사본 — 채널 CH 를 60개 메시지까지 보고 떠났다(마지막은 `last` 로 바꿀 수 있다) */
-  async function savedCopy(last?: Message) {
+  async function savedCopy(last?: Message, agents: Agent[] = []) {
     const storage = memoryStorage();
     const qc = createQueryClient(() => {});
     const p = await startPersistence(qc, { buster: "b1", storage, throttleMs: 0 });
     qc.setQueryData(qk.me, ME);
     qc.setQueryData(qk.channels, [channelOf(CH, { name: "general" })]);
-    qc.setQueryData(qk.agents, []);
+    qc.setQueryData(qk.agents, agents);
     touchRecentChannel(qc, CH);
     qc.setQueryData(qk.channel(CH), channelOf(CH, { name: "general" }));
     qc.setQueryData(qk.members(CH), []);
@@ -211,6 +212,30 @@ describe("오프라인 사본으로 띄우기 (createApp + 메모리 히스토�
     act(() => void window.dispatchEvent(new Event("online")));
     await waitFor(() => expect(meCalls(fetch)).toBe(1));
     await waitFor(() => expect(screen.queryByText(OFFLINE)).toBeNull());
+  });
+
+  it("[Review Focus 3] 사본에서 복원한 채널에서도 삭제(보관)한 에이전트의 메시지 작성자는 「삭제됨」 — 「알 수 없음」이 아니다", async () => {
+    const gone = agentOf(uid(77), "old", { name: "옛 봇", archivedAt: "2026-10-05T00:00:00.000Z" });
+    const storage = await savedCopy(
+      msg(60, { authorType: "agent", authorId: gone.id, bodyMd: `마지막 답 <@a:${gone.id}>` }),
+      [gone],
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("Failed to fetch");
+      }),
+    );
+    setBrowserOnline(false);
+    await boot(storage);
+
+    const body = await screen.findByText("마지막 답", { exact: false });
+    const article = body.closest("article");
+    expect(article).not.toBeNull();
+    expect(within(article as HTMLElement).getByText("옛 봇")).toBeInTheDocument();
+    expect(within(article as HTMLElement).getAllByText("삭제됨").length).toBeGreaterThanOrEqual(1);
+    expect(within(article as HTMLElement).queryByText("알 수 없음")).toBeNull();
+    expect(article?.querySelector("[data-mention][data-archived]")).toHaveTextContent("@old삭제됨");
   });
 
   it("오프라인으로 시작해도 me 요청 없이 채널 화면·저장된 메시지·배너가 뜨고, 보내기는 막힌다", async () => {

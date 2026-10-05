@@ -1,6 +1,8 @@
 import type { OpsRunsRow } from "@dodok/shared";
 import { Link } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
+import { useAgents } from "@/api/queries";
+import { isArchived } from "@/features/agents/archived";
 import { Section } from "@/features/setup/sections";
 import { useIsNarrow } from "@/hooks/useIsNarrow";
 import { Button } from "@/ui/button";
@@ -68,13 +70,23 @@ const USAGE: Column[] = [
   },
 ];
 
-/** 채널 이름은 그 채널로 가는 링크, 에이전트는 이름만 */
+/** 채널 이름은 그 채널로 가는 링크, 에이전트는 이름만 — 보관(삭제)한 에이전트도 기록이라 남기고 「삭제됨」을 붙인다(스펙 「에이전트 보관」 절) */
 function Name({ row, channel }: { row: OpsRunsRow; channel: boolean }) {
-  if (!channel) return <>{row.name}</>;
+  if (!channel) return <AgentName row={row} />;
   return (
     <Link to="/c/$channelId" params={{ channelId: row.id }} className="underline-offset-4 hover:underline">
       {row.name}
     </Link>
+  );
+}
+
+function AgentName({ row }: { row: OpsRunsRow }) {
+  const agent = useAgents().data?.find((a) => a.id === row.id);
+  return (
+    <>
+      {row.name}
+      {agent && isArchived(agent) && <span className={TAG}>삭제됨</span>}
+    </>
   );
 }
 

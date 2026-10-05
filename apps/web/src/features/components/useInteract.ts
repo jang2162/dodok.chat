@@ -2,6 +2,7 @@ import type { ErrorCode, Message } from "@dodok/shared";
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { emitAck, useWireStatus, WireAckError } from "@/realtime/wire";
+import { AGENT_ARCHIVED_TEXT } from "@/api/formErrors";
 import { RATE_LIMITED_TEXT } from "@/features/messages/rateLimited";
 import { useWire } from "@/realtime/WireProvider";
 import { DISABLED_REASON_TEXT } from "./state";
@@ -18,6 +19,8 @@ const ERR: Partial<Record<ErrorCode, string>> = {
   TIMEOUT: "서버 응답이 없습니다",
   // 「다시 실행」이 런 한도에 걸린 것 — 버튼은 소비되지 않아 한도가 풀리면 다시 누른다(채널에는 한도 시스템 메시지가 따로 뜬다)
   RUN_LIMIT: "오늘 런 한도에 도달했습니다 — 한도가 풀리면 다시 누를 수 있습니다",
+  // 「다시 실행」의 에이전트가 삭제(보관)됨 — 버튼은 소비되지 않는다(스펙 「오류」 절)
+  AGENT_ARCHIVED: AGENT_ARCHIVED_TEXT,
   RATE_LIMITED: RATE_LIMITED_TEXT,
 };
 

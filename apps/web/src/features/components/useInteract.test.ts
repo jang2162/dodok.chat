@@ -196,4 +196,8 @@ describe("interactErrorText", () => {
     );
     expect(interactErrorText("RATE_LIMITED", "too many requests")).toBe(RATE_LIMITED_TEXT);
   });
+
+  it("「다시 실행」의 에이전트가 삭제(보관)됐으면 「삭제된 에이전트입니다」", () => {
+    expect(interactErrorText("AGENT_ARCHIVED", "agent archived")).toBe("삭제된 에이전트입니다");
+  });
 });

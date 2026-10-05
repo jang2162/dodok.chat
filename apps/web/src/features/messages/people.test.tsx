@@ -3,7 +3,7 @@ import { act, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { qk } from "@/api/queries";
 import { msg, uid } from "../../../test/fixtures";
-import { authorsClient, OWNER_PERSON, renderWithClient } from "../../../test/messages";
+import { authorsClient, DEV, OWNER_PERSON, renderWithClient } from "../../../test/messages";
 import { MessageBody } from "./MessageBody";
 import { MessageItem } from "./MessageItem";
 
@@ -59,5 +59,33 @@ describe("사람 멘션", () => {
     );
     expect(screen.getByText("@mina")).toBeInTheDocument();
     expect(screen.getByText("@jihoon")).toBeInTheDocument();
+  });
+});
+
+// 보관(삭제)한 에이전트도 목록(`GET /agents`)에 남아 기록이 그 에이전트를 계속 가리킨다(스펙 「에이전트 보관」 절)
+describe("삭제된 에이전트", () => {
+  const GONE_DEV = { ...DEV, archivedAt: "2026-10-05T00:00:00.000Z" };
+
+  it("작성자 이름 옆에 「삭제됨」 — 이름은 그대로, 「알 수 없음」이 아니다", () => {
+    renderWithClient(
+      <MessageItem message={msg(1, { authorType: "agent", authorId: DEV.id })} head />,
+      authorsClient([GONE_DEV]),
+    );
+    const article = screen.getByRole("article");
+    expect(within(article).getByText(DEV.name)).toBeInTheDocument();
+    expect(within(article).getByText("삭제됨")).toBeInTheDocument();
+    expect(within(article).queryByText("알 수 없음")).toBeNull();
+  });
+
+  it("살아 있는 에이전트 작성자에는 「삭제됨」이 없다", () => {
+    renderWithClient(<MessageItem message={msg(1, { authorType: "agent", authorId: DEV.id })} head />);
+    expect(within(screen.getByRole("article")).queryByText("삭제됨")).toBeNull();
+  });
+
+  it("멘션 칩은 그 핸들 + 「삭제됨」", () => {
+    renderWithClient(<MessageBody bodyMd={`<@a:${DEV.id}> 안녕`} />, authorsClient([GONE_DEV]));
+    const chip = screen.getByText(`@${DEV.handle}`, { exact: false }).closest("[data-mention]");
+    expect(chip).toHaveTextContent(`@${DEV.handle}삭제됨`);
+    expect(chip).toHaveAttribute("data-archived");
   });
 });

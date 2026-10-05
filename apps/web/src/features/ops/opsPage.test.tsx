@@ -8,6 +8,7 @@ import { useWireStatus } from "@/realtime/wire";
 import { createFakeSocket } from "../../../test/fakeSocket";
 import { OWNER } from "../../../test/setupServer";
 import { uid } from "../../../test/fixtures";
+import { agentOf } from "../../../test/settingsServer";
 import { createQueryClient } from "@/app/queryClient";
 import { ME, TEST_GATEWAY, channelOf, json } from "../../../test/shellApi";
 import {
@@ -318,6 +319,22 @@ describe("런 표", () => {
     ).toEqual(["general", "9", "2", "1", "3"]);
     expect(within(runs).getByRole("table", { name: "에이전트별" })).toHaveTextContent("Dev");
     expect(server.count("GET", "/api/v1/ops/runs?days=1")).toBe(1);
+  });
+
+  it("에이전트별 표는 삭제(보관)한 에이전트도 기록으로 남기고 「삭제됨」을 붙인다", async () => {
+    stubOpsServer({
+      runs: (days) =>
+        runsOf({ days, byChannel: [], byAgent: [AGENT_ROW, rowOf(3, { name: "Fin", runs: 1 })] }),
+      agents: [
+        agentOf(AGENT_ROW.id, "dev", { archivedAt: "2026-10-05T00:00:00.000Z" }),
+        agentOf(uid(3), "fin"),
+      ],
+    });
+    renderOps();
+    const table = await within(await region("런")).findByRole("table", { name: "에이전트별" });
+    const dev = within(table).getByRole("row", { name: /Dev/ });
+    expect(await within(dev).findByText("삭제됨")).toBeInTheDocument();
+    expect(within(within(table).getByRole("row", { name: /Fin/ })).queryByText("삭제됨")).toBeNull();
   });
 
   it("「7일」로 바꾸면 days=7 을 부른다", async () => {

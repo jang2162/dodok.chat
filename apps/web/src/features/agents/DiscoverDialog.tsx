@@ -29,7 +29,8 @@ import {
 } from "./ManualAgentForm";
 import { formError } from "@/api/formErrors";
 import { PROVIDER_ID_LABEL } from "./providerLabels";
-import { type DiscoveredAgent, useCreateAgent, useDiscover } from "./mutations";
+import { isArchived } from "./archived";
+import { type DiscoveredAgent, useCreateAgent, useDiscover, useRestoreAgent } from "./mutations";
 
 /** 제공자 고르기의 이름(러너 스펙 7장) */
 const PROVIDER_LABEL: Record<AdapterProvider, string> = { openclaw: "OpenClaw", claude: "Claude 러너" };
@@ -118,19 +119,18 @@ export function DiscoverDialog({
   const discover = useDiscover(open, provider, gatewayId);
   const providerId = useId();
   const gatewayFieldId = useId();
-  const registeredIds = useMemo(
-    () =>
-      new Set(
-        agents
-          .filter((a) =>
-            provider === "openclaw"
-              ? a.provider === "openclaw" && a.gateway?.id === gatewayId
-              : a.provider === provider,
-          )
-          .map((a) => a.providerAgentId),
-      ),
-    [agents, provider, gatewayId],
-  );
+  // 고른 자리(OpenClaw 는 그 Gateway)의 에이전트 — 살아 있는 것은 등록됨, 보관(삭제)한 것은 등록 대신 되살린다(스펙 「에이전트 보관」 절)
+  const { registeredIds, archivedIds } = useMemo(() => {
+    const here = agents.filter((a) =>
+      provider === "openclaw"
+        ? a.provider === "openclaw" && a.gateway?.id === gatewayId
+        : a.provider === provider,
+    );
+    return {
+      registeredIds: new Set(here.filter((a) => !isArchived(a)).map((a) => a.providerAgentId)),
+      archivedIds: new Map(here.filter(isArchived).map((a) => [a.providerAgentId, a.id])),
+    };
+  }, [agents, provider, gatewayId]);
   const takenHandles = useMemo(() => new Set(agents.map((a) => a.handle)), [agents]);
 
   function onOpenChange(next: boolean) {
@@ -169,6 +169,7 @@ export function DiscoverDialog({
       provider={provider}
       gatewayId={gatewayId}
       registeredIds={registeredIds}
+      archivedIds={archivedIds}
       takenHandles={takenHandles}
       onCreated={close}
     />
@@ -205,6 +206,7 @@ export function DiscoverDialog({
         gatewayId={gatewayId}
         discovered={discover.data}
         registeredIds={registeredIds}
+        archivedIds={archivedIds}
         takenHandles={takenHandles}
         busy={busy}
         onBusy={setBusy}
@@ -287,7 +289,8 @@ export function DiscoverDialog({
 type Draft = { handle: string; name: string; error?: string };
 
 /**
- * 등록 안 된 것(같은 providerAgentId 가 없는 것 — OpenClaw 는 그 Gateway 안에서)만 체크 목록으로. 핸들 칸은 id 로 채우고, 이미 쓰이는
+ * 등록 안 된 것(같은 providerAgentId 가 없는 것 — OpenClaw 는 그 Gateway 안에서)만 체크 목록으로. 같은 자리의 보관(삭제)한 에이전트가
+ * 있는 항목(서버 `archivedAgentId`, 또는 이 화면이 아는 보관한 에이전트)은 체크 대신 「삭제됨 — 되살리기」 — 되살리면 등록된 것이 되어 빠진다. 핸들 칸은 id 로 채우고, 이미 쓰이는
  * 핸들이면 고정 문구로 막는다. 고른 것을 하나씩 POST 하고, 등록된 것은 목록에서 빠진다.
  * 폼 오류는 그 항목 핸들 칸 아래에 두고 다음 항목을 계속한다. 그 밖의 오류는 전역 토스트가 알리니 거기서 멈춘다.
  * 모두 등록되면 닫는다. busy 는 대화상자가 든다 — 도는 동안 닫지 못하게
@@ -297,6 +300,7 @@ function DiscoverList({
   gatewayId,
   discovered,
   registeredIds,
+  archivedIds,
   takenHandles,
   busy,
   onBusy,
@@ -307,6 +311,7 @@ function DiscoverList({
   gatewayId: string | undefined;
   discovered: DiscoveredAgent[];
   registeredIds: ReadonlySet<string>;
+  archivedIds: ReadonlyMap<string, string>;
   takenHandles: ReadonlySet<string>;
   busy: boolean;
   onBusy: (busy: boolean) => void;
@@ -318,7 +323,9 @@ function DiscoverList({
   const baseId = useId();
 
   const candidates = discovered.filter((d) => !registeredIds.has(d.providerAgentId));
-  const chosen = candidates.flatMap((c) => {
+  const archivedOf = (c: DiscoveredAgent) => c.archivedAgentId ?? archivedIds.get(c.providerAgentId);
+  const registrable = candidates.filter((c) => archivedOf(c) === undefined);
+  const chosen = registrable.flatMap((c) => {
     const draft = drafts[c.providerAgentId];
     return draft ? [{ agent: c, draft }] : [];
   });
@@ -394,6 +401,17 @@ function DiscoverList({
           <ul className="flex flex-col gap-2">
             {candidates.map((c, i) => {
               const label = c.name ?? c.providerAgentId;
+              const archivedId = archivedOf(c);
+              if (archivedId !== undefined)
+                return (
+                  <ArchivedCandidate
+                    key={c.providerAgentId}
+                    label={label}
+                    providerAgentId={c.providerAgentId}
+                    archivedId={archivedId}
+                    disabled={busy}
+                  />
+                );
               const draft = drafts[c.providerAgentId];
               const checkboxId = `${baseId}-${i}`;
               return (
@@ -441,12 +459,48 @@ function DiscoverList({
         <Button type="button" variant="ghost" onClick={onManual} disabled={busy}>
           직접 입력
         </Button>
-        {candidates.length > 0 && (
+        {registrable.length > 0 && (
           <Button type="submit" disabled={!ready || busy}>
             {busy ? "등록 중…" : chosen.length > 0 ? `${chosen.length}개 등록` : "등록"}
           </Button>
         )}
       </DialogFooter>
     </form>
+  );
+}
+
+/**
+ * 보관(삭제)한 에이전트와 같은 자리의 항목 — 등록하면 서버가 409 AGENT_ARCHIVED 로 막으므로 「삭제됨 — 되살리기」 하나만 둔다.
+ * 되살리면 등록된 것이 되어 목록에서 빠진다
+ */
+function ArchivedCandidate({
+  label,
+  providerAgentId,
+  archivedId,
+  disabled,
+}: {
+  label: string;
+  providerAgentId: string;
+  archivedId: string;
+  disabled: boolean;
+}) {
+  const { restore, isPending } = useRestoreAgent();
+  return (
+    <li className="flex items-center gap-3 rounded-md border border-dashed bg-card p-3">
+      <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">{label}</span>
+      {label !== providerAgentId && (
+        <code className="truncate font-mono text-xs text-muted-foreground">{providerAgentId}</code>
+      )}
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        aria-label={`${label} 삭제됨 — 되살리기`}
+        disabled={disabled || isPending}
+        onClick={() => restore(archivedId)}
+      >
+        {isPending ? "되살리는 중…" : "삭제됨 — 되살리기"}
+      </Button>
+    </li>
   );
 }

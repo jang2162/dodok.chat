@@ -68,6 +68,8 @@ export const qk = {
   channels: ["channels"] as const,
   channel: (id: string) => ["channel", id] as const,
   members: (id: string) => ["members", id] as const,
+  /** 모든 채널의 멤버(무효화용 앞머리) */
+  membersAll: ["members"] as const,
   agents: ["agents"] as const,
   /** 워크스페이스 사람 전원(나간 멤버 포함) — 작성자·사람 멘션·@ 후보. wire `people.changed` 가 통째로 바꾼다 */
   people: ["people"] as const,

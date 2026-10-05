@@ -194,6 +194,15 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
     },
     "channel.member.changed": ({ channelId, members }) => qc.setQueryData(qk.members(channelId), members),
     /**
+     * 에이전트가 바뀌었다(등록·수정·옮기기·보관·되살리기 — 본문 없음, 계획 판정 PS4). 목록과 채널 멤버를 다시 받게 낡은 것으로 둔다 —
+     * 보관·되살리기는 서버가 channel.member.changed 를 내지 않는다(멤버 응답이 읽을 때 거른다). exact: 찾기 목록도 [agents] 아래라
+     * 고르는 중인 등록 대화상자를 다시 부르지 않게(adapter.status 와 같은 까닭)
+     */
+    "agents.changed": () => {
+      void qc.invalidateQueries({ queryKey: qk.agents, exact: true });
+      void qc.invalidateQueries({ queryKey: qk.membersAll });
+    },
+    /**
      * 사람 목록(가입·역할·표시 이름·내보내기 뒤 전체) — 통째로 바꾼다. 내 역할이 바뀌었으면 me 를 다시 받는다: 역할의 정본은
      * `/auth/me` 이고(팀 스펙 6장) 관리 화면은 그것을 본다. 내보내졌으면(내 줄의 role 이 없다) 서버가 소켓을 끊고 다음 REST 가 401 이다.
      * 멤버 표·대기 초대(가입은 초대를 쓰고, 강등·내보내기는 링크를 폐기한다)는 낡은 것으로 둔다 — 보고 있는 화면만 다시 부른다

@@ -1,5 +1,6 @@
 import type { AdapterProvider, Agent } from "@dodok/shared";
 import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useRef } from "react";
 import { api } from "@/api/http";
 import { qk } from "@/api/queries";
 
@@ -15,8 +16,15 @@ export type CreateAgentInput = {
 };
 /** `basePrompt: null` 은 지운다 */
 export type AgentPatch = { enabled?: boolean; basePrompt?: string | null; name?: string; handle?: string };
-/** hint — Claude 러너는 `<러너 라벨> · <작업 디렉터리 라벨> · <모델>` */
-export type DiscoveredAgent = { providerAgentId: string; name?: string; hint?: string };
+/**
+ * hint — Claude 러너는 `<러너 라벨> · <작업 디렉터리 라벨> · <모델>`. archivedAgentId — 같은 자리의 보관(삭제)한 에이전트(등록 대신 되살린다)
+ */
+export type DiscoveredAgent = {
+  providerAgentId: string;
+  name?: string;
+  hint?: string;
+  archivedAgentId?: string;
+};
 
 /** 응답의 agent 로 `["agents"]` 를 직접 고친다(다시 불러오지 않는다). 아직 불러오지 않은 목록은 건드리지 않는다 */
 function putAgent(qc: QueryClient, agent: Agent) {
@@ -45,6 +53,49 @@ export function useMoveAgentGateway() {
       (await api<{ agent: Agent }>("PUT", `/agents/${id}/gateway`, { gatewayId })).agent,
     onSuccess: (agent) => putAgent(qc, agent),
   });
+}
+
+/**
+ * 보관(삭제, admin — 스펙 「에이전트 보관」 절)·되살리기. 응답의 에이전트로 목록 캐시를 고치고, 채널 멤버는 다시 받게 낡은 것으로 둔다 —
+ * 서버 멤버 응답이 보관한 에이전트를 읽을 때 거르고, channel.member.changed 는 내지 않는다(다른 탭은 wire agents.changed 로 같은 일을 한다)
+ */
+export function useArchiveAgent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => (await api<{ agent: Agent }>("DELETE", `/agents/${id}`)).agent,
+    onSuccess: (agent) => {
+      putAgent(qc, agent);
+      void qc.invalidateQueries({ queryKey: qk.membersAll });
+    },
+  });
+}
+
+export function useRestoreAgent() {
+  const qc = useQueryClient();
+  const mutation = useMutation({
+    mutationFn: async (id: string) => (await api<{ agent: Agent }>("POST", `/agents/${id}/restore`)).agent,
+    onSuccess: (agent) => {
+      putAgent(qc, agent);
+      void qc.invalidateQueries({ queryKey: qk.membersAll });
+    },
+  });
+  // 같은 틱 두 번 클릭에 한 번만 보낸다 — `isPending` 은 다시 그린 뒤에야 참이라 그 사이 두 번째 클릭이 지나간다. 실패는 전역 토스트
+  const sending = useRef(false);
+  const { mutate } = mutation;
+  const restore = useCallback(
+    (id: string, onSuccess?: () => void) => {
+      if (sending.current) return;
+      sending.current = true;
+      mutate(id, {
+        ...(onSuccess ? { onSuccess } : {}),
+        onSettled: () => {
+          sending.current = false;
+        },
+      });
+    },
+    [mutate],
+  );
+  return { restore, isPending: mutation.isPending };
 }
 
 export function usePatchAgent() {

@@ -4,6 +4,7 @@ import { type FormEvent, type RefObject, useEffect, useId, useRef, useState } fr
 import { toast } from "sonner";
 import { formError } from "@/api/formErrors";
 import { useCanManage } from "@/api/queries";
+import { isArchived } from "@/features/agents/archived";
 import { gatewaySuffix } from "@/features/agents/gatewaySuffix";
 import { cn } from "@/lib/utils";
 import { Button } from "@/ui/button";
@@ -16,12 +17,15 @@ import { Section } from "./Section";
 
 export type AgentMember = { member: ChannelMember; agent: Agent };
 
-/** 채널의 에이전트 멤버(합류 순)와 그 에이전트. 목록에 없는 에이전트는 건너뛴다 */
+/**
+ * 채널의 에이전트 멤버(합류 순)와 그 에이전트. 목록에 없는 에이전트·보관(삭제)한 에이전트는 건너뛴다 — 서버 멤버 응답이 보관한 것을
+ * 이미 빼지만, 다른 탭의 보관 뒤 멤버를 다시 받기 전 틈에도 줄이 남지 않게
+ */
 export function agentMembers(members: ChannelMember[] = [], agents: Agent[] = []): AgentMember[] {
   const byId = new Map(agents.map((a) => [a.id, a]));
   return members.flatMap((member) => {
     const agent = member.memberType === "agent" ? byId.get(member.memberId) : undefined;
-    return agent ? [{ member, agent }] : [];
+    return agent && !isArchived(agent) ? [{ member, agent }] : [];
   });
 }
 
@@ -124,7 +128,10 @@ export function MembersSection({
   );
 }
 
-/** 등록됐고 아직 멤버가 아닌 에이전트를 골라 넣는다. VALIDATION·CONFLICT 만 폼 안에, 그 밖은 전역 토스트 */
+/**
+ * 등록됐고 아직 멤버가 아닌 에이전트를 골라 넣는다 — 보관(삭제)한 에이전트는 고를 수 없다(서버도 409 AGENT_ARCHIVED).
+ * VALIDATION·CONFLICT·AGENT_ARCHIVED 만 폼 안에, 그 밖은 전역 토스트
+ */
 function AddAgentForm({
   channelId,
   members,
@@ -163,7 +170,8 @@ function AddAgentForm({
       </p>
     );
   }
-  if (agents.length === 0) {
+  const live = agents.filter((a) => !isArchived(a));
+  if (live.length === 0) {
     return (
       <p className="text-sm text-muted-foreground">
         등록된 에이전트가 없습니다.
@@ -179,7 +187,7 @@ function AddAgentForm({
     );
   }
   const memberIds = new Set((members ?? []).filter((m) => m.memberType === "agent").map((m) => m.memberId));
-  const candidates = agents.filter((a) => !memberIds.has(a.id));
+  const candidates = live.filter((a) => !memberIds.has(a.id));
   const ready = members !== undefined;
 
   function submit(e: FormEvent<HTMLFormElement>) {

@@ -721,6 +721,23 @@ describe("캐시 패치", () => {
     expect(queryClient.getQueryData(qk.members(CH))).toEqual([member]);
   });
 
+  it("agents.changed: 에이전트 목록과 채널 멤버를 다시 받게 낡은 것으로 둔다 — 찾기 목록은 건드리지 않는다", () => {
+    const { fake, queryClient } = setup();
+    queryClient.setQueryData(qk.agents, []);
+    queryClient.setQueryData(qk.members(CH), []);
+    queryClient.setQueryData(qk.members(CH2), []);
+    queryClient.setQueryData(qk.discoverOf("claude"), []);
+
+    fake.serverEmit("agents.changed", {});
+
+    expect(queryClient.getQueryState(qk.agents)?.isInvalidated).toBe(true);
+    // 보관하면 서버는 channel.member.changed 를 내지 않는다 — 멤버 줄·멘션 후보가 보관한 에이전트를 내려놓게
+    expect(queryClient.getQueryState(qk.members(CH))?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(qk.members(CH2))?.isInvalidated).toBe(true);
+    // 고르는 중인 등록 대화상자의 목록을 다시 부르지 않는다(adapter.status 의 exact 와 같은 까닭)
+    expect(queryClient.getQueryState(qk.discoverOf("claude"))?.isInvalidated).toBe(false);
+  });
+
   it("people.changed: [people] 를 통째로 바꾼다", () => {
     const { fake, queryClient } = setup();
     const people = [{ id: uid(30), handle: "mina", displayName: "미나", role: "member" as const }];

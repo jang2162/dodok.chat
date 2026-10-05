@@ -35,7 +35,7 @@ export function AuthorAvatar({ author }: { author: Author }) {
   );
 }
 
-/** 머리 줄: 이름(나간 멤버면 흐리게) · 에이전트면 「AI」 배지 · 시각(또는 상태) */
+/** 머리 줄: 이름(나간 멤버면 흐리게) · 에이전트면 「AI」 배지(보관했으면 「삭제됨」도) · 시각(또는 상태) */
 export function AuthorLine({ author, children }: { author: Author; children: ReactNode }) {
   return (
     <div className="flex items-baseline gap-2 text-[15px] leading-snug">
@@ -45,6 +45,11 @@ export function AuthorLine({ author, children }: { author: Author; children: Rea
       {author.isAgent && (
         <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
           AI
+        </Badge>
+      )}
+      {author.archived && (
+        <Badge variant="secondary" className="px-1.5 py-0 text-[10px] text-muted-foreground">
+          삭제됨
         </Badge>
       )}
       <span className="text-xs text-muted-foreground">{children}</span>

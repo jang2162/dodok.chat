@@ -223,6 +223,26 @@ describe("제거 실패·초점·목록 상태", () => {
     ).toEqual(["에이전트 선택", "@fin — FIN 봇 (꺼짐)"]);
   });
 
+  it("삭제(보관)한 에이전트는 셀렉트에도 멤버 행에도 없다 — 멤버 응답이 낡아 아직 싣고 있어도", async () => {
+    const archivedAt = "2026-10-05T00:00:00.000Z";
+    const third = uid(32);
+    stubSettingsServer({
+      agents: [
+        agentOf(DEV, "dev", { archivedAt }),
+        agentOf(FIN, "fin"),
+        agentOf(third, "ops", { archivedAt }),
+      ],
+      members: members([DEV], [FIN]),
+    });
+    renderRoute(`/c/${CH}/settings`);
+    const section = await membersSection();
+    const list = await agentList();
+    expect(await within(list).findByText("@fin")).toBeInTheDocument();
+    expect(within(list).queryByText("@dev")).toBeNull();
+    expect(within(section).queryByRole("combobox", { name: "에이전트 추가" })).toBeNull();
+    expect(within(section).getByText(/등록된 에이전트가 모두 채널에 있습니다/)).toBeInTheDocument();
+  });
+
   it("OpenClaw 에이전트는 셀렉트·멤버 행에 Gateway 이름 — 두 Gateway 의 같은 id 를 가른다", async () => {
     const office = { id: uid(30), name: "사무실" };
     const home = { id: uid(31), name: "집" };

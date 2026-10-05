@@ -1,18 +1,30 @@
 import { useAgents, useCanManage } from "@/api/queries";
 import { Button } from "@/ui/button";
 import { LOCKED_NOTICE } from "@/features/settings/Section";
+import { useEffect, useRef, useState } from "react";
 import { AgentRow } from "./AgentRow";
+import { ArchivedAgents } from "./ArchivedAgents";
+import { isArchived } from "./archived";
 import { DiscoverDialog } from "./DiscoverDialog";
 
 /**
  * 에이전트 관리(스펙 6.1): 목록·사용 토글·기본 프롬프트, 「에이전트 가져오기」(OpenClaw · Claude 러너, 러너 스펙 7장)·직접 입력.
  * 목록 조회 실패의 원인은 전역 토스트가 알린다 — 여기는 받은 목록이 없을 때만 그 자리에 「다시 시도」를 둔다.
  * 이미 받은 목록은 다시 불러오기가 실패해도 그대로 그린다.
- * 등록·수정은 admin 이상(팀 스펙 2장) — 아니면 등록 버튼이 없고 목록은 값만 보인다
+ * 등록·수정·삭제·되살리기는 admin 이상(팀 스펙 2장) — 아니면 등록 버튼이 없고 목록은 값만 보인다.
+ * 서버 목록은 보관(삭제)한 에이전트도 함께 준다 — 살아 있는 것만 목록에, 보관한 것은 아래 접힌 「삭제된 에이전트 N」 묶음에(스펙 「에이전트 보관」 절)
  */
 export function AgentsPage() {
   const agents = useAgents();
   const canManage = useCanManage();
+  const live = agents.data?.filter((a) => !isArchived(a)) ?? [];
+  const archived = agents.data?.filter(isArchived) ?? [];
+  const groupRef = useRef<HTMLButtonElement>(null);
+  // 보관하면 그 줄(과 「삭제」)이 사라진다 — 초점을 묶음 단추로. 묶음은 다시 그린 뒤에야 생기므로 그려진 다음에 옮긴다
+  const [archivedAt, setArchivedAt] = useState(0);
+  useEffect(() => {
+    if (archivedAt > 0) groupRef.current?.focus();
+  }, [archivedAt]);
 
   let content;
   if (agents.isPending) {
@@ -36,7 +48,7 @@ export function AgentsPage() {
         </Button>
       </div>
     );
-  } else if (agents.data.length === 0) {
+  } else if (live.length === 0) {
     content = (
       <p className="text-sm text-muted-foreground">
         {canManage
@@ -47,8 +59,13 @@ export function AgentsPage() {
   } else {
     content = (
       <ul className="flex flex-col gap-3">
-        {agents.data.map((agent) => (
-          <AgentRow key={agent.id} agent={agent} readOnly={!canManage} />
+        {live.map((agent) => (
+          <AgentRow
+            key={agent.id}
+            agent={agent}
+            readOnly={!canManage}
+            onArchived={() => setArchivedAt((n) => n + 1)}
+          />
         ))}
       </ul>
     );
@@ -69,6 +86,7 @@ export function AgentsPage() {
       </header>
       {!canManage && <p className="-mt-3 text-xs text-muted-foreground">{LOCKED_NOTICE}</p>}
       {content}
+      {archived.length > 0 && <ArchivedAgents agents={archived} readOnly={!canManage} toggleRef={groupRef} />}
     </section>
   );
 }

@@ -112,3 +112,9 @@ it("OpenClaw 에이전트 후보는 Gateway 이름을 함께 싣는다 — 연�
   );
   expect(list.slice(0, 3).map((c) => c.gateway)).toEqual(["사무실", undefined, undefined]);
 });
+
+it("삭제(보관)한 에이전트는 후보에서 빠진다 — 멤버 응답이 낡아 아직 싣고 있어도", () => {
+  const gone = agent(24, "old", { archivedAt: "2026-10-05T00:00:00.000Z" });
+  const list = mentionCandidates([member("agent", gone.id), member("agent", DEV.id)], [DEV, gone], ME);
+  expect(list.map((c) => c.label)).toEqual(["dev", "owner"]);
+});

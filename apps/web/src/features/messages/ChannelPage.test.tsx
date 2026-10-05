@@ -111,6 +111,22 @@ it("없는 채널(404)은 최근 본 채널에 넣지 않는다", async () => {
   expect(queryClient.getQueryData(qk.recentChannels)).toBeUndefined();
 });
 
+it("헤더 아바타에 삭제(보관)한 에이전트는 없다 — 멤버 응답이 낡아 아직 싣고 있어도", async () => {
+  stubServer({
+    agents: [
+      agentOf("ag-dev", "dev"),
+      { ...agentOf("ag-fin", "fin"), archivedAt: "2026-10-05T00:00:00.000Z" },
+    ],
+    members: [memberOf("user", "u"), memberOf("agent", "ag-dev"), memberOf("agent", "ag-fin")],
+  });
+  renderRoute("/c/a");
+  const group = await within(await screen.findByTestId("channel-header")).findByRole("group", {
+    name: "참여 에이전트",
+  });
+  expect(await within(group).findByRole("img", { name: "@dev" })).toBeInTheDocument();
+  expect(within(group).queryByRole("img", { name: "@fin" })).not.toBeInTheDocument();
+});
+
 it("헤더: 이름·주제, 채널 에이전트 아바타(테두리 에이전트 색), 설정 버튼은 설정 패널을 여닫는다", async () => {
   stubServer({
     agents: [agentOf("ag-dev", "dev"), agentOf("ag-fin", "fin")],

@@ -8,8 +8,8 @@ import { Input } from "@/ui/input";
 import { Label } from "@/ui/label";
 import { handleFrom } from "./handleFrom";
 import { PROVIDER_ID_LABEL } from "./providerLabels";
-import { detailField, formError, validationField } from "@/api/formErrors";
-import { useCreateAgent } from "./mutations";
+import { AGENT_ARCHIVED_TEXT, detailField, formError, validationField } from "@/api/formErrors";
+import { useCreateAgent, useRestoreAgent } from "./mutations";
 
 const NAME_MAX = 80;
 /** 에이전트 id 규칙 안내 — 서버가 shared 세션 키 헬퍼와 같은 규칙에 소문자만으로 거절한다(스레드·검색 태스크 5, 판정 R4). 러너 에이전트 id 도 같은 규칙 */
@@ -121,40 +121,54 @@ export const handleIssue = (handle: string, taken: ReadonlySet<string>): string 
  * 제공자의 에이전트 id·핸들·이름을 직접 넣어 등록(서버는 목록 검사를 하지 않는다 — 러너 계획 판정 P9). OpenClaw 는 대화상자가 고른
  * Gateway 로 등록한다. 핸들·이름은 손대기 전까지 id 를 따라간다(핸들은 handleFrom).
  * 서버 CONFLICT 는 핸들 칸 아래 고정 문구(id 중복이면 id 칸 아래 고정 문구), providerAgentId 를 가리킨 VALIDATION 은 id 칸 아래,
- * 그 밖의 VALIDATION 은 폼 아래 — 그 밖은 전역 토스트가 알린다
+ * 그 밖의 VALIDATION 은 폼 아래 — 그 밖은 전역 토스트가 알린다.
+ * 같은 자리의 보관(삭제)한 에이전트면(이 화면이 알거나 서버 409 AGENT_ARCHIVED 의 details.agentId) id 칸에 「삭제된 에이전트입니다」와
+ * 「되살리기」 — 등록 대신 되살린다(스펙 「오류」 절)
  */
 export function ManualAgentForm({
   provider,
   gatewayId,
   registeredIds,
+  archivedIds = new Map(),
   takenHandles,
   onCreated,
 }: {
   provider: AdapterProvider;
   /** OpenClaw 면 등록할 Gateway */
   gatewayId?: string;
-  /** 이미 등록된 providerAgentId(OpenClaw 는 그 Gateway 의 것) — 요청 전에 막는다 */
+  /** 이미 등록된(살아 있는) providerAgentId(OpenClaw 는 그 Gateway 의 것) — 요청 전에 막는다 */
   registeredIds: ReadonlySet<string>;
+  /** 같은 자리의 보관한 에이전트 — providerAgentId → 에이전트 id */
+  archivedIds?: ReadonlyMap<string, string>;
   /** 이미 등록된 에이전트들의 핸들 — 요청 전에 막는다 */
   takenHandles: ReadonlySet<string>;
   onCreated: () => void;
 }) {
   const create = useCreateAgent();
+  const { restore, isPending: restoring } = useRestoreAgent();
   const [rawId, setRawId] = useState("");
   const [handle, setHandle] = useState<string>(); // undefined 면 id 를 따른다
   const [name, setName] = useState<string>();
-  const [serverError, setServerError] = useState<{ field: "id" | "handle" | "form"; message: string }>();
+  const [serverError, setServerError] = useState<{
+    field: "id" | "handle" | "form";
+    message: string;
+    /** 409 AGENT_ARCHIVED 가 알린 보관한 에이전트 */
+    archivedId?: string;
+  }>();
 
   const providerAgentId = rawId.trim();
   const started = providerAgentId !== "";
   const currentHandle = handle ?? (started ? handleFrom(providerAgentId) : "");
   const currentName = name ?? providerAgentId;
+  const archivedId = serverError?.archivedId ?? archivedIds.get(providerAgentId);
   const idError =
     serverError?.field === "id"
       ? serverError.message
-      : registeredIds.has(providerAgentId)
-        ? `이미 등록된 ${PROVIDER_ID_LABEL[provider]} 입니다`
-        : undefined;
+      : archivedId !== undefined
+        ? AGENT_ARCHIVED_TEXT
+        : registeredIds.has(providerAgentId)
+          ? `이미 등록된 ${PROVIDER_ID_LABEL[provider]} 입니다`
+          : undefined;
   const handleError =
     serverError?.field === "handle"
       ? serverError.message
@@ -191,6 +205,15 @@ export function ManualAgentForm({
         onError: (err) => {
           const message = formError(err);
           if (message === undefined) return;
+          if (err instanceof ApiRequestError && err.code === "AGENT_ARCHIVED") {
+            const agentId = err.details?.agentId;
+            setServerError({
+              field: "id",
+              message,
+              ...(typeof agentId === "string" ? { archivedId: agentId } : {}),
+            });
+            return;
+          }
           const taken = idTaken(err, provider);
           if (taken !== undefined) {
             setServerError({ field: "id", message: taken });
@@ -226,6 +249,18 @@ export function ManualAgentForm({
         nameError={nameError}
         disabled={create.isPending}
       />
+      {archivedId !== undefined && (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="self-start"
+          disabled={restoring || create.isPending}
+          onClick={() => restore(archivedId, onCreated)}
+        >
+          {restoring ? "되살리는 중…" : "되살리기"}
+        </Button>
+      )}
       {serverError?.field === "form" && (
         <Alert variant="destructive">
           <AlertDescription>{serverError.message}</AlertDescription>

@@ -1,5 +1,6 @@
 import { MutationCache, QueryCache, QueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { isFormErrorCode } from "@/api/formErrors";
 import { ApiRequestError, NetworkError } from "@/api/http";
 import { meQuery, qk } from "@/api/queries";
 
@@ -20,8 +21,7 @@ const is401 = (e: unknown) => e instanceof ApiRequestError && e.status === 401;
 /** 역할이 모자라 서버가 막은 것(팀 스펙 2장) — 봉투 없는 403(프록시 등)은 아니다 */
 const isForbidden = (e: unknown) => e instanceof ApiRequestError && e.code === "FORBIDDEN";
 /** 폼 입력 오류는 폼 안에서 보인다(스펙 8장) — 뮤테이션 전역 토스트에서 뺀다 */
-const isFormError = (e: unknown) =>
-  e instanceof ApiRequestError && (e.code === "VALIDATION" || e.code === "CONFLICT");
+const isFormError = (e: unknown) => e instanceof ApiRequestError && isFormErrorCode(e.code);
 
 /** 스펙 8장 「네트워크 실패 → 재시도 2회」: 네트워크 실패·5xx 만. 4xx·코드 오류는 되풀이해도 같다 — 필요한 쿼리는 자기 `retry` 를 준다 */
 const isRetryable = (e: unknown) =>

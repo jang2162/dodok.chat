@@ -49,6 +49,8 @@ export function makeAgent(
     ...fields,
   };
 }
+/** 보관한 시각(서버 응답의 archivedAt) */
+export const ARCHIVED_AT = "2026-10-05T00:00:00.000Z";
 export const dev = () =>
   makeAgent({ providerAgentId: "dev", handle: "dev", name: "Dev 에이전트", basePrompt: "기존 프롬프트" });
 export const fin = () =>
@@ -72,6 +74,10 @@ export function stubServer(
     move?: (id: string, body: Body, fallback: (id: string, body: Body) => Reply) => Reply;
     /** GET /adapter/status 의 OpenClaw Gateway 목록 — 기본은 TEST_GATEWAY 하나 */
     gateways?: OpenClawGatewayStatus[];
+    /** DELETE /agents/:id(보관) — 기본은 서버 상태의 archivedAt 을 채워 `{ agent }` */
+    archive?: (id: string, fallback: (id: string) => Reply) => Reply;
+    /** POST /agents/:id/restore — 기본은 서버 상태의 archivedAt 을 비워 `{ agent }` */
+    restore?: (id: string, fallback: (id: string) => Reply) => Reply;
   } = {},
 ) {
   const state = [...(opts.agents ?? [])];
@@ -105,6 +111,17 @@ export function stubServer(
     state[i] = next;
     return json(200, { agent: next });
   };
+  const setArchived = (id: string, archivedAt: string | null) => {
+    const i = state.findIndex((a) => a.id === id);
+    const current = state[i];
+    if (!current) return apiErr(404, "NOT_FOUND", "agent not found");
+    const next: Agent = { ...current, archivedAt };
+    state[i] = next;
+    return json(200, { agent: next });
+  };
+  const archiveDefault = (id: string) =>
+    setArchived(id, state.find((a) => a.id === id)?.archivedAt ?? ARCHIVED_AT);
+  const restoreDefault = (id: string) => setArchived(id, null);
   const gateways = opts.gateways ?? [TEST_GATEWAY];
   const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
     const url = String(input);
@@ -125,13 +142,19 @@ export function stubServer(
     const moved = /^\/api\/v1\/agents\/([^/]+)\/gateway$/.exec(url);
     if (method === "PUT" && moved?.[1])
       return (opts.move ?? ((i, b, f) => f(i, b)))(moved[1], body ?? {}, moveDefault);
+    const restored = /^\/api\/v1\/agents\/([^/]+)\/restore$/.exec(url);
+    if (method === "POST" && restored?.[1])
+      return (opts.restore ?? ((i, f) => f(i)))(restored[1], restoreDefault);
     const m = /^\/api\/v1\/agents\/([^/]+)$/.exec(url);
     if (method === "PATCH" && m?.[1])
       return (opts.patch ?? ((i, b, f) => f(i, b)))(m[1], body ?? {}, patchDefault);
+    if (method === "DELETE" && m?.[1]) return (opts.archive ?? ((i, f) => f(i)))(m[1], archiveDefault);
     throw new Error(`예상 밖 요청 ${method} ${url}`);
   });
   vi.stubGlobal("fetch", fetch);
   return {
+    /** 서버가 들고 있는 목록 — 다른 탭이 바꾼 것을 흉내 낼 때 고친다 */
+    state,
     count: (method: string, url: string) => calls.filter((c) => c.method === method && c.url === url).length,
     bodies: (method: string) => calls.filter((c) => c.method === method).map((c) => c.body),
   };
