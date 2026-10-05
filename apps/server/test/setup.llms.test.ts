@@ -8,6 +8,7 @@ import { v7 as uuid } from "uuid";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { RunnerConfig } from "../../../packages/claude-runner/src/config";
 import { DodokAccountConfig } from "../../../packages/openclaw-plugin/src/config";
+import { llmsHandoffLine } from "../../web/src/features/setup/llms";
 import type { App } from "../src/app";
 import { RUNNER_BUNDLE_ENTRY } from "../src/modules/runners/runner-file";
 import { issueRunnerToken, revokeRunnerToken } from "../src/modules/runners/tokens";
@@ -150,6 +151,16 @@ describe("GET /llms.txt — 노드 설치 안내서", () => {
     );
     expect((config as { serverUrl: string }).serverUrl).toBe("https://chat.example.com");
     expect(runner).toContain("https://chat.example.com/api/v1/setup/runner.tgz");
+  });
+
+  it("대조: 웹 발급 대화상자의 「AI 에게 맡기기」 줄이 부르는 주소·절 제목이 본문에 있다", async () => {
+    const body = (await get("10.0.0.4")).body;
+    for (const kind of ["bridge", "runner"] as const) {
+      const line = llmsHandoffLine(kind, "https://chat.example.com", "<토큰>");
+      expect(line.startsWith("https://chat.example.com/llms.txt ")).toBe(true);
+      const title = /「([^」]+)」 절대로/.exec(line)?.[1];
+      expect(body, kind).toContain(`\n## ${title}\n`);
+    }
   });
 
   it("대조: 안내서가 부르는 설치 경로는 이 서버에 있다(owner 로 200)", async () => {
