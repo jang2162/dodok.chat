@@ -14,6 +14,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useShallow } from "zustand/react/shallow";
 import { useMe } from "@/api/queries";
 import { ApprovalCard } from "@/features/approvals/ApprovalCard";
+import { useChannelArchived } from "@/features/channels/archived";
 import { selectChannelApprovals, useApprovalStore } from "@/features/approvals/approvalStore";
 import { useRunStore } from "@/features/runs/runStore";
 import { cn } from "@/lib/utils";
@@ -64,6 +65,7 @@ function ChannelMessages({
   initialRect,
 }: MessageListProps) {
   const timeline = useTimeline(channelId, threadRootId);
+  const archived = useChannelArchived();
   // 승인 카드는 스토어에서 바로 읽는다(설계 5.3) — 카드 안은 `ApprovalCard` 가 스스로 구독하므로 여기는 행 자리만 본다.
   // 스레드 런의 승인은 그 스레드에만(런의 소속으로 가른다, 판정 R3′)
   const approvals = useApprovalStore(useShallow(selectChannelApprovals(channelId)));
@@ -315,7 +317,8 @@ function ChannelMessages({
         </div>
         {rows.length === 0 && (
           <p className="p-6 text-center text-sm text-muted-foreground">
-            아직 메시지가 없습니다. @멘션으로 에이전트를 불러 보세요.
+            {/* 보관한 채널에는 멘션을 보낼 수 없다 — 부르라는 안내를 빼고 */}
+            {archived ? "메시지가 없습니다." : "아직 메시지가 없습니다. @멘션으로 에이전트를 불러 보세요."}
           </p>
         )}
       </div>

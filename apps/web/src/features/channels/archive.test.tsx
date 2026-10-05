@@ -115,6 +115,8 @@ describe("보관한 채널 화면", () => {
     expect(screen.getByText("보관된 채널입니다.")).toBeInTheDocument();
     expect(composerBox()).toBeNull();
     expect(screen.getByRole("button", { name: "보관 해제" })).toBeInTheDocument();
+    // 빈 채널 안내가 멘션을 권하지 않는다
+    expect(screen.queryByText(/@멘션으로/)).toBeNull();
   });
 
   it("member 에게는 「보관 해제」가 없다 — 읽기만", async () => {
