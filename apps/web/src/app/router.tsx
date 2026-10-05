@@ -12,7 +12,7 @@ import { ApiRequestError } from "@/api/http";
 import { meQuery } from "@/api/queries";
 import { NotFound } from "./NotFound";
 import { RouteError } from "./RouteError";
-import { AppShell } from "./layout/AppShell";
+import { AppShell, PAGE_SCROLL_ID } from "./layout/AppShell";
 
 type Ctx = { queryClient: QueryClient };
 
@@ -171,6 +171,7 @@ export function createAppRouter(queryClient: QueryClient, history?: RouterHistor
     routeTree,
     context: { queryClient },
     defaultNotFoundComponent: NotFound,
+    scrollToTopSelectors: [`#${PAGE_SCROLL_ID}`],
     ...(history ? { history } : {}),
   });
 }

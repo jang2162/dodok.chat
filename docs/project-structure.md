@@ -638,7 +638,8 @@ src/
 │  ├─ NotFound.tsx         없는 경로(defaultNotFoundComponent)
 │  ├─ RouteError.tsx       라우트 오류 화면(연결 문제 ↔ 코드 오류를 가른다)
 │  └─ layout/
-│     ├─ AppShell.tsx      사이드바 + 배너 + 페이지. 768px 미만은 사이드바를 왼쪽 시트로, 닫히면 초점 복귀. 검색 대화상자(`⌘K`/`Ctrl+K` — 다른 대화상자가 열려 있으면 무시,
+│     ├─ AppShell.tsx      사이드바 + 배너 + 페이지. 페이지는 셸 안 스크롤 상자(`PAGE_SCROLL_ID` — 화면이 바뀌면 라우터 `scrollToTopSelectors` 가 맨 위로)에서만
+│     │                    스크롤해 사이드바·배너는 제자리에 있다(채널 화면은 그 높이에 맞추고 목록이 스스로 스크롤). 768px 미만은 사이드바를 왼쪽 시트로, 닫히면 초점 복귀. 검색 대화상자(`⌘K`/`Ctrl+K` — 다른 대화상자가 열려 있으면 무시,
 │     │                    `preventDefault`)와 그것을 여는 컨텍스트 `OpenSearchContext`
 │     ├─ Sidebar.tsx       워크스페이스 이름·검색 칸(누르면 검색 대화상자, `⌘K` 표시)·채널 목록·「채널 만들기」·「에이전트」·「멤버」·「운영」(admin 이상 — useCanManage)·「연결」(owner — useIsOwner)·연결 상태·「내 계정」·로그아웃.
 │     │                    「운영」 옆 배지 = ops/status 의 unacked warn + error(0 이면 없음, 100 이상 「99+」, sr-only 「(확인 안 한 사건 n건)」) — `ops.event` 로 실시간, 주기 재조회는 없다

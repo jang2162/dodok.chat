@@ -24,8 +24,10 @@ if (typeof window.matchMedia !== "function") {
   });
 }
 
-// jsdom 의 scrollTo 는 「Not implemented」만 찍는다 — 라우터의 스크롤 복원이 이동마다 부른다
+// jsdom 의 scrollTo 는 「Not implemented」만 찍는다 — 라우터의 스크롤 복원이 이동마다 부른다.
+// 요소의 scrollTo 는 아예 없다 — 라우터가 이동마다 페이지 스크롤 상자(AppShell `PAGE_SCROLL_ID`)에 부르고, 테스트가 그 호출을 엿본다
 window.scrollTo = () => {};
+Element.prototype.scrollTo = () => {};
 
 // jsdom 에는 ResizeObserver 가 없다 — Radix Switch·Checkbox(useSize)가 부른다. 관찰만 받고 아무것도 알리지 않는다.
 // 테스트가 vi.stubGlobal 로 바꿨다가 vi.unstubAllGlobals() 하면 이 값으로 돌아온다

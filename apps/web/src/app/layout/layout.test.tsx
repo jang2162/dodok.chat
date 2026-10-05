@@ -401,6 +401,41 @@ describe("AppShell", () => {
     expect(screen.queryByRole("navigation", { name: "채널" })).not.toBeInTheDocument();
   });
 
+  // jsdom 은 레이아웃을 재지 않는다 — 실제 높이·스크롤은 브라우저 확인이 보고, 여기서는 그 구조를 고정한다
+  it("긴 화면은 셸 안 스크롤 상자에서만 스크롤한다 — 사이드바·배너는 그 밖에 남는다", async () => {
+    stubChannels();
+    renderRoute("/agents");
+    const page = await screen.findByTestId("page-agents");
+    const scroller = screen.getByTestId("page-scroll");
+
+    expect(screen.getByTestId("app-shell")).toHaveClass("h-dvh");
+    expect(scroller).toHaveClass("min-h-0", "flex-1", "overflow-y-auto");
+    expect(scroller).toContainElement(page);
+    // 배너는 main 안 이 상자의 형제다 — 상자가 main 바로 아래가 아니면 배너도 함께 밀려 올라간다
+    expect(scroller.parentElement?.tagName).toBe("MAIN");
+    expect(scroller).not.toContainElement(screen.getByRole("complementary"));
+  });
+
+  it("채널 화면은 스크롤 상자 높이에 맞춘다 — 목록만 스크롤하고 두 겹이 되지 않는다", async () => {
+    stubChannels();
+    renderRoute("/c/a");
+    const page = await screen.findByTestId("page-channel");
+    expect(page.parentElement).toBe(screen.getByTestId("page-scroll"));
+    expect(page).toHaveClass("min-h-0", "flex-1");
+  });
+
+  it("화면을 옮기면 스크롤 상자를 맨 위로 돌린다", async () => {
+    const scrollTo = vi.spyOn(Element.prototype, "scrollTo");
+    stubChannels();
+    const { router } = renderRoute("/agents");
+    await screen.findByTestId("page-agents");
+    scrollTo.mockClear();
+
+    await act(() => router.navigate({ to: "/c/$channelId", params: { channelId: "a" } }));
+    await screen.findByTestId("page-channel");
+    await waitFor(() => expect(scrollTo.mock.contexts).toContain(screen.getByTestId("page-scroll")));
+  });
+
   it("로그아웃 버튼은 POST /auth/logout 뒤 로그인 화면으로 한 번 간다", async () => {
     let loggedOut = false;
     const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
