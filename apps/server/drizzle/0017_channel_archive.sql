@@ -1,0 +1,1 @@
+ALTER TABLE `channels` ADD `archived_at` integer;
