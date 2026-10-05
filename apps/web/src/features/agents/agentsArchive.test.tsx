@@ -163,6 +163,17 @@ describe("삭제·되살리기 뒤 초점 — 누른 단추의 줄이 사라져�
     const group = screen.getByRole("button", { name: "삭제된 에이전트 1" });
     await waitFor(() => expect(group).toHaveFocus());
   });
+
+  it("마지막 하나를 되살려 묶음이 사라지면 초점은 살아 있는 목록에 돌아온 그 줄의 「사용」 스위치로", async () => {
+    stubServer({ agents: [dev(), archivedFin()] });
+    renderPage(undefined, "admin");
+    await userEvent.click(await screen.findByRole("button", { name: "삭제된 에이전트 1" }));
+    await userEvent.click(screen.getByRole("button", { name: "@fin 되살리기" }));
+
+    const restored = await screen.findByRole("switch", { name: "@fin 사용" });
+    await waitFor(() => expect(restored).toHaveFocus());
+    expect(screen.queryByRole("button", { name: /^삭제된 에이전트/ })).toBeNull();
+  });
 });
 
 describe("가져오기의 삭제된 항목", () => {

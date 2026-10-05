@@ -1,5 +1,5 @@
 import type { Agent } from "@dodok/shared";
-import { type FormEvent, useId, useRef, useState } from "react";
+import { type FormEvent, type Ref, useId, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { agentColorVar } from "@/theme/agentColor";
 import { Button } from "@/ui/button";
@@ -21,16 +21,19 @@ const PROMPT_MAX = 20_000;
  * 잠근다(실패는 전역 토스트). `readOnly`(admin 미만 — 팀 스펙 2장)면 토글을 잠그고 프롬프트는 미리보기만.
  * OpenClaw 에이전트의 「Gateway 옮기기」는 owner 에게만(멀티 Gateway 스펙 「권한」 절) — 연결이 빈 줄뿐 아니라 어느 줄에서나 옮길 수 있다.
  * 연결이 빈 줄의 안내도 역할에 맞춘다 — 옮길 수 없는 admin·member 에게 옮기라고 권하지 않는다.
- * 「삭제」(보관, admin 이상 — 스펙 「에이전트 보관」 절)는 확인 뒤 보낸다. 보관하면 줄이 목록에서 빠지므로 `onArchived` 가 초점을 옮긴다
+ * 「삭제」(보관, admin 이상 — 스펙 「에이전트 보관」 절)는 확인 뒤 보낸다. 보관하면 줄이 목록에서 빠지므로 `onArchived` 가 초점을 옮긴다.
+ * `focusRef` 는 사용 토글에 붙는다 — 페이지가 되살린 줄로 초점을 옮기는 자리다
  */
 export function AgentRow({
   agent,
   readOnly = false,
   onArchived,
+  focusRef,
 }: {
   agent: Agent;
   readOnly?: boolean;
   onArchived?: () => void;
+  focusRef?: Ref<HTMLButtonElement>;
 }) {
   const toggle = usePatchAgent();
   const owner = useIsOwner();
@@ -67,6 +70,7 @@ export function AgentRow({
         {openclaw && owner && <MoveGatewayDialog agent={agent} />}
         {!readOnly && <ArchiveAgentButton agent={agent} onArchived={onArchived} />}
         <Switch
+          ref={focusRef}
           aria-label={`${handle} 사용`}
           checked={agent.enabled}
           disabled={toggle.isPending || readOnly}

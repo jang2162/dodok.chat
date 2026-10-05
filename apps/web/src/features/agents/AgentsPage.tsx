@@ -25,6 +25,16 @@ export function AgentsPage() {
   useEffect(() => {
     if (archivedAt > 0) groupRef.current?.focus();
   }, [archivedAt]);
+  // 되살리면 그 줄이 묶음에서 빠진다 — 묶음이 남으면 묶음 단추로, 마지막 하나였으면(묶음도 사라진다) 살아 있는 목록에 돌아온 그 줄로.
+  // 목록 캐시가 되살린 에이전트를 실은 뒤에야 줄이 생기므로 그때까지 기다린다
+  const [restoredId, setRestoredId] = useState<string | null>(null);
+  const restoredRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const data = agents.data ?? [];
+    if (restoredId === null || !data.some((a) => a.id === restoredId && !isArchived(a))) return;
+    (data.some(isArchived) ? groupRef.current : restoredRef.current)?.focus();
+    setRestoredId(null);
+  }, [restoredId, agents.data]);
 
   let content;
   if (agents.isPending) {
@@ -65,6 +75,7 @@ export function AgentsPage() {
             agent={agent}
             readOnly={!canManage}
             onArchived={() => setArchivedAt((n) => n + 1)}
+            {...(agent.id === restoredId ? { focusRef: restoredRef } : {})}
           />
         ))}
       </ul>
@@ -86,7 +97,14 @@ export function AgentsPage() {
       </header>
       {!canManage && <p className="-mt-3 text-xs text-muted-foreground">{LOCKED_NOTICE}</p>}
       {content}
-      {archived.length > 0 && <ArchivedAgents agents={archived} readOnly={!canManage} toggleRef={groupRef} />}
+      {archived.length > 0 && (
+        <ArchivedAgents
+          agents={archived}
+          readOnly={!canManage}
+          toggleRef={groupRef}
+          onRestored={setRestoredId}
+        />
+      )}
     </section>
   );
 }

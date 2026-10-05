@@ -9,16 +9,19 @@ import { providerIdLabel } from "./providerLabels";
 
 /**
  * 「삭제된 에이전트 N」 접힌 묶음(스펙 「에이전트 보관」 절 웹) — 줄마다 이름·핸들·제공자 id, admin 이상이면 「되살리기」.
- * 되살린 줄은 살아 있는 목록으로 옮겨 가 여기서 빠진다. `toggleRef` 는 페이지가 보관 뒤 초점을 옮기는 자리다
+ * 되살린 줄은 살아 있는 목록으로 옮겨 가 여기서 빠진다. `toggleRef` 는 페이지가 보관·되살리기 뒤 초점을 옮기는 자리고, 되살린 뒤
+ * 초점을 어디로 옮길지는 `onRestored` 를 받은 페이지가 정한다(이 묶음은 마지막 줄을 되살리면 함께 사라진다)
  */
 export function ArchivedAgents({
   agents,
   readOnly,
   toggleRef,
+  onRestored,
 }: {
   agents: readonly Agent[];
   readOnly: boolean;
   toggleRef: RefObject<HTMLButtonElement | null>;
+  onRestored: (id: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const listId = useId();
@@ -39,7 +42,7 @@ export function ArchivedAgents({
       {open && (
         <ul id={listId} className="flex flex-col gap-2">
           {agents.map((agent) => (
-            <ArchivedRow key={agent.id} agent={agent} readOnly={readOnly} toggleRef={toggleRef} />
+            <ArchivedRow key={agent.id} agent={agent} readOnly={readOnly} onRestored={onRestored} />
           ))}
         </ul>
       )}
@@ -47,15 +50,15 @@ export function ArchivedAgents({
   );
 }
 
-/** 되살리면 이 줄이 사라진다 — 초점이 body 로 떨어지지 않게, 묶음이 남아 있으면 그 단추로 */
+/** 되살리면 이 줄이 사라진다 — 초점이 body 로 떨어지지 않게 페이지에 알린다 */
 function ArchivedRow({
   agent,
   readOnly,
-  toggleRef,
+  onRestored,
 }: {
   agent: Agent;
   readOnly: boolean;
-  toggleRef: RefObject<HTMLButtonElement | null>;
+  onRestored: (id: string) => void;
 }) {
   const { restore, isPending } = useRestoreAgent();
   const handle = `@${agent.handle}`;
@@ -85,7 +88,7 @@ function ArchivedRow({
           size="sm"
           aria-label={`${handle} 되살리기`}
           disabled={isPending}
-          onClick={() => restore(agent.id, () => toggleRef.current?.focus())}
+          onClick={() => restore(agent.id, () => onRestored(agent.id))}
         >
           {isPending ? "되살리는 중…" : "되살리기"}
         </Button>
