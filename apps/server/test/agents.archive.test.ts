@@ -581,6 +581,55 @@ describe("보관과 채널 멤버(계획 판정 PS3)", () => {
       .members as ChannelMember[];
     expect(members.find((m) => m.memberId === dev.id)?.autoRespond).toBe(true);
   });
+
+  it("채널이 여럿이면 다른 자동 응답이 겹친 채널에서만 되살린 쪽을 끄고 그 채널에만 changed 를 낸다", async () => {
+    const { app, dev, fin, channel, inject, archive, restore } = await setup();
+    const other = createChannel(app.db, {
+      workspaceId: app.workspaceId,
+      createdBy: app.ownerUserId,
+      name: "archive-other",
+    });
+    addMember(app.db, other.id, { memberType: "agent", memberId: dev.id }, app.logger);
+    const autoRespond = (channelId: string, agentId: string) =>
+      inject("PATCH", `/api/v1/channels/${channelId}/members/${agentId}`, { autoRespond: true });
+    expect((await autoRespond(channel.id, dev.id)).statusCode).toBe(200);
+    expect((await autoRespond(other.id, dev.id)).statusCode).toBe(200);
+    await archive(dev.id);
+    // fin 은 첫 채널에서만 켠다 — 겹침은 그 채널 하나
+    expect((await autoRespond(channel.id, fin.id)).statusCode).toBe(200);
+
+    const changed: string[] = [];
+    app.bus.on("channel.member.changed", (p) => changed.push(p.channelId));
+    expect((await restore(dev.id)).statusCode).toBe(200);
+
+    const devAuto = async (channelId: string) =>
+      ((await inject("GET", `/api/v1/channels/${channelId}/members`)).json().members as ChannelMember[]).find(
+        (m) => m.memberId === dev.id,
+      )?.autoRespond;
+    expect(await devAuto(channel.id)).toBe(false);
+    expect(await devAuto(other.id)).toBe(true);
+    expect(changed).toEqual([channel.id]);
+  });
+
+  it("이미 살아 있는 에이전트를 되살리기해도 겹친 자동 응답을 건드리지 않고 changed 도 없다", async () => {
+    const { app, dev, fin, channel, inject, restore } = await setup();
+    for (const a of [dev, fin])
+      await inject("PATCH", `/api/v1/channels/${channel.id}/members/${a.id}`, { autoRespond: true });
+
+    const changed: unknown[] = [];
+    app.bus.on("channel.member.changed", (p) => changed.push(p));
+    expect((await restore(dev.id)).statusCode).toBe(200);
+
+    const members = (await inject("GET", `/api/v1/channels/${channel.id}/members`)).json()
+      .members as ChannelMember[];
+    expect(
+      members
+        .filter((m) => m.autoRespond)
+        .map((m) => m.memberId)
+        .sort(),
+    ).toEqual([dev.id, fin.id].sort());
+    expect(changed).toHaveLength(0);
+  });
 });
 
 describe("보관과 러너", () => {
