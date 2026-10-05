@@ -12,7 +12,7 @@ import { parseBody, parseParams, parseQuery } from "../../http/validate";
 import type { Logger } from "../../logger";
 import type { ServerBus } from "../../realtime/bus";
 import { syncPromptToGateway } from "../channels/prompt-sync";
-import { agentChannelGateways } from "../channels/service";
+import { agentChannelGateways, listMembers } from "../channels/service";
 import { getGatewayRow } from "../gateways/service";
 import type { Orchestrator } from "../runs/orchestrator";
 import {
@@ -121,8 +121,10 @@ export function registerAgentRoutes(fastify: FastifyInstance, ctx: AgentRouteCon
   /** 되살리기(admin) — 같은 채널·세션으로 이어 답한다. 살아 있으면 200 그대로 */
   fastify.post("/api/v1/agents/:id/restore", admin, async (request) => {
     const { id } = parseParams(AgentParams, request.params);
-    const agent = restoreAgent(ctx.db, id, sessionUser(request).workspaceId);
+    const { agent, autoRespondOffChannelIds } = restoreAgent(ctx.db, id, sessionUser(request).workspaceId);
     changed();
+    for (const channelId of autoRespondOffChannelIds)
+      ctx.bus.emit("channel.member.changed", { channelId, members: listMembers(ctx.db, channelId) });
     return { agent };
   });
 

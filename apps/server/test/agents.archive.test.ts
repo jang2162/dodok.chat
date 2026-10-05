@@ -524,6 +524,63 @@ describe("보관과 채널 멤버(계획 판정 PS3)", () => {
       a: 1,
     });
   });
+
+  it("되살릴 때 같은 채널에 다른 살아 있는 에이전트의 자동 응답이 켜져 있으면 되살린 쪽을 끄고 channel.member.changed 를 낸다", async () => {
+    const { app, adapter, dev, fin, channel, inject, say, runs, archive, restore } = await setup();
+    const autoRespond = (agentId: string) =>
+      inject("PATCH", `/api/v1/channels/${channel.id}/members/${agentId}`, { autoRespond: true });
+    expect((await autoRespond(dev.id)).statusCode).toBe(200);
+    await archive(dev.id);
+    // 보관한 dev 는 멤버 응답에 없어 웹이 fin 을 켤 때 dev 를 끌 수 없다
+    expect((await autoRespond(fin.id)).statusCode).toBe(200);
+
+    const changed: { channelId: string; members: ChannelMember[] }[] = [];
+    app.bus.on("channel.member.changed", (p) => changed.push(p));
+    expect((await restore(dev.id)).statusCode).toBe(200);
+
+    const members = (await inject("GET", `/api/v1/channels/${channel.id}/members`)).json()
+      .members as ChannelMember[];
+    const auto = (id: string) => members.find((m) => m.memberId === id)?.autoRespond;
+    expect([auto(dev.id), auto(fin.id)]).toEqual([false, true]);
+    expect(changed).toHaveLength(1);
+    expect(changed[0]?.channelId).toBe(channel.id);
+    expect(changed[0]?.members.find((m) => m.memberId === dev.id)?.autoRespond).toBe(false);
+
+    await say("누구든 답해 줘");
+    await vi.waitFor(() => expect(adapter.calls.send).toHaveLength(1));
+    expect(runs().map((r) => r?.agentId)).toEqual([fin.id]);
+  });
+
+  it("되살릴 때 같은 채널에 다른 자동 응답이 없으면 되살린 쪽 자동 응답이 그대로 켜진다 — channel.member.changed 없음", async () => {
+    const { app, adapter, dev, channel, inject, say, runs, archive, restore } = await setup();
+    await inject("PATCH", `/api/v1/channels/${channel.id}/members/${dev.id}`, { autoRespond: true });
+    await archive(dev.id);
+
+    const changed: unknown[] = [];
+    app.bus.on("channel.member.changed", (p) => changed.push(p));
+    await restore(dev.id);
+
+    const members = (await inject("GET", `/api/v1/channels/${channel.id}/members`)).json()
+      .members as ChannelMember[];
+    expect(members.find((m) => m.memberId === dev.id)?.autoRespond).toBe(true);
+    expect(changed).toHaveLength(0);
+    await say("누구든 답해 줘");
+    await vi.waitFor(() => expect(adapter.calls.send).toHaveLength(1));
+    expect(runs().map((r) => r?.agentId)).toEqual([dev.id]);
+  });
+
+  it("다른 에이전트의 자동 응답도 보관된 채로면 되살린 쪽을 끄지 않는다", async () => {
+    const { dev, fin, channel, inject, archive, restore } = await setup();
+    await inject("PATCH", `/api/v1/channels/${channel.id}/members/${dev.id}`, { autoRespond: true });
+    await archive(dev.id);
+    await inject("PATCH", `/api/v1/channels/${channel.id}/members/${fin.id}`, { autoRespond: true });
+    await archive(fin.id);
+    await restore(dev.id);
+
+    const members = (await inject("GET", `/api/v1/channels/${channel.id}/members`)).json()
+      .members as ChannelMember[];
+    expect(members.find((m) => m.memberId === dev.id)?.autoRespond).toBe(true);
+  });
 });
 
 describe("보관과 러너", () => {

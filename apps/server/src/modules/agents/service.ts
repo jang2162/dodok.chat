@@ -1,8 +1,9 @@
 import { Agent } from "@dodok/shared";
-import { and, asc, eq, isNull, ne, type SQL, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, ne, type SQL, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/sqlite-core";
 import { v7 as uuidv7 } from "uuid";
 import type { Db, DbOrTx } from "../../db/client";
-import { agents, gateways, runnerTokens } from "../../db/schema.sqlite";
+import { agents, channelMembers, gateways, runnerTokens } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
 import { getGatewayRow } from "../gateways/service";
 import { parseStored } from "../../http/validate";
@@ -355,16 +356,73 @@ export async function archiveAgent(
   return apiAgent(db, current);
 }
 
-/** 되살리기 — archived_at 을 비운다. 살아 있으면 그대로. 핸들은 보관 중에도 이 에이전트 몫이라 겹칠 수 없다 */
-export function restoreAgent(db: Db, id: string, workspaceId: string): Agent {
-  const row = db
-    .update(agents)
-    .set({ archivedAt: null })
-    .where(and(eq(agents.id, id), eq(agents.workspaceId, workspaceId)))
-    .returning()
-    .get();
-  if (!row) throw apiError("NOT_FOUND", "agent not found");
-  return apiAgent(db, row);
+/**
+ * 되살리기 — archived_at 을 비운다. 살아 있으면 그대로. 핸들은 보관 중에도 이 에이전트 몫이라 겹칠 수 없다.
+ * 자동 응답은 채널당 하나다 — 보관 중에는 멤버 응답이 이 에이전트를 걸러 웹이 다른 에이전트를 켤 때 이 행을 끌 수 없으므로, 같은
+ * 채널에 살아 있는 다른 에이전트의 자동 응답이 켜져 있으면 되살린 쪽을 끈다. 끈 채널은 호출자가 channel.member.changed 로 알린다
+ */
+export function restoreAgent(
+  db: Db,
+  id: string,
+  workspaceId: string,
+): { agent: Agent; autoRespondOffChannelIds: string[] } {
+  return db.transaction((tx) => {
+    const row = tx
+      .update(agents)
+      .set({ archivedAt: null })
+      .where(and(eq(agents.id, id), eq(agents.workspaceId, workspaceId), isNotNull(agents.archivedAt)))
+      .returning()
+      .get();
+    const current =
+      row ??
+      tx
+        .select()
+        .from(agents)
+        .where(and(eq(agents.id, id), eq(agents.workspaceId, workspaceId)))
+        .get();
+    if (!current) throw apiError("NOT_FOUND", "agent not found");
+    const autoRespondOffChannelIds = row === undefined ? [] : clearContestedAutoRespond(tx, id);
+    return { agent: apiAgent(tx, current), autoRespondOffChannelIds };
+  });
+}
+
+/** 그 에이전트가 자동 응답을 켠 채널 가운데 살아 있는 다른 에이전트도 켠 채널에서 그 에이전트의 자동 응답을 끄고 채널 id 를 돌려준다 */
+function clearContestedAutoRespond(tx: DbOrTx, agentId: string): string[] {
+  const other = alias(channelMembers, "other");
+  const contested = tx
+    .selectDistinct({ channelId: channelMembers.channelId })
+    .from(channelMembers)
+    .innerJoin(
+      other,
+      and(
+        eq(other.channelId, channelMembers.channelId),
+        eq(other.memberType, "agent"),
+        ne(other.memberId, agentId),
+        eq(other.autoRespond, true),
+      ),
+    )
+    .innerJoin(agents, and(eq(agents.id, other.memberId), agentNotArchived))
+    .where(
+      and(
+        eq(channelMembers.memberType, "agent"),
+        eq(channelMembers.memberId, agentId),
+        eq(channelMembers.autoRespond, true),
+      ),
+    )
+    .all()
+    .map((r) => r.channelId);
+  if (contested.length === 0) return [];
+  tx.update(channelMembers)
+    .set({ autoRespond: false })
+    .where(
+      and(
+        eq(channelMembers.memberType, "agent"),
+        eq(channelMembers.memberId, agentId),
+        inArray(channelMembers.channelId, contested),
+      ),
+    )
+    .run();
+  return contested;
 }
 
 /** REST 목록 — 묶인 러너 토큰(라벨·폐기 여부)과 Gateway(이름)를 붙인다. 보관한 에이전트도 싣는다(archivedAt 으로 가른다) */
