@@ -746,7 +746,7 @@ describe("캐시 패치", () => {
     expect(queryClient.getQueryData(qk.people)).toEqual(people);
   });
 
-  it("people.changed: 멤버 표·대기 초대는 다시 받게 낡은 것으로 둔다(다른 관리자의 가입·역할·내보내기)", () => {
+  it("people.changed: 멤버 표·대기 초대는 다시 받게 낡은 것으로 둔다(다른 관리자의 가입·역할·비활성화)", () => {
     const { fake, queryClient } = setup();
     queryClient.setQueryData(qk.teamMembers, []);
     queryClient.setQueryData(qk.invites, []);

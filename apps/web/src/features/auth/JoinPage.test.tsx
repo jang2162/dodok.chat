@@ -254,22 +254,45 @@ describe("JoinPage", () => {
     });
   });
 
-  it("예약된 핸들(left- 로 시작, 400 VALIDATION)도 화면 문구로", async () => {
+  it("쓸 수 없는 핸들(400 VALIDATION)도 화면 문구로", async () => {
     const fetch = stubServer({
       accept: () =>
         json(400, {
           code: "VALIDATION",
-          message: "handle 은 left- 로 시작할 수 없다",
+          message: "handle 형식이 아니다",
           details: { field: "handle" },
         }),
     });
     renderRoute(`/join/${TOKEN}`);
-    await fillForm({ 핸들: "left-x" });
+    await fillForm({ 핸들: "dev" });
     await userEvent.click(screen.getByRole("button", { name: "가입" }));
     const handle = screen.getByLabelText("핸들");
     expect(await screen.findByText("이 핸들은 쓸 수 없습니다")).toBeInTheDocument();
     expect(handle).toHaveAccessibleDescription("이 핸들은 쓸 수 없습니다");
     expect(handle).toHaveFocus();
+    expect(callsTo(fetch, "/invites/accept")).toHaveLength(1);
+  });
+
+  it("비활성 멤버의 이메일(409 MEMBER_DEACTIVATED)이면 이메일 칸 아래에 관리자에게 다시 활성화를 요청하라는 문구 — 초대 링크는 그대로", async () => {
+    const fetch = stubServer({
+      accept: () =>
+        json(409, {
+          code: "MEMBER_DEACTIVATED",
+          message: "비활성 멤버입니다 — 다시 활성화하세요",
+          details: { userId: "u9" },
+        }),
+    });
+    renderRoute(`/join/${TOKEN}`);
+    await fillForm({ 이메일: "gone@example.com" });
+    await userEvent.click(screen.getByRole("button", { name: "가입" }));
+    const email = screen.getByLabelText("이메일");
+    const text = "비활성 멤버의 이메일입니다 — 관리자에게 다시 활성화를 요청하세요";
+    await waitFor(() => expect(email).toHaveAccessibleDescription(text));
+    expect(email).toHaveAttribute("aria-invalid", "true");
+    expect(email).toHaveFocus();
+    expect(screen.queryByText("비활성 멤버입니다 — 다시 활성화하세요")).toBeNull();
+    // 무효 화면이 아니라 폼에 머문다 — 다른 이메일로 다시 보낼 수 있다
+    expect(screen.getByRole("button", { name: "가입" })).toBeEnabled();
     expect(callsTo(fetch, "/invites/accept")).toHaveLength(1);
   });
 

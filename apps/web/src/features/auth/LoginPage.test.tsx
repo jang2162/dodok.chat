@@ -128,6 +128,20 @@ describe("LoginPage — 이메일·비밀번호(기본)", () => {
     },
   );
 
+  it("비활성 멤버(403 MEMBER_DEACTIVATED)면 서버 문구가 아니라 화면 문구 — 「권한이 없습니다」 토스트는 없다", async () => {
+    const toastError = vi.spyOn(toast, "error");
+    stubServer(() => json(403, { code: "MEMBER_DEACTIVATED", message: "deactivated" }));
+    const router = renderAt("/login");
+    const password = await submitEmail("mia@example.com", "correct-horse-battery");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "비활성화된 계정입니다. 관리자에게 문의하세요.",
+    );
+    expect(screen.queryByText("deactivated")).toBeNull();
+    expect(password).toHaveValue("");
+    expect(router.state.location.pathname).toBe("/login");
+    expect(toastError).not.toHaveBeenCalled();
+  });
+
   it("429 면 레이트리밋 문구", async () => {
     stubServer(() => json(429, { code: "RATE_LIMITED", message: "Rate limit exceeded" }));
     renderAt("/login");

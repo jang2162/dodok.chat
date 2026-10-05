@@ -58,12 +58,14 @@ export function authErrorText(error: unknown, bucket: "login" | "invite" = "logi
 
 /**
  * 서버 문구를 그대로 내지 않는 알려진 칸 오류(o1) — `code:field` 로 고정 문구를 고른다.
- * 가입의 핸들 409(CONFLICT)·이메일 409·핸들 400(예약 `left-`, VALIDATION), 「내 계정」의 현재 비밀번호 400.
- * 모르는 조합은 authErrorText 그대로(서버 message)
+ * 가입의 핸들 409(CONFLICT)·이메일 409(CONFLICT, 비활성 멤버의 이메일이면 MEMBER_DEACTIVATED)·핸들 400(VALIDATION),
+ * 「내 계정」의 현재 비밀번호 400. 모르는 조합은 authErrorText 그대로(서버 message).
+ * MEMBER_DEACTIVATED 의 서버 문구(「다시 활성화하세요」)는 관리자에게 하는 말이라 가입하는 사람에게는 관리자에게 요청하라고 바꿔 말한다
  */
 const KNOWN_FIELD_ERRORS: Record<string, string> = {
   "CONFLICT:handle": "이 핸들은 이미 쓰이고 있습니다",
   "CONFLICT:email": "이 이메일은 이미 가입돼 있습니다",
+  "MEMBER_DEACTIVATED:email": "비활성 멤버의 이메일입니다 — 관리자에게 다시 활성화를 요청하세요",
   "VALIDATION:handle": "이 핸들은 쓸 수 없습니다",
   "VALIDATION:current": "현재 비밀번호가 맞지 않습니다",
 };

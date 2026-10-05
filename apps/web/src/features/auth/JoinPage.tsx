@@ -44,6 +44,7 @@ export function JoinPage() {
 /**
  * 칸 오류는 손댄 칸(blur)이나 제출을 한 번 누른 뒤에만 보인다 — 치는 중에 「이메일 모양이 아닙니다」가 깜빡이지 않게.
  * 규칙에 어긋나면(두 비밀번호가 다름 포함) 보내지 않는다. 서버 409 는 `details.field` 가 가리킨 칸 아래, 그 칸을 고치면 지운다.
+ * 비활성 멤버의 이메일(409 MEMBER_DEACTIVATED)은 안내만 한다 — 가입하는 사람은 멤버 탭을 볼 수 없어 그 줄로 가는 링크는 두지 않는다.
  * 수락 404(그 사이 다른 쪽이 씀·만료)는 무효 화면으로 바꾼다
  */
 function JoinForm({ token, lookup }: { token: string; lookup: InviteLookup }) {
@@ -106,7 +107,11 @@ function JoinForm({ token, lookup }: { token: string; lookup: InviteLookup }) {
         onError: (err) => {
           if (err instanceof ApiRequestError && err.status === 404) setGone(true);
           else {
-            const field = detailField(err, ["handle", "email"]);
+            // MEMBER_DEACTIVATED 는 details 에 칸 대신 userId 를 싣는다 — 이메일 때문이라 이메일 칸 아래에
+            const field =
+              err instanceof ApiRequestError && err.code === "MEMBER_DEACTIVATED"
+                ? "email"
+                : detailField(err, ["handle", "email"]);
             setServerError({ field, message: fieldErrorText(err, field, "invite") });
           }
         },

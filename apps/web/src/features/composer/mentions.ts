@@ -1,6 +1,7 @@
 import type { Agent, ChannelMember, Person } from "@dodok/shared";
 import type { MeResponse } from "@/api/queries";
 import { isArchived } from "@/features/agents/archived";
+import { isDeactivated } from "@/features/members/deactivated";
 
 /** 작성기 @ 후보(스펙 5.1). `id` 는 멘션 노드 attrs.id 그대로 — `"a:<agentId>"`·`"u:<userId>"` */
 export type MentionCandidate = {
@@ -22,7 +23,8 @@ export const MAX_MENTIONS = 8;
 /**
  * 채널의 에이전트 멤버(멤버 순, `useMembers` × `useAgents`) 다음 사람. 보관(삭제)한 에이전트는 서버 멤버 응답이 이미 빼지만,
  * 다른 탭의 보관 뒤 멤버를 다시 받기 전 틈에도 부르지 않게 여기서도 거른다. 사람은 워크스페이스 멤버 전원(`usePeople`, 가입 순 —
- * 나간 멤버는 부를 수 없어 뺀다, 팀 스펙 5장). 사람 목록을 아직 못 받았으면 나 하나(`useMe`)
+ * membership 이 없는 사람(`role` 없음)과 비활성 멤버는 뺀다, 팀 스펙 5장·채널 보관·멤버 비활성화 스펙 「기록과 목록」 절).
+ * 사람 목록을 아직 못 받았으면 나 하나(`useMe`)
  */
 export function mentionCandidates(
   members: readonly ChannelMember[] | undefined,
@@ -49,7 +51,7 @@ export function mentionCandidates(
   });
   const humans: MentionCandidate[] = people
     ? people.flatMap((p): MentionCandidate[] =>
-        p.role === undefined
+        p.role === undefined || isDeactivated(p)
           ? []
           : [
               {

@@ -19,9 +19,14 @@ function tokenErrorText(error: Error): string {
   return authErrorText(error);
 }
 
-/** 이메일 모양의 401 도 서버 문구(해라체) 대신 화면 말투로(o1) — 코드는 토큰과 같은 UNAUTHORIZED/401 이라 폼별로 가른다 */
+/**
+ * 이메일 모양의 401 도 서버 문구(해라체) 대신 화면 말투로(o1) — 코드는 토큰과 같은 UNAUTHORIZED/401 이라 폼별로 가른다.
+ * 비활성 멤버(403 MEMBER_DEACTIVATED)는 비밀번호가 맞을 때만 온다 — 틀리면 서버가 위 401 을 그대로 준다
+ */
 function emailErrorText(error: Error): string {
   if (error instanceof ApiRequestError && error.status === 401) return "이메일 또는 비밀번호가 맞지 않습니다";
+  if (error instanceof ApiRequestError && error.code === "MEMBER_DEACTIVATED")
+    return "비활성화된 계정입니다. 관리자에게 문의하세요.";
   return authErrorText(error);
 }
 

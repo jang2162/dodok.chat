@@ -1,5 +1,5 @@
 import { createMemoryHistory } from "@tanstack/react-router";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
@@ -12,12 +12,16 @@ import {
   INVITE_URL,
   MINA_ID,
   MINA_ROW,
+  OWNER_ROW,
+  ADMIN_ROW,
+  DEACTIVATED_AT,
   RESET_URL,
   inviteOf,
   stubMembersServer,
 } from "../../../test/membersServer";
 
-// 멤버 화면(팀 스펙 4·6장): 표·줄 동작(역할·재설정 링크·내보내기)·초대·대기 중인 초대
+// 멤버 화면(팀 스펙 4·6장, 채널 보관·멤버 비활성화 스펙 「멤버 비활성화」 절): 표·줄 동작(역할·재설정 링크·비활성화)·
+// 「비활성 멤버 N」·초대·대기 중인 초대
 const ADMIN_ME = { user: { id: ADMIN_ID, handle: "sora" }, workspaceId: "w", role: "admin" };
 
 let toastError: MockInstance<typeof toast.error>;
@@ -94,32 +98,104 @@ describe("멤버 표", () => {
     expect(mina.queryByRole("combobox")).toBeNull();
     expect(mina.getByText("멤버")).toBeInTheDocument();
     expect(mina.getByRole("button", { name: "@mina 재설정 링크" })).toBeInTheDocument();
-    expect(mina.getByRole("button", { name: "@mina 내보내기" })).toBeInTheDocument();
+    expect(mina.getByRole("button", { name: "@mina 비활성화" })).toBeInTheDocument();
     const sora = await rowOf("sora");
     expect(sora.queryByRole("button")).toBeNull();
     expect((await rowOf("owner")).queryByRole("button")).toBeNull();
   });
 
-  it("「내보내기」는 확인 대화상자 뒤 DELETE — 줄이 빠진다. 취소하면 보내지 않는다", async () => {
+  it("「비활성화」는 확인 대화상자 뒤 POST 한 번 — 줄은 표에서 「비활성 멤버 1」로 옮겨 간다. 취소하면 보내지 않는다", async () => {
     const server = stubMembersServer();
     renderRoute("/settings/members");
     const mina = await rowOf("mina");
-    await userEvent.click(mina.getByRole("button", { name: "@mina 내보내기" }));
-    let dialog = await screen.findByRole("dialog", { name: "멤버 내보내기" });
-    expect(dialog).toHaveTextContent("@mina");
+    await userEvent.click(mina.getByRole("button", { name: "@mina 비활성화" }));
+    let dialog = await screen.findByRole("dialog", { name: "멤버 비활성화" });
+    expect(dialog).toHaveTextContent(
+      "@mina 을 비활성화합니다. 로그인할 수 없게 되고, 쓴 메시지는 남습니다. 다시 활성화하면 그대로 돌아옵니다.",
+    );
     await userEvent.click(within(dialog).getByRole("button", { name: "취소" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(server.writes()).toEqual([]);
 
-    await userEvent.click(mina.getByRole("button", { name: "@mina 내보내기" }));
-    dialog = await screen.findByRole("dialog", { name: "멤버 내보내기" });
-    await userEvent.click(within(dialog).getByRole("button", { name: "내보내기" }));
-    await waitFor(() =>
-      expect(server.writes()).toEqual([
-        { method: "DELETE", url: `/api/v1/members/${MINA_ID}`, body: undefined },
-      ]),
-    );
-    await waitFor(() => expect(screen.queryByText("@mina")).toBeNull());
+    await userEvent.click(mina.getByRole("button", { name: "@mina 비활성화" }));
+    dialog = await screen.findByRole("dialog", { name: "멤버 비활성화" });
+    const confirm = within(dialog).getByRole("button", { name: "비활성화" });
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(server.writes()).toEqual([
+      { method: "POST", url: `/api/v1/members/${MINA_ID}/deactivate`, body: undefined },
+    ]);
+    const t = await table();
+    await waitFor(() => expect(within(t).queryByText("@mina")).toBeNull());
+    const toggle = screen.getByRole("button", { name: "비활성 멤버 1" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    // 줄(과 그 단추)이 사라져도 초점은 body 로 떨어지지 않고 묶음 단추로
+    await waitFor(() => expect(toggle).toHaveFocus());
+  });
+
+  it("「비활성 멤버 N」은 접혀 있고, 펼치면 줄마다 「다시 활성화」 — POST 뒤 표로 돌아온다", async () => {
+    const server = stubMembersServer({
+      members: [OWNER_ROW, ADMIN_ROW, { ...MINA_ROW, deactivatedAt: DEACTIVATED_AT }],
+    });
+    renderRoute("/settings/members");
+    const t = await table();
+    expect(within(t).queryByText("@mina")).toBeNull();
+    const toggle = await screen.findByRole("button", { name: "비활성 멤버 1" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("button", { name: "@mina 다시 활성화" })).toBeNull();
+
+    await userEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    const group = screen.getByRole("region", { name: "비활성 멤버" });
+    const line = within(group).getByText("@mina").closest("li") as HTMLElement;
+    expect(line).toHaveTextContent("미나");
+    expect(line).toHaveTextContent("mina@example.com");
+    // 비활성 줄에는 역할 바꾸기·재설정 링크가 없다(서버가 비활성 대상을 404 로 본다)
+    expect(within(line).queryByRole("combobox")).toBeNull();
+    expect(within(line).queryByRole("button", { name: /재설정 링크/ })).toBeNull();
+
+    // 같은 틱 두 번 — isPending 이 그려지기 전이라 단추가 아직 켜져 있다
+    const reactivate = within(line).getByRole("button", { name: "@mina 다시 활성화" });
+    fireEvent.click(reactivate);
+    fireEvent.click(reactivate);
+    await waitFor(() => expect(within(t).getByText("@mina")).toBeInTheDocument());
+    expect(server.writes()).toEqual([
+      { method: "POST", url: `/api/v1/members/${MINA_ID}/reactivate`, body: undefined },
+    ]);
+    // 마지막 하나였으면 묶음이 사라지고, 초점은 표로 돌아온 그 줄의 「비활성화」로
+    expect(screen.queryByRole("button", { name: /^비활성 멤버/ })).toBeNull();
+    await waitFor(() => expect(screen.getByRole("button", { name: "@mina 비활성화" })).toHaveFocus());
+  });
+
+  it("비활성 멤버가 없으면 묶음이 없다", async () => {
+    stubMembersServer();
+    renderRoute("/settings/members");
+    await rowOf("mina");
+    expect(screen.queryByRole("button", { name: /^비활성 멤버/ })).toBeNull();
+  });
+
+  it("「다시 활성화」 권한은 비활성화와 같다 — admin 은 member 줄만, owner 는 admin 줄까지", async () => {
+    const members = [
+      OWNER_ROW,
+      { ...ADMIN_ROW, deactivatedAt: DEACTIVATED_AT },
+      { ...MINA_ROW, deactivatedAt: DEACTIVATED_AT },
+    ];
+    stubMembersServer({ me: ADMIN_ME, members });
+    renderRoute("/settings/members");
+    await userEvent.click(await screen.findByRole("button", { name: "비활성 멤버 2" }));
+    let group = screen.getByRole("region", { name: "비활성 멤버" });
+    expect(within(group).getByRole("button", { name: "@mina 다시 활성화" })).toBeInTheDocument();
+    expect(within(group).queryByRole("button", { name: "@sora 다시 활성화" })).toBeNull();
+    expect(within(group).getByText("@sora")).toBeInTheDocument();
+    cleanup();
+
+    stubMembersServer({ members });
+    renderRoute("/settings/members");
+    await userEvent.click(await screen.findByRole("button", { name: "비활성 멤버 2" }));
+    group = screen.getByRole("region", { name: "비활성 멤버" });
+    expect(within(group).getByRole("button", { name: "@mina 다시 활성화" })).toBeInTheDocument();
+    expect(within(group).getByRole("button", { name: "@sora 다시 활성화" })).toBeInTheDocument();
   });
 
   it("「재설정 링크」는 만든 링크를 한 번만 보인다 — 「복사했습니다」 뒤에는 어디에도 없다", async () => {
@@ -268,8 +344,8 @@ describe("대기 중인 초대", () => {
   });
 });
 
-describe("역할 바꾸기·내보내기 뒤 대기 중인 초대", () => {
-  // 서버는 강등·내보내기 때 그 사람이 만든 쓰이지 않은 링크를 폐기한다 — 목록을 다시 받아 낡은 줄을 뺀다
+describe("역할 바꾸기·비활성화 뒤 대기 중인 초대", () => {
+  // 서버는 강등·비활성화 때 그 사람이 만든 쓰이지 않은 링크를 폐기한다 — 목록을 다시 받아 낡은 줄을 뺀다
   const invites = () => [inviteOf(1, "member"), inviteOf(2, "member", { createdBy: ADMIN_ID })];
 
   it("admin 을 멤버로 내리면 그 사람이 만든 초대 줄이 빠진다", async () => {
@@ -284,14 +360,14 @@ describe("역할 바꾸기·내보내기 뒤 대기 중인 초대", () => {
     await waitFor(() => expect(within(region).getAllByRole("listitem")).toHaveLength(1));
   });
 
-  it("내보내면 그 사람이 만든 초대 줄이 빠진다", async () => {
+  it("비활성화하면 그 사람이 만든 초대 줄이 빠진다", async () => {
     stubMembersServer({ invites: invites() });
     renderRoute("/settings/members");
     const region = await pending();
     expect(await within(region).findAllByRole("listitem")).toHaveLength(2);
-    await userEvent.click((await rowOf("sora")).getByRole("button", { name: "@sora 내보내기" }));
-    const dialog = await screen.findByRole("dialog", { name: "멤버 내보내기" });
-    await userEvent.click(within(dialog).getByRole("button", { name: "내보내기" }));
+    await userEvent.click((await rowOf("sora")).getByRole("button", { name: "@sora 비활성화" }));
+    const dialog = await screen.findByRole("dialog", { name: "멤버 비활성화" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "비활성화" }));
     await waitFor(() => expect(within(region).getAllByRole("listitem")).toHaveLength(1));
   });
 });
@@ -320,27 +396,27 @@ describe("권한이 바뀐 직후", () => {
     let role = "admin";
     stubMembersServer({
       me: ADMIN_ME,
-      override: ({ method, url }) => {
+      override: ({ url }) => {
         if (url === "/api/v1/auth/me") return json(200, { ...ADMIN_ME, role });
-        if (method === "DELETE") return json(403, { code: "FORBIDDEN", message: "admin 이상" });
+        if (url.endsWith("/deactivate")) return json(403, { code: "FORBIDDEN", message: "admin 이상" });
         return undefined;
       },
     });
     renderRoute("/settings/members");
     const mina = await rowOf("mina");
     role = "member";
-    await userEvent.click(mina.getByRole("button", { name: "@mina 내보내기" }));
-    const dialog = await screen.findByRole("dialog", { name: "멤버 내보내기" });
-    await userEvent.click(within(dialog).getByRole("button", { name: "내보내기" }));
+    await userEvent.click(mina.getByRole("button", { name: "@mina 비활성화" }));
+    const dialog = await screen.findByRole("dialog", { name: "멤버 비활성화" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "비활성화" }));
     const page = await screen.findByTestId("page-members");
     expect(await within(page).findByText(/권한이 없습니다/)).toBeInTheDocument();
     expect(screen.queryByRole("table")).toBeNull();
   });
 
-  it("내보내진 뒤의 다음 요청(401)은 로그인 화면으로(Review Focus 3)", async () => {
+  it("비활성화된 뒤의 다음 요청(401)은 로그인 화면으로", async () => {
     stubMembersServer({
-      override: ({ method, url }) =>
-        method === "DELETE" || url === "/api/v1/auth/me"
+      override: ({ url }) =>
+        url.endsWith("/deactivate") || url === "/api/v1/auth/me"
           ? json(401, { code: "UNAUTHORIZED", message: "로그인이 필요하다" })
           : undefined,
     });
@@ -349,9 +425,9 @@ describe("권한이 바뀐 직후", () => {
     app.queryClient.setQueryData(["me"], ME);
     render(<App app={app} />);
     const mina = await rowOf("mina");
-    await userEvent.click(mina.getByRole("button", { name: "@mina 내보내기" }));
-    const dialog = await screen.findByRole("dialog", { name: "멤버 내보내기" });
-    await userEvent.click(within(dialog).getByRole("button", { name: "내보내기" }));
+    await userEvent.click(mina.getByRole("button", { name: "@mina 비활성화" }));
+    const dialog = await screen.findByRole("dialog", { name: "멤버 비활성화" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "비활성화" }));
     expect(await screen.findByRole("heading", { name: "로그인" })).toBeInTheDocument();
     expect(history.location.pathname).toBe("/login");
   });

@@ -1,5 +1,6 @@
 import type { IssuedInvite, MemberRow } from "@dodok/shared";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useRef } from "react";
 import { api } from "@/api/http";
 import { qk } from "@/api/queries";
 
@@ -63,16 +64,41 @@ export function useChangeRole() {
 }
 
 /**
- * 내보내기 — 서버가 그 사람의 세션·소켓·푸시 구독을 끊고 그 사람이 만든 쓰이지 않은 링크를 폐기한다.
- * 표에서 곧바로 빼고 대기 초대는 다시 받는다
+ * 비활성화·다시 활성화(채널 보관·멤버 비활성화 스펙 「멤버 비활성화」 절) — 비활성화하면 서버가 그 사람의 세션·소켓·푸시 구독을 끊고
+ * 그 사람이 만들었거나 그 사람을 겨눈 쓰이지 않은 링크를 폐기한다. 둘 다 멱등이고 지금 줄을 돌려준다 — 표는 응답 줄로 곧바로
+ * 바꾸고(줄이 「비활성 멤버 N」 묶음과 표 사이를 옮겨 간다) 대기 초대는 다시 받는다. 사람 목록은 wire `people.changed` 가 고친다
  */
-export function useRemoveMember() {
+export function useSetMemberActive() {
   const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (userId: string) => api<void>("DELETE", `/members/${userId}`),
-    onSuccess: (_void, userId) => {
-      qc.setQueryData<MemberRow[]>(qk.teamMembers, (list) => list?.filter((m) => m.id !== userId));
+  const mutation = useMutation({
+    mutationFn: async ({ userId, active }: { userId: string; active: boolean }) =>
+      (await api<{ member: MemberRow }>("POST", `/members/${userId}/${active ? "reactivate" : "deactivate"}`))
+        .member,
+    onSuccess: (member) => {
+      qc.setQueryData<MemberRow[]>(qk.teamMembers, (list) =>
+        list?.map((m) => (m.id === member.id ? member : m)),
+      );
       void qc.invalidateQueries({ queryKey: qk.invites });
     },
   });
+  // 같은 틱 두 번 클릭에 한 번만 보낸다 — 까닭은 `useRestoreAgent` 와 같다(`isPending` 은 다시 그린 뒤에야 참). 실패는 전역 토스트
+  const sending = useRef(false);
+  const { mutate } = mutation;
+  const setActive = useCallback(
+    (userId: string, active: boolean, onSuccess?: () => void) => {
+      if (sending.current) return;
+      sending.current = true;
+      mutate(
+        { userId, active },
+        {
+          ...(onSuccess ? { onSuccess } : {}),
+          onSettled: () => {
+            sending.current = false;
+          },
+        },
+      );
+    },
+    [mutate],
+  );
+  return { setActive, isPending: mutation.isPending };
 }

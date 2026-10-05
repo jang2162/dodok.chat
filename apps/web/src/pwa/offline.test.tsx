@@ -1,4 +1,4 @@
-import { type Agent, ComponentsV1, type Message, type MessageInteraction } from "@dodok/shared";
+import { type Agent, ComponentsV1, type Message, type MessageInteraction, type Person } from "@dodok/shared";
 import { onlineManager, QueryClientProvider, type QueryClient } from "@tanstack/react-query";
 import { createMemoryHistory } from "@tanstack/react-router";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
@@ -131,13 +131,14 @@ describe("Banners — 오프라인", () => {
 
 describe("오프라인 사본으로 띄우기 (createApp + 메모리 히스토리 + 가짜 fetch)", () => {
   /** 앞선 세션이 남긴 사본 — 채널 CH 를 60개 메시지까지 보고 떠났다(마지막은 `last` 로 바꿀 수 있다) */
-  async function savedCopy(last?: Message, agents: Agent[] = []) {
+  async function savedCopy(last?: Message, agents: Agent[] = [], people?: Person[]) {
     const storage = memoryStorage();
     const qc = createQueryClient(() => {});
     const p = await startPersistence(qc, { buster: "b1", storage, throttleMs: 0 });
     qc.setQueryData(qk.me, ME);
     qc.setQueryData(qk.channels, [channelOf(CH, { name: "general" })]);
     qc.setQueryData(qk.agents, agents);
+    if (people) qc.setQueryData(qk.people, people);
     touchRecentChannel(qc, CH);
     qc.setQueryData(qk.channel(CH), channelOf(CH, { name: "general" }));
     qc.setQueryData(qk.members(CH), []);
@@ -236,6 +237,37 @@ describe("오프라인 사본으로 띄우기 (createApp + 메모리 히스토�
     expect(within(article as HTMLElement).getAllByText("삭제됨").length).toBeGreaterThanOrEqual(1);
     expect(within(article as HTMLElement).queryByText("알 수 없음")).toBeNull();
     expect(article?.querySelector("[data-mention][data-archived]")).toHaveTextContent("@old삭제됨");
+  });
+
+  it("[Review Focus 5] 사본에서 복원한 채널에서도 비활성 멤버의 메시지 작성자·멘션 칩은 「비활성」 — 「알 수 없음」이 아니다", async () => {
+    const gone: Person = {
+      id: uid(78),
+      handle: "jihoon",
+      displayName: "지훈",
+      role: "member",
+      deactivatedAt: "2026-10-06T00:00:00.000Z",
+    };
+    const storage = await savedCopy(
+      msg(60, { authorId: gone.id, bodyMd: `마지막 말 <@u:${gone.id}>` }),
+      [],
+      [{ id: ME.user.id, handle: "owner", displayName: "주인", role: "owner", deactivatedAt: null }, gone],
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("Failed to fetch");
+      }),
+    );
+    setBrowserOnline(false);
+    await boot(storage);
+
+    const body = await screen.findByText("마지막 말", { exact: false });
+    const article = body.closest("article");
+    expect(article).not.toBeNull();
+    expect(within(article as HTMLElement).getByText("지훈")).toBeInTheDocument();
+    expect(within(article as HTMLElement).getAllByText("비활성").length).toBeGreaterThanOrEqual(1);
+    expect(within(article as HTMLElement).queryByText("알 수 없음")).toBeNull();
+    expect(article?.querySelector("[data-mention][data-deactivated]")).toHaveTextContent("@jihoon비활성");
   });
 
   it("오프라인으로 시작해도 me 요청 없이 채널 화면·저장된 메시지·배너가 뜨고, 보내기는 막힌다", async () => {

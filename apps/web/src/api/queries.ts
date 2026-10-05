@@ -71,7 +71,7 @@ export const qk = {
   /** 모든 채널의 멤버(무효화용 앞머리) */
   membersAll: ["members"] as const,
   agents: ["agents"] as const,
-  /** 워크스페이스 사람 전원(나간 멤버 포함) — 작성자·사람 멘션·@ 후보. wire `people.changed` 가 통째로 바꾼다 */
+  /** 워크스페이스 사람 전원(비활성 멤버 포함) — 작성자·사람 멘션·@ 후보. wire `people.changed` 가 통째로 바꾼다 */
   people: ["people"] as const,
   /** 멤버 관리(admin 이상, 팀 스펙 6장) — 오프라인 사본에 담지 않는다(pwa/persist). 발급 원문은 어느 키에도 넣지 않는다 */
   teamMembers: ["team", "members"] as const,
@@ -178,7 +178,8 @@ export const useAgents = () =>
     queryFn: async () => (await api<{ agents: Agent[] }>("GET", "/agents")).agents,
   });
 /**
- * 사람 목록(`GET /people`) — 로그인한 누구나 읽는다. `role` 없는 줄은 나간 멤버다. 조회가 실패해도 작성자가 「알 수 없음」으로
+ * 사람 목록(`GET /people`) — 로그인한 누구나 읽는다. 비활성 멤버는 `deactivatedAt` 과 함께 남고, `role` 없는 줄은 membership 이
+ * 없는 사람이다. 조회가 실패해도 작성자가 「알 수 없음」으로
  * 남을 뿐이라 토스트를 띄우지 않는다(`silent`) — 다음 `people.changed` 가 통째로 채운다
  */
 export const usePeople = () =>

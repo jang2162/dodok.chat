@@ -1,7 +1,6 @@
 import type { MemberRow, TeamRole } from "@dodok/shared";
-import { useRef, useState } from "react";
+import { type RefObject, useRef, useState } from "react";
 import { ConfirmDialog } from "@/features/settings/ConfirmDialog";
-import { josa } from "@/lib/josa";
 import { Button } from "@/ui/button";
 import {
   Dialog,
@@ -12,7 +11,7 @@ import {
   DialogTitle,
 } from "@/ui/dialog";
 import { IssuedLink } from "./IssuedLink";
-import { useIssueResetLink, useRemoveMember } from "./mutations";
+import { useIssueResetLink, useSetMemberActive } from "./mutations";
 
 /**
  * 그 줄에 손댈 수 있는가(팀 스펙 2장·4장) — owner 는 owner 를 뺀 모두, admin 은 member 만. 서버가 같은 규칙으로 막는다
@@ -21,36 +20,55 @@ export function canActOn(viewer: TeamRole, target: TeamRole): boolean {
   return viewer === "owner" ? target !== "owner" : viewer === "admin" && target === "member";
 }
 
-/** 멤버 줄의 「재설정 링크」·「내보내기」 — 손댈 수 없는 줄이면 아무것도 그리지 않는다 */
-export function MemberRowActions({ member, viewerRole }: { member: MemberRow; viewerRole: TeamRole }) {
-  const [removing, setRemoving] = useState(false);
-  const remove = useRemoveMember();
-  const removeRef = useRef<HTMLButtonElement>(null);
+/**
+ * 멤버 줄의 「재설정 링크」·「비활성화」 — 손댈 수 없는 줄이면 아무것도 그리지 않는다. 비활성화하면 이 줄이 표에서 사라지므로
+ * 초점을 어디로 옮길지는 `onDeactivated` 를 받은 페이지가 정한다. `focusRef` 는 다시 활성화한 뒤 페이지가 초점을 돌려줄 자리다
+ */
+export function MemberRowActions({
+  member,
+  viewerRole,
+  focusRef,
+  onDeactivated,
+}: {
+  member: MemberRow;
+  viewerRole: TeamRole;
+  focusRef?: RefObject<HTMLButtonElement | null>;
+  onDeactivated?: () => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const deactivate = useSetMemberActive();
+  const ownRef = useRef<HTMLButtonElement>(null);
+  const buttonRef = focusRef ?? ownRef;
   if (!canActOn(viewerRole, member.role)) return null;
   const handle = `@${member.handle}`;
   return (
     <div className="flex justify-end gap-1">
       <ResetLinkDialog member={member} />
       <Button
-        ref={removeRef}
+        ref={buttonRef}
         variant="ghost"
         size="xs"
-        aria-label={`${handle} 내보내기`}
-        onClick={() => setRemoving(true)}
+        aria-label={`${handle} 비활성화`}
+        onClick={() => setConfirming(true)}
       >
-        내보내기
+        비활성화
       </Button>
       <ConfirmDialog
-        open={removing}
-        onOpenChange={setRemoving}
-        title="멤버 내보내기"
-        description={`${handle} ${josa(handle, "을", "를")} 워크스페이스에서 내보냅니다. 곧바로 로그아웃되고, 다시 들어오려면 새 초대가 필요합니다. 쓴 메시지는 남습니다`}
-        confirmLabel="내보내기"
-        pendingLabel="내보내는 중…"
-        pending={remove.isPending}
+        open={confirming}
+        onOpenChange={setConfirming}
+        title="멤버 비활성화"
+        description={`${handle} 을 비활성화합니다. 로그인할 수 없게 되고, 쓴 메시지는 남습니다. 다시 활성화하면 그대로 돌아옵니다.`}
+        confirmLabel="비활성화"
+        pendingLabel="비활성화하는 중…"
+        pending={deactivate.isPending}
         destructive
-        returnFocus={removeRef}
-        onConfirm={() => remove.mutate(member.id, { onSuccess: () => setRemoving(false) })}
+        returnFocus={buttonRef}
+        onConfirm={() =>
+          deactivate.setActive(member.id, false, () => {
+            setConfirming(false);
+            onDeactivated?.();
+          })
+        }
       />
     </div>
   );

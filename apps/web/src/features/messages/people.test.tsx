@@ -1,5 +1,7 @@
+import { readFileSync, readdirSync } from "node:fs";
+import { resolve } from "node:path";
 import type { Person } from "@dodok/shared";
-import { act, screen, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { qk } from "@/api/queries";
 import { msg, uid } from "../../../test/fixtures";
@@ -39,14 +41,30 @@ describe("사람 작성자", () => {
     expect(await within(screen.getByRole("article")).findByText("미나리")).toBeInTheDocument();
   });
 
-  it("비활성 멤버는 「나간 멤버 @<핸들>」 흐린 글씨", () => {
+  it("비활성 멤버는 표시 이름 그대로 + 「비활성」 — 「알 수 없음」이 아니다", () => {
     renderWithClient(
       <MessageItem message={msg(1, { authorId: GONE.id })} head />,
       authorsClient(undefined, [OWNER_PERSON, GONE]),
     );
-    const name = within(screen.getByRole("article")).getByText("나간 멤버 @jihoon");
-    expect(name).toHaveClass("text-muted-foreground");
-    expect(screen.queryByText("지훈")).toBeNull();
+    const article = screen.getByRole("article");
+    expect(within(article).getByText("지훈")).toBeInTheDocument();
+    expect(within(article).getByText("비활성")).toBeInTheDocument();
+    expect(within(article).queryByText("알 수 없음")).toBeNull();
+  });
+
+  it("활성 멤버에는 「비활성」이 없다", () => {
+    renderWithClient(
+      <MessageItem message={msg(1, { authorId: MINA.id })} head />,
+      authorsClient(undefined, [OWNER_PERSON, MINA]),
+    );
+    expect(within(screen.getByRole("article")).queryByText("비활성")).toBeNull();
+  });
+
+  it("다시 활성화되면(people.changed) 「비활성」이 사라진다", async () => {
+    const qc = authorsClient(undefined, [OWNER_PERSON, GONE]);
+    renderWithClient(<MessageItem message={msg(1, { authorId: GONE.id })} head />, qc);
+    act(() => qc.setQueryData<Person[]>(qk.people, [OWNER_PERSON, { ...GONE, deactivatedAt: null }]));
+    await waitFor(() => expect(within(screen.getByRole("article")).queryByText("비활성")).toBeNull());
   });
 
   it("사람 목록을 아직 못 받았으면 나는 me 로 푼다", () => {
@@ -64,13 +82,25 @@ describe("사람 작성자", () => {
 });
 
 describe("사람 멘션", () => {
-  it("다른 사람 멘션은 그 핸들, 비활성 멤버도 그 핸들", () => {
+  it("다른 사람 멘션은 그 핸들", () => {
     renderWithClient(
-      <MessageBody bodyMd={`<@u:${MINA.id}> <@u:${GONE.id}>`} />,
-      authorsClient(undefined, [OWNER_PERSON, MINA, GONE]),
+      <MessageBody bodyMd={`<@u:${MINA.id}>`} />,
+      authorsClient(undefined, [OWNER_PERSON, MINA]),
     );
-    expect(screen.getByText("@mina")).toBeInTheDocument();
-    expect(screen.getByText("@jihoon")).toBeInTheDocument();
+    const chip = screen.getByText("@mina").closest("[data-mention]");
+    expect(chip).not.toHaveAttribute("data-deactivated");
+    expect(spoken(chip)).toBe("@mina");
+  });
+
+  it("비활성 멤버 멘션은 그 핸들 + 「비활성」 — 스크린 리더에는 「@<핸들> (비활성)」", () => {
+    renderWithClient(
+      <MessageBody bodyMd={`<@u:${GONE.id}> 확인`} />,
+      authorsClient(undefined, [OWNER_PERSON, GONE]),
+    );
+    const chip = screen.getByText("@jihoon", { exact: false }).closest("[data-mention]");
+    expect(chip).toHaveAttribute("data-deactivated");
+    expect(within(chip as HTMLElement).getByText("비활성")).toBeInTheDocument();
+    expect(spoken(chip)).toBe("@jihoon (비활성)");
   });
 });
 
@@ -109,3 +139,14 @@ function spoken(el: Element | null): string {
   for (const hidden of clone?.querySelectorAll("[aria-hidden]") ?? []) hidden.remove();
   return clone?.textContent ?? "";
 }
+
+// 옛 내보내기의 「나간 멤버 @<옛핸들>」 표시는 비활성화로 바뀌었다(채널 보관·멤버 비활성화 스펙 「기록과 목록」 절)
+it("웹 소스 어디에도 「나간 멤버」 문구가 남지 않는다", () => {
+  const root = resolve(import.meta.dirname, "../..");
+  const files = readdirSync(root, { recursive: true, encoding: "utf8" }).filter(
+    (f) => /\.tsx?$/.test(f) && !f.endsWith("people.test.tsx"),
+  );
+  expect(files.length).toBeGreaterThan(100);
+  const hits = files.filter((f) => readFileSync(resolve(root, f), "utf8").includes("나간 멤버"));
+  expect(hits).toEqual([]);
+});

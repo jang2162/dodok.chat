@@ -2,10 +2,11 @@ import type { Message, Person } from "@dodok/shared";
 import { useCallback, useMemo } from "react";
 import { useAgents, useMe, usePeople } from "@/api/queries";
 import { isArchived } from "@/features/agents/archived";
+import { isDeactivated } from "@/features/members/deactivated";
 import { agentColorVar } from "@/theme/agentColor";
 
 /**
- * 작성자 표시(스펙 4.1·5.3). 에이전트면 `colorVar`(아바타 테두리·멘션 점), 비활성 멤버면 `left`(흐린 글씨),
+ * 작성자 표시(스펙 4.1·5.3). 에이전트면 `colorVar`(아바타 테두리·멘션 점), 비활성 멤버면 `deactivated`(이름 옆 「비활성」),
  * 보관(삭제)한 에이전트면 `archived`(이름 옆 「삭제됨」)
  */
 export type Author = {
@@ -14,7 +15,7 @@ export type Author = {
   isAgent: boolean;
   colorVar?: string;
   avatarUrl?: string;
-  left?: boolean;
+  deactivated?: boolean;
   archived?: boolean;
 };
 
@@ -23,7 +24,8 @@ const SYSTEM: Author = { name: "시스템", isAgent: false };
 
 /**
  * 작성자·멘션을 `["agents"]`·`["people"]` 로 푼다(팀 스펙 5·6장). 사람 목록을 아직 못 받았으면 나 하나는 `["me"]` 로 푼다.
- * 비활성 멤버(`deactivatedAt` 있음)는 「나간 멤버 @<핸들>」, 멘션은 그 핸들.
+ * 비활성 멤버도 목록에 남아 있어 이름·핸들 그대로 「비활성」을 단다(채널 보관·멤버 비활성화 스펙 「기록과 목록」 절) —
+ * `deactivatedPerson` 이 멘션 칩의 판정.
  * 보관(삭제)한 에이전트는 목록에 남아 있어 이름·핸들 그대로 「삭제됨」을 단다(스펙 「에이전트 보관」 절) — `archivedAgent` 가 멘션 칩의 판정.
  * 모르는 작성자(목록에 없는 에이전트·사람)는 「알 수 없음」
  */
@@ -31,6 +33,7 @@ export function useAuthors(): {
   author(m: Pick<Message, "authorType" | "authorId">): Author;
   mention(kind: "a" | "u", id: string): string | undefined;
   archivedAgent(id: string): boolean;
+  deactivatedPerson(id: string): boolean;
 } {
   const me = useMe().data?.user;
   const agents = useAgents().data;
@@ -66,18 +69,12 @@ export function useAuthors(): {
       }
       const person = m.authorId ? personById.get(m.authorId) : undefined;
       if (!person) return { name: UNKNOWN_NAME, isAgent: false };
-      if (person.deactivatedAt)
-        return {
-          name: `나간 멤버 @${person.handle}`,
-          handle: person.handle,
-          isAgent: false,
-          left: true,
-        };
       return {
         name: person.displayName || person.handle,
         handle: person.handle,
         isAgent: false,
         ...(person.avatarUrl ? { avatarUrl: person.avatarUrl } : {}),
+        ...(isDeactivated(person) ? { deactivated: true } : {}),
       };
     },
     [agentById, personById],
@@ -100,5 +97,16 @@ export function useAuthors(): {
     [agentById],
   );
 
-  return useMemo(() => ({ author, mention, archivedAgent }), [author, mention, archivedAgent]);
+  const deactivatedPerson = useCallback(
+    (id: string): boolean => {
+      const person = personById.get(id);
+      return person !== undefined && isDeactivated(person);
+    },
+    [personById],
+  );
+
+  return useMemo(
+    () => ({ author, mention, archivedAgent, deactivatedPerson }),
+    [author, mention, archivedAgent, deactivatedPerson],
+  );
 }

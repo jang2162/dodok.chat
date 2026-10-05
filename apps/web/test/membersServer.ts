@@ -41,6 +41,9 @@ export const MINA_ROW = memberRowOf({
   createdAt: "2026-09-25T12:00:00.000Z",
 });
 
+/** 가짜 서버가 비활성화 때 쓰는 시각 */
+export const DEACTIVATED_AT = "2026-10-06T09:00:00.000Z";
+
 export const inviteOf = (n: number, role: "admin" | "member", over: Partial<Invite> = {}): Invite => ({
   id: uid(300 + n),
   kind: "invite",
@@ -91,10 +94,20 @@ export function stubMembersServer(
       if (role === "member") state.invites = state.invites.filter((i) => i.createdBy !== member);
       return json(200, { member: state.members.find((m) => m.id === member) });
     }
-    if (member && method === "DELETE") {
-      state.members = state.members.filter((m) => m.id !== member);
-      state.invites = state.invites.filter((i) => i.createdBy !== member);
-      return new Response(null, { status: 204 });
+    // 서버 실물: 비활성화는 그 사람이 발급한 쓰이지 않은 링크를 폐기하고, 둘 다 멱등이며 지금 줄을 돌려준다
+    const toggle = /^\/api\/v1\/members\/([^/]+)\/(deactivate|reactivate)$/.exec(url);
+    if (toggle && method === "POST") {
+      const [, id, action] = toggle;
+      state.members = state.members.map((m) =>
+        m.id !== id
+          ? m
+          : {
+              ...m,
+              deactivatedAt: action === "deactivate" ? (m.deactivatedAt ?? DEACTIVATED_AT) : null,
+            },
+      );
+      if (action === "deactivate") state.invites = state.invites.filter((i) => i.createdBy !== id);
+      return json(200, { member: state.members.find((m) => m.id === id) });
     }
     const reset = /^\/api\/v1\/members\/([^/]+)\/reset-link$/.exec(url)?.[1];
     if (reset && method === "POST")

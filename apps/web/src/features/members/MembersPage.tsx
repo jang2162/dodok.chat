@@ -1,10 +1,13 @@
 import type { Invite, MemberRow, TeamRole } from "@dodok/shared";
-import { useId } from "react";
+import { ChevronRightIcon } from "lucide-react";
+import { type RefObject, useEffect, useId, useRef, useState } from "react";
 import { useCachedMe, useRole } from "@/api/queries";
+import { cn } from "@/lib/utils";
 import { Button } from "@/ui/button";
+import { isDeactivated } from "./deactivated";
 import { InviteDialog } from "./InviteDialog";
-import { MemberRowActions } from "./MemberRowActions";
-import { useChangeRole, useRevokeInvite } from "./mutations";
+import { MemberRowActions, canActOn } from "./MemberRowActions";
+import { useChangeRole, useRevokeInvite, useSetMemberActive } from "./mutations";
 import { useInvites, useTeamMembers } from "./queries";
 
 const ROLE_LABEL: Record<TeamRole, string> = { owner: "소유자", admin: "관리자", member: "멤버" };
@@ -12,7 +15,7 @@ const DATE = new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium" });
 const dateOf = (iso: string) => DATE.format(new Date(iso));
 
 /**
- * 멤버 관리(`/settings/members`, 팀 스펙 4·6장): 멤버 표·줄 동작·초대·대기 중인 초대. admin 이상만 본다 — 아니면 팀 API 를
+ * 멤버 관리(`/settings/members`, 팀 스펙 4·6장): 멤버 표·줄 동작·「비활성 멤버 N」·초대·대기 중인 초대. admin 이상만 본다 — 아니면 팀 API 를
  * 부르지 않고 「권한이 없습니다」(운영·연결 페이지와 같은 규칙). 역할이 내려가면 me 를 다시 받는 순간(403 전역 처리) 이 문구로 바뀐다
  */
 export function MembersPage() {
@@ -26,7 +29,7 @@ export function MembersPage() {
             <h1 className="text-xl font-semibold">멤버</h1>
           </div>
           <p className="text-sm text-muted-foreground">
-            워크스페이스 사람을 초대하고 역할·비밀번호 재설정·내보내기를 맡습니다.
+            워크스페이스 사람을 초대하고 역할·비밀번호 재설정·비활성화를 맡습니다.
           </p>
         </div>
         {manager && <InviteDialog viewerRole={manager} />}
@@ -45,8 +48,28 @@ export function MembersPage() {
   );
 }
 
+/**
+ * 서버 목록은 비활성 멤버도 함께 준다 — 활성 멤버는 표에, 비활성 멤버는 아래 접힌 「비활성 멤버 N」 묶음에
+ * (채널 보관·멤버 비활성화 스펙 「웹」 소절, 에이전트 탭의 「삭제된 에이전트 N」과 같은 꼴)
+ */
 function MembersTable({ viewerRole }: { viewerRole: "owner" | "admin" }) {
   const members = useTeamMembers();
+  const groupRef = useRef<HTMLButtonElement>(null);
+  // 비활성화하면 그 줄(과 「비활성화」)이 사라진다 — 초점을 묶음 단추로. 묶음은 다시 그린 뒤에야 생기므로 그려진 다음에 옮긴다
+  const [deactivatedAt, setDeactivatedAt] = useState(0);
+  useEffect(() => {
+    if (deactivatedAt > 0) groupRef.current?.focus();
+  }, [deactivatedAt]);
+  // 다시 활성화하면 그 줄이 묶음에서 빠진다 — 묶음이 남으면 묶음 단추로, 마지막 하나였으면(묶음도 사라진다) 표에 돌아온 그 줄로
+  const [reactivatedId, setReactivatedId] = useState<string | null>(null);
+  const reactivatedRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const data = members.data ?? [];
+    if (reactivatedId === null || !data.some((m) => m.id === reactivatedId && !isDeactivated(m))) return;
+    (data.some(isDeactivated) ? groupRef.current : reactivatedRef.current)?.focus();
+    setReactivatedId(null);
+  }, [reactivatedId, members.data]);
+
   if (!members.data) {
     return members.isError ? (
       <div className="flex flex-col items-start gap-3">
@@ -66,35 +89,63 @@ function MembersTable({ viewerRole }: { viewerRole: "owner" | "admin" }) {
       </p>
     );
   }
+  const active = members.data.filter((m) => !isDeactivated(m));
+  const deactivated = members.data.filter(isDeactivated);
   return (
-    // 좁은 화면에서는 표가 제 상자 안에서 가로로 스크롤한다 — 페이지가 넘치지 않게.
-    // relative 가 없으면 「동작」 sr-only span(absolute)의 포함 블록이 이 상자 밖(초기 포함 블록)이 되어
-    // 표가 넓어진 만큼 문서 전체를 가로로 넓힌다(D1)
-    <div className="relative overflow-x-auto rounded-lg border">
-      <table aria-label="멤버" className="w-full text-sm">
-        <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
-          <tr>
-            {["핸들", "이름", "이메일", "역할", "가입일"].map((h) => (
-              <th key={h} scope="col" className="px-3 py-2 font-medium whitespace-nowrap">
-                {h}
+    <>
+      {/* 좁은 화면에서는 표가 제 상자 안에서 가로로 스크롤한다 — 페이지가 넘치지 않게.
+          relative 가 없으면 「동작」 sr-only span(absolute)의 포함 블록이 이 상자 밖(초기 포함 블록)이 되어
+          표가 넓어진 만큼 문서 전체를 가로로 넓힌다(D1) */}
+      <div className="relative overflow-x-auto rounded-lg border">
+        <table aria-label="멤버" className="w-full text-sm">
+          <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
+            <tr>
+              {["핸들", "이름", "이메일", "역할", "가입일"].map((h) => (
+                <th key={h} scope="col" className="px-3 py-2 font-medium whitespace-nowrap">
+                  {h}
+                </th>
+              ))}
+              <th scope="col" className="px-3 py-2 text-right font-medium">
+                <span className="sr-only">동작</span>
               </th>
+            </tr>
+          </thead>
+          <tbody className="divide-y">
+            {active.map((m) => (
+              <MemberLine
+                key={m.id}
+                member={m}
+                viewerRole={viewerRole}
+                onDeactivated={() => setDeactivatedAt((n) => n + 1)}
+                {...(m.id === reactivatedId ? { focusRef: reactivatedRef } : {})}
+              />
             ))}
-            <th scope="col" className="px-3 py-2 text-right font-medium">
-              <span className="sr-only">동작</span>
-            </th>
-          </tr>
-        </thead>
-        <tbody className="divide-y">
-          {members.data.map((m) => (
-            <MemberLine key={m.id} member={m} viewerRole={viewerRole} />
-          ))}
-        </tbody>
-      </table>
-    </div>
+          </tbody>
+        </table>
+      </div>
+      {deactivated.length > 0 && (
+        <DeactivatedMembers
+          members={deactivated}
+          viewerRole={viewerRole}
+          toggleRef={groupRef}
+          onReactivated={setReactivatedId}
+        />
+      )}
+    </>
   );
 }
 
-function MemberLine({ member, viewerRole }: { member: MemberRow; viewerRole: "owner" | "admin" }) {
+function MemberLine({
+  member,
+  viewerRole,
+  focusRef,
+  onDeactivated,
+}: {
+  member: MemberRow;
+  viewerRole: "owner" | "admin";
+  focusRef?: RefObject<HTMLButtonElement | null>;
+  onDeactivated: () => void;
+}) {
   const meId = useCachedMe()?.user.id;
   return (
     <tr>
@@ -109,9 +160,95 @@ function MemberLine({ member, viewerRole }: { member: MemberRow; viewerRole: "ow
       </td>
       <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{dateOf(member.createdAt)}</td>
       <td className="px-3 py-2">
-        <MemberRowActions member={member} viewerRole={viewerRole} />
+        <MemberRowActions
+          member={member}
+          viewerRole={viewerRole}
+          onDeactivated={onDeactivated}
+          {...(focusRef ? { focusRef } : {})}
+        />
       </td>
     </tr>
+  );
+}
+
+/**
+ * 「비활성 멤버 N」 접힌 묶음 — 줄마다 핸들·이름·이메일·역할, 손댈 수 있는 줄(비활성화와 같은 권한)이면 「다시 활성화」.
+ * 역할 바꾸기·재설정 링크는 없다 — 서버가 비활성 대상을 없는 사람(404)으로 본다. 다시 활성화하면 줄이 표로 옮겨 간다
+ */
+function DeactivatedMembers({
+  members,
+  viewerRole,
+  toggleRef,
+  onReactivated,
+}: {
+  members: readonly MemberRow[];
+  viewerRole: "owner" | "admin";
+  toggleRef: RefObject<HTMLButtonElement | null>;
+  onReactivated: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const listId = useId();
+  return (
+    <section aria-label="비활성 멤버" className="flex flex-col gap-3">
+      <Button
+        ref={toggleRef}
+        variant="ghost"
+        size="sm"
+        className="self-start text-muted-foreground"
+        aria-expanded={open}
+        aria-controls={listId}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <ChevronRightIcon aria-hidden className={cn("transition-transform", open && "rotate-90")} />
+        비활성 멤버 {members.length}
+      </Button>
+      {open && (
+        <ul id={listId} className="flex flex-col divide-y rounded-lg border border-dashed">
+          {members.map((member) => (
+            <DeactivatedLine
+              key={member.id}
+              member={member}
+              viewerRole={viewerRole}
+              onReactivated={onReactivated}
+            />
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function DeactivatedLine({
+  member,
+  viewerRole,
+  onReactivated,
+}: {
+  member: MemberRow;
+  viewerRole: "owner" | "admin";
+  onReactivated: (id: string) => void;
+}) {
+  const reactivate = useSetMemberActive();
+  const handle = `@${member.handle}`;
+  return (
+    <li className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-sm text-muted-foreground">
+      <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2">
+        <span className="font-medium">{handle}</span>
+        <span>{member.displayName}</span>
+        <span className="break-all">{member.email ?? "—"}</span>
+        <span>{ROLE_LABEL[member.role]}</span>
+      </div>
+      {canActOn(viewerRole, member.role) && (
+        <Button
+          variant="outline"
+          size="sm"
+          aria-label={`${handle} 다시 활성화`}
+          disabled={reactivate.isPending}
+          onClick={() => reactivate.setActive(member.id, true, () => onReactivated(member.id))}
+        >
+          {reactivate.isPending ? "활성화하는 중…" : "다시 활성화"}
+        </Button>
+      )}
+    </li>
   );
 }
 
