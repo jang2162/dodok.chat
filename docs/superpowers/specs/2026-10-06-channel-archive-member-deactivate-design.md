@@ -126,3 +126,66 @@
 
 - 채널 영구 삭제(메시지·첨부·FTS 정리), 계정 데이터 삭제 요청 처리.
 - 기본 채널(슬랙 #general 처럼 보관할 수 없는 채널) 개념.
+
+## 8. 구현과 맞춘 것
+
+구현(계획 `docs/superpowers/plans/2026-10-06-channel-archive-member-deactivate.md` 태스크 1~4)·리뷰·수정·rebase 에서 이 설계와 달라지거나 설계가 정하지 않은 것을 정한 자리만 모았다.
+정본 근거는 실행 원장 `.superpowers/sdd/2026-10-06-channel-archive-member-deactivate/ledger.md`(git 제외)의 판정과 원장이 가리키는 보고서·리뷰(`t1`~`t4` — 줄 끝 괄호가 출처)다. 본문(0~7장)은 설계를 확정한 때의 기록이라 고치지 않았다 — **본문과 이 장이 다르면 이 장이 구현이다.**
+운영 절차는 `docs/guides/deploy.md` 「멤버 초대·비밀번호 재설정·비활성화」 절과 「오류」 절, 화면 쓰는 법은 `docs/guides/user-guide.md` 「채널 보관」·「멤버·역할」 절이다.
+
+**계획 판정 PC1~PC5**
+
+- **PC1 — 채널 쓰기 검사는 `apps/server/src/modules/channels/service.ts` 의 `assertChannelWritable(db, channelId, workspaceId?)` 한 함수다**(없으면 404, 보관이면 409 `CHANNEL_ARCHIVED`). 계획 시그니처에 선택 인자 `workspaceId` 를 더했다 — REST·wire·카드는 다른 워크스페이스 채널을 404 로 봐야 한다. 「보관한 채널에서 서버가 막는 것」 절의 경로(wire `message.send` 최상위·스레드, 카드 상호작용 `checkInteraction`, `PATCH /channels/:id`·멤버 넣기·빼기·설정·「새 대화」, 사람 첨부 올리기 `POST /api/v1/attachments`)가 모두 이것을 부른다. 던지지 않고 가르는 자리(런 관문·늦은 정본·푸시)는 `isChannelArchived` 를 쓴다(계획, t1 판단 1, t1 리뷰 「쓰기 경로 전수」).
+- **PC2 — 런 관문과 늦은 정본은 에이전트 보관과 같은 자리에서 본다.** 런 관문(`modules/ops/budget.ts`)이 보관한 채널을 거절하고, `runs/orchestrator.ts` 의 `archivedTarget(run)`(에이전트 보관 또는 채널 보관)을 디스패치 가드와 런 있는 늦은 정본 가지가 함께 쓴다. 보관 훑기는 대기 런부터 거꾸로 `orchestrator.abort` 로 닫고, 그래도 꺼낸 대기 런은 디스패치 가드가 보내지 않는다(두 겹 — 훑기 순서 변이는 그래서 살아남는다)(계획, t1 변이 M14, t1 리뷰 M3).
+- **PC3 — 비활성은 `apps/server/src/auth/roles.ts` 의 `roleOf` 한 곳에서 막는다** — 비활성 membership 이면 `undefined`. 원시 조회 `membershipOf`(비활성까지 낸다)는 로그인 403·멤버 관리·초대 수락만 쓴다. REST(`requireSession`)·wire 핸드셰이크와 connection·재설정 링크(`resetLinkUsable`·발급)·채널에 사람 넣기가 모두 `roleOf` 로 막힌다(계획, t2, t2 리뷰 「비활성이 `roleOf` 를 우회하는 길」).
+- **PC4 — 채널 멤버 읽기 거름은 `channels/service.ts` 의 조건 `memberNotDeactivated` 한 곳이다.** `listMembers`(멤버 응답·`channel.member.changed`·런 판정)·`channelParticipants`(「참여자:」·멘션 해석·멘션 푸시 수신자)·`userMessageParticipants`(채널 밖 사람 멘션·자동 참여)가 같이 쓴다. `channelParticipants` 의 옵션은 `includeArchived` 에서 `includeInactive` 로 이름이 바뀌었다 — 에이전트 문맥의 옛 메시지 글 풀기는 비활성 멤버도 그 핸들로 풀고(보관한 에이전트와 같은 규칙), 「참여자:」에서만 뺀다(계획, t2, t2 리뷰 고칠 것 1, t2 수정 보고).
+- **PC5 — 마이그레이션 번호는 계획과 반대다** — 태스크 2 가 먼저 병합돼 **멤버가 `0016_member_deactivate`, 채널이 `0017_channel_archive`** 다. 태스크 1 은 rebase 뒤 자기 0016 생성물을 지우고 drizzle-kit 으로 0017 을 다시 생성했다(생성물 직접 편집 없음). 0016 은 `ALTER TABLE memberships ADD deactivated_at` · `ALTER TABLE users DROP COLUMN left_handle` 두 줄, 0017 은 `ALTER TABLE channels ADD archived_at` 한 줄 — 둘 다 표를 다시 만들지 않아 ON DELETE·FTS 트리거·인덱스에 닿지 않는다(t2, t1 rebase 보고, t1 재리뷰 「rebase」).
+
+**조율자 판정 — 같은 이메일 409 는 초대 수락 때 (태스크 2·4)**
+
+- 「멤버 비활성화」 장 「API」 절의 「초대 만들기 — 같은 이메일이 비활성 멤버면 409」와 「웹」 절의 「초대: 409 면 안내와 그 줄로 가는 링크」를 대신한다. 초대 링크에는 이메일이 없고(`IssueInviteBody` 는 `{ role }` 뿐) 이메일은 수락 때 처음 들어온다. 그래서 409 `MEMBER_DEACTIVATED`(details `{ userId }`)는 **초대 수락**(`POST /api/v1/invites/accept`)에서 나고, 초대는 소비하지 않는다. 검사가 Better Auth 고아 정리보다 앞이라 비활성 계정의 비밀번호·핸들을 덮지 못한다(t2 판단 2, 원장 판정, t2 리뷰 탐침).
+- 웹은 가입 화면 이메일 칸 아래에 「비활성 멤버의 이메일입니다 — 관리자에게 다시 활성화를 요청하세요」를 보인다. 가입하는 사람은 멤버 탭을 볼 수 없어 그 줄로 가는 링크는 두지 않는다. 본문의 「비활성 멤버입니다 — 다시 활성화하세요」는 쓰지 않는다(관리자에게 하는 말이라)(t4 판단 1, t4 리뷰).
+- 틀렸다면(초대를 만들 때 막아야 한다면) 초대 만들기에 이메일 칸을 더해야 한다(원장 판정).
+
+**서버 — 채널 보관 (태스크 1)**
+
+- **에이전트 쪽 첨부 올리기(`/bridge/attachments`·`/runner/attachments`)는 막지 않는다.** 늦은 정본이 파일을 실을 때 업로드가 먼저 오므로, 막으면 「보관할 때 서버가 하는 일」 절의 「늦게 온 정본은 저장만」이 파일 붙은 답에서 깨진다. 업로드 자체는 채널에 아무것도 보이지 않고, 정본이 묶지 않으면 24시간 정리가 치운다. 「첨부 올리기(그 채널 대상)」는 사람 업로드만이다(t1 판단 2, t1 리뷰 이탈 A).
+- **`channel.updated` 는 보관·해제만이 아니라 모든 갱신이 workspace 룸으로 간다**(`realtime/events.ts`). 이름 바꾸기도 다른 탭 사이드바에 닿아야 하고, `channel.created`·목록 REST 가 이미 워크스페이스의 모든 채널을 줘 노출이 늘지 않는다. 채널 룸 송신은 걷어 한 소켓이 두 번 받지 않는다(t1 판단 3, t1 리뷰 이탈 B).
+- **I1 — 런 없는 정본이 보관한 채널을 겨누면 세션 키의 채널을 본다.** `onCanonical` 의 런 없는 가지에서 `parseDodokSessionKey(sessionKey)?.channelId` 가 그 채널과 같으면(스레드 하위 세션 포함) 늦은 답으로 보고 저장만 한다(릴레이·푸시 없음). 다르거나 세션 키를 풀 수 없으면 다른 채널 세션이 message 툴로 쓰는 **새 글**이라 저장 전에 `AdapterError("CHANNEL_ARCHIVED")` 로 거절한다. 러너는 `runner-adapter.ts` 가 런 채널 밖 게시를 FORBIDDEN 으로 먼저 막아 이 가지에 닿지 않는다(t1 리뷰 I1, t1 수정 보고, t1 재리뷰).
+- **브리지는 저장이 던진 계약 오류 코드를 플러그인 ack 에 그대로 싣는다**(`packages/openclaw-adapter/src/bridge/server.ts` `outboundError` — `.code` 가 shared `ErrorCode` 인 `Error` 면 그 코드·message, 아니면 지금처럼 `INTERNAL`). 그래서 모델은 `CHANNEL_ARCHIVED: channel is archived` 를 받는다. 곁효과로 다른 `AdapterError`(예: `ADAPTER_UNAVAILABLE` 「gateway connection is gone」)도 제 코드로 간다 — 플러그인은 거절 코드로 가르지 않아 바뀌는 것은 문구뿐이다(t1 수정 보고, t1 재리뷰 「곁효과」).
+- `message.send` 의 멱등 재전송(같은 `clientMsgId` 가 보관 전에 저장됨)은 409 가 아니라 그 메시지로 답한다 — ack 만 잃은 탭이 오류를 받지 않게. 새로 쓰는 것만 막는다(t1 판단 4, t1 리뷰 M1).
+- 카드 검사 순서는 `NOT_FOUND → CHANNEL_ARCHIVED → EXPIRED → …` 이고 저장·소비 전에 던진다 — 보관 해제 뒤 같은 카드(「다시 실행」 포함)를 다시 누를 수 있다(t1 판단 5).
+- 푸시 거름은 트리거마다가 아니라 `attachPushTriggers` 한곳(`TriggerLookups.channelArchived`)이다 — 멘션·승인 요청·릴레이 한도가 보관과 엇갈려 와도 모두 걸린다(t1 판단 6).
+- 막지 않는 wire 이벤트: `typing`(저장 없음), `approval.resolve`(보관이 승인을 `cancelled` 로 닫는다), `run.abort`(멈추기는 허용). 보관 해제는 이미 살아 있어도 `channel.updated` 를 한 번 낸다. `GET /channels?archived=0` 은 400 이다(`=1` 만 받는다)(t1 판단 8·9, t1 리뷰 M4).
+- shared `SearchHit.channelArchived: boolean` 이 생겼다 — 검색 결과의 「보관됨」은 이 값이다(t1).
+
+**서버 — 멤버 비활성화 (태스크 2)**
+
+- **순서는 「쓰기 → 끊기 → 세션 지우기」다**(「비활성화할 때 서버가 하는 일」 절의 「세션 지우기 → 끊기」 대신). 한 트랜잭션(권한 재검사·`deactivated_at`·푸시 구독 삭제·그 사람이 발급했거나 그 사람을 겨눈 쓰이지 않은 링크 폐기) 뒤 같은 동기 구간에서 `disconnectUser`, 그다음 Better Auth 세션을 지운다(사용자·계정은 남긴다). 쓰는 순간 `roleOf` 가 막으므로 옛 순서보다 틈이 좁다. 이미 비활성이면 쓰기 없이 끊기·세션 지우기만 다시 한다(멱등). 다시 활성화는 남은 세션을 먼저 지우고 트랜잭션에서 권한을 다시 본다(t2 판단 4, t2 리뷰).
+- **운영 사건 kind 는 `member_deactivate_failed`**(웹 「멤버 비활성화 실패」, 옛 `member_remove_failed` 를 대신한다)다. 세션 지우기가 실패하면 이 사건과 500 — 남은 세션은 비활성이라 쓸 수 없고, 다시 부르거나 다시 활성화하면 지운다(t2 판단 3).
+- 로그인 403 은 `HttpError` 를 그 자리에서 만든다 — 오류 코드당 상태가 하나라 `MEMBER_DEACTIVATED` 의 기본 상태는 409(수락)다. 403 은 비밀번호가 맞을 때만이고 그때 방금 만든 세션을 지운다(t2 판단 5, t2 리뷰).
+- 비활성 멤버의 역할 바꾸기·재설정 링크 발급은 404 다 — 둘 다 `roleOf` 로 대상을 본다. 다시 활성화한 뒤 한다(t2 판단 6).
+- 겹 방어 둘: 승인 푸시 수신자(`push/service.ts` `admins`)와 wire 역할 방(`setup.status`·`ops.event`)도 비활성 membership 을 거른다(t2 판단 7).
+- 핸들 `left-` 예약은 걷혔다 — `left-` 로 시작하는 핸들도 쓸 수 있고, 비활성 멤버의 핸들은 그 사람 몫이라 새 가입·에이전트가 쓰면 409 다. 검색 스니펫의 사람 멘션은 지금 핸들 그대로다(t2).
+
+**웹 — 채널 보관 (태스크 3)**
+
+- 카드·스레드 패널·설정 패널은 채널 화면이 내려 주는 `ChannelArchivedContext` 로 보관을 안다 — 카드마다 채널 쿼리를 구독하지 않는다. 채널 화면 밖은 「살아 있음」이 기본이다(t3 판단 1).
+- **「보관 해제」 단추는 채널 작성기 자리 하나에만 있다.** 설정 패널·스레드 패널은 「보관된 채널입니다.」 문구만 — 같은 화면에 같은 이름 단추가 둘이 되지 않게. 좁은 화면에서 설정 시트를 연 admin 은 시트를 닫아야 해제 단추가 보인다(t3 판단 2).
+- 409 `CHANNEL_ARCHIVED` 는 모든 쓰기 경로에서 「채널 다시 받기」로 이어진다 — `channel.updated` 를 놓친 탭도 읽기 전용이 된다. 보내기는 토스트 없이 보내는 중 항목의 사유(「보관된 채널입니다」, 「다시 보내기」 없이 「삭제」만), 카드·REST 는 같은 id 토스트 하나, 첨부 업로드는 칩 문구다(t3 판단 3, t3 리뷰 4a~5c).
+- 보관 목록 캐시 키는 `["archivedChannels"]` 다 — `["channels"]` 아래에 두면 사이드바 목록 무효화에 끌려간다. 오프라인 사본에는 담지 않는다(t3 판단 4).
+- 보관·보관 해제 단추의 둘째 클릭 버림은 성공 뒤에도 풀지 않는다 — 성공하면 단추가 상태 변화로 사라진다. 실패만 푼다(t3 판단 5).
+- 대화상자 제목은 「채널 보관」, 확인 단추는 「보관」이다. 탭 순서는 「에이전트」 다음 「채널」이다(t3 판단 6·7).
+- **스펙에 없던 문구 둘**: 「설정 → 채널」 머리 설명 「보관한 채널은 사이드바에 없고 읽기만 됩니다. 보관 해제하면 그대로 돌아옵니다.」, 빈 보관 채널 「메시지가 없습니다.」(멘션 권유를 뺀다)(t3 판단 6, t3 리뷰 9a).
+- 검색 대화상자의 채널 거르개와 운영 화면 사건 목록의 채널 이름은 사이드바 목록만 본다 — 보관한 채널은 거르개 후보에 없다(「모든 채널」 결과에는 「보관됨」과 함께 나온다)(t3 리뷰 「범위 밖 관찰」).
+
+**웹 — 멤버 비활성화 (태스크 4)**
+
+- **「채널 멤버 줄」 거름은 웹에 할 자리가 없다** — 웹은 채널의 사람 멤버 줄을 그리지 않는다(채널 머리·설정의 멤버 줄은 에이전트만). 사람 거름은 서버 `listMembers`(PC4)가 하고, 웹은 멘션 후보에서만 비활성 멤버를 뺀다(t4 판단 2, t4 리뷰).
+- **접근 이름 `@핸들 (비활성)` 은 멘션 칩이다.** 작성자 줄은 표시 이름 그대로 + 「비활성」 배지(접근 이름 「<이름> 비활성」)로, 보관한 에이전트의 「삭제됨」과 같은 꼴이다 — 이름을 흐리게 하지 않는다(t4 판단 3, t4 리뷰 작은 것 3).
+- 멘션 칩 태그는 `features/members/DeactivatedTag.tsx` 로 `ArchivedTag` 와 따로 둔다(글자만 다른 사본 — 태스크 3 과 겹치지 않으려고). 판정은 `features/members/deactivated.ts` `isDeactivated`(`Boolean(deactivatedAt)` — 열 이전 오프라인 사본에는 키가 없다) 한곳이다(t4 판단 4, t4 리뷰 작은 것 2).
+- 로그인 문구는 서버 message 가 아니라 코드 `MEMBER_DEACTIVATED` 로 고른다. 비활성 줄에는 역할 바꾸기·재설정 링크가 없다(서버 404). 비활성화·다시 활성화는 `useSetMemberActive` 하나이고 같은 틱 두 번 클릭은 한 요청이다(t4 판단 5·6).
+
+**검증 (원장 판정)**
+
+- 계획 태스크 5(브라우저 검증)는 따로 돌리지 않았다 — 태스크 3 리뷰(dev:fake 위 45항목 — 보관 전 흐름·Review Focus 1·4·역할·탭)와 태스크 4 리뷰(17항목 — 비활성화 전 흐름·Review Focus 5)가 계획 태스크 5 단계를 실제 화면에서 모두 덮었다(원장 판정, t3 리뷰, t4 리뷰).

@@ -66,7 +66,7 @@ OpenClaw 패키지 버전은 세 곳(`openclaw-adapter`의 `@openclaw/gateway-cl
 ```
 src/
 ├─ common.ts      Id(UUIDv7)·IsoDateTime·ErrorCode·ApiError·Result/Ack·WIRE_PROTOCOL/BRIDGE_PROTOCOL — 아래 전부가 쓰는 바닥
-├─ domain/        workspace, user, agent, channel, message, run, approval 타입 + Zod.
+├─ domain/        workspace, user, agent, channel(archivedAt — 보관한 시각, null 이면 살아 있음), message, run, approval 타입 + Zod.
 │                 `Message.interactions`(그 메시지 components 의 상호작용 기록, `MessageInteraction[]`, 최신 `INTERACTIONS_MAX`=20건,
 │                 `.default([])` — 경계를 넘는 Message 에 늘 있다).
 │                 Phase 4 ① 스레드: `Message.threadRootId?`(답글이면 그 루트 — 루트만 가리킨다)·루트의 `threadSummary?`(`ThreadSummary` { count, lastAt, agentIds ≤10 } — 답글이 있을 때만),
@@ -89,7 +89,7 @@ src/
 │                 IssueBridgeTokenResult(token `dbt_` + 43자 — 원문은 여기에만, record, pluginConfig). wire server→client `setup.status`({ status })는 `wire/` 에
 ├─ gateways/      멀티 Gateway. Gateway API 계약 — CreateGatewayBody(name trim 1~32·url `ws://`·`wss://` 만·token)·UpdateGatewayBody(모두 선택, 빈 token 은 「바꾸지 않음」)·
 │                 GatewaySummary(공유 토큰 대신 `tokenSet: true`, ownerUserId — v1 은 null)·DeleteGatewayResult{unboundAgents,deletedTokens}
-├─ ops/           Phase 3 ③. 운영 계약 — OpsEventKind(14종 — 팀의 invite_accept_failed·member_remove_failed 포함)·OpsSeverity(info·warn·error)·OpsEvent(detail 은 평평한 원시값만 — id·코드·수치, key 1~200자)·OpsUnacked{warn,error}·
+├─ ops/           Phase 3 ③. 운영 계약 — OpsEventKind(15종 — 팀의 invite_accept_failed·멤버 비활성화의 member_deactivate_failed·러너의 runner_down 포함)·OpsSeverity(info·warn·error)·OpsEvent(detail 은 평평한 원시값만 — id·코드·수치, key 1~200자)·OpsUnacked{warn,error}·
 │                 OpsEventsPage·OpsSettingsPatch(dailyRunLimit 1~10000 또는 null)·`OPS_DEFAULT_DAILY_RUN_LIMIT`=300·OpsAckResult·OpsStatus(서버·DB·디스크·Gateway{pinned,drift}·
 │                 플러그인·adapter·오늘 런 수·상한·blockedToday·unacked·workspaceId)·OpsRunsRow·OpsRunsSummary(usageTrusted 가 false 면 행에 tokens·costUsd 가 없다).
 │                 wire server→client `ops.event`({ event, unacked } — owner·admin 만)는 `wire/` 에, SystemKind `run_limit`·SystemMeta.limit{scope,limit} 은 `domain/` 에,
@@ -98,13 +98,13 @@ src/
 │                 ({ kind: mention|approval|relay_limit, channelId, title ≤80, body ≤200, url(`/c/<uuid>`·`/c/<uuid>/activity`·`/c/<uuid>/t/<uuid>`), tag ≤80 } — 서비스 워커가 경계에서 파싱한다).
 │                 wire 쪽 `presence.update`(`PresenceUpdate` { visible, channelId? }, ack 없음)는 `wire/` 의 Typing 옆에 있다
 ├─ search/        Phase 4 ①. `GET /api/v1/search` 계약 — SearchQuery(q 2~200 코드 포인트·채널·작성자·기간·커서)·SearchHit(messageId·channelId·**seq**(결과로 가기가
-│                 `?around=` 로 받는다)·threadRootId?·작성자·createdAt·snippet ≤400)·SearchResult(hits·nextCursor?·limited — 2글자 경로)·
+│                 `?around=` 로 받는다)·threadRootId?·작성자·createdAt·snippet ≤400·channelArchived — 보관한 채널의 결과)·SearchResult(hits·nextCursor?·limited — 2글자 경로)·
 │                 스니펫 표시 문자 `SEARCH_SNIPPET_OPEN`/`CLOSE`(STX·ETX — 서버는 HTML 을 만들지 않는다)
 ├─ members/       Phase 4 ② 팀. TeamRole(owner·admin·member — guest 는 없다)·roleAtLeast(owner > admin > member, 모르는 값은 false)·Password(12~256자)·DisplayName(trim 1~64)·
 │                 InviteKind(invite·reset)·Invite(원문·해시 없음, prefix)·IssueInviteBody·IssuedInvite({ invite, token, url } — 원문은 여기에만)·TokenBody·InviteLookup·
-│                 AcceptInviteBody·ResetPasswordBody·LocalLoginBody(`{ token }` 또는 `{ email, password }`)·Person(사람 목록 한 줄 — 나간 멤버는 role 없음·leftHandle)·
+│                 AcceptInviteBody·ResetPasswordBody·LocalLoginBody(`{ token }` 또는 `{ email, password }`)·Person(사람 목록 한 줄 — deactivatedAt(비활성 멤버면 시각, 아니면 null), membership 이 없으면 role 없음)·
 │                 MemberRow(+ email·role)·UpdateMemberRoleBody(admin·member)·UpdateMeBody·ChangePasswordBody. wire server→client `people.changed`({ people })는 `wire/` 에,
-│                 `User.leftHandle?`(나간 멤버의 옛 핸들)은 `domain/` 에
+│                 ErrorCode `MEMBER_DEACTIVATED`(로그인 403·초대 수락 409, details `{ userId }`)·`CHANNEL_ARCHIVED`(409)는 `common.ts` 에
 ├─ session-key.ts Phase 4 ①. 세션 키를 만들고 푸는 **유일한** 자리(서버·어댑터·플러그인이 따로 조립·정규식을 두지 않는다 — 두면 모양이 조용히 갈라진다).
 │                 `dodokSessionKey(agentId, channelId, rootId?)` → `agent:<agentId>:dodok:channel:<channelId>[:thread:<rootId>]`(channelId·rootId 소문자 —
 │                 코어가 dodok 키를 통째로 소문자로 접는다, agentId 가 규칙 밖이거나 rootId 가 빈 문자열이면 던진다) · `parseDodokSessionKey`(우리 모양이 아니면 undefined) ·
@@ -162,7 +162,7 @@ src/
 │                         브리지·러너 거절 로그도 app.ts 가 어댑터 옵션 logAddress 로 ipPrefix 를 준다(가드·스로틀 키는 전체 주소)
 ├─ wiring.ts              createServices(라우터 ⇄ 오케스트레이터 상호 참조, RunsFacade), sessionRecoverTargets(재접속 복구 대상 — 연결 id 별 Map, OpenClaw 에이전트 세션만)
 ├─ db/
-│  ├─ schema.sqlite.ts    Drizzle 스키마 (계획서 6장 테이블 + agent_sessions + approvals + attachments + bridge_tokens + ops_events + invites + runner_tokens + gateways — 마이그레이션 0000~0015,
+│  ├─ schema.sqlite.ts    Drizzle 스키마 (계획서 6장 테이블 + agent_sessions + approvals + attachments + bridge_tokens + ops_events + invites + runner_tokens + gateways — 마이그레이션 0000~0017,
 │  │                      FK ON DELETE 는 push_subscriptions.session_id·bridge_tokens.gateway_id(cascade)와 agents.gateway_id·attachments.gateway_id(set null)뿐).
 │  │                      ⚠ drizzle-kit 은 기존 표에 FK 열을 더하는 `ALTER TABLE … ADD … REFERENCES` 에서 스냅숏의 ON DELETE 를 빠뜨린다 — SQLite 가 받아도 조용히 다르게 동작하므로,
 │  │                      FK 열을 더하면 생성 SQL 의 ON DELETE 를 스냅숏과 대조하고 다르면 그 줄만 손으로 고친 뒤(SQLite 가 ALTER 를 받지 않으면 표를 다시 만든다) 머리 주석에
@@ -184,19 +184,21 @@ src/
 │  │                      enabled·owner_user_id·last_version·created_at·updated_at. agents.gateway_id(OpenClaw 에이전트의 Gateway, null 이면 연결이 빈 에이전트)·
 │  │                      runs.connection_id·approvals.connection_id(그 런·승인의 연결 — 공유 Run·Approval 에 싣지 않고 store 의 getRunConnectionId·getApprovalConnectionId 로 읽는다).
 │  │                      에이전트 보관(0015): agents.archived_at(보관한 시각, null 이면 살아 있음 — FK·인덱스 없음). 보관해도 행·핸들·채널 참여·세션 행은 남는다.
+│  │                      멤버 비활성화(0016): memberships.deactivated_at(비활성화한 시각, null 이면 활성)·users.left_handle 삭제. 채널 보관(0017): channels.archived_at(보관한 시각, null 이면 살아 있음).
+│  │                      두 열 모두 FK·인덱스 없음 — 행·핸들·이메일·채널 참여·메시지는 남고 읽는 자리가 거른다(채널 멤버는 channels/service.ts memberNotDeactivated, 쓰기는 assertChannelWritable).
 │  │                      유일: OpenClaw 에이전트 agents_openclaw_gateway_agent (gateway_id, provider_agent_id) · 러너 에이전트 agents_claude_ws_agent (workspace_id, provider, provider_agent_id) ·
 │  │                      runs_connection_provider_run (connection_id, provider_run_id) · approvals_connection_provider (connection_id, provider_approval_id) — 제공자 id 는 연결 안에서만 유일하다.
 │  │                      attachments.gateway_id(0014 — 플러그인이 올린 첨부의 Gateway. 그 Gateway 만 읽고 정본에 묶는다, Gateway 를 지우면 비어 아무도 묶지 못한다 — 러너 정본은 uploader_id 가 자기 러너 토큰인 것만 묶는다).
 │  │                      `drizzle/0012_multi_gateway.sql`·`0014_attachment_gateway.sql` 의 `ADD gateway_id … REFERENCES` 줄은 ON DELETE 를 손으로 붙였다(생성기가 빠뜨린다 — 그 파일 머리 주석).
 │  │                      팀(0008): invites — id·workspace_id·kind(invite·reset)·role(invite 만)·target_user_id(reset 만)·token_hash(sha256 hex, 유일 invites_token_hash)·prefix·
-│  │                      created_by·created_at·expires_at·used_at·used_by(FK 없음)·revoked_at — 원문 없음, 유효 = used_at·revoked_at 이 비고 만료 전. users.left_handle(나간 멤버의 옛 핸들 —
-│  │                      그 행의 handle 은 `left-<id 뒤 27자>`, email 은 NULL), 유일 인덱스 users_ws_email (workspace_id, email)(NULL 여럿 허용 — 이메일은 넣기 전에 소문자로).
-│  │                      직전 마이그레이션까지 적용된 DB 를 만드는 테스트는 행을 **SQL 로** 넣는다 — drizzle 스키마 객체는 뒤 마이그레이션의 열(`left_handle` 등)까지 INSERT 에 싣는다.
+│  │                      created_by·created_at·expires_at·used_at·used_by(FK 없음)·revoked_at — 원문 없음, 유효 = used_at·revoked_at 이 비고 만료 전.
+│  │                      유일 인덱스 users_ws_email (workspace_id, email)(NULL 여럿 허용 — 이메일은 넣기 전에 소문자로).
+│  │                      직전 마이그레이션까지 적용된 DB 를 만드는 테스트는 행을 **SQL 로** 넣는다 — drizzle 스키마 객체는 뒤 마이그레이션의 열(`deactivated_at`·`archived_at` 등)까지 INSERT 에 싣는다.
 │  │                      ops_events(0005): id·workspace_id·kind·severity·key·detail_json·count·first_at·last_at·resolved_at(끊김 사건)·acked_at, 인덱스 ops_events_ws_last(workspace_id, last_at)·
 │  │                      ops_events_open(workspace_id, kind, key, acked_at). workspaces.ops_json(0005, text 기본 `'{}'`) — { dailyRunLimit?: number | null }(Gateway 버전 기억은 gateways.last_version),
 │  │                      키가 없으면 상한 300, null 이면 무제한(json 모드가 아닌 까닭: 망가진 값을 {} 로 읽고 warn 하려고)
 │  │                      push_subscriptions(0010): session_id(구독을 등록한 Better Auth 세션, NOT NULL, FK ON DELETE CASCADE, 인덱스 push_subscriptions_session) —
-│  │                      세션 행을 지우는 모든 자리(로그아웃·비밀번호 변경·재설정·내보내기·owner 토큰 교체·만료 청소)가 구독도 지운다. 0010 은 표를 다시 만들고 옛 행(세션 모름)을 버린다 —
+│  │                      세션 행을 지우는 모든 자리(로그아웃·비밀번호 변경·재설정·비활성화·owner 토큰 교체·만료 청소)가 구독도 지운다. 0010 은 표를 다시 만들고 옛 행(세션 모름)을 버린다 —
 │  │                      웹이 앱을 열 때 다시 등록한다(`drizzle/0010_push_session.sql` 은 손으로 쓴 SQL — 생성기의 ALTER 는 SQLite 가 받지 않는다. 까닭은 그 파일 머리 주석).
 │  │                      새 열을 더하는 마이그레이션을 내면 `test/db.test.ts` 의 부분 마이그레이션 테스트를 돌려, 행을 스키마 객체로 INSERT 하는 자리가 남았는지 본다 —
 │  │                      남았으면 위 「행을 SQL 로 넣는다」 규칙대로 바꾼다(스키마 객체 INSERT 는 아직 없는 새 열까지 실어 그 테스트가 깨진다).
@@ -207,12 +209,13 @@ src/
 ├─ auth/
 │  ├─ index.ts            Better Auth(이메일 로그인·가입·비밀번호 변경·세션 폐기·로그아웃 HTTP 경로 비활성 — disabledPaths, routes.ts 허용 목록 밑의 겹 방어), 세션 토큰 검증(userId·sessionId)
 │  ├─ owner.ts            부팅 때 owner 보장 — LOCAL_AUTH_TOKEN 이 owner 비밀번호, 바뀌면 기존 세션을 끊는다
-│  ├─ roles.ts            Phase 4 ② 팀. 역할 검사의 유일한 자리(매트릭스의 정본은 팀 스펙 「역할과 권한」 절 표) — requireSession(세션 + membership, 없거나 모르는 역할이면 401,
+│  ├─ roles.ts            Phase 4 ② 팀. 역할 검사의 유일한 자리(매트릭스의 정본은 팀 스펙 「역할과 권한」 절 표) — requireSession(세션 + 활성 membership, 없거나 비활성이거나 모르는 역할이면 401,
 │  │                      `request.user` = { id, workspaceId, role, sessionId })·requireRole(ctx, min — 요청마다 membership 을 읽는다, 모자라면 403 FORBIDDEN)·assertRole(핸들러 안에서 다시 읽기)·
-│  │                      roleOf·sessionUser·sessionTokenOf · 본문 필드로 가르는 목록 둘 MEMBER_EDITABLE_CHANNEL_FIELDS(name·topic — `POST`·`PATCH /channels`)·
+│  │                      roleOf(비활성 membership 이면 undefined — 비활성은 이 한 함수에서 막힌다: REST·wire 핸드셰이크·connection·재설정 링크·채널에 사람 넣기)·
+│  │                      membershipOf(비활성까지 내는 원시 조회 — 로그인 403·멤버 관리·초대 수락만)·sessionUser·sessionTokenOf · 본문 필드로 가르는 목록 둘 MEMBER_EDITABLE_CHANNEL_FIELDS(name·topic — `POST`·`PATCH /channels`)·
 │  │                      MEMBER_EDITABLE_AGENT_MEMBER_FIELDS(memberType·memberId·aliases — 채널 멤버 `POST`·`PATCH`)과 hasFieldOutside(원문 본문 키 — 목록 밖이 하나라도 있으면 admin, 새 필드의 기본은 admin).
 │  │                      requireSession 이 여기 있는 까닭: routes.ts 와 나누면 서로를 import 한다
-│  └─ routes.ts           POST /api/v1/auth/local(`{ token }` = owner, `{ email, password }` = 멤버 — 이메일은 소문자로, `OWNER_EMAIL` 이메일 로그인·membership 없는 사용자는 같은 401 한 문구, IP 당 분당 LIMITS.localLoginPerMin)·GET me(role 포함)·POST logout(세션 행을 지우고 disconnectSessions 로 그 세션 소켓을 끊는다),
+│  └─ routes.ts           POST /api/v1/auth/local(`{ token }` = owner, `{ email, password }` = 멤버 — 이메일은 소문자로, `OWNER_EMAIL` 이메일 로그인·membership 없는 사용자는 같은 401 한 문구, 비밀번호가 맞은 비활성 멤버는 방금 만든 세션을 지우고 403 `MEMBER_DEACTIVATED`, IP 당 분당 LIMITS.localLoginPerMin)·GET me(role 포함)·POST logout(세션 행을 지우고 disconnectSessions 로 그 세션 소켓을 끊는다),
 │                         `/api/auth/*`(Better Auth, LIMITS.betterAuthPerMin) — 넘으면 429 + 사건 ratelimit, 허용 목록 BETTER_AUTH_HTTP_PATHS(`/ok`)만 통과하고 나머지는 404,
 │                         requireOwner(= roles.ts 의 requireRole(ctx, "owner")) · requireSession·sessionUser 는 roles.ts 에서 다시 내보낸다(Bearer 또는 dodok.session 쿠키 — 사용자를 확인한 뒤 REST 상한 `request.server.restLimits` 를 센다),
 │                         createIpLimit — 로그인(`/auth/local`·`me/password`)·초대 경로(lookup·accept·reset)가 하나씩
@@ -237,11 +240,16 @@ src/
 │  │                      service.ts(상관 — 승인이 온 연결의 에이전트·findOpenRunBySession(연결, 세션 키) → 저장 → APPROVAL_REQUESTED/RESOLVED 런 이벤트 → 버스,
 │  │                      resolve 는 승인 설계 4.4 의 문지기 검사 뒤 승인이 온 연결로 어댑터 RPC).
 │  │                      REST 라우트는 없다 — 요구·확정은 wire 로만 오간다
-│  ├─ channels/           CRUD·멤버(에이전트 promptOverride·autoRespond·aliases, 사람은 membership 이 있는 사람만 — 나간 사람 404)·프롬프트 리비전(역할: 만들기·`PATCH` 는 name·topic 밖 필드면 admin, 채널 멤버는 aliases 밖 필드면 admin, 「새 대화」는 admin — auth/roles.ts),
+│  ├─ channels/           CRUD·멤버(에이전트 promptOverride·autoRespond·aliases, 사람은 활성 membership 이 있는 사람만 — 없거나 비활성이면 404)·프롬프트 리비전(역할: 만들기·`PATCH` 는 name·topic 밖 필드면 admin, 채널 멤버는 aliases 밖 필드면 admin, 「새 대화」는 admin — auth/roles.ts),
 │  │                      사람의 자동 참여 joinChannelIfAbsent·사람 메시지의 멘션 후보 userMessageParticipants(채널 밖의 워크스페이스 사람 + 채널 참가자)·에이전트 헤더의 channelParticipants,
 │  │                      채널 프롬프트 동기화 prompt-sync.ts(OpenClaw config.set — 바꿀 때 그 채널 에이전트의 켜진 Gateway 마다, 에이전트를 넣거나 옮겨 Gateway 가 채널에 처음 들어올 때 그 Gateway 에,
 │  │                      플러그인 hello 때 그 Gateway 의 채널들을 다시 — watchPluginHellos, app.ts 가 건다), 「새 대화」(resetAgentSession —
-│  │                      `POST …/agents/:agentId/reset?threadRootId=` 면 그 스레드 세션만 reset·그 스레드 런만 abort, info 도 스레드에. 루트가 아니면 404, UUID 가 아니면 400)
+│  │                      `POST …/agents/:agentId/reset?threadRootId=` 면 그 스레드 세션만 reset·그 스레드 런만 abort, info 도 스레드에. 루트가 아니면 404, UUID 가 아니면 400).
+│  │                      보관(admin 이상): `POST /channels/:id/archive`(archiveChannel — archived_at 을 쓰고 열린 런을 대기 런부터 orchestrator.abort 로 닫는다, 멱등)·`/unarchive`(unarchiveChannel),
+│  │                      `GET /channels` 는 살아 있는 채널만·`?archived=1` 은 보관한 것만(누구나). 채널 갱신(보관·해제 포함)의 `channel.updated` 는 workspace 룸으로 간다.
+│  │                      쓰기 검사는 assertChannelWritable 한 함수(없으면 404, 보관이면 409 CHANNEL_ARCHIVED — PATCH·멤버 넣기·빼기·설정·「새 대화」·wire message.send·카드 checkInteraction·사람 첨부 올리기),
+│  │                      던지지 않는 판정은 isChannelArchived(런 관문·늦은 정본·푸시). 사람 멤버의 비활성 거름은 SQL 조건 memberNotDeactivated 한 곳 — listMembers·channelParticipants
+│  │                      (includeInactive 면 옛 글의 멘션 풀기용으로 비활성 멤버·보관한 에이전트도 싣는다)·userMessageParticipants 가 쓴다
 │  ├─ agents/             에이전트 등록·수정(admin 이상, 핸들은 members/handles.ts 의 assertHandleFree), GET /agents/discover(Gateway agents.list, admin 이상). 등록은 providerAgentId 를 shared `isRegistrableAgentId`(소문자)로 400 VALIDATION,
 │  │                      OpenClaw 는 등록·찾기 모두 gatewayId 필수(워크스페이스의 Gateway 가 아니면 400, 찾기는 꺼진 Gateway 면 ADAPTER_UNAVAILABLE), 같은 Gateway 에 같은 id 면 409.
 │  │                      `PUT /agents/:id/gateway`(owner) — 다른 Gateway 로 옮기기(대상에 같은 id 409, 러너 에이전트 400). 응답 Agent 에 OpenClaw 면 gateway({id,name} 또는 null),
@@ -284,6 +292,8 @@ src/
 │  │                      스레드 런(Phase 4 ①): 세션 큐는 (연결, 세션 키) 단위라 채널과 병렬·같은 스레드는 직렬. 붙은 플러그인이 있고 그 hello 에 threads 가 없으면 곧바로 error PLUGIN_OUTDATED
 │  │                      (붙은 플러그인이 없으면 채널 런처럼 기다린다), 저장된 providerAgentId 가 규칙 밖이면 INVALID_AGENT_ID(다시 실행 버튼 없음). 정본은 세션 키의 스레드·threadId·런의 스레드가
 │  │                      같아야 저장하고(다르면 VALIDATION — 어댑터가 ack 에 INTERNAL 로 싣는다), 에이전트·스냅샷·run_error 메시지의 threadRootId 는 런에서 온다.
+│  │                      보관: archivedTarget(run)(에이전트 보관 또는 채널 보관)을 디스패치 가드와 런 있는 늦은 정본(저장만 — 릴레이·푸시 없음)이 함께 본다. 런 없는 정본이 보관한 채널을 겨누면
+│  │                      세션 키의 채널이 같을 때(스레드 하위 세션 포함)만 저장만 하고, 다르거나 풀 수 없으면 저장 전에 AdapterError CHANNEL_ARCHIVED(브리지가 그 코드를 ack 에 싣는다).
 │  │                      store.ts(runs·run_events — runs.thread_root_id ↔ Run.threadRootId), context.ts(인바운드 InboundDeliver 조립 — 트리거 첨부를 싣고, 이전 메시지 줄의 첨부는 `[이미지 N장]`·`[파일: 이름]` 자리표시로만.
 │  │                      채널 런 recentMessages 는 thread_root_id IS NULL 만, 스레드 런은 recentMessages 가 비고 context.thread = 루트(THREAD_ROOT_TEXT_MAX 4000자)·그 스레드 normal 답글 최근 20(트리거 앞 — 상호작용이면 카드까지)),
 │  │                      media-lines.ts(순수: Gateway 폴백 스냅샷의 단독 `MEDIA:` 줄 걷기 — 줄이 있으면 finalizing 을 줄당 30s, 최대 120s 늘린다), timers.ts, routes.ts(런 목록·상세·이벤트 REST)
@@ -296,10 +306,10 @@ src/
 │  │                      지금 allowPairs 로 다시 본다(턴 상한·반복은 안 본다))
 │  ├─ push/               Phase 2 ④. vapid.ts(키: VAPID_PUBLIC_KEY·VAPID_PRIVATE_KEY 둘 다 있으면 그것, 아니면 `<DATA_DIR>/vapid.json`(없으면 만들고 0600,
 │  │                      망가졌으면 덮어쓰지 않고 던진다)) · presence.ts(소켓별 「보이는가·보는 채널」, 메모리뿐 — isWatching) ·
-│  │                      triggers.ts(순수: message.created·approval.requested → 받을 사람·알림 내용 — 멘션(자기 멘션은 작성자가 사람일 때만 뺀다)·승인 요청(워크스페이스의 owner·admin 전원 — `TriggerLookups.admins`)·relay_limit,
+│  │                      triggers.ts(순수: message.created·approval.requested → 받을 사람·알림 내용 — 멘션(자기 멘션은 작성자가 사람일 때만 뺀다)·승인 요청(워크스페이스의 활성 owner·admin 전원 — `TriggerLookups.admins`)·relay_limit,
 │  │                      제목 늘 `dodok`, 본문은 누가·어디·무엇만. 스레드 멘션은 「@dev가 #채널 스레드에서 불렀습니다」·url `/c/<id>/t/<rootId>`·tag `mention:t:<rootId>`
 │  │                      (`mention:<channelId>:<rootId>` 는 81자로 상한 80 을 넘는다), 스레드 안 relay_limit 은 tag 는 채널 그대로·문구와 링크만 스레드) ·
-│  │                      service.ts(구독 upsert(endpoint 유일 — 다른 사용자·세션 것이면 지금 사용자·세션으로 옮긴다)·해지·목록(등록한 세션이 만료 전인 것만), createTriggerLookups(DB 조회), attachPushTriggers(버스 배선 —
+│  │                      service.ts(구독 upsert(endpoint 유일 — 다른 사용자·세션 것이면 지금 사용자·세션으로 옮긴다)·해지·목록(등록한 세션이 만료 전인 것만), createTriggerLookups(DB 조회), attachPushTriggers(버스 배선 — 보관한 채널을 겨눈 알림은 여기 한곳에서 거른다(TriggerLookups.channelArchived),
 │  │                      같은 승인 id 는 한 번만, 최근 1000개), createPushDispatcher(보고 있으면 거름 → 구독마다 병렬 발송, TTL 3600·approval 만 urgency high·topic=tag 의 sha256 앞 32자,
 │  │                      404·410 삭제 / 400·403·413 error / 그 밖 warn, 로그에 keys·endpoint·본문 없음, drain), webPushSender(web-push, 요청 timeout 10s)) ·
 │  │                      routes.ts(`GET /api/v1/push/vapid-public-key` · `POST`·`DELETE /api/v1/push/subscriptions` — 세션, user-agent 512자)
@@ -345,7 +355,7 @@ src/
 │  │                      service.ts(createOpsService — 다른 모듈의 유일한 입구 record·resolve·ack·list·countsSince·unacked·sweep·close. 실패는 logger.error 뒤 null(원래 동작을 막지 않는다),
 │  │                      ops_events 는 이 서비스로만 쓴다(unacked 메모리 캐시). 기록마다 로그 `event: "ops.<kind>"` 와 owner·admin 소켓 `ops.event` — 같은 줄은 OPS_EMIT_COALESCE_MS(1s) 창으로 모은다) ·
 │  │                      settings.ts(workspaces.ops_json 읽기·패치 — 모르는 키는 보존) · ip.ts(ipPrefix — IPv4 /24·IPv6 /48) ·
-│  │                      budget.ts(createRunGate — 런을 만드는 모든 경로가 지나는 관문 check·enqueue: 워크스페이스 상한 먼저, 그다음 채널 dailyRunLimit. enqueue 는 그 앞에 에이전트가 활성인지(isAgentActive) 본다 — 런 행 INSERT 까지 await 가 없어 보관 쓰기 뒤의 계획은 런을 만들지 못한다. 막히면 그 채널에 오늘 같은 scope 의
+│  │                      budget.ts(createRunGate — 런을 만드는 모든 경로가 지나는 관문 check·enqueue: 워크스페이스 상한 먼저, 그다음 채널 dailyRunLimit. enqueue 는 그 앞에 에이전트가 활성인지(isAgentActive)·채널이 보관이 아닌지(isChannelArchived) 본다 — 런 행 INSERT 까지 await 가 없어 보관 쓰기 뒤의 계획은 런을 만들지 못한다. 막히면 그 채널에 오늘 같은 scope 의
 │  │                      run_limit 시스템 메시지가 없을 때만 하나 + 사건 run_limit. 스레드 런이면 그 알림을 스레드에 — 「오늘 이미 남겼나」는 채널 단위) ·
 │  │                      limits.ts(LIMITS — 레이트리밋 숫자의 유일한 자리. `llms.txt` 의 IP 버킷 llmsTxtPerMin 도) · ratelimit.ts(TokenBucket·KeyedLimiter, 기본 시계 monotonicNow) ·
 │  │                      http-limits.ts(createRestLimits — REST·업로드 상한, recordRateLimit — 사건 key 는 라우트 패턴) ·
@@ -362,22 +372,24 @@ src/
 │  │                      invites.ts(invites 저장소: issueInvite(7일)·issueResetLink(24시간 — 대상의 앞선 재설정 링크를 같은 트랜잭션에서 폐기)·canIssueResetLink(발급 규칙 — 발급·조회·수락이 같이 쓴다)·
 │  │                      resetLinkUsable(조회·수락 때 발급자·대상의 지금 역할로 canIssueResetLink)·listPendingInvites(kind invite 만)·getPendingInvite·
 │  │                      revokeInvite·findValidInvite(무효 까닭은 가르지 않는다)·claimInvite(`used_at IS NULL AND revoked_at IS NULL AND expires_at > now` 원자적 잡기)·unclaimInvite(`used_at` 만 되돌린다)) ·
-│  │                      accept.ts(acceptInvite — 초대 확인 → 같은 이메일의 수락이 이 프로세스에서 진행 중이면 409(DB 연결별 표시, 첫 await 전) → Better Auth 쪽 이메일(우리 users 행이 없고 owner 이메일이 아닌 고아 Better Auth 사용자는 세션·계정과 함께 지우고 warn — 수락이 Better Auth 생성 뒤·우리 행 앞에서 죽은 자리)·비밀번호 해시(await) → await 없이 핸들·이메일 검사와 claim → Better Auth 내부 어댑터로 사용자·credential →
+│  │                      accept.ts(acceptInvite — 초대 확인 → 같은 이메일의 수락이 이 프로세스에서 진행 중이면 409(DB 연결별 표시, 첫 await 전) → Better Auth 쪽 이메일(그 이메일이 비활성 멤버의 것이면 먼저 409 MEMBER_DEACTIVATED details { userId } — 초대 미소비 · 우리 users 행이 없고 owner 이메일이 아닌 고아 Better Auth 사용자는 세션·계정과 함께 지우고 warn — 수락이 Better Auth 생성 뒤·우리 행 앞에서 죽은 자리)·비밀번호 해시(await) → await 없이 핸들·이메일 검사와 claim → Better Auth 내부 어댑터로 사용자·credential →
 │  │                      users·memberships 한 트랜잭션 → 세션 발급 { userId, sessionToken }. 실패하면 Better Auth 사용자 삭제·claim 되돌림, 되돌리기도 실패하면 운영 사건 invite_accept_failed ·
 │  │                      resetPassword — resetLinkUsable 을 못 지나면 404(링크 미소비), 비밀번호 교체 → 대상 세션 삭제 → 곧바로 disconnectUser → 새 세션 · normalizeEmail(소문자 — 이메일을 넣거나 찾는 경로는 모두 지난다)) ·
 │  │                      account.ts(updateDisplayName · changePassword — 현재 비밀번호 확인(틀리면 400 VALIDATION field current), 이 세션을 뺀 세션 삭제 → 지운 세션만 disconnectSessions) ·
-│  │                      handles.ts(assertHandleFree — 핸들 검사의 유일한 자리: `left-`(LEFT_HANDLE_PREFIX, 나간 사람 몫 예약)는 400 VALIDATION, 사람(users)·에이전트(agents) 어느 쪽과 겹쳐도 409,
-│  │                      둘 다 field handle. 가입·에이전트 등록·수정이 부른다) ·
+│  │                      handles.ts(assertHandleFree — 핸들 검사의 유일한 자리: 사람(users — 비활성 멤버 포함)·에이전트(agents) 어느 쪽과 겹쳐도 409 field handle.
+│  │                      가입·에이전트 등록·수정이 부른다) ·
 │  │                      service.ts(listMembers · changeRole(owner — admin → member 면 그 사람이 발급한 쓰이지 않은(`used_by IS NULL`) 링크 폐기) ·
-│  │                      removeMember — Better Auth 삭제(세션·계정·사용자) → 트랜잭션(역할 재확인·membership·채널 참여·푸시 구독 삭제, 겨눈 재설정·발급한 링크 폐기, handle → leftHandleOf·left_handle·email NULL)
-│  │                      → disconnectUser, 트랜잭션이 실패하면 소켓을 끊고 운영 사건 member_remove_failed 뒤 500 · leftHandleOf(`left-` + id 뒤 27자)) ·
-│  │                      people.ts(listPeople — 나간 멤버 포함, 그 줄은 role 없음·leftHandle, 이메일은 싣지 않는다 · broadcastPeople — 버스 `people.changed` → 워크스페이스 방) ·
+│  │                      deactivateMember — 한 트랜잭션(권한 재검사·deactivated_at·푸시 구독 삭제·그 사람이 발급했거나 겨눈 쓰이지 않은 링크 폐기) → 같은 동기 구간에서 disconnectUser →
+│  │                      Better Auth 세션 삭제(사용자·계정은 남긴다. 실패하면 운영 사건 member_deactivate_failed 뒤 500 — 이미 비활성이면 끊기·세션 삭제만 다시 해 이어진다) ·
+│  │                      reactivateMember — 남은 세션 삭제 → 트랜잭션 재검사·deactivated_at = null(역할·채널 참여 그대로, 폐기된 링크는 폐기된 채). 둘 다 그 사람이 참여한 채널마다 channel.member.changed) ·
+│  │                      people.ts(listPeople — 비활성 멤버 포함(deactivatedAt), membership 이 없으면 role 없음, 이메일은 싣지 않는다 · broadcastPeople — 버스 `people.changed` → 워크스페이스 방) ·
 │  │                      routes.ts(registerMemberRoutes — `POST`·`GET /api/v1/invites`·`DELETE /api/v1/invites/:id`(admin 이상, admin 초대의 발급·폐기는 owner)·
 │  │                      `POST /api/v1/members/:userId/reset-link`(admin 은 member 에게만, owner 는 owner 를 뺀 모두 — 발급 둘은 사용자당 LIMITS.inviteIssuePerMin) ·
 │  │                      `POST /api/v1/invites/lookup`·`accept`·`reset`(로그인 없이, 토큰은 본문으로, 셋이 초대 경로 IP 버킷 LIMITS.invitePublicPerMin — 수락·재설정은 200 { sessionToken, user } + 쿠키) ·
 │  │                      `PATCH /api/v1/me` · `POST /api/v1/me/password`(로그인 IP 버킷, owner 는 403)) ·
 │  │                      manage.routes.ts(registerMemberManageRoutes — `GET /api/v1/people`(세션) · `GET /api/v1/members`(admin 이상) · `PATCH /api/v1/members/:userId`(owner) ·
-│  │                      `DELETE /api/v1/members/:userId`(admin 은 member 만, owner 는 owner 를 뺀 모두)). 가입·역할·표시 이름·내보내기 뒤 broadcastPeople
+│  │                      `POST /api/v1/members/:userId/deactivate`·`/reactivate`(admin 은 member 만, owner 는 owner 를 뺀 모두, 200 { member } — 비활성 대상의 역할 바꾸기·재설정 링크는 404)).
+│  │                      가입·역할·표시 이름·비활성화·다시 활성화 뒤 broadcastPeople
 │  └─ adapter/            GET /api/v1/adapter/status
 ├─ adapters/
 │  ├─ connection.ts       connectionIdOf(에이전트 → 연결 id — OpenClaw 는 gateway_id, 러너는 runner_token_id) · agentConnectionId · agentOnConnection(어댑터 이벤트의 연결로
@@ -389,14 +401,14 @@ src/
 └─ realtime/
    ├─ bus.ts              ServerBus — 모듈 → realtime 타입드 이벤트
    ├─ socket.ts           wire 인증(세션 토큰·프로토콜)·사용자당 동시 소켓 상한(LIMITS.socketsPerUser)·룸(channel:<id>, user:<id>, workspace:<id>, session:<Better Auth session id> — 토큰 원문은 소켓에 두지 않는다)·connection 에서 membership·세션(행과 만료 시각 — sessionAlive)을 다시 본다·
-   │                      disconnectUser(내보내기·재설정 수락)·disconnectSessions(me/password — 지운 세션만, 로그아웃 — 이 세션. 빈 목록이면 아무것도 안 한다: `io.in([])` 는 모든 소켓이다)·
+   │                      disconnectUser(비활성화·재설정 수락)·disconnectSessions(me/password — 지운 세션만, 로그아웃 — 이 세션. 빈 목록이면 아무것도 안 한다: `io.in([])` 는 모든 소켓이다)·
    │                      sweepExpiredSessions(만료된 세션 행을 지우고 그 세션 소켓을 끊는다 — app.ts 가 부팅 때 한 번, 그 뒤 SESSION_SWEEP_INTERVAL_MS(1분)마다. 소켓은 핸드셰이크·connection 에서만 세션을 보므로 REST 없이 wire 만 쓰는 탭은 이것이 끊는다)·
    │                      소켓마다 토큰 버킷 넷(WIRE_BUCKET — heavy·replay·approval·chatter, 넘으면 ack RATE_LIMITED·ack 없는 이벤트는 버림·사건 ratelimit `wire:<이벤트>`)·
    │                      클라이언트 → 서버 핸들러(subscribe 는 lastSeq 가 없으면 루트만, 있으면 lastSeq 이후 루트·답글 ≤200 + 옛 루트 요약 threadRoots · message.send 는 threadRootId 를 넘긴다,
    │                      ack 에 그 채널의 **미해결** 승인 pendingApprovals · approval.resolve 는 승인 서비스로 넘긴다 ·
    │                      presence.update 는 PresenceUpdate 로 파싱해 push presence 에 — 실패는 버린다, 끊기면 지운다)
    ├─ cookie-auth.ts      wire 핸드셰이크의 dodok.session 쿠키 파싱(웹은 토큰을 다루지 않는다)
-   ├─ events.ts           bus → 룸 팬아웃(`setup.status` 는 owner, `ops.event` 는 owner·admin 사용자 룸에만 — roleRooms 가 보낼 때마다 membership 을 다시 읽어 역할 변경을 따른다, `people.changed`·`agents.changed` 는 워크스페이스 룸), 소켓별 미전송 500 초과 시 run.event 버림 + run.state { resync }.
+   ├─ events.ts           bus → 룸 팬아웃(`setup.status` 는 owner, `ops.event` 는 owner·admin 사용자 룸에만 — roleRooms 가 보낼 때마다 membership 을 다시 읽어 역할 변경을 따르고 비활성 membership 은 거른다, `people.changed`·`agents.changed`·`channel.updated` 는 워크스페이스 룸), 소켓별 미전송 500 초과 시 run.event 버림 + run.state { resync }.
    │                      message.created 는 withInteractions, message.updated 는 hydrateForClient(+ 루트 스레드 요약)로 하이드레이션한다 — 그 두 버스 이벤트의 유일한 소비자라
    │                      emit 자리가 늘어도 저절로 덮인다(components v1 스펙 11장 Ruling 1).
    │                      approval.requested·resolved 는 channel.created 와 함께 **워크스페이스 룸**으로 — 지금 구독 중이 아닌 채널의 승인도 닿아야 한다(설계 5.4·Ruling 7)
@@ -535,6 +547,7 @@ src/
 │  │                      verifyToken 인증(통과면 { tokenId, gatewayId } — 던지면 거절, 실패 카운터에는 세지 않는다) → acceptGateway(켜진 Gateway 인가 — 아니면 같은
 │  │                      `token mismatch` 로 거절하되 실패로 세지 않는다: 꺼진 Gateway 의 플러그인은 백오프로 계속 다시 붙는다) → 세션이 tokenId·gatewayId 를 기억 → hello →
 │  │                      inbound.deliver·config.set·agents.list 요청, outbound.message·status 수신, close 때 system.notice { reason: "shutdown" }.
+│  │                      outbound.message 거절 ack(outboundError)는 던진 `Error` 의 `.code` 가 shared ErrorCode 면 그 코드·message(예: CHANNEL_ARCHIVED), 아니면 INTERNAL.
 │  │                      Gateway 마다 자리(forGateway(id) — 같은 id 에 같은 객체): 활성 플러그인 하나(새 hello 는 같은 Gateway 의 앞 연결만 replaced)·ready 대기·outboundId 중복 흡수.
 │  │                      disconnectGateway(id, { forget? }) 는 그 Gateway 의 소켓만 끊고 ready 대기를 끝낸다(끄기·삭제).
 │  │                      거절 로그 `token mismatch from <주소>` 는 주소별 1분에 한 줄(넘친 수는 `(N more suppressed)`), revokeSessions(tokenId) 는 사유 revoked 로 그 토큰의 소켓만 끊는다
@@ -645,9 +658,10 @@ src/
 │  ├─ createApp.ts         앱 하나의 QueryClient·Router·onUnauthorized(`/login?next=` 로 replace, `ignoreBlocker` — 원문 대화상자의 이동 막기를 건너뛴다. 로그인 없이 여는 화면(isPublicPath — `/join/`·`/reset/`)이면 상태만 비우고 머문다) (테스트는 메모리 히스토리를 넘긴다). notify(승인 알림의 화면 사정 + 채널 이동 알림 onLocationChange —
 │  │                       router.subscribe("onResolved")), 서비스 워커의 navigate 메시지 → safeNotificationUrl → router.navigate, captureInstallPrompt
 │  ├─ boot.tsx             bootApp — onlineManager.setOnline(navigator.onLine) → 오프라인 사본 복원(최대 1초) → registerSessionReset(사본 지우기) → 렌더. main 과 테스트가 같은 것을 부른다
-│  ├─ router.tsx           라우트(/login·/join/$token·/reset/$token(둘은 가드 밖)·가드 레이아웃·/·/c/$channelId(+/settings·/activity·/t/$rootId)·/settings 레이아웃 라우트(자식 /·account·notifications·agents·members·connection·operations — features/settings-shell)·옛 /agents → /settings/agents(beforeLoad redirect replace), scrollToTopSelectors 에 `#settings-scroll`), safeNext, isPublicPath(가드 밖 두 라우트 판정 — `/join/`·`/reset/`), 라우트 코드 분할
+│  ├─ router.tsx           라우트(/login·/join/$token·/reset/$token(둘은 가드 밖)·가드 레이아웃·/·/c/$channelId(+/settings·/activity·/t/$rootId)·/settings 레이아웃 라우트(자식 /·account·notifications·agents·channels·members·connection·operations — features/settings-shell)·옛 /agents → /settings/agents(beforeLoad redirect replace), scrollToTopSelectors 에 `#settings-scroll`), safeNext, isPublicPath(가드 밖 두 라우트 판정 — `/join/`·`/reset/`), 라우트 코드 분할
 │  ├─ queryClient.ts       Query 기본값 — 전역 오류 토스트(`meta.silent` 로 끔, 폼 오류 VALIDATION·CONFLICT 제외), 재시도는 네트워크·5xx 만, 401 → 로그인.
 │  │                       403 FORBIDDEN 은 「권한이 없습니다」(토스트 id `forbidden` 하나) + `silent` 와 무관하게 me 를 다시 받아 관리 화면을 잠근다(역할이 내려간 직후 남은 버튼).
+│  │                       409 CHANNEL_ARCHIVED 는 「보관된 채널입니다」(토스트 id `channel-archived` 하나) + 채널 상세·사이드바 목록을 다시 받는다(보관을 놓친 탭이 읽기 전용으로).
 │  │                       me 는 토스트하지 않고, 값이 없는 me 의 401(첫 가드)은 가드에 맡기며, 값을 가진 me 의 401(사본으로 뜬 뒤 세션 만료)은 onUnauthorized
 │  ├─ session.ts           로그아웃·401 정리(resetClientState — 등록된 정리 훅: 오프라인 사본 지우기·dropLocalPush)와 Query 밖 REST 401 통지
 │  ├─ fileDrop.ts          앱 수준 파일 드롭 막기(브라우저가 파일을 열어 앱을 떠나지 않게) + 「이미지는 입력 칸에 놓아 주세요」 한 문구·한 토스트 id. 작성기가 받은 드롭은 건드리지 않는다
@@ -660,7 +674,7 @@ src/
 │     ├─ Sidebar.tsx       워크스페이스 이름·검색 칸(누르면 검색 대화상자, `⌘K` 표시)·채널 목록·「채널 만들기」·하단 연결 상태와 「설정」(lucide 톱니 + 글자 — `/settings`).
 │     │                    admin 이상이면 「설정」에 확인 안 한 운영 사건 배지(features/settings-shell OpsBadge — ops/status 의 unacked warn + error, 0 이면 없음, 100 이상 「99+」,
 │     │                    sr-only 「(확인 안 한 사건 n건)」, `ops.event` 로 실시간, 주기 재조회는 없다). 에이전트·멤버·연결·운영·알림·내 계정·로그아웃은 설정 탭에 있다
-│     ├─ ChannelHeader.tsx 채널 이름·주제, 에이전트 아바타 묶음(+N), 설정 패널 여닫기, 좁은 화면 메뉴 버튼
+│     ├─ ChannelHeader.tsx 채널 이름(보관한 채널이면 「보관됨」)·주제, 에이전트 아바타 묶음(+N), 설정 패널 여닫기, 좁은 화면 메뉴 버튼
 │     ├─ Banners.tsx       wire 끊김·`rejected`·`protocol_mismatch` 배너 + OpenClaw 미연결 배너(켜진 Gateway 가운데 끊긴 것 — 하나면 「「<이름>」」, 둘 이상이면 「<N>개」. 둘은 함께 보일 수 있다,
 │     │                    owner 에게는 「연결 설정 보기」 링크) + 오프라인 배너
 │     │                    「오프라인 — 저장된 내용을 보여 줍니다」(useOffline — 그때는 「서버에 다시 연결하는 중…」을 내지 않는다)
@@ -676,11 +690,11 @@ src/
 │                          「채널 목록 열기 (확인 안 한 운영 사건 N)」(member 이거나 넓은 화면이면 ops API 를 부르지 않는다)
 ├─ api/
 │  ├─ http.ts              같은 출처 REST(`/api/v1`) — 인증은 httpOnly 쿠키, 토큰을 다루지 않는다. ApiRequestError(서버 봉투의 `details` 까지 — 폼은 formErrors.ts `detailField` 로 칸을 가른다)·NetworkError
-│  ├─ queries.ts           쿼리 키 `qk` 와 공용 훅(me·channels·channel·members·agents·adapter). 운영 키 opsStatus·opsRuns(days)·opsEvents(severity)·opsEventsAll,
+│  ├─ queries.ts           쿼리 키 `qk` 와 공용 훅(me·channels·channel·members·agents·adapter, 보관한 채널 archivedChannels(`GET /channels?archived=1` — 키를 `channels` 밖에 둬 사이드바 목록 무효화에 끌려가지 않고 오프라인 사본에도 없다)). 운영 키 opsStatus·opsRuns(days)·opsEvents(severity)·opsEventsAll,
 │  │                       스레드 키 thread(ch, root)·threads(ch — 무효화 앞머리)·threadsAll·recentThreads(채널 → 마지막으로 연 루트) 도 여기. useCachedMe — me 캐시를 관찰자 없이 캐시 구독으로 읽는다(useIsOwner 는 그 `role === "owner"`, useRole·useCanManage(admin 이상 — 관리 동작을 보일지), 가입 폼의 「지금 로그인한 계정」 줄).
-│  │                       팀: usePeople(`GET /people` — 작성자·@ 후보·나간 멤버, 키 people), 멤버 표·대기 초대는 키 앞머리 `team`(teamMembers·invites)
+│  │                       팀: usePeople(`GET /people` — 작성자·@ 후보, 비활성 멤버도 deactivatedAt 과 함께, 키 people), 멤버 표·대기 초대는 키 앞머리 `team`(teamMembers·invites)
 │  │                       (useSyncExternalStore — useMe 관찰자를 두면 401 정리 뒤 me 를 다시 불러 로그인 이동을 되돌린다). role 이 없는 옛 me 는 owner 가 아니다
-│  └─ formErrors.ts        VALIDATION·CONFLICT 를 폼 칸·문구로 잇는 도우미
+│  └─ formErrors.ts        VALIDATION·CONFLICT 를 폼 칸·문구로 잇는 도우미 · CHANNEL_ARCHIVED_TEXT(「보관된 채널입니다」 — 카드 사유·토스트·보내기·업로드가 같은 말)
 ├─ realtime/
 │  ├─ wire.ts              Socket.IO 클라이언트(토큰 없음 — 쿠키 인증, `transports: ["websocket"]` 만: polling 첫 GET 에는 Origin 이 없다), WireStatus, WireAckError.
 │  │                       소켓은 `io()` 가 아니라 `WireManager`(Manager 하위 클래스)가 연다 — socket.io-client 의 Manager 는 여는 동안 engine `error` 만 들어, WebSocket 이 핸드셰이크 전에
@@ -694,6 +708,7 @@ src/
 │  │                       `ops.event` → 상태 캐시의 unacked 를 곧바로 덮고(상태를 아직 안 받았으면 만들지 않는다) opsStatus·사건 목록 무효화.
 │  │                       `people.changed` → 사람 목록을 통째로 바꾸고 `team`(멤버 표·대기 초대) 무효화, 목록의 내 역할이 me 와 다르면 me 를 곧바로 다시 받는다(정본은 `/auth/me`).
 │  │                       `agents.changed` → `qk.agents`(exact — 가져오기의 찾기 목록은 그대로)·채널 멤버(`qk.membersAll`) 무효화 — 보관은 `channel.member.changed` 를 내지 않는다.
+│  │                       `channel.updated` → applyChannel(상세·사이드바 목록·보관 목록 캐시 셋 — workspace 룸이라 구독하지 않은 채널의 것도 온다).
 │  │                       탭 안 승인 알림은 admin 이상에게만(`notifyApproval` 을 부르기 전에 여기서 거른다)
 │  │                       첫 연결이 아닌 재연결이면 adapter·opsStatus·opsEventsAll 을 무효화한다 — 끊긴 사이의 변화는 팬아웃으로 다시 오지 않는다
 │  ├─ subscriptions.ts     한 채널 구독·빈틈 이어 받기·과거 페이지 REST(5쪽 초과면 타임라인 리셋). 재동기화 응답은 루트는 채널, 답글은 연 스레드 캐시에만, `threadRoots` 는 가진 루트만
@@ -722,25 +737,28 @@ src/
 │  │                       FileCard.tsx(아이콘·이름·크기·종류·「내려받기」 — `download` 속성 없이 서버 Content-Disposition 에 맡긴다) ·
 │  │                       ImageViewer.tsx(크게 보기 — ui/dialog 위, ←/→·`n / 전체`·「원본 내려받기」·Esc, 닫으면 연 이미지로 초점. `useImageViewer` 를 메시지 격자와 media 블록이 같이 쓴다) ·
 │  │                       MessageAttachments.tsx(본문 아래 이미지 격자 + 파일 카드, 카드가 가리킨 첨부는 뺀다) ·
-│  │                       upload.ts(XHR 업로드·진행·취소, 형식·5 MB 검사와 문구, 507 이면 본문과 무관하게 「서버 디스크 여유가 부족해 올리지 못했습니다」) · useComposerAttachments.ts(작성기 칩 상태 — 넣는 즉시 올리고, 빼면 끊고, 채널이 바뀌면 모두 비운다. 10장 상한)
-│  ├─ auth/                LoginPage(이메일·비밀번호가 기본, 접힌 「owner 로컬 토큰으로 로그인」) · JoinPage(`/join/<token>`)·ResetPage(`/reset/<token>`) — invite.tsx 의 InviteGate 가
+│  │                       upload.ts(XHR 업로드·진행·취소, 형식·5 MB 검사와 문구, 507 이면 본문과 무관하게 「서버 디스크 여유가 부족해 올리지 못했습니다」, 409 CHANNEL_ARCHIVED 면 「보관된 채널입니다」) · useComposerAttachments.ts(작성기 칩 상태 — 넣는 즉시 올리고, 빼면 끊고, 채널이 바뀌면 모두 비운다. 10장 상한)
+│  ├─ auth/                LoginPage(이메일·비밀번호가 기본, 접힌 「owner 로컬 토큰으로 로그인」, 403 MEMBER_DEACTIVATED 는 서버 문구가 아니라 코드로 「비활성화된 계정입니다. 관리자에게 문의하세요.」) · JoinPage(`/join/<token>`)·ResetPage(`/reset/<token>`) — invite.tsx 의 InviteGate 가
 │  │                       `POST /invites/lookup` 을 본문 토큰으로 부른 뒤 폼(무효·다른 종류 링크는 한 문구, 초대 경로 IP 버킷이라 `retry: false`, 쿼리 키에 토큰 원문 대신 `useId` — 토큰이 바뀌면 `key={token}` 으로 다시 마운트), 409 는 `details.field` 칸 아래, 수락 404 는 무효 화면.
 │  │                       성공하면 `useFinishInvite` 가 클라이언트 상태를 비우고 `/` 로 replace(주소창의 토큰을 걷는다). 로그인된 채 열면 폼 위에 「지금 @<핸들> 로 로그인돼 있습니다 — 가입하면 이 브라우저는 새 계정으로 바뀝니다」 ·
 │  │                       fields.tsx(AuthField·비밀번호 규칙·로그인 전 경로 공통 문구 authErrorText — 429 는 버킷을 따른다: 로그인 「(1분 5회)」, 초대 경로는 숫자 없이 ·
-│  │                       fieldErrorText — 알려진 칸 오류(핸들·이메일 409, 예약 핸들 400, 현재 비밀번호 400)는 서버 문구 대신 고정 문구(합쇼체), 칸 오류가 나면 그 칸으로 초점) ·
+│  │                       fieldErrorText — 알려진 칸 오류(핸들·이메일 409, 비활성 멤버의 이메일 409 MEMBER_DEACTIVATED — 이메일 칸 「비활성 멤버의 이메일입니다 — 관리자에게 다시 활성화를 요청하세요」, 핸들 400, 현재 비밀번호 400)는 서버 문구 대신 고정 문구(합쇼체), 칸 오류가 나면 그 칸으로 초점) ·
 │  │                       mutations(useLogin(`{ token }`·`{ email, password }`)·useAcceptInvite·useResetPassword·useLogout — 응답 `sessionToken` 은 쓰지 않는다, gcTime 0. 로그아웃은 disablePush 를 최대 3초 기다린 뒤 POST /auth/logout)
 │  ├─ account/             mutations(표시 이름 `PATCH /me`(me 캐시의 user 를 고친다), 비밀번호 바꾸기 `POST /me/password`(틀린 현재 비밀번호는 400 `field: "current"` → 그 칸 아래)) —
 │  │                       화면은 settings-shell 의 AccountPage
 │  ├─ members/             Phase 4 ② 팀. 멤버 화면 `/settings/members` — admin 이상(member 는 API 를 부르지 않고 「권한이 없습니다」).
-│  │                       MembersPage.tsx(멤버 표 — 핸들·이름·이메일·역할(「소유자」·「관리자」·「멤버」)·가입일, 390px 에서는 제 상자(`relative overflow-x-auto`) 안에서 가로 스크롤 ·
+│  │                       MembersPage.tsx(멤버 표 — 핸들·이름·이메일·역할(「소유자」·「관리자」·「멤버」)·가입일, 390px 에서는 제 상자(`relative overflow-x-auto`) 안에서 가로 스크롤 — 표는 활성 멤버만,
+│  │                       비활성 멤버는 아래 접힌 「비활성 멤버 N」(줄마다 「다시 활성화」 — 비활성화와 같은 권한, 역할 바꾸기·재설정 링크 없음. 초점은 비활성화 뒤 묶음 단추, 다시 활성화 뒤 묶음이 남으면 그 단추·아니면 그 줄 「비활성화」) ·
 │  │                       대기 중인 초대 — 역할·만료·「폐기」, admin 에게는 admin 초대의 폐기 버튼이 없다) · MemberRowActions.tsx(역할 셀렉트 — owner 만·owner 줄 제외·바꾸는 즉시 적용,
-│  │                       「재설정 링크」(확인 → 링크 한 번)·「내보내기」(확인 대화상자)) · InviteDialog.tsx(owner 는 역할 라디오, admin 은 member 고정 문구 → 링크 한 번) ·
-│  │                       IssuedLink.tsx(원문 링크 — CopyBlock wrap, 「이 링크는 다시 볼 수 없습니다」, 「복사했습니다」로만 닫힘, useLeaveGuard) · queries · mutations(역할 바꾸기·내보내기 뒤 대기 초대를 다시 받는다 —
-│  │                       서버가 그 사람이 발급한 링크를 폐기한다). 날짜는 로컬 시간대(`Intl.DateTimeFormat("ko-KR")`)
+│  │                       「재설정 링크」(확인 → 링크 한 번)·「비활성화」(확인 대화상자 「멤버 비활성화」)) · InviteDialog.tsx(owner 는 역할 라디오, admin 은 member 고정 문구 → 링크 한 번) ·
+│  │                       IssuedLink.tsx(원문 링크 — CopyBlock wrap, 「이 링크는 다시 볼 수 없습니다」, 「복사했습니다」로만 닫힘, useLeaveGuard) · queries · mutations(useSetMemberActive — 비활성화·다시 활성화 하나, 같은 틱 두 번은 한 요청. 역할 바꾸기·비활성화 뒤 대기 초대를 다시 받는다 —
+│  │                       서버가 그 사람이 발급한 링크를 폐기한다). 날짜는 로컬 시간대(`Intl.DateTimeFormat("ko-KR")`) ·
+│  │                       deactivated.ts(isDeactivated — `Boolean(deactivatedAt)`, 열 이전 오프라인 사본에는 키가 없다. 비활성 판정 한곳: 작성자·멘션 칩·멘션 후보·멤버 표) ·
+│  │                       DeactivatedTag.tsx(멘션 칩의 「비활성」 — 보이는 글자는 aria-hidden, 스크린 리더에는 「 (비활성)」. agents 의 ArchivedTag 와 글자만 다른 같은 꼴)
 │  ├─ components/          components v1 카드 렌더러(Phase 2 ②). 사람·에이전트 메시지(MessageItem)와 시스템 카드(SystemCard 의 「이어가기」)가 함께 쓴다.
 │  │                       Components.tsx(카드 전체: 블록을 배열 순서대로 → 모달 트리거 → 결과 줄 `@핸들 — 라벨: 값`(오래된 것부터, 20건이면 「최근 20건」).
 │  │                       결정 뒤 초점은 ack 이 돌려준 **내** 상호작용 id 의 결과 줄로만) ·
-│  │                       state.ts(순수: 비활성 규칙 한 곳 — 연결 → 만료 → 소비 → 권한(`allowedUsers` 가 비어 있지 않을 때만) → 전송 중, 사유 문구) ·
+│  │                       state.ts(순수: 비활성 규칙 한 곳 — 보관(채널 화면의 ChannelArchivedContext, 사유 「보관된 채널입니다」) → 연결 → 만료 → 소비 → 권한(`allowedUsers` 가 비어 있지 않을 때만) → 전송 중, 사유 문구) ·
 │  │                       useInteract.ts(`component.interact` 래퍼 — `send` 는 거부하지 않고 `SendResult` 로 성공·실패를 돌려준다. 버튼·셀렉트는 토스트(RUN_LIMIT·RATE_LIMITED 는 한국어 문구 — run_error 「다시 실행」도 이 길),
 │  │                       모달은 `toast: false`. 소켓·`components.id` 가 없으면 보내지 않고 `DISCONNECTED`) ·
 │  │                       DisabledHint.tsx(비활성 사유를 **보이는 글**로 — `aria-hidden` 인 12px 글을 컨트롤이 `aria-describedby` 로 가리킨다, `title` 은 안 쓴다) ·
@@ -751,17 +769,20 @@ src/
 │  │                       FileBlock — 첨부면 FileCard, https 면 이름·크기 + 「열기」 · artifact.tsx — 못 푼 값의 문구 둘 「첨부를 찾을 수 없습니다」·「열 수 없는 링크입니다」, 셋이 `resolveRef` 와 같이 쓴다) ·
 │  │                       modal/(ComponentModal — `triggerLabel` 버튼 + Dialog + 제출, ack 오류는 대화상자 안 · fields.tsx — 필드 7종 → 위젯, 못 읽는 입력은
 │  │                       제출 때 `validity.badInput` · validate.ts — 순수 화면 검사(서버 `fieldSchema` 와 같은 경계, 코드 포인트로 센다), 칸 id 로 찾는 객체는 프로토타입 없이)
-│  ├─ channels/            ChannelList · CreateChannelDialog(만들면 설정으로) · HomeRedirect(`/` → 첫 채널, 들어올 때 받은 목록으로만 판단) · mutations
+│  ├─ channels/            ChannelList(보관한 채널은 없다) · CreateChannelDialog(만들면 설정으로) · HomeRedirect(`/` → 첫 채널, 들어올 때 받은 목록으로만 판단) ·
+│  │                       mutations(useArchiveChannel·useUnarchiveChannel — 둘째 클릭은 버리고 실패만 푼다) · archived.ts(isChannelArchived(`Boolean(archivedAt)`) · applyChannel(상세·사이드바 목록·보관 목록
+│  │                       캐시 셋을 한곳에서 — wire channel.updated 와 보관·해제 응답) · refreshArchivedChannel(409 CHANNEL_ARCHIVED 뒤 다시 받기) · ChannelArchivedContext — 채널 화면이 아래(메시지 목록·카드·
+│  │                       오른쪽 패널)에 보관 여부를 내려 준다) · ArchivedNotice.tsx(보관한 채널의 작성기 자리 「보관된 채널입니다.」 + admin 이상 「보관 해제」 — 「보관 해제」 단추는 이 자리 하나)
 │  ├─ messages/            timeline.ts(입장·과거·upsert·낙관적 교체·빈틈 · 떨어진 창 `hasNewer` — around 로 갈아 끼운 창에는 창 안(가장 새 항목의 seq 이하)과 가진 것만 넣고
-│  │                       `lastSeq` 만 올린다, lastSeq 는 내려가지 않는다)·groupRows.ts(날짜 구분선·묶음)·useTimeline(timelineQuery — 채널 skipToken·스레드 threadQuery)·useOlderPages·useAuthors(작성자·사람 멘션은 사람 목록으로 — 나간 멤버(role 없음)는 「나간 멤버 @<leftHandle>」 흐린 글씨, 멘션은 옛 핸들),
+│  │                       `lastSeq` 만 올린다, lastSeq 는 내려가지 않는다)·groupRows.ts(날짜 구분선·묶음)·useTimeline(timelineQuery — 채널 skipToken·스레드 threadQuery)·useOlderPages·useAuthors(작성자·사람 멘션은 사람 목록으로 — 비활성 멤버는 이름 그대로 + 「비활성」 배지, 멘션 칩은 `@핸들` + DeactivatedTag),
 │  │                       결과로 가기 jump.ts(jumpToSeq — around 로 갈아 끼우기·loadNewer 아래로 이어 받기·loadLatest 최신으로)·jumpTarget.ts(목표 zustand 스토어 — URL 에 두지 않는다, 강조 2초)·
 │  │                       useJump(구독 응답 뒤(`lastSeq > 0`)에만 around, 목표 행으로 스크롤·강조)·useNewerPages(떨어진 창의 아래 끝에서 다음 쪽),
-│  │                       MessageList.tsx(TanStack Virtual, 끝 붙기·「새 메시지」 칩 — 기준은 가진 마지막 메시지의 seq, 떨어진 창이면 「최신 메시지로」·`followOnAppend` 끔·보내는 중 항목이 생기면 먼저 최신으로(loadLatest), `threadRootId` 면 영역 이름
+│  │                       MessageList.tsx(TanStack Virtual, 빈 보관 채널은 「메시지가 없습니다.」(멘션 권유 없음), 끝 붙기·「새 메시지」 칩 — 기준은 가진 마지막 메시지의 seq, 떨어진 창이면 「최신 메시지로」·`followOnAppend` 끔·보내는 중 항목이 생기면 먼저 최신으로(loadLatest), `threadRootId` 면 영역 이름
 │  │                       「스레드 메시지」에 칩·메뉴 없음), MessageItem(루트 아래 ThreadChip·「스레드에서 답하기」)·MessageBody(Streamdown, 원시 HTML 끔,
 │  │                       단일 개행 → br, 마크다운 이미지는 링크로, 확정 본문만 코드 하이라이트 — codeHighlight.ts(Streamdown 플러그인·언어 목록과 별칭, 실패는 페이지 수명 동안 칠하지 않음)·
 │  │                       shikiEngine.ts(지연 로딩되는 shiki 엔진 — 밝음·어두움 github 테마, 바탕은 앱 토큰))·MentionChip·mentionMarkdown·SystemCard(MessageItem 과 SystemCard 의 components 는 `features/components` 의 `<Components>` 가 그린다)·
-│  │                       PendingItem(보내는 중 첨부는 서버 경로로, 크게 보기 없음, 사유 rate_limited 면 rateLimited.ts 의 「너무 빠르게 보내고 있습니다 — 잠시 뒤 다시」)·pendingActions·MessageErrorBoundary,
-│  │                       SystemCard 의 run_limit 은 admin 이상에게만 링크 — scope workspace 면 「운영에서 한도 바꾸기」, channel 이면 「채널 설정에서 한도 바꾸기」, 모르는 kind 는 정보 모양, ChannelPage.tsx(채널 확인 뒤에만 안을 그린다, 확인되면 touchRecentChannel).
+│  │                       PendingItem(보내는 중 첨부는 서버 경로로, 크게 보기 없음, 사유 rate_limited 면 rateLimited.ts 의 「너무 빠르게 보내고 있습니다 — 잠시 뒤 다시」, channel_archived 면 「보관된 채널입니다」·「다시 보내기」 없이 「삭제」만)·pendingActions·MessageErrorBoundary,
+│  │                       SystemCard 의 run_limit 은 admin 이상에게만 링크 — scope workspace 면 「운영에서 한도 바꾸기」, channel 이면 「채널 설정에서 한도 바꾸기」, 모르는 kind 는 정보 모양, ChannelPage.tsx(채널 확인 뒤에만 안을 그린다, 확인되면 touchRecentChannel. 보관한 채널이면 작성기 대신 ArchivedNotice, 아래에 ChannelArchivedContext).
 │  │                       MessageItem 은 본문이 비면 본문을 그리지 않고, 본문 아래 `MessageAttachments` → components 카드 순으로 그린다
 │  ├─ ops/                 Phase 3 ③. 운영 화면 `/settings/operations` — admin 이상(member·role 없는 옛 me 는 ops API 를 부르지 않고 「권한이 없습니다」).
 │  │                       OpsPage.tsx(섹션 넷 — 상태를 30초마다 다시 받는 것은 이 화면만(OPS_STATUS_POLL_MS, 탭이 가려지면 쉰다)) ·
@@ -779,8 +800,8 @@ src/
 │  ├─ runs/                runStore.ts(Zustand, seq 중복 제거·재생. 런의 스레드 소속 = run.state.threadRootId 1순위, 없으면 RUN_STARTED.sessionKey 를 parseDodokSessionKey 로 —
 │  │                       런 id → 루트는 remove 뒤에도 남겨 확정 승인 카드가 채널로 새지 않게, selectScopeRuns(ch, root?) 로 버블·`/stop` 을 가른다)·bubblePhase.ts(상태 → 버블 모양)·
 │  │                       StreamingBubble.tsx·useChannelBubbles(범위별 — 끝난 런은 그 범위를 볼 때만 지운다)·abortError
-│  ├─ composer/            Composer.tsx(Tiptap — `/new` 는 admin 이상, member 면 「「새 대화」는 관리자만 시작할 수 있습니다」 토스트·입력 유지) · mentions·MentionList(@ 후보 = 채널 에이전트 + 사람 전원(나간 멤버 제외)) · serialize.ts(→ `<@a:id>` 토큰 bodyMd, 줄 머리 이스케이프) ·
-│  │                       submitKeys(Enter 전송·IME) · slash.ts(`/stop`·`/new`) · useSendMessage(ack·10s 타임아웃 → failed, ack RATE_LIMITED 면 사유 rate_limited, 첨부 id 를 싣고 재시도도 같은 clientMsgId·id.
+│  ├─ composer/            Composer.tsx(Tiptap — `/new` 는 admin 이상, member 면 「「새 대화」는 관리자만 시작할 수 있습니다」 토스트·입력 유지) · mentions·MentionList(@ 후보 = 채널 에이전트 + 사람 전원(membership 없는 사람·비활성 멤버 제외)) · serialize.ts(→ `<@a:id>` 토큰 bodyMd, 줄 머리 이스케이프) ·
+│  │                       submitKeys(Enter 전송·IME) · slash.ts(`/stop`·`/new`) · useSendMessage(ack·10s 타임아웃 → failed, ack RATE_LIMITED 면 사유 rate_limited, CHANNEL_ARCHIVED 면 사유 channel_archived(토스트 없이)·채널 다시 받기, 첨부 id 를 싣고 재시도도 같은 clientMsgId·id.
 │  │                       `threadRootId` 면 루트를 싣고 보내는 중·확정은 스레드 캐시에) · useTyping·TypingIndicator(스레드 작성기는 typing 을 보내지 않는다 — wire Typing 이 채널 단위) ·
 │  │                       PendingAttachments.tsx(칩 — 미리보기·진행 막대·사유·「<이름> 빼기」, 빼면 초점을 옆 칩·「이미지 첨부」로). Composer 는 「이미지 첨부」 버튼·붙여넣기·
 │  │                       작성기 상자 전체의 끌어다 놓기로 칩을 넣고, 올리기가 끝나야 보낸다(사유: 끊김 → 「이미지를 올리는 중입니다」 → 「올리지 못한 이미지를 빼 주세요」). 글 없이 이미지만 보낼 수 있다
@@ -794,7 +815,7 @@ src/
 │  │                       멘션 후보·채널 멤버 줄·「에이전트 추가」 셀렉트·채널 머리 아바타가 쓴다. 가져오기의 archivedAgentId 항목은 「삭제됨 — 되살리기」, 직접 입력·409 AGENT_ARCHIVED 는
 │  │                       id 칸 「삭제된 에이전트입니다」+「되살리기」. ArchivedTag(멘션 칩·운영 표 이름 뒤 「삭제됨」 — 보이는 글자는 aria-hidden, 스크린 리더에는 「 (삭제됨)」)
 │  ├─ search/              Phase 4 ①. SearchDialog.tsx(`⌘K` 대화상자 — 390px 전체 시트, 필터 채널·사람/에이전트·기간, 결과를 누르면 requestJump 뒤 그 채널·스레드로, 닫으면 연 자리로 초점 —
-│  │                       Trigger 없이 여는 대화상자라 `onOpenAutoFocus` 에서 기억한 요소로 돌려준다) · SearchResults.tsx(2글자면 「2글자는 최근 90일에서 50개까지만 찾습니다」·「더 보기」 없음,
+│  │                       Trigger 없이 여는 대화상자라 `onOpenAutoFocus` 에서 기억한 요소로 돌려준다) · SearchResults.tsx(보관한 채널 결과는 「보관됨」 — 채널 이름은 그런 결과가 있을 때만 받는 보관 목록에서 · 2글자면 「2글자는 최근 90일에서 50개까지만 찾습니다」·「더 보기」 없음,
 │  │                       429·오류는 대화상자 안 한 줄, 다음 쪽 실패는 받은 결과를 두고 목록 아래 한 줄, 입력이 2글자 미만이면 옛 결과를 곧바로 숨긴다) ·
 │  │                       useSearch.ts(useInfiniteQuery, 디바운스 300ms, 재시도·전역 토스트 없음) · highlight.tsx(STX·ETX 스니펫 → 강조 조각) ·
 │  │                       openSearch.ts(isSearchShortcut — `e.code === "KeyK"` 도 받는다(한글 입력기), otherModalOpen — 검색 표지가 없는 열린 대화상자가 있으면 ⌘K 무시)
@@ -819,21 +840,24 @@ src/
 │  │                       queries.ts(setupStatus·bridgeTokens(Gateway 마다) — `setup.status` wire 가 상태를 덮는다) · mutations.ts(Gateway 추가·수정·삭제, 발급은 결과를 뮤테이션 캐시에 두지 않고 콜백으로만(gcTime 0),
 │  │                       폐기, 플러그인 받기는 fetch → blob — 404·409 를 문구로). setup 쿼리는 오프라인 사본(`pwa/persist.ts`)에서 먼저 뺀다
 │  ├─ threads/             Phase 4 ①. ThreadPanel.tsx(`/c/$channelId/t/$rootId` — 오른쪽 패널의 스레드 탭·좁은 화면 시트, MessageList 를 `threadRootId` 로 재사용(버블·카드·첨부·승인 행 그대로),
-│  │                       스레드 작성기, 에이전트 줄의 「새 대화」(그 스레드 세션), 404·VALIDATION 이면 「스레드를 찾을 수 없습니다」, 답글 결과면 첫 페이지 뒤 around 로 갈아 끼운다) ·
+│  │                       스레드 작성기, 에이전트 줄의 「새 대화」(그 스레드 세션 — 보관한 채널이면 둘 다 없다), 404·VALIDATION 이면 「스레드를 찾을 수 없습니다」, 답글 결과면 첫 페이지 뒤 around 로 갈아 끼운다) ·
 │  │                       ThreadChip.tsx(루트 아래 「답글 N · 마지막 시각 · 에이전트 아바타」와 「스레드에서 답하기」 — 둘 다 라우터 Link) ·
 │  │                       queries.ts(스레드 REST·threadQuery(`withThreadEdits` 안에서 받는다)·touchRecentThread·threadRootOf(답글이면 그 루트)·isThreadMissing) ·
 │  │                       threadOpener.ts(스레드를 연 자리 — 칩·「스레드에서 답하기」가 누른 요소를 적고 PanelTabs 가 닫을 때 돌려준다)
 │  ├─ settings-shell/      `/settings` 레이아웃 라우트(SettingsLayout — 넓은 화면은 왼쪽 탭 목록 고정 + 내용 칸 `#settings-scroll` 만 스크롤, 좁은 화면은 `/settings` 가 탭 목록 페이지
 │  │                       (SettingsIndex — 넓은 화면이면 「내 계정」으로 replace)이고 탭 페이지는 위에 붙는 머리에 메뉴 단추 + 「← 설정」 — 탭 페이지는 메뉴 단추를 그리지 않는다) ·
-│  │                       tabs.ts(SETTINGS_TABS — 경로·이름·아이콘·역할별 보임: 내 계정·알림·에이전트 누구나, 멤버·운영 admin 이상, 연결 owner. 숨은 탭은 직접 주소로 가도 목록에 없다 —
+│  │                       tabs.ts(SETTINGS_TABS — 경로·이름·아이콘·역할별 보임: 내 계정·알림·에이전트·채널 누구나, 멤버·운영 admin 이상, 연결 owner. 숨은 탭은 직접 주소로 가도 목록에 없다 —
 │  │                       내용 자리가 「권한이 없습니다」) · SettingsNav.tsx(`nav aria-label="설정"`, 지금 탭 `aria-current="page"`, 운영 탭 배지) · OpsBadge.tsx(사이드바 「설정」과 운영 탭이 같이 쓴다) ·
 │  │                       focus.ts(설정 안의 이동 — 탭 목록·「← 설정」 — 뒤에만 초점을 내용 h1 로. 판정은 라우터 matches 의 그려진 화면, 제목이 늦게 붙으면 기다린다) ·
 │  │                       AccountPage.tsx(표시 이름·비밀번호 바꾸기 — owner 는 비밀번호 칸 대신 `.env` 의 LOCAL_AUTH_TOKEN 안내·「로그아웃」) ·
+│  │                       ChannelsPage.tsx(「설정 → 채널」 `/settings/channels` — 보관한 채널 목록(최근 보관 순, `#이름` 링크·보관한 날), 없으면 「보관된 채널이 없습니다」, admin 이상은 줄마다 「보관 해제」) ·
 │  │                       NotificationsPage.tsx(이 기기의 푸시 상태 다섯(미지원·설치 필요(iOS)·거절됨·꺼짐·켜짐)·「푸시 알림 켜기」·「끄기」·실패 이유(role=alert)·「앱 설치」.
 │  │                       푸시가 없는 브라우저(iOS 아님)에서 권한이 default 면 「탭이 열려 있을 때만 알림 켜기」)
 │  └─ settings/            ChannelSettingsPanel(패널 셸은 `app/layout/PanelTabs` 가 맡고 여기는 안쪽만) ·
 │                          BasicSection·PromptSection·MembersSection·AgentMemberRow·RelayPolicySection(+relayPolicyForm)·autoRespond(채널당 하나 보장)·
 │                          Section·ConfirmDialog·mutations(응답은 보낸 필드만 캐시 병합 — 늦은 응답이 wire 값을 덮지 않게).
+│                          ArchiveSection(맨 아래 「채널 보관」 — admin 이상, 확인 대화상자 뒤 보관). 보관한 채널이면 패널은 편집 섹션 대신 「보관된 채널입니다.」
+│                          (ArchivedSettings — 이 패널에서 보관해 초점이 body 로 떨어졌을 때만 안내로 옮긴다).
 │                          member 에게는 채널 프롬프트·릴레이 정책(일일 한도 포함)·에이전트 줄의 자동 응답·오버라이드가 값만 보이고 잠긴다(「관리자만 바꿀 수 있습니다」 — 잠기면 저장 안 된 초안이 아니라 서버 값),
 │                          「새 대화」는 숨기고, 이름·주제·에이전트 넣기·빼기는 열려 있다. 「에이전트 등록」 안내 링크는 admin 이상에게만
 ├─ pwa/                    Phase 2 ④. register.ts(startPwa — 등록, 대기 워커가 있으면 showUpdateToast 「새 버전이 있습니다」+「새로고침」, 무기한 — 누를 때만 SKIP_WAITING) ·
@@ -905,7 +929,7 @@ OpenClaw Gateway 주소·공유 토큰과 브리지 토큰은 env 가 아니라 
 | `ATTACHMENTS_DIR` | `<DATA_DIR>/attachments` | 첨부 블롭 디렉터리(`<sha 앞 2자>/<sha256>`). 부팅 때 만든다. 한 서버 프로세스만 쓴다 — sha 잠금이 프로세스 안에서만 맞다 |
 | `LOG_LEVEL` | `info` | `fatal`~`trace` (pino, 토큰 키는 redact) |
 | `DODOK_WORKSPACE_NAME` | `dodok` | 부팅 때 워크스페이스가 없으면 이 이름으로 만든다 |
-| `OWNER_HANDLE` | `owner` | owner 핸들(`left-` 예약 검사는 지나지 않는다 — `left-` 로 시작하게 두지 않는다) |
+| `OWNER_HANDLE` | `owner` | owner 핸들 |
 | `LOCAL_AUTH_TOKEN` | (필수, ≥16자) | 로컬 로그인 토큰 = owner 비밀번호. 바꾸면 기존 세션이 끊긴다 |
 | `BETTER_AUTH_SECRET` | (필수, ≥32자) | Better Auth 서명 비밀 |
 | `OPENCLAW_FRAME_DUMP_PATH` | — | 진단용 — 어댑터가 받은 Gateway `chat`·`agent`·`session.message` 프레임을 Gateway 마다 `<이 경로>.<Gateway id>` 파일에 JSONL(`{ receivedAt, frame }`)로 append. 본문이 들어가므로 `data/` 아래에. usage 출처 확인용(live-smoke 5.4) |
