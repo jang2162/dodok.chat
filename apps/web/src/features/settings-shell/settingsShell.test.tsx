@@ -88,6 +88,20 @@ describe("탭 — 역할대로", () => {
     await waitFor(async () => expect(await tabNames()).toEqual(tabs));
   });
 
+  // 보이지 않는 탭은 직접 주소로 와도 탭 목록에 끼지 않는다 — 내용 자리만 「권한이 없습니다」
+  it.each([
+    ["member", "/settings/members", ["내 계정", "알림", "에이전트"]],
+    ["member", "/settings/connection", ["내 계정", "알림", "에이전트"]],
+    ["member", "/settings/operations", ["내 계정", "알림", "에이전트"]],
+    ["admin", "/settings/connection", ["내 계정", "알림", "에이전트", "멤버", "운영"]],
+  ])("%s 가 숨은 탭 %s 로 직접 오면 — 탭 목록은 %j 그대로", async (role, path, tabs) => {
+    stubShell({ role });
+    renderRoute(path);
+    expect(await screen.findByText(/권한이 없습니다/)).toBeInTheDocument();
+    expect(await tabNames()).toEqual(tabs);
+    expect(within(await tabsNav()).queryByRole("link", { current: "page" })).not.toBeInTheDocument();
+  });
+
   it("지금 탭은 aria-current=page, 운영 탭에도 배지", async () => {
     stubShell({ unacked: { warn: 1, error: 0 } });
     renderRoute("/settings/members");
