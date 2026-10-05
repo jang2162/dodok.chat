@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
+import { NavigationRoute } from "workbox-routing";
 import { CH } from "../../test/fixtures";
 import {
   focusAndNavigate,
+  NAVIGATION_DENYLIST,
   notificationFromPush,
   pickClient,
   safeNotificationUrl,
@@ -209,5 +211,38 @@ describe("urlBase64ToUint8Array", () => {
   it("base64url(패딩 없음)을 바이트로", () => {
     expect([...urlBase64ToUint8Array("AQID_-8")]).toEqual([1, 2, 3, 255, 239]);
     expect([...urlBase64ToUint8Array("AA")]).toEqual([0]);
+  });
+});
+
+describe("NAVIGATION_DENYLIST", () => {
+  // workbox 가 실제로 쓰는 판정(pathname + search)으로 — 정규식만 따로 재면 쿼리가 붙는 탐색을 못 본다
+  const route = new NavigationRoute(() => Promise.resolve(new Response()), { denylist: NAVIGATION_DENYLIST });
+  const toIndex = (path: string) =>
+    Boolean(
+      route.match({ url: new URL(path, "https://dodok.example"), request: { mode: "navigate" } } as never),
+    );
+
+  it("서버가 내는 경로는 쿼리가 붙어도 index.html 로 떨어지지 않는다", () => {
+    for (const path of [
+      "/llms.txt",
+      "/llms.txt?x=1",
+      "/llms.txt?",
+      "/api/v1/me",
+      "/api/v1/me?x=1",
+      "/socket.io/?EIO=4",
+    ])
+      expect(toIndex(path), path).toBe(false);
+  });
+
+  it("앱 경로는 index.html 로", () => {
+    for (const path of [
+      "/",
+      `/c/${CH}`,
+      "/settings/connection?tab=x",
+      "/llms.txt.html",
+      "/llms.txtx",
+      "/apix",
+    ])
+      expect(toIndex(path), path).toBe(true);
   });
 });

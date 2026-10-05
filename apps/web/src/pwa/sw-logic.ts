@@ -14,6 +14,12 @@ export function safeNotificationUrl(url: unknown): string {
   return typeof url === "string" && SAFE_URL.test(url) ? url : "/";
 }
 
+/**
+ * SPA 탐색 폴백(index.html)에서 뺄 경로 — /api·/socket.io 는 네트워크만(스펙 3장). /llms.txt 는 서버가 내는 노드 설치 안내서라
+ * 사람이 주소창으로 열어도 서버까지 가야 한다. workbox 는 `pathname + search` 에 맞춰 보므로 끝은 `$` 가 아니라 쿼리까지 받는다
+ */
+export const NAVIGATION_DENYLIST: RegExp[] = [/^\/api\//, /^\/socket\.io\//, /^\/llms\.txt(\?|$)/];
+
 export type PushNotification = {
   title: string;
   options: { body: string; tag?: string; data: { url: string }; renotify?: boolean };
