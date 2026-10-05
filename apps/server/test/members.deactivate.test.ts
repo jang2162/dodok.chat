@@ -526,6 +526,39 @@ describe("멤버 비활성화·다시 활성화", () => {
       expect(after.people.find((p) => p.id === member.id)?.deactivatedAt).toBeNull();
     });
 
+    it("에이전트가 받는 옛 메시지 속 멘션은 비활성 멤버도 그 핸들로 풀린다 — 「참여자:」에서만 빠진다", async () => {
+      const member = await person("member");
+      const ch = channel("oldmention");
+      const dev = createAgent(app.db, {
+        workspaceId: app.workspaceId,
+        providerAgentId: `omdev${++n}`,
+        handle: `omdev${n}`,
+        name: "dev",
+        gatewayId: FAKE_GATEWAY_ID,
+      });
+      addMember(app.db, ch.id, { memberType: "agent", memberId: dev.id }, app.logger);
+      const before = createUserMessage(app.db, app.bus, {
+        channelId: ch.id,
+        authorId: app.ownerUserId,
+        bodyMd: `@${member.handle} 이거 맡아 줘`,
+        clientMsgId: `c${++n}`,
+      });
+      expect(before.mentions.users).toEqual([member.id]);
+      expect((await deactivate(ownerToken, member.id)).statusCode).toBe(200);
+
+      const ask = createUserMessage(app.db, app.bus, {
+        channelId: ch.id,
+        authorId: app.ownerUserId,
+        bodyMd: `@${dev.handle} 누가 맡았지?`,
+        clientMsgId: `c${++n}`,
+      });
+      await app.services.router.routeMessage(ask);
+      await vi.waitFor(() => expect(adapter.calls.send.some((s) => s.sessionKey.includes(ch.id))).toBe(true));
+      const sent = adapter.calls.send.filter((s) => s.sessionKey.includes(ch.id)).at(-1);
+      expect(sent?.context.recentMessages.map((m) => m.text)).toContain(`@${member.handle} 이거 맡아 줘`);
+      expect(sent?.context.participants.map((p) => p.handle)).not.toContain(member.handle);
+    });
+
     it("채널에 없는 비활성 멤버를 멘션해도 자동 참여·멘션이 없다, 채널에 넣기도 404", async () => {
       const member = await person("member");
       const ch = channel("outside");
