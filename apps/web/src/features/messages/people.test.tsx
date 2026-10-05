@@ -140,7 +140,7 @@ function spoken(el: Element | null): string {
   return clone?.textContent ?? "";
 }
 
-// 옛 내보내기의 「나간 멤버 @<옛핸들>」 표시는 비활성화로 바뀌었다(채널 보관·멤버 비활성화 스펙 「기록과 목록」 절)
+// 「나간 멤버」 표시는 없다 — 비활성 멤버는 이름 그대로 + 「비활성」(채널 보관·멤버 비활성화 스펙 「기록과 목록」 절)
 it("웹 소스 어디에도 「나간 멤버」 문구가 남지 않는다", () => {
   const root = resolve(import.meta.dirname, "../..");
   const files = readdirSync(root, { recursive: true, encoding: "utf8" }).filter(

@@ -105,7 +105,7 @@ describe("invites service", () => {
 });
 
 describe("canIssueResetLink — 발급·조회·수락이 함께 쓰는 규칙", () => {
-  it("owner 는 owner 밖 누구에게나, admin 은 member 에게만, member·나간 사람은 누구에게도 못 낸다", () => {
+  it("owner 는 owner 밖 누구에게나, admin 은 member 에게만, member·역할 없음(비활성 멤버)은 누구에게도 못 낸다", () => {
     const roles = ["owner", "admin", "member", undefined] as const;
     const allowed = roles.flatMap((issuer) =>
       roles.filter((target) => canIssueResetLink(issuer, target)).map((target) => `${issuer}→${target}`),

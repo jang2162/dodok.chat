@@ -240,7 +240,7 @@ describe("구독은 등록한 세션에 묶인다 — 세션이 지워지거나 
     expect(rowOf("https://push.example/pw-other")).toBeUndefined();
   });
 
-  it("사용자의 세션을 모두 지우면(재설정·내보내기·owner 토큰 교체가 쓰는 deleteUserSessions) 그 사용자의 구독이 모두 지워진다", async () => {
+  it("사용자의 세션을 모두 지우면(재설정·비활성화·owner 토큰 교체가 쓰는 deleteUserSessions) 그 사용자의 구독이 모두 지워진다", async () => {
     await subscribe(await newSession(), "https://push.example/all-1");
     await subscribe(await newSession(), "https://push.example/all-2");
     await (await app.auth.$context).internalAdapter.deleteUserSessions(userId);

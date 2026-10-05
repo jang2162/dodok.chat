@@ -124,7 +124,7 @@ describe("멤버 비활성화·다시 활성화", () => {
       name: `${name}-${++n}`,
     });
 
-  describe("권한(지금 내보내기 권한 그대로)", () => {
+  describe("권한 — admin 은 member, owner 는 admin 까지, owner 는 대상 아님", () => {
     for (const [label, send] of [
       ["비활성화", deactivate],
       ["다시 활성화", reactivate],
