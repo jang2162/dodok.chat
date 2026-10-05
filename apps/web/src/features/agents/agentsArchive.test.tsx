@@ -12,6 +12,7 @@ import {
   fin,
   gate,
   json,
+  makeAgent,
   openDiscover,
   renderPage,
   stubServer,
@@ -137,6 +138,30 @@ describe("삭제된 에이전트 묶음", () => {
     stubServer({ agents: [archivedFin()] });
     renderPage(undefined, "admin");
     expect(await screen.findByRole("button", { name: "삭제된 에이전트 1" })).toBeInTheDocument();
+  });
+});
+
+describe("삭제·되살리기 뒤 초점 — 누른 단추의 줄이 사라져도 body 로 떨어지지 않는다", () => {
+  it("삭제하면 초점은 「삭제된 에이전트 N」 묶음 단추로", async () => {
+    stubServer({ agents: [dev(), fin()] });
+    renderPage(undefined, "admin");
+    await userEvent.click(await screen.findByRole("button", { name: "@dev 삭제" }));
+    await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "삭제" }));
+
+    const group = await screen.findByRole("button", { name: "삭제된 에이전트 1" });
+    await waitFor(() => expect(group).toHaveFocus());
+  });
+
+  it("되살린 뒤 묶음이 남으면 초점은 묶음 단추로", async () => {
+    const ops = makeAgent({ providerAgentId: "ops", handle: "ops", name: "Ops", archivedAt: ARCHIVED_AT });
+    stubServer({ agents: [dev(), archivedFin(), ops] });
+    renderPage(undefined, "admin");
+    await userEvent.click(await screen.findByRole("button", { name: "삭제된 에이전트 2" }));
+    await userEvent.click(screen.getByRole("button", { name: "@fin 되살리기" }));
+
+    expect(await screen.findByRole("switch", { name: "@fin 사용" })).toBeInTheDocument();
+    const group = screen.getByRole("button", { name: "삭제된 에이전트 1" });
+    await waitFor(() => expect(group).toHaveFocus());
   });
 });
 
