@@ -82,10 +82,18 @@ describe("삭제된 에이전트", () => {
     expect(within(screen.getByRole("article")).queryByText("삭제됨")).toBeNull();
   });
 
-  it("멘션 칩은 그 핸들 + 「삭제됨」", () => {
+  it("멘션 칩은 그 핸들 + 「삭제됨」 — 스크린 리더에는 핸들과 띄어 「(삭제됨)」으로 읽힌다", () => {
     renderWithClient(<MessageBody bodyMd={`<@a:${DEV.id}> 안녕`} />, authorsClient([GONE_DEV]));
     const chip = screen.getByText(`@${DEV.handle}`, { exact: false }).closest("[data-mention]");
-    expect(chip).toHaveTextContent(`@${DEV.handle}삭제됨`);
     expect(chip).toHaveAttribute("data-archived");
+    expect(within(chip as HTMLElement).getByText("삭제됨")).toBeInTheDocument();
+    expect(spoken(chip)).toBe(`@${DEV.handle} (삭제됨)`);
   });
 });
+
+/** 접근성 트리에 가는 글자 — aria-hidden 을 걷은 textContent(jsdom 은 sr-only 를 숨기지 않으므로 그대로 남는다) */
+function spoken(el: Element | null): string {
+  const clone = el?.cloneNode(true) as Element | undefined;
+  for (const hidden of clone?.querySelectorAll("[aria-hidden]") ?? []) hidden.remove();
+  return clone?.textContent ?? "";
+}

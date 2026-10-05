@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
 import { useAgents } from "@/api/queries";
 import { isArchived } from "@/features/agents/archived";
+import { ArchivedTag } from "@/features/agents/ArchivedTag";
 import { Section } from "@/features/setup/sections";
 import { useIsNarrow } from "@/hooks/useIsNarrow";
 import { Button } from "@/ui/button";
@@ -85,7 +86,7 @@ function AgentName({ row }: { row: OpsRunsRow }) {
   return (
     <>
       {row.name}
-      {agent && isArchived(agent) && <span className={TAG}>삭제됨</span>}
+      {agent && isArchived(agent) && <ArchivedTag className={TAG} />}
     </>
   );
 }

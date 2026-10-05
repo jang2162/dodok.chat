@@ -332,8 +332,10 @@ describe("런 표", () => {
     });
     renderOps();
     const table = await within(await region("런")).findByRole("table", { name: "에이전트별" });
-    const dev = within(table).getByRole("row", { name: /Dev/ });
-    expect(await within(dev).findByText("삭제됨")).toBeInTheDocument();
+    // 스크린 리더에는 이름과 떨어진 「(삭제됨)」으로 읽힌다 — 눈에 보이는 「삭제됨」은 이름에 붙은 작은 글자. jsdom 의 이름 계산은
+    // sr-only 의 앞 공백을 걷어 「Dev(삭제됨)」, 실제 Chromium 은 「Dev (삭제됨)」이다
+    const dev = await within(table).findByRole("row", { name: /^Dev ?\(삭제됨\)/ });
+    expect(within(dev).getByText("삭제됨")).toBeInTheDocument();
     expect(within(within(table).getByRole("row", { name: /Fin/ })).queryByText("삭제됨")).toBeNull();
   });
 
