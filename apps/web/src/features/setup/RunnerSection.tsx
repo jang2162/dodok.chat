@@ -11,6 +11,7 @@ import {
   RUNNER_CONFIG_PATH,
   runnerConfigExample,
 } from "./IssueRunnerTokenDialog";
+import { publicOriginOf } from "./llms";
 import { useBindRunnerAgent, useDownloadRunner } from "./mutations";
 import { useRunnerTokens } from "./queries";
 import { RunnerTokenList } from "./RunnerTokenList";
@@ -23,19 +24,6 @@ export const RUNNER_PACK_COMMAND = "pnpm -F @dodok/claude-runner run pack:runner
 export const RUNNER_LOGIN_COMMAND = `CLAUDE_CONFIG_DIR=${RUNNER_CLAUDE_DIR} claude`;
 /** 러너 토큰 파일의 권장 자리 — 서버 RUNNER_TOKEN_FILE 과 같다 */
 const RUNNER_TOKEN_FILE = "~/.dodok-runner/token";
-
-/**
- * 러너 설정의 serverUrl — 서버 `runnerServerUrl`(modules/runners/routes.ts)과 같은 규칙으로 브리지 공개 주소의 오리진을 http(s) 로.
- * 발급 대화상자는 서버가 준 값을 쓰고, 이것은 설치 안내의 예시에만 쓴다
- */
-function serverUrlOf(bridgePublicUrl: string): string {
-  try {
-    const url = new URL(bridgePublicUrl);
-    return `${url.protocol === "wss:" ? "https:" : "http:"}//${url.host}`;
-  } catch {
-    return "https://chat.example.com";
-  }
-}
 
 /** 이름·값 한 줄 */
 function Field({ name, children }: { name: string; children: ReactNode }) {
@@ -172,7 +160,7 @@ function InstallSteps({ status }: { status: SetupStatus }) {
   const download = useDownloadRunner();
   const fileName = file.available ? `dodok-claude-runner-${file.sha256.slice(0, 12)}.tgz` : "";
   const config = runnerConfigExample({
-    serverUrl: serverUrlOf(status.bridge.publicUrl),
+    serverUrl: publicOriginOf(status.bridge.publicUrl),
     tokenFile: RUNNER_TOKEN_FILE,
   });
   return (

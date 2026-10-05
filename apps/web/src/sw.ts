@@ -19,10 +19,13 @@ const manifest = self.__WB_MANIFEST;
 cleanupOutdatedCaches();
 precacheAndRoute(manifest);
 
-// SPA 탐색 폴백 — /api·/socket.io 는 네트워크만(스펙 3장). 개발 모드는 매니페스트가 비어 index.html 이 없을 수 있다
+// SPA 탐색 폴백 — /api·/socket.io 는 네트워크만(스펙 3장). /llms.txt 는 서버가 내는 노드 설치 안내서라 사람이 주소창으로 열어도
+// 서버까지 가야 한다. 개발 모드는 매니페스트가 비어 index.html 이 없을 수 있다
 if (manifest.some((e) => (typeof e === "string" ? e : e.url) === "index.html")) {
   registerRoute(
-    new NavigationRoute(createHandlerBoundToURL("index.html"), { denylist: [/^\/api\//, /^\/socket\.io\//] }),
+    new NavigationRoute(createHandlerBoundToURL("index.html"), {
+      denylist: [/^\/api\//, /^\/socket\.io\//, /^\/llms\.txt$/],
+    }),
   );
 }
 

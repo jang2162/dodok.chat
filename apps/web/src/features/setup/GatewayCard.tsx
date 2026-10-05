@@ -8,6 +8,7 @@ import { Button } from "@/ui/button";
 import { DeleteGatewayConfirm } from "./DeleteGatewayConfirm";
 import { GatewayForm } from "./GatewayForm";
 import { IssueTokenDialog } from "./IssueTokenDialog";
+import { publicOriginOf } from "./llms";
 import { useUpdateGateway } from "./mutations";
 import { useBridgeTokens } from "./queries";
 import { CopyBlock, Field, PAIRING_STALE_MS, Pending, Section } from "./sections";
@@ -219,7 +220,11 @@ function BridgeTokens({ gateway, status }: { gateway: GatewaySetup; status: Setu
           폐기하면 에이전트가 멈추지 않습니다. 브리지 주소{" "}
           <code className="font-mono break-all">{status.bridge.publicUrl}</code>
         </p>
-        <IssueTokenDialog gatewayId={gateway.id} triggerRef={issueButton} />
+        <IssueTokenDialog
+          gatewayId={gateway.id}
+          origin={publicOriginOf(status.bridge.publicUrl)}
+          triggerRef={issueButton}
+        />
       </div>
       {/* 「쓸 수 있는」 — 폐기된 줄이 아래 목록에 함께 보여도 모순되지 않게 */}
       {none && (

@@ -2,6 +2,7 @@ import type { IssueRunnerTokenResult, RunnerConfigSnippet } from "@dodok/shared"
 import type { RefObject } from "react";
 import { qk } from "@/api/queries";
 import { IssueDialog } from "./IssueTokenDialog";
+import { llmsHandoffLine } from "./llms";
 import { CopyBlock } from "./sections";
 
 /** 러너 설정 파일의 기본 자리(러너 스펙 4.1 `dodok-runner --config` 기본값) */
@@ -48,6 +49,7 @@ export function IssueRunnerTokenDialog({ triggerRef }: { triggerRef?: RefObject<
       description="알아볼 라벨을 붙입니다(예: 러너를 돌릴 머신 이름). 원문은 발급 직후 한 번만 보입니다."
       path="/setup/runner-tokens"
       listKey={qk.runnerTokens}
+      handoff={(issued) => llmsHandoffLine("runner", issued.runnerConfig.serverUrl, issued.token)}
       config={(issued) => (
         <>
           <div className="grid min-w-0 gap-1.5">

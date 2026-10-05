@@ -17,6 +17,7 @@ import {
 } from "@/ui/dialog";
 import { Input } from "@/ui/input";
 import { Label } from "@/ui/label";
+import { llmsHandoffLine } from "./llms";
 import { useIssueToken } from "./mutations";
 import { CopyBlock } from "./sections";
 
@@ -49,6 +50,7 @@ export function IssueDialog<T extends Issued>({
   listKey,
   config,
   reservedLabel,
+  handoff,
 }: {
   triggerRef?: RefObject<HTMLButtonElement | null>;
   triggerLabel: string;
@@ -62,6 +64,8 @@ export function IssueDialog<T extends Issued>({
   config: (issued: T) => ReactNode;
   /** 서버가 VALIDATION 으로 막는 라벨이면 그 까닭 */
   reservedLabel?: (label: string) => string | undefined;
+  /** 원문 바로 아래 「AI 에게 맡기기」 한 줄(llmsHandoffLine) — 원문을 담으므로 원문과 같은 규칙으로 이 대화상자에서만 보인다 */
+  handoff?: (issued: T) => string;
 }) {
   const [open, setOpen] = useState(false);
   const [label, setLabel] = useState("");
@@ -128,6 +132,16 @@ export function IssueDialog<T extends Issued>({
               <p className="text-sm font-medium">토큰</p>
               <CopyBlock text={issued.token} label="토큰 복사" wrap />
             </div>
+            {handoff && (
+              <div className="grid min-w-0 gap-1.5">
+                <p className="text-sm font-medium">AI 에게 맡기기</p>
+                <p className="text-xs text-muted-foreground">
+                  설치할 머신에서 도는 AI 에게 이 한 줄을 건네면 안내서대로 설치합니다. 토큰이 들어 있으니
+                  원문처럼 다루세요.
+                </p>
+                <CopyBlock text={handoff(issued)} label="AI 에게 맡기기 복사" wrap testId="llms-handoff" />
+              </div>
+            )}
             {config(issued)}
             {leave.status === "blocked" && (
               <div
@@ -193,9 +207,12 @@ export function IssueDialog<T extends Issued>({
 /** 브리지 토큰 발급(그 Gateway 에 묶인다) — 원문과 Gateway 호스트에 넣을 플러그인 설정 조각 */
 export function IssueTokenDialog({
   gatewayId,
+  origin,
   triggerRef,
 }: {
   gatewayId: string;
+  /** 서버의 공개 오리진(publicOriginOf) — 「AI 에게 맡기기」 줄의 안내서 주소 */
+  origin: string;
   triggerRef?: RefObject<HTMLButtonElement | null>;
 }) {
   return (
@@ -206,6 +223,7 @@ export function IssueTokenDialog({
       description="알아볼 라벨을 붙입니다(예: Gateway 호스트 이름). 원문은 발급 직후 한 번만 보입니다."
       path={`/gateways/${gatewayId}/bridge-tokens`}
       listKey={qk.bridgeTokens}
+      handoff={(issued) => llmsHandoffLine("bridge", origin, issued.token)}
       config={(issued) => (
         <div className="grid min-w-0 gap-1.5">
           <p className="text-sm font-medium">플러그인 설정</p>
