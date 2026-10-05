@@ -4,6 +4,7 @@ import {
   BellIcon,
   BotIcon,
   CableIcon,
+  HashIcon,
   type LucideIcon,
   UserIcon,
   UsersIcon,
@@ -25,6 +26,8 @@ export const SETTINGS_TABS = [
   { path: "/settings/account", label: "내 계정", icon: UserIcon, visible: () => true },
   { path: "/settings/notifications", label: "알림", icon: BellIcon, visible: () => true },
   { path: "/settings/agents", label: "에이전트", icon: BotIcon, visible: () => true },
+  // 보관한 채널 목록 — 읽기는 누구나, 「보관 해제」만 admin 이상(채널 보관 스펙 「웹」 절)
+  { path: "/settings/channels", label: "채널", icon: HashIcon, visible: () => true },
   { path: "/settings/members", label: "멤버", icon: UsersIcon, visible: (r) => roleAtLeast(r, "admin") },
   { path: "/settings/connection", label: "연결", icon: CableIcon, visible: (r) => r === "owner" },
   {

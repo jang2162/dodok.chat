@@ -73,6 +73,12 @@ describe("uploadImage", () => {
     await expect(up.promise).rejects.toThrow(TOO_BIG);
   });
 
+  it("409 CHANNEL_ARCHIVED(보관한 채널) → 「보관된 채널입니다」", async () => {
+    const { up, xhr } = start();
+    xhr.respond(409, { code: "CHANNEL_ARCHIVED", message: "channel is archived" });
+    await expect(up.promise).rejects.toThrow("보관된 채널입니다");
+  });
+
   it("400 → 서버 message", async () => {
     const { up, xhr } = start();
     xhr.respond(400, { code: "VALIDATION", message: "이미지만 올릴 수 있습니다" });

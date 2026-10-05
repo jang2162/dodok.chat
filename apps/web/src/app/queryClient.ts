@@ -1,6 +1,6 @@
 import { MutationCache, QueryCache, QueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { isFormErrorCode } from "@/api/formErrors";
+import { CHANNEL_ARCHIVED_TEXT, isFormErrorCode } from "@/api/formErrors";
 import { ApiRequestError, NetworkError } from "@/api/http";
 import { meQuery, qk } from "@/api/queries";
 
@@ -20,6 +20,8 @@ declare module "@tanstack/react-query" {
 const is401 = (e: unknown) => e instanceof ApiRequestError && e.status === 401;
 /** 역할이 모자라 서버가 막은 것(팀 스펙 2장) — 봉투 없는 403(프록시 등)은 아니다 */
 const isForbidden = (e: unknown) => e instanceof ApiRequestError && e.code === "FORBIDDEN";
+/** 보관한 채널에 쓰기(채널 보관 스펙 「오류」 장) — 이 탭이 아직 보관을 모른다 */
+const isChannelArchived = (e: unknown) => e instanceof ApiRequestError && e.code === "CHANNEL_ARCHIVED";
 /** 폼 입력 오류는 폼 안에서 보인다(스펙 8장) — 뮤테이션 전역 토스트에서 뺀다 */
 const isFormError = (e: unknown) => e instanceof ApiRequestError && isFormErrorCode(e.code);
 
@@ -30,6 +32,7 @@ const isRetryable = (e: unknown) =>
 /** 스펙 8장: 네트워크 실패는 한 id 로 모아 하나만, API 오류는 서버 message(`apiErrorText` 가 있으면 그 문구). 그 밖(코드 오류)은 토스트하지 않는다 */
 function toastError(e: unknown, meta: RequestMeta | undefined) {
   if (isForbidden(e)) toast.error("권한이 없습니다", { id: "forbidden" });
+  else if (isChannelArchived(e)) toast.error(CHANNEL_ARCHIVED_TEXT, { id: "channel-archived" });
   else if (e instanceof NetworkError) toast.error("서버에 연결할 수 없습니다", { id: "network" });
   else if (e instanceof ApiRequestError) toast.error(meta?.apiErrorText?.(e) ?? e.message);
 }
@@ -47,6 +50,13 @@ export function createQueryClient(onUnauthorized: () => void): QueryClient {
   const refreshRole = (e: unknown) => {
     if (isForbidden(e)) void qc.fetchQuery({ ...meQuery, staleTime: 0 }).catch(() => undefined);
   };
+  // 보관을 놓친 탭의 쓰기(설정·멤버·「새 대화」)가 409 면 채널을 다시 받는다 — 열린 화면이 읽기 전용으로, 사이드바에서 빠진다.
+  // 어느 채널인지 오류가 말하지 않으므로 보고 있는 채널 상세 전부(관찰자 있는 것만 다시 부른다)
+  const refreshChannels = (e: unknown) => {
+    if (!isChannelArchived(e)) return;
+    void qc.invalidateQueries({ queryKey: ["channel"] });
+    void qc.invalidateQueries({ queryKey: qk.channels, exact: true });
+  };
   const qc: QueryClient = new QueryClient({
     queryCache: new QueryCache({
       onError: (e, query) => {
@@ -63,6 +73,7 @@ export function createQueryClient(onUnauthorized: () => void): QueryClient {
     mutationCache: new MutationCache({
       onError: (e, _variables, _onMutateResult, mutation) => {
         refreshRole(e);
+        refreshChannels(e);
         if (is401(e)) onUnauthorized();
         else if (!mutation.meta?.silent && !isFormError(e)) toastError(e, mutation.meta);
       },

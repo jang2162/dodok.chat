@@ -15,7 +15,7 @@ import { emptyTimeline, type Timeline } from "@/features/messages/timeline";
 import { useWireStatus } from "@/realtime/wire";
 import { stubEditorDom } from "../../../test/domStubs";
 import { createFakeSocket } from "../../../test/fakeSocket";
-import { AGENT, CH, CH2, msg } from "../../../test/fixtures";
+import { AGENT, CH, CH2, msg, uid } from "../../../test/fixtures";
 import { stubMedia } from "../../../test/media";
 import { DEV } from "../../../test/messages";
 import { stubScrollLayout } from "../../../test/scrollLayout";
@@ -397,6 +397,40 @@ describe("결과로 가기", () => {
     );
     expect(fetchMock.mock.calls.map((c) => String(c[0]))).not.toContain(
       `/api/v1/channels/${CH}/messages?limit=50&around=133`,
+    );
+  });
+
+  it("보관한 채널의 결과 — 줄에 「보관됨」과 채널 이름, 누르면 읽기 전용 채널 화면으로(Review Focus 4)", async () => {
+    const ARC = uid(3);
+    const archived = channelOf(ARC, { name: "old-news", archivedAt: "2027-01-20T00:00:00.000Z" });
+    const hit = msg(10, { channelId: ARC, bodyMd: "보관 전 메시지" });
+    search = () =>
+      json(200, { hits: [hitOf(hit, { snippet: "보관 전 메시지", channelArchived: true })], limited: false });
+    routes.set("/api/v1/channels?archived=1", () => json(200, { channels: [archived] }));
+    routes.set(`/api/v1/channels/${ARC}`, () => json(200, { channel: archived }));
+    // 구독 응답(최신 창)을 받은 상태 — 보관한 채널도 구독·읽기는 그대로다
+    const qc = subscribedClient();
+    qc.setQueryData<Timeline>(qk.timeline(ARC), {
+      ...emptyTimeline(),
+      items: range(1, 20).map((m) => (m.seq === 10 ? hit : { ...m, channelId: ARC })),
+      lastSeq: 20,
+    });
+    const { router } = renderRoute(`/c/${CH}`, qc);
+    const dialog = await openWith({ metaKey: true });
+    await typeQuery("보관 전");
+    const row = await within(dialog).findByRole("button", { name: /보관 전 메시지/ });
+    await waitFor(() => expect(row).toHaveTextContent("#old-news"));
+    expect(within(row).getByText("보관됨")).toBeInTheDocument();
+
+    await userEvent.click(row);
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${ARC}`));
+    expect(await screen.findByText("보관된 채널입니다.")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "메시지 입력" })).toBeNull();
+    await waitFor(() =>
+      expect(screen.getByText("보관 전 메시지", { selector: "p" }).closest("[data-index]")).toHaveAttribute(
+        "data-highlighted",
+        "true",
+      ),
     );
   });
 

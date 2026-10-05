@@ -155,6 +155,12 @@ export const agentsRoute = createRoute({
   path: "agents",
   component: lazyPage(() => import("@/features/agents/AgentsPage"), "AgentsPage"),
 });
+/** 보관한 채널(누구나 — 「보관 해제」만 admin 이상, 채널 보관 스펙 「웹」 절) */
+export const channelsRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: "channels",
+  component: lazyPage(() => import("@/features/settings-shell/ChannelsPage"), "ChannelsPage"),
+});
 /** 멤버 관리(admin 이상 — 페이지가 가른다, 팀 스펙 6장) */
 export const membersRoute = createRoute({
   getParentRoute: () => settingsRoute,
@@ -198,6 +204,7 @@ const routeTree = rootRoute.addChildren([
       accountRoute,
       notificationsRoute,
       agentsRoute,
+      channelsRoute,
       membersRoute,
       connectionRoute,
       operationsRoute,

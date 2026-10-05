@@ -12,7 +12,8 @@ export type PendingMessage = {
   /** `failed` 의 사유 — 레이트리밋(ack RATE_LIMITED)이면 다른 문구를 보인다. 없으면 일반 실패 */
   reason?: PendingFailReason;
 };
-export type PendingFailReason = "rate_limited";
+/** `channel_archived` 는 보관한 채널에 보낸 것 — 다시 보내도 같은 409 라 「다시 보내기」를 두지 않는다 */
+export type PendingFailReason = "rate_limited" | "channel_archived";
 /**
  * 확정 메시지(seq 오름차순)와 보내는 중 항목. 보내는 중 항목은 항상 목록 끝에 그린다(스펙 4.3-6).
  * `hasNewer` 는 결과로 가기(`around`)로 받은 떨어진 창이다 — 창 뒤에 받지 않은 메시지가 있다. 그동안 `lastSeq` 는 창의 끝이

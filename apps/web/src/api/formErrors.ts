@@ -2,6 +2,8 @@ import { ApiRequestError } from "./http";
 
 /** `AGENT_ARCHIVED`(보관한 에이전트를 등록·채널에 넣기·다시 실행)의 화면 문구 — 스펙 「오류」 절 */
 export const AGENT_ARCHIVED_TEXT = "삭제된 에이전트입니다";
+/** `CHANNEL_ARCHIVED`(보관한 채널에 보내기·상호작용·설정·첨부)의 화면 문구 — 채널 보관 스펙 「웹」 절의 카드 비활성 사유와 같은 말 */
+export const CHANNEL_ARCHIVED_TEXT = "보관된 채널입니다";
 
 /** 폼이 그리는 409·400 — 전역 뮤테이션 토스트(app/queryClient)도 이 판정으로 뺀다 */
 export const isFormErrorCode = (code: string): boolean =>

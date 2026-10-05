@@ -4,6 +4,7 @@ import { HashIcon, SettingsIcon } from "lucide-react";
 import type { RefObject } from "react";
 import { useAgents, useChannel, useMembers } from "@/api/queries";
 import { isArchived } from "@/features/agents/archived";
+import { isChannelArchived } from "@/features/channels/archived";
 import { agentColorVar } from "@/theme/agentColor";
 import { Avatar, AvatarFallback, AvatarGroup, AvatarGroupCount, AvatarImage } from "@/ui/avatar";
 import { Button } from "@/ui/button";
@@ -13,7 +14,7 @@ import { OpenSidebarButton } from "./sidebarSheet";
 const MAX_AVATARS = 4;
 
 /**
- * 채널 헤더(스펙 2.4): 이름·주제, 참여 에이전트 아바타 묶음(테두리 에이전트 색, 스펙 7.2), 설정 패널 여닫기.
+ * 채널 헤더(스펙 2.4): 이름(보관한 채널이면 「보관됨」)·주제, 참여 에이전트 아바타 묶음(테두리 에이전트 색, 스펙 7.2), 설정 패널 여닫기.
  * 좁은 화면이면 왼쪽에 「채널 목록 열기」. `settingsRef` 는 그 설정 링크 — 좁은 화면 시트가 닫히면
  * 초점이 여기로 돌아온다(브라우저 검증 D14)
  */
@@ -46,6 +47,11 @@ export function ChannelHeader({
         <h1 className="flex items-center gap-1 text-base font-semibold">
           <HashIcon className="size-4 shrink-0 opacity-60" aria-hidden />
           <span className="truncate">{channel.data?.name}</span>
+          {channel.data && isChannelArchived(channel.data) && (
+            <span className="shrink-0 rounded-sm bg-muted px-1.5 py-0.5 text-xs font-normal text-muted-foreground">
+              보관됨
+            </span>
+          )}
         </h1>
         {channel.data?.topic && (
           <p className="truncate text-xs text-muted-foreground">{channel.data.topic}</p>

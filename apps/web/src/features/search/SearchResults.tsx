@@ -1,7 +1,7 @@
 import type { SearchHit } from "@dodok/shared";
 import { useMemo } from "react";
 import { ApiRequestError, NetworkError } from "@/api/http";
-import { useChannels } from "@/api/queries";
+import { useArchivedChannels, useChannels } from "@/api/queries";
 import { useAuthors } from "@/features/messages/useAuthors";
 import { Button } from "@/ui/button";
 import { Snippet } from "./highlight";
@@ -19,7 +19,8 @@ export function searchErrorText(e: unknown): string {
 }
 
 /**
- * 결과 목록(스레드·검색 스펙 5.4) — 줄마다 채널·작성자·시각·스니펫(일치 부분 강조), 답글이면 「스레드 답글」.
+ * 결과 목록(스레드·검색 스펙 5.4) — 줄마다 채널·작성자·시각·스니펫(일치 부분 강조), 답글이면 「스레드 답글」, 보관한 채널이면 「보관됨」
+ * (누르면 읽기 전용 채널 화면으로 간다 — 채널 화면이 상세를 받아 안다).
  * 누르면 `onPick`. 2글자 검색(`limited`)은 「더 보기」 없이 범위 안내 한 줄. 다음 쪽이 실패하면(429 포함) 받은 결과 아래에 한 줄
  */
 export function SearchResults({
@@ -30,7 +31,12 @@ export function SearchResults({
   onPick: (hit: SearchHit) => void;
 }) {
   const channels = useChannels().data;
-  const nameOf = useMemo(() => new Map((channels ?? []).map((c) => [c.id, c.name])), [channels]);
+  // 보관한 채널은 사이드바 목록에 없다 — 그 결과가 있을 때만 보관 목록을 받아 이름을 찾는다
+  const archived = useArchivedChannels({ enabled: search.hits.some((h) => h.channelArchived) }).data;
+  const nameOf = useMemo(
+    () => new Map([...(channels ?? []), ...(archived ?? [])].map((c) => [c.id, c.name])),
+    [channels, archived],
+  );
   const { author } = useAuthors();
 
   if (!search.enabled) return null;
@@ -71,6 +77,7 @@ export function SearchResults({
                   </span>
                   <span>{author(hit).name}</span>
                   <time dateTime={hit.createdAt}>{WHEN.format(new Date(hit.createdAt))}</time>
+                  {hit.channelArchived && <span className="rounded-sm bg-muted px-1">보관됨</span>}
                   {hit.threadRootId !== undefined && (
                     <span className="rounded-sm bg-muted px-1">스레드 답글</span>
                   )}

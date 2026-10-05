@@ -1,4 +1,5 @@
 import { ApiError, ATTACHMENT_LIMITS, Attachment, isImageMime } from "@dodok/shared";
+import { CHANNEL_ARCHIVED_TEXT } from "@/api/formErrors";
 
 export const ONLY_IMAGES = "이미지만 올릴 수 있습니다";
 export const TOO_BIG = "5 MB 를 넘습니다";
@@ -15,7 +16,7 @@ export function checkImageFile(file: Pick<File, "type" | "size">): string | unde
 
 /**
  * 이미지 한 장을 올린다 — XHR 인 까닭은 `fetch` 가 업로드 진행을 주지 않아서다(스펙 6.1). 쿠키 인증, 같은 출처.
- * 413 은 상한 문구, 400 은 서버 문구, 507 은 디스크 문구, 그 밖·네트워크 오류는 「올리지 못했습니다」. `abort()` 는 `AbortError` 로 끝낸다
+ * 413 은 상한 문구, 400 은 서버 문구, 507 은 디스크 문구, 409 CHANNEL_ARCHIVED 는 보관 문구, 그 밖·네트워크 오류는 「올리지 못했습니다」. `abort()` 는 `AbortError` 로 끝낸다
  */
 export function uploadImage(
   file: File,
@@ -39,6 +40,8 @@ export function uploadImage(
       if (xhr.status === 413) return reject(new Error(TOO_BIG));
       if (xhr.status === 507) return reject(new Error(DISK_FULL));
       const body = ApiError.safeParse(safeJson(xhr.responseText));
+      if (body.success && body.data.code === "CHANNEL_ARCHIVED")
+        return reject(new Error(CHANNEL_ARCHIVED_TEXT));
       reject(new Error(body.success && xhr.status === 400 ? body.data.message : UPLOAD_FAILED));
     };
     xhr.onerror = () => reject(new Error(UPLOAD_FAILED));

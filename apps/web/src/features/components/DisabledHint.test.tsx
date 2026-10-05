@@ -6,6 +6,7 @@ import { useWireStatus } from "@/realtime/wire";
 import { createFakeSocket, type FakeSocket } from "../../../test/fakeSocket";
 import { msg, uid } from "../../../test/fixtures";
 import { renderWithClient } from "../../../test/messages";
+import { ChannelArchivedContext } from "@/features/channels/archived";
 import { Components } from "./Components";
 import { DISABLED_REASON_TEXT, type ItemState } from "./state";
 
@@ -181,9 +182,14 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("비활성 사유는 보이는 글이다 — 다섯 사유 × 버튼·셀렉트·모달", () => {
+describe("비활성 사유는 보이는 글이다 — 여섯 사유 × 버튼·셀렉트·모달", () => {
   /** 사유를 건다 — 카드는 먼저 누를 수 있게 그려 두고(바뀌는 순간에도 글이 따라오는지) 그 위에 사유를 얹는다 */
-  const lock: Record<Reason, (spot: Spot, rerender: (m: Message) => void) => Promise<void>> = {
+  const lock: Record<
+    Reason,
+    (spot: Spot, rerender: (m: Message, archived?: boolean) => void) => Promise<void>
+  > = {
+    // 채널 화면이 내려 주는 보관 여부가 바뀐다(다른 탭의 보관 → channel.updated)
+    archived: async (_, rerender) => rerender(card(), true),
     disconnected: async () => act(() => useWireStatus.getState().setStatus("reconnecting")),
     expired: async (_, rerender) => rerender(card({ expired: true })),
     consumed: async (_, rerender) => rerender(card({ consumed: true })),
@@ -196,9 +202,15 @@ describe("비활성 사유는 보이는 글이다 — 다섯 사유 × 버튼·�
 
   describe.each(SPOTS.map((s) => [s.name, s] as const))("%s", (_, spot) => {
     it.each(Object.keys(lock) as Reason[])("%s — 보이는 글 한 번, 설명 한 번", async (reason) => {
-      const { rerender } = renderWithClient(<Components message={card()} />);
+      // 처음부터 Provider 로 감싼다 — 보관 여부만 바뀌어야 카드가 새로 마운트되지 않고 그 자리에서 잠긴다
+      const inChannel = (m: Message, archived = false) => (
+        <ChannelArchivedContext.Provider value={archived}>
+          <Components message={m} />
+        </ChannelArchivedContext.Provider>
+      );
+      const { rerender } = renderWithClient(inChannel(card()));
       await spot.ready?.();
-      await lock[reason](spot, (m) => rerender(<Components message={m} />));
+      await lock[reason](spot, (m, archived) => rerender(inChannel(m, archived)));
       expectSeenAndSpokenOnce(spot, DISABLED_REASON_TEXT[reason]);
     });
 

@@ -14,6 +14,7 @@ import { ApiRequestError } from "@/api/http";
 import { type AdapterStatusResponse, type MeResponse, meQuery, qk } from "@/api/queries";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
 import { forgetApproval, notifyApproval } from "@/features/approvals/notify";
+import { applyChannel } from "@/features/channels/archived";
 import { hasGap, noteSeq, type Timeline, upsert } from "@/features/messages/timeline";
 import { useRunStore } from "@/features/runs/runStore";
 import type { Subscriptions } from "./subscriptions";
@@ -186,12 +187,10 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
         list && !list.some((c) => c.id === channel.id) ? [...list, channel] : list,
       );
     },
-    "channel.updated": ({ channel }) => {
-      qc.setQueryData<Channel[]>(qk.channels, (list) =>
-        list?.map((c) => (c.id === channel.id ? channel : c)),
-      );
-      qc.setQueryData<Channel>(qk.channel(channel.id), channel);
-    },
+    /**
+     * 워크스페이스 방으로 온다 — 구독하지 않은 채널도. 보관하면 사이드바에서 빠지고 열린 화면은 상세 캐시로 읽기 전용이 된다(`applyChannel`)
+     */
+    "channel.updated": ({ channel }) => applyChannel(qc, channel),
     "channel.member.changed": ({ channelId, members }) => qc.setQueryData(qk.members(channelId), members),
     /**
      * 에이전트가 바뀌었다(등록·수정·옮기기·보관·되살리기 — 본문 없음, 계획 판정 PS4). 목록과 채널 멤버를 다시 받게 낡은 것으로 둔다 —

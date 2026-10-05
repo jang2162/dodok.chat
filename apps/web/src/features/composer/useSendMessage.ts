@@ -10,6 +10,7 @@ import {
   setPendingState,
   upsert,
 } from "@/features/messages/timeline";
+import { refreshArchivedChannel } from "@/features/channels/archived";
 import { getThread, getTimeline, updateThread, updateTimeline } from "@/realtime/timelineCache";
 import { WireAckError, emitAck, useWireStatus } from "@/realtime/wire";
 import { useWire } from "@/realtime/WireProvider";
@@ -68,7 +69,14 @@ export function useSendMessage(channelId: string, threadRootId?: string): SendMe
       } catch (e) {
         // wire ack 오류(TIMEOUT 포함)는 토스트 없이 항목에만 보인다(스펙 8장). 레이트리밋은 사유를 달아 다른 문구로
         // (운영 보강 스펙 4장) — 다시 보내기는 같은 clientMsgId 라 서버가 멱등으로 받는다
-        fail(e instanceof WireAckError && e.code === "RATE_LIMITED" ? "rate_limited" : undefined);
+        const code = e instanceof WireAckError ? e.code : undefined;
+        if (code === "CHANNEL_ARCHIVED") {
+          // 이 탭이 보관을 아직 모른다(이벤트보다 먼저 보냈거나 놓쳤다) — 채널을 다시 받아 작성기를 안내로 바꾼다
+          fail("channel_archived");
+          refreshArchivedChannel(qc, channelId);
+          return;
+        }
+        fail(code === "RATE_LIMITED" ? "rate_limited" : undefined);
       }
     },
     [qc, socket, channelId, threadRootId, update],

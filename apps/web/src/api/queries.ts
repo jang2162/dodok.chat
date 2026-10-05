@@ -66,6 +66,11 @@ export function runnerAdapterStatus(list: AdapterStatusList): RunnerAdapterStatu
 export const qk = {
   me: ["me"] as const,
   channels: ["channels"] as const,
+  /**
+   * 보관한 채널(`GET /channels?archived=1`) — 「설정 → 채널」 탭·검색 결과의 채널 이름. `channels` 아래에 두지 않는다: 사이드바 목록의
+   * 앞머리 무효화에 끌려가지 않게. 오프라인 사본에 담지 않는다(pwa/persist 의 허용 목록 밖)
+   */
+  archivedChannels: ["archivedChannels"] as const,
   channel: (id: string) => ["channel", id] as const,
   members: (id: string) => ["members", id] as const,
   /** 모든 채널의 멤버(무효화용 앞머리) */
@@ -151,6 +156,13 @@ export const useChannels = () =>
   useQuery({
     queryKey: qk.channels,
     queryFn: async () => (await api<{ channels: Channel[] }>("GET", "/channels")).channels,
+  });
+/** 보관한 채널 목록 — `enabled` 로 필요할 때만 부른다(검색 결과에 보관한 채널이 있을 때) */
+export const useArchivedChannels = (opts: { enabled?: boolean } = {}) =>
+  useQuery({
+    queryKey: qk.archivedChannels,
+    queryFn: async () => (await api<{ channels: Channel[] }>("GET", "/channels?archived=1")).channels,
+    enabled: opts.enabled ?? true,
   });
 /**
  * 조회 오류는 채널 화면(ChannelPage)이 화면 안에 그린다(없는 채널 등) — 전역 토스트를 끈다(`silent`).

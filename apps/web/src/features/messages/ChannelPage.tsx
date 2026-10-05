@@ -6,6 +6,8 @@ import { useChannel } from "@/api/queries";
 import { ChannelHeader } from "@/app/layout/ChannelHeader";
 import { PanelTabs, usePanelTab } from "@/app/layout/PanelTabs";
 import { OpenSidebarButton, useOpenSidebar } from "@/app/layout/sidebarSheet";
+import { ArchivedNotice } from "@/features/channels/ArchivedNotice";
+import { ChannelArchivedContext, isChannelArchived } from "@/features/channels/archived";
 import { Composer } from "@/features/composer/Composer";
 import { TypingIndicator } from "@/features/composer/TypingIndicator";
 import { useSendMessage } from "@/features/composer/useSendMessage";
@@ -63,35 +65,46 @@ export function ChannelPage() {
       </div>
     );
   }
+  // 보관한 채널은 읽기만(채널 보관 스펙 「웹」 절) — 작성기 자리에 안내, 카드·스레드 패널·설정 패널은 컨텍스트로 안다.
+  // 다른 탭이 보관하면 wire `channel.updated` 가 이 채널 캐시를 바꿔 같은 화면이 그대로 읽기 전용이 된다
+  const archived = isChannelArchived(channel.data);
   return (
     <div data-testid="page-channel" className="flex min-h-0 flex-1">
-      <PendingActionsContext.Provider value={pendingActions}>
-        <ThreadOpenerContext.Provider value={threadOpenerRef}>
-          <section className="flex min-w-0 flex-1 flex-col">
-            <ChannelHeader channelId={channelId} settingsRef={settingsRef} />
-            <MessageList
-              channelId={channelId}
-              bubbleRunIds={bubbleRunIds}
-              bubbles={(runId) => <StreamingBubble runId={runId} />}
-            />
-            <div data-slot="composer">
-              <TypingIndicator channelId={channelId} />
-              <Composer channelId={channelId} />
-            </div>
-          </section>
-        </ThreadOpenerContext.Provider>
-      </PendingActionsContext.Provider>
-      {tab && (
-        <PanelTabs
-          channelId={channelId}
-          rootId={tab === "thread" ? rootId : undefined}
-          active={tab}
-          openerRef={settingsRef}
-          threadOpenerRef={threadOpenerRef}
-        >
-          <Outlet />
-        </PanelTabs>
-      )}
+      <ChannelArchivedContext.Provider value={archived}>
+        <PendingActionsContext.Provider value={pendingActions}>
+          <ThreadOpenerContext.Provider value={threadOpenerRef}>
+            <section className="flex min-w-0 flex-1 flex-col">
+              <ChannelHeader channelId={channelId} settingsRef={settingsRef} />
+              <MessageList
+                channelId={channelId}
+                bubbleRunIds={bubbleRunIds}
+                bubbles={(runId) => <StreamingBubble runId={runId} />}
+              />
+              <div data-slot="composer">
+                {archived ? (
+                  <ArchivedNotice channelId={channelId} unarchive />
+                ) : (
+                  <>
+                    <TypingIndicator channelId={channelId} />
+                    <Composer channelId={channelId} />
+                  </>
+                )}
+              </div>
+            </section>
+          </ThreadOpenerContext.Provider>
+        </PendingActionsContext.Provider>
+        {tab && (
+          <PanelTabs
+            channelId={channelId}
+            rootId={tab === "thread" ? rootId : undefined}
+            active={tab}
+            openerRef={settingsRef}
+            threadOpenerRef={threadOpenerRef}
+          >
+            <Outlet />
+          </PanelTabs>
+        )}
+      </ChannelArchivedContext.Provider>
     </div>
   );
 }

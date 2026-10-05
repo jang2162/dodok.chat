@@ -1,8 +1,10 @@
 import type { ErrorCode, Message } from "@dodok/shared";
-import { useCallback, useState } from "react";
+import { QueryClientContext } from "@tanstack/react-query";
+import { useCallback, useContext, useState } from "react";
 import { toast } from "sonner";
 import { emitAck, useWireStatus, WireAckError } from "@/realtime/wire";
-import { AGENT_ARCHIVED_TEXT } from "@/api/formErrors";
+import { AGENT_ARCHIVED_TEXT, CHANNEL_ARCHIVED_TEXT } from "@/api/formErrors";
+import { refreshArchivedChannel, useChannelArchived } from "@/features/channels/archived";
 import { RATE_LIMITED_TEXT } from "@/features/messages/rateLimited";
 import { useWire } from "@/realtime/WireProvider";
 import { DISABLED_REASON_TEXT } from "./state";
@@ -21,6 +23,8 @@ const ERR: Partial<Record<ErrorCode, string>> = {
   RUN_LIMIT: "오늘 런 한도에 도달했습니다 — 한도가 풀리면 다시 누를 수 있습니다",
   // 「다시 실행」의 에이전트가 삭제(보관)됨 — 버튼은 소비되지 않는다(스펙 「오류」 절)
   AGENT_ARCHIVED: AGENT_ARCHIVED_TEXT,
+  // 카드의 채널이 보관됨 — 저장·소비 전에 거절하므로 보관 해제 뒤 다시 누른다(채널 보관 스펙 「오류」 장)
+  CHANNEL_ARCHIVED: CHANNEL_ARCHIVED_TEXT,
   RATE_LIMITED: RATE_LIMITED_TEXT,
 };
 
@@ -61,6 +65,8 @@ export type Interact = {
   send(itemId: string, values: Record<string, unknown>, opts?: SendOptions): Promise<SendResult>;
   connected: boolean;
   hasSocket: boolean;
+  /** 카드가 있는 채널이 보관됐다(채널 화면의 `ChannelArchivedContext`) — 모든 항목이 비활성 */
+  archived: boolean;
   /**
    * 초점을 옮길 결과 줄 — **내가 보내 성공한** 상호작용의 id(ack 의 interactionId). 카드가 그 줄을 그리면 옮기고 `focusDone`.
    * 다른 사람이 보낸 것·만료는 이 id 가 아니라 초점을 뺏지 않는다
@@ -89,6 +95,9 @@ function failureOf(e: unknown): SendFailure {
 export function useInteract(message: Message): Interact {
   const { socket } = useWire();
   const connected = useWireStatus((s) => s.status === "connected");
+  const archived = useChannelArchived();
+  // 채널 화면 밖(카드만 그리는 테스트)에는 QueryClient 가 없다 — 그때는 409 뒤 채널을 다시 받지 않는다
+  const qc = useContext(QueryClientContext);
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
   const [focusId, setFocusId] = useState<string>();
   const focusDone = useCallback(() => setFocusId(undefined), []);
@@ -100,6 +109,12 @@ export function useInteract(message: Message): Interact {
     opts: SendOptions = {},
   ): Promise<SendResult> {
     const fail = (r: SendFailure) => {
+      if (r.code === "CHANNEL_ARCHIVED") {
+        // 이 탭이 보관을 아직 모른다 — 채널을 다시 받으면 카드가 「보관된 채널입니다」로 잠긴다. 여러 카드를 눌러도 토스트는 하나
+        if (qc) refreshArchivedChannel(qc, message.channelId);
+        if (opts.toast !== false) toast.error(r.text, { id: "channel-archived" });
+        return r;
+      }
       if (opts.toast !== false) toast.error(r.text);
       return r;
     };
@@ -137,6 +152,7 @@ export function useInteract(message: Message): Interact {
     send,
     connected,
     hasSocket: socket !== undefined,
+    archived,
     focusId,
     focusResult: setFocusId,
     focusDone,

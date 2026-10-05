@@ -706,6 +706,40 @@ describe("캐시 패치", () => {
     expect(queryClient.getQueryData<Channel>(qk.channel(CH))?.name).toBe("renamed");
   });
 
+  it("channel.updated 보관: 사이드바 목록에서 빼고 [channel, id] 는 보관된 채널로, 보관 목록에 넣는다", () => {
+    const { fake, queryClient } = setup();
+    const other = channel({ id: CH2, name: "random" });
+    queryClient.setQueryData(qk.channels, [channel(), other]);
+    queryClient.setQueryData(qk.archivedChannels, []);
+    const archived = channel({ archivedAt: "2027-01-16T00:00:00.000Z" });
+
+    fake.serverEmit("channel.updated", { channel: archived });
+
+    expect(queryClient.getQueryData<Channel[]>(qk.channels)?.map((c) => c.id)).toEqual([CH2]);
+    expect(queryClient.getQueryData<Channel>(qk.channel(CH))?.archivedAt).toBe(archived.archivedAt);
+    expect(queryClient.getQueryData<Channel[]>(qk.archivedChannels)?.map((c) => c.id)).toEqual([CH]);
+  });
+
+  it("channel.updated 보관 해제: 사이드바 목록의 만든 순서 자리로 돌아오고 보관 목록에서 빠진다", () => {
+    const { fake, queryClient } = setup();
+    // CH 가 먼저 만든 채널 — 서버 목록 순서(createdAt, id)대로 앞에 돌아와야 한다
+    const later = channel({ id: CH2, name: "random", createdAt: "2027-01-16T08:00:00.000Z" });
+    queryClient.setQueryData(qk.channels, [later]);
+    queryClient.setQueryData(qk.archivedChannels, [channel({ archivedAt: "2027-01-16T00:00:00.000Z" })]);
+
+    fake.serverEmit("channel.updated", { channel: channel() });
+
+    expect(queryClient.getQueryData<Channel[]>(qk.channels)?.map((c) => c.id)).toEqual([CH, CH2]);
+    expect(queryClient.getQueryData<Channel[]>(qk.archivedChannels)).toEqual([]);
+    expect(queryClient.getQueryData<Channel>(qk.channel(CH))?.archivedAt).toBeNull();
+  });
+
+  it("channel.updated 보관: 보관 목록을 아직 안 받았으면 만들지 않는다", () => {
+    const { fake, queryClient } = setup();
+    fake.serverEmit("channel.updated", { channel: channel({ archivedAt: "2027-01-16T00:00:00.000Z" }) });
+    expect(queryClient.getQueryData(qk.archivedChannels)).toBeUndefined();
+  });
+
   it("channel.member.changed: [members, channelId] 를 통째로 바꾼다", () => {
     const { fake, queryClient } = setup();
     const member = ChannelMember.parse({

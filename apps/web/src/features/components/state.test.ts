@@ -1,7 +1,7 @@
 import { ComponentsV1 } from "@dodok/shared";
 import { describe, expect, it } from "vitest";
 import { iso, msg, uid, USER } from "../../../test/fixtures";
-import { itemState, type StateInput } from "./state";
+import { DISABLED_REASON_TEXT, itemState, type StateInput } from "./state";
 
 const FUTURE = Date.parse("2999-01-01T00:00:00.000Z");
 const CMP = ComponentsV1.parse({
@@ -18,12 +18,18 @@ const base: StateInput = {
   busy: new Set(),
   allowedUsers: undefined,
   itemId: "ok",
+  archived: false,
 };
 
 describe("itemState", () => {
   it("모두 갖추면 눌린다", () => expect(itemState(base).disabled).toBe(false));
   it("연결이 끊기면 disconnected", () =>
     expect(itemState({ ...base, connected: false }).reason).toBe("disconnected"));
+  it("보관한 채널이면 archived — 연결·만료보다 먼저(보관 해제 전에는 무엇도 받지 않는다)", () => {
+    const s = itemState({ ...base, archived: true, connected: false, expired: true });
+    expect(s).toEqual({ disabled: true, reason: "archived" });
+    expect(DISABLED_REASON_TEXT.archived).toBe("보관된 채널입니다");
+  });
   it("만료되면 expired", () => expect(itemState({ ...base, expired: true }).reason).toBe("expired"));
   it("소비됐으면 consumed", () => {
     const m = msg(1, { components: CMP, componentState: { expiresAt: iso(FUTURE), consumed: ["ok"] } });

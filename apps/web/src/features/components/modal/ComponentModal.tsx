@@ -53,6 +53,7 @@ export function ComponentModal({ modal, message, io, expired }: Props) {
     message,
     connected: io.connected,
     hasSocket: io.hasSocket,
+    archived: io.archived,
     meId,
     expired,
     busy: io.busy,

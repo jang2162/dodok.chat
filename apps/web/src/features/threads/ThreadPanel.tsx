@@ -4,6 +4,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiRequestError, NetworkError } from "@/api/http";
 import { useAgents, useCanManage, useMembers } from "@/api/queries";
 import { ResetSessionDialog } from "@/features/agents/ResetSessionDialog";
+import { ArchivedNotice } from "@/features/channels/ArchivedNotice";
+import { useChannelArchived } from "@/features/channels/archived";
 import { Composer } from "@/features/composer/Composer";
 import { useSendMessage } from "@/features/composer/useSendMessage";
 import { MessageList } from "@/features/messages/MessageList";
@@ -51,8 +53,12 @@ function ThreadBody({ channelId, rootId }: { channelId: string; rootId: string }
   return <ThreadView channelId={channelId} rootId={rootId} />;
 }
 
-/** 루트·답글 목록(스트리밍 버블·카드·첨부·승인 — 채널 목록과 같은 행), 에이전트별 「새 대화」, 스레드 작성기 */
+/**
+ * 루트·답글 목록(스트리밍 버블·카드·첨부·승인 — 채널 목록과 같은 행), 에이전트별 「새 대화」, 스레드 작성기.
+ * 보관한 채널이면 「새 대화」 줄과 작성기 대신 안내만(채널 보관 스펙 「웹」 절)
+ */
 function ThreadView({ channelId, rootId }: { channelId: string; rootId: string }) {
+  const archived = useChannelArchived();
   const bubbleRunIds = useChannelBubbles(channelId, rootId);
   const { retry, discard } = useSendMessage(channelId, rootId);
   // 스레드의 보내는 중 항목 — 채널 목록의 것(ChannelPage)과 따로 둔다
@@ -63,7 +69,7 @@ function ThreadView({ channelId, rootId }: { channelId: string; rootId: string }
   return (
     <PendingActionsContext.Provider value={pendingActions}>
       <div data-testid="thread-panel" className="flex min-h-0 flex-1 flex-col">
-        <ThreadAgents channelId={channelId} rootId={rootId} />
+        {!archived && <ThreadAgents channelId={channelId} rootId={rootId} />}
         <MessageList
           channelId={channelId}
           threadRootId={rootId}
@@ -71,7 +77,11 @@ function ThreadView({ channelId, rootId }: { channelId: string; rootId: string }
           bubbles={(runId) => <StreamingBubble runId={runId} />}
         />
         <div data-slot="composer">
-          <Composer channelId={channelId} threadRootId={rootId} />
+          {archived ? (
+            <ArchivedNotice channelId={channelId} />
+          ) : (
+            <Composer channelId={channelId} threadRootId={rootId} />
+          )}
         </div>
       </div>
     </PendingActionsContext.Provider>

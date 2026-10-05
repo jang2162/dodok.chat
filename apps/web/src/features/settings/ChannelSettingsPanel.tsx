@@ -1,12 +1,15 @@
 import { useParams } from "@tanstack/react-router";
+import { useEffect, useRef } from "react";
 import { useAgents, useChannel, useMembers } from "@/api/queries";
+import { isChannelArchived } from "@/features/channels/archived";
+import { ArchiveSection } from "./ArchiveSection";
 import { BasicSection } from "./BasicSection";
 import { MembersSection, agentMembers } from "./MembersSection";
 import { PromptSection } from "./PromptSection";
 import { RelayPolicySection } from "./RelayPolicySection";
 
 /**
- * 채널 설정 패널(`/c/$channelId/settings`, 스펙 6.3·6.4). 바깥 틀(패널 ↔ 시트·탭 머리·닫기)은 부모인
+ * 채널 설정 패널(`/c/$channelId/settings`, 스펙 6.3·6.4) — 보관한 채널이면 편집 대신 안내만. 바깥 틀(패널 ↔ 시트·탭 머리·닫기)은 부모인
  * ChannelPage 의 `PanelTabs` 가 맡는다 — 활동 탭과 같은 자리를 나눠 쓴다(설계 5.1).
  * ChannelPage 가 채널을 확인한 뒤에만 마운트된다.
  */
@@ -33,6 +36,7 @@ function SettingsBody({ channelId }: { channelId: string }) {
       </p>
     );
   }
+  if (isChannelArchived(channel.data)) return <ArchivedSettings />;
   return (
     <div className="flex flex-col divide-y">
       <BasicSection channel={channel.data} />
@@ -50,6 +54,26 @@ function SettingsBody({ channelId }: { channelId: string }) {
         agentsError={agents.isError}
         onRetryAgents={() => void agents.refetch()}
       />
+      <ArchiveSection channel={channel.data} />
+    </div>
+  );
+}
+
+/**
+ * 보관한 채널의 설정 패널 — 편집 섹션(「새 대화」 포함)을 그리지 않는다(채널 보관 스펙 「웹」 절). 「보관 해제」는 작성기 자리 하나에만 둔다.
+ * 이 패널에서 보관했으면 누른 단추가 사라져 초점이 body 로 떨어진다 — 그때만 이 안내로 옮긴다(다른 탭의 보관이 초점을 뺏지 않게)
+ */
+function ArchivedSettings() {
+  const ref = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    const active = document.activeElement;
+    if (active === null || active === document.body) ref.current?.focus();
+  }, []);
+  return (
+    <div data-testid="channel-settings-archived" className="px-4 py-5 text-sm text-muted-foreground">
+      <p ref={ref} tabIndex={-1} className="outline-none">
+        보관된 채널입니다.
+      </p>
     </div>
   );
 }

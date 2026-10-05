@@ -183,6 +183,20 @@ describe("useInteract — 결정 뒤 초점 표식", () => {
   });
 });
 
+describe("useInteract — 보관한 채널(409 CHANNEL_ARCHIVED)", () => {
+  it("「보관된 채널입니다」 토스트는 같은 id 하나 — 여러 카드를 눌러도 쌓이지 않는다", async () => {
+    fake?.onAck("component.interact", () => ({
+      ok: false,
+      error: { code: "CHANNEL_ARCHIVED", message: "channel is archived" },
+    }));
+    const spy = vi.spyOn(toast, "error");
+    const hook = mount(MESSAGE);
+    const r = await sendWith(hook, "ok", {});
+    expect(r).toMatchObject({ ok: false, code: "CHANNEL_ARCHIVED", text: "보관된 채널입니다" });
+    expect(spy).toHaveBeenCalledWith("보관된 채널입니다", { id: "channel-archived" });
+  });
+});
+
 describe("interactErrorText", () => {
   it("표에 있는 코드는 웹 문구, 없는 코드는 서버 문구", () => {
     expect(interactErrorText("EXPIRED", "server says")).toBe("만료된 항목입니다");
