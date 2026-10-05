@@ -8,6 +8,7 @@ import type { AcceptInviteBody, ResetPasswordBody } from "@dodok/shared";
 import { and, eq } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import { type Auth, OWNER_EMAIL } from "../../auth";
+import { membershipOf } from "../../auth/roles";
 import type { Db, DbOrTx } from "../../db/client";
 import { invites, memberships, users } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
@@ -36,19 +37,27 @@ export function normalizeEmail(email: string): string {
   return email.toLowerCase();
 }
 
-function emailTaken(db: DbOrTx, workspaceId: string, email: string): boolean {
-  return !!db
+const emailConflict = () => apiError("CONFLICT", "이미 가입된 이메일입니다", { field: "email" });
+
+/**
+ * 우리 users 에 같은 이메일이 있으면 409 — 그 사람이 비활성 멤버면 MEMBER_DEACTIVATED(details.userId, 관리자가 다시 활성화할 대상),
+ * 아니면 CONFLICT. 초대 링크에는 이메일이 없어 이 검사는 수락 때 한다
+ */
+function assertEmailUnused(db: DbOrTx, workspaceId: string, email: string): void {
+  const taken = db
     .select({ id: users.id })
     .from(users)
     .where(and(eq(users.workspaceId, workspaceId), eq(users.email, email)))
     .get();
+  if (!taken) return;
+  if (membershipOf(db, workspaceId, taken.id)?.deactivatedAt)
+    throw apiError("MEMBER_DEACTIVATED", "비활성 멤버입니다 — 다시 활성화하세요", { userId: taken.id });
+  throw emailConflict();
 }
-
-const emailConflict = () => apiError("CONFLICT", "이미 가입된 이메일입니다", { field: "email" });
 
 /** Better Auth 의 이메일은 워크스페이스와 무관하게 유일하다 — 우리 users 에 없는 행(owner 부트스트랩 중간 등)도 본다 */
 async function assertEmailFree(deps: AcceptDeps, email: string): Promise<void> {
-  if (emailTaken(deps.db, deps.workspaceId, email)) throw emailConflict();
+  assertEmailUnused(deps.db, deps.workspaceId, email);
   const ctx = await deps.auth.$context;
   if (await ctx.internalAdapter.findUserByEmail(email)) throw emailConflict();
 }
@@ -72,7 +81,7 @@ function acceptingSet(db: DbOrTx): Set<string> {
  * acceptingSet 으로 먼저 막는다. owner 이메일은 다음 부팅의 bootstrapOwner 가 그 사용자로 users 행을 채우므로 지우지 않는다
  */
 async function clearOrphanAndAssertEmailFree(deps: AcceptDeps, email: string): Promise<void> {
-  if (emailTaken(deps.db, deps.workspaceId, email)) throw emailConflict();
+  assertEmailUnused(deps.db, deps.workspaceId, email);
   const adapter = (await deps.auth.$context).internalAdapter;
   const found = await adapter.findUserByEmail(email);
   if (!found) return;
@@ -142,7 +151,7 @@ async function acceptHoldingEmail(
   // 여기서 claim 까지는 await 가 없다 — 검사와 잡기 사이에 다른 가입이 끼지 않는다. 그 전의 await 사이에 낀 경합은
   // 아래 유일 인덱스가 막고 catch 의 재검사(assertHandleFree·assertEmailFree)가 409 로 바꾼다
   assertHandleFree(db, workspaceId, body.handle);
-  if (emailTaken(db, workspaceId, email)) throw emailConflict();
+  assertEmailUnused(db, workspaceId, email);
   if (!claimInvite(db, invite.id, deps.now())) throw inviteNotFound();
 
   const userId = uuidv7();
@@ -234,7 +243,7 @@ export async function resetPassword(
 ): Promise<{ userId: string; sessionToken: string }> {
   const invite = validInvite(deps, body.token, "reset", deps.now());
   const userId = invite.targetUserId;
-  // 발급 뒤 발급자·대상의 역할이 바뀌었으면(대상이 owner·admin 으로 오름, 대상이 나감) 발급 규칙으로 다시 본다 — 링크는 소비하지 않는다
+  // 발급 뒤 발급자·대상의 역할이 바뀌었으면(대상이 owner·admin 으로 오름, 비활성화) 발급 규칙으로 다시 본다 — 링크는 소비하지 않는다
   if (!userId || !resetLinkUsable(deps.db, deps.workspaceId, invite)) throw inviteNotFound();
   const ctx = await deps.auth.$context;
   const adapter = ctx.internalAdapter;

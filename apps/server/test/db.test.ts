@@ -214,7 +214,7 @@ describe("db", () => {
         const ws = uuid();
         const owner = uuid();
         const createdAt = new Date("2026-09-01T00:00:00.000Z");
-        // 0007 의 users 에는 left_handle 이 없다 — 스키마 객체 대신 SQL 로 넣는다
+        // 옛 DB 에 스키마 객체로 넣으면 뒤 마이그레이션의 열까지 싣는다 — SQL 로 넣는다
         db.run(
           sql`INSERT INTO workspaces (id, name, created_at) VALUES (${ws}, 'w', ${createdAt.getTime()})`,
         );
@@ -235,7 +235,6 @@ describe("db", () => {
           authProvider: "local",
           avatarUrl: null,
           createdAt,
-          leftHandle: null,
         });
         expect(db.select().from(memberships).all()).toMatchObject([{ userId: owner, role: "owner" }]);
         expect(db.select().from(invites).all()).toEqual([]);
@@ -559,6 +558,66 @@ describe("db", () => {
     }
   });
 
+  it("_agent_archive 까지 적용된 DB 에 _member_deactivate 를 얹으면 membership 은 활성으로 남고 users 의 left_handle 열은 없어진다 — 스키마 객체로 넣고 읽는다", () => {
+    const dir = mkdtempSync(join(tmpdir(), "dodok-db-mig-"));
+    try {
+      const older = migrationsUpTo(dir, "_agent_archive");
+      const sqlite = new Database(join(dir, "app.db"));
+      try {
+        const db = drizzle(sqlite, { schema: { ...schema, ...authSchema } });
+        migrate(db, { migrationsFolder: older });
+        const ws = uuid();
+        const left = uuid();
+        const createdAt = new Date("2026-10-06T00:00:00.000Z");
+        // 옛 스키마의 users 에는 left_handle 이 있고 memberships 에는 deactivated_at 이 없다 — SQL 로 넣는다
+        sqlite
+          .prepare("INSERT INTO workspaces (id, name, created_at) VALUES (?, 'w', ?)")
+          .run(ws, createdAt.getTime());
+        sqlite
+          .prepare(
+            "INSERT INTO users (id, workspace_id, handle, display_name, auth_provider, created_at, left_handle) VALUES (?, ?, 'left-x', 'Old', 'local', ?, 'old')",
+          )
+          .run(left, ws, createdAt.getTime());
+        sqlite
+          .prepare("INSERT INTO memberships (id, workspace_id, user_id, role) VALUES (?, ?, ?, 'member')")
+          .run(uuid(), ws, left);
+
+        migrate(db, { migrationsFolder: migrationsFolder() });
+
+        const columns = sqlite.prepare("SELECT name FROM pragma_table_info('users')").all() as {
+          name: string;
+        }[];
+        expect(columns.map((c) => c.name)).not.toContain("left_handle");
+        expect(db.select().from(memberships).where(eq(memberships.userId, left)).get()).toMatchObject({
+          role: "member",
+          deactivatedAt: null,
+        });
+        const joined = uuid();
+        db.insert(users)
+          .values({
+            id: joined,
+            workspaceId: ws,
+            handle: "new",
+            displayName: "New",
+            authProvider: "local",
+            createdAt,
+          })
+          .run();
+        db.insert(memberships)
+          .values({ id: uuid(), workspaceId: ws, userId: joined, role: "admin", deactivatedAt: createdAt })
+          .run();
+        expect(db.select().from(memberships).where(eq(memberships.userId, joined)).get()).toMatchObject({
+          role: "admin",
+          deactivatedAt: createdAt,
+        });
+        expect(db.select().from(users).where(eq(users.id, left)).get()).toMatchObject({ handle: "left-x" });
+      } finally {
+        sqlite.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
   it("runs·approvals 의 제공자 id 는 연결 안에서만 유일하다", () => {
     const db = createDb(":memory:");
     const { ws, ch } = seed(db);

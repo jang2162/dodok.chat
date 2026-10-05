@@ -65,7 +65,7 @@ export function canIssueResetLink(issuer: TeamRole | undefined, target: TeamRole
   return issuer === "owner" || (issuer === "admin" && target === "member");
 }
 
-/** 조회·수락 때 — 발급자와 대상의 **지금** 역할로 canIssueResetLink 를 다시 본다. 발급자·대상이 나갔으면 false */
+/** 조회·수락 때 — 발급자와 대상의 **지금** 역할로 canIssueResetLink 를 다시 본다. 발급자·대상이 비활성이면 false(roleOf) */
 export function resetLinkUsable(db: DbOrTx, workspaceId: string, row: InviteRow): boolean {
   if (row.kind !== "reset" || !row.targetUserId) return false;
   return canIssueResetLink(roleOf(db, workspaceId, row.createdBy), roleOf(db, workspaceId, row.targetUserId));

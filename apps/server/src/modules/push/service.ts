@@ -1,6 +1,6 @@
 /** 푸시 구독 저장(스펙 5.1)·발송(5.4)·버스 배선 */
 import type { PushSubscriptionInput } from "@dodok/shared";
-import { and, eq, gt, inArray } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { v7 as uuidv7 } from "uuid";
 import webpush from "web-push";
@@ -227,7 +227,13 @@ export function createTriggerLookups(db: DbOrTx, workspaceId: string): TriggerLo
       db
         .select({ userId: memberships.userId })
         .from(memberships)
-        .where(and(eq(memberships.workspaceId, workspaceId), inArray(memberships.role, ["owner", "admin"])))
+        .where(
+          and(
+            eq(memberships.workspaceId, workspaceId),
+            inArray(memberships.role, ["owner", "admin"]),
+            isNull(memberships.deactivatedAt),
+          ),
+        )
         .all()
         .map((row) => row.userId),
   };

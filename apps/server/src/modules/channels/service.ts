@@ -21,6 +21,9 @@ import { clearProviderSessionId, ensureSession, markSessionReset } from "../sess
 type ChannelRow = typeof channels.$inferSelect;
 type MemberRow = typeof channelMembers.$inferSelect;
 
+/** 비활성이 아닌 membership — memberships 를 (left) join 한 조회에서. join 할 행이 없으면(NULL) 통과한다 */
+const memberNotDeactivated = isNull(memberships.deactivatedAt);
+
 /** 도메인 Channel + 프롬프트 리비전(스펙 3.2 [신규]). REST 응답·세션 비교가 쓴다. */
 const StoredChannel = Channel.extend({ promptRevision: z.int().min(1) });
 export type ChannelRecord = z.infer<typeof StoredChannel>;
@@ -202,7 +205,7 @@ export function addMember(
         .from(users)
         .where(and(eq(users.id, input.memberId), eq(users.workspaceId, channel.workspaceId)))
         .get();
-      // 나간 사람(membership 없음)은 users 행이 남아도 넣지 않는다 — 넣으면 에이전트 헤더 「참여자:」에 다시 실린다
+      // membership 이 없거나 비활성인 사람은 넣지 않는다(roleOf)
       if (!user || !roleOf(tx, channel.workspaceId, input.memberId))
         throw apiError("NOT_FOUND", "user not found");
     } else {
@@ -310,18 +313,26 @@ export function joinChannelIfAbsent(tx: DbOrTx, channelId: string, userId: strin
 }
 
 /**
- * joinedAt 순. 보관한 에이전트는 빠진다(계획 판정 PS3) — 행은 남아 되살리면 그대로 돌아온다. 멤버 응답·channel.member.changed·
- * 런 판정이 모두 이 조회라 한곳에서 거른다
+ * joinedAt 순. 보관한 에이전트와 비활성 멤버는 빠진다(설정·에이전트 보관 계획 판정 PS3, 채널 보관·멤버 비활성화 계획 판정 PC4) —
+ * 행은 남아 되살리거나 다시 활성화하면 그대로 돌아온다. 멤버 응답·channel.member.changed·런 판정이 모두 이 조회라 한곳에서 거른다.
+ * 멘션 해석·푸시 수신자·에이전트 헤더 「참여자:」는 같은 거름을 channelParticipants 가 한다
  */
 export function listMembers(db: DbOrTx, channelId: string): ChannelMember[] {
   return db
     .select({ member: channelMembers })
     .from(channelMembers)
     .leftJoin(agents, and(eq(channelMembers.memberType, "agent"), eq(agents.id, channelMembers.memberId)))
+    .leftJoin(
+      memberships,
+      and(eq(channelMembers.memberType, "user"), eq(memberships.userId, channelMembers.memberId)),
+    )
     .where(
       and(
         eq(channelMembers.channelId, channelId),
-        or(eq(channelMembers.memberType, "user"), isNull(agents.id), agentNotArchived),
+        or(
+          and(eq(channelMembers.memberType, "user"), memberNotDeactivated),
+          and(eq(channelMembers.memberType, "agent"), or(isNull(agents.id), agentNotArchived)),
+        ),
       ),
     )
     .orderBy(asc(channelMembers.joinedAt), asc(channelMembers.id))
@@ -385,20 +396,30 @@ export function agentChannelGateways(
 
 /**
  * tokenize·renderForAgent 용 참가자. 사람 먼저, 에이전트 나중 — tokenize 는 뒤에 온 참가자가 같은 핸들을 덮으므로
- * 사람과 에이전트(또는 별칭)가 같은 핸들이면 에이전트로 풀린다. 보관한 에이전트는 빠진다 — 손으로 친 @핸들 은 글자로 남고
- * 에이전트 헤더 「참여자:」에도 실리지 않는다. includeArchived 는 이미 토큰이 된 옛 메시지를 에이전트에게 풀 때만 쓴다 — 보관한
- * 에이전트를 가리키던 <@agent:…> 가 @unknown 이 아니라 그 핸들로 읽히게
+ * 사람과 에이전트(또는 별칭)가 같은 핸들이면 에이전트로 풀린다. 보관한 에이전트와 비활성 멤버는 빠진다 — 손으로 친 @핸들 은 글자로
+ * 남고(멘션 푸시도 없다) 에이전트 헤더 「참여자:」에도 실리지 않는다. includeInactive 는 이미 토큰이 된 옛 메시지를 에이전트에게 풀
+ * 때만 쓴다 — 그들을 가리키던 <@agent:…>·<@user:…> 가 @unknown 이 아니라 그 핸들로 읽히게
  */
 export function channelParticipants(
   db: DbOrTx,
   channelId: string,
-  opts: { includeArchived?: boolean } = {},
+  opts: { includeInactive?: boolean } = {},
 ): Participant[] {
   const people = db
     .select({ id: users.id, handle: users.handle, displayName: users.displayName })
     .from(channelMembers)
     .innerJoin(users, eq(users.id, channelMembers.memberId))
-    .where(and(eq(channelMembers.channelId, channelId), eq(channelMembers.memberType, "user")))
+    .leftJoin(
+      memberships,
+      and(eq(memberships.userId, users.id), eq(memberships.workspaceId, users.workspaceId)),
+    )
+    .where(
+      and(
+        eq(channelMembers.channelId, channelId),
+        eq(channelMembers.memberType, "user"),
+        opts.includeInactive ? undefined : memberNotDeactivated,
+      ),
+    )
     .orderBy(asc(channelMembers.joinedAt), asc(channelMembers.id))
     .all();
   const bots = db
@@ -414,7 +435,7 @@ export function channelParticipants(
       and(
         eq(channelMembers.channelId, channelId),
         eq(channelMembers.memberType, "agent"),
-        opts.includeArchived ? undefined : agentNotArchived,
+        opts.includeInactive ? undefined : agentNotArchived,
       ),
     )
     .orderBy(asc(channelMembers.joinedAt), asc(channelMembers.id))
@@ -426,7 +447,7 @@ export function channelParticipants(
 }
 
 /**
- * 사람 메시지의 멘션을 풀 참가자 — 채널에 아직 없는 워크스페이스 사람(나간 멤버 제외)을 앞에, channelParticipants 를 뒤에.
+ * 사람 메시지의 멘션을 풀 참가자 — 채널에 아직 없는 워크스페이스 사람(비활성 멤버 제외)을 앞에, channelParticipants 를 뒤에.
  * 사람은 멘션으로 채널에 들어오므로(자동 참여) 채널 밖 사람도 풀려야 한다. 뒤가 같은 핸들을 덮으므로 겹치면 채널 쪽(에이전트)이 이긴다
  */
 export function userMessageParticipants(db: DbOrTx, channelId: string): Participant[] {
@@ -448,6 +469,7 @@ export function userMessageParticipants(db: DbOrTx, channelId: string): Particip
         eq(memberships.userId, users.id),
         eq(memberships.workspaceId, channel.workspaceId),
         inArray(memberships.role, TeamRole.options),
+        memberNotDeactivated,
       ),
     )
     .where(eq(users.workspaceId, channel.workspaceId))

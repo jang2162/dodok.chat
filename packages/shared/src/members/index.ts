@@ -73,18 +73,19 @@ export const LocalLoginBody = z.union([
 ]);
 export type LocalLoginBody = z.infer<typeof LocalLoginBody>;
 
-/** 워크스페이스 사람 목록 한 줄(wire `people.changed`, @멘션 해석, 참여자 표시). role 없음 = 나간 멤버 */
+/** 워크스페이스 사람 목록 한 줄(wire `people.changed`, @멘션 해석, 참여자 표시) */
 export const Person = z.object({
   id: Id,
   handle: z.string(),
   displayName: z.string(),
-  role: TeamRole.optional(), // role 없음 = 나간 멤버
-  leftHandle: Handle.optional(),
+  role: TeamRole.optional(), // role 없음 = membership 이 없거나 모르는 역할(guest 등)
+  /** 비활성화한 시각 — null 이면 활성. 비활성 멤버도 목록에 남는다(기록의 작성자·멘션 칩을 그리려면 웹이 알아야 한다) */
+  deactivatedAt: IsoDateTime.nullable(),
   avatarUrl: z.string().optional(),
 });
 export type Person = z.infer<typeof Person>;
 
-/** `/settings/members` 표 한 줄 — 나간 멤버는 이 목록에 없으므로 role 이 항상 있다 */
+/** `/settings/members` 표 한 줄 — membership 이 있는 사람만이라 role 이 항상 있다. 비활성 멤버도 deactivatedAt 과 함께 싣는다 */
 export const MemberRow = Person.extend({
   role: TeamRole,
   email: z.string().optional(),

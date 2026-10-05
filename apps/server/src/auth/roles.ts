@@ -38,15 +38,31 @@ export function hasFieldOutside(body: unknown, allowed: ReadonlySet<string>): bo
   return Object.keys(body).some((key) => !allowed.has(key));
 }
 
-/** 그 워크스페이스에서의 역할. membership 이 없거나 모르는 값(guest 등)이면 undefined */
-export function roleOf(db: DbOrTx, workspaceId: string, userId: string): TeamRole | undefined {
-  const role = db
-    .select({ role: memberships.role })
+/**
+ * membership 그대로 — 비활성도 낸다. 멤버 관리(비활성화·다시 활성화·멤버 표)와 로그인의 403 처럼 비활성을 가려 봐야 하는 자리만 쓴다.
+ * 권한 판정은 roleOf 로 한다. 없거나 모르는 역할(guest 등)이면 undefined
+ */
+export function membershipOf(
+  db: DbOrTx,
+  workspaceId: string,
+  userId: string,
+): { role: TeamRole; deactivatedAt: Date | null } | undefined {
+  const row = db
+    .select({ role: memberships.role, deactivatedAt: memberships.deactivatedAt })
     .from(memberships)
     .where(and(eq(memberships.workspaceId, workspaceId), eq(memberships.userId, userId)))
-    .get()?.role;
-  const parsed = TeamRole.safeParse(role);
-  return parsed.success ? parsed.data : undefined;
+    .get();
+  const parsed = TeamRole.safeParse(row?.role);
+  return row && parsed.success ? { role: parsed.data, deactivatedAt: row.deactivatedAt } : undefined;
+}
+
+/**
+ * 그 워크스페이스에서의 역할. membership 이 없거나 모르는 값(guest 등)이거나 비활성이면 undefined — 비활성을 막는 자리는 이 함수
+ * 하나다(채널 보관·멤버 비활성화 계획 판정 PC3). REST(requireSession)·wire 핸드셰이크와 connection·로그인·재설정 링크가 모두 이것으로 본다
+ */
+export function roleOf(db: DbOrTx, workspaceId: string, userId: string): TeamRole | undefined {
+  const membership = membershipOf(db, workspaceId, userId);
+  return membership && membership.deactivatedAt === null ? membership.role : undefined;
 }
 
 /** 핸들러 안에서(필드별 검사 등) — membership 을 다시 읽어 모자라면 403 을 던진다 */
@@ -56,7 +72,7 @@ export function assertRole(db: DbOrTx, workspaceId: string, userId: string, min:
 
 /**
  * REST 인증 preHandler. `Authorization: Bearer <sessionToken>` 또는 `dodok.session` 쿠키.
- * Better Auth 자체 쿠키는 보지 않는다. membership 이 없는 세션(내보내진 뒤의 낡은 세션 등)은 401.
+ * Better Auth 자체 쿠키는 보지 않는다. membership 이 없거나 비활성인 세션은 401.
  * 사용자를 확인한 뒤 앱의 REST 상한(restLimits)을 지난다 — 넘으면 429
  */
 export function requireSession(ctx: GuardContext) {

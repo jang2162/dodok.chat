@@ -1,5 +1,5 @@
 import type { Message, RunEvent, RunState, TeamRole } from "@dodok/shared";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { memberships } from "../db/schema.sqlite";
 import type { Logger } from "../logger";
@@ -89,7 +89,13 @@ export function attachWireFanout(io: WireServer, bus: ServerBus, opts: WireFanou
     opts.db
       .select({ userId: memberships.userId })
       .from(memberships)
-      .where(and(eq(memberships.workspaceId, opts.workspaceId), inArray(memberships.role, roles)))
+      .where(
+        and(
+          eq(memberships.workspaceId, opts.workspaceId),
+          inArray(memberships.role, roles),
+          isNull(memberships.deactivatedAt),
+        ),
+      )
       .all()
       .map((row) => userRoom(row.userId));
 

@@ -30,15 +30,15 @@ describe("GET /people", () => {
     await app.close();
   });
 
-  it("member 도 받는다 — 나간 멤버는 role 없이 leftHandle 을 싣는다", async () => {
+  it("member 도 받는다 — 비활성 멤버도 role 과 deactivatedAt 을 싣는다", async () => {
     const member = await userWithRole(app, "reader", "member");
     const gone = await userWithRole(app, "gone", "member");
-    const kicked = await app.fastify.inject({
-      method: "DELETE",
-      url: `/api/v1/members/${gone.id}`,
+    const deactivated = await app.fastify.inject({
+      method: "POST",
+      url: `/api/v1/members/${gone.id}/deactivate`,
       headers: { authorization: `Bearer ${ownerToken}` },
     });
-    expect(kicked.statusCode).toBe(204);
+    expect(deactivated.statusCode).toBe(200);
 
     const res = await app.fastify.inject({
       method: "GET",
@@ -47,12 +47,14 @@ describe("GET /people", () => {
     });
     expect(res.statusCode).toBe(200);
     const people = (res.json() as { people: Person[] }).people;
-    expect(people.find((p) => p.id === member.id)).toMatchObject({ handle: "reader", role: "member" });
+    expect(people.find((p) => p.id === member.id)).toMatchObject({
+      handle: "reader",
+      role: "member",
+      deactivatedAt: null,
+    });
     expect(people.find((p) => p.id === app.ownerUserId)?.role).toBe("owner");
-    const left = people.find((p) => p.id === gone.id);
-    expect(left).toMatchObject({ leftHandle: "gone" });
-    expect(left?.role).toBeUndefined();
-    expect(left?.handle).toMatch(/^left-/);
+    const inactive = people.find((p) => p.id === gone.id);
+    expect(inactive).toMatchObject({ handle: "gone", role: "member", deactivatedAt: expect.any(String) });
     // 이메일은 싣지 않는다 — 누구나 읽는 목록이다
     expect(JSON.stringify(people)).not.toContain("@dodok.local");
   });
@@ -62,7 +64,7 @@ describe("GET /people", () => {
     expect(res.statusCode).toBe(401);
   });
 
-  it("채널에 사람 넣기·빼기는 누구나 — 나간 사람은 넣지 못한다(404)", async () => {
+  it("채널에 사람 넣기·빼기는 누구나 — 비활성 멤버는 넣지 못한다(404)", async () => {
     const member = await userWithRole(app, "adder", "member");
     const friend = await userWithRole(app, "friend", "member");
     const gone = await userWithRole(app, "leaver", "member");
@@ -76,7 +78,7 @@ describe("GET /people", () => {
     const created = await as(member.token, "POST", "/api/v1/channels", { name: `people-${uuid()}` });
     expect(created.statusCode).toBe(201);
     const channelId = (created.json() as { channel: { id: string } }).channel.id;
-    expect((await as(ownerToken, "DELETE", `/api/v1/members/${gone.id}`)).statusCode).toBe(204);
+    expect((await as(ownerToken, "POST", `/api/v1/members/${gone.id}/deactivate`)).statusCode).toBe(200);
 
     const left = await as(member.token, "POST", `/api/v1/channels/${channelId}/members`, {
       memberType: "user",
@@ -214,13 +216,23 @@ describe("채널 자동 참여", () => {
     expect(changes).toHaveLength(1);
   });
 
-  it("나간 멤버(membership 없음)는 멘션으로 풀리지도 참여하지도 않는다", () => {
+  it("membership 이 없는 사람은 멘션으로 풀리지도 참여하지도 않는다", () => {
     const { db, channelId, userId, workspaceId, changes, say } = setup();
     const gone = addPerson(db, workspaceId, "gone");
     db.delete(memberships).where(eq(memberships.userId, gone)).run();
     const message = say(userId, "@gone 어디 갔어");
     expect(message.mentions.users).toEqual([]);
     expect(isChannelMember(db, channelId, gone)).toBe(false);
+    expect(changes).toHaveLength(0);
+  });
+
+  it("비활성 멤버는 멘션으로 풀리지도 참여하지도 않는다", () => {
+    const { db, channelId, userId, workspaceId, changes, say } = setup();
+    const resting = addPerson(db, workspaceId, "resting");
+    db.update(memberships).set({ deactivatedAt: new Date() }).where(eq(memberships.userId, resting)).run();
+    const message = say(userId, "@resting 쉬는 중?");
+    expect(message.mentions.users).toEqual([]);
+    expect(isChannelMember(db, channelId, resting)).toBe(false);
     expect(changes).toHaveLength(0);
   });
 

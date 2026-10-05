@@ -14,6 +14,7 @@ export const memberRowOf = (
 ): MemberRow => ({
   displayName: over.handle,
   createdAt: "2026-09-20T12:00:00.000Z",
+  deactivatedAt: null,
   ...over,
 });
 

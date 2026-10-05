@@ -5,7 +5,7 @@ import { and, eq } from "drizzle-orm";
 import { v7 as uuid } from "uuid";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { App } from "../src/app";
-import { channelMembers, channels, memberships } from "../src/db/schema.sqlite";
+import { channelMembers, channels, memberships, users } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
 import * as approvalStore from "../src/modules/approvals/store";
 import { addMember, type ChannelRecord, createChannel } from "../src/modules/channels/service";
@@ -86,6 +86,26 @@ describe("역할 매트릭스(스펙 2장)", () => {
     const agent = newAgent();
     addMember(app.db, channel.id, { memberType: "agent", memberId: agent.id }, app.logger);
     return { channel, agent };
+  };
+  /** member 역할의 사람 — request() 가 동기라 Better Auth 사용자 없이 우리 행만 넣는다(세션 지우기는 없는 사용자에도 된다) */
+  const newMember = (deactivatedAt: Date | null): string => {
+    const id = uuid();
+    app.db
+      .insert(users)
+      .values({
+        id,
+        workspaceId: app.workspaceId,
+        handle: `mem${++n}`,
+        displayName: `mem${n}`,
+        authProvider: "local",
+        createdAt: new Date(),
+      })
+      .run();
+    app.db
+      .insert(memberships)
+      .values({ id: uuid(), workspaceId: app.workspaceId, userId: id, role: "member", deactivatedAt })
+      .run();
+    return id;
   };
   const channelRow = (id: string) => app.db.select().from(channels).where(eq(channels.id, id)).get();
   const agentMemberRow = (channelId: string, agentId: string) =>
@@ -330,6 +350,19 @@ describe("역할 매트릭스(스펙 2장)", () => {
         return { method: "DELETE", url: `/api/v1/gateways/${gatewayId}/bridge-tokens/${record.id}` };
       },
     },
+    // 멤버 비활성화·다시 활성화(채널 보관·멤버 비활성화 스펙 「멤버 비활성화」 절) — member 대상은 admin 이상
+    {
+      name: "POST /members/:userId/deactivate",
+      min: "admin",
+      ok: 200,
+      request: () => ({ method: "POST", url: `/api/v1/members/${newMember(null)}/deactivate` }),
+    },
+    {
+      name: "POST /members/:userId/reactivate",
+      min: "admin",
+      ok: 200,
+      request: () => ({ method: "POST", url: `/api/v1/members/${newMember(new Date())}/reactivate` }),
+    },
   ];
 
   it.each(CASES.flatMap((c) => ROLES.map((role) => [c.name, role, c] as const)))(
@@ -458,6 +491,36 @@ describe("역할 매트릭스(스펙 2장)", () => {
 
     it("wire 핸드셰이크 거절(UNAUTHORIZED)", async () => {
       const socket = openWire(app, { token: gone.token, protocol: WIRE_PROTOCOL });
+      sockets.push(socket);
+      const err = await new Promise<Error & { data?: unknown }>((resolve, reject) => {
+        socket.once("connect", () => reject(new Error("접속이 거부되지 않았다")));
+        socket.once("connect_error", (e) => resolve(e as Error & { data?: unknown }));
+      });
+      expect(err.data).toMatchObject({ code: "UNAUTHORIZED" });
+    });
+  });
+
+  // 비활성 membership 은 없는 것과 같다(채널 보관·멤버 비활성화 계획 판정 PC3) — owner 역할이어도 막히는지 보려고 admin 이 아니라 owner 로 둔다
+  describe("비활성 membership 의 세션", () => {
+    let inactive: { id: string; token: string };
+    beforeAll(async () => {
+      inactive = await userWithRole(app, "inactive", "owner");
+      app.db
+        .update(memberships)
+        .set({ deactivatedAt: new Date() })
+        .where(and(eq(memberships.workspaceId, app.workspaceId), eq(memberships.userId, inactive.id)))
+        .run();
+    });
+
+    it.each(CASES.map((c) => [c.name, c] as const))("%s — 401", async (_name, c) => {
+      const res = await call(inactive.token, c.request());
+      expect(res.statusCode).toBe(401);
+      expect(res.json()).toMatchObject({ code: "UNAUTHORIZED" });
+    });
+
+    it("/auth/me 401·wire 핸드셰이크 거절(UNAUTHORIZED)", async () => {
+      expect((await call(inactive.token, { method: "GET", url: "/api/v1/auth/me" })).statusCode).toBe(401);
+      const socket = openWire(app, { token: inactive.token, protocol: WIRE_PROTOCOL });
       sockets.push(socket);
       const err = await new Promise<Error & { data?: unknown }>((resolve, reject) => {
         socket.once("connect", () => reject(new Error("접속이 거부되지 않았다")));

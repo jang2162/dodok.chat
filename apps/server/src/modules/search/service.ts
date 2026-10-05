@@ -115,7 +115,7 @@ type MentionDirectory = {
 
 /**
  * 멘션 토큰 ↔ 보이는 핸들. 스니펫이 토큰을 푸는 규칙과 검색어 `@핸들` 을 토큰으로 바꾸는 규칙은 서로 역이다 —
- * 스니펫에 보인 「@핸들」 로 다시 찾으면 그 메시지가 나온다. 핸들은 웹 useAuthors 의 mention 과 같게 고른다(사람은 나갔으면 옛 핸들).
+ * 스니펫에 보인 「@핸들」 로 다시 찾으면 그 메시지가 나온다. 핸들은 웹 useAuthors 의 mention 과 같게 고른다(비활성 멤버도 그 핸들).
  * 별칭은 검색 범위 채널(channelId 가 없으면 워크스페이스 모든 채널)의 것만 — 별칭은 채널마다 따로 붙는다
  */
 function mentionDirectory(db: DbOrTx, workspaceId: string, channelId: string | undefined): MentionDirectory {
@@ -137,14 +137,13 @@ function mentionDirectory(db: DbOrTx, workspaceId: string, channelId: string | u
     add(a.handle, `<@a:${a.id}>`);
   }
   const people = db
-    .select({ id: users.id, handle: users.handle, leftHandle: users.leftHandle })
+    .select({ id: users.id, handle: users.handle })
     .from(users)
     .where(eq(users.workspaceId, workspaceId))
     .all();
   for (const p of people) {
-    const shown = p.leftHandle ?? p.handle;
-    byId.set(`u:${p.id}`, shown);
-    add(shown, `<@u:${p.id}>`);
+    byId.set(`u:${p.id}`, p.handle);
+    add(p.handle, `<@u:${p.id}>`);
   }
   const aliased = db
     .select({ memberId: channelMembers.memberId, aliases: channelMembers.aliases })

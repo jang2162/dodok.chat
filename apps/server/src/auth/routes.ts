@@ -5,13 +5,13 @@ import { eq } from "drizzle-orm";
 import type { FastifyInstance, FastifyReply, FastifyRequest, onRequestHookHandler } from "fastify";
 import type { Db } from "../db/client";
 import { users, workspaces } from "../db/schema.sqlite";
-import { apiError } from "../http/errors";
+import { apiError, HttpError } from "../http/errors";
 import type { Logger } from "../logger";
 import { normalizeEmail } from "../modules/members/accept";
 import { recordRateLimit } from "../modules/ops/http-limits";
 import type { OpsService } from "../modules/ops/service";
 import { type Auth, OWNER_EMAIL, SESSION_COOKIE, SESSION_MAX_AGE_S } from "./index";
-import { requireRole, requireSession, roleOf, sessionTokenOf, sessionUser } from "./roles";
+import { membershipOf, requireRole, requireSession, sessionTokenOf, sessionUser } from "./roles";
 
 // 라우트 모듈들이 이 경로로 가져온다 — 정의는 auth/roles.ts
 export { requireSession, sessionUser };
@@ -35,6 +35,8 @@ export type AuthRouteContext = {
 
 /** 이메일 모양 로그인 실패는 까닭(없는 이메일·틀린 비밀번호·owner 이메일·membership 없음)을 가르지 않는다 */
 const WRONG_LOGIN = "이메일 또는 비밀번호가 맞지 않는다";
+/** 비밀번호가 맞은 비활성 멤버 — 웹 로그인 화면이 이 문구를 그대로 보인다 */
+const DEACTIVATED_LOGIN = "비활성화된 계정입니다. 관리자에게 문의하세요.";
 
 /**
  * 여러 경로가 같이 쓰는 IP 당 분당 상한 하나 — 로그인(LIMITS.localLoginPerMin)·초대 경로(LIMITS.invitePublicPerMin)가 하나씩 만든다.
@@ -127,7 +129,10 @@ export function requireOwner(ctx: { auth: Auth; db: Db; workspaceId: string }) {
   return requireRole(ctx, "owner");
 }
 
-/** owner 는 토큰 모양으로만 — 이메일 모양으로 OWNER_EMAIL 을 주면 같은 401. 성공했는데 membership 이 없으면 세션을 지우고 401 */
+/**
+ * owner 는 토큰 모양으로만 — 이메일 모양으로 OWNER_EMAIL 을 주면 같은 401. 성공했는데 membership 이 없으면 세션을 지우고 401,
+ * 비활성이면 세션을 지우고 403 MEMBER_DEACTIVATED — 비밀번호가 맞은 뒤에만 가르므로 틀린 비밀번호로는 계정이 비활성인지 알 수 없다
+ */
 async function signInMember(
   ctx: AuthRouteContext,
   request: FastifyRequest,
@@ -137,9 +142,12 @@ async function signInMember(
   const email = normalizeEmail(rawEmail);
   if (email === OWNER_EMAIL) throw apiError("UNAUTHORIZED", WRONG_LOGIN);
   const signed = await signIn(ctx, request, email, password, WRONG_LOGIN);
-  if (!roleOf(ctx.db, ctx.workspaceId, signed.user.id)) {
+  const membership = membershipOf(ctx.db, ctx.workspaceId, signed.user.id);
+  if (!membership || membership.deactivatedAt !== null) {
     await (await ctx.auth.$context).internalAdapter.deleteSession(signed.token);
-    throw apiError("UNAUTHORIZED", WRONG_LOGIN);
+    if (!membership) throw apiError("UNAUTHORIZED", WRONG_LOGIN);
+    // MEMBER_DEACTIVATED 의 기본 상태는 409(가입) — 로그인은 403 이라 상태를 직접 준다
+    throw new HttpError(403, { code: "MEMBER_DEACTIVATED", message: DEACTIVATED_LOGIN });
   }
   return signed;
 }

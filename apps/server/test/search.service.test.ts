@@ -17,7 +17,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Db } from "../src/db/client";
 import * as authSchema from "../src/db/auth-schema";
 import * as schema from "../src/db/schema.sqlite";
-import { agents, messages, users } from "../src/db/schema.sqlite";
+import { agents, memberships, messages, users } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
 import { addMember, createChannel } from "../src/modules/channels/service";
 import { createAgentMessage, createSystemMessage, createUserMessage } from "../src/modules/messages/service";
@@ -397,11 +397,16 @@ describe("스니펫 — 읽는 글(멘션 풀기·마크다운 걷기)", () => {
     );
   });
 
-  it("사람 멘션은 사람 핸들, 나간 멤버는 옛 핸들, 모르는 id 는 「@알 수 없음」(웹 칩과 같은 표기)", () => {
+  it("사람 멘션은 사람 핸들 — 비활성 멤버도 그 핸들, 모르는 id 는 「@알 수 없음」(웹 칩과 같은 표기)", () => {
     const t = setup();
     const m = t.say("@jang 님 확인 부탁");
     expect(t.search("확인 부탁").hits[0]?.snippet).toBe(`@jang 님 ${O}확인 부탁${C}`);
-    t.db.update(users).set({ handle: "left-x1", leftHandle: "jang" }).where(eq(users.id, t.userId)).run();
+    const workspaceId = t.db.select().from(users).where(eq(users.id, t.userId)).get()?.workspaceId ?? "";
+    t.db.delete(memberships).where(eq(memberships.userId, t.userId)).run();
+    t.db
+      .insert(memberships)
+      .values({ id: uuid(), workspaceId, userId: t.userId, role: "member", deactivatedAt: new Date() })
+      .run();
     expect(t.search("확인 부탁").hits[0]?.snippet).toBe(`@jang 님 ${O}확인 부탁${C}`);
     setBody(t, m.id, `<@a:${uuid()}> 님 확인 부탁`);
     expect(t.search("확인 부탁").hits[0]?.snippet).toBe(`@알 수 없음 님 ${O}확인 부탁${C}`);
@@ -811,7 +816,7 @@ describe("마이그레이션 — 기존 DB 에 색인을 채운다", () => {
     try {
       const db = drizzle(sqlite, { schema: { ...schema, ...authSchema } });
       migrate(db, { migrationsFolder: older });
-      // 스키마 객체로 넣으면 drizzle 이 뒤 마이그레이션의 열(users.left_handle)까지 싣는다 — 옛 DB 에는 SQL 로 넣는다
+      // 스키마 객체로 넣으면 drizzle 이 뒤 마이그레이션의 열까지 싣는다 — 옛 DB 에는 SQL 로 넣는다
       const workspaceId = uuid();
       const userId = uuid();
       db.run(

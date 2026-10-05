@@ -56,8 +56,8 @@ export function buildInboundDeliver(db: DbOrTx, input: BuildInboundInput): Inbou
     .get();
   if (!agent) throw apiError("NOT_FOUND", "agent not found");
   const participants = channelParticipants(db, run.channelId);
-  // 글 풀기는 보관한 에이전트까지 — 옛 멘션이 @unknown 이 되지 않게. 헤더 「참여자:」·릴레이 규칙은 participants 만
-  const renderable = channelParticipants(db, run.channelId, { includeArchived: true });
+  // 글 풀기는 보관한 에이전트·비활성 멤버까지 — 옛 멘션이 @unknown 이 되지 않게. 헤더 「참여자:」·릴레이 규칙은 participants 만
+  const renderable = channelParticipants(db, run.channelId, { includeInactive: true });
 
   let message: InboundDeliver["message"];
   let recentUpTo: { seq: number; inclusive: boolean };

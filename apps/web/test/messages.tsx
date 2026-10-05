@@ -22,7 +22,13 @@ export const ME_USER = {
   role: "owner",
 };
 /** 사람 목록(`GET /people`)의 owner 한 줄 — ME_USER 와 같은 사람 */
-export const OWNER_PERSON: Person = { id: USER, handle: "owner", displayName: "주인", role: "owner" };
+export const OWNER_PERSON: Person = {
+  id: USER,
+  handle: "owner",
+  displayName: "주인",
+  role: "owner",
+  deactivatedAt: null,
+};
 export const DEV: Agent = {
   id: AGENT,
   workspaceId: USER,

@@ -34,6 +34,7 @@ const personOf = (n: number, handle: string): Person => ({
   handle,
   displayName: handle,
   role: "member",
+  deactivatedAt: null,
 });
 const MIA = personOf(31, "mia");
 const JO = personOf(32, "jo");

@@ -47,11 +47,10 @@ export const users = sqliteTable(
     authProvider: text("auth_provider").notNull(),
     avatarUrl: text("avatar_url"),
     createdAt: ts("created_at").notNull(),
-    leftHandle: text("left_handle"), // 내보낸 멤버의 원래 핸들 — handle 은 left-…(modules/members/service.ts leftHandleOf), email 은 NULL 로 놓아준다(팀 스펙 4장)
   },
   (t) => [
     uniqueIndex("users_ws_handle").on(t.workspaceId, t.handle),
-    // email 이 NULL 인 행(나간 멤버 등)은 여럿이어도 된다 — SQLite 는 유일 인덱스에서 NULL 을 서로 다르게 본다
+    // email 이 NULL 인 행은 여럿이어도 된다 — SQLite 는 유일 인덱스에서 NULL 을 서로 다르게 본다
     uniqueIndex("users_ws_email").on(t.workspaceId, t.email),
   ],
 );
@@ -67,6 +66,11 @@ export const memberships = sqliteTable(
       .notNull()
       .references(() => users.id),
     role: text("role").notNull(),
+    /**
+     * 비활성화한 시각 — null 이면 활성. 비활성 membership 은 인증 자리(auth/roles.ts roleOf)가 없는 것처럼 본다. 역할·채널 참여는
+     * 남아 다시 활성화하면 그대로 돌아온다(채널 보관·멤버 비활성화 스펙 「멤버 비활성화」 절)
+     */
+    deactivatedAt: ts("deactivated_at"),
   },
   (t) => [uniqueIndex("memberships_ws_user").on(t.workspaceId, t.userId)],
 );
@@ -376,7 +380,7 @@ export const approvals = sqliteTable(
 );
 
 /**
- * 웹 푸시 구독. session_id 는 구독을 등록한 Better Auth 세션 — 그 세션 행이 지워지면(로그아웃·비밀번호 변경·재설정·내보내기·
+ * 웹 푸시 구독. session_id 는 구독을 등록한 Better Auth 세션 — 그 세션 행이 지워지면(로그아웃·비밀번호 변경·재설정·비활성화·
  * 만료 청소, 모두 session 행 DELETE) 구독도 함께 지워진다(ON DELETE CASCADE, createDb 가 foreign_keys 를 켠다).
  * 청소 전의 만료 세션은 listSubscriptions 가 거른다
  */

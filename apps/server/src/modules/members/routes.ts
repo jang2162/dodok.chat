@@ -155,7 +155,7 @@ export function registerMemberRoutes(fastify: FastifyInstance, ctx: MemberRouteC
     const { token } = parseBody(TokenBody, request.body);
     const invite = findValidInvite(ctx.db, token, now());
     if (!invite || invite.workspaceId !== ctx.workspaceId) throw inviteNotFound();
-    // 재설정 링크가 지금 역할로 발급 규칙을 못 지나면(대상이 나감·오름) 수락이 404 다 — 조회도 같게
+    // 재설정 링크가 지금 역할로 발급 규칙을 못 지나면(대상이 비활성·오름) 수락이 404 다 — 조회도 같게
     if (invite.kind === "reset" && !resetLinkUsable(ctx.db, ctx.workspaceId, invite)) throw inviteNotFound();
     const result: InviteLookup = {
       workspaceName: loadWorkspace(ctx.db, ctx.workspaceId).name,

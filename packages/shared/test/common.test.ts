@@ -31,6 +31,7 @@ describe("common", () => {
       "INSUFFICIENT_STORAGE",
       "PROVIDER_AUTH",
       "AGENT_ARCHIVED",
+      "MEMBER_DEACTIVATED",
       "INTERNAL",
     ]);
     expect(ErrorCode.safeParse("NOPE").success).toBe(false);

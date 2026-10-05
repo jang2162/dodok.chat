@@ -113,6 +113,13 @@
       "when": 1791200372050,
       "tag": "0015_agent_archive",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "6",
+      "when": 1791222034925,
+      "tag": "0016_member_deactivate",
+      "breakpoints": true
     }
   ]
 }

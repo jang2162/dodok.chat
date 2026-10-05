@@ -93,8 +93,8 @@ export const workspaceRoom = (workspaceId: string): string => `workspace:${works
 export const sessionRoom = (sessionId: string): string => `session:${sessionId}`;
 
 /**
- * 그 사용자의 열린 wire 소켓을 서버가 끊는다(내보내기·재설정 수락 — 팀 스펙 「멤버 관리」 절·3.3). 클라이언트는 「io server disconnect」를
- * 받는다. 세션 행을 지운 뒤에 부른다 — 핸드셰이크를 지나던 소켓은 connection 에서 membership·세션을 다시 본다
+ * 그 사용자의 열린 wire 소켓을 서버가 끊는다(비활성화·재설정 수락). 클라이언트는 「io server disconnect」를 받는다. 세션 행을 지우거나
+ * membership 을 비활성으로 쓴 뒤에 부른다 — 핸드셰이크를 지나던 소켓은 connection 에서 membership·세션을 다시 본다
  */
 export function disconnectUser(io: WireServer, userId: string): void {
   io.in(userRoom(userId)).disconnectSockets(true);
@@ -163,7 +163,7 @@ export function attachWire(io: WireServer, ctx: WireContext): void {
       typeof token === "string" ? token : cookieSessionToken(socket.handshake.headers, ctx.appOrigin);
     const user = sessionToken ? await verifySessionToken(ctx.auth, sessionToken) : null;
     if (!user) return next(connectError("UNAUTHORIZED", "invalid session"));
-    // membership 이 없는 세션(내보내진 뒤의 낡은 세션 등)은 REST 처럼 401 이다
+    // membership 이 없거나 비활성인 세션은 REST 처럼 401 이다(roleOf)
     if (!roleOf(ctx.db, ctx.workspaceId, user.userId))
       return next(connectError("UNAUTHORIZED", "not a member"));
     // 방에는 connection 에서 들어간다 — 동시에 도착한 핸드셰이크는 서로를 못 봐 상한을 조금 넘길 수 있다(느슨한 상한)
@@ -179,9 +179,9 @@ export function attachWire(io: WireServer, ctx: WireContext): void {
 
   io.on("connection", (socket) => {
     const { userId, sessionId } = socket.data;
-    // 미들웨어의 membership·세션 확인과 여기 사이에 await 가 있다 — 그 사이 내보내졌거나 세션이 지워졌으면(재설정·비밀번호 변경)
+    // 미들웨어의 membership·세션 확인과 여기 사이에 await 가 있다 — 그 사이 비활성화됐거나 세션이 지워졌으면(재설정·비밀번호 변경)
     // disconnectUser·disconnectSessions 가 아직 방에 없는 이 소켓을 못 본다. 확인과 방 참가를 같은 동기 구간에 둔다
-    // (members/service.ts removeMember·accept.ts resetPassword 도 지우기 뒤 끊기를 한 구간에)
+    // (members/service.ts deactivateMember·accept.ts resetPassword 도 쓰기 뒤 끊기를 한 구간에)
     if (!roleOf(ctx.db, ctx.workspaceId, userId) || !sessionAlive(ctx.db, sessionId)) {
       socket.disconnect(true);
       return;

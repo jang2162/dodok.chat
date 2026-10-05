@@ -55,7 +55,7 @@ describe("OpsEvent", () => {
     expect(OpsEvent.safeParse({ ...EVENT, severity: "debug" }).success).toBe(false);
   });
 
-  it("kind 열거는 운영 보강 3.1 표의 열두 가지 + 팀 설계의 invite_accept_failed·member_remove_failed + 러너의 runner_down", () => {
+  it("kind 열거는 운영 보강 3.1 표의 열두 가지 + 팀 설계의 invite_accept_failed·멤버 비활성화의 member_deactivate_failed + 러너의 runner_down", () => {
     expect(OpsEventKind.options).toEqual([
       "gateway_down",
       "plugin_down",
@@ -71,7 +71,7 @@ describe("OpsEvent", () => {
       "unclean_shutdown",
       "disk_low",
       "invite_accept_failed",
-      "member_remove_failed",
+      "member_deactivate_failed",
     ]);
   });
 });

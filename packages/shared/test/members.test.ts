@@ -69,13 +69,23 @@ describe("TeamRole", () => {
 
 describe("Person", () => {
   it("role 이 있으면 지금 멤버다", () => {
-    const p = { id: ID, handle: "researcher", displayName: "Researcher", role: "member" };
+    const p = {
+      id: ID,
+      handle: "researcher",
+      displayName: "Researcher",
+      role: "member",
+      deactivatedAt: null,
+    };
     expect(Person.parse(p).role).toBe("member");
   });
-  it("role 없음(나간 멤버)을 받는다", () => {
-    const p = { id: ID, handle: "left-01a09fc9", displayName: "Researcher", leftHandle: "researcher" };
-    const parsed = Person.parse(p);
-    expect(parsed.role).toBeUndefined();
-    expect(parsed.leftHandle).toBe("researcher");
+  it("비활성 멤버는 deactivatedAt 시각을 싣고, deactivatedAt 이 빠지면 거절한다", () => {
+    const at = "2026-10-06T00:00:00.000Z";
+    const p = { id: ID, handle: "researcher", displayName: "Researcher", role: "member", deactivatedAt: at };
+    expect(Person.parse(p).deactivatedAt).toBe(at);
+    expect(Person.safeParse({ id: ID, handle: "researcher", displayName: "Researcher" }).success).toBe(false);
+  });
+  it("옛 leftHandle 은 싣지 않는다 — 모르는 키는 버린다", () => {
+    const p = { id: ID, handle: "researcher", displayName: "R", deactivatedAt: null, leftHandle: "old" };
+    expect(Person.parse(p)).not.toHaveProperty("leftHandle");
   });
 });

@@ -8,8 +8,20 @@ import { MessageBody } from "./MessageBody";
 import { MessageItem } from "./MessageItem";
 
 // 사람 작성자·멘션은 사람 목록(`GET /people`, wire `people.changed`)으로 푼다(팀 스펙 5·6장)
-const MINA: Person = { id: uid(30), handle: "mina", displayName: "미나", role: "member" };
-const GONE: Person = { id: uid(31), handle: "left-abc", displayName: "지훈", leftHandle: "jihoon" };
+const MINA: Person = {
+  id: uid(30),
+  handle: "mina",
+  displayName: "미나",
+  role: "member",
+  deactivatedAt: null,
+};
+const GONE: Person = {
+  id: uid(31),
+  handle: "jihoon",
+  displayName: "지훈",
+  role: "member",
+  deactivatedAt: "2026-10-06T00:00:00.000Z",
+};
 
 describe("사람 작성자", () => {
   it("다른 사람의 메시지는 그 사람의 표시 이름", () => {
@@ -27,7 +39,7 @@ describe("사람 작성자", () => {
     expect(await within(screen.getByRole("article")).findByText("미나리")).toBeInTheDocument();
   });
 
-  it("나간 멤버는 「나간 멤버 @<leftHandle>」 흐린 글씨", () => {
+  it("비활성 멤버는 「나간 멤버 @<핸들>」 흐린 글씨", () => {
     renderWithClient(
       <MessageItem message={msg(1, { authorId: GONE.id })} head />,
       authorsClient(undefined, [OWNER_PERSON, GONE]),
@@ -52,7 +64,7 @@ describe("사람 작성자", () => {
 });
 
 describe("사람 멘션", () => {
-  it("다른 사람 멘션은 그 핸들, 나간 멤버는 옛 핸들", () => {
+  it("다른 사람 멘션은 그 핸들, 비활성 멤버도 그 핸들", () => {
     renderWithClient(
       <MessageBody bodyMd={`<@u:${MINA.id}> <@u:${GONE.id}>`} />,
       authorsClient(undefined, [OWNER_PERSON, MINA, GONE]),
