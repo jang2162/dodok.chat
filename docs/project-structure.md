@@ -183,6 +183,7 @@ src/
 │  │                      멀티 Gateway(0012): gateways — id(= 어댑터 계약의 연결 id)·workspace_id·name(유일 gateways_ws_name)·url·token(Gateway 공유 토큰 평문 — API·로그·wire 에 싣지 않는다)·
 │  │                      enabled·owner_user_id·last_version·created_at·updated_at. agents.gateway_id(OpenClaw 에이전트의 Gateway, null 이면 연결이 빈 에이전트)·
 │  │                      runs.connection_id·approvals.connection_id(그 런·승인의 연결 — 공유 Run·Approval 에 싣지 않고 store 의 getRunConnectionId·getApprovalConnectionId 로 읽는다).
+│  │                      에이전트 보관(0015): agents.archived_at(보관한 시각, null 이면 살아 있음 — FK·인덱스 없음). 보관해도 행·핸들·채널 참여·세션 행은 남는다.
 │  │                      유일: OpenClaw 에이전트 agents_openclaw_gateway_agent (gateway_id, provider_agent_id) · 러너 에이전트 agents_claude_ws_agent (workspace_id, provider, provider_agent_id) ·
 │  │                      runs_connection_provider_run (connection_id, provider_run_id) · approvals_connection_provider (connection_id, provider_approval_id) — 제공자 id 는 연결 안에서만 유일하다.
 │  │                      attachments.gateway_id(0014 — 플러그인이 올린 첨부의 Gateway. 그 Gateway 만 읽고 정본에 묶는다, Gateway 를 지우면 비어 아무도 묶지 못한다 — 러너 정본은 uploader_id 가 자기 러너 토큰인 것만 묶는다).
@@ -197,6 +198,8 @@ src/
 │  │                      push_subscriptions(0010): session_id(구독을 등록한 Better Auth 세션, NOT NULL, FK ON DELETE CASCADE, 인덱스 push_subscriptions_session) —
 │  │                      세션 행을 지우는 모든 자리(로그아웃·비밀번호 변경·재설정·내보내기·owner 토큰 교체·만료 청소)가 구독도 지운다. 0010 은 표를 다시 만들고 옛 행(세션 모름)을 버린다 —
 │  │                      웹이 앱을 열 때 다시 등록한다(`drizzle/0010_push_session.sql` 은 손으로 쓴 SQL — 생성기의 ALTER 는 SQLite 가 받지 않는다. 까닭은 그 파일 머리 주석).
+│  │                      새 열을 더하는 마이그레이션을 내면 `test/db.test.ts` 의 부분 마이그레이션 테스트를 돌려, 행을 스키마 객체로 INSERT 하는 자리가 남았는지 본다 —
+│  │                      남았으면 위 「행을 SQL 로 넣는다」 규칙대로 바꾼다(스키마 객체 INSERT 는 아직 없는 새 열까지 실어 그 테스트가 깨진다).
 │  ├─ auth-schema.ts      Better Auth 테이블
 │  ├─ client.ts           createDb: better-sqlite3 연결(WAL) → assertTrigramSupport → 마이그레이션(runtime.migrationsFolder — 운영 번들은 DODOK_MIGRATIONS_DIR 가 없으면 설정 오류)
 │  └─ fts.ts              assertTrigramSupport(sqlite) — temp 탐침 테이블로 FTS5 trigram 을 확인, 없으면 한 줄 오류(cause 보존). 마이그레이션 **전**이어야 한다 —
@@ -215,6 +218,8 @@ src/
 │                         createIpLimit — 로그인(`/auth/local`·`me/password`)·초대 경로(lookup·accept·reset)가 하나씩
 ├─ http/
 │  ├─ errors.ts           HttpError·apiError — ApiError { code, message, details? } ↔ HTTP 상태
+│  ├─ agent-token.ts      requireAgentToken — 브리지·러너 토큰의 HTTP onRequest(`Authorization: Bearer`) 한 함수. 첨부 HTTP(`/bridge/attachments`·`/runner/attachments`)와
+│  │                      토큰으로 받는 설치 파일이 같은 BridgeAuthGuard(브리지 실패 카운터 — 막힌 주소 429)를 지난다. 틀린 토큰은 세고, `accept` 가 거절한 것(꺼진 Gateway)은 세지 않는다
 │  └─ validate.ts         경계 Zod 파싱(body·query·params·wire payload·저장값)
 ├─ modules/
 │  ├─ attachments/        Phase 2 ③. 첨부의 정본 — 디스크 블롭(`<ATTACHMENTS_DIR>/<sha 앞 2자>/<sha256>`, 같은 내용은 한 번) + attachments 행, 경계를 넘는 꼴은 `artifact://<id>`.
@@ -240,7 +245,13 @@ src/
 │  ├─ agents/             에이전트 등록·수정(admin 이상, 핸들은 members/handles.ts 의 assertHandleFree), GET /agents/discover(Gateway agents.list, admin 이상). 등록은 providerAgentId 를 shared `isRegistrableAgentId`(소문자)로 400 VALIDATION,
 │  │                      OpenClaw 는 등록·찾기 모두 gatewayId 필수(워크스페이스의 Gateway 가 아니면 400, 찾기는 꺼진 Gateway 면 ADAPTER_UNAVAILABLE), 같은 Gateway 에 같은 id 면 409.
 │  │                      `PUT /agents/:id/gateway`(owner) — 다른 Gateway 로 옮기기(대상에 같은 id 409, 러너 에이전트 400). 응답 Agent 에 OpenClaw 면 gateway({id,name} 또는 null),
-│  │                      조회는 `providerAgentIdIs`(lower() 비교 — 승인 findAgentId·런 없는 정본 agentIdFor 가 같이 쓴다: 코어가 세션 키를 소문자로 접는다)
+│  │                      조회는 `providerAgentIdIs`(lower() 비교 — 승인 findAgentId·런 없는 정본 agentIdFor 가 같이 쓴다: 코어가 세션 키를 소문자로 접는다).
+│  │                      보관(삭제)·되살리기(admin 이상): `DELETE /agents/:id`(archived_at 을 쓰고 열린 런을 사람 「중지」와 같은 orchestrator.abort 로 닫은 뒤 응답, 멱등)·
+│  │                      `POST /agents/:id/restore`(되살린 쪽의 자동 응답이 같은 채널의 살아 있는 다른 자동 응답과 겹치면 되살린 쪽을 끄고 그 채널에 `channel.member.changed`).
+│  │                      「활성」 판정은 isAgentActive(enabled && 보관 안 됨) 한 함수 — router/decide.ts·components assertDeliverable·런 관문(ops/budget.ts)이 쓴다. SQL 조건 agentNotArchived 는
+│  │                      채널 멤버 조회·러너 묶기(claimRunnerToken — 끈 에이전트는 묶는다)가 쓴다. 목록 `GET /agents` 는 보관한 것도 archivedAt 과 함께 준다(기록의 작성자·멘션 칩).
+│  │                      discover 는 같은 자리의 보관한 에이전트에 archivedAgentId, 같은 자리 등록·보관한 에이전트를 채널에 넣기는 409 AGENT_ARCHIVED(「삭제된 에이전트입니다」).
+│  │                      등록·수정·옮기기·보관·되살리기·러너 「이 러너로 묶기」·에이전트가 묶인 Gateway 삭제 뒤 wire `agents.changed`(본문 없음)
 │  ├─ messages/           seq 발급(seq.ts)·사람/에이전트/시스템 메시지 저장·bus 통지·히스토리 페이징. 저장과 같은 트랜잭션에서 첨부를 묶는다
 │  │                      (사람 메시지는 같은 트랜잭션에서 쓴 사람·멘션된 사람을 채널에 참여시키고 커밋 뒤 `channel.member.changed` 한 번 — 에이전트 메시지는 아무도 참여시키지 않는다)
 │  │                      (사람: 틀린 id 가 하나라도 있으면 VALIDATION, clientMsgId 재전송은 잡기보다 먼저 확인 / 에이전트: 틀린 id 만 빼고 경고).
@@ -299,7 +310,7 @@ src/
 │  │                      routes.ts(`GET`·`POST /api/v1/gateways` · `PATCH`·`DELETE /api/v1/gateways/:id` — 저장 뒤 어댑터 upsertGateway·removeGateway ·
 │  │                      `GET`·`POST /api/v1/gateways/:id/bridge-tokens`(발급 201, `Cache-Control: no-store` — 원문은 이 응답에만) ·
 │  │                      `DELETE /api/v1/gateways/:id/bridge-tokens/:tokenId`(204, 폐기 뒤 revokeTokenSessions — 끊기 실패는 warn))
-│  ├─ setup/              Phase 3 ②. 설정 마법사 — 전부 owner 세션(`requireOwner`, 아니면 403).
+│  ├─ setup/              Phase 3 ②. 설정 마법사 — owner 세션(`requireOwner`, 아니면 403). 예외는 둘: `GET /llms.txt`(로그인 없음)와 설치 파일(owner 세션 또는 발급한 토큰).
 │  │                      tokens.ts(bridge_tokens 저장소 — 토큰은 Gateway 하나에 묶인다: 원문 `dbt_` + randomBytes(32) base64url, DB 는 sha256 hex·prefix(원문 `dbt_` 뒤 6자)만 ·
 │  │                      issueBridgeToken(그 Gateway 에, 라벨 trim 1~60) · verifyBridgeTokenDb(해시로 활성 행 → timingSafeEqual → { tokenId, gatewayId }, lastUsedAt 1분에 한 번) ·
 │  │                      listBridgeTokens(그 Gateway 의 것, 폐기 포함, 새것부터) · revokeBridgeToken(그 Gateway 의 행만)) ·
@@ -309,7 +320,12 @@ src/
 │  │                      plugin-file.ts(pluginDirCandidates — DODOK_PLUGIN_DIR(이미지 /app/plugin), 소스 실행이면 저장소 packages/openclaw-plugin/dist ·
 │  │                      readPluginFile — 가장 최근 tgz 의 sha256·크기·`package/dist/index.js` sha256, tar 는 의존성 없이 읽는다) ·
 │  │                      routes.ts(`GET /api/v1/setup/status` · `GET /api/v1/setup/plugin.tgz`
-│  │                      (`dodok-openclaw-plugin-<sha 앞 12자>.tgz`, 없으면 404 `PLUGIN_FILE_MISSING`, 부팅 뒤 파일이 바뀌었으면 409 `PLUGIN_FILE_CHANGED`))
+│  │                      (`dodok-openclaw-plugin-<sha 앞 12자>.tgz`, 없으면 404 `PLUGIN_FILE_MISSING`, 부팅 뒤 파일이 바뀌었으면 409 `PLUGIN_FILE_CHANGED`) ·
+│  │                      `GET /llms.txt`(`text/plain; charset=utf-8`·nosniff, IP 버킷 LIMITS.llmsTxtPerMin — Caddy `@backend`·Vite 프록시·SW denylist 에도 이 경로)) ·
+│  │                      llms.ts(노드 설치 안내서 `llms.txt` 의 본문 틀 한곳 — renderLlmsTxt 의 인자는 공개 오리진·bridgeUrl·두 파일의 해시뿐이라 토큰·Gateway·사람이 실릴 길이 없다.
+│  │                      부팅 때 한 번 렌더. 명령·계정 키·RunnerConfig 는 `test/setup.llms.test.ts` 가 코드와 대조한다 — 토큰은 명령 인자에 싣지 않는다(curl `-K -`), 머리 주석) ·
+│  │                      installer-auth.ts(requireOwnerOrToken — 살아 있는 세션이면 owner 규칙 그대로(아니면 403), 세션이 없을 때만 Bearer 를 http/agent-token.ts 에 넘긴다.
+│  │                      Bearer 가 없으면 세지 않는 401. plugin.tgz 는 브리지 토큰(꺼진 Gateway 면 세지 않는 401), runner.tgz 는 러너 토큰 — 다른 종류는 센 401)
 │  ├─ runners/            Phase 4 ③. 연결 페이지 러너 블록 — 전부 owner 세션.
 │  │                      tokens.ts(runner_tokens 저장소 — bridge_tokens 와 같은 규칙, 원문 `drn_`, `.env` 이어받기 없음 · verifyRunnerTokenDb 는 id·라벨 ·
 │  │                      activeRunnerTokenCount(어댑터 상태 runners.tokens) · isActiveRunnerTokenId(runner_down 이 폐기된 토큰에 사건을 남기지 않게)) ·
@@ -317,7 +333,7 @@ src/
 │  │                      readRunnerFile — tgz 안 `package/dist/main.js` sha256, 몸통은 plugin-file.ts readBundledTgz) ·
 │  │                      routes.ts(`GET`·`POST /api/v1/setup/runner-tokens`(201 no-store, runnerConfig{serverUrl — 브리지 공개 주소의 오리진을 http(s) 로, tokenFile}) ·
 │  │                      `DELETE /api/v1/setup/runner-tokens/:id`(폐기 → 러너 어댑터 revokeTokenSessions — 묶임은 남는다) ·
-│  │                      `PUT /api/v1/setup/runner-tokens/:id/agents/:agentId`(다시 묶기 — 활성 토큰만, 폐기면 409) · `GET /api/v1/setup/runner.tgz`(없으면 404 `RUNNER_FILE_MISSING`)) ·
+│  │                      `PUT /api/v1/setup/runner-tokens/:id/agents/:agentId`(다시 묶기 — 활성 토큰만, 폐기면 409) · `GET /api/v1/setup/runner.tgz`(owner 세션 또는 러너 토큰 — setup/installer-auth.ts, 없으면 404 `RUNNER_FILE_MISSING`)) ·
 │  │                      bindings.ts(agents.runner_token_id — boundRunnerToken·claimRunnerToken(묶임 없는 등록 claude 행만, 조건부 UPDATE)·bindRunnerToken.
 │  │                      러너 어댑터의 bindings 옵션이 앞의 둘을 부르고, 에이전트 등록은 그 id 를 맡는 러너의 토큰(servingTokenId)을 INSERT 에 싣는다).
 │  │                      러너 어댑터(@dodok/runner-adapter)는 app.ts 가 만든다(deps.adapters 를 안 주면 늘 — 테스트는 runnerAdapter: true). 러너 첨부 HTTP
@@ -329,9 +345,9 @@ src/
 │  │                      service.ts(createOpsService — 다른 모듈의 유일한 입구 record·resolve·ack·list·countsSince·unacked·sweep·close. 실패는 logger.error 뒤 null(원래 동작을 막지 않는다),
 │  │                      ops_events 는 이 서비스로만 쓴다(unacked 메모리 캐시). 기록마다 로그 `event: "ops.<kind>"` 와 owner·admin 소켓 `ops.event` — 같은 줄은 OPS_EMIT_COALESCE_MS(1s) 창으로 모은다) ·
 │  │                      settings.ts(workspaces.ops_json 읽기·패치 — 모르는 키는 보존) · ip.ts(ipPrefix — IPv4 /24·IPv6 /48) ·
-│  │                      budget.ts(createRunGate — 런을 만드는 모든 경로가 지나는 관문 check·enqueue: 워크스페이스 상한 먼저, 그다음 채널 dailyRunLimit. 막히면 그 채널에 오늘 같은 scope 의
+│  │                      budget.ts(createRunGate — 런을 만드는 모든 경로가 지나는 관문 check·enqueue: 워크스페이스 상한 먼저, 그다음 채널 dailyRunLimit. enqueue 는 그 앞에 에이전트가 활성인지(isAgentActive) 본다 — 런 행 INSERT 까지 await 가 없어 보관 쓰기 뒤의 계획은 런을 만들지 못한다. 막히면 그 채널에 오늘 같은 scope 의
 │  │                      run_limit 시스템 메시지가 없을 때만 하나 + 사건 run_limit. 스레드 런이면 그 알림을 스레드에 — 「오늘 이미 남겼나」는 채널 단위) ·
-│  │                      limits.ts(LIMITS — 레이트리밋 숫자의 유일한 자리) · ratelimit.ts(TokenBucket·KeyedLimiter, 기본 시계 monotonicNow) ·
+│  │                      limits.ts(LIMITS — 레이트리밋 숫자의 유일한 자리. `llms.txt` 의 IP 버킷 llmsTxtPerMin 도) · ratelimit.ts(TokenBucket·KeyedLimiter, 기본 시계 monotonicNow) ·
 │  │                      http-limits.ts(createRestLimits — REST·업로드 상한, recordRateLimit — 사건 key 는 라우트 패턴) ·
 │  │                      health.ts(watchConnections — 켜진 Gateway 마다 Gateway·브리지가 DISCONNECT_EVENT_MS(60s) 넘게 끊기면 gateway_down·plugin_down(key gateway:<id>)을 열고 붙거나 끄거나 지우면 닫는다 ·
 │  │                      watchRunners — 이 프로세스에서 붙은 적 있는 러너 토큰이 60s 넘게 끊기면 runner_down(key 토큰 id), 붙으면 닫는다, 폐기된 토큰은 남기지 않는다 ·
@@ -620,7 +636,7 @@ public/                    favicon.svg + PWA 아이콘 PNG 다섯(pwa-64·192·5
 components.json            shadcn 규약(new-york·neutral, 별칭 @/ui·@/lib/utils) — CLI 는 워크스페이스에서 돌리지 않는다(upstream 이 npm 패키지를 넣는다)
 src/
 ├─ main.tsx                진입점 — bootApp(createApp(), …) 뒤 virtual:pwa-register 동적 import → startPwa(렌더를 막지 않는다)
-├─ sw.ts                   서비스 워커(Phase 2 ④) — 미리 저장(주입 자리 self.__WB_MANIFEST 는 한 번만 읽는다)·탐색 폴백(목록에 index.html 이 있을 때, /api/·/socket.io/ 제외)·
+├─ sw.ts                   서비스 워커(Phase 2 ④) — 미리 저장(주입 자리 self.__WB_MANIFEST 는 한 번만 읽는다)·탐색 폴백(목록에 index.html 이 있을 때, `pwa/sw-logic.ts` 의 NAVIGATION_DENYLIST — /api/·/socket.io/·/llms.txt(쿼리가 붙어도) 제외)·
 │                          SKIP_WAITING · push → 알림 · notificationclick → 같은 출처 창에 focusAndNavigate(focus 가 거절·던져도 postMessage({ type: "navigate" }) 는 보낸다), 없으면 openWindow ·
 │                          pushsubscriptionchange → 다시 구독·등록
 ├─ styles.css              Tailwind 진입(@import) + theme/tokens.css, Streamdown 클래스 @source, 한국어 줄바꿈(word-break: keep-all)
@@ -629,7 +645,7 @@ src/
 │  ├─ createApp.ts         앱 하나의 QueryClient·Router·onUnauthorized(`/login?next=` 로 replace, `ignoreBlocker` — 원문 대화상자의 이동 막기를 건너뛴다. 로그인 없이 여는 화면(isPublicPath — `/join/`·`/reset/`)이면 상태만 비우고 머문다) (테스트는 메모리 히스토리를 넘긴다). notify(승인 알림의 화면 사정 + 채널 이동 알림 onLocationChange —
 │  │                       router.subscribe("onResolved")), 서비스 워커의 navigate 메시지 → safeNotificationUrl → router.navigate, captureInstallPrompt
 │  ├─ boot.tsx             bootApp — onlineManager.setOnline(navigator.onLine) → 오프라인 사본 복원(최대 1초) → registerSessionReset(사본 지우기) → 렌더. main 과 테스트가 같은 것을 부른다
-│  ├─ router.tsx           라우트(/login·/join/$token·/reset/$token(둘은 가드 밖)·가드 레이아웃·/·/c/$channelId(+/settings·/activity·/t/$rootId)·/agents·/settings/connection·/settings/operations·/settings/members), safeNext, isPublicPath(가드 밖 두 라우트 판정 — `/join/`·`/reset/`), 라우트 코드 분할
+│  ├─ router.tsx           라우트(/login·/join/$token·/reset/$token(둘은 가드 밖)·가드 레이아웃·/·/c/$channelId(+/settings·/activity·/t/$rootId)·/settings 레이아웃 라우트(자식 /·account·notifications·agents·members·connection·operations — features/settings-shell)·옛 /agents → /settings/agents(beforeLoad redirect replace), scrollToTopSelectors 에 `#settings-scroll`), safeNext, isPublicPath(가드 밖 두 라우트 판정 — `/join/`·`/reset/`), 라우트 코드 분할
 │  ├─ queryClient.ts       Query 기본값 — 전역 오류 토스트(`meta.silent` 로 끔, 폼 오류 VALIDATION·CONFLICT 제외), 재시도는 네트워크·5xx 만, 401 → 로그인.
 │  │                       403 FORBIDDEN 은 「권한이 없습니다」(토스트 id `forbidden` 하나) + `silent` 와 무관하게 me 를 다시 받아 관리 화면을 잠근다(역할이 내려간 직후 남은 버튼).
 │  │                       me 는 토스트하지 않고, 값이 없는 me 의 401(첫 가드)은 가드에 맡기며, 값을 가진 me 의 401(사본으로 뜬 뒤 세션 만료)은 onUnauthorized
@@ -641,17 +657,15 @@ src/
 │     ├─ AppShell.tsx      사이드바 + 배너 + 페이지. 페이지는 셸 안 스크롤 상자(`PAGE_SCROLL_ID` — 화면이 바뀌면 라우터 `scrollToTopSelectors` 가 맨 위로)에서만
 │     │                    스크롤해 사이드바·배너는 제자리에 있다(채널 화면은 그 높이에 맞추고 목록이 스스로 스크롤). 768px 미만은 사이드바를 왼쪽 시트로, 닫히면 초점 복귀. 검색 대화상자(`⌘K`/`Ctrl+K` — 다른 대화상자가 열려 있으면 무시,
 │     │                    `preventDefault`)와 그것을 여는 컨텍스트 `OpenSearchContext`
-│     ├─ Sidebar.tsx       워크스페이스 이름·검색 칸(누르면 검색 대화상자, `⌘K` 표시)·채널 목록·「채널 만들기」·「에이전트」·「멤버」·「운영」(admin 이상 — useCanManage)·「연결」(owner — useIsOwner)·연결 상태·「내 계정」·로그아웃.
-│     │                    「운영」 옆 배지 = ops/status 의 unacked warn + error(0 이면 없음, 100 이상 「99+」, sr-only 「(확인 안 한 사건 n건)」) — `ops.event` 로 실시간, 주기 재조회는 없다
+│     ├─ Sidebar.tsx       워크스페이스 이름·검색 칸(누르면 검색 대화상자, `⌘K` 표시)·채널 목록·「채널 만들기」·하단 연결 상태와 「설정」(lucide 톱니 + 글자 — `/settings`).
+│     │                    admin 이상이면 「설정」에 확인 안 한 운영 사건 배지(features/settings-shell OpsBadge — ops/status 의 unacked warn + error, 0 이면 없음, 100 이상 「99+」,
+│     │                    sr-only 「(확인 안 한 사건 n건)」, `ops.event` 로 실시간, 주기 재조회는 없다). 에이전트·멤버·연결·운영·알림·내 계정·로그아웃은 설정 탭에 있다
 │     ├─ ChannelHeader.tsx 채널 이름·주제, 에이전트 아바타 묶음(+N), 설정 패널 여닫기, 좁은 화면 메뉴 버튼
 │     ├─ Banners.tsx       wire 끊김·`rejected`·`protocol_mismatch` 배너 + OpenClaw 미연결 배너(켜진 Gateway 가운데 끊긴 것 — 하나면 「「<이름>」」, 둘 이상이면 「<N>개」. 둘은 함께 보일 수 있다,
 │     │                    owner 에게는 「연결 설정 보기」 링크) + 오프라인 배너
 │     │                    「오프라인 — 저장된 내용을 보여 줍니다」(useOffline — 그때는 「서버에 다시 연결하는 중…」을 내지 않는다)
 │     ├─ ConnectionDots.tsx Gateway·플러그인 점 — 켜진 Gateway 를 모아 하나로(모두 연결 초록 · 일부 끊김 노랑 · 붙은 것이 없어도 다시 붙는 중이면 노랑 「Gateway 다시 연결 중」 ·
 │     │                    모두 끊김 빨강 · 켜진 Gateway 없음 회색 「Gateway 없음」), 툴팁에 Gateway 마다 한 줄. wire 가 끊기면 마지막 값을 믿지 않고 「알 수 없음」
-│     ├─ NotifySettings.tsx 사이드바 하단 「알림」(벨) → Dialog 패널(Phase 2 ④, 옛 NotifyToggle 을 흡수) — 이 기기의 푸시 상태 다섯(미지원·설치 필요(iOS)·거절됨·꺼짐·켜짐)·
-│     │                    「푸시 알림 켜기」·「끄기」·실패 이유(role=alert, 거절이면 상태 줄 하나)·「앱 설치」. 켜고 끄는 동안 닫히지 않는다.
-│     │                    푸시가 없는 브라우저(iOS 아님)에서 권한이 default 면 「탭이 열려 있을 때만 알림 켜기」(옛 동작)
 │     ├─ PanelTabs.tsx     오른쪽 패널의 탭 셸(「설정」·「활동」, 스레드를 연 동안만 「스레드」, `data-testid="page-channel-panel"`). 넓은 화면은 360px `<aside>`, 좁은 화면은 전체 시트.
 │     │                    내용은 포털 하나로 옮겨 다녀 탭을 바꿔도 안쪽이 리마운트되지 않는다.
 │     │                    초점: 좁은 화면 시트는 열면 지금 탭 링크(`data-tab-id`), Esc·닫기면 헤더 「채널 설정」 링크. 넓은 화면은 「설정 닫기」·「활동 닫기」
@@ -679,6 +693,7 @@ src/
 │  │                       메시지 분배: 루트 → 채널 캐시(+ 연 스레드의 루트), 답글 → 채널은 seq 만(noteSeq)·캐시가 있는 스레드에 upsert.
 │  │                       `ops.event` → 상태 캐시의 unacked 를 곧바로 덮고(상태를 아직 안 받았으면 만들지 않는다) opsStatus·사건 목록 무효화.
 │  │                       `people.changed` → 사람 목록을 통째로 바꾸고 `team`(멤버 표·대기 초대) 무효화, 목록의 내 역할이 me 와 다르면 me 를 곧바로 다시 받는다(정본은 `/auth/me`).
+│  │                       `agents.changed` → `qk.agents`(exact — 가져오기의 찾기 목록은 그대로)·채널 멤버(`qk.membersAll`) 무효화 — 보관은 `channel.member.changed` 를 내지 않는다.
 │  │                       탭 안 승인 알림은 admin 이상에게만(`notifyApproval` 을 부르기 전에 여기서 거른다)
 │  │                       첫 연결이 아닌 재연결이면 adapter·opsStatus·opsEventsAll 을 무효화한다 — 끊긴 사이의 변화는 팬아웃으로 다시 오지 않는다
 │  ├─ subscriptions.ts     한 채널 구독·빈틈 이어 받기·과거 페이지 REST(5쪽 초과면 타임라인 리셋). 재동기화 응답은 루트는 채널, 답글은 연 스레드 캐시에만, `threadRoots` 는 가진 루트만
@@ -714,8 +729,8 @@ src/
 │  │                       fields.tsx(AuthField·비밀번호 규칙·로그인 전 경로 공통 문구 authErrorText — 429 는 버킷을 따른다: 로그인 「(1분 5회)」, 초대 경로는 숫자 없이 ·
 │  │                       fieldErrorText — 알려진 칸 오류(핸들·이메일 409, 예약 핸들 400, 현재 비밀번호 400)는 서버 문구 대신 고정 문구(합쇼체), 칸 오류가 나면 그 칸으로 초점) ·
 │  │                       mutations(useLogin(`{ token }`·`{ email, password }`)·useAcceptInvite·useResetPassword·useLogout — 응답 `sessionToken` 은 쓰지 않는다, gcTime 0. 로그아웃은 disablePush 를 최대 3초 기다린 뒤 POST /auth/logout)
-│  ├─ account/             AccountDialog(사이드바 하단 「내 계정」 — 표시 이름 `PATCH /me`(me 캐시의 user 를 고친다), 비밀번호 바꾸기 `POST /me/password`(틀린 현재 비밀번호는 400 `field: "current"` → 그 칸 아래).
-│  │                       owner 에게는 비밀번호 칸 대신 「로컬 토큰은 .env 의 LOCAL_AUTH_TOKEN」 안내) · mutations
+│  ├─ account/             mutations(표시 이름 `PATCH /me`(me 캐시의 user 를 고친다), 비밀번호 바꾸기 `POST /me/password`(틀린 현재 비밀번호는 400 `field: "current"` → 그 칸 아래)) —
+│  │                       화면은 settings-shell 의 AccountPage
 │  ├─ members/             Phase 4 ② 팀. 멤버 화면 `/settings/members` — admin 이상(member 는 API 를 부르지 않고 「권한이 없습니다」).
 │  │                       MembersPage.tsx(멤버 표 — 핸들·이름·이메일·역할(「소유자」·「관리자」·「멤버」)·가입일, 390px 에서는 제 상자(`relative overflow-x-auto`) 안에서 가로 스크롤 ·
 │  │                       대기 중인 초대 — 역할·만료·「폐기」, admin 에게는 admin 초대의 폐기 버튼이 없다) · MemberRowActions.tsx(역할 셀렉트 — owner 만·owner 줄 제외·바꾸는 즉시 적용,
@@ -773,7 +788,11 @@ src/
 │  │                       핸들 겹침은 「이미 쓰이는 핸들입니다 — 다른 핸들을 입력하세요」) · MoveGatewayDialog(「Gateway 옮기기」 — owner, OpenClaw 줄마다) ·
 │  │                       gatewaySuffix(「 · <Gateway 이름>」 — 에이전트 줄·멘션 후보·채널 설정이 같이 쓴다) · AgentRow 의 연결이 빈 줄 안내(owner 「…다른 Gateway 로 옮기세요」,
 │  │                       admin·member 「…owner 가 다른 Gateway 로 옮길 때까지 답하지 못합니다」) · ManualAgentForm·handleFrom ·
-│  │                       resetSession·ResetSessionDialog(「새 대화」 — 작성기 `/new` 와 설정 패널이 함께 쓴다) · mutations
+│  │                       resetSession·ResetSessionDialog(「새 대화」 — 작성기 `/new` 와 설정 패널이 함께 쓴다) · mutations(등록·수정·옮기기, useArchiveAgent·useRestoreAgent — 같은 틱 두 번은 한 요청).
+│  │                       보관(삭제)·되살리기 — 살아 있는 목록 아래 접힌 「삭제된 에이전트 N」(ArchivedAgents, admin 이상이면 줄마다 「되살리기」), 줄의 「삭제」는 ConfirmDialog
+│  │                       (「에이전트 삭제」). 고르는 자리의 거름은 archived.ts isArchived(`Boolean(archivedAt)` — 보관 열 이전 오프라인 사본에는 키가 없다) 한곳 —
+│  │                       멘션 후보·채널 멤버 줄·「에이전트 추가」 셀렉트·채널 머리 아바타가 쓴다. 가져오기의 archivedAgentId 항목은 「삭제됨 — 되살리기」, 직접 입력·409 AGENT_ARCHIVED 는
+│  │                       id 칸 「삭제된 에이전트입니다」+「되살리기」. ArchivedTag(멘션 칩·운영 표 이름 뒤 「삭제됨」 — 보이는 글자는 aria-hidden, 스크린 리더에는 「 (삭제됨)」)
 │  ├─ search/              Phase 4 ①. SearchDialog.tsx(`⌘K` 대화상자 — 390px 전체 시트, 필터 채널·사람/에이전트·기간, 결과를 누르면 requestJump 뒤 그 채널·스레드로, 닫으면 연 자리로 초점 —
 │  │                       Trigger 없이 여는 대화상자라 `onOpenAutoFocus` 에서 기억한 요소로 돌려준다) · SearchResults.tsx(2글자면 「2글자는 최근 90일에서 50개까지만 찾습니다」·「더 보기」 없음,
 │  │                       429·오류는 대화상자 안 한 줄, 다음 쪽 실패는 받은 결과를 두고 목록 아래 한 줄, 입력이 2글자 미만이면 옛 결과를 곧바로 숨긴다) ·
@@ -792,7 +811,9 @@ src/
 │  │                       PluginDownload — 받기는 `pluginFile.available` 로만, installCommands(`docs/guides/deploy.md` 「[웹 → B] 플러그인 설치·브리지 토큰」 절의 [B] 블록을 글자 그대로 —
 │  │                       패치 줄만 빼고 파일 이름·번들 sha 를 채운다, `connection.test.tsx` 가 그 블록과 대조한다)) ·
 │  │                       IssueTokenDialog.tsx(라벨 → 발급 → 원문·설정 조각 한 번. 원문은 컴포넌트 상태에만 — 「복사했습니다」로만 닫히고, 그동안 라우트 이동은 useBlocker 로 한 번 더 묻고
-│  │                       탭 닫기·새로고침은 beforeunload. 막힌 채 언마운트되면 이동을 이어 보낸다) ·
+│  │                       탭 닫기·새로고침은 beforeunload. 막힌 채 언마운트되면 이동을 이어 보낸다. 원문 바로 아래 「AI 에게 맡기기」 한 줄과 「복사」 — 원문과 같은 규칙) ·
+│  │                       llms.ts(llmsHandoffLine — 「<오리진>/llms.txt 를 읽고 「<절 제목>」 절대로 …」 한 줄, 절 제목은 서버 llms.ts 와 `setup.llms.test.ts` 가 대조 ·
+│  │                       publicOriginOf — 브리지 공개 주소 → 공개 오리진) ·
 │  │                       TokenList.tsx(라벨·`dbt_` + 앞 6자·만든 때·마지막 사용·「지금 접속 중」·폐기됨·「이제 폐기해도 됩니다」, 폐기는
 │  │                       ConfirmDialog — 접속 중이면 경고, 마지막 활성 토큰이면 `escalated` 두 번째 확인(600ms 무장), 폐기 뒤 초점은 아래 줄 「폐기」 또는 「새 토큰 발급」) ·
 │  │                       queries.ts(setupStatus·bridgeTokens(Gateway 마다) — `setup.status` wire 가 상태를 덮는다) · mutations.ts(Gateway 추가·수정·삭제, 발급은 결과를 뮤테이션 캐시에 두지 않고 콜백으로만(gcTime 0),
@@ -802,6 +823,14 @@ src/
 │  │                       ThreadChip.tsx(루트 아래 「답글 N · 마지막 시각 · 에이전트 아바타」와 「스레드에서 답하기」 — 둘 다 라우터 Link) ·
 │  │                       queries.ts(스레드 REST·threadQuery(`withThreadEdits` 안에서 받는다)·touchRecentThread·threadRootOf(답글이면 그 루트)·isThreadMissing) ·
 │  │                       threadOpener.ts(스레드를 연 자리 — 칩·「스레드에서 답하기」가 누른 요소를 적고 PanelTabs 가 닫을 때 돌려준다)
+│  ├─ settings-shell/      `/settings` 레이아웃 라우트(SettingsLayout — 넓은 화면은 왼쪽 탭 목록 고정 + 내용 칸 `#settings-scroll` 만 스크롤, 좁은 화면은 `/settings` 가 탭 목록 페이지
+│  │                       (SettingsIndex — 넓은 화면이면 「내 계정」으로 replace)이고 탭 페이지는 위에 붙는 머리에 메뉴 단추 + 「← 설정」 — 탭 페이지는 메뉴 단추를 그리지 않는다) ·
+│  │                       tabs.ts(SETTINGS_TABS — 경로·이름·아이콘·역할별 보임: 내 계정·알림·에이전트 누구나, 멤버·운영 admin 이상, 연결 owner. 숨은 탭은 직접 주소로 가도 목록에 없다 —
+│  │                       내용 자리가 「권한이 없습니다」) · SettingsNav.tsx(`nav aria-label="설정"`, 지금 탭 `aria-current="page"`, 운영 탭 배지) · OpsBadge.tsx(사이드바 「설정」과 운영 탭이 같이 쓴다) ·
+│  │                       focus.ts(설정 안의 이동 — 탭 목록·「← 설정」 — 뒤에만 초점을 내용 h1 로. 판정은 라우터 matches 의 그려진 화면, 제목이 늦게 붙으면 기다린다) ·
+│  │                       AccountPage.tsx(표시 이름·비밀번호 바꾸기 — owner 는 비밀번호 칸 대신 `.env` 의 LOCAL_AUTH_TOKEN 안내·「로그아웃」) ·
+│  │                       NotificationsPage.tsx(이 기기의 푸시 상태 다섯(미지원·설치 필요(iOS)·거절됨·꺼짐·켜짐)·「푸시 알림 켜기」·「끄기」·실패 이유(role=alert)·「앱 설치」.
+│  │                       푸시가 없는 브라우저(iOS 아님)에서 권한이 default 면 「탭이 열려 있을 때만 알림 켜기」)
 │  └─ settings/            ChannelSettingsPanel(패널 셸은 `app/layout/PanelTabs` 가 맡고 여기는 안쪽만) ·
 │                          BasicSection·PromptSection·MembersSection·AgentMemberRow·RelayPolicySection(+relayPolicyForm)·autoRespond(채널당 하나 보장)·
 │                          Section·ConfirmDialog·mutations(응답은 보낸 필드만 캐시 병합 — 늦은 응답이 wire 값을 덮지 않게).
@@ -827,6 +856,7 @@ src/
 ├─ theme/                  agentColor.ts(핸들 → 8색 색인) · tokens.css(중립 회색 램프·강조색 하나·상태색·에이전트 8색·모션 줄이기)
 └─ ui/                     18개 — shadcn 복사본(alert·avatar·badge·button·checkbox·dialog·dropdown-menu·input·label·radio-group·scroll-area·
                            separator·sheet·sonner·switch·textarea·tooltip)과 직접 만든 field-error(칸 아래 오류 라이브 영역).
+                           dialog 의 DialogContent 는 기본이 화면 높이 안(`max-h-[calc(100dvh-2rem)]`)에서 안쪽 스크롤 — 부르는 쪽 `max-h` 가 있으면 그것이 이긴다.
                            radio-group 은 Phase 2 ② 가 더했다(이미 있던 `radix-ui` 의 RadioGroup, 의존성 추가 없음). `ui/select.tsx` 는 없다 — 옵션은 OptionList 가 그린다.
                            손으로 두고 `@/lib/utils` 로 잇는다 — CLI 를 워크스페이스에서 돌리지 않는다
 ```

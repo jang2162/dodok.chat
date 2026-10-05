@@ -90,7 +90,7 @@ curl -fsS https://<도메인>/healthz              # {"ok":true,"db":"ok"}
 
 Gateway 는 dodok 웹의 **연결 페이지**(`https://<도메인>/settings/connection`)에서 붙인다. 개발 PC 는 필요 없다. Gateway 가 여럿이면 Gateway 마다 이 단계와 4·5 를 되풀이한다.
 
-**연결 페이지 열기** — 브라우저로 `https://<도메인>` 에 로그인(로그인 화면 아래 「owner 로컬 토큰으로 로그인」을 펼쳐 `LOCAL_AUTH_TOKEN`)하고 사이드바 하단 「연결」. owner 에게만 보인다(owner 가 아니면 그 주소도 「권한이 없습니다」). Gateway 가 하나도 없으면 「OpenClaw Gateway」 블록이 「OpenClaw Gateway 를 추가하면 그 안의 에이전트를 채널에 데려올 수 있습니다」를 보인다. OpenClaw 가 끊겼다는 배너의 「연결 설정 보기」도 같은 곳으로 간다.
+**연결 페이지 열기** — 브라우저로 `https://<도메인>` 에 로그인(로그인 화면 아래 「owner 로컬 토큰으로 로그인」을 펼쳐 `LOCAL_AUTH_TOKEN`)하고 사이드바 하단 「설정」 → 「연결」 탭. owner 에게만 보인다(owner 가 아니면 탭 목록에 없고, 그 주소로 직접 가도 「권한이 없습니다」). Gateway 가 하나도 없으면 「OpenClaw Gateway」 블록이 「OpenClaw Gateway 를 추가하면 그 안의 에이전트를 채널에 데려올 수 있습니다」를 보인다. OpenClaw 가 끊겼다는 배너의 「연결 설정 보기」도 같은 곳으로 간다.
 
 **Gateway 추가** — 「OpenClaw Gateway」 블록 머리의 「Gateway 추가」 → 이름·주소·토큰 → 「추가」.
 
@@ -130,15 +130,16 @@ scp <받은 파일> <B>:/tmp/
 - ⚠ **토큰은 발급한 카드의 Gateway 에 묶인다.** 서버는 플러그인이 낸 토큰만으로 어느 Gateway 의 플러그인인지 안다 — 다른 Gateway 호스트에 넣으면 그 플러그인은 발급한 카드의 Gateway 로 붙어, 에이전트 답이 엉뚱한 Gateway 로 간다.
 
 - **원문은 이 대화상자에서 한 번만 보인다.** 서버는 해시만 두고, 목록·로그·새로고침·뒤로 가기 어디에서도 원문을 다시 볼 수 없다. 원문이 보이는 동안 대화상자는 「복사했습니다」로만 닫히고, 다른 곳으로 가려 하면 한 번 더 묻는다(탭 닫기·새로고침은 브라우저가 묻는다. 세션이 끝나 로그인 화면으로 보내질 때만은 묻지 않고 원문이 사라진다). 복사하지 못한 채 닫았으면 그 토큰을 폐기하고 새로 발급한다.
-- 「플러그인 설정」 조각(`channels.dodok.accounts.default` 의 `bridgeUrl`·`token`)을 「플러그인 설정」 아래의 「복사」로 복사해 [B] 에서 파일로 둔다 — 붙여 넣기로 쓰면 토큰이 셸 기록·`ps` 에 남지 않는다.
+- 「플러그인 설정」 조각(`channels.dodok.accounts.default` 의 `bridgeUrl`·`token`)을 「플러그인 설정」 아래의 「복사」로 복사해 [B] 에서 파일로 둔다 — 붙여 넣기로 쓰면 토큰이 셸 기록·`ps` 에 남지 않는다. 파일은 고정 `/tmp` 경로가 아니라 `mktemp -d` 가 만든 자리(0700)에 둔다 — 공유 `/tmp` 의 고정 이름은 다른 사용자가 미리 만들어 둘 수 있다. 아래 [B] 설치까지 **같은 셸**에서 한다(`$dir` 를 쓴다).
   ```bash
-  ( umask 077; cat > /tmp/dodok.patch.json5 )     # [B] — 조각을 붙여 넣고 Ctrl-D
+  dir="$(mktemp -d "${TMPDIR:-/tmp}/dodok.XXXXXX")"     # [B] — 템플릿을 줘야 macOS 도 TMPDIR 을 따른다
+  ( umask 077; cat > "$dir/dodok.patch.json5" )     # [B] — 조각을 붙여 넣고 Ctrl-D
   ```
 - 파일을 둔 뒤 「복사했습니다」.
 
 **[B] 설치** — 「플러그인 받기」의 설치 명령 상자 아래 「복사」(「설치 명령 복사」)가 아래 블록과 같은 명령에 받은 파일 이름과 대조할 「번들 sha256」 값을 채워 준다(계정 설정 패치 줄은 빼고 — 토큰은 발급 대화상자가 따로 준다). 아래 블록의 파일 이름 `dodok-openclaw-plugin-0.0.0.tgz` 는 개발 PC 에서 `pnpm -F @dodok/openclaw-plugin run pack:plugin` 으로 만든 파일의 이름이고, sha 줄의 대조 값은 연결 페이지의 「번들 sha256」이다.
 
-처음 설치라면 복사한 명령의 마지막 줄(Gateway 올리기) 전에 `openclaw config patch --file /tmp/dodok.patch.json5 && rm /tmp/dodok.patch.json5` 를 돌린다 — 아래 블록이 그 순서다. 블록을 손으로 칠 때는 파일 이름을 받은 파일 이름으로 바꾼다.
+처음 설치라면 복사한 명령의 마지막 줄(Gateway 올리기) 전에 `openclaw config patch --file "$dir/dodok.patch.json5"; rm -rf "$dir"` 를 돌린다 — 아래 블록이 그 순서다. 성공·실패와 상관없이 토큰이 든 패치 파일을 지운다. 패치가 실패하면(`openclaw config patch` 가 오류를 찍는다 — 뒤의 `rm` 이 있어 줄 전체의 종료 코드로는 가를 수 없다) 그 Gateway 카드에서 토큰을 새로 발급해 붙여 넣기부터 다시 하고, 쓰지 않은 토큰은 「폐기」한다. 블록을 손으로 칠 때는 파일 이름을 받은 파일 이름으로 바꾼다.
 
 [B] — **Gateway 를 먼저 내리고** 설치한다(2026.9.5 는 떠 있는 Gateway 에 라이브 리로드를 시도하다 실패하면서 파일도 안 바꾼다 — `docs/guides/live-smoke.md` 「플러그인 최신 번들 재설치」). 계정 설정을 넣은 뒤 올린다.
 
@@ -147,13 +148,24 @@ scp <받은 파일> <B>:/tmp/
 openclaw plugins install /tmp/dodok-openclaw-plugin-0.0.0.tgz --force --accept-capabilities
 openclaw plugins inspect dodok --json | jq '.plugin.status, .plugin.channelIds'   # "loaded", ["dodok"]
 sha256sum ~/.openclaw/extensions/dodok/dist/index.js      # 기본 상태 디렉터리일 때. 연결 페이지의 「번들 sha256」과 같아야 한다(macOS 는 shasum -a 256)
-openclaw config patch --file /tmp/dodok.patch.json5 && rm /tmp/dodok.patch.json5
+openclaw config patch --file "$dir/dodok.patch.json5"; rm -rf "$dir"
 # Gateway 를 올린다
 ```
 
 - `--accept-capabilities` 가 없으면 설치되지 않는다. 호스트에 `security.installPolicy` 가 있으면 archive 설치(`provenance-invalid`)가 막힐 수 있다 — ADR 0002 「원격 배포 절차」.
 - 플러그인만 다시 설치할 때(토큰은 그대로)는 `openclaw config patch` 줄을 건너뛴다 — 연결 페이지가 복사해 주는 명령에는 처음부터 그 줄이 없다.
 - 첨부를 쓰기 전에 [B] 의 `attachments.ttlHours`·`tools.fs.workspaceOnly` 를 정한다 — `docs/guides/live-smoke.md` 「원격 Gateway 에서 같은 절차를」 절의 첨부 항목.
+
+**AI 에게 맡기는 길** — [B] 에서 셸을 쓰는 AI 에이전트(Claude Code 등)가 돌면 위 받기·설치·계정 설정을 그 AI 에게 맡길 수 있다. 브리지 토큰 발급 대화상자의 원문 바로 아래 「AI 에게 맡기기」에서 「복사」로 한 줄을 복사해 [B] 의 AI 에게 건넨다 — `<공개 오리진>/llms.txt 를 읽고 「OpenClaw Gateway 호스트」 절대로 이 호스트에 dodok 플러그인을 설치해 줘. 브리지 토큰: <원문>`. 이 줄에는 원문이 들어 있어 원문과 같은 규칙이다(이 대화상자에서 한 번만 보인다). AI 의 대화 기록에도 원문이 남는다 — 믿는 AI 에게만 건넨다.
+
+- **`llms.txt`** — 서버가 로그인 없이 내주는 평문 안내서다(`GET /llms.txt`, `text/plain`, IP 당 분당 30 — 아래 「운영 화면」 레이트리밋 표). 서버가 자기 공개 오리진(`BRIDGE_PUBLIC_URL` 의 오리진, 없으면 `APP_ORIGIN`)·계정 설정의 `bridgeUrl`·서버가 품은 플러그인과 러너 파일의 파일 sha256·번들 sha256 을 채운다. 토큰·Gateway 목록·사람 이름은 싣지 않는다. 서버에 파일이 없으면 그 절은 「서버에 파일이 없습니다」 한 줄이고 AI 는 거기서 멈춘다. 본문 틀의 정본은 `apps/server/src/modules/setup/llms.ts` 다.
+- **「OpenClaw Gateway 호스트」 절이 하는 일** — 이 체크리스트 4·5 와 같은 순서를 명령으로 적는다. ① 토큰을 0600 파일 `~/.dodok-bridge-token` 에 둔다 ② 그 토큰으로 `plugin.tgz` 를 받아 파일 sha256 을 대조한다 ③ Gateway 를 내리고 설치한 뒤 `loaded` 와 번들 sha256(`~/.openclaw/extensions/dodok/dist/index.js` — 기본 상태 디렉터리일 때)을 대조한다 ④ 계정 설정 패치 파일을 `mktemp -d` 자리에 0600 으로 만들어 적용하고, 성공·실패와 상관없이 패치 파일과 토큰 파일을 지운다 ⑤ Gateway 를 올린다. 토큰은 어떤 명령의 인자에도 싣지 않는다 — curl 은 표준 입력의 설정(`-K -`)으로 머리를 받는다.
+- **AI 가 멈추고 사람에게 묻는 자리** — Gateway 를 어떻게 내리고 올리는지 모를 때, sha256 이 다를 때, 계정 설정 패치가 실패했을 때(토큰 파일이 이미 지워졌다 — 새로 발급해 다시 건넨다), 그리고 마지막 확인: 사람이 이 연결 페이지 그 Gateway 카드의 「플러그인」이 「접속됨」·「서버와 같은 빌드입니다」인지 본다(위 5). 카드에 페어링 대기가 보이면 요청 id 를 AI 에게 준다(`openclaw devices approve <요청 id>`).
+- **노드에서 토큰으로 설치 파일 받기** — `GET /api/v1/setup/plugin.tgz` 는 owner 세션 **또는** `Authorization: Bearer <브리지 토큰>`(폐기되지 않았고 묶인 Gateway 가 켜져 있을 것)으로 받는다. 폐기된 토큰·러너 토큰·틀린 값은 401 이고 브리지 실패 카운터(`bridgeFail`)에 센다. 꺼진 Gateway 의 토큰과 Bearer 없는 요청은 401 이되 세지 않는다. 로그인한 owner 아닌 사람은 403 이다. 손으로 받을 때도 토큰을 명령 인자에 넣지 않는다:
+  ```bash
+  printf 'header = "Authorization: Bearer %s"\n' "$(cat ~/.dodok-bridge-token)" \
+    | curl -fsS -K - https://<도메인>/api/v1/setup/plugin.tgz -o /tmp/dodok-openclaw-plugin.tgz
+  ```
 
 ### 5. [웹] 브리지 접속 확인
 
@@ -176,7 +188,7 @@ docker compose -f infra/compose.yml logs app | grep -E 'bridge plugin hello|brid
 
 1. `https://<도메인>` → 로그인(owner 는 「owner 로컬 토큰으로 로그인」 → `LOCAL_AUTH_TOKEN` — 폰에 옮길 때는 비밀번호 관리자처럼 화면에 남지 않는 길로. 초대로 가입한 멤버는 이메일·비밀번호 — 아래 「멤버 초대·비밀번호 재설정·내보내기」).
 2. iOS(16.4+): Safari 공유 → 「홈 화면에 추가」 → **그 아이콘으로 연다**(iOS 는 홈 화면 PWA 에서만 푸시가 된다). 안드로이드: Chrome 에서 연다(설치는 선택).
-3. 앱의 알림 설정에서 「푸시 알림 켜기」 → OS 권한 허용.
+3. 사이드바 하단 「설정」 → 「알림」 탭(`/settings/notifications`)에서 「푸시 알림 켜기」 → OS 권한 허용.
 4. [PC] 브라우저에서 에이전트에게 사람을 부르는 답을 내게 한다(예: 「@<핸들> 불러 줘」 류) — 또는 승인 요청.
 5. 폰을 잠근 채 푸시가 오는지, 누르면 그 채널이 열리는지 본다.
 6. **CSP 확인** — 처음 배포에서는 PC 브라우저 개발자 도구 콘솔(가능하면 iOS 는 Mac Safari 웹 속성)에서 `Content-Security-Policy` 위반 줄이 0 인지, 서비스 워커가 등록되는지, wire 가 붙는지(연결 점) 본다. 로컬 검증은 Chromium 과 Caddy 내부 CA 로만 쟀다(`infra/Caddyfile` 의 CSP 주석). 위반이 나면 결과 표에 그 줄을 적는다.
@@ -196,10 +208,10 @@ docker compose -f infra/compose.yml exec app node dist/backup.js
 
 브리지 토큰은 Gateway 마다 따로다 — 아래는 바꿀 Gateway 의 카드에서 한다. 토큰은 겹쳐서 바꾼다 — 새 토큰을 넣고 다시 붙는 동안 옛 토큰도 통하므로 토큰 때문에 에이전트가 멈추지는 않는다(Gateway 재시작 동안의 짧은 끊김은 있다).
 
-1. **발급** — 그 Gateway 카드의 「브리지 토큰」에서 「새 토큰 발급」(체크리스트 4 「브리지 토큰 발급」과 같다 — 원문은 한 번만 보인다). 「플러그인 설정」 아래의 「복사」로 복사한 조각을 [B] 의 `/tmp/dodok.patch.json5` 로 두고 「복사했습니다」.
+1. **발급** — 그 Gateway 카드의 「브리지 토큰」에서 「새 토큰 발급」(체크리스트 4 「브리지 토큰 발급」과 같다 — 원문은 한 번만 보인다). 「플러그인 설정」 아래의 「복사」로 복사한 조각을 [B] 에서 체크리스트 4 「브리지 토큰 발급」의 붙여 넣기 블록대로(`mktemp -d` 자리의 `$dir/dodok.patch.json5`) 두고 「복사했습니다」.
 2. **[B] 설정 교체** — 플러그인은 다시 설치하지 않는다.
    ```bash
-   openclaw config patch --file /tmp/dodok.patch.json5 && rm /tmp/dodok.patch.json5
+   openclaw config patch --file "$dir/dodok.patch.json5"; rm -rf "$dir"     # 1번과 같은 셸 — 성공·실패와 상관없이 지운다
    # Gateway 를 재시작한다(호스트가 Gateway 를 돌리는 방식대로)
    ```
 3. **접속 이동 확인** — 같은 카드의 「브리지 토큰」에서 「지금 접속 중」이 새 줄로 옮겨 가고, 옛 줄에 「이제 폐기해도 됩니다 — 플러그인이 새 토큰으로 접속해 있습니다」가 뜬다. 옮겨 가지 않으면 [B] 의 설정·재시작을 다시 본다 — 이 단계 전에는 옛 토큰을 폐기하지 않는다.
@@ -223,7 +235,7 @@ Claude 러너(`@dodok/claude-runner`, 명령 `dodok-runner`)는 **사람의 머�
 
 표기: **[R]** 러너를 돌릴 머신(macOS 또는 Linux, Node — 저장소가 재는 판은 24, npm 레지스트리에 닿는 네트워크), **[웹]** owner 로 연 연결 페이지(`/settings/connection`)의 「Claude 러너」 블록.
 
-1. **[웹] 러너 토큰** — 「새 러너 토큰 발급」 → 라벨(머신 이름) → 원문 `drn_…` 이 **한 번만** 보인다(서버는 해시만 저장). [R] 에서 `~/.dodok-runner/token` 파일에 원문 한 줄로 두고 `chmod 600 ~/.dodok-runner/token`(0600 이 아니면 러너가 켤 때마다 경고한다). 대화상자 아래의 「러너 설정」 조각은 3번 설정 파일의 뼈대다 — 둘 다 복사한 뒤 「복사했습니다」로 닫는다. 토큰은 설정 파일 본문에 적지 않는다(적으면 러너가 설정 오류로 거절한다) — 파일 대신 env `DODOK_RUNNER_TOKEN` 으로 줘도 된다. env 로 줄 때는 설정 파일에서 `tokenFile` 키를 뺀다 — 키가 있으면 env 는 무시되고 파일을 못 읽으면 끝난다.
+1. **[웹] 러너 토큰** — 「새 러너 토큰 발급」 → 라벨(머신 이름) → 원문 `drn_…` 이 **한 번만** 보인다(서버는 해시만 저장). [R] 에서 `~/.dodok-runner/token` 파일에 원문 한 줄로 두고 `chmod 600 ~/.dodok-runner/token`(0600 이 아니면 러너가 켤 때마다 경고한다). 대화상자 아래의 「러너 설정」 조각은 4번 설정 파일의 뼈대다 — 둘 다 복사한 뒤 「복사했습니다」로 닫는다. 토큰은 설정 파일 본문에 적지 않는다(적으면 러너가 설정 오류로 거절한다) — 파일 대신 env `DODOK_RUNNER_TOKEN` 으로 줘도 된다. env 로 줄 때는 설정 파일에서 `tokenFile` 키를 뺀다 — 키가 있으면 env 는 무시되고 파일을 못 읽으면 끝난다.
 2. **[웹 → R] 받기·설치** — 「러너 받기」 → `dodok-claude-runner-<sha 12자>.tgz` 를 [R] 로 옮기고 `npm install -g ./dodok-claude-runner-<sha 12자>.tgz`. 서버 이미지가 같은 커밋의 러너를 품고 내려준다. 러너는 Claude Agent SDK 를 품지 않는다 — 설치할 때 npm 에서 SDK(과 플랫폼별 번들 CLI, 약 225 MB)·`socket.io-client`·`zod` 를 받는다.
 3. **[R] 러너 전용 로그인** — 러너는 평소 `~/.claude` 가 아니라 **러너 전용 디렉터리**의 로그인을 쓴다(세션·메모리·설정이 섞이지 않고, macOS 키체인 항목도 디렉터리마다 따로다 — ADR 0007 「함정」). `/login` 을 마치고 나온다.
    ```bash
@@ -259,7 +271,12 @@ Claude 러너(`@dodok/claude-runner`, 명령 `dodok-runner`)는 **사람의 머�
    - `permissionMode`·`allowedTools`·`disallowedTools` — Claude Code 의 권한 설정 그대로다. **에이전트가 이 머신에서 할 수 있는 일의 천장은 이 파일**이다 — 서버나 러너 토큰이 털려도 이 범위를 넘지 못한다. 여기서 미리 허용하지 않은 쓰기 도구(파일 쓰기·명령 실행 등)를 CLI 가 물으면 채널에 **도구 승인 카드**가 뜨고 admin 이상이 결정한다(10분 안에 아무도 안 누르면 거절). 「항상 허용」은 그 세션에만 걸리고 이 파일·작업 디렉터리의 설정에는 쓰지 않는다. CLI 가 읽기 전용으로 보는 명령 일부(`git log` 등)는 규칙이 없어도 묻지 않고 돌린다(ADR 0007 「질문별」 권한 콜백). 러너는 `mcp__dodok__post`(채널에 카드·파일 보내기)를 늘 허용하고, 채널이 아니라 러너 머신에 묻거나 알리는 `AskUserQuestion`·`PushNotification` 과 턴이 끝난 뒤에 도는 예약·원격 실행 도구(`ScheduleWakeup`·`CronCreate`·`CronDelete`·`CronList`·`RemoteTrigger`)는 늘 막는다 — 이 파일의 `disallowedTools` 와 합친다(정본 `packages/claude-runner/src/run.ts` 의 `RUNNER_DISALLOWED_TOOLS`).
    - 러너는 작업 디렉터리의 `CLAUDE.md`·`.claude/settings.json` 을 읽지 않는다(`settingSources: []`). 계정의 claude.ai 커넥터도 붙이지 않는다.
 5. **[R] 실행** — `dodok-runner`. 첫 줄에 러너·SDK·Claude Code 판본과 에이전트(작업 디렉터리 라벨)·동시 수, 이어서 `연결됨(서버 …)`. 연결 페이지 「Claude 러너」에 카드(라벨·판본·「서버와 같은 빌드입니다」·붙은 시각·에이전트)가 생기고, 토큰 목록의 그 줄에 「지금 접속 중」이 붙는다. v1 은 사람이 터미널에서 띄운다(OS 서비스로 자동 시작하지 않는다).
-6. **[웹] 에이전트 등록** — 「에이전트」 → 「에이전트 가져오기」 → 제공자 「Claude 러너」 → 붙은 러너들이 알린 에이전트(러너 라벨·작업 디렉터리 라벨·모델) 중에서 고른다(admin 이상). 러너가 끊겨도 등록한 에이전트는 남는다. 채널에 넣고 멘션한다 — 채널 프롬프트는 **매 런** 요청에 실리고, 채널 규칙(프롬프트·채널 지시·릴레이 정책)을 바꾸면 서버가 그 채널의 러너 세션을 다음 런에서 새로 연다 — 「새 대화」를 누를 필요가 없고, 대가로 세션 이력(앞 도구 결과·긴 작업 문맥)을 잃는다(`docs/guides/agent-guide.md` 「Claude 러너 에이전트」).
+6. **[웹] 에이전트 등록** — 「설정」 → 「에이전트」 탭(`/settings/agents`) → 「에이전트 가져오기」 → 제공자 「Claude 러너」 → 붙은 러너들이 알린 에이전트(러너 라벨·작업 디렉터리 라벨·모델) 중에서 고른다(admin 이상). 러너가 끊겨도 등록한 에이전트는 남는다. 채널에 넣고 멘션한다 — 채널 프롬프트는 **매 런** 요청에 실리고, 채널 규칙(프롬프트·채널 지시·릴레이 정책)을 바꾸면 서버가 그 채널의 러너 세션을 다음 런에서 새로 연다 — 「새 대화」를 누를 필요가 없고, 대가로 세션 이력(앞 도구 결과·긴 작업 문맥)을 잃는다(`docs/guides/agent-guide.md` 「Claude 러너 에이전트」).
+
+**AI 에게 맡기는 길** — [R] 에서 셸을 쓰는 AI 에이전트가 돌면 2~5번을 그 AI 에게 맡길 수 있다. 1번 발급 대화상자의 원문 바로 아래 「AI 에게 맡기기」에서 「복사」로 한 줄을 복사해 [R] 의 AI 에게 건넨다 — `<공개 오리진>/llms.txt 를 읽고 「Claude 러너 머신」 절대로 이 머신에 dodok 러너를 설치해 줘. 러너 토큰: <원문>`(원문이 들어 있다 — 체크리스트 4 「AI 에게 맡기는 길」과 같은 규칙). `llms.txt` 의 「Claude 러너 머신」 절은 토큰을 `~/.dodok-runner/token`(0600)에 두고, 그 토큰으로 `runner.tgz` 를 받아(`Authorization: Bearer <러너 토큰>` — owner 세션 대신. 폐기된 토큰·브리지 토큰·틀린 값은 401 이고 브리지 실패 카운터에 센다) 파일 sha256·설치·번들 sha256(`$(npm root -g)/@dodok/claude-runner/dist/main.js`)을 대조한 뒤, 설정 파일을 만들고 `dodok-runner` 를 띄운다.
+
+- **AI 가 멈추고 사람에게 묻는 자리** — 3번 러너 전용 로그인(사람이 한다 — AI 는 명령을 보여 주고 기다린다. `claude` 명령이 없으면 위 번들 CLI 줄을 보여 준다), 4번의 에이전트 id·이름·작업 디렉터리·모델, sha256 이 다를 때. 5번 `dodok-runner` 는 끝나지 않고 전경에 머무니, 출력에 `연결됨` 이 보이면 AI 가 사람에게 넘긴다(끄기는 Ctrl+C) — 사람이 연결 페이지 「Claude 러너」의 카드를 확인한다.
+- 안내서의 설정 파일 예시는 4번보다 짧다 — `serverUrl`·`tokenFile`·`claudeConfigDir`·`maxConcurrentRuns`·`agents`(`id`·`name`·`workdir`·`model`)뿐이고 권한 키(`permissionMode`·`allowedTools`·`disallowedTools`)가 없다. 에이전트가 이 머신에서 할 수 있는 일을 좁히려면 사람이 4번대로 더한다.
 
 **드러나는 것 셋** — 연결 페이지 같은 블록에도 적혀 있다.
 
@@ -281,7 +298,7 @@ Claude 러너(`@dodok/claude-runner`, 명령 `dodok-runner`)는 **사람의 머�
 
 ## 멤버 초대·비밀번호 재설정·내보내기
 
-사람은 초대 링크로 들인다 — 공개 가입은 없고 메일도 보내지 않는다. 역할은 셋이다: **owner**(한 명 — `LOCAL_AUTH_TOKEN` 으로 로그인하는 계정), **admin**(에이전트 동작·비용 설정·「새 대화」·도구 승인·에이전트 등록·member 관리·운영 화면), **member**(채널에서 대화하기·채널 만들기·이름·설명·에이전트 넣기·빼기). 무엇을 누가 하는지의 표는 팀 스펙 `docs/superpowers/specs/2026-09-26-team-members-design.md` 「역할과 권한」 절이고, 서버가 요청마다 막는다(화면에서 숨기는 것은 편의다). 화면은 사이드바 「멤버」(`/settings/members`, owner·admin).
+사람은 초대 링크로 들인다 — 공개 가입은 없고 메일도 보내지 않는다. 역할은 셋이다: **owner**(한 명 — `LOCAL_AUTH_TOKEN` 으로 로그인하는 계정), **admin**(에이전트 동작·비용 설정·「새 대화」·도구 승인·에이전트 등록·member 관리·운영 화면), **member**(채널에서 대화하기·채널 만들기·이름·설명·에이전트 넣기·빼기). 무엇을 누가 하는지의 표는 팀 스펙 `docs/superpowers/specs/2026-09-26-team-members-design.md` 「역할과 권한」 절이고, 서버가 요청마다 막는다(화면에서 숨기는 것은 편의다). 화면은 사이드바 하단 「설정」 → 「멤버」 탭(`/settings/members`, owner·admin).
 
 **초대**
 
@@ -298,7 +315,7 @@ Claude 러너(`@dodok/claude-runner`, 명령 `dodok-runner`)는 **사람의 머�
 
 1. 멤버 줄의 「재설정 링크」 → 확인(앞서 만든 그 사람의 재설정 링크는 쓸 수 없게 된다) → 링크 `<APP_ORIGIN>/reset/drt_…` 가 한 번만 보인다 → 메신저로 건넨다. admin 은 member 에게만, owner 는 owner 를 뺀 누구에게나 만든다 — 링크를 쓸 때도 같은 규칙을 지금 역할로 다시 보고, admin 이 만든 링크는 대상이 admin 으로 오를 때 폐기돼 다시 member 로 내려가도 쓸 수 없다. **1회용·24시간.**
 2. 받은 사람이 새 비밀번호를 넣으면 곧바로 로그인되고, **그 사람의 다른 로그인(다른 기기·탭의 세션과 열린 연결)은 모두 끊긴다.**
-3. 본인이 비밀번호를 알면 사이드바 하단 「내 계정」에서 바꾼다 — 이 기기는 남고 다른 기기의 로그인은 끊긴다.
+3. 본인이 비밀번호를 알면 「설정」 → 「내 계정」 탭(`/settings/account`)에서 바꾼다 — 이 기기는 남고 다른 기기의 로그인은 끊긴다.
 
 **owner 비밀번호는 `LOCAL_AUTH_TOKEN`** 이다 — 재설정 링크도 「내 계정」의 비밀번호 칸도 없다. 바꾸려면 `.env` 의 `LOCAL_AUTH_TOKEN` 을 고치고 `docker compose -f infra/compose.yml up -d` — owner 의 기존 세션이 끊긴다. owner 는 이메일·비밀번호 폼으로 로그인할 수 없다(「owner 로컬 토큰으로 로그인」만).
 
@@ -308,7 +325,7 @@ Claude 러너(`@dodok/claude-runner`, 명령 `dodok-runner`)는 **사람의 머�
 
 ## 운영 화면
 
-웹 사이드바 「운영」(`/settings/operations`, owner·admin — member 에게는 메뉴가 없고 직접 주소는 「권한이 없습니다」)이 「어젯밤 무슨 일이 있었나」에 답한다. 외부 모니터링 스택·푸시·웹훅 알림은 없다 — 사이드바 「운영」 옆 배지로 알아챈다. 설계는 `docs/superpowers/specs/2026-09-25-ops-hardening-design.md`(구현과 달라진 것은 그 스펙의 「구현과 맞춘 것」 장).
+웹 「설정」 → 「운영」 탭(`/settings/operations`, owner·admin — member 에게는 탭이 없고 직접 주소는 「권한이 없습니다」)이 「어젯밤 무슨 일이 있었나」에 답한다. 외부 모니터링 스택·푸시·웹훅 알림은 없다 — 사이드바 하단 「설정」과 「운영」 탭에 붙는 배지(확인 안 한 사건 수, admin 이상)로 알아챈다. 설계는 `docs/superpowers/specs/2026-09-25-ops-hardening-design.md`(구현과 달라진 것은 그 스펙의 「구현과 맞춘 것」 장).
 
 - **상태**(맨 위 카드) — 켜진 Gateway 마다 Gateway·플러그인 연결과 Gateway 버전 세 줄(줄 이름에 Gateway 이름 — 「Gateway 「사무실」」·「플러그인 「사무실」」·「Gateway 「사무실」 버전」, 꺼진 Gateway 는 줄이 없다), Claude 러너 연결(「<n>대 붙음 / 토큰 <m>개」 — 러너는 사람 PC 라 꺼져 있을 수 있어 이 줄은 강조하지 않고, 60초 넘는 끊김은 사건 「러너 연결 끊김」이 알린다), 디스크 여유, 직전 종료, 서버·DB. 문제가 있는 줄만 강조한다. 연결 줄은 wire 로 실시간이고, 나머지 칸은 사건이 올 때와 화면을 보는 동안 30초마다 다시 받는다. Gateway 버전이 저장소 핀(`packages/openclaw-adapter/src/version.ts` 의 `OPENCLAW_PINNED_VERSION`)과 다르면 「저장소가 검증한 버전(<핀>)과 다릅니다」 — 연결 페이지 Gateway 카드에도 같은 문구가 붙는다.
 - **런**(표) — 「오늘 / 7일」, 채널별·에이전트별 런·실패·중지·차단. OpenClaw 에이전트 런의 토큰·금액은 「측정 불가」다 — Gateway 가 주는 출력 토큰·비용 값이 틀린다(`docs/adr/0005-usage-values.md`). Claude 러너 에이전트 런은 러너가 CLI 의 값으로 보낸 토큰·금액이 보인다(ADR 0007 「질문별」 usage·비용). 러너가 구독 로그인이면 금액은 청구액이 아니라 공시 단가 환산이라 「환산 포함」이 붙고, 한 행에 두 종류 런이 섞이면 더한 것은 러너 런뿐이라 「런 m/n개만」이 붙는다.
@@ -334,6 +351,7 @@ docker compose -f infra/compose.yml logs app | grep '"event":"ops.'
 | `POST /api/v1/auth/local`(로그인)·`POST /api/v1/me/password` | `localLoginPerMin`(IP 당 분당, 둘이 한 버킷) | 429 |
 | `POST /api/v1/invites/lookup`·`/accept`·`/reset`(초대·재설정 링크) | `invitePublicPerMin`(IP 당 분당, 셋이 한 버킷 — 로그인과 따로) | 429 |
 | `/api/auth/*`(Better Auth) | `betterAuthPerMin`(IP 당 분당) | 429 |
+| `GET /llms.txt`(노드 설치 안내서 — 로그인 없음) | `llmsTxtPerMin`(IP 당 분당) | 429 |
 | `POST /api/v1/invites`·`POST /api/v1/members/:userId/reset-link`(링크 발급) | `inviteIssuePerMin`(사용자당 분당, 둘이 한 버킷) | 429 |
 | 로그인 뒤 REST `/api/v1/*` | `restPerMin`(사용자당 분당) | 429 `{"code":"RATE_LIMITED"}` |
 | 첨부 업로드 `POST /api/v1/attachments` | `uploadPerMin`(사용자당 분당, REST 상한 위에 한 번 더) | 429 `RATE_LIMITED` |
@@ -344,7 +362,7 @@ docker compose -f infra/compose.yml logs app | grep '"event":"ops.'
 | wire 동시 소켓 | `socketsPerUser`(사용자당) | 새 연결을 핸드셰이크에서 거절 |
 | 러너가 보내는 `run.event` | `runner.events`(러너 소켓마다 토큰 버킷 — 정상 스트리밍이 걸리지 않는 숫자, 근거는 그 키의 주석) | 버린다. 서버 로그 warn `runner frames rate limited — dropped` 와 사건 key `runner:<프레임>` 은 **주소마다 1분에 한 번**, 그사이 버린 수(`dropped`)와 함께 |
 | 러너가 보내는 `hello`·`outbound.post`, 그리고 열린 런·기다리는 승인을 가리키지 않거나 서버가 받아들이지 않는(계약 위반·세션 키 불일치 등) `run.final`·`run.error`·`approval.*` | `runner.control`(같은 소켓의 둘째 버킷) | 같다 — `outbound.post` 는 ack `RATE_LIMITED`(에이전트의 `post` 도구가 실패로 받는다). 그 러너의 열린 런을 닫는 `run.final`·`run.error`, 그 런의 새 승인 요청(런마다 누계 32개까지 — 철회·결정으로 줄지 않는다, 러너 어댑터 `RUN_FREE_APPROVALS`), 기다리는 승인의 철회는 버킷을 세지 않는다 — `post` 가 버킷을 비워도 런이 `runMs` 까지 매달리지 않게 |
-| `/bridge`·`/runner` 핸드셰이크, `/bridge/attachments`·`/runner/attachments` | `bridgeFail`(**넷이 한 카운터**, **실패만** 센다 — 한 주소가 창 안에 정해진 수만큼 틀리면 그 주소를 막는다) | 막힌 동안은 토큰을 보지 않고 거절(첨부 HTTP 는 429 「인증 실패가 너무 많습니다」), 사건 「브리지 인증 실패가 반복돼 주소를 막음」. 성공은 카운터를 비우지 않아 막힌 주소의 정상 플러그인도 막힌 동안은 거절되고, 풀리면 저절로 붙는다 |
+| `/bridge`·`/runner` 핸드셰이크, `/bridge/attachments`·`/runner/attachments`, 토큰으로 받는 설치 파일(`GET /api/v1/setup/plugin.tgz`·`runner.tgz` 의 `Authorization: Bearer`) | `bridgeFail`(**여섯이 한 카운터**, **실패만** 센다 — 한 주소가 창 안에 정해진 수만큼 틀리면 그 주소를 막는다. 설치 파일은 Bearer 가 없는 요청을 세지 않는다) | 막힌 동안은 토큰을 보지 않고 거절(첨부 HTTP·설치 파일은 429 「인증 실패가 너무 많습니다」), 사건 「브리지 인증 실패가 반복돼 주소를 막음」. 성공은 카운터를 비우지 않아 막힌 주소의 정상 플러그인도 막힌 동안은 거절되고, 풀리면 저절로 붙는다 |
 
 토큰을 바꾼 직후 옛 토큰으로 재접속을 되풀이하는 플러그인이 [B] 와 같은 주소의 정상 플러그인까지 잠시 막을 수 있다 — 옛 플러그인 설정을 먼저 고치고, 풀리기를 기다린다(아래 「오류」).
 
@@ -486,7 +504,7 @@ docker compose -f infra/compose.yml ps     # app·caddy (healthy)
 | Gateway 카드 「브리지 토큰」의 「쓸 수 있는 토큰이 없습니다 — 발급하세요」 | 그 Gateway 의 활성 토큰이 0개다(막 추가했거나 전부 폐기) — 그 Gateway 의 브리지 접속은 모두 거절된다 | 체크리스트 4 「브리지 토큰 발급」 |
 | 연결 페이지 Gateway 카드 「다른 빌드입니다」·「빌드를 알 수 없습니다」 | 그 Gateway 의 [B] 플러그인이 이 서버 이미지가 품은 번들과 다르다(또는 번들 sha256 을 보내지 않는 옛 플러그인) | 체크리스트 4 의 받기·설치 |
 | 「플러그인 받기」가 「플러그인 파일이 그새 다시 빌드됐습니다」 | 부팅 때 잰 tgz 와 지금 파일이 다르다(서버 409 `PLUGIN_FILE_CHANGED`) — 이미지로 돌면 나지 않는다 | 서버 재시작 |
-| 폰에 푸시가 안 옴(앱의 알림 설정이 꺼져 보임) | 푸시 구독은 등록한 세션에 묶인다 — 그 세션이 끝나면(로그아웃·비밀번호 변경·재설정·내보내기·30일 미사용 만료) 서버가 구독을 지우고, 웹도 401 을 보면 기기 구독을 해지한다 | 다시 로그인한 뒤 알림 설정에서 「푸시 알림 켜기」 |
+| 폰에 푸시가 안 옴(앱의 알림 설정이 꺼져 보임) | 푸시 구독은 등록한 세션에 묶인다 — 그 세션이 끝나면(로그아웃·비밀번호 변경·재설정·내보내기·30일 미사용 만료) 서버가 구독을 지우고, 웹도 401 을 보면 기기 구독을 해지한다 | 다시 로그인한 뒤 「설정」 → 「알림」 탭에서 「푸시 알림 켜기」 |
 | 폰에 푸시가 안 옴(iOS) | `VAPID_SUBJECT` 가 로컬 자리값이면 Apple 이 `403 BadJwtToken` — 서버 시작 로그에 warn 한 줄 | 실제 연락처로 바꾸고 `up -d` |
 | 백업 `백업 실패: …` exit 1 | 한 줄 사유(디스크 부족이면 부분 디렉터리는 지워진다) | 공간 확보 뒤 다시 |
 | 첨부 업로드가 507 `INSUFFICIENT_STORAGE`, 운영 화면 「디스크 여유 부족」(오류) | 데이터 볼륨의 여유가 256 MiB 미만 | 공간 확보(`backups/` 의 오래된 백업, 호스트의 다른 파일) → 최대 10분 뒤 또는 `docker compose -f infra/compose.yml restart app`. 위 「운영 화면」 |
