@@ -2,6 +2,7 @@ import type { Channel, OpenClawGatewayStatus, OpsStatus } from "@dodok/shared";
 import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { render } from "@testing-library/react";
+import type { ReactNode } from "react";
 import type { AdapterCapabilities, AdapterStatusList, AdapterStatusResponse } from "@/api/queries";
 import { createQueryClient } from "@/app/queryClient";
 import { createAppRouter } from "@/app/router";
@@ -102,14 +103,17 @@ export function shellGet(input: RequestInfo | URL, init?: RequestInit): Response
 }
 
 /** 앱 라우터를 메모리 히스토리로 띄운다 — App 과 같은 Provider(Query·Tooltip), 실시간(WireProvider)은 없다 */
-export function renderRoute(path: string, queryClient: QueryClient = createQueryClient(() => {})) {
+export function renderRoute(
+  path: string,
+  queryClient: QueryClient = createQueryClient(() => {}),
+  /** 라우터 바깥에 씌울 컨텍스트(읽음 전송기 등) */
+  wrap: (children: ReactNode) => ReactNode = (children) => children,
+) {
   const history = createMemoryHistory({ initialEntries: [path] });
   const router = createAppRouter(queryClient, history);
   render(
     <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <RouterProvider router={router} />
-      </TooltipProvider>
+      <TooltipProvider>{wrap(<RouterProvider router={router} />)}</TooltipProvider>
     </QueryClientProvider>,
   );
   return { router, history, queryClient };

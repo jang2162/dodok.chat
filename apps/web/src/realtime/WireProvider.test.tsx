@@ -168,6 +168,22 @@ it("읽음 전송기를 소켓마다 하나 만들어 내린다 — 요청은 �
   await waitFor(() => expect(fake?.sentOf("channel.read")).toEqual([{ channelId: CH, seq: 5 }]));
 });
 
+it("떠나면 읽음 전송기를 비운다 — 디바운스 중이던 요청은 나가지 않는다", async () => {
+  stubMe();
+  const { unmount } = render(
+    <Tree>
+      <ReadProbe seq={5} />
+    </Tree>,
+  );
+  await waitFor(() => expect(createdSockets).toHaveLength(1));
+  const fake = createdSockets[0];
+
+  unmount();
+  await new Promise((r) => setTimeout(r, 1200));
+
+  expect(fake?.sentOf("channel.read")).toEqual([]);
+});
+
 it("세션 정리 뒤 다시 로그인하면(me 가 다시 채워지면) 새 소켓을 만든다", async () => {
   stubMe(401);
   render(<Tree />);

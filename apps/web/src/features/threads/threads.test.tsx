@@ -10,6 +10,8 @@ import { MessageItem } from "@/features/messages/MessageItem";
 import { MessageList } from "@/features/messages/MessageList";
 import { emptyTimeline, threadFromPage, type Timeline } from "@/features/messages/timeline";
 import { StreamingBubble } from "@/features/runs/StreamingBubble";
+import { ReadSenderContext } from "@/features/reads/readSender";
+import { isViewingAtEnd, useUnread } from "@/features/reads/useUnread";
 import { useChannelBubbles } from "@/features/runs/useChannelBubbles";
 import { useRunStore } from "@/features/runs/runStore";
 import { getThread } from "@/realtime/timelineCache";
@@ -564,5 +566,44 @@ describe("스레드 과거 페이지", () => {
         .map((m) => m.seq),
     ).toEqual([1, 49, 50]);
     expect(getThread(qc, CH, ROOT.id)?.hasOlder).toBe(false);
+  });
+});
+
+/**
+ * 채널 읽음과 스레드 패널(읽지 않음 태스크 3 리뷰 I1·m1). 스레드 멘션 푸시는 /c/<id>/t/<rootId> 로 열려서, 좁은 화면에서
+ * 시트가 타임라인을 덮고 있는 동안 채널 전체가 읽음이 되면 안 된다
+ */
+describe("채널 읽음과 스레드 패널", () => {
+  const sender = () => ({ request: vi.fn(), dispose: vi.fn() });
+  const open = (path: string, s: ReturnType<typeof sender>) =>
+    renderRoute(path, channelClient(), (children) => (
+      <ReadSenderContext.Provider value={s}>{children}</ReadSenderContext.Provider>
+    ));
+  afterEach(() => useUnread.getState().reset());
+
+  it("좁은 화면: 스레드 시트가 타임라인을 덮고 있으면 읽음을 보내지 않고, 닫으면 보낸다", async () => {
+    stubMedia(true);
+    const s = sender();
+    const { router } = open(`/c/${CH}/t/${ROOT.id}`, s);
+    await screen.findByRole("dialog");
+    await panel();
+
+    expect(s.request).not.toHaveBeenCalled();
+    expect(isViewingAtEnd(CH)).toBe(false);
+
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}`));
+    await waitFor(() => expect(s.request).toHaveBeenCalledWith(CH, 3));
+    expect(isViewingAtEnd(CH)).toBe(true);
+  });
+
+  it("넓은 화면: 옆 스레드 패널은 타임라인을 덮지 않는다 — 읽음을 보내고, 패널이 채널의 끝 보임을 지우지 않는다(m1)", async () => {
+    const s = sender();
+    open(`/c/${CH}/t/${ROOT.id}`, s);
+    await panel();
+
+    await waitFor(() => expect(s.request).toHaveBeenCalledWith(CH, 3));
+    expect(s.request.mock.calls.every(([channelId]) => channelId === CH)).toBe(true);
+    expect(isViewingAtEnd(CH)).toBe(true);
   });
 });
