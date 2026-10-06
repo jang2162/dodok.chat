@@ -52,7 +52,9 @@ type UnreadRow = {
 /**
  * 워크스페이스의 보관하지 않은 채널마다 그 사용자의 현황(읽지 않음 스펙 「무엇이 「안 읽음」인가」 장) — 행이 없으면 읽음 위치 0.
  * 굵게는 남이 쓴 최상위 보통 메시지만, 배지는 나를 멘션한 보통 메시지를 스레드 답글까지 센다(스레드가 활발한 채널이 늘 굵지 않게,
- * 멘션은 어디서 왔든 놓치지 않게 — 스펙 결정 5). 두 하위 질의는 messages_channel_seq (channel_id, seq) 범위를 탄다
+ * 멘션은 어디서 왔든 놓치지 않게 — 스펙 결정 5). 굵게 하위 질의는 thread_root_id IS NULL 덕에 messages_channel_thread_seq
+ * (channel_id, thread_root_id, seq)를, 배지 하위 질의는 messages_channel_seq (channel_id, seq)를 범위로 탄다 — 다시 재려면
+ * 마이그레이션을 다 적용한 DB 에서 이 질의 앞에 EXPLAIN QUERY PLAN 을 붙여 SEARCH m USING INDEX 줄 둘을 본다
  */
 export function unreadFor(db: DbOrTx, workspaceId: string, userId: string): ChannelUnread[] {
   const rows = db.all<UnreadRow>(sql`
