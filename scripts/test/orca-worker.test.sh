@@ -720,6 +720,26 @@ assert_status 0 "--force 면 확인하고도 붙일 수 있다" \
   env STUB_ORCA_WORKERS_FIXTURE="$P/liveworker.json" \
   bash -c '. "$0"; cmd_attach probe chore --force' "$SUT"
 
+# 리뷰는 살아 있는 에이전트 터미널(구현자의 것)을 재사용하지 않고 새로 띄운다.
+: > "$STUB_ORCA_LOG"
+out="$(cmd_attach probe review 2>&1 >/dev/null)"
+assert_eq "$(grep 'worker-start' "$STUB_ORCA_LOG" | grep -c -- '--terminal')" "0" \
+  "attach review: 살아 있는 터미널이 있어도 --terminal 없이 새로 띄운다"
+assert_eq "$(grep 'worker-start' "$STUB_ORCA_LOG" | grep -c -- '--agent claude')" "1" \
+  "attach review: --agent 로 새 에이전트를 띄운다"
+assert_eq "$(printf '%s' "$out" | grep -c 'term_reap_1.*그대로 둔다.*stop probe --force')" "1" \
+  "attach review: 남겨 둔 터미널 핸들과 정리 명령을 한 줄로 안내한다"
+# 같은 조건의 implement 는 재사용한다.
+: > "$STUB_ORCA_LOG"
+cmd_attach probe implement >/dev/null 2>&1
+assert_eq "$(grep 'worker-start' "$STUB_ORCA_LOG" | grep -c -- '--terminal term_reap_1')" "1" \
+  "attach implement: 살아 있는 터미널을 재사용한다"
+# --terminal 을 준 리뷰는 사람이 고른 것이라 그대로 받는다.
+: > "$STUB_ORCA_LOG"
+cmd_attach probe review --terminal term_reap_1 >/dev/null 2>&1
+assert_eq "$(grep 'worker-start' "$STUB_ORCA_LOG" | grep -c -- '--terminal term_reap_1')" "1" \
+  "attach review --terminal: 준 핸들을 그대로 쓴다"
+
 # 터미널이 하나도 남지 않았어도 워크트리 세팅은 살린다.
 jq '.result.terminals = []' "$HERE/fixtures/terminal-list.json" > "$P/noterms.json"
 : > "$STUB_ORCA_LOG"

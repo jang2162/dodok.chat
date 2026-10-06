@@ -4,6 +4,8 @@
 #     모델·effort: --model 이 있으면 그 값, 없고 tiergear 가 있으면 판단기가 고르고
 #     (역할은 범위만 정한다), tiergear 가 없으면 역할 기본값이다.
 #   attach <슬러그> <역할> [--model ...] [--brief <파일>] [--terminal <핸들>] [--force]
+#     --terminal 이 없으면 살아 있는 에이전트 터미널을 재사용하되, review 는 늘 새로 띄운다
+#     (리뷰어는 구현자와 다른 세션이어야 한다).
 #   status [--porcelain]
 #   wait [--timeout-ms <n>]
 #   reap <슬러그> | --all-merged [--base <브랜치>] [--force]
@@ -1771,14 +1773,26 @@ cmd_attach() {
 
   # 핸들을 주지 않으면 그 워크트리에 살아 있는 에이전트 터미널을 쓴다.
   # 없으면 --agent 로 새로 띄운다 — 그래도 워크트리 세팅은 그대로 산다.
-  local wt_terms
+  # **리뷰는 예외다 — 살아 있는 터미널을 쓰지 않고 늘 새로 띄운다.** 끝난 구현자의
+  # 터미널은 살아 있으므로 거기에 붙이면 리뷰가 구현자 자신의 문맥에서 돈다(독립 리뷰가
+  # 아니다). --terminal 을 준 리뷰는 사람이 고른 것이라 그대로 받는다.
+  local wt_terms live_handles
   wt_terms="$("$(orca_cli)" terminal list --worktree "id:$wt_id" --json 2>/dev/null)"
   if [ -z "$handle" ]; then
-    handle="$(printf '%s' "$wt_terms" \
-      | jq -r '[ .result.terminals[]?
-                 | select((.agentIdentity? // "") != "")
-                 | select(.orphaned? != true)
-                 | select(.connected? != false) ] | last | .handle? // empty')"
+    live_handles="$(printf '%s' "$wt_terms" \
+      | jq -r '.result.terminals[]?
+               | select((.agentIdentity? // "") != "")
+               | select(.orphaned? != true)
+               | select(.connected? != false) | .handle? // empty')"
+    if [ "$role" = "review" ]; then
+      if [ -n "$live_handles" ]; then
+        printf 'attach: 리뷰어는 구현자와 다른 세션이어야 해서 살아 있는 터미널을 쓰지 않고 새로 띄운다\n' >&2
+        printf '  그 터미널(%s)은 그대로 둔다. 다 끝났으면: scripts/orca-worker.sh stop %s --force\n' \
+          "$(printf '%s' "$live_handles" | tr '\n' ' ' | sed 's/ *$//')" "$slug" >&2
+      fi
+    else
+      handle="$(printf '%s\n' "$live_handles" | sed '/^$/d' | tail -n 1)"
+    fi
   else
     # **--terminal 로 받은 핸들이 이 워크트리 것인지 먼저 잰다.** 확인 없이 넘기면
     # 다른 워크트리(다른 프로젝트일 수도 있다)에서 도는 워커에 브리프가 주입된다 —
@@ -1870,7 +1884,11 @@ cmd_attach() {
         --timeout-ms "${ORCA_WORKER_START_TIMEOUT_MS:-180000}"
     fi
   else
-    printf 'attach: 살아 있는 에이전트 터미널이 없다. 새로 띄워 붙인다\n' >&2
+    if [ "$role" = "review" ]; then
+      printf 'attach: 리뷰어를 새 에이전트로 띄워 붙인다\n' >&2
+    else
+      printf 'attach: 살아 있는 에이전트 터미널이 없다. 새로 띄워 붙인다\n' >&2
+    fi
     # 모델을 넘기는 자리는 새로 띄울 때뿐이다 — 도는 에이전트에는 tiergear 를 부르지 않는다.
     select_worker_model "$role" "$model" "$model_override" "$spec" "$path"
     attach_worker "$resp" \
