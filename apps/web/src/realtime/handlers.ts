@@ -7,15 +7,17 @@ import {
   type OpsStatus,
   roleAtLeast,
   type ServerToClientEvents,
+  UnreadSnapshot,
 } from "@dodok/shared";
 import type { QueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ApiRequestError } from "@/api/http";
+import { ApiRequestError, api } from "@/api/http";
 import { type AdapterStatusResponse, type MeResponse, meQuery, qk } from "@/api/queries";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
 import { forgetApproval, notifyApproval } from "@/features/approvals/notify";
-import { applyChannel } from "@/features/channels/archived";
+import { applyChannel, isChannelArchived } from "@/features/channels/archived";
 import { hasGap, noteSeq, type Timeline, upsert } from "@/features/messages/timeline";
+import { isViewingAtEnd, needsResync, useUnread } from "@/features/reads/useUnread";
 import { useRunStore } from "@/features/runs/runStore";
 import type { Subscriptions } from "./subscriptions";
 import { getTimeline, updateThread, updateTimeline } from "./timelineCache";
@@ -77,6 +79,8 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
   let retryAttempt = 0;
   /** 한 번이라도 붙었는가 — 두 번째 connect 부터가 다시 붙은 것이다 */
   let connectedOnce = false;
+  /** 마지막으로 보낸 현황 요청 — 끊김·다시 요청 뒤에 늦게 온 응답을 버린다 */
+  let unreadRequest = 0;
 
   /**
    * 새 메시지·수정. 구독한 적 없는 채널(캐시 없음)은 무시, 빈틈이면 넣지 않고 lastSeq 로 이어 받는다(스펙 4.3-3·4).
@@ -112,6 +116,31 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
     const oldestReply = thread.items.find((x) => x.threadRootId !== undefined);
     return oldestReply !== undefined && m.seq > oldestReply.seq;
   }
+
+  /**
+   * 읽지 않음 현황(`GET /me/unread`)을 받아 통째로 갈아 끼운다 — 붙을 때마다, 그리고 보관 상태가 현황과 어긋날 때.
+   * 실패하면 굵게·배지를 끈다(토스트 없음 — 틀린 배지보다 없는 배지). 다음 연결이 다시 받는다
+   */
+  async function loadUnread(): Promise<void> {
+    const request = ++unreadRequest;
+    const current = () => request === unreadRequest && !detached;
+    useUnread.getState().beginSnapshot();
+    let snapshot: UnreadSnapshot;
+    try {
+      snapshot = UnreadSnapshot.parse(await api<unknown>("GET", "/me/unread"));
+    } catch (e) {
+      if (!current()) return;
+      useUnread.getState().failSnapshot();
+      if (e instanceof ApiRequestError && e.status === 401) onUnauthorized();
+      return;
+    }
+    if (current()) useUnread.getState().applySnapshot(snapshot);
+  }
+
+  /** 사이드바 목록(보관하지 않은 채널)에 있는가 — 읽지 않음 항목을 새로 만드는 것은 이 채널만 */
+  const listed = (channelId: string) =>
+    qc.getQueryData<Channel[]>(qk.channels)?.some((c) => c.id === channelId && !isChannelArchived(c)) ??
+    false;
 
   function retryLater(): void {
     clearTimeout(retryTimer);
@@ -190,7 +219,11 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
     /**
      * 워크스페이스 방으로 온다 — 구독하지 않은 채널도. 보관하면 사이드바에서 빠지고 열린 화면은 상세 캐시로 읽기 전용이 된다(`applyChannel`)
      */
-    "channel.updated": ({ channel }) => applyChannel(qc, channel),
+    "channel.updated": ({ channel }) => {
+      applyChannel(qc, channel);
+      // 보관하면 현황에서 빠지고, 보관 해제하면 그동안의 읽음 위치 그대로 돌아와야 한다 — 스냅숏이 그렇게 싣는다
+      if (needsResync(channel)) void loadUnread();
+    },
     "channel.member.changed": ({ channelId, members }) => qc.setQueryData(qk.members(channelId), members),
     /**
      * 에이전트가 바뀌었다(등록·수정·옮기기·보관·되살리기 — 본문 없음, 계획 판정 PS4). 목록과 채널 멤버를 다시 받게 낡은 것으로 둔다 —
@@ -257,6 +290,19 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
       void qc.invalidateQueries({ queryKey: qk.opsStatus });
       void qc.invalidateQueries({ queryKey: qk.opsEventsAll });
     },
+    /**
+     * 다른 채널의 새 글(본문 없음, 워크스페이스 방) — 보는 채널만 구독하므로 사이드바는 이것으로 안다. 보고 있는 채널의 끝이
+     * 보이면 더하지 않는다(읽음 전송이 맡는다)
+     */
+    "channel.activity": (activity) =>
+      useUnread.getState().applyActivity(activity, {
+        me: qc.getQueryData<MeResponse>(qk.me)?.user.id,
+        viewing: subscriptions.active(),
+        atEnd: isViewingAtEnd(activity.channelId),
+        listed: listed(activity.channelId),
+      }),
+    /** 이 사람의 읽음 위치가 올랐다(user 방) — 이 탭이 보낸 것도, 다른 기기·가려진 탭이 보낸 것도 여기로 온다 */
+    "channel.read": (update) => useUnread.getState().applyRead(update, { listed: listed(update.channelId) }),
     typing: (p) => useTypingStore.getState().note(p),
     "system.notice": ({ level, message }) => {
       const opts = { duration: NOTICE_DURATION_MS[level] };
@@ -272,6 +318,8 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
     setStatus("connected");
     // 처음 붙을 때도 — 연결 전에 들어간 채널은 enter 가 보내지 않고 기억만 한다
     void subscriptions.resubscribeAll().catch(() => undefined);
+    // 끊긴 사이 놓친 activity 는 더해 갈 수 없다 — 통째로 다시 받는다
+    void loadUnread();
 
     // 다시 붙으면 끊긴 사이 놓친 adapter.status·ops.event 를 메운다 — 서버는 접속 때 상태를 보내지 않는다(재검증 N1).
     // 떠 있는 쿼리만 다시 부른다: member 의 ops 쿼리는 관찰자가 없거나 꺼져 있어(owner 만 켠다) 요청이 나가지 않는다
@@ -286,6 +334,9 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
     connectedOnce = true;
   };
   const onDisconnect = (reason: string) => {
+    // 끊긴 동안 오는 activity 가 없다 — 낡아 갈 숫자를 그리지 않는다. 나가 있던 현황 요청의 응답도 버린다
+    unreadRequest += 1;
+    useUnread.getState().failSnapshot();
     if (STOPPED.has(useWireStatus.getState().status)) return;
     setStatus(reason === "io client disconnect" ? "offline" : "reconnecting");
     // 서버가 끊은 소켓은 socket.io 가 다시 붙지 않는다. 세션이 폐기됐으면 다시 붙을 때 UNAUTHORIZED → verifySession

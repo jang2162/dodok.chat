@@ -11,6 +11,10 @@ import { AGENT, APPROVAL, APPROVAL2, approval, CH, CH2, msg, RUN } from "../../.
 import { authorsClient, renderWithClient } from "../../../test/messages";
 import { remeasureRows, setViewportHeight, stubScrollLayout } from "../../../test/scrollLayout";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
+import { ReadSenderContext } from "@/features/reads/readSender";
+import { isViewingAtEnd, useUnread } from "@/features/reads/useUnread";
+import { useWireStatus } from "@/realtime/wire";
+import { requestJump, useJumpStore } from "./jumpTarget";
 import { MessageList } from "./MessageList";
 import { useTimeline } from "./useTimeline";
 import { addPending, emptyTimeline, type Timeline, upsert } from "./timeline";
@@ -513,5 +517,164 @@ describe("MessageList 시스템 카드", () => {
     setup(timelineOf([...range(1, 2), system]));
     const card = await screen.findByRole("note");
     expect(card).toHaveTextContent("릴레이 한도에 닿았습니다");
+  });
+});
+
+describe("MessageList 읽음 전송", () => {
+  const ROOT = msg(5, { authorType: "agent", authorId: AGENT, bodyMd: "루트" });
+  const latestUrl = `/api/v1/channels/${CH}/messages?limit=50`;
+
+  beforeEach(() => {
+    useWireStatus.setState({ status: "connected" });
+    useUnread.getState().reset();
+  });
+  afterEach(() => {
+    useWireStatus.setState({ status: "idle" });
+    useUnread.getState().reset();
+    useJumpStore.setState({ targets: {} });
+  });
+
+  /** 읽음 전송기(가짜)를 컨텍스트로 준 목록 — `threadRootId` 면 스레드 패널 */
+  function setupRead(t: Timeline, threadRootId?: string) {
+    const sender = { request: vi.fn(), dispose: vi.fn() };
+    const qc = authorsClient();
+    qc.setQueryData(threadRootId ? qk.thread(CH, threadRootId) : qk.timeline(CH), t);
+    const view = renderWithClient(
+      <ReadSenderContext.Provider value={sender}>
+        <MessageList channelId={CH} threadRootId={threadRootId} initialRect={RECT} />
+      </ReadSenderContext.Provider>,
+      qc,
+    );
+    const scroller = () => view.container.querySelector<HTMLElement>("[data-scroller]") as HTMLElement;
+    const scrollTo = async (top: number) => {
+      await act(async () => {
+        scroller().dispatchEvent(new Event("wheel"));
+        scroller().scrollTop = top;
+        await new Promise((r) => setTimeout(r, 10));
+      });
+    };
+    return { ...view, qc, sender, scroller, scrollTo };
+  }
+  const requested = (sender: { request: ReturnType<typeof vi.fn> }) =>
+    sender.request.mock.calls.map(([channelId, seq]) => [channelId, seq]);
+
+  it("끝에 붙어 있고 탭이 보이면 타임라인의 lastSeq(답글 seq 포함)를 요청하고, 끝이 보이는 채널로 알린다", async () => {
+    // 답글이 채널 seq 를 올렸다 — 가진 마지막 루트(40)가 아니라 lastSeq(42)
+    const { sender } = setupRead({ ...timelineOf(range(1, 40)), lastSeq: 42 });
+    await waitFor(() => expect(requested(sender)).toEqual([[CH, 42]]));
+    expect(isViewingAtEnd(CH)).toBe(true);
+  });
+
+  it("끝에 붙은 채 새 메시지로 lastSeq 가 커지면 다시 요청한다", async () => {
+    const { qc, sender } = setupRead(timelineOf(range(1, 40)));
+    await waitFor(() => expect(requested(sender)).toEqual([[CH, 40]]));
+    act(() => updateTimeline(qc, CH, (t) => upsert(t, range(41, 41)[0] as Message)));
+    await waitFor(() =>
+      expect(requested(sender)).toEqual([
+        [CH, 40],
+        [CH, 41],
+      ]),
+    );
+  });
+
+  it("스크롤이 위면 보내지 않고 끝이 안 보이는 것으로 알린다 — 끝으로 돌아오면 보낸다", async () => {
+    const { qc, sender, scrollTo, scroller } = setupRead(timelineOf(range(1, 40)));
+    await waitFor(() => expect(requested(sender)).toEqual([[CH, 40]]));
+    await scrollTo(300);
+    expect(isViewingAtEnd(CH)).toBe(false);
+    act(() => updateTimeline(qc, CH, (t) => upsert(t, range(41, 41)[0] as Message)));
+    await act(() => new Promise((r) => setTimeout(r, 20)));
+    expect(requested(sender)).toEqual([[CH, 40]]);
+
+    await scrollTo(scroller().scrollHeight);
+    await waitFor(() =>
+      expect(requested(sender)).toEqual([
+        [CH, 40],
+        [CH, 41],
+      ]),
+    );
+    expect(isViewingAtEnd(CH)).toBe(true);
+  });
+
+  it("Review Focus 2 — 떨어진 창(결과로 가기)의 아래 끝은 진짜 끝이 아니다: 보내지 않다가 「최신 메시지로」 뒤에 보낸다", async () => {
+    fetchMock.mockImplementation(async (input) =>
+      String(input) === latestUrl
+        ? new Response(JSON.stringify({ messages: range(51, 100), hasMore: true }), { status: 200 })
+        : new Response("{}", { status: 500 }),
+    );
+    const { sender, scrollTo, scroller } = setupRead({
+      ...timelineOf(range(1, 20)),
+      hasNewer: true,
+      lastSeq: 100,
+    });
+    await screen.findByText("본문 20");
+    await scrollTo(scroller().scrollHeight);
+    await act(() => new Promise((r) => setTimeout(r, 20)));
+    expect(sender.request).not.toHaveBeenCalled();
+    expect(isViewingAtEnd(CH)).toBe(false);
+
+    await userEvent.click(screen.getByRole("button", { name: /최신 메시지로/ }));
+    await waitFor(() => expect(requested(sender)).toEqual([[CH, 100]]));
+    expect(isViewingAtEnd(CH)).toBe(true);
+  });
+
+  it("결과로 가기 목표를 안고 열리면(가진 메시지여도) 끝을 본 것이 아니다 — 보내지 않는다", async () => {
+    const target = range(10, 10)[0] as Message;
+    act(() => requestJump({ channelId: CH, messageId: target.id, seq: 10 }));
+    const { sender } = setupRead(timelineOf(range(1, 40)));
+    await waitFor(() =>
+      expect(screen.getByText("본문 10").closest("[data-index]")).toHaveAttribute("data-highlighted", "true"),
+    );
+    await act(() => new Promise((r) => setTimeout(r, 20)));
+    expect(sender.request).not.toHaveBeenCalled();
+    expect(isViewingAtEnd(CH)).toBe(false);
+  });
+
+  it("탭이 가려져 있으면 보내지 않고, 보이게 되면(visibilitychange) 보낸다", async () => {
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    const { sender } = setupRead(timelineOf(range(1, 40)));
+    await screen.findByText("본문 40");
+    await act(() => new Promise((r) => setTimeout(r, 20)));
+    expect(sender.request).not.toHaveBeenCalled();
+    expect(isViewingAtEnd(CH)).toBe(false);
+
+    visibility.mockReturnValue("visible");
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+    await waitFor(() => expect(requested(sender)).toEqual([[CH, 40]]));
+    expect(isViewingAtEnd(CH)).toBe(true);
+  });
+
+  it("끊겨 있으면 보내지 않고, 다시 붙으면 보낸다 — 끊긴 사이 버려진 요청을 다시", async () => {
+    useWireStatus.setState({ status: "reconnecting" });
+    const { sender } = setupRead(timelineOf(range(1, 40)));
+    await screen.findByText("본문 40");
+    await act(() => new Promise((r) => setTimeout(r, 20)));
+    expect(sender.request).not.toHaveBeenCalled();
+    act(() => useWireStatus.setState({ status: "connected" }));
+    await waitFor(() => expect(requested(sender)).toEqual([[CH, 40]]));
+  });
+
+  it("사본에서 복원한 타임라인(lastSeq 0)은 보내지 않는다 — 구독 응답을 받은 뒤에", async () => {
+    const { sender } = setupRead({ ...timelineOf(range(1, 40)), lastSeq: 0 });
+    await screen.findByText("본문 40");
+    await act(() => new Promise((r) => setTimeout(r, 20)));
+    expect(sender.request).not.toHaveBeenCalled();
+  });
+
+  it("스레드 패널은 채널 읽음을 올리지 않는다", async () => {
+    const replies = [6, 7, 8].map((seq) => msg(seq, { threadRootId: ROOT.id, bodyMd: `답글 ${seq}` }));
+    const { sender } = setupRead(timelineOf([ROOT, ...replies]), ROOT.id);
+    await screen.findByText("답글 8");
+    await act(() => new Promise((r) => setTimeout(r, 20)));
+    expect(sender.request).not.toHaveBeenCalled();
+    expect(isViewingAtEnd(CH)).toBe(false);
+  });
+
+  it("목록이 내려가면(채널을 떠나면) 끝이 보이지 않는 것으로 돌린다", async () => {
+    const { sender, unmount } = setupRead(timelineOf(range(1, 40)));
+    await waitFor(() => expect(sender.request).toHaveBeenCalled());
+    expect(isViewingAtEnd(CH)).toBe(true);
+    unmount();
+    expect(isViewingAtEnd(CH)).toBe(false);
   });
 });

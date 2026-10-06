@@ -14,11 +14,13 @@ import { type MeResponse, qk, useMe } from "@/api/queries";
 import { registerSessionReset, resetClientState } from "@/app/session";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
 import { resetApprovalNotices } from "@/features/approvals/notify";
+import { createReadSender, type ReadSender, ReadSenderContext } from "@/features/reads/readSender";
+import { useUnread } from "@/features/reads/useUnread";
 import { useRunStore } from "@/features/runs/runStore";
 import { dropLocalPush, syncPushSubscription } from "@/pwa/push";
 import { attachHandlers, type NotifyTarget } from "./handlers";
 import { createSubscriptions, type Subscriptions } from "./subscriptions";
-import { createWireSocket, useWireStatus, type WireSocket } from "./wire";
+import { createWireSocket, emitAck, useWireStatus, type WireSocket } from "./wire";
 
 /** 승인 알림의 화면 사정 + 채널 이동 알림(presence) — `createApp()` 이 라우터로 만든다 */
 export type AppNotifyTarget = NotifyTarget & {
@@ -26,8 +28,12 @@ export type AppNotifyTarget = NotifyTarget & {
   onLocationChange?(fn: () => void): () => void;
 };
 
-type WireRuntime = { socket: WireSocket | undefined; subscriptions: Subscriptions | undefined };
-const NONE: WireRuntime = { socket: undefined, subscriptions: undefined };
+type WireRuntime = {
+  socket: WireSocket | undefined;
+  subscriptions: Subscriptions | undefined;
+  readSender: ReadSender | undefined;
+};
+const NONE: WireRuntime = { socket: undefined, subscriptions: undefined, readSender: undefined };
 const WireContext = createContext<WireRuntime>(NONE);
 
 /**
@@ -90,6 +96,7 @@ export function WireProvider({
       },
     });
     const detachPresence = attachPresence(socket, notify);
+    const readSender = createReadSender((p) => emitAck(socket, "channel.read", p));
     const unregister = registerSessionReset(() => {
       // 세션이 끝났다(로그아웃은 그 전에 서버 해지까지 마쳤다 — useLogout). 401 이면 서버에 물을 수 없으니 기기 구독만
       // 해지한다 — 다음에 이 브라우저를 쓰는 사람에게 앞 사람의 알림이 오지 않게(Review Focus 1)
@@ -99,16 +106,19 @@ export function WireProvider({
       useApprovalStore.getState().reset();
       // 이미 알린 승인 기록도 — 다른 사람으로 다시 로그인하면 같은 승인을 다시 알려야 한다
       resetApprovalNotices();
+      // 읽지 않음 현황도 — 다음 사람에게 앞 사람의 굵게·배지가 남지 않게
+      useUnread.getState().reset();
       useWireStatus.getState().setStatus("idle");
     });
     useWireStatus.getState().setStatus("connecting");
     socket.connect();
-    setRuntime({ socket, subscriptions });
+    setRuntime({ socket, subscriptions, readSender });
     // 앱을 열 때(로그인 상태) 한 번 — 이 사람이 켠 구독이면 다시 등록한다(스펙 5.1)
     const me = qc.getQueryData<MeResponse>(qk.me);
     if (me) void syncPushSubscription(me.user.id);
     return () => {
       detachPresence();
+      readSender.dispose();
       unregister();
       detach();
       socket.disconnect();
@@ -117,7 +127,11 @@ export function WireProvider({
     };
   }, [signedIn, qc, onUnauthorized, notify]);
 
-  return <WireContext.Provider value={runtime}>{children}</WireContext.Provider>;
+  return (
+    <WireContext.Provider value={runtime}>
+      <ReadSenderContext.Provider value={runtime.readSender}>{children}</ReadSenderContext.Provider>
+    </WireContext.Provider>
+  );
 }
 
 /**

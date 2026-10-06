@@ -1,13 +1,15 @@
 import type { ChannelSubscribeResult, Result } from "@dodok/shared";
 import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor } from "@testing-library/react";
-import type { ReactNode } from "react";
+import { type ReactNode, useContext, useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { meQuery, qk } from "@/api/queries";
 import { createQueryClient } from "@/app/queryClient";
 import { resetClientState } from "@/app/session";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
 import { notifyApproval, resetApprovalNotices } from "@/features/approvals/notify";
+import { ReadSenderContext } from "@/features/reads/readSender";
+import { useUnread } from "@/features/reads/useUnread";
 import { useRunStore } from "@/features/runs/runStore";
 import { stubNotification } from "../../test/domStubs";
 import { fakeSubscription, pushStub, stubPush } from "../../test/pushStubs";
@@ -131,6 +133,39 @@ it("세션 정리(로그아웃·401)는 소켓을 끊고 런·승인 스토어�
   await waitFor(() => expect(createdSockets).toHaveLength(2));
   expect(errors).not.toHaveBeenCalled();
   errors.mockRestore();
+});
+
+it("세션 정리는 읽지 않음 현황도 비운다 — 다음 사람에게 앞 사람의 굵게·배지가 남지 않게", async () => {
+  stubMe();
+  render(<Tree />);
+  await waitFor(() => expect(createdSockets).toHaveLength(1));
+  useUnread.getState().beginSnapshot();
+  useUnread.getState().applySnapshot({
+    channels: [{ channelId: CH, lastReadSeq: 0, latestSeq: 3, unread: true, mentions: 1 }],
+  });
+
+  resetClientState(queryClient);
+
+  expect(useUnread.getState()).toMatchObject({ ready: false, byChannel: {} });
+});
+
+function ReadProbe({ seq }: { seq: number }) {
+  const sender = useContext(ReadSenderContext);
+  useEffect(() => sender?.request(CH, seq), [sender, seq]);
+  return null;
+}
+
+it("읽음 전송기를 소켓마다 하나 만들어 내린다 — 요청은 그 소켓의 channel.read(ack)로 나간다", async () => {
+  stubMe();
+  render(
+    <Tree>
+      <ReadProbe seq={5} />
+    </Tree>,
+  );
+  await waitFor(() => expect(createdSockets).toHaveLength(1));
+  const fake = createdSockets[0];
+  fake?.onAck("channel.read", () => ok({ lastReadSeq: 5 }));
+  await waitFor(() => expect(fake?.sentOf("channel.read")).toEqual([{ channelId: CH, seq: 5 }]));
 });
 
 it("세션 정리 뒤 다시 로그인하면(me 가 다시 채워지면) 새 소켓을 만든다", async () => {

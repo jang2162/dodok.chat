@@ -16,6 +16,7 @@ import { useMe } from "@/api/queries";
 import { ApprovalCard } from "@/features/approvals/ApprovalCard";
 import { useChannelArchived } from "@/features/channels/archived";
 import { selectChannelApprovals, useApprovalStore } from "@/features/approvals/approvalStore";
+import { useReadAtEnd } from "@/features/reads/readSender";
 import { useRunStore } from "@/features/runs/runStore";
 import { cn } from "@/lib/utils";
 import { Button } from "@/ui/button";
@@ -129,6 +130,15 @@ function ChannelMessages({
     [setStuck, virtualizer],
   );
   const jump = useJump(channelId, threadRootId, timeline, rows, arrive);
+  // 「끝이 보임」은 붙어 있음(`stuck`)이다. 그 처음 값(true)은 스크롤하기 전 값이라 떨어진 창과 결과로 가기 목표를 따로 뺀다 —
+  // 떨어진 창의 아래 끝은 진짜 끝이 아니고(`lastSeq` 는 창이 아니라 채널의 끝이라 보내면 받지 않은 메시지까지 읽음이 된다),
+  // 목표를 안고 열린 목록은 끝으로 가지 않는다
+  useReadAtEnd(
+    channelId,
+    threadRootId === undefined,
+    stuck && !hasNewer && !jump.pending,
+    timeline?.lastSeq ?? 0,
+  );
 
   // 처음(캐시가 있으면 마운트 때, 없으면 첫 응답 때) 맨 아래로.
   // 한 번 겨누고 마는 것으로는 모자란다 — 행은 추정 높이(64)로 먼저 잡혔다가 그 뒤에 실제로 재어지는데,

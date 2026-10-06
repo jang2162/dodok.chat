@@ -1,9 +1,10 @@
-import type { Channel } from "@dodok/shared";
+import type { Channel, ChannelUnread } from "@dodok/shared";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 import { qk } from "@/api/queries";
+import { useUnread } from "@/features/reads/useUnread";
 import { ME, channelOf, json, renderRoute, shellGet } from "../../../test/shellApi";
 
 type Body = Record<string, unknown>;
@@ -70,6 +71,89 @@ describe("ChannelList", () => {
     expect(random).toHaveAttribute("href", "/c/b");
     expect(random).toHaveAttribute("aria-current", "page");
     expect(general).not.toHaveAttribute("aria-current");
+  });
+});
+
+describe("ChannelList 읽지 않음", () => {
+  const C = channelOf("c", { name: "dev" });
+  /** 열어 둘 채널 — 「/」 는 첫 채널로 넘어가 그 채널이 보고 있는 채널이 된다 */
+  const D = channelOf("d", { name: "lobby" });
+  const unreadRow = (channelId: string, over: Partial<ChannelUnread> = {}): ChannelUnread => ({
+    channelId,
+    lastReadSeq: 0,
+    latestSeq: 0,
+    unread: false,
+    mentions: 0,
+    ...over,
+  });
+  const snapshot = (...channels: ChannelUnread[]) => {
+    useUnread.getState().beginSnapshot();
+    useUnread.getState().applySnapshot({ channels });
+  };
+  const link = async (name: RegExp) => within(await channelNav()).findByRole("link", { name });
+  /** 링크 안의 보이는 배지(숨긴 글 말고) */
+  const badge = (el: HTMLElement) => el.querySelector("[data-mention-badge]");
+  /** 링크 안의 채널 이름 — 굵게는 이름에 단다 */
+  const bold = (el: HTMLElement, name: string) =>
+    within(el).getByText(name).classList.contains("font-semibold");
+
+  beforeEach(() => useUnread.getState().reset());
+  afterEach(() => useUnread.getState().reset());
+
+  it("안 읽은 채널은 이름이 굵고, 멘션이 있으면 수 배지 — 99 이상이면 「99+」", async () => {
+    stubServer({ channels: [A, B, C, D] });
+    snapshot(
+      unreadRow("a", { unread: true }),
+      unreadRow("b", { unread: true, mentions: 3 }),
+      unreadRow("c", { mentions: 99 }),
+    );
+    renderRoute("/c/d");
+    const general = await link(/general/);
+    expect(bold(general, "general")).toBe(true);
+    expect(badge(general)).toBeNull();
+    expect(general).toHaveAccessibleName(/^general\s*\(안 읽음\)$/);
+
+    const random = await link(/random/);
+    expect(bold(random, "random")).toBe(true);
+    expect(badge(random)).toHaveTextContent(/^3$/);
+    expect(random).toHaveAccessibleName(/^random\s*\(안 읽음\)\s*\(멘션 3개\)$/);
+
+    // 스레드 답글 속 멘션만 있으면 굵지 않고 배지만
+    const dev = await link(/dev/);
+    expect(bold(dev, "dev")).toBe(false);
+    expect(badge(dev)).toHaveTextContent(/^99\+$/);
+    expect(dev).toHaveAccessibleName(/^dev\s*\(멘션 99개 이상\)$/);
+  });
+
+  it("현황을 받기 전·실패·끊긴 뒤에는 굵게·배지를 그리지 않는다 — 가진 값이 있어도", async () => {
+    stubServer({ channels: [A, D] });
+    snapshot(unreadRow("a", { unread: true, mentions: 2 }));
+    useUnread.getState().failSnapshot();
+    renderRoute("/c/d");
+    const general = await link(/general/);
+    expect(bold(general, "general")).toBe(false);
+    expect(badge(general)).toBeNull();
+    expect(general).toHaveAccessibleName("general");
+  });
+
+  it("현황이 들어오면 그때 굵어진다", async () => {
+    stubServer({ channels: [A, D] });
+    renderRoute("/c/d");
+    const general = await link(/general/);
+    act(() => snapshot(unreadRow("a", { unread: true, mentions: 1 })));
+    await waitFor(() => expect(bold(general, "general")).toBe(true));
+    expect(badge(general)).toHaveTextContent(/^1$/);
+  });
+
+  it("보고 있는 채널은 굵게 하지 않는다 — 배지는 남는다", async () => {
+    stubServer({ channels: [A, B] });
+    snapshot(unreadRow("a", { unread: true, mentions: 2 }), unreadRow("b", { unread: true }));
+    renderRoute("/c/a");
+    const general = await link(/general/);
+    expect(general).toHaveAttribute("aria-current", "page");
+    expect(bold(general, "general")).toBe(false);
+    expect(badge(general)).toHaveTextContent(/^2$/);
+    expect(bold(await link(/random/), "random")).toBe(true);
   });
 });
 
