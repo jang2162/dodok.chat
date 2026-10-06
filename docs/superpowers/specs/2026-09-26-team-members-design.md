@@ -53,6 +53,8 @@
 | 할 일 | member | admin | owner |
 | --- | --- | --- | --- |
 | 채널 읽기·쓰기·만들기(만들 때 `name`·`topic` 밖의 필드 — 프롬프트·릴레이 정책·공개 범위 — 를 주면 admin 이상), 채널 이름·설명(`name`·`topic`) 바꾸기, 멘션, 카드·모달, 첨부, 검색, 런 중지(`run.abort`) | ✅ | ✅ | ✅ |
+| 읽지 않음 현황(`GET /api/v1/me/unread`) — 자기 것만 | ✅ | ✅ | ✅ |
+| 읽음 위치 올리기(wire `channel.read`) — 자기 것만, 보관한 채널도 | ✅ | ✅ | ✅ |
 | 채널에 에이전트 넣기·빼기(`POST/DELETE /channels/:id/members`) | ✅ | ✅ | ✅ |
 | 채널에 사람 넣기·빼기(같은 경로, `memberType: "user"`) — 나간 사람(membership 없음)은 404 | ✅ | ✅ | ✅ |
 | 채널의 에이전트 동작·비용 설정 — 채널 프롬프트, 에이전트별 프롬프트(`PATCH /channels/:id/members/:memberId`), 릴레이 정책, 자동 응답, 일일 한도 | — | ✅ | ✅ |

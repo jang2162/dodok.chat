@@ -33,13 +33,15 @@ type AckEvent =
   | "component.interact"
   | "run.abort"
   | "run.events.replay"
-  | "approval.resolve";
+  | "approval.resolve"
+  | "channel.read";
 const ACK_EVENTS: AckEvent[] = [
   "message.send",
   "component.interact",
   "run.abort",
   "run.events.replay",
   "approval.resolve",
+  "channel.read",
 ];
 
 describe("wire 레이트리밋 (attachWire 단독)", () => {
@@ -86,7 +88,7 @@ describe("wire 레이트리밋 (attachWire 단독)", () => {
   /** 같은 연결의 ack 왕복(상한 없는 이벤트) — 그 앞에 보낸 이벤트는 모두 처리됐다 */
   const roundTrip = (socket: WireClient) => socket.emitWithAck("channel.unsubscribe", { channelId: uuid() });
 
-  it("ack 있는 이벤트 다섯 — 자기 버킷의 burst 만큼 지나고 그다음은 RATE_LIMITED, 사건 key 는 wire:<이벤트>", async () => {
+  it("ack 있는 이벤트 여섯 — 자기 버킷의 burst 만큼 지나고 그다음은 RATE_LIMITED, 사건 key 는 wire:<이벤트>", async () => {
     for (const event of ACK_EVENTS) {
       const record = vi.fn((_input: OpsRecordInput) => null);
       const socket = await start({ limits: DISTINCT, ops: { record } });
@@ -120,6 +122,7 @@ describe("wire 레이트리밋 (attachWire 단독)", () => {
       "approval.resolve": "approval",
       typing: "chatter",
       "presence.update": "chatter",
+      "channel.read": "chatter",
     });
   });
 

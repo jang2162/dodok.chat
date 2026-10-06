@@ -1,6 +1,7 @@
 import {
   type ApiError,
   ApprovalResolve,
+  ChannelRead,
   ChannelSubscribe,
   ComponentInteract,
   Id,
@@ -29,6 +30,7 @@ import { LIMITS, type Limits } from "../modules/ops/limits";
 import { monotonicNow, TokenBucket } from "../modules/ops/ratelimit";
 import type { OpsService } from "../modules/ops/service";
 import type { Presence } from "../modules/push/presence";
+import { markRead } from "../modules/reads/store";
 import {
   createUserMessage,
   findUserMessage,
@@ -76,6 +78,7 @@ export const WIRE_BUCKET = {
   "approval.resolve": "approval",
   typing: "chatter",
   "presence.update": "chatter",
+  "channel.read": "chatter",
 } as const satisfies Record<string, keyof Limits["wire"]>;
 
 const RATE_LIMITED: Result<never> = {
@@ -253,11 +256,33 @@ export function attachWire(io: WireServer, ctx: WireContext): void {
       reply(ack, res.ok ? { ok: true, data: { message: res.data.message } } : res);
       // 멱등 재전송은 다시 라우팅하지 않는다(에이전트 런이 두 번 뜬다)
       if (!res.ok || !res.data.created) return;
+      // 최상위를 보내면 작성자 읽음이 그 seq 까지 오른다 — 스레드 답글은 채널 끝을 보지 않고도 쓸 수 있어 올리지 않는다
+      if (res.data.message.threadRootId === undefined) {
+        try {
+          const { channelId, seq } = res.data.message;
+          const lastReadSeq = markRead(ctx.db, ctx.workspaceId, userId, channelId, seq, new Date());
+          ctx.bus.emit("channel.read", { userId, channelId, lastReadSeq });
+        } catch (err) {
+          ctx.logger.warn({ err, messageId: res.data.message.id }, "author read mark failed");
+        }
+      }
       try {
         await ctx.route(res.data.message);
       } catch (err) {
         ctx.logger.error({ err, messageId: res.data.message.id }, "route failed");
       }
+    });
+
+    // 보관한 채널도 받는다 — 읽기는 막지 않으므로 assertChannelWritable 을 쓰지 않는다
+    socket.on("channel.read", async (raw: unknown, ack: unknown) => {
+      if (limited("channel.read")) return reply(ack, RATE_LIMITED);
+      const res = await settle(ctx.logger, "channel.read", async () => {
+        const { channelId, seq } = parsePayload(ChannelRead, raw);
+        const lastReadSeq = markRead(ctx.db, ctx.workspaceId, userId, channelId, seq, new Date());
+        ctx.bus.emit("channel.read", { userId, channelId, lastReadSeq });
+        return { lastReadSeq };
+      });
+      reply(ack, res);
     });
 
     socket.on("typing", (raw: unknown) => {

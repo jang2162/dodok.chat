@@ -11,6 +11,7 @@ import type { App } from "../src/app";
 import * as authSchema from "../src/db/auth-schema";
 import {
   channelMembers,
+  channelReads,
   invites,
   memberships,
   messages,
@@ -23,6 +24,7 @@ import { addMember, createChannel } from "../src/modules/channels/service";
 import { claimInvite, findValidInvite, unclaimInvite } from "../src/modules/members/invites";
 import { deactivateMember, reactivateMember } from "../src/modules/members/service";
 import { createUserMessage } from "../src/modules/messages/service";
+import { markRead } from "../src/modules/reads/store";
 import { createTriggerLookups, upsertSubscription } from "../src/modules/push/service";
 import { targetsForMessage } from "../src/modules/push/triggers";
 import { bootTestApp, login, userWithRole } from "./helpers/app";
@@ -694,6 +696,41 @@ describe("멤버 비활성화·다시 활성화", () => {
         status: 403,
       });
       expect(membership(target.id)?.deactivatedAt).toBeInstanceOf(Date);
+    });
+
+    it("읽음 행은 비활성화에도 남고 다시 활성화한 뒤 /me/unread 가 비활성화 전과 같다(읽지 않음 스펙 「오류 처리」 장)", async () => {
+      const target = await joined();
+      const ch = channel("reads-keep");
+      for (const clientMsgId of ["k1", "k2", "k3"])
+        createUserMessage(app.db, app.bus, {
+          channelId: ch.id,
+          authorId: app.ownerUserId,
+          bodyMd: "hi",
+          clientMsgId,
+        });
+      markRead(app.db, app.workspaceId, target.id, ch.id, 2, new Date());
+      const unread = async () => {
+        const res = await call(target.token, "GET", "/api/v1/me/unread");
+        expect(res.statusCode).toBe(200);
+        return (res.json() as { channels: { channelId: string }[] }).channels.find(
+          (c) => c.channelId === ch.id,
+        );
+      };
+      const before = await unread();
+      expect(before).toMatchObject({ lastReadSeq: 2, unread: true });
+      const rows = () => app.db.select().from(channelReads).where(eq(channelReads.userId, target.id)).all();
+      const rowsBefore = rows();
+      expect((await deactivate(ownerToken, target.id)).statusCode).toBe(200);
+      expect(rows()).toEqual(rowsBefore);
+      expect((await reactivate(ownerToken, target.id)).statusCode).toBe(200);
+      // 비활성화가 세션을 지웠다 — 비밀번호로 다시 로그인한다
+      const relogin = await loginWith(target.email, PASSWORD);
+      expect(relogin.statusCode).toBe(200);
+      const token = (relogin.json() as { sessionToken: string }).sessionToken;
+      const after = await call(token, "GET", "/api/v1/me/unread");
+      expect(
+        (after.json() as { channels: { channelId: string }[] }).channels.find((c) => c.channelId === ch.id),
+      ).toEqual(before);
     });
 
     it("비활성화·다시 활성화마다 people.changed 가 한 번씩", async () => {

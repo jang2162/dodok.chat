@@ -104,8 +104,23 @@ export function attachWireFanout(io: WireServer, bus: ServerBus, opts: WireFanou
   const hydrateUpdated = (message: Message): Message => hydrateForClient(opts.db, [message])[0] ?? message;
 
   const offs = [
-    on("message.created", ({ message }) =>
-      io.to(channelRoom(message.channelId)).emit("message.created", { message: hydrate(message) }),
+    on("message.created", ({ message }) => {
+      io.to(channelRoom(message.channelId)).emit("message.created", { message: hydrate(message) });
+      // 구독하지 않은 채널의 새 글을 사이드바가 알도록 본문 없는 신호를 워크스페이스 룸으로 낸다. silent 메시지도 저장된 것이라 안 읽은 것이다
+      if (message.kind !== "normal" || (message.authorType !== "user" && message.authorType !== "agent"))
+        return;
+      if (!message.authorId) return;
+      io.to(workspaceRoom(opts.workspaceId)).emit("channel.activity", {
+        channelId: message.channelId,
+        seq: message.seq,
+        ...(message.threadRootId ? { threadRootId: message.threadRootId } : {}),
+        authorType: message.authorType,
+        authorId: message.authorId,
+        mentionedUserIds: message.mentions.users,
+      });
+    }),
+    on("channel.read", ({ userId, channelId, lastReadSeq }) =>
+      io.to(userRoom(userId)).emit("channel.read", { channelId, lastReadSeq }),
     ),
     on("message.updated", (p) =>
       io
