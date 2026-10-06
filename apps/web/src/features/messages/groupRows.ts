@@ -7,7 +7,8 @@ export type Row =
   | { kind: "message"; key: string; message: Message; head: boolean }
   | { kind: "pending"; key: string; pending: PendingMessage }
   | { kind: "bubble"; key: string; runId: string }
-  | { kind: "approval"; key: string; approvalId: string };
+  | { kind: "approval"; key: string; approvalId: string }
+  | { kind: "unread"; key: "unread" };
 
 /** 같은 작성자의 연속 메시지를 한 묶음(머리 생략)으로 보는 간격(스펙 5.3) */
 const GROUP_GAP_MS = 5 * 60_000;
@@ -31,6 +32,13 @@ function continues(prev: Message, m: Message): boolean {
   return gap >= 0 && gap < GROUP_GAP_MS;
 }
 
+/** 구분선이 서는 메시지 — 읽음 위치 뒤의 남의 최상위 보통 메시지. 에이전트 글은 id 가 같아도 내 글이 아니다 */
+function isNewForMe(m: Message, opts: { entryReadSeq?: number; me?: string }): boolean {
+  if (opts.entryReadSeq === undefined || m.seq <= opts.entryReadSeq) return false;
+  if (m.kind !== "normal" || m.threadRootId !== undefined) return false;
+  return !(m.authorType === "user" && m.authorId === opts.me);
+}
+
 const NO_APPROVALS: readonly Approval[] = [];
 const approvalRow = (a: Approval): Row => ({ kind: "approval", key: `approval:${a.id}`, approvalId: a.id });
 /**
@@ -51,13 +59,15 @@ const byPlace = (a: Approval, b: Approval): number => {
  * 시스템 메시지는 늘 머리이고 앞뒤 묶음을 끊는다. 순서는 확정 → 미해결 승인 → 스트리밍 버블 → 보내는 중.
  * 확정된 승인 카드는 **사라지지 않고** 결정 자리(`placedAt`)에 남는다(기록) — 승인 행도 시스템 카드처럼 앞뒤 묶음을 끊는다.
  * 더 옛 메시지가 남아 있으면(`hasOlder`) 맨 위 구분선은 두지 않는다 — 그 날의 첫 메시지인지 아직 모르고,
- * 과거 페이지를 붙일 때 구분선이 맨 위에 남아 있으면 스크롤 기준 행이 되어 위치가 튄다
+ * 과거 페이지를 붙일 때 구분선이 맨 위에 남아 있으면 스크롤 기준 행이 되어 위치가 튄다.
+ * `entryReadSeq` 가 있으면 그 뒤의 첫 남의 최상위 보통 메시지 앞(같은 자리의 날짜 구분선 뒤)에 「새 메시지」 행을 한 번 둔다 — 그 메시지는 머리
  */
 export function groupRows(
   timeline: Timeline,
   bubbleRunIds: readonly string[],
   approvals: readonly Approval[] = NO_APPROVALS,
   tz?: string,
+  opts: { entryReadSeq?: number; me?: string } = {},
 ): Row[] {
   const rows: Row[] = [];
   const sorted = [...approvals].sort(byPlace);
@@ -67,6 +77,7 @@ export function groupRows(
   let next = 0;
   let prev: Message | undefined;
   let prevDay: string | undefined;
+  let unreadPlaced = opts.entryReadSeq === undefined;
   for (const message of timeline.items) {
     // 이 메시지보다 먼저 만들어진 확정 승인을 여기에 끼운다 — 승인 행은 시스템 카드처럼 묶음을 끊는다(prev 를 버린다)
     for (let a = settled[next]; a && placedAt(a) <= message.createdAt; a = settled[next]) {
@@ -79,7 +90,12 @@ export function groupRows(
     if (newDay && (prevDay !== undefined || !timeline.hasOlder)) {
       rows.push({ kind: "divider", key: `date:${day}`, date: day });
     }
-    const head = newDay || prev === undefined || !continues(prev, message);
+    const startsUnread = !unreadPlaced && isNewForMe(message, opts);
+    if (startsUnread) {
+      rows.push({ kind: "unread", key: "unread" });
+      unreadPlaced = true;
+    }
+    const head = newDay || startsUnread || prev === undefined || !continues(prev, message);
     rows.push({ kind: "message", key: `msg:${message.id}`, message, head });
     prev = message;
     prevDay = day;

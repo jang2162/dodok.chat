@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Link, Outlet, useParams } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiRequestError, NetworkError } from "@/api/http";
 import { useChannel } from "@/api/queries";
 import { ChannelHeader } from "@/app/layout/ChannelHeader";
@@ -11,6 +11,7 @@ import { ChannelArchivedContext, isChannelArchived } from "@/features/channels/a
 import { Composer } from "@/features/composer/Composer";
 import { TypingIndicator } from "@/features/composer/TypingIndicator";
 import { useSendMessage } from "@/features/composer/useSendMessage";
+import { captureEntryRead } from "@/features/reads/entryRead";
 import { StreamingBubble } from "@/features/runs/StreamingBubble";
 import { useChannelBubbles } from "@/features/runs/useChannelBubbles";
 import { type ThreadOpener, ThreadOpenerContext } from "@/features/threads/threadOpener";
@@ -37,6 +38,10 @@ export function ChannelPage() {
   const settingsRef = useRef<HTMLAnchorElement>(null);
   // 칩·「스레드에서 답하기」로 연 스레드는 닫으면 그 자리로 초점을 돌려준다(p4t-c1, m5)
   const threadOpenerRef = useRef<ThreadOpener>(null);
+  // 구분선의 기준은 들어갈 때 한 번만 잡는다 — 읽음이 올라도, 스냅숏이 늦게 와도 떠날 때까지 그대로(스냅숏 전이면 없음)
+  const [entry, setEntry] = useState(() => ({ channelId, seq: captureEntryRead(channelId) }));
+  if (entry.channelId !== channelId) setEntry({ channelId, seq: captureEntryRead(channelId) });
+  const entryReadSeq = entry.channelId === channelId ? entry.seq : undefined;
   useChannelSubscription(channelId);
   const channel = useChannel(channelId);
   // 확인된 채널만 최근 본 채널로(오프라인 사본 대상, 스펙 4장) — 없는 채널 주소가 실제 채널을 밀어내지 않게
@@ -81,6 +86,7 @@ export function ChannelPage() {
               <MessageList
                 channelId={channelId}
                 covered={covered}
+                entryReadSeq={entryReadSeq}
                 bubbleRunIds={bubbleRunIds}
                 bubbles={(runId) => <StreamingBubble runId={runId} />}
               />

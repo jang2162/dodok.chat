@@ -220,3 +220,73 @@ describe("groupRows 승인 행", () => {
     expect(kinds(groupRows(timeline({ items }), [], [], TZ))).toEqual(["divider", "message"]);
   });
 });
+
+describe("groupRows 「새 메시지」 구분선", () => {
+  const OTHER = "00000000-0000-4000-8000-0000000000aa";
+  const theirs = (seq: number, iso = "2027-01-15T08:00:00Z", over = {}) =>
+    msg(seq, { ...at(iso), authorId: OTHER, ...over });
+  const withUnread = (items: ReturnType<typeof msg>[], entryReadSeq: number | undefined, tzOpt = TZ) =>
+    groupRows(timeline({ items }), [], [], tzOpt, { entryReadSeq, me: USER });
+  const unreadAt = (rows: Row[]) => rows.findIndex((r) => r.kind === "unread");
+
+  it("entryReadSeq 가 없으면 행이 없다", () => {
+    expect(kinds(withUnread([theirs(1), theirs(2)], undefined))).not.toContain("unread");
+  });
+
+  it("seq > entryReadSeq 인 첫 남의 최상위 글 앞에 한 번 — 그 글은 머리", () => {
+    const rows = withUnread(
+      [theirs(1), theirs(2, "2027-01-15T08:00:10Z"), theirs(3, "2027-01-15T08:00:20Z")],
+      1,
+    );
+    expect(kinds(rows)).toEqual(["divider", "message", "unread", "message", "message"]);
+    expect(rows.filter((r) => r.kind === "unread")).toHaveLength(1);
+    expect(heads(rows)).toEqual([true, true, false]);
+  });
+
+  it("내 글·시스템 메시지는 건너뛰고 그다음 남의 글 앞에 둔다", () => {
+    const items = [
+      theirs(1),
+      msg(2, { ...at("2027-01-15T08:00:10Z"), authorId: USER }),
+      msg(3, {
+        ...at("2027-01-15T08:00:20Z"),
+        kind: "system",
+        authorType: "system",
+        authorId: undefined,
+        systemMeta: { kind: "info" },
+      }),
+      theirs(4, "2027-01-15T08:00:30Z"),
+    ];
+    const rows = withUnread(items, 1);
+    const i = unreadAt(rows);
+    const next = rows[i + 1];
+    expect(next?.kind === "message" && next.message.seq).toBe(4);
+  });
+
+  it("스레드 답글은 구분선 자리가 아니다", () => {
+    const items = [
+      theirs(1),
+      theirs(2, "2027-01-15T08:00:10Z", { threadRootId: "00000000-0000-4000-8000-0000000000bb" }),
+      theirs(3, "2027-01-15T08:00:20Z"),
+    ];
+    const rows = withUnread(items, 1);
+    const next = rows[unreadAt(rows) + 1];
+    expect(next?.kind === "message" && next.message.seq).toBe(3);
+  });
+
+  it("모두 읽은 범위면 없다", () => {
+    expect(unreadAt(withUnread([theirs(1), theirs(2)], 2))).toBe(-1);
+  });
+
+  it("에이전트 글은 사람이어도 me 와 id 가 같다고 건너뛰지 않는다 — 내가 쓴 사람 글만 건너뛴다", () => {
+    const rows = withUnread(
+      [theirs(1), msg(2, { ...at("2027-01-15T08:00:10Z"), authorType: "agent", authorId: USER })],
+      1,
+    );
+    expect(unreadAt(rows)).toBeGreaterThan(-1);
+  });
+
+  it("날짜 구분선과 같은 자리면 날짜 구분선 뒤", () => {
+    const rows = withUnread([theirs(1), theirs(2, "2027-01-16T08:00:00Z")], 1);
+    expect(kinds(rows)).toEqual(["divider", "message", "divider", "unread", "message"]);
+  });
+});

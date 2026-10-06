@@ -678,3 +678,84 @@ describe("MessageList 읽음 전송", () => {
     expect(isViewingAtEnd(CH)).toBe(false);
   });
 });
+
+describe("MessageList 「새 메시지」 구분선·페이지 밖 배너", () => {
+  const aroundUrl = (seq: number) => `/api/v1/channels/${CH}/messages?limit=50&around=${seq}`;
+
+  beforeEach(() => useUnread.getState().reset());
+  afterEach(() => useUnread.getState().reset());
+
+  function setupEntry(t: Timeline, entryReadSeq: number | undefined) {
+    const qc = authorsClient();
+    qc.setQueryData(qk.timeline(CH), t);
+    const view = renderWithClient(
+      <MessageList channelId={CH} entryReadSeq={entryReadSeq} initialRect={RECT} />,
+      qc,
+    );
+    return { ...view, qc };
+  }
+  const separator = () => screen.queryByRole("separator", { name: "새 메시지" });
+  const banner = () => screen.queryByRole("button", { name: /안 읽은 메시지가 더 있어요/ });
+
+  it("entryReadSeq 뒤 첫 남의 글 앞에 「새 메시지」 구분선이 선다", async () => {
+    setupEntry(timelineOf(range(1, 40)), 38);
+    await screen.findByText("본문 40");
+    const line = await screen.findByRole("separator", { name: "새 메시지" });
+    const next = line.closest("[data-index]")?.nextElementSibling;
+    expect(next).toHaveTextContent("본문 39");
+  });
+
+  it("읽음이 올라가도(applyRead) 구분선은 그 자리에 남는다", async () => {
+    useUnread.getState().beginSnapshot();
+    useUnread.getState().applySnapshot({
+      channels: [{ channelId: CH, lastReadSeq: 38, latestSeq: 40, unread: true, mentions: 0 }],
+    });
+    setupEntry(timelineOf(range(1, 40)), 38);
+    await screen.findByRole("separator", { name: "새 메시지" });
+    act(() => useUnread.getState().applyRead({ channelId: CH, lastReadSeq: 40 }, { listed: true }));
+    await act(() => new Promise((r) => setTimeout(r, 20)));
+    expect(separator()).toBeInTheDocument();
+  });
+
+  it("entryReadSeq 가 없으면 구분선도 배너도 없다", async () => {
+    setupEntry(timelineOf(range(51, 100), true), undefined);
+    await screen.findByText("본문 100");
+    expect(separator()).toBeNull();
+    expect(banner()).toBeNull();
+  });
+
+  it("entryReadSeq + 1 이 불러온 가장 옛 seq 이후이면 배너가 없다(경계)", async () => {
+    setupEntry(timelineOf(range(51, 100), true), 50);
+    await screen.findByText("본문 100");
+    expect(banner()).toBeNull();
+  });
+
+  it("entryReadSeq + 1 이 가장 옛 seq 보다 앞이면 배너 — 누르면 entryReadSeq + 1 을 가운데로 받고, 한 번 누르면 사라진다", async () => {
+    fetchMock.mockImplementation(async (input) =>
+      String(input) === aroundUrl(12)
+        ? new Response(JSON.stringify({ messages: range(1, 30), hasMore: false, hasMoreAfter: true }), {
+            status: 200,
+          })
+        : new Response("{}", { status: 500 }),
+    );
+    const { qc } = setupEntry(timelineOf(range(51, 100), true), 11);
+    await screen.findByText("본문 100");
+    await userEvent.click(banner() as HTMLElement);
+    await waitFor(() => expect(fetchMock.mock.calls.map((c) => String(c[0]))).toContain(aroundUrl(12)));
+    await waitFor(() => expect(banner()).toBeNull());
+    expect(qc.getQueryData<Timeline>(qk.timeline(CH))?.items[0]?.seq).toBe(1);
+    // 받은 창에서 첫 안 읽은 글(12) 앞에 구분선이 있고 그 자리로 간다
+    expect(await screen.findByRole("separator", { name: "새 메시지" })).toBeInTheDocument();
+  });
+
+  it("배너로 가기가 실패하면 기존 페이지 오류 보고(토스트)로 간다", async () => {
+    const error = vi.spyOn(toast, "error");
+    fetchMock.mockImplementation(
+      async () => new Response(JSON.stringify({ code: "INTERNAL", message: "터졌다" }), { status: 500 }),
+    );
+    setupEntry(timelineOf(range(51, 100), true), 11);
+    await screen.findByText("본문 100");
+    await userEvent.click(banner() as HTMLElement);
+    await waitFor(() => expect(error).toHaveBeenCalledWith("터졌다"));
+  });
+});

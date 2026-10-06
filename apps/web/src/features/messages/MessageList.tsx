@@ -21,7 +21,7 @@ import { useRunStore } from "@/features/runs/runStore";
 import { cn } from "@/lib/utils";
 import { Button } from "@/ui/button";
 import { groupRows, type Row } from "./groupRows";
-import { loadLatest } from "./jump";
+import { jumpToSeq, loadLatest } from "./jump";
 import { MessageErrorBoundary } from "./MessageErrorBoundary";
 import { MessageItem } from "./MessageItem";
 import { PendingItem } from "./PendingItem";
@@ -46,9 +46,11 @@ export type MessageListProps = {
   channelId: string;
   /** 스레드 패널이면 그 루트 — 루트·답글과 그 스레드의 버블·승인 카드만 그린다. 없으면 채널 타임라인(루트만) */
   threadRootId?: string;
-  /** 태스크 8: 보일 스트리밍 버블의 runId(순서대로) 와 그 버블 */
   /** 좁은 화면의 패널 시트가 이 목록을 덮고 있다 — 끝이 보이는 것으로 치지 않는다(읽음을 보내지 않는다) */
   covered?: boolean;
+  /** 채널에 들어갈 때 잡은 읽음 위치(`captureEntryRead`) — 없으면 「새 메시지」 구분선도 배너도 없다. 스레드 패널은 넘기지 않는다 */
+  entryReadSeq?: number;
+  /** 태스크 8: 보일 스트리밍 버블의 runId(순서대로) 와 그 버블 */
   bubbleRunIds?: readonly string[];
   bubbles?: (runId: string) => ReactNode;
   /** 처음 재기 전의 스크롤 영역 크기(jsdom 테스트용) */
@@ -64,6 +66,7 @@ function ChannelMessages({
   channelId,
   threadRootId,
   covered = false,
+  entryReadSeq,
   bubbleRunIds = NO_RUNS,
   bubbles,
   initialRect,
@@ -81,9 +84,10 @@ function ChannelMessages({
         .filter((a) => (a.runId === undefined ? undefined : runThreads[a.runId]) === threadRootId),
     [approvals, runThreads, threadRootId],
   );
+  const me = useMe().data?.user.id;
   const rows = useMemo(
-    () => (timeline ? groupRows(timeline, bubbleRunIds, approvalFacts) : []),
-    [timeline, bubbleRunIds, approvalFacts],
+    () => (timeline ? groupRows(timeline, bubbleRunIds, approvalFacts, undefined, { entryReadSeq, me }) : []),
+    [timeline, bubbleRunIds, approvalFacts, entryReadSeq, me],
   );
   const scrollRef = useRef<HTMLDivElement>(null);
   // 결과로 가기로 받은 떨어진 창(timeline.ts `Timeline` 의 `hasNewer`)
@@ -133,6 +137,16 @@ function ChannelMessages({
     [setStuck, virtualizer],
   );
   const jump = useJump(channelId, threadRootId, timeline, rows, arrive);
+  // 배너로 받은 창에서 첫 안 읽은 곳(구분선 행)으로 — 행은 받은 창이 목록에 반영된 뒤에야 생긴다
+  const [toUnread, setToUnread] = useState(false);
+  const [bannerGone, setBannerGone] = useState(false);
+  useEffect(() => {
+    if (!toUnread) return;
+    const index = rows.findIndex((r) => r.kind === "unread");
+    if (index < 0) return;
+    setToUnread(false);
+    arrive(index);
+  }, [toUnread, rows, arrive]);
   // 「끝이 보임」은 붙어 있음(`stuck`)이다. 그 처음 값(true)은 스크롤하기 전 값이라 떨어진 창과 결과로 가기 목표를 따로 뺀다 —
   // 떨어진 창의 아래 끝은 진짜 끝이 아니고(`lastSeq` 는 창이 아니라 채널의 끝이라 보내면 받지 않은 메시지까지 읽음이 된다),
   // 목표를 안고 열린 목록은 끝으로 가지 않는다
@@ -277,6 +291,22 @@ function ChannelMessages({
     toEnd();
   };
 
+  // 처음 안 읽은 곳이 불러온 가장 옛 메시지보다 앞이면 목록 안에서는 닿을 수 없다 — 결과로 가기와 같은 길로 그 창을 받는다
+  const oldestSeq = timeline?.items[0]?.seq;
+  const showBanner =
+    entryReadSeq !== undefined && !bannerGone && oldestSeq !== undefined && entryReadSeq + 1 < oldestSeq;
+  const toFirstUnread = async () => {
+    if (entryReadSeq === undefined) return;
+    try {
+      await jumpToSeq(qc, channelId, entryReadSeq + 1);
+    } catch (e) {
+      reportPageError(e);
+      return;
+    }
+    setBannerGone(true);
+    setToUnread(true);
+  };
+
   if (!timeline) return <Skeleton />;
   const items = virtualizer.getVirtualItems();
   return (
@@ -288,6 +318,20 @@ function ChannelMessages({
         >
           이전 메시지를 불러오는 중…
         </p>
+      )}
+      {showBanner && (
+        <div
+          className={cn("absolute inset-x-0 z-10 flex justify-center", older.loading ? "top-11" : "top-2")}
+        >
+          <Button
+            size="sm"
+            variant="secondary"
+            className="rounded-full shadow-md"
+            onClick={() => void toFirstUnread()}
+          >
+            안 읽은 메시지가 더 있어요 · 처음 안 읽은 곳으로
+          </Button>
+        </div>
       )}
       <div
         ref={scrollRef}
@@ -400,6 +444,8 @@ const RowView = memo(
         return bubble ?? null;
       case "approval":
         return <ApprovalCard approvalId={row.approvalId} channelId={channelId} />;
+      case "unread":
+        return <NewMessagesDivider />;
     }
   },
   (a: RowProps, b: RowProps) =>
@@ -408,6 +454,16 @@ const RowView = memo(
     a.inThread === b.inThread &&
     sameRow(a.row, b.row),
 );
+
+function NewMessagesDivider() {
+  return (
+    <div role="separator" aria-label="새 메시지" className="flex items-center gap-3 px-4 py-2">
+      <div className="h-px flex-1 bg-primary/40" />
+      <span className="text-xs font-medium text-primary">새 메시지</span>
+      <div className="h-px flex-1 bg-primary/40" />
+    </div>
+  );
+}
 
 function DayDivider({ date }: { date: string }) {
   // date 는 그 시간대의 YYYY-MM-DD — 정오로 만들어 어느 시간대에서 읽어도 같은 날이 되게

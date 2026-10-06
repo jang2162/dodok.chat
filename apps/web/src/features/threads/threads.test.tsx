@@ -607,3 +607,82 @@ describe("채널 읽음과 스레드 패널", () => {
     expect(isViewingAtEnd(CH)).toBe(true);
   });
 });
+
+/** 채널에 들어갈 때 한 번 잡는 읽음 위치(구분선 — 읽지 않음 태스크 4, Review Focus 3) */
+describe("채널 진입의 「새 메시지」 구분선", () => {
+  const theirs = [1, 2, 3, 4].map((seq) => msg(seq, { authorId: uid(77), bodyMd: `남의 글 ${seq}` }));
+  const snapshot = (lastReadSeq: number) => {
+    useUnread.getState().beginSnapshot();
+    useUnread.getState().applySnapshot({
+      channels: [{ channelId: CH, lastReadSeq, latestSeq: 4, unread: lastReadSeq < 4, mentions: 0 }],
+    });
+  };
+  const open = (path = `/c/${CH}`) =>
+    renderRoute(path, channelClient(theirs), (children) => (
+      <ReadSenderContext.Provider value={{ request: vi.fn(), dispose: vi.fn() }}>
+        {children}
+      </ReadSenderContext.Provider>
+    ));
+  const line = () => screen.queryByRole("separator", { name: "새 메시지" });
+  beforeEach(() => useUnread.getState().reset());
+  afterEach(() => useUnread.getState().reset());
+
+  it("스냅숏이 있으면 첫 안 읽은 글 앞에 서고, 읽음이 올라도 채널을 떠날 때까지 남는다", async () => {
+    snapshot(2);
+    const { router } = open();
+    await screen.findByText("남의 글 4");
+    expect(await screen.findByRole("separator", { name: "새 메시지" })).toBeInTheDocument();
+    act(() => useUnread.getState().applyRead({ channelId: CH, lastReadSeq: 4 }, { listed: true }));
+    // 같은 채널에서 패널을 여닫아 채널 페이지가 다시 그려져도 기준은 다시 잡히지 않는다
+    await act(() => router.navigate({ to: "/c/$channelId/activity", params: { channelId: CH } }));
+    await act(() => new Promise((r) => setTimeout(r, 20)));
+    expect(line()).toBeInTheDocument();
+  });
+
+  it("떠났다 다시 들어오면 그때의 읽음 위치로 다시 잡는다", async () => {
+    snapshot(2);
+    const { router } = open();
+    await screen.findByRole("separator", { name: "새 메시지" });
+    act(() => useUnread.getState().applyRead({ channelId: CH, lastReadSeq: 4 }, { listed: true }));
+    await act(() => router.navigate({ to: "/settings/account" }));
+    await waitFor(() => expect(screen.queryByText("남의 글 4")).toBeNull());
+    await act(() => router.navigate({ to: "/c/$channelId", params: { channelId: CH } }));
+    await screen.findByText("남의 글 4");
+    expect(line()).toBeNull();
+  });
+
+  it("Review Focus 3 — 들어갈 때 스냅숏이 없으면 구분선을 짐작해 긋지 않고, 스냅숏이 뒤늦게 와도 튀어나오지 않는다", async () => {
+    open();
+    await screen.findByText("남의 글 4");
+    expect(line()).toBeNull();
+    act(() => snapshot(2));
+    await act(() => new Promise((r) => setTimeout(r, 20)));
+    expect(line()).toBeNull();
+  });
+
+  it("스냅숏에 항목이 없는 채널(보관 해제 직후 등)에서도 맨 앞에 긋지 않는다", async () => {
+    act(() => {
+      useUnread.getState().beginSnapshot();
+      useUnread.getState().applySnapshot({ channels: [] });
+    });
+    open();
+    await screen.findByText("남의 글 4");
+    expect(line()).toBeNull();
+  });
+
+  it.each(["activity", "settings"])(
+    "좁은 화면: %s 시트가 타임라인을 덮고 있으면 읽음을 보내지 않는다(스레드 시트만이 아니다)",
+    async (tab) => {
+      stubMedia(true);
+      snapshot(2);
+      const s = { request: vi.fn(), dispose: vi.fn() };
+      renderRoute(`/c/${CH}/${tab}`, channelClient(theirs), (children) => (
+        <ReadSenderContext.Provider value={s}>{children}</ReadSenderContext.Provider>
+      ));
+      await screen.findByRole("dialog");
+      await act(() => new Promise((r) => setTimeout(r, 50)));
+      expect(s.request).not.toHaveBeenCalled();
+      expect(isViewingAtEnd(CH)).toBe(false);
+    },
+  );
+});
