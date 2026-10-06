@@ -83,7 +83,7 @@ git worktree add -b feat/x .worktrees/dodok.chat/feat-x
   3. scripts/orca-worker.sh spawn <슬러그> implement --brief <브리프>
      → 워크트리 생성 · pnpm install · .env 복사 · BrowserOS neo 확인 · Task 생성 · 워커 기동 · 제출 확인
   4. scripts/orca-worker.sh wait             # worker_done 수신 (exit 3 은 타임아웃 — 다시 부른다)
-  5. scripts/orca-worker.sh attach <슬러그> review --brief <리뷰브리프>   # 같은 워크트리에 리뷰어
+  5. scripts/orca-worker.sh attach <슬러그> review --brief <리뷰브리프>   # 같은 워크트리에 새 에이전트로 띄운 리뷰어
   6. 두 보고를 두고 무엇을 고치고 무엇을 이월할지 판정 · git diff --name-only 로 파일 목록 대조
   7. 병합 후 scripts/orca-worker.sh reap <슬러그>
 ```
@@ -267,8 +267,12 @@ C t x c2a0 U s e d : c2a0 <게이지> c2a0 1 2 . 0 %
 scripts/orca-worker.sh attach <슬러그> <역할> [--model ...] [--brief <파일>] [--terminal <핸들>] [--force]
 ```
 
-`attach` 는 워크트리도 터미널도 새로 만들지 않는다. 그 워크트리에 살아 있는 에이전트
+`attach` 는 워크트리를 새로 만들지 않는다. 그 워크트리에 살아 있는 에이전트
 터미널이 있으면 그것을 쓰고, 하나도 없으면 `--agent` 로 새로 띄운다.
+**`review` 는 예외다 — `--terminal` 이 없으면 살아 있는 터미널이 있어도 늘 새 에이전트를 띄운다.**
+끝난 구현자의 터미널에 붙이면 리뷰가 구현자 자신의 문맥에서 돌아 독립 리뷰가 아니다. 남은 터미널은
+그대로 두고 핸들과 정리 명령(`stop <슬러그> --force`)을 한 줄로 알려 준다. `--terminal` 을 준 리뷰는
+사람이 고른 것이므로 그대로 받는다.
 
 - **진행 중인 Dispatch 가 붙어 있는 터미널에는 붙이지 않는다.** 그 워커는 이미 브리프를
   받고 일하는 중일 수 있고, 다시 붙이면 **같은 지시가 두 번 주입된다.** 터미널을 먼저 읽어
@@ -280,7 +284,8 @@ scripts/orca-worker.sh attach <슬러그> <역할> [--model ...] [--brief <파�
 - **그 터미널의 직전 Dispatch 가 `failed` 일 때만 `--retry-of` 로 잇는다.** 없으면 이력이 끊긴다.
   **성공한 Dispatch 는 잇지 마라** — 새 Task 는 그것의 재시도가 아니고, `worker-start` 가
   `task_not_startable` 로 거절해 붙이기가 통째로 실패한다. 정상 종료한 워커의 터미널에
-  다음 역할(구현 → 리뷰)을 붙이는 것이 `attach` 의 흔한 쓰임이라 **이 구멍은 정확히 그 자리에서 열린다.**
+  다음 역할(`verify`·`chore` 등)을 붙이는 것이 `attach` 의 흔한 쓰임이라 **이 구멍은 정확히 그 자리에서 열린다.**
+  구현 → 리뷰는 `attach` 가 새 에이전트로 띄운다 — 리뷰어는 구현자와 다른 세션이어야 한다.
   그리고 **`last` 를 고른 뒤에 상태를 본다** — 실패한 것만 먼저 걸러 마지막을 잡으면
   그 뒤에 성공이 있어도 **옛 실패를 끌어와** 잇는다. 이을 것은 「교체하는 그 시도」뿐이다.
 
@@ -536,7 +541,8 @@ pnpm typecheck && pnpm test               # 기준선 확인 — Turbo 캐시는
 | `verify`·`chore` | `--max-tier standard` |
 
 - **우선순위:** `--model` 직접 지정 > tiergear > 역할 기본값. `--model` 이나 `attach --terminal`
-  (이미 도는 에이전트)이면 tiergear 를 부르지 않는다.
+  (이미 도는 에이전트)이면 tiergear 를 부르지 않는다. `attach … review` 는 `--terminal` 이 없으면 늘 새로 띄우므로
+  tiergear 를 거쳐 `--min-tier deep` 이 걸린다.
 - **tiergear 가 없는 머신은 위 표 그대로 동작한다.** 실행 파일은 `TIERGEAR_COMMAND`(없으면 PATH 의
   `tiergear`)로 가리키고, 그 이름이 실행 가능한지로 있음·없음을 가른다.
 - **`tiergear launch` 가 실패해도 워커 기동은 막히지 않는다.** 0 이 아닌 종료, 출력에서 모델을 못 뽑음,
