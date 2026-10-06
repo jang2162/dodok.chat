@@ -5,7 +5,7 @@ type Payload<K extends keyof ServerToClientEvents> = Parameters<ServerToClientEv
 
 /**
  * 모듈 간 통지 이벤트. DB 쓰기 → bus emit → realtime 팬아웃.
- * 페이로드는 wire ServerToClientEvents(계약 스펙 7.2) 와 같고, run.event 만 룸을 고르도록 channelId 를 더 싣는다.
+ * 페이로드는 wire ServerToClientEvents(계약 스펙 7.2) 와 같고, 룸을 고르려고 run.event 는 channelId 를, channel.read 는 userId 를 더 싣는다.
  */
 export type BusEvents = {
   // silent — 서버 안에서만(팬아웃이 걷는다): 푸시 트리거가 건너뛴다. 연결을 닫으며 끝낸 런에 늦게 온 정본(runs/orchestrator.ts onCanonical)
