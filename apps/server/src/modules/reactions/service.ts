@@ -17,11 +17,17 @@ import { type HandleOf, readableGlyphs, readableWindow } from "../search/readabl
 /** 한 런에 싣는 리액션 수 — 넘치면 최근 쪽을 남기고 나머지는 reactionsOmitted 로 센다(InboundContext.reactions 의 상한과 같다) */
 export const REACTIONS_PER_RUN = 20;
 
-/** InboundReaction.excerpt 의 길이 상한(UTF-16 길이 — 계약 스키마가 string.max 로 센다) */
+/**
+ * InboundReaction.excerpt 의 길이 상한 — UTF-16 단위로 센다. 계약 스키마의 string.max 는 zod 판본마다 세는 법이 달라(핀한 4.6.5 는
+ * 코드 포인트, 의존성 트리의 4.4.3 은 UTF-16 단위) UTF-16 으로 60 이내면 어느 쪽으로도 넘지 않는다. 대가는 이모지처럼 서로게이트
+ * 쌍이 많은 글의 발췌가 60 코드 포인트보다 짧은 것. 세는 법은 `z.string().max(60).safeParse("😀".repeat(31))` 로 잰다 — 코드
+ * 포인트로 세면 통과, UTF-16 으로 세면 거절
+ */
 const EXCERPT_MAX = 60;
 
 /**
- * 리액션을 켜거나 끈다(리액션 스펙 5.1). 이미 그 상태면 성공이고 이벤트는 없다 — 두 번 눌리거나 다시 보내도 결과가 같다.
+ * 리액션을 켜거나 끈다(리액션 스펙 docs/superpowers/specs/2026-10-05-reactions-design.md 「`modules/reactions/`」 절). 이미 그
+ * 상태면 성공이고 이벤트는 없다 — 두 번 눌리거나 다시 보내도 결과가 같다.
  * message.updated 는 하이드레이션 전의 메시지로 낸다 — 리액션은 wire 팬아웃(realtime/events.ts)이 붙인다
  */
 export function setReaction(
@@ -192,7 +198,10 @@ export function pendingReactionsFor(db: DbOrTx, q: PendingReactionsQuery): Pendi
   };
 }
 
-/** 메시지 본문의 읽는 글 앞 60자 — 멘션은 @핸들로 풀고 마크다운 표시는 걷는다(검색 스니펫과 같은 변환) */
+/**
+ * 메시지 본문의 읽는 글 앞쪽 EXCERPT_MAX 안 — 글자(코드 포인트) 단위로 채워 서로게이트 쌍을 가르지 않는다. 멘션은 @핸들로 풀고
+ * 마크다운 표시는 걷는다(검색 스니펫과 같은 변환)
+ */
 function excerptOf(bodyMd: string, handleOf: HandleOf): string {
   const glyphs = readableGlyphs(bodyMd, handleOf, readableWindow(bodyMd, 0, 0));
   let out = "";
