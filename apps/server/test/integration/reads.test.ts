@@ -148,6 +148,28 @@ describe("통합 — 읽지 않음 팬아웃", () => {
       expect(seen).toEqual([]);
     });
 
+    // 푸시 트리거는 silent 를 건너뛰지만 activity 는 아니다 — 연결을 닫은 런·보관한 에이전트의 늦은 정본도 저장된 새 글이다
+    it("silent 메시지(늦게 온 정본)도 activity 를 낸다", async () => {
+      await ready();
+      const ch = channel();
+      const agentId = uuid();
+      const seen = waitFor(a1, "channel.activity");
+      app.bus.emit("message.created", {
+        message: {
+          id: uuid(),
+          channelId: ch.id,
+          seq: 1,
+          kind: "normal",
+          authorType: "agent",
+          authorId: agentId,
+          bodyMd: "x",
+          mentions: { users: [], agents: [] },
+        } as never,
+        silent: true,
+      });
+      expect(await seen).toMatchObject({ channelId: ch.id, authorType: "agent", authorId: agentId });
+    });
+
     it("에이전트 글은 authorType agent 로 나간다", async () => {
       await ready();
       const ch = channel();
