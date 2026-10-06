@@ -290,7 +290,7 @@ src/
 │  │                      길이의 제곱이라). 본문에 없으면 첨부 이름, 그래도 없으면 본문 머리 128자, 본문의 STX·ETX 는 먼저 걷는다) ·
 │  │                      routes.ts(`GET /api/v1/search` — requireSession 뒤 REST 상한 위에 검색 전용 사용자당 분당 LIMITS.searchPerMin(60), 넘으면 429 + 사건 ratelimit)
 │  ├─ reads/              읽지 않음. store.ts(markRead — seq 를 그 채널의 last_seq 로 깎아 upsert, last_read_seq = max(옛 값, 새 값)을 한 문장(ON CONFLICT … RETURNING)으로, 채널이 없거나 다른 워크스페이스면 NOT_FOUND,
-│  │                      보관한 채널도 받는다(읽기는 막지 않는다) · unreadFor — 보관하지 않은 채널마다 질의 한 번: 굵게 = R 뒤 남이 쓴 최상위 normal 메시지가 있는가, 배지 = R 뒤 나를 멘션한 남의
+│  │                      보관한 채널도 받는다(읽기는 막지 않는다) · unreadFor — 질의 하나가 보관하지 않은 채널마다 한 줄: 굵게 = R 뒤 남이 쓴 최상위 normal 메시지가 있는가, 배지 = R 뒤 나를 멘션한 남의
 │  │                      normal 메시지 수(스레드 답글 포함, 안쪽 LIMIT 99), 행이 없으면 R = 0, 결과 순서는 정하지 않는다 — 웹은 channelId 로 찾는다. 쓰는 인덱스와 다시 재는 법은 그 함수 머리 주석) ·
 │  │                      routes.ts(`GET /api/v1/me/unread` — requireSession, 사용자 id 는 세션에서만).
 │  │                      wire 는 realtime/ 이 맡는다 — `channel.read` 처리기와 작성자 읽음은 socket.ts, `channel.activity`·`channel.read` 팬아웃은 events.ts
@@ -419,7 +419,7 @@ src/
    │                      클라이언트 → 서버 핸들러(subscribe 는 lastSeq 가 없으면 루트만, 있으면 lastSeq 이후 루트·답글 ≤200 + 옛 루트 요약 threadRoots · message.send 는 threadRootId 를 넘긴다,
    │                      ack 에 그 채널의 **미해결** 승인 pendingApprovals · approval.resolve 는 승인 서비스로 넘긴다 ·
    │                      presence.update 는 PresenceUpdate 로 파싱해 push presence 에 — 실패는 버린다, 끊기면 지운다 ·
-   │                      channel.read(버킷 chatter — 넘으면 ack RATE_LIMITED)는 ChannelRead 로 파싱해 markRead → ack { lastReadSeq } → 버스 channel.read ·
+   │                      channel.read(버킷 chatter — 넘으면 ack RATE_LIMITED)는 ChannelRead 로 파싱해 markRead → 버스 channel.read → ack { lastReadSeq } ·
    │                      message.send 가 새 최상위 메시지를 저장하면 ack 뒤에 작성자 읽음을 그 seq 로 올린다 — 스레드 답글·같은 clientMsgId 재전송은 올리지 않고, 실패는 warn 만)
    ├─ cookie-auth.ts      wire 핸드셰이크의 dodok.session 쿠키 파싱(웹은 토큰을 다루지 않는다)
    ├─ events.ts           bus → 룸 팬아웃(`setup.status` 는 owner, `ops.event` 는 owner·admin 사용자 룸에만 — roleRooms 가 보낼 때마다 membership 을 다시 읽어 역할 변경을 따르고 비활성 membership 은 거른다, `people.changed`·`agents.changed`·`channel.updated` 는 워크스페이스 룸), 소켓별 미전송 500 초과 시 run.event 버림 + run.state { resync }.
@@ -731,7 +731,7 @@ src/
 │  │                       읽지 않음: 붙을 때마다 `GET /me/unread` 스냅숏(401 이면 앱의 401 처리, 그 밖의 실패는 토스트 없이 끈다), 끊기면 끄고 나가 있던 응답을 버린다.
 │  │                       `channel.activity`·`channel.read` → useUnread(내 id·보는 채널·끝 보임·사이드바 목록에 있는가를 함께 넘긴다),
 │  │                       `channel.updated` 가 보관 상태와 현황을 어긋나게 하면(needsResync) 스냅숏을 다시 받는다
-│  ├─ subscriptions.ts     한 채널 구독·빈틈 이어 받기·과거 페이지 REST(5쪽 초과면 타임라인 리셋). 재동기화 응답은 루트는 채널, 답글은 연 스레드 캐시에만, `threadRoots` 는 가진 루트만
+│  ├─ subscriptions.ts     한 채널 구독·빈틈 이어 받기(캐시가 있으면 lastSeq 로 이어 받는다 — 타임라인 캐시는 Query 기본 gcTime(5분)이라 채널을 떠난 지 5분이 지나면 빠져 처음 여는 것(`fresh`)과 같다. 구독 응답 + REST 4쪽(200개씩)을 넘으면 `fresh`)·과거 페이지 REST(5쪽 초과면 타임라인 리셋). 재동기화 응답은 루트는 채널, 답글은 연 스레드 캐시에만, `threadRoots` 는 가진 루트만
 │  │                       갈아 끼운다. REST 이어 받기(루트만)로 넘어가거나 `fresh` 로 캐시를 버리면 그 채널의 스레드 캐시를 낡은 것으로(staleThreads — 보고 있는 스레드는 곧바로 다시 받는다)
 │  ├─ timelineCache.ts     `["timeline", channelId]`·`["thread", channelId, rootId]` 읽기·쓰기(updateTimeline·updateThread) + withTimelineEdits·withThreadEdits(받는 동안 온 변경을 기록해 결과에 다시 적용)
 │  ├─ runReplay.ts         `run.events.replay` 와 실시간 `run.event` 의 경합(ack 전 이벤트는 버퍼)
