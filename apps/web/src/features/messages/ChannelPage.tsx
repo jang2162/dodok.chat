@@ -14,6 +14,7 @@ import { useSendMessage } from "@/features/composer/useSendMessage";
 import { StreamingBubble } from "@/features/runs/StreamingBubble";
 import { useChannelBubbles } from "@/features/runs/useChannelBubbles";
 import { type ThreadOpener, ThreadOpenerContext } from "@/features/threads/threadOpener";
+import { useIsNarrow } from "@/hooks/useIsNarrow";
 import { touchRecentChannel } from "@/pwa/persist";
 import { useChannelSubscription } from "@/realtime/WireProvider";
 import { Button } from "@/ui/button";
@@ -30,6 +31,8 @@ export function ChannelPage() {
   const { channelId, rootId } = useParams({ strict: false }) as { channelId: string; rootId?: string };
   // 오른쪽 패널의 탭 머리는 여기서 그린다 — 탭을 옮겨도 머리의 링크가 죽지 않아야 초점이 살아남는다(D3)
   const tab = usePanelTab();
+  // 좁은 화면에서 패널 시트는 타임라인을 통째로 덮는다 — 덮인 채널 목록은 끝이 보이는 것이 아니다(읽음을 보내지 않는다)
+  const covered = useIsNarrow() && tab !== undefined;
   // 좁은 화면에서 패널은 시트로 뜬다 — 닫히면 초점을 연 자리(헤더의 설정 링크)로 돌려준다(D14)
   const settingsRef = useRef<HTMLAnchorElement>(null);
   // 칩·「스레드에서 답하기」로 연 스레드는 닫으면 그 자리로 초점을 돌려준다(p4t-c1, m5)
@@ -77,6 +80,7 @@ export function ChannelPage() {
               <ChannelHeader channelId={channelId} settingsRef={settingsRef} />
               <MessageList
                 channelId={channelId}
+                covered={covered}
                 bubbleRunIds={bubbleRunIds}
                 bubbles={(runId) => <StreamingBubble runId={runId} />}
               />

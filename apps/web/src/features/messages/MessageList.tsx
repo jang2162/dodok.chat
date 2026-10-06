@@ -47,6 +47,8 @@ export type MessageListProps = {
   /** 스레드 패널이면 그 루트 — 루트·답글과 그 스레드의 버블·승인 카드만 그린다. 없으면 채널 타임라인(루트만) */
   threadRootId?: string;
   /** 태스크 8: 보일 스트리밍 버블의 runId(순서대로) 와 그 버블 */
+  /** 좁은 화면의 패널 시트가 이 목록을 덮고 있다 — 끝이 보이는 것으로 치지 않는다(읽음을 보내지 않는다) */
+  covered?: boolean;
   bubbleRunIds?: readonly string[];
   bubbles?: (runId: string) => ReactNode;
   /** 처음 재기 전의 스크롤 영역 크기(jsdom 테스트용) */
@@ -61,6 +63,7 @@ export function MessageList(props: MessageListProps) {
 function ChannelMessages({
   channelId,
   threadRootId,
+  covered = false,
   bubbleRunIds = NO_RUNS,
   bubbles,
   initialRect,
@@ -135,7 +138,7 @@ function ChannelMessages({
   // 목표를 안고 열린 목록은 끝으로 가지 않는다
   useReadAtEnd(
     channelId,
-    threadRootId === undefined,
+    threadRootId === undefined && !covered,
     stuck && !hasNewer && !jump.pending,
     timeline?.lastSeq ?? 0,
   );
