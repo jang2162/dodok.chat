@@ -7,6 +7,8 @@
 # stdin 필드 이름에 기대지 않기 위해서다.
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# 워커 세션(워크트리 안)에서는 침묵한다 — 회수는 메인 세션의 일이고, 워커에게는 자기 워크트리를 지우라는 말이 된다
+case "$ROOT" in */.worktrees/*) exit 0 ;; esac
 SCRIPT="$ROOT/scripts/orca-worker.sh"
 EVENT="${1:-UserPromptSubmit}"
 
