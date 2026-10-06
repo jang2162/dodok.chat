@@ -759,7 +759,7 @@ describe("db", () => {
     }
   });
 
-  it("channel_reads 는 사용자·채널과 함께 지워진다(cascade)", () => {
+  it("channel_reads 는 채널과 함께 지워지고(cascade), 없는 사용자는 FK 가 거절한다", () => {
     const db = createDb(":memory:");
     const { user, ch } = seed(db);
     db.insert(channelReads)

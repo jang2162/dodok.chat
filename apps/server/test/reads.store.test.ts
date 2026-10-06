@@ -25,6 +25,22 @@ function setup() {
   return { db, workspaceId, a, b, agentId, channelId };
 }
 
+function addChannel(db: Db, workspaceId: string, createdBy: string, name: string): string {
+  const id = uuid();
+  db.insert(channels)
+    .values({
+      id,
+      workspaceId,
+      name,
+      relayPolicy: { maxRelayTurns: 4, allowPairs: "all" },
+      visibility: "public",
+      createdBy,
+      createdAt: NOW,
+    })
+    .run();
+  return id;
+}
+
 type Post = {
   authorType: "user" | "agent" | "system";
   authorId?: string;
@@ -92,6 +108,17 @@ describe("markRead", () => {
 
     markRead(db, workspaceId, a, channelId, 1, NOW);
     expect(readRow(db, a, channelId)).toEqual({ userId: a, channelId, lastReadSeq: 1, updatedAt: NOW });
+  });
+
+  it("기존 행을 올리면 updated_at 도 그 시각으로 바꾼다", () => {
+    const { db, workspaceId, a, b, channelId } = setup();
+    post(db, channelId, { authorType: "user", authorId: b });
+    post(db, channelId, { authorType: "user", authorId: b });
+    const later = new Date(NOW.getTime() + 60_000);
+
+    markRead(db, workspaceId, a, channelId, 1, NOW);
+    markRead(db, workspaceId, a, channelId, 2, later);
+    expect(readRow(db, a, channelId)).toEqual({ userId: a, channelId, lastReadSeq: 2, updatedAt: later });
   });
 
   it("요청 seq 를 채널의 last_seq 로 깎는다 — last_seq 7 에 50 이면 7", () => {
@@ -239,6 +266,34 @@ describe("unreadFor", () => {
     expect(unreadFor(db, workspaceId, a)).toEqual([
       { channelId, lastReadSeq: 0, latestSeq: 1, unread: true, mentions: 0 },
     ]);
+  });
+
+  it("같은 워크스페이스의 다른 채널로 새지 않는다 — X 의 글·멘션이 빈 Y·다 읽은 Z 를 굵게·배지로 만들지 않는다", () => {
+    const { db, workspaceId, a, b, channelId: x } = setup();
+    const y = addChannel(db, workspaceId, a, "y");
+    const z = addChannel(db, workspaceId, a, "z");
+    post(db, z, { authorType: "user", authorId: b, mentionUsers: [a] });
+    markRead(db, workspaceId, a, z, 1, NOW);
+    // Z 의 읽음 위치(1)보다 큰 seq 가 X 에 있어야 X 의 글이 Z 로 새는지 보인다
+    post(db, x, { authorType: "user", authorId: b });
+    post(db, x, { authorType: "user", authorId: b });
+    post(db, x, { authorType: "user", authorId: b, mentionUsers: [a] });
+
+    expect(unreadOf(db, workspaceId, a, x)).toMatchObject({ unread: true, mentions: 1 });
+    expect(unreadOf(db, workspaceId, a, y)).toEqual({
+      channelId: y,
+      lastReadSeq: 0,
+      latestSeq: 0,
+      unread: false,
+      mentions: 0,
+    });
+    expect(unreadOf(db, workspaceId, a, z)).toEqual({
+      channelId: z,
+      lastReadSeq: 1,
+      latestSeq: 1,
+      unread: false,
+      mentions: 0,
+    });
   });
 
   it("보관한 채널은 빠지고, 보관 해제하면 읽음 위치 그대로 다시 나온다", async () => {
