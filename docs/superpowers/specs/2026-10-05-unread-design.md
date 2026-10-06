@@ -157,3 +157,61 @@ export const UnreadSnapshot = z.object({ channels: z.array(ChannelUnread) });
 - **「안 읽음으로 표시」** — 결정 7 을 깨므로 따로 설계한다.
 - **앱 아이콘 배지**(Badging API `navigator.setAppBadge`).
 - **비공개 채널** — 생기면 `channel.activity` 를 workspace 룸이 아니라 채널 멤버의 user 룸으로 보내야 한다.
+
+## 12. 구현과 맞춘 것
+
+구현(계획 `docs/superpowers/plans/2026-10-05-unread.md` 태스크 1~4)·리뷰·수정·브라우저 검증(태스크 5)에서 이 설계와 달라지거나 설계가 정하지 않은 것을 정한 자리만 모았다.
+근거는 실행 폴더 `.superpowers/sdd/2026-10-06-unread/`(git 제외)의 보고서·리뷰(`t1`~`t5` — 줄 끝 괄호가 출처)다. 본문(0~11장)은 설계를 확정한 때의 기록이라 고치지 않았다 — **본문과 이 장이 다르면 이 장이 구현이다.**
+화면 쓰는 법은 `docs/guides/user-guide.md` 「읽지 않음」 절, 레이트리밋 표는 `docs/guides/deploy.md` 「운영 화면」 절, 파일 자리는 `docs/project-structure.md`(서버 `modules/reads/`·웹 `features/reads/`)다.
+
+**계획 판정 PU1~PU7**
+
+- **PU1 — `ChannelUnread` 에 `latestSeq`(그 채널의 `channels.last_seq`)가 있다.** 「계약」 장 REST 절의 스키마에 이 필드를 더한다. 스냅숏을 받으면 웹은 항목의 `seenSeq` 를 `latestSeq` 로 두고, 스냅숏 요청이 나가 있는 동안 버퍼에 모은 `channel.activity` 가운데 `seq <= latestSeq` 인 것을 버린다 — 스냅숏에 이미 든 메시지를 두 번 세지 않는다(계획, t3).
+- **PU2 — 서버 → 클라이언트 `channel.read` 는 버스를 거친다.** `BusEvents["channel.read"]` 는 wire 페이로드에 `userId` 를 더한 꼴이고, `realtime/events.ts` 가 `userRoom(userId)` 로 `{ channelId, lastReadSeq }` 만 낸다. 모듈은 Socket.IO 를 만지지 않는다(계획, t2).
+- **PU3 — `channel.activity` 는 `realtime/events.ts` 의 `message.created` 처리기 옆에서 낸다.** 조건은 `kind = "normal"` 이고 `authorType` 이 `user`·`agent`(허용 목록 — 새 작성자 종류는 넣을 때까지 막힌다)이며 `authorId` 가 있을 때다. `silent` 메시지(연결을 닫은 런·보관한 에이전트·채널에 늦게 온 정본)도 낸다 — 저장된 메시지라 안 읽은 것이다. 「서버」 장의 `service.ts` 는 만들지 않았다 — activity 는 `events.ts`, 작성자 읽음은 `socket.ts`(PU4), 저장소와 REST 는 `modules/reads/store.ts`·`routes.ts` 다(계획, t2, t2 리뷰 F1).
+- **PU4 — 작성자 읽음은 `realtime/socket.ts` 의 `message.send` 처리기가 올린다** — 저장에 성공했고(`created`, 같은 `clientMsgId` 재전송이 아님) 최상위 메시지일 때 ack 뒤에 `markRead` 와 버스 `channel.read` 를 낸다. 실패는 warn 만 남기고 라우팅을 막지 않는다. 같은 사용자의 다른 소켓은 자기 글의 activity 를 read 보다 먼저 받으므로 마지막 상태가 「읽음」이다(계획, t2, t2 리뷰).
+- **PU5 — 보관·비활성화.** `unreadFor` 는 보관하지 않은 채널만 돌려준다. 보관한 채널의 `channel.read` 는 받는다(`assertChannelWritable` 을 쓰지 않는다). 비활성화는 읽음 행을 건드리지 않는다 — 다시 활성화한 뒤 `/me/unread` 가 비활성화 전과 같다(`apps/server/test/members.deactivate.test.ts`)(계획, t1, t2).
+- **PU6 — 「끝이 보임」은 `stuck && !hasNewer && !jump.pending` 이고, 좁은 화면 패널 시트가 덮고 있으면 끝이 보이지 않는 것으로 본다.** 계획은 `MessageList.tsx` 의 `stuck` 하나였다.
+  - `stuck` 의 처음 값(true)은 스크롤 전 값이라, 캐시에 남은 떨어진 창을 다시 열거나 결과로 가기 목표를 안고 열면 끝을 보지 않고도 읽음이 나갔다. 떨어진 창의 `lastSeq` 는 창이 아니라 채널의 끝이라 받지 않은 메시지까지 읽음이 된다(t3 판단 5, t3 리뷰).
+  - 좁은 화면에서 오른쪽 패널(스레드·활동·설정)이 시트로 타임라인을 덮고 있으면(`ChannelPage` 의 `covered = useIsNarrow() && tab !== undefined`) 채널 읽음을 보내지 않고 activity 도 「끝 보임」으로 보지 않는다 — 스레드 멘션 푸시(`/c/<id>/t/<rootId>`)로 연 스레드가 채널 전체를 읽음으로 만들지 않게. 시트를 닫으면 끝에 있을 때 그때 보낸다. 넓은 화면의 옆 패널은 타임라인이 보이므로 그대로다(t3 리뷰 I1, t3 수정 보고).
+  - 좁은 화면 **사이드바** 시트(`AppShell` 의 시트)는 덮어도 막지 않는다 — 창이 짧고 곧 채널을 옮기는 자리라 조율자가 이월로 정했다(`docs/plan.md` 8장 「이월」 「읽지 않음」).
+- **PU7 — 보내는 seq 는 채널 타임라인 캐시의 `lastSeq` 다** — 스레드 답글 seq 도 들어간다(채널을 보면 그 seq 까지의 스레드 멘션도 읽음이다 — 결정 6)(계획, t3).
+
+**서버 (태스크 1·2)**
+
+- `markRead`·`unreadFor` 의 첫 인자는 `Db` 가 아니라 `DbOrTx` 다 — 저장소의 다른 모듈과 같은 관례이고 `Db` 도 그대로 넘어간다(t1 판단 1).
+- 마이그레이션은 `0018_channel_reads`(생성기 `--name channel_reads`)다. 생성 SQL 은 `CREATE TABLE channel_reads` 하나이고, 끝에 손으로 붙인 시드(머리 주석 셋 — 왜 손으로 붙였나·비활성 포함·뒤에 생긴 것은 0)는 그 워크스페이스의 보관한 채널까지 채운다 — 보관 해제하면 읽음 위치가 그대로 돌아온다. 시드를 붙인 뒤 다시 generate 하면 「No schema changes」다(t1 판단 2·3, t1 리뷰 「마이그레이션」).
+- `unreadFor` 결과의 순서는 정하지 않는다 — 웹은 `channelId` 로 찾는다(t1 판단 4).
+- `unreadFor` 의 굵게 하위 질의는 `thread_root_id IS NULL` 덕에 `messages_channel_thread_seq (channel_id, thread_root_id, seq)`, 배지 하위 질의는 `messages_channel_seq (channel_id, seq)` 를 범위로 탄다(「서버」 장은 둘 다 `messages_channel_seq` 라 했다). 다시 재는 법은 그 함수 머리 주석이다(t1 리뷰 F2, t1 수정 보고).
+- wire `channel.read` 는 `typing`·`presence.update` 와 소켓마다 같은 `chatter` 버킷을 쓰지만 넘으면 조용히 버리지 않고 ack `RATE_LIMITED` 로 답한다. 운영 정본 `docs/guides/deploy.md` 「운영 화면」 레이트리밋 표에 그 줄이 있다(t2 리뷰 F4). 타이핑은 3초 스로틀(분당 최대 20)이고 읽음은 채널당 1초 묶음이라 사람 손으로는 버킷(분당 120·버스트 30)에 닿지 않는다 — 브라우저에서 22초 동안 계속 치면서 0.5초마다 새 글을 받아도 타이핑 7·읽음 19, `RATE_LIMITED` 0이었다(t2 리뷰 N3, t5 부가 확인 N3).
+- 역할 매트릭스(`apps/server/test/roles.matrix.test.ts`)는 `GET /api/v1/me/unread` × 세 역할·membership 없는 세션 401·비활성 401 을 싣는다. wire `channel.read` 는 통합 테스트가 member 소켓으로만 보낸다 — 처리기에 역할 분기가 없어 「테스트·검증」 장의 「두 경로 × 세 역할」 가운데 wire 쪽 owner·admin 두 칸은 비어 있다(t2 리뷰 N2). 팀 스펙 「역할과 권한」 표에 두 줄이 있다(t2).
+
+**웹 — 현황 스토어·사이드바·읽음 전송 (태스크 3)**
+
+- **항목을 새로 만드는 것은 사이드바 목록(`qk.channels`, 보관 아님)에 있는 채널만이다** — `channel.activity` 와 서버 `channel.read` 모두. 「웹」 장의 「스토어에 그 채널 항목이 없어도 `lastReadSeq 0` 으로 만든다」(계획 Review Focus 4)를 그대로 하면 보관한 채널에 0 항목이 생기고, 보관 해제 뒤 그 값이 `entryReadSeq` 로 쓰여 구분선이 채널 맨 앞에 그어진다. 보관·보관 해제의 `channel.updated` 가 보관 상태와 현황을 어긋나게 하면(보관했는데 항목이 있음·보관하지 않았는데 항목이 없음·요청이 나가 있음 — `needsResync`) 스냅숏을 다시 받는다. 캐시 전후가 아니라 현황과 견주는 것은 이 탭의 보관 응답이 wire 보다 먼저 캐시를 옮기는 경우를 놓치지 않으려는 것이다(t2 리뷰 「태스크 3 에 넘길 것」, t3 판단 1·「짚어 둘 것」).
+- 스냅숏 요청이 나가 있는 동안 버퍼에 모으는 것은 activity 만이 아니라 **서버 `channel.read` 도**다(받은 때의 문맥과 함께) — 스냅숏이 그 읽음보다 앞선 것이면 굵게가 되살아나기 때문이다. `seenSeq` 는 늘 `lastReadSeq` 이상이다(서버 read 가 올린다) — 읽은 범위의 activity 가 늦게 와도 다시 세지 않는다(t3 판단 1·2).
+- **서버 `channel.read` 는 굵게·배지를 통째로 지운다** — 그 위치보다 뒤의 activity 가 이미 와 있어도 그렇다(「웹」 장 그대로). 다른 기기가 N 까지 읽은 사이 N+1 이 왔으면 이 탭은 N+1 을 놓치고, 다음 스냅숏(재연결)에서 바로잡힌다 — 결정 9 쪽 오차다(t3 「알고 남긴 것」).
+- 스냅숏은 연결마다 받고, 끊기면 끄며 나가 있던 응답을 버린다. `/me/unread` 가 401 이면 앱의 401 처리로 간다(Query 밖 REST 라 전역 처리를 타지 않는다), 그 밖의 실패는 토스트 없이 끈다(t3 판단 9).
+- **읽음 전송은 채널마다 첫 요청부터 1초 동안 모아 가장 큰 seq 하나로 보낸다** — 「무엇이 「안 읽음」인가」 장·「웹」 장의 「1초 디바운스」를 대신한다. 요청이 이어져도 보내기가 밀리지 않는다(1초보다 촘촘히 글이 오는 채널에서 영영 안 나가는 것을 막는다). 서버가 저장했다고 답한 위치(ack 의 `lastReadSeq` 포함) 이하는 보내지 않고, 끊겨 있으면 보내지 않으며(조건에 「연결됨」), 다시 붙으면 다시 요청한다. 실패(레이트 초과 포함)는 버리고 스스로 다시 보내지 않는다 — 다음 조건 성립(끝으로 돌아옴·탭이 보이게 됨·`lastSeq` 증가·다시 붙음)이 다시 보낸다(t3 판단 3·4, t3 리뷰 「전송기」).
+- 전송 훅(`useReadAtEnd`)은 `MessageList` 안에서 부르고 스레드 패널은 끈다. 전송기는 소켓마다 `WireProvider` 가 만들어 `ReadSenderContext` 로 내린다(계획의 `ChannelPage.tsx` 변경은 필요 없었다)(t3 판단 6).
+- 사이드바 굵게는 이름 span 의 `font-semibold` 와 숨긴 글 「(안 읽음)」이다. 배지는 보이는 수를 `aria-hidden` 으로 두고 링크 이름에 숨긴 글 「(멘션 N개)」·「(멘션 99개 이상)」을 싣는다 — 일반 span 의 `aria-label` 은 ARIA 가 이름으로 받지 않는다(운영 배지와 같은 꼴). 상한 99 는 `features/reads/useUnread.ts` 의 `MENTIONS_MAX` 한곳이다(t3 판단 7, t3 리뷰 m3).
+
+**웹 — 「새 메시지」 구분선·페이지 밖 배너 (태스크 4)**
+
+- **`entryReadSeq` 는 현황이 없으면 0 이 아니라 `undefined`(구분선 없음)다** — 스냅숏 전·실패, 그 채널 항목이 없음(보관한 채널·보관 해제 직후 다시 받기 전·스냅숏에 없는 채널)이 그렇다. 0 이면 구분선이 채널 맨 앞에 그어진다. 계획의 「항목이 없으면 0」을 대신한다(`features/reads/entryRead.ts` `captureEntryRead`)(t3 「지침이 틀렸거나 빈 곳」 4, t4 판단 1).
+- 잡는 자리는 `enter`(구독)가 아니라 `ChannelPage` 다 — 채널 id 가 바뀔 때마다 렌더 중에 한 번 잡는다. 채널을 옮겨도 이 페이지는 다시 마운트되지 않기 때문이다(t4 판단 2, t4 리뷰 T1).
+- 구분선은 `seq > entryReadSeq`·`kind = "normal"`·최상위·사람 글이면 내 것이 아닌 첫 메시지 앞에 한 번 선다(같은 자리의 날짜 구분선 뒤, 그 메시지는 머리줄을 다시 그린다). 에이전트 글은 id 가 같아도 남의 글로 센다. 모양은 `role="separator"`·이름 「새 메시지」, 색은 날짜 구분선과 가르는 `text-primary` 다(t4, t4 리뷰).
+- **구분선은 자리가 확정됐을 때만 둔다** — 불러온 목록이 일부(`hasOlder`)이고 그 맨 앞이 이미 `entryReadSeq + 1` 보다 뒤면 구분선을 두지 않는다(배너가 맡는다). 맨 위 구분선은 과거 페이지를 붙일 때 스크롤 기준 행이 되어 위치가 튀고, 위에 아직 안 불러온 안 읽은 글이 있어 진짜 처음도 아니다. 이 조건은 배너 조건의 정확한 반대라 둘이 함께 뜨지 않는다. 과거 페이지가 R 까지 닿으면 구분선이 목록 가운데에 생긴다(앞에 행이 있어 기준 행이 되지 않는다)(t4 리뷰 I2, t4 수정 보고).
+  - 맨 앞이 첫 안 읽은 루트여도 그 앞 seq 가 답글뿐이면 같은 판정이 된다(seq 만으로는 사이에 루트가 있는지 모른다) — 한 쪽 경계에 맞을 때만이라 드물고, 배너가 그 루트로 데려간다(t4 재리뷰 r2).
+- **배너 목표는 `entryReadSeq` 뒤 첫 루트다** — 「페이지 밖 구분선」 문단의 「`around = entryReadSeq + 1`」을 대신한다. `restFetchPage(channelId, { afterSeq: entryReadSeq, limit: 1 })` 로 첫 루트를 찾아 그 seq 를 `around` 로 받는다(`features/messages/jump.ts` `jumpToFirstRootAfter`). 채널 타임라인의 `around` 는 답글 seq 를 그 루트로 바꾸므로, `entryReadSeq + 1` 이 옛 스레드의 늦은 답글이면(스레드 답글은 채널 읽음을 올리지 않아 흔하다) 읽은 창으로 간다. 뒤에 루트가 없으면 최신 페이지로 끝에 간다(t4 리뷰 I1, t4 수정 보고).
+- 배너를 누르면 받은 창에서 구분선 행으로 **한 번** 이동하고, 받은 창에 구분선이 없으면 이동을 거둔다 — 남은 이동이 뒤에 이어 받은 쪽에서 화면을 끌고 가지 않게. 실패면 기존 페이지 오류 보고(`reportPageError`)이고 배너는 남아 다시 누를 수 있다. 한 번 누른 배너는 「최신 메시지로」로 돌아와 조건이 다시 서도 그 채널을 떠날 때까지 뜨지 않는다(t4 판단 3, t4 리뷰 T2·T4).
+- 배너는 구독 응답 뒤(타임라인 `lastSeq > 0`)에만 띄운다 — 오프라인 사본에서 복원한 채널은 뒤이은 `fresh` 응답이 받은 창을 최신 쪽으로 덮기 때문이다(`useJump` 의 `ready` 와 같은 규칙). 「이전 메시지를 불러오는 중」 알림이 떠 있으면 그 아래에 놓는다(t4 리뷰 n1, t4 판단 4).
+
+**검증 (태스크 5 — `dev:fake`, 모델 런 0회)**
+
+- 독립 Chromium(Playwright) 하나에 owner·mia 두 컨텍스트, owner 는 둘째 탭까지(1280·390px). 둘째 클라이언트가 다른 계정이라 BrowserOS neo 가 아니라 독립 브라우저로 했다. headless 는 같은 컨텍스트의 두 탭이 모두 `visible` 이라 둘째 탭은 `document.visibilityState`·`hidden` 을 `hidden` 으로 덮고 `visibilitychange` 를 내 가렸다. 200개 넘는 채널은 mia 의 Socket.IO 소켓 18개로 채웠다. 항목 11개 모두 통과, 결함 0(t5 보고).
+- 관찰(결함 아님, 이 설계대로):
+  - 이 세션에서 이미 연 채널은 타임라인 캐시가 있어, 다시 들어가면 재구독(`lastSeq` 이후 ≤200 + 이어 받기)이 안 읽은 220개를 모두 받는다 — 불러온 목록 안이라 배너가 없고, 화면은 끝에서 열려 곧바로 읽음이 오르며 구분선은 화면 밖 위에 있다(t5 관찰 1).
+  - 결과로 가기로 들어간 채널에서 「최신 메시지로」를 누르면, 최신 창이 `entryReadSeq` 를 담지 못할 때 배너가 뜬다(누른 적이 없으므로)(t5 관찰 2).
+  - 좁은 화면 스레드 시트가 덮은 동안 온 최상위 글은 스토어·다른 탭에서 굵게다. 그 페이지 자신의 사이드바에서는 그 채널이 「보고 있는 채널」이라 굵게 그리지 않는다(t5 항목 10).
+  - 새로고침으로 곧장 안 읽은 채널에 들어갔을 때 이 머신에서는 스냅숏이 채널 페이지보다 먼저 와 구분선이 섰다 — 「스냅숏 전 진입은 구분선 없음」은 스냅숏이 늦을 때만 보인다(t4 리뷰 n4, t5 관찰 3).
