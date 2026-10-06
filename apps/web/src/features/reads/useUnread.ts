@@ -4,7 +4,7 @@ import { useShallow } from "zustand/react/shallow";
 import { isChannelArchived } from "@/features/channels/archived";
 
 /** 배지가 세는 상한 — 서버도 여기서 자른다(읽지 않음 스펙 「계약」 장) */
-const MENTIONS_MAX = 99;
+export const MENTIONS_MAX = 99;
 
 /**
  * 채널 하나의 현황. `seenSeq` 는 반영한 가장 큰 seq — 같은 신호가 두 번 오거나(재연결) 이미 읽은 범위의 신호가 늦게 와도

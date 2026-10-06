@@ -2,13 +2,10 @@ import type { Channel } from "@dodok/shared";
 import { Link } from "@tanstack/react-router";
 import { HashIcon } from "lucide-react";
 import { useChannels } from "@/api/queries";
-import { useChannelUnread } from "@/features/reads/useUnread";
+import { MENTIONS_MAX, useChannelUnread } from "@/features/reads/useUnread";
 import { cn } from "@/lib/utils";
 import { Button } from "@/ui/button";
 import { isChannelArchived } from "./archived";
-
-/** 배지에 그리는 수 — 서버가 여기서 자른다(읽지 않음 스펙 「계약」 장). 이 수면 「99+」 */
-const MENTIONS_MAX = 99;
 
 /**
  * 사이드바 채널 목록(스펙 2.4) — 보관한 채널은 없다(「설정 → 채널」 탭에 있다). 지금 채널은 Link 가 `aria-current="page"` 로 표시한다 — 앞머리 일치라 설정 패널이 열려 있어도.
