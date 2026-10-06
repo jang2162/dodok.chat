@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { Ack } from "../common";
 import { BRIDGE_PROTOCOL, Id, IsoDateTime } from "../common";
 import { ComponentsV1 } from "../components";
-import { ATTACHMENT_LIMITS, Attachment } from "../domain";
+import { ATTACHMENT_LIMITS, Attachment, ReactionEmoji } from "../domain";
 import { parseDodokSessionKey } from "../session-key";
 import { Sha256Hex } from "../setup";
 
@@ -44,6 +44,16 @@ export type InboundAuthor = z.infer<typeof InboundAuthor>;
 
 const InboundContextMessage = z.object({ author: InboundAuthor, text: z.string(), ts: IsoDateTime });
 
+/** 에이전트가 쓴 메시지에 사람이 단 리액션 하나 — 문구는 formatReactionFacts 가 만든다 */
+export const InboundReaction = z.object({
+  messageId: Id,
+  excerpt: z.string().max(60), // 그 메시지의 읽는 글 앞 60자
+  emoji: ReactionEmoji,
+  by: z.string(), // 단 사람의 핸들(비활성 멤버도 그 핸들)
+  at: IsoDateTime,
+});
+export type InboundReaction = z.infer<typeof InboundReaction>;
+
 export const InboundContext = z.object({
   recentMessages: z.array(InboundContextMessage).max(20), // 스레드 런이면 비어 있다 — 채널 대화는 스레드에 싣지 않는다
   /** 스레드 런만. 루트 본문은 서버가 4,000자에서 자른다 */
@@ -64,6 +74,9 @@ export const InboundContext = z.object({
   relayRules: z.string(), // 사람이 읽는 한 문단
   channelPrompt: z.string().optional(),
   promptOverride: z.string().optional(),
+  /** 지난 턴 뒤 이 에이전트의 메시지에 달린 리액션 — 최근 20개. 없으면 키가 없다 */
+  reactions: z.array(InboundReaction).max(20).optional(),
+  reactionsOmitted: z.int().min(1).optional(), // 20개 밖으로 밀린 수
 });
 export type InboundContext = z.infer<typeof InboundContext>;
 

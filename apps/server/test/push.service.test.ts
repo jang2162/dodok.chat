@@ -635,6 +635,7 @@ describe("attachPushTriggers — 버스 배선", () => {
     mentions: { users: [ALICE_ID], agents: [] },
     attachments: [],
     interactions: [],
+    reactions: [],
     createdAt: "2026-09-23T00:00:00.000Z",
   };
   const approval = {

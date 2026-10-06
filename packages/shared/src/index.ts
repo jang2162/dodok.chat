@@ -13,5 +13,6 @@ export * from "./gateways";
 export * from "./ops";
 export * from "./search";
 export * from "./reads";
+export * from "./reactions";
 export * from "./session-key";
 export * from "./runner";

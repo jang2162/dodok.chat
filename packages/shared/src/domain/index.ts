@@ -167,6 +167,19 @@ export type MessageInteraction = z.infer<typeof MessageInteraction>;
 /** 메시지에 싣는 상호작용 개수 상한. 넘으면 최신 쪽을 남긴다(설계 3장). */
 export const INTERACTIONS_MAX = 20;
 
+/** 사람이 달 수 있는 이모지 — 목록은 여기 한 곳이다(웹 피커·서버 검증·에이전트 문구가 모두 이것을 읽는다) */
+export const REACTION_EMOJIS = ["👍", "👎", "❤️", "😂", "🎉", "👀", "✅", "❓"] as const;
+export const ReactionEmoji = z.enum(REACTION_EMOJIS);
+export type ReactionEmoji = z.infer<typeof ReactionEmoji>;
+
+/** 메시지 하나의 이모지 하나 — 서버가 REACTION_EMOJIS 순서로 모아 싣는다. userIds 는 단 순서 */
+export const MessageReaction = z.object({
+  emoji: ReactionEmoji,
+  count: z.int().min(1),
+  userIds: z.array(Id),
+});
+export type MessageReaction = z.infer<typeof MessageReaction>;
+
 /** 루트 메시지의 스레드 요약 — 답글이 있을 때만 싣는다(스레드·검색 스펙 4.1) */
 export const ThreadSummary = z.object({
   count: z.int().min(1),
@@ -193,6 +206,8 @@ export const Message = z.object({
    * 없는 채로 message.updated 가 오면 웹 캐시가 기존 결과 줄을 지워 버린다.
    */
   interactions: z.array(MessageInteraction).max(INTERACTIONS_MAX).default([]),
+  /** 기본값이 있어 경계를 넘는 Message 에는 항상 있다 — interactions 와 같은 까닭(없는 채로 message.updated 가 오면 웹 캐시가 칩을 지운다) */
+  reactions: z.array(MessageReaction).max(REACTION_EMOJIS.length).default([]),
   systemMeta: SystemMeta.optional(), // kind === "system"일 때
   replyTo: Id.optional(),
   threadRootId: Id.optional(), // 스레드 답글이면 그 루트. 스레드 안의 스레드는 없다 — 루트만 가리킨다

@@ -8,6 +8,7 @@ import {
   type Channel,
   type ChannelMember,
   Message,
+  ReactionEmoji,
   RunState,
 } from "../domain";
 import { RunEvent } from "../events";
@@ -74,6 +75,10 @@ export type Typing = z.infer<typeof Typing>;
 export const PresenceUpdate = z.object({ visible: z.boolean(), channelId: Id.optional() });
 export type PresenceUpdate = z.infer<typeof PresenceUpdate>;
 
+/** 켜기/끄기 — 토글이 아니다. 두 번 보내도 결과가 같다 */
+export const ReactionSet = z.object({ messageId: Id, emoji: ReactionEmoji, on: z.boolean() });
+export type ReactionSet = z.infer<typeof ReactionSet>;
+
 export interface ClientToServerEvents {
   "channel.subscribe": (p: ChannelSubscribe, ack: Ack<ChannelSubscribeResult>) => void;
   "channel.unsubscribe": (p: { channelId: Id }, ack: Ack<null>) => void;
@@ -82,6 +87,7 @@ export interface ClientToServerEvents {
   "run.events.replay": (p: RunEventsReplay, ack: Ack<RunEventsReplayResult>) => void;
   "component.interact": (p: ComponentInteract, ack: Ack<{ interactionId: Id }>) => void;
   "approval.resolve": (p: ApprovalResolve, ack: Ack<null>) => void;
+  "reaction.set": (p: ReactionSet, ack: Ack<null>) => void;
   typing: (p: Typing) => void; // ack 없음, 클라이언트가 3초 스로틀
   "presence.update": (p: PresenceUpdate) => void; // ack 없음
   "channel.read": (p: ChannelRead, ack: Ack<{ lastReadSeq: number }>) => void; // ack 은 저장된(커지기만 하는) 읽음 위치

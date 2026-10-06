@@ -58,6 +58,7 @@ const userMsg = (agents: string[], bodyMd = "hi"): Message => ({
   mentions: { agents, users: [] },
   attachments: [],
   interactions: [],
+  reactions: [],
   createdAt: NOW,
 });
 const agentMsg = (author: string, agents: string[], bodyMd = "reply"): Message => ({
@@ -71,6 +72,7 @@ const agentMsg = (author: string, agents: string[], bodyMd = "reply"): Message =
   mentions: { agents, users: [] },
   attachments: [],
   interactions: [],
+  reactions: [],
   runId: ID(40),
   createdAt: NOW,
 });
@@ -246,6 +248,7 @@ const rootMsg = (authorType: "user" | "agent", authorId: string): Message => ({
   mentions: { agents: [], users: [] },
   attachments: [],
   interactions: [],
+  reactions: [],
   createdAt: NOW,
 });
 const inThread = (m: Message): Message => ({ ...m, threadRootId: ROOT });

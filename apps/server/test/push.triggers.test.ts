@@ -32,6 +32,7 @@ function msg(over: Partial<Message>): Message {
     mentions: { users: [], agents: [] },
     attachments: [],
     interactions: [],
+    reactions: [],
     createdAt: "2026-09-23T00:00:00.000Z",
     ...over,
   };

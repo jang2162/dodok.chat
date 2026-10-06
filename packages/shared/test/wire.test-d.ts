@@ -19,6 +19,7 @@ describe("wire event maps", () => {
       | "typing"
       | "presence.update"
       | "channel.read"
+      | "reaction.set"
     >();
   });
   it("서버→클라이언트 이벤트 이름", () => {
