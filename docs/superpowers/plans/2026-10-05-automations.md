@@ -14,6 +14,7 @@
 ## Global Constraints
 
 - 자동화 = 트리거(`schedule`·`webhook`) + 채널 최상위 메시지 게시 하나. 작성자 `authorType "automation"`, `authorId` = 자동화 id, `kind "normal"`.
+- 게시는 `assertChannelWritable` 을 지난다 — 보관한 채널이면 `CHANNEL_ARCHIVED`(예약: `error`·사건, 웹훅: 409, 만들기·채널 바꾸기: 거절).
 - 자동화 글은 **멘션으로만** 런을 만든다 — 자동 응답·스레드 응답자로 넘어가지 않는다. 런은 RunGate 를 지난다. 한도에 막혀도 메시지는 게시한다.
 - 에이전트 인바운드의 보낸 사람은 `{ type: "system", handle: "automation", displayName: "자동화 <이름>" }`(지운 자동화면 `"자동화"`). 플러그인·러너 CLI 변경 없음.
 - 예약: `daily`·`weekdays`(월~금)·`weekly`(`weekday` 0 = 일요일)·`hourly`(`minute`), 시각 `HH:MM`, 시간대는 워크스페이스 설정 `timeZone`(기본 `Asia/Seoul`). 놓친 예약은 **10분 이내면 한 번**, 넘으면 `skipped` + 운영 사건 `automation_skipped`.
@@ -46,7 +47,7 @@
 2. **웹훅 본문 안에 ```` ``` ```` 가 든 로그·마크다운** — 블록이 깨지지 않는다(펜스를 늘림). JSON 인데 `Content-Type: text/plain` 으로 옴 → 텍스트 블록. `Content-Type` 없음 → 텍스트 블록. → 태스크 3.
 3. **자동화 문구의 에이전트가 나중에 채널에서 빠지거나 핸들이 바뀜** — 게시는 되고 런은 없으며, 목록에 경고 줄이 뜬다. → 태스크 3(경고 계산)·4(표시).
 4. **자동화를 끈 상태에서 시각을 바꾸고 다시 켬** — 켜는 순간의 `now` 로 다음 시각을 계산한다(과거 시각이 바로 터지지 않는다). → 태스크 2.
-5. **채널을 지움(cascade) / 자동화를 지움** — 채널 삭제는 자동화를 함께 지우고 스케줄러가 죽지 않는다. 자동화 삭제 뒤 그 메시지는 「⚙ 지운 자동화」로 보이고, 그 메시지가 최근 대화 문맥에 실릴 때 서버가 죽지 않는다(보낸 사람 `"자동화"`). → 태스크 2(문맥)·4(표시).
+5. **채널을 보관함 / 자동화를 지움** — 보관한 채널의 예약은 게시하지 않고 `error`·`automation_failed`(code `CHANNEL_ARCHIVED`)·다음 시각으로 넘어가며 스케줄러가 죽지 않는다, 웹훅은 409, 목록 경고 「채널이 보관되었습니다」. 자동화 삭제 뒤 그 메시지는 「⚙ 지운 자동화」로 보이고, 그 메시지가 최근 대화 문맥에 실릴 때 서버가 죽지 않는다(보낸 사람 `"자동화"`). → 태스크 2(문맥)·4(표시).
 
 각 줄의 테스트는 해당 태스크의 단계에 들어 있다.
 
@@ -107,7 +108,7 @@ export const AutomationSummary = z.object({
   id: Id, name: z.string(), channelId: Id, kind: z.enum(["schedule", "webhook"]), bodyMd: z.string(), enabled: z.boolean(),
   schedule: AutomationSchedule.optional(), nextRunAt: IsoDateTime.optional(), tokenPrefix: z.string().optional(),
   lastRunAt: IsoDateTime.optional(), lastStatus: z.enum(["ok", "skipped", "error"]).optional(),
-  warnings: z.array(z.object({ kind: z.enum(["agent_not_in_channel", "agent_disabled", "unknown_handle"]), handle: z.string() })),
+  warnings: z.array(z.object({ kind: z.enum(["agent_not_in_channel", "agent_disabled", "unknown_handle", "channel_archived"]), handle: z.string().optional() })),
 });
 export const AutomationCreated = z.object({ automation: AutomationSummary, webhookUrl: z.url().optional() });
 ```
@@ -141,7 +142,7 @@ export function claimRun(db: DbOrTx, id: string, seen: Date, next: Date, now: Da
   - 월말·연말: 12-31 23:30 daily 23:00 뒤 → 다음 해 01-01 23:00. 윤년 02-28 → 02-29.
   - `America/New_York` 서머타임: 봄 02:30 daily(없는 시각) → 그날 03:00(첫 유효 순간), 가을 01:30(두 번) → 첫 번째(EDT) 순간.
   - `assertTimeZone("Mars/Base")` → `VALIDATION`.
-- [ ] **Step 3: 실패하는 테스트 — 저장소·토큰.** `automations.store.test.ts`: 이름 겹침 `CONFLICT` · 다른 워크스페이스 행 안 보임 · `dueSchedules` 는 켜진 예약만·`next_run_at <= now` 만 · `claimRun` 을 같은 `seen` 으로 두 번 → 처음 true, 다음 false · 채널을 지우면 자동화도 사라짐 · `issueWebhookToken` 원문이 `whk_` 로 시작하고 `hash` 는 64자 hex · `findWebhookByToken` 이 틀린 원문엔 `undefined`.
+- [ ] **Step 3: 실패하는 테스트 — 저장소·토큰.** `automations.store.test.ts`: 이름 겹침 `CONFLICT` · 다른 워크스페이스 행 안 보임 · `dueSchedules` 는 켜진 예약만·`next_run_at <= now` 만 · `claimRun` 을 같은 `seen` 으로 두 번 → 처음 true, 다음 false · `issueWebhookToken` 원문이 `whk_` 로 시작하고 `hash` 는 64자 hex · `findWebhookByToken` 이 틀린 원문엔 `undefined`.
 - [ ] **Step 4: 실패 확인.**
 - [ ] **Step 5: 구현.** 스키마는 스펙 2.1 그대로(+ 인덱스 `automations_due` `(enabled, kind, next_run_at)`), `db:generate`. `nextRunAt`: `Intl.DateTimeFormat("en-US", { timeZone, hourCycle: "h23", year, month, day, hour, minute, weekday })` 로 벽시계를 읽는 도우미와, 벽시계 → UTC 를 「추정 UTC 를 만들고 그 시간대 오프셋으로 한두 번 보정」해 구하는 도우미 둘로 짠다. 후보 날짜를 하루씩(매시간은 한 시간씩) 넘기며 반복 규칙에 맞고 `> after` 인 첫 순간을 돌려준다(상한 8일 — 넘으면 `INTERNAL`). `ops/index.ts` 의 설정 기본값과 `modules/ops/settings.ts` 의 읽기가 `timeZone` 을 채운다(없으면 `"Asia/Seoul"`).
 - [ ] **Step 6: 통과 확인** — 실행 개수.
@@ -186,6 +187,7 @@ export const MISSED_GRACE_MS = 10 * 60_000;
     - **Review Focus 1**: `now` 09:05, 09:00 예약과 08:30 예약 → 09:00 은 게시 1·`last_status ok`, 08:30 은 게시 0·`skipped`·사건 `automation_skipped` 1, 둘 다 `next_run_at` 다음 날. 같은 `now` 로 `tick` 을 두 번 → 게시 여전히 1.
     - 게시 중 예외(가짜 `route` 가 던지게 — 메시지는 저장된 뒤) → `last_status error`·사건 `automation_failed`, `next_run_at` 은 다음 회차.
     - 꺼진 자동화·웹훅 종류는 건드리지 않음.
+    - **Review Focus 5**: 채널을 보관한 예약 → 게시 0·`last_status error`·사건 `automation_failed`(detail `code: "CHANNEL_ARCHIVED"`)·다음 시각으로.
     - **Review Focus 4**: 끈 상태에서 예약을 과거 시각으로 바꾸고 켬 → `next_run_at` 이 켜는 순간 뒤의 첫 회차(바로 게시되지 않음) — 켜기·예약 변경 경로의 `next_run_at` 계산은 태스크 3 의 API 가 부르는 `rescheduleOne`(이 태스크에서 store 옆에 만든다)으로.
     - `rescheduleAll`: 시간대를 바꾸면 켜진 예약 전부 다시 계산.
   - `ops.routes.test.ts`: 시간대 PATCH — 틀린 이름 `VALIDATION`, 맞으면 `rescheduleAll` 효과(다음 시각이 바뀜), member 403.
@@ -248,7 +250,7 @@ export function registerWebhookRoute(fastify: FastifyInstance, ctx: { db: Db; po
 
 - [ ] **Step 1: 실패하는 테스트 — 본문.** `automations.body.test.ts`: JSON(`application/json; charset=utf-8`) → 2칸 들여쓰기 ```` ```json ```` · 깨진 JSON 인데 JSON 타입 → 텍스트 블록 · 텍스트 → ```` ``` ```` · **Review Focus 2**: 본문에 ```` ``` ```` 가 있으면 펜스가 ```` ```` ```` 로 늘어남 · JSON 이 `text/plain` 으로 옴·타입 없음 → 텍스트 블록 · 8,001자 → 8,000자 + `…(잘림)` · 빈 문자열 → `undefined`.
 - [ ] **Step 2: 실패하는 테스트 — 관리 API.** `automations.routes.test.ts`: 만들기(예약) → `nextRunAt` 있음 · 만들기(웹훅) → `webhookUrl` 이 `<origin>/hooks/whk_…`(PA2), 목록에는 `tokenPrefix` 만 · 이름 겹침 409 · PATCH 로 끄기 → `nextRunAt` 없음, 켜기 → 지금 뒤 첫 회차 · 토큰 재발급 → 새 URL, 옛 해시 사라짐 · 「지금 실행」 → 메시지 게시, `nextRunAt` 그대로 · 삭제 → 목록에서 빠지고 메시지는 남음 · **Review Focus 3**: `warnings` — 문구의 `@dev` 가 채널에 없음 → `agent_not_in_channel`, 꺼짐 → `agent_disabled`, 없는 핸들 → `unknown_handle`.
-- [ ] **Step 3: 실패하는 테스트 — 웹훅.** `automations.webhook.test.ts`: 맞는 토큰 → 202 `{messageId}`·블록이 붙은 메시지 · 틀린 토큰 404·실패 카운터 증가 · 꺼진 자동화 404 · 예약 종류 토큰 404(예약은 토큰이 없으므로 이 경우는 재발급 뒤 옛 토큰으로 대신 확인) · 64 KiB + 1 → 413 · 분당 31번째 429·사건 `ratelimit` · 실패 카운터에 막힌 주소 → 429 · 세션 쿠키 없이도 통과(공개 경로).
+- [ ] **Step 3: 실패하는 테스트 — 웹훅.** `automations.webhook.test.ts`: 맞는 토큰 → 202 `{messageId}`·블록이 붙은 메시지 · 틀린 토큰 404·실패 카운터 증가 · 꺼진 자동화 404 · 보관한 채널의 웹훅 409 `CHANNEL_ARCHIVED` · 예약 종류 토큰 404(예약은 토큰이 없으므로 이 경우는 재발급 뒤 옛 토큰으로 대신 확인) · 64 KiB + 1 → 413 · 분당 31번째 429·사건 `ratelimit` · 실패 카운터에 막힌 주소 → 429 · 세션 쿠키 없이도 통과(공개 경로).
 - [ ] **Step 4: 실패하는 테스트 — 통합·역할.** `integration/automations.test.ts`(가짜 Gateway·플러그인): 예약 틱 → 메시지 → 멘션 런 → 인바운드 보낸 사람 `system:automation` · 웹훅 → 202 → 런 · 한도에 막혀도 게시·한도 알림 · 멘션 없는 문구 + 자동 응답 에이전트 → 런 없음. `roles.matrix.test.ts`: 관리 API 여섯 × admin 이상 허용·member 403·membership 없음 401.
 - [ ] **Step 5: 실패 확인.**
 - [ ] **Step 6: 구현.** 웹훅 라우트는 PA5 대로 캡슐화한 플러그인 안에서 `fastify.post("/hooks/:token", { bodyLimit: 64 * 1024 }, …)`. 순서: 실패 카운터 막힘 → 429 / `findWebhookByToken` 없음 → `guard.fail(addr)` 후 404 / 꺼짐·종류 다름 → 404 / 토큰 키 버킷(`KeyedLimiter` — `modules/ops/ratelimit.ts`) 초과 → 429 / `webhookBlock` → `postAutomationMessage` → `lastStatus ok`·`lastRunAt` → 202. Caddy 줄과 `check-caddy.sh` 의 「`/hooks/whk_nope` 는 서버로(404 JSON)」.
@@ -261,7 +263,7 @@ export function registerWebhookRoute(fastify: FastifyInstance, ctx: { db: Db; po
 ### Task 4: 웹 — 설정 화면·작성자 표시·시간대
 
 **Files:**
-- Create: `apps/web/src/features/automations/{AutomationsPage.tsx,AutomationDialog.tsx,WebhookUrlOnce.tsx,queries.ts}`; Modify: 설정 라우트·설정 사이드바(「자동화」, admin 이상), `apps/web/src/features/messages/useAuthors.ts`, `apps/web/src/features/ops/*`(시간대 선택)
+- Create: `apps/web/src/features/automations/{AutomationsPage.tsx,AutomationDialog.tsx,WebhookUrlOnce.tsx,queries.ts}`; Modify: `apps/web/src/app/router.tsx`(설정 탭 `automations` — 에이전트·채널·멤버 탭과 같은 줄, admin 이상)·설정 탭 목록, `apps/web/src/features/messages/useAuthors.ts`, `apps/web/src/features/ops/*`(시간대 선택)
 - Test: `apps/web/src/features/automations/automations.test.tsx`(새), `features/messages/people.test.tsx` 또는 작성자 표시 테스트, `features/ops/*` 테스트
 
 **Interfaces:**
@@ -270,7 +272,7 @@ export function registerWebhookRoute(fastify: FastifyInstance, ctx: { db: Db; po
 - [ ] **Step 1: 실패하는 테스트.**
   - 목록: 이름·채널·종류·다음 실행(워크스페이스 시간대로 표기)·웹훅 URL 앞부분·마지막 결과 · 경고 줄 「문구의 @dev 이 이 채널에 없습니다」(Review Focus 3) · 「지금 실행」 → 성공 토스트 · 켜기/끄기 · 삭제는 확인 대화상자 뒤.
   - 대화상자: 이름 비면 제출 불가 · 예약 `weekly` 면 요일 선택이 보임, `hourly` 면 분만 · 웹훅 저장 직후 URL 과 「이 주소는 다시 볼 수 없습니다」·복사 버튼, 닫으면 다시 볼 수 없음 · 재발급도 같은 꼴 · 서버 409 → 이름 칸 오류.
-  - member 는 사이드바에 「자동화」가 없고 경로로 와도 권한 안내.
+  - member 는 설정 탭에 「자동화」가 없고 경로로 와도 권한 안내 · 경고 줄 「채널이 보관되었습니다」(Review Focus 5).
   - 작성자 표시: automation 메시지 「⚙ 자동화 · <이름>」, 목록에 없는 id 면 「⚙ 지운 자동화」(Review Focus 5).
   - 운영 화면 설정의 시간대 선택이 PATCH 를 보냄.
 - [ ] **Step 2: 실패 확인.**

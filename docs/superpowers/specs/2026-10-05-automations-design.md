@@ -12,6 +12,7 @@
 - 주기 작업 본보기: `apps/server/src/app.ts` 의 첨부 정리·ops 보존 정리(`setInterval` + `.unref()`, `AppDeps` 로 주기 주입, 종료 때 해제)
 - 토큰 본보기: 브리지 토큰 `apps/server/src/modules/setup/tokens.ts`(접두사 + `randomBytes(32).base64url`, sha256 만 저장, `timingSafeEqual`), 실패 카운터 `packages/shared/src/adapter/guard.ts`(`BridgeAuthGuard`)
 - 시스템 작성자 인바운드: 서버 `apps/server/src/modules/runs/context.ts`, 플러그인 `packages/openclaw-plugin/src/inbound.ts`(`senderId = <type>:<handle>`)
+- 보관: 채널 보관·멤버 비활성화 스펙 `docs/superpowers/specs/2026-10-06-channel-archive-member-deactivate-design.md` — 보관한 채널에는 쓸 수 없다(`assertChannelWritable`, 409 `CHANNEL_ARCHIVED`), 런 관문도 거절한다. 설정 화면은 `/settings` 아래 탭(`apps/web/src/app/router.tsx`)
 - 역할: 팀 스펙 `docs/superpowers/specs/2026-09-26-team-members-design.md` 「역할과 권한」
 - 읽지 않음 스펙 `docs/superpowers/specs/2026-10-05-unread-design.md`(`channel.activity` — 그 스펙 「서버」 장)
 
@@ -51,7 +52,7 @@
 | `id` | text PK | |
 | `workspace_id` | text FK | |
 | `name` | text not null | 1~40자, `(workspace_id, name)` 유일 |
-| `channel_id` | text FK `channels.id` `ON DELETE CASCADE` | 게시할 채널 |
+| `channel_id` | text FK `channels.id` | 게시할 채널(채널은 지워지지 않고 보관만 된다) |
 | `kind` | text not null | `schedule` \| `webhook` |
 | `body_md` | text not null | 게시할 문구. 작성기와 같은 멘션 토큰. 1~4,000자 |
 | `enabled` | boolean not null default true | |
@@ -147,7 +148,7 @@ const HHMM = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
 
 | 경로 | 동작 |
 | --- | --- |
-| `GET /api/v1/automations` | 목록 — 토큰 원문 없음, `tokenPrefix`·`warnings`(문구 속 에이전트 멘션 중 그 채널 멤버가 아니거나 꺼진 것) |
+| `GET /api/v1/automations` | 목록 — 토큰 원문 없음, `tokenPrefix`·`warnings`(문구 속 에이전트 멘션 중 그 채널 멤버가 아니거나 꺼진 것, 채널이 보관됨) |
 | `POST /api/v1/automations` | 만들기 — 웹훅이면 응답에 `webhookUrl` 한 번 |
 | `PATCH /api/v1/automations/:id` | 이름·채널·문구·켜기·예약 |
 | `DELETE /api/v1/automations/:id` | 삭제 — 메시지는 남는다 |
@@ -158,7 +159,7 @@ const HHMM = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
 
 ## 7. 웹
 
-- `/settings/automations`(admin 이상, 설정 사이드바에 「자동화」): 목록(이름·채널·종류·다음 실행 시각(워크스페이스 시간대로) 또는 웹훅 URL 앞부분 `…/hooks/whk_abc123…`·마지막 결과·경고 줄 「문구의 @fin 이 이 채널에 없습니다」), 「지금 실행」·켜기/끄기·삭제(확인 대화상자).
+- 설정 탭 「자동화」(`/settings/automations`, admin 이상 — 에이전트·채널·멤버 탭과 같은 줄): 목록(이름·채널·종류·다음 실행 시각(워크스페이스 시간대로) 또는 웹훅 URL 앞부분 `…/hooks/whk_abc123…`·마지막 결과·경고 줄 「문구의 @fin 이 이 채널에 없습니다」), 「지금 실행」·켜기/끄기·삭제(확인 대화상자).
 - 만들기·수정 대화상자: 이름·채널·종류·문구(멘션 자동완성은 작성기의 것을 재사용)·예약(반복·요일·시각, 매시간이면 분), 웹훅이면 저장 직후 URL 을 한 번 보인다(복사 버튼, 「이 주소는 다시 볼 수 없습니다」). 웹훅 재발급도 같은 대화상자.
 - 메시지 작성자 표시: 「⚙ 자동화 · <이름>」, 지운 자동화면 「⚙ 지운 자동화」(`features/messages/useAuthors.ts`).
 - 운영 화면 설정에 시간대 선택.
@@ -182,7 +183,7 @@ const HHMM = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
 | 웹훅 너무 큼 | 413 |
 | 웹훅 레이트 초과 | 429 |
 | 자동화 삭제 | 메시지는 남고 「지운 자동화」 |
-| 채널 삭제 | `ON DELETE CASCADE` 로 자동화도 사라진다 |
+| 채널이 보관됨 | 예약은 게시하지 않고 `last_status = error`·운영 사건 `automation_failed`(detail `code: CHANNEL_ARCHIVED`)·다음 시각으로. 웹훅은 409 `CHANNEL_ARCHIVED`. 목록 경고 「채널이 보관되었습니다」. 보관한 채널을 겨눈 만들기·채널 바꾸기는 `CHANNEL_ARCHIVED` |
 
 ## 10. 테스트·검증·완료 기준
 

@@ -10,6 +10,7 @@
 - 결과 줄 본보기: components v1 의 `Message.interactions` — 원본 표(`component_interactions`)·`withInteractions` 하이드레이션·wire 경계 팬아웃(`apps/server/src/realtime/events.ts`)·`.default([])`
 - 턴 인바운드: 서버 `apps/server/src/modules/runs/context.ts` 의 `buildInboundDeliver`, 계약 `packages/shared/src/bridge/index.ts` 의 `InboundContext`, 플러그인 헤더 `packages/openclaw-plugin/src/context.ts` 의 `formatInboundContext`, 러너 턴 사실 `packages/shared/src/runner/prompt.ts` 의 `buildTurnFacts`(서버 쪽 `packages/runner-adapter` 가 만든다)
 - OpenClaw SDK(2026.9.4)의 `enqueueSystemEvent` 는 쓰지 않는다 — 결정 3
+- 보관·비활성화: 채널 보관·멤버 비활성화 스펙 `docs/superpowers/specs/2026-10-06-channel-archive-member-deactivate-design.md` — 보관한 채널의 쓰기는 `assertChannelWritable`(`apps/server/src/modules/channels/service.ts`)이 409 `CHANNEL_ARCHIVED` 로 막는다
 - 역할: 팀 스펙 `docs/superpowers/specs/2026-09-26-team-members-design.md` 「역할과 권한」
 
 ---
@@ -43,7 +44,8 @@
 - `kind = "normal"` 메시지(사람·에이전트, 최상위·스레드 답글). 시스템 메시지와 아직 저장되지 않은(보내는 중) 메시지에는 달 수 없다.
 - 한 사람이 한 메시지에 이모지 여러 개를 달 수 있고, 같은 이모지는 한 번뿐이다.
 - 권한은 owner·admin·member 누구나.
-- 내보낸 멤버의 리액션은 남는다(메시지가 남는 규칙과 같다). 표시는 「나간 멤버 @옛핸들」.
+- **보관한 채널의 메시지에는 달지도 지우지도 못한다** — 409 `CHANNEL_ARCHIVED`(`assertChannelWritable`). 이미 달린 칩은 읽기 전용으로 보인다.
+- 비활성 멤버의 리액션은 남는다(메시지가 남는 규칙과 같다). 표시는 「@핸들 (비활성)」.
 
 ## 3. 데이터 모델
 
@@ -52,7 +54,7 @@
 | 열 | 꼴 | 비고 |
 | --- | --- | --- |
 | `message_id` | text, FK `messages.id` `ON DELETE CASCADE` | |
-| `user_id` | text, FK `users.id` `ON DELETE CASCADE` | 내보내기는 `users` 행을 지우지 않으므로 리액션이 남는다 |
+| `user_id` | text, FK `users.id` `ON DELETE CASCADE` | 사용자 행은 지워지지 않는다(비활성화) — cascade 는 정합성용 |
 | `emoji` | text not null | `REACTION_EMOJIS` 중 하나 |
 | `created_at` | ts not null | 커서 비교에 쓴다 |
 
@@ -92,7 +94,7 @@ export const InboundReaction = z.object({
   messageId: Id,
   excerpt: z.string().max(60), // 그 메시지의 읽는 글 앞 60자
   emoji: ReactionEmoji,
-  by: z.string(),             // 단 사람의 핸들(나간 멤버면 옛 핸들)
+  by: z.string(),             // 단 사람의 핸들(비활성 멤버도 그 핸들)
   at: IsoDateTime,
 });
 // InboundContext 에 더함
@@ -136,7 +138,7 @@ reactionsOmitted: z.int().min(1).optional(),
 ## 6. 웹
 
 - 메시지 행의 마우스 올림 동작(타임스탬프가 나타나는 자리, `features/messages/MessageItem.tsx`)에 「반응 추가」 버튼, 좁은 화면은 기존 메시지 메뉴에 같은 항목. 누르면 8개 팝오버(키보드: 화살표·Enter·Esc, 닫히면 초점이 버튼으로).
-- 메시지 아래 칩 `👍 3` — 내가 단 칩은 강조(`aria-pressed`), 누르면 켜기/끄기, 마우스 올림·초점 시 「@mia, @owner」(사람 목록 `people` 으로 핸들을 푼다, 나간 멤버는 「나간 멤버 @옛핸들」).
+- 메시지 아래 칩 `👍 3` — 내가 단 칩은 강조(`aria-pressed`), 누르면 켜기/끄기, 마우스 올림·초점 시 「@mia, @owner」(사람 목록 `people` 으로 핸들을 푼다, 비활성 멤버는 「@핸들 (비활성)」). 보관한 채널이면 「반응 추가」를 숨기고 칩은 누를 수 없다.
 - 낙관적 갱신: 누르면 캐시의 `reactions` 를 먼저 바꾸고 `reaction.set` 을 보낸다. 실패하면 되돌리고 토스트(「반응을 저장하지 못했습니다」). 서버의 `message.updated` 가 정본이다.
 - 시스템 메시지·보내는 중 항목에는 버튼·칩이 없다.
 - 기능 폴더 `features/reactions/`(피커·칩·`useSetReaction`).
@@ -152,6 +154,7 @@ wire `reaction.set` 은 owner·admin·member 모두 허용. 사용자 id 는 세
 | 목록 밖 이모지·형식 틀림 | `VALIDATION` |
 | 메시지 없음·다른 워크스페이스 | `NOT_FOUND` |
 | 시스템 메시지 | `VALIDATION` |
+| 보관한 채널 | 409 `CHANNEL_ARCHIVED` |
 | 이미 그 상태 | 성공, `message.updated` 없음 |
 | 레이트 초과 | `RATE_LIMITED` — 웹은 되돌리고 토스트 |
 | 런 보내기 실패 | 커서를 올리지 않는다 — 다음 런에 다시 실린다 |
@@ -164,7 +167,7 @@ wire `reaction.set` 은 owner·admin·member 모두 허용. 사용자 id 는 세
 - **서버 통합(가짜 Gateway·플러그인·러너)**: mia 가 에이전트 답에 👍 → 다음 멘션 런의 `context.reactions` 에 실리고 그다음 런에는 없음 · `send` 실패(가짜 플러그인 끊김) 뒤 다음 런에 다시 실림 · 스레드 리액션은 그 스레드 런에만 · 「새 대화」 뒤에는 안 실림 · 러너 에이전트의 턴 사실에 블록 · 두 창에 `message.updated` 로 칩이 맞음.
 - **플러그인 단위**: 헤더 블록이 `---` 앞, 없으면 줄 없음.
 - **역할 매트릭스**: `reaction.set` 세 역할 허용, membership 없는 세션 거절.
-- **웹 단위**: 피커 키보드·초점 · 칩 켜기/끄기 · 실패 되돌림 · 내 칩 강조 · 툴팁(나간 멤버) · 시스템 메시지에 버튼 없음.
+- **웹 단위**: 피커 키보드·초점 · 칩 켜기/끄기 · 실패 되돌림 · 내 칩 강조 · 툴팁(비활성 멤버) · 보관한 채널에서 버튼 없음·칩 비활성 · 시스템 메시지에 버튼 없음.
 - **브라우저(dev:fake, 모델 런 0회)**: owner·mia 두 창 실시간 칩 · 에이전트 답에 단 리액션이 다음 멘션 뒤 가짜 Gateway 가 받은 인바운드에 있음(dev:fake 로그) · 390px 메뉴로 달기.
 - **실연(dev Gateway, 런 0회 하네스 — `docs/guides/live-smoke.md` 「런 0회 하네스」)**: 실제 OpenClaw 가 헤더 블록을 모델 입력(가짜 CLI 가 받은 프롬프트)에 싣는다.
 

@@ -11,6 +11,7 @@
 - 구독 구조: 웹은 보고 있는 채널 하나만 구독한다(`apps/web/src/realtime/subscriptions.ts` 의 `enter`·`leave`) — 다른 채널의 `message.created` 는 브라우저에 오지 않는다
 - 메시지 seq: 채널마다 하나의 카운터(`channels.last_seq`)를 최상위·스레드 답글·시스템 메시지가 함께 쓴다
 - 결과로 가기(`?around=<seq>`): 스레드·검색 스펙 `docs/superpowers/specs/2026-09-25-threads-search-design.md`, 웹 `features/messages/jump.ts`·`useJump.ts`
+- 보관·비활성화: 채널 보관·멤버 비활성화 스펙 `docs/superpowers/specs/2026-10-06-channel-archive-member-deactivate-design.md` — 보관한 채널은 사이드바에서 빠지고 읽기만 된다, 멤버는 지워지지 않고 비활성화된다
 - 역할: 팀 스펙 `docs/superpowers/specs/2026-09-26-team-members-design.md` 「역할과 권한」
 
 ---
@@ -51,7 +52,7 @@
 
 ## 3. 데이터 모델
 
-### 3.1 `channel_reads` (새 표, 마이그레이션 `0015`)
+### 3.1 `channel_reads` (새 표·새 마이그레이션)
 
 | 열 | 꼴 | 비고 |
 | --- | --- | --- |
@@ -60,17 +61,17 @@
 | `last_read_seq` | integer not null | 커지기만 한다 |
 | `updated_at` | ts not null | |
 
-기본 키 `(user_id, channel_id)`. 같은 마이그레이션 끝에 시드를 붙인다 — 내보내지 않은 모든 사용자(`users` 에 membership 이 있는 행) × 그 워크스페이스의 모든 채널을 `last_read_seq = channels.last_seq` 로 넣는다. 스키마는 `apps/server/src/db/schema.sqlite.ts` 에 더하고 drizzle 로 생성한 뒤 시드 SQL 을 손으로 덧붙인다(FTS 마이그레이션 `0007_search_fts.sql` 과 같은 방식).
+기본 키 `(user_id, channel_id)`. 같은 마이그레이션 끝에 시드를 붙인다 — membership 이 있는 모든 사용자(비활성 멤버 포함 — 다시 활성화하면 돌아온다) × 그 워크스페이스의 모든 채널을 `last_read_seq = channels.last_seq` 로 넣는다. 스키마는 `apps/server/src/db/schema.sqlite.ts` 에 더하고 drizzle 로 생성한 뒤 시드 SQL 을 손으로 덧붙인다(FTS 마이그레이션 `0007_search_fts.sql` 과 같은 방식).
 
 행은 처음 읽을 때(`markRead`) 생긴다. 새 채널·새 멤버는 행이 없으므로 `R = 0` 이다.
 
-멤버를 내보내면 `users` 행은 남는다(「나간 멤버」 표시용) — 그래서 cascade 가 아니라 **내보내기 트랜잭션이 그 사용자의 `channel_reads` 행을 지운다**(`modules/members/` 의 내보내기 처리). 다시 초대받으면 새 사용자이므로 처음부터 안 읽음으로 본다.
+**비활성화는 읽음 행을 건드리지 않는다** — 사용자·채널 참여가 남고, 다시 활성화하면 읽음 위치도 그대로 돌아온다. 사용자·채널 행은 지워지지 않으므로(채널은 보관만) 두 FK 의 cascade 는 정합성용이다.
 
 ## 4. 계약
 
 ### 4.1 REST
 
-`GET /api/v1/me/unread` — 로그인한 사용자 누구나, 자기 것만.
+`GET /api/v1/me/unread` — 로그인한 사용자 누구나, 자기 것만. **보관하지 않은 채널만** 싣는다(`channels.archived_at IS NULL` — 사이드바 목록과 같은 기준).
 
 ```ts
 // packages/shared/src/reads/index.ts (새 파일)
@@ -83,7 +84,7 @@ export const ChannelUnread = z.object({
 export const UnreadSnapshot = z.object({ channels: z.array(ChannelUnread) });
 ```
 
-워크스페이스의 모든 채널을 싣는다(행이 없는 채널은 `lastReadSeq: 0`). 공용 `Channel` 타입에는 넣지 않는다 — `channel.updated` 는 워크스페이스 전원에게 가므로 사람마다 다른 값을 실을 수 없다.
+보관하지 않은 모든 채널을 싣는다(행이 없는 채널은 `lastReadSeq: 0`). 공용 `Channel` 타입에는 넣지 않는다 — `channel.updated` 는 워크스페이스 전원에게 가므로 사람마다 다른 값을 실을 수 없다.
 
 ### 4.2 wire (`packages/shared/src/wire/index.ts`)
 
@@ -130,13 +131,14 @@ export const UnreadSnapshot = z.object({ channels: z.array(ChannelUnread) });
 | 레이트 초과 | `RATE_LIMITED`. 웹은 버리고 다음 조건 성립 때 다시 보낸다 — 서버 값은 커지기만 하므로 늦게 와도 안전하다 |
 | `/me/unread` 실패 | `ready = false` 로 굵게·배지를 끄고, 다음 재연결 때 다시 받는다 |
 | 끊긴 사이 놓친 `channel.activity` | 재연결 때 `/me/unread` 로 통째로 갈아 끼우므로 오차가 쌓이지 않는다 |
-| 멤버 내보내기 | 내보내기 트랜잭션이 그 사용자의 행을 지운다(3.1) |
+| 멤버 비활성화·다시 활성화 | 행을 건드리지 않는다(3.1) |
+| 채널 보관 | 스냅숏에서 빠진다(사이드바에도 없다). 보관 해제하면 읽음 위치 그대로 다시 실린다. 보관한 채널을 열어 읽는 것은 막지 않으므로 `channel.read` 도 받는다 |
 
 ## 9. 테스트·검증
 
 - **shared**: `ChannelUnread`·`UnreadSnapshot`·wire 페이로드 파싱.
-- **서버 단위(`modules/reads`)**: `markRead` 가 커지기만 함·`last_seq` 로 깎기·없는 채널 · `unreadFor` 가 시스템 메시지 제외·스레드 답글은 굵게에서 빼고 멘션은 셈·내 메시지 제외·행 없음은 0·멘션 99 자름 · 마이그레이션 시드(기존 사용자 × 채널이 `last_seq`, 내보낸 사용자 없음).
-- **서버 통합**: 두 사용자·소켓 셋(사용자 A 두 기기) — B 가 쓰면 A 의 두 소켓이 `channel.activity` 를 받음 · A 가 `channel.read` 를 보내면 A 의 다른 소켓이 `channel.read` 를 받음 · 최상위를 보내면 작성자 읽음이 오르고 답글은 안 오름 · 내보낸 멤버의 행이 내보내기에서 지워짐.
+- **서버 단위(`modules/reads`)**: `markRead` 가 커지기만 함·`last_seq` 로 깎기·없는 채널 · `unreadFor` 가 시스템 메시지 제외·스레드 답글은 굵게에서 빼고 멘션은 셈·내 메시지 제외·행 없음은 0·멘션 99 자름 · 마이그레이션 시드(membership 있는 사용자(비활성 포함) × 채널이 `last_seq`, membership 없는 사용자 없음) · 보관한 채널은 결과에 없음.
+- **서버 통합**: 두 사용자·소켓 셋(사용자 A 두 기기) — B 가 쓰면 A 의 두 소켓이 `channel.activity` 를 받음 · A 가 `channel.read` 를 보내면 A 의 다른 소켓이 `channel.read` 를 받음 · 최상위를 보내면 작성자 읽음이 오르고 답글은 안 오름 · 비활성화해도 행이 남고 다시 활성화하면 현황이 그대로 · 보관한 채널은 스냅숏에 없음.
 - **역할 매트릭스**: 두 경로 × 세 역할 허용, membership 없는 세션 401.
 - **웹 단위**: 스토어(스냅숏 교체·activity 더하기·내 글 무시·서버 `channel.read` 반영·`ready = false` 면 안 그림) · 읽음 전송(끝이 보이고 탭이 보일 때만, 디바운스, 스크롤이 위거나 탭이 가려지면 안 보냄) · 구분선 위치(첫 남의 최상위 앞, 떠날 때까지 유지) · 페이지 밖 배너와 `around` 가기 · 사이드바 굵게·「99+」.
 - **브라우저(dev:fake, 모델 런 0회)**: owner 창과 member(mia) 창 — mia 가 쓰면 owner 사이드바가 굵어짐 → owner 가 열고 끝을 보면 지워짐 → owner 의 둘째 탭도 지워짐 · mia 가 owner 를 멘션하면 배지 1 · 스레드 답글은 굵게 안 함·답글 속 멘션은 배지 · 200개 넘게 쌓인 채널에서 배너 → 처음 안 읽은 곳 · 390px 사이드바 시트.

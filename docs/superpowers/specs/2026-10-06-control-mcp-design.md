@@ -13,6 +13,7 @@
 - OpenClaw 플러그인 도구: SDK 2026.9.4 `registerTool(tool | factory)` — 팩토리 문맥 `OpenClawPluginToolContext` 가 `agentId`·`sessionKey`·`sessionId` 를 준다(`openclaw/dist/plugin-entry-*.d.ts`). 9.5 의 플러그인 번들 두 번 평가는 ADR `docs/adr/0004-plugin-global-registry.md`
 - 승인 카드: `approvals` 표·`ApprovalKind`(`exec`·`plugin`·`system-agent`·`tool`), 결정은 지금 admin 이상
 - 토큰 본보기: 브리지·러너 토큰(`modules/setup/tokens.ts`·`modules/runners/tokens.ts`), 실패 카운터 `BridgeAuthGuard`
+- 보관·비활성화: 채널 보관·멤버 비활성화 스펙 `docs/superpowers/specs/2026-10-06-channel-archive-member-deactivate-design.md` — 보관한 채널의 쓰기는 `assertChannelWritable` 이 409 `CHANNEL_ARCHIVED`, 비활성 멤버는 `auth/roles.ts` 가 membership 없음으로 본다
 - 불변 규칙: 「에이전트 간 소통은 채널 @멘션 릴레이로만」(`CLAUDE.md`) — 메시지 게시 도구를 넣지 않는 까닭
 
 ---
@@ -27,7 +28,7 @@
 | 4 | **채널 안 에이전트는 기존 다리로, 바깥은 `/mcp` 로** | 사용자 결정. 권한 토큰이 모델 문맥(프롬프트·전사)에 남지 않는다. 플러그인·러너 CLI 배포가 필요하다. |
 | 5 | **채널 안 에이전트의 쓰기는 시킨 사람에게 확인 카드** — 본인만 결정, 10분 만료. 바깥 클라이언트는 카드 없음 | 사용자 결정. 모델의 오해와 채널 글 속 지시(프롬프트 주입)로 설정이 바뀌는 것을 막는다. 바깥은 사람이 직접 쓰고 클라이언트가 자기 확인을 한다. |
 | 6 | **도구 처리기는 REST 가 부르는 서비스 함수를 그대로 부른다** | 검증·이벤트·운영 사건이 웹에서 바꾼 것과 같다. 도구마다 권한 표를 따로 두지 않는다. |
-| 7 | **역할은 호출할 때마다(확인 카드면 허용할 때 다시) 읽는다** | 강등·내보내기가 곧바로 반영된다. |
+| 7 | **역할은 호출할 때마다(확인 카드면 허용할 때 다시) 읽는다** | 강등·비활성화가 곧바로 반영된다. |
 
 ## 1. 범위
 
@@ -43,7 +44,7 @@
 
 - 원문 `dpt_` + `randomBytes(32).base64url`, 발급 응답에 한 번. 표 `personal_tokens(id, user_id FK, label, hash unique, prefix, created_at, last_used_at, revoked_at)`.
 - 「내 계정」에서 발급·목록(이름·앞부분·마지막 사용)·폐기. 사람마다 최대 10개.
-- 내보내기(`removeMember`)와 같은 트랜잭션에서 그 사람의 토큰을 모두 폐기한다.
+- 비활성화(`deactivateMember`)와 같은 트랜잭션에서 그 사람의 토큰을 모두 폐기한다. 다시 활성화해도 되살리지 않는다(새로 발급한다).
 - 검증은 브리지 토큰과 같다(해시 → 행, `timingSafeEqual`, `last_used_at` 1분에 한 번). 틀리면 HTTP 401, 실패는 `BridgeAuthGuard` 가 IP 별로 센다.
 
 ### 2.2 그 런을 시킨 사람 — 채널 안 에이전트
@@ -80,6 +81,7 @@ shared `packages/shared/src/control/tools.ts` 의 `CONTROL_TOOLS: Array<{ name; 
 | | `add_channel_agent`·`remove_channel_agent` | write | |
 | | `update_channel_agent` | write | 채널별 프롬프트·자동 응답 |
 | | `set_relay_policy`·`set_channel_run_limit` | write | |
+| | `archive_channel`·`unarchive_channel` | write | 보관·보관 해제(admin 이상) |
 | 에이전트 | `discover_agents` | read(admin 이상) | Gateway·러너에서 가져올 목록 |
 | | `register_agent`·`update_agent`·`set_agent_enabled`·`archive_agent` | write | |
 
@@ -154,11 +156,12 @@ call(principal, tool, args)
 | 레이트 | `RATE_LIMITED` |
 | PAT 틀림·폐기 | HTTP 401, 실패 카운터 |
 | 서비스 함수의 오류(이름 겹침 등) | 그 코드 그대로(`CONFLICT` 등) |
+| 보관한 채널의 쓰기(보관 해제 말고) | `CHANNEL_ARCHIVED` — 확인 카드를 띄우기 전에 미리 거절 |
 
 ## 10. 테스트·검증·완료 기준
 
 - **shared**: 모든 도구에 `access` 가 있고 이름이 겹치지 않음(전수) · JSON Schema 생성.
-- **서버 단위**: `requested_by` 표 전부(릴레이 사슬·다시 실행 포함) · 도구 × 역할 — 같은 REST 경로의 판정과 결과가 같음 · PAT 발급·폐기·내보내기 연동·10개 상한 · 확인 카드(본인만·`allow-always` 거절·만료·런 종료 → cancelled·허용 뒤 역할 재확인) · 레이트 둘.
+- **서버 단위**: `requested_by` 표 전부(릴레이 사슬·다시 실행 포함) · 도구 × 역할 — 같은 REST 경로의 판정과 결과가 같음 · PAT 발급·폐기·비활성화 연동·10개 상한 · 확인 카드(본인만·`allow-always` 거절·만료·런 종료 → cancelled·허용 뒤 역할 재확인) · 레이트 둘.
 - **서버 통합**: 가짜 러너 `control.call` 읽기 → 결과, 쓰기 → 카드 → 허용 → `channel.updated`·시스템 메시지·`control_change` · 가짜 플러그인 같은 흐름(`sessionKey`) · 자동화 글이 시킨 런의 쓰기 → `FORBIDDEN` · `/mcp` HTTP: `tools/list`·`tools/call`, member PAT 의 admin 도구 `FORBIDDEN`, 폐기한 PAT 401.
 - **웹 단위**: 토큰 발급·목록·폐기 · `dodok_control` 카드(본인 버튼·남에게 대기 문구).
 - **브라우저(dev:fake, 모델 런 0회)**: 가짜 러너 대본 키워드로 쓰기 도구 → 카드 → 허용 → 채널 설정이 바뀜 · 다른 창(mia 가 시켰으면 owner 창)에는 버튼이 없음.

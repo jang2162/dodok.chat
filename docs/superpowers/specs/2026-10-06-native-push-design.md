@@ -40,7 +40,7 @@
 | --- | --- | --- |
 | `id` | text PK | |
 | `user_id` | text FK `users.id` | |
-| `session_id` | text FK `session.id` `ON DELETE CASCADE` | 로그아웃·재설정·내보내기로 세션이 지워지면 함께 |
+| `session_id` | text FK `session.id` `ON DELETE CASCADE` | 로그아웃·재설정·비활성화로 세션이 지워지면 함께 |
 | `platform` | text not null | `ios` \| `android` |
 | `token` | text not null, unique | APNs 기기 토큰(hex) 또는 FCM 등록 토큰 |
 | `app_id` | text not null | iOS 번들 id(= APNs topic) 또는 Android 패키지명 |

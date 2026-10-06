@@ -14,18 +14,18 @@
 ## Global Constraints
 
 - 이모지는 `REACTION_EMOJIS = ["👍", "👎", "❤️", "😂", "🎉", "👀", "✅", "❓"]` 하나(shared). 다른 곳에 목록을 다시 적지 않는다.
-- 리액션은 `kind = "normal"` 메시지에만. 런을 시작하지 않고, 읽지 않음·푸시에 영향이 없다.
+- 리액션은 `kind = "normal"` 메시지에만, **보관하지 않은 채널에서만**(`assertChannelWritable` — 409 `CHANNEL_ARCHIVED`). 런을 시작하지 않고, 읽지 않음·푸시에 영향이 없다.
 - wire `reaction.set {messageId, emoji, on}` — 켜기/끄기(토글 아님), 버킷 `chatter`, 상태가 바뀌었을 때만 `message.updated`.
 - 에이전트에게는 **그 에이전트가 쓴 메시지**의 리액션만, **그 세션 범위**(채널 = 최상위, 스레드 = 루트 + 그 답글)만, 런마다 **최근 20개** + `reactionsOmitted`.
 - 커서는 `send` 가 받아들여졌을 때만 올린다. 리셋·러너 세션 새로 열기 때는 그 시각으로 올린다. 커서가 null 이면 싣지 않는다.
 - 에이전트 문구는 shared `formatReactionFacts` 만 만든다(스펙 4.4 의 글 그대로).
 - 플러그인은 바뀐다(재설치 필요). `dodok-runner` CLI 는 바뀌지 않는다.
 - 외부 입력은 경계에서 Zod 파싱. shared 는 Node 전용 API 금지. 레이트리밋 숫자는 `apps/server/src/modules/ops/limits.ts` 한곳(새 숫자 없음).
-- 웹 문구는 합쇼체: 「반응 추가」, 실패 토스트 「반응을 저장하지 못했습니다」, 나간 멤버 「나간 멤버 @옛핸들」.
+- 웹 문구는 합쇼체: 「반응 추가」, 실패 토스트 「반응을 저장하지 못했습니다」, 비활성 멤버 「@핸들 (비활성)」.
 - 포트 5173·3000 금지(사용자 인스턴스 3100·5180 도 건드리지 않는다 — 워커는 브리프가 주는 포트). 프로세스는 자기 PID 로만, `pkill` 금지. **모델 런 없음**(실연은 런 0회 하네스).
 - 커밋: `git add -A`·`git commit -a` 금지, 경로 명시. Conventional Commits + 스코프(`feat(shared)`·`feat(server)`·`feat(plugin)`·`feat(runner-adapter)`·`feat(web)`). 워커 트레일러 `Co-Authored-By: <네 실제 모델명> <noreply@anthropic.com>`.
 - 생성물(drizzle SQL·meta)은 `pnpm -F @dodok/server db:generate`. 기존 세션 행 채우기 SQL 만 생성된 파일 끝에 손으로 덧붙이고, 다시 generate 해 「No schema changes」.
-- 읽지 않음 계획(`docs/superpowers/plans/2026-10-05-unread.md`)과 마이그레이션 번호가 겹칠 수 있다 — **먼저 병합된 쪽이 `0015`**, 나중 쪽은 병합 전에 rebase 하고 generate 를 다시 돌려 번호를 맞춘다.
+- 읽지 않음 계획(`docs/superpowers/plans/2026-10-05-unread.md`)과 마이그레이션 번호가 겹칠 수 있다 — **먼저 병합된 쪽이 앞 번호**, 나중 쪽은 병합 전에 rebase 하고 generate 를 다시 돌려 번호를 맞춘다(번호는 생성기가 정한다).
 - 문서·주석을 쓰기 전에 `docs/guideline/base/03-comments.md`·`04-citation.md` 를 읽는다.
 - 끝내기 검사: 루트 `pnpm test && pnpm typecheck && pnpm lint && pnpm fmt:check`, 각 exit code, 테스트 수는 자기 실행 출력에서 패키지별로(0개는 통과가 아니다). 웹을 바꿨으면 `pnpm -F @dodok/web build`, 서버를 바꿨으면 `pnpm -F @dodok/server build && pnpm -F @dodok/server bundle:smoke`, 플러그인을 바꿨으면 그 패키지 빌드.
 
@@ -45,7 +45,7 @@
 2. **리액션이 달린 뒤 그 에이전트의 다음 런이 대기열에 있다가 `send` 전에 abort 됨** — 커서가 오르지 않아 그다음 런에 실린다. → 태스크 2.
 3. **에이전트 메시지가 스레드 루트이고, 루트에 리액션 + 그 스레드 런 + 채널 런** — 루트 리액션은 스레드 런에만 실린다(채널 범위는 `thread_root_id IS NULL` 이지만 루트 자신도 `thread_root_id` 가 null 이므로 채널 런에도 걸린다 — 그래서 **루트에 달린 리액션은 채널·스레드 두 세션 모두에 실린다**: 루트는 두 세션이 다 아는 메시지다). 두 세션의 커서는 따로 오른다. → 태스크 2.
 4. **에이전트를 채널에서 뺐다가 다시 넣음 / 에이전트 메시지를 다른 사람이 단 리액션이 21개 이상** — 빠진 동안 쌓인 것은 다시 넣은 뒤 첫 런에 최근 20개 + 「외 n개」. → 태스크 2.
-5. **나간 멤버가 단 리액션** — 칩 툴팁 「나간 멤버 @옛핸들」, 에이전트 문구의 `by` 는 옛 핸들. → 태스크 1(질의)·4(툴팁).
+5. **비활성 멤버가 단 리액션 / 보관한 채널** — 칩 툴팁 「@핸들 (비활성)」, 에이전트 문구의 `by` 는 그 핸들. 보관한 채널에서는 `reaction.set` 이 409 `CHANNEL_ARCHIVED` 이고 웹은 버튼을 숨기고 칩을 비활성으로. → 태스크 1(질의·거절)·4(표시).
 
 각 줄의 테스트는 해당 태스크의 단계에 들어 있다. 3번은 스펙의 「범위」 정의를 루트에 적용한 결과다 — 태스크 5 가 스펙 「구현과 맞춘 것」에 적는다.
 
@@ -124,8 +124,9 @@ export function advanceReactionCursor(db: DbOrTx, sessionRowId: string, to: Date
 - [ ] **Step 2: 실패하는 테스트 — 서비스.** `reactions.service.test.ts`(기존 `test/helpers/db.ts`·`seed.ts`, 버스는 기록하는 가짜):
   - 켜기 → 행 1·이벤트 1, 같은 켜기 다시 → 이벤트 없음, 끄기 → 행 0·이벤트 1, 같은 끄기 다시 → 이벤트 없음.
   - 시스템 메시지 → `VALIDATION`, 없는 메시지·다른 워크스페이스 → `NOT_FOUND`.
+  - 보관한 채널의 메시지 → `CHANNEL_ARCHIVED`(켜기·끄기 둘 다).
   - `withReactions`: 이모지 순서가 `REACTION_EMOJIS` 순, `userIds` 는 단 순서, 리액션 없는 메시지는 `[]`, 메시지 여럿이면 질의 한 번(질의 수를 세지 못하면 결과 단언만).
-  - `pendingReactionsFor`: 채널 범위는 그 에이전트의 최상위 메시지(스레드 루트 포함 — Review Focus 3) · 스레드 범위는 루트 + 그 스레드 답글 · 다른 에이전트·사람 메시지 제외 · `since` 이후만 · `since: null` 이면 빈 결과 · 지운 리액션 없음 · 25개면 최근 20개(`at` 오름차순으로 돌려줌)와 `omitted 5`·`latestAt` 은 가장 늦은 것 · 나간 멤버는 `by` 가 옛 핸들(Review Focus 5) · `excerpt` 는 멘션 토큰이 `@핸들` 로 풀린 앞 60자.
+  - `pendingReactionsFor`: 채널 범위는 그 에이전트의 최상위 메시지(스레드 루트 포함 — Review Focus 3) · 스레드 범위는 루트 + 그 스레드 답글 · 다른 에이전트·사람 메시지 제외 · `since` 이후만 · `since: null` 이면 빈 결과 · 지운 리액션 없음 · 25개면 최근 20개(`at` 오름차순으로 돌려줌)와 `omitted 5`·`latestAt` 은 가장 늦은 것 · 비활성 멤버도 `by` 가 그 핸들(Review Focus 5) · `excerpt` 는 멘션 토큰이 `@핸들` 로 풀린 앞 60자.
   - `advanceReactionCursor` 는 뒤로 가지 않음.
 - [ ] **Step 3: 실패하는 테스트 — 마이그레이션.** `db.test.ts`: 직전 마이그레이션까지 적용한 DB 의 `agent_sessions` 행 둘이 새 마이그레이션 뒤 `reactions_seen_at` 이 null 이 아님.
 - [ ] **Step 4: 실패 확인.** `pnpm -F @dodok/shared test` · `pnpm -F @dodok/server test -- reactions db`.
@@ -141,7 +142,7 @@ UPDATE `agent_sessions` SET `reactions_seen_at` = CAST(strftime('%s', 'now') AS 
 
 ```sql
 SELECT r.message_id, r.emoji, r.created_at, m.body_md, m.mentions_json,
-       COALESCE(u.left_handle, u.handle) AS by_handle
+       u.handle AS by_handle
 FROM message_reactions r
 JOIN messages m ON m.id = r.message_id
 JOIN users u ON u.id = r.user_id
@@ -263,7 +264,7 @@ export function ReactionPicker(props: { onPick: (emoji: ReactionEmoji) => void }
 
 - [ ] **Step 1: 실패하는 테스트.**
   - 피커: 「반응 추가」 버튼 → 팝오버에 8개 · 화살표로 이동·Enter 로 고름·Esc 로 닫힘 · 닫히면 초점이 버튼으로.
-  - 칩: `👍 3` · 내가 단 칩 `aria-pressed="true"` · 누르면 `onToggle("👍", false)` · 마우스 올림·초점 시 「@mia, @owner」 · 나간 멤버는 「나간 멤버 @옛핸들」(Review Focus 5) · 리액션이 없으면 아무것도 안 그림.
+  - 칩: `👍 3` · 내가 단 칩 `aria-pressed="true"` · 누르면 `onToggle("👍", false)` · 마우스 올림·초점 시 「@mia, @owner」 · 비활성 멤버는 「@핸들 (비활성)」, 보관한 채널이면 「반응 추가」 없음·칩 `disabled`(Review Focus 5) · 리액션이 없으면 아무것도 안 그림.
   - `useSetReaction`: 누르면 캐시가 곧바로 바뀜 · ack 실패면 원래대로 + 토스트 「반응을 저장하지 못했습니다」 · **Review Focus 1**: 켜기·끄기를 연달아 → 첫 요청이 늦게 실패해도 화면은 마지막(끄기) 상태 · 서버 `message.updated` 가 오면 그것으로 맞춤.
   - `MessageItem`: 시스템 메시지·보내는 중 항목에는 버튼·칩 없음 · 스레드 패널 안에서도 동작(스레드 캐시 갱신) · `@media (hover: none)` 에서 버튼이 보임(클래스 단언 — PR2).
 - [ ] **Step 2: 실패 확인** — `pnpm -F @dodok/web test -- reactions MessageList`.
