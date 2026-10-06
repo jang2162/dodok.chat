@@ -17,6 +17,7 @@ import {
   type AnySQLiteColumn,
   index,
   integer,
+  primaryKey,
   sqliteTable,
   text,
   uniqueIndex,
@@ -197,6 +198,25 @@ export const channelMembers = sqliteTable(
     joinedAt: ts("joined_at").notNull(),
   },
   (t) => [uniqueIndex("channel_members_unique").on(t.channelId, t.memberType, t.memberId)],
+);
+
+/**
+ * 사용자 × 채널의 읽음 위치(읽지 않음 스펙 「channel_reads (새 표·새 마이그레이션)」 절) — last_read_seq 는 커지기만 한다(modules/reads/store.ts markRead).
+ * 행이 없으면 0 으로 본다. 비활성화·보관은 행을 건드리지 않는다 — 다시 활성화·보관 해제하면 읽음 위치가 그대로 돌아온다
+ */
+export const channelReads = sqliteTable(
+  "channel_reads",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    channelId: text("channel_id")
+      .notNull()
+      .references(() => channels.id, { onDelete: "cascade" }),
+    lastReadSeq: integer("last_read_seq").notNull(),
+    updatedAt: ts("updated_at").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.channelId] })],
 );
 
 export const messages = sqliteTable(

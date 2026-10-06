@@ -13,6 +13,7 @@ import * as schema from "../src/db/schema.sqlite";
 import {
   agents,
   bridgeTokens,
+  channelReads,
   channels,
   gateways,
   invites,
@@ -85,7 +86,7 @@ const msg = (ch: string, seq: number, extra: Partial<typeof messages.$inferInser
 });
 
 describe("db", () => {
-  it("마이그레이션이 24개 테이블을 만든다(FTS5 그림자 테이블 제외)", () => {
+  it("마이그레이션이 25개 테이블을 만든다(FTS5 그림자 테이블 제외)", () => {
     const db = createDb(":memory:");
     const rows = db.all<{ name: string }>(sql`select name from sqlite_master where type = 'table'`);
     const names = rows
@@ -100,6 +101,7 @@ describe("db", () => {
       "attachments",
       "bridge_tokens",
       "channel_members",
+      "channel_reads",
       "channels",
       "component_interactions",
       "gateways",
@@ -671,6 +673,106 @@ describe("db", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("_channel_archive 까지 적용된 DB 에 channel_reads 를 얹으면 membership 이 있는 사용자(비활성 포함)만 그 워크스페이스 채널마다 last_seq 까지 읽음이다", () => {
+    const dir = mkdtempSync(join(tmpdir(), "dodok-db-mig-"));
+    try {
+      const older = migrationsUpTo(dir, "_channel_archive");
+      const sqlite = new Database(join(dir, "app.db"));
+      try {
+        const db = drizzle(sqlite, { schema: { ...schema, ...authSchema } });
+        migrate(db, { migrationsFolder: older });
+        const createdAt = Date.parse("2026-10-06T00:00:00.000Z");
+        // 옛 스키마에는 channel_reads 가 없다 — 스키마 객체 대신 SQL 로 넣는다
+        const insertWorkspace = sqlite.prepare(
+          "INSERT INTO workspaces (id, name, created_at) VALUES (?, 'w', ?)",
+        );
+        const insertUser = sqlite.prepare(
+          "INSERT INTO users (id, workspace_id, handle, display_name, auth_provider, created_at) VALUES (?, ?, ?, ?, 'local', ?)",
+        );
+        const insertMembership = sqlite.prepare(
+          "INSERT INTO memberships (id, workspace_id, user_id, role, deactivated_at) VALUES (?, ?, ?, 'member', ?)",
+        );
+        const insertChannel = sqlite.prepare(
+          'INSERT INTO channels (id, workspace_id, name, relay_policy_json, visibility, created_by, created_at, last_seq) VALUES (?, ?, ?, \'{"maxRelayTurns":4,"allowPairs":"all"}\', \'public\', ?, ?, ?)',
+        );
+        const ws = uuid();
+        const active = uuid();
+        const deactivated = uuid();
+        const outsider = uuid();
+        insertWorkspace.run(ws, createdAt);
+        insertUser.run(active, ws, "active", "Active", createdAt);
+        insertUser.run(deactivated, ws, "gone", "Gone", createdAt);
+        insertUser.run(outsider, ws, "outsider", "Outsider", createdAt);
+        insertMembership.run(uuid(), ws, active, null);
+        insertMembership.run(uuid(), ws, deactivated, createdAt);
+        const busy = uuid();
+        const quiet = uuid();
+        insertChannel.run(busy, ws, "busy", active, createdAt, 3);
+        insertChannel.run(quiet, ws, "quiet", active, createdAt, 0);
+        // 다른 워크스페이스의 멤버·채널 — 워크스페이스를 넘어 짝짓지 않는다
+        const ws2 = uuid();
+        const stranger = uuid();
+        const elsewhere = uuid();
+        insertWorkspace.run(ws2, createdAt);
+        insertUser.run(stranger, ws2, "stranger", "Stranger", createdAt);
+        insertMembership.run(uuid(), ws2, stranger, null);
+        insertChannel.run(elsewhere, ws2, "elsewhere", stranger, createdAt, 5);
+
+        const before = Date.now();
+        migrate(db, { migrationsFolder: migrationsFolder() });
+
+        const rows = db.select().from(channelReads).all();
+        const key = (r: { userId: string; channelId: string }) => `${r.userId}/${r.channelId}`;
+        expect(
+          rows.map((r) => ({ userId: r.userId, channelId: r.channelId, lastReadSeq: r.lastReadSeq })),
+        ).toEqual(
+          expect.arrayContaining([
+            { userId: active, channelId: busy, lastReadSeq: 3 },
+            { userId: active, channelId: quiet, lastReadSeq: 0 },
+            { userId: deactivated, channelId: busy, lastReadSeq: 3 },
+            { userId: deactivated, channelId: quiet, lastReadSeq: 0 },
+            { userId: stranger, channelId: elsewhere, lastReadSeq: 5 },
+          ]),
+        );
+        expect(rows).toHaveLength(5);
+        expect(new Set(rows.map(key)).size).toBe(5);
+        // 시각은 마이그레이션이 돈 때(초 단위) — ts 열로 읽힌다
+        for (const r of rows) {
+          expect(r.updatedAt).toBeInstanceOf(Date);
+          expect(r.updatedAt.getTime()).toBeGreaterThanOrEqual(Math.floor(before / 1000) * 1000);
+          expect(r.updatedAt.getTime()).toBeLessThanOrEqual(Date.now());
+        }
+        // (user_id, channel_id) 는 한 행 — 같은 짝을 다시 넣으면 거절
+        expect(() =>
+          db
+            .insert(channelReads)
+            .values({ userId: active, channelId: busy, lastReadSeq: 1, updatedAt: new Date() })
+            .run(),
+        ).toThrow(/UNIQUE|PRIMARY KEY/);
+      } finally {
+        sqlite.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("channel_reads 는 사용자·채널과 함께 지워진다(cascade)", () => {
+    const db = createDb(":memory:");
+    const { user, ch } = seed(db);
+    db.insert(channelReads)
+      .values({ userId: user, channelId: ch, lastReadSeq: 0, updatedAt: new Date() })
+      .run();
+    expect(() =>
+      db
+        .insert(channelReads)
+        .values({ userId: uuid(), channelId: ch, lastReadSeq: 0, updatedAt: new Date() })
+        .run(),
+    ).toThrow(/FOREIGN KEY/);
+    db.delete(channels).where(eq(channels.id, ch)).run();
+    expect(db.select().from(channelReads).all()).toEqual([]);
   });
 
   it("runs·approvals 의 제공자 id 는 연결 안에서만 유일하다", () => {
