@@ -361,6 +361,7 @@ docker compose -f infra/compose.yml logs app | grep '"event":"ops.'
 | wire `run.events.replay` | `wire.replay` | ack `RATE_LIMITED` |
 | wire `approval.resolve` | `wire.approval` | ack `RATE_LIMITED` |
 | wire `typing`·`presence.update` | `wire.chatter` | 조용히 버린다(ack 없음) |
+| wire `channel.read` | `wire.chatter`(typing·presence.update 와 소켓마다 한 버킷) | ack `RATE_LIMITED` — 웹은 버리고 다음 조건이 서면 다시 보낸다(서버 값은 커지기만 한다) |
 | wire 동시 소켓 | `socketsPerUser`(사용자당) | 새 연결을 핸드셰이크에서 거절 |
 | 러너가 보내는 `run.event` | `runner.events`(러너 소켓마다 토큰 버킷 — 정상 스트리밍이 걸리지 않는 숫자, 근거는 그 키의 주석) | 버린다. 서버 로그 warn `runner frames rate limited — dropped` 와 사건 key `runner:<프레임>` 은 **주소마다 1분에 한 번**, 그사이 버린 수(`dropped`)와 함께 |
 | 러너가 보내는 `hello`·`outbound.post`, 그리고 열린 런·기다리는 승인을 가리키지 않거나 서버가 받아들이지 않는(계약 위반·세션 키 불일치 등) `run.final`·`run.error`·`approval.*` | `runner.control`(같은 소켓의 둘째 버킷) | 같다 — `outbound.post` 는 ack `RATE_LIMITED`(에이전트의 `post` 도구가 실패로 받는다). 그 러너의 열린 런을 닫는 `run.final`·`run.error`, 그 런의 새 승인 요청(런마다 누계 32개까지 — 철회·결정으로 줄지 않는다, 러너 어댑터 `RUN_FREE_APPROVALS`), 기다리는 승인의 철회는 버킷을 세지 않는다 — `post` 가 버킷을 비워도 런이 `runMs` 까지 매달리지 않게 |
