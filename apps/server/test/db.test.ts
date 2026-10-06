@@ -86,7 +86,7 @@ const msg = (ch: string, seq: number, extra: Partial<typeof messages.$inferInser
 });
 
 describe("db", () => {
-  it("마이그레이션이 25개 테이블을 만든다(FTS5 그림자 테이블 제외)", () => {
+  it("마이그레이션이 26개 테이블을 만든다(FTS5 그림자 테이블 제외)", () => {
     const db = createDb(":memory:");
     const rows = db.all<{ name: string }>(sql`select name from sqlite_master where type = 'table'`);
     const names = rows
@@ -107,6 +107,7 @@ describe("db", () => {
       "gateways",
       "invites",
       "memberships",
+      "message_reactions",
       "messages",
       "messages_fts",
       "ops_events",
@@ -830,5 +831,94 @@ describe("db", () => {
     approval("g1");
     approval("g2");
     expect(() => approval("g2")).toThrow(/UNIQUE/);
+  });
+});
+
+describe("message_reactions 마이그레이션", () => {
+  it("0018 까지 적용된 DB 의 세션 행은 마이그레이션 뒤 reactions_seen_at 이 채워지고, 메시지·사용자를 지우면 리액션이 함께 지워진다", () => {
+    const dir = mkdtempSync(join(tmpdir(), "dodok-db-mig-"));
+    try {
+      const older = migrationsUpTo(dir, "_channel_reads");
+      const sqlite = new Database(join(dir, "app.db"));
+      try {
+        const db = drizzle(sqlite, { schema: { ...schema, ...authSchema } });
+        migrate(db, { migrationsFolder: older });
+        // 옛 스키마에는 reactions_seen_at 이 없다 — 지금 스키마의 insert 를 쓰지 않고 SQL 로 넣는다
+        const insertSession = sqlite.prepare(
+          "INSERT INTO agent_sessions (id, channel_id, agent_id, session_key, prompt_revision_at_start, thread_root_id) VALUES (?, ?, ?, ?, 1, ?)",
+        );
+        const [ch, ag] = [uuid(), uuid()];
+        // 이 줄은 세션 행만 있으면 된다 — 채널·에이전트 행 없이 넣으려고 외래 키를 잠시 끈다
+        sqlite.pragma("foreign_keys = OFF");
+        insertSession.run("s1", ch, ag, "k1", null);
+        insertSession.run("s2", ch, ag, "k2", uuid());
+        const before = Date.now();
+
+        migrate(db, { migrationsFolder: migrationsFolder() });
+
+        const rows = db
+          .select({ id: schema.agentSessions.id, at: schema.agentSessions.reactionsSeenAt })
+          .from(schema.agentSessions)
+          .all();
+        expect(rows).toHaveLength(2);
+        for (const r of rows) {
+          expect(r.at).not.toBeNull();
+          // 초 단위로 채워 마이그레이션 시각보다 1초 안쪽까지 앞설 수 있다
+          expect(r.at?.getTime()).toBeGreaterThan(before - 1000);
+        }
+
+        sqlite.pragma("foreign_keys = ON");
+        const ws = uuid();
+        const userId = uuid();
+        const msgId = uuid();
+        const createdAt = new Date("2026-10-07T00:00:00.000Z");
+        db.insert(workspaces).values({ id: ws, name: "w", createdAt }).run();
+        db.insert(users)
+          .values({
+            id: userId,
+            workspaceId: ws,
+            handle: "mia",
+            displayName: "m",
+            authProvider: "local",
+            createdAt,
+          })
+          .run();
+        db.insert(channels)
+          .values({
+            id: ch,
+            workspaceId: ws,
+            name: "c",
+            relayPolicy: { maxRelayTurns: 4, allowPairs: "all" },
+            visibility: "public",
+            createdBy: userId,
+            createdAt,
+          })
+          .run();
+        db.insert(messages)
+          .values({
+            id: msgId,
+            channelId: ch,
+            seq: 1,
+            kind: "normal",
+            authorType: "user",
+            authorId: userId,
+            bodyMd: "x",
+            mentions: { agents: [], users: [] },
+            createdAt,
+          })
+          .run();
+        const add = (emoji: string) =>
+          db.insert(schema.messageReactions).values({ messageId: msgId, userId, emoji, createdAt }).run();
+        add("👍");
+        expect(() => add("👍")).toThrow(/UNIQUE|PRIMARY/);
+        add("👎");
+        db.delete(messages).where(eq(messages.id, msgId)).run();
+        expect(db.select().from(schema.messageReactions).all()).toEqual([]);
+      } finally {
+        sqlite.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

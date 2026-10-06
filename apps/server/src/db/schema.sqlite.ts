@@ -172,6 +172,8 @@ export const agentSessions = sqliteTable(
     historyCursor: text("history_cursor"), // chat.history deltaCursor (오면 저장, 최적화용)
     lastSyncedAt: ts("last_synced_at"),
     threadRootId: text("thread_root_id"), // 스레드 하위 세션이면 그 루트 메시지 id, 채널 세션은 null
+    // 이 시각 뒤에 달린 리액션만 다음 런에 싣는다. null 이면 실을 것이 없는 것으로 읽는다 — 옛 리액션을 한꺼번에 싣는 쪽으로 틀리지 않게
+    reactionsSeenAt: ts("reactions_seen_at"),
   },
   (t) => [
     uniqueIndex("agent_sessions_channel_agent_thread").on(t.channelId, t.agentId, t.threadRootId),
@@ -359,6 +361,29 @@ export const componentInteractions = sqliteTable(
     deliveredAt: ts("delivered_at"),
   },
   (t) => [index("component_interactions_message").on(t.messageId)],
+);
+
+/**
+ * 사람이 메시지에 단 리액션 — 한 사람이 같은 이모지는 한 번뿐. created_at 은 에이전트에게 안 알린 것을 가르는 커서 비교에 쓴다.
+ * 사용자 행은 지워지지 않으므로(비활성화) 사용자 cascade 는 정합성용이다
+ */
+export const messageReactions = sqliteTable(
+  "message_reactions",
+  {
+    messageId: text("message_id")
+      .notNull()
+      .references(() => messages.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    emoji: text("emoji").notNull(),
+    createdAt: ts("created_at").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.messageId, t.userId, t.emoji] }),
+    index("message_reactions_message").on(t.messageId),
+    index("message_reactions_created").on(t.createdAt),
+  ],
 );
 
 /** 승인 계약(shared `Approval`, 설계 3.1)에 맞춘다. `runId` 는 없을 수 있다 — 승인 페이로드에 runId 가 없어 sessionKey 로 상관한다(스파이크 3.2). */

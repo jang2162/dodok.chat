@@ -28,6 +28,7 @@ import {
   listMembers,
   userMessageParticipants,
 } from "../channels/service";
+import { withReactions } from "../reactions/service";
 import { allocateSeq } from "./seq";
 
 /** listMessages 한 페이지 상한 */
@@ -185,9 +186,9 @@ export function withThreadSummaries(db: DbOrTx, msgs: Message[]): Message[] {
   });
 }
 
-/** 클라이언트가 볼 Message — 상호작용 기록과 스레드 요약. REST·구독 ack·wire 팬아웃이 쓴다 */
+/** 클라이언트가 볼 Message — 상호작용 기록·리액션·스레드 요약. REST·구독 ack·wire 팬아웃이 쓴다 */
 export function hydrateForClient(db: DbOrTx, msgs: Message[]): Message[] {
-  return withThreadSummaries(db, withInteractions(db, msgs));
+  return withThreadSummaries(db, withReactions(db, withInteractions(db, msgs)));
 }
 
 /**
