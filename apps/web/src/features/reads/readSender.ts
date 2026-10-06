@@ -31,7 +31,7 @@ export function createReadSender(
   function flush(channelId: string): void {
     const w = waiting.get(channelId);
     waiting.delete(channelId);
-    // 모으는 사이에 앞 요청의 응답이 더 큰 위치를 알려 왔을 수 있다
+    // 이미 저장된 위치 이하는 보내지 않는다 — 보내는 때에 보아야 모으는 사이에 닿은 앞 응답까지 거른다
     if (!w || disposed || w.seq <= done(channelId)) return;
     emit({ channelId, seq: w.seq }).then(
       ({ lastReadSeq }) => stored.set(channelId, Math.max(done(channelId), w.seq, lastReadSeq)),
@@ -41,7 +41,7 @@ export function createReadSender(
 
   return {
     request(channelId, seq) {
-      if (disposed || seq <= done(channelId)) return;
+      if (disposed) return;
       const w = waiting.get(channelId);
       if (w) {
         w.seq = Math.max(w.seq, seq);
