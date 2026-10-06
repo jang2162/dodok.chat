@@ -707,6 +707,48 @@ describe("채널 진입의 「새 메시지」 구분선", () => {
     expect(line()).toBeNull();
   });
 
+  it("안 읽은 채널은 구분선이 위쪽에 오게 열고, 패널을 여닫아도 다시 끌고 가지 않으며, 떠났다 돌아오면 다시 내려앉는다(처음 한 번만)", async () => {
+    const long = Array.from({ length: 60 }, (_, i) =>
+      msg(i + 1, { authorId: uid(77), bodyMd: `긴 글 ${i + 1}` }),
+    );
+    // 읽음 40, 최신 60 — 날짜 구분선 1 + 메시지 40 개 뒤가 「새 메시지」 행이고 그 행은 위에서 128px 아래에 선다
+    act(() => {
+      useUnread.getState().beginSnapshot();
+      useUnread.getState().applySnapshot({
+        channels: [{ channelId: CH, lastReadSeq: 40, latestSeq: 60, unread: true, mentions: 0 }],
+      });
+    });
+    const qc = channelClient(long);
+    qc.setQueryData(qk.timeline(CH), { ...emptyTimeline(), items: long, lastSeq: 60 });
+    const s = { request: vi.fn(), dispose: vi.fn() };
+    const { router } = renderRoute(`/c/${CH}`, qc, (children) => (
+      <ReadSenderContext.Provider value={s}>{children}</ReadSenderContext.Provider>
+    ));
+    const top = () => channelList().scrollTop;
+    await screen.findByRole("separator", { name: "새 메시지" });
+    await waitFor(() => expect(top()).toBe(41 * 64 - 128));
+    expect(s.request).not.toHaveBeenCalled();
+
+    // 사용자가 조금 올려 둔 채 패널을 열었다 닫아도 그 자리다
+    await act(async () => {
+      channelList().dispatchEvent(new Event("wheel"));
+      channelList().scrollTop = 1000;
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    await act(() => router.navigate({ to: "/c/$channelId/activity", params: { channelId: CH } }));
+    await act(() => router.navigate({ to: "/c/$channelId", params: { channelId: CH } }));
+    await act(() => new Promise((r) => setTimeout(r, 120)));
+    expect(top()).toBe(1000);
+    expect(s.request).not.toHaveBeenCalled();
+
+    // 채널을 떠났다 돌아오면 그때 다시 — 읽음 위치는 그때 값(40)이다
+    await act(() => router.navigate({ to: "/settings/account" }));
+    await waitFor(() => expect(screen.queryByText("긴 글 60")).toBeNull());
+    await act(() => router.navigate({ to: "/c/$channelId", params: { channelId: CH } }));
+    await screen.findByRole("separator", { name: "새 메시지" });
+    await waitFor(() => expect(top()).toBe(41 * 64 - 128));
+  });
+
   it.each(["activity", "settings"])(
     "좁은 화면: %s 시트가 타임라인을 덮고 있으면 읽음을 보내지 않는다(스레드 시트만이 아니다)",
     async (tab) => {

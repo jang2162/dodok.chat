@@ -17,6 +17,7 @@ import { ApprovalCard } from "@/features/approvals/ApprovalCard";
 import { useChannelArchived } from "@/features/channels/archived";
 import { selectChannelApprovals, useApprovalStore } from "@/features/approvals/approvalStore";
 import { useReadAtEnd } from "@/features/reads/readSender";
+import { useUnread } from "@/features/reads/useUnread";
 import { useRunStore } from "@/features/runs/runStore";
 import { cn } from "@/lib/utils";
 import { Button } from "@/ui/button";
@@ -39,6 +40,10 @@ const SETTLE_FRAMES = 3;
 const SETTLE_MAX_MS = 1_000;
 /** 이 중 하나라도 오면 사용자가 스크롤을 잡은 것이다 — 첫 붙임을 그만둔다 */
 const HANDS_ON = ["wheel", "touchstart", "keydown", "pointerdown"] as const;
+/** 안 읽은 채널을 열 때 「새 메시지」 구분선이 뷰포트 위에서 이만큼 아래에 선다 — 앞 메시지 한두 줄(머리가 있는 줄 약 60px × 2)이 위에 남아 어디서 이어지는지 보인다 */
+const UNREAD_CONTEXT_PX = 128;
+/** 이어 받기를 기다리며 읽음을 붙잡는 가장 긴 시간 — 응답이 끝내 안 오면 놓는다 */
+const AWAIT_UNREAD_MAX_MS = 5_000;
 const NO_RUNS: readonly string[] = [];
 const DAY = new Intl.DateTimeFormat("ko-KR", { dateStyle: "full" });
 
@@ -48,7 +53,7 @@ export type MessageListProps = {
   threadRootId?: string;
   /** 좁은 화면의 패널 시트가 이 목록을 덮고 있다 — 끝이 보이는 것으로 치지 않는다(읽음을 보내지 않는다) */
   covered?: boolean;
-  /** 채널에 들어갈 때 잡은 읽음 위치(`captureEntryRead`) — 없으면 「새 메시지」 구분선도 배너도 없다. 스레드 패널은 넘기지 않는다 */
+  /** 채널에 들어갈 때 잡은 읽음 위치(`captureEntryRead`) — 없으면 「새 메시지」 구분선도 배너도 없고 끝에서 연다. 있으면 구분선이 받은 행 안일 때 그 선에서 연다. 스레드 패널은 넘기지 않는다 */
   entryReadSeq?: number;
   /** 태스크 8: 보일 스트리밍 버블의 runId(순서대로) 와 그 버블 */
   bubbleRunIds?: readonly string[];
@@ -119,10 +124,21 @@ function ChannelMessages({
     stuckRef.current = next;
     setStuckState(next);
   }, []);
-  const unseen = useUnseen(timeline, stuck);
+  const [unseen, setSeen] = useUnseen(timeline, stuck, stuckRef);
   const older = useOlderPages(channelId, threadRootId);
   const newer = useNewerPages(channelId, threadRootId, hasNewer);
   const qc = useQueryClient();
+
+  // 구분선이 있는 채널은 처음 위치를 정하기 전까지 끝 보임으로 치지 않는다 — 첫 렌더의 `stuck`(true) 가 읽음 요청을 먼저 내보내지 않게
+  const entryTracked = threadRootId === undefined && entryReadSeq !== undefined;
+  const [entryHold, setEntryHold] = useState(entryTracked);
+  /** 캐시가 낡은 채로 열렸다 — 서버가 아는 최신 seq. 이어 받기가 그 구분선을 만들 때까지 기다린다(없으면 undefined) */
+  const [awaitSeq, setAwaitSeq] = useState<number>();
+  /** 첫 붙임이 겨누는 곳 — 안 읽은 곳(「새 메시지」 행)이면 true, 아니면 맨 아래 */
+  const aimUnread = useRef(false);
+  const [aimNonce, setAimNonce] = useState(0);
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
 
   const positioned = useRef(false);
   /** 첫 붙임을 놓을 시각(performance.now 기준). 0 이면 끝났거나 사용자가 잡았다 — 효과가 다시 돌아도 되살아나지 않는다 */
@@ -131,6 +147,7 @@ function ChannelMessages({
   const arrive = useCallback(
     (index: number) => {
       settleUntil.current = 0;
+      aimUnread.current = false;
       setStuck(false);
       virtualizer.scrollToIndex(index, { align: "center" });
     },
@@ -153,7 +170,7 @@ function ChannelMessages({
   useReadAtEnd(
     channelId,
     threadRootId === undefined && !covered,
-    stuck && !hasNewer && !jump.pending,
+    stuck && !hasNewer && !jump.pending && !entryHold,
     timeline?.lastSeq ?? 0,
   );
 
@@ -164,22 +181,92 @@ function ChannelMessages({
   // virtual-core 가 줄어든 총 높이를 보정할 때 아직 한 번도 못 본 스크롤 오프셋(0)에서 빼는 것으로 보인다.
   // 그래서 총 높이가 잦아들 때까지 프레임마다 끝에 다시 붙인다. 사용자가 손을 대면 그 자리에서 멈춘다 —
   // 스스로 위로 올린 사람을 끌어내리지 않는다(스펙 5.5: 맨 아래에 붙어 있을 때만 따라간다).
-  // 결과로 가기 목표를 안고 열렸으면 끝으로 가지 않는다 — 그 메시지로 간다(`useJump`)
+  // 결과로 가기 목표를 안고 열렸으면 끝으로 가지 않는다 — 그 메시지로 간다(`useJump`).
+  // 안 읽은 채널은 끝이 아니라 첫 안 읽은 곳 — 「새 메시지」 행이 뷰포트 위쪽(`UNREAD_CONTEXT_PX`)에 오게 같은 방식으로 붙인다.
+  // 그때는 끝에 붙지 않았으므로 읽음이 가지 않는다(끝까지 내리면 간다). 구분선과 끝이 한 화면에 다 보이면 끝에 붙은 것이다.
+  // 행이 아직 없으면(캐시가 읽음 위치까지만 있고 이어 받기가 구분선을 만드는 중) 끝으로 열어 두고 그 행이 생길 때 한 번 내려앉는다.
+  // 처음 한 번만이다 — 그 뒤의 새 글·과거 페이지·패널 여닫기는 다시 끌고 가지 않는다
   const jumpPending = jump.pending;
+  // 이어 받기를 기다리던 구분선이 생겼다 / 다 받았는데 안 생겼다(전부 내 글·답글) / 사용자가 손을 댔다·시간이 지났다
+  useLayoutEffect(() => {
+    if (awaitSeq === undefined) return;
+    if (rows.some((r) => r.kind === "unread")) {
+      setAwaitSeq(undefined);
+      aimUnread.current = true;
+      settleSoon();
+      setStuck(false);
+      setSeen(entryReadSeq ?? 0);
+      setEntryHold(false);
+      setAimNonce((n) => n + 1);
+    } else if ((timeline?.lastSeq ?? 0) >= awaitSeq) {
+      setAwaitSeq(undefined);
+      setEntryHold(false);
+    }
+  });
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (awaitSeq === undefined || !el) return;
+    const release = () => {
+      setAwaitSeq(undefined);
+      setEntryHold(false);
+    };
+    const timer = setTimeout(release, AWAIT_UNREAD_MAX_MS);
+    for (const type of HANDS_ON) el.addEventListener(type, release, { passive: true });
+    return () => {
+      clearTimeout(timer);
+      for (const type of HANDS_ON) el.removeEventListener(type, release);
+    };
+  }, [awaitSeq]);
+  // 보일 행이 하나도 없는 채널(답글뿐 등)은 붙잡을 것이 없다
+  const empty = timeline !== undefined && rows.length === 0;
+  useEffect(() => {
+    if (empty) setEntryHold(false);
+  }, [empty]);
+  function settleSoon() {
+    const win = scrollRef.current?.ownerDocument.defaultView;
+    if (win) settleUntil.current = win.performance.now() + SETTLE_MAX_MS;
+  }
   useLayoutEffect(() => {
     const el = scrollRef.current;
     const win = el?.ownerDocument.defaultView;
     if (!el || !win || rows.length === 0) return;
     const pin = () => {
-      el.scrollTop = el.scrollHeight - el.clientHeight;
+      if (!aimUnread.current) {
+        el.scrollTop = el.scrollHeight - el.clientHeight;
+        return;
+      }
+      const index = rowsRef.current.findIndex((r) => r.kind === "unread");
+      // `getOffsetForIndex` 는 스크롤 끝으로 잘라 돌려줘 끝 가까운 구분선의 자리가 틀어진다 — 행의 시작을 직접 읽는다(브라우저가 자른다)
+      const start = index < 0 ? undefined : virtualizer.measurementsCache[index]?.start;
+      if (start === undefined) return;
+      const top = Math.max(0, start - UNREAD_CONTEXT_PX);
+      virtualizer.scrollToOffset(top);
+      el.scrollTop = top;
+      // 구분선을 위에 둬도 끝이 함께 보이면(한 화면에 다 들어가는 안 읽음) 끝에 붙은 것이다
+      const atEnd = el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_PX;
+      if (atEnd !== stuckRef.current) setStuck(atEnd);
     };
     if (!positioned.current) {
       positioned.current = true;
       if (jumpPending) {
         settleUntil.current = 0;
+        setEntryHold(false);
         return;
       }
-      virtualizer.scrollToEnd();
+      if (entryTracked && rows.some((r) => r.kind === "unread")) {
+        aimUnread.current = true;
+        setStuck(false);
+        setSeen(entryReadSeq ?? 0);
+        setEntryHold(false);
+      } else {
+        if (entryTracked) {
+          // 서버는 안 읽은 것이 있다고 아는데 가진 목록이 거기까지 안 닿았다 — 이어 받기를 기다린다. 그동안 읽음을 보내지 않는다
+          const latest = useUnread.getState().byChannel[channelId]?.seenSeq ?? 0;
+          if (latest > (timeline?.lastSeq ?? 0)) setAwaitSeq(latest);
+          else setEntryHold(false);
+        }
+        virtualizer.scrollToEnd();
+      }
       pin();
       settleUntil.current = win.performance.now() + SETTLE_MAX_MS;
     }
@@ -207,10 +294,12 @@ function ChannelMessages({
       }
       raf = win.requestAnimationFrame(tick);
     };
+    // 구분선으로 내려앉는 때(이어 받기를 기다리다 행이 생긴 순간)는 앞서 걸린 끝 겨누기를 지금 바로 갈아 끼운다
+    if (aimUnread.current) pin();
     raf = win.requestAnimationFrame(tick);
     for (const type of HANDS_ON) el.addEventListener(type, handsOn, { passive: true });
     return stop;
-  }, [rows.length, virtualizer, jumpPending]);
+  }, [rows.length, virtualizer, jumpPending, aimNonce]);
 
   // 내가 보낸 항목이 붙으면 위를 보고 있었어도 끝으로. 떨어진 창이면 먼저 최신으로 — 보내는 중 항목은 늘 목록 끝이라
   // 창 뒤에 곧바로 붙으면 그 사이의 받지 않은 메시지가 보이지 않은 채 이어진 것처럼 보인다
@@ -236,8 +325,8 @@ function ChannelMessages({
   useLayoutEffect(() => {
     if (lastKey === prevLastKey.current) return;
     prevLastKey.current = lastKey;
-    if (stuck) virtualizer.scrollToEnd();
-  }, [lastKey, stuck, virtualizer]);
+    if (stuckRef.current) virtualizer.scrollToEnd();
+  }, [lastKey, virtualizer]);
 
   // 뷰포트가 줄면(연결 배너가 생기거나 창이 작아지면) 브라우저는 scrollTop 을 그대로 둬 끝에서 그만큼 떨어진다 —
   // 붙어 있는 동안에만 다시 겨눈다. 스스로 위로 올린 사람은 끌어내리지 않는다(스펙 5.5, 태스크 13 수정 라운드 규칙).
@@ -277,6 +366,9 @@ function ChannelMessages({
 
   // 칩은 누르면 사라진다 — 초점을 목록으로 옮겨 잃지 않게
   const toEnd = () => {
+    // 첫 붙임이 아직 구분선을 겨누고 있어도 그만둔다 — 끝으로 간 사람을 되끌지 않는다
+    settleUntil.current = 0;
+    aimUnread.current = false;
     setStuck(true);
     virtualizer.scrollToEnd();
     scrollRef.current?.focus({ preventScroll: true });
@@ -510,14 +602,22 @@ function Skeleton() {
  * 내 메시지는 세지 않는다(보낼 때 끝으로 간다). 기준은 가진 마지막 메시지의 seq — 사본에서 복원한 타임라인은
  * `lastSeq` 가 0 이라(첫 구독을 새로 받게) 그것을 쓰면 오프라인에서 위로 올리자마자 전부 새 메시지로 센다
  */
-function useUnseen(timeline: ReturnType<typeof useTimeline>, stuck: boolean): number {
+function useUnseen(
+  timeline: ReturnType<typeof useTimeline>,
+  stuck: boolean,
+  stuckRef: { readonly current: boolean },
+): [number, (seq: number) => void] {
   const me = useMe().data?.user.id;
   const lastSeq = timeline?.items.at(-1)?.seq ?? 0;
   const [seenSeq, setSeenSeq] = useState(lastSeq);
+  // 끝에 붙은 것은 지금 값(ref)으로 본다 — 처음 위치가 구분선이면 이 렌더의 `stuck` 은 아직 true 인데 이미 붙어 있지 않다
   useEffect(() => {
-    if (stuck && seenSeq !== lastSeq) setSeenSeq(lastSeq);
-  }, [stuck, lastSeq, seenSeq]);
-  if (stuck || !timeline) return 0;
-  return timeline.items.filter((m) => m.seq > seenSeq && !(m.authorType === "user" && m.authorId === me))
-    .length;
+    if (stuckRef.current && seenSeq !== lastSeq) setSeenSeq(lastSeq);
+  }, [stuck, stuckRef, lastSeq, seenSeq]);
+  const unseen =
+    stuck || !timeline
+      ? 0
+      : timeline.items.filter((m) => m.seq > seenSeq && !(m.authorType === "user" && m.authorId === me))
+          .length;
+  return [unseen, setSeenSeq];
 }
