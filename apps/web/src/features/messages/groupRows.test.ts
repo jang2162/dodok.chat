@@ -309,4 +309,9 @@ describe("groupRows 「새 메시지」 구분선", () => {
       expect(kinds(rows)).toEqual(["unread", "message", "message"]);
     });
   });
+
+  it("다 불러온 목록(hasOlder 아님)이면 맨 앞이 entryReadSeq + 1 보다 뒤여도 자리가 정해졌다", () => {
+    const rows = withUnread([theirs(5), theirs(6, "2027-01-15T08:00:10Z")], 3);
+    expect(kinds(rows)).toEqual(["divider", "unread", "message", "message"]);
+  });
 });

@@ -864,8 +864,12 @@ describe("MessageList 「새 메시지」 구분선·페이지 밖 배너", () =
       [firstRootUrl(11)]: { messages: [], hasMore: false },
       [latestUrl]: { messages: range(51, 100), hasMore: true },
     });
-    const { fromEnd } = setupEntry(timelineOf(range(51, 100), true), 11);
+    const { fromEnd, scrollTo } = setupEntry(timelineOf(range(51, 100), true), 11);
     await screen.findByText("본문 100");
+    await pastVirtualizerReconcile();
+    // 위로 올려 본 채 누른다 — 끝으로 가는 것은 받은 페이지가 아니라 「최신 메시지로」와 같은 이동이다
+    await scrollTo(1000);
+    expect(fromEnd()).toBeGreaterThan(0);
     await userEvent.click(banner() as HTMLElement);
     await waitFor(() => expect(urls()).toContain(latestUrl));
     await waitFor(() => expect(banner()).toBeNull());
