@@ -68,6 +68,25 @@ export async function jumpToSeq(
   });
 }
 
+/**
+ * 채널의 「처음 안 읽은 곳으로」 — 읽음 위치 뒤 첫 루트를 가운데 둔 페이지로 갈아 끼우고 true. `readSeq + 1` 을 바로 `around` 로
+ * 주지 않는다: 스레드 답글은 채널 읽음을 올리지 않아 그 seq 가 옛 스레드의 늦은 답글인 일이 흔하고, 그러면 서버가 그 옛 루트를
+ * 가운데 두어 읽은 창이 온다. 뒤에 루트가 없으면(안 읽은 것이 답글뿐) 최신 페이지로 새로 시작하고 false
+ */
+export async function jumpToFirstRootAfter(
+  qc: QueryClient,
+  channelId: string,
+  readSeq: number,
+): Promise<boolean> {
+  const first = (await restFetchPage(channelId, { afterSeq: readSeq, limit: 1 })).messages[0];
+  if (first === undefined) {
+    await loadLatest(qc, channelId);
+    return false;
+  }
+  await jumpToSeq(qc, channelId, first.seq);
+  return true;
+}
+
 /** 떨어진 창(`hasNewer`)의 아래로 이어 받기 — 가장 새 항목 뒤를 한 쪽. 더 없으면 창이 끝에 닿는다 */
 export async function loadNewer(qc: QueryClient, channelId: string, threadRootId?: string): Promise<void> {
   const newest = read(qc, channelId, threadRootId)?.items.at(-1);

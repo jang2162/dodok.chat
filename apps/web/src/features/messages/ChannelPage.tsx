@@ -38,7 +38,8 @@ export function ChannelPage() {
   const settingsRef = useRef<HTMLAnchorElement>(null);
   // 칩·「스레드에서 답하기」로 연 스레드는 닫으면 그 자리로 초점을 돌려준다(p4t-c1, m5)
   const threadOpenerRef = useRef<ThreadOpener>(null);
-  // 구분선의 기준은 들어갈 때 한 번만 잡는다 — 읽음이 올라도, 스냅숏이 늦게 와도 떠날 때까지 그대로(스냅숏 전이면 없음)
+  // 구분선의 기준을 채널에 들어갈 때 한 번 잡는다(`captureEntryRead`). 채널을 옮겨도 이 페이지는 다시 마운트되지 않는다 —
+  // 그래서 첫 값만 잡지 않고 채널이 바뀌면 렌더 중에 다시 잡는다
   const [entry, setEntry] = useState(() => ({ channelId, seq: captureEntryRead(channelId) }));
   if (entry.channelId !== channelId) setEntry({ channelId, seq: captureEntryRead(channelId) });
   const entryReadSeq = entry.channelId === channelId ? entry.seq : undefined;

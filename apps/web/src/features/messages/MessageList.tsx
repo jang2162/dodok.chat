@@ -21,7 +21,7 @@ import { useRunStore } from "@/features/runs/runStore";
 import { cn } from "@/lib/utils";
 import { Button } from "@/ui/button";
 import { groupRows, type Row } from "./groupRows";
-import { jumpToSeq, loadLatest } from "./jump";
+import { jumpToFirstRootAfter, loadLatest } from "./jump";
 import { MessageErrorBoundary } from "./MessageErrorBoundary";
 import { MessageItem } from "./MessageItem";
 import { PendingItem } from "./PendingItem";
@@ -137,15 +137,15 @@ function ChannelMessages({
     [setStuck, virtualizer],
   );
   const jump = useJump(channelId, threadRootId, timeline, rows, arrive);
-  // 배너로 받은 창에서 첫 안 읽은 곳(구분선 행)으로 — 행은 받은 창이 목록에 반영된 뒤에야 생긴다
+  // 배너로 받은 창에서 첫 안 읽은 곳(구분선 행)으로 — 행은 받은 창이 목록에 반영된 뒤에야 생긴다. 받은 창에서 한 번만 찾는다:
+  // 없다고 남겨 두면 나중에 다른 창(이어 받기·과거 페이지)에 구분선이 생기는 순간 보던 자리를 그리로 끌고 간다
   const [toUnread, setToUnread] = useState(false);
   const [bannerGone, setBannerGone] = useState(false);
   useEffect(() => {
     if (!toUnread) return;
-    const index = rows.findIndex((r) => r.kind === "unread");
-    if (index < 0) return;
     setToUnread(false);
-    arrive(index);
+    const index = rows.findIndex((r) => r.kind === "unread");
+    if (index >= 0) arrive(index);
   }, [toUnread, rows, arrive]);
   // 「끝이 보임」은 붙어 있음(`stuck`)이다. 그 처음 값(true)은 스크롤하기 전 값이라 떨어진 창과 결과로 가기 목표를 따로 뺀다 —
   // 떨어진 창의 아래 끝은 진짜 끝이 아니고(`lastSeq` 는 창이 아니라 채널의 끝이라 보내면 받지 않은 메시지까지 읽음이 된다),
@@ -291,20 +291,27 @@ function ChannelMessages({
     toEnd();
   };
 
-  // 처음 안 읽은 곳이 불러온 가장 옛 메시지보다 앞이면 목록 안에서는 닿을 수 없다 — 결과로 가기와 같은 길로 그 창을 받는다
+  // 처음 안 읽은 곳이 불러온 가장 옛 메시지보다 앞이면 불러온 목록에 없다 — 그곳을 가운데 둔 창을 받는다.
+  // 구독 응답 전(`lastSeq` 0 — 사본에서 복원한 타임라인)에는 띄우지 않는다: 받은 창을 뒤이은 `fresh` 가 최신 쪽으로 덮는다(`useJump` 와 같다)
   const oldestSeq = timeline?.items[0]?.seq;
   const showBanner =
-    entryReadSeq !== undefined && !bannerGone && oldestSeq !== undefined && entryReadSeq + 1 < oldestSeq;
+    entryReadSeq !== undefined &&
+    !bannerGone &&
+    (timeline?.lastSeq ?? 0) > 0 &&
+    oldestSeq !== undefined &&
+    entryReadSeq + 1 < oldestSeq;
   const toFirstUnread = async () => {
     if (entryReadSeq === undefined) return;
+    let found: boolean;
     try {
-      await jumpToSeq(qc, channelId, entryReadSeq + 1);
+      found = await jumpToFirstRootAfter(qc, channelId, entryReadSeq);
     } catch (e) {
       reportPageError(e);
       return;
     }
     setBannerGone(true);
-    setToUnread(true);
+    if (found) setToUnread(true);
+    else toEnd();
   };
 
   if (!timeline) return <Skeleton />;

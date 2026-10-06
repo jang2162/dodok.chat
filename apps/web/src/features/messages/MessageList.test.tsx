@@ -681,21 +681,53 @@ describe("MessageList 읽음 전송", () => {
 
 describe("MessageList 「새 메시지」 구분선·페이지 밖 배너", () => {
   const aroundUrl = (seq: number) => `/api/v1/channels/${CH}/messages?limit=50&around=${seq}`;
+  const firstRootUrl = (seq: number) => `/api/v1/channels/${CH}/messages?limit=1&afterSeq=${seq}`;
+  const latestUrl = `/api/v1/channels/${CH}/messages?limit=50`;
+  /** 내가 쓴 최상위 글 seq from..to */
+  const mine = (from: number, to: number): Message[] =>
+    Array.from({ length: to - from + 1 }, (_, i) => msg(from + i, { bodyMd: `내 글 ${from + i}` }));
+  const ok = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
+  /** url → 응답. 없는 url 은 500 */
+  const serve = (routes: Record<string, unknown>) =>
+    fetchMock.mockImplementation(async (input) => {
+      const body = routes[String(input)];
+      return body === undefined ? new Response("{}", { status: 500 }) : ok(body);
+    });
+  const urls = () => fetchMock.mock.calls.map((c) => String(c[0]));
 
-  beforeEach(() => useUnread.getState().reset());
-  afterEach(() => useUnread.getState().reset());
+  beforeEach(() => {
+    useWireStatus.setState({ status: "connected" });
+    useUnread.getState().reset();
+  });
+  afterEach(() => {
+    useWireStatus.setState({ status: "idle" });
+    useUnread.getState().reset();
+  });
 
   function setupEntry(t: Timeline, entryReadSeq: number | undefined) {
+    const sender = { request: vi.fn(), dispose: vi.fn() };
     const qc = authorsClient();
     qc.setQueryData(qk.timeline(CH), t);
     const view = renderWithClient(
-      <MessageList channelId={CH} entryReadSeq={entryReadSeq} initialRect={RECT} />,
+      <ReadSenderContext.Provider value={sender}>
+        <MessageList channelId={CH} entryReadSeq={entryReadSeq} initialRect={RECT} />
+      </ReadSenderContext.Provider>,
       qc,
     );
-    return { ...view, qc };
+    const scroller = () => view.container.querySelector<HTMLElement>("[data-scroller]") as HTMLElement;
+    const scrollTo = async (top: number) => {
+      await act(async () => {
+        scroller().dispatchEvent(new Event("wheel"));
+        scroller().scrollTop = top;
+        await new Promise((r) => setTimeout(r, 10));
+      });
+    };
+    const fromEnd = () => scroller().scrollHeight - scroller().scrollTop - scroller().clientHeight;
+    return { ...view, qc, sender, scroller, scrollTo, fromEnd };
   }
   const separator = () => screen.queryByRole("separator", { name: "새 메시지" });
   const banner = () => screen.queryByRole("button", { name: /안 읽은 메시지가 더 있어요/ });
+  const items = (qc: ReturnType<typeof authorsClient>) => qc.getQueryData<Timeline>(qk.timeline(CH))?.items;
 
   it("entryReadSeq 뒤 첫 남의 글 앞에 「새 메시지」 구분선이 선다", async () => {
     setupEntry(timelineOf(range(1, 40)), 38);
@@ -717,6 +749,14 @@ describe("MessageList 「새 메시지」 구분선·페이지 밖 배너", () =
     expect(separator()).toBeInTheDocument();
   });
 
+  it("들어간 뒤 내가 쓴 최상위 글 앞에는 구분선이 서지 않는다", async () => {
+    const { qc } = setupEntry(timelineOf(range(1, 40)), 40);
+    await screen.findByText("본문 40");
+    act(() => updateTimeline(qc, CH, (t) => upsert(t, mine(41, 41)[0] as Message)));
+    await screen.findByText("내 글 41");
+    expect(separator()).toBeNull();
+  });
+
   it("entryReadSeq 가 없으면 구분선도 배너도 없다", async () => {
     setupEntry(timelineOf(range(51, 100), true), undefined);
     await screen.findByText("본문 100");
@@ -730,25 +770,110 @@ describe("MessageList 「새 메시지」 구분선·페이지 밖 배너", () =
     expect(banner()).toBeNull();
   });
 
-  it("entryReadSeq + 1 이 가장 옛 seq 보다 앞이면 배너 — 누르면 entryReadSeq + 1 을 가운데로 받고, 한 번 누르면 사라진다", async () => {
-    fetchMock.mockImplementation(async (input) =>
-      String(input) === aroundUrl(12)
-        ? new Response(JSON.stringify({ messages: range(1, 30), hasMore: false, hasMoreAfter: true }), {
-            status: 200,
-          })
-        : new Response("{}", { status: 500 }),
-    );
+  it("불러온 목록이 일부이고 그 맨 앞이 entryReadSeq + 1 보다 뒤면 구분선 없이 배너만 — 둘이 함께 뜨지 않는다", async () => {
+    setupEntry(timelineOf(range(51, 100), true), 11);
+    await screen.findByText("본문 100");
+    expect(banner()).toBeInTheDocument();
+    expect(separator()).toBeNull();
+  });
+
+  it("구독 응답 전(사본에서 복원한 타임라인, lastSeq 0)에는 배너가 없다 — 응답을 받으면 뜬다", async () => {
+    const { qc } = setupEntry({ ...timelineOf(range(51, 100), true), lastSeq: 0 }, 11);
+    await screen.findByText("본문 100");
+    expect(banner()).toBeNull();
+    act(() => qc.setQueryData(qk.timeline(CH), timelineOf(range(51, 100), true)));
+    expect(await screen.findByRole("button", { name: /안 읽은 메시지가 더 있어요/ })).toBeInTheDocument();
+  });
+
+  it("배너를 누르면 entryReadSeq 뒤 첫 루트를 물어 그 seq 를 가운데로 받고(답글 seq 가 아니라), 구분선으로 간다", async () => {
+    // 12·13 은 옛 스레드의 답글 — 첫 루트는 14
+    serve({
+      [firstRootUrl(11)]: { messages: range(14, 14), hasMore: true },
+      [aroundUrl(14)]: { messages: range(1, 38), hasMore: false, hasMoreAfter: true },
+    });
     const { qc } = setupEntry(timelineOf(range(51, 100), true), 11);
     await screen.findByText("본문 100");
     await userEvent.click(banner() as HTMLElement);
-    await waitFor(() => expect(fetchMock.mock.calls.map((c) => String(c[0]))).toContain(aroundUrl(12)));
-    await waitFor(() => expect(banner()).toBeNull());
-    expect(qc.getQueryData<Timeline>(qk.timeline(CH))?.items[0]?.seq).toBe(1);
-    // 받은 창에서 첫 안 읽은 글(12) 앞에 구분선이 있고 그 자리로 간다
-    expect(await screen.findByRole("separator", { name: "새 메시지" })).toBeInTheDocument();
+    await waitFor(() => expect(items(qc)?.[0]?.seq).toBe(1));
+    expect(urls()).toEqual([firstRootUrl(11), aroundUrl(14)]);
+    const line = await screen.findByRole("separator", { name: "새 메시지" });
+    expect(line.closest("[data-index]")?.nextElementSibling).toHaveTextContent("본문 12");
+    expect(banner()).toBeNull();
   });
 
-  it("배너로 가기가 실패하면 기존 페이지 오류 보고(토스트)로 간다", async () => {
+  it("배너는 한 번 누르면 사라진다 — 「최신 메시지로」로 돌아와 조건이 다시 참이어도 다시 뜨지 않는다", async () => {
+    serve({
+      [firstRootUrl(11)]: { messages: range(12, 12), hasMore: true },
+      [aroundUrl(12)]: { messages: range(1, 36), hasMore: false, hasMoreAfter: true },
+      [latestUrl]: { messages: range(51, 100), hasMore: true },
+    });
+    const { qc } = setupEntry(timelineOf(range(51, 100), true), 11);
+    await screen.findByText("본문 100");
+    await userEvent.click(banner() as HTMLElement);
+    await waitFor(() => expect(items(qc)?.[0]?.seq).toBe(1));
+    await userEvent.click(screen.getByRole("button", { name: /최신 메시지로/ }));
+    await waitFor(() => expect(items(qc)?.[0]?.seq).toBe(51));
+    await act(() => new Promise((r) => setTimeout(r, 20)));
+    expect(banner()).toBeNull();
+  });
+
+  it("받은 창에 안 읽은 글이 없으면 이동을 거둔다 — 「최신 메시지로」 뒤에는 끝에 붙고 읽음을 보낸다", async () => {
+    // 첫 루트를 가운데 둔 창이 와도 그 안이 다 읽은 글이면(경합 등) 구분선 행이 없다
+    serve({
+      [firstRootUrl(30)]: { messages: range(31, 31), hasMore: true },
+      [aroundUrl(31)]: { messages: range(1, 30), hasMore: false, hasMoreAfter: true },
+      [latestUrl]: { messages: range(51, 100), hasMore: true },
+    });
+    const { qc, sender, fromEnd } = setupEntry(timelineOf(range(51, 100), true), 30);
+    await screen.findByText("본문 100");
+    await userEvent.click(banner() as HTMLElement);
+    await waitFor(() => expect(items(qc)?.[0]?.seq).toBe(1));
+    expect(separator()).toBeNull();
+    expect(banner()).toBeNull();
+    sender.request.mockClear();
+
+    await userEvent.click(screen.getByRole("button", { name: /최신 메시지로/ }));
+    await waitFor(() => expect(sender.request).toHaveBeenCalledWith(CH, 100));
+    expect(fromEnd()).toBe(0);
+  });
+
+  it("받은 창에 구분선이 없었으면 뒤에 이어 받은 쪽에 구분선이 생겨도 보던 자리를 끌고 가지 않는다", async () => {
+    // 첫 루트 뒤가 내 글뿐인 창 — 받은 창의 아래 끝에 머물러 다음 쪽을 이어 받고, 거기서 처음 남의 글(61)이 나온다
+    serve({
+      [firstRootUrl(30)]: { messages: mine(31, 31), hasMore: true },
+      [aroundUrl(31)]: { messages: [...range(6, 30), ...mine(31, 55)], hasMore: true, hasMoreAfter: true },
+      [`/api/v1/channels/${CH}/messages?limit=50&afterSeq=55`]: {
+        messages: [...mine(56, 60), ...range(61, 100)],
+        hasMore: true,
+      },
+    });
+    const { qc, scroller } = setupEntry(timelineOf(range(61, 100), true), 30);
+    await screen.findByText("본문 100");
+    await pastVirtualizerReconcile();
+    await userEvent.click(banner() as HTMLElement);
+    await waitFor(() => expect(items(qc)?.at(-1)?.seq).toBe(100));
+    expect(items(qc)?.[0]?.seq).toBe(6);
+    await act(() => new Promise((r) => setTimeout(r, 50)));
+    expect(separator()).toBeInTheDocument();
+    // 받은 창(메시지 50행)의 아래 끝 그대로 — 끌려가면 61 앞 구분선이 가운데로 온다
+    expect(scroller().scrollTop).toBe(50 * ROW - RECT.height);
+  });
+
+  it("첫 루트 뒤에 루트가 없으면(안 읽은 것이 답글뿐) 「최신 메시지로」처럼 끝으로 간다", async () => {
+    serve({
+      [firstRootUrl(11)]: { messages: [], hasMore: false },
+      [latestUrl]: { messages: range(51, 100), hasMore: true },
+    });
+    const { fromEnd } = setupEntry(timelineOf(range(51, 100), true), 11);
+    await screen.findByText("본문 100");
+    await userEvent.click(banner() as HTMLElement);
+    await waitFor(() => expect(urls()).toContain(latestUrl));
+    await waitFor(() => expect(banner()).toBeNull());
+    expect(urls().some((u) => u.includes("around="))).toBe(false);
+    await waitFor(() => expect(fromEnd()).toBe(0));
+  });
+
+  it("배너로 가기가 실패하면 기존 페이지 오류 보고(토스트)로 가고 배너는 남는다(다시 누를 수 있다)", async () => {
     const error = vi.spyOn(toast, "error");
     fetchMock.mockImplementation(
       async () => new Response(JSON.stringify({ code: "INTERNAL", message: "터졌다" }), { status: 500 }),
@@ -757,5 +882,26 @@ describe("MessageList 「새 메시지」 구분선·페이지 밖 배너", () =
     await screen.findByText("본문 100");
     await userEvent.click(banner() as HTMLElement);
     await waitFor(() => expect(error).toHaveBeenCalledWith("터졌다"));
+    expect(banner()).toBeInTheDocument();
   });
+
+  it.each([
+    // 과거 페이지가 읽음 위치까지 닿았다 — 날짜 구분선 1 + 메시지 50 + 「새 메시지」 1 이 위에 붙는다
+    { entryReadSeq: 11, hasMore: false, added: 52 },
+    // 더 옛 것이 남은 채 맨 앞(1)이 읽음 위치 + 1 — 맨 위 날짜 구분선 없이 「새 메시지」 1 + 메시지 50
+    { entryReadSeq: 0, hasMore: true, added: 51 },
+  ])(
+    "entryReadSeq $entryReadSeq: 맨 위 근처에서 과거 페이지를 붙여도 보던 행의 자리를 지킨다(맨 위 구분선이 기준 행이 되지 않는다)",
+    async ({ entryReadSeq, hasMore, added }) => {
+      serve({
+        [`/api/v1/channels/${CH}/messages?limit=50&beforeSeq=51`]: { messages: range(1, 50), hasMore },
+      });
+      const { qc, scroller, scrollTo } = setupEntry(timelineOf(range(51, 100), true), entryReadSeq);
+      await waitFor(() => expect(scroller().scrollTop).toBeGreaterThan(0));
+      await scrollTo(30);
+      await waitFor(() => expect(items(qc)).toHaveLength(100));
+      await waitFor(() => expect(scroller().scrollTop).toBe(30 + added * ROW));
+      expect(screen.getByText("본문 51")).toBeInTheDocument();
+    },
+  );
 });

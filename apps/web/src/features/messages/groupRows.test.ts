@@ -289,4 +289,24 @@ describe("groupRows 「새 메시지」 구분선", () => {
     const rows = withUnread([theirs(1), theirs(2, "2027-01-16T08:00:00Z")], 1);
     expect(kinds(rows)).toEqual(["divider", "message", "divider", "unread", "message"]);
   });
+
+  describe("불러온 목록이 일부(hasOlder)", () => {
+    const partial = (first: number, entryReadSeq: number) =>
+      groupRows(
+        timeline({ items: [theirs(first), theirs(first + 1, "2027-01-15T08:00:10Z")], hasOlder: true }),
+        [],
+        [],
+        TZ,
+        { entryReadSeq, me: USER },
+      );
+
+    it("맨 앞이 entryReadSeq + 1 보다 뒤면 행이 없다 — 첫 안 읽은 곳은 아직 안 불러온 쪽이다(배너가 맡는다)", () => {
+      expect(unreadAt(partial(5, 3))).toBe(-1);
+    });
+
+    it("맨 앞이 entryReadSeq + 1 이면 자리가 정해졌다 — 그 앞에 선다", () => {
+      const rows = partial(5, 4);
+      expect(kinds(rows)).toEqual(["unread", "message", "message"]);
+    });
+  });
 });

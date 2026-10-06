@@ -22,6 +22,7 @@ import {
   AGENT,
   approval,
   CH,
+  CH2,
   msg,
   RUN,
   RUN2,
@@ -646,6 +647,42 @@ describe("채널 진입의 「새 메시지」 구분선", () => {
     act(() => useUnread.getState().applyRead({ channelId: CH, lastReadSeq: 4 }, { listed: true }));
     await act(() => router.navigate({ to: "/settings/account" }));
     await waitFor(() => expect(screen.queryByText("남의 글 4")).toBeNull());
+    await act(() => router.navigate({ to: "/c/$channelId", params: { channelId: CH } }));
+    await screen.findByText("남의 글 4");
+    expect(line()).toBeNull();
+  });
+
+  it("채널 사이를 바로 옮기면(채널 페이지는 다시 마운트되지 않는다) 그 채널의 읽음 위치로 다시 잡는다", async () => {
+    const others = [1, 2, 3].map((seq) =>
+      msg(seq, { id: uid(20_000 + seq), channelId: CH2, authorId: uid(77), bodyMd: `B 글 ${seq}` }),
+    );
+    act(() => {
+      useUnread.getState().beginSnapshot();
+      useUnread.getState().applySnapshot({
+        channels: [
+          { channelId: CH, lastReadSeq: 2, latestSeq: 4, unread: true, mentions: 0 },
+          { channelId: CH2, lastReadSeq: 1, latestSeq: 3, unread: true, mentions: 0 },
+        ],
+      });
+    });
+    const qc = channelClient(theirs);
+    qc.setQueryData(qk.timeline(CH2), { ...emptyTimeline(), items: others, lastSeq: 3 });
+    const { router } = renderRoute(`/c/${CH}`, qc, (children) => (
+      <ReadSenderContext.Provider value={{ request: vi.fn(), dispose: vi.fn() }}>
+        {children}
+      </ReadSenderContext.Provider>
+    ));
+    const after = async () =>
+      (await screen.findByRole("separator", { name: "새 메시지" })).closest("[data-index]")
+        ?.nextElementSibling;
+    await screen.findByText("남의 글 4");
+    expect(await after()).toHaveTextContent("남의 글 3");
+    act(() => useUnread.getState().applyRead({ channelId: CH, lastReadSeq: 4 }, { listed: true }));
+
+    await act(() => router.navigate({ to: "/c/$channelId", params: { channelId: CH2 } }));
+    await screen.findByText("B 글 3");
+    expect(await after()).toHaveTextContent("B 글 2");
+
     await act(() => router.navigate({ to: "/c/$channelId", params: { channelId: CH } }));
     await screen.findByText("남의 글 4");
     expect(line()).toBeNull();
