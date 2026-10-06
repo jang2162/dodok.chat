@@ -1,6 +1,8 @@
 #!/bin/bash
 # Orca 워커 수명주기 관리.
 #   spawn <슬러그> <역할> [--model opus|sonnet] [--brief <파일>] [--base <브랜치>]
+#     모델·effort: --model 이 있으면 그 값, 없고 tiergear 가 있으면 판단기가 고르고
+#     (역할은 범위만 정한다), tiergear 가 없으면 역할 기본값이다.
 #   attach <슬러그> <역할> [--model ...] [--brief <파일>] [--terminal <핸들>] [--force]
 #   status [--porcelain]
 #   wait [--timeout-ms <n>]
@@ -55,6 +57,94 @@ resolve_model() {
       return 1
       ;;
   esac
+}
+
+# tiergear 실행파일. 테스트는 TIERGEAR_COMMAND 로 스텁을 주입한다(ORCA_CLI_COMMAND 와 같은 방식).
+tiergear_cli() {
+  printf '%s\n' "${TIERGEAR_COMMAND:-tiergear}"
+}
+
+# 워커 기동에 쓸 모델·effort 를 고른다. 결과는 전역 WM_MODEL·WM_EFFORT·WM_SOURCE 에 둔다
+# (tiergear 의 stderr 를 사용자에게 그대로 보이려면 서브셸로 감쌀 수 없다).
+#   --model 재정의            → 그 값. tiergear 를 부르지 않는다
+#   tiergear 실행파일 없음     → 역할 기본값(resolve_model), effort 없음
+#   tiergear 있음              → `tiergear launch` 가 정한 --model·--effort
+#   launch 실패·출력 불량       → 경고 한 줄 + 역할 기본값. 워커 기동을 막지 않는다
+# 역할별 범위: review=--min-tier deep, verify·chore=--max-tier standard, implement=없음.
+# 사용: select_worker_model <역할> <기본모델> <재정의> <spec> <워크트리경로>
+select_worker_model() {
+  local role="$1" default_model="$2" override="$3" spec="$4" wt_path="$5"
+  WM_MODEL="$default_model"
+  WM_EFFORT=""
+  WM_SOURCE="역할 기본값 $role"
+
+  if [ -n "$override" ]; then
+    WM_SOURCE="--model 재정의, 역할 $role"
+    return 0
+  fi
+
+  local tg
+  tg="$(tiergear_cli)"
+  command -v "$tg" >/dev/null 2>&1 || return 0
+
+  local range_args=""
+  case "$role" in
+    review)       range_args="--min-tier deep" ;;
+    verify|chore) range_args="--max-tier standard" ;;
+  esac
+
+  local out_file err_file out rc note
+  out_file="$(mktemp)"
+  err_file="$(mktemp)"
+  # shellcheck disable=SC2086  # range_args 는 위 case 의 고정 리터럴이다
+  "$tg" launch "$spec" --worktree "$wt_path" $range_args >"$out_file" 2>"$err_file"
+  rc=$?
+  out="$(cat "$out_file")"
+  # judged/applied 줄과 경고는 사용자에게 그대로 보인다.
+  cat "$err_file" >&2
+  note="$(grep -E 'judged .*applied' "$err_file" | tail -1 | sed 's/^tiergear: *//')"
+  rm -f "$out_file" "$err_file"
+
+  if [ "$rc" -ne 0 ]; then
+    printf '경고: tiergear launch 가 종료코드 %s 로 실패했다 — 역할 기본값(%s)으로 진행한다\n' \
+      "$rc" "$default_model" >&2
+    return 0
+  fi
+
+  local t_model="" t_effort="" prev="" tok
+  for tok in $out; do
+    case "$prev" in
+      --model)  t_model="$tok" ;;
+      --effort) t_effort="$tok" ;;
+    esac
+    prev="$tok"
+  done
+
+  # 값은 worker-start 인자로 그대로 간다. 평범한 토큰이 아니면 쓰지 않는다.
+  if [ -z "$t_model" ] \
+     || ! printf '%s' "$t_model" | grep -Eq '^[][A-Za-z0-9._:-]+$' \
+     || { [ -n "$t_effort" ] && ! printf '%s' "$t_effort" | grep -Eq '^[][A-Za-z0-9._:-]+$'; }; then
+    printf '경고: tiergear launch 출력에서 모델·effort 를 얻지 못했다 — 역할 기본값(%s)으로 진행한다\n' \
+      "$default_model" >&2
+    return 0
+  fi
+
+  WM_MODEL="$t_model"
+  WM_EFFORT="$t_effort"
+  if [ -n "$note" ]; then
+    WM_SOURCE="tiergear: $note, 역할 $role"
+  else
+    WM_SOURCE="tiergear, 역할 $role"
+  fi
+}
+
+# 요약에 쓰는 모델 표기. 사용: model_label  (WM_* 를 읽는다)
+model_label() {
+  if [ -n "$WM_EFFORT" ]; then
+    printf '%s/%s (%s)' "$WM_MODEL" "$WM_EFFORT" "$WM_SOURCE"
+  else
+    printf '%s (%s)' "$WM_MODEL" "$WM_SOURCE"
+  fi
 }
 
 # 워커가 아직 도는 중인지.
@@ -1571,6 +1661,9 @@ cmd_spawn() {
     spec="워크트리 $slug 에서 $role 역할로 작업한다. 구체적 지시는 코디네이터가 곧 보낸다 — 그때까지 저장소를 파악하고 대기하라."
   fi
 
+  # 워크트리 준비가 끝났으니 tiergear 를 부를 수 있다(floor 파일이 이 경로에 쓰인다).
+  select_worker_model "$role" "$model" "$model_override" "$spec" "$path"
+
   local tc_out
   tc_out="$("$(orca_cli)" orchestration task-create \
       --spec "$spec" --task-title "$role:$slug" --json 2>&1)"
@@ -1592,7 +1685,7 @@ cmd_spawn() {
   resp="$(mktemp)"
   attach_worker "$resp" \
     --task "$task_id" --worktree "id:$wt_id" \
-    --agent claude --model "$model" \
+    --agent claude --model "$WM_MODEL" ${WM_EFFORT:+--effort "$WM_EFFORT"} \
     --timeout-ms "${ORCA_WORKER_START_TIMEOUT_MS:-180000}"
   rc=$?
 
@@ -1627,8 +1720,8 @@ cmd_spawn() {
   wait_rendered "$handle"
   verify_submitted "$handle" || true
 
-  printf '워크트리: %s\n태스크: %s\n터미널: %s\n모델: %s (역할 %s)\n' \
-    "$wt_id" "$task_id" "$handle" "$model" "$role"
+  printf '워크트리: %s\n태스크: %s\n터미널: %s\n모델: %s\n' \
+    "$wt_id" "$task_id" "$handle" "$(model_label)"
   printf '\n다음: scripts/orca-worker.sh wait\n'
 }
 
@@ -1771,9 +1864,11 @@ cmd_attach() {
     fi
   else
     printf 'attach: 살아 있는 에이전트 터미널이 없다. 새로 띄워 붙인다\n' >&2
+    # 모델을 넘기는 자리는 새로 띄울 때뿐이다 — 도는 에이전트에는 tiergear 를 부르지 않는다.
+    select_worker_model "$role" "$model" "$model_override" "$spec" "$path"
     attach_worker "$resp" \
       --task "$task_id" --worktree "id:$wt_id" \
-      --agent claude --model "$model" \
+      --agent claude --model "$WM_MODEL" ${WM_EFFORT:+--effort "$WM_EFFORT"} \
       --timeout-ms "${ORCA_WORKER_START_TIMEOUT_MS:-180000}"
   fi
   rc=$?

@@ -129,7 +129,7 @@ scripts/orca-worker.sh spawn <슬러그> <역할> [--model opus|sonnet] [--brief
    마지막으로 **BrowserOS neo 가 떠 있는지 확인하고 꺼져 있으면 켠다**(`ensure_browser`) — 워커는 `/mcp` 를 못 누르므로
    워커가 뜨기 전에 브라우저가 떠 있어야 한다(4절 「예외」)
 7. `task-create --spec <브리프본문> --task-title <역할:슬러그>`
-   → `worker-start --task --worktree id:<id> --agent claude --model <역할별> --timeout-ms`
+   → `worker-start --task --worktree id:<id> --agent claude --model <역할별 또는 tiergear> [--effort <tiergear>] --timeout-ms`
    — **브리프는 `--spec` 으로 간다.** `worker-start` 에 `--prompt-file` 이라는 플래그는 없다.
    **터미널은 스크립트가 만들지 않는다** — 아래 「붙이기」 절 참고
 8. `terminal wait --for tui-idle` 로 **화면이 그려질 때까지** 기다린다.
@@ -516,7 +516,7 @@ pnpm typecheck && pnpm test               # 기준선 확인 — Turbo 캐시는
 
 ### 역할별 모델 배정
 
-`spawn` 의 두 번째 인자가 역할이고, 역할이 기본 모델을 정한다. `--model` 로 언제든 덮어쓴다.
+`spawn` 의 두 번째 인자가 역할이고, tiergear 가 없으면 역할이 기본 모델을 정한다. `--model` 로 언제든 덮어쓴다.
 
 | 역할 | 기본 모델 | 맡기는 일 |
 |---|---|---|
@@ -524,6 +524,27 @@ pnpm typecheck && pnpm test               # 기준선 확인 — Turbo 캐시는
 | `review` | **opus** | 리뷰어. 판단이 곧 산출물이라 낮추지 않는다 |
 | `verify` | **sonnet** | 정해진 검증을 실행하고 결과를 보고 (테스트·스모크·브라우저 확인) |
 | `chore` | **sonnet** | 정해진 패턴의 기계적 일괄 변경, 문서 갱신 |
+
+**tiergear 가 있으면 판단기가 고른다 — 위 표는 없을 때의 기본값이 된다.** `spawn`·`attach` 가
+워크트리 준비를 끝낸 뒤 `worker-start` 앞에서 `tiergear launch "<브리프>" --worktree <경로>` 를 부르고,
+그 출력의 `--model`·`--effort` 를 `worker-start` 에 넘긴다. 이때 **역할은 범위만 정한다.**
+
+| 역할 | tiergear 에 넘기는 범위 |
+|---|---|
+| `review` | `--min-tier deep` |
+| `implement` | 없음 |
+| `verify`·`chore` | `--max-tier standard` |
+
+- **우선순위:** `--model` 직접 지정 > tiergear > 역할 기본값. `--model` 이나 `attach --terminal`
+  (이미 도는 에이전트)이면 tiergear 를 부르지 않는다.
+- **tiergear 가 없는 머신은 위 표 그대로 동작한다.** 실행 파일은 `TIERGEAR_COMMAND`(없으면 PATH 의
+  `tiergear`)로 가리키고, 그 이름이 실행 가능한지로 있음·없음을 가른다.
+- **`tiergear launch` 가 실패해도 워커 기동은 막히지 않는다.** 0 이 아닌 종료, 출력에서 모델을 못 뽑음,
+  평범한 토큰이 아닌 값이면 경고 한 줄을 내고 역할 기본값으로 간다.
+- **판단기가 고른 모델은 `opus|sonnet` 검사를 거치지 않는다** — 사용자의 tiergear 표에서 온 값이다.
+  그 검사는 `--model` 직접 지정에만 걸린다.
+- **`tiergear orca-spawn` 은 쓰지 않는다.** 이 스크립트의 워크트리 준비(`.env` 복사 등)를 건너뛴다.
+- 요약의 `모델:` 줄이 모델·effort·출처(`tiergear: judged …, applied …` 또는 `역할 기본값`)를 함께 보인다.
 
 기본값을 두는 이유는 매번 고민하지 않게 하되 **예외는 명령줄에 명시로 남기기** 위해서다.
 `--model` 이 붙어 있으면 "왜 기본과 다르게 골랐나"가 그 자리에 기록된다.
