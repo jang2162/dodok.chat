@@ -904,6 +904,33 @@ out="$(TIERGEAR_COMMAND="$TG" STUB_TG_OUT="claude --model fable[1m] --effort max
 assert_eq "$(printf '%s' "$out" | grep -c '모델: fable\[1m\]/max')" "1" "[ ] 를 낀 모델 별칭도 받는다"
 assert_eq "$(grep -c '^REJECTED' "$STUB_ORCA_LOG")" "0" "tiergear 경로의 Orca 호출도 인자 검증을 통과한다"
 
+# 7. 브리프가 `-` 로 시작해도 tiergear 가 옵션으로 읽지 않게 옵션 뒤 `--` 한 인자로 간다.
+for lead in '--- title' '- 항목' '-x'; do
+  : > "$STUB_TG_LOG"
+  TIERGEAR_COMMAND="$TG" select_worker_model review opus "" "$lead" "$TGWT" 2>/dev/null
+  assert_eq "$(cat "$STUB_TG_LOG")" "launch --worktree $TGWT --min-tier deep -- $lead" \
+    "'$lead' 로 시작하는 브리프는 옵션이 앞, \`--\` 뒤 한 인자로 간다"
+done
+: > "$STUB_TG_LOG"
+TIERGEAR_COMMAND="$TG" select_worker_model implement opus "" "- 항목" "$TGWT" 2>/dev/null
+assert_eq "$(cat "$STUB_TG_LOG")" "launch --worktree $TGWT -- - 항목" "implement 도 범위 없이 \`--\` 뒤로 보낸다"
+
+# 8. 출력 파싱은 글롭 확장을 타지 않는다 — cwd 에 걸리는 파일이 있어도 글자 그대로다.
+GD="$(mktemp -d)"; : > "$GD/fable1"; : > "$GD/aaa"
+got="$(cd "$GD" && TIERGEAR_COMMAND="$TG" STUB_TG_OUT='claude --model fable[1m] --effort max' \
+  select_worker_model chore sonnet "" x "$TGWT" 2>/dev/null; echo "$WM_MODEL/$WM_EFFORT")"
+assert_eq "$got" 'fable[1m]/max' "[1m] 이 든 출력이 파일 이름(fable1)으로 바뀌지 않는다"
+got="$(cd "$GD" && TIERGEAR_COMMAND="$TG" STUB_TG_OUT='claude --model * --effort high' \
+  select_worker_model chore sonnet "" x "$TGWT" 2>/dev/null; echo "$WM_MODEL/$WM_EFFORT")"
+assert_eq "$got" 'sonnet/' "글롭 문자뿐인 모델은 토큰 검사에서 걸러진다(파일 이름 aaa 가 되지 않는다)"
+case "$-" in *f*) glob_state=off ;; *) glob_state=on ;; esac
+assert_eq "$glob_state" "on" "파싱 뒤 글롭 설정이 원래대로 돌아온다"
+rm -rf "$GD"
+
+# 9. 값이 없어 다음 옵션이 모델로 잡히면 못 뽑은 것으로 본다.
+tg_fallback "--model 뒤에 값이 없음" "claude --model --effort high" 0
+tg_fallback "--effort 뒤에 값이 없음" "claude --model opus --effort --foo" 0
+
 rm -f "$STUB_TG_LOG"; unset STUB_TG_LOG
 
 unset ORCA_WORKER_WORKTREES_DIR STUB_ORCA_TERMINALS_FIXTURE STUB_ORCA_WORKERS_FIXTURE

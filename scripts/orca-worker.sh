@@ -96,8 +96,10 @@ select_worker_model() {
   local out_file err_file out rc note
   out_file="$(mktemp)"
   err_file="$(mktemp)"
+  # spec 은 맨 끝에 `--` 뒤로 둔다 — tiergear 는 parseArgs 라 `---`·`- 항목` 으로 시작하는
+  # 브리프를 옵션으로 읽는다. `--` 앞에 두면 그 뒤의 범위 옵션이 위치 인자가 되므로 옵션이 먼저다.
   # shellcheck disable=SC2086  # range_args 는 위 case 의 고정 리터럴이다
-  "$tg" launch "$spec" --worktree "$wt_path" $range_args >"$out_file" 2>"$err_file"
+  "$tg" launch --worktree "$wt_path" $range_args -- "$spec" >"$out_file" 2>"$err_file"
   rc=$?
   out="$(cat "$out_file")"
   # judged/applied 줄과 경고는 사용자에게 그대로 보인다.
@@ -111,7 +113,10 @@ select_worker_model() {
     return 0
   fi
 
-  local t_model="" t_effort="" prev="" tok
+  # 글롭을 끄고 자른다 — `*`·`[1m]` 가 든 토큰이 cwd 의 파일 이름으로 바뀌지 않게.
+  local t_model="" t_effort="" prev="" tok noglob_was_off=no
+  case "$-" in *f*) ;; *) noglob_was_off=yes ;; esac
+  set -f
   for tok in $out; do
     case "$prev" in
       --model)  t_model="$tok" ;;
@@ -119,11 +124,13 @@ select_worker_model() {
     esac
     prev="$tok"
   done
+  [ "$noglob_was_off" = yes ] && set +f
 
   # 값은 worker-start 인자로 그대로 간다. 평범한 토큰이 아니면 쓰지 않는다.
+  # 첫 글자는 영문·숫자여야 한다 — `--model --effort high` 에서 `--effort` 가 모델로 잡히지 않게.
   if [ -z "$t_model" ] \
-     || ! printf '%s' "$t_model" | grep -Eq '^[][A-Za-z0-9._:-]+$' \
-     || { [ -n "$t_effort" ] && ! printf '%s' "$t_effort" | grep -Eq '^[][A-Za-z0-9._:-]+$'; }; then
+     || ! printf '%s' "$t_model" | grep -Eq '^[A-Za-z0-9][][A-Za-z0-9._:-]*$' \
+     || { [ -n "$t_effort" ] && ! printf '%s' "$t_effort" | grep -Eq '^[A-Za-z0-9][][A-Za-z0-9._:-]*$'; }; then
     printf '경고: tiergear launch 출력에서 모델·effort 를 얻지 못했다 — 역할 기본값(%s)으로 진행한다\n' \
       "$default_model" >&2
     return 0
