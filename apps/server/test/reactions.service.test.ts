@@ -1,13 +1,22 @@
 /**
- * 리액션 서비스(리액션 스펙 5.1) — 켜기/끄기·집계·「에이전트에게 아직 안 알린 것」 질의·커서.
+ * 리액션 서비스(리액션 스펙 docs/superpowers/specs/2026-10-05-reactions-design.md 「`modules/reactions/`」 절) — 켜기/끄기·집계·
+ * 「에이전트에게 아직 안 알린 것」 질의·커서.
  * 메시지·리액션은 시각을 정해 DB 에 직접 넣는다 — 커서 비교(created_at > since)를 시계 없이 재려고.
  */
-import { type Message, REACTION_EMOJIS } from "@dodok/shared";
+import { InboundReaction, type Message, REACTION_EMOJIS } from "@dodok/shared";
 import { eq } from "drizzle-orm";
 import { v7 as uuid } from "uuid";
 import { describe, expect, it } from "vitest";
 import type { Db } from "../src/db/client";
-import { agentSessions, agents, channels, messageReactions, messages, users } from "../src/db/schema.sqlite";
+import {
+  agentSessions,
+  agents,
+  channels,
+  memberships,
+  messageReactions,
+  messages,
+  users,
+} from "../src/db/schema.sqlite";
 import { allocateSeq } from "../src/modules/messages/seq";
 import { hydrateForClient, rowToMessage } from "../src/modules/messages/service";
 import {
@@ -104,6 +113,26 @@ describe("setReaction", () => {
     expect(c.updated).toHaveLength(2);
   });
 
+  it("끄기는 그 (메시지, 사람, 이모지) 한 행만 지운다 — 남의 같은 이모지·자기 다른 이모지·다른 메시지의 것은 남는다", () => {
+    const c = setup();
+    const m = post(c.db, { channelId: c.channelId, authorId: c.agentId });
+    const other = post(c.db, { channelId: c.channelId, authorId: c.agentId });
+    set(c, c.mia, m, "👍", true);
+    set(c, c.mia, m, "👎", true);
+    set(c, c.userId, m, "👍", true);
+    set(c, c.mia, other, "👍", true);
+
+    set(c, c.mia, m, "👍", false);
+    const who = (id: string) => (id === c.mia ? "mia" : "owner");
+    const left = c.db
+      .select()
+      .from(messageReactions)
+      .all()
+      .map((r) => `${r.messageId === m ? "m" : "other"} ${who(r.userId)} ${r.emoji}`)
+      .sort();
+    expect(left).toEqual(["m mia 👎", "m owner 👍", "other mia 👍"]);
+  });
+
   it("같은 켜기를 다시 해도 처음 단 시각이 남는다(커서 비교가 되살아나지 않게)", () => {
     const c = setup();
     const m = post(c.db, { channelId: c.channelId, authorId: c.agentId });
@@ -127,6 +156,15 @@ describe("setReaction", () => {
       setReaction(c.db, c.bus, uuid(), c.mia, { messageId: m, emoji: "👍", on: true }, at(1)),
     ).toThrow(expect.objectContaining({ body: expect.objectContaining({ code: "NOT_FOUND" }) }));
     expect(c.db.select().from(messageReactions).all()).toHaveLength(0);
+  });
+
+  it("다른 워크스페이스의 시스템 메시지는 VALIDATION 이 아니라 NOT_FOUND — 존재를 알리지 않는다", () => {
+    const c = setup();
+    const foreign = seedChannelWithAgent(c.db, { agentHandle: "dev2" });
+    const sys = post(c.db, { channelId: foreign.channelId, authorType: "system", authorId: "" });
+    expect(() => set(c, c.mia, sys, "👍", true)).toThrow(
+      expect.objectContaining({ body: expect.objectContaining({ code: "NOT_FOUND" }) }),
+    );
   });
 
   it("보관한 채널의 메시지는 켜기·끄기 모두 CHANNEL_ARCHIVED 이고 이미 달린 것은 그대로다", () => {
@@ -288,12 +326,41 @@ describe("pendingReactionsFor", () => {
     expect(out.latestAt).toEqual(at(25));
   });
 
+  it("omitted 는 고른 것과 같은 조건으로 센다 — since 이전·범위 밖 리액션이 섞여도 범위 안 22개면 2", () => {
+    const c = setup();
+    const top = post(c.db, { channelId: c.channelId, authorId: c.agentId });
+    const reply = post(c.db, { channelId: c.channelId, authorId: c.agentId, threadRootId: top });
+    const human = post(c.db, { channelId: c.channelId, authorType: "user", authorId: c.userId });
+    const foreignChannel = post(c.db, { channelId: seedChannelOf(c), authorId: c.agentId });
+    // 범위 안 22개 — 사람 셋 × 이모지 8종에서 앞 22개, 시각 10..31초
+    const reactors = [c.mia, c.userId, c.addUser("kai")];
+    const combos = reactors.flatMap((u) => REACTION_EMOJIS.map((e) => [u, e] as const)).slice(0, 22);
+    combos.forEach(([u, e], i) => react(c.db, top, u, e, at(10 + i)));
+    // since(5초) 이전 셋은 같은 메시지, 범위 밖 셋은 since 뒤 — 어느 것도 세지 않는다
+    react(c.db, top, c.addUser("early1"), "👍", at(1));
+    react(c.db, top, c.addUser("early2"), "👍", at(2));
+    react(c.db, top, c.addUser("early3"), "👍", at(3));
+    react(c.db, reply, c.mia, "👍", at(40));
+    react(c.db, human, c.mia, "👍", at(41));
+    react(c.db, foreignChannel, c.mia, "👍", at(42));
+
+    const out = pendingReactionsFor(c.db, channelScope(c, at(5)));
+    expect(out.reactions).toHaveLength(20);
+    expect(out.omitted).toBe(2);
+    expect(out.reactions[0]?.at).toBe(at(12).toISOString());
+    expect(out.latestAt).toEqual(at(31));
+  });
+
   it("비활성 멤버의 리액션도 by 가 그 핸들이다", () => {
     const c = setup();
     const m = post(c.db, { channelId: c.channelId, authorId: c.agentId });
     const gone = c.addUser("gone");
-    // 멤버 비활성화는 users 행을 건드리지 않는다(계정·핸들이 남는다) — 질의는 u.handle 을 읽는다
-    react(c.db, m, gone, "✅", at(5));
+    // 멤버 비활성화는 membership 에 시각만 적고 users 행(계정·핸들)은 남긴다 — 질의는 u.handle 을 읽는다
+    c.db
+      .insert(memberships)
+      .values({ id: uuid(), workspaceId: c.workspaceId, userId: gone, role: "member", deactivatedAt: at(3) })
+      .run();
+    react(c.db, m, gone, "✅", at(2));
     expect(pendingReactionsFor(c.db, channelScope(c, at(0))).reactions[0]?.by).toBe("gone");
   });
 
@@ -309,6 +376,16 @@ describe("pendingReactionsFor", () => {
     const excerpt = pendingReactionsFor(c.db, channelScope(c, at(0))).reactions[0]?.excerpt;
     expect(excerpt?.startsWith("@mia 님, 가가")).toBe(true);
     expect(excerpt?.length).toBe(60);
+  });
+
+  it("excerpt 는 UTF-16 60 안에서 글자 단위로 자른다 — 서로게이트 쌍을 가르지 않고 계약 스키마를 지난다", () => {
+    const c = setup();
+    const m = post(c.db, { channelId: c.channelId, authorId: c.agentId, bodyMd: `가${"😀".repeat(40)}` });
+    react(c.db, m, c.userId, "👍", at(5));
+    const reaction = pendingReactionsFor(c.db, channelScope(c, at(0))).reactions[0];
+    // 가(1) + 😀 29개(58) = 59 — 30번째 😀 를 넣으면 61 이라 멈춘다
+    expect(reaction?.excerpt).toBe(`가${"😀".repeat(29)}`);
+    expect(InboundReaction.safeParse(reaction).success).toBe(true);
   });
 });
 
