@@ -2105,6 +2105,17 @@ assert_eq "$(ORCA_CLI_COMMAND="$HERE/stub-orca.sh" STUB_ORCA_PS_FIXTURE="$HKR/ps
   | jq -r '.systemMessage' | grep -o -E '[0-9]+건')" "1건" \
   "미정리 건수에는 orphan-live 를 세지 않는다"
 
+# 워커 세션에서는 침묵한다 — 훅 파일이 워크트리(`/.worktrees/`) 안에 있고 저장소를 따로 주지 않으면
+# 미정리가 있어도 아무것도 내지 않는다(워커에게 자기 워크트리를 회수하라고 말하지 않게).
+mkdir -p "$HKR/.worktrees/$HKB/w-rec/.claude/hooks"
+cp "$HOOK" "$HKR/.worktrees/$HKB/w-rec/.claude/hooks/orca-worker-check.sh"
+mkdir -p "$HKR/.worktrees/$HKB/w-rec/scripts"
+cp "$SUT" "$HKR/.worktrees/$HKB/w-rec/scripts/orca-worker.sh"
+assert_eq "$(ORCA_CLI_COMMAND="$HERE/stub-orca.sh" STUB_ORCA_PS_FIXTURE="$HKR/ps.json" \
+  STUB_ORCA_TERMINALS_FIXTURE="$HKR/terminals.json" ORCA_WORKER_REPO_ID=repo1 ORCA_WORKER_LIB= \
+  bash "$HKR/.worktrees/$HKB/w-rec/.claude/hooks/orca-worker-check.sh" UserPromptSubmit 2>/dev/null | wc -c | tr -d ' ')" "0" \
+  "워크트리 안의 훅은 저장소를 따로 주지 않으면 침묵한다"
+
 rm -rf "$HK" "$HKR"
 
 finish

@@ -7,8 +7,12 @@
 # stdin 필드 이름에 기대지 않기 위해서다.
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-# 워커 세션(워크트리 안)에서는 침묵한다 — 회수는 메인 세션의 일이고, 워커에게는 자기 워크트리를 지우라는 말이 된다
-case "$ROOT" in */.worktrees/*) exit 0 ;; esac
+# 워커 세션(워크트리 안)에서는 침묵한다 — 회수는 메인 세션의 일이고, 워커에게는 자기 워크트리를 지우라는 말이 된다.
+# ORCA_WORKER_REPO_ROOT 로 저장소를 따로 준 호출(테스트)은 훅 파일 자리와 무관하므로 거르지 않는다 —
+# 거르면 워커가 워크트리 안에서 돌린 orca-worker.test.sh 의 훅 사례만 실패한다
+if [ -z "${ORCA_WORKER_REPO_ROOT:-}" ]; then
+  case "$ROOT" in */.worktrees/*) exit 0 ;; esac
+fi
 SCRIPT="$ROOT/scripts/orca-worker.sh"
 EVENT="${1:-UserPromptSubmit}"
 
