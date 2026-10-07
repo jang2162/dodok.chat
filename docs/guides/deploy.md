@@ -331,12 +331,12 @@ Claude 러너(`@dodok/claude-runner`, 명령 `dodok-runner`)는 **사람의 머�
 자동화(웹 「설정」 → 「자동화」 탭, admin 이상 — 화면 쓰는 법은 `docs/guides/user-guide.md` 「자동화 (admin 이상)」 절)의 웹훅은 바깥 서비스가 `POST https://<도메인>/hooks/whk_<토큰>` 으로 보내면 정한 채널에 문구와 그 본문을 올린다. 설계는 `docs/superpowers/specs/2026-10-05-automations-design.md`(구현과 달라진 것은 「구현과 맞춘 것」 장).
 
 - **공개 경로** — 로그인·쿠키 없이 토큰만 본다. Caddy 가 `/hooks/*` 를 서버로 넘긴다(`infra/Caddyfile` 의 `@backend`) — 빠지면 바깥 서비스의 POST 가 웹 앱(SPA 폴백)으로 떨어진다. `/api` 밖이라 로그인 사용자의 REST 상한을 타지 않고, 토큰마다 분당 상한과 웹훅 전용 실패 카운터를 따로 쓴다(아래 「운영 화면」 레이트리밋 표).
-- **주소의 오리진** — 브리지 공개 주소(`BRIDGE_PUBLIC_URL`, 없으면 `APP_ORIGIN`)의 오리진을 `https:`(`ws:` 면 `http:`)로 바꾼 것이다 — 러너 설정의 `serverUrl` 과 같은 규칙. 운영에서는 `https://<도메인>` 이다. 개발 모드(`pnpm -F @dodok/web dev` 의 Vite)에서는 이 오리진이 웹 포트가 되는데 Vite 프록시에 `/hooks` 가 없어 그 주소로는 닿지 않는다 — 같은 경로를 서버 포트로 보낸다(`docs/plan.md` 8장 이월).
+- **주소의 오리진** — 브리지 공개 주소(`BRIDGE_PUBLIC_URL`, 없으면 `APP_ORIGIN`)의 오리진을 `https:`(`ws:` 면 `http:`)로 바꾼 것이다 — 러너 설정의 `serverUrl` 과 같은 규칙. 운영에서는 `https://<도메인>` 이다.
 - **토큰** — `whk_` + 43자. DB 에는 sha256 해시와 `whk_` 뒤 6자(목록에 보이는 앞부분)만 둔다. 원문은 만들기·「주소 다시 만들기」 응답 한 번뿐이다(`Cache-Control: no-store`). 새었으면 「주소 다시 만들기」 — 옛 주소는 곧바로 404 다.
 - **응답** — 받으면 `202 {"messageId":"…"}`(에이전트 답을 기다리지 않는다). 모르는 토큰·꺼 둔 자동화·예약 종류·재발급 전 옛 토큰은 **모두 같은 404** `{"code":"NOT_FOUND","message":"not found"}` 다(어느 경우인지 드러내지 않는다). 본문 64 KiB 초과 413, 토큰 상한 초과 429, 보관한 채널 409 `CHANNEL_ARCHIVED`. `Content-Type` 머리의 꼴이 틀리면(`;;;`·빈 값) Fastify 가 파서 전에 415 를 낸다. 본문은 바이트로 받아 UTF-8 로 풀고(틀린 바이트는 `�`), 타입과 무관하게 받아들인다.
 - **로그 가림** — 토큰이 경로에 있어 요청 로그가 그대로 남기면 로그를 읽는 사람이 그 주소로 글을 올려 런 비용을 만든다. 서버는 요청 로그(`incoming request` 의 `url`)와 Fastify 의 404 줄(`Route POST:/hooks/… not found`)을, Caddy 는 오류 로그(`http.log.error` — 앱이 내려간 동안·보낸 쪽이 본문 도중 끊을 때의 502, 그리고 `reverse_proxy` 의 「aborting with incomplete response」)를 `/hooks/` 다음 10자(`whk_` + 6자)와 `…` 로 가린다. 그 밖 자리의 `whk_` 토큰 꼴(쿼리 등)도 같다. Caddy 는 access log 를 남기지 않는다. 확인은 아래 「로컬 검증」의 `CADDY_LOG_CMD` 와, 운영에서는 개수만 세는 꼴로:
   ```bash
-  docker compose -f infra/compose.yml logs app caddy | grep -c '/hooks/whk_[A-Za-z0-9_-]\{7,\}'   # 0 이어야 한다(가린 줄은 whk_ 뒤 6자 + …)
+  docker compose -f infra/compose.yml logs app caddy | grep -c 'whk_[A-Za-z0-9_-]\{7,\}'   # 0 이어야 한다(가린 줄은 whk_ 뒤 6자 + …)
   ```
 - **손으로 보내 보기** — 화면에서 복사한 주소로 `curl -sS -X POST -H 'content-type: application/json' -d '{"ok":false}' '<주소>'` → `202`. 주소를 셸 기록에 남기지 않으려면 앞에 공백을 두거나(`HISTCONTROL=ignorespace`) 변수로 읽는다.
 
@@ -599,8 +599,8 @@ DODOK_UPSTREAM=devfake:3000 lc --profile devfake up -d --build
 ```
 
 - `CADDY_LOG_CMD` 를 주면 마지막 세 줄이 웹훅 토큰이 Caddy 오류 로그에 원문으로 남지 않는지 본다 — HTTP/2 로 본문을 덜 보내 Caddy 가 502 와 오류 줄을 남기게 하고, 필터의 두 규칙(`/hooks/` 경로·그 밖의 `whk_` 토큰 꼴)을 탐침 셋으로 따로 잰다. 없으면 `SKIP` 한 줄이다. `https://` 오리진에만 쓴다 — 평문 `http://` 면 h1 이라 오류 줄이 생기지 않아 `SKIP` 이다.
-- ⚠ **1분 안에 `check-caddy.sh` 를 다섯 번 넘게 돌리면 `/bridge/attachments`·`/runner/attachments` 두 줄이 429 로 FAIL 한다** — 그 두 확인이 한 번에 틀린 토큰을 두 번 보내 브리지 실패 카운터(`LIMITS.bridgeFail` — 60초 안에 10번이면 60초 막힘)에 쌓이고, 그 주소가 막힌다. 1분 기다렸다 다시 돌린다(`restart app` 도 풀린다).
-- Docker 없이 mise 의 `caddy` 로 `infra/Caddyfile` 을 띄울 때는 `XDG_DATA_HOME`·`XDG_CONFIG_HOME` 을 스크래치로 주고, `CADDY_LOCAL_CERTS` 에 `local_certs` 를 넣으면 `skip_install_trust` 를 함께 넣는다 — 안 주면 `caddy validate` 도 `~/Library/Application Support/Caddy/pki` 에 로컬 CA 를 만들고, `caddy run` 은 그 CA 를 시스템 신뢰 저장소에 넣으려 한다.
+- ⚠ **1분 안에 `check-caddy.sh` 를 다섯 번 넘게 돌리면 `/bridge/attachments`·`/runner/attachments` 두 줄이 429 로 FAIL 한다** — 그 두 확인이 한 번에 토큰 없는 요청을 두 번 보내 브리지 실패 카운터(`LIMITS.bridgeFail` — 60초 안에 10번이면 60초 막힘)에 쌓이고, 그 주소가 막힌다. 1분 기다렸다 다시 돌린다(`restart app` 도 풀린다).
+- Docker 없이 로컬에 설치한 `caddy`(이미지와 같은 2.11.4) 로 `infra/Caddyfile` 을 띄울 때는 `XDG_DATA_HOME`·`XDG_CONFIG_HOME` 을 스크래치로 주고, `CADDY_LOCAL_CERTS` 에 `local_certs` 를 넣으면 `skip_install_trust` 를 함께 넣는다 — 안 주면 `caddy validate` 도 `~/Library/Application Support/Caddy/pki` 에 로컬 CA 를 만들고, `caddy run` 은 그 CA 를 시스템 신뢰 저장소에 넣으려 한다.
 - 새 볼륨(`down -v` 뒤 첫 `up`)으로 막 뜬 Caddy 는 내부 CA·인증서를 만드는 몇 초 동안 연결을 받지 않는다 — 그때 부른 `check-caddy.sh` 는 `/healthz → 000` 같은 FAIL 이 섞인다. 몇 초 뒤 다시 부른다(caddy 헬스는 관리 API 라 `(healthy)` 여도 그 창이 남는다). 볼륨이 남은 재시작에서는 나지 않는다.
 - 연결 페이지(`/settings/connection`)의 「플러그인 받기」는 운영 이미지가 `/app/plugin/` 에 품은 tgz 를 준다 — 받은 파일의 sha256 이 화면 값과 같은지 보면 이미지의 플러그인 단계까지 확인된다.
 - devfake → 운영으로 돌아갈 때: `lc --profile devfake stop devfake && lc --profile devfake rm -f devfake` 뒤 `lc up -d`(`DODOK_UPSTREAM` 없이 — Caddy 가 다시 만들어지며 `app:3000` 으로 돌아온다).
