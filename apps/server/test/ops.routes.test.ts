@@ -1,10 +1,11 @@
 import { OPENCLAW_PINNED_VERSION, type OpenClawSetupDetail } from "@dodok/openclaw-adapter";
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
 import { OpsEventsPage, OpsRunsSummary, OpsStatus } from "@dodok/shared";
+import { eq } from "drizzle-orm";
 import { v7 as uuid } from "uuid";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { App } from "../src/app";
-import { opsEvents, runs } from "../src/db/schema.sqlite";
+import { opsEvents, runs, workspaces } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
 import { createChannel } from "../src/modules/channels/service";
 import { getOpsSettings } from "../src/modules/ops/settings";
@@ -304,10 +305,15 @@ describe("운영 API /api/v1/ops", () => {
       expect(settings()).toEqual({ dailyRunLimit: 8, timeZone: "Asia/Seoul" });
     });
 
-    it("모르는 이름은 400 VALIDATION — 같이 보낸 한도도, 예약 시각도 바꾸지 않는다", async () => {
+    it("모르는 이름·고정 오프셋은 400 VALIDATION — 같이 보낸 한도도, 예약 시각도 바꾸지 않는다", async () => {
       await call(owner, "PATCH", "/settings", { dailyRunLimit: 11, timeZone: "Asia/Seoul" });
       const on = addAutomation(`그대로-${uuid()}`);
-      for (const body of [{ timeZone: "Mars/Base" }, { dailyRunLimit: 6, timeZone: "Mars/Base" }]) {
+      for (const body of [
+        { timeZone: "Mars/Base" },
+        { dailyRunLimit: 6, timeZone: "Mars/Base" },
+        { timeZone: "+09:00" },
+        { dailyRunLimit: 6, timeZone: "-05:30" },
+      ]) {
         const res = await call(owner, "PATCH", "/settings", body);
         expect(res.statusCode, JSON.stringify(body)).toBe(400);
         expect(res.json().code).toBe("VALIDATION");
@@ -324,6 +330,20 @@ describe("운영 API /api/v1/ops", () => {
         expect(res.statusCode).toBe(200);
       }
       expect(getAutomation(app.db, app.workspaceId, waiting.id)?.nextRunAt).toEqual(waiting.nextRunAt);
+    });
+
+    it("저장된 시간대가 이 서버가 모르는 이름이어도 한도만 바꾸는 PATCH 는 200 — 응답은 읽기와 같은 폴백, 예약 시각 그대로", async () => {
+      const on = addAutomation(`모르는-${uuid()}`);
+      app.db
+        .update(workspaces)
+        .set({ opsJson: JSON.stringify({ dailyRunLimit: 300, timeZone: "Mars/Base" }) })
+        .where(eq(workspaces.id, app.workspaceId))
+        .run();
+      const res = await call(owner, "PATCH", "/settings", { dailyRunLimit: 7 });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ dailyRunLimit: 7, timeZone: "Asia/Seoul" });
+      expect(settings()).toEqual({ dailyRunLimit: 7, timeZone: "Asia/Seoul" });
+      expect(getAutomation(app.db, app.workspaceId, on.id)?.nextRunAt).toEqual(on.nextRunAt);
     });
 
     it("member 의 시간대 PATCH 는 403 이고 바꾸지 않는다", async () => {

@@ -3,6 +3,8 @@ import {
   INTERACTIONS_MAX,
   Message,
   type MessageInteraction,
+  neutralizeMentionTokens,
+  parseMentions,
   type SystemKind,
   type SystemMeta,
   type ThreadSummary,
@@ -71,8 +73,13 @@ export type CreateAgentMessageInput = {
 export type CreateAutomationMessageInput = {
   channelId: string;
   automationId: string;
-  /** 자동화에 저장된 평문 @handle 문구(+ 웹훅 블록) — 사람 메시지와 같은 참가자 집합으로 토큰화한다(계획 판정 PA1) */
+  /** 자동화에 저장된 평문 @handle 문구 — 사람 메시지와 같은 참가자 집합으로 토큰화한다(계획 판정 PA1) */
   bodyMd: string;
+  /**
+   * 문구 아래 빈 줄 하나 뒤에 붙이는 웹훅 원문 블록. 토큰화하지 않고 그 안의 멘션 토큰 꼴은 무력화한다(neutralizeMentionTokens) —
+   * 바깥 서비스가 보낸 글(이슈 본문·커밋 메시지)의 @핸들이 런·푸시·채널 참여를 만들면 안 된다. 멘션은 문구에서만 나온다
+   */
+  extraMd?: string;
 };
 
 export type CreateSystemMessageInput = {
@@ -388,13 +395,15 @@ export function createAutomationMessage(
   const result = db.transaction((tx) => {
     assertChannelWritable(tx, input.channelId);
     const message = storeMessage(tx, input.channelId, undefined, () => {
-      const { bodyMd, mentions } = tokenize(input.bodyMd, userMessageParticipants(tx, input.channelId));
+      const text = tokenize(input.bodyMd, userMessageParticipants(tx, input.channelId)).bodyMd;
+      const bodyMd =
+        input.extraMd === undefined ? text : `${text}\n\n${neutralizeMentionTokens(input.extraMd)}`;
       return {
         kind: "normal",
         authorType: "automation",
         authorId: input.automationId,
         bodyMd,
-        mentions,
+        mentions: parseMentions(bodyMd),
         attachments: [],
         createdAt: new Date(),
       };

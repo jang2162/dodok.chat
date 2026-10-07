@@ -184,18 +184,21 @@ describe("assertTimeZone", () => {
     expect(assertTimeZone("UTC")).toBe("UTC");
     expect(assertTimeZone("asia/seoul")).toBe(SEOUL);
     expect(assertTimeZone("US/Eastern")).toBe(NEW_YORK);
+    expect(assertTimeZone("Etc/UTC")).toBe("UTC");
+    expect(assertTimeZone("Etc/GMT-9")).toBe("Etc/GMT-9");
   });
 
-  it("없는 이름·빈 이름은 VALIDATION", () => {
-    for (const tz of ["Mars/Base", ""]) {
+  it("없는 이름·빈 이름·고정 오프셋은 VALIDATION — 오프셋은 Intl 이 받아도 IANA 이름이 아니다", () => {
+    // "\u221205:30" 은 유니코드 빼기 — Intl 이 ASCII "-05:30" 으로 정규화하므로 입력이 아니라 정규형으로 거른다
+    for (const tz of ["Mars/Base", "", "+09:00", "+0900", "+09", "-05:30", "\u221205:30", "UTC+9"]) {
       let caught: unknown;
       try {
         assertTimeZone(tz);
       } catch (err) {
         caught = err;
       }
-      expect(caught).toBeInstanceOf(HttpError);
-      expect((caught as HttpError).body.code).toBe("VALIDATION");
+      expect(caught, tz).toBeInstanceOf(HttpError);
+      expect((caught as HttpError).body.code, tz).toBe("VALIDATION");
     }
   });
 });

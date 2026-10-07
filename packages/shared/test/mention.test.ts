@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   MENTION_TOKEN_RE,
+  neutralizeMentionTokens,
   type Participant,
   parseMentions,
   renderForAgent,
@@ -74,5 +75,20 @@ describe("tokenize", () => {
   it("renderForAgent와 왕복한다", () => {
     const body = `<@a:${A1}> 다음 <@u:${U1}> 끝`;
     expect(tokenize(renderForAgent(body, participants), participants).bodyMd).toBe(body);
+  });
+});
+
+describe("neutralizeMentionTokens", () => {
+  it("토큰 꼴만 멘션으로 읽히지 않게 바꾸고, 보이는 글자는 그대로다 — 평문 @핸들·다른 꼴은 건드리지 않는다", () => {
+    const raw = `{"a":"<@a:${A1}>","u":"<@u:${U1}>","x":"<@a:${A1}><@a:${A1}>"} @researcher <@x:${A1}> <@a:not-a-uuid>`;
+    const out = neutralizeMentionTokens(raw);
+    expect(parseMentions(out)).toEqual({ agents: [], users: [] });
+    expect([...out.matchAll(MENTION_TOKEN_RE)]).toHaveLength(0);
+    expect(out.replaceAll("\u2060", "")).toBe(raw);
+    expect(segment(out)).toEqual([{ kind: "text", text: out }]);
+  });
+
+  it("토큰이 없으면 같은 문자열", () => {
+    expect(neutralizeMentionTokens("평문 @jang `<@a:x>`")).toBe("평문 @jang `<@a:x>`");
   });
 });

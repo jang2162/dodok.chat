@@ -38,14 +38,19 @@ function formatterFor(timeZone: string): Intl.DateTimeFormat {
 
 /**
  * 틀린 시간대 이름이면 VALIDATION, 맞으면 Intl 의 정규형(asia/seoul → Asia/Seoul, US/Eastern → America/New_York) —
- * 워크스페이스 설정에 저장하기 전에 불러 그 값을 저장한다. 시간대 선택 목록의 이름과 저장값이 맞게
+ * 워크스페이스 설정에 저장하기 전에 불러 그 값을 저장한다. 시간대 선택 목록의 이름과 저장값이 맞게.
+ * IANA 이름만 받는다 — Intl 은 고정 오프셋(+09:00·+0900·-05:30)도 받아 그 꼴(+09:00)을 정규형으로 주지만 거절한다.
+ * Intl.supportedValuesOf("timeZone") 로 거르지 않는다: 그 목록에는 UTC·Etc/GMT-9 처럼 받아야 할 이름이 빠져 있다
  */
 export function assertTimeZone(timeZone: string): string {
+  let resolved: string;
   try {
-    return formatterFor(timeZone).resolvedOptions().timeZone;
+    resolved = formatterFor(timeZone).resolvedOptions().timeZone;
   } catch {
     throw apiError("VALIDATION", "unknown time zone", { field: "timeZone" });
   }
+  if (/^[+-]/.test(resolved)) throw apiError("VALIDATION", "unknown time zone", { field: "timeZone" });
+  return resolved;
 }
 
 /**

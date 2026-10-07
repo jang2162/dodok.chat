@@ -22,6 +22,14 @@ export type Segment =
   | { kind: "text"; text: string }
   | { kind: "mention"; type: "agent" | "user"; id: string };
 
+/**
+ * 남이 보낸 원문(웹훅 본문 등)을 본문에 그대로 실을 때 — 그 안의 멘션 토큰 꼴이 멘션으로 읽히지 않게 `<` 와 `@` 사이에 보이지 않는
+ * 단어 잇기(U+2060)를 넣는다. 보이는 글자는 그대로다. parseMentions 는 코드 블록을 가리지 않으므로 펜스 안에 있어도 이것을 거쳐야 한다
+ */
+export function neutralizeMentionTokens(text: string): string {
+  return text.replace(MENTION_TOKEN_RE, (token) => `<\u2060${token.slice(1)}`);
+}
+
 export function parseMentions(bodyMd: string): MentionSet {
   const agents: string[] = [];
   const users: string[] = [];

@@ -428,6 +428,15 @@ describe("운영 설정(ops_json)", () => {
     expect(lines.filter((l) => l.level === 40 && l.msg === "ops settings time zone unknown")).toHaveLength(1);
     // logger 없이 읽어도 던지지 않는다 — 스케줄러가 매 틱 읽는다
     expect(getOpsSettings(db, ws).timeZone).toBe(SEOUL);
+    // 고정 오프셋도 모르는 이름과 같다(IANA 이름만)
+    setRaw(JSON.stringify({ dailyRunLimit: 20, timeZone: "+09:00" }));
+    expect(getOpsSettings(db, ws).timeZone).toBe(SEOUL);
+  });
+
+  it("저장된 시간대를 모를 때 한도만 patch 하면 읽기와 같은 폴백으로 돌려주고, 저장된 이름은 그대로 둔다", () => {
+    setRaw(JSON.stringify({ dailyRunLimit: 20, timeZone: "Mars/Base" }));
+    expect(patchOpsSettings(db, ws, { dailyRunLimit: 7 })).toEqual({ dailyRunLimit: 7, timeZone: SEOUL });
+    expect(storedRaw()).toEqual({ dailyRunLimit: 7, timeZone: "Mars/Base" });
   });
 
   it("patch 는 시간대를 Intl 의 정규형으로 저장한다 — 대소문자·옛 이름", () => {

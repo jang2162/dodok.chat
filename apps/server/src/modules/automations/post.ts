@@ -26,7 +26,8 @@ export async function postAutomationMessage(
   const message = createAutomationMessage(deps.db, deps.bus, {
     channelId: automation.channelId,
     automationId: automation.id,
-    bodyMd: extraMd === undefined ? automation.bodyMd : `${automation.bodyMd}\n\n${extraMd}`,
+    bodyMd: automation.bodyMd,
+    ...(extraMd === undefined ? {} : { extraMd }),
   });
   await deps.route(message);
   return message;

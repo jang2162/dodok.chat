@@ -3,17 +3,19 @@
  * 조건부 UPDATE(계획 판정 PA3), 놓친 예약은 10분 안이면 한 번·넘으면 skipped, 게시 실패는 그 자동화만 error 로 남기고 틱은 이어 간다.
  */
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
-import type { AutomationSchedule, Message } from "@dodok/shared";
+import { type AutomationSchedule, type Message, parseMentions } from "@dodok/shared";
 import { and, eq } from "drizzle-orm";
 import { v7 as uuid } from "uuid";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { App } from "../src/app";
 import type { Db } from "../src/db/client";
-import { channelMembers, channels, messages, runs } from "../src/db/schema.sqlite";
+import { channelMembers, channels, memberships, messages, runs, users } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
 import { addMember, createChannel } from "../src/modules/channels/service";
 import { createUserMessage, listMessages } from "../src/modules/messages/service";
 import { patchOpsSettings } from "../src/modules/ops/settings";
+import { createTriggerLookups } from "../src/modules/push/service";
+import { targetsForMessage } from "../src/modules/push/triggers";
 import { countRunsTodayInWorkspace } from "../src/modules/runs/store";
 import type { Logger } from "../src/logger";
 import { postAutomationMessage } from "../src/modules/automations/post";
@@ -392,6 +394,73 @@ describe("postAutomationMessage", () => {
     expect((await postAutomationMessage(t.deps, a)).bodyMd).toBe(`<@a:${t.seed.agentId}> 배포 알림`);
   });
 
+  it("웹훅 원문은 멘션이 아니다 — 블록 안의 리터럴 토큰은 멘션으로 읽히지 않고, 늘린 펜스 안의 @핸들은 토큰화하지 않는다(참여·푸시 0)", async () => {
+    const t = setup();
+    const mia = uuid();
+    t.db
+      .insert(users)
+      .values({
+        id: mia,
+        workspaceId: t.seed.workspaceId,
+        handle: "mia",
+        displayName: "mia",
+        authProvider: "local",
+        createdAt: NOW,
+      })
+      .run();
+    t.db
+      .insert(memberships)
+      .values({ id: uuid(), workspaceId: t.seed.workspaceId, userId: mia, role: "member" })
+      .run();
+    const joins: string[] = [];
+    t.bus.on("channel.member.changed", (p) => joins.push(p.channelId));
+    const hook = t.add({
+      kind: "webhook",
+      scheduleJson: null,
+      nextRunAt: null,
+      tokenHash: "h".repeat(64),
+      tokenPrefix: "abcdef",
+      bodyMd: "새 이벤트",
+    });
+    // 펜스를 늘린 블록 — 안의 ``` 뒤가 토큰화 경계(splitCode)에서 코드 밖으로 읽힌다
+    const extraMd = `\`\`\`\`json\n{"by":"<@a:${t.seed.agentId}> <@u:${mia}>","log":"\`\`\` @dev @mia"}\n\`\`\`\``;
+
+    const message = await postAutomationMessage(t.deps, hook, extraMd);
+
+    expect(message.mentions).toEqual({ agents: [], users: [] });
+    expect(parseMentions(message.bodyMd)).toEqual({ agents: [], users: [] });
+    // 보이는 글자는 원문 그대로 — 멘션 토큰 꼴만 읽히지 않게 바뀐다
+    expect(message.bodyMd.replaceAll("\u2060", "")).toBe(`새 이벤트\n\n${extraMd}`);
+    expect(joins).toEqual([]);
+    expect(
+      t.db
+        .select()
+        .from(channelMembers)
+        .all()
+        .some((m) => m.memberId === mia),
+    ).toBe(false);
+    expect(targetsForMessage(message, createTriggerLookups(t.db, t.seed.workspaceId))).toEqual([]);
+  });
+
+  it("문구의 멘션은 원문 블록과 함께여도 그대로 — 멘션은 문구에서만 나온다", async () => {
+    const t = setup();
+    const hook = t.add({
+      kind: "webhook",
+      scheduleJson: null,
+      nextRunAt: null,
+      tokenHash: "h".repeat(64),
+      tokenPrefix: "abcdef",
+      bodyMd: "@dev 봐 줘",
+    });
+    const message = await postAutomationMessage(
+      t.deps,
+      hook,
+      `\`\`\`text\n<@u:${t.seed.userId}> @owner\n\`\`\``,
+    );
+    expect(message.mentions).toEqual({ agents: [t.seed.agentId], users: [] });
+    expect(parseMentions(message.bodyMd)).toEqual(message.mentions);
+  });
+
   it("보관한 채널이면 CHANNEL_ARCHIVED 로 던지고 저장·라우팅이 없다", async () => {
     const t = setup();
     const a = t.add();
@@ -491,6 +560,20 @@ describe("실제 라우터·런 관문으로 (FakeAdapter)", () => {
     const [posted] = automationPosts(channelId);
     expect(posted).toBeDefined();
     expect(runsFor(posted?.id as string)).toEqual([]);
+  });
+
+  it("웹훅 원문 속 멘션(리터럴 토큰·늘린 펜스의 @dev)은 런을 만들지 않는다", async () => {
+    const { channelId, automation } = due("웹훅 알림");
+    // 이 행은 손으로 게시한다 — 뒤 사례의 틱이 다시 가져가지 않게 끈다
+    updateAutomation(app.db, app.workspaceId, automation.id, { enabled: false, nextRunAt: null });
+    const posted = await postAutomationMessage(
+      { db: app.db, bus: app.bus, logger: app.logger, route: (m) => app.services.router.routeMessage(m) },
+      automation,
+      `\`\`\`\`text\n<@a:${agentId}>\n\`\`\` @dev\n\`\`\`\``,
+    );
+    expect(automationPosts(channelId).map((m) => m.id)).toEqual([posted.id]);
+    expect(runsFor(posted.id)).toEqual([]);
+    expect(adapter.calls.send.some((s) => s.message.id === posted.id)).toBe(false);
   });
 
   it("런 한도에 막혀도 게시한다 — last_status ok·한도 알림, 런은 없다", async () => {
