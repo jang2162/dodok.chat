@@ -926,6 +926,54 @@ assert_status 1 "둘째 장에만 있는 진행 중 Dispatch 가 리뷰 attach �
 assert_eq "$(grep -c 'orchestration task-create' "$STUB_ORCA_LOG")" "0" \
   "둘째 장의 진행 중 Dispatch 로 거부하면 Task 도 만들지 않는다"
 
+# 목록은 Task 를 만들기 전에 한 번만 읽고, 진행 중 검사와 직전 시도(--retry-of)가 함께 쓴다.
+# Task 를 만든 뒤에 읽다가 실패하면 시작되지 않는 Task 가 남고, 거부 안내가 가리키는
+# --force 로도 그 자리를 넘지 못한다(막다른 길).
+: > "$STUB_ORCA_LOG"
+out="$(STUB_ORCA_FAIL="orchestration worker-list" cmd_attach probe chore 2>&1 >/dev/null)"
+assert_eq "$?" "1" "목록을 못 읽으면 --force 없이는 붙이지 않는다"
+assert_eq "$(grep -c 'orchestration task-create' "$STUB_ORCA_LOG")" "0" \
+  "목록을 못 읽어 거부할 때는 Task 를 만들기 전에 멈춘다"
+assert_eq "$(printf '%s' "$out" | grep -c '다시 부르거나.*--force')" "1" \
+  "목록을 못 읽으면 다시 부르거나 --force 로 붙이라고 말한다"
+: > "$STUB_ORCA_LOG"
+out="$(STUB_ORCA_FAIL="orchestration worker-list" STUB_ORCA_WORKERS_FIXTURE="$P/prevworker.json" \
+       cmd_attach probe chore --force 2>&1 >/dev/null)"
+assert_eq "$?" "0" "목록을 못 읽어도 --force 면 붙인다"
+assert_eq "$(grep -c '^orchestration worker-start ' "$STUB_ORCA_LOG")" "1" \
+  "목록을 못 읽은 --force 도 worker-start 까지 간다"
+assert_eq "$(grep '^orchestration worker-start ' "$STUB_ORCA_LOG" | grep -c -- '--retry-of')" "0" \
+  "목록을 못 읽은 --force 는 --retry-of 없이 붙인다"
+assert_eq "$(printf '%s' "$out" | grep -c -- '--retry-of 없이 붙인다')" "1" \
+  "목록을 못 읽은 --force 는 --retry-of 없이 붙인다고 경고한다"
+: > "$STUB_ORCA_LOG"
+STUB_ORCA_WORKERS_FIXTURE="$P/prevworker.json" cmd_attach probe chore --force >/dev/null 2>&1
+assert_eq "$(grep '^orchestration worker-start ' "$STUB_ORCA_LOG" | grep -c -- '--retry-of ctx_prev')" "1" \
+  "--force 여도 목록을 읽었으면 실패한 직전 시도를 --retry-of 로 잇는다"
+
+# 한 번만 읽는다 — 묶인 터미널에서는 한 번 읽는 데 Run 수만큼 왕복한다.
+: > "$STUB_ORCA_LOG"
+STUB_ORCA_WORKERS_FIXTURE="$P/prevworker.json" cmd_attach probe chore >/dev/null 2>&1
+assert_eq "$(grep -c '^orchestration worker-list --json$' "$STUB_ORCA_LOG")" "1" \
+  "attach 한 번에 목록을 한 번만 읽는다"
+assert_eq "$(grep -o -E '^orchestration (worker-list|task-create) ' "$STUB_ORCA_LOG" | tr '\n' ',')" \
+  "orchestration worker-list ,orchestration task-create ," "목록은 Task 를 만들기 전에 읽는다"
+assert_eq "$(grep '^orchestration worker-start ' "$STUB_ORCA_LOG" | grep -c -- '--retry-of ctx_prev')" "1" \
+  "한 번 읽은 목록으로 --retry-of 도 정한다"
+: > "$STUB_ORCA_LOG"
+STUB_ORCA_WORKERS_FIXTURE="$P/prevworker.json" STUB_ORCA_BOUND_RUN=run_a \
+  cmd_attach probe chore >/dev/null 2>&1
+assert_eq "$(grep -c '^orchestration run-list ' "$STUB_ORCA_LOG")" "1" \
+  "묶인 터미널에서도 attach 한 번에 Run 을 한 번만 돈다"
+: > "$STUB_ORCA_LOG"
+cmd_attach probe review >/dev/null 2>&1
+assert_eq "$(grep -c '^orchestration worker-list --json$' "$STUB_ORCA_LOG")" "1" \
+  "attach review(새로 띄움)도 목록을 한 번만 읽는다"
+: > "$STUB_ORCA_LOG"
+cmd_attach probe review --force >/dev/null 2>&1
+assert_eq "$(grep -c '^orchestration worker-list ' "$STUB_ORCA_LOG")" "0" \
+  "attach review --force 는 목록을 읽지 않는다(검사도, 이을 터미널도 없다)"
+
 # 없는 워크트리에 attach 하면 spawn 을 쓰라고 말한다.
 assert_status 1 "워크트리가 없으면 거부한다" cmd_attach 없다 chore
 assert_status 2 "<슬러그> <역할> 이 없으면 사용법 오류다" cmd_attach probe
@@ -2022,6 +2070,29 @@ assert_eq "$(grep 'worker-release' "$STUB_ORCA_LOG" | grep -c -- '--dispatch ctx
 assert_eq "$(grep -c '^REJECTED' "$STUB_ORCA_LOG")" "0" \
   "reap 의 모든 Orca 호출이 실물 인자 검증을 통과한다"
 
+# --all-merged 는 목록을 한 번 읽어 워크트리마다 나눠 쓴다. 워크트리마다 다시 읽으면 묶인
+# 터미널에서 워크트리 수 × (Run 수만큼의 왕복)이다. w-recover·w-reap·w-keep 셋이 회수까지 간다.
+: > "$STUB_ORCA_LOG"
+out="$(cmd_reap --all-merged --base main 2>&1)"
+assert_eq "$(printf '%s\n' "$out" | grep -c -E '워커 [0-9]+건 회수|증명된 dispatch 가 없어')" "3" \
+  "--all-merged: 세 워크트리가 모두 회수 판정을 거친다"
+assert_eq "$(grep -c '^orchestration worker-list --json$' "$STUB_ORCA_LOG")" "1" \
+  "--all-merged 는 워크트리가 여럿이어도 목록을 한 번만 읽는다"
+assert_eq "$(grep '^orchestration worker-release ' "$STUB_ORCA_LOG" | grep -o -E 'ctx_[a-z_]+' | sort | tr '\n' ',')" \
+  "ctx_reap,ctx_recover," "--all-merged: 나눠 쓴 목록으로 워크트리마다 제 것만 회수한다"
+: > "$STUB_ORCA_LOG"
+STUB_ORCA_BOUND_RUN=run_a cmd_reap --all-merged --base main >/dev/null 2>&1
+assert_eq "$(grep -c '^orchestration run-list ' "$STUB_ORCA_LOG")" "1" \
+  "--all-merged: 묶인 터미널에서도 Run 을 한 번만 돈다"
+: > "$STUB_ORCA_LOG"
+out="$(STUB_ORCA_FAIL="orchestration worker-list" cmd_reap --all-merged --base main 2>&1)"
+assert_eq "$(grep -c '^orchestration worker-list ' "$STUB_ORCA_LOG")" "1" \
+  "--all-merged: 목록을 못 읽어도 워크트리마다 다시 읽지 않는다"
+assert_eq "$(printf '%s\n' "$out" | grep -c '판정하지 못했다')" "3" \
+  "--all-merged: 못 읽었으면 워크트리마다 판정하지 못했다고 말한다"
+assert_eq "$(grep -c 'worker-release' "$STUB_ORCA_LOG")" "0" \
+  "--all-merged: 목록을 못 읽으면 아무것도 회수하지 않는다"
+
 # ---------------------------------------------------------------------------
 # stop — 끝난 워커를 회수하고 워크트리에 붙은 터미널만 정지한다
 #
@@ -2147,6 +2218,25 @@ assert_eq "$(grep -c '^terminal close ' "$STUB_ORCA_LOG")" "1" \
 assert_eq "$(grep '^terminal close ' "$STUB_ORCA_LOG" | grep -c 'other-project')" "0" \
   "--all 이 다른 저장소의 워크트리를 건드리지 않는다"
 rm -f "$X/.worktrees/lms-base/w-keep/.orca-keep"
+
+# --all 도 reap --all-merged 처럼 목록을 한 번 읽어 나눠 쓴다. w-reap·w-keep 둘이 회수까지
+# 간다(w-recover 는 터미널이 없고 w-live 는 도는 중이다).
+: > "$STUB_ORCA_LOG"
+cmd_stop --all >/dev/null 2>&1
+assert_eq "$(grep -c '^terminal close ' "$STUB_ORCA_LOG")" "2" \
+  "stop --all: 두 워크트리가 회수·닫기까지 간다"
+assert_eq "$(grep -c '^orchestration worker-list --json$' "$STUB_ORCA_LOG")" "1" \
+  "stop --all 은 워크트리가 여럿이어도 목록을 한 번만 읽는다"
+assert_eq "$(grep '^orchestration worker-release ' "$STUB_ORCA_LOG" | grep -c -- '--dispatch ctx_reap')" "1" \
+  "stop --all: 나눠 쓴 목록으로 회수한다"
+: > "$STUB_ORCA_LOG"
+STUB_ORCA_BOUND_RUN=run_a cmd_stop --all >/dev/null 2>&1
+assert_eq "$(grep -c '^orchestration run-list ' "$STUB_ORCA_LOG")" "1" \
+  "stop --all: 묶인 터미널에서도 Run 을 한 번만 돈다"
+: > "$STUB_ORCA_LOG"
+STUB_ORCA_FAIL="orchestration worker-list" cmd_stop --all >/dev/null 2>&1
+assert_eq "$(grep -c '^orchestration worker-list ' "$STUB_ORCA_LOG")" "1" \
+  "stop --all: 목록을 못 읽어도 워크트리마다 다시 읽지 않는다"
 
 # 빈 셀렉터는 실물에서 **오류가 아니라 전역 목록**이다(`--worktree ""` → 머신 전체).
 # 그러므로 셀렉터를 조립하는 자리마다 두 가지가 보장돼야 한다 —
