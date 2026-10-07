@@ -142,6 +142,26 @@ describe("formatInboundContext 스레드", () => {
     );
   });
 
+  it("스레드 런에서도 리액션 블록이 `---` 바로 앞에 실린다", () => {
+    const reactions: InboundReaction[] = [
+      {
+        messageId: "01a09fc9-d204-7551-89d6-38544d07a110",
+        excerpt: "DB 먼저요",
+        emoji: "👍",
+        by: "jang",
+        at: "2026-09-14T00:15:00Z",
+      },
+    ];
+    const lines = formatInboundContext(
+      { ...threaded, context: { ...threaded.context, reactions, reactionsOmitted: 2 } },
+      { timeZone: "Asia/Seoul" },
+    ).split("\n");
+    const facts = formatReactionFacts(reactions, 2).split("\n");
+    expect(lines.at(-1)).toBe("---");
+    expect(lines.slice(-1 - facts.length, -1)).toEqual(facts);
+    expect(lines).toContain("스레드 루트: [09:10] @jang: 배포 순서 정리하자");
+  });
+
   it("스레드 최근 메시지가 없으면 그 줄이 빠진다", () => {
     const out = formatInboundContext({
       ...threaded,
