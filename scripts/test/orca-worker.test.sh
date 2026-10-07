@@ -727,6 +727,8 @@ assert_eq "$(grep 'worker-start' "$STUB_ORCA_LOG" | grep -c -- '--terminal')" "0
   "attach review: 살아 있는 터미널이 있어도 --terminal 없이 새로 띄운다"
 assert_eq "$(grep 'worker-start' "$STUB_ORCA_LOG" | grep -c -- '--agent claude')" "1" \
   "attach review: --agent 로 새 에이전트를 띄운다"
+assert_eq "$(grep -c '^REJECTED' "$STUB_ORCA_LOG")" "0" \
+  "attach review: 새로 띄우는 경로의 Orca 호출이 실물 인자 검증을 통과한다"
 assert_eq "$(printf '%s' "$out" | grep -c '남아 있는 에이전트 터미널(term_reap_1)은 그대로 둔다')" "1" \
   "attach review: 남겨 둔 터미널 핸들을 보인다"
 # stop 은 워크트리 단위라 리뷰어를 띄운 뒤에 권하면 방금 띄운 리뷰어까지 끈다.
@@ -736,6 +738,29 @@ assert_eq "$(printf '%s' "$out" | grep -c 'terminal close --terminal term_reap_1
   "attach review: 띄운 뒤에는 그 핸들 하나만 끄는 명령을 보인다"
 assert_eq "$(printf '%s' "$out" | grep -c -- 'stop probe --force')" "1" \
   "attach review: 워크트리 단위 stop 을 다른 자리에서 또 권하지 않는다"
+# 구현자가 아직 일하는 중이면 리뷰어를 띄우지 않는다 — 그 터미널에 붙지 않아도
+# 반쯤 된 트리를 리뷰하고 두 에이전트가 한 워크트리를 함께 고친다.
+: > "$STUB_ORCA_LOG"
+assert_status 1 "attach review: 구현자 터미널에 진행 중인 Dispatch 가 있으면 띄우지 않는다" \
+  env STUB_ORCA_WORKERS_FIXTURE="$P/liveworker.json" \
+  bash -c '. "$0"; cmd_attach probe review' "$SUT"
+assert_eq "$(grep -c 'orchestration task-create' "$STUB_ORCA_LOG")" "0" \
+  "attach review: 거부할 때는 Task 도 만들지 않는다"
+assert_eq "$(grep -c 'orchestration worker-start' "$STUB_ORCA_LOG")" "0" \
+  "attach review: 거부하면 worker-start 까지 가지 않는다"
+out="$(STUB_ORCA_WORKERS_FIXTURE="$P/liveworker.json" cmd_attach probe review 2>&1 >/dev/null)"
+assert_eq "$(printf '%s' "$out" | grep -c '구현자 터미널 term_reap_1 에 아직 진행 중인 Dispatch(ctx_live)')" "1" \
+  "attach review: 어느 터미널의 어느 Dispatch 때문인지 말한다"
+assert_eq "$(printf '%s' "$out" | grep -c '반쯤 된 트리')" "1" \
+  "attach review: 왜 거부하는지 말한다"
+: > "$STUB_ORCA_LOG"
+assert_status 0 "attach review --force: 확인하고도 띄울 수 있다" \
+  env STUB_ORCA_WORKERS_FIXTURE="$P/liveworker.json" \
+  bash -c '. "$0"; cmd_attach probe review --force' "$SUT"
+assert_eq "$(grep 'worker-start' "$STUB_ORCA_LOG" | grep -c -- '--terminal')" "0" \
+  "attach review --force: 구현자 터미널에 붙지 않고 새로 띄운다"
+assert_eq "$(grep 'worker-start' "$STUB_ORCA_LOG" | grep -c -- '--agent claude')" "1" \
+  "attach review --force: --agent 로 새 에이전트를 띄운다"
 # 같은 조건의 implement 는 재사용한다.
 : > "$STUB_ORCA_LOG"
 cmd_attach probe implement >/dev/null 2>&1
@@ -746,6 +771,30 @@ assert_eq "$(grep 'worker-start' "$STUB_ORCA_LOG" | grep -c -- '--terminal term_
 cmd_attach probe review --terminal term_reap_1 >/dev/null 2>&1
 assert_eq "$(grep 'worker-start' "$STUB_ORCA_LOG" | grep -c -- '--terminal term_reap_1')" "1" \
   "attach review --terminal: 준 핸들을 그대로 쓴다"
+
+# 리뷰 뒤에는 워크트리에 구현자·리뷰어 터미널이 함께 남는 것이 보통이다. --terminal 없는
+# 수정 라운드가 둘 중 무엇을 고르는지가 실제로 갈리므로 「목록의 마지막」을 잠근다.
+jq --arg wt "repo1::$P/.worktrees/$PB/probe" \
+   '.result.terminals |= ([.[0], .[2]] | map(.worktreeId = $wt))' \
+   "$HERE/fixtures/terminal-list.json" > "$P/aterms2.json"
+: > "$STUB_ORCA_LOG"
+STUB_ORCA_TERMINALS_FIXTURE="$P/aterms2.json" cmd_attach probe implement >/dev/null 2>&1
+assert_eq "$(grep 'worker-start' "$STUB_ORCA_LOG" | grep -c -- '--terminal term_live')" "1" \
+  "attach implement: 에이전트 터미널이 둘이면 목록의 마지막을 쓴다"
+assert_eq "$(grep 'worker-start' "$STUB_ORCA_LOG" | grep -c -- '--terminal term_reap_1')" "0" \
+  "attach implement: 목록의 첫째를 고르지 않는다"
+out="$(STUB_ORCA_TERMINALS_FIXTURE="$P/aterms2.json" cmd_attach probe review 2>&1 >/dev/null)"
+assert_eq "$(printf '%s' "$out" | grep -c '남아 있는 에이전트 터미널(term_reap_1 term_live)은 그대로 둔다')" "1" \
+  "attach review: 남은 에이전트 터미널을 전부 보인다"
+assert_eq "$(printf '%s' "$out" | grep -cE 'terminal close --terminal (term_reap_1|term_live)$')" "2" \
+  "attach review: 핸들마다 하나씩 끄는 명령을 보인다"
+# 진행 중인 Dispatch 는 마지막 터미널이 아니라 남은 터미널 전부에서 찾는다.
+: > "$STUB_ORCA_LOG"
+assert_status 1 "attach review: 첫째 터미널의 진행 중인 Dispatch 도 거부 사유가 된다" \
+  env STUB_ORCA_TERMINALS_FIXTURE="$P/aterms2.json" STUB_ORCA_WORKERS_FIXTURE="$P/liveworker.json" \
+  bash -c '. "$0"; cmd_attach probe review' "$SUT"
+assert_eq "$(grep -c 'orchestration worker-start' "$STUB_ORCA_LOG")" "0" \
+  "attach review: 터미널이 둘이어도 거부하면 worker-start 까지 가지 않는다"
 
 # 터미널이 하나도 남지 않았어도 워크트리 세팅은 살린다.
 jq '.result.terminals = []' "$HERE/fixtures/terminal-list.json" > "$P/noterms.json"
@@ -903,6 +952,13 @@ STUB_ORCA_TERMINALS_FIXTURE="$P/aterms.json"
 TIERGEAR_COMMAND="$TG" cmd_attach probe chore --terminal term_reap_1 >/dev/null 2>&1
 assert_eq "$(wc -l < "$STUB_TG_LOG" | tr -d ' ')" "0" "attach --terminal 이면 tiergear 를 부르지 않는다"
 assert_eq "$(grep 'worker-start' "$STUB_ORCA_LOG" | grep -c -- '--model')" "0" "--terminal 이면 모델을 넘기지 않는다"
+# 살아 있는 터미널이 있어도 리뷰는 새로 띄우므로 tiergear 를 거쳐 범위가 걸린다.
+: > "$STUB_TG_LOG"; : > "$STUB_ORCA_LOG"
+TIERGEAR_COMMAND="$TG" cmd_attach probe review >/dev/null 2>&1
+assert_eq "$(grep -c -- '--min-tier deep' "$STUB_TG_LOG")" "1" \
+  "attach review: 살아 있는 터미널이 있어도 tiergear 를 --min-tier deep 으로 부른다"
+assert_eq "$(grep 'worker-start' "$STUB_ORCA_LOG" | grep -c -- '--agent claude --model opus --effort xhigh --timeout-ms')" "1" \
+  "attach review: 살아 있는 터미널이 있어도 tiergear 가 고른 값으로 새로 띄운다"
 STUB_ORCA_TERMINALS_FIXTURE="$P/tg-noterms.json"
 
 # 5. 실패는 경고 + 역할 기본값. 워커 기동은 막지 않는다.
