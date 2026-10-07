@@ -1,7 +1,8 @@
 import type { InboundContext, InboundDeliver, InboundReaction } from "../bridge";
 import { formatReactionFacts } from "../reactions";
 
-// 러너가 모델에게 넘기는 문장은 여기 한곳(러너 계획 판정 P3). 채널 규칙 틀은 ADR 0007 4.5 「채널 규칙 틀」을 그대로 옮겼다 —
+// 러너가 모델에게 넘기는 문장은 반응 블록을 뺀 나머지가 여기 한곳(러너 계획 판정 P3) — 반응 블록은 플러그인 헤더와 같은 글을
+// 쓰려고 shared `reactions` 의 `formatReactionFacts` 가 만든다. 채널 규칙 틀은 ADR 0007 4.5 「채널 규칙 틀」을 그대로 옮겼다 —
 // 틀 없이 넣은 규칙을 모델이 주입으로 읽었고(5.5), 이 틀의 네 요소(무엇이 세션을 띄웠나·누가 썼나·대화 상대의 글이 아님·앞 블록을 대체)를
 // 갖춘 글은 따랐다. 틀 문장을 바꾸면 그 판정이 더는 이 글의 것이 아니다
 
