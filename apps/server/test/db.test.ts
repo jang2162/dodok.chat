@@ -86,7 +86,7 @@ const msg = (ch: string, seq: number, extra: Partial<typeof messages.$inferInser
 });
 
 describe("db", () => {
-  it("마이그레이션이 26개 테이블을 만든다(FTS5 그림자 테이블 제외)", () => {
+  it("마이그레이션이 27개 테이블을 만든다(FTS5 그림자 테이블 제외)", () => {
     const db = createDb(":memory:");
     const rows = db.all<{ name: string }>(sql`select name from sqlite_master where type = 'table'`);
     const names = rows
@@ -99,6 +99,7 @@ describe("db", () => {
       "agents",
       "approvals",
       "attachments",
+      "automations",
       "bridge_tokens",
       "channel_members",
       "channel_reads",

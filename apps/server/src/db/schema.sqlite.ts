@@ -1,6 +1,9 @@
 import type {
   ApprovalDecision,
   Attachment,
+  AutomationKind,
+  AutomationSchedule,
+  AutomationStatus,
   ComponentState,
   ComponentsV1,
   MentionSet,
@@ -31,7 +34,7 @@ export const workspaces = sqliteTable("workspaces", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   createdAt: ts("created_at").notNull(),
-  /** 운영 설정 { dailyRunLimit? } — 망가진 값도 읽을 수 있게 json 모드가 아니다(modules/ops/settings.ts 가 파싱) */
+  /** 운영 설정 { dailyRunLimit?, timeZone? } — 망가진 값도 읽을 수 있게 json 모드가 아니다(modules/ops/settings.ts 가 파싱) */
   opsJson: text("ops_json").notNull().default("{}"),
 });
 
@@ -554,4 +557,46 @@ export const invites = sqliteTable(
     revokedAt: ts("revoked_at"),
   },
   (t) => [uniqueIndex("invites_token_hash").on(t.tokenHash)],
+);
+
+/**
+ * 자동화(자동화 스펙 「데이터 모델」 절) — 예약·웹훅 트리거가 channel_id 의 최상위에 body_md 를 게시한다. 게시한 메시지의
+ * author_id 가 이 id 다(FK 가 아니라 행을 지워도 메시지는 남는다).
+ * 종류마다 쓰는 칸이 갈린다 — schedule_json·next_run_at 은 예약만(next_run_at 은 켜져 있을 때만), token_hash·token_prefix 는 웹훅만.
+ * 토큰 원문(whk_…)은 두지 않는다 — token_hash 는 sha256(원문) hex, token_prefix 는 whk_ 뒤 6자
+ */
+export const automations = sqliteTable(
+  "automations",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id),
+    name: text("name").notNull(),
+    channelId: text("channel_id")
+      .notNull()
+      .references(() => channels.id),
+    kind: text("kind").$type<AutomationKind>().notNull(),
+    // 평문 `@핸들` — 게시할 때 토큰화한다(계획 판정 PA1)
+    bodyMd: text("body_md").notNull(),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    scheduleJson: json<AutomationSchedule>("schedule_json"),
+    nextRunAt: ts("next_run_at"),
+    tokenHash: text("token_hash"),
+    tokenPrefix: text("token_prefix"),
+    lastRunAt: ts("last_run_at"),
+    lastStatus: text("last_status").$type<AutomationStatus>(),
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: ts("created_at").notNull(),
+    updatedAt: ts("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("automations_ws_name").on(t.workspaceId, t.name),
+    // 예약 종류는 NULL — SQLite 는 유일 인덱스에서 NULL 을 서로 다르게 본다
+    uniqueIndex("automations_token_hash").on(t.tokenHash),
+    // 스케줄러 틱의 dueSchedules(enabled AND kind = 'schedule' AND next_run_at <= now)
+    index("automations_due").on(t.enabled, t.kind, t.nextRunAt),
+  ],
 );

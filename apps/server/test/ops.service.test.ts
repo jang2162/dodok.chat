@@ -1,4 +1,4 @@
-import { OPS_DEFAULT_DAILY_RUN_LIMIT, OpsEvent } from "@dodok/shared";
+import { OPS_DEFAULT_DAILY_RUN_LIMIT, OPS_DEFAULT_TIME_ZONE, OpsEvent } from "@dodok/shared";
 import { eq } from "drizzle-orm";
 import pino from "pino";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -358,34 +358,50 @@ describe("OpsService.ack·list·unacked·sweep", () => {
 describe("운영 설정(ops_json)", () => {
   const setRaw = (raw: string) =>
     db.update(workspaces).set({ opsJson: raw }).where(eq(workspaces.id, ws)).run();
+  const SEOUL = OPS_DEFAULT_TIME_ZONE;
+  const storedRaw = () =>
+    JSON.parse(db.select({ opsJson: workspaces.opsJson }).from(workspaces).get()?.opsJson ?? "");
 
-  it("키가 없으면 dailyRunLimit 300", () => {
+  it("키가 없으면 dailyRunLimit 300·timeZone Asia/Seoul", () => {
     expect(OPS_DEFAULT_DAILY_RUN_LIMIT).toBe(300);
-    expect(getOpsSettings(db, ws)).toEqual({ dailyRunLimit: 300 });
+    expect(OPS_DEFAULT_TIME_ZONE).toBe("Asia/Seoul");
+    expect(getOpsSettings(db, ws)).toEqual({ dailyRunLimit: 300, timeZone: SEOUL });
   });
 
   it("null 은 무제한, 숫자는 그대로 — 모르는 키는 설정에 싣지 않는다", () => {
     setRaw(JSON.stringify({ dailyRunLimit: null, future: "x" }));
-    expect(getOpsSettings(db, ws)).toEqual({ dailyRunLimit: null });
-    setRaw(JSON.stringify({ dailyRunLimit: 20 }));
-    expect(getOpsSettings(db, ws)).toEqual({ dailyRunLimit: 20 });
+    expect(getOpsSettings(db, ws)).toEqual({ dailyRunLimit: null, timeZone: SEOUL });
+    setRaw(JSON.stringify({ dailyRunLimit: 20, timeZone: "America/New_York" }));
+    expect(getOpsSettings(db, ws)).toEqual({ dailyRunLimit: 20, timeZone: "America/New_York" });
   });
 
-  it("망가진 값(JSON 아님·범위 밖·배열)이면 {} 로 보고 warn", () => {
+  it("망가진 값(JSON 아님·범위 밖·배열·문자열 아닌 시간대)이면 {} 로 보고 warn", () => {
     const { logger, lines: warnLines } = captureLogger();
-    for (const raw of ["{nope", JSON.stringify({ dailyRunLimit: 0 }), "[]"]) {
+    for (const raw of [
+      "{nope",
+      JSON.stringify({ dailyRunLimit: 0 }),
+      "[]",
+      JSON.stringify({ timeZone: 9 }),
+    ]) {
       setRaw(raw);
-      expect(getOpsSettings(db, ws, logger)).toEqual({ dailyRunLimit: 300 });
+      expect(getOpsSettings(db, ws, logger)).toEqual({ dailyRunLimit: 300, timeZone: SEOUL });
     }
-    expect(warnLines.filter((l) => l.level === 40 && l.msg === "ops settings unreadable")).toHaveLength(3);
+    expect(warnLines.filter((l) => l.level === 40 && l.msg === "ops settings unreadable")).toHaveLength(4);
   });
 
   it("patch 는 준 키만 바꾸고 다른 키(모르는 키 포함)는 남긴다", () => {
     setRaw(JSON.stringify({ future: 1 }));
-    expect(patchOpsSettings(db, ws, { dailyRunLimit: null })).toEqual({ dailyRunLimit: null });
+    expect(patchOpsSettings(db, ws, { dailyRunLimit: null })).toEqual({
+      dailyRunLimit: null,
+      timeZone: SEOUL,
+    });
     expect(patchOpsSettings(db, ws, { dailyRunLimit: 50 }).dailyRunLimit).toBe(50);
-    const raw = db.select({ opsJson: workspaces.opsJson }).from(workspaces).get()?.opsJson ?? "";
-    expect(JSON.parse(raw)).toEqual({ dailyRunLimit: 50, future: 1 });
+    expect(storedRaw()).toEqual({ dailyRunLimit: 50, future: 1 });
+    expect(patchOpsSettings(db, ws, { timeZone: "America/New_York" })).toEqual({
+      dailyRunLimit: 50,
+      timeZone: "America/New_York",
+    });
+    expect(storedRaw()).toEqual({ dailyRunLimit: 50, future: 1, timeZone: "America/New_York" });
   });
 
   it("patch 가 범위 밖이면 VALIDATION 으로 던지고 저장하지 않는다", () => {
@@ -395,12 +411,19 @@ describe("운영 설정(ops_json)", () => {
     expect(() => patchOpsSettings(db, ws, { dailyRunLimit: 10_001 })).toThrow(
       expect.objectContaining({ status: 400 }),
     );
-    expect(getOpsSettings(db, ws)).toEqual({ dailyRunLimit: 300 });
+    expect(getOpsSettings(db, ws)).toEqual({ dailyRunLimit: 300, timeZone: SEOUL });
+  });
+
+  it("없는 시간대 이름이면 VALIDATION 으로 던지고 같이 준 한도도 저장하지 않는다", () => {
+    expect(() => patchOpsSettings(db, ws, { dailyRunLimit: 9, timeZone: "Mars/Base" })).toThrow(
+      expect.objectContaining({ status: 400, body: expect.objectContaining({ code: "VALIDATION" }) }),
+    );
+    expect(getOpsSettings(db, ws)).toEqual({ dailyRunLimit: 300, timeZone: SEOUL });
   });
 
   it("망가진 값 위에 patch 하면 {} 에서 시작한다", () => {
     setRaw("{nope");
-    expect(patchOpsSettings(db, ws, { dailyRunLimit: 7 })).toEqual({ dailyRunLimit: 7 });
+    expect(patchOpsSettings(db, ws, { dailyRunLimit: 7 })).toEqual({ dailyRunLimit: 7, timeZone: SEOUL });
   });
 });
 
