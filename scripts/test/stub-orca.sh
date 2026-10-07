@@ -124,20 +124,25 @@ for req in $(required_flags "$sub"); do
 done
 
 # terminal close 의 usage 는 `([--terminal <핸들>] [--tab] | --worktree <셀렉터> --all)` 이다.
-# 둘 중 한 꼴이어야 하고, 워크트리 전체는 --all 이 짝이다. --all 이 없는 --worktree 는
-# 실물이 거부하므로 스텁도 거부해야 그 호출을 쓰는 코드가 테스트를 통과하지 못한다.
+# 둘 중 한 꼴이어야 한다. 워크트리 꼴은 --worktree 와 --all 이 짝이고 --terminal·--tab 과
+# 섞지 못한다 — 실물은 짝이 빠지거나 섞인 꼴을 거부하므로 스텁도 거부해야 그 호출을 쓰는
+# 코드가 테스트를 통과하지 못한다.
+#
+# 플래그가 없는 꼴(--tab 만 준 꼴 포함)의 거부는 **일부러 실물보다 엄격하다.** 실물은 그때
+# cwd 워크트리의 활성 터미널, 곧 부른 쪽 자기 터미널을 닫는다. 스크립트가 낼 꼴이 아니다.
 if [ "$sub" = "terminal close" ]; then
-  has_t=no; has_w=no; has_a=no
+  has_t=no; has_tab=no; has_w=no; has_a=no
   for arg in "$@"; do
     case "$arg" in
       (--terminal|--terminal=*) has_t=yes ;;
+      (--tab)                   has_tab=yes ;;
       (--worktree|--worktree=*) has_w=yes ;;
-      (--all) has_a=yes ;;
+      (--all)                   has_a=yes ;;
     esac
   done
-  if [ "$has_w" = "yes" ]; then
-    [ "$has_a" = "yes" ] && [ "$has_t" = "no" ] \
-      || die_invalid "terminal close --worktree needs --all and cannot combine with --terminal for command: $sub"
+  if [ "$has_w" = "yes" ] || [ "$has_a" = "yes" ]; then
+    [ "$has_w" = "yes" ] && [ "$has_a" = "yes" ] && [ "$has_t" = "no" ] && [ "$has_tab" = "no" ] \
+      || die_invalid "terminal close --worktree and --all go together and cannot combine with --terminal or --tab for command: $sub"
   else
     [ "$has_t" = "yes" ] || die_invalid "Missing required flag (--terminal | --worktree --all) for command: $sub"
   fi
