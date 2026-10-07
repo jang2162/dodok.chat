@@ -862,7 +862,7 @@ scripts/orca-worker.sh stop <슬러그> --force   # 도는 워커도 끊는다 �
 거부가 막던 사고(도는 워커의 문맥을 끊는 것)가 그대로 난다.
 
 `stop` 은 **이 저장소의 `repoId` 로 거른 워크트리에만** 나가고, 파괴 명령은 정확 일치
-셀렉터를 받는 `orca terminal stop --worktree "id:<repoId>::<path>"` 하나뿐이다.
+셀렉터를 받는 `orca terminal close --worktree "id:<repoId>::<path>" --all` 하나뿐이다.
 `.orca-keep` 보호는 여기서도 `--force` 로 뚫리지 않고, **자기가 서 있는 워크트리는 끄지
 않는다.** 저장소 밖 슬러그는 셀렉터조차 만들지 않고 실패로 끝낸다.
 
@@ -932,5 +932,5 @@ git worktree remove .worktrees/dodok.chat/<슬러그>
 (→ 「터미널을 끄는 것은 `stop` 이 한다」 절).
 
 ```bash
-orca terminal stop --worktree "id:<repoId>::<path>"
+orca terminal close --worktree "id:<repoId>::<path>" --all
 ```
