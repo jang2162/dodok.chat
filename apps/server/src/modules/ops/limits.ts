@@ -19,6 +19,11 @@ export const LIMITS = {
   inviteIssuePerMin: 20,
   /** GET /api/v1/search — 사용자당 분당(REST 상한 위에 한 번 더, 스레드·검색 스펙 5.2) */
   searchPerMin: 60,
+  /**
+   * POST /hooks/<token>(로그인 없음) — 웹훅 토큰마다 분당. 게시 하나가 멘션 런을 만들 수 있어 런 비용을 바깥 서비스가 정하지 않게
+   * 막는다(자동화 스펙 「웹훅」 절). 토큰을 맞혀 보는 것은 상한이 아니라 실패 카운터(bridgeFail)가 막는다
+   */
+  webhookPerMin: 30,
   /** wire 이벤트 — 소켓마다 토큰 버킷 */
   wire: {
     heavy: { perMin: 30, burst: 10 }, // message.send·component.interact·run.abort
@@ -43,7 +48,7 @@ export const LIMITS = {
   },
   /** 사용자당 동시 wire 소켓 */
   socketsPerUser: 20,
-  /** 브리지 인증 실패 카운터(BridgeAuthGuard) — 핸드셰이크·첨부 HTTP·설치 파일(plugin.tgz·runner.tgz) 토큰 받기가 같이 쓴다 */
+  /** 브리지 인증 실패 카운터(BridgeAuthGuard) — 핸드셰이크·첨부 HTTP·설치 파일(plugin.tgz·runner.tgz) 토큰 받기·웹훅이 같이 쓴다 */
   bridgeFail: { maxFailures: 10, windowMs: 60_000, blockMs: 60_000, maxAddresses: 1024 },
 } as const;
 
@@ -55,6 +60,7 @@ export type Limits = {
   restPerMin: number;
   uploadPerMin: number;
   searchPerMin: number;
+  webhookPerMin: number;
   inviteIssuePerMin: number;
   wire: Record<keyof (typeof LIMITS)["wire"], { perMin: number; burst: number }>;
   runner: Record<keyof (typeof LIMITS)["runner"], { perMin: number; burst: number }>;

@@ -19,6 +19,8 @@ describe("LIMITS — 스펙 4장 숫자", () => {
       uploadPerMin: 30,
       inviteIssuePerMin: 20,
       searchPerMin: 60,
+      // 자동화 스펙 「웹훅」 장 — 토큰마다
+      webhookPerMin: 30,
       wire: {
         heavy: { perMin: 30, burst: 10 },
         replay: { perMin: 120, burst: 30 },

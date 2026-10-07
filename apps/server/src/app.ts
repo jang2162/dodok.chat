@@ -26,7 +26,10 @@ import { registerAgentRoutes } from "./modules/agents/routes";
 import { registerAttachmentRoutes } from "./modules/attachments/routes";
 import { sweepAttachments } from "./modules/attachments/service";
 import { type BlobLocks, createBlobLocks } from "./modules/attachments/store";
+import type { PostDeps } from "./modules/automations/post";
+import { registerAutomationRoutes } from "./modules/automations/routes";
 import { tick } from "./modules/automations/scheduler";
+import { registerWebhookRoute } from "./modules/automations/webhook";
 import { watchPluginHellos } from "./modules/channels/prompt-sync";
 import { registerChannelRoutes } from "./modules/channels/routes";
 import { getChannel } from "./modules/channels/service";
@@ -218,7 +221,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     // 사건 서비스는 어댑터 뒤에 만들어진다 — 막힘은 listen 뒤 핸드셰이크에서만 일어나므로 그때는 있다.
     // 사건은 하나(key bridge)로 묶고 막히게 한 쪽은 detail.path 로 가른다(러너 스펙 8장)
     let ops: OpsService;
-    const onAuthBlocked = (address: string, path: "bridge" | "runner") =>
+    const onAuthBlocked = (address: string, path: "bridge" | "runner" | "webhook") =>
       ops.record({
         kind: "bridge_auth_blocked",
         key: "bridge",
@@ -598,6 +601,33 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       changed: emitSetupStatus,
       agentsChanged: () => bus.emit("agents.changed", {}),
     });
+    // 자동화(자동화 스펙): 예약 틱·웹훅·「지금 실행」이 같은 게시(라우터로 멘션 런)와 같은 워크스페이스 시간대를 쓴다
+    const automationPost: PostDeps = {
+      db,
+      bus,
+      logger,
+      route: (message) => services.router.routeMessage(message),
+    };
+    const workspaceTimeZone = () => getOpsSettings(db, workspaceId, logger).timeZone;
+    registerAutomationRoutes(fastify, {
+      auth,
+      db,
+      workspaceId,
+      post: automationPost,
+      // 웹훅 URL 은 웹 오리진(APP_ORIGIN)이 아니라 서버 공개 주소로 — 러너 serverUrl 과 같은 값(계획 판정 PA2)
+      publicOrigin: () => serverUrl,
+      timeZone: workspaceTimeZone,
+    });
+    // 웹훅 토큰을 맞혀 보는 것도 브리지·러너와 같은 실패 카운터가 막는다
+    registerWebhookRoute(fastify, {
+      db,
+      post: automationPost,
+      guard: bridgeGuard,
+      onBlocked: (address) => onAuthBlocked(address, "webhook"),
+      limits,
+      ops,
+      now: limitClock,
+    });
     // 운영 API(운영 보강 스펙 6장) — /healthz 에서 뺀 워크스페이스 id·어댑터 상세도 여기서 owner 에게만
     registerOpsRoutes(fastify, {
       auth,
@@ -697,17 +727,9 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     // 지난 부팅의 것으로 보고 닫는다
     const automationTicks = startAttachmentSweeper(
       () =>
-        tick(
-          {
-            db,
-            bus,
-            logger,
-            ops,
-            route: (message) => services.router.routeMessage(message),
-            timeZone: () => getOpsSettings(db, workspaceId, logger).timeZone,
-          },
-          new Date(),
-        ).catch((err: unknown) => logger.error({ err }, "automation tick failed")),
+        tick({ ...automationPost, ops, timeZone: workspaceTimeZone }, new Date()).catch((err: unknown) =>
+          logger.error({ err }, "automation tick failed"),
+        ),
       deps.automationTickMs ?? AUTOMATION_TICK_INTERVAL_MS,
     );
 

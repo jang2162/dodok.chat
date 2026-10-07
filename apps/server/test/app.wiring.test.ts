@@ -266,6 +266,15 @@ describe("부팅 정리 — 파일 DB 로 두 번 부팅", () => {
     }
   });
 
+  it("닫은 앱은 자동화 틱을 멈춘다 — 주기 타이머가 남으면 닫힌 DB 로 틱이 돌아 「automation tick failed」 가 찍힌다", async () => {
+    const { logger, lines } = captureLogger();
+    const app = await bootTestApp({}, { automationTickMs: 20, logger });
+    await app.close();
+    const closedAt = lines.length;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(lines.slice(closedAt).filter((line) => line.msg === "automation tick failed")).toEqual([]);
+  });
+
   it("sessionRecoverTargets 는 agent_sessions 를 { sessionKey, agentId: providerAgentId, cursor? } 로 돌려준다", async () => {
     const app = await bootTestApp();
     try {

@@ -7,6 +7,8 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import type { App } from "../src/app";
 import { channelMembers, channels, memberships, messageReactions, users } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
+import { insertAutomation } from "../src/modules/automations/store";
+import { issueWebhookToken } from "../src/modules/automations/tokens";
 import * as approvalStore from "../src/modules/approvals/store";
 import { addMember, type ChannelRecord, createChannel } from "../src/modules/channels/service";
 import { createGateway } from "../src/modules/gateways/service";
@@ -107,6 +109,25 @@ describe("역할 매트릭스(스펙 2장)", () => {
       .values({ id: uuid(), workspaceId: app.workspaceId, userId: id, role: "member", deactivatedAt })
       .run();
     return id;
+  };
+  /** 새 채널을 겨눈 자동화 — 웹훅이면 토큰 해시도 넣는다 */
+  const newAutomation = (kind: "schedule" | "webhook"): string => {
+    const token = issueWebhookToken();
+    return insertAutomation(app.db, {
+      id: uuid(),
+      workspaceId: app.workspaceId,
+      name: `auto${++n}`,
+      channelId: newChannel().id,
+      kind,
+      bodyMd: "점검",
+      enabled: true,
+      ...(kind === "schedule"
+        ? { scheduleJson: { repeat: "daily" as const, time: "09:00" } }
+        : { tokenHash: token.hash, tokenPrefix: token.prefix }),
+      createdBy: app.ownerUserId,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }).id;
   };
   const channelRow = (id: string) => app.db.select().from(channels).where(eq(channels.id, id)).get();
   /** 에이전트가 들어간 새 채널의 에이전트 답 하나 */
@@ -404,6 +425,57 @@ describe("역할 매트릭스(스펙 2장)", () => {
       min: "admin",
       ok: 200,
       request: () => ({ method: "POST", url: `/api/v1/members/${newMember(new Date())}/reactivate` }),
+    },
+    // 자동화(자동화 스펙 「권한」 장) — 관리 API 여섯은 admin 이상. POST /hooks/<token> 은 세션이 아니라 토큰만 본다(automations.webhook.test.ts)
+    {
+      name: "GET /automations",
+      min: "admin",
+      ok: 200,
+      request: () => ({ method: "GET", url: "/api/v1/automations" }),
+    },
+    {
+      name: "POST /automations",
+      min: "admin",
+      ok: 201,
+      request: () => ({
+        method: "POST",
+        url: "/api/v1/automations",
+        payload: {
+          kind: "schedule",
+          name: `auto${++n}`,
+          channelId: newChannel().id,
+          bodyMd: "점검",
+          schedule: { repeat: "daily", time: "09:00" },
+        },
+      }),
+    },
+    {
+      name: "PATCH /automations/:id",
+      min: "admin",
+      ok: 200,
+      request: () => ({
+        method: "PATCH",
+        url: `/api/v1/automations/${newAutomation("schedule")}`,
+        payload: { enabled: false },
+      }),
+    },
+    {
+      name: "DELETE /automations/:id",
+      min: "admin",
+      ok: 204,
+      request: () => ({ method: "DELETE", url: `/api/v1/automations/${newAutomation("schedule")}` }),
+    },
+    {
+      name: "POST /automations/:id/token",
+      min: "admin",
+      ok: 200,
+      request: () => ({ method: "POST", url: `/api/v1/automations/${newAutomation("webhook")}/token` }),
+    },
+    {
+      name: "POST /automations/:id/run",
+      min: "admin",
+      ok: 202,
+      request: () => ({ method: "POST", url: `/api/v1/automations/${newAutomation("schedule")}/run` }),
     },
   ];
 

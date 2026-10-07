@@ -76,8 +76,15 @@ async function runDue(deps: SchedulerDeps, a: AutomationRow, timeZone: string, n
   updateAutomation(deps.db, a.workspaceId, a.id, { lastStatus: "ok" });
 }
 
-/** 보관한 채널(CHANNEL_ARCHIVED) 같은 HttpError 는 그 코드를 사건에 싣는다 — 운영 화면이 사유를 보인다 */
-function markFailed(deps: SchedulerDeps, a: AutomationRow, err: unknown): void {
+/**
+ * 게시 실패를 그 자동화의 결과(error)와 운영 사건 automation_failed 로 남긴다 — 예약 틱과 웹훅이 쓴다. 보관한 채널(CHANNEL_ARCHIVED) 같은
+ * HttpError 는 그 코드를 사건에 싣는다 — 운영 화면이 사유를 보인다
+ */
+export function markFailed(
+  deps: Pick<SchedulerDeps, "db" | "ops" | "logger">,
+  a: AutomationRow,
+  err: unknown,
+): void {
   const code = err instanceof HttpError ? err.body.code : undefined;
   updateAutomation(deps.db, a.workspaceId, a.id, { lastStatus: "error" });
   deps.ops.record({
