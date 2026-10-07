@@ -1993,6 +1993,8 @@ assert_status 1 "스텁: --worktree 가 없는 --all 은 거부한다" \
   "$HERE/stub-orca.sh" terminal close --terminal term_x --all --json
 assert_status 1 "스텁: 워크트리 꼴에 --tab 을 섞으면 거부한다" \
   "$HERE/stub-orca.sh" terminal close --worktree "id:repo1::/w" --all --tab --json
+assert_status 1 "스텁: 워크트리 꼴에 --terminal 을 섞으면 거부한다" \
+  "$HERE/stub-orca.sh" terminal close --worktree "id:repo1::/w" --all --terminal term_x --json
 assert_status 1 "스텁: 플래그 없는 close 는 거부한다(실물은 부른 쪽 자기 터미널을 닫는다)" \
   "$HERE/stub-orca.sh" terminal close --json
 
