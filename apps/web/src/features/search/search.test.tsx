@@ -103,7 +103,8 @@ async function openWith(key: { metaKey?: boolean; ctrlKey?: boolean }) {
 }
 async function typeQuery(text: string) {
   const input = screen.getByRole("searchbox", { name: "검색어" });
-  await userEvent.type(input, text);
+  // delay:null — 글자마다 setTimeout 을 기다리지 않는다(부하에서 시간 초과의 씨앗)
+  await userEvent.setup({ delay: null }).type(input, text);
   return input;
 }
 
@@ -378,7 +379,7 @@ describe("결과로 가기", () => {
     await typeQuery("찾던");
     const result = await within(dialog).findByRole("button", { name: /찾던 답글/ });
     expect(result).toHaveTextContent("스레드 답글");
-    await userEvent.click(result);
+    await userEvent.setup({ delay: null }).click(result);
     await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/t/${ROOT.id}`));
     const panel = await screen.findByTestId("thread-panel");
     await waitFor(() =>

@@ -186,10 +186,15 @@ describe("셀렉트 — 다중", () => {
     // 계약 상한인 25개 — 옵션이 적으면 기본값을 25 밑으로 내려도 안 걸린다
     const all = Array.from({ length: 25 }, (_, i) => ({ value: `o${i}`, label: `옵션 ${i}` }));
     renderWithClient(<Components message={withSelect({ ...MULTI, maxValues: undefined, options: all })} />);
-    for (const o of all) await userEvent.click(screen.getByRole("checkbox", { name: o.label }));
-    for (const o of all) expect(screen.getByRole("checkbox", { name: o.label })).toBeChecked();
+    // delay:null — 기본 클릭마다 setTimeout 을 기다려 부하에서 25번이 20초를 넘겼다
+    const user = userEvent.setup({ delay: null });
+    // getByRole 는 접근 이름을 매번 계산해 비싸다 — 한 번 받아 옵션 순서대로 누른다
+    const boxes = screen.getAllByRole("checkbox");
+    expect(boxes).toHaveLength(all.length);
+    for (const box of boxes) await user.click(box);
+    for (const box of screen.getAllByRole("checkbox")) expect(box).toBeChecked();
     expect(screen.queryByText(/최대/)).toBeNull();
-    await userEvent.click(send());
+    await user.click(send());
     expect(fake?.sentOf("component.interact")).toMatchObject([
       { values: { values: all.map((o) => o.value) } },
     ]);
