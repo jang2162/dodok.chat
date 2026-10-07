@@ -10,6 +10,7 @@ import { ReactionPicker } from "@/features/reactions/ReactionPicker";
 import { useSetReaction } from "@/features/reactions/useSetReaction";
 import { threadRootOf } from "@/features/threads/queries";
 import { ReplyInThread, ThreadChip } from "@/features/threads/ThreadChip";
+import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback, AvatarImage } from "@/ui/avatar";
 import { Badge } from "@/ui/badge";
 import { MessageBody } from "./MessageBody";
@@ -66,6 +67,18 @@ export function AuthorLine({ author, children }: { author: Author; children: Rea
 }
 
 /**
+ * 마우스 없는 기기(`hover: none`)에서는 동작 버튼이 늘 보여 머리 줄이 없는 이어진 메시지의 본문 첫 줄들 위에 뜬다 —
+ * 그 조건에서만 본문 칸 오른쪽을 버튼 폭만큼 비운다(행 `px-4` 를 뺀 값: 스레드 답하기 right-3 + 28px 이면 24px,
+ * 반응 추가가 right-12 에 더 있으면 64px, 스레드 패널은 반응 추가가 right-3 이라 24px). 버튼이 없으면 비우지 않는다.
+ * 클래스는 Tailwind 가 읽도록 통째로 적는다.
+ */
+function touchGutter(inThread: boolean, hasPicker: boolean): string | undefined {
+  if (hasPicker && !inThread) return "[@media(hover:none)]:pr-16";
+  if (hasPicker || !inThread) return "[@media(hover:none)]:pr-6";
+  return undefined;
+}
+
+/**
  * 사람·에이전트 메시지(스펙 5.3): 머리(아바타·이름·「AI」·시각) + 본문 + 첨부 + components 카드.
  * 글 없는 첨부 메시지는 본문을 그리지 않는다(빈 단락이 줄을 차지하지 않게). 카드가 가리킨 첨부는 본문 아래에 다시 그리지 않는다(첨부 스펙 6.3).
  * 같은 작성자의 연속(`head: false`)은 머리를 생략하고 시각은 마우스를 올리거나 행 안에 초점이 있을 때만 보인다 —
@@ -107,7 +120,13 @@ export function MessageItem({
           />
         )}
       </div>
-      <div className={head ? "min-w-0 flex-1 pt-1" : "min-w-0 flex-1"}>
+      <div
+        className={cn(
+          "min-w-0 flex-1",
+          head && "pt-1",
+          head || touchGutter(inThread, reactable && !archived),
+        )}
+      >
         {head && (
           <AuthorLine author={author}>
             <MessageTime iso={message.createdAt} />
