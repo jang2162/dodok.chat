@@ -1,5 +1,5 @@
 import { type Message, type Person, REACTION_EMOJIS, type Result } from "@dodok/shared";
-import { act, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -52,8 +52,11 @@ beforeEach(() => {
  * window blur 에 닫힌다 — 그래서 열기 전에 트리거에 초점을 준다(키보드로 열거나 `focus()` 뒤 클릭). 그러지 않으면 파일의 둘째
  * 테스트부터 메뉴가 열리자마자 닫힌다. 마우스 열기는 파일 첫 테스트인 피커 테스트가 확인한다
  */
-async function openPicker(user: ReturnType<typeof userEvent.setup>) {
-  screen.getByRole("button", { name: "반응 추가" }).focus();
+async function openPicker(
+  user: ReturnType<typeof userEvent.setup>,
+  scope: Pick<typeof screen, "getByRole"> = screen,
+) {
+  scope.getByRole("button", { name: "반응 추가" }).focus();
   await user.keyboard("{Enter}");
 }
 
@@ -132,6 +135,7 @@ describe("ReactionChips", () => {
     );
     const mine = screen.getByRole("button", { name: /👍\s*3/ });
     expect(mine).toHaveAttribute("aria-pressed", "true");
+    expect(mine).not.toHaveAttribute("aria-disabled");
     expect(screen.getByRole("button", { name: /🎉\s*1/ })).toHaveAttribute("aria-pressed", "false");
     await user.click(mine);
     expect(onToggle).toHaveBeenCalledWith("👍", false);
@@ -396,6 +400,80 @@ describe("MessageItem 안의 리액션", () => {
     const mine = [{ emoji: "👀", count: 1, userIds: [USER] }];
     expect(rootIn(getThread(qc, CH, ROOT_MSG.id))).toEqual(mine);
     expect(rootIn(getTimeline(qc, CH))).toEqual(mine);
+  });
+
+  it("채널 행에서 켜고 스레드 패널 칩으로 끈 뒤 둘 다 실패해도 서버에 없는 칩을 남기지 않는다 — 두 행이 요청 하나로 센다", async () => {
+    const qc = bothOpen();
+    const acks = holdAcks();
+    const user = userEvent.setup();
+    const rows = (inChannel: Message, inPanel: Message) => (
+      <>
+        <section aria-label="채널">
+          <MessageItem message={inChannel} head />
+        </section>
+        <section aria-label="스레드 패널">
+          <MessageItem message={inPanel} head inThread />
+        </section>
+      </>
+    );
+    const { rerender } = renderWithClient(rows(ROOT_MSG, ROOT_MSG), qc);
+    await openPicker(user, within(screen.getByRole("region", { name: "채널" })));
+    await user.click(await screen.findByRole("menuitem", { name: "👍" }));
+    // 두 캐시의 메시지로 다시 그려진 것처럼 — 스레드 패널 칩으로 끈다
+    const rootOf = (t: Timeline | undefined) => t?.items.find((m) => m.id === ROOT_MSG.id) as Message;
+    rerender(rows(rootOf(getTimeline(qc, CH)), rootOf(getThread(qc, CH, ROOT_MSG.id))));
+    const panel = within(screen.getByRole("region", { name: "스레드 패널" }));
+    await user.click(panel.getByRole("button", { name: /👍\s*1/ }));
+    expect(fake.sentOf("reaction.set")).toEqual([
+      { messageId: ROOT_MSG.id, emoji: "👍", on: true },
+      { messageId: ROOT_MSG.id, emoji: "👍", on: false },
+    ]);
+    await acks.settle(0, failed("TIMEOUT"));
+    await acks.settle(1, failed("TIMEOUT"));
+    expect(rootIn(getTimeline(qc, CH))).toEqual([]);
+    expect(rootIn(getThread(qc, CH, ROOT_MSG.id))).toEqual([]);
+    expect(toast.error).toHaveBeenCalledTimes(1);
+    expect(fake.listenerCount()).toBe(0);
+  });
+
+  it("켜고 행이 다시 마운트된 뒤 칩으로 끄고 둘 다 실패해도 서버에 없는 칩을 남기지 않는다", async () => {
+    const qc = authorsClient(undefined, PEOPLE);
+    qc.setQueryData(qk.timeline(CH), timelineWith(ROOT_MSG));
+    const acks = holdAcks();
+    const user = userEvent.setup();
+    const { unmount } = renderWithClient(<MessageItem message={ROOT_MSG} head />, qc);
+    await openPicker(user);
+    await user.click(await screen.findByRole("menuitem", { name: "👍" }));
+    // 가상 목록이 행을 지웠다 다시 그리거나 채널을 옮겼다 돌아온 것처럼 — 새 행이 캐시의 메시지로 그려진다
+    unmount();
+    renderWithClient(<MessageItem message={getTimeline(qc, CH)?.items[0] as Message} head />, qc);
+    await user.click(screen.getByRole("button", { name: /👍\s*1/ }));
+    expect(fake.sentOf("reaction.set")).toHaveLength(2);
+    await acks.settle(0, failed("TIMEOUT"));
+    await acks.settle(1, failed("TIMEOUT"));
+    expect(getTimeline(qc, CH)?.items[0]?.reactions).toEqual([]);
+    expect(toast.error).toHaveBeenCalledTimes(1);
+    expect(fake.listenerCount()).toBe(0);
+  });
+
+  it("나가 있는 요청은 QueryClient 마다 따로다 — 다른 클라이언트의 요청에 끼어 그 클라이언트 캐시로 되돌리지 않는다", async () => {
+    const acks = holdAcks();
+    const user = userEvent.setup();
+    const mineA = authorsClient(undefined, PEOPLE);
+    const onA = withReactions(1, thumbsMine, { id: ROOT_MSG.id });
+    mineA.setQueryData(qk.timeline(CH), timelineWith(onA));
+    const a = renderWithClient(<MessageItem message={onA} head />, mineA);
+    await user.click(within(a.container).getByRole("button", { name: /👍\s*1/ }));
+
+    const emptyB = authorsClient(undefined, PEOPLE);
+    emptyB.setQueryData(qk.timeline(CH), timelineWith(ROOT_MSG));
+    const b = renderWithClient(<MessageItem message={ROOT_MSG} head />, emptyB);
+    await openPicker(user, within(b.container));
+    await user.click(await screen.findByRole("menuitem", { name: "👍" }));
+    await acks.settle(1, failed("TIMEOUT"));
+    expect(getTimeline(emptyB, CH)?.items[0]?.reactions).toEqual([]);
+    await acks.settle(0, emptyAck());
+    expect(getTimeline(mineA, CH)?.items[0]?.reactions).toEqual([]);
   });
 
   it("스레드 패널 안에서도 달린다 — 스레드 캐시가 바뀐다", async () => {

@@ -1,6 +1,6 @@
 import { type Message, type MessageReaction, REACTION_EMOJIS, type ReactionEmoji } from "@dodok/shared";
-import { useQueryClient } from "@tanstack/react-query";
-import { useCallback, useRef } from "react";
+import { type QueryClient, useQueryClient } from "@tanstack/react-query";
+import { useCallback } from "react";
 import { toast } from "sonner";
 import { useMe } from "@/api/queries";
 import { refreshArchivedChannel } from "@/features/channels/archived";
@@ -49,6 +49,19 @@ const mineIn = (m: Pick<Message, "reactions"> | undefined, emoji: ReactionEmoji,
 type Inflight = { seq: number; open: number; server: boolean; stop: () => void };
 
 /**
+ * 나가 있는 요청은 훅 인스턴스가 아니라 QueryClient(이 탭)마다 센다 — 같은 메시지를 그리는 행이 둘(채널 행·스레드 패널 행)이거나
+ * 행이 다시 마운트돼도 한 줄로 세야, 뒤 행이 앞 행의 낙관값을 「서버 상태」로 잡지 않는다
+ */
+const inflightBy = new WeakMap<QueryClient, Map<string, Inflight>>();
+let counter = 0;
+
+function inflightOf(qc: QueryClient): Map<string, Inflight> {
+  let byKey = inflightBy.get(qc);
+  if (!byKey) inflightBy.set(qc, (byKey = new Map()));
+  return byKey;
+}
+
+/**
  * 낙관적 갱신 → `reaction.set` → 실패하면 되돌리고 토스트. 같은 (메시지, 이모지)는 요청마다 번호를 매겨 **마지막 요청만**
  * 화면 정본이다 — 앞 요청이 늦게 실패해도 뒤에 누른 상태를 되돌리지 않는다(리액션 계획 「Review Focus」 절의 「같은 사람이 같은
  * 이모지를 빠르게 두 번 누름」). 마지막 요청이 실패하면 「반대로」가 아니라 **이 탭이 서버에게서 마지막으로 들은 상태**로 되돌린다 —
@@ -64,13 +77,12 @@ export function useSetReaction(
   const qc = useQueryClient();
   const { socket } = useWire();
   const me = useMe().data?.user.id;
-  const inflight = useRef(new Map<string, Inflight>());
-  const counter = useRef(0);
 
   return useCallback(
     (messageId, emoji, on) => {
+      const inflight = inflightOf(qc);
       const key = `${messageId}|${emoji}`;
-      const seq = ++counter.current;
+      const seq = ++counter;
       const apply = (value: boolean) => {
         if (!me) return;
         const fn = editMessage(messageId, emoji, me, value);
@@ -83,7 +95,7 @@ export function useSetReaction(
           (threadRootId
             ? getThread(qc, channelId, threadRootId)?.items.find((m) => m.id === messageId)
             : undefined);
-        // 나가 있는 요청이 없으면 지금 캐시가 서버에게서 들은 상태다 — 낙관값을 얹기 전에 잡는다
+        // 이 탭 어느 행에서도 나가 있는 요청이 없으면 지금 캐시가 서버에게서 들은 상태다 — 낙관값을 얹기 전에 잡는다
         const r: Inflight = { seq, open: 0, server: me ? mineIn(cached, emoji, me) : false, stop: () => {} };
         if (socket && me) {
           const heard = ({ message: m }: { message: Message }) => {
@@ -92,16 +104,16 @@ export function useSetReaction(
           socket.on("message.updated", heard);
           r.stop = () => socket.off("message.updated", heard);
         }
-        inflight.current.set(key, r);
+        inflight.set(key, r);
         return r;
       };
-      const req = inflight.current.get(key) ?? start();
+      const req = inflight.get(key) ?? start();
       req.seq = seq;
       req.open += 1;
       const settle = () => {
         if (--req.open > 0) return;
         req.stop();
-        inflight.current.delete(key);
+        inflight.delete(key);
       };
       const ok = () => {
         req.server = on;
