@@ -1,8 +1,14 @@
 import type { Message } from "@dodok/shared";
+import { useMe } from "@/api/queries";
 import type { ReactNode } from "react";
 import { MessageAttachments } from "@/features/attachments/MessageAttachments";
 import { referencedAttachmentIds } from "@/features/attachments/resolve";
 import { Components } from "@/features/components/Components";
+import { useChannelArchived } from "@/features/channels/archived";
+import { ReactionChips } from "@/features/reactions/ReactionChips";
+import { ReactionPicker } from "@/features/reactions/ReactionPicker";
+import { useSetReaction } from "@/features/reactions/useSetReaction";
+import { threadRootOf } from "@/features/threads/queries";
 import { ReplyInThread, ThreadChip } from "@/features/threads/ThreadChip";
 import { Avatar, AvatarFallback, AvatarImage } from "@/ui/avatar";
 import { Badge } from "@/ui/badge";
@@ -65,7 +71,8 @@ export function AuthorLine({ author, children }: { author: Author; children: Rea
  * 같은 작성자의 연속(`head: false`)은 머리를 생략하고 시각은 마우스를 올리거나 행 안에 초점이 있을 때만 보인다 —
  * 투명도로만 숨겨 스크린 리더는 늘 읽는다(visibility:hidden 은 접근성 트리에서도 빠진다, web-t7 리뷰 m6).
  * 채널 타임라인에서는 루트 아래에 답글 요약 칩과 「스레드에서 답하기」가 붙는다(스레드·검색 스펙 4.2) — 스레드 패널
- * 안(`inThread`)에서는 둘 다 없다: 이미 그 스레드이고, 스레드 안의 스레드는 없다
+ * 안(`inThread`)에서는 둘 다 없다: 이미 그 스레드이고, 스레드 안의 스레드는 없다.
+ * 반응(리액션 스펙 6장): 본문·첨부·카드 아래에 칩, 동작 줄에 「반응 추가」(보관한 채널은 숨김·칩은 읽기만, 시스템 메시지는 둘 다 없음)
  */
 export function MessageItem({
   message,
@@ -77,6 +84,11 @@ export function MessageItem({
   inThread?: boolean;
 }) {
   const author = useAuthors().author(message);
+  const me = useMe().data?.user.id;
+  const archived = useChannelArchived();
+  const setReaction = useSetReaction(message.channelId, inThread ? threadRootOf(message) : undefined);
+  // 시스템 메시지에는 달 수 없다(보내는 중 항목은 PendingItem 이라 여기에 오지 않는다)
+  const reactable = message.kind === "normal";
   return (
     <article
       className="group relative flex gap-3 px-4 py-0.5 hover:bg-accent/40"
@@ -107,10 +119,19 @@ export function MessageItem({
           exclude={referencedAttachmentIds(message.components, message.attachments)}
         />
         <Components message={message} />
+        {reactable && me && (
+          <ReactionChips message={message} me={me} onToggle={(e, on) => setReaction(message.id, e, on)} />
+        )}
         {!inThread && message.threadSummary && (
           <ThreadChip message={message} summary={message.threadSummary} />
         )}
       </div>
+      {reactable && !archived && (
+        <ReactionPicker
+          className={inThread ? "right-3" : "right-12"}
+          onPick={(e) => setReaction(message.id, e, true)}
+        />
+      )}
       {!inThread && <ReplyInThread message={message} />}
     </article>
   );
