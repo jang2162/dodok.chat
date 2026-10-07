@@ -936,6 +936,12 @@ assert_eq "$(grep -c 'orchestration task-create' "$STUB_ORCA_LOG")" "0" \
   "목록을 못 읽어 거부할 때는 Task 를 만들기 전에 멈춘다"
 assert_eq "$(printf '%s' "$out" | grep -c '다시 부르거나.*--force')" "1" \
   "목록을 못 읽으면 다시 부르거나 --force 로 붙이라고 말한다"
+# 스텁의 run-current 는 기본으로 Run 이 있다고 답해 위 단언들은 ensure_run 의 자리를 보지 못한다 —
+# 거부된 attach 가 빈 Run 을 만들면 그 터미널이 묶여 이후 목록 읽기가 Run 수만큼 왕복한다.
+: > "$STUB_ORCA_LOG"
+STUB_ORCA_NO_RUN=1 STUB_ORCA_FAIL="orchestration worker-list" cmd_attach probe chore >/dev/null 2>&1
+assert_eq "$(grep -c 'orchestration run-create' "$STUB_ORCA_LOG")" "0" \
+  "목록을 못 읽어 거부할 때는 Run 도 만들지 않는다"
 : > "$STUB_ORCA_LOG"
 out="$(STUB_ORCA_FAIL="orchestration worker-list" STUB_ORCA_WORKERS_FIXTURE="$P/prevworker.json" \
        cmd_attach probe chore --force 2>&1 >/dev/null)"
