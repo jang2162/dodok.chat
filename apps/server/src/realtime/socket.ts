@@ -8,6 +8,7 @@ import {
   type Message,
   MessageSend,
   PresenceUpdate,
+  ReactionSet,
   type Result,
   RunAbort,
   RunEventsReplay,
@@ -30,6 +31,7 @@ import { LIMITS, type Limits } from "../modules/ops/limits";
 import { monotonicNow, TokenBucket } from "../modules/ops/ratelimit";
 import type { OpsService } from "../modules/ops/service";
 import type { Presence } from "../modules/push/presence";
+import { setReaction } from "../modules/reactions/service";
 import { markRead } from "../modules/reads/store";
 import {
   createUserMessage,
@@ -79,6 +81,7 @@ export const WIRE_BUCKET = {
   typing: "chatter",
   "presence.update": "chatter",
   "channel.read": "chatter",
+  "reaction.set": "chatter",
 } as const satisfies Record<string, keyof Limits["wire"]>;
 
 const RATE_LIMITED: Result<never> = {
@@ -281,6 +284,16 @@ export function attachWire(io: WireServer, ctx: WireContext): void {
         const lastReadSeq = markRead(ctx.db, ctx.workspaceId, userId, channelId, seq, new Date());
         ctx.bus.emit("channel.read", { userId, channelId, lastReadSeq });
         return { lastReadSeq };
+      });
+      reply(ack, res);
+    });
+
+    // 보관한 채널·시스템 메시지·다른 워크스페이스 거절은 서비스가 한다(리액션 스펙 「오류 처리」 절). 상태가 바뀌었을 때만 message.updated
+    socket.on("reaction.set", async (raw: unknown, ack: unknown) => {
+      if (limited("reaction.set")) return reply(ack, RATE_LIMITED);
+      const res = await settle(ctx.logger, "reaction.set", async () => {
+        setReaction(ctx.db, ctx.bus, ctx.workspaceId, userId, parsePayload(ReactionSet, raw), new Date());
+        return null;
       });
       reply(ack, res);
     });

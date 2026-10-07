@@ -6,9 +6,22 @@ import { v7 as uuid } from "uuid";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RunEventBody } from "../src/adapters/types";
 import type { DbOrTx } from "../src/db/client";
-import { agents, attachments, componentInteractions, messages } from "../src/db/schema.sqlite";
-import { addMember, createChannel } from "../src/modules/channels/service";
-import { createUserMessage, getMessage, rowToMessage } from "../src/modules/messages/service";
+import {
+  agentSessions,
+  agents,
+  attachments,
+  componentInteractions,
+  messageReactions,
+  messages,
+  users,
+} from "../src/db/schema.sqlite";
+import { addMember, createChannel, updateChannel } from "../src/modules/channels/service";
+import {
+  createAgentMessage,
+  createUserMessage,
+  getMessage,
+  rowToMessage,
+} from "../src/modules/messages/service";
 import type { RunPlan } from "../src/modules/router/decide";
 import {
   DEFAULT_RUN_TIMEOUTS,
@@ -19,6 +32,7 @@ import {
 } from "../src/modules/runs/orchestrator";
 import { createAdapterRegistry } from "../src/adapters/registry";
 import { getRun, insertRun, listRunEvents, updateRun } from "../src/modules/runs/store";
+import { ensureSession } from "../src/modules/sessions/service";
 import { ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
 import { FAKE_GATEWAY_ID, fakeGatewayStatus, insertGateway } from "./helpers/gateways";
@@ -2191,5 +2205,199 @@ describe("orchestrator", () => {
     t.orch.stop();
     t.adapter.emit({ kind: "status", status, capabilities: t.adapter.capabilities() });
     expect(statuses).toHaveLength(1); // stop 뒤엔 구독 해제
+  });
+});
+
+describe("리액션 — 다음 런에 싣고, send 가 받아들여졌을 때만 커서를 올린다(리액션 계획 판정 PR1)", () => {
+  const T0 = new Date("2026-10-07T00:00:00.000Z");
+  const at = (sec: number) => new Date(T0.getTime() + sec * 1000);
+  const dispatch: Parameters<FakeAdapter["script"]>[0] = (input) => ({
+    admission: "dispatch",
+    providerRunId: input.runId,
+  });
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(T0);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** 채널 세션 행을 T0 커서로 먼저 만들고, 에이전트 답 하나와 그 답에 리액션을 다는 손잡이를 준다 */
+  function reactionSetup() {
+    const t = setup();
+    const mia = uuid();
+    t.db
+      .insert(users)
+      .values({
+        id: mia,
+        workspaceId: t.workspaceId,
+        handle: "mia",
+        displayName: "mia",
+        authProvider: "local",
+        createdAt: T0,
+      })
+      .run();
+    const session = ensureSession(t.db, t.adapter, { channelId: t.channelId, agentId: t.agentId }).session;
+    const answer = createAgentMessage(t.db, new ServerBus(), {
+      channelId: t.channelId,
+      agentId: t.agentId,
+      bodyMd: "배포 순서는 먼저 DB 마이그레이션",
+      externalId: "ext-answer",
+    });
+    const react = (emoji: string, sec: number, userId = mia) =>
+      t.db
+        .insert(messageReactions)
+        .values({ messageId: answer.id, userId, emoji, createdAt: at(sec) })
+        .run();
+    const cursor = () =>
+      t.db.select().from(agentSessions).where(eq(agentSessions.id, session.id)).get()?.reactionsSeenAt;
+    /** n 번째 send 에 실린 리액션 — `by emoji at초` */
+    const carried = (n: number) =>
+      t.adapter.calls.send[n]?.context.reactions?.map(
+        (r) => `${r.by} ${r.emoji} ${(Date.parse(r.at) - T0.getTime()) / 1000}`,
+      );
+    /** 런을 정본으로 끝낸다 — 같은 세션의 다음 런이 나갈 수 있다 */
+    const finish = async (runId: string) => {
+      await t.orch.signal(runId, { kind: "gateway_final" });
+      await t.orch.signal(runId, { kind: "canonical_received" });
+    };
+    return { ...t, mia, session, answer, react, cursor, carried, finish };
+  }
+
+  it("실은 것 가운데 가장 늦은 시각으로 커서를 올린다 — ack 를 기다리는 사이 달린 것은 다음 런에 남는다", async () => {
+    const t = reactionSetup();
+    t.react("👍", 1);
+    t.react("🎉", 2, t.userId);
+    vi.setSystemTime(at(10));
+
+    const first = await t.enqueue();
+    expect(t.carried(0)).toEqual(["mia 👍 1", "owner 🎉 2"]);
+    expect(t.adapter.calls.send[0]?.context.reactionsOmitted).toBeUndefined();
+    t.react("👀", 5);
+    await t.flush();
+    expect(t.cursor()).toEqual(at(2));
+
+    await t.finish(first.id);
+    const second = await t.enqueue();
+    expect(t.carried(1)).toEqual(["mia 👀 5"]);
+    await t.flush();
+    await t.finish(second.id);
+    await t.enqueue();
+    expect(t.adapter.calls.send[2]?.context.reactions).toBeUndefined();
+    t.orch.stop();
+  });
+
+  it("drop 이면 커서를 올리지 않는다 — 다음 런에 다시 실린다", async () => {
+    const t = reactionSetup();
+    t.react("👍", 1);
+    t.adapter.script(() => ({ admission: "drop", reason: "bot-loop-protection" }));
+    const dropped = await t.enqueue();
+    await t.flush();
+    expect(t.runOf(dropped.id).status).toBe("error");
+    expect(t.carried(0)).toEqual(["mia 👍 1"]);
+    expect(t.cursor()).toEqual(T0);
+
+    t.adapter.script(dispatch);
+    await t.enqueue();
+    expect(t.carried(1)).toEqual(["mia 👍 1"]);
+    t.orch.stop();
+  });
+
+  it("send 가 던지면 커서를 올리지 않는다 — 다음 런에 다시 실린다", async () => {
+    const t = reactionSetup();
+    t.react("👍", 1);
+    t.adapter.script(() => {
+      throw new AdapterError("ADAPTER_UNAVAILABLE", "plugin gone");
+    });
+    const failed = await t.enqueue();
+    await t.flush();
+    expect(t.runOf(failed.id).status).toBe("error");
+    expect(t.cursor()).toEqual(T0);
+
+    t.adapter.script(dispatch);
+    await t.enqueue();
+    expect(t.carried(1)).toEqual(["mia 👍 1"]);
+    t.orch.stop();
+  });
+
+  it("ack 전에 중지한 런은 늦게 받아들여져도 커서를 올리지 않는다 — 다음 런에 다시 실린다(Review Focus 2)", async () => {
+    const t = reactionSetup();
+    t.react("👍", 1);
+    let accept: (() => void) | undefined;
+    t.adapter.script(
+      (input) =>
+        new Promise((resolve) => {
+          accept = () => resolve({ admission: "dispatch", providerRunId: input.runId });
+        }),
+    );
+    const run = await t.enqueue();
+    expect(t.carried(0)).toEqual(["mia 👍 1"]);
+    await t.orch.abort(run.id);
+    expect(t.runOf(run.id).status).toBe("aborted");
+    accept?.();
+    await t.flush();
+    expect(t.cursor()).toEqual(T0);
+
+    t.adapter.script(dispatch);
+    await t.enqueue();
+    expect(t.carried(1)).toEqual(["mia 👍 1"]);
+    t.orch.stop();
+  });
+
+  it("커서가 null 인 세션은 싣지 않고, 받아들여지면 그때 시각으로 채운다", async () => {
+    const t = reactionSetup();
+    t.db.update(agentSessions).set({ reactionsSeenAt: null }).where(eq(agentSessions.id, t.session.id)).run();
+    t.react("👍", 1);
+    vi.setSystemTime(at(10));
+    const first = await t.enqueue();
+    expect(t.adapter.calls.send[0]?.context.reactions).toBeUndefined();
+    vi.setSystemTime(at(12));
+    await t.flush();
+    expect(t.cursor()).toEqual(at(12));
+
+    await t.finish(first.id);
+    t.react("🎉", 13);
+    await t.enqueue();
+    expect(t.carried(1)).toEqual(["mia 🎉 13"]);
+    t.orch.stop();
+  });
+
+  it("싣지 않은 런은 커서를 건드리지 않는다", async () => {
+    const t = reactionSetup();
+    vi.setSystemTime(at(10));
+    await t.enqueue();
+    await t.flush();
+    expect(t.adapter.calls.send[0]?.context.reactions).toBeUndefined();
+    expect(t.cursor()).toEqual(T0);
+    t.orch.stop();
+  });
+
+  it("러너 세션을 새로 여는 런(채널 규칙 리비전 변경)은 그 전에 달린 리액션을 싣지 않는다 — 판정 뒤의 커서로 고른다", async () => {
+    const t = reactionSetup();
+    t.adapter.setCapabilities({
+      sessionReset: true,
+      agentsList: true,
+      configSet: true,
+      promptEveryRun: true,
+      serverSessionIds: true,
+    });
+    const first = await t.enqueue();
+    await t.flush();
+    await t.finish(first.id);
+    t.react("👍", 1);
+    updateChannel(t.db, t.channelId, { prompt: "짧게 답해" });
+    vi.setSystemTime(at(10));
+
+    await t.enqueue();
+    // 새 세션으로 열렸다(세션 id 가 바뀜)
+    expect(t.adapter.calls.sendOpts[1]?.providerSessionId).not.toBe(
+      t.adapter.calls.sendOpts[0]?.providerSessionId,
+    );
+    expect(t.adapter.calls.send[1]?.context.reactions).toBeUndefined();
+    await t.flush();
+    expect(t.cursor()).toEqual(at(10));
+    t.orch.stop();
   });
 });

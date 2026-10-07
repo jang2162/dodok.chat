@@ -22,6 +22,7 @@ export type SessionResetInfo = { sessionStartedAt?: string; lifecycleRevision?: 
 /**
  * 스펙 3.9 — 디스패치 직전에 부른다. 행이 없으면 현재 채널 promptRevision 으로 만든다(첫 턴은 설정 경로가 이미
  * 프롬프트를 담으므로 동봉하지 않는다). 세션 시작 뒤 리비전이 올랐으면 needsPromptContext. 리비전은 스레드 세션 행별로 기억한다(스펙 2.3).
+ * 새 행의 리액션 커서는 만든 시각 — 새 세션은 그 전에 달린 리액션을 받지 않는다.
  * providerAgentId 가 세션 키 규칙 밖이면 VALIDATION 을 던진다 — 행을 만들지 않는다.
  */
 export function ensureSession(
@@ -57,11 +58,17 @@ export function ensureSession(
             input.threadRootId,
           ),
           promptRevisionAtStart: promptRevision,
+          reactionsSeenAt: new Date(),
         })
         .returning()
         .get();
     return { session, needsPromptContext: session.promptRevisionAtStart !== promptRevision };
   });
+}
+
+/** id 로 세션 행 하나 — 디스패치가 갱신 판정 뒤의 리액션 커서를 다시 읽는다 */
+export function getSessionRow(db: DbOrTx, sessionId: string): AgentSessionRow | undefined {
+  return db.select().from(agentSessions).where(eq(agentSessions.id, sessionId)).get();
 }
 
 /**
@@ -95,6 +102,7 @@ export function clearProviderSessionId(db: Db, sessionId: string): void {
  * 서버가 세션 id 를 정하는 어댑터(러너)의 디스패치 직전 — 세션 시작 뒤 채널 리비전이 올랐으면 「새 대화」와 같은 결과로 만든다:
  * 세션 id 를 비우고(다음 ensureProviderSessionId 가 새 UUID) 리비전·시작 표지를 맞춘다. 이어 간 세션은 자기 앞 답의 옛 형식을
  * 따른다(ADR 0007 「규칙이 바뀐 뒤 이어 간 세션」). 리비전은 채널 하나라 promptOverride 가 바뀌어도 그 채널의 모든 행이 해당한다.
+ * 리액션 커서도 「새 대화」처럼 지금으로 올린다 — 새 세션은 옛 메시지를 모른다.
  * 버린 대화가 있었을 때만 true — 세션 id 가 아직 없으면 리비전만 맞춘다. 한 트랜잭션이라 같은 리비전 변화에 두 번 true 가 없다
  */
 export function renewSessionOnPromptChange(db: Db, sessionId: string): boolean {
@@ -111,13 +119,15 @@ export function renewSessionOnPromptChange(db: Db, sessionId: string): boolean {
     if (!row) throw apiError("NOT_FOUND", "agent session not found");
     const promptRevision = currentPromptRevision(tx, row.channelId);
     if (row.promptRevisionAtStart === promptRevision) return false;
+    const now = new Date();
     tx.update(agentSessions)
       .set({
         providerSessionId: null,
         promptRevisionAtStart: promptRevision,
         sessionStartedAt: null,
         lifecycleRevision: null,
-        lastSyncedAt: new Date(),
+        lastSyncedAt: now,
+        reactionsSeenAt: now,
       })
       .where(eq(agentSessions.id, sessionId))
       .run();
@@ -128,6 +138,7 @@ export function renewSessionOnPromptChange(db: Db, sessionId: string): boolean {
 /**
  * 우리 resetSession 이 성공한 뒤 부른다 — 새 세션은 현재 채널 프롬프트를 설정 경로로 받으므로 리비전을 맞춘다.
  * 응답에 없는 sessionStartedAt·lifecycleRevision 은 null(옛 세션 값을 남기지 않는다). 행이 없으면 만든다.
+ * 리액션 커서는 리셋 시각 — 새 세션은 옛 메시지를 모르므로 그 전에 달린 리액션을 싣지 않는다.
  * threadRootId 가 있으면 그 스레드 세션 행만 바꾼다. 서버가 정한 세션 id 는 건드리지 않는다(clearProviderSessionId)
  */
 export function markSessionReset(
@@ -144,6 +155,7 @@ export function markSessionReset(
       sessionStartedAt: isoToDate(reset.sessionStartedAt),
       lifecycleRevision: reset.lifecycleRevision ?? null,
       lastSyncedAt: now,
+      reactionsSeenAt: now,
     };
     const row = {
       id: uuidv7(),

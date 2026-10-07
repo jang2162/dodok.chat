@@ -15,7 +15,7 @@ import { Server } from "socket.io";
 import { v7 as uuid } from "uuid";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { App } from "../src/app";
-import { attachments, componentInteractions } from "../src/db/schema.sqlite";
+import { attachments, componentInteractions, messageReactions } from "../src/db/schema.sqlite";
 import { apiError } from "../src/http/errors";
 import type { Logger } from "../src/logger";
 import { toAttachment } from "../src/modules/attachments/service";
@@ -430,6 +430,29 @@ describe("wire (앱 부팅, FakeAdapter)", () => {
 
     await roundTrip(outsider);
     expect(seenOutsider).toEqual([]);
+  });
+
+  it("message.created 팬아웃도 리액션 집계를 붙인다 — 버스 페이로드의 reactions 가 아니라 표가 정본", async () => {
+    const member = await connect();
+    const channel = newChannel("wire-reactions");
+    await subscribe(member, channel.id);
+    // 지금 서버의 message.created 는 새 메시지라 리액션이 없다 — 표에 미리 넣어 팬아웃이 표를 읽는지 본다. 저장은 앱 bus 밖에서
+    const message = createUserMessage(app.db, new ServerBus(), {
+      channelId: channel.id,
+      authorId: app.ownerUserId,
+      bodyMd: "반응",
+      clientMsgId: "r-1",
+    });
+    app.db
+      .insert(messageReactions)
+      .values({ messageId: message.id, userId: app.ownerUserId, emoji: "👍", createdAt: new Date() })
+      .run();
+
+    const created = waitFor(member, "message.created", (p) => p.message.id === message.id);
+    app.bus.emit("message.created", { message });
+    expect((await created).message.reactions).toEqual([
+      { emoji: "👍", count: 1, userIds: [app.ownerUserId] },
+    ]);
   });
 
   it("ack 콜백 없이 보내도 서버가 죽지 않는다", async () => {

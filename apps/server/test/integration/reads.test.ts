@@ -121,6 +121,7 @@ describe("통합 — 읽지 않음 팬아웃", () => {
           authorId: uuid(),
           bodyMd: "x",
           mentions: { users: [], agents: [] },
+          reactions: [],
         } as never,
       });
       await roundTrip(a1);
@@ -142,6 +143,7 @@ describe("통합 — 읽지 않음 팬아웃", () => {
             authorId: uuid(),
             bodyMd: "x",
             mentions: { users: [], agents: [] },
+            reactions: [],
           } as never,
         });
       await roundTrip(a1);
@@ -164,6 +166,7 @@ describe("통합 — 읽지 않음 팬아웃", () => {
           authorId: agentId,
           bodyMd: "x",
           mentions: { users: [], agents: [] },
+          reactions: [],
         } as never,
         silent: true,
       });
@@ -185,6 +188,7 @@ describe("통합 — 읽지 않음 팬아웃", () => {
           authorId: agentId,
           bodyMd: "x",
           mentions: { users: [], agents: [] },
+          reactions: [],
         } as never,
       });
       expect(await seen).toMatchObject({ authorType: "agent", authorId: agentId });

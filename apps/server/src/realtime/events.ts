@@ -4,6 +4,7 @@ import type { Db } from "../db/client";
 import { memberships } from "../db/schema.sqlite";
 import type { Logger } from "../logger";
 import { hydrateForClient, withInteractions } from "../modules/messages/service";
+import { withReactions } from "../modules/reactions/service";
 import { TERMINAL_STATUSES } from "../modules/runs/machine";
 import type { BusEvents, ServerBus } from "./bus";
 import { channelRoom, userRoom, workspaceRoom } from "./socket";
@@ -14,7 +15,7 @@ export const WIRE_MAX_PENDING = 500;
 
 export type WireFanoutOptions = {
   logger: Logger;
-  /** message.created·updated 를 내보내기 직전 상호작용 기록을 붙일 때 읽는다(설계 4.2) */
+  /** message.created·updated 를 내보내기 직전 상호작용 기록·리액션 집계를 붙일 때 읽는다(설계 4.2) */
   db: Db;
   /** 승인 팬아웃의 룸(`workspace:<id>`) — 서버가 섬기는 그 워크스페이스, attachWire 의 `ctx.workspaceId` 와 같은 값 */
   workspaceId: string;
@@ -24,7 +25,7 @@ export type WireFanoutOptions = {
 /**
  * bus → Socket.IO 팬아웃. 채널 이벤트는 channel:<id> 룸, 승인 둘·channel.created·updated·people.changed·agents.changed·channel.activity 는 workspace:<id> 룸, channel.read 는 그 사용자의 user 룸,
  * adapter.status·system.notice 는 전체(단일 사용자 MVP), setup.status 는 owner·ops.event 는 owner·admin 사용자 룸에만(설정 마법사 결정 6·팀 스펙 「역할과 권한」 표).
- * message.created·updated 는 여기서 상호작용 기록을 붙인다 — 버스 페이로드는 가볍게 두고, 클라이언트가 보는 Message 는
+ * message.created·updated 는 여기서 상호작용 기록·리액션 집계를 붙인다 — 버스 페이로드는 가볍게 두고, 클라이언트가 보는 Message 는
  * wire 경계에서 한 번 하이드레이션한다(설계 4.2 「클라이언트가 볼 Message 는 항상 하이드레이션을 거친다」).
  * run.event 만 백프레셔를 본다: 소켓의 미전송 큐가 maxPending 이상이면 그 소켓엔 델타를 버리고
  * 런별로 한 번 run.state { resync: true } 를 보낸다. 큐가 풀리면 다시 델타를 보내고, 다음 막힘에 또 resync 한다.
@@ -99,7 +100,8 @@ export function attachWireFanout(io: WireServer, bus: ServerBus, opts: WireFanou
       .all()
       .map((row) => userRoom(row.userId));
 
-  const hydrate = (message: Message): Message => withInteractions(opts.db, [message])[0] ?? message;
+  const hydrate = (message: Message): Message =>
+    withReactions(opts.db, withInteractions(opts.db, [message]))[0] ?? message;
   // 갱신은 루트일 수 있다(카드 상호작용 등) — 요약을 빼고 보내면 웹 칩이 사라진다. 새 메시지는 답글이 있을 수 없어 요약을 보지 않는다
   const hydrateUpdated = (message: Message): Message => hydrateForClient(opts.db, [message])[0] ?? message;
 

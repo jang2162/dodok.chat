@@ -5,11 +5,12 @@ import { and, eq } from "drizzle-orm";
 import { v7 as uuid } from "uuid";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { App } from "../src/app";
-import { channelMembers, channels, memberships, users } from "../src/db/schema.sqlite";
+import { channelMembers, channels, memberships, messageReactions, users } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
 import * as approvalStore from "../src/modules/approvals/store";
 import { addMember, type ChannelRecord, createChannel } from "../src/modules/channels/service";
 import { createGateway } from "../src/modules/gateways/service";
+import { createAgentMessage } from "../src/modules/messages/service";
 import { createTriggerLookups } from "../src/modules/push/service";
 import { targetsForApproval } from "../src/modules/push/triggers";
 import { issueBridgeToken } from "../src/modules/setup/tokens";
@@ -108,6 +109,22 @@ describe("역할 매트릭스(스펙 2장)", () => {
     return id;
   };
   const channelRow = (id: string) => app.db.select().from(channels).where(eq(channels.id, id)).get();
+  /** 에이전트가 들어간 새 채널의 에이전트 답 하나 */
+  const agentAnswer = () => {
+    const { channel, agent } = channelWithAgent();
+    return createAgentMessage(app.db, app.bus, {
+      channelId: channel.id,
+      agentId: agent.id,
+      bodyMd: "답",
+      externalId: `answer-${++n}`,
+    });
+  };
+  const reactionsOf = (messageId: string) =>
+    app.db
+      .select({ userId: messageReactions.userId, emoji: messageReactions.emoji })
+      .from(messageReactions)
+      .where(eq(messageReactions.messageId, messageId))
+      .all();
   const agentMemberRow = (channelId: string, agentId: string) =>
     app.db
       .select()
@@ -522,6 +539,35 @@ describe("역할 매트릭스(스펙 2장)", () => {
         socket.once("connect_error", (e) => resolve(e as Error & { data?: unknown }));
       });
       expect(err.data).toMatchObject({ code: "UNAUTHORIZED" });
+    });
+
+    // wire 이벤트는 membership 을 핸드셰이크·connection 에서 본다 — 그 문을 못 지나면 reaction.set 처리기에 닿지 않는다
+    it("reaction.set — 핸드셰이크에서 막혀 반응이 생기지 않는다", async () => {
+      const answer = agentAnswer();
+      const socket = openWire(app, { token: gone.token, protocol: WIRE_PROTOCOL });
+      sockets.push(socket);
+      const err = await new Promise<Error & { data?: unknown }>((resolve, reject) => {
+        socket.once("connect", () => reject(new Error("접속이 거부되지 않았다")));
+        socket.once("connect_error", (e) => resolve(e as Error & { data?: unknown }));
+      });
+      expect(err.data).toMatchObject({ code: "UNAUTHORIZED" });
+      expect(reactionsOf(answer.id)).toEqual([]);
+    });
+  });
+
+  // 반응(리액션 스펙 docs/superpowers/specs/2026-10-05-reactions-design.md 「권한」 절) — 누구나, 사용자 id 는 세션에서만
+  describe("반응(wire reaction.set)", () => {
+    it.each(ROLES)("%s 는 켜고 끌 수 있다 — 단 사람은 그 세션의 사용자", async (role) => {
+      const answer = agentAnswer();
+      const socket = await connectWire(app, tokens[role]);
+      sockets.push(socket);
+      const set = (on: boolean) =>
+        socket.emitWithAck("reaction.set", { messageId: answer.id, emoji: "👍", on });
+
+      expect(await set(true)).toEqual({ ok: true, data: null });
+      expect(reactionsOf(answer.id)).toEqual([{ userId: ids[role], emoji: "👍" }]);
+      expect(await set(false)).toEqual({ ok: true, data: null });
+      expect(reactionsOf(answer.id)).toEqual([]);
     });
   });
 

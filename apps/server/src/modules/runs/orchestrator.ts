@@ -1,4 +1,5 @@
 import {
+  type InboundDeliver,
   isOpenClawAgentId,
   type Message,
   type OutboundMessage,
@@ -34,12 +35,14 @@ import {
   runErrorMessages,
 } from "../messages/service";
 import type { ApprovalsService } from "../approvals/service";
+import { advanceReactionCursor, type PendingReactions, pendingReactionsFor } from "../reactions/service";
 import type { UploadedBy } from "../attachments/service";
 import type { RunPlan } from "../router/decide";
 import { RETRY_RUN_ITEM } from "../router/service";
 import {
   ensureProviderSessionId,
   ensureSession,
+  getSessionRow,
   INVALID_AGENT_ID_REASON,
   renewSessionOnPromptChange,
 } from "../sessions/service";
@@ -185,6 +188,19 @@ type Pending = { queueKey: string; order: number; trigger: EnqueueTrigger };
  */
 function queueKeyOf(connectionId: string | null, sessionKey: string): string {
   return `${connectionId ?? ""}\u0000${sessionKey}`;
+}
+
+/** 아직 안 알린 리액션을 인바운드 맥락에 싣는다 — 없으면 그대로(키를 만들지 않는다) */
+function withReactionFacts(inbound: InboundDeliver, pending: PendingReactions): InboundDeliver {
+  if (pending.reactions.length === 0) return inbound;
+  return {
+    ...inbound,
+    context: {
+      ...inbound.context,
+      reactions: pending.reactions,
+      ...(pending.omitted === undefined ? {} : { reactionsOmitted: pending.omitted }),
+    },
+  };
 }
 
 /**
@@ -768,7 +784,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       });
       const capabilities = adapter.capabilities();
       // 채널 프롬프트를 매 런 싣는 어댑터(판정 P3)는 리비전과 무관하게 늘 — 바뀐 뒤에는 채널 행의 새 값만 실린다
-      const inbound = buildInboundDeliver(db, {
+      const built = buildInboundDeliver(db, {
         run,
         trigger,
         session,
@@ -778,6 +794,16 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       // 서버가 세션 id 를 정하는 어댑터(판정 P4)만 두 번째 인자를 받는다. 채널 규칙이 바뀐 뒤면 새 세션으로 연다 — 세션 큐가
       // 같은 세션의 런을 하나씩 보내므로 같은 리비전 변화에 한 번만 걸린다
       if (capabilities.serverSessionIds && renewSessionOnPromptChange(db, session.id)) notifyRenewed(run);
+      // 리액션은 그 판정 뒤에 세션 행을 다시 읽어 고른다(리액션 계획 판정 PR1) — 새 세션으로 열었으면 커서가 지금으로 올라 그 전에
+      // 달린 것을 싣지 않는다. ensureSession 이 돌려준 행의 커서는 판정 전 값이다
+      const reactionsSince = getSessionRow(db, session.id)?.reactionsSeenAt ?? null;
+      const reactions = pendingReactionsFor(db, {
+        channelId: run.channelId,
+        agentId: run.agentId,
+        threadRootId: run.threadRootId ?? null,
+        since: reactionsSince,
+      });
+      const inbound = withReactionFacts(built, reactions);
       const providerSessionId = capabilities.serverSessionIds
         ? ensureProviderSessionId(db, session.id)
         : undefined;
@@ -807,6 +833,11 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         applySignal(runId, { kind: "gateway_error", code: `DROPPED:${reason}`, message: reason });
         return;
       }
+      // 받아들여진 경로에서만 리액션 커서를 올린다 — send 실패·drop·ack 전 중지면 그대로 두어 다음 런에 다시 실린다. 올리는 곳은 실은
+      // 것 가운데 가장 늦은 시각이라 ack 를 기다리는 사이 달린 것도 다음 런에 남는다. null 이던 커서(싣지 않았다)는 지금으로 채운다 —
+      // 옛 리액션을 한꺼번에 싣지 않게(리액션 스펙 「`agent_sessions.reactions_seen_at`」 절)
+      const reactionCursor = reactions.latestAt ?? (reactionsSince === null ? now() : undefined);
+      if (reactionCursor !== undefined) advanceReactionCursor(db, session.id, reactionCursor);
       // 실제로 맡은 연결(판정 PG4) — 묶임 없는 러너 에이전트는 여기서 처음 정해진다. 제공자 런 id 는 연결 안에서만 유일하므로 한 번에 쓴다.
       // 보낸 연결(저장값 ?? 에이전트의 지금 연결)이 아니라 저장값과 견준다 — 기다리는 사이 에이전트가 묶이면 둘이 같아도 저장값은 비어 있다
       const patch: store.RunRowPatch = {};

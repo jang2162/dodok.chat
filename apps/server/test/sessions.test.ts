@@ -198,6 +198,74 @@ describe("sessions service", () => {
     expect(untouched).toMatchObject({ promptRevisionAtStart: 1, lifecycleRevision: null });
   });
 
+  describe("리액션 커서(reactions_seen_at) — 새 세션은 그 전에 달린 리액션을 받지 않는다", () => {
+    const LONG_AGO = new Date("2000-01-01T00:00:00.000Z");
+    const cursorOf = (db: ReturnType<typeof setup>["db"], id: string) =>
+      db.select().from(agentSessions).where(eq(agentSessions.id, id)).get()?.reactionsSeenAt;
+    const rewind = (db: ReturnType<typeof setup>["db"], id: string) =>
+      db.update(agentSessions).set({ reactionsSeenAt: LONG_AGO }).where(eq(agentSessions.id, id)).run();
+
+    it("ensureSession 이 만든 행(채널·스레드)은 만든 시각", () => {
+      const { db, adapter, channelId, agentId } = setup();
+      const before = Date.now();
+      const channel = ensureSession(db, adapter, { channelId, agentId }).session;
+      const thread = ensureSession(db, adapter, {
+        channelId,
+        agentId,
+        threadRootId: "01a09fc9-d204-7551-89d6-38544d07a1dd",
+      }).session;
+      for (const row of [channel, thread]) {
+        expect(row.reactionsSeenAt?.getTime()).toBeGreaterThanOrEqual(before);
+        expect(cursorOf(db, row.id)?.getTime()).toBeGreaterThanOrEqual(before);
+      }
+    });
+
+    it("이미 있는 행을 ensureSession 이 다시 읽을 때는 커서를 건드리지 않는다", () => {
+      const { db, adapter, channelId, agentId } = setup();
+      const { session } = ensureSession(db, adapter, { channelId, agentId });
+      rewind(db, session.id);
+      expect(ensureSession(db, adapter, { channelId, agentId }).session.reactionsSeenAt).toEqual(LONG_AGO);
+    });
+
+    it("markSessionReset 은 있는 행(채널·스레드)을 리셋 시각으로 올리고, 없으면 그 시각으로 만든다", () => {
+      const { db, adapter, channelId, agentId } = setup();
+      const ROOT = "01a09fc9-d204-7551-89d6-38544d07a1ee";
+      const channel = ensureSession(db, adapter, { channelId, agentId }).session;
+      const thread = ensureSession(db, adapter, { channelId, agentId, threadRootId: ROOT }).session;
+      rewind(db, channel.id);
+      rewind(db, thread.id);
+
+      const before = Date.now();
+      expect(markSessionReset(db, channelId, agentId, {}).reactionsSeenAt?.getTime()).toBeGreaterThanOrEqual(
+        before,
+      );
+      expect(cursorOf(db, thread.id)).toEqual(LONG_AGO); // 채널 리셋은 스레드 행을 건드리지 않는다
+      expect(
+        markSessionReset(db, channelId, agentId, {}, ROOT).reactionsSeenAt?.getTime(),
+      ).toBeGreaterThanOrEqual(before);
+
+      const { channelId: other, agentId: otherAgent } = seedChannelWithAgent(db, { agentHandle: "fresh" });
+      expect(markSessionReset(db, other, otherAgent, {}).reactionsSeenAt?.getTime()).toBeGreaterThanOrEqual(
+        before,
+      );
+    });
+
+    it("renewSessionOnPromptChange 는 리비전이 바뀌었을 때만 지금으로 올린다", () => {
+      const { db, adapter, channelId, agentId } = setup();
+      const { session } = ensureSession(db, adapter, { channelId, agentId });
+      ensureProviderSessionId(db, session.id);
+      rewind(db, session.id);
+
+      expect(renewSessionOnPromptChange(db, session.id)).toBe(false);
+      expect(cursorOf(db, session.id)).toEqual(LONG_AGO);
+
+      updateChannel(db, channelId, { prompt: "짧게 답해" });
+      const before = Date.now();
+      expect(renewSessionOnPromptChange(db, session.id)).toBe(true);
+      expect(cursorOf(db, session.id)?.getTime()).toBeGreaterThanOrEqual(before);
+    });
+  });
+
   it("규칙 밖 providerAgentId 는 세션 키를 만들지 않고 던진다(빌더 규칙)", () => {
     const { db, adapter, channelId, agentId } = setup();
     db.update(agents).set({ providerAgentId: "dev:main" }).where(eq(agents.id, agentId)).run();
