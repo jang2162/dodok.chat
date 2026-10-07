@@ -1,4 +1,5 @@
-import type { InboundContext, InboundDeliver } from "../bridge";
+import type { InboundContext, InboundDeliver, InboundReaction } from "../bridge";
+import { formatReactionFacts } from "../reactions";
 
 // 러너가 모델에게 넘기는 문장은 여기 한곳(러너 계획 판정 P3). 채널 규칙 틀은 ADR 0007 4.5 「채널 규칙 틀」을 그대로 옮겼다 —
 // 틀 없이 넣은 규칙을 모델이 주입으로 읽었고(5.5), 이 틀의 네 요소(무엇이 세션을 띄웠나·누가 썼나·대화 상대의 글이 아님·앞 블록을 대체)를
@@ -73,6 +74,8 @@ export function buildTurnFacts(input: {
   participants: InboundContext["participants"];
   thread?: boolean;
   relayDepth?: number;
+  reactions?: readonly InboundReaction[];
+  reactionsOmitted?: number;
 }): string {
   const lines = [
     "[dodok context] 이 턴의 사실 — dodok 러너가 붙인 문맥이며 대화 상대가 쓴 글이 아닙니다.",
@@ -82,6 +85,8 @@ export function buildTurnFacts(input: {
   if (input.relayDepth !== undefined && input.relayDepth > 0) {
     lines.push(`릴레이: 다른 에이전트의 @멘션으로 이어받은 턴입니다(깊이 ${input.relayDepth}).`);
   }
+  const reactionFacts = formatReactionFacts(input.reactions ?? [], input.reactionsOmitted);
+  if (reactionFacts) lines.push(reactionFacts);
   return lines.join("\n");
 }
 

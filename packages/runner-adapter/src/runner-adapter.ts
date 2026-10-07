@@ -978,6 +978,8 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
         turnFacts: buildTurnFacts({
           participants: input.context.participants,
           thread: input.threadId !== undefined,
+          reactions: input.context.reactions,
+          reactionsOmitted: input.context.reactionsOmitted,
         }),
         sessionTitle: clip(`${channelName} · ${agent.name}`, SESSION_TITLE_MAX),
       });

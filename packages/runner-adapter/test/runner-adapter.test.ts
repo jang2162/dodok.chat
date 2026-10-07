@@ -7,6 +7,7 @@ import {
   artifactUrl,
   BridgeAuthGuard,
   dodokSessionKey,
+  formatReactionFacts,
   type InboundDeliver,
   OutboundMessage,
   type ProviderApproval,
@@ -459,6 +460,33 @@ describe("send", () => {
     const root = randomUUID();
     await startRun(h, r, { threadId: root, sessionKey: dodokSessionKey("coder", CH, root) });
     expect(r.runStarts[0]?.turnFacts).toContain("스레드");
+  });
+
+  it("deliver.context.reactions 와 reactionsOmitted 가 턴 사실 끝에 블록으로 붙고, 없으면 블록이 없다", async () => {
+    const h = await setup();
+    const r = await readyRunner(h);
+    const reactions = [
+      {
+        messageId: randomUUID(),
+        excerpt: "테스트 결과",
+        emoji: "👍" as const,
+        by: "mia",
+        at: "2026-09-27T00:01:00.000Z",
+      },
+    ];
+    const plain = deliver();
+    await h.adapter.send(plain, { connectionId: null, providerSessionId: SESSION_ID });
+    await until(() => r.runStarts.some((s) => s.deliver.runId === plain.runId), "run.start");
+    const base = r.runStarts[0]?.turnFacts ?? "";
+    expect(base).not.toContain("반응(");
+
+    const base2 = deliver();
+    const withReactions = { ...base2, context: { ...base2.context, reactions, reactionsOmitted: 2 } };
+    await h.adapter.send(withReactions, { connectionId: null, providerSessionId: SESSION_ID });
+    await until(() => r.runStarts.some((s) => s.deliver.runId === withReactions.runId), "run.start 2");
+    const start = r.runStarts.find((s) => s.deliver.runId === withReactions.runId);
+    expect(start?.turnFacts).toBe(`${base}\n${formatReactionFacts(reactions, 2)}`);
+    expect(start?.turnFacts).toContain("(외 2개)");
   });
 
   it("그 에이전트를 가진 러너가 없으면 ADAPTER_UNAVAILABLE", async () => {

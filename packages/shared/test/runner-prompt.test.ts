@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { buildChannelRulesAppend, buildTurnFacts, renderRunnerPrompt, type InboundDeliver } from "../src";
+import {
+  buildChannelRulesAppend,
+  buildTurnFacts,
+  formatReactionFacts,
+  renderRunnerPrompt,
+  type InboundDeliver,
+  type InboundReaction,
+} from "../src";
 
 const RELAY = "다른 에이전트에게 일을 넘길 때만 @핸들을 쓰세요.";
 const CH = "01a09fc9-d204-7551-89d6-38544d07a102";
@@ -236,6 +243,30 @@ describe("buildTurnFacts — 턴마다 붙는 문맥", () => {
     expect(buildTurnFacts({ participants: PARTICIPANTS, relayDepth: 0 })).toBe(
       buildTurnFacts({ participants: PARTICIPANTS }),
     );
+  });
+});
+
+describe("buildTurnFacts — 리액션", () => {
+  const REACTIONS: InboundReaction[] = [
+    { messageId: ROOT, excerpt: "재현 조건", emoji: "👍", by: "mia", at: "2026-09-14T00:15:00Z" },
+  ];
+
+  it("리액션이 있으면 끝에 formatReactionFacts 블록이 붙는다", () => {
+    const base = buildTurnFacts({ participants: PARTICIPANTS, thread: true, relayDepth: 1 });
+    const text = buildTurnFacts({
+      participants: PARTICIPANTS,
+      thread: true,
+      relayDepth: 1,
+      reactions: REACTIONS,
+      reactionsOmitted: 2,
+    });
+    expect(text).toBe(`${base}\n${formatReactionFacts(REACTIONS, 2)}`);
+  });
+
+  it("없거나 빈 배열이면 이전과 같다", () => {
+    const base = buildTurnFacts({ participants: PARTICIPANTS });
+    expect(buildTurnFacts({ participants: PARTICIPANTS, reactions: [] })).toBe(base);
+    expect(buildTurnFacts({ participants: PARTICIPANTS, reactions: [], reactionsOmitted: 3 })).toBe(base);
   });
 });
 
