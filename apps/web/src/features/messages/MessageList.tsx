@@ -115,6 +115,8 @@ function ChannelMessages({
   const [cachedAtMount] = useState(timeline !== undefined);
   /** 기다리는 동안 사용자가 스크롤을 잡았다 — 그 뒤로는 구분선으로 겨누지 않는다 */
   const awaitTouched = useRef(false);
+  /** 기다리는 동안 사용자가 끝으로 갔다(칩·보내기) — 다 받으면 구분선이 아니라 끝으로 */
+  const awaitToEnd = useRef(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   // 결과로 가기로 받은 떨어진 창(timeline.ts `Timeline` 의 `hasNewer`)
@@ -233,6 +235,12 @@ function ChannelMessages({
   useEffect(() => {
     if (empty) setEntryHold(false);
   }, [empty]);
+  /** 끝으로 가려 했다 — 구분선으로 겨누지 않는다. 기다리는 중이면 다 받을 때 끝으로 가게 표시한다(그 자리에서 풀면 읽음이 샌다) */
+  function markGoingToEnd() {
+    settleUntil.current = 0;
+    aimUnread.current = false;
+    if (awaitRef.current !== undefined) awaitTouched.current = awaitToEnd.current = true;
+  }
   function settleSoon() {
     const win = scrollRef.current?.ownerDocument.defaultView;
     if (win) settleUntil.current = win.performance.now() + SETTLE_MAX_MS;
@@ -253,7 +261,10 @@ function ChannelMessages({
     setAwaitSeq(undefined);
     setEntryHold(false);
     const el = scrollRef.current;
-    if (awaitTouched.current) {
+    if (awaitToEnd.current) {
+      setStuck(true);
+      virtualizer.scrollToEnd();
+    } else if (awaitTouched.current) {
       if (el) setStuck(el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_PX);
     } else if (rowsRef.current.some((r) => r.kind === "unread")) aimAtUnread();
     else {
@@ -348,6 +359,7 @@ function ChannelMessages({
     if (lastPending === prevPending.current) return;
     prevPending.current = lastPending;
     if (lastPending === undefined) return;
+    markGoingToEnd();
     setStuck(true);
     if (hasNewer) {
       loadLatest(qc, channelId, threadRootId).then(() => virtualizer.scrollToEnd(), reportPageError);
@@ -407,8 +419,7 @@ function ChannelMessages({
   // 칩은 누르면 사라진다 — 초점을 목록으로 옮겨 잃지 않게
   const toEnd = () => {
     // 첫 붙임이 아직 구분선을 겨누고 있어도 그만둔다 — 끝으로 간 사람을 되끌지 않는다
-    settleUntil.current = 0;
-    aimUnread.current = false;
+    markGoingToEnd();
     setStuck(true);
     virtualizer.scrollToEnd();
     scrollRef.current?.focus({ preventScroll: true });

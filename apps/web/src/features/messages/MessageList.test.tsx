@@ -1171,6 +1171,62 @@ describe("MessageList 첫 안 읽은 곳에서 열기", () => {
     expect(screen.getByRole("button", { name: /새 메시지 60개/ })).toBeInTheDocument();
   });
 
+  describe("낡은 캐시 이어 받기를 기다리는 동안 끝으로 가면 다 받은 뒤 끝으로 간다", () => {
+    const send = (qc: ReturnType<typeof authorsClient>) =>
+      act(() =>
+        updateTimeline(qc, CH, (t) =>
+          addPending(t, {
+            clientMsgId: "c-1",
+            channelId: CH,
+            bodyMd: "내 말",
+            createdAt: new Date().toISOString(),
+            state: "sending",
+          }),
+        ),
+      );
+
+    it("칩을 누르면 — 다 받기 전엔 읽음이 없고, 다 받은 뒤 끝에서 읽음이 간다", async () => {
+      known(40, 100);
+      const { qc, scroller, sender, fromEnd } = open(timelineOf(range(1, 60)), 40);
+      const chip = await screen.findByRole("button", { name: /새 메시지 \d+개/ });
+      await settle();
+      expect(scroller().scrollTop).toBe(41 * ROW - CONTEXT);
+      await userEvent.click(chip);
+      await settle();
+      expect(sender.request).not.toHaveBeenCalled();
+      await catchUp(qc, 61, 100);
+      await waitFor(() => expect(fromEnd()).toBe(0));
+      await waitFor(() => expect(sender.request).toHaveBeenCalledWith(CH, 100));
+    });
+
+    it("보내면 — 다 받은 뒤 끝에서 내 글이 보이고 읽음은 그때 간다", async () => {
+      known(40, 100);
+      const { qc, sender, fromEnd } = open(timelineOf(range(1, 42)), 40);
+      await screen.findByRole("separator", { name: "새 메시지" });
+      await settle();
+      await send(qc);
+      await settle();
+      expect(sender.request).not.toHaveBeenCalled();
+      await catchUp(qc, 43, 100);
+      await waitFor(() => expect(fromEnd()).toBe(0));
+      await screen.findByText("내 말");
+      await waitFor(() => expect(sender.request).toHaveBeenCalledWith(CH, 100));
+    });
+
+    it("구분선이 아직 없을 때(끝에서 열림) 보내도 다 받은 뒤 끝에서 내 글이 보인다", async () => {
+      known(40, 100);
+      const { qc, sender, fromEnd } = open(timelineOf(range(1, 40)), 40);
+      await screen.findByText("본문 40");
+      await settle();
+      await send(qc);
+      await settle();
+      await catchUp(qc, 41, 100);
+      await waitFor(() => expect(fromEnd()).toBe(0));
+      await screen.findByText("내 말");
+      await waitFor(() => expect(sender.request).toHaveBeenCalledWith(CH, 100));
+    });
+  });
+
   it("6. 결과로 가기 목표를 안고 열리면 구분선이 아니라 그 메시지로 간다", async () => {
     const target = range(10, 10)[0] as Message;
     act(() => requestJump({ channelId: CH, messageId: target.id, seq: 10 }));
