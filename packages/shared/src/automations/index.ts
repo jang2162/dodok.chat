@@ -96,3 +96,7 @@ export type AutomationSummary = z.infer<typeof AutomationSummary>;
 /** 만들기·토큰 재발급 응답 — webhookUrl 은 웹훅일 때 이 응답 한 번뿐이다(다시 볼 수 없다) */
 export const AutomationCreated = z.object({ automation: AutomationSummary, webhookUrl: z.url().optional() });
 export type AutomationCreated = z.infer<typeof AutomationCreated>;
+
+/** 「지금 실행」(POST /api/v1/automations/:id/run)·웹훅(POST /hooks/<token>)의 202 응답 — 런 결과는 기다리지 않는다 */
+export const AutomationPosted = z.object({ messageId: Id });
+export type AutomationPosted = z.infer<typeof AutomationPosted>;

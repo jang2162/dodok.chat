@@ -4,6 +4,7 @@ import {
   neutralizeMentionTokens,
   type Participant,
   parseMentions,
+  plainMentionHandles,
   renderForAgent,
   segment,
   tokenize,
@@ -75,6 +76,24 @@ describe("tokenize", () => {
   it("renderForAgent와 왕복한다", () => {
     const body = `<@a:${A1}> 다음 <@u:${U1}> 끝`;
     expect(tokenize(renderForAgent(body, participants), participants).bodyMd).toBe(body);
+  });
+});
+
+describe("plainMentionHandles", () => {
+  it("코드 밖의 평문 @핸들 — 소문자, 처음 나온 차례, 중복 없음(이메일·코드 안은 빠진다)", () => {
+    const text = "@Planner 와 @res 확인. @nobody, `@code`\n```\n@fenced\n```\na@planner.com @planner 다시";
+    expect(plainMentionHandles(text)).toEqual(["planner", "res", "nobody"]);
+  });
+
+  it("tokenize 가 풀어 보려는 핸들과 같다 — 풀린 것은 토큰이 되고 나머지는 평문으로 남는다", () => {
+    const text = "@planner 와 @ghost `@jang` @jang";
+    const handles = plainMentionHandles(text);
+    expect(handles).toEqual(["planner", "ghost", "jang"]);
+    expect(tokenize(text, participants).bodyMd).toBe(`<@a:${A2}> 와 @ghost \`@jang\` <@u:${U1}>`);
+  });
+
+  it("멘션이 없으면 빈 목록", () => {
+    expect(plainMentionHandles("멘션 없음 a@b.com")).toEqual([]);
   });
 });
 

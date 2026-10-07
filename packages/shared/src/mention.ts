@@ -86,6 +86,19 @@ export function tokenize(
   return { bodyMd, mentions: parseMentions(bodyMd) };
 }
 
+/**
+ * 본문의 평문 `@핸들` — tokenize 가 풀어 보려는 것과 같은 집합(코드 밖, 앞뒤 문맥 규칙 같음). 소문자, 처음 나온 차례, 중복 없음.
+ * 게시하기 전에 어느 핸들이 멘션으로 풀릴지 미리 볼 때 쓴다(서버 자동화 목록의 경고)
+ */
+export function plainMentionHandles(text: string): string[] {
+  const handles = new Set<string>();
+  for (const part of splitCode(text)) {
+    if (part.code) continue;
+    for (const m of part.text.matchAll(PLAIN_MENTION_RE)) handles.add((m[2] as string).toLowerCase());
+  }
+  return [...handles];
+}
+
 /** 펜스 코드 블록(```...```)과 인라인 코드(`...`)를 분리한다. */
 function splitCode(text: string): Array<{ text: string; code: boolean }> {
   const re = /```[\s\S]*?```|`[^`\n]*`/g;
