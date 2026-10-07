@@ -925,10 +925,15 @@ describe("MessageList 첫 안 읽은 곳에서 열기", () => {
     useUnread.getState().reset();
   });
 
-  function open(t: Timeline, entryReadSeq: number | undefined, over: { threadRootId?: string } = {}) {
+  /** `t` 가 없으면 캐시 없이 연다(구독 응답은 테스트가 나중에 넣는다) */
+  function open(
+    t: Timeline | undefined,
+    entryReadSeq: number | undefined,
+    over: { threadRootId?: string } = {},
+  ) {
     const sender = { request: vi.fn(), dispose: vi.fn() };
     const qc = authorsClient();
-    qc.setQueryData(qk.timeline(CH), t);
+    if (t) qc.setQueryData(over.threadRootId ? qk.thread(CH, over.threadRootId) : qk.timeline(CH), t);
     const view = renderWithClient(
       <ReadSenderContext.Provider value={sender}>
         <MessageList channelId={CH} entryReadSeq={entryReadSeq} initialRect={RECT} {...over} />
@@ -948,6 +953,18 @@ describe("MessageList 첫 안 읽은 곳에서 열기", () => {
   }
   const separator = () => screen.queryByRole("separator", { name: "새 메시지" });
   const settle = () => act(() => new Promise((r) => setTimeout(r, 120)));
+  /** 스냅숏 — 서버가 아는 이 채널의 읽음 위치와 최신 seq */
+  const known = (lastReadSeq: number, latestSeq: number) => {
+    useUnread.getState().beginSnapshot();
+    useUnread.getState().applySnapshot({
+      channels: [{ channelId: CH, lastReadSeq, latestSeq, unread: true, mentions: 0 }],
+    });
+  };
+  /** 이어 받기 — 가진 목록 뒤에 from..to 를 붙이고 lastSeq 를 to 로 */
+  const catchUp = (qc: ReturnType<typeof authorsClient>, from: number, to: number) =>
+    act(() =>
+      updateTimeline(qc, CH, (t) => ({ ...t, items: [...t.items, ...range(from, to)], lastSeq: to })),
+    );
 
   it("1. 구분선이 받은 행 안이면 끝이 아니라 구분선이 위쪽에 오게 열고, 읽음을 보내지 않는다", async () => {
     // 날짜 구분선 1 + 메시지 80 개가 위에 있고 「새 메시지」 행은 81번째(0 부터) 자리
@@ -1116,6 +1133,44 @@ describe("MessageList 첫 안 읽은 곳에서 열기", () => {
     expect(separator()).toBeNull();
   });
 
+  it("5. 첫 붙임이 끝난 뒤에 온 이어 받기에 구분선이 없어도 — 따라가지 않던 끝으로 돌아가 읽음이 간다", async () => {
+    known(40, 50);
+    const { qc, sender, fromEnd } = open(timelineOf(range(1, 40)), 40);
+    await screen.findByText("본문 40");
+    await settle();
+    act(() =>
+      updateTimeline(qc, CH, (t) => ({
+        ...t,
+        items: [
+          ...t.items,
+          ...Array.from({ length: 10 }, (_, i) => msg(41 + i, { bodyMd: `내 글 ${41 + i}` })),
+        ],
+        lastSeq: 50,
+      })),
+    );
+    await waitFor(() => expect(sender.request).toHaveBeenCalledWith(CH, 50));
+    expect(fromEnd()).toBe(0);
+  });
+
+  it("5. 낡은 캐시의 읽음 위치 뒤가 구분선을 세우지 않는 글(시스템 카드)뿐이어도, 내려앉은 뒤의 칩은 읽음 위치부터 센다", async () => {
+    known(40, 100);
+    const card = msg(41, {
+      kind: "system",
+      authorType: "system",
+      authorId: undefined,
+      bodyMd: "릴레이 한도에 닿았습니다",
+      systemMeta: { kind: "relay_limit" },
+    });
+    const { qc, scroller } = open(timelineOf([...range(1, 40), card]), 40);
+    await screen.findByRole("note");
+    expect(separator()).toBeNull();
+    await settle();
+    await catchUp(qc, 42, 100);
+    // 날짜 구분선 1 + 메시지 40 + 시스템 카드 1 뒤가 「새 메시지」 행
+    await waitFor(() => expect(scroller().scrollTop).toBe(42 * ROW - CONTEXT));
+    expect(screen.getByRole("button", { name: /새 메시지 60개/ })).toBeInTheDocument();
+  });
+
   it("6. 결과로 가기 목표를 안고 열리면 구분선이 아니라 그 메시지로 간다", async () => {
     const target = range(10, 10)[0] as Message;
     act(() => requestJump({ channelId: CH, messageId: target.id, seq: 10 }));
@@ -1128,9 +1183,141 @@ describe("MessageList 첫 안 읽은 곳에서 열기", () => {
     expect(sender.request).not.toHaveBeenCalled();
   });
 
-  it("스레드 패널(entryReadSeq 없음)은 이 규칙을 타지 않는다", async () => {
-    const { scroller } = open({ ...timelineOf(range(1, 100)) }, undefined, { threadRootId: "root-1" });
+  it("6. 결과로 간 뒤 끝까지 내리면 읽음이 간다 — 목표를 안고 열린 목록은 읽음을 붙잡아 두지 않는다", async () => {
+    const target = range(10, 10)[0] as Message;
+    act(() => requestJump({ channelId: CH, messageId: target.id, seq: 10 }));
+    const { sender, scrollTo } = open(timelineOf(range(1, 100)), 80);
+    await waitFor(() =>
+      expect(screen.getByText("본문 10").closest("[data-index]")).toHaveAttribute("data-highlighted", "true"),
+    );
     await settle();
-    expect(scroller()).toBeDefined();
+    await pastVirtualizerReconcile();
+    await scrollTo(MAX_TOP(102));
+    await waitFor(() => expect(sender.request).toHaveBeenCalledWith(CH, 100));
+  });
+
+  it("스레드 패널은 이 규칙을 타지 않는다 — entryReadSeq 를 받아도 끝에서 열고 채널 읽음을 보내지 않는다", async () => {
+    const { fromEnd, sender } = open(timelineOf(range(1, 100)), 80, { threadRootId: "root-1" });
+    await screen.findByText("본문 100");
+    await waitFor(() => expect(fromEnd()).toBe(0));
+    await settle();
+    expect(fromEnd()).toBe(0);
+    expect(sender.request).not.toHaveBeenCalled();
+  });
+
+  it("캐시 없이 들어가 구독 응답이 나중에 오면 그때 구분선이 위쪽에 오게 열고, 읽음을 보내지 않는다", async () => {
+    const { qc, scroller, sender } = open(undefined, 80);
+    expect(screen.getByRole("status", { name: "메시지를 불러오는 중" })).toBeInTheDocument();
+    act(() => qc.setQueryData(qk.timeline(CH), timelineOf(range(1, 100))));
+    await waitFor(() => expect(scroller().scrollTop).toBe(81 * ROW - CONTEXT));
+    // 읽음 전송기는 취소가 없다 — 한 번이라도 끝 보임으로 잡히면 그대로 나간다
+    await act(() => new Promise((r) => setTimeout(r, 1_100)));
+    expect(scroller().scrollTop).toBe(81 * ROW - CONTEXT);
+    expect(sender.request).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: /새 메시지 20개/ })).toBeInTheDocument();
+  });
+
+  it("캐시 없이 들어가면 이어 받기를 기다리지 않는다 — 채널의 끝이 답글이라 첫 응답의 lastSeq 가 최신에 못 미쳐도 곧 읽음이 간다", async () => {
+    // 스냅숏의 최신은 105(답글) — 첫 구독은 루트만 싣는다(lastSeq 100)
+    known(100, 105);
+    const { qc, sender, fromEnd } = open(undefined, 100);
+    act(() => qc.setQueryData(qk.timeline(CH), timelineOf(range(1, 100))));
+    await waitFor(() => expect(fromEnd()).toBe(0));
+    await waitFor(() => expect(sender.request).toHaveBeenCalledWith(CH, 100));
+  });
+
+  it("읽은 자리가 0 이면(새 멤버가 처음 여는 채널) 구분선이 아니라 끝에서 열고 읽음이 간다", async () => {
+    const { sender, fromEnd } = open(timelineOf(range(1, 100)), 0);
+    await screen.findByText("본문 100");
+    await waitFor(() => expect(fromEnd()).toBe(0));
+    await waitFor(() => expect(sender.request).toHaveBeenCalledWith(CH, 100));
+    expect(screen.queryByRole("button", { name: /새 메시지 \d+개/ })).toBeNull();
+  });
+
+  describe("낡은 캐시에 이미 구분선이 있을 때", () => {
+    // 캐시는 42 까지(41·42 는 안 읽음), 서버가 아는 최신은 100. 구분선 뒤가 두 줄이라 구분선을 위에 두면 끝도 보인다
+    it("이어 받기 전에는 끝이 보여도 읽음을 보내지 않고, 이어 받은 뒤에는 끝으로 끌려가지 않고 구분선에 선다", async () => {
+      known(40, 100);
+      const { qc, scroller, sender, fromEnd } = open(timelineOf(range(1, 42)), 40);
+      await screen.findByRole("separator", { name: "새 메시지" });
+      await settle();
+      expect(sender.request).not.toHaveBeenCalled();
+
+      await catchUp(qc, 43, 100);
+      await waitFor(() => expect(scroller().scrollTop).toBe(41 * ROW - CONTEXT));
+      await settle();
+      expect(scroller().scrollTop).toBe(41 * ROW - CONTEXT);
+      expect(fromEnd()).toBeGreaterThan(0);
+      expect(sender.request).not.toHaveBeenCalled();
+      expect(isViewingAtEnd(CH)).toBe(false);
+      // 끝으로 가는 길 — 이어 받은 것까지 안 읽은 60개
+      expect(screen.getByRole("button", { name: /새 메시지 60개/ })).toBeInTheDocument();
+    });
+
+    it("이어 받은 뒤에도 구분선과 끝이 한 화면이면 그때 끝 보임이다 — 다 받은 끝까지 읽음이 간다", async () => {
+      known(40, 45);
+      const { qc, sender } = open(timelineOf(range(1, 42)), 40);
+      await screen.findByRole("separator", { name: "새 메시지" });
+      await settle();
+      expect(sender.request).not.toHaveBeenCalled();
+
+      await catchUp(qc, 43, 45);
+      await waitFor(() => expect(sender.request).toHaveBeenCalledWith(CH, 45));
+      expect(sender.request).not.toHaveBeenCalledWith(CH, 42);
+    });
+
+    it("기다리는 동안 손을 대 옮긴 자리는 다 받은 뒤에도 그대로다 — 구분선으로 다시 끌고 가지 않고, 끝이 아니면 읽음이 가지 않는다", async () => {
+      known(40, 100);
+      const { qc, scroller, scrollTo, sender } = open(timelineOf(range(1, 42)), 40);
+      await screen.findByRole("separator", { name: "새 메시지" });
+      await settle();
+      await scrollTo(1000);
+      await catchUp(qc, 43, 100);
+      await settle();
+      expect(scroller().scrollTop).toBe(1000);
+      expect(sender.request).not.toHaveBeenCalled();
+      expect(screen.getByRole("button", { name: /새 메시지 60개/ })).toBeInTheDocument();
+    });
+
+    it("기다리는 동안 손만 대고 끝에 남아 있어도 받는 글을 따라 내려가지 않는다 — 다 받은 뒤 그 자리는 끝이 아니라 읽음이 가지 않는다", async () => {
+      // 캐시에 구분선이 아직 없는 쪽(끝에서 연다) — 손을 댔으므로 이어 받기가 구분선을 만들어도 내려앉지 않는다
+      known(40, 100);
+      const { qc, scroller, sender } = open(timelineOf(range(1, 40)), 40);
+      await screen.findByText("본문 40");
+      await settle();
+      const oldEnd = MAX_TOP(41);
+      expect(scroller().scrollTop).toBe(oldEnd);
+      await act(async () => {
+        scroller().dispatchEvent(new Event("pointerdown"));
+        await new Promise((r) => setTimeout(r, 20));
+      });
+      await catchUp(qc, 41, 100);
+      await settle();
+      expect(scroller().scrollTop).toBe(oldEnd);
+      expect(sender.request).not.toHaveBeenCalled();
+    });
+
+    it("기다리는 동안 손만 댄 자리가 다 받은 뒤에도 끝이 보이면 그 자리에서 끝 보임이다 — 읽음이 간다", async () => {
+      // 이어 받은 것이 한 줄뿐이라 따라 내려가지 않아도 끝이 STICK_PX 안에 남는다
+      known(40, 43);
+      const { qc, scroller, sender } = open(timelineOf(range(1, 42)), 40);
+      await screen.findByRole("separator", { name: "새 메시지" });
+      await settle();
+      await act(async () => {
+        scroller().dispatchEvent(new Event("pointerdown"));
+        await new Promise((r) => setTimeout(r, 20));
+      });
+      await catchUp(qc, 43, 43);
+      await waitFor(() => expect(sender.request).toHaveBeenCalledWith(CH, 43));
+    });
+
+    it("이어 받기가 끝내 안 오면 5초 뒤 가진 것으로 판정한다 — 그때 구분선과 끝이 한 화면이면 읽음이 간다", async () => {
+      known(40, 100);
+      const { sender } = open(timelineOf(range(1, 42)), 40);
+      await screen.findByRole("separator", { name: "새 메시지" });
+      await act(() => new Promise((r) => setTimeout(r, 4_500)));
+      expect(sender.request).not.toHaveBeenCalled();
+      await waitFor(() => expect(sender.request).toHaveBeenCalledWith(CH, 42), { timeout: 2_000 });
+    }, 10_000);
   });
 });

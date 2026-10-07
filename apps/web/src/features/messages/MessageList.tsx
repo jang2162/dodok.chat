@@ -53,7 +53,7 @@ export type MessageListProps = {
   threadRootId?: string;
   /** 좁은 화면의 패널 시트가 이 목록을 덮고 있다 — 끝이 보이는 것으로 치지 않는다(읽음을 보내지 않는다) */
   covered?: boolean;
-  /** 채널에 들어갈 때 잡은 읽음 위치(`captureEntryRead`) — 없으면 「새 메시지」 구분선도 배너도 없고 끝에서 연다. 있으면 구분선이 받은 행 안일 때 그 선에서 연다. 스레드 패널은 넘기지 않는다 */
+  /** 채널에 들어갈 때 잡은 읽음 위치(`captureEntryRead`) — 없으면 「새 메시지」 구분선도 배너도 없고 끝에서 연다. 있으면 구분선이 받은 행 안일 때 그 선에서 연다(0 이면 끝에서). 스레드 패널은 넘기지 않는다 */
   entryReadSeq?: number;
   /** 태스크 8: 보일 스트리밍 버블의 runId(순서대로) 와 그 버블 */
   bubbleRunIds?: readonly string[];
@@ -94,6 +94,28 @@ function ChannelMessages({
     () => (timeline ? groupRows(timeline, bubbleRunIds, approvalFacts, undefined, { entryReadSeq, me }) : []),
     [timeline, bubbleRunIds, approvalFacts, entryReadSeq, me],
   );
+  // 구분선이 있는 채널은 처음 위치를 정하기 전까지 끝 보임으로 치지 않는다 — 첫 렌더의 `stuck`(true) 가 읽음 요청을 먼저 내보내지 않게.
+  // 읽은 자리가 0 인 채널(새 멤버가 처음 여는 채널 등)은 끝에서 연다(사용자 결정) — 기록 전체가 안 읽음이라 구분선에서 열면
+  // 첫 구독 한 쪽(루트 200개)에 다 드는 채널은 맨 첫 글에서 열린다
+  const entryTracked = threadRootId === undefined && entryReadSeq !== undefined && entryReadSeq > 0;
+  const [entryHold, setEntryHold] = useState(entryTracked);
+  /**
+   * 캐시가 낡은 채로 열렸다 — 서버가 아는 최신 seq(없으면 undefined). 이어 받기가 거기까지 닿을 때까지 읽음을 붙잡고 끝 보임으로
+   * 치지 않는다: 구분선이 캐시에 이미 있어도 이어 받을 글이 붙기 전의 끝 보임으로 보내면 받지 않은 글까지 읽음이 된다.
+   * `pin` 이 지금 값을 보므로 ref 로도 든다
+   */
+  const [awaitSeq, setAwaitSeqState] = useState<number>();
+  const awaitRef = useRef<number | undefined>(undefined);
+  const setAwaitSeq = useCallback((seq: number | undefined) => {
+    awaitRef.current = seq;
+    setAwaitSeqState(seq);
+  }, []);
+  // 마운트 때 캐시가 없었으면 첫 응답이 최신 쪽이라 이어 받을 것이 없다 — 그 `lastSeq` 는 루트만의 최대라 채널의 끝이 답글이면
+  // 서버가 아는 최신에 끝내 닿지 못하므로 기다리지 않는다
+  const [cachedAtMount] = useState(timeline !== undefined);
+  /** 기다리는 동안 사용자가 스크롤을 잡았다 — 그 뒤로는 구분선으로 겨누지 않는다 */
+  const awaitTouched = useRef(false);
+
   const scrollRef = useRef<HTMLDivElement>(null);
   // 결과로 가기로 받은 떨어진 창(timeline.ts `Timeline` 의 `hasNewer`)
   const hasNewer = timeline?.hasNewer === true;
@@ -106,8 +128,9 @@ function ChannelMessages({
     getItemKey,
     // 채팅 모드: 앞에 붙는 행(과거 페이지)은 보던 행을 기준으로 자리를 지키고, 끝에 붙어 있으면 새 행·자라는 행을 따라간다
     anchorTo: "end",
-    // 떨어진 창에서는 따라가지 않는다 — 아래로 이어 받은 행을 따라 내려가면 또 아래 끝이라 다음 쪽이 연달아 불린다
-    followOnAppend: !hasNewer,
+    // 떨어진 창에서는 따라가지 않는다 — 아래로 이어 받은 행을 따라 내려가면 또 아래 끝이라 다음 쪽이 연달아 불린다.
+    // 이어 받기를 기다리는 동안도 — 받는 글을 따라 내려가면 구분선을 지나쳐 보지 않은 글이 끝 보임에 든다
+    followOnAppend: !hasNewer && awaitSeq === undefined,
     scrollEndThreshold: STICK_PX,
     // 잰 크기를 ResizeObserver 콜백 안에서 바로 반영하면 같은 프레임에 또 배치가 바뀌어
     // 「ResizeObserver loop completed with undelivered notifications」 가 난다(브라우저 검증 결함 4 — 개발 모드에서
@@ -129,13 +152,9 @@ function ChannelMessages({
   const newer = useNewerPages(channelId, threadRootId, hasNewer);
   const qc = useQueryClient();
 
-  // 구분선이 있는 채널은 처음 위치를 정하기 전까지 끝 보임으로 치지 않는다 — 첫 렌더의 `stuck`(true) 가 읽음 요청을 먼저 내보내지 않게
-  const entryTracked = threadRootId === undefined && entryReadSeq !== undefined;
-  const [entryHold, setEntryHold] = useState(entryTracked);
-  /** 캐시가 낡은 채로 열렸다 — 서버가 아는 최신 seq. 이어 받기가 그 구분선을 만들 때까지 기다린다(없으면 undefined) */
-  const [awaitSeq, setAwaitSeq] = useState<number>();
   /** 첫 붙임이 겨누는 곳 — 안 읽은 곳(「새 메시지」 행)이면 true, 아니면 맨 아래 */
   const aimUnread = useRef(false);
+  /** 다시 겨눌 때 올린다 — 행 수가 그대로여도(이어 받기 기다림이 시간으로 끝날 때) 첫 붙임 효과를 다시 돌린다 */
   const [aimNonce, setAimNonce] = useState(0);
   const rowsRef = useRef(rows);
   rowsRef.current = rows;
@@ -184,37 +203,29 @@ function ChannelMessages({
   // 결과로 가기 목표를 안고 열렸으면 끝으로 가지 않는다 — 그 메시지로 간다(`useJump`).
   // 안 읽은 채널은 끝이 아니라 첫 안 읽은 곳 — 「새 메시지」 행이 뷰포트 위쪽(`UNREAD_CONTEXT_PX`)에 오게 같은 방식으로 붙인다.
   // 그때는 끝에 붙지 않았으므로 읽음이 가지 않는다(끝까지 내리면 간다). 구분선과 끝이 한 화면에 다 보이면 끝에 붙은 것이다.
-  // 행이 아직 없으면(캐시가 읽음 위치까지만 있고 이어 받기가 구분선을 만드는 중) 끝으로 열어 두고 그 행이 생길 때 한 번 내려앉는다.
-  // 처음 한 번만이다 — 그 뒤의 새 글·과거 페이지·패널 여닫기는 다시 끌고 가지 않는다
+  // 캐시가 낡았으면(`awaitSeq`) 행이 아직 없을 때는 끝으로 열어 두고 그 행이 생길 때 한 번 내려앉으며, 다 받으면 그 자리에서
+  // 끝 보임을 다시 잰다. 처음 한 번만이다 — 그 뒤의 새 글·과거 페이지·패널 여닫기는 다시 끌고 가지 않는다
   const jumpPending = jump.pending;
-  // 이어 받기를 기다리던 구분선이 생겼다 / 다 받았는데 안 생겼다(전부 내 글·답글) / 사용자가 손을 댔다·시간이 지났다
+  // 이어 받기를 기다리던 구분선이 생겼다 / 다 받았다(서버가 아는 최신에 닿았다). 사용자가 손을 댔거나 시간이 지난 것은 아래 효과
   useLayoutEffect(() => {
     if (awaitSeq === undefined) return;
-    if (rows.some((r) => r.kind === "unread")) {
-      setAwaitSeq(undefined);
-      aimUnread.current = true;
-      settleSoon();
-      setStuck(false);
-      setSeen(entryReadSeq ?? 0);
-      setEntryHold(false);
-      setAimNonce((n) => n + 1);
-    } else if ((timeline?.lastSeq ?? 0) >= awaitSeq) {
-      setAwaitSeq(undefined);
-      setEntryHold(false);
-    }
+    if ((timeline?.lastSeq ?? 0) >= awaitSeq) finishAwait();
+    else if (!aimUnread.current && !awaitTouched.current && rows.some((r) => r.kind === "unread"))
+      aimAtUnread();
   });
   useEffect(() => {
     const el = scrollRef.current;
     if (awaitSeq === undefined || !el) return;
-    const release = () => {
-      setAwaitSeq(undefined);
-      setEntryHold(false);
+    // 손을 대면 그 뒤로는 겨누지 않는다 — 스스로 움직인 사람을 끌고 가지 않는다. 읽음은 다 받을 때까지 그대로 붙잡는다.
+    // 끝내 다 받지 못하면 가진 것으로 판정한다
+    const handsOn = () => {
+      awaitTouched.current = true;
     };
-    const timer = setTimeout(release, AWAIT_UNREAD_MAX_MS);
-    for (const type of HANDS_ON) el.addEventListener(type, release, { passive: true });
+    const timer = setTimeout(finishAwait, AWAIT_UNREAD_MAX_MS);
+    for (const type of HANDS_ON) el.addEventListener(type, handsOn, { passive: true });
     return () => {
       clearTimeout(timer);
-      for (const type of HANDS_ON) el.removeEventListener(type, release);
+      for (const type of HANDS_ON) el.removeEventListener(type, handsOn);
     };
   }, [awaitSeq]);
   // 보일 행이 하나도 없는 채널(답글뿐 등)은 붙잡을 것이 없다
@@ -225,6 +236,38 @@ function ChannelMessages({
   function settleSoon() {
     const win = scrollRef.current?.ownerDocument.defaultView;
     if (win) settleUntil.current = win.performance.now() + SETTLE_MAX_MS;
+  }
+  /** 「새 메시지」 행으로 (다시) 겨눈다 — 첫 붙임을 잠깐 되살려 `pin` 이 그 자리와 끝 보임을 정한다. 칩은 들어갈 때의 읽음 위치부터 센다 */
+  function aimAtUnread() {
+    aimUnread.current = true;
+    settleSoon();
+    setStuck(false);
+    setSeen(entryReadSeq ?? 0);
+    setAimNonce((n) => n + 1);
+  }
+  /**
+   * 이어 받기 기다림을 끝내고 읽음을 놓는다. 그 사이 손을 댄 사람은 그 자리에서 끝이 보이는지만 다시 잰다. 아니면 구분선이 있으면
+   * 다 받은 목록에서 다시 겨누고, 없으면(전부 내 글·답글) 열어 둔 끝으로 — 기다리는 동안은 받은 글을 따라가지 않았다
+   */
+  function finishAwait() {
+    setAwaitSeq(undefined);
+    setEntryHold(false);
+    const el = scrollRef.current;
+    if (awaitTouched.current) {
+      if (el) setStuck(el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_PX);
+    } else if (rowsRef.current.some((r) => r.kind === "unread")) aimAtUnread();
+    else {
+      setStuck(true);
+      virtualizer.scrollToEnd();
+    }
+  }
+  /** 서버는 가진 목록 뒤에도 글이 있다고 안다 — 이어 받기가 거기까지 닿을 때까지 읽음을 붙잡고 끝에 붙지 않은 것으로 둔다. 아니면 곧바로 놓는다 */
+  function holdForCatchUp() {
+    const latest = useUnread.getState().byChannel[channelId]?.seenSeq ?? 0;
+    if (cachedAtMount && latest > (timeline?.lastSeq ?? 0)) {
+      setAwaitSeq(latest);
+      setStuck(false);
+    } else setEntryHold(false);
   }
   useLayoutEffect(() => {
     const el = scrollRef.current;
@@ -242,8 +285,9 @@ function ChannelMessages({
       const top = Math.max(0, start - UNREAD_CONTEXT_PX);
       virtualizer.scrollToOffset(top);
       el.scrollTop = top;
-      // 구분선을 위에 둬도 끝이 함께 보이면(한 화면에 다 들어가는 안 읽음) 끝에 붙은 것이다
-      const atEnd = el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_PX;
+      // 구분선을 위에 둬도 끝이 함께 보이면(한 화면에 다 들어가는 안 읽음) 끝에 붙은 것이다 — 이어 받기를 기다리는 동안은 아니다
+      const atEnd =
+        awaitRef.current === undefined && el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_PX;
       if (atEnd !== stuckRef.current) setStuck(atEnd);
     };
     if (!positioned.current) {
@@ -257,14 +301,9 @@ function ChannelMessages({
         aimUnread.current = true;
         setStuck(false);
         setSeen(entryReadSeq ?? 0);
-        setEntryHold(false);
+        holdForCatchUp();
       } else {
-        if (entryTracked) {
-          // 서버는 안 읽은 것이 있다고 아는데 가진 목록이 거기까지 안 닿았다 — 이어 받기를 기다린다. 그동안 읽음을 보내지 않는다
-          const latest = useUnread.getState().byChannel[channelId]?.seenSeq ?? 0;
-          if (latest > (timeline?.lastSeq ?? 0)) setAwaitSeq(latest);
-          else setEntryHold(false);
-        }
+        if (entryTracked) holdForCatchUp();
         virtualizer.scrollToEnd();
       }
       pin();
@@ -354,12 +393,13 @@ function ChannelMessages({
     };
   }, [mounted, virtualizer]);
 
-  // 떨어진 창의 아래 끝은 목록의 끝이 아니다 — 붙어 있지 않은 것으로 둬 새 행을 따라가지 않는다(아래로 이어 받기가 연달아 돌지 않게)
+  // 떨어진 창의 아래 끝은 목록의 끝이 아니다 — 붙어 있지 않은 것으로 둬 새 행을 따라가지 않는다(아래로 이어 받기가 연달아 돌지 않게).
+  // 이어 받기를 기다리는 동안의 끝도 아직 끝이 아니다 — 다 받으면 `finishAwait` 가 잰다
   const onScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
     const fromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    setStuck(fromBottom <= STICK_PX && !hasNewer);
+    setStuck(fromBottom <= STICK_PX && !hasNewer && awaitRef.current === undefined);
     older.onScrollTop(el.scrollTop);
     newer.onScrollBottom(fromBottom);
   };
@@ -599,8 +639,9 @@ function Skeleton() {
 
 /**
  * 맨 아래에 붙어 있지 않을 때 들어온 확정 메시지 수(스펙 5.5 칩). 붙어 있으면 본 것으로 친다.
- * 내 메시지는 세지 않는다(보낼 때 끝으로 간다). 기준은 가진 마지막 메시지의 seq — 사본에서 복원한 타임라인은
- * `lastSeq` 가 0 이라(첫 구독을 새로 받게) 그것을 쓰면 오프라인에서 위로 올리자마자 전부 새 메시지로 센다
+ * 내 메시지는 세지 않는다(보낼 때 끝으로 간다). 기준은 처음에 가진 마지막 메시지의 seq 이고, 구분선에서 열면 부르는 쪽이
+ * 돌려받은 setter 로 들어갈 때의 읽음 위치로 옮긴다(칩이 그 뒤에 온 수를 센다). 타임라인의 `lastSeq` 를 쓰지 않는 까닭 — 사본에서
+ * 복원한 타임라인은 그것이 0 이라(첫 구독을 새로 받게) 오프라인에서 위로 올리자마자 전부 새 메시지로 센다
  */
 function useUnseen(
   timeline: ReturnType<typeof useTimeline>,
