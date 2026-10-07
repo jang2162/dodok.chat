@@ -9,7 +9,7 @@
 #   status [--porcelain]
 #   wait [--timeout-ms <n>]
 #   reap <슬러그> | --all-merged [--base <브랜치>] [--force]
-#   stop <슬러그> | --all [--force] [--dry-run]   # 워크트리에 붙은 터미널만 정지
+#   stop <슬러그> | --all [--force] [--dry-run]   # 끝난 워커를 회수하고 워크트리의 터미널만 정지
 #   keep <슬러그> [--remove]
 #   sync-config [<워크트리경로>]   # 최상위 .env 를 워크트리로 복사
 #
@@ -897,7 +897,8 @@ EOF
   [ "$refused" -eq 0 ]
 }
 
-# 워크트리에 붙은 Orca 터미널만 정지한다. 워크트리도 브랜치도 건드리지 않는다.
+# 워크트리에 붙은 Orca 터미널만 정지한다. 끝난 워커는 닫기 전에 회수하고(reap 과 같은
+# 회수 → 닫기 순서), 워크트리도 브랜치도 건드리지 않는다.
 #
 # **이 verb 가 없으면 사람이 `orca terminal list | grep` 루프를 즉흥으로 짠다.**
 # 그 평문 목록은 머신 전역이고 한 항목이 여러 줄(핸들 줄 + `preview:` + 가변 길이
@@ -985,6 +986,11 @@ cmd_stop() {
     fi
 
     printf '%s: 터미널 %s개를 정지한다\n' "$slug" "$live"
+    # 닫기 전에 회수한다 — reap 과 같은 순서다. close 는 터미널 탭까지 지우므로 닫은 뒤에는
+    # worker-release 가 그 터미널을 찾지 못해 꼬리 보관 없이 회수하거나 release_unknown 으로
+    # 남긴다. 도는 워커(active)는 release_disposition 이 건너뛰므로 --force 로 끊을 때도
+    # 터미널만 닫는다. 회수 실패는 reap 처럼 경고만 내고 거부로 세지 않는다.
+    release_workers "$repo::$path"
     "$(orca_cli)" terminal close --worktree "id:$repo::$path" --all --json >/dev/null 2>&1 \
       || { printf '  경고: terminal close 실패 — %s\n' "$slug" >&2; refused=$((refused + 1)); }
   done <<EOF

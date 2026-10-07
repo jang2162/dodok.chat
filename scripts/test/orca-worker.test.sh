@@ -1930,6 +1930,15 @@ assert_eq "$(grep '^terminal close ' "$STUB_ORCA_LOG" | grep -c -- '--all')" "1"
 assert_eq "$(grep -c 'terminal stop' "$STUB_ORCA_LOG")" "0" \
   "Deprecated terminal stop 을 부르지 않는다"
 
+# 끝난 워커는 닫기 전에 회수한다 — reap 과 같은 순서다
+# (worktree-workflow.md 「터미널을 끄는 것은 `stop` 이 한다」 절).
+assert_eq "$(grep 'worker-release' "$STUB_ORCA_LOG" | grep -c -- '--dispatch ctx_reap')" "1" \
+  "stop 이 끝난 워커(reclaimable)를 회수한다"
+assert_eq "$(grep 'worker-release' "$STUB_ORCA_LOG" | grep -c -- '--dispatch ctx_taken')" "0" \
+  "stop 이 사용자가 넘겨받은 터미널을 회수하려 들지 않는다"
+assert_eq "$(grep -o -E '^(orchestration worker-release|terminal close) ' "$STUB_ORCA_LOG" | tr '\n' ',')" \
+  "orchestration worker-release ,terminal close ," "stop 은 회수한 뒤에 닫는다(회수→닫기 순서)"
+
 # 저장소 밖 슬러그는 셀렉터조차 만들지 않는다.
 : > "$STUB_ORCA_LOG"
 assert_status 1 "다른 저장소의 슬러그는 거부한다" cmd_stop other-wt
@@ -1944,16 +1953,29 @@ assert_status 2 "알 수 없는 인자는 거부한다" cmd_stop w-reap --nope
 cmd_stop w-reap --dry-run >/dev/null 2>&1
 assert_eq "$(grep -c '^terminal close ' "$STUB_ORCA_LOG")" "0" \
   "dry-run 은 terminal close 를 부르지 않는다"
+assert_eq "$(grep -c 'worker-release' "$STUB_ORCA_LOG")" "0" \
+  "dry-run 은 worker-release 도 부르지 않는다"
 
-# 도는 워커는 --force 없이 끊지 않는다.
+# 도는 워커는 --force 없이 끊지 않는다. 거부하면 회수 판정에도 들어가지 않는다.
 : > "$STUB_ORCA_LOG"
 assert_status 1 "도는 워커는 --force 없이 거부한다" cmd_stop w-live
 assert_eq "$(grep -c '^terminal close ' "$STUB_ORCA_LOG")" "0" \
   "거부된 stop 은 명령을 내지 않는다"
+assert_eq "$(grep -c -E '^orchestration worker-(list|release) ' "$STUB_ORCA_LOG")" "0" \
+  "거부된 stop 은 회수 판정도 하지 않는다"
+# --force 는 reap 과 같은 길을 간다 — 회수 판정을 거친 뒤 닫는다. 도는 워커(active)는
+# release_disposition 이 건너뛰므로 회수하지 않고 터미널만 닫는다.
 : > "$STUB_ORCA_LOG"
-assert_status 0 "--force 면 도는 워커도 끊는다" cmd_stop w-live --force
+out="$(cmd_stop w-live --force 2>&1)"
+assert_eq "$?" "0" "--force 면 도는 워커도 끊는다"
 assert_eq "$(grep '^terminal close ' "$STUB_ORCA_LOG" | grep -c 'w-live')" "1" \
   "--force 는 실제로 그 워크트리에 나간다"
+assert_eq "$(grep -c 'worker-release' "$STUB_ORCA_LOG")" "0" \
+  "--force 로 끊어도 도는 워커(active)는 회수하지 않는다"
+assert_eq "$(printf '%s\n' "$out" | grep -c '건너뜀: ctx_live')" "1" \
+  "--force 도 회수 판정을 거치고 건너뛴 이유를 말한다"
+assert_eq "$(grep -o -E '^(orchestration worker-list|terminal close) ' "$STUB_ORCA_LOG" | tr '\n' ',')" \
+  "orchestration worker-list ,terminal close ," "--force 도 회수 판정 → 닫기 순서다"
 
 # 보호 표시는 stop 에서도 최우선이고 --force 로도 뚫리지 않는다.
 touch "$X/.worktrees/lms-base/w-keep/.orca-keep"
