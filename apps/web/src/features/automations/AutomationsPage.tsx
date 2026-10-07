@@ -1,18 +1,11 @@
 import type { AutomationSummary } from "@dodok/shared";
 import { PlusIcon, TriangleAlertIcon } from "lucide-react";
-import { useId, useMemo, useState } from "react";
+import { type Ref, type RefObject, useId, useMemo, useRef, useState } from "react";
 import { useArchivedChannels, useCanManage, useChannels } from "@/api/queries";
 import { useOpsStatus } from "@/features/ops/queries";
+import { ConfirmDialog } from "@/features/settings/ConfirmDialog";
 import { Badge } from "@/ui/badge";
 import { Button } from "@/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/ui/dialog";
 import { Switch } from "@/ui/switch";
 import { AutomationDialog } from "./AutomationDialog";
 import { STATUS_LABEL, describeSchedule, formatAt, warningText } from "./copy";
@@ -25,6 +18,7 @@ import { useAutomations } from "./queries";
  */
 export function AutomationsPage() {
   const manager = useCanManage();
+  const createButton = useRef<HTMLButtonElement>(null);
   return (
     <section
       data-testid="page-automations"
@@ -40,7 +34,7 @@ export function AutomationsPage() {
         </div>
         {manager && (
           <AutomationDialog>
-            <Button type="button" size="sm">
+            <Button ref={createButton} type="button" size="sm">
               <PlusIcon />
               만들기
             </Button>
@@ -48,7 +42,7 @@ export function AutomationsPage() {
         )}
       </header>
       {manager ? (
-        <AutomationList />
+        <AutomationList createButton={createButton} />
       ) : (
         <p className="text-sm text-muted-foreground">권한이 없습니다 — 자동화는 관리자만 볼 수 있습니다.</p>
       )}
@@ -56,8 +50,19 @@ export function AutomationsPage() {
   );
 }
 
-function AutomationList() {
+/**
+ * 목록과 삭제 확인(공용 `ConfirmDialog` 하나를 목록이 든다). 지운 줄은 「삭제」 단추와 함께 사라져 초점을 돌려줄 자리가 없다 — 다음
+ * 줄의 「삭제」, 없으면 앞 줄의 것, 그것도 없으면 `createButton`(「만들기」)으로 옮긴다(연결 페이지 `TokenList` 와 같은 규칙).
+ * 목록이 비어도 대화상자는 그린다 — 마지막 줄을 지울 때도 다른 줄처럼 닫히는 애니메이션을 거친다
+ */
+function AutomationList({ createButton }: { createButton: RefObject<HTMLButtonElement | null> }) {
   const automations = useAutomations();
+  const remove = useDeleteAutomation();
+  const [target, setTarget] = useState<AutomationSummary>();
+  // 닫히는 동안에도 문구가 비지 않게 `target` 은 남겨 두고 열림만 따로 든다
+  const [deleting, setDeleting] = useState(false);
+  const returnFocus = useRef<HTMLElement | null>(null);
+  const deleteButtons = useRef(new Map<string, HTMLButtonElement>());
   const timeZone = useOpsStatus().data?.timeZone;
   const channels = useChannels().data;
   // 보관된 채널은 사이드바 목록에 없다 — 그런 줄이 있을 때만 보관 목록에서 이름을 찾는다
@@ -69,6 +74,26 @@ function AutomationList() {
     () => new Map([...(channels ?? []), ...(archived ?? [])].map((c) => [c.id, c.name])),
     [channels, archived],
   );
+
+  function startDelete(a: AutomationSummary, button: HTMLButtonElement) {
+    returnFocus.current = button;
+    setTarget(a);
+    setDeleting(true);
+  }
+
+  // 실패하면 대화상자는 열린 채다(전역 토스트) — 다시 누를 수 있다
+  function confirmDelete() {
+    if (!target) return;
+    const rows = automations.data ?? [];
+    const i = rows.findIndex((a) => a.id === target.id);
+    const neighbor = rows[i + 1] ?? rows[i - 1];
+    remove.mutate(target.id, {
+      onSuccess: () => {
+        returnFocus.current = (neighbor && deleteButtons.current.get(neighbor.id)) ?? createButton.current;
+        setDeleting(false);
+      },
+    });
+  }
 
   if (!automations.data) {
     return automations.isError ? (
@@ -89,26 +114,47 @@ function AutomationList() {
       </p>
     );
   }
-  if (automations.data.length === 0)
-    return <p className="text-sm text-muted-foreground">아직 자동화가 없습니다. 「만들기」로 시작합니다.</p>;
   return (
-    <div className="flex flex-col gap-3">
-      {timeZone && (
-        <p className="text-xs text-muted-foreground">
-          시각은 워크스페이스 시간대 {timeZone} 기준입니다 — 운영 화면에서 바꿉니다.
-        </p>
+    <>
+      {automations.data.length === 0 ? (
+        <p className="text-sm text-muted-foreground">아직 자동화가 없습니다. 「만들기」로 시작합니다.</p>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {timeZone && (
+            <p className="text-xs text-muted-foreground">
+              시각은 워크스페이스 시간대 {timeZone} 기준입니다 — 운영 화면에서 바꿉니다.
+            </p>
+          )}
+          <ul aria-label="자동화" className="flex flex-col divide-y rounded-lg border">
+            {automations.data.map((a) => (
+              <AutomationRow
+                key={a.id}
+                automation={a}
+                channel={channelName.get(a.channelId)}
+                {...(timeZone ? { timeZone } : {})}
+                deleteRef={(el) => {
+                  if (el) deleteButtons.current.set(a.id, el);
+                  else deleteButtons.current.delete(a.id);
+                }}
+                onDelete={(button) => startDelete(a, button)}
+              />
+            ))}
+          </ul>
+        </div>
       )}
-      <ul aria-label="자동화" className="flex flex-col divide-y rounded-lg border">
-        {automations.data.map((a) => (
-          <AutomationRow
-            key={a.id}
-            automation={a}
-            channel={channelName.get(a.channelId)}
-            {...(timeZone ? { timeZone } : {})}
-          />
-        ))}
-      </ul>
-    </div>
+      <ConfirmDialog
+        open={deleting}
+        onOpenChange={setDeleting}
+        title="자동화 삭제"
+        description={`「${target?.name ?? ""}」 자동화를 삭제합니다. 이미 게시한 메시지는 남고 「⚙ 지운 자동화」로 보입니다.`}
+        confirmLabel="삭제"
+        pendingLabel="삭제하는 중…"
+        pending={remove.isPending}
+        destructive
+        returnFocus={returnFocus}
+        onConfirm={confirmDelete}
+      />
+    </>
   );
 }
 
@@ -116,10 +162,15 @@ function AutomationRow({
   automation: a,
   channel,
   timeZone,
+  deleteRef,
+  onDelete,
 }: {
   automation: AutomationSummary;
   channel: string | undefined;
   timeZone?: string;
+  deleteRef: Ref<HTMLButtonElement>;
+  /** 누른 「삭제」 단추 — 확인을 닫으면 초점이 그리로 돌아온다 */
+  onDelete: (button: HTMLButtonElement) => void;
 }) {
   const nameId = useId();
   const run = useRunAutomation();
@@ -186,56 +237,17 @@ function AutomationRow({
             수정
           </Button>
         </AutomationDialog>
-        <DeleteAutomation automation={a} />
+        <Button
+          ref={deleteRef}
+          type="button"
+          size="sm"
+          variant="ghost"
+          className="text-destructive"
+          onClick={(e) => onDelete(e.currentTarget)}
+        >
+          삭제
+        </Button>
       </div>
     </li>
-  );
-}
-
-/** 삭제 확인 — 게시한 메시지는 남고 「⚙ 지운 자동화」로 보인다 */
-function DeleteAutomation({ automation }: { automation: AutomationSummary }) {
-  const [open, setOpen] = useState(false);
-  const remove = useDeleteAutomation();
-  return (
-    <>
-      <Button
-        type="button"
-        size="sm"
-        variant="ghost"
-        className="text-destructive"
-        onClick={() => setOpen(true)}
-      >
-        삭제
-      </Button>
-      <Dialog open={open} onOpenChange={(next) => !remove.isPending && setOpen(next)}>
-        <DialogContent closeDisabled={remove.isPending}>
-          <DialogHeader>
-            <DialogTitle>자동화 삭제</DialogTitle>
-            <DialogDescription>
-              「{automation.name}」 자동화를 삭제합니다. 이미 게시한 메시지는 남고 「⚙ 지운 자동화」로
-              보입니다.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={remove.isPending}
-              onClick={() => setOpen(false)}
-            >
-              취소
-            </Button>
-            <Button
-              type="button"
-              variant="destructive"
-              disabled={remove.isPending}
-              onClick={() => remove.mutate(automation.id, { onSuccess: () => setOpen(false) })}
-            >
-              {remove.isPending ? "삭제하는 중…" : "삭제"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </>
   );
 }

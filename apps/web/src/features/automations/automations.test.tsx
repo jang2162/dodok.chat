@@ -203,6 +203,52 @@ describe("목록", () => {
       { method: "DELETE", url: `/api/v1/automations/${uid(501)}`, body: undefined },
     ]);
   });
+
+  it("삭제 확인을 취소·Esc 로 닫으면 초점은 누른 「삭제」로 돌아온다", async () => {
+    stubAutomationsServer({
+      automations: [automationOf(1, { name: "점검" }), automationOf(2, { name: "다른 것" })],
+    });
+    renderRoute(PATH);
+    const remove = (await rowOf("다른 것")).getByRole("button", { name: "삭제" });
+    await user().click(remove);
+    const ask = await screen.findByRole("dialog", { name: "자동화 삭제" });
+    await user().click(within(ask).getByRole("button", { name: "취소" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(remove).toHaveFocus());
+    await user().click(remove);
+    await screen.findByRole("dialog", { name: "자동화 삭제" });
+    await user().keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(remove).toHaveFocus());
+  });
+
+  it("삭제한 뒤 초점은 다음 줄의 「삭제」, 마지막 줄이면 앞 줄, 다 지우면 「만들기」", async () => {
+    stubAutomationsServer({
+      automations: [
+        automationOf(1, { name: "가" }),
+        automationOf(2, { name: "나" }),
+        automationOf(3, { name: "다" }),
+      ],
+    });
+    renderRoute(PATH);
+    const removeOf = async (name: string) => (await rowOf(name)).getByRole("button", { name: "삭제" });
+    async function remove(name: string) {
+      await user().click(await removeOf(name));
+      const ask = await screen.findByRole("dialog", { name: "자동화 삭제" });
+      await user().click(within(ask).getByRole("button", { name: "삭제" }));
+      await waitFor(() => expect(screen.queryByRole("listitem", { name })).toBeNull());
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    }
+    const first = await removeOf("가");
+    const last = await removeOf("다");
+    await remove("나");
+    await waitFor(() => expect(last).toHaveFocus());
+    await remove("다");
+    await waitFor(() => expect(first).toHaveFocus());
+    await remove("가");
+    expect(await screen.findByText(/아직 자동화가 없습니다/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "만들기" })).toHaveFocus());
+  });
 });
 
 describe("만들기·수정 대화상자", () => {
