@@ -2,6 +2,7 @@ import type { Message } from "@dodok/shared";
 import { useMe } from "@/api/queries";
 import type { ReactNode } from "react";
 import { MessageAttachments } from "@/features/attachments/MessageAttachments";
+import { useLoadAutomationAuthors } from "@/features/automations/queries";
 import { referencedAttachmentIds } from "@/features/attachments/resolve";
 import { Components } from "@/features/components/Components";
 import { useChannelArchived } from "@/features/channels/archived";
@@ -97,6 +98,7 @@ export function MessageItem({
   inThread?: boolean;
 }) {
   const author = useAuthors().author(message);
+  useLoadAutomationAuthors([message]);
   const me = useMe().data?.user.id;
   const archived = useChannelArchived();
   // 채널 타임라인의 루트도 스레드를 넘긴다 — 나란히 열린 스레드 패널의 같은 루트가 곧바로 바뀐다(연 적 없는 스레드면 updateThread 가 그냥 지나간다)

@@ -80,8 +80,8 @@ describe("사이드바 하단", () => {
 describe("탭 — 역할대로", () => {
   it.each([
     ["member", ["내 계정", "알림", "에이전트", "채널"]],
-    ["admin", ["내 계정", "알림", "에이전트", "채널", "멤버", "운영"]],
-    ["owner", ["내 계정", "알림", "에이전트", "채널", "멤버", "연결", "운영"]],
+    ["admin", ["내 계정", "알림", "에이전트", "채널", "자동화", "멤버", "운영"]],
+    ["owner", ["내 계정", "알림", "에이전트", "채널", "자동화", "멤버", "연결", "운영"]],
   ])("%s — %j", async (role, tabs) => {
     stubShell({ role });
     renderRoute("/settings/account");
@@ -93,7 +93,8 @@ describe("탭 — 역할대로", () => {
     ["member", "/settings/members", ["내 계정", "알림", "에이전트", "채널"]],
     ["member", "/settings/connection", ["내 계정", "알림", "에이전트", "채널"]],
     ["member", "/settings/operations", ["내 계정", "알림", "에이전트", "채널"]],
-    ["admin", "/settings/connection", ["내 계정", "알림", "에이전트", "채널", "멤버", "운영"]],
+    ["member", "/settings/automations", ["내 계정", "알림", "에이전트", "채널"]],
+    ["admin", "/settings/connection", ["내 계정", "알림", "에이전트", "채널", "자동화", "멤버", "운영"]],
   ])("%s 가 숨은 탭 %s 로 직접 오면 — 탭 목록은 %j 그대로", async (role, path, tabs) => {
     stubShell({ role });
     renderRoute(path);

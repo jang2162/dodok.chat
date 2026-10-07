@@ -18,6 +18,7 @@ import { createFakeSocket } from "../../../test/fakeSocket";
 import { AGENT, CH, CH2, msg, uid } from "../../../test/fixtures";
 import { stubMedia } from "../../../test/media";
 import { DEV } from "../../../test/messages";
+import { automationOf } from "../../../test/automationsServer";
 import { stubScrollLayout } from "../../../test/scrollLayout";
 import { channelOf, json, ME, renderRoute, shellGet } from "../../../test/shellApi";
 import { SEARCH_DEBOUNCE_MS } from "./useSearch";
@@ -442,5 +443,20 @@ describe("결과로 가기", () => {
     const dialog = await openWith({ metaKey: true });
     await typeQuery("배포를");
     expect(await within(dialog).findByRole("button", { name: /배포/ })).toHaveTextContent("Dev");
+  });
+
+  it("결과 줄에 작성자 이름 — 자동화 결과는 admin 이상에게 「⚙ 자동화 · <이름>」", async () => {
+    const morning = automationOf(1, { name: "아침 점검" });
+    routes.set("/api/v1/automations", () => json(200, [morning]));
+    search = () =>
+      json(200, {
+        hits: [hitOf(msg(70), { authorType: "automation", authorId: morning.id })],
+        limited: false,
+      });
+    renderRoute(`/c/${CH}`, subscribedClient());
+    const dialog = await openWith({ metaKey: true });
+    await typeQuery("배포를");
+    const hit = await within(dialog).findByRole("button", { name: /배포/ });
+    await waitFor(() => expect(hit).toHaveTextContent("⚙ 자동화 · 아침 점검"));
   });
 });

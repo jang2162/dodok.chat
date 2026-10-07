@@ -110,6 +110,11 @@ export const qk = {
   /** 사건 목록(무한 쿼리) — severity 가 없으면 전부 */
   opsEvents: (severity?: string) => ["ops", "events", severity ?? "all"] as const,
   opsEventsAll: ["ops", "events"] as const,
+  /**
+   * 자동화(admin 이상, 자동화 스펙 「웹」 장) — 설정 화면 목록과 자동화 글의 작성자 이름. 오프라인 사본에 담지 않는다(pwa/persist 의
+   * 허용 목록 밖). 웹훅 URL 원문은 어느 키에도 넣지 않는다 — 목록에는 앞 6자(`tokenPrefix`)뿐이다
+   */
+  automations: ["automations"] as const,
 };
 
 /** 활동 패널이 한 번에 받는 런 수(REST 상한 200) */
@@ -178,11 +183,13 @@ export const useChannel = (id: string) => {
     meta: { silent: true },
   });
 };
-export const useMembers = (channelId: string) =>
+/** `enabled` 가 거짓이면 부르지 않는다 — 채널을 아직 고르지 않은 폼(자동화 대화상자의 @ 후보) */
+export const useMembers = (channelId: string, { enabled = true }: { enabled?: boolean } = {}) =>
   useQuery({
     queryKey: qk.members(channelId),
     queryFn: async () =>
       (await api<{ members: ChannelMember[] }>("GET", `/channels/${channelId}/members`)).members,
+    enabled,
   });
 export const useAgents = () =>
   useQuery({

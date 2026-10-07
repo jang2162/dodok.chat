@@ -145,9 +145,10 @@ export function stubOpsServer(
       }
       if (method === "PATCH" && url === "/api/v1/ops/settings") {
         if (opts.patch) return opts.patch(body);
-        const { dailyRunLimit } = body as { dailyRunLimit: number | null };
-        status = { ...status, dailyRunLimit };
-        return json(200, { dailyRunLimit });
+        // 서버 실물: 준 키만 바꾸고 바꾼 뒤의 설정 전체(OpsSettings)를 돌려준다
+        const patch = body as { dailyRunLimit?: number | null; timeZone?: string };
+        status = { ...status, ...patch };
+        return json(200, { dailyRunLimit: status.dailyRunLimit, timeZone: status.timeZone });
       }
     }
     const shell = shellGet(input, init);

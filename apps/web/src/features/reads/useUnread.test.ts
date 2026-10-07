@@ -132,6 +132,14 @@ describe("channel.activity", () => {
     expect(view()).toEqual({ unread: false, mentions: 0 });
   });
 
+  it("자동화 글도 남의 글 — 굵게, 나를 멘션했으면 배지 +1(자동화 id 가 내 id 와 같아도)", () => {
+    store().applyActivity(
+      activity(4, { authorType: "automation", authorId: USER, mentionedUserIds: [USER] }),
+      away,
+    );
+    expect(view()).toEqual({ unread: true, mentions: 1 });
+  });
+
   it("같은 id 라도 에이전트 글은 내 글이 아니다", () => {
     store().applyActivity(activity(4, { authorType: "agent", authorId: USER }), away);
     expect(view()).toEqual({ unread: true, mentions: 0 });

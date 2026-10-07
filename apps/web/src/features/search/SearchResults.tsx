@@ -2,6 +2,7 @@ import type { SearchHit } from "@dodok/shared";
 import { useMemo } from "react";
 import { ApiRequestError, NetworkError } from "@/api/http";
 import { useArchivedChannels, useChannels } from "@/api/queries";
+import { useLoadAutomationAuthors } from "@/features/automations/queries";
 import { useAuthors } from "@/features/messages/useAuthors";
 import { Button } from "@/ui/button";
 import { Snippet } from "./highlight";
@@ -38,6 +39,7 @@ export function SearchResults({
     [channels, archived],
   );
   const { author } = useAuthors();
+  useLoadAutomationAuthors(search.hits);
 
   if (!search.enabled) return null;
   // 다음 쪽 실패면 받은 결과는 둔다 — 한 줄은 목록 아래에

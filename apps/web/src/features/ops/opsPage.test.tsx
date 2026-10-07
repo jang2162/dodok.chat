@@ -600,6 +600,48 @@ describe("한도", () => {
   });
 });
 
+describe("시간대 — 예약 자동화의 벽시계", () => {
+  const select = async () =>
+    within(await region("시간대")).findByRole("combobox", { name: "워크스페이스 시간대" });
+
+  it("지금 시간대를 고른 채 보이고 UTC 도 고를 수 있다 — 오프셋 꼴은 선택지에 없다", async () => {
+    stubOpsServer();
+    renderOps();
+    const zone = await select();
+    expect(zone).toHaveValue("Asia/Seoul");
+    const values = within(zone)
+      .getAllByRole("option")
+      .map((o) => (o as HTMLOptionElement).value);
+    expect(values).toContain("UTC");
+    expect(values.filter((v) => /^[+-]/.test(v))).toEqual([]);
+  });
+
+  it("지금 값이 브라우저 목록에 없어도(Etc/GMT-9) 그 값으로 보인다", async () => {
+    stubOpsServer({ status: opsStatusOf({ timeZone: "Etc/GMT-9" }) });
+    renderOps();
+    expect(await select()).toHaveValue("Etc/GMT-9");
+  });
+
+  it("바꿔 저장하면 시간대만 PATCH — 서버가 돌려준 정규형을 보이고, 자동화 목록(다음 실행)을 다시 받게 한다", async () => {
+    const server = stubOpsServer({
+      patch: () => json(200, { dailyRunLimit: 300, timeZone: "America/Panama" }),
+    });
+    const { qc } = renderOps();
+    qc.setQueryData(qk.automations, []);
+    const zone = await select();
+    await userEvent.selectOptions(zone, "America/Cayman");
+    await userEvent.click(within(await region("시간대")).getByRole("button", { name: "저장" }));
+    await waitFor(() =>
+      expect(server.calls.filter((c) => c.method === "PATCH")).toEqual([
+        { method: "PATCH", url: "/api/v1/ops/settings", body: { timeZone: "America/Cayman" } },
+      ]),
+    );
+    await waitFor(() => expect(zone).toHaveValue("America/Panama"));
+    expect(within(await region("시간대")).getByText("저장했습니다")).toBeInTheDocument();
+    expect(qc.getQueryState(qk.automations)?.isInvalidated).toBe(true);
+  });
+});
+
 describe("최근 사건", () => {
   const FAILED = eventOf(1, { kind: "run_failed", severity: "warn", detail: { code: "TIMEOUT" }, count: 3 });
   const CRASH = eventOf(2, { kind: "crash_rejection", severity: "error", key: "process", detail: {} });

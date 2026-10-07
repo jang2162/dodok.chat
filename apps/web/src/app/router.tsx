@@ -161,6 +161,12 @@ export const channelsRoute = createRoute({
   path: "channels",
   component: lazyPage(() => import("@/features/settings-shell/ChannelsPage"), "ChannelsPage"),
 });
+/** 자동화(admin 이상 — 페이지가 가른다, 자동화 스펙 「웹」 장) */
+export const automationsRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: "automations",
+  component: lazyPage(() => import("@/features/automations/AutomationsPage"), "AutomationsPage"),
+});
 /** 멤버 관리(admin 이상 — 페이지가 가른다, 팀 스펙 6장) */
 export const membersRoute = createRoute({
   getParentRoute: () => settingsRoute,
@@ -205,6 +211,7 @@ const routeTree = rootRoute.addChildren([
       notificationsRoute,
       agentsRoute,
       channelsRoute,
+      automationsRoute,
       membersRoute,
       connectionRoute,
       operationsRoute,

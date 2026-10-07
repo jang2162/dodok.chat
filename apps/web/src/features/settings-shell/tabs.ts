@@ -8,6 +8,7 @@ import {
   type LucideIcon,
   UserIcon,
   UsersIcon,
+  ZapIcon,
 } from "lucide-react";
 
 export type SettingsTab = {
@@ -19,7 +20,7 @@ export type SettingsTab = {
 };
 
 /**
- * `/settings` 의 탭(설정 통합 스펙 「주소와 탭」 절 표) — 순서가 곧 탭 목록 순서다. 멤버·운영은 admin 이상(팀 스펙 「역할과 권한」 표),
+ * `/settings` 의 탭(설정 통합 스펙 「주소와 탭」 절 표) — 순서가 곧 탭 목록 순서다. 자동화·멤버·운영은 admin 이상(팀 스펙 「역할과 권한」 표),
  * 연결은 owner 만(설정 마법사 스펙 「결정」 — setup 은 owner 만). 역할을 모르는 옛 me 는 member 와 같이 본다
  */
 export const SETTINGS_TABS = [
@@ -28,6 +29,13 @@ export const SETTINGS_TABS = [
   { path: "/settings/agents", label: "에이전트", icon: BotIcon, visible: () => true },
   // 보관한 채널 목록 — 읽기는 누구나, 「보관 해제」만 admin 이상(채널 보관 스펙 「웹」 절)
   { path: "/settings/channels", label: "채널", icon: HashIcon, visible: () => true },
+  // 예약·웹훅으로 채널에 게시(자동화 스펙 「웹」 장) — 런 비용을 만드는 설정이라 admin 이상
+  {
+    path: "/settings/automations",
+    label: "자동화",
+    icon: ZapIcon,
+    visible: (r) => roleAtLeast(r, "admin"),
+  },
   { path: "/settings/members", label: "멤버", icon: UsersIcon, visible: (r) => roleAtLeast(r, "admin") },
   { path: "/settings/connection", label: "연결", icon: CableIcon, visible: (r) => r === "owner" },
   {

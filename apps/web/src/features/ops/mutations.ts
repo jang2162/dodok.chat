@@ -19,6 +19,24 @@ export function useAckEvents() {
   });
 }
 
+/**
+ * 워크스페이스 시간대(자동화 스펙 「워크스페이스 시간대」 절) — 이 키만 보낸다(같이 보내면 한도 칸의 고치다 만 값이 실린다).
+ * 응답은 서버가 정규형으로 바꿔 저장한 설정 전체(`EST` → `America/Panama`) — 그 값을 상태에 넣어 선택기가 저장된 이름을 보인다.
+ * 서버가 켜진 예약의 다음 실행을 다시 세므로 자동화 목록도 다시 받게 한다. 오류 문구는 폼이 그린다(`silent`)
+ */
+export function useSaveTimeZone() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (timeZone: string) =>
+      api<OpsSettings>("PATCH", "/ops/settings", { timeZone } satisfies OpsSettingsPatch),
+    onSuccess: ({ timeZone }) => {
+      qc.setQueryData<OpsStatus>(qk.opsStatus, (prev) => prev && { ...prev, timeZone });
+      void qc.invalidateQueries({ queryKey: qk.automations });
+    },
+    meta: { silent: true },
+  });
+}
+
 /** 워크스페이스 일일 런 상한 — null 은 무제한. 오류 문구는 폼이 그린다(`silent`) */
 export function useSaveRunLimit() {
   const qc = useQueryClient();
