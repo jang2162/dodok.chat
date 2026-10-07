@@ -4,7 +4,7 @@
  * 멘션 무력화는 여기서 하지 않는다 — 게시(createAutomationMessage)가 한다(두 번 바뀌지 않게)
  */
 import { describe, expect, it } from "vitest";
-import { WEBHOOK_BLOCK_MAX, webhookBlock } from "../src/modules/automations/body";
+import { REINDENT_LIMITS, WEBHOOK_BLOCK_MAX, webhookBlock } from "../src/modules/automations/body";
 
 const TRUNCATED = "…(잘림)";
 
@@ -81,11 +81,56 @@ describe("webhookBlock", () => {
     expect(block).toBe(`\`\`\`\`\`\n${"a".repeat(7996)}\`\`\`\`${TRUNCATED}\n\`\`\`\`\``);
   });
 
-  it("다시 쓸 수 없을 만큼 깊은 JSON 도 던지지 않는다 — 원문 그대로의 블록이거나 json 블록", () => {
-    const deep = `${"[".repeat(30_000)}${"]".repeat(30_000)}`;
-    const block = webhookBlock(deep, "application/json") as string;
-    expect(block.startsWith("```")).toBe(true);
-    expect(block.endsWith("…(잘림)\n```")).toBe(true);
+  describe("[I2] 다시 쓰기 상한 — 넘으면 원문 그대로의 블록(8,000자 자르기만)", () => {
+    const nested = (depth: number) => `${"[".repeat(depth)}${"]".repeat(depth)}`;
+    const rawBlock = (raw: string) =>
+      `\`\`\`\n${raw.length > WEBHOOK_BLOCK_MAX ? `${raw.slice(0, WEBHOOK_BLOCK_MAX)}${TRUNCATED}` : raw}\n\`\`\``;
+
+    it("상한 값", () => {
+      expect(REINDENT_LIMITS).toEqual({ depth: 64, nodes: 10_000, length: 256 * 1024 });
+    });
+
+    // 6000 은 리뷰가 잰 입력(고치기 전 수치는 body.ts REINDENT_LIMITS 주석). 테스트 워커는 스택이 작아 6000 에서는 stringify 가
+    // 던져(RangeError) 고치기 전에도 원문 블록이 되므로, 워커 안에서도 끝까지 다시 쓰는 4000(8 KB → 32M 자)을 함께 둔다 — 고치기
+    // 전 코드로 이 사례를 돌리면 json 블록·103~172 ms·힙 +272 MB, 고친 뒤 약 1 ms·+0.3 MB(워커는 5000 까지 다시 썼다).
+    // 시간 상한 100 ms 는 부하 평균 40~80(15코어)에서 1 ms 짜리가 밀려도 넘지 않게 둔 여유다 — 고치기 전과의 구분은 결과 꼴(원문
+    // 블록)과 힙도 함께 맡는다
+    it.each([6000, 4000])("깊이 %i 의 [ … ] 본문 — 원문 그대로의 블록, 100 ms·힙 64 MB 안", (depth) => {
+      const deep = nested(depth);
+      const heapBefore = process.memoryUsage().heapUsed;
+      const started = performance.now();
+      const block = webhookBlock(deep, "application/json");
+      const elapsedMs = performance.now() - started;
+      const heapGrowth = process.memoryUsage().heapUsed - heapBefore;
+      expect(block).toBe(rawBlock(deep));
+      expect(elapsedMs).toBeLessThan(100);
+      expect(heapGrowth).toBeLessThan(64 * 1024 * 1024);
+    });
+
+    it("깊이 — 상한(64단)까지는 json 블록, 한 단 더 깊으면 원문 블록. stringify 가 스택을 넘는 30,000단도 원문 블록", () => {
+      expect(webhookBlock(nested(REINDENT_LIMITS.depth), "application/json")).toMatch(/^```json\n\[\n {2}\[/);
+      const over = nested(REINDENT_LIMITS.depth + 1);
+      expect(webhookBlock(over, "application/json")).toBe(rawBlock(over));
+      const deepest = nested(30_000);
+      expect(webhookBlock(deepest, "application/json")).toBe(rawBlock(deepest));
+    });
+
+    it("값 수 — 상한(루트 포함 10,000)까지는 json 블록, 하나 더 많으면 원문 블록", () => {
+      const zeros = (n: number) => JSON.stringify(Array.from({ length: n }, () => 0));
+      expect(webhookBlock(zeros(REINDENT_LIMITS.nodes - 1), "application/json")).toMatch(
+        /^```json\n\[\n {2}0,\n/,
+      );
+      const over = zeros(REINDENT_LIMITS.nodes);
+      expect(webhookBlock(over, "application/json")).toBe(rawBlock(over));
+    });
+
+    it("다시 쓴 길이 — 상한까지는 json 블록, 한 글자 더 길면 원문 블록", () => {
+      // 문자열 하나는 다시 써도 길이가 그대로다(따옴표 포함) — 어림이 정확한 자리
+      const atLimit = JSON.stringify("a".repeat(REINDENT_LIMITS.length - 2));
+      expect(webhookBlock(atLimit, "application/json")).toMatch(/^```json\n"a/);
+      const over = JSON.stringify("a".repeat(REINDENT_LIMITS.length - 1));
+      expect(webhookBlock(over, "application/json")).toBe(rawBlock(over));
+    });
   });
 
   it("멘션 토큰 꼴은 바꾸지 않는다 — 무력화는 게시가 한다", () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createLogger } from "../src/logger";
+import { createLogger, redactUrl, requestLogSerializer } from "../src/logger";
 
 /** createLogger 의 가림을 그대로 쓰되 줄을 모은다 — pino 의 목적지만 바꾼다 */
 function capture(): { lines: Array<Record<string, unknown>>; log: ReturnType<typeof createLogger> } {
@@ -58,5 +58,40 @@ describe("createLogger 가림", () => {
       res: { headers: { "set-cookie": "***" } },
       req: { headers: { cookie: "***", authorization: "***", "x-keep": "ok" } },
     });
+  });
+});
+
+describe("요청 로그의 URL — 웹훅 토큰 가림", () => {
+  // 실제 발급과 같은 꼴(whk_ + base64url 43자)
+  const token = "whk_0BVMW_jJFOfn5uqEVJpO8zLEnAIEkj7oxYm5mdFpTls";
+  const shown = "whk_0BVMW_…";
+
+  it.each([
+    ["/hooks/<token>", `/hooks/${token}`, `/hooks/${shown}`],
+    ["쿼리가 붙어도 — 쿼리는 그대로", `/hooks/${token}?delivery=1&x=2`, `/hooks/${shown}?delivery=1&x=2`],
+    ["끝 슬래시·뒤 조각(404 꼴)", `/hooks/${token}/extra`, `/hooks/${shown}/extra`],
+    ["대소문자(404 꼴)", `/HOOKS/${token}`, `/HOOKS/${shown}`],
+    ["퍼센트 인코딩한 조각 — 앞 10자만", `/hooks/%77hk_${token.slice(4)}`, "/hooks/%77hk_0BVM…"],
+    ["인코딩한 슬래시(404 꼴) — whk_ 토큰 꼴", `/hooks%2F${token}`, `/hooks%2F${shown}`],
+    ["쿼리 속 토큰 꼴", `/hooks?t=${token}`, `/hooks?t=${shown}`],
+  ])("%s", (_label, url, expected) => {
+    expect(redactUrl(url)).toBe(expected);
+    expect(redactUrl(url)).not.toContain(token.slice(10));
+  });
+
+  it.each([
+    "/api/v1/channels?limit=50&after=12",
+    "/bridge/attachments/01999999-0000-7000-8000-000000000001",
+    "/api/v1/automations/01999999-0000-7000-8000-000000000001/token",
+    "/hooks/whk_nope",
+    "/socket.io/?EIO=4&transport=polling&sid=abcdefghijklmnopqrstuvwxyz",
+  ])("다른 경로·짧은 조각은 그대로 — %s", (url) => {
+    expect(redactUrl(url)).toBe(url);
+  });
+
+  it("requestLogSerializer 가 url 을 가린다 — 다른 필드는 그대로", () => {
+    expect(
+      requestLogSerializer({ method: "POST", url: `/hooks/${token}`, host: "h", ip: "203.0.113.7" }),
+    ).toMatchObject({ method: "POST", url: `/hooks/${shown}`, host: "h", remoteAddress: "203.0.113.0/24" });
   });
 });

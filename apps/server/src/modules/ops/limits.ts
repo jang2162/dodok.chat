@@ -48,7 +48,10 @@ export const LIMITS = {
   },
   /** 사용자당 동시 wire 소켓 */
   socketsPerUser: 20,
-  /** 브리지 인증 실패 카운터(BridgeAuthGuard) — 핸드셰이크·첨부 HTTP·설치 파일(plugin.tgz·runner.tgz) 토큰 받기·웹훅이 같이 쓴다 */
+  /**
+   * 브리지 인증 실패 카운터(BridgeAuthGuard) — 핸드셰이크·첨부 HTTP·설치 파일(plugin.tgz·runner.tgz) 토큰 받기가 한 인스턴스를 같이
+   * 쓰고, 웹훅은 같은 숫자로 따로 둔 인스턴스를 쓴다(modules/automations/webhook.ts WebhookRouteContext.guard)
+   */
   bridgeFail: { maxFailures: 10, windowMs: 60_000, blockMs: 60_000, maxAddresses: 1024 },
 } as const;
 

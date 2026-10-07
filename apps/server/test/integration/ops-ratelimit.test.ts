@@ -132,6 +132,23 @@ describe("레이트리밋 통합", () => {
     expect((await l.plugin.downloadAttachment(attachment.id)).status).toBe(404);
   });
 
+  it("웹훅 실패는 브리지를 막지 않는다 — 같은 주소에서 모르는 웹훅 토큰 10번(웹훅만 429) 뒤에도 핸드셰이크·/bridge/attachments 는 통과", async () => {
+    const l = await boot();
+    const attachment = { id: randomUUID() };
+    // 플러그인과 같은 주소(127.0.0.1)에서 보낸다
+    const hook = async (token: string) =>
+      (await fetch(`${l.app.url}/hooks/${token}`, { method: "POST" })).status;
+
+    for (let i = 0; i < LIMITS.bridgeFail.maxFailures; i++) expect(await hook(`whk_unknown${i}`)).toBe(404);
+    expect(await hook("whk_unknown")).toBe(429);
+    expect(opsRows(l, "bridge_auth_blocked").map((r) => r.detail)).toEqual([
+      { ipPrefix: "127.0.0.0/24", path: "webhook" },
+    ]);
+
+    await l.plugin.reconnect({ token: l.bridgeToken });
+    expect((await l.plugin.downloadAttachment(attachment.id)).status).toBe(404);
+  });
+
   it("브리지 — TRUST_PROXY 면 핸드셰이크와 /bridge/attachments 가 같은 X-Forwarded-For 주소로 센다", async () => {
     const l = await boot({}, { TRUST_PROXY: "true" });
     const attachment = { id: randomUUID() };

@@ -20,7 +20,7 @@ import { createDb, type Db, type DbOrTx } from "./db/client";
 import { workspaces } from "./db/schema.sqlite";
 import { type AgentTokenGuard, requireAgentToken } from "./http/agent-token";
 import { HttpError, httpStatusToErrorCode } from "./http/errors";
-import { createLogger, type Logger, requestLogSerializer } from "./logger";
+import { createLogger, type Logger, RedactingLogController, requestLogSerializer } from "./logger";
 import { registerAdapterRoutes } from "./modules/adapter/routes";
 import { registerAgentRoutes } from "./modules/agents/routes";
 import { registerAttachmentRoutes } from "./modules/attachments/routes";
@@ -231,13 +231,14 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     const onBridgeBlocked = (address: string) => onAuthBlocked(address, "bridge");
 
     // 기본 제네릭(FastifyBaseLogger)으로 추론되게 한다 — pino Logger 로 추론되면 FastifyInstance·플러그인 타입과 어긋난다.
-    // req 직렬화는 이 로거의 것이 Fastify 기본을 이긴다 — 요청 로그의 원격 주소를 가린다(deps.logger 를 받아도 같다)
+    // req 직렬화는 이 로거의 것이 Fastify 기본을 이긴다 — 요청 로그의 원격 주소·URL 속 웹훅 토큰을 가린다(deps.logger 를 받아도
+    // 같다). 직렬화기를 거치지 않는 404 줄은 RedactingLogController 가 가린다
     const loggerInstance: FastifyBaseLogger = logger.child(
       {},
       { serializers: { req: requestLogSerializer } },
     );
     // 리버스 프록시 뒤면 request.ip(레이트리밋 키)가 X-Forwarded-For 를 따르게 한다(리뷰 sc-t3 이월 4)
-    const fastify = Fastify({ loggerInstance, trustProxy });
+    const fastify = Fastify({ loggerInstance, trustProxy, logController: new RedactingLogController() });
     undo.push({ step: "fastify", run: () => fastify.close() });
     await fastify.register(cookie);
     // 라우트가 config.rateLimit 로 켠 곳에만 건다(/api/v1/auth/local)
@@ -618,11 +619,11 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       publicOrigin: () => serverUrl,
       timeZone: workspaceTimeZone,
     });
-    // 웹훅 토큰을 맞혀 보는 것도 브리지·러너와 같은 실패 카운터가 막는다
+    // 웹훅 토큰을 맞혀 보는 것은 같은 숫자(bridgeFail)의 웹훅 전용 실패 카운터가 막는다 — 나누는 까닭은 WebhookRouteContext.guard
     registerWebhookRoute(fastify, {
       db,
       post: automationPost,
-      guard: bridgeGuard,
+      guard: new BridgeAuthGuard(limits.bridgeFail),
       onBlocked: (address) => onAuthBlocked(address, "webhook"),
       limits,
       ops,
