@@ -629,11 +629,18 @@ $more"
 # 목록을 끝까지 읽지 못하면 **rc=1** 이다 — 한 장이라도 못 읽었거나, 페이지가 끝나지
 # 않거나(`orca_pages`), Run 목록을 못 읽었을 때다. 「0건」과 「못 읽었다」는 다르다 —
 # 같은 것으로 만들면 필터가 죽은 날 회수가 조용히 생략된다.
+#
+# 사용: owned_workers <워크트리 id> [<all_workers 의 출력>]
+# 목록을 넘기면(빈 값이어도) 다시 읽지 않고 그것을 쓴다.
 owned_workers() {
   local wt_id="$1" handles pages
   handles="$("$(orca_cli)" terminal list --worktree "id:$wt_id" --json 2>/dev/null \
     | jq -r '.result.terminals[]?.handle // empty' 2>/dev/null)"
-  pages="$(all_workers)" || return 1
+  if [ $# -ge 2 ]; then
+    pages="$2"
+  else
+    pages="$(all_workers)" || return 1
+  fi
   printf '%s\n' "$pages" \
     | jq -r --arg wt "$wt_id" --arg handles "$handles" '
         ($handles | split("\n") | map(select(length > 0))) as $H
@@ -705,11 +712,23 @@ retained_reason_text() {
 # **출력이 사실이어야 한다.** 실제로 회수를 부른 것과, 부르지 않고 건너뛴 것과 그 이유를
 # 나눠 말한다. 뭉뚱그리면 다음 사람이 「회수됐구나」로 읽는데, `retained`·`released` 는
 # 부르든 안 부르든 아무 프로세스도 닫히지 않는다.
+#
+# 사용: release_workers <워크트리 id> [<all_workers 의 rc> <all_workers 의 출력>]
+# 목록을 넘기지 않으면 직접 읽는다. 워크트리 여럿을 도는 루프(`reap --all-merged`·`stop --all`)는
+# 처음 회수할 때 한 번 읽어 넘긴다 — 묶인 터미널에서는 한 번 읽는 데 Run 수만큼 왕복한다
+# (`all_workers`). 한 워크트리의 회수는 다른 워크트리의 행을 바꾸지 않으므로 판정이 같다.
 release_workers() {
-  local wt_id="$1" rows dispatch tstate reason proof
+  local wt_id="$1" rows dispatch tstate reason proof list_rc=0
   local disposition why rt n=0 skipped=0 failed=0
 
-  if ! rows="$(owned_workers "$wt_id")"; then
+  if [ $# -lt 3 ]; then
+    rows="$(owned_workers "$wt_id")" || list_rc=1
+  elif [ "$2" -ne 0 ]; then
+    list_rc="$2"
+  else
+    rows="$(owned_workers "$wt_id" "$3")" || list_rc=1
+  fi
+  if [ "$list_rc" -ne 0 ]; then
     printf '  경고: worker-list 를 읽지 못해 회수 대상을 판정하지 못했다 — 아무것도 회수하지 않았다\n' >&2
     return 0
   fi
@@ -853,6 +872,7 @@ cmd_reap() {
   [ -n "$base" ] || base="$(git -C "$root" branch --show-current)"
 
   local slug state live path branch refused=0 matched=0 wt_id merged dirty token rows tl=""
+  local wl="" wl_rc=-
   rows="$(collect_worktrees)"
   while IFS="$(printf '\t')" read -r slug state live path branch; do
     [ -n "$slug" ] || continue
@@ -911,7 +931,10 @@ cmd_reap() {
     fi
 
     printf '%s 정리\n' "$slug"
-    release_workers "$wt_id"
+    # 목록은 처음 회수할 때 한 번만 읽고 다음 워크트리에 돌려 쓴다(`release_workers`).
+    # 히어독 루프라 다음 반복까지 남는다. 못 읽었으면 그 실패도 돌려 쓴다.
+    [ "$wl_rc" != "-" ] || { wl="$(all_workers)"; wl_rc=$?; }
+    release_workers "$wt_id" "$wl_rc" "$wl"
     "$(orca_cli)" terminal close --worktree "id:$wt_id" --all --json >/dev/null 2>&1
     # --force 로 게이트를 넘긴 경우 rm 도 --force 라야 한다. 아니면 워커 회수와
     # 터미널 정지는 끝났는데 워크트리만 남는 반쪽 상태가 된다.
@@ -1008,7 +1031,7 @@ cmd_stop() {
     return 2
   fi
 
-  local slug state live path branch refused=0 matched=0 rows repo
+  local slug state live path branch refused=0 matched=0 rows repo wl="" wl_rc=-
   repo="$(repo_id)"
   [ -n "$repo" ] || { printf 'stop: 이 저장소의 repoId 를 얻지 못했다. 중단한다\n' >&2; return 1; }
   rows="$(collect_worktrees)"
@@ -1067,7 +1090,9 @@ cmd_stop() {
     # worker-release 가 그 터미널을 찾지 못해 꼬리 보관 없이 회수하거나 release_unknown 으로
     # 남긴다. 도는 워커(active)는 release_disposition 이 건너뛰므로 --force 로 끊을 때도
     # 터미널만 닫는다. 회수 실패는 reap 처럼 경고만 내고 거부로 세지 않는다.
-    release_workers "$repo::$path"
+    # 목록은 reap 처럼 처음 회수할 때 한 번만 읽고 돌려 쓴다(`release_workers`).
+    [ "$wl_rc" != "-" ] || { wl="$(all_workers)"; wl_rc=$?; }
+    release_workers "$repo::$path" "$wl_rc" "$wl"
     "$(orca_cli)" terminal close --worktree "id:$repo::$path" --all --json >/dev/null 2>&1 \
       || { printf '  경고: terminal close 실패 — %s\n' "$slug" >&2; refused=$((refused + 1)); }
   done <<EOF
@@ -1890,17 +1915,31 @@ cmd_attach() {
   # **새로 띄우는 리뷰도 같은 검사를 받는다** — 그 터미널에 붙지는 않지만, 구현자가 아직
   # 일하는 중에 리뷰어를 띄우면 반쯤 된 트리를 리뷰하고 두 에이전트가 한 워크트리를 함께
   # 고친다(리뷰어의 변이 테스트도 파일을 잠시 고친다).
-  local check_handles busy_handle all
+  local check_handles busy_handle all="" have_list=no
   check_handles="$handle"
   [ -z "$handle" ] && [ "$role" = "review" ] && check_handles="$live_handles"
-  if [ -n "$check_handles" ] && [ "$force" != "yes" ]; then
-    # 첫 장 밖·다른 Run 의 진행 중 Dispatch 도 봐야 하므로 목록을 끝까지 읽는다(`all_workers`).
-    # 못 읽은 것을 「진행 중 없음」으로 읽으면 두 번 주입되므로 거부한다.
-    all="$(all_workers)" || {
-      printf 'attach: worker-list 를 끝까지 읽지 못해 진행 중인 Dispatch 를 확인하지 못했다\n' >&2
-      printf '  확인하고도 붙이려면 --force\n' >&2
+
+  # 목록은 **Task 를 만들기 전에 한 번만** 읽고, 진행 중 검사와 직전 시도(아래 `--retry-of`)가
+  # 함께 쓴다. 첫 장 밖·다른 Run 의 dispatch 도 봐야 하므로 끝까지 읽는다(`all_workers`) —
+  # 묶인 터미널에서는 Run 수만큼 왕복하므로 두 번 읽으면 그 시간이 두 배다. 두 쓰임 사이에
+  # 목록이 바뀔 일은 없다(새 Task 는 아직 dispatch 되지 않았다). Task 를 만든 뒤에 읽다가
+  # 실패하면 시작되지 않는 Task 가 Run 에 남는다.
+  if [ -n "$handle" ] || { [ -n "$check_handles" ] && [ "$force" != "yes" ]; }; then
+    if all="$(all_workers)"; then
+      have_list=yes
+    elif [ "$force" != "yes" ]; then
+      # 못 읽은 것을 「진행 중 없음」으로 읽으면 두 번 주입되므로 거부한다.
+      printf 'attach: worker-list 를 끝까지 읽지 못했다 — 진행 중인 Dispatch 를 확인하지 못해 Task 를 만들지 않았다\n' >&2
+      printf '  다시 부르거나, 확인하고도 붙이려면 --force\n' >&2
       return 1
-    }
+    else
+      # 여기 오는 것은 직전 시도를 읽으려던 때뿐이다(--force 는 진행 중 검사를 하지 않는다).
+      # `--retry-of` 는 이력을 잇는 것이지 안전 장치가 아니다 — 없이 붙여도 주입은 같다.
+      printf 'attach: worker-list 를 끝까지 읽지 못해 직전 시도를 확인하지 못했다 — --force 라 --retry-of 없이 붙인다(실패한 직전 시도와 이력이 끊긴다)\n' >&2
+    fi
+  fi
+
+  if [ "$have_list" = "yes" ] && [ "$force" != "yes" ]; then
     live="$(printf '%s\n' "$all" \
       | jq -rs --arg hs "$check_handles" \
           '($hs | split("\n") | map(select(. != ""))) as $hs
@@ -1965,14 +2004,12 @@ cmd_attach() {
   # 시각 필드가 없어 정렬로 고를 수 없으니 목록 순서(`all_workers` 의 순서 문단)에 기댄다.
   # 실패한 것만 먼저 걸러 `first` 를 잡으면, 그 뒤에 성공한 Dispatch 가 있어도 **옛 실패를
   # 끌어와** 잇는다 — 교체 대상은 「직전 시도」뿐이다.
+  # 목록은 Task 를 만들기 전에 읽어 둔 것을 쓴다(위 진행 중 검사 앞). 못 읽은 채 --force 로
+  # 왔으면 잇지 않는다.
   # (배치는 물려받지 않으므로 --terminal/--worktree 는 그대로 다시 준다.)
   local prev retry_of
   prev=""
-  if [ -n "$handle" ]; then
-    all="$(all_workers)" || {
-      printf 'attach: worker-list 를 끝까지 읽지 못해 직전 시도를 확인하지 못했다\n' >&2
-      return 1
-    }
+  if [ -n "$handle" ] && [ "$have_list" = "yes" ]; then
     prev="$(printf '%s\n' "$all" \
       | jq -rs --arg h "$handle" \
           '[ .[].result.workers[]? | select(.agentTerminalHandle? == $h) ] | first
