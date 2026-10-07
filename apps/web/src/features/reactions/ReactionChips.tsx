@@ -6,8 +6,9 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/ui/t
 
 /**
  * 메시지 아래 칩 `👍 3` — 내가 단 칩은 `aria-pressed` 로 강조, 누르면 켜기/끄기. 마우스를 올리거나 초점이 오면 단 사람을
- * 「@mia, @owner」 로 보이고, 비활성 멤버는 「@핸들 (비활성)」. 보관한 채널은 읽기만(`disabled`).
- * 리액션이 없으면 아무것도 그리지 않는다. 툴팁 트리거는 칩을 감싼 span 이다 — disabled 버튼은 포인터·초점 이벤트를 받지 못한다
+ * 「@mia, @owner」 로 보이고, 비활성 멤버는 「@핸들 (비활성)」. 리액션이 없으면 아무것도 그리지 않는다.
+ * 보관한 채널은 읽기만 — `disabled` 가 아니라 `aria-disabled` 에 누름 무시: `disabled` 버튼은 초점을 받지 못해 키보드로는
+ * 누가 달았는지 볼 길이 없고, 포인터 이벤트도 브라우저에 따라 안 나간다
  */
 export function ReactionChips({
   message,
@@ -34,23 +35,23 @@ export function ReactionChips({
           return (
             <Tooltip key={r.emoji}>
               <TooltipTrigger asChild>
-                <span className="inline-flex">
-                  <button
-                    type="button"
-                    aria-pressed={mine}
-                    disabled={archived}
-                    onClick={() => onToggle(r.emoji, !mine)}
-                    className={cn(
-                      "inline-flex h-6 items-center gap-1 rounded-full border px-2 text-xs focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none disabled:cursor-default",
-                      mine
-                        ? "border-primary bg-primary/10 text-primary"
-                        : "bg-background text-muted-foreground hover:bg-accent",
-                    )}
-                  >
-                    <span>{r.emoji}</span>
-                    <span>{r.count}</span>
-                  </button>
-                </span>
+                <button
+                  type="button"
+                  aria-pressed={mine}
+                  aria-disabled={archived || undefined}
+                  onClick={() => {
+                    if (!archived) onToggle(r.emoji, !mine);
+                  }}
+                  className={cn(
+                    "inline-flex h-6 items-center gap-1 rounded-full border px-2 text-xs focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none aria-disabled:cursor-default",
+                    mine
+                      ? "border-primary bg-primary/10 text-primary"
+                      : "bg-background text-muted-foreground hover:bg-accent aria-disabled:hover:bg-background",
+                  )}
+                >
+                  <span>{r.emoji}</span>
+                  <span>{r.count}</span>
+                </button>
               </TooltipTrigger>
               <TooltipContent>{r.userIds.map(who).join(", ")}</TooltipContent>
             </Tooltip>

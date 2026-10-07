@@ -8,7 +8,7 @@ import { CHANNEL_ARCHIVED_TEXT } from "@/api/formErrors";
 import type { Timeline } from "@/features/messages/timeline";
 import { useWire } from "@/realtime/WireProvider";
 import { emitAck, WireAckError } from "@/realtime/wire";
-import { getTimeline, updateThread, updateTimeline } from "@/realtime/timelineCache";
+import { getThread, getTimeline, updateThread, updateTimeline } from "@/realtime/timelineCache";
 
 const FAILED_TEXT = "반응을 저장하지 못했습니다";
 
@@ -42,10 +42,20 @@ const editMessage =
         }
       : t;
 
+const mineIn = (m: Pick<Message, "reactions"> | undefined, emoji: ReactionEmoji, me: string): boolean =>
+  m?.reactions.find((r) => r.emoji === emoji)?.userIds.includes(me) ?? false;
+
+/** (메시지, 이모지) 하나에 나가 있는 요청들 — 마지막 요청 번호, 아직 안 끝난 수, 이 탭이 서버에게서 마지막으로 들은 내 표 */
+type Inflight = { seq: number; open: number; server: boolean; stop: () => void };
+
 /**
  * 낙관적 갱신 → `reaction.set` → 실패하면 되돌리고 토스트. 같은 (메시지, 이모지)는 요청마다 번호를 매겨 **마지막 요청만**
- * 화면 정본이다 — 앞 요청이 늦게 실패해도 뒤에 누른 상태를 되돌리지 않는다(리액션 계획 Review Focus 1). 서버의 `message.updated` 가 오면
- * 그것이 캐시를 덮는다(기존 핸들러). 채널 타임라인 캐시는 들어간 적이 있을 때만 고친다 — 없는 것을 빈 목록으로 만들지 않는다
+ * 화면 정본이다 — 앞 요청이 늦게 실패해도 뒤에 누른 상태를 되돌리지 않는다(리액션 계획 「Review Focus」 절의 「같은 사람이 같은
+ * 이모지를 빠르게 두 번 누름」). 마지막 요청이 실패하면 「반대로」가 아니라 **이 탭이 서버에게서 마지막으로 들은 상태**로 되돌린다 —
+ * 첫 요청 직전의 캐시, 그 뒤로는 성공한 ack·받은 `message.updated`. 켜기·끄기가 둘 다 실패하면 서버 상태가 그대로라
+ * `message.updated` 가 오지 않으므로, 「반대로」는 서버에 없는 칩을 새로고침 전까지 남긴다.
+ * 서버의 `message.updated` 는 `applyMessage`(`realtime/handlers.ts`)가 캐시에 덮는다. 채널 타임라인 캐시는 들어간 적이 있을 때만
+ * 고친다 — 없는 것을 빈 목록으로 만들지 않는다
  */
 export function useSetReaction(
   channelId: string,
@@ -54,23 +64,53 @@ export function useSetReaction(
   const qc = useQueryClient();
   const { socket } = useWire();
   const me = useMe().data?.user.id;
-  const latest = useRef(new Map<string, number>());
+  const inflight = useRef(new Map<string, Inflight>());
   const counter = useRef(0);
 
   return useCallback(
     (messageId, emoji, on) => {
       const key = `${messageId}|${emoji}`;
       const seq = ++counter.current;
-      latest.current.set(key, seq);
       const apply = (value: boolean) => {
         if (!me) return;
         const fn = editMessage(messageId, emoji, me, value);
         if (getTimeline(qc, channelId)) updateTimeline(qc, channelId, fn);
         if (threadRootId) updateThread(qc, channelId, threadRootId, fn);
       };
+      const start = (): Inflight => {
+        const cached =
+          getTimeline(qc, channelId)?.items.find((m) => m.id === messageId) ??
+          (threadRootId
+            ? getThread(qc, channelId, threadRootId)?.items.find((m) => m.id === messageId)
+            : undefined);
+        // 나가 있는 요청이 없으면 지금 캐시가 서버에게서 들은 상태다 — 낙관값을 얹기 전에 잡는다
+        const r: Inflight = { seq, open: 0, server: me ? mineIn(cached, emoji, me) : false, stop: () => {} };
+        if (socket && me) {
+          const heard = ({ message: m }: { message: Message }) => {
+            if (m.id === messageId) r.server = mineIn(m, emoji, me);
+          };
+          socket.on("message.updated", heard);
+          r.stop = () => socket.off("message.updated", heard);
+        }
+        inflight.current.set(key, r);
+        return r;
+      };
+      const req = inflight.current.get(key) ?? start();
+      req.seq = seq;
+      req.open += 1;
+      const settle = () => {
+        if (--req.open > 0) return;
+        req.stop();
+        inflight.current.delete(key);
+      };
+      const ok = () => {
+        req.server = on;
+        settle();
+      };
       const fail = (e: unknown) => {
-        if (latest.current.get(key) !== seq) return;
-        apply(!on);
+        settle();
+        if (req.seq !== seq) return;
+        apply(req.server);
         if (e instanceof WireAckError && e.code === "CHANNEL_ARCHIVED") {
           refreshArchivedChannel(qc, channelId);
           toast.error(CHANNEL_ARCHIVED_TEXT, { id: "channel-archived" });
@@ -80,7 +120,7 @@ export function useSetReaction(
       };
       apply(on);
       if (!socket) return fail(new Error("no socket"));
-      emitAck(socket, "reaction.set", { messageId, emoji, on }).catch(fail);
+      emitAck(socket, "reaction.set", { messageId, emoji, on }).then(ok, fail);
     },
     [qc, socket, me, channelId, threadRootId],
   );

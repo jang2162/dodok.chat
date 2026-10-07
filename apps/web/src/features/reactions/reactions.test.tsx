@@ -1,4 +1,4 @@
-import { type Message, type Person, REACTION_EMOJIS } from "@dodok/shared";
+import { type Message, type Person, REACTION_EMOJIS, type Result } from "@dodok/shared";
 import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
@@ -7,6 +7,7 @@ import { ChannelArchivedContext } from "@/features/channels/archived";
 import { MessageItem } from "@/features/messages/MessageItem";
 import { PendingItem } from "@/features/messages/PendingItem";
 import { emptyTimeline, type Timeline, upsert } from "@/features/messages/timeline";
+import { CHANNEL_ARCHIVED_TEXT } from "@/api/formErrors";
 import { qk } from "@/api/queries";
 import { getThread, getTimeline } from "@/realtime/timelineCache";
 import { useWireStatus } from "@/realtime/wire";
@@ -47,8 +48,9 @@ beforeEach(() => {
 });
 
 /**
- * 메뉴를 키보드(초점 + Enter)로 연다. 마우스 클릭으로 연 메뉴에서 항목을 고르면 같은 파일의 다음 테스트에서 트리거가
- * 클릭으로 열리지 않는다(user-event + jsdom 에서 재현, 키보드로 열면 매번 열린다). 마우스 열기는 피커 테스트가 한 번 확인한다
+ * 메뉴를 키보드(초점 + Enter)로 연다. jsdom 은 초점이 없던 문서에서 요소로 초점이 갈 때 window 에 blur 를 쏘고, Radix 메뉴는
+ * window blur 에 닫힌다 — 그래서 열기 전에 트리거에 초점을 준다(키보드로 열거나 `focus()` 뒤 클릭). 그러지 않으면 파일의 둘째
+ * 테스트부터 메뉴가 열리자마자 닫힌다. 마우스 열기는 파일 첫 테스트인 피커 테스트가 확인한다
  */
 async function openPicker(user: ReturnType<typeof userEvent.setup>) {
   screen.getByRole("button", { name: "반응 추가" }).focus();
@@ -79,6 +81,25 @@ describe("ReactionPicker", () => {
     await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
     expect(trigger).toHaveFocus();
+  });
+
+  it("가로 한 줄이라 ←·→ 로도 옮긴다 — 끝에서는 멈춘다(↑·↓ 와 같다)", async () => {
+    const onPick = vi.fn();
+    const user = userEvent.setup();
+    renderWithClient(<ReactionPicker onPick={onPick} />);
+    await openPicker(user);
+    const items = await screen.findAllByRole("menuitem");
+    await waitFor(() => expect(items[0]).toHaveFocus());
+    await user.keyboard("{ArrowRight}{ArrowRight}");
+    expect(items[2]).toHaveFocus();
+    await user.keyboard("{ArrowLeft}");
+    expect(items[1]).toHaveFocus();
+    await user.keyboard("{ArrowLeft}{ArrowLeft}");
+    expect(items[0]).toHaveFocus();
+    await user.keyboard("{End}{ArrowRight}");
+    expect(items[7]).toHaveFocus();
+    await user.keyboard("{ArrowLeft}{Enter}");
+    expect(onPick).toHaveBeenCalledExactlyOnceWith(REACTION_EMOJIS[6]);
   });
 });
 
@@ -141,8 +162,9 @@ describe("ReactionChips", () => {
     expect(await screen.findByRole("tooltip")).toHaveTextContent("@mia, @owner, @gone (비활성)");
   });
 
-  it("보관한 채널이면 칩은 눌러도 아무 일이 없는 disabled", async () => {
+  it("보관한 채널이면 칩은 aria-disabled — 눌러도(클릭·Enter·Space) 아무 일이 없고, 키보드 초점은 받아 툴팁을 읽는다", async () => {
     const onToggle = vi.fn();
+    const user = userEvent.setup();
     renderWithClient(
       <ChannelArchivedContext.Provider value={true}>
         <ReactionChips message={withReactions(1, thumbs([MIA_ID]))} me={USER} onToggle={onToggle} />
@@ -150,8 +172,12 @@ describe("ReactionChips", () => {
       authorsClient(undefined, PEOPLE),
     );
     const chip = screen.getByRole("button", { name: /👍\s*1/ });
-    expect(chip).toBeDisabled();
-    await userEvent.click(chip);
+    expect(chip).toHaveAttribute("aria-disabled", "true");
+    await user.tab();
+    expect(chip).toHaveFocus();
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("@mia");
+    await user.keyboard("{Enter} ");
+    await user.click(chip);
     expect(onToggle).not.toHaveBeenCalled();
   });
 });
@@ -233,6 +259,145 @@ describe("MessageItem 안의 리액션", () => {
     expect(toast.error).not.toHaveBeenCalled();
   });
 
+  /** reaction.set ack 을 붙들어 두었다가 테스트가 순서를 골라 풀어 준다(보낸 순) */
+  function holdAcks() {
+    const pending: Array<(r: Result<unknown>) => void> = [];
+    fake.onAck("reaction.set", () => new Promise<Result<unknown>>((resolve) => pending.push(resolve)));
+    return {
+      settle: (i: number, r: Result<unknown>) => act(async () => pending[i]?.(r)),
+    };
+  }
+  const failed = (code: "RATE_LIMITED" | "TIMEOUT" | "CHANNEL_ARCHIVED" | "INTERNAL") => ({
+    ok: false as const,
+    error: { code, message: code },
+  });
+  const thumbsMine: Message["reactions"] = [{ emoji: "👍", count: 1, userIds: [USER] }];
+
+  /** 리액션 없는 루트에 피커로 👍 를 켜고, 다시 그려진 칩으로 끈다 — 두 요청 모두 ack 을 기다린다 */
+  async function thumbsOnThenOff(qc: ReturnType<typeof authorsClient>) {
+    const base = withReactions(1, [], { id: ROOT_MSG.id });
+    qc.setQueryData(qk.timeline(CH), timelineWith(base));
+    const acks = holdAcks();
+    const user = userEvent.setup();
+    const { rerender } = renderWithClient(<MessageItem message={base} head />, qc);
+    await openPicker(user);
+    await user.click(await screen.findByRole("menuitem", { name: "👍" }));
+    rerender(<MessageItem message={getTimeline(qc, CH)?.items[0] as Message} head />);
+    await user.click(await screen.findByRole("button", { name: /👍\s*1/ }));
+    expect(fake.sentOf("reaction.set")).toEqual([
+      { messageId: ROOT_MSG.id, emoji: "👍", on: true },
+      { messageId: ROOT_MSG.id, emoji: "👍", on: false },
+    ]);
+    return acks;
+  }
+
+  it("켜기·끄기가 둘 다 실패하면 서버에 없는 칩을 남기지 않는다 — 요청 전 상태(빈 목록)로 맞추고 토스트는 한 번", async () => {
+    const qc = authorsClient(undefined, PEOPLE);
+    const acks = await thumbsOnThenOff(qc);
+    await acks.settle(0, failed("RATE_LIMITED"));
+    await acks.settle(1, failed("RATE_LIMITED"));
+    expect(getTimeline(qc, CH)?.items[0]?.reactions).toEqual([]);
+    expect(toast.error).toHaveBeenCalledTimes(1);
+    expect(toast.error).toHaveBeenCalledWith("반응을 저장하지 못했습니다", expect.anything());
+    // 다 끝나면 message.updated 듣기도 거둔다
+    expect(fake.listenerCount()).toBe(0);
+  });
+
+  it("켜기는 성공하고 끄기만 실패하면 서버에 있는 내 👍 가 남는다", async () => {
+    const qc = authorsClient(undefined, PEOPLE);
+    const acks = await thumbsOnThenOff(qc);
+    await acks.settle(0, emptyAck());
+    await acks.settle(1, failed("RATE_LIMITED"));
+    expect(getTimeline(qc, CH)?.items[0]?.reactions).toEqual(thumbsMine);
+  });
+
+  it("마지막 요청이 실패해도 그사이 받은 message.updated 가 말한 상태로 맞춘다 — 서버는 처리했는데 ack 만 시간 초과", async () => {
+    const qc = authorsClient(undefined, PEOPLE);
+    const base = withReactions(1, [], { id: ROOT_MSG.id });
+    qc.setQueryData(qk.timeline(CH), timelineWith(base));
+    const acks = holdAcks();
+    const user = userEvent.setup();
+    renderWithClient(<MessageItem message={base} head />, qc);
+    await openPicker(user);
+    await user.click(await screen.findByRole("menuitem", { name: "👍" }));
+    act(() => {
+      fake.serverEmit("message.updated", {
+        message: withReactions(1, thumbsMine, { id: ROOT_MSG.id }),
+      });
+    });
+    await acks.settle(0, failed("TIMEOUT"));
+    expect(getTimeline(qc, CH)?.items[0]?.reactions).toEqual(thumbsMine);
+  });
+
+  it("같은 메시지의 다른 이모지는 따로 센다 — 👍 가 늦게 실패하면 👍 만 되돌리고 그 뒤에 단 🎉 는 남긴다", async () => {
+    const qc = authorsClient(undefined, PEOPLE);
+    qc.setQueryData(qk.timeline(CH), timelineWith(ROOT_MSG));
+    const acks = holdAcks();
+    const user = userEvent.setup();
+    renderWithClient(<MessageItem message={ROOT_MSG} head />, qc);
+    await openPicker(user);
+    await user.click(await screen.findByRole("menuitem", { name: "👍" }));
+    await openPicker(user);
+    await user.click(await screen.findByRole("menuitem", { name: "🎉" }));
+    expect(getTimeline(qc, CH)?.items[0]?.reactions.map((r) => r.emoji)).toEqual(["👍", "🎉"]);
+    await acks.settle(1, emptyAck());
+    await acks.settle(0, failed("INTERNAL"));
+    expect(getTimeline(qc, CH)?.items[0]?.reactions).toEqual([{ emoji: "🎉", count: 1, userIds: [USER] }]);
+    expect(toast.error).toHaveBeenCalledTimes(1);
+  });
+
+  it("ack CHANNEL_ARCHIVED → 되돌리고 보관 문구 토스트, 채널·채널 목록을 다시 받는다", async () => {
+    const qc = authorsClient(undefined, PEOPLE);
+    qc.setQueryData(qk.timeline(CH), timelineWith(ROOT_MSG));
+    qc.setQueryData(qk.channel(CH), { id: CH });
+    qc.setQueryData(qk.channels, [{ id: CH }]);
+    fake.onAck("reaction.set", () => failed("CHANNEL_ARCHIVED"));
+    const user = userEvent.setup();
+    renderWithClient(<MessageItem message={ROOT_MSG} head />, qc);
+    await openPicker(user);
+    await user.click(await screen.findByRole("menuitem", { name: "👍" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledTimes(1));
+    expect(toast.error).toHaveBeenCalledWith(CHANNEL_ARCHIVED_TEXT, { id: "channel-archived" });
+    expect(getTimeline(qc, CH)?.items[0]?.reactions).toEqual([]);
+    expect(qc.getQueryState(qk.channel(CH))?.isInvalidated).toBe(true);
+    expect(qc.getQueryState(qk.channels)?.isInvalidated).toBe(true);
+  });
+
+  /** 채널 타임라인과 그 루트의 스레드 패널이 둘 다 열려 있다(넓은 화면에서 나란히 보인다) */
+  const bothOpen = () => {
+    const qc = authorsClient(undefined, PEOPLE);
+    qc.setQueryData(qk.timeline(CH), timelineWith(ROOT_MSG));
+    qc.setQueryData(
+      qk.thread(CH, ROOT_MSG.id),
+      timelineWith(ROOT_MSG, msg(2, { threadRootId: ROOT_MSG.id })),
+    );
+    fake.onAck("reaction.set", emptyAck);
+    return qc;
+  };
+  const rootIn = (t: Timeline | undefined) => t?.items.find((m) => m.id === ROOT_MSG.id)?.reactions;
+
+  it("채널에서 루트에 달면 열린 스레드 패널의 같은 루트도 곧바로 바뀐다", async () => {
+    const qc = bothOpen();
+    const user = userEvent.setup();
+    renderWithClient(<MessageItem message={ROOT_MSG} head />, qc);
+    await openPicker(user);
+    await user.click(await screen.findByRole("menuitem", { name: "🎉" }));
+    const mine = [{ emoji: "🎉", count: 1, userIds: [USER] }];
+    expect(rootIn(getTimeline(qc, CH))).toEqual(mine);
+    expect(rootIn(getThread(qc, CH, ROOT_MSG.id))).toEqual(mine);
+  });
+
+  it("스레드 패널에서 루트에 달면 채널 타임라인의 같은 루트도 곧바로 바뀐다", async () => {
+    const qc = bothOpen();
+    const user = userEvent.setup();
+    renderWithClient(<MessageItem message={ROOT_MSG} head inThread />, qc);
+    await openPicker(user);
+    await user.click(await screen.findByRole("menuitem", { name: "👀" }));
+    const mine = [{ emoji: "👀", count: 1, userIds: [USER] }];
+    expect(rootIn(getThread(qc, CH, ROOT_MSG.id))).toEqual(mine);
+    expect(rootIn(getTimeline(qc, CH))).toEqual(mine);
+  });
+
   it("스레드 패널 안에서도 달린다 — 스레드 캐시가 바뀐다", async () => {
     const qc = authorsClient(undefined, PEOPLE);
     const reply = msg(2, { threadRootId: ROOT_MSG.id });
@@ -286,7 +451,7 @@ describe("MessageItem 안의 리액션", () => {
       authorsClient(undefined, PEOPLE),
     );
     expect(screen.queryByRole("button", { name: "반응 추가" })).toBeNull();
-    expect(screen.getByRole("button", { name: /👍\s*1/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /👍\s*1/ })).toHaveAttribute("aria-disabled", "true");
   });
 
   it("마우스가 없는 기기(hover: none)에서는 「반응 추가」가 늘 보이는 클래스를 가진다 — PR2", () => {

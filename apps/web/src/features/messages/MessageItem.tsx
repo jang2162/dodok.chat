@@ -72,7 +72,7 @@ export function AuthorLine({ author, children }: { author: Author; children: Rea
  * 투명도로만 숨겨 스크린 리더는 늘 읽는다(visibility:hidden 은 접근성 트리에서도 빠진다, web-t7 리뷰 m6).
  * 채널 타임라인에서는 루트 아래에 답글 요약 칩과 「스레드에서 답하기」가 붙는다(스레드·검색 스펙 4.2) — 스레드 패널
  * 안(`inThread`)에서는 둘 다 없다: 이미 그 스레드이고, 스레드 안의 스레드는 없다.
- * 반응(리액션 스펙 6장): 본문·첨부·카드 아래에 칩, 동작 줄에 「반응 추가」(보관한 채널은 숨김·칩은 읽기만, 시스템 메시지는 둘 다 없음)
+ * 반응(리액션 스펙 「웹」 장): 본문·첨부·카드 아래에 칩, 동작 줄에 「반응 추가」(보관한 채널은 숨김·칩은 읽기만, 시스템 메시지는 둘 다 없음)
  */
 export function MessageItem({
   message,
@@ -86,7 +86,8 @@ export function MessageItem({
   const author = useAuthors().author(message);
   const me = useMe().data?.user.id;
   const archived = useChannelArchived();
-  const setReaction = useSetReaction(message.channelId, inThread ? threadRootOf(message) : undefined);
+  // 채널 타임라인의 루트도 스레드를 넘긴다 — 나란히 열린 스레드 패널의 같은 루트가 곧바로 바뀐다(연 적 없는 스레드면 updateThread 가 그냥 지나간다)
+  const setReaction = useSetReaction(message.channelId, threadRootOf(message));
   // 시스템 메시지에는 달 수 없다(보내는 중 항목은 PendingItem 이라 여기에 오지 않는다)
   const reactable = message.kind === "normal";
   return (
