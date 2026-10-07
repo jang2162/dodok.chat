@@ -809,9 +809,15 @@ src/
 │  │                       결과로 가기 jump.ts(jumpToSeq — around 로 갈아 끼우기·loadNewer 아래로 이어 받기·loadLatest 최신으로·jumpToFirstRootAfter — 읽음 위치 뒤 첫 루트를 `afterSeq` `limit 1` 로 찾아
 │  │                       그 seq 를 around 로, 루트가 없으면 최신으로. 읽음 위치 + 1 을 바로 around 로 주지 않는 까닭은 그 함수 머리 주석)·jumpTarget.ts(목표 zustand 스토어 — URL 에 두지 않는다, 강조 2초)·
 │  │                       useJump(구독 응답 뒤(`lastSeq > 0`)에만 around, 목표 행으로 스크롤·강조)·useNewerPages(떨어진 창의 아래 끝에서 다음 쪽),
-│  │                       MessageList.tsx(TanStack Virtual, 빈 보관 채널은 「메시지가 없습니다.」(멘션 권유 없음), 끝 붙기·「새 메시지」 칩 — 기준은 가진 마지막 메시지의 seq, 떨어진 창이면 「최신 메시지로」·`followOnAppend` 끔·보내는 중 항목이 생기면 먼저 최신으로(loadLatest), `threadRootId` 면 영역 이름
-│  │                       「스레드 메시지」에 칩·메뉴 없음. 채널 목록은 끝이 보이면 읽음을 보낸다 — 끝 보임 = `stuck && !hasNewer && !jump.pending`(stuck 의 처음 값은 스크롤 전 값이라 떨어진 창·결과로 가기 목표를 뺀다)
-│  │                       그리고 좁은 화면 패널 시트가 덮지 않음(`covered`). 「새 메시지」 구분선(`role="separator"`, 이름 「새 메시지」)과 페이지 밖 배너 「안 읽은 메시지가 더 있어요 · 처음 안 읽은 곳으로」 —
+│  │                       MessageList.tsx(TanStack Virtual, 빈 보관 채널은 「메시지가 없습니다.」(멘션 권유 없음), 끝 붙기·「새 메시지」 칩 — 기준은 가진 마지막 메시지의 seq(구분선에서 열면 entryReadSeq), 떨어진 창이면 「최신 메시지로」·`followOnAppend` 끔·보내는 중 항목이 생기면 먼저 최신으로(loadLatest), `threadRootId` 면 영역 이름
+│  │                       「스레드 메시지」에 칩·메뉴 없음. 채널 목록은 끝이 보이면 읽음을 보낸다 — 끝 보임 = `stuck && !hasNewer && !jump.pending && !entryHold`(stuck 의 처음 값은 스크롤 전 값이라 떨어진 창·결과로 가기 목표를 빼고,
+│  │                       안 읽은 채널은 처음 위치를 정하기 전·낡은 캐시를 이어 받는 동안 읽음을 붙잡는다)
+│  │                       그리고 좁은 화면 패널 시트가 덮지 않음(`covered`). 처음 위치 — entryReadSeq 가 0 보다 크고 「새 메시지」 행이 받은 행 안이면
+│  │                       그 행이 위에서 `UNREAD_CONTEXT_PX` 아래에 오게 처음 한 번 연다(끝에 붙지 않았으므로 읽음은 끝까지 내리거나 칩을 눌러야 간다 —
+│  │                       구분선과 끝이 한 화면이면 곧바로), 행 밖이면 끝 + 배너, 행이 없거나 entryReadSeq 가 0(새 멤버)이면 끝. 마운트 때 캐시가 있고
+│  │                       서버가 아는 최신 seq(스냅숏 seenSeq)가 가진 lastSeq 보다 크면 이어 받기가 거기 닿을 때까지 읽음을 붙잡고 끝 따라가기를 끄며,
+│  │                       행이 생기면 내려앉고 다 받으면 다시 겨눠 끝 보임을 잰다(그 사이 손을 대면 겨누지 않고 그 자리에서, 5초가 지나면 가진 것으로).
+│  │                       「새 메시지」 구분선(`role="separator"`, 이름 「새 메시지」)과 페이지 밖 배너 「안 읽은 메시지가 더 있어요 · 처음 안 읽은 곳으로」 —
 │  │                       entryReadSeq + 1 이 불러온 가장 옛 seq 보다 앞이고 구독 응답 뒤(`lastSeq > 0`)일 때, 누르면 jumpToFirstRootAfter 뒤 구분선 행으로 한 번 이동(받은 창에 없으면 이동을 거둔다),
 │  │                       루트가 없으면 끝으로, 실패면 reportPageError 이고 배너는 남는다. 한 번 누르면 그 채널을 떠날 때까지 다시 뜨지 않는다), MessageItem(루트 아래 ThreadChip·「스레드에서 답하기」)·MessageBody(Streamdown, 원시 HTML 끔,
 │  │                       단일 개행 → br, 마크다운 이미지는 링크로, 확정 본문만 코드 하이라이트 — codeHighlight.ts(Streamdown 플러그인·언어 목록과 별칭, 실패는 페이지 수명 동안 칠하지 않음)·
