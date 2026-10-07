@@ -7,6 +7,7 @@ import { shouldPersist } from "@/pwa/persist";
 import {
   GENERAL,
   OPS_CHANNEL,
+  REISSUED_TOKEN,
   REISSUED_URL,
   WEBHOOK_TOKEN,
   WEBHOOK_URL,
@@ -38,6 +39,45 @@ const user = () => userEvent.setup({ delay: null });
 async function openCreate() {
   await user().click(await screen.findByRole("button", { name: "만들기" }));
   return screen.findByRole("dialog", { name: "자동화 만들기" });
+}
+
+/**
+ * 웹훅 원문(`secret` — 앞 6자 뒤)이 대화상자 밖에 남은 자리 — 쿼리·뮤테이션 캐시, 저장소, 주소, 콘솔, 토스트. 화면에 `Toaster` 가
+ * 없어 토스트는 `document.body` 로 못 보므로 스파이의 호출 인자를 본다. 콘솔 스파이는 렌더 전에 걸어야 해서 먼저 부르고, 돌려받은
+ * 함수에 렌더 결과를 넘긴다
+ */
+function watchLeaks(secret: string) {
+  const consoles = (["log", "info", "warn", "error", "debug"] as const).map((k) => vi.spyOn(console, k));
+  const text = (a: unknown) => {
+    if (typeof a === "string") return a;
+    try {
+      return JSON.stringify(a) ?? "";
+    } catch {
+      return String(a);
+    }
+  };
+  return ({ router, queryClient }: Pick<ReturnType<typeof renderRoute>, "router" | "queryClient">) => {
+    const caches = JSON.stringify([
+      queryClient
+        .getQueryCache()
+        .getAll()
+        .map((q) => [q.queryKey, q.state]),
+      queryClient
+        .getMutationCache()
+        .getAll()
+        .map((m) => m.state),
+    ]);
+    const stored = [localStorage, sessionStorage].flatMap((s) =>
+      Array.from({ length: s.length }, (_, i) => {
+        const key = s.key(i) ?? "";
+        return `${key}=${s.getItem(key) ?? ""}`;
+      }),
+    );
+    const logged = [...consoles, toastSuccess, toastError].flatMap((spy) => spy.mock.calls.flat().map(text));
+    return [caches, ...stored, router.state.location.href, window.location.href, ...logged].filter((s) =>
+      s.includes(secret),
+    );
+  };
 }
 
 describe("권한·탭", () => {
@@ -168,6 +208,34 @@ describe("목록", () => {
     ]);
   });
 
+  it("「지금 실행」 — 실패(409)하면 풀려 다시 누르면 다시 보내고, 성공한 뒤에도 다시 누르면 또 보낸다", async () => {
+    let failures = 1;
+    const server = stubAutomationsServer({
+      automations: [automationOf(1, { name: "점검" })],
+      override: (c) =>
+        c.method === "POST" && c.url.endsWith("/run") && failures-- > 0
+          ? json(409, { code: "CHANNEL_ARCHIVED", message: "channel is archived" })
+          : undefined,
+    });
+    renderRoute(PATH);
+    const run = (await rowOf("점검")).getByRole("button", { name: "지금 실행" });
+    // 다음 클릭은 앞 요청이 끝난(토스트) 뒤에 — 나가 있는 동안의 클릭은 걸러지는 것이 맞다
+    await user().click(run);
+    await waitFor(() => expect(toastError).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(run).toBeEnabled());
+    await user().click(run);
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(run).toBeEnabled());
+    await user().click(run);
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledTimes(2));
+    const runUrl = `/api/v1/automations/${uid(501)}/run`;
+    expect(server.writes()).toEqual([
+      { method: "POST", url: runUrl, body: undefined },
+      { method: "POST", url: runUrl, body: undefined },
+      { method: "POST", url: runUrl, body: undefined },
+    ]);
+  });
+
   it("켜기/끄기 — 스위치가 PATCH { enabled } 를 보내고 줄이 「꺼짐」으로", async () => {
     const server = stubAutomationsServer({ automations: [automationOf(1, { name: "점검" })] });
     renderRoute(PATH);
@@ -267,6 +335,20 @@ describe("만들기·수정 대화상자", () => {
     expect(submit).toBeEnabled();
   });
 
+  it("시각 칸을 비우면 만들 수 없다 — 매시간은 시각을 보지 않는다", async () => {
+    stubAutomationsServer();
+    renderRoute(PATH);
+    const dialog = await openCreate();
+    const submit = within(dialog).getByRole("button", { name: "만들기" });
+    await user().type(within(dialog).getByRole("textbox", { name: "이름" }), "아침");
+    await user().type(within(dialog).getByRole("textbox", { name: "문구" }), "점검해 줘");
+    expect(submit).toBeEnabled();
+    fireEvent.change(within(dialog).getByLabelText("시각"), { target: { value: "" } });
+    expect(submit).toBeDisabled();
+    await user().selectOptions(within(dialog).getByRole("combobox", { name: "반복" }), "hourly");
+    expect(submit).toBeEnabled();
+  });
+
   it("반복에 따라 칸이 바뀐다 — 매주는 요일, 매시간은 분만, 웹훅은 예약 칸 없음", async () => {
     stubAutomationsServer();
     renderRoute(PATH);
@@ -315,10 +397,61 @@ describe("만들기·수정 대화상자", () => {
     expect(await rowOf("아침 점검")).toBeTruthy();
   });
 
-  it("웹훅 만들기 — 주소를 한 번만 보이고(「이 주소는 다시 볼 수 없습니다」·복사), 원문은 대화상자 밖 어디에도 남지 않는다", async () => {
-    const consoles = (["log", "info", "warn", "error", "debug"] as const).map((k) => vi.spyOn(console, k));
+  it("매시간 만들기 — 고른 분을 그대로 보낸다", async () => {
     const server = stubAutomationsServer();
-    const { router, queryClient } = renderRoute(PATH);
+    renderRoute(PATH);
+    const dialog = await openCreate();
+    await user().type(within(dialog).getByRole("textbox", { name: "이름" }), "매시 확인");
+    await user().type(within(dialog).getByRole("textbox", { name: "문구" }), "확인해 줘");
+    await user().selectOptions(within(dialog).getByRole("combobox", { name: "반복" }), "hourly");
+    await user().selectOptions(within(dialog).getByRole("combobox", { name: "분" }), "15");
+    await user().click(within(dialog).getByRole("button", { name: "만들기" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(server.writes()).toEqual([
+      {
+        method: "POST",
+        url: "/api/v1/automations",
+        body: {
+          kind: "schedule",
+          name: "매시 확인",
+          channelId: GENERAL.id,
+          bodyMd: "확인해 줘",
+          schedule: { repeat: "hourly", minute: 15 },
+        },
+      },
+    ]);
+  });
+
+  it("만드는 중에는 Esc 로 닫히지 않는다 — 응답의 웹훅 주소가 닫힌 대화상자로 사라지지 않게", async () => {
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    stubAutomationsServer({
+      override: async (c) => {
+        if (c.method === "POST" && c.url === "/api/v1/automations") await held;
+        return undefined;
+      },
+    });
+    renderRoute(PATH);
+    const dialog = await openCreate();
+    await user().type(within(dialog).getByRole("textbox", { name: "이름" }), "배포 알림");
+    await user().click(within(dialog).getByRole("radio", { name: "웹훅" }));
+    await user().type(within(dialog).getByRole("textbox", { name: "문구" }), "배포가 끝났습니다");
+    await user().click(within(dialog).getByRole("button", { name: "만들기" }));
+    await within(dialog).findByRole("button", { name: "만드는 중…" });
+    await user().keyboard("{Escape}");
+    expect(screen.getByRole("dialog", { name: "자동화 만들기" })).toBeInTheDocument();
+    release();
+    expect(await within(dialog).findByText(WEBHOOK_URL)).toBeInTheDocument();
+  });
+
+  it("웹훅 만들기 — 주소를 한 번만 보이고(「이 주소는 다시 볼 수 없습니다」·복사), 원문은 대화상자 밖 어디에도 남지 않는다", async () => {
+    const secret = WEBHOOK_TOKEN.slice("whk_abc123".length);
+    const watch = watchLeaks(secret);
+    const server = stubAutomationsServer();
+    const app = renderRoute(PATH);
+    const leaks = () => watch(app);
     const dialog = await openCreate();
     await user().type(within(dialog).getByRole("textbox", { name: "이름" }), "배포 알림");
     await user().click(within(dialog).getByRole("radio", { name: "웹훅" }));
@@ -334,30 +467,7 @@ describe("만들기·수정 대화상자", () => {
       bodyMd: "배포가 끝났습니다",
     });
 
-    // 원문은 대화상자의 컴포넌트 상태에만 — 쿼리·뮤테이션 캐시, 저장소, 주소, 콘솔 어디에도 없다
-    const secret = WEBHOOK_TOKEN.slice("whk_abc123".length);
-    const leaks = () => {
-      const caches = JSON.stringify([
-        queryClient
-          .getQueryCache()
-          .getAll()
-          .map((q) => [q.queryKey, q.state]),
-        queryClient
-          .getMutationCache()
-          .getAll()
-          .map((m) => m.state),
-      ]);
-      const stored = [localStorage, sessionStorage].flatMap((s) =>
-        Array.from({ length: s.length }, (_, i) => {
-          const key = s.key(i) ?? "";
-          return `${key}=${s.getItem(key) ?? ""}`;
-        }),
-      );
-      const logged = consoles.flatMap((spy) => spy.mock.calls.flat().map((a) => String(a)));
-      return [caches, ...stored, router.state.location.href, window.location.href, ...logged].filter((s) =>
-        s.includes(secret),
-      );
-    };
+    // 원문은 대화상자의 컴포넌트 상태에만 — 쿼리·뮤테이션 캐시, 저장소, 주소, 콘솔, 토스트 어디에도 없다
     expect(leaks()).toEqual([]);
 
     // 닫는 길은 「복사했습니다」뿐 — Esc 로는 닫히지 않는다
@@ -383,7 +493,7 @@ describe("만들기·수정 대화상자", () => {
     expect(document.body.textContent).not.toContain(secret);
   });
 
-  it("주소 다시 만들기 — 확인한 뒤 새 주소를 한 번 보이고, 목록은 새 앞부분", async () => {
+  it("주소 다시 만들기 — 확인한 뒤 새 주소를 한 번 보이고, 목록은 새 앞부분, 원문은 대화상자 밖 어디에도 남지 않는다", async () => {
     const hook = automationOf(1, {
       name: "배포 알림",
       kind: "webhook",
@@ -391,8 +501,11 @@ describe("만들기·수정 대화상자", () => {
       nextRunAt: undefined,
       tokenPrefix: "abc123",
     });
+    const secret = REISSUED_TOKEN.slice("whk_zyx987".length);
+    const watch = watchLeaks(secret);
     const server = stubAutomationsServer({ automations: [hook] });
-    renderRoute(PATH);
+    const app = renderRoute(PATH);
+    const leaks = () => watch(app);
     await user().click((await rowOf("배포 알림")).getByRole("button", { name: "수정" }));
     const dialog = await screen.findByRole("dialog", { name: "자동화 수정" });
     await user().click(within(dialog).getByRole("button", { name: "주소 다시 만들기" }));
@@ -404,9 +517,12 @@ describe("만들기·수정 대화상자", () => {
     expect(server.writes()).toEqual([
       { method: "POST", url: `/api/v1/automations/${hook.id}/token`, body: undefined },
     ]);
+    expect(leaks()).toEqual([]);
     await user().click(within(dialog).getByRole("button", { name: "복사했습니다" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(await (await rowOf("배포 알림")).findByText("…/hooks/whk_zyx987…")).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain(secret);
+    expect(leaks()).toEqual([]);
   });
 
   it("예약 자동화에는 「주소 다시 만들기」가 없다", async () => {
