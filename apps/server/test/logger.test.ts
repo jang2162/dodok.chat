@@ -1,10 +1,15 @@
+import { connect, type AddressInfo } from "node:net";
 import { describe, expect, it } from "vitest";
 import { createLogger, redactUrl, requestLogSerializer } from "../src/logger";
+import { bootTestApp } from "./helpers/app";
 
 /** createLogger 의 가림을 그대로 쓰되 줄을 모은다 — pino 의 목적지만 바꾼다 */
-function capture(): { lines: Array<Record<string, unknown>>; log: ReturnType<typeof createLogger> } {
+function capture(level = "info"): {
+  lines: Array<Record<string, unknown>>;
+  log: ReturnType<typeof createLogger>;
+} {
   const lines: Array<Record<string, unknown>> = [];
-  const log = createLogger("info", { write: (line: string) => void lines.push(JSON.parse(line)) });
+  const log = createLogger(level, { write: (line: string) => void lines.push(JSON.parse(line)) });
   return { lines, log };
 }
 
@@ -58,6 +63,65 @@ describe("createLogger 가림", () => {
       res: { headers: { "set-cookie": "***" } },
       req: { headers: { cookie: "***", authorization: "***", "x-keep": "ok" } },
     });
+  });
+});
+
+describe("[F2] err 의 Buffer 속성 — redact 가 걷다 던지지 않게 뗀다", () => {
+  const hookToken = "whk_Fq3-Ze9xKpL0mN7bV2cR8tY4uI6oP1aS5dG-hJ3kQwE";
+  // Node HTTP 파서 오류와 같은 꼴 — rawPacket 은 받은 요청 바이트다
+  const parseError = () =>
+    Object.assign(new Error("Parse Error: Invalid header value char"), {
+      code: "HPE_INVALID_HEADER_TOKEN",
+      bytesParsed: 40,
+      rawPacket: Buffer.from(`POST /hooks/${hookToken} HTTP/1.1\r\nBad Header Line\r\n\r\n`),
+    });
+
+  it("trace 의 client error 줄을 남긴다 — code 는 그대로, rawPacket 은 없다", () => {
+    const { lines, log } = capture("trace");
+    expect(() => log.trace({ err: parseError() }, "client error")).not.toThrow();
+    expect(lines[0]).toMatchObject({
+      msg: "client error",
+      err: { code: "HPE_INVALID_HEADER_TOKEN", bytesParsed: 40 },
+    });
+    expect(lines[0]?.err).not.toHaveProperty("rawPacket");
+  });
+
+  it("오류를 첫 인자로 넘겨도(log.error(err)) 같다", () => {
+    const { lines, log } = capture("trace");
+    expect(() => log.error(parseError())).not.toThrow();
+    expect(lines[0]?.err).toMatchObject({ code: "HPE_INVALID_HEADER_TOKEN" });
+    expect(lines[0]?.err).not.toHaveProperty("rawPacket");
+  });
+
+  it("실제 소켓 — LOG_LEVEL=trace 앱이 잘못된 머리 하나에 400 을 내고 다음 요청도 받는다", async () => {
+    const lines: string[] = [];
+    const app = await bootTestApp(
+      {},
+      { logger: createLogger("trace", { write: (line: string) => void lines.push(line) }) },
+    );
+    try {
+      await app.fastify.listen({ host: "127.0.0.1", port: 0 });
+      const { port } = app.fastify.server.address() as AddressInfo;
+      const raw = await new Promise<string>((resolve) => {
+        let got = "";
+        const socket = connect(port, "127.0.0.1", () =>
+          socket.write(`POST /hooks/${hookToken} HTTP/1.1\r\nHost: x\r\nBad Header Line\r\n\r\n`),
+        );
+        socket.setEncoding("utf8");
+        socket.on("data", (chunk: string) => (got += chunk));
+        socket.on("close", () => resolve(got));
+        socket.on("error", () => resolve(got));
+        socket.setTimeout(2000, () => socket.destroy());
+      });
+      expect(raw).toMatch(/^HTTP\/1\.1 400 /);
+      const res = await fetch(`http://127.0.0.1:${port}/healthz`);
+      expect(res.status).toBe(200);
+      const clientError = lines.find((line) => line.includes('"msg":"client error"'));
+      expect(clientError).toContain("HPE_");
+      expect(lines.join("\n")).not.toContain(hookToken.slice(10));
+    } finally {
+      await app.close();
+    }
   });
 });
 

@@ -5,7 +5,8 @@ import { ipPrefix } from "./modules/ops/ip";
 // x-*-token 꼴 요청 헤더는 지금 쓰는 곳이 없다(브리지 토큰은 Authorization·핸드셰이크 auth 로 온다) — 토큰을 싣는
 // 헤더를 새로 만들면 이름을 여기에 적는다. pino redact 는 헤더 이름 와일드카드를 받지 못한다.
 // 토큰을 URL 경로에 싣는 라우트를 새로 만들면 redactUrl 에 그 경로를 더한다 — Fastify 의 `incoming request` 줄이 req.url 을
-// info 로 남긴다(지금은 웹훅 /hooks/<token>)
+// info 로 남긴다(지금은 웹훅 /hooks/<token>). Caddy 도 프록시 오류(502) 때 URI 를 원문으로 남긴다 — infra/Caddyfile 전역
+// log default 의 request>uri 필터에도 같은 경로를 더한다
 const SECRET_KEYS = new Set([
   "token",
   "LOCAL_AUTH_TOKEN",
@@ -31,7 +32,26 @@ const REDACT_PATHS = [...SECRET_KEYS].flatMap((k) =>
 
 /** destination 은 테스트가 줄을 모을 때만 준다(기본 stdout) */
 export function createLogger(level: string, destination?: DestinationStream): Logger {
-  return pino({ level, redact: { paths: REDACT_PATHS, censor: "***" } }, destination);
+  return pino(
+    { level, redact: { paths: REDACT_PATHS, censor: "***" }, serializers: { err: serializeErr } },
+    destination,
+  );
+}
+
+/**
+ * pino 기본 err 직렬화에서 Buffer 값 속성을 뗀다. redact 의 와일드카드 경로가 로그 객체 깊이 1~2 의 Buffer 안을 걷다 던져 로그 호출이
+ * 예외가 된다 — Node HTTP 파서 오류의 rawPacket(받은 요청 바이트 — URL 속 웹훅 토큰 포함)이 그 꼴이고, Fastify 기본
+ * clientErrorHandler 가 그 오류를 trace 로 남기므로, 떼지 않으면 LOG_LEVEL=trace 에서 잘못된 요청 하나가 서버를 죽인다. err 밖의
+ * 키에는 Buffer 를 싣지 않는다. Fastify 는 이 로거의 직렬화기를 자기 기본보다 앞세운다(loggerInstance)
+ */
+function serializeErr(err: Error): unknown {
+  const out: unknown = pino.stdSerializers.err(err);
+  // 오류가 아니면 받은 값 그대로 온다 — 부른 쪽 객체를 고치지 않는다
+  if (out === err || out === null || typeof out !== "object") return out;
+  for (const [key, value] of Object.entries(out)) {
+    if (Buffer.isBuffer(value)) delete (out as Record<string, unknown>)[key];
+  }
+  return out;
 }
 
 /** whk_ 와 그 뒤 6자 — 자동화 목록의 tokenPrefix(whk_ 뒤 6자, modules/automations/tokens.ts)만큼만 보인다 */
