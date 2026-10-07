@@ -23,6 +23,7 @@ import {
   type UploadedBy,
 } from "../attachments/service";
 import {
+  assertChannelWritable,
   channelParticipants,
   joinChannelIfAbsent,
   listMembers,
@@ -65,6 +66,13 @@ export type CreateAgentMessageInput = {
   uploadedBy?: UploadedBy;
   replyTo?: string;
   threadRootId?: string;
+};
+
+export type CreateAutomationMessageInput = {
+  channelId: string;
+  automationId: string;
+  /** 자동화에 저장된 평문 @handle 문구(+ 웹훅 블록) — 사람 메시지와 같은 참가자 집합으로 토큰화한다(계획 판정 PA1) */
+  bodyMd: string;
 };
 
 export type CreateSystemMessageInput = {
@@ -364,6 +372,46 @@ export function createAgentMessage(
   // 트랜잭션 밖에서 — 호출자의 로그가 커밋을 붙잡지 않게
   if (result.dropped.length > 0) opts.onDroppedAttachments?.(result.dropped);
   if (result.created) emitCreated(bus, result.message, result.root, opts.silent === true);
+  return result.message;
+}
+
+/**
+ * 자동화가 채널 최상위에 게시하는 보통 메시지(자동화 스펙 「게시」 절) — 작성자 automation·authorId 는 자동화 id. 보관한 채널이면
+ * CHANNEL_ARCHIVED(같은 트랜잭션에서 본다 — 보관과 엇갈려도 쓰지 않게). 멘션된 사람은 사람 멘션처럼 채널에 들어온다(팀 스펙
+ * 「채널 참여·멘션·알림」 절). 런은 부르는 쪽이 라우터에 넘겨 만든다
+ */
+export function createAutomationMessage(
+  db: Db,
+  bus: ServerBus,
+  input: CreateAutomationMessageInput,
+): Message {
+  const result = db.transaction((tx) => {
+    assertChannelWritable(tx, input.channelId);
+    const message = storeMessage(tx, input.channelId, undefined, () => {
+      const { bodyMd, mentions } = tokenize(input.bodyMd, userMessageParticipants(tx, input.channelId));
+      return {
+        kind: "normal",
+        authorType: "automation",
+        authorId: input.automationId,
+        bodyMd,
+        mentions,
+        attachments: [],
+        createdAt: new Date(),
+      };
+    });
+    const now = new Date();
+    const joined = message.mentions.users
+      .map((userId) => joinChannelIfAbsent(tx, input.channelId, userId, now))
+      .includes(true);
+    return { message, joined };
+  });
+  emitCreated(bus, result.message, undefined);
+  if (result.joined) {
+    bus.emit("channel.member.changed", {
+      channelId: input.channelId,
+      members: listMembers(db, input.channelId),
+    });
+  }
   return result.message;
 }
 

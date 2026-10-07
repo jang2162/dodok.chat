@@ -9,7 +9,11 @@ import type { App } from "../../src/app";
 import { eq } from "drizzle-orm";
 import { channels } from "../../src/db/schema.sqlite";
 import { createChannel } from "../../src/modules/channels/service";
-import { createSystemMessage, createUserMessage } from "../../src/modules/messages/service";
+import {
+  createAutomationMessage,
+  createSystemMessage,
+  createUserMessage,
+} from "../../src/modules/messages/service";
 import { bootTestApp, userWithRole } from "../helpers/app";
 import { connectWire, recordEvents, type WireClient, waitFor } from "../helpers/wire";
 
@@ -155,11 +159,11 @@ describe("통합 — 읽지 않음 팬아웃", () => {
       expect(authorsOf(seen)).toEqual([controlId]);
     });
 
-    it("authorType 이 user·agent 가 아니면 작성자가 있어도 activity 를 내지 않는다 — 자동화는 아직 없다", async () => {
+    it("authorType 이 user·agent·automation 이 아니면 작성자가 있어도 activity 를 내지 않는다", async () => {
       await ready();
       const ch = channel();
       const seen = recordEvents(a1, ["channel.activity"]);
-      for (const authorType of ["system", "automation"])
+      for (const authorType of ["system", "bogus"])
         app.bus.emit("message.created", {
           message: {
             id: uuid(),
@@ -230,6 +234,26 @@ describe("통합 — 읽지 않음 팬아웃", () => {
         silent: true,
       });
       expect(await seen).toMatchObject({ channelId: ch.id, authorType: "agent", authorId: agentId });
+    });
+
+    it("자동화 글은 authorType automation·authorId 자동화 id 로 나가고, 멘션된 사람이 실린다", async () => {
+      await ready();
+      const ch = channel();
+      const automationId = uuid();
+      const seen = waitFor(a1, "channel.activity", (p) => p.channelId === ch.id);
+      const message = createAutomationMessage(app.db, app.bus, {
+        channelId: ch.id,
+        automationId,
+        bodyMd: "@reads-a 확인해 주세요",
+      });
+      const activity = await seen;
+      expect(ChannelActivity.parse(activity)).toEqual({
+        channelId: ch.id,
+        seq: message.seq,
+        authorType: "automation",
+        authorId: automationId,
+        mentionedUserIds: [a.id],
+      });
     });
 
     it("에이전트 글은 authorType agent 로 나간다", async () => {

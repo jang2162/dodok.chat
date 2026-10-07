@@ -26,6 +26,7 @@ import { registerAgentRoutes } from "./modules/agents/routes";
 import { registerAttachmentRoutes } from "./modules/attachments/routes";
 import { sweepAttachments } from "./modules/attachments/service";
 import { type BlobLocks, createBlobLocks } from "./modules/attachments/store";
+import { tick } from "./modules/automations/scheduler";
 import { watchPluginHellos } from "./modules/channels/prompt-sync";
 import { registerChannelRoutes } from "./modules/channels/routes";
 import { getChannel } from "./modules/channels/service";
@@ -48,6 +49,7 @@ import { ipPrefix } from "./modules/ops/ip";
 import { LIMITS, type Limits } from "./modules/ops/limits";
 import { monotonicNow, TokenBucket } from "./modules/ops/ratelimit";
 import { registerOpsRoutes } from "./modules/ops/routes";
+import { getOpsSettings } from "./modules/ops/settings";
 import { providersWithAgents } from "./modules/ops/summary";
 import type { OpsService } from "./modules/ops/service";
 import { createPresence } from "./modules/push/presence";
@@ -91,6 +93,8 @@ export const GATEWAY_RECONNECTING_NOTICE_MS = 60_000;
 export const OPS_SWEEP_INTERVAL_MS = 24 * 3600_000;
 /** 만료 세션 청소 주기 — 만료 행을 지우고 그 wire 소켓을 끊는다(socket.ts sweepExpiredSessions). 만료 뒤 소켓은 최대 이만큼 산다 */
 export const SESSION_SWEEP_INTERVAL_MS = 60_000;
+/** 예약 자동화 틱 주기(자동화 스펙 결정 4) — 예약은 분 단위라 회차는 최대 이만큼 늦게 게시된다 */
+export const AUTOMATION_TICK_INTERVAL_MS = 60_000;
 
 export type AppDeps = {
   /**
@@ -111,6 +115,8 @@ export type AppDeps = {
   attachmentSweepIntervalMs?: number;
   /** 만료 세션 청소 주기(기본 SESSION_SWEEP_INTERVAL_MS) — 테스트가 낮춘다 */
   sessionSweepIntervalMs?: number;
+  /** 예약 자동화 틱 주기(기본 AUTOMATION_TICK_INTERVAL_MS) — 테스트가 낮추거나 부팅 틱만 보려고 늘린다 */
+  automationTickMs?: number;
   /** 웹 푸시 발송기(기본은 VAPID 키로 만든 실제 web-push). 테스트는 가짜를 준다 — 밖으로 보내지 않게 */
   pushSend?: PushSend;
   /** 품은 플러그인 tgz 를 찾을 디렉터리(기본 pluginDirCandidates) — 테스트가 임시 디렉터리나 []를 준다 */
@@ -687,6 +693,24 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       }
     }
 
+    // 예약 자동화(자동화 스펙 「스케줄러」 절): 부팅 정리와 어댑터 연결 뒤에 첫 틱 — 그보다 먼저 만든 멘션 런은 recoverOnBoot 가
+    // 지난 부팅의 것으로 보고 닫는다
+    const automationTicks = startAttachmentSweeper(
+      () =>
+        tick(
+          {
+            db,
+            bus,
+            logger,
+            ops,
+            route: (message) => services.router.routeMessage(message),
+            timeZone: () => getOpsSettings(db, workspaceId, logger).timeZone,
+          },
+          new Date(),
+        ).catch((err: unknown) => logger.error({ err }, "automation tick failed")),
+      deps.automationTickMs ?? AUTOMATION_TICK_INTERVAL_MS,
+    );
+
     const closeTimeoutMs = deps.closeTimeoutMs ?? APP_CLOSE_TIMEOUT_MS;
     const step = async (name: string, run: () => unknown) => {
       try {
@@ -708,6 +732,8 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       await step("setup-events", () => offSetup());
       await step("prompt-resync", () => offPromptResync());
       await step("push-triggers", () => pushTriggers.close()); // 새 발송을 받지 않는다 — 이미 나간 것은 ⑥ 앞에서 잠깐 기다린다
+      // 진행 중인 틱이 게시·사건 기록을 끝낸 뒤 ops·orchestrator 를 닫는다
+      await step("automations", () => automationTicks.close());
       await step("attachments-sweep", () => sweeper.close()); // 진행 중인 정리가 db 를 닫기 전에 끝나게
       await step("session-sweep", closeSessionSweep);
       await step("ops", closeOps);
@@ -826,8 +852,8 @@ export function watchGatewayReconnecting(
 }
 
 /**
- * 첨부 정리를 지금 한 번, 그 뒤 intervalMs 마다 부른다. 앞 정리가 안 끝났으면 그 주기는 건너뛴다(겹쳐 돌지 않는다).
- * run 이 던져도 다음 주기에 다시 돈다. 타이머는 unref. close() 는 타이머를 멈추고 진행 중인 정리를 기다린다
+ * 주기 작업(첨부 정리·자동화 틱)을 지금 한 번, 그 뒤 intervalMs 마다 부른다. 앞 회가 안 끝났으면 그 주기는 건너뛴다(겹쳐 돌지 않는다).
+ * run 이 던져도 다음 주기에 다시 돈다. 타이머는 unref. close() 는 타이머를 멈추고 진행 중인 회를 기다린다
  */
 export function startAttachmentSweeper(
   run: () => Promise<unknown>,

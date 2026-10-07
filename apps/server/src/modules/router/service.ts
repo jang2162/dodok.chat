@@ -24,7 +24,7 @@ export type RouterDeps = {
 };
 
 export type Router = {
-  /** 저장된 normal 메시지(사람·에이전트)로 런을 만들거나 차단을 시스템 메시지로 알린다. 시스템 메시지는 무시한다. */
+  /** 저장된 normal 메시지(사람·에이전트·자동화)로 런을 만들거나 차단을 시스템 메시지로 알린다. 시스템 메시지는 무시한다. */
   routeMessage(message: Message): Promise<void>;
 };
 

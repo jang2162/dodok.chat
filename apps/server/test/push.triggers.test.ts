@@ -9,11 +9,14 @@ const SAM = "0199a000-0000-7000-8000-000000005a70";
 const DEV = "0199a000-0000-7000-8000-000000000de0";
 const AP = "0199a000-0000-7000-8000-0000000000a9";
 const GHOST = "0199a000-0000-7000-8000-00000000dead";
+const DAWN = "0199a000-0000-7000-8000-00000000da00";
+const MORNING = "0199a000-0000-7000-8000-000000000a0e";
 
 const L: TriggerLookups = {
   channelName: (id) => ({ [CH]: "프로젝트" })[id],
   userHandle: (id) => ({ [ALICE]: "alice", [BOB]: "bob", [SAM]: "sam" })[id],
   agentHandle: (id) => ({ [DEV]: "dev" })[id],
+  automationName: (id) => ({ [DAWN]: "새벽 배포", [MORNING]: "아침 점검" })[id],
   humanMembers: (id) => (id === CH ? [ALICE, BOB] : []),
   // SAM 은 채널 밖 admin, ALICE 는 채널 안 member — 승인은 채널 참여와 무관하게 owner·admin 에게만
   admins: () => [SAM, BOB],
@@ -94,6 +97,27 @@ describe("targetsForMessage — 멘션(스펙 5.2 첫 줄)", () => {
       L,
     );
     expect(t.map((x) => [x.userId, x.payload.body])).toEqual([[BOB, "@alice가 #프로젝트에서 불렀습니다"]]);
+  });
+
+  it("자동화가 사람을 멘션 → 그 사람에게, 보낸 이는 「자동화 <이름>」(받침에 따라 이·가), 지운 자동화면 「자동화가」", () => {
+    const by = (authorId: string) =>
+      targetsForMessage(
+        msg({ authorType: "automation", authorId, mentions: { users: [ALICE, BOB], agents: [] } }),
+        L,
+      );
+    const dawn = by(DAWN);
+    expect(dawn.map((x) => x.userId)).toEqual([ALICE, BOB]);
+    expect(dawn[0]?.payload).toEqual({
+      kind: "mention",
+      channelId: CH,
+      title: "dodok",
+      body: "자동화 새벽 배포가 #프로젝트에서 불렀습니다",
+      url: `/c/${CH}`,
+      tag: `mention:${CH}`,
+    });
+    for (const x of dawn) expect(PushPayload.safeParse(x.payload).success).toBe(true);
+    expect(by(MORNING)[0]?.payload.body).toBe("자동화 아침 점검이 #프로젝트에서 불렀습니다");
+    expect(by(GHOST)[0]?.payload.body).toBe("자동화가 #프로젝트에서 불렀습니다");
   });
 
   it("받침으로 끝나는 핸들은 「이」(josa(sam) = 「이」), 받침 없는 핸들은 「가」(josa(bob) = 「가」)", () => {

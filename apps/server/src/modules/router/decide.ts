@@ -11,7 +11,7 @@ import {
 import { isAgentActive } from "../agents/service";
 
 export type RoutingInput = {
-  message: Message; // 방금 저장된 메시지 (user | agent | system)
+  message: Message; // 방금 저장된 메시지 (user | agent | automation | system)
   channel: Channel;
   members: ChannelMember[];
   agents: Agent[]; // 채널 소속 에이전트 (enabled·archivedAt 포함)
@@ -76,21 +76,23 @@ export function decideRuns(input: RoutingInput): { runs: RunPlan[]; blocked: Blo
   };
 
   const thread = message.threadRootId === undefined ? {} : { threadRootId: message.threadRootId };
+  const mentionRuns = (): RunPlan[] =>
+    uniq(message.mentions.agents)
+      .filter(isActive)
+      .map((agentId) => ({
+        agentId,
+        triggerKind: "mention",
+        rootMessageId: message.id,
+        relayDepth: 0,
+        ...thread,
+      }));
+
+  // 자동화 글은 멘션으로만 런을 만든다 — 멘션 없는 글이 자동 응답·스레드 응답자로 몰래 런을 만들면 비용이 예상과 달라진다(자동화 스펙 결정 6)
+  if (message.authorType === "automation") return { runs: mentionRuns(), blocked: [] };
 
   if (message.authorType === "user") {
-    const targets = uniq(message.mentions.agents).filter(isActive);
-    if (targets.length > 0) {
-      return {
-        runs: targets.map((agentId) => ({
-          agentId,
-          triggerKind: "mention",
-          rootMessageId: message.id,
-          relayDepth: 0,
-          ...thread,
-        })),
-        blocked: [],
-      };
-    }
+    const runs = mentionRuns();
+    if (runs.length > 0) return { runs, blocked: [] };
     if (message.mentions.agents.length > 0) return { runs: [], blocked: [] }; // 멘션이 전부 비활성: 폴백 없음
     const responder = threadResponder(input.threadRoot, isActive) ?? autoResponder(agentMembers, isActive);
     if (responder === undefined) return { runs: [], blocked: [] };

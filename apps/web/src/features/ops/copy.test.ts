@@ -14,6 +14,7 @@ describe("사건 한 줄 문구 — kind 별 고정 문구", () => {
     ["crash_exception", "서버가 오류로 종료됨"],
     ["unclean_shutdown", "직전 종료가 비정상"],
     ["disk_low", "디스크 여유 부족"],
+    ["automation_skipped", "자동화 예약을 놓쳐 건너뜀"],
   ] as const)("%s → 「%s」", (kind: OpsEventKind, text) => {
     expect(eventText(eventOf(1, { kind, detail: {} }))).toBe(text);
   });
@@ -81,6 +82,13 @@ describe("사건 한 줄 문구 — kind 별 고정 문구", () => {
       detail: { version: "2026.9.5" },
     };
     expect(eventText(untested, undefined, now)).toBe("Gateway 「새 이름」 검증 안 된 버전 (2026.9.5)");
+  });
+
+  it("자동화 실패는 detail.code — 코드가 없으면 괄호 없이", () => {
+    expect(eventText(eventOf(1, { kind: "automation_failed", detail: { code: "CHANNEL_ARCHIVED" } }))).toBe(
+      "자동화 실행 실패 (CHANNEL_ARCHIVED)",
+    );
+    expect(eventText(eventOf(1, { kind: "automation_failed", detail: {} }))).toBe("자동화 실행 실패");
   });
 
   it("런 실패는 detail.code — 코드가 없으면 괄호 없이", () => {

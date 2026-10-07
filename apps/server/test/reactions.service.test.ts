@@ -18,7 +18,7 @@ import {
   users,
 } from "../src/db/schema.sqlite";
 import { allocateSeq } from "../src/modules/messages/seq";
-import { hydrateForClient, rowToMessage } from "../src/modules/messages/service";
+import { createAutomationMessage, hydrateForClient, rowToMessage } from "../src/modules/messages/service";
 import {
   advanceReactionCursor,
   pendingReactionsFor,
@@ -219,6 +219,18 @@ describe("withReactions", () => {
     expect(hydrateForClient(c.db, [rowToMessage(row)])[0]?.reactions).toEqual([
       { emoji: "🎉", count: 1, userIds: [c.mia] },
     ]);
+  });
+
+  it("자동화 글(kind normal)에도 사람이 반응을 단다 — 켜기·집계가 되고 에이전트 몫(pendingReactionsFor)에는 들지 않는다", () => {
+    const c = setup();
+    const automationId = uuid();
+    const m = createAutomationMessage(c.db, c.bus, { channelId: c.channelId, automationId, bodyMd: "알림" });
+    setReaction(c.db, c.bus, c.workspaceId, c.mia, { messageId: m.id, emoji: "👀", on: true }, at(1));
+    expect(c.updated.map((u) => u.id)).toEqual([m.id]);
+    expect(hydrateForClient(c.db, [m])[0]?.reactions).toEqual([{ emoji: "👀", count: 1, userIds: [c.mia] }]);
+    const scope = { channelId: c.channelId, threadRootId: null, since: at(0) };
+    expect(pendingReactionsFor(c.db, { ...scope, agentId: c.agentId })).toEqual({ reactions: [] });
+    expect(pendingReactionsFor(c.db, { ...scope, agentId: automationId })).toEqual({ reactions: [] });
   });
 
   it("메시지가 없으면 질의 없이 그대로 돌려준다", () => {

@@ -190,6 +190,10 @@ describe("검색 계약", () => {
     };
     expect(SearchHit.safeParse(hit).success).toBe(true);
     expect(SearchHit.safeParse({ ...hit, threadRootId: ID(4) }).success).toBe(true);
+    // 자동화 글(kind normal)도 색인에 들어 결과로 나온다 — authorId 는 자동화 id
+    expect(SearchHit.safeParse({ ...hit, authorType: "agent" }).success).toBe(true);
+    expect(SearchHit.safeParse({ ...hit, authorType: "automation" }).success).toBe(true);
+    expect(SearchHit.safeParse({ ...hit, authorType: "system" }).success).toBe(false);
     expect(SearchHit.safeParse({ ...hit, snippet: "a".repeat(401) }).success).toBe(false);
     // 결과로 가기가 around=<seq> 로 받는다(판정 R5)
     const { seq: _, ...noSeq } = hit;

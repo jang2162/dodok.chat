@@ -8,6 +8,8 @@ import { opsEvents, runs } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
 import { createChannel } from "../src/modules/channels/service";
 import { getOpsSettings } from "../src/modules/ops/settings";
+import { nextRunAt } from "../src/modules/automations/schedule";
+import { type NewAutomationRow, getAutomation, insertAutomation } from "../src/modules/automations/store";
 import { insertRun } from "../src/modules/runs/store";
 import packageJson from "../package.json" with { type: "json" };
 import { bootTestApp, login, userWithRole } from "./helpers/app";
@@ -213,13 +215,14 @@ describe("운영 API /api/v1/ops", () => {
   describe("PATCH /settings", () => {
     const limitNow = async () => OpsStatus.parse((await call(owner, "GET", "/status")).json()).dailyRunLimit;
 
-    it("1~10000 과 null(무제한)을 저장하고 status 에 반영한다", async () => {
+    it("1~10000 과 null(무제한)을 저장하고 status 에 반영한다 — 응답은 바꾼 뒤의 설정 전체", async () => {
       const res = await call(owner, "PATCH", "/settings", { dailyRunLimit: 5 });
       expect(res.statusCode).toBe(200);
-      expect(res.json()).toEqual({ dailyRunLimit: 5 });
+      expect(res.json()).toEqual({ dailyRunLimit: 5, timeZone: "Asia/Seoul" });
       expect(await limitNow()).toBe(5);
       expect((await call(owner, "PATCH", "/settings", { dailyRunLimit: null })).json()).toEqual({
         dailyRunLimit: null,
+        timeZone: "Asia/Seoul",
       });
       expect(await limitNow()).toBeNull();
       expect((await call(owner, "PATCH", "/settings", { dailyRunLimit: 10_000 })).statusCode).toBe(200);
@@ -240,6 +243,94 @@ describe("운영 API /api/v1/ops", () => {
         expect(res.json().code).toBe("VALIDATION");
       }
       expect(await limitNow()).toBe(42);
+    });
+  });
+
+  describe("PATCH /settings — 시간대(자동화 스펙 「워크스페이스 시간대」 절, 계획 판정 PA4)", () => {
+    const now = new Date();
+    const wallInNewYork = (d: Date) =>
+      new Intl.DateTimeFormat("en-US", {
+        timeZone: "America/New_York",
+        hourCycle: "h23",
+        hour: "2-digit",
+        minute: "2-digit",
+      }).format(d);
+    const addAutomation = (name: string, over: Partial<NewAutomationRow> = {}) => {
+      const channel = createChannel(app.db, {
+        workspaceId: app.workspaceId,
+        createdBy: ownerId,
+        name: `tz-${uuid()}`,
+      });
+      return insertAutomation(app.db, {
+        id: uuid(),
+        workspaceId: app.workspaceId,
+        name,
+        channelId: channel.id,
+        kind: "schedule",
+        bodyMd: "점검",
+        enabled: true,
+        scheduleJson: { repeat: "daily", time: "09:00" },
+        nextRunAt: nextRunAt({ repeat: "daily", time: "09:00" }, "Asia/Seoul", now),
+        createdBy: ownerId,
+        createdAt: now,
+        updatedAt: now,
+        ...over,
+      });
+    };
+    const settings = () => getOpsSettings(app.db, app.workspaceId);
+    afterAll(async () => {
+      await call(owner, "PATCH", "/settings", { dailyRunLimit: 300, timeZone: "Asia/Seoul" });
+    });
+
+    it("timeZone 만 보내도 저장하고 한도는 그대로 — 켜진 예약의 다음 시각을 새 시간대로 다시 센다", async () => {
+      await call(owner, "PATCH", "/settings", { dailyRunLimit: 42, timeZone: "Asia/Seoul" });
+      const on = addAutomation(`켜짐-${uuid()}`);
+      const off = addAutomation(`꺼짐-${uuid()}`, { enabled: false, nextRunAt: null });
+      const res = await call(owner, "PATCH", "/settings", { timeZone: "America/New_York" });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ dailyRunLimit: 42, timeZone: "America/New_York" });
+      expect(settings()).toEqual({ dailyRunLimit: 42, timeZone: "America/New_York" });
+      const moved = getAutomation(app.db, app.workspaceId, on.id)?.nextRunAt;
+      expect(moved).not.toEqual(on.nextRunAt);
+      expect(wallInNewYork(moved as Date)).toBe("09:00");
+      expect((moved as Date).getTime()).toBeGreaterThan(Date.now() - 60_000);
+      expect(getAutomation(app.db, app.workspaceId, off.id)?.nextRunAt).toBeNull();
+    });
+
+    it("한도와 함께 보내면 둘 다 저장한다 — 시간대는 정규형으로", async () => {
+      const res = await call(admin, "PATCH", "/settings", { dailyRunLimit: 8, timeZone: "asia/seoul" });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ dailyRunLimit: 8, timeZone: "Asia/Seoul" });
+      expect(settings()).toEqual({ dailyRunLimit: 8, timeZone: "Asia/Seoul" });
+    });
+
+    it("모르는 이름은 400 VALIDATION — 같이 보낸 한도도, 예약 시각도 바꾸지 않는다", async () => {
+      await call(owner, "PATCH", "/settings", { dailyRunLimit: 11, timeZone: "Asia/Seoul" });
+      const on = addAutomation(`그대로-${uuid()}`);
+      for (const body of [{ timeZone: "Mars/Base" }, { dailyRunLimit: 6, timeZone: "Mars/Base" }]) {
+        const res = await call(owner, "PATCH", "/settings", body);
+        expect(res.statusCode, JSON.stringify(body)).toBe(400);
+        expect(res.json().code).toBe("VALIDATION");
+      }
+      expect(settings()).toEqual({ dailyRunLimit: 11, timeZone: "Asia/Seoul" });
+      expect(getAutomation(app.db, app.workspaceId, on.id)?.nextRunAt).toEqual(on.nextRunAt);
+    });
+
+    it("시간대가 그대로면(정규형 기준) 다음 시각을 다시 세지 않는다 — 기한이 막 지나 틱을 기다리는 회차가 내일로 밀리지 않게", async () => {
+      await call(owner, "PATCH", "/settings", { timeZone: "Asia/Seoul" });
+      const waiting = addAutomation(`기다림-${uuid()}`, { nextRunAt: new Date(Date.now() - 20_000) });
+      for (const timeZone of ["Asia/Seoul", "asia/seoul"]) {
+        const res = await call(owner, "PATCH", "/settings", { dailyRunLimit: 12, timeZone });
+        expect(res.statusCode).toBe(200);
+      }
+      expect(getAutomation(app.db, app.workspaceId, waiting.id)?.nextRunAt).toEqual(waiting.nextRunAt);
+    });
+
+    it("member 의 시간대 PATCH 는 403 이고 바꾸지 않는다", async () => {
+      const before = settings();
+      const res = await call(member, "PATCH", "/settings", { timeZone: "America/New_York" });
+      expect(res.statusCode).toBe(403);
+      expect(settings()).toEqual(before);
     });
   });
 

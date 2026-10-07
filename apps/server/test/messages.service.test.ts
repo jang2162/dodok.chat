@@ -1,14 +1,22 @@
 import { type Attachment, INTERACTIONS_MAX, Message } from "@dodok/shared";
-import { inArray } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { v7 as uuid } from "uuid";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "../src/db/client";
-import { attachments, componentInteractions } from "../src/db/schema.sqlite";
+import {
+  attachments,
+  channelMembers,
+  channels,
+  componentInteractions,
+  memberships,
+  users,
+} from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
 import { toAttachment } from "../src/modules/attachments/service";
 import { addMember, createChannel } from "../src/modules/channels/service";
 import {
   createAgentMessage,
+  createAutomationMessage,
   createSystemMessage,
   createUserMessage,
   getMessage,
@@ -556,5 +564,79 @@ describe("messages service", () => {
     const page = listMessages(db, channelId, { afterSeq: 0, limit: 1000 });
     expect(page.messages).toHaveLength(200);
     expect(page.hasMore).toBe(true);
+  });
+});
+
+describe("createAutomationMessage", () => {
+  /** 채널 밖 워크스페이스 사람 — 사람 메시지처럼 멘션으로 풀린다 */
+  function addPerson(db: Db, workspaceId: string, handle: string): string {
+    const id = uuid();
+    db.insert(users)
+      .values({ id, workspaceId, handle, displayName: handle, authProvider: "local", createdAt: new Date() })
+      .run();
+    db.insert(memberships).values({ id: uuid(), workspaceId, userId: id, role: "member" }).run();
+    return id;
+  }
+
+  it("평문 @핸들을 사람 메시지와 같은 참가자로 토큰화해 자동화 작성자·kind normal·최상위로 저장하고 message.created 를 낸다", () => {
+    const { db, bus, created, userId, channelId, devId } = setup();
+    const automationId = uuid();
+    const message = createAutomationMessage(db, bus, {
+      channelId,
+      automationId,
+      bodyMd: "@reviewer 와 @jang, 점검",
+    });
+    expect(Message.parse(message)).toEqual(message);
+    expect(message).toMatchObject({
+      seq: 1,
+      kind: "normal",
+      authorType: "automation",
+      authorId: automationId,
+      bodyMd: `<@a:${devId}> 와 <@u:${userId}>, 점검`,
+      mentions: { agents: [devId], users: [userId] },
+      attachments: [],
+    });
+    expect(message.threadRootId).toBeUndefined();
+    expect(message.clientMsgId).toBeUndefined();
+    expect(created.map((m) => m.id)).toEqual([message.id]);
+    expect(getMessage(db, message.id)).toEqual(message);
+  });
+
+  it("채널 밖 사람을 멘션하면 그 사람이 채널에 들어온다(사람 멘션과 같다) — channel.member.changed 한 번", () => {
+    const { db, bus, workspaceId, channelId } = setup();
+    const mia = addPerson(db, workspaceId, "mia");
+    const changes: string[] = [];
+    bus.on("channel.member.changed", (p) => changes.push(p.channelId));
+    const message = createAutomationMessage(db, bus, {
+      channelId,
+      automationId: uuid(),
+      bodyMd: "@mia 확인",
+    });
+    expect(message.mentions.users).toEqual([mia]);
+    const joined = db
+      .select()
+      .from(channelMembers)
+      .all()
+      .filter((m) => m.channelId === channelId && m.memberType === "user" && m.memberId === mia);
+    expect(joined).toHaveLength(1);
+    expect(changes).toEqual([channelId]);
+    // 자동화 자신은 채널 멤버가 되지 않는다
+    expect(
+      db
+        .select()
+        .from(channelMembers)
+        .all()
+        .some((m) => m.memberId === message.authorId),
+    ).toBe(false);
+  });
+
+  it("보관한 채널이면 CHANNEL_ARCHIVED — 저장·이벤트가 없다", () => {
+    const { db, bus, created, channelId } = setup();
+    db.update(channels).set({ archivedAt: new Date() }).where(eq(channels.id, channelId)).run();
+    expect(() => createAutomationMessage(db, bus, { channelId, automationId: uuid(), bodyMd: "x" })).toThrow(
+      expect.objectContaining({ status: 409, body: expect.objectContaining({ code: "CHANNEL_ARCHIVED" }) }),
+    );
+    expect(created).toHaveLength(0);
+    expect(listMessages(db, channelId, { limit: 10 }).messages).toEqual([]);
   });
 });

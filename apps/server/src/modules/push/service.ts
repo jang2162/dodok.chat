@@ -6,7 +6,7 @@ import { v7 as uuidv7 } from "uuid";
 import webpush from "web-push";
 import { session } from "../../db/auth-schema";
 import type { Db, DbOrTx } from "../../db/client";
-import { agents, memberships, pushSubscriptions, users } from "../../db/schema.sqlite";
+import { agents, automations, memberships, pushSubscriptions, users } from "../../db/schema.sqlite";
 import type { Logger } from "../../logger";
 import type { ServerBus } from "../../realtime/bus";
 import { channelParticipants, getChannel, isChannelArchived } from "../channels/service";
@@ -219,6 +219,12 @@ export function createTriggerLookups(db: DbOrTx, workspaceId: string): TriggerLo
     userHandle: (id) => db.select({ handle: users.handle }).from(users).where(eq(users.id, id)).get()?.handle,
     agentHandle: (id) =>
       db.select({ handle: agents.handle }).from(agents).where(eq(agents.id, id)).get()?.handle,
+    automationName: (id) =>
+      db
+        .select({ name: automations.name })
+        .from(automations)
+        .where(and(eq(automations.id, id), eq(automations.workspaceId, workspaceId)))
+        .get()?.name,
     humanMembers: (channelId) =>
       channelParticipants(db, channelId)
         .filter((p) => p.type === "user")

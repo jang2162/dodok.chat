@@ -10,7 +10,14 @@ import {
 import { and, desc, eq, inArray, isNull, lt, lte } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import type { DbOrTx } from "../../db/client";
-import { agents, channelMembers, componentInteractions, messages, users } from "../../db/schema.sqlite";
+import {
+  agents,
+  automations,
+  channelMembers,
+  componentInteractions,
+  messages,
+  users,
+} from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
 import { channelParticipants, getChannel } from "../channels/service";
 import type { AgentSessionRow } from "../sessions/service";
@@ -229,13 +236,18 @@ function relayRulesFor(policy: RelayPolicy, agentId: string, participants: Parti
   return `${base} 당신이 부를 수 있는 에이전트: ${[...handles].join(", ")}.`;
 }
 
-/** 작성자 행을 한 번에 읽는다. 채널을 떠난 작성자도 풀리도록 멤버가 아니라 users·agents 에서 찾는다. */
+/**
+ * 작성자 행을 한 번에 읽는다. 채널을 떠난 작성자도 풀리도록 멤버가 아니라 users·agents 에서 찾는다.
+ * 자동화 글은 system:automation 꼴로 보낸다 — 플러그인·러너가 이미 다루는 보낸 사람 꼴이라 그쪽을 바꾸지 않는다(자동화 스펙 결정 9).
+ * 자동화를 지웠으면 이름 없이 「자동화」(메시지는 남는다)
+ */
 function resolveAuthors(db: DbOrTx, refs: AuthorRef[]): (ref: AuthorRef) => InboundAuthor {
   const idsOf = (type: string) => [
     ...new Set(refs.flatMap((r) => (r.authorType === type && r.authorId ? [r.authorId] : []))),
   ];
   const userIds = idsOf("user");
   const agentIds = idsOf("agent");
+  const automationIds = idsOf("automation");
   const byKey = new Map<string, InboundAuthor>();
   if (userIds.length > 0) {
     for (const u of db
@@ -255,7 +267,29 @@ function resolveAuthors(db: DbOrTx, refs: AuthorRef[]): (ref: AuthorRef) => Inbo
       byKey.set(`agent:${a.id}`, { type: "agent", handle: a.handle, displayName: a.name });
     }
   }
+  if (automationIds.length > 0) {
+    for (const a of db
+      .select({ id: automations.id, name: automations.name })
+      .from(automations)
+      .where(inArray(automations.id, automationIds))
+      .all()) {
+      byKey.set(`automation:${a.id}`, {
+        type: "system",
+        handle: "automation",
+        displayName: `자동화 ${a.name}`,
+      });
+    }
+  }
   return (ref) => {
+    if (ref.authorType === "automation") {
+      return (
+        byKey.get(`automation:${ref.authorId}`) ?? {
+          type: "system",
+          handle: "automation",
+          displayName: "자동화",
+        }
+      );
+    }
     if (ref.authorType !== "user" && ref.authorType !== "agent") {
       return { type: "system", handle: "system", displayName: "system" };
     }

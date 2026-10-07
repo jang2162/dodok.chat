@@ -1,4 +1,4 @@
-import type { OpsAckResult, OpsSettingsPatch, OpsStatus } from "@dodok/shared";
+import type { OpsAckResult, OpsSettings, OpsSettingsPatch, OpsStatus } from "@dodok/shared";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/http";
 import { qk } from "@/api/queries";
@@ -24,7 +24,7 @@ export function useSaveRunLimit() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (dailyRunLimit: number | null) =>
-      api<OpsSettingsPatch>("PATCH", "/ops/settings", { dailyRunLimit } satisfies OpsSettingsPatch),
+      api<OpsSettings>("PATCH", "/ops/settings", { dailyRunLimit } satisfies OpsSettingsPatch),
     onSuccess: ({ dailyRunLimit }) =>
       qc.setQueryData<OpsStatus>(qk.opsStatus, (prev) => prev && { ...prev, dailyRunLimit }),
     meta: { silent: true },

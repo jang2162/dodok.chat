@@ -22,7 +22,8 @@ export const SearchHit = z.object({
   threadRootId: Id.optional(),
   /** 보관한 채널의 메시지 — 웹은 「보관됨」을 붙이고, 결과로 가기는 읽기 전용 채널 화면으로 간다 */
   channelArchived: z.boolean(),
-  authorType: z.enum(["user", "agent"]),
+  /** 검색은 kind normal 을 모두 찾는다 — 자동화 글도 결과에 든다(authorId 는 자동화 id) */
+  authorType: z.enum(["user", "agent", "automation"]),
   authorId: Id.optional(),
   createdAt: IsoDateTime,
   /** 일치 부분을 SEARCH_SNIPPET_OPEN·CLOSE 로 감싼 평문. 서버는 HTML 을 만들지 않는다 — 강조는 웹이 그린다 */

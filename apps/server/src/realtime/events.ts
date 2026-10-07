@@ -112,14 +112,18 @@ export function attachWireFanout(io: WireServer, bus: ServerBus, opts: WireFanou
     // 구독하지 않은 채널의 새 글을 사이드바가 알도록 본문 없는 신호를 워크스페이스 룸으로 낸다. silent 메시지도 저장된 것이라 안 읽은 것이다.
     // 위와 따로 등록한다 — 하이드레이션(새 글마다 리액션 질의)이 던져도 이 신호는 나가게. 버스는 등록 순서대로 부르므로 순서는 위가 먼저다
     on("message.created", ({ message }) => {
-      if (message.kind !== "normal" || (message.authorType !== "user" && message.authorType !== "agent"))
+      const { authorType } = message;
+      if (
+        message.kind !== "normal" ||
+        (authorType !== "user" && authorType !== "agent" && authorType !== "automation")
+      )
         return;
       if (!message.authorId) return;
       io.to(workspaceRoom(opts.workspaceId)).emit("channel.activity", {
         channelId: message.channelId,
         seq: message.seq,
         ...(message.threadRootId ? { threadRootId: message.threadRootId } : {}),
-        authorType: message.authorType,
+        authorType,
         authorId: message.authorId,
         mentionedUserIds: message.mentions.users,
       });

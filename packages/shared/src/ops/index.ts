@@ -21,6 +21,8 @@ export const OpsEventKind = z.enum([
   "disk_low",
   "invite_accept_failed",
   "member_deactivate_failed",
+  "automation_skipped", // key automation:<id> — 10분 넘게 놓친 예약
+  "automation_failed", // key automation:<id> — 게시 실패(보관한 채널이면 detail.code CHANNEL_ARCHIVED)
 ]);
 export type OpsEventKind = z.infer<typeof OpsEventKind>;
 
@@ -59,8 +61,12 @@ const TimeZoneName = z.string().min(1).max(64);
 export const OpsSettings = z.object({ dailyRunLimit: DailyRunLimit, timeZone: TimeZoneName });
 export type OpsSettings = z.infer<typeof OpsSettings>;
 
-/** PATCH /api/v1/ops/settings 본문 */
-export const OpsSettingsPatch = z.object({ dailyRunLimit: DailyRunLimit, timeZone: TimeZoneName.optional() });
+/** PATCH /api/v1/ops/settings 본문 — 준 키만 바꾼다(하나 이상). 응답은 바꾼 뒤의 OpsSettings 전체 */
+export const OpsSettingsPatch = z
+  .object({ dailyRunLimit: DailyRunLimit.optional(), timeZone: TimeZoneName.optional() })
+  .refine((patch) => patch.dailyRunLimit !== undefined || patch.timeZone !== undefined, {
+    message: "dailyRunLimit 이나 timeZone 가운데 하나는 있어야 한다",
+  });
 export type OpsSettingsPatch = z.infer<typeof OpsSettingsPatch>;
 
 /** 워크스페이스 일일 런 상한 — 설정 키가 없을 때 */

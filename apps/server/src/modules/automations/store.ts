@@ -91,9 +91,10 @@ export function dueSchedules(db: DbOrTx, now: Date): AutomationRow[] {
 
 /**
  * 이번 회차를 가져간다(계획 판정 PA3) — next_run_at 이 읽은 seen 그대로일 때만 next 로 올리고 true. 틱이 겹치거나 그사이 끄기·예약
- * 변경으로 next_run_at 이 바뀌었으면 false 이고 행을 건드리지 않는다. true 일 때만 게시한다
+ * 변경으로 next_run_at 이 바뀌었으면 false 이고 행을 건드리지 않는다. true 일 때만 게시한다. next 가 null 이면 그 예약을 멈춘다
+ * (다음 시각을 셀 수 없을 때 — 다시 세는 것은 rescheduleOne·rescheduleAll)
  */
-export function claimRun(db: DbOrTx, id: string, seen: Date, next: Date, now: Date): boolean {
+export function claimRun(db: DbOrTx, id: string, seen: Date, next: Date | null, now: Date): boolean {
   const result = db
     .update(automations)
     .set({ nextRunAt: next, lastRunAt: now })

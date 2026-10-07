@@ -99,6 +99,51 @@ const input = (partial: Partial<RoutingInput>): RoutingInput => ({
   ...partial,
 });
 
+const automationMsg = (agents: string[], extra: Partial<Message> = {}): Message => ({
+  ...userMsg(agents),
+  authorType: "automation",
+  authorId: ID(50),
+  ...extra,
+});
+
+describe("decideRuns — 자동화 메시지(결정 6: 멘션으로만)", () => {
+  it("멘션된 활성 에이전트마다 mention 런, depth 0, root = 메시지", () => {
+    const r = decideRuns(input({ message: automationMsg([A, B]) }));
+    expect(r).toEqual({
+      runs: [
+        { agentId: A, triggerKind: "mention", rootMessageId: ID(30), relayDepth: 0 },
+        { agentId: B, triggerKind: "mention", rootMessageId: ID(30), relayDepth: 0 },
+      ],
+      blocked: [],
+    });
+  });
+  it("멘션이 없으면 자동 응답 에이전트가 있어도 런 없음", () => {
+    const r = decideRuns(
+      input({ message: automationMsg([]), members: [member(A, { autoRespond: true }), member(B)] }),
+    );
+    expect(r).toEqual({ runs: [], blocked: [] });
+  });
+  it("멘션된 에이전트가 꺼졌거나 채널 밖이면 런 없음 — 자동 응답으로 넘어가지 않는다", () => {
+    const r = decideRuns(
+      input({
+        message: automationMsg([A, C]),
+        members: [member(A), member(B, { autoRespond: true })],
+        agents: [agent(A, "a", false), agent(B, "b")],
+      }),
+    );
+    expect(r).toEqual({ runs: [], blocked: [] });
+  });
+  it("멘션 일부만 활성이면 그것만, 중복은 한 번", () => {
+    const r = decideRuns(input({ message: automationMsg([A, A, C]) }));
+    expect(r.runs.map((x) => x.agentId)).toEqual([A]);
+  });
+  it("스레드 루트가 에이전트 글이어도 스레드 응답자로 넘어가지 않는다", () => {
+    const root = agentMsg(A, []);
+    const r = decideRuns(input({ message: automationMsg([], { threadRootId: root.id }), threadRoot: root }));
+    expect(r.runs).toEqual([]);
+  });
+});
+
 describe("decideRuns — 사람 메시지", () => {
   it("멘션된 활성 에이전트마다 mention 런, depth 0, root = 메시지", () => {
     const r = decideRuns(input({ message: userMsg([A, B]) }));

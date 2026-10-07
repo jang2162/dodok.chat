@@ -159,11 +159,13 @@ describe("워크스페이스 시간대", () => {
     expect(OpsSettings.safeParse({ dailyRunLimit: 300 }).success).toBe(false);
   });
 
-  it("OpsSettingsPatch 는 한도와 함께 시간대를 받는다", () => {
+  it("OpsSettingsPatch 는 한도·시간대를 따로도 함께도 받는다 — 빈 본문은 거절", () => {
     expect(OpsSettingsPatch.safeParse({ dailyRunLimit: 7 }).success).toBe(true);
+    expect(OpsSettingsPatch.safeParse({ timeZone: "America/New_York" }).success).toBe(true);
     expect(OpsSettingsPatch.safeParse({ dailyRunLimit: null, timeZone: "America/New_York" }).success).toBe(
       true,
     );
+    expect(OpsSettingsPatch.safeParse({}).success).toBe(false);
   });
 
   it("OpsSettingsPatch 의 빈 시간대는 거절 — 있는 이름인지는 서버가 가른다", () => {

@@ -18,6 +18,7 @@ import {
   upsertSubscription,
   webPushSender,
 } from "../src/modules/push/service";
+import { deleteAutomation, insertAutomation } from "../src/modules/automations/store";
 import { ServerBus } from "../src/realtime/bus";
 import type { PushTarget } from "../src/modules/push/triggers";
 import { newTestDb } from "./helpers/db";
@@ -582,6 +583,28 @@ describe("createTriggerLookups — DB 로 이름 풀기", () => {
     expect(createTriggerLookups(db, uuid()).channelName(s.channelId)).toBeUndefined();
   });
 
+  it("automationName — 그 워크스페이스의 자동화 이름, 지웠거나 다른 워크스페이스면 undefined", () => {
+    const db = newTestDb();
+    const s = seedChannelWithAgent(db);
+    const now = new Date();
+    const automation = insertAutomation(db, {
+      id: uuid(),
+      workspaceId: s.workspaceId,
+      name: "아침 점검",
+      channelId: s.channelId,
+      kind: "webhook",
+      bodyMd: "x",
+      enabled: true,
+      createdBy: s.userId,
+      createdAt: now,
+      updatedAt: now,
+    });
+    expect(createTriggerLookups(db, s.workspaceId).automationName(automation.id)).toBe("아침 점검");
+    expect(createTriggerLookups(db, uuid()).automationName(automation.id)).toBeUndefined();
+    deleteAutomation(db, s.workspaceId, automation.id);
+    expect(createTriggerLookups(db, s.workspaceId).automationName(automation.id)).toBeUndefined();
+  });
+
   it("admins — 그 워크스페이스 membership 의 owner·admin 만(member·다른 워크스페이스·membership 없음은 빼고)", () => {
     const db = newTestDb();
     const s = seedChannelWithAgent(db);
@@ -620,6 +643,7 @@ describe("attachPushTriggers — 버스 배선", () => {
     channelName: () => "프로젝트",
     userHandle: () => "alice",
     agentHandle: () => "dev",
+    automationName: () => undefined,
     humanMembers: () => [ALICE_ID],
     admins: () => [ALICE_ID],
     channelArchived: () => false,

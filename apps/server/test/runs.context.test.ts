@@ -8,7 +8,13 @@ import { agents, attachments, componentInteractions } from "../src/db/schema.sql
 import { createAgent } from "../src/modules/agents/service";
 import { toAttachment } from "../src/modules/attachments/service";
 import { addMember, updateAgentMember, updateChannel } from "../src/modules/channels/service";
-import { createAgentMessage, createSystemMessage, createUserMessage } from "../src/modules/messages/service";
+import {
+  createAgentMessage,
+  createAutomationMessage,
+  createSystemMessage,
+  createUserMessage,
+} from "../src/modules/messages/service";
+import { deleteAutomation, insertAutomation } from "../src/modules/automations/store";
 import { type InboundTrigger, attachmentPlaceholder, buildInboundDeliver } from "../src/modules/runs/context";
 import { ensureSession } from "../src/modules/sessions/service";
 import { ServerBus } from "../src/realtime/bus";
@@ -543,6 +549,81 @@ describe("buildInboundDeliver", () => {
       expect(inbound.context.recentMessages.map((m) => m.text)).toEqual(["루트"]);
       expect(inbound).not.toHaveProperty("threadId");
       expect(inbound.context).not.toHaveProperty("thread");
+    });
+  });
+
+  describe("자동화 작성자(자동화 스펙 「인바운드 작성자」 절)", () => {
+    const automationIn = (t: ReturnType<typeof setup>, name: string) => {
+      const now = new Date();
+      return insertAutomation(t.db, {
+        id: uuid(),
+        workspaceId: t.workspaceId,
+        name,
+        channelId: t.channelId,
+        kind: "webhook",
+        bodyMd: "@dev 봐 줘",
+        enabled: true,
+        createdBy: t.userId,
+        createdAt: now,
+        updatedAt: now,
+      });
+    };
+
+    it("트리거·최근 대화의 자동화 글은 system:automation 꼴 — displayName 은 「자동화 <이름>」", () => {
+      const t = setup();
+      const morning = automationIn(t, "아침 점검");
+      const deploy = automationIn(t, "배포 알림");
+      const earlier = createAutomationMessage(t.db, t.bus, {
+        channelId: t.channelId,
+        automationId: deploy.id,
+        bodyMd: "배포 끝",
+      });
+      const trigger = createAutomationMessage(t.db, t.bus, {
+        channelId: t.channelId,
+        automationId: morning.id,
+        bodyMd: "@dev 점검해 줘",
+      });
+      const { inbound } = t.deliver({ message: trigger });
+      expect(InboundDeliver.safeParse(inbound).success).toBe(true);
+      expect(inbound.message).toMatchObject({
+        id: trigger.id,
+        author: { type: "system", handle: "automation", displayName: "자동화 아침 점검" },
+        text: "@dev 점검해 줘",
+      });
+      expect(inbound.context.recentMessages).toEqual([
+        {
+          author: { type: "system", handle: "automation", displayName: "자동화 배포 알림" },
+          text: "배포 끝",
+          ts: earlier.createdAt,
+        },
+      ]);
+    });
+
+    it("[Review Focus 5] 자동화를 지운 뒤 그 글이 문맥에 실려도 던지지 않는다 — displayName 「자동화」", () => {
+      const t = setup();
+      const gone = automationIn(t, "지울 것");
+      const old = createAutomationMessage(t.db, t.bus, {
+        channelId: t.channelId,
+        automationId: gone.id,
+        bodyMd: "옛 알림",
+      });
+      deleteAutomation(t.db, t.workspaceId, gone.id);
+      const trigger = t.say("@dev 위 알림 봐 줘");
+      const { inbound } = t.deliver({ message: trigger });
+      expect(InboundDeliver.safeParse(inbound).success).toBe(true);
+      expect(inbound.context.recentMessages).toEqual([
+        {
+          author: { type: "system", handle: "automation", displayName: "자동화" },
+          text: "옛 알림",
+          ts: old.createdAt,
+        },
+      ]);
+      // 지운 자동화의 글이 트리거여도 같다
+      expect(t.deliver({ message: old }).inbound.message.author).toEqual({
+        type: "system",
+        handle: "automation",
+        displayName: "자동화",
+      });
     });
   });
 });

@@ -20,7 +20,12 @@ import * as schema from "../src/db/schema.sqlite";
 import { agents, memberships, messages, users } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
 import { addMember, createChannel } from "../src/modules/channels/service";
-import { createAgentMessage, createSystemMessage, createUserMessage } from "../src/modules/messages/service";
+import {
+  createAgentMessage,
+  createAutomationMessage,
+  createSystemMessage,
+  createUserMessage,
+} from "../src/modules/messages/service";
 import { searchMessages } from "../src/modules/search/service";
 import { ServerBus } from "../src/realtime/bus";
 import { migrationsFolder } from "../src/runtime";
@@ -285,6 +290,30 @@ describe("3글자 이상 — MATCH", () => {
       Buffer.from("[1]").toString("base64url"),
     ])
       expect(() => t.search("커서검사", { cursor })).toThrow(expect.objectContaining({ status: 400 }));
+  });
+});
+
+describe("자동화 글", () => {
+  it("작성자 automation 메시지가 검색 결과에 실린다 — FTS·2글자 두 경로, 한 행이 결과 전체를 죽이지 않는다", () => {
+    const t = setup();
+    const automationId = uuid();
+    const posted = createAutomationMessage(t.db, t.bus, {
+      channelId: t.channelId,
+      automationId,
+      bodyMd: "배포 점검 결과",
+    });
+    const human = t.say("배포 점검 끝");
+    for (const q of ["배포 점검", "배포"]) {
+      const r = t.search(q);
+      expect(ids(r).sort(), q).toEqual([posted.id, human.id].sort());
+      expect(
+        r.hits.find((h) => h.messageId === posted.id),
+        q,
+      ).toMatchObject({
+        authorType: "automation",
+        authorId: automationId,
+      });
+    }
   });
 });
 

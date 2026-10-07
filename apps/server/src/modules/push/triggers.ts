@@ -6,6 +6,8 @@ export type TriggerLookups = {
   channelName(id: string): string | undefined;
   userHandle(id: string): string | undefined;
   agentHandle(id: string): string | undefined;
+  /** 자동화 이름 — 지운 자동화면 undefined */
+  automationName(id: string): string | undefined;
   /** 채널의 사람 멤버 id */
   humanMembers(channelId: string): string[];
   /** 워크스페이스의 owner·admin id — 승인은 관리 일이라 채널 참여와 무관하게 이들에게만 간다 */
@@ -22,6 +24,21 @@ const placeOf = (l: TriggerLookups, m: Message) =>
   m.threadRootId === undefined
     ? { label: `#${channelLabel(l, m.channelId)}`, url: `/c/${m.channelId}` }
     : { label: `#${channelLabel(l, m.channelId)} 스레드`, url: `/c/${m.channelId}/t/${m.threadRootId}` };
+
+/** 멘션 알림의 보낸 이 — 사람·에이전트는 「@핸들이」, 자동화는 「자동화 <이름>이」(지웠으면 「자동화가」), 모르면 「누군가가」 */
+function whoOf(m: Message, l: TriggerLookups): string {
+  if (m.authorType === "automation") {
+    const name = m.authorId === undefined ? undefined : l.automationName(m.authorId);
+    return name ? `자동화 ${name}${josa(name, "이", "가")}` : "자동화가";
+  }
+  const author =
+    m.authorId === undefined
+      ? undefined
+      : m.authorType === "agent"
+        ? l.agentHandle(m.authorId)
+        : l.userHandle(m.authorId);
+  return author ? `@${author}${josa(author, "이", "가")}` : "누군가가";
+}
 
 export function targetsForMessage(m: Message, l: TriggerLookups): PushTarget[] {
   if (m.kind === "system") {
@@ -45,15 +62,8 @@ export function targetsForMessage(m: Message, l: TriggerLookups): PushTarget[] {
     (userId) => !(m.authorType === "user" && userId === m.authorId),
   );
   if (receivers.length === 0) return [];
-  const author =
-    m.authorId === undefined
-      ? undefined
-      : m.authorType === "agent"
-        ? l.agentHandle(m.authorId)
-        : l.userHandle(m.authorId);
-  const who = author ? `@${author}${josa(author, "이", "가")}` : "누군가가";
   const place = placeOf(l, m);
-  const body = `${who} ${place.label}에서 불렀습니다`;
+  const body = `${whoOf(m, l)} ${place.label}에서 불렀습니다`;
   // 같은 tag 는 푸시 서비스가 바꿔 끼운다 — 스레드마다 따로 둔다(80자 상한이라 채널 id 는 빼고 루트 id 만)
   const tag = m.threadRootId === undefined ? `mention:${m.channelId}` : `mention:t:${m.threadRootId}`;
   return receivers.map((userId) => ({

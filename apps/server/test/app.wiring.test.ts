@@ -21,6 +21,7 @@ import { getRun, listRunEvents } from "../src/modules/runs/store";
 import { ensureSession } from "../src/modules/sessions/service";
 import { ServerBus } from "../src/realtime/bus";
 import { sessionRecoverTargets } from "../src/wiring";
+import { getAutomation, insertAutomation } from "../src/modules/automations/store";
 import { bootTestApp, login } from "./helpers/app";
 import { testEnv } from "./helpers/env";
 import { FAKE_GATEWAY_ID, fakeGatewayStatus } from "./helpers/gateways";
@@ -159,6 +160,109 @@ describe("부팅 정리 — 파일 DB 로 두 번 부팅", () => {
       }
     } finally {
       rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("[Review Focus 1] 자동화 틱은 부팅 때 recoverOnBoot·adapter.connect 뒤에 한 번 돈다 — 재부팅을 연달아 해도 한 번만 게시, 그 멘션 런은 살아 있다", async () => {
+    const base = tempDir();
+    const DB_PATH = join(base, "dodok.sqlite");
+    const hourly = { automationTickMs: 3_600_000 };
+    try {
+      const first = await bootTestApp({ DB_PATH }, { adapters: [new FakeAdapter()], ...hourly });
+      const { channelId } = seedAgentChannel(first, "auto-boot");
+      const now = new Date();
+      const automation = insertAutomation(first.db, {
+        id: uuid(),
+        workspaceId: first.workspaceId,
+        name: "부팅 점검",
+        channelId,
+        kind: "schedule",
+        bodyMd: "@dev 점검해 줘",
+        enabled: true,
+        scheduleJson: { repeat: "daily", time: "09:00" },
+        // 5분 놓친 회차 — 10분 안이라 한 번 게시
+        nextRunAt: new Date(now.getTime() - 5 * 60_000),
+        createdBy: first.ownerUserId,
+        createdAt: now,
+        updatedAt: now,
+      });
+      await first.close();
+
+      const posted = (app: App) =>
+        listMessages(app.db, channelId, { limit: 200 }).messages.filter(
+          (m) => m.authorType === "automation" && m.authorId === automation.id,
+        );
+      const secondAdapter = new FakeAdapter();
+      let postedAtConnect: number | undefined;
+      vi.spyOn(secondAdapter, "connect").mockImplementation(async () => {
+        const peek = new Database(DB_PATH, { readonly: true });
+        postedAtConnect = (
+          peek.prepare("select count(*) as n from messages where author_type = 'automation'").get() as {
+            n: number;
+          }
+        ).n;
+        peek.close();
+      });
+      const second = await bootTestApp({ DB_PATH }, { adapters: [secondAdapter], ...hourly });
+      let runId: string | undefined;
+      try {
+        expect(postedAtConnect).toBe(0);
+        await vi.waitFor(() => expect(posted(second)).toHaveLength(1));
+        await vi.waitFor(() => expect(secondAdapter.calls.send).toHaveLength(1));
+        runId = secondAdapter.calls.send[0]?.runId;
+        // 부팅 틱이 recoverOnBoot 뒤라 그 런은 이 부팅이 닫지 않는다
+        expect(getRun(second.db, runId as string)).toMatchObject({
+          status: "queued",
+          triggerMessageId: posted(second)[0]?.id,
+        });
+      } finally {
+        await second.close();
+      }
+
+      const third = await bootTestApp({ DB_PATH }, { adapters: [new FakeAdapter()], ...hourly });
+      await third.close(); // 닫기는 진행 중인 틱을 기다린다
+      const reopened = await bootTestApp({ DB_PATH }, { adapters: [new FakeAdapter()], ...hourly });
+      try {
+        expect(posted(reopened)).toHaveLength(1);
+        expect(getAutomation(reopened.db, reopened.workspaceId, automation.id)).toMatchObject({
+          lastStatus: "ok",
+          nextRunAt: expect.any(Date),
+        });
+      } finally {
+        await reopened.close();
+      }
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("자동화 틱은 AppDeps.automationTickMs 마다 다시 돈다 — 부팅 뒤 기한이 된 예약도 게시된다", async () => {
+    const app = await bootTestApp({}, { automationTickMs: 20 });
+    try {
+      const { channelId } = seedAgentChannel(app, "auto-interval");
+      const now = new Date();
+      const automation = insertAutomation(app.db, {
+        id: uuid(),
+        workspaceId: app.workspaceId,
+        name: "주기 점검",
+        channelId,
+        kind: "schedule",
+        bodyMd: "점검",
+        enabled: true,
+        scheduleJson: { repeat: "hourly", minute: 0 },
+        nextRunAt: new Date(now.getTime() - 1000),
+        createdBy: app.ownerUserId,
+        createdAt: now,
+        updatedAt: now,
+      });
+      await vi.waitFor(() =>
+        expect(getAutomation(app.db, app.workspaceId, automation.id)?.lastStatus).toBe("ok"),
+      );
+      expect(
+        listMessages(app.db, channelId, { limit: 10 }).messages.filter((m) => m.authorType === "automation"),
+      ).toHaveLength(1);
+    } finally {
+      await app.close();
     }
   });
 

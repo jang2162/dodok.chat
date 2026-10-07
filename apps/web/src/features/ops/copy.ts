@@ -63,6 +63,11 @@ const TITLE: Record<OpsEventKind, (e: OpsEvent, nameOf: ChannelNameOf | undefine
   disk_low: () => "디스크 여유 부족",
   invite_accept_failed: () => "초대 수락 실패",
   member_deactivate_failed: () => "멤버 비활성화 실패",
+  automation_skipped: () => "자동화 예약을 놓쳐 건너뜀",
+  automation_failed: (e) => {
+    const code = str(e.detail.code);
+    return code ? `자동화 실행 실패 (${code})` : "자동화 실행 실패";
+  },
 };
 
 export const SEVERITY_LABEL: Record<OpsSeverity, string> = { info: "정보", warn: "주의", error: "오류" };

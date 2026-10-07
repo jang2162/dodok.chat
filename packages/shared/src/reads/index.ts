@@ -33,7 +33,8 @@ export const ChannelActivity = z.object({
   channelId: Id,
   seq: z.int().min(1),
   threadRootId: Id.optional(),
-  authorType: z.enum(["user", "agent"]),
+  authorType: z.enum(["user", "agent", "automation"]),
+  /** 자동화 글이면 자동화 id */
   authorId: Id,
   mentionedUserIds: z.array(Id),
 });

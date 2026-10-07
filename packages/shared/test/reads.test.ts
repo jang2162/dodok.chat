@@ -55,12 +55,17 @@ describe("ChannelActivity", () => {
     mentionedUserIds: [ID(3)],
   } as const;
 
-  it("본문 없는 신호 — 사람·에이전트 글만", () => {
+  it("본문 없는 신호 — 사람·에이전트·자동화 글만(자동화면 authorId 가 자동화 id)", () => {
     expect(ChannelActivity.parse(activity)).toEqual(activity);
     expect(ChannelActivity.parse({ ...activity, authorType: "agent", threadRootId: ID(4) })).toEqual({
       ...activity,
       authorType: "agent",
       threadRootId: ID(4),
+    });
+    expect(ChannelActivity.parse({ ...activity, authorType: "automation", authorId: ID(5) })).toEqual({
+      ...activity,
+      authorType: "automation",
+      authorId: ID(5),
     });
     expect(ChannelActivity.safeParse({ ...activity, authorType: "system" }).success).toBe(false);
   });
