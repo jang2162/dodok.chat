@@ -15,8 +15,9 @@
 	}
 
 	# /bridge/*·/runner/* 는 플러그인·러너의 첨부 HTTP(/bridge/attachments·/runner/attachments) — 두 WebSocket 은
-	# /socket.io/ 의 /bridge·/runner 네임스페이스다. /llms.txt 는 서버가 공개 주소를 채워 내는 노드 설치 안내서(정적 파일이 아니다)
-	@backend path /api/* /socket.io/* /bridge/* /runner/* /healthz /llms.txt
+	# /socket.io/ 의 /bridge·/runner 네임스페이스다. /llms.txt 는 서버가 공개 주소를 채워 내는 노드 설치 안내서(정적 파일이 아니다).
+	# /hooks/* 는 자동화 웹훅 수신(POST /hooks/<token>) — 빠지면 바깥 서비스의 POST 가 SPA 폴백으로 떨어진다
+	@backend path /api/* /socket.io/* /bridge/* /runner/* /hooks/* /healthz /llms.txt
 	handle @backend {
 		reverse_proxy {$DODOK_UPSTREAM:app:3000}
 	}
