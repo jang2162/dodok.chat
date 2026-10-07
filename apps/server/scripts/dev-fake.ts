@@ -706,7 +706,8 @@ export async function fakeRunnerScript(run: FakeRunnerRun): Promise<void> {
 
 /**
  * 가짜 Gateway·러너가 받은 인바운드의 반응을 한 줄로 — 「에이전트 답에 단 반응이 다음 런에 실리고 그다음 런에는 없다」를
- * 브라우저 검증이 이 줄로 본다. 반응이 없어도 찍는다(빈 배열이 「그다음 런에는 없음」의 증거다)
+ * 브라우저 검증이 이 줄로 본다. 반응이 없어도 찍는다(빈 배열이 「그다음 런에는 없음」의 증거다).
+ * 보낸 사람(`sender` = 플러그인의 senderId 꼴 `<type>:<handle>`)도 싣는다 — 자동화 글이 `system:automation` 으로 가는지 본다
  */
 function logInboundReactions(app: App, connection: string, d: InboundDeliver): void {
   app.logger.info(
@@ -715,6 +716,8 @@ function logInboundReactions(app: App, connection: string, d: InboundDeliver): v
       agentId: d.agentId,
       runId: d.runId,
       threadId: d.threadId,
+      sender: `${d.message.author.type}:${d.message.author.handle}`,
+      senderName: d.message.author.displayName,
       reactions: (d.context.reactions ?? []).map((r) => `@${r.by} ${r.emoji} ${r.messageId} "${r.excerpt}"`),
       reactionsOmitted: d.context.reactionsOmitted,
     },
