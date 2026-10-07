@@ -1784,13 +1784,7 @@ cmd_attach() {
                | select((.agentIdentity? // "") != "")
                | select(.orphaned? != true)
                | select(.connected? != false) | .handle? // empty')"
-    if [ "$role" = "review" ]; then
-      if [ -n "$live_handles" ]; then
-        printf 'attach: 리뷰어는 구현자와 다른 세션이어야 해서 살아 있는 터미널을 쓰지 않고 새로 띄운다\n' >&2
-        printf '  그 터미널(%s)은 그대로 둔다. 다 끝났으면: scripts/orca-worker.sh stop %s --force\n' \
-          "$(printf '%s' "$live_handles" | tr '\n' ' ' | sed 's/ *$//')" "$slug" >&2
-      fi
-    else
+    if [ "$role" != "review" ]; then
       handle="$(printf '%s\n' "$live_handles" | sed '/^$/d' | tail -n 1)"
     fi
   else
@@ -1810,17 +1804,34 @@ cmd_attach() {
 
   # 진행 중인 Dispatch 가 붙어 있는 터미널에 또 주입하면 워커가 같은 지시를 두 번
   # 받는다. 그 워커가 이미 브리프를 받고 일하는 중일 수 있다.
-  if [ -n "$handle" ] && [ "$force" != "yes" ]; then
+  # **새로 띄우는 리뷰도 같은 검사를 받는다** — 그 터미널에 붙지는 않지만, 구현자가 아직
+  # 일하는 중에 리뷰어를 띄우면 반쯤 된 트리를 리뷰하고 두 에이전트가 한 워크트리를 함께
+  # 고친다(리뷰어의 변이 테스트도 파일을 잠시 고친다).
+  local check_handles busy_handle
+  check_handles="$handle"
+  [ -z "$handle" ] && [ "$role" = "review" ] && check_handles="$live_handles"
+  if [ -n "$check_handles" ] && [ "$force" != "yes" ]; then
     live="$("$(orca_cli)" orchestration worker-list --json 2>/dev/null \
-      | jq -r --arg h "$handle" \
-          '[ .result.workers[]?
-             | select(.agentTerminalHandle? == $h)
-             | select(.dispatchStatus? == "dispatched") ] | last | .dispatchId? // empty')"
+      | jq -r --arg hs "$check_handles" \
+          '($hs | split("\n") | map(select(. != ""))) as $hs
+           | [ .result.workers[]?
+               | select(.agentTerminalHandle? as $h | any($hs[]; . == $h))
+               | select(.dispatchStatus? == "dispatched") ] | last
+           | select(. != null) | "\(.agentTerminalHandle) \(.dispatchId // "")"')"
     if [ -n "$live" ]; then
-      printf 'attach: 터미널 %s 에 아직 진행 중인 Dispatch(%s)가 있다\n' "$handle" "$live" >&2
-      printf '  그 워커는 이미 브리프를 받았을 수 있다. 다시 붙이면 같은 지시가 두 번 주입된다\n' >&2
+      busy_handle="${live%% *}"
+      live="${live#* }"
+      if [ -n "$handle" ]; then
+        printf 'attach: 터미널 %s 에 아직 진행 중인 Dispatch(%s)가 있다\n' "$handle" "$live" >&2
+        printf '  그 워커는 이미 브리프를 받았을 수 있다. 다시 붙이면 같은 지시가 두 번 주입된다\n' >&2
+      else
+        printf 'attach: 구현자 터미널 %s 에 아직 진행 중인 Dispatch(%s)가 있다\n' \
+          "$busy_handle" "$live" >&2
+        printf '  구현이 끝나기 전에 리뷰를 띄우면 반쯤 된 트리를 리뷰하고 두 에이전트가 같은 워크트리를 함께 고친다\n' >&2
+        printf '  끝을 받은 뒤 붙여라: scripts/orca-worker.sh wait\n' >&2
+      fi
       printf '  먼저 읽어 확인하라: %s terminal read --terminal %s --screen --json\n' \
-        "$(orca_cli)" "$handle" >&2
+        "$(orca_cli)" "$busy_handle" >&2
       printf '  확인하고도 붙이려면 --force\n' >&2
       return 1
     fi
@@ -1885,7 +1896,19 @@ cmd_attach() {
     fi
   else
     if [ "$role" = "review" ]; then
-      printf 'attach: 리뷰어를 새 에이전트로 띄워 붙인다\n' >&2
+      printf 'attach: 리뷰어를 새 에이전트로 띄워 붙인다 — 리뷰어는 구현자와 다른 세션이어야 한다\n' >&2
+      # **stop 은 워크트리 단위다.** 리뷰어를 띄운 뒤에 권하면 방금 띄운 리뷰어까지 문맥째
+      # 끈다(--force 라 「워커가 도는 중」 거부도 뚫린다). 띄운 뒤에는 핸들 하나씩만 끈다.
+      if [ -n "$live_handles" ]; then
+        printf '  남아 있는 에이전트 터미널(%s)은 그대로 둔다\n' \
+          "$(printf '%s' "$live_handles" | tr '\n' ' ' | sed 's/ *$//')" >&2
+        printf '  정리는 리뷰어를 띄우기 전에만 워크트리 단위로: scripts/orca-worker.sh stop %s --force\n' \
+          "$slug" >&2
+        printf '  띄운 뒤라면 그 핸들만 끈다:\n' >&2
+        printf '%s\n' "$live_handles" | sed '/^$/d' | while IFS= read -r h; do
+          printf '    %s terminal close --terminal %s\n' "$(orca_cli)" "$h" >&2
+        done
+      fi
     else
       printf 'attach: 살아 있는 에이전트 터미널이 없다. 새로 띄워 붙인다\n' >&2
     fi

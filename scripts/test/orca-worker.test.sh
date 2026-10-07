@@ -727,8 +727,15 @@ assert_eq "$(grep 'worker-start' "$STUB_ORCA_LOG" | grep -c -- '--terminal')" "0
   "attach review: 살아 있는 터미널이 있어도 --terminal 없이 새로 띄운다"
 assert_eq "$(grep 'worker-start' "$STUB_ORCA_LOG" | grep -c -- '--agent claude')" "1" \
   "attach review: --agent 로 새 에이전트를 띄운다"
-assert_eq "$(printf '%s' "$out" | grep -c 'term_reap_1.*그대로 둔다.*stop probe --force')" "1" \
-  "attach review: 남겨 둔 터미널 핸들과 정리 명령을 한 줄로 안내한다"
+assert_eq "$(printf '%s' "$out" | grep -c '남아 있는 에이전트 터미널(term_reap_1)은 그대로 둔다')" "1" \
+  "attach review: 남겨 둔 터미널 핸들을 보인다"
+# stop 은 워크트리 단위라 리뷰어를 띄운 뒤에 권하면 방금 띄운 리뷰어까지 끈다.
+assert_eq "$(printf '%s' "$out" | grep -c '띄우기 전에만.*stop probe --force')" "1" \
+  "attach review: 워크트리 단위 stop 은 리뷰어를 띄우기 전에만 권한다"
+assert_eq "$(printf '%s' "$out" | grep -c 'terminal close --terminal term_reap_1$')" "1" \
+  "attach review: 띄운 뒤에는 그 핸들 하나만 끄는 명령을 보인다"
+assert_eq "$(printf '%s' "$out" | grep -c -- 'stop probe --force')" "1" \
+  "attach review: 워크트리 단위 stop 을 다른 자리에서 또 권하지 않는다"
 # 같은 조건의 implement 는 재사용한다.
 : > "$STUB_ORCA_LOG"
 cmd_attach probe implement >/dev/null 2>&1
