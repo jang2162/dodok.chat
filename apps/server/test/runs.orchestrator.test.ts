@@ -2364,6 +2364,33 @@ describe("리액션 — 다음 런에 싣고, send 가 받아들여졌을 때만
     t.orch.stop();
   });
 
+  // 러너 대기열에 선 것도 send 가 성공한 것이다(리액션 스펙 「런에 싣기」 절) — 그 런이 시작 전에 중지돼도 다시 싣지 않는다
+  // (OpenClaw 의 ack 뒤 중지와 같은 꼴)
+  it("러너가 자기 대기열에 세운 런(queued: true)도 받아들여진 것이라 커서를 올린다 — 다음 런에 다시 싣지 않는다", async () => {
+    const t = reactionSetup();
+    t.adapter.setCapabilities({
+      sessionReset: true,
+      agentsList: true,
+      configSet: true,
+      promptEveryRun: true,
+      serverSessionIds: true,
+    });
+    t.adapter.script((input) => ({ admission: "dispatch", providerRunId: input.runId, queued: true }));
+    t.react("👍", 1);
+    vi.setSystemTime(at(10));
+
+    const first = await t.enqueue();
+    expect(t.carried(0)).toEqual(["mia 👍 1"]);
+    await t.flush();
+    expect(t.runOf(first.id).status).toBe("queued");
+    expect(t.cursor()).toEqual(at(1));
+
+    await t.finish(first.id);
+    await t.enqueue();
+    expect(t.adapter.calls.send[1]?.context.reactions).toBeUndefined();
+    t.orch.stop();
+  });
+
   it("싣지 않은 런은 커서를 건드리지 않는다", async () => {
     const t = reactionSetup();
     vi.setSystemTime(at(10));

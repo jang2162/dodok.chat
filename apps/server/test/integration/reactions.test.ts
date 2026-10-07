@@ -282,7 +282,7 @@ describe("통합 — 리액션", () => {
     expect(back.delivery?.context.reactionsOmitted).toBe(5);
   });
 
-  it("러너 에이전트 — 다음 런의 RunnerRunStart.deliver.context.reactions 에 실린다", async () => {
+  it("러너 에이전트 — 다음 런의 RunnerRunStart.deliver.context.reactions 에 실리고 그다음 런에는 없다", async () => {
     live = await bootLiveApp();
     const issued = IssueRunnerTokenResult.parse(
       (await rest(live, "POST", "/setup/runner-tokens", { label: "macbook" })).body,
@@ -314,12 +314,14 @@ describe("통합 — 리액션", () => {
     if (!answer) throw new Error("러너 답이 없다");
     expect(await react(mia.log, answer.id, "👍")).toEqual(OK);
     await turn({ owner, channel }, "@coder 다음");
+    await turn({ owner, channel }, "@coder 또");
 
-    expect(runner.runStarts).toHaveLength(2);
+    expect(runner.runStarts).toHaveLength(3);
     expect(runner.runStarts[0]?.deliver.context.reactions).toBeUndefined();
     expect(runner.runStarts[1]?.deliver.context.reactions).toEqual([
       expect.objectContaining({ messageId: answer.id, emoji: "👍", by: "mia" }),
     ]);
+    expect(runner.runStarts[2]?.deliver.context.reactions).toBeUndefined();
   });
 
   describe("거절", () => {
