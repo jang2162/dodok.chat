@@ -64,6 +64,7 @@
 | member 초대, 재설정 링크 발급, member 내보내기 | — | ✅ | ✅ |
 | admin 초대, 역할 바꾸기(admin ↔ member), admin 내보내기 | — | — | ✅ |
 | 운영 화면(`/api/v1/ops/*` — 사건 확인·한도 설정) | — | ✅ | ✅ |
+| 자동화 목록·만들기·수정·삭제·웹훅 토큰 재발급·지금 실행(`/api/v1/automations/*`) — 웹훅 수신(`POST /hooks/<token>`)은 세션 없이 토큰만 본다 | — | ✅ | ✅ |
 | 연결 페이지(`/api/v1/setup/*` — 브리지 토큰) | — | — | ✅ |
 
 - **서버가 막는다.** 웹이 숨기는 것은 편의다. REST 는 `requireRole(min)` preHandler(세션 확인 뒤 membership 의 역할을 **요청마다** 읽는다 — 바뀌면 다음 요청부터 따른다). 지금의 `requireOwner` 는 `requireRole("owner")` 가 된다. 모자라면 403 `FORBIDDEN`.
