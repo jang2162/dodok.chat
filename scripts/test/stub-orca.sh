@@ -51,7 +51,7 @@ allowed_flags() {
     ("terminal send")               printf 'help json pairing-code environment terminal text enter interrupt' ;;
     ("terminal wait")               printf 'help json pairing-code environment terminal for timeout-ms' ;;
     ("terminal rename")             printf 'help json pairing-code environment terminal title' ;;
-    ("terminal stop")               printf 'help json pairing-code environment worktree' ;;
+    ("terminal close")              printf 'help json pairing-code environment terminal tab worktree all' ;;
     ("orchestration run-current")   printf 'help json pairing-code environment from' ;;
     ("orchestration run-create")    printf 'help json pairing-code environment objective from retry-request' ;;
     ("orchestration task-create")   printf 'help json pairing-code environment spec task-title display-name deps parent run from retry-request' ;;
@@ -74,7 +74,6 @@ required_flags() {
     ("orchestration worker-release") printf 'dispatch' ;;
     ("orchestration request-show")  printf 'request' ;;
     ("orchestration worker-show")   printf 'dispatch' ;;
-    ("terminal stop")               printf 'worktree' ;;
     ("terminal wait")               printf 'for' ;;
     ("worktree create")             printf 'name' ;;
     ("worktree rm")                 printf 'worktree' ;;
@@ -86,7 +85,7 @@ die_invalid() {
   # 실물의 --json 오류 형식을 흉내낸다. stdout 에 JSON, stderr 에 사람이 읽는 줄.
   #
   # 거부 사실을 로그에도 남긴다. 프로덕션 코드가 종료코드를 삼키는 호출
-  # (terminal stop, worktree rm 등)은 거부돼도 아무도 보지 못한다 —
+  # (terminal close, worktree rm 등)은 거부돼도 아무도 보지 못한다 —
   # 테스트가 "REJECTED 가 0건인가"를 직접 물을 수 있어야 그 자리도 지켜진다.
   if [ -n "${STUB_ORCA_LOG:-}" ]; then
     printf 'REJECTED: %s\n' "$1" >> "$STUB_ORCA_LOG"
@@ -123,6 +122,26 @@ for req in $(required_flags "$sub"); do
   done
   [ "$found" = "yes" ] || die_invalid "Missing required flag --$req for command: $sub"
 done
+
+# terminal close 의 usage 는 `([--terminal <핸들>] [--tab] | --worktree <셀렉터> --all)` 이다.
+# 둘 중 한 꼴이어야 하고, 워크트리 전체는 --all 이 짝이다. --all 이 없는 --worktree 는
+# 실물이 거부하므로 스텁도 거부해야 그 호출을 쓰는 코드가 테스트를 통과하지 못한다.
+if [ "$sub" = "terminal close" ]; then
+  has_t=no; has_w=no; has_a=no
+  for arg in "$@"; do
+    case "$arg" in
+      (--terminal|--terminal=*) has_t=yes ;;
+      (--worktree|--worktree=*) has_w=yes ;;
+      (--all) has_a=yes ;;
+    esac
+  done
+  if [ "$has_w" = "yes" ]; then
+    [ "$has_a" = "yes" ] && [ "$has_t" = "no" ] \
+      || die_invalid "terminal close --worktree needs --all and cannot combine with --terminal for command: $sub"
+  else
+    [ "$has_t" = "yes" ] || die_invalid "Missing required flag (--terminal | --worktree --all) for command: $sub"
+  fi
+fi
 
 # worker-start 는 --agent 와 --terminal 중 하나가 반드시 있어야 한다.
 if [ "$sub" = "orchestration worker-start" ]; then

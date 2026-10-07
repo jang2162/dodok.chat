@@ -835,7 +835,7 @@ cmd_reap() {
 
     printf '%s 정리\n' "$slug"
     release_workers "$wt_id"
-    "$(orca_cli)" terminal stop --worktree "id:$wt_id" --json >/dev/null 2>&1
+    "$(orca_cli)" terminal close --worktree "id:$wt_id" --all --json >/dev/null 2>&1
     # --force 로 게이트를 넘긴 경우 rm 도 --force 라야 한다. 아니면 워커 회수와
     # 터미널 정지는 끝났는데 워크트리만 남는 반쪽 상태가 된다.
     if [ "$force" = "yes" ]; then
@@ -905,7 +905,7 @@ EOF
 # **다른 프로젝트의 터미널과 자기 자신의 터미널까지** 끄고, 끈 쪽은 무엇을 껐는지 모른다.
 #
 # 여기서는 `collect_worktrees` 가 `repoId` 로 거른 워크트리만 대상이 되고,
-# 파괴 명령은 정확 일치 셀렉터를 받는 `terminal stop --worktree` 하나뿐이다.
+# 파괴 명령은 정확 일치 셀렉터를 받는 `terminal close --worktree --all` 하나뿐이다.
 cmd_stop() {
   local target="" force=no dry=no
   while [ $# -gt 0 ]; do
@@ -985,8 +985,8 @@ cmd_stop() {
     fi
 
     printf '%s: 터미널 %s개를 정지한다\n' "$slug" "$live"
-    "$(orca_cli)" terminal stop --worktree "id:$repo::$path" --json >/dev/null 2>&1 \
-      || { printf '  경고: terminal stop 실패 — %s\n' "$slug" >&2; refused=$((refused + 1)); }
+    "$(orca_cli)" terminal close --worktree "id:$repo::$path" --all --json >/dev/null 2>&1 \
+      || { printf '  경고: terminal close 실패 — %s\n' "$slug" >&2; refused=$((refused + 1)); }
   done <<EOF
 $rows
 EOF

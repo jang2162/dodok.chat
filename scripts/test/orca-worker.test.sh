@@ -247,14 +247,14 @@ export STUB_ORCA_PS_FIXTURE STUB_ORCA_WORKERS_FIXTURE ORCA_WORKER_REPO_ID ORCA_W
 
 # dry-run 은 아무 Orca 명령도 부르지 않아야 한다.
 cmd_reap w-reap --base main --dry-run >/dev/null 2>&1
-assert_eq "$(grep -c -E 'worker-release|terminal stop|worktree rm' "$STUB_ORCA_LOG")" "0" \
+assert_eq "$(grep -c -E 'worker-release|terminal close|worktree rm' "$STUB_ORCA_LOG")" "0" \
   "dry-run 은 어떤 파괴 명령도 실행하지 않는다"
 
 # 실제 실행은 회수→정지→폐기 순서여야 한다. Orca 호출은 스텁이 받는다.
 : > "$STUB_ORCA_LOG"
 cmd_reap w-reap --base main >/dev/null 2>&1
-order="$(grep -o -E 'worker-release|terminal stop|worktree rm' "$STUB_ORCA_LOG" | tr '\n' ',')"
-assert_eq "$order" "worker-release,terminal stop,worktree rm," "회수→터미널정지→폐기 순서"
+order="$(grep -o -E 'worker-release|terminal close|worktree rm' "$STUB_ORCA_LOG" | tr '\n' ',')"
+assert_eq "$order" "worker-release,terminal close,worktree rm," "회수→터미널정지→폐기 순서"
 
 # 게이트에 걸리면 실행 명령이 하나도 나가지 않아야 한다.
 : > "$STUB_ORCA_LOG"
@@ -1150,7 +1150,7 @@ assert_status 1 "없는 슬러그는 실패로 알린다" cmd_reap 없는슬러�
 # F8 — 일괄 + --force 금지
 : > "$STUB_ORCA_LOG"
 assert_status 2 "--all-merged 와 --force 는 함께 못 쓴다" cmd_reap --all-merged --force --base main
-assert_eq "$(grep -c -E 'worker-release|terminal stop|worktree rm' "$STUB_ORCA_LOG")" "0" \
+assert_eq "$(grep -c -E 'worker-release|terminal close|worktree rm' "$STUB_ORCA_LOG")" "0" \
   "거부된 조합은 어떤 파괴 명령도 실행하지 않는다"
 # 개별 슬러그 + --force 는 여전히 허용된다
 printf 'wip\n' > "$D/.worktrees/$DB/plain/wip.txt"
@@ -1595,7 +1595,7 @@ assert_status 1 "고아가 있으면 status 가 exit 1 이다" cmd_status --base
 
 : > "$STUB_ORCA_LOG"
 cmd_reap dead --base main --dry-run >/dev/null 2>&1
-assert_eq "$(grep -c -E 'worker-release|terminal stop|worktree rm' "$STUB_ORCA_LOG")" "0" \
+assert_eq "$(grep -c -E 'worker-release|terminal close|worktree rm' "$STUB_ORCA_LOG")" "0" \
   "고아 dry-run 은 어떤 Orca 명령도 부르지 않는다"
 assert_eq "$([ -d "$O/.worktrees/$OB/dead" ] && printf yes || printf no)" "yes" \
   "dry-run 은 고아를 지우지 않는다"
@@ -1901,19 +1901,23 @@ assert_eq "$(grep -c '^REJECTED' "$STUB_ORCA_LOG")" "0" \
 echo "stop — 저장소 범위 터미널 정지"
 : > "$STUB_ORCA_LOG"
 assert_status 0 "슬러그를 찍으면 성공한다" cmd_stop w-reap
-assert_eq "$(grep 'terminal stop' "$STUB_ORCA_LOG" | grep -c -- "--worktree id:repo1::$X/.worktrees/lms-base/w-reap")" "1" \
-  "정확 일치 셀렉터로 terminal stop 을 부른다"
-assert_eq "$(grep -c 'terminal stop' "$STUB_ORCA_LOG")" "1" \
+assert_eq "$(grep 'terminal close' "$STUB_ORCA_LOG" | grep -c -- "--worktree id:repo1::$X/.worktrees/lms-base/w-reap")" "1" \
+  "정확 일치 셀렉터로 terminal close 를 부른다"
+assert_eq "$(grep -c 'terminal close' "$STUB_ORCA_LOG")" "1" \
   "지정한 워크트리 하나에만 나간다"
 assert_eq "$(grep -c '^REJECTED' "$STUB_ORCA_LOG")" "0" \
   "stop 의 모든 Orca 호출이 실물 인자 검증을 통과한다"
-assert_eq "$(grep -c 'terminal close' "$STUB_ORCA_LOG")" "0" \
+assert_eq "$(grep 'terminal close' "$STUB_ORCA_LOG" | grep -c -- '--terminal')" "0" \
   "핸들 단위 terminal close 를 쓰지 않는다"
+assert_eq "$(grep 'terminal close' "$STUB_ORCA_LOG" | grep -c -- '--all')" "1" \
+  "워크트리 전체 정지는 --all 을 싣는다"
+assert_eq "$(grep -c 'terminal stop' "$STUB_ORCA_LOG")" "0" \
+  "Deprecated terminal stop 을 부르지 않는다"
 
 # 저장소 밖 슬러그는 셀렉터조차 만들지 않는다.
 : > "$STUB_ORCA_LOG"
 assert_status 1 "다른 저장소의 슬러그는 거부한다" cmd_stop other-wt
-assert_eq "$(grep -c 'terminal stop' "$STUB_ORCA_LOG")" "0" \
+assert_eq "$(grep -c 'terminal close' "$STUB_ORCA_LOG")" "0" \
   "다른 저장소 슬러그에는 아무 명령도 나가지 않는다"
 assert_status 1 "없는 슬러그는 실패로 알린다" cmd_stop 없는슬러그
 assert_status 2 "슬러그도 --all 도 없으면 사용법 오류다" cmd_stop
@@ -1922,17 +1926,17 @@ assert_status 2 "알 수 없는 인자는 거부한다" cmd_stop w-reap --nope
 # dry-run 은 아무것도 부르지 않는다.
 : > "$STUB_ORCA_LOG"
 cmd_stop w-reap --dry-run >/dev/null 2>&1
-assert_eq "$(grep -c 'terminal stop' "$STUB_ORCA_LOG")" "0" \
-  "dry-run 은 terminal stop 을 부르지 않는다"
+assert_eq "$(grep -c 'terminal close' "$STUB_ORCA_LOG")" "0" \
+  "dry-run 은 terminal close 을 부르지 않는다"
 
 # 도는 워커는 --force 없이 끊지 않는다.
 : > "$STUB_ORCA_LOG"
 assert_status 1 "도는 워커는 --force 없이 거부한다" cmd_stop w-live
-assert_eq "$(grep -c 'terminal stop' "$STUB_ORCA_LOG")" "0" \
+assert_eq "$(grep -c 'terminal close' "$STUB_ORCA_LOG")" "0" \
   "거부된 stop 은 명령을 내지 않는다"
 : > "$STUB_ORCA_LOG"
 assert_status 0 "--force 면 도는 워커도 끊는다" cmd_stop w-live --force
-assert_eq "$(grep 'terminal stop' "$STUB_ORCA_LOG" | grep -c 'w-live')" "1" \
+assert_eq "$(grep 'terminal close' "$STUB_ORCA_LOG" | grep -c 'w-live')" "1" \
   "--force 는 실제로 그 워크트리에 나간다"
 
 # 보호 표시는 stop 에서도 최우선이고 --force 로도 뚫리지 않는다.
@@ -1940,24 +1944,24 @@ touch "$X/.worktrees/lms-base/w-keep/.orca-keep"
 : > "$STUB_ORCA_LOG"
 assert_status 1 "보호된 워크트리는 stop 도 거부한다" cmd_stop w-keep
 assert_status 1 "--force 로도 보호를 뚫지 못한다" cmd_stop w-keep --force
-assert_eq "$(grep -c 'terminal stop' "$STUB_ORCA_LOG")" "0" \
+assert_eq "$(grep -c 'terminal close' "$STUB_ORCA_LOG")" "0" \
   "보호된 워크트리에는 명령이 나가지 않는다"
 
 # 자기가 서 있는 워크트리는 끄지 않는다 — 사고의 절반이 이것이었다.
 : > "$STUB_ORCA_LOG"
 ( cd "$X/.worktrees/lms-base/w-reap" && cmd_stop --all ) >/dev/null 2>&1
-assert_eq "$(grep 'terminal stop' "$STUB_ORCA_LOG" | grep -c 'w-reap')" "0" \
+assert_eq "$(grep 'terminal close' "$STUB_ORCA_LOG" | grep -c 'w-reap')" "0" \
   "자기가 서 있는 워크트리의 터미널은 끄지 않는다"
 : > "$STUB_ORCA_LOG"
 ( cd "$X/.worktrees/lms-base/w-reap" && cmd_stop w-reap ) >/dev/null 2>&1
-assert_eq "$(grep -c 'terminal stop' "$STUB_ORCA_LOG")" "0" \
+assert_eq "$(grep -c 'terminal close' "$STUB_ORCA_LOG")" "0" \
   "슬러그를 직접 찍어도 자기 발밑은 끄지 않는다"
 
 # --all 과 --force 는 함께 못 쓴다. 합치면 이 저장소의 도는 워커를 한 번에 끊는다 —
 # reap 의 --all-merged --force 금지와 같은 관문이다.
 : > "$STUB_ORCA_LOG"
 assert_status 2 "--all 과 --force 는 함께 못 쓴다" cmd_stop --all --force
-assert_eq "$(grep -c 'terminal stop' "$STUB_ORCA_LOG")" "0" \
+assert_eq "$(grep -c 'terminal close' "$STUB_ORCA_LOG")" "0" \
   "거부된 조합은 어떤 정지 명령도 실행하지 않는다"
 assert_eq "$(cmd_stop --all --force 2>&1 >/dev/null | grep -c -- '--all --dry-run')" "1" \
   "거부하면서 대신 무엇을 하라고 알려준다"
@@ -1968,9 +1972,9 @@ assert_status 0 "슬러그 + --force 는 그대로 쓸 수 있다" cmd_stop w-li
 # --all 은 이 저장소의 워크트리만 훑는다.
 : > "$STUB_ORCA_LOG"
 cmd_stop --all >/dev/null 2>&1
-assert_eq "$(grep -c 'terminal stop' "$STUB_ORCA_LOG")" "1" \
+assert_eq "$(grep -c 'terminal close' "$STUB_ORCA_LOG")" "1" \
   "--all 은 보호·도는 워커·터미널 0을 빼고 남은 것에만 나간다"
-assert_eq "$(grep 'terminal stop' "$STUB_ORCA_LOG" | grep -c 'other-project')" "0" \
+assert_eq "$(grep 'terminal close' "$STUB_ORCA_LOG" | grep -c 'other-project')" "0" \
   "--all 이 다른 저장소의 워크트리를 건드리지 않는다"
 rm -f "$X/.worktrees/lms-base/w-keep/.orca-keep"
 
@@ -1994,7 +1998,7 @@ assert_eq "$("$HERE/stub-orca.sh" terminal list --worktree "" --json | jq -r '.r
 assert_status 1 "repoId 를 얻지 못하면 stop 이 중단한다" \
   env -u ORCA_WORKER_REPO_ID ORCA_WORKER_REPO_ROOT="$X/없는최상위" \
   bash -c 'ORCA_WORKER_LIB=1 . "$0"; cmd_stop --all' "$SUT"
-assert_eq "$(grep -c 'terminal stop' "$STUB_ORCA_LOG")" "0" \
+assert_eq "$(grep -c 'terminal close' "$STUB_ORCA_LOG")" "0" \
   "repoId 가 없으면 어떤 정지 명령도 내보내지 않는다"
 
 rm -f "$STUB_ORCA_LOG"; rm -rf "$X"
@@ -2116,9 +2120,9 @@ export STUB_ORCA_PS_FIXTURE STUB_ORCA_TERMINALS_FIXTURE ORCA_WORKER_REPO_ID ORCA
 
 : > "$STUB_ORCA_LOG"
 ( cd "$ZR/link/.worktrees/$ZB/w-self" && cmd_stop --all ) >/dev/null 2>&1
-assert_eq "$(grep 'terminal stop' "$STUB_ORCA_LOG" | grep -c 'w-self')" "0" \
+assert_eq "$(grep 'terminal close' "$STUB_ORCA_LOG" | grep -c 'w-self')" "0" \
   "심링크 경로로 서 있어도 자기 터미널은 끄지 않는다(stop)"
-assert_eq "$(grep 'terminal stop' "$STUB_ORCA_LOG" | grep -c 'w-other')" "1" \
+assert_eq "$(grep 'terminal close' "$STUB_ORCA_LOG" | grep -c 'w-other')" "1" \
   "옆 워크트리는 그대로 정지된다(가드가 전부를 막아 통과하는 것이 아니다)"
 
 : > "$STUB_ORCA_LOG"
