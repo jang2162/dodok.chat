@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Caddy 앞단 검사 — 라우팅·SPA 폴백·캐시·보안 헤더를 curl 로 단언한다. 줄마다 PASS/FAIL, 하나라도 FAIL 이면 exit 1.
 # 사용: bash infra/check-caddy.sh https://localhost:8443   (로컬 검증은 compose.local.yml 머리의 명령으로 띄운 뒤)
+# 웹훅 토큰이 Caddy 로그에 원문으로 남지 않는지는 CADDY_LOG_CMD(Caddy 로그를 찍는 명령)를 줄 때만 본다 — 없으면 SKIP 줄. 로컬 검증은
+#   CADDY_LOG_CMD='docker compose --env-file infra/local.env -f infra/compose.yml -f infra/compose.local.yml logs --no-log-prefix caddy' \
+#     bash infra/check-caddy.sh https://localhost:8443
 # 인증서는 검사하지 않는다(-k) — 로컬 검증은 Caddy 내부 CA 다. 운영 도메인에 쓰면 인증서 확인은 따로 한다.
 # CSP 는 헤더 글자만 본다 — 정책이 앱을 깨지 않는지(위반 0)는 브라우저 검증 몫이다. 보지 않는 것: 업로드 상한(19·21 MiB)·WebSocket 연결·X-Forwarded-For 가 서버의 request.ip 로 들어가는지 — 브라우저·서버 로그 검증 몫
 set -uo pipefail
@@ -100,6 +103,26 @@ for path in / /healthz; do
     fail "CSP 강제 · script-src 'self' 만 ($path)" "Content-Security-Policy '$csp'"
   fi
 done
+
+# 웹훅 토큰 가림(Caddyfile 전역 log default 필터) — 본문을 Content-Length 보다 적게 보내고 끊으면 업스트림이 살아 있어도 Caddy 가
+# 502 와 함께 오류 로그 한 줄(request.uri)을 남긴다. 가린 줄(whk_ + 6자 뒤 「…」)이 있어야 PASS — 줄이 없으면 가림을 본 것이 아니다
+if [[ -n "${CADDY_LOG_CMD:-}" ]]; then
+  hook_token="whk_$(head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n' | head -c 43)"
+  curl -sk --max-time 2 -o /dev/null -X POST -H 'Content-Type: text/plain' -H 'Content-Length: 1000' \
+    --data-binary 'abc' "$origin/hooks/$hook_token?delivery=1" 2>/dev/null || true
+  sleep 1
+  bash -c "$CADDY_LOG_CMD" >"$tmp/caddy.log" 2>&1 || true
+  label="웹훅 토큰이 Caddy 오류 로그에 원문으로 없다(본문 도중 끊기)"
+  if grep -qF "${hook_token:10}" "$tmp/caddy.log"; then
+    fail "$label" "토큰 뒷부분이 로그에 있다 — Caddyfile 의 request>uri 필터"
+  elif ! grep -qF "/hooks/${hook_token:0:10}…" "$tmp/caddy.log"; then
+    fail "$label" "가린 줄(/hooks/${hook_token:0:10}…)을 로그에서 못 찾았다 — CADDY_LOG_CMD 가 이 Caddy 의 로그를 찍는가"
+  else
+    pass "$label"
+  fi
+else
+  printf 'SKIP  웹훅 토큰이 Caddy 오류 로그에 원문으로 없다 — CADDY_LOG_CMD 가 없어 안 봤다\n'
+fi
 
 if ((fails > 0)); then
   printf '\ncheck-caddy: %d 개 FAIL\n' "$fails"

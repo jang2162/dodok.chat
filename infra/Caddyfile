@@ -5,6 +5,15 @@
 #   DODOK_UPSTREAM     서버 주소(기본 app:3000). 로컬 검증의 devfake 프로필만 devfake:3000
 {
 	{$CADDY_LOCAL_CERTS}
+	# 웹훅 토큰을 로그에서 가린다 — access log 는 없지만 핸들러 오류(http.log.error)가 기본 로거로 request.uri 를 원문으로 남긴다:
+	# 업스트림이 내려간 동안(배포·재시작)이나 보낸 쪽이 본문 도중 끊을 때의 502. 꼴은 서버 redactUrl(apps/server/src/logger.ts)과
+	# 같다 — /hooks/ 다음 조각(대소문자 무관)은 앞 10자, 그 밖 어디든 whk_ 토큰 꼴은 whk_ + 6자 뒤를 「…」로. 필드 하나에 필터
+	# 하나라 두 규칙을 교대로 합쳤다(맞지 않은 쪽 그룹은 빈 글). 확인: infra/check-caddy.sh 의 CADDY_LOG_CMD
+	log default {
+		format filter {
+			request>uri regexp "((?i:/hooks/)[^/?#]{10})[^/?#]+|(whk_[\w-]{6})[\w-]+" "${1}${2}…"
+		}
+	}
 }
 
 {$DODOK_DOMAIN} {
