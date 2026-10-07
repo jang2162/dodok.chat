@@ -704,6 +704,24 @@ export async function fakeRunnerScript(run: FakeRunnerRun): Promise<void> {
   });
 }
 
+/**
+ * 가짜 Gateway·러너가 받은 인바운드의 반응을 한 줄로 — 「에이전트 답에 단 반응이 다음 런에 실리고 그다음 런에는 없다」를
+ * 브라우저 검증이 이 줄로 본다. 반응이 없어도 찍는다(빈 배열이 「그다음 런에는 없음」의 증거다)
+ */
+function logInboundReactions(app: App, connection: string, d: InboundDeliver): void {
+  app.logger.info(
+    {
+      connection,
+      agentId: d.agentId,
+      runId: d.runId,
+      threadId: d.threadId,
+      reactions: (d.context.reactions ?? []).map((r) => `@${r.by} ${r.emoji} ${r.messageId} "${r.excerpt}"`),
+      reactionsOmitted: d.context.reactionsOmitted,
+    },
+    "dev:fake inbound reactions",
+  );
+}
+
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { "content-type": "application/json; charset=utf-8" }).end(JSON.stringify(body));
 }
@@ -1266,7 +1284,14 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
       return run;
     };
     const connectRunner = (token: string) =>
-      startFakeRunner({ url: live.url, token, script: fakeRunnerScript });
+      startFakeRunner({
+        url: live.url,
+        token,
+        script: (run) => {
+          logInboundReactions(live, "runner", run.start.deliver);
+          return fakeRunnerScript(run);
+        },
+      });
     // 러너 끊기·붙이기도 한 번에 하나씩
     let runnerSwapping: Promise<unknown> = Promise.resolve();
     const setRunner = (input: { connected: boolean; token?: string | undefined }): Promise<unknown> => {
@@ -1400,18 +1425,23 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
       // 대본의 이름표는 시작 때 등록한 핸들(집 dev 는 dev-home) — 답만 보고 어느 Gateway 가 답했는지 안다
       const scenarioAgents: Record<string, ScenarioAgent> = {};
       for (const { id, handle } of spec.agents)
-        scenarioAgents[id] = ({ delivery }) => fakeAgentScript(handle, delivery);
+        scenarioAgents[id] = ({ delivery }) => {
+          logInboundReactions(live, spec.name, delivery);
+          return fakeAgentScript(handle, delivery);
+        };
       // 그 Gateway 에 없는 id(다른 Gateway 에서 옮겨 온 에이전트)도 답한다 — 「삭제 → 옮기기 → 다시 실행 → 답」을 끝까지 보게.
       // 이름표는 채널 참여자 가운데 자기 핸들
       createScenario({
         gateway: pair.gateway,
         plugin,
         agents: scenarioAgents,
-        fallback: ({ delivery }) =>
-          fakeAgentScript(
+        fallback: ({ delivery }) => {
+          logInboundReactions(live, spec.name, delivery);
+          return fakeAgentScript(
             delivery.context.participants.find((p) => p.isSelf)?.handle ?? delivery.agentId,
             delivery,
-          ),
+          );
+        },
       });
     }
     try {
