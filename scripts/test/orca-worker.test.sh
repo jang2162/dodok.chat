@@ -874,14 +874,57 @@ assert_eq "$(grep 'worker-start' "$STUB_ORCA_LOG" | grep -c -- '--retry-of')" "0
   "성공한 Dispatch 는 --retry-of 로 잇지 않는다"
 
 # 직전이 성공이면 그 앞의 실패도 잇지 않는다. 이을 것은 「교체하는 그 시도」뿐이다.
+# worker-list 는 최신순이다 — 첫 행이 가장 최근 dispatch 다.
 jq --arg h term_reap_1 \
-   '.result.workers = [{dispatchId:"ctx_old_fail",taskId:"task_o",runId:"run_a",workerState:"failed",dispatchStatus:"failed",agentTerminalHandle:$h,terminalState:"retained",resource:null},
-                       {dispatchId:"ctx_done",taskId:"task_done",runId:"run_a",workerState:"completed",dispatchStatus:"completed",agentTerminalHandle:$h,terminalState:"retained",resource:null}]' \
+   '.result.workers = [{dispatchId:"ctx_done",taskId:"task_done",runId:"run_a",workerState:"completed",dispatchStatus:"completed",agentTerminalHandle:$h,terminalState:"retained",resource:null},
+                       {dispatchId:"ctx_old_fail",taskId:"task_o",runId:"run_a",workerState:"failed",dispatchStatus:"failed",agentTerminalHandle:$h,terminalState:"retained",resource:null}]' \
    "$HERE/fixtures/worker-list.json" > "$P/staleworker.json"
 : > "$STUB_ORCA_LOG"
 STUB_ORCA_WORKERS_FIXTURE="$P/staleworker.json" cmd_attach probe chore >/dev/null 2>&1
 assert_eq "$(grep 'worker-start' "$STUB_ORCA_LOG" | grep -c -- '--retry-of')" "0" \
   "직전이 성공이면 그 앞의 실패를 끌어와 잇지 않는다"
+
+# 같은 터미널에 dispatch 여럿 — 최신(첫 행)이 실패면 --retry-of 가 그것이다. 더 오래된
+# 성공·실패는 잇지 않는다. 둘째 장에 있어도 최신이 첫 행이면 첫 행이 이긴다.
+jq --arg h term_reap_1 \
+   '.result.workers = [{dispatchId:"ctx_newest_fail",taskId:"task_n",runId:"run_a",workerState:"failed",dispatchStatus:"failed",agentTerminalHandle:$h,terminalState:"retained",resource:null},
+                       {dispatchId:"ctx_older_done",taskId:"task_d",runId:"run_a",workerState:"completed",dispatchStatus:"completed",agentTerminalHandle:$h,terminalState:"retained",resource:null},
+                       {dispatchId:"ctx_oldest_fail",taskId:"task_f",runId:"run_a",workerState:"failed",dispatchStatus:"failed",agentTerminalHandle:$h,terminalState:"retained",resource:null}]' \
+   "$HERE/fixtures/worker-list.json" > "$P/multiworker.json"
+: > "$STUB_ORCA_LOG"
+STUB_ORCA_WORKERS_FIXTURE="$P/multiworker.json" cmd_attach probe chore >/dev/null 2>&1
+assert_eq "$(grep 'worker-start' "$STUB_ORCA_LOG" | grep -c -- '--retry-of ctx_newest_fail ')" "1" \
+  "dispatch 여럿이면 최신(첫 행)의 실패를 --retry-of 로 잇는다"
+assert_eq "$(grep 'worker-start' "$STUB_ORCA_LOG" | grep -c -- '--retry-of ctx_oldest_fail')" "0" \
+  "가장 오래된 dispatch 는 잇지 않는다"
+: > "$STUB_ORCA_LOG"
+STUB_ORCA_WORKERS_FIXTURE="$P/multiworker.json" STUB_ORCA_WORKERS_PAGE_SIZE=1 \
+  cmd_attach probe chore >/dev/null 2>&1
+assert_eq "$(grep 'worker-start' "$STUB_ORCA_LOG" | grep -c -- '--retry-of ctx_newest_fail ')" "1" \
+  "목록이 여러 장이어도 최신을 --retry-of 로 잇는다"
+
+# 그 터미널의 최신 실패가 둘째 장에 있다(첫 장은 다른 터미널의 더 최근 dispatch).
+jq --arg h term_reap_1 \
+   '.result.workers = [{dispatchId:"ctx_p1",taskId:"task_p1",runId:"run_a",workerState:"completed",dispatchStatus:"completed",agentTerminalHandle:"term_other",terminalState:"retained",resource:null},
+                       {dispatchId:"ctx_p2_fail",taskId:"task_p2",runId:"run_a",workerState:"failed",dispatchStatus:"failed",agentTerminalHandle:$h,terminalState:"retained",resource:null}]' \
+   "$HERE/fixtures/worker-list.json" > "$P/page2fail.json"
+: > "$STUB_ORCA_LOG"
+STUB_ORCA_WORKERS_FIXTURE="$P/page2fail.json" STUB_ORCA_WORKERS_PAGE_SIZE=1 \
+  cmd_attach probe chore >/dev/null 2>&1
+assert_eq "$(grep 'worker-start' "$STUB_ORCA_LOG" | grep -c -- '--retry-of ctx_p2_fail ')" "1" \
+  "직전 시도가 둘째 장에 있어도 --retry-of 로 잇는다"
+
+# 둘째 장에만 있는 진행 중 Dispatch 도 리뷰 attach 를 거부시킨다(첫 장만 읽으면 놓친다).
+jq --arg h term_reap_1 \
+   '.result.workers = [{dispatchId:"ctx_p1",taskId:"task_p1",runId:"run_a",workerState:"completed",dispatchStatus:"completed",agentTerminalHandle:"term_other",terminalState:"retained",resource:null},
+                       {dispatchId:"ctx_p2_live",taskId:"task_p2",runId:"run_a",workerState:"unsupervised",dispatchStatus:"dispatched",agentTerminalHandle:$h,terminalState:"retained",resource:null}]' \
+   "$HERE/fixtures/worker-list.json" > "$P/page2live.json"
+: > "$STUB_ORCA_LOG"
+assert_status 1 "둘째 장에만 있는 진행 중 Dispatch 가 리뷰 attach 를 거부시킨다" \
+  env STUB_ORCA_WORKERS_FIXTURE="$P/page2live.json" STUB_ORCA_WORKERS_PAGE_SIZE=1 \
+  bash -c '. "$0"; cmd_attach probe review' "$SUT"
+assert_eq "$(grep -c 'orchestration task-create' "$STUB_ORCA_LOG")" "0" \
+  "둘째 장의 진행 중 Dispatch 로 거부하면 Task 도 만들지 않는다"
 
 # 없는 워크트리에 attach 하면 spawn 을 쓰라고 말한다.
 assert_status 1 "워크트리가 없으면 거부한다" cmd_attach 없다 chore

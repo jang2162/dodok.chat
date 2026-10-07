@@ -564,8 +564,7 @@ orca_pages() {
   done
 }
 
-# 한 워크트리 것이라고 **증명된** 워커만 낸다.
-# 한 줄에 탭으로 `<dispatchId> <terminalState> <retainedReason> <증명>` 을 낸다.
+# `worker-list` 의 모든 항목을 끝까지, 모든 Run 에서 읽어 응답을 한 장에 한 줄씩 낸다.
 #
 # **목록을 끝까지, 모든 Run 에서 읽는다.** `worker-list` 는 `--run` 이 없으면 부른 터미널에
 # 묶인 Run 만 내고, 묶인 Run 이 없을 때만 모든 Run 을 낸다. 한 번에 최신 100행만 내므로
@@ -575,31 +574,11 @@ orca_pages() {
 # `--run` 으로 읽는다. 「모든 Run」을 고르는 옵션은 `worker-list --help` 에 없다 — 그래서
 # 묶인 터미널에서는 Run 수만큼 왕복한다. `run-list` 에 없는 Run 은 볼 수 없다.
 #
-# 목록에는 저장소 경계가 없다 — 모든 프로젝트의 워커가 한 목록에 들어 있고(범위는 Run 이지
-# 저장소가 아니다), 항목에는 `worktreeId` 라는 최상위 필드가 **없다**. 그래서 소유를 증명하는
-# 길은 둘뿐이고 둘 다 정확 일치다.
-#   1) `.resource.worktreeId` 가 이 워크트리와 같다. `resource` 는 워커가 쥔 워크트리
-#      자원 기록이라 **터미널이 이미 죽은 뒤에도 남는다** — 회수해야 할 것이 정확히 그것이다.
-#   2) `.agentTerminalHandle` 이 `terminal list --worktree <셀렉터>` 가 낸 핸들 집합에 있다.
-#      `resource` 가 null 인 항목(비감독 dispatch)을 여기서 줍는다.
-#
-# **어느 쪽도 대지 못하는 항목은 내지 않는다.** 이 목록을 느슨하게 거르면 남의
-# 프로젝트 워커를 회수하게 된다 — 목록에 경계가 없으므로 필터가 유일한 경계다.
-#
-# **소유 증명과 회수 대상 판정은 다른 일이다.** 여기서는 거르지 않고 상태를 그대로
-# 실어 보낸다 — 판정은 `release_workers` 가 한다. 증명된 것을 여기서 지우면
-# 「건너뛴 것과 그 이유」를 조율자가 볼 방법이 없어진다.
-#
-# `terminal list` 의 **평문**을 grep 으로 파싱하지 마라. 전역 목록이고 항목 길이가
-# 가변이라 `grep -B/-A` 창이 남의 항목을 통째로 삼킨다. JSON 의 `.handle` 만 읽는다.
-#
-# 목록을 끝까지 읽지 못하면 **rc=1** 이다 — 한 장이라도 못 읽었거나, 페이지가 끝나지
-# 않거나(`orca_pages`), Run 목록을 못 읽었을 때다. 「0건」과 「못 읽었다」는 다르다 —
-# 같은 것으로 만들면 필터가 죽은 날 회수가 조용히 생략된다.
-owned_workers() {
-  local wt_id="$1" handles pages first scope bound runs rid more
-  handles="$("$(orca_cli)" terminal list --worktree "id:$wt_id" --json 2>/dev/null \
-    | jq -r '.result.terminals[]?.handle // empty' 2>/dev/null)"
+# **순서.** 한 목록 안에서는 최신순이다(`worker-list --help`). 항목에는 시각 필드가 없어
+# 호출자가 정렬할 수 없다 — 묶인 Run 의 장이 먼저, 그 뒤가 `run-list` 순서다.
+# 못 읽으면 rc=1 이다(「0건」과 다르다 — `orca_pages`).
+all_workers() {
+  local pages first scope bound runs rid more
   pages="$(orca_pages '.result.page.nextCursor' orchestration worker-list --json)" || return 1
   # 범위는 첫 장의 `scope` 가 말한다. 그것을 싣지 않는 CLI 는 Run 범위가 생기기 전 것이라
   # 늘 모든 dispatch 를 냈다.
@@ -623,6 +602,38 @@ $more"
   fi
   printf '%s\n' "$pages" | jq -s -e 'all(.[]; .result.workers | type == "array")' >/dev/null 2>&1 \
     || return 1
+  printf '%s\n' "$pages"
+}
+
+# 한 워크트리 것이라고 **증명된** 워커만 낸다.
+# 한 줄에 탭으로 `<dispatchId> <terminalState> <retainedReason> <증명>` 을 낸다.
+#
+# 목록에는 저장소 경계가 없다 — 모든 프로젝트의 워커가 한 목록에 들어 있고(범위는 Run 이지
+# 저장소가 아니다), 항목에는 `worktreeId` 라는 최상위 필드가 **없다**. 그래서 소유를 증명하는
+# 길은 둘뿐이고 둘 다 정확 일치다.
+#   1) `.resource.worktreeId` 가 이 워크트리와 같다. `resource` 는 워커가 쥔 워크트리
+#      자원 기록이라 **터미널이 이미 죽은 뒤에도 남는다** — 회수해야 할 것이 정확히 그것이다.
+#   2) `.agentTerminalHandle` 이 `terminal list --worktree <셀렉터>` 가 낸 핸들 집합에 있다.
+#      `resource` 가 null 인 항목(비감독 dispatch)을 여기서 줍는다.
+#
+# **어느 쪽도 대지 못하는 항목은 내지 않는다.** 이 목록을 느슨하게 거르면 남의
+# 프로젝트 워커를 회수하게 된다 — 목록에 경계가 없으므로 필터가 유일한 경계다.
+#
+# **소유 증명과 회수 대상 판정은 다른 일이다.** 여기서는 거르지 않고 상태를 그대로
+# 실어 보낸다 — 판정은 `release_workers` 가 한다. 증명된 것을 여기서 지우면
+# 「건너뛴 것과 그 이유」를 조율자가 볼 방법이 없어진다.
+#
+# `terminal list` 의 **평문**을 grep 으로 파싱하지 마라. 전역 목록이고 항목 길이가
+# 가변이라 `grep -B/-A` 창이 남의 항목을 통째로 삼킨다. JSON 의 `.handle` 만 읽는다.
+#
+# 목록을 끝까지 읽지 못하면 **rc=1** 이다 — 한 장이라도 못 읽었거나, 페이지가 끝나지
+# 않거나(`orca_pages`), Run 목록을 못 읽었을 때다. 「0건」과 「못 읽었다」는 다르다 —
+# 같은 것으로 만들면 필터가 죽은 날 회수가 조용히 생략된다.
+owned_workers() {
+  local wt_id="$1" handles pages
+  handles="$("$(orca_cli)" terminal list --worktree "id:$wt_id" --json 2>/dev/null \
+    | jq -r '.result.terminals[]?.handle // empty' 2>/dev/null)"
+  pages="$(all_workers)" || return 1
   printf '%s\n' "$pages" \
     | jq -r --arg wt "$wt_id" --arg handles "$handles" '
         ($handles | split("\n") | map(select(length > 0))) as $H
@@ -1879,16 +1890,23 @@ cmd_attach() {
   # **새로 띄우는 리뷰도 같은 검사를 받는다** — 그 터미널에 붙지는 않지만, 구현자가 아직
   # 일하는 중에 리뷰어를 띄우면 반쯤 된 트리를 리뷰하고 두 에이전트가 한 워크트리를 함께
   # 고친다(리뷰어의 변이 테스트도 파일을 잠시 고친다).
-  local check_handles busy_handle
+  local check_handles busy_handle all
   check_handles="$handle"
   [ -z "$handle" ] && [ "$role" = "review" ] && check_handles="$live_handles"
   if [ -n "$check_handles" ] && [ "$force" != "yes" ]; then
-    live="$("$(orca_cli)" orchestration worker-list --json 2>/dev/null \
-      | jq -r --arg hs "$check_handles" \
+    # 첫 장 밖·다른 Run 의 진행 중 Dispatch 도 봐야 하므로 목록을 끝까지 읽는다(`all_workers`).
+    # 못 읽은 것을 「진행 중 없음」으로 읽으면 두 번 주입되므로 거부한다.
+    all="$(all_workers)" || {
+      printf 'attach: worker-list 를 끝까지 읽지 못해 진행 중인 Dispatch 를 확인하지 못했다\n' >&2
+      printf '  확인하고도 붙이려면 --force\n' >&2
+      return 1
+    }
+    live="$(printf '%s\n' "$all" \
+      | jq -rs --arg hs "$check_handles" \
           '($hs | split("\n") | map(select(. != ""))) as $hs
-           | [ .result.workers[]?
+           | [ .[].result.workers[]?
                | select(.agentTerminalHandle? as $h | any($hs[]; . == $h))
-               | select(.dispatchStatus? == "dispatched") ] | last
+               | select(.dispatchStatus? == "dispatched") ] | first
            | select(. != null) | "\(.agentTerminalHandle) \(.dispatchId // "")"')"
     if [ -n "$live" ]; then
       busy_handle="${live%% *}"
@@ -1942,14 +1960,24 @@ cmd_attach() {
   # 관측된 실패도 그 자리였다: 구현 워커가 정상 종료(`completed`)한 터미널에 리뷰어를
   # 붙이려 하자 `worker-start` 가 `task_not_startable` 로 두 번 거절했다.
   #
-  # **`last` 를 고른 뒤에 상태를 본다.** 실패한 것만 먼저 걸러 `last` 를 잡으면, 그 뒤에
-  # 성공한 Dispatch 가 있어도 **옛 실패를 끌어와** 잇는다 — 교체 대상은 「직전 시도」뿐이다.
+  # **`first` 를 고른 뒤에 상태를 본다.** `worker-list` 는 최신순이므로 직전 시도는 `first` 다
+  # — `last` 는 그 터미널의 가장 오래된 dispatch 라 실패한 최신 시도를 잇지 못한다. 항목에
+  # 시각 필드가 없어 정렬로 고를 수 없으니 목록 순서(`all_workers` 의 순서 문단)에 기댄다.
+  # 실패한 것만 먼저 걸러 `first` 를 잡으면, 그 뒤에 성공한 Dispatch 가 있어도 **옛 실패를
+  # 끌어와** 잇는다 — 교체 대상은 「직전 시도」뿐이다.
   # (배치는 물려받지 않으므로 --terminal/--worktree 는 그대로 다시 준다.)
   local prev retry_of
-  prev="$("$(orca_cli)" orchestration worker-list --json 2>/dev/null \
-    | jq -r --arg h "$handle" \
-        '[ .result.workers[]? | select(.agentTerminalHandle? == $h) ] | last
-           | select(.dispatchStatus? == "failed") | .dispatchId? // empty')"
+  prev=""
+  if [ -n "$handle" ]; then
+    all="$(all_workers)" || {
+      printf 'attach: worker-list 를 끝까지 읽지 못해 직전 시도를 확인하지 못했다\n' >&2
+      return 1
+    }
+    prev="$(printf '%s\n' "$all" \
+      | jq -rs --arg h "$handle" \
+          '[ .[].result.workers[]? | select(.agentTerminalHandle? == $h) ] | first
+             | select(.dispatchStatus? == "failed") | .dispatchId? // empty')"
+  fi
   retry_of=""
   [ -n "$prev" ] && retry_of="$prev"
 
