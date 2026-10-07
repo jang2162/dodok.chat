@@ -1,6 +1,6 @@
-# dodok.chat — 에이전트 네이티브 메신저 개발 계획서 (v0.26)
+# dodok.chat — 에이전트 네이티브 메신저 개발 계획서 (v0.27)
 
-작성일: 2026-09-14 · 상태: v0.26 (2026-10-06) — 읽지 않음을 마쳤다: 사람마다 채널 읽음 위치를 서버에 두어 기기 사이에 맞추고, 사이드바는 안 읽은 채널을 굵게·나를 멘션한 수를 배지로, 타임라인은 「새 메시지」 구분선과 페이지 밖 배너를 보인다(8장 Phase 4). 이 사이클이 남긴 것은 8장 「이월」의 「읽지 않음」 묶음.
+작성일: 2026-09-14 · 상태: v0.27 (2026-10-07) — 리액션을 마쳤다: 사람이 보통 메시지에 고정 이모지 8종으로 반응을 달고, 에이전트가 쓴 메시지에 달린 반응은 그 에이전트의 다음 턴에 사실로 실린다(8장 Phase 4). 이 사이클이 남긴 것은 8장 「이월」의 「리액션」 묶음.
 
 ### 변경 이력
 
@@ -30,6 +30,7 @@
 | v0.24 | **설정 통합·에이전트 보관·`llms.txt` 종료**(2026-10-06, 실연까지) — 8장 Phase 4 에 완료 표시·구성 요약·확인 방법, 화면이 옮겨 간 줄(Phase 2 ④ 「알림」·Phase 3 ② 「연결」 진입점·이월 「권한 물음」 줄의 파일)을 지금 자리로, 「이월」 머리를 이 시점으로, 새 묶음 「설정·에이전트 보관·llms.txt」 |
 | v0.25 | **채널 보관·멤버 비활성화 종료**(2026-10-06) — 8장 Phase 4 에 완료 표시·구성 요약·확인 방법, 「팀」 절의 내보내기 문장을 비활성화로, 「이월」 머리를 이 시점으로, 「팀」 묶음의 내보내기 예외 경로 줄을 비활성화의 예외 경로로, 새 묶음 「채널 보관·멤버 비활성화」 |
 | v0.26 | **읽지 않음 종료**(2026-10-06) — 8장 Phase 4 에 완료 표시·구성 요약·확인 방법, 「이월」 머리를 이 시점으로, 새 묶음 「읽지 않음」 |
+| v0.27 | **리액션 종료**(2026-10-07, 실연까지) — 8장 Phase 4 에 완료 표시·구성 요약·확인 방법, 「이월」 머리를 이 시점으로, 새 묶음 「리액션」, 「실물 확인」에 실연 줄, 7.1 (B) 「이모지/리액션」 줄을 지금 상태로 |
 
 ---
 
@@ -403,7 +404,7 @@ SQLite(WAL)로 시작, Drizzle ORM으로 스키마 정의해 Postgres 전환 시
 | **메시지 목록 가상화** | **TanStack Virtual**(MIT) | react-virtuoso(기본 MIT; "Message List" 제품은 상용) | 역방향 스크롤·하단 고정 처리만 직접 |
 | **메시지 작성기(@멘션)** | **Tiptap**(MIT 코어) + Mention 확장 + 마크다운 직렬화 | Lexical(Meta, MIT) | 사람/에이전트 멘션 자동완성, 슬래시 커맨드, 이미지 붙여넣기 |
 | **JSON → 폼/모달 렌더** | 우리 `components` 스키마를 **Zod**로 정의하고 shadcn 프리미티브로 직접 렌더(규모가 작음) | react-jsonschema-form(Apache-2.0) | 모달 필드 ≤5 제약이라 자체 렌더러가 더 가벼움 |
-| **이모지/리액션** | emoji-mart | — | |
+| **이모지/리액션** | emoji-mart | — | 쓰지 않는다 — 리액션은 고정 8종이라 피커가 Radix 메뉴 하나다(리액션 스펙 결정 2) |
 | **에이전트 이벤트 표준** | **AG-UI**(MIT) 이벤트 모델을 내부 `RunEvent` 형식으로 채택 — TEXT_MESSAGE_*, TOOL_CALL_START/ARGS/END, STATE_*, CUSTOM | 자체 정의 | OpenClaw `chat`/`agent`(`stream:"tool"`) 이벤트를 AG-UI로 정규화하면 후속 Claude/Codex/Hermes 어댑터가 같은 형식으로 합류. CopilotKit·Pydantic AI·Mastra 등 1st-party 커넥터 존재 |
 | **선언적 UI 규약(후속)** | A2UI(Google, Apache-2.0) — OpenClaw도 `/__openclaw__/a2ui/` 호스팅 | — | v1은 Discord 미러링 규약으로 가고, 이후 A2UI 호환 레이어 검토 |
 | **실시간 전송** | **Socket.IO**(MIT) — 룸, 자동 재연결, ack, 바이너리 (확정) | `ws` + 자체 프로토콜 | Open WebUI·OpenClaw 플러그인 사례와 동일. 채널 = 룸 |
@@ -536,11 +537,16 @@ SQLite(WAL)로 시작, Drizzle ORM으로 스키마 정의해 Postgres 전환 시
   **사이드바** — 남이 쓴 최상위 보통 메시지가 있으면 굵게, 나를 멘션한 메시지 수(스레드 답글 포함)를 배지로(「99+」). 처음·재연결 때 `GET /api/v1/me/unread` 스냅숏을 받고 그 뒤는 워크스페이스 룸의 본문 없는 신호 `channel.activity` 로 더해 간다. 스냅숏을 못 받았거나 끊기면 굵게·배지를 끈다(틀린 배지보다 없는 배지). 보관한 채널은 빠지고, 보관 해제하면 읽음 위치 그대로 돌아온다.
   **타임라인** — 들어갈 때의 읽음 위치 뒤 첫 남의 최상위 글 앞에 「새 메시지」 구분선(떠날 때까지 그대로), 그 자리가 불러온 목록 밖이면 「안 읽은 메시지가 더 있어요 · 처음 안 읽은 곳으로」 배너 — 누르면 읽음 위치 뒤 첫 루트를 가운데 둔 창으로 간다.
   **확인 방법**: 서버 단위·통합(`apps/server/test/reads.store.test.ts`·`reads.routes.test.ts`·`integration/reads.test.ts`·`db.test.ts` 시드·`members.deactivate.test.ts`·역할 매트릭스·`wire.ratelimit.test.ts`) · 웹 단위(`features/reads/*.test.ts`·`realtime/handlers.unread.test.ts`·`channels.test.tsx`·`MessageList.test.tsx`·`groupRows.test.ts`·`threads.test.tsx`) · 태스크마다 독립 리뷰(변이)·수정·범위 재리뷰 · `dev:fake` 위 브라우저 검증(독립 Chromium 에 owner·mia 두 계정, owner 둘째 탭, 1280·390px) 11항목 모두 통과·결함 0 — 두 탭 동기, 멘션·스레드 멘션 배지, 에이전트 답, 구분선, 250개 채널의 배너(옛 스레드 답글이 읽음 위치 바로 뒤인 경우 포함)와 과거 페이지를 붙일 때 화면이 튀지 않음(0px), 결과로 가기, 서버 재시작(`--keep`)·보관·보관 해제, 390px 사이드바 시트, 390px 스레드 시트.
+- 리액션 → **완료(실연까지, 2026-10-07 — 모델 런 0회)** — 스펙 `docs/superpowers/specs/2026-10-05-reactions-design.md`(구현과 달라진 것은 스펙 「구현과 맞춘 것」 장), 계획 `docs/superpowers/plans/2026-10-05-reactions.md`(태스크 1~5), 사용법 `docs/guides/user-guide.md` 「반응」 절, 에이전트 쪽 `docs/guides/agent-guide.md` 「반응 — 지난 턴 뒤 내 메시지에 달린 것」 절, 업데이트 `docs/guides/deploy.md` 「업데이트」(플러그인 재설치).
+  **반응** — 사람(owner·admin·member)이 보통 메시지(사람·에이전트, 최상위·스레드 답글)에 고정 8종 👍 👎 ❤️ 😂 🎉 👀 ✅ ❓ 를 단다(`message_reactions`, 마이그레이션 0019). wire `reaction.set {messageId, emoji, on}` 은 토글이 아니라 켜기/끄기(버킷 `chatter`)이고 상태가 바뀔 때만 `message.updated` — 모든 클라이언트 경로가 하이드레이션으로 집계(`Message.reactions`)를 받는다. 보관한 채널은 409 `CHANNEL_ARCHIVED`, 시스템 메시지는 달 수 없다. 반응은 런을 만들지 않고 읽지 않음·푸시에 들지 않는다.
+  **에이전트에게** — 그 에이전트가 쓴 메시지의 반응을 세션 커서(`agent_sessions.reactions_seen_at`)로 기억했다가 그 세션의 다음 런 인바운드(`InboundContext.reactions`, 최근 20개 + `reactionsOmitted`)에 싣는다. 범위는 세션이 아는 메시지(채널 = 최상위·루트, 스레드 = 루트 + 그 답글), 커서는 `send` 가 받아들여졌을 때만 오르고(실패·ack 전 중지면 다시 실린다) 리셋·러너 세션 새로 열기 때는 그 시각으로. 문구는 shared `formatReactionFacts` 하나를 플러그인 헤더(`---` 바로 위)와 러너 턴 사실이 같이 쓴다. 플러그인은 다시 설치해야 하고(옛 플러그인은 반응 줄만 없다), `dodok-runner` 는 그대로다.
+  **웹** — 메시지 행의 「반응 추가」(마우스 올림·초점, 터치 화면은 늘 보임)와 8개 한 줄 메뉴(←·→ 포함 키보드), 칩 `👍 3`(내 것 강조·툴팁 「@mia, @owner」·비활성 「(비활성)」·보관 채널은 읽기만), 낙관적 갱신 — 실패하면 이 탭이 서버에게서 마지막으로 들은 상태로.
+  **확인 방법**: shared 단위(`reactions.test.ts` — 문구·옛 스키마 호환) · 서버 단위·통합(`reactions.service.test.ts`·`db.test.ts` 채우기·`integration/reactions.test.ts`(두 소켓·다음 런·ack 전 중지·끊김·스레드 범위·리셋·25개·러너·오류) · `runs.orchestrator`·`sessions`·`roles.matrix`·`wire.ratelimit`·`integration/reads`(하이드레이션이 던져도 activity)) · 플러그인·러너 어댑터·웹 단위(`features/reactions/reactions.test.tsx`) · 태스크마다 독립 리뷰(변이)·수정·범위 재리뷰 · `dev:fake` 위 브라우저 검증(독립 Chromium 에 owner·mia·셋째 member, 1280·390px) — 실시간 칩·내 칩·툴팁·다음 멘션 인바운드(`dev:fake inbound reactions` 줄)와 그다음엔 없음·스레드·러너·시스템 카드·연타·보관·비활성·읽지 않음과의 충돌(끝 붙음·구분선 128px 고정)·키보드 통과, **결함 1**(390px 버튼 겹침 — 이월) · 실연 `docs/guides/live-smoke.md` 「리액션 실연」 절(실물 dev Gateway 2026.9.5 를 `OPENCLAW_HOME` 스크래치로, 가짜 claude CLI·Claude 러너 하네스, 합격 기준 6/6). 테스트 5044(web 1868·server 2000·shared 396·openclaw-adapter 315·claude-runner 235·plugin 149·runner-adapter 81).
 - 에이전트 내부 위임 결과 요약 게시, 채널 템플릿.
 
-### 이월 — 남은 문제(읽지 않음 뒤 시점, 2026-10-06)
+### 이월 — 남은 문제(리액션 뒤 시점, 2026-10-07)
 
-Phase 1 ①·②, Phase 2 ①·②·③·④, Phase 3 ①·②·③·④, Phase 4 ①·②·③·멀티 Gateway·설정 통합·채널 보관·읽지 않음 을 돌면서 「고치지 않고 알고 넘긴 것」을 한곳에 모았다. 상세 근거는 각 줄에 적은 문서에 있다. 위 Phase 2·3 항목과 겹치면 그쪽을 가리킨다.
+Phase 1 ①·②, Phase 2 ①·②·③·④, Phase 3 ①·②·③·④, Phase 4 ①·②·③·멀티 Gateway·설정 통합·채널 보관·읽지 않음·리액션 을 돌면서 「고치지 않고 알고 넘긴 것」을 한곳에 모았다. 상세 근거는 각 줄에 적은 문서에 있다. 위 Phase 2·3 항목과 겹치면 그쪽을 가리킨다.
 Phase 1 이 남긴 아홉(서버 넷·웹 넷·`wire-cli` typecheck)은 Phase 2 ① 태스크 0·1 에서, Phase 2 ① 이 남긴 초점·타이머 셋(D6 카운트다운 어긋남 · 자리값 소요가 계속 흐름 · 넓은 화면 「설정 닫기」 초점)은 Phase 2 ② 태스크 8 에서 정리해 지웠다.
 Phase 2 ② 가 남긴 「`media` 이미지를 크게 볼 수 없다」·「`media`·`file` 문구 비대칭」은 Phase 2 ③ 이 닫아 지웠다(크게 보기 `ImageViewer`, 세 블록이 해석기 하나로 「첨부를 찾을 수 없습니다」·「열 수 없는 링크입니다」를 같이 쓴다).
 Phase 2 ② 가 남긴 「`infra/` 가 없는데 두 문서가 있다고 말한다」는 Phase 3 ① 이 `infra/` 를 만들고 `docs/project-structure.md` 를 고쳐 지웠다(`CLAUDE.md` 「명령」 줄은 조율자가 고친다).
@@ -795,8 +801,19 @@ Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-comp
 - **서버 `channel.read` 가 그 위치 뒤에 온 activity 까지 지운다** — 다른 기기가 N 까지 읽는 사이 N+1 이 와 있었으면 이 탭은 N+1 을 굵게·배지로 보이지 않는다(다음 재연결 스냅숏에서 바로잡힌다). 출처: t3 보고 「알고 남긴 것」. 미룬 까닭: 「틀린 배지보다 없는 배지」 쪽 오차이고, 읽은 기기가 끝을 보고 있으면 곧 N+1 도 읽음이 된다. 고칠 길: 스토어 항목이 읽음 위치 뒤에 받은 activity 의 최상위·멘션 여부를 들고, 서버 read 가 그 위치 뒤의 것은 남긴다.
 - **테스트·주석 빈틈 몇** — wire `channel.read` 의 owner·admin 소켓 매트릭스 칸(통합 테스트는 member 소켓만 — t2 리뷰 N2) · `apps/server/src/realtime/bus.ts` 의 `message.created` 줄 주석이 `silent` 를 「연결을 닫은 런의 늦은 정본」 하나로만 든다(보관한 에이전트·채널의 정본도 — t2 재리뷰 「넘길 것」 3) · `apps/web/src/features/messages/MessageList.test.tsx` 「배너를 누르면 entryReadSeq 뒤 첫 루트를 물어…」 사례의 `around` 응답이 답글이라던 12·13 을 루트로 싣는다(URL 순서 검사는 유효 — t4 재리뷰 r1).
 
+**리액션(2026-10-07)** — 스펙 `docs/superpowers/specs/2026-10-05-reactions-design.md` 「열린 문제」·「구현과 맞춘 것」 장. 아래 출처의 보고서·리뷰(t*)는 `.superpowers/sdd/2026-10-07-reactions/`(git 제외)에 있다.
+
+- **390px(마우스 없는 기기)에서 늘 보이는 두 버튼이 이어진 메시지의 본문 글자를 덮는다** — 「반응 추가」(`right-12`)와 「스레드에서 답하기」(`right-3`, 각 28px)가 행 위쪽에 `absolute` 로 떠, 머리 줄이 없는 이어진 메시지의 첫 두 줄 오른쪽 끝(약 64px)을 가린다(실측: 본문 줄 오른쪽 334px·버튼 314~342px·378px 까지). 머리 줄이 있는 행은 버튼이 작성자 줄 옆이라 덜하다. 출처: t5 브라우저 D1. 미룬 까닭: 이 태스크(검증·문서)는 고치지 않는다 — 「스레드에서 답하기」 하나일 때부터 있던 겹침을 폭 두 배로 넓혔다. 고칠 길: `features/messages/MessageItem.tsx` 에서 `(hover: none)` 일 때 본문 칸 오른쪽에 두 버튼 폭만큼 여백(`[@media(hover:none)]:pr-16` 꼴)을 두거나, 두 버튼을 행 위가 아니라 본문 아래 칩 줄 끝으로 옮긴다.
+- **스레드를 열기 전에 루트에 단 반응은 그 스레드 대화에 가지 않는다** — 스레드 세션 행이 첫 스레드 런을 대기열에 넣을 때 생기고 커서가 그 시각이라서다(채널 세션에는 간다). 사람에게는 「답에 👍 → 곧바로 그 답에서 스레드를 열어 부름 → 에이전트가 👍 를 모른다」로 보인다. 출처: t2 판단 6·t2 리뷰 볼 것 3·t5 실연. 미룬 까닭: 스펙 결정 5(알려지지 않을 수 있다) 범위 — 조율자 판단. 고칠 길: `apps/server/src/modules/sessions/service.ts` 의 `ensureSession` 이 새 **스레드** 세션 행을 만들 때 커서를 min(지금, 그 채널 세션의 커서)로 둔다 — 스레드 범위에서 세션보다 먼저 있을 수 있는 에이전트 글은 루트뿐이라 더해지는 것은 「채널에 아직 안 알린 루트 반응」뿐이다.
+- **러너 대기열에서 시작 전에 중지된 런의 반응은 다시 실리지 않는다** — 러너가 `queued: true` 로 받으면 받아들여진 것이라 커서가 오른다. 출처: t2 리뷰 볼 것 2(변이 F), t2 수정 보고(단위 테스트로 지금 동작을 잠갔다). 미룬 까닭: 스펙 「받아들여졌을 때」의 정의 그대로이고 OpenClaw 의 ack 뒤 중지와 같은 꼴이다. 고칠 길: 러너 런은 커서 올리기를 러너의 시작 신호(`RUN_STARTED`) 뒤로 미룬다(`apps/server/src/modules/runs/orchestrator.ts` 의 받아들여진 경로).
+- **반응 블록만으로는 어느 메시지인지 가리지 못할 수 있다** — 블록에 메시지 id·시각이 없어, 같은 짧은 답(「완료했습니다」 등)이 이어지면 인용이 같다. 본문이 없는 메시지(카드·파일만)는 `""` 로 실린다. 출처: t5 실연 「새로 찾은 것」, t1 리뷰 「스펙 쪽에 남길 질문」(스펙 「구현과 맞춘 것」 장의 판정 — 지금은 그대로). 미룬 까닭: 실제 답은 글이 달라 드물고, 바꾸면 두 어댑터의 문구(`formatReactionFacts`)와 에이전트 가이드가 함께 바뀐다. 고칠 길: 줄에 그 메시지의 `[HH:MM]`(「최근 대화」와 같은 UTC 표기)을 붙이고, 빈 본문은 `apps/server/src/modules/runs/context.ts` 의 첨부 자리표시(`[이미지 N장]`·`[파일: 이름]`)와 같은 꼴(`[카드]` 등)로 — `InboundReaction` 에 필드를 더하면 옛 플러그인은 버린다.
+- **하이드레이션이 던지면 채널 룸 구독자는 그 `message.created` 를 잃는다** — 읽지 않음 신호(`channel.activity`)는 따로 등록한 처리기라 나간다. 출처: t2 재리뷰 관찰 2. 미룬 까닭: 하이드레이션 질의의 DB 오류에서만 생기고, 원본으로 대신 내기는 리뷰가 선택으로 둔 것이다. 고칠 길: `apps/server/src/realtime/events.ts` 의 첫 처리기가 하이드레이션 실패 때 원본 메시지로 낸다 — 방금 저장한 메시지에는 반응·상호작용 행이 아직 없어 잃는 것이 없다.
+- **테스트·주석 빈틈 몇** — `withReactions` 의 동률 `rowid` 순서(`rowid desc` 로 바꿔도 초록 — t1 리뷰 N9) · 발췌 안 에이전트 멘션 핸들(t1 리뷰 N10) · 상한 숫자 사본 `REACTIONS_PER_RUN`·`EXCERPT_MAX` ↔ shared `.max(20)`·`.max(60)`(shared 가 상수를 내보내면 갈라질 자리가 없다 — t1 리뷰 권장) · `events.ts` 의 두 `message.created` 처리기 등록 순서(뒤집어도 서버 전체 초록 — t2 재리뷰 관찰 1) · `apps/server/test/integration/reads.test.ts` 의 「시스템 메시지는 작성자가 없어 authorId 거름이 대신 막는다」 주석은 실제와 다르다(kind·authorType 거름이 먼저 막는다 — t2 재리뷰 관찰 3) · `attachWireFanout` 머리 주석의 「설계 4.2」 번호 인용(t2 재리뷰 nit) · 웹 피커 `data-[state=open]` 붙듦·낙관값 정렬·포인터로 연 뒤 ←·→ 의 첫 항목 분기(t4 리뷰 G·L, t4 재리뷰 V12) · 「서버 message.updated 가 오면 맞춘다」 사례의 뒷부분이 훅을 지나지 않는다(t4 리뷰 3절). 미룬 까닭: 동작 결함이 아니다 — 리뷰가 권장·선택으로 둔 것. 고칠 길: 각 출처가 적은 사례·주석 한 줄.
+- **관찰 둘** — Radix 메뉴의 ↑·↓·Home·End 초점 이동은 한 틱 미뤄지고(`setTimeout`) ←·→(`moveAcross`)는 곧바로라, 같은 틱 안에 섞어 누르면 차례가 틀어진다 — 사람 속도(키 사이 수십 ms)에서는 맞게 움직였다(t5 브라우저). 루트 `pnpm test` 한 번에서 서버 32건이 실패하고 다시 돌리면 재현되지 않은 적이 있다 — 원인 모름, 실패가 나면 vitest 의 `FAIL` 줄과 오류를 옮겨 적는다(서버 테스트 로그의 `violates contract` 는 의도된 로그다 — t3 보고·t3 리뷰 「플레이크 조사」). 미룬 까닭: 둘 다 재현·영향이 없다. 고칠 길: 앞의 것은 `moveAcross` 도 같은 꼴로 미루면 되고, 뒤의 것은 다시 나면 그 `FAIL` 줄로 원인을 본다.
+
 **실물 확인**
 
+- **리액션을 실물 dev Gateway(2026.9.5)로 본 것은 실연(`docs/guides/live-smoke.md` 「리액션 실연」 절 — 가짜 claude CLI·Claude 러너 하네스, 모델 런 0회)이다.** 반응 블록이 실제 OpenClaw 의 모델 입력과 러너 턴 사실에 실리는 자리·글을 그 절이 본다. 실제 모델이 그 블록을 요청이 아니라 사실로 읽는지는 모른다.
 - **멀티 Gateway 를 실물로 본 것은 실연(`docs/guides/live-smoke.md` 「멀티 Gateway 실연」 절 — 로컬 실물 dev Gateway 둘, 런 0회 하네스, 모델 런 0회)이다.** 같은 id 두 에이전트의 멘션·한쪽 끄기/지우기·hello 때 프롬프트 다시 보내기·다시 실행·옮기기 충돌을 그 절이 본다. 원격 Gateway 판에서는 아직 안 봤다(위 「플러그인·OpenClaw 버전」).
 - **Claude 러너를 실제 번들 CLI 로 본 것은 런 0회 하네스(`docs/guides/live-smoke.md` 「Claude 러너 런 0회 하네스」 절 — 모델 자리만 로컬 가짜 Messages API)와 실연(같은 문서 「Claude 러너(Phase 4 ③) 실연」 절 — 모델 런 3회, OpenClaw 쪽은 `dev:fake` 가짜 Gateway)이다.** 실연은 멘션·도구·스트리밍·운영 비용과 규칙 변경 뒤 `resume`(위 이월 첫 줄)을 봤다. **승인 카드·`post` 카드·파일·`@dev` 릴레이는 모델로 보지 않았다** — 기계 경로는 하네스가 봤고, 모델이 `post` 의 `components` 를 스키마에 맞게 쓰는지는 모른다.
 - **팀을 실물 dev Gateway(2026.9.5)로 본 것은 실연(`docs/guides/live-smoke.md` 「팀(Phase 4 ②) 실연」 절 — 모델 런 0회)이다.** 사람 둘이 쓴 채널에서 에이전트 헤더 「참여자:」가 실제로 온 사람만 싣는지와 member 의 승인 거부를 그 절이 본다. 실연이 새로 찾은 것은 그 절에 있다. 원격 Gateway 판에서는 아직 안 봤다(위 「플러그인·OpenClaw 버전」).

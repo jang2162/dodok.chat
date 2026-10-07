@@ -362,6 +362,7 @@ docker compose -f infra/compose.yml logs app | grep '"event":"ops.'
 | wire `approval.resolve` | `wire.approval` | ack `RATE_LIMITED` |
 | wire `typing`·`presence.update` | `wire.chatter` | 조용히 버린다(ack 없음) |
 | wire `channel.read` | `wire.chatter`(typing·presence.update 와 소켓마다 한 버킷) | ack `RATE_LIMITED` — 웹은 버리고 다음 조건이 서면 다시 보낸다(서버 값은 커지기만 한다) |
+| wire `reaction.set` | `wire.chatter`(위 셋과 소켓마다 한 버킷) | ack `RATE_LIMITED` — 웹은 그 칩을 서버가 아는 상태로 되돌리고 「반응을 저장하지 못했습니다」 |
 | wire 동시 소켓 | `socketsPerUser`(사용자당) | 새 연결을 핸드셰이크에서 거절 |
 | 러너가 보내는 `run.event` | `runner.events`(러너 소켓마다 토큰 버킷 — 정상 스트리밍이 걸리지 않는 숫자, 근거는 그 키의 주석) | 버린다. 서버 로그 warn `runner frames rate limited — dropped` 와 사건 key `runner:<프레임>` 은 **주소마다 1분에 한 번**, 그사이 버린 수(`dropped`)와 함께 |
 | 러너가 보내는 `hello`·`outbound.post`, 그리고 열린 런·기다리는 승인을 가리키지 않거나 서버가 받아들이지 않는(계약 위반·세션 키 불일치 등) `run.final`·`run.error`·`approval.*` | `runner.control`(같은 소켓의 둘째 버킷) | 같다 — `outbound.post` 는 ack `RATE_LIMITED`(에이전트의 `post` 도구가 실패로 받는다). 그 러너의 열린 런을 닫는 `run.final`·`run.error`, 그 런의 새 승인 요청(런마다 누계 32개까지 — 철회·결정으로 줄지 않는다, 러너 어댑터 `RUN_FREE_APPROVALS`), 기다리는 승인의 철회는 버킷을 세지 않는다 — `post` 가 버킷을 비워도 런이 `runMs` 까지 매달리지 않게 |
@@ -450,6 +451,8 @@ docker compose -f infra/compose.yml ps                              # app·caddy
 
 **스레드가 있는 판(Phase 4 ① 이후)으로 올릴 때는 플러그인을 반드시 다시 설치한다.** 스레드 런은 hello 에 `threads` 를 싣는 플러그인이 붙어 있어야 돈다. 옛 플러그인이 붙어 있으면 스레드에서 에이전트를 부를 때마다 스레드에 「@dev 가 스레드에서 답하지 못했습니다 — 플러그인을 새로 설치해야 합니다(연결 페이지)」 run_error 카드(`PLUGIN_OUTDATED`)가 남고, 채널 최상위 멘션은 그대로 돈다. 다시 설치한 뒤 그 카드의 「다시 실행」을 누르면 스레드에서 답한다.
 
+**반응이 있는 판으로 올릴 때는 플러그인을 다시 설치해야 OpenClaw 에이전트가 반응을 본다.** 서버는 에이전트의 다음 턴에 그 에이전트 메시지에 달린 반응을 싣고 플러그인이 헤더에 그 줄을 넣는데(`docs/guides/agent-guide.md` 「반응 — 지난 턴 뒤 내 메시지에 달린 것」 절), 옛 플러그인은 모르는 필드를 버린다 — 턴은 그대로 돌고 반응 줄만 없다. 연결 페이지는 그 Gateway 카드에 「다른 빌드입니다 — 받아서 다시 설치하세요」를 보인다. Claude 러너(`dodok-runner`)는 다시 설치하지 않는다 — 턴 사실은 서버가 만들어 보낸다. 반응 판의 플러그인은 hello 를 바꾸지 않아 아래 「되돌리기」에서 반응 전 서버(Phase 4 ① 이후)에도 붙는다 — 반응 줄이 없을 뿐이다. 마이그레이션(`0019_message_reactions`)이 기존 에이전트 세션의 반응 기준 시각을 마이그레이션 때로 채운다 — 올리기 전의 반응은 없으니 잃는 것이 없다.
+
 ### 되돌리기
 
 부팅에 실패하면(`app` 이 unhealthy·재시작 반복 — `docker compose -f infra/compose.yml logs app`):
@@ -500,7 +503,7 @@ docker compose -f infra/compose.yml ps     # app·caddy (healthy)
 | Caddy 502 | `app` 이 아직 안 떴거나 재시작 중 | `ps`·`logs app` |
 | 업데이트 뒤 `app` unhealthy | 마이그레이션·부팅 실패 — `logs app` | 위 「되돌리기」 |
 | 웹 배너 「실시간 연결이 거부되었습니다 — …」 | 브라우저 주소와 `APP_ORIGIN` 이 다르다(스킴·포트·끝 슬래시까지) | `APP_ORIGIN=https://<도메인>` |
-| 채널 작성기 자리에 「보관된 채널입니다.」, 사이드바에 그 채널이 없음, 에이전트의 message 툴이 `CHANNEL_ARCHIVED` 로 실패 | admin 이상이 그 채널을 보관했다 — 기록은 남고 누구나 읽지만 보내기·카드·채널 설정·첨부는 409 `CHANNEL_ARCHIVED`, 그 채널에는 런·푸시가 없다(보관할 때 돌던 실행은 「중지」와 같이 멈춘다) | admin 이상이 채널 작성기 자리나 「설정」 → 「채널」 탭에서 「보관 해제」 — 멤버·에이전트 대화가 그대로라 같은 대화로 이어진다. 지우는 길은 없다 |
+| 채널 작성기 자리에 「보관된 채널입니다.」, 사이드바에 그 채널이 없음, 에이전트의 message 툴이 `CHANNEL_ARCHIVED` 로 실패 | admin 이상이 그 채널을 보관했다 — 기록은 남고 누구나 읽지만 보내기·카드·반응·채널 설정·첨부는 409 `CHANNEL_ARCHIVED`, 그 채널에는 런·푸시가 없다(보관할 때 돌던 실행은 「중지」와 같이 멈춘다) | admin 이상이 채널 작성기 자리나 「설정」 → 「채널」 탭에서 「보관 해제」 — 멤버·에이전트 대화가 그대로라 같은 대화로 이어진다. 지우는 길은 없다 |
 | Gateway 카드 「재연결 중」·「연결 안 됨」, 로그에 그 `gatewayId` 의 재시도, 1분 뒤 「OpenClaw Gateway 「<이름>」에 연결하지 못하고 있습니다」 알림 | 그 Gateway 의 주소·토큰, 방화벽 — 서버는 멈추지 않고 그 Gateway 만 재시도한다(다른 Gateway 는 그대로) | 카드 「수정」(「Gateway 수정·끄기·삭제」), 체크리스트 3 |
 | 에이전트 가져오기가 「Gateway 에 연결되지 않았습니다」 | 고른 Gateway 가 끊겼거나 꺼졌다 | 연결 페이지 그 Gateway 카드 |
 | 에이전트 화면 「Gateway 가 삭제됨 — 다른 Gateway 로 옮기세요」, 멘션하면 `ADAPTER_UNAVAILABLE` 카드 | 그 에이전트의 Gateway 를 지웠다 | 「Gateway 옮기기」 뒤 카드의 「다시 실행」(「Gateway 수정·끄기·삭제」) |

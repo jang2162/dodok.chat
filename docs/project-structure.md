@@ -70,19 +70,23 @@ src/
 │                 `Message.interactions`(그 메시지 components 의 상호작용 기록, `MessageInteraction[]`, 최신 `INTERACTIONS_MAX`=20건,
 │                 `.default([])` — 경계를 넘는 Message 에 늘 있다).
 │                 Phase 4 ① 스레드: `Message.threadRootId?`(답글이면 그 루트 — 루트만 가리킨다)·루트의 `threadSummary?`(`ThreadSummary` { count, lastAt, agentIds ≤10 } — 답글이 있을 때만),
-│                 `Run.threadRootId?`·`RunState` 의 `threadRootId`(스레드 런이면 그 루트 — queued 동안에도 소속을 안다, 채널 런은 없다)
+│                 `Run.threadRootId?`·`RunState` 의 `threadRootId`(스레드 런이면 그 루트 — queued 동안에도 소속을 안다, 채널 런은 없다).
+│                 리액션: `REACTION_EMOJIS`(고정 8종 — 목록은 여기 하나)·`ReactionEmoji`·`MessageReaction`{ emoji, count, userIds }·`Message.reactions`(REACTION_EMOJIS 순서,
+│                 `.default([])` — interactions 와 같은 까닭: 없는 채로 message.updated 가 오면 웹 캐시가 칩을 지운다)
 ├─ components/    components v1 스키마 (blocks/actions/button/select/modal/media/file) + 제약 검증 — Phase 2 ② 는 이 파일을 안 바꿨다
 ├─ events/        RunEvent 유니온 (AG-UI 이벤트명 채택: TEXT_MESSAGE_START/CONTENT/END,
 │                 TOOL_CALL_START/ARGS/END, RUN_STARTED/FINISHED/ERROR, STATE_SNAPSHOT, CUSTOM)
 ├─ wire/          클라이언트↔서버 Socket.IO 이벤트 계약 (server→client, client→server 타입 맵).
 │                 승인: client→server `approval.resolve`, server→client `approval.requested`·`approval.resolved`,
 │                 구독 ack 의 `pendingApprovals`(그 채널의 **미해결**만). 스레드: `MessageSend.threadRootId?`, 구독 ack 의 `threadRoots?`
-│                 (lastSeq 재동기화 때만 — 페이지의 답글이 가리키는데 페이지에 없는 옛 루트, 최신 요약)
+│                 (lastSeq 재동기화 때만 — 페이지의 답글이 가리키는데 페이지에 없는 옛 루트, 최신 요약). 리액션: client→server `reaction.set`(`ReactionSet` { messageId, emoji, on } —
+│                 토글이 아니라 켜기/끄기, ack null)
 ├─ bridge/        플러그인↔서버 브리지 메시지 계약 (인바운드 전달, 아웃바운드 수신, 컴포넌트 결과, 설정 변경, 헬스).
 │                 `BridgeHello.bundleSha256`(선택, sha256 hex) — 플러그인이 자기 번들 파일을 해시해 싣는다(없으면 서버는 「빌드를 알 수 없습니다」).
 │                 `BridgeHello.capabilities` 는 아는 값만 남기고 모르는 값은 버린다(닫힌 enum 이면 옛 서버가 새 플러그인 hello 를 통째로 거절한다).
 │                 스레드: `BridgeCapability "threads"`, `InboundDeliver.threadId?`·`context.thread?`({ root, recentMessages }), `OutboundMessage.threadId?`,
-│                 `threadMatchesSessionKey`(threadId 와 세션 키의 스레드 접미사 대조 — 우리 모양이 아닌 키면 false)
+│                 `threadMatchesSessionKey`(threadId 와 세션 키의 스레드 접미사 대조 — 우리 모양이 아닌 키면 false).
+│                 리액션: `InboundReaction`{ messageId, excerpt ≤60, emoji, by(핸들), at }·`InboundContext.reactions?`(≤20)·`reactionsOmitted?` — 옛 플러그인은 모르는 키라 버린다
 ├─ setup/         Phase 3 ②. 설정 마법사 계약 — Sha256Hex·SetupStatus(server·bridge{publicUrl}·pluginFile·gateways: GatewaySetup[]·runners)·
 │                 GatewaySetup(id·name·url·enabled·gateway{state(+disabled),host,version,pinned,drift,pairing}·bridge{state,plugin}·pluginMatches — 공유 토큰 없음)·
 │                 BridgeTokenRecord(원문·해시 없음, prefix 6자, connected)·IssueBridgeTokenInput(라벨 trim 1~60)·
@@ -109,6 +113,8 @@ src/
 │                 UnreadSnapshot({ channels })·ChannelRead({ channelId, seq } — 클라이언트 → 서버)·ChannelReadUpdate({ channelId, lastReadSeq } — 서버 → 그 사용자의 user 룸)·
 │                 ChannelActivity({ channelId, seq, threadRootId?, authorType user|agent, authorId, mentionedUserIds } — 본문 없음, workspace 룸). 이벤트 이름은 `wire/` 에.
 │                 공용 `Channel` 에는 읽음 값을 넣지 않는다 — `channel.updated` 는 워크스페이스 전원에게 가서 사람마다 다른 값을 실을 수 없다
+├─ reactions/     리액션. `formatReactionFacts(reactions, omitted?)` — 에이전트가 받는 「반응(지난 턴 뒤 네 메시지에 달린 것):」 블록을 만드는 **유일한** 자리
+│                 (플러그인 헤더와 러너 턴 사실이 같이 쓴다 — 두 어댑터 문구가 갈라지지 않게, 비면 "", 줄은 at 오름차순·끝에 「(외 n개)」)
 ├─ session-key.ts Phase 4 ①. 세션 키를 만들고 푸는 **유일한** 자리(서버·어댑터·플러그인이 따로 조립·정규식을 두지 않는다 — 두면 모양이 조용히 갈라진다).
 │                 `dodokSessionKey(agentId, channelId, rootId?)` → `agent:<agentId>:dodok:channel:<channelId>[:thread:<rootId>]`(channelId·rootId 소문자 —
 │                 코어가 dodok 키를 통째로 소문자로 접는다, agentId 가 규칙 밖이거나 rootId 가 빈 문자열이면 던진다) · `parseDodokSessionKey`(우리 모양이 아니면 undefined) ·
@@ -122,7 +128,7 @@ test/agent-guide-examples.test.ts   docs/guides/agent-guide.md 의 `json dodok-c
 규칙: 여기의 Zod 스키마가 단일 진실. 서버 입력 검증·클라이언트 폼·플러그인 아웃바운드 검증·브리지 양단 검증이 전부 같은 스키마를 import한다. 브리지 계약이 `shared`에 있는 이유는 플러그인과 서버가 서로 다른 프로세스·호스트에서 같은 메시지를 파싱하기 때문이다.
 
 - `src/adapter/` — 어댑터 계약 `AgentAdapter`·`AdapterEvent`·`AdapterError`·`AdapterStatus`(provider 판별 유니온)·`ProviderApproval`, 인증 실패 가드 `BridgeAuthGuard`(`guard.ts` — 브리지·러너 핸드셰이크와 두 첨부 HTTP 가 한 카운터). 두 어댑터 패키지와 서버가 여기서 가져간다.
-- `src/runner/` — `/runner` 프레임 Zod(`index.ts` — `RunnerHello`·`RunnerRunStart`·`RunnerRunFinal`·`RunnerOutboundPost`·승인 프레임, `RUNNER_PROTOCOL`·`RUNNER_ATTACHMENTS_PATH`)와 러너 프롬프트 문장(`prompt.ts` — 채널 규칙 틀 `buildChannelRulesAppend`, 턴 사실 `buildTurnFacts`, 사용자 메시지 `renderRunnerPrompt`).
+- `src/runner/` — `/runner` 프레임 Zod(`index.ts` — `RunnerHello`·`RunnerRunStart`·`RunnerRunFinal`·`RunnerOutboundPost`·승인 프레임, `RUNNER_PROTOCOL`·`RUNNER_ATTACHMENTS_PATH`)와 러너 프롬프트 문장(`prompt.ts` — 채널 규칙 틀 `buildChannelRulesAppend`, 턴 사실 `buildTurnFacts` — 반응이 있으면 끝에 `formatReactionFacts` 블록, 사용자 메시지 `renderRunnerPrompt`).
 
 ### 2.2 `apps/server`
 
@@ -166,8 +172,8 @@ src/
 │                         브리지·러너 거절 로그도 app.ts 가 어댑터 옵션 logAddress 로 ipPrefix 를 준다(가드·스로틀 키는 전체 주소)
 ├─ wiring.ts              createServices(라우터 ⇄ 오케스트레이터 상호 참조, RunsFacade), sessionRecoverTargets(재접속 복구 대상 — 연결 id 별 Map, OpenClaw 에이전트 세션만)
 ├─ db/
-│  ├─ schema.sqlite.ts    Drizzle 스키마 (계획서 6장 테이블 + agent_sessions + approvals + attachments + bridge_tokens + ops_events + invites + runner_tokens + gateways + channel_reads — 마이그레이션 0000~0018,
-│  │                      FK ON DELETE 는 push_subscriptions.session_id·bridge_tokens.gateway_id·channel_reads.user_id·channel_reads.channel_id(cascade)와 agents.gateway_id·attachments.gateway_id(set null)뿐).
+│  ├─ schema.sqlite.ts    Drizzle 스키마 (계획서 6장 테이블 + agent_sessions + approvals + attachments + bridge_tokens + ops_events + invites + runner_tokens + gateways + channel_reads + message_reactions — 마이그레이션 0000~0019,
+│  │                      FK ON DELETE 는 push_subscriptions.session_id·bridge_tokens.gateway_id·channel_reads.user_id·channel_reads.channel_id·message_reactions.message_id·message_reactions.user_id(cascade)와 agents.gateway_id·attachments.gateway_id(set null)뿐).
 │  │                      ⚠ drizzle-kit 은 기존 표에 FK 열을 더하는 `ALTER TABLE … ADD … REFERENCES` 에서 스냅숏의 ON DELETE 를 빠뜨린다 — SQLite 가 받아도 조용히 다르게 동작하므로,
 │  │                      FK 열을 더하면 생성 SQL 의 ON DELETE 를 스냅숏과 대조하고 다르면 그 줄만 손으로 고친 뒤(SQLite 가 ALTER 를 받지 않으면 표를 다시 만든다) 머리 주석에
 │  │                      까닭을 적는다. 스냅숏은 생성기 출력 그대로 두고 다음 generate 가 「No schema changes」인지 본다(0010·0012·0014).
@@ -193,6 +199,9 @@ src/
 │  │                      읽지 않음(0018): channel_reads — user_id·channel_id(기본 키 (user_id, channel_id), 둘 다 FK ON DELETE CASCADE)·last_read_seq(커지기만 한다 — modules/reads/store.ts markRead)·updated_at.
 │  │                      마이그레이션 끝에 손으로 붙인 시드가 membership(비활성 포함) × 그 워크스페이스 채널(보관 포함)을 last_seq 까지 읽음으로 채운다 — 생성 SQL 뒤에 붙였으므로
 │  │                      다시 generate 해 「No schema changes」인지 본다. 비활성화·보관은 행을 건드리지 않는다(다시 활성화·보관 해제하면 읽음 위치가 그대로 돌아온다).
+│  │                      리액션(0019): message_reactions — message_id·user_id(둘 다 FK ON DELETE CASCADE)·emoji(REACTION_EMOJIS 하나)·created_at(세션 커서 비교에 쓴다 — 다시 켜도 처음 시각),
+│  │                      기본 키 (message_id, user_id, emoji), 인덱스 message_reactions_message·message_reactions_created. agent_sessions.reactions_seen_at(nullable — 그 세션에 알린 반응의 기준 시각,
+│  │                      null 이면 싣지 않는다). 마이그레이션 끝에 손으로 붙인 UPDATE 가 기존 세션 행을 마이그레이션 시각으로 채운다(옛 반응은 없다) — 다시 generate 해 「No schema changes」.
 │  │                      유일: OpenClaw 에이전트 agents_openclaw_gateway_agent (gateway_id, provider_agent_id) · 러너 에이전트 agents_claude_ws_agent (workspace_id, provider, provider_agent_id) ·
 │  │                      runs_connection_provider_run (connection_id, provider_run_id) · approvals_connection_provider (connection_id, provider_approval_id) — 제공자 id 는 연결 안에서만 유일하다.
 │  │                      attachments.gateway_id(0014 — 플러그인이 올린 첨부의 Gateway. 그 Gateway 만 읽고 정본에 묶는다, Gateway 를 지우면 비어 아무도 묶지 못한다 — 러너 정본은 uploader_id 가 자기 러너 토큰인 것만 묶는다).
@@ -275,7 +284,7 @@ src/
 │  │                      클라이언트가 볼 Message 만 거친다: listMessages(REST `GET /channels/:id/messages`·구독 ack)와 wire 팬아웃(realtime/events.ts).
 │  │                      내부 getMessage·bus 페이로드는 거치지 않는다(components v1 스펙 11장 Ruling 1).
 │  │                      스레드(Phase 4 ①): 저장 때 threadRootId 는 같은 채널의 루트만(답글·다른 채널·없음이면 VALIDATION — 답글을 루트로 바꾸지 않는다), 시스템 메시지도 가진다.
-│  │                      답글이 저장되면 루트를 요약과 함께 `message.updated`. hydrateForClient = withInteractions + withThreadSummaries(요약은 한 번에 — 루트마다 질의하지 않는다).
+│  │                      답글이 저장되면 루트를 요약과 함께 `message.updated`. hydrateForClient = withThreadSummaries(withReactions(withInteractions(…)))(요약·반응은 한 번에 — 메시지마다 질의하지 않는다).
 │  │                      listMessages 의 `MessageScope` — 채널 경로는 루트만(`roots`), 스레드 경로 `GET /channels/:id/threads/:rootId/messages` 는 루트+답글
 │  │                      ({ root, messages, hasMore[, hasMoreAfter] } — root 는 늘, 다른 워크스페이스·없는 id·답글·다른 채널 루트면 404). 두 경로 모두 `beforeSeq`·`afterSeq`·`limit` 과
 │  │                      `?around=<seq>`(그 seq 이하에서 절반 올림·초과에서 나머지, hasMoreAfter — beforeSeq·afterSeq 와 함께면 400). 채널 경로의 around 가 답글 seq 면 그 루트를 가운데로.
@@ -294,6 +303,13 @@ src/
 │  │                      normal 메시지 수(스레드 답글 포함, 안쪽 LIMIT 99), 행이 없으면 R = 0, 결과 순서는 정하지 않는다 — 웹은 channelId 로 찾는다. 쓰는 인덱스와 다시 재는 법은 그 함수 머리 주석) ·
 │  │                      routes.ts(`GET /api/v1/me/unread` — requireSession, 사용자 id 는 세션에서만).
 │  │                      wire 는 realtime/ 이 맡는다 — `channel.read` 처리기와 작성자 읽음은 socket.ts, `channel.activity`·`channel.read` 팬아웃은 events.ts
+│  ├─ reactions/          리액션. service.ts(setReaction — normal 메시지만(아니면 VALIDATION), 없는 메시지·다른 워크스페이스는 NOT_FOUND, 보관한 채널은 assertChannelWritable 로 409,
+│  │                      켜기는 ON CONFLICT DO NOTHING·끄기는 그 한 행 DELETE, 바뀐 행이 있을 때만 버스 message.updated(하이드레이션 전 — 반응은 wire 팬아웃이 붙인다) ·
+│  │                      withReactions — 메시지 id IN 질의 한 번, REACTION_EMOJIS 순서·userIds 는 단 순서(동률 rowid) · pendingReactionsFor — 그 에이전트가 쓴 그 세션 범위(채널은
+│  │                      thread_root_id IS NULL — 루트 포함, 스레드는 루트 + 그 답글) 메시지에 since 뒤 달린 것 최근 20개를 at 오름차순으로 + COUNT 로 omitted·latestAt, since null 이면 빈 결과,
+│  │                      by 는 users.handle(비활성 멤버도), excerpt 는 search/readable.ts 의 읽는 글을 UTF-16 60 안에서 글자 단위로 자른 것(EXCERPT_MAX 주석) ·
+│  │                      advanceReactionCursor — reactions_seen_at = max(옛 값, to), null 이면 to).
+│  │                      wire 처리기는 realtime/socket.ts, 런에 싣기·커서 올리기는 runs/orchestrator.ts
 │  ├─ router/             decide.ts(순수: 멘션·릴레이 판정, maxRelayTurns·allowPairs·반복 해시 — 일일 상한은 ops 관문, isPairAllowed 는 다시 실행도 쓴다.
 │  │                      스레드 답글(사람): 멘션된 에이전트마다 스레드 런, 멘션이 없으면 루트를 쓴 에이전트(활성·멤버) → 채널 자동 응답. 스레드 답글(에이전트)의 멘션은 같은 스레드 릴레이) +
 │  │                      service.ts(관문 `RunGate.enqueue` 로 런, relay_limit·relay_denied 시스템 메시지와 continue_relay 버튼 — 스레드면 그 스레드에, RETRY_RUN_ITEM = "retry_run")
@@ -306,10 +322,13 @@ src/
 │  │                      같아야 저장하고(다르면 VALIDATION — 어댑터가 ack 에 INTERNAL 로 싣는다), 에이전트·스냅샷·run_error 메시지의 threadRootId 는 런에서 온다.
 │  │                      보관: archivedTarget(run)(에이전트 보관 또는 채널 보관)을 디스패치 가드와 런 있는 늦은 정본(저장만 — 릴레이·푸시 없음)이 함께 본다. 런 없는 정본이 보관한 채널을 겨누면
 │  │                      세션 키의 채널이 같을 때(스레드 하위 세션 포함)만 저장만 하고, 다르거나 풀 수 없으면 저장 전에 AdapterError CHANNEL_ARCHIVED(브리지가 그 코드를 ack 에 싣는다).
+│  │                      리액션: buildInboundDeliver 와 renewSessionOnPromptChange 판정 **뒤에** 세션 행을 다시 읽어(getSessionRow) pendingReactionsFor → withReactionFacts(반응이 없으면 키를 만들지 않는다),
+│  │                      send 가 받아들여진 경로(drop·ack 전 종료·종료 중이 아닐 때 — 러너 queued 포함)에서만 advanceReactionCursor(실은 것 가운데 가장 늦은 시각, 커서가 null 이었으면 지금)
 │  │                      store.ts(runs·run_events — runs.thread_root_id ↔ Run.threadRootId), context.ts(인바운드 InboundDeliver 조립 — 트리거 첨부를 싣고, 이전 메시지 줄의 첨부는 `[이미지 N장]`·`[파일: 이름]` 자리표시로만.
 │  │                      채널 런 recentMessages 는 thread_root_id IS NULL 만, 스레드 런은 recentMessages 가 비고 context.thread = 루트(THREAD_ROOT_TEXT_MAX 4000자)·그 스레드 normal 답글 최근 20(트리거 앞 — 상호작용이면 카드까지)),
 │  │                      media-lines.ts(순수: Gateway 폴백 스냅샷의 단독 `MEDIA:` 줄 걷기 — 줄이 있으면 finalizing 을 줄당 30s, 최대 120s 늘린다), timers.ts, routes.ts(런 목록·상세·이벤트 REST)
 │  ├─ sessions/           agent_sessions — 채널×에이전트(스레드면 ×루트) 세션 키 보장(키는 어댑터 sessionKeyFor → shared dodokSessionKey), 리셋 뒤 프롬프트 리비전 갱신, 서버가 정하는 러너 세션 id(ensureProviderSessionId — 채널 규칙 리비전이 바뀌면 renewSessionOnPromptChange 가 비우고 오케스트레이터가 info 한 번).
+│  │                      리액션 커서 reactions_seen_at 은 새 세션 행(ensureSession)·리셋(markSessionReset — 갱신 포함)·러너 세션 새로 열기(renewSessionOnPromptChange)가 지금으로 둔다. getSessionRow(id 로 한 행)
 │  │                      세션 시작 리비전은 행마다(스레드 세션 행도 따로). providerAgentId 가 규칙 밖이면 키를 만들기 전에 VALIDATION(INVALID_AGENT_ID_REASON — run_error 카드와 같은 문장)
 │  ├─ components/         interact.ts(순수: 검사 순서·값 스키마·인바운드 텍스트) + service.ts(저장·소비·continue/interaction/retry 런.
 │  │                      상호작용마다 message.updated — reusable 카드도 결과 줄이 실시간으로 는다. 소비(consumed)는 1회용만.
@@ -420,12 +439,14 @@ src/
    │                      ack 에 그 채널의 **미해결** 승인 pendingApprovals · approval.resolve 는 승인 서비스로 넘긴다 ·
    │                      presence.update 는 PresenceUpdate 로 파싱해 push presence 에 — 실패는 버린다, 끊기면 지운다 ·
    │                      channel.read(버킷 chatter — 넘으면 ack RATE_LIMITED)는 ChannelRead 로 파싱해 markRead → 버스 channel.read → ack { lastReadSeq } ·
+   │                      reaction.set(버킷 chatter — 넘으면 ack RATE_LIMITED)은 ReactionSet 으로 파싱해 setReaction → ack null(역할을 다시 읽지 않는다 — membership 은 핸드셰이크가 본다) ·
    │                      message.send 가 새 최상위 메시지를 저장하면 ack 뒤에 작성자 읽음을 그 seq 로 올린다 — 스레드 답글·같은 clientMsgId 재전송은 올리지 않고, 실패는 warn 만)
    ├─ cookie-auth.ts      wire 핸드셰이크의 dodok.session 쿠키 파싱(웹은 토큰을 다루지 않는다)
    ├─ events.ts           bus → 룸 팬아웃(`setup.status` 는 owner, `ops.event` 는 owner·admin 사용자 룸에만 — roleRooms 가 보낼 때마다 membership 을 다시 읽어 역할 변경을 따르고 비활성 membership 은 거른다, `people.changed`·`agents.changed`·`channel.updated` 는 워크스페이스 룸), 소켓별 미전송 500 초과 시 run.event 버림 + run.state { resync }.
    │                      읽지 않음: message.created 가 kind normal 이고 작성자가 user·agent 면 본문 없는 `channel.activity` 를 워크스페이스 룸으로(silent — 늦게 온 정본 — 도 낸다,
+   │                      버스 message.created 에 채널 룸 팬아웃과 **따로 등록한** 처리기다 — 하이드레이션 질의가 던져도 읽지 않음 신호는 나간다, 등록 순서가 호출 순서,
    │                      허용 목록이라 새 authorType 은 넣을 때까지 막힌다), 버스 `channel.read`(userId 를 더 싣는다)는 그 사용자의 user 룸으로 `{ channelId, lastReadSeq }` 만.
-   │                      message.created 는 withInteractions, message.updated 는 hydrateForClient(+ 루트 스레드 요약)로 하이드레이션한다 — 그 두 버스 이벤트의 유일한 소비자라
+   │                      message.created 는 withReactions(withInteractions(…)), message.updated 는 hydrateForClient(+ 루트 스레드 요약)로 하이드레이션한다 — 그 두 버스 이벤트의 유일한 소비자라
    │                      emit 자리가 늘어도 저절로 덮인다(components v1 스펙 11장 Ruling 1).
    │                      approval.requested·resolved 는 channel.created 와 함께 **워크스페이스 룸**으로 — 지금 구독 중이 아닌 채널의 승인도 닿아야 한다(설계 5.4·Ruling 7)
    └─ types.ts            WireServer·RunsFacade 타입
@@ -443,7 +464,10 @@ src/
 Gateway 0개 부팅, 검증 함수가 던지면 거절, 거절 로그 주소(TRUST_PROXY)), `gateways`(Gateway API — 0개 부팅·추가·수정·삭제·Gateway 아래 브리지 토큰·부팅 때 넣기),
 `late-canonical`(연결을 닫으며 끝낸 런의 늦은 정본 — 저장만, 릴레이·푸시 없음, 「다시 실행」 카드 소비, 재시작 뒤도),
 `threads`(스레드 11건 — 스레드 키·문맥(채널 대화 없음)·정본·루트 요약·activeRuns 의 threadRootId, 멘션 없는 답글, 채널·스레드 병렬과 같은 스레드 직렬, 스레드 릴레이·relay_limit,
-한도, 스레드 「새 대화」, PLUGIN_OUTDATED → 재설치 → 다시 실행, threadId 불일치 거절, 카드 버튼, 스레드 멘션 푸시), 실제 어댑터 + 가짜 둘),
+한도, 스레드 「새 대화」, PLUGIN_OUTDATED → 재설치 → 다시 실행, threadId 불일치 거절, 카드 버튼, 스레드 멘션 푸시),
+`reactions`(리액션 — 두 소켓의 message.updated·같은 요청 다시면 이벤트 없음, 다음 멘션 런에 실리고 그다음엔 없음, ack 전 중지·플러그인 끊김 뒤 다시 실림, 스레드 루트·답글 범위와
+세션마다 따로 오르는 커서, 「새 대화」 뒤 없음, 25개 → 20개 + reactionsOmitted 5, 러너 RunnerRunStart, VALIDATION·RATE_LIMITED·보관 409), 실제 어댑터 + 가짜 둘),
+리액션 서비스·마이그레이션은 단위(`reactions.service`·`db` — 끄기는 한 행만·omitted 를 같은 조건으로·발췌의 서로게이트·비활성 멤버의 by·채우기 UPDATE),
 검색은 단위(`search.service`·`search.routes`·`db.fts` — 트리거 셋·rowid 재사용·백필 가드·주입·2글자·NUL·레이트리밋),
 팀은 단위(`roles.matrix` — 팀 스펙 「역할과 권한」 표의 경로 × 역할 허용·거부 전부·필드별·`approval.resolve`·승인 푸시 수신자·membership 없는 세션 · `members.invites`·`members.accept`·`members.manage`·`people`·`auth.login`·`auth` —
 두 번 제출·핸들 충돌 양쪽·재가입·링크 폐기·세션 소켓 끊기와 지우기 → 끊기 순서·핸드셰이크 틈·버킷 분리·Better Auth 폐기 경로 404),
@@ -468,6 +492,7 @@ DB 는 `data/dev-fake.sqlite`(시작마다 새로, `--keep` 이면 유지), 기�
 「짧게」(TTL 20초, 다른 키워드와 오면 그 카드의 TTL 만 줄인다), 첨부(Phase 2 ③)는 「이미지 보여줘」(chart.png 480×320)·「보고서 줘」(report.pdf)·「카드에 이미지」(media·file·링크 버튼이 `artifact://<이름>` 으로 첨부를 가리키고 하나는 없는 이름)·「미디어만」(글 없는 응답).
 푸시(Phase 2 ④)는 「나 불러」(답 `@<부른 사람> 확인해 주세요` — 멘션 푸시, 「느리게」와 함께면 채널을 옮길 시간이 난다). 사람이 첨부를 붙여 부르면 답 앞에 `받은 첨부 N개, 첫 이미지 W×H` 줄을 붙인다. 대본이 내는 글·라벨·파일 이름에 키워드가 없음을 `DEV_FAKE_KEYWORDS` 전수 테스트가 본다.
 스레드(Phase 4 ①)는 따로 키워드가 없다 — 스레드에서 멘션하면 대본이 그 스레드로 답하고(정본에 `threadId`, 델타 포함), 스레드 안 답의 「@핸들 이어서 부탁해요」는 같은 스레드에서 릴레이한다. 가짜 플러그인 hello 는 `threads` 를 싣는다.
+리액션도 키워드가 없다 — 가짜 Gateway·가짜 러너가 받은 인바운드마다 `dev:fake inbound reactions` 한 줄(`connection`·`agentId`·`runId`·`threadId`·`reactions`(「@핸들 이모지 메시지 id "발췌"」)·`reactionsOmitted`, 반응이 없어도 빈 배열)을 남긴다 — 「에이전트 답에 단 반응이 다음 런에 실리고 그다음 런에는 없다」를 이 줄로 본다.
 웹을 다른 포트로 띄우면 `PORT=3100 APP_ORIGIN=http://localhost:5180 pnpm -F @dodok/server dev:fake` + `DODOK_API_ORIGIN=http://127.0.0.1:3100 pnpm -F @dodok/web dev --port 5180`(`APP_ORIGIN` 기본은 `http://localhost:5173`).
 가짜 플러그인은 `.env` 가 아니라 그 Gateway 의 고정 브리지 토큰(라벨 `dev-fake`)으로 붙는다 — 연결 페이지의 각 Gateway 카드 토큰 목록에 그 줄이 있다.
 Gateway 를 고르는 훅(`plugin-token`·`plugin-capabilities`·`gateway`)은 본문에 `gatewayId`(사무실·집의 고정 id)가 있어야 한다 — 없거나 그 둘이 아니면 400 `VALIDATION`(문구에 고를 수 있는 id 가 실린다).
@@ -608,7 +633,8 @@ src/
 ├─ config-writer.ts       브리지에서 받은 채널 설정 변경을 runtime.config.mutateConfigFile 로 Gateway 설정에 반영(channel-config-writes 는 권한 판정).
 │                         반영은 설정 스냅샷 기준 live. claude-cli 기존 세션은 리셋·새 키에서만 반영, 드리프트·재시작으로는 미반영 (ADR 0003 3절)
 └─ context.ts             인바운드에 동봉할 최근 채널 메시지 N개 + 참여자 목록 + 릴레이 규칙 요약 + 채널 프롬프트 배치(헤더 줄 또는 ChannelPromptContext, ADR 0003).
-                          스레드면 첫 줄에 `thread=<rootId>`, 「최근 대화」 대신 `스레드 루트:`·`스레드 최근:`(서버가 채널 대화를 보내도 싣지 않는다)
+                          스레드면 첫 줄에 `thread=<rootId>`, 「최근 대화」 대신 `스레드 루트:`·`스레드 최근:`(서버가 채널 대화를 보내도 싣지 않는다).
+                          반응이 있으면 `---` 바로 앞에 shared `formatReactionFacts` 블록(없거나 빈 배열이면 줄 없음 — 옛 서버의 인바운드도 그대로)
 ```
 
 SDK import 경로: `openclaw/plugin-sdk/plugin-entry`, `openclaw/plugin-sdk/channel-message`, `openclaw/plugin-sdk/channel-config-schema` 등 서브패스만 사용한다. `openclaw`는 devDependency이며 번들 시 external로 두어 Gateway가 제공하는 런타임을 쓴다.
@@ -618,7 +644,7 @@ SDK import 경로: `openclaw/plugin-sdk/plugin-entry`, `openclaw/plugin-sdk/chan
 ### 2.4a `packages/runner-adapter` (서버 프로세스 안에서 실행)
 
 서버 측 Claude 러너 어댑터 — `AgentAdapter` 의 `provider: "claude"` 구현. 설계는 `docs/superpowers/specs/2026-09-27-claude-runner-design.md`(구현과 달라진 것은 그 스펙의 「구현과 맞춘 것」 장).
-- `src/runner-adapter.ts` — `/runner` 네임스페이스(러너 토큰 핸드셰이크·hello·같은 토큰 교체는 옛 자리를 잇는다), `send`→`run.start`(채널 규칙 틀·턴 사실은 여기서 만든다), `run.event` 허용 목록·runId 대조, `run.final`→정본·usage(`dodok.usage`), 중지(`run.final aborted` → 메시지 없는 `RUN_ABORTED`, 러너 종료 `run.final runner_shutdown` → `ADAPTER_UNAVAILABLE`), `outbound.post` 를 열린 런에 묶기, `mayReadAttachment`(러너 토큰 첨부 읽기 범위 — 열린 런의 트리거 첨부만), `supports`(러너가 없으면 true), 서버 종료·hello 타임아웃은 전송만 닫고 교체·폐기만 `disconnect(true)`.
+- `src/runner-adapter.ts` — `/runner` 네임스페이스(러너 토큰 핸드셰이크·hello·같은 토큰 교체는 옛 자리를 잇는다), `send`→`run.start`(채널 규칙 틀·턴 사실은 여기서 만든다 — 인바운드의 `reactions`·`reactionsOmitted` 를 `buildTurnFacts` 에 넘긴다), `run.event` 허용 목록·runId 대조, `run.final`→정본·usage(`dodok.usage`), 중지(`run.final aborted` → 메시지 없는 `RUN_ABORTED`, 러너 종료 `run.final runner_shutdown` → `ADAPTER_UNAVAILABLE`), `outbound.post` 를 열린 런에 묶기, `mayReadAttachment`(러너 토큰 첨부 읽기 범위 — 열린 런의 트리거 첨부만), `supports`(러너가 없으면 true), 서버 종료·hello 타임아웃은 전송만 닫고 교체·폐기만 `disconnect(true)`.
 - `src/connections.ts` — 붙은 러너와 에이전트 배정(러너 토큰에 묶인 등록 에이전트는 그 토큰의 러너만, 묶임이 없으면 먼저 알린 러너가 맡고 뒤 러너의 같은 id 는 「충돌」, 교체는 자리 잇기). 묶임 없는 등록 에이전트는 hello·러너가 빠진 뒤 지금 맡는 러너 토큰에 묶는다(`claimUnbound`).
 - 러너 프레임 속도 제한 — 소켓마다 버킷 둘(`run.event` 와 나머지, 숫자는 서버 `LIMITS.runner`, 옵션 `frameLimit` 로 받는다). 넘친 프레임은 버리고 warn·`onLimited`(운영 사건)는 주소별 1분에 한 번. 열린 런·기다리는 승인을 가리키는 종결·승인 프레임 가운데 처리기가 받아들일 것은 버킷을 거치지 않는다(승인 요청은 런마다 누계 32개까지 — `namesOpenWork`, 까닭과 상한은 그 머리 주석).
 - `src/approvals.ts` — 러너 승인 정규화(서버 쪽 id `runner:<토큰 id>:<러너 id>`)와 10분 기한 타이머(지나면 러너에 `deny`, `expired`).
@@ -803,6 +829,13 @@ src/
 │  │                       다음 요청이 다시 보낸다 — `docs/guides/deploy.md` 「운영 화면」 레이트리밋 표의 channel.read 줄이 같은 규칙을 가르친다 · useReadAtEnd — 끝이 보이고 탭이 보이고 연결돼
 │  │                       있으면 타임라인 lastSeq 를 요청, 끝 보임을 activity 처리에 알린다) · entryRead.ts(captureEntryRead — 들어갈 때의 읽음 위치, 현황이 `ready` 가 아니거나 그 채널 항목이
 │  │                       없으면 undefined(구분선 없음))
+│  ├─ reactions/           리액션. ReactionPicker.tsx(「반응 추가」 버튼 + Radix DropdownMenu 의 8개 한 줄 — ↑·↓·Home·End·Enter·Esc·초점 복귀는 Radix, ←·→ 는 moveAcross, 끝에서 멈춤.
+│  │                       메시지 행 동작 줄에 「스레드에서 답하기」와 같은 보임 규칙(`group-hover`·`group-focus-within`, `(hover: none)` 이면 늘), 열린 동안 `data-[state=open]` 으로 붙든다) ·
+│  │                       ReactionChips.tsx(`👍 3` — 내 것은 `aria-pressed`, 툴팁은 사람 목록으로 「@mia, @owner」·비활성은 「@핸들 (비활성)」, 보관한 채널은 `aria-disabled` + 누름 무시 —
+│  │                       `disabled` 면 초점을 못 받아 키보드로 툴팁을 못 본다) · useSetReaction.ts(낙관적 갱신 → wire `reaction.set`. 나가 있는 요청은 (메시지, 이모지)마다 QueryClient 별 모듈 상태 —
+│  │                       같은 메시지를 그리는 행이 둘이거나 다시 마운트돼도 한 줄로 센다. 마지막 요청만 실패를 되돌리고, 되돌리는 값은 「반대로」가 아니라 이 탭이 서버에게서 마지막으로 들은 내 표
+│  │                       (첫 요청 직전 캐시 → 성공한 ack → 그동안 받은 message.updated). 채널 캐시는 있을 때만, 루트면 스레드 캐시도 고친다. CHANNEL_ARCHIVED 면 보관 토스트·채널 다시 받기,
+│  │                       그 밖은 「반응을 저장하지 못했습니다」). 테스트의 Radix 메뉴 열기는 키보드로 — 까닭은 reactions.test.tsx 의 openPicker 주석
 │  ├─ messages/            timeline.ts(입장·과거·upsert·낙관적 교체·빈틈 · 떨어진 창 `hasNewer` — around 로 갈아 끼운 창에는 창 안(가장 새 항목의 seq 이하)과 가진 것만 넣고
 │  │                       `lastSeq` 만 올린다, lastSeq 는 내려가지 않는다)·groupRows.ts(날짜 구분선·묶음·「새 메시지」 구분선 행 — entryReadSeq 뒤 첫 남의 최상위 normal 메시지 앞(날짜 구분선 뒤)에 한 번,
 │  │                       자리가 불러온 목록 안에서 정해졌을 때만(`!hasOlder` 이거나 맨 앞이 entryReadSeq + 1 이하 — 아니면 배너가 맡는다. 맨 위 구분선은 과거 페이지를 붙일 때 스크롤 기준 행이 되어 화면이 튄다))·useTimeline(timelineQuery — 채널 skipToken·스레드 threadQuery)·useOlderPages·useAuthors(작성자·사람 멘션은 사람 목록으로 — 비활성 멤버는 이름 그대로 + 「비활성」 배지, 멘션 칩은 `@핸들` + DeactivatedTag),
@@ -819,14 +852,14 @@ src/
 │  │                       행이 생기면 내려앉고 다 받으면 다시 겨눠 끝 보임을 잰다(그 사이 손을 대면 겨누지 않고 그 자리에서, 칩·보내기로 끝에 갔으면 다 받은 뒤 끝으로, 5초가 지나면 가진 것으로).
 │  │                       「새 메시지」 구분선(`role="separator"`, 이름 「새 메시지」)과 페이지 밖 배너 「안 읽은 메시지가 더 있어요 · 처음 안 읽은 곳으로」 —
 │  │                       entryReadSeq + 1 이 불러온 가장 옛 seq 보다 앞이고 구독 응답 뒤(`lastSeq > 0`)일 때, 누르면 jumpToFirstRootAfter 뒤 구분선 행으로 한 번 이동(받은 창에 없으면 이동을 거둔다),
-│  │                       루트가 없으면 끝으로, 실패면 reportPageError 이고 배너는 남는다. 한 번 누르면 그 채널을 떠날 때까지 다시 뜨지 않는다), MessageItem(루트 아래 ThreadChip·「스레드에서 답하기」)·MessageBody(Streamdown, 원시 HTML 끔,
+│  │                       루트가 없으면 끝으로, 실패면 reportPageError 이고 배너는 남는다. 한 번 누르면 그 채널을 떠날 때까지 다시 뜨지 않는다), MessageItem(루트 아래 ThreadChip·「스레드에서 답하기」, normal 메시지면 반응 칩과 「반응 추가」 — 보관한 채널은 「반응 추가」 없음)·MessageBody(Streamdown, 원시 HTML 끔,
 │  │                       단일 개행 → br, 마크다운 이미지는 링크로, 확정 본문만 코드 하이라이트 — codeHighlight.ts(Streamdown 플러그인·언어 목록과 별칭, 실패는 페이지 수명 동안 칠하지 않음)·
 │  │                       shikiEngine.ts(지연 로딩되는 shiki 엔진 — 밝음·어두움 github 테마, 바탕은 앱 토큰))·MentionChip·mentionMarkdown·SystemCard(MessageItem 과 SystemCard 의 components 는 `features/components` 의 `<Components>` 가 그린다)·
 │  │                       PendingItem(보내는 중 첨부는 서버 경로로, 크게 보기 없음, 사유 rate_limited 면 rateLimited.ts 의 「너무 빠르게 보내고 있습니다 — 잠시 뒤 다시」, channel_archived 면 「보관된 채널입니다」·「다시 보내기」 없이 「삭제」만)·pendingActions·MessageErrorBoundary,
 │  │                       SystemCard 의 run_limit 은 admin 이상에게만 링크 — scope workspace 면 「운영에서 한도 바꾸기」, channel 이면 「채널 설정에서 한도 바꾸기」, 모르는 kind 는 정보 모양, ChannelPage.tsx(채널 확인 뒤에만 안을 그린다, 확인되면 touchRecentChannel. 보관한 채널이면 작성기 대신 ArchivedNotice, 아래에 ChannelArchivedContext.
 │  │                       채널 id 가 바뀔 때마다 captureEntryRead 로 entryReadSeq 를 한 번 잡는다 — 채널을 옮겨도 이 페이지는 다시 마운트되지 않아 렌더 중에 다시 잡는다.
 │  │                       좁은 화면에서 오른쪽 패널(스레드·활동·설정)이 열려 있으면 `covered` — 시트가 타임라인을 덮으므로 채널 읽음을 보내지 않는다).
-│  │                       MessageItem 은 본문이 비면 본문을 그리지 않고, 본문 아래 `MessageAttachments` → components 카드 순으로 그린다
+│  │                       MessageItem 은 본문이 비면 본문을 그리지 않고, 본문 아래 `MessageAttachments` → components 카드 → 반응 칩 순으로 그린다
 │  ├─ ops/                 Phase 3 ③. 운영 화면 `/settings/operations` — admin 이상(member·role 없는 옛 me 는 ops API 를 부르지 않고 「권한이 없습니다」).
 │  │                       OpsPage.tsx(섹션 넷 — 상태를 30초마다 다시 받는 것은 이 화면만(OPS_STATUS_POLL_MS, 탭이 가려지면 쉰다)) ·
 │  │                       StatusCard.tsx(켜진 Gateway 마다 Gateway·플러그인·Gateway 버전 세 줄(줄 이름에 Gateway 이름, 꺼진 Gateway 는 줄 없음, drift 면 「저장소가 검증한 버전(<핀>)과 다릅니다」)·디스크·직전 종료·서버·DB, 문제가 있는 줄만 `data-problem` 강조 + sr-only 「문제:」.
