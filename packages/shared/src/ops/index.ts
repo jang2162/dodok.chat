@@ -50,12 +50,24 @@ export type OpsUnacked = z.infer<typeof OpsUnacked>;
 export const OpsEventsPage = z.object({ events: z.array(OpsEvent), nextCursor: z.string().optional() });
 export type OpsEventsPage = z.infer<typeof OpsEventsPage>;
 
-/** PATCH /api/v1/ops/settings 본문 — null 은 무제한 */
-export const OpsSettingsPatch = z.object({ dailyRunLimit: z.int().min(1).max(10_000).nullable() });
+/** 워크스페이스 일일 런 상한 — null 은 무제한 */
+const DailyRunLimit = z.int().min(1).max(10_000).nullable();
+/** 워크스페이스 시간대(IANA 이름) — 여기서는 모양만 본다. 있는 이름인지는 예약을 세는 서버의 Intl 이 가른다 */
+const TimeZoneName = z.string().min(1).max(64);
+
+/** 워크스페이스 운영 설정 — 저장된 키가 없으면 기본값(OPS_DEFAULT_DAILY_RUN_LIMIT·OPS_DEFAULT_TIME_ZONE)으로 채운 값 */
+export const OpsSettings = z.object({ dailyRunLimit: DailyRunLimit, timeZone: TimeZoneName });
+export type OpsSettings = z.infer<typeof OpsSettings>;
+
+/** PATCH /api/v1/ops/settings 본문 */
+export const OpsSettingsPatch = z.object({ dailyRunLimit: DailyRunLimit, timeZone: TimeZoneName.optional() });
 export type OpsSettingsPatch = z.infer<typeof OpsSettingsPatch>;
 
 /** 워크스페이스 일일 런 상한 — 설정 키가 없을 때 */
 export const OPS_DEFAULT_DAILY_RUN_LIMIT = 300;
+
+/** 워크스페이스 시간대 — 설정 키가 없을 때. 예약 자동화의 시각을 이 시간대의 벽시계로 센다 */
+export const OPS_DEFAULT_TIME_ZONE = "Asia/Seoul";
 
 /** POST /api/v1/ops/events/ack 응답 — 이번에 확인 처리한 줄 수 */
 export const OpsAckResult = z.object({ acked: z.int().min(0) });

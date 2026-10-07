@@ -193,8 +193,8 @@ export const Message = z.object({
   channelId: Id,
   seq: z.int().min(1),
   kind: z.enum(["normal", "system"]),
-  authorType: z.enum(["user", "agent", "system"]),
-  authorId: Id.optional(), // system이면 없음
+  authorType: z.enum(["user", "agent", "system", "automation"]),
+  authorId: Id.optional(), // system이면 없음. automation 이면 자동화 id(자동화를 지워도 메시지는 남는다 — FK 가 아니다)
   bodyMd: z.string().max(100_000),
   mentions: MentionSet,
   attachments: z.array(Attachment).max(ATTACHMENT_LIMITS.perMessage).default([]),
