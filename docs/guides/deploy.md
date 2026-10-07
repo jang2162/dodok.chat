@@ -13,6 +13,7 @@ dodok 서버·웹을 Docker Compose 로 한 호스트에 올리고, Caddy 가 �
 - `.env` 를 `cat`·`grep` 하지 않는다. 값이 필요하면 서브셸에서 `. ./.env` 로 **셸 변수**로만 읽는다.
 - ⚠ **`docker compose config` 와 `docker compose exec app env` 는 `.env` 값을 그대로 찍는다** — 부르지 않는다. 합쳐진 설정을 볼 때는 `docker compose -f infra/compose.yml config --services`(서비스 이름만)처럼 값이 안 나오는 것만 쓴다.
 - 서버 로그(`docker compose logs app`)는 토큰·비밀 키를 가린다(pino redact). 옮기기 전에는 그래도 `grep -c -F` 로 개수만 확인한다.
+- 자동화 웹훅 주소(`/hooks/whk_…`)는 토큰이 경로에 든 주소다 — 서버 로그와 Caddy 오류 로그는 `whk_` 와 그 뒤 6자만 남기고 `…` 로 가린다(아래 「자동화 웹훅」). 주소 원문은 만들 때 대화상자에 한 번 보이는 것뿐이니 채팅·이슈에 붙여 넣지 않는다.
 
 ## 설정 — `.env`
 
@@ -325,6 +326,20 @@ Claude 러너(`@dodok/claude-runner`, 명령 `dodok-runner`)는 **사람의 머�
 
 **다시 활성화** — 멤버 표 아래 접힌 「비활성 멤버 N」을 펼쳐 줄의 「다시 활성화」(권한은 비활성화와 같다). 역할·채널 참여가 그대로 돌아오고 예전 비밀번호로 로그인한다. 비밀번호를 모르면 새 재설정 링크를 만든다 — 비활성 중 폐기된 링크는 되살아나지 않는다. 비활성 줄에는 역할 바꾸기·재설정 링크가 없다(다시 활성화한 뒤에 한다). 계정을 지우는 길은 없다.
 
+## 자동화 웹훅
+
+자동화(웹 「설정」 → 「자동화」 탭, admin 이상 — 화면 쓰는 법은 `docs/guides/user-guide.md` 「자동화 (admin 이상)」 절)의 웹훅은 바깥 서비스가 `POST https://<도메인>/hooks/whk_<토큰>` 으로 보내면 정한 채널에 문구와 그 본문을 올린다. 설계는 `docs/superpowers/specs/2026-10-05-automations-design.md`(구현과 달라진 것은 「구현과 맞춘 것」 장).
+
+- **공개 경로** — 로그인·쿠키 없이 토큰만 본다. Caddy 가 `/hooks/*` 를 서버로 넘긴다(`infra/Caddyfile` 의 `@backend`) — 빠지면 바깥 서비스의 POST 가 웹 앱(SPA 폴백)으로 떨어진다. `/api` 밖이라 로그인 사용자의 REST 상한을 타지 않고, 토큰마다 분당 상한과 웹훅 전용 실패 카운터를 따로 쓴다(아래 「운영 화면」 레이트리밋 표).
+- **주소의 오리진** — 브리지 공개 주소(`BRIDGE_PUBLIC_URL`, 없으면 `APP_ORIGIN`)의 오리진을 `https:`(`ws:` 면 `http:`)로 바꾼 것이다 — 러너 설정의 `serverUrl` 과 같은 규칙. 운영에서는 `https://<도메인>` 이다. 개발 모드(`pnpm -F @dodok/web dev` 의 Vite)에서는 이 오리진이 웹 포트가 되는데 Vite 프록시에 `/hooks` 가 없어 그 주소로는 닿지 않는다 — 같은 경로를 서버 포트로 보낸다(`docs/plan.md` 8장 이월).
+- **토큰** — `whk_` + 43자. DB 에는 sha256 해시와 `whk_` 뒤 6자(목록에 보이는 앞부분)만 둔다. 원문은 만들기·「주소 다시 만들기」 응답 한 번뿐이다(`Cache-Control: no-store`). 새었으면 「주소 다시 만들기」 — 옛 주소는 곧바로 404 다.
+- **응답** — 받으면 `202 {"messageId":"…"}`(에이전트 답을 기다리지 않는다). 모르는 토큰·꺼 둔 자동화·예약 종류·재발급 전 옛 토큰은 **모두 같은 404** `{"code":"NOT_FOUND","message":"not found"}` 다(어느 경우인지 드러내지 않는다). 본문 64 KiB 초과 413, 토큰 상한 초과 429, 보관한 채널 409 `CHANNEL_ARCHIVED`. `Content-Type` 머리의 꼴이 틀리면(`;;;`·빈 값) Fastify 가 파서 전에 415 를 낸다. 본문은 바이트로 받아 UTF-8 로 풀고(틀린 바이트는 `�`), 타입과 무관하게 받아들인다.
+- **로그 가림** — 토큰이 경로에 있어 요청 로그가 그대로 남기면 로그를 읽는 사람이 그 주소로 글을 올려 런 비용을 만든다. 서버는 요청 로그(`incoming request` 의 `url`)와 Fastify 의 404 줄(`Route POST:/hooks/… not found`)을, Caddy 는 오류 로그(`http.log.error` — 앱이 내려간 동안·보낸 쪽이 본문 도중 끊을 때의 502, 그리고 `reverse_proxy` 의 「aborting with incomplete response」)를 `/hooks/` 다음 10자(`whk_` + 6자)와 `…` 로 가린다. 그 밖 자리의 `whk_` 토큰 꼴(쿼리 등)도 같다. Caddy 는 access log 를 남기지 않는다. 확인은 아래 「로컬 검증」의 `CADDY_LOG_CMD` 와, 운영에서는 개수만 세는 꼴로:
+  ```bash
+  docker compose -f infra/compose.yml logs app caddy | grep -c '/hooks/whk_[A-Za-z0-9_-]\{7,\}'   # 0 이어야 한다(가린 줄은 whk_ 뒤 6자 + …)
+  ```
+- **손으로 보내 보기** — 화면에서 복사한 주소로 `curl -sS -X POST -H 'content-type: application/json' -d '{"ok":false}' '<주소>'` → `202`. 주소를 셸 기록에 남기지 않으려면 앞에 공백을 두거나(`HISTCONTROL=ignorespace`) 변수로 읽는다.
+
 ## 운영 화면
 
 웹 「설정」 → 「운영」 탭(`/settings/operations`, owner·admin — member 에게는 탭이 없고 직접 주소는 「권한이 없습니다」)이 「어젯밤 무슨 일이 있었나」에 답한다. 외부 모니터링 스택·푸시·웹훅 알림은 없다 — 사이드바 하단 「설정」과 「운영」 탭에 붙는 배지(확인 안 한 사건 수, admin 이상)로 알아챈다. 설계는 `docs/superpowers/specs/2026-09-25-ops-hardening-design.md`(구현과 달라진 것은 그 스펙의 「구현과 맞춘 것」 장).
@@ -332,7 +347,8 @@ Claude 러너(`@dodok/claude-runner`, 명령 `dodok-runner`)는 **사람의 머�
 - **상태**(맨 위 카드) — 켜진 Gateway 마다 Gateway·플러그인 연결과 Gateway 버전 세 줄(줄 이름에 Gateway 이름 — 「Gateway 「사무실」」·「플러그인 「사무실」」·「Gateway 「사무실」 버전」, 꺼진 Gateway 는 줄이 없다), Claude 러너 연결(「<n>대 붙음 / 토큰 <m>개」 — 러너는 사람 PC 라 꺼져 있을 수 있어 이 줄은 강조하지 않고, 60초 넘는 끊김은 사건 「러너 연결 끊김」이 알린다), 디스크 여유, 직전 종료, 서버·DB. 문제가 있는 줄만 강조한다. 연결 줄은 wire 로 실시간이고, 나머지 칸은 사건이 올 때와 화면을 보는 동안 30초마다 다시 받는다. Gateway 버전이 저장소 핀(`packages/openclaw-adapter/src/version.ts` 의 `OPENCLAW_PINNED_VERSION`)과 다르면 「저장소가 검증한 버전(<핀>)과 다릅니다」 — 연결 페이지 Gateway 카드에도 같은 문구가 붙는다.
 - **런**(표) — 「오늘 / 7일」, 채널별·에이전트별 런·실패·중지·차단. OpenClaw 에이전트 런의 토큰·금액은 「측정 불가」다 — Gateway 가 주는 출력 토큰·비용 값이 틀린다(`docs/adr/0005-usage-values.md`). Claude 러너 에이전트 런은 러너가 CLI 의 값으로 보낸 토큰·금액이 보인다(ADR 0007 「질문별」 usage·비용). 러너가 구독 로그인이면 금액은 청구액이 아니라 공시 단가 환산이라 「환산 포함」이 붙고, 한 행에 두 종류 런이 섞이면 더한 것은 러너 런뿐이라 「런 m/n개만」이 붙는다.
 - **한도** — 워크스페이스 일일 런 상한. 값을 정한 적이 없으면(새 배포도, 이 판으로 올린 기존 배포도) **300**, 1~10000, 비우면 무제한. 채널별 상한은 각 채널 설정 「릴레이 정책」의 「일일 실행 상한」이다. 둘 다 그 채널·워크스페이스에서 오늘 **만들어진 모든 런**(사람 멘션·자동 응답·릴레이·컴포넌트 상호작용·다시 실행)을 센다 — 한도로 막혀 만들지 않은 런은 세지 않는다. 막히면 런을 만들지 않고, 그 채널에 「오늘 런 한도(N)에 도달했습니다 — 내일 0시에 풀립니다」(채널 상한이면 「이 채널의」가 붙는다)를 범위마다 **하루 한 번** 남기며, 사람이 보낸 메시지는 그대로 저장된다. 「하루」는 `TZ` 의 자정이다(위 「설정 — `.env`」).
-- **최근 사건** — 심각도 필터·「모두 확인」·「더 보기」. 같은 종류·대상의 사건은 확인하기 전 1시간 안이면 한 줄로 묶여 「×n」이 오르고, 30일 지난 줄은 지워진다. Gateway 사건은 이름이 붙는다(「Gateway 「집」 연결 끊김」·「Gateway 「집」 플러그인 연결 끊김」·「Gateway 「집」 검증 안 된 버전 (…)」 — 이름을 바꿨으면 지금 이름, 지운 Gateway 는 사건을 연 때의 이름). 끊김 사건(Gateway·플러그인)은 Gateway 마다 **60초 넘게** 끊겨야 열리고(그 안에 돌아오면 남지 않는다), 붙으면 같은 줄이 「(n분 동안)」으로 닫힌다. 「(n분 동안)」은 서버가 다시 붙은 때까지다 — Gateway 가 먼저 떠도 서버의 재접속 백오프(최대 30초)만큼 길게 나온다.
+- **시간대** — 워크스페이스 시간대(기본 `Asia/Seoul`, IANA 이름 — `+09:00` 같은 고정 오프셋은 받지 않는다). 예약 자동화의 시각 기준이고, 바꾸면 켜진 예약의 다음 실행 시각을 다시 센다. 저장값은 서버 Intl 의 정규형이다(`asia/seoul` → `Asia/Seoul`, `EST` → `America/Panama`). 한도의 「하루」는 이 값이 아니라 `TZ` 다.
+- **최근 사건** — 심각도 필터·「모두 확인」·「더 보기」. 같은 종류·대상의 사건은 확인하기 전 1시간 안이면 한 줄로 묶여 「×n」이 오르고, 30일 지난 줄은 지워진다. Gateway 사건은 이름이 붙는다(「Gateway 「집」 연결 끊김」·「Gateway 「집」 플러그인 연결 끊김」·「Gateway 「집」 검증 안 된 버전 (…)」 — 이름을 바꿨으면 지금 이름, 지운 Gateway 는 사건을 연 때의 이름). 자동화 사건은 둘이다 — 「자동화 예약을 놓쳐 건너뜀」(서버가 꺼져 있어 놓친 회차가 10분을 넘었다 — 몰아 올리지 않는다)과 「자동화 실행 실패」(게시 실패 — 보관한 채널이면 「(CHANNEL_ARCHIVED)」). 끊김 사건(Gateway·플러그인)은 Gateway 마다 **60초 넘게** 끊겨야 열리고(그 안에 돌아오면 남지 않는다), 붙으면 같은 줄이 「(n분 동안)」으로 닫힌다. 「(n분 동안)」은 서버가 다시 붙은 때까지다 — Gateway 가 먼저 떠도 서버의 재접속 백오프(최대 30초)만큼 길게 나온다.
 - **배지** — 확인 안 한 주의·오류 사건 수(100 이상은 「99+」). 좁은 화면에서는 채널 목록 메뉴 버튼의 빨간 점. 「모두 확인」 뒤 사라진다.
 - **다시 실행** — 디스패치 실패·타임아웃으로 끝난 런의 채널 알림 「@<에이전트> 실행이 실패했습니다: <코드>」에 1회용 「다시 실행」 버튼이 붙는다(채널의 사람 누구나, 24시간). 같은 트리거로 새 런을 만들고, 한도에 걸리면 버튼은 소비되지 않는다.
 
@@ -354,6 +370,8 @@ docker compose -f infra/compose.yml logs app | grep '"event":"ops.'
 | `POST /api/v1/invites/lookup`·`/accept`·`/reset`(초대·재설정 링크) | `invitePublicPerMin`(IP 당 분당, 셋이 한 버킷 — 로그인과 따로) | 429 |
 | `/api/auth/*`(Better Auth) | `betterAuthPerMin`(IP 당 분당) | 429 |
 | `GET /llms.txt`(노드 설치 안내서 — 로그인 없음) | `llmsTxtPerMin`(IP 당 분당) | 429 |
+| `POST /hooks/<토큰>`(자동화 웹훅 — 로그인 없음) | `webhookPerMin`(토큰마다 분당, 재발급한 토큰은 새 버킷) | 429 |
+| `POST /hooks/<토큰>` 의 모르는 토큰 | `bridgeFail` 과 같은 숫자의 **웹훅 전용** 카운터(브리지·러너와 나누지 않는다) | 막힌 주소에서 모르는·꺼진 토큰은 429, 사건 「브리지 인증 실패가 반복돼 주소를 막음」(detail `path: webhook`). **켜진 자동화의 토큰은 막힌 주소에서도 통과한다** — GitHub 처럼 여러 고객이 발신 주소를 나눠 쓰는 서비스에서 남의 틀린 토큰이 내 웹훅을 막지 않게 |
 | `POST /api/v1/invites`·`POST /api/v1/members/:userId/reset-link`(링크 발급) | `inviteIssuePerMin`(사용자당 분당, 둘이 한 버킷) | 429 |
 | 로그인 뒤 REST `/api/v1/*` | `restPerMin`(사용자당 분당) | 429 `{"code":"RATE_LIMITED"}` |
 | 첨부 업로드 `POST /api/v1/attachments` | `uploadPerMin`(사용자당 분당, REST 상한 위에 한 번 더) | 429 `RATE_LIMITED` |
@@ -366,7 +384,7 @@ docker compose -f infra/compose.yml logs app | grep '"event":"ops.'
 | wire 동시 소켓 | `socketsPerUser`(사용자당) | 새 연결을 핸드셰이크에서 거절 |
 | 러너가 보내는 `run.event` | `runner.events`(러너 소켓마다 토큰 버킷 — 정상 스트리밍이 걸리지 않는 숫자, 근거는 그 키의 주석) | 버린다. 서버 로그 warn `runner frames rate limited — dropped` 와 사건 key `runner:<프레임>` 은 **주소마다 1분에 한 번**, 그사이 버린 수(`dropped`)와 함께 |
 | 러너가 보내는 `hello`·`outbound.post`, 그리고 열린 런·기다리는 승인을 가리키지 않거나 서버가 받아들이지 않는(계약 위반·세션 키 불일치 등) `run.final`·`run.error`·`approval.*` | `runner.control`(같은 소켓의 둘째 버킷) | 같다 — `outbound.post` 는 ack `RATE_LIMITED`(에이전트의 `post` 도구가 실패로 받는다). 그 러너의 열린 런을 닫는 `run.final`·`run.error`, 그 런의 새 승인 요청(런마다 누계 32개까지 — 철회·결정으로 줄지 않는다, 러너 어댑터 `RUN_FREE_APPROVALS`), 기다리는 승인의 철회는 버킷을 세지 않는다 — `post` 가 버킷을 비워도 런이 `runMs` 까지 매달리지 않게 |
-| `/bridge`·`/runner` 핸드셰이크, `/bridge/attachments`·`/runner/attachments`, 토큰으로 받는 설치 파일(`GET /api/v1/setup/plugin.tgz`·`runner.tgz` 의 `Authorization: Bearer`) | `bridgeFail`(**여섯이 한 카운터**, **실패만** 센다 — 한 주소가 창 안에 정해진 수만큼 틀리면 그 주소를 막는다. 설치 파일은 Bearer 가 없는 요청을 세지 않는다) | 막힌 동안은 토큰을 보지 않고 거절(첨부 HTTP·설치 파일은 429 「인증 실패가 너무 많습니다」), 사건 「브리지 인증 실패가 반복돼 주소를 막음」. 성공은 카운터를 비우지 않아 막힌 주소의 정상 플러그인도 막힌 동안은 거절되고, 풀리면 저절로 붙는다 |
+| `/bridge`·`/runner` 핸드셰이크, `/bridge/attachments`·`/runner/attachments`, 토큰으로 받는 설치 파일(`GET /api/v1/setup/plugin.tgz`·`runner.tgz` 의 `Authorization: Bearer`) | `bridgeFail`(**여섯이 한 카운터**(웹훅은 위 줄의 따로 둔 카운터), **실패만** 센다 — 한 주소가 창 안에 정해진 수만큼 틀리면 그 주소를 막는다. 설치 파일은 Bearer 가 없는 요청을 세지 않는다) | 막힌 동안은 토큰을 보지 않고 거절(첨부 HTTP·설치 파일은 429 「인증 실패가 너무 많습니다」), 사건 「브리지 인증 실패가 반복돼 주소를 막음」. 성공은 카운터를 비우지 않아 막힌 주소의 정상 플러그인도 막힌 동안은 거절되고, 풀리면 저절로 붙는다 |
 
 토큰을 바꾼 직후 옛 토큰으로 재접속을 되풀이하는 플러그인이 [B] 와 같은 주소의 정상 플러그인까지 잠시 막을 수 있다 — 옛 플러그인 설정을 먼저 고치고, 풀리기를 기다린다(아래 「오류」).
 
@@ -453,6 +471,8 @@ docker compose -f infra/compose.yml ps                              # app·caddy
 
 **반응이 있는 판으로 올릴 때는 플러그인을 다시 설치해야 OpenClaw 에이전트가 반응을 본다.** 서버는 에이전트의 다음 턴에 그 에이전트 메시지에 달린 반응을 싣고 플러그인이 헤더에 그 줄을 넣는데(`docs/guides/agent-guide.md` 「반응 — 지난 턴 뒤 내 메시지에 달린 것」 절), 옛 플러그인은 모르는 필드를 버린다 — 턴은 그대로 돌고 반응 줄만 없다. 연결 페이지는 그 Gateway 카드에 「다른 빌드입니다 — 받아서 다시 설치하세요」를 보인다. Claude 러너(`dodok-runner`)는 다시 설치하지 않는다 — 턴 사실은 서버가 만들어 보낸다. 반응 판의 플러그인은 hello 를 바꾸지 않아 아래 「되돌리기」에서 반응 전 서버(Phase 4 ① 이후)에도 붙는다 — 반응 줄이 없을 뿐이다. 마이그레이션(`0019_message_reactions`)이 기존 에이전트 세션의 반응 기준 시각을 마이그레이션 때로 채운다 — 올리기 전의 반응은 없으니 잃는 것이 없다.
 
+**자동화가 있는 판으로 올릴 때는 플러그인·러너를 다시 설치하지 않는다.** 에이전트는 자동화 글을 보낸 사람 `system:automation` 으로 받는데, 플러그인과 러너가 이미 다루는 꼴이다. 마이그레이션(`0020_automations`)은 새 표만 만든다. 웹훅 수신 경로 `/hooks/*` 는 이미지에 든 `infra/Caddyfile` 이 넘기므로 `up -d --build` 로 함께 올라간다.
+
 ### 되돌리기
 
 부팅에 실패하면(`app` 이 unhealthy·재시작 반복 — `docker compose -f infra/compose.yml logs app`):
@@ -517,6 +537,10 @@ docker compose -f infra/compose.yml ps     # app·caddy (healthy)
 | 첨부 업로드가 507 `INSUFFICIENT_STORAGE`, 운영 화면 「디스크 여유 부족」(오류) | 데이터 볼륨의 여유가 256 MiB 미만 | 공간 확보(`backups/` 의 오래된 백업, 호스트의 다른 파일) → 최대 10분 뒤 또는 `docker compose -f infra/compose.yml restart app`. 위 「운영 화면」 |
 | 멘션해도 답이 없고 채널에 「오늘 런 한도(N)에 도달했습니다 — 내일 0시에 풀립니다」 | 워크스페이스 또는 채널 일일 런 상한 | 운영 화면 「한도」 또는 채널 설정 「일일 실행 상한」. 자정이 예상과 다르면 `TZ` |
 | 요청이 429 `RATE_LIMITED`, 운영 화면 「요청 제한 발동」 | 레이트리밋(위 「운영 화면」의 표) — 한 사람·한 탭의 폭주 | 1분 안에 저절로 풀린다. 되풀이되면 그 사건의 `key`(경로·이벤트 이름)로 무엇이 두드리는지 본다 |
+| 바깥 서비스의 웹훅이 404 `{"code":"NOT_FOUND","message":"not found"}` | 주소의 토큰이 지금 켜진 웹훅 자동화의 것이 아니다 — 틀린 주소, 꺼 둔 자동화, 지운 자동화, 「주소 다시 만들기」 전의 옛 주소가 모두 같은 404 다 | 「자동화」 탭에서 켜져 있는지 보고, 주소를 잃었으면 「주소 다시 만들기」 뒤 바깥 서비스의 주소를 바꾼다(「자동화 웹훅」) |
+| 웹훅이 409 `CHANNEL_ARCHIVED`, 또는 예약이 「실패」·운영 화면 「자동화 실행 실패 (CHANNEL_ARCHIVED)」 | 자동화의 채널을 보관했다 — 목록에 「채널이 보관되었습니다」 | 채널 보관 해제, 또는 자동화의 채널을 바꾼다 |
+| 운영 화면 「자동화 예약을 놓쳐 건너뜀」 | 예약 시각에 서버가 꺼져 있었고 켜졌을 때 가장 이른 놓친 회차가 10분을 넘었다 — 그 회차는 올리지 않고 다음 회차부터 돈다 | 할 일 없음. 놓친 글이 필요하면 「지금 실행」 |
+| 웹훅이 413 / 415 / 429 | 본문 64 KiB 초과 / `Content-Type` 머리의 꼴이 틀림 / 그 토큰이 분당 30번을 넘었거나(토큰 상한) 그 주소가 모르는 토큰을 되풀이해 막혔다 | 본문을 줄인다 / 머리를 고친다 / 보내는 쪽의 재시도 간격을 늘린다. 켜진 웹훅의 토큰은 주소 막힘과 무관하게 통과한다 |
 | 플러그인이 안 붙고 로그 `bridge connection rejected … blocked after repeated failures`, 운영 화면 「브리지 인증 실패가 반복돼 주소를 막음」 | 한 주소에서 틀린 토큰이 되풀이됐다(옛 토큰으로 재접속하는 플러그인 등) | 틀린 토큰을 쓰는 쪽을 고친 뒤 막힘이 풀리기를 기다린다(`LIMITS.bridgeFail.blockMs`) — 재시작해도 풀린다 |
 | 에이전트 파일 업로드 413 | 32 MB 초과면 Caddy 의 413, 20 MiB~32 MB 면 서버의 413 JSON `{"code":"VALIDATION","message":"Request body is too large"}` — 첨부 전용 고정 문구가 아니다(`docs/plan.md` 8장 이월). 웹과 플러그인은 올리기 전에 크기를 걸러 자기 문구를 낸다 | 파일을 줄인다 |
 | 러너가 `dodok-runner: 설정 파일 오류 — agents[0].workdir: 디렉터리가 없습니다(라벨 …)` 처럼 한 줄 찍고 끝남 | 설정 파일(`~/.dodok-runner/config.json`)이 틀렸다 — 어느 키가 왜 틀렸는지가 그 줄에 있다. 연결은 시도하지 않는다 | 그 키를 고치고 다시 띄운다(「Claude 러너 설치」 4) |
@@ -533,6 +557,7 @@ docker compose -f infra/compose.yml ps     # app·caddy (healthy)
 - 호스트에 열리는 포트는 Caddy 80·443(udp 포함)뿐이다. `app` 은 compose 내부 네트워크에만 있다.
 - 컨테이너는 비루트(`node`)로 돈다. `.env`·`data/` 는 이미지에 들어가지 않는다(`.dockerignore`).
 - HSTS·`nosniff`·`Referrer-Policy`·**CSP(강제)** 는 Caddy 가 붙인다. CSP 는 스크립트를 이 오리진의 파일만 허용하고(인라인·eval 없음), 스타일은 인라인까지(라이브러리가 런타임에 `<style>` 을 꽂는다), 이미지는 이 오리진·`data:`·`blob:`(작성기 미리보기)·`https:`(components media 블록의 외부 이미지), 연결은 이 오리진(wss 포함), 워커는 `/sw.js`, 다른 사이트의 틀 안에는 못 넣는다(`frame-ancestors 'none'`). 정책 글과 각 허용의 까닭은 `infra/Caddyfile` 의 CSP 주석, `check-caddy.sh` 는 헤더가 강제이고 `script-src 'self'` 만인지를 본다. 정책을 넓히거나 좁혔으면 로컬 검증에서 로그인·채널·스트리밍·첨부 이미지·코드 하이라이트·서비스 워커를 돌며 콘솔의 CSP 위반이 0 인지 본다 — 8443 은 독립 Playwright Chromium(`docs/guides/browser-verification.md` 「로컬 HTTPS(Compose 8443)를 볼 때」)으로, `securitypolicyviolation` 이벤트를 `addInitScript` 로 모은다. 웹은 zod 를 jitless 로 둔다(`apps/web/src/lib/zodJitless.ts`) — 아니면 zod 의 `Function("")` 탐지가 페이지마다 위반 보고를 낸다(막혀도 앱은 돈다).
+- **자동화 웹훅은 로그인 없는 공개 경로다**(`POST /hooks/<토큰>`, 위 「자동화 웹훅」) — 256비트 토큰이 유일한 열쇠이고, 서버·Caddy 로그는 그 토큰을 가린다. 본문은 글자로만 다룬다 — 실행하거나 템플릿으로 풀지 않고, 본문 속 `@핸들`·멘션 토큰은 아무도 부르지 않는다. 서명 검증(GitHub `X-Hub-Signature-256` 등)은 없다.
 - **`X-Forwarded-For` 를 위조해도 로그인 레이트리밋은 우회되지 않는다.** Caddy 에 `trusted_proxies` 가 없어(기본 — 아무도 믿지 않음) 클라이언트가 보낸 XFF 를 그대로 넘기지 않고 자기가 본 연결 IP 로 덮는다. 서버는 compose 가 고정한 `TRUST_PROXY=true` 로 그 값을 읽는다 — 다른 레이트리밋과 브리지 실패 카운터(위 「운영 화면」)도 같은 주소를 쓴다. 로컬 검증에서 틀린 토큰 로그인을 XFF 를 바꿔 가며 보내도 5회 뒤 새 XFF 값의 첫 요청부터 429 였다(다시 재려면 `curl -H 'X-Forwarded-For: <아무 값>'` 으로 `POST /api/v1/auth/local` 을 6회). Caddy 앞에 다른 프록시를 더 두면 이 전제가 바뀐다 — 그때는 Caddy 에 그 프록시만 `trusted_proxies` 로 둔다.
 - **서버 로그에는 IP 전체를 싣지 않는다.** 요청 로그(`incoming request` 줄의 `req.remoteAddress`)와 브리지·러너 핸드셰이크 거절 로그(`bridge connection rejected` 의 `reason`, `runner connection rejected` 의 `address`)는 운영 사건과 같이 IPv4 /24·IPv6 /48 로 줄인 값이다(`apps/server/src/modules/ops/ip.ts` 의 `ipPrefix`). 레이트리밋·인증 실패 카운터는 전체 IP 로 센다 — 로그만 줄인다. 이 가림은 로그뿐이다: DB 의 Better Auth 세션 행(`session.ip_address`)에는 로그인한 IP 전체가 남는다(`docs/plan.md` 8장 이월).
 
@@ -565,13 +590,17 @@ lc() { docker compose --env-file infra/local.env -f infra/compose.yml -f infra/c
 
 # 운영 모드 — Gateway 0개로 뜬다(연결 페이지에서 추가). 로그인·채널·사람 메시지·첨부·PWA·푸시 구독까지
 lc up -d --build
-bash infra/check-caddy.sh https://localhost:8443      # 줄마다 PASS/FAIL, 끝 줄 「check-caddy: 전부 PASS」 — 새 볼륨으로 막 뜬 직후면 아래 첫 항목
+CADDY_LOG_CMD='docker compose --env-file infra/local.env -f infra/compose.yml -f infra/compose.local.yml logs --no-log-prefix caddy' \
+  bash infra/check-caddy.sh https://localhost:8443      # 줄마다 PASS/FAIL, 끝 줄 「check-caddy: 전부 PASS」 — 새 볼륨으로 막 뜬 직후면 아래 첫 항목
 
 # devfake 모드 — 가짜 Gateway·플러그인 둘(dev:fake — 「사무실」·「집」)을 Caddy 뒤에 둔다. 에이전트 스트리밍·카드·승인·에이전트 첨부가 Caddy 를 지나는지
 DODOK_UPSTREAM=devfake:3000 lc --profile devfake up -d --build
 # 로그인 토큰은 dev-fake-local-token(개발 전용 고정값)
 ```
 
+- `CADDY_LOG_CMD` 를 주면 마지막 세 줄이 웹훅 토큰이 Caddy 오류 로그에 원문으로 남지 않는지 본다 — HTTP/2 로 본문을 덜 보내 Caddy 가 502 와 오류 줄을 남기게 하고, 필터의 두 규칙(`/hooks/` 경로·그 밖의 `whk_` 토큰 꼴)을 탐침 셋으로 따로 잰다. 없으면 `SKIP` 한 줄이다. `https://` 오리진에만 쓴다 — 평문 `http://` 면 h1 이라 오류 줄이 생기지 않아 `SKIP` 이다.
+- ⚠ **1분 안에 `check-caddy.sh` 를 다섯 번 넘게 돌리면 `/bridge/attachments`·`/runner/attachments` 두 줄이 429 로 FAIL 한다** — 그 두 확인이 한 번에 틀린 토큰을 두 번 보내 브리지 실패 카운터(`LIMITS.bridgeFail` — 60초 안에 10번이면 60초 막힘)에 쌓이고, 그 주소가 막힌다. 1분 기다렸다 다시 돌린다(`restart app` 도 풀린다).
+- Docker 없이 mise 의 `caddy` 로 `infra/Caddyfile` 을 띄울 때는 `XDG_DATA_HOME`·`XDG_CONFIG_HOME` 을 스크래치로 주고, `CADDY_LOCAL_CERTS` 에 `local_certs` 를 넣으면 `skip_install_trust` 를 함께 넣는다 — 안 주면 `caddy validate` 도 `~/Library/Application Support/Caddy/pki` 에 로컬 CA 를 만들고, `caddy run` 은 그 CA 를 시스템 신뢰 저장소에 넣으려 한다.
 - 새 볼륨(`down -v` 뒤 첫 `up`)으로 막 뜬 Caddy 는 내부 CA·인증서를 만드는 몇 초 동안 연결을 받지 않는다 — 그때 부른 `check-caddy.sh` 는 `/healthz → 000` 같은 FAIL 이 섞인다. 몇 초 뒤 다시 부른다(caddy 헬스는 관리 API 라 `(healthy)` 여도 그 창이 남는다). 볼륨이 남은 재시작에서는 나지 않는다.
 - 연결 페이지(`/settings/connection`)의 「플러그인 받기」는 운영 이미지가 `/app/plugin/` 에 품은 tgz 를 준다 — 받은 파일의 sha256 이 화면 값과 같은지 보면 이미지의 플러그인 단계까지 확인된다.
 - devfake → 운영으로 돌아갈 때: `lc --profile devfake stop devfake && lc --profile devfake rm -f devfake` 뒤 `lc up -d`(`DODOK_UPSTREAM` 없이 — Caddy 가 다시 만들어지며 `app:3000` 으로 돌아온다).

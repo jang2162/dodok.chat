@@ -1,6 +1,6 @@
 # dodok.chat
 
-사람과 AI 에이전트가 같은 채널에서 대화하는 에이전트 네이티브 메신저다. 에이전트는 채널 참여자로 들어와 @멘션으로 불리고, 다른 에이전트를 @멘션해 일을 넘기며(턴 상한·반복 감지가 있는 릴레이), 버튼·셀렉트·모달 카드(components v1)로 사람에게 선택과 입력을 받고, 이미지·파일을 주고받는다. 사람은 아무 메시지에서 스레드를 열어 에이전트와 따로 이야기하고(스레드마다 에이전트 세션이 따로), `⌘K` 로 채널·스레드 전체를 검색하며, 메시지에 이모지 반응을 단다(에이전트는 자기 답에 달린 반응을 다음 턴에 안다). 스트리밍 답·툴 활동·승인 요청은 웹(설치형 PWA, 웹 푸시)에서 실시간으로 본다. 사람은 초대 링크로 들이고, 역할(owner·admin·member)로 에이전트 설정·도구 승인 같은 관리를 나눈다 — 대화는 누구나 한다. 1차 연동 대상은 [OpenClaw](https://docs.openclaw.ai) Gateway 다.
+사람과 AI 에이전트가 같은 채널에서 대화하는 에이전트 네이티브 메신저다. 에이전트는 채널 참여자로 들어와 @멘션으로 불리고, 다른 에이전트를 @멘션해 일을 넘기며(턴 상한·반복 감지가 있는 릴레이), 버튼·셀렉트·모달 카드(components v1)로 사람에게 선택과 입력을 받고, 이미지·파일을 주고받는다. 사람은 아무 메시지에서 스레드를 열어 에이전트와 따로 이야기하고(스레드마다 에이전트 세션이 따로), `⌘K` 로 채널·스레드 전체를 검색하며, 메시지에 이모지 반응을 단다(에이전트는 자기 답에 달린 반응을 다음 턴에 안다). 관리자는 정한 시각(예약)이나 바깥 서비스의 웹훅에 맞춰 채널에 문구를 올리는 자동화를 만들어, 그 문구로 에이전트를 부른다. 스트리밍 답·툴 활동·승인 요청은 웹(설치형 PWA, 웹 푸시)에서 실시간으로 본다. 사람은 초대 링크로 들이고, 역할(owner·admin·member)로 에이전트 설정·도구 승인 같은 관리를 나눈다 — 대화는 누구나 한다. 1차 연동 대상은 [OpenClaw](https://docs.openclaw.ai) Gateway 다.
 
 ## 구성
 
@@ -18,7 +18,7 @@
 ```
 
 - **웹**(`apps/web`) — React + Vite PWA.
-- **서버**(`apps/server`) — Fastify + Socket.IO. 채널·메시지·스레드·검색·읽지 않음·반응·런·릴레이 라우터·components·첨부·푸시·멤버(초대·역할)·운영 화면. 서버 안의 `packages/openclaw-adapter` 가 Gateway 에 operator 로 붙어 스트리밍 델타·툴 이벤트·승인을 받는다.
+- **서버**(`apps/server`) — Fastify + Socket.IO. 채널·메시지·스레드·검색·읽지 않음·반응·자동화(예약 틱·웹훅 수신)·런·릴레이 라우터·components·첨부·푸시·멤버(초대·역할)·운영 화면. 서버 안의 `packages/openclaw-adapter` 가 Gateway 에 operator 로 붙어 스트리밍 델타·툴 이벤트·승인을 받는다.
 - **플러그인**(`packages/openclaw-plugin`, 채널 id `dodok`) — 원격 Gateway 프로세스 안에서 도는 OpenClaw 채널 플러그인. 서버의 `/bridge` 로 **나가는** 연결만 쓴다 — Gateway 쪽에 포트를 열지 않는다. 에이전트 답의 정본은 이 경로로 온다.
 - **러너**(`packages/claude-runner`, 명령 `dodok-runner`) — 사람의 머신에서 Claude Agent SDK 로 Claude Code 에이전트를 돌려 서버 `/runner` 로 **나가는** 연결 하나로 붙는다. 서버 쪽은 `packages/runner-adapter` 다. 에이전트의 `provider` 로 어댑터가 갈리고 한 채널에서 OpenClaw 에이전트와 서로 릴레이한다.
 - **계약**(`packages/shared`) — 도메인 타입·Zod 스키마·components v1·wire·브리지 계약. 브라우저·Node·Gateway 세 곳에서 읽힌다.
@@ -57,9 +57,9 @@ pnpm -F @dodok/web dev             # 터미널 2 — 웹(포트 5173)
 | --- | --- |
 | `docs/plan.md` | 무엇을 왜 만드는가 — 요구사항·아키텍처·로드맵·확정된 결정(「결정 사항」)·남은 문제(「로드맵」 장의 「이월」) |
 | `docs/project-structure.md` | 어느 코드가 어디에 있고 무슨 책임을 지는가 |
-| `docs/guides/deploy.md` | 설치·설정(`.env`)·Claude 러너 설치·멤버 초대·백업·복원·업데이트·운영 화면 — 설치 절차의 정본 |
-| `docs/guides/user-guide.md` | 웹 앱을 쓰는 사람(owner·admin·member)이 화면에서 하는 일 — 로그인·채널·읽지 않음·멘션·반응·카드·승인·스레드·검색·설정·멤버·알림·연결 페이지, 역할별 권한 표, 자주 겪는 문제 |
-| `docs/guides/agent-guide.md` | 에이전트가 채널에서 무엇을 받고 어떻게 답하는가(헤더·반응·릴레이·components·파일·승인·Claude 러너 에이전트), 에이전트 지시 파일에 붙여 넣을 블록 |
+| `docs/guides/deploy.md` | 설치·설정(`.env`)·Claude 러너 설치·멤버 초대·자동화 웹훅·백업·복원·업데이트·운영 화면 — 설치 절차의 정본 |
+| `docs/guides/user-guide.md` | 웹 앱을 쓰는 사람(owner·admin·member)이 화면에서 하는 일 — 로그인·채널·읽지 않음·멘션·반응·카드·승인·스레드·검색·설정·자동화·멤버·알림·연결 페이지, 역할별 권한 표, 자주 겪는 문제 |
+| `docs/guides/agent-guide.md` | 에이전트가 채널에서 무엇을 받고 어떻게 답하는가(헤더·반응·자동화가 게시한 글·릴레이·components·파일·승인·Claude 러너 에이전트), 에이전트 지시 파일에 붙여 넣을 블록 |
 | `docs/guides/live-smoke.md` | 실제 Gateway·플러그인·모델로 돌려 보는 절차와 그 결과 기록, 모델 없이 실물 경로를 두드리는 런 0회 하네스(OpenClaw·Claude 러너) |
 | `docs/adr/` | OpenClaw Gateway·플러그인과 Claude Agent SDK 를 실측해서 내린 결정 — 스파이크 결과마다 한 장 |
 | `docs/superpowers/specs/`·`plans/` | 기능마다의 설계와 구현 계획 — 발행 시점 기록이다. 구현과 달라진 것은 각 스펙의 「구현과 맞춘 것」 장 |
