@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Caddy 앞단 검사 — 라우팅·SPA 폴백·캐시·보안 헤더를 curl 로 단언한다. 줄마다 PASS/FAIL, 하나라도 FAIL 이면 exit 1.
 # 사용: bash infra/check-caddy.sh https://localhost:8443   (로컬 검증은 compose.local.yml 머리의 명령으로 띄운 뒤)
-# 웹훅 토큰이 Caddy 로그에 원문으로 남지 않는지는 CADDY_LOG_CMD(Caddy 로그를 찍는 명령)를 줄 때만 본다 — 없으면 SKIP 줄. 로컬 검증은
+# 웹훅 토큰이 Caddy 로그에 원문으로 남지 않는지는 CADDY_LOG_CMD(Caddy 로그를 찍는 명령)를 주고 https 오리진일 때만 본다 — 아니면 SKIP 줄. 로컬 검증은
 #   CADDY_LOG_CMD='docker compose --env-file infra/local.env -f infra/compose.yml -f infra/compose.local.yml logs --no-log-prefix caddy' \
 #     bash infra/check-caddy.sh https://localhost:8443
 # 인증서는 검사하지 않는다(-k) — 로컬 검증은 Caddy 내부 CA 다. 운영 도메인에 쓰면 인증서 확인은 따로 한다.
@@ -104,24 +104,43 @@ for path in / /healthz; do
   fi
 done
 
-# 웹훅 토큰 가림(Caddyfile 전역 log default 필터) — 본문을 Content-Length 보다 적게 보내고 끊으면 업스트림이 살아 있어도 Caddy 가
-# 502 와 함께 오류 로그 한 줄(request.uri)을 남긴다. 가린 줄(whk_ + 6자 뒤 「…」)이 있어야 PASS — 줄이 없으면 가림을 본 것이 아니다
-if [[ -n "${CADDY_LOG_CMD:-}" ]]; then
-  hook_token="whk_$(head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n' | head -c 43)"
-  curl -sk --max-time 2 -o /dev/null -X POST -H 'Content-Type: text/plain' -H 'Content-Length: 1000' \
-    --data-binary 'abc' "$origin/hooks/$hook_token?delivery=1" 2>/dev/null || true
+# 웹훅 토큰 가림(Caddyfile 전역 log default 필터) — HTTP/2 로 본문을 Content-Length 보다 적게 보내면 Caddy 의 h2 서버가 곧바로
+# 502 와 오류 로그 한 줄(request.uri)을 남긴다. h1 에서는 앱이 모르는 토큰을 본문 전에 404 로 받아 줄이 생기지 않아(거짓 FAIL)
+# https 오리진(ALPN 으로 h2)에만 쓴다. 탐침 셋이 필터의 두 규칙을 따로 잰다 — /hooks/ 경로, 쿼리에 실은 whk_ 토큰(꼬리에 - 가
+# 있어야 whk_ 규칙의 [\w-] 가 \w 로 줄어든 것을 잡는다), w 를 %77 로 쓴 /hooks/ 조각(whk_ 규칙을 비켜 /hooks/ 규칙만 탄다).
+# 원문 판정은 토큰 끝 12자로 한다 — 규칙이 중간에서 멈추면 끝이 드러난다. 가린 줄이 있어야 PASS — 줄이 없으면 가림을 본 것이 아니다
+rand_b64url() { head -c 48 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n' | head -c "$1"; }
+if [[ -z "${CADDY_LOG_CMD:-}" ]]; then
+  printf 'SKIP  웹훅 토큰이 Caddy 오류 로그에 원문으로 없다 — CADDY_LOG_CMD 가 없어 안 봤다\n'
+elif [[ "$origin" != https://* ]]; then
+  printf 'SKIP  웹훅 토큰이 Caddy 오류 로그에 원문으로 없다 — https 오리진이 아니다(h1 탐침은 오류 줄을 만들지 못한다)\n'
+else
+  hook_token="whk_$(rand_b64url 43)"
+  dash_token="whk_$(rand_b64url 10)-$(rand_b64url 32)"
+  pct_tail="$(rand_b64url 39)"
+  probe() {
+    curl -sk --http2 --max-time 2 -o /dev/null -X POST -H 'Content-Type: text/plain' -H 'Content-Length: 1000' \
+      --data-binary 'abc' "$origin$1" 2>/dev/null || true
+  }
+  probe "/hooks/$hook_token?delivery=1"
+  probe "/api/v1/channels?t=$dash_token"
+  probe "/hooks/%77hk_$pct_tail"
   sleep 1
   bash -c "$CADDY_LOG_CMD" >"$tmp/caddy.log" 2>&1 || true
-  label="웹훅 토큰이 Caddy 오류 로그에 원문으로 없다(본문 도중 끊기)"
-  if grep -qF "${hook_token:10}" "$tmp/caddy.log"; then
-    fail "$label" "토큰 뒷부분이 로그에 있다 — Caddyfile 의 request>uri 필터"
-  elif ! grep -qF "/hooks/${hook_token:0:10}…" "$tmp/caddy.log"; then
-    fail "$label" "가린 줄(/hooks/${hook_token:0:10}…)을 로그에서 못 찾았다 — CADDY_LOG_CMD 가 이 Caddy 의 로그를 찍는가"
-  else
-    pass "$label"
-  fi
-else
-  printf 'SKIP  웹훅 토큰이 Caddy 오류 로그에 원문으로 없다 — CADDY_LOG_CMD 가 없어 안 봤다\n'
+  # log_masked <라벨 꼬리> <원문 끝 조각> <가린 꼴>
+  log_masked() {
+    local label="웹훅 토큰이 Caddy 오류 로그에 원문으로 없다 — $1"
+    if grep -qF -- "$2" "$tmp/caddy.log"; then
+      fail "$label" "토큰 끝부분이 로그에 있다 — Caddyfile 의 request>uri 필터"
+    elif ! grep -qF -- "$3" "$tmp/caddy.log"; then
+      fail "$label" "가린 줄($3)을 로그에서 못 찾았다 — CADDY_LOG_CMD 가 이 Caddy 의 로그를 찍는가"
+    else
+      pass "$label"
+    fi
+  }
+  log_masked "/hooks/ 경로" "${hook_token: -12}" "/hooks/${hook_token:0:10}…"
+  log_masked "쿼리의 whk_ 토큰(꼬리에 -)" "${dash_token: -12}" "?t=${dash_token:0:10}…"
+  log_masked "%77 로 쓴 /hooks/ 조각" "${pct_tail: -12}" "/hooks/%77hk_${pct_tail:0:4}…"
 fi
 
 if ((fails > 0)); then
