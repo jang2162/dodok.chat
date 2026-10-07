@@ -84,6 +84,9 @@ git worktree add -b feat/x .worktrees/dodok.chat/feat-x
      → 워크트리 생성 · pnpm install · .env 복사 · BrowserOS neo 확인 · Task 생성 · 워커 기동 · 제출 확인
   4. scripts/orca-worker.sh wait             # worker_done 수신 (exit 3 은 타임아웃 — 다시 부른다)
   5. scripts/orca-worker.sh attach <슬러그> review --brief <리뷰브리프>   # 같은 워크트리에 새 에이전트로 띄운 리뷰어
+     → 4번에서 구현자의 끝을 받은 뒤에 부른다(구현자의 Dispatch 가 진행 중이면 거부한다)
+     → 구현자 터미널을 끄려면 그 앞에 scripts/orca-worker.sh stop <슬러그> --force
+       (워크트리 단위라 리뷰어를 띄운 뒤에 부르면 리뷰어도 끈다)
   6. 두 보고를 두고 무엇을 고치고 무엇을 이월할지 판정 · git diff --name-only 로 파일 목록 대조
   7. 병합 후 scripts/orca-worker.sh reap <슬러그>
 ```
@@ -268,15 +271,24 @@ scripts/orca-worker.sh attach <슬러그> <역할> [--model ...] [--brief <파�
 ```
 
 `attach` 는 워크트리를 새로 만들지 않는다. 그 워크트리에 살아 있는 에이전트
-터미널이 있으면 그것을 쓰고, 하나도 없으면 `--agent` 로 새로 띄운다.
+터미널이 있으면 그중 목록의 마지막을 쓰고, 하나도 없으면 `--agent` 로 새로 띄운다.
 **`review` 는 예외다 — `--terminal` 이 없으면 살아 있는 터미널이 있어도 늘 새 에이전트를 띄운다.**
-끝난 구현자의 터미널에 붙이면 리뷰가 구현자 자신의 문맥에서 돌아 독립 리뷰가 아니다. 남은 터미널은
-그대로 두고 핸들과 정리 명령(`stop <슬러그> --force`)을 한 줄로 알려 준다. `--terminal` 을 준 리뷰는
-사람이 고른 것이므로 그대로 받는다.
+끝난 구현자의 터미널에 붙이면 리뷰가 구현자 자신의 문맥에서 돌아 독립 리뷰가 아니다. `--terminal` 을 준
+리뷰는 사람이 고른 것이므로 그대로 받는다.
 
 - **진행 중인 Dispatch 가 붙어 있는 터미널에는 붙이지 않는다.** 그 워커는 이미 브리프를
   받고 일하는 중일 수 있고, 다시 붙이면 **같은 지시가 두 번 주입된다.** 터미널을 먼저 읽어
   확인하고, 확인하고도 붙이려면 `--force`.
+  **`review` 는 그 터미널에 붙지 않아도 구현자의 Dispatch 가 아직 진행 중이면 거부한다** — 반쯤 된
+  트리를 리뷰하고 두 에이전트가 한 워크트리를 함께 고치게 된다(리뷰어의 변이 테스트도 파일을 잠시
+  고친다). `wait` 로 끝을 받은 뒤 붙이고, 확인하고도 띄우려면 `--force`.
+- **리뷰어를 띄울 때 남은 에이전트 터미널은 그대로 둔다.** `attach` 가 그 핸들을 보여 준다. 정리하려면
+  리뷰어를 띄우기 **전에** `scripts/orca-worker.sh stop <슬러그> --force`, 띄운 뒤라면 그 핸들만 끈다
+  (`orca terminal close --terminal <핸들>` — `attach` 가 핸들마다 찍어 준다). **`stop` 은 워크트리
+  단위라 리뷰어를 띄운 뒤에 부르면 방금 띄운 리뷰어까지 문맥째 끈다** — `--force` 라 「워커가 도는 중」
+  거부도 뚫린다. 리뷰까지 끝난 뒤(`reap` 앞)에는 워크트리 단위 `stop` 을 써도 된다.
+- **리뷰 뒤에는 워크트리에 구현자·리뷰어 터미널이 함께 남는다.** `--terminal` 없는 `attach` 는 그중
+  목록의 마지막을 쓰므로, 수정을 특정 세션에 맡기려면 `--terminal <핸들>` 을 준다.
 - **`spawn` 이 「브리프는 전달됐다」고 말했으면 `attach` 를 부르지 마라.** 같은 이유다.
 - **`--terminal <핸들>` 은 그 핸들이 이 워크트리 것인지 확인한 뒤에만 받는다.** 확인 없이
   넘기면 다른 워크트리(다른 프로젝트일 수도 있다)에서 도는 워커에 브리프가 주입된다.
@@ -541,8 +553,8 @@ pnpm typecheck && pnpm test               # 기준선 확인 — Turbo 캐시는
 | `verify`·`chore` | `--max-tier standard` |
 
 - **우선순위:** `--model` 직접 지정 > tiergear > 역할 기본값. `--model` 이나 `attach --terminal`
-  (이미 도는 에이전트)이면 tiergear 를 부르지 않는다. `attach … review` 는 `--terminal` 이 없으면 늘 새로 띄우므로
-  tiergear 를 거쳐 `--min-tier deep` 이 걸린다.
+  (이미 도는 에이전트)이면 tiergear 를 부르지 않는다. `attach … review` 는 `--terminal` 이 없으면 살아 있는 터미널이
+  있어도 새로 띄우므로 (`--model` 이 없을 때) tiergear 를 거쳐 `--min-tier deep` 이 걸린다.
 - **tiergear 가 없는 머신은 위 표 그대로 동작한다.** 실행 파일은 `TIERGEAR_COMMAND`(없으면 PATH 의
   `tiergear`)로 가리키고, 그 이름이 실행 가능한지로 있음·없음을 가른다.
 - **`tiergear launch` 가 실패해도 워커 기동은 막히지 않는다.** 0 이 아닌 종료, 출력에서 모델을 못 뽑음,
