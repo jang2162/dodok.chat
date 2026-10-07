@@ -90,7 +90,12 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
-    proxy: { "/api": { target: api }, "/socket.io": { target: api, ws: true }, "/llms.txt": { target: api } },
+    proxy: {
+      "/api": { target: api },
+      "/socket.io": { target: api, ws: true },
+      "/llms.txt": { target: api },
+      "/hooks": { target: api },
+    },
   },
   test: {
     environment: "jsdom",
