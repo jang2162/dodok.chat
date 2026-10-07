@@ -115,6 +115,15 @@ describe("webhookBlock", () => {
       expect(webhookBlock(deepest, "application/json")).toBe(rawBlock(deepest));
     });
 
+    it('깊이는 객체 중첩에도 — {"a": 를 상한(64단)까지는 json 블록, 한 단 더 깊으면 원문 블록', () => {
+      const objects = (depth: number) => `${'{"a":'.repeat(depth)}0${"}".repeat(depth)}`;
+      expect(webhookBlock(objects(REINDENT_LIMITS.depth), "application/json")).toMatch(
+        /^```json\n\{\n {2}"a": \{/,
+      );
+      const over = objects(REINDENT_LIMITS.depth + 1);
+      expect(webhookBlock(over, "application/json")).toBe(rawBlock(over));
+    });
+
     it("값 수 — 상한(루트 포함 10,000)까지는 json 블록, 하나 더 많으면 원문 블록", () => {
       const zeros = (n: number) => JSON.stringify(Array.from({ length: n }, () => 0));
       expect(webhookBlock(zeros(REINDENT_LIMITS.nodes - 1), "application/json")).toMatch(
@@ -129,6 +138,18 @@ describe("webhookBlock", () => {
       const atLimit = JSON.stringify("a".repeat(REINDENT_LIMITS.length - 2));
       expect(webhookBlock(atLimit, "application/json")).toMatch(/^```json\n"a/);
       const over = JSON.stringify("a".repeat(REINDENT_LIMITS.length - 1));
+      expect(webhookBlock(over, "application/json")).toBe(rawBlock(over));
+    });
+
+    it("다시 쓴 길이 어림은 들여쓰기를 센다 — 깊이 60 의 빗(맨 안 배열에 잎 n개)이 어림 상한 바로 아래면 json, 바로 위면 원문", () => {
+      // 빗: 배열 60겹(깊이 0~59), 맨 안 배열에 0 이 n개. 어림(body.ts withinReindentLimits) = 컨테이너 Σ(3+2d) 3,720 + 바깥 자식
+      // 줄 Σ(2+2(d+1)) 3,658 + 잎 줄 n×(2+2×60) + 잎 n×1 = 7,378 + 123n. 들여쓰기 몫이 빠지면 바로 위 n 도 json 이 된다
+      const comb = (n: number) =>
+        `${"[".repeat(60)}${Array.from({ length: n }, () => 0).join(",")}${"]".repeat(60)}`;
+      const atLimit = Math.floor((REINDENT_LIMITS.length - 7378) / 123);
+      expect(7378 + 123 * atLimit).toBeLessThanOrEqual(REINDENT_LIMITS.length);
+      expect(webhookBlock(comb(atLimit), "application/json")).toMatch(/^```json\n\[\n {2}\[/);
+      const over = comb(atLimit + 1);
       expect(webhookBlock(over, "application/json")).toBe(rawBlock(over));
     });
   });

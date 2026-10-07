@@ -143,6 +143,16 @@ describe("요청 로그의 URL — 웹훅 토큰 가림", () => {
     expect(redactUrl(url)).not.toContain(token.slice(10));
   });
 
+  // whk_ 규칙(/hooks/ 조각 규칙을 비켜 간 꼴)이 - 에서 멈추면 그 뒤가 드러난다 — 위 고정 토큰은 뒷부분에 - 가 없어 그 변이를 못 잡는다
+  const dashed = "whk_0BVMW_jJFOfn5u-EVJpO8zLEnAIEkj7oxYm5mdFpTls";
+  it.each([
+    ["인코딩한 슬래시(404 꼴)", `/hooks%2F${dashed}`, `/hooks%2F${shown}`],
+    ["다른 경로의 쿼리", `/api/v1/channels?t=${dashed}`, `/api/v1/channels?t=${shown}`],
+  ])("뒷부분에 - 가 든 토큰도 끝까지 가린다 — %s", (_label, url, expected) => {
+    expect(redactUrl(url)).toBe(expected);
+    expect(redactUrl(url)).not.toContain(dashed.slice(10));
+  });
+
   it.each([
     "/api/v1/channels?limit=50&after=12",
     "/bridge/attachments/01999999-0000-7000-8000-000000000001",
