@@ -528,18 +528,62 @@ reap_gate() {
   [ "$blocked" = "no" ]
 }
 
+# 커서 페이지를 끝까지 따라가며 응답을 한 장에 한 줄(jq -c)씩 낸다.
+# 사용: orca_pages <다음 커서의 jq 경로> <orca 인자...>
+#
+# **끝까지 읽지 못하면 rc=1 이다.** 첫 장에서 멈추면 뒷장의 항목은 「없다」로 보이고,
+# 그 「없다」는 종료코드로 성공과 구별되지 않는다. 그래서 셋을 모두 실패로 친다 —
+# 한 장이라도 못 읽었다, 이미 받은 커서가 다시 왔다(끝나지 않는 페이지),
+# 장 수가 `ORCA_WORKER_MAX_PAGES`(기본 1000)에 닿았는데 아직 남았다.
+orca_pages() {
+  local next_path="$1" out cur="" seen=" " pages=0
+  local max="${ORCA_WORKER_MAX_PAGES:-1000}"
+  shift
+  while :; do
+    if [ -n "$cur" ]; then
+      out="$("$(orca_cli)" "$@" --cursor "$cur" 2>/dev/null)" || return 1
+    else
+      out="$("$(orca_cli)" "$@" 2>/dev/null)" || return 1
+    fi
+    printf '%s' "$out" | jq -c -e 'select(type == "object" and .ok != false)' 2>/dev/null || return 1
+    pages=$((pages + 1))
+    cur="$(printf '%s' "$out" | jq -r "$next_path // empty" 2>/dev/null)"
+    [ -n "$cur" ] || return 0
+    case "$seen" in
+      (*" $cur "*)
+        printf '  경고: %s %s 가 이미 받은 커서를 다시 냈다 — 페이지가 끝나지 않는다\n' "$1" "$2" >&2
+        return 1
+        ;;
+    esac
+    seen="$seen$cur "
+    if [ "$pages" -ge "$max" ]; then
+      printf '  경고: %s %s 가 %s장을 넘는다(ORCA_WORKER_MAX_PAGES) — 끝까지 읽지 못했다\n' \
+        "$1" "$2" "$max" >&2
+      return 1
+    fi
+  done
+}
+
 # 한 워크트리 것이라고 **증명된** 워커만 낸다.
 # 한 줄에 탭으로 `<dispatchId> <terminalState> <retainedReason> <증명>` 을 낸다.
 #
-# `worker-list` 는 머신 전역이다 — 모든 프로젝트의 워커가 한 목록에 들어 있고,
-# 항목에는 `worktreeId` 라는 최상위 필드가 **없다**. 그래서 소유를 증명하는 길은 둘뿐이고
-# 둘 다 정확 일치다.
+# **목록을 끝까지, 모든 Run 에서 읽는다.** `worker-list` 는 `--run` 이 없으면 부른 터미널에
+# 묶인 Run 만 내고, 묶인 Run 이 없을 때만 모든 Run 을 낸다. 한 번에 최신 100행만 내므로
+# 나머지는 `page.nextCursor` 로 이어 받는다 — 첫 페이지만 읽으면 오래된 dispatch 와 다른
+# Run 의 dispatch 는 「증명된 dispatch 없음」으로 보인다. 그래서 첫 장의 `scope.source` 가
+# `all` 이 아니면(`spawn` 이 Run 을 묶은 조율자 터미널이 그렇다) `run-list` 의 Run 을 하나씩
+# `--run` 으로 읽는다. 「모든 Run」을 고르는 옵션은 `worker-list --help` 에 없다 — 그래서
+# 묶인 터미널에서는 Run 수만큼 왕복한다. `run-list` 에 없는 Run 은 볼 수 없다.
+#
+# 목록에는 저장소 경계가 없다 — 모든 프로젝트의 워커가 한 목록에 들어 있고(범위는 Run 이지
+# 저장소가 아니다), 항목에는 `worktreeId` 라는 최상위 필드가 **없다**. 그래서 소유를 증명하는
+# 길은 둘뿐이고 둘 다 정확 일치다.
 #   1) `.resource.worktreeId` 가 이 워크트리와 같다. `resource` 는 워커가 쥔 워크트리
 #      자원 기록이라 **터미널이 이미 죽은 뒤에도 남는다** — 회수해야 할 것이 정확히 그것이다.
 #   2) `.agentTerminalHandle` 이 `terminal list --worktree <셀렉터>` 가 낸 핸들 집합에 있다.
 #      `resource` 가 null 인 항목(비감독 dispatch)을 여기서 줍는다.
 #
-# **어느 쪽도 대지 못하는 항목은 내지 않는다.** 전역 목록을 느슨하게 거르면 남의
+# **어느 쪽도 대지 못하는 항목은 내지 않는다.** 이 목록을 느슨하게 거르면 남의
 # 프로젝트 워커를 회수하게 된다 — 목록에 경계가 없으므로 필터가 유일한 경계다.
 #
 # **소유 증명과 회수 대상 판정은 다른 일이다.** 여기서는 거르지 않고 상태를 그대로
@@ -549,15 +593,37 @@ reap_gate() {
 # `terminal list` 의 **평문**을 grep 으로 파싱하지 마라. 전역 목록이고 항목 길이가
 # 가변이라 `grep -B/-A` 창이 남의 항목을 통째로 삼킨다. JSON 의 `.handle` 만 읽는다.
 #
-# 목록 자체를 읽지 못하면 **rc=1** 이다. 「0건」과 「못 읽었다」는 다르다 —
+# 목록을 끝까지 읽지 못하면 **rc=1** 이다 — 한 장이라도 못 읽었거나, 페이지가 끝나지
+# 않거나(`orca_pages`), Run 목록을 못 읽었을 때다. 「0건」과 「못 읽었다」는 다르다 —
 # 같은 것으로 만들면 필터가 죽은 날 회수가 조용히 생략된다.
 owned_workers() {
-  local wt_id="$1" handles workers
+  local wt_id="$1" handles pages first scope bound runs rid more
   handles="$("$(orca_cli)" terminal list --worktree "id:$wt_id" --json 2>/dev/null \
     | jq -r '.result.terminals[]?.handle // empty' 2>/dev/null)"
-  workers="$("$(orca_cli)" orchestration worker-list --json 2>/dev/null)"
-  printf '%s' "$workers" | jq -e '.result.workers | type == "array"' >/dev/null 2>&1 || return 1
-  printf '%s' "$workers" \
+  pages="$(orca_pages '.result.page.nextCursor' orchestration worker-list --json)" || return 1
+  # 범위는 첫 장의 `scope` 가 말한다. 그것을 싣지 않는 CLI 는 Run 범위가 생기기 전 것이라
+  # 늘 모든 dispatch 를 냈다.
+  first="$(printf '%s\n' "$pages" | sed -n 1p)"
+  scope="$(printf '%s' "$first" | jq -r '.result.scope.source // "all"' 2>/dev/null)"
+  if [ "$scope" != "all" ]; then
+    # 묶인 Run 은 이미 읽었으니 건너뛴다. 어느 Run 인지 모르면 읽은 것을 버리고 전부 다시
+    # 읽는다 — 같은 Run 을 두 번 읽으면 같은 dispatch 를 두 번 회수하고 두 번 센다.
+    bound="$(printf '%s' "$first" | jq -r '.result.scope.run // empty' 2>/dev/null)"
+    [ -n "$bound" ] || pages=""
+    runs="$(orca_pages '.result.nextCursor' orchestration run-list --json)" || return 1
+    printf '%s\n' "$runs" | jq -s -e 'all(.[]; .result.runs | type == "array")' >/dev/null 2>&1 \
+      || return 1
+    for rid in $(printf '%s\n' "$runs" | jq -r '.result.runs[].id // empty'); do
+      [ "$rid" != "$bound" ] || continue
+      more="$(orca_pages '.result.page.nextCursor' orchestration worker-list --run "$rid" --json)" \
+        || return 1
+      pages="$pages
+$more"
+    done
+  fi
+  printf '%s\n' "$pages" | jq -s -e 'all(.[]; .result.workers | type == "array")' >/dev/null 2>&1 \
+    || return 1
+  printf '%s\n' "$pages" \
     | jq -r --arg wt "$wt_id" --arg handles "$handles" '
         ($handles | split("\n") | map(select(length > 0))) as $H
         | .result.workers[]?

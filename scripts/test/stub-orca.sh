@@ -56,7 +56,8 @@ allowed_flags() {
     ("orchestration run-create")    printf 'help json pairing-code environment objective from retry-request' ;;
     ("orchestration task-create")   printf 'help json pairing-code environment spec task-title display-name deps parent run from retry-request' ;;
     ("orchestration worker-start")  printf 'help json pairing-code environment task on worktree name repo base-branch display-name comment setup agent model effort terminal retry-of timeout-ms run from retry-request' ;;
-    ("orchestration worker-list")   printf 'help json pairing-code environment run terminal-state' ;;
+    ("orchestration worker-list")   printf 'help json pairing-code environment run terminal-state include-remote cursor limit' ;;
+    ("orchestration run-list")      printf 'help json pairing-code environment limit cursor' ;;
     ("orchestration request-show")  printf 'help json pairing-code environment request' ;;
     ("orchestration worker-show")   printf 'help json pairing-code environment dispatch' ;;
     ("orchestration worker-release") printf 'help json pairing-code environment dispatch retry-request' ;;
@@ -320,6 +321,73 @@ if [ "$sub" = "orchestration worker-start" ] && [ -n "${STUB_ORCA_WS_FAIL_MODE:-
   fi
 fi
 
+# 플래그 값을 꺼낸다(`--이름 값` 과 `--이름=값` 둘 다). 없으면 빈 문자열.
+flag_value() {
+  local name="$1" prev="" arg
+  shift
+  for arg in "$@"; do
+    [ "$prev" = "--$name" ] && { printf '%s' "$arg"; return 0; }
+    case "$arg" in ("--$name="*) printf '%s' "${arg#--"$name"=}"; return 0 ;; esac
+    prev="$arg"
+  done
+}
+
+# 커서를 시작 행으로 푼다. 스텁만 아는 꼴(`<접두>-<시작 행>`)이라, 커서를 불투명하게
+# 그대로 넘기지 않는 코드는 여기서 거부된다.
+cursor_offset() {
+  case "$2" in
+    ("")        printf '0' ;;
+    ("$1"-[0-9]*) printf '%s' "${2#"$1"-}" ;;
+    (*)         die_invalid "invalid --cursor for command: $sub" ;;
+  esac
+}
+
+# worker-list 의 범위와 페이지를 실물 모양으로 흉내 낸다(`worker-list --help`):
+#   *Without --run the list is scoped to the Run bound to the calling terminal, and to every
+#    Run when there is no binding; the receipt reports which in scope.source*
+#   *Returns at most 100 local rows ... Continue with the opaque page.nextCursor value unchanged.*
+# 기본은 묶인 Run 이 없고 한 장에 전부다 — 실물의 `scope.source: "all"`, `hasMore: false`.
+#   STUB_ORCA_BOUND_RUN          부른 터미널에 묶인 Run. 있으면 --run 없는 호출이 그 Run 만 낸다
+#   STUB_ORCA_WORKERS_PAGE_SIZE  한 장의 행 수
+#   STUB_ORCA_WORKERS_STUCK      끝나지 않는 페이지 — 둘째 장부터 늘 같은 커서를 다시 낸다
+stub_worker_list() {
+  local run source off
+  run="$(flag_value run "$@")"
+  if [ -n "$run" ]; then
+    source=flag
+  elif [ -n "${STUB_ORCA_BOUND_RUN:-}" ]; then
+    source=bound; run="$STUB_ORCA_BOUND_RUN"
+  else
+    source=all
+  fi
+  off="$(cursor_offset stub-cursor "$(flag_value cursor "$@")")" || exit 1
+  jq --arg source "$source" --arg run "$run" --argjson off "$off" \
+     --arg size "${STUB_ORCA_WORKERS_PAGE_SIZE:-}" --arg stuck "${STUB_ORCA_WORKERS_STUCK:-}" '
+    (.result.workers | if $run == "" then . else map(select(.runId == $run)) end) as $all
+    | ($all | length) as $total
+    | (if $size == "" then $total else ($size | tonumber) end) as $n
+    | (($off + $n) < $total) as $more
+    | .result.workers = $all[$off:($off + $n)]
+    | .result.scope = (if $source == "all" then {source: "all"} else {source: $source, run: $run} end)
+    | .result.page = {limit: $n, total: $total, hasMore: ($more or $stuck != ""),
+        nextCursor: (if $stuck != "" then "stub-cursor-\($n)"
+                     elif $more then "stub-cursor-\($off + $n)" else null end)}' "$WORKERS_FIXTURE"
+}
+
+# run-list 는 픽스처 행의 runId 로 Run 목록을 만든다. 실물처럼 다음 커서는 `page` 가 아니라
+# `.result.nextCursor` 에 있다. STUB_ORCA_RUNS_PAGE_SIZE 로 장을 나눈다.
+stub_run_list() {
+  local off
+  off="$(cursor_offset stub-run-cursor "$(flag_value cursor "$@")")" || exit 1
+  jq --argjson off "$off" --arg size "${STUB_ORCA_RUNS_PAGE_SIZE:-}" '
+    ([.result.workers[]? | .runId // empty] | unique) as $ids
+    | ($ids | length) as $total
+    | (if $size == "" then $total else ($size | tonumber) end) as $n
+    | {ok: true, result: {runs: ($ids[$off:($off + $n)] | map({id: .})),
+        nextCursor: (if ($off + $n) < $total then "stub-run-cursor-\($off + $n)" else null end)}}' \
+    "$WORKERS_FIXTURE"
+}
+
 case "$sub" in
   (status)           printf '{"ok":true,"result":{"runtime":{"state":"ready"}}}\n' ;;
   ("orchestration request-show")
@@ -339,7 +407,8 @@ case "$sub" in
     ;;
   ("worktree ps")    cat "$PS_FIXTURE" ;;
   ("worktree list")  cat "$LIST_FIXTURE" ;;
-  ("orchestration worker-list") cat "$WORKERS_FIXTURE" ;;
+  ("orchestration worker-list") stub_worker_list "$@" ;;
+  ("orchestration run-list")    stub_run_list "$@" ;;
   ("terminal list")
     # 실물의 --worktree 는 `id:<repoId>::<path>` 를 **정확 일치**로 해석하고,
     # 주지 않으면 머신 전역 목록을 낸다. 스텁이 실물보다 관대하면 범위를 넘긴

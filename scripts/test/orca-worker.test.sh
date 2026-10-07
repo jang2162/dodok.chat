@@ -1705,7 +1705,7 @@ unset ORCA_WORKER_REPO_ROOT
 # 워커 회수의 소유 증명과 회수 대상 판정 (owned_workers · release_disposition ·
 # release_workers)
 #
-# worker-list 는 머신 전역이고 항목에 worktreeId 라는 최상위 필드가 **없다**.
+# worker-list 에는 저장소 경계가 없고 항목에 worktreeId 라는 최상위 필드가 **없다**.
 # 없는 필드로 거르면 항상 0건이 되어 worker-release 가 한 번도 불리지 않고,
 # 반대로 느슨하게 거르면 남의 프로젝트 워커를 회수한다. 양쪽을 다 잰다.
 #
@@ -1881,6 +1881,89 @@ assert_eq "$(printf '%s\n' "$out" | grep -c '판정하지 못했다')" "1" \
   "목록을 못 읽으면 0건이 아니라 판정 불가라고 말한다"
 assert_eq "$(grep -c 'worker-release' "$STUB_ORCA_LOG")" "0" \
   "목록을 못 읽으면 아무것도 회수하지 않는다(fail closed)"
+
+# ---------------------------------------------------------------------------
+# 목록을 끝까지, 모든 Run 에서 읽는다
+#
+# worker-list 는 한 번에 최신 100행만 내고(나머지는 page.nextCursor 로 이어 받는다), --run 이
+# 없으면 부른 터미널에 묶인 Run 만 낸다. 첫 장만 읽으면 오래된 dispatch 와 다른 Run 의
+# dispatch 가 「증명된 dispatch 없음」으로 보이고, stop 은 회수 없이 닫아 그 출력 보관을 잃는다.
+# ---------------------------------------------------------------------------
+# 스텁의 흉내부터 잰다 — 스텁이 한 장에 전부를 내면 아래 단언은 아무것도 재지 않는다.
+assert_eq "$(STUB_ORCA_WORKERS_PAGE_SIZE=2 "$HERE/stub-orca.sh" orchestration worker-list --json \
+  | jq -r '([.result.workers[].dispatchId] | join(",")) + " " + .result.page.nextCursor')" \
+  "ctx_recover,ctx_recover_done stub-cursor-2" "스텁: 장을 나누고 다음 커서를 낸다"
+assert_eq "$(STUB_ORCA_BOUND_RUN=run_b "$HERE/stub-orca.sh" orchestration worker-list --json \
+  | jq -r '.result.scope.source + " " + ([.result.workers[].runId] | unique | join(","))')" \
+  "bound run_b" "스텁: 묶인 Run 이 있으면 --run 없는 호출이 그 Run 만 낸다"
+
+# 두 장씩 나누면 ctx_reap(회수 대상)은 둘째 장에만, ctx_taken 은 셋째 장에만 있다.
+: > "$STUB_ORCA_LOG"
+out="$( export STUB_ORCA_WORKERS_PAGE_SIZE=2
+        release_workers "repo1::$X/.worktrees/lms-base/w-reap" 2>&1 )"
+assert_eq "$(grep 'worker-release' "$STUB_ORCA_LOG" | grep -c -- '--dispatch ctx_reap')" "1" \
+  "둘째 장에만 있는 dispatch 도 회수한다(page.nextCursor 를 따라간다)"
+assert_eq "$(printf '%s\n' "$out" | grep -c '워커 1건 회수 · 2건 건너뜀 · 0건 실패')" "1" \
+  "여러 장에 흩어진 항목을 한 번씩만 센다"
+assert_eq "$(grep -c -E '^orchestration worker-list .*--cursor stub-cursor-[0-9]+' "$STUB_ORCA_LOG")" "4" \
+  "받은 커서를 그대로 넘겨 끝 장(9행 ÷ 2 = 다섯 장)까지 읽는다"
+assert_eq "$(grep -c '^orchestration run-list' "$STUB_ORCA_LOG")" "0" \
+  "묶인 Run 이 없으면 Run 을 돌지 않는다(모든 Run 이 이미 왔다)"
+
+# 끝나지 않는 페이지(같은 커서가 다시 온다)는 「못 읽었다」다. 둘째 장에 ctx_reap 이 보여도
+# 회수하지 않는다 — 덜 읽은 목록의 「0건」과 「몇 건」은 어느 쪽도 믿을 수 없다.
+: > "$STUB_ORCA_LOG"
+out="$( export STUB_ORCA_WORKERS_PAGE_SIZE=2 STUB_ORCA_WORKERS_STUCK=1
+        release_workers "repo1::$X/.worktrees/lms-base/w-reap" 2>&1 )"
+assert_eq "$(printf '%s\n' "$out" | grep -c '이미 받은 커서를 다시 냈다')" "1" \
+  "같은 커서가 다시 오면 멈추고 그렇다고 말한다"
+assert_eq "$(printf '%s\n' "$out" | grep -c '판정하지 못했다')" "1" \
+  "끝나지 않는 페이지는 판정 불가로 친다"
+assert_eq "$(grep -c 'worker-release' "$STUB_ORCA_LOG")" "0" \
+  "끝나지 않는 페이지면 아무것도 회수하지 않는다"
+assert_eq "$(grep -c '^orchestration worker-list ' "$STUB_ORCA_LOG")" "2" \
+  "같은 커서를 한 번 보면 더 부르지 않는다"
+
+# 장 수 상한. 닿았는데 아직 남았으면 끝까지 못 읽은 것이다. 딱 맞으면 통과한다.
+: > "$STUB_ORCA_LOG"
+( export STUB_ORCA_WORKERS_PAGE_SIZE=2 ORCA_WORKER_MAX_PAGES=2
+  owned_workers "repo1::$X/.worktrees/lms-base/w-reap" ) >/dev/null 2>&1
+assert_eq "$?" "1" "장 수가 상한(ORCA_WORKER_MAX_PAGES)에 닿았는데 남았으면 rc=1 이다"
+assert_eq "$(grep -c '^orchestration worker-list ' "$STUB_ORCA_LOG")" "2" \
+  "상한을 넘겨 부르지 않는다"
+( export STUB_ORCA_WORKERS_PAGE_SIZE=2 ORCA_WORKER_MAX_PAGES=5
+  owned_workers "repo1::$X/.worktrees/lms-base/w-reap" ) >/dev/null 2>&1
+assert_eq "$?" "0" "마지막 장이 상한과 같으면 끝까지 읽은 것이다"
+
+# 둘째 장부터 못 읽으면 첫 장만으로 판정하지 않는다.
+printf '#!/bin/bash\ncase " $* " in (*" --cursor "*) exit 1 ;; esac\nexec "%s" "$@"\n' \
+  "$HERE/stub-orca.sh" > "$X/fail-cursor.sh"
+chmod +x "$X/fail-cursor.sh"
+( export ORCA_CLI_COMMAND="$X/fail-cursor.sh" STUB_ORCA_WORKERS_PAGE_SIZE=2
+  owned_workers "repo1::$X/.worktrees/lms-base/w-reap" ) >/dev/null 2>&1
+assert_eq "$?" "1" "다음 장을 못 읽으면 rc=1 이다(앞 장만으로 판정하지 않는다)"
+
+# 묶인 Run 밖의 dispatch. spawn 이 Run 을 묶은 조율자 터미널에서 부르면 worker-list 는 그
+# Run 만 낸다 — ctx_reap 을 다른 Run(run_old)에 두고 run_a 에 묶는다. Run 목록을 한 장에
+# 하나씩 내면 run_old 는 셋째 장(run_a·run_b·run_old)에 있다.
+jq '(.result.workers[] | select(.dispatchId == "ctx_reap") | .runId) = "run_old"' \
+  "$X/workers.json" > "$X/workers-runs.json"
+: > "$STUB_ORCA_LOG"
+out="$( export STUB_ORCA_WORKERS_FIXTURE="$X/workers-runs.json" STUB_ORCA_BOUND_RUN=run_a \
+               STUB_ORCA_RUNS_PAGE_SIZE=1
+        release_workers "repo1::$X/.worktrees/lms-base/w-reap" 2>&1 )"
+assert_eq "$(grep 'worker-release' "$STUB_ORCA_LOG" | grep -c -- '--dispatch ctx_reap')" "1" \
+  "묶인 Run 밖(다른 Run)의 dispatch 도 회수한다"
+assert_eq "$(grep -c -E '^orchestration worker-list .*--run run_old( |$)' "$STUB_ORCA_LOG")" "1" \
+  "Run 목록의 다음 장까지 읽어 그 Run 을 --run 으로 읽는다"
+assert_eq "$(printf '%s\n' "$out" | grep -c '워커 1건 회수 · 2건 건너뜀 · 0건 실패')" "1" \
+  "묶인 Run 을 두 번 읽지 않는다(같은 dispatch 를 두 번 세지 않는다)"
+assert_eq "$(grep -c '^REJECTED' "$STUB_ORCA_LOG")" "0" \
+  "Run 을 도는 경로의 모든 Orca 호출이 실물 인자 검증을 통과한다"
+( export STUB_ORCA_WORKERS_FIXTURE="$X/workers-runs.json" STUB_ORCA_BOUND_RUN=run_a \
+         STUB_ORCA_FAIL="orchestration run-list"
+  owned_workers "repo1::$X/.worktrees/lms-base/w-reap" ) >/dev/null 2>&1
+assert_eq "$?" "1" "묶인 터미널에서 Run 목록을 못 읽으면 rc=1 이다(묶인 Run 만으로 판정하지 않는다)"
 
 # reap 경로 end-to-end. w-reap 은 병합·클린이고 터미널이 있으므로 recover 다.
 : > "$STUB_ORCA_LOG"
