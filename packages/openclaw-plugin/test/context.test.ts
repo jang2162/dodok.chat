@@ -1,4 +1,4 @@
-import type { InboundDeliver } from "@dodok/shared";
+import { formatReactionFacts, type InboundDeliver, type InboundReaction } from "@dodok/shared";
 import { describe, expect, it } from "vitest";
 import { buildInboundText, channelPromptContext, formatInboundContext } from "../src/context";
 
@@ -64,6 +64,42 @@ describe("formatInboundContext", () => {
   });
   it("기본 시간대는 UTC", () => {
     expect(formatInboundContext(deliver)).toContain("[00:12] @jang");
+  });
+});
+
+describe("formatInboundContext 리액션", () => {
+  const REACTIONS: InboundReaction[] = [
+    {
+      messageId: "01a09fc9-d204-7551-89d6-38544d07a110",
+      excerpt: "재현 조건",
+      emoji: "👍",
+      by: "jang",
+      at: "2026-09-14T00:15:00Z",
+    },
+    {
+      messageId: "01a09fc9-d204-7551-89d6-38544d07a111",
+      excerpt: "원인 후보",
+      emoji: "🎉",
+      by: "mia",
+      at: "2026-09-14T00:16:00Z",
+    },
+  ];
+  const withReactions = (reactions?: InboundReaction[], reactionsOmitted?: number): InboundDeliver => ({
+    ...deliver,
+    context: { ...deliver.context, reactions, reactionsOmitted },
+  });
+
+  it("리액션이 있으면 `---` 바로 앞에 formatReactionFacts 결과를 줄째로 싣는다", () => {
+    const lines = formatInboundContext(withReactions(REACTIONS, 3), { timeZone: "Asia/Seoul" }).split("\n");
+    const facts = formatReactionFacts(REACTIONS, 3).split("\n");
+    expect(lines.at(-1)).toBe("---");
+    expect(lines.slice(-1 - facts.length, -1)).toEqual(facts);
+  });
+  it("없거나 빈 배열이면 반응 줄이 없고 헤더는 이전과 글자까지 같다", () => {
+    const base = formatInboundContext(deliver, { timeZone: "Asia/Seoul" });
+    expect(formatInboundContext(withReactions(undefined), { timeZone: "Asia/Seoul" })).toBe(base);
+    expect(formatInboundContext(withReactions([], 2), { timeZone: "Asia/Seoul" })).toBe(base);
+    expect(base).not.toContain("반응(");
   });
 });
 

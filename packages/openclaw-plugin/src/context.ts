@@ -1,4 +1,4 @@
-import type { InboundDeliver } from "@dodok/shared";
+import { formatReactionFacts, type InboundDeliver } from "@dodok/shared";
 
 export type ContextFormatOptions = {
   /** 최근 대화 시각 표기 시간대 (IANA). 기본 UTC */
@@ -41,6 +41,8 @@ export function formatInboundContext(d: InboundDeliver, opts: ContextFormatOptio
     lines.push("최근 대화:");
     for (const m of d.context.recentMessages) lines.push(line(m));
   }
+  const reactionFacts = formatReactionFacts(d.context.reactions ?? [], d.context.reactionsOmitted);
+  if (reactionFacts) lines.push(reactionFacts);
   lines.push("---");
   return lines.join("\n");
 }
