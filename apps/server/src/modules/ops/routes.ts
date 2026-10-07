@@ -65,6 +65,7 @@ export function registerOpsRoutes(fastify: FastifyInstance, ctx: OpsRouteContext
       };
     });
     const midnight = new Date(at.getFullYear(), at.getMonth(), at.getDate());
+    const settings = getOpsSettings(ctx.db, ctx.workspaceId);
     const status: OpsStatus = {
       workspaceId: ctx.workspaceId,
       server: {
@@ -77,7 +78,8 @@ export function registerOpsRoutes(fastify: FastifyInstance, ctx: OpsRouteContext
       adapter,
       gateways,
       runsToday: countRunsTodayInWorkspace(ctx.db, at),
-      dailyRunLimit: getOpsSettings(ctx.db, ctx.workspaceId).dailyRunLimit,
+      dailyRunLimit: settings.dailyRunLimit,
+      timeZone: settings.timeZone,
       blockedToday: ctx.ops.countsSince("run_limit", midnight).get("workspace") ?? 0,
       unacked: ctx.ops.unacked(),
     };

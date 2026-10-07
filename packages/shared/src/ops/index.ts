@@ -115,6 +115,7 @@ export const OpsStatus = z.object({
   gateways: z.array(OpsGatewayStatus), // 더한 차례 — Gateway 가 없으면 빈 목록
   runsToday: z.int().min(0),
   dailyRunLimit: z.int().nullable(), // null 은 무제한
+  timeZone: TimeZoneName, // 워크스페이스 시간대(정규형) — 웹이 시간대 선택기·예약의 다음 실행 표기에 읽는다
   blockedToday: z.int().min(0), // 오늘 워크스페이스 상한으로 막힌 수 — 채널 한도 차단은 런 표의 행에
   unacked: OpsUnacked,
 });

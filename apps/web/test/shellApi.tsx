@@ -60,6 +60,7 @@ export const OPS_STATUS_OK: OpsStatus = {
   ],
   runsToday: 0,
   dailyRunLimit: 300,
+  timeZone: "Asia/Seoul",
   blockedToday: 0,
   unacked: { warn: 0, error: 0 },
 };

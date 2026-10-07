@@ -155,6 +155,7 @@ const STATUS = {
   ],
   runsToday: 3,
   dailyRunLimit: 300,
+  timeZone: "Asia/Seoul",
   blockedToday: 0,
   unacked: { warn: 1, error: 0 },
 };
@@ -186,6 +187,7 @@ describe("OpsStatus", () => {
     expect(OpsStatus.safeParse({ ...STATUS, disk: { level: "ok" } }).success).toBe(false);
     expect(OpsStatus.safeParse({ ...STATUS, runsToday: -1 }).success).toBe(false);
     expect(OpsStatus.safeParse({ ...STATUS, blockedToday: -1 }).success).toBe(false);
+    expect(OpsStatus.safeParse({ ...STATUS, timeZone: undefined }).success).toBe(false);
     const [gw] = STATUS.gateways;
     expect(
       OpsStatus.safeParse({ ...STATUS, gateways: [{ ...gw, plugin: { state: "reconnecting" } }] }).success,

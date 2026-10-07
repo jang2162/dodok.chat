@@ -115,6 +115,7 @@ describe("운영 API /api/v1/ops", () => {
       expect(status.server.version).toBe(packageJson.version);
       expect(Date.parse(status.server.startedAt)).toBeLessThanOrEqual(Date.now());
       expect(status.dailyRunLimit).toBe(300);
+      expect(status.timeZone).toBe("Asia/Seoul");
       // helpers/app plentyOfDisk: bavail 2^20·blocks 2^21 블록, 4096 바이트
       expect(status.disk).toEqual({ level: "ok", freeBytes: 2 ** 20 * 4096, totalBytes: 2 ** 21 * 4096 });
       expect(status.db.bytes).toBeGreaterThan(0);
@@ -291,6 +292,8 @@ describe("운영 API /api/v1/ops", () => {
       expect(res.statusCode).toBe(200);
       expect(res.json()).toEqual({ dailyRunLimit: 42, timeZone: "America/New_York" });
       expect(settings()).toEqual({ dailyRunLimit: 42, timeZone: "America/New_York" });
+      // 웹은 운영 상태로 지금 시간대를 읽는다(시간대 선택기·자동화 다음 실행 표기) — 저장한 정규형 그대로
+      expect(OpsStatus.parse((await call(owner, "GET", "/status")).json()).timeZone).toBe("America/New_York");
       const moved = getAutomation(app.db, app.workspaceId, on.id)?.nextRunAt;
       expect(moved).not.toEqual(on.nextRunAt);
       expect(wallInNewYork(moved as Date)).toBe("09:00");
