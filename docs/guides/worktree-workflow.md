@@ -85,7 +85,7 @@ git worktree add -b feat/x .worktrees/dodok.chat/feat-x
   4. scripts/orca-worker.sh wait             # worker_done 수신 (exit 3 은 타임아웃 — 다시 부른다)
   5. scripts/orca-worker.sh attach <슬러그> review --brief <리뷰브리프>   # 같은 워크트리에 새 에이전트로 띄운 리뷰어
      → 4번에서 구현자의 끝을 받은 뒤에 부른다(구현자의 Dispatch 가 진행 중이면 거부한다)
-     → 구현자 터미널을 끄려면 그 앞에 scripts/orca-worker.sh stop <슬러그> --force
+     → 구현자 터미널을 끄려면 그 앞에 scripts/orca-worker.sh stop <슬러그>(`--force` 없이 — 거부되면 구현자가 아직 도는 것이다)
        (워크트리 단위라 리뷰어를 띄운 뒤에 부르면 리뷰어도 끈다)
   6. 두 보고를 두고 무엇을 고치고 무엇을 이월할지 판정 · git diff --name-only 로 파일 목록 대조
   7. 병합 후 scripts/orca-worker.sh reap <슬러그>
@@ -283,10 +283,12 @@ scripts/orca-worker.sh attach <슬러그> <역할> [--model ...] [--brief <파�
   트리를 리뷰하고 두 에이전트가 한 워크트리를 함께 고치게 된다(리뷰어의 변이 테스트도 파일을 잠시
   고친다). `wait` 로 끝을 받은 뒤 붙이고, 확인하고도 띄우려면 `--force`.
 - **리뷰어를 띄울 때 남은 에이전트 터미널은 그대로 둔다.** `attach` 가 그 핸들을 보여 준다. 정리하려면
-  리뷰어를 띄우기 **전에** `scripts/orca-worker.sh stop <슬러그> --force`, 띄운 뒤라면 그 핸들만 끈다
+  리뷰어를 띄우기 **전에** `scripts/orca-worker.sh stop <슬러그>` — **`--force` 를 붙이지 않는다.**
+  끝난 구현자는 그냥 꺼지고, 거부되면 구현자가 아직 도는 것이다. `--force` 로 끄면 그 터미널이 사라져
+  `attach` 의 진행 중 Dispatch 거부가 볼 것이 없어진다. 띄운 뒤라면 그 핸들만 끈다
   (`orca terminal close --terminal <핸들>` — `attach` 가 핸들마다 찍어 준다). **`stop` 은 워크트리
-  단위라 리뷰어를 띄운 뒤에 부르면 방금 띄운 리뷰어까지 문맥째 끈다** — `--force` 라 「워커가 도는 중」
-  거부도 뚫린다. 리뷰까지 끝난 뒤(`reap` 앞)에는 워크트리 단위 `stop` 을 써도 된다.
+  단위라 리뷰어를 띄운 뒤에 부르면 방금 띄운 리뷰어까지 문맥째 끈다** — 리뷰어가 도는 중이면 `stop` 이
+  거부하지만 `--force` 를 붙이면 뚫린다. 리뷰까지 끝난 뒤(`reap` 앞)에는 워크트리 단위 `stop` 을 써도 된다.
 - **리뷰 뒤에는 워크트리에 구현자·리뷰어 터미널이 함께 남는다.** `--terminal` 없는 `attach` 는 그중
   목록의 마지막을 쓰므로, 수정을 특정 세션에 맡기려면 `--terminal <핸들>` 을 준다.
 - **`spawn` 이 「브리프는 전달됐다」고 말했으면 `attach` 를 부르지 마라.** 같은 이유다.
@@ -854,6 +856,10 @@ scripts/orca-worker.sh stop --all              # 이 저장소의 워크트리 �
 scripts/orca-worker.sh stop --all --dry-run    # 무엇이 정지될지 먼저 본다
 scripts/orca-worker.sh stop <슬러그> --force   # 도는 워커도 끊는다 — 슬러그를 찍을 때만
 ```
+
+**끝난 워커(`done`)는 `--force` 없이 꺼진다.** `stop` 이 「워커가 도는 중이다」로 거부하면 그것이
+신호다 — 터미널을 읽어 확인한 뒤에만 `--force` 를 붙인다. 흐름 안에서 `--force` 를 미리 붙여 두면 그
+거부가 막던 사고(도는 워커의 문맥을 끊는 것)가 그대로 난다.
 
 `stop` 은 **이 저장소의 `repoId` 로 거른 워크트리에만** 나가고, 파괴 명령은 정확 일치
 셀렉터를 받는 `orca terminal stop --worktree "id:<repoId>::<path>"` 하나뿐이다.

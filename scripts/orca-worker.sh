@@ -1898,11 +1898,11 @@ cmd_attach() {
     if [ "$role" = "review" ]; then
       printf 'attach: 리뷰어를 새 에이전트로 띄워 붙인다 — 리뷰어는 구현자와 다른 세션이어야 한다\n' >&2
       # **stop 은 워크트리 단위다.** 리뷰어를 띄운 뒤에 권하면 방금 띄운 리뷰어까지 문맥째
-      # 끈다(--force 라 「워커가 도는 중」 거부도 뚫린다). 띄운 뒤에는 핸들 하나씩만 끈다.
+      # 끈다(리뷰어가 도는 중이면 stop 이 거부하지만 --force 면 뚫린다). 띄운 뒤에는 핸들 하나씩만 끈다.
       if [ -n "$live_handles" ]; then
         printf '  남아 있는 에이전트 터미널(%s)은 그대로 둔다\n' \
           "$(printf '%s' "$live_handles" | tr '\n' ' ' | sed 's/ *$//')" >&2
-        printf '  정리는 리뷰어를 띄우기 전에만 워크트리 단위로: scripts/orca-worker.sh stop %s --force\n' \
+        printf '  정리는 리뷰어를 띄우기 전에만 워크트리 단위로: scripts/orca-worker.sh stop %s (--force 없이 — 거부되면 구현자가 아직 돈다)\n' \
           "$slug" >&2
         printf '  띄운 뒤라면 그 핸들만 끈다:\n' >&2
         printf '%s\n' "$live_handles" | sed '/^$/d' | while IFS= read -r h; do

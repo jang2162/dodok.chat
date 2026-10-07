@@ -732,12 +732,12 @@ assert_eq "$(grep -c '^REJECTED' "$STUB_ORCA_LOG")" "0" \
 assert_eq "$(printf '%s' "$out" | grep -c '남아 있는 에이전트 터미널(term_reap_1)은 그대로 둔다')" "1" \
   "attach review: 남겨 둔 터미널 핸들을 보인다"
 # stop 은 워크트리 단위라 리뷰어를 띄운 뒤에 권하면 방금 띄운 리뷰어까지 끈다.
-assert_eq "$(printf '%s' "$out" | grep -c '띄우기 전에만.*stop probe --force')" "1" \
+assert_eq "$(printf '%s' "$out" | grep -c '띄우기 전에만.*stop probe ')" "1" \
   "attach review: 워크트리 단위 stop 은 리뷰어를 띄우기 전에만 권한다"
 assert_eq "$(printf '%s' "$out" | grep -c 'terminal close --terminal term_reap_1$')" "1" \
   "attach review: 띄운 뒤에는 그 핸들 하나만 끄는 명령을 보인다"
-assert_eq "$(printf '%s' "$out" | grep -c -- 'stop probe --force')" "1" \
-  "attach review: 워크트리 단위 stop 을 다른 자리에서 또 권하지 않는다"
+assert_eq "$(printf '%s' "$out" | grep -c -- 'stop probe --force')" "0" \
+  "attach review: 리뷰 앞 stop 에 --force 를 붙이지 않는다(도는 구현자를 죽여 진행 중 거부를 무력화한다)"
 # 구현자가 아직 일하는 중이면 리뷰어를 띄우지 않는다 — 그 터미널에 붙지 않아도
 # 반쯤 된 트리를 리뷰하고 두 에이전트가 한 워크트리를 함께 고친다.
 : > "$STUB_ORCA_LOG"
@@ -795,6 +795,14 @@ assert_status 1 "attach review: 첫째 터미널의 진행 중인 Dispatch 도 �
   bash -c '. "$0"; cmd_attach probe review' "$SUT"
 assert_eq "$(grep -c 'orchestration worker-start' "$STUB_ORCA_LOG")" "0" \
   "attach review: 터미널이 둘이어도 거부하면 worker-start 까지 가지 않는다"
+# 반대쪽: 진행 중인 Dispatch 가 둘째(마지막) 터미널에만 있어도 거부한다 — 첫째만 보면 놓친다.
+: > "$STUB_ORCA_LOG"
+jq '.result.workers[0].agentTerminalHandle = "term_live"' "$P/liveworker.json" > "$P/liveworker2.json"
+assert_status 1 "attach review: 둘째 터미널의 진행 중인 Dispatch 도 거부 사유가 된다" \
+  env STUB_ORCA_TERMINALS_FIXTURE="$P/aterms2.json" STUB_ORCA_WORKERS_FIXTURE="$P/liveworker2.json" \
+  bash -c '. "$0"; cmd_attach probe review' "$SUT"
+assert_eq "$(grep -c 'orchestration worker-start' "$STUB_ORCA_LOG")" "0" \
+  "attach review: 둘째 터미널 사례도 worker-start 까지 가지 않는다"
 
 # 터미널이 하나도 남지 않았어도 워크트리 세팅은 살린다.
 jq '.result.terminals = []' "$HERE/fixtures/terminal-list.json" > "$P/noterms.json"
