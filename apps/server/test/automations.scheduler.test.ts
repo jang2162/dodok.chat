@@ -140,6 +140,28 @@ describe("tick", () => {
     expect(t.eventsOf("automation_skipped")).toHaveLength(1);
   });
 
+  it("[PA3] 틱이 겹쳐도 한 회차는 한 번 — 앞 틱이 게시를 기다리는 사이 뒤 틱이 같은 행을 가져가면 앞 틱은 그 행을 건너뛴다", async () => {
+    const t = setup();
+    const first = t.add({ nextRunAt: kst("2026-10-07T09:00") });
+    const second = t.add({ nextRunAt: kst("2026-10-07T09:01") });
+    let release: () => void = () => undefined;
+    const slowRoute = vi.fn((m: Message) =>
+      m.authorId === first.id ? new Promise<void>((resolve) => (release = resolve)) : Promise.resolve(),
+    );
+    // 앞 틱은 두 행을 읽고 first 를 게시한 뒤 route 에서 멈춘다 — second 는 아직 가져가지 않았다
+    const slow = tick({ ...t.deps, route: slowRoute }, NOW);
+    expect(t.posted(first.id)).toHaveLength(1);
+    // 뒤 틱이 second 를 가져가 게시한다
+    await tick(t.deps, NOW);
+    expect(t.posted(second.id)).toHaveLength(1);
+    // 앞 틱이 이어 가며 읽어 둔 second 를 가져가려 하지만 next_run_at 이 이미 올라 있다
+    release();
+    await slow;
+    expect(t.posted(first.id)).toHaveLength(1);
+    expect(t.posted(second.id)).toHaveLength(1);
+    expect(t.row(second.id)?.nextRunAt).toEqual(kst("2026-10-08T09:00"));
+  });
+
   it("10분 경계 — 정확히 10분 늦으면 게시, 1ms 더 늦으면 skipped", async () => {
     const t = setup();
     const onEdge = t.add({ nextRunAt: new Date(NOW.getTime() - MISSED_GRACE_MS) });
@@ -247,6 +269,22 @@ describe("tick", () => {
 
     await tick(t.deps, new Date(NOW.getTime() + 60_000));
     expect(t.eventsOf("automation_failed")).toHaveLength(1);
+  });
+
+  it("한 자동화의 결과를 적다 던져도(사건 기록 실패) 틱은 던지지 않고 다음 자동화를 게시한다", async () => {
+    const t = setup();
+    const other = seedChannelWithAgent(t.db, { channelName: "other" });
+    t.add({ channelId: other.channelId, workspaceId: other.workspaceId, createdBy: other.userId });
+    const fine = t.add({ nextRunAt: kst("2026-10-07T09:01") });
+    archive(t.db, other.channelId);
+    t.record.mockImplementationOnce(() => {
+      throw new Error("record boom");
+    });
+
+    await expect(tick(t.deps, NOW)).resolves.toBeUndefined();
+
+    expect(t.posted(fine.id)).toHaveLength(1);
+    expect(t.row(fine.id)?.lastStatus).toBe("ok");
   });
 
   it("시간대가 Intl 이 모르는 이름이어도 틱은 던지지 않는다 — 자동화마다 error·사건", async () => {
