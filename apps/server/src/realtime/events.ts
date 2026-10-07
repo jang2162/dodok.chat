@@ -15,7 +15,7 @@ export const WIRE_MAX_PENDING = 500;
 
 export type WireFanoutOptions = {
   logger: Logger;
-  /** message.created·updated 를 내보내기 직전 상호작용 기록·리액션 집계를 붙일 때 읽는다(설계 4.2) */
+  /** message.created·updated 를 내보내기 직전 상호작용 기록(components 설계 「붙이는 자리」 절)·리액션 집계(리액션 설계 「`modules/reactions/`」 절)를 붙일 때 읽는다 */
   db: Db;
   /** 승인 팬아웃의 룸(`workspace:<id>`) — 서버가 섬기는 그 워크스페이스, attachWire 의 `ctx.workspaceId` 와 같은 값 */
   workspaceId: string;
@@ -106,9 +106,12 @@ export function attachWireFanout(io: WireServer, bus: ServerBus, opts: WireFanou
   const hydrateUpdated = (message: Message): Message => hydrateForClient(opts.db, [message])[0] ?? message;
 
   const offs = [
+    on("message.created", ({ message }) =>
+      io.to(channelRoom(message.channelId)).emit("message.created", { message: hydrate(message) }),
+    ),
+    // 구독하지 않은 채널의 새 글을 사이드바가 알도록 본문 없는 신호를 워크스페이스 룸으로 낸다. silent 메시지도 저장된 것이라 안 읽은 것이다.
+    // 위와 따로 등록한다 — 하이드레이션(새 글마다 리액션 질의)이 던져도 이 신호는 나가게. 버스는 등록 순서대로 부르므로 순서는 위가 먼저다
     on("message.created", ({ message }) => {
-      io.to(channelRoom(message.channelId)).emit("message.created", { message: hydrate(message) });
-      // 구독하지 않은 채널의 새 글을 사이드바가 알도록 본문 없는 신호를 워크스페이스 룸으로 낸다. silent 메시지도 저장된 것이라 안 읽은 것이다
       if (message.kind !== "normal" || (message.authorType !== "user" && message.authorType !== "agent"))
         return;
       if (!message.authorId) return;

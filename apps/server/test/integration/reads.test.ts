@@ -4,7 +4,7 @@
  */
 import { ChannelActivity } from "@dodok/shared";
 import { v7 as uuid } from "uuid";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { App } from "../../src/app";
 import { eq } from "drizzle-orm";
 import { channels } from "../../src/db/schema.sqlite";
@@ -65,6 +65,33 @@ describe("통합 — 읽지 않음 팬아웃", () => {
   };
 
   describe("channel.activity", () => {
+    /**
+     * 반드시 activity 가 나갈 에이전트 글 하나를 내고 기다려 그 작성자 id 를 돌려준다. 「내지 않는다」 사례는 이것을 끝에 내고 받은 것이
+     * 이것 하나뿐인지 본다 — 팬아웃 자체가 멈춰도(하이드레이션 예외 등) 아무것도 안 와 통과하지 않게. 같은 버스·같은 소켓이라 앞서
+     * 낸 것이 나갔다면 이것보다 먼저 와 있다
+     */
+    const control = async (channelId: string): Promise<string> => {
+      const authorId = uuid();
+      const seen = waitFor(a1, "channel.activity", (p) => p.authorId === authorId);
+      app.bus.emit("message.created", {
+        message: {
+          id: uuid(),
+          channelId,
+          seq: 1,
+          kind: "normal",
+          authorType: "agent",
+          authorId,
+          bodyMd: "x",
+          mentions: { users: [], agents: [] },
+          reactions: [],
+        } as never,
+      });
+      await seen;
+      return authorId;
+    };
+    const authorsOf = (seen: { payload: unknown }[]) =>
+      seen.map((e) => (e.payload as { authorId: string }).authorId);
+
     it("B 가 최상위를 보내면 A 의 두 소켓이 본문 없는 신호를 받는다", async () => {
       await ready();
       const ch = channel();
@@ -102,8 +129,8 @@ describe("통합 — 읽지 않음 팬아웃", () => {
       const ch = channel();
       const seen = recordEvents(a1, ["channel.activity"]);
       createSystemMessage(app.db, app.bus, { channelId: ch.id, bodyMd: "공지", kind: "info" });
-      await roundTrip(a1);
-      expect(seen).toEqual([]);
+      const controlId = await control(ch.id);
+      expect(authorsOf(seen)).toEqual([controlId]);
     });
 
     // 시스템 메시지는 작성자가 없어 authorId 거름이 대신 막는다 — kind·authorType 거름은 작성자가 있는 꼴로 따로 잠근다
@@ -124,8 +151,8 @@ describe("통합 — 읽지 않음 팬아웃", () => {
           reactions: [],
         } as never,
       });
-      await roundTrip(a1);
-      expect(seen).toEqual([]);
+      const controlId = await control(ch.id);
+      expect(authorsOf(seen)).toEqual([controlId]);
     });
 
     it("authorType 이 user·agent 가 아니면 작성자가 있어도 activity 를 내지 않는다 — 자동화는 아직 없다", async () => {
@@ -146,8 +173,40 @@ describe("통합 — 읽지 않음 팬아웃", () => {
             reactions: [],
           } as never,
         });
-      await roundTrip(a1);
-      expect(seen).toEqual([]);
+      const controlId = await control(ch.id);
+      expect(authorsOf(seen)).toEqual([controlId]);
+    });
+
+    // 새 글마다 하이드레이션이 리액션을 질의하므로 던질 수 있다(DB 오류) — 그래도 읽지 않음 신호는 잃지 않는다
+    it("하이드레이션이 던져도 channel.activity 는 나간다", async () => {
+      await ready();
+      const ch = channel();
+      const agentId = uuid();
+      const failed = vi.spyOn(app.logger, "error");
+      try {
+        const seen = waitFor(a1, "channel.activity");
+        // reactions 가 없는 꼴 — withReactions 가 그것을 읽다 던진다
+        app.bus.emit("message.created", {
+          message: {
+            id: uuid(),
+            channelId: ch.id,
+            seq: 1,
+            kind: "normal",
+            authorType: "agent",
+            authorId: agentId,
+            bodyMd: "x",
+            mentions: { users: [], agents: [] },
+          } as never,
+        });
+        expect(await seen).toMatchObject({ channelId: ch.id, authorType: "agent", authorId: agentId });
+        // 전제 — 하이드레이션이 실제로 던졌다(아니면 이 사례는 아무것도 보지 않는다)
+        expect(failed).toHaveBeenCalledWith(
+          expect.objectContaining({ event: "message.created" }),
+          "wire fanout failed",
+        );
+      } finally {
+        failed.mockRestore();
+      }
     });
 
     // 푸시 트리거는 silent 를 건너뛰지만 activity 는 아니다 — 연결을 닫은 런·보관한 에이전트의 늦은 정본도 저장된 새 글이다
