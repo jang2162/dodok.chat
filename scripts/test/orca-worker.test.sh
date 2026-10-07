@@ -738,6 +738,10 @@ assert_eq "$(printf '%s' "$out" | grep -c 'terminal close --terminal term_reap_1
   "attach review: 띄운 뒤에는 그 핸들 하나만 끄는 명령을 보인다"
 assert_eq "$(printf '%s' "$out" | grep -c -- 'stop probe --force')" "0" \
   "attach review: 리뷰 앞 stop 에 --force 를 붙이지 않는다(도는 구현자를 죽여 진행 중 거부를 무력화한다)"
+# stop 의 exit 1 은 「도는 중」 거부만이 아니다(close 실패·보호·없는 슬러그). 그 거부일 때만
+# 구현자가 돈다고 읽어야 한다 — 아무 거부나 그렇게 읽으면 끝난 구현자를 wait 로 기다린다.
+assert_eq "$(printf '%s' "$out" | grep -c '「워커가 도는 중이다」로 거부되면 구현자가 아직 돈다')" "1" \
+  "attach review: 구현자가 돈다는 신호를 「워커가 도는 중이다」 거부로만 한정한다"
 # 구현자가 아직 일하는 중이면 리뷰어를 띄우지 않는다 — 그 터미널에 붙지 않아도
 # 반쯤 된 트리를 리뷰하고 두 에이전트가 한 워크트리를 함께 고친다.
 : > "$STUB_ORCA_LOG"

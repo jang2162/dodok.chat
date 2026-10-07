@@ -85,7 +85,7 @@ git worktree add -b feat/x .worktrees/dodok.chat/feat-x
   4. scripts/orca-worker.sh wait             # worker_done 수신 (exit 3 은 타임아웃 — 다시 부른다)
   5. scripts/orca-worker.sh attach <슬러그> review --brief <리뷰브리프>   # 같은 워크트리에 새 에이전트로 띄운 리뷰어
      → 4번에서 구현자의 끝을 받은 뒤에 부른다(구현자의 Dispatch 가 진행 중이면 거부한다)
-     → 구현자 터미널을 끄려면 그 앞에 scripts/orca-worker.sh stop <슬러그>(`--force` 없이 — 거부되면 구현자가 아직 도는 것이다)
+     → 구현자 터미널을 끄려면 그 앞에 scripts/orca-worker.sh stop <슬러그>(`--force` 없이 — 「워커가 도는 중이다」로 거부되면 구현자가 아직 도는 것이다)
        (워크트리 단위라 리뷰어를 띄운 뒤에 부르면 리뷰어도 끈다)
   6. 두 보고를 두고 무엇을 고치고 무엇을 이월할지 판정 · git diff --name-only 로 파일 목록 대조
   7. 병합 후 scripts/orca-worker.sh reap <슬러그>
@@ -284,7 +284,8 @@ scripts/orca-worker.sh attach <슬러그> <역할> [--model ...] [--brief <파�
   고친다). `wait` 로 끝을 받은 뒤 붙이고, 확인하고도 띄우려면 `--force`.
 - **리뷰어를 띄울 때 남은 에이전트 터미널은 그대로 둔다.** `attach` 가 그 핸들을 보여 준다. 정리하려면
   리뷰어를 띄우기 **전에** `scripts/orca-worker.sh stop <슬러그>` — **`--force` 를 붙이지 않는다.**
-  끝난 구현자는 회수된 뒤 꺼지고, 거부되면 구현자가 아직 도는 것이다. `--force` 로 끄면 그 터미널이 사라져
+  끝난 구현자는 회수된 뒤 꺼지고, 「워커가 도는 중이다」로 거부되면 구현자가 아직 도는 것이다
+  (다른 exit 1 은 「터미널을 끄는 것은 `stop` 이 한다」 절). `--force` 로 끄면 그 터미널이 사라져
   `attach` 의 진행 중 Dispatch 거부가 볼 것이 없어진다. 띄운 뒤라면 그 핸들만 끈다
   (`orca terminal close --terminal <핸들>` — `attach` 가 핸들마다 찍어 준다). **`stop` 은 워크트리
   단위라 리뷰어를 띄운 뒤에 부르면 방금 띄운 리뷰어까지 문맥째 끈다** — 리뷰어가 도는 중이면 `stop` 이
@@ -807,15 +808,26 @@ scripts/orca-worker.sh keep <슬러그> --remove   # 해제
 **`reap` 은 자기가 서 있는 워크트리를 건너뛴다** — 워크트리 안의 워커가 `--all-merged` 를
 돌리는 일이 실제로 생기고, 가드가 없으면 자기 발밑이 무너진다.
 
-**회수 단계가 무엇을 거르는가가 이 순서의 안전을 정한다.** `orca orchestration worker-list` 는
-**머신 전역**이라 모든 프로젝트의 워커가 한 목록에 들어 있고, 항목에는 `worktreeId` 라는
-최상위 필드가 **없다.** 그래서 이 워크트리 것임을 증명하는 길은 둘뿐이고 둘 다 정확 일치다 —
+**회수 단계가 무엇을 거르는가가 이 순서의 안전을 정한다.** `orca orchestration worker-list` 에는
+**저장소 경계가 없어** 모든 프로젝트의 워커가 한 목록에 들어 있고(범위는 Run 이지 저장소가 아니다),
+항목에는 `worktreeId` 라는 최상위 필드가 **없다.** 그래서 이 워크트리 것임을 증명하는 길은 둘뿐이고 둘 다 정확 일치다 —
 `.resource.worktreeId` 가 같거나, `.agentTerminalHandle` 이
 `orca terminal list --worktree <셀렉터>` 가 낸 핸들 집합에 있거나.
 `.resource` 는 워커가 쥔 워크트리 자원 기록이라 **터미널이 이미 죽은 뒤에도 남고**,
 회수해야 할 것이 정확히 그것이다. **어느 쪽도 대지 못하는 dispatch 는 건너뛰고 그렇다고
 출력한다.** 없는 필드로 거르면 항상 0건이 되어 회수가 조용히 생략되고, 느슨하게 거르면
 남의 프로젝트 워커를 회수한다 — **둘 다 종료코드로는 성공으로 보인다.**
+
+**목록은 끝까지, 모든 Run 에서 읽는다.** `worker-list` 는 `--run` 이 없으면 부른 터미널에 묶인 Run 만
+내고, 묶인 Run 이 없을 때만 모든 Run 을 낸다. 한 번에 최신 100행만 내므로 나머지는
+`page.nextCursor` 로 이어 받는다 — 첫 페이지만 읽으면 오래된 dispatch 와 다른 Run 의 dispatch 는
+「증명된 dispatch 없음」으로 보인다. 그래서 회수는 `--cursor` 로 끝 페이지까지 읽고, 응답의
+`scope.source` 가 `all` 이 아니면(`spawn` 이 Run 을 묶은 조율자 터미널이 그렇다) `run-list` 의 Run 을
+하나씩 `--run` 으로 읽는다. 「모든 Run」을 고르는 옵션은 `worker-list --help` 에 없어서, 묶인
+터미널에서는 Run 수만큼 왕복하고 `run-list` 에 없는 Run 은 보지 못한다. 한 장이라도 못 읽거나,
+이미 받은 커서가 다시 오거나, 장 수가 `ORCA_WORKER_MAX_PAGES`(기본 1000)에 닿았는데 아직 남았으면
+「목록을 읽지 못했다」로 치고 **아무것도 회수하지 않는다** — 덜 읽은 목록의 「0건」은 다 읽은
+「0건」과 구별되지 않는다.
 
 **소유 증명과 회수 대상 판정은 다른 일이다.** 증명은 「이 워크트리 것인가」를 묻고, 판정은
 「부르면 무엇이 닫히는가」를 묻는다. 증명 단계에서 상태로 걸러 버리면 건너뛴 것과 그 이유를
@@ -843,7 +855,7 @@ scripts/orca-worker.sh keep <슬러그> --remove   # 해제
 **`active` 를 거르는 것은 안전 장치다.** 그것은 지금 돌고 있는 워커이고, 자기 자신일 수도 있다.
 
 `release_pending`·`release_unknown` 은 `--help` 의 열거값에서만 왔다. 그래서 부르지 않는다 — **모르면 부르지 않는다.**
-`worker-list` 는 머신 전역이라, 여기서 한 번 느슨해지면 그 대상이 남의 프로젝트가 된다.
+`worker-list` 에는 저장소 경계가 없어, 여기서 한 번 느슨해지면 그 대상이 남의 프로젝트가 된다.
 
 ### 터미널을 끄는 것은 `stop` 이 한다 — `terminal list` 평문을 grep 하지 마라
 
@@ -872,9 +884,17 @@ scripts/orca-worker.sh stop <슬러그> --force   # 도는 워커도 끊는다 �
 `worker-release` 도 터미널을 찾지 못해 터미널 꼬리 보관 없이 회수하거나 `release_unknown` 으로 남긴다.
 그래서 **`stop` 도 `reap` 처럼 닫기 전에 회수한다** — 그 워크트리의 워커를 「회수는 `reclaimable` 만
 부른다」 절의 판정대로 `worker-release` 한 뒤에 닫는다. 「워커가 도는 중이다」 거부는 회수보다 앞서고,
-도는 워커(`active`)는 회수하지 않으므로 `--force` 로 끊을 때도 터미널만 닫힌다. 회수 실패는 경고만 내고
+도는 워커(`active`)는 회수하지 않으므로 `--force` 로 끊을 때도 터미널만 닫힌다. 그렇게 끊긴 워커는
+프로세스가 끝나면서 런타임이 실패로 정산해 `reclaimable` 이 되고, 나중 `reap` 이 회수를 부르지만
+터미널이 이미 없어 꼬리를 보관하지 못한 채 `released` 가 되거나 `release_unknown` 경고를 낸다 —
+`--force` 가 버리는 것에는 그 워커의 출력 보관도 들어간다. 회수 실패는 경고만 내고
 `stop` 의 종료 코드를 바꾸지 않는다(`reap` 과 같다). 나중 `reap` 은 이미 `released` 인 워커에
 `worker-release` 를 다시 부르지 않는다.
+
+`stop` 의 exit 1 은 「워커가 도는 중이다」 거부만이 아니다 — `경고: terminal close 실패`, 보호된
+워크트리, 이 저장소에 없는 슬러그도 1 이다. **`wait` 로 끝을 기다릴 것은 「워커가 도는 중이다」일
+때뿐이다.** close 실패는 스크립트가 출력을 버려 이유가 남지 않으니
+`orca terminal close --worktree "id:<repoId>::<path>" --all --json` 을 한 번 불러 `error.code` 를 본다.
 
 **`--all` 과 `--force` 는 함께 쓸 수 없다.** `--force` 는 「도는 워커를 끊어라」는 뜻이고
 `--all` 과 합치면 **이 저장소의 워커를 한 번에 전부 끊고 exit 0** 이 된다 — 코드는 남지만

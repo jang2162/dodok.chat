@@ -1974,7 +1974,7 @@ cmd_attach() {
       if [ -n "$live_handles" ]; then
         printf '  남아 있는 에이전트 터미널(%s)은 그대로 둔다\n' \
           "$(printf '%s' "$live_handles" | tr '\n' ' ' | sed 's/ *$//')" >&2
-        printf '  정리는 리뷰어를 띄우기 전에만 워크트리 단위로: scripts/orca-worker.sh stop %s (--force 없이 — 거부되면 구현자가 아직 돈다)\n' \
+        printf '  정리는 리뷰어를 띄우기 전에만 워크트리 단위로: scripts/orca-worker.sh stop %s (--force 없이 — 「워커가 도는 중이다」로 거부되면 구현자가 아직 돈다)\n' \
           "$slug" >&2
         printf '  띄운 뒤라면 그 핸들만 끈다:\n' >&2
         printf '%s\n' "$live_handles" | sed '/^$/d' | while IFS= read -r h; do
