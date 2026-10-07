@@ -19,19 +19,31 @@ const StoredOps = z.looseObject({
 });
 type StoredOps = z.infer<typeof StoredOps>;
 
-/** ops_json 을 읽는다. 망가진 값(JSON 아님·모양 다름)이면 {} 로 보고 logger 가 있으면 warn 을 남긴다 */
+/**
+ * ops_json 을 읽는다. 망가진 값(JSON 아님·모양 다름)이면 {} 로 보고 logger 가 있으면 warn 을 남긴다. 저장된 시간대를 이 서버의 Intl 이
+ * 모르면(다른 ICU 로 저장한 이름 등) 시간대만 기본값으로 읽는다 — 예약 틱이 매번 이 값으로 다음 시각을 세므로 던지면 틱이 멈춘다
+ */
 export function getOpsSettings(db: DbOrTx, workspaceId: string, logger?: Pick<Logger, "warn">): OpsSettings {
-  return toSettings(readStored(db, workspaceId, logger));
+  const settings = toSettings(readStored(db, workspaceId, logger));
+  try {
+    assertTimeZone(settings.timeZone);
+  } catch {
+    logger?.warn({ workspaceId }, "ops settings time zone unknown");
+    return { ...settings, timeZone: OPS_DEFAULT_TIME_ZONE };
+  }
+  return settings;
 }
 
 /**
  * 준 키만 바꾼다(undefined 값은 바꾸지 않는다). 범위 밖이거나 없는 시간대 이름이면 VALIDATION 으로 던지고 아무 키도 저장하지 않는다.
- * 시간대를 바꿔도 예약 자동화의 다음 시각은 여기서 다시 세지 않는다 — 부르는 쪽(설정 PATCH)이 맡는다(계획 판정 PA4)
+ * 시간대는 Intl 의 정규형으로 저장한다(assertTimeZone). 시간대를 바꿔도 예약 자동화의 다음 시각은 여기서 다시 세지 않는다 — 부르는
+ * 쪽(설정 PATCH)이 맡는다(계획 판정 PA4)
  */
 export function patchOpsSettings(db: DbOrTx, workspaceId: string, patch: Partial<OpsSettings>): OpsSettings {
-  if (patch.timeZone !== undefined) assertTimeZone(patch.timeZone);
+  const timeZone = patch.timeZone === undefined ? undefined : assertTimeZone(patch.timeZone);
   const next: Record<string, unknown> = { ...readStored(db, workspaceId) };
-  for (const [key, value] of Object.entries(patch)) if (value !== undefined) next[key] = value;
+  for (const [key, value] of Object.entries({ ...patch, timeZone }))
+    if (value !== undefined) next[key] = value;
   const parsed = StoredOps.safeParse(next);
   if (!parsed.success) throw apiError("VALIDATION", "invalid ops settings");
   db.update(workspaces)

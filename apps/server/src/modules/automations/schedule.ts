@@ -2,6 +2,7 @@
  * 예약 자동화의 다음 실행 시각(자동화 스펙 「다음 실행 시각」 절). 시간대 계산은 Intl.DateTimeFormat 하나로 한다(의존성 없음) —
  * 후보 벽시계를 하루씩(매시간은 한 시간씩) 넘기며 반복 규칙에 맞는 것을 그 시간대의 순간으로 바꿔, after 보다 엄격히 뒤인 첫 순간을 고른다.
  * 서머타임: 없는 벽시계 시각(봄)은 그 뒤 첫 유효 순간, 두 번 있는 시각(가을)은 첫 번째만 — 두 번째는 다음 회차로 넘어간다.
+ * 매시간만 다르다 — 없는 벽시계 시각은 건너뛴다. 첫 유효 순간(예: 03:00)으로 밀면 곧 다음 시의 회차(03:15)가 와서 15분 간격으로 두 번 돈다.
  */
 import type { AutomationSchedule } from "@dodok/shared";
 import { apiError } from "../../http/errors";
@@ -35,10 +36,13 @@ function formatterFor(timeZone: string): Intl.DateTimeFormat {
   return fmt;
 }
 
-/** 틀린 시간대 이름이면 VALIDATION — 워크스페이스 설정에 저장하기 전에 부른다 */
-export function assertTimeZone(timeZone: string): void {
+/**
+ * 틀린 시간대 이름이면 VALIDATION, 맞으면 Intl 의 정규형(asia/seoul → Asia/Seoul, US/Eastern → America/New_York) —
+ * 워크스페이스 설정에 저장하기 전에 불러 그 값을 저장한다. 시간대 선택 목록의 이름과 저장값이 맞게
+ */
+export function assertTimeZone(timeZone: string): string {
   try {
-    formatterFor(timeZone);
+    return formatterFor(timeZone).resolvedOptions().timeZone;
   } catch {
     throw apiError("VALIDATION", "unknown time zone", { field: "timeZone" });
   }
@@ -101,8 +105,10 @@ export function nextRunAt(schedule: AutomationSchedule, timeZone: string, after:
   if (schedule.repeat === "hourly") {
     const startHour = Math.floor(start / HOUR_MS) * HOUR_MS;
     for (let i = -1; i <= SEARCH_DAYS * 24; i++) {
-      const t = wallToInstant(fmt, startHour + i * HOUR_MS + schedule.minute * MINUTE_MS);
-      if (t > afterMs) return new Date(t);
+      const wall = startHour + i * HOUR_MS + schedule.minute * MINUTE_MS;
+      const t = wallToInstant(fmt, wall);
+      // 없는 벽시계 시각이면 wallToInstant 가 그 뒤 순간으로 민다 — 매시간은 그 회차를 건너뛴다
+      if (t > afterMs && wallOf(fmt, t) === wall) return new Date(t);
     }
   } else {
     const [hh, mm] = schedule.time.split(":").map(Number) as [number, number];

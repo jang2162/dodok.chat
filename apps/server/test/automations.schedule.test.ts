@@ -1,9 +1,9 @@
 /**
  * 예약 자동화의 다음 실행 시각(자동화 스펙 「다음 실행 시각」 절) — after 보다 엄격히 뒤인 가장 이른 순간을 워크스페이스 시간대의
- * 벽시계로 센다. 없는 벽시계 시각(봄)은 그 뒤 첫 유효 순간, 두 번 있는 시각(가을)은 첫 번째.
+ * 벽시계로 센다. 없는 벽시계 시각(봄)은 그 뒤 첫 유효 순간(매시간은 건너뜀), 두 번 있는 시각(가을)은 첫 번째.
  */
 import type { AutomationSchedule } from "@dodok/shared";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { HttpError } from "../src/http/errors";
 import { assertTimeZone, nextRunAt } from "../src/modules/automations/schedule";
 
@@ -15,6 +15,24 @@ const next = (schedule: AutomationSchedule, after: string, tz = SEOUL) =>
   nextRunAt(schedule, tz, at(after)).toISOString();
 
 const daily = (time: string): AutomationSchedule => ({ repeat: "daily", time });
+
+// 프로세스 시간대를 음수 오프셋으로 고정한다 — 벽시계 날짜를 프로세스 시간대로 읽는 실수(getUTCDay 대신 getDay 등)는 UTC 이상 오프셋의
+// 머신(KST 등)에서는 결과가 같아 숨는다. 자정 UTC 가 전날이 되는 시간대여야 어느 머신에서나 드러난다
+const PROCESS_TZ = "America/Los_Angeles";
+let savedTz: string | undefined;
+beforeAll(() => {
+  savedTz = process.env.TZ;
+  process.env.TZ = PROCESS_TZ;
+});
+afterAll(() => {
+  if (savedTz === undefined) delete process.env.TZ;
+  else process.env.TZ = savedTz;
+});
+
+it("전제 — 이 파일은 프로세스 시간대가 음수 오프셋인 채로 돈다(2026-10-07 00:00Z 가 그 시간대로는 화요일)", () => {
+  expect(new Date("2026-10-07T00:00:00Z").getDay()).toBe(2);
+  expect(new Date("2026-10-07T00:00:00Z").getUTCDay()).toBe(3);
+});
 
 describe("nextRunAt — Asia/Seoul", () => {
   it("daily — 08:59 뒤면 같은 날 09:00", () => {
@@ -143,16 +161,29 @@ describe("nextRunAt — America/New_York 서머타임", () => {
     expect(next(daily("01:30"), "2026-11-01T06:00:00Z", NEW_YORK)).toBe("2026-11-02T06:30:00.000Z");
   });
 
+  it("봄 — 매시간은 없는 벽시계 시각을 건너뛴다: 01:15 EST 다음은 03:15 EDT(03:00 에 한 번 더 돌지 않는다)", () => {
+    const quarter: AutomationSchedule = { repeat: "hourly", minute: 15 };
+    // 01:15:30 EST(06:15:30Z) 뒤 — 02:15 는 없다
+    expect(next(quarter, "2026-03-08T06:15:30Z", NEW_YORK)).toBe("2026-03-08T07:15:00.000Z");
+    expect(next(quarter, "2026-03-08T07:15:30Z", NEW_YORK)).toBe("2026-03-08T08:15:00.000Z");
+    // 정시(:00)는 03:00 이 곧 그 시의 회차라 그대로
+    expect(next({ repeat: "hourly", minute: 0 }, "2026-03-08T06:00:30Z", NEW_YORK)).toBe(
+      "2026-03-08T07:00:00.000Z",
+    );
+  });
+
   it("가을 — 돌아간 뒤의 시각은 EST 로", () => {
     expect(next(daily("02:30"), "2026-11-01T00:00:00-04:00", NEW_YORK)).toBe("2026-11-01T07:30:00.000Z");
   });
 });
 
 describe("assertTimeZone", () => {
-  it("있는 IANA 이름은 통과", () => {
-    expect(() => assertTimeZone(SEOUL)).not.toThrow();
-    expect(() => assertTimeZone(NEW_YORK)).not.toThrow();
-    expect(() => assertTimeZone("UTC")).not.toThrow();
+  it("있는 IANA 이름은 통과하고 Intl 의 정규형을 돌려준다", () => {
+    expect(assertTimeZone(SEOUL)).toBe(SEOUL);
+    expect(assertTimeZone(NEW_YORK)).toBe(NEW_YORK);
+    expect(assertTimeZone("UTC")).toBe("UTC");
+    expect(assertTimeZone("asia/seoul")).toBe(SEOUL);
+    expect(assertTimeZone("US/Eastern")).toBe(NEW_YORK);
   });
 
   it("없는 이름·빈 이름은 VALIDATION", () => {

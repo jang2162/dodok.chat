@@ -421,6 +421,22 @@ describe("운영 설정(ops_json)", () => {
     expect(getOpsSettings(db, ws)).toEqual({ dailyRunLimit: 300, timeZone: SEOUL });
   });
 
+  it("저장된 시간대가 Intl 이 모르는 이름이면 시간대만 기본값으로 읽고 warn — 한도는 그대로", () => {
+    const { logger, lines } = captureLogger();
+    setRaw(JSON.stringify({ dailyRunLimit: 20, timeZone: "Mars/Base" }));
+    expect(getOpsSettings(db, ws, logger)).toEqual({ dailyRunLimit: 20, timeZone: SEOUL });
+    expect(lines.filter((l) => l.level === 40 && l.msg === "ops settings time zone unknown")).toHaveLength(1);
+    // logger 없이 읽어도 던지지 않는다 — 스케줄러가 매 틱 읽는다
+    expect(getOpsSettings(db, ws).timeZone).toBe(SEOUL);
+  });
+
+  it("patch 는 시간대를 Intl 의 정규형으로 저장한다 — 대소문자·옛 이름", () => {
+    expect(patchOpsSettings(db, ws, { timeZone: "asia/seoul" }).timeZone).toBe("Asia/Seoul");
+    expect(storedRaw().timeZone).toBe("Asia/Seoul");
+    expect(patchOpsSettings(db, ws, { timeZone: "US/Eastern" }).timeZone).toBe("America/New_York");
+    expect(getOpsSettings(db, ws).timeZone).toBe("America/New_York");
+  });
+
   it("망가진 값 위에 patch 하면 {} 에서 시작한다", () => {
     setRaw("{nope");
     expect(patchOpsSettings(db, ws, { dailyRunLimit: 7 })).toEqual({ dailyRunLimit: 7, timeZone: SEOUL });
