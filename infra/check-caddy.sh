@@ -13,6 +13,7 @@ origin="${origin%/}"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 fails=0
+skips=0
 
 pass() { printf 'PASS  %s\n' "$1"; }
 fail() {
@@ -111,8 +112,10 @@ done
 # 원문 판정은 토큰 끝 12자로 한다 — 규칙이 중간에서 멈추면 끝이 드러난다. 가린 줄이 있어야 PASS — 줄이 없으면 가림을 본 것이 아니다
 rand_b64url() { head -c 48 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n' | head -c "$1"; }
 if [[ -z "${CADDY_LOG_CMD:-}" ]]; then
+  skips=$((skips + 1))
   printf 'SKIP  웹훅 토큰이 Caddy 오류 로그에 원문으로 없다 — CADDY_LOG_CMD 가 없어 안 봤다\n'
 elif [[ "$origin" != https://* ]]; then
+  skips=$((skips + 1))
   printf 'SKIP  웹훅 토큰이 Caddy 오류 로그에 원문으로 없다 — https 오리진이 아니다(h1 탐침은 오류 줄을 만들지 못한다)\n'
 else
   hook_token="whk_$(rand_b64url 43)"
@@ -147,4 +150,8 @@ if ((fails > 0)); then
   printf '\ncheck-caddy: %d 개 FAIL\n' "$fails"
   exit 1
 fi
-printf '\ncheck-caddy: 전부 PASS\n'
+if ((skips > 0)); then
+  printf '\ncheck-caddy: 전부 PASS (SKIP %d)\n' "$skips"
+else
+  printf '\ncheck-caddy: 전부 PASS\n'
+fi
