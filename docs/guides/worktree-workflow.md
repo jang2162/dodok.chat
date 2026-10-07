@@ -284,7 +284,7 @@ scripts/orca-worker.sh attach <슬러그> <역할> [--model ...] [--brief <파�
   고친다). `wait` 로 끝을 받은 뒤 붙이고, 확인하고도 띄우려면 `--force`.
 - **리뷰어를 띄울 때 남은 에이전트 터미널은 그대로 둔다.** `attach` 가 그 핸들을 보여 준다. 정리하려면
   리뷰어를 띄우기 **전에** `scripts/orca-worker.sh stop <슬러그>` — **`--force` 를 붙이지 않는다.**
-  끝난 구현자는 그냥 꺼지고, 거부되면 구현자가 아직 도는 것이다. `--force` 로 끄면 그 터미널이 사라져
+  끝난 구현자는 회수된 뒤 꺼지고, 거부되면 구현자가 아직 도는 것이다. `--force` 로 끄면 그 터미널이 사라져
   `attach` 의 진행 중 Dispatch 거부가 볼 것이 없어진다. 띄운 뒤라면 그 핸들만 끈다
   (`orca terminal close --terminal <핸들>` — `attach` 가 핸들마다 찍어 준다). **`stop` 은 워크트리
   단위라 리뷰어를 띄운 뒤에 부르면 방금 띄운 리뷰어까지 문맥째 끈다** — 리뷰어가 도는 중이면 `stop` 이
@@ -745,7 +745,7 @@ scripts/orca-worker.sh status                 # 워크트리마다 다음 행동
 scripts/orca-worker.sh reap <슬러그>           # 하나 정리
 scripts/orca-worker.sh reap --all-merged      # 병합된 것만 일괄 정리
 scripts/orca-worker.sh reap --all-merged --dry-run   # 무엇이 지워질지 먼저 본다
-scripts/orca-worker.sh stop <슬러그>           # 그 워크트리의 터미널만 정지(워크트리는 그대로)
+scripts/orca-worker.sh stop <슬러그>           # 끝난 워커 회수 뒤 그 워크트리의 터미널만 정지(워크트리는 그대로)
 scripts/orca-worker.sh stop --all --dry-run   # 무엇이 정지될지 먼저 본다
 ```
 
@@ -851,7 +851,7 @@ scripts/orca-worker.sh keep <슬러그> --remove   # 해제
 끄게 되는데, **그 자리에서 핸들을 손으로 모으려고 하면 남의 것을 끈다.**
 
 ```bash
-scripts/orca-worker.sh stop <슬러그>           # 그 워크트리의 터미널만 정지
+scripts/orca-worker.sh stop <슬러그>           # 끝난 워커를 회수하고 그 워크트리의 터미널만 정지
 scripts/orca-worker.sh stop --all              # 이 저장소의 워크트리 전부(도는 워커는 건너뛴다)
 scripts/orca-worker.sh stop --all --dry-run    # 무엇이 정지될지 먼저 본다
 scripts/orca-worker.sh stop <슬러그> --force   # 도는 워커도 끊는다 — 슬러그를 찍을 때만
@@ -865,6 +865,16 @@ scripts/orca-worker.sh stop <슬러그> --force   # 도는 워커도 끊는다 �
 셀렉터를 받는 `orca terminal close --worktree "id:<repoId>::<path>" --all` 하나뿐이다.
 `.orca-keep` 보호는 여기서도 `--force` 로 뚫리지 않고, **자기가 서 있는 워크트리는 끄지
 않는다.** 저장소 밖 슬러그는 셀렉터조차 만들지 않고 실패로 끝낸다.
+
+`stop` 은 프로세스만 멈추지 않고 그 워크트리의 터미널 탭·레이아웃·재개 기록까지 지운다
+(`terminal close --all` — 여기 `--all` 은 「그 워크트리의 터미널 전부」다. `stop --all` 의
+「이 저장소의 워크트리 전부」와 다르다). 끈 뒤에는 그 터미널을 `terminal read` 로 읽을 수 없고,
+`worker-release` 도 터미널을 찾지 못해 터미널 꼬리 보관 없이 회수하거나 `release_unknown` 으로 남긴다.
+그래서 **`stop` 도 `reap` 처럼 닫기 전에 회수한다** — 그 워크트리의 워커를 「회수는 `reclaimable` 만
+부른다」 절의 판정대로 `worker-release` 한 뒤에 닫는다. 「워커가 도는 중이다」 거부는 회수보다 앞서고,
+도는 워커(`active`)는 회수하지 않으므로 `--force` 로 끊을 때도 터미널만 닫힌다. 회수 실패는 경고만 내고
+`stop` 의 종료 코드를 바꾸지 않는다(`reap` 과 같다). 나중 `reap` 은 이미 `released` 인 워커에
+`worker-release` 를 다시 부르지 않는다.
 
 **`--all` 과 `--force` 는 함께 쓸 수 없다.** `--force` 는 「도는 워커를 끊어라」는 뜻이고
 `--all` 과 합치면 **이 저장소의 워커를 한 번에 전부 끊고 exit 0** 이 된다 — 코드는 남지만
@@ -929,7 +939,8 @@ git worktree remove .worktrees/dodok.chat/<슬러그>
 **어느 쪽이든 그 워크트리에 붙은 Orca 터미널을 먼저 종료한다.** 핸들을 하나씩 찾지 말고
 **저장소 범위 셀렉터로** 끈다 — 핸들 기준으로 가면 그 핸들을 어디서 얻을지가 문제가 되고,
 그 자리에서 짜는 `orca terminal list | grep` 이 다른 프로젝트의 터미널과 자기 터미널까지 끈다
-(→ 「터미널을 끄는 것은 `stop` 이 한다」 절).
+(→ 「터미널을 끄는 것은 `stop` 이 한다」 절). 워커가 붙어 있던 워크트리면 닫기 전에
+`worker-release` 로 회수한다 — 닫은 뒤에는 회수가 그 터미널을 찾지 못한다(같은 절).
 
 ```bash
 orca terminal close --worktree "id:<repoId>::<path>" --all
