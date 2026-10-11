@@ -46,7 +46,10 @@ describe("역할 매트릭스(스펙 2장)", () => {
 
   beforeAll(async () => {
     adapter = new FakeAdapter();
-    app = await bootTestApp({}, { adapters: [adapter] });
+    app = await bootTestApp(
+      {},
+      { adapters: [adapter], pushCapabilities: { webpush: true, ios: true, android: true } },
+    );
     await app.fastify.listen({ host: "127.0.0.1", port: 0 });
     tokens.owner = (await login(app)).token;
     ids.owner = app.ownerUserId;
@@ -412,6 +415,29 @@ describe("역할 매트릭스(스펙 2장)", () => {
       min: "member",
       ok: 200,
       request: () => ({ method: "GET", url: "/api/v1/me/unread" }),
+    },
+    // 네이티브 푸시 기기(네이티브 푸시 스펙 5장) — 누구나, 자기 세션
+    {
+      name: "GET /push/capabilities",
+      min: "member",
+      ok: 200,
+      request: () => ({ method: "GET", url: "/api/v1/push/capabilities" }),
+    },
+    {
+      name: "POST /push/devices",
+      min: "member",
+      ok: 200,
+      request: () => ({
+        method: "POST",
+        url: "/api/v1/push/devices",
+        payload: { platform: "android", token: `matrix-${++n}`, appId: "chat.dodok.android" },
+      }),
+    },
+    {
+      name: "DELETE /push/devices",
+      min: "member",
+      ok: 204,
+      request: () => ({ method: "DELETE", url: "/api/v1/push/devices", payload: { token: "matrix-none" } }),
     },
     // 멤버 비활성화·다시 활성화(채널 보관·멤버 비활성화 스펙 「멤버 비활성화」 절) — member 대상은 admin 이상
     {

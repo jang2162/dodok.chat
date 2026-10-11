@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { App } from "../src/app";
 import { isLocalVapidSubject, loadConfig } from "../src/config";
 import { session as authSession } from "../src/db/auth-schema";
-import { pushSubscriptions } from "../src/db/schema.sqlite";
+import { pushDevices, pushSubscriptions } from "../src/db/schema.sqlite";
 import { listSubscriptions } from "../src/modules/push/service";
 import { sweepExpiredSessions } from "../src/realtime/socket";
 import { bootTestApp, login, userWithRole } from "./helpers/app";
@@ -266,6 +266,104 @@ describe("구독은 등록한 세션에 묶인다 — 세션이 지워지거나 
     sweepExpiredSessions(app.io, app.db);
     expect(rowOf("https://push.example/exp-stale")).toBeUndefined();
     expect(rowOf("https://push.example/exp-live")).toMatchObject({ sessionId: live.id });
+  });
+});
+
+describe("기기 경로 /api/v1/push/capabilities·devices", () => {
+  let app: App;
+  let a: { id: string; headers: { authorization: string } };
+  let b: { id: string; headers: { authorization: string } };
+  const TOKEN = "cd".repeat(32);
+  const IOS = { platform: "ios", token: TOKEN, appId: "chat.dodok.app", environment: "production" };
+  const ANDROID = { platform: "android", token: "fcm-token-route", appId: "chat.dodok.android" };
+
+  beforeAll(async () => {
+    app = await bootTestApp({}, { pushCapabilities: { webpush: true, ios: false, android: true } });
+    a = { id: app.ownerUserId, headers: (await login(app)).headers };
+    b = await secondUser(app, "cee");
+  });
+  afterAll(async () => {
+    await app.close();
+  });
+
+  const call = (
+    who: { headers: { authorization: string } } | undefined,
+    method: "GET" | "POST" | "DELETE",
+    url: string,
+    payload?: object,
+  ) =>
+    app.fastify.inject({
+      method,
+      url: `/api/v1/push${url}`,
+      headers: { ...who?.headers },
+      ...(payload === undefined ? {} : { payload }),
+    });
+  const devices = () => app.db.select().from(pushDevices).all();
+
+  it("GET /capabilities 는 주입한 능력을 돌려주고, 로그인 없으면 401", async () => {
+    const res = await call(a, "GET", "/capabilities");
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ webpush: true, ios: false, android: true });
+    expect((await call(undefined, "GET", "/capabilities")).statusCode).toBe(401);
+  });
+
+  it("앱 기본 능력은 웹 푸시만 켜져 있다", async () => {
+    const plain = await bootTestApp();
+    try {
+      const res = await plain.fastify.inject({
+        method: "GET",
+        url: "/api/v1/push/capabilities",
+        headers: (await login(plain)).headers,
+      });
+      expect(res.json()).toEqual({ webpush: true, ios: false, android: false });
+    } finally {
+      await plain.close();
+    }
+  });
+
+  it("iOS 통로가 꺼져 있으면 iOS 등록은 PUSH_UNAVAILABLE(503), 행을 만들지 않는다. Android 는 등록된다", async () => {
+    const ios = await call(a, "POST", "/devices", IOS);
+    expect(ios.statusCode).toBe(503);
+    expect(ios.json()).toMatchObject({ code: "PUSH_UNAVAILABLE" });
+    expect(devices()).toEqual([]);
+
+    const android = await call(a, "POST", "/devices", ANDROID);
+    expect(android.statusCode).toBe(200);
+    const { id } = android.json() as { id: string };
+    expect(devices()).toEqual([expect.objectContaining({ id, userId: a.id, token: ANDROID.token })]);
+  });
+
+  it("같은 토큰을 B 가 등록하면 같은 id 로 B 에게 옮겨 간다(Review Focus 1)", async () => {
+    const first = (await call(a, "POST", "/devices", ANDROID)).json() as { id: string };
+    const second = (await call(b, "POST", "/devices", ANDROID)).json() as { id: string };
+    expect(second.id).toBe(first.id);
+    expect(devices().filter((d) => d.token === ANDROID.token)).toEqual([
+      expect.objectContaining({ userId: b.id }),
+    ]);
+  });
+
+  it("형식이 틀리면 400 VALIDATION — iOS 토큰 63자·environment 없음·알 수 없는 platform, 로그인 없으면 401", async () => {
+    for (const bad of [
+      { ...IOS, token: "a".repeat(63) },
+      { platform: "ios", token: TOKEN, appId: "x" },
+      { ...ANDROID, platform: "web" },
+      {},
+    ]) {
+      const res = await call(a, "POST", "/devices", bad);
+      expect(res.statusCode).toBe(400);
+      expect(res.json()).toMatchObject({ code: "VALIDATION" });
+    }
+    expect((await call(undefined, "POST", "/devices", ANDROID)).statusCode).toBe(401);
+  });
+
+  it("DELETE /devices 는 자기 행만 지운다. 남의 것·없는 것도 204, 본문이 틀리면 400", async () => {
+    expect((await call(a, "DELETE", "/devices", { token: ANDROID.token })).statusCode).toBe(204);
+    expect(devices().some((d) => d.token === ANDROID.token)).toBe(true); // 지금은 B 의 행
+    expect((await call(b, "DELETE", "/devices", { token: ANDROID.token })).statusCode).toBe(204);
+    expect(devices().some((d) => d.token === ANDROID.token)).toBe(false);
+    expect((await call(b, "DELETE", "/devices", { token: "없음" })).statusCode).toBe(204);
+    expect((await call(b, "DELETE", "/devices", {})).statusCode).toBe(400);
+    expect((await call(undefined, "DELETE", "/devices", { token: "x" })).statusCode).toBe(401);
   });
 });
 

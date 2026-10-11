@@ -456,6 +456,35 @@ export const pushSubscriptions = sqliteTable(
 );
 
 /**
+ * 네이티브 푸시 기기(APNs·FCM). token 은 전역 유일 — 같은 폰에 다른 계정이 로그인하면 행이 그 사용자·세션으로 옮겨 간다.
+ * 세션이 지워지면 함께 지워진다(웹 구독과 같은 규칙)
+ */
+export const pushDevices = sqliteTable(
+  "push_devices",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => session.id, { onDelete: "cascade" }),
+    platform: text("platform", { enum: ["ios", "android"] }).notNull(),
+    token: text("token").notNull(),
+    appId: text("app_id").notNull(),
+    /** iOS 만 — APNs 호스트(production·sandbox)를 가른다 */
+    environment: text("environment", { enum: ["sandbox", "production"] }),
+    createdAt: ts("created_at").notNull(),
+    lastSeenAt: ts("last_seen_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("push_devices_token").on(t.token),
+    index("push_devices_user").on(t.userId),
+    index("push_devices_session").on(t.sessionId),
+  ],
+);
+
+/**
  * 브리지 토큰(설정 마법사 스펙 2.2) — 원문은 두지 않는다. hash 는 sha256(원문) hex, prefix 는 알아보기용 6자.
  * 폐기는 지우지 않고 revoked_at 을 채운다(목록에 남는다)
  */

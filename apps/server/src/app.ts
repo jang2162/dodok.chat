@@ -1,6 +1,6 @@
 import { BridgeAuthGuard, createOpenClawAdapter } from "@dodok/openclaw-adapter";
 import { createRunnerAdapter, type RunnerAdapter, type RunnerTokenVerifier } from "@dodok/runner-adapter";
-import type { AdapterStatus, ApiError, GatewayLinkState } from "@dodok/shared";
+import type { AdapterStatus, ApiError, GatewayLinkState, PushCapabilities } from "@dodok/shared";
 import cookie from "@fastify/cookie";
 import rateLimit from "@fastify/rate-limit";
 import { sql } from "drizzle-orm";
@@ -123,6 +123,8 @@ export type AppDeps = {
   automationTickMs?: number;
   /** 웹 푸시 발송기(기본은 VAPID 키로 만든 실제 web-push). 테스트는 가짜를 준다 — 밖으로 보내지 않게 */
   pushSend?: PushSend;
+  /** 푸시 통로 능력 덮기(테스트 전용) — 통로가 생기는 태스크 3~5 전까지 웹 푸시만 켜져 있다 */
+  pushCapabilities?: PushCapabilities;
   /** 품은 플러그인 tgz 를 찾을 디렉터리(기본 pluginDirCandidates) — 테스트가 임시 디렉터리나 []를 준다 */
   pluginDirs?: string[];
   /**
@@ -506,7 +508,13 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
         { vapidSubject: config.vapid.subject },
         "VAPID subject is a local placeholder — Apple Push rejects it (403 BadJwtToken)",
       );
-    registerPushRoutes(fastify, { auth, db, workspaceId, publicKey: vapid.publicKey });
+    registerPushRoutes(fastify, {
+      auth,
+      db,
+      workspaceId,
+      publicKey: vapid.publicKey,
+      capabilities: () => deps.pushCapabilities ?? { webpush: true, ios: false, android: false },
+    });
     const sweeper = startAttachmentSweeper(
       () =>
         sweepAttachments({ db, dir: config.attachmentsDir, locks: blobLocks }).then(
