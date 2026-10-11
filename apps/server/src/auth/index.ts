@@ -3,6 +3,7 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { bearer } from "better-auth/plugins/bearer";
 import * as authSchema from "../db/auth-schema";
 import type { Db } from "../db/client";
+import { allowedOrigins } from "../http/origins";
 import type { Logger } from "../logger";
 
 export const OWNER_EMAIL = "owner@dodok.local";
@@ -18,7 +19,7 @@ export function createAuth(
     secret: config.BETTER_AUTH_SECRET,
     baseURL: config.APP_ORIGIN,
     basePath: "/api/auth",
-    trustedOrigins: [config.APP_ORIGIN],
+    trustedOrigins: allowedOrigins(config),
     // auth-schema 를 명시한다 — db 의 schema 에는 우리 users 도 있어 모델 이름 추론에 맡기면 안 된다
     database: drizzleAdapter(db, { provider: "sqlite", schema: authSchema }),
     // 가입은 막는다. owner 는 bootstrapOwner 가 내부 어댑터로 만든다.
