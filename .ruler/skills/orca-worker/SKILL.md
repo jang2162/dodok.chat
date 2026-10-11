@@ -2,6 +2,7 @@
 name: orca-worker
 categories: [agent]
 description: Orca 오케스트레이션으로 워크트리에 워커 세션을 띄우고 감독한다. 워크트리 작업을 시작할 때, 워커가 응답하지 않을 때, 배달이 오지 않을 때 쓴다.
+requires: [rules/orca]
 ---
 
 # orca-worker
