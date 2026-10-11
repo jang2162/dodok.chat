@@ -18,6 +18,8 @@
     "pnpm-lock.yaml",
     "**/data/**",
     ".worktrees/**",
-    ".claude/settings.local.json"
+    ".claude/settings.local.json",
+    "guideline.json",
+    "guideline-lock.json"
   ]
 }

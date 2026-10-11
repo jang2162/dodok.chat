@@ -24,3 +24,12 @@ dist/
 
 # Claude Code 로컬 권한 설정 (세션마다 생성)
 .claude/settings.local.json
+
+# Playwright MCP 페이지 스냅샷과 스크린샷
+/.playwright-mcp/
+
+# START Ruler Generated Files
+/.claude/skills
+/.mcp.json
+/CLAUDE.md
+# END Ruler Generated Files

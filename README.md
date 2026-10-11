@@ -64,4 +64,4 @@ pnpm -F @dodok/web dev             # 터미널 2 — 웹(포트 5173)
 | `docs/adr/` | OpenClaw Gateway·플러그인과 Claude Agent SDK 를 실측해서 내린 결정 — 스파이크 결과마다 한 장 |
 | `docs/superpowers/specs/`·`plans/` | 기능마다의 설계와 구현 계획 — 발행 시점 기록이다. 구현과 달라진 것은 각 스펙의 「구현과 맞춘 것」 장 |
 | `docs/guides/worktree-workflow.md` | 이 저장소의 작업 방식(워크트리·Orca 워커·커밋 규칙) |
-| `CLAUDE.md` | 코딩 에이전트가 이 저장소에서 따르는 지침 |
+| `.ruler/AGENTS.md` | 코딩 에이전트가 이 저장소에서 따르는 지침의 소스 — `CLAUDE.md` 는 `pnpm exec ruler apply` 가 만드는 생성물이다 |

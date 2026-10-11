@@ -7,114 +7,6 @@
 - docs/guides/worktree-workflow.md — 워크트리·Orca 워커·병렬 작업·폐기. 코드 변경 전에 0절로 「직접 처리 / 워크트리」를 정한다.
 - docs/guides/browser-verification.md — 이 앱에서 화면을 확인할 때만 해당하는 것(실시간 검증은 처음부터 Playwright 를 neo 에, 기록기, neo 가 잘 하는 것). 도구 순서와 공통 원리는 아래 「BrowserOS neo 가 깔려 있으면 neo 로 본다」와 두 「참조 지침」.
 
-## 에이전트 기본
-
-### 사용자 응답은 한국어로 하고, 코드와 식별자는 원래 형태를 지킨다
-
-요약·설명·대화형 답변은 한국어로 한다. 코드, 식별자, 커밋 메시지는 자연스러운 형태(영문·코드)를 유지한다. 파일 안의 주석은 그 파일의 기존 관례를 따른다.
-
-- **Why:** 식별자와 커밋 메시지까지 한국어로 옮기면 `grep`·도구 연동·외부 참조가 함께 끊긴다. 주석을 파일마다 다른 언어로 쓰면 한 파일 안에서 언어가 갈린다.
-- **How to apply:** 설명은 한국어로, 코드 블록 안은 그대로 둔다. 기존 파일을 고칠 때는 그 파일이 쓰던 언어를 따른다.
-
-### 에이전트의 메모리 기능에 프로젝트 지식을 저장하지 않는다
-
-알게 된 결정·제약·관례는 전부 문서에 기록하고 커밋한다.
-
-- **Why:** 메모리는 에이전트별·머신별·세션별로 갈라진다. 다른 에이전트나 다른 사람은 그 내용을 볼 수 없고, 리뷰도 되지 않으며, 코드와 함께 버전 관리되지 않는다. 문서로 남겨야 모든 에이전트에 동일하게 전달된다.
-- **How to apply:** 사용자가 "기억해"라고 하거나 재사용할 결정이 확정되면 그 프로젝트의 지침 문서에 추가하고 커밋한다.
-- **예외 — 메모리에 남겨도 되는 것은 저장소와 무관한 개인 환경 문제뿐이다.** 로컬 경로, 개인 계정·툴 설정, 머신 특이사항 등. 프로젝트 코드·아키텍처·컨벤션·의사결정은 예외가 아니다.
-
-### 지침을 고쳐야 할 일이 생기면 사용자에게 보고하고 진행한다
-
-작업 중에 지침이 틀렸거나 비어 있는 것을 발견하면 그 자리에서 말한다. 그 자리에서 못 고치는 것은 **어느 문서의 어느 절에 무슨 문장을 넣어야 하는지까지 써서** 보고에 남긴다.
-
-- **Why:** 발견은 세션 안에만 있다. 보고하지 않으면 다음 세션과 다른 에이전트는 같은 지침을 같은 상태로 다시 받고, 같은 자리에서 다시 넘어진다. 「어디에 무슨 문장」이 없는 보고는 다음 사람이 그 판단을 처음부터 다시 하게 만든다.
-- **How to apply:** 보고에 세 가지를 적는다 — 무엇이 틀렸는가, 어느 문서 어느 절인가, 넣을 문장은 무엇인가.
-
-
-## 검증
-
-### 생성물을 직접 편집하지 않는다 — 소스를 고치고 그 자리에서 재생성한다
-
-생성기가 만드는 파일은 소스를 고치고 생성기를 돌려 만든다.
-
-- **Why:** 생성물은 다음 재생성에서 통째로 덮어써진다. 더 나쁜 것은 **재생성을 안 돌렸을 때다** — 생성물이 gitignore 면 `git status` 에 뜨지 않아 아무 경고가 없고, 리뷰에도 안 걸리고, 테스트도 통과한다. 그동안 다른 에이전트와 다음 세션은 **낡은 것을 최신인 줄 알고 받는다.** 소스에는 새 규칙이 적혀 있는데 실제로 읽히는 건 옛 것이다.
-- **How to apply:**
-  - **소스를 고쳤으면 그 자리에서 재생성한다.** 한 줄을 고쳤든 절을 통째로 다시 썼든, 만들었든 옮겼든 지웠든 예외가 없다. **커밋 전에, 작업이 끝난 그 턴에** 돌린다.
-  - **지침 파일을 생성물에 써 넣지 않는다.** 생성물이 다시 소스로 읽히면 재생성마다 자기 자신을 덧붙여 중복으로 오염된다.
-  - **옮길 때가 가장 티가 안 난다.** 안 돌리면 옛 위치의 생성물이 그대로 남아 낡은 것이 **새 것과 나란히** 계속 주입된다.
-  - **소스를 지웠을 때도 돌린다.** 생성기는 대개 소스가 사라진 경로의 생성물을 치워 주지 않으므로 남은 파일을 직접 지운다.
-  - 의심스러우면 그냥 돌린다. 멱등이라 두 번 돌려도 손해가 없다.
-
-### 「통과」를 보기 전에 몇 개가 실행됐는지 확인한다
-
-테스트가 **0개 실행되고도 성공으로 끝나는** 빌드 도구가 있다.
-
-- **Why:** 캐시가 최신이라고 판단했거나 필터가 아무것도 고르지 못하면, 실행이 0건인 채로 성공 메시지가 뜬다. **실패가 없으므로 통과로 읽히고**, 그 상태로 「테스트 통과」를 보고하면 아무도 검증하지 않은 코드가 병합된다.
-- **How to apply:** 출력에서 **실제 실행 개수**를 확인하고 보고에 함께 적는다. 개수가 0이면 통과가 아니라 **실행되지 않은 것**이다. 캐시를 무시하는 옵션이 있으면 그것을 쓴다.
-
-### 수를 셀 때는 두 번 세고 표본을 열어 본다
-
-세는 `grep` 은 **틀려도 오류를 내지 않는다.**
-
-- **Why:** 함정이 셋이고 **셋 다 그럴듯한 수**를 내놓는다 — ① BSD `grep` 의 BRE 는 `\|` 를 교대가 아니라 글자로 본다 ② **배타 조건으로 세면 걸러진 쪽이 통째로 빠진다** ③ **공백 변형**(`foo (` 대 `foo(`)을 놓치면 실제보다 적게 나온다.
-- **How to apply:**
-  - `grep -E` 를 쓰고, 공백은 `\s*`, 따옴표는 `["']` 로 흡수한다.
-  - 센 뒤 **표본을 열어 보고, 같은 것을 다른 방법으로 한 번 더 센다.**
-  - **세는 범위를 라벨에 밝힌다.** 같은 이름도 「식별자 줄」·「호출 자리」·「특정 디렉터리 안」에 따라 수가 갈린다. 범위를 안 적으면 두 문서가 다른 수를 말하게 된다.
-  - **수치를 고쳤으면 그 수치에서 나온 것을 전부 다시 센다.** 파생 수치를 함께 고치지 않으면 두 문서가 서로 다른 수를 말하고, 겉으로는 어느 쪽이 옛 값인지 구별되지 않는다.
-  - **도구를 문서에 실을 때는 그 도구가 보지 않는 것을 같은 자리에 적는다.** 침묵이 보증으로 읽히면 사람은 확인을 건너뛴다.
-  - **도구가 「없다」고 말하는 것과 실제로 없는 것은 다르다.** 정적으로는 영영 못 잡는 것이 섞인다(런타임에 조립되는 이름 등). **버킷 이름을 지을 때 그 이름이 사람에게 어떤 행동을 허가하는지 생각한다** — 「죽었다」는 삭제 허가로 읽힌다.
-
-
-## base 참조 지침
-
-아래 작업을 할 때는 **시작하기 전에** 그 파일을 읽는다. 이 규칙들은 상시 지침에 없다.
-
-| 언제 | 읽을 파일 |
-| --- | --- |
-| 코드나 문서의 주석을 쓰거나 고치거나 걷을 때 | `docs/guideline/base/03-comments.md` |
-| 문서·주석에서 다른 파일이나 문서를 가리키거나, 지침·문서를 쓰거나 고칠 때 | `docs/guideline/base/04-citation.md` |
-
-## BrowserOS neo 가 깔려 있으면 neo 로 본다
-
-`browser` 스택 「무엇이 붙어 있는지 먼저 확인하고 고른다」 의 **고르는 순서만** 바꾼다 — `/Applications/BrowserOS neo.app` 이 있으면 화면 확인은 neo(`mcp__browseros-neo__*`)로 하고, neo 가 없을 때만 그 절의 순서로 고른다. 도구가 없을 때 검증을 건너뛰지 않는 것, 한계에 걸리면 버리지 말고 얹는 것은 그 스택을 따른다.
-
-- **Why:** neo 는 에이전트 전용으로 띄워 둔 **로그인이 살아 있는 실제 브라우저**다. 다른 도구로 새 브라우저를 띄우면 그 로그인과 프로필을 잃고, 사람의 브라우저에 붙는 도구는 사람의 탭과 섞인다.
-- **How to apply:**
-  - **꺼져 있으면 에이전트가 켠다** — 화면을 뺏지 않게 `-g` 를 준다. MCP 가 열릴 때까지 기다린다(406 이 정상 응답이다). 포트는 neo 설정(`~/Library/Application Support/BrowserClaw/.browseros/config.json`)의 `ports.proxy` 다.
-    ```bash
-    open -g -a "BrowserOS neo"
-    curl -s -o /dev/null -w '%{http_code}\n' --max-time 40 --retry 40 --retry-delay 1 \
-      --retry-connrefused http://127.0.0.1:9010/mcp
-    ```
-  - **MCP 가 406 으로 답해도 창이 없으면 탭을 못 연다.** `tabs new` 가 `No browser window available` 로 실패한다. 그때 `windows create` 도 `No profile available` 이면 neo 를 다시 띄우거나(사람) 독립 브라우저로 보고 보고서에 적는다.
-  - **세션을 열기 전에 켜 둔다.** 세션이 시작될 때 꺼져 있었으면 켜도 이 세션에는 붙지 않는다 — 고장을 가르는 법은 `browser` 스택 「브라우저 서버가 안 붙을 때」. 앱을 로그인 항목에 넣어 두면 이 조건을 매번 기억하지 않아도 된다.
-  - **새 탭은 백그라운드로 연다.** `tabs action="new"` 에는 `background: true` 를 준다. `run` 의 `browser.pages.newPage(url)` 은 기본이 백그라운드다. `windows action="create"` 에는 백그라운드 옵션이 없으니 창 대신 탭으로 연다.
-  - neo 가 못 하는 확인(콘솔 `log`, 첫 로드 콘솔, 네트워크, 뷰포트)이면 **neo 에 Playwright 를 얹는다** — 이 스택 「neo 가 못 하는 다섯 가지」·「Playwright 를 neo 에 붙일 때」. 렌더(애니메이션·캔버스)를 재거나 다른 계정의 둘째 클라이언트가 필요한 검증은 neo 가 아니라 독립 브라우저로 한다 — `browser` 스택 「페이지 자동화 도구를 얹을 때」 의 예외.
-
-## browser 참조 지침
-
-아래 작업을 할 때는 **시작하기 전에** 그 파일을 읽는다. 이 규칙들은 상시 지침에 없다.
-
-| 언제 | 읽을 파일 |
-| --- | --- |
-| 브라우저로 화면을 확인해야 할 때 — 어느 도구로 볼지 고르기 전에 | `docs/guideline/browser/00-tool-choice.md` |
-| 브라우저 MCP 서버가 안 붙거나, 워커에게 브라우저 확인을 맡길 때 | `docs/guideline/browser/01-mcp-lifecycle.md` |
-| 브라우저 콘솔이나 네트워크 요청을 읽어 판단할 때 | `docs/guideline/browser/02-console-network.md` |
-| Playwright 같은 페이지 자동화 도구를 이미 떠 있는 브라우저에 붙일 때 | `docs/guideline/browser/03-cdp.md` |
-| 여러 세션이나 워커가 한 브라우저를 함께 쓸 때 | `docs/guideline/browser/04-shared-profile.md` |
-
-## browseros-neo 참조 지침
-
-아래 작업을 할 때는 **시작하기 전에** 그 파일을 읽는다. 이 규칙들은 상시 지침에 없다.
-
-| 언제 | 읽을 파일 |
-| --- | --- |
-| neo 로 콘솔 로그·네트워크·모바일 레이아웃·렌더(애니메이션·캔버스)를 확인해야 할 때 | `docs/guideline/browseros-neo/01-limits.md` |
-| neo 에 Playwright 를 붙이거나, playwright-neo MCP 를 설정할 때 | `docs/guideline/browseros-neo/02-playwright.md` |
-| 여러 세션·워커가 neo 를 함께 쓰거나, neo 를 재시작한 뒤 탭을 다시 찾을 때 | `docs/guideline/browseros-neo/03-tabs.md` |
-
 ## 구조
 pnpm 모노레포, npm 스코프 @dodok. apps/web(React+Vite PWA), apps/server(Fastify+Socket.IO+브리지 엔드포인트),
 packages/shared(타입·Zod·components 규약·wire/bridge 계약), packages/openclaw-plugin(원격 Gateway 안 채널 플러그인, id "dodok"),
@@ -135,37 +27,15 @@ packages/openclaw-adapter(서버 측 브리지 서버+Gateway WS 클라이언트
 - 코드 변경은 기본이 워크트리. 예외는 브레인스토밍·스펙·계획 없이 바로 구현 가능한 것(문서·설정·지침 갱신, 진단 끝난 버그, 기계적 변경)뿐이며 그때만 최상위에서 직접. 최상위에서 checkout/switch 금지.
 - Orca 런타임이 살아 있으면(orca status --json) 구현·리뷰·검증은 scripts/orca-worker.sh 로 띄운 워커가 한다. 메인 세션은 디스패치·판정·병합만. superpowers 는 브레인스토밍·스펙·구현계획까지. SDD 의 Agent 디스패치·EnterWorktree 는 Orca 가 없을 때만.
 - 흐름: spawn <슬러그> <역할> --brief <파일> → wait(exit 3 은 타임아웃, 다시 부른다) → (구현자 터미널을 끄려면 여기서 stop <슬러그> — `--force` 없이. 끝난 구현자는 회수된 뒤 꺼지고, 「워커가 도는 중이다」로 거부되면 아직 도는 것이니 wait 로 끝을 받는다. 워크트리 단위라 리뷰어를 띄운 뒤에 부르면 리뷰어도 끈다) → attach <슬러그> review(구현자 터미널을 재사용하지 않고 새 에이전트로 띄운다, 구현자의 Dispatch 가 진행 중이면 거부) → 판정(git diff --name-only 를 브리프 목록과 대조) → 병합 → reap <슬러그>. 역할 기본 모델(tiergear 가 없을 때): implement/review=opus, verify/chore=sonnet. tiergear 가 있으면 `spawn`·`attach` 가 판단기(`tiergear launch`)로 모델·effort 를 고르고 역할은 범위만 정한다(review=`--min-tier deep`, verify·chore=`--max-tier standard`, implement=범위 없음). `--model` 이 둘 다를 이긴다(그때는 tiergear 를 부르지 않는다).
-- 워크트리 자리는 .worktrees/dodok.chat/<슬러그>. Orca 의 worktree 경로 설정(이 머신은 글로벌 .worktrees, repo 별 worktreeBasePath 가 있으면 우선)이 그 자리를 내야 spawn 이 된다. git worktree add 로 만든 워크트리는 Orca 가 인식하지 않으므로 워커를 붙일 워크트리는 spawn 으로 만든다. 손으로 만들면 --base-branch $(git branch --show-current), pnpm install, scripts/orca-worker.sh sync-config <경로>(.env 복사). data/ 는 복사하지 않는다.
+- 워크트리 자리는 .worktrees/dodok.chat/<슬러그>. Orca 의 worktree 경로 설정(이 머신은 글로벌 .worktrees, repo 별 worktreeBasePath 가 있으면 우선)이 그 자리를 내야 spawn 이 된다. git worktree add 로 만든 워크트리는 Orca 가 인식하지 않으므로 워커를 붙일 워크트리는 spawn 으로 만든다. 손으로 만들면 --base-branch $(git branch --show-current), pnpm install, scripts/orca-worker.sh sync-config <경로>(.env 복사·ruler apply). data/ 는 복사하지 않는다.
 - 브라우저 검증도 워커가 한다. BrowserOS neo 는 워커를 띄우기 전에 떠 있어야 한다(spawn 이 켠다). 브리프에 "네가 연 탭은 네가 닫아라".
 - 커밋: git add -A / git commit -a 금지, 경로를 명시해 stage. Conventional Commits, 패키지 스코프(feat(plugin): …).
 
-## tiergear CLI 가 있으면 워커를 붙이기 직전에 `tiergear launch` 로 모델·effort 를 고른다
+## 이 프로젝트 고유의 지침은 `.ruler/AGENTS.md` 에 쓴다
+CLAUDE.md·.mcp.json·.claude/skills 는 ruler 생성물(gitignore)이고, 공용 지침은 지침 서버(https://guideline.develma.com) 사본이다 — 규칙은 아래 「공용 지침 관리」·「ruler 소스와 생성물」. 새 워크트리에는 생성물이 없으므로 `scripts/orca-worker.sh` spawn·sync-config 가 `ruler apply` 를 돌린다(안 돌리면 워커가 지침·MCP 없이 뜬다).
 
-워커를 붙이는 명령(`worker-start` 등)을 부르기 직전에 `command -v tiergear` 를 본다. 있으면 그 워크트리에 floor 를 쓰고 모델·effort 를 받아, 붙이는 명령의 `--model`·`--effort` 에 넣는다.
-
-```bash
-tiergear launch --worktree <워크트리 경로> [역할 범위] -- "<브리프>"
-# stdout: claude --model <모델> --effort <effort>
-```
-
-**바뀌는 것은 모델을 고르는 자리 하나뿐이다.** 워크트리를 만드는 법, 만든 직후의 세팅, 붙이는 법, 제출 확인, 수신 대기, 정리는 그 프로젝트가 쓰는 절차(`orca-worker` 스킬, 프로젝트 스크립트, 지침의 손 절차)를 그대로 따른다. 역할이 모델을 정하던 규칙은 역할이 tier 범위를 정하는 규칙이 된다(`docs/guideline/tiergear/01-launch.md`).
-
-- **Why:** `tiergear launch --worktree` 는 판단기가 브리프를 읽고 고른 모델·effort 를 주고, 워커 세션 안의 플러그인이 그 범위 안에서만 tier 를 오르내리게 floor 파일을 써 둔다. floor 없이 붙이면 워커의 첫 턴은 브리프가 아니라 Orca 프리앰블로 판단돼 대개 확신도가 낮게 나오고, 역할로 정한 하한·상한도 세션 안에 남지 않는다.
-- **How to apply:**
-  - **tiergear 가 없는 머신에서도 돌아야 한다.** CLI 가 없거나 `tiergear launch` 가 실패하면 경고 한 줄을 내고 원래의 역할 기본 모델로 진행한다. 워커 기동을 막지 않는다.
-  - 사람이 모델을 명시하면(`--model`) tiergear 를 부르지 않는다. 명시한 예외가 판단기를 이긴다.
-  - 이미 도는 에이전트에 붙일 때(`--terminal`)는 모델을 바꿀 수 없으므로 부르지 않는다.
-  - 워커를 띄우는 프로젝트 스크립트가 있으면 이 한 줄을 그 스크립트의 붙이기 직전에 넣는다. 범위·출력 읽기·테스트는 `docs/guideline/tiergear/01-launch.md` 를 읽는다.
-  - `tiergear orca-spawn` 은 워크트리 생성과 붙이기를 한 번에 해서 그 사이의 세팅을 건너뛴다. 생성 직후 세팅이 없는 프로젝트에서만 쓴다(`docs/guideline/tiergear/02-orca-spawn.md`).
-
-## tiergear 참조 지침
-
-아래 작업을 할 때는 **시작하기 전에** 그 파일을 읽는다. 이 규칙들은 상시 지침에 없다.
-
-| 언제 | 읽을 파일 |
-| --- | --- |
-| tiergear launch 로 워커의 모델·effort 를 고르거나, 워커를 띄우는 절차·스크립트에 tiergear 를 끼울 때 | `docs/guideline/tiergear/01-launch.md` |
-| 생성 직후 세팅이 없는 프로젝트에서 tiergear orca-spawn 으로 워커를 띄우거나, orca-spawn 이 실패했을 때 | `docs/guideline/tiergear/02-orca-spawn.md` |
+## neo 창이 없으면 탭을 못 연다
+BrowserOS neo 의 MCP 가 406 으로 답해도 창이 없으면 `tabs new` 가 `No browser window available` 로 실패한다. 그때 `windows create` 도 `No profile available` 이면 neo 를 다시 띄우거나(사람) 독립 브라우저로 보고 보고서에 적는다.
 
 ## 명령
 pnpm i · pnpm -F @dodok/server dev · pnpm -F @dodok/web dev (루트 `pnpm dev` 는 없다)

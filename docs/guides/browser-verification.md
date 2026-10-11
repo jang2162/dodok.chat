@@ -4,7 +4,7 @@
 **누가 그 검증을 하는가**는 [워크트리 작업 흐름](worktree-workflow.md) 「예외 — 워커가 가질 수 없는 자원이 필요한 검증」이 갖는다.
 
 **도구를 고르는 순서와 공통 원리는 여기 없다.** `CLAUDE.md` 「BrowserOS neo 가 깔려 있으면 neo 로 본다」(상시)와
-`docs/guideline/browser/`·`docs/guideline/browseros-neo/`(문서 저장소 사본 — `CLAUDE.md` 의 두 「참조 지침」 색인)이 갖는다.
+`docs/guideline/browser/`·`docs/guideline/browseros-neo/`(지침 서버에서 받은 사본 — `CLAUDE.md` 의 두 「참조 지침」 색인)이 갖는다.
 켜는 법, 안 붙을 때, 탭을 백그라운드로 여는 법, neo 가 못 하는 것, Playwright 를 neo 에 붙이는 법, 탭 소유권이 그것이다.
 
 이 저장소의 로컬 앱은 평문 HTTP 다 — 웹은 Vite 개발 서버, API·Socket.IO 는 서버 프로세스이고 주소는 `.env` 가 정한다.

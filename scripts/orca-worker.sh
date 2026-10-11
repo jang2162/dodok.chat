@@ -11,7 +11,7 @@
 #   reap <슬러그> | --all-merged [--base <브랜치>] [--force]
 #   stop <슬러그> | --all [--force] [--dry-run]   # 끝난 워커를 회수하고 워크트리의 터미널만 정지
 #   keep <슬러그> [--remove]
-#   sync-config [<워크트리경로>]   # 최상위 .env 를 워크트리로 복사
+#   sync-config [<워크트리경로>]   # 최상위 .env 를 워크트리로 복사하고 ruler apply 로 CLAUDE.md 를 만든다
 #
 # 정본: docs/guides/worktree-workflow.md (절차·근거는 그 문서가 갖는다)
 # bash 3.2 에서 동작해야 한다 — 연관배열·mapfile·${var^^} 금지.
@@ -1264,6 +1264,17 @@ trust_mise_config() {
     || printf '경고: mise trust 실패 — 워커 셸의 node 가 24 가 아닐 수 있다\n' >&2
 }
 
+# CLAUDE.md 는 ruler 생성물이라 gitignore 다 — 새 워크트리에는 없다. 없이 붙인 워커는
+# 프로젝트 지침 없이 뜨므로 붙이기 전에 만든다. 이미 있어도 돌린다(소스가 바뀌었을 수 있고, 멱등이다).
+# .ruler/ 가 없는 브랜치(전환 전)면 조용히 통과한다.
+apply_ruler() {
+  local path="$1"
+  [ -d "$path/.ruler" ] || return 0
+  (cd "$path" && pnpm exec ruler apply >/dev/null 2>&1) \
+    && printf 'ruler apply 로 CLAUDE.md 를 만들었다\n' >&2 \
+    || printf '경고: ruler apply 실패 — 워커가 CLAUDE.md 없이 뜰 수 있다\n' >&2
+}
+
 verify_setup() {
   local path="$1" mode="${2:-overwrite}"
   trust_mise_config "$path"
@@ -1272,6 +1283,7 @@ verify_setup() {
     (cd "$path" && pnpm install >/dev/null 2>&1) \
       || printf '경고: pnpm install 실패\n' >&2
   fi
+  apply_ruler "$path"
   sync_local_config "$path" "$mode" || true
   ensure_browser
 }
@@ -2198,6 +2210,7 @@ cmd_sync_config() {
     return 1
   }
   trust_mise_config "$path"
+  apply_ruler "$path"
   sync_local_config "$path"
 }
 

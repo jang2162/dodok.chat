@@ -1,0 +1,20 @@
+# ruler 설정 — 에이전트 지침 소스는 .ruler/, CLAUDE.md 는 생성물이다(pnpm exec ruler apply)
+default_agents = ["claude"]
+
+[backup]
+enabled = false
+
+[mcp_servers.codegraph]
+type = "stdio"
+command = "npx"
+args = ["-y", "@colbymchenry/codegraph", "serve", "--mcp"]
+
+[mcp_servers.context7]
+type = "stdio"
+command = "npx"
+args = ["-y", "@upstash/context7-mcp"]
+
+[mcp_servers.playwright-neo]
+type = "stdio"
+command = "npx"
+args = ["-y", "@playwright/mcp@latest", "--cdp-endpoint", "http://127.0.0.1:9110"]
