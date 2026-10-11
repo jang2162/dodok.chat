@@ -91,6 +91,13 @@ describe("사건 한 줄 문구 — kind 별 고정 문구", () => {
     expect(eventText(eventOf(1, { kind: "automation_failed", detail: {} }))).toBe("자동화 실행 실패");
   });
 
+  it("푸시 자격 증명 거부는 key 의 통로 — push:<통로> 가 아니면 괄호 없이", () => {
+    const hit = (key: string) => eventOf(1, { kind: "push_credentials_invalid", key, detail: {}, count: 3 });
+    expect(eventText(hit("push:apns"))).toBe("푸시 자격 증명이 거부되었습니다(apns) ×3");
+    expect(eventText(hit("push:fcm"))).toBe("푸시 자격 증명이 거부되었습니다(fcm) ×3");
+    expect(eventText(hit("workspace"))).toBe("푸시 자격 증명이 거부되었습니다 ×3");
+  });
+
   it("런 실패는 detail.code — 코드가 없으면 괄호 없이", () => {
     expect(eventText(eventOf(1, { kind: "run_failed", detail: { code: "TIMEOUT" } }))).toBe(
       "런 실패 (TIMEOUT)",

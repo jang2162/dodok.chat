@@ -68,6 +68,10 @@ const TITLE: Record<OpsEventKind, (e: OpsEvent, nameOf: ChannelNameOf | undefine
     const code = str(e.detail.code);
     return code ? `자동화 실행 실패 (${code})` : "자동화 실행 실패";
   },
+  push_credentials_invalid: (e) => {
+    const transport = /^push:(.+)$/.exec(e.key)?.[1];
+    return transport ? `푸시 자격 증명이 거부되었습니다(${transport})` : "푸시 자격 증명이 거부되었습니다";
+  },
 };
 
 export const SEVERITY_LABEL: Record<OpsSeverity, string> = { info: "정보", warn: "주의", error: "오류" };
