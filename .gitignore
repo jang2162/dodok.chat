@@ -28,6 +28,9 @@ dist/
 # Playwright MCP 페이지 스냅샷과 스크린샷
 /.playwright-mcp/
 
+# codegraph 인덱스 — 로컬에서 다시 만드는 생성물(codegraph init·sync)
+/.codegraph/
+
 # START Ruler Generated Files
 /.claude/skills
 /.mcp.json

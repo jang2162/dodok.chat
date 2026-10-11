@@ -31,6 +31,8 @@
     "default:rules/browseros-neo/02-playwright.md": "6978ac9122694785bc29f4e24b82e1c17ddd22a99cde289f39745ad8a27c97a8",
     "default:rules/browseros-neo/03-tabs.md": "5ef01cc4bffdc79f36b1fa3c319547c72eb62717d89d55124ef767f5b93aa1d4",
     "default:rules/browseros-neo/SETUP.md": "b7376822d2ad4eae0857a1654bc5ddf6c1304c75ec2c898097c4362f0d46a80f",
+    "default:rules/codegraph/00-index.md": "dfb04e418ad4e592a161c6cc0d895ba534c7191106b3945d91f4c29dde211f8e",
+    "default:rules/codegraph/SETUP.md": "a54cd61e8deb6b18582d90a3b4ac7ce7516e75ab3d50bb4e8b1032420de957fc",
     "default:rules/komodo/00-stack.md": "04b890d44b989d472a1d3db2ccca17489b67223b7ff97ee3b094ba9765d729ba",
     "default:rules/komodo/01-environment.md": "780196b6c9aac72d48ccfb0fd1454cad16cc4bb160afd68ce52a555531b349c8",
     "default:rules/komodo/02-override.md": "06bce5f009fafa0173c91f0e6729ef538f36d2d18c28729b3790c94e8589ea28",
@@ -115,9 +117,14 @@
       "hash": "c06141ac53bada4dba1b01ce575f0544715f3cf81b5e96c6d1b46d85e1b40e33"
     },
     {
+      "path": ".ruler/codegraph/99-reference.md",
+      "items": [],
+      "hash": "338cea68681c304d07155989b3bcbc4cce3b3198517ba515c9e003270f1d716d"
+    },
+    {
       "path": ".ruler/guideline.md",
       "items": [],
-      "hash": "a06e148c39f79a49390762daf828c34c84e3b130279b5ba29bb989a8cafd6651"
+      "hash": "6e02386d7d2dceec632bfabd3d6ad35cf6918a4183b628aa8bc2acf16900351d"
     },
     {
       "path": ".ruler/komodo/99-reference.md",
@@ -392,6 +399,20 @@
         "default:rules/browseros-neo/SETUP.md"
       ],
       "hash": "b7376822d2ad4eae0857a1654bc5ddf6c1304c75ec2c898097c4362f0d46a80f"
+    },
+    {
+      "path": "docs/guideline/codegraph/00-index.md",
+      "items": [
+        "default:rules/codegraph/00-index.md"
+      ],
+      "hash": "39ecf3d50fb4c01657ff29bb359407bc1064104a7e9ce3dfb68c786b95882672"
+    },
+    {
+      "path": "docs/guideline/codegraph/SETUP.md",
+      "items": [
+        "default:rules/codegraph/SETUP.md"
+      ],
+      "hash": "a54cd61e8deb6b18582d90a3b4ac7ce7516e75ab3d50bb4e8b1032420de957fc"
     },
     {
       "path": "docs/guideline/komodo/00-stack.md",
