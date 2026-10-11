@@ -27,4 +27,9 @@ describe("isAllowedOrigin", () => {
     expect(isAllowedOrigin(config, undefined)).toBe(false);
     expect(isAllowedOrigin(config, "http://localhost:5173/")).toBe(false);
   });
+
+  it("never accepts an opaque origin, even when APP_ORIGIN has one", () => {
+    expect(allowedOrigins({ APP_ORIGIN: "capacitor://localhost" })).toEqual([]);
+    expect(isAllowedOrigin({ APP_ORIGIN: "capacitor://localhost" }, "null")).toBe(false);
+  });
 });
