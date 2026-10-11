@@ -42,6 +42,15 @@ const Raw = z.object({
   // 테스트·개발 전용 — 통합 테스트가 가짜 FCM 으로 돌린다. 운영 문서에는 싣지 않는다(계획 판정 PN3)
   FCM_HOST: z.url().optional(),
   FCM_TOKEN_URI: z.url().optional(),
+  // 네이티브 푸시 — APNs 키(.p8)·키 id·팀 id. 없으면 DATA_DIR/apns/ 의 파일(스펙 「자격 증명·설정」 장), 둘 다 없으면 iOS 통로는 꺼진다
+  APNS_KEY_PATH: z.string().min(1).optional(),
+  APNS_KEY_ID: z.string().min(1).optional(),
+  APNS_TEAM_ID: z.string().min(1).optional(),
+  // 중계 자리 — 아직 구현되지 않았다. 값이 있으면 부팅 때 warn 후 무시
+  PUSH_RELAY_URL: z.string().min(1).optional(),
+  // 테스트·개발 전용 — 가짜 APNs 로 보낸다(deploy.md 에 싣지 않는다). APNS_HOST 는 호스트[:포트], APNS_CA_PATH 는 그 서버의 인증서(PEM)
+  APNS_HOST: z.string().min(1).optional(),
+  APNS_CA_PATH: z.string().min(1).optional(),
 });
 
 export type ServerConfig = z.infer<typeof Raw> & {

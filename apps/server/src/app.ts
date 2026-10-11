@@ -5,7 +5,7 @@ import cookie from "@fastify/cookie";
 import rateLimit from "@fastify/rate-limit";
 import { sql } from "drizzle-orm";
 import Fastify, { type FastifyBaseLogger, type FastifyInstance } from "fastify";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { Server } from "socket.io";
 import { v7 as uuidv7 } from "uuid";
@@ -66,6 +66,8 @@ import {
   pushCapabilities,
 } from "./modules/push/service";
 import { fcmTransport } from "./modules/push/transports/fcm";
+import { loadApnsCredentials } from "./modules/push/credentials";
+import { apnsTransport } from "./modules/push/transports/apns";
 import type { PushTransports } from "./modules/push/transports/types";
 import { type PushSend, webPushSender, webPushTransport } from "./modules/push/transports/webpush";
 import { loadVapidKeys } from "./modules/push/vapid";
@@ -514,7 +516,30 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
         { vapidSubject: config.vapid.subject },
         "VAPID subject is a local placeholder — Apple Push rejects it (403 BadJwtToken)",
       );
-    // 통로(네이티브 푸시 스펙 「통로」 장) — 웹 푸시는 VAPID 키가 늘 있으니 늘 켜진다
+    // 통로(네이티브 푸시 스펙 「통로」 장) — 웹 푸시는 VAPID 키가 늘 있으니 늘 켜진다. 네이티브 통로는 자격 증명이 있을 때만
+    if (config.PUSH_RELAY_URL !== undefined)
+      logger.warn("PUSH_RELAY_URL is set but the push relay is not implemented yet — ignored");
+    let apns: ReturnType<typeof apnsTransport> | undefined;
+    if (deps.pushTransports?.apns === undefined) {
+      const credentials = loadApnsCredentials({
+        dataDir: config.DATA_DIR,
+        ...(config.APNS_KEY_PATH === undefined ? {} : { keyPath: config.APNS_KEY_PATH }),
+        ...(config.APNS_KEY_ID === undefined ? {} : { keyId: config.APNS_KEY_ID }),
+        ...(config.APNS_TEAM_ID === undefined ? {} : { teamId: config.APNS_TEAM_ID }),
+      });
+      if ("off" in credentials) logger.info(`push transport apns: off(${credentials.off})`);
+      else {
+        apns = apnsTransport({
+          credentials,
+          logger,
+          ...(config.APNS_HOST === undefined ? {} : { host: config.APNS_HOST }),
+          ...(config.APNS_CA_PATH === undefined ? {} : { ca: readFileSync(config.APNS_CA_PATH) }),
+        });
+        logger.info("push transport apns: on");
+        const opened = apns;
+        undo.push({ step: "apns", run: () => opened.close() });
+      }
+    }
     let fcm = deps.pushTransports?.fcm;
     if (fcm === undefined) {
       const credentials = loadFcmCredentials({
@@ -533,6 +558,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       }
     }
     const pushTransports: PushTransports = {
+      ...(apns === undefined ? {} : { apns }),
       ...deps.pushTransports,
       ...(fcm === undefined ? {} : { fcm }),
       webpush:
@@ -544,6 +570,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
               publicKey: vapid.publicKey,
               privateKey: vapid.privateKey,
             }),
+          logger,
         ),
     };
     const capabilities = pushCapabilities(pushTransports);
@@ -805,6 +832,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       await step("fastify", () => fastify.close()); // ⑤
       // 진행 중인 푸시가 구독 정리(404·410)로 db 를 쓸 수 있다 — 짧게만 기다린다(응답 없는 푸시 서비스가 종료를 막지 않게)
       await step("push-drain", () => pushDispatcher.drain(PUSH_DRAIN_TIMEOUT_MS));
+      await step("apns", async () => apns?.close()); // 발송이 끝난 뒤에 세션을 닫는다
       await step("db", () => db.$client.close()); // ⑥ (리뷰 sc-t1 이월 1)
     };
     let closing: Promise<void> | undefined;

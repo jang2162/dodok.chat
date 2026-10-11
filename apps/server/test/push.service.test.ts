@@ -578,6 +578,17 @@ describe("webPushTransport — 상태 코드 → 결과(스펙 「통로」 장 
     await expect(webPushTransport(async () => ({ statusCode })).send(target, n)).resolves.toBe(result);
   });
 
+  it("거부(rejected)는 statusCode 만 warn 으로 남기고 endpoint 는 싣지 않는다 — ok·gone·retry 는 남기지 않는다", async () => {
+    const warn = vi.fn();
+    for (const statusCode of [201, 410, 503, 403, 400])
+      await webPushTransport(async () => ({ statusCode }), { warn }).send(target, n);
+    expect(warn.mock.calls.map(([fields]) => fields)).toEqual([
+      { transport: "webpush", statusCode: 403 },
+      { transport: "webpush", statusCode: 400 },
+    ]);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(target.endpoint);
+  });
+
   it("발송기가 던지면 그대로 던지고, 기기 대상은 받지 않는다", async () => {
     const boom = webPushTransport(async () => {
       throw new Error("socket hang up");

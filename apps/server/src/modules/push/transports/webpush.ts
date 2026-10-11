@@ -1,5 +1,6 @@
 /** 웹 푸시 통로 — VAPID 로 브라우저 푸시 서비스에 보낸다(PWA·푸시 스펙 5.4) */
 import webpush from "web-push";
+import type { Logger } from "../../../logger";
 import { PUSH_SEND_TIMEOUT_MS, PUSH_TTL_SECONDS, pushTopic } from "../service";
 import type { PushTransport, TransportResult } from "./types";
 
@@ -37,8 +38,11 @@ function resultOf(statusCode: number): TransportResult {
   return "retry";
 }
 
-/** 발송기를 통로로 감싼다. `send` 는 첫 await 앞에서 부른다 — 통합 시나리오가 버스 emit 안에서 발송 호출을 동기로 센다 */
-export function webPushTransport(send: PushSend): PushTransport {
+/**
+ * 발송기를 통로로 감싼다. `send` 는 첫 await 앞에서 부른다 — 통합 시나리오가 버스 emit 안에서 발송 호출을 동기로 센다.
+ * 거부(rejected)는 디스패처 로그에 사유가 없어 여기서 statusCode 를 warn 으로 남긴다 — endpoint 는 싣지 않는다
+ */
+export function webPushTransport(send: PushSend, logger?: Pick<Logger, "warn">): PushTransport {
   return {
     kind: "webpush",
     async send(target, n) {
@@ -52,7 +56,10 @@ export function webPushTransport(send: PushSend): PushTransport {
           topic: pushTopic(n.payload.tag),
         },
       );
-      return resultOf(statusCode);
+      const result = resultOf(statusCode);
+      if (result === "rejected" || result === "credentials")
+        logger?.warn({ transport: "webpush", statusCode }, "web push service refused the push");
+      return result;
     },
   };
 }
