@@ -27,7 +27,8 @@ export function apnsResult(status: number, reason: string | undefined): Transpor
   if (status === 410) return "gone";
   if (status === 403) return "credentials";
   if (status === 400 && (reason === "BadDeviceToken" || reason === "DeviceTokenNotForTopic")) return "gone";
-  if (status === 429 || status >= 500) return "retry";
+  // 0 은 응답 헤더 없이 스트림이 끝난 것 — 서버가 끊은 네트워크 사정이라 기기·요청 탓이 아니다
+  if (status === 0 || status === 429 || status >= 500) return "retry";
   return "rejected";
 }
 

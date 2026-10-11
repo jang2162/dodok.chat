@@ -115,6 +115,10 @@ describe("apnsTransport", () => {
     expect(ok).toBe(true);
   });
 
+  it("JWT 수명은 50분 — Apple 의 60분 상한 안", () => {
+    expect(APNS_JWT_TTL_MS).toBe(50 * 60_000);
+  });
+
   it("JWT 는 50분 안이면 재사용하고 50분이 되면 새로 만든다", async () => {
     const t = make();
     try {
@@ -233,6 +237,50 @@ describe("apnsTransport", () => {
     }
     expect(fake.requests.map((r) => r.connection)).toEqual([0, 1]);
   });
+
+  it("응답 없이 스트림이 끝나면 rejected 가 아니고 다시 보내지 않는다 — 다음 발송은 새 세션", async () => {
+    let first = true;
+    fake.reply(() => {
+      if (!first) return { status: 200 };
+      first = false;
+      return { drop: "destroy" };
+    });
+    const t = make();
+    try {
+      const r = await t.send(device(), { payload: mention, urgency: "normal" }).catch((e: unknown) => e);
+      // 세션 파괴는 stream 오류(던짐)나 헤더 없는 end(retry) 둘 중 하나로 온다 — 어느 쪽이든 rejected 가 아니다
+      expect(r).not.toBe("rejected");
+      expect(r).not.toBe("ok");
+      expect(fake.requests).toHaveLength(1);
+      expect(warn).not.toHaveBeenCalled();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(await t.send(device(), { payload: mention, urgency: "normal" })).toBe("ok");
+    } finally {
+      await t.close();
+    }
+    expect(fake.requests.map((x) => x.connection)).toEqual([0, 1]);
+  });
+
+  it("헤더 없이 끝난 응답은 apnsResult 로 retry", () => {
+    expect(apnsResult(0, undefined)).toBe("retry");
+  });
+
+  it.each(["destroy", "rst", "goaway"] as const)(
+    "처리됐을 수 있는 요청은 다시 보내지 않는다 — 받은 뒤 %s 로 끊겨도 가짜 서버가 받은 요청은 1건",
+    async (drop) => {
+      fake.reply(() => ({ drop }));
+      const t = make();
+      try {
+        const r = await t.send(device(), { payload: mention, urgency: "normal" }).catch((e: unknown) => e);
+        expect(r).not.toBe("ok");
+        expect(r).not.toBe("rejected");
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      } finally {
+        await t.close();
+      }
+      expect(fake.requests).toHaveLength(1);
+    },
+  );
 
   it("iOS 기기가 아닌 대상은 던진다", async () => {
     const t = make();

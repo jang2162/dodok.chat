@@ -4,7 +4,7 @@
  */
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { createSecureServer, type Http2Session } from "node:http2";
+import { constants, createSecureServer, type Http2Session } from "node:http2";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,7 +16,8 @@ export type ApnsRequest = {
   /** 요청이 들어온 연결 번호(0부터) — GOAWAY 뒤 새 연결을 가른다 */
   connection: number;
 };
-export type ApnsReply = { status: number; reason?: string };
+/** `drop` 은 요청을 받은 뒤 응답 없이 끊는다 — destroy 는 세션 파괴, rst 는 RST_STREAM(INTERNAL_ERROR), goaway 는 GOAWAY(INTERNAL, last=그 스트림) */
+export type ApnsReply = { status: number; reason?: string } | { drop: "destroy" | "rst" | "goaway" };
 
 export type FakeApns = {
   /** 호스트:포트 — apnsTransport 의 host, 앱의 APNS_HOST */
@@ -77,6 +78,7 @@ export async function startFakeApns(): Promise<FakeApns> {
   });
   server.on("stream", (stream, headers) => {
     const chunks: Buffer[] = [];
+    stream.on("error", () => undefined);
     stream.on("data", (c: Buffer) => chunks.push(c));
     stream.on("end", () => {
       const raw = Buffer.concat(chunks).toString("utf8");
@@ -87,7 +89,15 @@ export async function startFakeApns(): Promise<FakeApns> {
         connection: numbers.get(stream.session as Http2Session) ?? -1,
       };
       requests.push(req);
-      const { status, reason } = responder(req);
+      const out = responder(req);
+      if ("drop" in out) {
+        const session = stream.session as Http2Session;
+        if (out.drop === "destroy") session.destroy();
+        else if (out.drop === "rst") stream.close(constants.NGHTTP2_INTERNAL_ERROR);
+        else session.goaway(constants.NGHTTP2_INTERNAL_ERROR, stream.id);
+        return;
+      }
+      const { status, reason } = out;
       stream.respond({ ":status": status, "content-type": "application/json" });
       stream.end(reason === undefined ? "" : JSON.stringify({ reason }));
     });

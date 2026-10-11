@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import pino from "pino";
+import type { Logger } from "../../src/logger";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { App } from "../../src/app";
 import { opsEvents, pushDevices } from "../../src/db/schema.sqlite";
@@ -32,8 +33,8 @@ type Booted = {
   deviceRows(): Array<typeof pushDevices.$inferSelect>;
 };
 
-async function bootNative(env: Record<string, string>): Promise<Booted> {
-  const app = await bootTestApp(env);
+async function bootNative(env: Record<string, string>, logger?: Logger): Promise<Booted> {
+  const app = await bootTestApp(env, logger === undefined ? {} : { logger });
   const owner = await login(app);
   const mia = await userWithRole(app, "mia", "member");
   const channel = createChannel(app.db, {
@@ -73,6 +74,7 @@ describe("네이티브 푸시 통합 — APNs", () => {
   let dir: string;
   let fake: FakeApns;
   let b: Booted;
+  const logLines: Array<Record<string, unknown>> = [];
   const sockets: WireClient[] = [];
 
   beforeEach(async () => {
@@ -85,13 +87,17 @@ describe("네이티브 푸시 통합 — APNs", () => {
         .privateKey.export({ type: "pkcs8", format: "pem" })
         .toString(),
     );
-    b = await bootNative({
-      APNS_KEY_PATH: keyPath,
-      APNS_KEY_ID: "KEYID12345",
-      APNS_TEAM_ID: "TEAMID1234",
-      APNS_HOST: fake.host,
-      APNS_CA_PATH: fake.caPath,
-    });
+    logLines.length = 0;
+    b = await bootNative(
+      {
+        APNS_KEY_PATH: keyPath,
+        APNS_KEY_ID: "KEYID12345",
+        APNS_TEAM_ID: "TEAMID1234",
+        APNS_HOST: fake.host,
+        APNS_CA_PATH: fake.caPath,
+      },
+      pino({ level: "warn" }, { write: (line: string) => void logLines.push(JSON.parse(line)) }),
+    );
   });
   afterEach(async () => {
     for (const s of sockets.splice(0)) s.close();
@@ -186,6 +192,13 @@ describe("네이티브 푸시 통합 — APNs", () => {
     ]);
     expect(b.deviceRows()).toHaveLength(1);
     expect(new Set(fake.requests.map((r) => r.headers.authorization)).size).toBe(1);
+    // app.ts 가 APNs 통로에 앱 로거를 넘긴다 — 거부 사유는 고정된 reason 만, 토큰은 없다
+    expect(logLines.find((l) => l.msg === "apns refused the push")).toMatchObject({
+      transport: "apns",
+      statusCode: 403,
+      reason: "InvalidProviderToken",
+    });
+    expect(JSON.stringify(logLines)).not.toContain(IOS_TOKEN);
   });
 });
 
