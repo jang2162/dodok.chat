@@ -32,6 +32,7 @@
 | v0.26 | **읽지 않음 종료**(2026-10-06) — 8장 Phase 4 에 완료 표시·구성 요약·확인 방법, 「이월」 머리를 이 시점으로, 새 묶음 「읽지 않음」 |
 | v0.27 | **리액션 종료**(2026-10-07, 실연까지) — 8장 Phase 4 에 완료 표시·구성 요약·확인 방법, 「이월」 머리를 이 시점으로, 새 묶음 「리액션」, 「실물 확인」에 실연 줄, 7.1 (B) 「이모지/리액션」 줄을 지금 상태로 |
 | v0.28 | **자동화 종료**(2026-10-07, 모델 런 0회) — 8장 Phase 4 에 「자동화(예약·웹훅)」 완료 표시·구성 요약·확인 방법, 「이월」 머리를 이 시점으로, 새 묶음 「자동화」 |
+| v0.29 | **서버 네이티브 푸시 종료**(2026-10-12, 실기기 발송은 사람 몫) — 8장 Phase 4 「앱」 줄에 서버 하위 프로젝트 완료 표시·구성 요약·확인 방법, 「이월」 머리를 이 시점으로, 새 묶음 「네이티브 푸시(서버)」, 「실물 확인」에 실기기 줄 |
 
 ---
 
@@ -519,7 +520,12 @@ SQLite(WAL)로 시작, Drizzle ORM으로 스키마 정의해 Postgres 전환 시
 - 어댑터: Claude Agent SDK 러너 → **완료(실연까지, 2026-09-29 — 모델 런 3회)** — 스펙 `docs/superpowers/specs/2026-09-27-claude-runner-design.md`(구현과 달라진 것은 스펙 「구현과 맞춘 것」 장), 계획 `docs/superpowers/plans/2026-09-27-claude-runner.md`(태스크 1~9), 실측 `docs/adr/0007-claude-agent-sdk-spike.md`, 설치 `docs/guides/deploy.md` 「Claude 러너 설치」 절, 에이전트 쪽 `docs/guides/agent-guide.md` 「Claude 러너 에이전트」 절. → Codex app-server 러너 → Hermes(API 서버 경로).
   **러너** — 사람의 머신에서 `dodok-runner`(`packages/claude-runner`)가 Claude Agent SDK 로 Claude Code 를 그 머신의 작업 디렉터리에서 돌리고, 서버 `/runner`(Socket.IO 네임스페이스, 러너 토큰 `drn_`)로 나가는 연결 하나로 붙는다. 서버는 에이전트의 `provider`(`openclaw`·`claude`)로 어댑터를 고르고(`AdapterRegistry`), 한 채널에서 두 종류 에이전트가 서로 @멘션 릴레이한다. 런 하나 = `query()` 하나, 채널 규칙은 틀을 입힌 `systemPrompt.append`(`snapshot: false` — 매 런), 턴 사실은 `UserPromptSubmit` 훅, 카드·파일은 `mcp__dodok__post`(작업 디렉터리 안만, 파일은 macOS·Linux), 쓰기 도구는 도구 승인 카드(10분 기한). 운영 화면은 러너 런의 토큰·금액을 보인다(구독이면 「환산 포함」).
   **확인 방법**: 패키지 테스트(가짜 `query`), 서버 통합 러너 시나리오(가짜 러너 WS), dev:fake 가짜 러너 위 브라우저 11/11, 런 0회 하네스 12/12(`docs/guides/live-smoke.md` 「Claude 러너 런 0회 하네스」 절 — 실제 서버·러너 설치본·번들 CLI + 로컬 가짜 Messages API), 전체 브랜치 최종 리뷰, 실연(같은 문서 「Claude 러너(Phase 4 ③) 실연」 절 — 모델 런 3회: 멘션·도구·스트리밍·운영 비용 통과, 채널 규칙을 바꾼 뒤 이어 간 세션은 옛 형식으로 답함 — 아래 이월 첫 줄).
-- 앱: Tauri 데스크톱(트레이·알림), Capacitor 모바일 또는 네이티브.
+- 앱: Tauri 데스크톱(트레이·알림), Capacitor 모바일 또는 네이티브. 로드맵 `docs/superpowers/specs/2026-10-06-native-apps-roadmap.md` — 하위 프로젝트 넷 가운데 **서버: 네이티브 푸시와 기기 등록**은 아래대로 끝났고, 스파이크·데스크톱·모바일은 아직 스펙 전이다.
+- 서버 네이티브 푸시(앱 하위 프로젝트 2) → **완료**(2026-10-12 — 실제 APNs·FCM 발송은 한 번도 안 했다) — 스펙 `docs/superpowers/specs/2026-10-06-native-push-design.md`(구현과 달라진 것은 스펙 「구현과 맞춘 것」 장 — 계획 판정 PN1~PN5 포함), 계획 `docs/superpowers/plans/2026-10-06-native-push.md`(태스크 1~6), 운영 `docs/guides/deploy.md` 「네이티브 푸시 자격 증명」 절, 실기기 손 확인 `docs/guides/live-smoke.md` 「네이티브 푸시 손 확인」 절.
+  **통로** — 푸시 발송이 통로(`webpush`·`apns`·`fcm`, `relay` 는 설정 자리 `PUSH_RELAY_URL` 뿐)로 나뉜다. 디스패처는 받는 사람의 웹 구독과 기기마다 그 통로로 보내고 「보고 있으면 건너뜀」·tag 묶기·결과 처리(`gone` 은 행 삭제, `credentials` 는 행 유지 + 운영 사건 `push_credentials_invalid`, `retry` 는 버림)를 한곳에서 한다. 알림은 웹 푸시와 같은 「누가·어디」뿐이다 — 메시지 본문은 실리지 않는다. APNs(`http2`, ES256 JWT)·FCM(`fetch`, RS256 → OAuth)은 Node 내장만 쓰고 의존성을 늘리지 않는다.
+  **기기 등록** — 새 표 `push_devices`(마이그레이션 0021, 세션 cascade·세션당 한 행). `GET /api/v1/push/capabilities` 가 켜진 통로를, `POST`·`DELETE /api/v1/push/devices` 가 등록·해제를(꺼진 플랫폼은 503 `PUSH_UNAVAILABLE`) 맡는다. 자격 증명은 환경 변수가 `data/apns/`·`data/fcm/` 파일보다 먼저고, 없으면 그 통로만 꺼지며 서버는 뜬다(부팅 로그 `push transport …`).
+  **출처 정리** — wire 쿠키 인증·Better Auth `trustedOrigins`·Socket.IO CORS 가 `http/origins.ts` 의 `allowedOrigins` 하나를 쓴다(값은 그대로 `APP_ORIGIN`, 불투명 출처는 걸러낸다).
+  **확인 방법**: shared·서버 단위(`push.devices`·`push.credentials`·`push.apns`·`push.fcm`·`push.routes`·`push.service`·`http.origins`·역할 매트릭스) · 서버 통합 `apps/server/test/integration/push-native.test.ts`·`push-native-android.test.ts`(로컬 가짜 APNs·FCM — 셋 통로로 멘션, 보고 있으면 건너뜀, 410 → 기기 삭제, 401 → 사건 하나·기기 유지, 통로 꺼짐 → 503) · 태스크마다 독립 리뷰(변이)·수정·범위 재리뷰. 루트 테스트 5474(web 1912·server 2351·shared 431·openclaw-adapter 315·claude-runner 235·plugin 149·runner-adapter 81 — `pnpm test --force`). 앱 쪽(토큰 받기·등록 흐름·알림 누르기)은 모바일 하위 프로젝트다.
 - 스레드·검색 → **완료**(2026-09-26) — 스펙 `docs/superpowers/specs/2026-09-25-threads-search-design.md`(구현과 달라진 것은 스펙 「구현과 맞춘 것」 장), 계획 `docs/superpowers/plans/2026-09-25-threads-search.md`(태스크 1~9), 스레드 하위 세션 실측 `docs/adr/0006-thread-sessions-spike.md`, 에이전트 쪽 설명 `docs/guides/agent-guide.md` 「스레드」 절.
   **스레드** — 사람이 아무 채널 메시지에서 스레드를 연다(스레드 안의 스레드는 없다). 스레드 안의 에이전트는 **스레드마다 하위 세션**(10장 #19)이라 채널 세션·다른 스레드와 섞이지 않고 채널 런과 병렬로 돈다. 스레드 런의 문맥은 루트(4,000자)와 그 스레드 답글 최근 20개뿐이고, 채널 런의 문맥에서도 스레드 답글을 뺀다. 멘션·자동 응답(멘션이 없으면 루트를 쓴 에이전트)·릴레이·카드·다시 실행·「새 대화」·run_error·릴레이 한도 알림이 그 스레드 안에서 돌고, 스레드 세션의 에이전트는 채널 최상위로 보내지 못한다(플러그인이 고정 사유로 거절). 옛 플러그인(hello 에 `threads` 없음)이 붙어 있으면 스레드 런은 `PLUGIN_OUTDATED` run_error 카드(재설치 안내 + 「다시 실행」), 채널 런은 그대로다. 웹은 루트 아래 칩(답글 수·마지막 시각·에이전트)·「스레드에서 답하기」·스레드 패널(넓은 화면 오른쪽 탭, 좁은 화면 전체 시트, URL `/c/$channelId/t/$rootId`)·스레드 멘션 푸시(누르면 그 스레드)·오프라인 사본(최근 채널마다 마지막으로 연 스레드 하나).
   **검색** — `GET /api/v1/search`(FTS5 `trigram` — 3글자 이상은 구절 하나로 MATCH·bm25, 2글자는 `LIKE` 최근 90일·50개, 사용자당 분당 60). 웹은 사이드바 검색 칸·`⌘K`/`Ctrl+K` 대화상자(필터 채널·사람/에이전트·기간)와 결과로 가기(`?around=<seq>` — 떨어진 창에서 위·아래로 이어 받고 「최신 메시지로」, 답글 결과는 스레드 패널을 그 답글로, 2초 강조).
@@ -550,9 +556,9 @@ SQLite(WAL)로 시작, Drizzle ORM으로 스키마 정의해 Postgres 전환 시
   **확인 방법**: shared 단위(`automations.test.ts`·`mention.test.ts`) · 서버 단위·통합(`automations.schedule`·`store`·`scheduler`(PA3 겹침·10분 경계·실제 라우터와 런 관문)·`routes`·`webhook`(404 통일·실패 카운터·게시 직전 다시 확인·로그의 토큰 원문 0)·`body`·`logger`·`integration/automations.test.ts`·`ops.routes`·`roles.matrix` 여섯 경로) · 웹 단위(`features/automations/automations.test.tsx`·`authors.test.tsx`·`opsPage`·`search`·`useUnread`) · 태스크마다 독립 리뷰(변이)·수정·범위 재리뷰(태스크 3 은 보안 수정 두 번 — 로그의 토큰·깊은 JSON·공용 발신 주소·Caddy 오류 로그) · `dev:fake` 위 브라우저 검증(독립 Chromium, owner·mia·390px) — 결함 셋(D1 개발 모드 웹훅 주소가 Vite 404 · D2 「지금 실행」 키보드 초점 · D3 낮은 화면의 @ 후보 잘림)은 아래 「이월」 · 로컬 Compose `infra/check-caddy.sh` 전부 PASS(웹훅 토큰 가림 탐침 셋, Caddyfile 변이 셋을 잡음). 테스트 5326(web 1911·server 2214·shared 421·openclaw-adapter 315·claude-runner 235·plugin 149·runner-adapter 81).
 - 에이전트 내부 위임 결과 요약 게시, 채널 템플릿.
 
-### 이월 — 남은 문제(자동화 뒤 시점, 2026-10-07)
+### 이월 — 남은 문제(네이티브 푸시 뒤 시점, 2026-10-12)
 
-Phase 1 ①·②, Phase 2 ①·②·③·④, Phase 3 ①·②·③·④, Phase 4 ①·②·③·멀티 Gateway·설정 통합·채널 보관·읽지 않음·리액션·자동화 를 돌면서 「고치지 않고 알고 넘긴 것」을 한곳에 모았다. 상세 근거는 각 줄에 적은 문서에 있다. 위 Phase 2·3 항목과 겹치면 그쪽을 가리킨다.
+Phase 1 ①·②, Phase 2 ①·②·③·④, Phase 3 ①·②·③·④, Phase 4 ①·②·③·멀티 Gateway·설정 통합·채널 보관·읽지 않음·리액션·자동화·서버 네이티브 푸시 를 돌면서 「고치지 않고 알고 넘긴 것」을 한곳에 모았다. 상세 근거는 각 줄에 적은 문서에 있다. 위 Phase 2·3 항목과 겹치면 그쪽을 가리킨다.
 Phase 1 이 남긴 아홉(서버 넷·웹 넷·`wire-cli` typecheck)은 Phase 2 ① 태스크 0·1 에서, Phase 2 ① 이 남긴 초점·타이머 셋(D6 카운트다운 어긋남 · 자리값 소요가 계속 흐름 · 넓은 화면 「설정 닫기」 초점)은 Phase 2 ② 태스크 8 에서 정리해 지웠다.
 Phase 2 ② 가 남긴 「`media` 이미지를 크게 볼 수 없다」·「`media`·`file` 문구 비대칭」은 Phase 2 ③ 이 닫아 지웠다(크게 보기 `ImageViewer`, 세 블록이 해석기 하나로 「첨부를 찾을 수 없습니다」·「열 수 없는 링크입니다」를 같이 쓴다).
 Phase 2 ② 가 남긴 「`infra/` 가 없는데 두 문서가 있다고 말한다」는 Phase 3 ① 이 `infra/` 를 만들고 `docs/guides/project-structure.md` 를 고쳐 지웠다(`CLAUDE.md` 「명령」 줄은 조율자가 고친다).
@@ -830,7 +836,17 @@ Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-comp
 - **운영 사건·로그 쪽 남은 것** — `bridge_auth_blocked` 는 웹훅·브리지·러너가 key `bridge` 한 줄로 묶이고 detail 이 마지막 값으로 덮여, 웹훅 소음(GitHub 발신 풀의 남의 틀린 토큰)이 1시간 안의 진짜 브리지 맞혀 보기를 `path: webhook` 으로 덮을 수 있다(t3 재리뷰 「관찰」 — key 를 경로별로 가를지는 판정 몫). shared `adapter/guard.ts` 머리 주석의 「막힌 주소의 정상 토큰도 거절」은 브리지·러너 쓰임새의 문장이고 웹훅은 이제 다르다(t3 수정 보고). `app.ts` 오류 처리기·`realtime/socket.ts` 의 `cause:` 키는 `err` 직렬화기를 지나지 않아 최상위 Buffer 가 든 cause 가 생기면 그 로그 호출이 던지고, 깊이 3 의 Buffer 는 그 키를 통째로 잃는다(t3 재리뷰2 「관찰」 — 오늘 그런 값을 싣는 자리는 없다). 미룬 까닭: 지금 동작에 해가 없다. 고칠 길: 사건 key 를 `bridge:<path>` 로, guard 주석에 웹훅 줄, `createLogger` 의 `serializers` 에 `cause: serializeErr`.
 - **테스트 도우미·관찰** — 웹 테스트 도우미 `apps/web/test/shellApi.tsx` 의 `ME` 에 `displayName` 이 없어 「내 계정」 탭을 그리는 테스트가 `reading 'trim'` 으로 깨진다(루트 실행마다 web stderr 12줄 — t4 보고 8장 2). `dev:fake` 를 몇 시간 띄워 두면 가짜 Gateway 가 `tick timeout` 으로 다시 붙은 뒤 가짜 플러그인·러너는 스스로 다시 붙지 않는다 — 운영 화면에 「플러그인 연결 끊김 (지금도)」, 멘션이 기다린다(t5 — 세션이 3시간 쉬는 사이). 미룬 까닭: 둘 다 개발 도구 쪽이다. 고칠 길: `ME.user.displayName`(다른 테스트의 기대값 확인 뒤), 오래 둔 `dev:fake` 는 `POST /__devfake/plugin-token`(그 Gateway 의 고정 토큰)·`/__devfake/runner {connected:true}` 로 되붙인다(`docs/guides/project-structure.md` dev:fake 문단).
 
+**네이티브 푸시(서버, 2026-10-12)** — 스펙 `docs/superpowers/specs/2026-10-06-native-push-design.md` 「열린 문제」·「구현과 맞춘 것」 장. 아래 출처의 보고서·리뷰(t*)는 `.superpowers/sdd/2026-10-12-native-push/`(git 제외)에 있다.
+
+- **중앙 푸시 중계는 설정 자리뿐이다** — `PUSH_RELAY_URL` 에 값이 있으면 부팅 때 warn 후 무시한다. 스토어 공개 앱으로 가는 날 구현하려면 서버 → 중계는 「기기 토큰 + 최소 페이로드」만 보내야 하고 중계 인증·남용 방지가 필요하다. 출처: 스펙 「열린 문제」. 미룬 까닭: 지금 배포는 「직접 빌드한 앱」이라 배포자가 자기 Apple·Firebase 계정으로 보낸다(로드맵 결정 2).
+- **실제 APNs·FCM 로 나가는 발송은 사람이 한 번 봐야 한다** — 자동 테스트는 로컬 가짜 서버뿐이라 자격 증명이 맞는지·`sandbox`/`production` 이 빌드와 맞는지·알림이 기기에 뜨는지는 안 잰다. 절차는 `docs/guides/live-smoke.md` 「네이티브 푸시 손 확인」 절, 결과는 `docs/guides/deploy.md` 「사람이 한 번 따라 한 결과」 의 「네이티브 푸시」 줄. 닫히는 때: 자격 증명과 기기 토큰이 생기는 모바일 하위 프로젝트.
+- **앱이 토큰을 등록하는 흐름은 서버 밖이다** — 서버는 등록·해제·능력 API 까지다. 로그인 뒤 토큰을 받아 `POST /api/v1/push/devices` 로 올리고 로그아웃에 `DELETE` 하는 흐름, 앱 웹뷰에서 웹 푸시 구독 UI 를 숨기고 「앱 알림」 상태를 보이는 것, 「이 기기에 푸시가 켜져 있으면 탭 안 승인 알림은 쉰다」를 앱에도 적용하는 것은 모바일 하위 프로젝트(앱 태스크)가 한다. 세션당 기기 한 행(PN5)은 그 앱이 세션 토큰을 기기 전용 저장소에 둔다는 전제다.
+- **알림 동작 버튼·배지 수는 없다** — 승인 허용·거절·빠른 답장(APNs 카테고리·FCM 액션)과 앱 아이콘 배지(APNs `badge` 를 안 읽음 수로 채우는 것 — 읽지 않음의 합계가 필요하다). 출처: 로드맵 「범위 밖」·스펙 「열린 문제」.
+- **웹 단위 테스트가 부하에서 가끔 5초 제한에 걸린다** — 검색 쪽 `search.test` 의 한 건(이름은 태스크 5 보고서에 있었으나 이 문서를 쓸 때 그 보고서가 남아 있지 않았다)과, 루트 `pnpm test --force` 를 다른 작업과 겹쳐 돌렸을 때 `MessageList.test.tsx` 「첫 안 읽은 곳에서 열기 › 낡은 캐시에 이미 구분선이 있을 때 › 이어 받기가 끝내 안 오면 5초 뒤 가진 것으로 판정한다」(5초 타이머를 기다리는 테스트가 5199ms 로 제한을 넘었다). 둘 다 이번 변경과 무관하고 그 파일만·다시 돌렸을 때는 통과했다. 닫히는 때: 타이머 테스트를 가짜 시계로 바꿀 때.
+
 **실물 확인**
+
+- 네이티브 푸시를 실제 APNs·FCM·기기로 본 적은 없다(위 이월). 서버 쪽 통로·자격 증명 읽기·기기 등록·운영 사건은 가짜 APNs·FCM 통합 테스트까지만 안다.
 
 - **자동화는 실물 Gateway·러너로 보지 않았다** — 서버 통합 테스트(가짜 Gateway·플러그인 — 인바운드 보낸 사람 `system:automation`)와 `dev:fake` 브라우저 검증(가짜 Gateway 의 `dev:fake inbound reactions` 줄의 `sender`)뿐이다. 실제 OpenClaw 코어가 `system:automation` 보낸 사람과 이름(「자동화 <이름>」)을 모델 입력에 어떻게 싣는지, 실제 모델이 웹훅 블록 안의 지시를 따르지 않는지는 모른다 — 모델 런이 필요하다.
 - **리액션을 실물 dev Gateway(2026.9.5)로 본 것은 실연(`docs/guides/live-smoke.md` 「리액션 실연」 절 — 가짜 claude CLI·Claude 러너 하네스, 모델 런 0회)이다.** 반응 블록이 실제 OpenClaw 의 모델 입력과 러너 턴 사실에 실리는 자리·글을 그 절이 본다. 실제 모델이 그 블록을 요청이 아니라 사실로 읽는지는 모른다.

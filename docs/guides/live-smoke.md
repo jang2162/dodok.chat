@@ -21,6 +21,7 @@
 **Claude 러너(Phase 4 ③)를 모델 없이 실제 서버·러너 설치본·번들 CLI 로 두드리는 하네스와 그 결과는 「Claude 러너 런 0회 하네스」 절**이다 — 모델 자리만 로컬 가짜 Messages API 다. **모델 런으로 도는 러너 실연의 절차와 결과(규칙 변경 뒤 `resume` 이 옛 형식을 이어 쓴 것 포함)는 「Claude 러너(Phase 4 ③) 실연」 절**이다.
 **Gateway 를 여럿 붙이는 법(스크래치 상태 디렉터리로 dev Gateway 를 둘 띄워 연결 페이지 「Gateway 추가」로 붙이기)과 같은 id 에이전트 둘·한 Gateway 끄기·지우기를 모델 런 0회로 돌린 결과는 「멀티 Gateway 실연」 절**이다.
 **사람이 에이전트 답에 단 반응이 실제 OpenClaw 의 모델 입력(가짜 claude CLI 가 받은 프롬프트)과 Claude 러너의 턴 사실에 실리는지를 모델 런 0회로 잰 결과는 「리액션 실연」 절**이다 — 그 절에 **프롬프트를 적는 가짜 CLI** 가 있다.
+**iOS·Android 앱 푸시(네이티브 푸시)를 실제 APNs·FCM 으로 한 번 쏴 보는 사람용 절차는 「네이티브 푸시 손 확인」 절**이다 — 자격 증명이 있어야 하고 실제 발송이라 사람이 한다(자동 테스트는 가짜 APNs·FCM 만 쓴다).
 
 ## 2. 전제
 
@@ -1303,7 +1304,7 @@ await page.evaluate(async () =>
 
   탭을 닫든 다른 주소로 가든 브라우저가 웹소켓을 곧바로 닫고(React 정리가 안 돌아도 된다), vite preview 프록시도 늦추지 않는다. Chromium 은 언로드 때 `pagehide`(이때 `visibilityState` 는 아직 `visible`) 다음 `visibilitychange` hidden 을 보내고, 그 뒤에 소켓이 닫힌다. 웹은 이제 `pagehide` 에서도 「안 보임」을 강제로 보낸다(`WireProvider` `attachPresence` — 언로드 때 `visibilitychange` 가 오지 않는 엔진 대비, Chromium 에서는 결과가 같다). **남는 최대 45초 창은 close 가 서버에 가지 않는 경우 — 네트워크 단절·절전·프로세스 멈춤 — 뿐이다**(스펙 10장 트레이드오프, `pagehide` 로도 못 막는다).
   실제 알림 도착: 데워진 프로필에서는 닫기 3종 3/3 이 닫은 뒤 1.7~1.9초에 SW `getNotifications` 로 잡혔다. 새 프로필 첫 몇 분에는 5건 중 2건만 20초 안에 잡혔다(서버는 5건 모두 201) — A 와 같은 GCM 준비 쪽으로 보이며, 같은 `Topic` 의 대기 메시지가 다음 발송에 밀려 풀린 것처럼 보이는 꼴이었지만 원인은 가르지 않았다.
-  **이제 서버가 가른다** — `LOG_LEVEL=debug` 면 디스패처가 거를 때 `push skipped — watching`(`userId`·`channelId`·`kind`), 푸시 서비스가 받으면 `push sent`(`subscriptionId`·`statusCode`)를 한 줄씩 남긴다. 다음 실연은 「걸렀다·보냈다·보냈는데 안 왔다」를 이 두 줄과 `chrome://gcm-internals` 로 가른다. `dev:fake` 진입점은 로그 수준을 `info` 로 고정하므로 debug 줄을 보려면 `startDevFake({ logLevel: "debug" })` 로 감싸 띄운다.
+  **이제 서버가 가른다** — `LOG_LEVEL=debug` 면 디스패처가 거를 때 `push skipped — watching`(`userId`·`channelId`·`kind`), 푸시 서비스가 받으면 `push sent`(`subscriptionId`·`transport`·`result`)를 한 줄씩 남긴다(HTTP 상태는 디스패처 줄에 없다 — 통로가 거절·실패를 받았을 때만 그 통로가 `statusCode` 와 고정 문구 `reason` 을 warn 으로 남긴다). 다음 실연은 「걸렀다·보냈다·보냈는데 안 왔다」를 이 두 줄과 `chrome://gcm-internals` 로 가른다. `dev:fake` 진입점은 로그 수준을 `info` 로 고정하므로 debug 줄을 보려면 `startDevFake({ logLevel: "debug" })` 로 감싸 띄운다.
 
 #### 14.4.4 모델 런 (상한 1, 실제 1)
 
@@ -2089,3 +2090,51 @@ const SID = at("--session-id") ?? at("--resume");                       // 세�
 - 러너(SIGTERM)·가짜 API·웹·서버(SIGINT)·Gateway·브라우저 드라이버를 자기 PID 로 내렸다 — 19031·3960·6160·3967 LISTEN 0, 남은 `dodok-runner`·`claude.real`·`fake-messages-api` 프로세스 0.
 - 스크래치의 Gateway 상태·서버 `DATA_DIR`·러너 설치본·러너 홈(토큰)·CLI 설치본·토큰 파일·받은 tgz 를 지웠다. 워크트리의 `packages/openclaw-plugin/dist`·`packages/claude-runner/dist`·`data/` 도 지웠다. 홈의 `~/.openclaw`·`~/.openclaw-dev` 는 시작 전후 수정 시각이 같다(`stat`).
 - 남긴 것: 공용 `/tmp/openclaw/openclaw-<날짜>.log`(다른 Gateway 도 쓰는 날짜 파일이라 지우지 않았다 — 시크릿 0), 스크래치의 로그·가짜 CLI 기록·화면 사진(커밋하지 않는다).
+
+## 24. 네이티브 푸시 손 확인 — 실제 APNs·FCM 으로 한 번 쏘기 (사람이 한다)
+
+서버가 iOS(APNs)·Android(FCM)로 알림을 보내는 경로(`apps/server/src/modules/push/transports/`)를 실제 서비스에 한 번 태워 본다. 자동 테스트(`apps/server/test/integration/push-native.test.ts`·`push-native-android.test.ts`)는 로컬 가짜 APNs·FCM 으로만 돌고 **실제 Apple·Google 로는 한 번도 나가지 않는다** — 자격 증명이 맞는지·기기 토큰이 서버가 고른 호스트(sandbox·production)와 맞는지·알림이 기기에 뜨는지는 여기서만 안다. 모델 런은 쓰지 않는다. 자격 증명을 만드는 법은 `docs/guides/deploy.md` 「네이티브 푸시 자격 증명」 절.
+
+**왜 사람이 하나** — 실제 발송이고(받는 쪽 기기가 있어야 한다) 자격 증명(`.p8`·서비스 계정 JSON)과 기기 토큰이 있어야 한다. 에이전트는 가짜 통로만 쓴다.
+
+**전제**
+
+- 서버가 뜨고(`dev:fake` 가 아니어도 된다 — 실제 서버면 된다) 부팅 로그에 `push transport apns: on` 또는 `push transport fcm: on` 이 있다(없으면 그 플랫폼 등록이 `503 PUSH_UNAVAILABLE`). 로그 수준은 `LOG_LEVEL=debug` 로 두면 「보냈다」까지 보인다.
+- 알림을 받을 기기와 **그 기기에서 얻은 토큰·앱 id** — iOS 는 64자 hex 기기 토큰·번들 id(= `apns-topic`)·`environment`(Xcode 디버그 빌드는 `sandbox`, 배포 빌드는 `production`), Android 는 FCM 등록 토큰·패키지명. 앱 쪽 등록 흐름은 모바일 하위 프로젝트가 만든다 — 그 전에는 토큰을 앱 샘플·Xcode·`adb logcat` 에서 손으로 얻어 아래 `curl` 로 넣는다.
+- 알림을 받는 사람의 세션 하나와, 멘션을 일으킬 다른 사람(또는 에이전트) — 아래 5번.
+
+**절차**
+
+1. 로그인해 세션 토큰을 변수로 받는다(출력하지 않는다) — 4절 `wire-cli` 의 `W login` 뒤 `data/wire-cli-session.json` 에서 읽는 3절 (e) 의 꼴 그대로:
+   ```bash
+   T=$(jq -r '."http://127.0.0.1:'$PORT'"' data/wire-cli-session.json)
+   ```
+2. 켜진 통로를 본다 — `curl -s -H "authorization: Bearer $T" http://127.0.0.1:$PORT/api/v1/push/capabilities | jq .` → `{ "webpush": true, "ios": …, "android": … }`. 쓸 플랫폼이 `true` 여야 한다.
+3. 기기를 등록한다(토큰은 셸 변수에 두고 화면에 찍지 않는다):
+   ```bash
+   # iOS
+   curl -s -H "authorization: Bearer $T" -H 'content-type: application/json' \
+     -d '{"platform":"ios","token":"'"$IOS_TOKEN"'","appId":"<번들 id>","environment":"sandbox"}' http://127.0.0.1:$PORT/api/v1/push/devices
+   # Android
+   curl -s -H "authorization: Bearer $T" -H 'content-type: application/json' \
+     -d '{"platform":"android","token":"'"$FCM_TOKEN"'","appId":"<패키지명>"}' http://127.0.0.1:$PORT/api/v1/push/devices
+   ```
+   성공은 `200 {"id":"…"}`. 꼴이 틀리면 `400 VALIDATION`(iOS 토큰은 64자 hex — 대문자는 소문자로 모인다, `appId` 는 영숫자로 시작하고 영숫자·`.`·`_`·`-` 만 200자까지), 그 통로가 꺼져 있으면 `503 PUSH_UNAVAILABLE`. **한 세션에는 기기 한 행만 남는다** — 같은 세션이 다른 토큰을 등록하면 앞의 것이 지워지니, 두 기기를 한꺼번에 시험하려면 세션(로그인)을 따로 쓴다.
+4. 그 사용자가 **그 채널을 보고 있지 않게** 한다 — 웹이 그 채널을 보는 탭이 열려 있으면 서버가 알림을 거른다(`push skipped — watching`). 브라우저 탭을 닫거나 다른 채널로 옮긴다.
+5. 다른 사람(또는 `wire-cli send`)이 그 사용자를 **멘션**하거나, 에이전트가 승인을 요청하게 한다. 알림 제목은 `dodok`, 본문은 「누가·어디」뿐이다.
+6. 기기에서 알림이 뜨는지·누르면 앱이 열리는지 본다. 서버 쪽은 `docker compose … logs app | grep 'push '`(또는 소스 실행이면 서버 로그)에서 `push sent`(`debug`, `transport`·`result: ok`)를 본다.
+7. 정리 — 시험이 끝나면 기기를 해제한다: `curl -s -X DELETE -H "authorization: Bearer $T" -H 'content-type: application/json' -d '{"token":"'"$IOS_TOKEN"'"}' …/api/v1/push/devices` → `204`(없는 토큰도 204).
+
+**결과를 가르는 법**
+
+| 로그·화면 | 뜻 | 고칠 곳 |
+| --- | --- | --- |
+| `push sent`(result `ok`)인데 기기에 안 뜬다 | 통로는 받았다 — 기기 쪽(알림 권한·집중 모드·앱 푸시 기능·`environment` 가 빌드와 다름) | 앱·기기 설정. APNs 는 sandbox 토큰을 production 호스트로 보내면 `BadDeviceToken` 으로 기기 행이 지워진다 |
+| `push device gone — removed` | APNs 410·`BadDeviceToken`·`DeviceTokenNotForTopic`, FCM `UNREGISTERED`·404 — 토큰이 죽었거나 앱 id 가 토큰과 다르다 | 앱에서 토큰을 다시 받아 등록 |
+| `push credentials rejected` + 운영 화면 사건 「푸시 자격 증명이 거부되었습니다(apns\|fcm)」 | 키·팀 id·서비스 계정이 거절됨(APNs 403, FCM 401·403) | 자격 증명 다시 만들기 — `deploy.md` 「네이티브 푸시 자격 증명」 절 |
+| `push rejected` | 기기 탓이 아닌 400(예: 잘린 페이로드) | 통로가 warn 으로 남긴 `statusCode`·`reason` |
+| `push send failed` | 429·5xx·네트워크 — 그 알림은 버려졌다(재시도 없음) | 잠시 뒤 다시 |
+| `push skipped — watching` | 그 사용자가 그 채널을 보고 있다 | 4번 |
+| `push skipped — transport off` | 그 플랫폼 통로가 꺼져 있다 | 부팅 로그의 `push transport` 줄 |
+
+**이 절차가 못 하는 것** — 알림 동작 버튼(승인 허용·거절·빠른 답장), 앱 아이콘 배지 수, 앱이 서버에 토큰을 등록하는 흐름(앱 하위 프로젝트), 중앙 푸시 중계. 결과 표는 `docs/guides/deploy.md` 「사람이 한 번 따라 한 결과」 절의 「네이티브 푸시」 줄에 적는다.

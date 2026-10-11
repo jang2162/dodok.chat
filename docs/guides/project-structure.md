@@ -108,6 +108,8 @@ src/
 │                 ErrorCode `RATE_LIMITED`·`RUN_LIMIT`·`INSUFFICIENT_STORAGE` 는 `common.ts` 에
 ├─ push/          Phase 2 ④. PushSubscriptionInput(https endpoint ≤2048·base64url 키)·PushUnsubscribeInput·PushPayload
 │                 ({ kind: mention|approval|relay_limit, channelId, title ≤80, body ≤200, url(`/c/<uuid>`·`/c/<uuid>/activity`·`/c/<uuid>/t/<uuid>`), tag ≤80 } — 서비스 워커가 경계에서 파싱한다).
+│                 네이티브: PushDeviceInput(platform 으로 가르는 합집합 — iOS 토큰은 64자 hex 를 소문자로 모으고 `environment` 필수, Android 토큰 1~4096자, appId `/^[A-Za-z0-9][A-Za-z0-9._-]*$/` 200자)·PushDeviceRemove·PushCapabilities.
+│                 ErrorCode `PUSH_UNAVAILABLE`(common.ts)·운영 사건 종류 `OpsEventKind` 의 `push_credentials_invalid` 도 shared 에 있다.
 │                 wire 쪽 `presence.update`(`PresenceUpdate` { visible, channelId? }, ack 없음)는 `wire/` 의 Typing 옆에 있다
 ├─ search/        Phase 4 ①. `GET /api/v1/search` 계약 — SearchQuery(q 2~200 코드 포인트·채널·작성자·기간·커서)·SearchHit(messageId·channelId·**seq**(결과로 가기가
 │                 `?around=` 로 받는다)·threadRootId?·작성자(authorType user·agent·automation — 거르개 SearchQuery.authorType 은 user·agent 뿐)·createdAt·snippet ≤400·channelArchived — 보관한 채널의 결과)·SearchResult(hits·nextCursor?·limited — 2글자 경로)·
@@ -179,7 +181,7 @@ src/
 │                         **웹훅 전용** BridgeAuthGuard 인스턴스 — 위 하나와 나누지 않는다, 막힘 사건 detail.path webhook), 예약 틱(AUTOMATION_TICK_INTERVAL_MS 60s·`AppDeps.automationTickMs` —
 │                         첨부 정리와 같은 startAttachmentSweeper 라 겹쳐 돌지 않고, 첫 틱은 부팅 정리 recoverOnBoot·adapter.connect **뒤** — 앞이면 첫 틱이 만든 멘션 런을
 │                         recoverOnBoot 가 지난 부팅 것으로 닫는다, 종료 단계 "automations" 가 진행 중 틱을 기다린다). Fastify 에 `logController: new RedactingLogController()`.
-│                         테스트·dev:fake 입력: `AppDeps.statfs`·`disconnectEventMs`·`gatewayBackoff`. VAPID 키를 읽고(주체가 로컬 자리값이면 warn 한 줄) 발송기(`AppDeps.pushSend`, 없으면 webPushSender)를 배선한다.
+│                         테스트·dev:fake 입력: `AppDeps.statfs`·`disconnectEventMs`·`gatewayBackoff`. VAPID 키를 읽고(주체가 로컬 자리값이면 warn 한 줄) 푸시 통로를 배선한다 — 웹 푸시는 늘 켜지고(`AppDeps.pushSend` 는 그 발송기만 덮는 호환 입구, 없으면 webPushSender), APNs·FCM 은 자격 증명이 있을 때만 켜서 통로마다 부팅 로그 한 줄(`push transport apns: on|off(<사유>)`·`fcm`)을 남기고, 테스트·dev:fake 는 `AppDeps.pushTransports`(통로 객체) 로 통로를 통째로 덮는다. `PUSH_RELAY_URL` 은 값이 있으면 warn 후 무시한다(중계 자리).
 │                         브리지 검증 함수(verifyBridgeTokenDb — 토큰 id 와 그 토큰의 Gateway, 어댑터 핸드셰이크와 `/bridge/attachments` 가 같이 쓴다),
 │                         부팅 때 DB 의 Gateway 를 모두 어댑터에 넣음(bootGateways — 꺼진 것도 `enabled: false`, 0개여도 뜬다), 부팅 때 한 번 readPluginFile,
 │                         setup 상태 조립(Gateway 행 + 어댑터 gatewaySetupDetails)·`setup.status` 발행
@@ -195,8 +197,8 @@ src/
 │                         `client error` 줄 하나로 서버가 죽던 자리. err 밖의 키에는 Buffer 를 싣지 않는다 — 머리 주석)
 ├─ wiring.ts              createServices(라우터 ⇄ 오케스트레이터 상호 참조, RunsFacade), sessionRecoverTargets(재접속 복구 대상 — 연결 id 별 Map, OpenClaw 에이전트 세션만)
 ├─ db/
-│  ├─ schema.sqlite.ts    Drizzle 스키마 (계획서 6장 테이블 + agent_sessions + approvals + attachments + bridge_tokens + ops_events + invites + runner_tokens + gateways + channel_reads + message_reactions + automations — 마이그레이션 0000~0020,
-│  │                      FK ON DELETE 는 push_subscriptions.session_id·bridge_tokens.gateway_id·channel_reads.user_id·channel_reads.channel_id·message_reactions.message_id·message_reactions.user_id(cascade)와 agents.gateway_id·attachments.gateway_id(set null)뿐).
+│  ├─ schema.sqlite.ts    Drizzle 스키마 (계획서 6장 테이블 + agent_sessions + approvals + attachments + bridge_tokens + ops_events + invites + runner_tokens + gateways + channel_reads + message_reactions + automations + push_devices — 마이그레이션 0000~0021,
+│  │                      FK ON DELETE 는 push_subscriptions.session_id·bridge_tokens.gateway_id·channel_reads.user_id·channel_reads.channel_id·message_reactions.message_id·message_reactions.user_id·push_devices.session_id(cascade)와 agents.gateway_id·attachments.gateway_id(set null)뿐).
 │  │                      ⚠ drizzle-kit 은 기존 표에 FK 열을 더하는 `ALTER TABLE … ADD … REFERENCES` 에서 스냅숏의 ON DELETE 를 빠뜨린다 — SQLite 가 받아도 조용히 다르게 동작하므로,
 │  │                      FK 열을 더하면 생성 SQL 의 ON DELETE 를 스냅숏과 대조하고 다르면 그 줄만 손으로 고친 뒤(SQLite 가 ALTER 를 받지 않으면 표를 다시 만든다) 머리 주석에
 │  │                      까닭을 적는다. 스냅숏은 생성기 출력 그대로 두고 다음 generate 가 「No schema changes」인지 본다(0010·0012·0014).
@@ -244,6 +246,8 @@ src/
 │  │                      push_subscriptions(0010): session_id(구독을 등록한 Better Auth 세션, NOT NULL, FK ON DELETE CASCADE, 인덱스 push_subscriptions_session) —
 │  │                      세션 행을 지우는 모든 자리(로그아웃·비밀번호 변경·재설정·비활성화·owner 토큰 교체·만료 청소)가 구독도 지운다. 0010 은 표를 다시 만들고 옛 행(세션 모름)을 버린다 —
 │  │                      웹이 앱을 열 때 다시 등록한다(`drizzle/0010_push_session.sql` 은 손으로 쓴 SQL — 생성기의 ALTER 는 SQLite 가 받지 않는다. 까닭은 그 파일 머리 주석).
+│  │                      push_devices(0021): id·user_id·session_id(FK ON DELETE CASCADE, 인덱스 push_devices_session)·platform(`ios`|`android`)·token(유일 push_devices_token — APNs 기기 토큰은 소문자 hex 로 모아 저장)·app_id(iOS 번들 id = apns-topic, Android 패키지명)·environment(iOS 만 `sandbox`|`production`, 아니면 null)·created_at·last_seen_at, 인덱스 push_devices_user.
+│  │                      세션당 한 행(등록이 같은 세션의 다른 토큰 행을 지운다)이고, 세션을 지우는 모든 자리와 멤버 비활성화가 기기 행도 지운다.
 │  │                      새 열을 더하는 마이그레이션을 내면 `test/db.test.ts` 의 부분 마이그레이션 테스트를 돌려, 행을 스키마 객체로 INSERT 하는 자리가 남았는지 본다 —
 │  │                      남았으면 위 「행을 SQL 로 넣는다」 규칙대로 바꾼다(스키마 객체 INSERT 는 아직 없는 새 열까지 실어 그 테스트가 깨진다).
 │  ├─ auth-schema.ts      Better Auth 테이블
@@ -265,6 +269,7 @@ src/
 │                         createIpLimit — 로그인(`/auth/local`·`me/password`)·초대 경로(lookup·accept·reset)가 하나씩
 ├─ http/
 │  ├─ errors.ts           HttpError·apiError — ApiError { code, message, details? } ↔ HTTP 상태
+│  ├─ origins.ts          allowedOrigins(config)·isAllowedOrigin(config, origin) — 출처 비교의 유일한 자리(지금은 `APP_ORIGIN` 의 오리진 하나). wire 쿠키 인증(realtime/cookie-auth.ts)·Better Auth `trustedOrigins`(auth/index.ts)·Socket.IO CORS(app.ts)가 쓴다 — REST CORS 는 없다(서버는 `@fastify/cors` 를 쓰지 않고 웹이 REST 를 같은 출처로 부른다). 초대·재설정 링크의 대표 출처는 `APP_ORIGIN` 그대로라 이 함수를 쓰지 않는다. 불투명 출처(`new URL("capacitor://…").origin === "null"`)는 목록에서 걸러진다 — 앱 출처를 더할 때 `Origin: null`(샌드박스 iframe·file 페이지)이 쿠키를 읽지 않게
 │  ├─ agent-token.ts      requireAgentToken — 브리지·러너 토큰의 HTTP onRequest(`Authorization: Bearer`) 한 함수. 첨부 HTTP(`/bridge/attachments`·`/runner/attachments`)와
 │  │                      토큰으로 받는 설치 파일이 같은 BridgeAuthGuard(브리지 실패 카운터 — 막힌 주소 429)를 지난다. 틀린 토큰은 세고, `accept` 가 거절한 것(꺼진 Gateway)은 세지 않는다
 │  └─ validate.ts         경계 Zod 파싱(body·query·params·wire payload·저장값)
@@ -377,7 +382,14 @@ src/
 │  │                      service.ts(구독 upsert(endpoint 유일 — 다른 사용자·세션 것이면 지금 사용자·세션으로 옮긴다)·해지·목록(등록한 세션이 만료 전인 것만), createTriggerLookups(DB 조회), attachPushTriggers(버스 배선 — 보관한 채널을 겨눈 알림은 여기 한곳에서 거른다(TriggerLookups.channelArchived),
 │  │                      같은 승인 id 는 한 번만, 최근 1000개), createPushDispatcher(보고 있으면 거름 → 구독마다 병렬 발송, TTL 3600·approval 만 urgency high·topic=tag 의 sha256 앞 32자,
 │  │                      404·410 삭제 / 400·403·413 error / 그 밖 warn, 로그에 keys·endpoint·본문 없음, drain), webPushSender(web-push, 요청 timeout 10s)) ·
-│  │                      routes.ts(`GET /api/v1/push/vapid-public-key` · `POST`·`DELETE /api/v1/push/subscriptions` — 세션, user-agent 512자)
+│  │                      routes.ts(`GET /api/v1/push/vapid-public-key` · `POST`·`DELETE /api/v1/push/subscriptions` — 세션, user-agent 512자 ·
+│  │                      네이티브: `GET /api/v1/push/capabilities` `{ webpush, ios, android }` · `POST /api/v1/push/devices`(PushDeviceInput — 그 플랫폼 통로가 꺼져 있으면 503 `PUSH_UNAVAILABLE`, 성공은 200 `{ id }`) · `DELETE /api/v1/push/devices`(자기 행만, 없으면 204) — 모두 로그인한 누구나·사용자 REST 상한)
+│  │                      devices.ts(기기 저장 — upsertDevice: 한 트랜잭션에서 같은 세션의 다른 토큰 행을 지우고 token 으로 upsert(다른 사용자·세션 것이면 지금 쪽으로 옮긴다) · removeDevice · listDevices(세션이 만료 전인 것만) · deleteDeviceById) ·
+│  │                      credentials.ts(loadApnsCredentials — 환경 변수가 `data/apns/` 파일보다 먼저, 못 쓰면 `{ off: <고정 사유> }`, ES256(P-256) 키만) · fcm-credentials.ts(loadFcmCredentials — 서비스 계정 JSON, RSA 키만) ·
+│  │                      transports/(types.ts 의 PushTransport·TransportResult(ok·gone·rejected·credentials·retry)·WebTarget·DeviceTarget · webpush.ts(webPushSender 를 감싼다) ·
+│  │                      apns.ts(Node `http2` — 호스트마다 연결 하나를 재사용, ES256 JWT 50분 캐시, 403 은 모두 credentials·토픽 문제는 400, GOAWAY·REFUSED_STREAM 으로 **처리되지 않은** 요청만 한 번 다시, 응답 없이 끝난 스트림은 retry) ·
+│  │                      fcm.ts(내장 `fetch` — 서비스 계정 RS256 JWT → OAuth 토큰 55분 캐시·진행 중 교환 공유·실패는 캐시하지 않음·교환 제한 시간))
+│  │                      디스패처는 대상(웹 구독 + 기기)마다 통로를 골라 결과만 본다: gone 은 행 삭제 · rejected 는 error · credentials 는 행 유지 + 운영 사건 `push_credentials_invalid`(key `push:<통로>`) · retry·던짐은 warn(재시도 없음). 디스패처 로그는 `transport`·`result` 만, 거절 사유(`statusCode`·고정 `reason`)는 각 통로가 warn 으로 남긴다. 토큰·endpoint·키·본문은 로그에 없다
 │  ├─ gateways/           멀티 Gateway. OpenClaw Gateway 저장소·API — 전부 owner 세션(`requireOwner`, 아니면 403). 공유 토큰은 DB 평문, 응답·로그에 없다.
 │  │                      service.ts(listGatewayRows(더한 차례) · createGateway·updateGateway(이름은 워크스페이스 안 유일 — CONFLICT details.field name,
 │  │                      빈 토큰은 그대로, 바뀐 것이 없으면 쓰지 않음) · deleteGateway(한 트랜잭션 — 에이전트 gateway_id 비움, 행 삭제, 브리지 토큰은 FK cascade) ·
@@ -498,7 +510,7 @@ src/
    │                      channel.read(버킷 chatter — 넘으면 ack RATE_LIMITED)는 ChannelRead 로 파싱해 markRead → 버스 channel.read → ack { lastReadSeq } ·
    │                      reaction.set(버킷 chatter — 넘으면 ack RATE_LIMITED)은 ReactionSet 으로 파싱해 setReaction → ack null(역할을 다시 읽지 않는다 — membership 은 핸드셰이크가 본다) ·
    │                      message.send 가 새 최상위 메시지를 저장하면 ack 뒤에 작성자 읽음을 그 seq 로 올린다 — 스레드 답글·같은 clientMsgId 재전송은 올리지 않고, 실패는 warn 만)
-   ├─ cookie-auth.ts      wire 핸드셰이크의 dodok.session 쿠키 파싱(웹은 토큰을 다루지 않는다)
+   ├─ cookie-auth.ts      wire 핸드셰이크의 dodok.session 쿠키 파싱(웹은 토큰을 다루지 않는다) — Origin 이 `isAllowedOrigin`(http/origins.ts)일 때만 쿠키를 읽는다
    ├─ events.ts           bus → 룸 팬아웃(`setup.status` 는 owner, `ops.event` 는 owner·admin 사용자 룸에만 — roleRooms 가 보낼 때마다 membership 을 다시 읽어 역할 변경을 따르고 비활성 membership 은 거른다, `people.changed`·`agents.changed`·`channel.updated` 는 워크스페이스 룸), 소켓별 미전송 500 초과 시 run.event 버림 + run.state { resync }.
    │                      읽지 않음: message.created 가 kind normal 이고 작성자가 user·agent·automation 이면 본문 없는 `channel.activity` 를 워크스페이스 룸으로(silent — 늦게 온 정본 — 도 낸다,
    │                      버스 message.created 에 채널 룸 팬아웃과 **따로 등록한** 처리기다 — 하이드레이션 질의가 던져도 읽지 않음 신호는 나간다, 등록 순서가 호출 순서,
@@ -509,12 +521,13 @@ src/
    └─ types.ts            WireServer·RunsFacade 타입
 ```
 
-업로드는 `modules/attachments/`, 웹 푸시는 `modules/push/` 가 맡는다.
+업로드는 `modules/attachments/`, 웹·네이티브(APNs·FCM) 푸시는 `modules/push/` 가 맡는다.
 
 테스트(`apps/server/test/`): 모듈 단위(인메모리 SQLite), `fakes/`(가짜 Gateway·가짜 플러그인·시나리오 대본 — 대본의 `components` 는 실물 플러그인
 `buildOutboundMessage` 를 지나 스키마를 어기면 거절된다), `integration/`(시나리오 1~8 `relay`·`prompt`·`recovery`, 시나리오 9a~9g `approvals`(9c′ 포함 8건),
 시나리오 10a~10g `components`(셀렉트·모달 → 다음 런, 결과 줄 세 경로, reusable, 상한 20, 동시 두 번, 스키마 위반 거절), 시나리오 11a~11i `attachments`(올리기·권한·판별·에이전트 첨부·미디어만·폴백 `MEDIA:`·정리·문맥 자리표시),
 시나리오 12a~12h `push`(멘션·보고 있으면 거름·승인·릴레이 한도·410 정리·자기 멘션·페이로드에 본문 없음·소켓 둘 + 종료 drain),
+`push-native`·`push-native-android`(네이티브 푸시 — 로컬 가짜 APNs(`http2.createSecureServer`, 자체 서명)·가짜 FCM 으로 iOS·Android·웹 구독 셋에 멘션이 가고, 보고 있으면 셋 다 건너뜀, 410 이면 기기 삭제, 401 이면 사건 하나·기기 유지, 통로가 꺼지면 등록 `PUSH_UNAVAILABLE`. 파일을 둘로 나눈 것은 병렬 실행 충돌을 피하려는 것 — 가짜 APNs 인증서를 만드는 테스트 도우미는 `openssl` CLI(LibreSSL 도 된다)를 부르므로 없으면 크게 실패한다),
 `ops-events`·`ops-limits`·`ops-ratelimit`·`ops-health`(운영 보강 — `ops.event` 는 owner·admin 소켓에만, 워크스페이스·채널 한도와 하루 한 번 메시지·다시 실행, REST·wire·브리지 실패 카운터·XFF,
 끊김 사건 열고 닫기·버전·디스크 507·run_failed — 60초는 가짜 타이머 단위 테스트가 재고 통합은 줄인 임계 `disconnectEventMs`),
 `setup`(설정 마법사 — 토큰 겹침 교체·폐기 뒤 핸드셰이크·첨부 HTTP 거절·접속 중 폐기의 즉시 끊김, `setup.status` 는 owner 소켓에만(admin 소켓은 못 받는다), 원문이 로그·목록·wire 에 없음,
@@ -534,7 +547,7 @@ Gateway 0개 부팅, 검증 함수가 던지면 거절, 거절 로그 주소(TRU
 두 번 제출·핸들 충돌 양쪽·재가입·링크 폐기·세션 소켓 끊기와 지우기 → 끊기 순서·핸드셰이크 틈·버킷 분리·Better Auth 폐기 경로 404),
 `helpers/`(`bootLiveApp`·wire 클라이언트·시나리오 단계·`png.ts`(테스트 PNG 생성기 `makePng`·`PDF_BYTES`) — `bootTestApp` 은 앱마다 임시 `ATTACHMENTS_DIR` 을 만들고 닫으면 지운다.
 `bootLiveApp` 의 `extraGateways`(이름·`agents`)는 가짜 Gateway·플러그인 짝을 더 붙인다 — `live.gateways` 가 더한 차례의 짝 목록이고(첫 줄이 `live.gateway`·`live.plugin`), 가짜 Gateway `agents.list` 는 `agents` 옵션(기본 `dev`·`fin`)이다. 멀티 Gateway 통합은 `test/multi-gateway.integration.test.ts`.
-`bootTestApp`·`bootLiveApp` 은 `deps.pushSend` 가 없으면 가짜 발송기 `noExternalPush` 를 넣고, `env.ts` 의 `testEnv` 는 프로세스마다 만든 VAPID 키를 환경변수로 준다 — 테스트가 밖으로 푸시를 보내거나 `data/vapid.json` 을 만들지 않는다).
+`bootTestApp`·`bootLiveApp` 은 `deps.pushSend` 가 없으면 가짜 발송기 `noExternalPush` 를 넣고(APNs·FCM 은 테스트 `DATA_DIR` 에 자격 증명이 없으니 꺼져 실제 Apple·Google 로는 나가지 않는다), `env.ts` 의 `testEnv` 는 프로세스마다 만든 VAPID 키를 환경변수로 준다 — 테스트가 밖으로 푸시를 보내거나 `data/vapid.json` 을 만들지 않는다).
 가짜 플러그인은 브리지 HTTP 로 첨부를 받고 올리며(`uploadAttachment`·`downloadAttachment`), 대본 `ScenarioScript` 에 `attachments`·`attachmentIds`·`withholdCanonical` 이 있다.
 가짜 플러그인 hello(`FAKE_PLUGIN_HELLO`)는 `threads` 를 싣고, `hello` 옵션·`reconnect({ hello })` 로 옛 플러그인·재설치를 흉내 낸다. 대본은 정본에 `delivery.threadId` 를 싣는다.
 손으로 두드리는 실연 도구는 루트 `scripts/wire-cli.ts`(`pnpm wire-cli`, `docs/guides/live-smoke.md`).
@@ -1071,7 +1084,7 @@ OpenClaw Gateway 주소·공유 토큰과 브리지 토큰은 env 가 아니라 
 | --- | --- | --- |
 | `HOST` | `127.0.0.1` | 리슨 주소 |
 | `PORT` | `3000` | 리슨 포트. REST `/api/v1`·wire(기본 네임스페이스)·브리지 `/bridge` 가 모두 여기 |
-| `APP_ORIGIN` | (필수) | 웹 앱 오리진 — Socket.IO CORS·Better Auth `baseURL`/`trustedOrigins`·세션 쿠키 Secure(https 일 때)·초대·재설정 링크(`<APP_ORIGIN>/join/<token>`·`/reset/<token>`). 로컬 `http://localhost:5173` |
+| `APP_ORIGIN` | (필수) | 웹 앱 오리진 — Socket.IO CORS·wire 쿠키 인증·Better Auth `trustedOrigins`(셋 다 `http/origins.ts` 의 `allowedOrigins`)·Better Auth `baseURL`·세션 쿠키 Secure(https 일 때)·초대·재설정 링크(`<APP_ORIGIN>/join/<token>`·`/reset/<token>`). 로컬 `http://localhost:5173` |
 | `TRUST_PROXY` | `false` | 리버스 프록시 뒤면 `true` — 레이트리밋·브리지 실패 카운터·브리지 거절 로그의 주소가 X-Forwarded-For 첫 값이 된다. 배포 compose 는 `true` 로 고정한다 |
 | `TZ` | 프로세스 기본(컨테이너는 UTC) | 「하루」의 경계 — 일일 런 상한이 이 시간대의 자정에 풀리고 운영 화면 「오늘」·「7일」 집계도 그 자정을 따른다(`docs/guides/deploy.md` 「설정 — `.env`」). `.env.example` 에는 없다 — Node 가 읽는 표준 변수라 config.ts 가 검증하지 않는다 |
 | `DATA_DIR` | `./data` | 런타임 데이터(DB·첨부 블롭·VAPID 키 `vapid.json`·Gateway 마다 Ed25519 디바이스 아이덴티티와 디바이스 토큰 `gateways/<Gateway id>/`(`device.json`·`device-tokens.json`)) |
@@ -1085,6 +1098,10 @@ OpenClaw Gateway 주소·공유 토큰과 브리지 토큰은 env 가 아니라 
 | `OPENCLAW_FRAME_DUMP_PATH` | — | 진단용 — 어댑터가 받은 Gateway `chat`·`agent`·`session.message` 프레임을 Gateway 마다 `<이 경로>.<Gateway id>` 파일에 JSONL(`{ receivedAt, frame }`)로 append. 본문이 들어가므로 `data/` 아래에. usage 출처 확인용(live-smoke 5.4) |
 | `BRIDGE_PUBLIC_URL` | `APP_ORIGIN` 의 `https:`→`wss:`(`http:`→`ws:`) + `/bridge` | 플러그인 계정 설정 `bridgeUrl` 에 적을 공개 주소 — 연결 페이지가 보여 주고 발급 결과의 설정 조각에 들어간다(서버는 이 값으로 리슨하지 않는다). 예 `wss://dodok.example.com/bridge` |
 | `VAPID_PUBLIC_KEY` · `VAPID_PRIVATE_KEY` | — | 웹 푸시 VAPID 키 쌍 — **둘 다** 있어야 쓴다. 없으면 `<DATA_DIR>/vapid.json` 을 만들어(0600) 쓴다. 키가 바뀌면 모든 기기의 푸시 구독이 무효가 된다. 비밀 키는 로그에서 가린다 |
+| `APNS_KEY_PATH` · `APNS_KEY_ID` · `APNS_TEAM_ID` | — | iOS 앱 푸시(APNs) 인증 키(.p8) 경로·키 id·팀 id. 없으면 `<DATA_DIR>/apns/key.p8`·`config.json`(`{ keyId, teamId }`)을 읽고, 둘 다 없으면 통로가 꺼진다(부팅은 막지 않는다). 키는 ES256(P-256)만. 발급·배치는 `docs/guides/deploy.md` 「네이티브 푸시 자격 증명」 |
+| `FCM_SERVICE_ACCOUNT_PATH` | — | Android 앱 푸시(FCM) 서비스 계정 JSON 경로. 없으면 `<DATA_DIR>/fcm/service-account.json`, 둘 다 없으면 통로가 꺼진다 |
+| `APNS_HOST` · `APNS_CA_PATH` · `FCM_HOST` · `FCM_TOKEN_URI` | — | **테스트·개발 전용** — 통합 테스트가 로컬 가짜 APNs·FCM 으로 보낼 때 호스트·인증서·토큰 엔드포인트를 덮는다. 운영 문서에는 싣지 않는다 |
+| `PUSH_RELAY_URL` | — | 중앙 푸시 중계 자리 — 아직 구현이 없어 값이 있으면 부팅 때 warn 후 무시한다 |
 | `VAPID_SUBJECT` | `mailto:dodok@localhost` | 푸시 서비스가 연락할 주체 — `mailto:…` 또는 `https://…`. 호스트가 `localhost`·`127.0.0.1`·`*.local` 이면 시작 때 warn(Apple Push 는 `403 BadJwtToken`) — 배포는 실제 연락처로(`docs/guides/live-smoke.md` 14.2) |
 | `DODOK_MIGRATIONS_DIR` | 소스 `apps/server/drizzle` | drizzle 마이그레이션 폴더. 운영 번들은 **필수**(없으면 설정 오류) — 이미지·compose 가 `/app/drizzle` 로 준다 |
 | `DODOK_PLUGIN_DIR` | — | 연결 페이지가 내려줄 플러그인 tgz 를 찾을 디렉터리(가장 최근 tgz). 소스 실행이면 그 뒤에 `packages/openclaw-plugin/dist` 도 본다. 배포에서는 이미지·compose 가 `/app/plugin` 으로 고정한다(그때 `.env` 의 값은 무시된다) |

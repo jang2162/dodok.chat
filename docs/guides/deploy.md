@@ -49,6 +49,9 @@ OpenClaw Gateway 의 주소·공유 토큰과 브리지 토큰은 `.env` 에 두
 | `LOG_LEVEL` · `OWNER_HANDLE` · `DODOK_WORKSPACE_NAME` | 선택 | 기본 `info` · `owner` · `dodok` |
 | `TZ` | 선택(IANA 이름, 예 `Asia/Seoul`) | 「하루」의 경계다 — 일일 런 상한(워크스페이스·채널)이 서버 현지 자정에 풀리고, 한도 문구 「내일 0시에 풀립니다」와 운영 화면의 「오늘」 집계도 그 자정을 따른다. 비우면 이미지 기본인 UTC 라 한국에서는 오전 9시에 하루가 바뀐다. 이미지가 시간대 데이터를 품고 있어 값만 주면 된다(`docker run --rm -e TZ=Asia/Seoul node:24.21.0-bookworm-slim node -e 'console.log(new Date(0).getHours())'` → `9`) |
 | `VAPID_PUBLIC_KEY` · `VAPID_PRIVATE_KEY` | 선택 | 비우면 서버가 `/data/vapid.json` 을 만들어 쓴다(볼륨에 남는다). 키가 바뀌면 모든 기기의 푸시 구독이 무효가 된다 |
+| `APNS_KEY_PATH` · `APNS_KEY_ID` · `APNS_TEAM_ID` | 선택(iOS 앱 푸시) | APNs 인증 키(.p8)의 **컨테이너 안 경로**·키 id·팀 id. 비우면 `/data/apns/key.p8`·`/data/apns/config.json`(`{ "keyId": …, "teamId": … }`)을 본다 — 둘 다 없으면 iOS 통로는 꺼진다. 절차는 아래 「네이티브 푸시 자격 증명」 |
+| `FCM_SERVICE_ACCOUNT_PATH` | 선택(Android 앱 푸시) | Firebase 서비스 계정 JSON 의 컨테이너 안 경로. 비우면 `/data/fcm/service-account.json`. 없으면 Android 통로는 꺼진다 |
+| `PUSH_RELAY_URL` | 쓰지 않는다 | 중앙 푸시 중계 자리 — 구현이 없어 값이 있으면 부팅 때 warn 한 줄을 남기고 무시한다 |
 | `DB_PATH` · `ATTACHMENTS_DIR` | **비워 둔다** | 기본값이 `/data` 아래다. 볼륨 밖 경로를 주면 컨테이너를 다시 만들 때 그 데이터가 사라진다 |
 | `HOST` · `PORT` · `DATA_DIR` · `DODOK_MIGRATIONS_DIR` · `DODOK_PLUGIN_DIR` · `DODOK_RUNNER_DIR` · `TRUST_PROXY` | 무시된다 | compose 가 `environment` 로 `0.0.0.0`·`3000`·`/data`·`/app/drizzle`·`/app/plugin`(이미지가 품은 플러그인 tgz 자리)·`/app/runner`(이미지가 품은 Claude 러너 tgz 자리)·`true` 를 고정한다. `.env.example` 을 복사해 생긴 빈 줄(`HOST=`)이 그대로 있어도 된다. `TRUST_PROXY` 는 Caddy 뒤라 늘 `true` 다 — 레이트리밋·브리지 실패 카운터가 Caddy 가 붙인 클라이언트 IP 로 걸린다(아래 「보안」). compose 가 고정하지 않으면 `.env` 의 빈 줄이나 `false` 가 모든 요청을 Caddy 주소 하나로 묶어 한 사람의 폭주가 모두를 막는다 — 그래서 `environment` 에 둔다 |
 | `OPENCLAW_FRAME_DUMP_PATH` · `BRIDGE_URL` | 쓰지 않는다 | 진단·스파이크 전용 |
@@ -340,6 +343,60 @@ Claude 러너(`@dodok/claude-runner`, 명령 `dodok-runner`)는 **사람의 머�
   ```
 - **손으로 보내 보기** — 화면에서 복사한 주소로 `curl -sS -X POST -H 'content-type: application/json' -d '{"ok":false}' '<주소>'` → `202`. 주소를 셸 기록에 남기지 않으려면 앞에 공백을 두거나(`HISTCONTROL=ignorespace`) 변수로 읽는다.
 
+## 네이티브 푸시 자격 증명
+
+iOS·Android **앱**(모바일 하위 프로젝트)에 알림을 보내려면 서버가 Apple·Google 에 낼 자격 증명이 있어야 한다. 웹 푸시(VAPID)는 이것과 따로 늘 켜져 있다. 설계는 `docs/superpowers/specs/2026-10-06-native-push-design.md`(구현과 달라진 것은 「구현과 맞춘 것」 장). 두 통로는 **독립**이라 한쪽만 설정해도 된다. 자격 증명이 없는 통로는 꺼진 채로 서버가 정상 부팅하고, 그 플랫폼의 기기 등록은 `503 PUSH_UNAVAILABLE` 이다. 알림 본문에는 메시지 내용이 없다 — 누가·어디(제목은 늘 `dodok`)만 실린다.
+
+**iOS — APNs 인증 키(.p8)**
+
+1. Apple Developer → Certificates, Identifiers & Profiles → **Keys** → 「+」 → 이름을 정하고 **Apple Push Notifications service (APNs)** 를 체크해 만든다.
+2. **키 id**(10자)를 적어 두고 `.p8` 파일을 받는다. ⚠ **`.p8` 은 이때 한 번만 받을 수 있다.** 서버 백업(`node dist/backup.js`)은 이 파일을 담지 않으므로 저장소 밖 안전한 곳에 따로 둔다.
+3. **팀 id**(10자)는 Developer 계정 → Membership details 에 있다.
+4. 서버의 데이터 볼륨에 둔다. 컨테이너는 `node`(1000:1000)로 도니 파일이 그 사용자 몫이어야 읽힌다(`docker cp` 로 넣은 파일은 root 소유라 그대로는 부팅 로그가 `off(key unreadable)` 가 된다):
+   ```bash
+   docker compose -f infra/compose.yml exec app mkdir -p /data/apns
+   docker compose -f infra/compose.yml cp ./AuthKey_<키 id>.p8 app:/data/apns/key.p8
+   printf '{ "keyId": "<키 id>", "teamId": "<팀 id>" }' > apns-config.json
+   docker compose -f infra/compose.yml cp ./apns-config.json app:/data/apns/config.json
+   docker compose -f infra/compose.yml exec -u 0 app chown -R 1000:1000 /data/apns
+   docker compose -f infra/compose.yml exec -u 0 app chmod 600 /data/apns/key.p8
+   ```
+   파일 대신 `.env` 의 `APNS_KEY_PATH`(컨테이너 안 경로)·`APNS_KEY_ID`·`APNS_TEAM_ID` 로 줘도 된다 — 환경 변수가 파일보다 먼저다. 호스트에 내려 둔 원본은 안전한 곳으로 옮기고 작업 폴더에 남기지 않는다.
+5. 키는 **ES256(P-256) `.p8`** 이어야 한다. 다른 곡선·RSA 키는 부팅 때 `off(invalid key)` 로 걸러진다.
+6. iOS 앱이 기기 토큰을 등록할 때 `environment` 로 `sandbox`(Xcode 디버그 빌드)·`production` 을 알려 준다 — 서버는 그 값으로 `api.sandbox.push.apple.com`·`api.push.apple.com` 을 가른다. 앱의 번들 id 가 `apns-topic` 이 되므로 그 번들 id 에 푸시 기능(Capability)이 켜져 있어야 한다. 키 하나로 둘 다 보낸다.
+
+**Android — Firebase 서비스 계정**
+
+1. Firebase 콘솔 → 프로젝트 설정 → **서비스 계정** → 「새 비공개 키 생성」 → JSON 을 받는다. 앱(`google-services.json`)과 같은 Firebase 프로젝트의 계정이어야 한다.
+2. 데이터 볼륨에 둔다(소유자 규칙은 위 iOS 4번과 같다):
+   ```bash
+   docker compose -f infra/compose.yml exec app mkdir -p /data/fcm
+   docker compose -f infra/compose.yml cp ./<받은 파일>.json app:/data/fcm/service-account.json
+   docker compose -f infra/compose.yml exec -u 0 app chown -R 1000:1000 /data/fcm
+   docker compose -f infra/compose.yml exec -u 0 app chmod 600 /data/fcm/service-account.json
+   ```
+   경로를 바꾸려면 `.env` 의 `FCM_SERVICE_ACCOUNT_PATH`. 이것도 백업에 들어가지 않으니 원본을 안전한 곳에 둔다.
+3. 키는 RSA 서비스 계정 키여야 한다 — `project_id`·`client_email`·`private_key` 가 든 파일이 아니면 `off(invalid service account)` 다.
+
+**켜졌는지 보기** — 서버를 다시 띄운 뒤 부팅 로그 두 줄로 안다. 사유는 고정 문구라 키·이메일은 로그에 없다.
+
+```bash
+docker compose -f infra/compose.yml up -d --force-recreate app   # 파일만 놓았으면 다시 띄워야 읽는다
+docker compose -f infra/compose.yml logs app | grep 'push transport'
+# push transport apns: on | off(no key | no key id | no team id | key unreadable | config unreadable | invalid config | invalid key)
+# push transport fcm:  on | off(no service account | invalid service account)
+```
+
+로그인한 사용자(쿠키 세션)의 `GET /api/v1/push/capabilities` 가 `{ "webpush": true, "ios": …, "android": … }` 로 같은 사실을 돌려준다. 앱은 이것으로 어느 플랫폼을 등록할 수 있는지 안다.
+
+**운영 중 신호**
+- 알림이 가지 않을 때 **자격 증명이 거절된** 것이면(APNs 403 — 토픽 문제는 400 이라 아니다 · FCM 토큰 교환 400·401·403, 발송 401·403) 기기 행은 남기고 운영 화면에 사건 「푸시 자격 증명이 거부되었습니다(apns)」·「…(fcm)」(`push_credentials_invalid`, key `push:<통로>`, 같은 통로는 확인 전 1시간 안이면 한 줄)가 뜬다 — 키를 폐기했거나 팀·키 id 가 틀렸다는 뜻이다. 고친 뒤 확인(ack)한다.
+- 기기가 사라진 것(APNs 410·`BadDeviceToken`·`DeviceTokenNotForTopic`, FCM `UNREGISTERED`)은 그 기기 행만 조용히 지운다. 429·5xx·네트워크 오류는 그 알림을 버리고 warn 이다(재시도 없음 — APNs 가 GOAWAY·REFUSED_STREAM 으로 **처리하지 않은** 요청만 한 번 더 보낸다).
+- 로그 수준 `debug` 면 디스패처가 `push sent`·`push skipped — watching`·`push skipped — transport off` 를 남긴다(`transport`·`result` 필드). 거절 사유(`statusCode`와 고정 문구 `reason`)는 각 통로가 warn 으로 남긴다. 토큰·키·본문은 로그에 없다.
+- 로그아웃·비밀번호 변경·비활성화로 세션이 지워지면 그 세션의 기기도 지워진다(웹 구독과 같은 규칙). 세션 하나에는 기기 한 행만 둔다 — 같은 세션이 새 토큰을 등록하면 옛 토큰 행은 지워진다.
+
+실제 기기로 한 번 쏴 보는 법은 `docs/guides/live-smoke.md` 「네이티브 푸시 손 확인」 절.
+
 ## 운영 화면
 
 웹 「설정」 → 「운영」 탭(`/settings/operations`, owner·admin — member 에게는 탭이 없고 직접 주소는 「권한이 없습니다」)이 「어젯밤 무슨 일이 있었나」에 답한다. 외부 모니터링 스택·푸시·웹훅 알림은 없다 — 사이드바 하단 「설정」과 「운영」 탭에 붙는 배지(확인 안 한 사건 수, admin 이상)로 알아챈다. 설계는 `docs/superpowers/specs/2026-09-25-ops-hardening-design.md`(구현과 달라진 것은 그 스펙의 「구현과 맞춘 것」 장).
@@ -399,6 +456,7 @@ docker compose -f infra/compose.yml exec app node dist/backup.js [--keep N]
 - **보관**: 최근 7개(기본), `--keep N` 으로 바꾼다. 넘친 것은 오래된 것부터 지운다. 보관 개수는 **백업 이름 형식(`YYYY-MM-DDTHH-MM-SS-mmmZ`)** 인 디렉터리만 센다 — 오래 둘 백업은 다른 이름으로 옮겨 둔다(그대로 두면 정리가 센다).
 - **`.partial-*`**: 백업은 `backups/.partial-<시각>-XXXXXX/` 에서 만든 뒤 다 되면 `<시각>/` 으로 옮긴다. 중단(Ctrl-C·`SIGTERM` 은 스스로 지운다, `SIGKILL`·전원 끊김은 남는다)으로 남은 `.partial-*` 는 **복원에 쓰지 않는다** — 1시간이 지나면 다음 백업이 지운다.
 - 출력은 한 줄(시크릿 없음), 실패는 exit 1 과 `백업 실패: <사유>` 한 줄(디스크 부족이면 부분 디렉터리를 지운다).
+- **네이티브 푸시 자격 증명(`/data/apns/`·`/data/fcm/`)도 들어가지 않는다** — 백업이 담는 부수 파일은 `vapid.json` 과 `gateways/` 뿐이다. 볼륨을 잃으면 APNs `.p8`(Apple 에서 다시 받을 수 없다)·서비스 계정 JSON 은 원본 보관본에서 다시 놓아야 한다(위 「네이티브 푸시 자격 증명」).
 - **첨부는 백업에 들어가지 않는다** — 내용 주소(sha256) 블롭이라 백업마다 복사하지 않는다. 첨부까지 옮기려면 아래 「볼륨째 옮기기」.
 - 백업은 같은 볼륨 안에 있다 — 호스트가 죽으면 같이 잃는다. 다른 곳으로 보내는 것은 사람 몫이다: `docker compose -f infra/compose.yml cp app:/data/backups/<이름> ./<이름>` 로 호스트에 꺼낸 뒤 옮긴다.
 
@@ -534,6 +592,7 @@ docker compose -f infra/compose.yml ps     # app·caddy (healthy)
 | 폰에 푸시가 안 옴(앱의 알림 설정이 꺼져 보임) | 푸시 구독은 등록한 세션에 묶인다 — 그 세션이 끝나면(로그아웃·비밀번호 변경·재설정·비활성화·30일 미사용 만료) 서버가 구독을 지우고, 웹도 401 을 보면 기기 구독을 해지한다 | 다시 로그인한 뒤 「설정」 → 「알림」 탭에서 「푸시 알림 켜기」 |
 | 폰에 푸시가 안 옴(iOS) | `VAPID_SUBJECT` 가 로컬 자리값이면 Apple 이 `403 BadJwtToken` — 서버 시작 로그에 warn 한 줄 | 실제 연락처로 바꾸고 `up -d` |
 | 백업 `백업 실패: …` exit 1 | 한 줄 사유(디스크 부족이면 부분 디렉터리는 지워진다) | 공간 확보 뒤 다시 |
+| 앱(iOS·Android)이 기기 등록에서 503 `PUSH_UNAVAILABLE` · 부팅 로그 `push transport apns: off(…)`·`fcm: off(…)` | 그 플랫폼의 자격 증명이 없거나 못 읽는다 — 사유가 고정 문구다(`no key`·`no key id`·`no team id`·`key unreadable`·`invalid key`·`invalid config`·`no service account`·`invalid service account`). `docker cp` 로 넣은 파일은 root 소유라 `key unreadable` 이 되기 쉽다 | 위 「네이티브 푸시 자격 증명」 절 그대로 파일을 놓고 소유자를 1000:1000 으로 맞춘 뒤 `up -d --force-recreate app` |
 | 첨부 업로드가 507 `INSUFFICIENT_STORAGE`, 운영 화면 「디스크 여유 부족」(오류) | 데이터 볼륨의 여유가 256 MiB 미만 | 공간 확보(`backups/` 의 오래된 백업, 호스트의 다른 파일) → 최대 10분 뒤 또는 `docker compose -f infra/compose.yml restart app`. 위 「운영 화면」 |
 | 멘션해도 답이 없고 채널에 「오늘 런 한도(N)에 도달했습니다 — 내일 0시에 풀립니다」 | 워크스페이스 또는 채널 일일 런 상한 | 운영 화면 「한도」 또는 채널 설정 「일일 실행 상한」. 자정이 예상과 다르면 `TZ` |
 | 요청이 429 `RATE_LIMITED`, 운영 화면 「요청 제한 발동」 | 레이트리밋(위 「운영 화면」의 표) — 한 사람·한 탭의 폭주 | 1분 안에 저절로 풀린다. 되풀이되면 그 사건의 `key`(경로·이벤트 이름)로 무엇이 두드리는지 본다 |
@@ -631,6 +690,7 @@ DODOK_UPSTREAM=devfake:3000 lc --profile devfake up -d --build
 | 둘째 Gateway(있으면) — 추가·설치·토큰, 같은 id 에이전트를 핸들을 달리해 가져와 각각 멘션 | | |
 | 6. 폰 — iOS 홈 화면 PWA 푸시·누르기 | | |
 | 6. 폰 — 안드로이드 Chrome 푸시·누르기 | | |
+| 네이티브 푸시(앱) — 자격 증명(부팅 로그 `push transport … on`)·`docs/guides/live-smoke.md` 「네이티브 푸시 손 확인」 절의 실기기 알림 | | |
 | 멤버 초대 — 다른 브라우저·폰에서 가입, 서로 멘션해 폰에 푸시가 오는가, 비활성화 뒤 그 화면·다시 활성화 뒤 같은 비밀번호 로그인 | | |
 | 7. 백업·cron | | |
 | 복원(업데이트 직전 백업) | | |

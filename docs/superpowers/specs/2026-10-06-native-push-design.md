@@ -107,7 +107,7 @@ export function allowedOrigins(config: { APP_ORIGIN: string }): string[];
 export function isAllowedOrigin(config: { APP_ORIGIN: string }, origin: string | undefined): boolean;
 ```
 
-바꾸는 자리: wire 쿠키 인증(`realtime/cookie-auth.ts`), Better Auth `trustedOrigins`(`auth/index.ts`), Socket.IO CORS·REST CORS(`app.ts`). 초대·재설정 링크를 만드는 「대표 출처」는 `APP_ORIGIN` 그대로(`modules/members/routes.ts` 등) — 이 함수를 쓰지 않는다. 기존 테스트가 그대로 초록이면 된다.
+바꾸는 자리: wire 쿠키 인증(`realtime/cookie-auth.ts`), Better Auth `trustedOrigins`(`auth/index.ts`), Socket.IO CORS(`app.ts`). 초대·재설정 링크를 만드는 「대표 출처」는 `APP_ORIGIN` 그대로(`modules/members/routes.ts` 등) — 이 함수를 쓰지 않는다. 기존 테스트가 그대로 초록이면 된다.
 
 ## 8. 웹과의 관계
 
@@ -139,3 +139,38 @@ export function isAllowedOrigin(config: { APP_ORIGIN: string }, origin: string |
 - **중계 구현** — 스토어 공개 앱으로 갈 때. 서버 → 중계는 「기기 토큰 + 최소 페이로드」만, 중계 인증·남용 방지가 필요하다.
 - **알림 동작 버튼**(승인 허용·거절, 빠른 답장) — APNs 카테고리·FCM 액션과 앱 쪽 처리가 필요하다.
 - **배지 수** — APNs `badge` 를 안 읽음 수로 채우려면 읽지 않음 기능의 합계가 필요하다(읽지 않음 스펙의 「앱 아이콘 배지」와 같은 줄기).
+
+## 12. 구현과 맞춘 것
+
+계획 `docs/superpowers/plans/2026-10-06-native-push.md`(태스크 1~6)와 구현이 위 본문과 달라진 곳이다. 본문은 설계 시점 그대로 두고 여기에만 적는다. 출처의 t1~t5 보고·리뷰는 `.superpowers/sdd/2026-10-12-native-push/`(git 제외)에 있다.
+
+**계획 판정 PN1~PN4와 PN5**
+
+- **PN1 — 디스패처 일반화와 통로 추가를 나눴다.** 태스크 3 은 웹 푸시만 있는 지금과 결과가 같은 단계(`webpush` 통로 하나), 태스크 4·5 가 APNs·FCM 을 더한다.
+- **PN2 — `AppDeps.pushTransports`.** 테스트·`dev:fake` 가 통로를 통째로 덮는 입구다. 옛 `AppDeps.pushCapabilities` 덮기는 `pushTransports` 로 흡수했고(켜진 통로가 곧 능력), `AppDeps.pushSend` 는 웹 푸시 발송기만 덮는 호환 입구로 남겼다.
+- **PN3 — 호스트 덮기는 테스트·개발 전용.** `APNS_HOST`·`APNS_CA_PATH`·`FCM_HOST`·`FCM_TOKEN_URI` 는 `config.ts` 에만 있고 `deploy.md` 에 싣지 않는다.
+- **PN4 — 태스크 3 으로 앞당겼다.** 운영 사건 종류 `push_credentials_invalid`(shared)와 웹 운영 화면 문구 「푸시 자격 증명이 거부되었습니다(<통로>)」를, 사건을 처음 내는 디스패처 일반화와 같은 태스크에 넣었다(계획은 태스크 4).
+- **PN5 — 세션당 기기 한 행**(조율자 결정). 본문 2장은 기기를 토큰으로만 유일하게 했지만, `upsertDevice` 가 한 트랜잭션 안에서 같은 세션의 **다른 토큰** 행을 지우고 등록한다. 토큰이 돌았거나 거절된 옛 토큰이 세션에 쌓이지 않게 하려는 것이다(지우기와 upsert 가 한 트랜잭션인 까닭: upsert 가 던졌을 때 옛 행까지 사라져 기기가 0개로 남지 않게). **전제**: 모바일 앱은 세션 토큰을 기기 전용 저장소에 두므로 한 세션은 한 기기다 — 한 세션 토큰을 여러 기기가 나눠 쓰면 마지막 등록만 남는다.
+
+**API·검증 경계**
+
+- iOS 토큰은 경계(shared `PushDeviceInput`)에서 소문자로 모은다 — APNs 토큰은 hex 라 대소문자가 같은 기기인데 `token` 유일이 대소문자를 가르면 한 기기가 두 행이 된다. 해제(`DELETE`)도 같은 규칙으로 찾는다.
+- `appId` 는 `/^[A-Za-z0-9][A-Za-z0-9._-]*$/`·200자다. `apns-topic` 헤더와 FCM 요청에 그대로 실리는 값이라 경계에서 모양을 좁힌다.
+- 멤버 비활성화가 `push_devices` 행도 지운다(웹 구독을 지우던 자리와 같은 곳). 세션 삭제의 cascade 와 둘이 합쳐 「그 사람의 알림은 그 사람이 로그인한 기기에만」 이 된다.
+- `PUSH_UNAVAILABLE` 은 HTTP **503** 이고, 성공한 `POST /api/v1/push/devices` 는 **200 `{ id }`**(본문 5장이 둘 다 적지 않은 것)다.
+
+**출처 정리 (7장)**
+
+- **REST CORS 자리는 없다.** 서버는 `@fastify/cors` 를 쓰지 않고 웹은 REST 를 같은 출처(개발 Vite 프록시·운영 Caddy)로 부른다. 출처 정리는 세 자리 — wire 쿠키 인증·Better Auth `trustedOrigins`·Socket.IO `cors` — 이고, 7장 「바꾸는 자리」의 문장을 그에 맞게 고쳤다.
+- **불투명 출처("null")는 목록에 넣지 않는다.** `capacitor://…`·`file:` 의 `new URL(…).origin` 은 `"null"` 이라, 앱 출처를 더하는 날 그대로 넣으면 샌드박스 iframe·file 페이지가 보내는 `Origin: null` 이 쿠키를 읽는다. `allowedOrigins` 가 걸러내고 `isAllowedOrigin` 은 `undefined` 를 거절한다. 앱 출처를 더할 때의 함정이다.
+
+**통로와 디스패처**
+
+- **로그의 나눔.** 디스패처 로그는 통로(`transport`)와 결과(`result`)만 남기고, 거절 사유(`statusCode`·고정 문구 `reason`)는 각 통로가 warn 으로 남긴다. 옛 웹 푸시 로그의 `statusCode` 필드는 디스패처 줄에서 사라졌다.
+- **APNs.** 403 은 모두 `credentials`(토픽 문제는 400 이라 `rejected`·`gone` 쪽이다) — 본문 3장의 `InvalidProviderToken`/`ExpiredProviderToken` 구분을 두지 않는다. **GOAWAY·REFUSED_STREAM 이 처리하지 않은 요청만** 한 번 다시 보낸다(HTTP/2 의미상 서버가 처리하지 않았음을 보장하므로 중복이 없다 — 본문 결정 7 「재시도 없음」의 예외). 응답 헤더 없이 스트림이 끝나면 `retry` 로 두고 다시 보내지 않는다. 가짜 APNs 서버의 자체 서명 인증서를 만드는 테스트 도우미는 `openssl` CLI(LibreSSL 도 된다)를 부르고, 없으면 테스트가 크게 실패한다.
+- **FCM.** 자격 증명 로더는 `modules/push/fcm-credentials.ts`(본문·계획의 `credentials.ts` 안 `loadFcmCredentials` 가 아니다). 토큰 교환에는 제한 시간이 있고, 진행 중인 교환은 동시 발송이 공유하며, 실패한 교환은 캐시하지 않는다. 교환이 400·401·403 이면 `credentials`, 네트워크·5xx 는 `retry`.
+- **통합 테스트 파일.** Android 는 `apps/server/test/integration/push-native-android.test.ts` 로 나눴다 — 같은 파일을 두 태스크가 만져 병렬 실행이 충돌하는 것을 피하려는 것.
+
+**검증**
+
+태스크마다 독립 리뷰(변이 테스트)·수정·범위 재리뷰를 거쳤다. 실제 APNs·FCM 으로의 발송은 한 번도 없다 — 통합 테스트는 로컬 가짜 서버만 쓴다. 실기기 확인은 사람이 `docs/guides/live-smoke.md` 「네이티브 푸시 손 확인」 절로 한다. 테스트 수는 `docs/guides/plan.md` 8장 Phase 4 「서버 네이티브 푸시」 줄.
