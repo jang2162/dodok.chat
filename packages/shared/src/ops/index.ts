@@ -23,6 +23,7 @@ export const OpsEventKind = z.enum([
   "member_deactivate_failed",
   "automation_skipped", // key automation:<id> — 10분 넘게 놓친 예약
   "automation_failed", // key automation:<id> — 게시 실패(보관한 채널이면 detail.code CHANNEL_ARCHIVED)
+  "push_credentials_invalid", // key push:<통로>(apns·fcm) — 푸시 서비스가 키를 거부함(기기 행은 남는다)
 ]);
 export type OpsEventKind = z.infer<typeof OpsEventKind>;
 
