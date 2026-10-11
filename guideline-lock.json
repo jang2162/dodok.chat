@@ -1,7 +1,7 @@
 {
   "version": 2,
   "revisions": {
-    "default": 6
+    "default": 10
   },
   "sources": {
     "default:mcp/codegraph": "f6e4c3dc8b10c412e418c0d5e68bc69d7061cfb424e79aa75cfa11fa8ad40b5a",
@@ -31,9 +31,9 @@
     "default:rules/browseros-neo/02-playwright.md": "4619f8275a4a8b27bf7314726124df94b554aefc7f91d208a03fefea91f4a149",
     "default:rules/browseros-neo/03-tabs.md": "5ef01cc4bffdc79f36b1fa3c319547c72eb62717d89d55124ef767f5b93aa1d4",
     "default:rules/browseros-neo/SETUP.md": "b7376822d2ad4eae0857a1654bc5ddf6c1304c75ec2c898097c4362f0d46a80f",
-    "default:rules/komodo/00-stack.md": "7d7ab0f97703387858f6119ba1de8b3da781f7698925bd1bcc44c41c4e9b9fc2",
+    "default:rules/komodo/00-stack.md": "04b890d44b989d472a1d3db2ccca17489b67223b7ff97ee3b094ba9765d729ba",
     "default:rules/komodo/01-environment.md": "780196b6c9aac72d48ccfb0fd1454cad16cc4bb160afd68ce52a555531b349c8",
-    "default:rules/komodo/02-override.md": "6b7f39fa6bf5488cfb10f72056d0daba18611e1d1ef6d83b02ffb5a4004c61d8",
+    "default:rules/komodo/02-override.md": "06bce5f009fafa0173c91f0e6729ef538f36d2d18c28729b3790c94e8589ea28",
     "default:rules/lefthook/00-toolchain.md": "1b778edb3d410653acc7c23acc3967268125e08da90522289fd6386d2af21589",
     "default:rules/lefthook/01-pre-push.md": "abacc327081e93b49348ff865cae466c25ff2a2fd4c3a1330a0c94ea51d943c3",
     "default:rules/lefthook/02-post-checkout.md": "5ab824979f4939efc568e16070c52fa3203bc72b4b1f031d429b13d8363c1b37",
@@ -52,8 +52,8 @@
     "default:rules/tiergear/00-switch.md": "f07c95ca2a29356b6e42f3a1f156872c37df7d89c521539adfd27c06d838a907",
     "default:rules/tiergear/01-launch.md": "0c9ac57eb259330694b7175f4da76373e111d83f0e6b665492cf6413964b2fc0",
     "default:rules/tiergear/02-orca-spawn.md": "150896fe165ccb4508c6d302f01962c521ff5aa93ad1fecb4a8b7aa7d8255551",
-    "default:skills/guideline-export": "2d8b52f724d911802e39c6d8fefc65fe0ca3b0e91fd2470fb0f35c463bbef928",
-    "default:skills/guideline-sync": "a3c56d5174db16271895fbe5eeb6023c2ef63fc3e6013b18d9dca9dc1f127d2a",
+    "default:skills/guideline-export": "7f7ee8d777638cfa7ec07583d730d74c93038aa28ce17d090200f70d9ec80940",
+    "default:skills/guideline-sync": "a899e72eeeb63622d167b7e1cb8782314ecda71fdeced26da7b49d9255f8d4fb",
     "default:skills/orca-worker": "1d719c952f0af1e22d2ec1c6e8b287512df3f7e715708e64665d7d766fb0074b"
   },
   "outputs": [
@@ -117,7 +117,7 @@
     {
       "path": ".ruler/guideline.md",
       "items": [],
-      "hash": "763ba2d38c63db234cdad52e4a28e6069b4024e1f2417f0d3b57096095998c7c"
+      "hash": "a06e148c39f79a49390762daf828c34c84e3b130279b5ba29bb989a8cafd6651"
     },
     {
       "path": ".ruler/komodo/99-reference.md",
@@ -199,14 +199,14 @@
       "items": [
         "default:skills/guideline-export"
       ],
-      "hash": "147a82cfe617ad8e3adbe27cf2ab6cfc6de5c622b656ca2dc639fe6f8867da1c"
+      "hash": "3b3890349c16fab379dc6f756993264675a1a3e6320128489d2464e5961e9dc8"
     },
     {
       "path": ".ruler/skills/guideline-sync/SKILL.md",
       "items": [
         "default:skills/guideline-sync"
       ],
-      "hash": "6fad77880f188c568e9a8fa4116b7ac53ca3f26e60507c026d5a209073ec534c"
+      "hash": "6db51588040d643b00c8bd88f21c93c0e2a81544e203a7b116dc6f2c15948250"
     },
     {
       "path": ".ruler/skills/orca-worker/SKILL.md",
@@ -398,7 +398,7 @@
       "items": [
         "default:rules/komodo/00-stack.md"
       ],
-      "hash": "816decd61970e656a7acadb02832e6c90509947680b2b7ca9de393c15ef3614c"
+      "hash": "1ff72b6e7ba578b93c76201e3932309fb2931d811778f34521e05032ef0c85fd"
     },
     {
       "path": "docs/guideline/komodo/01-environment.md",
@@ -412,7 +412,7 @@
       "items": [
         "default:rules/komodo/02-override.md"
       ],
-      "hash": "901ae4824def6bcb5e0b0196947925a9652bec4e4a9ab5f8a75b3354bfbe1089"
+      "hash": "3150eb1f35aa5a5d0639c34e4fc3fdda7eb1b134a722cf467710f812a72d04e8"
     },
     {
       "path": "docs/guideline/lefthook/00-toolchain.md",

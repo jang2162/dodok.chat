@@ -1,5 +1,21 @@
 # Git Repo Stack 구성
 
+## 서버별 값은 저장소 문서에 적지 않는다 — Komodo 서버 이름·호스트 경로·프록시 네트워크 이름·레지스트리 계정
+
+저장소의 compose 파일과 문서는 누가 어느 Komodo 서버에 올려도 그대로 쓰이게 쓴다. Komodo 서버 이름, Periphery clone 디렉터리의 호스트 경로, 프록시 네트워크 이름, 레지스트리 계정은 문서에 쓰지 않고, 모른다고 `<…>` 빈칸으로 남기지도 않는다. 이 값은 각자 Komodo 에서 설정한다.
+
+- **Why:** 이 값은 서버마다 다르고 저장소에서 알 수 없다. 문서에 적으면 다른 서버에서 틀리고, 빈칸으로 두면 채워지지 않은 채 남는다. 사용자는 Komodo 에서 직접 고르거나 입력하므로 문서에 있을 필요가 없다.
+- **How to apply:**
+  - 서버마다 달라지는 값은 환경 변수(`${VAR:?}`)나 서버에서 쓰는 override 파일이 갖게 하고, 문서에는 변수 이름과 의미만 적는다(→ `01-environment.md`).
+  - 에이전트는 이 값들을 사용자에게 묻거나 보고에서 「채울 값」으로 세지 않는다.
+
+## 배포 가이드는 Docker 기준으로 쓴다 — Komodo 에 한정하지 않는다
+
+저장소에 배포 가이드가 필요하면 `docker compose` 로 올리는 방법(필요한 파일, 환경 변수, 실행·확인 명령)을 쓴다. Komodo 는 그 compose 를 올리는 여러 방법 중 하나다. Komodo 를 전제로 한 단계(Stack 만들기, UI 조작)로 가이드를 채우지 않는다.
+
+- **Why:** Komodo 에 한정한 가이드는 Komodo 를 쓰지 않는 환경(로컬, 다른 서버)에서 쓸 수 없다. 이 스택이 갖는 것은 Komodo 에서 배포하기 쉬운 compose·override·환경 변수 구성이지 가이드의 틀이 아니다.
+- **How to apply:** 가이드 본문은 Docker 기준으로 쓴다. 아래 Stack 설정 표는 가이드 본문에 섞지 않고 따로(부록이나 별도 파일) 둔다.
+
 ## Stack 설정은 저장소 문서에 표로 남긴다
 
 Komodo Stack 의 설정은 Komodo 안에만 있고 저장소에서는 보이지 않는다. 저장소의 README 나 `docs/` 에 아래 항목을 표로 적어 둔다.
@@ -7,12 +23,11 @@ Komodo Stack 의 설정은 Komodo 안에만 있고 저장소에서는 보이지 
 | 항목 | 적을 것 |
 | --- | --- |
 | Name | Stack 이름. compose project 이름이 된다(`project_name` 을 따로 주지 않으면) |
-| Server | 배치할 Komodo 서버 |
 | Source | Git Repo — `git_provider` / `repo`(`<소유자>/<저장소>`) / `branch`. 비공개 저장소는 Komodo 에 등록한 `git_account` |
 | File Paths | compose 파일 목록과 **순서**(→ `02-override.md`) |
 | Environment | 키 목록과 설명(→ `01-environment.md`) |
 | Webhook | 켬/끔과 그 이유 |
-| override 파일 | 서버에서 직접 쓰는 파일이면 이름, 호스트 경로↔Periphery 컨테이너 경로 대응(→ `02-override.md`) |
+| override 파일 | 서버에서 직접 쓰는 파일이면 이름과 내용(→ `02-override.md`) |
 
 - **Why:** Stack 을 지우거나 다른 서버에 다시 만들 때 설정을 기억에서 복원해야 한다. 순서가 중요한 `File Paths` 를 빠뜨리면 덮어쓰기 파일이 빠진 채 올라간다.
 - **How to apply:** Stack 을 바꾸면 같은 커밋에서 이 표도 고친다.
