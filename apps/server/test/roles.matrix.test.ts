@@ -16,7 +16,7 @@ import { createAgentMessage } from "../src/modules/messages/service";
 import { createTriggerLookups } from "../src/modules/push/service";
 import { targetsForApproval } from "../src/modules/push/triggers";
 import { issueBridgeToken } from "../src/modules/setup/tokens";
-import { bootTestApp, login, userWithRole } from "./helpers/app";
+import { bootTestApp, login, noExternalTransport, userWithRole } from "./helpers/app";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
 import { connectWire, openWire, type WireClient } from "./helpers/wire";
 
@@ -48,7 +48,10 @@ describe("역할 매트릭스(스펙 2장)", () => {
     adapter = new FakeAdapter();
     app = await bootTestApp(
       {},
-      { adapters: [adapter], pushCapabilities: { webpush: true, ios: true, android: true } },
+      {
+        adapters: [adapter],
+        pushTransports: { apns: noExternalTransport("apns"), fcm: noExternalTransport("fcm") },
+      },
     );
     await app.fastify.listen({ host: "127.0.0.1", port: 0 });
     tokens.owner = (await login(app)).token;

@@ -10,7 +10,7 @@ import { session as authSession } from "../src/db/auth-schema";
 import { pushDevices, pushSubscriptions } from "../src/db/schema.sqlite";
 import { listSubscriptions } from "../src/modules/push/service";
 import { sweepExpiredSessions } from "../src/realtime/socket";
-import { bootTestApp, login, userWithRole } from "./helpers/app";
+import { bootTestApp, login, noExternalTransport, userWithRole } from "./helpers/app";
 import { testEnv } from "./helpers/env";
 
 const ENDPOINT = "https://fcm.googleapis.com/fcm/send/device-1";
@@ -278,7 +278,7 @@ describe("기기 경로 /api/v1/push/capabilities·devices", () => {
   const ANDROID = { platform: "android", token: "fcm-token-route", appId: "chat.dodok.android" };
 
   beforeAll(async () => {
-    app = await bootTestApp({}, { pushCapabilities: { webpush: true, ios: false, android: true } });
+    app = await bootTestApp({}, { pushTransports: { fcm: noExternalTransport("fcm") } });
     a = { id: app.ownerUserId, headers: (await login(app)).headers };
     b = await secondUser(app, "cee");
   });
@@ -300,14 +300,14 @@ describe("기기 경로 /api/v1/push/capabilities·devices", () => {
     });
   const devices = () => app.db.select().from(pushDevices).all();
 
-  it("GET /capabilities 는 주입한 능력을 돌려주고, 로그인 없으면 401", async () => {
+  it("GET /capabilities 는 붙은 통로로 정해진 능력(fcm 만 주입 → android)을 돌려주고, 로그인 없으면 401", async () => {
     const res = await call(a, "GET", "/capabilities");
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ webpush: true, ios: false, android: true });
     expect((await call(undefined, "GET", "/capabilities")).statusCode).toBe(401);
   });
 
-  it("앱 기본 능력은 웹 푸시만 켜져 있다", async () => {
+  it("통로를 주입하지 않은 앱은 웹 푸시만 켜져 있다", async () => {
     const plain = await bootTestApp();
     try {
       const res = await plain.fastify.inject({
@@ -318,6 +318,34 @@ describe("기기 경로 /api/v1/push/capabilities·devices", () => {
       expect(res.json()).toEqual({ webpush: true, ios: false, android: false });
     } finally {
       await plain.close();
+    }
+  });
+
+  it("apns 통로만 붙은 앱은 ios 만 켜지고 iOS 등록을 받는다 — webpush 를 덮어도 웹 푸시는 켜진 채", async () => {
+    const iosOnly = await bootTestApp(
+      {},
+      { pushTransports: { webpush: noExternalTransport("webpush"), apns: noExternalTransport("apns") } },
+    );
+    try {
+      const { headers } = await login(iosOnly);
+      const caps = await iosOnly.fastify.inject({ method: "GET", url: "/api/v1/push/capabilities", headers });
+      expect(caps.json()).toEqual({ webpush: true, ios: true, android: false });
+      const ios = await iosOnly.fastify.inject({
+        method: "POST",
+        url: "/api/v1/push/devices",
+        headers,
+        payload: IOS,
+      });
+      expect(ios.statusCode).toBe(200);
+      const android = await iosOnly.fastify.inject({
+        method: "POST",
+        url: "/api/v1/push/devices",
+        headers,
+        payload: ANDROID,
+      });
+      expect(android.json()).toMatchObject({ code: "PUSH_UNAVAILABLE" });
+    } finally {
+      await iosOnly.close();
     }
   });
 

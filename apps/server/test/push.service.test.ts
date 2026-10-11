@@ -13,11 +13,20 @@ import {
   createTriggerLookups,
   deleteSubscriptionById,
   listSubscriptions,
-  type PushSend,
   pushTopic,
   upsertSubscription,
-  webPushSender,
 } from "../src/modules/push/service";
+import type {
+  DeviceTarget,
+  PushNotification,
+  PushTransport,
+  PushTransports,
+  TransportResult,
+  WebTarget,
+} from "../src/modules/push/transports/types";
+import { type PushSend, webPushSender, webPushTransport } from "../src/modules/push/transports/webpush";
+import type { OpsRecordInput } from "../src/modules/ops/service";
+import { listDevices, upsertDevice } from "../src/modules/push/devices";
 import { deleteAutomation, insertAutomation } from "../src/modules/automations/store";
 import { ServerBus } from "../src/realtime/bus";
 import type { PushTarget } from "../src/modules/push/triggers";
@@ -155,7 +164,14 @@ describe("createPushDispatcher — 발송·거르기·결과 분기(스펙 5.3·
     calls.push(call);
     return respond(call);
   };
-  const dispatcher = () => createPushDispatcher({ db, logger: cap.logger, send, presence });
+  const dispatcher = () =>
+    createPushDispatcher({
+      db,
+      logger: cap.logger,
+      transports: { webpush: webPushTransport(send) },
+      presence,
+      ops: { record: () => null },
+    });
   const endpoints = (userId: string) =>
     listSubscriptions(db, userId)
       .map((s) => s.endpoint)
@@ -248,11 +264,18 @@ describe("createPushDispatcher — 발송·거르기·결과 분기(스펙 5.3·
 
     const sent = cap.lines.filter((l) => l.msg === "push sent");
     expect(sent).toHaveLength(1); // bob 의 구독 하나
-    expect(sent[0]).toMatchObject({ level: 20, statusCode: 201, userId: bob, kind: "mention" });
+    expect(sent[0]).toMatchObject({
+      level: 20,
+      result: "ok",
+      transport: "webpush",
+      userId: bob,
+      kind: "mention",
+    });
     expect(fieldsOf(sent[0] as Record<string, unknown>)).toEqual([
       "kind",
-      "statusCode",
+      "result",
       "subscriptionId",
+      "transport",
       "userId",
     ]);
     expect(cap.lines).toHaveLength(2);
@@ -292,7 +315,12 @@ describe("createPushDispatcher — 발송·거르기·결과 분기(스펙 5.3·
       expect(endpoints(bob)).toEqual([EP_B]);
       const errors = cap.lines.filter((l) => l.level === 50);
       expect(errors).toHaveLength(1);
-      expect(errors[0]).toMatchObject({ statusCode, userId: bob, kind: "mention" });
+      expect(errors[0]).toMatchObject({
+        result: "rejected",
+        transport: "webpush",
+        userId: bob,
+        kind: "mention",
+      });
       expect(cap.lines.filter((l) => l.level === 40)).toEqual([]);
     }
   });
@@ -398,7 +426,7 @@ describe("createPushDispatcher — 발송·거르기·결과 분기(스펙 5.3·
   });
 
   it("[리뷰 m1] 발송 경로의 로그는 분기마다 정해진 필드만 싣는다(오류 객체·페이로드·keys·endpoint 없음)", async () => {
-    const SUB = ["kind", "subscriptionId", "userId"];
+    const SUB = ["kind", "subscriptionId", "transport", "userId"];
     const cases: Array<{
       name: string;
       respond: () => Promise<{ statusCode: number }>;
@@ -411,21 +439,21 @@ describe("createPushDispatcher — 발송·거르기·결과 분기(스펙 5.3·
         respond: async () => ({ statusCode: 410 }),
         level: 30,
         msg: "push subscription gone — removed",
-        fields: [...SUB, "statusCode"],
+        fields: [...SUB, "result"],
       },
       {
         name: "403",
         respond: async () => ({ statusCode: 403 }),
         level: 50,
         msg: "push rejected",
-        fields: [...SUB, "statusCode"],
+        fields: [...SUB, "result"],
       },
       {
         name: "500",
         respond: async () => ({ statusCode: 500 }),
         level: 40,
         msg: "push send failed",
-        fields: [...SUB, "statusCode"],
+        fields: [...SUB, "result"],
       },
       {
         name: "던짐",
@@ -467,7 +495,8 @@ describe("createPushDispatcher — 발송·거르기·결과 분기(스펙 5.3·
     const d = createPushDispatcher({
       db,
       logger: cap.logger,
-      send,
+      transports: { webpush: webPushTransport(send) },
+      ops: { record: () => null },
       presence: {
         isWatching: () => {
           throw leaky;
@@ -510,6 +539,244 @@ describe("createPushDispatcher — 발송·거르기·결과 분기(스펙 5.3·
     release?.();
     await pending;
     await d.drain(5_000); // 비었으면 바로
+  });
+});
+
+describe("webPushTransport — 상태 코드 → 결과(스펙 「통로」 장 webpush 줄)", () => {
+  const target = { kind: "web" as const, id: "s1", endpoint: "https://push.invalid/x", keys: KEYS_A };
+  const n = { payload: mention(), urgency: "high" as const };
+
+  it("발송기에 endpoint·keys, JSON 본문, TTL·urgency·topic 을 넘긴다", async () => {
+    const calls: unknown[] = [];
+    await webPushTransport(async (...args) => {
+      calls.push(args);
+      return { statusCode: 201 };
+    }).send(target, n);
+    expect(calls).toEqual([
+      [
+        { endpoint: target.endpoint, keys: KEYS_A },
+        JSON.stringify(mention()),
+        { TTL: 3600, urgency: "high", topic: pushTopic(`mention:${CH}`) },
+      ],
+    ]);
+  });
+
+  it.each([
+    [200, "ok"],
+    [201, "ok"],
+    [299, "ok"],
+    [404, "gone"],
+    [410, "gone"],
+    [400, "rejected"],
+    [403, "rejected"],
+    [413, "rejected"],
+    [401, "retry"],
+    [429, "retry"],
+    [500, "retry"],
+    [503, "retry"],
+  ] as const)("%i → %s", async (statusCode, result) => {
+    await expect(webPushTransport(async () => ({ statusCode })).send(target, n)).resolves.toBe(result);
+  });
+
+  it("발송기가 던지면 그대로 던지고, 기기 대상은 받지 않는다", async () => {
+    const boom = webPushTransport(async () => {
+      throw new Error("socket hang up");
+    });
+    await expect(boom.send(target, n)).rejects.toThrow("socket hang up");
+    const device = { kind: "device" as const, id: "d", platform: "ios" as const, token: "t", appId: "a" };
+    await expect(webPushTransport(async () => ({ statusCode: 201 })).send(device, n)).rejects.toThrow();
+  });
+});
+
+describe("createPushDispatcher — 기기 통로(apns·fcm)", () => {
+  const IOS_TOKEN = "ab".repeat(32);
+  const ANDROID_TOKEN = "fcm-registration-token-secret";
+  let db: Db;
+  let alice: string;
+  let cap: ReturnType<typeof captureLogger>;
+  let presence: ReturnType<typeof createPresence>;
+  let sent: Array<{ transport: string; target: WebTarget | DeviceTarget; n: PushNotification }>;
+  let results: Partial<Record<string, () => Promise<TransportResult>>>;
+  let recorded: OpsRecordInput[];
+
+  const fake = (kind: "webpush" | "apns" | "fcm"): PushTransport => ({
+    kind,
+    send: (target, n) => {
+      sent.push({ transport: kind, target, n });
+      return results[kind]?.() ?? Promise.resolve("ok");
+    },
+  });
+  const dispatcher = (
+    transports: PushTransports = { webpush: fake("webpush"), apns: fake("apns"), fcm: fake("fcm") },
+  ) =>
+    createPushDispatcher({
+      db,
+      logger: cap.logger,
+      transports,
+      presence,
+      ops: {
+        record: (input) => {
+          recorded.push(input);
+          return null;
+        },
+      },
+    });
+  const tokens = () =>
+    listDevices(db, alice)
+      .map((d) => d.token)
+      .sort();
+
+  beforeEach(() => {
+    db = newTestDb();
+    alice = seedWorkspace(db, { userHandle: "alice" }).userId;
+    upsertSubscription(db, seedSession(db, alice), { endpoint: EP_A1, keys: KEYS_A });
+    upsertDevice(
+      db,
+      alice,
+      seedSession(db, alice).sessionId,
+      { platform: "ios", token: IOS_TOKEN, appId: "chat.dodok.app", environment: "sandbox" },
+      new Date(),
+    );
+    upsertDevice(
+      db,
+      alice,
+      seedSession(db, alice).sessionId,
+      { platform: "android", token: ANDROID_TOKEN, appId: "chat.dodok.android" },
+      new Date(),
+    );
+    cap = captureLogger();
+    presence = createPresence();
+    sent = [];
+    results = {};
+    recorded = [];
+  });
+
+  it("웹 구독은 webpush, iOS 기기는 apns, Android 기기는 fcm 으로 — 대상에는 기기 행의 값, 승인은 urgency high", async () => {
+    const approval: PushPayload = { ...mention(), kind: "approval", tag: `approval:${OTHER}` };
+    await dispatcher().dispatch([{ userId: alice, payload: approval }]);
+    const by = (t: string) => sent.find((x) => x.transport === t);
+    expect(sent).toHaveLength(3);
+    expect(by("webpush")?.target).toMatchObject({ kind: "web", endpoint: EP_A1, keys: KEYS_A });
+    expect(by("apns")?.target).toEqual({
+      kind: "device",
+      id: expect.any(String),
+      platform: "ios",
+      token: IOS_TOKEN,
+      appId: "chat.dodok.app",
+      environment: "sandbox",
+    });
+    expect(by("fcm")?.target).toEqual({
+      kind: "device",
+      id: expect.any(String),
+      platform: "android",
+      token: ANDROID_TOKEN,
+      appId: "chat.dodok.android",
+    });
+    for (const x of sent) expect(x.n).toEqual({ payload: approval, urgency: "high" });
+  });
+
+  it("그 채널을 보고 있으면 기기에도 보내지 않는다", async () => {
+    presence.set("s1", alice, { visible: true, channelId: CH });
+    await dispatcher().dispatch([{ userId: alice, payload: mention(CH) }]);
+    expect(sent).toEqual([]);
+  });
+
+  it("gone → 그 기기 행만 지운다(다른 기기·웹 구독은 남는다), info", async () => {
+    results.apns = async () => "gone";
+    await dispatcher().dispatch([{ userId: alice, payload: mention() }]);
+    expect(tokens()).toEqual([ANDROID_TOKEN]);
+    expect(listSubscriptions(db, alice).map((x) => x.endpoint)).toEqual([EP_A1]);
+    const gone = cap.lines.filter((l) => l.msg === "push device gone — removed");
+    expect(gone).toHaveLength(1);
+    expect(gone[0]).toMatchObject({
+      level: 30,
+      transport: "apns",
+      result: "gone",
+      userId: alice,
+      kind: "mention",
+    });
+  });
+
+  it("credentials → 기기는 남고 운영 사건 push_credentials_invalid(key push:<통로>), error", async () => {
+    results.apns = async () => "credentials";
+    results.fcm = async () => "credentials";
+    await dispatcher().dispatch([{ userId: alice, payload: mention() }]);
+    expect(tokens()).toEqual([ANDROID_TOKEN, IOS_TOKEN].sort());
+    expect([...recorded].sort((x, y) => x.key.localeCompare(y.key))).toEqual([
+      { kind: "push_credentials_invalid", key: "push:apns", severity: "error" },
+      { kind: "push_credentials_invalid", key: "push:fcm", severity: "error" },
+    ]);
+    const errors = cap.lines.filter((l) => l.msg === "push credentials rejected");
+    expect(errors.map((l) => l.transport).sort()).toEqual(["apns", "fcm"]);
+    for (const l of errors) expect(l.level).toBe(50);
+  });
+
+  it("rejected → error, retry·던짐 → warn — 기기는 남고 사건은 없다", async () => {
+    for (const [outcome, level] of [
+      [async () => "rejected" as const, 50],
+      [async () => "retry" as const, 40],
+      [
+        async (): Promise<TransportResult> => {
+          throw new Error("ECONNRESET");
+        },
+        40,
+      ],
+    ] as const) {
+      cap = captureLogger();
+      results.apns = outcome;
+      await dispatcher().dispatch([{ userId: alice, payload: mention() }]);
+      expect(tokens()).toEqual([ANDROID_TOKEN, IOS_TOKEN].sort());
+      const apnsLines = cap.lines.filter((l) => l.transport === "apns");
+      expect(apnsLines).toHaveLength(1);
+      expect(apnsLines[0]?.level).toBe(level);
+    }
+    expect(recorded).toEqual([]);
+  });
+
+  it("그 플랫폼 통로가 꺼져 있으면 그 기기는 건너뛰고 debug — 행은 남고 다른 통로로는 보낸다", async () => {
+    await dispatcher({ webpush: fake("webpush"), fcm: fake("fcm") }).dispatch([
+      { userId: alice, payload: mention() },
+    ]);
+    expect(sent.map((x) => x.transport).sort()).toEqual(["fcm", "webpush"]);
+    expect(tokens()).toEqual([ANDROID_TOKEN, IOS_TOKEN].sort());
+    const skipped = cap.lines.filter((l) => l.msg === "push skipped — transport off");
+    expect(skipped).toHaveLength(1);
+    expect(skipped[0]).toMatchObject({ level: 20, userId: alice, kind: "mention" });
+    expect(fieldsOf(skipped[0] as Record<string, unknown>)).toEqual(["deviceId", "kind", "userId"]);
+  });
+
+  it("로그에는 정해진 필드만 — token·endpoint·keys 키도, 토큰·endpoint 값도 없다", async () => {
+    for (const r of ["ok", "gone", "rejected", "credentials", "retry"] as const) {
+      results.apns = async () => r;
+      results.fcm = async () => r;
+      await dispatcher().dispatch([{ userId: alice, payload: mention() }]);
+      upsertDevice(
+        db,
+        alice,
+        seedSession(db, alice).sessionId,
+        { platform: "ios", token: IOS_TOKEN, appId: "chat.dodok.app", environment: "sandbox" },
+        new Date(),
+      );
+      upsertDevice(
+        db,
+        alice,
+        seedSession(db, alice).sessionId,
+        { platform: "android", token: ANDROID_TOKEN, appId: "chat.dodok.android" },
+        new Date(),
+      );
+    }
+    const deviceLines = cap.lines.filter((l) => l.deviceId !== undefined);
+    expect(deviceLines.length).toBe(10);
+    for (const l of deviceLines) {
+      expect(fieldsOf(l)).toEqual(["deviceId", "kind", "result", "transport", "userId"]);
+    }
+    for (const l of cap.lines) {
+      for (const key of ["token", "endpoint", "keys", "payload", "err"]) expect(l[key]).toBeUndefined();
+    }
+    const all = cap.raw.join("\n");
+    for (const secret of [IOS_TOKEN, IOS_TOKEN.slice(0, 16), ANDROID_TOKEN, EP_A1, KEYS_A.p256dh, BODY]) {
+      expect(all).not.toContain(secret);
+    }
   });
 });
 

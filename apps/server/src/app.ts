@@ -1,6 +1,6 @@
 import { BridgeAuthGuard, createOpenClawAdapter } from "@dodok/openclaw-adapter";
 import { createRunnerAdapter, type RunnerAdapter, type RunnerTokenVerifier } from "@dodok/runner-adapter";
-import type { AdapterStatus, ApiError, GatewayLinkState, PushCapabilities } from "@dodok/shared";
+import type { AdapterStatus, ApiError, GatewayLinkState } from "@dodok/shared";
 import cookie from "@fastify/cookie";
 import rateLimit from "@fastify/rate-limit";
 import { sql } from "drizzle-orm";
@@ -62,9 +62,10 @@ import {
   attachPushTriggers,
   createPushDispatcher,
   createTriggerLookups,
-  type PushSend,
-  webPushSender,
+  pushCapabilities,
 } from "./modules/push/service";
+import type { PushTransports } from "./modules/push/transports/types";
+import { type PushSend, webPushSender, webPushTransport } from "./modules/push/transports/webpush";
 import { loadVapidKeys } from "./modules/push/vapid";
 import type { Orchestrator, RunTimeouts } from "./modules/runs/orchestrator";
 import { registerRunnerRoutes, runnerServerUrl } from "./modules/runners/routes";
@@ -121,10 +122,13 @@ export type AppDeps = {
   sessionSweepIntervalMs?: number;
   /** 예약 자동화 틱 주기(기본 AUTOMATION_TICK_INTERVAL_MS) — 테스트가 낮추거나 부팅 틱만 보려고 늘린다 */
   automationTickMs?: number;
-  /** 웹 푸시 발송기(기본은 VAPID 키로 만든 실제 web-push). 테스트는 가짜를 준다 — 밖으로 보내지 않게 */
+  /** 웹 푸시 통로 안의 발송기(기본은 VAPID 키로 만든 실제 web-push). 테스트·dev:fake 는 가짜를 준다 — 밖으로 보내지 않게 */
   pushSend?: PushSend;
-  /** 푸시 통로 능력 덮기(테스트 전용) — 통로가 생기는 태스크 3~5 전까지 웹 푸시만 켜져 있다 */
-  pushCapabilities?: PushCapabilities;
+  /**
+   * 푸시 통로 덮기 — 준 통로가 앱이 만들 통로를 이긴다. 능력(`GET /push/capabilities`)은 붙은 통로로 정해지므로 테스트는
+   * iOS off·Android on 같은 조합을 여기서 만든다. webpush 를 주지 않으면 pushSend 로 만든 웹 푸시 통로를 쓴다
+   */
+  pushTransports?: PushTransports;
   /** 품은 플러그인 tgz 를 찾을 디렉터리(기본 pluginDirCandidates) — 테스트가 임시 디렉터리나 []를 준다 */
   pluginDirs?: string[];
   /**
@@ -508,12 +512,27 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
         { vapidSubject: config.vapid.subject },
         "VAPID subject is a local placeholder — Apple Push rejects it (403 BadJwtToken)",
       );
+    // 통로(네이티브 푸시 스펙 「통로」 장) — 웹 푸시는 VAPID 키가 늘 있으니 늘 켜진다
+    const pushTransports: PushTransports = {
+      ...deps.pushTransports,
+      webpush:
+        deps.pushTransports?.webpush ??
+        webPushTransport(
+          deps.pushSend ??
+            webPushSender({
+              subject: config.vapid.subject,
+              publicKey: vapid.publicKey,
+              privateKey: vapid.privateKey,
+            }),
+        ),
+    };
+    const capabilities = pushCapabilities(pushTransports);
     registerPushRoutes(fastify, {
       auth,
       db,
       workspaceId,
       publicKey: vapid.publicKey,
-      capabilities: () => deps.pushCapabilities ?? { webpush: true, ios: false, android: false },
+      capabilities: () => capabilities,
     });
     const sweeper = startAttachmentSweeper(
       () =>
@@ -702,18 +721,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     const runFailures = watchRunFailures(bus, ops);
     undo.push({ step: "run-failures", run: () => runFailures.close() });
     // 푸시(스펙 5.2~5.4): 버스 → 트리거 → 보고 있으면 거르기 → 발송. 발송은 버스 처리기를 막지 않는다
-    const pushDispatcher = createPushDispatcher({
-      db,
-      logger,
-      presence,
-      send:
-        deps.pushSend ??
-        webPushSender({
-          subject: config.vapid.subject,
-          publicKey: vapid.publicKey,
-          privateKey: vapid.privateKey,
-        }),
-    });
+    const pushDispatcher = createPushDispatcher({ db, logger, presence, transports: pushTransports, ops });
     const pushTriggers = attachPushTriggers(
       bus,
       pushDispatcher,

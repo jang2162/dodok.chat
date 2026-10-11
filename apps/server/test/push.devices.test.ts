@@ -146,4 +146,27 @@ describe("푸시 기기 저장소", () => {
         .map((r) => r.token),
     ).toEqual(["tok-B"]);
   });
+
+  it("세션당 1행은 세션 단위다 — 같은 사용자의 다른 세션 기기는 남는다", async () => {
+    const s1 = await newSession(a.id);
+    const s2 = await newSession(a.id);
+    upsertDevice(app.db, a.id, s1, { ...ANDROID, token: "tok-S1" }, new Date(1));
+    upsertDevice(app.db, a.id, s2, { ...ANDROID, token: "tok-S2" }, new Date(2));
+    expect(rowOf("tok-S1")).toMatchObject({ userId: a.id, sessionId: s1 });
+    expect(rowOf("tok-S2")).toMatchObject({ userId: a.id, sessionId: s2 });
+    expect(listDevices(app.db, a.id).map((d) => d.token)).toEqual(
+      expect.arrayContaining(["tok-S1", "tok-S2"]),
+    );
+  });
+
+  it("upsert 가 던지면 그 세션의 옛 행을 지운 것도 되돌린다 — 세션의 기기가 0개로 남지 않는다", async () => {
+    const sid = await newSession(a.id);
+    upsertDevice(app.db, a.id, sid, { ...ANDROID, token: "tok-keep" }, new Date(1));
+    // 없는 사용자 → user_id 외래 키로 insert 가 던진다(지우기는 그 앞에서 이미 돌았다)
+    expect(() =>
+      upsertDevice(app.db, "no-such-user", sid, { ...ANDROID, token: "tok-fail" }, new Date(2)),
+    ).toThrow();
+    expect(rowOf("tok-keep")).toMatchObject({ userId: a.id, sessionId: sid });
+    expect(rowOf("tok-fail")).toBeUndefined();
+  });
 });

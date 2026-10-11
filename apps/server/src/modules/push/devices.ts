@@ -20,29 +20,39 @@ export function upsertDevice(
   now: Date,
 ): PushDeviceRow {
   const environment = input.platform === "ios" ? input.environment : null;
-  // 세션당 기기 1행(PN5) — 토큰이 돌았거나 거절된 옛 토큰이 세션에 쌓이지 않게
-  db.delete(pushDevices)
-    .where(and(eq(pushDevices.sessionId, sessionId), ne(pushDevices.token, input.token)))
-    .run();
-  return db
-    .insert(pushDevices)
-    .values({
-      id: uuidv7(),
-      userId,
-      sessionId,
-      platform: input.platform,
-      token: input.token,
-      appId: input.appId,
-      environment,
-      createdAt: now,
-      lastSeenAt: now,
-    })
-    .onConflictDoUpdate({
-      target: pushDevices.token,
-      set: { userId, sessionId, platform: input.platform, appId: input.appId, environment, lastSeenAt: now },
-    })
-    .returning()
-    .get();
+  // 지우기와 upsert 를 한 트랜잭션으로 — upsert 가 던졌을 때 그 세션의 옛 행까지 사라져 기기가 0개로 남지 않게
+  return db.transaction((tx) => {
+    // 세션당 기기 1행(PN5) — 토큰이 돌았거나 거절된 옛 토큰이 세션에 쌓이지 않게
+    tx.delete(pushDevices)
+      .where(and(eq(pushDevices.sessionId, sessionId), ne(pushDevices.token, input.token)))
+      .run();
+    return tx
+      .insert(pushDevices)
+      .values({
+        id: uuidv7(),
+        userId,
+        sessionId,
+        platform: input.platform,
+        token: input.token,
+        appId: input.appId,
+        environment,
+        createdAt: now,
+        lastSeenAt: now,
+      })
+      .onConflictDoUpdate({
+        target: pushDevices.token,
+        set: {
+          userId,
+          sessionId,
+          platform: input.platform,
+          appId: input.appId,
+          environment,
+          lastSeenAt: now,
+        },
+      })
+      .returning()
+      .get();
+  });
 }
 
 /** 세션 사용자의 것만 지운다 — 남의 토큰·없는 토큰은 아무 일도 없다(멱등) */

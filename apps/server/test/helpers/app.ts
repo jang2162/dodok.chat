@@ -6,7 +6,8 @@ import { hasGateways } from "../../src/adapters/types";
 import { type App, type AppDeps, createApp } from "../../src/app";
 import { loadConfig } from "../../src/config";
 import { memberships, users } from "../../src/db/schema.sqlite";
-import type { PushSend } from "../../src/modules/push/service";
+import type { PushTransport, TransportKind } from "../../src/modules/push/transports/types";
+import type { PushSend } from "../../src/modules/push/transports/webpush";
 import { v7 as uuid } from "uuid";
 import { testEnv } from "./env";
 import { insertGateway } from "./gateways";
@@ -16,6 +17,11 @@ import { insertGateway } from "./gateways";
  * 실제 web-push 가 돌지 않게 bootTestApp·bootLiveApp 이 deps.pushSend 가 없을 때 넣는다
  */
 export const noExternalPush: PushSend = async () => ({ statusCode: 201 });
+
+/** 아무 데도 보내지 않고 ok 를 내는 통로 — 붙어 있기만 하면 능력이 켜지므로 네이티브 통로의 능력을 켜는 테스트가 쓴다 */
+export function noExternalTransport(kind: TransportKind): PushTransport {
+  return { kind, send: async () => "ok" };
+}
 
 /**
  * 테스트 앱의 기본 디스크 측정 — 여유 넉넉(ok). testEnv 의 DATA_DIR 은 없는 경로라 실제 statfs 면 앱마다 「disk check failed」
