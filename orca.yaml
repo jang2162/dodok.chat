@@ -1,0 +1,14 @@
+# Orca 워크트리 셋업 — 앱의 저장소 설정에서 스크립트 출처를 orca.yaml 로 맞춰야 돈다.
+# 같은 단계를 scripts/orca-worker.sh 의 verify_setup 도 밟는다(셋업이 안 돈 워크트리를 위한 사후 보정, 멱등).
+scripts:
+  setup: |
+    set -e
+    # 런타임부터 — mise.toml 이 신뢰되기 전에는 다른 node 가 잡혀 의존성이 엉뚱한 런타임으로 깔린다
+    mise trust "$ORCA_WORKTREE_PATH/mise.toml"
+    mise install
+    mise exec -- pnpm install --frozen-lockfile
+    # CLAUDE.md·.mcp.json·.claude/skills 는 gitignore 된 ruler 생성물이라 새 워크트리에 없다
+    mise exec -- pnpm exec ruler apply
+    # .env 는 gitignore 라 따라오지 않는다. data/ 는 복사하지 않는다(워크트리마다 따로)
+    if [ -f "$ORCA_ROOT_PATH/.env" ]; then cp "$ORCA_ROOT_PATH/.env" "$ORCA_WORKTREE_PATH/.env"; fi
+setupAgentStartupPolicy: wait-for-setup
