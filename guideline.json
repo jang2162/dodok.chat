@@ -36,6 +36,7 @@
         "rules/browseros-neo/03-tabs.md",
         "rules/browseros-neo/SETUP.md",
         "rules/codegraph/00-index.md",
+        "rules/codegraph/01-orca-setup.md",
         "rules/codegraph/SETUP.md",
         "rules/komodo/00-stack.md",
         "rules/komodo/01-environment.md",

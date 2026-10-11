@@ -32,6 +32,7 @@
     "default:rules/browseros-neo/03-tabs.md": "5ef01cc4bffdc79f36b1fa3c319547c72eb62717d89d55124ef767f5b93aa1d4",
     "default:rules/browseros-neo/SETUP.md": "b7376822d2ad4eae0857a1654bc5ddf6c1304c75ec2c898097c4362f0d46a80f",
     "default:rules/codegraph/00-index.md": "dfb04e418ad4e592a161c6cc0d895ba534c7191106b3945d91f4c29dde211f8e",
+    "default:rules/codegraph/01-orca-setup.md": "02b018ad80d5b31cf8269fde51afdafdf34e9a4d07a5d0e32d69e0498d10a5b6",
     "default:rules/codegraph/SETUP.md": "3ce9d694c54a14d50a99af943df5764dc228fc2f3d5a5e61358bc6143d808d96",
     "default:rules/komodo/00-stack.md": "04b890d44b989d472a1d3db2ccca17489b67223b7ff97ee3b094ba9765d729ba",
     "default:rules/komodo/01-environment.md": "780196b6c9aac72d48ccfb0fd1454cad16cc4bb160afd68ce52a555531b349c8",
@@ -119,7 +120,7 @@
     {
       "path": ".ruler/codegraph/99-reference.md",
       "items": [],
-      "hash": "338cea68681c304d07155989b3bcbc4cce3b3198517ba515c9e003270f1d716d"
+      "hash": "47844b2dd5a5d68b161eb86cec7032fef17a8ed0ccdb4ddf938d628c4b3e8e10"
     },
     {
       "path": ".ruler/guideline.md",
@@ -406,6 +407,13 @@
         "default:rules/codegraph/00-index.md"
       ],
       "hash": "39ecf3d50fb4c01657ff29bb359407bc1064104a7e9ce3dfb68c786b95882672"
+    },
+    {
+      "path": "docs/guideline/codegraph/01-orca-setup.md",
+      "items": [
+        "default:rules/codegraph/01-orca-setup.md"
+      ],
+      "hash": "1bc0adc0ee3dd54cb10421a11e4772f2b11bfca7c5ab65670179e25f2f1c2f70"
     },
     {
       "path": "docs/guideline/codegraph/SETUP.md",
