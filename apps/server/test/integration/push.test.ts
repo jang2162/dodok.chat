@@ -316,6 +316,7 @@ describe("통합 시나리오 12 — 푸시 트리거·거르기·발송", () =>
     live.app.bus.emit("message.created", { message: reply });
     await new Promise((r) => setTimeout(r, 20));
     expect(sent).toHaveLength(1);
-    expect(lines.filter((l) => l.msg?.startsWith("push"))).toEqual([]);
+    // 부팅 때 통로마다 남기는 「push transport <통로>: on|off(…)」 줄은 발송 로그가 아니다
+    expect(lines.filter((l) => l.msg?.startsWith("push") && !l.msg.startsWith("push transport"))).toEqual([]);
   });
 });

@@ -37,6 +37,11 @@ const Raw = z.object({
       "mailto: 또는 https:// 로 시작해야 한다",
     )
     .default("mailto:dodok@localhost"),
+  // FCM 서비스 계정 JSON 경로(없으면 DATA_DIR/fcm/service-account.json — 스펙 「자격 증명·설정」 장)
+  FCM_SERVICE_ACCOUNT_PATH: z.string().min(1).optional(),
+  // 테스트·개발 전용 — 통합 테스트가 가짜 FCM 으로 돌린다. 운영 문서에는 싣지 않는다(계획 판정 PN3)
+  FCM_HOST: z.url().optional(),
+  FCM_TOKEN_URI: z.url().optional(),
 });
 
 export type ServerConfig = z.infer<typeof Raw> & {

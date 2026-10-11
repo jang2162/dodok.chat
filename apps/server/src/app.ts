@@ -56,6 +56,7 @@ import { registerOpsRoutes } from "./modules/ops/routes";
 import { getOpsSettings } from "./modules/ops/settings";
 import { providersWithAgents } from "./modules/ops/summary";
 import type { OpsService } from "./modules/ops/service";
+import { loadFcmCredentials } from "./modules/push/fcm-credentials";
 import { createPresence } from "./modules/push/presence";
 import { registerPushRoutes } from "./modules/push/routes";
 import {
@@ -64,6 +65,7 @@ import {
   createTriggerLookups,
   pushCapabilities,
 } from "./modules/push/service";
+import { fcmTransport } from "./modules/push/transports/fcm";
 import type { PushTransports } from "./modules/push/transports/types";
 import { type PushSend, webPushSender, webPushTransport } from "./modules/push/transports/webpush";
 import { loadVapidKeys } from "./modules/push/vapid";
@@ -513,8 +515,26 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
         "VAPID subject is a local placeholder — Apple Push rejects it (403 BadJwtToken)",
       );
     // 통로(네이티브 푸시 스펙 「통로」 장) — 웹 푸시는 VAPID 키가 늘 있으니 늘 켜진다
+    let fcm = deps.pushTransports?.fcm;
+    if (fcm === undefined) {
+      const credentials = loadFcmCredentials({
+        dataDir: config.DATA_DIR,
+        path: config.FCM_SERVICE_ACCOUNT_PATH,
+      });
+      if ("off" in credentials) logger.info(`push transport fcm: off(${credentials.off})`);
+      else {
+        logger.info("push transport fcm: on");
+        fcm = fcmTransport({
+          credentials,
+          host: config.FCM_HOST,
+          tokenUri: config.FCM_TOKEN_URI,
+          logger,
+        });
+      }
+    }
     const pushTransports: PushTransports = {
       ...deps.pushTransports,
+      ...(fcm === undefined ? {} : { fcm }),
       webpush:
         deps.pushTransports?.webpush ??
         webPushTransport(
