@@ -44,7 +44,7 @@ dodok.chat/
 │  ├─ settings.json           # SessionStart·UserPromptSubmit 훅 등록
 │  ├─ hooks/node-env.sh       # SessionStart: mise 가 핀한 Node·pnpm 을 Bash 도구 PATH 앞에 (비대화형 셸은 mise activate 훅이 안 돈다)
 │  └─ hooks/orca-worker-check.sh   # 미정리 워커·워크트리 현황을 세션에 알림
-├─ orca.yaml                 # Orca 워크트리 셋업(mise·pnpm install·ruler apply·.env 복사, wait-for-setup) — 커밋된 것만 돈다
+├─ orca.yaml                 # Orca 워크트리 셋업(mise·pnpm install·ruler apply·.env 복사·codegraph init, wait-for-setup) — 커밋된 것만 돈다
 ├─ .worktrees/dodok.chat/     # Orca 워크트리 자리 — git 제외 (docs/guides/worktree-workflow.md)
 ├─ data/                      # 런타임 데이터 (SQLite, 첨부 블롭 attachments/, 디바이스 아이덴티티, VAPID 키 vapid.json) — git 제외
 ├─ README.md                  # 저장소 첫 화면 — 소개·구성 그림·빠른 시작(dev:fake / deploy.md 로)·문서 지도. 설치 단계는 옮겨 적지 않는다

@@ -1336,6 +1336,12 @@ cat > "$S2/bin/pnpm" <<'PNPMEOF'
 printf 'pnpm %s\n' "$*" >> "$SETUP_LOG"
 PNPMEOF
 chmod +x "$S2/bin/pnpm"
+# 진짜 codegraph 가 PATH 에 있으면 앞의 호출이 임시 디렉터리를 실제로 색인해 .codegraph/ 를 만들어 버린다
+cat > "$S2/bin/codegraph" <<'CGEOF'
+#!/bin/bash
+printf 'codegraph %s\n' "$*" >> "$SETUP_LOG"
+CGEOF
+chmod +x "$S2/bin/codegraph"
 SETUP_LOG="$S2/setup.log"; export SETUP_LOG
 : > "$SETUP_LOG"
 OLDPATH="$PATH"; PATH="$S2/bin:$PATH"; export PATH
@@ -1354,6 +1360,15 @@ mkdir -p "$S2/wt/.ruler"
 verify_setup "$S2/wt" >/dev/null 2>&1
 assert_eq "$(grep -c 'pnpm exec ruler apply' "$SETUP_LOG")" "1" \
   ".ruler/ 가 있으면 ruler apply 로 CLAUDE.md 를 만든다(gitignore 생성물이라 새 워크트리에 없다)"
+: > "$SETUP_LOG"
+verify_setup "$S2/wt" >/dev/null 2>&1
+assert_eq "$(grep -c '^codegraph init' "$SETUP_LOG")" "1" \
+  ".codegraph/ 가 없으면 codegraph init 으로 인덱스를 만든다(gitignore 라 새 워크트리에 없다)"
+: > "$SETUP_LOG"
+mkdir -p "$S2/wt/.codegraph"
+verify_setup "$S2/wt" >/dev/null 2>&1
+assert_eq "$(grep -c '^codegraph init' "$SETUP_LOG")" "0" \
+  ".codegraph/ 가 이미 있으면 init 을 다시 돌리지 않는다"
 PATH="$OLDPATH"; export PATH
 unset SETUP_LOG
 rm -rf "$S2"

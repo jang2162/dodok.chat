@@ -370,7 +370,7 @@ orca worktree create --name <슬러그> --repo path:/Users/jang2162/IdeaProjects
 
 1. **Orca 가 곧바로 등록한다** — 반환 JSON 에 `id` 가 들어 있어 `orca worktree list --json` 으로 다시 찾을 필요가 없다.
    그 id 가 3절의 `worker-start --worktree id:<fullId>` 에 그대로 들어간다.
-2. **`--setup run` 이 저장소 루트 `orca.yaml` 의 셋업을 돌린다** — mise·의존성 설치·`ruler apply`·`.env` 복사(아래).
+2. **`--setup run` 이 저장소 루트 `orca.yaml` 의 셋업을 돌린다** — mise·의존성 설치·`ruler apply`·`.env` 복사·codegraph 인덱스(아래).
 3. `--agent` · `--prompt` 로 워크트리 생성과 워커 기동을 한 번에 할 수 있다(3절 참고).
 
 **다만 세 가지를 반드시 확인한다.**
@@ -468,7 +468,7 @@ git worktree add -b feat/<작업명> .worktrees/dodok.chat/<슬러그>
 cd .worktrees/dodok.chat/<슬러그>
 node -v                                   # 24.x 여야 한다 (mise.toml 핀; 아니면 export PATH="$(mise where node)/bin:$PATH")
 pnpm install                              # node_modules 는 워크트리마다 따로 필요하다
-scripts/orca-worker.sh sync-config .      # ruler apply(CLAUDE.md 등 생성물) + 최상위 .env 복사 (아래 Why 참고)
+scripts/orca-worker.sh sync-config .      # ruler apply(CLAUDE.md 등 생성물) + codegraph 인덱스 + 최상위 .env 복사 (아래 Why 참고)
 pnpm typecheck && pnpm test               # 기준선 확인 — Turbo 캐시는 꺼져 있다 (아래 참고)
 ```
 
