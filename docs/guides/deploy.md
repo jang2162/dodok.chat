@@ -352,7 +352,7 @@ iOS·Android **앱**(모바일 하위 프로젝트)에 알림을 보내려면 �
 1. Apple Developer → Certificates, Identifiers & Profiles → **Keys** → 「+」 → 이름을 정하고 **Apple Push Notifications service (APNs)** 를 체크해 만든다.
 2. **키 id**(10자)를 적어 두고 `.p8` 파일을 받는다. ⚠ **`.p8` 은 이때 한 번만 받을 수 있다.** 서버 백업(`node dist/backup.js`)은 이 파일을 담지 않으므로 저장소 밖 안전한 곳에 따로 둔다.
 3. **팀 id**(10자)는 Developer 계정 → Membership details 에 있다.
-4. 서버의 데이터 볼륨에 둔다. 컨테이너는 `node`(1000:1000)로 도니 파일이 그 사용자 몫이어야 읽힌다(`docker cp` 로 넣은 파일은 root 소유라 그대로는 부팅 로그가 `off(key unreadable)` 가 된다):
+4. 서버의 데이터 볼륨에 둔다. 컨테이너는 `node`(1000:1000)로 도니 파일이 그 사용자 몫이어야 읽힌다(`docker cp` 로 넣은 파일은 root 소유가 되고 권한 비트는 원본을 따른다 — 원본이 0600 이면 서버가 못 읽어 부팅 로그가 APNs 는 `off(key unreadable)`, FCM 은 `off(no service account)` 가 된다. 아래 `chown`·`chmod` 로 늘 맞춰 둔다):
    ```bash
    docker compose -f infra/compose.yml exec app mkdir -p /data/apns
    docker compose -f infra/compose.yml cp ./AuthKey_<키 id>.p8 app:/data/apns/key.p8
@@ -592,7 +592,7 @@ docker compose -f infra/compose.yml ps     # app·caddy (healthy)
 | 폰에 푸시가 안 옴(앱의 알림 설정이 꺼져 보임) | 푸시 구독은 등록한 세션에 묶인다 — 그 세션이 끝나면(로그아웃·비밀번호 변경·재설정·비활성화·30일 미사용 만료) 서버가 구독을 지우고, 웹도 401 을 보면 기기 구독을 해지한다 | 다시 로그인한 뒤 「설정」 → 「알림」 탭에서 「푸시 알림 켜기」 |
 | 폰에 푸시가 안 옴(iOS) | `VAPID_SUBJECT` 가 로컬 자리값이면 Apple 이 `403 BadJwtToken` — 서버 시작 로그에 warn 한 줄 | 실제 연락처로 바꾸고 `up -d` |
 | 백업 `백업 실패: …` exit 1 | 한 줄 사유(디스크 부족이면 부분 디렉터리는 지워진다) | 공간 확보 뒤 다시 |
-| 앱(iOS·Android)이 기기 등록에서 503 `PUSH_UNAVAILABLE` · 부팅 로그 `push transport apns: off(…)`·`fcm: off(…)` | 그 플랫폼의 자격 증명이 없거나 못 읽는다 — 사유가 고정 문구다(`no key`·`no key id`·`no team id`·`key unreadable`·`invalid key`·`invalid config`·`no service account`·`invalid service account`). `docker cp` 로 넣은 파일은 root 소유라 `key unreadable` 이 되기 쉽다 | 위 「네이티브 푸시 자격 증명」 절 그대로 파일을 놓고 소유자를 1000:1000 으로 맞춘 뒤 `up -d --force-recreate app` |
+| 앱(iOS·Android)이 기기 등록에서 503 `PUSH_UNAVAILABLE` · 부팅 로그 `push transport apns: off(…)`·`fcm: off(…)` | 그 플랫폼의 자격 증명이 없거나 못 읽는다 — 사유가 고정 문구다(`no key`·`no key id`·`no team id`·`key unreadable`·`config unreadable`·`invalid key`·`invalid config`·`no service account`·`invalid service account`). 원본이 0600 이던 파일을 `docker cp` 로 넣으면 root 소유라 못 읽는다 — APNs 는 `key unreadable`, FCM 은 못 읽어도 `no service account` 로 보인다(파일이 있는데 이 사유면 소유자·권한부터 본다) | 위 「네이티브 푸시 자격 증명」 절 그대로 파일을 놓고 소유자를 1000:1000 으로 맞춘 뒤 `up -d --force-recreate app` |
 | 첨부 업로드가 507 `INSUFFICIENT_STORAGE`, 운영 화면 「디스크 여유 부족」(오류) | 데이터 볼륨의 여유가 256 MiB 미만 | 공간 확보(`backups/` 의 오래된 백업, 호스트의 다른 파일) → 최대 10분 뒤 또는 `docker compose -f infra/compose.yml restart app`. 위 「운영 화면」 |
 | 멘션해도 답이 없고 채널에 「오늘 런 한도(N)에 도달했습니다 — 내일 0시에 풀립니다」 | 워크스페이스 또는 채널 일일 런 상한 | 운영 화면 「한도」 또는 채널 설정 「일일 실행 상한」. 자정이 예상과 다르면 `TZ` |
 | 요청이 429 `RATE_LIMITED`, 운영 화면 「요청 제한 발동」 | 레이트리밋(위 「운영 화면」의 표) — 한 사람·한 탭의 폭주 | 1분 안에 저절로 풀린다. 되풀이되면 그 사건의 `key`(경로·이벤트 이름)로 무엇이 두드리는지 본다 |

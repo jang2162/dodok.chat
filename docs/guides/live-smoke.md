@@ -2099,7 +2099,7 @@ const SID = at("--session-id") ?? at("--resume");                       // 세�
 
 **전제**
 
-- 서버가 뜨고(`dev:fake` 가 아니어도 된다 — 실제 서버면 된다) 부팅 로그에 `push transport apns: on` 또는 `push transport fcm: on` 이 있다(없으면 그 플랫폼 등록이 `503 PUSH_UNAVAILABLE`). 로그 수준은 `LOG_LEVEL=debug` 로 두면 「보냈다」까지 보인다.
+- 서버가 뜨고(`dev:fake` 가 아니어도 된다 — 실제 서버면 된다) 부팅 로그에 `push transport apns: on` 또는 `push transport fcm: on` 이 있다(없으면 그 플랫폼 등록이 `503 PUSH_UNAVAILABLE`). 로그 수준은 `LOG_LEVEL=debug` 로 두면 「보냈다」까지 보인다. 배포 서버면 `127.0.0.1:$PORT` 대신 공개 오리진(`https://<도메인>`)을 쓴다 — `wire-cli` 도 그 오리진으로 로그인하고 1번의 `jq` 키도 그 오리진이다.
 - 알림을 받을 기기와 **그 기기에서 얻은 토큰·앱 id** — iOS 는 64자 hex 기기 토큰·번들 id(= `apns-topic`)·`environment`(Xcode 디버그 빌드는 `sandbox`, 배포 빌드는 `production`), Android 는 FCM 등록 토큰·패키지명. 앱 쪽 등록 흐름은 모바일 하위 프로젝트가 만든다 — 그 전에는 토큰을 앱 샘플·Xcode·`adb logcat` 에서 손으로 얻어 아래 `curl` 로 넣는다.
 - 알림을 받는 사람의 세션 하나와, 멘션을 일으킬 다른 사람(또는 에이전트) — 아래 5번.
 
@@ -2121,7 +2121,7 @@ const SID = at("--session-id") ?? at("--resume");                       // 세�
    ```
    성공은 `200 {"id":"…"}`. 꼴이 틀리면 `400 VALIDATION`(iOS 토큰은 64자 hex — 대문자는 소문자로 모인다, `appId` 는 영숫자로 시작하고 영숫자·`.`·`_`·`-` 만 200자까지), 그 통로가 꺼져 있으면 `503 PUSH_UNAVAILABLE`. **한 세션에는 기기 한 행만 남는다** — 같은 세션이 다른 토큰을 등록하면 앞의 것이 지워지니, 두 기기를 한꺼번에 시험하려면 세션(로그인)을 따로 쓴다.
 4. 그 사용자가 **그 채널을 보고 있지 않게** 한다 — 웹이 그 채널을 보는 탭이 열려 있으면 서버가 알림을 거른다(`push skipped — watching`). 브라우저 탭을 닫거나 다른 채널로 옮긴다.
-5. 다른 사람(또는 `wire-cli send`)이 그 사용자를 **멘션**하거나, 에이전트가 승인을 요청하게 한다. 알림 제목은 `dodok`, 본문은 「누가·어디」뿐이다.
+5. **다른 계정**이 그 사용자를 멘션하게 한다 — 웹에서 member 계정(또는 다른 브라우저 프로필의 다른 사람)으로 그 채널에 `@<받는 사람 핸들>` 을 쓴다. 에이전트가 도구 승인을 요청하게 해도 된다(승인 알림은 owner·admin 에게 간다). `wire-cli send` 는 1번과 같은 세션이라 쓰지 않는다 — 자기 글은 자기에게 알림이 가지 않는다(작성자 제외). 그 채널을 구독하는 소켓이라 「보고 있음」으로도 걸러진다. 알림 제목은 `dodok`, 본문은 「누가·어디」뿐이다.
 6. 기기에서 알림이 뜨는지·누르면 앱이 열리는지 본다. 서버 쪽은 `docker compose … logs app | grep 'push '`(또는 소스 실행이면 서버 로그)에서 `push sent`(`debug`, `transport`·`result: ok`)를 본다.
 7. 정리 — 시험이 끝나면 기기를 해제한다: `curl -s -X DELETE -H "authorization: Bearer $T" -H 'content-type: application/json' -d '{"token":"'"$IOS_TOKEN"'"}' …/api/v1/push/devices` → `204`(없는 토큰도 204).
 
@@ -2131,7 +2131,7 @@ const SID = at("--session-id") ?? at("--resume");                       // 세�
 | --- | --- | --- |
 | `push sent`(result `ok`)인데 기기에 안 뜬다 | 통로는 받았다 — 기기 쪽(알림 권한·집중 모드·앱 푸시 기능·`environment` 가 빌드와 다름) | 앱·기기 설정. APNs 는 sandbox 토큰을 production 호스트로 보내면 `BadDeviceToken` 으로 기기 행이 지워진다 |
 | `push device gone — removed` | APNs 410·`BadDeviceToken`·`DeviceTokenNotForTopic`, FCM `UNREGISTERED`·404 — 토큰이 죽었거나 앱 id 가 토큰과 다르다 | 앱에서 토큰을 다시 받아 등록 |
-| `push credentials rejected` + 운영 화면 사건 「푸시 자격 증명이 거부되었습니다(apns\|fcm)」 | 키·팀 id·서비스 계정이 거절됨(APNs 403, FCM 401·403) | 자격 증명 다시 만들기 — `deploy.md` 「네이티브 푸시 자격 증명」 절 |
+| `push credentials rejected` + 운영 화면 사건 「푸시 자격 증명이 거부되었습니다(apns\|fcm)」 | 키·팀 id·서비스 계정이 거절됨(APNs 403, FCM 토큰 교환 400·401·403·발송 401·403) | 자격 증명 다시 만들기 — `deploy.md` 「네이티브 푸시 자격 증명」 절 |
 | `push rejected` | 기기 탓이 아닌 400(예: 잘린 페이로드) | 통로가 warn 으로 남긴 `statusCode`·`reason` |
 | `push send failed` | 429·5xx·네트워크 — 그 알림은 버려졌다(재시도 없음) | 잠시 뒤 다시 |
 | `push skipped — watching` | 그 사용자가 그 채널을 보고 있다 | 4번 |
