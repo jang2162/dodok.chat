@@ -3,9 +3,9 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { PushPayload } from "@dodok/shared";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { type FcmCredentials, loadFcmCredentials } from "../src/modules/push/fcm-credentials";
-import { PUSH_TTL_SECONDS, pushTopic } from "../src/modules/push/service";
+import { PUSH_SEND_TIMEOUT_MS, PUSH_TTL_SECONDS, pushTopic } from "../src/modules/push/service";
 import { FCM_TOKEN_TTL_MS, fcmTransport } from "../src/modules/push/transports/fcm";
 import type { DeviceTarget } from "../src/modules/push/transports/types";
 
@@ -228,6 +228,100 @@ describe("fcmTransport — 발송", () => {
     const t = fcmTransport({ credentials: CREDS, fetch: fx.f });
     await expect(t.send(TARGET, NORMAL)).rejects.toThrow("ECONNRESET");
     await expect(t.send({ ...TARGET, platform: "ios" }, NORMAL)).rejects.toThrow(/android/);
+  });
+});
+
+describe("fcmTransport — 토큰 교환 결과 표·만료·제한 시간", () => {
+  const exchangeResult = async (status: number) => {
+    const fx = fakeFetch({ token: [{ status, body: { error: "x" } }] });
+    const warns: unknown[] = [];
+    const t = fcmTransport({
+      credentials: CREDS,
+      fetch: fx.f,
+      logger: { warn: (o: unknown) => warns.push(o) } as never,
+    });
+    return { result: await t.send(TARGET, NORMAL), fx };
+  };
+
+  it.each([401, 403])("교환 %i 는 자격 증명 문제다 — credentials, 발송은 나가지 않는다", async (status) => {
+    const { result, fx } = await exchangeResult(status);
+    expect(result).toBe("credentials");
+    expect(fx.sendCalls()).toHaveLength(0);
+  });
+
+  it("교환 429 는 retry 다 — 레이트리밋 한 번이 자격 증명 사건이 되지 않는다", async () => {
+    expect((await exchangeResult(429)).result).toBe("retry");
+  });
+
+  it("expires_in 이 55분보다 짧으면 (expires_in − 60초)만 재사용하고 그 뒤 다시 교환한다", async () => {
+    let t0 = 1_000_000;
+    const fx = fakeFetch({
+      token: [
+        { status: 200, body: { access_token: "short", expires_in: 600 } },
+        { status: 200, body: { access_token: "fresh", expires_in: 600 } },
+      ],
+      send: [OK, OK, OK],
+    });
+    const t = fcmTransport({ credentials: CREDS, fetch: fx.f, now: () => t0 });
+    await t.send(TARGET, NORMAL);
+    t0 += 540_000 - 1;
+    await t.send(TARGET, NORMAL);
+    expect(fx.tokenCalls()).toHaveLength(1);
+    t0 += 2;
+    await t.send(TARGET, NORMAL);
+    expect(fx.tokenCalls()).toHaveLength(2);
+  });
+
+  it("응답 없는 토큰 엔드포인트는 제한 시간에 끊겨 retry 이고, 다음 발송은 새 교환을 낸다", async () => {
+    // 진짜 10초를 기다리지 않게 AbortSignal.timeout 만 짧은 것으로 바꾸고, 쓰인 제한값은 단언한다
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout").mockImplementation(() => AbortSignal.abort());
+    try {
+      let tokenCalls = 0;
+      const hang = (init?: RequestInit) =>
+        new Promise<Response>((_, reject) => {
+          const sig = init?.signal;
+          if (sig === undefined || sig === null) return; // 신호가 없으면 영영 매달린다
+          const fail = () => reject(new Error("aborted"));
+          if (sig.aborted) fail();
+          else sig.addEventListener("abort", fail);
+        });
+      const f = (async (url: string | URL | Request, init?: RequestInit) => {
+        if (String(url) === CREDS.tokenUri) {
+          tokenCalls += 1;
+          if (tokenCalls === 1) return hang(init);
+          return new Response(JSON.stringify({ access_token: "a", expires_in: 3599 }));
+        }
+        return new Response("{}");
+      }) as typeof fetch;
+      const t = fcmTransport({ credentials: CREDS, fetch: f });
+      expect(await t.send(TARGET, NORMAL)).toBe("retry");
+      expect(timeoutSpy).toHaveBeenCalledWith(PUSH_SEND_TIMEOUT_MS);
+      expect(await t.send(TARGET, NORMAL)).toBe("ok");
+      expect(tokenCalls).toBe(2);
+    } finally {
+      timeoutSpy.mockRestore();
+    }
+  });
+
+  it("응답 없는 발송 엔드포인트는 제한 시간에 끊겨 던진다", async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout").mockImplementation(() => AbortSignal.abort());
+    try {
+      const f = (async (url: string | URL | Request, init?: RequestInit) => {
+        if (String(url) === CREDS.tokenUri)
+          return new Response(JSON.stringify({ access_token: "a", expires_in: 3599 }));
+        return new Promise<Response>((_, reject) => {
+          const sig = init?.signal;
+          if (sig === undefined || sig === null) return;
+          const fail = () => reject(new Error("aborted"));
+          if (sig.aborted) fail();
+          else sig.addEventListener("abort", fail);
+        });
+      }) as typeof fetch;
+      const t = fcmTransport({ credentials: CREDS, fetch: f });
+      await expect(t.send(TARGET, NORMAL)).rejects.toThrow("aborted");
+    } finally {
+      timeoutSpy.mockRestore();
+    }
   });
 });
 

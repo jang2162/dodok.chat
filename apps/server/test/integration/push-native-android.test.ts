@@ -9,6 +9,7 @@ import { type IncomingMessage, type Server, createServer } from "node:http";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
+import pino from "pino";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppDeps } from "../../src/app";
@@ -92,12 +93,12 @@ describe("통합 — 네이티브 푸시: FCM", () => {
         project_id: "dodok-int",
         client_email: "sa@dodok-int.iam.gserviceaccount.com",
         private_key: privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
-        token_uri: `${origin}/token`,
+        token_uri: "https://oauth2.googleapis.com/token", // 기본값 — 가짜로는 FCM_TOKEN_URI 가 덮는다
       }),
     );
     live = await bootLiveApp({
       deps,
-      env: { FCM_SERVICE_ACCOUNT_PATH: saPath, FCM_HOST: origin },
+      env: { FCM_SERVICE_ACCOUNT_PATH: saPath, FCM_HOST: origin, FCM_TOKEN_URI: `${origin}/token` },
     });
   }
 
@@ -258,7 +259,13 @@ describe("통합 — 네이티브 푸시: FCM", () => {
     await boot();
     // 같은 앱에서 파일을 못 찾게 하는 대신, 파일 없는 별도 부팅
     await live?.close();
-    live = await bootLiveApp({ env: { FCM_SERVICE_ACCOUNT_PATH: join(dir ?? "", "missing.json") } });
+    const lines: Array<{ msg?: string }> = [];
+    const logger = pino({ level: "info" }, { write: (line: string) => void lines.push(JSON.parse(line)) });
+    live = await bootLiveApp({
+      deps: { logger },
+      env: { FCM_SERVICE_ACCOUNT_PATH: join(dir ?? "", "missing.json") },
+    });
+    expect(lines.map((l) => l.msg)).toContain("push transport fcm: off(no service account)");
     const caps = await rest<{ android: boolean }>(live, "GET", "/push/capabilities");
     expect(caps.body.android).toBe(false);
     const res = await live.app.fastify.inject({
@@ -267,7 +274,7 @@ describe("통합 — 네이티브 푸시: FCM", () => {
       headers: live.auth.headers,
       payload: { platform: "android", token: DEVICE_TOKEN, appId: "chat.dodok" },
     });
-    expect(res.statusCode).toBeGreaterThanOrEqual(400);
+    expect(res.statusCode).toBe(503);
     expect(res.json()).toMatchObject({ code: "PUSH_UNAVAILABLE" });
   });
 });
