@@ -370,7 +370,7 @@ orca worktree create --name <슬러그> --repo path:/Users/jang2162/IdeaProjects
 
 1. **Orca 가 곧바로 등록한다** — 반환 JSON 에 `id` 가 들어 있어 `orca worktree list --json` 으로 다시 찾을 필요가 없다.
    그 id 가 3절의 `worker-start --worktree id:<fullId>` 에 그대로 들어간다.
-2. **`--setup run` 이 프로젝트에 설정된 셋업 훅을 돌린다** — 단, 이 저장소의 훅은 **비어 있다**(아래).
+2. **`--setup run` 이 저장소 루트 `orca.yaml` 의 셋업을 돌린다** — mise·의존성 설치·`ruler apply`·`.env` 복사(아래).
 3. `--agent` · `--prompt` 로 워크트리 생성과 워커 기동을 한 번에 할 수 있다(3절 참고).
 
 **다만 세 가지를 반드시 확인한다.**
@@ -399,17 +399,17 @@ orca worktree create --name <슬러그> --repo path:/Users/jang2162/IdeaProjects
 
   **가르치는 자리가 둘이면 둘 다 맞아야 한다** — `.ruler/AGENTS.md` 요약에도 이 옵션이 들어 있다. 한쪽만 고치지 마라.
 
-- **`--setup run` 이 무엇을 했는지 믿지 말고 재라.** 셋업 훅은 파일이 아니라 Orca 앱 설정
-  (`hookSettings.scripts.setup`)에 있어 저장소만 봐서는 무엇이 도는지 알 수 없다. **이 저장소에는 아직 훅이 등록돼 있지
-  않다** — `--setup run` 은 아무것도 하지 않고, `node_modules`·`.env` 는 `spawn` 의 `verify_setup` 이 사후에 채운다.
+- **`--setup run` 이 무엇을 했는지 믿지 말고 재라.** 셋업은 저장소 루트의 `orca.yaml`(`scripts.setup`,
+  `setupAgentStartupPolicy: wait-for-setup`)이 갖는다. **Orca 는 그 파일을 새 워크트리의 체크아웃에서 읽는다** — 커밋하지 않은
+  `orca.yaml` 이나 기준 브랜치에 아직 없는 변경은 돌지 않고, 그래도 워크트리 생성은 성공한다(실측: 커밋 전 셋업 0회, 커밋 뒤
+  `.env`·`node_modules`·`CLAUDE.md` 생성). 출처 정책은 **Orca 앱의 repo 설정**(`commandSourcePolicy` — 이 머신은 `shared-only`)이
+  정하고 CLI 로는 못 바꾼다. 셋업이 안 돈 워크트리는 `spawn` 의 `verify_setup` 이 사후에 같은 단계를 채운다(멱등).
   손으로 만든 워크트리는 아래 「생성 직후 세팅」을 직접 밟는다.
 
   ```bash
   orca repo show --repo path:/Users/jang2162/IdeaProjects/dodok.chat --json \
-    | jq -r '.result.repo.hookSettings.scripts.setup'
+    | jq '.result.repo.hookSettings | {commandSourcePolicy, setupRunPolicy}'
   ```
-
-  ⚠ **이 훅은 CLI 로는 못 바꾼다** — **Orca 앱의 repo 설정**에서 고친다.
 - **경로는 Orca 가 정한다 — 글로벌 설정 또는 repo 별 `worktreeBasePath`.** 워크트리 위치는 앱의 글로벌 worktree 경로
   설정이 기본이고, repo 설정의 `worktreeBasePath` 가 있으면 그것이 덮는다. **repo 를 Orca 에 등록해도 repo 별 값은 자동으로
   채워지지 않으며, 글로벌 값은 CLI 로 보이지 않는다**(`repo show` 에는 repo 별 값만 나온다). 어느 쪽도 `.worktrees` 가
@@ -468,7 +468,7 @@ git worktree add -b feat/<작업명> .worktrees/dodok.chat/<슬러그>
 cd .worktrees/dodok.chat/<슬러그>
 node -v                                   # 24.x 여야 한다 (mise.toml 핀; 아니면 export PATH="$(mise where node)/bin:$PATH")
 pnpm install                              # node_modules 는 워크트리마다 따로 필요하다
-scripts/orca-worker.sh sync-config .      # 최상위 .env 복사 (아래 Why 참고)
+scripts/orca-worker.sh sync-config .      # ruler apply(CLAUDE.md 등 생성물) + 최상위 .env 복사 (아래 Why 참고)
 pnpm typecheck && pnpm test               # 기준선 확인 — Turbo 캐시는 꺼져 있다 (아래 참고)
 ```
 
