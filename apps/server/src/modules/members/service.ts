@@ -3,7 +3,14 @@ import { and, asc, eq, inArray, isNull, or } from "drizzle-orm";
 import type { Auth } from "../../auth";
 import { assertRole, membershipOf, roleOf } from "../../auth/roles";
 import type { Db, DbOrTx } from "../../db/client";
-import { channelMembers, invites, memberships, pushSubscriptions, users } from "../../db/schema.sqlite";
+import {
+  channelMembers,
+  invites,
+  memberships,
+  pushDevices,
+  pushSubscriptions,
+  users,
+} from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
 import { parseStored } from "../../http/validate";
 import type { Logger } from "../../logger";
@@ -137,6 +144,7 @@ export async function deactivateMember(
       .where(and(eq(memberships.workspaceId, workspaceId), eq(memberships.userId, userId)))
       .run();
     tx.delete(pushSubscriptions).where(eq(pushSubscriptions.userId, userId)).run();
+    tx.delete(pushDevices).where(eq(pushDevices.userId, userId)).run();
     tx.update(invites)
       .set({ revokedAt: now })
       .where(

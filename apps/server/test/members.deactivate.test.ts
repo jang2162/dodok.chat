@@ -25,6 +25,7 @@ import { claimInvite, findValidInvite, unclaimInvite } from "../src/modules/memb
 import { deactivateMember, reactivateMember } from "../src/modules/members/service";
 import { createUserMessage } from "../src/modules/messages/service";
 import { markRead } from "../src/modules/reads/store";
+import { listDevices, upsertDevice } from "../src/modules/push/devices";
 import { createTriggerLookups, upsertSubscription } from "../src/modules/push/service";
 import { targetsForMessage } from "../src/modules/push/triggers";
 import { bootTestApp, login, userWithRole } from "./helpers/app";
@@ -347,6 +348,13 @@ describe("멤버 비활성화·다시 활성화", () => {
         { userId: member.id, sessionId: session.id },
         { endpoint: `https://push.example/${member.handle}`, keys: { p256dh: "p", auth: "a" } },
       );
+      upsertDevice(
+        app.db,
+        member.id,
+        session.id,
+        { platform: "android", token: "fcm-deactivate", appId: "chat.dodok.android" },
+        new Date(),
+      );
       const real = (await app.auth.$context).internalAdapter;
       const failing = Object.create(real) as typeof real;
       failing.deleteUserSessions = async () => {
@@ -377,6 +385,7 @@ describe("멤버 비활성화·다시 활성화", () => {
       expect(
         app.db.select().from(pushSubscriptions).where(eq(pushSubscriptions.userId, member.id)).all(),
       ).toHaveLength(0);
+      expect(listDevices(app.db, member.id)).toHaveLength(0);
 
       expect((await deactivate(ownerToken, member.id)).statusCode).toBe(200);
       expect(sessionsOf(member.id)).toHaveLength(0);

@@ -19,17 +19,27 @@ export type PushUnsubscribeInput = z.infer<typeof PushUnsubscribeInput>;
  * POST /api/v1/push/devices 본문 — token 으로 upsert(다른 사용자에게 묶여 있으면 지금 사용자로 옮긴다).
  * iOS 토큰은 APNs 기기 토큰(hex 64자), Android 는 FCM 등록 토큰. environment 는 iOS 만 — APNs 호스트를 가른다
  */
+const AppId = z
+  .string()
+  .max(200)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/);
+// APNs 토큰은 hex 라 대소문자가 같은 기기다 — 경계에서 소문자로 모아 token 유일이 깨지지 않게
+export const IosToken = z
+  .string()
+  .regex(/^[0-9a-f]{64}$/i)
+  .transform((t) => t.toLowerCase());
+
 export const PushDeviceInput = z.discriminatedUnion("platform", [
   z.object({
     platform: z.literal("ios"),
-    token: z.string().regex(/^[0-9a-f]{64}$/i),
-    appId: z.string().min(1).max(200),
+    token: IosToken,
+    appId: AppId,
     environment: z.enum(["sandbox", "production"]),
   }),
   z.object({
     platform: z.literal("android"),
     token: z.string().min(1).max(4096),
-    appId: z.string().min(1).max(200),
+    appId: AppId,
   }),
 ]);
 export type PushDeviceInput = z.infer<typeof PushDeviceInput>;

@@ -1,6 +1,6 @@
 /** 네이티브 푸시 기기 저장(스펙 2장) — 웹 구독(service.ts)과 같은 규칙: 토큰은 전역 유일, 세션이 살아 있는 동안만 쓴다 */
-import type { PushDeviceInput } from "@dodok/shared";
-import { and, eq, gt } from "drizzle-orm";
+import { IosToken, type PushDeviceInput } from "@dodok/shared";
+import { and, eq, gt, ne } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import { session } from "../../db/auth-schema";
 import type { DbOrTx } from "../../db/client";
@@ -20,6 +20,10 @@ export function upsertDevice(
   now: Date,
 ): PushDeviceRow {
   const environment = input.platform === "ios" ? input.environment : null;
+  // 세션당 기기 1행(PN5) — 토큰이 돌았거나 거절된 옛 토큰이 세션에 쌓이지 않게
+  db.delete(pushDevices)
+    .where(and(eq(pushDevices.sessionId, sessionId), ne(pushDevices.token, input.token)))
+    .run();
   return db
     .insert(pushDevices)
     .values({
@@ -43,8 +47,9 @@ export function upsertDevice(
 
 /** 세션 사용자의 것만 지운다 — 남의 토큰·없는 토큰은 아무 일도 없다(멱등) */
 export function removeDevice(db: DbOrTx, userId: string, token: string): void {
+  const key = IosToken.safeParse(token);
   db.delete(pushDevices)
-    .where(and(eq(pushDevices.userId, userId), eq(pushDevices.token, token)))
+    .where(and(eq(pushDevices.userId, userId), eq(pushDevices.token, key.success ? key.data : token)))
     .run();
 }
 

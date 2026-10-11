@@ -1,3 +1,4 @@
+import { PushDeviceInput } from "@dodok/shared";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { App } from "../src/app";
@@ -34,7 +35,10 @@ describe("푸시 기기 저장소", () => {
     await app.close();
   });
 
-  it("새 등록은 행을 만든다(iOS environment 보존, Android 는 null)", () => {
+  it("새 등록은 행을 만든다(iOS environment 보존, Android 는 null)", async () => {
+    const android = upsertDevice(app.db, a.id, await newSession(a.id), ANDROID, new Date());
+    expect(android.environment).toBeNull();
+    app.db.delete(pushDevices).where(eq(pushDevices.token, ANDROID.token)).run();
     const now = new Date(1_000_000);
     const ios = upsertDevice(app.db, a.id, a.sessionId, IOS, now);
     expect(ios).toMatchObject({
@@ -47,9 +51,7 @@ describe("푸시 기기 저장소", () => {
       createdAt: now,
       lastSeenAt: now,
     });
-    const android = upsertDevice(app.db, a.id, a.sessionId, ANDROID, now);
-    expect(android.environment).toBeNull();
-    expect(rows()).toHaveLength(2);
+    expect(rows()).toHaveLength(1);
   });
 
   it("같은 사용자가 같은 토큰을 다시 등록하면 last_seen_at 만 바뀐다(id·created_at 유지)", () => {
@@ -115,11 +117,33 @@ describe("푸시 기기 저장소", () => {
     expect(rowOf("live-token")).toBeDefined();
   });
 
-  it("deleteDeviceById 는 그 행 하나만 지운다", () => {
-    const x = upsertDevice(app.db, a.id, a.sessionId, { ...ANDROID, token: "del-x" }, new Date());
-    upsertDevice(app.db, a.id, a.sessionId, { ...ANDROID, token: "del-y" }, new Date());
+  it("deleteDeviceById 는 그 행 하나만 지운다", async () => {
+    const x = upsertDevice(app.db, a.id, await newSession(a.id), { ...ANDROID, token: "del-x" }, new Date());
+    upsertDevice(app.db, a.id, await newSession(a.id), { ...ANDROID, token: "del-y" }, new Date());
     deleteDeviceById(app.db, x.id);
     expect(rowOf("del-x")).toBeUndefined();
     expect(rowOf("del-y")).toBeDefined();
+  });
+
+  it("대소문자만 다른 iOS 토큰을 다른 사용자가 등록하면 행 하나가 옮겨 간다(정규화 경계)", () => {
+    const upper = PushDeviceInput.parse({ ...IOS, token: "AB".repeat(32) });
+    upsertDevice(app.db, a.id, a.sessionId, PushDeviceInput.parse(IOS), new Date(1));
+    upsertDevice(app.db, b.id, b.sessionId, upper, new Date(2));
+    expect(rows().filter((r) => r.token === TOKEN)).toHaveLength(1);
+    expect(listDevices(app.db, a.id).filter((d) => d.token === TOKEN)).toHaveLength(0);
+    expect(listDevices(app.db, b.id).filter((d) => d.token === TOKEN)).toHaveLength(1);
+    removeDevice(app.db, b.id, "AB".repeat(32));
+    expect(rowOf(TOKEN)).toBeUndefined();
+  });
+
+  it("세션당 기기 1행 — 같은 세션이 토큰 A 뒤 B 를 등록하면 B 하나", async () => {
+    const sid = await newSession(a.id);
+    upsertDevice(app.db, a.id, sid, { ...ANDROID, token: "tok-A" }, new Date(1));
+    upsertDevice(app.db, a.id, sid, { ...ANDROID, token: "tok-B" }, new Date(2));
+    expect(
+      rows()
+        .filter((r) => r.sessionId === sid)
+        .map((r) => r.token),
+    ).toEqual(["tok-B"]);
   });
 });

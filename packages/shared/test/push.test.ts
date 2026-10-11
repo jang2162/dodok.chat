@@ -153,6 +153,18 @@ describe("PushDeviceInput", () => {
       token: "x",
     });
   });
+  it("iOS 토큰은 소문자로 정규화한다", () => {
+    const r = PushDeviceInput.parse({ ...IOS, token: "AB".repeat(32) });
+    expect(r.token).toBe("ab".repeat(32));
+  });
+
+  it("appId 는 줄바꿈·공백·꼴 밖 글자를 거절한다(iOS·Android)", () => {
+    for (const appId of ["a\nb", "a b", " chat.dodok", ".chat", "chat/dodok"]) {
+      expect(PushDeviceInput.safeParse({ ...IOS, appId }).success).toBe(false);
+      expect(PushDeviceInput.safeParse({ platform: "android", token: "t", appId }).success).toBe(false);
+    }
+  });
+
   it("appId 는 1~200자", () => {
     expect(PushDeviceInput.safeParse({ ...IOS, appId: "" }).success).toBe(false);
     expect(PushDeviceInput.safeParse({ ...IOS, appId: "a".repeat(201) }).success).toBe(false);
