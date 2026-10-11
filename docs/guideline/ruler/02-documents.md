@@ -27,5 +27,5 @@ ruler 는 `.ruler/` 아래 `.md` 를 `skills/`·`agents/` 만 빼고 **전부** 
 - **Why:** 에이전트는 파일 이름만 보고 지금 작업에 필요한지 판단하지 못한다. 목록만 있는 색인은 읽히지 않는다.
 - **How to apply:**
   - 「언제」 는 「~할 때」 로 끝나는 작업 시점으로 쓴다. 경로는 저장소 루트 기준.
-  - 프로젝트가 직접 쓰는 색인은 `.ruler/90-reference.md` 한 곳에 둔다. `.ruler/<스택>/99-reference.md` 는 sync 가 쓰는 스택 색인이라 섞지 않는다.
-  - `docs/guideline/` 은 sync 사본 자리다. 직접 쓰는 문서를 거기 두지 않는다.
+  - 프로젝트가 직접 쓰는 색인은 `.ruler/90-reference.md` 한 곳에 둔다. `.ruler/<스택>/99-reference.md` 는 `guideline` CLI 가 쓰는 스택 색인이라 섞지 않는다.
+  - `docs/guideline/` 은 guideline 사본 자리다. 직접 쓰는 문서를 거기 두지 않는다.

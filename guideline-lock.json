@@ -1,7 +1,7 @@
 {
   "version": 2,
   "revisions": {
-    "default": 10
+    "default": 11
   },
   "sources": {
     "default:mcp/codegraph": "f6e4c3dc8b10c412e418c0d5e68bc69d7061cfb424e79aa75cfa11fa8ad40b5a",
@@ -26,9 +26,9 @@
     "default:rules/browser/02-console-network.md": "b5649ad1e5c645c3524fb4ad0acf1930e25766a981bfa0c349438e789a493697",
     "default:rules/browser/03-cdp.md": "271e112b29f9fa6235fb3919e64feb80b9abbece5249accf03ca1dc4b593f9c8",
     "default:rules/browser/04-shared-profile.md": "5f306b8212cff5572c7e8d1f2e012cd6ce7bd80e9ae0b1f985d61593635473d5",
-    "default:rules/browseros-neo/00-switch.md": "b9add648f1666db41fa971788dd9a679e591d5c044baf52286ccf5d104e142cb",
+    "default:rules/browseros-neo/00-switch.md": "9fad10f2d0fff095abafdd649b366431e14155f929b8aff77fe105f141e67433",
     "default:rules/browseros-neo/01-limits.md": "5cf79db60eb9bc05b2640a9ac81a9257109532a7613472df216aeb7b9323d494",
-    "default:rules/browseros-neo/02-playwright.md": "4619f8275a4a8b27bf7314726124df94b554aefc7f91d208a03fefea91f4a149",
+    "default:rules/browseros-neo/02-playwright.md": "6978ac9122694785bc29f4e24b82e1c17ddd22a99cde289f39745ad8a27c97a8",
     "default:rules/browseros-neo/03-tabs.md": "5ef01cc4bffdc79f36b1fa3c319547c72eb62717d89d55124ef767f5b93aa1d4",
     "default:rules/browseros-neo/SETUP.md": "b7376822d2ad4eae0857a1654bc5ddf6c1304c75ec2c898097c4362f0d46a80f",
     "default:rules/komodo/00-stack.md": "04b890d44b989d472a1d3db2ccca17489b67223b7ff97ee3b094ba9765d729ba",
@@ -46,9 +46,9 @@
     "default:rules/orca/SETUP.md": "c619aa402c8f51df9792eeaef89f5cd5ac0d632d3ee509dbd9219d6469951d27",
     "default:rules/oxc/00-version.md": "b6358ea4358d8b9df6e2ca52d2b0a8dfa3047d4a0e9c8b6d0a8c3a532b8b5f57",
     "default:rules/oxc/01-formatting.md": "6b1b6ed02c4c5ee9406c3a4d4c0254cfd26e4c5851dbcb4d68d980ba92caf2a2",
-    "default:rules/ruler/00-sources.md": "e160fcf9d9abc7ea77b01a871ed82c01c6182d0a906ea0cd8a5b3e1fa581835b",
+    "default:rules/ruler/00-sources.md": "88d4bd5b9578324256a9493686c05c98dc1586a978af4f8de848652a6a9f9d27",
     "default:rules/ruler/01-nested.md": "55199f7569e7ad1fe5d58e9d193f7e5137bcd9d0431b00772131f35d7abe4c40",
-    "default:rules/ruler/02-documents.md": "7eaeb726c4ad10c992a6067d5fa1e9d822d1b87edf27bccbba5c385a800ecba0",
+    "default:rules/ruler/02-documents.md": "5ec1a082098d747b22905bea5178f76bd9d46b84db83216506b874da3ab08189",
     "default:rules/tiergear/00-switch.md": "f07c95ca2a29356b6e42f3a1f156872c37df7d89c521539adfd27c06d838a907",
     "default:rules/tiergear/01-launch.md": "0c9ac57eb259330694b7175f4da76373e111d83f0e6b665492cf6413964b2fc0",
     "default:rules/tiergear/02-orca-spawn.md": "150896fe165ccb4508c6d302f01962c521ff5aa93ad1fecb4a8b7aa7d8255551",
@@ -107,7 +107,7 @@
       "items": [
         "default:rules/browseros-neo/00-switch.md"
       ],
-      "hash": "afa33dc5780acb16841f6ed76eeffb6707d64d6964c536da33f7d74def3a3e7b"
+      "hash": "3f5b19e4da2b9339cd5653a0636a7d12131e3a8c5096c6c6da5241c9ee59e2f1"
     },
     {
       "path": ".ruler/browseros-neo/99-reference.md",
@@ -187,7 +187,7 @@
       "items": [
         "default:rules/ruler/00-sources.md"
       ],
-      "hash": "000d169b8a17c75e5b23c961152e0475a26dc20f390e3d6ebf5c417a2c4df8c1"
+      "hash": "776b0d8f4e78eee9dc76ec88f0bb6916532138ff39587b41e12df4648851e7f8"
     },
     {
       "path": ".ruler/ruler/99-reference.md",
@@ -377,7 +377,7 @@
       "items": [
         "default:rules/browseros-neo/02-playwright.md"
       ],
-      "hash": "5a319443aaee06d231606c3b80669521a47465a16266b5cb83cb4005d72c9525"
+      "hash": "eee2fdce3f6fb2cd6d5d3893b3d546fefb12d14c32d5e132ebc35e46593279b6"
     },
     {
       "path": "docs/guideline/browseros-neo/03-tabs.md",
@@ -496,7 +496,7 @@
       "items": [
         "default:rules/ruler/02-documents.md"
       ],
-      "hash": "d1fe6561e7f8d1d0243bca1b343cd662b3a1a9c284b53e20517ff5710ee95edd"
+      "hash": "774daf294c636b65e069bb21e920af0c5ce24e82bdecd1dcb3d532889ff4b922"
     },
     {
       "path": "docs/guideline/tiergear/01-launch.md",

@@ -34,9 +34,6 @@ packages/openclaw-adapter(서버 측 브리지 서버+Gateway WS 클라이언트
 ## 이 프로젝트 고유의 지침은 `.ruler/AGENTS.md` 에 쓴다
 CLAUDE.md·.mcp.json·.claude/skills 는 ruler 생성물(gitignore)이고, 공용 지침은 지침 서버(https://guideline.develma.com) 사본이다 — 규칙은 아래 「공용 지침 관리」·「ruler 소스와 생성물」. 새 워크트리에는 생성물이 없으므로 `orca.yaml` 셋업과 `scripts/orca-worker.sh` spawn·sync-config 가 `ruler apply` 를 돌린다(안 돌리면 워커가 지침·MCP 없이 뜬다).
 
-## neo 창이 없으면 탭을 못 연다
-BrowserOS neo 의 MCP 가 406 으로 답해도 창이 없으면 `tabs new` 가 `No browser window available` 로 실패한다. 그때 `windows create` 도 `No profile available` 이면 neo 를 다시 띄우거나(사람) 독립 브라우저로 보고 보고서에 적는다.
-
 ## 명령
 pnpm i · pnpm -F @dodok/server dev · pnpm -F @dodok/web dev (루트 `pnpm dev` 는 없다)
 pnpm test · pnpm typecheck · pnpm lint · pnpm lint:fix · pnpm fmt · pnpm fmt:check (oxlint / oxfmt · test·typecheck 는 Turbo 캐시 off)

@@ -15,4 +15,5 @@ neo 는 CDP 를 열어 두고 있다. 포트는 `~/Library/Application Support/B
     // ...
     await b.close();
     ```
+  - 겪은 동작: neo 에 창이 없을 때 CDP 에 Playwright 를 붙이면 `Browser context management is not supported` 로 거절된 적이 있다. 이때는 `00-switch.md` 의 창 없음 안내를 따른다.
   - 포트가 기본값과 다른 머신이면 설정 파일에서 읽어 쓴다 — 포트를 추정하지 않는다.

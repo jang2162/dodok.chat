@@ -10,7 +10,7 @@
 
 생성물에 지침을 써 넣지 않는다. 지침을 고치려면 소스를 고치고 `ruler apply` 를 돌린다.
 
-`.ruler/<스택>/` 과 `docs/guideline/` 은 `sync-guideline` 이 문서 저장소에서 복사한 **사본**이다. 직접 고치지 않는다 — 고칠 것은 문서 저장소에 `import-guideline` 으로 올린다. 직접 고친 사본은 다음 sync 에서 덮어써지거나 원본과 조용히 갈라진다.
+`.ruler/<스택>/` 과 `docs/guideline/` 은 `guideline` CLI 가 지침 서버에서 받은 **사본**이다. 직접 고치지 않는다 — 고칠 것은 `guideline propose` 로 올린다(에이전트는 `guideline-export` 스킬). 직접 고친 사본은 다음 `guideline update` 에서 건너뛰어지거나 원본과 조용히 갈라진다.
 
 - **Why:** 생성물은 다음 apply 에서 통째로 덮어써진다. 생성물이 소스로 다시 읽히는 설정이면 apply 마다 자기 자신을 덧붙여 중복 헤더로 오염된다.
 - **How to apply:** 어떤 파일이 생성물인지 헷갈리면 `.ruler/ruler.toml` 의 에이전트 목록과 `.gitignore` 의 Ruler 블록을 본다. 블록 안에 있으면 생성물이다.
