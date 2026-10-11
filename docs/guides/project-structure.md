@@ -1,6 +1,6 @@
 # 프로젝트 구성 가이드 (Claude Code 인계용)
 
-작성일: 2026-09-14 · 계획서 v0.17 기준(2026-09-25 갱신: Phase 3 ④ 문서화) · 이 문서는 "어떻게 구성할지"만 다룬다. 배경·결정 근거는 `docs/plan.md` 참고.
+작성일: 2026-09-14 · 계획서 v0.17 기준(2026-09-25 갱신: Phase 3 ④ 문서화) · 이 문서는 "어떻게 구성할지"만 다룬다. 배경·결정 근거는 `docs/guides/plan.md` 참고.
 
 ---
 
@@ -30,11 +30,12 @@ dodok.chat/
 │  ├─ local.env.example       # 로컬 검증 설정의 틀 — 사본 infra/local.env 는 git 제외
 │  └─ .env → ../.env          # 배포 호스트에서 손으로 만드는 링크(git 제외) — compose 변수 치환이 infra/ 의 .env 만 읽는다
 ├─ docs/
-│  ├─ plan.md                 # 계획서
-│  ├─ project-structure.md    # 이 문서
-│  ├─ guides/                 # 작업 지침 (worktree-workflow.md, browser-verification.md, live-smoke.md, deploy.md — 배포·백업·복원·업데이트,
-│  │                          #   agent-guide.md — 에이전트가 채널에서 받는 것·릴레이·components·파일·승인과 AGENTS.md·채널 프롬프트에 붙여 넣을 블록)
-│  ├─ superpowers/            # 스펙·구현계획 (specs/, plans/)
+│  ├─ guides/                 # 계속 사는 정본 — plan.md(계획서), project-structure.md(이 문서), worktree-workflow.md, browser-verification.md,
+│  │                          #   live-smoke.md, deploy.md — 배포·백업·복원·업데이트, agent-guide.md — 에이전트가 채널에서 받는 것·릴레이·components·
+│  │                          #   파일·승인과 AGENTS.md·채널 프롬프트에 붙여 넣을 블록
+│  ├─ manual/                 # 사용자 매뉴얼 (user-guide.md — 웹 앱을 쓰는 사람)
+│  ├─ guideline/              # 지침 서버에서 받은 참조 지침 사본 — guideline CLI 만 쓴다 (7장)
+│  ├─ superpowers/            # 스펙·구현계획 (specs/, plans/) — 발행 시점 기록
 │  └─ adr/                    # 결정 기록 (스파이크 결과마다 한 장; 0001 = Gateway 클라이언트 스파이크)
 ├─ scripts/
 │  ├─ orca-worker.sh          # Orca 워커 수명주기 (spawn/attach/wait/status/reap/stop/keep/sync-config)

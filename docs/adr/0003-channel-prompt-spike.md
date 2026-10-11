@@ -2,7 +2,7 @@
 
 - 상태: 완료 (실측, 로컬 dev Gateway) — 설계 결론은 초안이며 7절·10절이 사용자 판정을 기다린다
 - 날짜: 2026-09-15
-- 대상: `docs/plan.md` 3.1절(`chat.history`·`chat.send`)·4.4절(재접속·복구)·5.2절(채널 프롬프트 합성 규칙)·8장 Phase 0 스파이크 3·대체 경로,
+- 대상: `docs/guides/plan.md` 3.1절(`chat.history`·`chat.send`)·4.4절(재접속·복구)·5.2절(채널 프롬프트 합성 규칙)·8장 Phase 0 스파이크 3·대체 경로,
   ADR 0001 8절 4·5, ADR 0002 8절·11.1·11.2·11.9·12.5
 - 산출 코드: `packages/openclaw-adapter/src/spike/prompt-spike.ts`(+ `spike:prompt`),
   `packages/openclaw-plugin/src/{inbound.ts,context.ts,config.ts,channel.ts}`·`openclaw.plugin.json`(세션 키 세대 회전, 인바운드 채널 프롬프트 자리)
@@ -247,7 +247,7 @@ API 프로바이더 백엔드는 드리프트 재전송이 실제로 먹힐 수 
 
 ## 8. 계획서·스펙·구성 문서에서 고쳐야 할 것
 
-위치는 `파일:줄`(이 브랜치, main `646904e` 기준). `plan.md` = `docs/plan.md`, `구성.md` = `docs/project-structure.md`, `스펙.md` = `docs/superpowers/specs/2026-09-14-shared-contracts-design.md`.
+위치는 `파일:줄`(이 브랜치, main `646904e` 기준). `plan.md` = `docs/guides/plan.md`, `구성.md` = `docs/guides/project-structure.md`, `스펙.md` = `docs/superpowers/specs/2026-09-14-shared-contracts-design.md`.
 
 | 위치 | 지금 | 실측 | 근거 |
 | --- | --- | --- | --- |
@@ -300,7 +300,7 @@ API 프로바이더 백엔드는 드리프트 재전송이 실제로 먹힐 수 
 6. **업스트림 보고**: claude-cli 드리프트가 재개 세션에 반영되지 않는 문제를 OpenClaw 에 이슈로 올릴지(재현 절차는 3.1 표 P0→P1).
 7. **세션 키 세대 접미사 `:g<N>`**: 7.1 에서 회전을 쓰지 않으면 플러그인의 수용 코드를 되돌릴지.
 
-### 확정 (2026-09-15, `docs/plan.md` 10장)
+### 확정 (2026-09-15, `docs/guides/plan.md` 10장)
 
 | 항목 | 결정 | 계획서 |
 | --- | --- | --- |

@@ -2,7 +2,7 @@
 
 - 상태: 완료 (실측, 로컬 dev Gateway, **모델 런 0회**) — 스레드 스펙이 7절 「설계에 주는 제약과 추천」을 입력으로 받는다
 - 날짜: 2026-09-25
-- 대상: `docs/plan.md` 「5.8 OpenClaw 세션·내부 위임 설계」 절, 10장 결정 #3(「스레드는 후속 하위 세션」)·#19(세션 키 원형)
+- 대상: `docs/guides/plan.md` 「5.8 OpenClaw 세션·내부 위임 설계」 절, 10장 결정 #3(「스레드는 후속 하위 세션」)·#19(세션 키 원형)
 - 산출 코드: 없음 — 실험 플러그인 사본·러너·가짜 CLI 는 버렸다
 - 근거 원장(git 제외): `.superpowers/sdd/2026-09-25-thread-spike/spike-report.md` — 질문별 실측·probe 모양·연결별 이벤트 수·정리 상태
 
@@ -107,7 +107,7 @@
 
 ## 5. 고쳐야 할 문서·코드 (스레드 스펙에서)
 
-- `docs/plan.md` 10장 #19 「세션 키 규칙은 원형 유지」 — 스레드 접미사 `:thread:<threadId>` 를 규칙에 넣는다(세대 접미사 `:g<N>` 는 그대로 제거 상태).
+- `docs/guides/plan.md` 10장 #19 「세션 키 규칙은 원형 유지」 — 스레드 접미사 `:thread:<threadId>` 를 규칙에 넣는다(세대 접미사 `:g<N>` 는 그대로 제거 상태).
 - `packages/openclaw-plugin/src/inbound.ts` 의 `dodokSessionKey` 머리주석(「접미사(세대·스레드)는 두지 않는다」)과 `toInboundFacts` 의 완전 일치 검사.
 - `packages/openclaw-adapter/src/gateway/approvals.ts` 의 `parseSessionKey`(「접미사가 붙으면 우리 것이 아니다」).
 - `packages/shared/src/bridge/index.ts` 의 `InboundDeliver.sessionKey` 주석(채널 키 모양만 적혀 있다).

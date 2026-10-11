@@ -38,7 +38,7 @@
 - ⚠ **`connectOverCDP` 로 스크립트마다 붙었다 떼면 `setViewportSize` 가 연결과 함께 풀린다** — 창 실제 크기(headless 면 대개 756×413)로 돌아가, 390px 검증이 조용히 넓은 화면으로 찍힌다. 붙을 때마다 다시 준다.
 - 붙을 때마다 다시 주는 대신, `launchPersistentContext` 를 띄운 Node 프로세스 하나가 127.0.0.1 포트로 스크립트 본문을 받아 같은 컨텍스트에서 실행하게 하면 페이지·뷰포트·리스너가 호출 사이에 남는다. 그 포트도 끝에 LISTEN 0 을 확인한다.
 - **서버 쪽 wire 끊김은 `page.routeWebSocket` 으로 흉내 낸다** — `page.routeWebSocket(u => u.pathname.includes("socket.io"), ws => { if (block) ws.close(); else ws.connectToServer(); })` 를 페이지를 열기 전에 건다. `context.setOffline` 은 브라우저 온라인 이벤트로 React Query 가 쿼리를 다시 받아 **재접속 뒤 캐시가 낡는 결함을 가린다.** 이 `ws.close()` 는 「업그레이드는 됐는데 핸드셰이크 전에 깨끗이 닫힌」 시도라, 진짜 서버 중단(연결 거부 — 브라우저가 `error` 를 먼저 낸다)과 다른 길을 탄다 — 웹은 그 길을 `realtime/wire.ts` 의 `WireManager` 로 실패로 친다. 서버가 죽은 경우를 재려면 서버 프로세스를 내렸다 올린다.
-- `dev:fake` 의 개발 전용 훅(`/__devfake/*`)은 서버 오리진으로 직접 부른다 — 페이지 안 `fetch` 는 CORS 와 415(JSON 이 아닌 단순 요청 거절)에 걸린다. 훅 목록·호출 예는 `docs/project-structure.md` 의 `apps/server` 절 dev:fake 문단.
+- `dev:fake` 의 개발 전용 훅(`/__devfake/*`)은 서버 오리진으로 직접 부른다 — 페이지 안 `fetch` 는 CORS 와 415(JSON 이 아닌 단순 요청 거절)에 걸린다. 훅 목록·호출 예는 `docs/guides/project-structure.md` 의 `apps/server` 절 dev:fake 문단.
 
 ## 로컬 HTTPS(Compose 8443)를 볼 때
 

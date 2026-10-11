@@ -2,7 +2,7 @@
 
 - 상태: 완료 (실측, 로컬 dev Gateway) — 원격 배포는 사람이 할 절차로 9절에 넘긴다
 - 날짜: 2026-09-15
-- 대상: `docs/plan.md` 3.2절(채널 플러그인)·3.3절(components 규약)·5.2절(채널 프롬프트)·5.3절(릴레이·봇 루프 보호)·5.4절(components v1)·8장 Phase 0 스파이크 2
+- 대상: `docs/guides/plan.md` 3.2절(채널 플러그인)·3.3절(components 규약)·5.2절(채널 프롬프트)·5.3절(릴레이·봇 루프 보호)·5.4절(components v1)·8장 Phase 0 스파이크 2
 - 산출 코드: `packages/openclaw-plugin/{openclaw.plugin.json,scripts/build.mjs,src/*}`,
   `packages/openclaw-adapter/src/bridge/{server.ts,session.ts}`, `src/spike/{bridge-spike.ts,bridge-serve.ts}`
 - 원본 관찰(커밋하지 않음 — `data/` 는 ignored): `data/spike-2-observations-main.json`(A·T·B·C·D),
@@ -349,7 +349,7 @@ openclaw config patch --file /tmp/dodok.patch.json5 && rm /tmp/dodok.patch.json5
 
 ## 10. 계획서·스펙·구성 문서에서 고쳐야 할 것
 
-위치는 `파일:줄` — 줄 번호는 **이 브랜치(main 기준) 파일**로 쟀다. `plan.md` = `docs/plan.md`, `구성.md` = `docs/project-structure.md`,
+위치는 `파일:줄` — 줄 번호는 **이 브랜치(main 기준) 파일**로 쟀다. `plan.md` = `docs/guides/plan.md`, `구성.md` = `docs/guides/project-structure.md`,
 `스펙.md` = `docs/superpowers/specs/2026-09-14-shared-contracts-design.md`.
 **구분**: `원안` = 이 표의 첫 판(조율자가 최상위 체크아웃에 반영한 분량), `추가` = 리뷰 B-7·수정 라운드 1에서 찾은 것 — **최상위 반영 시점 이후 추가로 고칠 것**.
 최상위 파일은 이미 바뀌었으므로 줄 번호는 문장을 찾는 출발점으로만 쓴다(반영 여부는 조율자가 병합 뒤 대조).
@@ -410,7 +410,7 @@ openclaw config patch --file /tmp/dodok.patch.json5 && rm /tmp/dodok.patch.json5
 5. **채널 프롬프트 주입 경로**(스파이크 3 결과를 보고): `GroupSystemPrompt`(설정 쓰기, 새 세션만 확인) / 인바운드 프리픽스 / 둘 병행.
 6. **첫 에이전트 id.** 원격은 `main` 이 있으나 dev 프로필은 `main` 을 만들 수 없었다 — 로컬 개발 문서에 `dev` 를 쓰라고 적을지, `doctor --fix` 절차를 적을지.
 
-### 확정 (2026-09-15, `docs/plan.md` 10장)
+### 확정 (2026-09-15, `docs/guides/plan.md` 10장)
 
 | 항목 | 결정 | 계획서 |
 | --- | --- | --- |

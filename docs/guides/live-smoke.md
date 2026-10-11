@@ -695,7 +695,7 @@ PARAMS=$(jq -cn --argjson a "$ARGS" --arg sk "agent:dev:dodok:channel:<채널 id
    - **영향**: 실물에서 **에이전트가 카드를 스스로 보낼 수 없다** — components v1 전체가 dev 실물에서 쓸 수 없는 상태다. 가짜 Gateway·통합 시나리오는 플러그인을 한 인스턴스로 불러 이 경로를 못 본다.
 2. **[결함·중간] `ask_user` 가 dodok 채널에서 깨진다.** 코어 `ask_user` 는 질문을 채널 `outbound.sendText` 로 보내는데(`ask-user-tool-*.mjs` → `sendDurableMessageBatchCore`), 우리 `sendText` 도 `bridges.get(…)` 이 비어
    `dodok: bridge is not running` 을 던진다(결함 1 과 같은 뿌리로 보인다). 설령 브리지를 찾아도 `sendText` 는 **텍스트만** 보내고 `agentId: "unknown"` 이라 질문의 **선택지 컨트롤이 없다** — dodok 은 `ask_user` 를 카드로 그릴 길이 없다.
-   → 이어서 볼 곳: 첫 층(`sendText` 도 두 번째 인스턴스) → ADR 0004, 뒷 두 층(`agent not found`·선택지 컨트롤 없음) → `docs/plan.md` 8장 「플러그인·OpenClaw 버전」.
+   → 이어서 볼 곳: 첫 층(`sendText` 도 두 번째 인스턴스) → ADR 0004, 뒷 두 층(`agent not found`·선택지 컨트롤 없음) → `docs/guides/plan.md` 8장 「플러그인·OpenClaw 버전」.
 3. **[관찰·중요] 모델은 `components` 보다 `ask_user` 를 먼저 고른다(발견 가능성).** 「셀렉트로 물어봐 줘」처럼 자연스러운 요청에 모델은 `message` 툴의 components 가 아니라 `ask_user` 를 불렀다(런 1).
    `components` 는 `message` 툴 스키마의 한 속성일 뿐이라 「사용자에게 묻는다」는 의도에 먼저 걸리는 쪽은 이름부터 그 일인 `ask_user` 다. 결함 1·2 를 고쳐도 **우리 카드가 실무에서 잘 안 쓰일 수 있다**.
    손댈 곳: `components-schema.ts` 의 `COMPONENTS_DESCRIPTION`(「사용자에게 선택·입력을 받을 때는 이것을 쓴다」를 앞에), 채널 프롬프트, 또는 `ask_user` 를 dodok 이 카드로 받아 그리는 길(결함 2) — 어느 쪽으로 갈지는 판단이 필요하다.
@@ -825,7 +825,7 @@ grep "dodok:probe\|dodok:tool-send" data/dev-gateway.log | tail                 
 **합격 기준**(ADR 0004 6절):
 - `tools/call message` → `sent to dodok channel <CH> (<messageId>)`. (고치기 전: `{"content":[{"type":"text","text":"dodok: account \"default\" bridge is not running"}],"isError":true}`)
 - 서버에 카드 `message.created` 가 오고, 그 메시지의 **`runId` 가 그 가짜 런**이고 **`replyTo` 가 방금 보낸 사람 메시지**다 — 상관관계(`correlations`)까지 공유됐는지를 이것으로 본다. 카드만 오고 `runId` 가 비면 반쪽이다.
-- `ask_user` 는 다음 층 `agent not found`(결함 2 의 뒷반쪽, `docs/plan.md` 8장 이월)에서 막히는 것이 **정상**이다. 고치기 전에는 `ask_user prompt delivery failed | dodok: bridge is not running`.
+- `ask_user` 는 다음 층 `agent not found`(결함 2 의 뒷반쪽, `docs/guides/plan.md` 8장 이월)에서 막히는 것이 **정상**이다. 고치기 전에는 `ask_user prompt delivery failed | dodok: bridge is not running`.
 - 런 정본은 가짜 답 `FAKE_CLI_DONE` → `message.created` · `RUN_FINISHED`(usage 0·cost 0).
 
 **가짜 CLI 가 걸린 곳 셋**(다음 사람용 — c2-t14 는 1~3회차 런이 `RUN_ERROR "Claude CLI live session exited unexpectedly without a terminal result."` 로 끝났다):
@@ -966,7 +966,7 @@ shasum -a 256 $WS/a3-harness/*; stat -f '%z %N' $WS/a3-harness/*          # 크�
 | e | **실패 문구**(선택) | b 의 경로 하나를 없는 파일로 | 툴 결과가 `dodok: 첨부를 보내지 못했습니다 — <이름>: 파일을 찾을 수 없음`. 호스트 경로가 툴 결과·채널에 없다(원문은 `dodok:tool-send-media` 의 `details` 에만, 가려서) |
 
 `<CH>`·`<WS>` 는 실제 값으로 바꿔 쓴다. c·d 가 통과하면 스파이크 2-10 의 결함(미디어 전용 응답이 `MEDIA:/호스트/경로` 를 채널에 드러냄)이 실물에서 닫힌 것이다.
-이 표는 플러그인 `channel.ts` 배선(순수 함수를 부르는가)의 합격 기준도 겸한다 — 단위 테스트는 그 우회를 못 잡는다(`docs/plan.md` 8장 이월).
+이 표는 플러그인 `channel.ts` 배선(순수 함수를 부르는가)의 합격 기준도 겸한다 — 단위 테스트는 그 우회를 못 잡는다(`docs/guides/plan.md` 8장 이월).
 
 **끝나면**: 11.3 대로 되돌리고, `rm -rf $WS/a3-harness`. 플러그인이 저장한 원본(`~/.openclaw-dev/media/inbound/`)·CLI 복사본(`<ws>/.openclaw-cli-images/`)·스테이징(`<ws>/media/inbound/openclaw-staged-*`)·**아웃바운드 스테이징(`~/.openclaw-dev/media/outbound/` — 툴 `media` 와 `MEDIA:` 줄이 코어를 지날 때 복사본이 생긴다, Gateway 가 24h 뒤 지운다)**에서 이번 런이 만든 것만 지운다(`find … -newermt '<시작 시각>'` 로 가른다. 스파이크 보고서 「정리 상태」가 본보기). 모델 런이 워크스페이스에 만든 파일(예: `hello-c3po.txt`)도 지운다.
 
@@ -1233,7 +1233,7 @@ await page.evaluate(async () =>
 
 **`VAPID_SUBJECT` 는 실제 연락처로** — `mailto:ops@example.com` 또는 `https://…`(`mailto:`/`https://` 뒤에 공백 없는 값이 있어야 한다 — 아니면 설정 오류로 부팅하지 않는다). 기본값 `mailto:dodok@localhost` 는 개발용이다.
 주체의 호스트가 `localhost`·`127.0.0.1`·`*.local` 이면 **Apple Push(Safari·iOS)가 `403 BadJwtToken` 으로 거부한다**(web-push#947·#988) — 서버는 시작 때 warn 한 줄을 남기고, 발송 403 은 구독을 지우지 않고 error 를 남긴다(키·주체 문제라 구독 탓이 아니다). FCM(Chrome) 은 로컬 주체로도 받았다(p4-t7).
-실기기에는 HTTPS 배포가 필요하다 — 서비스 워커·푸시는 보안 출처에서만 돈다(`localhost` 는 예외). 배포 구성은 Phase 3 이다(`docs/plan.md` 8장).
+실기기에는 HTTPS 배포가 필요하다 — 서비스 워커·푸시는 보안 출처에서만 돈다(`localhost` 는 예외). 배포 구성은 Phase 3 이다(`docs/guides/plan.md` 8장).
 
 ### 14.3 사람이 볼 것 (자동화가 원리상 못 잰 것)
 
@@ -1245,7 +1245,7 @@ await page.evaluate(async () =>
 | 2 | **창이 없을 때 클릭** | dodok 탭을 모두 닫고(브라우저는 켜 둔 채) 다른 프로필이나 `pnpm wire-cli` 로 `@dev 나 불러` 를 보내 알림을 누른다 | 새 창이 그 채널(`/c/<id>`)로 열린다 |
 | 3 | **「앱 설치」를 끝까지** | 「설정」 → 「알림」 탭(`/settings/notifications`)의 「앱 설치」 → OS 설치 대화상자 → 설치 | 설치된 앱이 독립 창(standalone)으로 뜨고, 탭의 「앱 설치」 버튼이 사라진다. 설치된 창에서도 1 이 된다 |
 | 4 | **macOS 알림 모양** | 1·2 의 알림을 본다. 알림이 뜬 채 화면을 잠근다 | 제목 `dodok`, 본문은 누가·어디·무엇뿐(「@dev가 #<채널>에서 불렀습니다」·「#<채널>에 승인 요청이 있습니다」·「#<채널>의 에이전트 대화가 한도에 닿았습니다」). 아이콘이 dodok 아이콘이다. 잠금 화면에도 메시지 본문·툴 인자가 없다 |
-| 5 | **가려진 창 경계** | 같은 채널을 연 창을 다른 창 뒤로 **일부만** 가리거나 포커스만 빼고 → 그 채널에서 `@dev 승인` | 기록한다: 푸시도 탭 안 알림도 안 뜨는가. 창이 `visible` 이면 서버가 걸러 알림이 아무 데도 안 뜰 수 있다 — `docs/plan.md` 8장 「이월」(판단 필요) |
+| 5 | **가려진 창 경계** | 같은 채널을 연 창을 다른 창 뒤로 **일부만** 가리거나 포커스만 빼고 → 그 채널에서 `@dev 승인` | 기록한다: 푸시도 탭 안 알림도 안 뜨는가. 창이 `visible` 이면 서버가 걸러 알림이 아무 데도 안 뜰 수 있다 — `docs/guides/plan.md` 8장 「이월」(판단 필요) |
 | 6 | **실제 기기 오프라인** | 앱을 한 번 연 뒤 Wi-Fi 를 끄고(비행기 모드) 앱을 새로 연다 → 다시 켠다 | 곧바로 배너 「오프라인 — 저장된 내용을 보여 줍니다」와 최근 채널, 토스트 없음, 보내기 막힘. 다시 연결되면 배너가 사라진다 |
 | 7 | **iOS·안드로이드 실기기** | **Phase 3**(HTTPS 배포 뒤) | iOS 16.4+ 는 홈 화면에 추가한 앱에서만(패널 「홈 화면에 추가하면 알림을 받을 수 있습니다 — …」). `VAPID_SUBJECT` 가 실제 연락처여야 Apple 이 받는다(14.2) |
 
@@ -2075,7 +2075,7 @@ const SID = at("--session-id") ?? at("--resume");                       // 세�
 
 ### 23.4 새로 찾은 것 (코드는 고치지 않았다)
 
-- **스레드를 열기 전에 루트에 단 반응은 그 스레드 대화에 가지 않는다**(기준 3 의 ⑤). 스레드 세션 행은 그 스레드의 첫 런을 대기열에 넣을 때 생기고 반응 기준 시각이 그때라서다 — 설계대로이고(스펙 「구현과 맞춘 것」 장), 그 반응은 채널 세션에는 갔다. 사람에게는 「답에 👍 를 달고 곧바로 그 답에서 스레드를 열어 물었는데 에이전트가 👍 를 모른다」로 보인다. 바꿀 길은 `docs/plan.md` 「이월」의 「리액션」 묶음.
+- **스레드를 열기 전에 루트에 단 반응은 그 스레드 대화에 가지 않는다**(기준 3 의 ⑤). 스레드 세션 행은 그 스레드의 첫 런을 대기열에 넣을 때 생기고 반응 기준 시각이 그때라서다 — 설계대로이고(스펙 「구현과 맞춘 것」 장), 그 반응은 채널 세션에는 갔다. 사람에게는 「답에 👍 를 달고 곧바로 그 답에서 스레드를 열어 물었는데 에이전트가 👍 를 모른다」로 보인다. 바꿀 길은 `docs/guides/plan.md` 「이월」의 「리액션」 묶음.
 - **러너 세션은 앞 턴의 반응 블록을 이력으로 안고 간다.** `resume` 한 요청의 `messages` 에 앞 턴의 `UserPromptSubmit` 문맥이 그대로 남아, 셋째 런의 모델은 둘째 런 때의 「반응」 블록을 다시 본다(이번 턴의 사실에는 없다). 「Claude 러너 런 0회 하네스」 절 기준 3 과 같은 성질 — 반응이 「다시 왔다」로 읽히지 않게 에이전트 가이드가 「새 반응은 이번 턴의 글에 있는 것뿐」이라고 적는다.
 - **발췌만으로는 어느 메시지인지 가리지 못할 수 있다** — 이번 실연은 에이전트 답이 모두 `FAKE_CLI_DONE` 이라 세 반응의 인용이 같았다. 블록에는 메시지 id 가 없다(설계 — 에이전트 가이드가 「앞부분으로 알아본다」고 적는다). 실제 답은 글이 달라 문제가 덜하지만, 짧은 같은 답(「완료했습니다」 등)이 이어지면 같은 인용이 된다.
 

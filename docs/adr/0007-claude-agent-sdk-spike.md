@@ -2,7 +2,7 @@
 
 - 상태: 완료 (실측 — 가짜 CLI, 번들 CLI + 로컬 가짜 Messages API, **모델 런 5회** + 규칙 변경 스파이크 **모델 런 6회**) — 로컬 러너 스펙이 「설계에 주는 제약과 추천」 절을 입력으로 받았고, 구현이 고른 것은 「구현이 고른 것」 절, 규칙이 바뀐 뒤 이어 간 세션은 「규칙이 바뀐 뒤 이어 간 세션」 절이다
 - 날짜: 2026-09-27
-- 대상: `docs/plan.md` 「5.7 에이전트 어댑터 인터페이스 (후속 연동 대비)」 절·기술 표의 「에이전트 이벤트 표준」, `packages/openclaw-adapter/src/adapter-types.ts` 의 `AgentAdapter`·`AdapterEvent`
+- 대상: `docs/guides/plan.md` 「5.7 에이전트 어댑터 인터페이스 (후속 연동 대비)」 절·기술 표의 「에이전트 이벤트 표준」, `packages/openclaw-adapter/src/adapter-types.ts` 의 `AgentAdapter`·`AdapterEvent`
 - 산출 코드: 스파이크의 것은 없다 — 가짜 CLI·드라이버·스크래치 설치본·스파이크 세션 전사는 버렸다. 가짜 Messages API 는 러너 구현의 하네스로 다시 만들어 `packages/claude-runner/scripts/fake-messages-api.ts` 에 있다(「다시 재는 법」 6)
 - 근거 원장(git 제외): `.superpowers/sdd/2026-09-27-claude-runner-spike/` 의 `p4c-spike-report.md`(모델 없이 잰 것)·`p4c-spike2-report.md`(모델 런 1~3)·`p4c-spike3-report.md`(채널 규칙 전달 경로·`alwaysLoad`, 모델 런 4·5), `.superpowers/sdd/2026-09-30-runner-rule-change/p4r-spike-report.md`(규칙 변경 뒤 이어 간 세션 — 변형별 요청 본문과 모델 런 6회)
 

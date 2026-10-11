@@ -2,7 +2,7 @@
 
 - 상태: 완료 (실측)
 - 날짜: 2026-09-15
-- 대상: `docs/plan.md` 3.1절 「Gateway 클라이언트 (WS API)」, 8장 Phase 0 스파이크 1
+- 대상: `docs/guides/plan.md` 3.1절 「Gateway 클라이언트 (WS API)」, 8장 Phase 0 스파이크 1
 - 산출 코드: `packages/openclaw-adapter/src/gateway/{client.ts,device-identity.ts}`, `src/spike/gateway-spike.ts`
 - 원본 관찰: `data/spike-1-observations.json` (커밋하지 않음 — `data/` 는 ignored)
 
@@ -509,11 +509,11 @@ sessions.messages.subscribe({ key, agentId, includeApprovals: true })
 
 | 위치 | 현재 문장 | 왜 틀렸나 | 고칠 내용 |
 | --- | --- | --- | --- |
-| `docs/plan.md:411` (8장 Phase 0, 스파이크 1 정의) | 「디바이스 페어링(`openclaw devices approve`) → `hello-ok.features` 덤프 → `chat.send` → `chat` 델타 수신 → **`session.tool` 이벤트 수신** 콘솔 출력」 | 표 6행·10행과 같은 이유 — 페어링은 자동 승인됐고(3.2), `session.tool` 은 `tool-events` 선언 때문에 오지 않는다(5.4) | 「페어링(보통 자동, 필요하면 `devices approve`) → … → **`agent` `stream:"tool"`** 수신」 |
-| `docs/project-structure.md:197` (5장 2단계) | 「`openclaw-adapter/gateway/client.ts` — wss 접속·페어링·`hello-ok.features` 덤프·`chat.send`·`chat` 델타·**`session.tool` 콘솔 출력**까지 (스파이크 1)」 | 위와 같음 | `session.tool` → `agent`(`stream:"tool"`) |
-| `docs/project-structure.md:101` (2.3절 `events.ts`) | 「`chat(delta/final/status/error/aborted)/agent/**session.tool**/session.approval → RunEvent 정규화 (runId+seq 정합)」 | `session.tool` 은 오지 않고(5.4), `usage`·`stopReason` 은 `session.message` 에 있다(6.3) | `session.tool` 을 빼고 `session.message` 를 넣는다. 「runId+seq 정합」은 **seq 가 연속이 아니라는 전제**(6.3)로 고친다 |
+| `docs/guides/plan.md:411` (8장 Phase 0, 스파이크 1 정의) | 「디바이스 페어링(`openclaw devices approve`) → `hello-ok.features` 덤프 → `chat.send` → `chat` 델타 수신 → **`session.tool` 이벤트 수신** 콘솔 출력」 | 표 6행·10행과 같은 이유 — 페어링은 자동 승인됐고(3.2), `session.tool` 은 `tool-events` 선언 때문에 오지 않는다(5.4) | 「페어링(보통 자동, 필요하면 `devices approve`) → … → **`agent` `stream:"tool"`** 수신」 |
+| `docs/guides/project-structure.md:197` (5장 2단계) | 「`openclaw-adapter/gateway/client.ts` — wss 접속·페어링·`hello-ok.features` 덤프·`chat.send`·`chat` 델타·**`session.tool` 콘솔 출력**까지 (스파이크 1)」 | 위와 같음 | `session.tool` → `agent`(`stream:"tool"`) |
+| `docs/guides/project-structure.md:101` (2.3절 `events.ts`) | 「`chat(delta/final/status/error/aborted)/agent/**session.tool**/session.approval → RunEvent 정규화 (runId+seq 정합)」 | `session.tool` 은 오지 않고(5.4), `usage`·`stopReason` 은 `session.message` 에 있다(6.3) | `session.tool` 을 빼고 `session.message` 를 넣는다. 「runId+seq 정합」은 **seq 가 연속이 아니라는 전제**(6.3)로 고친다 |
 
-덧붙여 `docs/plan.md` 8장 Phase 0 「준비」의 **「에이전트 2개(`agents.entries`) 구성」**도 사실과 다르다 —
+덧붙여 `docs/guides/plan.md` 8장 Phase 0 「준비」의 **「에이전트 2개(`agents.entries`) 구성」**도 사실과 다르다 —
 배포에는 이미 6개가 있다(2.1). 「임의 개수」로 고친다.
 
 ## 8. 남은 질문
