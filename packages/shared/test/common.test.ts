@@ -33,6 +33,7 @@ describe("common", () => {
       "AGENT_ARCHIVED",
       "MEMBER_DEACTIVATED",
       "CHANNEL_ARCHIVED",
+      "PUSH_UNAVAILABLE",
       "INTERNAL",
     ]);
     expect(ErrorCode.safeParse("NOPE").success).toBe(false);
