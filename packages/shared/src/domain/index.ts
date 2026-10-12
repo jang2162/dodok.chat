@@ -302,7 +302,9 @@ export type ComponentInteraction = z.infer<typeof ComponentInteraction>;
 
 // 승인 계약은 Gateway 실물에 맞춘다(승인 스파이크 3·4·5장, 설계 3.1). 값을 바꾸면 Gateway 가 조용히 거절로 확정한다.
 // tool — Claude 러너의 도구 승인(러너 스펙 6장)
-export const ApprovalKind = z.enum(["exec", "plugin", "system-agent", "tool"]);
+// dodok_control — 채널 안 에이전트의 제어 도구 쓰기 확인 카드(제어 MCP 스펙 「확인 카드」 장). 우리 서버가 낸 승인이라 어댑터로 가지
+// 않고, 결정은 그 런을 시킨 사람 본인만 allow-once·deny 로 한다
+export const ApprovalKind = z.enum(["exec", "plugin", "system-agent", "tool", "dodok_control"]);
 export type ApprovalKind = z.infer<typeof ApprovalKind>;
 /** `cancelled` 는 런 중단·Gateway 재기동. 만료는 `expired`(+ `reason: "timeout"`). */
 export const ApprovalStatus = z.enum(["pending", "allowed", "denied", "expired", "cancelled"]);

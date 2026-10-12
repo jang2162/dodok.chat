@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { Ack } from "../common";
 import { BRIDGE_PROTOCOL, Id, IsoDateTime } from "../common";
 import { ComponentsV1 } from "../components";
+import type { BridgeControlCall, ControlResult } from "../control";
 import { ATTACHMENT_LIMITS, Attachment, ReactionEmoji } from "../domain";
 import { parseDodokSessionKey } from "../session-key";
 import { Sha256Hex } from "../setup";
@@ -12,6 +13,7 @@ export const BridgeCapability = z.enum([
   "typing",
   "run_id_in_outbound",
   "threads",
+  "control", // 제어 도구를 등록하고 control.call 을 보낸다 — 없는 플러그인에는 서버가 아무것도 바꾸지 않는다
 ]);
 export type BridgeCapability = z.infer<typeof BridgeCapability>;
 
@@ -153,6 +155,7 @@ export interface BridgeClientToServerEvents {
   "outbound.message": (p: OutboundMessage, ack: Ack<{ messageId: Id }>) => void;
   "outbound.typing": (p: { channelId: Id; agentId: string }) => void;
   status: (p: BridgeStatus) => void;
+  "control.call": (p: BridgeControlCall, ack: (r: ControlResult) => void) => void;
 }
 export interface BridgeServerToClientEvents {
   // 서버 → 플러그인

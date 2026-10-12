@@ -1,4 +1,10 @@
-import { Channel, ChannelMember, Id } from "@dodok/shared";
+import {
+  AddChannelMemberBody,
+  CreateChannelBody,
+  Id,
+  UpdateChannelBody,
+  UpdateChannelMemberBody,
+} from "@dodok/shared";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { AdapterRegistry } from "../../adapters/registry";
@@ -54,35 +60,6 @@ const AgentParams = z.object({ id: Id, agentId: Id });
 const ListQuery = z.object({ archived: z.literal("1").optional() });
 /** 「새 대화」 — 스레드 루트를 주면 그 스레드 세션만(스펙 2.4) */
 const ResetQuery = z.object({ threadRootId: Id.optional() });
-
-const CreateChannelBody = Channel.pick({
-  name: true,
-  topic: true,
-  prompt: true,
-  relayPolicy: true,
-  visibility: true,
-}).partial({ relayPolicy: true, visibility: true });
-
-/** topic·prompt 는 null 로 지운다. relayPolicy 는 통째로 바꾼다(빠진 필드는 기본값). */
-const UpdateChannelBody = Channel.pick({ name: true, relayPolicy: true, visibility: true }).partial().extend({
-  topic: Channel.shape.topic.unwrap().nullable().optional(),
-  prompt: Channel.shape.prompt.unwrap().nullable().optional(),
-});
-
-const AddMemberBody = ChannelMember.pick({
-  memberType: true,
-  memberId: true,
-  promptOverride: true,
-  autoRespond: true,
-  aliases: true,
-});
-
-/** 기본값이 붙은 필드는 unwrap — partial 만 쓰면 빠진 필드가 기본값으로 덮인다 */
-const UpdateMemberBody = z.object({
-  promptOverride: ChannelMember.shape.promptOverride.unwrap().nullable().optional(),
-  autoRespond: ChannelMember.shape.autoRespond.unwrap().optional(),
-  aliases: ChannelMember.shape.aliases.unwrap().optional(),
-});
 
 export function registerChannelRoutes(fastify: FastifyInstance, ctx: ChannelRouteContext): void {
   const authed = { preHandler: requireSession(ctx) };
@@ -152,7 +129,7 @@ export function registerChannelRoutes(fastify: FastifyInstance, ctx: ChannelRout
   fastify.post("/api/v1/channels/:id/members", authed, async (request, reply) => {
     const { id } = parseParams(ChannelParams, request.params);
     loadWritable(sessionUser(request).workspaceId, id);
-    const body = parseBody(AddMemberBody, request.body);
+    const body = parseBody(AddChannelMemberBody, request.body);
     // 사람 멤버는 promptOverride·autoRespond 를 못 가진다 — 서비스가 400 으로 막는다
     if (body.memberType === "agent") assertFields(request, MEMBER_EDITABLE_AGENT_MEMBER_FIELDS);
     const gatewaysBefore = body.memberType === "agent" ? channelGatewayIds(ctx.db, id) : [];
@@ -169,7 +146,7 @@ export function registerChannelRoutes(fastify: FastifyInstance, ctx: ChannelRout
   fastify.patch("/api/v1/channels/:id/members/:memberId", authed, async (request) => {
     const { id, memberId } = parseParams(MemberParams, request.params);
     loadWritable(sessionUser(request).workspaceId, id);
-    const patch = parseBody(UpdateMemberBody, request.body);
+    const patch = parseBody(UpdateChannelMemberBody, request.body);
     assertFields(request, MEMBER_EDITABLE_AGENT_MEMBER_FIELDS);
     const { member } = updateAgentMember(ctx.db, id, memberId, patch, ctx.logger);
     emitMembers(id);

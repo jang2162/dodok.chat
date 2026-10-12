@@ -636,9 +636,10 @@ describe("parseApprovalReplay — 재접속 되감기(5.3)", () => {
 
 describe("resolveParams / parseResolveResult — approval.resolve 왕복(4.1)", () => {
   // `kind` 는 wire 에 없어 저장된 행에서만 온다 — 한 값으로 굳으면 exec·system-agent 승인이 어긋난 kind 로 나간다.
-  it("Gateway kind 는 셋뿐 — 러너의 tool 은 Gateway 로 나가지 않는다", () => {
+  it("Gateway kind 는 셋뿐 — 러너의 tool·제어 확인 카드는 Gateway 로 나가지 않는다", () => {
     expect(GatewayApprovalKind.options).toEqual(["exec", "plugin", "system-agent"]);
     expect(ApprovalKind.options).toContain("tool");
+    expect(ApprovalKind.options).toContain("dodok_control");
   });
 
   it.each(GatewayApprovalKind.options)("resolveParams 는 저장된 행의 kind(%s)를 그대로 싣는다", (kind) => {

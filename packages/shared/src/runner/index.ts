@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { ErrorCode, Id } from "../common";
 import { InboundDeliver, OutboundMessage } from "../bridge";
+import type { ControlResult, RunnerControlCall } from "../control";
 import { ApprovalDecision } from "../domain";
 import { RunEvent } from "../events";
 import { isRegistrableAgentId } from "../session-key";
@@ -162,6 +163,7 @@ export interface RunnerClientToServerEvents {
   "outbound.post": (p: RunnerOutboundPost, ack: (r: RunnerOutboundAck) => void) => void;
   "approval.requested": (p: RunnerApprovalRequested) => void;
   "approval.withdrawn": (p: RunnerApprovalWithdrawn) => void;
+  "control.call": (p: RunnerControlCall, ack: (r: ControlResult) => void) => void;
 }
 
 export interface RunnerServerToClientEvents {

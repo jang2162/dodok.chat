@@ -157,6 +157,7 @@ export const FRAME_BUCKET: Record<keyof RunnerClientToServerEvents, RunnerFrameB
   "outbound.post": "control",
   "approval.requested": "control",
   "approval.withdrawn": "control",
+  "control.call": "control",
 };
 
 /**

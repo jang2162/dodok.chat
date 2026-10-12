@@ -3,6 +3,7 @@ export * from "./automations";
 export * from "./bridge";
 export * from "./common";
 export * from "./components";
+export * from "./control";
 export * from "./domain";
 export * from "./events";
 export * from "./mention";

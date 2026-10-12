@@ -27,10 +27,10 @@ import { z } from "zod";
 export type { ProviderApproval };
 
 /**
- * Gateway 가 아는 kind 셋. shared `ApprovalKind` 의 `tool` 은 러너의 도구 승인 몫이라 OpenClaw 단서로 읽지도, Gateway 로 보내지도 않는다
- * — Gateway 는 모르는 kind 를 조용히 거절로 확정한다
+ * Gateway 가 아는 kind 셋. shared `ApprovalKind` 의 `tool`(러너의 도구 승인)·`dodok_control`(우리 서버의 제어 확인 카드)은 OpenClaw
+ * 단서로 읽지도, Gateway 로 보내지도 않는다 — Gateway 는 모르는 kind 를 조용히 거절로 확정한다
  */
-export const GatewayApprovalKind = ApprovalKind.exclude(["tool"]);
+export const GatewayApprovalKind = ApprovalKind.exclude(["tool", "dodok_control"]);
 export type GatewayApprovalKind = z.infer<typeof GatewayApprovalKind>;
 
 // 계약(shared `Approval`)의 문자열 상한 = Gateway 상한. 보여 주는 값은 넘으면 자르고, 상관 키(`toolCallId`)는 자르지 않는다.

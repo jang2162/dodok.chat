@@ -101,3 +101,23 @@ export type UpdateMeBody = z.infer<typeof UpdateMeBody>;
 
 export const ChangePasswordBody = z.object({ current: z.string().min(1).max(256), next: Password });
 export type ChangePasswordBody = z.infer<typeof ChangePasswordBody>;
+
+// 개인 토큰(PAT) — 바깥 MCP 클라이언트가 `/mcp` 에 붙는 토큰(제어 MCP 스펙 「주체」 장). 원문 dpt_… 은 발급 응답 한 번뿐이다
+
+/** 사람마다 살아 있는(폐기 안 한) 토큰 상한 */
+export const PERSONAL_TOKENS_MAX = 10;
+
+export const PersonalTokenCreate = z.object({ label: z.string().trim().min(1).max(40) });
+export type PersonalTokenCreate = z.infer<typeof PersonalTokenCreate>;
+
+export const PersonalTokenSummary = z.object({
+  id: Id,
+  label: z.string(),
+  prefix: z.string(), // 원문 앞부분 — 목록에서 어느 토큰인지 가른다
+  createdAt: IsoDateTime,
+  lastUsedAt: IsoDateTime.optional(),
+});
+export type PersonalTokenSummary = z.infer<typeof PersonalTokenSummary>;
+
+export const PersonalTokenIssued = z.object({ token: PersonalTokenSummary, raw: z.string() });
+export type PersonalTokenIssued = z.infer<typeof PersonalTokenIssued>;

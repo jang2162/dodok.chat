@@ -1,4 +1,4 @@
-import { Agent, Id, isRegistrableAgentId } from "@dodok/shared";
+import { CreateAgentBody, DiscoverAgentsQuery, Id, UpdateAgentBody } from "@dodok/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { AdapterRegistry } from "../../adapters/registry";
@@ -40,38 +40,7 @@ export type AgentRouteContext = {
 };
 
 const AgentParams = z.object({ id: Id });
-// OpenClaw 는 그 Gateway 의 agents.list — gatewayId 가 있어야 한다. 러너는 붙은 러너 전부(연결을 고르지 않는다)
-const DiscoverQuery = z.object({
-  provider: z.enum(["openclaw", "claude"]).default("openclaw"),
-  gatewayId: Id.optional(),
-});
-
-const CreateAgentBody = Agent.pick({
-  providerAgentId: true,
-  handle: true,
-  name: true,
-  avatarUrl: true,
-  basePrompt: true,
-}).extend({
-  // 세션 키 빌더(dodokSessionKey) 규칙에 소문자까지 — 밖의 id 는 키를 못 만들고, 대문자는 코어가 접은 키와 어긋난다
-  providerAgentId: Agent.shape.providerAgentId.refine(isRegistrableAgentId, {
-    message:
-      "providerAgentId 는 OpenClaw 에이전트 id(영문 소문자·숫자로 시작, 영문 소문자·숫자·_·-, 64자 이하)여야 한다",
-  }),
-  // 판정 P9 — 서버는 목록 검사를 하지 않는다(OpenClaw 와 같다). 웹이 discover?provider= 목록에서 고른다
-  provider: z.enum(["openclaw", "claude"]).default("openclaw"),
-  enabled: Agent.shape.enabled.default(true),
-  // OpenClaw 에이전트의 Gateway — OpenClaw 면 필수(아래 라우트가 400), 러너 에이전트는 무시한다
-  gatewayId: Id.optional(),
-});
-
 const MoveGatewayBody = z.object({ gatewayId: Id });
-
-/** avatarUrl·basePrompt 는 null 로 지운다 */
-const UpdateAgentBody = Agent.pick({ handle: true, name: true, enabled: true }).partial().extend({
-  avatarUrl: Agent.shape.avatarUrl.unwrap().nullable().optional(),
-  basePrompt: Agent.shape.basePrompt.unwrap().nullable().optional(),
-});
 
 export function registerAgentRoutes(fastify: FastifyInstance, ctx: AgentRouteContext): void {
   const authed = { preHandler: requireSession(ctx) };
@@ -152,7 +121,7 @@ export function registerAgentRoutes(fastify: FastifyInstance, ctx: AgentRouteCon
    * archivedAgentId 를 싣는다 — 웹은 등록 대신 되살리기를 보인다
    */
   fastify.get("/api/v1/agents/discover", admin, async (request) => {
-    const { provider, gatewayId } = parseQuery(DiscoverQuery, request.query);
+    const { provider, gatewayId } = parseQuery(DiscoverAgentsQuery, request.query);
     if (provider === "openclaw") {
       if (gatewayId === undefined)
         throw apiError("VALIDATION", "gatewayId is required for OpenClaw", { field: "gatewayId" });
