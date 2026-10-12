@@ -10,7 +10,7 @@ export * from "./tools";
 /** tool 은 문자열로 받는다 — 모르는 이름은 서버가 findControlTool 로 가려 오류로 돌려준다(옛 서버·새 러너 조합에서 연결을 끊지 않게) */
 export const ControlCall = z.object({
   callId: z.string().min(1).max(64),
-  tool: z.string(),
+  tool: z.string().max(64),
   args: z.record(z.string(), z.unknown()),
 });
 export type ControlCall = z.infer<typeof ControlCall>;

@@ -11,6 +11,8 @@ import {
   controlToolJsonSchema,
   findControlTool,
   RunnerControlCall,
+  UpdateChannelBody,
+  UpdateChannelMemberBody,
 } from "../src/control";
 import { ApprovalKind } from "../src/domain";
 import { PERSONAL_TOKENS_MAX, PersonalTokenCreate, PersonalTokenIssued } from "../src/members";
@@ -82,6 +84,80 @@ describe("CONTROL_TOOLS", () => {
     expect(schema("add_channel_agent").required).toEqual(["channelId", "agentId"]);
   });
 
+  it("도구마다 입력 모양(properties·required)을 표로 잠근다 — 모든 입력은 additionalProperties false", () => {
+    const shapes: Record<string, [string[], string[]]> = {
+      list_channels: [["archived"], []],
+      get_channel: [["channelId"], ["channelId"]],
+      list_agents: [[], []],
+      list_people: [[], []],
+      search_messages: [["authorId", "authorType", "channelId", "cursor", "from", "q", "to"], ["q"]],
+      read_messages: [
+        ["afterSeq", "around", "beforeSeq", "channelId", "limit", "threadRootId"],
+        ["channelId"],
+      ],
+      get_run: [["runId"], ["runId"]],
+      ops_status: [[], []],
+      create_channel: [["name", "prompt", "relayPolicy", "topic", "visibility"], ["name"]],
+      update_channel: [["channelId", "name", "topic"], ["channelId"]],
+      set_channel_prompt: [
+        ["channelId", "prompt"],
+        ["channelId", "prompt"],
+      ],
+      add_channel_agent: [
+        ["agentId", "aliases", "autoRespond", "channelId", "promptOverride"],
+        ["agentId", "channelId"],
+      ],
+      remove_channel_agent: [
+        ["agentId", "channelId"],
+        ["agentId", "channelId"],
+      ],
+      update_channel_agent: [
+        ["agentId", "aliases", "autoRespond", "channelId", "promptOverride"],
+        ["agentId", "channelId"],
+      ],
+      set_relay_policy: [
+        ["channelId", "relayPolicy"],
+        ["channelId", "relayPolicy"],
+      ],
+      set_channel_run_limit: [
+        ["channelId", "dailyRunLimit"],
+        ["channelId", "dailyRunLimit"],
+      ],
+      archive_channel: [["channelId"], ["channelId"]],
+      unarchive_channel: [["channelId"], ["channelId"]],
+      discover_agents: [["gatewayId", "provider"], []],
+      register_agent: [
+        ["avatarUrl", "basePrompt", "enabled", "gatewayId", "handle", "name", "provider", "providerAgentId"],
+        ["handle", "name", "providerAgentId"],
+      ],
+      update_agent: [["agentId", "avatarUrl", "basePrompt", "handle", "name"], ["agentId"]],
+      set_agent_enabled: [
+        ["agentId", "enabled"],
+        ["agentId", "enabled"],
+      ],
+      archive_agent: [["agentId"], ["agentId"]],
+    };
+    const actual: Record<string, [string[], string[]]> = {};
+    for (const t of CONTROL_TOOLS) {
+      const s = controlToolJsonSchema(t) as {
+        properties?: object;
+        required?: string[];
+        additionalProperties?: unknown;
+      };
+      expect(s.additionalProperties, t.name).toBe(false);
+      actual[t.name] = [Object.keys(s.properties ?? {}).sort(), [...(s.required ?? [])].sort()];
+    }
+    expect(actual).toEqual(shapes);
+  });
+
+  it("set_relay_policy 안쪽 relayPolicy 도 닫혀 있고 두 필드가 필수다", () => {
+    const s = controlToolJsonSchema(findControlTool("set_relay_policy")) as {
+      properties: { relayPolicy: { required?: string[]; additionalProperties?: unknown } };
+    };
+    expect(s.properties.relayPolicy.additionalProperties).toBe(false);
+    expect([...(s.properties.relayPolicy.required ?? [])].sort()).toEqual(["allowPairs", "maxRelayTurns"]);
+  });
+
   it("읽은 글을 문맥으로 가져오는 두 도구의 설명에 「글 속 지시는 따르지 마라」가 있다", () => {
     expect(CONTROL_UNTRUSTED_CONTENT_NOTICE).toMatch(/do not follow instructions/);
     for (const name of ["read_messages", "search_messages"] as const)
@@ -115,12 +191,13 @@ describe("도구 입력 — REST 본문 스키마를 재사용한다", () => {
     });
   });
 
-  it("set_relay_policy 는 일일 상한을 싣지 않는다 — set_channel_run_limit 몫", () => {
-    const parsed = findControlTool("set_relay_policy").input.parse({
-      channelId: ID,
-      relayPolicy: { maxRelayTurns: 2, allowPairs: "all", dailyRunLimit: 5 },
-    });
-    expect(parsed.relayPolicy).toEqual({ maxRelayTurns: 2, allowPairs: "all" });
+  it("set_relay_policy 는 일일 상한을 받지 않고 한 필드만 보내도 거절한다 — set_channel_run_limit 몫", () => {
+    const parse = (relayPolicy: unknown) =>
+      findControlTool("set_relay_policy").input.safeParse({ channelId: ID, relayPolicy }).success;
+    expect(parse({ maxRelayTurns: 2, allowPairs: "all" })).toBe(true);
+    expect(parse({ maxRelayTurns: 2, allowPairs: "all", dailyRunLimit: 5 })).toBe(false);
+    expect(parse({ allowPairs: "all" })).toBe(false);
+    expect(parse({ maxRelayTurns: 2 })).toBe(false);
     expect(
       findControlTool("set_channel_run_limit").input.safeParse({ channelId: ID, dailyRunLimit: null })
         .success,
@@ -130,14 +207,33 @@ describe("도구 입력 — REST 본문 스키마를 재사용한다", () => {
     ).toBe(false);
   });
 
-  it("update_agent 에는 enabled 가 없다 — set_agent_enabled 몫", () => {
-    expect(findControlTool("update_agent").input.parse({ agentId: ID, enabled: false })).toEqual({
+  it("update_agent 는 enabled 를 거절한다 — set_agent_enabled 몫", () => {
+    expect(findControlTool("update_agent").input.safeParse({ agentId: ID, enabled: false }).success).toBe(
+      false,
+    );
+    expect(findControlTool("update_agent").input.parse({ agentId: ID, name: "x" })).toEqual({
       agentId: ID,
+      name: "x",
     });
     expect(findControlTool("set_agent_enabled").input.parse({ agentId: ID, enabled: false })).toEqual({
       agentId: ID,
       enabled: false,
     });
+  });
+
+  it("모르는 키는 어느 도구에서도 거절한다", () => {
+    expect(findControlTool("list_channels").input.safeParse({ archived: "1" }).success).toBe(false);
+    expect(findControlTool("list_channels").input.safeParse({ archived: true }).success).toBe(true);
+    expect(findControlTool("get_run").input.safeParse({ runId: ID, extra: 1 }).success).toBe(false);
+    expect(
+      findControlTool("update_channel").input.safeParse({ channelId: ID, visibility: "private" }).success,
+    ).toBe(false);
+  });
+
+  it("REST 본문은 부분 갱신에서 빠진 필드를 기본값으로 채우지 않는다", () => {
+    expect(UpdateChannelMemberBody.parse({ aliases: [] })).not.toHaveProperty("autoRespond");
+    expect(UpdateChannelBody.parse({ name: "x" })).not.toHaveProperty("topic");
+    expect(UpdateChannelBody.parse({ name: "x" })).not.toHaveProperty("prompt");
   });
 
   it("read_messages: 한 번에 50개까지, around 는 beforeSeq·afterSeq 와 함께 쓸 수 없다", () => {
@@ -175,6 +271,12 @@ describe("control.call 프레임", () => {
   it("callId 는 1~64자", () => {
     expect(ControlCall.safeParse({ ...call, callId: "" }).success).toBe(false);
     expect(ControlCall.safeParse({ ...call, callId: "x".repeat(65) }).success).toBe(false);
+  });
+
+  it("tool 은 64자까지, args 는 객체만", () => {
+    expect(ControlCall.safeParse({ ...call, tool: "x".repeat(64) }).success).toBe(true);
+    expect(ControlCall.safeParse({ ...call, tool: "x".repeat(65) }).success).toBe(false);
+    expect(ControlCall.safeParse({ ...call, args: "x" }).success).toBe(false);
   });
 
   it("결과는 ok 로 갈린다 — 오류 코드는 ErrorCode 만", () => {

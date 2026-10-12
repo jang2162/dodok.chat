@@ -44,7 +44,8 @@ export const CONTROL_READ_MESSAGES_MAX = 50;
 function tool<const N extends string, I extends z.ZodObject>(
   t: { name: N; input: I } & Omit<ControlTool<I>, "name" | "input">,
 ): Omit<ControlTool<I>, "name"> & { name: N } {
-  return t;
+  // 모델은 두 도구로 나눈 설계를 모르고 키를 섞어 보낸다 — 모르는 키를 버리면 처리기가 ok 를 돌려주고 모델이 「바꿨다」고 믿는다
+  return { ...t, input: t.input.strict() as I };
 }
 
 export const CONTROL_TOOLS = [
@@ -143,7 +144,7 @@ export const CONTROL_TOOLS = [
     name: "add_channel_agent",
     access: "write",
     description:
-      "Add an agent to a channel, optionally with a per-channel prompt, auto-respond (at most one agent per channel) and aliases. Setting those needs admin or owner.",
+      "Add an agent to a channel, optionally with a per-channel prompt, auto-respond (at most one agent per channel) and aliases. Setting promptOverride or autoRespond needs admin or owner; aliases anyone can.",
     input: ChannelAgentRef.extend(
       AddChannelMemberBody.pick({ promptOverride: true, autoRespond: true, aliases: true }).shape,
     ),
@@ -158,15 +159,23 @@ export const CONTROL_TOOLS = [
     name: "update_channel_agent",
     access: "write",
     description:
-      "Change an agent's per-channel prompt (null clears it), auto-respond or aliases in one channel. Admin or owner only.",
+      "Change an agent's per-channel prompt (null clears it), auto-respond or aliases in one channel. Changing promptOverride or autoRespond needs admin or owner; aliases anyone can.",
     input: ChannelAgentRef.extend(UpdateChannelMemberBody.shape),
   }),
   tool({
     name: "set_relay_policy",
     access: "write",
     description:
-      'Set how far agents may hand off to each other by @mention in a channel: maxRelayTurns and which agent pairs may relay ("all" or a list). The daily run limit is kept — use set_channel_run_limit for it. Admin or owner only.',
-    input: ChannelRef.extend({ relayPolicy: RelayPolicy.omit({ dailyRunLimit: true }) }),
+      'Set how far agents may hand off to each other by @mention in a channel: maxRelayTurns and which agent pairs may relay ("all" or a list). Both fields replace the current policy (send maxRelayTurns and allowPairs together). The daily run limit is kept — use set_channel_run_limit for it. Admin or owner only.',
+    input: ChannelRef.extend({
+      // 기본값 없이 둘 다 필수 — 빠진 필드가 기본값(4·"all")으로 지금 정책을 덮지 않게
+      relayPolicy: z
+        .object({
+          maxRelayTurns: RelayPolicy.shape.maxRelayTurns.unwrap(),
+          allowPairs: RelayPolicy.shape.allowPairs.unwrap(),
+        })
+        .strict(),
+    }),
   }),
   tool({
     name: "set_channel_run_limit",
