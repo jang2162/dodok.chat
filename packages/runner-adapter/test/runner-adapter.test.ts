@@ -1903,6 +1903,18 @@ describe("control.call", () => {
     expect(h.controlCalls).toEqual([]);
   });
 
+  it("서버가 abort 를 보낸 뒤(러너의 최종 답 전 — 런은 아직 열려 있고 aborted) 그 런의 이름이면 콜백 없이 NOT_FOUND", async () => {
+    // 오케스트레이터는 어댑터 abort 를 기다린 뒤에야 런을 abort_requested 로 바꾼다 — 그 사이 서버 principalForRunner 는 받으므로
+    // 이 검사가 그 창의 막이다
+    const h = await setup();
+    const r = await readyRunner(h);
+    const { runId, sessionKey } = await startRun(h, r);
+    await h.adapter.abort(runId, sessionKey, null);
+    await until(() => r.aborts.length === 1, "abort");
+    expect(await emit(r, call(runId))).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
+    expect(h.controlCalls).toEqual([]);
+  });
+
   it("모양이 틀리면 VALIDATION, 콜백이 던지면 INTERNAL", async () => {
     const h = await setup({
       control: async () => {

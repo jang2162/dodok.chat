@@ -28,7 +28,7 @@ export type McpRouteContext = {
   db: Db;
   workspaceId: string;
   control: Pick<ControlService, "call">;
-  /** 브리지·러너 토큰과 같은 실패 카운터(스펙 「개인 토큰(PAT)」 절) — 막힌 주소는 토큰을 보지 않고 429 */
+  /** 브리지·러너와 같은 규칙(bridgeFail)의 /mcp 전용 실패 카운터 — 막힌 주소는 토큰을 보지 않고 429 */
   guard: AgentTokenGuard;
   serverVersion: string;
   /** lastUsedAt 시계 — 테스트 주입 */
@@ -46,7 +46,8 @@ function webRequest(request: FastifyRequest): Request {
     const value = request.headers[name];
     if (typeof value === "string") headers.set(name, value);
   }
-  return new Request(`http://${request.host}${MCP_PATH}`, { method: "POST", headers });
+  // URL 은 고정 — SDK 는 DNS rebinding 보호를 켜지 않으면 호스트를 보지 않고, Host 머리를 넣으면 이상한 값(공백·괄호)에 URL 생성이 던진다
+  return new Request(`http://localhost${MCP_PATH}`, { method: "POST", headers });
 }
 
 /** 결과는 텍스트 JSON 하나, 오류는 isError + { code, message }(ErrorCode 그대로 — 스펙 「실행 흐름」 장) */

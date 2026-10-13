@@ -2,6 +2,8 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 import { BridgeCapability, BridgeHello, type BridgeClientToServerEvents } from "../src/bridge";
 import {
   BridgeControlCall,
+  CONTROL_CALL_TIMEOUT_MS,
+  CONTROL_CONFIRM_TTL_MS,
   CONTROL_READ_MESSAGES_MAX,
   CONTROL_TOOLS,
   CONTROL_UNTRUSTED_CONTENT_NOTICE,
@@ -316,6 +318,10 @@ describe("확인 카드·capability", () => {
       capabilities: ["threads", "control"],
     });
     expect(hello.capabilities).toEqual(["threads", "control"]);
+  });
+
+  it("에이전트 쪽 호출 상한은 카드 만료보다 길다 — 짧으면 허용한 쓰기가 실행됐는데 에이전트는 시간 초과로 안다", () => {
+    expect(CONTROL_CALL_TIMEOUT_MS).toBeGreaterThan(CONTROL_CONFIRM_TTL_MS);
   });
 });
 

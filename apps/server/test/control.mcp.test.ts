@@ -6,15 +6,18 @@ import { CONTROL_TOOLS, controlToolJsonSchema } from "@dodok/shared";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { and, eq } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
 import { Writable } from "node:stream";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { App } from "../src/app";
-import { approvals, memberships } from "../src/db/schema.sqlite";
+import { approvals, memberships, opsEvents } from "../src/db/schema.sqlite";
 import { createLogger } from "../src/logger";
 import { getChannel } from "../src/modules/channels/service";
+import { issueBridgeToken } from "../src/modules/setup/tokens";
 import { issuePersonalToken } from "../src/modules/tokens/service";
 import { bootTestApp, login, userWithRole } from "./helpers/app";
 import { newChannel } from "./helpers/control";
+import { FAKE_GATEWAY_ID } from "./helpers/gateways";
 
 const MAX_FAILURES = 4;
 const ACCEPT = "application/json, text/event-stream";
@@ -54,6 +57,9 @@ describe("/mcp", () => {
   });
 
   const tokenFor = (userId: string) => issuePersonalToken(app.db, userId, `t${++n}`).raw;
+  // 사람당 토큰은 10개까지 — 토큰이 무엇이든 상관없는 테스트는 owner 토큰 하나를 같이 쓴다
+  let shared: string | undefined;
+  const ownerToken = () => (shared ??= tokenFor(app.ownerUserId));
   const post = (token: string | undefined, body: unknown) =>
     app.fastify.inject({
       method: "POST",
@@ -109,6 +115,26 @@ describe("/mcp", () => {
     expect((await post(good, initialize)).statusCode).toBe(200);
   });
 
+  it("/mcp 의 실패 카운터는 따로다 — 개인 토큰 실패로 막힌 주소도 브리지 토큰의 설치 파일·첨부 HTTP 는 막히지 않는다", async () => {
+    const good = ownerToken();
+    const bridgeToken = issueBridgeToken(app.db, app.workspaceId, FAKE_GATEWAY_ID, "gw").token;
+    const bridgeGet = (url: string) =>
+      app.fastify.inject({ method: "GET", url, headers: { authorization: `Bearer ${bridgeToken}` } });
+    for (let i = 0; i < MAX_FAILURES; i++) expect((await post("dpt_nope", initialize)).statusCode).toBe(401);
+    expect((await post(good, initialize)).statusCode).toBe(429);
+    // 인증은 통과하고 대상이 없어 404 — 같은 카운터였으면 토큰을 보기 전에 429
+    expect((await bridgeGet("/api/v1/setup/plugin.tgz")).statusCode).toBe(404);
+    expect((await bridgeGet(`/bridge/attachments/${randomUUID()}`)).statusCode).toBe(404);
+    // 사건은 그대로 bridge_auth_blocked, 막히게 한 쪽 detail.path "mcp"
+    const paths = app.db
+      .select()
+      .from(opsEvents)
+      .all()
+      .filter((r) => r.kind === "bridge_auth_blocked")
+      .map((r) => (r.detail as { path?: unknown } | null)?.path);
+    expect(paths).toContain("mcp");
+  });
+
   it("비활성화된 사람의 토큰은 401, 다시 활성화해도 401 [Review Focus 5]", async () => {
     const mia = await userWithRole(app, `mcp-mia${++n}`, "member");
     const token = tokenFor(mia.id);
@@ -158,6 +184,22 @@ describe("/mcp", () => {
     }
   });
 
+  it("Host 머리가 URL 이 될 수 없는 값이어도 처리한다 — 500 이 아니다", async () => {
+    const res = await app.fastify.inject({
+      method: "POST",
+      url: "/mcp",
+      headers: {
+        host: "a b[",
+        accept: ACCEPT,
+        "content-type": "application/json",
+        authorization: `Bearer ${ownerToken()}`,
+      },
+      payload: JSON.stringify(initialize),
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ result: { serverInfo: { name: "dodok" } } });
+  });
+
   it("tools/call list_channels 는 제어 서비스의 결과를 텍스트 JSON 으로", async () => {
     const channel = newChannel(app, { name: `mcp-list${++n}` });
     const { isError, value } = await callTool(tokenFor(app.ownerUserId), "list_channels", {});
@@ -201,6 +243,16 @@ describe("/mcp", () => {
     });
   });
 
+  it("토큰 없는 GET 도 405 — 인증보다 먼저, 실패로 세지 않는다", async () => {
+    const good = ownerToken();
+    for (let i = 0; i < MAX_FAILURES; i++) {
+      const res = await app.fastify.inject({ method: "GET", url: "/mcp" });
+      expect(res.statusCode).toBe(405);
+      expect(res.headers.allow).toBe("POST");
+    }
+    expect((await post(good, initialize)).statusCode).toBe(200);
+  });
+
   it("GET·DELETE 는 405 — 토큰이 있어도", async () => {
     const token = tokenFor(app.ownerUserId);
     for (const method of ["GET", "DELETE"] as const) {
@@ -214,17 +266,28 @@ describe("/mcp", () => {
     }
   });
 
-  it("응답·로그 어디에도 토큰 원문이 없다 — 맞는 토큰·틀린 토큰 모두", async () => {
+  it("응답·로그 어디에도 토큰 원문이 없다 — 맞는 토큰·틀린 토큰, 쿼리에 잘못 실은 맞는 토큰 모두", async () => {
     const good = tokenFor(app.ownerUserId);
     const wrong = `dpt_${"x".repeat(43)}`;
     lines.length = 0;
+    // URL 만 받는 MCP 클라이언트에 ?token= 으로 넣어 보는 오설정 — 401 이지만 토큰은 유효한 채라 `incoming request` 줄의 url 에 남으면 안 된다
+    const query = await app.fastify.inject({
+      method: "POST",
+      url: `/mcp?token=${good}`,
+      headers: { accept: ACCEPT, "content-type": "application/json" },
+      payload: JSON.stringify(initialize),
+    });
+    expect(query.statusCode).toBe(401);
     const bodies = [
       (await post(good, initialize)).body,
       (await post(good, { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "list_channels" } }))
         .body,
       (await post(wrong, initialize)).body,
+      query.body,
     ];
     expect(lines.length).toBeGreaterThan(0);
+    // 가린 꼴이 실제로 찍혔는가 — 요청 줄이 아예 없어서 통과하는 것이 아니다
+    expect(lines.join("")).toContain(`/mcp?token=${good.slice(0, 10)}…`);
     for (const secret of [good.slice(4), wrong.slice(4)]) {
       expect(lines.join("").includes(secret)).toBe(false);
       expect(bodies.join("").includes(secret)).toBe(false);

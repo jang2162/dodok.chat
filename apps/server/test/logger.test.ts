@@ -153,6 +153,17 @@ describe("요청 로그의 URL — 웹훅 토큰 가림", () => {
     expect(redactUrl(url)).not.toContain(dashed.slice(10));
   });
 
+  // 개인 토큰(dpt_ + base64url 43자)은 Authorization 머리로만 받지만 ?token= 으로 잘못 실려 올 수 있다 — 꼬리에 - 가 든 꼴로 [\w-] 가
+  // \w 로 줄어든 변이를 잡는다
+  const pat = "dpt_Ab3dE-_jJFOfn5u-EVJpO8zLEnAIEkj7oxYm5mdFpTl";
+  it.each([
+    ["/mcp 쿼리", `/mcp?token=${pat}`, "/mcp?token=dpt_Ab3dE-…"],
+    ["다른 쿼리와 함께", `/mcp?x=1&api_key=${pat}&y=2`, "/mcp?x=1&api_key=dpt_Ab3dE-…&y=2"],
+  ])("쿼리 속 개인 토큰 꼴도 dpt_ + 6자만 — %s", (_label, url, expected) => {
+    expect(redactUrl(url)).toBe(expected);
+    expect(redactUrl(url)).not.toContain(pat.slice(10));
+  });
+
   it.each([
     "/api/v1/channels?limit=50&after=12",
     "/bridge/attachments/01999999-0000-7000-8000-000000000001",

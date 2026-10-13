@@ -769,12 +769,14 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       ...(deps.controlConfirmTtlMs === undefined ? {} : { confirmTtlMs: deps.controlConfirmTtlMs }),
     });
     services.bindControl(control);
-    // 바깥 MCP 클라이언트(스펙 「바깥 — /mcp」 절) — 개인 토큰 실패도 브리지·러너 토큰과 같은 카운터가 센다
+    // 바깥 MCP 클라이언트(스펙 「바깥 — /mcp」 절) — 개인 토큰 실패는 같은 숫자(bridgeFail)의 /mcp 전용 카운터가 센다. 브리지·러너
+    // 카운터와 나누는 까닭: 사람 머신의 MCP 클라이언트에 남은 폐기된 토큰이나, 같은 출구 주소(NAT) 뒤 한 사람의 잘못된 설정이 그
+    // 주소의 러너·플러그인 핸드셰이크와 런 도중 첨부 HTTP 를 막으면 안 된다. 토큰은 256비트라 맞혀 보기 방어는 나눠도 같다
     registerMcpRoute(fastify, {
       db,
       workspaceId,
       control,
-      guard: agentTokenGuard,
+      guard: { guard: new BridgeAuthGuard(limits.bridgeFail), now: limitClock, onBlocked: onAuthBlocked },
       serverVersion: packageJson.version,
     });
     // 인증 없이 열려 있다 — 워크스페이스 id·어댑터 상세는 내놓지 않는다(운영 보강 스펙 8장, 상세는 owner 전용 ops/status)
