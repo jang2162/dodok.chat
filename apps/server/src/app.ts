@@ -1,6 +1,6 @@
 import { BridgeAuthGuard, createOpenClawAdapter } from "@dodok/openclaw-adapter";
 import { createRunnerAdapter, type RunnerAdapter, type RunnerTokenVerifier } from "@dodok/runner-adapter";
-import type { AdapterStatus, ApiError, GatewayLinkState } from "@dodok/shared";
+import type { AdapterStatus, ApiError, ControlResult, GatewayLinkState } from "@dodok/shared";
 import cookie from "@fastify/cookie";
 import rateLimit from "@fastify/rate-limit";
 import { sql } from "drizzle-orm";
@@ -33,6 +33,8 @@ import { tick } from "./modules/automations/scheduler";
 import { registerWebhookRoute } from "./modules/automations/webhook";
 import { watchPluginHellos } from "./modules/channels/prompt-sync";
 import { registerChannelRoutes } from "./modules/channels/routes";
+import { registerMcpRoute } from "./modules/control/mcp";
+import { type Principal, principalForBridge, principalForRunner } from "./modules/control/principal";
 import { type ControlService, createControlService } from "./modules/control/service";
 import { getChannel } from "./modules/channels/service";
 import { registerGatewayRoutes } from "./modules/gateways/routes";
@@ -239,7 +241,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     // 사건 서비스는 어댑터 뒤에 만들어진다 — 막힘은 listen 뒤 핸드셰이크에서만 일어나므로 그때는 있다.
     // 사건은 하나(key bridge)로 묶고 막히게 한 쪽은 detail.path 로 가른다(러너 스펙 8장)
     let ops: OpsService;
-    const onAuthBlocked = (address: string, path: "bridge" | "runner" | "webhook") =>
+    const onAuthBlocked = (address: string, path: "bridge" | "runner" | "mcp" | "webhook") =>
       ops.record({
         kind: "bridge_auth_blocked",
         key: "bridge",
@@ -292,6 +294,16 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
 
     // 정본 훅은 오케스트레이터를 부르는데 오케스트레이터는 어댑터를 받아 뒤에 만들어진다 — 브리지 연결은 listen 뒤라 그때는 있다
     let orchestrator: Orchestrator;
+    // 제어 도구 호출도 같다 — 제어 서비스는 라우트 문맥을 받아 어댑터 뒤에 만들어진다. 주체는 그 연결의 열린 런에서 찾고(스펙 「그 런을
+    // 시킨 사람」 절), 없으면 끝난 런의 이름이라 실행하지 않는다
+    let control: ControlService;
+    const controlCall = async (
+      principal: Principal | undefined,
+      call: { tool: string; args: unknown },
+    ): Promise<ControlResult> =>
+      principal
+        ? control.call(principal, call.tool, call.args)
+        : { ok: false, error: { code: "NOT_FOUND", message: "no open run for this call" } };
     const clientAddress = bridgeClientAddress(trustProxy);
     const adapters: AgentAdapter[] = deps.adapters
       ? [...deps.adapters]
@@ -312,6 +324,8 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
             logger: logger.child({ mod: "adapter" }),
             onCanonical: (message, connectionId) =>
               orchestrator.onCanonical(message, "openclaw", connectionId),
+            onControlCall: (connectionId, call) =>
+              controlCall(principalForBridge(db, connectionId, call.sessionKey, call.runId), call),
             sessionKeysToRecover: (connectionId) => sessionRecoverTargets(db).get(connectionId) ?? [],
             ...(config.OPENCLAW_FRAME_DUMP_PATH === undefined
               ? {}
@@ -343,6 +357,8 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
           return { messageId };
         },
         tokenCount: () => activeRunnerTokenCount(db, workspaceId),
+        onControlCall: (connectionId, call) =>
+          controlCall(principalForRunner(db, connectionId, call.runId), call),
         bindings: {
           boundToken: (agentId) => boundRunnerToken(db, workspaceId, agentId),
           claim: (agentId, tokenId) => claimRunnerToken(db, workspaceId, agentId, tokenId),
@@ -738,7 +754,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     });
     // 제어 도구(제어 MCP 스펙) — REST 와 같은 액션 함수·정책 함수로 처리한다. 런 종료·확인 카드 결정이 되돌아오도록 서비스에 잇는다 —
     // 부팅 정리(recoverOnBoot)가 닫는 런의 카드도 닫히게 그보다 먼저
-    const control = createControlService({
+    control = createControlService({
       db,
       bus,
       logger: logger.child({ mod: "control" }),
@@ -753,6 +769,14 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       ...(deps.controlConfirmTtlMs === undefined ? {} : { confirmTtlMs: deps.controlConfirmTtlMs }),
     });
     services.bindControl(control);
+    // 바깥 MCP 클라이언트(스펙 「바깥 — /mcp」 절) — 개인 토큰 실패도 브리지·러너 토큰과 같은 카운터가 센다
+    registerMcpRoute(fastify, {
+      db,
+      workspaceId,
+      control,
+      guard: agentTokenGuard,
+      serverVersion: packageJson.version,
+    });
     // 인증 없이 열려 있다 — 워크스페이스 id·어댑터 상세는 내놓지 않는다(운영 보강 스펙 8장, 상세는 owner 전용 ops/status)
     fastify.get("/healthz", async (_request, reply) => {
       const dbOk = pingDb(db, logger);

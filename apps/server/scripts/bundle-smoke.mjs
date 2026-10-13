@@ -5,7 +5,8 @@
 // 저장소 밖 임시 디렉터리에서 띄운다 — 저장소 안이면 워크스페이스 node_modules(devDependency 포함)가 모든 것을 해석해
 // 빠진 prod 의존성이 가려진다(번들이 런타임에 찾는 ws 가 devDependency 였던 결함을 그렇게 놓쳤다).
 // 단계 1: 정상 env 로 /healthz 200 · GET /socket.io/socket.io.js 400(serveClient: false) 뒤에도 살아 있음 · SIGTERM 이면 exit 0 과
-//   DATA_DIR/run-state.json clean:true(종료 표지 — 처리기가 번들 main 에 걸렸는지)
+//   DATA_DIR/run-state.json clean:true(종료 표지 — 처리기가 번들 main 에 걸렸는지) · /mcp 를 개인 토큰으로 불러 initialize·tools/call 이
+//   200 — MCP SDK 는 요청 경로에서야 적재되므로 부팅만으로는 번들·배치에서 풀리는지 모른다
 // 단계 2: DODOK_MIGRATIONS_DIR 없이 띄우면 설정 오류로 죽는다 — 번들이 자기를 번들로 알아보는지(define·isBundled)를 이것으로 본다
 // 단계 3: dist/backup.js — 단계 1 서버가 떠 있는 동안 그 DATA_DIR 을 백업하면 exit 0·한 줄·사본, DB 없는 디렉터리면 exit 1·사유 한 줄.
 //   better-sqlite3 가 external 이라 번들 혼자로는 모른다 — 프로드 설치 위에서 실제로 적재되는지를 본다
@@ -195,7 +196,11 @@ async function stop(run) {
 async function stage1() {
   const port = await freePort();
   const base = `http://127.0.0.1:${port}`;
-  const run = startBundle(port, { DODOK_MIGRATIONS_DIR: join(appDir, "drizzle") });
+  const localToken = randomBytes(24).toString("hex");
+  const run = startBundle(port, {
+    DODOK_MIGRATIONS_DIR: join(appDir, "drizzle"),
+    LOCAL_AUTH_TOKEN: localToken,
+  });
   const healthz = () =>
     fetch(`${base}/healthz`).then(
       (r) => r.ok,
@@ -217,6 +222,7 @@ async function stage1() {
     await new Promise((r) => setTimeout(r, 300));
     if (run.exited || !(await healthz()))
       failures.push("단계 1: GET /socket.io/socket.io.js 뒤 서버가 죽었다");
+    await mcpLive(base, localToken);
     await backupLive();
   }
   await stop(run);
@@ -226,6 +232,60 @@ async function stage1() {
     const clean = existsSync(marker) ? JSON.parse(readFileSync(marker, "utf8")).clean : "파일 없음";
     if (clean !== true) failures.push(`단계 1: SIGTERM 뒤 run-state.json clean 이 true 가 아니라 ${clean}`);
   }
+}
+
+// 단계 1 의 /mcp — owner 로그인 → 개인 토큰 발급 → 토큰 없이 401 · initialize 200(serverInfo dodok) · tools/call list_channels 성공
+async function mcpLive(base, localToken) {
+  const json = async (path, init) => {
+    const r = await fetch(`${base}${path}`, init).catch((e) => ({
+      status: `요청 실패(${e.cause?.code ?? e.message})`,
+    }));
+    return { status: r.status, body: typeof r.json === "function" ? await r.json().catch(() => null) : null };
+  };
+  const send = (path, body, headers = {}) =>
+    json(path, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify(body),
+    });
+  const login = await send("/api/v1/auth/local", { token: localToken });
+  if (login.status !== 200) return failures.push(`단계 1: /mcp 준비 — 로컬 로그인이 ${login.status}`);
+  const session = { authorization: `Bearer ${login.body.sessionToken}` };
+  const issued = await send("/api/v1/me/tokens", { label: "bundle-smoke" }, session);
+  if (issued.status !== 201) return failures.push(`단계 1: /mcp 준비 — 개인 토큰 발급이 ${issued.status}`);
+  const mcp = (body, token) =>
+    send("/mcp", body, {
+      accept: "application/json, text/event-stream",
+      ...(token === undefined ? {} : { authorization: `Bearer ${token}` }),
+    });
+  const anonymous = await mcp({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+  if (anonymous.status !== 401)
+    failures.push(`단계 1: 토큰 없는 POST /mcp 가 401 이 아니라 ${anonymous.status}`);
+  const init = await mcp(
+    {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-06-18",
+        capabilities: {},
+        clientInfo: { name: "bundle-smoke", version: "0" },
+      },
+    },
+    issued.body.raw,
+  );
+  if (init.status !== 200 || init.body?.result?.serverInfo?.name !== "dodok")
+    failures.push(`단계 1: /mcp initialize 가 ${init.status} ${JSON.stringify(init.body)}`);
+  const call = await mcp(
+    { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "list_channels", arguments: {} } },
+    issued.body.raw,
+  );
+  if (
+    call.status !== 200 ||
+    call.body?.result?.isError === true ||
+    !Array.isArray(call.body?.result?.content)
+  )
+    failures.push(`단계 1: /mcp tools/call list_channels 가 ${call.status} ${JSON.stringify(call.body)}`);
 }
 
 // 단계 3 앞 절반 — 운영에서처럼 서버가 쓰고 있는 DB 를 다른 프로세스가 백업한다
@@ -283,7 +343,7 @@ try {
 if (!interrupted) {
   console.log(
     failures.length === 0
-      ? "bundle smoke: 1) /healthz 200 · /socket.io/socket.io.js 400 · SIGTERM exit 0·clean 표지  2) DODOK_MIGRATIONS_DIR 없으면 설정 오류로 종료  3) backup.js 떠 있는 DB exit 0 · DB 없음 exit 1"
+      ? "bundle smoke: 1) /healthz 200 · /socket.io/socket.io.js 400 · /mcp 401·initialize·tools/call · SIGTERM exit 0·clean 표지  2) DODOK_MIGRATIONS_DIR 없으면 설정 오류로 종료  3) backup.js 떠 있는 DB exit 0 · DB 없음 exit 1"
       : `bundle smoke: FAILED — ${failures.join(", ")}`,
   );
   process.exit(failures.length === 0 ? 0 : 1);

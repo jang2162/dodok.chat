@@ -1,4 +1,4 @@
-import type { Approval, Message } from "@dodok/shared";
+import { type Approval, CONTROL_CONFIRM_TTL_MS, type Message } from "@dodok/shared";
 import { and, eq } from "drizzle-orm";
 import type { DbOrTx } from "../../db/client";
 import { approvals as approvalsTable, componentInteractions, users } from "../../db/schema.sqlite";
@@ -16,9 +16,6 @@ import { readableMentions } from "../search/readable";
 
 // 확인 카드(제어 MCP 스펙 「확인 카드」 장) — 채널 안 에이전트의 쓰기는 그 런을 시킨 사람이 허용해야 실행된다. 카드 행은 승인 서비스가
 // 저장·중계하고(kind dodok_control), 이 모듈은 카드를 기다리는 도구 호출·만료 타이머·런 종료를 맡는다
-
-/** 확인 카드 기한 — 러너 도구 승인 기한(RUNNER_APPROVAL_TTL_MS)과 같은 10분 */
-export const CONTROL_CONFIRM_TTL_MS = 600_000;
 
 /** 출처 줄에 싣는 트리거 글의 앞부분 */
 const ORIGIN_EXCERPT_MAX = 120;

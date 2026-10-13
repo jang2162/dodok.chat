@@ -26,6 +26,16 @@ export type RunnerControlCall = z.infer<typeof RunnerControlCall>;
 export const BridgeControlCall = ControlCall.extend({ sessionKey: z.string(), runId: Id });
 export type BridgeControlCall = z.infer<typeof BridgeControlCall>;
 
+/** 확인 카드 기한 — 러너 도구 승인 기한과 같은 10분. 그 안에 결정이 없으면 도구 호출은 EXPIRED 로 끝난다 */
+export const CONTROL_CONFIRM_TTL_MS = 600_000;
+
+/**
+ * 러너 CLI·플러그인이 control.call 의 ack 를 기다리는 상한. 서버는 확인 카드를 기다리는 동안 ack 를 미루고(최대
+ * CONTROL_CONFIRM_TTL_MS, 그 전에 런이 끝나면 그때) 스스로 끊지 않는다 — 이보다 짧으면 허용한 쓰기가 실행됐는데 에이전트는 시간
+ * 초과로 안다
+ */
+export const CONTROL_CALL_TIMEOUT_MS = CONTROL_CONFIRM_TTL_MS + 60_000;
+
 export const ControlResult = z.discriminatedUnion("ok", [
   z.object({ ok: z.literal(true), data: z.unknown() }),
   z.object({ ok: z.literal(false), error: z.object({ code: ErrorCode, message: z.string() }) }),

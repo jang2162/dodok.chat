@@ -6,16 +6,23 @@ import {
   AdapterError,
   artifactUrl,
   BridgeAuthGuard,
+  type ControlResult,
   dodokSessionKey,
   formatReactionFacts,
   type InboundDeliver,
   OutboundMessage,
   type ProviderApproval,
   type RunEventBody,
+  type RunnerControlCall,
 } from "@dodok/shared";
 import { Server } from "socket.io";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createRunnerAdapter, RUNNER_APPROVAL_TTL_MS, type RunnerAdapter } from "../src";
+import {
+  createRunnerAdapter,
+  RUNNER_APPROVAL_TTL_MS,
+  type RunnerAdapter,
+  type RunnerAdapterOptions,
+} from "../src";
 import { FRAME_BUCKET, RUN_FREE_APPROVALS } from "../src/runner-adapter";
 import { connectRunner, type FakeRunner, runnerAgent } from "./helpers/fake-runner-client";
 
@@ -50,6 +57,8 @@ type Harness = {
   limited: Array<[string, string, number]>;
   /** 등록된 claude 에이전트의 묶인 토큰 id(null 이면 묶임 없음) — bindings 옵션이 읽고 claim 이 쓴다 */
   bound: Map<string, string | null>;
+  /** onControlCall 이 받은 것 — [연결 id, 호출] */
+  controlCalls: Array<[string, RunnerControlCall]>;
   runner(token: string, agents?: ReturnType<typeof runnerAgent>[]): Promise<FakeRunner>;
 };
 
@@ -59,7 +68,13 @@ let current: { http: HttpServer; io: Server; adapter: RunnerAdapter; runners: Fa
 type FrameAllowance = { events: number; control: number };
 
 async function setup(
-  opts: { fakeTimers?: boolean; frames?: FrameAllowance; bound?: Record<string, string | null> } = {},
+  opts: {
+    fakeTimers?: boolean;
+    frames?: FrameAllowance;
+    bound?: Record<string, string | null>;
+    /** 서버의 제어 도구 처리 — 기본은 받은 호출을 그대로 data 로 돌려준다. null 이면 옵션을 주지 않는다 */
+    control?: RunnerAdapterOptions["onControlCall"] | null;
+  } = {},
 ): Promise<Harness> {
   // 가짜 시계로 10분을 건너뛰어도 Socket.IO 하트비트가 끊지 않게 핑 간격을 늘린다
   if (opts.fakeTimers) vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
@@ -78,6 +93,12 @@ async function setup(
   const channelNames = new Map([[CH, "general"]]);
   const limited: Array<[string, string, number]> = [];
   const bound = new Map<string, string | null>(Object.entries(opts.bound ?? {}));
+  const controlCalls: Array<[string, RunnerControlCall]> = [];
+  const control =
+    opts.control === null
+      ? undefined
+      : (opts.control ??
+        (async (_id: string, call: RunnerControlCall): Promise<ControlResult> => ({ ok: true, data: call })));
   const frames = opts.frames ?? { events: Number.POSITIVE_INFINITY, control: Number.POSITIVE_INFINITY };
   const allowance = (n: number) => {
     let left = n;
@@ -101,6 +122,14 @@ async function setup(
       return { messageId: randomUUID() };
     },
     tokenCount: () => 2,
+    ...(control === undefined
+      ? {}
+      : {
+          onControlCall: (connectionId: string, call: RunnerControlCall) => {
+            controlCalls.push([connectionId, call]);
+            return control(connectionId, call);
+          },
+        }),
     bindings: {
       boundToken: (agentId) => bound.get(agentId) ?? null,
       claim: (agentId, tokenId) => {
@@ -137,6 +166,7 @@ async function setup(
     },
     limited,
     bound,
+    controlCalls,
     async runner(token, agents = [runnerAgent("coder")]) {
       const r = await connectRunner(url, token, agents);
       runners.push(r);
@@ -1815,5 +1845,104 @@ describe("연결 id — 러너 토큰 id 가 send 결과·이벤트·정본에 �
     expect(await ids(null)).toEqual(["coder", "writer"]);
     expect(await ids(RUNNER_A_CONNECTION)).toEqual(["coder"]);
     expect(await ids(TOKENS[TOKEN_B]?.tokenId ?? "")).toEqual(["writer"]);
+  });
+});
+
+describe("control.call", () => {
+  const call = (runId: string, over: Record<string, unknown> = {}) => ({
+    callId: randomUUID(),
+    runId,
+    tool: "get_channel",
+    args: { channelId: CH },
+    ...over,
+  });
+  const emit = (r: FakeRunner, payload: unknown) =>
+    r.socket.emitWithAck("control.call", payload) as Promise<ControlResult>;
+
+  it("그 러너의 열린 런이면 서버 콜백(연결 id = 러너 토큰 id)으로 가고 ack 가 그 결과다", async () => {
+    const h = await setup();
+    const r = await readyRunner(h);
+    const input = await startRun(h, r);
+    const payload = call(input.runId);
+    expect(await emit(r, payload)).toEqual({ ok: true, data: payload });
+    expect(h.controlCalls).toEqual([[RUNNER_A_CONNECTION, payload]]);
+  });
+
+  it("콜백이 늦게 끝나면(확인 카드 대기) ack 도 그때까지 미룬다", async () => {
+    let finish!: (result: ControlResult) => void;
+    const h = await setup({
+      control: () =>
+        new Promise<ControlResult>((resolve) => {
+          finish = resolve;
+        }),
+    });
+    const r = await readyRunner(h);
+    const input = await startRun(h, r);
+    let acked: ControlResult | undefined;
+    const pending = emit(r, call(input.runId, { tool: "update_channel" })).then((result) => {
+      acked = result;
+      return result;
+    });
+    await until(() => h.controlCalls.length === 1, "control callback");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(acked).toBeUndefined();
+    finish({ ok: false, error: { code: "EXPIRED", message: "카드가 만료됐습니다" } });
+    expect(await pending).toEqual({ ok: false, error: { code: "EXPIRED", message: "카드가 만료됐습니다" } });
+  });
+
+  it("남의 런·모르는 런·끝난 런의 이름이면 콜백을 부르지 않고 NOT_FOUND [Review Focus 4]", async () => {
+    const h = await setup();
+    const a = await readyRunner(h, TOKEN_A, [runnerAgent("coder")]);
+    const b = await readyRunner(h, TOKEN_B, [runnerAgent("fin")]);
+    const theirs = await startRun(h, b, { agentId: "fin", sessionKey: dodokSessionKey("fin", CH) });
+    const mine = await startRun(h, a);
+    a.send("run.final", { runId: mine.runId, text: "답", stopReason: "end_turn", costKind: "api" });
+    await until(() => signals(h, mine.runId).includes("gateway_final"), "final");
+    for (const runId of [theirs.runId, randomUUID(), mine.runId])
+      expect(await emit(a, call(runId))).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
+    expect(h.controlCalls).toEqual([]);
+  });
+
+  it("모양이 틀리면 VALIDATION, 콜백이 던지면 INTERNAL", async () => {
+    const h = await setup({
+      control: async () => {
+        throw new Error("db is locked");
+      },
+    });
+    const r = await readyRunner(h);
+    const input = await startRun(h, r);
+    expect(await emit(r, { runId: input.runId, tool: "get_channel" })).toMatchObject({
+      ok: false,
+      error: { code: "VALIDATION" },
+    });
+    expect(await emit(r, call(input.runId))).toMatchObject({ ok: false, error: { code: "INTERNAL" } });
+  });
+
+  it("서버가 제어 도구를 처리하지 않으면(콜백 없음) ADAPTER_UNAVAILABLE", async () => {
+    const bare = await setup({ control: null });
+    const r2 = await readyRunner(bare);
+    const input2 = await startRun(bare, r2);
+    expect(await emit(r2, call(input2.runId))).toMatchObject({
+      ok: false,
+      error: { code: "ADAPTER_UNAVAILABLE" },
+    });
+  });
+
+  it("control 버킷을 센다 — 비면 콜백 없이 RATE_LIMITED", async () => {
+    // hello 가 control 하나를 쓴다
+    const h = await setup({ frames: { events: 100, control: 1 } });
+    const r = await readyRunner(h);
+    const input = await startRun(h, r);
+    expect(await emit(r, call(input.runId))).toMatchObject({ ok: false, error: { code: "RATE_LIMITED" } });
+    expect(h.controlCalls).toEqual([]);
+    expect(h.limited).toEqual([["127.0.0.1", "control.call", 1]]);
+  });
+
+  it("모르는 프레임으로 warn 하지 않는다", async () => {
+    const h = await setup();
+    const r = await readyRunner(h);
+    const input = await startRun(h, r);
+    await emit(r, call(input.runId));
+    expect(h.logs.filter((l) => l.msg?.includes("unknown frame"))).toEqual([]);
   });
 });

@@ -2,7 +2,7 @@
  * 플러그인이 아웃바운드로 붙는 브리지 엔드포인트 — Socket.IO 네임스페이스 `/bridge`.
  *
  * 최소 표면: 토큰 인증(handshake `auth.token` 을 검증 함수에 넘긴다 — 통과한 토큰 id 와 그 토큰의 Gateway 를 세션이 기억한다), 플러그인 → 서버 이벤트
- * (`hello`·`outbound.message`·`outbound.typing`·`status`) 수신, 서버 → 플러그인 요청
+ * (`hello`·`outbound.message`·`outbound.typing`·`status`·`control.call`) 수신, 서버 → 플러그인 요청
  * (`inbound.deliver`·`config.set`·`agents.list`) 송신. 저장·라우팅 같은 런타임 로직은 콜백으로 밖에 둔다.
  * 네임스페이스는 하나이고 Gateway 마다 자리(`forGateway`)를 따로 둔다 — 「활성 플러그인 하나」·중복 흡수·ready 대기는 그 자리 안에서만
  * 오간다(멀티 Gateway 스펙 「브리지」 절).
@@ -15,12 +15,14 @@ import {
   ApiError,
   BRIDGE_PROTOCOL,
   type BridgeClientToServerEvents,
+  BridgeControlCall,
   type BridgeHello,
   type BridgeServerToClientEvents,
   type BridgeStatus,
   type ConfigSet,
   ErrorCode,
   ConfigSetResult,
+  type ControlResult,
   type InboundDeliver,
   InboundDeliverResult,
   type OutboundMessage,
@@ -49,6 +51,11 @@ export type BridgeServerCallbacks = {
   ) => Promise<{ messageId: string }>;
   onTyping?: (session: BridgeSessionState, payload: { channelId: string; agentId: string }) => void;
   onStatus?: (session: BridgeSessionState, status: BridgeStatus) => void;
+  /**
+   * 제어 도구 호출 — hello 에 capability `control` 을 실은 ready 연결의 것만 온다. ack 는 돌려준 결과로, 확인 카드를 기다리는 동안
+   * 늦게 끝난다. 없으면 호출마다 ADAPTER_UNAVAILABLE
+   */
+  onControlCall?: (session: BridgeSessionState, call: BridgeControlCall) => Promise<ControlResult>;
   onClose?: (session: BridgeSessionState) => void;
   /** 핸드셰이크 거절 — 원격 주소별 1분에 한 번만 온다(그 사이 눌러 둔 수를 싣는다). 제시된 토큰은 싣지 않는다 */
   onRejected?: (reason: string) => void;
@@ -323,6 +330,27 @@ export function attachBridge(io: Server, opts: BridgeServerOptions): BridgeHandl
       if (!parsed.ok || session.phase !== "ready") return;
       session.lastStatus = parsed.data;
       opts.onStatus?.(session, parsed.data);
+    });
+
+    socket.on("control.call", (payload, ack) => {
+      const reply = (result: ControlResult) => {
+        if (typeof ack === "function") ack(result);
+      };
+      const fail = (code: ErrorCode, message: string) => reply({ ok: false, error: { code, message } });
+      const parsed = BridgeControlCall.safeParse(payload);
+      if (!parsed.success)
+        return fail(
+          "VALIDATION",
+          parsed.error.issues.map((i) => `${i.path.join(".") || "<root>"}: ${i.message}`).join("; "),
+        );
+      if (session.phase !== "ready") return fail("PROTOCOL_MISMATCH", "hello first");
+      // 도구를 등록한다고 알리지 않은 플러그인의 프레임은 받지 않는다(스펙 「OpenClaw 플러그인」 절 — 옛 플러그인에는 아무것도 바꾸지 않는다)
+      if (!session.hello?.capabilities.includes("control"))
+        return fail("FORBIDDEN", "plugin did not announce the control capability");
+      if (!opts.onControlCall) return fail("ADAPTER_UNAVAILABLE", "control tools are not served");
+      opts
+        .onControlCall(session, parsed.data)
+        .then(reply, (error: unknown) => reply({ ok: false, error: outboundError(error) }));
     });
 
     socket.on("disconnect", () => {

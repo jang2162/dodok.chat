@@ -1,12 +1,19 @@
 import { randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
-import { AdapterError, type InboundDeliver, type OutboundMessage } from "@dodok/shared";
+import {
+  AdapterError,
+  type BridgeControlCall,
+  type ControlResult,
+  type InboundDeliver,
+  type OutboundMessage,
+} from "@dodok/shared";
 import Fastify, { type FastifyInstance } from "fastify";
 import { Server } from "socket.io";
 import { io as connect, type Socket } from "socket.io-client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { BridgeAuthGuard } from "../src/bridge/guard";
 import { attachBridge, type BridgeHandle } from "../src/bridge/server";
+import type { BridgeSessionState } from "../src/bridge/session";
 
 const TOKEN = "bridge-test-token";
 const OTHER_TOKEN = "bridge-other-token";
@@ -571,5 +578,109 @@ describe("attachBridge — 인증 실패 카운터(authGuard)", () => {
     } finally {
       await close();
     }
+  });
+});
+
+describe("attachBridge — control.call", () => {
+  const RUN = "01a09fc9-d204-7551-89d6-38544d07a1ff";
+  const call = (over: Record<string, unknown> = {}) => ({
+    callId: randomUUID(),
+    sessionKey: `agent:main:dodok:channel:${CH}`,
+    runId: RUN,
+    tool: "get_channel",
+    args: { channelId: CH },
+    ...over,
+  });
+  const controlHello = { ...hello, capabilities: [...hello.capabilities, "control"] };
+  const emit = (socket: Socket, payload: unknown) =>
+    socket.emitWithAck("control.call", payload) as Promise<ControlResult>;
+
+  /** 이 묶음의 브리지 — onControlCall 이 받은 [세션, 호출] 을 모은다. handler 가 없으면 받은 호출을 data 로 돌려준다 */
+  async function withControl(
+    handler?: (call: BridgeControlCall) => Promise<ControlResult>,
+  ): Promise<Array<[BridgeSessionState, BridgeControlCall]>> {
+    const seen: Array<[BridgeSessionState, BridgeControlCall]> = [];
+    await stop();
+    await start({
+      onControlCall: (session, c) => {
+        seen.push([session, c]);
+        return handler ? handler(c) : Promise.resolve({ ok: true, data: c });
+      },
+    });
+    return seen;
+  }
+
+  async function ready(h = controlHello): Promise<Socket> {
+    const socket = client(TOKEN);
+    await waitFor(socket, "connect");
+    expect(await socket.emitWithAck("hello", h)).toMatchObject({ ok: true });
+    return socket;
+  }
+
+  it("control 을 알린 ready 연결의 호출은 콜백(세션의 Gateway)으로 가고 ack 가 그 결과다", async () => {
+    const seen = await withControl();
+    const socket = await ready();
+    const payload = call();
+    expect(await emit(socket, payload)).toEqual({ ok: true, data: payload });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.[0].gatewayId).toBe(GATEWAY);
+    expect(seen[0]?.[1]).toEqual(payload);
+  });
+
+  it("control 을 알리지 않은 플러그인은 hello 는 그대로 받고, 호출은 콜백 없이 FORBIDDEN", async () => {
+    const seen = await withControl();
+    const socket = await ready(hello);
+    expect(bridge.forGateway(GATEWAY).current()?.phase).toBe("ready");
+    expect(await emit(socket, call())).toMatchObject({ ok: false, error: { code: "FORBIDDEN" } });
+    expect(seen).toEqual([]);
+  });
+
+  it("hello 전이면 PROTOCOL_MISMATCH, 모양이 틀리면(runId 없음) VALIDATION — 콜백을 부르지 않는다", async () => {
+    const seen = await withControl();
+    const early = client(TOKEN);
+    await waitFor(early, "connect");
+    expect(await emit(early, call())).toMatchObject({ ok: false, error: { code: "PROTOCOL_MISMATCH" } });
+    const socket = await ready();
+    const { runId: _runId, ...noRun } = call();
+    expect(await emit(socket, noRun)).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
+    expect(seen).toEqual([]);
+  });
+
+  it("콜백이 늦게 끝나면(확인 카드 대기) ack 도 그때까지 미룬다", async () => {
+    let finish!: (result: ControlResult) => void;
+    const seen = await withControl(
+      () =>
+        new Promise<ControlResult>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const socket = await ready();
+    let acked: ControlResult | undefined;
+    const pending = emit(socket, call({ tool: "update_channel" })).then((result) => {
+      acked = result;
+      return result;
+    });
+    while (seen.length === 0) await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(acked).toBeUndefined();
+    finish({ ok: true, data: { changed: true } });
+    expect(await pending).toEqual({ ok: true, data: { changed: true } });
+  });
+
+  it("콜백이 계약 코드를 실어 던지면 그 코드로, 아니면 INTERNAL", async () => {
+    let error: unknown;
+    await withControl(async () => {
+      throw error;
+    });
+    const socket = await ready();
+    error = new AdapterError("ADAPTER_UNAVAILABLE", "gateway connection is gone");
+    expect(await emit(socket, call())).toMatchObject({ ok: false, error: { code: "ADAPTER_UNAVAILABLE" } });
+    error = new Error("db is locked");
+    expect(await emit(socket, call())).toMatchObject({ ok: false, error: { code: "INTERNAL" } });
+  });
+
+  it("onControlCall 이 없으면 ADAPTER_UNAVAILABLE", async () => {
+    const socket = await ready();
+    expect(await emit(socket, call())).toMatchObject({ ok: false, error: { code: "ADAPTER_UNAVAILABLE" } });
   });
 });

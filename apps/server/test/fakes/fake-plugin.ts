@@ -11,7 +11,9 @@ import {
   type BridgeClientToServerEvents,
   BridgeHello,
   BridgeHelloResult,
+  type BridgeControlCall,
   type BridgeServerToClientEvents,
+  type ControlResult,
   ConfigSet,
   InboundDeliver,
   type InboundDeliverResult,
@@ -53,6 +55,8 @@ export type FakePlugin = {
   readonly helloResult: BridgeHelloResult | undefined;
   /** `outbound.message` 를 보내고 서버가 준 messageId 를 돌려준다. outboundId(uuid)·ts(now)는 없으면 채운다 */
   sendOutbound(message: OutboundInput): Promise<{ messageId: string }>;
+  /** `control.call` 을 보내고 ack 를 기다린다 — 확인 카드를 기다리는 동안 늦게 온다. callId 는 없으면 채운다 */
+  control(call: Omit<BridgeControlCall, "callId"> & { callId?: string }): Promise<ControlResult>;
   /** 브리지 HTTP 로 첨부를 올린다(실제 플러그인 `uploadMedia` 와 같은 헤더). 2xx 가 아니면 상태·본문을 싣고 던진다 */
   uploadAttachment(input: {
     channelId: string;
@@ -194,6 +198,12 @@ export async function startFakePlugin(opts: FakePluginOptions): Promise<FakePlug
       }>;
       if (!res.ok) throw new Error(`${res.error.code}: ${res.error.message}`);
       return res.data;
+    },
+    async control(call) {
+      return (await socket.emitWithAck("control.call", {
+        ...call,
+        callId: call.callId ?? randomUUID(),
+      })) as ControlResult;
     },
     async uploadAttachment({ channelId, bytes, name, mime }) {
       const res = await fetch(`${opts.bridgeUrl}${BRIDGE_ATTACHMENTS_PATH}`, {

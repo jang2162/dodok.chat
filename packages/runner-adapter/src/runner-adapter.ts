@@ -12,6 +12,7 @@ import {
   type AgentAdapter,
   type BridgeAuthGuard,
   buildChannelRulesAppend,
+  type ControlResult,
   buildTurnFacts,
   type ClaudeAdapterStatus,
   type ClaudeSetupDetail,
@@ -29,6 +30,7 @@ import {
   RunnerApprovalRequested,
   RunnerApprovalWithdrawn,
   type RunnerClientToServerEvents,
+  RunnerControlCall,
   RunnerHello,
   type RunnerHelloResult,
   RunnerOutboundPost,
@@ -103,6 +105,11 @@ export type RunnerAdapterOptions = {
   onOutbound: (m: OutboundMessage, connectionId: string) => Promise<{ messageId: string }>;
   /** AdapterStatus.runners.tokens */
   tokenCount: () => number;
+  /**
+   * 제어 도구 호출(control.call)을 서버가 처리한다 — connectionId 는 보낸 러너의 토큰 id. 확인 카드를 기다리는 동안 늦게 끝나고
+   * (최대 CONTROL_CONFIRM_TTL_MS), 던지지 않고 결과를 돌려준다. 없으면 호출마다 ADAPTER_UNAVAILABLE
+   */
+  onControlCall?: (connectionId: string, call: RunnerControlCall) => Promise<ControlResult>;
   approvalTtlMs?: number;
   bindings: RunnerAgentBindings;
   frameLimit: RunnerFrameLimit;
@@ -145,6 +152,7 @@ const RUNNER_FRAMES: ReadonlySet<string> = new Set<keyof RunnerClientToServerEve
   "outbound.post",
   "approval.requested",
   "approval.withdrawn",
+  "control.call",
 ]);
 // 프레임이 쓰는 버킷 — run.event 는 모델 델타마다 오므로 따로 넉넉하게, 나머지는 런마다 몇 번뿐이다. 열린 런·기다리는 승인을
 // 가리키는 종결·승인 프레임 가운데 처리기가 받아들일 것은 버킷을 거치지 않는다(승인 요청은 런마다 누계 RUN_FREE_APPROVALS 개까지
@@ -695,6 +703,29 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
     }
   }
 
+  /**
+   * 제어 도구 호출(제어 MCP 스펙 「Claude 러너」 절) — 이 러너가 맡은 열린 런의 이름으로만 받는다. 끝난 런·남의 런이면 서버에 묻지
+   * 않고 NOT_FOUND(서버도 principalForRunner 로 한 번 더 본다). ack 는 서버의 결과가 올 때까지 미룬다 — 확인 카드를 기다리면 길다
+   */
+  async function onControlCall(runner: Runner, payload: unknown, ack: unknown) {
+    const reply = (r: ControlResult) => {
+      if (typeof ack === "function") ack(r);
+    };
+    const fail = (code: ErrorCode, message: string) => reply({ ok: false, error: { code, message } });
+    const parsed = RunnerControlCall.safeParse(payload);
+    if (!parsed.success) return fail("VALIDATION", issues(parsed.error));
+    const call = parsed.data;
+    const run = runs.get(call.runId);
+    if (!run || run.runner !== runner || run.aborted) return fail("NOT_FOUND", "no open run of this runner");
+    if (!opts.onControlCall) return fail("ADAPTER_UNAVAILABLE", "control tools are not served");
+    try {
+      reply(await opts.onControlCall(runner.tokenId, call));
+    } catch (error) {
+      logger.warn({ err: error, tokenId: runner.tokenId, runId: call.runId }, "runner control.call failed");
+      fail("INTERNAL", "control call failed");
+    }
+  }
+
   function onApprovalRequested(runner: Runner, payload: unknown) {
     const parsed = RunnerApprovalRequested.safeParse(payload);
     if (!parsed.success) {
@@ -838,6 +869,11 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
           code: "RATE_LIMITED",
           message: "too many frames",
         });
+      if (event === "control.call" && typeof ack === "function")
+        (ack as (r: ControlResult) => void)({
+          ok: false,
+          error: { code: "RATE_LIMITED", message: "too many frames" },
+        });
       return false;
     };
     const on = <A extends unknown[]>(
@@ -880,6 +916,7 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
     on("outbound.post", onOutboundPost);
     on("approval.requested", onApprovalRequested);
     on("approval.withdrawn", onApprovalWithdrawn);
+    on("control.call", onControlCall);
     socket.on("disconnect", () => {
       clearTimeout(helloTimer);
       helloTimers.delete(helloTimer);

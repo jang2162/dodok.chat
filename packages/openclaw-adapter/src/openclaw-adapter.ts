@@ -6,7 +6,13 @@
  * 토큰이 묶인 Gateway 로 플러그인 연결을 나눠 받는다. 응답 정본은 브리지 `outbound.message` 이고, 서버가 저장한 id 를 `onCanonical`
  * 훅으로 받아 플러그인에 ack 한다.
  */
-import type { ConfigSet, ConfigSetResult, OutboundMessage } from "@dodok/shared";
+import type {
+  BridgeControlCall,
+  ConfigSet,
+  ConfigSetResult,
+  ControlResult,
+  OutboundMessage,
+} from "@dodok/shared";
 import type { Server } from "socket.io";
 import {
   AdapterError,
@@ -65,6 +71,11 @@ export type OpenClawAdapterOptions = {
   logger: AdapterLogger;
   /** 서버가 정본을 저장하고 id 를 돌려준다. 그 id 가 플러그인 ack 의 messageId 가 된다. connectionId 는 정본이 온 연결 */
   onCanonical: (message: OutboundMessage, connectionId: string) => Promise<{ messageId?: string }>;
+  /**
+   * 플러그인의 제어 도구 호출을 서버가 처리한다 — connectionId 는 그 플러그인의 브리지 토큰이 묶인 Gateway(계획 판정 PC3). 확인 카드를
+   * 기다리는 동안 늦게 끝나고, 던지지 않고 결과를 돌려준다. 없으면 호출마다 ADAPTER_UNAVAILABLE
+   */
+  onControlCall?: (connectionId: string, call: BridgeControlCall) => Promise<ControlResult>;
   /** 그 연결의 재접속 복구 대상(서버 agent_sessions). */
   sessionKeysToRecover?: (connectionId: string) => RecoverTarget[];
   /** 기본 `connectGateway` (테스트 주입) */
@@ -146,6 +157,16 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
     // 받으면 버린다 — 플러그인은 typing 을 내지 않고(capability "typing" 없음), 에이전트가 일하는 중이라는 표시는 웹 런 버블이 맡는다
     onTyping: () => undefined,
     onStatus: (_session, pluginStatus) => logger.debug({ pluginStatus }, "bridge plugin status"),
+    onControlCall: async (session, call) => {
+      const unavailable = (message: string): ControlResult => ({
+        ok: false,
+        error: { code: "ADAPTER_UNAVAILABLE", message },
+      });
+      if (!opts.onControlCall) return unavailable("control tools are not served");
+      if (session.gatewayId === null || !connectionOf(session.gatewayId))
+        return unavailable("gateway connection is gone");
+      return opts.onControlCall(session.gatewayId, call);
+    },
     onRejected: (reason) => logger.warn({ reason }, "bridge connection rejected"),
   });
 

@@ -8,6 +8,7 @@
  */
 import {
   type ComponentsV1,
+  type ControlResult,
   RUNNER_NAMESPACE,
   RUNNER_POST_ID_PREFIX,
   RUNNER_PROTOCOL,
@@ -49,6 +50,11 @@ export type FakeRunnerRun = {
     components?: z.input<typeof ComponentsV1>;
     attachmentIds?: string[];
   }): Promise<RunnerOutboundAck>;
+  /**
+   * control.call 을 보내고 ack(서버의 결과)를 기다린다 — 확인 카드를 기다리는 동안 늦게 온다. runId 는 기본 이 런, 런이 끝난 뒤에도
+   * 보낼 수 있다(늦은 호출을 잴 때)
+   */
+  control(tool: string, args: Record<string, unknown>, opts?: { runId?: string }): Promise<ControlResult>;
   final(text: string, opts?: Partial<Omit<RunnerRunFinal, "runId" | "text">>): void;
   error(code: string, message: string): void;
   /** run.abort 를 받으면 풀린다 */
@@ -276,6 +282,14 @@ export async function startFakeRunner(opts: FakeRunnerOptions): Promise<FakeRunn
           ts: new Date().toISOString(),
         };
         return (await s.emitWithAck("outbound.post", post)) as RunnerOutboundAck;
+      },
+      async control(tool, args, over = {}) {
+        return (await s.emitWithAck("control.call", {
+          callId: randomUUID(),
+          runId: over.runId ?? runId,
+          tool,
+          args,
+        })) as ControlResult;
       },
       final(text, extra = {}) {
         if (finish()) s.emit("run.final", { runId, text, stopReason: "end_turn", costKind: "api", ...extra });

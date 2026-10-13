@@ -1,6 +1,6 @@
 /**
- * 에이전트 쪽(브리지·러너) 토큰 인증 onRequest — 첨부 HTTP 와 설치 파일 받기가 같은 실패 카운터를 지난다(app.ts 가 하나의
- * BridgeAuthGuard 를 핸드셰이크·첨부·설치 파일에 준다). 그래서 어느 경로로 토큰을 맞혀 봐도 같은 버킷이 막는다
+ * 에이전트 쪽(브리지·러너) 토큰과 /mcp 개인 토큰의 인증 onRequest — 첨부 HTTP·설치 파일 받기·/mcp 가 같은 실패 카운터를 지난다
+ * (app.ts 가 하나의 BridgeAuthGuard 를 핸드셰이크·첨부·설치 파일·/mcp 에 준다). 그래서 어느 경로로 토큰을 맞혀 봐도 같은 버킷이 막는다
  */
 import type { BridgeAuthGuard } from "@dodok/shared";
 import type { FastifyRequest } from "fastify";
@@ -9,7 +9,8 @@ import { apiError } from "./errors";
 
 /** 외부 입력(Bearer 값) 그대로 받아 통과면 무엇이든, 아니면 null */
 export type TokenVerifier = (presented: unknown) => unknown;
-export type TokenPath = "bridge" | "runner";
+/** 막히게 한 쪽 — mcp 는 /mcp 의 개인 토큰(제어 MCP 스펙 「개인 토큰(PAT)」 절) */
+export type TokenPath = "bridge" | "runner" | "mcp";
 
 /**
  * 브리지·러너 핸드셰이크와 같은 실패 카운터 인스턴스. 주소는 request.ip — TRUST_PROXY 일 때 X-Forwarded-For 를 따르는 것이
