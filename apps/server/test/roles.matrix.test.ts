@@ -269,6 +269,17 @@ describe("역할 매트릭스(스펙 2장)", () => {
         payload: { memberType: "agent", memberId: newAgent().id, ...extra },
       }),
     })),
+    // 사람 멤버는 누구나 넣는다(authorizeChannelMemberAdd 의 사람 갈래) — 채널은 owner 가 만든 새 것이라 admin 은 아직 멤버가 아니다
+    {
+      name: "POST /channels/:id/members user",
+      min: "member",
+      ok: 201,
+      request: () => ({
+        method: "POST",
+        url: `/api/v1/channels/${newChannel().id}/members`,
+        payload: { memberType: "user", memberId: ids.admin },
+      }),
+    },
     {
       name: "POST /channels/:id/members agent (필드 없음)",
       min: "member",

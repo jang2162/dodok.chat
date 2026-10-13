@@ -9,38 +9,24 @@ import {
   OpsSettings,
   OpsSettingsPatch,
   OpsSeverity,
-  OpsStatus,
 } from "@dodok/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import type { AgentAdapter, OpenClawGateways } from "../../adapters/types";
 import type { Auth } from "../../auth";
 import { authorizeOpsRead } from "../../auth/policies";
 import { requirePolicy, requireRole } from "../../auth/roles";
-import type { Db } from "../../db/client";
 import { parseBody, parseQuery, parseStored } from "../../http/validate";
 import { rescheduleAll } from "../automations/scheduler";
-import { countRunsTodayInWorkspace } from "../runs/store";
-import { type DiskState, gatewayPin } from "./health";
 import type { OpsService } from "./service";
 import { getOpsSettings, patchOpsSettings } from "./settings";
+import { buildOpsStatus, type OpsStatusContext } from "./status";
 import { runsSummary, usageTrustedAmong } from "./summary";
 
-export type OpsRouteContext = {
+export type OpsRouteContext = OpsStatusContext & {
   auth: Auth;
-  db: Db;
-  workspaceId: string;
-  /** OpenClaw 어댑터 — Gateway 줄은 Gateway 별 상태와 상세(버전)에서 만든다 */
-  adapter: Pick<AgentAdapter, "status"> & Pick<OpenClawGateways, "gatewaySetupDetails">;
   /** 쓰이는 제공자(붙은 어댑터 가운데 에이전트가 등록된 것) — 런 표의 usage 는 이 가운데 믿는 제공자만 합친다 */
   providersInUse(): Iterable<string>;
   ops: Pick<OpsService, "list" | "ack" | "unacked" | "countsSince">;
-  disk(): DiskState;
-  serverVersion: string;
-  startedAt: Date;
-  /** 직전 종료 표지(main 이 startRunState 뒤에 넘긴다) — 넘기기 전이나 표지가 없으면 null */
-  previousClean(): boolean | null;
-  now?: () => Date;
 };
 
 const RunsQuery = z.object({ days: z.enum(["1", "7"]).transform((d) => (d === "1" ? 1 : 7)) });
@@ -50,42 +36,9 @@ export function registerOpsRoutes(fastify: FastifyInstance, ctx: OpsRouteContext
   const admin = { preHandler: requireRole(ctx, "admin") };
   const now = ctx.now ?? (() => new Date());
 
-  fastify.get("/api/v1/ops/status", { preHandler: requirePolicy(ctx, authorizeOpsRead) }, async () => {
-    const at = now();
-    const adapter = ctx.adapter.status();
-    // Gateway 줄은 OpenClaw 어댑터의 것(멀티 Gateway 스펙 「운영」 절) — 다른 어댑터면 빈 목록. 꺼진 Gateway 는 버전을 싣지 않는다
-    const versions = new Map(ctx.adapter.gatewaySetupDetails().map((d) => [d.id, d.gateway.version]));
-    const gateways = (adapter.provider === "openclaw" ? adapter.gateways : []).map((g) => {
-      const version = g.enabled ? (versions.get(g.id) ?? null) : null;
-      return {
-        id: g.id,
-        name: g.name,
-        enabled: g.enabled,
-        gateway: { state: g.gateway, version, ...gatewayPin(version) },
-        plugin: { state: g.bridge },
-      };
-    });
-    const midnight = new Date(at.getFullYear(), at.getMonth(), at.getDate());
-    const settings = getOpsSettings(ctx.db, ctx.workspaceId);
-    const status: OpsStatus = {
-      workspaceId: ctx.workspaceId,
-      server: {
-        version: ctx.serverVersion,
-        startedAt: ctx.startedAt.toISOString(),
-        previousClean: ctx.previousClean(),
-      },
-      db: { bytes: dbBytes(ctx.db) },
-      disk: ctx.disk(),
-      adapter,
-      gateways,
-      runsToday: countRunsTodayInWorkspace(ctx.db, at),
-      dailyRunLimit: settings.dailyRunLimit,
-      timeZone: settings.timeZone,
-      blockedToday: ctx.ops.countsSince("run_limit", midnight).get("workspace") ?? 0,
-      unacked: ctx.ops.unacked(),
-    };
-    return parseStored(OpsStatus, status, "ops status");
-  });
+  fastify.get("/api/v1/ops/status", { preHandler: requirePolicy(ctx, authorizeOpsRead) }, async () =>
+    buildOpsStatus(ctx),
+  );
 
   fastify.get("/api/v1/ops/runs", admin, async (request) => {
     const { days } = parseQuery(RunsQuery, request.query);
@@ -125,11 +78,4 @@ export function registerOpsRoutes(fastify: FastifyInstance, ctx: OpsRouteContext
     });
     return parseStored(OpsSettings, saved, "ops settings");
   });
-}
-
-/** SQLite 가 보는 DB 크기(page_count × page_size) — 체크포인트 전 WAL 파일은 따로 세지 않는다 */
-function dbBytes(db: Db): number {
-  const pages = db.$client.pragma("page_count", { simple: true }) as number;
-  const pageSize = db.$client.pragma("page_size", { simple: true }) as number;
-  return pages * pageSize;
 }

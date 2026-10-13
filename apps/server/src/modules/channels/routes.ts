@@ -28,22 +28,22 @@ import { parseBody, parseParams, parseQuery } from "../../http/validate";
 import type { Logger } from "../../logger";
 import type { ServerBus } from "../../realtime/bus";
 import type { Orchestrator } from "../runs/orchestrator";
-import { syncChannelPrompt, syncPromptToGateway } from "./prompt-sync";
 import {
-  addMember,
-  archiveChannel,
+  addChannelMemberAndNotify,
+  archiveChannelAndNotify,
+  createChannelAndNotify,
+  patchChannelAndNotify,
+  removeChannelMemberAndNotify,
+  unarchiveChannelAndNotify,
+  updateChannelAgentAndNotify,
+} from "./actions";
+import {
   assertChannelWritable,
   type ChannelRecord,
-  channelGatewayIds,
-  createChannel,
   getChannel,
   listChannels,
   listMembers,
-  removeMember,
   resetAgentSession,
-  unarchiveChannel,
-  updateAgentMember,
-  updateChannel,
 } from "./service";
 
 export type ChannelRouteContext = {
@@ -86,9 +86,6 @@ export function registerChannelRoutes(fastify: FastifyInstance, ctx: ChannelRout
   const loadWritable = (workspaceId: string, id: string): ChannelRecord =>
     assertChannelWritable(ctx.db, id, workspaceId);
 
-  const emitMembers = (channelId: string) =>
-    ctx.bus.emit("channel.member.changed", { channelId, members: listMembers(ctx.db, channelId) });
-
   fastify.get("/api/v1/channels", read, async (request) => {
     const { archived } = parseQuery(ListQuery, request.query);
     return {
@@ -100,9 +97,7 @@ export function registerChannelRoutes(fastify: FastifyInstance, ctx: ChannelRout
     const user = sessionUser(request);
     const body = parseBody(CreateChannelBody, request.body);
     authorizeBody(request, authorizeChannelCreate);
-    const channel = createChannel(ctx.db, { ...body, workspaceId: user.workspaceId, createdBy: user.id });
-    // 채널 룸에는 아직 아무도 없다 — 워크스페이스 룸으로 알려 다른 탭의 목록에 바로 뜨게 한다(계획서 8장 이월)
-    ctx.bus.emit("channel.created", { channel });
+    const channel = createChannelAndNotify(ctx, body, user.workspaceId, user.id);
     return reply.code(201).send({ channel });
   });
 
@@ -116,11 +111,7 @@ export function registerChannelRoutes(fastify: FastifyInstance, ctx: ChannelRout
     loadWritable(sessionUser(request).workspaceId, id);
     const patch = parseBody(UpdateChannelBody, request.body);
     authorizeBody(request, authorizeChannelPatch);
-    const { channel, promptChanged } = updateChannel(ctx.db, id, patch);
-    ctx.bus.emit("channel.updated", { channel });
-    // 채널 변경은 이미 유효하다 — Gateway 반영은 비동기, 실패는 system.notice 로만 알린다(스펙 3.4)
-    if (promptChanged && patch.prompt !== undefined) syncChannelPrompt(ctx, channel);
-    return { channel };
+    return { channel: patchChannelAndNotify(ctx, id, patch) };
   });
 
   fastify.get("/api/v1/channels/:id/members", read, async (request) => {
@@ -133,16 +124,8 @@ export function registerChannelRoutes(fastify: FastifyInstance, ctx: ChannelRout
     const { id } = parseParams(ChannelParams, request.params);
     loadWritable(sessionUser(request).workspaceId, id);
     const body = parseBody(AddChannelMemberBody, request.body);
-    // 사람 멤버는 promptOverride·autoRespond 를 못 가진다 — 서비스가 400 으로 막는다
     authorizeBody(request, authorizeChannelMemberAdd);
-    const gatewaysBefore = body.memberType === "agent" ? channelGatewayIds(ctx.db, id) : [];
-    const member = addMember(ctx.db, id, body, ctx.logger);
-    emitMembers(id);
-    // 다른 Gateway 의 에이전트가 처음 들어오면 그 Gateway 에 이 채널의 프롬프트를 한 번(계획 판정 PG10)
-    if (body.memberType === "agent") {
-      for (const gatewayId of channelGatewayIds(ctx.db, id))
-        if (!gatewaysBefore.includes(gatewayId)) syncPromptToGateway(ctx, id, gatewayId);
-    }
+    const member = addChannelMemberAndNotify(ctx, id, body);
     return reply.code(201).send({ member });
   });
 
@@ -151,9 +134,7 @@ export function registerChannelRoutes(fastify: FastifyInstance, ctx: ChannelRout
     loadWritable(sessionUser(request).workspaceId, id);
     const patch = parseBody(UpdateChannelMemberBody, request.body);
     authorizeBody(request, authorizeChannelAgentPatch);
-    const { member } = updateAgentMember(ctx.db, id, memberId, patch, ctx.logger);
-    emitMembers(id);
-    return { member };
+    return { member: updateChannelAgentAndNotify(ctx, id, memberId, patch) };
   });
 
   fastify.delete(
@@ -162,37 +143,27 @@ export function registerChannelRoutes(fastify: FastifyInstance, ctx: ChannelRout
     async (request) => {
       const { id, memberId } = parseParams(MemberParams, request.params);
       loadWritable(sessionUser(request).workspaceId, id);
-      removeMember(ctx.db, id, memberId);
-      const members = listMembers(ctx.db, id);
-      ctx.bus.emit("channel.member.changed", { channelId: id, members });
-      return { members };
+      return { members: removeChannelMemberAndNotify(ctx, id, memberId) };
     },
   );
 
-  /**
-   * 보관(채널 보관 스펙 「채널 보관」 절, admin) — 기록은 남고 열린 런은 멈춘다. 이미 보관했으면 200 그대로. channel.updated 는
-   * 워크스페이스 방으로 간다 — 다른 사람의 사이드바에서 빠지고 열린 화면이 읽기 전용으로 바뀐다
-   */
+  /** 보관(admin) — 이미 보관했으면 200 그대로 */
   fastify.post(
     "/api/v1/channels/:id/archive",
     { preHandler: requirePolicy(ctx, authorizeChannelArchive) },
     async (request) => {
       const { id } = parseParams(ChannelParams, request.params);
-      const channel = await archiveChannel(ctx, id, sessionUser(request).workspaceId);
-      ctx.bus.emit("channel.updated", { channel });
-      return { channel };
+      return { channel: await archiveChannelAndNotify(ctx, id, sessionUser(request).workspaceId) };
     },
   );
 
-  /** 보관 해제(admin) — 같은 멤버·세션으로 돌아온다. 살아 있으면 200 그대로 */
+  /** 보관 해제(admin) — 살아 있으면 200 그대로 */
   fastify.post(
     "/api/v1/channels/:id/unarchive",
     { preHandler: requirePolicy(ctx, authorizeChannelUnarchive) },
     async (request) => {
       const { id } = parseParams(ChannelParams, request.params);
-      const channel = unarchiveChannel(ctx.db, id, sessionUser(request).workspaceId);
-      ctx.bus.emit("channel.updated", { channel });
-      return { channel };
+      return { channel: unarchiveChannelAndNotify(ctx, id, sessionUser(request).workspaceId) };
     },
   );
 

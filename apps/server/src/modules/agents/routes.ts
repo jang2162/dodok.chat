@@ -2,7 +2,6 @@ import { CreateAgentBody, DiscoverAgentsQuery, Id, UpdateAgentBody } from "@dodo
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { AdapterRegistry } from "../../adapters/registry";
-import { AdapterError } from "../../adapters/types";
 import type { Auth } from "../../auth";
 import {
   authorizeAgentArchive,
@@ -20,18 +19,14 @@ import type { Logger } from "../../logger";
 import type { ServerBus } from "../../realtime/bus";
 import { syncPromptToGateway } from "../channels/prompt-sync";
 import { agentChannelGateways, listMembers } from "../channels/service";
-import { getGatewayRow } from "../gateways/service";
 import type { Orchestrator } from "../runs/orchestrator";
 import {
-  archiveAgent,
-  createAgent,
-  findArchivedAgent,
-  getAgent,
-  listAgents,
-  moveAgentGateway,
-  restoreAgent,
-  updateAgent,
-} from "./service";
+  archiveAgentAndNotify,
+  discoverAgents,
+  patchAgentAndNotify,
+  registerAgentAndNotify,
+} from "./actions";
+import { getAgent, listAgents, moveAgentGateway, restoreAgent } from "./service";
 
 export type AgentRouteContext = {
   auth: Auth;
@@ -62,36 +57,23 @@ export function registerAgentRoutes(fastify: FastifyInstance, ctx: AgentRouteCon
 
   fastify.post("/api/v1/agents", policy(authorizeAgentRegister), async (request, reply) => {
     const body = parseBody(CreateAgentBody, request.body);
-    if (body.provider === "openclaw" && body.gatewayId === undefined)
-      throw apiError("VALIDATION", "gatewayId is required for OpenClaw", { field: "gatewayId" });
-    const runnerTokenId = body.provider === "claude" ? ctx.runnerTokenFor?.(body.providerAgentId) : undefined;
-    const agent = createAgent(ctx.db, {
-      ...body,
-      workspaceId: sessionUser(request).workspaceId,
-      ...(runnerTokenId === undefined ? {} : { runnerTokenId }),
-    });
-    changed();
+    const agent = registerAgentAndNotify(ctx, body, sessionUser(request).workspaceId);
     return reply.code(201).send({ agent });
   });
 
   fastify.patch("/api/v1/agents/:id", policy(authorizeAgentPatch), async (request) => {
     const { id } = parseParams(AgentParams, request.params);
+    // 본문보다 먼저 404 — 옛 순서 그대로(patchAgentAndNotify 도 다시 본다)
     if (!getAgent(ctx.db, id, sessionUser(request).workspaceId))
       throw apiError("NOT_FOUND", "agent not found");
     const patch = parseBody(UpdateAgentBody, request.body);
-    const agent = updateAgent(ctx.db, id, patch);
-    changed();
-    return { agent };
+    return { agent: patchAgentAndNotify(ctx, id, patch, sessionUser(request).workspaceId) };
   });
 
-  /**
-   * 보관(스펙 「에이전트 보관」 절, admin) — 행·핸들·채널 참여·세션은 남고 열린 런은 멈춘다. 이미 보관했으면 200 그대로
-   */
+  /** 보관(admin) — 이미 보관했으면 200 그대로 */
   fastify.delete("/api/v1/agents/:id", policy(authorizeAgentArchive), async (request) => {
     const { id } = parseParams(AgentParams, request.params);
-    const agent = await archiveAgent(ctx.db, ctx, id, sessionUser(request).workspaceId);
-    changed();
-    return { agent };
+    return { agent: await archiveAgentAndNotify(ctx, id, sessionUser(request).workspaceId) };
   });
 
   /** 되살리기(admin) — 같은 채널·세션으로 이어 답한다. 살아 있으면 200 그대로 */
@@ -122,40 +104,8 @@ export function registerAgentRoutes(fastify: FastifyInstance, ctx: AgentRouteCon
     return { agent };
   });
 
-  /**
-   * 그 제공자 어댑터의 listAgents 를 그대로 — 등록 화면(admin)의 선택지. OpenClaw 는 Gateway agents.list, Claude 러너는 붙은
-   * 러너들이 hello 로 알린 에이전트(충돌 빼고). 자동 동기화는 하지 않는다(스펙 3.5). 같은 자리의 보관한 에이전트가 있으면
-   * archivedAgentId 를 싣는다 — 웹은 등록 대신 되살리기를 보인다
-   */
-  fastify.get("/api/v1/agents/discover", policy(authorizeAgentDiscover), async (request) => {
-    const { provider, gatewayId } = parseQuery(DiscoverAgentsQuery, request.query);
-    if (provider === "openclaw") {
-      if (gatewayId === undefined)
-        throw apiError("VALIDATION", "gatewayId is required for OpenClaw", { field: "gatewayId" });
-      // 등록·옮기기와 같이 워크스페이스의 Gateway 만. 꺼진 Gateway 는 어댑터에 묻지 않는다(연결이 없다)
-      const gateway = getGatewayRow(ctx.db, sessionUser(request).workspaceId, gatewayId);
-      if (!gateway) throw apiError("VALIDATION", "gateway not found", { field: "gatewayId" });
-      if (!gateway.enabled) throw apiError("ADAPTER_UNAVAILABLE", "gateway is disabled");
-    }
-    const adapter = ctx.registry.forProvider(provider);
-    if (!adapter) throw apiError("ADAPTER_UNAVAILABLE", "adapter not configured");
-    try {
-      const found = await adapter.listAgents(provider === "openclaw" ? (gatewayId ?? null) : null);
-      const workspaceId = sessionUser(request).workspaceId;
-      return {
-        agents: found.map((entry) => {
-          const archivedAgentId = findArchivedAgent(ctx.db, {
-            workspaceId,
-            provider,
-            providerAgentId: entry.providerAgentId,
-            gatewayId: provider === "openclaw" ? (gatewayId ?? null) : null,
-          });
-          return archivedAgentId === undefined ? entry : { ...entry, archivedAgentId };
-        }),
-      };
-    } catch (err) {
-      if (err instanceof AdapterError) throw apiError(err.code, err.message);
-      throw err;
-    }
-  });
+  /** 가져올 에이전트 목록(admin) — 검사·보관한 에이전트 표시는 discoverAgents */
+  fastify.get("/api/v1/agents/discover", policy(authorizeAgentDiscover), async (request) =>
+    discoverAgents(ctx, parseQuery(DiscoverAgentsQuery, request.query), sessionUser(request).workspaceId),
+  );
 }
