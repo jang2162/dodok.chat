@@ -122,18 +122,19 @@ for path in / /healthz; do
   fi
 done
 
-# 웹훅 토큰 가림(Caddyfile 전역 log default 필터) — HTTP/2 로 본문을 Content-Length 보다 적게 보내면 Caddy 의 h2 서버가 곧바로
+# 웹훅·개인 토큰 가림(Caddyfile 전역 log default 필터) — HTTP/2 로 본문을 Content-Length 보다 적게 보내면 Caddy 의 h2 서버가 곧바로
 # 502 와 오류 로그 한 줄(request.uri)을 남긴다. h1 에서는 앱이 모르는 토큰을 본문 전에 404 로 받아 줄이 생기지 않아(거짓 FAIL)
-# https 오리진(ALPN 으로 h2)에만 쓴다. 탐침 셋이 필터의 두 규칙을 따로 잰다 — /hooks/ 경로, 쿼리에 실은 whk_ 토큰(꼬리에 - 가
-# 있어야 whk_ 규칙의 [\w-] 가 \w 로 줄어든 것을 잡는다), w 를 %77 로 쓴 /hooks/ 조각(whk_ 규칙을 비켜 /hooks/ 규칙만 탄다).
+# https 오리진(ALPN 으로 h2)에만 쓴다. 탐침 넷이 필터의 세 규칙을 따로 잰다 — /hooks/ 경로, 쿼리에 실은 whk_ 토큰(꼬리에 - 가
+# 있어야 whk_ 규칙의 [\w-] 가 \w 로 줄어든 것을 잡는다), w 를 %77 로 쓴 /hooks/ 조각(whk_ 규칙을 비켜 /hooks/ 규칙만 탄다),
+# /mcp 쿼리에 잘못 실은 dpt_ 개인 토큰(꼬리에 - — 같은 이유).
 # 원문 판정은 토큰 끝 12자로 한다 — 규칙이 중간에서 멈추면 끝이 드러난다. 가린 줄이 있어야 PASS — 줄이 없으면 가림을 본 것이 아니다
 rand_b64url() { head -c 48 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n' | head -c "$1"; }
 if [[ -z "${CADDY_LOG_CMD:-}" ]]; then
   skips=$((skips + 1))
-  printf 'SKIP  웹훅 토큰이 Caddy 오류 로그에 원문으로 없다 — CADDY_LOG_CMD 가 없어 안 봤다\n'
+  printf 'SKIP  웹훅·개인 토큰이 Caddy 오류 로그에 원문으로 없다 — CADDY_LOG_CMD 가 없어 안 봤다\n'
 elif [[ "$origin" != https://* ]]; then
   skips=$((skips + 1))
-  printf 'SKIP  웹훅 토큰이 Caddy 오류 로그에 원문으로 없다 — https 오리진이 아니다(h1 탐침은 오류 줄을 만들지 못한다)\n'
+  printf 'SKIP  웹훅·개인 토큰이 Caddy 오류 로그에 원문으로 없다 — https 오리진이 아니다(h1 탐침은 오류 줄을 만들지 못한다)\n'
 else
   hook_token="whk_$(rand_b64url 43)"
   dash_token="whk_$(rand_b64url 10)-$(rand_b64url 32)"
@@ -145,26 +146,29 @@ else
   probe "/hooks/$hook_token?delivery=1"
   probe "/api/v1/channels?t=$dash_token"
   probe "/hooks/%77hk_$pct_tail"
+  mcp_query="dpt_$(rand_b64url 10)-$(rand_b64url 32)"
+  probe "/mcp?token=$mcp_query"
   # 개인 토큰은 URL 이 아니라 Authorization 머리로 온다 — Caddy 는 오류 로그의 요청 머리에서 그 값을 가린다(log_credentials 를 켜지 않는 한)
   mcp_token="dpt_$(rand_b64url 43)"
   curl -sk --http2 --max-time 2 -o /dev/null -X POST -H 'Content-Type: application/json' -H 'Content-Length: 1000' \
     -H "Authorization: Bearer $mcp_token" --data-binary 'abc' "$origin/mcp" 2>/dev/null || true
   sleep 1
   bash -c "$CADDY_LOG_CMD" >"$tmp/caddy.log" 2>&1 || true
-  # log_masked <라벨 꼬리> <원문 끝 조각> <가린 꼴>
+  # log_masked <토큰 종류> <라벨 꼬리> <원문 끝 조각> <가린 꼴>
   log_masked() {
-    local label="웹훅 토큰이 Caddy 오류 로그에 원문으로 없다 — $1"
-    if grep -qF -- "$2" "$tmp/caddy.log"; then
+    local label="$1 토큰이 Caddy 오류 로그에 원문으로 없다 — $2"
+    if grep -qF -- "$3" "$tmp/caddy.log"; then
       fail "$label" "토큰 끝부분이 로그에 있다 — Caddyfile 의 request>uri 필터"
-    elif ! grep -qF -- "$3" "$tmp/caddy.log"; then
-      fail "$label" "가린 줄($3)을 로그에서 못 찾았다 — CADDY_LOG_CMD 가 이 Caddy 의 로그를 찍는가"
+    elif ! grep -qF -- "$4" "$tmp/caddy.log"; then
+      fail "$label" "가린 줄($4)을 로그에서 못 찾았다 — CADDY_LOG_CMD 가 이 Caddy 의 로그를 찍는가"
     else
       pass "$label"
     fi
   }
-  log_masked "/hooks/ 경로" "${hook_token: -12}" "/hooks/${hook_token:0:10}…"
-  log_masked "쿼리의 whk_ 토큰(꼬리에 -)" "${dash_token: -12}" "?t=${dash_token:0:10}…"
-  log_masked "%77 로 쓴 /hooks/ 조각" "${pct_tail: -12}" "/hooks/%77hk_${pct_tail:0:4}…"
+  log_masked 웹훅 "/hooks/ 경로" "${hook_token: -12}" "/hooks/${hook_token:0:10}…"
+  log_masked 웹훅 "쿼리의 whk_ 토큰(꼬리에 -)" "${dash_token: -12}" "?t=${dash_token:0:10}…"
+  log_masked 웹훅 "%77 로 쓴 /hooks/ 조각" "${pct_tail: -12}" "/hooks/%77hk_${pct_tail:0:4}…"
+  log_masked 개인 "/mcp 쿼리에 잘못 실은 dpt_ 토큰(꼬리에 -)" "${mcp_query: -12}" "/mcp?token=${mcp_query:0:10}…"
   label="개인 토큰이 Caddy 오류 로그에 원문으로 없다 — /mcp Authorization 머리"
   if grep -qF -- "${mcp_token: -12}" "$tmp/caddy.log"; then
     fail "$label" "토큰 끝부분이 로그에 있다 — Caddyfile 에 log_credentials 가 켜졌는가"

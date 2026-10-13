@@ -9,11 +9,12 @@
 	# 업스트림이 내려간 동안(배포·재시작)이나 보낸 쪽이 본문 도중 끊을 때의 502. 업스트림이 응답 도중 끊으면 reverse_proxy 로거의
 	# 「aborting with incomplete response」 경고도 request.uri 를 싣는다 — 같은 기본 로그라 이 필터가 함께 가린다.
 	# 꼴은 서버 redactUrl(apps/server/src/logger.ts)과 같다 — /hooks/ 다음 조각(대소문자 무관)은 앞 10자, 그 밖 어디든 whk_ 토큰
-	# 꼴은 whk_ + 6자 뒤를 「…」로. 필드 하나에 필터 하나라 두 규칙을 교대로 합쳤다(맞지 않은 쪽 그룹은 빈 글).
-	# 확인: infra/check-caddy.sh 의 CADDY_LOG_CMD(탐침 셋이 두 규칙을 따로 잰다)
+	# 꼴은 whk_ + 6자 뒤를 「…」로, 개인 토큰 dpt_ 꼴(/mcp 는 Authorization 머리로만 받지만 ?token= 으로 잘못 실려 올 수 있다)도
+	# dpt_ + 6자 뒤를 「…」로. 필드 하나에 필터 하나라 세 규칙을 교대로 합쳤다(맞지 않은 쪽 그룹은 빈 글).
+	# 확인: infra/check-caddy.sh 의 CADDY_LOG_CMD(탐침 넷이 세 규칙을 따로 잰다)
 	log default {
 		format filter {
-			request>uri regexp "((?i:/hooks/)[^/?#]{10})[^/?#]+|(whk_[\w-]{6})[\w-]+" "${1}${2}…"
+			request>uri regexp "((?i:/hooks/)[^/?#]{10})[^/?#]+|(whk_[\w-]{6})[\w-]+|(dpt_[\w-]{6})[\w-]+" "${1}${2}${3}…"
 		}
 	}
 }
