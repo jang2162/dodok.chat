@@ -115,6 +115,11 @@ export const qk = {
    * 허용 목록 밖). 웹훅 URL 원문은 어느 키에도 넣지 않는다 — 목록에는 앞 6자(`tokenPrefix`)뿐이다
    */
   automations: ["automations"] as const,
+  /**
+   * 내 MCP 토큰(제어 MCP 스펙 「웹」 장) — 「내 계정」 탭. `me` 아래에 두지 않는다: me 무효화에 끌려가지 않게. 오프라인 사본에 담지 않는다
+   * (pwa/persist 의 허용 목록 밖). 발급 원문은 어느 키에도 넣지 않는다 — 목록에는 앞 6자(`prefix`)뿐이다
+   */
+  personalTokens: ["personalTokens"] as const,
 };
 
 /** 활동 패널이 한 번에 받는 런 수(REST 상한 200) */

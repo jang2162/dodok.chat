@@ -583,6 +583,40 @@ describe("승인 알림", () => {
     }
   });
 
+  /**
+   * 승인 이벤트는 워크스페이스 방으로 온다 — 확인 카드(dodok_control)를 역할로만 거르면 남이 시킨 일의 알림이 admin 모두에게 뜬다.
+   * 시킨 사람(requestedBy)이 나일 때만, 역할과 상관없이 알린다(제어 MCP 스펙 「확인 카드」 장)
+   */
+  it("확인 카드는 시킨 사람 본인에게만 알린다 — owner·admin 이라도 남의 것은 알리지 않고, member 라도 내 것은 알린다", () => {
+    const control = (requestedBy: string | undefined) =>
+      approval({
+        kind: "dodok_control",
+        toolCallId: undefined,
+        toolName: "update_channel",
+        title: "@dev 가 #일반 의 이름을 바꾸려 합니다",
+        allowedDecisions: ["allow-once", "deny"],
+        requestedBy,
+      });
+    const ME_ID = "01a00000-0000-7000-8000-000000000098";
+    const OTHER = "01a00000-0000-7000-8000-000000000099";
+    for (const [role, requestedBy, n] of [
+      ["owner", OTHER, 0],
+      ["admin", OTHER, 0],
+      ["owner", undefined, 0],
+      ["member", ME_ID, 1],
+      ["owner", ME_ID, 1],
+    ] as const) {
+      resetApprovalNotices();
+      const { fake, queryClient } = armed("granted", role);
+      queryClient.setQueryData(qk.me, { user: { id: ME_ID, handle: "owner" }, workspaceId: "w", role });
+      screenNow.channelId = CH2;
+      fake.serverEmit("approval.requested", { approval: control(requestedBy) });
+      expect(stub.made, `${role} · ${requestedBy}`).toHaveLength(n);
+      expect(useApprovalStore.getState().byChannel[CH]?.[APPROVAL]).toBeDefined();
+      stub.restore();
+    }
+  });
+
   it("보고 있는 채널의 승인은 알리지 않는다 — 카드가 이미 화면에 있다", () => {
     const { fake } = armed();
     screenNow.channelId = CH;

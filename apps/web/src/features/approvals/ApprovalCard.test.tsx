@@ -7,8 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { qk } from "@/api/queries";
 import { useWireStatus, WireAckError } from "@/realtime/wire";
 import { createFakeSocket, type FakeSocket } from "../../../test/fakeSocket";
-import { APPROVAL, APPROVAL2, CH, CH2, approval, iso } from "../../../test/fixtures";
-import { authorsClient, ME_USER, renderWithClient } from "../../../test/messages";
+import { APPROVAL, APPROVAL2, CH, CH2, USER, approval, iso } from "../../../test/fixtures";
+import { authorsClient, ME_USER, OWNER_PERSON, renderWithClient } from "../../../test/messages";
 import { ApprovalCard, resolveErrorMessage } from "./ApprovalCard";
 import { selectPendingApproval, useApprovalStore } from "./approvalStore";
 
@@ -543,5 +543,130 @@ describe("resolveErrorMessage", () => {
     ["INTERNAL", "승인을 처리하지 못했습니다 (INTERNAL)"],
   ])("%s → %s", (code, message) => {
     expect(resolveErrorMessage(new WireAckError(code as ErrorCode, "서버 문구"))).toBe(message);
+  });
+});
+
+/** 확인 카드(제어 MCP 스펙 「확인 카드」 장) — 서버가 내는 모양 그대로: 결정은 allow-once·deny, 시킨 사람은 requestedBy */
+const MIA = "01a00000-0000-7000-8000-000000000020";
+const MIA_PERSON = {
+  id: MIA,
+  handle: "mia",
+  displayName: "미아",
+  role: "member",
+  deactivatedAt: null,
+} as const;
+const control = (over: Partial<Approval> = {}) =>
+  approval({
+    kind: "dodok_control",
+    providerApprovalId: "0f0f0f0f-0000-4000-8000-0000000000c1",
+    toolCallId: undefined,
+    toolName: "set_channel_prompt",
+    title: "@dev 가 #일반 의 채널 프롬프트를 바꾸려 합니다",
+    description: "새 프롬프트: 짧게 답한다",
+    detail: "시킨 사람: @owner\n시작: @owner 의 글",
+    allowedDecisions: ["allow-once", "deny"],
+    requestedBy: USER,
+    ...over,
+  });
+/** owner·mia 를 아는 화면 — me 는 `who` */
+function controlClient(who: "owner" | "mia", role = who === "owner" ? "owner" : "member") {
+  const qc = authorsClient(undefined, [OWNER_PERSON, MIA_PERSON]);
+  qc.setQueryData(
+    qk.me,
+    who === "owner"
+      ? { ...ME_USER, role }
+      : { ...ME_USER, user: { ...ME_USER.user, id: MIA, handle: "mia" }, role },
+  );
+  return qc;
+}
+function renderControl(a: Approval, qc: ReturnType<typeof controlClient>) {
+  act(() => useApprovalStore.getState().apply(a));
+  return renderWithClient(<ApprovalCard approvalId={a.id} channelId={a.channelId} />, qc);
+}
+
+describe("ApprovalCard — 확인 카드(dodok_control)", () => {
+  it("시킨 사람 본인에게는 「허용」「거절」 — 「항상 허용」은 없다, 바뀔 내용과 출처가 보인다", async () => {
+    const user = userEvent.setup();
+    fake.onAck("approval.resolve", () => ok(null));
+    renderControl(control(), controlClient("owner"));
+
+    expect(screen.getAllByRole("button").map((b) => b.textContent)).toEqual(["허용", "거절"]);
+    expect(screen.getByText("새 프롬프트: 짧게 답한다")).toBeInTheDocument();
+    expect(screen.getByText(/시킨 사람: @owner/)).toBeInTheDocument();
+    expect(screen.queryByText("관리자가 결정합니다")).toBeNull();
+
+    await user.click(button("허용"));
+    expect(fake.sentOf("approval.resolve")[0]).toEqual({ approvalId: APPROVAL, decision: "allow-once" });
+  });
+
+  it("서버가 allow-always 를 실어 보내도 그리지 않는다", () => {
+    renderControl(
+      control({ allowedDecisions: ["allow-once", "allow-always", "deny"] }),
+      controlClient("owner"),
+    );
+    expect(screen.queryByRole("button", { name: "항상 허용" })).toBeNull();
+    expect(screen.getAllByRole("button").map((b) => b.textContent)).toEqual(["허용", "거절"]);
+  });
+
+  it("남에게는 역할과 상관없이 버튼 대신 「@<시킨 사람> 의 확인을 기다립니다」", () => {
+    // owner 라도 mia 가 시킨 일은 결정하지 않는다
+    renderControl(control({ requestedBy: MIA }), controlClient("owner"));
+    expect(screen.queryAllByRole("button")).toHaveLength(0);
+    expect(screen.getByText("@mia 의 확인을 기다립니다")).toBeInTheDocument();
+    expect(screen.queryByText("관리자가 결정합니다")).toBeNull();
+  });
+
+  it("member 라도 자기가 시킨 일이면 버튼이 있다", () => {
+    renderControl(control({ requestedBy: MIA }), controlClient("mia"));
+    expect(screen.getAllByRole("button").map((b) => b.textContent)).toEqual(["허용", "거절"]);
+  });
+
+  it("시킨 사람이 비어 있으면 아무에게도 버튼이 없다", () => {
+    renderControl(control({ requestedBy: undefined }), controlClient("owner"));
+    expect(screen.queryAllByRole("button")).toHaveLength(0);
+    expect(screen.getByText("시킨 사람의 확인을 기다립니다")).toBeInTheDocument();
+  });
+
+  it("결정 뒤에는 결과와 결정한 사람 줄", () => {
+    renderControl(
+      control({
+        requestedBy: MIA,
+        status: "allowed",
+        decision: "allow-once",
+        reason: "user",
+        decidedBy: MIA,
+      }),
+      controlClient("owner"),
+    );
+    expect(screen.getByText("허용됨")).toBeInTheDocument();
+    expect(screen.getByText("선택: 허용 · @mia")).toBeInTheDocument();
+    expect(screen.queryByText("@mia 의 확인을 기다립니다")).toBeNull();
+  });
+
+  it("거절 뒤에도 결정한 사람 줄", () => {
+    renderControl(
+      control({ status: "denied", decision: "deny", reason: "user", decidedBy: USER }),
+      controlClient("mia"),
+    );
+    expect(screen.getByText("거절됨")).toBeInTheDocument();
+    expect(screen.getByText("선택: 거절 · @owner")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["expired", "timeout", "만료됨"],
+    ["cancelled", "run-aborted", "취소됨 (실행 중지)"],
+  ] as const)("%s 는 「%s」 까닭과 함께 결과 한 줄 — 버튼·대기 문구 없음", (status, reason, text) => {
+    renderControl(control({ status, reason }), controlClient("owner"));
+    expect(screen.getByText(text)).toBeInTheDocument();
+    expect(screen.queryAllByRole("button")).toHaveLength(0);
+    expect(screen.queryByText(/확인을 기다립니다/)).toBeNull();
+    expect(screen.queryByText(/^선택:/)).toBeNull();
+  });
+
+  it("FORBIDDEN 이면 시킨 사람만 결정한다고 알린다", () => {
+    expect(resolveErrorMessage(new WireAckError("FORBIDDEN", "x"), "dodok_control")).toBe(
+      "시킨 사람만 결정할 수 있습니다",
+    );
+    expect(resolveErrorMessage(new WireAckError("FORBIDDEN", "x"), "plugin")).toBe("권한이 없습니다");
   });
 });

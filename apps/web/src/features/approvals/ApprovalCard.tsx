@@ -9,7 +9,7 @@ import { InfoIcon, type LucideIcon, ShieldAlertIcon, TriangleAlertIcon } from "l
 import { useQueryClient } from "@tanstack/react-query";
 import { type ReactElement, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { meQuery, useCanManage } from "@/api/queries";
+import { meQuery, useCachedMe } from "@/api/queries";
 import { useAuthors } from "@/features/messages/useAuthors";
 import { cn } from "@/lib/utils";
 import { emitAck, useWireStatus, WireAckError } from "@/realtime/wire";
@@ -17,6 +17,7 @@ import { useWire } from "@/realtime/WireProvider";
 import { Button } from "@/ui/button";
 import { useApprovalStore } from "./approvalStore";
 import { EXPIRED_LABEL, useRemaining } from "./countdown";
+import { canDecideApproval } from "./decider";
 
 /** 버튼 차례와 글. `allowedDecisions` 에 있는 것만 그린다 — 목록 밖 값은 Gateway 가 조용히 거절로 확정한다(스파이크 4.4) */
 const DECISIONS = [
@@ -28,6 +29,26 @@ const DECISIONS = [
 const DECISION_LABEL: Record<ApprovalDecision, string> = {
   "allow-once": "이번만 허용",
   "allow-always": "항상 허용",
+  deny: "거절",
+};
+
+/**
+ * 확인 카드(`dodok_control`)의 버튼 — 한 번의 바꾸기를 허용하는 것이라 「이번만」이 붙지 않고, 「항상 허용」은 서버가 받지 않는다
+ * (제어 MCP 스펙 「확인 카드」 장). `allowedDecisions` 에 실려 와도 이 목록 밖이면 그리지 않는다
+ */
+const CONTROL_DECISIONS = [
+  { decision: "allow-once", label: "허용", variant: "default" },
+  { decision: "deny", label: "거절", variant: "outline" },
+] as const;
+
+type DecisionChoices = ReadonlyArray<{
+  decision: ApprovalDecision;
+  label: string;
+  variant: "default" | "secondary" | "outline";
+}>;
+
+const CONTROL_DECISION_LABEL: Partial<Record<ApprovalDecision, string>> = {
+  "allow-once": "허용",
   deny: "거절",
 };
 
@@ -77,7 +98,7 @@ export function resolveErrorMessage(e: unknown, kind?: ApprovalKind): string {
     case "VALIDATION":
       return "이 승인이 받지 않는 선택입니다";
     case "FORBIDDEN":
-      return "권한이 없습니다";
+      return kind === "dodok_control" ? "시킨 사람만 결정할 수 있습니다" : "권한이 없습니다";
     case "ADAPTER_UNAVAILABLE":
       return kind === "tool" ? "러너에 연결되지 않았습니다" : "Gateway 에 연결되지 않았습니다";
     case "NOT_FOUND":
@@ -93,7 +114,9 @@ export function resolveErrorMessage(e: unknown, kind?: ApprovalKind): string {
  * 승인 카드(설계 5.3). 자리 둘 — 채널 메시지 흐름(시간 순서)과 활동 탭 맨 위 — 이 같은 스토어를 본다.
  * 미해결이면 남은 시간과 버튼, 확정되면 **사라지지 않고** 결과 한 줄로 바뀐다(기록).
  * 클라이언트 시계로 0 이 되면 「만료됨」으로 보이되 서버 사실이 오면 그쪽이 이긴다(설계 5.5).
- * 결정은 admin 이상의 몫이다(팀 스펙 2장) — member 에게는 버튼 대신 「관리자가 결정합니다」.
+ * 결정은 admin 이상의 몫이다(팀 스펙 2장) — member 에게는 버튼 대신 「관리자가 결정합니다」. 확인 카드(`dodok_control`)는 시킨
+ * 사람 본인만 결정한다(`canDecideApproval`) — 남에게는 역할과 상관없이 「@<시킨 사람> 의 확인을 기다립니다」, 본문은 바뀔 내용(`description`)과
+ * 출처 줄(`detail` — 시킨 사람·릴레이 사슬)을 접지 않고 보인다. 「내가 시킨 일인가」를 누르기 전에 읽어야 해서다.
  * 도구 승인(`kind: "tool"`, 러너 스펙 6장·7장)은 제목이 도구 이름이고 `detail` 이 요약(Bash 명령·작업 디렉터리 상대 경로 등)이다 —
  * 짧은 한 줄이라 접지 않고 코드 글꼴로 바로 보인다. 러너가 이미 앞·뒤를 남겨 줄였으므로 웹은 더 자르지 않는다 — 꼬리가 대개 위험한 부분이다
  */
@@ -106,7 +129,7 @@ export function ApprovalCard({
 }): ReactElement | null {
   const view = useApprovalStore((s) => s.byChannel[channelId]?.[approvalId]);
   const { author } = useAuthors();
-  const canDecide = useCanManage();
+  const me = useCachedMe();
   const pending = view?.approval.status === "pending";
   const { label: remaining, expired } = useRemaining(view?.approval.expiresAt ?? "", pending);
   /**
@@ -134,6 +157,8 @@ export function ApprovalCard({
   if (!view) return null;
 
   const { approval, sending } = view;
+  const canDecide = canDecideApproval(approval, me);
+  const control = approval.kind === "dodok_control";
   const { Icon, label: severityLabel, tone, bar } = LOOK[approval.severity];
   const agent = author({ authorType: "agent", authorId: approval.agentId });
   const note = approval.reason && REASON_NOTE[approval.reason];
@@ -141,6 +166,16 @@ export function ApprovalCard({
     approval.status === "pending" ? undefined : OUTCOME[approval.status] + (note ? ` (${note})` : "");
   const tool = approval.kind === "tool";
   const args = approval.detail ?? approval.description;
+  const handleOf = (userId: string | undefined) =>
+    userId === undefined ? undefined : author({ authorType: "user", authorId: userId }).handle;
+  const requester = handleOf(approval.requestedBy);
+  const waitingText = control
+    ? // 로마자 핸들과 조사 사이는 띄우고 우리말은 붙인다(notify.ts approvalNotifyTitle 과 같은 규칙)
+      requester
+      ? `@${requester} 의 확인을 기다립니다`
+      : "시킨 사람의 확인을 기다립니다"
+    : "관리자가 결정합니다";
+  const decider = control ? handleOf(approval.decidedBy) : undefined;
   // 도구 승인은 제목이 곧 도구 이름이라 부제에 다시 적지 않는다
   const toolLabel =
     approval.toolName && !(tool && approval.toolName === approval.title) ? approval.toolName : "";
@@ -186,7 +221,10 @@ export function ApprovalCard({
             </span>
           </div>
 
-          {args &&
+          {control ? (
+            <ControlBody summary={approval.description} origin={approval.detail} />
+          ) : (
+            args &&
             (tool ? (
               <div>
                 <code className="block rounded bg-muted px-2 py-1.5 font-mono text-xs break-all whitespace-pre-wrap">
@@ -196,25 +234,28 @@ export function ApprovalCard({
               </div>
             ) : (
               <Arguments args={args} />
-            ))}
+            ))
+          )}
 
-          {answerable && !canDecide && <p className="text-xs text-muted-foreground">관리자가 결정합니다</p>}
+          {answerable && !canDecide && <p className="text-xs text-muted-foreground">{waitingText}</p>}
           {answerable && canDecide && (
             <div className="flex flex-wrap gap-2">
-              {DECISIONS.filter((d) => approval.allowedDecisions.includes(d.decision)).map((d) => (
-                <DecisionButton
-                  key={d.decision}
-                  approvalId={approval.id}
-                  kind={approval.kind}
-                  decision={d.decision}
-                  label={d.label}
-                  variant={d.variant}
-                  sending={sending}
-                  onActed={(yes) => {
-                    acted.current = yes ? approvalId : undefined;
-                  }}
-                />
-              ))}
+              {(control ? CONTROL_DECISIONS : (DECISIONS as DecisionChoices))
+                .filter((d) => approval.allowedDecisions.includes(d.decision))
+                .map((d) => (
+                  <DecisionButton
+                    key={d.decision}
+                    approvalId={approval.id}
+                    kind={approval.kind}
+                    decision={d.decision}
+                    label={d.label}
+                    variant={d.variant}
+                    sending={sending}
+                    onActed={(yes) => {
+                      acted.current = yes ? approvalId : undefined;
+                    }}
+                  />
+                ))}
             </div>
           )}
           {/*
@@ -224,7 +265,9 @@ export function ApprovalCard({
           */}
           {(approval.status === "allowed" || approval.status === "denied") && approval.decision && (
             <p aria-live="polite" className="text-xs text-muted-foreground">
-              선택: {DECISION_LABEL[approval.decision]}
+              선택:{" "}
+              {(control && CONTROL_DECISION_LABEL[approval.decision]) || DECISION_LABEL[approval.decision]}
+              {decider ? ` · @${decider}` : ""}
             </p>
           )}
           {pending && expired && (
@@ -235,6 +278,20 @@ export function ApprovalCard({
         </div>
       </div>
     </div>
+  );
+}
+
+/** 확인 카드 본문 — 바뀔 내용(서버가 도구별로 만든 요약, 프롬프트는 앞 300자)과 그 아래 출처 줄 */
+function ControlBody({ summary, origin }: { summary?: string; origin?: string }) {
+  return (
+    <>
+      {summary && (
+        <p className="max-h-48 overflow-auto rounded bg-muted px-2 py-1.5 text-xs break-words whitespace-pre-wrap">
+          {summary}
+        </p>
+      )}
+      {origin && <p className="text-xs break-words whitespace-pre-line text-muted-foreground">{origin}</p>}
+    </>
   );
 }
 

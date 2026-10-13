@@ -95,6 +95,8 @@ export default defineConfig({
       "/socket.io": { target: api, ws: true },
       "/llms.txt": { target: api },
       "/hooks": { target: api },
+      // 바깥 MCP 클라이언트의 입구 — 「내 계정」의 `claude mcp add` 예시가 이 페이지 오리진을 쓰므로 개발 모드에서도 서버로 넘긴다
+      "/mcp": { target: api },
     },
   },
   test: {

@@ -5,7 +5,6 @@ import {
   type Message,
   type OpenClawGatewayStatus,
   type OpsStatus,
-  roleAtLeast,
   type ServerToClientEvents,
   UnreadSnapshot,
 } from "@dodok/shared";
@@ -14,6 +13,7 @@ import { toast } from "sonner";
 import { ApiRequestError, api } from "@/api/http";
 import { type AdapterStatusResponse, type MeResponse, meQuery, qk } from "@/api/queries";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
+import { canDecideApproval } from "@/features/approvals/decider";
 import { forgetApproval, notifyApproval } from "@/features/approvals/notify";
 import { applyChannel, isChannelArchived } from "@/features/channels/archived";
 import { hasGap, noteSeq, type Timeline, upsert } from "@/features/messages/timeline";
@@ -191,8 +191,8 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
       useApprovalStore.getState().apply(approval);
       // 이미 답한 승인은 알리지 않는다 — 재접속 되감기·늦게 온 프레임이 확정 뒤에 올 수 있다
       if (approval.status !== "pending") return;
-      // 결정은 admin 이상의 몫이다(팀 스펙 5장) — member 는 카드만 본다(「관리자가 결정합니다」)
-      if (!roleAtLeast(qc.getQueryData<MeResponse>(qk.me)?.role, "admin")) return;
+      // 결정할 수 있는 사람에게만 — 카드 버튼과 같은 규칙(`canDecideApproval`). 다른 사람은 카드만 본다
+      if (!canDecideApproval(approval, qc.getQueryData<MeResponse>(qk.me))) return;
       notifyApproval(approval, {
         visible: document.visibilityState === "visible",
         currentChannelId: notify.currentChannelId(),
