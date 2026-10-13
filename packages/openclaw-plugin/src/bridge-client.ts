@@ -12,14 +12,18 @@
 import {
   BRIDGE_PROTOCOL,
   BridgeHelloResult,
+  CONTROL_CALL_TIMEOUT_MS,
   ConfigSet,
+  ControlResult,
   InboundDeliver,
   OutboundMessage,
   type ApiError,
   type BridgeClientToServerEvents,
+  type BridgeControlCall,
   type BridgeHello,
   type BridgeServerToClientEvents,
   type ConfigSetResult,
+  type ControlUnknownResult,
   type InboundDeliverResult,
   type Result,
 } from "@dodok/shared";
@@ -243,6 +247,30 @@ export function createBridgeClient(opts: BridgeClientOptions) {
         dropped?.reject(new Error("dodok bridge: 큐 상한 초과로 버림"));
         reportStatus();
       });
+    },
+    /**
+     * 제어 도구 호출(control.call). 큐에 넣지 않는다 — 다시 붙은 연결로 늦게 나가면 끝난 런의 이름으로 불린다. 던지지 않는다.
+     * ready 가 아니면 보내지 않고 ADAPTER_UNAVAILABLE(서버에 닿지 않았다), 보낸 뒤 끊김·시간 초과는 unknown(서버가 받았을 수 있다 —
+     * shared ControlUnknownResult)
+     */
+    async sendControl(call: BridgeControlCall): Promise<ControlResult | ControlUnknownResult> {
+      if (state !== "ready") {
+        return {
+          ok: false,
+          error: { code: "ADAPTER_UNAVAILABLE", message: "dodok 서버와 연결돼 있지 않아 보내지 않았습니다" },
+        };
+      }
+      let raw: unknown;
+      try {
+        // 서버는 확인 카드를 기다리는 동안 ack 를 미룬다 — 짧은 ackTimeoutMs 가 아니라 shared CONTROL_CALL_TIMEOUT_MS
+        raw = await socket.timeout(CONTROL_CALL_TIMEOUT_MS).emitWithAck("control.call", call);
+      } catch {
+        return { unknown: true };
+      }
+      const parsed = ControlResult.safeParse(raw);
+      return parsed.success
+        ? parsed.data
+        : { ok: false, error: { code: "INTERNAL", message: "서버 응답이 계약과 다릅니다" } };
     },
     sendTyping(channelId: string, agentId: string): void {
       if (state === "ready") socket.emit("outbound.typing", { channelId, agentId });

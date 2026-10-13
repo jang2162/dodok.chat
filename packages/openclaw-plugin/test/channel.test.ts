@@ -168,7 +168,7 @@ describe("sendText — 코어 일반 전송", () => {
 });
 
 describe("hello capabilities", () => {
-  it("스레드를 안다고 알린다", () => {
-    expect(DODOK_BRIDGE_CAPABILITIES).toEqual(["run_id_in_outbound", "config.set", "threads"]);
+  it("스레드와 제어 도구를 안다고 알린다 — control 이 없으면 서버가 control.call 을 거절한다", () => {
+    expect(DODOK_BRIDGE_CAPABILITIES).toEqual(["run_id_in_outbound", "config.set", "threads", "control"]);
   });
 });

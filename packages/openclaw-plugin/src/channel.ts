@@ -74,8 +74,16 @@ const SDK_VERSION = typeof __OPENCLAW_SDK_VERSION__ === "string" ? __OPENCLAW_SD
 // 번들(scripts/build.mjs, format esm)에서 import.meta.url 은 dist/index.js 자신이다. 빌드를 CJS 로 바꾸거나
 // import.meta 를 define 으로 치환하면 해시가 조용히 사라져 서버는 늘 「빌드를 알 수 없습니다」로 본다
 const BUNDLE_SHA256 = computeBundleSha256(import.meta.url);
-/** hello 로 서버에 알리는 능력. `threads` 가 없으면 서버는 스레드 런을 PLUGIN_OUTDATED 로 끝낸다(스펙 3.2) */
-export const DODOK_BRIDGE_CAPABILITIES: BridgeCapability[] = ["run_id_in_outbound", "config.set", "threads"];
+/**
+ * hello 로 서버에 알리는 능력. `threads` 가 없으면 서버는 스레드 런을 PLUGIN_OUTDATED 로 끝내고(스펙 3.2), `control` 이 없으면
+ * control.call 을 FORBIDDEN 으로 거절한다(제어 도구 — control-tools.ts)
+ */
+export const DODOK_BRIDGE_CAPABILITIES: BridgeCapability[] = [
+  "run_id_in_outbound",
+  "config.set",
+  "threads",
+  "control",
+];
 
 type ChannelRuntime = PluginRuntime["channel"];
 

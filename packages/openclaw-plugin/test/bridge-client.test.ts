@@ -1,4 +1,10 @@
-import { BRIDGE_PROTOCOL, type BridgeHello, type OutboundMessage } from "@dodok/shared";
+import {
+  BRIDGE_PROTOCOL,
+  type BridgeControlCall,
+  type BridgeHello,
+  CONTROL_CALL_TIMEOUT_MS,
+  type OutboundMessage,
+} from "@dodok/shared";
 import { describe, expect, it } from "vitest";
 import { createBridgeClient, type BridgeClientOptions } from "../src/bridge-client";
 
@@ -33,6 +39,8 @@ class FakeSocket {
   connects = 0;
   disconnects = 0;
   readonly emitted: Array<{ event: string; payload: unknown }> = [];
+  /** emitWithAck 마다 건 ack 제한시간 */
+  readonly timeouts: Array<{ event: string; ms: number }> = [];
   readonly #handlers = new Map<string, Array<(...args: unknown[]) => void>>();
 
   constructor(readonly respond: Respond) {}
@@ -59,9 +67,10 @@ class FakeSocket {
     return this;
   }
 
-  timeout(_ms: number) {
+  timeout(ms: number) {
     return {
       emitWithAck: (event: string, payload: unknown) => {
+        this.timeouts.push({ event, ms });
         this.emitted.push({ event, payload });
         return this.respond(event, payload);
       },
@@ -143,5 +152,86 @@ describe("createBridgeClient 큐 flush (가짜 소켓)", () => {
     expect(socket.outboundIds()).toEqual(["o-1", "o-2"]);
     expect(socket.disconnects).toBe(0);
     await client.stop();
+  });
+});
+
+describe("createBridgeClient sendControl — 제어 도구 호출", () => {
+  const SESSION = `agent:main:dodok:channel:${CH}`;
+  const call: BridgeControlCall = {
+    callId: "c1",
+    sessionKey: SESSION,
+    runId: "01a09fc9-d204-7551-89d6-38544d07a301",
+    tool: "list_channels",
+    args: {},
+  };
+
+  async function ready(respond: Respond) {
+    let readyNow!: () => void;
+    const isReady = new Promise<void>((resolve) => (readyNow = resolve));
+    const socket = new FakeSocket(respond);
+    const client = createBridgeClient({
+      url: "ws://bridge.test/bridge",
+      token: "t0k",
+      hello,
+      handlers: { onInbound: async () => ({ admission: "dispatch" }), onReady: () => readyNow() },
+      logger: silent,
+      backoff: { baseMs: 1, maxMs: 1, jitter: 0 },
+      connectSocket: (() => socket) as unknown as BridgeClientOptions["connectSocket"],
+    });
+    client.start();
+    await isReady;
+    return { socket, client };
+  }
+
+  it("ready 면 control.call 을 보내고 ack 를 shared CONTROL_CALL_TIMEOUT_MS 까지 기다린다 — 짧은 기본값이 없다", async () => {
+    const { socket, client } = await ready(async (event) =>
+      event === "hello" ? helloOk : { ok: true, data: [{ name: "dev" }] },
+    );
+    expect(await client.sendControl(call)).toEqual({ ok: true, data: [{ name: "dev" }] });
+    expect(socket.emitted.filter((e) => e.event === "control.call")).toEqual([
+      { event: "control.call", payload: call },
+    ]);
+    expect(socket.timeouts.find((t) => t.event === "control.call")?.ms).toBe(CONTROL_CALL_TIMEOUT_MS);
+    await client.stop();
+  });
+
+  it("ready 가 아니면 보내지도 큐에 넣지도 않고 ADAPTER_UNAVAILABLE — 다시 붙은 연결로 늦게 나가지 않는다", async () => {
+    const socket = new FakeSocket(async (event) => (event === "hello" ? helloOk : { ok: true, data: null }));
+    const client = clientWith(socket);
+    expect(await client.sendControl(call)).toMatchObject({
+      ok: false,
+      error: { code: "ADAPTER_UNAVAILABLE" },
+    });
+    client.start();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(socket.emitted.map((e) => e.event)).not.toContain("control.call");
+    await client.stop();
+  });
+
+  it("보낸 뒤 끊김·시간 초과(socket.io-client 의 거절)는 unknown — 서버가 받았을 수 있다", async () => {
+    for (const message of ["socket has been disconnected", "operation has timed out"]) {
+      const { client } = await ready(async (event) => {
+        if (event === "hello") return helloOk;
+        throw new Error(message);
+      });
+      expect(await client.sendControl(call)).toEqual({ unknown: true });
+      await client.stop();
+    }
+  });
+
+  it("서버가 ok:false 면 그대로, 계약과 다른 ack 는 INTERNAL", async () => {
+    const { client } = await ready(async (event) =>
+      event === "hello"
+        ? helloOk
+        : { ok: false, error: { code: "NOT_FOUND", message: "열린 런이 없습니다" } },
+    );
+    expect(await client.sendControl(call)).toEqual({
+      ok: false,
+      error: { code: "NOT_FOUND", message: "열린 런이 없습니다" },
+    });
+    await client.stop();
+    const bad = await ready(async (event) => (event === "hello" ? helloOk : { ok: "yes" }));
+    expect(await bad.client.sendControl(call)).toMatchObject({ ok: false, error: { code: "INTERNAL" } });
+    await bad.client.stop();
   });
 });

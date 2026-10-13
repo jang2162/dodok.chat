@@ -7,6 +7,33 @@
     "onStartup": false
   },
   "channels": ["dodok"],
+  "contracts": {
+    "tools": [
+      "dodok_list_channels",
+      "dodok_get_channel",
+      "dodok_list_agents",
+      "dodok_list_people",
+      "dodok_search_messages",
+      "dodok_read_messages",
+      "dodok_get_run",
+      "dodok_ops_status",
+      "dodok_create_channel",
+      "dodok_update_channel",
+      "dodok_set_channel_prompt",
+      "dodok_add_channel_agent",
+      "dodok_remove_channel_agent",
+      "dodok_update_channel_agent",
+      "dodok_set_relay_policy",
+      "dodok_set_channel_run_limit",
+      "dodok_archive_channel",
+      "dodok_unarchive_channel",
+      "dodok_discover_agents",
+      "dodok_register_agent",
+      "dodok_update_agent",
+      "dodok_set_agent_enabled",
+      "dodok_archive_agent"
+    ]
+  },
   "channelConfigs": {
     "dodok": {
       "schema": {
