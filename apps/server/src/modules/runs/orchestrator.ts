@@ -21,7 +21,7 @@ import {
   type RunEventBody,
 } from "../../adapters/types";
 import type { Db, DbOrTx } from "../../db/client";
-import { agents, channels, messages } from "../../db/schema.sqlite";
+import { agents, channels, componentInteractions, messages } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
 import type { Logger } from "../../logger";
 import type { ServerBus } from "../../realtime/bus";
@@ -93,7 +93,32 @@ export type EnqueueTrigger = {
   interactionId?: string;
   interactionText?: string;
   interactionMessageId?: string;
+  /** 그 런을 시킨 사람을 부르는 쪽이 안다면(다시 실행 — 원래 런의 값) 여기에. 빠지면 requesterOf 가 트리거로 정한다 */
+  requestedBy?: string | null;
 };
+
+/**
+ * 그 런을 시킨 사람(제어 MCP 스펙 「그 런을 시킨 사람」 절 표) — 사람 글의 멘션·자동 응답은 작성자, 카드 상호작용·「이어가기」는 누른
+ * 사람, 릴레이는 앞 런(트리거 에이전트 글의 런)의 값, 자동화 글로 시작한 사슬은 null. 릴레이가 앞 런을 물려받으므로 사슬 전체가
+ * 처음 사람(또는 null)을 지닌다 — 에이전트 글을 작성자로 보면 사슬 중간에서 사람이 사라지고, 자동화 글을 사람으로 보면 권한이 생긴다
+ */
+function requesterOf(db: DbOrTx, trigger: EnqueueTrigger): string | null {
+  if (trigger.requestedBy !== undefined) return trigger.requestedBy;
+  if (trigger.interactionId !== undefined) {
+    return (
+      db
+        .select({ userId: componentInteractions.userId })
+        .from(componentInteractions)
+        .where(eq(componentInteractions.id, trigger.interactionId))
+        .get()?.userId ?? null
+    );
+  }
+  const message = trigger.message;
+  if (message?.authorType === "user") return message.authorId ?? null;
+  if (message?.authorType === "agent" && message.runId !== undefined)
+    return store.getRunRequestedBy(db, message.runId);
+  return null;
+}
 
 export interface Orchestrator {
   enqueueRun(plan: RunPlan & { channelId: string }, trigger: EnqueueTrigger): Promise<Run>;
@@ -1142,6 +1167,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
           sessionKey,
           threadRootId: plan.threadRootId,
           connectionId,
+          requestedBy: requesterOf(tx, trigger),
           createdAt: ts,
         });
         const event = store.appendRunEvent(

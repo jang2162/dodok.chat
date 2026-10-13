@@ -26,6 +26,8 @@ export type InsertRunInput = {
   threadRootId?: string | undefined;
   /** 만들 때 에이전트 행의 연결(adapters/connection.ts connectionIdOf) — send 가 돌려준 값으로 덮는다 */
   connectionId?: string | null | undefined;
+  /** 그 런을 시킨 사람 — 오케스트레이터 requesterOf 가 정한다. 없으면 null */
+  requestedBy?: string | null | undefined;
   createdAt: Date;
 };
 
@@ -98,6 +100,7 @@ export function insertRun(db: DbOrTx, input: InsertRunInput): Run {
       sessionKey: input.sessionKey,
       threadRootId: input.threadRootId ?? null,
       connectionId: input.connectionId ?? null,
+      requestedBy: input.requestedBy ?? null,
       status: "queued",
       hasCanonical: false,
       createdAt: input.createdAt,
@@ -121,6 +124,13 @@ export function getRun(db: DbOrTx, id: string): Run | undefined {
 /** 그 런을 맡은 연결(runs.connection_id) — 공유 Run 에는 싣지 않는다(REST·wire 로 나가지 않게). 런이 없거나 비었으면 null */
 export function getRunConnectionId(db: DbOrTx, id: string): string | null {
   return db.select({ c: runs.connectionId }).from(runs).where(eq(runs.id, id)).get()?.c ?? null;
+}
+
+/**
+ * 그 런을 시킨 사람(runs.requested_by) — connectionId 처럼 공유 Run 에는 싣지 않는다(REST·wire 로 나가지 않게). 런이 없거나 비었으면 null
+ */
+export function getRunRequestedBy(db: DbOrTx, id: string): string | null {
+  return db.select({ r: runs.requestedBy }).from(runs).where(eq(runs.id, id)).get()?.r ?? null;
 }
 
 /** 채널이 그 워크스페이스에 있는 런 — REST·wire 가 다른 워크스페이스 런을 NOT_FOUND 로 가린다 */

@@ -447,7 +447,8 @@ describe("components service — interact", () => {
         relayDepth: 2,
         parentRunId: failed.id,
       },
-      { message: expect.objectContaining({ id: failed.triggerMessageId }) },
+      // 시킨 사람은 원래 런의 값 — 이 런은 requested_by 없이 넣었다
+      { message: expect.objectContaining({ id: failed.triggerMessageId }), requestedBy: null },
     );
     expect(getMessage(t.db, notice.id)?.componentState?.consumed).toEqual(["retry_run"]);
     await expect(interact(t.deps, t.click(notice, "retry_run"))).rejects.toMatchObject({

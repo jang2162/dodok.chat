@@ -317,6 +317,9 @@ export const runs = sqliteTable(
     // 그 런을 맡은 연결(OpenClaw Gateway id·러너 토큰 id) — 만들 때 에이전트 행의 연결, send 가 돌려준 값으로 덮는다. 에이전트를
     // 옮겨도 옛 런의 대조가 흔들리지 않게 런에 남긴다. 세션 키가 같은 두 Gateway 의 런을 이것으로 가른다
     connectionId: text("connection_id"),
+    // 그 런을 시킨 사람(제어 MCP 스펙 「그 런을 시킨 사람」 절) — 채널 안 에이전트의 제어 도구가 이 사람의 지금 역할을 빌린다.
+    // null 이면 시킨 사람이 없다(자동화 글로 시작한 사슬·이 열 전의 런) — 읽기 도구만. 정하는 곳은 runs/orchestrator.ts requesterOf
+    requestedBy: text("requested_by"),
     createdAt: ts("created_at").notNull(),
     startedAt: ts("started_at"),
     endedAt: ts("ended_at"),

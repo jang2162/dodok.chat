@@ -11,7 +11,7 @@ import { consumeComponentItem, getMessage } from "../messages/service";
 import type { RunGate } from "../ops/budget";
 import { isPairAllowed } from "../router/decide";
 import { CONTINUE_RELAY_ITEM, RETRY_RUN_ITEM } from "../router/service";
-import { getRun } from "../runs/store";
+import { getRun, getRunRequestedBy } from "../runs/store";
 import { formatInteractionText, validateInteraction } from "./interact";
 
 export type InteractDeps = {
@@ -101,7 +101,7 @@ export async function interact(deps: InteractDeps, input: InteractInput): Promis
         parentRunId: run.id,
         ...withThread(threadOf(target, message)),
       },
-      { message: target.triggerMessage },
+      { message: target.triggerMessage, requestedBy: getRunRequestedBy(deps.db, run.id) },
     );
     return { interactionId };
   }
