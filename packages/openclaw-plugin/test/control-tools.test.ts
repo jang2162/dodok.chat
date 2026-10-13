@@ -117,12 +117,54 @@ describe("제어 도구 실행 — control.call", () => {
     });
   });
 
-  it("runId 는 실행할 때의 상관관계 — 팩토리를 부른 뒤 그 세션에 다음 인바운드가 오면 그 런", async () => {
+  const callWith = async (tool: ControlAgentTool, hostRunId: string | undefined, id = "tc1") => {
+    await tool.prepareBeforeToolCallParams(
+      {},
+      { toolCallId: id, hookContext: hostRunId === undefined ? undefined : { runId: hostRunId } },
+    );
+    return tool.execute(id, {});
+  };
+
+  it("같은 OpenClaw 런이면 보낸다 — runId 는 실행할 때의 상관관계(providerRunId 가 있으면 그것과 대조)", async () => {
+    setCorrelation(CHANNEL_KEY, { runId: RUN_1, providerRunId: "host-1" });
+    const tool = toolOf(factory({ sessionKey: CHANNEL_KEY }), "list_channels");
+    setCorrelation(CHANNEL_KEY, { runId: RUN_2, providerRunId: "host-2" });
+    await callWith(tool, "host-2");
+    expect(sent.map((c) => c.runId)).toEqual([RUN_2]);
+  });
+
+  it("providerRunId 가 없으면 runId 와 대조한다", async () => {
     setCorrelation(CHANNEL_KEY, { runId: RUN_1 });
     const tool = toolOf(factory({ sessionKey: CHANNEL_KEY }), "list_channels");
-    setCorrelation(CHANNEL_KEY, { runId: RUN_2 });
+    await callWith(tool, RUN_1);
+    expect(sent).toHaveLength(1);
+  });
+
+  it("다른 OpenClaw 런의 늦은 호출은 보내지 않고 EXPIRED — 서버가 닫은 런이 같은 세션 다음 런의 권한을 빌리지 못하게(t5 리뷰 R1)", async () => {
+    setCorrelation(CHANNEL_KEY, { runId: RUN_1, providerRunId: "host-1" });
+    const tool = toolOf(factory({ sessionKey: CHANNEL_KEY }), "list_channels");
+    setCorrelation(CHANNEL_KEY, { runId: RUN_2, providerRunId: "host-2" });
+    const out = await callWith(tool, "host-1");
+    expect(sent).toEqual([]);
+    expect(out.details).toEqual({ ok: false, code: "EXPIRED" });
+    expect(JSON.parse(out.content[0]!.text)).toMatchObject({ message: "이 런은 dodok 에서 이미 끝났습니다" });
+  });
+
+  it("hookContext.runId 가 없으면 대조하지 않고 보낸다(호환)", async () => {
+    setCorrelation(CHANNEL_KEY, { runId: RUN_1, providerRunId: "host-1" });
+    const tool = toolOf(factory({ sessionKey: CHANNEL_KEY }), "list_channels");
+    await callWith(tool, undefined);
+    await tool.execute("never-prepared", {});
+    expect(sent).toHaveLength(2);
+  });
+
+  it("훅이 잡은 런 id 는 한 호출에만 쓰인다 — 다음 호출(같은 toolCallId)로 새지 않는다", async () => {
+    setCorrelation(CHANNEL_KEY, { runId: RUN_1, providerRunId: "host-1" });
+    const tool = toolOf(factory({ sessionKey: CHANNEL_KEY }), "list_channels");
+    await callWith(tool, "host-old");
+    expect(sent).toEqual([]);
     await tool.execute("tc1", {});
-    expect(sent.map((c) => c.runId)).toEqual([RUN_2]);
+    expect(sent).toHaveLength(1);
   });
 
   it("상관관계가 없으면(dodok 인바운드 없이 돈 런) 보내지 않고 오류 결과", async () => {

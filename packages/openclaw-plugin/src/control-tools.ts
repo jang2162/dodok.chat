@@ -42,6 +42,11 @@ export type ControlAgentTool = {
     params: unknown,
     signal?: AbortSignal,
   ) => Promise<{ content: Array<{ type: "text"; text: string }>; details: ControlToolDetails }>;
+  /** SDK AnyAgentTool.prepareBeforeToolCallParams — 실행 직전 Gateway 가 부르고 hookContext.runId 에 그 호출의 OpenClaw 런 id 를 싣는다 */
+  prepareBeforeToolCallParams: (
+    params: unknown,
+    ctx: { toolCallId?: string; hookContext?: unknown; signal?: AbortSignal },
+  ) => unknown;
 };
 
 /** 브리지가 하는 일 중 도구가 쓰는 것 — 테스트가 갈아 끼운다 */
@@ -53,6 +58,8 @@ export type ControlToolDeps = {
   getBridge?: (accountId: string) => ControlBridge | undefined;
   /** 그 세션의 마지막 인바운드 런 id(플러그인 상관관계) */
   getRunId?: (sessionKey: string) => string | undefined;
+  /** 그 세션의 마지막 인바운드가 시작한 OpenClaw 런 id(상관관계 providerRunId, 없으면 runId) */
+  getHostRunId?: (sessionKey: string) => string | undefined;
   newId?: () => string;
 };
 
@@ -69,23 +76,38 @@ const refused = (code: "NOT_FOUND" | "ADAPTER_UNAVAILABLE" | "EXPIRED", message:
 
 /**
  * registerTool 팩토리. dodok 세션이 아니면 도구를 내지 않는다(다른 채널의 세션에서 보이지 않게). runId 는 실행할 때의 상관관계 —
- * 도구가 Gateway 캐시(MCP loopback 30초)로 다음 런까지 쓰일 수 있어 팩토리를 부를 때 잡지 않는다. 끝난 런의 이름은 서버가
+ * 도구가 Gateway 캐시(MCP loopback 30초)에서 팩토리가 다시 불려도 틈이 남아 팩토리 때 잡지 않고, 실행 직전 훅의 OpenClaw 런 id 와 대조한다. 끝난 런의 이름은 서버가
  * NOT_FOUND 로 거른다(그 runId 가 열려 있고 세션 키·Gateway 가 맞을 때만 받는다)
  */
 export function createControlToolFactory(deps: ControlToolDeps = {}) {
   const bridgeOf = deps.getBridge ?? getBridge;
   const runIdOf = deps.getRunId ?? ((sessionKey: string) => getCorrelation(sessionKey)?.runId);
+  const hostRunIdOf =
+    deps.getHostRunId ??
+    ((sessionKey: string) => {
+      const correlation = getCorrelation(sessionKey);
+      return correlation?.providerRunId ?? correlation?.runId;
+    });
   const newId = deps.newId ?? randomUUID;
   return (ctx: ControlToolContext): ControlAgentTool[] | null => {
     const sessionKey = ctx.sessionKey;
     if (!sessionKey || parseDodokSessionKey(sessionKey) === undefined) return null;
     const accountId = ctx.agentAccountId ?? DEFAULT_ACCOUNT_ID;
+    // toolCallId → 그 호출의 OpenClaw 런 id. 도구 객체에 묶는다(모듈 상태 아님 — ADR 0004), 도구가 캐시에서 빠지면 같이 사라진다
+    const hostRunIds = new Map<string, string>();
     return CONTROL_TOOLS.map((tool) => ({
       name: CONTROL_TOOL_PREFIX + tool.name,
       label: `dodok ${tool.name}`,
       description: tool.description,
       parameters: controlToolJsonSchema(tool),
-      execute: async (_toolCallId, params, signal) => {
+      prepareBeforeToolCallParams: (params, { toolCallId, hookContext }) => {
+        const hostRunId = (hookContext as { runId?: unknown } | undefined)?.runId;
+        if (toolCallId && typeof hostRunId === "string") hostRunIds.set(toolCallId, hostRunId);
+        return params;
+      },
+      execute: async (toolCallId, params, signal) => {
+        const hostRunId = hostRunIds.get(toolCallId);
+        hostRunIds.delete(toolCallId);
         // 멈춘 런의 늦은 호출이 그 사이 같은 세션에 온 다음 인바운드의 runId 를 집지 않게
         if (signal?.aborted) return refused("EXPIRED", "런이 멈춰 보내지 않았습니다");
         const runId = runIdOf(sessionKey);
@@ -95,6 +117,10 @@ export function createControlToolFactory(deps: ControlToolDeps = {}) {
             "이 세션에 dodok 런이 없습니다 — dodok 채널 메시지로 시작한 런에서만 쓸 수 있습니다",
           );
         }
+        // 이 호출이 도는 OpenClaw 런이 그 세션의 마지막 인바운드가 시작한 런이 아니면 — 서버가 이미 닫은 런의 늦은 호출이다.
+        // hookContext.runId 가 없으면(다른 런타임) 대조하지 않는다
+        if (hostRunId !== undefined && hostRunId !== hostRunIdOf(sessionKey))
+          return refused("EXPIRED", "이 런은 dodok 에서 이미 끝났습니다");
         const bridge = bridgeOf(accountId);
         if (!bridge)
           return refused("ADAPTER_UNAVAILABLE", `dodok: account "${accountId}" bridge is not running`);
