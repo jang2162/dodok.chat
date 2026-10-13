@@ -412,13 +412,17 @@ describe("제어 서비스", () => {
       const event = app.db
         .select()
         .from(opsEvents)
-        .where(and(eq(opsEvents.kind, "control_change"), eq(opsEvents.key, "control:set_channel_prompt")))
+        .where(
+          and(eq(opsEvents.kind, "control_change"), eq(opsEvents.key, `control:set_channel_prompt:${owner}`)),
+        )
         .get();
       expect(event?.detail).toEqual({
         userId: owner,
         via: "pat",
+        agentId: null,
         tool: "set_channel_prompt",
         channelId: channel.id,
+        targetAgentId: null,
       });
       expect(JSON.stringify(event)).not.toContain(secret);
     });
@@ -431,12 +435,14 @@ describe("제어 서비스", () => {
       const event = app.db
         .select()
         .from(opsEvents)
-        .where(and(eq(opsEvents.kind, "control_change"), eq(opsEvents.key, "control:update_agent")))
+        .where(and(eq(opsEvents.kind, "control_change"), eq(opsEvents.key, `control:update_agent:${owner}`)))
         .get();
       expect(event?.detail).toEqual({
         userId: owner,
         via: "pat",
+        agentId: null,
         tool: "update_agent",
+        channelId: null,
         targetAgentId: target.id,
       });
       expect(JSON.stringify(event)).not.toContain("비밀-기본-프롬프트");

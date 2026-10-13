@@ -16,7 +16,7 @@ import { createAgentMessage, createUserMessage } from "../src/modules/messages/s
 import { getRun, insertRun, listRunEvents, updateRun } from "../src/modules/runs/store";
 import { josa } from "../src/util/josa";
 import { bootTestApp, login, userWithRole } from "./helpers/app";
-import { errorOf, expectOk, newAgent, newChannel, openRun } from "./helpers/control";
+import { errorOf, expectOk, newAgent, newChannel, openRun, pat } from "./helpers/control";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
 import { connectWire, type WireClient } from "./helpers/wire";
 
@@ -136,7 +136,7 @@ describe("확인 카드", () => {
     const event = app.db
       .select()
       .from(opsEvents)
-      .where(and(eq(opsEvents.kind, "control_change"), eq(opsEvents.key, "control:update_channel")))
+      .where(and(eq(opsEvents.kind, "control_change"), eq(opsEvents.key, `control:update_channel:${owner}`)))
       .get();
     expect(event?.detail).toEqual({
       userId: owner,
@@ -144,6 +144,7 @@ describe("확인 카드", () => {
       agentId: agent.id,
       tool: "update_channel",
       channelId: channel.id,
+      targetAgentId: null,
     });
     expect(listRunEvents(app.db, run.id, 0).map((e) => e.type)).toEqual(
       expect.arrayContaining(["APPROVAL_REQUESTED", "APPROVAL_RESOLVED"]),
@@ -297,6 +298,161 @@ describe("확인 카드", () => {
     expect(await decide(mia.token, card.id, "deny")).toMatchObject({ ok: true });
     expect(errorOf(await call.result).code).toBe("FORBIDDEN");
   });
+
+  it("카드 출처 — 앞 런이 열린 채 쓴 릴레이 글이면 릴레이 줄만, 주의 줄 없음", async () => {
+    const channel = newChannel(app, { members: [mia.id] });
+    const a = newAgent(app);
+    const ops = newAgent(app);
+    for (const agent of [a, ops])
+      addMember(app.db, channel.id, { memberType: "agent", memberId: agent.id }, app.logger);
+    const origin = createUserMessage(app.db, app.bus, {
+      channelId: channel.id,
+      authorId: mia.id,
+      bodyMd: `@${a.handle} 주제 정리 부탁`,
+      clientMsgId: `relay-ok-${channel.id}`,
+    });
+    const runOf = (agentId: string, triggerMessageId: string) =>
+      insertRun(app.db, {
+        channelId: channel.id,
+        agentId,
+        triggerKind: "mention",
+        triggerMessageId,
+        rootMessageId: origin.id,
+        relayDepth: 0,
+        sessionKey: `agent:${agentId}:dodok:channel:${channel.id}`,
+        connectionId: FAKE_GATEWAY_ID,
+        requestedBy: mia.id,
+        createdAt: new Date(),
+      });
+    // a 의 런이 열려 있을 때 글을 쓰고, 그 뒤에 끝났다
+    const first = updateRun(app.db, runOf(a.id, origin.id).id, { status: "tool" });
+    const relayed = createAgentMessage(app.db, app.bus, {
+      channelId: channel.id,
+      agentId: a.id,
+      runId: first.id,
+      externalId: `o-${first.id}`,
+      bodyMd: `@${ops.handle} 주제 바꿔`,
+    });
+    updateRun(app.db, first.id, {
+      status: "done",
+      endedAt: new Date(Date.parse(relayed.createdAt) + 1_000),
+    });
+    const second = updateRun(app.db, runOf(ops.id, relayed.id).id, { status: "tool" });
+    const call = track(
+      app.control.call(
+        { userId: mia.id, via: "agent", agentId: ops.id, runId: second.id },
+        "update_channel",
+        { channelId: channel.id, topic: "정리" },
+      ),
+    );
+    const card = await cardOf(app, second.id);
+    expect(card.detail?.split("\n")).toEqual([
+      "시킨 사람: @mia",
+      `시작한 글: @mia · #${channel.name} · ${origin.seq}번째 글 「@${a.handle} 주제 정리 부탁」`,
+      `릴레이: @${a.handle}`,
+    ]);
+    expect(await decide(mia.token, card.id, "deny")).toMatchObject({ ok: true });
+    expect(errorOf(await call.result).code).toBe("FORBIDDEN");
+  });
+
+  it("허용 뒤 상태를 다시 본다 — 런은 채널 A, 도구는 채널 B, 기다리는 사이 B 가 보관되면 CHANNEL_ARCHIVED, 아무것도 안 바뀐다", async () => {
+    const { channel: home, run, principal } = openRun(app, owner);
+    const target = newChannel(app);
+    const call = track(
+      app.control.call(principal, "update_channel", { channelId: target.id, name: "보관뒤이름" }),
+    );
+    const card = await cardOf(app, run.id);
+    // B 의 보관은 B 의 런만 멈춘다 — A 의 런과 카드는 산다
+    const archived = await app.fastify.inject({
+      method: "POST",
+      url: `/api/v1/channels/${target.id}/archive`,
+      headers: { authorization: `Bearer ${ada.token}` },
+    });
+    expect(archived.statusCode).toBe(200);
+    expect(app.db.select().from(approvals).where(eq(approvals.id, card.id)).get()?.status).toBe("pending");
+    expect(await decide(ownerToken, card.id, "allow-once")).toMatchObject({ ok: true });
+    expect(errorOf(await call.result)).toEqual({ code: "CHANNEL_ARCHIVED", message: "보관된 채널입니다" });
+    expect(getChannel(app.db, target.id)?.name).toBe(target.name);
+    for (const channelId of [home.id, target.id]) {
+      const system = app.db
+        .select()
+        .from(messages)
+        .where(and(eq(messages.channelId, channelId), eq(messages.kind, "system")))
+        .all();
+      expect(system).toEqual([]);
+    }
+  });
+
+  it("wire 결정 — 소켓이 붙은 채 시킨 사람이 비활성화되면 FORBIDDEN, 카드는 그대로", async () => {
+    const leaver = await userWithRole(app, `leaver${uuid().slice(0, 4)}`, "member");
+    const { channel, run, principal } = openRun(app, leaver.id, {
+      channel: newChannel(app, { members: [leaver.id] }),
+    });
+    const socket = await wire(leaver.token);
+    const call = track(
+      app.control.call(principal, "update_channel", { channelId: channel.id, topic: "떠남" }),
+    );
+    const card = await cardOf(app, run.id);
+    app.db
+      .update(memberships)
+      .set({ deactivatedAt: new Date() })
+      .where(eq(memberships.userId, leaver.id))
+      .run();
+    expect(
+      await socket.emitWithAck("approval.resolve", { approvalId: card.id, decision: "allow-once" } as never),
+    ).toEqual({ ok: false, error: { code: "FORBIDDEN", message: "워크스페이스 멤버가 아니다" } });
+    expect(app.db.select().from(approvals).where(eq(approvals.id, card.id)).get()?.status).toBe("pending");
+    expect(call.settled()).toBe(false);
+    expect(getChannel(app.db, channel.id)?.topic).toBeUndefined();
+    await app.orchestrator.signal(run.id, { kind: "gateway_aborted" });
+    expect(errorOf(await call.result).code).toBe("EXPIRED");
+  });
+
+  it("사건은 같은 사람·같은 도구만 묶이고, 묶여도 앞 기록의 에이전트·채널이 남지 않는다", async () => {
+    const eventsOf = (userId: string) =>
+      app.db
+        .select()
+        .from(opsEvents)
+        .where(
+          and(eq(opsEvents.kind, "control_change"), eq(opsEvents.key, `control:update_channel:${userId}`)),
+        )
+        .all();
+    const before = eventsOf(owner).at(0)?.count ?? 0;
+    // 에이전트 주체(owner 가 시킨 런)가 채널 A 를 바꾼다
+    const { channel: a, run, principal } = openRun(app, owner);
+    const call = track(app.control.call(principal, "update_channel", { channelId: a.id, name: "r1-a" }));
+    const card = await cardOf(app, run.id);
+    expect(await decide(ownerToken, card.id, "allow-once")).toMatchObject({ ok: true });
+    expectOk(await call.result);
+    // 같은 사람이 개인 토큰으로 채널 B 를 바꾼다 — 같은 줄로 묶이되 agentId 는 남지 않는다
+    const b = newChannel(app);
+    expectOk(await app.control.call(pat(owner), "update_channel", { channelId: b.id, name: "r1-b" }));
+    const ownerRows = eventsOf(owner);
+    expect(ownerRows).toHaveLength(1);
+    expect(ownerRows[0]?.count).toBe(before + 2);
+    expect(ownerRows[0]?.detail).toEqual({
+      userId: owner,
+      via: "pat",
+      agentId: null,
+      tool: "update_channel",
+      channelId: b.id,
+      targetAgentId: null,
+    });
+    // 다른 사람의 변경은 다른 줄 — owner 의 줄은 그대로
+    const c = newChannel(app);
+    expectOk(await app.control.call(pat(ada.id), "update_channel", { channelId: c.id, name: "r1-c" }));
+    expect(eventsOf(owner)).toEqual(ownerRows);
+    const adaRows = eventsOf(ada.id);
+    expect(adaRows).toHaveLength(1);
+    expect(adaRows[0]?.detail).toEqual({
+      userId: ada.id,
+      via: "pat",
+      agentId: null,
+      tool: "update_channel",
+      channelId: c.id,
+      targetAgentId: null,
+    });
+  });
 });
 
 describe("확인 카드 — 만료", () => {
@@ -320,5 +476,40 @@ describe("확인 카드 — 만료", () => {
     expect(card).toMatchObject({ kind: "dodok_control", status: "expired", reason: "timeout" });
     expect(getRun(app.db, run.id)?.status).toBe("tool");
     expect(getChannel(app.db, channel.id)?.name).toBe(channel.name);
+  });
+});
+
+describe("확인 카드 — 재시작", () => {
+  let app: App;
+
+  beforeAll(async () => {
+    app = await bootTestApp({}, { adapters: [new FakeAdapter()] });
+  });
+  afterAll(async () => {
+    await app.close();
+  });
+
+  it("이 프로세스가 기다리지 않는 카드(재시작 전에 연 것)도 recoverOnBoot 가 런을 닫을 때 cancelled", async () => {
+    const { channel, agent, run } = openRun(app, app.ownerUserId);
+    const createdAt = new Date();
+    // 확인 서비스를 거치지 않고 행만 연다 — 재시작 전 프로세스가 열고 사라진 카드
+    const card = app.services.approvals.openControl({
+      runId: run.id,
+      channelId: channel.id,
+      agentId: agent.id,
+      requestedBy: app.ownerUserId,
+      toolName: "update_channel",
+      title: "재시작 전 카드",
+      createdAt,
+      expiresAt: new Date(createdAt.getTime() + 600_000),
+    });
+    expect(app.db.select().from(approvals).where(eq(approvals.id, card.id)).get()?.status).toBe("pending");
+    await app.orchestrator.recoverOnBoot();
+    expect(getRun(app.db, run.id)?.status).not.toBe("tool");
+    expect(app.db.select().from(approvals).where(eq(approvals.id, card.id)).get()).toMatchObject({
+      status: "cancelled",
+      reason: "run-aborted",
+    });
+    expect(app.services.approvals.pendingForChannel(channel.id).map((a) => a.id)).not.toContain(card.id);
   });
 });

@@ -58,14 +58,17 @@ export type ControlService = {
 
 const ROLES: readonly TeamRole[] = ["member", "admin", "owner"];
 
-/** 바꾼 값을 남기지 않는다 — 운영 사건 detail 은 누가·어디·무엇(도구)만(스펙 「실행 흐름」 장) */
+/**
+ * 바꾼 값을 남기지 않는다 — 운영 사건 detail 은 누가·어디·무엇(도구)만(스펙 「실행 흐름」 장). 선택 키도 늘 싣는다(없으면 null) —
+ * 묶인 줄의 detail 은 병합이라 빠진 키에 앞 기록의 값이 남는다
+ */
 type ChangeDetail = {
   userId: string;
   via: Principal["via"];
-  agentId?: string;
+  agentId: string | null;
   tool: string;
-  channelId?: string;
-  targetAgentId?: string;
+  channelId: string | null;
+  targetAgentId: string | null;
 };
 
 export function createControlService(deps: ControlDeps): ControlService {
@@ -196,11 +199,13 @@ export function createControlService(deps: ControlDeps): ControlService {
         userId: p.userId,
         via: p.via,
         tool: toolName,
-        ...(p.agentId === undefined ? {} : { agentId: p.agentId }),
-        ...(channelId === undefined ? {} : { channelId }),
-        ...(targetAgentId === undefined ? {} : { targetAgentId }),
+        agentId: p.agentId ?? null,
+        channelId: channelId ?? null,
+        targetAgentId: targetAgentId ?? null,
       };
-      deps.ops.record({ kind: "control_change", key: `control:${toolName}`, severity: "info", detail });
+      // 행위 단위로 묶는다 — 같은 사람·같은 도구만 한 줄이 된다(다른 사람의 변경이 앞사람 줄을 덮지 않게)
+      const key = `control:${toolName}:${p.userId}`;
+      deps.ops.record({ kind: "control_change", key, severity: "info", detail });
       const done = handler.wording?.(ctx, input).done;
       if (handler.channelId === undefined || channelId === undefined || done === undefined) return;
       const who = userHandle(db, p.userId) ?? "알 수 없음";
