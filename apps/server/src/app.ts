@@ -78,6 +78,7 @@ import { readRunnerFile, runnerDirCandidates } from "./modules/runners/runner-fi
 import { activeRunnerTokenCount, isActiveRunnerTokenId, verifyRunnerTokenDb } from "./modules/runners/tokens";
 import { registerRunRoutes } from "./modules/runs/routes";
 import { registerReadRoutes } from "./modules/reads/routes";
+import { registerTokenRoutes } from "./modules/tokens/routes";
 import { registerSearchRoutes } from "./modules/search/routes";
 import { renderLlmsTxt } from "./modules/setup/llms";
 import { pluginDirCandidates, readPluginFile } from "./modules/setup/plugin-file";
@@ -478,6 +479,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     registerAdapterRoutes(fastify, routeContext);
     registerSearchRoutes(fastify, { auth, db, workspaceId, limits, ops, now: limitClock });
     registerReadRoutes(fastify, { auth, db, workspaceId });
+    registerTokenRoutes(fastify, { auth, db, workspaceId });
     // 첨부: 업로드의 「블롭 쓰기 + 행 넣기」와 정리의 「행 없음 확인 + 블롭 지우기」는 같은 잠금 객체를 지나야 한다 —
     // 이 한 변수로만 넘긴다(App.blobLocks 로도 내보내 테스트가 잠근다)
     mkdirSync(config.attachmentsDir, { recursive: true });

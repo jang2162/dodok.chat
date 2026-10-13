@@ -17,6 +17,7 @@ import type { Logger } from "../../logger";
 import type { ServerBus } from "../../realtime/bus";
 import { listMembers as listChannelMembers } from "../channels/service";
 import type { OpsService } from "../ops/service";
+import { revokeAllPersonalTokens } from "../tokens/service";
 
 // 멤버 관리(팀 스펙 「멤버 관리」 절). 권한은 여기서도 membership 을 다시 읽어 본다 — 라우트 가드는 최소 역할만 거른다
 
@@ -123,7 +124,7 @@ export type MemberStateDeps = {
 /**
  * 비활성화(채널 보관·멤버 비활성화 스펙 「멤버 비활성화」 절). admin 은 member 만, owner 는 owner 를 뺀 모두. membership 이 없으면 404,
  * 이미 비활성이면 쓰기 없이 세션 지우기만 다시 한다(멱등 — 앞선 호출의 세션 지우기가 실패했으면 이어진다).
- * 한 트랜잭션으로 deactivated_at·푸시 구독·그 사람이 발급했거나 그 사람을 겨눈 쓰이지 않은 링크 폐기를 쓰고, 같은 동기 구간에서 열린 소켓을
+ * 한 트랜잭션으로 deactivated_at·푸시 구독·개인 토큰 폐기·그 사람이 발급했거나 그 사람을 겨눈 쓰이지 않은 링크 폐기를 쓰고, 같은 동기 구간에서 열린 소켓을
  * 끊는다 — 그 순간부터 roleOf 가 undefined 라 REST·핸드셰이크·connection 이 모두 막는다. 그 뒤 Better Auth 세션을 지운다(사용자·계정은
  * 남긴다 — 다시 활성화하면 예전 비밀번호로 들어온다). 세션 지우기가 실패하면 운영 사건을 남기고 500 — 남은 세션은 비활성이라 쓸 수 없고,
  * 다시 부르거나 다시 활성화하면 지운다. 채널 참여 행은 남기고 읽을 때 거른다(channels/service.ts listMembers). people.changed 는 호출자(라우트)가 낸다
@@ -145,6 +146,8 @@ export async function deactivateMember(
       .run();
     tx.delete(pushSubscriptions).where(eq(pushSubscriptions.userId, userId)).run();
     tx.delete(pushDevices).where(eq(pushDevices.userId, userId)).run();
+    // 개인 토큰은 다시 활성화해도 되살리지 않는다 — 비활성 중에 새어 나간 토큰이 되살아나지 않게(새로 발급한다)
+    revokeAllPersonalTokens(tx, userId, now);
     tx.update(invites)
       .set({ revokedAt: now })
       .where(

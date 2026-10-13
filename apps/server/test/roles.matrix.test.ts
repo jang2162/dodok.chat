@@ -16,6 +16,7 @@ import { createAgentMessage } from "../src/modules/messages/service";
 import { createTriggerLookups } from "../src/modules/push/service";
 import { targetsForApproval } from "../src/modules/push/triggers";
 import { issueBridgeToken } from "../src/modules/setup/tokens";
+import { issuePersonalToken, verifyPersonalToken } from "../src/modules/tokens/service";
 import { bootTestApp, login, noExternalTransport, userWithRole } from "./helpers/app";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
 import { connectWire, openWire, type WireClient } from "./helpers/wire";
@@ -419,6 +420,19 @@ describe("역할 매트릭스(스펙 2장)", () => {
       ok: 200,
       request: () => ({ method: "GET", url: "/api/v1/me/unread" }),
     },
+    // 개인 토큰(제어 MCP 스펙 「권한」 장) — 누구나, 자기 것만. DELETE 는 아래 「개인 토큰」 묶음이 주인별로 본다
+    {
+      name: "GET /me/tokens",
+      min: "member",
+      ok: 200,
+      request: () => ({ method: "GET", url: "/api/v1/me/tokens" }),
+    },
+    {
+      name: "POST /me/tokens",
+      min: "member",
+      ok: 201,
+      request: () => ({ method: "POST", url: "/api/v1/me/tokens", payload: { label: `m${++n}` } }),
+    },
     // 네이티브 푸시 기기(네이티브 푸시 스펙 5장) — 누구나, 자기 세션
     {
       name: "GET /push/capabilities",
@@ -699,6 +713,33 @@ describe("역할 매트릭스(스펙 2장)", () => {
         socket.once("connect_error", (e) => resolve(e as Error & { data?: unknown }));
       });
       expect(err.data).toMatchObject({ code: "UNAUTHORIZED" });
+    });
+  });
+
+  describe("개인 토큰 — DELETE /me/tokens/:id 는 주인만", () => {
+    it.each(ROLES)("%s 는 자기 토큰을 폐기하고(204) 남의 토큰은 404 — 남의 것은 산다", async (role) => {
+      const own = issuePersonalToken(app.db, ids[role], "mine");
+      const others = ROLES.filter((r) => r !== role).map((r) => issuePersonalToken(app.db, ids[r], "theirs"));
+      for (const other of others) {
+        const res = await call(tokens[role], {
+          method: "DELETE",
+          url: `/api/v1/me/tokens/${other.token.id}`,
+        });
+        expect(res.statusCode, res.body).toBe(404);
+        expect(res.json()).toMatchObject({ code: "NOT_FOUND" });
+        expect(verifyPersonalToken(app.db, other.raw)).toBeDefined();
+      }
+      const res = await call(tokens[role], { method: "DELETE", url: `/api/v1/me/tokens/${own.token.id}` });
+      expect(res.statusCode, res.body).toBe(204);
+      expect(verifyPersonalToken(app.db, own.raw)).toBeUndefined();
+    });
+
+    it("세션이 없으면 401", async () => {
+      const own = issuePersonalToken(app.db, ids.member, "mine");
+      expect(
+        (await call(undefined, { method: "DELETE", url: `/api/v1/me/tokens/${own.token.id}` })).statusCode,
+      ).toBe(401);
+      expect(verifyPersonalToken(app.db, own.raw)).toBeDefined();
     });
   });
 

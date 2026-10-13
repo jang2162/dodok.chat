@@ -3,7 +3,14 @@
  * 비활성화는 계정·핸들·이메일·역할·비밀번호·채널 참여를 남기고 로그인과 요청만 막는다.
  */
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
-import { type ChannelMember, IssuedInvite, type MemberRow, type Person, WIRE_PROTOCOL } from "@dodok/shared";
+import {
+  type ChannelMember,
+  IssuedInvite,
+  type MemberRow,
+  PersonalTokenIssued,
+  type Person,
+  WIRE_PROTOCOL,
+} from "@dodok/shared";
 import { and, eq } from "drizzle-orm";
 import { v7 as uuid } from "uuid";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -16,6 +23,7 @@ import {
   memberships,
   messages,
   opsEvents,
+  personalTokens,
   pushSubscriptions,
   users,
 } from "../src/db/schema.sqlite";
@@ -28,6 +36,7 @@ import { markRead } from "../src/modules/reads/store";
 import { listDevices, upsertDevice } from "../src/modules/push/devices";
 import { createTriggerLookups, upsertSubscription } from "../src/modules/push/service";
 import { targetsForMessage } from "../src/modules/push/triggers";
+import { listPersonalTokens, verifyPersonalToken } from "../src/modules/tokens/service";
 import { bootTestApp, login, userWithRole } from "./helpers/app";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
 import { connectWire, openWire, recordEvents, type WireClient } from "./helpers/wire";
@@ -756,6 +765,33 @@ describe("멤버 비활성화·다시 활성화", () => {
             null,
         ),
       ).toEqual([false, true]);
+    });
+  });
+
+  // 제어 MCP Review Focus 5 — 비활성화된 사람의 개인 토큰은 곧바로 죽고, 다시 활성화해도 되살아나지 않는다
+  describe("개인 토큰", () => {
+    it("비활성화하면 그 사람의 토큰이 모두 폐기된다 — 다른 사람 것은 그대로, 다시 활성화해도 폐기 그대로", async () => {
+      const target = await person("member");
+      const other = await person("member");
+      const issue = async (token: string) => {
+        const res = await call(token, "POST", "/api/v1/me/tokens", { label: "laptop" });
+        expect(res.statusCode).toBe(201);
+        return PersonalTokenIssued.parse(res.json()).raw;
+      };
+      const mine = [await issue(target.token), await issue(target.token)];
+      const theirs = await issue(other.token);
+      for (const raw of [...mine, theirs]) expect(verifyPersonalToken(app.db, raw)).toBeDefined();
+
+      expect((await deactivate(ownerToken, target.id)).statusCode).toBe(200);
+      for (const raw of mine) expect(verifyPersonalToken(app.db, raw)).toBeUndefined();
+      expect(verifyPersonalToken(app.db, theirs)).toMatchObject({ userId: other.id });
+      const rows = app.db.select().from(personalTokens).where(eq(personalTokens.userId, target.id)).all();
+      expect(rows).toHaveLength(2);
+      expect(rows.every((r) => r.revokedAt !== null)).toBe(true);
+
+      expect((await reactivate(ownerToken, target.id)).statusCode).toBe(200);
+      for (const raw of mine) expect(verifyPersonalToken(app.db, raw)).toBeUndefined();
+      expect(listPersonalTokens(app.db, target.id)).toEqual([]);
     });
   });
 

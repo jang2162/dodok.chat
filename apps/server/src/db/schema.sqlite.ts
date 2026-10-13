@@ -537,6 +537,30 @@ export const runnerTokens = sqliteTable(
 );
 
 /**
+ * 개인 토큰(PAT, 제어 MCP 스펙 「개인 토큰(PAT)」 절) — 바깥 MCP 클라이언트가 `/mcp` 에 그 사람으로 붙는다. 원문 dpt_… 은 발급
+ * 응답에만 있고 여기에는 sha256 hex 만 둔다. 비활성화가 그 사람의 행을 모두 폐기하고, 다시 활성화해도 되살리지 않는다
+ */
+export const personalTokens = sqliteTable(
+  "personal_tokens",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    label: text("label").notNull(),
+    hash: text("hash").notNull(),
+    prefix: text("prefix").notNull(),
+    createdAt: ts("created_at").notNull(),
+    lastUsedAt: ts("last_used_at"),
+    revokedAt: ts("revoked_at"),
+  },
+  (t) => [
+    uniqueIndex("personal_tokens_hash").on(t.hash),
+    index("personal_tokens_user_created").on(t.userId, t.createdAt),
+  ],
+);
+
+/**
  * 운영 사건(운영 보강 스펙 3.1) — 같은 kind·key 는 한 줄로 묶여 count·last_at 만 오른다.
  * detail_json 에는 id·코드·수치만(메시지 본문·토큰·호스트 경로·IP 전체 금지). last_at 이 30일 지나면 지운다
  */
