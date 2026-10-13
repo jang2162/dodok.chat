@@ -94,6 +94,12 @@ src/
 │                 스레드: `BridgeCapability "threads"`, `InboundDeliver.threadId?`·`context.thread?`({ root, recentMessages }), `OutboundMessage.threadId?`,
 │                 `threadMatchesSessionKey`(threadId 와 세션 키의 스레드 접미사 대조 — 우리 모양이 아닌 키면 false).
 │                 리액션: `InboundReaction`{ messageId, excerpt ≤60, emoji, by(핸들), at }·`InboundContext.reactions?`(≤20)·`reactionsOmitted?` — 옛 플러그인은 모르는 키라 버린다
+├─ control/       제어 MCP. tools.ts(CONTROL_TOOLS — 도구 이름·설명·입력 Zod(모두 strict — 모르는 키를 버리면 처리기가 ok 를 돌려줘 모델이 「바꿨다」고 믿는다)·access read|write 의 유일한 목록,
+│                 controlToolJsonSchema = z.toJSONSchema, 읽기 둘의 설명에 CONTROL_UNTRUSTED_CONTENT_NOTICE) · rest-bodies.ts(REST 본문 스키마를 도구 입력이 재사용) ·
+│                 index.ts(ControlCall·RunnerControlCall{runId}·BridgeControlCall{sessionKey, runId — 플러그인 상관관계의 마지막 인바운드 런}·ControlResult,
+│                 CONTROL_CONFIRM_TTL_MS(10분)·CONTROL_CALL_TIMEOUT_MS(+60초 — 러너·플러그인 emitWithAck 상한), controlResultText·CONTROL_RESULT_UNKNOWN_MESSAGE —
+│                 러너·플러그인·/mcp 가 같은 결과 글을 만든다). PAT 계약(PersonalTokenCreate·Summary·Issued·PERSONAL_TOKENS_MAX)은 members/, `ApprovalKind "dodok_control"`·
+│                 `Approval.requestedBy` 는 domain/, 프레임 `control.call` 은 runner/·bridge/, `BridgeCapability "control"` 은 bridge/
 ├─ setup/         Phase 3 ②. 설정 마법사 계약 — Sha256Hex·SetupStatus(server·bridge{publicUrl}·pluginFile·gateways: GatewaySetup[]·runners)·
 │                 GatewaySetup(id·name·url·enabled·gateway{state(+disabled),host,version,pinned,drift,pairing}·bridge{state,plugin}·pluginMatches — 공유 토큰 없음)·
 │                 BridgeTokenRecord(원문·해시 없음, prefix 6자, connected)·IssueBridgeTokenInput(라벨 trim 1~60)·
@@ -263,6 +269,9 @@ src/
 │  │                      membershipOf(비활성까지 내는 원시 조회 — 로그인 403·멤버 관리·초대 수락만)·sessionUser·sessionTokenOf · 본문 필드로 가르는 목록 둘 MEMBER_EDITABLE_CHANNEL_FIELDS(name·topic — `POST`·`PATCH /channels`)·
 │  │                      MEMBER_EDITABLE_AGENT_MEMBER_FIELDS(memberType·memberId·aliases — 채널 멤버 `POST`·`PATCH`)과 hasFieldOutside(원문 본문 키 — 목록 밖이 하나라도 있으면 admin, 새 필드의 기본은 admin).
 │  │                      requireSession 이 여기 있는 까닭: routes.ts 와 나누면 서로를 import 한다
+│  ├─ policies.ts         제어 MCP. REST 경로와 제어 도구가 같이 부르는 역할 판정 authorize<Action>(role, body?) — authorizeRead·authorizeOpsRead·authorizeChannelCreate·Patch·MemberAdd·
+│  │                      AgentPatch·MemberRemove·Archive·Unarchive·authorizeAgentDiscover·Register·Patch·Archive. 본문을 보는 것은 **원래 본문**을 받는다(파싱이 채운 기본값을 세지 않게).
+│  │                      MEMBER_EDITABLE_* 목록·hasFieldOutside·requireAtLeast 도 여기, preHandler 꼴은 roles.ts requirePolicy. 도구 정책을 새로 만들지 않고 이 함수를 부른다
 │  └─ routes.ts           POST /api/v1/auth/local(`{ token }` = owner, `{ email, password }` = 멤버 — 이메일은 소문자로, `OWNER_EMAIL` 이메일 로그인·membership 없는 사용자는 같은 401 한 문구, 비밀번호가 맞은 비활성 멤버는 방금 만든 세션을 지우고 403 `MEMBER_DEACTIVATED`, IP 당 분당 LIMITS.localLoginPerMin)·GET me(role 포함)·POST logout(세션 행을 지우고 disconnectSessions 로 그 세션 소켓을 끊는다),
 │                         `/api/auth/*`(Better Auth, LIMITS.betterAuthPerMin) — 넘으면 429 + 사건 ratelimit, 허용 목록 BETTER_AUTH_HTTP_PATHS(`/ok`)만 통과하고 나머지는 404,
 │                         requireOwner(= roles.ts 의 requireRole(ctx, "owner")) · requireSession·sessionUser 는 roles.ts 에서 다시 내보낸다(Bearer 또는 dodok.session 쿠키 — 사용자를 확인한 뒤 REST 상한 `request.server.restLimits` 를 센다),
@@ -467,6 +476,17 @@ src/
 │  │                      webhook.ts(registerWebhookRoute — `POST /hooks/:token`, 캡슐 플러그인 안에서만 파서 교체(`parseAs: "buffer"` + TextDecoder — 틀린 바이트 U+FFFD·BOM 뗌)·bodyLimit 64 KiB(PA5).
 │  │                      검사는 모두 onRequest — 켜진 웹훅의 토큰이 아니면 막힌 주소 429 / 모르는 토큰은 실패로 세고 404 / 꺼짐·예약 404(같은 본문), 켜진 웹훅 토큰은 막힌 주소도 통과해
 │  │                      토큰 해시 버킷(webhookPerMin) 429. 본문을 다 받으면 게시 직전에 다시 읽어 꺼짐·재발급·삭제면 404, 게시 중 지워지면 결과 쓰기를 건너뛴다. 202 { messageId }, 보관 409)
+│  ├─ control/            제어 MCP. 정본 설계 `docs/superpowers/specs/2026-10-06-control-mcp-design.md`(구현과 달라진 것은 「구현과 맞춘 것」 장).
+│  │                      service.ts(createControlService — call(principal, tool, args): 레이트(키 via·userId·agentId, controlPerMin·controlWritePerMin) → Zod → 정책 → 상태 확인 →
+│  │                      (에이전트·쓰기) 확인 카드 → 정책·상태 다시 → 실행 → 사건 control_change(key `control:<도구>:<userId>`, 값 없음)·채널 시스템 메시지. 던지지 않고 ControlResult ·
+│  │                      onRunEnded(그 런의 카드를 cancelled — 오케스트레이터 terminal 전이 전) · onApprovalSettled) · handlers.ts(도구별 정책 함수·check·run — REST 와 같은 액션 함수
+│  │                      channels/actions.ts·agents/actions.ts·ops/status.ts) · principal.ts(principalForRunner(러너 토큰, runId)·principalForBridge(Gateway, sessionKey, runId) —
+│  │                      열린 런 + 연결 + (세션 키) 가 맞을 때만, requested_by 가 주체) · confirm.ts(확인 카드 — approvals 에 dodok_control 행, 기다림·10분 타이머·출처 줄 detail) ·
+│  │                      mcp.ts(registerMcpRoute — `POST /mcp` 요청마다 SDK Server + WebStandardStreamableHTTPServerTransport(상태 없음·JSON 응답), GET·DELETE 405,
+│  │                      인증 requireAgentToken path "mcp" + `/mcp` 전용 BridgeAuthGuard, 비활성 membership 401). 앱이 만들고 `App.control` 로 내보낸다(통로 셋이 같은 call)
+│  ├─ tokens/             제어 MCP 개인 토큰. service.ts(issuePersonalToken — `dpt_` + 43자, sha256·앞 6자만, 살아 있는 10개면 CONFLICT · listPersonalTokens(살아 있는 것만) ·
+│  │                      revokePersonalToken(남의 것 NOT_FOUND, 두 번째는 처음 시각) · revokeAllPersonalTokens(멤버 비활성화 트랜잭션) · verifyPersonalToken(last_used_at 1분에 한 번)) ·
+│  │                      routes.ts(`GET/POST /api/v1/me/tokens`·`DELETE /api/v1/me/tokens/:id` — 누구나 자기 것만)
 │  ├─ members/            Phase 4 ② 팀. 초대·재설정 링크·가입·멤버 관리·「내 계정」·사람 목록 — 원문 토큰은 발급 응답 한 번뿐(`Cache-Control: no-store`), 로그·사건·목록·wire 에 없다.
 │  │                      tokens.ts(원문 `dit_`(초대)·`drt_`(재설정) + randomBytes(32) base64url, DB 는 sha256 hex·prefix 만 · sameHash — 해시로 찾은 행을 상수 시간으로 한 번 더 대조) ·
 │  │                      invites.ts(invites 저장소: issueInvite(7일)·issueResetLink(24시간 — 대상의 앞선 재설정 링크를 같은 트랜잭션에서 폐기)·canIssueResetLink(발급 규칙 — 발급·조회·수락이 같이 쓴다)·
@@ -698,7 +718,10 @@ src/
 │                         이미지가 아닌 첨부는 본문 끝 `[첨부 파일: 이름]`, 실패는 `[이미지를 불러오지 못했습니다: 이름]` — 런은 막지 않는다
 ├─ outbound-media.ts      Phase 2 ③(순수). 원천 모으기(툴 media/mediaUrls·deliver mediaUrls)·이름 정리·겹치면 ` (2)`·loadWebMediaRaw 옵션·올리기,
 │                         실패 사유는 오류 코드별 고정 문구(원문은 가려서 로그에만 — 스펙 11장 Ruling 3), 미디어만 있는 final 도 보낸다(shouldDeliverFinal)
-├─ bridge-client.ts       서버 브리지 WSS 아웃바운드 접속(BRIDGE_URL·토큰)·지수 백오프 재연결·아웃바운드 큐
+├─ control-tools.ts       제어 도구 팩토리(createControlToolFactory — index.ts 의 registerFull 에서 api.registerTool). dodok 세션 키가 아니면 null, 이름 `dodok_<tool>`(Gateway 는 플러그인·코어
+│                         도구를 한 이름 공간에 두고 겹치면 나중 것을 뺀다 — 이름은 매니페스트 openclaw.plugin.json `contracts.tools` 에 선언해야 등록된다). 실행은 상관관계 runId 로
+│                         control.call, prepareBeforeToolCallParams 의 hookContext.runId 가 상관관계 providerRunId 와 다르면 보내지 않고 EXPIRED(제어 MCP 스펙 「구현과 맞춘 것」 장)
+├─ bridge-client.ts       서버 브리지 WSS 아웃바운드 접속(BRIDGE_URL·토큰)·지수 백오프 재연결·아웃바운드 큐(sendControl 은 큐에 넣지 않는다 — ready 가 아니면 ADAPTER_UNAVAILABLE, 보낸 뒤 끊김·CONTROL_CALL_TIMEOUT_MS 초과는 「결과를 모른다」)
 ├─ bridge-registry.ts     계정별 브리지·세션별 상관관계를 globalThis Symbol.for 키에 둔다 — 9.5 는 번들을 두 번 평가해 모델 런의 message 툴이
 │                         startAccount 를 돌지 않은 인스턴스로 간다. 삭제는 같은 객체일 때만(releaseBridge) (ADR 0004)
 ├─ outbound.ts            buildOutboundMessage·coerceComponents — components 의 `artifact://` 값 안 공백류를 검증 전에 퍼센트 인코딩(Ruling 4).
@@ -722,6 +745,7 @@ SDK import 경로: `openclaw/plugin-sdk/plugin-entry`, `openclaw/plugin-sdk/chan
 - `src/connections.ts` — 붙은 러너와 에이전트 배정(러너 토큰에 묶인 등록 에이전트는 그 토큰의 러너만, 묶임이 없으면 먼저 알린 러너가 맡고 뒤 러너의 같은 id 는 「충돌」, 교체는 자리 잇기). 묶임 없는 등록 에이전트는 hello·러너가 빠진 뒤 지금 맡는 러너 토큰에 묶는다(`claimUnbound`).
 - 러너 프레임 속도 제한 — 소켓마다 버킷 둘(`run.event` 와 나머지, 숫자는 서버 `LIMITS.runner`, 옵션 `frameLimit` 로 받는다). 넘친 프레임은 버리고 warn·`onLimited`(운영 사건)는 주소별 1분에 한 번. 열린 런·기다리는 승인을 가리키는 종결·승인 프레임 가운데 처리기가 받아들일 것은 버킷을 거치지 않는다(승인 요청은 런마다 누계 32개까지 — `namesOpenWork`, 까닭과 상한은 그 머리 주석).
 - `src/approvals.ts` — 러너 승인 정규화(서버 쪽 id `runner:<토큰 id>:<러너 id>`)와 10분 기한 타이머(지나면 러너에 `deny`, `expired`).
+- `control.call`(제어 MCP) — `runner.control` 버킷을 세고, 이 러너의 열린 런(aborted 아님)이 아니면 콜백 없이 `NOT_FOUND`, 아니면 옵션 `onControlCall(러너 토큰 id, call)` 의 결과로 ack 를 미룬다(카드 대기 — 상한 없음).
 
 ### 2.4b `packages/claude-runner` (사람의 머신에서 실행 — CLI `dodok-runner`)
 
@@ -729,6 +753,7 @@ Claude Agent SDK 로 Claude Code 에이전트를 돌려 서버 `/runner` 에 붙
 - `src/main.ts` — 인자·설정 읽기·SIGINT/SIGTERM(도는 런을 멈추고 최대 5초). `src/config.ts` — 설정 파일 `RunnerConfig`(strict)·토큰 파일 0600 경고. `src/connection.ts` — 연결·hello·재접속 백오프(1~30초)·서버가 끊으면 종료 2·연결 세대. `src/scheduler.ts` — 동시 상한·대기.
 - `src/run.ts` — 런 하나(`query()` 하나, `buildQueryOptions` — preset·`append`·`snapshot: false`·훅·`strictMcpConfig`·`settingSources: []`·env 허용 목록, 「이미 있는 세션」이면 `resume` 재시도, 런 비용 차이). `src/stream-map.ts` — SDK 스트림 → `RunEvent`. `src/sdk.ts` — SDK 를 import 하는 유일한 파일(`SdkPort`).
 - `src/post-tool.ts`·`src/files.ts` — `mcp__dodok__post`(카드·파일, 작업 디렉터리 경계, macOS `O_NOFOLLOW_ANY`·Linux `/proc/self/fd`). `src/approvals.ts` — `canUseTool` → 승인 프레임·요약 이스케이프. `src/images.ts`·`src/attachments-http.ts` — 트리거 이미지 받기·파일 올리기. `src/mask.ts` — 호스트 경로 가림(못 알아보는 모양은 머리 주석).
+- `src/control-tools.ts` — 제어 도구 23개를 `mcp__dodok__<tool>` 로(런마다 그 런의 runId 에 묶는다, `allowedTools` 에 늘 — 러너 도구 승인과 확인 카드로 두 번 묻지 않게). 실행은 `connection.ts` 의 `RunBridge.control` — 그 런을 시작한 연결 세대가 끊겼으면 `ADAPTER_UNAVAILABLE`, 아니면 `emitWithAck("control.call")` 을 `CONTROL_CALL_TIMEOUT_MS` 까지(끊김·초과는 「결과를 모른다」).
 - `scripts/build.mjs` — esbuild 단일 번들 `dist/main.js`(SDK external, 정확 핀 확인). `scripts/fake-messages-api.ts` — 런 0회 하네스의 로컬 가짜 Messages API(`docs/guides/live-smoke.md` 「Claude 러너 런 0회 하네스」 절).
 
 ### 2.5 `apps/web`
@@ -851,6 +876,8 @@ src/
 │  │                       notify.ts(브라우저 알림 — 권한·지원 여부를 한 자리에서 가르고, 중복은 모듈 `Set` 으로 막는다(확정되면 `forgetApproval` 로 지운다 — 한 탭 안에서만 산다).
 │  │                       이 기기에 푸시가 켜져 있으면(`pushOnThisDevice`) 쉰다 — 푸시가 대신 울린다(PWA 스펙 결정 8).
 │  │                       이미 답한 승인은 `handlers.ts` 가 `apply` **뒤** 들어온 페이로드의 `status` 로 거른다. `tag` 는 `approval:<id>`)
+│  │                       decider.ts(canDecideApproval — 카드 버튼과 탭 안 알림(realtime/handlers)이 같이 본다: dodok_control 은 requestedBy 가 있고 나와 같을 때만(역할 무관), 다른 종류는 admin 이상).
+│  │                       확인 카드(dodok_control)는 ApprovalCard 안의 갈래 — 버튼 「허용」「거절」, 남에게 「@<핸들> 의 확인을 기다립니다」, 결정자 줄 「선택: 허용 · @mia」는 이 종류에만
 │  ├─ attachments/         Phase 2 ③. 메시지 첨부와 작성기 올리기. url.ts(`artifact://<id>` → `/api/v1/attachments/<id>[?download=1]`) ·
 │  │                       resolve.ts(순수: 카드의 `artifact://<ref>` → **그 메시지의** 첨부. 이름 후보를 우선순위로 — 그대로 → 디코드 → 관대한 디코드 → 저장 규칙으로 다듬은 것,
 │  │                       마지막에 id. `https://` 는 그대로, 그 밖은 blocked — 스펙 11장 Ruling 5) · format.ts(크기 문구) ·
@@ -867,6 +894,8 @@ src/
 │  │                       mutations(useLogin(`{ token }`·`{ email, password }`)·useAcceptInvite·useResetPassword·useLogout — 응답 `sessionToken` 은 쓰지 않는다, gcTime 0. 로그아웃은 disablePush 를 최대 3초 기다린 뒤 POST /auth/logout)
 │  ├─ account/             mutations(표시 이름 `PATCH /me`(me 캐시의 user 를 고친다), 비밀번호 바꾸기 `POST /me/password`(틀린 현재 비밀번호는 400 `field: "current"` → 그 칸 아래)) —
 │  │                       화면은 settings-shell 의 AccountPage
+│  │                       McpTokensSection.tsx(「MCP 토큰」 절 — 목록·발급 대화상자(원문은 대화상자 상태에만 — useIssueToken·useLeaveGuard, 「복사했습니다」로만 닫힌다)·폐기 확인. 목록 키 `["personalTokens"]`) ·
+│  │                       tokens.ts(`mcpAddCommand` — 페이지 오리진 + `/mcp`, 끝 슬래시 뗌)
 │  ├─ members/             Phase 4 ② 팀. 멤버 화면 `/settings/members` — admin 이상(member 는 API 를 부르지 않고 「권한이 없습니다」).
 │  │                       MembersPage.tsx(멤버 표 — 핸들·이름·이메일·역할(「소유자」·「관리자」·「멤버」)·가입일, 390px 에서는 제 상자(`relative overflow-x-auto`) 안에서 가로 스크롤 — 표는 활성 멤버만,
 │  │                       비활성 멤버는 아래 접힌 「비활성 멤버 N」(줄마다 「다시 활성화」 — 비활성화와 같은 권한, 역할 바꾸기·재설정 링크 없음. 초점은 비활성화 뒤 묶음 단추, 다시 활성화 뒤 묶음이 남으면 그 단추·아니면 그 줄 「비활성화」) ·

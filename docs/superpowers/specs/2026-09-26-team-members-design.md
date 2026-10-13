@@ -60,6 +60,8 @@
 | 채널에 사람 넣기·빼기(같은 경로, `memberType: "user"`) — 나간 사람(membership 없음)은 404 | ✅ | ✅ | ✅ |
 | 채널의 에이전트 동작·비용 설정 — 채널 프롬프트, 에이전트별 프롬프트(`PATCH /channels/:id/members/:memberId`), 릴레이 정책, 자동 응답, 일일 한도 | — | ✅ | ✅ |
 | 「새 대화」(`POST /channels/:id/agents/:agentId/reset`), 도구 실행 승인·거절(wire `approval.resolve`) | — | ✅ | ✅ |
+| 확인 카드(`ApprovalKind "dodok_control"` — 채널 안 에이전트가 제어 도구로 설정을 바꾸려 할 때) 허용·거절(wire `approval.resolve`) — **그 런을 시킨 사람 본인만**(`approvals.requested_by`), 역할과 무관. 남이 결정하면 `FORBIDDEN`. 허용 때 그 사람의 지금 역할로 그 일을 다시 판정한다 | 본인 | 본인 | 본인 |
+| 개인 토큰(MCP 토큰) 발급·목록·폐기(`GET/POST /api/v1/me/tokens`, `DELETE /api/v1/me/tokens/:id`) — 자기 것만(남의 것 404), 사람마다 10개. 그 토큰으로 `/mcp` 에서 부르는 제어 도구는 이 표의 같은 REST 경로 판정을 토큰 주인의 지금 역할로 받는다 | ✅ | ✅ | ✅ |
 | 에이전트 등록·수정(`POST/PATCH /agents`), Gateway 에이전트 찾기(`GET /agents/discover`) | — | ✅ | ✅ |
 | member 초대, 재설정 링크 발급, member 내보내기 | — | ✅ | ✅ |
 | admin 초대, 역할 바꾸기(admin ↔ member), admin 내보내기 | — | — | ✅ |
@@ -67,9 +69,10 @@
 | 자동화 목록·만들기·수정·삭제·웹훅 토큰 재발급·지금 실행(`/api/v1/automations/*`) — 웹훅 수신(`POST /hooks/<token>`)은 세션 없이 토큰만 본다 | — | ✅ | ✅ |
 | 연결 페이지(`/api/v1/setup/*` — 브리지 토큰) | — | — | ✅ |
 
+- **제어 도구는 이 표를 따로 갖지 않는다.** 바깥 MCP 클라이언트(개인 토큰의 주인)와 채널 안 에이전트(그 런을 시킨 사람)의 도구 호출은 같은 REST 경로의 정책 함수(`apps/server/src/auth/policies.ts`)로 판정한다 — 시킨 사람이 없는 런(자동화 글이 시작한 런)은 읽기만.
 - **서버가 막는다.** 웹이 숨기는 것은 편의다. REST 는 `requireRole(min)` preHandler(세션 확인 뒤 membership 의 역할을 **요청마다** 읽는다 — 바뀌면 다음 요청부터 따른다). 지금의 `requireOwner` 는 `requireRole("owner")` 가 된다. 모자라면 403 `FORBIDDEN`.
 - **`PATCH /channels/:id` 는 본문 필드로 가른다.** `name`·`topic` 만 있으면 member 도 된다. 그 밖의 필드(`prompt`·`relayPolicy`·자동 응답·`dailyRunLimit` 등)가 하나라도 있으면 admin 이상이어야 한다. 가르는 목록은 서버 한곳에 둔다 — 새 필드는 기본이 admin 이다(목록에 없는 필드는 admin).
-- **wire** 는 `approval.resolve` 만 역할을 본다(ack 오류 `FORBIDDEN`). `message.send`·`component.interact`·`run.abort` 는 member 에게 열려 있다.
+- **wire** 는 `approval.resolve` 만 역할을 본다(ack 오류 `FORBIDDEN`). 확인 카드(`dodok_control`)만은 admin 을 요구하지 않고 멤버인지만 보며, 시킨 사람 본인인지는 승인 서비스가 본다(제어 MCP 스펙 `docs/superpowers/specs/2026-10-06-control-mcp-design.md` 「확인 카드」 장·「구현과 맞춘 것」 장 PC4). `message.send`·`component.interact`·`run.abort` 는 member 에게 열려 있다.
 - **membership 이 없는 세션**(내보내진 뒤의 낡은 세션 등)은 모든 경로에서 401 이다 — 지금 `/auth/me` 가 「행이 없으면 member」로 보는 것을 바꾼다.
 
 ---

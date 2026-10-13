@@ -343,6 +343,21 @@ Claude 러너(`@dodok/claude-runner`, 명령 `dodok-runner`)는 **사람의 머�
   ```
 - **손으로 보내 보기** — 화면에서 복사한 주소로 `curl -sS -X POST -H 'content-type: application/json' -d '{"ok":false}' '<주소>'` → `202`. 주소를 셸 기록에 남기지 않으려면 앞에 공백을 두거나(`HISTCONTROL=ignorespace`) 변수로 읽는다.
 
+## 제어 MCP — 바깥 클라이언트의 `/mcp`
+
+사람이 자기 Claude Code·Claude Desktop 같은 MCP 클라이언트로 채널·에이전트 설정을 읽고 바꾸는 입구다(도구 목록·권한은 `docs/guides/agent-guide.md` 「제어 도구 — 채널·에이전트 설정 읽고 바꾸기」 절, 화면은 `docs/manual/user-guide.md` 「내 계정」 절의 「MCP 토큰」). 설계는 `docs/superpowers/specs/2026-10-06-control-mcp-design.md`(구현과 달라진 것은 「구현과 맞춘 것」 장).
+
+- **주소는 끝 슬래시 없이 `https://<도메인>/mcp`** 다. Caddy `@backend` 는 `/mcp` 를 정확히 맞춰 서버로 넘긴다 — `/mcp/` 는 웹 앱(SPA 폴백)으로 떨어져 엉뚱한 405·HTML 이 난다. 앞단 프록시를 Caddy 대신 직접 두면 `/api`·`/socket.io`·`/bridge`·`/runner`·`/hooks`·`/llms.txt`·`/healthz` 와 함께(`infra/Caddyfile` 의 `@backend`) **`/mcp` 도 서버로 넘긴다** — 「내 계정」의 `claude mcp add` 예시는 웹 페이지의 오리진에 `/mcp` 를 붙인 주소라, 빠지면 예시 명령이 404 다.
+- **토큰** — 사람마다 「내 계정」에서 발급하는 개인 토큰 `dpt_` + 43자(사람마다 10개). DB 에는 sha256 해시와 앞 6자만 둔다. 원문은 발급 응답 한 번뿐이다. `Authorization: Bearer dpt_…` 머리로만 받는다 — URL·쿼리의 토큰은 보지 않는다. 그 사람의 **지금 역할**로 판정하고(REST 와 같은 규칙), 비활성화하면 그 사람의 토큰이 모두 폐기된다(다시 활성화해도 되살아나지 않는다). 바깥 클라이언트의 쓰기에는 확인 카드가 없다 — 클라이언트의 도구 확인에 맡긴다.
+- **붙이기** — 「내 계정」의 예시 명령 그대로다(`claude mcp add --transport http dodok https://<도메인>/mcp --header "Authorization: Bearer dpt_…"`) → `claude mcp list` 가 `dodok: … (HTTP) - ✔ Connected`. ⚠ `claude mcp get dodok` 은 머리를 원문으로 보인다(`add`·`list` 는 `[REDACTED]`) — 화면 공유 중에는 부르지 않는다. 틀리거나 폐기된 토큰이면 `list` 가 `✘ Failed to connect — Server rejected the configured Authorization header (HTTP 401) … OAuth fallback is disabled when headers.Authorization is set. Error detail: {"code":"UNAUTHORIZED","message":"mcp 토큰이 틀렸다"}` 를 보인다 — 클라이언트가 OAuth 로그인으로 빠지지 않으니, 「내 계정」에서 새 토큰을 발급해 `claude mcp remove dodok` 뒤 다시 붙인다.
+- **응답** — `POST` 만 받는다(상태 없는 Streamable HTTP, JSON 응답 — SSE 없음). `GET`·`DELETE` 는 토큰과 무관하게 405 `Allow: POST`. 토큰이 없거나 틀리면 401 `{"code":"UNAUTHORIZED","message":"mcp 토큰이 틀렸다"}`(`WWW-Authenticate` 없음), 맞는 토큰이어도 비활성 멤버면 401. 도구가 거절되면 HTTP 는 200 이고 MCP 결과가 `isError: true` + `{"code","message"}`(예: member 토큰의 `set_channel_prompt` → `FORBIDDEN`).
+- **실패 카운터는 `/mcp` 전용**이다 — 아래 「운영 화면」 레이트리밋 표. 같은 머신의 러너·같은 출구 주소의 Gateway 플러그인과 나눈다(틀린 토큰을 넣은 클라이언트가 그 머신의 러너 핸드셰이크·런 도중의 첨부를 막지 않게).
+- **로그 가림** — 토큰은 머리로만 오므로 요청 로그에 남지 않는다(`authorization` 머리는 로그에서 가린다). 쿼리에 `?token=dpt_…` 로 잘못 넣어 보낸 요청도 서버 요청 로그와 Caddy 오류 로그가 `dpt_` 뒤 6자 + `…` 로 가린다. ⚠ **`infra/Caddyfile` 에 `log_credentials` 를 넣지 않는다** — 넣으면 Caddy 오류 로그(`http.log.error` — 앱이 내려간 동안의 502 등)에 `Authorization` 머리가 원문으로 남는다. 확인은 아래 「로컬 검증」의 `CADDY_LOG_CMD` 와, 운영에서는 개수만 세는 꼴로:
+  ```bash
+  docker compose -f infra/compose.yml logs app caddy | grep -c 'dpt_[A-Za-z0-9_-]\{7,\}'   # 0 이어야 한다(가린 줄은 dpt_ 뒤 6자 + …)
+  ```
+- **채널 안 에이전트는 이 입구를 쓰지 않는다** — Claude 러너는 `/runner`, OpenClaw 플러그인은 `/bridge` 의 기존 연결로 같은 도구를 부르고, 쓰기는 그 런을 시킨 사람의 확인 카드를 지난다. 그래서 그 둘을 쓰려면 러너·플러그인이 제어 도구를 아는 판이어야 한다(아래 「업데이트」).
+
 ## 네이티브 푸시 자격 증명
 
 iOS·Android **앱**(모바일 하위 프로젝트)에 알림을 보내려면 서버가 Apple·Google 에 낼 자격 증명이 있어야 한다. 웹 푸시(VAPID)는 이것과 따로 늘 켜져 있다. 설계는 `docs/superpowers/specs/2026-10-06-native-push-design.md`(구현과 달라진 것은 「구현과 맞춘 것」 장). 두 통로는 **독립**이라 한쪽만 설정해도 된다. 자격 증명이 없는 통로는 꺼진 채로 서버가 정상 부팅하고, 그 플랫폼의 기기 등록은 `503 PUSH_UNAVAILABLE` 이다. 알림 본문에는 메시지 내용이 없다 — 누가·어디(제목은 늘 `dodok`)만 실린다.
@@ -441,6 +456,9 @@ docker compose -f infra/compose.yml logs app | grep '"event":"ops.'
 | wire 동시 소켓 | `socketsPerUser`(사용자당) | 새 연결을 핸드셰이크에서 거절 |
 | 러너가 보내는 `run.event` | `runner.events`(러너 소켓마다 토큰 버킷 — 정상 스트리밍이 걸리지 않는 숫자, 근거는 그 키의 주석) | 버린다. 서버 로그 warn `runner frames rate limited — dropped` 와 사건 key `runner:<프레임>` 은 **주소마다 1분에 한 번**, 그사이 버린 수(`dropped`)와 함께 |
 | 러너가 보내는 `hello`·`outbound.post`, 그리고 열린 런·기다리는 승인을 가리키지 않거나 서버가 받아들이지 않는(계약 위반·세션 키 불일치 등) `run.final`·`run.error`·`approval.*` | `runner.control`(같은 소켓의 둘째 버킷) | 같다 — `outbound.post` 는 ack `RATE_LIMITED`(에이전트의 `post` 도구가 실패로 받는다). 그 러너의 열린 런을 닫는 `run.final`·`run.error`, 그 런의 새 승인 요청(런마다 누계 32개까지 — 철회·결정으로 줄지 않는다, 러너 어댑터 `RUN_FREE_APPROVALS`), 기다리는 승인의 철회는 버킷을 세지 않는다 — `post` 가 버킷을 비워도 런이 `runMs` 까지 매달리지 않게 |
+| `POST /mcp` 의 틀린·폐기된 개인 토큰 | `bridgeFail` 과 같은 숫자의 **`/mcp` 전용** 카운터(브리지·러너·첨부·설치 파일과 나누지 않는다) | 막힌 동안은 맞는 토큰도 429 `RATE_LIMITED`(토큰을 보지 않는다), 사건 「브리지 인증 실패가 반복돼 주소를 막음」(detail `path: mcp`). 맞는 토큰이어도 비활성 멤버면 401 이되 세지 않는다 |
+| 제어 도구 호출(`/mcp`·러너 `control.call`·플러그인 `control.call`) | `controlPerMin`·쓰기는 그 안에서 한 번 더 `controlWritePerMin`(주체마다 — 개인 토큰이면 그 사람, 채널 안 에이전트면 (그 에이전트, 그 런을 시킨 사람). 같은 사람의 개인 토큰과 에이전트마다 버킷이 따로다) | 도구 결과 `isError` `RATE_LIMITED`, 사건 「요청 제한 발동」(key `control:<pat\|agent>`) |
+| 러너가 보내는 `control.call` | `runner.control`(위 `hello`·`outbound.post` 와 같은 버킷) | ack `RATE_LIMITED`(에이전트의 도구가 오류로 받는다). 플러그인의 `control.call` 에는 프레임 버킷이 없다 — `/bridge` 는 원래 프레임을 세지 않는다 |
 | `/bridge`·`/runner` 핸드셰이크, `/bridge/attachments`·`/runner/attachments`, 토큰으로 받는 설치 파일(`GET /api/v1/setup/plugin.tgz`·`runner.tgz` 의 `Authorization: Bearer`) | `bridgeFail`(**여섯이 한 카운터**(웹훅은 위 줄의 따로 둔 카운터), **실패만** 센다 — 한 주소가 창 안에 정해진 수만큼 틀리면 그 주소를 막는다. 설치 파일은 Bearer 가 없는 요청을 세지 않는다) | 막힌 동안은 토큰을 보지 않고 거절(첨부 HTTP·설치 파일은 429 「인증 실패가 너무 많습니다」), 사건 「브리지 인증 실패가 반복돼 주소를 막음」. 성공은 카운터를 비우지 않아 막힌 주소의 정상 플러그인도 막힌 동안은 거절되고, 풀리면 저절로 붙는다 |
 
 토큰을 바꾼 직후 옛 토큰으로 재접속을 되풀이하는 플러그인이 [B] 와 같은 주소의 정상 플러그인까지 잠시 막을 수 있다 — 옛 플러그인 설정을 먼저 고치고, 풀리기를 기다린다(아래 「오류」).
@@ -530,6 +548,8 @@ docker compose -f infra/compose.yml ps                              # app·caddy
 **반응이 있는 판으로 올릴 때는 플러그인을 다시 설치해야 OpenClaw 에이전트가 반응을 본다.** 서버는 에이전트의 다음 턴에 그 에이전트 메시지에 달린 반응을 싣고 플러그인이 헤더에 그 줄을 넣는데(`docs/guides/agent-guide.md` 「반응 — 지난 턴 뒤 내 메시지에 달린 것」 절), 옛 플러그인은 모르는 필드를 버린다 — 턴은 그대로 돌고 반응 줄만 없다. 연결 페이지는 그 Gateway 카드에 「다른 빌드입니다 — 받아서 다시 설치하세요」를 보인다. Claude 러너(`dodok-runner`)는 다시 설치하지 않는다 — 턴 사실은 서버가 만들어 보낸다. 반응 판의 플러그인은 hello 를 바꾸지 않아 아래 「되돌리기」에서 반응 전 서버(Phase 4 ① 이후)에도 붙는다 — 반응 줄이 없을 뿐이다. 마이그레이션(`0019_message_reactions`)이 기존 에이전트 세션의 반응 기준 시각을 마이그레이션 때로 채운다 — 올리기 전의 반응은 없으니 잃는 것이 없다.
 
 **자동화가 있는 판으로 올릴 때는 플러그인·러너를 다시 설치하지 않는다.** 에이전트는 자동화 글을 보낸 사람 `system:automation` 으로 받는데, 플러그인과 러너가 이미 다루는 꼴이다. 마이그레이션(`0020_automations`)은 새 표만 만든다. 웹훅 수신 경로 `/hooks/*` 는 이미지에 든 `infra/Caddyfile` 이 넘기므로 `up -d --build` 로 함께 올라간다.
+
+**제어 MCP 가 있는 판으로 올릴 때는 플러그인과 러너를 모두 다시 설치해야 채널 안 에이전트가 제어 도구를 쓴다.** 옛 플러그인·옛 `dodok-runner` 는 도구가 없을 뿐 런은 그대로 돈다(옛 플러그인은 hello 에 `control` 을 싣지 않아 서버가 그 Gateway 의 제어 호출을 받지 않는다). 연결 페이지는 그 Gateway·러너 카드에 「다른 빌드입니다 — 받아서 다시 설치하세요」를 보인다 — 플러그인은 체크리스트 4 의 받기·설치, 러너는 위 「Claude 러너 설치」 절의 「업데이트」. 바깥 클라이언트의 `/mcp` 는 이미지에 든 `infra/Caddyfile` 이 넘기므로 `up -d --build` 로 함께 올라간다. 마이그레이션(`0022_run_requested_by`·`0023_personal_tokens`·`0024_approval_requested_by`)은 열·표만 더한다 — 올리기 전의 런은 「시킨 사람」이 비어 있어, 그 런의 「다시 실행」으로 생긴 런도 읽기 도구만 쓴다.
 
 ### 되돌리기
 
