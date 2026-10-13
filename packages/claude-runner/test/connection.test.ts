@@ -1,10 +1,13 @@
 import { createServer, type Server as HttpServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import {
+  CONTROL_RESULT_UNKNOWN_MESSAGE,
+  type ControlResult,
   RUNNER_NAMESPACE,
   RUNNER_PROTOCOL,
   RunnerApprovalRequested,
   RunnerApprovalWithdrawn,
+  RunnerControlCall,
   RunnerHello,
   RunnerOutboundPost,
   type RunnerOutboundAck,
@@ -40,6 +43,9 @@ type FakeServer = {
   posts: RunnerOutboundPost[];
   approvals: RunnerApprovalRequested[];
   withdrawn: RunnerApprovalWithdrawn[];
+  controls: RunnerControlCall[];
+  /** control.call 에 답하는 법 — 없으면 곧바로 ok */
+  onControl?: (socket: ServerSocket, ack: (r: ControlResult) => void) => void;
   postAck: RunnerOutboundAck;
   sockets: ServerSocket[];
   helloResult: RunnerHelloResult;
@@ -61,6 +67,7 @@ async function startFakeServer(): Promise<FakeServer> {
     posts: [],
     approvals: [],
     withdrawn: [],
+    controls: [],
     postAck: { ok: true, messageId: "0192f000-0000-7000-8000-0000000000aa" },
     sockets: [],
     helloResult: { ok: true, serverVersion: "test", conflicts: [] },
@@ -91,6 +98,11 @@ async function startFakeServer(): Promise<FakeServer> {
     });
     socket.on("approval.requested", (p) => void server.approvals.push(RunnerApprovalRequested.parse(p)));
     socket.on("approval.withdrawn", (p) => void server.withdrawn.push(RunnerApprovalWithdrawn.parse(p)));
+    socket.on("control.call", (p, ack) => {
+      server.controls.push(RunnerControlCall.parse(p));
+      if (server.onControl) server.onControl(socket, ack);
+      else ack({ ok: true, data: null });
+    });
   });
   await new Promise<void>((resolve) => http.listen(0, "127.0.0.1", resolve));
   server.url = `http://127.0.0.1:${(http.address() as AddressInfo).port}/`;
@@ -507,6 +519,50 @@ describe("startRunnerConnection", () => {
         isError: true,
         content: [{ type: "text", text: "보내지 못했습니다(INTERNAL): 서버 응답이 계약과 다릅니다" }],
       },
+    ]);
+  });
+
+  it("제어 도구 → control.call(지금 런의 runId) → 서버가 늦게(확인 카드 대기) 답해도 그 ack 가 도구 결과로", async () => {
+    const { server, fake } = await setup();
+    await waitFor(() => server.hellos.length === 1);
+    server.onControl = (_socket, ack) =>
+      void setTimeout(
+        () => ack({ ok: false, error: { code: "FORBIDDEN", message: "@mia 가 거절했습니다" } }),
+        300,
+      );
+    fake.script(
+      { callTool: { name: "set_channel_prompt", input: { channelId: RUN_ID, prompt: "규칙" } } },
+      ...script.textTurn("msg_1", ["끝"]),
+    );
+    await sendStart(server.sockets[0]!, runStart());
+    await waitFor(() => server.finals.length === 1);
+    expect(server.controls).toMatchObject([
+      { runId: RUN_ID, tool: "set_channel_prompt", args: { channelId: RUN_ID, prompt: "규칙" } },
+    ]);
+    expect(fake.calls[0]!.toolResults).toEqual([
+      {
+        isError: true,
+        content: [
+          { type: "text", text: JSON.stringify({ code: "FORBIDDEN", message: "@mia 가 거절했습니다" }) },
+        ],
+      },
+    ]);
+  });
+
+  it("control.call 을 보낸 뒤 전송이 끊기면 도구 결과는 「결과를 모른다」 — 실패라고 하지 않는다(태스크 4 리뷰 L2)", async () => {
+    const { server, fake } = await setup();
+    await waitFor(() => server.hellos.length === 1);
+    // 서버가 받기만 하고(카드 대기) 답하기 전에 전송이 끊긴다
+    server.onControl = (socket) => socket.conn.close();
+    fake.script(
+      { callTool: { name: "update_channel", input: { channelId: RUN_ID, name: "ops" } } },
+      ...script.textTurn("msg_1", ["끝"]),
+    );
+    await sendStart(server.sockets[0]!, runStart());
+    await waitFor(() => fake.calls[0]?.toolResults.length === 1);
+    expect(server.controls).toHaveLength(1);
+    expect(fake.calls[0]!.toolResults).toEqual([
+      { isError: true, content: [{ type: "text", text: CONTROL_RESULT_UNKNOWN_MESSAGE }] },
     ]);
   });
 

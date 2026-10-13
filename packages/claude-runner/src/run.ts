@@ -4,6 +4,7 @@ import {
   type ErrorCode,
   type RunEventBody,
   type RunnerApprovalRequested,
+  type RunnerControlCall,
   type RunnerOutboundAck,
   type RunnerOutboundPost,
   type RunnerRunFinal,
@@ -12,6 +13,7 @@ import {
 import { type ApprovalOutcome, createCanUseTool } from "./approvals";
 import type { AttachmentsHttp } from "./attachments-http";
 import type { ResolvedAgent } from "./config";
+import { CONTROL_TOOL_FULL_NAMES, type ControlCallOutcome, createControlTools } from "./control-tools";
 import { imageFailureNote, loadImageBlocks, type SdkImageBlock } from "./images";
 import { createPathMasker, workdirRoots } from "./mask";
 import { createDodokMcpServer, createPoster, POST_TOOL_FULL_NAME } from "./post-tool";
@@ -97,8 +99,9 @@ export function buildQueryOptions(
     cwd: agent.workdir,
     model: agent.model,
     permissionMode: agent.permissionMode,
-    // dodok 도구는 늘 허용 — 승인 콜백은 입력 검증보다 먼저 와서 틀린 입력에도 카드가 뜬다(ADR 0007 4.2)
-    allowedTools: [...new Set([...agent.allowedTools, POST_TOOL_FULL_NAME])],
+    // dodok 도구는 늘 허용 — 승인 콜백은 입력 검증보다 먼저 와서 틀린 입력에도 카드가 뜬다(ADR 0007 4.2). 제어 도구의 쓰기는
+    // 서버의 확인 카드가 묻는다(CONTROL_TOOL_FULL_NAMES)
+    allowedTools: [...new Set([...agent.allowedTools, POST_TOOL_FULL_NAME, ...CONTROL_TOOL_FULL_NAMES])],
     disallowedTools: [...new Set([...RUNNER_DISALLOWED_TOOLS, ...agent.disallowedTools])],
     // sessionId 와 resume 은 함께 못 쓴다. title 을 주면 새 세션 제목을 짓는 보조 모델 호출이 없어진다(ADR 0007 4.8)
     ...(deps.resume
@@ -165,6 +168,8 @@ export type RunEmitter = {
 export type RunBridge = {
   http: AttachmentsHttp;
   post(message: RunnerOutboundPost): Promise<RunnerOutboundAck>;
+  /** 제어 도구 호출 — 던지지 않는다. 보낸 뒤 답을 못 받으면 unknown(서버가 실행했을 수 있다) */
+  control(call: RunnerControlCall): Promise<ControlCallOutcome>;
   requestApproval(request: RunnerApprovalRequested): void;
   withdrawApproval(providerApprovalId: string): void;
   /** approval.resolve 가 오면 풀리고 signal 이 끊기면 거절된다 */
@@ -273,6 +278,10 @@ async function attempt(
             mask,
             signal: ctx.signal,
             now,
+          }),
+          tools: createControlTools({
+            runId: start.deliver.runId,
+            call: (call) => ctx.bridge.control(call),
           }),
         }),
         canUseTool: createCanUseTool({

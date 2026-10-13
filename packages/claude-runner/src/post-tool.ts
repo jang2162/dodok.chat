@@ -19,7 +19,7 @@ import {
   readCheckedFile,
 } from "./files";
 import type { PathMasker } from "./mask";
-import { defineSdkTool, type SdkMcpServer, type SdkPort } from "./sdk";
+import { defineSdkTool, type SdkMcpServer, type SdkMcpTool, type SdkPort } from "./sdk";
 
 // dodok 도구 `mcp__dodok__post`(러너 스펙 4.4) — 런의 채널(스레드 런이면 그 스레드)에 카드·파일을 보낸다. 거절은 던지지 않고
 // 도구 결과로 돌려준다(런은 계속된다). 모델에게 가는 글이라 호스트 경로를 싣지 않는다
@@ -56,6 +56,8 @@ const textResult = (text: string, isError = false): ToolResult => ({
 export function createDodokMcpServer(deps: {
   sdk: SdkPort;
   post: (input: PostInput) => Promise<PostResult>;
+  /** post 뒤에 함께 싣는 도구 — 제어 도구(control-tools.ts) */
+  tools?: SdkMcpTool[];
 }): SdkMcpServer {
   // SDK MCP 층은 모양(shape)만 검사한다 — 「셋 중 하나」 refine 은 여기서 한 번 더 본다
   const post = defineSdkTool(POST_TOOL_NAME, DESCRIPTION, PostInputSchema.shape, async (args) => {
@@ -68,7 +70,7 @@ export function createDodokMcpServer(deps: {
     if ("error" in result) return textResult(result.error, true);
     return textResult(`보냈습니다(메시지 ${result.messageId})`);
   });
-  return deps.sdk.createMcpServer([post]);
+  return deps.sdk.createMcpServer([post, ...(deps.tools ?? [])]);
 }
 
 // 서버는 매직 바이트로 이미지·PDF 를 가르고, 그 밖은 이 힌트가 글 종류일 때만 받는다(apps/server attachments/sniff.ts)

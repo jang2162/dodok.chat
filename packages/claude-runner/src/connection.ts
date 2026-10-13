@@ -1,4 +1,6 @@
 import {
+  CONTROL_CALL_TIMEOUT_MS,
+  ControlResult,
   RUNNER_NAMESPACE,
   RUNNER_PROTOCOL,
   RUNNER_SHUTDOWN_STOP_REASON,
@@ -89,6 +91,29 @@ export function createRunBridge(o: {
       } catch {
         return { ok: false, code: "ADAPTER_UNAVAILABLE", message: "서버가 제때 답하지 않았습니다" };
       }
+    },
+    async control(call) {
+      // 보내기 전에 끊겨 있었으면 서버에 닿지 않았다 — 실패로 알려도 된다
+      if (!o.live()) {
+        return {
+          ok: false,
+          error: { code: "ADAPTER_UNAVAILABLE", message: "서버와 연결이 끊겨 보내지 않았습니다" },
+        };
+      }
+      let raw: unknown;
+      try {
+        // 서버는 확인 카드를 기다리는 동안 ack 를 미룬다 — shared CONTROL_CALL_TIMEOUT_MS 의 까닭. CLI 쪽 SDK MCP 도구 호출 상한이
+        // 이보다 짧으면 그쪽이 먼저 끊는데, 번들 CLI 는 서버 timeout ?? env MCP_TOOL_TIMEOUT ?? 1e8ms 이고(ENV_ALLOWLIST 가 그 env 를
+        // 넘기지 않는다) sdk 서버에는 idle 상한이 없다. SDK 를 올리면 번들 CLI 바이너리에서 `a.MCP_TOOL_TIMEOUT??` 둘레를 다시 본다
+        raw = await o.socket.timeout(CONTROL_CALL_TIMEOUT_MS).emitWithAck("control.call", call);
+      } catch {
+        // 보낸 뒤 끊김(socket.io-client 가 기다리던 ack 를 곧바로 거절한다)·시간 초과 — 서버가 받았을 수 있다
+        return { unknown: true };
+      }
+      const parsed = ControlResult.safeParse(raw);
+      return parsed.success
+        ? parsed.data
+        : { ok: false, error: { code: "INTERNAL", message: "서버 응답이 계약과 다릅니다" } };
     },
     requestApproval(request) {
       if (o.live()) o.socket.emit("approval.requested", request);

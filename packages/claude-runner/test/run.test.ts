@@ -1,5 +1,5 @@
 import { tool } from "@anthropic-ai/claude-agent-sdk";
-import { renderRunnerPrompt, type ErrorCode, type RunEventBody } from "@dodok/shared";
+import { CONTROL_TOOLS, renderRunnerPrompt, type ErrorCode, type RunEventBody } from "@dodok/shared";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
@@ -11,6 +11,7 @@ import {
   RUNNER_DISALLOWED_TOOLS,
   type RunContext,
 } from "../src/run";
+import { CONTROL_TOOL_FULL_NAMES } from "../src/control-tools";
 import { POST_STOPPED_MESSAGE } from "../src/post-tool";
 import { realSdk, type SdkMcpServer } from "../src/sdk";
 import { createFakeBridge, type FakeBridge } from "./helpers/fake-bridge";
@@ -46,8 +47,8 @@ describe("buildQueryOptions", () => {
       cwd: AGENT.workdir,
       model: "sonnet",
       permissionMode: "default",
-      // dodok 도구는 늘 허용 — 승인 콜백이 입력 검증보다 먼저 온다(스펙 6장)
-      allowedTools: ["Read", "Bash(git status)", "mcp__dodok__post"],
+      // dodok 도구는 늘 허용 — 승인 콜백이 입력 검증보다 먼저 온다(스펙 6장). 제어 도구의 쓰기는 서버 확인 카드가 묻는다
+      allowedTools: ["Read", "Bash(git status)", "mcp__dodok__post", ...CONTROL_TOOL_FULL_NAMES],
       disallowedTools: [...RUNNER_DISALLOWED_TOOLS, "WebFetch"],
       sessionId: SESSION_ID,
       title: "dev · 코더",
@@ -211,7 +212,9 @@ describe("runOnce", () => {
     // 입력은 result 까지 열려 있어야 한다 — 닫으면 권한 콜백·SDK MCP 가 멈춘다(리뷰 M2)
     expect(fake.calls[0]!.inputEndedBeforeResult).toBe(false);
     expect(fake.calls[0]!.options.sessionId).toBe(SESSION_ID);
-    expect(fake.servers.map((tools) => tools.map((t) => t.name))).toEqual([["post"]]);
+    expect(fake.servers.map((tools) => tools.map((t) => t.name))).toEqual([
+      ["post", ...CONTROL_TOOLS.map((t) => t.name)],
+    ]);
     expect(fake.calls[0]!.options.canUseTool).toBeTypeOf("function");
     expect(emitted.map((e) => (e.kind === "event" ? e.event.type : e.kind))).toEqual([
       "TEXT_MESSAGE_START",

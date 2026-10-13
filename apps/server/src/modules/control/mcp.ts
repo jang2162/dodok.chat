@@ -7,7 +7,7 @@
  * 감싼 것이라 응답을 직접 써야 해서 Fastify 의 오류 처리·inject 를 비켜 간다. 응답은 SSE 대신 JSON(enableJsonResponse) — 바깥
  * 호출은 카드를 기다리지 않으니 흘려 보낼 것이 없다
  */
-import { CONTROL_TOOLS, type ControlResult, controlToolJsonSchema } from "@dodok/shared";
+import { CONTROL_TOOLS, type ControlResult, controlResultText, controlToolJsonSchema } from "@dodok/shared";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import {
@@ -50,10 +50,10 @@ function webRequest(request: FastifyRequest): Request {
   return new Request(`http://localhost${MCP_PATH}`, { method: "POST", headers });
 }
 
-/** 결과는 텍스트 JSON 하나, 오류는 isError + { code, message }(ErrorCode 그대로 — 스펙 「실행 흐름」 장) */
+/** 결과 글은 러너·플러그인 도구와 같은 꼴 — shared controlResultText */
 function toolResult(result: ControlResult): CallToolResult {
-  if (result.ok) return { content: [{ type: "text", text: JSON.stringify(result.data ?? null) }] };
-  return { isError: true, content: [{ type: "text", text: JSON.stringify(result.error) }] };
+  const { text, isError } = controlResultText(result);
+  return { ...(isError ? { isError } : {}), content: [{ type: "text", text }] };
 }
 
 function mcpServer(ctx: McpRouteContext, userId: string): Server {

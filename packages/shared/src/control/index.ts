@@ -41,3 +41,26 @@ export const ControlResult = z.discriminatedUnion("ok", [
   z.object({ ok: z.literal(false), error: z.object({ code: ErrorCode, message: z.string() }) }),
 ]);
 export type ControlResult = z.infer<typeof ControlResult>;
+
+/**
+ * 러너·플러그인이 control.call 의 ack 를 받지 못한 호출(보낸 뒤 끊김·CONTROL_CALL_TIMEOUT_MS 초과). 서버는 그 호출을 받았을 수 있고,
+ * 확인 카드는 끊김·시간 초과로 닫히지 않아 사람이 나중에 허용하면 실행된다 — 그래서 「실패」라고 하지 않는다. 실패라고 하면 모델이
+ * 같은 요청을 되풀이해 카드가 둘 뜬다. 보내기 전에 끊겨 있었으면 서버에 닿지 않은 것이라 이것이 아니라 ADAPTER_UNAVAILABLE 이다
+ */
+export type ControlUnknownResult = { unknown: true };
+export const CONTROL_RESULT_UNKNOWN_MESSAGE =
+  "결과를 모릅니다 — 서버의 답을 받지 못했습니다(연결이 끊겼거나 시간이 지났습니다). 요청은 확인 카드에서 아직 기다리고 있거나 이미 " +
+  "실행됐을 수 있습니다. 채널의 확인 카드나 시스템 메시지를 확인하고, 같은 요청을 바로 되풀이하지 마세요.";
+
+/**
+ * 모델에게 보이는 도구 결과 글 — `/mcp`·러너·플러그인이 같은 꼴을 쓴다. 성공은 data 의 JSON, 서버가 거절한 것은 { code, message } 의
+ * JSON(ErrorCode 그대로 — 제어 MCP 스펙 「실행 흐름」 장), 결과를 모르는 것은 CONTROL_RESULT_UNKNOWN_MESSAGE
+ */
+export function controlResultText(result: ControlResult | ControlUnknownResult): {
+  text: string;
+  isError: boolean;
+} {
+  if ("unknown" in result) return { text: CONTROL_RESULT_UNKNOWN_MESSAGE, isError: true };
+  if (result.ok) return { text: JSON.stringify(result.data ?? null), isError: false };
+  return { text: JSON.stringify({ code: result.error.code, message: result.error.message }), isError: true };
+}

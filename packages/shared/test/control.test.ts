@@ -5,10 +5,12 @@ import {
   CONTROL_CALL_TIMEOUT_MS,
   CONTROL_CONFIRM_TTL_MS,
   CONTROL_READ_MESSAGES_MAX,
+  CONTROL_RESULT_UNKNOWN_MESSAGE,
   CONTROL_TOOLS,
   CONTROL_UNTRUSTED_CONTENT_NOTICE,
   ControlCall,
   ControlResult,
+  controlResultText,
   type ControlToolName,
   controlToolJsonSchema,
   findControlTool,
@@ -322,6 +324,33 @@ describe("확인 카드·capability", () => {
 
   it("에이전트 쪽 호출 상한은 카드 만료보다 길다 — 짧으면 허용한 쓰기가 실행됐는데 에이전트는 시간 초과로 안다", () => {
     expect(CONTROL_CALL_TIMEOUT_MS).toBeGreaterThan(CONTROL_CONFIRM_TTL_MS);
+  });
+});
+
+describe("controlResultText — /mcp·러너·플러그인이 모델에게 보이는 도구 결과 글", () => {
+  it("성공은 data 의 JSON, data 가 없으면 null", () => {
+    expect(controlResultText({ ok: true, data: { id: ID, name: "dev" } })).toEqual({
+      text: JSON.stringify({ id: ID, name: "dev" }),
+      isError: false,
+    });
+    expect(controlResultText({ ok: true, data: undefined })).toEqual({ text: "null", isError: false });
+  });
+
+  it("서버가 거절한 것은 { code, message } 의 JSON 이고 오류다", () => {
+    const out = controlResultText({ ok: false, error: { code: "FORBIDDEN", message: "admin 이상만" } });
+    expect(out.isError).toBe(true);
+    expect(JSON.parse(out.text)).toEqual({ code: "FORBIDDEN", message: "admin 이상만" });
+  });
+
+  it("ack 를 못 받은 호출은 실패가 아니라 「결과를 모른다」 — 확인 카드·시스템 메시지를 보고 되풀이하지 말라고 한다", () => {
+    const out = controlResultText({ unknown: true });
+    expect(out).toEqual({ text: CONTROL_RESULT_UNKNOWN_MESSAGE, isError: true });
+    expect(out.text).toMatch(/^결과를 모릅니다/);
+    expect(out.text).toContain("확인 카드");
+    expect(out.text).toContain("시스템 메시지");
+    expect(out.text).toContain("되풀이하지 마세요");
+    // 오류 코드 꼴이 아니다 — 모델이 거절(FORBIDDEN 등)로 읽지 않게
+    expect(() => JSON.parse(out.text)).toThrow();
   });
 });
 
