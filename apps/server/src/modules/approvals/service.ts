@@ -1,6 +1,7 @@
 import { type ProviderApproval, parseSessionKey } from "@dodok/openclaw-adapter";
 import type { Approval, ApprovalDecision, ApprovalReason, ApprovalStatus, RunSignal } from "@dodok/shared";
 import { and, eq } from "drizzle-orm";
+import { v7 as uuidv7 } from "uuid";
 import { agentConnectionId, agentOnConnection } from "../../adapters/connection";
 import type { AdapterRegistry } from "../../adapters/registry";
 import {
@@ -16,12 +17,30 @@ import type { Logger } from "../../logger";
 import type { ServerBus } from "../../realtime/bus";
 import { getAgent, providerAgentIdIs } from "../agents/service";
 import { getChannel } from "../channels/service";
-import { findOpenRunBySession } from "../runs/store";
+import { findOpenRunBySession, getRun } from "../runs/store";
 import * as store from "./store";
 
 export type ApprovalsLogger = Pick<Logger, "debug" | "warn" | "error">;
 
 export type ResolveInput = { approvalId: string; decision: ApprovalDecision; userId: string };
+
+/** 제어 서비스가 여는 확인 카드(제어 MCP 스펙 「확인 카드」 장) — 우리 서버가 낸 승인이라 연결이 없다(계획 판정 PC4) */
+export type ControlApprovalInput = {
+  runId: string;
+  channelId: string;
+  agentId: string;
+  /** 결정할 수 있는 사람 — 그 런의 requested_by */
+  requestedBy: string;
+  toolName: string;
+  title: string;
+  description?: string | undefined;
+  detail?: string | undefined;
+  createdAt: Date;
+  expiresAt: Date;
+};
+
+/** 확인 카드의 결정 — 「항상 허용」은 받지 않는다(도구 호출 하나만 허락한다) */
+const CONTROL_DECISIONS: ApprovalDecision[] = ["allow-once", "deny"];
 
 export type ApprovalsService = {
   /**
@@ -34,8 +53,18 @@ export type ApprovalsService = {
    * 검사에 걸리면 `HttpError`(FORBIDDEN·NOT_FOUND·CONFLICT·VALIDATION)를, 어댑터가 거부하면 그 코드(ADAPTER_UNAVAILABLE 등)를 던진다.
    */
   resolve(input: ResolveInput): Promise<Approval>;
-  /** 런이 끝났을 때 남은 승인을 닫는다. 런은 이미 끝나는 중이라 런 신호는 보내지 않는다 */
+  /**
+   * 런이 끝났을 때 남은 승인을 닫는다. 런은 이미 끝나는 중이라 런 신호는 보내지 않는다. dodok_control 확인 카드는 닫지 않는다 —
+   * 그 카드를 기다리는 도구 호출과 함께 제어 서비스(onRunEnded → closeControl)가 닫는다
+   */
   cancelForRun(runId: string, reason: ApprovalReason): void;
+  /** 확인 카드를 연다 — 새 사실이라 타임라인·런 신호(awaiting_approval)·wire 까지 낸다 */
+  openControl(input: ControlApprovalInput): Approval;
+  /**
+   * 아직 pending 인 확인 카드를 만료(expired — 런은 대기 직전 상태로 돌아간다)나 취소(cancelled — 런이 끝나는 중)로 닫는다.
+   * 이미 닫혔으면 아무것도 하지 않고 undefined
+   */
+  closeControl(approvalId: string, status: "expired" | "cancelled"): Approval | undefined;
   /**
    * 만료 감시 타이머가 부른다 — 미해결 승인 중 **만료 시각이 지난 것만** expired(timeout)로 닫고
    * 런 신호로 시계를 다시 켠다. 아직 살아 있는 승인은 Gateway 가 여전히 기다리므로 그대로 둔다.
@@ -63,6 +92,11 @@ export type ApprovalsDeps = {
   onSignal(runId: string, signal: RunSignal): void;
   /** orchestrator.applyRunEvent — 활동 타임라인이 순서대로 읽게 남긴다 */
   appendEvent(runId: string, event: RunEventBody): void;
+  /**
+   * dodok_control 확인 카드가 어떤 길로든(결정·만료·취소) 닫힌 뒤 — 제어 서비스가 기다리던 도구 호출을 이어 가거나 끝낸다.
+   * 던져도 승인 처리는 막지 않는다
+   */
+  onControlSettled?: (approval: Approval) => void;
 };
 
 /**
@@ -134,6 +168,25 @@ export function createApprovalsService(deps: ApprovalsDeps): ApprovalsService {
       }
     }
     bus.emit(approval.status === "pending" ? "approval.requested" : "approval.resolved", { approval });
+    if (approval.kind === "dodok_control" && approval.status !== "pending") {
+      try {
+        deps.onControlSettled?.(approval);
+      } catch (err) {
+        logger.error({ err, approvalId: approval.id }, "control approval settle hook failed");
+      }
+    }
+  }
+
+  /** 승인을 요구하기 직전의 런 상태를 기억해 둔다 — 해결 뒤 그 상태로 돌아간다(설계 4.3). 이미 대기 중이면 먼저 기억한 값이 진짜 「직전」이다 */
+  function rememberResume(run: { id: string; status: string } | undefined): void {
+    if (run && run.status !== "awaiting_approval") {
+      resumeTo.set(run.id, run.status === "tool" ? "tool" : "streaming");
+    }
+  }
+
+  /** 그 런의 미해결 승인 가운데 이 서비스가 닫을 것 — 확인 카드는 제어 서비스가 닫는다(cancelForRun 주석) */
+  function pendingProviderApprovals(runId: string): Approval[] {
+    return store.listPendingApprovalsByRun(db, runId).filter((a) => a.kind !== "dodok_control");
   }
 
   /**
@@ -181,11 +234,7 @@ export function createApprovalsService(deps: ApprovalsDeps): ApprovalsService {
         const receivedAt = now();
         // FIFO 직렬화라 그 세션의 열린 런 중 맨 앞(가장 먼저 만든 것)이 지금 Gateway 에서 도는 런이다
         const run = findOpenRunBySession(db, connectionId, a.sessionKey);
-        // 승인을 요구하기 직전의 런 상태를 기억해 둔다 — 해결 뒤 그 상태로 돌아간다(설계 4.3).
-        // 이미 대기 중이면(같은 런의 두 번째 승인) 먼저 기억한 값이 진짜 「직전」이다
-        if (run && a.status === "pending" && run.status !== "awaiting_approval") {
-          resumeTo.set(run.id, run.status === "tool" ? "tool" : "streaming");
-        }
+        if (a.status === "pending") rememberResume(run);
         const { approval, changed, created, filled } = store.upsertApproval(db, {
           providerApprovalId: a.providerApprovalId,
           connectionId,
@@ -241,6 +290,24 @@ export function createApprovalsService(deps: ApprovalsDeps): ApprovalsService {
       if (!approval.allowedDecisions.includes(decision)) {
         throw apiError("VALIDATION", "decision is not allowed for this approval");
       }
+      // 확인 카드는 어댑터로 가지 않고 여기서 끝난다(계획 판정 PC4). 결정은 그 일을 시킨 사람 본인만 — 역할은 보지 않는다(wire 가
+      // 멤버인지만 본다). 허용 뒤 역할 재확인·실행은 onControlSettled 를 받은 제어 서비스가 한다.
+      // await 없이 읽기·쓰기를 한 번에 해 두 결정이 겹쳐도 먼저 쓴 쪽만 pending 을 본다
+      if (approval.kind === "dodok_control") {
+        if (approval.requestedBy !== userId) {
+          throw apiError("FORBIDDEN", "이 확인은 그 일을 시킨 사람만 할 수 있다");
+        }
+        const marked = store.markApproval(db, approvalId, {
+          status: decision === "deny" ? "denied" : "allowed",
+          decision,
+          reason: "user",
+          decidedBy: userId,
+          decidedAt: now(),
+        });
+        logger.debug({ approvalId, decision, userId }, "control approval decided");
+        publish(marked);
+        return marked;
+      }
       // 연결 검사는 어댑터가 한다(판정 P6) — Gateway·러너가 없으면 resolveApproval 이 ADAPTER_UNAVAILABLE 을 던진다
       const agent = getAgent(db, approval.agentId);
       if (!agent) throw apiError("NOT_FOUND", "approval agent not found");
@@ -295,16 +362,49 @@ export function createApprovalsService(deps: ApprovalsDeps): ApprovalsService {
     cancelForRun(runId, reason) {
       // 런이 끝난다 — 만료 시각이 남았든 아니든 전부 닫는다.
       // 런 신호를 보내면 상태가 awaiting_approval 에서 되돌아갔다가 다시 종료로 간다
-      close(store.listPendingApprovalsByRun(db, runId), "cancelled", reason, { resumeRun: false });
+      close(pendingProviderApprovals(runId), "cancelled", reason, { resumeRun: false });
+    },
+
+    openControl(input) {
+      rememberResume(getRun(db, input.runId));
+      const { approval } = store.upsertApproval(db, {
+        providerApprovalId: `control:${uuidv7()}`,
+        kind: "dodok_control",
+        channelId: input.channelId,
+        agentId: input.agentId,
+        runId: input.runId,
+        toolName: input.toolName,
+        title: input.title,
+        description: input.description,
+        detail: input.detail,
+        severity: "warning",
+        allowedDecisions: CONTROL_DECISIONS,
+        status: "pending",
+        createdAt: input.createdAt,
+        expiresAt: input.expiresAt,
+        requestedBy: input.requestedBy,
+      });
+      publish(approval);
+      return approval;
+    },
+
+    closeControl(approvalId, status) {
+      const pending = store.getApproval(db, approvalId);
+      if (pending?.kind !== "dodok_control" || pending.status !== "pending") return undefined;
+      // 만료는 런이 계속 돈다 — 대기 직전 상태로 돌린다. 취소는 런이 끝나는 중이다(cancelForRun 과 같다)
+      close([pending], status, status === "expired" ? "timeout" : "run-aborted", {
+        resumeRun: status === "expired",
+      });
+      return store.getApproval(db, approvalId);
     },
 
     expireForRun(runId) {
       // 감시 타이머는 그 런의 **가장 이른** 만료 시각에 울린다 — 아직 만료되지 않은 승인은 Gateway 가 여전히
       // 기다리는 것이라 그대로 둔다. 쓸어 닫으면 사용자는 살아 있는 카드를 「만료됨」으로 보고 다시 누를 수도 없다
       const at = now().getTime();
-      const expired = store
-        .listPendingApprovalsByRun(db, runId)
-        .filter((pending) => Date.parse(pending.expiresAt) <= at);
+      const expired = pendingProviderApprovals(runId).filter(
+        (pending) => Date.parse(pending.expiresAt) <= at,
+      );
       for (const pending of expired) {
         logger.warn(
           { approvalId: pending.id, runId, expiresAt: pending.expiresAt },

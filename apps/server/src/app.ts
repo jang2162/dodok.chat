@@ -33,6 +33,7 @@ import { tick } from "./modules/automations/scheduler";
 import { registerWebhookRoute } from "./modules/automations/webhook";
 import { watchPluginHellos } from "./modules/channels/prompt-sync";
 import { registerChannelRoutes } from "./modules/channels/routes";
+import { type ControlService, createControlService } from "./modules/control/service";
 import { getChannel } from "./modules/channels/service";
 import { registerGatewayRoutes } from "./modules/gateways/routes";
 import { bootGateways, getGatewayRow, listGatewayRows } from "./modules/gateways/service";
@@ -53,6 +54,7 @@ import { ipPrefix } from "./modules/ops/ip";
 import { LIMITS, type Limits } from "./modules/ops/limits";
 import { monotonicNow, TokenBucket } from "./modules/ops/ratelimit";
 import { registerOpsRoutes } from "./modules/ops/routes";
+import { buildOpsStatus, type OpsStatusContext } from "./modules/ops/status";
 import { getOpsSettings } from "./modules/ops/settings";
 import { providersWithAgents } from "./modules/ops/summary";
 import type { OpsService } from "./modules/ops/service";
@@ -145,6 +147,8 @@ export type AppDeps = {
   runnerDirs?: string[];
   /** 러너 도구 승인 기한(기본 RUNNER_APPROVAL_TTL_MS 10분) — 통합 테스트가 실제 시계로 잴 만큼 줄인다 */
   runnerApprovalTtlMs?: number;
+  /** 제어 도구 확인 카드 기한(기본 CONTROL_CONFIRM_TTL_MS 10분) — 테스트가 실제 시계로 잴 만큼 줄인다 */
+  controlConfirmTtlMs?: number;
   /** 레이트리밋 숫자(기본 LIMITS, 얕게 덮는다) — 테스트가 수백 번 되풀이할 상한을 줄인다 */
   limits?: Partial<Limits>;
   /** 레이트리밋·브리지 실패 카운터의 시계(ms, 기본 단조 시계 monotonicNow) — 테스트가 창·버킷을 넘긴다. Better Auth·로컬 로그인 상한(@fastify/rate-limit)은 따르지 않는다 */
@@ -186,6 +190,8 @@ export type App = {
   registry: AdapterRegistry;
   orchestrator: Orchestrator;
   services: Services;
+  /** 제어 도구 입구 — /mcp·러너·플러그인 통로가 부른다 */
+  control: ControlService;
   /** 운영 사건 입구(= services.ops) — 프로세스 예외 처리기(main.ts)도 여기로 남긴다 */
   ops: OpsService;
   /** DATA_DIR 디스크 여유 — 첫 측정은 createApp 이 끝나기 전에 끝난다. error 면 첨부 업로드가 507 */
@@ -706,12 +712,21 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       ops,
       now: limitClock,
     });
-    // 운영 API(운영 보강 스펙 6장) — /healthz 에서 뺀 워크스페이스 id·어댑터 상세도 여기서 owner 에게만
-    registerOpsRoutes(fastify, {
-      auth,
+    // 운영 상태 요약 — 운영 API 와 제어 도구 ops_status 가 같은 문맥으로 만든다
+    const opsStatusContext: OpsStatusContext = {
       db,
       workspaceId,
       adapter: openclaw,
+      ops,
+      disk: () => disk.current(),
+      serverVersion: packageJson.version,
+      startedAt,
+      previousClean: () => previousClean,
+    };
+    // 운영 API(운영 보강 스펙 6장) — /healthz 에서 뺀 워크스페이스 id·어댑터 상세도 여기서 owner 에게만
+    registerOpsRoutes(fastify, {
+      ...opsStatusContext,
+      auth,
       // 붙어 있고 에이전트가 등록된 제공자 — 러너 어댑터는 늘 붙으므로, claude 에이전트가 없는 배포는 OpenClaw 만 쓰는 배포와 같다
       providersInUse: () =>
         providersWithAgents(
@@ -720,11 +735,24 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
           adapters.map((adapter) => adapter.provider),
         ),
       ops,
-      disk: () => disk.current(),
-      serverVersion: packageJson.version,
-      startedAt,
-      previousClean: () => previousClean,
     });
+    // 제어 도구(제어 MCP 스펙) — REST 와 같은 액션 함수·정책 함수로 처리한다. 런 종료·확인 카드 결정이 되돌아오도록 서비스에 잇는다 —
+    // 부팅 정리(recoverOnBoot)가 닫는 런의 카드도 닫히게 그보다 먼저
+    const control = createControlService({
+      db,
+      bus,
+      logger: logger.child({ mod: "control" }),
+      workspaceId,
+      ops,
+      limits,
+      now: limitClock,
+      approvals: services.approvals,
+      channels: routeContext,
+      agents: { ...routeContext, runnerTokenFor: (id) => runnerAdapter?.servingTokenId(id) },
+      opsStatus: () => buildOpsStatus(opsStatusContext),
+      ...(deps.controlConfirmTtlMs === undefined ? {} : { confirmTtlMs: deps.controlConfirmTtlMs }),
+    });
+    services.bindControl(control);
     // 인증 없이 열려 있다 — 워크스페이스 id·어댑터 상세는 내놓지 않는다(운영 보강 스펙 8장, 상세는 owner 전용 ops/status)
     fastify.get("/healthz", async (_request, reply) => {
       const dbOk = pingDb(db, logger);
@@ -851,6 +879,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       registry,
       orchestrator: services.orchestrator,
       services,
+      control,
       ops: services.ops,
       disk: () => disk.current(),
       async checkDisk() {

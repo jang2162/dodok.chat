@@ -68,6 +68,10 @@ const TITLE: Record<OpsEventKind, (e: OpsEvent, nameOf: ChannelNameOf | undefine
     const code = str(e.detail.code);
     return code ? `자동화 실행 실패 (${code})` : "자동화 실행 실패";
   },
+  control_change: (e) => {
+    const tool = str(e.detail.tool);
+    return tool ? `제어 도구로 설정을 바꿈 (${tool})` : "제어 도구로 설정을 바꿈";
+  },
   push_credentials_invalid: (e) => {
     const transport = /^push:(.+)$/.exec(e.key)?.[1];
     return transport ? `푸시 자격 증명이 거부되었습니다(${transport})` : "푸시 자격 증명이 거부되었습니다";

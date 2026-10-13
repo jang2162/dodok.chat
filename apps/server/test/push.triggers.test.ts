@@ -231,6 +231,13 @@ describe("targetsForApproval (스펙 5.2 둘째 줄)", () => {
   it("owner·admin 이 없으면 없다 — 채널의 사람 멤버에게로 새지 않는다", () => {
     expect(targetsForApproval(approval({}), { ...L, admins: () => [] })).toEqual([]);
   });
+
+  it("확인 카드(dodok_control)는 시킨 사람 본인에게만 — owner·admin 에게 가지 않는다", () => {
+    const t = targetsForApproval(approval({ kind: "dodok_control", requestedBy: ALICE }), L);
+    expect(t.map((x) => x.userId)).toEqual([ALICE]);
+    expect(t[0]?.payload).toMatchObject({ kind: "approval", tag: `approval:${AP}` });
+    expect(targetsForApproval(approval({ kind: "dodok_control" }), L)).toEqual([]);
+  });
 });
 
 describe("targetsForMessage — 스레드(스펙 4.2 푸시)", () => {

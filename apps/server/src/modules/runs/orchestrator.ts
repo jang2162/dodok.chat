@@ -155,6 +155,11 @@ export type OrchestratorDeps = {
   onAgentMessage: (message: Message, run: Run) => Promise<void>;
   /** 어댑터 승인 이벤트를 넘길 곳(wiring.ts 가 잇는다). 없으면 승인 이벤트는 로그만 남기고 버린다 */
   approvals?: Pick<ApprovalsService, "ingest" | "cancelForRun" | "expireForRun" | "earliestPendingExpiry">;
+  /**
+   * 런이 끝난다(완료·중지·실패·타임아웃·부팅 정리 — terminal 전이마다 한 번, 전이 전에). 제어 서비스가 그 런의 확인 카드를 cancelled 로
+   * 닫고 기다리던 도구 호출을 EXPIRED 로 끝낸다(wiring.ts 가 잇는다)
+   */
+  onRunEnded?: (runId: string) => void;
   now?: () => Date;
   timeouts?: Partial<RunTimeouts>;
 };
@@ -548,6 +553,11 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
    * (applyRunEvent 가 종료된 런의 이벤트를 드롭한다 — p2-t4 리뷰 이월 5).
    */
   function cancelApprovals(runId: string): void {
+    try {
+      deps.onRunEnded?.(runId);
+    } catch (err) {
+      logger.error({ err, runId }, "control cancel on run end failed");
+    }
     try {
       deps.approvals?.cancelForRun(runId, "run-aborted");
     } catch (err) {

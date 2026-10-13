@@ -9,6 +9,7 @@ import type { Logger } from "./logger";
 import { type ApprovalsService, createApprovalsService } from "./modules/approvals/service";
 import { interact } from "./modules/components/service";
 import { createRunGate } from "./modules/ops/budget";
+import type { ControlService } from "./modules/control/service";
 import { createOpsService, type OpsService } from "./modules/ops/service";
 import { createRouter, type Router } from "./modules/router/service";
 import { createOrchestrator, type Orchestrator, type RunTimeouts } from "./modules/runs/orchestrator";
@@ -32,7 +33,15 @@ export type Services = {
   runs: RunsFacade;
   approvals: ApprovalsService;
   ops: OpsService;
+  /**
+   * 제어 서비스를 잇는다 — 제어 서비스는 이 서비스들과 앱의 운영 상태·라우트 문맥을 받아 뒤에 만들어진다. 잇기 전에는 확인 카드가 열릴
+   * 일이 없다(카드를 여는 것이 제어 서비스다)
+   */
+  bindControl(control: ControlHooks): void;
 };
+
+/** 승인·오케스트레이터가 제어 서비스로 되돌려 부르는 면 */
+export type ControlHooks = Pick<ControlService, "onApprovalSettled" | "onRunEnded">;
 
 export type SessionRecoverTarget = ReturnType<
   NonNullable<OpenClawAdapterOptions["sessionKeysToRecover"]>
@@ -79,6 +88,7 @@ export function createServices(deps: ServicesDeps): Services {
   // 런을 만드는 경로(라우터·상호작용·다시 실행)는 모두 관문을 지난다(스펙 3.2)
   const gate = createRunGate({ db, bus, ops, workspaceId, enqueue });
   const router = createRouter({ db, bus, logger, enqueue: gate.enqueue });
+  let control: ControlHooks | undefined;
   // 승인 서비스도 같은 방식으로 먼저 만든다 — 런 이벤트·신호를 오케스트레이터로 되돌려 보내고,
   // 오케스트레이터는 어댑터 승인 이벤트를 이 서비스로 넘긴다(서로가 서로를 부른다)
   const approvals = createApprovalsService({
@@ -89,6 +99,7 @@ export function createServices(deps: ServicesDeps): Services {
     workspaceId,
     onSignal: (runId, signal) => void orchestrator.signal(runId, signal),
     appendEvent: (runId, event) => void orchestrator.applyRunEvent(runId, event),
+    onControlSettled: (approval) => control?.onApprovalSettled(approval),
   });
   orchestrator = createOrchestrator({
     db,
@@ -98,6 +109,7 @@ export function createServices(deps: ServicesDeps): Services {
     approvals,
     timeouts: deps.timeouts,
     onAgentMessage: (message) => router.routeMessage(message),
+    onRunEnded: (runId) => control?.onRunEnded(runId),
   });
 
   const visibleRun = (runId: string) => {
@@ -125,5 +137,14 @@ export function createServices(deps: ServicesDeps): Services {
     interact: (input) => interact({ db, bus, workspaceId, gate }, input),
   };
 
-  return { router, orchestrator, runs, approvals, ops };
+  return {
+    router,
+    orchestrator,
+    runs,
+    approvals,
+    ops,
+    bindControl(c) {
+      control = c;
+    },
+  };
 }

@@ -110,6 +110,11 @@ export function searchMessages(
   return { hits: page.map(hit), limited: false, ...(nextCursor ? { nextCursor } : {}) };
 }
 
+/** 멘션 토큰 → 보이는 핸들(스니펫과 같은 규칙) — 제어 도구 read_messages 가 본문을 읽는 글로 바꿀 때 */
+export function mentionHandleOf(db: DbOrTx, workspaceId: string): HandleOf {
+  return mentionDirectory(db, workspaceId, undefined).handleOf;
+}
+
 type MentionDirectory = {
   handleOf: HandleOf;
   /** 소문자 핸들 → 그 핸들로 보이는 멘션 토큰들 */

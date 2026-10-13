@@ -49,6 +49,8 @@ export type ApprovalRowInput = {
   createdAt: Date;
   /** 카운트다운의 근거. 해결 프레임에는 없다 — 없으면 있는 행의 값을 지키고, 새 행이면 createdAt 으로 채운다 */
   expiresAt?: Date | undefined;
+  /** dodok_control 확인 카드만 — 결정할 수 있는 사람. 새 행에만 쓴다 */
+  requestedBy?: string | undefined;
 };
 
 export type ApprovalPatch = {
@@ -83,6 +85,7 @@ export function rowToApproval(row: ApprovalRow): Approval {
       decision: row.decision ?? undefined,
       reason: row.reason ?? undefined,
       decidedBy: row.decidedBy ?? undefined,
+      requestedBy: row.requestedBy ?? undefined,
       decidedAt: row.decidedAt?.toISOString(),
       expiresAt: row.expiresAt.toISOString(),
       createdAt: row.createdAt.toISOString(),
@@ -174,6 +177,7 @@ function insertApproval(db: DbOrTx, input: ApprovalRowInput): ApprovalRow {
       decidedAt: input.decidedAt ?? null,
       expiresAt: input.expiresAt ?? input.createdAt,
       createdAt: input.createdAt,
+      requestedBy: input.requestedBy ?? null,
     })
     .returning()
     .get();

@@ -81,7 +81,10 @@ export function targetsForMessage(m: Message, l: TriggerLookups): PushTarget[] {
 
 export function targetsForApproval(a: Approval, l: TriggerLookups): PushTarget[] {
   const body = `#${channelLabel(l, a.channelId)}에 승인 요청이 있습니다`;
-  return l.admins().map((userId) => ({
+  // 확인 카드(dodok_control)는 그 일을 시킨 사람 본인만 결정한다 — 알림도 그 사람에게만(제어 MCP 스펙 「확인 카드」 장)
+  const receivers =
+    a.kind === "dodok_control" ? (a.requestedBy === undefined ? [] : [a.requestedBy]) : l.admins();
+  return receivers.map((userId) => ({
     userId,
     payload: {
       kind: "approval",

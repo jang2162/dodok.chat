@@ -1,0 +1,1 @@
+ALTER TABLE `approvals` ADD `requested_by` text;

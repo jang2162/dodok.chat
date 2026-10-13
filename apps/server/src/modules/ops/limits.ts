@@ -24,6 +24,12 @@ export const LIMITS = {
    * 막는다(자동화 스펙 「웹훅」 절). 토큰을 맞혀 보는 것은 상한이 아니라 실패 카운터(bridgeFail)가 막는다
    */
   webhookPerMin: 30,
+  /**
+   * 제어 도구 호출 — 주체(개인 토큰의 주인, 또는 채널 안 에이전트 + 그 런을 시킨 사람)마다 분당. 쓰기는 그 안에서 한 번 더 —
+   * 모델이 되풀이로 설정을 흔들거나 확인 카드를 쏟아내지 않게(제어 MCP 스펙 「실행 흐름」 장)
+   */
+  controlPerMin: 60,
+  controlWritePerMin: 10,
   /** wire 이벤트 — 소켓마다 토큰 버킷 */
   wire: {
     heavy: { perMin: 30, burst: 10 }, // message.send·component.interact·run.abort
@@ -64,6 +70,8 @@ export type Limits = {
   uploadPerMin: number;
   searchPerMin: number;
   webhookPerMin: number;
+  controlPerMin: number;
+  controlWritePerMin: number;
   inviteIssuePerMin: number;
   wire: Record<keyof (typeof LIMITS)["wire"], { perMin: number; burst: number }>;
   runner: Record<keyof (typeof LIMITS)["runner"], { perMin: number; burst: number }>;

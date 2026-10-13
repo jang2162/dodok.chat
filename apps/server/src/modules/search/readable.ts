@@ -1,3 +1,5 @@
+import { MENTION_TOKEN_RE } from "@dodok/shared";
+
 /**
  * 검색 스니펫의 「읽는 글」 — 저장 본문(마크다운·멘션 토큰)을 화면에 보이는 글자로 바꾸고, 글자마다 원문 위치를 붙여 둔다.
  * 색인·검색어 일치는 원문 위에서 나므로(검색어 안 `@핸들` 은 토큰으로 바꿔 찾는다) 강조 범위는 원문 위치로 옮겨 와야 한다.
@@ -307,6 +309,17 @@ function inline(raw: string, pos: number, ch: string): Step | undefined {
     default:
       return undefined;
   }
+}
+
+/**
+ * 멘션 토큰만 `@핸들` 로 푼 본문 — 제어 도구 read_messages 가 에이전트에게 주는 꼴이다. 마크다운은 그대로 둔다(모델은 마크다운을
+ * 읽는다). 정규식 한 번이라 본문 길이에 비례한다 — readableGlyphs 의 창 제한이 필요 없다
+ */
+export function readableMentions(raw: string, handleOf: HandleOf): string {
+  return raw.replace(
+    MENTION_TOKEN_RE,
+    (_token, kind: "a" | "u", id: string) => `@${handleOf(kind, id) ?? UNKNOWN_MENTION}`,
+  );
 }
 
 /** 마크다운이 아닌 글(첨부 이름) — 글자 그대로, 공백만 접는다 */

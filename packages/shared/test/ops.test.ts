@@ -55,7 +55,7 @@ describe("OpsEvent", () => {
     expect(OpsEvent.safeParse({ ...EVENT, severity: "debug" }).success).toBe(false);
   });
 
-  it("kind 열거는 운영 보강 3.1 표의 열두 가지 + 팀 설계의 invite_accept_failed·멤버 비활성화의 member_deactivate_failed + 러너의 runner_down + 자동화의 automation_skipped·automation_failed + 네이티브 푸시의 push_credentials_invalid", () => {
+  it("kind 열거는 운영 보강 3.1 표의 열두 가지 + 팀 설계의 invite_accept_failed·멤버 비활성화의 member_deactivate_failed + 러너의 runner_down + 자동화의 automation_skipped·automation_failed + 네이티브 푸시의 push_credentials_invalid + 제어 MCP 의 control_change", () => {
     expect(OpsEventKind.options).toEqual([
       "gateway_down",
       "plugin_down",
@@ -75,6 +75,7 @@ describe("OpsEvent", () => {
       "automation_skipped",
       "automation_failed",
       "push_credentials_invalid",
+      "control_change",
     ]);
   });
 });

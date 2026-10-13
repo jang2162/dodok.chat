@@ -16,7 +16,7 @@ import type { Logger } from "../src/logger";
 import type { RunTimeouts } from "../src/modules/runs/orchestrator";
 import { createAdapterRegistry } from "../src/adapters/registry";
 import { createServices } from "../src/wiring";
-import { bootTestApp, login } from "./helpers/app";
+import { bootTestApp, login, userWithRole } from "./helpers/app";
 import { newTestDb } from "./helpers/db";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
 import { seedChannelWithAgent } from "./helpers/seed";
@@ -408,6 +408,27 @@ describe("승인 저장·런 상관·wire 중계 (앱 부팅, FakeAdapter)", () 
     expect(ids).not.toContain(decided.providerApprovalId);
     expect(ids).not.toContain(elsewhere.providerApprovalId);
     expect(res.data.pendingApprovals.every((p) => p.channelId === channel.id)).toBe(true);
+  });
+
+  it("Gateway 승인의 결정은 그대로 admin 이상 — member 는 FORBIDDEN 이고 어댑터로 가지 않는다(확인 카드만 시킨 사람 본인, 제어 MCP PC4)", async () => {
+    const socket = await connect();
+    await mentionDev(socket);
+    const a = providerApproval(sessionKeyOf("dev", channel.id));
+    const requested = waitFor(socket, "approval.requested");
+    adapter.emitApproval(a);
+    await requested;
+    const member = await userWithRole(app, `approver-${++n}`, "member");
+    const theirs = await connectWire(app, member.token);
+    sockets.push(theirs);
+    const before = adapter.calls.resolveApproval.length;
+    expect(
+      await theirs.emitWithAck("approval.resolve", {
+        approvalId: stored(a)?.id ?? "",
+        decision: "allow-once",
+      }),
+    ).toEqual({ ok: false, error: { code: "FORBIDDEN", message: "승인·거절은 admin 이상만 할 수 있다" } });
+    expect(adapter.calls.resolveApproval).toHaveLength(before);
+    expect(stored(a)?.status).toBe("pending");
   });
 
   it("해결 이벤트는 저장된 createdAt·expiresAt 을 지키고, decidedBy 없이 decidedAt 만 채운다", async () => {

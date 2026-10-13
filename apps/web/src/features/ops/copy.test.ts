@@ -98,6 +98,13 @@ describe("사건 한 줄 문구 — kind 별 고정 문구", () => {
     expect(eventText(hit("workspace"))).toBe("푸시 자격 증명이 거부되었습니다 ×3");
   });
 
+  it("제어 도구 변경은 detail.tool — 도구가 없으면 괄호 없이", () => {
+    expect(eventText(eventOf(1, { kind: "control_change", detail: { tool: "set_channel_prompt" } }))).toBe(
+      "제어 도구로 설정을 바꿈 (set_channel_prompt)",
+    );
+    expect(eventText(eventOf(1, { kind: "control_change", detail: {} }))).toBe("제어 도구로 설정을 바꿈");
+  });
+
   it("런 실패는 detail.code — 코드가 없으면 괄호 없이", () => {
     expect(eventText(eventOf(1, { kind: "run_failed", detail: { code: "TIMEOUT" } }))).toBe(
       "런 실패 (TIMEOUT)",

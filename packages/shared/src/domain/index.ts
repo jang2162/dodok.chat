@@ -345,6 +345,8 @@ export const Approval = z.object({
   decision: ApprovalDecision.optional(),
   reason: ApprovalReason.optional(),
   decidedBy: Id.optional(), // 우리 사용자 — 우리가 해결했을 때만
+  // dodok_control 만 — 결정할 수 있는 사람(그 런을 시킨 사람). 다른 kind 는 비운다(지금처럼 admin 이상이 결정)
+  requestedBy: Id.optional(),
   decidedAt: IsoDateTime.optional(),
   expiresAt: IsoDateTime, // 카운트다운의 근거. plugin 기본 TTL 120초, 우리가 늘릴 수단이 없다
   createdAt: IsoDateTime,

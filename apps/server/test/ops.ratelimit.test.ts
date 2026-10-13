@@ -21,6 +21,9 @@ describe("LIMITS — 스펙 4장 숫자", () => {
       searchPerMin: 60,
       // 자동화 스펙 「웹훅」 장 — 토큰마다
       webhookPerMin: 30,
+      // 제어 MCP 스펙 「실행 흐름」 장 — 주체마다
+      controlPerMin: 60,
+      controlWritePerMin: 10,
       wire: {
         heavy: { perMin: 30, burst: 10 },
         replay: { perMin: 120, burst: 30 },

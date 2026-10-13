@@ -25,6 +25,7 @@ import type { Db } from "../db/client";
 import { apiError, HttpError } from "../http/errors";
 import { parsePayload } from "../http/validate";
 import type { Logger } from "../logger";
+import { getApproval } from "../modules/approvals/store";
 import { assertChannelWritable, getChannel } from "../modules/channels/service";
 import { ipPrefix } from "../modules/ops/ip";
 import { LIMITS, type Limits } from "../modules/ops/limits";
@@ -350,8 +351,12 @@ export function attachWire(io: WireServer, ctx: WireContext): void {
       if (limited("approval.resolve")) return reply(ack, RATE_LIMITED);
       const res = await settle(ctx.logger, "approval.resolve", async () => {
         const { approvalId, decision } = parsePayload(ApprovalResolve, raw);
-        // wire 에서 역할을 보는 이벤트는 이것 하나다(팀 스펙 「역할과 권한」). 역할은 이벤트마다 다시 읽는다
-        if (!roleAtLeast(roleOf(ctx.db, ctx.workspaceId, userId), "admin"))
+        // wire 에서 역할을 보는 이벤트는 이것 하나다(팀 스펙 「역할과 권한」). 역할은 이벤트마다 다시 읽는다.
+        // 확인 카드(dodok_control)는 그 일을 시킨 사람 본인이 결정한다 — 역할은 보지 않고, 본인인지는 승인 서비스가 본다(계획 판정 PC4)
+        const role = roleOf(ctx.db, ctx.workspaceId, userId);
+        if (getApproval(ctx.db, approvalId)?.kind === "dodok_control") {
+          if (!role) throw apiError("FORBIDDEN", "워크스페이스 멤버가 아니다");
+        } else if (!roleAtLeast(role, "admin"))
           throw apiError("FORBIDDEN", "승인·거절은 admin 이상만 할 수 있다");
         await runs().resolveApproval({ approvalId, decision, userId });
         return null;

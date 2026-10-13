@@ -423,6 +423,8 @@ export const approvals = sqliteTable(
     expiresAt: ts("expires_at").notNull(), // 카운트다운의 근거
     createdAt: ts("created_at").notNull(),
     connectionId: text("connection_id"), // 승인이 온 연결 — 해결도 그 연결로 보낸다
+    // dodok_control 확인 카드만 — 결정할 수 있는 사람(그 런의 runs.requested_by). 다른 kind 는 비운다
+    requestedBy: text("requested_by"),
   },
   (t) => [
     // 제공자 승인 id 는 연결 안에서만 유일하다(runs 와 같은 까닭)
