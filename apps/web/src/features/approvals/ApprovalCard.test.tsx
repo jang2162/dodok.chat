@@ -663,6 +663,15 @@ describe("ApprovalCard — 확인 카드(dodok_control)", () => {
     expect(screen.queryByText(/^선택:/)).toBeNull();
   });
 
+  it("결정한 사람 줄은 확인 카드에만 — 다른 종류는 decidedBy 가 있어도 「선택: …」 그대로(스펙 「웹」 장)", () => {
+    renderControl(
+      approval({ status: "allowed", decision: "allow-once", reason: "user", decidedBy: USER }),
+      controlClient("owner"),
+    );
+    expect(screen.getByText("선택: 이번만 허용")).toBeInTheDocument();
+    expect(screen.queryByText(/ · @/)).toBeNull();
+  });
+
   it("FORBIDDEN 이면 시킨 사람만 결정한다고 알린다", () => {
     expect(resolveErrorMessage(new WireAckError("FORBIDDEN", "x"), "dodok_control")).toBe(
       "시킨 사람만 결정할 수 있습니다",

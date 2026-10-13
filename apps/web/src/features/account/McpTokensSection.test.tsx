@@ -4,10 +4,27 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MeResponse } from "@/api/queries";
+
+// 토스트 호출을 모두 적는다 — 원문이 토스트로 새지 않는지 본다(renderRoute 는 Toaster 를 그리지 않아 DOM 으로는 못 본다)
+const toasted = vi.hoisted(() => [] as unknown[][]);
+vi.mock("sonner", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("sonner")>();
+  const record =
+    <A extends unknown[], R>(fn: (...args: A) => R) =>
+    (...args: A): R => {
+      toasted.push(args);
+      return fn(...args);
+    };
+  const methods = Object.fromEntries(
+    Object.entries(actual.toast).map(([k, v]) => [k, typeof v === "function" ? record(v) : v]),
+  );
+  return { ...actual, toast: Object.assign(record(actual.toast), methods) };
+});
 import { ME, json, renderRoute, shellGet } from "../../../test/shellApi";
 import { mcpAddCommand } from "./tokens";
 
 afterEach(() => {
+  toasted.length = 0;
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -39,7 +56,11 @@ const tokenOf = (n: number, over: Partial<PersonalTokenSummary> = {}): PersonalT
 type Issue = (label: string) => Response;
 
 /** `/me/tokens` 를 흉내 내는 서버 — 목록은 살아 있는 토큰만, 발급은 `issue` 가 정한다(기본은 원문 RAW 로 성공) */
-function stubTokenServer(initial: PersonalTokenSummary[] = [], issue?: Issue) {
+function stubTokenServer(
+  initial: PersonalTokenSummary[] = [],
+  issue?: Issue,
+  opts: { listPending?: boolean } = {},
+) {
   let tokens = [...initial];
   const calls: { method: string; url: string; body?: unknown }[] = [];
   const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
@@ -48,7 +69,8 @@ function stubTokenServer(initial: PersonalTokenSummary[] = [], issue?: Issue) {
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     calls.push({ method, url, body });
     if (url === "/api/v1/auth/me") return json(200, MEMBER);
-    if (url === "/api/v1/me/tokens" && method === "GET") return json(200, { tokens });
+    if (url === "/api/v1/me/tokens" && method === "GET")
+      return opts.listPending ? new Promise<Response>(() => {}) : json(200, { tokens });
     if (url === "/api/v1/me/tokens" && method === "POST") {
       const label = (body as { label: string }).label;
       if (issue) return issue(label);
@@ -164,6 +186,7 @@ describe("MCP 토큰", () => {
     );
     expect(stored.join("\n")).not.toContain("SECRET");
     expect(JSON.stringify(logged)).not.toContain("SECRET");
+    expect(JSON.stringify(toasted)).not.toContain("SECRET");
 
     // 다시 열면 처음부터 — 앞 원문은 없다
     await userEvent.click(within(section).getByRole("button", { name: "새 토큰 발급" }));
@@ -186,6 +209,13 @@ describe("MCP 토큰", () => {
     await waitFor(() => expect(within(section).queryByRole("listitem", { name: "토큰 3" })).toBeNull());
     expect(within(section).getByRole("button", { name: "새 토큰 발급" })).toBeEnabled();
     expect(within(section).queryByText(/10개까지 발급할 수 있습니다/)).toBeNull();
+  });
+
+  it("목록을 받기 전에는 발급 버튼이 잠겨 있다 — 몇 개인지 모르면 상한을 넘길 수 있다", async () => {
+    stubTokenServer([], undefined, { listPending: true });
+    renderRoute("/settings/account");
+    const section = await openSection();
+    expect(within(section).getByRole("button", { name: "새 토큰 발급" })).toBeDisabled();
   });
 
   it("서버가 상한(CONFLICT)으로 막으면 대화상자 안에 같은 까닭", async () => {
@@ -214,6 +244,16 @@ describe("MCP 토큰", () => {
       `/api/v1/me/tokens/${tokenOf(1).id}`,
     ]);
     await waitFor(() => expect(within(section).getByRole("button", { name: "토큰 2 폐기" })).toHaveFocus());
+  });
+
+  it("마지막 토큰을 폐기하면 목록이 빈 안내로 바뀌고 초점은 「새 토큰 발급」으로", async () => {
+    stubTokenServer([tokenOf(1)]);
+    renderRoute("/settings/account");
+    const section = await openSection();
+    await userEvent.click(await within(section).findByRole("button", { name: "토큰 1 폐기" }));
+    await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "폐기" }));
+    expect(await within(section).findByText("발급한 토큰이 없습니다.")).toBeInTheDocument();
+    await waitFor(() => expect(within(section).getByRole("button", { name: "새 토큰 발급" })).toHaveFocus());
   });
 });
 
