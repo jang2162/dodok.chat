@@ -572,6 +572,7 @@ export const DEV_FAKE_KEYWORDS: readonly string[] = [
   "도구",
   "승인",
   "게시",
+  "제어",
   "구독",
   CALL_ME,
   ...COMPONENT_CARDS.map(([keyword]) => keyword),
@@ -650,6 +651,9 @@ const RUNNER_POST_CARD: FakeComponents = {
     },
   ],
 };
+/** 러너 대본 「제어」가 바꾸는 채널 주제·「제어 프롬프트」가 넣는 채널 프롬프트 — 키워드를 담지 않는다(채널 설정에 남아 다음 런에 실린다) */
+export const RUNNER_CONTROL_TOPIC = "dev:fake 에이전트가 바꾼 주제";
+export const RUNNER_CONTROL_PROMPT = "dev:fake 에이전트가 넣은 채널 프롬프트";
 /** 러너 대본의 사용량 — 운영 화면이 Claude 런의 토큰·비용을 더한다(「구독」이면 공시 단가 환산값) */
 const RUNNER_USAGE = { inputTokens: 1_200, outputTokens: 80 };
 const RUNNER_COST_USD = 0.02;
@@ -661,6 +665,7 @@ const pauseOrAbort = (run: FakeRunnerRun, ms: number) =>
 /**
  * 가짜 Claude 러너(에이전트 coder)의 대본. 답 글·델타·간격·릴레이 꼬리는 `fakeAgentScript` 와 같다(「오래」·「느리게」도 그대로) —
  * 늘 도구 하나(Read)를 먼저 부르고, 러너 키워드: 승인(도구 승인 카드 — 허용이면 Bash 도구가 돈다)·게시(post 로 글 + 카드)·
+ * 제어(제어 도구 update_channel 로 채널 주제를 바꾼다 — 시킨 사람에게 확인 카드, 「제어 프롬프트」면 admin 이상만 되는 set_channel_prompt)·
  * 구독(비용을 subscription_estimate 로)·실패(run.error). 그 밖의 키워드(카드·첨부·드롭 등)는 OpenClaw 가짜 에이전트 몫이다.
  * 중지되면 더 보내지 않는다 — 가짜 러너가 `stopReason: "aborted"` 로 끝낸다
  */
@@ -689,6 +694,20 @@ export async function fakeRunnerScript(run: FakeRunnerRun): Promise<void> {
   if (text.includes("게시")) {
     const ack = await run.post({ text: RUNNER_POST_TEXT, components: RUNNER_POST_CARD });
     lines.push(ack.ok ? "요약을 채널에 올렸습니다." : `요약을 올리지 못했습니다(${ack.code}).`);
+  }
+  if (text.includes("제어")) {
+    // 쓰기 도구 하나 — 서버가 시킨 사람에게 확인 카드를 띄우고 결정까지 ack 를 미룬다. 서버 문구는 키워드를 담을 수 있어 인용으로 싣는다
+    const prompt = text.includes("프롬프트");
+    const result = prompt
+      ? await run.control("set_channel_prompt", { channelId: d.channelId, prompt: RUNNER_CONTROL_PROMPT })
+      : await run.control("update_channel", { channelId: d.channelId, topic: RUNNER_CONTROL_TOPIC });
+    if (run.isAborted) return;
+    const what = prompt ? "채널 프롬프트" : "채널 주제";
+    lines.push(
+      result.ok
+        ? `${what}를 바꿨습니다.`
+        : `${what}를 바꾸지 못했습니다(${result.error.code}) — 「${result.error.message}」`,
+    );
   }
   const deltas = [...lines.map((line) => `${line}\n\n`), ...(script.deltas ?? [script.reply])];
   for (const delta of deltas) {

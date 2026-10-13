@@ -2,6 +2,7 @@ import {
   type Attachment,
   type ClientToServerEvents,
   ComponentsV1,
+  type ControlResult,
   type Field,
   type InboundDeliver,
   type Message,
@@ -43,6 +44,8 @@ import {
   DEV_FAKE_GATEWAYS,
   DEV_FAKE_HOME_GATEWAY_ID,
   DEV_FAKE_OFFICE_GATEWAY_ID,
+  RUNNER_CONTROL_PROMPT,
+  RUNNER_CONTROL_TOPIC,
   RUNNER_POST_TEXT,
   startDevFake,
 } from "../scripts/dev-fake";
@@ -60,6 +63,9 @@ import { openclawOf } from "./helpers/openclaw";
 
 type Author = { type: "user" | "agent"; handle: string };
 
+/** 대본이 제어 도구에 싣는 채널 id */
+const CH = "019a0000-0000-7000-8000-00000000c7c1";
+
 /** 대본이 읽는 필드만 채운다 — 채널 참여자는 owner·dev·fin, self 는 isSelf */
 const delivery = (
   text: string,
@@ -69,6 +75,7 @@ const delivery = (
   attachments: Array<Partial<Attachment>> = [],
 ): InboundDeliver =>
   ({
+    channelId: CH,
     message: { text, author: { ...author, displayName: author.handle }, attachments },
     context: {
       participants: [
@@ -452,11 +459,16 @@ type RunnerCall =
   | { kind: "tool"; name: string; args: unknown }
   | { kind: "approval"; toolName: string; summary: string }
   | { kind: "post"; text?: string; components?: unknown }
+  | { kind: "control"; tool: string; args: Record<string, unknown> }
   | { kind: "final"; text: string; opts: unknown }
   | { kind: "error"; code: string };
 
-/** 가짜 러너의 런 손잡이를 흉내 낸다 — 대본이 부른 순서를 남기고, 승인은 decision 으로 곧바로 답한다 */
-async function runRunnerScript(text: string, decision: RunnerApprovalResolve | null = null) {
+/** 가짜 러너의 런 손잡이를 흉내 낸다 — 대본이 부른 순서를 남기고, 승인은 decision·제어 도구는 control 로 곧바로 답한다 */
+async function runRunnerScript(
+  text: string,
+  decision: RunnerApprovalResolve | null = null,
+  control: ControlResult = { ok: true, data: {} },
+) {
   const calls: RunnerCall[] = [];
   const run = {
     start: { deliver: delivery(text, { type: "user", handle: "owner" }, "coder", ["coder", "dev"]) },
@@ -472,6 +484,10 @@ async function runRunnerScript(text: string, decision: RunnerApprovalResolve | n
     post: async (input: { text?: string; components?: unknown }) => {
       calls.push({ kind: "post", ...input });
       return { ok: true, messageId: "m1" };
+    },
+    control: async (tool: string, args: Record<string, unknown>) => {
+      calls.push({ kind: "control", tool, args });
+      return control;
     },
     final: (t: string, opts: unknown) => calls.push({ kind: "final", text: t, opts }),
     error: (code: string) => calls.push({ kind: "error", code }),
@@ -551,6 +567,25 @@ describe("fakeRunnerScript", () => {
 
     const failed = await runRunnerScript("@coder 실패");
     expect(failed.calls.map((c) => c.kind)).toEqual(["tool", "error"]);
+  });
+
+  it("제어 → 그 채널의 주제를 update_channel 로, 「제어 프롬프트」 → set_channel_prompt, 거절이면 코드와 서버 문구를 답에", async () => {
+    const changed = await runRunnerScript("@coder 제어");
+    expect(changed.calls.filter((c) => c.kind === "control")).toEqual([
+      { kind: "control", tool: "update_channel", args: { channelId: CH, topic: RUNNER_CONTROL_TOPIC } },
+    ]);
+    expect(changed.streamed).toMatch(/^채널 주제를 바꿨습니다\.\n\n/);
+
+    const refused = await runRunnerScript("@coder 제어 프롬프트", null, {
+      ok: false,
+      error: { code: "FORBIDDEN", message: "이 일은 admin 이상만 할 수 있습니다(시킨 사람: @mia, member)" },
+    });
+    expect(refused.calls.filter((c) => c.kind === "control")).toEqual([
+      { kind: "control", tool: "set_channel_prompt", args: { channelId: CH, prompt: RUNNER_CONTROL_PROMPT } },
+    ]);
+    expect(refused.streamed).toMatch(
+      /^채널 프롬프트를 바꾸지 못했습니다\(FORBIDDEN\) — 「이 일은 admin 이상만 할 수 있습니다\(시킨 사람: @mia, member\)」/,
+    );
   });
 
   it("러너 대본이 내는 글·카드 라벨·승인 요약에는 어떤 키워드도 없다", async () => {
@@ -2098,6 +2133,32 @@ describe("startDevFake 가짜 Claude 러너 — 고정 러너 토큰·coder·/__
       .where(eq(runs.id, final?.runId ?? ""))
       .get();
     expect(stored?.usage).toMatchObject({ costUsd: 0.02, costKind: "api" });
+  }, 20_000);
+
+  it("@coder 「제어」 → 시킨 owner 에게 dodok_control 확인 카드, 허용하면 채널 주제가 바뀌고 시스템 메시지·답이 온다", async () => {
+    const ch = await coderChannel("runner-control");
+    const requested = new Promise<{ id: string; kind: string }>((resolve) =>
+      ch.socket.on("approval.requested", ({ approval }) => resolve(approval)),
+    );
+    expect((await ch.send(`<@a:${ch.coderId}> 제어`)).ok).toBe(true);
+    const approval = await requested;
+    expect(approval.kind).toBe("dodok_control");
+    const decided = await ch.socket.emitWithAck("approval.resolve", {
+      approvalId: approval.id,
+      decision: "allow-once",
+    });
+    expect(decided.ok).toBe(true);
+    await vi.waitFor(
+      () => {
+        expect(ch.created.some((m) => m.authorType === "system" && m.bodyMd.includes("주제"))).toBe(true);
+        expect(
+          ch.created.some((m) => m.authorType === "agent" && m.bodyMd.startsWith("채널 주제를 바꿨습니다.")),
+        ).toBe(true);
+      },
+      { timeout: 10_000 },
+    );
+    const { channel } = await rest<{ channel: { topic?: string } }>("GET", `/channels/${ch.channelId}`);
+    expect(channel.topic).toBe(RUNNER_CONTROL_TOPIC);
   }, 20_000);
 
   it("runner 훅 — false 면 끊기고 멘션은 run_error 카드, 틀린 token 이면 ok:false, true 면 다시 붙어 답한다", async () => {
