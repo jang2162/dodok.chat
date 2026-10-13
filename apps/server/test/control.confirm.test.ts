@@ -3,7 +3,7 @@
  * allow-once 만, 10분 만료, 런이 끝나면 cancelled, 허용 때 역할을 다시 읽는다(Review Focus 2). 결정은 실제 wire(approval.resolve)로 한다
  */
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
-import type { Approval, ControlResult } from "@dodok/shared";
+import { type Approval, CONTROL_CONFIRM_TTL_BRIDGE_MS, type ControlResult } from "@dodok/shared";
 import { and, eq } from "drizzle-orm";
 import { v7 as uuid } from "uuid";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -149,6 +149,35 @@ describe("확인 카드", () => {
     expect(listRunEvents(app.db, run.id, 0).map((e) => e.type)).toEqual(
       expect.arrayContaining(["APPROVAL_REQUESTED", "APPROVAL_RESOLVED"]),
     );
+  });
+
+  it("카드 기한 — OpenClaw(브리지) 주체는 5분, 러너 주체는 10분", async () => {
+    const bridge = openRun(app, owner);
+    const runner = openRun(app, owner);
+    const calls = [
+      track(
+        app.control.call({ ...bridge.principal, bridge: true }, "update_channel", {
+          channelId: bridge.channel.id,
+          name: "브리지기한",
+        }),
+      ),
+      track(
+        app.control.call(runner.principal, "update_channel", {
+          channelId: runner.channel.id,
+          name: "러너기한",
+        }),
+      ),
+    ];
+    const ttl = (c: Approval) => Date.parse(c.expiresAt) - Date.parse(c.createdAt);
+    const bridgeCard = await cardOf(app, bridge.run.id);
+    const runnerCard = await cardOf(app, runner.run.id);
+    expect(ttl(bridgeCard)).toBe(CONTROL_CONFIRM_TTL_BRIDGE_MS);
+    expect(ttl(bridgeCard)).toBe(300_000);
+    expect(ttl(runnerCard)).toBe(600_000);
+    // 카드를 닫아 호출이 매달리지 않게 한다
+    await decide(ownerToken, bridgeCard.id, "deny");
+    await decide(ownerToken, runnerCard.id, "deny");
+    await Promise.all(calls.map((c) => c.result));
   });
 
   it("결정은 시킨 사람 본인만 — 남(admin)의 결정은 FORBIDDEN 이고 카드는 그대로, 「항상 허용」은 VALIDATION", async () => {

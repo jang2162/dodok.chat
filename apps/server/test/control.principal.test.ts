@@ -71,6 +71,8 @@ describe("principalForRunner·principalForBridge", () => {
 
   it("플러그인: 열린 런 + 세션 키 + Gateway 가 모두 맞을 때만(Review Focus 4)", () => {
     const open = run(GATEWAY);
+    // 브리지 표지 — 확인 카드 기한이 5분이 된다(러너는 표지 없음, 위 toEqual)
+    expect(principalForBridge(db, GATEWAY, sessionKey(), open.id)?.bridge).toBe(true);
     expect(principalForBridge(db, GATEWAY, sessionKey(), open.id)).toMatchObject({
       runId: open.id,
       via: "agent",

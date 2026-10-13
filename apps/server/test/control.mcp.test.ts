@@ -7,6 +7,9 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { and, eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Writable } from "node:stream";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { App } from "../src/app";
@@ -28,6 +31,8 @@ describe("/mcp", () => {
   const lines: string[] = [];
   let ownerHeaders: { authorization: string };
   let n = 0;
+  // 설치 파일 자리를 빈 디렉터리로 고정 — 빌드 산출물(packages/*/dist 의 tgz)이 있어도 404 가 기대대로 나오게
+  const emptyDir = mkdtempSync(join(tmpdir(), "dodok-test-nofiles-"));
 
   beforeAll(async () => {
     const sink = new Writable({
@@ -40,6 +45,8 @@ describe("/mcp", () => {
       { LOG_LEVEL: "trace" },
       {
         logger: createLogger("trace", sink),
+        pluginDirs: [emptyDir],
+        runnerDirs: [emptyDir],
         limitClock: () => clock,
         limits: {
           bridgeFail: { maxFailures: MAX_FAILURES, windowMs: 60_000, blockMs: 60_000, maxAddresses: 64 },
@@ -50,6 +57,7 @@ describe("/mcp", () => {
   });
   afterAll(async () => {
     await app.close();
+    rmSync(emptyDir, { recursive: true, force: true });
   });
   // 테스트마다 실패 창·막힘·레이트 창을 넘긴다 — 앞 테스트의 실패가 다음 테스트를 막지 않게
   beforeEach(() => {
@@ -133,6 +141,34 @@ describe("/mcp", () => {
       .filter((r) => r.kind === "bridge_auth_blocked")
       .map((r) => (r.detail as { path?: unknown } | null)?.path);
     expect(paths).toContain("mcp");
+  });
+
+  it("제어 호출은 info 로그 한 줄 — 도구·via·사람·결과·ms 만, 인자 값과 토큰은 없다", async () => {
+    const token = ownerToken();
+    const secretName = `비밀이름-${randomUUID()}`;
+    const channel = newChannel(app);
+    lines.length = 0;
+    const ok = await callTool(token, "update_channel", { channelId: channel.id, name: secretName });
+    expect(ok.isError).toBe(false);
+    await callTool(token, "update_channel", { channelId: randomUUID(), name: secretName });
+    const entries = lines
+      .map((l) => JSON.parse(l) as Record<string, unknown>)
+      .filter((e) => e.msg === "control call");
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toMatchObject({
+      level: 30,
+      tool: "update_channel",
+      via: "pat",
+      userId: app.ownerUserId,
+      agentId: null,
+      runId: null,
+      result: "ok",
+    });
+    expect(typeof entries[0]?.ms).toBe("number");
+    expect(entries[1]?.result).not.toBe("ok");
+    const text = lines.join("");
+    expect(text).not.toContain(secretName);
+    expect(text).not.toContain(token);
   });
 
   it("비활성화된 사람의 토큰은 401, 다시 활성화해도 401 [Review Focus 5]", async () => {

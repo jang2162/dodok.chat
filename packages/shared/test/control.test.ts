@@ -3,6 +3,7 @@ import { BridgeCapability, BridgeHello, type BridgeClientToServerEvents } from "
 import {
   BridgeControlCall,
   CONTROL_CALL_TIMEOUT_MS,
+  CONTROL_CONFIRM_TTL_BRIDGE_MS,
   CONTROL_CONFIRM_TTL_MS,
   CONTROL_READ_MESSAGES_MAX,
   CONTROL_RESULT_UNKNOWN_MESSAGE,
@@ -324,6 +325,10 @@ describe("확인 카드·capability", () => {
 
   it("에이전트 쪽 호출 상한은 카드 만료보다 길다 — 짧으면 허용한 쓰기가 실행됐는데 에이전트는 시간 초과로 안다", () => {
     expect(CONTROL_CALL_TIMEOUT_MS).toBeGreaterThan(CONTROL_CONFIRM_TTL_MS);
+    expect(CONTROL_CALL_TIMEOUT_MS).toBeGreaterThan(CONTROL_CONFIRM_TTL_BRIDGE_MS);
+    // OpenClaw claude-cli 는 약 330~420초에 도구 호출을 끊는다 — 브리지 카드는 그보다 먼저 끝나야 한다
+    expect(CONTROL_CONFIRM_TTL_BRIDGE_MS).toBeLessThan(330_000);
+    expect(CONTROL_CONFIRM_TTL_BRIDGE_MS).toBeLessThan(CONTROL_CONFIRM_TTL_MS);
   });
 });
 

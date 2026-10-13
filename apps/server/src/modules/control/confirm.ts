@@ -1,4 +1,9 @@
-import { type Approval, CONTROL_CONFIRM_TTL_MS, type Message } from "@dodok/shared";
+import {
+  type Approval,
+  CONTROL_CONFIRM_TTL_BRIDGE_MS,
+  CONTROL_CONFIRM_TTL_MS,
+  type Message,
+} from "@dodok/shared";
 import { and, eq } from "drizzle-orm";
 import type { DbOrTx } from "../../db/client";
 import { approvals as approvalsTable, componentInteractions, users } from "../../db/schema.sqlite";
@@ -29,6 +34,8 @@ export type ConfirmDeps = {
   workspaceId: string;
   now(): Date;
   ttlMs?: number;
+  /** 브리지(OpenClaw) 주체의 카드 기한 — 기본 CONTROL_CONFIRM_TTL_BRIDGE_MS */
+  bridgeTtlMs?: number;
 };
 
 export type ConfirmRequest = {
@@ -39,6 +46,8 @@ export type ConfirmRequest = {
   /** 「…하려 합니다」 — 카드 제목의 술어(handlers.ts Wording.want) */
   want: string;
   summary?: string | undefined;
+  /** OpenClaw 플러그인 경로 — 더 짧은 기한 */
+  bridge?: boolean;
 };
 
 export type Confirmations = {
@@ -54,7 +63,8 @@ type Waiter = { runId: string; settle(approval: Approval): void; timer: ReturnTy
 
 export function createConfirmations(deps: ConfirmDeps): Confirmations {
   const { db, logger } = deps;
-  const ttlMs = deps.ttlMs ?? CONTROL_CONFIRM_TTL_MS;
+  const defaultTtlMs = deps.ttlMs ?? CONTROL_CONFIRM_TTL_MS;
+  const bridgeTtlMs = deps.bridgeTtlMs ?? deps.ttlMs ?? CONTROL_CONFIRM_TTL_BRIDGE_MS;
   const waiters = new Map<string, Waiter>();
 
   function expire(approvalId: string): void {
@@ -71,6 +81,7 @@ export function createConfirmations(deps: ConfirmDeps): Confirmations {
       const run = getRun(db, req.runId);
       // 끝난 런에 카드를 열면 닫아 줄 런 종료가 다시 오지 않는다 — 주체를 만든 뒤 런이 끝났으면 여기서 거절한다
       if (!run || TERMINAL_STATUSES.has(run.status)) throw apiError("NOT_FOUND", "run is not open");
+      const ttlMs = req.bridge === true ? bridgeTtlMs : defaultTtlMs;
       const agent = getAgent(db, req.agentId)?.handle ?? "unknown";
       const createdAt = deps.now();
       const approval = deps.approvals.openControl({

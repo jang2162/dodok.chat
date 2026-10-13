@@ -43,8 +43,9 @@ export type ControlDeps = {
   now?: () => number;
   /** 카드 시각·검색 날짜의 벽시계 */
   clock?: () => Date;
-  /** 확인 카드 기한 — 기본 CONTROL_CONFIRM_TTL_MS(10분) */
+  /** 확인 카드 기한 — 기본 CONTROL_CONFIRM_TTL_MS(10분). 브리지 주체는 bridgeConfirmTtlMs(없으면 이 값, 그것도 없으면 5분) */
   confirmTtlMs?: number;
+  bridgeConfirmTtlMs?: number;
 };
 
 export type ControlService = {
@@ -84,6 +85,7 @@ export function createControlService(deps: ControlDeps): ControlService {
     workspaceId,
     now: clock,
     ...(deps.confirmTtlMs === undefined ? {} : { ttlMs: deps.confirmTtlMs }),
+    ...(deps.bridgeConfirmTtlMs === undefined ? {} : { bridgeTtlMs: deps.bridgeConfirmTtlMs }),
   });
   const ctx: HandlerContext = {
     db,
@@ -165,6 +167,7 @@ export function createControlService(deps: ControlDeps): ControlService {
       runId: p.runId,
       requestedBy: p.userId,
       agentId: p.agentId,
+      bridge: p.bridge === true,
       toolName,
       want: wording?.want ?? `${toolName} 을 부르려 합니다`,
       summary: handler.summary?.(ctx, input),
@@ -220,18 +223,37 @@ export function createControlService(deps: ControlDeps): ControlService {
     }
   }
 
+  async function settle(principal: Principal, tool: string, args: unknown): Promise<ControlResult> {
+    try {
+      return { ok: true, data: await run(principal, tool, args) };
+    } catch (err) {
+      if (err instanceof HttpError) {
+        if (err.body.code === "INTERNAL") logger.error({ err, tool }, "control call failed");
+        return { ok: false, error: { code: err.body.code, message: err.body.message } };
+      }
+      logger.error({ err, tool }, "control call failed");
+      return { ok: false, error: { code: "INTERNAL", message: "internal error" } };
+    }
+  }
+
   return {
     async call(principal, tool, args) {
-      try {
-        return { ok: true, data: await run(principal, tool, args) };
-      } catch (err) {
-        if (err instanceof HttpError) {
-          if (err.body.code === "INTERNAL") logger.error({ err, tool }, "control call failed");
-          return { ok: false, error: { code: err.body.code, message: err.body.message } };
-        }
-        logger.error({ err, tool }, "control call failed");
-        return { ok: false, error: { code: "INTERNAL", message: "internal error" } };
-      }
+      const started = performance.now();
+      const result = await settle(principal, tool, args);
+      // 인자 값·프롬프트·토큰은 싣지 않는다 — 누가·무엇을·어떻게 끝났나만. tool 은 호출자가 보낸 문자열이라 알려진 도구일 때만 그대로
+      logger.info(
+        {
+          tool: findControlTool(tool) ? tool : "unknown",
+          via: principal.via,
+          userId: principal.userId,
+          agentId: principal.agentId ?? null,
+          runId: principal.runId ?? null,
+          result: result.ok ? "ok" : result.error.code,
+          ms: Math.round(performance.now() - started),
+        },
+        "control call",
+      );
+      return result;
     },
     onRunEnded: (runId) => confirmations.onRunEnded(runId),
     onApprovalSettled: (approval) => confirmations.onApprovalSettled(approval),

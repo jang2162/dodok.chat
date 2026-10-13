@@ -13,6 +13,8 @@ export type Principal = {
   agentId?: string;
   /** via agent — 그 에이전트의 열린 런. 확인 카드가 이 런에 붙고, 런이 끝나면 카드도 닫힌다 */
   runId?: string;
+  /** via agent — OpenClaw 플러그인(브리지) 경로. 확인 카드 기한이 더 짧다(CONTROL_CONFIRM_TTL_BRIDGE_MS) */
+  bridge?: true;
 };
 
 /**
@@ -48,5 +50,6 @@ export function principalForBridge(
   sessionKey: string,
   runId: string,
 ): Principal | undefined {
-  return principalForOpenRun(db, gatewayId, runId, sessionKey);
+  const principal = principalForOpenRun(db, gatewayId, runId, sessionKey);
+  return principal && { ...principal, bridge: true };
 }

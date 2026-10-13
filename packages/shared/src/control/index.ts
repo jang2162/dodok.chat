@@ -26,12 +26,18 @@ export type RunnerControlCall = z.infer<typeof RunnerControlCall>;
 export const BridgeControlCall = ControlCall.extend({ sessionKey: z.string(), runId: Id });
 export type BridgeControlCall = z.infer<typeof BridgeControlCall>;
 
-/** 확인 카드 기한 — 러너 도구 승인 기한과 같은 10분. 그 안에 결정이 없으면 도구 호출은 EXPIRED 로 끝난다 */
+/** 확인 카드 기한 — 러너 도구 승인 기한과 같은 10분(러너·개인 토큰 경로). 그 안에 결정이 없으면 도구 호출은 EXPIRED 로 끝난다 */
 export const CONTROL_CONFIRM_TTL_MS = 600_000;
 
 /**
+ * OpenClaw(플러그인) 경로의 확인 카드 기한 — 5분. OpenClaw claude-cli 런은 도구 호출이 약 5분 반~7분 사이에 `transport dropped mid-call`
+ * 로 끊긴다(실측: 330초 통과·420초 끊김). 카드가 그보다 먼저 EXPIRED 로 끝나야 도구가 「만료」를 깨끗이 받는다
+ */
+export const CONTROL_CONFIRM_TTL_BRIDGE_MS = 300_000;
+
+/**
  * 러너 CLI·플러그인이 control.call 의 ack 를 기다리는 상한. 서버는 확인 카드를 기다리는 동안 ack 를 미루고(최대
- * CONTROL_CONFIRM_TTL_MS, 그 전에 런이 끝나면 그때) 스스로 끊지 않는다 — 이보다 짧으면 허용한 쓰기가 실행됐는데 에이전트는 시간
+ * CONTROL_CONFIRM_TTL_MS — 브리지 경로는 그보다 짧은 CONTROL_CONFIRM_TTL_BRIDGE_MS, 그 전에 런이 끝나면 그때) 스스로 끊지 않는다 — 이보다 짧으면 허용한 쓰기가 실행됐는데 에이전트는 시간
  * 초과로 안다
  */
 export const CONTROL_CALL_TIMEOUT_MS = CONTROL_CONFIRM_TTL_MS + 60_000;
