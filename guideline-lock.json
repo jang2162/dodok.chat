@@ -1,7 +1,7 @@
 {
   "version": 2,
   "revisions": {
-    "default": 18
+    "default": 19
   },
   "sources": {
     "default:mcp/codegraph": "01d216780214053bd3728391bbb87db603034af0d566ca43dc52bc228378cc00",
@@ -15,7 +15,7 @@
     "default:rules/base/05-verification.md": "f781c9a139fb99592276239352afb95cbaf7c905b31812bebfd98f46eb1dd728",
     "default:rules/base/06-worktree-setup.md": "4fb84f38bbe4bb6b47e6d6a1c57f9df3a358f75d52737c029dac4c4fa653c66b",
     "default:rules/base/07-worktree-cleanup.md": "acfd9442e38a843ac88f0210fb7674ff435c2b4e3e0db65d6f0fd942c79f7a9f",
-    "default:rules/base/08-shared-resources.md": "57baca2fb1222d1ba24a61ef63839b70dd64b3497cdbdaae017a31afab1ae434",
+    "default:rules/base/08-shared-resources.md": "f68b3db0fea9443d254766dc5739596f79c986c20c82f76002e40876b22cf97d",
     "default:rules/base/09-worker-brief.md": "d0a58241b62c20a37ec594ceedddc247e4a4fe64960b39a16e93a11bef987cc5",
     "default:rules/base/10-package-manager.md": "4393e7b5203dbdf3cae0b02259a3989023c359f751a9c109fe10315283412c22",
     "default:rules/base/11-docs-layout.md": "8def8e3594ee2bad6e268e1bc64b01bb337228cdd0d3d2771abe033c08bb4bd2",
@@ -27,8 +27,8 @@
     "default:rules/browser/03-cdp.md": "271e112b29f9fa6235fb3919e64feb80b9abbece5249accf03ca1dc4b593f9c8",
     "default:rules/browser/04-shared-profile.md": "5f306b8212cff5572c7e8d1f2e012cd6ce7bd80e9ae0b1f985d61593635473d5",
     "default:rules/browseros-neo/00-switch.md": "9fad10f2d0fff095abafdd649b366431e14155f929b8aff77fe105f141e67433",
-    "default:rules/browseros-neo/01-limits.md": "5cf79db60eb9bc05b2640a9ac81a9257109532a7613472df216aeb7b9323d494",
-    "default:rules/browseros-neo/02-playwright.md": "bbdb1d602433a4f7ff1a20fca3d4724c7794ff27de95f47ffc43c70f8deca8a4",
+    "default:rules/browseros-neo/01-limits.md": "52fa2c34c80c0b91776f11e4f8f3bb4bfb9aa04cde757882c3c653fb6b8331ab",
+    "default:rules/browseros-neo/02-playwright.md": "c25f640696256793957ba742ba64334040ebb7bea6c24d43977dbcc8ba87ce21",
     "default:rules/browseros-neo/03-tabs.md": "5ef01cc4bffdc79f36b1fa3c319547c72eb62717d89d55124ef767f5b93aa1d4",
     "default:rules/browseros-neo/SETUP.md": "b7376822d2ad4eae0857a1654bc5ddf6c1304c75ec2c898097c4362f0d46a80f",
     "default:rules/codegraph/00-index.md": "dfb04e418ad4e592a161c6cc0d895ba534c7191106b3945d91f4c29dde211f8e",
@@ -308,7 +308,7 @@
       "items": [
         "default:rules/base/08-shared-resources.md"
       ],
-      "hash": "062cb2607b696d0fbd1fa37aa4798bdfb2f9180c70b872d2b6d23a1dafed35fe"
+      "hash": "1669f1ed97b43f6adbbabe58fa0c94e32f8e86c6e4b2f9ee2719be0eb9e611ef"
     },
     {
       "path": "docs/guideline/base/09-worker-brief.md",
@@ -378,14 +378,14 @@
       "items": [
         "default:rules/browseros-neo/01-limits.md"
       ],
-      "hash": "846c95b82040518441e943494063acea9ee607d559175b34fa75d6eba122b5dd"
+      "hash": "1ba9d8a50975b2aa055b327bab82ba19cc5e49ee7b9fc2017dc085b5eb4d2145"
     },
     {
       "path": "docs/guideline/browseros-neo/02-playwright.md",
       "items": [
         "default:rules/browseros-neo/02-playwright.md"
       ],
-      "hash": "147acc27903179eef07ca04bcacf14e1319ed2741d0c1026cca548ccc10c923a"
+      "hash": "c900dc39c38114f7715a62d4834209b9d849195437c36e680166c0f673125b22"
     },
     {
       "path": "docs/guideline/browseros-neo/03-tabs.md",

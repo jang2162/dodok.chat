@@ -13,5 +13,6 @@
 - **Why:** 다섯 다 실패가 아니라 **「없음」으로 보인다.** 「로그가 안 찍혔다」·「오류 없음」·「모바일에서도 같다」를 코드의 결과로 읽으면 못 본 것을 확인한 것으로 보고하게 된다.
 - **How to apply:**
   - 렌더를 재야 하면 neo 도, neo 에 붙인 Playwright 도 답이 아니다 — 둘 다 탭을 백그라운드로 연다. 로그인이 필요 없는 검증이면 독립 브라우저를 띄운다 — `browser` 스택 「페이지 자동화 도구를 얹을 때」 의 예외.
+  - ⚠ **포커스에 기대는 동작은 거짓 음성이 난다.** 백그라운드 탭은 `hasFocus() === false` 라 blur 때 저장하는 에디터, `:focus` 스타일 같은 것이 돌지 않는다. `playwright-core` 의 `connectOverCDP` 는 붙는 페이지에 포커스 에뮬레이션을 스스로 켜지만, **`playwright-neo` MCP(`@playwright/mcp`)는 `noDefaults` 로 붙어 켜지 않고** neo 자체 도구에도 없다. 그 경로로 확인할 때는 그 페이지에 CDP 세션을 열어(`page.context().newCDPSession(page)`) `Emulation.setFocusEmulationEnabled {enabled: true}` 를 보낸 뒤 본다 — 탭을 앞으로 가져오지 않으니 백그라운드 규칙과 같이 선다. **포커스만 풀린다** — `requestAnimationFrame`·`ResizeObserver` 는 visibility 에 묶여 여전히 돌지 않으므로 렌더는 위 항목대로 한다.
   - 앞의 넷 중 하나가 필요한 확인이면 처음부터 neo 에 Playwright 를 붙인다 — 이 스택 「Playwright 를 neo 에 붙일 때」. 실시간 동작(스트리밍·WebSocket 재접속)을 재는 검증이 대표적이다.
   - Playwright 를 붙이기 어려우면 `evaluate` 로 기록기를 심는다 — `browser` 스택 「콘솔과 네트워크」. 첫 로드 콘솔은 **열고 → `reload()` → 읽기** 순서로 한다(같은 파일).

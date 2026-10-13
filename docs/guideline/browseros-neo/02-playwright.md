@@ -21,3 +21,4 @@ neo 는 CDP 를 열어 두고 있다. 포트는 `~/Library/Application Support/B
     ```
   - 겪은 동작: neo 에 창이 없을 때 CDP 에 Playwright 를 붙이면 `Browser context management is not supported` 로 거절된 적이 있다. 이때는 `00-switch.md` 의 창 없음 안내를 따른다.
   - 포트는 위처럼 설정 파일에서 읽어 쓴다 — 기본값으로 추정하지 않는다. `playwright-neo` MCP 는 같은 방식으로 스스로 읽는다.
+  - ⚠ **`playwright-neo` MCP 가 읽고 쓰는 파일은 그 세션의 작업 디렉터리 안이어야 한다.** `browser_run_code_unsafe` 로 돌리는 하네스와 스크린샷 경로가 세션 스크래치패드(`/private/tmp/...`) 같은 바깥이면 `File access denied: … outside allowed roots` 로 막힌다 — 기본 허용 범위가 MCP 의 workspace roots(없으면 cwd)다. 하네스와 스크린샷은 **작업 디렉터리의 `.playwright-mcp/`** 에 둔다(이 스택 `SETUP.md` 가 gitignore 한다). 막혔다고 `server.json` 에 `--allow-unrestricted-file-access` 를 더하지 않는다 — `file://` 탐색까지 함께 열린다.
