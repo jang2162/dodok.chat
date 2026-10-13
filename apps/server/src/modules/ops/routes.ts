@@ -15,7 +15,8 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { AgentAdapter, OpenClawGateways } from "../../adapters/types";
 import type { Auth } from "../../auth";
-import { requireRole } from "../../auth/roles";
+import { authorizeOpsRead } from "../../auth/policies";
+import { requirePolicy, requireRole } from "../../auth/roles";
 import type { Db } from "../../db/client";
 import { parseBody, parseQuery, parseStored } from "../../http/validate";
 import { rescheduleAll } from "../automations/scheduler";
@@ -49,7 +50,7 @@ export function registerOpsRoutes(fastify: FastifyInstance, ctx: OpsRouteContext
   const admin = { preHandler: requireRole(ctx, "admin") };
   const now = ctx.now ?? (() => new Date());
 
-  fastify.get("/api/v1/ops/status", admin, async () => {
+  fastify.get("/api/v1/ops/status", { preHandler: requirePolicy(ctx, authorizeOpsRead) }, async () => {
     const at = now();
     const adapter = ctx.adapter.status();
     // Gateway 줄은 OpenClaw 어댑터의 것(멀티 Gateway 스펙 「운영」 절) — 다른 어댑터면 빈 목록. 꺼진 Gateway 는 버전을 싣지 않는다

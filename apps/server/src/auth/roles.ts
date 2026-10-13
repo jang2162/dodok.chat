@@ -1,10 +1,11 @@
-import { roleAtLeast, TeamRole } from "@dodok/shared";
+import { TeamRole } from "@dodok/shared";
 import { and, eq } from "drizzle-orm";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import type { DbOrTx } from "../db/client";
 import { memberships } from "../db/schema.sqlite";
 import { apiError } from "../http/errors";
 import { type Auth, SESSION_COOKIE, verifySessionToken } from "./index";
+import { requireAtLeast } from "./policies";
 
 // 요청이 누구이고 무엇을 할 수 있는가 — 역할 매트릭스의 정본은 팀 스펙 「역할과 권한」 절 표다.
 // requireSession 도 여기 있는 까닭: 세션 확인이 membership 을 읽고(없으면 401) requireRole 은 그 위에 선다 —
@@ -18,25 +19,6 @@ declare module "fastify" {
 }
 
 type GuardContext = { auth: Auth; db: DbOrTx; workspaceId: string };
-
-/** POST /channels·PATCH /channels/:id 에서 member 가 줄 수 있는 필드. 목록 밖 필드가 하나라도 있으면 admin — 새 필드는 기본이 admin 이다 */
-export const MEMBER_EDITABLE_CHANNEL_FIELDS: ReadonlySet<string> = new Set(["name", "topic"]);
-
-/**
- * 채널의 에이전트 멤버(POST /channels/:id/members 의 에이전트·PATCH …/members/:memberId)에서 member 가 줄 수 있는 필드.
- * promptOverride·autoRespond 는 에이전트 동작·비용 설정이라 admin
- */
-export const MEMBER_EDITABLE_AGENT_MEMBER_FIELDS: ReadonlySet<string> = new Set([
-  "memberType",
-  "memberId",
-  "aliases",
-]);
-
-/** 본문 키 중 allowed 밖이 하나라도 있는가 — 파싱이 버린 모르는 키도 센다(부분 적용 없이 통째로 막으려고) */
-export function hasFieldOutside(body: unknown, allowed: ReadonlySet<string>): boolean {
-  if (typeof body !== "object" || body === null) return false;
-  return Object.keys(body).some((key) => !allowed.has(key));
-}
 
 /**
  * membership 그대로 — 비활성도 낸다. 멤버 관리(비활성화·다시 활성화·멤버 표)와 로그인의 403 처럼 비활성을 가려 봐야 하는 자리만 쓴다.
@@ -67,7 +49,7 @@ export function roleOf(db: DbOrTx, workspaceId: string, userId: string): TeamRol
 
 /** 핸들러 안에서(필드별 검사 등) — membership 을 다시 읽어 모자라면 403 을 던진다 */
 export function assertRole(db: DbOrTx, workspaceId: string, userId: string, min: TeamRole): void {
-  if (!roleAtLeast(roleOf(db, workspaceId, userId), min)) throw forbidden(min);
+  requireAtLeast(roleOf(db, workspaceId, userId), min);
 }
 
 /**
@@ -92,7 +74,19 @@ export function requireRole(ctx: GuardContext, min: TeamRole) {
   const session = requireSession(ctx);
   return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
     await session(request, reply);
-    if (!roleAtLeast(sessionUser(request).role, min)) throw forbidden(min);
+    requireAtLeast(sessionUser(request).role, min);
+  };
+}
+
+/**
+ * 세션 확인 뒤 정책 함수(auth/policies.ts)를 이 요청의 역할로 부른다 — 제어 도구에 대응하는 경로가 쓴다. 본문을 보는 정책(필드별)은
+ * 파싱 뒤 핸들러에서 sessionUser(request).role 로 부른다
+ */
+export function requirePolicy(ctx: GuardContext, policy: (role: TeamRole) => void) {
+  const session = requireSession(ctx);
+  return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
+    await session(request, reply);
+    policy(sessionUser(request).role);
   };
 }
 
@@ -114,8 +108,4 @@ export function sessionTokenOf(request: FastifyRequest): string | undefined {
     if (token) return token;
   }
   return request.cookies[SESSION_COOKIE] || undefined;
-}
-
-function forbidden(min: TeamRole) {
-  return apiError("FORBIDDEN", min === "owner" ? "owner 만 쓸 수 있다" : `${min} 이상만 쓸 수 있다`);
 }

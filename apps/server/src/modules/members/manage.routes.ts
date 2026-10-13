@@ -2,7 +2,8 @@ import { Id, UpdateMemberRoleBody } from "@dodok/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { Auth } from "../../auth";
-import { requireRole, requireSession, sessionUser } from "../../auth/roles";
+import { authorizeRead } from "../../auth/policies";
+import { requirePolicy, requireRole, sessionUser } from "../../auth/roles";
 import type { Db } from "../../db/client";
 import { apiError } from "../../http/errors";
 import { parseBody, parseParams } from "../../http/validate";
@@ -27,11 +28,10 @@ const MemberParams = z.object({ userId: Id });
 
 /** 멤버 관리(팀 스펙 「멤버 관리」 절)와 사람 목록. 초대·재설정·내 계정 경로는 members/routes.ts */
 export function registerMemberManageRoutes(fastify: FastifyInstance, ctx: MemberManageRouteContext): void {
-  const authed = { preHandler: requireSession(ctx) };
   const admin = { preHandler: requireRole(ctx, "admin") };
   const owner = { preHandler: requireRole(ctx, "owner") };
 
-  fastify.get("/api/v1/people", authed, async (request) => ({
+  fastify.get("/api/v1/people", { preHandler: requirePolicy(ctx, authorizeRead) }, async (request) => ({
     people: listPeople(ctx.db, sessionUser(request).workspaceId),
   }));
 

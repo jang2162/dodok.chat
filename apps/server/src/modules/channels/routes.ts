@@ -2,6 +2,7 @@ import {
   AddChannelMemberBody,
   CreateChannelBody,
   Id,
+  type TeamRole,
   UpdateChannelBody,
   UpdateChannelMemberBody,
 } from "@dodok/shared";
@@ -10,12 +11,16 @@ import { z } from "zod";
 import type { AdapterRegistry } from "../../adapters/registry";
 import type { Auth } from "../../auth";
 import {
-  assertRole,
-  hasFieldOutside,
-  MEMBER_EDITABLE_AGENT_MEMBER_FIELDS,
-  MEMBER_EDITABLE_CHANNEL_FIELDS,
-  requireRole,
-} from "../../auth/roles";
+  authorizeChannelAgentPatch,
+  authorizeChannelArchive,
+  authorizeChannelCreate,
+  authorizeChannelMemberAdd,
+  authorizeChannelMemberRemove,
+  authorizeChannelPatch,
+  authorizeChannelUnarchive,
+  authorizeRead,
+} from "../../auth/policies";
+import { requirePolicy, requireRole } from "../../auth/roles";
 import { requireSession, sessionUser } from "../../auth/routes";
 import type { Db } from "../../db/client";
 import { apiError } from "../../http/errors";
@@ -62,14 +67,13 @@ const ListQuery = z.object({ archived: z.literal("1").optional() });
 const ResetQuery = z.object({ threadRootId: Id.optional() });
 
 export function registerChannelRoutes(fastify: FastifyInstance, ctx: ChannelRouteContext): void {
+  const read = { preHandler: requirePolicy(ctx, authorizeRead) };
+  /** 본문을 보는 정책은 파싱 뒤 핸들러가 부른다(authorizeBody) */
   const authed = { preHandler: requireSession(ctx) };
   const admin = { preHandler: requireRole(ctx, "admin") };
-  /** 필드별 역할 검사 — 파싱 뒤, 어떤 쓰기보다 먼저 부른다(403 이면 아무 필드도 안 바뀐다) */
-  const assertFields = (request: FastifyRequest, allowed: ReadonlySet<string>) => {
-    if (!hasFieldOutside(request.body, allowed)) return;
-    const user = sessionUser(request);
-    assertRole(ctx.db, user.workspaceId, user.id, "admin");
-  };
+  /** 필드별 역할 검사 — 파싱 뒤, 어떤 쓰기보다 먼저 부른다(403 이면 아무 필드도 안 바뀐다). 모르는 키도 세도록 원래 본문을 넘긴다 */
+  const authorizeBody = (request: FastifyRequest, policy: (role: TeamRole, body: unknown) => void) =>
+    policy(sessionUser(request).role, request.body);
 
   /** 요청자 워크스페이스의 채널만 — 아니면 404 */
   const loadChannel = (workspaceId: string, id: string): ChannelRecord => {
@@ -85,7 +89,7 @@ export function registerChannelRoutes(fastify: FastifyInstance, ctx: ChannelRout
   const emitMembers = (channelId: string) =>
     ctx.bus.emit("channel.member.changed", { channelId, members: listMembers(ctx.db, channelId) });
 
-  fastify.get("/api/v1/channels", authed, async (request) => {
+  fastify.get("/api/v1/channels", read, async (request) => {
     const { archived } = parseQuery(ListQuery, request.query);
     return {
       channels: listChannels(ctx.db, sessionUser(request).workspaceId, { archived: archived === "1" }),
@@ -95,15 +99,14 @@ export function registerChannelRoutes(fastify: FastifyInstance, ctx: ChannelRout
   fastify.post("/api/v1/channels", authed, async (request, reply) => {
     const user = sessionUser(request);
     const body = parseBody(CreateChannelBody, request.body);
-    // 만들 때 name·topic 밖의 필드(프롬프트·릴레이 정책·공개 범위)를 실으면 PATCH 와 같이 admin 몫
-    assertFields(request, MEMBER_EDITABLE_CHANNEL_FIELDS);
+    authorizeBody(request, authorizeChannelCreate);
     const channel = createChannel(ctx.db, { ...body, workspaceId: user.workspaceId, createdBy: user.id });
     // 채널 룸에는 아직 아무도 없다 — 워크스페이스 룸으로 알려 다른 탭의 목록에 바로 뜨게 한다(계획서 8장 이월)
     ctx.bus.emit("channel.created", { channel });
     return reply.code(201).send({ channel });
   });
 
-  fastify.get("/api/v1/channels/:id", authed, async (request) => {
+  fastify.get("/api/v1/channels/:id", read, async (request) => {
     const { id } = parseParams(ChannelParams, request.params);
     return { channel: loadChannel(sessionUser(request).workspaceId, id) };
   });
@@ -112,7 +115,7 @@ export function registerChannelRoutes(fastify: FastifyInstance, ctx: ChannelRout
     const { id } = parseParams(ChannelParams, request.params);
     loadWritable(sessionUser(request).workspaceId, id);
     const patch = parseBody(UpdateChannelBody, request.body);
-    assertFields(request, MEMBER_EDITABLE_CHANNEL_FIELDS);
+    authorizeBody(request, authorizeChannelPatch);
     const { channel, promptChanged } = updateChannel(ctx.db, id, patch);
     ctx.bus.emit("channel.updated", { channel });
     // 채널 변경은 이미 유효하다 — Gateway 반영은 비동기, 실패는 system.notice 로만 알린다(스펙 3.4)
@@ -120,7 +123,7 @@ export function registerChannelRoutes(fastify: FastifyInstance, ctx: ChannelRout
     return { channel };
   });
 
-  fastify.get("/api/v1/channels/:id/members", authed, async (request) => {
+  fastify.get("/api/v1/channels/:id/members", read, async (request) => {
     const { id } = parseParams(ChannelParams, request.params);
     loadChannel(sessionUser(request).workspaceId, id);
     return { members: listMembers(ctx.db, id) };
@@ -131,7 +134,7 @@ export function registerChannelRoutes(fastify: FastifyInstance, ctx: ChannelRout
     loadWritable(sessionUser(request).workspaceId, id);
     const body = parseBody(AddChannelMemberBody, request.body);
     // 사람 멤버는 promptOverride·autoRespond 를 못 가진다 — 서비스가 400 으로 막는다
-    if (body.memberType === "agent") assertFields(request, MEMBER_EDITABLE_AGENT_MEMBER_FIELDS);
+    authorizeBody(request, authorizeChannelMemberAdd);
     const gatewaysBefore = body.memberType === "agent" ? channelGatewayIds(ctx.db, id) : [];
     const member = addMember(ctx.db, id, body, ctx.logger);
     emitMembers(id);
@@ -147,39 +150,51 @@ export function registerChannelRoutes(fastify: FastifyInstance, ctx: ChannelRout
     const { id, memberId } = parseParams(MemberParams, request.params);
     loadWritable(sessionUser(request).workspaceId, id);
     const patch = parseBody(UpdateChannelMemberBody, request.body);
-    assertFields(request, MEMBER_EDITABLE_AGENT_MEMBER_FIELDS);
+    authorizeBody(request, authorizeChannelAgentPatch);
     const { member } = updateAgentMember(ctx.db, id, memberId, patch, ctx.logger);
     emitMembers(id);
     return { member };
   });
 
-  fastify.delete("/api/v1/channels/:id/members/:memberId", authed, async (request) => {
-    const { id, memberId } = parseParams(MemberParams, request.params);
-    loadWritable(sessionUser(request).workspaceId, id);
-    removeMember(ctx.db, id, memberId);
-    const members = listMembers(ctx.db, id);
-    ctx.bus.emit("channel.member.changed", { channelId: id, members });
-    return { members };
-  });
+  fastify.delete(
+    "/api/v1/channels/:id/members/:memberId",
+    { preHandler: requirePolicy(ctx, authorizeChannelMemberRemove) },
+    async (request) => {
+      const { id, memberId } = parseParams(MemberParams, request.params);
+      loadWritable(sessionUser(request).workspaceId, id);
+      removeMember(ctx.db, id, memberId);
+      const members = listMembers(ctx.db, id);
+      ctx.bus.emit("channel.member.changed", { channelId: id, members });
+      return { members };
+    },
+  );
 
   /**
    * 보관(채널 보관 스펙 「채널 보관」 절, admin) — 기록은 남고 열린 런은 멈춘다. 이미 보관했으면 200 그대로. channel.updated 는
    * 워크스페이스 방으로 간다 — 다른 사람의 사이드바에서 빠지고 열린 화면이 읽기 전용으로 바뀐다
    */
-  fastify.post("/api/v1/channels/:id/archive", admin, async (request) => {
-    const { id } = parseParams(ChannelParams, request.params);
-    const channel = await archiveChannel(ctx, id, sessionUser(request).workspaceId);
-    ctx.bus.emit("channel.updated", { channel });
-    return { channel };
-  });
+  fastify.post(
+    "/api/v1/channels/:id/archive",
+    { preHandler: requirePolicy(ctx, authorizeChannelArchive) },
+    async (request) => {
+      const { id } = parseParams(ChannelParams, request.params);
+      const channel = await archiveChannel(ctx, id, sessionUser(request).workspaceId);
+      ctx.bus.emit("channel.updated", { channel });
+      return { channel };
+    },
+  );
 
   /** 보관 해제(admin) — 같은 멤버·세션으로 돌아온다. 살아 있으면 200 그대로 */
-  fastify.post("/api/v1/channels/:id/unarchive", admin, async (request) => {
-    const { id } = parseParams(ChannelParams, request.params);
-    const channel = unarchiveChannel(ctx.db, id, sessionUser(request).workspaceId);
-    ctx.bus.emit("channel.updated", { channel });
-    return { channel };
-  });
+  fastify.post(
+    "/api/v1/channels/:id/unarchive",
+    { preHandler: requirePolicy(ctx, authorizeChannelUnarchive) },
+    async (request) => {
+      const { id } = parseParams(ChannelParams, request.params);
+      const channel = unarchiveChannel(ctx.db, id, sessionUser(request).workspaceId);
+      ctx.bus.emit("channel.updated", { channel });
+      return { channel };
+    },
+  );
 
   /** 「새 대화」(스펙 3.4) — 409 CONFLICT(ADAPTER_CAPABILITY_MISSING)·503 ADAPTER_UNAVAILABLE 등은 서비스가 정한다 */
   fastify.post("/api/v1/channels/:id/agents/:agentId/reset", admin, async (request) => {

@@ -4,8 +4,15 @@ import { z } from "zod";
 import type { AdapterRegistry } from "../../adapters/registry";
 import { AdapterError } from "../../adapters/types";
 import type { Auth } from "../../auth";
-import { requireRole } from "../../auth/roles";
-import { requireSession, sessionUser } from "../../auth/routes";
+import {
+  authorizeAgentArchive,
+  authorizeAgentDiscover,
+  authorizeAgentPatch,
+  authorizeAgentRegister,
+  authorizeRead,
+} from "../../auth/policies";
+import { requirePolicy, requireRole } from "../../auth/roles";
+import { sessionUser } from "../../auth/routes";
 import type { Db } from "../../db/client";
 import { apiError } from "../../http/errors";
 import { parseBody, parseParams, parseQuery } from "../../http/validate";
@@ -43,17 +50,17 @@ const AgentParams = z.object({ id: Id });
 const MoveGatewayBody = z.object({ gatewayId: Id });
 
 export function registerAgentRoutes(fastify: FastifyInstance, ctx: AgentRouteContext): void {
-  const authed = { preHandler: requireSession(ctx) };
+  const policy = (p: Parameters<typeof requirePolicy>[1]) => ({ preHandler: requirePolicy(ctx, p) });
   const admin = { preHandler: requireRole(ctx, "admin") };
   const owner = { preHandler: requireRole(ctx, "owner") };
   // 다른 탭·사람의 화면이 에이전트·채널 멤버 목록을 다시 받게 — 본문이 없다(계획 판정 PS4)
   const changed = () => ctx.bus.emit("agents.changed", {});
 
-  fastify.get("/api/v1/agents", authed, async (request) => ({
+  fastify.get("/api/v1/agents", policy(authorizeRead), async (request) => ({
     agents: listAgents(ctx.db, sessionUser(request).workspaceId),
   }));
 
-  fastify.post("/api/v1/agents", admin, async (request, reply) => {
+  fastify.post("/api/v1/agents", policy(authorizeAgentRegister), async (request, reply) => {
     const body = parseBody(CreateAgentBody, request.body);
     if (body.provider === "openclaw" && body.gatewayId === undefined)
       throw apiError("VALIDATION", "gatewayId is required for OpenClaw", { field: "gatewayId" });
@@ -67,7 +74,7 @@ export function registerAgentRoutes(fastify: FastifyInstance, ctx: AgentRouteCon
     return reply.code(201).send({ agent });
   });
 
-  fastify.patch("/api/v1/agents/:id", admin, async (request) => {
+  fastify.patch("/api/v1/agents/:id", policy(authorizeAgentPatch), async (request) => {
     const { id } = parseParams(AgentParams, request.params);
     if (!getAgent(ctx.db, id, sessionUser(request).workspaceId))
       throw apiError("NOT_FOUND", "agent not found");
@@ -80,7 +87,7 @@ export function registerAgentRoutes(fastify: FastifyInstance, ctx: AgentRouteCon
   /**
    * 보관(스펙 「에이전트 보관」 절, admin) — 행·핸들·채널 참여·세션은 남고 열린 런은 멈춘다. 이미 보관했으면 200 그대로
    */
-  fastify.delete("/api/v1/agents/:id", admin, async (request) => {
+  fastify.delete("/api/v1/agents/:id", policy(authorizeAgentArchive), async (request) => {
     const { id } = parseParams(AgentParams, request.params);
     const agent = await archiveAgent(ctx.db, ctx, id, sessionUser(request).workspaceId);
     changed();
@@ -120,7 +127,7 @@ export function registerAgentRoutes(fastify: FastifyInstance, ctx: AgentRouteCon
    * 러너들이 hello 로 알린 에이전트(충돌 빼고). 자동 동기화는 하지 않는다(스펙 3.5). 같은 자리의 보관한 에이전트가 있으면
    * archivedAgentId 를 싣는다 — 웹은 등록 대신 되살리기를 보인다
    */
-  fastify.get("/api/v1/agents/discover", admin, async (request) => {
+  fastify.get("/api/v1/agents/discover", policy(authorizeAgentDiscover), async (request) => {
     const { provider, gatewayId } = parseQuery(DiscoverAgentsQuery, request.query);
     if (provider === "openclaw") {
       if (gatewayId === undefined)

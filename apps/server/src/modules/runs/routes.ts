@@ -2,6 +2,8 @@ import { Id } from "@dodok/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { Auth } from "../../auth";
+import { authorizeRead } from "../../auth/policies";
+import { requirePolicy } from "../../auth/roles";
 import { requireSession, sessionUser } from "../../auth/routes";
 import type { Db } from "../../db/client";
 import { apiError } from "../../http/errors";
@@ -36,7 +38,7 @@ export function registerRunRoutes(fastify: FastifyInstance, ctx: RunRouteContext
     return { runs: listChannelRuns(ctx.db, id, limit) };
   });
 
-  fastify.get("/api/v1/runs/:id", auth, async (request) => {
+  fastify.get("/api/v1/runs/:id", { preHandler: requirePolicy(ctx, authorizeRead) }, async (request) => {
     const { id } = parseParams(IdParams, request.params);
     return { run: visibleRun(id, sessionUser(request).workspaceId) };
   });
