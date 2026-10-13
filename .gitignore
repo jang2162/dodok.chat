@@ -31,6 +31,9 @@ dist/
 # codegraph 인덱스 — 로컬에서 다시 만드는 생성물(codegraph init·sync)
 /.codegraph/
 
+# Orca 개인용 이슈 명령
+/.orca/issue-command
+
 # START Ruler Generated Files
 /.claude/skills
 /.mcp.json

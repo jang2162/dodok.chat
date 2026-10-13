@@ -11,8 +11,9 @@
   post-checkout:
     jobs:
       - name: runtime
-        run: "if command -v mise >/dev/null; then mise install; else echo 'mise 가 없어 런타임 버전을 맞추지 못했다'; fi"
+        run: "if command -v mise >/dev/null; then mise trust && mise install; else echo 'mise 가 없어 런타임 버전을 맞추지 못했다'; fi"
       - name: deps
         run: "pnpm install"
   ```
+  - 새 워크트리의 `mise.toml` 은 아직 신뢰되지 않아 `mise install` 만 부르면 바로 실패한다. `mise trust` 를 먼저 부른다.
   - 런타임 관리자가 없는 환경에서는 첫 잡이 **안내만 찍고 넘어가게** 한다.

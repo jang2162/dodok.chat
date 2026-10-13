@@ -10,10 +10,14 @@ neo 는 CDP 를 열어 두고 있다. 포트는 `~/Library/Application Support/B
   - 한 번만 필요하면 `playwright-core` 로 붙는다. 끝낼 때 `close()` 는 **연결만 끊는다** — neo 는 살아 있다.
     ```js
     import { chromium } from 'playwright-core';
-    const b = await chromium.connectOverCDP('http://127.0.0.1:9110');
+    import { readFileSync } from 'node:fs';
+    import { homedir } from 'node:os';
+    const cfg = `${homedir()}/Library/Application Support/BrowserClaw/.browseros/config.json`;
+    const port = JSON.parse(readFileSync(cfg, 'utf8')).ports?.cdp ?? 9110;
+    const b = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
     const page = await b.contexts()[0].newPage();   // neo 의 기존 컨텍스트
     // ...
     await b.close();
     ```
   - 겪은 동작: neo 에 창이 없을 때 CDP 에 Playwright 를 붙이면 `Browser context management is not supported` 로 거절된 적이 있다. 이때는 `00-switch.md` 의 창 없음 안내를 따른다.
-  - 포트가 기본값과 다른 머신이면 설정 파일에서 읽어 쓴다 — 포트를 추정하지 않는다.
+  - 포트는 위처럼 설정 파일에서 읽어 쓴다 — 기본값으로 추정하지 않는다. `playwright-neo` MCP 는 같은 방식으로 스스로 읽는다.
