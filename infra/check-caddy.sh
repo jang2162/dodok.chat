@@ -30,6 +30,16 @@ get() {
 # 응답 헤더 값(이름은 대소문자 무시, 마지막 것)
 header() { grep -i "^$1:" "$tmp/h" | tail -1 | cut -d: -f2- | tr -d '\r' | sed 's/^ *//'; }
 
+# POST 한 번(JSON 본문, 머리는 넷째 인자부터) — get 과 같이 $tmp/h·$tmp/b 에 남기고 상태 코드를 찍는다
+post_json() {
+  local path="$1" body="$2"
+  shift 2
+  : >"$tmp/h"
+  : >"$tmp/b"
+  curl -sk --max-time 10 -D "$tmp/h" -o "$tmp/b" -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
+    "$@" --data-binary "$body" "$origin$path" 2>/dev/null || true
+}
+
 # check <라벨> <경로> <기대 상태> [content-type 접두] [Cache-Control 에 들어 있어야 할 낱말]
 check() {
   local label="$1" path="$2" want="$3" type="${4:-}" cache="${5:-}" code
@@ -66,6 +76,13 @@ check "/runner/attachments/… 는 서버로(토큰 없이 401 JSON)" /runner/at
 # 노드 설치 안내서 — 서버가 채우는 평문. SPA 폴백이면 200 HTML 이라 content-type 과 본문의 절 제목을 본다
 # 자동화 웹훅 — 모르는 토큰은 서버의 404 JSON. SPA 폴백이면 200 HTML
 check "/hooks/whk_nope 는 서버로(404 JSON)" /hooks/whk_nope 404 application/json
+# 바깥 MCP 입구 — 토큰 없는 POST 는 서버의 401 JSON. SPA 폴백이면 POST 가 정적 처리기로 가 405·200 HTML 이 된다
+code="$(post_json /mcp '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' -H 'Accept: application/json, text/event-stream')"
+if [[ "$code" == 401 && "$(header content-type)" == application/json* ]] && grep -qF '"UNAUTHORIZED"' "$tmp/b"; then
+  pass "/mcp 는 서버로(토큰 없이 401 JSON)"
+else
+  fail "/mcp 는 서버로(토큰 없이 401 JSON)" "POST /mcp → $code content-type '$(header content-type)' 본문 '$(head -c 120 "$tmp/b" | tr '\n' ' ')'"
+fi
 check "/llms.txt 는 서버의 평문" /llms.txt 200 text/plain
 if grep -qF '## OpenClaw Gateway 호스트' "$tmp/b"; then pass "/llms.txt 본문이 서버의 안내서"; else fail "/llms.txt 본문이 서버의 안내서" "본문 '$(head -c 120 "$tmp/b" | tr '\n' ' ')'"; fi
 check "/sw.js no-cache" /sw.js 200 "" no-cache
@@ -128,6 +145,10 @@ else
   probe "/hooks/$hook_token?delivery=1"
   probe "/api/v1/channels?t=$dash_token"
   probe "/hooks/%77hk_$pct_tail"
+  # 개인 토큰은 URL 이 아니라 Authorization 머리로 온다 — Caddy 는 오류 로그의 요청 머리에서 그 값을 가린다(log_credentials 를 켜지 않는 한)
+  mcp_token="dpt_$(rand_b64url 43)"
+  curl -sk --http2 --max-time 2 -o /dev/null -X POST -H 'Content-Type: application/json' -H 'Content-Length: 1000' \
+    -H "Authorization: Bearer $mcp_token" --data-binary 'abc' "$origin/mcp" 2>/dev/null || true
   sleep 1
   bash -c "$CADDY_LOG_CMD" >"$tmp/caddy.log" 2>&1 || true
   # log_masked <라벨 꼬리> <원문 끝 조각> <가린 꼴>
@@ -144,6 +165,14 @@ else
   log_masked "/hooks/ 경로" "${hook_token: -12}" "/hooks/${hook_token:0:10}…"
   log_masked "쿼리의 whk_ 토큰(꼬리에 -)" "${dash_token: -12}" "?t=${dash_token:0:10}…"
   log_masked "%77 로 쓴 /hooks/ 조각" "${pct_tail: -12}" "/hooks/%77hk_${pct_tail:0:4}…"
+  label="개인 토큰이 Caddy 오류 로그에 원문으로 없다 — /mcp Authorization 머리"
+  if grep -qF -- "${mcp_token: -12}" "$tmp/caddy.log"; then
+    fail "$label" "토큰 끝부분이 로그에 있다 — Caddyfile 에 log_credentials 가 켜졌는가"
+  elif ! grep -qF -- '"/mcp"' "$tmp/caddy.log"; then
+    fail "$label" "/mcp 오류 줄을 로그에서 못 찾았다 — CADDY_LOG_CMD 가 이 Caddy 의 로그를 찍는가"
+  else
+    pass "$label"
+  fi
 fi
 
 if ((fails > 0)); then
