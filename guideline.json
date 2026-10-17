@@ -57,9 +57,6 @@
         "rules/ruler/01-nested.md",
         "rules/ruler/02-documents.md",
         "rules/ruler/SETUP.md",
-        "rules/tiergear/00-switch.md",
-        "rules/tiergear/01-launch.md",
-        "rules/tiergear/02-orca-spawn.md",
         "skills/guideline-export",
         "skills/guideline-sync",
         "skills/orca-worker"
