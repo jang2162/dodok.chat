@@ -57,11 +57,6 @@ ORCA_WORKER_RETRY_SLEEP=0
 export ORCA_WORKER_ATTACH_BUDGET_SEC ORCA_WORKER_RETRY_SLEEP
 . "$SUT"
 
-# **스위트 기본값은 「tiergear 없음」이다.** 개발자 머신에 깔린 진짜 tiergear 가
-# 판단기를 부르면 모델이 머신마다 달라져 단언이 흔들린다. tiergear 가 필요한
-# 테스트만 스텁(stub-tiergear.sh)을 주입한다.
-TIERGEAR_COMMAND="$HERE/no-such-tiergear"
-export TIERGEAR_COMMAND
 
 echo "역할→모델 배정"
 assert_eq "$(resolve_model implement)" "opus"   "implement 는 opus"
@@ -992,138 +987,36 @@ assert_eq "$(printf '%s' "$out" | grep -c 'wait` 로 잡히지 않는다')" "1" 
 assert_eq "$(printf '%s' "$out" | grep -c 'terminal read --terminal term_reap_1')" "1" \
   "읽어야 할 터미널을 핸들까지 찍어 준다"
 
-echo "tiergear 연동"
-TG="$HERE/stub-tiergear.sh"
-export STUB_TG_LOG="$(mktemp)"
+echo "워커 모델 — 역할 기본값과 --model 재정의"
 jq '.result.terminals = []' "$HERE/fixtures/terminal-list.json" > "$P/tg-noterms.json"
 STUB_ORCA_TERMINALS_FIXTURE="$P/tg-noterms.json"; export STUB_ORCA_TERMINALS_FIXTURE
-TGWT="$P/.worktrees/$PB/probe"
 
-# 1. tiergear 없음 — 지금과 같다(역할 기본 모델, --effort 없음).
 : > "$STUB_ORCA_LOG"
 out="$(cmd_spawn probe chore --base main 2>&1)"
 assert_eq "$(grep 'worker-start' "$STUB_ORCA_LOG" | grep -c -- '--agent claude --model sonnet --timeout-ms')" "1" \
-  "tiergear 가 없으면 spawn 은 역할 기본 모델로 띄운다(--effort 없음)"
+  "spawn 은 역할 기본 모델로 띄운다"
 assert_eq "$(printf '%s' "$out" | grep -c '모델: sonnet (역할 기본값 chore)')" "1" \
   "요약에 역할 기본값 출처를 적는다"
 : > "$STUB_ORCA_LOG"
 cmd_attach probe chore >/dev/null 2>&1
 assert_eq "$(grep 'worker-start' "$STUB_ORCA_LOG" | grep -c -- '--agent claude --model sonnet --timeout-ms')" "1" \
-  "tiergear 가 없으면 attach 도 역할 기본 모델로 띄운다(--effort 없음)"
+  "attach 도 역할 기본 모델로 띄운다"
 
-# 2. tiergear 있음 — 스텁 출력의 --model·--effort 가 worker-start 로 간다.
-: > "$STUB_ORCA_LOG"; : > "$STUB_TG_LOG"
-out="$(TIERGEAR_COMMAND="$TG" cmd_spawn probe review --base main 2>&1)"
-assert_eq "$(grep 'worker-start' "$STUB_ORCA_LOG" | grep -c -- '--agent claude --model opus --effort xhigh --timeout-ms')" "1" \
-  "spawn: tiergear 가 고른 --model·--effort 를 worker-start 에 넘긴다"
-assert_eq "$(printf '%s' "$out" | grep -c '^tiergear: judged deep, applied deep')" "1" \
-  "tiergear 의 stderr 를 사용자에게 그대로 보인다"
-assert_eq "$(printf '%s' "$out" | grep -c '모델: opus/xhigh (tiergear: judged deep, applied deep, 역할 review)')" "1" \
-  "요약에 effort 와 출처를 함께 적는다"
 : > "$STUB_ORCA_LOG"
-TIERGEAR_COMMAND="$TG" cmd_attach probe review >/dev/null 2>&1
-assert_eq "$(grep 'worker-start' "$STUB_ORCA_LOG" | grep -c -- '--agent claude --model opus --effort xhigh --timeout-ms')" "1" \
-  "attach: 새로 띄울 때 tiergear 가 고른 값을 넘긴다"
-
-# 3. 범위와 --worktree.
-: > "$STUB_TG_LOG"
-TIERGEAR_COMMAND="$TG" cmd_spawn probe review --base main >/dev/null 2>&1
-assert_eq "$(grep -c -- '--min-tier deep' "$STUB_TG_LOG")" "1" "review 는 --min-tier deep"
-assert_eq "$(grep -c -- '--max-tier' "$STUB_TG_LOG")" "0" "review 는 --max-tier 가 없다"
-: > "$STUB_TG_LOG"
-TIERGEAR_COMMAND="$TG" cmd_spawn probe verify --base main >/dev/null 2>&1
-assert_eq "$(grep -c -- '--max-tier standard' "$STUB_TG_LOG")" "1" "verify 는 --max-tier standard"
-: > "$STUB_TG_LOG"
-TIERGEAR_COMMAND="$TG" cmd_spawn probe chore --base main >/dev/null 2>&1
-assert_eq "$(grep -c -- '--max-tier standard' "$STUB_TG_LOG")" "1" "chore 는 --max-tier standard"
-: > "$STUB_TG_LOG"
-TIERGEAR_COMMAND="$TG" cmd_spawn probe implement --base main >/dev/null 2>&1
-assert_eq "$(grep -c -- '-tier' "$STUB_TG_LOG")" "0" "implement 는 범위 인자 없이 부른다"
-assert_eq "$(grep -c '^launch ' "$STUB_TG_LOG")" "1" "implement 도 tiergear launch 를 부른다"
-assert_eq "$(grep -c -- "--worktree $TGWT" "$STUB_TG_LOG")" "1" "--worktree 에 워크트리 경로를 넘긴다"
-: > "$STUB_TG_LOG"; : > "$STUB_ORCA_LOG"
-BR="$(mktemp)"; printf '브리프 원문 ABC\n' > "$BR"
-TIERGEAR_COMMAND="$TG" cmd_spawn probe implement --base main --brief "$BR" >/dev/null 2>&1
-assert_eq "$(grep -c '브리프 원문 ABC' "$STUB_TG_LOG")" "1" "tiergear 에는 task-create --spec 과 같은 브리프를 넘긴다"
-rm -f "$BR"
-
-# 4. --model 재정의·--terminal 이면 부르지 않는다.
-: > "$STUB_TG_LOG"; : > "$STUB_ORCA_LOG"
-TIERGEAR_COMMAND="$TG" cmd_spawn probe implement --model sonnet --base main >/dev/null 2>&1
-assert_eq "$(wc -l < "$STUB_TG_LOG" | tr -d ' ')" "0" "spawn --model 이면 tiergear 를 부르지 않는다"
+out="$(cmd_spawn probe implement --model sonnet --base main 2>&1)"
 assert_eq "$(grep 'worker-start' "$STUB_ORCA_LOG" | grep -c -- '--agent claude --model sonnet --timeout-ms')" "1" \
-  "--model 재정의가 그대로 간다(--effort 없음)"
-: > "$STUB_TG_LOG"
-TIERGEAR_COMMAND="$TG" cmd_attach probe implement --model sonnet >/dev/null 2>&1
-assert_eq "$(wc -l < "$STUB_TG_LOG" | tr -d ' ')" "0" "attach --model 이면 tiergear 를 부르지 않는다"
+  "--model 재정의가 그대로 간다"
+assert_eq "$(printf '%s' "$out" | grep -c '모델: sonnet (--model 재정의, 역할 implement)')" "1" \
+  "요약에 --model 재정의 출처를 적는다"
 STUB_ORCA_TERMINALS_FIXTURE="$P/aterms.json"
-: > "$STUB_TG_LOG"; : > "$STUB_ORCA_LOG"
-TIERGEAR_COMMAND="$TG" cmd_attach probe chore --terminal term_reap_1 >/dev/null 2>&1
-assert_eq "$(wc -l < "$STUB_TG_LOG" | tr -d ' ')" "0" "attach --terminal 이면 tiergear 를 부르지 않는다"
-assert_eq "$(grep 'worker-start' "$STUB_ORCA_LOG" | grep -c -- '--model')" "0" "--terminal 이면 모델을 넘기지 않는다"
-# 살아 있는 터미널이 있어도 리뷰는 새로 띄우므로 tiergear 를 거쳐 범위가 걸린다.
-: > "$STUB_TG_LOG"; : > "$STUB_ORCA_LOG"
-TIERGEAR_COMMAND="$TG" cmd_attach probe review >/dev/null 2>&1
-assert_eq "$(grep -c -- '--min-tier deep' "$STUB_TG_LOG")" "1" \
-  "attach review: 살아 있는 터미널이 있어도 tiergear 를 --min-tier deep 으로 부른다"
-assert_eq "$(grep 'worker-start' "$STUB_ORCA_LOG" | grep -c -- '--agent claude --model opus --effort xhigh --timeout-ms')" "1" \
-  "attach review: 살아 있는 터미널이 있어도 tiergear 가 고른 값으로 새로 띄운다"
-STUB_ORCA_TERMINALS_FIXTURE="$P/tg-noterms.json"
-
-# 5. 실패는 경고 + 역할 기본값. 워커 기동은 막지 않는다.
-tg_fallback() {
-  # $1 설명, $2 STUB_TG_OUT, $3 STUB_TG_RC
-  : > "$STUB_ORCA_LOG"
-  local o
-  o="$(TIERGEAR_COMMAND="$TG" STUB_TG_OUT="$2" STUB_TG_RC="$3" cmd_spawn probe chore --base main 2>&1)"
-  assert_eq "$(grep 'worker-start' "$STUB_ORCA_LOG" | grep -c -- '--agent claude --model sonnet --timeout-ms')" "1" \
-    "$1: 역할 기본값으로 worker-start 를 부른다"
-  assert_eq "$(printf '%s' "$o" | grep -c '^경고: tiergear')" "1" "$1: 경고 한 줄을 낸다"
-}
-tg_fallback "launch 가 exit 1" "claude --model opus --effort xhigh" 1
-tg_fallback "출력이 비었다" "" 0
-tg_fallback "모델이 없는 출력" "claude --effort high" 0
-tg_fallback "이상한 모델 토큰" 'claude --model opus;rm --effort high' 0
-tg_fallback "이상한 effort 토큰" 'claude --model opus --effort $(x)' 0
-
-# 6. effort 없는 출력이면 --effort 를 넘기지 않는다.
 : > "$STUB_ORCA_LOG"
-TIERGEAR_COMMAND="$TG" STUB_TG_OUT="claude --model haiku" cmd_spawn probe chore --base main >/dev/null 2>&1
-assert_eq "$(grep 'worker-start' "$STUB_ORCA_LOG" | grep -c -- '--agent claude --model haiku --timeout-ms')" "1" \
-  "effort 가 없으면 --model 만 넘긴다"
-assert_eq "$(grep 'worker-start' "$STUB_ORCA_LOG" | grep -c -- '--effort')" "0" "--effort 를 넘기지 않는다"
-out="$(TIERGEAR_COMMAND="$TG" STUB_TG_OUT="claude --model fable[1m] --effort max" cmd_spawn probe chore --base main 2>&1)"
-assert_eq "$(printf '%s' "$out" | grep -c '모델: fable\[1m\]/max')" "1" "[ ] 를 낀 모델 별칭도 받는다"
-assert_eq "$(grep -c '^REJECTED' "$STUB_ORCA_LOG")" "0" "tiergear 경로의 Orca 호출도 인자 검증을 통과한다"
-
-# 7. 브리프가 `-` 로 시작해도 tiergear 가 옵션으로 읽지 않게 옵션 뒤 `--` 한 인자로 간다.
-for lead in '--- title' '- 항목' '-x'; do
-  : > "$STUB_TG_LOG"
-  TIERGEAR_COMMAND="$TG" select_worker_model review opus "" "$lead" "$TGWT" 2>/dev/null
-  assert_eq "$(cat "$STUB_TG_LOG")" "launch --worktree $TGWT --min-tier deep -- $lead" \
-    "'$lead' 로 시작하는 브리프는 옵션이 앞, \`--\` 뒤 한 인자로 간다"
-done
-: > "$STUB_TG_LOG"
-TIERGEAR_COMMAND="$TG" select_worker_model implement opus "" "- 항목" "$TGWT" 2>/dev/null
-assert_eq "$(cat "$STUB_TG_LOG")" "launch --worktree $TGWT -- - 항목" "implement 도 범위 없이 \`--\` 뒤로 보낸다"
-
-# 8. 출력 파싱은 글롭 확장을 타지 않는다 — cwd 에 걸리는 파일이 있어도 글자 그대로다.
-GD="$(mktemp -d)"; : > "$GD/fable1"; : > "$GD/aaa"
-got="$(cd "$GD" && TIERGEAR_COMMAND="$TG" STUB_TG_OUT='claude --model fable[1m] --effort max' \
-  select_worker_model chore sonnet "" x "$TGWT" 2>/dev/null; echo "$WM_MODEL/$WM_EFFORT")"
-assert_eq "$got" 'fable[1m]/max' "[1m] 이 든 출력이 파일 이름(fable1)으로 바뀌지 않는다"
-got="$(cd "$GD" && TIERGEAR_COMMAND="$TG" STUB_TG_OUT='claude --model * --effort high' \
-  select_worker_model chore sonnet "" x "$TGWT" 2>/dev/null; echo "$WM_MODEL/$WM_EFFORT")"
-assert_eq "$got" 'sonnet/' "글롭 문자뿐인 모델은 토큰 검사에서 걸러진다(파일 이름 aaa 가 되지 않는다)"
-case "$-" in *f*) glob_state=off ;; *) glob_state=on ;; esac
-assert_eq "$glob_state" "on" "파싱 뒤 글롭 설정이 원래대로 돌아온다"
-rm -rf "$GD"
-
-# 9. 값이 없어 다음 옵션이 모델로 잡히면 못 뽑은 것으로 본다.
-tg_fallback "--model 뒤에 값이 없음" "claude --model --effort high" 0
-tg_fallback "--effort 뒤에 값이 없음" "claude --model opus --effort --foo" 0
-
-rm -f "$STUB_TG_LOG"; unset STUB_TG_LOG
+cmd_attach probe chore --terminal term_reap_1 >/dev/null 2>&1
+assert_eq "$(grep 'worker-start' "$STUB_ORCA_LOG" | grep -c -- '--model')" "0" "--terminal 이면 모델을 넘기지 않는다"
+# 살아 있는 터미널이 있어도 리뷰는 새 에이전트로 띄우므로 역할 기본 모델이 간다.
+: > "$STUB_ORCA_LOG"
+cmd_attach probe review >/dev/null 2>&1
+assert_eq "$(grep 'worker-start' "$STUB_ORCA_LOG" | grep -c -- '--agent claude --model opus --timeout-ms')" "1" \
+  "attach review: 살아 있는 터미널이 있어도 opus 로 새로 띄운다"
 
 unset ORCA_WORKER_WORKTREES_DIR STUB_ORCA_TERMINALS_FIXTURE STUB_ORCA_WORKERS_FIXTURE
 
