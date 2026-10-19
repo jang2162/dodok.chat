@@ -6,7 +6,7 @@ Komodo 서버 이름, Periphery 가 clone 하는 호스트 경로, 바깥 프록
 
 ## Komodo 가 부르는 명령
 
-Komodo 의 Periphery 는 저장소를 `<stack_dir>/<Stack 이름>/<clone_path>` 에 clone(이미 있으면 pull)하고, 그 아래 Run Directory 에 Environment 를 `.env`(`env_file_path`)로 쓴 뒤, Run Directory 에서 다음 꼴로 부른다(Environment 가 비면 `.env` 를 쓰지 않고 `--env-file` 도 없다).
+Komodo 의 Periphery 는 저장소를 `<stack_dir>/<Stack 이름>/<clone_path>` 에 clone(이미 있으면 pull)하고, 그 아래 Run Directory 에 Environment 를 `.env`(`env_file_path`)로 쓴 뒤, Run Directory 에서 다음 꼴로 부른다(Environment 가 비면 `.env` 를 새로 쓰지 않는다 — 그 자리에 파일이 이미 있으면 그 파일을 `--env-file` 로 넘기고, 없으면 `--env-file` 도 없다).
 
 ```
 docker compose -p <Stack 이름> -f <File Paths 1> -f <File Paths 2> --env-file .env config
@@ -30,13 +30,14 @@ docker compose -p <Stack 이름> -f … --env-file .env up -d
 | 항목 | 값 |
 | --- | --- |
 | Name | `dodok` — compose 프로젝트 이름이 된다(Project Name 은 비운다) |
-| Source | Git Repo — Git Provider·Repo(`<소유자>/<저장소>`)·Branch(`main`). 비공개 저장소면 Komodo 에 등록한 Git Account |
+| Source | Git Repo — Git Provider `gitlab.develma.com`·Repo `app/dodok.chat`·Branch `main`. ⚠ Git Provider 의 기본값은 `github.com` 이라 바꾸지 않으면 clone 이 실패한다(`stack.rs` 의 `default_git_provider`). 비공개 저장소면 Komodo 에 등록한 Git Account |
 | Run Directory | 비운다(저장소 루트). Komodo 가 여기 `.env` 를 쓴다 |
 | File Paths | 프록시 없는 서버: `infra/compose.yml` 하나. 기존 리버스 프록시 뒤: `infra/compose.yml` **다음에** `infra/compose.server.yml` — 순서가 바뀌면 기본 파일이 덮어쓰기를 덮어 Caddy 가 80·443 을 다시 잡는다 |
 | Env File Path | 기본 `.env` 그대로 |
 | Run Build | 끈다 — `pull_policy: build` 라 `up` 이 빌드한다(켜면 빌드를 한 번 더 부를 뿐이다) |
 | Auto Pull | 기본(켬) 그대로 — 두 서비스를 건너뛴다 |
 | Destroy Before Deploy | 끈다 — 켜면 배포마다 `down` 뒤 `up` 이라 끊김이 길어진다 |
+| Reclone | 끈다(기본) — 켜면 배포마다 clone 디렉터리를 지우고 다시 받아 서버 덮어쓰기 파일이 매번 사라진다 |
 | Webhook | **끈다**(Komodo 기본은 켬) — 까닭은 아래 |
 | Environment | 아래 표 |
 
@@ -57,8 +58,8 @@ Komodo 가 위 `.env` 로 쓴다. 값의 뜻·필수 여부는 본문 「설정 
 | `BRIDGE_PUBLIC_URL` · `LOG_LEVEL` · `OWNER_HANDLE` · `DODOK_WORKSPACE_NAME` | 선택 | 본문 표 |
 | `VAPID_PUBLIC_KEY` · `VAPID_PRIVATE_KEY` | 선택(비밀) | 비우면 서버가 볼륨에 만든다. 주면 `[[DODOK_VAPID_PRIVATE_KEY]]` |
 | `APNS_KEY_PATH` · `APNS_KEY_ID` · `APNS_TEAM_ID` · `FCM_SERVICE_ACCOUNT_PATH` | 선택 | 본문 「네이티브 푸시 자격 증명」 |
-| `DODOK_PROXY_NETWORK` | 프록시 뒤면 필수 | 바깥 프록시와 함께 쓰는 Docker 네트워크 이름(본문 「기존 리버스 프록시 뒤에 두기」 1) |
-| `DODOK_TRUSTED_PROXIES` | 프록시 뒤면 필수 | 바깥 프록시 컨테이너의 주소 `/32`(같은 절 2 — 서브넷 전체를 주지 않는다) |
+| `DODOK_PROXY_NETWORK` | 바깥 프록시가 컨테이너면 필수 | 바깥 프록시와 함께 쓰는 Docker 네트워크 이름(본문 「기존 리버스 프록시 뒤에 두기」 절의 「공유 네트워크」) |
+| `DODOK_TRUSTED_PROXIES` | 프록시 뒤면 필수 | 바깥 프록시 컨테이너의 주소 `/32`(같은 절의 「신뢰 주소」 — 서브넷 전체를 주지 않는다). 호스트에 깐 프록시면 `dodok_default` 게이트웨이 `/32`(같은 절의 「바깥 프록시가 호스트에 깔린 경우」) |
 
 - `DODOK_WEB_BUILD_ID` 는 넣지 않는다 — 넣으면 웹이 바뀌어도 ID 가 그대로다(본문 「설정 — `.env`」).
 - `HOST`·`PORT`·`DATA_DIR`·`TRUST_PROXY` 등 compose 가 고정하는 값은 넣어도 무시된다(본문 표의 「무시된다」 줄).
@@ -67,7 +68,7 @@ Komodo 가 위 `.env` 로 쓴다. 값의 뜻·필수 여부는 본문 「설정 
 
 ## 서버 덮어쓰기 파일(프록시 뒤일 때)
 
-`infra/compose.server.yml` 은 저장소에 없고(`.gitignore`) 서버에서 직접 쓴다. Periphery 가 clone 한 디렉터리(그 호스트 경로는 Periphery 컨테이너 정의의 `root_directory`·`stack_dir` 바인드로 본다)의 `infra/` 에 둔다. 내용은 커밋된 예시를 그대로 복사한 것이다 — 서버마다 다른 값은 Environment 의 `DODOK_PROXY_NETWORK`·`DODOK_TRUSTED_PROXIES` 가 갖는다.
+`infra/compose.server.yml` 은 저장소에 없고(`.gitignore`) 서버에서 직접 쓴다. Periphery 가 clone 한 디렉터리(그 호스트 경로는 Periphery 컨테이너 정의의 `root_directory`·`stack_dir` 바인드로 본다)의 `infra/` 에 둔다. 내용은 커밋된 예시를 그대로 복사한 것이다(바깥 프록시가 호스트 프로세스면 본문 같은 절 「바깥 프록시가 호스트에 깔린 경우」의 조각) — 서버마다 다른 값은 Environment 의 `DODOK_PROXY_NETWORK`·`DODOK_TRUSTED_PROXIES` 가 갖는다.
 
 ```bash
 cp infra/compose.server.example.yml infra/compose.server.yml      # clone 디렉터리에서
@@ -75,7 +76,7 @@ cp infra/compose.server.example.yml infra/compose.server.yml      # clone 디렉
 
 - 예시가 바뀌면(저장소를 pull 한 뒤 `git diff` 에 `infra/compose.server.example.yml` 이 보이면) 서버의 사본도 다시 복사한다. 갱신(pull)은 사본을 건드리지 않는다.
 - ⚠ **clone 을 다시 하면 사본이 사라진다** — Stack 을 지우고 다시 만들거나, 이름·저장소·브랜치를 바꾸거나, Reclone 을 켜 두면 Periphery 가 디렉터리를 통째로 다시 만든다. 그 뒤 Deploy 는 File Paths 의 파일이 없어 실패한다. 위 `cp` 를 다시 하고 Deploy 한다.
-- 바깥 프록시가 갖출 것과 확인 절차는 본문 「기존 리버스 프록시 뒤에 두기」 5·6.
+- 바깥 프록시가 갖출 것과 확인 절차는 본문 「기존 리버스 프록시 뒤에 두기」 절의 「바깥 프록시가 갖출 것」·「확인」.
 
 ## 호스트에서 운영 명령 부르기
 

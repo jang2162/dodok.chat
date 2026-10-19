@@ -211,7 +211,26 @@ docker compose -f infra/compose.yml exec app node dist/backup.js
 
 [A] 의 80·443 을 이미 다른 리버스 프록시(nginx·Traefik·Caddy·Nginx Proxy Manager 등)가 잡고 있으면, 그 프록시가 TLS 를 끝내고 dodok 의 Caddy 로 HTTP 를 넘기게 한다. 기본 파일(`infra/compose.yml`)은 고치지 않고 **서버 덮어쓰기 파일 하나를 뒤에 붙인다** — dodok 의 Caddy 는 호스트 포트를 닫고 HTTP(:80)만 들으며, 정적 웹·경로 나누기·캐시·보안 헤더·CSP·로그 가림은 그대로 한다. 파일의 각 줄이 왜 그런지는 `infra/compose.server.example.yml` 머리 주석, Caddy 쪽 손잡이는 `infra/Caddyfile` 머리 주석이 정본이다.
 
-**1. 공유 네트워크** — 바깥 프록시와 dodok 의 Caddy 가 함께 붙을 Docker 네트워크가 있어야 한다(`external` — 없으면 `up` 이 멈춘다). 바깥 프록시가 이미 쓰는 네트워크가 있으면 그 이름을 쓰고, 없으면 만들어 바깥 프록시를 붙인다(`docker network create <이름>` · `docker network connect <이름> <프록시 컨테이너>`).
+**바깥 프록시가 호스트에 깔린 경우** — 아래는 바깥 프록시가 **컨테이너**라고 전제한다. 프록시가 호스트 프로세스(systemd 의 nginx·Caddy 등)면 공유 네트워크의 별칭 `dodok-web` 을 풀 수 없으니 「공유 네트워크」와 예시 파일을 쓰지 않는다. `infra/compose.server.yml` 은 예시를 복사하지 않고 아래 조각으로 쓴다(「덮어쓰기 파일·기동」의 `dc` 는 같고, `dc ps` 의 caddy PORTS 는 `127.0.0.1:<포트>->80/tcp` 다). 바깥 프록시는 `http://127.0.0.1:<포트>` 로 넘긴다(「바깥 프록시가 갖출 것」의 나머지는 같다). `DODOK_PROXY_NETWORK` 는 두지 않는다.
+
+```yaml
+services:
+  caddy:
+    ports: !override ["127.0.0.1:<포트>:80"]
+    environment:
+      DODOK_SITE_SCHEME: "http://"
+      DODOK_TRUSTED_PROXIES: ${DODOK_TRUSTED_PROXIES:-}
+```
+
+- 신뢰 주소는 이 Stack 의 기본 네트워크 `dodok_default` 의 게이트웨이 `/32` 다 — 호스트에서 게시 포트로 들어온 연결은 그 게이트웨이에서 온 것으로 보인다. 그 네트워크는 첫 `up` 이 만드니 값을 비운 채 한 번 올리고(그동안은 아무도 믿지 않아 모든 요청이 게이트웨이 하나로 묶인다), 아래 값을 `.env` 에 넣고 `dc up -d` 한다.
+  ```bash
+  docker network inspect dodok_default --format '{{(index .IPAM.Config 0).Gateway}}'
+  ```
+  `dc down` 뒤 다시 올리면 네트워크가 새로 생겨 게이트웨이가 바뀔 수 있다. 바뀌면 아무도 믿지 않는 쪽(한 버킷)으로 떨어지니 「확인」의 「주소 확인」으로 보고 다시 넣는다.
+- ⚠ **포트는 `127.0.0.1` 에만 연다.** 게이트웨이를 믿으므로 그 포트로 들어오는 연결은 모두 「믿는 프록시」가 된다. 바깥 프록시를 거치지 않고 그 포트에 닿는 누구나 꾸민 `X-Forwarded-For` 로 레이트리밋을 피한다. 루프백에만 열면 그럴 수 있는 것은 호스트의 프로세스뿐이다.
+- 로컬 검증 환경(Docker Desktop)에서 잰 것: 게이트웨이 `/32` 를 믿을 때 호스트에서 `X-Forwarded-For: 1.2.3.4, 9.9.9.9`(프록시가 덧붙인 꼴)를 보내면 Caddy 가 서버로 넘긴 XFF 는 `9.9.9.9`, 믿지 않으면 게이트웨이 주소였다. 실제 앱에 `1.2.3.$i, 9.9.9.9` 로 틀린 토큰 로그인을 6번 보내면 6번째가 429 였다. **Linux 는 재지 않았다** — 루프백 게시 포트로 들어온 연결이 docker-proxy(userland-proxy)를 타 게이트웨이로 보인다는 Docker 동작에 기댄다. Linux 서버에서는 「확인」의 「위조 확인」·「주소 확인」으로 잰다.
+
+**1. 공유 네트워크** — 바깥 프록시와 dodok 의 Caddy 가 함께 붙을 Docker 네트워크가 있어야 한다(`external` — 없으면 `up` 이 멈춘다). 바깥 프록시가 이미 쓰는 네트워크가 있으면 그 이름을 쓰고, 없으면 만들어 바깥 프록시를 붙인다(`docker network create --subnet <CIDR> <이름>` · `docker network connect --ip <주소> <이름> <프록시 컨테이너>` — 고정 주소의 까닭은 「신뢰 주소」).
 
 **2. 신뢰 주소** — 바깥 프록시 컨테이너가 그 네트워크에서 갖는 주소 하나(`/32`)다.
 
@@ -219,15 +238,15 @@ docker compose -f infra/compose.yml exec app node dist/backup.js
 docker inspect <프록시 컨테이너> --format '{{(index .NetworkSettings.Networks "<네트워크>").IPAddress}}'
 ```
 
-- ⚠ **네트워크 서브넷 전체를 주지 않는다.** 서브넷에는 게이트웨이(`.1`)가 든다. Docker 가 게시 포트로 들어온 연결을 게이트웨이에서 온 것처럼 바깥 프록시에 넘기면(Docker Desktop 은 늘, Linux 는 userland-proxy 를 타는 IPv6·루프백 연결) 그 연결도 「믿는 프록시」가 되어 클라이언트가 꾸민 `X-Forwarded-For` 가 서버에 닿는다 — 아래 「위조 확인」이 그 차이를 잰다.
-- 바깥 프록시 컨테이너를 다시 만들면 주소가 바뀔 수 있다. 바뀌면 위조는 여전히 막히지만 **모든 요청이 프록시 주소 하나로 묶여** 한 사람의 폭주가 모두를 막는다(로그인 1분 5회가 전원 몫이 된다 — 「운영 화면」 레이트리밋 표). 바깥 프록시에 고정 주소를 주거나(그 네트워크를 `--subnet` 으로 만들고 프록시에 `ipv4_address`), 프록시를 다시 만든 뒤 이 값을 다시 본다.
+- ⚠ **네트워크 서브넷 전체를 주지 않는다.** 서브넷에는 게이트웨이(`.1`)가 든다. Docker 가 게시 포트로 들어온 연결을 게이트웨이에서 온 것처럼 바깥 프록시에 넘기면(Docker Desktop 은 늘, Linux 는 userland-proxy 를 타는 IPv6·루프백 연결 — Linux 는 재지 않았다) 그 연결도 「믿는 프록시」가 되어 클라이언트가 꾸민 `X-Forwarded-For` 가 서버에 닿는다 — 아래 「위조 확인」이 그 차이를 잰다.
+- 바깥 프록시 컨테이너를 다시 만들면 주소가 바뀔 수 있다 — Docker 는 비어 있는 가장 낮은 주소를 다시 주므로, 프록시가 내려간 사이 공유 네트워크에 다른 컨테이너가 뜨면 그 컨테이너가 프록시의 옛 주소를 가져간다. 그러면 ① 정상 요청이 모두 새 프록시 주소 하나로 묶이고(로그인 1분 5회, 브리지 실패 카운터 `bridgeFail` 60초 10번이 모든 사용자·모든 Gateway·러너 몫이 된다 — 「운영 화면」 레이트리밋 표. 플러그인 하나의 틀린 토큰이 모든 Gateway·러너의 연결을 막는다), ② 옛 주소를 받은 컨테이너가 보낸 `X-Forwarded-For` 를 믿는다. 그래서 **바깥 프록시에 고정 주소를 준다** — 공유 네트워크를 `docker network create --subnet <CIDR> <이름>` 으로 만들고 프록시에 `ipv4_address`(또는 `docker run --ip`·`docker network connect --ip`)를 준다. 고정 주소는 `--subnet` 을 준 네트워크에서만 받는다. 고정할 수 없으면 프록시를 다시 만들 때마다 이 값을 다시 보고 `dc up -d` 한다.
 
 **3. `.env`** — 위 「설정 — `.env`」 표에 둘을 더한다. 나머지 값은 그대로다 — `APP_ORIGIN`·`BRIDGE_PUBLIC_URL` 은 바깥 프록시가 내보이는 공개 주소(`https://<도메인>`), `DODOK_DOMAIN` 은 그 도메인이다(인증서는 받지 않고 Host 를 맞추는 데만 쓴다).
 
 | 값 | 뜻 |
 | --- | --- |
-| `DODOK_PROXY_NETWORK` | 1 의 네트워크 이름 |
-| `DODOK_TRUSTED_PROXIES` | 2 의 주소(`/32` — 프록시가 여럿이면 공백으로) |
+| `DODOK_PROXY_NETWORK` | 「공유 네트워크」의 네트워크 이름 |
+| `DODOK_TRUSTED_PROXIES` | 「신뢰 주소」의 주소(`/32` — 프록시가 여럿이면 공백으로) |
 
 **4. 덮어쓰기 파일·기동**
 
@@ -245,7 +264,7 @@ dc ps                                                             # app·caddy (
 
 - **대상** — `http://dodok-web:80`(공유 네트워크의 별칭). 서비스 이름 `caddy` 는 같은 네트워크의 다른 Stack 과 겹치면 DNS 가 둘을 번갈아 돌려줘 쓰지 않는다. **모든 경로를** 넘기는 것이 기본이다 — 경로는 dodok 의 Caddy 가 나눈다(`infra/Caddyfile` 의 `@backend`).
 - **Host** — 클라이언트가 보낸 Host(`<도메인>`)를 그대로 넘긴다. dodok 의 Caddy 는 그 이름의 사이트만 가진다 — 다른 Host 면 빈 본문 `200` 이 와서 고장이 「흰 화면」으로 보인다.
-- **`X-Forwarded-For`** — 받은 값 뒤에 연결 주소를 덧붙이거나(nginx `$proxy_add_x_forwarded_for`) 연결 주소로 덮는다. 둘 다 된다 — dodok 의 Caddy 가 오른쪽부터 믿는 주소(2)를 건너뛴 첫 주소 하나로 덮어 서버에 넘긴다.
+- **`X-Forwarded-For`** — 받은 값 뒤에 연결 주소를 덧붙이거나(nginx `$proxy_add_x_forwarded_for`) 연결 주소로 덮는다. 둘 다 된다 — dodok 의 Caddy 가 오른쪽부터 믿는 주소(「신뢰 주소」)를 건너뛴 첫 주소 하나로 덮어 서버에 넘긴다.
 - **WebSocket** — `/socket.io/` 의 업그레이드를 넘긴다(nginx 는 `proxy_http_version 1.1` 과 `Upgrade`·`Connection` 머리). 웹·플러그인·러너의 연결은 늘 열려 있고 Socket.IO 가 25초마다 핑을 보낸다 — 유휴 상한이 그보다 길어야 한다(넉넉히 몇 분).
 - **본문 크기** — 32 MB 이상(에이전트 파일 20 MiB + 여유 — dodok Caddy 의 상한과 같다). 작으면(nginx 기본 `client_max_body_size 1m`) 첨부가 바깥 프록시의 413 으로 끊긴다.
 - **로그** — ⚠ dodok 의 Caddy·서버는 웹훅 토큰(`/hooks/whk_…`)과 쿼리에 잘못 실린 개인 토큰(`?token=dpt_…`)을 로그에서 가리지만(「자동화 웹훅」·「제어 MCP」 절), **바깥 프록시의 로그는 모른다** — access log 가 켜진 프록시는 그 URL 을 원문으로 남긴다(로컬 검증의 바깥 Caddy 는 오류 로그에도 남겼다). 그 경로의 로그를 끄거나 가린다. 확인은 바깥 프록시 로그에서 `grep -c 'whk_[A-Za-z0-9_-]\{7,\}'` 이 0 인지.
@@ -259,14 +278,14 @@ curl -fsS https://<도메인>/healthz                                 # {"ok":tr
 bash infra/check-caddy.sh https://<도메인>                           # 줄마다 PASS/FAIL
 ```
 
-- `check-caddy.sh` 에 `CADDY_LOG_CMD='docker compose -f infra/compose.yml -f infra/compose.server.yml logs --no-log-prefix caddy'` 를 주면 로그 가림 탐침 다섯 가운데 둘(`/hooks/` 경로, `/mcp` Authorization 머리)이 「로그에서 못 찾았다」로 FAIL 한다 — 바깥 프록시가 Caddy 로 HTTP/1.1 로 넘기면 앱이 그 둘을 본문 전에 404·401 로 받아 dodok Caddy 에 오류 줄이 생기지 않는다(그 스크립트의 「웹훅·개인 토큰 가림」 주석의 h1 거짓 FAIL). Caddy 의 가림 필터는 바뀌지 않았으니 가림 자체는 「로컬 검증」의 8443 으로 잰다. 나머지 25 줄은 PASS 여야 한다.
+- 프록시 뒤에서는 `check-caddy.sh` 에 `CADDY_LOG_CMD` 를 주지 않는다 — 로그 가림 탐침 다섯은 바깥 프록시가 Caddy 로 HTTP/1.1 로 넘기면 앱이 본문 전에 답하는지가 타이밍에 달려, 어느 것이 몇 개 「로그에서 못 찾았다」로 FAIL 할지 매번 다르다(그 스크립트의 「웹훅·개인 토큰 가림」 주석의 h1 거짓 FAIL). 주지 않으면 22 줄 PASS·1 줄 SKIP(`CADDY_LOG_CMD 가 없어 안 봤다`)이고 끝 줄이 「check-caddy: 전부 PASS (SKIP 1)」이어야 한다. Caddy 의 가림 필터 자체는 「로컬 검증」의 8443 으로 잰다.
 - **위조 확인** — 틀린 토큰 로그인을 XFF 를 바꿔 가며 6번 보내면 6번째가 429 여야 한다. 6번 모두 401 이면 꾸민 XFF 가 서버에 닿는 것이다(신뢰 주소에 서브넷·게이트웨이가 들었다).
   ```bash
   for i in 1 2 3 4 5 6; do curl -s -o /dev/null -w '%{http_code} ' -X POST -H 'content-type: application/json' \
     -H "X-Forwarded-For: 1.2.3.$i" --data '{"token":"wrong-token-xxxxxxxxxxxx"}' https://<도메인>/api/v1/auth/local; done; echo
   ```
   1분 안에 같은 주소의 정상 로그인도 막히니 사람이 쓰지 않을 때 한다(재시작하면 풀린다 — `dc restart app`).
-- **주소 확인** — `dc logs app | grep -o '"remoteAddress":"[^"]*"' | sort | uniq -c` 에 클라이언트들의 주소(앞 /24)가 보여야 한다. 프록시 네트워크의 주소 하나만 보이면 신뢰 주소가 프록시와 맞지 않는다(2). 단 바깥 프록시 자체가 클라이언트를 게이트웨이 주소로 보는 환경(Docker Desktop 등)에서는 그 주소가 보이는 것이 맞다.
+- **주소 확인** — `dc logs app | grep -o '"remoteAddress":"[^"]*"' | sort | uniq -c` 에 클라이언트들의 주소(앞 /24)가 보여야 한다. 프록시 네트워크의 주소 하나만 보이면 신뢰 주소가 프록시와 맞지 않는다(「신뢰 주소」). 단 바깥 프록시 자체가 클라이언트를 게이트웨이 주소로 보는 환경(Docker Desktop 등)에서는 그 주소가 보이는 것이 맞다.
 - 로컬 검증 환경(Docker Desktop, 테스트 바깥 프록시 `caddy:2.11.4` + `tls internal`, 받은 XFF 뒤에 덧붙이게 둠)에서 잰 것: 신뢰 주소가 프록시 `/32` 면 Caddy 가 서버로 넘긴 XFF 는 바깥 프록시가 본 주소(게이트웨이) 하나, 서브넷 전체면 클라이언트가 꾸민 값(`1.2.3.4`), 프록시를 포함하지 않으면 프록시 주소 하나였다. 위조 6회는 `/32` 와 「포함하지 않음」에서 6번째 429, 서브넷에서 6번 모두 401. 같은 구성에서 owner 로그인 쿠키(`Secure; HttpOnly; SameSite=Lax`), wire WebSocket(쿠키 + 맞는 Origin 은 websocket 으로 붙어 40초 유지, 틀린 Origin 은 `UNAUTHORIZED`), 첨부(에이전트 파일 20 MiB 200, 사람 이미지 3.8 MiB 200)가 바깥 프록시를 지났다. 다시 재려면 넘기는 XFF 를 되돌려 주는 임시 업스트림을 `DODOK_UPSTREAM` 으로 붙인다.
 
 ## 브리지 토큰 교체
@@ -658,8 +677,8 @@ docker compose -f infra/compose.yml ps     # app·caddy (healthy)
 | --- | --- | --- |
 | compose 명령이 `DODOK_DOMAIN 이 필요하다 — 루트 .env 에 두고 ln -s ../.env infra/.env` 로 멈춤 | 링크가 없거나 `.env` 에 `DODOK_DOMAIN` 이 비었다 | `ln -s ../.env infra/.env`, 값 채우기 |
 | `up` 이 `port is already allocated`(`Bind for 0.0.0.0:80 failed` 류)로 멈춤 | 호스트의 80·443 을 다른 리버스 프록시가 잡고 있다 — 또는 덮어쓰기 파일 없이 기본 파일만으로 `up` 했다 | 「기존 리버스 프록시 뒤에 두기」 — 모든 명령을 두 파일로 |
-| 프록시 뒤에서 페이지가 흰 화면, `/healthz` 가 빈 본문 200 | 바깥 프록시가 넘긴 Host 가 `DODOK_DOMAIN` 과 다르다 | 바깥 프록시가 원래 Host 를 넘기게(「기존 리버스 프록시 뒤에 두기」 5) |
-| 프록시 뒤에서 로그인 429 가 모두에게 함께 걸림, 앱 로그 `remoteAddress` 가 프록시 네트워크 하나 | `DODOK_TRUSTED_PROXIES` 가 바깥 프록시의 지금 주소와 다르다(프록시 컨테이너를 다시 만들어 주소가 바뀌었다 등) | 「기존 리버스 프록시 뒤에 두기」 2 로 주소를 다시 보고 `dc up -d` |
+| 프록시 뒤에서 페이지가 흰 화면, `/healthz` 가 빈 본문 200 | 바깥 프록시가 넘긴 Host 가 `DODOK_DOMAIN` 과 다르다 | 바깥 프록시가 원래 Host 를 넘기게(「기존 리버스 프록시 뒤에 두기」 절의 「바깥 프록시가 갖출 것」) |
+| 프록시 뒤에서 로그인 429 가 모두에게 함께 걸림(또는 플러그인 하나의 틀린 토큰에 모든 Gateway·러너 연결이 함께 막힘), 앱 로그 `remoteAddress` 가 프록시 네트워크 하나 | `DODOK_TRUSTED_PROXIES` 가 바깥 프록시의 지금 주소와 다르다(프록시 컨테이너를 다시 만들어 주소가 바뀌었다 등). 그 옛 주소를 다른 컨테이너가 받았으면 그 컨테이너가 보낸 `X-Forwarded-For` 를 믿는다 | 「기존 리버스 프록시 뒤에 두기」 절의 「신뢰 주소」로 주소를 다시 보고 `dc up -d`. 다시 바뀌지 않게 바깥 프록시에 고정 주소를 준다(같은 「신뢰 주소」) |
 | `app` 이 재시작을 되풀이, `caddy` 는 대기 | `.env` 필수 값이 없거나 틀렸다 — `docker compose -f infra/compose.yml logs app` 에 `Error: 설정 오류:` 줄(그 위에 소스 위치와 `^` 줄이 먼저 나온다)과 그 아래 틀린 항목마다 한 줄(`<이름>: <사유>`), 이어서 Node 스택 | 그 값을 고치고 `up -d` |
 | `app` 로그 한 줄: `설정 오류: DATA_DIR 에 쓸 수 없다: /data (EACCES) — 컨테이너면 볼륨 소유자를 1000:1000 으로: …` | 볼륨이 다른 UID(예: root)로 채워진 적이 있다. 컨테이너는 `node`(1000:1000)로 돈다. 빈 볼륨은 Docker 가 이미지의 `/data` 소유자를 입혀 이 경우가 안 생긴다 — 파일이 이미 든 볼륨에서만 난다 | `docker compose -f infra/compose.yml run --rm -u 0 app chown -R 1000:1000 /data` 뒤 `up -d` |
 | `/healthz` 가 안 됨, `caddy` 는 healthy | 인증서 발급 실패 — `logs caddy`. 확인 순서: DNS A 레코드가 이 호스트인가 → 80·443 이 밖에서 열려 있나 → `DODOK_DOMAIN` 이 그 이름인가 | 고친 뒤 `docker compose -f infra/compose.yml restart caddy`. Let's Encrypt 는 실패가 잦으면 잠시 막는다 — 고치기 전에 되풀이하지 않는다 |

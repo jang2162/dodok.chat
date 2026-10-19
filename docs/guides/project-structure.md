@@ -34,8 +34,8 @@ dodok.chat/
 │  └─ .env → ../.env          # 배포 호스트에서 손으로 만드는 링크(git 제외) — compose 변수 치환이 infra/ 의 .env 만 읽는다. --env-file .env 로 부르면(Komodo) 필요 없다
 ├─ docs/
 │  ├─ guides/                 # 계속 사는 정본 — plan.md(계획서), project-structure.md(이 문서), worktree-workflow.md, browser-verification.md,
-│  │                          #   live-smoke.md, deploy.md — 배포·백업·복원·업데이트, agent-guide.md — 에이전트가 채널에서 받는 것·릴레이·components·
-│  │                          #   파일·승인과 AGENTS.md·채널 프롬프트에 붙여 넣을 블록
+│  │                          #   live-smoke.md, deploy.md — 배포·백업·복원·업데이트, deploy-komodo.md — Komodo Git Repo Stack 설정(부록),
+│  │                          #   agent-guide.md — 에이전트가 채널에서 받는 것·릴레이·components·파일·승인과 AGENTS.md·채널 프롬프트에 붙여 넣을 블록
 │  ├─ manual/                 # 사용자 매뉴얼 (user-guide.md — 웹 앱을 쓰는 사람)
 │  ├─ guideline/              # 지침 서버에서 받은 참조 지침 사본 — guideline CLI 만 쓴다 (7장)
 │  ├─ superpowers/            # 스펙·구현계획 (specs/, plans/) — 발행 시점 기록
