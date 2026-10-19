@@ -165,7 +165,8 @@ export type AppDeps = {
 
 /**
  * 브리지 거절 로그·실패 카운터와 wire 레이트리밋 사건의 원격 주소. 리버스 프록시를 믿을 때(TRUST_PROXY=true)만 X-Forwarded-For 첫 값을 쓴다 —
- * 믿지 않는데 읽으면 클라이언트가 헤더를 꾸며 스로틀·귀속을 피한다. Caddy 는 클라이언트 XFF 를 자기가 본 IP 로 덮는다
+ * 믿지 않는데 읽으면 클라이언트가 헤더를 꾸며 스로틀·귀속을 피한다. Caddy 는 XFF 를 client_ip 하나로 덮는다(infra/Caddyfile 전역
+ * servers 블록 — 믿는 프록시가 없으면 연결 주소)
  */
 export function bridgeClientAddress(
   trustProxy: boolean,
