@@ -7,15 +7,25 @@ RUN corepack enable && corepack prepare pnpm@11.16.0 --activate
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 RUN pnpm fetch
 COPY . .
+# 웹 빌드 ID(__BUILD_ID__ — 오프라인 사본 buster)의 기본값 — 웹 빌드 입력의 내용 해시. COPY . . 때문에 서버만 바뀐 배포도 아래 빌드
+# 층을 다시 돌리는데, ID 가 빌드 시각이면 그때마다 index 를 import 하는 청크들·sw.js 이름이 바뀌어 모든 클라이언트가 청크를 다시 받고
+# 새 버전 토스트·오프라인 사본 폐기를 겪는다. 내용 해시면 웹 입력이 같은 배포의 ID 가 같고, 같은 ID·같은 웹 입력이면 산출물이 바이트
+# 단위로 같다. 셸에서 git 으로 계산해 넘길 단계가 없는 배포(Komodo 등)와 얕은 클론에서도 맞는다.
+#   입력 — 웹 빌드가 읽는 경로 전부. 경로를 더하거나 빼면 여기만 고친다. 빠진 경로가 있으면 빌드를 멈춘다(조용히 좁아지지 않게).
+#   해시 — 경로로 정렬한(LC_ALL=C) 파일마다 「sha256  경로」 줄을 다시 sha256 한 앞 12자. 이름·내용만 들어가고 mtime·권한·시각은
+#   안 들어간다. 빌드 컨텍스트의 파일이라 .dockerignore 가 뺀 것(node_modules·dist·.env 등)은 안 들어가지만, git 이 무시하는 다른
+#   파일(손으로 둔 메모 등)이 저 경로 안에 있으면 들어간다 — 깨끗한 클론에서는 git 이 추적하는 파일과 같다.
+# install 앞에 두는 까닭: install 이 만드는 파일이 해시에 섞이지 않게
+RUN set -- apps/web packages/shared pnpm-lock.yaml tsconfig.base.json package.json pnpm-workspace.yaml infra/Dockerfile.web \
+ && for p; do [ -e "$p" ] || { echo "웹 빌드 ID 입력이 없다: $p" >&2; exit 1; }; done \
+ && find "$@" -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | cut -c1-12 > /web-build-id \
+ && echo "웹 빌드 ID(내용 해시): $(cat /web-build-id)"
 RUN pnpm install --offline --frozen-lockfile --filter "@dodok/web..."
-# 웹 빌드 ID(__BUILD_ID__ — 오프라인 사본 buster). 비면 vite.config.ts 가 빌드 시각을 쓴다. COPY . . 때문에 서버만 바뀐 배포도
-# 이 층을 다시 돌리고, 빌드 시각이면 그때마다 index 를 import 하는 청크들·sw.js 이름이 바뀌어 모든 클라이언트가 청크를 다시 받고
-# 새 버전 토스트·오프라인 사본 폐기를 겪는다. 그래서 배포는 웹 입력의 마지막 커밋을 넘긴다(compose.yml 머리의 DODOK_WEB_BUILD_ID) —
-# 같은 ID·같은 웹 입력이면 산출물이 바이트 단위로 같다. 빈 값은 unset 한다(vite.config.ts 도 `||` 로 빈 문자열을 빌드 시각으로 바꾼다 — 두 겹).
-# ARG 를 install 뒤에 두는 까닭: 값이 바뀌어도 install 층 캐시는 산다
+# 넘긴 값이 내용 해시를 이긴다(compose.yml 의 DODOK_WEB_BUILD_ID — 선택). 빈 값은 내용 해시로 바꾼다. Docker 밖 빌드는 이 Dockerfile 을
+# 지나지 않아 vite.config.ts 가 빌드 시각을 쓴다. ARG 를 install 뒤에 두는 까닭: 값이 바뀌어도 install 층 캐시는 산다
 ARG VITE_BUILD_ID=
 # 웹은 같은 오리진의 /api·/socket.io 를 쓴다 — 빌드가 API 오리진을 알 필요가 없다
-RUN if [ -z "$VITE_BUILD_ID" ]; then unset VITE_BUILD_ID; fi && pnpm -F @dodok/web build
+RUN if [ -z "$VITE_BUILD_ID" ]; then VITE_BUILD_ID="$(cat /web-build-id)"; fi && export VITE_BUILD_ID && pnpm -F @dodok/web build
 
 # 태그는 정확 핀 — latest·2 처럼 움직이는 태그는 재빌드마다 다른 Caddy 가 된다
 FROM caddy:2.11.4 AS web
