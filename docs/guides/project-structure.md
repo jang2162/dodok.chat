@@ -18,17 +18,20 @@ dodok.chat/
 │  ├─ runner-adapter/         # @dodok/runner-adapter — 서버 측 Claude 러너 어댑터 (/runner 네임스페이스·러너 연결·승인 기한·AgentAdapter 구현)
 │  └─ claude-runner/          # @dodok/claude-runner — 사람의 머신에서 도는 러너 CLI dodok-runner (Claude Agent SDK, 설정·재접속·런·post 도구·승인·첨부)
 ├─ infra/                    # 배포(Docker Compose) — 절차 docs/guides/deploy.md, 각 파일의 까닭은 그 파일 머리 주석
-│  ├─ compose.yml             # 운영: 서비스 app(서버, 포트 안 엶)·caddy(80·443), 볼륨 dodok-data·caddy-data·caddy-config. app 의 HOST·PORT·DATA_DIR·DODOK_MIGRATIONS_DIR·DODOK_PLUGIN_DIR(/app/plugin)·DODOK_RUNNER_DIR(/app/runner) 고정
+│  ├─ compose.yml             # 운영: 서비스 app(서버, 포트 안 엶)·caddy(80·443), 볼륨 dodok-data·caddy-data·caddy-config. app 의 HOST·PORT·DATA_DIR·DODOK_MIGRATIONS_DIR·DODOK_PLUGIN_DIR(/app/plugin)·DODOK_RUNNER_DIR(/app/runner) 고정, 두 이미지 pull_policy: build
+│  ├─ compose.server.example.yml # 기존 리버스 프록시 뒤에 둘 서버 덮어쓰기의 예시 — caddy 포트 닫기·바깥 프록시 네트워크(별칭 dodok-web)·Caddyfile 손잡이.
+│  │                          # 서버의 사본 infra/compose.server.yml 은 git 제외(docs/guides/deploy.md 「기존 리버스 프록시 뒤에 두기」)
 │  ├─ compose.local.yml       # 이 Mac 의 로컬 검증 겹침: 127.0.0.1:8443·Caddy 내부 CA·devfake 프로필(dev:fake 를 Caddy 뒤에)
 │  ├─ Dockerfile.server       # 단계 build(번들) → deploy(런타임 의존성 닫힘) · plugin(pack:plugin — 플러그인 tgz, openclaw devDependency 는 이 단계에만)
 │  │                          # → runtime(운영, node:24.21.0-bookworm-slim, 비루트 — 번들·닫힘·마이그레이션·/app/plugin/*.tgz·/app/runner/*.tgz) · devfake(로컬 검증 전용)
-│  ├─ Dockerfile.web          # 웹 빌드(ARG VITE_BUILD_ID) → caddy:2.11.4 에 dist 와 Caddyfile
+│  ├─ Dockerfile.web          # 웹 빌드(ARG VITE_BUILD_ID — 비면 웹 빌드 입력의 내용 해시) → caddy:2.11.4 에 dist 와 Caddyfile
 │  ├─ Caddyfile               # 자동 HTTPS·/api·/socket.io·/bridge/*·/runner/*·/hooks/*·/healthz·/llms.txt 프록시, /assets immutable·나머지 no-cache·SPA 폴백, 보안 헤더·CSP(강제), 본문 32MB,
-│  │                          # 전역 log default 필터 — 오류 로그의 request.uri 에서 웹훅 토큰을 가린다(서버 logger.ts redactUrl 과 같은 꼴)
+│  │                          # 전역 log default 필터 — 오류 로그의 request.uri 에서 웹훅 토큰을 가린다(서버 logger.ts redactUrl 과 같은 꼴),
+│  │                          # 프록시 뒤 손잡이 DODOK_SITE_SCHEME(http://)·DODOK_TRUSTED_PROXIES(client_ip 를 XFF 하나로 서버에 넘긴다)
 │  ├─ check-caddy.sh          # Caddy 앞단 검사(curl — 라우팅·폴백·캐시·보안 헤더), `bash infra/check-caddy.sh https://localhost:8443`.
 │  │                          # CADDY_LOG_CMD 를 주고 https 오리진이면 웹훅 토큰 가림을 h2 탐침 셋으로 본다(docs/guides/deploy.md 「로컬 검증」)
 │  ├─ local.env.example       # 로컬 검증 설정의 틀 — 사본 infra/local.env 는 git 제외
-│  └─ .env → ../.env          # 배포 호스트에서 손으로 만드는 링크(git 제외) — compose 변수 치환이 infra/ 의 .env 만 읽는다
+│  └─ .env → ../.env          # 배포 호스트에서 손으로 만드는 링크(git 제외) — compose 변수 치환이 infra/ 의 .env 만 읽는다. --env-file .env 로 부르면(Komodo) 필요 없다
 ├─ docs/
 │  ├─ guides/                 # 계속 사는 정본 — plan.md(계획서), project-structure.md(이 문서), worktree-workflow.md, browser-verification.md,
 │  │                          #   live-smoke.md, deploy.md — 배포·백업·복원·업데이트, agent-guide.md — 에이전트가 채널에서 받는 것·릴레이·components·
@@ -1135,11 +1138,11 @@ OpenClaw Gateway 주소·공유 토큰과 브리지 토큰은 env 가 아니라 
 | `DODOK_MIGRATIONS_DIR` | 소스 `apps/server/drizzle` | drizzle 마이그레이션 폴더. 운영 번들은 **필수**(없으면 설정 오류) — 이미지·compose 가 `/app/drizzle` 로 준다 |
 | `DODOK_PLUGIN_DIR` | — | 연결 페이지가 내려줄 플러그인 tgz 를 찾을 디렉터리(가장 최근 tgz). 소스 실행이면 그 뒤에 `packages/openclaw-plugin/dist` 도 본다. 배포에서는 이미지·compose 가 `/app/plugin` 으로 고정한다(그때 `.env` 의 값은 무시된다) |
 | `DODOK_RUNNER_DIR` | — | 연결 페이지가 내려줄 러너 tgz 를 찾을 디렉터리(가장 최근 tgz). 소스 실행이면 그 뒤에 `packages/claude-runner/dist` 도 본다. 배포에서는 이미지·compose 가 `/app/runner` 로 고정한다(그때 `.env` 의 값은 무시된다) |
-| `DODOK_DOMAIN` | — | **배포 전용**(서버는 읽지 않음) — Caddy 가 인증서를 받을 공개 도메인. compose 변수 치환이라 배포 호스트에 `infra/.env → ../.env` 링크가 필요하다 |
+| `DODOK_DOMAIN` | — | **배포 전용**(서버는 읽지 않음) — Caddy 가 인증서를 받을 공개 도메인. compose 변수 치환이라 배포 호스트에 `infra/.env → ../.env` 링크(또는 명령마다 `--env-file .env`)가 필요하다 |
 | `BRIDGE_URL` | — | **스파이크 러너 전용**(서버는 읽지 않음) — 러너가 브리지를 리슨할 오리진(`/bridge` 없음) |
 
 플러그인은 env 가 아니라 Gateway 계정 설정 `channels.dodok.accounts.<id>.bridgeUrl`(오리진 + `/bridge`)로 접속한다(ADR 0002 10절). 서버 쪽 공개 주소는 `BRIDGE_PUBLIC_URL` 하나다. `BRIDGE_URL` 은 스파이크 러너만 읽는다.
-웹(`apps/web`)은 `.env` 를 읽지 않는다 — 브라우저에 들어가는 설정이 없다. `vite.config.ts` 가 셸 환경으로 받는 것은 셋이다 — dev 서버의 프록시 대상 `DODOK_API_ORIGIN`(기본 `http://127.0.0.1:3000`), 개발 모드 서비스 워커 `VITE_PWA_DEV=1`(기본 끔), 빌드 식별자 `VITE_BUILD_ID`(없거나 비면 빌드 시각 — 오프라인 사본을 버리는 기준. 배포 이미지는 compose 의 `DODOK_WEB_BUILD_ID` 를 빌드 인자로 받는다 — `docs/guides/deploy.md` 「기동」). 서버 포트를 바꾸면 `APP_ORIGIN`(서버)·`DODOK_API_ORIGIN`(Vite)·브라우저 주소를 함께 맞춘다 — wire 는 핸드셰이크 `Origin` 이 `APP_ORIGIN` 과 같을 때만 쿠키를 받는다.
+웹(`apps/web`)은 `.env` 를 읽지 않는다 — 브라우저에 들어가는 설정이 없다. `vite.config.ts` 가 셸 환경으로 받는 것은 셋이다 — dev 서버의 프록시 대상 `DODOK_API_ORIGIN`(기본 `http://127.0.0.1:3000`), 개발 모드 서비스 워커 `VITE_PWA_DEV=1`(기본 끔), 빌드 식별자 `VITE_BUILD_ID`(없거나 비면 빌드 시각 — 오프라인 사본을 버리는 기준. 배포 이미지는 `infra/Dockerfile.web` 이 웹 빌드 입력의 내용 해시를 넣고, compose 의 `DODOK_WEB_BUILD_ID` 를 넘기면 그 값이 이긴다 — `docs/guides/deploy.md` 「기동」). 서버 포트를 바꾸면 `APP_ORIGIN`(서버)·`DODOK_API_ORIGIN`(Vite)·브라우저 주소를 함께 맞춘다 — wire 는 핸드셰이크 `Origin` 이 `APP_ORIGIN` 과 같을 때만 쿠키를 받는다.
 
 Postgres 전환 시 `DB_PATH` 대신 연결 문자열.
 

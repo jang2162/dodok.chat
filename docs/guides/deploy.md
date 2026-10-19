@@ -1,7 +1,8 @@
 # 배포 — 한 호스트에 dodok 을 올리고 원격 Gateway·폰까지 잇기
 
 dodok 서버·웹을 Docker Compose 로 한 호스트에 올리고, Caddy 가 공개 도메인에 자동 HTTPS 를 붙인다. 웹의 연결 페이지에서 원격 OpenClaw Gateway 를 하나 이상 추가하면 서버가 Gateway 마다 붙고, Gateway 마다 설치한 플러그인이 그 도메인의 브리지로 붙고, 폰이 PWA·푸시로 붙는다. 사람의 머신에서 Claude Code 에이전트를 돌리는 Claude 러너도 같은 도메인으로 붙는다(「Claude 러너 설치」 절).
-설계는 `docs/superpowers/specs/2026-09-24-deploy-packaging-design.md`, 웹의 연결 페이지(플러그인 받기·브리지 토큰)는 `docs/superpowers/specs/2026-09-24-setup-wizard-design.md`, Gateway 여럿(Gateway 추가·Gateway 마다 브리지 토큰)은 `docs/superpowers/specs/2026-10-04-multi-gateway-design.md` 다(구현과 달라진 것은 각 스펙의 「구현과 맞춘 것」 장). 각 파일이 **왜 그렇게 생겼는지는 그 파일의 머리 주석이 정본**이다 — `infra/compose.yml`·`infra/compose.local.yml`·`infra/Caddyfile`·`infra/Dockerfile.server`·`infra/Dockerfile.web`·`infra/check-caddy.sh`.
+설계는 `docs/superpowers/specs/2026-09-24-deploy-packaging-design.md`, 웹의 연결 페이지(플러그인 받기·브리지 토큰)는 `docs/superpowers/specs/2026-09-24-setup-wizard-design.md`, Gateway 여럿(Gateway 추가·Gateway 마다 브리지 토큰)은 `docs/superpowers/specs/2026-10-04-multi-gateway-design.md` 다(구현과 달라진 것은 각 스펙의 「구현과 맞춘 것」 장). 각 파일이 **왜 그렇게 생겼는지는 그 파일의 머리 주석이 정본**이다 — `infra/compose.yml`·`infra/compose.server.example.yml`·`infra/compose.local.yml`·`infra/Caddyfile`·`infra/Dockerfile.server`·`infra/Dockerfile.web`·`infra/check-caddy.sh`.
+호스트의 80·443 을 이미 다른 리버스 프록시가 잡고 있으면 아래 「기존 리버스 프록시 뒤에 두기」 절을 함께 따른다. Komodo 의 Git Repo Stack 으로 올릴 때의 Stack 설정은 부록 `docs/guides/deploy-komodo.md` 다 — 본문은 `docker compose` 기준이다.
 
 표기: **[A]** dodok 호스트(Docker·Compose v2 이상, git), **[B]** Gateway 호스트, **[PC]** 개발 PC(이 저장소, Node·pnpm — `mise.toml`), **[폰]**.
 명령은 [A] 의 저장소 루트에서 부른다(따로 적지 않으면).
@@ -58,7 +59,7 @@ OpenClaw Gateway 의 주소·공유 토큰과 브리지 토큰은 `.env` 에 두
 
 compose 가 `.env` 와 상관없이 더 고정하는 것 — 로그 로테이션(`app`·`caddy` 둘 다 `json-file`, 파일 10 MB × 5개 — 서비스마다 최대 50 MB)과 `app` 의 `stop_grace_period: 15s`(앱의 종료 상한 10초보다 길게 — 짧으면 SIGKILL 이 먼저 와 깨끗한 종료 표지를 못 쓰고, 다음 부팅의 운영 화면에 사건 「직전 종료가 비정상」이 뜬다). 컨테이너에 먹었는지는 `docker inspect <컨테이너> --format '{{json .HostConfig.LogConfig}} {{.Config.StopTimeout}}'`.
 
-`DODOK_WEB_BUILD_ID` 는 `.env` 에 두지 않는다 — 배포마다 셸이 계산해 넘기는 값이다(아래 「기동」). `.env` 에 고정하면 웹이 바뀌어도 ID 가 그대로라 클라이언트가 옛 오프라인 사본을 버리지 않는다.
+`DODOK_WEB_BUILD_ID` 는 `.env` 에 두지 않는다 — 넘기지 않으면 이미지 빌드가 웹 입력의 내용 해시로 정한다(아래 「기동」). `.env` 에 고정하면 웹이 바뀌어도 ID 가 그대로라 클라이언트가 옛 오프라인 사본을 버리지 않는다.
 전체 변수 목록과 기본값은 `docs/guides/project-structure.md` 「환경 변수」 장, 형식은 `.env.example`.
 
 ## 체크리스트 — 처음 배포
@@ -68,26 +69,24 @@ compose 가 `.env` 와 상관없이 더 고정하는 것 — 로그 로테이션
 ```bash
 dig +short A <도메인>                 # [A] 의 공인 IP 가 나와야 한다
 # 방화벽·클라우드 보안 그룹에서 80/tcp·443/tcp·443/udp 를 연다(Let's Encrypt HTTP 검증은 80 을 쓴다)
-git clone <저장소 URL> dodok.chat && cd dodok.chat     # --depth 를 주지 않는다(아래 「기동」의 웹 빌드 ID)
+git clone <저장소 URL> dodok.chat && cd dodok.chat
 ```
 
-그다음 위 「설정 — `.env`」 대로 `.env` 를 만들고 `ln -s ../.env infra/.env`.
+그다음 위 「설정 — `.env`」 대로 `.env` 를 만들고 `ln -s ../.env infra/.env`. 80·443 을 이미 다른 리버스 프록시가 잡고 있으면 방화벽은 그 프록시 몫이고, 2 의 `up` 전에 「기존 리버스 프록시 뒤에 두기」 절의 덮어쓰기 파일을 둔다.
 
 ### 2. [A] 기동
 
 ```bash
-DODOK_WEB_BUILD_ID=$(git log -1 --format=%h -- apps/web packages/shared pnpm-lock.yaml tsconfig.base.json package.json pnpm-workspace.yaml infra/Dockerfile.web) \
-  docker compose -f infra/compose.yml up -d --build
+docker compose -f infra/compose.yml up -d --build
 docker compose -f infra/compose.yml ps          # app·caddy 둘 다 (healthy)
 curl -fsS https://<도메인>/healthz              # {"ok":true,"db":"ok"}
 ```
 
-- 빌드는 이 호스트에서 소스로 한다(이미지 레지스트리 없음). 빌드 중에 npm 레지스트리에 닿아야 한다(`pnpm fetch`·`pnpm deploy`).
-- **`DODOK_WEB_BUILD_ID`** 는 웹 산출물에 들어가는 빌드 ID 다(`__BUILD_ID__` — 오프라인 사본을 버리는 기준, 청크·`sw.js` 이름에도 스민다). 위 경로들(웹 빌드의 입력)이 마지막으로 바뀐 커밋이라, 서버만 바뀐 배포에서는 ID 가 그대로고 웹 산출물이 바이트 단위로 같다 — 클라이언트는 새 버전 토스트도 오프라인 사본 폐기도 겪지 않는다.
-  - 빼거나 비면 빌드 시각이 ID 가 된다(늘 새 버전 — 안전한 쪽이지만 배포마다 모든 클라이언트가 청크를 다시 받는다).
-  - ⚠ **얕은 클론(`--depth`)에서는 이 값이 틀린다** — 잘린 이력의 첫 커밋이 모든 파일을 바꾼 것으로 보여 웹이 안 바뀐 배포에서도 ID 가 바뀐다. 이미 얕으면 `git fetch --unshallow`.
-  - ⚠ **호스트에서 파일을 손으로 고쳐 빌드하지 않는다** — 커밋되지 않은 변경은 ID 를 바꾸지 않아, 웹이 바뀌었는데 클라이언트가 옛 사본을 계속 쓴다.
-- `app` 은 호스트에 포트를 열지 않는다(`expose` 만). 열리는 것은 Caddy 의 80·443 뿐이다.
+- 빌드는 이 호스트에서 소스로 한다(이미지 레지스트리 없음 — 두 서비스에 `pull_policy: build`). 빌드 중에 npm 레지스트리에 닿아야 한다(`pnpm fetch`·`pnpm deploy`).
+- **웹 빌드 ID** 는 웹 산출물에 들어가는 값이다(`__BUILD_ID__` — 오프라인 사본을 버리는 기준, 청크·`sw.js` 이름에도 스민다). `infra/Dockerfile.web` 이 웹 빌드 입력(그 파일의 「웹 빌드 ID」 주석이 경로 목록의 정본)의 **내용 해시**로 정한다 — 서버만 바뀐 배포에서는 ID 가 그대로고 웹 산출물이 바이트 단위로 같아, 클라이언트는 새 버전 토스트도 오프라인 사본 폐기도 겪지 않는다. 셸 계산이 없어 얕은 클론·Komodo 에서도 같다. 빌드 로그의 `웹 빌드 ID(내용 해시): <12자>` 줄로 값을 본다.
+  - 선택: `DODOK_WEB_BUILD_ID=<값> docker compose … up -d --build` 로 넘기면 그 값이 이긴다. `.env` 에는 두지 않는다(위 「설정 — `.env`」).
+  - 해시는 빌드 컨텍스트의 파일로 잰다 — 호스트에서 웹 입력 파일을 손으로 고쳐 빌드하면 그 변경도 ID 를 바꾼다(커밋 여부와 상관없다).
+- `app` 은 호스트에 포트를 열지 않는다(`expose` 만). 열리는 것은 Caddy 의 80·443 뿐이고, 기존 리버스 프록시 뒤에 두면 그것도 닫는다(아래 「기존 리버스 프록시 뒤에 두기」).
 - `caddy` 의 헬스는 관리 API 다 — **인증서 발급에 실패해도 healthy 다.** `/healthz` 가 안 되면 `docker compose -f infra/compose.yml logs caddy` 를 본다(아래 「오류」).
 
 ### 3. [웹] Gateway 추가·페어링 확인
@@ -207,6 +206,68 @@ docker compose -f infra/compose.yml exec app node dist/backup.js
 ```
 
 정기 백업은 아래 「백업」 절의 cron 줄.
+
+## 기존 리버스 프록시 뒤에 두기
+
+[A] 의 80·443 을 이미 다른 리버스 프록시(nginx·Traefik·Caddy·Nginx Proxy Manager 등)가 잡고 있으면, 그 프록시가 TLS 를 끝내고 dodok 의 Caddy 로 HTTP 를 넘기게 한다. 기본 파일(`infra/compose.yml`)은 고치지 않고 **서버 덮어쓰기 파일 하나를 뒤에 붙인다** — dodok 의 Caddy 는 호스트 포트를 닫고 HTTP(:80)만 들으며, 정적 웹·경로 나누기·캐시·보안 헤더·CSP·로그 가림은 그대로 한다. 파일의 각 줄이 왜 그런지는 `infra/compose.server.example.yml` 머리 주석, Caddy 쪽 손잡이는 `infra/Caddyfile` 머리 주석이 정본이다.
+
+**1. 공유 네트워크** — 바깥 프록시와 dodok 의 Caddy 가 함께 붙을 Docker 네트워크가 있어야 한다(`external` — 없으면 `up` 이 멈춘다). 바깥 프록시가 이미 쓰는 네트워크가 있으면 그 이름을 쓰고, 없으면 만들어 바깥 프록시를 붙인다(`docker network create <이름>` · `docker network connect <이름> <프록시 컨테이너>`).
+
+**2. 신뢰 주소** — 바깥 프록시 컨테이너가 그 네트워크에서 갖는 주소 하나(`/32`)다.
+
+```bash
+docker inspect <프록시 컨테이너> --format '{{(index .NetworkSettings.Networks "<네트워크>").IPAddress}}'
+```
+
+- ⚠ **네트워크 서브넷 전체를 주지 않는다.** 서브넷에는 게이트웨이(`.1`)가 든다. Docker 가 게시 포트로 들어온 연결을 게이트웨이에서 온 것처럼 바깥 프록시에 넘기면(Docker Desktop 은 늘, Linux 는 userland-proxy 를 타는 IPv6·루프백 연결) 그 연결도 「믿는 프록시」가 되어 클라이언트가 꾸민 `X-Forwarded-For` 가 서버에 닿는다 — 아래 「위조 확인」이 그 차이를 잰다.
+- 바깥 프록시 컨테이너를 다시 만들면 주소가 바뀔 수 있다. 바뀌면 위조는 여전히 막히지만 **모든 요청이 프록시 주소 하나로 묶여** 한 사람의 폭주가 모두를 막는다(로그인 1분 5회가 전원 몫이 된다 — 「운영 화면」 레이트리밋 표). 바깥 프록시에 고정 주소를 주거나(그 네트워크를 `--subnet` 으로 만들고 프록시에 `ipv4_address`), 프록시를 다시 만든 뒤 이 값을 다시 본다.
+
+**3. `.env`** — 위 「설정 — `.env`」 표에 둘을 더한다. 나머지 값은 그대로다 — `APP_ORIGIN`·`BRIDGE_PUBLIC_URL` 은 바깥 프록시가 내보이는 공개 주소(`https://<도메인>`), `DODOK_DOMAIN` 은 그 도메인이다(인증서는 받지 않고 Host 를 맞추는 데만 쓴다).
+
+| 값 | 뜻 |
+| --- | --- |
+| `DODOK_PROXY_NETWORK` | 1 의 네트워크 이름 |
+| `DODOK_TRUSTED_PROXIES` | 2 의 주소(`/32` — 프록시가 여럿이면 공백으로) |
+
+**4. 덮어쓰기 파일·기동**
+
+```bash
+cp infra/compose.server.example.yml infra/compose.server.yml     # git 이 무시한다 — 서버마다 다르다
+dc() { docker compose -f infra/compose.yml -f infra/compose.server.yml "$@"; }
+dc up -d --build
+dc ps                                                             # app·caddy (healthy), caddy 의 PORTS 에 호스트 포트가 없다
+```
+
+- 이 문서의 다른 명령(`docker compose -f infra/compose.yml …`)도 **모두** 두 파일로 부른다(위 `dc`). ⚠ 기본 파일만으로 `up` 하면 Caddy 가 호스트 80·443 을 다시 잡으려다 `port is already allocated` 로 멈춘다. `ps`·`logs`·`exec` 는 한 파일로도 돌지만 섞어 쓰다 `up` 에서 실수한다. cron 줄도 두 파일이다.
+- 덮어쓰기 파일은 기본 파일의 키를 복사하지 않고 달라지는 키만 갖는다 — `caddy` 의 호스트 포트를 모두 닫고(`ports: !reset []`), Caddyfile 손잡이 `DODOK_SITE_SCHEME=http://`·`DODOK_TRUSTED_PROXIES` 를 켜고, `default`(→ `app`)와 바깥 프록시 네트워크 둘에 붙으며 그 네트워크에서 별칭 `dodok-web` 를 갖는다. 병합 결과는 값이 나오지 않는 꼴로만 본다(`dc config --format json | jq -c '.services|map_values({ports, networks, pull_policy})'` — `environment` 는 찍지 않는다, 위 「시크릿 규칙」). 오래된 Compose 는 `!reset` 을 읽지 못한다 — 서버에서 위 `config` 가 오류 없이 `caddy` 의 `ports` 를 `null` 로 보이는지 본다(로컬 검증은 Docker Compose 5.6.0).
+
+**5. 바깥 프록시가 갖출 것** — 프록시 종류마다 설정 글은 다르니 아래 성질을 맞춘다.
+
+- **대상** — `http://dodok-web:80`(공유 네트워크의 별칭). 서비스 이름 `caddy` 는 같은 네트워크의 다른 Stack 과 겹치면 DNS 가 둘을 번갈아 돌려줘 쓰지 않는다. **모든 경로를** 넘기는 것이 기본이다 — 경로는 dodok 의 Caddy 가 나눈다(`infra/Caddyfile` 의 `@backend`).
+- **Host** — 클라이언트가 보낸 Host(`<도메인>`)를 그대로 넘긴다. dodok 의 Caddy 는 그 이름의 사이트만 가진다 — 다른 Host 면 빈 본문 `200` 이 와서 고장이 「흰 화면」으로 보인다.
+- **`X-Forwarded-For`** — 받은 값 뒤에 연결 주소를 덧붙이거나(nginx `$proxy_add_x_forwarded_for`) 연결 주소로 덮는다. 둘 다 된다 — dodok 의 Caddy 가 오른쪽부터 믿는 주소(2)를 건너뛴 첫 주소 하나로 덮어 서버에 넘긴다.
+- **WebSocket** — `/socket.io/` 의 업그레이드를 넘긴다(nginx 는 `proxy_http_version 1.1` 과 `Upgrade`·`Connection` 머리). 웹·플러그인·러너의 연결은 늘 열려 있고 Socket.IO 가 25초마다 핑을 보낸다 — 유휴 상한이 그보다 길어야 한다(넉넉히 몇 분).
+- **본문 크기** — 32 MB 이상(에이전트 파일 20 MiB + 여유 — dodok Caddy 의 상한과 같다). 작으면(nginx 기본 `client_max_body_size 1m`) 첨부가 바깥 프록시의 413 으로 끊긴다.
+- **로그** — ⚠ dodok 의 Caddy·서버는 웹훅 토큰(`/hooks/whk_…`)과 쿼리에 잘못 실린 개인 토큰(`?token=dpt_…`)을 로그에서 가리지만(「자동화 웹훅」·「제어 MCP」 절), **바깥 프록시의 로그는 모른다** — access log 가 켜진 프록시는 그 URL 을 원문으로 남긴다(로컬 검증의 바깥 Caddy 는 오류 로그에도 남겼다). 그 경로의 로그를 끄거나 가린다. 확인은 바깥 프록시 로그에서 `grep -c 'whk_[A-Za-z0-9_-]\{7,\}'` 이 0 인지.
+- **HSTS** — dodok 의 Caddy 가 붙여 보낸다. 바깥 프록시도 붙이면 머리가 두 줄이 되니 한쪽만 둔다.
+- **`X-Forwarded-Proto`** — 서버는 읽지 않는다. 세션 쿠키의 `Secure`, wire 핸드셰이크 `Origin` 검사, 초대·웹훅 링크는 모두 `APP_ORIGIN`·`BRIDGE_PUBLIC_URL` 로 정한다 — 그래서 바깥 프록시 → Caddy 구간이 HTTP 여도 쿠키는 `Secure` 로 나가고 wire 가 붙는다.
+
+**6. 확인**
+
+```bash
+curl -fsS https://<도메인>/healthz                                 # {"ok":true,"db":"ok"}
+bash infra/check-caddy.sh https://<도메인>                           # 줄마다 PASS/FAIL
+```
+
+- `check-caddy.sh` 에 `CADDY_LOG_CMD='docker compose -f infra/compose.yml -f infra/compose.server.yml logs --no-log-prefix caddy'` 를 주면 로그 가림 탐침 다섯 가운데 둘(`/hooks/` 경로, `/mcp` Authorization 머리)이 「로그에서 못 찾았다」로 FAIL 한다 — 바깥 프록시가 Caddy 로 HTTP/1.1 로 넘기면 앱이 그 둘을 본문 전에 404·401 로 받아 dodok Caddy 에 오류 줄이 생기지 않는다(그 스크립트의 「웹훅·개인 토큰 가림」 주석의 h1 거짓 FAIL). Caddy 의 가림 필터는 바뀌지 않았으니 가림 자체는 「로컬 검증」의 8443 으로 잰다. 나머지 25 줄은 PASS 여야 한다.
+- **위조 확인** — 틀린 토큰 로그인을 XFF 를 바꿔 가며 6번 보내면 6번째가 429 여야 한다. 6번 모두 401 이면 꾸민 XFF 가 서버에 닿는 것이다(신뢰 주소에 서브넷·게이트웨이가 들었다).
+  ```bash
+  for i in 1 2 3 4 5 6; do curl -s -o /dev/null -w '%{http_code} ' -X POST -H 'content-type: application/json' \
+    -H "X-Forwarded-For: 1.2.3.$i" --data '{"token":"wrong-token-xxxxxxxxxxxx"}' https://<도메인>/api/v1/auth/local; done; echo
+  ```
+  1분 안에 같은 주소의 정상 로그인도 막히니 사람이 쓰지 않을 때 한다(재시작하면 풀린다 — `dc restart app`).
+- **주소 확인** — `dc logs app | grep -o '"remoteAddress":"[^"]*"' | sort | uniq -c` 에 클라이언트들의 주소(앞 /24)가 보여야 한다. 프록시 네트워크의 주소 하나만 보이면 신뢰 주소가 프록시와 맞지 않는다(2). 단 바깥 프록시 자체가 클라이언트를 게이트웨이 주소로 보는 환경(Docker Desktop 등)에서는 그 주소가 보이는 것이 맞다.
+- 로컬 검증 환경(Docker Desktop, 테스트 바깥 프록시 `caddy:2.11.4` + `tls internal`, 받은 XFF 뒤에 덧붙이게 둠)에서 잰 것: 신뢰 주소가 프록시 `/32` 면 Caddy 가 서버로 넘긴 XFF 는 바깥 프록시가 본 주소(게이트웨이) 하나, 서브넷 전체면 클라이언트가 꾸민 값(`1.2.3.4`), 프록시를 포함하지 않으면 프록시 주소 하나였다. 위조 6회는 `/32` 와 「포함하지 않음」에서 6번째 429, 서브넷에서 6번 모두 401. 같은 구성에서 owner 로그인 쿠키(`Secure; HttpOnly; SameSite=Lax`), wire WebSocket(쿠키 + 맞는 Origin 은 websocket 으로 붙어 40초 유지, 틀린 Origin 은 `UNAUTHORIZED`), 첨부(에이전트 파일 20 MiB 200, 사람 이미지 3.8 MiB 200)가 바깥 프록시를 지났다. 다시 재려면 넘기는 XFF 를 되돌려 주는 임시 업스트림을 `DODOK_UPSTREAM` 으로 붙인다.
 
 ## 브리지 토큰 교체
 
@@ -347,7 +408,7 @@ Claude 러너(`@dodok/claude-runner`, 명령 `dodok-runner`)는 **사람의 머�
 
 사람이 자기 Claude Code·Claude Desktop 같은 MCP 클라이언트로 채널·에이전트 설정을 읽고 바꾸는 입구다(도구 목록·권한은 `docs/guides/agent-guide.md` 「제어 도구 — 채널·에이전트 설정 읽고 바꾸기」 절, 화면은 `docs/manual/user-guide.md` 「내 계정」 절의 「MCP 토큰」). 설계는 `docs/superpowers/specs/2026-10-06-control-mcp-design.md`(구현과 달라진 것은 「구현과 맞춘 것」 장).
 
-- **주소는 끝 슬래시 없이 `https://<도메인>/mcp`** 다. Caddy `@backend` 는 `/mcp` 를 정확히 맞춰 서버로 넘긴다 — `/mcp/` 는 웹 앱(SPA 폴백)으로 떨어져 엉뚱한 405·HTML 이 난다. 앞단 프록시를 Caddy 대신 직접 두면 `/api`·`/socket.io`·`/bridge`·`/runner`·`/hooks`·`/llms.txt`·`/healthz` 와 함께(`infra/Caddyfile` 의 `@backend`) **`/mcp` 도 서버로 넘긴다** — 「내 계정」의 `claude mcp add` 예시는 웹 페이지의 오리진에 `/mcp` 를 붙인 주소라, 빠지면 예시 명령이 404 다.
+- **주소는 끝 슬래시 없이 `https://<도메인>/mcp`** 다. Caddy `@backend` 는 `/mcp` 를 정확히 맞춰 서버로 넘긴다 — `/mcp/` 는 웹 앱(SPA 폴백)으로 떨어져 엉뚱한 405·HTML 이 난다. 기존 리버스 프록시 뒤에 둘 때는 그 프록시가 **모든 경로를** 이 Stack 의 Caddy 로 넘기는 것이 기본이다(「기존 리버스 프록시 뒤에 두기」) — 경로를 골라 넘기는 프록시면 `/api`·`/socket.io`·`/bridge`·`/runner`·`/hooks`·`/llms.txt`·`/healthz`(`infra/Caddyfile` 의 `@backend`)와 함께 **`/mcp` 도 넘긴다** — 「내 계정」의 `claude mcp add` 예시는 웹 페이지의 오리진에 `/mcp` 를 붙인 주소라, 빠지면 예시 명령이 404 다.
 - **로그** — 서버는 제어 호출마다(`/mcp`·채널 안 에이전트 모두) info 한 줄 `control call` 을 남긴다: `tool`·`via`(`pat`·`agent`)·`userId`·`agentId`·`runId`·`result`(`ok` 또는 오류 코드)·`ms`. 인자 값·프롬프트·토큰은 싣지 않는다 — 에이전트가 무엇을 읽고 바꾸려 했는지는 이 줄과 `control_change` 사건으로 본다. OpenClaw 에이전트의 확인 카드는 5분, 그 밖은 10분이다.
 - **토큰** — 사람마다 「내 계정」에서 발급하는 개인 토큰 `dpt_` + 43자(사람마다 10개). DB 에는 sha256 해시와 앞 6자만 둔다. 원문은 발급 응답 한 번뿐이다. `Authorization: Bearer dpt_…` 머리로만 받는다 — URL·쿼리의 토큰은 보지 않는다. 그 사람의 **지금 역할**로 판정하고(REST 와 같은 규칙), 비활성화하면 그 사람의 토큰이 모두 폐기된다(다시 활성화해도 되살아나지 않는다). 바깥 클라이언트의 쓰기에는 확인 카드가 없다 — 클라이언트의 도구 확인에 맡긴다.
 - **붙이기** — 「내 계정」의 예시 명령 그대로다(`claude mcp add --transport http dodok https://<도메인>/mcp --header "Authorization: Bearer dpt_…"`) → `claude mcp list` 가 `dodok: … (HTTP) - ✔ Connected`. ⚠ `claude mcp get dodok` 은 머리를 원문으로 보인다(`add`·`list` 는 `[REDACTED]`) — 화면 공유 중에는 부르지 않는다. 틀리거나 폐기된 토큰이면 `list` 가 `✘ Failed to connect — Server rejected the configured Authorization header (HTTP 401) … OAuth fallback is disabled when headers.Authorization is set. Error detail: {"code":"UNAUTHORIZED","message":"mcp 토큰이 틀렸다"}` 를 보인다 — 클라이언트가 OAuth 로그인으로 빠지지 않으니, 「내 계정」에서 새 토큰을 발급해 `claude mcp remove dodok` 뒤 다시 붙인다.
@@ -535,8 +596,7 @@ docker compose -f infra/compose.yml ps     # app (healthy)
 docker compose -f infra/compose.yml exec app node dist/backup.js     # 이 백업의 이름을 적어 둔다
 git rev-parse --short HEAD                                          # 되돌아갈 커밋을 적어 둔다
 git pull --ff-only
-DODOK_WEB_BUILD_ID=$(git log -1 --format=%h -- apps/web packages/shared pnpm-lock.yaml tsconfig.base.json package.json pnpm-workspace.yaml infra/Dockerfile.web) \
-  docker compose -f infra/compose.yml up -d --build
+docker compose -f infra/compose.yml up -d --build
 docker compose -f infra/compose.yml ps                              # app·caddy (healthy)
 ```
 
@@ -561,10 +621,11 @@ docker compose -f infra/compose.yml ps                              # app·caddy
 ```bash
 docker compose -f infra/compose.yml stop app
 git checkout <적어 둔 커밋>
-DODOK_WEB_BUILD_ID=$(git log -1 --format=%h -- apps/web packages/shared pnpm-lock.yaml tsconfig.base.json package.json pnpm-workspace.yaml infra/Dockerfile.web) \
-  docker compose -f infra/compose.yml build
+docker compose -f infra/compose.yml build
 docker compose -f infra/compose.yml run --rm --entrypoint sh app    # 방금 빌드한 옛 이미지
 ```
+
+옛 커밋의 `infra/Dockerfile.web` 이 내용 해시를 모르는 판이면 웹 빌드 ID 가 빌드 시각이 된다 — 클라이언트가 청크를 한 번 다시 받을 뿐 안전한 쪽이다.
 
 컨테이너 안(「복원」 절과 같다 — **업데이트 직전 백업**을 고른다):
 
@@ -596,6 +657,9 @@ docker compose -f infra/compose.yml ps     # app·caddy (healthy)
 | 증상 | 원인·확인 | 고침 |
 | --- | --- | --- |
 | compose 명령이 `DODOK_DOMAIN 이 필요하다 — 루트 .env 에 두고 ln -s ../.env infra/.env` 로 멈춤 | 링크가 없거나 `.env` 에 `DODOK_DOMAIN` 이 비었다 | `ln -s ../.env infra/.env`, 값 채우기 |
+| `up` 이 `port is already allocated`(`Bind for 0.0.0.0:80 failed` 류)로 멈춤 | 호스트의 80·443 을 다른 리버스 프록시가 잡고 있다 — 또는 덮어쓰기 파일 없이 기본 파일만으로 `up` 했다 | 「기존 리버스 프록시 뒤에 두기」 — 모든 명령을 두 파일로 |
+| 프록시 뒤에서 페이지가 흰 화면, `/healthz` 가 빈 본문 200 | 바깥 프록시가 넘긴 Host 가 `DODOK_DOMAIN` 과 다르다 | 바깥 프록시가 원래 Host 를 넘기게(「기존 리버스 프록시 뒤에 두기」 5) |
+| 프록시 뒤에서 로그인 429 가 모두에게 함께 걸림, 앱 로그 `remoteAddress` 가 프록시 네트워크 하나 | `DODOK_TRUSTED_PROXIES` 가 바깥 프록시의 지금 주소와 다르다(프록시 컨테이너를 다시 만들어 주소가 바뀌었다 등) | 「기존 리버스 프록시 뒤에 두기」 2 로 주소를 다시 보고 `dc up -d` |
 | `app` 이 재시작을 되풀이, `caddy` 는 대기 | `.env` 필수 값이 없거나 틀렸다 — `docker compose -f infra/compose.yml logs app` 에 `Error: 설정 오류:` 줄(그 위에 소스 위치와 `^` 줄이 먼저 나온다)과 그 아래 틀린 항목마다 한 줄(`<이름>: <사유>`), 이어서 Node 스택 | 그 값을 고치고 `up -d` |
 | `app` 로그 한 줄: `설정 오류: DATA_DIR 에 쓸 수 없다: /data (EACCES) — 컨테이너면 볼륨 소유자를 1000:1000 으로: …` | 볼륨이 다른 UID(예: root)로 채워진 적이 있다. 컨테이너는 `node`(1000:1000)로 돈다. 빈 볼륨은 Docker 가 이미지의 `/data` 소유자를 입혀 이 경우가 안 생긴다 — 파일이 이미 든 볼륨에서만 난다 | `docker compose -f infra/compose.yml run --rm -u 0 app chown -R 1000:1000 /data` 뒤 `up -d` |
 | `/healthz` 가 안 됨, `caddy` 는 healthy | 인증서 발급 실패 — `logs caddy`. 확인 순서: DNS A 레코드가 이 호스트인가 → 80·443 이 밖에서 열려 있나 → `DODOK_DOMAIN` 이 그 이름인가 | 고친 뒤 `docker compose -f infra/compose.yml restart caddy`. Let's Encrypt 는 실패가 잦으면 잠시 막는다 — 고치기 전에 되풀이하지 않는다 |
@@ -634,11 +698,11 @@ docker compose -f infra/compose.yml ps     # app·caddy (healthy)
 
 ## 보안
 
-- 호스트에 열리는 포트는 Caddy 80·443(udp 포함)뿐이다. `app` 은 compose 내부 네트워크에만 있다.
+- 호스트에 열리는 포트는 Caddy 80·443(udp 포함)뿐이다(기존 리버스 프록시 뒤면 그것도 닫는다). `app` 은 compose 내부 네트워크에만 있다.
 - 컨테이너는 비루트(`node`)로 돈다. `.env`·`data/` 는 이미지에 들어가지 않는다(`.dockerignore`).
 - HSTS·`nosniff`·`Referrer-Policy`·**CSP(강제)** 는 Caddy 가 붙인다. CSP 는 스크립트를 이 오리진의 파일만 허용하고(인라인·eval 없음), 스타일은 인라인까지(라이브러리가 런타임에 `<style>` 을 꽂는다), 이미지는 이 오리진·`data:`·`blob:`(작성기 미리보기)·`https:`(components media 블록의 외부 이미지), 연결은 이 오리진(wss 포함), 워커는 `/sw.js`, 다른 사이트의 틀 안에는 못 넣는다(`frame-ancestors 'none'`). 정책 글과 각 허용의 까닭은 `infra/Caddyfile` 의 CSP 주석, `check-caddy.sh` 는 헤더가 강제이고 `script-src 'self'` 만인지를 본다. 정책을 넓히거나 좁혔으면 로컬 검증에서 로그인·채널·스트리밍·첨부 이미지·코드 하이라이트·서비스 워커를 돌며 콘솔의 CSP 위반이 0 인지 본다 — 8443 은 독립 Playwright Chromium(`docs/guides/browser-verification.md` 「로컬 HTTPS(Compose 8443)를 볼 때」)으로, `securitypolicyviolation` 이벤트를 `addInitScript` 로 모은다. 웹은 zod 를 jitless 로 둔다(`apps/web/src/lib/zodJitless.ts`) — 아니면 zod 의 `Function("")` 탐지가 페이지마다 위반 보고를 낸다(막혀도 앱은 돈다).
 - **자동화 웹훅은 로그인 없는 공개 경로다**(`POST /hooks/<토큰>`, 위 「자동화 웹훅」) — 256비트 토큰이 유일한 열쇠이고, 서버·Caddy 로그는 그 토큰을 가린다. 본문은 글자로만 다룬다 — 실행하거나 템플릿으로 풀지 않고, 본문 속 `@핸들`·멘션 토큰은 아무도 부르지 않는다. 서명 검증(GitHub `X-Hub-Signature-256` 등)은 없다.
-- **`X-Forwarded-For` 를 위조해도 로그인 레이트리밋은 우회되지 않는다.** Caddy 에 `trusted_proxies` 가 없어(기본 — 아무도 믿지 않음) 클라이언트가 보낸 XFF 를 그대로 넘기지 않고 자기가 본 연결 IP 로 덮는다. 서버는 compose 가 고정한 `TRUST_PROXY=true` 로 그 값을 읽는다 — 다른 레이트리밋과 브리지 실패 카운터(위 「운영 화면」)도 같은 주소를 쓴다. 로컬 검증에서 틀린 토큰 로그인을 XFF 를 바꿔 가며 보내도 5회 뒤 새 XFF 값의 첫 요청부터 429 였다(다시 재려면 `curl -H 'X-Forwarded-For: <아무 값>'` 으로 `POST /api/v1/auth/local` 을 6회). Caddy 앞에 다른 프록시를 더 두면 이 전제가 바뀐다 — 그때는 Caddy 에 그 프록시만 `trusted_proxies` 로 둔다.
+- **`X-Forwarded-For` 를 위조해도 로그인 레이트리밋은 우회되지 않는다.** Caddy 의 `trusted_proxies` 가 기본으로 비어 있어(`DODOK_TRUSTED_PROXIES` 를 주지 않으면 — 아무도 믿지 않음) 클라이언트가 보낸 XFF 를 그대로 넘기지 않고 자기가 본 연결 IP 하나로 덮는다. 서버는 compose 가 고정한 `TRUST_PROXY=true` 로 그 값을 읽는다 — 다른 레이트리밋과 브리지 실패 카운터(위 「운영 화면」)도 같은 주소를 쓴다. 로컬 검증에서 틀린 토큰 로그인을 XFF 를 바꿔 가며 보내도 5회 뒤 새 XFF 값의 첫 요청부터 429 였다(다시 재려면 `curl -H 'X-Forwarded-For: <아무 값>'` 으로 `POST /api/v1/auth/local` 을 6회). Caddy 앞에 다른 프록시를 더 두면 이 전제가 바뀐다 — 그때는 Caddy 에 그 프록시만 믿게 하고(`DODOK_TRUSTED_PROXIES`), Caddy 가 서버에 넘기는 XFF 를 믿는 주소를 건너뛴 클라이언트 주소 하나로 덮는다. 절차와 실측은 「기존 리버스 프록시 뒤에 두기」 절.
 - **서버 로그에는 IP 전체를 싣지 않는다.** 요청 로그(`incoming request` 줄의 `req.remoteAddress`)와 브리지·러너 핸드셰이크 거절 로그(`bridge connection rejected` 의 `reason`, `runner connection rejected` 의 `address`)는 운영 사건과 같이 IPv4 /24·IPv6 /48 로 줄인 값이다(`apps/server/src/modules/ops/ip.ts` 의 `ipPrefix`). 레이트리밋·인증 실패 카운터는 전체 IP 로 센다 — 로그만 줄인다. 이 가림은 로그뿐이다: DB 의 Better Auth 세션 행(`session.ip_address`)에는 로그인한 IP 전체가 남는다(`docs/guides/plan.md` 8장 이월).
 
 ## Docker 정리 규칙

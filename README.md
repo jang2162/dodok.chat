@@ -47,7 +47,7 @@ pnpm -F @dodok/web dev             # 터미널 2 — 웹(포트 5173)
 
 ### 운영 — 한 호스트에 올리고 원격 Gateway 잇기
 
-`docs/guides/deploy.md` 「체크리스트 — 처음 배포」 절을 따른다. Docker Compose 로 서버·Caddy 를 올리고, 웹의 연결 페이지에서 플러그인 파일과 브리지 토큰을 받아 Gateway 호스트에 설치하고, 폰에서 PWA·푸시까지 확인하는 순서다. 멤버 초대·비밀번호 재설정·백업·복원·업데이트·브리지 토큰 교체·운영 화면도 같은 문서에 있다.
+`docs/guides/deploy.md` 「체크리스트 — 처음 배포」 절을 따른다. Docker Compose 로 서버·Caddy 를 올리고, 웹의 연결 페이지에서 플러그인 파일과 브리지 토큰을 받아 Gateway 호스트에 설치하고, 폰에서 PWA·푸시까지 확인하는 순서다. 멤버 초대·비밀번호 재설정·백업·복원·업데이트·브리지 토큰 교체·운영 화면도 같은 문서에 있다. 호스트의 80·443 을 이미 다른 리버스 프록시가 잡고 있으면 같은 문서의 「기존 리버스 프록시 뒤에 두기」 절, Komodo 로 올리면 부록 `docs/guides/deploy-komodo.md` 를 함께 본다.
 
 설치가 끝나면 `docs/guides/agent-guide.md` 로 에이전트에게 dodok 쓰는 법을 알려 준다.
 
@@ -57,7 +57,8 @@ pnpm -F @dodok/web dev             # 터미널 2 — 웹(포트 5173)
 | --- | --- |
 | `docs/guides/plan.md` | 무엇을 왜 만드는가 — 요구사항·아키텍처·로드맵·확정된 결정(「결정 사항」)·남은 문제(「로드맵」 장의 「이월」) |
 | `docs/guides/project-structure.md` | 어느 코드가 어디에 있고 무슨 책임을 지는가 |
-| `docs/guides/deploy.md` | 설치·설정(`.env`)·Claude 러너 설치·멤버 초대·자동화 웹훅·백업·복원·업데이트·운영 화면 — 설치 절차의 정본 |
+| `docs/guides/deploy.md` | 설치·설정(`.env`)·기존 리버스 프록시 뒤에 두기·Claude 러너 설치·멤버 초대·자동화 웹훅·백업·복원·업데이트·운영 화면 — 설치 절차의 정본 |
+| `docs/guides/deploy-komodo.md` | Komodo Git Repo Stack 으로 올릴 때의 Stack 설정(Source·File Paths·Environment·Webhook)·서버 덮어쓰기 파일·호스트에서 운영 명령 부르는 꼴 |
 | `docs/manual/user-guide.md` | 웹 앱을 쓰는 사람(owner·admin·member)이 화면에서 하는 일 — 로그인·채널·읽지 않음·멘션·반응·카드·승인·스레드·검색·설정·자동화·멤버·알림·연결 페이지, 역할별 권한 표, 자주 겪는 문제 |
 | `docs/guides/agent-guide.md` | 에이전트가 채널에서 무엇을 받고 어떻게 답하는가(헤더·반응·자동화가 게시한 글·릴레이·components·파일·승인·Claude 러너 에이전트), 에이전트 지시 파일에 붙여 넣을 블록 |
 | `docs/guides/live-smoke.md` | 실제 Gateway·플러그인·모델로 돌려 보는 절차와 그 결과 기록, 모델 없이 실물 경로를 두드리는 런 0회 하네스(OpenClaw·Claude 러너) |
