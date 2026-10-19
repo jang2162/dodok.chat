@@ -3,12 +3,14 @@
 #   DODOK_DOMAIN       인증서를 받을 도메인(필수 — 프록시 뒤면 인증서 없이 Host 를 맞추는 이름으로만 쓴다). 로컬 검증은 localhost
 #   CADDY_LOCAL_CERTS  로컬 검증만 local_certs — 공개 CA 대신 Caddy 내부 CA. 운영은 비워 둔다(빈 전역 블록)
 #   DODOK_UPSTREAM     서버 주소(기본 app:3000). 로컬 검증의 devfake 프로필만 devfake:3000
-#   기존 리버스 프록시 뒤에 둘 때만(서버 덮어쓰기 파일 compose.server.example.yml 이 켠다 — 비우면 지금처럼 Caddy 가 공개 앞단):
+#   기존 리버스 프록시 뒤에 둘 때만(서버 덮어쓰기 파일이 켠다 — 바깥 프록시가 컨테이너면 compose.server.example.yml, 호스트 프로세스면 deploy.md
+#   「바깥 프록시가 호스트에 깔린 경우」의 조각. 비우면 지금처럼 Caddy 가 공개 앞단):
 #   DODOK_SITE_SCHEME      http:// 면 HTTP(:80)만 듣고 인증서를 받지 않는다. 사이트 주소는 이 값 + DODOK_DOMAIN 이라 바깥 프록시가
 #                          Host 를 그 도메인으로 넘겨야 맞는다. {$A:{$B}} 처럼 기본값 안에 변수를 넣는 꼴은 Caddy 2.11.4 가 풀지 않아
 #                          (caddy adapt 가 '{$B}' 를 글자로 남긴다) 주소 전체가 아니라 접두만 손잡이로 둔다
 #   DODOK_TRUSTED_PROXIES  바깥 프록시가 이 Caddy 에 닿는 주소(CIDR, 공백으로 여럿 — 서브넷 전체가 아니라 프록시 주소만인 까닭은
-#                          compose.server.example.yml). 비우면 아무도 믿지 않는다(빈 목록도 파싱된다)
+#                          compose.server.example.yml, 호스트 프록시면 게이트웨이 /32 — deploy.md 「바깥 프록시가 호스트에 깔린 경우」).
+#                          비우면 아무도 믿지 않는다(빈 목록도 파싱된다)
 {
 	{$CADDY_LOCAL_CERTS}
 	# 클라이언트 IP — 레이트리밋·브리지 실패 카운터가 이 값으로 걸린다(서버는 TRUST_PROXY=true 로 X-Forwarded-For 첫 값을 읽는다).

@@ -211,7 +211,7 @@ docker compose -f infra/compose.yml exec app node dist/backup.js
 
 [A] 의 80·443 을 이미 다른 리버스 프록시(nginx·Traefik·Caddy·Nginx Proxy Manager 등)가 잡고 있으면, 그 프록시가 TLS 를 끝내고 dodok 의 Caddy 로 HTTP 를 넘기게 한다. 기본 파일(`infra/compose.yml`)은 고치지 않고 **서버 덮어쓰기 파일 하나를 뒤에 붙인다** — dodok 의 Caddy 는 호스트 포트를 닫고 HTTP(:80)만 들으며, 정적 웹·경로 나누기·캐시·보안 헤더·CSP·로그 가림은 그대로 한다. 파일의 각 줄이 왜 그런지는 `infra/compose.server.example.yml` 머리 주석, Caddy 쪽 손잡이는 `infra/Caddyfile` 머리 주석이 정본이다.
 
-**바깥 프록시가 호스트에 깔린 경우** — 아래는 바깥 프록시가 **컨테이너**라고 전제한다. 프록시가 호스트 프로세스(systemd 의 nginx·Caddy 등)면 공유 네트워크의 별칭 `dodok-web` 을 풀 수 없으니 「공유 네트워크」와 예시 파일을 쓰지 않는다. `infra/compose.server.yml` 은 예시를 복사하지 않고 아래 조각으로 쓴다(「덮어쓰기 파일·기동」의 `dc` 는 같고, `dc ps` 의 caddy PORTS 는 `127.0.0.1:<포트>->80/tcp` 다). 바깥 프록시는 `http://127.0.0.1:<포트>` 로 넘긴다(「바깥 프록시가 갖출 것」의 나머지는 같다). `DODOK_PROXY_NETWORK` 는 두지 않는다.
+**바깥 프록시가 호스트에 깔린 경우** — 아래는 바깥 프록시가 **컨테이너**라고 전제한다. 프록시가 호스트 프로세스(systemd 의 nginx·Caddy 등)면 공유 네트워크의 별칭 `dodok-web` 을 풀 수 없으니 「공유 네트워크」와 예시 파일을 쓰지 않는다. `infra/compose.server.yml` 은 예시를 복사하지 않고 아래 조각으로 쓴다(「덮어쓰기 파일·기동」의 `dc` 는 같고, `dc ps` 의 caddy PORTS 는 `127.0.0.1:<포트>->80/tcp`, 병합 확인(`config … jq`)의 caddy `ports` 는 `127.0.0.1` → `80` 하나다). 바깥 프록시는 `http://127.0.0.1:<포트>` 로 넘긴다(「바깥 프록시가 갖출 것」의 나머지는 같다). `DODOK_PROXY_NETWORK` 는 두지 않는다.
 
 ```yaml
 services:
@@ -226,7 +226,7 @@ services:
   ```bash
   docker network inspect dodok_default --format '{{(index .IPAM.Config 0).Gateway}}'
   ```
-  `dc down` 뒤 다시 올리면 네트워크가 새로 생겨 게이트웨이가 바뀔 수 있다. 바뀌면 아무도 믿지 않는 쪽(한 버킷)으로 떨어지니 「확인」의 「주소 확인」으로 보고 다시 넣는다.
+  `dc down` 뒤 다시 올리면 네트워크가 새로 생겨 게이트웨이가 바뀔 수 있다. 바뀌면 아무도 믿지 않는 쪽(한 버킷)으로 떨어지니 「확인」의 「주소 확인」으로 보고 다시 넣는다. 호스트 프록시면 `dodok_default` 게이트웨이 하나만 보이는 것이 곧 이 경우다(「주소 확인」의 Docker Desktop 단서는 컨테이너 프록시 얘기다).
 - ⚠ **포트는 `127.0.0.1` 에만 연다.** 게이트웨이를 믿으므로 그 포트로 들어오는 연결은 모두 「믿는 프록시」가 된다. 바깥 프록시를 거치지 않고 그 포트에 닿는 누구나 꾸민 `X-Forwarded-For` 로 레이트리밋을 피한다. 루프백에만 열면 그럴 수 있는 것은 호스트의 프로세스뿐이다.
 - 로컬 검증 환경(Docker Desktop)에서 잰 것: 게이트웨이 `/32` 를 믿을 때 호스트에서 `X-Forwarded-For: 1.2.3.4, 9.9.9.9`(프록시가 덧붙인 꼴)를 보내면 Caddy 가 서버로 넘긴 XFF 는 `9.9.9.9`, 믿지 않으면 게이트웨이 주소였다. 실제 앱에 `1.2.3.$i, 9.9.9.9` 로 틀린 토큰 로그인을 6번 보내면 6번째가 429 였다. **Linux 는 재지 않았다** — 루프백 게시 포트로 들어온 연결이 docker-proxy(userland-proxy)를 타 게이트웨이로 보인다는 Docker 동작에 기댄다. Linux 서버에서는 「확인」의 「위조 확인」·「주소 확인」으로 잰다.
 
@@ -239,7 +239,7 @@ docker inspect <프록시 컨테이너> --format '{{(index .NetworkSettings.Netw
 ```
 
 - ⚠ **네트워크 서브넷 전체를 주지 않는다.** 서브넷에는 게이트웨이(`.1`)가 든다. Docker 가 게시 포트로 들어온 연결을 게이트웨이에서 온 것처럼 바깥 프록시에 넘기면(Docker Desktop 은 늘, Linux 는 userland-proxy 를 타는 IPv6·루프백 연결 — Linux 는 재지 않았다) 그 연결도 「믿는 프록시」가 되어 클라이언트가 꾸민 `X-Forwarded-For` 가 서버에 닿는다 — 아래 「위조 확인」이 그 차이를 잰다.
-- 바깥 프록시 컨테이너를 다시 만들면 주소가 바뀔 수 있다 — Docker 는 비어 있는 가장 낮은 주소를 다시 주므로, 프록시가 내려간 사이 공유 네트워크에 다른 컨테이너가 뜨면 그 컨테이너가 프록시의 옛 주소를 가져간다. 그러면 ① 정상 요청이 모두 새 프록시 주소 하나로 묶이고(로그인 1분 5회, 브리지 실패 카운터 `bridgeFail` 60초 10번이 모든 사용자·모든 Gateway·러너 몫이 된다 — 「운영 화면」 레이트리밋 표. 플러그인 하나의 틀린 토큰이 모든 Gateway·러너의 연결을 막는다), ② 옛 주소를 받은 컨테이너가 보낸 `X-Forwarded-For` 를 믿는다. 그래서 **바깥 프록시에 고정 주소를 준다** — 공유 네트워크를 `docker network create --subnet <CIDR> <이름>` 으로 만들고 프록시에 `ipv4_address`(또는 `docker run --ip`·`docker network connect --ip`)를 준다. 고정 주소는 `--subnet` 을 준 네트워크에서만 받는다. 고정할 수 없으면 프록시를 다시 만들 때마다 이 값을 다시 보고 `dc up -d` 한다.
+- 바깥 프록시 컨테이너를 다시 만들면 주소가 바뀔 수 있다 — Docker 는 비어 있는 가장 낮은 주소를 다시 주므로, 프록시가 내려간 사이 공유 네트워크에 다른 컨테이너가 뜨면 그 컨테이너가 프록시의 옛 주소를 가져간다. 그러면 ① 정상 요청이 모두 새 프록시 주소 하나로 묶이고(로그인 1분 5회, 브리지 실패 카운터 `bridgeFail` 60초 10번이 모든 사용자·모든 Gateway·러너 몫이 된다 — 「운영 화면」 레이트리밋 표. 플러그인 하나의 틀린 토큰이 모든 Gateway·러너의 연결을 막는다), ② 옛 주소를 받은 컨테이너가 보낸 `X-Forwarded-For` 를 믿는다. 그래서 **바깥 프록시에 고정 주소를 준다** — 공유 네트워크를 `docker network create --subnet <CIDR> <이름>` 으로 만들고 프록시에 `ipv4_address`(또는 `docker run --ip`·`docker network connect --ip`)를 준다. 고정 주소는 그 네트워크의 서브넷 안에서 고른다(`docker network inspect <이름> --format '{{(index .IPAM.Config 0).Subnet}}'`) — 로컬 검증의 Docker Engine 29.2.1 은 `--subnet` 없이 만든 네트워크에서도 받았다. 엔진이 거절하면 그 네트워크를 `--subnet` 으로 다시 만든다. 고정할 수 없으면 프록시를 다시 만들 때마다 이 값을 다시 보고 `dc up -d` 한다.
 
 **3. `.env`** — 위 「설정 — `.env`」 표에 둘을 더한다. 나머지 값은 그대로다 — `APP_ORIGIN`·`BRIDGE_PUBLIC_URL` 은 바깥 프록시가 내보이는 공개 주소(`https://<도메인>`), `DODOK_DOMAIN` 은 그 도메인이다(인증서는 받지 않고 Host 를 맞추는 데만 쓴다).
 

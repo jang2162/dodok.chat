@@ -59,7 +59,7 @@ Komodo 가 위 `.env` 로 쓴다. 값의 뜻·필수 여부는 본문 「설정 
 | `VAPID_PUBLIC_KEY` · `VAPID_PRIVATE_KEY` | 선택(비밀) | 비우면 서버가 볼륨에 만든다. 주면 `[[DODOK_VAPID_PRIVATE_KEY]]` |
 | `APNS_KEY_PATH` · `APNS_KEY_ID` · `APNS_TEAM_ID` · `FCM_SERVICE_ACCOUNT_PATH` | 선택 | 본문 「네이티브 푸시 자격 증명」 |
 | `DODOK_PROXY_NETWORK` | 바깥 프록시가 컨테이너면 필수 | 바깥 프록시와 함께 쓰는 Docker 네트워크 이름(본문 「기존 리버스 프록시 뒤에 두기」 절의 「공유 네트워크」) |
-| `DODOK_TRUSTED_PROXIES` | 프록시 뒤면 필수 | 바깥 프록시 컨테이너의 주소 `/32`(같은 절의 「신뢰 주소」 — 서브넷 전체를 주지 않는다). 호스트에 깐 프록시면 `dodok_default` 게이트웨이 `/32`(같은 절의 「바깥 프록시가 호스트에 깔린 경우」) |
+| `DODOK_TRUSTED_PROXIES` | 프록시 뒤면 필수 | 바깥 프록시 컨테이너의 주소 `/32`(같은 절의 「신뢰 주소」 — 서브넷 전체를 주지 않는다). 호스트에 깐 프록시면 `dodok_default` 게이트웨이 `/32`(같은 절의 「바깥 프록시가 호스트에 깔린 경우」) — 호스트 프록시면 첫 Deploy 는 비우고, 게이트웨이를 본 뒤 넣고 다시 Deploy |
 
 - `DODOK_WEB_BUILD_ID` 는 넣지 않는다 — 넣으면 웹이 바뀌어도 ID 가 그대로다(본문 「설정 — `.env`」).
 - `HOST`·`PORT`·`DATA_DIR`·`TRUST_PROXY` 등 compose 가 고정하는 값은 넣어도 무시된다(본문 표의 「무시된다」 줄).
@@ -68,7 +68,7 @@ Komodo 가 위 `.env` 로 쓴다. 값의 뜻·필수 여부는 본문 「설정 
 
 ## 서버 덮어쓰기 파일(프록시 뒤일 때)
 
-`infra/compose.server.yml` 은 저장소에 없고(`.gitignore`) 서버에서 직접 쓴다. Periphery 가 clone 한 디렉터리(그 호스트 경로는 Periphery 컨테이너 정의의 `root_directory`·`stack_dir` 바인드로 본다)의 `infra/` 에 둔다. 내용은 커밋된 예시를 그대로 복사한 것이다(바깥 프록시가 호스트 프로세스면 본문 같은 절 「바깥 프록시가 호스트에 깔린 경우」의 조각) — 서버마다 다른 값은 Environment 의 `DODOK_PROXY_NETWORK`·`DODOK_TRUSTED_PROXIES` 가 갖는다.
+`infra/compose.server.yml` 은 저장소에 없고(`.gitignore`) 서버에서 직접 쓴다. Periphery 가 clone 한 디렉터리(그 호스트 경로는 Periphery 컨테이너 정의의 `root_directory`·`stack_dir` 바인드로 본다)의 `infra/` 에 둔다. 내용은 커밋된 예시를 그대로 복사한 것이다(바깥 프록시가 호스트 프로세스면 본문 「기존 리버스 프록시 뒤에 두기」 절의 「바깥 프록시가 호스트에 깔린 경우」 조각 — 그 꼴은 조각 안의 `<포트>` 도 서버 값이다) — 서버마다 다른 값은 Environment 의 `DODOK_PROXY_NETWORK`·`DODOK_TRUSTED_PROXIES` 가 갖는다.
 
 ```bash
 cp infra/compose.server.example.yml infra/compose.server.yml      # clone 디렉터리에서
