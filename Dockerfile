@@ -53,13 +53,16 @@ FROM source AS web
 # 단위로 같다. 셸에서 git 으로 계산해 넘길 단계가 없는 배포(Komodo 등)와 얕은 클론에서도 맞는다.
 #   입력 — 웹 빌드가 읽는 경로 전부와 이 Dockerfile(웹 빌드 명령이 여기 있다 — 서버 단계만 고쳐도 ID 가 바뀌는 값은 치른다). 경로를
 #   더하거나 빼면 여기만 고친다. 빠진 경로가 있으면 빌드를 멈춘다(조용히 좁아지지 않게).
+#   루트 파일 셋은 웹 빌드가 읽어서 든다 — .npmrc 는 아래 install 의 설정, .gitignore 는 Tailwind 가 클래스를 찾을 파일을 거른다
+#   (git 저장소가 없는 이 단계에서도 위 디렉터리의 .gitignore 를 따른다 — @tailwindcss/oxide 4.3.3 Scanner 로 확인).
 #   웹 빌드가 루트까지 거슬러 찾는 설정(Vite 의 PostCSS 설정 postcss.config.*·.postcssrc* 등)을 저장소 루트에 새로 두면 그 파일도 여기
-#   더한다 — 빠지면 그 파일만 바뀐 배포에서 ID 가 그대로다.
+#   더한다 — 빠지면 그 파일만 바뀐 배포에서 ID 가 그대로다. 넣지 않은 루트 파일: mise.toml(이미지는 mise 를 쓰지 않는다 — Node 는
+#   이 Dockerfile 의 베이스 이미지), turbo.json(웹 빌드가 Turbo 를 거치지 않는다), .oxfmtrc.json·.oxlintrc.json(빌드가 읽지 않는다).
 #   해시 — 경로로 정렬한(LC_ALL=C) 파일마다 「sha256  경로」 줄을 다시 sha256 한 앞 12자. 이름·내용만 들어가고 mtime·권한·시각은
 #   안 들어간다. 빌드 컨텍스트의 파일이라 .dockerignore 가 뺀 것(node_modules·dist·.env 등)은 안 들어가지만, git 이 무시하는 다른
 #   파일(손으로 둔 메모 등)이 저 경로 안에 있으면 들어간다 — 깨끗한 클론에서는 git 이 추적하는 파일과 같다.
 # install 앞에 두는 까닭: install 이 만드는 파일이 해시에 섞이지 않게
-RUN set -- apps/web packages/shared pnpm-lock.yaml tsconfig.base.json package.json pnpm-workspace.yaml Dockerfile \
+RUN set -- apps/web packages/shared pnpm-lock.yaml tsconfig.base.json package.json pnpm-workspace.yaml .npmrc .gitignore Dockerfile \
  && for p; do [ -e "$p" ] || { echo "웹 빌드 ID 입력이 없다: $p" >&2; exit 1; }; done \
  && find "$@" -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | cut -c1-12 > /web-build-id \
  && echo "웹 빌드 ID(내용 해시): $(cat /web-build-id)"

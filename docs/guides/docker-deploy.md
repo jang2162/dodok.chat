@@ -94,7 +94,7 @@ bash scripts/check-deploy.sh app https://<도메인> "$(docker compose ps -q app
 ```
 
 - `docker compose` 를 `-f` 없이 부르면 Compose 가 `compose.yaml` 과 **`compose.override.yaml`(있으면)** 을 함께 읽는다 — 이 문서의 명령은 모두 그 꼴이다. `-f compose.yaml` 을 직접 쓰는 명령에는 덮어쓰기 파일도 `-f compose.override.yaml` 로 붙여야 한다(Komodo 가 그렇게 부른다 — 부록).
-- **웹 빌드 ID** 는 웹 산출물에 들어가는 값이다(`__BUILD_ID__` — 오프라인 사본을 버리는 기준, 청크·`sw.js` 이름에도 스민다). `Dockerfile` 의 `web` 단계가 웹 빌드 입력(그 단계의 「웹 빌드 ID」 주석이 경로 목록의 정본 — `Dockerfile` 자신도 든다)의 **내용 해시**로 정한다 — 서버만 바뀐 배포에서는 ID 가 그대로고 웹 산출물이 바이트 단위로 같아, 클라이언트는 새 버전 토스트도 오프라인 사본 폐기도 겪지 않는다. `Dockerfile` 만 고친 배포는 ID 가 바뀐다(클라이언트가 청크를 한 번 다시 받는 쪽 — 안전하다). 셸 계산이 없어 얕은 클론·Komodo 에서도 같다. 빌드 로그의 `웹 빌드 ID(내용 해시): <12자>` 줄로 값을 본다.
+- **웹 빌드 ID** 는 웹 산출물에 들어가는 값이다(`__BUILD_ID__` — 오프라인 사본을 버리는 기준, 청크·`sw.js` 이름에도 스민다). `Dockerfile` 의 `web` 단계가 웹 빌드 입력(그 단계의 「웹 빌드 ID」 주석이 경로 목록의 정본 — `Dockerfile` 자신도 든다)의 **내용 해시**로 정한다 — 서버만 바뀐 배포에서는 ID 가 그대로고 웹 산출물이 바이트 단위로 같아, 클라이언트는 새 버전 토스트도 오프라인 사본 폐기도 겪지 않는다. `Dockerfile`·루트 `.gitignore`(Tailwind 가 클래스를 찾을 파일을 거른다)·`.npmrc` 만 고친 배포도 ID 가 바뀐다(클라이언트가 청크를 한 번 다시 받는 쪽 — 안전하다). 셸 계산이 없어 얕은 클론·Komodo 에서도 같다. 빌드 로그의 `웹 빌드 ID(내용 해시): <12자>` 줄로 값을 본다.
   - 선택: `DODOK_WEB_BUILD_ID=<값> docker compose up -d --build` 로 넘기면 그 값이 이긴다. `.env` 에는 두지 않는다(위 「설정 — `.env`」).
   - 해시는 빌드 컨텍스트의 파일로 잰다 — 호스트에서 웹 입력 파일을 손으로 고쳐 빌드하면 그 변경도 ID 를 바꾼다(커밋 여부와 상관없다).
 - `check-deploy.sh app` 을 1분 안에 다섯 번 넘게 돌리면 `/bridge/attachments`·`/runner/attachments` 두 줄이 429 로 FAIL 한다 — 그 두 확인이 토큰 없는 요청을 보내 브리지 실패 카운터(`LIMITS.bridgeFail`)에 쌓인다. 1분 기다리거나 `docker compose restart app`. 이 스크립트가 보지 않는 것은 아래 「확인 — `scripts/check-deploy.sh`」.
