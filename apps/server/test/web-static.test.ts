@@ -8,7 +8,8 @@ import pino from "pino";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { App } from "../src/app";
 import { SECURITY_HEADERS } from "../src/http/web-static";
-import { bootTestApp } from "./helpers/app";
+import { bootTestApp, login } from "./helpers/app";
+import { makePng } from "./helpers/png";
 
 // 예전 Caddy 앞단(Caddyfile)의 header Content-Security-Policy 값 그대로 — 서버가 Caddy 대신 낸다(앱 컨테이너 하나 스펙 3.2)
 const CADDY_CSP =
@@ -119,6 +120,37 @@ describe("서버가 웹을 낸다(DODOK_WEB_DIR)", () => {
     }
     // 백엔드 라우트는 그대로
     expect((await get("/healthz")).json()).toEqual({ ok: true, db: "ok" });
+  });
+
+  it("라우트가 정한 보안 헤더는 덮지 않는다 — 첨부 받기는 sandbox CSP 하나만(앱 CSP 가 섞이지 않는다), HSTS 는 함께", async () => {
+    app = await bootTestApp({ DODOK_WEB_DIR: webDir, APP_ORIGIN: "https://x.example" });
+    const { headers: session } = await login(app);
+    const ch = await app.fastify.inject({
+      method: "POST",
+      url: "/api/v1/channels",
+      headers: session,
+      payload: { name: "csp" },
+    });
+    expect(ch.statusCode).toBe(201);
+    const up = await app.fastify.inject({
+      method: "POST",
+      url: `/api/v1/attachments?channelId=${ch.json().channel.id}`,
+      headers: { ...session, "content-type": "image/png" },
+      payload: makePng(4, 3),
+    });
+    expect(up.statusCode).toBe(200);
+    for (const query of ["", "?download=1"]) {
+      const res = await get(`/api/v1/attachments/${up.json().id}${query}`, session);
+      expect(res.statusCode, query).toBe(200);
+      expect(res.headers["content-security-policy"], query).toBe("default-src 'none'; sandbox");
+      expect(res.headers["cache-control"], query).toBe("private, max-age=31536000, immutable");
+      expect(res.headers["x-content-type-options"], query).toBe("nosniff");
+      // 라우트가 정하지 않은 것은 앱 값이 붙는다
+      expect(res.headers["referrer-policy"], query).toBe("strict-origin-when-cross-origin");
+      expect(res.headers["strict-transport-security"], query).toBe("max-age=31536000");
+    }
+    // 같은 앱의 일반 웹 응답에는 앱 CSP
+    expect((await get("/")).headers["content-security-policy"]).toBe(CADDY_CSP);
   });
 
   it("경로 탈출 — 웹 디렉터리 밖 파일을 내지 않는다(404 또는 index.html)", async () => {

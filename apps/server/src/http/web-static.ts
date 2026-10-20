@@ -117,9 +117,14 @@ export function registerWebStatic(
     return { enabled: false };
   }
 
+  // 라우트가 이미 정한 값은 덮지 않는다 — 첨부 받기의 `default-src 'none'; sandbox` 가 앱 CSP 로 바뀌면 사용자가 올린 SVG·HTML 이
+  // 이 오리진의 스크립트 권한으로 열린다. 예전 Caddy 는 두 줄을 함께 보내 둘 다 걸렸고, 여기서는 라우트 값 하나가 그보다 좁다
   fastify.addHook("onSend", (_request, reply, payload, done) => {
-    reply.headers(SECURITY_HEADERS);
-    if (opts.httpsOrigin) reply.header("strict-transport-security", HSTS_VALUE);
+    for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
+      if (!reply.hasHeader(name)) reply.header(name, value);
+    }
+    if (opts.httpsOrigin && !reply.hasHeader("strict-transport-security"))
+      reply.header("strict-transport-security", HSTS_VALUE);
     done(null, payload);
   });
 
