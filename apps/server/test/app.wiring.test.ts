@@ -751,9 +751,10 @@ describe("종료·실패 정리", () => {
     }
   });
 
-  it("TRUST_PROXY=true 면 레이트리밋 키가 X-Forwarded-For 를 따른다(기본 false 는 연결 주소)", async () => {
+  it("TRUST_PROXY 가 연결 주소(프록시)면 레이트리밋 키가 X-Forwarded-For 를 따른다(기본 false 는 연결 주소)", async () => {
     const off = await bootTestApp();
-    const on = await bootTestApp({ TRUST_PROXY: "true" });
+    // inject 의 연결 주소가 127.0.0.1 — 그 주소를 프록시로 믿는다
+    const on = await bootTestApp({ TRUST_PROXY: "127.0.0.1" });
     const local = (app: App, ip: string) =>
       app.fastify.inject({
         method: "POST",

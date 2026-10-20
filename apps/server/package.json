@@ -17,6 +17,7 @@
     "@dodok/runner-adapter": "workspace:*",
     "@dodok/shared": "workspace:*",
     "@fastify/cookie": "11.1.2",
+    "@fastify/proxy-addr": "5.1.0",
     "@fastify/rate-limit": "11.2.0",
     "@modelcontextprotocol/sdk": "1.30.0",
     "better-auth": "1.7.5",

@@ -238,10 +238,10 @@ describe("설정 마법사 통합 — 거절 로그 주소", () => {
       .filter((l) => l.msg === "bridge connection rejected")
       .map((l) => l.reason);
 
-  it("TRUST_PROXY=true 면 X-Forwarded-For 첫 값(trim)을 쓴다", async () => {
+  it("TRUST_PROXY 가 프록시 주소면 프록시가 덧붙인 X-Forwarded-For 의 오른쪽 값을 쓴다 — 꾸민 왼쪽 값이 아니다", async () => {
     const { logger, lines } = captureLogger();
-    live = await bootLiveApp({ env: { TRUST_PROXY: "true" }, deps: { logger, pluginDirs: [] } });
-    expect(await tryBridge(live.app.url, "wrong", { "x-forwarded-for": " 203.0.113.9 , 10.0.0.1" })).toBe(
+    live = await bootLiveApp({ env: { TRUST_PROXY: "127.0.0.1" }, deps: { logger, pluginDirs: [] } });
+    expect(await tryBridge(live.app.url, "wrong", { "x-forwarded-for": " 10.0.0.1 , 203.0.113.9 " })).toBe(
       "UNAUTHORIZED",
     );
     // 로그의 주소는 가린 값(ipPrefix) — 스로틀·가드 키는 전체 주소 그대로다

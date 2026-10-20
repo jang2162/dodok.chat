@@ -1,13 +1,24 @@
 import { join } from "node:path";
 import { Handle } from "@dodok/shared";
 import { z } from "zod";
+import { parseTrustProxy } from "./http/client-address";
 
 const Raw = z.object({
   HOST: z.string().default("127.0.0.1"),
   PORT: z.coerce.number().int().min(0).max(65535).default(3000),
   APP_ORIGIN: z.url(),
-  // 리버스 프록시 뒤면 "true" — 레이트리밋 키(request.ip)가 X-Forwarded-For 를 따른다
-  TRUST_PROXY: z.enum(["true", "false"]).default("false"),
+  // 리버스 프록시 뒤면 그 프록시 주소(IP·CIDR 쉼표 목록 — 프록시 하나면 /32) — 레이트리밋 키(request.ip)·소켓 주소가 그 프록시가
+  // 보낸 X-Forwarded-For 를 따른다. 비우거나 false 면 아무도 믿지 않는다, true 는 설정 오류(http/client-address.ts)
+  TRUST_PROXY: z
+    .string()
+    .optional()
+    .superRefine((raw, ctx) => {
+      try {
+        parseTrustProxy(raw);
+      } catch (err) {
+        ctx.addIssue({ code: "custom", message: (err as Error).message });
+      }
+    }),
   DATA_DIR: z.string().default("./data"),
   DB_PATH: z.string().optional(),
   // 첨부 블롭 디렉터리(스펙 4.1). 없으면 DATA_DIR/attachments

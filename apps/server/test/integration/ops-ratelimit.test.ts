@@ -149,8 +149,8 @@ describe("레이트리밋 통합", () => {
     expect((await l.plugin.downloadAttachment(attachment.id)).status).toBe(404);
   });
 
-  it("브리지 — TRUST_PROXY 면 핸드셰이크와 /bridge/attachments 가 같은 X-Forwarded-For 주소로 센다", async () => {
-    const l = await boot({}, { TRUST_PROXY: "true" });
+  it("브리지 — TRUST_PROXY 면 핸드셰이크와 /bridge/attachments 가 같은 X-Forwarded-For 주소(프록시가 덧붙인 오른쪽 값)로 센다", async () => {
+    const l = await boot({}, { TRUST_PROXY: "127.0.0.1" });
     const attachment = { id: randomUUID() };
     const handshake = (xff: string, token: string) =>
       new Promise<"connected" | "rejected">((resolve) => {
@@ -177,11 +177,15 @@ describe("레이트리밋 통합", () => {
         })
       ).status;
 
-    for (let i = 0; i < 5; i++) expect(await handshake("198.51.100.7", "wrong")).toBe("rejected");
-    for (let i = 0; i < 5; i++) expect(await download("198.51.100.7", "wrong")).toBe(401);
+    // 클라이언트가 꾸민 왼쪽 값은 매번 다르다 — 프록시가 덧붙인 오른쪽 값으로 센다
+    for (let i = 0; i < 5; i++)
+      expect(await handshake(`10.9.9.${i}, 198.51.100.7`, "wrong")).toBe("rejected");
+    for (let i = 0; i < 5; i++) expect(await download(`10.8.8.${i}, 198.51.100.7`, "wrong")).toBe(401);
 
-    expect(await download("198.51.100.7", l.bridgeToken)).toBe(429);
+    expect(await download("1.2.3.4, 198.51.100.7", l.bridgeToken)).toBe(429);
     expect(await handshake("198.51.100.7", l.bridgeToken)).toBe("rejected");
+    // 오른쪽 값이 다르면 왼쪽에 막힌 주소를 꾸며 넣어도 막히지 않는다
+    expect(await download("198.51.100.7, 198.51.100.9", l.bridgeToken)).toBe(404);
     // 다른 주소·프록시 소켓 주소(127.0.0.1)는 막히지 않았다
     expect(await download("198.51.100.8", l.bridgeToken)).toBe(404);
     expect((await l.plugin.downloadAttachment(attachment.id)).status).toBe(404);
