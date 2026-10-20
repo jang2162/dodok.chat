@@ -17,24 +17,17 @@ dodok.chat/
 │  ├─ openclaw-adapter/       # @dodok/openclaw-adapter — 서버 측 OpenClaw 어댑터 (브리지 서버 + Gateway WS 클라이언트)
 │  ├─ runner-adapter/         # @dodok/runner-adapter — 서버 측 Claude 러너 어댑터 (/runner 네임스페이스·러너 연결·승인 기한·AgentAdapter 구현)
 │  └─ claude-runner/          # @dodok/claude-runner — 사람의 머신에서 도는 러너 CLI dodok-runner (Claude Agent SDK, 설정·재접속·런·post 도구·승인·첨부)
-├─ infra/                    # 배포(Docker Compose) — 절차 docs/guides/deploy.md, 각 파일의 까닭은 그 파일 머리 주석
-│  ├─ compose.yml             # 운영: 서비스 app(서버, 포트 안 엶)·caddy(80·443), 볼륨 dodok-data·caddy-data·caddy-config. app 의 HOST·PORT·DATA_DIR·DODOK_MIGRATIONS_DIR·DODOK_PLUGIN_DIR(/app/plugin)·DODOK_RUNNER_DIR(/app/runner) 고정, 두 이미지 pull_policy: build
-│  ├─ compose.server.example.yml # 기존 리버스 프록시 뒤에 둘 서버 덮어쓰기의 예시 — caddy 포트 닫기·바깥 프록시 네트워크(별칭 dodok-web)·Caddyfile 손잡이.
-│  │                          # 서버의 사본 infra/compose.server.yml 은 git 제외(docs/guides/deploy.md 「기존 리버스 프록시 뒤에 두기」)
-│  ├─ compose.local.yml       # 이 Mac 의 로컬 검증 겹침: 127.0.0.1:8443·Caddy 내부 CA·devfake 프로필(dev:fake 를 Caddy 뒤에)
-│  ├─ Dockerfile.server       # 단계 build(번들) → deploy(런타임 의존성 닫힘) · plugin(pack:plugin — 플러그인 tgz, openclaw devDependency 는 이 단계에만)
-│  │                          # → runtime(운영, node:24.21.0-bookworm-slim, 비루트 — 번들·닫힘·마이그레이션·/app/plugin/*.tgz·/app/runner/*.tgz) · devfake(로컬 검증 전용)
-│  ├─ Dockerfile.web          # 웹 빌드(ARG VITE_BUILD_ID — 비면 웹 빌드 입력의 내용 해시) → caddy:2.11.4 에 dist 와 Caddyfile
-│  ├─ Caddyfile               # 자동 HTTPS·/api·/socket.io·/bridge/*·/runner/*·/hooks/*·/healthz·/llms.txt 프록시, /assets immutable·나머지 no-cache·SPA 폴백, 보안 헤더·CSP(강제), 본문 32MB,
-│  │                          # 전역 log default 필터 — 오류 로그의 request.uri 에서 웹훅 토큰을 가린다(서버 logger.ts redactUrl 과 같은 꼴),
-│  │                          # 프록시 뒤 손잡이 DODOK_SITE_SCHEME(http://)·DODOK_TRUSTED_PROXIES(client_ip 를 XFF 하나로 서버에 넘긴다)
-│  ├─ check-caddy.sh          # Caddy 앞단 검사(curl — 라우팅·폴백·캐시·보안 헤더), `bash infra/check-caddy.sh https://localhost:8443`.
-│  │                          # CADDY_LOG_CMD 를 주고 https 오리진이면 웹훅 토큰 가림을 h2 탐침 셋으로 본다(docs/guides/deploy.md 「로컬 검증」)
-│  ├─ local.env.example       # 로컬 검증 설정의 틀 — 사본 infra/local.env 는 git 제외
-│  └─ .env → ../.env          # 배포 호스트에서 손으로 만드는 링크(git 제외) — compose 변수 치환이 infra/ 의 .env 만 읽는다. --env-file .env 로 부르면(Komodo) 필요 없다
+├─ Dockerfile                # 배포 이미지(앱 컨테이너 하나) — 단계 source(pnpm fetch·소스) → build(서버 번들) → deploy(런타임 의존성 닫힘) ·
+│                            # plugin(pack:plugin — 플러그인 tgz, openclaw devDependency 는 이 단계에만) · runner(pack:runner) · web(웹 빌드, ARG VITE_BUILD_ID —
+│                            # 비면 웹 빌드 입력의 내용 해시, 끝에 precompress-web 으로 .br·.gz) → runtime(node:24.21.0-bookworm-slim, 비루트 —
+│                            # 번들·닫힘·마이그레이션·/app/plugin/*.tgz·/app/runner/*.tgz·/app/web). 각 단계의 까닭은 그 파일 주석
+├─ compose.yaml              # 배포: 서비스 app 하나(포트 127.0.0.1:${DODOK_HTTP_PORT:-3000}), 볼륨 dodok-data, env_file ${DODOK_ENV_FILE:-.env},
+│                            # HOST·PORT·DATA_DIR·DODOK_MIGRATIONS_DIR·DODOK_PLUGIN_DIR·DODOK_RUNNER_DIR·DODOK_WEB_DIR 고정, pull_policy: build.
+│                            # 절차 docs/guides/docker-deploy.md. 서버마다 다른 것(프록시 네트워크·포트·TRUST_PROXY)은 서버의 compose.override.yaml(git 제외 —
+│                            # 내용은 그 문서 「컨테이너 프록시」)
 ├─ docs/
 │  ├─ guides/                 # 계속 사는 정본 — plan.md(계획서), project-structure.md(이 문서), worktree-workflow.md, browser-verification.md,
-│  │                          #   live-smoke.md, deploy.md — 배포·백업·복원·업데이트, deploy-komodo.md — Komodo Git Repo Stack 설정(부록),
+│  │                          #   live-smoke.md, docker-deploy.md — 배포·프록시·백업·복원·업데이트(부록 Komodo Git Repo Stack 설정),
 │  │                          #   agent-guide.md — 에이전트가 채널에서 받는 것·릴레이·components·파일·승인과 AGENTS.md·채널 프롬프트에 붙여 넣을 블록
 │  ├─ manual/                 # 사용자 매뉴얼 (user-guide.md — 웹 앱을 쓰는 사람)
 │  ├─ guideline/              # 지침 서버에서 받은 참조 지침 사본 — guideline CLI 만 쓴다 (7장)
@@ -42,6 +35,8 @@ dodok.chat/
 │  └─ adr/                    # 결정 기록 (스파이크 결과마다 한 장; 0001 = Gateway 클라이언트 스파이크)
 ├─ scripts/
 │  ├─ orca-worker.sh          # Orca 워커 수명주기 (spawn/attach/wait/status/reap/stop/keep/sync-config)
+│  ├─ check-deploy.sh         # 배포 검사(curl) — `app <origin> [컨테이너]`(정적·폴백·캐시·보안 헤더·백엔드 경로·로그 토큰 가림) ·
+│  │                          # `proxy`(임시 네트워크·Caddy·덮어쓰기로 프록시 꼴 — Secure 쿠키·WebSocket·20 MiB 첨부·XFF 위조, 만든 것은 이름으로 지운다)
 │  └─ test/                   # 위 스크립트의 테스트 하네스 + Orca CLI 스텁
 ├─ .claude/
 │  ├─ settings.json           # SessionStart·UserPromptSubmit 훅 등록
@@ -50,13 +45,13 @@ dodok.chat/
 ├─ orca.yaml                 # Orca 워크트리 셋업(mise·pnpm install·ruler apply·.env 복사·codegraph init, wait-for-setup) — 커밋된 것만 돈다
 ├─ .worktrees/dodok.chat/     # Orca 워크트리 자리 — git 제외 (docs/guides/worktree-workflow.md)
 ├─ data/                      # 런타임 데이터 (SQLite, 첨부 블롭 attachments/, 디바이스 아이덴티티, VAPID 키 vapid.json) — git 제외
-├─ README.md                  # 저장소 첫 화면 — 소개·구성 그림·빠른 시작(dev:fake / deploy.md 로)·문서 지도. 설치 단계는 옮겨 적지 않는다
+├─ README.md                  # 저장소 첫 화면 — 소개·구성 그림·빠른 시작(dev:fake / docker-deploy.md 로)·문서 지도. 설치 단계는 옮겨 적지 않는다
 ├─ .ruler/                    # 에이전트 지침 소스 — AGENTS.md(이 프로젝트 고유)·<스택>/(지침 서버 사본)·skills/·ruler.toml (7장)
 ├─ CLAUDE.md                  # ruler 생성물 — git 제외 (pnpm exec ruler apply)
 ├─ guideline.json / guideline-lock.json  # 지침 서버에서 고른 항목과 받은 리비전 (guideline CLI 가 쓴다)
 ├─ .mcp.json                  # ruler 생성물 — git 제외. 프로젝트 MCP(playwright-neo·codegraph·context7)의 소스는 .ruler/ruler.toml
 ├─ .oxlintrc.json / .oxfmtrc.json
-├─ .dockerignore             # 이미지 빌드 컨텍스트에서 빼는 것 — .env*·data·node_modules·dist·.worktrees·.superpowers·infra/*.env (패턴이 루트 기준이라 **/ 로 하위까지)
+├─ .dockerignore             # 이미지 빌드 컨텍스트에서 빼는 것 — .env*·data·node_modules·dist·.worktrees·.superpowers·.codegraph·compose.override.yaml (패턴이 루트 기준이라 **/ 로 하위까지)
 ├─ mise.toml / .npmrc         # Node 24.21.0 · pnpm 11.16.0 핀(openclaw engines >=24.16 <25) · engine-strict
 ├─ package.json / pnpm-workspace.yaml / turbo.json
 └─ .env.example
@@ -179,7 +174,7 @@ src/
 │                         unwritableDataPath·dataDirErrorMessage(비루트 컨테이너 + 다른 UID 볼륨 → chown 명령이 든 한 줄)
 ├─ backup.ts              runBackup: 온라인 백업을 한 번에 전부 복사(읽기 트랜잭션 스냅숏) → <DATA_DIR>/backups/.partial-* 에서 만들고 rename,
 │                         vapid.json 사본(0600)·`gateways/` 디렉터리 통째(Gateway 마다 디바이스 아이덴티티·디바이스 토큰 — 파일 0600·디렉터리 0700), 보관 개수(기본 7, 백업 이름 형식만 센다), 1시간 넘은 .partial-* 정리
-├─ backup-main.ts         백업 CLI(번들 dist/backup.js — `docker compose -f infra/compose.yml exec app node dist/backup.js [--keep N]`), 한 줄 출력·실패 exit 1, SIGINT·SIGTERM 에 자기 .partial-* 삭제(복사 도중의 신호는 복사가 끝난 뒤 완료·exit 0)
+├─ backup-main.ts         백업 CLI(번들 dist/backup.js — `docker compose exec app node dist/backup.js [--keep N]`), 한 줄 출력·실패 exit 1, SIGINT·SIGTERM 에 자기 .partial-* 삭제(복사 도중의 신호는 복사가 끝난 뒤 완료·exit 0)
 ├─ app.ts                 createApp: 부팅 순서(DB → 워크스페이스 → 인증·owner → Fastify → Socket.IO → 어댑터 → 서비스 → 라우트 → wire → 부팅 정리 → adapter.connect),
 │                         종료 순서(새 wire 거부 → 푸시 트리거 떼기 → 오케스트레이터 stop → adapter.close → io.close → Fastify → 진행 중 푸시 발송 최대 2s(PUSH_DRAIN_TIMEOUT_MS) → DB, 10s 상한),
 │                         /healthz(`{ok, db}` 뿐 — 워크스페이스 id·어댑터 상세는 ops/status), Gateway 마다 재접속 60s 알림(Gateway 이름을 넣은 system.notice).
@@ -201,7 +196,7 @@ src/
 │                         브리지·러너 거절 로그도 app.ts 가 어댑터 옵션 logAddress 로 ipPrefix 를 준다(가드·스로틀 키는 전체 주소).
 │                         redactUrl — 요청 로그 url 의 `/hooks/` 다음 조각(대소문자·퍼센트 인코딩 무관)은 앞 10자(`whk_` + 6자) + `…`, 그 밖 어디든 `whk_` 토큰 꼴도 `whk_` + 6자 + `…` ·
 │                         RedactingLogController — Fastify 기본 404 줄(`Route <method>:<url> not found`)은 직렬화기를 거치지 않아 같은 가림을 따로 건다.
-│                         토큰을 URL 경로에 싣는 라우트를 새로 만들면 redactUrl 과 `infra/Caddyfile` 의 log default 필터에 그 경로를 더한다 ·
+│                         토큰을 URL 경로에 싣는 라우트를 새로 만들면 redactUrl 과 docs/guides/docker-deploy.md 「프록시 접근 로그」의 Caddy 필터 조각에 그 경로를 더한다 ·
 │                         err 직렬화기(serializeErr — pino 기본 뒤 Buffer 값 속성을 지운다: redact 와일드카드가 Buffer 를 걷다 던져 `LOG_LEVEL=trace` 에서 잘못된 HTTP 요청의
 │                         `client error` 줄 하나로 서버가 죽던 자리. err 밖의 키에는 Buffer 를 싣지 않는다 — 머리 주석)
 ├─ wiring.ts              createServices(라우터 ⇄ 오케스트레이터 상호 참조, RunsFacade), sessionRecoverTargets(재접속 복구 대상 — 연결 id 별 Map, OpenClaw 에이전트 세션만)
@@ -284,6 +279,13 @@ src/
 │  ├─ origins.ts          allowedOrigins(config)·isAllowedOrigin(config, origin) — 출처 비교의 유일한 자리(지금은 `APP_ORIGIN` 의 오리진 하나). wire 쿠키 인증(realtime/cookie-auth.ts)·Better Auth `trustedOrigins`(auth/index.ts)·Socket.IO CORS(app.ts)가 쓴다 — REST CORS 는 없다(서버는 `@fastify/cors` 를 쓰지 않고 웹이 REST 를 같은 출처로 부른다). 초대·재설정 링크의 대표 출처는 `APP_ORIGIN` 그대로라 이 함수를 쓰지 않는다. 불투명 출처(`new URL("capacitor://…").origin === "null"`)는 목록에서 걸러진다 — 앱 출처를 더할 때 `Origin: null`(샌드박스 iframe·file 페이지)이 쿠키를 읽지 않게
 │  ├─ agent-token.ts      requireAgentToken — 브리지·러너 토큰의 HTTP onRequest(`Authorization: Bearer`) 한 함수. 첨부 HTTP(`/bridge/attachments`·`/runner/attachments`)와
 │  │                      토큰으로 받는 설치 파일이 같은 BridgeAuthGuard(브리지 실패 카운터 — 막힌 주소 429)를 지난다. 틀린 토큰은 세고, `accept` 가 거절한 것(꺼진 Gateway)은 세지 않는다
+│  ├─ client-address.ts   parseTrustProxy(TRUST_PROXY — 비었거나 false 면 아무도 안 믿음, IP·CIDR 목록, true·이름 붙은 범위·/0 은 설정 오류)·
+│  │                      fastifyTrustProxy(Fastify trustProxy 값)·clientAddressOf(소켓 핸드셰이크 주소) — REST request.ip 와 소켓이 같은 @fastify/proxy-addr 판정
+│  │                      (믿는 주소에서 온 연결의 X-Forwarded-For 를 오른쪽부터 믿는 주소를 건너뛰어 읽는다, IPv4-mapped 도 같은 IPv4)
+│  ├─ web-static.ts       registerWebStatic — DODOK_WEB_DIR 이 있으면 빌드된 웹을 낸다: GET "/*" 하나(Fastify 가 HEAD 도 연다), BACKEND_PREFIXES 는
+│  │                      callNotFound(지금의 JSON 404), /assets/* 는 있는 파일만 immutable·없으면 404, 나머지는 파일 아니면 index.html(no-cache),
+│  │                      미리 압축한 .br·.gz(Accept-Encoding·Vary)·ETag 304, 디코드한 경로의 ..·백슬래시·NUL·밖을 가리키는 링크는 없는 파일.
+│  │                      SECURITY_HEADERS(nosniff·Referrer-Policy·CSP)를 onSend 로 모든 응답에, HSTS 는 APP_ORIGIN 이 https 일 때만. index.html 이 없으면 error 한 줄 뒤 끈다
 │  └─ validate.ts         경계 Zod 파싱(body·query·params·wire payload·저장값)
 ├─ modules/
 │  ├─ attachments/        Phase 2 ③. 첨부의 정본 — 디스크 블롭(`<ATTACHMENTS_DIR>/<sha 앞 2자>/<sha256>`, 같은 내용은 한 번) + attachments 행, 경계를 넘는 꼴은 `artifact://<id>`.
@@ -420,7 +422,7 @@ src/
 │  │                      readPluginFile — 가장 최근 tgz 의 sha256·크기·`package/dist/index.js` sha256, tar 는 의존성 없이 읽는다) ·
 │  │                      routes.ts(`GET /api/v1/setup/status` · `GET /api/v1/setup/plugin.tgz`
 │  │                      (`dodok-openclaw-plugin-<sha 앞 12자>.tgz`, 없으면 404 `PLUGIN_FILE_MISSING`, 부팅 뒤 파일이 바뀌었으면 409 `PLUGIN_FILE_CHANGED`) ·
-│  │                      `GET /llms.txt`(`text/plain; charset=utf-8`·nosniff, IP 버킷 LIMITS.llmsTxtPerMin — Caddy `@backend`·Vite 프록시·SW denylist 에도 이 경로)) ·
+│  │                      `GET /llms.txt`(`text/plain; charset=utf-8`·nosniff, IP 버킷 LIMITS.llmsTxtPerMin — Vite 프록시·SW denylist·web-static 의 BACKEND_PREFIXES 에도 이 경로)) ·
 │  │                      llms.ts(노드 설치 안내서 `llms.txt` 의 본문 틀 한곳 — renderLlmsTxt 의 인자는 공개 오리진·bridgeUrl·두 파일의 해시뿐이라 토큰·Gateway·사람이 실릴 길이 없다.
 │  │                      부팅 때 한 번 렌더. 명령·계정 키·RunnerConfig 는 `test/setup.llms.test.ts` 가 코드와 대조한다 — 토큰은 명령 인자에 싣지 않는다(curl `-K -`), 머리 주석) ·
 │  │                      installer-auth.ts(requireOwnerOrToken — 살아 있는 세션이면 owner 규칙 그대로(아니면 403), 세션이 없을 때만 Bearer 를 http/agent-token.ts 에 넘긴다.
@@ -739,7 +741,7 @@ src/
 
 SDK import 경로: `openclaw/plugin-sdk/plugin-entry`, `openclaw/plugin-sdk/channel-message`, `openclaw/plugin-sdk/channel-config-schema` 등 서브패스만 사용한다. `openclaw`는 devDependency이며 번들 시 external로 두어 Gateway가 제공하는 런타임을 쓴다.
 
-배포: Gateway 호스트에서 `openclaw plugins install <tarball> --force --accept-capabilities`(초기; tarball 은 `pnpm pack` — 배포 서버 이미지가 같은 커밋의 tgz 를 `/app/plugin/` 에 품고 웹 연결 페이지가 내려준다(`docs/guides/deploy.md` 「[웹 → B] 플러그인 설치·브리지 토큰」 절), `openclaw plugins pack` 은 채널 플러그인 거부, RPC `plugins.install` 은 clawhub/official 만 — ADR 0002 9절), 안정화 후 npm `@dodok/openclaw-plugin` 퍼블리시. Gateway 설정에 우리 채널 계정(브리지 URL·토큰 — 토큰은 연결 페이지에서 발급한 `dbt_…`, 발급 대화상자가 설정 조각을 준다)을 넣는다. 플러그인이 **아웃바운드**로 접속하므로 Gateway 호스트에 인바운드 포트를 열 필요는 없다.
+배포: Gateway 호스트에서 `openclaw plugins install <tarball> --force --accept-capabilities`(초기; tarball 은 `pnpm pack` — 배포 서버 이미지가 같은 커밋의 tgz 를 `/app/plugin/` 에 품고 웹 연결 페이지가 내려준다(`docs/guides/docker-deploy.md` 「[웹 → B] 플러그인 설치·브리지 토큰」 절), `openclaw plugins pack` 은 채널 플러그인 거부, RPC `plugins.install` 은 clawhub/official 만 — ADR 0002 9절), 안정화 후 npm `@dodok/openclaw-plugin` 퍼블리시. Gateway 설정에 우리 채널 계정(브리지 URL·토큰 — 토큰은 연결 페이지에서 발급한 `dbt_…`, 발급 대화상자가 설정 조각을 준다)을 넣는다. 플러그인이 **아웃바운드**로 접속하므로 Gateway 호스트에 인바운드 포트를 열 필요는 없다.
 
 ### 2.4a `packages/runner-adapter` (서버 프로세스 안에서 실행)
 
@@ -752,7 +754,7 @@ SDK import 경로: `openclaw/plugin-sdk/plugin-entry`, `openclaw/plugin-sdk/chan
 
 ### 2.4b `packages/claude-runner` (사람의 머신에서 실행 — CLI `dodok-runner`)
 
-Claude Agent SDK 로 Claude Code 에이전트를 돌려 서버 `/runner` 에 붙는 러너. 서버 이미지가 같은 커밋의 tgz 를 품고(`/app/runner`, `pack:runner`) 연결 페이지가 내려준다 — SDK 는 번들에 넣지 않고 설치 때 npm 에서 받는다. 설치·운영은 `docs/guides/deploy.md` 「Claude 러너 설치」 절.
+Claude Agent SDK 로 Claude Code 에이전트를 돌려 서버 `/runner` 에 붙는 러너. 서버 이미지가 같은 커밋의 tgz 를 품고(`/app/runner`, `pack:runner`) 연결 페이지가 내려준다 — SDK 는 번들에 넣지 않고 설치 때 npm 에서 받는다. 설치·운영은 `docs/guides/docker-deploy.md` 「Claude 러너 설치」 절.
 - `src/main.ts` — 인자·설정 읽기·SIGINT/SIGTERM(도는 런을 멈추고 최대 5초). `src/config.ts` — 설정 파일 `RunnerConfig`(strict)·토큰 파일 0600 경고. `src/connection.ts` — 연결·hello·재접속 백오프(1~30초)·서버가 끊으면 종료 2·연결 세대. `src/scheduler.ts` — 동시 상한·대기.
 - `src/run.ts` — 런 하나(`query()` 하나, `buildQueryOptions` — preset·`append`·`snapshot: false`·훅·`strictMcpConfig`·`settingSources: []`·env 허용 목록, 「이미 있는 세션」이면 `resume` 재시도, 런 비용 차이). `src/stream-map.ts` — SDK 스트림 → `RunEvent`. `src/sdk.ts` — SDK 를 import 하는 유일한 파일(`SdkPort`).
 - `src/post-tool.ts`·`src/files.ts` — `mcp__dodok__post`(카드·파일, 작업 디렉터리 경계, macOS `O_NOFOLLOW_ANY`·Linux `/proc/self/fd`). `src/approvals.ts` — `canUseTool` → 승인 프레임·요약 이스케이프. `src/images.ts`·`src/attachments-http.ts` — 트리거 이미지 받기·파일 올리기. `src/mask.ts` — 호스트 경로 가림(못 알아보는 모양은 머리 주석).
@@ -772,7 +774,7 @@ Phase 4 ① 스레드·검색(스펙 `docs/superpowers/specs/2026-09-25-threads-
 React 19 + Vite 8 + TanStack(Query·Router·Virtual) + Tiptap 작성기 + Streamdown 렌더 + Tailwind 4·shadcn. 의존성은 전부 정확 핀이고 웹 MVP 태스크 2 에서 한 번에 넣었다(Phase 2 ③ 은 0).
 Phase 2 ④ 가 PWA·오프라인 사본 몫으로 더했다 — `vite-plugin-pwa`(dev)·`workbox-precaching`·`workbox-routing`·`workbox-window`·`@tanstack/query-persist-client-core`·`@tanstack/query-async-storage-persister`·`idb-keyval`.
 코드 하이라이트는 `shiki` — `shiki/core`·JS 정규식 엔진·언어 문법을 하나씩 동적 import 한다(초기 조각에 없다). shiki 가 든 조각은 `hl-` 이름을 달고 서비스 워커 사전 저장에서 빠진다(`vite.config.ts` 의 `chunkFileNames`·`globIgnores`).
-`zod` 는 CSP 때문에 웹이 직접 의존한다 — 앱(`main.tsx`)과 서비스 워커(`sw.ts`)의 첫 import 인 `lib/zodJitless.ts` 가 `config({ jitless: true })` 로 스키마를 만들기 전에 문자열 코드 실행(`Function`)을 끈다. 빌드에서는 zod 와 그 설정을 `zod` 조각 하나에 묶는다(`codeSplitting` 그룹) — 따로 두면 zod 가 든 공용 조각이 설정보다 먼저 평가돼 CSP 위반 보고가 난다(앱은 돈다). 조각 배치를 바꿨으면 `docs/guides/deploy.md` 「보안」의 CSP 확인을 다시 한다.
+`zod` 는 CSP 때문에 웹이 직접 의존한다 — 앱(`main.tsx`)과 서비스 워커(`sw.ts`)의 첫 import 인 `lib/zodJitless.ts` 가 `config({ jitless: true })` 로 스키마를 만들기 전에 문자열 코드 실행(`Function`)을 끈다. 빌드에서는 zod 와 그 설정을 `zod` 조각 하나에 묶는다(`codeSplitting` 그룹) — 따로 두면 zod 가 든 공용 조각이 설정보다 먼저 평가돼 CSP 위반 보고가 난다(앱은 돈다). 조각 배치를 바꿨으면 `docs/guides/docker-deploy.md` 「보안」의 CSP 확인을 다시 한다.
 서버 상태의 진실은 Query 캐시이고 wire 이벤트가 그것을 패치한다. 스트리밍 중인 런만 Zustand 스토어에 둔다(스펙 4장, 데이터 흐름 A).
 캐시 모양: 채널 `["timeline", ch]` 은 **루트만**(답글은 seq 만 기록 — 채널 `lastSeq` 는 루트·답글 모두의 최대 seq 라 답글 뒤의 루트가 거짓 빈틈이 되지 않는다),
 스레드 `["thread", ch, root]` 는 루트+답글 seq 순 한 목록(REST 로 처음 받고 그 뒤는 wire 가 고친다, 캐시가 없는 스레드의 답글은 버린다 — 칩은 루트 `message.updated` 가 맞춘다).
@@ -933,7 +935,7 @@ src/
 │  │                       배지는 MENTIONS_MAX(99)에서 멈춘다, 서버 read 는 lastReadSeq 를 올리고 굵게·배지를 지운다. useChannelUnread(`ready` 가 아니면 null)·setViewingAtEnd·isViewingAtEnd·
 │  │                       needsResync — 보관 상태가 현황과 어긋나거나 요청이 나가 있으면 다시 받는다) ·
 │  │                       readSender.ts(createReadSender — 채널마다 첫 요청부터 1초 모아 가장 큰 seq 하나로 `channel.read`, 서버가 저장했다고 답한 위치 이하는 보내지 않는다, 실패는 버리고
-│  │                       다음 요청이 다시 보낸다 — `docs/guides/deploy.md` 「운영 화면」 레이트리밋 표의 channel.read 줄이 같은 규칙을 가르친다 · useReadAtEnd — 끝이 보이고 탭이 보이고 연결돼
+│  │                       다음 요청이 다시 보낸다 — `docs/guides/docker-deploy.md` 「운영 화면」 레이트리밋 표의 channel.read 줄이 같은 규칙을 가르친다 · useReadAtEnd — 끝이 보이고 탭이 보이고 연결돼
 │  │                       있으면 타임라인 lastSeq 를 요청, 끝 보임을 activity 처리에 알린다) · entryRead.ts(captureEntryRead — 들어갈 때의 읽음 위치, 현황이 `ready` 가 아니거나 그 채널 항목이
 │  │                       없으면 undefined(구분선 없음))
 │  ├─ reactions/           리액션. ReactionPicker.tsx(「반응 추가」 버튼 + Radix DropdownMenu 의 8개 한 줄 — ↑·↓·Home·End·Enter·Esc·초점 복귀는 Radix, ←·→ 는 moveAcross, 끝에서 멈춤.
@@ -1024,7 +1026,7 @@ src/
 │  │                       GatewayForm.tsx(추가·수정 대화상자 — 이름·주소·토큰(수정이면 「바꾸려면 입력」), 서버 400·409 를 칸 오류로, 문구는 고정(스키마 문구를 보이지 않는다)) ·
 │  │                       DeleteGatewayConfirm.tsx(카드 안 한 번 더 확인 — 에이전트 수·토큰 수를 다 받기 전에는 지울 수 없다) ·
 │  │                       sections.tsx(Section · CopyBlock — 기본은 줄 구조를 지키고 제 상자 안에서 가로 스크롤, `wrap` 이면 아무 글자에서나 줄바꿈(토큰), 래퍼 min-w-0 · ServerSection ·
-│  │                       PluginDownload — 받기는 `pluginFile.available` 로만, installCommands(`docs/guides/deploy.md` 「[웹 → B] 플러그인 설치·브리지 토큰」 절의 [B] 블록을 글자 그대로 —
+│  │                       PluginDownload — 받기는 `pluginFile.available` 로만, installCommands(`docs/guides/docker-deploy.md` 「[웹 → B] 플러그인 설치·브리지 토큰」 절의 [B] 블록을 글자 그대로 —
 │  │                       패치 줄만 빼고 파일 이름·번들 sha 를 채운다, `connection.test.tsx` 가 그 블록과 대조한다)) ·
 │  │                       IssueTokenDialog.tsx(라벨 → 발급 → 원문·설정 조각 한 번. 원문은 컴포넌트 상태에만 — 「복사했습니다」로만 닫히고, 그동안 라우트 이동은 useBlocker 로 한 번 더 묻고
 │  │                       탭 닫기·새로고침은 beforeunload. 막힌 채 언마운트되면 이동을 이어 보낸다. 원문 바로 아래 「AI 에게 맡기기」 한 줄과 「복사」 — 원문과 같은 규칙) ·
@@ -1088,20 +1090,21 @@ src/
 
 운영 번들 스크립트(`apps/server/scripts/`, Phase 3 ① — 정본은 각 파일 머리 주석):
 - `build.mjs`(`pnpm -F @dodok/server build`) — esbuild 로 `src/main.ts` → `dist/main.js`, `src/backup-main.ts` → `dist/backup.js`(ESM, 소스맵). external 은 `better-sqlite3` 하나, 번들 밖에서 런타임에 찾는 것의 목록 `runtimeDeps`(`better-sqlite3`·`ws`)를 `dist/runtime-deps.json` 으로 쓴다. 배너가 CommonJS 의존성용 `require`·`__filename`·`__dirname` 을 만든다.
-- `prune-runtime-deps.mjs` — `pnpm deploy --prod` 산출물에서 `runtime-deps.json` 이름들의 닫힘(dependencies·optional·peer)만 평평한 `node_modules` 로 옮긴다. `infra/Dockerfile.server` 의 `deploy` 단계와 `bundle-smoke` 가 같은 명령으로 쓴다.
+- `prune-runtime-deps.mjs` — `pnpm deploy --prod` 산출물에서 `runtime-deps.json` 이름들의 닫힘(dependencies·optional·peer)만 평평한 `node_modules` 로 옮긴다. 루트 `Dockerfile` 의 `deploy` 단계와 `bundle-smoke` 가 같은 명령으로 쓴다.
 - `bundle-smoke.mjs`(`pnpm -F @dodok/server bundle:smoke`, build 뒤) — 저장소 밖 임시 디렉터리에 매니페스트 사본으로 `pnpm deploy --prod --legacy --offline` → 가지치기 → 번들을 띄워 ① `/healthz` 200·`/socket.io/socket.io.js` 400 뒤 생존 ② `DODOK_MIGRATIONS_DIR` 없으면 설정 오류 ③ `dist/backup.js` 성공·실패 한 줄을 본다. 원본 워크스페이스 상태는 바꾸지 않고, 중단에도 임시 디렉터리를 지운다.
+- `precompress-web.mjs <dir>` — 빌드된 웹의 텍스트 파일(1 KiB 이상, `.js .mjs .css .html .svg .json .webmanifest .txt .map`) 옆에 `.br`·`.gz` 를 쓴다(원본보다 작을 때만). 루트 `Dockerfile` 의 web 단계가 부르고, 서버(`http/web-static.ts`)는 요청마다 압축하지 않고 이 형제 파일을 고른다.
 - dev:fake 는 `DEV_FAKE_HOST`(기본 `127.0.0.1`)로 리슨 주소를 받는다 — 로컬 검증의 `devfake` 컨테이너가 `0.0.0.0` 을 준다.
 
 ## 3. 런타임 토폴로지
 
 ```
-[브라우저/PWA] ⇄ Socket.IO/HTTP ⇄ [Caddy] ⇄ [apps/server (+openclaw-adapter)]   ← 본인 서버 A (Compose)
+[브라우저/PWA] ⇄ Socket.IO/HTTP ⇄ [리버스 프록시(HTTPS)] ⇄ [apps/server (+openclaw-adapter) — 웹도 낸다]   ← 본인 서버 A (Compose)
                                                    ├─ Socket.IO 네임스페이스 /bridge (토큰)  ⇐ 아웃바운드 접속 ⇐ [openclaw-plugin @ Gateway]
                                                    └─ operator 클라이언트 ⇒ wss:// ⇒ [OpenClaw Gateway]   ← 본인 서버 B (원격)
 ```
 
 - 기본값: 본인이 운영하는 원격 Gateway에 연결(연결 페이지에서 Gateway 주소 `wss://...`·공유 토큰을 추가 — 여럿 붙일 수 있다). 플러그인은 그 Gateway에 설치되어 `BRIDGE_PUBLIC_URL`로 우리 서버에 접속하고, 서버는 브리지 토큰으로 어느 Gateway 의 플러그인인지 가른다.
-- 배포: `infra/compose.yml` 로 서버 A 에 `app`·`caddy` 를 띄운다(`docs/guides/deploy.md`). Caddy 가 `/api`·`/socket.io`(wire·브리지 WebSocket)·`/bridge/*`(플러그인의 첨부 HTTP)·`/healthz` 를 서버로 넘기고 나머지는 웹 정적이다. Gateway 는 Compose 밖이다(동반 기동 프로필은 뺐다 — 배포 패키징 스펙 결정 5).
+- 배포: 루트 `compose.yaml` 로 서버 A 에 앱 컨테이너 `app` 하나를 띄운다(`docs/guides/docker-deploy.md`). 서버가 웹 화면·`/api`·`/socket.io`(wire·브리지·러너 WebSocket)·`/bridge/*`·`/runner/*`(첨부 HTTP)·`/hooks/*`·`/mcp`·`/healthz`·`/llms.txt` 를 한 포트로 내고, HTTPS 는 서버 A 의 리버스 프록시가 끝내 모든 경로를 그 포트로 넘긴다(`TRUST_PROXY` 는 그 프록시 주소). Gateway 는 Compose 밖이다(동반 기동 프로필은 뺐다 — 배포 패키징 스펙 결정 5).
 - 로컬 개발: Gateway 는 원격에 붙거나 로컬 dev Gateway 를 연결 페이지 「Gateway 추가」로 붙인다(`docs/guides/live-smoke.md` 「전제」 — 상태 디렉터리를 갈라 여럿 띄울 수 있다). 원격 Gateway의 플러그인을 개발 PC의 브리지에 붙이려면 터널(cloudflared/tailscale 등)로 `BRIDGE_PUBLIC_URL`을 만든다.
 - 응답 정본은 플러그인 경로, WS 경로는 미리보기(델타)·툴 이벤트·승인. `runId`로 dedupe.
 
@@ -1109,7 +1112,7 @@ src/
 
 ## 4. 환경 변수 (`.env.example`)
 
-정본은 `apps/server/src/config.ts`(zod). 소스 실행의 서버는 저장소 루트를 작업 디렉터리로 삼고 루트 `.env` 를 읽는다(운영 번들은 `.env` 파일을 읽지 않고 compose 의 `env_file` 로 받는다 — 배포 값은 `docs/guides/deploy.md` 「설정 — `.env`」) — **이미 설정된 환경 변수는 `.env` 가 덮지 않는다**(`process.loadEnvFile`, 실연에서 확인). 빈 값(`KEY=`)은 설정하지 않은 것으로 보고 기본값을 쓴다.
+정본은 `apps/server/src/config.ts`(zod). 소스 실행의 서버는 저장소 루트를 작업 디렉터리로 삼고 루트 `.env` 를 읽는다(운영 번들은 `.env` 파일을 읽지 않고 compose 의 `env_file` 로 받는다 — 배포 값은 `docs/guides/docker-deploy.md` 「설정 — `.env`」) — **이미 설정된 환경 변수는 `.env` 가 덮지 않는다**(`process.loadEnvFile`, 실연에서 확인). 빈 값(`KEY=`)은 설정하지 않은 것으로 보고 기본값을 쓴다.
 OpenClaw Gateway 주소·공유 토큰과 브리지 토큰은 env 가 아니라 DB 다(연결 페이지 — `modules/gateways/`). 서버는 Gateway 가 0개여도 뜨고, 옛 `.env` 에 남은 `OPENCLAW_*`·`BRIDGE_TOKEN` 은 읽지 않는다.
 
 | 변수 | 기본값 | 뜻 |
@@ -1117,8 +1120,8 @@ OpenClaw Gateway 주소·공유 토큰과 브리지 토큰은 env 가 아니라 
 | `HOST` | `127.0.0.1` | 리슨 주소 |
 | `PORT` | `3000` | 리슨 포트. REST `/api/v1`·wire(기본 네임스페이스)·브리지 `/bridge` 가 모두 여기 |
 | `APP_ORIGIN` | (필수) | 웹 앱 오리진 — Socket.IO CORS·wire 쿠키 인증·Better Auth `trustedOrigins`(셋 다 `http/origins.ts` 의 `allowedOrigins`)·Better Auth `baseURL`·세션 쿠키 Secure(https 일 때)·초대·재설정 링크(`<APP_ORIGIN>/join/<token>`·`/reset/<token>`). 로컬 `http://localhost:5173` |
-| `TRUST_PROXY` | `false` | 리버스 프록시 뒤면 `true` — 레이트리밋·브리지 실패 카운터·브리지 거절 로그의 주소가 X-Forwarded-For 첫 값이 된다. 배포 compose 는 `true` 로 고정한다 |
-| `TZ` | 프로세스 기본(컨테이너는 UTC) | 「하루」의 경계 — 일일 런 상한이 이 시간대의 자정에 풀리고 운영 화면 「오늘」·「7일」 집계도 그 자정을 따른다(`docs/guides/deploy.md` 「설정 — `.env`」). `.env.example` 에는 없다 — Node 가 읽는 표준 변수라 config.ts 가 검증하지 않는다 |
+| `TRUST_PROXY` | `false` | 믿는 리버스 프록시 주소 — IP·CIDR 쉼표 목록(프록시 하나면 `/32`). 그 주소에서 온 연결만 X-Forwarded-For 를 오른쪽부터 읽어 레이트리밋·브리지 실패 카운터·브리지 거절 로그의 주소로 쓴다(`http/client-address.ts`). 비우거나 `false` 면 아무도 안 믿는다, `true`·이름 붙은 범위·`/0` 은 설정 오류. compose 는 고정하지 않는다(`.env`·서버 덮어쓰기 파일) |
+| `TZ` | 프로세스 기본(컨테이너는 UTC) | 「하루」의 경계 — 일일 런 상한이 이 시간대의 자정에 풀리고 운영 화면 「오늘」·「7일」 집계도 그 자정을 따른다(`docs/guides/docker-deploy.md` 「설정 — `.env`」). `.env.example` 에는 없다 — Node 가 읽는 표준 변수라 config.ts 가 검증하지 않는다 |
 | `DATA_DIR` | `./data` | 런타임 데이터(DB·첨부 블롭·VAPID 키 `vapid.json`·Gateway 마다 Ed25519 디바이스 아이덴티티와 디바이스 토큰 `gateways/<Gateway id>/`(`device.json`·`device-tokens.json`)) |
 | `DB_PATH` | `<DATA_DIR>/dodok.sqlite` | SQLite 파일 |
 | `ATTACHMENTS_DIR` | `<DATA_DIR>/attachments` | 첨부 블롭 디렉터리(`<sha 앞 2자>/<sha256>`). 부팅 때 만든다. 한 서버 프로세스만 쓴다 — sha 잠금이 프로세스 안에서만 맞다 |
@@ -1130,7 +1133,7 @@ OpenClaw Gateway 주소·공유 토큰과 브리지 토큰은 env 가 아니라 
 | `OPENCLAW_FRAME_DUMP_PATH` | — | 진단용 — 어댑터가 받은 Gateway `chat`·`agent`·`session.message` 프레임을 Gateway 마다 `<이 경로>.<Gateway id>` 파일에 JSONL(`{ receivedAt, frame }`)로 append. 본문이 들어가므로 `data/` 아래에. usage 출처 확인용(live-smoke 5.4) |
 | `BRIDGE_PUBLIC_URL` | `APP_ORIGIN` 의 `https:`→`wss:`(`http:`→`ws:`) + `/bridge` | 플러그인 계정 설정 `bridgeUrl` 에 적을 공개 주소 — 연결 페이지가 보여 주고 발급 결과의 설정 조각에 들어간다(서버는 이 값으로 리슨하지 않는다). 예 `wss://dodok.example.com/bridge` |
 | `VAPID_PUBLIC_KEY` · `VAPID_PRIVATE_KEY` | — | 웹 푸시 VAPID 키 쌍 — **둘 다** 있어야 쓴다. 없으면 `<DATA_DIR>/vapid.json` 을 만들어(0600) 쓴다. 키가 바뀌면 모든 기기의 푸시 구독이 무효가 된다. 비밀 키는 로그에서 가린다 |
-| `APNS_KEY_PATH` · `APNS_KEY_ID` · `APNS_TEAM_ID` | — | iOS 앱 푸시(APNs) 인증 키(.p8) 경로·키 id·팀 id. 없으면 `<DATA_DIR>/apns/key.p8`·`config.json`(`{ keyId, teamId }`)을 읽고, 둘 다 없으면 통로가 꺼진다(부팅은 막지 않는다). 키는 ES256(P-256)만. 발급·배치는 `docs/guides/deploy.md` 「네이티브 푸시 자격 증명」 |
+| `APNS_KEY_PATH` · `APNS_KEY_ID` · `APNS_TEAM_ID` | — | iOS 앱 푸시(APNs) 인증 키(.p8) 경로·키 id·팀 id. 없으면 `<DATA_DIR>/apns/key.p8`·`config.json`(`{ keyId, teamId }`)을 읽고, 둘 다 없으면 통로가 꺼진다(부팅은 막지 않는다). 키는 ES256(P-256)만. 발급·배치는 `docs/guides/docker-deploy.md` 「네이티브 푸시 자격 증명」 |
 | `FCM_SERVICE_ACCOUNT_PATH` | — | Android 앱 푸시(FCM) 서비스 계정 JSON 경로. 없으면 `<DATA_DIR>/fcm/service-account.json`, 둘 다 없으면 통로가 꺼진다 |
 | `APNS_HOST` · `APNS_CA_PATH` · `FCM_HOST` · `FCM_TOKEN_URI` | — | **테스트·개발 전용** — 통합 테스트가 로컬 가짜 APNs·FCM 으로 보낼 때 호스트·인증서·토큰 엔드포인트를 덮는다. 운영 문서에는 싣지 않는다 |
 | `PUSH_RELAY_URL` | — | 중앙 푸시 중계 자리 — 아직 구현이 없어 값이 있으면 부팅 때 warn 후 무시한다 |
@@ -1138,11 +1141,12 @@ OpenClaw Gateway 주소·공유 토큰과 브리지 토큰은 env 가 아니라 
 | `DODOK_MIGRATIONS_DIR` | 소스 `apps/server/drizzle` | drizzle 마이그레이션 폴더. 운영 번들은 **필수**(없으면 설정 오류) — 이미지·compose 가 `/app/drizzle` 로 준다 |
 | `DODOK_PLUGIN_DIR` | — | 연결 페이지가 내려줄 플러그인 tgz 를 찾을 디렉터리(가장 최근 tgz). 소스 실행이면 그 뒤에 `packages/openclaw-plugin/dist` 도 본다. 배포에서는 이미지·compose 가 `/app/plugin` 으로 고정한다(그때 `.env` 의 값은 무시된다) |
 | `DODOK_RUNNER_DIR` | — | 연결 페이지가 내려줄 러너 tgz 를 찾을 디렉터리(가장 최근 tgz). 소스 실행이면 그 뒤에 `packages/claude-runner/dist` 도 본다. 배포에서는 이미지·compose 가 `/app/runner` 로 고정한다(그때 `.env` 의 값은 무시된다) |
-| `DODOK_DOMAIN` | — | **배포 전용**(서버는 읽지 않음) — Caddy 가 인증서를 받을 공개 도메인. compose 변수 치환이라 배포 호스트에 `infra/.env → ../.env` 링크(또는 명령마다 `--env-file .env`)가 필요하다 |
+| `DODOK_WEB_DIR` | — | 빌드된 웹 디렉터리 — 있으면 서버가 웹을 낸다(`http/web-static.ts`), 없으면 개발처럼 Vite 가 낸다. 가리키는 곳에 `index.html` 이 없으면 부팅 로그 error 한 줄 뒤 끈다. 배포에서는 이미지·compose 가 `/app/web` 으로 고정한다 |
+| `DODOK_HTTP_PORT` · `DODOK_PROXY_NETWORK` · `DODOK_ENV_FILE` | — | **배포 전용**(서버는 읽지 않음, compose 변수 치환) — 호스트 루프백 포트(기본 3000)·서버 덮어쓰기 파일이 붙을 프록시 네트워크 이름·`compose.yaml` 이 `.env` 대신 읽을 env 파일(로컬 검사 전용 — 운영은 `.env`) |
 | `BRIDGE_URL` | — | **스파이크 러너 전용**(서버는 읽지 않음) — 러너가 브리지를 리슨할 오리진(`/bridge` 없음) |
 
 플러그인은 env 가 아니라 Gateway 계정 설정 `channels.dodok.accounts.<id>.bridgeUrl`(오리진 + `/bridge`)로 접속한다(ADR 0002 10절). 서버 쪽 공개 주소는 `BRIDGE_PUBLIC_URL` 하나다. `BRIDGE_URL` 은 스파이크 러너만 읽는다.
-웹(`apps/web`)은 `.env` 를 읽지 않는다 — 브라우저에 들어가는 설정이 없다. `vite.config.ts` 가 셸 환경으로 받는 것은 셋이다 — dev 서버의 프록시 대상 `DODOK_API_ORIGIN`(기본 `http://127.0.0.1:3000`), 개발 모드 서비스 워커 `VITE_PWA_DEV=1`(기본 끔), 빌드 식별자 `VITE_BUILD_ID`(없거나 비면 빌드 시각 — 오프라인 사본을 버리는 기준. 배포 이미지는 `infra/Dockerfile.web` 이 웹 빌드 입력의 내용 해시를 넣고, compose 의 `DODOK_WEB_BUILD_ID` 를 넘기면 그 값이 이긴다 — `docs/guides/deploy.md` 「기동」). 서버 포트를 바꾸면 `APP_ORIGIN`(서버)·`DODOK_API_ORIGIN`(Vite)·브라우저 주소를 함께 맞춘다 — wire 는 핸드셰이크 `Origin` 이 `APP_ORIGIN` 과 같을 때만 쿠키를 받는다.
+웹(`apps/web`)은 `.env` 를 읽지 않는다 — 브라우저에 들어가는 설정이 없다. `vite.config.ts` 가 셸 환경으로 받는 것은 셋이다 — dev 서버의 프록시 대상 `DODOK_API_ORIGIN`(기본 `http://127.0.0.1:3000`), 개발 모드 서비스 워커 `VITE_PWA_DEV=1`(기본 끔), 빌드 식별자 `VITE_BUILD_ID`(없거나 비면 빌드 시각 — 오프라인 사본을 버리는 기준. 배포 이미지는 루트 `Dockerfile` 의 web 단계가 웹 빌드 입력의 내용 해시를 넣고, compose 의 `DODOK_WEB_BUILD_ID` 를 넘기면 그 값이 이긴다 — `docs/guides/docker-deploy.md` 「기동」). 서버 포트를 바꾸면 `APP_ORIGIN`(서버)·`DODOK_API_ORIGIN`(Vite)·브라우저 주소를 함께 맞춘다 — wire 는 핸드셰이크 `Origin` 이 `APP_ORIGIN` 과 같을 때만 쿠키를 받는다.
 
 Postgres 전환 시 `DB_PATH` 대신 연결 문자열.
 

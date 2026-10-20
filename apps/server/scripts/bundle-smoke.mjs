@@ -1,6 +1,6 @@
 // apps/server/scripts/bundle-smoke.mjs — 운영 번들을 실행 이미지와 같은 배치로 띄워 본다(스펙 8장). 사용: build 뒤 pnpm -F @dodok/server bundle:smoke
 // 배치: `pnpm deploy --prod` 산출물을 scripts/prune-runtime-deps.mjs 로 dist/runtime-deps.json 의 닫힘만 남긴 node_modules 위에
-// dist/·drizzle/ 을 놓는다 — infra/Dockerfile.server 의 runtime 이미지와 같은 명령·같은 배치다. 그래서 build.mjs 의 runtimeDeps 에
+// dist/·drizzle/ 을 놓는다 — 루트 Dockerfile 의 runtime 이미지와 같은 명령·같은 배치다. 그래서 build.mjs 의 runtimeDeps 에
 // 빠진 것이 있으면 여기서 부팅이 깨진다.
 // 저장소 밖 임시 디렉터리에서 띄운다 — 저장소 안이면 워크스페이스 node_modules(devDependency 포함)가 모든 것을 해석해
 // 빠진 prod 의존성이 가려진다(번들이 런타임에 찾는 ws 가 devDependency 였던 결함을 그렇게 놓쳤다).

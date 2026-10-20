@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-// Dockerfile.server·bundle-smoke 와 같게 CLI 로 부른다
+// 루트 Dockerfile·bundle-smoke 와 같게 CLI 로 부른다
 const script = resolve(import.meta.dirname, "../scripts/prune-runtime-deps.mjs");
 
 let work: string;

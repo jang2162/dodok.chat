@@ -560,3 +560,37 @@ describe("로그 위생", () => {
     }
   });
 });
+
+describe("Better Auth 세션의 클라이언트 IP — 서버의 신뢰 프록시 판정(request.ip)과 같다", () => {
+  const ipOf = (a: App, token: string) =>
+    a.db.select({ ip: authSession.ipAddress }).from(authSession).where(eq(authSession.token, token)).get()
+      ?.ip;
+  const signIn = (a: App, remoteAddress: string, headers: Record<string, string>) =>
+    a.fastify.inject({
+      method: "POST",
+      url: "/api/v1/auth/local",
+      remoteAddress,
+      headers,
+      payload: { token: TEST_LOCAL_TOKEN },
+    });
+
+  it("믿는 프록시가 없으면 꾸민 X-Forwarded-For·내부 헤더를 버리고 실제 연결 주소", async () => {
+    app = await bootTestApp();
+    const res = await signIn(app, "203.0.113.50", {
+      "x-forwarded-for": "1.2.3.4",
+      "x-dodok-client-ip": "5.6.7.8",
+    });
+    expect(res.statusCode).toBe(200);
+    expect(ipOf(app, res.json().sessionToken)).toBe("203.0.113.50");
+  });
+
+  it("믿는 프록시 뒤면 그 프록시가 덧붙인 오른쪽 값 — 클라이언트가 꾸민 왼쪽 값이 아니다", async () => {
+    app = await bootTestApp({ TRUST_PROXY: "203.0.113.50/32" });
+    const res = await signIn(app, "203.0.113.50", {
+      "x-forwarded-for": "1.2.3.4, 198.51.100.9",
+      "x-dodok-client-ip": "5.6.7.8",
+    });
+    expect(res.statusCode).toBe(200);
+    expect(ipOf(app, res.json().sessionToken)).toBe("198.51.100.9");
+  });
+});

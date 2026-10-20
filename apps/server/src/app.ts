@@ -19,8 +19,10 @@ import { isLocalVapidSubject, type ServerConfig } from "./config";
 import { createDb, type Db, type DbOrTx } from "./db/client";
 import { workspaces } from "./db/schema.sqlite";
 import { type AgentTokenGuard, requireAgentToken } from "./http/agent-token";
+import { clientAddressOf, fastifyTrustProxy, parseTrustProxy } from "./http/client-address";
 import { HttpError, httpStatusToErrorCode } from "./http/errors";
 import { allowedOrigins } from "./http/origins";
+import { registerWebStatic } from "./http/web-static";
 import { createLogger, type Logger, RedactingLogController, requestLogSerializer } from "./logger";
 import { registerAdapterRoutes } from "./modules/adapter/routes";
 import { registerAgentRoutes } from "./modules/agents/routes";
@@ -163,22 +165,6 @@ export type AppDeps = {
   gatewayBackoff?: { initialMs?: number; maxMs?: number };
 };
 
-/**
- * 브리지 거절 로그·실패 카운터와 wire 레이트리밋 사건의 원격 주소. 리버스 프록시를 믿을 때(TRUST_PROXY=true)만 X-Forwarded-For 첫 값을 쓴다 —
- * 믿지 않는데 읽으면 클라이언트가 헤더를 꾸며 스로틀·귀속을 피한다. Caddy 는 XFF 를 client_ip 하나로 덮는다(infra/Caddyfile 전역
- * servers 블록 — 믿는 프록시가 없으면 연결 주소)
- */
-export function bridgeClientAddress(
-  trustProxy: boolean,
-): (handshake: { address: string; headers: Record<string, string | string[] | undefined> }) => string {
-  return (handshake) => {
-    if (!trustProxy) return handshake.address;
-    const raw = handshake.headers["x-forwarded-for"];
-    const first = (Array.isArray(raw) ? raw[0] : raw)?.split(",")[0]?.trim();
-    return first || handshake.address;
-  };
-}
-
 export type App = {
   fastify: FastifyInstance;
   io: WireServer;
@@ -235,7 +221,8 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     const bus = new ServerBus();
     const limits: Limits = { ...LIMITS, ...deps.limits };
     const limitClock = deps.limitClock ?? monotonicNow;
-    const trustProxy = config.TRUST_PROXY === "true";
+    // 브리지 거절 로그·실패 카운터·wire 레이트리밋 사건의 소켓 주소와 REST request.ip 가 같은 판정을 쓴다(http/client-address.ts)
+    const trustProxy = parseTrustProxy(config.TRUST_PROXY);
     // 브리지·러너의 핸드셰이크와 첨부 HTTP 가 같은 실패 카운터를 쓴다(스펙 4.1·러너 스펙 5장) — 한쪽에서 막힌 주소는 다른
     // 쪽에서도 막힌다
     const bridgeGuard = new BridgeAuthGuard(limits.bridgeFail);
@@ -258,8 +245,12 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       {},
       { serializers: { req: requestLogSerializer } },
     );
-    // 리버스 프록시 뒤면 request.ip(레이트리밋 키)가 X-Forwarded-For 를 따르게 한다(리뷰 sc-t3 이월 4)
-    const fastify = Fastify({ loggerInstance, trustProxy, logController: new RedactingLogController() });
+    // 리버스 프록시 뒤면 request.ip(레이트리밋 키)가 믿는 프록시의 X-Forwarded-For 를 따르게 한다(리뷰 sc-t3 이월 4)
+    const fastify = Fastify({
+      loggerInstance,
+      trustProxy: fastifyTrustProxy(trustProxy),
+      logController: new RedactingLogController(),
+    });
     undo.push({ step: "fastify", run: () => fastify.close() });
     await fastify.register(cookie);
     // 라우트가 config.rateLimit 로 켠 곳에만 건다(/api/v1/auth/local)
@@ -284,6 +275,12 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       logger.error({ err: error }, "unhandled");
       return reply.status(500).send({ code: "INTERNAL", message: "internal error" });
     });
+    // 빌드된 웹·보안 헤더(앱 컨테이너 하나 스펙 3.2). 보안 헤더 훅이 뒤에 붙는 모든 라우트에 걸리게 라우트보다 먼저 둔다
+    registerWebStatic(fastify, {
+      webDir: config.DODOK_WEB_DIR,
+      httpsOrigin: new URL(config.APP_ORIGIN).protocol === "https:",
+      logger,
+    });
 
     const io: WireServer = new Server(fastify.server, {
       cors: { origin: allowedOrigins(config), credentials: true },
@@ -305,7 +302,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       principal
         ? control.call(principal, call.tool, call.args)
         : { ok: false, error: { code: "NOT_FOUND", message: "no open run for this call" } };
-    const clientAddress = bridgeClientAddress(trustProxy);
+    const clientAddress = clientAddressOf(trustProxy);
     const adapters: AgentAdapter[] = deps.adapters
       ? [...deps.adapters]
       : [
@@ -803,7 +800,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       limits,
       now: limitClock,
       ops,
-      clientAddress: bridgeClientAddress(trustProxy),
+      clientAddress,
     });
     const fanout = attachWireFanout(io, bus, { logger, db, workspaceId, maxPending: deps.wireMaxPending });
     undo.push({ step: "fanout", run: () => fanout.close() });

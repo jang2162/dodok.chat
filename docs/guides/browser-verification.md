@@ -9,7 +9,7 @@
 
 이 저장소의 로컬 앱은 평문 HTTP 다 — 웹은 Vite 개발 서버, API·Socket.IO 는 서버 프로세스이고 주소는 `.env` 가 정한다.
 인증서·자동 로그인 같은 전제가 없으므로 **도구를 고르고 탭을 여는 규칙만 지키면 된다.**
-예외는 배포 이미지를 이 Mac 에 띄운 로컬 검증(`https://localhost:8443`, Caddy 내부 CA)이다 — 아래 「로컬 HTTPS(Compose 8443)를 볼 때」.
+배포 이미지를 이 Mac 에 띄워 볼 때와 내부 CA 의 HTTPS 앞단을 볼 때는 아래 「배포 이미지(앱 컨테이너)를 볼 때」.
 
 ## 이 저장소에서 달라지는 것
 
@@ -40,9 +40,11 @@
 - **서버 쪽 wire 끊김은 `page.routeWebSocket` 으로 흉내 낸다** — `page.routeWebSocket(u => u.pathname.includes("socket.io"), ws => { if (block) ws.close(); else ws.connectToServer(); })` 를 페이지를 열기 전에 건다. `context.setOffline` 은 브라우저 온라인 이벤트로 React Query 가 쿼리를 다시 받아 **재접속 뒤 캐시가 낡는 결함을 가린다.** 이 `ws.close()` 는 「업그레이드는 됐는데 핸드셰이크 전에 깨끗이 닫힌」 시도라, 진짜 서버 중단(연결 거부 — 브라우저가 `error` 를 먼저 낸다)과 다른 길을 탄다 — 웹은 그 길을 `realtime/wire.ts` 의 `WireManager` 로 실패로 친다. 서버가 죽은 경우를 재려면 서버 프로세스를 내렸다 올린다.
 - `dev:fake` 의 개발 전용 훅(`/__devfake/*`)은 서버 오리진으로 직접 부른다 — 페이지 안 `fetch` 는 CORS 와 415(JSON 이 아닌 단순 요청 거절)에 걸린다. 훅 목록·호출 예는 `docs/guides/project-structure.md` 의 `apps/server` 절 dev:fake 문단.
 
-## 로컬 HTTPS(Compose 8443)를 볼 때
+## 배포 이미지(앱 컨테이너)를 볼 때
 
-`docs/guides/deploy.md` 「로컬 검증 (이 Mac)」 으로 띄운 `https://localhost:8443` 은 **Caddy 내부 CA 의 자체 인증서**다. 도구마다 막히는 자리가 다르다.
+`docs/guides/docker-deploy.md` 「확인 — `scripts/check-deploy.sh`」 절의 「로컬에서 운영 이미지를 띄워 볼 때」대로 띄운 앱은 평문 `http://localhost:3000` 이다(서버가 웹까지 낸다). `localhost` 는 보안 컨텍스트라 서비스 워커·푸시 구독이 되고 인증서 문제가 없다 — 위 규칙 그대로 보되, 쿠키가 호스트 단위라 neo 로 로그인하면 `localhost:5173` 의 dev 세션을 덮는다(위 「이 저장소에서 달라지는 것」). 푸시까지 보려면 아래 `launchPersistentContext` 를 인증서 인자 없이 쓴다.
+
+HTTPS 앞단을 이 Mac 에 두고 볼 때(`scripts/check-deploy.sh proxy` 의 Caddy 처럼 **내부 CA 의 자체 인증서**) 도구마다 막히는 자리가 다르다 — 그 스크립트의 프록시는 검사가 끝나면 지워지니, 브라우저로 볼 앞단은 따로 띄운다.
 
 - ⚠ **Claude-in-Chrome 은 인증서 오류를 넘기지 못한다** — `net::ERR_CERT_AUTHORITY_INVALID` 에서 멈추고 예외를 거는 옵션이 없다.
 - ⚠ **Playwright 의 `ignoreHTTPSErrors` 만으로는 서비스 워커가 등록되지 않는다** — 페이지는 열리지만 SW 스크립트 가져오기가 `An SSL certificate error occurred when fetching the script` 로 거절된다. 브라우저 인자 `--ignore-certificate-errors` 가 있어야 한다.
@@ -57,7 +59,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const ctx = await chromium.launchPersistentContext(mkdtempSync(join(tmpdir(), "dodok-8443-")), {
+const ctx = await chromium.launchPersistentContext(mkdtempSync(join(tmpdir(), "dodok-https-")), {
   headless: false, // 알림 권한이 필요하면 headed(창은 화면 밖에 두어도 된다)
   args: ["--ignore-certificate-errors"],
   ignoreHTTPSErrors: true,

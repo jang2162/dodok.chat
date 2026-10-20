@@ -10,6 +10,13 @@ export const OWNER_EMAIL = "owner@dodok.local";
 export const SESSION_COOKIE = "dodok.session";
 export const SESSION_MAX_AGE_S = 60 * 60 * 24 * 30;
 
+/**
+ * Better Auth 가 클라이언트 IP 를 읽는 유일한 헤더(advanced.ipAddress.ipAddressHeaders). 기본값 X-Forwarded-For 를 그대로 두면
+ * TRUST_PROXY 판정을 거치지 않고 클라이언트가 꾸민 값이 세션 ip_address 와 Better Auth 자체 레이트리밋 키가 된다. 서버가 Better Auth
+ * 로 넘기는 자리(auth/routes.ts betterAuthHeaders)는 들어온 같은 이름을 버리고 request.ip 만 싣는다
+ */
+export const CLIENT_IP_HEADER = "x-dodok-client-ip";
+
 export function createAuth(
   db: Db,
   config: { BETTER_AUTH_SECRET: string; APP_ORIGIN: string },
@@ -46,6 +53,7 @@ export function createAuth(
       "/revoke-other-sessions",
     ],
     session: { expiresIn: SESSION_MAX_AGE_S, updateAge: 60 * 60 * 24 },
+    advanced: { ipAddress: { ipAddressHeaders: [CLIENT_IP_HEADER] } },
     plugins: [bearer()],
     telemetry: { enabled: false },
     ...(logger

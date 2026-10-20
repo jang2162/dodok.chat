@@ -34,14 +34,14 @@ describe("요청 로그의 원격 주소는 가린 값이다 — IPv4 /24·IPv6 
     expect(all).not.toContain("2001:db8:aa:bb:cc::5");
   });
 
-  it("TRUST_PROXY=true 면 X-Forwarded-For 첫 값(request.ip)을 가려 싣는다", async () => {
+  it("TRUST_PROXY 가 프록시 주소면 그 프록시가 덧붙인 X-Forwarded-For 의 오른쪽 값(request.ip)을 가려 싣는다", async () => {
     const { logger, lines } = captureLogger();
-    app = await bootTestApp({ TRUST_PROXY: "true" }, { logger });
+    app = await bootTestApp({ TRUST_PROXY: "172.18.0.5/32" }, { logger });
     await app.fastify.inject({
       method: "GET",
       url: "/healthz",
       remoteAddress: "172.18.0.5",
-      headers: { "x-forwarded-for": "198.51.100.23" },
+      headers: { "x-forwarded-for": "1.2.3.4, 198.51.100.23" },
     });
     expect(incoming(lines)).toEqual([expect.objectContaining({ remoteAddress: "198.51.100.0/24" })]);
     expect(JSON.stringify(lines)).not.toContain("198.51.100.23");

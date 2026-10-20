@@ -314,7 +314,7 @@ describe("웹훅 POST /hooks/<token>", () => {
     ]);
   });
 
-  it("GET 은 서버의 404 JSON — infra/check-caddy.sh 가 /hooks/* 가 서버까지 가는지 이것으로 본다", async () => {
+  it("GET 은 서버의 404 JSON — scripts/check-deploy.sh 가 /hooks/* 가 서버까지 가는지 이것으로 본다", async () => {
     const { token } = addWebhook();
     for (const path of ["/hooks/whk_nope", `/hooks/${token}`]) {
       const res = await app.fastify.inject({ method: "GET", url: path, remoteAddress: newAddress() });

@@ -14,8 +14,8 @@ export type TokenVerifier = (presented: unknown) => unknown;
 export type TokenPath = "bridge" | "runner" | "mcp";
 
 /**
- * 실패 카운터 인스턴스 — 브리지·러너 쪽은 핸드셰이크와 같은 것, /mcp 는 따로 만든 것. 주소는 request.ip — TRUST_PROXY 일 때 X-Forwarded-For 를 따르는 것이
- * 핸드셰이크의 bridgeClientAddress 와 같다. onBlocked 의 path 는 막히게 한 쪽
+ * 실패 카운터 인스턴스 — 브리지·러너 쪽은 핸드셰이크와 같은 것, /mcp 는 따로 만든 것. 주소는 request.ip — 믿는 프록시(TRUST_PROXY)의 X-Forwarded-For 를 따르는 판정이
+ * 핸드셰이크의 clientAddressOf(http/client-address.ts)와 같다. onBlocked 의 path 는 막히게 한 쪽
  */
 export type AgentTokenGuard = {
   guard: BridgeAuthGuard;

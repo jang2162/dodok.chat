@@ -194,7 +194,7 @@ export type DevFakeOptions = {
   logLevel?: "fatal" | "error" | "warn" | "info" | "debug" | "trace";
   /** 웹 오리진(wire 핸드셰이크 Origin 검사). 기본 http://localhost:5173 */
   appOrigin?: string;
-  /** 리슨 주소. 기본 127.0.0.1 — 컨테이너(Dockerfile.server 의 devfake 타깃)는 Caddy 가 닿게 0.0.0.0 */
+  /** 리슨 주소. 기본 127.0.0.1 — 컨테이너 안에서 띄워 바깥에서 닿게 하려면 0.0.0.0 */
   host?: string;
   /** 웹 푸시 발송기. 기본은 실제 web-push(dev:fake 로 브라우저 푸시를 본다) — 테스트는 가짜를 줘 밖으로 보내지 않는다 */
   pushSend?: AppDeps["pushSend"];

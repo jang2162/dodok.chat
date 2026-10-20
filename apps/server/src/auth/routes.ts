@@ -10,7 +10,7 @@ import type { Logger } from "../logger";
 import { normalizeEmail } from "../modules/members/accept";
 import { recordRateLimit } from "../modules/ops/http-limits";
 import type { OpsService } from "../modules/ops/service";
-import { type Auth, OWNER_EMAIL, SESSION_COOKIE, SESSION_MAX_AGE_S } from "./index";
+import { type Auth, CLIENT_IP_HEADER, OWNER_EMAIL, SESSION_COOKIE, SESSION_MAX_AGE_S } from "./index";
 import { membershipOf, requireRole, requireSession, sessionTokenOf, sessionUser } from "./roles";
 
 // 라우트 모듈들이 이 경로로 가져온다 — 정의는 auth/roles.ts
@@ -74,7 +74,7 @@ export function registerAuthRoutes(fastify: FastifyInstance, ctx: AuthRouteConte
       const path = request.url.split("?", 1)[0] ?? "";
       if (!path.startsWith("/api/auth/") || !BETTER_AUTH_HTTP_PATHS.has(path.slice("/api/auth".length)))
         throw apiError("NOT_FOUND", "not found");
-      const headers = fromNodeHeaders(request.headers);
+      const headers = betterAuthHeaders(request);
       headers.delete("content-length"); // 파싱된 본문을 다시 직렬화하므로 원래 길이와 다를 수 있다
       const hasBody = request.method !== "GET" && request.body !== undefined;
       const res = await ctx.auth.handler(
@@ -162,7 +162,7 @@ async function signIn(
   try {
     return await ctx.auth.api.signInEmail({
       body: { email, password },
-      headers: fromNodeHeaders(request.headers),
+      headers: betterAuthHeaders(request),
       asResponse: false,
     });
   } catch (error) {
@@ -171,6 +171,16 @@ async function signIn(
     ctx.logger.error({ err: error }, "local login failed");
     throw error;
   }
+}
+
+/**
+ * Better Auth 로 넘기는 요청 헤더 — 클라이언트 IP 는 서버의 신뢰 프록시 판정(request.ip, TRUST_PROXY)만 CLIENT_IP_HEADER 로 싣는다.
+ * 같은 이름으로 들어온 값은 Headers.set 이 덮는다(클라이언트가 그 헤더를 직접 보내도 그 값은 남지 않는다)
+ */
+function betterAuthHeaders(request: FastifyRequest): Headers {
+  const headers = fromNodeHeaders(request.headers);
+  headers.set(CLIENT_IP_HEADER, request.ip);
+  return headers;
 }
 
 export function setSessionCookie(reply: FastifyReply, token: string, secure: boolean): void {

@@ -1,13 +1,24 @@
 import { join } from "node:path";
 import { Handle } from "@dodok/shared";
 import { z } from "zod";
+import { parseTrustProxy } from "./http/client-address";
 
 const Raw = z.object({
   HOST: z.string().default("127.0.0.1"),
   PORT: z.coerce.number().int().min(0).max(65535).default(3000),
   APP_ORIGIN: z.url(),
-  // 리버스 프록시 뒤면 "true" — 레이트리밋 키(request.ip)가 X-Forwarded-For 를 따른다
-  TRUST_PROXY: z.enum(["true", "false"]).default("false"),
+  // 리버스 프록시 뒤면 그 프록시 주소(IP·CIDR 쉼표 목록 — 프록시 하나면 /32) — 레이트리밋 키(request.ip)·소켓 주소가 그 프록시가
+  // 보낸 X-Forwarded-For 를 따른다. 비우거나 false 면 아무도 믿지 않는다, true 는 설정 오류(http/client-address.ts)
+  TRUST_PROXY: z
+    .string()
+    .optional()
+    .superRefine((raw, ctx) => {
+      try {
+        parseTrustProxy(raw);
+      } catch (err) {
+        ctx.addIssue({ code: "custom", message: (err as Error).message });
+      }
+    }),
   DATA_DIR: z.string().default("./data"),
   DB_PATH: z.string().optional(),
   // 첨부 블롭 디렉터리(스펙 4.1). 없으면 DATA_DIR/attachments
@@ -26,6 +37,8 @@ const Raw = z.object({
   DODOK_PLUGIN_DIR: z.string().optional(),
   // 서버가 품은 러너 tgz 디렉터리(이미지가 /app/runner). 없으면 소스 실행에서 packages/claude-runner/dist
   DODOK_RUNNER_DIR: z.string().optional(),
+  // 빌드된 웹 디렉터리(이미지가 /app/web) — 있으면 서버가 웹을 낸다(http/web-static.ts). 없으면 개발처럼 Vite 가 낸다
+  DODOK_WEB_DIR: z.string().optional(),
   // 웹 푸시(스펙 5.1). 키 둘이 다 있어야 쓰고, 아니면 DATA_DIR/vapid.json(없으면 만든다)
   VAPID_PUBLIC_KEY: z.string().min(1).optional(),
   VAPID_PRIVATE_KEY: z.string().min(1).optional(),
@@ -48,7 +61,7 @@ const Raw = z.object({
   APNS_TEAM_ID: z.string().min(1).optional(),
   // 중계 자리 — 아직 구현되지 않았다. 값이 있으면 부팅 때 warn 후 무시
   PUSH_RELAY_URL: z.string().min(1).optional(),
-  // 테스트·개발 전용 — 가짜 APNs 로 보낸다(deploy.md 에 싣지 않는다). APNS_HOST 는 호스트[:포트], APNS_CA_PATH 는 그 서버의 인증서(PEM)
+  // 테스트·개발 전용 — 가짜 APNs 로 보낸다(docker-deploy.md 에 싣지 않는다). APNS_HOST 는 호스트[:포트], APNS_CA_PATH 는 그 서버의 인증서(PEM)
   APNS_HOST: z.string().min(1).optional(),
   APNS_CA_PATH: z.string().min(1).optional(),
 });
