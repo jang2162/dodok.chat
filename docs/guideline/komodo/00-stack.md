@@ -56,8 +56,10 @@ services:
     pull_policy: build   # 레지스트리 이미지가 아니다: pull 은 건너뛰고 up 할 때마다 저장소 코드로 빌드
 ```
 
-- **Why:** 레지스트리에 없는 이미지를 pull 하려 하면 배포가 실패하거나, 서버에 남은 옛 이미지가 그대로 쓰인다.
-- **How to apply:** 레지스트리 이미지를 쓰는 서비스는 이 줄을 두지 않는다.
+- **Why:** Komodo 의 Deploy 는 `pull`(Auto Pull, 기본 켬) 다음 `up -d` 를 부르고, `up` 에 `--build` 를 붙이지 않는다(따로 `build` 를 부르는 것은 Stack 의 Run Build 를 켰을 때뿐이다). 그래서 `build:` 만 있고 이 줄이 없으면 서버에 같은 이름의 옛 이미지가 남아 있을 때 `up` 이 그것을 그대로 띄운다 — push 한 코드가 배포되지 않는데 배포는 성공으로 끝난다. 이 줄이 있으면 `pull` 은 그 서비스를 건너뛰고(「No image to be pulled」) `up` 이 매번 저장소 코드로 빌드한다.
+- **How to apply:**
+  - 레지스트리 이미지를 쓰는 서비스는 이 줄을 두지 않는다.
+  - 이 줄을 둔 Stack 은 Run Build 를 꺼 둔다. 켜면 빌드를 한 번 더 부를 뿐이다.
 
 ## 이 Stack 의 재배포가 서비스를 끊는지 보고 Webhook 을 정한다
 

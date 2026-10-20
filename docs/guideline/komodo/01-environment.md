@@ -33,10 +33,11 @@ DB_PASSWORD=[[APP_DB_PASSWORD]]
 API_TOKEN=[[APP_API_TOKEN]]
 ```
 
-- **Why:** compose 와 저장소 문서는 커밋되어 이력에 남는다. Environment 에 평문을 쓰면 그 Stack 을 볼 수 있는 사람에게 값이 보인다.
+- **Why:** compose 와 저장소 문서는 커밋되어 이력에 남는다. Environment 에 평문을 쓰면 그 Stack 을 볼 수 있는 사람에게 값이 보인다. 배포 기록도 같다 — Komodo 는 배포마다 `docker compose config` 결과(합친 설정 — 서비스의 `env_file` 로 읽은 값까지)를 기록에 남기고, 그 안에서 가리는 것은 Secret Variable 로 치환한 값뿐이다. 평문으로 넣은 비밀은 배포 기록에 그대로 남는다.
 - **How to apply:**
   - Variable 이름에 앱 이름을 앞에 붙인다(`<앱>_DB_PASSWORD`). Variable 은 Komodo 전체가 공유한다.
   - `.env` 파일·`environment:` 에 비밀값을 커밋하지 않는다. compose 에는 `${DB_PASSWORD:?...}` 참조만 둔다.
+  - 서버에서 Komodo 와 같은 꼴로 `docker compose … --env-file .env config` 를 직접 부르면 Komodo 가 쓴 `.env` 의 값을 비밀까지 그대로 찍는다. 그 출력을 로그·대화·이슈에 붙이지 않는다. 파일이 맞는지만 보려면 값을 찍지 않는 `config --quiet`(검사만)나 `config --services` 를 쓴다.
 
 ## 환경 변수 목록을 저장소에 문서로 남긴다
 

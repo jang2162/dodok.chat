@@ -1,7 +1,7 @@
 {
   "version": 2,
   "revisions": {
-    "default": 22
+    "default": 25
   },
   "sources": {
     "default:mcp/codegraph": "01d216780214053bd3728391bbb87db603034af0d566ca43dc52bc228378cc00",
@@ -16,7 +16,7 @@
     "default:rules/base/06-worktree-setup.md": "4fb84f38bbe4bb6b47e6d6a1c57f9df3a358f75d52737c029dac4c4fa653c66b",
     "default:rules/base/07-worktree-cleanup.md": "acfd9442e38a843ac88f0210fb7674ff435c2b4e3e0db65d6f0fd942c79f7a9f",
     "default:rules/base/08-shared-resources.md": "f68b3db0fea9443d254766dc5739596f79c986c20c82f76002e40876b22cf97d",
-    "default:rules/base/09-worker-brief.md": "d0a58241b62c20a37ec594ceedddc247e4a4fe64960b39a16e93a11bef987cc5",
+    "default:rules/base/09-worker-brief.md": "f8bfeacc7060334737380faf6cef4cd1a386f5c510cbc28ad27af13f3e20c23a",
     "default:rules/base/10-package-manager.md": "4393e7b5203dbdf3cae0b02259a3989023c359f751a9c109fe10315283412c22",
     "default:rules/base/11-docs-layout.md": "8def8e3594ee2bad6e268e1bc64b01bb337228cdd0d3d2771abe033c08bb4bd2",
     "default:rules/base/12-handoff-docs.md": "af802bc8c52903064076d2973d2da191bfcc8f6c849917ede35394cab9ac48a2",
@@ -34,8 +34,8 @@
     "default:rules/codegraph/00-index.md": "dfb04e418ad4e592a161c6cc0d895ba534c7191106b3945d91f4c29dde211f8e",
     "default:rules/codegraph/01-orca-setup.md": "02b018ad80d5b31cf8269fde51afdafdf34e9a4d07a5d0e32d69e0498d10a5b6",
     "default:rules/codegraph/SETUP.md": "3ce9d694c54a14d50a99af943df5764dc228fc2f3d5a5e61358bc6143d808d96",
-    "default:rules/komodo/00-stack.md": "04b890d44b989d472a1d3db2ccca17489b67223b7ff97ee3b094ba9765d729ba",
-    "default:rules/komodo/01-environment.md": "780196b6c9aac72d48ccfb0fd1454cad16cc4bb160afd68ce52a555531b349c8",
+    "default:rules/komodo/00-stack.md": "a59767508bd633848f14c7e5fec0b4958dfeec00bb99d819a72c2fa8f645df6a",
+    "default:rules/komodo/01-environment.md": "8ad000befaca09c3dd1ef565ce2de43d07939682d789a1978d1f792741c4d898",
     "default:rules/komodo/02-override.md": "06bce5f009fafa0173c91f0e6729ef538f36d2d18c28729b3790c94e8589ea28",
     "default:rules/lefthook/00-toolchain.md": "1b778edb3d410653acc7c23acc3967268125e08da90522289fd6386d2af21589",
     "default:rules/lefthook/01-pre-push.md": "abacc327081e93b49348ff865cae466c25ff2a2fd4c3a1330a0c94ea51d943c3",
@@ -301,7 +301,7 @@
       "items": [
         "default:rules/base/09-worker-brief.md"
       ],
-      "hash": "5a7b994686018909dfd6220f7eaadcd92acbecfccf65f9f21cb8b06efa909124"
+      "hash": "7c08b69056987d19444f2c2c68e915898e57f0cedab1f437d953008ccda61eec"
     },
     {
       "path": "docs/guideline/base/11-docs-layout.md",
@@ -413,14 +413,14 @@
       "items": [
         "default:rules/komodo/00-stack.md"
       ],
-      "hash": "1ff72b6e7ba578b93c76201e3932309fb2931d811778f34521e05032ef0c85fd"
+      "hash": "33a0ed09ba3a75f26c55c6fb6aff2f10d064b1a25af266393da1b003c37905fb"
     },
     {
       "path": "docs/guideline/komodo/01-environment.md",
       "items": [
         "default:rules/komodo/01-environment.md"
       ],
-      "hash": "1c7ab36155e5fc32ce4e86e4bfd916a81115f5f9467fadd7cb409dc5b1add436"
+      "hash": "e08374ab7808a650d7c2a25be0907ffa1af13e37cd28c7d7f7375eb772b95311"
     },
     {
       "path": "docs/guideline/komodo/02-override.md",
