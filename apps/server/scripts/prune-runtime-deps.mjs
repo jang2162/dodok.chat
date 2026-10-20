@@ -2,7 +2,7 @@
 // 사용: node scripts/prune-runtime-deps.mjs <deploy 디렉터리> <대상 node_modules> <runtime-deps.json>
 //   <deploy 디렉터리>   `pnpm deploy --prod` 산출물 — 버전은 거기서(= lockfile) 온다. 손으로 버전을 풀지 않는다
 //   <runtime-deps.json> build.mjs 가 dist/ 에 쓰는 이름 목록(정본은 build.mjs 의 runtimeDeps)
-// 쓰는 곳은 둘이고 같은 명령이다: infra/Dockerfile.server 의 deploy 단계, bundle-smoke.mjs. 스모크가 가지치기된 배치에서 번들을
+// 쓰는 곳은 둘이고 같은 명령이다: 루트 Dockerfile 의 deploy 단계, bundle-smoke.mjs. 스모크가 가지치기된 배치에서 번들을
 // 띄우므로 목록이 모자라면(런타임에 찾는 것이 목록에 없으면) 스모크가 빨개진다.
 // 까닭: deploy 산출물을 통째로 실으면 번들에 이미 든 의존성과, better-auth 의 optional peer 가 lockfile 스냅숏에 워크스페이스 것으로
 // 묶여 따라온 개발 도구(vitest·vite·drizzle-kit·jsdom…)·@dodok/* 의 TS 원본까지 실린다 — 이미지 node_modules 234 MB 대 이 닫힘 27 MB

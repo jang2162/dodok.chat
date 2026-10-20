@@ -10,7 +10,7 @@ import type { App } from "../src/app";
 import { SECURITY_HEADERS } from "../src/http/web-static";
 import { bootTestApp } from "./helpers/app";
 
-// 옛 infra/Caddyfile 의 header Content-Security-Policy 값 그대로 — 서버가 Caddy 대신 낸다(앱 컨테이너 하나 스펙 3.2)
+// 예전 Caddy 앞단(Caddyfile)의 header Content-Security-Policy 값 그대로 — 서버가 Caddy 대신 낸다(앱 컨테이너 하나 스펙 3.2)
 const CADDY_CSP =
   "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'";
 

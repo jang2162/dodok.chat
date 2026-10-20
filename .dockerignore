@@ -7,10 +7,11 @@ data
 **/.env
 **/.env.*
 !.env.example
-# infra/local.env(로컬 검증 비밀)·infra/.env(compose 변수 치환용)
-infra/*.env
-infra/.env
+# 서버에서만 쓰는 덮어쓰기 파일 — 서버 경로·네트워크 이름이 이미지에 들어가지 않게
+compose.override.yaml
 .worktrees
+# codegraph 색인(소켓이 들어 있어 tar 가 「sockets not supported」 오류를 낸다)
+.codegraph
 .superpowers
 .claude
 **/.turbo

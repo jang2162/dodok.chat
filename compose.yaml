@@ -1,0 +1,46 @@
+# dodok 배포 — 앱 컨테이너 하나(서버가 웹·API·실시간·브리지·러너·웹훅·/mcp 를 한 포트로 낸다). HTTPS·도메인은 각자 서버의 리버스
+# 프록시 몫이고 이 파일에 넣지 않는다. 저장소 루트에서:
+#   cp .env.example .env   (값을 채운다 — docs/guides/docker-deploy.md 「준비」)
+#   docker compose up -d --build
+# 프록시·서버마다 다른 값(외부 네트워크·TRUST_PROXY·포트)은 서버에서만 쓰는 compose.override.yaml(git 무시)로 덮는다. -f 없이 부르면
+# Docker Compose 가 그 파일을 자동으로 읽는다. 두 꼴(컨테이너 프록시·호스트 프록시)과 Komodo Stack 설정은 docs/guides/docker-deploy.md
+# pull_policy: build — 이미지는 레지스트리에 없고 이 저장소로 빌드한다. 없으면 `up`(--build 없이)·Komodo 배포가 pull 을 시도해 실패하거나
+# 호스트에 남은 옛 이미지를 그대로 쓴다
+name: dodok
+services:
+  app:
+    build:
+      context: .
+      target: runtime
+      # 비면 Dockerfile 의 web 단계가 웹 입력의 내용 해시를 쓴다(그 파일의 「웹 빌드 ID」 주석). 값을 .env 에 고정하지 않는다 — 웹이
+      # 바뀌어도 ID 가 그대로라 클라이언트가 옛 오프라인 사본을 버리지 않는다
+      args: { VITE_BUILD_ID: "${DODOK_WEB_BUILD_ID:-}" }
+    pull_policy: build
+    # 운영은 루트 .env 하나(변수 치환과 같은 파일). DODOK_ENV_FILE 은 로컬 검사(scripts/check-deploy.sh)가 개발용 .env(APP_ORIGIN 이
+    # Vite 5173)와 부딪히지 않게 다른 파일을 줄 때만 쓴다
+    env_file: ${DODOK_ENV_FILE:-.env}
+    # 컨테이너 계약 — 헬스체크·포트(3000)·볼륨(/data)·이미지 안 마이그레이션·플러그인·러너·웹 자리. environment 가 env_file 보다 앞서므로
+    # .env 의 같은 이름은 무시된다. 이미지 ENV 로만 두면 .env.example 을 복사한 `HOST=` 같은 빈 줄이 그 값을 빈 문자열로 덮고, 서버는
+    # 빈 값을 기본값(127.0.0.1·./data)으로 읽는다 — 헬스체크(컨테이너 안 127.0.0.1)는 초록인데 바깥에서는 닿지 않는다.
+    # TRUST_PROXY 는 여기 두지 않는다 — 프록시가 서버마다 달라 .env 나 compose.override.yaml 이 정한다(비면 아무도 믿지 않는다)
+    environment:
+      HOST: 0.0.0.0
+      PORT: "3000"
+      DATA_DIR: /data
+      DODOK_MIGRATIONS_DIR: /app/drizzle
+      DODOK_PLUGIN_DIR: /app/plugin # 이미지가 품은 플러그인 tgz — .env 의 빈 줄이 덮어 「플러그인 파일 없음」이 되지 않게
+      DODOK_RUNNER_DIR: /app/runner # 이미지가 품은 러너 tgz — 같은 까닭
+      DODOK_WEB_DIR: /app/web # 이미지가 품은 웹 — 빈 줄이 덮으면 모든 화면 경로가 JSON 404 가 된다
+    # 루프백에만 연다 — 프록시 없이 바깥에 드러나지 않게. 호스트에 깐 프록시는 이 포트로 보내고, 컨테이너 프록시는 덮어쓰기에서
+    # `ports: !reset []` 로 지우고 공유 네트워크로 닿는다
+    ports: ["127.0.0.1:${DODOK_HTTP_PORT:-3000}:3000"]
+    volumes: [dodok-data:/data]
+    restart: unless-stopped
+    # 앱의 종료 상한(10초 — PROCESS_EXIT_TIMEOUT_MS·APP_CLOSE_TIMEOUT_MS)보다 길게. Docker 기본 10초면 SIGKILL 이 먼저 와 깨끗한 종료 표지를 못 써 다음 부팅에 unclean_shutdown 이 뜬다
+    stop_grace_period: 15s
+    # 로그 로테이션(운영 보강 스펙 2.6) — 10 MB × 5개, 최대 50 MB. 없으면 json-file 로그가 디스크를 끝없이 채운다
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+volumes:
+  dodok-data:

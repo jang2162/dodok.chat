@@ -3,11 +3,9 @@ data/
 .env
 .env.*
 !.env.example
-# 로컬 검증 비밀(infra/local.env.example 의 사본) — 이름이 .env.* 꼴이 아니라 위 줄에 안 걸린다
-infra/local.env
-# 서버에서 직접 쓰는 덮어쓰기 파일(infra/compose.server.example.yml 의 사본) — 서버마다 다르다. 같은 이름이 추적되기 시작하면
+# 서버에서 직접 쓰는 덮어쓰기 파일(내용은 docs/guides/docker-deploy.md) — 서버마다 다르다. 같은 이름이 추적되기 시작하면
 # Komodo 의 갱신(git pull)이 그 파일에서 충돌한다
-/infra/compose.server.yml
+/compose.override.yaml
 
 # 의존성·빌드
 node_modules/

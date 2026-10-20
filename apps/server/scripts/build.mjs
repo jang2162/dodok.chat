@@ -14,7 +14,7 @@ import { writeFileSync } from "node:fs";
 // 번들러가 이름을 require2 처럼 바꾸므로 \brequire\( 로는 못 센다. 빠진 것은 bundle-smoke(runtimeDeps 로 가지치기한 배치에서 띄운다)가 잡는다 —
 // 단 부팅 경로에서 찾는 것만(ws 는 부팅 때 Gateway 클라이언트가 적재한다). 요청 경로 안의 런타임 해석은 위 전수 재기로만 찾는다
 const external = ["better-sqlite3"];
-// 번들 밖 node_modules 에서 런타임에 찾는 것 전부 — 운영 배치(infra/Dockerfile.server·bundle-smoke)는 dist/runtime-deps.json 으로 받은
+// 번들 밖 node_modules 에서 런타임에 찾는 것 전부 — 운영 배치(루트 Dockerfile·bundle-smoke)는 dist/runtime-deps.json 으로 받은
 // 이 목록의 닫힘만 싣는다(scripts/prune-runtime-deps.mjs)
 const runtimeDeps = [...external, "ws"];
 

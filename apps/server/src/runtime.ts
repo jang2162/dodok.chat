@@ -53,6 +53,6 @@ export function unwritableDataPath(paths: {
 export function dataDirErrorMessage(u: UnwritablePath): string {
   return (
     `설정 오류: DATA_DIR 에 쓸 수 없다: ${u.path} (${u.code}) — 컨테이너면 볼륨 소유자를 1000:1000 으로: ` +
-    "docker compose -f infra/compose.yml run --rm -u 0 app chown -R 1000:1000 /data"
+    "docker compose run --rm -u 0 app chown -R 1000:1000 /data"
   );
 }

@@ -104,7 +104,7 @@ describe("devFakeCliOptions", () => {
     expect(devFakeCliOptions({}, []).dataDir).toMatch(/[/\\]data$/);
   });
 
-  it("리슨 주소는 DEV_FAKE_HOST(컨테이너의 devfake 타깃은 0.0.0.0), 없거나 비었으면 127.0.0.1", () => {
+  it("리슨 주소는 DEV_FAKE_HOST(컨테이너면 0.0.0.0), 없거나 비었으면 127.0.0.1", () => {
     expect(devFakeCliOptions({ DEV_FAKE_HOST: "0.0.0.0" }, []).host).toBe("0.0.0.0");
     expect(devFakeCliOptions({}, []).host).toBe("127.0.0.1");
     expect(devFakeCliOptions({ DEV_FAKE_HOST: "" }, []).host).toBe("127.0.0.1");

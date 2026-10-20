@@ -65,7 +65,7 @@ describe.skipIf(process.getuid?.() === 0)("unwritableDataPath", () => {
   it("메시지는 한 줄 — 경로·사유·고치는 명령", () => {
     expect(dataDirErrorMessage({ path: "/data", code: "EACCES" })).toBe(
       "설정 오류: DATA_DIR 에 쓸 수 없다: /data (EACCES) — 컨테이너면 볼륨 소유자를 1000:1000 으로: " +
-        "docker compose -f infra/compose.yml run --rm -u 0 app chown -R 1000:1000 /data",
+        "docker compose run --rm -u 0 app chown -R 1000:1000 /data",
     );
   });
 });
