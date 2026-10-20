@@ -37,6 +37,8 @@ const Raw = z.object({
   DODOK_PLUGIN_DIR: z.string().optional(),
   // 서버가 품은 러너 tgz 디렉터리(이미지가 /app/runner). 없으면 소스 실행에서 packages/claude-runner/dist
   DODOK_RUNNER_DIR: z.string().optional(),
+  // 빌드된 웹 디렉터리(이미지가 /app/web) — 있으면 서버가 웹을 낸다(http/web-static.ts). 없으면 개발처럼 Vite 가 낸다
+  DODOK_WEB_DIR: z.string().optional(),
   // 웹 푸시(스펙 5.1). 키 둘이 다 있어야 쓰고, 아니면 DATA_DIR/vapid.json(없으면 만든다)
   VAPID_PUBLIC_KEY: z.string().min(1).optional(),
   VAPID_PRIVATE_KEY: z.string().min(1).optional(),

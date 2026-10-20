@@ -22,6 +22,7 @@ import { type AgentTokenGuard, requireAgentToken } from "./http/agent-token";
 import { clientAddressOf, fastifyTrustProxy, parseTrustProxy } from "./http/client-address";
 import { HttpError, httpStatusToErrorCode } from "./http/errors";
 import { allowedOrigins } from "./http/origins";
+import { registerWebStatic } from "./http/web-static";
 import { createLogger, type Logger, RedactingLogController, requestLogSerializer } from "./logger";
 import { registerAdapterRoutes } from "./modules/adapter/routes";
 import { registerAgentRoutes } from "./modules/agents/routes";
@@ -273,6 +274,12 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       }
       logger.error({ err: error }, "unhandled");
       return reply.status(500).send({ code: "INTERNAL", message: "internal error" });
+    });
+    // 빌드된 웹·보안 헤더(앱 컨테이너 하나 스펙 3.2). 보안 헤더 훅이 뒤에 붙는 모든 라우트에 걸리게 라우트보다 먼저 둔다
+    registerWebStatic(fastify, {
+      webDir: config.DODOK_WEB_DIR,
+      httpsOrigin: new URL(config.APP_ORIGIN).protocol === "https:",
+      logger,
     });
 
     const io: WireServer = new Server(fastify.server, {
