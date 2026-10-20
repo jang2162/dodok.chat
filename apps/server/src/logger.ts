@@ -5,9 +5,9 @@ import { ipPrefix } from "./modules/ops/ip";
 // x-*-token 꼴 요청 헤더는 지금 쓰는 곳이 없다(브리지 토큰은 Authorization·핸드셰이크 auth 로 온다) — 토큰을 싣는
 // 헤더를 새로 만들면 이름을 여기에 적는다. pino redact 는 헤더 이름 와일드카드를 받지 못한다.
 // 토큰을 URL 경로에 싣는 라우트를 새로 만들면 redactUrl 에 그 경로를 더한다 — Fastify 의 `incoming request` 줄이 req.url 을
-// info 로 남긴다(지금은 웹훅 /hooks/<token>). Caddy 도 프록시 오류(502) 때 URI 를 원문으로 남긴다 — infra/Caddyfile 전역
-// log default 의 request>uri 필터에도 같은 경로를 더한다. 토큰 접두(whk_·dpt_)는 쿼리 등에 잘못 실려 와도 두 자리가 모두
-// 가린다 — 접두가 붙은 토큰을 새로 만들면 그 접두도 두 자리에 더한다
+// info 로 남긴다(지금은 웹훅 /hooks/<token>). 앞단 리버스 프록시도 접근·오류 로그에 URI 를 원문으로 남긴다 — 앱이 막을 수
+// 없으니 docs/guides/docker-deploy.md 「프록시 접근 로그」의 Caddy 필터 조각에도 같은 경로를 더한다. 토큰 접두(whk_·dpt_)는
+// 쿼리 등에 잘못 실려 와도 두 자리가 모두 가린다 — 접두가 붙은 토큰을 새로 만들면 그 접두도 두 자리에 더한다
 const SECRET_KEYS = new Set([
   "token",
   "LOCAL_AUTH_TOKEN",

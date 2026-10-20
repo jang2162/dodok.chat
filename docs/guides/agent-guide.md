@@ -4,7 +4,7 @@
 
 플러그인은 이 사용법을 에이전트에게 따로 주입하지 않는다. 에이전트가 매 턴 받는 것은 아래 「에이전트가 받는 것」의 헤더와 채널 프롬프트뿐이고, 카드 쓰는 법은 `message` 툴 스키마의 짧은 설명(`packages/openclaw-plugin/src/components-schema.ts` 의 `COMPONENTS_DESCRIPTION`)에만 있다. 나머지는 「붙여 넣을 블록」을 에이전트 쪽에 넣어야 에이전트가 안다.
 
-설치(서버·플러그인·브리지 토큰)는 `docs/guides/deploy.md` 가 정본이다. 이 문서의 동작 서술이 코드와 다르면 코드가 맞다 — 절마다 정본 파일을 적어 둔다.
+설치(서버·플러그인·브리지 토큰)는 `docs/guides/docker-deploy.md` 가 정본이다. 이 문서의 동작 서술이 코드와 다르면 코드가 맞다 — 절마다 정본 파일을 적어 둔다.
 
 ## 에이전트가 받는 것
 
@@ -32,7 +32,7 @@
 
 - **`---` 아래가 지금 받은 메시지**다. 위는 모두 문맥이다.
 - **참여자**는 그 채널에 참여한 사람과 채널에 넣은 에이전트의 핸들이다. 헤더에는 핸들만 있고 사용자 id 는 없다.
-  - 사람은 워크스페이스에 여럿일 수 있지만(초대로 들인 멤버 — `docs/guides/deploy.md` 「멤버 초대·비밀번호 재설정·비활성화」 절) **그 채널에 한 번이라도 쓰거나 그 채널에서 멘션된 사람만** 실린다 — 채널을 읽기만 한 사람은 없다. 웹에서 비활성화한 멤버는 빠지고(다시 활성화하면 돌아온다), 최근 대화 속 옛 메시지가 그 사람을 멘션했으면 그 핸들 그대로 보인다.
+  - 사람은 워크스페이스에 여럿일 수 있지만(초대로 들인 멤버 — `docs/guides/docker-deploy.md` 「멤버 초대·비밀번호 재설정·비활성화」 절) **그 채널에 한 번이라도 쓰거나 그 채널에서 멘션된 사람만** 실린다 — 채널을 읽기만 한 사람은 없다. 웹에서 비활성화한 멤버는 빠지고(다시 활성화하면 돌아온다), 최근 대화 속 옛 메시지가 그 사람을 멘션했으면 그 핸들 그대로 보인다.
   - 에이전트가 쓴 `@사람핸들` 은 이 참여자 목록으로만 풀린다 — 참여자가 아닌 사람을 불러도 그 사람에게 알림이 가지 않는다.
   - 웹에서 삭제(보관)한 에이전트는 「참여자:」에서 빠진다. 최근 대화 속 옛 메시지가 그 에이전트를 멘션했으면 그 핸들 그대로 보인다.
 - **릴레이 규칙**은 채널의 릴레이 정책에서 만든 한 문단이다(서버 `apps/server/src/modules/runs/context.ts` 의 `relayRulesFor`). 괄호 안 턴 수는 채널의 「턴 상한」이다. 쌍 허용을 좁혀 두면 끝에 「당신이 부를 수 있는 에이전트: @fin.」 또는 「당신은 다른 에이전트를 부를 수 없습니다.」가 붙는다.
@@ -63,7 +63,7 @@
 - **범위 — 세션이 아는 메시지만** — 채널 세션은 채널 최상위 메시지(스레드를 연 루트 포함), 스레드 세션은 그 스레드의 루트와 답글의 반응을 받는다. 그래서 루트에 단 반응은 두 세션에 모두 간다 — 단 스레드 세션이 생긴 뒤(그 스레드에서 처음 부른 뒤)에 단 것만 그 스레드로 간다. 스레드를 열기 전에 루트에 단 반응은 채널 세션으로만 간다.
 - **「새 대화」 뒤** — 새 세션은 리셋 전에 달린 반응을 받지 않는다. Claude 러너 에이전트가 채널 규칙이 바뀌어 새 세션을 열 때도 같다.
 - 문구는 shared `packages/shared/src/reactions/index.ts` 의 `formatReactionFacts` 하나가 만든다 — OpenClaw 헤더와 Claude 러너의 턴 사실이 같은 글이다. 무엇을 싣는지는 서버 `apps/server/src/modules/reactions/service.ts` 의 `pendingReactionsFor`, 설계는 `docs/superpowers/specs/2026-10-05-reactions-design.md`(구현과 달라진 것은 「구현과 맞춘 것」 장).
-- 반응을 모르는 옛 플러그인이 붙어 있으면 턴은 그대로 돌고 반응 블록만 없다 — 플러그인을 다시 설치한다(`docs/guides/deploy.md` 「업데이트」 절).
+- 반응을 모르는 옛 플러그인이 붙어 있으면 턴은 그대로 돌고 반응 블록만 없다 — 플러그인을 다시 설치한다(`docs/guides/docker-deploy.md` 「업데이트」 절).
 
 ### 자동화가 게시한 글 — 보낸 사람 `system:automation`
 
@@ -232,7 +232,7 @@ admin 이상이 만든 자동화(`docs/manual/user-guide.md` 「자동화 (admin
 
 ### 플러그인이 옛 판이면
 
-스레드 런은 **스레드를 아는 플러그인**(hello 에 `threads`)이 붙어 있어야 돈다. 옛 플러그인이 붙어 있으면 스레드 멘션은 에이전트가 돌지 않고(런은 `PLUGIN_OUTDATED` 오류로 곧바로 끝난다) 스레드에 「@dev 가 스레드에서 답하지 못했습니다 — 플러그인을 새로 설치해야 합니다(연결 페이지)」 카드와 「다시 실행」 버튼을 남긴다. 채널 멘션은 그대로 돈다. 설치는 `docs/guides/deploy.md` 「업데이트」 절.
+스레드 런은 **스레드를 아는 플러그인**(hello 에 `threads`)이 붙어 있어야 돈다. 옛 플러그인이 붙어 있으면 스레드 멘션은 에이전트가 돌지 않고(런은 `PLUGIN_OUTDATED` 오류로 곧바로 끝난다) 스레드에 「@dev 가 스레드에서 답하지 못했습니다 — 플러그인을 새로 설치해야 합니다(연결 페이지)」 카드와 「다시 실행」 버튼을 남긴다. 채널 멘션은 그대로 돈다. 설치는 `docs/guides/docker-deploy.md` 「업데이트」 절.
 
 ## components v1 — 카드로 묻고 받기
 
@@ -646,7 +646,7 @@ admin 이상이 만든 자동화(`docs/manual/user-guide.md` 「자동화 (admin
 - **보이는 모양** — 서버가 내용의 첫 바이트로 판별한다. PNG·JPEG·GIF·WebP 는 이미지 격자(크게 보기 됨), 그 밖(SVG 포함)은 파일 카드(내려받기)다.
 - **이름** — 모델이 준 이름(`filename`) → 로더가 알려 준 이름 → 경로의 마지막 조각. 한 메시지 안에서 겹치면 확장자 앞에 ` (2)`.
 - **실패 사유는 정해진 문구**다 — 「파일을 찾을 수 없음」·「허용되지 않은 경로」(Gateway 호스트의 파일 접근 정책이 막음)·「20 MiB 초과」(상한을 낮췄으면 그 값)·「파일을 읽지 못함」·「서버 상한 초과」·「서버가 거절함 (N)」·「서버에 올리지 못함」·「메시지당 10개 초과」. 원문(경로가 든)은 Gateway 로그에만 남는다.
-- 어떤 경로를 읽을 수 있는지는 Gateway 호스트 설정(`tools.fs.workspaceOnly` 등)이 정한다 — `docs/guides/deploy.md` 「[웹 → B] 플러그인 설치·브리지 토큰」 절의 첨부 항목.
+- 어떤 경로를 읽을 수 있는지는 Gateway 호스트 설정(`tools.fs.workspaceOnly` 등)이 정한다 — `docs/guides/docker-deploy.md` 「[웹 → B] 플러그인 설치·브리지 토큰」 절의 첨부 항목.
 
 ### 호스트 경로를 글에 쓰지 않는다
 
@@ -667,9 +667,9 @@ admin 이상이 만든 자동화(`docs/manual/user-guide.md` 「자동화 (admin
 
 ## 제어 도구 — 채널·에이전트 설정 읽고 바꾸기
 
-에이전트는 채널 안에서 dodok 의 채널·에이전트 설정을 도구로 읽고 바꿀 수 있다 — 사람이 바깥 MCP 클라이언트(`/mcp`, `docs/guides/deploy.md` 「제어 MCP — 바깥 클라이언트의 `/mcp`」 절)로 쓰는 것과 같은 도구 목록이다. 정본: 설계 `docs/superpowers/specs/2026-10-06-control-mcp-design.md`(구현과 달라진 것은 「구현과 맞춘 것」 장), 도구 이름·설명·입력 스키마는 `packages/shared/src/control/tools.ts` 의 `CONTROL_TOOLS`.
+에이전트는 채널 안에서 dodok 의 채널·에이전트 설정을 도구로 읽고 바꿀 수 있다 — 사람이 바깥 MCP 클라이언트(`/mcp`, `docs/guides/docker-deploy.md` 「제어 MCP — 바깥 클라이언트의 `/mcp`」 절)로 쓰는 것과 같은 도구 목록이다. 정본: 설계 `docs/superpowers/specs/2026-10-06-control-mcp-design.md`(구현과 달라진 것은 「구현과 맞춘 것」 장), 도구 이름·설명·입력 스키마는 `packages/shared/src/control/tools.ts` 의 `CONTROL_TOOLS`.
 
-- **이름** — OpenClaw 에이전트에게는 `dodok_<tool>`(Claude CLI 런이면 모델에게 `mcp__openclaw__dodok_<tool>` 로 보인다), Claude 러너 에이전트에게는 `mcp__dodok__<tool>` 이다. 플러그인·`dodok-runner` 가 제어 도구를 아는 판이어야 보인다 — 옛 판이면 도구가 없을 뿐 런은 그대로다(`docs/guides/deploy.md` 「업데이트」).
+- **이름** — OpenClaw 에이전트에게는 `dodok_<tool>`(Claude CLI 런이면 모델에게 `mcp__openclaw__dodok_<tool>` 로 보인다), Claude 러너 에이전트에게는 `mcp__dodok__<tool>` 이다. 플러그인·`dodok-runner` 가 제어 도구를 아는 판이어야 보인다 — 옛 판이면 도구가 없을 뿐 런은 그대로다(`docs/guides/docker-deploy.md` 「업데이트」).
 - **도구** — 읽기 `list_channels`·`get_channel`·`list_agents`·`list_people`·`search_messages`·`read_messages`(최대 50개, 멘션은 `@핸들` 로)·`get_run`·`ops_status`·`discover_agents`, 채널 `create_channel`·`update_channel`(이름·주제)·`set_channel_prompt`·`add_channel_agent`·`remove_channel_agent`·`update_channel_agent`(채널별 지시·자동 응답·별칭)·`set_relay_policy`·`set_channel_run_limit`·`archive_channel`·`unarchive_channel`, 에이전트 `register_agent`·`update_agent`·`set_agent_enabled`·`archive_agent`. 메시지를 올리는 도구는 없다 — 에이전트끼리는 채널 @멘션 릴레이로만 이야기한다.
 - **권한은 그 런을 시킨 사람의 것을 빌린다** — 사람 글의 멘션·자동 응답이면 그 글을 쓴 사람, 카드 누름·「이어가기」면 누른 사람, 「다시 실행」이면 원래 런의 시킨 사람, 릴레이면 사슬을 시작한 사람이다. 판정은 그 사람의 **지금 역할**로, 웹에서 같은 일을 할 때와 같다 — 채널 만들기·이름·주제·에이전트 넣기·빼기는 member 도, 채널 프롬프트·채널별 지시·릴레이 정책·일일 한도·보관·`ops_status`·`discover_agents`·에이전트 도구는 admin 이상. 모자라면 확인 카드 없이 곧바로 `FORBIDDEN` 「이 일은 admin 이상만 할 수 있습니다(시킨 사람: @mia, member)」가 도구 오류로 온다. **자동화 글이 시작한 런은 시킨 사람이 없어 읽기만 된다** — 쓰기는 `FORBIDDEN` 「사람이 시킨 런에서만 바꿀 수 있습니다」.
 - **쓰기는 시킨 사람의 확인 카드를 지난다.** 쓰기 도구를 부르면 런이 「승인 대기」로 멈추고 그 런의 채널(스레드 런이면 그 스레드)에 확인 카드가 뜬다 — 제목 「@ops 가 #dev 의 채널 프롬프트를 바꾸려 합니다」, 바뀔 내용 요약, 출처 줄(「시킨 사람: @mia」, 릴레이면 시작한 글·사슬). 버튼은 **시킨 사람 본인에게만**(「허용」·「거절」 — 「항상 허용」은 없다) 보이고, 다른 사람에게는 「@mia 의 확인을 기다립니다」다. 허용이면 도구가 돌아 결과가 오고, 채널에는 「@mia 의 요청으로 @ops 가 … 바꿨습니다」 시스템 메시지가 남는다. 거절은 `FORBIDDEN` 「@mia 가 거절했습니다」, **10분**(OpenClaw 에이전트는 5분 — 아래 ⚠) 안에 아무도 안 누르면 `EXPIRED`, 그 사이 런이 끝나면(중지·실패·시간 초과) 카드가 닫히고 `EXPIRED` 다. 허용할 때 역할을 다시 보므로 그 사이 강등됐으면 `FORBIDDEN` 이고 아무것도 바뀌지 않는다.
@@ -680,7 +680,7 @@ admin 이상이 만든 자동화(`docs/manual/user-guide.md` 「자동화 (admin
 
 ## Claude 러너 에이전트
 
-에이전트 목록에서 제공자가 「Claude 러너」인 에이전트는 OpenClaw 를 거치지 않는다 — 사람의 머신에서 도는 러너가 Claude Agent SDK 로 Claude Code 를 그 머신의 작업 디렉터리에서 돌린다(설치는 `docs/guides/deploy.md` 「Claude 러너 설치」 절). 채널에서의 쓰임(멘션·릴레이·일일 한도·스레드·카드 누르기·「새 대화」·「다시 실행」)은 위 절들과 같고, **받는 모양과 보내는 도구가 다르다.** 세션 키도 같은 꼴(`agent:<러너 에이전트 id>:dodok:channel:<channelId>`)이고, 서버가 그 키에 Claude 세션 id 를 하나 묶어 러너가 런마다 그 세션을 잇는다 — 「새 대화」는 새 Claude 세션이다. 채널 규칙이 바뀌어도 서버가 그 세션을 새로 연다(아래 「받는 것」 1). 정본: 설계 `docs/superpowers/specs/2026-09-27-claude-runner-design.md`, 문장은 `packages/shared/src/runner/prompt.ts`(`buildChannelRulesAppend`·`buildTurnFacts`·`renderRunnerPrompt`), 도구는 `packages/claude-runner/src/post-tool.ts`.
+에이전트 목록에서 제공자가 「Claude 러너」인 에이전트는 OpenClaw 를 거치지 않는다 — 사람의 머신에서 도는 러너가 Claude Agent SDK 로 Claude Code 를 그 머신의 작업 디렉터리에서 돌린다(설치는 `docs/guides/docker-deploy.md` 「Claude 러너 설치」 절). 채널에서의 쓰임(멘션·릴레이·일일 한도·스레드·카드 누르기·「새 대화」·「다시 실행」)은 위 절들과 같고, **받는 모양과 보내는 도구가 다르다.** 세션 키도 같은 꼴(`agent:<러너 에이전트 id>:dodok:channel:<channelId>`)이고, 서버가 그 키에 Claude 세션 id 를 하나 묶어 러너가 런마다 그 세션을 잇는다 — 「새 대화」는 새 Claude 세션이다. 채널 규칙이 바뀌어도 서버가 그 세션을 새로 연다(아래 「받는 것」 1). 정본: 설계 `docs/superpowers/specs/2026-09-27-claude-runner-design.md`, 문장은 `packages/shared/src/runner/prompt.ts`(`buildChannelRulesAppend`·`buildTurnFacts`·`renderRunnerPrompt`), 도구는 `packages/claude-runner/src/post-tool.ts`.
 
 ### 받는 것 — 세 자리
 

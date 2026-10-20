@@ -61,7 +61,7 @@ const Raw = z.object({
   APNS_TEAM_ID: z.string().min(1).optional(),
   // 중계 자리 — 아직 구현되지 않았다. 값이 있으면 부팅 때 warn 후 무시
   PUSH_RELAY_URL: z.string().min(1).optional(),
-  // 테스트·개발 전용 — 가짜 APNs 로 보낸다(deploy.md 에 싣지 않는다). APNS_HOST 는 호스트[:포트], APNS_CA_PATH 는 그 서버의 인증서(PEM)
+  // 테스트·개발 전용 — 가짜 APNs 로 보낸다(docker-deploy.md 에 싣지 않는다). APNS_HOST 는 호스트[:포트], APNS_CA_PATH 는 그 서버의 인증서(PEM)
   APNS_HOST: z.string().min(1).optional(),
   APNS_CA_PATH: z.string().min(1).optional(),
 });

@@ -13,7 +13,7 @@ const api = process.env.DODOK_API_ORIGIN ?? "http://127.0.0.1:3000";
 const pwaDev = process.env.VITE_PWA_DEV === "1";
 
 // 빌드마다 바뀌는 값 — 오프라인 사본은 이 값이 다르면 버린다(pwa/persist.ts `buster`). 테스트(vitest)에도 정의된다.
-// 빈 문자열도 「없음」으로 본다 — 빈 값으로 고정되면 웹이 바뀌어도 사본이 버려지지 않는다(infra/Dockerfile.web 의 VITE_BUILD_ID)
+// 빈 문자열도 「없음」으로 본다 — 빈 값으로 고정되면 웹이 바뀌어도 사본이 버려지지 않는다(루트 Dockerfile web 단계의 VITE_BUILD_ID)
 const buildId = process.env.VITE_BUILD_ID || new Date().toISOString();
 
 export default defineConfig({

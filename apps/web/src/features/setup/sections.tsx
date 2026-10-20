@@ -154,9 +154,9 @@ export function ServerSection({ status }: { status: SetupStatus }) {
 export const NO_GATEWAY = "OpenClaw Gateway 를 추가하면 그 안의 에이전트를 채널에 데려올 수 있습니다";
 
 /**
- * Gateway 호스트에서 돌릴 설치 명령 — `docs/guides/deploy.md` 「[웹 → B] 플러그인 설치·브리지 토큰」 절의 [B] 블록이 정본이다.
+ * Gateway 호스트에서 돌릴 설치 명령 — `docs/guides/docker-deploy.md` 「[웹 → B] 플러그인 설치·브리지 토큰」 절의 [B] 블록이 정본이다.
  * 그 블록의 줄을 글자 그대로 옮기고 계정 설정 패치 줄만 뺀다(토큰은 「새 토큰 발급」이 따로 준다). 다른 것은 둘뿐이다 —
- * 받은 파일 이름, 번들 sha256 을 대조할 값(deploy.md 는 [PC] 에서 잰 값, 여기는 서버가 품은 번들의 값 — 스펙 「결정」 번들 파일 sha256).
+ * 받은 파일 이름, 번들 sha256 을 대조할 값(docker-deploy.md 는 [PC] 에서 잰 값, 여기는 서버가 품은 번들의 값 — 스펙 「결정」 번들 파일 sha256).
  * `connection.test.tsx` 가 그 블록과 대조하므로 문서가 바뀌면 테스트가 알린다
  */
 export function installCommands(fileName: string, bundleSha256: string): string {

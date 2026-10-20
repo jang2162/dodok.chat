@@ -238,12 +238,12 @@ describe("renderLlmsTxt — 안내서 명령이 기대는 것", () => {
   const gateway = section(body, "OpenClaw Gateway 호스트");
   const runner = section(body, "Claude 러너 머신");
 
-  it("러너 3번 — claude 가 없는 머신의 번들 CLI 줄은 deploy.md 「Claude 러너 설치」와 같고 경로 성분이 러너 패키지와 맞다", () => {
+  it("러너 3번 — claude 가 없는 머신의 번들 CLI 줄은 docker-deploy.md 「Claude 러너 설치」와 같고 경로 성분이 러너 패키지와 맞다", () => {
     const runnerSteps = bashBlocks(runner);
     expect(blockWith(runnerSteps, "CLAUDE_CONFIG_DIR=")).toContain(
       "CLAUDE_CONFIG_DIR=~/.dodok-runner/claude claude\n",
     );
-    const deploy = readFileSync(join(ROOT, "docs/guides/deploy.md"), "utf8");
+    const deploy = readFileSync(join(ROOT, "docs/guides/docker-deploy.md"), "utf8");
     const line = deploy
       .split("\n")
       .map((l) => l.trim())

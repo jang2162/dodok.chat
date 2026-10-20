@@ -144,7 +144,7 @@ curl -s -H "authorization: Bearer $T" http://127.0.0.1:$PORT/api/v1/adapter/stat
 - `wire-cli add-agent` 는 Gateway 가 하나면 `gatewayId` 를 빼도 된다(「`wire-cli`」 절 표).
 
 `bridge` 가 60초 안에 `connected` 가 안 되면 `data/dev-gateway.log` 의 `[dodok] bridge:` 줄을 본다. 서버가 늦게 뜨면 플러그인 백오프가 벌어져 있어
-첫 연결에 그만큼 걸린다(상한 10s, 지터 포함 ~12s — 30s 상한이던 이번 실연은 21s). `UNAUTHORIZED` 면 계정 토큰이 그 Gateway 의 활성 토큰과 다르다. **브리지 토큰의 정본은 DB 고 Gateway 마다 따로다** — 실연 DB 를 새로 만들었으면 위처럼 새로 발급해 패치한다. 교체 절차는 이 문서 「브리지 토큰 교체 — 사람이 따라 할 절차」 절 · `docs/guides/deploy.md` 「브리지 토큰 교체」.
+첫 연결에 그만큼 걸린다(상한 10s, 지터 포함 ~12s — 30s 상한이던 이번 실연은 21s). `UNAUTHORIZED` 면 계정 토큰이 그 Gateway 의 활성 토큰과 다르다. **브리지 토큰의 정본은 DB 고 Gateway 마다 따로다** — 실연 DB 를 새로 만들었으면 위처럼 새로 발급해 패치한다. 교체 절차는 이 문서 「브리지 토큰 교체 — 사람이 따라 할 절차」 절 · `docs/guides/docker-deploy.md` 「브리지 토큰 교체」.
 
 주의: Gateway 를 띄우면 OpenClaw 내장 주간 cron `skill-collection-review:<agent>`(격리 세션, exec·write 툴)가 밀린 실행을 곧바로 돌 수 있다 — 이번 실연에서 dev 의 것이
 기동 2분 뒤 1회 돌았다(우리 런과 별개로 모델 사용). 예정은 `( env -u OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_TOKEN="$(cat data/dev-gateway.token)" PATH="$OCBIN:$PATH" openclaw --dev cron list --json --port 19001 )` 로 본다.
@@ -301,7 +301,7 @@ oc --dev plugins inspect dodok --json | jq .plugin.status     # 여전히 "loade
 - 플러그인은 **사용자가 Gateway 호스트에 설치**한다(ADR 0002 9.2~9.5: `pack:plugin` → tarball 복사 → `openclaw plugins install … --force --accept-capabilities` → 계정 설정은 패치 파일). 워커는 원격 호스트를 만지지 않는다.
 - 서버: 연결 페이지 「Gateway 추가」로 원격 주소(`wss://…`)·공유 토큰을 넣는다. 디바이스 디렉터리는 그 Gateway 행의 것(`data/gateways/<Gateway id>/`)이라 dev Gateway 와 따로다.
   원격 공유 토큰은 `operator.admin` 을 부여한다(계획서 10장 #15, 2026-09-15 원격 실측 — 스코프 승급 자동 승인). 부여가 없어지면 `capabilities.sessionReset=false` 가 되고 「새 대화」는 409.
-- 브리지: 플러그인이 **아웃바운드로** 서버에 붙는다. 개발 PC 서버면 터널(cloudflared 등)로 `wss://…/bridge` 를 만들고, 그 주소를 `BRIDGE_PUBLIC_URL` 에 적고 호스트의 계정 `bridgeUrl` 에 넣는다. 토큰은 연결 페이지의 그 원격 Gateway 카드에서 발급한 것 — 브리지 토큰의 정본은 DB 고 Gateway 마다 따로다(이 문서 「브리지 토큰 교체 — 사람이 따라 할 절차」 절 · `docs/guides/deploy.md` 「브리지 토큰 교체」).
+- 브리지: 플러그인이 **아웃바운드로** 서버에 붙는다. 개발 PC 서버면 터널(cloudflared 등)로 `wss://…/bridge` 를 만들고, 그 주소를 `BRIDGE_PUBLIC_URL` 에 적고 호스트의 계정 `bridgeUrl` 에 넣는다. 토큰은 연결 페이지의 그 원격 Gateway 카드에서 발급한 것 — 브리지 토큰의 정본은 DB 고 Gateway 마다 따로다(이 문서 「브리지 토큰 교체 — 사람이 따라 할 절차」 절 · `docs/guides/docker-deploy.md` 「브리지 토큰 교체」).
 - 원격은 루프백이 아니므로 페어링 자동 승인·지연 수치가 다를 수 있다. ①~③ 을 다시 재고 이 문서에 표를 더한다.
 - **[사람] 원격 Gateway 버전을 먼저 확인한다.** 서버를 원격에 붙이면 접속 한 번에 로그 두 줄이 알려 준다 — `"gateway connected"` 의 `gatewayVersion`·`gatewayBuildId`(hello-ok `server.version`·`server.buildId`)와 `"bridge plugin hello"` 의 `gatewayVersion`(원격 호스트의 플러그인이 보낸 `runtime.version`).
   원격이 `2026.9.5` 이상이면 **ADR 0004 이전 번들은 배포에서도 에이전트가 카드를 못 보낸다**(결함 1) — 호스트의 플러그인을 새 번들로 바꾸고, 그 버전에서 11절 하네스를 한 번 돌린다. `pluginBuiltWithSdk` 는 Gateway 버전이 아니다(2절).
@@ -1370,7 +1370,7 @@ await page.evaluate(async () =>
 | # | 기준 | 결과 | 증거 |
 | --- | --- | --- | --- |
 | 1 | `.env` 토큰을 빈 테이블에서 라벨 `env` 로 한 번 이어받음 | **통과** | 첫 부팅 `"label":"env","msg":"bridge token imported from .env"` 1줄. `GET /api/v1/setup/bridge-tokens` 에 `env` 1행(`connected:true`, prefix 는 해시 앞 6자). 버전 로그는 15.1 |
-| 2 | 서버가 내려준 tgz 로 설치 | **통과** | `pack:plugin` 뒤 부팅 → `status.pluginFile.available:true`. owner `GET /api/v1/setup/plugin.tgz` 200·195,283 B·`filename="dodok-openclaw-plugin-95f80fb8c77e.tgz"`, 받은 sha256 `95f80fb8…` = `status.pluginFile.sha256`. 익명 401. Gateway 를 내리고 `oc --dev plugins install <받은 파일> --force --accept-capabilities` → `Installed plugin: dodok`·`Saved for the next Gateway start.` · `inspect` `"loaded"`·`["dodok"]` · 설치본 `dist/index.js` = `9e59c7a5…` = `status.pluginFile.bundleSha256` = tgz 안 `package/dist/index.js`. 명령은 연결 페이지 설치 블록(= `docs/guides/deploy.md` 「[PC → B] 플러그인 설치·브리지 설정」 [B])과 같은 꼴 — 다른 것은 dev 의 `--dev`, 파일 자리(페이지는 `/tmp/<받은 이름>`, 이번엔 같은 이름으로 스크래치), sha 대조 경로(`~/.openclaw-dev/…`)뿐 |
+| 2 | 서버가 내려준 tgz 로 설치 | **통과** | `pack:plugin` 뒤 부팅 → `status.pluginFile.available:true`. owner `GET /api/v1/setup/plugin.tgz` 200·195,283 B·`filename="dodok-openclaw-plugin-95f80fb8c77e.tgz"`, 받은 sha256 `95f80fb8…` = `status.pluginFile.sha256`. 익명 401. Gateway 를 내리고 `oc --dev plugins install <받은 파일> --force --accept-capabilities` → `Installed plugin: dodok`·`Saved for the next Gateway start.` · `inspect` `"loaded"`·`["dodok"]` · 설치본 `dist/index.js` = `9e59c7a5…` = `status.pluginFile.bundleSha256` = tgz 안 `package/dist/index.js`. 명령은 연결 페이지 설치 블록(= `docs/guides/docker-deploy.md` 「[PC → B] 플러그인 설치·브리지 설정」 [B])과 같은 꼴 — 다른 것은 dev 의 `--dev`, 파일 자리(페이지는 `/tmp/<받은 이름>`, 이번엔 같은 이름으로 스크래치), sha 대조 경로(`~/.openclaw-dev/…`)뿐 |
 | 3 | 같은 빌드 | **통과** | 설치 전(옛 플러그인): `bridge.plugin.bundleSha256:null`·`pluginMatches:null`. 설치 뒤: `bundleSha256` = `9e59c7a5…` = 설치본, `pluginMatches:true`, 화면 「서버와 같은 빌드입니다」 |
 | 4 | 새 토큰 발급 | **통과** | `POST /api/v1/setup/bridge-tokens {"label":"s2t7-dev"}` → 201·`cache-control: no-store`. 원문은 `^dbt_[A-Za-z0-9_-]{43}$`, record prefix 는 `dbt_` 뒤 6자, `pluginConfig.bridgeUrl` = `ws://127.0.0.1:19100/bridge`. 목록 2행 활성(`env` 접속 중·`s2t7-dev`). 서버 로그 `"bridge token issued"` 1줄, 원문 0 |
 | 5 | dev 플러그인 설정 교체(원문을 인자로 넘기지 않음) | **통과** | 발급 응답의 `pluginConfig` 를 스크래치 0600 파일로 → `oc --dev config patch --file <파일>` → 파일 삭제. `config patch` 는 `--file`·`--stdin` 을 받는다(`config set` 도 `--batch-file` 로 argv 를 피할 수 있지만 조작 배열 꼴이다) — 발급 결과가 patch 꼴 조각이고, 연결 페이지 발급 대화상자가 사람에게 권하는 「이 조각을 파일로 저장해 `openclaw config patch --file` 로 적용하고 저장한 파일은 지우세요」와 같은 길을 골랐다. 출력 `Applied 2 config update(s). Change will apply without restarting the gateway.`(`bridgeUrl` 은 같은 값), 출력에 원문 0 |
@@ -1408,7 +1408,7 @@ await page.evaluate(async () =>
 
 ### 15.4 브리지 토큰 교체 — 사람이 따라 할 절차
 
-dev 는 모든 `openclaw` 에 `--dev` 를 붙이고 상태 디렉터리가 `~/.openclaw-dev` 다. 원격 Gateway 호스트는 `docs/guides/deploy.md` 「[웹 → B] 플러그인 설치·브리지 토큰」의 [B] 와 같은 자리에서 한다. 정본 절차는 `docs/guides/deploy.md` 「브리지 토큰 교체」다.
+dev 는 모든 `openclaw` 에 `--dev` 를 붙이고 상태 디렉터리가 `~/.openclaw-dev` 다. 원격 Gateway 호스트는 `docs/guides/docker-deploy.md` 「[웹 → B] 플러그인 설치·브리지 토큰」의 [B] 와 같은 자리에서 한다. 정본 절차는 `docs/guides/docker-deploy.md` 「브리지 토큰 교체」다.
 
 1. 연결 페이지의 그 Gateway 카드 「브리지 토큰」 → 「새 토큰 발급」 → 라벨. 대화상자의 「설정 복사」로 `pluginConfig` 조각을 복사한다(원문은 이때 한 번만 보인다).
 2. Gateway 호스트에서 조각을 **파일로** 저장한다 — `umask 077` 인 셸에서 편집기로 붙여 넣는다. 셸 인자·`echo` 로 넘기지 않는다(`ps`·셸 기록에 남는다).
@@ -1424,7 +1424,7 @@ dev 는 모든 `openclaw` 에 `--dev` 를 붙이고 상태 디렉터리가 `~/.o
 
 ### 15.6 사람이 볼 것
 
-- 원격 Gateway(`wss://<도메인>/bridge`) 에서 15.4 를 끝까지 — 이번은 dev(루프백 `ws://`)만 쟀다. `docs/guides/deploy.md` 결과 표에 적는다.
+- 원격 Gateway(`wss://<도메인>/bridge`) 에서 15.4 를 끝까지 — 이번은 dev(루프백 `ws://`)만 쟀다. `docs/guides/docker-deploy.md` 결과 표에 적는다.
 - 발급 대화상자의 「설정 복사」 → Gateway 호스트 편집기에 붙여 넣기(실제 OS 클립보드) — 이번은 API 로 발급해 대화상자를 열지 않았다.
 - 14.3 의 표는 그대로다.
 
@@ -1717,7 +1717,7 @@ final = "FAKE_CLI_DONE approval=" + (res.response?.behavior ?? res.subtype);   /
 ### 18.5 사람이 볼 것
 
 - 원격 Gateway 판(9.4 일 수 있음)에서 승인 — `decided_by` 가 비는지(이벤트·RPC 응답 순서)는 판마다 다를 수 있다.
-- 실제 폰에서 승인 푸시가 owner·admin 에게만 오는지 — 이번은 로컬 받이로 대상만 쟀다(실제 FCM·APNs 전달은 `docs/guides/deploy.md` 체크리스트).
+- 실제 폰에서 승인 푸시가 owner·admin 에게만 오는지 — 이번은 로컬 받이로 대상만 쟀다(실제 FCM·APNs 전달은 `docs/guides/docker-deploy.md` 체크리스트).
 - 18.4 첫 줄(`decided_by`)을 고칠지.
 
 ### 18.6 정리·잔여물
@@ -1806,7 +1806,7 @@ chmod +x "$B/claude"
 - **러너를 `SIGTERM` 으로 끄면 도는 런이 사람 중지와 같은 모양으로 닫힌다** — `RUN_ABORTED {by:"user"}`·런 `aborted`·메시지 없음(러너 스펙 「구현과 맞춘 것」 장의 러너 종료 판정대로). 「다시 실행」 카드가 없어서 채널의 사람은 러너가 꺼진 줄 모르고 활동 탭에 「중지됨」만 본다.
 - 러너 표준 오류에 **런마다** SDK 경고 `[CLAUDE_SDK_CAN_USE_TOOL_SHADOWED] canUseTool will not be invoked for: mcp__dodok__post …` 가 한 줄씩 찍힌다(러너 로그 57줄 중 14줄). 의도한 미리 허용(러너 스펙 「승인」 절 마지막 줄)이라 해롭지 않지만, 사람이 러너 터미널에서 보는 줄의 4분의 1이 이 경고다.
 - 발급 응답·연결 페이지 설정 예시의 `serverUrl` 이 dev 에서는 `APP_ORIGIN`(웹 오리진)이다 — 기존 이월 「발급 조각 bridgeUrl 이 공개 주소 파생」과 같은 줄기. 배포(한 오리진)에서는 맞다.
-- 연결 페이지의 로그인 명령 `CLAUDE_CONFIG_DIR=~/.dodok-runner/claude claude` 는 `claude` 가 PATH 에 있다고 가정한다. 러너 tgz 는 번들 CLI 를 품지만 PATH 에 두지 않는다 — `docs/guides/deploy.md` 「Claude 러너 설치」 절에 번들 CLI 로 로그인하는 명령을 적었다.
+- 연결 페이지의 로그인 명령 `CLAUDE_CONFIG_DIR=~/.dodok-runner/claude claude` 는 `claude` 가 PATH 에 있다고 가정한다. 러너 tgz 는 번들 CLI 를 품지만 PATH 에 두지 않는다 — `docs/guides/docker-deploy.md` 「Claude 러너 설치」 절에 번들 CLI 로 로그인하는 명령을 적었다.
 - CLI 는 기동마다 `HEAD <ANTHROPIC_BASE_URL>/api/hello` 를 한 번 보낸다(연결 확인). 가짜 API 는 404 로 답하고 CLI 는 그대로 진행했다.
 - 러너 에이전트가 받는 `tools[]` 14개에 Claude Code 기본 도구가 그대로 있다 — `AskUserQuestion`·`Agent`·`Workflow`·`ScheduleWakeup`·`Skill` 등. 사람에게 되묻는 `AskUserQuestion` 이나 예약·하위 에이전트 도구를 모델이 부르면 dodok 에서 어떻게 되는지는 재지 않았다(러너 설정 `disallowedTools` 로 뺄 수 있다).
 
@@ -1817,7 +1817,7 @@ chmod +x "$B/claude"
 
 ## 20. Claude 러너(Phase 4 ③) 실연 — 2026-09-29 결과 (p4c-t9b, 모델 런 3회)
 
-「Claude 러너 런 0회 하네스」 절을 먼저 끝까지 돌린 뒤에 한다. 모델 런은 **3회 이내**(러너가 연 `query()` 하나 = 1회 — 릴레이·카드 누르기가 만드는 러너 런도 센다), 러너 전용 로그인(`CLAUDE_CONFIG_DIR=~/.dodok-runner/claude` — `docs/guides/deploy.md` 「Claude 러너 설치」 절의 로그인)으로.
+「Claude 러너 런 0회 하네스」 절을 먼저 끝까지 돌린 뒤에 한다. 모델 런은 **3회 이내**(러너가 연 `query()` 하나 = 1회 — 릴레이·카드 누르기가 만드는 러너 런도 센다), 러너 전용 로그인(`CLAUDE_CONFIG_DIR=~/.dodok-runner/claude` — `docs/guides/docker-deploy.md` 「Claude 러너 설치」 절의 로그인)으로.
 
 **판정: 멘션 경로(스트리밍·도구·최종 답·운영 비용)는 통과. 규칙 변경 뒤 `resume` 은 새 규칙을 따르지 않았다** — 서버는 새 규칙만 실었는데(모델 0 으로 확인) 이어 간 세션의 모델이 자기 앞 답의 옛 표식을 이어 썼고, 「새 대화」 뒤 새 세션은 새 규칙을 따랐다(20.3). 승인·`post`·릴레이(원래 배분의 셋째)는 모델로 보지 않았다 — 셋째 런을 규칙 변경의 원인 가르기에 썼다.
 
@@ -1964,7 +1964,7 @@ gw config patch --file $SP/base.patch.json5          # 21.1 「Gateway 설정」
 
 ## 22. llms.txt 실연 — 2026-10-05 결과 (sal-t6, 설정 통합 계획 태스크 6, 모델 런 0회)
 
-설계는 `docs/superpowers/specs/2026-10-05-settings-agents-llms-design.md`(구현과 달라진 것은 그 스펙의 「구현과 맞춘 것」 장), 운영 절차는 `docs/guides/deploy.md` 「[웹 → B] 플러그인 설치·브리지 토큰」·「Claude 러너 설치」 절의 「AI 에게 맡기는 길」.
+설계는 `docs/superpowers/specs/2026-10-05-settings-agents-llms-design.md`(구현과 달라진 것은 그 스펙의 「구현과 맞춘 것」 장), 운영 절차는 `docs/guides/docker-deploy.md` 「[웹 → B] 플러그인 설치·브리지 토큰」·「Claude 러너 설치」 절의 「AI 에게 맡기는 길」.
 owner 로 Gateway 를 추가하고 브리지·러너 토큰을 발급한 뒤, 「AI 에게 맡기기」 한 줄이 가리키는 `llms.txt` 의 두 절을 노드 자리에서 **명령 그대로** 돌렸다 — AI 가 할 일을 실연자가 손으로 대신했다(모델 런 금지라 실제 AI 에게 건네지 않았다).
 사람의 dev 상태(`~/.openclaw-dev`·`~/.openclaw`)와 `.env` 는 읽지도 쓰지도 않았다 — Gateway 상태·노드 홈·서버 DB 를 모두 스크래치에 새로 만들었다.
 
@@ -2094,7 +2094,7 @@ const SID = at("--session-id") ?? at("--resume");                       // 세�
 
 ## 24. 네이티브 푸시 손 확인 — 실제 APNs·FCM 으로 한 번 쏘기 (사람이 한다)
 
-서버가 iOS(APNs)·Android(FCM)로 알림을 보내는 경로(`apps/server/src/modules/push/transports/`)를 실제 서비스에 한 번 태워 본다. 자동 테스트(`apps/server/test/integration/push-native.test.ts`·`push-native-android.test.ts`)는 로컬 가짜 APNs·FCM 으로만 돌고 **실제 Apple·Google 로는 한 번도 나가지 않는다** — 자격 증명이 맞는지·기기 토큰이 서버가 고른 호스트(sandbox·production)와 맞는지·알림이 기기에 뜨는지는 여기서만 안다. 모델 런은 쓰지 않는다. 자격 증명을 만드는 법은 `docs/guides/deploy.md` 「네이티브 푸시 자격 증명」 절.
+서버가 iOS(APNs)·Android(FCM)로 알림을 보내는 경로(`apps/server/src/modules/push/transports/`)를 실제 서비스에 한 번 태워 본다. 자동 테스트(`apps/server/test/integration/push-native.test.ts`·`push-native-android.test.ts`)는 로컬 가짜 APNs·FCM 으로만 돌고 **실제 Apple·Google 로는 한 번도 나가지 않는다** — 자격 증명이 맞는지·기기 토큰이 서버가 고른 호스트(sandbox·production)와 맞는지·알림이 기기에 뜨는지는 여기서만 안다. 모델 런은 쓰지 않는다. 자격 증명을 만드는 법은 `docs/guides/docker-deploy.md` 「네이티브 푸시 자격 증명」 절.
 
 **왜 사람이 하나** — 실제 발송이고(받는 쪽 기기가 있어야 한다) 자격 증명(`.p8`·서비스 계정 JSON)과 기기 토큰이 있어야 한다. 에이전트는 가짜 통로만 쓴다.
 
@@ -2132,17 +2132,17 @@ const SID = at("--session-id") ?? at("--resume");                       // 세�
 | --- | --- | --- |
 | `push sent`(result `ok`)인데 기기에 안 뜬다 | 통로는 받았다 — 기기 쪽(알림 권한·집중 모드·앱 푸시 기능·`environment` 가 빌드와 다름) | 앱·기기 설정. APNs 는 sandbox 토큰을 production 호스트로 보내면 `BadDeviceToken` 으로 기기 행이 지워진다 |
 | `push device gone — removed` | APNs 410·`BadDeviceToken`·`DeviceTokenNotForTopic`, FCM `UNREGISTERED`·404 — 토큰이 죽었거나 앱 id 가 토큰과 다르다 | 앱에서 토큰을 다시 받아 등록 |
-| `push credentials rejected` + 운영 화면 사건 「푸시 자격 증명이 거부되었습니다(apns\|fcm)」 | 키·팀 id·서비스 계정이 거절됨(APNs 403, FCM 토큰 교환 400·401·403·발송 401·403) | 자격 증명 다시 만들기 — `deploy.md` 「네이티브 푸시 자격 증명」 절 |
+| `push credentials rejected` + 운영 화면 사건 「푸시 자격 증명이 거부되었습니다(apns\|fcm)」 | 키·팀 id·서비스 계정이 거절됨(APNs 403, FCM 토큰 교환 400·401·403·발송 401·403) | 자격 증명 다시 만들기 — `docker-deploy.md` 「네이티브 푸시 자격 증명」 절 |
 | `push rejected` | 기기 탓이 아닌 400(예: 잘린 페이로드) | 통로가 warn 으로 남긴 `statusCode`·`reason` |
 | `push send failed` | 429·5xx·네트워크 — 그 알림은 버려졌다(재시도 없음) | 잠시 뒤 다시 |
 | `push skipped — watching` | 그 사용자가 그 채널을 보고 있다 | 4번 |
 | `push skipped — transport off` | 그 플랫폼 통로가 꺼져 있다 | 부팅 로그의 `push transport` 줄 |
 
-**이 절차가 못 하는 것** — 알림 동작 버튼(승인 허용·거절·빠른 답장), 앱 아이콘 배지 수, 앱이 서버에 토큰을 등록하는 흐름(앱 하위 프로젝트), 중앙 푸시 중계. 결과 표는 `docs/guides/deploy.md` 「사람이 한 번 따라 한 결과」 절의 「네이티브 푸시」 줄에 적는다.
+**이 절차가 못 하는 것** — 알림 동작 버튼(승인 허용·거절·빠른 답장), 앱 아이콘 배지 수, 앱이 서버에 토큰을 등록하는 흐름(앱 하위 프로젝트), 중앙 푸시 중계. 결과 표는 `docs/guides/docker-deploy.md` 「사람이 한 번 따라 한 결과」 절의 「네이티브 푸시」 줄에 적는다.
 
 ## 25. 제어 MCP 실연 — 2026-10-13 결과 (cm-t7, 제어 MCP 계획 태스크 7, 모델 런 0회)
 
-설계는 `docs/superpowers/specs/2026-10-06-control-mcp-design.md`(구현과 달라진 것은 그 스펙의 「구현과 맞춘 것」 장), 에이전트 쪽은 `docs/guides/agent-guide.md` 「제어 도구 — 채널·에이전트 설정 읽고 바꾸기」 절, 바깥 클라이언트는 `docs/guides/deploy.md` 「제어 MCP — 바깥 클라이언트의 `/mcp`」 절.
+설계는 `docs/superpowers/specs/2026-10-06-control-mcp-design.md`(구현과 달라진 것은 그 스펙의 「구현과 맞춘 것」 장), 에이전트 쪽은 `docs/guides/agent-guide.md` 「제어 도구 — 채널·에이전트 설정 읽고 바꾸기」 절, 바깥 클라이언트는 `docs/guides/docker-deploy.md` 「제어 MCP — 바깥 클라이언트의 `/mcp`」 절.
 실물 OpenClaw Gateway(9.5)의 모델 런 경로에서 플러그인 제어 도구가 보이고 브리지 `control.call` 로 서버에 닿는지, 그 둘째 평가 세대(ADR 0004)에서 도는지, 확인 카드를 오래 둔 뒤 허용하면 모델 쪽이 무엇을 받는지를 쟀다. Claude 러너는 「Claude 러너 런 0회 하네스」 절의 하네스로, 바깥 클라이언트는 실제 `claude mcp` 로 붙였다.
 사람의 상태(`~/.openclaw`·`~/.openclaw-dev`·`~/.claude*`·`~/.dodok-runner`)와 `.env` 는 읽지도 쓰지도 않았다 — Gateway 상태·서버 DB·러너 홈·Claude 설정을 모두 스크래치에 새로 만들었다.
 

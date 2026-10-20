@@ -192,7 +192,7 @@ describe("플러그인", () => {
     const head = await region("플러그인 받기");
     expect(head).toHaveTextContent(SHA_FILE);
     expect(within(head).getByRole("button", { name: "플러그인 받기" })).toBeInTheDocument();
-    // 받은 파일 이름·번들 sha256(파일 sha 가 아니다)을 넣은 deploy.md [B] 줄들 — 대조는 아래 테스트
+    // 받은 파일 이름·번들 sha256(파일 sha 가 아니다)을 넣은 docker-deploy.md [B] 줄들 — 대조는 아래 테스트
     const cmd = within(head).getByTestId("plugin-install-commands").textContent ?? "";
     expect(cmd).toBe(installCommands("dodok-openclaw-plugin-ffffffffffff.tgz", SHA_A));
     expect(cmd).toContain("openclaw plugins install /tmp/dodok-openclaw-plugin-ffffffffffff.tgz ");
@@ -203,8 +203,11 @@ describe("플러그인", () => {
     expect(block.parentElement).toHaveClass("min-w-0");
   });
 
-  it("설치 명령은 deploy.md [B] 블록과 글자 그대로 같다 — 계정 설정 패치 줄만 빼고, 파일 이름과 대조할 sha 만 다르다", () => {
-    const doc = readFileSync(resolve(import.meta.dirname, "../../../../../docs/guides/deploy.md"), "utf8");
+  it("설치 명령은 docker-deploy.md [B] 블록과 글자 그대로 같다 — 계정 설정 패치 줄만 빼고, 파일 이름과 대조할 sha 만 다르다", () => {
+    const doc = readFileSync(
+      resolve(import.meta.dirname, "../../../../../docs/guides/docker-deploy.md"),
+      "utf8",
+    );
     const from = doc.indexOf("[B] — **Gateway 를 먼저 내리고**");
     expect(from).toBeGreaterThan(-1);
     const block = /```bash\n([\s\S]*?)```/.exec(doc.slice(from))?.[1] ?? "";
@@ -212,7 +215,7 @@ describe("플러그인", () => {
     const patch = docLines.filter((l) => l.startsWith("openclaw config patch "));
     expect(patch).toHaveLength(1);
     const expected = docLines.filter((l) => !patch.includes(l));
-    // deploy.md 가 옮기는 파일 이름을 넣으면 설치 줄까지 글자 그대로 같아야 한다
+    // docker-deploy.md 가 옮기는 파일 이름을 넣으면 설치 줄까지 글자 그대로 같아야 한다
     const web = installCommands("dodok-openclaw-plugin-0.0.0.tgz", SHA_A).split("\n");
     expect(web).toHaveLength(expected.length);
     web.forEach((line, i) => {
