@@ -279,6 +279,61 @@ describe("레이트리밋 통합", () => {
     });
   });
 
+  it("wire — TRUST_PROXY 면 소켓 상한 사건의 주소가 프록시가 덧붙인 X-Forwarded-For 의 오른쪽 값이다", async () => {
+    const l = await boot({}, { TRUST_PROXY: "127.0.0.1" });
+    for (let i = 0; i < LIMITS.socketsPerUser; i++) sockets.push(await connectWire(l.app, l.auth.token));
+    const extra = io(l.app.url, {
+      auth: { token: l.auth.token, protocol: WIRE_PROTOCOL },
+      transports: ["websocket"],
+      extraHeaders: { "x-forwarded-for": "10.9.9.9, 198.51.100.7" },
+      reconnection: false,
+      forceNew: true,
+    });
+    sockets.push(extra);
+    const error = await new Promise<Error & { data?: unknown }>((resolve) =>
+      extra.once("connect_error", resolve),
+    );
+    expect(error.data).toMatchObject({ code: "RATE_LIMITED" });
+    expect(opsRows(l, "ratelimit").map((r) => [r.key, r.detail])).toEqual([
+      ["wire:connect", { ipPrefix: "198.51.100.0/24" }],
+    ]);
+  });
+
+  it("러너 — TRUST_PROXY 면 틀린 토큰 실패를 프록시가 덧붙인 X-Forwarded-For 의 오른쪽 값으로 센다", async () => {
+    const l = await boot({}, { TRUST_PROXY: "127.0.0.1" });
+    const issued = IssueRunnerTokenResult.parse(
+      (await rest(l, "POST", "/setup/runner-tokens", { label: "xff" })).body,
+    );
+    const handshake = (xff: string, token: string) =>
+      new Promise<"connected" | "rejected">((resolve) => {
+        const socket = io(`${l.app.url}${RUNNER_NAMESPACE}`, {
+          auth: { token },
+          transports: ["websocket"],
+          extraHeaders: { "x-forwarded-for": xff },
+          reconnection: false,
+          forceNew: true,
+        });
+        socket.once("connect", () => {
+          socket.close();
+          resolve("connected");
+        });
+        socket.once("connect_error", () => {
+          socket.close();
+          resolve("rejected");
+        });
+      });
+
+    // 왼쪽(클라이언트가 꾸민 값)은 매번 다르다 — 오른쪽 값 하나로 쌓여 막힌다
+    for (let i = 0; i < LIMITS.bridgeFail.maxFailures; i++)
+      expect(await handshake(`10.9.9.${i}, 198.51.100.7`, "drn_wrong")).toBe("rejected");
+    expect(await handshake("1.2.3.4, 198.51.100.7", issued.token)).toBe("rejected");
+    // 오른쪽 값이 다르면 막힌 주소를 왼쪽에 꾸며 넣어도 통과
+    expect(await handshake("198.51.100.7, 198.51.100.9", issued.token)).toBe("connected");
+    expect(opsRows(l, "bridge_auth_blocked").map((r) => r.detail)).toEqual([
+      { ipPrefix: "198.51.100.0/24", path: "runner" },
+    ]);
+  });
+
   it("/healthz 본문 키는 정확히 ok·db 다", async () => {
     const l = await boot();
     const res = await l.app.fastify.inject({ method: "GET", url: "/healthz" });
