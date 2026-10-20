@@ -353,6 +353,16 @@ EOF
         -H 'x-dodok-file-name: big.bin' -H 'Content-Type: application/octet-stream' --data-binary "@$tmp/big.bin")"
       if [[ "$code" == 200 ]] && grep -qF '"size":20971520' "$tmp/b"; then
         pass "20 MiB 첨부 업로드(프록시 → 앱 저장)"
+        # 받기는 라우트가 정한 sandbox CSP 하나여야 한다 — 앱 CSP 가 덮거나 둘째 줄로 붙으면 올린 파일이 이 오리진 권한으로 열린다
+        local att csp_lines
+        att="$(node -e 'try{process.stdout.write(JSON.parse(require("fs").readFileSync(0,"utf8")).id??"")}catch{}' <"$tmp/b")"
+        code="$(req "/bridge/attachments/$att" -H "Authorization: Bearer $bridge")"
+        csp_lines="$(grep -ic '^content-security-policy:' "$tmp/h")"
+        if [[ "$code" == 200 && "$csp_lines" == 1 && "$(header content-security-policy)" == "default-src 'none'; sandbox" ]]; then
+          pass "첨부 받기 CSP 는 sandbox 한 줄(앱 CSP 가 덮지 않는다)"
+        else
+          fail "첨부 받기 CSP 는 sandbox 한 줄(앱 CSP 가 덮지 않는다)" "→ $code CSP ${csp_lines}줄 '$(header content-security-policy)'"
+        fi
       else
         fail "20 MiB 첨부 업로드(프록시 → 앱 저장)" "→ $code 본문 '$(body_head)'"
       fi
