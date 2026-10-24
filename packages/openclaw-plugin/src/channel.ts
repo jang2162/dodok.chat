@@ -26,7 +26,7 @@ import {
 } from "openclaw/plugin-sdk/channel-core";
 import { toInboundMediaFacts } from "openclaw/plugin-sdk/channel-inbound";
 import { resolveStableChannelMessageIngress } from "openclaw/plugin-sdk/channel-ingress-runtime";
-import { waitUntilAbort } from "openclaw/plugin-sdk/channel-lifecycle";
+import { waitUntilAbort } from "openclaw/plugin-sdk/channel-outbound";
 import { loadWebMediaRaw } from "openclaw/plugin-sdk/web-media";
 import { createBridgeClient, type BridgeClient, type BridgeLogger } from "./bridge-client";
 import { getBridge, getCorrelation, registerBridge, releaseBridge, setCorrelation } from "./bridge-registry";
