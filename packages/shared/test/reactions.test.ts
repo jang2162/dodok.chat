@@ -85,6 +85,7 @@ describe("Message.reactions", () => {
     const m = Message.parse({
       id: ID(1),
       channelId: ID(2),
+      conversationId: ID(2),
       seq: 1,
       kind: "normal",
       authorType: "user",

@@ -7,6 +7,7 @@ import {
   ApprovalReason,
   ApprovalStatus,
   Channel,
+  Conversation,
   Handle,
   INTERACTIONS_MAX,
   Message,
@@ -102,10 +103,34 @@ describe("Channel", () => {
   });
 });
 
+describe("Conversation", () => {
+  const base = {
+    id: ID(2),
+    channelId: ID(2),
+    title: "이전 대화",
+    titleSource: "user",
+    createdBy: { type: "user", id: ID(3) },
+    createdAt: NOW,
+    lastSeq: 0,
+  };
+  it("제목은 1~80자 — 빈 제목·81자를 거절한다", () => {
+    expect(Conversation.safeParse(base).success).toBe(true);
+    expect(Conversation.safeParse({ ...base, title: "가".repeat(80) }).success).toBe(true);
+    expect(Conversation.safeParse({ ...base, title: "가".repeat(81) }).success).toBe(false);
+    expect(Conversation.safeParse({ ...base, title: "" }).success).toBe(false);
+    expect(Conversation.safeParse({ ...base, title: "   " }).success).toBe(false);
+  });
+  it("titleSource 는 user·auto 뿐", () => {
+    expect(Conversation.safeParse({ ...base, titleSource: "auto" }).success).toBe(true);
+    expect(Conversation.safeParse({ ...base, titleSource: "x" }).success).toBe(false);
+  });
+});
+
 describe("Message", () => {
   const base = {
     id: ID(1),
     channelId: ID(2),
+    conversationId: ID(2),
     seq: 1,
     kind: "normal",
     authorType: "user",
@@ -188,6 +213,7 @@ describe("Run", () => {
     const r = Run.parse({
       id: ID(1),
       channelId: ID(2),
+      conversationId: ID(2),
       agentId: ID(3),
       triggerKind: "mention",
       triggerMessageId: ID(4),
@@ -203,6 +229,7 @@ describe("Run", () => {
     const base = {
       id: ID(1),
       channelId: ID(2),
+      conversationId: ID(2),
       agentId: ID(3),
       triggerKind: "mention",
       rootMessageId: ID(4),
@@ -219,6 +246,7 @@ describe("Run", () => {
       [
         "agentId",
         "channelId",
+        "conversationId",
         "endedAt",
         "error",
         "finalSource",
@@ -241,6 +269,7 @@ describe("Approval", () => {
     providerApprovalId: "plugin:533fe246-fa79-4f86-bcd0-3c08b549cb20",
     kind: "plugin",
     channelId: ID(2),
+    conversationId: ID(2),
     agentId: ID(3),
     toolCallId: "toolu_018ohZoiNMZwidAe7fWsWSam",
     toolName: "Write",

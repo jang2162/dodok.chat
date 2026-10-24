@@ -44,13 +44,13 @@ export type AdapterLogger = {
   debug(obj: object, msg?: string): void;
 };
 
-/** 런 상관(서버 태스크 4) 전의 승인. `channelId`·`providerAgentId`·`threadRootId` 는 `sessionKey` 에서 푼 값이다. */
+/** 런 상관(서버 태스크 4) 전의 승인. `conversationId`·`providerAgentId`·`threadRootId` 는 `sessionKey` 에서 푼 값이다(채널은 서버가 대화에서 찾는다). */
 export type ProviderApproval = {
   providerApprovalId: string;
   kind: ApprovalKind;
   sessionKey: string;
   providerAgentId: string;
-  channelId: string;
+  conversationId: string;
   /** 스레드 세션의 승인만 */
   threadRootId?: string;
   toolCallId?: string;
@@ -164,7 +164,7 @@ export interface AgentAdapter {
     connectionId: ConnectionId | null,
   ): Promise<Array<{ providerAgentId: string; name?: string; hint?: string }>>;
   /** 스레드 루트를 주면 그 스레드의 하위 세션 키 */
-  sessionKeyFor(providerAgentId: string, channelId: string, threadRootId?: string): string;
+  sessionKeyFor(providerAgentId: string, conversationId: string, threadRootId?: string): string;
   /** 그 에이전트를 맡은 쪽(OpenClaw 는 그 연결에 붙은 플러그인, 러너는 그 에이전트를 알린 러너)이 능력을 hello 로 알렸는가 — 없으면 false */
   supports(providerAgentId: string, connectionId: ConnectionId | null, capability: "threads"): boolean;
   /** ok:false 는 throw AdapterError(code) */

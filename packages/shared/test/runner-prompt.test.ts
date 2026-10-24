@@ -23,6 +23,7 @@ function deliver(over: Partial<InboundDeliver> = {}): InboundDeliver {
     deliveryId: "01a09fc9-d204-7551-89d6-38544d07a101",
     kind: "message",
     channelId: CH,
+    conversationId: CH,
     agentId: "coder",
     sessionKey: `agent:coder:dodok:channel:${CH}`,
     runId: "01a09fc9-d204-7551-89d6-38544d07a101",

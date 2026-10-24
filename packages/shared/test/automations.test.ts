@@ -137,6 +137,7 @@ describe("Message.authorType", () => {
     const message = {
       id: ID,
       channelId: CH,
+      conversationId: CH,
       seq: 1,
       kind: "normal",
       authorType: "automation",

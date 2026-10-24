@@ -200,6 +200,7 @@ describe("ComponentsV1", () => {
       const message = Message.safeParse({
         id: U1,
         channelId: U1,
+        conversationId: U1,
         seq: 1,
         kind: "normal",
         authorType: "agent",

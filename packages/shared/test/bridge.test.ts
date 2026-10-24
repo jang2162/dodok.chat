@@ -59,6 +59,7 @@ describe("bridge schemas", () => {
       deliveryId: ID(1),
       kind: "message",
       channelId: ID(2),
+      conversationId: ID(2),
       agentId: "researcher",
       sessionKey: `agent:researcher:dodok:channel:${ID(2)}`,
       runId: ID(3),
@@ -100,7 +101,7 @@ describe("bridge schemas", () => {
   it("OutboundMessage: attachmentIds 기본값 [], components는 스키마 검증", () => {
     const base = {
       outboundId: "ob-1",
-      channelId: ID(2),
+      conversationId: ID(2),
       agentId: "researcher",
       sessionKey: "k",
       text: "@jang 결과입니다",

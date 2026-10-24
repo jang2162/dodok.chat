@@ -79,6 +79,7 @@ describe("RunEvent", () => {
     const snapshot = {
       id: RUN,
       channelId: "01a09fc9-d204-7551-89d6-38544d07a102",
+      conversationId: "01a09fc9-d204-7551-89d6-38544d07a102",
       agentId: "01a09fc9-d204-7551-89d6-38544d07a103",
       status: "streaming",
       relayDepth: 0,

@@ -85,9 +85,10 @@ export type InboundContext = z.infer<typeof InboundContext>;
 export const InboundDeliver = z.object({
   deliveryId: Id,
   kind: z.enum(["message", "interaction", "continue"]),
-  channelId: Id,
+  channelId: Id, // 채널 설정(ConfigSet)·프롬프트 조회 — 채널 단위
+  conversationId: Id, // OpenClaw 피어 id(`channel:<id>`)·세션 키의 대화
   agentId: z.string(), // providerAgentId (OpenClaw agentId)
-  sessionKey: z.string(), // dodokSessionKey(agentId, channelId, threadId)
+  sessionKey: z.string(), // dodokSessionKey(agentId, conversationId, threadId)
   threadId: Id.optional(), // 스레드 루트 id — threadMatchesSessionKey 로 키와 대조한다
   runId: Id, // 우리 런 id
   message: z.object({
@@ -120,7 +121,7 @@ export type ConfigSetResult = z.infer<typeof ConfigSetResult>;
 
 export const OutboundMessage = z.object({
   outboundId: z.string().min(1).max(128), // 중복 제거 키 (messages.external_id)
-  channelId: Id,
+  conversationId: Id, // 채널은 서버가 대화에서 찾는다
   agentId: z.string(), // providerAgentId
   sessionKey: z.string(),
   threadId: Id.optional(), // 스레드 세션에서 보낸 것이면 그 루트 id
@@ -172,5 +173,5 @@ export interface BridgeServerToClientEvents {
 export const BRIDGE_ATTACHMENTS_PATH = "/bridge/attachments";
 export const BRIDGE_ATTACHMENT_HEADERS = {
   fileName: "x-dodok-file-name",
-  channelId: "x-dodok-channel-id",
+  conversationId: "x-dodok-conversation-id", // 서버가 그 대화의 채널로 묶는다
 } as const;

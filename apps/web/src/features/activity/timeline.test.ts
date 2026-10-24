@@ -348,6 +348,7 @@ describe("mergeRuns", () => {
   const run = (id: string, over: Partial<Run> = {}): Run => ({
     id,
     channelId: CH,
+    conversationId: CH,
     agentId: AGENT,
     triggerKind: "mention",
     rootMessageId: uid(9),

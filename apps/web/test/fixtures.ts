@@ -21,6 +21,8 @@ export const msg = (seq: number, over: Partial<Message> = {}): Message =>
   Message.parse({
     id: uid(10_000 + seq),
     channelId: CH,
+    // 채널마다 대화가 하나이고 id 가 채널 id 와 같다(채널 세션 계획 판정 PS1)
+    conversationId: over.channelId ?? CH,
     seq,
     kind: "normal",
     authorType: "user",
@@ -36,6 +38,7 @@ export const runState = (over: Partial<RunState> = {}): RunState =>
   RunState.parse({
     id: RUN,
     channelId: CH,
+    conversationId: over.channelId ?? CH,
     agentId: AGENT,
     status: "streaming",
     relayDepth: 0,
@@ -58,6 +61,7 @@ export const approval = (over: Partial<Approval> = {}): Approval =>
     providerApprovalId: "plugin:0f0f0f0f-0000-4000-8000-000000000001",
     kind: "plugin",
     channelId: CH,
+    conversationId: over.channelId ?? CH,
     agentId: AGENT,
     runId: RUN,
     toolCallId: "toolu_01",
