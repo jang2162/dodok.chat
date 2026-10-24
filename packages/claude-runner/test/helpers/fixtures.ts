@@ -25,6 +25,7 @@ export function runStart(
       deliveryId: "0192f000-0000-7000-8000-00000000d001",
       kind: "message",
       channelId: CHANNEL_ID,
+      conversationId: CHANNEL_ID,
       agentId,
       sessionKey: dodokSessionKey(agentId, CHANNEL_ID),
       runId: overrides.runId ?? RUN_ID,

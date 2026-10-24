@@ -132,7 +132,7 @@ describe("createPoster — 파일 검사 → 올리기 → outbound.post", () =>
       onUpload?: () => void;
     } = {},
   ) {
-    const uploads: Array<{ channelId: string; name: string; mime?: string; bytes: number }> = [];
+    const uploads: Array<{ conversationId: string; name: string; mime?: string; bytes: number }> = [];
     const uploadSignals: Array<AbortSignal | undefined> = [];
     const sent: RunnerOutboundPost[] = [];
     let n = 0;
@@ -142,7 +142,7 @@ describe("createPoster — 파일 검사 → 올리기 → outbound.post", () =>
         uploadSignals.push(o.signal);
         opts.onUpload?.();
         uploads.push({
-          channelId: o.channelId,
+          conversationId: o.conversationId,
           name: o.name,
           ...(o.mime ? { mime: o.mime } : {}),
           bytes: o.bytes.length,
@@ -216,14 +216,19 @@ describe("createPoster — 파일 검사 → 올리기 → outbound.post", () =>
     });
     expect(out).toEqual({ messageId: "0192f000-0000-7000-8000-0000000000aa" });
     expect(h.uploads).toEqual([
-      { channelId: h.start.deliver.channelId, name: "report final.md", mime: "text/plain", bytes: 8 },
-      { channelId: h.start.deliver.channelId, name: "chart.png", bytes: 2 },
+      {
+        conversationId: h.start.deliver.conversationId,
+        name: "report final.md",
+        mime: "text/plain",
+        bytes: 8,
+      },
+      { conversationId: h.start.deliver.conversationId, name: "chart.png", bytes: 2 },
     ]);
     const d = h.start.deliver;
     expect(h.sent).toEqual([
       {
         outboundId: "runner-post:post-1",
-        channelId: d.channelId,
+        conversationId: d.conversationId,
         agentId: d.agentId,
         sessionKey: d.sessionKey,
         runId: RUN_ID,

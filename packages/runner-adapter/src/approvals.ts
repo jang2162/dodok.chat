@@ -58,7 +58,7 @@ export class RunnerApprovals {
       kind: "tool",
       sessionKey: req.sessionKey,
       providerAgentId: session.providerAgentId,
-      channelId: session.channelId,
+      conversationId: session.conversationId,
       ...(session.threadRootId === undefined ? {} : { threadRootId: session.threadRootId }),
       toolCallId: req.toolCallId,
       toolName: req.toolName,

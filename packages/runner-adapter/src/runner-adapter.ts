@@ -612,7 +612,7 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
     const message: OutboundMessage = {
       // 같은 런의 최종 답은 하나 — 메시지 external_id 유일 인덱스가 재전송을 흡수한다
       outboundId: `runner-final:${run.runId}`,
-      channelId: d.channelId,
+      conversationId: d.conversationId,
       agentId: d.agentId,
       sessionKey: d.sessionKey,
       ...(d.threadId === undefined ? {} : { threadId: d.threadId }),
@@ -670,14 +670,14 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
       logger.warn({ tokenId: runner.tokenId, agentId: post.agentId, runId: post.runId }, message);
       reply({ ok: false, code: "FORBIDDEN", message });
     };
-    // 러너는 자기에게 배정된 열린 런에만, 그 런의 채널·에이전트·세션·스레드 그대로 쓴다. 끝난 런 id 를 실으면 서버가 그 런의
+    // 러너는 자기에게 배정된 열린 런에만, 그 런의 대화·에이전트·세션·스레드 그대로 쓴다. 끝난 런 id 를 실으면 서버가 그 런의
     // 에이전트 글로 저장하고, 런 없는 글은 다른 채널에도 저장된다 — 어느 쪽도 이 러너가 흉내 낼 자리가 아니다
     const run = post.runId === undefined ? undefined : runs.get(post.runId);
     if (!run || run.runner !== runner || run.aborted)
       return deny("post must belong to an open run of this runner");
     const d = run.deliver;
     if (
-      post.channelId !== d.channelId ||
+      post.conversationId !== d.conversationId ||
       post.agentId !== d.agentId ||
       post.sessionKey !== d.sessionKey ||
       post.threadId !== d.threadId

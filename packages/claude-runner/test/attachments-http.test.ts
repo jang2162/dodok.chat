@@ -32,7 +32,7 @@ describe("createAttachmentsHttp — 브리지 첨부 HTTP 와 같은 모양, 경
     const { fetch, seen } = fakeFetch(() => Response.json(attachment));
     const http = createAttachmentsHttp({ serverUrl: "https://chat.example.com/", token: TOKEN, fetch });
     const out = await http.upload({
-      channelId: CHANNEL,
+      conversationId: CHANNEL,
       bytes: new TextEncoder().encode("hello"),
       name: "report final.md",
       mime: "text/plain",
@@ -42,7 +42,7 @@ describe("createAttachmentsHttp — 브리지 첨부 HTTP 와 같은 모양, 경
     expect(seen[0]!.init.method).toBe("POST");
     expect(seen[0]!.init.headers).toEqual({
       authorization: `Bearer ${TOKEN}`,
-      [BRIDGE_ATTACHMENT_HEADERS.channelId]: CHANNEL,
+      [BRIDGE_ATTACHMENT_HEADERS.conversationId]: CHANNEL,
       [BRIDGE_ATTACHMENT_HEADERS.fileName]: "report%20final.md",
       "content-type": "text/plain",
     });
@@ -64,7 +64,7 @@ describe("createAttachmentsHttp — 브리지 첨부 HTTP 와 같은 모양, 경
     const { fetch } = fakeFetch(() => new Response("nope", { status: 413 }));
     const http = createAttachmentsHttp({ serverUrl: "https://chat.example.com", token: TOKEN, fetch });
     const err = await http
-      .upload({ channelId: CHANNEL, bytes: new Uint8Array([1]), name: "a" })
+      .upload({ conversationId: CHANNEL, bytes: new Uint8Array([1]), name: "a" })
       .catch((e: unknown) => e);
     expect(err).toBeInstanceOf(AttachmentsHttpError);
     expect((err as AttachmentsHttpError).status).toBe(413);
@@ -77,7 +77,7 @@ describe("createAttachmentsHttp — 브리지 첨부 HTTP 와 같은 모양, 경
     const { fetch } = fakeFetch(() => Response.json({ id: "x" }));
     const http = createAttachmentsHttp({ serverUrl: "https://chat.example.com", token: TOKEN, fetch });
     await expect(
-      http.upload({ channelId: CHANNEL, bytes: new Uint8Array([1]), name: "a" }),
+      http.upload({ conversationId: CHANNEL, bytes: new Uint8Array([1]), name: "a" }),
     ).rejects.toBeInstanceOf(AttachmentsHttpError);
   });
 
@@ -108,7 +108,7 @@ describe("createAttachmentsHttp — 브리지 첨부 HTTP 와 같은 모양, 경
     const started = Date.now();
     const down = http.download(ATT_ID, { signal: run.signal }).catch((e: unknown) => e);
     const up = http
-      .upload({ channelId: CHANNEL, bytes: new Uint8Array([1]), name: "a", signal: run.signal })
+      .upload({ conversationId: CHANNEL, bytes: new Uint8Array([1]), name: "a", signal: run.signal })
       .catch((e: unknown) => e);
     run.abort();
     const [d, u] = await Promise.all([down, up]);
