@@ -92,7 +92,7 @@ function setup(opts: { timeouts?: Partial<RunTimeouts>; approvals?: Orchestrator
   let n = 0;
   const say = (bodyMd = "@dev 안녕", at: Ids = ids, threadRootId?: string) =>
     createUserMessage(db, bus, {
-      channelId: at.channelId,
+      conversationId: at.channelId,
       authorId: at.userId,
       bodyMd,
       clientMsgId: `c${++n}`,
@@ -103,6 +103,7 @@ function setup(opts: { timeouts?: Partial<RunTimeouts>; approvals?: Orchestrator
       {
         agentId: ids.agentId,
         channelId: message.channelId,
+        conversationId: message.channelId,
         triggerKind: "mention",
         rootMessageId: message.id,
         relayDepth: 0,
@@ -113,7 +114,7 @@ function setup(opts: { timeouts?: Partial<RunTimeouts>; approvals?: Orchestrator
   const sessionKey = `agent:dev:dodok:channel:${ids.channelId}`;
   const outbound = (over: Partial<OutboundMessage> = {}): OutboundMessage => ({
     outboundId: `out-${++n}`,
-    channelId: ids.channelId,
+    conversationId: ids.channelId,
     agentId: "dev",
     sessionKey,
     text: "답입니다",
@@ -1213,6 +1214,7 @@ describe("orchestrator", () => {
       {
         agentId: t.agentId,
         channelId: t.channelId,
+        conversationId: t.channelId,
         triggerKind: "interaction",
         rootMessageId: card.id,
         relayDepth: 0,
@@ -1232,6 +1234,7 @@ describe("orchestrator", () => {
       {
         agentId: t.agentId,
         channelId: t.channelId,
+        conversationId: t.channelId,
         triggerKind: "interaction",
         rootMessageId: card.id,
         relayDepth: 0,
@@ -1343,6 +1346,7 @@ describe("orchestrator", () => {
     const make = (status: Run["status"]) => {
       const run = insertRun(t.db, {
         channelId: t.channelId,
+        conversationId: t.channelId,
         agentId: t.agentId,
         triggerKind: "mention",
         rootMessageId: uuid(),
@@ -1497,7 +1501,11 @@ describe("orchestrator", () => {
     const second = createChannel(t.db, { workspaceId: t.workspaceId, createdBy: t.userId, name: "second" });
     addMember(t.db, second.id, { memberType: "agent", memberId: t.agentId }, t.logger);
     const crossed = await t.orch.onCanonical(
-      t.outbound({ channelId: second.id, runId: run.id, sessionKey: `agent:dev:dodok:channel:${second.id}` }),
+      t.outbound({
+        conversationId: second.id,
+        runId: run.id,
+        sessionKey: `agent:dev:dodok:channel:${second.id}`,
+      }),
       "openclaw",
       FAKE_GATEWAY_ID,
     );
@@ -2239,9 +2247,12 @@ describe("리액션 — 다음 런에 싣고, send 가 받아들여졌을 때만
         createdAt: T0,
       })
       .run();
-    const session = ensureSession(t.db, t.adapter, { channelId: t.channelId, agentId: t.agentId }).session;
+    const session = ensureSession(t.db, t.adapter, {
+      conversationId: t.channelId,
+      agentId: t.agentId,
+    }).session;
     const answer = createAgentMessage(t.db, new ServerBus(), {
-      channelId: t.channelId,
+      conversationId: t.channelId,
       agentId: t.agentId,
       bodyMd: "배포 순서는 먼저 DB 마이그레이션",
       externalId: "ext-answer",

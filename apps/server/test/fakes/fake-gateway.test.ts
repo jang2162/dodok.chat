@@ -396,7 +396,7 @@ describe("가짜 Gateway — 실제 connectGateway 로 붙는다", () => {
       kind: "plugin",
       sessionKey: SESSION_KEY,
       providerAgentId: "dev",
-      channelId: CHANNEL_ID,
+      conversationId: CHANNEL_ID,
       toolCallId: "toolu_fake_a",
       toolName: "Write",
       status: "pending",

@@ -55,6 +55,7 @@ function fill(channelId: string, n: number, at = clock) {
   for (let i = 0; i < n; i++) {
     insertRun(db, {
       channelId,
+      conversationId: channelId,
       agentId,
       triggerKind: "mention",
       rootMessageId: ROOT,
@@ -68,6 +69,7 @@ function fill(channelId: string, n: number, at = clock) {
 const plan = (channelId: string) => ({
   agentId,
   channelId,
+  conversationId: channelId, // 채널을 만들면 id 가 같은 「이전 대화」가 생긴다
   triggerKind: "mention" as const,
   rootMessageId: ROOT,
   relayDepth: 0,

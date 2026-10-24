@@ -10,12 +10,26 @@ describe("agent_sessions", () => {
     const { channelId, agentId } = seedChannelWithAgent(db);
     expect(db.select().from(channels).where(eq(channels.id, channelId)).get()?.promptRevision).toBe(1);
     db.insert(agentSessions)
-      .values({ id: "01", channelId, agentId, sessionKey: "k", promptRevisionAtStart: 1 })
+      .values({
+        id: "01",
+        channelId,
+        conversationId: channelId,
+        agentId,
+        sessionKey: "k",
+        promptRevisionAtStart: 1,
+      })
       .run();
     expect(() =>
       db
         .insert(agentSessions)
-        .values({ id: "02", channelId, agentId, sessionKey: "k", promptRevisionAtStart: 1 })
+        .values({
+          id: "02",
+          channelId,
+          conversationId: channelId,
+          agentId,
+          sessionKey: "k",
+          promptRevisionAtStart: 1,
+        })
         .run(),
     ).toThrow(/UNIQUE/);
   });

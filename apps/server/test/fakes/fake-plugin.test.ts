@@ -19,6 +19,7 @@ function sampleDelivery(overrides: Partial<InboundDeliver> = {}): InboundDeliver
     deliveryId: DELIVERY_ID,
     kind: "message",
     channelId: CHANNEL_ID,
+    conversationId: CHANNEL_ID,
     agentId: "dev",
     sessionKey: SESSION_KEY,
     runId: RUN_ID,
@@ -134,7 +135,7 @@ describe("가짜 플러그인 — 실제 attachBridge 에 붙는다", () => {
     const before = Date.now();
     await expect(
       plugin.sendOutbound({
-        channelId: CHANNEL_ID,
+        conversationId: CHANNEL_ID,
         agentId: "dev",
         sessionKey: SESSION_KEY,
         runId: RUN_ID,
@@ -147,7 +148,7 @@ describe("가짜 플러그인 — 실제 attachBridge 에 붙는다", () => {
     expect(outbound).toEqual([
       {
         outboundId: expect.stringMatching(/^[0-9a-f-]{36}$/),
-        channelId: CHANNEL_ID,
+        conversationId: CHANNEL_ID,
         agentId: "dev",
         sessionKey: SESSION_KEY,
         runId: RUN_ID,
@@ -164,7 +165,7 @@ describe("가짜 플러그인 — 실제 attachBridge 에 붙는다", () => {
     const plugin = await start();
     await expect(
       plugin.sendOutbound({
-        channelId: "not-a-uuid",
+        conversationId: "not-a-uuid",
         agentId: "dev",
         sessionKey: SESSION_KEY,
         text: "x",

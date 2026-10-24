@@ -73,7 +73,7 @@ function seedAgentChannel(app: App, name: string, agentId?: string, gatewayId = 
 /** threadRootId 를 주면 그 스레드의 답글로 스레드 런 */
 async function startRun(app: App, channelId: string, agentId: string, threadRootId?: string) {
   const message = createUserMessage(app.db, app.bus, {
-    channelId,
+    conversationId: channelId,
     authorId: app.ownerUserId,
     bodyMd: "@dev 안녕",
     clientMsgId: uuid(),
@@ -83,6 +83,7 @@ async function startRun(app: App, channelId: string, agentId: string, threadRoot
     {
       agentId,
       channelId,
+      conversationId: channelId,
       triggerKind: "mention",
       rootMessageId: message.id,
       relayDepth: 0,
@@ -289,8 +290,8 @@ describe("부팅 정리 — 파일 DB 로 두 번 부팅", () => {
       addMember(app.db, channelId, { memberType: "agent", memberId: other.id }, app.logger);
       expect(sessionRecoverTargets(app.db).size).toBe(0);
 
-      ensureSession(app.db, openclawOf(app), { channelId, agentId });
-      ensureSession(app.db, openclawOf(app), { channelId, agentId: other.id });
+      ensureSession(app.db, openclawOf(app), { conversationId: channelId, agentId });
+      ensureSession(app.db, openclawOf(app), { conversationId: channelId, agentId: other.id });
       app.db
         .update(agentSessions)
         .set({ historyCursor: "cursor-1" })
@@ -536,7 +537,7 @@ describe("REST·wire 배선 (FakeAdapter)", () => {
   it("reset?threadRootId — 그 스레드 세션만: 스레드 런만 abort·스레드 키로 resetSession·스레드 행 갱신·info 는 스레드에", async () => {
     const { channelId } = seedAgentChannel(app, "reset-thread", dev);
     const root = createUserMessage(app.db, app.bus, {
-      channelId,
+      conversationId: channelId,
       authorId: app.ownerUserId,
       bodyMd: "루트",
       clientMsgId: uuid(),
@@ -587,7 +588,7 @@ describe("REST·wire 배선 (FakeAdapter)", () => {
     const other = seedAgentChannel(app, "reset-thread-other", dev);
     const say = (at: string, threadRootId?: string) =>
       createUserMessage(app.db, app.bus, {
-        channelId: at,
+        conversationId: at,
         authorId: app.ownerUserId,
         bodyMd: "m",
         clientMsgId: uuid(),
@@ -909,7 +910,7 @@ describe("실제 어댑터(createOpenClawAdapter) 부팅", () => {
       // 브리지 정본 → orchestrator.onCanonical → 에이전트 메시지 저장, 그 id 로 ack
       const ack = (await plugin.emitWithAck("outbound.message", {
         outboundId: "out-real-1",
-        channelId,
+        conversationId: channelId,
         agentId: "dev",
         sessionKey: `agent:dev:dodok:channel:${channelId}`,
         text: "정본",
@@ -931,7 +932,7 @@ describe("실제 어댑터(createOpenClawAdapter) 부팅", () => {
       expect(archivedRes.statusCode).toBe(200);
       const refused = await plugin.emitWithAck("outbound.message", {
         outboundId: "out-real-archived",
-        channelId: archived,
+        conversationId: archived,
         agentId: "dev",
         sessionKey: `agent:dev:dodok:channel:${channelId}`,
         text: "보관한 채널에",

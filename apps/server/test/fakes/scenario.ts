@@ -168,7 +168,7 @@ export function createScenario(opts: {
   }
 
   async function play(delivery: InboundDeliver, script: ScenarioScript): Promise<void> {
-    const { runId, sessionKey, agentId, channelId } = delivery;
+    const { runId, sessionKey, agentId, conversationId } = delivery;
     const stopped = () => abortRequested(runId);
     if (!script.silentGateway) {
       await gateway.lifecycleStart(runId, sessionKey, agentId);
@@ -198,12 +198,17 @@ export function createScenario(opts: {
     const uploaded: Attachment[] = [];
     for (const file of script.attachments ?? []) {
       uploaded.push(
-        await plugin.uploadAttachment({ channelId, bytes: file.bytes, name: file.name, mime: file.mime }),
+        await plugin.uploadAttachment({
+          conversationId,
+          bytes: file.bytes,
+          name: file.name,
+          mime: file.mime,
+        }),
       );
     }
     const built = buildOutboundMessage({
       outboundId: randomUUID(),
-      channelId,
+      conversationId,
       agentId,
       sessionKey,
       ...(delivery.threadId === undefined ? {} : { threadId: delivery.threadId }),

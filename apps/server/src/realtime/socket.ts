@@ -27,6 +27,7 @@ import { parsePayload } from "../http/validate";
 import type { Logger } from "../logger";
 import { getApproval } from "../modules/approvals/store";
 import { assertChannelWritable, getChannel } from "../modules/channels/service";
+import { latestOpenConversation } from "../modules/conversations/store";
 import { ipPrefix } from "../modules/ops/ip";
 import { LIMITS, type Limits } from "../modules/ops/limits";
 import { monotonicNow, TokenBucket } from "../modules/ops/ratelimit";
@@ -373,9 +374,12 @@ function sendMessage(ctx: WireContext, userId: string, raw: unknown): { message:
   // 보관 전에 이미 저장된 메시지의 재전송(ack 를 잃은 탭)은 그 메시지로 답한다 — 새로 쓰는 것만 막는다(계획 판정 PC1)
   if (existing) return { message: existing, created: false };
   assertChannelWritable(ctx.db, input.channelId, ctx.workspaceId);
+  // 채널의 열린 대화(계획 판정 PS3) — 채널마다 대화가 하나인 동안은 늘 있다
+  const conversationId = latestOpenConversation(ctx.db, input.channelId);
+  if (conversationId === undefined) throw apiError("NOT_FOUND", "conversation not found");
   // 첨부는 서비스가 같은 트랜잭션에서 검사하고 묶는다(스펙 4.4) — 버리고 저장하면 「본문 없음 + 첨부」가 빈 메시지로 남는다
   const message = createUserMessage(ctx.db, ctx.bus, {
-    channelId: input.channelId,
+    conversationId,
     authorId: userId,
     bodyMd: input.bodyMd,
     clientMsgId: input.clientMsgId,

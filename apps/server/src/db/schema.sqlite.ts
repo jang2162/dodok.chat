@@ -157,6 +157,30 @@ export const channels = sqliteTable("channels", {
   archivedAt: ts("archived_at"),
 });
 
+/**
+ * 채널 아래의 대화(세션 — 채널 세션 스펙 2.1). 채널의 메시지·런·에이전트 세션은 모두 대화 하나에 속한다. 0025 가 기존 채널마다
+ * id 가 그 채널 id 와 같은 「이전 대화」를 만들었다 — 저장된 세션 키(`…:channel:<id>`)가 새로 계산한 키와 그대로 맞는다
+ */
+export const conversations = sqliteTable(
+  "conversations",
+  {
+    id: text("id").primaryKey(),
+    channelId: text("channel_id")
+      .notNull()
+      .references(() => channels.id),
+    title: text("title").notNull(),
+    titleSource: text("title_source").notNull(), // "user" | "auto"
+    createdByType: text("created_by_type").notNull(), // "user" | "automation"
+    createdById: text("created_by_id").notNull(), // 사용자 id 또는 자동화 id — FK 가 아니다(자동화를 지워도 대화는 남는다)
+    createdAt: ts("created_at").notNull(),
+    lastMessageAt: ts("last_message_at"), // 목록 정렬(최근 활동순). 메시지가 없으면 null
+    lastSeq: integer("last_seq").notNull().default(0), // 이 대화에 마지막으로 저장된 메시지의 seq(채널 seq 를 같이 쓴다)
+    closedAt: ts("closed_at"), // null 이면 열림
+    closedBy: text("closed_by"),
+  },
+  (t) => [index("conversations_channel_open_recent").on(t.channelId, t.closedAt, t.lastMessageAt)],
+);
+
 export const agentSessions = sqliteTable(
   "agent_sessions",
   {
@@ -164,10 +188,13 @@ export const agentSessions = sqliteTable(
     channelId: text("channel_id")
       .notNull()
       .references(() => channels.id),
+    conversationId: text("conversation_id")
+      .notNull()
+      .references(() => conversations.id),
     agentId: text("agent_id")
       .notNull()
       .references(() => agents.id),
-    sessionKey: text("session_key").notNull(), // agent:<providerAgentId>:dodok:channel:<channelId>[:thread:<rootId>] — shared dodokSessionKey
+    sessionKey: text("session_key").notNull(), // agent:<providerAgentId>:dodok:channel:<conversationId>[:thread:<rootId>] — shared dodokSessionKey
     promptRevisionAtStart: integer("prompt_revision_at_start").notNull(), // 세션이 마지막으로 새로 시작됐을 때(첫 턴·리셋 뒤)의 채널 프롬프트 리비전
     sessionStartedAt: ts("session_started_at"), // Gateway sessions.list 의 sessionStartedAt (리셋 판별)
     lifecycleRevision: text("lifecycle_revision"), // 실측값은 uuid 문자열 (sessions.reset 응답 entry)
@@ -179,11 +206,11 @@ export const agentSessions = sqliteTable(
     reactionsSeenAt: ts("reactions_seen_at"),
   },
   (t) => [
-    uniqueIndex("agent_sessions_channel_agent_thread").on(t.channelId, t.agentId, t.threadRootId),
-    // SQLite 유일 인덱스는 NULL 끼리를 서로 다르다고 봐서 위 인덱스만으로는 채널 세션 행이 둘 생길 수 있다 — 채널 세션만 따로 막는다.
+    uniqueIndex("agent_sessions_conversation_agent_thread").on(t.conversationId, t.agentId, t.threadRootId),
+    // SQLite 유일 인덱스는 NULL 끼리를 서로 다르다고 봐서 위 인덱스만으로는 대화 세션 행이 둘 생길 수 있다 — 대화 세션만 따로 막는다.
     // coalesce 표현식 인덱스는 drizzle-kit 이 쉼표에서 SQL 을 깨뜨린다. onConflict 는 targetWhere 로 이 인덱스를 고른다(sessions/service.ts)
-    uniqueIndex("agent_sessions_channel_session")
-      .on(t.channelId, t.agentId)
+    uniqueIndex("agent_sessions_conversation_session")
+      .on(t.conversationId, t.agentId)
       .where(sql`thread_root_id IS NULL`),
   ],
 );
@@ -231,6 +258,9 @@ export const messages = sqliteTable(
     channelId: text("channel_id")
       .notNull()
       .references(() => channels.id),
+    conversationId: text("conversation_id")
+      .notNull()
+      .references(() => conversations.id),
     seq: integer("seq").notNull(),
     kind: text("kind").notNull(),
     authorType: text("author_type").notNull(),
@@ -245,7 +275,7 @@ export const messages = sqliteTable(
     runId: text("run_id"),
     clientMsgId: text("client_msg_id"),
     externalId: text("external_id"),
-    threadRootId: text("thread_root_id"), // 스레드 답글이면 같은 채널의 루트(thread_root_id 가 null 인 메시지) id
+    threadRootId: text("thread_root_id"), // 스레드 답글이면 같은 대화의 루트(thread_root_id 가 null 인 메시지) id
     createdAt: ts("created_at").notNull(),
     editedAt: ts("edited_at"),
   },
@@ -255,6 +285,7 @@ export const messages = sqliteTable(
     uniqueIndex("messages_external_id").on(t.externalId),
     index("messages_run").on(t.runId),
     index("messages_channel_thread_seq").on(t.channelId, t.threadRootId, t.seq),
+    index("messages_conversation_thread_seq").on(t.conversationId, t.threadRootId, t.seq),
   ],
 );
 
@@ -295,6 +326,9 @@ export const runs = sqliteTable(
     channelId: text("channel_id")
       .notNull()
       .references(() => channels.id),
+    conversationId: text("conversation_id")
+      .notNull()
+      .references(() => conversations.id),
     agentId: text("agent_id")
       .notNull()
       .references(() => agents.id),
@@ -328,6 +362,7 @@ export const runs = sqliteTable(
     // 제공자 런 id 는 연결 안에서만 유일하다 — 두 Gateway 가 같은 id 를 낼 수 있다
     uniqueIndex("runs_connection_provider_run").on(t.connectionId, t.providerRunId),
     index("runs_channel_created").on(t.channelId, t.createdAt),
+    index("runs_conversation_created").on(t.conversationId, t.createdAt),
     index("runs_root").on(t.rootMessageId),
     index("runs_session_status").on(t.sessionKey, t.status),
     index("runs_connection_session_status").on(t.connectionId, t.sessionKey, t.status),
@@ -402,6 +437,9 @@ export const approvals = sqliteTable(
     channelId: text("channel_id")
       .notNull()
       .references(() => channels.id),
+    conversationId: text("conversation_id") // 세션 키에서 푼 대화
+      .notNull()
+      .references(() => conversations.id),
     agentId: text("agent_id")
       .notNull()
       .references(() => agents.id),

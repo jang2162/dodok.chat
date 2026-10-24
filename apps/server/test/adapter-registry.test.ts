@@ -283,7 +283,7 @@ describe("어댑터 레지스트리 배선 (앱 부팅, OpenClaw·Claude 가짜 
     await app.orchestrator.onCanonical(
       {
         outboundId: `out-${uuid()}`,
-        channelId: channel.id,
+        conversationId: channel.id,
         agentId: "dev",
         sessionKey: devSend.input.sessionKey,
         runId: devSend.input.runId,
@@ -308,7 +308,7 @@ describe("어댑터 레지스트리 배선 (앱 부팅, OpenClaw·Claude 가짜 
     await app.orchestrator.onCanonical(
       {
         outboundId: `out-${uuid()}`,
-        channelId: channel.id,
+        conversationId: channel.id,
         agentId: "coder",
         sessionKey: relay.input.sessionKey,
         runId: relay.input.runId,
@@ -338,7 +338,7 @@ describe("어댑터 레지스트리 배선 (앱 부팅, OpenClaw·Claude 가짜 
     const late = await app.orchestrator.onCanonical(
       {
         outboundId: `out-${uuid()}`,
-        channelId: channel.id,
+        conversationId: channel.id,
         agentId: "coder",
         sessionKey: sent.input.sessionKey,
         replyToInboundId: sent.input.message.id,
@@ -352,7 +352,7 @@ describe("어댑터 레지스트리 배선 (앱 부팅, OpenClaw·Claude 가짜 
     const orphan = await app.orchestrator.onCanonical(
       {
         outboundId: `out-${uuid()}`,
-        channelId: channel.id,
+        conversationId: channel.id,
         agentId: "coder",
         sessionKey: sent.input.sessionKey,
         text: "혼잣말",
@@ -383,7 +383,7 @@ describe("어댑터 레지스트리 배선 (앱 부팅, OpenClaw·Claude 가짜 
       kind: "tool",
       sessionKey: sent.input.sessionKey,
       providerAgentId: "coder",
-      channelId: channel.id,
+      conversationId: channel.id,
       toolCallId: "toolu_registry",
       toolName: "Write",
       title: "Write 실행",

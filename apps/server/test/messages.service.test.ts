@@ -117,13 +117,13 @@ describe("messages service", () => {
   it("createUserMessage 는 seq 를 1·2 로 발급하고 @handle 을 토큰으로 바꿔 mentions 를 채운다", () => {
     const { db, bus, created, userId, channelId, devId } = setup();
     const first = createUserMessage(db, bus, {
-      channelId,
+      conversationId: channelId,
       authorId: userId,
       bodyMd: "@dev 안녕",
       clientMsgId: "c1",
     });
     const second = createUserMessage(db, bus, {
-      channelId,
+      conversationId: channelId,
       authorId: userId,
       bodyMd: "@reviewer 와 @jang, `@dev` 는 코드",
       clientMsgId: "c2",
@@ -150,7 +150,7 @@ describe("messages service", () => {
 
   it("같은 clientMsgId 재호출은 같은 행을 돌려주고 seq·이벤트를 더 쓰지 않는다", () => {
     const { db, bus, created, userId, channelId } = setup();
-    const input = { channelId, authorId: userId, bodyMd: "hi", clientMsgId: "same" };
+    const input = { conversationId: channelId, authorId: userId, bodyMd: "hi", clientMsgId: "same" };
     const a = createUserMessage(db, bus, input);
     const b = createUserMessage(db, bus, { ...input, bodyMd: "다른 본문" });
     expect(b).toEqual(a);
@@ -161,11 +161,11 @@ describe("messages service", () => {
   it("없는 채널이면 NOT_FOUND, 없는 첨부 id 면 VALIDATION — 둘 다 저장·이벤트가 없다", () => {
     const { db, bus, created, userId, channelId } = setup();
     expect(() =>
-      createUserMessage(db, bus, { channelId: uuid(), authorId: userId, bodyMd: "x", clientMsgId: "c" }),
+      createUserMessage(db, bus, { conversationId: uuid(), authorId: userId, bodyMd: "x", clientMsgId: "c" }),
     ).toThrow(expect.objectContaining({ status: 404 }));
     expect(() =>
       createUserMessage(db, bus, {
-        channelId,
+        conversationId: channelId,
         authorId: userId,
         bodyMd: "x",
         clientMsgId: "c",
@@ -182,7 +182,7 @@ describe("messages service", () => {
       const b = insertAttachment(db, { channelId, uploaderId: userId, name: "b.png" });
       const a = insertAttachment(db, { channelId, uploaderId: userId, name: "a.png" });
       const m = createUserMessage(db, bus, {
-        channelId,
+        conversationId: channelId,
         authorId: userId,
         bodyMd: "보세요",
         clientMsgId: "c1",
@@ -198,7 +198,7 @@ describe("messages service", () => {
       const { db, bus, userId, channelId } = setup();
       const a = insertAttachment(db, { channelId, uploaderId: userId });
       const m = createUserMessage(db, bus, {
-        channelId,
+        conversationId: channelId,
         authorId: userId,
         bodyMd: "",
         clientMsgId: "c1",
@@ -213,7 +213,7 @@ describe("messages service", () => {
       const mine = insertAttachment(db, { channelId, uploaderId: userId });
       const bound = insertAttachment(db, { channelId, uploaderId: userId });
       createUserMessage(db, bus, {
-        channelId,
+        conversationId: channelId,
         authorId: userId,
         bodyMd: "먼저",
         clientMsgId: "c0",
@@ -228,7 +228,7 @@ describe("messages service", () => {
       for (const [i, att] of bad.entries()) {
         expect(() =>
           createUserMessage(db, bus, {
-            channelId,
+            conversationId: channelId,
             authorId: userId,
             bodyMd: "x",
             clientMsgId: `bad-${i}`,
@@ -240,14 +240,25 @@ describe("messages service", () => {
       // 롤백 — 함께 보낸 멀쩡한 첨부도 묶이지 않았다
       expect(boundTo(db, [mine.id])).toEqual([null]);
       expect(
-        createUserMessage(db, bus, { channelId, authorId: userId, bodyMd: "y", clientMsgId: "ok" }).seq,
+        createUserMessage(db, bus, {
+          conversationId: channelId,
+          authorId: userId,
+          bodyMd: "y",
+          clientMsgId: "ok",
+        }).seq,
       ).toBe(2);
     });
 
     it("[Review Focus 4] ack 를 잃고 같은 clientMsgId·같은 첨부로 다시 보내면 처음 메시지를 그대로 돌려준다", () => {
       const { db, bus, created, userId, channelId } = setup();
       const a = insertAttachment(db, { channelId, uploaderId: userId });
-      const input = { channelId, authorId: userId, bodyMd: "", clientMsgId: "same", attachments: [a.id] };
+      const input = {
+        conversationId: channelId,
+        authorId: userId,
+        bodyMd: "",
+        clientMsgId: "same",
+        attachments: [a.id],
+      };
       const first = createUserMessage(db, bus, input);
       const again = createUserMessage(db, bus, input);
       expect(again).toEqual(first);
@@ -265,7 +276,7 @@ describe("messages service", () => {
         db,
         bus,
         {
-          channelId,
+          conversationId: channelId,
           agentId: devId,
           externalId: "o1",
           bodyMd: "파일",
@@ -287,7 +298,7 @@ describe("messages service", () => {
         db,
         bus,
         {
-          channelId,
+          conversationId: channelId,
           agentId: devId,
           externalId: "o1",
           bodyMd: "",
@@ -304,7 +315,7 @@ describe("messages service", () => {
       const { db, bus, created, channelId, devId } = setup();
       const f = insertAttachment(db, { channelId, uploaderType: "bridge" });
       const input = {
-        channelId,
+        conversationId: channelId,
         agentId: devId,
         externalId: "o1",
         bodyMd: "파일",
@@ -326,7 +337,7 @@ describe("messages service", () => {
     const { db, bus, created, userId, channelId, devId } = setup();
     const runId = uuid();
     const input = {
-      channelId,
+      conversationId: channelId,
       agentId: devId,
       runId,
       externalId: "out-1",
@@ -357,7 +368,7 @@ describe("messages service", () => {
     expect(created).toHaveLength(1);
 
     const plain = createAgentMessage(db, bus, {
-      channelId,
+      conversationId: channelId,
       agentId: devId,
       externalId: "out-2",
       bodyMd: "끝",
@@ -372,7 +383,7 @@ describe("messages service", () => {
     vi.setSystemTime(new Date("2026-09-15T00:00:00.000Z"));
     const { db, bus, channelId, devId } = setup();
     const m = createAgentMessage(db, bus, {
-      channelId,
+      conversationId: channelId,
       agentId: devId,
       externalId: "out-ttl",
       bodyMd: "x",
@@ -385,7 +396,7 @@ describe("messages service", () => {
     const { db, bus, created, channelId, devId } = setup();
     const runId = uuid();
     const m = createSystemMessage(db, bus, {
-      channelId,
+      conversationId: channelId,
       kind: "run_error",
       bodyMd: "@dev 실행이 실패했습니다",
       systemMeta: { runId },
@@ -404,7 +415,7 @@ describe("messages service", () => {
 
     const relay = { fromAgentId: devId, toAgentId: devId, sourceRunId: runId, rootMessageId: m.id };
     const withButton = createSystemMessage(db, bus, {
-      channelId,
+      conversationId: channelId,
       kind: "relay_limit",
       bodyMd: "릴레이 상한",
       systemMeta: { kind: "relay_limit", relay },
@@ -420,7 +431,12 @@ describe("messages service", () => {
   it("listMessages 는 beforeSeq 미만·afterSeq 초과를 seq 오름차순으로 잘라 hasMore 를 준다", () => {
     const { db, bus, userId, channelId } = setup();
     for (let i = 1; i <= 5; i++) {
-      createUserMessage(db, bus, { channelId, authorId: userId, bodyMd: `m${i}`, clientMsgId: `c${i}` });
+      createUserMessage(db, bus, {
+        conversationId: channelId,
+        authorId: userId,
+        bodyMd: `m${i}`,
+        clientMsgId: `c${i}`,
+      });
     }
     const seqs = (page: { messages: Message[] }) => page.messages.map((m) => m.seq);
 
@@ -449,7 +465,7 @@ describe("messages service", () => {
     const { db, bus, userId, channelId, devId } = setup();
     const card = (externalId: string) =>
       createAgentMessage(db, bus, {
-        channelId,
+        conversationId: channelId,
         agentId: devId,
         externalId,
         bodyMd: "골라",
@@ -458,7 +474,7 @@ describe("messages service", () => {
     const msgWithComponents = card("out-c");
     const other = card("out-other");
     const msgPlain = createAgentMessage(db, bus, {
-      channelId,
+      conversationId: channelId,
       agentId: devId,
       externalId: "out-p",
       bodyMd: "끝",
@@ -503,7 +519,7 @@ describe("messages service", () => {
   it("withInteractions — createdAt 이 같으면 id 순이다(같은 밀리초의 두 클릭)", () => {
     const { db, bus, userId, channelId, devId } = setup();
     const card = createAgentMessage(db, bus, {
-      channelId,
+      conversationId: channelId,
       agentId: devId,
       externalId: "out-tie",
       bodyMd: "골라",
@@ -525,7 +541,7 @@ describe("messages service", () => {
   it("components 가 하나도 없으면 질의하지 않는다", () => {
     const { db, bus, userId, channelId } = setup();
     const msgPlain = createUserMessage(db, bus, {
-      channelId,
+      conversationId: channelId,
       authorId: userId,
       bodyMd: "hi",
       clientMsgId: "c1",
@@ -539,9 +555,14 @@ describe("messages service", () => {
 
   it("listMessages 는 components 카드에 상호작용 기록을 싣는다 — REST 히스토리·구독 ack 가 이 경로다", () => {
     const { db, bus, userId, channelId, devId } = setup();
-    createUserMessage(db, bus, { channelId, authorId: userId, bodyMd: "골라 줘", clientMsgId: "c1" });
+    createUserMessage(db, bus, {
+      conversationId: channelId,
+      authorId: userId,
+      bodyMd: "골라 줘",
+      clientMsgId: "c1",
+    });
     const card = createAgentMessage(db, bus, {
-      channelId,
+      conversationId: channelId,
       agentId: devId,
       externalId: "out-1",
       bodyMd: "골라",
@@ -559,7 +580,12 @@ describe("messages service", () => {
   it("listMessages 의 limit 은 200 을 넘지 않는다", () => {
     const { db, bus, userId, channelId } = setup();
     for (let i = 1; i <= 201; i++) {
-      createUserMessage(db, bus, { channelId, authorId: userId, bodyMd: "m", clientMsgId: `c${i}` });
+      createUserMessage(db, bus, {
+        conversationId: channelId,
+        authorId: userId,
+        bodyMd: "m",
+        clientMsgId: `c${i}`,
+      });
     }
     const page = listMessages(db, channelId, { afterSeq: 0, limit: 1000 });
     expect(page.messages).toHaveLength(200);
@@ -582,7 +608,7 @@ describe("createAutomationMessage", () => {
     const { db, bus, created, userId, channelId, devId } = setup();
     const automationId = uuid();
     const message = createAutomationMessage(db, bus, {
-      channelId,
+      conversationId: channelId,
       automationId,
       bodyMd: "@reviewer 와 @jang, 점검",
     });
@@ -608,7 +634,7 @@ describe("createAutomationMessage", () => {
     const changes: string[] = [];
     bus.on("channel.member.changed", (p) => changes.push(p.channelId));
     const message = createAutomationMessage(db, bus, {
-      channelId,
+      conversationId: channelId,
       automationId: uuid(),
       bodyMd: "@mia 확인",
     });
@@ -633,7 +659,9 @@ describe("createAutomationMessage", () => {
   it("보관한 채널이면 CHANNEL_ARCHIVED — 저장·이벤트가 없다", () => {
     const { db, bus, created, channelId } = setup();
     db.update(channels).set({ archivedAt: new Date() }).where(eq(channels.id, channelId)).run();
-    expect(() => createAutomationMessage(db, bus, { channelId, automationId: uuid(), bodyMd: "x" })).toThrow(
+    expect(() =>
+      createAutomationMessage(db, bus, { conversationId: channelId, automationId: uuid(), bodyMd: "x" }),
+    ).toThrow(
       expect.objectContaining({ status: 409, body: expect.objectContaining({ code: "CHANNEL_ARCHIVED" }) }),
     );
     expect(created).toHaveLength(0);

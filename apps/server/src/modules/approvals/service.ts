@@ -17,6 +17,7 @@ import type { Logger } from "../../logger";
 import type { ServerBus } from "../../realtime/bus";
 import { getAgent, providerAgentIdIs } from "../agents/service";
 import { getChannel } from "../channels/service";
+import { getConversation } from "../conversations/store";
 import { findOpenRunBySession, getRun } from "../runs/store";
 import * as store from "./store";
 
@@ -28,6 +29,7 @@ export type ResolveInput = { approvalId: string; decision: ApprovalDecision; use
 export type ControlApprovalInput = {
   runId: string;
   channelId: string;
+  conversationId: string;
   agentId: string;
   /** 결정할 수 있는 사람 — 그 런의 requested_by */
   requestedBy: string;
@@ -224,10 +226,11 @@ export function createApprovalsService(deps: ApprovalsDeps): ApprovalsService {
           return;
         }
         // workspaceId 를 꼭 넘긴다 — 빠뜨리면 다른 워크스페이스 채널의 승인도 받아 적는다(socket.ts 와 같은 규칙)
-        const channel = getChannel(db, session.channelId, deps.workspaceId);
+        const conversation = getConversation(db, session.conversationId, deps.workspaceId);
+        const channel = conversation && getChannel(db, conversation.channelId, deps.workspaceId);
         const agentId =
           channel && findAgentId(db, channel.workspaceId, provider, connectionId, session.providerAgentId);
-        if (!channel || !agentId) {
+        if (!conversation || !channel || !agentId) {
           logger.warn({ sessionKey: a.sessionKey }, "approval for unknown session");
           return;
         }
@@ -240,6 +243,7 @@ export function createApprovalsService(deps: ApprovalsDeps): ApprovalsService {
           connectionId,
           kind: a.kind,
           channelId: channel.id,
+          conversationId: conversation.id,
           agentId,
           runId: run?.id,
           toolCallId: a.toolCallId,
@@ -371,6 +375,7 @@ export function createApprovalsService(deps: ApprovalsDeps): ApprovalsService {
         providerApprovalId: `control:${uuidv7()}`,
         kind: "dodok_control",
         channelId: input.channelId,
+        conversationId: input.conversationId,
         agentId: input.agentId,
         runId: input.runId,
         toolName: input.toolName,

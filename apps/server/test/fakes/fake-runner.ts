@@ -269,7 +269,7 @@ export async function startFakeRunner(opts: FakeRunnerOptions): Promise<FakeRunn
         const d = start.deliver;
         const post: RunnerOutboundPost = {
           outboundId: `${RUNNER_POST_ID_PREFIX}${randomUUID()}`,
-          channelId: d.channelId,
+          conversationId: d.conversationId,
           agentId: d.agentId,
           sessionKey: d.sessionKey,
           ...(d.threadId === undefined ? {} : { threadId: d.threadId }),

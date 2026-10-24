@@ -28,8 +28,9 @@ export type ApprovalRowInput = {
   /** 승인이 온 연결 — 제공자 승인 id 는 그 연결 안에서만 유일하다. 새 행에만 쓴다 */
   connectionId?: string | undefined;
   kind: ApprovalKind;
-  /** 새 행에만 쓴다 — 세션 키에서 푼 값이라 승인이 사는 동안 바뀌지 않는다 */
+  /** 새 행에만 쓴다 — 세션 키에서 푼 대화와 그 채널이라 승인이 사는 동안 바뀌지 않는다 */
   channelId: string;
+  conversationId: string;
   agentId: string;
   runId?: string | undefined;
   toolCallId?: string | undefined;
@@ -70,6 +71,7 @@ export function rowToApproval(row: ApprovalRow): Approval {
       providerApprovalId: row.providerApprovalId,
       kind: row.kind,
       channelId: row.channelId,
+      conversationId: row.conversationId,
       agentId: row.agentId,
       runId: row.runId ?? undefined,
       toolCallId: row.toolCallId ?? undefined,
@@ -159,6 +161,7 @@ function insertApproval(db: DbOrTx, input: ApprovalRowInput): ApprovalRow {
       connectionId: input.connectionId ?? null,
       kind: input.kind,
       channelId: input.channelId,
+      conversationId: input.conversationId,
       agentId: input.agentId,
       runId: input.runId ?? null,
       toolCallId: input.toolCallId ?? null,

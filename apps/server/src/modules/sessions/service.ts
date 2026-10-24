@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { v7 as uuidv7 } from "uuid";
 import type { AgentAdapter } from "../../adapters/types";
 import type { Db, DbOrTx } from "../../db/client";
-import { agentSessions, agents, channels } from "../../db/schema.sqlite";
+import { agentSessions, agents, channels, conversations } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
 
 export type AgentSessionRow = typeof agentSessions.$inferSelect;
@@ -13,8 +13,12 @@ export type AgentSessionRow = typeof agentSessions.$inferSelect;
 export const INVALID_AGENT_ID_REASON =
   "OpenClaw 에이전트 id 가 세션 키 규칙(영문·숫자·_·-)에 맞지 않습니다 — 올바른 id 로 에이전트를 다시 등록하세요";
 
-/** threadRootId 가 있으면 그 스레드의 하위 세션(ADR 0006), 없으면 채널 세션 */
-export type EnsureSessionInput = { channelId: string; agentId: string; threadRootId?: string | undefined };
+/** threadRootId 가 있으면 그 스레드의 하위 세션(ADR 0006), 없으면 대화 세션 */
+export type EnsureSessionInput = {
+  conversationId: string;
+  agentId: string;
+  threadRootId?: string | undefined;
+};
 
 /** 어댑터 resetSession 응답 그대로 */
 export type SessionResetInfo = { sessionStartedAt?: string; lifecycleRevision?: string };
@@ -31,13 +35,14 @@ export function ensureSession(
   input: EnsureSessionInput,
 ): { session: AgentSessionRow; needsPromptContext: boolean } {
   return db.transaction((tx) => {
-    const promptRevision = currentPromptRevision(tx, input.channelId);
+    const channelId = channelOfConversation(tx, input.conversationId);
+    const promptRevision = currentPromptRevision(tx, channelId);
     const existing = tx
       .select()
       .from(agentSessions)
       .where(
         and(
-          eq(agentSessions.channelId, input.channelId),
+          eq(agentSessions.conversationId, input.conversationId),
           eq(agentSessions.agentId, input.agentId),
           sameThread(input.threadRootId),
         ),
@@ -49,12 +54,13 @@ export function ensureSession(
         .insert(agentSessions)
         .values({
           id: uuidv7(),
-          channelId: input.channelId,
+          channelId,
+          conversationId: input.conversationId,
           agentId: input.agentId,
           threadRootId: input.threadRootId ?? null,
           sessionKey: adapter.sessionKeyFor(
             providerAgentIdOf(tx, input.agentId),
-            input.channelId,
+            input.conversationId,
             input.threadRootId,
           ),
           promptRevisionAtStart: promptRevision,
@@ -143,12 +149,13 @@ export function renewSessionOnPromptChange(db: Db, sessionId: string): boolean {
  */
 export function markSessionReset(
   db: Db,
-  channelId: string,
+  conversationId: string,
   agentId: string,
   reset: SessionResetInfo,
   threadRootId?: string,
 ): AgentSessionRow {
   return db.transaction((tx) => {
+    const channelId = channelOfConversation(tx, conversationId);
     const now = new Date();
     const fields = {
       promptRevisionAtStart: currentPromptRevision(tx, channelId),
@@ -160,23 +167,24 @@ export function markSessionReset(
     const row = {
       id: uuidv7(),
       channelId,
+      conversationId,
       agentId,
       threadRootId: threadRootId ?? null,
-      sessionKey: dodokSessionKey(providerAgentIdOf(tx, agentId), channelId, threadRootId),
+      sessionKey: dodokSessionKey(providerAgentIdOf(tx, agentId), conversationId, threadRootId),
       ...fields,
     };
-    // 스레드 행은 3열 유일 인덱스, 채널 행은 부분 유일 인덱스(agent_sessions_channel_session) — 채널 쪽은 targetWhere 가
+    // 스레드 행은 3열 유일 인덱스, 대화 행은 부분 유일 인덱스(agent_sessions_conversation_session) — 대화 쪽은 targetWhere 가
     // 인덱스 조건과 같아야 SQLite 가 받는다
     const upsert = tx.insert(agentSessions).values(row);
     return (
       threadRootId === undefined
         ? upsert.onConflictDoUpdate({
-            target: [agentSessions.channelId, agentSessions.agentId],
+            target: [agentSessions.conversationId, agentSessions.agentId],
             targetWhere: sql`thread_root_id IS NULL`,
             set: fields,
           })
         : upsert.onConflictDoUpdate({
-            target: [agentSessions.channelId, agentSessions.agentId, agentSessions.threadRootId],
+            target: [agentSessions.conversationId, agentSessions.agentId, agentSessions.threadRootId],
             set: fields,
           })
     )
@@ -189,6 +197,16 @@ function sameThread(threadRootId: string | undefined) {
   return threadRootId === undefined
     ? isNull(agentSessions.threadRootId)
     : eq(agentSessions.threadRootId, threadRootId);
+}
+
+function channelOfConversation(db: DbOrTx, conversationId: string): string {
+  const row = db
+    .select({ channelId: conversations.channelId })
+    .from(conversations)
+    .where(eq(conversations.id, conversationId))
+    .get();
+  if (!row) throw apiError("NOT_FOUND", "conversation not found");
+  return row.channelId;
 }
 
 function currentPromptRevision(db: DbOrTx, channelId: string): number {

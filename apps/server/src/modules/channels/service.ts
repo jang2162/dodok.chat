@@ -14,6 +14,7 @@ import { parseStored } from "../../http/validate";
 import type { Logger } from "../../logger";
 import type { ServerBus } from "../../realtime/bus";
 import { agentNotArchived, getAgent } from "../agents/service";
+import { createLegacyConversation, latestOpenConversation } from "../conversations/store";
 import { createSystemMessage, getThreadRoot } from "../messages/service";
 import type { Orchestrator } from "../runs/orchestrator";
 import { clearProviderSessionId, ensureSession, markSessionReset } from "../sessions/service";
@@ -125,6 +126,7 @@ export function createChannel(db: Db, input: CreateChannelInput): ChannelRecord 
         joinedAt: now,
       })
       .run();
+    createLegacyConversation(tx, { id: row.id, createdBy: input.createdBy, createdAt: now });
     return rowToChannel(row);
   });
 }
@@ -575,9 +577,11 @@ export async function resetAgentSession(
 ): Promise<void> {
   const { db, orchestrator } = deps;
   const { threadRootId } = input;
-  if (threadRootId !== undefined && !getThreadRoot(db, input.channelId, threadRootId)) {
-    throw apiError("NOT_FOUND", "thread not found");
-  }
+  const root = threadRootId === undefined ? undefined : getThreadRoot(db, input.channelId, threadRootId);
+  if (threadRootId !== undefined && !root) throw apiError("NOT_FOUND", "thread not found");
+  // 스레드면 그 루트의 대화, 아니면 채널의 열린 대화(계획 판정 PS3)
+  const conversationId = root?.conversationId ?? latestOpenConversation(db, input.channelId);
+  if (conversationId === undefined) throw apiError("NOT_FOUND", "conversation not found");
   const member = listMembers(db, input.channelId).some(
     (m) => m.memberType === "agent" && m.memberId === input.agentId,
   );
@@ -587,7 +591,7 @@ export async function resetAgentSession(
   const adapter = adapterForAgent(deps.registry, agent);
   if (!adapter.capabilities().sessionReset) throw capabilityMissing();
   // markSessionReset 이 행을 만들며 키를 따로 조립하지 않게, 세션 행을 먼저 보장하고 그 키로 리셋한다(sc-t7 걱정 1)
-  const { session } = ensureSession(db, adapter, input);
+  const { session } = ensureSession(db, adapter, { conversationId, agentId: input.agentId, threadRootId });
   // 아래 abort·리셋을 기다리는 동안 디스패치되는 런부터 새 세션 id 를 받는다(clearProviderSessionId). 리셋이 실패해도
   // 되살리지 않는다 — 다음 런은 새 대화로 간다
   if (adapter.capabilities().serverSessionIds) clearProviderSessionId(db, session.id);
@@ -607,10 +611,10 @@ export async function resetAgentSession(
     if (err.code === "FORBIDDEN") throw capabilityMissing();
     throw apiError(err.code, err.message);
   }
-  markSessionReset(db, input.channelId, input.agentId, reset, threadRootId);
+  markSessionReset(db, conversationId, input.agentId, reset, threadRootId);
   const handle = agent.handle;
   createSystemMessage(db, deps.bus, {
-    channelId: input.channelId,
+    conversationId,
     ...(threadRootId === undefined ? {} : { threadRootId }),
     kind: "info",
     bodyMd: `@${handle} 의 대화를 새로 시작했습니다`,

@@ -16,6 +16,7 @@ import type { AgentActionContext } from "../agents/actions";
 import { getAgent } from "../agents/service";
 import type { ApprovalsService } from "../approvals/service";
 import type { ChannelActionContext } from "../channels/actions";
+import { latestOpenConversation } from "../conversations/store";
 import { createSystemMessage } from "../messages/service";
 import type { Limits } from "../ops/limits";
 import { KeyedLimiter, monotonicNow } from "../ops/ratelimit";
@@ -217,7 +218,15 @@ export function createControlService(deps: ControlDeps): ControlService {
         agent === undefined
           ? `@${who} ${josa(who, "이", "가")} MCP 로 ${done}`
           : `@${who} 의 요청으로 @${agent} ${josa(agent, "이", "가")} ${done}`;
-      createSystemMessage(db, deps.bus, { channelId, kind: "info", bodyMd, systemMeta: { kind: "info" } });
+      // 대화가 정해지지 않은 시스템 메시지 — 그 채널의 열린 대화에, 없으면 남기지 않는다(계획 판정 PS3)
+      const conversationId = latestOpenConversation(db, channelId);
+      if (conversationId === undefined) return;
+      createSystemMessage(db, deps.bus, {
+        conversationId,
+        kind: "info",
+        bodyMd,
+        systemMeta: { kind: "info" },
+      });
     } catch (err) {
       logger.error({ err, tool: toolName }, "control change record failed");
     }

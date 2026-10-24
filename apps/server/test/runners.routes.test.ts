@@ -393,7 +393,7 @@ describe("연결 페이지 러너 API /api/v1/setup/runner-*", () => {
         headers: {
           authorization: `Bearer ${token}`,
           "content-type": "image/png",
-          [BRIDGE_ATTACHMENT_HEADERS.channelId]: channelId,
+          [BRIDGE_ATTACHMENT_HEADERS.conversationId]: channelId,
           [BRIDGE_ATTACHMENT_HEADERS.fileName]: encodeURIComponent("shot.png"),
         },
         payload: Buffer.from(makePng(4, 4)),
@@ -441,7 +441,7 @@ describe("연결 페이지 러너 API /api/v1/setup/runner-*", () => {
       });
       const attachment = Attachment.parse(human.json());
       const message = createUserMessage(app.db, app.bus, {
-        channelId: secretId,
+        conversationId: secretId,
         authorId: app.ownerUserId,
         bodyMd: "비밀",
         clientMsgId: "runner-scope-human",
@@ -468,7 +468,7 @@ describe("연결 페이지 러너 API /api/v1/setup/runner-*", () => {
       expect((await download(other.token, own.id)).statusCode).toBe(404);
 
       const message = createUserMessage(app.db, app.bus, {
-        channelId,
+        conversationId: channelId,
         authorId: app.ownerUserId,
         bodyMd: "묶음",
         clientMsgId: "runner-scope-mine",
@@ -483,7 +483,7 @@ describe("연결 페이지 러너 API /api/v1/setup/runner-*", () => {
         headers: {
           authorization: `Bearer ${bridgeTokenOf(app)}`,
           "content-type": "image/png",
-          [BRIDGE_ATTACHMENT_HEADERS.channelId]: channelId,
+          [BRIDGE_ATTACHMENT_HEADERS.conversationId]: channelId,
         },
         payload: Buffer.from(makePng(5, 5)),
       });

@@ -95,6 +95,7 @@ export async function interact(deps: InteractDeps, input: InteractInput): Promis
       {
         agentId: run.agentId,
         channelId: run.channelId,
+        conversationId: run.conversationId,
         triggerKind: run.triggerKind,
         rootMessageId: run.rootMessageId,
         relayDepth: run.relayDepth,
@@ -109,6 +110,7 @@ export async function interact(deps: InteractDeps, input: InteractInput): Promis
     {
       agentId: target.agentId,
       channelId: message.channelId,
+      conversationId: message.conversationId,
       triggerKind: target.triggerKind,
       rootMessageId: message.id,
       relayDepth: 0,

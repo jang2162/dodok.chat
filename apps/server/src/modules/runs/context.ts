@@ -146,6 +146,7 @@ export function buildInboundDeliver(db: DbOrTx, input: BuildInboundInput): Inbou
     deliveryId: uuidv7(),
     kind: run.triggerKind === "continue" ? "continue" : trigger.message ? "message" : "interaction",
     channelId: run.channelId,
+    conversationId: run.conversationId,
     agentId: agent.providerAgentId,
     sessionKey: session.sessionKey,
     ...(run.threadRootId === undefined ? {} : { threadId: run.threadRootId }),

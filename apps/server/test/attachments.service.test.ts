@@ -61,7 +61,7 @@ describe("attachments service", () => {
     chA = createChannel(db, { workspaceId: ws, createdBy: alice, name: "a" }).id;
     chB = createChannel(db, { workspaceId: ws, createdBy: alice, name: "b" }).id;
     msgInA = createUserMessage(db, new ServerBus(), {
-      channelId: chA,
+      conversationId: chA,
       authorId: alice,
       bodyMd: "hi",
       clientMsgId: "c1",

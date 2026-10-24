@@ -29,6 +29,7 @@ function setup() {
   const newRun = (over: Partial<Parameters<typeof insertRun>[1]> = {}) =>
     insertRun(db, {
       channelId: ids.channelId,
+      conversationId: ids.channelId,
       agentId: ids.agentId,
       triggerKind: "mention",
       rootMessageId: uuid(),
@@ -58,6 +59,7 @@ describe("runs store", () => {
     expect(run).toEqual({
       id: run.id,
       channelId,
+      conversationId: channelId,
       agentId,
       triggerKind: "interaction",
       triggerInteractionId,
@@ -140,7 +142,7 @@ describe("runs store", () => {
   it("findRunByTriggerMessage 는 트리거 메시지(와 에이전트)로 가장 최근 런을 찾는다", () => {
     const { db, bus, newRun, channelId, userId, agentId } = setup();
     const m = createUserMessage(db, bus, {
-      channelId,
+      conversationId: channelId,
       authorId: userId,
       bodyMd: "@dev hi",
       clientMsgId: "c1",
@@ -178,15 +180,15 @@ describe("runs store", () => {
     const { db, bus, newRun, channelId, agentId } = setup();
     const run = newRun();
     const m1 = createAgentMessage(db, bus, {
-      channelId,
+      conversationId: channelId,
       agentId,
       runId: run.id,
       externalId: "o1",
       bodyMd: "a",
     });
-    createAgentMessage(db, bus, { channelId, agentId, externalId: "o2", bodyMd: "b" });
+    createAgentMessage(db, bus, { conversationId: channelId, agentId, externalId: "o2", bodyMd: "b" });
     const m3 = createAgentMessage(db, bus, {
-      channelId,
+      conversationId: channelId,
       agentId,
       runId: run.id,
       externalId: "o3",

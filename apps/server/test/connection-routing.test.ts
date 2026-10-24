@@ -65,7 +65,7 @@ function setup() {
   let n = 0;
   const say = (): Message =>
     createUserMessage(db, bus, {
-      channelId: channel.id,
+      conversationId: channel.id,
       authorId: userId,
       bodyMd: "안녕",
       clientMsgId: `c${++n}`,
@@ -73,7 +73,14 @@ function setup() {
   const mention = (agentId: string) => {
     const message = say();
     return services.orchestrator.enqueueRun(
-      { agentId, channelId: channel.id, triggerKind: "mention", rootMessageId: message.id, relayDepth: 0 },
+      {
+        agentId,
+        channelId: channel.id,
+        conversationId: channel.id,
+        triggerKind: "mention",
+        rootMessageId: message.id,
+        relayDepth: 0,
+      },
       { message },
     );
   };
@@ -82,7 +89,7 @@ function setup() {
   const sessionKey = `agent:main:dodok:channel:${channel.id}`;
   const outbound = (over: Partial<OutboundMessage> = {}): OutboundMessage => ({
     outboundId: `out-${++n}`,
-    channelId: channel.id,
+    conversationId: channel.id,
     agentId: "main",
     sessionKey,
     text: "답입니다",
@@ -95,7 +102,7 @@ function setup() {
     kind: "plugin",
     sessionKey,
     providerAgentId: "main",
-    channelId: channel.id,
+    conversationId: channel.id,
     title: "Write 실행",
     severity: "warning",
     allowedDecisions: ["allow-once", "deny"],

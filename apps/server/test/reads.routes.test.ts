@@ -28,7 +28,7 @@ describe("GET /api/v1/me/unread", () => {
     }).id;
     for (const n of [1, 2]) {
       createUserMessage(app.db, app.bus, {
-        channelId,
+        conversationId: channelId,
         authorId: app.ownerUserId,
         bodyMd: `m${n}`,
         clientMsgId: `r-${n}`,

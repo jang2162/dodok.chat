@@ -154,7 +154,7 @@ describe("설정 마법사 통합 — 브리지 토큰 겹침 교체·폐기", (
     });
     const { channel } = createdChannel.json() as { channel: Channel };
     const uploaded: Attachment = await pluginB.uploadAttachment({
-      channelId: channel.id,
+      conversationId: channel.id,
       bytes: makePng(2, 2),
       name: "a.png",
       mime: "image/png",
@@ -167,7 +167,7 @@ describe("설정 마법사 통합 — 브리지 토큰 겹침 교체·폐기", (
     expect((await pluginB.downloadAttachment(uploaded.id, { token: TOKEN_A })).status).toBe(401);
     expect((await pluginB.downloadAttachment(uploaded.id)).status).toBe(200);
     await pluginB.uploadAttachment({
-      channelId: channel.id,
+      conversationId: channel.id,
       bytes: makePng(3, 3),
       name: "b.png",
       mime: "image/png",

@@ -55,6 +55,7 @@ function run(
 ): void {
   const { id } = insertRun(db, {
     channelId,
+    conversationId: channelId,
     agentId,
     triggerKind: "mention",
     rootMessageId: ROOT,

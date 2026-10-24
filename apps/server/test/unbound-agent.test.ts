@@ -40,7 +40,7 @@ async function setup() {
   let n = 0;
   const say = async (bodyMd: string, threadRootId?: string) => {
     const message = createUserMessage(app.db, app.bus, {
-      channelId: channel.id,
+      conversationId: channel.id,
       authorId: app.ownerUserId,
       bodyMd,
       clientMsgId: `orphan-${++n}`,
@@ -78,7 +78,7 @@ describe("Gateway 가 빈 OpenClaw 에이전트", () => {
   it("스레드 멘션도 같은 사유다 — 붙은 플러그인이 스레드를 알아도 재설치 안내(PLUGIN_OUTDATED)가 아니다", async () => {
     const { app, channel, say } = await setup();
     const root = createUserMessage(app.db, app.bus, {
-      channelId: channel.id,
+      conversationId: channel.id,
       authorId: app.ownerUserId,
       bodyMd: "루트",
       clientMsgId: "orphan-root",

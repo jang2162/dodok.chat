@@ -27,7 +27,7 @@ describe("GET /api/v1/search (스펙 5.2)", () => {
     let n = 0;
     const say = (bodyMd: string) =>
       createUserMessage((app as App).db, (app as App).bus, {
-        channelId,
+        conversationId: channelId,
         authorId: (app as App).ownerUserId,
         bodyMd,
         clientMsgId: `s${n++}`,

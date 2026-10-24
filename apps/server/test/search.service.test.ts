@@ -46,7 +46,7 @@ function setup() {
   let n = 0;
   const say = (bodyMd: string, opts: { channelId?: string; at?: Date } = {}) => {
     const m = createUserMessage(db, bus, {
-      channelId: opts.channelId ?? channel.id,
+      conversationId: opts.channelId ?? channel.id,
       authorId: userId,
       bodyMd,
       clientMsgId: `c${n++}`,
@@ -56,7 +56,7 @@ function setup() {
   };
   const agentSays = (bodyMd: string, opts: { at?: Date } = {}) => {
     const m = createAgentMessage(db, bus, {
-      channelId: channel.id,
+      conversationId: channel.id,
       agentId: dev.id,
       externalId: `e${n++}`,
       bodyMd,
@@ -135,11 +135,11 @@ describe("색인 트리거 (스펙 5.1)", () => {
     t.say("사람 메시지 하나");
     t.agentSays("에이전트 메시지 하나");
     const sys = createSystemMessage(t.db, t.bus, {
-      channelId: t.channelId,
+      conversationId: t.channelId,
       kind: "info",
       bodyMd: "시스템 공지",
     });
-    createSystemMessage(t.db, t.bus, { channelId: t.channelId, kind: "info", bodyMd: "또 공지" });
+    createSystemMessage(t.db, t.bus, { conversationId: t.channelId, kind: "info", bodyMd: "또 공지" });
     t.db.update(messages).set({ bodyMd: "고친 시스템 공지" }).where(eq(messages.id, sys.id)).run();
     const normal = t.db.get<{ n: number }>(sql`SELECT count(*) AS n FROM messages WHERE kind = 'normal'`)?.n;
     expect(normal).toBe(2);
@@ -160,7 +160,7 @@ describe("색인 트리거 (스펙 5.1)", () => {
   it("시스템 메시지는 찾지 않는다", () => {
     const t = setup();
     createSystemMessage(t.db, t.bus, {
-      channelId: t.channelId,
+      conversationId: t.channelId,
       kind: "info",
       bodyMd: "시스템 공지 배포를 알림",
     });
@@ -255,7 +255,7 @@ describe("3글자 이상 — MATCH", () => {
     const w2 = seedWorkspace(t.db, { userHandle: "other" });
     const ch2 = createChannel(t.db, { workspaceId: w2.workspaceId, createdBy: w2.userId, name: "x" });
     createUserMessage(t.db, t.bus, {
-      channelId: ch2.id,
+      conversationId: ch2.id,
       authorId: w2.userId,
       bodyMd: "워크스페이스경계",
       clientMsgId: "z",
@@ -298,7 +298,7 @@ describe("자동화 글", () => {
     const t = setup();
     const automationId = uuid();
     const posted = createAutomationMessage(t.db, t.bus, {
-      channelId: t.channelId,
+      conversationId: t.channelId,
       automationId,
       bodyMd: "배포 점검 결과",
     });
@@ -322,7 +322,7 @@ describe("2글자 — LIKE", () => {
     const t = setup();
     const inside = t.say("배포 완료", { at: new Date(NOW.getTime() - 89 * DAY) });
     t.say("배포 옛날", { at: new Date(NOW.getTime() - 91 * DAY) });
-    createSystemMessage(t.db, t.bus, { channelId: t.channelId, kind: "info", bodyMd: "배포 공지" });
+    createSystemMessage(t.db, t.bus, { conversationId: t.channelId, kind: "info", bodyMd: "배포 공지" });
     const r = t.search("배포");
     expect(r.limited).toBe(true);
     expect(ids(r)).toEqual([inside.id]);
@@ -799,7 +799,7 @@ describe("결과 모양", () => {
     const t = setup();
     const root = t.say("스레드루트 본문");
     const reply = createUserMessage(t.db, t.bus, {
-      channelId: t.channelId,
+      conversationId: t.channelId,
       authorId: t.userId,
       bodyMd: "스레드답글 본문",
       clientMsgId: "reply",
@@ -899,7 +899,10 @@ describe("마이그레이션 — 기존 DB 에 색인을 채운다", () => {
       expect(found("옛첨부파일")).toEqual([withFile]);
       expect(found("둘째.txt")).toEqual([withFile]);
       const fresh = uuid();
-      insert(fresh, "normal", "마이그레이션 뒤 새행고유");
+      // 마이그레이션 뒤의 messages 에는 conversation_id 가 있다 — 「이전 대화」 id 는 채널 id 와 같다
+      db.run(sql`INSERT INTO messages (id, channel_id, conversation_id, seq, kind, author_type, author_id, body_md,
+        mentions_json, created_at) VALUES (${fresh}, ${ch.id}, ${ch.id}, ${++seq}, 'normal', 'user', ${userId},
+        '마이그레이션 뒤 새행고유', '{"agents":[],"users":[]}', ${NOW.getTime()})`);
       expect(found("새행고유")).toEqual([fresh]);
 
       // VACUUM 뒤에도 행마다 제 id 로만 찾힌다(m1) — text PK 테이블(messages)은 SQLite 문서상 VACUUM 이 rowid 를

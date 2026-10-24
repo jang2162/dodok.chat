@@ -67,7 +67,7 @@ describe("runs.requested_by", () => {
   const route = (message: Message) => app.services.router.routeMessage(message);
   const say = async (channel: ChannelRecord, authorId: string, bodyMd: string) => {
     const message = createUserMessage(app.db, app.bus, {
-      channelId: channel.id,
+      conversationId: channel.id,
       authorId,
       bodyMd,
       clientMsgId: `c-${++n}`,
@@ -80,7 +80,7 @@ describe("runs.requested_by", () => {
     const run = app.db.select().from(runs).where(eq(runs.id, runId)).get();
     if (!run) throw new Error("런이 없다");
     const message = createAgentMessage(app.db, app.bus, {
-      channelId: run.channelId,
+      conversationId: run.channelId,
       agentId: run.agentId,
       runId,
       externalId: `out-${++n}`,
@@ -155,7 +155,7 @@ describe("runs.requested_by", () => {
     const { channel, a } = room();
     const human = await say(channel, mia, `@${a.handle} 골라 줘`);
     const card = createAgentMessage(app.db, app.bus, {
-      channelId: channel.id,
+      conversationId: channel.id,
       agentId: a.id,
       runId: onlyRun("triggerMessageId", human.id).id,
       externalId: `out-${++n}`,
@@ -200,13 +200,14 @@ describe("runs.requested_by", () => {
   const failed = (stored: string | null) => {
     const { channel, a } = room();
     const trigger = createUserMessage(app.db, app.bus, {
-      channelId: channel.id,
+      conversationId: channel.id,
       authorId: mia,
       bodyMd: `@${a.handle} 해 줘`,
       clientMsgId: `c-${++n}`,
     });
     const run = insertRun(app.db, {
       channelId: channel.id,
+      conversationId: channel.id,
       agentId: a.id,
       triggerKind: "mention",
       triggerMessageId: trigger.id,
@@ -219,7 +220,7 @@ describe("runs.requested_by", () => {
     });
     updateRun(app.db, run.id, { status: "error", error: { code: "TIMEOUT", message: "t" } });
     const notice = createSystemMessage(app.db, app.bus, {
-      channelId: channel.id,
+      conversationId: channel.id,
       kind: "run_error",
       bodyMd: `@${a.handle} 실행이 실패했습니다: TIMEOUT`,
       systemMeta: { kind: "run_error", runId: run.id },

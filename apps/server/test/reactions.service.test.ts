@@ -28,6 +28,7 @@ import {
 import { ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
 import { seedChannelWithAgent } from "./helpers/seed";
+import { createLegacyConversation } from "../src/modules/conversations/store";
 
 const T0 = new Date("2026-10-07T00:00:00.000Z");
 const at = (sec: number) => new Date(T0.getTime() + sec * 1000);
@@ -72,6 +73,7 @@ function post(db: Db, p: Post): string {
       .values({
         id,
         channelId: p.channelId,
+        conversationId: p.channelId,
         seq: allocateSeq(tx, p.channelId),
         kind: p.authorType === "system" ? "system" : "normal",
         authorType: p.authorType ?? "agent",
@@ -224,7 +226,11 @@ describe("withReactions", () => {
   it("자동화 글(kind normal)에도 사람이 반응을 단다 — 켜기·집계가 되고 에이전트 몫(pendingReactionsFor)에는 들지 않는다", () => {
     const c = setup();
     const automationId = uuid();
-    const m = createAutomationMessage(c.db, c.bus, { channelId: c.channelId, automationId, bodyMd: "알림" });
+    const m = createAutomationMessage(c.db, c.bus, {
+      conversationId: c.channelId,
+      automationId,
+      bodyMd: "알림",
+    });
     setReaction(c.db, c.bus, c.workspaceId, c.mia, { messageId: m.id, emoji: "👀", on: true }, at(1));
     expect(c.updated.map((u) => u.id)).toEqual([m.id]);
     expect(hydrateForClient(c.db, [m])[0]?.reactions).toEqual([{ emoji: "👀", count: 1, userIds: [c.mia] }]);
@@ -410,6 +416,7 @@ describe("advanceReactionCursor", () => {
       .values({
         id: sessionId,
         channelId: c.channelId,
+        conversationId: c.channelId,
         agentId: c.agentId,
         sessionKey: "k",
         promptRevisionAtStart: 1,
@@ -433,6 +440,7 @@ describe("advanceReactionCursor", () => {
       .values({
         id: sessionId,
         channelId: c.channelId,
+        conversationId: c.channelId,
         agentId: c.agentId,
         sessionKey: "k",
         promptRevisionAtStart: 1,
@@ -458,5 +466,6 @@ function seedChannelOf(c: Ctx): string {
       createdAt: T0,
     })
     .run();
+  createLegacyConversation(c.db, { id, createdBy: c.userId, createdAt: T0 });
   return id;
 }

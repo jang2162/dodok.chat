@@ -194,7 +194,11 @@ describe("운영 안정성 — 끊김·실패한 런·Gateway 버전·디스크"
     expect((await upload()).statusCode).toBe(429);
 
     await expect(
-      l.plugin.uploadAttachment({ channelId: setup.channel.id, bytes: makePng(2, 2), mime: "image/png" }),
+      l.plugin.uploadAttachment({
+        conversationId: setup.channel.id,
+        bytes: makePng(2, 2),
+        mime: "image/png",
+      }),
     ).rejects.toThrow(/fake upload 507: .*INSUFFICIENT_STORAGE/);
   });
 });

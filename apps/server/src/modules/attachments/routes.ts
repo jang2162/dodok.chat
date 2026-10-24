@@ -21,7 +21,8 @@ import type { Db } from "../../db/client";
 import { type AgentTokenGuard, requireAgentToken } from "../../http/agent-token";
 import { apiError } from "../../http/errors";
 import { parseParams, parseQuery } from "../../http/validate";
-import { assertChannelWritable, getChannel } from "../channels/service";
+import { assertChannelWritable } from "../channels/service";
+import { getConversation } from "../conversations/store";
 import { type AttachmentDeps, findReadable, type Uploader, uploadAttachment } from "./service";
 import type { BlobLocks } from "./store";
 
@@ -245,12 +246,13 @@ export function registerAttachmentRoutes(fastify: FastifyInstance, ctx: Attachme
         path,
         { onRequest: [agent, storage], bodyLimit: ATTACHMENT_LIMITS.agentFileMaxBytes },
         async (request) => {
-          const channelId = Id.safeParse(request.headers[H.channelId]);
-          if (!channelId.success) throw apiError("VALIDATION", `${H.channelId} 헤더가 필요하다`);
-          if (!getChannel(ctx.db, channelId.data, ctx.workspaceId))
-            throw apiError("NOT_FOUND", "channel not found");
+          // 첨부는 그 대화의 채널로 묶는다(채널 세션 계획 판정 PS2)
+          const conversationId = Id.safeParse(request.headers[H.conversationId]);
+          if (!conversationId.success) throw apiError("VALIDATION", `${H.conversationId} 헤더가 필요하다`);
+          const conversation = getConversation(ctx.db, conversationId.data, ctx.workspaceId);
+          if (!conversation) throw apiError("NOT_FOUND", "conversation not found");
           return uploadAttachment(deps, {
-            channelId: channelId.data,
+            channelId: conversation.channelId,
             uploader: uploader(request),
             bytes: bodyBytes(request),
             nameHint: fileNameHeader(request),

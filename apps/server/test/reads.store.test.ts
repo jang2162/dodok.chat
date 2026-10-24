@@ -12,6 +12,7 @@ import { allocateSeq } from "../src/modules/messages/seq";
 import { markRead, unreadFor } from "../src/modules/reads/store";
 import { newTestDb } from "./helpers/db";
 import { seedChannelWithAgent } from "./helpers/seed";
+import { createLegacyConversation } from "../src/modules/conversations/store";
 
 const NOW = new Date("2026-10-06T00:00:00.000Z");
 
@@ -38,6 +39,7 @@ function addChannel(db: Db, workspaceId: string, createdBy: string, name: string
       createdAt: NOW,
     })
     .run();
+  createLegacyConversation(db, { id, createdBy, createdAt: NOW });
   return id;
 }
 
@@ -57,6 +59,7 @@ function post(db: Db, channelId: string, p: Post): { id: string; seq: number } {
       .values({
         id,
         channelId,
+        conversationId: channelId,
         seq,
         kind: p.authorType === "system" ? "system" : "normal",
         authorType: p.authorType,
@@ -180,6 +183,7 @@ describe("unreadFor", () => {
         .values({
           id: uuid(),
           channelId,
+          conversationId: channelId,
           seq,
           kind: "system",
           authorType: "system",
