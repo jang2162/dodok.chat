@@ -13,7 +13,8 @@ import { formatDodokTarget } from "./outbound";
 
 export type DodokInboundFacts = {
   accountId: string;
-  channelId: string;
+  /** OpenClaw 피어 id(`channel:<id>`) — 대화 id(채널 세션 계획 판정 PS2) */
+  conversationId: string;
   agentId: string;
   sessionKey: string;
   /** message 툴 `to` 와 같은 문법 */
@@ -54,7 +55,7 @@ export function toInboundFacts(
 ): InboundFactsResult {
   let expected: string;
   try {
-    expected = dodokSessionKey(d.agentId, d.channelId, d.threadId);
+    expected = dodokSessionKey(d.agentId, d.conversationId, d.threadId);
   } catch (error) {
     return { ok: false, error: `sessionKey 를 만들 수 없다: ${String(error)}` };
   }
@@ -73,10 +74,10 @@ export function toInboundFacts(
   const isBot = author.type === "agent";
   const senderId = `${author.type}:${author.handle}`;
   const self = d.context.participants.find((p) => p.isSelf);
-  const target = formatDodokTarget(d.channelId);
+  const target = formatDodokTarget(d.conversationId);
   const facts: DodokInboundFacts = {
     accountId: opts.accountId,
-    channelId: d.channelId,
+    conversationId: d.conversationId,
     agentId: d.agentId,
     sessionKey: d.sessionKey,
     target,
@@ -86,7 +87,12 @@ export function toInboundFacts(
     body: buildInboundText(d, opts.context),
     rawBody: d.message.text,
     correlation: { deliveryId: d.deliveryId, runId: d.runId, replyToInboundId: d.message.id },
-    conversation: { kind: "channel", id: d.channelId, label: d.channelId, ...(threadId ? { threadId } : {}) },
+    conversation: {
+      kind: "channel",
+      id: d.conversationId,
+      label: d.conversationId,
+      ...(threadId ? { threadId } : {}),
+    },
     route: {
       agentId: d.agentId,
       accountId: opts.accountId,
@@ -99,8 +105,8 @@ export function toInboundFacts(
   if (isBot) {
     facts.botLoopProtection = {
       scopeId: opts.accountId,
-      // 스레드도 채널과 한 예산이다 — 쪼개면 코어 안전망이 스레드 수만큼 넓어진다(ADR 0006 「봇 루프 예산」 절)
-      conversationId: d.channelId,
+      // 스레드도 대화와 한 예산이다 — 쪼개면 코어 안전망이 스레드 수만큼 넓어진다(ADR 0006 「봇 루프 예산」 절)
+      conversationId: d.conversationId,
       senderId,
       receiverId: `agent:${self?.handle ?? d.agentId}`,
       eventId: d.deliveryId,

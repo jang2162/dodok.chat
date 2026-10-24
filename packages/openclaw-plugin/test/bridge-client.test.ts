@@ -22,7 +22,7 @@ const silent = { info: () => undefined, warn: () => undefined, error: () => unde
 function outbound(outboundId: string): OutboundMessage {
   return {
     outboundId,
-    channelId: CH,
+    conversationId: CH,
     agentId: "main",
     sessionKey: `agent:main:dodok:channel:${CH}`,
     text: outboundId,

@@ -46,7 +46,7 @@ import { appendNotes, inboundSaveArgs, prepareInboundMedia } from "./inbound-med
 import { bridgeHttpOrigin, downloadAttachment, uploadAttachment } from "./media-http";
 import {
   buildOutboundMessage,
-  channelIdFromSessionKey,
+  conversationIdFromSessionKey,
   formatDodokTarget,
   messageToolSendToOutbound,
   outboundRouteThreadId,
@@ -128,7 +128,7 @@ async function dispatchInbound(params: {
     cfg,
     identity: { key: "sender", entryIdPrefix: "dodok-entry" },
     subject: { stableId: facts.sender.id },
-    conversation: { kind: "channel", id: facts.channelId },
+    conversation: { kind: "channel", id: facts.conversationId },
     contextBinding: {
       agentId: facts.agentId,
       sessionKey: facts.sessionKey,
@@ -276,7 +276,7 @@ async function dispatchInbound(params: {
                     uploadAttachment({
                       origin,
                       token,
-                      channelId: facts.channelId,
+                      conversationId: facts.conversationId,
                       bytes,
                       name,
                       ...(mime ? { mime } : {}),
@@ -299,7 +299,7 @@ async function dispatchInbound(params: {
             outcome.failures.length > 0 ? appendNotes(text, [deliverFailureLine(outcome.failures)]) : text;
           const built = buildOutboundMessage({
             outboundId: `dodok-reply-${randomUUID()}`,
-            channelId: facts.channelId,
+            conversationId: facts.conversationId,
             agentId: facts.agentId,
             sessionKey: facts.sessionKey,
             ...(facts.threadId ? { threadId: facts.threadId } : {}),
@@ -444,17 +444,17 @@ export const dodokChannelPlugin = createChatChannelPlugin<ResolvedDodokAccount>(
       // 전사에 샌다(ADR 0006 「아웃바운드와 delivery-mirror 누수」 절). SDK 기본 precedence 는 replyToId 를 먼저 보는데
       // 우리 replyToId 는 인바운드 메시지 id 라 `:thread:<메시지 id>` 라는 없는 세션으로 가므로 쓰지 않는다
       resolveOutboundSessionRoute: ({ cfg, agentId, accountId, target, currentSessionKey, threadId }) => {
-        const channelId = parseDodokTarget(target);
-        if (!channelId) return null;
+        const conversationId = parseDodokTarget(target);
+        if (!conversationId) return null;
         const route = buildChannelOutboundSessionRoute({
           cfg,
           agentId,
           channel: DODOK_CHANNEL_ID,
           accountId,
-          peer: { kind: "channel", id: channelId },
+          peer: { kind: "channel", id: conversationId },
           chatType: "channel",
           from: `dodok:${accountId ?? DEFAULT_ACCOUNT_ID}`,
-          to: formatDodokTarget(channelId),
+          to: formatDodokTarget(conversationId),
         });
         const routeThreadId = outboundRouteThreadId({ currentSessionKey, threadId });
         return buildThreadAwareOutboundSessionRoute({
@@ -527,7 +527,7 @@ export const dodokChannelPlugin = createChatChannelPlugin<ResolvedDodokAccount>(
           const token = account.token;
           const maxBytes = account.mediaMaxBytes;
           const access = actionCtx.mediaAccess;
-          const channelId = built.message.channelId;
+          const conversationId = built.message.conversationId;
           const outcome = await uploadOutboundMedia(sources, {
             // 호스트 정책(localRoots·readFile·workspaceDir)을 그대로 넘긴다 — fs.readFile 직접 금지
             load: async (src) => {
@@ -539,7 +539,7 @@ export const dodokChannelPlugin = createChatChannelPlugin<ResolvedDodokAccount>(
               };
             },
             upload: (bytes, name, mime) =>
-              uploadAttachment({ origin, token, channelId, bytes, name, ...(mime ? { mime } : {}) }),
+              uploadAttachment({ origin, token, conversationId, bytes, name, ...(mime ? { mime } : {}) }),
             maxBytes,
           });
           console.info(
@@ -556,9 +556,12 @@ export const dodokChannelPlugin = createChatChannelPlugin<ResolvedDodokAccount>(
         const ack = await bridge.sendOutbound(built.message);
         return {
           content: [
-            { type: "text", text: `sent to dodok channel ${built.message.channelId} (${ack.messageId})` },
+            {
+              type: "text",
+              text: `sent to dodok channel ${built.message.conversationId} (${ack.messageId})`,
+            },
           ],
-          details: { ok: true, messageId: ack.messageId, channelId: built.message.channelId },
+          details: { ok: true, messageId: ack.messageId, channelId: built.message.conversationId },
         };
       },
     },
@@ -571,8 +574,8 @@ export const dodokChannelPlugin = createChatChannelPlugin<ResolvedDodokAccount>(
     attachedResults: {
       channel: DODOK_CHANNEL_ID,
       sendText: async ({ to, text, accountId, threadId: rawThreadId }) => {
-        const channelId = parseDodokTarget(to) ?? channelIdFromSessionKey(to);
-        if (!channelId) throw new Error(`dodok: invalid target ${to}`);
+        const conversationId = parseDodokTarget(to) ?? conversationIdFromSessionKey(to);
+        if (!conversationId) throw new Error(`dodok: invalid target ${to}`);
         // 스레드 런이 실패하면 코어가 오류 알림을 threadId 와 함께 여기로 보낸다(ADR 0006) — 버리면 채널 최상위에 뜬다
         const threadId =
           rawThreadId === undefined || rawThreadId === null || rawThreadId === ""
@@ -586,15 +589,15 @@ export const dodokChannelPlugin = createChatChannelPlugin<ResolvedDodokAccount>(
         // 코어의 일반 전송(크론·하트비트 전달·런 오류 알림 등) 경로 — 에이전트 컨텍스트가 없다
         const built = buildOutboundMessage({
           outboundId: `dodok-out-${randomUUID()}`,
-          channelId,
+          conversationId,
           agentId: "unknown",
-          sessionKey: dodokSessionKey("unknown", channelId, threadId),
+          sessionKey: dodokSessionKey("unknown", conversationId, threadId),
           ...(threadId ? { threadId } : {}),
           text,
           now: new Date(),
         });
         if (!built.ok) throw new Error(built.error);
-        console.info(logLine("outbound-sendText", { channelId, textLength: text.length }));
+        console.info(logLine("outbound-sendText", { conversationId, textLength: text.length }));
         const ack = await bridge.sendOutbound(built.message);
         return { to, messageId: ack.messageId };
       },

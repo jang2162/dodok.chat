@@ -63,7 +63,7 @@ async function readyClient(): Promise<Socket> {
 function outbound(outboundId: string) {
   return {
     outboundId,
-    channelId: CH,
+    conversationId: CH,
     agentId: "main",
     sessionKey: `agent:main:dodok:channel:${CH}`,
     text: "PONG",
@@ -198,7 +198,7 @@ describe("attachBridge (실제 Socket.IO)", () => {
 
     const message = {
       outboundId: "o-1",
-      channelId: CH,
+      conversationId: CH,
       agentId: "main",
       sessionKey: `agent:main:dodok:channel:${CH}`,
       text: "PONG",
@@ -243,7 +243,7 @@ describe("attachBridge (실제 Socket.IO)", () => {
     await waitFor(socket, "connect");
     const res = await socket.emitWithAck("outbound.message", {
       outboundId: "o-2",
-      channelId: CH,
+      conversationId: CH,
       agentId: "main",
       sessionKey: `agent:main:dodok:channel:${CH}`,
       text: "x",

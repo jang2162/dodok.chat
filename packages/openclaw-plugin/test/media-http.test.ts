@@ -46,7 +46,7 @@ describe("media-http", () => {
     const r = await uploadAttachment({
       origin: "http://h",
       token: "t",
-      channelId: CH,
+      conversationId: CH,
       bytes: new Uint8Array([1]),
       name: "보고서.pdf",
       mime: "application/pdf",
@@ -57,7 +57,7 @@ describe("media-http", () => {
     expect(init.method).toBe("POST");
     expect(init.headers).toMatchObject({
       authorization: "Bearer t",
-      "x-dodok-channel-id": CH,
+      "x-dodok-conversation-id": CH,
       "x-dodok-file-name": encodeURIComponent("보고서.pdf"),
       "content-type": "application/pdf",
     });
@@ -72,7 +72,7 @@ describe("media-http", () => {
       uploadAttachment({
         origin: "http://h",
         token: "t",
-        channelId: CH,
+        conversationId: CH,
         bytes: new Uint8Array([1]),
         name: "a",
         fetch: net as never,
@@ -84,7 +84,7 @@ describe("media-http", () => {
       uploadAttachment({
         origin: "http://h",
         token: "t",
-        channelId: CH,
+        conversationId: CH,
         bytes: new Uint8Array([1]),
         name: "a",
         fetch: http as never,
@@ -122,7 +122,7 @@ describe("media-http", () => {
       uploadAttachment({
         origin: "http://h",
         token: "t",
-        channelId: CH,
+        conversationId: CH,
         bytes: new Uint8Array([1]),
         name: "a",
         fetch: net as never,
@@ -137,7 +137,7 @@ describe("media-http", () => {
       uploadAttachment({
         origin: "http://h",
         token: "t",
-        channelId: CH,
+        conversationId: CH,
         bytes: new Uint8Array([1]),
         name: "a",
         fetch: f as never,

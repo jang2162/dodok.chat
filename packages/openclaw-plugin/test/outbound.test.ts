@@ -2,7 +2,7 @@ import { OutboundMessage } from "@dodok/shared";
 import { describe, expect, it } from "vitest";
 import {
   buildOutboundMessage,
-  channelIdFromSessionKey,
+  conversationIdFromSessionKey,
   formatDodokTarget,
   messageToolSendToOutbound,
   parseDodokTarget,
@@ -28,11 +28,11 @@ describe("target 문법", () => {
     expect(formatDodokTarget(CH)).toBe(`channel:${CH}`);
   });
 
-  it("세션 키에서 채널 id 를 뽑는다", () => {
-    expect(channelIdFromSessionKey(SESSION)).toBe(CH);
-    expect(channelIdFromSessionKey(THREAD_SESSION)).toBe(CH);
-    expect(channelIdFromSessionKey(`agent:main:dodok:channel:${CH}:g2`)).toBeNull();
-    expect(channelIdFromSessionKey("agent:main:main")).toBeNull();
+  it("세션 키에서 대화 id 를 뽑는다", () => {
+    expect(conversationIdFromSessionKey(SESSION)).toBe(CH);
+    expect(conversationIdFromSessionKey(THREAD_SESSION)).toBe(CH);
+    expect(conversationIdFromSessionKey(`agent:main:dodok:channel:${CH}:g2`)).toBeNull();
+    expect(conversationIdFromSessionKey("agent:main:main")).toBeNull();
   });
 });
 
@@ -40,7 +40,7 @@ describe("buildOutboundMessage", () => {
   it("평문 응답을 OutboundMessage 로 만든다", () => {
     const res = buildOutboundMessage({
       outboundId: "dodok-out-1",
-      channelId: CH,
+      conversationId: CH,
       agentId: "main",
       sessionKey: SESSION,
       text: "PONG",
@@ -52,7 +52,7 @@ describe("buildOutboundMessage", () => {
     expect(OutboundMessage.parse(res.message)).toEqual(res.message);
     expect(res.message).toEqual({
       outboundId: "dodok-out-1",
-      channelId: CH,
+      conversationId: CH,
       agentId: "main",
       sessionKey: SESSION,
       runId: RUN,
@@ -67,7 +67,7 @@ describe("buildOutboundMessage", () => {
   it("components 는 shared 스키마로 검증하고 기본값을 채운다", () => {
     const res = buildOutboundMessage({
       outboundId: "o2",
-      channelId: CH,
+      conversationId: CH,
       agentId: "main",
       sessionKey: SESSION,
       text: "골라 주세요",
@@ -83,7 +83,7 @@ describe("buildOutboundMessage", () => {
   it("components 가 JSON 문자열로 와도 받는다 (모델이 문자열로 직렬화하는 경우)", () => {
     const res = buildOutboundMessage({
       outboundId: "o3",
-      channelId: CH,
+      conversationId: CH,
       agentId: "main",
       sessionKey: SESSION,
       text: "x",
@@ -97,7 +97,7 @@ describe("buildOutboundMessage", () => {
     const items = Array.from({ length: 6 }, (_, i) => ({ type: "button", id: `b${i}`, label: `B${i}` }));
     const res = buildOutboundMessage({
       outboundId: "o4",
-      channelId: CH,
+      conversationId: CH,
       agentId: "main",
       sessionKey: SESSION,
       text: "x",
@@ -113,7 +113,7 @@ describe("buildOutboundMessage", () => {
   it("깨진 JSON 문자열은 거부한다", () => {
     const res = buildOutboundMessage({
       outboundId: "o5",
-      channelId: CH,
+      conversationId: CH,
       agentId: "main",
       sessionKey: SESSION,
       text: "x",
@@ -125,7 +125,14 @@ describe("buildOutboundMessage", () => {
 });
 
 describe("buildOutboundMessage — artifact:// 이름의 공백류", () => {
-  const base = { outboundId: "oa", channelId: CH, agentId: "main", sessionKey: SESSION, text: "x", now: NOW };
+  const base = {
+    outboundId: "oa",
+    conversationId: CH,
+    agentId: "main",
+    sessionKey: SESSION,
+    text: "x",
+    now: NOW,
+  };
   const components = () => ({
     blocks: [
       { type: "media", items: [{ url: "artifact://월간 보고서.png", alt: "월간 보고서" }] },
@@ -209,7 +216,7 @@ describe("messageToolSendToOutbound", () => {
     });
     expect(res.ok).toBe(true);
     if (!res.ok) return;
-    expect(res.message.channelId).toBe(CH);
+    expect(res.message.conversationId).toBe(CH);
     expect(res.message.text).toBe("버튼입니다");
     expect(res.message.runId).toBe(RUN);
     expect(res.message.components?.blocks).toHaveLength(1);
@@ -263,7 +270,7 @@ describe("messageToolSendToOutbound", () => {
       outboundId: "o7",
       now: NOW,
     });
-    expect(res.ok && [res.message.channelId, res.message.agentId]).toEqual([CH, "main"]);
+    expect(res.ok && [res.message.conversationId, res.message.agentId]).toEqual([CH, "main"]);
   });
 
   it("text/content 별칭도 받는다", () => {
@@ -314,7 +321,7 @@ describe("messageToolSendToOutbound", () => {
 });
 
 describe("스레드 아웃바운드", () => {
-  const base = { outboundId: "t1", channelId: CH, agentId: "main", text: "x", now: NOW };
+  const base = { outboundId: "t1", conversationId: CH, agentId: "main", text: "x", now: NOW };
 
   it("buildOutboundMessage 는 threadId 를 싣고 계약을 지킨다", () => {
     const res = buildOutboundMessage({ ...base, sessionKey: THREAD_SESSION, threadId: ROOT });
@@ -343,7 +350,7 @@ describe("스레드 아웃바운드", () => {
       { to: CH, message: "hi" },
     ]) {
       const res = toolSend(params);
-      expect(res.ok && [res.message.channelId, res.message.threadId, res.message.sessionKey]).toEqual([
+      expect(res.ok && [res.message.conversationId, res.message.threadId, res.message.sessionKey]).toEqual([
         CH,
         ROOT,
         THREAD_SESSION,
@@ -380,7 +387,7 @@ describe("buildOutboundMessage attachmentIds", () => {
     const ids = ["01a09fc9-d204-7551-89d6-38544d07a105", "01a09fc9-d204-7551-89d6-38544d07a106"];
     const res = buildOutboundMessage({
       outboundId: "o12",
-      channelId: CH,
+      conversationId: CH,
       agentId: "main",
       sessionKey: SESSION,
       text: "",

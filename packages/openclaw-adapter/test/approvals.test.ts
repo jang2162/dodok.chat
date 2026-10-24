@@ -45,7 +45,7 @@ function fitsContract(a: ProviderApproval) {
   return Approval.safeParse({
     ...a,
     id: "01a09fc9-d204-7551-89d6-38544d07a2b1",
-    channelId: a.channelId,
+    channelId: a.conversationId,
     agentId: "01a09fc9-d204-7551-89d6-38544d07a2b2",
     expiresAt: a.expiresAt ?? EXPIRES_AT,
     createdAt: a.createdAt ?? CREATED_AT,
@@ -61,7 +61,7 @@ describe("parseApprovalFrame — plugin 경로(정본)", () => {
       kind: "plugin",
       sessionKey: f.SESSION_KEY,
       providerAgentId: "dev",
-      channelId: f.CHANNEL_ID,
+      conversationId: f.CHANNEL_ID,
       toolCallId: f.APPROVAL_TOOL_CALL_ID,
       toolName: "Write",
       pluginId: "claude-cli",
@@ -135,7 +135,7 @@ describe("parseApprovalFrame — session.approval(보조, 재접속·중복 경�
       title: "claude-cli native tool: Write",
       toolName: "Write",
       sessionKey: f.SESSION_KEY,
-      channelId: f.CHANNEL_ID,
+      conversationId: f.CHANNEL_ID,
       urlPath: `/approve/${encodeURIComponent(f.APPROVAL_ID)}`,
       createdAt: CREATED_AT,
       expiresAt: EXPIRES_AT,
@@ -202,7 +202,7 @@ describe("parseApprovalFrame — 우리 세션만 거른다(전역 이벤트)", 
   });
 
   it("parseSessionKey 는 스레드 접미사 말고 다른 접미사가 붙은 키를 받지 않는다", () => {
-    expect(parseSessionKey(f.SESSION_KEY)).toEqual({ providerAgentId: "dev", channelId: f.CHANNEL_ID });
+    expect(parseSessionKey(f.SESSION_KEY)).toEqual({ providerAgentId: "dev", conversationId: f.CHANNEL_ID });
     expect(parseSessionKey(`${f.SESSION_KEY}:sub`)).toBeUndefined();
     expect(parseSessionKey(`${f.SESSION_KEY}:thread:x`)).toBeUndefined();
     expect(parseSessionKey(OTHER_SESSION)).toBeUndefined();
@@ -211,7 +211,7 @@ describe("parseApprovalFrame — 우리 세션만 거른다(전역 이벤트)", 
   it("parseSessionKey 는 스레드 키에서 threadRootId 까지 돌려준다", () => {
     expect(parseSessionKey(`${f.SESSION_KEY}:thread:${THREAD_ROOT.toUpperCase()}`)).toEqual({
       providerAgentId: "dev",
-      channelId: f.CHANNEL_ID,
+      conversationId: f.CHANNEL_ID,
       threadRootId: THREAD_ROOT,
     });
   });
@@ -222,7 +222,11 @@ describe("parseApprovalFrame — 우리 세션만 거른다(전역 이벤트)", 
       "plugin.approval.requested",
       payloadOf(f.pluginApprovalRequested({ sessionKey: threadKey })),
     );
-    expect(a).toMatchObject({ sessionKey: threadKey, channelId: f.CHANNEL_ID, threadRootId: THREAD_ROOT });
+    expect(a).toMatchObject({
+      sessionKey: threadKey,
+      conversationId: f.CHANNEL_ID,
+      threadRootId: THREAD_ROOT,
+    });
     expect(parsed("plugin.approval.requested", payloadOf(f.pluginApprovalRequested()))).not.toHaveProperty(
       "threadRootId",
     );
@@ -612,7 +616,7 @@ describe("parseApprovalReplay — 재접속 되감기(5.3)", () => {
       kind: "plugin",
       status: "pending",
       sessionKey: f.SESSION_KEY,
-      channelId: f.CHANNEL_ID,
+      conversationId: f.CHANNEL_ID,
       expiresAt: EXPIRES_AT,
     });
   });
@@ -661,7 +665,7 @@ describe("resolveParams / parseResolveResult — approval.resolve 왕복(4.1)", 
       reason: "user",
       resolvedAt: RESOLVED_AT,
       sessionKey: f.SESSION_KEY,
-      channelId: f.CHANNEL_ID,
+      conversationId: f.CHANNEL_ID,
     });
   });
 

@@ -20,8 +20,8 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 export const THREAD_ONLY_REASON = "dodok: 이 대화는 스레드라 이 스레드에만 보낼 수 있습니다";
 
 /** message 툴의 `to` 로 쓰는 dodok 대상 문법: `channel:<uuid>` (앞에 `dodok:` 가 붙어도 된다) */
-export function formatDodokTarget(channelId: string): string {
-  return `channel:${channelId}`;
+export function formatDodokTarget(conversationId: string): string {
+  return `channel:${conversationId}`;
 }
 
 export function parseDodokTarget(raw: string): string | null {
@@ -32,8 +32,8 @@ export function parseDodokTarget(raw: string): string | null {
   return UUID_RE.test(value) ? value.toLowerCase() : null;
 }
 
-export function channelIdFromSessionKey(sessionKey: string | null | undefined): string | null {
-  return parseDodokSessionKey(sessionKey ?? undefined)?.channelId ?? null;
+export function conversationIdFromSessionKey(sessionKey: string | null | undefined): string | null {
+  return parseDodokSessionKey(sessionKey ?? undefined)?.conversationId ?? null;
 }
 
 /** 인바운드에서 받은 상관관계 — 응답을 우리 런·원 메시지에 묶는다 */
@@ -110,7 +110,8 @@ function coerceComponents(
 
 export type BuildOutboundInput = {
   outboundId: string;
-  channelId: string;
+  /** OpenClaw 피어 id 와 같은 대화 id */
+  conversationId: string;
   agentId: string;
   sessionKey: string;
   /** 스레드 세션이면 그 루트 id — 세션 키의 스레드 접미사와 같아야 한다 */
@@ -136,7 +137,7 @@ export function buildOutboundMessage(input: BuildOutboundInput): OutboundResult 
   if (!components.ok) return components;
   const message: OutboundMessage = {
     outboundId: input.outboundId,
-    channelId: input.channelId,
+    conversationId: input.conversationId,
     agentId: input.agentId,
     sessionKey: input.sessionKey,
     ...(input.threadId ? { threadId: input.threadId.toLowerCase() } : {}),
@@ -154,7 +155,7 @@ export function buildOutboundMessage(input: BuildOutboundInput): OutboundResult 
     ok: true,
     message: {
       outboundId: message.outboundId,
-      channelId: message.channelId,
+      conversationId: message.conversationId,
       agentId: message.agentId,
       sessionKey: message.sessionKey,
       ...(message.threadId ? { threadId: message.threadId } : {}),
@@ -197,14 +198,14 @@ export type MessageToolSendInput = {
 export function messageToolSendToOutbound(input: MessageToolSendInput): OutboundResult {
   const session = parseDodokSessionKey(input.sessionKey ?? undefined);
   const rawTarget = firstString(input.params, ["to", "target", "channelId"]);
-  const channelId = rawTarget ? parseDodokTarget(rawTarget) : (session?.channelId ?? null);
-  if (!channelId) return { ok: false, error: "to: dodok 채널 id(channel:<uuid>)를 해석할 수 없다" };
+  const conversationId = rawTarget ? parseDodokTarget(rawTarget) : (session?.conversationId ?? null);
+  if (!conversationId) return { ok: false, error: "to: dodok 채널 id(channel:<uuid>)를 해석할 수 없다" };
   const threadId = session?.threadRootId;
   if (threadId) {
     const requested = input.params["threadId"];
     const requestedThread =
       requested === undefined || requested === null || requested === "" ? undefined : String(requested);
-    if (channelId !== session.channelId) return { ok: false, error: THREAD_ONLY_REASON };
+    if (conversationId !== session.conversationId) return { ok: false, error: THREAD_ONLY_REASON };
     if (requestedThread !== undefined && requestedThread.toLowerCase() !== threadId) {
       return { ok: false, error: THREAD_ONLY_REASON };
     }
@@ -219,14 +220,14 @@ export function messageToolSendToOutbound(input: MessageToolSendInput): Outbound
   let sessionKey = input.sessionKey;
   if (!sessionKey) {
     try {
-      sessionKey = dodokSessionKey(agentId, channelId);
+      sessionKey = dodokSessionKey(agentId, conversationId);
     } catch (error) {
       return { ok: false, error: `agentId: ${String(error)}` };
     }
   }
   return buildOutboundMessage({
     outboundId: input.outboundId,
-    channelId,
+    conversationId,
     agentId,
     sessionKey,
     ...(threadId ? { threadId } : {}),

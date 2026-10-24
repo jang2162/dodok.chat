@@ -202,6 +202,7 @@ function delivery(runId: string = randomUUID()): InboundDeliver {
     deliveryId: randomUUID(),
     kind: "message",
     channelId: f.CHANNEL_ID,
+    conversationId: f.CHANNEL_ID,
     agentId: f.PROVIDER_AGENT_ID,
     sessionKey: f.SESSION_KEY,
     runId,

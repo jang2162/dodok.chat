@@ -239,6 +239,7 @@ function baseDeliver(params: {
     deliveryId: randomUUID(),
     kind: "message",
     channelId: CHANNEL_ID,
+    conversationId: CHANNEL_ID,
     agentId: params.agentId,
     sessionKey: `agent:${params.agentId}:dodok:channel:${CHANNEL_ID}`,
     runId: randomUUID(),
