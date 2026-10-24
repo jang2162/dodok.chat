@@ -2,6 +2,7 @@ import type { Run } from "@dodok/shared";
 import { and, eq, gte, sql } from "drizzle-orm";
 import type { Db } from "../../db/client";
 import { conversations, messages } from "../../db/schema.sqlite";
+import { apiError } from "../../http/errors";
 import type { ServerBus } from "../../realtime/bus";
 import { getAgent, isAgentActive } from "../agents/service";
 import { getChannel, isChannelArchived } from "../channels/service";
@@ -21,7 +22,8 @@ export type LimitHit = { scope: "channel" | "workspace"; limit: number };
 export interface RunGate {
   /**
    * 한도 안이면 null. 넘으면 LimitHit — 그 대화의 채널에 오늘 같은 scope 의 run_limit 시스템 메시지가 없으면 그 대화에 남기고 사건
-   * run_limit 을 기록한다. 한도는 채널·워크스페이스 단위다. 스레드에서 막혔으면 알림은 그 스레드에 남는다(하루 한 번은 채널 단위 그대로)
+   * run_limit 을 기록한다. 한도는 채널·워크스페이스 단위다. 스레드에서 막혔으면 알림은 그 스레드에 남는다(하루 한 번은 채널 단위 그대로).
+   * 대화가 없으면 NOT_FOUND 를 던진다
    */
   check(conversationId: string, threadRootId?: string): LimitHit | null;
   /**
@@ -83,8 +85,8 @@ export function createRunGate(deps: {
       .from(conversations)
       .where(eq(conversations.id, conversationId))
       .get()?.channelId;
-    // 대화가 없으면 막을 근거도 알릴 자리도 없다 — 런 행을 넣는 쪽이 대화 FK 로 거절한다
-    if (channelId === undefined) return null;
+    // 통과로 두면 채널 id 처럼 잘못 넘긴 id 가 조용히 「한도 안」이 된다 — check 만 부르는 자리(상호작용)는 FK 로도 못 막는다
+    if (channelId === undefined) throw apiError("NOT_FOUND", "conversation not found");
     const hit = hitOf(channelId, at);
     if (!hit) return null;
     if (!announcedToday(channelId, hit.scope, at)) {

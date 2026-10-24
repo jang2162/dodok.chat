@@ -181,4 +181,10 @@ describe("RunGate", () => {
     gate.check(a.id);
     expect(limitMessages().map((m) => m.channelId)).toEqual([a.id, b.id]);
   });
+
+  it("없는 대화 id 면 NOT_FOUND — 한도 안으로 통과시키지 않는다", () => {
+    expect(() => gate.check(uuid())).toThrow(
+      expect.objectContaining({ body: expect.objectContaining({ code: "NOT_FOUND" }) }),
+    );
+  });
 });

@@ -1,9 +1,10 @@
 import type { Agent, Message, RelayPolicy, Run } from "@dodok/shared";
+import { eq } from "drizzle-orm";
 import { v7 as uuid } from "uuid";
 import { describe, expect, it, vi } from "vitest";
 import type { z } from "zod";
 import type { Db } from "../src/db/client";
-import { componentInteractions } from "../src/db/schema.sqlite";
+import { componentInteractions, conversations } from "../src/db/schema.sqlite";
 import { createAgent, updateAgent } from "../src/modules/agents/service";
 import { addMember, createChannel, removeMember, updateChannel } from "../src/modules/channels/service";
 import { type InteractInput, interact } from "../src/modules/components/service";
@@ -755,5 +756,67 @@ describe("components service — 스레드 안의 카드(스펙 2.2)", () => {
       scope: { threadRootId: t.root.id },
     }).messages.filter((m) => m.systemMeta?.kind === "run_limit");
     expect(notices).toHaveLength(1);
+  });
+});
+
+describe("components service — 채널의 둘째 대화에 있는 카드", () => {
+  /** 채널에 둘째 대화 B 와 B 의 카드 — 카드를 낸 런이 오늘 런 1개다. legacy 가 false 면 「이전 대화」가 없는 채널 */
+  function conversationSetup(opts: { legacy: boolean }) {
+    const t = setup();
+    if (!opts.legacy) t.db.delete(conversations).where(eq(conversations.id, t.channel.id)).run();
+    const conversationId = uuid();
+    t.db
+      .insert(conversations)
+      .values({
+        id: conversationId,
+        channelId: t.channel.id,
+        title: "세션 B",
+        titleSource: "user",
+        createdByType: "user",
+        createdById: t.userId,
+        createdAt: new Date(),
+      })
+      .run();
+    const run = insertRun(t.db, {
+      channelId: t.channel.id,
+      conversationId,
+      agentId: t.dev.id,
+      triggerKind: "mention",
+      rootMessageId: uuid(),
+      relayDepth: 0,
+      sessionKey: `agent:dev:dodok:channel:${conversationId}`,
+      createdAt: new Date(),
+    });
+    const card = createAgentMessage(t.db, t.bus, {
+      conversationId,
+      agentId: t.dev.id,
+      runId: run.id,
+      externalId: "conversation-b-card",
+      bodyMd: "골라 주세요",
+      components: PICKER,
+    });
+    patchOpsSettings(t.db, t.workspaceId, { dailyRunLimit: 1 });
+    return { ...t, conversationId, card };
+  }
+
+  it("한도면 RUN_LIMIT — 상호작용을 저장·소비하지 않는다(「이전 대화」가 없는 채널)", async () => {
+    const t = conversationSetup({ legacy: false });
+    await expect(interact(t.deps, t.click(t.card, "go"))).rejects.toMatchObject({
+      body: { code: "RUN_LIMIT" },
+    });
+    expect(t.interactionRows()).toEqual([]);
+    expect(getMessage(t.db, t.card.id)?.componentState?.consumed).toEqual([]);
+    expect(t.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("run_limit 알림은 「이전 대화」가 아니라 카드가 있는 대화 B 에 남는다", async () => {
+    const t = conversationSetup({ legacy: true });
+    await expect(interact(t.deps, t.click(t.card, "go"))).rejects.toMatchObject({
+      body: { code: "RUN_LIMIT" },
+    });
+    const notices = listMessages(t.db, t.channel.id, { limit: 50 }).messages.filter(
+      (m) => m.systemMeta?.kind === "run_limit",
+    );
+    expect(notices.map((m) => m.conversationId)).toEqual([t.conversationId]);
   });
 });
