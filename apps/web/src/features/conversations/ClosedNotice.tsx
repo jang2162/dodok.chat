@@ -48,7 +48,14 @@ export function ClosedNotice({
           variant="outline"
           size="sm"
           disabled={patch.isPending}
-          onClick={() => patch.mutate({ closed: false }, { onSuccess: () => onReopened?.() })}
+          // mutate 의 콜백이 아니라 promise 로 — 훅의 onSuccess 가 세션 캐시를 열림으로 바꾸면 이 안내가 먼저 언마운트돼 mutate 콜백은
+          // 불리지 않는다(초점이 body 로 떨어졌다). 실패는 전역 오류 처리가 알린다
+          onClick={() =>
+            void patch.mutateAsync({ closed: false }).then(
+              () => onReopened?.(),
+              () => undefined,
+            )
+          }
         >
           다시 열기
         </Button>

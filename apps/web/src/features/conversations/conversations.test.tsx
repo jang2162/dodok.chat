@@ -718,6 +718,35 @@ describe("닫기·다시 열기", () => {
 });
 
 describe("닫힌 세션 — 권한·스레드·리액션·카드", () => {
+  it("[태스크 8 브라우저] 「다시 열기」 응답 전에 안내가 언마운트돼도(세션 캐시가 먼저 열림으로 바뀜) onReopened 가 불린다 — 초점을 작성기로 옮기는 신호", async () => {
+    const { ClosedNotice } = await import("./ClosedNotice");
+    const { renderWithClient } = await import("../../../test/messages");
+    const closedA = conv(A, { closedAt: at(3), closedBy: ME.user.id });
+    stubServer({ conversations: [closedA] });
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const base = globalThis.fetch;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof globalThis.fetch>(async (input, init) => {
+        if ((init?.method ?? "GET") === "PATCH") await gate;
+        return base(input, init);
+      }),
+    );
+    const qc = createQueryClient(() => {});
+    qc.setQueryData(qk.me, { ...ME });
+    const onReopened = vi.fn();
+    const view = renderWithClient(
+      <ClosedNotice channelId={CH} conversation={closedA} reopen onReopened={onReopened} />,
+      qc,
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "다시 열기" }));
+    // 브라우저에서는 훅의 onSuccess(캐시를 열림으로)가 부모를 곧바로 다시 그려 이 안내가 먼저 사라진다
+    view.unmount();
+    release();
+    await waitFor(() => expect(onReopened).toHaveBeenCalledTimes(1));
+  });
+
   it("member 는 남의 닫힌 세션에서 「다시 열기」를 보지 않는다", async () => {
     stubServer({
       role: "member",
