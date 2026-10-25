@@ -1,4 +1,4 @@
-import type { QueryClient } from "@tanstack/react-query";
+import { onlineManager, type QueryClient } from "@tanstack/react-query";
 import {
   type RouterHistory,
   Outlet,
@@ -9,8 +9,9 @@ import {
   redirect,
 } from "@tanstack/react-router";
 import { ApiRequestError } from "@/api/http";
-import { conversationsQuery, meQuery } from "@/api/queries";
+import { conversationsQuery, meQuery, qk } from "@/api/queries";
 import { NEW_CONVERSATION } from "@/features/messages/timeline";
+import type { RecentConversations } from "@/pwa/persist";
 import { SETTINGS_SCROLL_ID, SettingsIndex, SettingsLayout } from "@/features/settings-shell/SettingsLayout";
 import { NotFound } from "./NotFound";
 import { RouteError } from "./RouteError";
@@ -111,18 +112,31 @@ export const indexRoute = createRoute({
 /**
  * 채널 주소를 세션으로 넘긴다(채널 세션 스펙 「웹」 장) — 열린 세션 가운데 최근 활동한 것(목록 REST 는 최근 활동순), 열린 세션이 없으면
  * 새 세션 창. 기록을 바꿔 쓴다(뒤로 가기가 채널 주소에 걸려 다시 넘겨지지 않게). 화면을 그리기 전에 넘긴다 — 사이드바에서 채널을 옮길 때
- * 세션 화면이 그대로 남아 머리·작성기·초점이 갈아 끼워지지 않게. 목록을 받지 못하면(없는 채널·네트워크) 넘기지 않고 화면이 그 사정을
- * 그린다(`ChannelRedirect`). `tail` 은 세션 전의 채널 탭 주소의 탭
+ * 세션 화면이 그대로 남아 머리·작성기·초점이 갈아 끼워지지 않게. `tail` 은 세션 전의 채널 탭 주소의 탭.
+ * 목록을 받을 수 없으면(오프라인·네트워크·5xx) 이 채널의 마지막으로 본 세션(`qk.recentConversations` — 오프라인 사본이 담은 그 세션)으로
+ * 간다. 그것도 없으면 넘기지 않고 화면이 그 사정을 그린다(`ChannelRedirect`). 4xx(없는 채널·틀린 id)는 사본으로 가리지 않는다 —
+ * 화면이 「찾을 수 없음」을 그린다.
+ * 오프라인이면 묻지 않는다: Query 는 오프라인에서 요청을 거절하지 않고 쉬어(`networkMode` 기본 "online") 기다리면 넘김이 끝나지 않는다.
+ * 묻는 사이 오프라인이 되어도 쉬지 않게 이 요청만 `networkMode: "always"` — 재시도가 실패로 끝나 사본으로 간다
  */
 async function toLatestSession(qc: QueryClient, channelId: string, tail?: "settings" | "activity") {
-  let first: string | undefined;
-  try {
-    first = (await qc.fetchQuery({ ...conversationsQuery(channelId, "open"), staleTime: 0 })).conversations[0]
-      ?.id;
-  } catch {
-    return;
+  const lastSeen = () => qc.getQueryData<RecentConversations>(qk.recentConversations)?.[channelId];
+  let conversationId: string | undefined;
+  if (!navigator.onLine || !onlineManager.isOnline()) conversationId = lastSeen();
+  else {
+    try {
+      const list = await qc.fetchQuery({
+        ...conversationsQuery(channelId, "open"),
+        staleTime: 0,
+        networkMode: "always",
+      });
+      conversationId = list.conversations[0]?.id ?? NEW_CONVERSATION;
+    } catch (e) {
+      if (!(e instanceof ApiRequestError && e.status < 500)) conversationId = lastSeen();
+    }
   }
-  const params = { channelId, conversationId: first ?? NEW_CONVERSATION };
+  if (conversationId === undefined) return;
+  const params = { channelId, conversationId };
   if (tail === "settings")
     throw redirect({ to: "/c/$channelId/s/$conversationId/settings", params, replace: true });
   if (tail === "activity")

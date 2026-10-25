@@ -70,7 +70,7 @@ export function Composer({
   const { socket } = useWire();
   const connected = useWireStatus((s) => s.status === "connected");
   const { send } = useSendMessage(channelId, conversationId, threadRootId);
-  const attachments = useComposerAttachments(channelId);
+  const attachments = useComposerAttachments(channelId, conversationId);
   const fileInput = useRef<HTMLInputElement>(null);
   const attachButton = useRef<HTMLButtonElement>(null);
   const typing = useTyping(channelId, conversationId);

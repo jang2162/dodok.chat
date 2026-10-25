@@ -20,6 +20,29 @@ export function ChannelLoading() {
   );
 }
 
+/**
+ * 오프라인이라 채널 주소를 세션으로 넘기지 못했다 — 세션 목록은 사본에 없고 이 채널의 마지막으로 본 세션도 없다(app/router
+ * `toLatestSession`). 연결되면 쉬던 목록 조회가 다시 나가 넘어간다(`ChannelRedirect`)
+ */
+export function ChannelOffline() {
+  const openSidebar = useOpenSidebar();
+  return (
+    <>
+      {openSidebar && (
+        <div className="flex h-14 shrink-0 items-center px-2">
+          <OpenSidebarButton />
+        </div>
+      )}
+      <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
+        <h1 className="text-lg font-semibold">오프라인이라 이 채널을 열 수 없습니다</h1>
+        <p className="text-sm text-muted-foreground">
+          이 기기에 저장된 세션이 없습니다. 연결되면 다시 불러옵니다.
+        </p>
+      </div>
+    </>
+  );
+}
+
 /** 주소의 id 가 틀렸거나(VALIDATION) 없는 채널(404)이면 「찾을 수 없음」, 그 밖은 원인과 「다시 시도」 */
 export function ChannelUnavailable({
   error,

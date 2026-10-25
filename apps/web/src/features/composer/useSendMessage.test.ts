@@ -1,4 +1,4 @@
-import type { Message, Result } from "@dodok/shared";
+import type { ErrorCode, Message, Result } from "@dodok/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { createMemoryHistory, RouterContextProvider } from "@tanstack/react-router";
@@ -444,6 +444,144 @@ describe("새 세션 창(/s/new) — 첫 보내기가 세션을 만든다(채널
     await waitFor(() => expect(history.location.pathname).toBe(`/c/${CH}/s/${NEW_ID}`));
     await waitFor(() => expect(getTimeline(qc, CH, NEW_CONVERSATION)?.pending).toEqual([]));
     expect(getTimeline(qc, CH, NEW_ID)?.items.map((m) => m.bodyMd)).toEqual(["하나", "둘"]);
+  });
+
+  /** 보낸 순서대로 [본문, newConversation 이면 "new" · 아니면 conversationId] */
+  const sentTargets = () =>
+    (fake.sentOf("message.send") as Array<Record<string, unknown>>).map((p) => [
+      p.bodyMd,
+      p.newConversation ? "new" : p.conversationId,
+    ]);
+  const windowOf = (id: string) => getTimeline(qc, CH, id)?.pending.map((p) => [p.bodyMd, p.state]) ?? [];
+  /** 대본: 차례마다 `"timeout"`(ack 없음 — 결과 불명)·오류 코드(서버 거절)·`"ok"`(서버처럼 확정) */
+  function scriptAcks(...turns: Array<"timeout" | "ok" | ErrorCode>) {
+    let n = 0;
+    fake.onAck("message.send", (p) => {
+      const turn = turns[n] ?? "ok";
+      n += 1;
+      if (turn === "timeout") throw new Error("no ack");
+      if (turn === "ok") return created(p, 10 + n);
+      return { ok: false, error: { code: turn, message: "x" } };
+    });
+  }
+
+  it("[t5-review M1] 첫 글이 결과 불명(시간 초과)으로 끝난 뒤 보낸 둘째 글은 그 첫 글을 먼저 같은 clientMsgId·newConversation 으로 다시 보내고 그 세션으로 간다 — 세션은 하나, 창은 빈다", async () => {
+    scriptAcks("timeout", "ok", "ok");
+    const { result, history } = renderNew(`/c/${CH}/s/${NEW_CONVERSATION}`);
+    await act(() => result.current.send("하나"));
+    expect(windowOf(NEW_CONVERSATION)).toEqual([["하나", "failed"]]);
+
+    await act(() => result.current.send("둘"));
+    expect(sentTargets()).toEqual([
+      ["하나", "new"],
+      ["하나", "new"],
+      ["둘", NEW_ID],
+    ]);
+    const ids = (fake.sentOf("message.send") as SendPayload[]).map((p) => p.clientMsgId);
+    expect(ids[1]).toBe(ids[0]);
+    await waitFor(() => expect(history.location.pathname).toBe(`/c/${CH}/s/${NEW_ID}`));
+    await waitFor(() => expect(windowOf(NEW_CONVERSATION)).toEqual([]));
+    expect(getTimeline(qc, CH, NEW_ID)?.items.map((m) => m.bodyMd)).toEqual(["하나", "둘"]);
+    expect(windowOf(NEW_ID)).toEqual([]);
+  });
+
+  it("[t5-review M1] 첫 ack 를 기다리던 둘째 글은 첫 글이 결과 불명으로 끝나면 보내지 않고 실패 — 그 「다시 보내기」가 첫 글을 먼저 다시 보낸다", async () => {
+    let release!: () => void;
+    const acked = new Promise<void>((r) => (release = r));
+    let n = 0;
+    fake.onAck("message.send", async (p) => {
+      n += 1;
+      if (n === 1) {
+        await acked;
+        throw new Error("no ack");
+      }
+      return created(p, 10 + n);
+    });
+    const { result, history } = renderNew(`/c/${CH}/s/${NEW_CONVERSATION}`);
+    let first!: Promise<void>;
+    let second!: Promise<void>;
+    act(() => {
+      first = result.current.send("하나");
+    });
+    act(() => {
+      second = result.current.send("둘");
+    });
+    release();
+    await act(() => Promise.all([first, second]));
+    expect(sentTargets()).toEqual([["하나", "new"]]);
+    expect(windowOf(NEW_CONVERSATION)).toEqual([
+      ["하나", "failed"],
+      ["둘", "failed"],
+    ]);
+
+    const two = getTimeline(qc, CH, NEW_CONVERSATION)?.pending[1]?.clientMsgId ?? "";
+    await act(() => result.current.retry(two));
+    expect(sentTargets()).toEqual([
+      ["하나", "new"],
+      ["하나", "new"],
+      ["둘", NEW_ID],
+    ]);
+    await waitFor(() => expect(history.location.pathname).toBe(`/c/${CH}/s/${NEW_ID}`));
+    await waitFor(() => expect(windowOf(NEW_CONVERSATION)).toEqual([]));
+    expect(getTimeline(qc, CH, NEW_ID)?.items.map((m) => m.bodyMd)).toEqual(["하나", "둘"]);
+  });
+
+  it("[t5-review M1] 첫 글의 다시 보내기도 결과 불명이면 다음 글은 보내지 않고 실패(같은 사유) — 두 항목 모두 창에 남는다", async () => {
+    scriptAcks("timeout", "timeout");
+    const { result, history } = renderNew(`/c/${CH}/s/${NEW_CONVERSATION}`);
+    await act(() => result.current.send("하나"));
+    await act(() => result.current.send("둘"));
+
+    expect(sentTargets()).toEqual([
+      ["하나", "new"],
+      ["하나", "new"],
+    ]);
+    const pending = getTimeline(qc, CH, NEW_CONVERSATION)?.pending ?? [];
+    expect(pending.map((p) => [p.bodyMd, p.state, p.reason])).toEqual([
+      ["하나", "failed", undefined],
+      ["둘", "failed", undefined],
+    ]);
+    expect(history.location.pathname).toBe(`/c/${CH}/s/${NEW_CONVERSATION}`);
+  });
+
+  it("[t5-review M1] 첫 글이 서버에 거절되면(저장되지 않음) 다음 글이 새로 만든다 — 실패한 첫 글은 그 세션으로 옮겨 가고, 그 「다시 보내기」는 그 세션으로", async () => {
+    scriptAcks("VALIDATION", "ok", "ok");
+    const { result, history } = renderNew(`/c/${CH}/s/${NEW_CONVERSATION}`);
+    await act(() => result.current.send("하나"));
+    await act(() => result.current.send("둘"));
+
+    expect(sentTargets()).toEqual([
+      ["하나", "new"],
+      ["둘", "new"],
+    ]);
+    await waitFor(() => expect(history.location.pathname).toBe(`/c/${CH}/s/${NEW_ID}`));
+    await waitFor(() => expect(windowOf(NEW_CONVERSATION)).toEqual([]));
+    expect(windowOf(NEW_ID)).toEqual([["하나", "failed"]]);
+
+    // 주소가 그 세션으로 바뀐 화면의 「다시 보내기」 — 그 세션의 작성기·목록이 쓰는 훅
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: qc }, children);
+    const inSession = renderHook(() => useSendMessage(CH, NEW_ID), { wrapper }).result;
+    const one = getTimeline(qc, CH, NEW_ID)?.pending[0]?.clientMsgId ?? "";
+    await act(() => inSession.current.retry(one));
+    const last = (fake.sentOf("message.send") as Array<Record<string, unknown>>).at(-1);
+    expect(last).toMatchObject({ clientMsgId: one, conversationId: NEW_ID, bodyMd: "하나" });
+    expect(last).not.toHaveProperty("newConversation");
+    expect(windowOf(NEW_ID)).toEqual([]);
+    expect(getTimeline(qc, CH, NEW_ID)?.items.map((m) => m.bodyMd)).toEqual(["둘", "하나"]);
+  });
+
+  it("결과 불명으로 남은 첫 글을 지우면 다음 글이 그것을 다시 보내지 않고 새로 만든다", async () => {
+    scriptAcks("timeout", "ok");
+    const { result } = renderNew(`/c/${CH}/s/${NEW_CONVERSATION}`);
+    await act(() => result.current.send("하나"));
+    const one = getTimeline(qc, CH, NEW_CONVERSATION)?.pending[0]?.clientMsgId ?? "";
+    act(() => result.current.discard(one));
+    await act(() => result.current.send("둘"));
+    expect(sentTargets()).toEqual([
+      ["하나", "new"],
+      ["둘", "new"],
+    ]);
   });
 
   it("ack 가 올 때 이미 다른 곳으로 갔으면 주소를 바꾸지 않는다 — 메시지는 그 세션에, 창의 항목은 지운다", async () => {

@@ -24,8 +24,13 @@ afterEach(() => {
 const svg = () => new File(["<svg/>"], "x.svg", { type: "image/svg+xml" });
 const xhrAt = (i: number) => FakeXhr.all[i] as FakeXhr;
 
+const CONV = "01a00000-0000-7000-8000-000000003001";
+const CONV2 = "01a00000-0000-7000-8000-000000003002";
+
 function renderAttachments(channelId = CH) {
-  return renderHook(({ ch }) => useComposerAttachments(ch), { initialProps: { ch: channelId } });
+  return renderHook(({ ch, conv }) => useComposerAttachments(ch, conv), {
+    initialProps: { ch: channelId, conv: CONV },
+  });
 }
 
 it("add([png, svg]) — 둘 다 칩, svg 는 곧바로 오류(올리지 않음), png 는 올리는 중 → 진행 → done", async () => {
@@ -137,7 +142,7 @@ it("clear — 모두 비우고 URL 을 놓는다", async () => {
 it("채널이 바뀌면 모두 끊고 놓고 비운다 — 새 채널로 올린다", async () => {
   const { result, rerender } = renderAttachments();
   act(() => result.current.add([pngFile("a.png")]));
-  rerender({ ch: CH2 });
+  rerender({ ch: CH2, conv: CONV });
   expect(xhrAt(0).aborted).toBe(true);
   expect(urls.revoke).toHaveBeenCalledWith("blob:1");
   expect(result.current.items).toEqual([]);
@@ -146,6 +151,19 @@ it("채널이 바뀌면 모두 끊고 놓고 비운다 — 새 채널로 올린�
 
   act(() => result.current.add([pngFile("b.png")]));
   expect(xhrAt(1).url).toBe(`/api/v1/attachments?channelId=${CH2}`);
+});
+
+it("[t5-review M2] 같은 채널의 다른 세션으로 옮기면 모두 끊고 놓고 비운다 — 세션 A 에 올린 이미지가 세션 B 로 나가지 않게", async () => {
+  const { result, rerender } = renderAttachments();
+  act(() => result.current.add([pngFile("a.png"), pngFile("b.png")]));
+  await act(async () => xhrAt(0).respond(200, uploaded(1, "a.png")));
+  expect(result.current.ready).toHaveLength(1);
+
+  rerender({ ch: CH, conv: CONV2 });
+  expect(xhrAt(1).aborted).toBe(true);
+  expect(urls.revoke.mock.calls.map(([u]) => u).sort()).toEqual(["blob:1", "blob:2"]);
+  expect(result.current.items).toEqual([]);
+  expect(result.current.ready).toEqual([]);
 });
 
 it("언마운트 때 모두 끊고 놓는다", () => {

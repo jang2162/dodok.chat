@@ -9,7 +9,7 @@ import { PromptSection } from "./PromptSection";
 import { RelayPolicySection } from "./RelayPolicySection";
 
 /**
- * 채널 설정 패널(`/c/$channelId/settings`, 스펙 6.3·6.4) — 보관한 채널이면 편집 대신 안내만. 바깥 틀(패널 ↔ 시트·탭 머리·닫기)은 부모인
+ * 채널 설정 패널(`/c/$channelId/s/$conversationId/settings`, 스펙 6.3·6.4) — 보관한 채널이면 편집 대신 안내만. 바깥 틀(패널 ↔ 시트·탭 머리·닫기)은 부모인
  * ChannelPage 의 `PanelTabs` 가 맡는다 — 활동 탭과 같은 자리를 나눠 쓴다(설계 5.1).
  * ChannelPage 가 채널을 확인한 뒤에만 마운트된다.
  */

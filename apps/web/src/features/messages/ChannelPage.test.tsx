@@ -109,6 +109,17 @@ it("채널을 열면 최근 본 채널(오프라인 사본 대상) 맨 앞에", 
   await waitFor(() => expect(queryClient.getQueryData(qk.recentChannels)).toEqual(["b", "a"]));
 });
 
+it("[t5-review L2] 새 세션 창(/s/new)은 그 채널의 마지막으로 본 세션을 바꾸지 않는다 — 실제 세션의 오프라인 사본이 빠지지 않게", async () => {
+  stubServer();
+  const queryClient = createQueryClient(() => {});
+  const SEEN = "01a00000-0000-7000-8000-000000003009";
+  queryClient.setQueryData(qk.recentConversations, { a: SEEN });
+  renderRoute("/c/a/s/new", queryClient);
+  expect(await screen.findByRole("heading", { name: /general/ })).toBeInTheDocument();
+  await waitFor(() => expect(queryClient.getQueryData(qk.recentChannels)).toEqual(["a"]));
+  expect(queryClient.getQueryData(qk.recentConversations)).toEqual({ a: SEEN });
+});
+
 it("없는 채널(404)은 최근 본 채널에 넣지 않는다", async () => {
   stubServer();
   const { queryClient } = renderRoute("/c/nope");

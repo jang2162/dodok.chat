@@ -1,4 +1,4 @@
-import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
+import { onlineManager, QueryClientProvider, type QueryClient } from "@tanstack/react-query";
 import { RouterProvider, createMemoryHistory, createRootRoute, createRouter } from "@tanstack/react-router";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -118,6 +118,99 @@ describe("채널 주소 — 세션으로 넘긴다(채널 세션 스펙 「웹�
     const panel = await screen.findByTestId("page-channel-panel");
     expect(panel).toHaveAttribute("data-panel-tab", "thread");
     expect(router.state.location.pathname).toBe(`/c/abc/s/${SESSION}/t/root1`);
+  });
+
+  describe("목록을 받을 수 없으면 이 채널의 마지막으로 본 세션(오프라인 사본)으로", () => {
+    const SEEN = "01a00000-0000-7000-8000-000000003002";
+    afterEach(() => onlineManager.setOnline(true));
+
+    /** 로그인·사본(그 채널의 마지막으로 본 세션)이 복원된 클라이언트. 목록 재시도는 기다리지 않는다 */
+    function restored(seen?: string) {
+      const queryClient = createQueryClient(() => {});
+      queryClient.setQueryData(qk.me, ME);
+      if (seen) queryClient.setQueryData(qk.recentConversations, { abc: seen });
+      queryClient.setQueryDefaults(qk.conversations("abc", "open"), { retryDelay: 0 });
+      return queryClient;
+    }
+    /** 셸 기본 응답 + 세션 목록은 `list` 로 — 목록 조회 주소를 모은다 */
+    function serveList(list: () => Response | Promise<Response>) {
+      const lists: string[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn<typeof fetch>(async (input, init) => {
+          const url = String(input);
+          if (/\/channels\/abc\/conversations/.test(url)) {
+            lists.push(url);
+            return list();
+          }
+          return shellGet(input, init) ?? json(200, ME);
+        }),
+      );
+      return lists;
+    }
+    const offline = () => {
+      throw new TypeError("Failed to fetch");
+    };
+
+    it("오프라인이면 목록을 묻지 않고(쉬어 멈추지 않게) 사본의 세션으로 바꿔 간다", async () => {
+      const lists = serveList(offline);
+      onlineManager.setOnline(false);
+      const router = renderAt("/c/abc", restored(SEEN));
+      await waitFor(() => expect(router.state.location.pathname).toBe(`/c/abc/s/${SEEN}`));
+      expect(lists).toEqual([]);
+      expect(router.history.length).toBe(1);
+    });
+
+    it("오프라인이고 사본도 없으면 넘기지 않고 오프라인임을 말한다 — 연결되면 목록을 받아 넘긴다", async () => {
+      let up = false;
+      serveList(() =>
+        up ? json(200, { conversations: [conversationOf("abc", { id: SESSION })] }) : offline(),
+      );
+      onlineManager.setOnline(false);
+      const router = renderAt("/c/abc", restored());
+      expect(await screen.findByText("오프라인이라 이 채널을 열 수 없습니다")).toBeInTheDocument();
+      expect(router.state.location.pathname).toBe("/c/abc");
+
+      up = true;
+      onlineManager.setOnline(true);
+      await waitFor(() => expect(router.state.location.pathname).toBe(`/c/abc/s/${SESSION}`));
+    });
+
+    it("온라인인데 서버가 실패하면(5xx·네트워크) 재시도 뒤 사본의 세션으로", async () => {
+      const lists = serveList(() => json(503, { code: "INTERNAL", message: "down" }));
+      const router = renderAt("/c/abc", restored(SEEN));
+      await waitFor(() => expect(router.state.location.pathname).toBe(`/c/abc/s/${SEEN}`));
+      expect(lists).toHaveLength(3);
+    });
+
+    it("서버가 실패하고 사본도 없으면 넘기지 않고 오류 화면 — 「다시 시도」", async () => {
+      serveList(() => json(503, { code: "INTERNAL", message: "down" }));
+      const router = renderAt("/c/abc", restored());
+      expect(await screen.findByText("채널을 불러오지 못했습니다")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "다시 시도" })).toBeInTheDocument();
+      expect(router.state.location.pathname).toBe("/c/abc");
+    });
+
+    it("없는 채널(404)은 사본으로 가리지 않는다 — 「채널을 찾을 수 없습니다」", async () => {
+      serveList(() => json(404, { code: "NOT_FOUND", message: "channel not found" }));
+      const router = renderAt("/c/abc", restored(SEEN));
+      expect(await screen.findByText("채널을 찾을 수 없습니다")).toBeInTheDocument();
+      expect(router.state.location.pathname).toBe("/c/abc");
+    });
+
+    it("묻는 사이 오프라인이 되어도 재시도가 쉬지 않고 실패로 끝나 사본의 세션으로", async () => {
+      let fail!: () => void;
+      const failed = new Promise<void>((r) => (fail = r));
+      serveList(async () => {
+        await failed;
+        return offline();
+      });
+      const router = renderAt("/c/abc", restored(SEEN));
+      await waitFor(() => expect(router.state.status).toBe("pending"));
+      onlineManager.setOnline(false);
+      fail();
+      await waitFor(() => expect(router.state.location.pathname).toBe(`/c/abc/s/${SEEN}`));
+    });
   });
 
   it("conversationIdOf — 세션 주소의 대화 id(새 세션 창이면 new), 채널 주소·설정이면 없다", () => {
