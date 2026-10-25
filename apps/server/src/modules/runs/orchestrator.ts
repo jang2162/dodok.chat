@@ -863,7 +863,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       // 달린 것을 싣지 않는다. ensureSession 이 돌려준 행의 커서는 판정 전 값이다
       const reactionsSince = getSessionRow(db, session.id)?.reactionsSeenAt ?? null;
       const reactions = pendingReactionsFor(db, {
-        channelId: run.channelId,
+        conversationId: run.conversationId,
         agentId: run.agentId,
         threadRootId: run.threadRootId ?? null,
         since: reactionsSince,

@@ -122,9 +122,10 @@ function isReactionEmoji(value: string): value is ReactionEmoji {
 }
 
 export type PendingReactionsQuery = {
-  channelId: string;
+  /** 세션의 대화 — 같은 채널의 다른 세션에 달린 리액션은 그 세션 몫이다(세션 행마다 커서가 따로라 좁히지 않으면 두 세션에 다 실린다) */
+  conversationId: string;
   agentId: string;
-  /** 스레드 세션이면 그 루트 — 루트와 그 답글이 범위. 없으면 채널 최상위(루트 메시지 자신도 최상위라 채널 세션 범위에 든다) */
+  /** 스레드 세션이면 그 루트 — 루트와 그 답글이 범위. 없으면 대화 최상위(루트 메시지 자신도 최상위라 대화 세션 범위에 든다) */
   threadRootId: string | null;
   /** 세션의 reactions_seen_at. null 이면 실을 것이 없다 */
   since: Date | null;
@@ -142,7 +143,7 @@ export function pendingReactionsFor(db: DbOrTx, q: PendingReactionsQuery): Pendi
     ? or(eq(messages.id, q.threadRootId), eq(messages.threadRootId, q.threadRootId))
     : isNull(messages.threadRootId);
   const where = and(
-    eq(messages.channelId, q.channelId),
+    eq(messages.conversationId, q.conversationId),
     eq(messages.authorType, "agent"),
     eq(messages.authorId, q.agentId),
     eq(messages.kind, "normal"),

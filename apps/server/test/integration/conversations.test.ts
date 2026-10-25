@@ -226,6 +226,63 @@ describe("통합 — 런과 에이전트가 세션 단위로", () => {
     expect(finTurns.map((d) => d.message.text)).toEqual(["@fin 이어서 (세션 A)", "@fin 이어서 (세션 B)"]);
   });
 
+  it("리액션 사실은 그 세션 몫만 — 세션 A 의 에이전트 답에 단 리액션은 B 런에 실리지 않고 A 의 다음 런에 실린다", async () => {
+    live = await bootLiveApp();
+    const { channel, dev } = await setupRelayChannel(live, { maxRelayTurns: 3, allowPairs: "all" });
+    const log = await openChannelWire(live, channel.id, sockets);
+    const scenario = createScenario({
+      gateway: live.gateway,
+      plugin: live.plugin,
+      agents: {
+        dev: ({ delivery }) => ({ reply: `${delivery.conversationTitle} 의 답 ${delivery.message.text}` }),
+        fin: () => ({ reply: "fin" }),
+      },
+    });
+    const doneIn = (conversationId: string, n: number) =>
+      log.until(
+        () =>
+          log.states.filter(
+            (s) => s.agentId === dev.id && s.conversationId === conversationId && s.status === "done",
+          ).length >= n || undefined,
+        `dev 런 ${n}개 done`,
+      );
+
+    const a = (await sendIn(log.socket, channel.id, "@dev A 질문", { newConversation: { title: "세션 A" } }))
+      .conversation;
+    if (!a) throw new Error("세션이 없다");
+    await doneIn(a.id, 1);
+    // B 의 세션 행(리액션 커서)을 A 의 리액션보다 먼저 만든다 — 대화로 좁히지 않으면 B 의 커서 뒤 리액션으로 걸린다
+    const b = (
+      await sendIn(log.socket, channel.id, "@dev B 첫 질문", { newConversation: { title: "세션 B" } })
+    ).conversation;
+    if (!b) throw new Error("세션이 없다");
+    await doneIn(b.id, 1);
+    await scenario.idle();
+
+    const answerA = live.app.db
+      .select()
+      .from(messages)
+      .where(and(eq(messages.conversationId, a.id), eq(messages.authorType, "agent")))
+      .get();
+    if (!answerA) throw new Error("A 의 답이 없다");
+    const reacted = await (log.socket.emitWithAck as (e: string, p: unknown) => Promise<{ ok: boolean }>)(
+      "reaction.set",
+      { messageId: answerA.id, emoji: "👍", on: true },
+    );
+    expect(reacted.ok).toBe(true);
+
+    await sendIn(log.socket, channel.id, "@dev B 둘째 질문", { conversationId: b.id });
+    await doneIn(b.id, 2);
+    await sendIn(log.socket, channel.id, "@dev A 둘째 질문", { conversationId: a.id });
+    await doneIn(a.id, 2);
+    await scenario.idle();
+
+    const devTurns = scenario.turns.filter((t) => t.agentId === "dev").map((t) => t.delivery);
+    const second = (conversationId: string) => devTurns.filter((d) => d.conversationId === conversationId)[1];
+    expect(second(b.id)?.context.reactions ?? []).toEqual([]);
+    expect(second(a.id)?.context.reactions?.map((r) => [r.messageId, r.emoji])).toEqual([[answerA.id, "👍"]]);
+  });
+
   it("[Review Focus 4] 세션 키가 A 인 정본이 같은 채널의 세션 B·다른 채널의 세션으로 오면 — 런이 있든 없든 FORBIDDEN, 저장하지 않는다", async () => {
     live = await bootLiveApp();
     const { channel, dev } = await setupRelayChannel(live, { maxRelayTurns: 3, allowPairs: "all" });

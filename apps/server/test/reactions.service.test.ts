@@ -59,6 +59,8 @@ type Ctx = ReturnType<typeof setup>;
 
 type Post = {
   channelId: string;
+  /** 없으면 그 채널의 최근 열린 대화 */
+  conversationId?: string;
   authorType?: "user" | "agent" | "system";
   authorId: string;
   threadRootId?: string;
@@ -72,7 +74,7 @@ function post(db: Db, p: Post): string {
       .values({
         id,
         channelId: p.channelId,
-        conversationId: channelConversation(tx, p.channelId),
+        conversationId: p.conversationId ?? channelConversation(tx, p.channelId),
         seq: allocateSeq(tx, p.channelId),
         kind: p.authorType === "system" ? "system" : "normal",
         authorType: p.authorType ?? "agent",
@@ -233,7 +235,7 @@ describe("withReactions", () => {
     setReaction(c.db, c.bus, c.workspaceId, c.mia, { messageId: m.id, emoji: "👀", on: true }, at(1));
     expect(c.updated.map((u) => u.id)).toEqual([m.id]);
     expect(hydrateForClient(c.db, [m])[0]?.reactions).toEqual([{ emoji: "👀", count: 1, userIds: [c.mia] }]);
-    const scope = { channelId: c.channelId, threadRootId: null, since: at(0) };
+    const scope = { conversationId: c.conversationId, threadRootId: null, since: at(0) };
     expect(pendingReactionsFor(c.db, { ...scope, agentId: c.agentId })).toEqual({ reactions: [] });
     expect(pendingReactionsFor(c.db, { ...scope, agentId: automationId })).toEqual({ reactions: [] });
   });
@@ -246,7 +248,7 @@ describe("withReactions", () => {
 
 describe("pendingReactionsFor", () => {
   const channelScope = (c: Ctx, since: Date | null, agentId = c.agentId) => ({
-    channelId: c.channelId,
+    conversationId: c.conversationId,
     agentId,
     threadRootId: null,
     since,
@@ -289,6 +291,21 @@ describe("pendingReactionsFor", () => {
     expect(out.omitted).toBeUndefined();
   });
 
+  it("같은 채널의 다른 세션(대화)에 단 리액션은 이 세션 몫이 아니다 — 세션마다 커서가 따로라 좁히지 않으면 두 세션에 다 실린다", () => {
+    const c = setup();
+    const mine = post(c.db, { channelId: c.channelId, authorId: c.agentId });
+    const otherSession = seedConversation(c.db, c.channelId, { createdBy: c.userId, createdAt: T0 });
+    const theirs = post(c.db, { channelId: c.channelId, conversationId: otherSession, authorId: c.agentId });
+    react(c.db, mine, c.mia, "👍", at(10));
+    react(c.db, theirs, c.mia, "👀", at(11));
+
+    expect(pendingReactionsFor(c.db, channelScope(c, at(0))).reactions.map((r) => r.messageId)).toEqual([
+      mine,
+    ]);
+    const other = pendingReactionsFor(c.db, { ...channelScope(c, at(0)), conversationId: otherSession });
+    expect(other.reactions.map((r) => r.messageId)).toEqual([theirs]);
+  });
+
   it("스레드 범위는 루트 + 그 스레드 답글 — 다른 스레드·최상위 글 제외", () => {
     const c = setup();
     const root = post(c.db, { channelId: c.channelId, authorId: c.agentId });
@@ -299,7 +316,7 @@ describe("pendingReactionsFor", () => {
       react(c.db, id, c.mia, "👀", at(10 + i));
 
     const out = pendingReactionsFor(c.db, {
-      channelId: c.channelId,
+      conversationId: c.conversationId,
       agentId: c.agentId,
       threadRootId: root,
       since: at(0),
