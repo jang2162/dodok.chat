@@ -7,7 +7,10 @@ import {
   ApprovalReason,
   ApprovalStatus,
   Channel,
+  ChannelMember,
   Conversation,
+  ConversationList,
+  ConversationPatch,
   Handle,
   INTERACTIONS_MAX,
   Message,
@@ -123,6 +126,43 @@ describe("Conversation", () => {
   it("titleSource 는 user·auto 뿐", () => {
     expect(Conversation.safeParse({ ...base, titleSource: "auto" }).success).toBe(true);
     expect(Conversation.safeParse({ ...base, titleSource: "x" }).success).toBe(false);
+  });
+});
+
+describe("세션 계약(채널 세션 스펙 「데이터」·「권한」·「wire·REST」 장)", () => {
+  const channel = {
+    id: ID(1),
+    workspaceId: ID(2),
+    name: "general",
+    relayPolicy: {},
+    visibility: "public",
+    createdBy: ID(3),
+    createdAt: NOW,
+    archivedAt: null,
+  };
+  it("Channel.sessionPolicy — 없으면 members, managers·members 밖은 거절", () => {
+    expect(Channel.parse(channel).sessionPolicy).toEqual({ create: "members" });
+    expect(Channel.parse({ ...channel, sessionPolicy: { create: "managers" } }).sessionPolicy).toEqual({
+      create: "managers",
+    });
+    expect(Channel.safeParse({ ...channel, sessionPolicy: { create: "all" } }).success).toBe(false);
+  });
+  it("ChannelMember.role — member·manager 만, 없어도 된다(에이전트 행)", () => {
+    const member = { id: ID(4), channelId: ID(1), memberType: "user", memberId: ID(3), joinedAt: NOW };
+    expect(ChannelMember.parse(member).role).toBeUndefined();
+    expect(ChannelMember.parse({ ...member, role: "manager" }).role).toBe("manager");
+    expect(ChannelMember.safeParse({ ...member, role: "owner" }).success).toBe(false);
+  });
+  it("ConversationPatch — title·closed 가운데 하나는 있어야 하고 제목은 1~80자", () => {
+    expect(ConversationPatch.safeParse({}).success).toBe(false);
+    expect(ConversationPatch.safeParse({ closed: true }).success).toBe(true);
+    expect(ConversationPatch.safeParse({ title: "배포 회고" }).success).toBe(true);
+    expect(ConversationPatch.safeParse({ title: "가".repeat(81) }).success).toBe(false);
+    expect(ConversationPatch.safeParse({ title: "  " }).success).toBe(false);
+  });
+  it("ConversationList — nextCursor 는 선택", () => {
+    expect(ConversationList.safeParse({ conversations: [] }).success).toBe(true);
+    expect(ConversationList.safeParse({ conversations: [], nextCursor: "1_x" }).success).toBe(true);
   });
 });
 

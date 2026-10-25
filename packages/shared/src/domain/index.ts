@@ -66,6 +66,10 @@ export const RelayPolicy = z.object({
 });
 export type RelayPolicy = z.infer<typeof RelayPolicy>;
 
+/** 채널마다 누가 새 세션을 만드나(채널 세션 스펙 「권한」 장) — managers 면 그 채널의 세션 관리자와 admin 이상만 */
+export const SessionPolicy = z.object({ create: z.enum(["members", "managers"]) });
+export type SessionPolicy = z.infer<typeof SessionPolicy>;
+
 export const Channel = z.object({
   id: Id,
   workspaceId: Id,
@@ -78,6 +82,7 @@ export const Channel = z.object({
   createdAt: IsoDateTime,
   /** 보관한 시각 — null 이면 살아 있다. 보관한 채널은 누구나 읽고 아무도 쓰지 못한다(보관 해제만 받는다) */
   archivedAt: IsoDateTime.nullable(),
+  sessionPolicy: SessionPolicy.default({ create: "members" }),
 });
 export type Channel = z.infer<typeof Channel>;
 
@@ -101,6 +106,25 @@ export const Conversation = z.object({
 });
 export type Conversation = z.infer<typeof Conversation>;
 
+/** message.send 가 새 세션을 열 때(채널 세션 스펙 「세션 만들기·닫기」 절) — 제목이 없으면 첫 메시지 본문으로 짓는다 */
+export const NewConversation = z.object({ title: ConversationTitle.optional() });
+export type NewConversation = z.infer<typeof NewConversation>;
+
+/** PATCH /conversations/:id — 제목 바꾸기·닫기·다시 열기. 둘 다 있으면 제목부터 */
+export const ConversationPatch = z
+  .object({ title: ConversationTitle.optional(), closed: z.boolean().optional() })
+  .refine((p) => p.title !== undefined || p.closed !== undefined, {
+    message: "title 이나 closed 가운데 하나는 있어야 한다",
+  });
+export type ConversationPatch = z.infer<typeof ConversationPatch>;
+
+/** GET /channels/:id/conversations 한 쪽 — 최근 활동순, nextCursor 가 없으면 끝 */
+export const ConversationList = z.object({
+  conversations: z.array(Conversation),
+  nextCursor: z.string().optional(),
+});
+export type ConversationList = z.infer<typeof ConversationList>;
+
 export const ChannelMember = z.object({
   id: Id,
   channelId: Id,
@@ -109,6 +133,7 @@ export const ChannelMember = z.object({
   promptOverride: z.string().max(20_000).optional(), // agent만
   autoRespond: z.boolean().default(false), // agent만, 채널당 최대 1
   aliases: z.array(Handle).max(8).default([]), // agent만
+  role: z.enum(["member", "manager"]).optional(), // user만 — manager 는 그 채널의 세션 관리자(채널 세션 스펙 「권한」 장)
   joinedAt: IsoDateTime,
 });
 export type ChannelMember = z.infer<typeof ChannelMember>;

@@ -1,6 +1,6 @@
 import { describe, expectTypeOf, it } from "vitest";
 import type { Ack } from "../src/common";
-import type { Message } from "../src/domain";
+import type { Conversation, Message } from "../src/domain";
 import type { OpsEvent, OpsUnacked } from "../src/ops";
 import type { ChannelActivity, ChannelRead, ChannelReadUpdate } from "../src/reads";
 import type { SetupStatus } from "../src/setup";
@@ -33,6 +33,8 @@ describe("wire event maps", () => {
       | "channel.created"
       | "channel.updated"
       | "channel.member.changed"
+      | "conversation.created"
+      | "conversation.updated"
       | "channel.read"
       | "channel.activity"
       | "people.changed"
@@ -73,7 +75,15 @@ describe("wire event maps", () => {
   it("message.send의 페이로드와 ack 타입", () => {
     expectTypeOf<Parameters<ClientToServerEvents["message.send"]>[0]>().toEqualTypeOf<MessageSend>();
     expectTypeOf<Parameters<ClientToServerEvents["message.send"]>[1]>().toEqualTypeOf<
-      Ack<{ message: Message }>
+      Ack<{ message: Message; conversation?: Conversation }>
     >();
+  });
+  it("conversation.created·updated 페이로드는 { conversation }", () => {
+    expectTypeOf<Parameters<ServerToClientEvents["conversation.created"]>[0]>().toEqualTypeOf<{
+      conversation: Conversation;
+    }>();
+    expectTypeOf<Parameters<ServerToClientEvents["conversation.updated"]>[0]>().toEqualTypeOf<{
+      conversation: Conversation;
+    }>();
   });
 });

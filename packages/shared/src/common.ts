@@ -28,6 +28,7 @@ export const ErrorCode = z.enum([
   "MEMBER_DEACTIVATED", // 비활성 멤버 — 로그인은 403, 같은 이메일의 가입은 409(details.userId)
   "CHANNEL_ARCHIVED", // 보관한 채널 — 읽기만 된다. 보내기·상호작용·설정·멤버·첨부 올리기는 거절
   "PUSH_UNAVAILABLE", // 그 플랫폼의 푸시 통로가 꺼져 있다 — 기기 등록은 거절
+  "CONVERSATION_CLOSED", // 닫힌 세션 — 읽기만 된다. 보내기·카드·리액션·첨부 묶기는 거절(다시 열면 된다)
   "INTERNAL",
 ]);
 export type ErrorCode = z.infer<typeof ErrorCode>;
