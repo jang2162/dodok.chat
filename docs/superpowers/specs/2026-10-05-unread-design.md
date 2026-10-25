@@ -220,3 +220,7 @@ export const UnreadSnapshot = z.object({ channels: z.array(ChannelUnread) });
   - 결과로 가기로 들어간 채널에서 「최신 메시지로」를 누르면, 최신 창이 `entryReadSeq` 를 담지 못할 때 배너가 뜬다(누른 적이 없으므로)(t5 관찰 2).
   - 좁은 화면 스레드 시트가 덮은 동안 온 최상위 글은 스토어·다른 탭에서 굵게다. 그 페이지 자신의 사이드바에서는 그 채널이 「보고 있는 채널」이라 굵게 그리지 않는다(t5 항목 10).
   - 새로고침으로 곧장 안 읽은 채널에 들어갔을 때 이 머신에서는 스냅숏이 채널 페이지보다 먼저 와 구분선이 섰다 — 「스냅숏 전 진입은 구분선 없음」은 스냅숏이 늦을 때만 보인다(t4 리뷰 n4, t5 「부가 확인」 콜드 스타트).
+
+**채널 세션 뒤 (채널 세션 스펙 「구현과 맞춘 것」 장)**
+
+- **읽음 위치·현황·전송·구분선 기준의 단위는 대화(세션)다** — seq 는 채널 하나의 번호를 세션이 같이 써서, 채널 단위면 세션 A 의 읽음이 B 의 글을 덮는다. 표는 `conversation_reads`(0028 — 옛 `channel_reads` 는 「이전 대화」로 옮겼다), REST `GET /api/v1/me/unread` 는 대화별 `{ conversationId, channelId, unread, mentions, latestSeq }` + 보관하지 않은 채널 id 목록, wire 는 `conversation.read { conversationId, seq }`(서버 → 그 사용자의 user 룸 `{ conversationId, channelId, lastReadSeq }`), `channel.activity` 는 `conversationId` 를 싣는다. 규칙(굵게·배지·스레드·보관·비활성화·PU1~PU7)은 단위만 바꿔 그대로이고, 사이드바 한 줄은 그 채널 세션들의 합이다(굵게 = 하나라도, 배지 = 합을 99 에서). 세션 목록은 세션마다 점·멘션 배지를 그린다(채널 세션 계획 태스크 7·8).
