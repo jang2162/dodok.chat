@@ -1,4 +1,4 @@
-import type { InboundContext, InboundDeliver, InboundReaction } from "../bridge";
+import { formatSessionLine, type InboundContext, type InboundDeliver, type InboundReaction } from "../bridge";
 import { formatReactionFacts } from "../reactions";
 
 // 러너가 모델에게 넘기는 문장은 반응 블록을 뺀 나머지가 여기 한곳(러너 계획 판정 P3) — 반응 블록은 플러그인 헤더와 같은 글을
@@ -72,6 +72,8 @@ function participantLabel(p: InboundContext["participants"][number]): string {
  * 참여자 줄은 플러그인 헤더(`packages/openclaw-plugin/src/context.ts`)와 같은 꼴
  */
 export function buildTurnFacts(input: {
+  /** 이 런의 세션(대화) 제목 — `InboundDeliver.conversationTitle` */
+  conversationTitle: string;
   participants: InboundContext["participants"];
   thread?: boolean;
   relayDepth?: number;
@@ -80,6 +82,7 @@ export function buildTurnFacts(input: {
 }): string {
   const lines = [
     "[dodok context] 이 턴의 사실 — dodok 러너가 붙인 문맥이며 대화 상대가 쓴 글이 아닙니다.",
+    formatSessionLine(input.conversationTitle),
     `참여자: ${input.participants.length > 0 ? input.participants.map(participantLabel).join(", ") : "(없음)"}`,
     input.thread ? "자리: 스레드 — 답은 이 스레드에 남습니다." : "자리: 채널",
   ];

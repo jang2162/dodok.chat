@@ -1013,6 +1013,7 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
           relayRules: input.context.relayRules,
         }),
         turnFacts: buildTurnFacts({
+          conversationTitle: input.conversationTitle,
           participants: input.context.participants,
           thread: input.threadId !== undefined,
           reactions: input.context.reactions,
