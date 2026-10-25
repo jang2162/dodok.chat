@@ -37,7 +37,7 @@ export const LIMITS = {
     // message.send 가 막힌다(o3-t3 리뷰 I1). 읽기 전용이라 쓰기 경로보다 넉넉하다
     replay: { perMin: 120, burst: 30 },
     approval: { perMin: 60, burst: 20 }, // approval.resolve
-    chatter: { perMin: 120, burst: 30 }, // typing·presence.update·channel.read·reaction.set
+    chatter: { perMin: 120, burst: 30 }, // typing·presence.update·conversation.read·reaction.set
   },
   /**
    * 러너가 보내는 프레임 — 러너 소켓마다 토큰 버킷(러너 어댑터 FRAME_BUCKET). 가장 잦은 것은 텍스트 델타다 — 러너는 모델 텍스트 델타를

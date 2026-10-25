@@ -85,19 +85,54 @@ describe("제어 서비스", () => {
         bodyMd: "답글",
         threadRootId: root.id,
       });
-      const page = expectOk(await call(pat(owner), "read_messages", { channelId: channel.id })) as {
+      const conversationId = root.conversationId;
+      const page = expectOk(await call(pat(owner), "read_messages", { conversationId })) as {
         messages: Array<{ id: string; author: string; text: string; replyCount?: number }>;
       };
       const first = page.messages.find((m) => m.id === root.id);
       expect(first).toMatchObject({ author: "@mia", text: `@${agent.handle} 안녕 **굵게**`, replyCount: 1 });
       expect(root.bodyMd).toContain("<@a:"); // 저장 본문은 토큰이다 — 도구가 푼 것이다
       const thread = expectOk(
-        await call(pat(owner), "read_messages", { channelId: channel.id, threadRootId: root.id }),
+        await call(pat(owner), "read_messages", { conversationId, threadRootId: root.id }),
       ) as { messages: Array<{ author: string; text: string }> };
       expect(thread.messages.map((m) => [m.author, m.text])).toEqual([
         ["@mia", `@${agent.handle} 안녕 **굵게**`],
         [`@${agent.handle}`, "답글"],
       ]);
+    });
+
+    it("read_messages — 그 세션의 글만, 같은 채널의 다른 세션 글·그 세션 밖 스레드는 섞지 않는다", async () => {
+      const { channel } = openRun(app, owner);
+      const here = channelConversation(app.db, channel.id);
+      const side = seedConversation(app.db, channel.id, { title: "곁 세션" });
+      const say = (conversationId: string, bodyMd: string) =>
+        createUserMessage(app.db, app.bus, {
+          conversationId,
+          authorId: owner,
+          bodyMd,
+          clientMsgId: `${conversationId}-${bodyMd}`,
+        });
+      const a1 = say(here, "여기 하나");
+      const b1 = say(side, "저기 하나");
+      const a2 = say(here, "여기 둘");
+      const page = expectOk(await call(pat(owner), "read_messages", { conversationId: here })) as {
+        messages: Array<{ id: string }>;
+      };
+      expect(page.messages.map((m) => m.id)).toEqual([a1.id, a2.id]);
+      const sidePage = expectOk(await call(pat(owner), "read_messages", { conversationId: side })) as {
+        messages: Array<{ id: string }>;
+      };
+      expect(sidePage.messages.map((m) => m.id)).toEqual([b1.id]);
+      // 다른 세션의 루트로 스레드를 읽으면 없는 스레드다
+      expect(
+        errorOf(await call(pat(owner), "read_messages", { conversationId: here, threadRootId: b1.id })),
+      ).toMatchObject({ code: "NOT_FOUND" });
+      // 없는 세션
+      expect(
+        errorOf(
+          await call(pat(owner), "read_messages", { conversationId: "0199a000-0000-7000-8000-00000000dead" }),
+        ),
+      ).toMatchObject({ code: "NOT_FOUND" });
     });
 
     it("search_messages·get_run·ops_status·discover_agents", async () => {

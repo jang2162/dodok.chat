@@ -238,22 +238,23 @@ export const channelMembers = sqliteTable(
 );
 
 /**
- * 사용자 × 채널의 읽음 위치(읽지 않음 스펙 「channel_reads (새 표·새 마이그레이션)」 절) — last_read_seq 는 커지기만 한다(modules/reads/store.ts markRead).
- * 행이 없으면 0 으로 본다. 비활성화·보관은 행을 건드리지 않는다 — 다시 활성화·보관 해제하면 읽음 위치가 그대로 돌아온다
+ * 사용자 × 대화(세션)의 읽음 위치(읽지 않음 스펙 「channel_reads (새 표·새 마이그레이션)」 절을 채널 세션 계획 태스크 7 이 대화 단위로 옮긴 것) —
+ * last_read_seq 는 커지기만 하고 그 대화의 last_seq 로 깎는다(modules/reads/store.ts markRead). seq 는 채널 하나의 번호라 채널 단위로 두면
+ * 세션 A 의 읽음이 seq 가 더 낮은 B 의 글까지 읽음으로 만든다. 행이 없으면 0 으로 본다. 비활성화·보관·닫기는 행을 건드리지 않는다
  */
-export const channelReads = sqliteTable(
-  "channel_reads",
+export const conversationReads = sqliteTable(
+  "conversation_reads",
   {
     userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    channelId: text("channel_id")
+    conversationId: text("conversation_id")
       .notNull()
-      .references(() => channels.id, { onDelete: "cascade" }),
+      .references(() => conversations.id, { onDelete: "cascade" }),
     lastReadSeq: integer("last_read_seq").notNull(),
     updatedAt: ts("updated_at").notNull(),
   },
-  (t) => [primaryKey({ columns: [t.userId, t.channelId] })],
+  (t) => [primaryKey({ columns: [t.userId, t.conversationId] })],
 );
 
 export const messages = sqliteTable(

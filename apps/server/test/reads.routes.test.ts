@@ -16,6 +16,7 @@ describe("GET /api/v1/me/unread", () => {
   let admin: { id: string; token: string };
   let member: { id: string; token: string };
   let channelId: string;
+  let conversationId: string;
 
   beforeAll(async () => {
     app = await bootTestApp();
@@ -27,9 +28,10 @@ describe("GET /api/v1/me/unread", () => {
       createdBy: app.ownerUserId,
       name: "reads-routes",
     }).id;
+    conversationId = channelConversation(app.db, channelId);
     for (const n of [1, 2]) {
       createUserMessage(app.db, app.bus, {
-        conversationId: channelConversation(app.db, channelId),
+        conversationId,
         authorId: app.ownerUserId,
         bodyMd: `m${n}`,
         clientMsgId: `r-${n}`,
@@ -46,7 +48,8 @@ describe("GET /api/v1/me/unread", () => {
       url: "/api/v1/me/unread",
       ...(token ? { headers: { authorization: `Bearer ${token}` } } : {}),
     });
-  const mine = (body: unknown) => UnreadSnapshot.parse(body).channels.find((c) => c.channelId === channelId);
+  const mine = (body: unknown) =>
+    UnreadSnapshot.parse(body).conversations.find((c) => c.conversationId === conversationId);
 
   it("로그인이 없으면 401", async () => {
     expect((await get()).statusCode).toBe(401);
@@ -57,6 +60,7 @@ describe("GET /api/v1/me/unread", () => {
       const res = await get(token);
       expect(res.statusCode).toBe(200);
       expect(mine(res.json())).toEqual({
+        conversationId,
         channelId,
         lastReadSeq: 0,
         latestSeq: 2,
@@ -71,8 +75,19 @@ describe("GET /api/v1/me/unread", () => {
   });
 
   it("다른 사용자의 읽음 위치가 섞이지 않는다 — admin 이 읽어도 member 의 응답은 그대로", async () => {
-    markRead(app.db, app.workspaceId, admin.id, channelId, 2, new Date());
+    markRead(app.db, app.workspaceId, admin.id, conversationId, 2, new Date());
     expect(mine((await get(admin.token)).json())).toMatchObject({ lastReadSeq: 2, unread: false });
     expect(mine((await get(member.token)).json())).toMatchObject({ lastReadSeq: 0, unread: true });
+  });
+
+  it("스냅숏의 channels 는 보관하지 않은 채널 — 대화가 없는 채널도 든다", async () => {
+    const empty = createChannel(app.db, {
+      workspaceId: app.workspaceId,
+      createdBy: app.ownerUserId,
+      name: "reads-routes-empty",
+    }).id;
+    const snap = UnreadSnapshot.parse((await get(member.token)).json());
+    expect(snap.channels).toEqual(expect.arrayContaining([channelId, empty]));
+    expect(snap.conversations.some((c) => c.channelId === empty)).toBe(false);
   });
 });

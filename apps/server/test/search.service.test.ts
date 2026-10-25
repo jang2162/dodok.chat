@@ -246,6 +246,9 @@ describe("3글자 이상 — MATCH", () => {
     expect(ids(t.search("공통검색어", { authorId: t.devId }))).toEqual([a.id]);
     expect(new Set(ids(t.search("공통검색어", { authorType: "user" })))).toEqual(new Set([u.id, o.id]));
     expect(ids(t.search("공통검색어", { channelId: t.otherId }))).toEqual([o.id]);
+    expect(ids(t.search("공통검색어", { conversationId: t.conversationId })).sort()).toEqual(
+      [u.id, a.id].sort(),
+    );
     const localDate = (d: Date) =>
       `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
     const dayOf = (msAgo: number) => localDate(new Date(NOW.getTime() - msAgo));
@@ -253,6 +256,29 @@ describe("3글자 이상 — MATCH", () => {
     expect(ids(t.search("공통검색어", { from: dayOf(DAY), to: dayOf(DAY) }))).toEqual([a.id]);
     expect(new Set(ids(t.search("공통검색어", { from: dayOf(DAY) })))).toEqual(new Set([a.id, o.id]));
     expect(ids(t.search("공통검색어", { to: dayOf(2 * DAY) }))).toEqual([u.id]);
+  });
+
+  it("세션 필터 — 같은 채널의 다른 세션 글은 빼고, 결과는 그 세션 id·지금 제목을 싣는다", () => {
+    const t = setup();
+    const side = seedConversation(t.db, t.channelId, { title: "곁 세션" });
+    const here = t.say("세션필터 여기");
+    const there = createUserMessage(t.db, t.bus, {
+      conversationId: side,
+      authorId: t.userId,
+      bodyMd: "세션필터 저기",
+      clientMsgId: "side-1",
+    });
+    expect(ids(t.search("세션필터", { conversationId: side }))).toEqual([there.id]);
+    expect(ids(t.search("세션필터", { conversationId: t.conversationId }))).toEqual([here.id]);
+    // 채널과 함께 주면 둘 다 맞아야 한다
+    expect(ids(t.search("세션필터", { channelId: t.otherId, conversationId: side }))).toEqual([]);
+    const all = t.search("세션필터").hits;
+    expect(all.map((h) => [h.messageId, h.conversationId, h.conversationTitle]).sort()).toEqual(
+      [
+        [here.id, t.conversationId, "테스트 세션"],
+        [there.id, side, "곁 세션"],
+      ].sort(),
+    );
   });
 
   it("다른 워크스페이스의 메시지는 나오지 않는다", () => {
@@ -784,7 +810,7 @@ describe("@핸들 검색 — 멘션 토큰으로 바꿔 찾는다(색인은 그�
 });
 
 describe("결과 모양", () => {
-  it("messageId·channelId·conversationId·seq·channelArchived·authorType·authorId·createdAt", () => {
+  it("messageId·channelId·conversationId·conversationTitle·seq·channelArchived·authorType·authorId·createdAt", () => {
     const t = setup();
     t.say("앞 메시지");
     const m = t.agentSays("모양검사 본문");
@@ -793,6 +819,7 @@ describe("결과 모양", () => {
       messageId: m.id,
       channelId: t.channelId,
       conversationId: m.conversationId,
+      conversationTitle: "테스트 세션",
       seq: m.seq,
       channelArchived: false,
       authorType: "agent",

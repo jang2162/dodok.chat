@@ -27,6 +27,7 @@ import {
   sendMessage,
   setupRelayChannel,
 } from "../helpers/scenario-steps";
+import { channelConversation } from "../helpers/seed";
 import { type WireClient } from "../helpers/wire";
 
 vi.setConfig({ testTimeout: 20_000, hookTimeout: 20_000 });
@@ -159,15 +160,23 @@ describe("통합 — 네이티브 푸시: FCM", () => {
       JSON.parse(one?.body ?? "{}") as { message: { token: string; data: Record<string, string> } }
     ).message;
     expect(msg.token).toBe(DEVICE_TOKEN);
-    expect(msg.data).toEqual({ url: `/c/${setup.channel.id}`, kind: "mention", channelId: setup.channel.id });
+    expect(msg.data).toEqual({
+      url: `/c/${setup.channel.id}/s/${channelConversation(live!.app.db, setup.channel.id)}`,
+      kind: "mention",
+      channelId: setup.channel.id,
+    });
     expect(scenario.errors).toEqual([]);
   });
 
-  it("그 채널을 보고 있으면 FCM 으로 보내지 않는다", async () => {
+  it("그 세션을 보고 있으면 FCM 으로 보내지 않는다", async () => {
     await boot();
     await registerAndroid();
     const { setup, log } = await startChannel();
-    log.socket.emit("presence.update", { visible: true, channelId: setup.channel.id });
+    log.socket.emit("presence.update", {
+      visible: true,
+      channelId: setup.channel.id,
+      conversationId: channelConversation(live!.app.db, setup.channel.id),
+    });
     await devTurn(log, setup, 0);
     await new Promise((r) => setTimeout(r, 100)); // 보내지 않았다는 것은 잠깐 기다려 본다 — 상한은 없다
     expect(sends).toEqual([]);

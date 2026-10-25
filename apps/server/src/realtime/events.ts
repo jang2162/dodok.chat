@@ -23,7 +23,7 @@ export type WireFanoutOptions = {
 };
 
 /**
- * bus → Socket.IO 팬아웃. 채널 이벤트는 channel:<id> 룸, 승인 둘·channel.created·updated·people.changed·agents.changed·channel.activity 는 workspace:<id> 룸, channel.read 는 그 사용자의 user 룸,
+ * bus → Socket.IO 팬아웃. 채널 이벤트는 channel:<id> 룸, 승인 둘·channel.created·updated·people.changed·agents.changed·channel.activity 는 workspace:<id> 룸, conversation.read 는 그 사용자의 user 룸,
  * adapter.status·system.notice 는 전체(단일 사용자 MVP), setup.status 는 owner·ops.event 는 owner·admin 사용자 룸에만(설정 마법사 결정 6·팀 스펙 「역할과 권한」 표).
  * message.created·updated 는 여기서 상호작용 기록·리액션 집계를 붙인다 — 버스 페이로드는 가볍게 두고, 클라이언트가 보는 Message 는
  * wire 경계에서 한 번 하이드레이션한다(설계 4.2 「클라이언트가 볼 Message 는 항상 하이드레이션을 거친다」).
@@ -121,6 +121,7 @@ export function attachWireFanout(io: WireServer, bus: ServerBus, opts: WireFanou
       if (!message.authorId) return;
       io.to(workspaceRoom(opts.workspaceId)).emit("channel.activity", {
         channelId: message.channelId,
+        conversationId: message.conversationId,
         seq: message.seq,
         ...(message.threadRootId ? { threadRootId: message.threadRootId } : {}),
         authorType,
@@ -128,8 +129,8 @@ export function attachWireFanout(io: WireServer, bus: ServerBus, opts: WireFanou
         mentionedUserIds: message.mentions.users,
       });
     }),
-    on("channel.read", ({ userId, channelId, lastReadSeq }) =>
-      io.to(userRoom(userId)).emit("channel.read", { channelId, lastReadSeq }),
+    on("conversation.read", ({ userId, ...update }) =>
+      io.to(userRoom(userId)).emit("conversation.read", update),
     ),
     on("message.updated", (p) =>
       io

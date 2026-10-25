@@ -1,11 +1,14 @@
 import { z } from "zod";
 import { Id, IsoDateTime } from "../common";
+import { ConversationTitle } from "../domain";
 
 // GET /api/v1/search (스레드·검색 스펙 5.2)
 
 export const SearchQuery = z.object({
   q: z.string().trim().min(2).max(200),
   channelId: Id.optional(),
+  /** 한 세션 안에서만 — 채널과 함께 주면 둘 다 맞아야 한다 */
+  conversationId: Id.optional(),
   authorType: z.enum(["user", "agent"]).optional(),
   authorId: Id.optional(),
   from: z.iso.date().optional(),
@@ -19,6 +22,8 @@ export const SearchHit = z.object({
   channelId: Id,
   /** 그 메시지의 세션 — 결과로 가기가 `/c/<channelId>/s/<conversationId>` 로 간다 */
   conversationId: Id,
+  /** 그 세션의 지금 제목 — 결과 줄에 「#채널 · 제목」으로 보인다 */
+  conversationTitle: ConversationTitle,
   /** 결과로 가기가 `?around=<seq>` 로 그 자리를 받는다 — 답글이면 채널 타임라인은 서버가 그 루트를 가운데로 둔다 */
   seq: z.number().int().min(1),
   threadRootId: Id.optional(),

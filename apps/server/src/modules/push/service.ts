@@ -183,9 +183,12 @@ export function createPushDispatcher(deps: {
   };
 
   const forUser = async (target: PushTarget): Promise<void> => {
-    const { userId, payload } = target;
-    if (presence.isWatching(userId, payload.channelId)) {
-      logger.debug({ userId, channelId: payload.channelId, kind: payload.kind }, "push skipped — watching");
+    const { userId, conversationId, payload } = target;
+    if (presence.isWatching(userId, conversationId)) {
+      logger.debug(
+        { userId, channelId: payload.channelId, conversationId, kind: payload.kind },
+        "push skipped — watching",
+      );
       return;
     }
     const n: PushNotification = { payload, urgency: payload.kind === "approval" ? "high" : "normal" };

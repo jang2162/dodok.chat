@@ -2,7 +2,7 @@ import {
   type ApiError,
   ApprovalResolve,
   type Conversation,
-  ChannelRead,
+  ConversationRead,
   ChannelSubscribe,
   ComponentInteract,
   Id,
@@ -85,7 +85,7 @@ export const WIRE_BUCKET = {
   "approval.resolve": "approval",
   typing: "chatter",
   "presence.update": "chatter",
-  "channel.read": "chatter",
+  "conversation.read": "chatter",
   "reaction.set": "chatter",
 } as const satisfies Record<string, keyof Limits["wire"]>;
 
@@ -274,12 +274,12 @@ export function attachWire(io: WireServer, ctx: WireContext): void {
       );
       // 멱등 재전송은 다시 라우팅하지 않는다(에이전트 런이 두 번 뜬다)
       if (!res.ok || !res.data.created) return;
-      // 최상위를 보내면 작성자 읽음이 그 seq 까지 오른다 — 스레드 답글은 채널 끝을 보지 않고도 쓸 수 있어 올리지 않는다
+      // 최상위를 보내면 작성자 읽음이 그 세션에서 그 seq 까지 오른다 — 스레드 답글은 세션 끝을 보지 않고도 쓸 수 있어 올리지 않는다
       if (res.data.message.threadRootId === undefined) {
         try {
-          const { channelId, seq } = res.data.message;
-          const lastReadSeq = markRead(ctx.db, ctx.workspaceId, userId, channelId, seq, new Date());
-          ctx.bus.emit("channel.read", { userId, channelId, lastReadSeq });
+          const { channelId, conversationId, seq } = res.data.message;
+          const lastReadSeq = markRead(ctx.db, ctx.workspaceId, userId, conversationId, seq, new Date());
+          ctx.bus.emit("conversation.read", { userId, conversationId, channelId, lastReadSeq });
         } catch (err) {
           ctx.logger.warn({ err, messageId: res.data.message.id }, "author read mark failed");
         }
@@ -291,13 +291,14 @@ export function attachWire(io: WireServer, ctx: WireContext): void {
       }
     });
 
-    // 보관한 채널도 받는다 — 읽기는 막지 않으므로 assertChannelWritable 을 쓰지 않는다
-    socket.on("channel.read", async (raw: unknown, ack: unknown) => {
-      if (limited("channel.read")) return reply(ack, RATE_LIMITED);
-      const res = await settle(ctx.logger, "channel.read", async () => {
-        const { channelId, seq } = parsePayload(ChannelRead, raw);
-        const lastReadSeq = markRead(ctx.db, ctx.workspaceId, userId, channelId, seq, new Date());
-        ctx.bus.emit("channel.read", { userId, channelId, lastReadSeq });
+    // 보관한 채널·닫힌 세션도 받는다 — 읽기는 막지 않으므로 assertChannelWritable·assertConversationWritable 을 쓰지 않는다
+    socket.on("conversation.read", async (raw: unknown, ack: unknown) => {
+      if (limited("conversation.read")) return reply(ack, RATE_LIMITED);
+      const res = await settle(ctx.logger, "conversation.read", async () => {
+        const { conversationId, seq } = parsePayload(ConversationRead, raw);
+        const lastReadSeq = markRead(ctx.db, ctx.workspaceId, userId, conversationId, seq, new Date());
+        const channelId = getConversation(ctx.db, conversationId, ctx.workspaceId)?.channelId;
+        if (channelId) ctx.bus.emit("conversation.read", { userId, conversationId, channelId, lastReadSeq });
         return { lastReadSeq };
       });
       reply(ack, res);

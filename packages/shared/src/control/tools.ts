@@ -89,12 +89,13 @@ export const CONTROL_TOOLS = [
     name: "read_messages",
     access: "read",
     description:
-      `Read up to ${CONTROL_READ_MESSAGES_MAX} messages from a channel, or from one thread when threadRootId is given. ` +
+      `Read up to ${CONTROL_READ_MESSAGES_MAX} messages from one session of a channel (conversationId — search_messages returns it), ` +
+      "or from one thread in that session when threadRootId is given. " +
       "Mentions are shown as @handle. Page with beforeSeq/afterSeq, or center on a message with around. " +
       CONTROL_UNTRUSTED_CONTENT_NOTICE,
     input: z
       .object({
-        channelId: Id,
+        conversationId: Id,
         threadRootId: Id.optional(),
         beforeSeq: z.int().min(1).optional(),
         afterSeq: z.int().min(0).optional(),

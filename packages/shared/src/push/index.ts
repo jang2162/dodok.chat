@@ -58,7 +58,7 @@ export const PushPayload = z.object({
   channelId: Id,
   title: z.string().max(80),
   body: z.string().max(200),
-  url: z.string().max(200), // 같은 출처 상대 경로(/c/<uuid>·/c/<uuid>/activity·/c/<uuid>/t/<uuid>) — 서비스 워커가 다시 거른다
+  url: z.string().max(200), // 같은 출처 상대 경로(/c/<채널>/s/<세션>·…/activity·…/t/<루트>) — 서비스 워커가 다시 거른다(apps/web/src/pwa/sw-logic.ts SAFE_URL)
   tag: z.string().max(80),
 });
 export type PushPayload = z.infer<typeof PushPayload>;

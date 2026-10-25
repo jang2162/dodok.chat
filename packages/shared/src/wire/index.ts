@@ -16,7 +16,7 @@ import {
 import { RunEvent } from "../events";
 import type { Person } from "../members";
 import type { OpsEvent, OpsUnacked } from "../ops";
-import type { ChannelActivity, ChannelRead, ChannelReadUpdate } from "../reads";
+import type { ChannelActivity, ConversationRead, ConversationReadUpdate } from "../reads";
 import type { SetupStatus } from "../setup";
 
 // ── 클라이언트 → 서버 (ack 있음) ──
@@ -109,7 +109,7 @@ export interface ClientToServerEvents {
   "reaction.set": (p: ReactionSet, ack: Ack<null>) => void;
   typing: (p: Typing) => void; // ack 없음, 클라이언트가 3초 스로틀
   "presence.update": (p: PresenceUpdate) => void; // ack 없음
-  "channel.read": (p: ChannelRead, ack: Ack<{ lastReadSeq: number }>) => void; // ack 은 저장된(커지기만 하는) 읽음 위치
+  "conversation.read": (p: ConversationRead, ack: Ack<{ lastReadSeq: number }>) => void; // ack 은 저장된(커지기만 하는) 읽음 위치
 }
 
 // ── 서버 → 클라이언트 (룸 channel:<id> 또는 user:<id>) ──
@@ -157,8 +157,8 @@ export interface ServerToClientEvents {
   "channel.member.changed": (p: { channelId: Id; members: ChannelMember[] }) => void;
   "conversation.created": (p: { conversation: Conversation }) => void; // 채널 룸
   "conversation.updated": (p: { conversation: Conversation }) => void; // 채널 룸 — 제목·닫기·다시 열기
-  "channel.read": (p: ChannelReadUpdate) => void; // user 룸 — 같은 사용자의 다른 기기·탭이 읽음을 맞춘다(보낸 소켓도 받는다)
-  "channel.activity": (p: ChannelActivity) => void; // workspace 룸 — 본문 없음, 구독하지 않은 채널의 새 글을 사이드바가 안다
+  "conversation.read": (p: ConversationReadUpdate) => void; // user 룸 — 같은 사용자의 다른 기기·탭이 읽음을 맞춘다(보낸 소켓도 받는다)
+  "channel.activity": (p: ChannelActivity) => void; // workspace 룸 — 본문 없음, 구독하지 않은 채널·보지 않는 세션의 새 글을 사이드바·세션 목록이 안다
   "people.changed": (p: { people: Person[] }) => void; // workspace 룸 — 가입·역할·표시 이름·비활성화·다시 활성화 뒤 전체 목록
   // workspace 룸 — 에이전트 등록·수정·옮기기·보관·되살리기 뒤. 본문이 없다: 받은 쪽이 에이전트·채널 멤버 목록을 다시 받는다
   "agents.changed": (p: Record<string, never>) => void;

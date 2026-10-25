@@ -15,15 +15,23 @@ export type TriggerLookups = {
   /** 보관한 채널이면 true — 그 채널을 겨눈 알림은 보내지 않는다(채널 보관 스펙 「보관할 때 서버가 하는 일」 절) */
   channelArchived(id: string): boolean;
 };
-export type PushTarget = { userId: string; payload: PushPayload };
+/**
+ * `conversationId` 는 거르기(「그 세션을 보고 있으면 안 보냄」 — 채널 세션 계획 판정 PS7)에만 쓰고 페이로드에는 싣지 않는다 — 같은 채널의
+ * 다른 세션을 보고 있는 사람에게는 간다
+ */
+export type PushTarget = { userId: string; conversationId: string; payload: PushPayload };
 
 const TITLE = "dodok";
 const channelLabel = (l: TriggerLookups, id: string) => l.channelName(id) ?? "채널";
-/** 스레드 안 메시지면 「#채널 스레드」, 누르면 그 스레드(웹 /c/<id>/t/<rootId>) */
-const placeOf = (l: TriggerLookups, m: Message) =>
-  m.threadRootId === undefined
-    ? { label: `#${channelLabel(l, m.channelId)}`, url: `/c/${m.channelId}` }
-    : { label: `#${channelLabel(l, m.channelId)} 스레드`, url: `/c/${m.channelId}/t/${m.threadRootId}` };
+/** 누르면 그 세션(웹 /c/<채널>/s/<세션>) — 꼴을 바꾸면 서비스 워커의 허용 꼴(apps/web/src/pwa/sw-logic.ts SAFE_URL)도 함께 바꾼다 */
+const sessionUrl = (channelId: string, conversationId: string) => `/c/${channelId}/s/${conversationId}`;
+/** 스레드 안 메시지면 「#채널 스레드」, 누르면 그 세션의 그 스레드(…/t/<rootId>) */
+const placeOf = (l: TriggerLookups, m: Message) => {
+  const session = sessionUrl(m.channelId, m.conversationId);
+  return m.threadRootId === undefined
+    ? { label: `#${channelLabel(l, m.channelId)}`, url: session }
+    : { label: `#${channelLabel(l, m.channelId)} 스레드`, url: `${session}/t/${m.threadRootId}` };
+};
 
 /** 멘션 알림의 보낸 이 — 사람·에이전트는 「@핸들이」, 자동화는 「자동화 <이름>이」(지웠으면 「자동화가」), 모르면 「누군가가」 */
 function whoOf(m: Message, l: TriggerLookups): string {
@@ -45,15 +53,17 @@ export function targetsForMessage(m: Message, l: TriggerLookups): PushTarget[] {
     if (m.systemMeta?.kind !== "relay_limit") return [];
     const place = placeOf(l, m);
     const body = `${place.label}의 에이전트 대화가 한도에 닿았습니다`;
+    // 릴레이 사슬은 세션 안에서만 이어진다 — 세션마다 따로 바꿔 끼운다(uuid 라 80자 안)
     return l.humanMembers(m.channelId).map((userId) => ({
       userId,
+      conversationId: m.conversationId,
       payload: {
         kind: "relay_limit",
         channelId: m.channelId,
         title: TITLE,
         body,
         url: place.url,
-        tag: `relay:${m.channelId}`,
+        tag: `relay:${m.conversationId}`,
       },
     }));
   }
@@ -64,10 +74,11 @@ export function targetsForMessage(m: Message, l: TriggerLookups): PushTarget[] {
   if (receivers.length === 0) return [];
   const place = placeOf(l, m);
   const body = `${whoOf(m, l)} ${place.label}에서 불렀습니다`;
-  // 같은 tag 는 푸시 서비스가 바꿔 끼운다 — 스레드마다 따로 둔다(80자 상한이라 채널 id 는 빼고 루트 id 만)
-  const tag = m.threadRootId === undefined ? `mention:${m.channelId}` : `mention:t:${m.threadRootId}`;
+  // 같은 tag 는 푸시 서비스가 바꿔 끼운다 — 세션·스레드마다 따로 둔다(80자 상한이라 채널 id 는 빼고 세션 id·루트 id 만)
+  const tag = m.threadRootId === undefined ? `mention:${m.conversationId}` : `mention:t:${m.threadRootId}`;
   return receivers.map((userId) => ({
     userId,
+    conversationId: m.conversationId,
     payload: {
       kind: "mention",
       channelId: m.channelId,
@@ -86,12 +97,13 @@ export function targetsForApproval(a: Approval, l: TriggerLookups): PushTarget[]
     a.kind === "dodok_control" ? (a.requestedBy === undefined ? [] : [a.requestedBy]) : l.admins();
   return receivers.map((userId) => ({
     userId,
+    conversationId: a.conversationId,
     payload: {
       kind: "approval",
       channelId: a.channelId,
       title: TITLE,
       body,
-      url: `/c/${a.channelId}/activity`,
+      url: `${sessionUrl(a.channelId, a.conversationId)}/activity`,
       tag: `approval:${a.id}`,
     },
   }));

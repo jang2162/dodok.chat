@@ -83,7 +83,7 @@ describe("CONTROL_TOOLS", () => {
 
   it("JSON Schema 는 입력 기준 — 기본값이 있는 필드는 required 에 없다", () => {
     const schema = (name: ControlToolName) => controlToolJsonSchema(findControlTool(name));
-    expect(schema("read_messages").required).toEqual(["channelId"]);
+    expect(schema("read_messages").required).toEqual(["conversationId"]);
     expect(schema("register_agent").required).not.toContain("provider");
     expect(schema("register_agent").required).not.toContain("enabled");
     expect(schema("add_channel_agent").required).toEqual(["channelId", "agentId"]);
@@ -95,10 +95,13 @@ describe("CONTROL_TOOLS", () => {
       get_channel: [["channelId"], ["channelId"]],
       list_agents: [[], []],
       list_people: [[], []],
-      search_messages: [["authorId", "authorType", "channelId", "cursor", "from", "q", "to"], ["q"]],
+      search_messages: [
+        ["authorId", "authorType", "channelId", "conversationId", "cursor", "from", "q", "to"],
+        ["q"],
+      ],
       read_messages: [
-        ["afterSeq", "around", "beforeSeq", "channelId", "limit", "threadRootId"],
-        ["channelId"],
+        ["afterSeq", "around", "beforeSeq", "conversationId", "limit", "threadRootId"],
+        ["conversationId"],
       ],
       get_run: [["runId"], ["runId"]],
       ops_status: [[], []],
@@ -243,12 +246,14 @@ describe("도구 입력 — REST 본문 스키마를 재사용한다", () => {
 
   it("read_messages: 한 번에 50개까지, around 는 beforeSeq·afterSeq 와 함께 쓸 수 없다", () => {
     const parse = (q: object) =>
-      findControlTool("read_messages").input.safeParse({ channelId: ID, ...q }).success;
+      findControlTool("read_messages").input.safeParse({ conversationId: ID, ...q }).success;
     expect(CONTROL_READ_MESSAGES_MAX).toBe(50);
     expect(parse({ limit: 50 })).toBe(true);
     expect(parse({ limit: 51 })).toBe(false);
     expect(parse({ around: 10, beforeSeq: 5 })).toBe(false);
     expect(parse({ threadRootId: ID2, around: 10 })).toBe(true);
+    // 채널 단위로는 읽지 않는다 — 세션이 섞인다
+    expect(findControlTool("read_messages").input.safeParse({ channelId: ID }).success).toBe(false);
   });
 
   it("search_messages 는 검색 API 질의 그대로 — 2글자 미만 거절", () => {

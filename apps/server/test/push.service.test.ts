@@ -106,14 +106,17 @@ describe("push service — listSubscriptions·deleteSubscriptionById", () => {
 
 const CH = "0199a000-0000-7000-8000-000000000001";
 const OTHER = "0199a000-0000-7000-8000-000000000002";
+/** CH 의 세션 둘 — 거르기는 세션 단위다(채널 세션 계획 판정 PS7) */
+const CONV = "0199a000-0000-7000-8000-000000000011";
+const CONV_B = "0199a000-0000-7000-8000-000000000012";
 const BODY = "@dev가 #프로젝트에서 불렀습니다";
 const mention = (channelId = CH): PushPayload => ({
   kind: "mention",
   channelId,
   title: "dodok",
   body: BODY,
-  url: `/c/${channelId}`,
-  tag: `mention:${channelId}`,
+  url: `/c/${channelId}/s/${CONV}`,
+  tag: `mention:${CONV}`,
 });
 
 function captureLogger() {
@@ -202,11 +205,11 @@ describe("createPushDispatcher — 발송·거르기·결과 분기(스펙 5.3·
   });
 
   it("사용자 구독 둘 → 두 번, 본문은 JSON.stringify(payload), TTL 3600·urgency normal·topic", async () => {
-    await dispatcher().dispatch([{ userId: alice, payload: mention() }]);
+    await dispatcher().dispatch([{ userId: alice, conversationId: CONV, payload: mention() }]);
     expect(calls.map((c) => c.endpoint).sort()).toEqual([EP_A1, EP_A2].sort());
     for (const c of calls) {
       expect(c.body).toBe(JSON.stringify(mention()));
-      expect(c.opts).toEqual({ TTL: 3600, urgency: "normal", topic: pushTopic(`mention:${CH}`) });
+      expect(c.opts).toEqual({ TTL: 3600, urgency: "normal", topic: pushTopic(`mention:${CONV}`) });
     }
     expect(calls.find((c) => c.endpoint === EP_A1)?.keys).toEqual(KEYS_A);
     // 남의 구독에는 가지 않는다
@@ -224,8 +227,8 @@ describe("createPushDispatcher — 발송·거르기·결과 분기(스펙 5.3·
     };
     const relay: PushPayload = { ...approval, kind: "relay_limit", url: `/c/${CH}`, tag: `relay:${CH}` };
     await dispatcher().dispatch([
-      { userId: bob, payload: approval },
-      { userId: bob, payload: relay },
+      { userId: bob, conversationId: CONV, payload: approval },
+      { userId: bob, conversationId: CONV, payload: relay },
     ]);
     expect(calls.map((c) => c.opts)).toEqual([
       { TTL: 3600, urgency: "high", topic: pushTopic(`approval:${OTHER}`) },
@@ -233,34 +236,57 @@ describe("createPushDispatcher — 발송·거르기·결과 분기(스펙 5.3·
     ]);
   });
 
-  it("[Review Focus 3] 그 채널을 보이는 탭으로 보고 있으면 보내지 않는다 — 다른 채널·백그라운드면 보낸다", async () => {
-    presence.set("s1", alice, { visible: true, channelId: CH });
+  it("[Review Focus 3] 그 세션을 보이는 탭으로 보고 있으면 보내지 않는다 — 다른 채널·백그라운드면 보낸다", async () => {
+    presence.set("s1", alice, { visible: true, channelId: CH, conversationId: CONV });
     await dispatcher().dispatch([
-      { userId: alice, payload: mention(CH) },
-      { userId: bob, payload: mention(CH) },
+      { userId: alice, conversationId: CONV, payload: mention(CH) },
+      { userId: bob, conversationId: CONV, payload: mention(CH) },
     ]);
     expect(calls.map((c) => c.endpoint)).toEqual([EP_B]);
 
     calls = [];
-    await dispatcher().dispatch([{ userId: alice, payload: mention(OTHER) }]);
+    await dispatcher().dispatch([{ userId: alice, conversationId: uuid(), payload: mention(OTHER) }]);
     expect(calls).toHaveLength(2);
 
     calls = [];
-    presence.set("s1", alice, { visible: false, channelId: CH });
-    await dispatcher().dispatch([{ userId: alice, payload: mention(CH) }]);
+    presence.set("s1", alice, { visible: false, channelId: CH, conversationId: CONV });
+    await dispatcher().dispatch([{ userId: alice, conversationId: CONV, payload: mention(CH) }]);
+    expect(calls).toHaveLength(2);
+  });
+
+  it("[판정 PS7] 같은 채널의 다른 세션을 보고 있으면 보낸다 — 거르기는 채널이 아니라 세션 단위", async () => {
+    presence.set("s1", alice, { visible: true, channelId: CH, conversationId: CONV });
+    await dispatcher().dispatch([{ userId: alice, conversationId: CONV_B, payload: mention(CH) }]);
+    expect(calls.map((c) => c.endpoint).sort()).toEqual([EP_A1, EP_A2].sort());
+
+    // 세션이 없는 화면(새 세션 창·채널 밖)은 같은 채널이어도 아무것도 거르지 않는다
+    calls = [];
+    presence.set("s1", alice, { visible: true, channelId: CH });
+    await dispatcher().dispatch([{ userId: alice, conversationId: CONV, payload: mention(CH) }]);
     expect(calls).toHaveLength(2);
   });
 
   it("[p4-c1] 거르기·성공 발송은 debug 한 줄씩 — 필드는 정해진 것만(다음 실연이 억제·발송·미도착을 가르게)", async () => {
-    presence.set("s1", alice, { visible: true, channelId: CH });
+    presence.set("s1", alice, { visible: true, channelId: CH, conversationId: CONV });
     await dispatcher().dispatch([
-      { userId: alice, payload: mention(CH) },
-      { userId: bob, payload: mention(CH) },
+      { userId: alice, conversationId: CONV, payload: mention(CH) },
+      { userId: bob, conversationId: CONV, payload: mention(CH) },
     ]);
     const skipped = cap.lines.filter((l) => l.msg === "push skipped — watching");
     expect(skipped).toHaveLength(1);
-    expect(skipped[0]).toMatchObject({ level: 20, userId: alice, channelId: CH, kind: "mention" });
-    expect(fieldsOf(skipped[0] as Record<string, unknown>)).toEqual(["channelId", "kind", "userId"]);
+    expect(skipped[0]).toMatchObject({
+      level: 20,
+      userId: alice,
+      channelId: CH,
+      conversationId: CONV,
+      kind: "mention",
+    });
+    expect(fieldsOf(skipped[0] as Record<string, unknown>)).toEqual([
+      "channelId",
+      "conversationId",
+      "kind",
+      "userId",
+    ]);
 
     const sent = cap.lines.filter((l) => l.msg === "push sent");
     expect(sent).toHaveLength(1); // bob 의 구독 하나
@@ -285,7 +311,7 @@ describe("createPushDispatcher — 발송·거르기·결과 분기(스펙 5.3·
   });
 
   it("구독이 없는 사람·빈 목록은 보내지 않는다", async () => {
-    await dispatcher().dispatch([{ userId: uuid(), payload: mention() }]);
+    await dispatcher().dispatch([{ userId: uuid(), conversationId: CONV, payload: mention() }]);
     await dispatcher().dispatch([]);
     expect(calls).toEqual([]);
   });
@@ -293,8 +319,8 @@ describe("createPushDispatcher — 발송·거르기·결과 분기(스펙 5.3·
   it("404·410 → 그 구독만 지운다(다른 구독·남의 구독은 남는다)", async () => {
     respond = async (c) => ({ statusCode: c.endpoint === EP_A1 ? 410 : c.endpoint === EP_A2 ? 404 : 201 });
     await dispatcher().dispatch([
-      { userId: alice, payload: mention() },
-      { userId: bob, payload: mention() },
+      { userId: alice, conversationId: CONV, payload: mention() },
+      { userId: bob, conversationId: CONV, payload: mention() },
     ]);
     expect(endpoints(alice)).toEqual([]);
     expect(endpoints(bob)).toEqual([EP_B]);
@@ -303,7 +329,7 @@ describe("createPushDispatcher — 발송·거르기·결과 분기(스펙 5.3·
     upsertSubscription(db, seedSession(db, alice), { endpoint: EP_A1, keys: KEYS_A });
     upsertSubscription(db, seedSession(db, alice), { endpoint: EP_A2, keys: KEYS_A2 });
     respond = async (c) => ({ statusCode: c.endpoint === EP_A2 ? 410 : 201 });
-    await dispatcher().dispatch([{ userId: alice, payload: mention() }]);
+    await dispatcher().dispatch([{ userId: alice, conversationId: CONV, payload: mention() }]);
     expect(endpoints(alice)).toEqual([EP_A1]);
   });
 
@@ -311,7 +337,7 @@ describe("createPushDispatcher — 발송·거르기·결과 분기(스펙 5.3·
     for (const statusCode of [400, 403, 413]) {
       cap = captureLogger();
       respond = async () => ({ statusCode });
-      await dispatcher().dispatch([{ userId: bob, payload: mention() }]);
+      await dispatcher().dispatch([{ userId: bob, conversationId: CONV, payload: mention() }]);
       expect(endpoints(bob)).toEqual([EP_B]);
       const errors = cap.lines.filter((l) => l.level === 50);
       expect(errors).toHaveLength(1);
@@ -336,7 +362,9 @@ describe("createPushDispatcher — 발송·거르기·결과 분기(스펙 5.3·
       cap = captureLogger();
       calls = [];
       respond = (c) => (c.endpoint === EP_A1 ? fail() : Promise.resolve({ statusCode: 201 }));
-      await expect(dispatcher().dispatch([{ userId: alice, payload: mention() }])).resolves.toBeUndefined();
+      await expect(
+        dispatcher().dispatch([{ userId: alice, conversationId: CONV, payload: mention() }]),
+      ).resolves.toBeUndefined();
       expect(calls.map((c) => c.endpoint).sort()).toEqual([EP_A1, EP_A2].sort());
       expect(endpoints(alice)).toEqual([EP_A1, EP_A2].sort());
       const warns = cap.lines.filter((l) => l.level === 40);
@@ -351,8 +379,8 @@ describe("createPushDispatcher — 발송·거르기·결과 분기(스펙 5.3·
       return { statusCode: 201 };
     };
     await dispatcher().dispatch([
-      { userId: alice, payload: mention() },
-      { userId: bob, payload: mention() },
+      { userId: alice, conversationId: CONV, payload: mention() },
+      { userId: bob, conversationId: CONV, payload: mention() },
     ]);
     expect(calls.map((c) => c.endpoint)).toContain(EP_B);
   });
@@ -382,7 +410,7 @@ describe("createPushDispatcher — 발송·거르기·결과 분기(스펙 5.3·
     ];
     for (const outcome of outcomes) {
       respond = () => outcome();
-      await dispatcher().dispatch([{ userId: alice, payload: mention() }]);
+      await dispatcher().dispatch([{ userId: alice, conversationId: CONV, payload: mention() }]);
     }
     const all = cap.raw.join("\n");
     expect(cap.lines.length).toBeGreaterThanOrEqual(outcomes.length * 2);
@@ -412,7 +440,9 @@ describe("createPushDispatcher — 발송·거르기·결과 분기(스펙 5.3·
 
   it("DB 가 닫혀 있어도 dispatch 는 던지지 않고 error 로그만 남긴다", async () => {
     db.$client.close();
-    await expect(dispatcher().dispatch([{ userId: alice, payload: mention() }])).resolves.toBeUndefined();
+    await expect(
+      dispatcher().dispatch([{ userId: alice, conversationId: CONV, payload: mention() }]),
+    ).resolves.toBeUndefined();
     expect(cap.lines.filter((l) => l.level === 50)).toHaveLength(1);
     // [리뷰 m1] 사용자 단위 실패 로그도 허용 필드만 — 오류 객체·페이로드는 없다
     expect(cap.lines).toHaveLength(1);
@@ -473,7 +503,7 @@ describe("createPushDispatcher — 발송·거르기·결과 분기(스펙 5.3·
       cap = captureLogger();
       respond = c.respond;
       upsertSubscription(db, seedSession(db, bob), { endpoint: EP_B, keys: KEYS_B }); // 410 이 지운 뒤에도 다음 경우를 위해
-      await dispatcher().dispatch([{ userId: bob, payload: mention() }]);
+      await dispatcher().dispatch([{ userId: bob, conversationId: CONV, payload: mention() }]);
       expect(cap.lines, c.name).toHaveLength(1);
       expect(cap.lines[0], c.name).toMatchObject({
         level: c.level,
@@ -503,7 +533,9 @@ describe("createPushDispatcher — 발송·거르기·결과 분기(스펙 5.3·
         },
       },
     });
-    await expect(d.dispatch([{ userId: bob, payload: mention() }])).resolves.toBeUndefined();
+    await expect(
+      d.dispatch([{ userId: bob, conversationId: CONV, payload: mention() }]),
+    ).resolves.toBeUndefined();
     expect(calls).toEqual([]);
     expect(cap.lines).toHaveLength(1);
     const line = cap.lines[0] as Record<string, unknown>;
@@ -532,7 +564,7 @@ describe("createPushDispatcher — 발송·거르기·결과 분기(스펙 5.3·
         release = () => resolve({ statusCode: 201 });
       });
     const d = dispatcher();
-    const pending = d.dispatch([{ userId: bob, payload: mention() }]);
+    const pending = d.dispatch([{ userId: bob, conversationId: CONV, payload: mention() }]);
     const t0 = Date.now();
     await d.drain(50); // 걸린 발송이 있어도 상한에서 돌아온다
     expect(Date.now() - t0).toBeLessThan(1000);
@@ -556,7 +588,7 @@ describe("webPushTransport — 상태 코드 → 결과(스펙 「통로」 장 
       [
         { endpoint: target.endpoint, keys: KEYS_A },
         JSON.stringify(mention()),
-        { TTL: 3600, urgency: "high", topic: pushTopic(`mention:${CH}`) },
+        { TTL: 3600, urgency: "high", topic: pushTopic(`mention:${CONV}`) },
       ],
     ]);
   });
@@ -664,7 +696,7 @@ describe("createPushDispatcher — 기기 통로(apns·fcm)", () => {
 
   it("웹 구독은 webpush, iOS 기기는 apns, Android 기기는 fcm 으로 — 대상에는 기기 행의 값, 승인은 urgency high", async () => {
     const approval: PushPayload = { ...mention(), kind: "approval", tag: `approval:${OTHER}` };
-    await dispatcher().dispatch([{ userId: alice, payload: approval }]);
+    await dispatcher().dispatch([{ userId: alice, conversationId: CONV, payload: approval }]);
     const by = (t: string) => sent.find((x) => x.transport === t);
     expect(sent).toHaveLength(3);
     expect(by("webpush")?.target).toMatchObject({ kind: "web", endpoint: EP_A1, keys: KEYS_A });
@@ -686,15 +718,15 @@ describe("createPushDispatcher — 기기 통로(apns·fcm)", () => {
     for (const x of sent) expect(x.n).toEqual({ payload: approval, urgency: "high" });
   });
 
-  it("그 채널을 보고 있으면 기기에도 보내지 않는다", async () => {
-    presence.set("s1", alice, { visible: true, channelId: CH });
-    await dispatcher().dispatch([{ userId: alice, payload: mention(CH) }]);
+  it("그 세션을 보고 있으면 기기에도 보내지 않는다", async () => {
+    presence.set("s1", alice, { visible: true, channelId: CH, conversationId: CONV });
+    await dispatcher().dispatch([{ userId: alice, conversationId: CONV, payload: mention(CH) }]);
     expect(sent).toEqual([]);
   });
 
   it("gone → 그 기기 행만 지운다(다른 기기·웹 구독은 남는다), info", async () => {
     results.apns = async () => "gone";
-    await dispatcher().dispatch([{ userId: alice, payload: mention() }]);
+    await dispatcher().dispatch([{ userId: alice, conversationId: CONV, payload: mention() }]);
     expect(tokens()).toEqual([ANDROID_TOKEN]);
     expect(listSubscriptions(db, alice).map((x) => x.endpoint)).toEqual([EP_A1]);
     const gone = cap.lines.filter((l) => l.msg === "push device gone — removed");
@@ -711,7 +743,7 @@ describe("createPushDispatcher — 기기 통로(apns·fcm)", () => {
   it("credentials → 기기는 남고 운영 사건 push_credentials_invalid(key push:<통로>), error", async () => {
     results.apns = async () => "credentials";
     results.fcm = async () => "credentials";
-    await dispatcher().dispatch([{ userId: alice, payload: mention() }]);
+    await dispatcher().dispatch([{ userId: alice, conversationId: CONV, payload: mention() }]);
     expect(tokens()).toEqual([ANDROID_TOKEN, IOS_TOKEN].sort());
     expect([...recorded].sort((x, y) => x.key.localeCompare(y.key))).toEqual([
       { kind: "push_credentials_invalid", key: "push:apns", severity: "error" },
@@ -735,7 +767,7 @@ describe("createPushDispatcher — 기기 통로(apns·fcm)", () => {
     ] as const) {
       cap = captureLogger();
       results.apns = outcome;
-      await dispatcher().dispatch([{ userId: alice, payload: mention() }]);
+      await dispatcher().dispatch([{ userId: alice, conversationId: CONV, payload: mention() }]);
       expect(tokens()).toEqual([ANDROID_TOKEN, IOS_TOKEN].sort());
       const apnsLines = cap.lines.filter((l) => l.transport === "apns");
       expect(apnsLines).toHaveLength(1);
@@ -746,7 +778,7 @@ describe("createPushDispatcher — 기기 통로(apns·fcm)", () => {
 
   it("그 플랫폼 통로가 꺼져 있으면 그 기기는 건너뛰고 debug — 행은 남고 다른 통로로는 보낸다", async () => {
     await dispatcher({ webpush: fake("webpush"), fcm: fake("fcm") }).dispatch([
-      { userId: alice, payload: mention() },
+      { userId: alice, conversationId: CONV, payload: mention() },
     ]);
     expect(sent.map((x) => x.transport).sort()).toEqual(["fcm", "webpush"]);
     expect(tokens()).toEqual([ANDROID_TOKEN, IOS_TOKEN].sort());
@@ -760,7 +792,7 @@ describe("createPushDispatcher — 기기 통로(apns·fcm)", () => {
     for (const r of ["ok", "gone", "rejected", "credentials", "retry"] as const) {
       results.apns = async () => r;
       results.fcm = async () => r;
-      await dispatcher().dispatch([{ userId: alice, payload: mention() }]);
+      await dispatcher().dispatch([{ userId: alice, conversationId: CONV, payload: mention() }]);
       upsertDevice(
         db,
         alice,

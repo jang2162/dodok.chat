@@ -179,6 +179,11 @@ describe("검색 계약", () => {
     expect(SearchQuery.safeParse({ q: "배포", authorType: "system" }).success).toBe(false);
     expect(SearchQuery.safeParse({ q: "배포", from: "2026-09-01T00:00:00Z" }).success).toBe(false);
     expect(SearchQuery.safeParse({ q: "배포", cursor: "c".repeat(201) }).success).toBe(false);
+    expect(SearchQuery.parse({ q: "배포", conversationId: ID(5) })).toEqual({
+      q: "배포",
+      conversationId: ID(5),
+    });
+    expect(SearchQuery.safeParse({ q: "배포", conversationId: "x" }).success).toBe(false);
   });
 
   it("SearchHit·SearchResult", () => {
@@ -186,6 +191,7 @@ describe("검색 계약", () => {
       messageId: ID(1),
       channelId: ID(2),
       conversationId: ID(5),
+      conversationTitle: "배포 이야기",
       seq: 7,
       channelArchived: false,
       authorType: "user",
@@ -207,6 +213,9 @@ describe("검색 계약", () => {
     // 보관한 채널 표시는 빠질 수 없다 — 웹이 「보관됨」을 붙인다
     const { channelArchived: __, ...noArchived } = hit;
     expect(SearchHit.safeParse(noArchived).success).toBe(false);
+    // 결과 줄이 세션 제목을 보인다 — 빠질 수 없다
+    const { conversationTitle: ___, ...noTitle } = hit;
+    expect(SearchHit.safeParse(noTitle).success).toBe(false);
     expect(SearchResult.parse({ hits: [hit], limited: false })).toEqual({ hits: [hit], limited: false });
     expect(SearchResult.safeParse({ hits: [], nextCursor: "n" }).success).toBe(false);
   });
