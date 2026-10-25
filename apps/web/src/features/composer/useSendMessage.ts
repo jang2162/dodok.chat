@@ -31,7 +31,9 @@ export type SendMessage = {
  * 보낸 글은 새 세션을 또 만들지 않고 그 세션으로 간다(빠르게 두 줄을 보내면 세션이 둘 생기지 않게). 성공하면 주소를 바꾼 뒤 지운다.
  * 결과 불명(ack 시간 초과·끊김 — 서버가 저장했을 수 있다)으로 끝나면 지우지 않고 `attempt` 만 비워 둔다: 다음 보내기가 그 글을 먼저 같은
  * clientMsgId·`newConversation` 으로 다시 보내 세션을 얻는다(서버는 처음 만든 세션으로 답한다, 판정 PS9). 지우면 그 글이 실제로 저장됐을
- * 때 다음 글이 세션을 하나 더 만든다. 서버가 거절했으면(저장되지 않은 것이 확실) 지운다 — 다음 글이 새로 만든다
+ * 때 다음 글이 세션을 하나 더 만든다. 서버가 거절했으면(저장되지 않은 것이 확실) 지운다 — 다음 글이 새로 만든다.
+ * 결과 불명 표지는 그 글의 항목이 지금 창에 있을 때만 다시 보낸다 — 창 캐시가 걷혔거나(gc) 항목을 지웠으면 표지를 버린다(사람이 보지
+ * 못하는 글을 몰래 보내지 않게)
  */
 type Creation = {
   clientMsgId: string;
@@ -42,10 +44,18 @@ type Creation = {
 };
 /** 세션 만들기의 끝 — 만든 세션, 결과 불명, 거절 */
 type Created = { conversationId: string } | "unknown" | "rejected";
-const creating = new WeakMap<QueryClient, Map<string, Creation>>();
+/**
+ * 표지(채널 → `Creation`)는 QueryClient 캐시 안에 둔다 — 로그아웃·401 의 `queryClient.clear()` 가 함께 지우게(앞 사용자의 글이 다음
+ * 사용자 이름으로 나가지 않게, 앞 사용자의 나가 있는 첫 글을 기다리지 않게). 저절로 걷히지는 않는다(gc 끔) — 창보다 먼저 걷히면 결과 불명인
+ * 첫 글이 다시 보내지지 않아 세션이 둘 생긴다. 오프라인 사본에는 담기지 않는다(pwa/persist 의 허용 목록 밖)
+ */
+export const creatingKey = ["composerCreating"] as const;
 const creatingOf = (qc: QueryClient) => {
-  let byChannel = creating.get(qc);
-  if (!byChannel) creating.set(qc, (byChannel = new Map()));
+  const held = qc.getQueryData<Map<string, Creation>>(creatingKey);
+  if (held) return held;
+  const byChannel = new Map<string, Creation>();
+  qc.setQueryDefaults(creatingKey, { gcTime: Infinity });
+  qc.setQueryData(creatingKey, byChannel);
   return byChannel;
 };
 
@@ -201,7 +211,19 @@ export function useSendMessage(
       // 새 세션 창: 세션을 만드는 첫 글이 있으면 그 세션으로 간다. 없으면(앞 글이 거절됐으면) 이 글이 만든다 — 표지는 기다리기 전에
       // 세운다(`create`): 같은 틱에 보낸 둘째 글이 그것을 봐야 한다
       while (target === undefined) {
-        const ahead = creatingOf(qc).get(channelId);
+        const byChannel = creatingOf(qc);
+        const ahead = byChannel.get(channelId);
+        // 결과 불명으로 남은 첫 글이 창에 없다(창 캐시가 걷혔거나 지웠다) — 표지를 버리고 이 글이 만든다
+        if (
+          ahead &&
+          !ahead.attempt &&
+          !getTimeline(qc, channelId, NEW_CONVERSATION)?.pending.some(
+            (p) => p.clientMsgId === ahead.clientMsgId,
+          )
+        ) {
+          byChannel.delete(channelId);
+          continue;
+        }
         // 표지가 없거나, 결과 불명으로 끝난 이 글 자신(그 항목의 「다시 보내기」)이면 이 글이 만든다
         if (!ahead || (ahead.clientMsgId === clientMsgId && !ahead.attempt)) {
           await create(socket, { clientMsgId, bodyMd, attachments });
@@ -217,6 +239,8 @@ export function useSendMessage(
         // 첫 글이 또 결과 불명이면 이 글은 보내지 않는다 — 세션을 둘 만들지 않게
         if (created === "unknown") return fail(clientMsgId, "TIMEOUT");
         if (created !== "rejected") target = created.conversationId;
+        // 거절된 표지는 여기서도 지운다 — `create` 가 지우지만, 남아 있으면 같은 표지를 다시 기다리며 끝없이 돈다
+        else if (byChannel.get(channelId) === ahead) byChannel.delete(channelId);
       }
       try {
         const ids = attachments.map((a) => a.id);
@@ -273,14 +297,9 @@ export function useSendMessage(
   );
 
   const discard = useCallback(
-    (clientMsgId: string) => {
-      update((t) => removePending(t, clientMsgId));
-      // 결과 불명으로 남은 첫 글을 지웠다 — 다음 글이 그것을 다시 보내지 않고 새로 만든다(지운 글을 몰래 보내지 않게)
-      const byChannel = creatingOf(qc);
-      const ahead = isNew ? byChannel.get(channelId) : undefined;
-      if (ahead?.clientMsgId === clientMsgId && !ahead.attempt) byChannel.delete(channelId);
-    },
-    [qc, channelId, isNew, update],
+    // 결과 불명으로 남은 첫 글을 지우면 그 표지는 다음 보내기가 버린다(창에 항목이 없다 — `deliver`)
+    (clientMsgId: string) => update((t) => removePending(t, clientMsgId)),
+    [update],
   );
 
   return useMemo(() => ({ send, retry, discard }), [send, retry, discard]);

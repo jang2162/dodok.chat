@@ -1,15 +1,16 @@
 import type { ErrorCode, Message, Result } from "@dodok/shared";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, QueryObserver } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { createMemoryHistory, RouterContextProvider } from "@tanstack/react-router";
 import { createElement, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { qk } from "@/api/queries";
 import { createAppRouter } from "@/app/router";
+import { resetClientState } from "@/app/session";
 import { fromLatest, NEW_CONVERSATION, threadFromPage } from "@/features/messages/timeline";
 import { getThread, getTimeline, updateTimeline } from "@/realtime/timelineCache";
 import { useWireStatus } from "@/realtime/wire";
-import { useSendMessage } from "./useSendMessage";
+import { creatingKey, useSendMessage } from "./useSendMessage";
 import { createFakeSocket, type FakeSocket } from "../../../test/fakeSocket";
 import { uploaded } from "../../../test/fakeXhr";
 import { CH, msg, uid, USER } from "../../../test/fixtures";
@@ -582,6 +583,123 @@ describe("새 세션 창(/s/new) — 첫 보내기가 세션을 만든다(채널
       ["하나", "new"],
       ["둘", "new"],
     ]);
+  });
+
+  it("[t5-rereview N1] 결과 불명으로 남은 첫 글의 창 캐시가 걷히면(gc) 다음 글은 그것을 다시 보내지 않고 새로 만든다 — 보이지 않는 글을 몰래 보내지 않게", async () => {
+    scriptAcks("timeout", "ok");
+    const { result, history } = renderNew(`/c/${CH}/s/${NEW_CONVERSATION}`);
+    await act(() => result.current.send("옛글"));
+    // 관찰자 없이 gcTime 이 지난 창 — gc 가 하는 일과 같다
+    qc.removeQueries({ queryKey: qk.timeline(CH, NEW_CONVERSATION), exact: true });
+
+    await act(() => result.current.send("새글"));
+    expect(sentTargets()).toEqual([
+      ["옛글", "new"],
+      ["새글", "new"],
+    ]);
+    await waitFor(() => expect(history.location.pathname).toBe(`/c/${CH}/s/${NEW_ID}`));
+    expect(getTimeline(qc, CH, NEW_ID)?.items.map((m) => m.bodyMd)).toEqual(["새글"]);
+  });
+
+  it("[t5-rereview N1] 결과 불명 표지는 창이 남아 있는 동안 저절로 걷히지 않는다 — 몇 분 뒤 보낸 글도 첫 글을 먼저 다시 보낸다", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      scriptAcks("timeout", "ok", "ok");
+      const { result } = renderNew(`/c/${CH}/s/${NEW_CONVERSATION}`);
+      await act(() => result.current.send("하나"));
+      // 화면이 창을 보고 있다(관찰자) — 창은 걷히지 않고, 표지만 기본 gcTime(5분)이면 걷힌다
+      const watching = new QueryObserver(qc, {
+        queryKey: qk.timeline(CH, NEW_CONVERSATION),
+        enabled: false,
+      }).subscribe(() => {});
+      act(() => vi.advanceTimersByTime(10 * 60_000));
+
+      await act(() => result.current.send("둘"));
+      expect(sentTargets()).toEqual([
+        ["하나", "new"],
+        ["하나", "new"],
+        ["둘", NEW_ID],
+      ]);
+      watching();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("[t5-rereview N1] 로그아웃(queryClient.clear())하면 앞 사용자의 결과 불명 첫 글이 다음 사용자의 첫 글 앞에 나가지 않는다", async () => {
+    scriptAcks("timeout", "ok");
+    const { result } = renderNew(`/c/${CH}/s/${NEW_CONVERSATION}`);
+    await act(() => result.current.send("이전사용자글"));
+    act(() => {
+      resetClientState(qc);
+      qc.setQueryData(qk.me, { user: { id: USER, handle: "owner" }, workspaceId: "w", role: "owner" });
+    });
+
+    await act(() => result.current.send("다음사용자글"));
+    expect(sentTargets()).toEqual([
+      ["이전사용자글", "new"],
+      ["다음사용자글", "new"],
+    ]);
+  });
+
+  it("[t5-rereview N1] 로그아웃하면 다음 사용자의 첫 글은 앞 사용자의 나가 있는 첫 글을 기다리지 않고 새로 만든다", async () => {
+    let release!: () => void;
+    const acked = new Promise<void>((r) => (release = r));
+    let n = 0;
+    fake.onAck("message.send", async (p) => {
+      n += 1;
+      // 앞 사용자의 첫 글 — 로그아웃이 소켓을 끊어 ack 를 잃는다
+      if (n === 1) {
+        await acked;
+        throw new Error("no ack");
+      }
+      return created(p, 10 + n);
+    });
+    const { result } = renderNew(`/c/${CH}/s/${NEW_CONVERSATION}`);
+    let first!: Promise<void>;
+    act(() => {
+      first = result.current.send("이전사용자글");
+    });
+    act(() => {
+      resetClientState(qc);
+      qc.setQueryData(qk.me, { user: { id: USER, handle: "owner" }, workspaceId: "w", role: "owner" });
+    });
+    let second!: Promise<void>;
+    act(() => {
+      second = result.current.send("다음사용자글");
+    });
+    await waitFor(() =>
+      expect(sentTargets()).toEqual([
+        ["이전사용자글", "new"],
+        ["다음사용자글", "new"],
+      ]),
+    );
+    release();
+    await act(() => Promise.all([first, second]));
+    expect(sentTargets()).toHaveLength(2);
+  });
+
+  it("[t5-rereview 참고] 거절로 끝난 표지가 남아 있어도 다음 글은 그것을 한 번만 기다리고 새로 만든다 — 같은 표지를 다시 기다리며 돌지 않는다", async () => {
+    scriptAcks("ok");
+    // `create` 가 아닌 길로 남은 거절 표지. 같은 표지를 계속 읽으면(도는 중) 던져 멈춤이 아니라 실패로 드러나게 한다
+    // (이미 끝난 약속을 기다리는 반복은 마이크로태스크만 돌아 testTimeout 타이머도 굶긴다)
+    let reads = 0;
+    const stale = {
+      clientMsgId: uid(9_999),
+      bodyMd: "남은 표지",
+      attachments: [],
+      get attempt() {
+        reads += 1;
+        if (reads > 20) throw new Error("거절된 표지를 다시 기다리며 돈다");
+        return Promise.resolve("rejected");
+      },
+    };
+    qc.setQueryData(creatingKey, new Map([[CH, stale]]));
+    const { result } = renderNew(`/c/${CH}/s/${NEW_CONVERSATION}`);
+
+    await act(() => result.current.send("새글"));
+    expect(qc.getQueryData<Map<string, unknown>>(creatingKey)?.get(CH)).not.toBe(stale);
+    expect(sentTargets()).toEqual([["새글", "new"]]);
   });
 
   it("ack 가 올 때 이미 다른 곳으로 갔으면 주소를 바꾸지 않는다 — 메시지는 그 세션에, 창의 항목은 지운다", async () => {

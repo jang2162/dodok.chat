@@ -122,11 +122,17 @@ describe("채널 주소 — 세션으로 넘긴다(채널 세션 스펙 「웹�
 
   describe("목록을 받을 수 없으면 이 채널의 마지막으로 본 세션(오프라인 사본)으로", () => {
     const SEEN = "01a00000-0000-7000-8000-000000003002";
-    afterEach(() => onlineManager.setOnline(true));
+    const clients: QueryClient[] = [];
+    // 연결을 되돌리기 전에 그 테스트의 클라이언트를 비운다 — 쉬던 재시도가 되살아나 다음 테스트의 fetch 를 부르지 않게
+    afterEach(() => {
+      for (const c of clients.splice(0)) c.clear();
+      onlineManager.setOnline(true);
+    });
 
     /** 로그인·사본(그 채널의 마지막으로 본 세션)이 복원된 클라이언트. 목록 재시도는 기다리지 않는다 */
     function restored(seen?: string) {
       const queryClient = createQueryClient(() => {});
+      clients.push(queryClient);
       queryClient.setQueryData(qk.me, ME);
       if (seen) queryClient.setQueryData(qk.recentConversations, { abc: seen });
       queryClient.setQueryDefaults(qk.conversations("abc", "open"), { retryDelay: 0 });
