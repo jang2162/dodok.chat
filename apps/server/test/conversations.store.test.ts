@@ -95,7 +95,7 @@ describe("conversations store", () => {
     expect(latestOpenConversation(db, uuid())).toBeUndefined();
   });
 
-  it("메시지를 저장하면 그 대화의 last_seq·last_message_at 이 오른다 — 시스템 메시지·스레드 답글도", () => {
+  it("메시지를 저장하면 그 대화의 last_seq·last_message_at 이 오른다 — 스레드 답글도. 시스템 메시지는 last_seq 만", () => {
     const { db, bus, workspaceId, first: conversation, addConversation, say } = setup();
     const second = addConversation(at(1));
     const first = say(conversation);
@@ -116,9 +116,10 @@ describe("conversations store", () => {
       createdAt: at(50_000),
     });
     expect(reply.seq).toBeLessThan(notice.seq);
+    // 활동 시각은 사람·에이전트의 글(답글)에서 멈춘다 — 서버 알림이 세션을 목록 위로 올리지 않게
     expect(getConversation(db, conversation, workspaceId)).toMatchObject({
       lastSeq: notice.seq,
-      lastMessageAt: notice.createdAt,
+      lastMessageAt: reply.createdAt,
     });
   });
 

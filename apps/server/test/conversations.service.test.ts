@@ -21,7 +21,7 @@ import {
   resolveSendConversation,
   setConversationClosed,
 } from "../src/modules/conversations/service";
-import { getConversation } from "../src/modules/conversations/store";
+import { getConversation, latestOpenConversation } from "../src/modules/conversations/store";
 import { createAgentMessage, createSystemMessage, sendUserMessage } from "../src/modules/messages/service";
 import { createRunGate } from "../src/modules/ops/budget";
 import { setReaction } from "../src/modules/reactions/service";
@@ -140,18 +140,28 @@ const codeAsync = async (fn: () => Promise<unknown>): Promise<string | undefined
 };
 
 describe("autoTitle — 첫 메시지 본문의 읽는 글 앞 40 코드 포인트", () => {
+  const title = (bodyMd: string) => autoTitle(bodyMd, () => undefined);
   it("마크다운 표시를 걷고 줄바꿈을 공백으로, 비면 「새 세션」", () => {
-    expect(autoTitle("@dev 안녕\n**굵게**")).toBe("@dev 안녕 굵게");
-    expect(autoTitle("")).toBe("새 세션");
-    expect(autoTitle("  \n ")).toBe("새 세션");
-    expect(autoTitle("# 제목\n- [링크](https://x.example) `코드`")).toBe("제목 링크 코드");
+    expect(title("@dev 안녕\n**굵게**")).toBe("@dev 안녕 굵게");
+    expect(title("")).toBe("새 세션");
+    expect(title("  \n ")).toBe("새 세션");
+    expect(title("# 제목\n- [링크](https://x.example) `코드`")).toBe("제목 링크 코드");
   });
   it("45자 → 40 코드 포인트, 이모지(서로게이트 쌍)를 반으로 가르지 않는다", () => {
-    expect(autoTitle("가".repeat(45))).toBe("가".repeat(40));
-    const emoji = autoTitle("😀".repeat(45));
+    expect(title("가".repeat(45))).toBe("가".repeat(40));
+    const emoji = title("😀".repeat(45));
     expect([...emoji]).toHaveLength(40);
     expect(emoji).toBe("😀".repeat(40));
-    expect(autoTitle(`${"가".repeat(39)}😀끝`)).toBe(`${"가".repeat(39)}😀`);
+    expect(title(`${"가".repeat(39)}😀끝`)).toBe(`${"가".repeat(39)}😀`);
+  });
+  it("[낮음 3] 원문 멘션 토큰은 그 워크스페이스의 핸들로 — 토큰을 직접 싣는 클라이언트(wire-cli 등)의 첫 글. 모르는 id 는 「@알 수 없음」", () => {
+    const t = setup();
+    const agentToken = t.send({ newConversation: {}, bodyMd: `<@a:${t.dev.id}> 안녕` });
+    expect(agentToken.conversation?.title).toBe("@dev 안녕");
+    const userToken = t.send({ newConversation: {}, bodyMd: `<@u:${t.noah}> 봐 줘` });
+    expect(userToken.conversation?.title).toBe("@noah 봐 줘");
+    const unknown = t.send({ newConversation: {}, bodyMd: `<@u:${uuid()}> 누구` });
+    expect(unknown.conversation?.title).toBe("@알 수 없음 누구");
   });
 });
 
@@ -499,5 +509,71 @@ describe("세션 서비스", () => {
     expect(code(() => listConversations(t.db, t.channel.id, { status: "all", cursor: "nope" }))).toBe(
       "VALIDATION",
     );
+  });
+
+  it("[낮음 1] 활동 시각이 같은 ms 인 세션 25개 — 두 쪽(20 + 5)의 합집합이 전부, 교집합 없음. 정확히 20개면 nextCursor 없음", () => {
+    const sameMs = (count: number) => {
+      const t = setup();
+      const at = new Date("2026-10-25T00:00:00.000Z");
+      const ids = Array.from({ length: count }, () => t.send({ newConversation: {} }).message.conversationId);
+      t.db
+        .update(conversations)
+        .set({ lastMessageAt: at })
+        .where(eq(conversations.channelId, t.channel.id))
+        .run();
+      return { t, ids };
+    };
+    const { t, ids } = sameMs(25);
+    const first = listConversations(t.db, t.channel.id, { status: "all" });
+    expect(first.conversations).toHaveLength(20);
+    expect(first.nextCursor).toBeDefined();
+    const second = listConversations(t.db, t.channel.id, { status: "all", cursor: first.nextCursor });
+    expect(second.conversations).toHaveLength(5);
+    expect(second.nextCursor).toBeUndefined();
+    const a = first.conversations.map((c) => c.id);
+    const b = second.conversations.map((c) => c.id);
+    expect(a.filter((id) => b.includes(id))).toEqual([]);
+    expect([...a, ...b].sort()).toEqual([...ids].sort());
+
+    const exact = sameMs(20);
+    const only = listConversations(exact.t.db, exact.t.channel.id, { status: "all" });
+    expect(only.conversations).toHaveLength(20);
+    expect(only.nextCursor).toBeUndefined();
+  });
+
+  it("[낮음 5] 시스템 메시지는 활동 시각을 올리지 않는다 — 닫기·다시 열기·알림 뒤에도 last_message_at·다리의 최근 세션은 그대로, last_seq 는 오른다", async () => {
+    const t = setup();
+    const older = t.send({ newConversation: { title: "옛 세션" } }).message.conversationId;
+    const newer = t.send({ newConversation: { title: "새 세션" } }).message.conversationId;
+    // 활동 시각을 벌려 둔다 — 같은 ms 면 id 로 갈려 다리의 1순위가 시각과 무관해진다
+    t.db
+      .update(conversations)
+      .set({ lastMessageAt: new Date("2026-10-25T00:00:00.000Z") })
+      .where(eq(conversations.id, older))
+      .run();
+    t.db
+      .update(conversations)
+      .set({ lastMessageAt: new Date("2026-10-25T00:00:01.000Z") })
+      .where(eq(conversations.id, newer))
+      .run();
+    const before = getConversation(t.db, older) as Conversation;
+    expect(latestOpenConversation(t.db, t.channel.id)).toBe(newer);
+
+    const closed = await t.close(older, true);
+    expect(closed.lastMessageAt).toBe(before.lastMessageAt);
+    expect(closed.lastSeq).toBeGreaterThan(before.lastSeq);
+    const reopened = await t.close(older, false);
+    expect(reopened.lastMessageAt).toBe(before.lastMessageAt);
+    expect(latestOpenConversation(t.db, t.channel.id)).toBe(newer);
+
+    const notice = createSystemMessage(t.db, t.bus, { conversationId: older, kind: "info", bodyMd: "알림" });
+    const after = getConversation(t.db, older) as Conversation;
+    expect(after.lastSeq).toBe(notice.seq);
+    expect(after.lastMessageAt).toBe(before.lastMessageAt);
+    expect(latestOpenConversation(t.db, t.channel.id)).toBe(newer);
+    expect(listConversations(t.db, t.channel.id, { status: "all" }).conversations.map((c) => c.id)).toEqual([
+      newer,
+      older,
+    ]);
   });
 });

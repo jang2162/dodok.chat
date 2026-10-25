@@ -61,10 +61,22 @@ export function latestOpenConversation(db: DbOrTx, channelId: string): string | 
     .get()?.id;
 }
 
-/** storeMessage 가 같은 트랜잭션에서 부른다 — last_seq·last_message_at 를 올린다 */
-export function touchConversation(tx: DbOrTx, conversationId: string, seq: number, at: Date): void {
+/**
+ * storeMessage 가 같은 트랜잭션에서 부른다 — last_seq·last_message_at 를 올린다. 시스템 메시지는 last_seq 만(읽음 깎기에 필요하다) —
+ * 닫기·다시 열기·런 한도 같은 서버 알림이 활동 시각을 올리면 닫은 세션이 목록 맨 위로 오고 다시 연 옛 세션이 latestOpenConversation
+ * 1순위가 된다. 목록 순서와 다리는 사람·에이전트의 대화를 따른다
+ */
+export function touchConversation(
+  tx: DbOrTx,
+  conversationId: string,
+  message: { seq: number; createdAt: Date; kind: string },
+): void {
   tx.update(conversations)
-    .set({ lastSeq: seq, lastMessageAt: at })
+    .set(
+      message.kind === "system"
+        ? { lastSeq: message.seq }
+        : { lastSeq: message.seq, lastMessageAt: message.createdAt },
+    )
     .where(eq(conversations.id, conversationId))
     .run();
 }
@@ -93,14 +105,6 @@ export function createConversation(tx: DbOrTx, input: NewConversationRow): Conve
     .returning()
     .get();
   return rowToConversation(row);
-}
-
-/** 첫 메시지로 지은 자동 제목을 쓴다 — title_source auto 인 행만 바꾼다(사람이 지은 제목은 덮지 않는다) */
-export function setAutoTitle(tx: DbOrTx, conversationId: string, title: string): void {
-  tx.update(conversations)
-    .set({ title })
-    .where(and(eq(conversations.id, conversationId), eq(conversations.titleSource, "auto")))
-    .run();
 }
 
 /** 닫힌 대화인가 — 늦은 정본·디스패치처럼 던지지 않고 가르는 자리가 쓴다. 없는 대화는 false */

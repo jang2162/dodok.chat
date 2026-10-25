@@ -633,7 +633,7 @@ function requireConversation(tx: DbOrTx, conversationId: string): { id: string; 
 }
 
 /**
- * 스레드 루트 확인 → allocateSeq → 본문 조립(토큰화) → INSERT → 대화의 last_seq·last_message_at. 호출자의 트랜잭션 안에서.
+ * 스레드 루트 확인 → allocateSeq → 본문 조립(토큰화) → INSERT → 대화의 last_seq·last_message_at(시스템 메시지는 last_seq 만). 호출자의 트랜잭션 안에서.
  * 계약 위반이면 throw 해 롤백된다. 답글을 루트로 가리키면 그 루트로 바꾸지 않고 거절한다 — 웹이 루트를 보낸다(스펙 4.1).
  * 답글의 대화는 루트의 대화와 같아야 한다(채널 세션 스펙 2.2) — seq 는 채널을 같이 쓰므로 루트를 채널로만 찾으면 다른 대화의 루트에
  * 답글이 붙는다
@@ -657,7 +657,7 @@ function storeMessage(
     .values({ id: uuidv7(), channelId, conversationId, seq, ...build(), threadRootId: threadRootId ?? null })
     .returning()
     .get();
-  touchConversation(tx, conversationId, row.seq, row.createdAt);
+  touchConversation(tx, conversationId, row);
   return rowToMessage(row);
 }
 

@@ -8,7 +8,8 @@ import type { ServerBus } from "../../realtime/bus";
 import { josa } from "../../util/josa";
 import { assertChannelWritable, getChannel, isSessionManager } from "../channels/service";
 import { createSystemMessage, getThreadRoot } from "../messages/service";
-import { readableGlyphs, readableWindow } from "../search/readable";
+import { type HandleOf, readableGlyphs, readableWindow } from "../search/readable";
+import { mentionHandleOf } from "../search/service";
 import { createConversation, getConversation, latestOpenConversation, rowToConversation } from "./store";
 
 /** 자동 제목 길이(코드 포인트) — 채널 세션 계획 Global Constraints */
@@ -19,11 +20,11 @@ export const CONVERSATION_PAGE = 20;
 
 /**
  * 첫 메시지 본문으로 지은 세션 제목 — 마크다운 표시를 걷고 공백(줄바꿈 포함)을 하나로 접은 읽는 글의 앞 40 코드 포인트. 비면 「새 세션」.
- * 멘션은 부르는 쪽이 `@핸들` 로 풀어 넘긴다(사람 보내기는 평문 `@핸들` 본문 그대로다). 앞쪽 창만 변환한다 — readableGlyphs 는 긴 한 줄에서
- * 느려진다(search/readable.ts 머리 주석)
+ * 멘션 토큰은 handleOf 로 `@핸들` 로 푼다(웹은 평문 `@핸들` 을 보내지만 토큰을 직접 싣는 클라이언트도 있다 — 모르는 id 는 「@알 수 없음」).
+ * 앞쪽 창만 변환한다 — readableGlyphs 는 긴 한 줄에서 느려진다(search/readable.ts 머리 주석)
  */
-export function autoTitle(readable: string): string {
-  const glyphs = readableGlyphs(readable, () => undefined, readableWindow(readable, 0, 0));
+export function autoTitle(bodyMd: string, handleOf: HandleOf): string {
+  const glyphs = readableGlyphs(bodyMd, handleOf, readableWindow(bodyMd, 0, 0));
   const title = glyphs
     .slice(0, AUTO_TITLE_MAX)
     .map((g) => g.ch)
@@ -80,7 +81,7 @@ export function resolveSendConversation(
   const title = input.newConversation?.title;
   const created = createConversation(tx, {
     channelId: channel.id,
-    title: title ?? autoTitle(input.bodyMd),
+    title: title ?? autoTitle(input.bodyMd, mentionHandleOf(tx, channel.workspaceId)),
     titleSource: title === undefined ? "auto" : "user",
     createdBy: { type: "user", id: input.userId },
     createdAt: now,
