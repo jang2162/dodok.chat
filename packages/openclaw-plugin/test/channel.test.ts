@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BridgeClient } from "../src/bridge-client";
 import { registerBridge, releaseBridge } from "../src/bridge-registry";
 import { DODOK_BRIDGE_CAPABILITIES, dodokChannelPlugin } from "../src/channel";
-import { THREAD_ONLY_REASON } from "../src/outbound";
+import { CONVERSATION_ONLY_REASON, THREAD_ONLY_REASON } from "../src/outbound";
 
 const CH = "01a09fc9-d204-7551-89d6-38544d07a102";
 const OTHER_CH = "01a09fc9-d204-7551-89d6-38544d07a1cc";
@@ -105,10 +105,17 @@ describe("handleAction — 스레드 세션", () => {
   });
 
   it.each([
-    ["다른 채널", { to: `channel:${OTHER_CH}`, message: "x" }],
-    ["최상위를 뜻하는 threadId", { to: `channel:${CH}`, message: "x", threadId: "top" }],
-  ])("%s — 고정 사유 ToolInputError, 전송 없음", async (_label, params) => {
-    await expect(act(params)).rejects.toMatchObject({ name: "ToolInputError", message: THREAD_ONLY_REASON });
+    ["다른 채널", { to: `channel:${OTHER_CH}`, message: "x" }, CONVERSATION_ONLY_REASON],
+    ["최상위를 뜻하는 threadId", { to: `channel:${CH}`, message: "x", threadId: "top" }, THREAD_ONLY_REASON],
+  ])("%s — 고정 사유 ToolInputError, 전송 없음", async (_label, params, reason) => {
+    await expect(act(params)).rejects.toMatchObject({ name: "ToolInputError", message: reason });
+    expect(sent).toHaveLength(0);
+  });
+
+  it("[Review Focus 4] 채널 세션도 다른 대화(같은 채널의 다른 세션) 대상이면 고정 사유 ToolInputError, 전송 없음", async () => {
+    await expect(
+      act({ to: `channel:${OTHER_CH}`, message: "x" }, { sessionKey: CHANNEL_KEY }),
+    ).rejects.toMatchObject({ name: "ToolInputError", message: CONVERSATION_ONLY_REASON });
     expect(sent).toHaveLength(0);
   });
 

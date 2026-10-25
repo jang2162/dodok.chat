@@ -5,6 +5,7 @@ import {
   conversationIdFromSessionKey,
   formatDodokTarget,
   messageToolSendToOutbound,
+  CONVERSATION_ONLY_REASON,
   parseDodokTarget,
   THREAD_ONLY_REASON,
   toolInputError,
@@ -320,6 +321,43 @@ describe("messageToolSendToOutbound", () => {
   });
 });
 
+describe("[Review Focus 4] message 툴 — 세션 키의 대화에만", () => {
+  const send = (params: Record<string, unknown>, sessionKey: string | null = SESSION) =>
+    messageToolSendToOutbound({ params, agentId: "main", sessionKey, outboundId: "c1", now: NOW });
+
+  it("to 가 같은 채널의 다른 세션(대화) id 면 고정 사유로 거절한다", () => {
+    for (const to of [`channel:${OTHER_CH}`, OTHER_CH, `dodok:channel:${OTHER_CH}`]) {
+      expect(send({ to, message: "x" })).toEqual({ ok: false, error: CONVERSATION_ONLY_REASON });
+    }
+  });
+
+  it("to 가 없으면 세션 키의 대화, 세션의 대화와 같으면(대소문자 무시) 통과", () => {
+    for (const params of [
+      { message: "x" },
+      { to: `channel:${CH}`, message: "x" },
+      { to: CH.toUpperCase(), message: "x" },
+    ]) {
+      const res = send(params);
+      expect(res.ok && [res.message.conversationId, res.message.sessionKey]).toEqual([CH, SESSION]);
+    }
+  });
+
+  it("dodok 모양이 아닌 세션에서 dodok 대화로 보내면 거절한다 — 서버도 저장하지 않는다", () => {
+    expect(send({ to: `channel:${CH}`, message: "x" }, "agent:main:main")).toEqual({
+      ok: false,
+      error: CONVERSATION_ONLY_REASON,
+    });
+  });
+
+  it("세션 키가 없으면(에이전트 세션 문맥 없음) to 의 대화로 키를 만든다", () => {
+    const res = send({ to: `channel:${OTHER_CH}`, message: "x" }, null);
+    expect(res.ok && [res.message.conversationId, res.message.sessionKey]).toEqual([
+      OTHER_CH,
+      `agent:main:dodok:channel:${OTHER_CH}`,
+    ]);
+  });
+});
+
 describe("스레드 아웃바운드", () => {
   const base = { outboundId: "t1", conversationId: CH, agentId: "main", text: "x", now: NOW };
 
@@ -363,8 +401,14 @@ describe("스레드 아웃바운드", () => {
     expect(res.ok && res.message.threadId).toBe(ROOT);
   });
 
+  it("스레드 세션의 message 툴이 다른 대화를 가리키면 대화 사유로 거절한다 — 스레드 사유는 다른 스레드에만", () => {
+    expect(toolSend({ to: `channel:${OTHER_CH}`, message: "hi" })).toEqual({
+      ok: false,
+      error: CONVERSATION_ONLY_REASON,
+    });
+  });
+
   it.each([
-    ["다른 채널", { to: `channel:${OTHER_CH}`, message: "hi" }],
     ["다른 스레드", { to: `channel:${CH}`, message: "hi", threadId: "01a09fc9-d204-7551-89d6-38544d07a1bb" }],
     ["스레드가 아닌 값(최상위를 뜻하려는 것)", { to: `channel:${CH}`, message: "hi", threadId: "top" }],
   ])("스레드 세션의 message 툴이 가리키는 곳이 %s — 고정 사유로 거절한다", (_label, params) => {
@@ -373,6 +417,7 @@ describe("스레드 아웃바운드", () => {
 
   it("고정 사유 문구", () => {
     expect(THREAD_ONLY_REASON).toBe("dodok: 이 대화는 스레드라 이 스레드에만 보낼 수 있습니다");
+    expect(CONVERSATION_ONLY_REASON).toBe("이 대화에만 보낼 수 있습니다");
   });
 
   it("채널 세션의 message 툴은 스레드로 보내지 않는다 — threadId 인자는 쓰지 않는다", () => {

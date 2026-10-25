@@ -14,7 +14,13 @@ import {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * 스레드 세션의 에이전트가 채널 최상위·다른 채널·다른 스레드로 보내려 할 때 모델에게 돌려주는 고정 사유(스펙 결정 6).
+ * 에이전트가 자기 세션 키의 대화가 아닌 곳(같은 채널의 다른 세션·채널 id·다른 채널)으로 보내려 할 때 모델에게 돌려주는 고정 사유
+ * (채널 세션 스펙 「에이전트가 받는 것」 절). 서버도 같은 문구로 저장을 거절한다(`assertCanonicalConversation`). 대상을 되읊지 않는다
+ */
+export const CONVERSATION_ONLY_REASON = "이 대화에만 보낼 수 있습니다";
+
+/**
+ * 스레드 세션의 에이전트가 같은 대화의 최상위나 다른 스레드로 보내려 할 때 모델에게 돌려주는 고정 사유(스레드 스펙 결정 6).
  * 대상을 되읊지 않는다 — 모델이 고칠 것은 「이 스레드로만」 하나다
  */
 export const THREAD_ONLY_REASON = "dodok: 이 대화는 스레드라 이 스레드에만 보낼 수 있습니다";
@@ -191,21 +197,25 @@ export type MessageToolSendInput = {
 };
 
 /**
- * 스레드 세션(ADR 0006 「아웃바운드와 delivery-mirror 누수」 절)은 세션 키가 정본이다 — `to` 가 없거나 같은 채널이면
- * 그 스레드로 보내고, 다른 채널이나 다른 `threadId` 인자(최상위를 뜻하려는 값 포함)는 고정 사유로 거절한다.
- * 채널 세션은 `threadId` 인자를 쓰지 않는다 — 서버는 런의 스레드와 다른 전송을 받지 않는다(스펙 3.5).
+ * 세션 키가 정본이다 — 에이전트의 세션이 있으면(툴 컨텍스트의 세션 키) `to` 가 없거나 그 세션의 대화일 때만 보내고, 같은 채널의 다른
+ * 세션·채널 id·다른 채널은 고정 사유로 거절한다. dodok 모양이 아닌 세션(다른 채널 플러그인의 세션 등)에서 dodok 으로 보내는 것도
+ * 거절한다 — 서버는 세션 키의 대화가 아닌 정본을 저장하지 않는다. 세션 키가 없을 때만(에이전트 세션 문맥 없음) `to` 의 대화로 키를 만든다.
+ * 스레드 세션(ADR 0006 「아웃바운드와 delivery-mirror 누수」 절)은 그 스레드로 보내고, 다른 `threadId` 인자(최상위를 뜻하려는 값
+ * 포함)는 스레드 사유로 거절한다. 채널 세션은 `threadId` 인자를 쓰지 않는다 — 서버는 런의 스레드와 다른 전송을 받지 않는다(스펙 3.5).
  */
 export function messageToolSendToOutbound(input: MessageToolSendInput): OutboundResult {
   const session = parseDodokSessionKey(input.sessionKey ?? undefined);
   const rawTarget = firstString(input.params, ["to", "target", "channelId"]);
   const conversationId = rawTarget ? parseDodokTarget(rawTarget) : (session?.conversationId ?? null);
   if (!conversationId) return { ok: false, error: "to: dodok 채널 id(channel:<uuid>)를 해석할 수 없다" };
+  if (input.sessionKey && conversationId !== session?.conversationId) {
+    return { ok: false, error: CONVERSATION_ONLY_REASON };
+  }
   const threadId = session?.threadRootId;
   if (threadId) {
     const requested = input.params["threadId"];
     const requestedThread =
       requested === undefined || requested === null || requested === "" ? undefined : String(requested);
-    if (conversationId !== session.conversationId) return { ok: false, error: THREAD_ONLY_REASON };
     if (requestedThread !== undefined && requestedThread.toLowerCase() !== threadId) {
       return { ok: false, error: THREAD_ONLY_REASON };
     }
