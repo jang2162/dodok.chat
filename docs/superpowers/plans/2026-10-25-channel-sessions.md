@@ -266,7 +266,7 @@ export function listConversations(db: DbOrTx, channelId: string, q: { status: "o
 **Interfaces:**
 - Consumes: 태스크 3 의 REST·wire·이벤트.
 - Produces(웹): 경로 `/c/$channelId`(→ 열린 세션 가운데 최근 활동으로 `replace` 넘김, 없으면 `/c/$channelId/s/new`) · `/c/$channelId/s/$conversationId`(`new` 는 빈 새 세션 창 — 첫 보내기가 `newConversation` 을 싣고 ack 의 대화로 `replace` 넘김) · 그 아래 `settings`·`activity`·`t/$rootId`. `qk.timeline(channelId, conversationId)`·`qk.thread(channelId, conversationId, rootId)`·`qk.threads(channelId, conversationId)`·`qk.channelSeq(channelId)`·`qk.conversations(channelId, status)`. `useSendMessage(channelId, conversationId | "new")`. `PendingFailReason` 에 `"conversation_closed"`.
-- Produces(서버): 처음 `channel.subscribe` 는 `messages: []`(PS5). `MessageSend` 는 `conversationId` 와 `newConversation` 가운데 정확히 하나. `Typing`·`PresenceUpdate` 에 `conversationId`(서버 중계·푸시 거름이 대화 단위 — 거름 자체는 태스크 7).
+- Produces(서버): 처음 `channel.subscribe` 는 `messages: []`(PS5). `ChannelSubscribeResult.latestSeq` — 읽은 순간 그 채널의 마지막 seq(처음 구독·재동기화 모두, 웹의 빈틈 커서가 여기서 시작 — 태스크 5 에서 더함). `MessageSend` 는 `conversationId` 와 `newConversation` 가운데 정확히 하나. `Typing`·`PresenceUpdate` 에 `conversationId`(서버 중계·푸시 거름이 대화 단위 — 거름 자체는 태스크 7).
 
 - [ ] **Step 1: 실패하는 테스트.**
   - `router.test.tsx`: `/c/<ch>` 가 최근 열린 세션으로, 세션이 없으면 `/s/new` 로 넘긴다 · `/c/<ch>/s/<conv>/t/<root>` 새로고침이 그 세션과 스레드를 연다.
@@ -292,6 +292,7 @@ export function listConversations(db: DbOrTx, channelId: string, q: { status: "o
 **Interfaces:**
 - Consumes: 태스크 3 의 REST·이벤트, 태스크 5 의 경로·`qk.conversations`.
 - Produces: 세션 목록(넓은 화면 타임라인 왼쪽 접히는 칸, 좁은 화면 시트 — 배치는 빌더 판단, 스펙 6장): 제목·마지막 활동·(태스크 7 이 채울) 읽지 않음 점·멘션 배지 자리, 「열림/닫힘」 필터, 제목 검색, 「새 세션」(정책·역할로 숨김). 머리의 지금 세션 제목(권한이 있으면 눌러 이름 바꾸기). 닫힌 세션은 작성기 자리에 「닫힌 세션입니다」와 (권한이 있으면) 「다시 열기」. 채널 설정 「세션」 칸: 정책(누구나 / 세션 관리자만)·세션 관리자 목록(admin 이상만 바꿈).
+- 태스크 5 리뷰가 넘긴 것: ① 닫힌 세션의 카드는 보관 채널처럼 비활성 사유 「닫힌 세션입니다」로 잠근다(`features/components/useInteract.ts` 의 오류 표에 `CONVERSATION_CLOSED`) ② 정책 `managers` 의 member 가 세션 없는 채널(`/s/new`)에 들어가면 작성기 대신 안내, `FORBIDDEN` 실패 항목에는 「다시 보내기」를 두지 않는다 ③ 주소의 채널과 세션의 채널이 다르면(`/c/<A>/s/<B 채널의 세션>`) 세션 머리가 받은 세션의 `channelId` 로 `/c/<그 채널>/s/<conv>` 에 `replace` — 지금은 A 의 머리 아래 B 의 글이 그려진다(태스크 5 리뷰 L1).
 
 - [ ] **Step 1: 실패하는 테스트.** 목록이 최근 활동순·필터·검색으로 바뀐다 · `conversation.created`(다른 탭이 만든 세션)가 목록 맨 위에 든다 · `conversation.updated`(닫힘)를 받으면 그 세션을 보고 있던 화면의 작성기가 「닫힌 세션입니다」로 바뀌고 보내는 중 항목은 Review Focus 2 대로 · 정책 `managers` 의 member 에게 「새 세션」이 없다 · member 는 남의 세션 제목을 못 바꾼다(제목이 버튼이 아니다) · 설정 「세션」 칸은 admin 이상만 바꾼다(member 는 읽기) · 390px 에서 시트로 열리고 닫으면 초점이 여는 버튼으로 돌아온다.
 - [ ] **Step 2: 실패 확인.**
