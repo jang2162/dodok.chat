@@ -42,7 +42,6 @@ export const UpdateChannelMemberBody = z.object({
 });
 export type UpdateChannelMemberBody = z.infer<typeof UpdateChannelMemberBody>;
 
-// OpenClaw 는 그 Gateway 의 agents.list — gatewayId 가 있어야 한다. 러너는 붙은 러너 전부(연결을 고르지 않는다)
 /** GET /channels/:id/conversations 쿼리 — q 는 제목 부분 일치, cursor 는 앞 쪽의 nextCursor */
 export const ListConversationsQuery = z.object({
   status: z.enum(["open", "closed", "all"]).default("open"),
@@ -51,6 +50,7 @@ export const ListConversationsQuery = z.object({
 });
 export type ListConversationsQuery = z.infer<typeof ListConversationsQuery>;
 
+// OpenClaw 는 그 Gateway 의 agents.list — gatewayId 가 있어야 한다. 러너는 붙은 러너 전부(연결을 고르지 않는다)
 export const DiscoverAgentsQuery = z.object({
   provider: z.enum(["openclaw", "claude"]).default("openclaw"),
   gatewayId: Id.optional(),
