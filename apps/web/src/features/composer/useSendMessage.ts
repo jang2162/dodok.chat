@@ -149,8 +149,13 @@ export function useSendMessage(
         refreshArchivedChannel(qc, channelId);
         return;
       }
-      // 다른 탭이 이 세션을 닫았다(Review Focus 2) — 다시 보내도 같은 409 다. 작성기 자리는 `conversation.updated` 가 바꾼다
-      if (code === "CONVERSATION_CLOSED") return mark("conversation_closed");
+      if (code === "CONVERSATION_CLOSED") {
+        // 다른 탭이 이 세션을 닫았다(Review Focus 2) — 다시 보내도 같은 409 다. 작성기 자리는 보통 `conversation.updated` 가 바꾸지만,
+        // 이 탭이 그 이벤트를 놓쳤으면(끊긴 사이) 세션을 다시 받아야 안내로 바뀐다(카드의 409 와 같다 — 태스크 6 리뷰 M1)
+        mark("conversation_closed");
+        void qc.invalidateQueries({ queryKey: qk.conversation(target ?? conversationId), exact: true });
+        return;
+      }
       if (code === "FORBIDDEN") {
         // 「세션 관리자만」 채널에서 새 세션(태스크 5 리뷰가 넘긴 ②) — 이 탭이 정책·역할 변경을 아직 모른다. 채널·멤버를 다시 받으면 새 세션
         // 창의 작성기가 안내로 바뀐다
@@ -161,7 +166,7 @@ export function useSendMessage(
       }
       mark(code === "RATE_LIMITED" ? "rate_limited" : undefined);
     },
-    [qc, channelId, patchPending],
+    [qc, channelId, conversationId, patchPending],
   );
 
   /**

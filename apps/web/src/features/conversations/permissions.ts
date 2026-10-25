@@ -44,14 +44,17 @@ export function canManageConversation(
 /**
  * 지금 사람의 세션 권한 — 채널·멤버·me 캐시에서. 보관한 채널에는 새 세션을 만들 수 없다(서버가 409 — 정책과 따로 쓰기 막기가 먼저다).
  * `canCreate` 는 아직 가를 수 없으면(채널을, 「세션 관리자만」이면 멤버를 아직 못 받았다) undefined — 숨기는 쪽은 거짓처럼 쓰고, 작성기 대신
- * 안내를 그리는 쪽은 `false` 일 때만 그린다(받는 동안 모든 사람에게 안내가 번쩍이지 않게)
+ * 안내를 그리는 쪽은 `false` 일 때만 그린다(받는 동안 모든 사람에게 안내가 번쩍이지 않게). `enabled` 가 거짓이면 멤버를 부르지 않는다
  */
-export function useConversationPermissions(channelId: string) {
+export function useConversationPermissions(
+  channelId: string,
+  { enabled = true }: { enabled?: boolean } = {},
+) {
   const role = useRole();
   // 관찰자를 두지 않는다(`useCachedMe`) — 로그아웃·401 의 캐시 비우기 뒤 머리가 me 를 다시 불러 로그인 화면을 되돌리지 않게
   const meId = useCachedMe()?.user.id;
   const channel = useChannel(channelId).data;
-  const members = useMembers(channelId).data;
+  const members = useMembers(channelId, { enabled }).data;
   const isManager = isSessionManagerOf(members, meId);
   const policy = channel?.sessionPolicy ?? { create: "members" };
   const canCreate =

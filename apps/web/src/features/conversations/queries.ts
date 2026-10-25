@@ -1,5 +1,11 @@
 import type { Conversation, ConversationList, ServerToClientEvents } from "@dodok/shared";
-import { keepPreviousData, useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  queryOptions,
+  useInfiniteQuery,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { useEffect } from "react";
 import { api } from "@/api/http";
@@ -11,16 +17,24 @@ import { type ConversationPages, noteConversationActivity, visibleConversations 
 /**
  * 세션 하나(`GET /conversations/:id`) — 세션 머리의 제목·닫힘. 새 세션 창(`NEW_CONVERSATION`)은 부르지 않는다. 오류는 화면이 따로
  * 그리지 않는다(메시지 목록이 「세션을 찾을 수 없습니다」를 그린다) — 토스트를 끈다(`silent`). 실시간으로는 `conversation.updated` 가
- * 갈아 끼운다(`applyConversation`)
+ * 갈아 끼운다(`applyConversation`). 받는 것은 세션 화면(`ChannelPage`)이 맡는다 — 그 아래 자리는 `useConversationView`
  */
-export const useConversation = (conversationId: string) =>
-  useQuery({
+const conversationQuery = (conversationId: string) =>
+  queryOptions({
     queryKey: qk.conversation(conversationId),
     queryFn: async () =>
       (await api<{ conversation: Conversation }>("GET", `/conversations/${conversationId}`)).conversation,
     enabled: conversationId !== NEW_CONVERSATION,
     meta: { silent: true },
   });
+export const useConversation = (conversationId: string) => useQuery(conversationQuery(conversationId));
+/**
+ * 세션 화면 아래 자리(머리의 제목·닫기, 스레드 패널)가 같은 세션을 읽는다 — 마운트할 때 다시 받지 않는다. 세션 화면이 먼저 받은 값을 채널이
+ * 확인된 뒤 붙는 자리가 또 받으면 화면이 뜰 때 같은 GET 이 두 번 나간다(태스크 6 리뷰 L1). 값이 없으면 받고(나가 있으면 그것을 기다린다),
+ * 다시 받기(재연결·409 의 무효화)는 세션 화면의 관찰자가 맡는다
+ */
+export const useConversationView = (conversationId: string) =>
+  useQuery({ ...conversationQuery(conversationId), refetchOnMount: false });
 
 /**
  * 세션 목록 칸 — 최근 활동순 20개씩(채널 세션 스펙 「wire·REST」 장), 상태·제목 검색어마다 따로. 화면 목록은 쪽을 펼쳐 상태·검색어로

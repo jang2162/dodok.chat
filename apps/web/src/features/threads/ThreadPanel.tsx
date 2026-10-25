@@ -6,7 +6,7 @@ import { ArchivedNotice } from "@/features/channels/ArchivedNotice";
 import { useChannelArchived } from "@/features/channels/archived";
 import { ClosedNotice } from "@/features/conversations/ClosedNotice";
 import { useConversationClosed } from "@/features/conversations/closed";
-import { useConversation } from "@/features/conversations/queries";
+import { useConversationView } from "@/features/conversations/queries";
 import { Composer } from "@/features/composer/Composer";
 import { useSendMessage } from "@/features/composer/useSendMessage";
 import { MessageList } from "@/features/messages/MessageList";
@@ -74,7 +74,7 @@ function ThreadBody({ channelId, conversationId, rootId }: ThreadProps) {
 function ThreadView({ channelId, conversationId, rootId }: ThreadProps) {
   const archived = useChannelArchived();
   const closed = useConversationClosed();
-  const conversation = useConversation(conversationId).data;
+  const conversation = useConversationView(conversationId).data;
   const bubbleRunIds = useChannelBubbles(channelId, conversationId, rootId);
   const { retry, discard } = useSendMessage(channelId, conversationId, rootId);
   // 스레드의 보내는 중 항목 — 채널 목록의 것(ChannelPage)과 따로 둔다

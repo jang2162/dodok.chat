@@ -62,11 +62,15 @@ export function ChannelPage() {
   useChannelSubscription(channelId);
   const channel = useChannel(channelId);
   const session = useTimelineState(channelId, conversationId);
-  // 주소의 채널과 세션의 채널이 다르면 그 세션의 채널로 바꿔 간다(태스크 5 리뷰 L1) — 확인되기 전에는 최근 본 세션으로 남기지 않는다
+  const known = channel.data !== undefined;
+  // 주소의 채널과 세션의 채널이 다르면 그 세션의 채널로 바꿔 간다(태스크 5 리뷰 L1) — 확인되기 전에는 최근 본 세션으로 남기지 않는다.
+  // 세션은 채널과 함께 받는다(닫힘을 카드·작성기가 곧바로 알게) — 아래 자리는 다시 받지 않고 읽는다(`useConversationView`)
   const conversation = useConversation(conversationId);
   const belongs = useSessionChannelGuard(channelId, conversationId, conversation.data);
   const closed = conversation.data !== undefined && conversation.data.closedAt !== undefined;
-  const { canCreate } = useConversationPermissions(channelId);
+  // 멤버는 채널이 확인된 뒤에 부른다 — 위 주석의 까닭에 더해, 먼저 받아 두면 확인 뒤 마운트되는 머리·목록·작성기의 관찰자가 낡은
+  // 값(staleTime 0)을 한 번 더 받는다(태스크 6 리뷰 L1)
+  const { canCreate } = useConversationPermissions(channelId, { enabled: known });
   const cannotCreate = conversationId === NEW_CONVERSATION && canCreate === false;
   // 닫힌 안내가 초점을 받는 것은 이 화면에서 열린 채 보던 세션이 닫혔을 때만(`ClosedNotice` 의 focusOnMount)
   const [seenOpen, setSeenOpen] = useState<string>();
@@ -86,7 +90,6 @@ export function ChannelPage() {
   // 확인된 채널만 최근 본 채널로(오프라인 사본 대상, 스펙 4장) — 없는 채널 주소가 실제 채널을 밀어내지 않게.
   // 세션은 받은 것만 그 채널의 마지막으로 본 세션으로(사본이 채널마다 그 세션 하나만 담는다) — 새 세션 창은 남길 것이 없다
   const qc = useQueryClient();
-  const known = channel.data !== undefined;
   const sessionKnown = conversationId !== NEW_CONVERSATION && session.timeline !== undefined;
   useEffect(() => {
     if (known) touchRecentChannel(qc, channelId);

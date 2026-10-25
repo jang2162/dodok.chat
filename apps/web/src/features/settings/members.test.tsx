@@ -43,8 +43,6 @@ describe("추가·제거", () => {
         .map((o) => o.textContent),
     ).toEqual(["에이전트 선택", "@fin — FIN 봇"]);
     expect(within(section).getByRole("button", { name: "추가" })).toBeDisabled();
-    // 추가는 응답으로 캐시를 고친다 — 다시 받지 않는다. 처음 받은 횟수는 화면 조각이 뜨는 순서에 따라 달라 그 뒤로만 센다
-    const fetched = server.count("GET", membersUrl);
 
     await userEvent.selectOptions(select, FIN);
     await userEvent.click(within(section).getByRole("button", { name: "추가" }));
@@ -60,7 +58,7 @@ describe("추가·제거", () => {
       "href",
       "/settings/agents",
     );
-    expect(server.count("GET", membersUrl)).toBe(fetched);
+    expect(server.count("GET", membersUrl)).toBe(1);
   });
 
   it("등록된 에이전트가 없으면 /settings/agents 로 안내", async () => {

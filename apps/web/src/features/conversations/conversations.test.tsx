@@ -11,7 +11,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { qk } from "@/api/queries";
 import { createQueryClient } from "@/app/queryClient";
-import { emptyTimeline, NEW_CONVERSATION, type Timeline } from "@/features/messages/timeline";
+import { emptyTimeline, NEW_CONVERSATION, threadFromPage, type Timeline } from "@/features/messages/timeline";
 import { createSubscriptions } from "@/realtime/subscriptions";
 import { getTimeline } from "@/realtime/timelineCache";
 import { attachHandlers } from "@/realtime/handlers";
@@ -26,7 +26,8 @@ import { stubMedia } from "../../../test/media";
 import { ME, channelOf, conversationOf, json, renderRoute, shellGet } from "../../../test/shellApi";
 import { applyConversation, byActivity, noteConversationActivity, visibleConversations } from "./cache";
 import type { ConversationPages } from "./cache";
-import { canCreateConversation, canManageConversation } from "./permissions";
+import { settledFromNew } from "@/features/composer/useSendMessage";
+import { canCreateConversation, canManageConversation, isSessionManagerOf } from "./permissions";
 
 // 세션 목록·머리·닫기(채널 세션 계획 태스크 6). 세션 화면은 실시간 없이(WireProvider 없음) 띄우고, 실시간 이벤트는 실제 핸들러
 // (attachHandlers)가 같은 QueryClient 에 반영하는 것으로 흉내 낸다. 목록 칸의 활동 순서(message.created)는 칸이 직접 듣는다 — 가짜 소켓
@@ -66,11 +67,13 @@ function stubServer({
   policy = { create: "members" },
   members = [],
   conversations = [],
+  archived = false,
 }: {
   role?: string;
   policy?: SessionPolicy;
   members?: ChannelMember[];
   conversations?: Conversation[];
+  archived?: boolean;
 } = {}) {
   const calls: Call[] = [];
   const state = { conversations: [...conversations], members: [...members], policy };
@@ -83,7 +86,9 @@ function stubServer({
       calls.push({ method, url, ...(body === undefined ? {} : { body }) });
       if (url === "/api/v1/auth/me") return json(200, { ...ME, role });
       if (url === `/api/v1/channels/${CH}` && method === "GET")
-        return json(200, { channel: channelOf(CH, { sessionPolicy: state.policy }) });
+        return json(200, {
+          channel: channelOf(CH, { sessionPolicy: state.policy, ...(archived ? { archivedAt: at(0) } : {}) }),
+        });
       if (url === `/api/v1/channels/${CH}` && method === "PATCH") {
         state.policy = (body as { sessionPolicy: SessionPolicy }).sessionPolicy;
         return json(200, { channel: channelOf(CH, { sessionPolicy: state.policy }) });
@@ -127,7 +132,12 @@ function stubServer({
       return shellGet(input, init) ?? json(404, { code: "NOT_FOUND", message: "x" });
     }),
   );
-  return { calls, state, writes: () => calls.filter((c) => c.method !== "GET") };
+  return {
+    calls,
+    state,
+    writes: () => calls.filter((c) => c.method !== "GET"),
+    gets: (path: string) => calls.filter((c) => c.method === "GET" && c.url === `/api/v1${path}`).length,
+  };
 }
 
 let fake: FakeSocket;
@@ -159,6 +169,17 @@ const itemTitles = async () =>
     .map((li) => li.querySelector("a > span")?.textContent);
 const header = () => screen.findByTestId("channel-header");
 const composerSlot = () => document.querySelector<HTMLElement>('[data-slot="composer"]');
+/** 작성기에 글을 넣고 Enter */
+async function typeAndSend(text: string) {
+  const box = await screen.findByRole("textbox", { name: "메시지 입력" });
+  const editor = (box as unknown as { editor: import("@tiptap/core").Editor }).editor;
+  act(() => {
+    editor.commands.setContent(text);
+    editor.commands.focus("end");
+  });
+  fireEvent.keyDown(box, { key: "Enter" });
+  return editor;
+}
 const pages = (conversations: Conversation[]): ConversationPages => ({
   pages: [{ conversations }],
   pageParams: [undefined],
@@ -179,7 +200,10 @@ function liveHandlers(qc: QueryClient) {
     onUnauthorized: () => {},
     notify,
   });
-  return { emit: (event: string, payload: unknown) => act(() => socket.serverEmit(event, payload)), detach };
+  return {
+    emit: (event: string, ...payload: unknown[]) => act(() => socket.serverEmit(event, ...payload)),
+    detach,
+  };
 }
 
 describe("목록 순서·거름(순수)", () => {
@@ -218,6 +242,14 @@ describe("목록 순서·거름(순수)", () => {
     noteConversationActivity(qc, msg(3, { conversationId: B }));
     expect(qc.getQueryState(key)?.isInvalidated).toBe(true);
   });
+
+  it("[태스크 6 리뷰 L3] 제목 검색 목록에 없는 세션의 글로는 다시 받지 않는다 — 다시 받아도 검색에 맞지 않는다", () => {
+    const qc = createQueryClient(() => {});
+    const key = qk.conversationList(CH, "open", "배포");
+    qc.setQueryData(key, pages([conv(A, { title: "배포" })]));
+    noteConversationActivity(qc, msg(3, { conversationId: B }));
+    expect(qc.getQueryState(key)?.isInvalidated).toBe(false);
+  });
 });
 
 describe("권한 판정 — 서버 auth/policies.ts 의 세션 쪽과 같은 표", () => {
@@ -243,6 +275,11 @@ describe("권한 판정 — 서버 auth/policies.ts 의 세션 쪽과 같은 표
   ] as const)("제목·닫기 — %s · 만든 이 %o · 세션 관리자 %s → %s", (role, createdBy, isManager, expected) => {
     expect(canManageConversation(role, { createdBy }, "u", isManager)).toBe(expected);
   });
+  it("세션 관리자는 채널 멤버 줄의 role manager 만 — 채널 멤버(role member)는 아니다", () => {
+    expect(isSessionManagerOf([userMember("u", "member")], "u")).toBe(false);
+    expect(isSessionManagerOf([userMember("u", "manager")], "u")).toBe(true);
+    expect(isSessionManagerOf([userMember(OTHER, "manager")], "u")).toBe(false);
+  });
 });
 
 describe("세션 목록 칸", () => {
@@ -258,6 +295,16 @@ describe("세션 목록 칸", () => {
       "href",
       `/c/${CH}/s/${B}`,
     );
+  });
+
+  it("[태스크 6 리뷰 L1] 화면이 뜰 때 세션 하나·채널 멤버를 한 번씩만 받는다(머리·목록·작성기가 뒤에 붙어도)", async () => {
+    const server = stubServer({ conversations: [conv(A)] });
+    renderRoute(`/c/${CH}/s/${A}`);
+    await within(await header()).findByRole("button", { name: "세션-1" });
+    await waitFor(async () => expect(await itemTitles()).toEqual(["세션-1"]));
+    await screen.findByRole("textbox", { name: "메시지 입력" });
+    expect(server.gets(`/conversations/${A}`)).toBe(1);
+    expect(server.gets(`/channels/${CH}/members`)).toBe(1);
   });
 
   it("「닫힘」 필터는 닫힌 세션만, 제목 검색은 서버 q 로(잠깐 기다렸다가) — 없으면 「찾는 세션이 없습니다」", async () => {
@@ -361,6 +408,31 @@ describe("새 세션 — 정책·역할", () => {
       `/c/${CH}/s/${NEW_CONVERSATION}`,
     );
     expect(await within(await pane()).findByRole("link", { name: /새 세션/ })).toBeInTheDocument();
+  });
+
+  it("[정책 managers] 채널 멤버이지만 세션 관리자가 아닌 member 에게도 「새 세션」이 없다", async () => {
+    stubServer({
+      role: "member",
+      policy: { create: "managers" },
+      members: [userMember("u", "member")],
+      conversations: [conv(A)],
+    });
+    renderRoute(`/c/${CH}/s/${A}`);
+    await waitFor(async () => expect(await itemTitles()).toEqual(["세션-1"]));
+    expect(within(await header()).queryByRole("link", { name: "새 세션" })).toBeNull();
+    expect(within(await pane()).queryByRole("link", { name: /새 세션/ })).toBeNull();
+  });
+
+  it("보관한 채널에는 owner 에게도 「새 세션」이 없고 제목은 버튼이 아니다(서버가 409)", async () => {
+    stubServer({ archived: true, conversations: [conv(A, { title: "보관 전" })] });
+    renderRoute(`/c/${CH}/s/${A}`);
+    const title = await within(await header()).findByTestId("conversation-title");
+    expect(title).toHaveTextContent("보관 전");
+    expect(title.tagName).not.toBe("BUTTON");
+    await waitFor(async () => expect(await itemTitles()).toEqual(["보관 전"]));
+    expect(within(await header()).queryByRole("link", { name: "새 세션" })).toBeNull();
+    expect(within(await pane()).queryByRole("link", { name: /새 세션/ })).toBeNull();
+    expect(within(await header()).queryByRole("button", { name: "세션 닫기" })).toBeNull();
   });
 
   it("[태스크 5 리뷰 ②] 정책 managers 의 member 가 새 세션 창에 오면 작성기 대신 안내", async () => {
@@ -594,6 +666,131 @@ describe("닫기·다시 열기", () => {
   });
 });
 
+describe("닫힌 세션 — 권한·스레드·리액션·카드", () => {
+  it("member 는 남의 닫힌 세션에서 「다시 열기」를 보지 않는다", async () => {
+    stubServer({
+      role: "member",
+      conversations: [conv(A, { closedAt: at(3), createdBy: { type: "user", id: OTHER } })],
+    });
+    renderRoute(`/c/${CH}/s/${A}`);
+    const notice = await screen.findByTestId("conversation-closed");
+    expect(notice).toHaveTextContent("닫힌 세션입니다");
+    expect(within(notice).queryByRole("button", { name: "다시 열기" })).toBeNull();
+  });
+
+  it("닫힌 세션의 스레드 패널은 작성기 대신 안내(「다시 열기」 없음)", async () => {
+    const root = msg(1, { conversationId: A, bodyMd: "루트 질문" });
+    stubServer({ conversations: [conv(A, { closedAt: at(3) })] });
+    const queryClient = createQueryClient(() => {});
+    queryClient.setQueryData<Timeline>(qk.timeline(CH, A), { ...emptyTimeline(), items: [root], lastSeq: 1 });
+    queryClient.setQueryData<Timeline>(
+      qk.thread(CH, A, root.id),
+      threadFromPage(undefined, root, [root], false),
+    );
+    renderRoute(`/c/${CH}/s/${A}/t/${root.id}`, queryClient);
+    const panel = await screen.findByTestId("thread-panel");
+    expect(await within(panel).findByTestId("conversation-closed")).toHaveTextContent("닫힌 세션입니다");
+    expect(within(panel).queryByRole("textbox", { name: "스레드 답글 입력" })).toBeNull();
+    expect(within(panel).queryByRole("button", { name: "다시 열기" })).toBeNull();
+  });
+
+  it("닫힌 세션에서는 반응을 달 수 없다 — 다시 열리면(conversation.updated) 「반응 추가」가 돌아온다", async () => {
+    stubServer({ conversations: [conv(A, { closedAt: at(3) })] });
+    const queryClient = createQueryClient(() => {});
+    queryClient.setQueryData<Timeline>(qk.timeline(CH, A), {
+      ...emptyTimeline(),
+      items: [msg(1, { conversationId: A, bodyMd: "반응 대상" })],
+      lastSeq: 1,
+    });
+    renderRoute(`/c/${CH}/s/${A}`, queryClient);
+    const live = liveHandlers(queryClient);
+    await screen.findByTestId("conversation-closed");
+    expect(screen.getByText("반응 대상")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "반응 추가" })).toBeNull();
+    live.emit("conversation.updated", { conversation: conv(A) });
+    expect(await screen.findByRole("button", { name: "반응 추가" })).toBeInTheDocument();
+    live.detach();
+  });
+
+  it("카드 응답이 CONVERSATION_CLOSED 면(이 탭이 닫힘을 모른다) 세션을 다시 받아 카드가 잠기고 작성기 자리가 안내로", async () => {
+    const server = stubServer({ conversations: [conv(A)] });
+    const card = msg(1, {
+      conversationId: A,
+      authorType: "agent",
+      components: ComponentsV1.parse({
+        id: "cmp_1",
+        blocks: [{ type: "actions", items: [{ type: "button", id: "ok", label: "확인" }] }],
+      }),
+      componentState: { expiresAt: "2999-01-01T00:00:00.000Z", consumed: [] },
+    });
+    const queryClient = createQueryClient(() => {});
+    queryClient.setQueryData<Timeline>(qk.timeline(CH, A), { ...emptyTimeline(), items: [card], lastSeq: 1 });
+    fake.onAck("component.interact", () => ({
+      ok: false,
+      error: { code: "CONVERSATION_CLOSED", message: "closed" },
+    }));
+    renderRoute(`/c/${CH}/s/${A}`, queryClient);
+    await screen.findByRole("textbox", { name: "메시지 입력" });
+    server.state.conversations[0] = conv(A, { closedAt: at(3), closedBy: OTHER });
+    await userEvent.click(await screen.findByRole("button", { name: "확인" }));
+    expect(await screen.findByTestId("conversation-closed")).toBeInTheDocument();
+    expect(server.gets(`/conversations/${A}`)).toBe(2);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "확인" })).toHaveAccessibleDescription("닫힌 세션입니다"),
+    );
+  });
+});
+
+describe("[태스크 6 리뷰 M1] 닫힘·다시 열기를 이벤트로 놓쳤을 때", () => {
+  it("보내기 ack 가 CONVERSATION_CLOSED 면 세션을 다시 받아 작성기 자리가 안내로 바뀐다", async () => {
+    const server = stubServer({ conversations: [conv(A)] });
+    fake.onAck("message.send", () => ({
+      ok: false,
+      error: { code: "CONVERSATION_CLOSED", message: "closed" },
+    }));
+    renderRoute(`/c/${CH}/s/${A}`);
+    await screen.findByRole("textbox", { name: "메시지 입력" });
+    await waitFor(() => expect(server.gets(`/conversations/${A}`)).toBe(1));
+    // 끊긴 사이 다른 사람이 닫았다 — 이 탭은 conversation.updated 를 받지 못했다
+    server.state.conversations[0] = conv(A, { closedAt: at(3), closedBy: OTHER });
+    await typeAndSend("늦은 글");
+    expect(await screen.findByTestId("conversation-closed")).toBeInTheDocument();
+    expect(server.gets(`/conversations/${A}`)).toBe(2);
+    expect(screen.queryByRole("textbox", { name: "메시지 입력" })).toBeNull();
+    expect(within(await header()).getByText("닫힘")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "다시 보내기" })).toBeNull();
+  });
+
+  it("다시 붙으면 세션 하나를 다시 받는다 — 끊긴 사이 닫힌 세션의 작성기가 안내로", async () => {
+    const server = stubServer({ conversations: [conv(A)] });
+    const { queryClient } = renderRoute(`/c/${CH}/s/${A}`);
+    const live = liveHandlers(queryClient);
+    live.emit("connect");
+    await screen.findByRole("textbox", { name: "메시지 입력" });
+    server.state.conversations[0] = conv(A, { closedAt: at(3), closedBy: OTHER });
+    live.emit("connect");
+    expect(await screen.findByTestId("conversation-closed")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "메시지 입력" })).toBeNull();
+    live.detach();
+  });
+
+  it("다시 붙으면 목록도 다시 받는다 — 끊긴 사이 다시 열리고 이름이 바뀐 세션이 열림 목록·머리에 돌아온다", async () => {
+    const server = stubServer({ conversations: [conv(A, { title: "닫힌 것", closedAt: at(3) }), conv(B)] });
+    const { queryClient } = renderRoute(`/c/${CH}/s/${A}`);
+    const live = liveHandlers(queryClient);
+    live.emit("connect");
+    await screen.findByTestId("conversation-closed");
+    await waitFor(async () => expect(await itemTitles()).toEqual(["세션-2"]));
+    server.state.conversations[0] = conv(A, { title: "다시 연 것", lastMessageAt: at(9) });
+    live.emit("connect");
+    expect(await screen.findByRole("textbox", { name: "메시지 입력" })).toBeInTheDocument();
+    expect(screen.queryByTestId("conversation-closed")).toBeNull();
+    expect(await within(await header()).findByRole("button", { name: "다시 연 것" })).toBeInTheDocument();
+    await waitFor(async () => expect(await itemTitles()).toEqual(["다시 연 것", "세션-2"]));
+    live.detach();
+  });
+});
+
 describe("주소·세션 전환", () => {
   it("[태스크 5 리뷰 ③] 주소의 채널과 세션의 채널이 다르면 그 세션의 채널 주소로 바꿔 간다(replace, 패널 탭 그대로)", async () => {
     const elsewhere = conversationOf(CH2, { id: B, title: "다른 채널 세션" });
@@ -656,6 +853,90 @@ describe("주소·세션 전환", () => {
     // 다음에 새 세션 창을 열면 빈 작성기다(창 몫 초안은 들고 간 뒤 지웠다)
     await userEvent.click(within(await pane()).getByRole("link", { name: /새 세션/ }));
     await waitFor(() => expect(history.location.pathname).toBe(`/c/${CH}/s/${NEW_CONVERSATION}`));
+    expect(editor.getText()).toBe("");
+    // 표는 한 번만 쓴다 — 이번에는 창에서 쓴 초안을 B 로 들고 가지 않고 B 몫 초안을 꺼낸다
+    act(() => editor.commands.setContent("창 초안"));
+    await userEvent.click(within(await pane()).getByRole("link", { name: /첫 글/ }));
+    await waitFor(() => expect(history.location.pathname).toBe(`/c/${CH}/s/${B}`));
+    expect(editor.getText()).toBe("다음 글 초안");
+  });
+
+  it("[태스크 6 리뷰 L2] 새 세션 창에서 첫 ack 전에 다른 세션으로 옮기면 칩·초안을 비우고, ack 뒤에도 그 세션 작성기에 창 초안이 들어오지 않는다", async () => {
+    stubServer({ conversations: [conv(A)] });
+    let release: (r: Result<unknown>) => void = () => {};
+    fake.onAck(
+      "message.send",
+      () =>
+        new Promise<Result<unknown>>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const { history, queryClient } = renderRoute(`/c/${CH}/s/${NEW_CONVERSATION}`);
+    const editor = await typeAndSend("첫 글");
+    await waitFor(() => expect(fake.sentOf("message.send")).toHaveLength(1));
+    act(() => editor.commands.setContent("창 초안"));
+    vi.stubGlobal("XMLHttpRequest", FakeXhr);
+    await userEvent.upload(
+      document.querySelector<HTMLInputElement>('input[type="file"]') as HTMLInputElement,
+      pngFile("a.png"),
+    );
+    const chips = () => screen.queryByRole("list", { name: "첨부할 이미지" });
+    expect(chips()).not.toBeNull();
+
+    await userEvent.click(within(await pane()).getByRole("link", { name: /세션-1/ }));
+    await waitFor(() => expect(history.location.pathname).toBe(`/c/${CH}/s/${A}`));
+    expect(chips()).toBeNull();
+    expect(editor.getText()).toBe("");
+
+    await act(async () =>
+      release({
+        ok: true,
+        data: { message: msg(2, { conversationId: B, bodyMd: "첫 글" }), conversation: conv(B) },
+      }),
+    );
+    await waitFor(() => expect(getTimeline(queryClient, CH, B)?.items).toHaveLength(1));
+    expect(history.location.pathname).toBe(`/c/${CH}/s/${A}`);
+    expect(editor.getText()).toBe("");
+    expect(chips()).toBeNull();
+  });
+
+  it("[태스크 6 리뷰 L4] 표가 생긴 뒤 주소가 그 세션으로 바뀌기 전에 다른 채널로 가면 표를 지운다 — 뒤에 새 세션 창에서 그 세션으로 가도 창 초안을 들고 가지 않는다", async () => {
+    const server = stubServer({ conversations: [conv(A)] });
+    server.state.conversations.push(conversationOf(CH2, { id: C, title: "다른 채널" }));
+    let release: (r: Result<unknown>) => void = () => {};
+    fake.onAck(
+      "message.send",
+      () =>
+        new Promise<Result<unknown>>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const { history, router, queryClient } = renderRoute(`/c/${CH}/s/${NEW_CONVERSATION}`);
+    await typeAndSend("첫 글");
+    await waitFor(() => expect(fake.sentOf("message.send")).toHaveLength(1));
+
+    // ack 가 표를 남기고 주소를 바꾸러 가는 사이(아직 그리기 전) 다른 채널로 간다
+    server.state.conversations.push(conv(B));
+    await act(async () => {
+      release({
+        ok: true,
+        data: { message: msg(2, { conversationId: B, bodyMd: "첫 글" }), conversation: conv(B) },
+      });
+      for (let i = 0; i < 50 && settledFromNew(queryClient, CH) !== B; i++) await Promise.resolve();
+      expect(settledFromNew(queryClient, CH)).toBe(B);
+      void router.navigate({ href: `/c/${CH2}/s/${C}` });
+    });
+    await waitFor(() => expect(history.location.pathname).toBe(`/c/${CH2}/s/${C}`));
+    expect(settledFromNew(queryClient, CH)).toBeUndefined();
+
+    await act(() => router.navigate({ href: `/c/${CH}/s/${NEW_CONVERSATION}` }));
+    await waitFor(() => expect(history.location.pathname).toBe(`/c/${CH}/s/${NEW_CONVERSATION}`));
+    // 채널을 옮기며 작성기가 새로 떴을 수 있다 — 편집기를 다시 찾는다
+    const box = await screen.findByRole("textbox", { name: "메시지 입력" });
+    const editor = (box as unknown as { editor: import("@tiptap/core").Editor }).editor;
+    act(() => editor.commands.setContent("창 초안"));
+    await userEvent.click(within(await pane()).getByRole("link", { name: /세션-2/ }));
+    await waitFor(() => expect(history.location.pathname).toBe(`/c/${CH}/s/${B}`));
     expect(editor.getText()).toBe("");
   });
 });

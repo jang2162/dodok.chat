@@ -89,8 +89,8 @@ export function applyConversation(qc: QueryClient, conversation: Conversation): 
 
 /**
  * 새 글이 그 세션의 활동 시각을 올린다(목록 순서 — 계획 판정 PS12: 서버는 메시지마다 `conversation.updated` 를 내지 않는다). 시스템
- * 메시지는 올리지 않는다(판정 PS11 — 서버 `touchConversation` 과 같다), 스레드 답글은 올린다. 받아 둔 목록에 그 세션이 없으면(더 옛
- * 쪽에 있었다) 그 채널의 목록을 다시 받게 한다 — 올라온 세션을 맨 위에 보이려고
+ * 메시지는 올리지 않는다(판정 PS11 — 서버 `touchConversation` 과 같다), 스레드 답글은 올린다. 검색어 없는 열림 목록에 그 세션이 없으면
+ * (더 옛 쪽에 있었다) 그 채널의 목록을 다시 받게 한다 — 올라온 세션을 맨 위에 보이려고
  */
 export function noteConversationActivity(qc: QueryClient, message: Message): void {
   if (message.kind === "system") return;
@@ -110,8 +110,8 @@ export function noteConversationActivity(qc: QueryClient, message: Message): voi
     if (!pages) continue;
     const patched = patchPages(pages, message.conversationId, bump);
     if (patched) qc.setQueryData(key, patched);
-    // 닫힘 목록에 없는 것은 당연하다(글은 열린 세션에 쓴다)
-    else if (key[2] === "open") missing = true;
+    // 닫힘 목록·제목 검색 목록에 없는 것은 당연하다(글은 열린 세션에 쓰고, 검색에 맞지 않으면 다시 받아도 없다 — 태스크 6 리뷰 L3)
+    else if (key[2] === "open" && key[3] === "") missing = true;
   }
   if (missing) void qc.invalidateQueries({ queryKey: qk.channelConversationLists(message.channelId) });
 }

@@ -183,11 +183,12 @@ export function Composer({
       else drafts.set(draftKey, editor.getJSON());
     };
   }, [editor, draftKey, drafts, carriedFrom]);
-  // 옮겨 간 표는 한 번만 쓴다 — 남아 있으면 나중에 새 세션 창에서 같은 세션 주소로 갈 때 창의 초안을 잘못 들고 간다
+  // 옮겨 간 표는 새 세션 창을 떠나는 그 한 번만 쓴다(읽기는 위 렌더 중) — 그 세션으로 들고 갔든, 표가 생긴 뒤 주소가 바뀌기 전에 다른
+  // 채널·화면으로 갔든 지운다(태스크 6 리뷰 L4). 남아 있으면 나중에 새 세션 창에서 같은 세션으로 갈 때 창의 초안을 잘못 들고 간다
   useEffect(() => {
-    if (conversationId !== NEW_CONVERSATION && settledFromNew(qc, channelId) !== undefined)
-      forgetSettled(qc, channelId);
-  }, [qc, channelId, conversationId]);
+    if (threadRootId !== undefined || conversationId !== NEW_CONVERSATION) return;
+    return () => forgetSettled(qc, channelId);
+  }, [qc, channelId, conversationId, threadRootId]);
 
   live.current.candidates = candidates;
   live.current.notifyTyping = threadRootId === undefined ? typing.notify : () => {};

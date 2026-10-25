@@ -19,7 +19,7 @@ import { FieldError } from "@/ui/field-error";
 import { Input } from "@/ui/input";
 import { usePatchConversation } from "./mutations";
 import { useConversationPermissions } from "./permissions";
-import { useConversation } from "./queries";
+import { useConversationView } from "./queries";
 
 /** 새 세션 창의 머리 — 첫 보내기가 세션을 만들기 전이다(채널 세션 스펙 결정 7) */
 export const NEW_SESSION_TITLE = "새 세션";
@@ -36,7 +36,7 @@ export function ConversationTitle({
   channelId: string;
   conversationId: string;
 }) {
-  const conversation = useConversation(conversationId).data;
+  const conversation = useConversationView(conversationId).data;
   const { canManage } = useConversationPermissions(channelId);
   const archived = useChannelArchived();
   if (conversationId === NEW_CONVERSATION)
@@ -152,7 +152,7 @@ export function CloseConversationButton({
   channelId: string;
   conversationId: string;
 }) {
-  const conversation = useConversation(conversationId).data;
+  const conversation = useConversationView(conversationId).data;
   const { canManage } = useConversationPermissions(channelId);
   const patch = usePatchConversation(conversationId);
   const [open, setOpen] = useState(false);
