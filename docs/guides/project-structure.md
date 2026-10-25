@@ -303,11 +303,11 @@ src/
 │  │                      service.ts(상관 — 승인이 온 연결의 에이전트·findOpenRunBySession(연결, 세션 키) → 저장 → APPROVAL_REQUESTED/RESOLVED 런 이벤트 → 버스,
 │  │                      resolve 는 승인 설계 4.4 의 문지기 검사 뒤 승인이 온 연결로 어댑터 RPC).
 │  │                      REST 라우트는 없다 — 요구·확정은 wire 로만 오간다
-│  ├─ channels/           CRUD·멤버(에이전트 promptOverride·autoRespond·aliases, 사람은 활성 membership 이 있는 사람만 — 없거나 비활성이면 404)·프롬프트 리비전(역할: 만들기·`PATCH` 는 name·topic 밖 필드면 admin, 채널 멤버는 aliases 밖 필드면 admin, 「새 대화」는 admin — auth/roles.ts),
+│  ├─ channels/           CRUD·멤버(에이전트 promptOverride·autoRespond·aliases, 사람은 활성 membership 이 있는 사람만 — 없거나 비활성이면 404)·프롬프트 리비전(역할: 만들기·`PATCH` 는 name·topic 밖 필드면 admin, 채널 멤버는 aliases 밖 필드면 admin — auth/roles.ts),
 │  │                      사람의 자동 참여 joinChannelIfAbsent·사람 메시지의 멘션 후보 userMessageParticipants(채널 밖의 워크스페이스 사람 + 채널 참가자)·에이전트 헤더의 channelParticipants,
 │  │                      채널 프롬프트 동기화 prompt-sync.ts(OpenClaw config.set — 바꿀 때 그 채널 에이전트의 켜진 Gateway 마다, 에이전트를 넣거나 옮겨 Gateway 가 채널에 처음 들어올 때 그 Gateway 에,
-│  │                      플러그인 hello 때 그 Gateway 의 채널들을 다시 — watchPluginHellos, app.ts 가 건다), 「새 대화」(resetAgentSession —
-│  │                      `POST …/agents/:agentId/reset?threadRootId=` 면 그 스레드 세션만 reset·그 스레드 런만 abort, info 도 스레드에. 루트가 아니면 404, UUID 가 아니면 400).
+│  │                      플러그인 hello 때 그 Gateway 의 채널들을 다시 — watchPluginHellos, app.ts 가 건다). 「새 대화」(에이전트 세션 리셋)는 없다 —
+│  │                      채널 세션(`docs/superpowers/specs/2026-10-25-channel-sessions-design.md` 결정 6)이 그 자리를 대신한다.
 │  │                      보관(admin 이상): `POST /channels/:id/archive`(archiveChannel — archived_at 을 쓰고 열린 런을 대기 런부터 orchestrator.abort 로 닫는다, 멱등)·`/unarchive`(unarchiveChannel),
 │  │                      `GET /channels` 는 살아 있는 채널만·`?archived=1` 은 보관한 것만(누구나). 채널 갱신(보관·해제 포함)의 `channel.updated` 는 workspace 룸으로 간다.
 │  │                      쓰기 검사는 assertChannelWritable 한 함수(없으면 404, 보관이면 409 CHANNEL_ARCHIVED — PATCH·멤버 넣기·빼기·설정·「새 대화」·wire message.send·카드 checkInteraction·사람 첨부 올리기),
