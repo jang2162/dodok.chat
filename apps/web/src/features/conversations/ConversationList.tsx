@@ -44,11 +44,14 @@ export function ConversationList({
   conversationId,
   unreadOf,
   onPick,
+  inSheet = false,
 }: {
   channelId: string;
   conversationId: string;
   unreadOf?: (conversationId: string) => ConversationUnreadMark | undefined;
   onPick?: () => void;
+  /** 좁은 화면 시트 안 — 머리 오른쪽을 시트의 닫기 단추 자리만큼 비운다(패널 시트 머리 `PanelTabs` 와 같은 pr-12) */
+  inSheet?: boolean;
 }) {
   const [status, setStatus] = useState<"open" | "closed">("open");
   const [input, setInput] = useState("");
@@ -66,7 +69,7 @@ export function ConversationList({
 
   return (
     <nav aria-label="세션 목록" data-testid="conversation-list" className="flex min-h-0 flex-1 flex-col">
-      <div className="flex items-center gap-2 px-3 pt-3">
+      <div className={cn("flex items-center gap-2 px-3 pt-3", inSheet && "pr-12")}>
         <h2 className="flex-1 text-sm font-semibold">세션</h2>
         {canCreate && (
           <Button asChild variant="outline" size="xs">

@@ -290,6 +290,9 @@ describe("세션 목록 칸", () => {
     });
     renderRoute(`/c/${CH}/s/${A}`);
     await waitFor(async () => expect(await itemTitles()).toEqual(["세션-2", "세션-1", "세션-3"]));
+    expect(
+      within(await pane()).getByRole("heading", { name: "세션", level: 2 }).parentElement,
+    ).not.toHaveClass("pr-12");
     const current = within(await pane()).getByRole("link", { current: "page" });
     expect(current).toHaveTextContent("세션-1");
     expect(within(await pane()).getByRole("link", { name: /세션-2/ })).toHaveAttribute(
@@ -1000,6 +1003,8 @@ describe("좁은 화면(390px)", () => {
     await userEvent.click(opener);
     const sheet = await screen.findByRole("dialog", { name: "세션 목록" });
     expect(opener).toHaveAttribute("aria-expanded", "true");
+    // 머리 오른쪽은 시트의 닫기 단추 자리 — 「새 세션」이 그 밑에 깔리지 않는다(태스크 8 브라우저 390px)
+    expect(within(sheet).getByRole("heading", { name: "세션", level: 2 }).parentElement).toHaveClass("pr-12");
     await userEvent.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(opener).toHaveFocus();

@@ -135,6 +135,7 @@ export function ChannelPage() {
       conversationId={conversationId}
       onPick={onPick}
       unreadOf={unreadOf}
+      inSheet={onPick !== undefined}
     />
   );
   // 작성기 자리의 안내 — 보관 → 닫힘 → 만들 수 없음 순. 안내가 있으면 작성기는 숨긴다(초안을 잃지 않게 — 위 주석)
