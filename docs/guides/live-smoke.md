@@ -835,11 +835,12 @@ grep "dodok:probe\|dodok:tool-send" data/dev-gateway.log | tail                 
 2. Gateway 는 stdin 으로 `control_request{subtype:"initialize"}` 를 먼저 보내고 `control_response` 를 기다린다. 그다음에 `user` 레코드가 온다. 순서는 **control_response → user 수신 → system/init → 툴 호출 → assistant·result**.
 3. `-p` 가 없는 호출(버전·인증 확인)은 진짜 `claude` 로 넘긴다 — 모델을 부르지 않는다.
 
-**세션을 잴 때 걸리는 곳 셋**(ADR 0006 스파이크·17절 스레드 실연):
+**세션을 잴 때 걸리는 곳 넷**(ADR 0006 스파이크·17절 스레드 실연):
 1. **가짜 CLI 는 claude 전사 파일을 만들지 않는다** — 같은 세션의 둘째 턴은 Gateway 로그 `cli session reset: reason=missing-transcript` 로 매번 새 CLI 세션이 된다. `--resume` 경로는 이 하네스로 못 잰다.
    같은 세션에 턴 둘을 겹쳐 보내지 않는다 — 큐잉된 둘째 턴은 살아 있는 프로세스로 가는데, 첫 턴 뒤 끝나는 가짜 CLI 는 `Managed CLI live session is no longer reusable` 로 실패한다. 세션 id 는 argv 의 `--session-id`/`--resume` 값을 그대로 되돌린다.
 2. **시스템 프롬프트는 argv 가 아니라 stdin `control_request { subtype: "initialize", appendSystemPrompt }`** 로 온다 — argv 만 보면 「채널 프롬프트가 안 들어갔다」로 오판한다.
 3. **zsh 에서 세션 키를 셸 변수로 이을 때는 `${B}:thread:${T}`** 로 쓴다 — `$B:thread:…` 는 `:t` 수식자로 먹혀 `${B:t}hread…` 가 된다. 깨진 키로 부른 `chat.history` 는 오류 없이 빈 결과를 돌려준다.
+4. 새로 만든 9.5 상태(`OPENCLAW_HOME`)에서 Gateway 세션은 파일이 아니라 `agents/<에이전트>/agent/openclaw-agent.sqlite` 다 — 키 → OpenClaw 세션 id 는 `session_nodes`, 전사는 `transcript_events`(「채널 세션 실연」 절 26.2). 읽기 전용(`file:…?mode=ro`)으로 연다.
 
 **끝나면**: 가짜 PATH 없이 Gateway 를 다시 띄우거나(3절 (c)) 내린다. `rm -rf $SP`. probe 를 붙였으면 11.1 대로 되돌린다. 하네스 채널은 진짜 모델 런에 쓰지 않는다.
 
@@ -1581,7 +1582,7 @@ message.updated … consumed=[retry_run]
 # 세션 전사 요약 — 항목 수·delivery-mirror 수만(본문은 보지 않는다)
 hist() { gcall chat.history "{\"sessionKey\":\"$1\",\"limit\":500}" | jq -c '{total: (.messages|length),
   mirror: ([.messages[] | select((.model // "") == "delivery-mirror")] | length), sessionId}'; }
-B="agent:dev:dodok:channel:${CH}"          # zsh — ${B}:thread:${R} 로 잇는다(11.3 「세션을 잴 때 걸리는 곳 셋」)
+B="agent:dev:dodok:channel:${CH}"          # zsh — ${B}:thread:${R} 로 잇는다(11.3 「세션을 잴 때 걸리는 곳 넷」)
 hist "$B"; hist "${B}:thread:${R1}"          # 기준 3 — 스레드 런의 툴 전송 전후로 한 번씩
 # 기준 6 — 스레드 리셋과 판정
 api POST "/api/v1/channels/$CH/agents/<dev agentId>/reset?threadRootId=$R1"
@@ -1595,7 +1596,7 @@ gcall sessions.list '{"limit":300}' | jq -r --arg ch "$CH" '.sessions[] | select
 - **리셋은 전사와 서버 행으로 판정한다.** Gateway `sessions.list` 의 `startedAt` 은 세션 시작이 아니라 **마지막 런의 시작**이고 리셋하면 `null` 이 된다 — 세션 시작 시각으로 읽지 않는다.
   `sessions.reset` 의 응답 `entry.sessionStartedAt`(ADR 0006 「채널 프롬프트·리셋」 절)은 서버가 `agent_sessions.session_started_at` 에 옮긴다.
 - **옛 플러그인(기준 7)은 새 플러그인을 설치하기 전에 잰다.** dev 설치본이 Phase 4 이전 빌드면(`"threads"` 0) 그대로 쓰면 된다. 아니면 Phase 4 이전 커밋에서 `pack:plugin` 한 tgz 를 3절 (b) 대로 설치한다. 설치 전 설치본은 `~/.openclaw-dev/extensions/dodok` 을 `package/` 아래로 묶어 tgz 로 남겨 둘 수 있다.
-- 기준 5 는 **서로 다른 세션**의 두 멘션을 같이 보낸다. 같은 세션에 겹쳐 보내면 가짜 CLI 의 둘째 턴이 실패한다(11.3 「세션을 잴 때 걸리는 곳 셋」 1).
+- 기준 5 는 **서로 다른 세션**의 두 멘션을 같이 보낸다. 같은 세션에 겹쳐 보내면 가짜 CLI 의 둘째 턴이 실패한다(11.3 「세션을 잴 때 걸리는 곳 넷」 1).
 - `W send` 두 개를 같이 띄우면 두 연결이 같은 채널을 구독해 **양쪽 시간표에 두 런이 다 찍힌다** — 판정은 `runs` 의 `startedAt`·`endedAt` 으로 한다.
 
 ### 17.4 모델 런 (상한 2, 실제 2)
@@ -2073,7 +2074,7 @@ const SID = at("--session-id") ?? at("--resume");                       // 세�
 | 3 | 스레드 런은 스레드 범위만 | **통과** | ⑦ 의 헤더(`thread=<A1>`): `- @owner ❤️ "FAKE_CLI_DONE"`(T1 — 스레드 답글)·`- @owner 👀 "FAKE_CLI_DONE"`(루트 A1, 스레드 세션이 생긴 뒤에 달았다) — `formatReactionFacts` 와 MATCH. ⑧ 채널 런의 헤더: `- @owner 👀 "FAKE_CLI_DONE"` 하나뿐 — 스레드 답글의 ❤️ 는 채널 런에 없다(MATCH). ⑤ 스레드 첫 런에는 블록이 없다 — A1 의 👍·🎉 는 스레드 세션이 생기기 전에 달려 채널 세션(③)에만 갔다 |
 | 4 | 반응이 없으면 헤더가 이전과 같다 | **통과** | ①·④·⑤ 의 헤더는 `[dodok context]`·`참여자:`·`릴레이 규칙:`·(`최근 대화:`·줄들 또는 `스레드 루트:`) 뒤 곧바로 `---` 다. 반응 전 플러그인과의 코드 차이는 `formatInboundContext` 의 「블록이 비지 않았을 때만 `---` 앞에 넣는」 두 줄뿐이다(`git diff ff7b509^ HEAD -- packages/openclaw-plugin/src/context.ts`) |
 | 5 | (가능하면) 러너 턴 사실 | **통과** | 가짜 Messages API 가 받은 요청 본문의 `UserPromptSubmit hook additional context` 글: 둘째 런의 이번 턴 사실 끝에 `반응(지난 턴 뒤 네 메시지에 달린 것):` · `- @owner ✅ "하네스 답입니다 — 가짜 Messages API 가 보냈습니다."` · `- @owner ❓ "…"`, 셋째 런의 이번 턴 사실에는 없다. 셋째 요청은 `resume` 이라 앞 턴의 사실(둘째 런의 반응 블록 포함)이 이력에 그대로 있다 — 「새로 찾은 것」 |
-| 6 | 시크릿 0 · 모델 런 0 | **통과** | Gateway 공유 토큰·로컬 로그인 토큰·세션 토큰·브리지 토큰·러너 토큰(0600 파일 하나로 `grep -a -c -F -f`)이 서버·Gateway·러너·웹 로그, 가짜 CLI 기록, 가짜 API 요청 본문·목록, 공용 `/tmp/openclaw/openclaw-<날짜>.log`, 드라이버 로그에서 모두 **0**, 접두 `dbt_`·`drn_` 도 서버·Gateway·러너 로그에 0. DB 덤프에는 Gateway 공유 토큰 1(`gateways`, 설계 — 평문 저장)·세션 토큰 1(Better Auth `session`)뿐, 브리지·러너·로컬 토큰 0. 양성 대조(토큰 파일 자신) 5. 모델: Gateway `cli exec: provider=claude-cli` 6줄 = 가짜 CLI `-p` 6회 = OpenClaw 런 6건(`done`·`finalSource=plugin`·비용 0), `-p` 없는 호출 6회는 고정값으로 답했다(진짜 `claude` 0회). 러너 번들 CLI 3회 = 감싸개 기록 3줄, 가짜 API 가 받은 것은 `HEAD /api/hello` 3·`POST /v1/messages` 3 뿐. 러너 런 비용 칸의 `0.00027` 은 CLI 가 가짜 API 의 사용량 숫자에 단가를 곱한 값이다(바깥 연결 없음) |
+| 6 | 공통 조건 — 시크릿 0 · 모델 런 0 | **통과** | Gateway 공유 토큰·로컬 로그인 토큰·세션 토큰·브리지 토큰·러너 토큰(0600 파일 하나로 `grep -a -c -F -f`)이 서버·Gateway·러너·웹 로그, 가짜 CLI 기록, 가짜 API 요청 본문·목록, 공용 `/tmp/openclaw/openclaw-<날짜>.log`, 드라이버 로그에서 모두 **0**, 접두 `dbt_`·`drn_` 도 서버·Gateway·러너 로그에 0. DB 덤프에는 Gateway 공유 토큰 1(`gateways`, 설계 — 평문 저장)·세션 토큰 1(Better Auth `session`)뿐, 브리지·러너·로컬 토큰 0. 양성 대조(토큰 파일 자신) 5. 모델: Gateway `cli exec: provider=claude-cli` 6줄 = 가짜 CLI `-p` 6회 = OpenClaw 런 6건(`done`·`finalSource=plugin`·비용 0), `-p` 없는 호출 6회는 고정값으로 답했다(진짜 `claude` 0회). 러너 번들 CLI 3회 = 감싸개 기록 3줄, 가짜 API 가 받은 것은 `HEAD /api/hello` 3·`POST /v1/messages` 3 뿐. 러너 런 비용 칸의 `0.00027` 은 CLI 가 가짜 API 의 사용량 숫자에 단가를 곱한 값이다(바깥 연결 없음) |
 
 ### 23.4 새로 찾은 것 (코드는 고치지 않았다)
 
@@ -2219,7 +2220,7 @@ env HOME=<스크래치>/home CLAUDE_CONFIG_DIR=<스크래치>/cfg claude mcp lis
 한 채널의 세션 둘이 실물 OpenClaw Gateway(9.5)에서 **대화 id 키로 따로 맥락을 갖는지**(스펙 「테스트·검증」 장의 유일한 가정 — OpenClaw 가 대화 id 를 피어로 받는가), 같은 것을 Claude 러너 하네스로, message 툴 호출에 세션 키가 실리는지, 대화 밖 전송이 거절되는지, **세션 기능 전 서버로 만든 DB·Gateway 세션이 올린 뒤 「이전 대화」로 같은 키에 이어지는지**를 쟀다.
 사람의 상태(`~/.openclaw`·`~/.openclaw-dev`·`~/.claude*`·`~/.dodok-runner`)와 `.env` 는 읽지도 쓰지도 않았다 — Gateway 상태·공유 토큰·서버 DB·러너 홈을 모두 스크래치에 새로 만들었다.
 
-**판정: 합격 기준 5/5 통과, 시크릿 0·모델 런 0. 결함 0.** 확인한 사실과 가정은 기준마다 갈라 적었다. 새로 안 것은 「새로 찾은 것」.
+**판정: 합격 기준 5/5 통과, 공통 조건(시크릿 0·모델 런 0) 지킴. 결함 0.** 확인한 사실과 가정은 기준마다 갈라 적었다. 새로 안 것은 「새로 찾은 것」.
 
 ### 26.1 환경 실물
 
@@ -2261,12 +2262,12 @@ sqlite3 "$A" "select w.session_key, count(*), sum(instr(e.event_json,'ALPHA')>0)
 
 | # | 기준 | 결과 | 증거 |
 | --- | --- | --- | --- |
-| 1 | 한 채널의 세션 둘이 대화 id 키로 따로 맥락을 갖는다 — OpenClaw | **통과** | **확인한 사실**: ack `conversation=<A>`·`<B>` → `RUN_STARTED sessionKey=agent:main:dodok:channel:<A>`·`…:<B>`. Gateway `session_nodes` 에 키 셋(`legacy-smoke` 의 「이전 대화」·A·B)이 **서로 다른 `current_session_id`** 로, `display_name` 은 `dodok:g-<대화 id>`. 전사 사건 수 키마다 5, A 키는 `ALPHA` 2·`BRAVO` 0, B 키는 `ALPHA` 0·`BRAVO` 2. 모델 입력: A 런의 `chat_id` 는 `channel:<A>`, 헤더 `세션: @main 세션 A 첫 질문 ALPHA-1`, A 둘째 턴의 「최근 대화」는 A 의 첫 질문·답 두 줄뿐(B 둘째 턴도 B 의 두 줄뿐). **가정**: 가짜 CLI 는 claude 전사를 만들지 않아 런마다 새 CLI 세션 id 를 받는다(11.3 「세션을 잴 때」 1) — 「맥락」은 OpenClaw 세션·전사와 모델 입력 헤더로 봤고, 진짜 claude 세션의 `--resume` 은 재지 않았다 |
-| 2 | 같은 것 — Claude 러너 | **통과** | **확인한 사실**: 감싸개 기록 넷 — A `--session-id=a65dbfad…` → 둘째 턴 `--resume=a65dbfad…`, B `--session-id=9755c5ac…` → `--resume=9755c5ac…`(세션 행마다 Claude 세션 하나). `RUN_STARTED sessionKey=agent:hx:dodok:channel:<A>`·`…:<B>`. 가짜 API 가 받은 A 둘째 턴 요청 본문에 `ALPHA` 6·`BRAVO` 0, B 둘째 턴에 `ALPHA` 0·`BRAVO` 6. 턴 사실(`UserPromptSubmit hook additional context`)은 `[dodok context] 이 턴의 사실 — …` · **`세션: @main 세션 A 첫 질문 ALPHA-1`**(둘째 줄) · `참여자: …` · `자리: 채널`, 프롬프트의 「최근 대화」는 그 세션 글만(A 에는 `@main` 답·툴로 보낸 글 포함) |
+| 1 | 한 채널의 세션 둘이 대화 id 키로 따로 맥락을 갖는다 — OpenClaw | **통과** | **확인한 사실**: ack `conversation=<A>`·`<B>` → `RUN_STARTED sessionKey=agent:main:dodok:channel:<A>`·`…:<B>`. Gateway `session_nodes` 에 키 셋(`legacy-smoke` 의 「이전 대화」·A·B)이 **서로 다른 `current_session_id`** 로, `display_name` 은 `dodok:g-<대화 id>`. 전사 사건 수 키마다 5, A 키는 `ALPHA` 2·`BRAVO` 0, B 키는 `ALPHA` 0·`BRAVO` 2(실연 당시 질의 — 남은 파일로 다시 셀 수 없다, 26.6). 모델 입력: A 런의 `chat_id` 는 `channel:<A>`, 헤더 `세션: @main 세션 A 첫 질문 ALPHA-1`, A 둘째 턴의 「최근 대화」는 A 의 첫 질문·답 두 줄뿐(B 둘째 턴도 B 의 두 줄뿐). **가정**: 가짜 CLI 는 claude 전사를 만들지 않아 런마다 새 CLI 세션 id 를 받는다(11.3 「세션을 잴 때」 1) — 「맥락」은 OpenClaw 세션·전사와 모델 입력 헤더로 봤고, 진짜 claude 세션의 `--resume` 은 재지 않았다 |
+| 2 | 같은 것 — Claude 러너 | **통과** | **확인한 사실**: 감싸개 기록 넷 — A `--session-id=a65dbfad…` → 둘째 턴 `--resume=a65dbfad…`, B `--session-id=9755c5ac…` → `--resume=9755c5ac…`(세션 행마다 Claude 세션 하나). `RUN_STARTED sessionKey=agent:hx:dodok:channel:<A>`·`…:<B>`. 가짜 API 가 받은 A 둘째 턴 요청 본문에 `ALPHA` 6·`BRAVO` 0, B 둘째 턴에 `ALPHA` 0·`BRAVO` 6(실연 당시 질의 — 남은 파일로 다시 셀 수 없다, 26.6). 턴 사실(`UserPromptSubmit hook additional context`)은 `[dodok context] 이 턴의 사실 — …` · **`세션: @main 세션 A 첫 질문 ALPHA-1`**(둘째 줄) · `참여자: …` · `자리: 채널`, 프롬프트의 「최근 대화」는 그 세션 글만(A 에는 `@main` 답·툴로 보낸 글 포함) |
 | 3 | message 툴 호출(`handleAction`)에 세션 키가 실린다 | **통과**(모델 런 경로는 가짜 CLI 로) | **확인한 사실**: Gateway 로그 `dodok:tool-send` 넷(⑤) 모두 `"sessionKey":"agent:main:dodok:channel:<A>"`·`"agentId":"main"`, 인자 키에 `__sessionKey`·`__agentId` — `"sessionKey":null` 인 줄 0. 자기 세션으로 보낸 글은 A 에 `runId` = 그 런, `replyTo` = 사람 글로 저장. 세션 키를 주지 않은 운영자 `tools.invoke` 둘(⑦)에는 Gateway 가 `"sessionKey":"agent:main:main"` 을 채웠고 플러그인이 dodok 밖 세션으로 보고 거절했다. **가정**: 가짜 CLI 가 부른 것은 run grant 의 루프백 `/mcp` — 진짜 모델 런의 CLI 와 같은 통로라 세션 키는 모델이 아니라 Gateway 가 붙인다고 본다. **못 본 것**: 실제 모델이 내는 호출(모델 런 금지), `actionCtx.sessionKey` 가 비는 갈래(이번에 만든 어떤 길에서도 닿지 않았다) |
 | 4 | 마이그레이션 뒤 「이전 대화」에서 기존 OpenClaw 세션이 같은 키로 이어진다 | **통과** | **확인한 사실**: 옛 서버 런 `sessionKey=agent:main:dodok:channel:<legacy-smoke 채널 id>`, Gateway `session_nodes` 한 줄(`current_session_id` `e3f680a6…`)·전사 사건 3. 새 서버 첫 부팅 뒤 DB: `conversations` 에 id = 채널 id·「이전 대화」·`title_source user`·`last_seq 2`, `agent_sessions`·`runs` 의 `conversation_id` = 채널 id·`session_key` 그대로, 메시지 둘 모두 그 대화. 새 플러그인으로 세션을 주지 않고 보낸 글 → ack `conversation=<채널 id>`(최근 열린 세션) → `RUN_STARTED` 의 키가 옛 키와 같고, Gateway 는 **같은 키·같은 `current_session_id` `e3f680a6…`** 에 전사를 3 → 5 로 이었다. 새 사람 글 사건의 헤더는 `세션: 이전 대화` 와 「최근 대화」의 `LEGACY-1` 줄. **못 본 것**: 진짜 claude CLI 세션의 `--resume` 이 올린 뒤에도 이어지는지 — 가짜 CLI 의 CLI 세션 id 는 `0fa7f3e1…` → `1fa2bcc4…` 로 새로 났다(전사가 없다, 11.3) |
 | 5 | 다른 세션·다른 채널로 보내는 툴 호출은 「이 대화에만 보낼 수 있습니다」 | **통과** | **확인한 사실**: A 의 런에서 `message` 넷 — 자기 세션(`channel:<A>`) `isError:false`, 같은 채널 B(`channel:<B>`)·다른 채널의 「이전 대화」(`channel:<legacy-smoke 채널 id>`)·채널 id(`channel:<sessions-smoke 채널 id>` — 대화가 아니다) 셋은 도구 결과 `{"type":"text","text":"이 대화에만 보낼 수 있습니다"}`·`isError:true`, tool-send 줄 `"ok":false,"error":"이 대화에만 보낼 수 있습니다"`. 서버 DB 에 `TOOL-` 표식 글은 A 의 하나뿐. 세션 키 없는 `tools.invoke` 의 B·C 행도 같은 사유(`code: internal_error`). **못 본 것**: 플러그인을 거치지 않은 정본을 서버가 거절하는 것 — 실물 플러그인으로는 만들 수 없다(통합 `apps/server/test/integration/conversations.test.ts` 「[Review Focus 4] …」 둘이 본다). 러너 `post` 는 대상 인자가 없어 다른 세션을 겨눌 수 없다 |
-| 6 | 시크릿 0 · 모델 런 0 | **통과** | Gateway 공유 토큰·로컬 로그인 토큰·세션 토큰·러너 토큰·브리지 토큰(0600 파일 하나로 `grep -a -c -F -f`)이 서버(옛·새)·Gateway·러너·가짜 API·감싸개·설치 로그, 가짜 CLI 기록, 가짜 API 요청 목록·본문, 공용 `/tmp/openclaw/openclaw-<날짜>.log`, `wire-cli` 세션 파일(옛·새 트리)에서 모두 **0**, 접두 `dbt_`·`drn_`(뒤 7자 이상)도 서버·Gateway·러너 로그에 0. DB 덤프에는 Gateway 공유 토큰 1(`gateways`, 설계 — 평문 저장)·세션 토큰 1(Better Auth `session`)뿐, 로컬·러너·브리지 토큰 0. 양성 대조(토큰 파일 자신) 5. 모델: Gateway `cli exec: provider=claude-cli` 7줄 = 가짜 CLI `-p` 7회 = OpenClaw 런 7건(비용 0), `-p` 없는 호출 7회는 고정값으로 답했다(진짜 `claude` 0회). 러너 번들 CLI 4회 = 감싸개 기록 4줄, 가짜 API 가 받은 것은 `POST /v1/messages` 4·`HEAD /api/hello` 4 뿐 |
+| 6 | 시크릿 0 · 모델 런 0 | **통과** | Gateway 공유 토큰·로컬 로그인 토큰·세션 토큰·러너 토큰·브리지 토큰(0600 파일 하나로 `grep -a -c -F -f`)이 서버(옛·새)·Gateway·러너·가짜 API·감싸개·설치 로그, 가짜 CLI 기록, 가짜 API 요청 목록, 공용 `/tmp/openclaw/openclaw-<날짜>.log`, `wire-cli` 세션 파일(옛·새 트리)에서 모두 **0**, 접두 `dbt_`·`drn_`(뒤 7자 이상)도 서버·Gateway·러너 로그에 0. DB 덤프에는 Gateway 공유 토큰 1(`gateways`, 설계 — 평문 저장)·세션 토큰 1(Better Auth `session`)뿐, 로컬·러너·브리지 토큰 0. 양성 대조(토큰 파일 자신) 5. 모델: Gateway `cli exec: provider=claude-cli` 7줄 = 가짜 CLI `-p` 7회 = OpenClaw 런 7건(비용 0), `-p` 없는 호출 7회는 고정값으로 답했다(진짜 `claude` 0회). 러너 번들 CLI 4회 = 감싸개 기록 4줄, 가짜 API 가 받은 것은 `POST /v1/messages` 4·`HEAD /api/hello` 4 뿐 |
 
 ### 26.4 새로 찾은 것 (코드는 고치지 않았다)
 
@@ -2284,4 +2285,4 @@ sqlite3 "$A" "select w.session_key, count(*), sum(instr(e.event_json,'ALPHA')>0)
 
 - 러너(SIGTERM)·가짜 API·서버(SIGINT)·Gateway 를 자기 PID 로 내렸다 — 19041·3960·6160·3967 LISTEN 0, 남은 `dodok-runner`·`claude.real`·`fake-messages-api` 프로세스 0(이 실연의 것). 홈의 `~/.openclaw`·`~/.openclaw-dev` 는 시작 전후 수정 시각이 같다(`stat`).
 - 스크래치의 Gateway 상태·서버 `DATA_DIR`·옛 트리·CLI 설치본·러너 설치본·러너 홈(토큰)·토큰 파일·받은 tgz·DB 덤프를 지웠다. 워크트리의 `packages/openclaw-plugin/dist`·`packages/claude-runner/dist`·`data/` 도 지웠다(남기면 「제어 MCP 실연」 절 「새로 찾은 것」의 서버 테스트가 실패한다).
-- 남긴 것: 공용 `/tmp/openclaw/openclaw-<날짜>.log`(다른 Gateway 도 쓰는 날짜 파일 — 시크릿 0), 스크래치의 로그·가짜 CLI 기록·기준별 요약(커밋하지 않는다).
+- 남긴 것: 공용 `/tmp/openclaw/openclaw-<날짜>.log`(다른 Gateway 도 쓰는 날짜 파일 — 시크릿 0), 스크래치의 로그·가짜 CLI 기록·기준별 요약(커밋하지 않는다). 가짜 API 요청 본문·Gateway 세션 DB·`RUN_STARTED`/ack 줄은 남기지 않았다. 기준 1·2 의 `ALPHA`/`BRAVO` 수와 전사 수는 실연 당시 질의 결과이고 남은 파일로 다시 셀 수 없다. 남은 증거: `criterion1-nodes.txt`·`criterion1-prompts.jsonl`·`legacy-before/after.txt`·`fake/out/fake-claude.jsonl`·감싸개 로그.

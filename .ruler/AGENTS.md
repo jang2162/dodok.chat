@@ -36,7 +36,7 @@ CLAUDE.md·.mcp.json·.claude/skills 는 ruler 생성물(gitignore)이고, 공�
 
 ## 명령
 pnpm i · pnpm -F @dodok/server dev · pnpm -F @dodok/web dev (루트 `pnpm dev` 는 없다)
-pnpm test · pnpm typecheck · pnpm lint · pnpm lint:fix · pnpm fmt · pnpm fmt:check (oxlint / oxfmt · test·typecheck 는 Turbo 캐시 off) · `pnpm test` 는 다른 검사(typecheck·build)와 동시에 돌리지 않는다 — 실제 시간을 재는 웹 테스트가 깨진다
+pnpm test · pnpm typecheck · pnpm lint · pnpm lint:fix · pnpm fmt · pnpm fmt:check (oxlint / oxfmt · test·typecheck 는 Turbo 캐시 off) · `pnpm test` 는 다른 검사(typecheck·build)와 동시에 돌리지 않는다 — 실제 시간을 재는 웹 테스트가 깨진다 — 혼자 돌려도 서버·웹 병렬 부하에서 `MessageList.test.tsx` 「5초 뒤 판정」이 한 번씩 깨진다: 실패가 그 사례뿐이면 그 파일만 다시 돌려 확인하고 보고에 적는다(plan.md 8장 「채널 세션」 묶음)
 Node 24.21.0 · pnpm 11.16.0 은 mise.toml 핀(`mise install`). Bash 도구는 SessionStart 훅(.claude/hooks/node-env.sh)이 PATH 를 잡는다. `node -v` 가 24 가 아니면 `export PATH="$(mise where node)/bin:$PATH"`.
 scripts/orca-worker.sh status|spawn|attach|wait|reap|stop|keep|sync-config · bash scripts/test/orca-worker.test.sh
 서버 단독: pnpm -F @dodok/server dev(루트 .env, 이미 있는 env 는 안 덮음) · pnpm wire-cli <origin> [localToken] <명령>(REST·wire 손 점검) · dev Gateway 실연 절차·결과 docs/guides/live-smoke.md
