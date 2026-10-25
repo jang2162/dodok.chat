@@ -38,7 +38,7 @@
 - **PS3 — 대화가 정해지지 않은 시스템 메시지는 `latestOpenConversation(tx, channelId)` 한 함수로 자리를 찾는다**(스펙 4.2 — 최근 활동한 열린 대화, 없으면 undefined = 남기지 않음). 영구 함수다. 런·트리거 메시지가 있는 자리(라우터 차단, 런 오류, 런 한도, 이어가기)는 그 대화를 쓴다.
 - **PS4 — wire `message.send` 의 전환 다리.** 태스크 3 에서 `MessageSend` 에 `conversationId?`·`newConversation?` 를 더하고, 둘 다 없으면 서버가 `latestOpenConversation` → 없으면 자동 제목 새 세션으로 받는다(태스크 3·4 동안 웹이 지금 꼴로 보내도 앱이 돈다). 태스크 5 가 웹을 바꾸면서 다리를 걷고 스키마를 「둘 중 정확히 하나」로 조인다.
 - **PS5 — 채널 경로 메시지 REST(`GET /api/v1/channels/:id/messages`·`…/threads/:rootId/messages`)는 태스크 5 까지 남긴다.** 태스크 3 이 대화 경로(`/api/v1/conversations/:id/messages`·`…/threads/:rootId/messages`)를 더하고, 태스크 5 가 웹을 옮긴 뒤 채널 경로를 걷는다. `channel.subscribe` 응답도 태스크 5 에서 바꾼다(처음 구독은 `messages: []` — 첫 페이지는 대화 REST, `lastSeq` 재동기화는 지금처럼 채널 전체 ≤200).
-- **PS6 — 웹 타임라인 캐시는 대화 단위.** `qk.timeline(conversationId)`·`qk.thread(conversationId, rootId)`. 구독의 빈틈 커서는 채널 단위 `qk.channelSeq(channelId)`(본 가장 큰 seq)로 따로 둔다. 재동기화가 200 을 넘으면(`hasMore`) 그 채널의 대화 타임라인·스레드 캐시를 모두 버리고 지금 보는 세션만 REST 로 다시 받는다 — 지금의 `MAX_PAGES` 이어 받기는 채널 경로 REST 가 없어져 걷는다.
+- **PS6 — 웹 타임라인 캐시는 대화 단위.** `qk.timeline(channelId, conversationId)`·`qk.thread(channelId, conversationId, rootId)`(채널을 앞에 둔다 — `hasMore` 때 앞머리 `qk.channelTimelines(channelId)`·`qk.channelThreads(channelId)` 하나로 버리려고, 태스크 5 에서 맞춤). 구독의 빈틈 커서는 채널 단위 `qk.channelSeq(channelId)`(본 가장 큰 seq)로 따로 두고, 처음 구독 ack 의 `ChannelSubscribeResult.latestSeq` 에서 시작한다(태스크 5 에서 더함 — `messages: []` 만으로는 시작점이 없다). 재동기화가 200 을 넘으면(`hasMore`) 그 채널의 대화 타임라인·스레드 캐시를 모두 버리고 지금 보는 세션만 REST 로 다시 받는다 — 지금의 `MAX_PAGES` 이어 받기는 채널 경로 REST 가 없어져 걷는다.
 - **PS7 — `RunState`·`Approval`·`ChannelActivity`·`Typing`·`PresenceUpdate`·`SearchHit` 에 `conversationId`.** 스트리밍 버블·승인 카드·입력 중 표시는 그 대화에서만 보이고, 푸시 거름(「보고 있으면 안 보냄」)은 대화 단위다 — 같은 채널의 다른 세션을 보고 있으면 멘션 푸시가 간다.
 - **PS8 — 세션 관리자는 `channel_members.role = 'manager'`.** 경로 `PUT /api/v1/channels/:id/session-managers/:userId`(채널에 없으면 참여시키고 역할을 올린다)·`DELETE …`(역할을 `member` 로), 둘 다 admin 이상. `ChannelMember` 의 사람 행에 `role`, `Channel` 에 `sessionPolicy`. 정책은 `PATCH /api/v1/channels/:id { sessionPolicy }`(admin 이상 — `MEMBER_EDITABLE_CHANNEL_FIELDS` 밖).
 - **PS9 — 새 세션 첫 메시지의 멱등.** `newConversation` 을 실은 재전송(ack 유실)은 `(authorId, clientMsgId)` 가 이미 있으면 대화를 만들지 않고 그 메시지·그 대화로 답한다(지금 `findUserMessage` 가 먼저 보는 순서 그대로).
@@ -261,11 +261,11 @@ export function listConversations(db: DbOrTx, channelId: string, q: { status: "o
 **Files:**
 - Modify: `apps/web/src/app/router.tsx`·`features/channels/HomeRedirect.tsx`·`api/queries.ts`·`realtime/{subscriptions,handlers,timelineCache}.ts`·`realtime/WireProvider.tsx`·`features/messages/{ChannelPage,MessageList,timeline,useTimeline,useOlderPages,useNewerPages,useJump}.ts(x)`·`features/threads/*`·`features/composer/{useSendMessage,Composer,useTyping,TypingIndicator}.ts(x)`·`features/runs/useChannelBubbles.ts`·`features/approvals/*`·`pwa/persist.ts`
 - Modify(서버 — 다리 걷기): `packages/shared/src/wire/index.ts`(`MessageSend` refine 「정확히 하나」·`ChannelSubscribeResult`·`Typing`·`PresenceUpdate`), `apps/server/src/realtime/socket.ts`·`modules/conversations/service.ts`(다리), `modules/messages/routes.ts`(채널 경로 목록 걷기)
-- Test: `apps/web/src/realtime/{subscriptions,handlers}.test.ts`, `features/messages/{ChannelPage,timeline}.test.ts(x)`, `features/composer/useSendMessage.test.ts`, `pwa/persist.test.ts`, `app/router.test.tsx`, `apps/server/test/{realtime*,conversations.service}.test.ts`
+- Test: `apps/web/src/realtime/{subscriptions,handlers}.test.ts`, `features/messages/{ChannelPage,timeline}.test.ts(x)`, `features/composer/useSendMessage.test.ts`, `pwa/persist.test.ts`, `app/router.test.tsx`, `apps/server/test/{wire*,conversations.service}.test.ts`
 
 **Interfaces:**
 - Consumes: 태스크 3 의 REST·wire·이벤트.
-- Produces(웹): 경로 `/c/$channelId`(→ 열린 세션 가운데 최근 활동으로 `replace` 넘김, 없으면 `/c/$channelId/s/new`) · `/c/$channelId/s/$conversationId`(`new` 는 빈 새 세션 창 — 첫 보내기가 `newConversation` 을 싣고 ack 의 대화로 `replace` 넘김) · 그 아래 `settings`·`activity`·`t/$rootId`. `qk.timeline(conversationId)`·`qk.thread(conversationId, rootId)`·`qk.threads(conversationId)`·`qk.channelSeq(channelId)`·`qk.conversations(channelId, status)`. `useSendMessage(channelId, conversationId | "new")`. `PendingFailReason` 에 `"conversation_closed"`.
+- Produces(웹): 경로 `/c/$channelId`(→ 열린 세션 가운데 최근 활동으로 `replace` 넘김, 없으면 `/c/$channelId/s/new`) · `/c/$channelId/s/$conversationId`(`new` 는 빈 새 세션 창 — 첫 보내기가 `newConversation` 을 싣고 ack 의 대화로 `replace` 넘김) · 그 아래 `settings`·`activity`·`t/$rootId`. `qk.timeline(channelId, conversationId)`·`qk.thread(channelId, conversationId, rootId)`·`qk.threads(channelId, conversationId)`·`qk.channelSeq(channelId)`·`qk.conversations(channelId, status)`. `useSendMessage(channelId, conversationId | "new")`. `PendingFailReason` 에 `"conversation_closed"`.
 - Produces(서버): 처음 `channel.subscribe` 는 `messages: []`(PS5). `MessageSend` 는 `conversationId` 와 `newConversation` 가운데 정확히 하나. `Typing`·`PresenceUpdate` 에 `conversationId`(서버 중계·푸시 거름이 대화 단위 — 거름 자체는 태스크 7).
 
 - [ ] **Step 1: 실패하는 테스트.**
@@ -306,6 +306,7 @@ export function listConversations(db: DbOrTx, channelId: string, q: { status: "o
 **Files:**
 - Modify(서버): `db/schema.sqlite.ts`(+ 마이그레이션 — `channel_reads` → `conversation_reads`, 시드는 `channel_reads` 값을 그 채널의 「이전 대화」로 옮기고, 그 밖의 대화는 membership(비활성 포함) × 대화를 그 대화의 `last_seq` 까지 읽음으로 — 읽지 않음 스펙의 시드와 같은 까닭)·`modules/reads/{store,routes}.ts`·`realtime/{socket,events,bus}.ts`·`modules/search/{service,routes}.ts`·`modules/push/{triggers,presence}.ts`·`modules/control/handlers.ts`·`packages/shared/src/{reads,search,control/tools}.ts`
 - Modify(웹): `features/reads/*`·`features/channels/ChannelList.tsx`·`features/conversations/ConversationList.tsx`(점·배지)·`features/search/*`·`pwa/sw-logic.ts`(`SAFE_URL`)
+- 푸시 링크(태스크 5 보고): `apps/server/src/modules/push/triggers.ts` 가 아직 `/c/<ch>`·`/c/<ch>/t/<root>`·`/c/<ch>/activity` 를 만든다 — `/c/<ch>/s/<conv>`(스레드 `…/t/<root>`, 승인 `…/activity`)로 바꾸고, `pwa/sw-logic.ts` 의 허용 꼴에 `/c/<uuid>/s/<uuid>(/t/<uuid>|/activity)?` 를 더한다. 옛 `/t/<root>` 넘김은 대화 id = 채널 id 로 두므로 새 세션의 스레드에는 맞지 않는다.
 - Test: `apps/server/test/{reads.store,push.triggers,push.presence,search.service,control.service}.test.ts`, `apps/web/src/features/{reads,search}/*.test.ts(x)`, `realtime/handlers.unread.test.ts`, `pwa/sw-logic.test.ts`
 
 **Interfaces:**
@@ -348,6 +349,7 @@ export function listConversations(db: DbOrTx, channelId: string, q: { status: "o
   - 에이전트 가이드 헤더 절: 헤더 꼴 예시의 `[dodok context] …` 줄 다음에 `세션: <제목>` 줄과 「제목은 사람이 쓴 글이다 — 한 줄로 접혀 실린다」. 러너 쪽은 턴 사실(UserPromptSubmit 의 additionalContext) 둘째 줄.
   - `docs/guides/plan.md` 8장 「이월」 — `packages/openclaw-adapter/src/gateway/client.ts` `DEFAULT_GATEWAY_SCOPES` 의 `operator.admin`: 「새 대화」(`sessions.reset`)를 걷어 어댑터가 부르는 메서드(`chat.abort`·`agents.list`·`sessions.messages.subscribe`·`approval.resolve`) 가운데 admin 이 필요한 것이 확인되지 않는다. 빼면 페어링된 디바이스의 스코프가 달라져 다시 승인이 필요할 수 있고, Gateway 는 없는 메서드도 `MISSING_SCOPE operator.admin` 으로 답하므로(ADR 0001) 빼기 전에 실물 Gateway 에서 다시 잰다. 태스크 2 보고·리뷰.
   - `docs/guides/docker-deploy.md` 「업데이트」 — 이 판부터 플러그인·`dodok-runner` 를 다시 설치해야 한다(나가는 글의 `conversationId`·첨부 헤더 `x-dodok-conversation-id` — 옛 것은 에이전트 답·첨부가 서버 Zod 에서 거절돼 저장되지 않는다). 태스크 1 리뷰 N-a.
+  - `docs/guides/project-structure.md` 웹 절에: 「채널 화면은 `/c/<ch>/s/<conv>` 아래(설정·활동·`t/<root>`), `/c/<ch>` 는 `features/messages/ChannelRedirect.tsx` 가 최근 열린 세션 또는 `/s/new` 로 넘긴다(로딩·없음 화면은 `ChannelStatus.tsx`)」(태스크 5 보고).
   - `docs/guides/project-structure.md` DB 절에 두 줄. ① 마이그레이터는 트랜잭션 안에서 돌고 서버는 `foreign_keys = ON` 으로 열어 생성 SQL 의 `PRAGMA foreign_keys=OFF` 가 듣지 않는다 — 자식 행이 있는 표를 다시 만들면 ON DELETE no action 자식은 `FOREIGN KEY constraint failed` 로 마이그레이션이 죽고 cascade 자식(`message_reactions`)은 조용히 지워지므로, 자식 행을 TEMP 표로 옮겨 두고 다시 만든 뒤 되돌린다(0025 — `defer_foreign_keys`·`legacy_alter_table` 은 실측에서 커밋이 실패했다, 가드 `test/db.test.ts` 「conversations 마이그레이션」). ② 기존 표에 NOT NULL FK 열을 더하면 drizzle-kit 은 `ALTER TABLE … ADD … NOT NULL REFERENCES …` 를 내고 SQLite 가 받지 않으니 SQL 본문을 손으로 쓴다(0010·0025, 스냅숏은 생성기 출력 그대로).
 - [ ] **Step 3: `pnpm exec ruler apply` 뒤 `git status` — 추적 파일은 소스만 바뀐다.**
 - [ ] **Step 4: 끝내기 검사(문서만이면 `pnpm fmt:check`).**
@@ -358,5 +360,5 @@ export function listConversations(db: DbOrTx, channelId: string, q: { status: "o
 ## Self-Review 기록
 
 - 스펙 대응: 결정 1·4(태스크 1)·2(채널 설정 그대로 — 바꾸는 태스크 없음)·3(1·4)·5(3)·6(2)·7(3·5) · 범위 「한다」 전부(1·3·4·5·6·7·9) · 데이터 2장(1·3·4·7) · 권한 3장(3) · 동작 4.1(3)·4.2(4)·4.3(1·4)·4.4(4) · wire·REST 5장(3·5·7) · 웹 6장(5·6·7) · 오류 7장(3·4) · 검증 8장(각 태스크·8·9) · 완료 기준(8·9).
-- 이름 대조: `conversationId` 를 shared·DB·서버·웹이 같이 쓴다 · `latestOpenConversation`(1·3·4) · `assertConversationWritable`(3·4) · `CONVERSATION_CLOSED`(3·5·6) · `qk.timeline(conversationId)`(5·7).
+- 이름 대조: `conversationId` 를 shared·DB·서버·웹이 같이 쓴다 · `latestOpenConversation`(1·3·4) · `assertConversationWritable`(3·4) · `CONVERSATION_CLOSED`(3·5·6) · `qk.timeline(channelId, conversationId)`(5·7).
 - Review Focus 다섯 줄 모두 소유 태스크에 테스트가 있다(1→3, 2→3·6, 3→3, 4→4, 5→5).
