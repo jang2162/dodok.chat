@@ -331,6 +331,7 @@ export function listConversations(db: DbOrTx, channelId: string, q: { status: "o
 - Modify: `apps/server/scripts/dev-fake.ts`(가짜 Gateway·플러그인·러너 대본이 대화 id 키를 쓴다, 시작 때 채널마다 세션 둘 — 「이전 대화」 하나 + 새 세션 하나)·`apps/server/test/integration/*`
 - Create: `.superpowers/sdd/2026-10-25-channel-sessions-browser/report.md`(검증 기록 — 실행 기록 자리 관례)
 
+- [ ] **Step 0: 세션 목록에 읽지 않음 잇기.** 태스크 6·7 을 병렬로 돌리려고 둘이 겹치지 않게 나눴다 — 태스크 6 은 세션 목록에 점·배지 자리만, 태스크 7 은 `features/reads` 에 대화별 값을 읽는 훅만 냈다. 두 보고(2장)의 이름으로 잇고 컴포넌트 테스트 하나(두 세션 중 하나만 점·배지).
 - [ ] **Step 1: 통합 시나리오.** `integration/conversations.test.ts` 에 완료 기준 1~4(스펙 9장)를 한 흐름씩 — 두 세션·두 맥락, 닫기·다시 열기·검색으로 찾기, 정책 `managers`, 읽음·검색·푸시 링크가 세션을 가리킴.
 - [ ] **Step 2: 브라우저 검증.** `docs/guides/browser-verification.md` 를 따른다(독립 Chromium, owner·mia 두 계정, 1280·390px, 브리프가 주는 포트). 항목: 세션 목록·전환·새 세션(첫 보내기 뒤 URL 이 바뀜)·제목 바꾸기·닫기(다른 탭의 작성기가 바뀜)·다시 열기·URL 새로고침·푸시 링크(`/__devfake` 훅 없이 알림 URL 을 직접 연다)·검색 결과로 가기·읽지 않음(세션 점·사이드바 합)·정책 `managers` 의 member 화면·`/new` 가 보통 글로 감. 콘솔 오류 0 을 확인한다. 결함은 고치고 그 항목을 다시 본다.
 - [ ] **Step 3: 끝내기 검사 + 웹 빌드 + 서버 번들 스모크.**
