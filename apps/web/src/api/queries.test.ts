@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { openclawAdapterStatus } from "./queries";
 
-const CAPS = { sessionReset: true, agentsList: true, configSet: true };
+const CAPS = { agentsList: true, configSet: true };
 const G1 = {
   id: "01a00000-0000-7000-8000-0000000000a1",
   name: "사무실",
@@ -19,7 +19,7 @@ describe("openclawAdapterStatus", () => {
           { provider: "claude", runners: { connected: 1, tokens: 1 } },
           { provider: "openclaw", gateways: [G1, { ...G2, gateway: "reconnecting", bridge: "down" }] },
         ],
-        capabilities: { claude: { ...CAPS, sessionReset: false }, openclaw: CAPS },
+        capabilities: { claude: { ...CAPS, configSet: false }, openclaw: CAPS },
       }),
     ).toEqual({
       provider: "openclaw",

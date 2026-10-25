@@ -253,42 +253,7 @@ describe("오버라이드 저장 중·초점", () => {
   });
 });
 
-describe("새 대화", () => {
-  it("확인 → 이 채널로 POST reset, 성공하면 닫힌다", async () => {
-    const server = stubSettingsServer({ members: members([DEV]) });
-    renderRoute(`/c/${CH}/settings`);
-    const list = await agentList();
-    await userEvent.click(within(list).getByRole("button", { name: "@dev 새 대화" }));
-    const dialog = await screen.findByRole("dialog", { name: "새 대화" });
-    expect(dialog).toHaveTextContent("@dev 와의 대화 기록을 새로 시작합니다. 진행 중인 실행은 중지됩니다");
-    await userEvent.click(within(dialog).getByRole("button", { name: "새 대화 시작" }));
-    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    expect(server.writes()).toEqual([
-      { method: "POST", url: `/api/v1/channels/${CH}/agents/${DEV}/reset`, body: undefined },
-    ]);
-  });
-
-  it.each([
-    [
-      "409 권한 부족",
-      apiErr(409, "CONFLICT", "ADAPTER_CAPABILITY_MISSING: sessions.reset"),
-      "Gateway 권한(operator.admin)이 없어 새 대화를 시작할 수 없습니다",
-    ],
-    ["503", apiErr(503, "ADAPTER_UNAVAILABLE", "adapter down"), "Gateway 에 연결되지 않았습니다"],
-  ])("%s → 대화상자 안 문구(토스트 없음)", async (_name, reply, text) => {
-    stubSettingsServer({
-      members: members([DEV]),
-      override: ({ method, url }) => (method === "POST" && url.endsWith("/reset") ? reply : undefined),
-    });
-    renderRoute(`/c/${CH}/settings`);
-    const list = await agentList();
-    await userEvent.click(within(list).getByRole("button", { name: "@dev 새 대화" }));
-    const dialog = await screen.findByRole("dialog", { name: "새 대화" });
-    await userEvent.click(within(dialog).getByRole("button", { name: "새 대화 시작" }));
-    expect(await within(dialog).findByRole("alert")).toHaveTextContent(text);
-    expect(toastError).not.toHaveBeenCalled();
-  });
-
+describe("에이전트 제거 확인", () => {
   it("열린 채 채널이 바뀌면 닫는다 — 돌아와도 다시 열리지 않고 요청도 없다", async () => {
     const server = stubSettingsServer({
       members: members([DEV]),
@@ -304,18 +269,20 @@ describe("새 대화", () => {
     queryClient.setQueryData<Channel>(qk.channel(CH2), channelOf(CH2, { name: "random" }));
     const { router } = renderRoute(`/c/${CH}/settings`, queryClient);
     const list = await agentList();
-    await userEvent.click(within(list).getByRole("button", { name: "@dev 새 대화" }));
-    expect(await screen.findByRole("dialog", { name: "새 대화" })).toBeInTheDocument();
+    await userEvent.click(within(list).getByRole("button", { name: "@dev 제거" }));
+    expect(await screen.findByRole("dialog", { name: "에이전트 제거" })).toBeInTheDocument();
 
     const panel = screen.getByTestId("page-channel-panel");
     await router.navigate({ to: "/c/$channelId/settings", params: { channelId: CH2 } });
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "새 대화" })).not.toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "에이전트 제거" })).not.toBeInTheDocument(),
+    );
     expect(screen.getByTestId("page-channel-panel")).toBe(panel);
 
     router.history.back();
     await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/settings`));
     await agentList();
-    expect(screen.queryByRole("dialog", { name: "새 대화" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "에이전트 제거" })).not.toBeInTheDocument();
     expect(server.writes()).toEqual([]);
   });
 });

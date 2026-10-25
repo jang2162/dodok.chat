@@ -109,8 +109,6 @@ export function stubSettingsServer(
       state.members = state.members.filter((x) => x.memberId !== m[1]);
       return json(200, { members: state.members });
     }
-    if (method === "POST" && new RegExp(`^${base}/agents/[^/]+/reset$`).test(url))
-      return json(200, { ok: true });
     return undefined;
   }
 

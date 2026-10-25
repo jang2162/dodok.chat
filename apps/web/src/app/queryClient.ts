@@ -50,7 +50,7 @@ export function createQueryClient(onUnauthorized: () => void): QueryClient {
   const refreshRole = (e: unknown) => {
     if (isForbidden(e)) void qc.fetchQuery({ ...meQuery, staleTime: 0 }).catch(() => undefined);
   };
-  // 보관을 놓친 탭의 쓰기(설정·멤버·「새 대화」)가 409 면 채널을 다시 받는다 — 열린 화면이 읽기 전용으로, 사이드바에서 빠진다.
+  // 보관을 놓친 탭의 쓰기(설정·멤버)가 409 면 채널을 다시 받는다 — 열린 화면이 읽기 전용으로, 사이드바에서 빠진다.
   // 어느 채널인지 오류가 말하지 않으므로 보고 있는 채널 상세 전부(관찰자 있는 것만 다시 부른다)
   const refreshChannels = (e: unknown) => {
     if (!isChannelArchived(e)) return;

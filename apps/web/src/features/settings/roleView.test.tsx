@@ -70,7 +70,7 @@ describe("member 의 채널 설정", () => {
     expect(server.writes()[0]?.body).toEqual({ name: "잡담", topic: null });
   });
 
-  it("에이전트 줄: 넣기·빼기는 열려 있고, 자동 응답·오버라이드는 값만, 「새 대화」는 없다", async () => {
+  it("에이전트 줄: 넣기·빼기는 열려 있고, 자동 응답·오버라이드는 값만", async () => {
     const server = stubSettingsServer({
       me: MEMBER,
       members: [memberOf("agent", DEV, { autoRespond: true, promptOverride: "dev 에게만" })],
@@ -82,7 +82,6 @@ describe("member 의 채널 설정", () => {
     expect(within(list).getByRole("switch", { name: "@dev 자동 응답" })).toBeDisabled();
     expect(within(list).getByText("dev 에게만")).toBeInTheDocument();
     expect(within(list).queryByRole("button", { name: "@dev 채널 프롬프트 편집" })).toBeNull();
-    expect(within(list).queryByRole("button", { name: "@dev 새 대화" })).toBeNull();
     expect(within(list).getByText(LOCKED)).toBeInTheDocument();
 
     const select = within(section).getByRole("combobox", { name: "에이전트 추가" });
@@ -121,7 +120,7 @@ describe("member 의 채널 설정", () => {
     expect(within(section).getByRole("button", { name: "저장" })).toBeInTheDocument();
     expect(screen.queryByText(LOCKED)).toBeNull();
     expect(
-      await within(await agentList()).findByRole("button", { name: "@dev 새 대화" }),
+      await within(await agentList()).findByRole("button", { name: "@dev 채널 프롬프트 편집" }),
     ).toBeInTheDocument();
   });
 });

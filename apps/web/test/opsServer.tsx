@@ -74,7 +74,7 @@ export function withRunners(connected: number, tokens: number): AdapterStatusLis
     statuses: [...body.statuses, { provider: "claude", runners: { connected, tokens } }],
     capabilities: {
       ...body.capabilities,
-      claude: { sessionReset: true, agentsList: true, configSet: false },
+      claude: { agentsList: true, configSet: false },
     },
   };
 }

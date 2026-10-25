@@ -151,17 +151,6 @@ describe("제거 실패·초점·목록 상태", () => {
     );
   });
 
-  it("「새 대화」를 닫으면 초점은 누른 버튼으로 돌아간다", async () => {
-    stubSettingsServer({ members: members([DEV]) });
-    renderRoute(`/c/${CH}/settings`);
-    const list = await agentList();
-    const button = within(list).getByRole("button", { name: "@dev 새 대화" });
-    await userEvent.click(button);
-    const dialog = await screen.findByRole("dialog", { name: "새 대화" });
-    await userEvent.click(within(dialog).getByRole("button", { name: "취소" }));
-    await waitFor(() => expect(button).toHaveFocus());
-  });
-
   it("에이전트 목록을 아직 못 받았거나 실패했으면 「아직 에이전트가 없습니다」 대신 상태를 보인다", async () => {
     const queryClient = createQueryClient(() => {});
     queryClient.setQueryDefaults(qk.agents, { retryDelay: 0 });

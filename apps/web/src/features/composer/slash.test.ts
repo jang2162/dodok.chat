@@ -15,16 +15,10 @@ it("/stop — 뒤에 다른 글이 있어도", () => {
   expect(parseSlash(doc(p(t("/stop")), p(t("둘째 문단"))))).toEqual({ kind: "stop" });
 });
 
-it("/new 뒤 에이전트 멘션 → agentId", () => {
-  expect(parseSlash(doc(p(t("/new "), mention(`a:${A}`, "dev"))))).toEqual({ kind: "new", agentId: A });
-  expect(parseSlash(doc(p(t("/new"), mention(`a:${A}`), t(" "))))).toEqual({ kind: "new", agentId: A });
-});
-
-it("/new 뒤에 에이전트 멘션이 없으면 invalid", () => {
-  const invalid = { kind: "invalid", message: "/new 뒤에 @에이전트를 붙이세요" };
-  expect(parseSlash(doc(p(t("/new"))))).toEqual(invalid);
-  expect(parseSlash(doc(p(t("/new dev"))))).toEqual(invalid);
-  expect(parseSlash(doc(p(t("/new "), mention(`u:${U}`))))).toEqual(invalid);
+it("/new 는 명령이 아니다 — 에이전트 멘션이 붙어도 null(일반 메시지)", () => {
+  expect(parseSlash(doc(p(t("/new "), mention(`a:${A}`, "dev"))))).toBeNull();
+  expect(parseSlash(doc(p(t("/new"))))).toBeNull();
+  expect(parseSlash(doc(p(t("/new "), mention(`u:${U}`))))).toBeNull();
 });
 
 it("알 수 없는 / 명령·경로·URL 은 null(일반 메시지)", () => {

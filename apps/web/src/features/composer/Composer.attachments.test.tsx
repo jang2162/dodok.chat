@@ -256,19 +256,6 @@ describe("슬래시 명령과 첨부", () => {
     // 칩은 그대로 보낼 수 있다
     expect(sendButton()).toBeEnabled();
   });
-
-  it("/new @에이전트 도 대화상자만 열고 칩은 남긴다 — 올리는 중이어도", async () => {
-    const { box, editor } = renderComposer();
-    await pick(pngFile("남을.png"));
-    setDoc(editor, doc(p(t("/new "), mention(`a:${AGENT}`, "dev"))));
-    fireEvent.keyDown(box, { key: "Enter" });
-    expect(await screen.findByRole("dialog")).toBeInTheDocument();
-    expect(fake.sentOf("message.send")).toEqual([]);
-    expect(xhrAt(0).aborted).toBe(false);
-    // 대화상자(모달)가 뒤를 접근성 트리에서 가린다 — 가려진 것까지 찾는다
-    const list = screen.getByRole("list", { name: "첨부할 이미지", hidden: true });
-    expect(within(list).getByText("남을.png")).toBeInTheDocument();
-  });
 });
 
 it("채널을 옮기면 칩을 비우고 올리던 것을 끊는다(첨부는 채널별로 들고 다니지 않는다)", async () => {

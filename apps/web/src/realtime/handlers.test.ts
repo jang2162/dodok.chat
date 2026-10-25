@@ -878,7 +878,7 @@ describe("캐시 패치", () => {
     fake.serverEmit("adapter.status", { provider: "openclaw", gateways: [down] });
     expect(queryClient.getQueryData(qk.adapter)).toBeUndefined();
 
-    const capabilities = { sessionReset: true, agentsList: true, configSet: false };
+    const capabilities = { agentsList: true, configSet: false };
     const cached: AdapterStatusResponse = { ...ADAPTER_OK, capabilities };
     queryClient.setQueryData(qk.adapter, cached);
     const reconnecting = { ...TEST_GATEWAY, gateway: "reconnecting", bridge: "down" } as const;

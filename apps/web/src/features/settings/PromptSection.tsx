@@ -16,7 +16,7 @@ export const PROMPT_MAX = 20_000;
 export const RUNNER_RENEW_NOTICE = "Claude 러너 에이전트는 다음 런을 새 대화로 시작합니다";
 
 /** OpenClaw 는 기존 세션에 채널 프롬프트가 온전히 반영되지 않는다(ADR 0003) */
-export const PROMPT_SAVED_NOTICE = `다음 턴부터 반영됩니다. ${RUNNER_RENEW_NOTICE}. OpenClaw 에이전트의 진행 중인 대화에 온전히 반영하려면 에이전트별 「새 대화」를 누르세요`;
+export const PROMPT_SAVED_NOTICE = `다음 턴부터 반영됩니다. ${RUNNER_RENEW_NOTICE}. OpenClaw 에이전트의 진행 중인 세션에는 온전히 반영되지 않고 새 세션부터 반영됩니다`;
 
 /**
  * 채널 프롬프트(스펙 6.3). 공백뿐이면 지운다(null). VALIDATION·CONFLICT 만 섹션 안에, 그 밖은 전역 토스트.

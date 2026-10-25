@@ -23,7 +23,7 @@ export const TEST_GATEWAY: OpenClawGatewayStatus = {
 export const ADAPTER_OK: AdapterStatusResponse = {
   provider: "openclaw",
   gateways: [TEST_GATEWAY],
-  capabilities: { sessionReset: true, agentsList: true, configSet: true },
+  capabilities: { agentsList: true, configSet: true },
 };
 
 /**

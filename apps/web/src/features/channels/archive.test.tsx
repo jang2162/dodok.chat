@@ -15,7 +15,6 @@ import { stubEditorDom } from "../../../test/domStubs";
 import { createFakeSocket, type FakeSocket } from "../../../test/fakeSocket";
 import { stubScrollLayout } from "../../../test/scrollLayout";
 import { CH, CH2, msg } from "../../../test/fixtures";
-import { DEV } from "../../../test/messages";
 import { ME, channelOf, json, renderRoute, shellGet } from "../../../test/shellApi";
 
 // 채널 보관(채널 보관 스펙 「웹」 절) — 사이드바·보관한 채널 화면·카드·설정 패널·스레드·열린 채널이 보관되는 순간
@@ -169,23 +168,10 @@ describe("보관한 채널 화면", () => {
     expect(screen.queryByRole("button", { name: "채널 보관" })).toBeNull();
   });
 
-  it("스레드 패널도 읽기 전용 — 작성기·「새 대화」 줄·「보관 해제」가 없다", async () => {
+  it("스레드 패널도 읽기 전용 — 작성기·「보관 해제」가 없다", async () => {
     const queryClient = createQueryClient(() => {});
     const root = msg(1, { channelId: CH2 });
     queryClient.setQueryData(qk.thread(CH2, root.id), threadFromPage(undefined, root, [], false));
-    // 채널에 에이전트가 있다 — 살아 있는 채널이면 owner 에게 「새 대화」 줄이 보인다
-    queryClient.setQueryData(qk.agents, [DEV]);
-    queryClient.setQueryData(qk.members(CH2), [
-      {
-        id: "m1",
-        channelId: CH2,
-        memberType: "agent",
-        memberId: DEV.id,
-        autoRespond: false,
-        aliases: [],
-        joinedAt: ARCHIVED_AT,
-      },
-    ]);
     queryClient.setDefaultOptions({
       queries: { ...queryClient.getDefaultOptions().queries, staleTime: Infinity },
     });
@@ -193,7 +179,6 @@ describe("보관한 채널 화면", () => {
     const panel = await screen.findByTestId("thread-panel");
     expect(within(panel).getByText("보관된 채널입니다.")).toBeInTheDocument();
     expect(within(panel).queryByRole("textbox", { name: /입력/ })).toBeNull();
-    expect(within(panel).queryByText("새 대화")).toBeNull();
     // owner 라도 「보관 해제」는 채널 작성기 자리 하나뿐 — 스레드 패널에는 두지 않는다
     expect(within(panel).queryByRole("button", { name: "보관 해제" })).toBeNull();
     expect(screen.getAllByRole("button", { name: "보관 해제" })).toHaveLength(1);

@@ -33,7 +33,7 @@ export type MeResponse = {
   workspace?: Pick<Workspace, "id" | "name">;
   role?: string;
 };
-export type AdapterCapabilities = { sessionReset: boolean; agentsList: boolean; configSet: boolean };
+export type AdapterCapabilities = { agentsList: boolean; configSet: boolean };
 /** GET /adapter/status 응답 — 붙은 어댑터마다 상태 하나, capabilities 는 provider 로 찾는다(러너 계획 판정 P7) */
 export type AdapterStatusList = {
   statuses: AdapterStatus[];
@@ -158,7 +158,7 @@ export function useRole(): TeamRole | undefined {
   return parsed.success ? parsed.data : undefined;
 }
 /**
- * 관리 동작(에이전트 등록·채널 동작 설정·「새 대화」·승인·멤버·운영)을 보이는가 — admin 이상. 서버가 막으므로 숨김은 편의다.
+ * 관리 동작(에이전트 등록·채널 동작 설정·승인·멤버·운영)을 보이는가 — admin 이상. 서버가 막으므로 숨김은 편의다.
  * 역할이 내려간 뒤 남은 버튼은 서버 403 → 전역 처리(app/queryClient)가 me 를 다시 받아 잠근다
  */
 export const useCanManage = (): boolean => roleAtLeast(useCachedMe()?.role, "admin");
