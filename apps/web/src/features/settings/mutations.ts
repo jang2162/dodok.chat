@@ -1,4 +1,4 @@
-import type { Channel, ChannelMember, RelayPolicy } from "@dodok/shared";
+import type { Channel, ChannelMember, RelayPolicy, SessionPolicy } from "@dodok/shared";
 import { type QueryClient, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/http";
 import { qk } from "@/api/queries";
@@ -15,6 +15,8 @@ export type ChannelPatch = {
   topic?: string | null;
   prompt?: string | null;
   relayPolicy?: RelayPolicy;
+  /** 누가 새 세션을 만드나(admin 이상 — 채널 세션 계획 판정 PS8) */
+  sessionPolicy?: SessionPolicy;
 };
 /** `promptOverride: null` 은 지운다 */
 export type MemberPatch = { promptOverride?: string | null; autoRespond?: boolean };

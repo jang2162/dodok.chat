@@ -1,5 +1,6 @@
 import type { Message, ReactionEmoji } from "@dodok/shared";
 import { useChannelArchived } from "@/features/channels/archived";
+import { useConversationClosed } from "@/features/conversations/closed";
 import { UNKNOWN_NAME, useAuthors } from "@/features/messages/useAuthors";
 import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/ui/tooltip";
@@ -19,7 +20,10 @@ export function ReactionChips({
   me: string;
   onToggle: (emoji: ReactionEmoji, on: boolean) => void;
 }) {
-  const archived = useChannelArchived();
+  // 보관한 채널·닫힌 세션은 읽기만(서버 409)
+  const channelArchived = useChannelArchived();
+  const closed = useConversationClosed();
+  const archived = channelArchived || closed;
   const { mention, deactivatedPerson } = useAuthors();
   if (message.reactions.length === 0) return null;
   const who = (id: string): string => {

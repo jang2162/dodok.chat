@@ -1,10 +1,10 @@
 import type { Message } from "@dodok/shared";
-import { CHANNEL_ARCHIVED_TEXT } from "@/api/formErrors";
+import { CHANNEL_ARCHIVED_TEXT, CONVERSATION_CLOSED_TEXT } from "@/api/formErrors";
 
 /** 아이템 하나(버튼·셀렉트·모달 트리거)를 지금 누를 수 있는가, 못 누르면 왜인가(스펙 5.5) */
 export type ItemState = {
   disabled: boolean;
-  reason?: "archived" | "disconnected" | "expired" | "consumed" | "forbidden" | "busy";
+  reason?: "archived" | "closed" | "disconnected" | "expired" | "consumed" | "forbidden" | "busy";
 };
 
 export type StateInput = {
@@ -22,11 +22,14 @@ export type StateInput = {
   itemId: string;
   /** 카드가 있는 채널이 보관됐는가 — 서버가 보관 해제 전에는 어떤 상호작용도 받지 않는다(409 CHANNEL_ARCHIVED) */
   archived: boolean;
+  /** 카드가 있는 세션이 닫혔는가 — 다시 열기 전에는 서버가 받지 않는다(409 CONVERSATION_CLOSED, 채널 세션 스펙 「세션 만들기·닫기」 절) */
+  closed: boolean;
 };
 
 /** 비활성 사유를 사람에게 말하는 문구 — 보이는 글로 두고 컨트롤이 aria-describedby 로 가리킨다(스펙 5.7, `DisabledHint`) */
 export const DISABLED_REASON_TEXT: Record<NonNullable<ItemState["reason"]>, string> = {
   archived: CHANNEL_ARCHIVED_TEXT,
+  closed: CONVERSATION_CLOSED_TEXT,
   disconnected: "연결이 끊겨 지금은 보낼 수 없습니다",
   expired: "만료되었습니다",
   consumed: "이미 처리되었습니다",
@@ -36,14 +39,15 @@ export const DISABLED_REASON_TEXT: Record<NonNullable<ItemState["reason"]>, stri
 
 /**
  * 버튼·셀렉트·모달이 함께 쓰는 비활성 규칙 한 곳(스펙 5.5, 순수).
- * 사유가 겹치면 먼저 나온 것을 돌려준다: 보관 → 연결 → 만료 → 소비 → 권한 → 전송 중. 보관이 맨 앞인 까닭은 다른 사유가 풀려도
- * 보관 해제 전에는 누를 수 없어서다.
+ * 사유가 겹치면 먼저 나온 것을 돌려준다: 보관 → 닫힘 → 연결 → 만료 → 소비 → 권한 → 전송 중. 보관·닫힘이 앞인 까닭은 다른 사유가
+ * 풀려도 보관 해제·다시 열기 전에는 누를 수 없어서다(서버의 쓰기 막기 순서도 보관 → 닫힘).
  * components.id 가 없으면 disconnected — 서버가 아직 id 를 안 준 카드는 보낼 곳이 없다
  */
 export function itemState(input: StateInput): ItemState {
   const { message, itemId } = input;
   const c = message.components;
   if (input.archived) return { disabled: true, reason: "archived" };
+  if (input.closed) return { disabled: true, reason: "closed" };
   if (!input.hasSocket || !input.connected || !c?.id) return { disabled: true, reason: "disconnected" };
   if (input.expired) return { disabled: true, reason: "expired" };
   if (!c.reusable && message.componentState?.consumed.includes(itemId)) {

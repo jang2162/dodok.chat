@@ -113,6 +113,16 @@ export const qk = {
   /** 채널의 세션 목록(`GET /channels/:id/conversations?status=`) — 첫 쪽 */
   conversations: (channelId: string, status: "open" | "closed" | "all") =>
     ["conversations", channelId, status] as const,
+  /**
+   * 세션 목록 칸의 쪽들(무한 쿼리 — features/conversations). `conversations` 와 앞머리를 나누지 않는다: 데이터 모양이 다르다(쪽 묶음).
+   * `q` 는 다듬은 제목 검색어(없으면 "")
+   */
+  conversationList: (channelId: string, status: "open" | "closed", q: string) =>
+    ["conversationList", channelId, status, q] as const,
+  /** 한 채널의 세션 목록 칸 전부(실시간 반영·무효화용 앞머리) */
+  channelConversationLists: (channelId: string) => ["conversationList", channelId] as const,
+  /** 세션 하나(`GET /conversations/:id`) — 세션 머리의 제목·닫힘과 주소의 채널 대조 */
+  conversation: (conversationId: string) => ["conversation", conversationId] as const,
   channelRuns: (channelId: string) => ["channels", channelId, "runs"] as const,
   runEvents: (runId: string) => ["runs", runId, "events"] as const,
   /** 최근 본 채널 id(앞이 최근) — 서버 조회가 아니라 오프라인 사본이 무엇을 담을지 정하는 목록(pwa/persist) */

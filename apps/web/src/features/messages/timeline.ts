@@ -20,9 +20,16 @@ export type PendingMessage = {
 };
 /**
  * `channel_archived` 는 보관한 채널에, `conversation_closed` 는 닫힌 세션에 보낸 것 — 다시 보내도 같은 409 라 「다시 보내기」를 두지
- * 않는다(채널 세션 계획 Review Focus 2)
+ * 않는다(채널 세션 계획 Review Focus 2). `forbidden` 은 서버가 403 으로 거절한 것(「세션 관리자만」 채널에서 새 세션) — 역시 다시 보내도 같다
  */
-export type PendingFailReason = "rate_limited" | "channel_archived" | "conversation_closed";
+export type PendingFailReason = "rate_limited" | "channel_archived" | "conversation_closed" | "forbidden";
+
+/** 다시 보내도 같은 거절이라 「다시 보내기」를 두지 않는 사유 */
+export const FINAL_FAIL_REASONS: ReadonlySet<PendingFailReason> = new Set([
+  "channel_archived",
+  "conversation_closed",
+  "forbidden",
+]);
 /**
  * 세션 하나(또는 스레드 하나)의 확정 메시지(seq 오름차순)와 보내는 중 항목. 보내는 중 항목은 항상 목록 끝에 그린다(스펙 4.3-6).
  * `lastSeq` 는 이 목록이 본 가장 큰 seq — 세션 타임라인은 그 세션의 스레드 답글 seq 도 기록한다(`noteSeq`). seq 는 채널 하나의
