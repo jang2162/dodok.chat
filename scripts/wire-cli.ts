@@ -34,8 +34,7 @@ const USAGE = `사용: pnpm wire-cli <origin> [localToken] <명령> …   (local
   interact <channelId> <messageId> <itemId> [--watch-ms 60000]
                                                    component.interact ack → 이벤트 시간표
   watch <channelId> [--watch-ms 60000]             구독만 하고 이벤트 시간표(adapter.status 관찰용)
-  runs <channelId>                                 GET /channels/:id/runs 요약
-  reset <channelId> <agentId|handle>               POST /channels/:id/agents/:agentId/reset`;
+  runs <channelId>                                 GET /channels/:id/runs 요약`;
 
 const COMMANDS = new Set([
   "login",
@@ -47,7 +46,6 @@ const COMMANDS = new Set([
   "interact",
   "watch",
   "runs",
-  "reset",
 ]);
 
 class CliError extends Error {
@@ -560,24 +558,6 @@ async function run(args: Args): Promise<void> {
             .join(" "),
         );
       }
-      return;
-    }
-    case "reset": {
-      const [channelId, agentRef] = need(rest, ["channelId", "agentId|handle"]) as [string, string];
-      const { session: token } = await session(args);
-      let agentId = agentRef;
-      if (!/^[0-9a-f-]{36}$/i.test(agentRef)) {
-        const agents = ok("GET /agents", await request(origin, "GET", "/agents", { session: token }))[
-          "agents"
-        ] as Json[];
-        const found = agents.find((a) => a["handle"] === agentRef.replace(/^@/, ""));
-        if (!found) fail("NOT_FOUND", `핸들 ${agentRef} 인 에이전트가 없다`);
-        agentId = found["id"];
-      }
-      const path = `/channels/${channelId}/agents/${agentId}/reset`;
-      const res = await request(origin, "POST", path, { session: token });
-      ok(`POST ${path}`, res);
-      printRest("POST", path, res);
       return;
     }
   }
