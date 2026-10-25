@@ -275,7 +275,10 @@ describe("세션 목록 칸", () => {
     await userEvent.click(within(await pane()).getByRole("button", { name: "열림" }));
     await userEvent.type(within(await pane()).getByRole("searchbox", { name: "세션 제목 검색" }), "없는");
     expect(await within(await pane()).findByText("찾는 세션이 없습니다.")).toBeInTheDocument();
-    expect(server.calls.some((c) => c.url.includes("status=open&q=%EC%97%86%EB%8A%94"))).toBe(true);
+    // 화면 목록은 받아 둔 쪽을 검색어로도 거르므로 안내가 요청보다 먼저 뜰 수 있다 — 요청은 따로 기다린다
+    await waitFor(() =>
+      expect(server.calls.some((c) => c.url.includes("status=open&q=%EC%97%86%EB%8A%94"))).toBe(true),
+    );
   });
 
   it("칸이 떠 있는 동안 새 글이 그 세션을 맨 위로 — 시스템 메시지(닫기·한도 알림)는 올리지 않는다(PS11)", async () => {
