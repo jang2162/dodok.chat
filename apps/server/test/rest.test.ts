@@ -120,7 +120,7 @@ describe("REST /api/v1 (FakeAdapter)", () => {
     expect(missing.json()).toMatchObject({ code: "NOT_FOUND" });
     expect((await api("PATCH", `/channels/${uuid()}`, { name: "x" })).statusCode).toBe(404);
     expect((await api("GET", `/channels/${uuid()}/members`)).statusCode).toBe(404);
-    expect((await api("GET", `/channels/${uuid()}/messages`)).statusCode).toBe(404);
+    expect((await api("GET", `/conversations/${uuid()}/messages`)).statusCode).toBe(404);
   });
 
   it("DB 행이 도메인 계약을 어기면 500 INTERNAL (본문에 원인을 싣지 않는다)", async () => {
@@ -372,26 +372,29 @@ describe("REST /api/v1 (FakeAdapter)", () => {
     expect((await api("DELETE", `/channels/${channel.id}/members/${agent.id}`)).statusCode).toBe(404);
   });
 
-  it("GET /channels/:id/messages?limit=50 은 { messages, hasMore }", async () => {
+  it("GET /conversations/:id/messages?limit=50 은 { messages, hasMore } — 채널 경로 목록은 걷었다(판정 PS5)", async () => {
     const channel = await newChannel("rest-messages");
+    const conversationId = channelConversation(app.db, channel.id);
     for (let i = 1; i <= 3; i++) {
       createUserMessage(app.db, app.bus, {
-        conversationId: channelConversation(app.db, channel.id),
+        conversationId,
         authorId: app.ownerUserId,
         bodyMd: `m${i}`,
         clientMsgId: `rest-${i}`,
       });
     }
-    const res = await api("GET", `/channels/${channel.id}/messages?limit=50`);
+    const path = `/conversations/${conversationId}/messages`;
+    const res = await api("GET", `${path}?limit=50`);
     expect(res.statusCode).toBe(200);
     const body = res.json() as { messages: Message[]; hasMore: boolean };
     expect(body.hasMore).toBe(false);
     expect(body.messages.map((m) => Message.parse(m).seq)).toEqual([1, 2, 3]);
 
-    const page = await api("GET", `/channels/${channel.id}/messages?beforeSeq=3&limit=1`);
+    const page = await api("GET", `${path}?beforeSeq=3&limit=1`);
     expect(page.json()).toMatchObject({ hasMore: true, messages: [{ seq: 2 }] });
-    expect((await api("GET", `/channels/${channel.id}/messages?afterSeq=1`)).json().messages).toHaveLength(2);
-    expect((await api("GET", `/channels/${channel.id}/messages?limit=201`)).statusCode).toBe(400);
+    expect((await api("GET", `${path}?afterSeq=1`)).json().messages).toHaveLength(2);
+    expect((await api("GET", `${path}?limit=201`)).statusCode).toBe(400);
+    expect((await api("GET", `/channels/${channel.id}/messages?limit=50`)).statusCode).toBe(404);
   });
 });
 

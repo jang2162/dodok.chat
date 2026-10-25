@@ -7,7 +7,7 @@ import { qk } from "@/api/queries";
 import { createQueryClient } from "@/app/queryClient";
 import { useChannelSubscription } from "@/realtime/WireProvider";
 import { agentColorVar } from "@/theme/agentColor";
-import { ME, channelOf, json, renderRoute, shellGet } from "../../../test/shellApi";
+import { ME, channelOf, conversationOf, json, renderRoute, shellGet } from "../../../test/shellApi";
 
 // 채널 구독만 목으로 — 인자를 잰다
 vi.mock("@/realtime/WireProvider", async (importOriginal) => ({
@@ -53,6 +53,11 @@ function stubServer(
     if (url === "/api/v1/channels") return json(200, { channels: [A, B] });
     if (url === "/api/v1/agents") return json(200, { agents: opts.agents ?? [] });
     if (url === "/api/v1/channels/a/members") return json(200, { members: opts.members ?? [] });
+    const sessions = /^\/api\/v1\/channels\/([^/]+)\/conversations/.exec(url);
+    if (sessions?.[1])
+      return [A, B].some((c) => c.id === sessions[1])
+        ? json(200, { conversations: [conversationOf(sessions[1])] })
+        : json(404, { code: "NOT_FOUND", message: "channel not found" });
     const m = /^\/api\/v1\/channels\/([^/]+)(\/.+)?$/.exec(url);
     if (m?.[1]) {
       if (!m[2] && opts.channel) return opts.channel(m[1]);
@@ -104,6 +109,17 @@ it("채널을 열면 최근 본 채널(오프라인 사본 대상) 맨 앞에", 
   await waitFor(() => expect(queryClient.getQueryData(qk.recentChannels)).toEqual(["b", "a"]));
 });
 
+it("[t5-review L2] 새 세션 창(/s/new)은 그 채널의 마지막으로 본 세션을 바꾸지 않는다 — 실제 세션의 오프라인 사본이 빠지지 않게", async () => {
+  stubServer();
+  const queryClient = createQueryClient(() => {});
+  const SEEN = "01a00000-0000-7000-8000-000000003009";
+  queryClient.setQueryData(qk.recentConversations, { a: SEEN });
+  renderRoute("/c/a/s/new", queryClient);
+  expect(await screen.findByRole("heading", { name: /general/ })).toBeInTheDocument();
+  await waitFor(() => expect(queryClient.getQueryData(qk.recentChannels)).toEqual(["a"]));
+  expect(queryClient.getQueryData(qk.recentConversations)).toEqual({ a: SEEN });
+});
+
 it("없는 채널(404)은 최근 본 채널에 넣지 않는다", async () => {
   stubServer();
   const { queryClient } = renderRoute("/c/nope");
@@ -144,17 +160,18 @@ it("헤더: 이름·주제, 채널 에이전트 아바타(테두리 에이전트
   expect(within(group).queryByRole("img", { name: "@fin" })).not.toBeInTheDocument();
 
   const settings = within(header).getByRole("link", { name: "채널 설정" });
-  expect(settings).toHaveAttribute("href", "/c/a/settings");
+  // 채널 주소는 최근 세션(여기는 「이전 대화」 a)으로 넘겨졌다 — 설정 패널을 여닫아도 그 세션에 머문다
+  expect(settings).toHaveAttribute("href", "/c/a/s/a/settings");
   expect(settings).toHaveAttribute("aria-expanded", "false");
   await userEvent.click(settings);
   expect(await screen.findByTestId("page-channel-panel")).toBeInTheDocument();
-  expect(router.state.location.pathname).toBe("/c/a/settings");
-  expect(settings).toHaveAttribute("href", "/c/a");
+  expect(router.state.location.pathname).toBe("/c/a/s/a/settings");
+  expect(settings).toHaveAttribute("href", "/c/a/s/a");
   expect(settings).toHaveAttribute("aria-expanded", "true");
 
   await userEvent.click(settings);
   await waitFor(() => expect(screen.queryByTestId("page-channel-panel")).not.toBeInTheDocument());
-  expect(router.state.location.pathname).toBe("/c/a");
+  expect(router.state.location.pathname).toBe("/c/a/s/a");
 });
 
 it("메시지·작성기 자리를 비워 두고 오른쪽 Outlet 에 설정 패널을 둔다", async () => {
@@ -209,7 +226,7 @@ it("그 밖의 조회 실패는 원인과 「다시 시도」를 화면 안에 �
   });
   const queryClient = createQueryClient(() => {});
   queryClient.setQueryDefaults(["channel"], { retryDelay: 0 });
-  renderRoute("/c/a", queryClient);
+  renderRoute("/c/a/s/a", queryClient);
   const page = await screen.findByTestId("page-channel");
   expect(await within(page).findByText("채널을 불러오지 못했습니다")).toBeInTheDocument();
   expect(within(page).getByText("서버에 연결할 수 없습니다")).toBeInTheDocument();

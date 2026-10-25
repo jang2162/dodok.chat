@@ -10,6 +10,7 @@ import type { DehydratedState, QueryClient } from "@tanstack/react-query";
 import { del, get, set } from "idb-keyval";
 import { qk } from "@/api/queries";
 import type { Timeline } from "@/features/messages/timeline";
+import type { RecentThreads } from "@/features/threads/queries";
 
 /** 최근 본 채널 수 · 채널마다 남기는 최근 메시지 수 · 사본의 최대 나이(스펙 4장) */
 export const RECENT_MAX = 5;
@@ -31,9 +32,20 @@ export function touchRecentChannel(qc: QueryClient, channelId: string): void {
   );
 }
 
+/** 채널마다 마지막으로 본 세션(`qk.recentConversations` — 채널 id → 대화 id) */
+export type RecentConversations = Record<string, string>;
+
+/** 세션을 받아 볼 때 — 그 채널의 마지막으로 본 세션으로 둔다. 사본은 채널마다 그 세션 하나만 담는다(채널 세션 스펙 「웹」 장) */
+export function touchRecentConversation(qc: QueryClient, channelId: string, conversationId: string): void {
+  qc.setQueryData<RecentConversations>(qk.recentConversations, (prev = {}) =>
+    prev[channelId] === conversationId ? prev : { ...prev, [channelId]: conversationId },
+  );
+}
+
 /**
- * 사본에 담을 쿼리(스펙 4장). me·채널 목록·에이전트·최근 목록은 늘, 채널 하나의 것(채널·멤버·타임라인)은 최근 본
- * 채널만. 스레드는 최근 채널마다 마지막으로 연 스레드 하나만(`threads` — 채널 id → 루트 id, 스레드·검색 스펙 4.2).
+ * 사본에 담을 쿼리(스펙 4장). me·채널 목록·에이전트·최근 목록은 늘, 채널 하나의 것(채널·멤버)은 최근 본 채널만. 타임라인은 최근 채널마다
+ * 마지막으로 본 세션 하나만(`conversations` — 채널 id → 대화 id, 채널 세션 스펙 「웹」 장), 스레드는 그 세션에서 마지막으로 연 스레드
+ * 하나만(`threads` — 채널 id → 세션·루트, 스레드·검색 스펙 4.2).
  * 런·활동·어댑터 상태는 지나간 실시간 값이라 담지 않는다(복원하면 틀린 상태를 보인다).
  * 연결 설정(`setup`)·운영(`ops`)은 관리 정보라 기기에 남기지 않는다 — 아래 규칙이 바뀌어도 빠지게 먼저 거른다.
  * 사람 목록(`people` — 오프라인에서도 작성자가 풀리게)은 담고, 멤버 관리(`team` — 이메일이 든다)는 목록에 없어 빠진다
@@ -41,9 +53,10 @@ export function touchRecentChannel(qc: QueryClient, channelId: string): void {
 export function shouldPersist(
   query: { queryKey: readonly unknown[] },
   recent: readonly string[],
-  threads: Readonly<Record<string, string>> = {},
+  conversations: Readonly<RecentConversations> = {},
+  threads: Readonly<RecentThreads> = {},
 ): boolean {
-  const [head, id, rootId] = query.queryKey;
+  const [head, id, conversationId, rootId] = query.queryKey;
   if (head === qk.setupStatus[0] || head === qk.opsStatus[0]) return false;
   if (
     head === "me" ||
@@ -51,26 +64,31 @@ export function shouldPersist(
     head === "agents" ||
     head === "people" ||
     head === "recentChannels" ||
+    head === "recentConversations" ||
     head === "recentThreads"
   )
     return query.queryKey.length === 1;
-  if (head === "channel" || head === "members" || head === "timeline")
-    return query.queryKey.length === 2 && typeof id === "string" && recent.includes(id);
-  if (head === "thread")
+  const recentChannel = typeof id === "string" && recent.includes(id);
+  if (head === "channel" || head === "members") return query.queryKey.length === 2 && recentChannel;
+  // 세션: 그 채널의 마지막으로 본 세션만 — 새 세션 창은 대화가 아니라 담지 않는다(그 이름은 기록에 남지 않는다)
+  const lastSession = recentChannel && conversationId !== undefined && conversations[id] === conversationId;
+  if (head === "timeline") return query.queryKey.length === 3 && lastSession;
+  if (head === "thread") {
+    const opened = typeof id === "string" ? threads[id] : undefined;
     return (
-      query.queryKey.length === 3 &&
-      typeof id === "string" &&
-      recent.includes(id) &&
-      rootId !== undefined &&
-      threads[id] === rootId
+      query.queryKey.length === 4 &&
+      lastSession &&
+      opened?.conversationId === conversationId &&
+      opened.rootId === rootId
     );
+  }
   return false;
 }
 
 /**
- * 최근 50개·보내는 중 항목 없이. `lastSeq` 는 0 으로 — 복원한 채널의 첫 구독이 이어 받기가 아니라 최신 페이지로
- * 새로 시작(`fresh`)하게 한다. 앱이 닫혀 있던 동안의 카드 상호작용(`message.updated`)은 seq 가 그대로라 이어 받기로는
- * 오지 않는다(p4-t4 리뷰 결함 1)
+ * 최근 50개·보내는 중 항목 없이. 복원한 세션은 낡은 것으로 두고(아래 `startPersistence`), 첫 구독이 커서를 세우면 최신 페이지로 다시
+ * 받는다 — 앱이 닫혀 있던 동안의 카드 상호작용(`message.updated`)은 seq 가 그대로라 이어 받기로는 오지 않는다(p4-t4 리뷰 결함 1).
+ * `lastSeq` 는 0 으로 — 다시 받기 전의 복원한 목록 끝으로 읽음을 보내지 않게(읽음 전송은 목록의 `lastSeq` 를 싣는다)
  */
 function trimTimeline(t: Timeline): Timeline {
   const items = t.items.slice(-TIMELINE_KEEP);
@@ -128,8 +146,10 @@ const CHANNEL_HEADS: readonly unknown[] = ["channel", "members", "timeline", "th
  */
 function carryOver(state: DehydratedState, prev: DehydratedState | undefined): DehydratedState {
   if (!prev) return state;
-  const recent = state.queries.find((q) => q.queryKey[0] === qk.recentChannels[0])?.state.data;
-  const threads = state.queries.find((q) => q.queryKey[0] === qk.recentThreads[0])?.state.data;
+  const dataOf = (head: string) => state.queries.find((q) => q.queryKey[0] === head)?.state.data;
+  const recent = dataOf(qk.recentChannels[0]);
+  const conversations = dataOf(qk.recentConversations[0]);
+  const threads = dataOf(qk.recentThreads[0]);
   const have = new Set(state.queries.map((q) => q.queryHash));
   const carried = prev.queries.filter(
     (q) =>
@@ -138,7 +158,8 @@ function carryOver(state: DehydratedState, prev: DehydratedState | undefined): D
       shouldPersist(
         q,
         Array.isArray(recent) ? (recent as string[]) : [],
-        threads && typeof threads === "object" ? (threads as Record<string, string>) : {},
+        conversations && typeof conversations === "object" ? (conversations as RecentConversations) : {},
+        threads && typeof threads === "object" ? (threads as RecentThreads) : {},
       ),
   );
   return carried.length === 0 ? state : { ...state, queries: [...state.queries, ...carried] };
@@ -206,6 +227,7 @@ export async function startPersistence(
 
   // 최근 목록은 관찰자가 없어도 늘 남아야 한다 — 채널 쪽 항목은 gcTime 을 늘리지 않고 저장 때 옛 사본에서 붙인다
   qc.setQueryDefaults(qk.recentChannels, { gcTime: Number.POSITIVE_INFINITY });
+  qc.setQueryDefaults(qk.recentConversations, { gcTime: Number.POSITIVE_INFINITY });
   qc.setQueryDefaults(qk.recentThreads, { gcTime: Number.POSITIVE_INFINITY });
 
   try {
@@ -217,7 +239,8 @@ export async function startPersistence(
     });
     // 사본의 me 는 낡은 것으로 둔다 — 첫 관찰자·연결 회복 때 다시 불러 세션을 확인한다(401 이면 지우고 로그인으로)
     void qc.invalidateQueries({ queryKey: qk.me, exact: true, refetchType: "none" });
-    // 스레드는 저절로 낡지 않는다(wire 가 고친다) — 앱이 닫힌 사이의 답글을 다시 열 때 받게 낡은 것으로 둔다
+    // 세션·스레드는 저절로 낡지 않는다(wire 가 고친다) — 앱이 닫힌 사이의 글을 다시 열 때(첫 구독이 커서를 세운 뒤) 받게 낡은 것으로 둔다
+    void qc.invalidateQueries({ queryKey: ["timeline"], refetchType: "none" });
     void qc.invalidateQueries({ queryKey: qk.threadsAll, refetchType: "none" });
   } catch {
     // 읽지 못한 사본은 persistQueryClientRestore 가 지웠다 — 사본 없이 띄운다
@@ -234,7 +257,8 @@ export async function startPersistence(
         shouldPersist(
           q,
           qc.getQueryData<string[]>(qk.recentChannels) ?? [],
-          qc.getQueryData<Record<string, string>>(qk.recentThreads),
+          qc.getQueryData<RecentConversations>(qk.recentConversations),
+          qc.getQueryData<RecentThreads>(qk.recentThreads),
         ),
     },
   });

@@ -78,12 +78,12 @@ function SearchPanel({ onDone }: { onDone: () => void }) {
   const pick = (hit: SearchHit) => {
     requestJump(hit);
     onDone();
-    if (hit.threadRootId === undefined)
-      void navigate({ to: "/c/$channelId", params: { channelId: hit.channelId } });
+    const params = { channelId: hit.channelId, conversationId: hit.conversationId };
+    if (hit.threadRootId === undefined) void navigate({ to: "/c/$channelId/s/$conversationId", params });
     else
       void navigate({
-        to: "/c/$channelId/t/$rootId",
-        params: { channelId: hit.channelId, rootId: hit.threadRootId },
+        to: "/c/$channelId/s/$conversationId/t/$rootId",
+        params: { ...params, rootId: hit.threadRootId },
       });
   };
 

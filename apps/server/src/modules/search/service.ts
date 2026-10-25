@@ -44,6 +44,7 @@ const DAY_MS = 86_400_000;
 type HitRow = {
   id: string;
   channelId: string;
+  conversationId: string;
   seq: number;
   authorType: string;
   authorId: string | null;
@@ -59,7 +60,7 @@ type HitRow = {
 const MatchCursor = z.object({ rank: z.number(), createdAt: z.int(), id: z.string() });
 type MatchCursor = z.infer<typeof MatchCursor>;
 
-const SELECT_HIT = sql`m.id AS id, m.channel_id AS channelId, m.seq AS seq, m.author_type AS authorType, m.author_id AS authorId,
+const SELECT_HIT = sql`m.id AS id, m.channel_id AS channelId, m.conversation_id AS conversationId, m.seq AS seq, m.author_type AS authorType, m.author_id AS authorId,
   m.created_at AS createdAt, m.body_md AS bodyMd, m.attachments_json AS attachmentsJson,
   m.thread_root_id AS threadRootId,
   (SELECT c.archived_at IS NOT NULL FROM channels c WHERE c.id = m.channel_id) AS channelArchived`;
@@ -257,6 +258,7 @@ function toHit(row: HitRow, needles: string[], handleOf: HandleOf): SearchHit {
     {
       messageId: row.id,
       channelId: row.channelId,
+      conversationId: row.conversationId,
       seq: row.seq,
       authorType: row.authorType,
       authorId: row.authorId ?? undefined,

@@ -7,10 +7,10 @@ import { apiError } from "../../http/errors";
 import type { ServerBus } from "../../realtime/bus";
 import { josa } from "../../util/josa";
 import { assertChannelWritable, getChannel, isSessionManager } from "../channels/service";
-import { createSystemMessage, getThreadRoot } from "../messages/service";
+import { createSystemMessage } from "../messages/service";
 import { type HandleOf, readableGlyphs, readableWindow } from "../search/readable";
 import { mentionHandleOf } from "../search/service";
-import { createConversation, getConversation, latestOpenConversation, rowToConversation } from "./store";
+import { createConversation, getConversation, rowToConversation } from "./store";
 
 /** 자동 제목 길이(코드 포인트) — 채널 세션 계획 Global Constraints */
 const AUTO_TITLE_MAX = 40;
@@ -46,9 +46,9 @@ export type ResolveSendInput = {
 
 /**
  * 사람 보내기의 대화 고르기(채널 세션 스펙 「세션 만들기·닫기」 절·「wire·REST」 장) — messages/service.ts sendUserMessage 가 저장과 같은 트랜잭션에서 부른다.
- * conversationId 면 그 대화(이 채널 것이어야 한다 — 다른 채널이면 VALIDATION), newConversation 이면 권한을 보고 새 대화, 둘 다 없으면
- * 다리(채널 세션 계획 판정 PS4): 스레드 답글은 루트의 대화, 아니면 채널의 최근 열린 대화, 없으면 자동 제목 새 대화. 쓰기 검사(보관·닫힘)는
- * sendUserMessage 가 고른 대화에 한다
+ * conversationId 면 그 대화(이 채널 것이어야 한다 — 다른 채널이면 VALIDATION), newConversation 이면 권한을 보고 새 대화. 둘 중 정확히
+ * 하나다 — wire 스키마(MessageSend)가 먼저 거르고 여기서도 막는다(서버가 세션을 고르던 다리는 걷었다, 채널 세션 계획 판정 PS4).
+ * 스레드 답글은 새 대화로 보낼 수 없다(새 대화에는 아직 루트가 없다). 쓰기 검사(보관·닫힘)는 sendUserMessage 가 고른 대화에 한다
  */
 export function resolveSendConversation(
   tx: DbOrTx,
@@ -57,22 +57,16 @@ export function resolveSendConversation(
 ): { conversationId: string; created?: Conversation } {
   const channel = getChannel(tx, input.channelId);
   if (!channel) throw apiError("NOT_FOUND", "channel not found");
+  if ((input.conversationId === undefined) === (input.newConversation === undefined))
+    throw apiError("VALIDATION", "conversationId 와 newConversation 가운데 정확히 하나가 있어야 한다");
   if (input.conversationId !== undefined) {
     const conversation = getConversation(tx, input.conversationId, channel.workspaceId);
     if (!conversation) throw apiError("NOT_FOUND", "conversation not found");
     if (conversation.channelId !== channel.id) throw apiError("VALIDATION", "다른 채널의 세션이다");
     return { conversationId: conversation.id };
   }
-  if (input.threadRootId !== undefined) {
-    // 답글은 루트의 대화에 쓴다 — 새 대화에는 아직 루트가 없다
-    const root = input.newConversation === undefined && getThreadRoot(tx, channel.id, input.threadRootId);
-    if (!root) throw apiError("VALIDATION", "threadRootId 는 이 대화의 루트 메시지여야 한다");
-    return { conversationId: root.conversationId };
-  }
-  if (input.newConversation === undefined) {
-    const latest = latestOpenConversation(tx, channel.id);
-    if (latest !== undefined) return { conversationId: latest };
-  }
+  if (input.threadRootId !== undefined)
+    throw apiError("VALIDATION", "threadRootId 는 이 대화의 루트 메시지여야 한다");
   authorizeConversationCreate(
     input.role,
     channel.sessionPolicy,

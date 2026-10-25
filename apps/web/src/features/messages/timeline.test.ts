@@ -3,10 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   addPending,
   appendNewer,
-  applyToChannel,
+  applyToTimeline,
   emptyTimeline,
   fromLatest,
-  hasGap,
+  hasChannelGap,
   inThread,
   jumpAround,
   noteSeq,
@@ -90,12 +90,12 @@ describe("timeline", () => {
     expect(t.pending).toHaveLength(1);
     expect(t.pending[0]?.state).toBe("sending");
   });
-  it("hasGap: lastSeq+1 보다 큰 새 seq 면 빈틈, 처음(0)·이미 있는 것·옛 seq 수정은 아니다", () => {
-    const t = fromLatest(undefined, [msg(1), msg(2)], false);
-    expect(hasGap(t, msg(3))).toBe(false);
-    expect(hasGap(t, msg(5))).toBe(true);
-    expect(hasGap(t, msg(1, { bodyMd: "x" }))).toBe(false);
-    expect(hasGap(emptyTimeline(), msg(9))).toBe(false);
+  it("hasChannelGap: 채널 커서 + 1 보다 큰 seq 면 빈틈 — 빈 채널(커서 0)의 첫 글은 seq 1(채널 세션 계획 판정 PS6)", () => {
+    expect(hasChannelGap(2, msg(3))).toBe(false);
+    expect(hasChannelGap(2, msg(5))).toBe(true);
+    expect(hasChannelGap(2, msg(1, { bodyMd: "x" }))).toBe(false);
+    expect(hasChannelGap(0, msg(1))).toBe(false);
+    expect(hasChannelGap(0, msg(9))).toBe(true);
   });
   it("fromLatest 는 보내는 중 항목을 유지하되 확정된 것은 지운다", () => {
     const prev = addPending(addPending(emptyTimeline(), pending("c1")), pending("c2"));
@@ -117,17 +117,9 @@ describe("루트만 드는 채널 타임라인(스레드·검색 스펙 4.1)", (
     expect(noteSeq(noted, 3)).toBe(noted);
   });
 
-  it("답글 seq 를 기록한 뒤에는 그 다음 루트가 빈틈이 아니다(답글이 채널 seq 를 같이 쓴다)", () => {
+  it("applyToTimeline: 루트는 병합하고 답글은 seq 만 — 재동기화 응답(scope all)", () => {
     const t = fromLatest(undefined, [msg(1), msg(2)], false);
-    // 기록하지 않으면 루트 5 는 3·4(답글) 때문에 빈틈으로 보인다
-    expect(hasGap(t, msg(5))).toBe(true);
-    const noted = noteSeq(noteSeq(t, 3), 4);
-    expect(hasGap(noted, msg(5))).toBe(false);
-  });
-
-  it("applyToChannel: 루트는 병합하고 답글은 seq 만 — 재동기화 응답(scope all)", () => {
-    const t = fromLatest(undefined, [msg(1), msg(2)], false);
-    const next = applyToChannel(t, [reply(3), msg(4), reply(5)]);
+    const next = applyToTimeline(t, [reply(3), msg(4), reply(5)]);
     expect(next.items.map((m) => m.seq)).toEqual([1, 2, 4]);
     expect(next.lastSeq).toBe(5);
   });
@@ -173,9 +165,6 @@ describe("결과로 가기 — around 페이지로 갈아 끼우기(떨어진 �
     expect(t.hasOlder).toBe(true);
     expect(t.hasNewer).toBe(true);
     expect(t.lastSeq).toBe(46);
-    // 다음 wire 메시지(47)는 빈틈이 아니다 — 루트 사이 seq(10·11)가 비어 있어도
-    expect(hasGap(t, msg(47))).toBe(false);
-    expect(hasGap(t, msg(48))).toBe(true);
   });
 
   it("페이지가 끝까지 닿으면 hasNewer 없이, 그 사이 새로 온 것(페이지보다 새것)은 남긴다", () => {
@@ -199,8 +188,8 @@ describe("결과로 가기 — around 페이지로 갈아 끼우기(떨어진 �
     expect(next.items[1]?.bodyMd).toBe("고침");
     expect(next.lastSeq).toBe(47);
     expect(next.pending).toEqual([]);
-    // 재동기화 응답도 같은 길(applyToChannel → upsertMany)
-    expect(applyToChannel(t, [msg(48)]).items.map((m) => m.seq)).toEqual([5, 9]);
+    // 재동기화 응답도 같은 길(applyToTimeline → upsertMany)
+    expect(applyToTimeline(t, [msg(48)]).items.map((m) => m.seq)).toEqual([5, 9]);
   });
 
   it("아래로 이어 받기(appendNewer) 는 창을 넓히고, 끝에 닿으면 hasNewer 를 끈다", () => {

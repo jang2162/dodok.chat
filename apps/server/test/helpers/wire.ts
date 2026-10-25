@@ -1,5 +1,6 @@
 import { type ClientToServerEvents, type ServerToClientEvents, WIRE_PROTOCOL } from "@dodok/shared";
 import { io, type Socket } from "socket.io-client";
+import type { DbOrTx } from "../../src/db/client";
 
 export type WireClient = Socket<ServerToClientEvents, ClientToServerEvents>;
 export type WirePayload<E extends keyof ServerToClientEvents> = Parameters<ServerToClientEvents[E]>[0];
@@ -10,9 +11,17 @@ export function openWire(target: { readonly url: string }, auth: Record<string, 
   return io(target.url, { auth, transports: ["websocket"], reconnection: false, forceNew: true });
 }
 
+/** 앱(db 를 가진 대상)에 연 소켓 → 그 앱의 DB — 시나리오 보내기(scenario-steps `sendMessage`)가 보낼 세션을 고른다 */
+const socketDbs = new WeakMap<WireClient, DbOrTx>();
+export const wireDb = (socket: WireClient): DbOrTx | undefined => socketDbs.get(socket);
+
 /** 세션 토큰·현재 프로토콜로 접속하고 connect 를 기다린다. 닫는 건 호출자 몫. */
-export function connectWire(target: { readonly url: string }, sessionToken: string): Promise<WireClient> {
+export function connectWire(
+  target: { readonly url: string; readonly db?: DbOrTx },
+  sessionToken: string,
+): Promise<WireClient> {
   const socket = openWire(target, { token: sessionToken, protocol: WIRE_PROTOCOL });
+  if (target.db) socketDbs.set(socket, target.db);
   return new Promise((resolve, reject) => {
     socket.once("connect", () => resolve(socket));
     socket.once("connect_error", (err) => {

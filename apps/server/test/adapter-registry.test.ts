@@ -20,7 +20,7 @@ import { getRun } from "../src/modules/runs/store";
 import { bootTestApp, login } from "./helpers/app";
 import { FAKE_GATEWAY_ID, fakeGatewayStatus } from "./helpers/gateways";
 import { connectWire, type WireClient } from "./helpers/wire";
-import { channelConversation } from "./helpers/seed";
+import { channelConversation, sendTarget } from "./helpers/seed";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -131,7 +131,12 @@ describe("어댑터 레지스트리 배선 (앱 부팅, OpenClaw·Claude 가짜 
   }
 
   async function say(socket: WireClient, channelId: string, bodyMd: string): Promise<void> {
-    const sent = await socket.emitWithAck("message.send", { channelId, clientMsgId: `m-${++n}`, bodyMd });
+    const sent = await socket.emitWithAck("message.send", {
+      channelId,
+      ...sendTarget(app.db, channelId),
+      clientMsgId: `m-${++n}`,
+      bodyMd,
+    });
     if (!sent.ok) throw new Error(sent.error.code);
   }
 

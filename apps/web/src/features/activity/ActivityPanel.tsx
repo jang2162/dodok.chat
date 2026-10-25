@@ -11,7 +11,7 @@ import { RunTimeline } from "./RunTimeline";
 import { freezeDurations, mergeRuns } from "./timeline";
 
 /**
- * 활동 탭(`/c/$channelId/activity`, 설계 5.1·5.2): 런 목록과 툴 타임라인. 바깥 틀(패널 ↔ 시트·탭 머리·닫기)은
+ * 활동 탭(`/c/$channelId/s/$conversationId/activity`, 설계 5.1·5.2): 런 목록과 툴 타임라인. 바깥 틀(패널 ↔ 시트·탭 머리·닫기)은
  * 부모인 ChannelPage 의 `PanelTabs` 가 맡는다 — 탭을 옮겨도 머리가 살아 있게(D3).
  * ChannelPage 가 채널을 확인한 뒤에만 마운트된다
  */

@@ -17,6 +17,7 @@ import {
   shouldPersist,
   startPersistence,
   touchRecentChannel,
+  touchRecentConversation,
   trimForPersist,
 } from "./persist";
 
@@ -64,23 +65,33 @@ async function persist(qc: QueryClient, storage = memoryStorage(), buster = "b1"
 
 describe("shouldPersist", () => {
   const recent = [CH];
-  const yes = (key: readonly unknown[]) => shouldPersist({ queryKey: key }, recent);
+  /** CH 의 마지막으로 본 세션은 「이전 대화」(id = 채널 id) */
+  const yes = (key: readonly unknown[]) => shouldPersist({ queryKey: key }, recent, { [CH]: CH });
   it("me·채널 목록·에이전트·최근 목록은 늘", () => {
     expect(yes(["me"])).toBe(true);
     expect(yes(["channels"])).toBe(true);
     expect(yes(["agents"])).toBe(true);
     expect(yes(["recentChannels"])).toBe(true);
+    expect(yes(["recentConversations"])).toBe(true);
   });
   it("사람 목록은 늘 — 오프라인에서도 작성자 이름이 풀린다. 멤버 관리(team)는 담지 않는다", () => {
     expect(yes(qk.people)).toBe(true);
     expect(yes(qk.teamMembers)).toBe(false);
     expect(yes(qk.invites)).toBe(false);
   });
-  it("채널·멤버·타임라인은 최근 목록에 있는 채널만", () => {
-    for (const head of ["channel", "members", "timeline"]) {
+  it("채널·멤버는 최근 목록에 있는 채널만", () => {
+    for (const head of ["channel", "members"]) {
       expect(yes([head, CH])).toBe(true);
       expect(yes([head, CH2])).toBe(false);
     }
+  });
+  it("타임라인은 최근 채널마다 마지막으로 본 세션 하나만 — 같은 채널의 다른 세션·새 세션 창·최근이 아닌 채널은 담지 않는다(채널 세션 스펙 「웹」 장)", () => {
+    expect(yes(qk.timeline(CH, CH))).toBe(true);
+    expect(yes(qk.timeline(CH, uid(77)))).toBe(false);
+    expect(yes(qk.timeline(CH, "new"))).toBe(false);
+    expect(yes(qk.timeline(CH2, CH2))).toBe(false);
+    // 마지막으로 본 세션을 모르는 채널은 아무 세션도
+    expect(shouldPersist({ queryKey: qk.timeline(CH, CH) }, recent)).toBe(false);
   });
   it("런·활동·어댑터·에이전트 찾기는 저장하지 않는다", () => {
     expect(yes(["runs", uid(5), "events"])).toBe(false);
@@ -101,7 +112,7 @@ describe("shouldPersist", () => {
 });
 
 describe("trimForPersist", () => {
-  const state = (data: unknown, key: readonly unknown[] = ["timeline", CH]): DehydratedState => ({
+  const state = (data: unknown, key: readonly unknown[] = qk.timeline(CH, CH)): DehydratedState => ({
     mutations: [],
     queries: [
       {
@@ -203,16 +214,33 @@ describe("trimForPersist", () => {
   });
 });
 
-describe("스레드 사본(스레드·검색 스펙 4.2 — 최근 채널에 그 채널에서 연 스레드의 마지막 페이지)", () => {
-  const threads = { [CH]: ROOT.id };
-  it("shouldPersist: 최근 채널에서 마지막으로 연 스레드 하나만, 최근 스레드 목록은 늘", () => {
-    const yes = (key: readonly unknown[]) => shouldPersist({ queryKey: key }, [CH], threads);
+describe("스레드 사본(스레드·검색 스펙 4.2 — 최근 채널의 마지막으로 본 세션에서 연 스레드의 마지막 페이지)", () => {
+  const sessions = { [CH]: CH };
+  const threads = { [CH]: { conversationId: CH, rootId: ROOT.id } };
+  it("shouldPersist: 최근 채널의 마지막으로 본 세션에서 마지막으로 연 스레드 하나만, 최근 스레드 목록은 늘", () => {
+    const yes = (key: readonly unknown[]) => shouldPersist({ queryKey: key }, [CH], sessions, threads);
     expect(yes(["recentThreads"])).toBe(true);
-    expect(yes(qk.thread(CH, ROOT.id))).toBe(true);
-    // 같은 채널의 다른 스레드·최근이 아닌 채널의 스레드·기억한 스레드가 없는 채널
-    expect(yes(qk.thread(CH, uid(77)))).toBe(false);
-    expect(shouldPersist({ queryKey: qk.thread(CH2, ROOT.id) }, [CH], { [CH2]: ROOT.id })).toBe(false);
-    expect(shouldPersist({ queryKey: qk.thread(CH, ROOT.id) }, [CH])).toBe(false);
+    expect(yes(qk.thread(CH, CH, ROOT.id))).toBe(true);
+    // 같은 세션의 다른 스레드·최근이 아닌 채널의 스레드·기억한 스레드가 없는 채널
+    expect(yes(qk.thread(CH, CH, uid(77)))).toBe(false);
+    expect(
+      shouldPersist(
+        { queryKey: qk.thread(CH2, CH2, ROOT.id) },
+        [CH],
+        { [CH2]: CH2 },
+        {
+          [CH2]: { conversationId: CH2, rootId: ROOT.id },
+        },
+      ),
+    ).toBe(false);
+    expect(shouldPersist({ queryKey: qk.thread(CH, CH, ROOT.id) }, [CH], sessions)).toBe(false);
+    // 그 스레드의 세션이 마지막으로 본 세션이 아니면(다른 세션으로 옮겼다) 담지 않는다
+    const other = uid(78);
+    expect(
+      shouldPersist({ queryKey: qk.thread(CH, other, ROOT.id) }, [CH], sessions, {
+        [CH]: { conversationId: other, rootId: ROOT.id },
+      }),
+    ).toBe(false);
   });
 
   it("trimForPersist: 루트는 남기고 마지막 답글 50개, 보내는 중 항목은 빼고 hasOlder 는 참", () => {
@@ -223,7 +251,7 @@ describe("스레드 사본(스레드·검색 스펙 4.2 — 최근 채널에 그
       mutations: [],
       queries: [
         {
-          queryKey: qk.thread(CH, ROOT.id),
+          queryKey: qk.thread(CH, CH, ROOT.id),
           queryHash: "h",
           dehydratedAt: 1,
           state: {
@@ -255,13 +283,13 @@ describe("스레드 사본(스레드·검색 스펙 4.2 — 최근 채널에 그
     const qc = createQueryClient(() => {});
     const { storage } = await persist(qc);
     qc.setQueryData(qk.me, ME);
-    touchRecentChannel(qc, CH);
-    touchRecentThread(qc, CH, ROOT.id);
-    qc.setQueryData(qk.thread(CH, ROOT.id), threadOf(3));
-    qc.setQueryData(qk.thread(CH, uid(77)), threadOf(1));
+    touchSession(qc, CH);
+    touchRecentThread(qc, CH, CH, ROOT.id);
+    qc.setQueryData(qk.thread(CH, CH, ROOT.id), threadOf(3));
+    qc.setQueryData(qk.thread(CH, CH, uid(77)), threadOf(1));
     await vi.waitFor(() =>
       expect(storedKeys(storage)).toEqual(
-        [["me"], ["recentChannels"], ["recentThreads"], qk.thread(CH, ROOT.id)]
+        [["me"], ["recentChannels"], ["recentConversations"], ["recentThreads"], qk.thread(CH, CH, ROOT.id)]
           .map((k) => JSON.stringify(k))
           .sort(),
       ),
@@ -269,18 +297,24 @@ describe("스레드 사본(스레드·검색 스펙 4.2 — 최근 채널에 그
 
     const next = createQueryClient(() => {});
     await persist(next, storage);
-    expect(next.getQueryData<Timeline>(qk.thread(CH, ROOT.id))?.items.map((m) => m.seq)).toEqual([
+    expect(next.getQueryData<Timeline>(qk.thread(CH, CH, ROOT.id))?.items.map((m) => m.seq)).toEqual([
       1, 2, 3, 4,
     ]);
-    expect(next.getQueryData(qk.recentThreads)).toEqual({ [CH]: ROOT.id });
+    expect(next.getQueryData(qk.recentThreads)).toEqual({ [CH]: { conversationId: CH, rootId: ROOT.id } });
     expect(
       next
         .getQueryCache()
-        .find({ queryKey: qk.thread(CH, ROOT.id), exact: true })
+        .find({ queryKey: qk.thread(CH, CH, ROOT.id), exact: true })
         ?.isStale(),
     ).toBe(true);
   });
 });
+
+/** 채널을 열고 그 채널의 「이전 대화」(id = 채널 id)를 본 것으로 — 사본이 채널마다 그 세션 하나를 담는다 */
+function touchSession(qc: QueryClient, channelId: string) {
+  touchRecentChannel(qc, channelId);
+  touchRecentConversation(qc, channelId, channelId);
+}
 
 describe("touchRecentChannel", () => {
   it("앞으로 옮기고 중복 없이 5개로 자른다", () => {
@@ -299,11 +333,13 @@ describe("startPersistence", () => {
     qc.setQueryData(qk.channels, [channelOf(CH), channelOf(CH2)]);
     qc.setQueryData(qk.agents, []);
     qc.setQueryData(qk.adapter, ADAPTER_OK);
-    touchRecentChannel(qc, CH);
+    touchSession(qc, CH);
     qc.setQueryData(qk.channel(CH), channelOf(CH));
     qc.setQueryData(qk.members(CH), []);
-    qc.setQueryData(qk.timeline(CH), timelineOf(60));
-    qc.setQueryData(qk.timeline(CH2), timelineOf(2));
+    qc.setQueryData(qk.timeline(CH, CH), timelineOf(60));
+    // 같은 채널의 다른 세션 — 마지막으로 본 세션이 아니라 담지 않는다
+    qc.setQueryData(qk.timeline(CH, uid(77)), timelineOf(5));
+    qc.setQueryData(qk.timeline(CH2, CH2), timelineOf(2));
     qc.setQueryData(qk.channelRuns(CH), []);
     qc.setQueryData(qk.setupStatus, { server: { version: "0.1.0" } });
     qc.setQueryData([...qk.bridgeTokens, "gateway-1"], [{ id: "t", label: "env", prefix: "abc123" }]);
@@ -322,7 +358,8 @@ describe("startPersistence", () => {
           ["me"],
           ["members", CH],
           ["recentChannels"],
-          ["timeline", CH],
+          ["recentConversations"],
+          qk.timeline(CH, CH),
         ]
           .map((k) => JSON.stringify(k))
           .sort(),
@@ -333,7 +370,7 @@ describe("startPersistence", () => {
     expect(t.items).toHaveLength(TIMELINE_KEEP);
     expect(stored(storage)?.buster).toBe("b1");
     // 메모리의 캐시는 자르지 않는다
-    expect(qc.getQueryData<Timeline>(qk.timeline(CH))?.items).toHaveLength(60);
+    expect(qc.getQueryData<Timeline>(qk.timeline(CH, CH))?.items).toHaveLength(60);
   });
 
   it("사본에 세션 토큰·쿠키가 없다 — 뮤테이션(로그인 토큰 variables)은 저장하지 않는다", async () => {
@@ -410,7 +447,7 @@ describe("startPersistence", () => {
     const first = createQueryClient(() => {});
     const { p, storage } = await persist(first, memoryStorage(), buster);
     seed(first);
-    await vi.waitFor(() => expect(storedKeys(storage)).toContain(JSON.stringify(["timeline", CH])));
+    await vi.waitFor(() => expect(storedKeys(storage)).toContain(JSON.stringify(qk.timeline(CH, CH))));
     p.stop();
     return storage;
   }
@@ -420,18 +457,16 @@ describe("startPersistence", () => {
     const qc = createQueryClient(() => {});
     await persist(qc, storage);
     expect(qc.getQueryData(qk.me)).toEqual(ME);
-    expect(qc.getQueryData<Timeline>(qk.timeline(CH))?.items).toHaveLength(TIMELINE_KEEP);
+    expect(qc.getQueryData<Timeline>(qk.timeline(CH, CH))?.items).toHaveLength(TIMELINE_KEEP);
     expect(qc.getQueryData(qk.recentChannels)).toEqual([CH]);
     expect(qc.getQueryData(qk.adapter)).toBeUndefined();
     expect(qc.getQueryCache().find({ queryKey: qk.me, exact: true })?.isStale()).toBe(true);
   });
 
   describe("관찰자 없는 최근 채널 — 메모리에서는 gc(기본 5분), 사본에는 남는다(옛 사본에서 이어 붙임)", () => {
-    const CHANNEL_KEYS = [
-      ["channel", CH],
-      ["members", CH],
-      ["timeline", CH],
-    ].map((k) => JSON.stringify(k));
+    const CHANNEL_KEYS = [["channel", CH], ["members", CH], qk.timeline(CH, CH)].map((k) =>
+      JSON.stringify(k),
+    );
     let mark = 0;
     /** 다른 변경으로 저장을 한 번 일으키고 그 저장이 끝날 때까지 */
     async function saveAgain(qc: QueryClient, storage: ReturnType<typeof memoryStorage>) {
@@ -464,8 +499,8 @@ describe("startPersistence", () => {
       vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
       const { qc } = await restoredClient(storage);
       await vi.advanceTimersByTimeAsync(10 * 60_000);
-      for (const head of ["channel", "members", "timeline"])
-        expect(qc.getQueryCache().find({ queryKey: [head, CH], exact: true })).toBeUndefined();
+      for (const key of [qk.channel(CH), qk.members(CH), qk.timeline(CH, CH)])
+        expect(qc.getQueryCache().find({ queryKey: key, exact: true })).toBeUndefined();
       expect(qc.getQueryData(qk.recentChannels)).toEqual([CH]);
       await saveAgain(qc, storage);
       expect(storedKeys(storage)).toEqual(expect.arrayContaining(CHANNEL_KEYS));
@@ -482,7 +517,7 @@ describe("startPersistence", () => {
       seed(qc);
       await vi.advanceTimersByTimeAsync(10);
       await vi.advanceTimersByTimeAsync(10 * 60_000);
-      expect(qc.getQueryData(qk.timeline(CH))).toBeUndefined();
+      expect(qc.getQueryData(qk.timeline(CH, CH))).toBeUndefined();
       await saveAgain(qc, storage);
       expect(storedKeys(storage)).toEqual(expect.arrayContaining(CHANNEL_KEYS));
       const t = stored(storage)?.clientState.queries.find((q) => q.queryKey[0] === "timeline")?.state
@@ -491,7 +526,7 @@ describe("startPersistence", () => {
       expect(t.lastSeq).toBe(0);
 
       // 다시 캐시에 생기면 지금 값 하나만 — 옛 것을 겹쳐 붙이지 않는다
-      qc.setQueryData(qk.timeline(CH), timelineOf(3));
+      qc.setQueryData(qk.timeline(CH, CH), timelineOf(3));
       await saveAgain(qc, storage);
       const timelines = stored(storage)?.clientState.queries.filter((q) => q.queryKey[0] === "timeline");
       expect(timelines?.map((q) => (q.state.data as Timeline).items.length)).toEqual([3]);
@@ -507,25 +542,25 @@ describe("startPersistence", () => {
       await vi.advanceTimersByTimeAsync(0);
       stops.push((await started).stop);
       qc.setQueryData(qk.me, ME);
-      touchRecentChannel(qc, CH);
-      touchRecentThread(qc, CH, ROOT.id);
-      qc.setQueryData(qk.thread(CH, ROOT.id), threadOf(3));
+      touchSession(qc, CH);
+      touchRecentThread(qc, CH, CH, ROOT.id);
+      qc.setQueryData(qk.thread(CH, CH, ROOT.id), threadOf(3));
       await vi.advanceTimersByTimeAsync(10);
-      expect(storedKeys(storage)).toContain(JSON.stringify(qk.thread(CH, ROOT.id)));
+      expect(storedKeys(storage)).toContain(JSON.stringify(qk.thread(CH, CH, ROOT.id)));
       await vi.advanceTimersByTimeAsync(10 * 60_000);
       return { qc, storage };
     }
 
     it("닫은 지 5분 넘은 스레드도 옛 사본에서 이어 담는다", async () => {
       const { qc, storage } = await closedThreadTenMinutesAgo();
-      expect(qc.getQueryData(qk.thread(CH, ROOT.id))).toBeUndefined();
+      expect(qc.getQueryData(qk.thread(CH, CH, ROOT.id))).toBeUndefined();
       await saveAgain(qc, storage);
-      expect(storedKeys(storage)).toContain(JSON.stringify(qk.thread(CH, ROOT.id)));
+      expect(storedKeys(storage)).toContain(JSON.stringify(qk.thread(CH, CH, ROOT.id)));
     });
 
     it("recentThreads 는 gc 되지 않는다 — 관찰자 없이 5분이 지나도 메모리와 사본에 남는다", async () => {
       const { qc, storage } = await closedThreadTenMinutesAgo();
-      expect(qc.getQueryData(qk.recentThreads)).toEqual({ [CH]: ROOT.id });
+      expect(qc.getQueryData(qk.recentThreads)).toEqual({ [CH]: { conversationId: CH, rootId: ROOT.id } });
       await saveAgain(qc, storage);
       expect(storedKeys(storage)).toContain(JSON.stringify(qk.recentThreads));
     });

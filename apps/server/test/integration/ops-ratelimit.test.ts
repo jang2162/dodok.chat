@@ -2,6 +2,7 @@
  * 레이트리밋 통합(운영 보강 스펙 4장) — 가짜 Gateway·플러그인 위 실제 앱. 시계는 AppDeps.limitClock 으로 주입해 창·버킷을 넘긴다.
  * 숫자는 LIMITS 그대로 쓰되, 수백 번을 되풀이해야 하는 REST·업로드·Better Auth 는 AppDeps.limits 로 줄인다.
  */
+import { sendTarget } from "../helpers/seed";
 import {
   BRIDGE_ATTACHMENTS_PATH,
   IssueRunnerTokenResult,
@@ -54,7 +55,12 @@ describe("레이트리밋 통합", () => {
     const { socket } = await openChannelWire(l, channel.id, sockets);
     const ids = Array.from({ length: 11 }, () => randomUUID());
     const send = (clientMsgId: string) =>
-      socket.emitWithAck("message.send", { channelId: channel.id, clientMsgId, bodyMd: "@dev 안녕" });
+      socket.emitWithAck("message.send", {
+        channelId: channel.id,
+        ...sendTarget(l.app.db, channel.id),
+        clientMsgId,
+        bodyMd: "@dev 안녕",
+      });
 
     const acks = [];
     for (const id of ids) acks.push(await send(id));
@@ -98,7 +104,7 @@ describe("레이트리밋 통합", () => {
     let typed = 0;
     watcher.socket.on("typing", () => (typed += 1));
     for (let i = 0; i < LIMITS.wire.chatter.burst + 5; i++)
-      sender.socket.emit("typing", { channelId: channel.id });
+      sender.socket.emit("typing", { channelId: channel.id, conversationId: channel.id });
     // 같은 연결의 ack 왕복 — 그 앞의 typing 은 모두 처리됐다
     await sender.socket.emitWithAck("channel.unsubscribe", { channelId: randomUUID() });
     await watcher.socket.emitWithAck("channel.unsubscribe", { channelId: randomUUID() });

@@ -9,7 +9,7 @@ import { createAgentMessage } from "../src/modules/messages/service";
 import { getRun, insertRun, listOpenRuns } from "../src/modules/runs/store";
 import { bootTestApp, login } from "./helpers/app";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
-import { channelConversation, seedWorkspace } from "./helpers/seed";
+import { channelConversation, seedWorkspace, sendTarget } from "./helpers/seed";
 import { connectWire, type WireClient, waitFor } from "./helpers/wire";
 
 describe("wire 런 핸들러·REST 런 조회 (앱 부팅, FakeAdapter 배선)", () => {
@@ -61,6 +61,7 @@ describe("wire 런 핸들러·REST 런 조회 (앱 부팅, FakeAdapter 배선)",
     const queued = waitFor(socket, "run.state", (p) => p.run.status === "queued" && p.run.agentId === dev.id);
     const sent = await socket.emitWithAck("message.send", {
       channelId: channel.id,
+      ...sendTarget(app.db, channel.id),
       clientMsgId: `m-${++n}`,
       bodyMd: "@dev 부탁",
     });
@@ -245,17 +246,17 @@ describe("wire 런 핸들러·REST 런 조회 (앱 부팅, FakeAdapter 배선)",
       // 소비 규칙은 그대로 — reusable 은 consumed 가 비어 있다
       expect(updated.componentState?.consumed).toEqual([]);
 
-      // ① 새 탭 — 새 소켓의 구독 ack
+      // ① 끊겼다 다시 붙은 탭 — 새 소켓의 재동기화 ack(처음 구독은 메시지를 싣지 않는다, 판정 PS5)
       const fresh = await connectWire(app, token);
       sockets.push(fresh);
-      const ack = await fresh.emitWithAck("channel.subscribe", { channelId: channel.id });
+      const ack = await fresh.emitWithAck("channel.subscribe", { channelId: channel.id, lastSeq: 0 });
       if (!ack.ok) throw new Error(ack.error.code);
       expect(ack.data.messages.find((m) => m.id === card.id)?.interactions).toEqual(updated.interactions);
 
-      // ③ 새로고침 — REST 히스토리
+      // ③ 새로고침 — 세션의 REST 히스토리
       const res = await app.fastify.inject({
         method: "GET",
-        url: `/api/v1/channels/${channel.id}/messages`,
+        url: `/api/v1/conversations/${card.conversationId}/messages`,
         headers,
       });
       expect(res.statusCode).toBe(200);

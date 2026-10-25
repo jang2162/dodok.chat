@@ -99,7 +99,7 @@ describe("사이드바", () => {
     queryClient.setDefaultOptions({
       queries: { ...queryClient.getDefaultOptions().queries, staleTime: Infinity },
     });
-    renderRoute(`/c/${CH}`, queryClient);
+    renderRoute(`/c/${CH}/s/${CH}`, queryClient);
     const nav = await screen.findByRole("navigation", { name: "채널" });
     expect(await within(nav).findByRole("link", { name: /general/ })).toBeInTheDocument();
     expect(within(nav).queryByRole("link", { name: /old-news/ })).toBeNull();
@@ -108,7 +108,7 @@ describe("사이드바", () => {
 
 describe("보관한 채널 화면", () => {
   it("머리에 「보관됨」, 작성기 자리에 「보관된 채널입니다.」, owner 는 「보관 해제」", async () => {
-    renderRoute(`/c/${CH2}`);
+    renderRoute(`/c/${CH2}/s/${CH2}`);
     const header = await screen.findByTestId("channel-header");
     expect(await within(header).findByText("보관됨")).toBeInTheDocument();
     expect(screen.getByText("보관된 채널입니다.")).toBeInTheDocument();
@@ -119,21 +119,21 @@ describe("보관한 채널 화면", () => {
   it("빈 보관 채널의 안내는 「메시지가 없습니다.」 — 멘션을 권하지 않는다", async () => {
     const queryClient = createQueryClient(() => {});
     // 타임라인이 있어야 빈 상태 문구가 그려진다 — 구독은 가짜라 받아 오지 않는다
-    queryClient.setQueryData<Timeline>(qk.timeline(CH2), emptyTimeline());
-    renderRoute(`/c/${CH2}`, queryClient);
+    queryClient.setQueryData<Timeline>(qk.timeline(CH2, CH2), emptyTimeline());
+    renderRoute(`/c/${CH2}/s/${CH2}`, queryClient);
     expect(await screen.findByText("메시지가 없습니다.")).toBeInTheDocument();
     expect(screen.queryByText(/@멘션으로/)).toBeNull();
   });
 
   it("member 에게는 「보관 해제」가 없다 — 읽기만", async () => {
     server.role = "member";
-    renderRoute(`/c/${CH2}`);
+    renderRoute(`/c/${CH2}/s/${CH2}`);
     expect(await screen.findByText("보관된 채널입니다.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "보관 해제" })).toBeNull();
   });
 
   it("「보관 해제」를 누르면 한 번 보내고 작성기가 돌아오며 사이드바에 다시 든다", async () => {
-    renderRoute(`/c/${CH2}`);
+    renderRoute(`/c/${CH2}/s/${CH2}`);
     const button = await screen.findByRole("button", { name: "보관 해제" });
     await userEvent.dblClick(button);
     expect(await screen.findByRole("textbox", { name: "메시지 입력" })).toBeInTheDocument();
@@ -153,15 +153,19 @@ describe("보관한 채널 화면", () => {
       }),
       componentState: { expiresAt: "2999-01-01T00:00:00.000Z", consumed: [] },
     });
-    queryClient.setQueryData<Timeline>(qk.timeline(CH2), { ...emptyTimeline(), items: [card], lastSeq: 1 });
-    renderRoute(`/c/${CH2}`, queryClient);
+    queryClient.setQueryData<Timeline>(qk.timeline(CH2, CH2), {
+      ...emptyTimeline(),
+      items: [card],
+      lastSeq: 1,
+    });
+    renderRoute(`/c/${CH2}/s/${CH2}`, queryClient);
     const button = await screen.findByRole("button", { name: "확인" });
     expect(button).toBeDisabled();
     expect(button).toHaveAccessibleDescription("보관된 채널입니다");
   });
 
   it("채널 설정 패널: 편집 섹션·「채널 보관」 대신 「보관된 채널입니다.」", async () => {
-    renderRoute(`/c/${CH2}/settings`);
+    renderRoute(`/c/${CH2}/s/${CH2}/settings`);
     const panel = await screen.findByTestId("channel-settings-archived");
     expect(within(panel).getByText("보관된 채널입니다.")).toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "이름" })).toBeNull();
@@ -171,11 +175,11 @@ describe("보관한 채널 화면", () => {
   it("스레드 패널도 읽기 전용 — 작성기·「보관 해제」가 없다", async () => {
     const queryClient = createQueryClient(() => {});
     const root = msg(1, { channelId: CH2 });
-    queryClient.setQueryData(qk.thread(CH2, root.id), threadFromPage(undefined, root, [], false));
+    queryClient.setQueryData(qk.thread(CH2, CH2, root.id), threadFromPage(undefined, root, [], false));
     queryClient.setDefaultOptions({
       queries: { ...queryClient.getDefaultOptions().queries, staleTime: Infinity },
     });
-    renderRoute(`/c/${CH2}/t/${root.id}`, queryClient);
+    renderRoute(`/c/${CH2}/s/${CH2}/t/${root.id}`, queryClient);
     const panel = await screen.findByTestId("thread-panel");
     expect(within(panel).getByText("보관된 채널입니다.")).toBeInTheDocument();
     expect(within(panel).queryByRole("textbox", { name: /입력/ })).toBeNull();
@@ -188,14 +192,14 @@ describe("보관한 채널 화면", () => {
 describe("채널 설정 패널 「채널 보관」", () => {
   it("member 에게는 없다", async () => {
     server.role = "member";
-    renderRoute(`/c/${CH}/settings`);
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
     expect(await screen.findByRole("textbox", { name: "이름" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "채널 보관" })).toBeNull();
   });
 
   it("admin: 확인 문구 → 연속 클릭에도 한 번 보내고 화면이 읽기 전용으로", async () => {
     server.role = "admin";
-    renderRoute(`/c/${CH}/settings`);
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
     await userEvent.click(await screen.findByRole("button", { name: "채널 보관" }));
     const dialog = await screen.findByRole("dialog");
     expect(
@@ -230,7 +234,7 @@ describe("보관을 모르는 탭의 설정 저장", () => {
         return json(409, { code: "CHANNEL_ARCHIVED", message: "보관된 채널입니다" });
       return (base as typeof globalThis.fetch)(input, init);
     });
-    renderRoute(`/c/${CH}/settings`);
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
     const name = await screen.findByRole("textbox", { name: "이름" });
     // 서버에서는 이미 보관됐다
     server.live = [];
@@ -252,19 +256,19 @@ describe("열린 채널이 다른 탭에서 보관될 때(Review Focus 1)", () =
     const queryClient = createQueryClient(() => {});
     fake.socket.connected = true;
     fake.socket.active = true;
-    const subscriptions = createSubscriptions({ socket: fake.wire, queryClient, fetchPage: vi.fn() });
+    const subscriptions = createSubscriptions({ socket: fake.wire, queryClient });
     const detach = attachHandlers(fake.wire, {
       queryClient,
       subscriptions,
       onUnauthorized: vi.fn(),
-      notify: { currentChannelId: () => CH, openActivity: vi.fn() },
+      notify: { currentChannelId: () => CH, currentConversationId: () => undefined, openActivity: vi.fn() },
     });
     return { queryClient, detach };
   }
 
   it("channel.updated 가 오면 작성기가 「보관된 채널입니다.」로 바뀌고 오류 토스트는 없다", async () => {
     const { queryClient, detach } = withHandlers();
-    renderRoute(`/c/${CH}`, queryClient);
+    renderRoute(`/c/${CH}/s/${CH}`, queryClient);
     expect(await screen.findByRole("textbox", { name: "메시지 입력" })).toBeInTheDocument();
 
     act(() => fake.serverEmit("channel.updated", { channel: { ...LIVE, archivedAt: ARCHIVED_AT } }));
@@ -279,7 +283,7 @@ describe("열린 채널이 다른 탭에서 보관될 때(Review Focus 1)", () =
 
   it("설정 패널이 열려 있어도 초점이 패널 밖(사이드바)에 있으면 보관 이벤트가 초점을 뺏지 않는다", async () => {
     const { queryClient, detach } = withHandlers();
-    renderRoute(`/c/${CH}/settings`, queryClient);
+    renderRoute(`/c/${CH}/s/${CH}/settings`, queryClient);
     expect(await screen.findByRole("textbox", { name: "이름" })).toBeInTheDocument();
     // 모달 대화상자는 초점 가두기가 초점을 되돌려 이 가드를 가린다 — 가두지 않는 사이드바 단추로 잰다
     const outside = within(screen.getByRole("navigation", { name: "채널" })).getByRole("button", {
@@ -303,8 +307,12 @@ describe("열린 채널이 다른 탭에서 보관될 때(Review Focus 1)", () =
       }),
       componentState: { expiresAt: "2999-01-01T00:00:00.000Z", consumed: [] },
     });
-    queryClient.setQueryData<Timeline>(qk.timeline(CH), { ...emptyTimeline(), items: [card], lastSeq: 1 });
-    renderRoute(`/c/${CH}`, queryClient);
+    queryClient.setQueryData<Timeline>(qk.timeline(CH, CH), {
+      ...emptyTimeline(),
+      items: [card],
+      lastSeq: 1,
+    });
+    renderRoute(`/c/${CH}/s/${CH}`, queryClient);
     const button = await screen.findByRole("button", { name: "확인" });
     expect(button).toBeEnabled();
     server.live = [];
@@ -320,7 +328,7 @@ describe("열린 채널이 다른 탭에서 보관될 때(Review Focus 1)", () =
 
   it("이벤트보다 먼저 보낸 글이 409 CHANNEL_ARCHIVED 면 토스트 없이 그 항목에 사유, 화면은 채널을 다시 받아 읽기 전용", async () => {
     const queryClient = createQueryClient(() => {});
-    renderRoute(`/c/${CH}`, queryClient);
+    renderRoute(`/c/${CH}/s/${CH}`, queryClient);
     const box = await screen.findByRole("textbox", { name: "메시지 입력" });
     // 서버에서는 이미 보관됐다 — 이 탭만 아직 모른다
     server.live = [];
@@ -338,7 +346,7 @@ describe("열린 채널이 다른 탭에서 보관될 때(Review Focus 1)", () =
 
     expect(await screen.findByText("보관된 채널입니다.")).toBeInTheDocument();
     await waitFor(() =>
-      expect(getTimeline(queryClient, CH)?.pending.map((p) => [p.state, p.reason])).toEqual([
+      expect(getTimeline(queryClient, CH, CH)?.pending.map((p) => [p.state, p.reason])).toEqual([
         ["failed", "channel_archived"],
       ]),
     );

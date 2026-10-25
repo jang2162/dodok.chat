@@ -6,8 +6,8 @@ import { useMemo } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { qk } from "@/api/queries";
 import { registerUnauthorized } from "@/app/session";
-import { updateTimeline } from "@/realtime/timelineCache";
-import { AGENT, APPROVAL, APPROVAL2, approval, CH, CH2, msg, RUN } from "../../../test/fixtures";
+import { getChannelSeq, setChannelSeq, updateTimeline } from "@/realtime/timelineCache";
+import { AGENT, APPROVAL, APPROVAL2, approval, CH, CH2, msg, RUN, uid } from "../../../test/fixtures";
 import { authorsClient, renderWithClient } from "../../../test/messages";
 import { remeasureRows, setViewportHeight, stubScrollLayout } from "../../../test/scrollLayout";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
@@ -46,10 +46,24 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/** 캐시를 채우고 그 채널을 구독한 것으로(채널 커서) — 받은 것이 지금 것이어야 결과로 가기·배너가 돈다(useTimelineState `ready`) */
+function subscribedWith(
+  qc: ReturnType<typeof authorsClient>,
+  key: readonly unknown[],
+  t: Timeline,
+  channelId = CH,
+) {
+  qc.setQueryData(key, t);
+  setChannelSeq(qc, channelId, Math.max(t.lastSeq, getChannelSeq(qc, channelId) ?? 0));
+}
+
 function setup(t: Timeline | undefined, channelId = CH) {
   const qc = authorsClient();
-  if (t) qc.setQueryData(qk.timeline(channelId), t);
-  const view = renderWithClient(<MessageList channelId={channelId} initialRect={RECT} />, qc);
+  if (t) subscribedWith(qc, qk.timeline(channelId, channelId), t, channelId);
+  const view = renderWithClient(
+    <MessageList channelId={channelId} conversationId={channelId} initialRect={RECT} />,
+    qc,
+  );
   const scroller = () => view.container.querySelector<HTMLElement>("[data-scroller]") as HTMLElement;
   /** 사용자가 그 자리로 스크롤한 것처럼 — 손을 댔다는 신호(휠)와 scrollTop 을 함께, scroll 이벤트가 처리될 때까지 */
   const scrollTo = async (top: number) => {
@@ -81,14 +95,14 @@ describe("MessageList", () => {
   it("타임라인이 아직 없으면 불러오는 중 자리표시, 비었으면 안내", async () => {
     const { qc } = setup(undefined);
     expect(screen.getByRole("status", { name: "메시지를 불러오는 중" })).toBeInTheDocument();
-    act(() => qc.setQueryData(qk.timeline(CH), emptyTimeline()));
+    act(() => qc.setQueryData(qk.timeline(CH, CH), emptyTimeline()));
     expect(await screen.findByText(/아직 메시지가 없습니다/)).toBeInTheDocument();
     expect(screen.queryByRole("status", { name: "메시지를 불러오는 중" })).toBeNull();
   });
 
   it("타임라인이 나중에 오면(구독 응답) 그때 맨 아래로 간다", async () => {
     const { qc, atEnd } = setup(undefined);
-    act(() => qc.setQueryData(qk.timeline(CH), timelineOf(range(1, 40))));
+    act(() => qc.setQueryData(qk.timeline(CH, CH), timelineOf(range(1, 40))));
     await waitFor(() => expect(screen.getByText("본문 40")).toBeInTheDocument());
     await waitFor(() => expect(atEnd()).toBe(true));
   });
@@ -176,7 +190,7 @@ describe("MessageList", () => {
       flashes += records.reduce((n, r) => n + r.addedNodes.length, 0);
     });
     observer.observe(live, { childList: true, subtree: true });
-    act(() => updateTimeline(qc, CH, (t) => upsert(t, range(41, 41)[0] as Message)));
+    act(() => updateTimeline(qc, CH, CH, (t) => upsert(t, range(41, 41)[0] as Message)));
     await waitFor(() => expect(screen.getByText("본문 41")).toBeInTheDocument());
     await waitFor(() => expect(atEnd()).toBe(true));
     observer.disconnect();
@@ -188,7 +202,7 @@ describe("MessageList", () => {
     const { qc, scrollTo, atEnd, scroller } = setup(timelineOf(range(1, 40)));
     await waitFor(() => expect(atEnd()).toBe(true));
     await scrollTo(300);
-    act(() => updateTimeline(qc, CH, (t) => range(41, 42).reduce(upsert, t)));
+    act(() => updateTimeline(qc, CH, CH, (t) => range(41, 42).reduce(upsert, t)));
     const chip = await screen.findByRole("button", { name: "새 메시지 2개" });
     expect(chip.closest("[aria-live=polite]")).not.toBeNull();
     expect(scroller().scrollTop).toBe(300);
@@ -207,14 +221,14 @@ describe("MessageList", () => {
     await scrollTo(300);
     await act(() => new Promise((r) => setTimeout(r, 10)));
     expect(screen.queryByRole("button", { name: /새 메시지/ })).toBeNull();
-    act(() => updateTimeline(qc, CH, (t) => upsert(t, range(41, 41)[0] as Message)));
+    act(() => updateTimeline(qc, CH, CH, (t) => upsert(t, range(41, 41)[0] as Message)));
     await screen.findByRole("button", { name: "새 메시지 1개" });
   });
 
   it("스크롤해서 맨 아래로 돌아오면 칩이 사라진다", async () => {
     const { qc, scrollTo, scroller } = setup(timelineOf(range(1, 40)));
     await scrollTo(300);
-    act(() => updateTimeline(qc, CH, (t) => upsert(t, range(41, 41)[0] as Message)));
+    act(() => updateTimeline(qc, CH, CH, (t) => upsert(t, range(41, 41)[0] as Message)));
     await screen.findByRole("button", { name: "새 메시지 1개" });
     await scrollTo(scroller().scrollHeight);
     await waitFor(() => expect(screen.queryByRole("button", { name: /새 메시지/ })).toBeNull());
@@ -224,7 +238,7 @@ describe("MessageList", () => {
     const { qc, scrollTo, atEnd } = setup(timelineOf(range(1, 40)));
     await scrollTo(300);
     act(() =>
-      updateTimeline(qc, CH, (t) =>
+      updateTimeline(qc, CH, CH, (t) =>
         addPending(t, {
           clientMsgId: "c-1",
           channelId: CH,
@@ -245,12 +259,12 @@ describe("MessageList", () => {
     const { qc, scrollTo, scroller } = setup(timelineOf(range(51, 80), true));
     await waitFor(() => expect(scroller().scrollTop).toBeGreaterThan(0));
     await scrollTo(100);
-    await waitFor(() => expect(qc.getQueryData<Timeline>(qk.timeline(CH))?.items).toHaveLength(80));
+    await waitFor(() => expect(qc.getQueryData<Timeline>(qk.timeline(CH, CH))?.items).toHaveLength(80));
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
-      `/api/v1/channels/${CH}/messages?limit=50&beforeSeq=51`,
+      `/api/v1/conversations/${CH}/messages?limit=50&beforeSeq=51`,
     );
-    expect(qc.getQueryData<Timeline>(qk.timeline(CH))?.hasOlder).toBe(false);
+    expect(qc.getQueryData<Timeline>(qk.timeline(CH, CH))?.hasOlder).toBe(false);
     // 붙은 행: 메시지 50 + 맨 위 날짜 구분선 1 — 그만큼 아래로 옮겨 같은 행이 같은 자리에 보인다
     await waitFor(() => expect(scroller().scrollTop).toBe(100 + 51 * ROW));
     expect(screen.getByText("본문 52")).toBeInTheDocument();
@@ -315,7 +329,7 @@ describe("MessageList", () => {
   it("버블은 확정 메시지 뒤, 보내는 중 앞에 그린다", async () => {
     const qc = authorsClient();
     qc.setQueryData(
-      qk.timeline(CH),
+      qk.timeline(CH, CH),
       addPending(timelineOf(range(1, 2)), {
         clientMsgId: "c-1",
         channelId: CH,
@@ -327,6 +341,7 @@ describe("MessageList", () => {
     const { container } = renderWithClient(
       <MessageList
         channelId={CH}
+        conversationId={CH}
         initialRect={RECT}
         bubbleRunIds={[RUN]}
         bubbles={(runId) => <div data-testid="bubble">버블 {runId}</div>}
@@ -345,12 +360,13 @@ describe("MessageList", () => {
     restore = stubScrollLayout({ ...RECT, rowHeight: 55 });
     // 앱처럼 버블 목록을 타임라인에서 끌어낸다 — 확정 답이 들어오는 커밋에서 버블이 함께 빠진다
     function Harness() {
-      const t = useTimeline(CH);
+      const t = useTimeline(CH, CH);
       const answered = t?.items.some((m) => m.runId === RUN) ?? false;
       const ids = useMemo(() => (answered ? [] : [RUN]), [answered]);
       return (
         <MessageList
           channelId={CH}
+          conversationId={CH}
           initialRect={RECT}
           bubbleRunIds={ids}
           bubbles={(runId) => <div data-testid="bubble">버블 {runId}</div>}
@@ -358,7 +374,7 @@ describe("MessageList", () => {
       );
     }
     const qc = authorsClient();
-    qc.setQueryData(qk.timeline(CH), timelineOf(range(1, 40)));
+    qc.setQueryData(qk.timeline(CH, CH), timelineOf(range(1, 40)));
     const { container } = renderWithClient(<Harness />, qc);
     const scroller = container.querySelector("[data-scroller]") as HTMLElement;
     const gap = () => scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
@@ -370,7 +386,7 @@ describe("MessageList", () => {
     await waitFor(() => expect(gap()).toBe(0));
 
     await settle();
-    act(() => updateTimeline(qc, CH, (t) => upsert(t, range(41, 41, { runId: RUN })[0] as Message)));
+    act(() => updateTimeline(qc, CH, CH, (t) => upsert(t, range(41, 41, { runId: RUN })[0] as Message)));
     await waitFor(() => expect(screen.queryByTestId("bubble")).toBeNull());
     expect(screen.getByText("본문 41")).toBeInTheDocument();
     // 교체 뒤 끝에 그대로 — 고치기 전에는 9px 이 남는다(부하에서 늦어도 거짓 실패가 나지 않게 waitFor)
@@ -379,7 +395,7 @@ describe("MessageList", () => {
     // 보내는 중 항목이 확정되는 교체도 같은 경로
     const clientMsgId = "c-last";
     act(() =>
-      updateTimeline(qc, CH, (t) =>
+      updateTimeline(qc, CH, CH, (t) =>
         addPending(t, {
           clientMsgId,
           channelId: CH,
@@ -391,7 +407,7 @@ describe("MessageList", () => {
     );
     await waitFor(() => expect(gap()).toBe(0));
     await settle();
-    act(() => updateTimeline(qc, CH, (t) => upsert(t, msg(42, { clientMsgId, bodyMd: "내 말" }))));
+    act(() => updateTimeline(qc, CH, CH, (t) => upsert(t, msg(42, { clientMsgId, bodyMd: "내 말" }))));
     await waitFor(() => expect(screen.queryByRole("status", { name: "보내는 중" })).toBeNull());
     // 이 경로는 jsdom 에서 고치기 전에도 0 이다 — 회귀 방지용(실물 확인은 태스크 13)
     await waitFor(() => expect(gap()).toBe(0));
@@ -399,9 +415,9 @@ describe("MessageList", () => {
 
   it("채널을 옮기면 칩·스크롤 상태를 새로 시작한다", async () => {
     const qc = authorsClient();
-    qc.setQueryData(qk.timeline(CH), timelineOf(range(1, 40)));
-    qc.setQueryData(qk.timeline(CH2), timelineOf(range(1, 40, { channelId: CH2 })));
-    const view = renderWithClient(<MessageList channelId={CH} initialRect={RECT} />, qc);
+    qc.setQueryData(qk.timeline(CH, CH), timelineOf(range(1, 40)));
+    qc.setQueryData(qk.timeline(CH2, CH2), timelineOf(range(1, 40, { channelId: CH2 })));
+    const view = renderWithClient(<MessageList channelId={CH} conversationId={CH} initialRect={RECT} />, qc);
     const scroller = () => view.container.querySelector<HTMLElement>("[data-scroller]") as HTMLElement;
     // 휠 = 사용자가 스크롤을 잡았다는 신호 — 이것 없이 scrollTop 만 옮기면 첫 붙임(settle)이 아직 살아 있을 때
     // 다음 프레임에 끝으로 되돌려 칩이 뜨지 않는다(부하에서 20회 중 1회). 이 파일의 다른 scroll 과 같은 방식
@@ -410,10 +426,10 @@ describe("MessageList", () => {
       scroller().scrollTop = 300;
       await new Promise((r) => setTimeout(r, 10));
     });
-    act(() => updateTimeline(qc, CH, (t) => upsert(t, range(41, 41)[0] as Message)));
+    act(() => updateTimeline(qc, CH, CH, (t) => upsert(t, range(41, 41)[0] as Message)));
     await screen.findByRole("button", { name: "새 메시지 1개" });
 
-    view.rerender(<MessageList channelId={CH2} initialRect={RECT} />);
+    view.rerender(<MessageList channelId={CH2} conversationId={CH2} initialRect={RECT} />);
     expect(screen.queryByRole("button", { name: /새 메시지/ })).toBeNull();
     await waitFor(() => expect(scroller().scrollTop).toBe(scroller().scrollHeight - scroller().clientHeight));
   });
@@ -488,7 +504,7 @@ describe("MessageList 승인 카드", () => {
     expect(text.indexOf("본문 2")).toBeLessThan(text.indexOf("claude-cli native tool: Write"));
   });
 
-  it("다른 채널의 승인은 행도 만들지 않는다 — 빈 행이 끼지 않게", async () => {
+  it("다른 채널·같은 채널의 다른 세션의 승인은 행도 만들지 않는다 — 빈 행이 끼지 않게", async () => {
     const { container } = setup(timelineOf(range(1, 2)));
     await screen.findByText("본문 2");
     // 구분선 + 메시지 둘
@@ -497,6 +513,16 @@ describe("MessageList 승인 카드", () => {
 
     act(() => useApprovalStore.getState().apply(approval({ id: APPROVAL2, channelId: CH2 })));
     await waitFor(() => expect(rows()).toBe(3));
+    expect(screen.queryByRole("group", { name: /승인 요청/ })).not.toBeInTheDocument();
+
+    // 같은 채널의 다른 세션의 승인도 — 카드는 그 승인의 세션에만(채널 세션 계획 판정 PS7)
+    act(() =>
+      useApprovalStore
+        .getState()
+        .apply(approval({ id: uid(203), conversationId: uid(3_001), runId: undefined })),
+    );
+    await new Promise((r) => setTimeout(r, 20));
+    expect(rows()).toBe(3);
     expect(screen.queryByRole("group", { name: /승인 요청/ })).not.toBeInTheDocument();
 
     // 이 채널의 승인이면 행이 는다
@@ -522,7 +548,7 @@ describe("MessageList 시스템 카드", () => {
 
 describe("MessageList 읽음 전송", () => {
   const ROOT = msg(5, { authorType: "agent", authorId: AGENT, bodyMd: "루트" });
-  const latestUrl = `/api/v1/channels/${CH}/messages?limit=50`;
+  const latestUrl = `/api/v1/conversations/${CH}/messages?limit=50`;
 
   beforeEach(() => {
     useWireStatus.setState({ status: "connected" });
@@ -538,10 +564,10 @@ describe("MessageList 읽음 전송", () => {
   function setupRead(t: Timeline, threadRootId?: string) {
     const sender = { request: vi.fn(), dispose: vi.fn() };
     const qc = authorsClient();
-    qc.setQueryData(threadRootId ? qk.thread(CH, threadRootId) : qk.timeline(CH), t);
+    subscribedWith(qc, threadRootId ? qk.thread(CH, CH, threadRootId) : qk.timeline(CH, CH), t);
     const view = renderWithClient(
       <ReadSenderContext.Provider value={sender}>
-        <MessageList channelId={CH} threadRootId={threadRootId} initialRect={RECT} />
+        <MessageList channelId={CH} conversationId={CH} threadRootId={threadRootId} initialRect={RECT} />
       </ReadSenderContext.Provider>,
       qc,
     );
@@ -568,7 +594,7 @@ describe("MessageList 읽음 전송", () => {
   it("끝에 붙은 채 새 메시지로 lastSeq 가 커지면 다시 요청한다", async () => {
     const { qc, sender } = setupRead(timelineOf(range(1, 40)));
     await waitFor(() => expect(requested(sender)).toEqual([[CH, 40]]));
-    act(() => updateTimeline(qc, CH, (t) => upsert(t, range(41, 41)[0] as Message)));
+    act(() => updateTimeline(qc, CH, CH, (t) => upsert(t, range(41, 41)[0] as Message)));
     await waitFor(() =>
       expect(requested(sender)).toEqual([
         [CH, 40],
@@ -582,7 +608,7 @@ describe("MessageList 읽음 전송", () => {
     await waitFor(() => expect(requested(sender)).toEqual([[CH, 40]]));
     await scrollTo(300);
     expect(isViewingAtEnd(CH)).toBe(false);
-    act(() => updateTimeline(qc, CH, (t) => upsert(t, range(41, 41)[0] as Message)));
+    act(() => updateTimeline(qc, CH, CH, (t) => upsert(t, range(41, 41)[0] as Message)));
     await act(() => new Promise((r) => setTimeout(r, 20)));
     expect(requested(sender)).toEqual([[CH, 40]]);
 
@@ -620,7 +646,7 @@ describe("MessageList 읽음 전송", () => {
 
   it("결과로 가기 목표를 안고 열리면(가진 메시지여도) 끝을 본 것이 아니다 — 보내지 않는다", async () => {
     const target = range(10, 10)[0] as Message;
-    act(() => requestJump({ channelId: CH, messageId: target.id, seq: 10 }));
+    act(() => requestJump({ conversationId: CH, messageId: target.id, seq: 10 }));
     const { sender } = setupRead(timelineOf(range(1, 40)));
     await waitFor(() =>
       expect(screen.getByText("본문 10").closest("[data-index]")).toHaveAttribute("data-highlighted", "true"),
@@ -680,9 +706,9 @@ describe("MessageList 읽음 전송", () => {
 });
 
 describe("MessageList 「새 메시지」 구분선·페이지 밖 배너", () => {
-  const aroundUrl = (seq: number) => `/api/v1/channels/${CH}/messages?limit=50&around=${seq}`;
-  const firstRootUrl = (seq: number) => `/api/v1/channels/${CH}/messages?limit=1&afterSeq=${seq}`;
-  const latestUrl = `/api/v1/channels/${CH}/messages?limit=50`;
+  const aroundUrl = (seq: number) => `/api/v1/conversations/${CH}/messages?limit=50&around=${seq}`;
+  const firstRootUrl = (seq: number) => `/api/v1/conversations/${CH}/messages?limit=1&afterSeq=${seq}`;
+  const latestUrl = `/api/v1/conversations/${CH}/messages?limit=50`;
   /** 내가 쓴 최상위 글 seq from..to */
   const mine = (from: number, to: number): Message[] =>
     Array.from({ length: to - from + 1 }, (_, i) => msg(from + i, { bodyMd: `내 글 ${from + i}` }));
@@ -704,13 +730,14 @@ describe("MessageList 「새 메시지」 구분선·페이지 밖 배너", () =
     useUnread.getState().reset();
   });
 
-  function setupEntry(t: Timeline, entryReadSeq: number | undefined) {
+  function setupEntry(t: Timeline, entryReadSeq: number | undefined, { subscribed = true } = {}) {
     const sender = { request: vi.fn(), dispose: vi.fn() };
     const qc = authorsClient();
-    qc.setQueryData(qk.timeline(CH), t);
+    if (subscribed) subscribedWith(qc, qk.timeline(CH, CH), t);
+    else qc.setQueryData(qk.timeline(CH, CH), t);
     const view = renderWithClient(
       <ReadSenderContext.Provider value={sender}>
-        <MessageList channelId={CH} entryReadSeq={entryReadSeq} initialRect={RECT} />
+        <MessageList channelId={CH} conversationId={CH} entryReadSeq={entryReadSeq} initialRect={RECT} />
       </ReadSenderContext.Provider>,
       qc,
     );
@@ -727,7 +754,8 @@ describe("MessageList 「새 메시지」 구분선·페이지 밖 배너", () =
   }
   const separator = () => screen.queryByRole("separator", { name: "새 메시지" });
   const banner = () => screen.queryByRole("button", { name: /안 읽은 메시지가 더 있어요/ });
-  const items = (qc: ReturnType<typeof authorsClient>) => qc.getQueryData<Timeline>(qk.timeline(CH))?.items;
+  const items = (qc: ReturnType<typeof authorsClient>) =>
+    qc.getQueryData<Timeline>(qk.timeline(CH, CH))?.items;
 
   it("entryReadSeq 뒤 첫 남의 글 앞에 「새 메시지」 구분선이 선다", async () => {
     setupEntry(timelineOf(range(1, 40)), 38);
@@ -752,7 +780,7 @@ describe("MessageList 「새 메시지」 구분선·페이지 밖 배너", () =
   it("들어간 뒤 내가 쓴 최상위 글 앞에는 구분선이 서지 않는다", async () => {
     const { qc } = setupEntry(timelineOf(range(1, 40)), 40);
     await screen.findByText("본문 40");
-    act(() => updateTimeline(qc, CH, (t) => upsert(t, mine(41, 41)[0] as Message)));
+    act(() => updateTimeline(qc, CH, CH, (t) => upsert(t, mine(41, 41)[0] as Message)));
     await screen.findByText("내 글 41");
     expect(separator()).toBeNull();
   });
@@ -777,11 +805,30 @@ describe("MessageList 「새 메시지」 구분선·페이지 밖 배너", () =
     expect(separator()).toBeNull();
   });
 
-  it("구독 응답 전(사본에서 복원한 타임라인, lastSeq 0)에는 배너가 없다 — 응답을 받으면 뜬다", async () => {
-    const { qc } = setupEntry({ ...timelineOf(range(51, 100), true), lastSeq: 0 }, 11);
+  it("구독 전(채널 커서 없음 — 사본에서 복원한 타임라인)에는 배너가 없다 — 구독하면 뜬다", async () => {
+    const { qc } = setupEntry(timelineOf(range(51, 100), true), 11, { subscribed: false });
     await screen.findByText("본문 100");
     expect(banner()).toBeNull();
-    act(() => qc.setQueryData(qk.timeline(CH), timelineOf(range(51, 100), true)));
+    act(() => setChannelSeq(qc, CH, 100));
+    expect(await screen.findByRole("button", { name: /안 읽은 메시지가 더 있어요/ })).toBeInTheDocument();
+  });
+
+  it("다시 받는 중(낡은 것으로 둔 세션)에는 배너가 없다 — 받고 나면 뜬다", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        await gate;
+        return new Response(JSON.stringify({ messages: range(51, 100), hasMore: true }), { status: 200 });
+      }),
+    );
+    const { qc } = setupEntry(timelineOf(range(51, 100), true), 11);
+    await screen.findByText("본문 100");
+    act(() => void qc.invalidateQueries({ queryKey: qk.timeline(CH, CH) }));
+    await act(() => new Promise((r) => setTimeout(r, 20)));
+    expect(banner()).toBeNull();
+    release();
     expect(await screen.findByRole("button", { name: /안 읽은 메시지가 더 있어요/ })).toBeInTheDocument();
   });
 
@@ -842,7 +889,7 @@ describe("MessageList 「새 메시지」 구분선·페이지 밖 배너", () =
     serve({
       [firstRootUrl(30)]: { messages: mine(31, 31), hasMore: true },
       [aroundUrl(31)]: { messages: [...range(6, 30), ...mine(31, 55)], hasMore: true, hasMoreAfter: true },
-      [`/api/v1/channels/${CH}/messages?limit=50&afterSeq=55`]: {
+      [`/api/v1/conversations/${CH}/messages?limit=50&afterSeq=55`]: {
         messages: [...mine(56, 60), ...range(61, 100)],
         hasMore: true,
       },
@@ -898,7 +945,7 @@ describe("MessageList 「새 메시지」 구분선·페이지 밖 배너", () =
     "entryReadSeq $entryReadSeq: 맨 위 근처에서 과거 페이지를 붙여도 보던 행의 자리를 지킨다(맨 위 구분선이 기준 행이 되지 않는다)",
     async ({ entryReadSeq, hasMore, added }) => {
       serve({
-        [`/api/v1/channels/${CH}/messages?limit=50&beforeSeq=51`]: { messages: range(1, 50), hasMore },
+        [`/api/v1/conversations/${CH}/messages?limit=50&beforeSeq=51`]: { messages: range(1, 50), hasMore },
       });
       const { qc, scroller, scrollTo } = setupEntry(timelineOf(range(51, 100), true), entryReadSeq);
       await waitFor(() => expect(scroller().scrollTop).toBeGreaterThan(0));
@@ -933,10 +980,17 @@ describe("MessageList 첫 안 읽은 곳에서 열기", () => {
   ) {
     const sender = { request: vi.fn(), dispose: vi.fn() };
     const qc = authorsClient();
-    if (t) qc.setQueryData(over.threadRootId ? qk.thread(CH, over.threadRootId) : qk.timeline(CH), t);
+    if (t)
+      subscribedWith(qc, over.threadRootId ? qk.thread(CH, CH, over.threadRootId) : qk.timeline(CH, CH), t);
     const view = renderWithClient(
       <ReadSenderContext.Provider value={sender}>
-        <MessageList channelId={CH} entryReadSeq={entryReadSeq} initialRect={RECT} {...over} />
+        <MessageList
+          channelId={CH}
+          conversationId={CH}
+          entryReadSeq={entryReadSeq}
+          initialRect={RECT}
+          {...over}
+        />
       </ReadSenderContext.Provider>,
       qc,
     );
@@ -963,7 +1017,7 @@ describe("MessageList 첫 안 읽은 곳에서 열기", () => {
   /** 이어 받기 — 가진 목록 뒤에 from..to 를 붙이고 lastSeq 를 to 로 */
   const catchUp = (qc: ReturnType<typeof authorsClient>, from: number, to: number) =>
     act(() =>
-      updateTimeline(qc, CH, (t) => ({ ...t, items: [...t.items, ...range(from, to)], lastSeq: to })),
+      updateTimeline(qc, CH, CH, (t) => ({ ...t, items: [...t.items, ...range(from, to)], lastSeq: to })),
     );
 
   it("1. 구분선이 받은 행 안이면 끝이 아니라 구분선이 위쪽에 오게 열고, 읽음을 보내지 않는다", async () => {
@@ -1011,9 +1065,9 @@ describe("MessageList 첫 안 읽은 곳에서 열기", () => {
     fetchMock.mockImplementation(async (input) => {
       const url = String(input);
       const body =
-        url === `/api/v1/channels/${CH}/messages?limit=1&afterSeq=11`
+        url === `/api/v1/conversations/${CH}/messages?limit=1&afterSeq=11`
           ? { messages: range(14, 14), hasMore: true }
-          : url === `/api/v1/channels/${CH}/messages?limit=50&around=14`
+          : url === `/api/v1/conversations/${CH}/messages?limit=50&around=14`
             ? { messages: range(1, 38), hasMore: false, hasMoreAfter: true }
             : undefined;
       return body ? new Response(JSON.stringify(body), { status: 200 }) : new Response("{}", { status: 500 });
@@ -1064,7 +1118,7 @@ describe("MessageList 첫 안 읽은 곳에서 열기", () => {
     const { qc, scroller, scrollTo, sender } = open(timelineOf(range(1, 100)), 80);
     await waitFor(() => expect(scroller().scrollTop).toBe(81 * ROW - CONTEXT));
     await scrollTo(1000);
-    act(() => updateTimeline(qc, CH, (t) => upsert(t, range(101, 101)[0] as Message)));
+    act(() => updateTimeline(qc, CH, CH, (t) => upsert(t, range(101, 101)[0] as Message)));
     await screen.findByText("본문 101", undefined, { timeout: 1000 }).catch(() => undefined);
     await settle();
     expect(scroller().scrollTop).toBe(1000);
@@ -1077,7 +1131,7 @@ describe("MessageList 첫 안 읽은 곳에서 열기", () => {
     await settle();
     await pastVirtualizerReconcile();
     const before = scroller().scrollTop;
-    act(() => updateTimeline(qc, CH, (t) => upsert(t, range(101, 101)[0] as Message)));
+    act(() => updateTimeline(qc, CH, CH, (t) => upsert(t, range(101, 101)[0] as Message)));
     await settle();
     expect(scroller().scrollTop).toBe(before);
   });
@@ -1103,7 +1157,7 @@ describe("MessageList 첫 안 읽은 곳에서 열기", () => {
     await settle();
     expect(sender.request).not.toHaveBeenCalled();
     act(() =>
-      updateTimeline(qc, CH, (t) => ({ ...t, items: [...t.items, ...range(41, 100)], lastSeq: 100 })),
+      updateTimeline(qc, CH, CH, (t) => ({ ...t, items: [...t.items, ...range(41, 100)], lastSeq: 100 })),
     );
     await screen.findByRole("separator", { name: "새 메시지" });
     await waitFor(() => expect(scroller().scrollTop).toBe(41 * ROW - CONTEXT));
@@ -1120,7 +1174,7 @@ describe("MessageList 첫 안 읽은 곳에서 열기", () => {
     await screen.findByText("본문 40");
     // 41..50 은 내 글이라 구분선이 서지 않는다
     act(() =>
-      updateTimeline(qc, CH, (t) => ({
+      updateTimeline(qc, CH, CH, (t) => ({
         ...t,
         items: [
           ...t.items,
@@ -1139,7 +1193,7 @@ describe("MessageList 첫 안 읽은 곳에서 열기", () => {
     await screen.findByText("본문 40");
     await settle();
     act(() =>
-      updateTimeline(qc, CH, (t) => ({
+      updateTimeline(qc, CH, CH, (t) => ({
         ...t,
         items: [
           ...t.items,
@@ -1174,7 +1228,7 @@ describe("MessageList 첫 안 읽은 곳에서 열기", () => {
   describe("낡은 캐시 이어 받기를 기다리는 동안 끝으로 가면 다 받은 뒤 끝으로 간다", () => {
     const send = (qc: ReturnType<typeof authorsClient>) =>
       act(() =>
-        updateTimeline(qc, CH, (t) =>
+        updateTimeline(qc, CH, CH, (t) =>
           addPending(t, {
             clientMsgId: "c-1",
             channelId: CH,
@@ -1229,7 +1283,7 @@ describe("MessageList 첫 안 읽은 곳에서 열기", () => {
 
   it("6. 결과로 가기 목표를 안고 열리면 구분선이 아니라 그 메시지로 간다", async () => {
     const target = range(10, 10)[0] as Message;
-    act(() => requestJump({ channelId: CH, messageId: target.id, seq: 10 }));
+    act(() => requestJump({ conversationId: CH, messageId: target.id, seq: 10 }));
     const { sender } = open(timelineOf(range(1, 100)), 80);
     await waitFor(() =>
       expect(screen.getByText("본문 10").closest("[data-index]")).toHaveAttribute("data-highlighted", "true"),
@@ -1241,7 +1295,7 @@ describe("MessageList 첫 안 읽은 곳에서 열기", () => {
 
   it("6. 결과로 간 뒤 끝까지 내리면 읽음이 간다 — 목표를 안고 열린 목록은 읽음을 붙잡아 두지 않는다", async () => {
     const target = range(10, 10)[0] as Message;
-    act(() => requestJump({ channelId: CH, messageId: target.id, seq: 10 }));
+    act(() => requestJump({ conversationId: CH, messageId: target.id, seq: 10 }));
     const { sender, scrollTo } = open(timelineOf(range(1, 100)), 80);
     await waitFor(() =>
       expect(screen.getByText("본문 10").closest("[data-index]")).toHaveAttribute("data-highlighted", "true"),
@@ -1264,7 +1318,7 @@ describe("MessageList 첫 안 읽은 곳에서 열기", () => {
   it("캐시 없이 들어가 구독 응답이 나중에 오면 그때 구분선이 위쪽에 오게 열고, 읽음을 보내지 않는다", async () => {
     const { qc, scroller, sender } = open(undefined, 80);
     expect(screen.getByRole("status", { name: "메시지를 불러오는 중" })).toBeInTheDocument();
-    act(() => qc.setQueryData(qk.timeline(CH), timelineOf(range(1, 100))));
+    act(() => qc.setQueryData(qk.timeline(CH, CH), timelineOf(range(1, 100))));
     await waitFor(() => expect(scroller().scrollTop).toBe(81 * ROW - CONTEXT));
     // 읽음 전송기는 취소가 없다 — 한 번이라도 끝 보임으로 잡히면 그대로 나간다
     await act(() => new Promise((r) => setTimeout(r, 1_100)));
@@ -1277,7 +1331,7 @@ describe("MessageList 첫 안 읽은 곳에서 열기", () => {
     // 스냅숏의 최신은 105(답글) — 첫 구독은 루트만 싣는다(lastSeq 100)
     known(100, 105);
     const { qc, sender, fromEnd } = open(undefined, 100);
-    act(() => qc.setQueryData(qk.timeline(CH), timelineOf(range(1, 100))));
+    act(() => qc.setQueryData(qk.timeline(CH, CH), timelineOf(range(1, 100))));
     await waitFor(() => expect(fromEnd()).toBe(0));
     await waitFor(() => expect(sender.request).toHaveBeenCalledWith(CH, 100));
   });

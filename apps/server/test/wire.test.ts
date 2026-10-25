@@ -26,7 +26,7 @@ import { attachWire, type WireContext } from "../src/realtime/socket";
 import type { RunsFacade, WireServer } from "../src/realtime/types";
 import { bootTestApp, login } from "./helpers/app";
 import { fakeGatewayStatus } from "./helpers/gateways";
-import { channelConversation, seedWorkspace } from "./helpers/seed";
+import { channelConversation, seedWorkspace, sendTarget } from "./helpers/seed";
 import { connectWire, openWire, recordEvents, type WireClient, waitFor } from "./helpers/wire";
 
 async function listen(app: App): Promise<void> {
@@ -178,7 +178,7 @@ describe("wire (앱 부팅, FakeAdapter)", () => {
     const channel = newChannel("wire-b");
     expect(await socket.emitWithAck("channel.subscribe", { channelId: channel.id })).toEqual({
       ok: true,
-      data: { messages: [], hasMore: false, activeRuns: [], pendingApprovals: [] },
+      data: { messages: [], hasMore: false, latestSeq: 0, activeRuns: [], pendingApprovals: [] },
     });
     expect(app.io.sockets.sockets.get(socket.id as string)?.rooms.has(`channel:${channel.id}`)).toBe(true);
 
@@ -210,6 +210,7 @@ describe("wire (앱 부팅, FakeAdapter)", () => {
     const created = waitFor(b, "message.created");
     const res = await a.emitWithAck("message.send", {
       channelId: channel.id,
+      ...sendTarget(app.db, channel.id),
       clientMsgId: "c-1",
       bodyMd: "hi",
     });
@@ -220,6 +221,7 @@ describe("wire (앱 부팅, FakeAdapter)", () => {
 
     const again = await a.emitWithAck("message.send", {
       channelId: channel.id,
+      ...sendTarget(app.db, channel.id),
       clientMsgId: "c-1",
       bodyMd: "hi",
     });
@@ -240,6 +242,7 @@ describe("wire (앱 부팅, FakeAdapter)", () => {
     for (const channelId of [uuid(), foreign.id]) {
       const res = await socket.emitWithAck("message.send", {
         channelId,
+        conversationId: uuid(),
         clientMsgId: `x-${channelId}`,
         bodyMd: "x",
       });
@@ -247,13 +250,14 @@ describe("wire (앱 부팅, FakeAdapter)", () => {
     }
     const invalid = await socket.emitWithAck("message.send", {
       channelId: foreign.id,
+      conversationId: uuid(),
       clientMsgId: "",
       bodyMd: "",
     });
     expect(invalid).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
   });
 
-  it("(d) channel.subscribe { lastSeq: 1 } 은 seq 2 만 돌려준다, lastSeq 없으면 최근 것", async () => {
+  it("(d) channel.subscribe { lastSeq: 1 } 은 seq 2 만 돌려준다, lastSeq 없으면 메시지 없이 채널의 마지막 seq 만(판정 PS5)", async () => {
     const socket = await connect();
     const channel = newChannel("wire-d");
     for (const n of [1, 2]) {
@@ -267,10 +271,12 @@ describe("wire (앱 부팅, FakeAdapter)", () => {
     const page = await subscribe(socket, channel.id, 1);
     expect(page.messages.map((m) => m.seq)).toEqual([2]);
     expect(page.hasMore).toBe(false);
-    expect((await subscribe(socket, channel.id)).messages.map((m) => m.seq)).toEqual([1, 2]);
+    expect(page.latestSeq).toBe(2);
+    const first = await subscribe(socket, channel.id);
+    expect(first).toMatchObject({ messages: [], hasMore: false, latestSeq: 2 });
   });
 
-  it("(d) lastSeq 없이 201개면 가장 최근 200개(seq 2~201)와 hasMore, lastSeq: 0 이면 가장 오래된 200개", async () => {
+  it("(d) 201개면 lastSeq: 0 은 가장 오래된 200개와 hasMore·latestSeq 201, lastSeq 없으면 메시지 없이 latestSeq 만", async () => {
     const socket = await connect();
     const channel = newChannel("wire-d-many");
     for (let n = 1; n <= 201; n++) {
@@ -282,14 +288,14 @@ describe("wire (앱 부팅, FakeAdapter)", () => {
       });
     }
     const recent = await subscribe(socket, channel.id);
-    expect(recent.messages.map((m) => m.seq)).toEqual(Array.from({ length: 200 }, (_, i) => i + 2));
-    expect(recent.hasMore).toBe(true);
+    expect(recent).toMatchObject({ messages: [], hasMore: false, latestSeq: 201 });
     const oldest = await subscribe(socket, channel.id, 0);
     expect(oldest.messages.map((m) => m.seq)).toEqual(Array.from({ length: 200 }, (_, i) => i + 1));
     expect(oldest.hasMore).toBe(true);
+    expect(oldest.latestSeq).toBe(201);
   });
 
-  it("(e) typing 은 보낸 사람을 뺀 구독자에게 사람 타이핑으로 중계, 구독하지 않은 채널로는 안 보낸다", async () => {
+  it("(e) typing 은 보낸 사람을 뺀 구독자에게 사람 타이핑으로 중계(그 세션을 싣고), 구독하지 않은 채널로는 안 보낸다", async () => {
     const a = await connect();
     const b = await connect();
     const outsider = await connect();
@@ -300,11 +306,17 @@ describe("wire (앱 부팅, FakeAdapter)", () => {
     const seenB = recordEvents(b, ["typing"]);
 
     // 구독하지 않은 소켓의 typing — 서버가 처리한 뒤(왕복)에 a 가 보낸다
-    outsider.emit("typing", { channelId: channel.id });
+    const conversationId = channelConversation(app.db, channel.id);
+    outsider.emit("typing", { channelId: channel.id, conversationId });
     await roundTrip(outsider);
     const relayed = waitFor(b, "typing");
-    a.emit("typing", { channelId: channel.id });
-    expect(await relayed).toEqual({ channelId: channel.id, actorType: "user", actorId: app.ownerUserId });
+    a.emit("typing", { channelId: channel.id, conversationId });
+    expect(await relayed).toEqual({
+      channelId: channel.id,
+      conversationId,
+      actorType: "user",
+      actorId: app.ownerUserId,
+    });
     await roundTrip(a);
     expect(seenA).toEqual([]);
     expect(seenB).toHaveLength(1);
@@ -323,7 +335,12 @@ describe("wire (앱 부팅, FakeAdapter)", () => {
     });
 
     const created = waitFor(b, "message.created");
-    await b.emitWithAck("message.send", { channelId: channel.id, clientMsgId: "u-1", bodyMd: "after" });
+    await b.emitWithAck("message.send", {
+      channelId: channel.id,
+      ...sendTarget(app.db, channel.id),
+      clientMsgId: "u-1",
+      bodyMd: "after",
+    });
     await created;
     await roundTrip(a);
     expect(seenA).toEqual([]);
@@ -395,7 +412,12 @@ describe("wire (앱 부팅, FakeAdapter)", () => {
     app.bus.emit("run.event", { event, channelId: channel.id });
     app.bus.emit("channel.updated", { channel: record });
     app.bus.emit("channel.member.changed", { channelId: channel.id, members });
-    app.bus.emit("typing", { channelId: channel.id, actorType: "agent", actorId: run.agentId });
+    app.bus.emit("typing", {
+      channelId: channel.id,
+      conversationId: run.conversationId,
+      actorType: "agent",
+      actorId: run.agentId,
+    });
     const adapterStatus: AdapterStatus = {
       provider: "openclaw",
       gateways: [fakeGatewayStatus({ gateway: "reconnecting", bridge: "down" })],
@@ -425,7 +447,12 @@ describe("wire (앱 부팅, FakeAdapter)", () => {
     expect(channelUpdated.channel.id).toBe(channel.id);
     expect(outsiderChannelUpdated).toEqual(channelUpdated);
     expect(memberChanged).toEqual({ channelId: channel.id, members });
-    expect(typing).toEqual({ channelId: channel.id, actorType: "agent", actorId: run.agentId });
+    expect(typing).toEqual({
+      channelId: channel.id,
+      conversationId: run.conversationId,
+      actorType: "agent",
+      actorId: run.agentId,
+    });
     expect(status).toEqual(adapterStatus);
     expect(outsiderStatus).toEqual(status);
     expect(notice).toEqual({ level: "warn", message: "notice" });
@@ -545,6 +572,7 @@ describe("wire (attachWire 단독 — route·runs 주입)", () => {
 
     const res = await socket.emitWithAck("message.send", {
       channelId: channel.id,
+      ...sendTarget(app.db, channel.id),
       clientMsgId: "r-1",
       bodyMd: "go",
     });
@@ -554,6 +582,7 @@ describe("wire (attachWire 단독 — route·runs 주입)", () => {
 
     const again = await socket.emitWithAck("message.send", {
       channelId: channel.id,
+      ...sendTarget(app.db, channel.id),
       clientMsgId: "r-1",
       bodyMd: "go",
     });
@@ -572,6 +601,7 @@ describe("wire (attachWire 단독 — route·runs 주입)", () => {
 
     const res = await socket.emitWithAck("message.send", {
       channelId: channel.id,
+      ...sendTarget(app.db, channel.id),
       clientMsgId: "a-1",
       bodyMd: "hello",
     });
@@ -595,6 +625,7 @@ describe("wire (attachWire 단독 — route·runs 주입)", () => {
     ] as const) {
       const res = await socket.emitWithAck("message.send", {
         channelId: channel.id,
+        ...sendTarget(app.db, channel.id),
         clientMsgId,
         bodyMd,
         attachments: [uuid()],
@@ -607,6 +638,7 @@ describe("wire (attachWire 단독 — route·runs 주입)", () => {
     // 거절된 두 번이 seq 를 먹지 않았다 — 다음 메시지가 seq 1
     const next = await socket.emitWithAck("message.send", {
       channelId: channel.id,
+      ...sendTarget(app.db, channel.id),
       clientMsgId: "a-next",
       bodyMd: "plain",
     });
@@ -636,7 +668,13 @@ describe("wire (attachWire 단독 — route·runs 주입)", () => {
       })
       .returning()
       .get();
-    const payload = { channelId: channel.id, clientMsgId: "a-img", bodyMd: "", attachments: [row.id] };
+    const payload = {
+      channelId: channel.id,
+      ...sendTarget(app.db, channel.id),
+      clientMsgId: "a-img",
+      bodyMd: "",
+      attachments: [row.id],
+    };
 
     const first = await socket.emitWithAck("message.send", payload);
     expect(first).toMatchObject({

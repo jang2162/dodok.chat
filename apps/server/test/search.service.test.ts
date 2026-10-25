@@ -784,7 +784,7 @@ describe("@핸들 검색 — 멘션 토큰으로 바꿔 찾는다(색인은 그�
 });
 
 describe("결과 모양", () => {
-  it("messageId·channelId·seq·channelArchived·authorType·authorId·createdAt", () => {
+  it("messageId·channelId·conversationId·seq·channelArchived·authorType·authorId·createdAt", () => {
     const t = setup();
     t.say("앞 메시지");
     const m = t.agentSays("모양검사 본문");
@@ -792,6 +792,7 @@ describe("결과 모양", () => {
     expect(hit).toEqual({
       messageId: m.id,
       channelId: t.channelId,
+      conversationId: m.conversationId,
       seq: m.seq,
       channelArchived: false,
       authorType: "agent",

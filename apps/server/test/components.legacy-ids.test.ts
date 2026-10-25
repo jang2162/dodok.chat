@@ -108,13 +108,15 @@ describe.each(["constructor", "__proto__"])("옛 카드 id %s", (bad) => {
       threadRootId: message.id,
     });
 
-    const list = await api(`/channels/${channel.id}/messages?limit=50`);
+    const list = await api(`/conversations/${message.conversationId}/messages?limit=50`);
     expect(list.statusCode, list.body).toBe(200);
     const card = cardOf(list.json(), message.id);
     expect(card?.components?.blocks[0]).toMatchObject({ items: [{ id: bad }, { id: "go" }] });
     expect(card?.componentState?.consumed).toEqual([bad]);
 
-    const thread = await api(`/channels/${channel.id}/threads/${message.id}/messages?limit=50`);
+    const thread = await api(
+      `/conversations/${message.conversationId}/threads/${message.id}/messages?limit=50`,
+    );
     expect(thread.statusCode, thread.body).toBe(200);
     expect((thread.json() as { root: Message }).root.components?.blocks[0]).toMatchObject({
       items: [{ id: bad }, { id: "go" }],

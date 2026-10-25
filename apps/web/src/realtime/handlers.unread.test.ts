@@ -64,7 +64,11 @@ function stubUnread() {
 }
 
 const detachers: Array<() => void> = [];
-const noNotify = { currentChannelId: () => undefined, openActivity: () => {} };
+const noNotify = {
+  currentChannelId: () => undefined,
+  currentConversationId: () => undefined,
+  openActivity: () => {},
+};
 
 /** 사이드바 목록(qk.channels)에 CH·CH2 가 있는, 로그인한 USER 의 탭 */
 function setup(channels: Channel[] = [channelOf(CH), channelOf(CH2)]) {
@@ -75,7 +79,7 @@ function setup(channels: Channel[] = [channelOf(CH), channelOf(CH2)]) {
   const queryClient = createQueryClient(onUnauthorized);
   queryClient.setQueryData(qk.me, { user: { id: USER, handle: "owner" }, workspaceId: uid(3) });
   queryClient.setQueryData(qk.channels, channels);
-  const subscriptions = createSubscriptions({ socket: fake.wire, queryClient, fetchPage: vi.fn() });
+  const subscriptions = createSubscriptions({ socket: fake.wire, queryClient });
   vi.spyOn(subscriptions, "resubscribeAll").mockResolvedValue();
   detachers.push(attachHandlers(fake.wire, { queryClient, subscriptions, onUnauthorized, notify: noNotify }));
   return { fake, queryClient, subscriptions, onUnauthorized };

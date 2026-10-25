@@ -31,7 +31,11 @@ const ME = { user: { id: USER, handle: "owner" }, workspaceId: uid(3) };
 const ok = <T,>(data: T): Result<T> => ({ ok: true, data });
 const meQueryFresh = { ...meQuery, staleTime: 0 };
 /** 승인 알림이 보는 화면 사정 — 이 파일은 알림을 재지 않으므로 아무것도 하지 않는다 */
-const notify = { currentChannelId: () => undefined, openActivity: () => {} };
+const notify = {
+  currentChannelId: () => undefined,
+  currentConversationId: () => undefined,
+  openActivity: () => {},
+};
 
 let queryClient: QueryClient;
 const onUnauthorized = vi.fn();
@@ -248,7 +252,13 @@ it("useChannelSubscription: 마운트하면 들어가고, 채널이 바뀌거나
   const fake = createdSockets[0];
   if (!fake) throw new Error("no socket");
   fake.onAck("channel.subscribe", () =>
-    ok<ChannelSubscribeResult>({ messages: [], hasMore: false, activeRuns: [], pendingApprovals: [] }),
+    ok<ChannelSubscribeResult>({
+      messages: [],
+      hasMore: false,
+      latestSeq: 0,
+      activeRuns: [],
+      pendingApprovals: [],
+    }),
   );
   fake.onAck("channel.unsubscribe", () => ok(null));
   // 연결 전에 들어간 채널은 붙을 때 구독한다
@@ -272,12 +282,14 @@ it("useChannelSubscription: 마운트하면 들어가고, 채널이 바뀌거나
 });
 
 describe("presence.update(스펙 5.3) — 보이는가·보는 채널", () => {
-  /** 라우터 대신 — 지금 채널을 바꾸고 이동을 알린다 */
+  /** 라우터 대신 — 지금 채널(·세션)을 바꾸고 이동을 알린다. 세션을 주지 않으면 세션 주소가 아닌 것(채널만) */
   function fakeLocation(initial?: string) {
     let channelId = initial;
+    let conversationId: string | undefined;
     const watchers = new Set<() => void>();
     const target: AppNotifyTarget = {
       currentChannelId: () => channelId,
+      currentConversationId: () => conversationId,
       openActivity: () => {},
       onLocationChange: (fn) => {
         watchers.add(fn);
@@ -287,8 +299,9 @@ describe("presence.update(스펙 5.3) — 보이는가·보는 채널", () => {
     return {
       target,
       watchers,
-      go(next?: string) {
+      go(next?: string, session?: string) {
         channelId = next;
+        conversationId = session;
         for (const fn of watchers) fn();
       },
     };
@@ -376,6 +389,26 @@ describe("presence.update(스펙 5.3) — 보이는가·보는 채널", () => {
     fake.serverEmit("disconnect", "transport close");
     act(() => void window.dispatchEvent(new Event("pagehide")));
     expect(fake.sentOf("presence.update")).toEqual([{ visible: true, channelId: CH }]);
+  });
+
+  it("보는 세션도 싣는다 — 같은 채널 안 세션을 옮기면 다시, 새 세션 창(new)은 싣지 않는다(채널 세션 계획 판정 PS7)", async () => {
+    const loc = fakeLocation(CH);
+    const fake = await connected(loc.target);
+    const B = "01a00000-0000-7000-8000-000000003001";
+    act(() => loc.go(CH, CH));
+    expect(fake.sentOf("presence.update").at(-1)).toEqual({
+      visible: true,
+      channelId: CH,
+      conversationId: CH,
+    });
+    act(() => loc.go(CH, B));
+    expect(fake.sentOf("presence.update").at(-1)).toEqual({
+      visible: true,
+      channelId: CH,
+      conversationId: B,
+    });
+    act(() => loc.go(CH, "new"));
+    expect(fake.sentOf("presence.update").at(-1)).toEqual({ visible: true, channelId: CH });
   });
 
   it("연결이 없으면 보내지 않고, 채널 id 가 uuid 가 아니면 싣지 않는다", async () => {

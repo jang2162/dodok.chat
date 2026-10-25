@@ -235,10 +235,11 @@ describe("MessageList 와 함께", () => {
   afterEach(() => restore());
 
   function Channel() {
-    const bubbleRunIds = useChannelBubbles(CH);
+    const bubbleRunIds = useChannelBubbles(CH, CH);
     return (
       <MessageList
         channelId={CH}
+        conversationId={CH}
         bubbleRunIds={bubbleRunIds}
         bubbles={(runId) => <StreamingBubble runId={runId} />}
         initialRect={RECT}
@@ -249,7 +250,7 @@ describe("MessageList 와 함께", () => {
   it("런 streaming → 버블 하나(끝을 따라감), 같은 runId 의 답이 오고 done 이면 버블이 빠지고 메시지 하나만", async () => {
     const qc = authorsClient();
     const items = Array.from({ length: 30 }, (_, i) => msg(i + 1, { bodyMd: `질문 ${i + 1}` }));
-    qc.setQueryData(qk.timeline(CH), { ...emptyTimeline(), items, lastSeq: 30 });
+    qc.setQueryData(qk.timeline(CH, CH), { ...emptyTimeline(), items, lastSeq: 30 });
     const { container } = renderWithClient(<Channel />, qc);
     const scroller = container.querySelector("[data-scroller]") as HTMLElement;
     const atEnd = () => scroller.scrollTop === scroller.scrollHeight - scroller.clientHeight;
@@ -263,7 +264,7 @@ describe("MessageList 와 함께", () => {
     await waitFor(() => expect(atEnd()).toBe(true));
 
     act(() => {
-      updateTimeline(qc, CH, (t) =>
+      updateTimeline(qc, CH, CH, (t) =>
         upsert(t, msg(31, { authorType: "agent", authorId: AGENT, runId: RUN, bodyMd: "답을 다 썼다" })),
       );
       useRunStore.getState().applyState(runState({ status: "done" }));

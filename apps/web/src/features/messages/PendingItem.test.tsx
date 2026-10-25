@@ -64,3 +64,14 @@ it("그 밖의 실패는 「전송 실패」", () => {
   expect(screen.getByText("전송 실패")).toBeInTheDocument();
   expect(screen.queryByText(/너무 빠르게/)).toBeNull();
 });
+
+it("[Review Focus 2] 닫힌 세션에 보낸 것은 「닫힌 세션입니다」 — 다시 보내도 같은 거절이라 「삭제」만", () => {
+  renderWithClient(
+    <PendingActionsContext.Provider value={{ retry: vi.fn(), discard: vi.fn() }}>
+      <PendingItem pending={pending({ state: "failed", reason: "conversation_closed" })} />
+    </PendingActionsContext.Provider>,
+  );
+  expect(screen.getByText("닫힌 세션입니다")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "다시 보내기" })).toBeNull();
+  expect(screen.getByRole("button", { name: "삭제" })).toBeInTheDocument();
+});

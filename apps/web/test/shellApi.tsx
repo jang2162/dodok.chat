@@ -1,4 +1,4 @@
-import type { Channel, OpenClawGatewayStatus, OpsStatus } from "@dodok/shared";
+import type { Channel, Conversation, OpenClawGatewayStatus, OpsStatus } from "@dodok/shared";
 import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { render } from "@testing-library/react";
@@ -80,8 +80,23 @@ export const channelOf = (id: string, over: Partial<Channel> = {}): Channel => (
 });
 
 /**
+ * 테스트용 세션(REST 응답 모양). 기본은 그 채널의 「이전 대화」 — id 가 채널 id 와 같다(채널 세션 계획 Global Constraints).
+ * 메시지 픽스처(test/fixtures `msg`)의 기본 세션도 그것이다
+ */
+export const conversationOf = (channelId: string, over: Partial<Conversation> = {}): Conversation => ({
+  id: channelId,
+  channelId,
+  title: "이전 대화",
+  titleSource: "user",
+  createdBy: { type: "user", id: "u" },
+  createdAt: "2026-09-19T00:00:00.000Z",
+  lastSeq: 0,
+  ...over,
+});
+
+/**
  * 앱 셸(사이드바·배너·채널 헤더)이 뜨면서 부르는 GET 의 기본 응답 — 채널·에이전트·멤버 없음, Gateway·플러그인 연결됨,
- * `/channels/:id` 는 그 id 의 채널. 해당하지 않으면 undefined — 부르는 쪽 스텁이 이어서 가른다
+ * `/channels/:id` 는 그 id 의 채널, `/channels/:id/conversations` 는 그 채널의 「이전 대화」 하나. 해당하지 않으면 undefined — 부르는 쪽 스텁이 이어서 가른다
  */
 export function shellGet(input: RequestInfo | URL, init?: RequestInit): Response | undefined {
   if ((init?.method ?? "GET") !== "GET") return undefined;
@@ -101,6 +116,9 @@ export function shellGet(input: RequestInfo | URL, init?: RequestInit): Response
   // 활동 패널(오른쪽 패널 「활동」 탭)이 부르는 조회 — 기본은 런도 이벤트도 없음
   if (/^\/api\/v1\/channels\/[^/]+\/runs(\?|$)/.test(url)) return json(200, { runs: [] });
   if (/^\/api\/v1\/runs\/[^/]+\/events(\?|$)/.test(url)) return json(200, { events: [] });
+  // 채널 주소(`/c/<id>`)가 최근 세션으로 넘길 때 — 기본은 채널마다 「이전 대화」 하나
+  const sessions = /^\/api\/v1\/channels\/([^/]+)\/conversations(\?|$)/.exec(url);
+  if (sessions?.[1]) return json(200, { conversations: [conversationOf(sessions[1])] });
   const m = /^\/api\/v1\/channels\/([^/]+)(\/members)?$/.exec(url);
   if (m?.[1]) return m[2] ? json(200, { members: [] }) : json(200, { channel: channelOf(m[1]) });
   return undefined;

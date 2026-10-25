@@ -166,10 +166,14 @@ describe("autoTitle — 첫 메시지 본문의 읽는 글 앞 40 코드 포인�
 });
 
 describe("세션 서비스", () => {
-  it("채널을 만들어도 세션은 없다 — 다리(대화 없음)로 보내면 자동 제목 새 세션, 다음 보내기는 그 세션", () => {
+  it("채널을 만들어도 세션은 없다 — 세션을 안 주거나(다리를 걷었다, 판정 PS4) 둘 다 주면 VALIDATION 이고 아무것도 생기지 않는다. newConversation 의 첫 글은 자동 제목, 다음 보내기는 그 세션", () => {
     const t = setup();
     expect(t.conversationRows()).toEqual([]);
-    const first = t.send({ bodyMd: "@dev 배포 일정\n잡아 줘" });
+    expect(code(() => t.send({ bodyMd: "세션 없이" }))).toBe("VALIDATION");
+    expect(code(() => t.send({ conversationId: uuid(), newConversation: {} }))).toBe("VALIDATION");
+    expect(t.conversationRows()).toEqual([]);
+    expect(t.db.select().from(messages).all()).toEqual([]);
+    const first = t.send({ newConversation: {}, bodyMd: "@dev 배포 일정\n잡아 줘" });
     expect(first.created).toBe(true);
     expect(first.conversation).toMatchObject({
       channelId: t.channel.id,
@@ -179,7 +183,7 @@ describe("세션 서비스", () => {
       lastSeq: first.message.seq,
     });
     expect(first.message.conversationId).toBe(first.conversation?.id);
-    const second = t.send();
+    const second = t.send({ conversationId: first.message.conversationId });
     expect(second.conversation).toBeUndefined();
     expect(second.message.conversationId).toBe(first.conversation?.id);
     expect(t.conversationRows()).toHaveLength(1);
@@ -213,15 +217,12 @@ describe("세션 서비스", () => {
     expect(t.messagesCreated).toHaveLength(1);
   });
 
-  it("정책 managers — member 는 FORBIDDEN(다리도), 세션 관리자·admin 은 만든다. 정책 members 면 member 도", () => {
+  it("정책 managers — member 는 새 세션이 FORBIDDEN(있는 세션에 쓰기는 정책과 무관), 세션 관리자·admin 은 만든다. 정책 members 면 member 도", () => {
     const t = setup();
-    t.send({ newConversation: {} });
+    const open = t.send({ newConversation: {} }).message.conversationId;
     updateChannel(t.db, t.channel.id, { sessionPolicy: { create: "managers" } });
     expect(code(() => t.send({ newConversation: {}, userId: t.noah }))).toBe("FORBIDDEN");
-    // 열린 세션이 있으면 다리는 거기에 쓴다 — 세션을 만들지 않으므로 정책과 무관
-    expect(t.send({ userId: t.noah }).created).toBe(true);
-    t.db.update(conversations).set({ closedAt: new Date(), closedBy: t.mia }).run();
-    expect(code(() => t.send({ userId: t.noah }))).toBe("FORBIDDEN");
+    expect(t.send({ conversationId: open, userId: t.noah }).created).toBe(true);
     expect(t.conversationRows()).toHaveLength(1);
 
     setSessionManager(t.db, t.channel.id, t.noah, true);
@@ -254,12 +255,12 @@ describe("세션 서비스", () => {
     expect(code(() => setSessionManager(t.db, t.channel.id, stranger.userId, true))).toBe("NOT_FOUND");
   });
 
-  it("스레드 답글은 다리에서도 루트의 세션에 — 다른 세션이 더 최근이어도", () => {
+  it("스레드 답글은 루트의 세션으로 — 다른 세션이 더 최근이어도. 새 세션·다른 세션을 가리키면 VALIDATION", () => {
     const t = setup();
     const a = t.send({ newConversation: { title: "A" } });
     const root = t.send({ conversationId: a.message.conversationId });
     const b = t.send({ newConversation: { title: "B" } });
-    const reply = t.send({ threadRootId: root.message.id });
+    const reply = t.send({ conversationId: a.message.conversationId, threadRootId: root.message.id });
     expect(reply.message).toMatchObject({
       conversationId: a.message.conversationId,
       threadRootId: root.message.id,
@@ -339,7 +340,7 @@ describe("세션 서비스", () => {
     expect(closed.lastSeq).toBe(notice?.seq);
 
     expect(code(() => t.send({ conversationId }))).toBe("CONVERSATION_CLOSED");
-    expect(code(() => t.send({ threadRootId: root.id }))).toBe("CONVERSATION_CLOSED");
+    expect(code(() => t.send({ conversationId, threadRootId: root.id }))).toBe("CONVERSATION_CLOSED");
     expect(
       code(() =>
         setReaction(
@@ -410,7 +411,7 @@ describe("세션 서비스", () => {
     expect(t.send({ conversationId, bodyMd: "", attachments: [image.id] }).message.attachments).toHaveLength(
       1,
     );
-    expect(t.send({ threadRootId: root.id }).message.conversationId).toBe(conversationId);
+    expect(t.send({ conversationId, threadRootId: root.id }).message.conversationId).toBe(conversationId);
   });
 
   it("보관한 채널이면 닫힌 세션이어도 CHANNEL_ARCHIVED 가 먼저 — 닫기·다시 열기·제목도 막힌다", async () => {
@@ -541,11 +542,11 @@ describe("세션 서비스", () => {
     expect(only.nextCursor).toBeUndefined();
   });
 
-  it("[낮음 5] 시스템 메시지는 활동 시각을 올리지 않는다 — 닫기·다시 열기·알림 뒤에도 last_message_at·다리의 최근 세션은 그대로, last_seq 는 오른다", async () => {
+  it("[낮음 5] 시스템 메시지는 활동 시각을 올리지 않는다 — 닫기·다시 열기·알림 뒤에도 last_message_at·최근 열린 세션은 그대로, last_seq 는 오른다", async () => {
     const t = setup();
     const older = t.send({ newConversation: { title: "옛 세션" } }).message.conversationId;
     const newer = t.send({ newConversation: { title: "새 세션" } }).message.conversationId;
-    // 활동 시각을 벌려 둔다 — 같은 ms 면 id 로 갈려 다리의 1순위가 시각과 무관해진다
+    // 활동 시각을 벌려 둔다 — 같은 ms 면 id 로 갈려 최근 열린 세션의 1순위가 시각과 무관해진다
     t.db
       .update(conversations)
       .set({ lastMessageAt: new Date("2026-10-25T00:00:00.000Z") })

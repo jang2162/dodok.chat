@@ -14,7 +14,7 @@ import { ReadSenderContext } from "@/features/reads/readSender";
 import { isViewingAtEnd, useUnread } from "@/features/reads/useUnread";
 import { useChannelBubbles } from "@/features/runs/useChannelBubbles";
 import { useRunStore } from "@/features/runs/runStore";
-import { getThread } from "@/realtime/timelineCache";
+import { getThread, setChannelSeq } from "@/realtime/timelineCache";
 import { useWireStatus } from "@/realtime/wire";
 import { stubEditorDom } from "../../../test/domStubs";
 import { createFakeSocket, type FakeSocket } from "../../../test/fakeSocket";
@@ -80,7 +80,7 @@ beforeEach(() => {
           },
         ],
       });
-    if (url.startsWith(`/api/v1/channels/${CH}/threads/`)) return threadReply(url) ?? json(404, {});
+    if (url.startsWith(`/api/v1/conversations/${CH}/threads/`)) return threadReply(url) ?? json(404, {});
     return shellGet(input, init) ?? json(404, {});
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -95,10 +95,11 @@ afterEach(() => {
   useApprovalStore.getState().reset();
 });
 
-/** 채널 타임라인(루트만)을 채운 클라이언트 */
+/** 세션 타임라인(루트만)을 채우고 그 채널을 구독한(채널 커서가 선) 클라이언트 */
 function channelClient(items: Message[] = [{ ...ROOT, threadSummary: summary }]) {
   const qc = createQueryClient(() => {});
-  qc.setQueryData(qk.timeline(CH), { ...emptyTimeline(), items, lastSeq: 3 });
+  qc.setQueryData(qk.timeline(CH, CH), { ...emptyTimeline(), items, lastSeq: 3 });
+  setChannelSeq(qc, CH, 3);
   return qc;
 }
 const panel = () => screen.findByTestId("thread-panel");
@@ -107,15 +108,18 @@ const channelList = () => screen.getByRole("region", { name: "메시지" });
 describe("채널 타임라인의 칩·메뉴", () => {
   it("루트 아래 칩 「답글 N · 마지막 답글 · 에이전트 아바타」 — 누르면 그 스레드", async () => {
     const qc = authorsClient();
-    qc.setQueryData(qk.timeline(CH), {
+    qc.setQueryData(qk.timeline(CH, CH), {
       ...emptyTimeline(),
       items: [{ ...ROOT, threadSummary: summary }],
       lastSeq: 3,
     });
-    const { container } = renderWithClient(<MessageList channelId={CH} initialRect={RECT} />, qc);
+    const { container } = renderWithClient(
+      <MessageList channelId={CH} conversationId={CH} initialRect={RECT} />,
+      qc,
+    );
 
     const chip = await screen.findByRole("link", { name: /답글 2개/ });
-    expect(chip).toHaveAttribute("href", `/c/${CH}/t/${ROOT.id}`);
+    expect(chip).toHaveAttribute("href", `/c/${CH}/s/${CH}/t/${ROOT.id}`);
     expect(chip).toHaveTextContent("마지막 답글");
     // 요약의 에이전트(dev)의 아바타 하나
     expect(chip.querySelectorAll('[data-slot="avatar"]')).toHaveLength(1);
@@ -127,7 +131,7 @@ describe("채널 타임라인의 칩·메뉴", () => {
     renderWithClient(<MessageItem message={ROOT} head />);
     expect(screen.getByRole("link", { name: "스레드에서 답하기" })).toHaveAttribute(
       "href",
-      `/c/${CH}/t/${ROOT.id}`,
+      `/c/${CH}/s/${CH}/t/${ROOT.id}`,
     );
   });
 
@@ -135,7 +139,7 @@ describe("채널 타임라인의 칩·메뉴", () => {
     renderWithClient(<MessageItem message={reply(3)} head />);
     expect(screen.getByRole("link", { name: "스레드에서 답하기" })).toHaveAttribute(
       "href",
-      `/c/${CH}/t/${ROOT.id}`,
+      `/c/${CH}/s/${CH}/t/${ROOT.id}`,
     );
   });
 
@@ -159,7 +163,7 @@ describe("스레드 닫기 초점(m5)", () => {
     );
 
   it("넓은 화면: 칩으로 연 스레드를 닫으면 초점이 그 칩으로 돌아간다", async () => {
-    const { router } = renderRoute(`/c/${CH}`, channelClient());
+    const { router } = renderRoute(`/c/${CH}/s/${CH}`, channelClient());
     const chip = await (await inList()).findByRole("link", { name: /답글 2개/ });
     await userEvent.click(chip);
     await panel();
@@ -168,123 +172,129 @@ describe("스레드 닫기 초점(m5)", () => {
 
     await closeThread();
 
-    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}`));
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}`));
     await waitFor(() => expect(screen.queryByTestId("page-channel-panel")).not.toBeInTheDocument());
     expect(chip).toHaveFocus();
   });
 
   it("넓은 화면: 「스레드에서 답하기」로 연 스레드를 닫으면 그 행의 그 버튼으로 돌아간다", async () => {
-    const { router } = renderRoute(`/c/${CH}`, channelClient([ROOT]));
+    const { router } = renderRoute(`/c/${CH}/s/${CH}`, channelClient([ROOT]));
     const open = await (await inList()).findByRole("link", { name: "스레드에서 답하기" });
     await userEvent.click(open);
     await panel();
 
     await closeThread();
 
-    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}`));
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}`));
     expect(open).toHaveFocus();
   });
 
   it("좁은 화면: 칩으로 연 스레드 시트를 Esc 로 닫으면 칩으로 돌아간다", async () => {
     stubMedia(true);
-    const { router } = renderRoute(`/c/${CH}`, channelClient());
+    const { router } = renderRoute(`/c/${CH}/s/${CH}`, channelClient());
     const chip = await (await inList()).findByRole("link", { name: /답글 2개/ });
     await userEvent.click(chip);
     await screen.findByRole("dialog");
 
     await userEvent.keyboard("{Escape}");
 
-    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}`));
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}`));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     await waitFor(() => expect(chip).toHaveFocus());
   });
 
   it("주소로 연 스레드(연 자리 없음)를 닫으면 헤더의 「채널 설정」", async () => {
-    const { router } = renderRoute(`/c/${CH}/t/${ROOT.id}`, channelClient());
+    const { router } = renderRoute(`/c/${CH}/s/${CH}/t/${ROOT.id}`, channelClient());
     await panel();
 
     await closeThread();
 
-    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}`));
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}`));
     expect(header()).toHaveFocus();
   });
 
   it("연 칩이 화면에서 사라졌으면 헤더의 「채널 설정」", async () => {
     const qc = channelClient();
-    const { router } = renderRoute(`/c/${CH}`, qc);
+    const { router } = renderRoute(`/c/${CH}/s/${CH}`, qc);
     await userEvent.click(await (await inList()).findByRole("link", { name: /답글 2개/ }));
     await panel();
     // 요약이 빠져 칩이 내려간다
-    act(() => qc.setQueryData<Timeline>(qk.timeline(CH), (t) => t && { ...t, items: [ROOT] }));
+    act(() => qc.setQueryData<Timeline>(qk.timeline(CH, CH), (t) => t && { ...t, items: [ROOT] }));
     await waitFor(() => expect(channelList().querySelector('[data-slot="thread-chip"]')).toBeNull());
 
     await closeThread();
 
-    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}`));
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}`));
     expect(header()).toHaveFocus();
   });
 
   it("칩으로 연 뒤 다른 스레드로 옮겼으면(검색·주소) 앞 칩이 아니라 헤더의 「채널 설정」", async () => {
     const other = msg(9, { bodyMd: "다른 루트" });
-    const { router } = renderRoute(`/c/${CH}`, channelClient());
+    const { router } = renderRoute(`/c/${CH}/s/${CH}`, channelClient());
     await userEvent.click(await (await inList()).findByRole("link", { name: /답글 2개/ }));
     await panel();
     await act(() =>
-      router.navigate({ to: "/c/$channelId/t/$rootId", params: { channelId: CH, rootId: other.id } }),
+      router.navigate({
+        to: "/c/$channelId/s/$conversationId/t/$rootId",
+        params: { channelId: CH, conversationId: CH, rootId: other.id },
+      }),
     );
-    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/t/${other.id}`));
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}/t/${other.id}`));
 
     await closeThread();
 
-    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}`));
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}`));
     expect(header()).toHaveFocus();
   });
 
   it("칩으로 스레드를 연 뒤 설정 탭으로 옮겨 닫으면 설정 탭의 규칙대로 헤더의 「채널 설정」(D14)", async () => {
-    const { router } = renderRoute(`/c/${CH}`, channelClient());
+    const { router } = renderRoute(`/c/${CH}/s/${CH}`, channelClient());
     await userEvent.click(await (await inList()).findByRole("link", { name: /답글 2개/ }));
     const aside = await screen.findByTestId("page-channel-panel");
     await userEvent.click(within(aside).getByRole("link", { name: "설정" }));
-    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/settings`));
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}/settings`));
 
     await userEvent.click(
       await within(await screen.findByTestId("page-channel-panel")).findByRole("link", { name: "설정 닫기" }),
     );
 
-    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}`));
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}`));
     expect(header()).toHaveFocus();
   });
 
   it("칩으로 열고 닫은 뒤 같은 스레드를 주소로 열어 닫으면 채널 설정", async () => {
-    const { router } = renderRoute(`/c/${CH}`, channelClient());
+    const { router } = renderRoute(`/c/${CH}/s/${CH}`, channelClient());
     const chip = await (await inList()).findByRole("link", { name: /답글 2개/ });
     await userEvent.click(chip);
     await panel();
     await closeThread();
-    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}`));
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}`));
 
     // 주소로 다시 열었다 — 칩을 누르지 않아 연 자리를 남기지 않는다
     await act(() =>
-      router.navigate({ to: "/c/$channelId/t/$rootId", params: { channelId: CH, rootId: ROOT.id } }),
+      router.navigate({
+        to: "/c/$channelId/s/$conversationId/t/$rootId",
+        params: { channelId: CH, conversationId: CH, rootId: ROOT.id },
+      }),
     );
     await panel();
 
     await closeThread();
 
-    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}`));
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}`));
     expect(header()).toHaveFocus();
   });
 });
 
 describe("URL 로 열기", () => {
   it("/c/:id/t/:rootId 새로고침 — 스레드 REST 로 루트·답글을 받아 패널에 그리고, 탭 머리에 「스레드」", async () => {
-    renderRoute(`/c/${CH}/t/${ROOT.id}`, channelClient());
+    renderRoute(`/c/${CH}/s/${CH}/t/${ROOT.id}`, channelClient());
     const view = await panel();
     expect(await within(view).findByText("루트 질문")).toBeInTheDocument();
     expect(within(view).getByText("답글 2")).toBeInTheDocument();
     expect(within(view).getByText("답글 3")).toBeInTheDocument();
     expect(fetchMock.mock.calls.map((c) => String(c[0]))).toContain(
-      `/api/v1/channels/${CH}/threads/${ROOT.id}/messages?limit=50`,
+      `/api/v1/conversations/${CH}/threads/${ROOT.id}/messages?limit=50`,
     );
     const tabs = screen.getByRole("navigation", { name: "패널 탭" });
     expect(within(tabs).getByRole("link", { name: "스레드" })).toHaveAttribute("aria-current", "page");
@@ -298,21 +308,27 @@ describe("URL 로 열기", () => {
 
   it("없는 루트(404)면 「스레드를 찾을 수 없습니다」 — 전역 토스트 없이 패널 안에", async () => {
     threadReply = () => json(404, { code: "NOT_FOUND", message: "thread not found" });
-    renderRoute(`/c/${CH}/t/${uid(999)}`, channelClient());
+    renderRoute(`/c/${CH}/s/${CH}/t/${uid(999)}`, channelClient());
     expect(await screen.findByText("스레드를 찾을 수 없습니다")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "채널로 돌아가기" })).toHaveAttribute("href", `/c/${CH}`);
+    expect(screen.getByRole("link", { name: "세션으로 돌아가기" })).toHaveAttribute(
+      "href",
+      `/c/${CH}/s/${CH}`,
+    );
   });
 
   it("주소의 루트가 UUID 가 아니면(VALIDATION) 「스레드를 찾을 수 없습니다」 — /c/:id/t/nope", async () => {
     threadReply = () => json(400, { code: "VALIDATION", message: "rootId must be a uuid" });
-    renderRoute(`/c/${CH}/t/nope`, channelClient());
+    renderRoute(`/c/${CH}/s/${CH}/t/nope`, channelClient());
     expect(await screen.findByText("스레드를 찾을 수 없습니다")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "채널로 돌아가기" })).toHaveAttribute("href", `/c/${CH}`);
+    expect(screen.getByRole("link", { name: "세션으로 돌아가기" })).toHaveAttribute(
+      "href",
+      `/c/${CH}/s/${CH}`,
+    );
   });
 
   it("좁은 화면(390px)에서는 전체 화면 시트로 뜬다", async () => {
     stubMedia(true);
-    renderRoute(`/c/${CH}/t/${ROOT.id}`, channelClient());
+    renderRoute(`/c/${CH}/s/${CH}/t/${ROOT.id}`, channelClient());
     const sheet = await screen.findByRole("dialog");
     expect(sheet).toHaveAttribute("data-panel-tab", "thread");
     expect(sheet.className).toContain("w-full");
@@ -322,11 +338,12 @@ describe("URL 로 열기", () => {
 
   it("패널이 열린 채 버블만 다시 그려진 뒤 무효화해도 스레드 REST 를 다시 부른다(p4t-t6 리뷰 I2)", async () => {
     const qc = channelClient();
-    renderRoute(`/c/${CH}/t/${ROOT.id}`, qc);
+    renderRoute(`/c/${CH}/s/${CH}/t/${ROOT.id}`, qc);
     const view = await panel();
     await within(view).findByText("답글 3");
     const threadCalls = () =>
-      fetchMock.mock.calls.filter((c) => String(c[0]).startsWith(`/api/v1/channels/${CH}/threads/`)).length;
+      fetchMock.mock.calls.filter((c) => String(c[0]).startsWith(`/api/v1/conversations/${CH}/threads/`))
+        .length;
     expect(threadCalls()).toBe(1);
     // 스레드 버블 하나 — 패널의 버블 관찰자만 다시 그려진다
     act(() =>
@@ -334,23 +351,25 @@ describe("URL 로 열기", () => {
     );
     await waitFor(() => expect(view.querySelector(`[data-run-id="${RUN2}"]`)).not.toBeNull());
 
-    await act(() => qc.invalidateQueries({ queryKey: qk.threads(CH) }));
+    await act(() => qc.invalidateQueries({ queryKey: qk.threads(CH, CH) }));
     expect(threadCalls()).toBe(2);
-    expect(qc.getQueryState(qk.thread(CH, ROOT.id))?.status).toBe("success");
+    expect(qc.getQueryState(qk.thread(CH, CH, ROOT.id))?.status).toBe("success");
   });
 
-  it("연 스레드는 채널마다 마지막 하나로 기억한다(오프라인 사본 대상)", async () => {
+  it("연 스레드는 채널마다 마지막 하나로 그 세션과 함께 기억한다(오프라인 사본 대상)", async () => {
     const qc = channelClient();
-    renderRoute(`/c/${CH}/t/${ROOT.id}`, qc);
+    renderRoute(`/c/${CH}/s/${CH}/t/${ROOT.id}`, qc);
     await panel();
-    await waitFor(() => expect(qc.getQueryData(qk.recentThreads)).toEqual({ [CH]: ROOT.id }));
+    await waitFor(() =>
+      expect(qc.getQueryData(qk.recentThreads)).toEqual({ [CH]: { conversationId: CH, rootId: ROOT.id } }),
+    );
   });
 });
 
 describe("스레드 작성기", () => {
   it("보내면 message.send 에 threadRootId(루트)를 싣고, 확정 답글은 스레드에만 보인다", async () => {
     const qc = channelClient();
-    renderRoute(`/c/${CH}/t/${ROOT.id}`, qc);
+    renderRoute(`/c/${CH}/s/${CH}/t/${ROOT.id}`, qc);
     const view = await panel();
     await within(view).findByText("답글 3");
     fake.onAck("message.send", (p): Result<{ message: Message }> => {
@@ -371,7 +390,9 @@ describe("스레드 작성기", () => {
       threadRootId: ROOT.id,
       bodyMd: "스레드에서 답",
     });
-    await waitFor(() => expect(getThread(qc, CH, ROOT.id)?.items.map((m) => m.seq)).toEqual([1, 2, 3, 4]));
+    await waitFor(() =>
+      expect(getThread(qc, CH, CH, ROOT.id)?.items.map((m) => m.seq)).toEqual([1, 2, 3, 4]),
+    );
     expect(within(channelList()).queryByText("스레드에서 답")).toBeNull();
     // 스레드에서 쓰는 것은 채널의 「입력 중」으로 알리지 않는다
     expect(fake.sentOf("typing")).toEqual([]);
@@ -383,7 +404,7 @@ describe("스레드 작성기", () => {
       useRunStore.getState().applyState(runState({ id: RUN2, status: "streaming", threadRootId: ROOT.id }));
     });
     fake.onAck("run.abort", () => ({ ok: true, data: null }));
-    renderRoute(`/c/${CH}/t/${ROOT.id}`, channelClient());
+    renderRoute(`/c/${CH}/s/${CH}/t/${ROOT.id}`, channelClient());
     const view = await panel();
     const box = await within(view).findByRole("textbox", { name: "스레드 답글 입력" });
     const editor = (box as unknown as { editor: Editor }).editor;
@@ -399,13 +420,14 @@ describe("스레드 작성기", () => {
 describe("버블·승인의 소속(판정 R3′)", () => {
   /** 채널 목록과 스레드 목록을 나란히 — 둘 다 버블을 그린다 */
   function Both() {
-    const channelRuns = useChannelBubbles(CH);
-    const threadRuns = useChannelBubbles(CH, ROOT.id);
+    const channelRuns = useChannelBubbles(CH, CH);
+    const threadRuns = useChannelBubbles(CH, CH, ROOT.id);
     return (
       <>
         <section aria-label="채널">
           <MessageList
             channelId={CH}
+            conversationId={CH}
             bubbleRunIds={channelRuns}
             bubbles={(id) => <StreamingBubble runId={id} />}
             initialRect={RECT}
@@ -414,6 +436,7 @@ describe("버블·승인의 소속(판정 R3′)", () => {
         <section aria-label="스레드">
           <MessageList
             channelId={CH}
+            conversationId={CH}
             threadRootId={ROOT.id}
             bubbleRunIds={threadRuns}
             bubbles={(id) => <StreamingBubble runId={id} />}
@@ -425,8 +448,8 @@ describe("버블·승인의 소속(판정 R3′)", () => {
   }
   function renderBoth() {
     const qc = authorsClient();
-    qc.setQueryData(qk.timeline(CH), { ...emptyTimeline(), items: [ROOT], lastSeq: 1 });
-    qc.setQueryData<Timeline>(qk.thread(CH, ROOT.id), threadFromPage(undefined, ROOT, [], false));
+    qc.setQueryData(qk.timeline(CH, CH), { ...emptyTimeline(), items: [ROOT], lastSeq: 1 });
+    qc.setQueryData<Timeline>(qk.thread(CH, CH, ROOT.id), threadFromPage(undefined, ROOT, [], false));
     renderWithClient(<Both />, qc);
     const scope = (name: string) => screen.getByRole("region", { name });
     return { channel: () => scope("채널"), thread: () => scope("스레드") };
@@ -520,10 +543,10 @@ describe("스레드 과거 페이지", () => {
   it("맨 위에 닿으면 스레드 REST 로 가장 옛 답글 앞(beforeSeq)을 받아 루트 뒤에 붙인다", async () => {
     const replies = Array.from({ length: 30 }, (_, i) => reply(i + 51));
     const qc = authorsClient();
-    qc.setQueryData<Timeline>(qk.thread(CH, ROOT.id), threadFromPage(undefined, ROOT, replies, true));
+    qc.setQueryData<Timeline>(qk.thread(CH, CH, ROOT.id), threadFromPage(undefined, ROOT, replies, true));
     threadReply = () => json(200, threadPage([reply(49), reply(50)], false));
     const { container } = renderWithClient(
-      <MessageList channelId={CH} threadRootId={ROOT.id} initialRect={RECT} />,
+      <MessageList channelId={CH} conversationId={CH} threadRootId={ROOT.id} initialRect={RECT} />,
       qc,
     );
     const scroller = container.querySelector<HTMLElement>("[data-scroller]") as HTMLElement;
@@ -533,16 +556,16 @@ describe("스레드 과거 페이지", () => {
       scroller.scrollTop = 100;
       await new Promise((r) => setTimeout(r, 10));
     });
-    await waitFor(() => expect(getThread(qc, CH, ROOT.id)?.items).toHaveLength(33));
+    await waitFor(() => expect(getThread(qc, CH, CH, ROOT.id)?.items).toHaveLength(33));
     expect(fetchMock.mock.calls.map((c) => String(c[0]))).toContain(
-      `/api/v1/channels/${CH}/threads/${ROOT.id}/messages?limit=50&beforeSeq=51`,
+      `/api/v1/conversations/${CH}/threads/${ROOT.id}/messages?limit=50&beforeSeq=51`,
     );
     expect(
-      getThread(qc, CH, ROOT.id)
+      getThread(qc, CH, CH, ROOT.id)
         ?.items.slice(0, 3)
         .map((m) => m.seq),
     ).toEqual([1, 49, 50]);
-    expect(getThread(qc, CH, ROOT.id)?.hasOlder).toBe(false);
+    expect(getThread(qc, CH, CH, ROOT.id)?.hasOlder).toBe(false);
   });
 });
 
@@ -561,7 +584,7 @@ describe("채널 읽음과 스레드 패널", () => {
   it("좁은 화면: 스레드 시트가 타임라인을 덮고 있으면 읽음을 보내지 않고, 닫으면 보낸다", async () => {
     stubMedia(true);
     const s = sender();
-    const { router } = open(`/c/${CH}/t/${ROOT.id}`, s);
+    const { router } = open(`/c/${CH}/s/${CH}/t/${ROOT.id}`, s);
     await screen.findByRole("dialog");
     await panel();
 
@@ -569,14 +592,14 @@ describe("채널 읽음과 스레드 패널", () => {
     expect(isViewingAtEnd(CH)).toBe(false);
 
     await userEvent.keyboard("{Escape}");
-    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}`));
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}`));
     await waitFor(() => expect(s.request).toHaveBeenCalledWith(CH, 3));
     expect(isViewingAtEnd(CH)).toBe(true);
   });
 
   it("넓은 화면: 옆 스레드 패널은 타임라인을 덮지 않는다 — 읽음을 보내고, 패널이 채널의 끝 보임을 지우지 않는다(m1)", async () => {
     const s = sender();
-    open(`/c/${CH}/t/${ROOT.id}`, s);
+    open(`/c/${CH}/s/${CH}/t/${ROOT.id}`, s);
     await panel();
 
     await waitFor(() => expect(s.request).toHaveBeenCalledWith(CH, 3));
@@ -594,7 +617,7 @@ describe("채널 진입의 「새 메시지」 구분선", () => {
       channels: [{ channelId: CH, lastReadSeq, latestSeq: 4, unread: lastReadSeq < 4, mentions: 0 }],
     });
   };
-  const open = (path = `/c/${CH}`) =>
+  const open = (path = `/c/${CH}/s/${CH}`) =>
     renderRoute(path, channelClient(theirs), (children) => (
       <ReadSenderContext.Provider value={{ request: vi.fn(), dispose: vi.fn() }}>
         {children}
@@ -611,7 +634,12 @@ describe("채널 진입의 「새 메시지」 구분선", () => {
     expect(await screen.findByRole("separator", { name: "새 메시지" })).toBeInTheDocument();
     act(() => useUnread.getState().applyRead({ channelId: CH, lastReadSeq: 4 }, { listed: true }));
     // 같은 채널에서 패널을 여닫아 채널 페이지가 다시 그려져도 기준은 다시 잡히지 않는다
-    await act(() => router.navigate({ to: "/c/$channelId/activity", params: { channelId: CH } }));
+    await act(() =>
+      router.navigate({
+        to: "/c/$channelId/s/$conversationId/activity",
+        params: { channelId: CH, conversationId: CH },
+      }),
+    );
     await act(() => new Promise((r) => setTimeout(r, 20)));
     expect(line()).toBeInTheDocument();
   });
@@ -623,7 +651,12 @@ describe("채널 진입의 「새 메시지」 구분선", () => {
     act(() => useUnread.getState().applyRead({ channelId: CH, lastReadSeq: 4 }, { listed: true }));
     await act(() => router.navigate({ to: "/settings/account" }));
     await waitFor(() => expect(screen.queryByText("남의 글 4")).toBeNull());
-    await act(() => router.navigate({ to: "/c/$channelId", params: { channelId: CH } }));
+    await act(() =>
+      router.navigate({
+        to: "/c/$channelId/s/$conversationId",
+        params: { channelId: CH, conversationId: CH },
+      }),
+    );
     await screen.findByText("남의 글 4");
     expect(line()).toBeNull();
   });
@@ -642,8 +675,9 @@ describe("채널 진입의 「새 메시지」 구분선", () => {
       });
     });
     const qc = channelClient(theirs);
-    qc.setQueryData(qk.timeline(CH2), { ...emptyTimeline(), items: others, lastSeq: 3 });
-    const { router } = renderRoute(`/c/${CH}`, qc, (children) => (
+    qc.setQueryData(qk.timeline(CH2, CH2), { ...emptyTimeline(), items: others, lastSeq: 3 });
+    setChannelSeq(qc, CH2, 3);
+    const { router } = renderRoute(`/c/${CH}/s/${CH}`, qc, (children) => (
       <ReadSenderContext.Provider value={{ request: vi.fn(), dispose: vi.fn() }}>
         {children}
       </ReadSenderContext.Provider>
@@ -655,11 +689,21 @@ describe("채널 진입의 「새 메시지」 구분선", () => {
     expect(await after()).toHaveTextContent("남의 글 3");
     act(() => useUnread.getState().applyRead({ channelId: CH, lastReadSeq: 4 }, { listed: true }));
 
-    await act(() => router.navigate({ to: "/c/$channelId", params: { channelId: CH2 } }));
+    await act(() =>
+      router.navigate({
+        to: "/c/$channelId/s/$conversationId",
+        params: { channelId: CH2, conversationId: CH2 },
+      }),
+    );
     await screen.findByText("B 글 3");
     expect(await after()).toHaveTextContent("B 글 2");
 
-    await act(() => router.navigate({ to: "/c/$channelId", params: { channelId: CH } }));
+    await act(() =>
+      router.navigate({
+        to: "/c/$channelId/s/$conversationId",
+        params: { channelId: CH, conversationId: CH },
+      }),
+    );
     await screen.findByText("남의 글 4");
     expect(line()).toBeNull();
   });
@@ -695,9 +739,9 @@ describe("채널 진입의 「새 메시지」 구분선", () => {
       });
     });
     const qc = channelClient(long);
-    qc.setQueryData(qk.timeline(CH), { ...emptyTimeline(), items: long, lastSeq: 60 });
+    qc.setQueryData(qk.timeline(CH, CH), { ...emptyTimeline(), items: long, lastSeq: 60 });
     const s = { request: vi.fn(), dispose: vi.fn() };
-    const { router } = renderRoute(`/c/${CH}`, qc, (children) => (
+    const { router } = renderRoute(`/c/${CH}/s/${CH}`, qc, (children) => (
       <ReadSenderContext.Provider value={s}>{children}</ReadSenderContext.Provider>
     ));
     const top = () => channelList().scrollTop;
@@ -711,8 +755,18 @@ describe("채널 진입의 「새 메시지」 구분선", () => {
       channelList().scrollTop = 1000;
       await new Promise((r) => setTimeout(r, 20));
     });
-    await act(() => router.navigate({ to: "/c/$channelId/activity", params: { channelId: CH } }));
-    await act(() => router.navigate({ to: "/c/$channelId", params: { channelId: CH } }));
+    await act(() =>
+      router.navigate({
+        to: "/c/$channelId/s/$conversationId/activity",
+        params: { channelId: CH, conversationId: CH },
+      }),
+    );
+    await act(() =>
+      router.navigate({
+        to: "/c/$channelId/s/$conversationId",
+        params: { channelId: CH, conversationId: CH },
+      }),
+    );
     await act(() => new Promise((r) => setTimeout(r, 120)));
     expect(top()).toBe(1000);
     expect(s.request).not.toHaveBeenCalled();
@@ -720,7 +774,12 @@ describe("채널 진입의 「새 메시지」 구분선", () => {
     // 채널을 떠났다 돌아오면 그때 다시 — 읽음 위치는 그때 값(40)이다
     await act(() => router.navigate({ to: "/settings/account" }));
     await waitFor(() => expect(screen.queryByText("긴 글 60")).toBeNull());
-    await act(() => router.navigate({ to: "/c/$channelId", params: { channelId: CH } }));
+    await act(() =>
+      router.navigate({
+        to: "/c/$channelId/s/$conversationId",
+        params: { channelId: CH, conversationId: CH },
+      }),
+    );
     await screen.findByRole("separator", { name: "새 메시지" });
     await waitFor(() => expect(top()).toBe(41 * 64 - 128));
   });
@@ -731,7 +790,7 @@ describe("채널 진입의 「새 메시지」 구분선", () => {
       stubMedia(true);
       snapshot(2);
       const s = { request: vi.fn(), dispose: vi.fn() };
-      renderRoute(`/c/${CH}/${tab}`, channelClient(theirs), (children) => (
+      renderRoute(`/c/${CH}/s/${CH}/${tab}`, channelClient(theirs), (children) => (
         <ReadSenderContext.Provider value={s}>{children}</ReadSenderContext.Provider>
       ));
       await screen.findByRole("dialog");

@@ -16,7 +16,7 @@ import {
 } from "../../src/modules/messages/service";
 import { bootTestApp, userWithRole } from "../helpers/app";
 import { connectWire, recordEvents, type WireClient, waitFor } from "../helpers/wire";
-import { channelConversation } from "../helpers/seed";
+import { channelConversation, sendTarget } from "../helpers/seed";
 
 describe("통합 — 읽지 않음 팬아웃", () => {
   let app: App;
@@ -57,6 +57,7 @@ describe("통합 — 읽지 않음 팬아웃", () => {
   const send = (socket: WireClient, channelId: string, extra: Record<string, unknown> = {}) =>
     socket.emitWithAck("message.send", {
       channelId,
+      ...sendTarget(app.db, channelId, extra["threadRootId"] as string | undefined),
       clientMsgId: `c-${++n}`,
       bodyMd: "hi",
       ...extra,

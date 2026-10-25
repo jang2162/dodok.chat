@@ -2,6 +2,7 @@
  * wire 레이트리밋(운영 보강 스펙 4.2) — attachWire 단독. 버킷마다 burst 를 다르게 줘서 이벤트가 어느 버킷을 쓰는지까지 가른다.
  * 시계는 멈춰 둔다(보충 없음). 핸들러는 파싱 전에 토큰을 쓰므로 틀린 페이로드로 충분하다
  */
+import { sendTarget } from "./helpers/seed";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { Server } from "socket.io";
@@ -143,7 +144,8 @@ describe("wire 레이트리밋 (attachWire 단독)", () => {
   it("버킷끼리 나누지 않는다 — chatter 를 다 써도 replay·heavy·approval 은 그대로다", async () => {
     const record = vi.fn((_input: OpsRecordInput) => null);
     const socket = await start({ limits: DISTINCT, ops: { record } });
-    for (let i = 0; i < DISTINCT.wire.chatter.burst + 1; i++) socket.emit("typing", { channelId: uuid() });
+    for (let i = 0; i < DISTINCT.wire.chatter.burst + 1; i++)
+      socket.emit("typing", { channelId: uuid(), conversationId: uuid() });
     await roundTrip(socket);
     expect(record.mock.calls.map(([input]) => input.key)).toEqual(["wire:typing"]);
     expect(await socket.emitWithAck("run.events.replay", { runId: uuid(), afterSeq: 0 })).not.toEqual(
@@ -169,6 +171,7 @@ describe("wire 레이트리밋 (attachWire 단독)", () => {
       for (let run = 0; run < 3; run++) expect(await replay()).not.toEqual(RATE_LIMITED);
     const sent = await socket.emitWithAck("message.send", {
       channelId: channel.id,
+      ...sendTarget(app.db, channel.id),
       clientMsgId: "after-replay",
       bodyMd: "지나간다",
     });

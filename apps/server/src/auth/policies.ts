@@ -40,8 +40,7 @@ function requireFields(role: TeamRole | undefined, body: unknown, allowed: Reado
 
 /**
  * 워크스페이스 멤버면 누구나 — GET /channels·/channels/:id·/channels/:id/members·/agents·/people·/search·
- * /channels/:id/messages·/channels/:id/threads/:rootId/messages·/runs/:id·/channels/:id/conversations·
- * /conversations/:id/messages·/conversations/:id/threads/:rootId/messages
+ * /runs/:id·/channels/:id/conversations·/conversations/:id/messages·/conversations/:id/threads/:rootId/messages
  */
 export function authorizeRead(role: TeamRole | undefined): void {
   requireAtLeast(role, "member");

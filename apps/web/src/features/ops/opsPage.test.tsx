@@ -188,12 +188,16 @@ function renderLive() {
   const fake = createFakeSocket();
   fake.socket.connected = true;
   const qc = createQueryClient(() => {});
-  const subscriptions = createSubscriptions({ socket: fake.wire, queryClient: qc, fetchPage: vi.fn() });
+  const subscriptions = createSubscriptions({ socket: fake.wire, queryClient: qc });
   attachHandlers(fake.wire, {
     queryClient: qc,
     subscriptions,
     onUnauthorized: () => {},
-    notify: { currentChannelId: () => undefined, openActivity: () => {} },
+    notify: {
+      currentChannelId: () => undefined,
+      currentConversationId: () => undefined,
+      openActivity: () => {},
+    },
   });
   act(() => useWireStatus.getState().setStatus("connected"));
   renderOps(OWNER, qc);

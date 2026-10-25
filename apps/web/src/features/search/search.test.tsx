@@ -9,6 +9,7 @@ import { act, createEvent, fireEvent, screen, waitFor, within } from "@testing-l
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { qk } from "@/api/queries";
+import { setChannelSeq } from "@/realtime/timelineCache";
 import { createQueryClient } from "@/app/queryClient";
 import { useJumpStore } from "@/features/messages/jumpTarget";
 import { emptyTimeline, type Timeline } from "@/features/messages/timeline";
@@ -36,6 +37,7 @@ const range = (from: number, to: number): Message[] =>
 const hitOf = (m: Message, over: Partial<SearchHit> = {}): SearchHit => ({
   messageId: m.id,
   channelId: m.channelId,
+  conversationId: m.conversationId,
   seq: m.seq,
   channelArchived: false,
   authorType: "user",
@@ -85,12 +87,14 @@ afterEach(() => {
 /** 채널 CH 에 들어가 구독 응답까지 받은 상태(루트 60~100, lastSeq 100) */
 function subscribedClient() {
   const qc = createQueryClient(() => {});
-  qc.setQueryData<Timeline>(qk.timeline(CH), {
+  qc.setQueryData<Timeline>(qk.timeline(CH, CH), {
     ...emptyTimeline(),
     items: range(60, 100),
     hasOlder: true,
     lastSeq: 100,
   });
+  // 그 채널을 구독했다(채널 커서) — 결과로 가기는 받은 것이 지금 것일 때만 around 로 받는다
+  setChannelSeq(qc, CH, 100);
   return qc;
 }
 const searchCalls = () =>
@@ -111,7 +115,7 @@ async function typeQuery(text: string) {
 
 describe("검색 대화상자 열기", () => {
   it("⌘K·Ctrl+K 로 열고 Esc 로 닫는다 — 검색어 칸에 초점", async () => {
-    renderRoute(`/c/${CH}`, subscribedClient());
+    renderRoute(`/c/${CH}/s/${CH}`, subscribedClient());
     await openWith({ metaKey: true });
     expect(screen.getByRole("searchbox", { name: "검색어" })).toHaveFocus();
     await userEvent.keyboard("{Escape}");
@@ -120,7 +124,7 @@ describe("검색 대화상자 열기", () => {
   });
 
   it("Alt·Shift 가 섞이면 열지 않는다 — 여는 키는 기본 동작(Ctrl+K 주소창)을 막는다", async () => {
-    renderRoute(`/c/${CH}`, subscribedClient());
+    renderRoute(`/c/${CH}/s/${CH}`, subscribedClient());
     await screen.findByTestId("app-shell");
     expect(fireEvent.keyDown(window, { key: "k", metaKey: true, altKey: true })).toBe(true);
     expect(fireEvent.keyDown(window, { key: "K", ctrlKey: true, shiftKey: true })).toBe(true);
@@ -133,14 +137,14 @@ describe("검색 대화상자 열기", () => {
   });
 
   it("한글 입력기 상태(key 가 「k」 가 아니다)여도 물리 키 K 면 연다", async () => {
-    renderRoute(`/c/${CH}`, subscribedClient());
+    renderRoute(`/c/${CH}/s/${CH}`, subscribedClient());
     await screen.findByTestId("app-shell");
     fireEvent.keyDown(window, { key: "ㅏ", code: "KeyK", metaKey: true });
     expect(await screen.findByRole("dialog", { name: "검색" })).toBeInTheDocument();
   });
 
   it("작성기 안에서 눌러도 연다 — 닫으면 작성기로 돌아간다", async () => {
-    renderRoute(`/c/${CH}`, subscribedClient());
+    renderRoute(`/c/${CH}/s/${CH}`, subscribedClient());
     const box = await screen.findByRole("textbox", { name: "메시지 입력" });
     act(() => box.focus());
     expect(box).toHaveFocus();
@@ -151,7 +155,7 @@ describe("검색 대화상자 열기", () => {
   });
 
   it("다른 대화상자가 열려 있으면 무시한다 — 그 위에 겹쳐 열지 않는다", async () => {
-    renderRoute(`/c/${CH}`, subscribedClient());
+    renderRoute(`/c/${CH}/s/${CH}`, subscribedClient());
     await userEvent.click(await screen.findByRole("button", { name: "채널 만들기" }));
     await screen.findByRole("dialog", { name: "채널 만들기" });
     expect(fireEvent.keyDown(window, { key: "k", metaKey: true })).toBe(true);
@@ -160,14 +164,14 @@ describe("검색 대화상자 열기", () => {
   });
 
   it("열린 채 Ctrl+K 를 다시 누르면 기본 동작을 막고 대화상자는 그대로", async () => {
-    renderRoute(`/c/${CH}`, subscribedClient());
+    renderRoute(`/c/${CH}/s/${CH}`, subscribedClient());
     const dialog = await openWith({ ctrlKey: true });
     expect(fireEvent.keyDown(window, { key: "k", ctrlKey: true })).toBe(false);
     expect(screen.getByRole("dialog", { name: "검색" })).toBe(dialog);
   });
 
   it("닫으면 초점이 연 자리로 돌아간다", async () => {
-    renderRoute(`/c/${CH}`, subscribedClient());
+    renderRoute(`/c/${CH}/s/${CH}`, subscribedClient());
     const opener = await screen.findByRole("button", { name: /검색/ });
     await userEvent.click(opener);
     await screen.findByRole("dialog", { name: "검색" });
@@ -177,14 +181,14 @@ describe("검색 대화상자 열기", () => {
   });
 
   it("사이드바 위의 검색 칸을 눌러도 열린다", async () => {
-    renderRoute(`/c/${CH}`, subscribedClient());
+    renderRoute(`/c/${CH}/s/${CH}`, subscribedClient());
     await userEvent.click(await screen.findByRole("button", { name: /검색/ }));
     expect(await screen.findByRole("dialog", { name: "검색" })).toBeInTheDocument();
   });
 
   it("좁은 화면(390px)에서는 전체 시트", async () => {
     stubMedia(true);
-    renderRoute(`/c/${CH}`, subscribedClient());
+    renderRoute(`/c/${CH}/s/${CH}`, subscribedClient());
     const dialog = await openWith({ ctrlKey: true });
     expect(dialog).toHaveAttribute("data-slot", "sheet-content");
     expect(dialog).toHaveClass("h-dvh");
@@ -193,7 +197,7 @@ describe("검색 대화상자 열기", () => {
 
 describe("검색하기", () => {
   it("입력이 멈춘 뒤 한 번만 부른다(디바운스) — 1글자는 부르지 않고 안내", async () => {
-    renderRoute(`/c/${CH}`, subscribedClient());
+    renderRoute(`/c/${CH}/s/${CH}`, subscribedClient());
     await openWith({ metaKey: true });
     await typeQuery("배");
     expect(screen.getByText("2글자 이상 입력하세요")).toBeInTheDocument();
@@ -207,7 +211,7 @@ describe("검색하기", () => {
 
   it("1글자로 줄이면 옛 결과를 곧바로 숨기고 안내만 — 디바운스를 기다리지 않는다", async () => {
     search = () => json(200, { hits: [hitOf(msg(70), { snippet: "옛 결과" })], limited: false });
-    renderRoute(`/c/${CH}`, subscribedClient());
+    renderRoute(`/c/${CH}/s/${CH}`, subscribedClient());
     const dialog = await openWith({ metaKey: true });
     await typeQuery("배포를");
     expect(await within(dialog).findByText("옛 결과")).toBeInTheDocument();
@@ -224,7 +228,7 @@ describe("검색하기", () => {
       u.searchParams.get("q") === "배포"
         ? gate.then(() => json(200, { hits: [hitOf(msg(70), { snippet: "옛 결과" })], limited: true }))
         : json(200, { hits: [hitOf(msg(71), { snippet: "새 결과" })], limited: false });
-    renderRoute(`/c/${CH}`, subscribedClient());
+    renderRoute(`/c/${CH}/s/${CH}`, subscribedClient());
     const dialog = await openWith({ metaKey: true });
     await typeQuery("배포");
     await waitFor(() => expect(searchCalls()).toHaveLength(1));
@@ -242,7 +246,7 @@ describe("검색하기", () => {
         hits: [hitOf(msg(70), { snippet: `<img src=x onerror=alert(1)> ${O}<b>배포</b>${C} %_"*` })],
         limited: false,
       });
-    renderRoute(`/c/${CH}`, subscribedClient());
+    renderRoute(`/c/${CH}/s/${CH}`, subscribedClient());
     const dialog = await openWith({ metaKey: true });
     await typeQuery("배포");
     const result = await within(dialog).findByRole("button", { name: /<b>배포<\/b>/ });
@@ -254,7 +258,7 @@ describe("검색하기", () => {
   });
 
   it("필터 — 채널·사람/에이전트·기간이 요청에 실린다", async () => {
-    renderRoute(`/c/${CH}`, subscribedClient());
+    renderRoute(`/c/${CH}/s/${CH}`, subscribedClient());
     const dialog = await openWith({ metaKey: true });
     await typeQuery("배포");
     await waitFor(() => expect(searchCalls()).toHaveLength(1));
@@ -278,7 +282,7 @@ describe("검색하기", () => {
       u.searchParams.get("cursor") === "c2"
         ? json(200, { hits: [hitOf(msg(71), { snippet: "둘째 쪽" })], limited: false })
         : json(200, { hits: [hitOf(msg(70), { snippet: "첫째 쪽" })], nextCursor: "c2", limited: false });
-    renderRoute(`/c/${CH}`, subscribedClient());
+    renderRoute(`/c/${CH}/s/${CH}`, subscribedClient());
     const dialog = await openWith({ metaKey: true });
     await typeQuery("배포를");
     await userEvent.click(await within(dialog).findByRole("button", { name: "더 보기" }));
@@ -293,7 +297,7 @@ describe("검색하기", () => {
       u.searchParams.get("cursor") === "c2"
         ? json(429, { code: "RATE_LIMITED", message: "검색 요청이 너무 많습니다" })
         : json(200, { hits: [hitOf(msg(70), { snippet: "첫째 쪽" })], nextCursor: "c2", limited: false });
-    renderRoute(`/c/${CH}`, subscribedClient());
+    renderRoute(`/c/${CH}/s/${CH}`, subscribedClient());
     const dialog = await openWith({ metaKey: true });
     await typeQuery("배포를");
     await userEvent.click(await within(dialog).findByRole("button", { name: "더 보기" }));
@@ -308,7 +312,7 @@ describe("검색하기", () => {
   it("2글자(limited) — 「더 보기」 없이 안내 한 줄", async () => {
     // 커서가 실려 와도(서버는 싣지 않는다) limited 면 더 보기를 두지 않는다
     search = () => json(200, { hits: [hitOf(msg(70))], nextCursor: "x", limited: true });
-    renderRoute(`/c/${CH}`, subscribedClient());
+    renderRoute(`/c/${CH}/s/${CH}`, subscribedClient());
     const dialog = await openWith({ metaKey: true });
     await typeQuery("배포");
     expect(await within(dialog).findByText("2글자는 최근 90일에서 50개까지만 찾습니다")).toBeInTheDocument();
@@ -317,7 +321,7 @@ describe("검색하기", () => {
 
   it("429(RATE_LIMITED) — 대화상자 안에 한 줄, 입력은 그대로", async () => {
     search = () => json(429, { code: "RATE_LIMITED", message: "검색 요청이 너무 많습니다" });
-    renderRoute(`/c/${CH}`, subscribedClient());
+    renderRoute(`/c/${CH}/s/${CH}`, subscribedClient());
     const dialog = await openWith({ metaKey: true });
     const input = await typeQuery("배포를");
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(
@@ -330,7 +334,7 @@ describe("검색하기", () => {
 
   it("그 밖의 오류 — 서버 문구 한 줄", async () => {
     search = () => json(500, { code: "INTERNAL", message: "서버 오류" });
-    renderRoute(`/c/${CH}`, subscribedClient());
+    renderRoute(`/c/${CH}/s/${CH}`, subscribedClient());
     const dialog = await openWith({ metaKey: true });
     await typeQuery("배포를");
     expect(await within(dialog).findByRole("alert")).toHaveTextContent("검색하지 못했습니다 — 서버 오류");
@@ -340,15 +344,15 @@ describe("검색하기", () => {
 describe("결과로 가기", () => {
   it("채널 결과 — 대화상자가 닫히고 그 채널을 around 로 받아 그 메시지를 강조한다", async () => {
     search = () => json(200, { hits: [hitOf(msg(10), { snippet: "열째 메시지" })], limited: false });
-    routes.set(`/api/v1/channels/${CH}/messages?limit=50&around=10`, () =>
+    routes.set(`/api/v1/conversations/${CH}/messages?limit=50&around=10`, () =>
       json(200, { messages: range(1, 20), hasMore: false, hasMoreAfter: true }),
     );
-    const { router } = renderRoute(`/c/${CH2}`, subscribedClient());
+    const { router } = renderRoute(`/c/${CH2}/s/${CH2}`, subscribedClient());
     const dialog = await openWith({ metaKey: true });
     await typeQuery("열째");
     await userEvent.click(await within(dialog).findByRole("button", { name: /열째 메시지/ }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "검색" })).toBeNull());
-    expect(router.state.location.pathname).toBe(`/c/${CH}`);
+    expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}`);
     await waitFor(() =>
       expect(screen.getByText("본문 10").closest("[data-index]")).toHaveAttribute("data-highlighted", "true"),
     );
@@ -358,16 +362,16 @@ describe("결과로 가기", () => {
     const reply = msg(133, { threadRootId: ROOT.id, bodyMd: "찾던 답글" });
     search = () => json(200, { hits: [hitOf(reply, { snippet: "찾던 답글" })], limited: false });
     const qc = subscribedClient();
-    qc.setQueryData<Timeline>(qk.timeline(CH), (t) => ({ ...t!, items: [ROOT, ...t!.items] }));
+    qc.setQueryData<Timeline>(qk.timeline(CH, CH), (t) => ({ ...t!, items: [ROOT, ...t!.items] }));
     // 스레드 최신 50 에는 그 답글이 없다 — around 로 받는다(서버 스레드 REST 도 around 를 받는다)
     const replies = (from: number, to: number) =>
       Array.from({ length: to - from + 1 }, (_, i) =>
         msg(from + i, { threadRootId: ROOT.id, bodyMd: `답글 ${from + i}` }),
       );
-    routes.set(`/api/v1/channels/${CH}/threads/${ROOT.id}/messages?limit=50`, () =>
+    routes.set(`/api/v1/conversations/${CH}/threads/${ROOT.id}/messages?limit=50`, () =>
       json(200, { root: ROOT, messages: replies(200, 249), hasMore: true }),
     );
-    routes.set(`/api/v1/channels/${CH}/threads/${ROOT.id}/messages?limit=50&around=133`, () =>
+    routes.set(`/api/v1/conversations/${CH}/threads/${ROOT.id}/messages?limit=50&around=133`, () =>
       json(200, {
         root: ROOT,
         messages: [...replies(110, 132), reply, ...replies(134, 150)],
@@ -375,13 +379,13 @@ describe("결과로 가기", () => {
         hasMoreAfter: true,
       }),
     );
-    const { router } = renderRoute(`/c/${CH}`, qc);
+    const { router } = renderRoute(`/c/${CH}/s/${CH}`, qc);
     const dialog = await openWith({ metaKey: true });
     await typeQuery("찾던");
     const result = await within(dialog).findByRole("button", { name: /찾던 답글/ });
     expect(result).toHaveTextContent("스레드 답글");
     await userEvent.setup({ delay: null }).click(result);
-    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/t/${ROOT.id}`));
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}/t/${ROOT.id}`));
     const panel = await screen.findByTestId("thread-panel");
     await waitFor(() =>
       expect(within(panel).getByText("찾던 답글").closest("[data-index]")).toHaveAttribute(
@@ -398,7 +402,7 @@ describe("결과로 가기", () => {
       ),
     );
     expect(fetchMock.mock.calls.map((c) => String(c[0]))).not.toContain(
-      `/api/v1/channels/${CH}/messages?limit=50&around=133`,
+      `/api/v1/conversations/${CH}/messages?limit=50&around=133`,
     );
   });
 
@@ -412,12 +416,13 @@ describe("결과로 가기", () => {
     routes.set(`/api/v1/channels/${ARC}`, () => json(200, { channel: archived }));
     // 구독 응답(최신 창)을 받은 상태 — 보관한 채널도 구독·읽기는 그대로다
     const qc = subscribedClient();
-    qc.setQueryData<Timeline>(qk.timeline(ARC), {
+    qc.setQueryData<Timeline>(qk.timeline(ARC, ARC), {
       ...emptyTimeline(),
       items: range(1, 20).map((m) => (m.seq === 10 ? hit : { ...m, channelId: ARC })),
       lastSeq: 20,
     });
-    const { router } = renderRoute(`/c/${CH}`, qc);
+    setChannelSeq(qc, ARC, 20);
+    const { router } = renderRoute(`/c/${CH}/s/${CH}`, qc);
     const dialog = await openWith({ metaKey: true });
     await typeQuery("보관 전");
     const row = await within(dialog).findByRole("button", { name: /보관 전 메시지/ });
@@ -425,7 +430,7 @@ describe("결과로 가기", () => {
     expect(within(row).getByText("보관됨")).toBeInTheDocument();
 
     await userEvent.click(row);
-    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${ARC}`));
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${ARC}/s/${ARC}`));
     expect(await screen.findByText("보관된 채널입니다.")).toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "메시지 입력" })).toBeNull();
     await waitFor(() =>
@@ -439,7 +444,7 @@ describe("결과로 가기", () => {
   it("결과 줄에 작성자 이름 — 에이전트 결과", async () => {
     search = () =>
       json(200, { hits: [hitOf(msg(70), { authorType: "agent", authorId: AGENT })], limited: false });
-    renderRoute(`/c/${CH}`, subscribedClient());
+    renderRoute(`/c/${CH}/s/${CH}`, subscribedClient());
     const dialog = await openWith({ metaKey: true });
     await typeQuery("배포를");
     expect(await within(dialog).findByRole("button", { name: /배포/ })).toHaveTextContent("Dev");
@@ -453,7 +458,7 @@ describe("결과로 가기", () => {
         hits: [hitOf(msg(70), { authorType: "automation", authorId: morning.id })],
         limited: false,
       });
-    renderRoute(`/c/${CH}`, subscribedClient());
+    renderRoute(`/c/${CH}/s/${CH}`, subscribedClient());
     const dialog = await openWith({ metaKey: true });
     await typeQuery("배포를");
     const hit = await within(dialog).findByRole("button", { name: /배포/ });

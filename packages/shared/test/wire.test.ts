@@ -16,17 +16,16 @@ describe("wire schemas", () => {
     expect(ChannelSubscribe.safeParse({ channelId: ID, lastSeq: -1 }).success).toBe(false);
   });
   it("MessageSend: 빈 본문·긴 clientMsgId 거부", () => {
-    expect(MessageSend.safeParse({ channelId: ID, clientMsgId: "c1", bodyMd: "" }).success).toBe(false);
-    expect(MessageSend.safeParse({ channelId: ID, clientMsgId: "x".repeat(65), bodyMd: "hi" }).success).toBe(
-      false,
+    const at = { channelId: ID, conversationId: ID };
+    expect(MessageSend.safeParse({ ...at, clientMsgId: "c1", bodyMd: "" }).success).toBe(false);
+    expect(MessageSend.safeParse({ ...at, clientMsgId: "x".repeat(65), bodyMd: "hi" }).success).toBe(false);
+    expect(MessageSend.safeParse({ ...at, clientMsgId: "c1", bodyMd: "hi", attachments: [ID] }).success).toBe(
+      true,
     );
-    expect(
-      MessageSend.safeParse({ channelId: ID, clientMsgId: "c1", bodyMd: "hi", attachments: [ID] }).success,
-    ).toBe(true);
   });
-  it("MessageSend: conversationId·newConversation 은 함께 못 쓴다 — 둘 다 없음은 받는다(채널 세션 계획 판정 PS4)", () => {
+  it("MessageSend: conversationId·newConversation 가운데 정확히 하나 — 둘 다 없음은 거절한다(다리를 걷었다, 판정 PS4)", () => {
     const base = { channelId: ID, clientMsgId: "c1", bodyMd: "hi" };
-    expect(MessageSend.safeParse(base).success).toBe(true);
+    expect(MessageSend.safeParse(base).success).toBe(false);
     expect(MessageSend.safeParse({ ...base, conversationId: ID }).success).toBe(true);
     expect(MessageSend.safeParse({ ...base, newConversation: {} }).success).toBe(true);
     expect(MessageSend.safeParse({ ...base, newConversation: { title: "배포" } }).success).toBe(true);

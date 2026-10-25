@@ -99,6 +99,24 @@ describe("세션 REST·wire", () => {
     expect(plain.conversation).toBeUndefined();
   });
 
+  it("wire message.send — 세션을 안 주거나 둘 다 주면 VALIDATION(서버가 고르던 다리는 걷었다, 판정 PS4) — 세션도 메시지도 생기지 않는다", async () => {
+    const channel = newChannel();
+    const socket = await wire(member.token, channel.id);
+    const existing = await open(channel.id);
+    expect(await send(socket, channel.id)).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
+    expect(
+      await send(socket, channel.id, { conversationId: existing.conversation.id, newConversation: {} }),
+    ).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
+    const list = (
+      await call(owner, "GET", `/api/v1/channels/${channel.id}/conversations?status=all`)
+    ).json() as ConversationList;
+    expect(list.conversations.map((c) => c.id)).toEqual([existing.conversation.id]);
+    const page = (
+      await call(owner, "GET", `/api/v1/conversations/${existing.conversation.id}/messages`)
+    ).json() as { messages: Message[] };
+    expect(page.messages.map((m) => m.id)).toEqual([existing.message.id]);
+  });
+
   it("[Review Focus 2] 한 탭이 닫는 사이 다른 탭이 보내면 CONVERSATION_CLOSED, 다른 탭은 conversation.updated 로 닫힘을 안다", async () => {
     const channel = newChannel();
     const { socket, conversation } = await open(channel.id);
@@ -188,7 +206,9 @@ describe("세션 REST·wire", () => {
     const channel = newChannel();
     const a = await open(channel.id, member.token, "A");
     const b = await open(channel.id, member.token, "B");
-    const reply = ok(await send(a.socket, channel.id, { threadRootId: a.message.id }));
+    const reply = ok(
+      await send(a.socket, channel.id, { conversationId: a.conversation.id, threadRootId: a.message.id }),
+    );
     const page = (
       await call(member.token, "GET", `/api/v1/conversations/${a.conversation.id}/messages`)
     ).json() as {
@@ -222,15 +242,8 @@ describe("세션 REST·wire", () => {
       messages: Message[];
     };
     expect(closedPage.messages.at(-1)?.kind).toBe("system");
-    // 채널 경로는 태스크 5 까지 남는다(계획 판정 PS5) — 모든 세션의 루트
-    const channelPage = (
-      await call(member.token, "GET", `/api/v1/channels/${channel.id}/messages`)
-    ).json() as {
-      messages: Message[];
-    };
-    expect(channelPage.messages.map((m) => m.conversationId)).toEqual(
-      expect.arrayContaining([a.conversation.id, b.conversation.id]),
-    );
+    // 채널 경로 목록은 걷었다(계획 판정 PS5) — 타임라인은 세션마다다
+    expect((await call(member.token, "GET", `/api/v1/channels/${channel.id}/messages`)).statusCode).toBe(404);
   });
 
   it("세션 관리자 PUT 은 채널에 없는 사람을 참여시키고 channel.member.changed, DELETE 는 역할만 member 로. member 는 403", async () => {

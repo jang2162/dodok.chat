@@ -73,7 +73,7 @@ it("앱 안 쿼리의 401 은 상태를 비우고 /login?next=<지금 경로> �
       return shellGet(input, init) ?? json(200, { channels: [] });
     }),
   );
-  const { app, history, moves } = renderApp("/c/abc");
+  const { app, history, moves } = renderApp("/c/abc/s/abc");
   expect(await screen.findByTestId("page-channel")).toBeInTheDocument();
   const reset = spyReset();
 
@@ -84,7 +84,7 @@ it("앱 안 쿼리의 401 은 상태를 비우고 /login?next=<지금 경로> �
 
   expect(await screen.findByRole("heading", { name: "로그인" })).toBeInTheDocument();
   expect(history.location.pathname).toBe("/login");
-  expect(new URLSearchParams(history.location.search).get("next")).toBe("/c/abc");
+  expect(new URLSearchParams(history.location.search).get("next")).toBe("/c/abc/s/abc");
   expect(moves).toHaveLength(1);
   expect(reset).toHaveBeenCalledTimes(1);
   expect(app.queryClient.getQueryData(qk.me)).toBeUndefined();
@@ -98,14 +98,14 @@ it("Query 밖 REST 401(notifyUnauthorized)도 같은 곳 — 상태를 비우고
       return shellGet(input, init) ?? json(200, { channels: [] });
     }),
   );
-  const { history, moves } = renderApp("/c/abc");
+  const { history, moves } = renderApp("/c/abc/s/abc");
   expect(await screen.findByTestId("page-channel")).toBeInTheDocument();
   const reset = spyReset();
 
   act(() => notifyUnauthorized());
 
   expect(await screen.findByRole("heading", { name: "로그인" })).toBeInTheDocument();
-  expect(new URLSearchParams(history.location.search).get("next")).toBe("/c/abc");
+  expect(new URLSearchParams(history.location.search).get("next")).toBe("/c/abc/s/abc");
   expect(moves).toHaveLength(1);
   expect(reset).toHaveBeenCalled();
 });
@@ -118,7 +118,7 @@ it("401 은 이동 막기(blocker)를 건너뛴다 — 막는 화면이 남아 �
       return shellGet(input, init) ?? json(200, { channels: [] });
     }),
   );
-  const { app, history } = renderApp("/c/abc");
+  const { app, history } = renderApp("/c/abc/s/abc");
   expect(await screen.findByTestId("page-channel")).toBeInTheDocument();
   const blockerFn = vi.fn(async () => true);
   const unblock = history.block({ blockerFn });
@@ -186,7 +186,7 @@ it("wire UNAUTHORIZED 이고 세션도 끝났으면(me 401) 상태를 비우고 
       return shellGet(input, init) ?? json(200, { channels: [] });
     }),
   );
-  const { history, moves } = renderApp("/c/abc");
+  const { history, moves } = renderApp("/c/abc/s/abc");
   expect(await screen.findByTestId("page-channel")).toBeInTheDocument();
   await waitFor(() => expect(createdSockets).toHaveLength(1));
   const reset = spyReset();
@@ -196,7 +196,7 @@ it("wire UNAUTHORIZED 이고 세션도 끝났으면(me 401) 상태를 비우고 
 
   expect(await screen.findByRole("heading", { name: "로그인" })).toBeInTheDocument();
   expect(history.location.pathname).toBe("/login");
-  expect(new URLSearchParams(history.location.search).get("next")).toBe("/c/abc");
+  expect(new URLSearchParams(history.location.search).get("next")).toBe("/c/abc/s/abc");
   expect(moves).toHaveLength(1);
   expect(reset).toHaveBeenCalled();
   expect(createdSockets[0]?.calls.disconnect).toBeGreaterThanOrEqual(1);
@@ -208,7 +208,7 @@ it("wire UNAUTHORIZED 인데 REST 세션이 살아 있으면(me 200) 로그인�
     return shellGet(input, init) ?? json(200, { channels: [] });
   });
   vi.stubGlobal("fetch", fetchMock);
-  const { moves } = renderApp("/c/abc");
+  const { moves } = renderApp("/c/abc/s/abc");
   expect(await screen.findByTestId("page-channel")).toBeInTheDocument();
   await waitFor(() => expect(createdSockets).toHaveLength(1));
   const meCalls = () => fetchMock.mock.calls.filter((c) => String(c[0]) === "/api/v1/auth/me").length;
@@ -268,8 +268,8 @@ it("앱은 파일 끌어 놓기를 창에서 막는다(로그인 화면에서도
   expect(fireEvent.drop(heading, files)).toBe(false);
 });
 
-// 설계 5.4 — 알림을 누르면 그 채널의 활동 탭으로. 알림 코드가 아니라 createApp 이 라우터를 안다
-it("알림이 보는 화면 사정은 지금 채널을 알고, 누르면 그 채널 활동 탭을 연다", async () => {
+// 설계 5.4 — 알림을 누르면 그 승인의 세션 활동 탭으로. 알림 코드가 아니라 createApp 이 라우터를 안다
+it("알림이 보는 화면 사정은 지금 채널·세션을 알고, 누르면 그 세션 활동 탭을 연다", async () => {
   vi.stubGlobal(
     "fetch",
     vi.fn<typeof fetch>(async (input, init) => {
@@ -277,11 +277,13 @@ it("알림이 보는 화면 사정은 지금 채널을 알고, 누르면 그 채
       return shellGet(input, init) ?? json(404, { code: "NOT_FOUND", message: "x" });
     }),
   );
-  const { app, history } = renderApp("/c/c1");
+  const { app, history } = renderApp("/c/c1/s/s1");
   await screen.findByTestId("channel-header");
   expect(app.notify.currentChannelId()).toBe("c1");
+  expect(app.notify.currentConversationId()).toBe("s1");
 
-  act(() => app.notify.openActivity("c2"));
-  await waitFor(() => expect(history.location.pathname).toBe("/c/c2/activity"));
+  act(() => app.notify.openActivity("c2", "s2"));
+  await waitFor(() => expect(history.location.pathname).toBe("/c/c2/s/s2/activity"));
   expect(app.notify.currentChannelId()).toBe("c2");
+  expect(app.notify.currentConversationId()).toBe("s2");
 });

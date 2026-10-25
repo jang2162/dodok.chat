@@ -44,13 +44,17 @@ afterEach(() => {
 
 it("채널 화면: 진행 중인 런이 목록 끝에 버블로 뜨고, 중지를 누르면 run.abort", async () => {
   const qc = createQueryClient(() => {});
-  qc.setQueryData(qk.timeline(CH), { ...emptyTimeline(), items: [msg(1, { bodyMd: "질문" })], lastSeq: 1 });
+  qc.setQueryData(qk.timeline(CH, CH), {
+    ...emptyTimeline(),
+    items: [msg(1, { bodyMd: "질문" })],
+    lastSeq: 1,
+  });
   act(() => {
     useRunStore.getState().applyState(runState({ status: "streaming" }));
     useRunStore.getState().applyEvent(textDelta(1, "답하는 중"));
   });
   fake.onAck("run.abort", () => ({ ok: true, data: null }));
-  renderRoute(`/c/${CH}`, qc);
+  renderRoute(`/c/${CH}/s/${CH}`, qc);
 
   expect(await screen.findByText("답하는 중")).toBeInTheDocument();
   const rows = [...document.querySelectorAll("[data-index]")].map((r) => r.textContent ?? "");

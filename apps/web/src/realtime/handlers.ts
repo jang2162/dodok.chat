@@ -16,11 +16,11 @@ import { useApprovalStore } from "@/features/approvals/approvalStore";
 import { canDecideApproval } from "@/features/approvals/decider";
 import { forgetApproval, notifyApproval } from "@/features/approvals/notify";
 import { applyChannel, isChannelArchived } from "@/features/channels/archived";
-import { hasGap, noteSeq, type Timeline, upsert } from "@/features/messages/timeline";
+import { hasChannelGap, noteSeq, type Timeline, upsert } from "@/features/messages/timeline";
 import { isViewingAtEnd, needsResync, useUnread } from "@/features/reads/useUnread";
 import { useRunStore } from "@/features/runs/runStore";
 import type { Subscriptions } from "./subscriptions";
-import { getTimeline, updateThread, updateTimeline } from "./timelineCache";
+import { getChannelSeq, noteChannelSeq, patchTimeline, updateThread } from "./timelineCache";
 import { useTypingStore } from "./typing";
 import { useWireStatus, type WireSocket, type WireStatus } from "./wire";
 
@@ -57,8 +57,10 @@ const STOPPED: ReadonlySet<WireStatus> = new Set(["protocol_mismatch", "rejected
 export type NotifyTarget = {
   /** 지금 보고 있는 채널 */
   currentChannelId(): string | undefined;
-  /** 알림을 눌렀을 때 — 그 채널의 활동 탭 */
-  openActivity(channelId: string): void;
+  /** 지금 보고 있는 세션 — 승인 카드는 그 세션에서만 보인다(채널 세션 계획 판정 PS7) */
+  currentConversationId(): string | undefined;
+  /** 알림을 눌렀을 때 — 그 승인의 세션 활동 탭 */
+  openActivity(channelId: string, conversationId: string): void;
 };
 
 type Deps = {
@@ -83,31 +85,37 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
   let unreadRequest = 0;
 
   /**
-   * 새 메시지·수정. 구독한 적 없는 채널(캐시 없음)은 무시, 빈틈이면 넣지 않고 lastSeq 로 이어 받는다(스펙 4.3-3·4).
-   * 채널 룸 하나로 루트와 스레드 답글이 함께 온다(스레드·검색 스펙 4.1) — 채널 타임라인은 루트만, 답글은 seq 만 기록하고
-   * 연 스레드의 캐시에 넣는다. 루트의 바뀐 요약(`threadSummary`)은 서버가 루트 `message.updated` 로 따로 보낸다
+   * 새 메시지·수정(채널 세션 계획 판정 PS6). 구독한 적 없는 채널(커서 없음)은 무시, 커서 뒤로 빈틈이면 넣지 않고 커서로 이어 받는다
+   * (스펙 4.3-3·4). 채널 룸 하나로 모든 세션의 루트와 스레드 답글이 온다 — 커서는 어느 세션의 글이든 올리고, 글은 **그 세션**의
+   * 캐시에만 넣는다(받은 적 없는 세션은 버린다 — 열 때 REST 로 받는다). 세션 타임라인은 루트만, 답글은 seq 만 기록하고 연 스레드의
+   * 캐시에 넣는다. 루트의 바뀐 요약(`threadSummary`)은 서버가 루트 `message.updated` 로 따로 보낸다
    */
   function applyMessage({ message: m }: MessageEvent, updated: boolean): void {
-    const t = getTimeline(qc, m.channelId);
-    if (!t) return;
+    const seen = getChannelSeq(qc, m.channelId);
+    if (seen === undefined) return;
+    const { channelId, conversationId } = m;
     const rootId = m.threadRootId;
     // 이미 지난 seq 의 수정 — 빈틈을 볼 일이 없다
-    const stale = updated && m.seq <= t.lastSeq;
-    // 빈 채널(lastSeq 0)은 hasGap 이 빈틈으로 보지 않는다 — 구독 경합으로 앞 메시지를 놓쳤을 수 있다(web-t3 리뷰 Ruling)
-    if (!stale && (hasGap(t, m) || (t.lastSeq === 0 && m.seq > 1))) {
-      void subscriptions.catchUp(m.channelId).catch(() => undefined);
+    const stale = updated && m.seq <= seen;
+    if (!stale && hasChannelGap(seen, m)) {
+      void subscriptions.catchUp(channelId).catch(() => undefined);
       return;
     }
+    if (!stale) noteChannelSeq(qc, channelId, m.seq);
     if (rootId !== undefined) {
-      if (!stale) updateTimeline(qc, m.channelId, (prev) => noteSeq(prev, m.seq));
-      updateThread(qc, m.channelId, rootId, (prev) => (keeps(prev, m, updated) ? upsert(prev, m) : prev));
+      if (!stale) patchTimeline(qc, channelId, conversationId, (prev) => noteSeq(prev, m.seq));
+      updateThread(qc, channelId, conversationId, rootId, (prev) =>
+        keeps(prev, m, updated) ? upsert(prev, m) : prev,
+      );
       return;
     }
     // 연 스레드의 루트는 적재 범위와 상관없이 늘 맞춘다(패널 맨 위에 늘 있다)
-    updateThread(qc, m.channelId, m.id, (prev) => upsert(prev, m));
-    // 적재 범위 밖(더 옛것)의 수정은 넣지 않는다 — 과거 페이지(beforeSeq)가 가장 옛 seq 를 기준으로 삼는다
-    if (stale && !t.items.some((x) => x.id === m.id)) return;
-    updateTimeline(qc, m.channelId, (prev) => upsert(prev, m));
+    updateThread(qc, channelId, conversationId, m.id, (prev) => upsert(prev, m));
+    // 적재 범위 밖(더 옛것)의 수정은 넣지 않는다 — 과거 페이지(beforeSeq)가 가장 옛 seq 를 기준으로 삼는다. 받는 중인 첫 페이지에
+    // 다시 적용될 때도 같은 규칙이다(`patchTimeline`)
+    patchTimeline(qc, channelId, conversationId, (prev) =>
+      stale && !prev.items.some((x) => x.id === m.id) ? prev : upsert(prev, m),
+    );
   }
 
   /** 스레드 캐시에 넣을 답글인가 — 수정이면 가진 것이거나 적재 범위(가장 옛 답글) 안일 때만 */
@@ -195,8 +203,8 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
       if (!canDecideApproval(approval, qc.getQueryData<MeResponse>(qk.me))) return;
       notifyApproval(approval, {
         visible: document.visibilityState === "visible",
-        currentChannelId: notify.currentChannelId(),
-        onClick: () => notify.openActivity(approval.channelId),
+        currentConversationId: notify.currentConversationId(),
+        onClick: () => notify.openActivity(approval.channelId, approval.conversationId),
         // 캐시에 없으면(아직 못 받았다) 일반 문구로 — 알림 때문에 REST 를 부르지 않는다
         handle: qc.getQueryData<Agent[]>(qk.agents)?.find((a) => a.id === approval.agentId)?.handle,
         channelName: qc.getQueryData<Channel[]>(qk.channels)?.find((c) => c.id === approval.channelId)?.name,

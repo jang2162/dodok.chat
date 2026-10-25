@@ -30,7 +30,8 @@ import { SystemCard } from "./SystemCard";
 import { useJump } from "./useJump";
 import { useNewerPages } from "./useNewerPages";
 import { reportPageError, useOlderPages } from "./useOlderPages";
-import { useTimeline } from "./useTimeline";
+import type { Timeline } from "./timeline";
+import { useTimelineState } from "./useTimeline";
 
 /** 하단에서 이만큼 안이면 「맨 아래에 붙어 있다」 — 새 행을 따라간다(스펙 5.5) */
 const STICK_PX = 80;
@@ -49,7 +50,9 @@ const DAY = new Intl.DateTimeFormat("ko-KR", { dateStyle: "full" });
 
 export type MessageListProps = {
   channelId: string;
-  /** 스레드 패널이면 그 루트 — 루트·답글과 그 스레드의 버블·승인 카드만 그린다. 없으면 채널 타임라인(루트만) */
+  /** 그 채널의 세션 — 목록·버블·승인 카드는 이 세션의 것만(채널 세션 계획 판정 PS6·PS7). 새 세션 창이면 `NEW_CONVERSATION` */
+  conversationId: string;
+  /** 스레드 패널이면 그 루트 — 루트·답글과 그 스레드의 버블·승인 카드만 그린다. 없으면 세션 타임라인(루트만) */
   threadRootId?: string;
   /** 좁은 화면의 패널 시트가 이 목록을 덮고 있다 — 끝이 보이는 것으로 치지 않는다(읽음을 보내지 않는다) */
   covered?: boolean;
@@ -62,13 +65,19 @@ export type MessageListProps = {
   initialRect?: { width: number; height: number };
 };
 
-/** 채널 메시지 목록(스펙 5.5)·스레드 패널의 목록. 스크롤 위치·「새 메시지」 칩은 채널·스레드마다 새로 시작한다 */
+/** 세션 메시지 목록(스펙 5.5)·스레드 패널의 목록. 스크롤 위치·「새 메시지」 칩은 세션·스레드마다 새로 시작한다 */
 export function MessageList(props: MessageListProps) {
-  return <ChannelMessages key={`${props.channelId}:${props.threadRootId ?? ""}`} {...props} />;
+  return (
+    <ChannelMessages
+      key={`${props.channelId}:${props.conversationId}:${props.threadRootId ?? ""}`}
+      {...props}
+    />
+  );
 }
 
 function ChannelMessages({
   channelId,
+  conversationId,
   threadRootId,
   covered = false,
   entryReadSeq,
@@ -76,18 +85,22 @@ function ChannelMessages({
   bubbles,
   initialRect,
 }: MessageListProps) {
-  const timeline = useTimeline(channelId, threadRootId);
+  const { timeline, ready } = useTimelineState(channelId, conversationId, threadRootId);
   const archived = useChannelArchived();
   // 승인 카드는 스토어에서 바로 읽는다(설계 5.3) — 카드 안은 `ApprovalCard` 가 스스로 구독하므로 여기는 행 자리만 본다.
-  // 스레드 런의 승인은 그 스레드에만(런의 소속으로 가른다, 판정 R3′)
+  // 그 세션의 승인만(계획 판정 PS7), 스레드 런의 승인은 그 스레드에만(런의 소속으로 가른다, 판정 R3′)
   const approvals = useApprovalStore(useShallow(selectChannelApprovals(channelId)));
   const runThreads = useRunStore((s) => s.threads);
   const approvalFacts = useMemo(
     () =>
       approvals
         .map((v) => v.approval)
-        .filter((a) => (a.runId === undefined ? undefined : runThreads[a.runId]) === threadRootId),
-    [approvals, runThreads, threadRootId],
+        .filter(
+          (a) =>
+            a.conversationId === conversationId &&
+            (a.runId === undefined ? undefined : runThreads[a.runId]) === threadRootId,
+        ),
+    [approvals, runThreads, conversationId, threadRootId],
   );
   const me = useMe().data?.user.id;
   const rows = useMemo(
@@ -150,8 +163,8 @@ function ChannelMessages({
     setStuckState(next);
   }, []);
   const [unseen, setSeen] = useUnseen(timeline, stuck, stuckRef);
-  const older = useOlderPages(channelId, threadRootId);
-  const newer = useNewerPages(channelId, threadRootId, hasNewer);
+  const older = useOlderPages(channelId, conversationId, threadRootId);
+  const newer = useNewerPages(channelId, conversationId, threadRootId, hasNewer);
   const qc = useQueryClient();
 
   /** 첫 붙임이 겨누는 곳 — 안 읽은 곳(「새 메시지」 행)이면 true, 아니면 맨 아래 */
@@ -174,7 +187,7 @@ function ChannelMessages({
     },
     [setStuck, virtualizer],
   );
-  const jump = useJump(channelId, threadRootId, timeline, rows, arrive);
+  const jump = useJump(channelId, conversationId, threadRootId, timeline, ready, rows, arrive);
   // 배너로 받은 창에서 첫 안 읽은 곳(구분선 행)으로 — 행은 받은 창이 목록에 반영된 뒤에야 생긴다. 받은 창에서 한 번만 찾는다:
   // 없다고 남겨 두면 나중에 다른 창(이어 받기·과거 페이지)에 구분선이 생기는 순간 보던 자리를 그리로 끌고 간다
   const [toUnread, setToUnread] = useState(false);
@@ -362,11 +375,14 @@ function ChannelMessages({
     markGoingToEnd();
     setStuck(true);
     if (hasNewer) {
-      loadLatest(qc, channelId, threadRootId).then(() => virtualizer.scrollToEnd(), reportPageError);
+      loadLatest(qc, channelId, conversationId, threadRootId).then(
+        () => virtualizer.scrollToEnd(),
+        reportPageError,
+      );
       return;
     }
     virtualizer.scrollToEnd();
-  }, [lastPending, virtualizer, hasNewer, qc, channelId, threadRootId, setStuck]);
+  }, [lastPending, virtualizer, hasNewer, qc, channelId, conversationId, threadRootId, setStuck]);
 
   // 끝에 붙은 채 마지막 행이 다른 key 로 바뀌면(버블 → 확정 메시지, 보내는 중 → 확정) 끝으로. 행 수가 같아 followOnAppend 가
   // 걸리지 않고, 새 행이 추정 높이로 먼저 잡혔다 재어지면 virtual-core 는 끝까지 남은 거리를 그대로 둔다.
@@ -426,7 +442,7 @@ function ChannelMessages({
   };
   const toLatest = async () => {
     try {
-      await loadLatest(qc, channelId, threadRootId);
+      await loadLatest(qc, channelId, conversationId, threadRootId);
     } catch (e) {
       reportPageError(e);
       return;
@@ -435,19 +451,19 @@ function ChannelMessages({
   };
 
   // 처음 안 읽은 곳이 불러온 가장 옛 메시지보다 앞이면 불러온 목록에 없다 — 그곳을 가운데 둔 창을 받는다.
-  // 구독 응답 전(`lastSeq` 0 — 사본에서 복원한 타임라인)에는 띄우지 않는다: 받은 창을 뒤이은 `fresh` 가 최신 쪽으로 덮는다(`useJump` 와 같다)
+  // 받은 것이 지금 것이 되기 전(사본에서 복원했거나 다시 받는 중)에는 띄우지 않는다: 받은 창을 뒤이은 다시 받기가 최신 쪽으로 덮는다(`useJump` 와 같다)
   const oldestSeq = timeline?.items[0]?.seq;
   const showBanner =
     entryReadSeq !== undefined &&
     !bannerGone &&
-    (timeline?.lastSeq ?? 0) > 0 &&
+    ready &&
     oldestSeq !== undefined &&
     entryReadSeq + 1 < oldestSeq;
   const toFirstUnread = async () => {
     if (entryReadSeq === undefined) return;
     let found: boolean;
     try {
-      found = await jumpToFirstRootAfter(qc, channelId, entryReadSeq);
+      found = await jumpToFirstRootAfter(qc, channelId, conversationId, entryReadSeq);
     } catch (e) {
       reportPageError(e);
       return;
@@ -655,7 +671,7 @@ function Skeleton() {
  * 복원한 타임라인은 그것이 0 이라(첫 구독을 새로 받게) 오프라인에서 위로 올리자마자 전부 새 메시지로 센다
  */
 function useUnseen(
-  timeline: ReturnType<typeof useTimeline>,
+  timeline: Timeline | undefined,
   stuck: boolean,
   stuckRef: { readonly current: boolean },
 ): [number, (seq: number) => void] {

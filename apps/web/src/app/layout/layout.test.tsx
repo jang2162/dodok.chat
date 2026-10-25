@@ -343,7 +343,7 @@ describe("AppShell", () => {
     const nav = within(sheet).getByRole("navigation", { name: "채널" });
     await userEvent.click(await within(nav).findByRole("link", { name: /random/ }));
 
-    await waitFor(() => expect(router.state.location.pathname).toBe("/c/b"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/c/b/s/b"));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "채널 목록" })).not.toBeInTheDocument());
     expect(screen.queryByRole("navigation", { name: "채널" })).not.toBeInTheDocument();
   });
@@ -358,7 +358,7 @@ describe("AppShell", () => {
     await userEvent.click(menu);
     const sheet = await screen.findByRole("dialog", { name: "채널 목록" });
     await userEvent.click(await within(sheet).findByRole("link", { name: /random/ }));
-    await waitFor(() => expect(router.state.location.pathname).toBe("/c/b"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/c/b/s/b"));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     await waitFor(() => expect(menu).toHaveFocus());
 
@@ -431,7 +431,12 @@ describe("AppShell", () => {
     await screen.findByTestId("page-agents");
     scrollTo.mockClear();
 
-    await act(() => router.navigate({ to: "/c/$channelId", params: { channelId: "a" } }));
+    await act(() =>
+      router.navigate({
+        to: "/c/$channelId/s/$conversationId",
+        params: { channelId: "a", conversationId: "a" },
+      }),
+    );
     await screen.findByTestId("page-channel");
     await waitFor(() => expect(scrollTo.mock.contexts).toContain(screen.getByTestId("page-scroll")));
   });

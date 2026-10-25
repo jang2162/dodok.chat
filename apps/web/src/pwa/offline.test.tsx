@@ -19,7 +19,7 @@ import { memoryStorage } from "../../test/memoryStorage";
 import { agentOf } from "../../test/settingsServer";
 import { stubScrollLayout } from "../../test/scrollLayout";
 import { ADAPTER_OK, ME, adapterStatusBody, channelOf, json, shellGet } from "../../test/shellApi";
-import { PERSIST_KEY, startPersistence, touchRecentChannel } from "./persist";
+import { PERSIST_KEY, startPersistence, touchRecentChannel, touchRecentConversation } from "./persist";
 
 const OFFLINE = "오프라인 — 저장된 내용을 보여 줍니다";
 const RECONNECTING = "서버에 다시 연결하는 중…";
@@ -140,11 +140,13 @@ describe("오프라인 사본으로 띄우기 (createApp + 메모리 히스토�
     qc.setQueryData(qk.agents, agents);
     if (people) qc.setQueryData(qk.people, people);
     touchRecentChannel(qc, CH);
+    // 그 채널에서 마지막으로 본 세션 — 「이전 대화」(id = 채널 id). 사본은 채널마다 그 세션 하나를 담는다
+    touchRecentConversation(qc, CH, CH);
     qc.setQueryData(qk.channel(CH), channelOf(CH, { name: "general" }));
     qc.setQueryData(qk.members(CH), []);
     const items = Array.from({ length: 60 }, (_, i) => msg(i + 1, { bodyMd: `메시지 ${i + 1}` }));
     if (last) items[59] = last;
-    qc.setQueryData<Timeline>(qk.timeline(CH), { items, pending: [], hasOlder: false, lastSeq: 60 });
+    qc.setQueryData<Timeline>(qk.timeline(CH, CH), { items, pending: [], hasOlder: false, lastSeq: 60 });
     await vi.waitFor(() => expect(storage.map.get(PERSIST_KEY)).toContain('"timeline"'));
     p.stop();
     return storage;
@@ -152,7 +154,7 @@ describe("오프라인 사본으로 띄우기 (createApp + 메모리 히스토�
 
   /** main.tsx 와 같은 배선(bootApp) — 그리기만 testing-library 로 */
   async function boot(storage: ReturnType<typeof memoryStorage>) {
-    const history = createMemoryHistory({ initialEntries: [`/c/${CH}`] });
+    const history = createMemoryHistory({ initialEntries: [`/c/${CH}/s/${CH}`] });
     const app = createApp(history);
     const moves: string[] = [];
     history.subscribe(({ location }) => moves.push(location.href));
@@ -171,7 +173,7 @@ describe("오프라인 사본으로 띄우기 (createApp + 메모리 히스토�
         throw new TypeError("Failed to fetch");
       }),
     );
-    const app = createApp(createMemoryHistory({ initialEntries: [`/c/${CH}`] }));
+    const app = createApp(createMemoryHistory({ initialEntries: [`/c/${CH}/s/${CH}`] }));
     const drawn = vi.fn();
     const booted = bootApp(app, { buster: "b1", storage, throttleMs: 30, render: drawn });
     await new Promise((r) => setTimeout(r, 20));
@@ -309,9 +311,9 @@ describe("오프라인 사본으로 띄우기 (createApp + 메모리 히스토�
 
     expect(await screen.findByRole("heading", { name: "로그인" })).toBeInTheDocument();
     expect(history.location.pathname).toBe("/login");
-    expect(new URLSearchParams(history.location.search).get("next")).toBe(`/c/${CH}`);
+    expect(new URLSearchParams(history.location.search).get("next")).toBe(`/c/${CH}/s/${CH}`);
     await waitFor(() => expect(storage.map.has(PERSIST_KEY)).toBe(false));
-    expect(app.queryClient.getQueryData(qk.timeline(CH))).toBeUndefined();
+    expect(app.queryClient.getQueryData(qk.timeline(CH, CH))).toBeUndefined();
     // 로그인 화면의 me 401 은 다시 보내지 않는다 — 이동 한 번, me 요청도 멈춘다
     const settled = meCalls(fetch);
     await act(() => new Promise((r) => setTimeout(r, 100)));
@@ -345,8 +347,13 @@ describe("오프라인 사본으로 띄우기 (createApp + 메모리 히스토�
       componentState: { expiresAt: "2999-01-01T00:00:00.000Z", consumed: [] },
     });
     const storage = await savedCopy(card);
+    // 다른 기기에서 누른 「+1」 — seq 는 그대로, interactions 만 바뀌었다(아래 pressed). 세션 REST 는 지금 값을 준다
+    let pressedNow: MessageInteraction[] = [];
     const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
-      if (String(input) === "/api/v1/auth/me") return json(200, ME);
+      const url = String(input);
+      if (url === "/api/v1/auth/me") return json(200, ME);
+      if (url.startsWith(`/api/v1/conversations/${CH}/messages`))
+        return json(200, { messages: [{ ...card, interactions: pressedNow }], hasMore: true });
       return shellGet(input, init) ?? json(200, { members: [] });
     });
     vi.stubGlobal("fetch", fetch);
@@ -354,7 +361,6 @@ describe("오프라인 사본으로 띄우기 (createApp + 메모리 히스토�
     expect(await screen.findByText("메시지 60")).toBeInTheDocument();
     expect(screen.queryByRole("list", { name: "상호작용 기록" })).toBeNull();
 
-    // 다른 기기에서 누른 「+1」 — seq 는 그대로, interactions 만 바뀌었다
     const pressed: MessageInteraction = {
       id: uid(700),
       componentId: "cmp_1",
@@ -366,15 +372,12 @@ describe("오프라인 사본으로 띄우기 (createApp + 메모리 히스토�
     await waitFor(() => expect(createdSockets).toHaveLength(1));
     const fake = createdSockets[0];
     if (!fake) throw new Error("no socket");
-    // 서버처럼: 이어 받기(lastSeq)면 그 뒤 메시지만 — 카드 갱신은 seq 가 같아 오지 않는다. 새로 받기면 최신 페이지
-    fake.onAck("channel.subscribe", (payload) => ({
+    pressedNow = [pressed];
+    // 서버처럼: 처음 구독은 메시지 없이 커서만(판정 PS5), 이어 받기(lastSeq)면 그 뒤 메시지만 — 카드 갱신은 seq 가 같아 오지 않는다.
+    // 그래서 복원한 세션은 첫 구독 뒤 세션 REST 로 다시 받아야 결과 줄이 보인다
+    fake.onAck("channel.subscribe", () => ({
       ok: true,
-      data: {
-        messages: (payload as { lastSeq?: number }).lastSeq ? [] : [{ ...card, interactions: [pressed] }],
-        hasMore: true,
-        activeRuns: [],
-        pendingApprovals: [],
-      },
+      data: { messages: [], hasMore: false, latestSeq: 60, activeRuns: [], pendingApprovals: [] },
     }));
     fake.socket.connected = true;
     act(() => fake.serverEmit("connect"));

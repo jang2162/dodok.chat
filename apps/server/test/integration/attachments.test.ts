@@ -27,7 +27,7 @@ import {
   uploadImage,
 } from "../helpers/scenario-steps";
 import type { WireClient } from "../helpers/wire";
-import { channelConversation, seedConversation } from "../helpers/seed";
+import { channelConversation, seedConversation, sendTarget } from "../helpers/seed";
 
 vi.setConfig({ testTimeout: 20_000, hookTimeout: 20_000 });
 
@@ -77,8 +77,15 @@ describe("통합 시나리오 11 — 첨부", () => {
       { timeout: 5_000 },
     );
 
+  /** 그 채널의 열린 세션(테스트는 채널마다 세션 하나) 타임라인 — 채널 경로 목록은 걷었다(채널 세션 계획 판정 PS5) */
   const channelMessages = async (l: LiveApp, channelId: string) =>
-    (await rest<{ messages: Message[] }>(l, "GET", `/channels/${channelId}/messages`)).body.messages;
+    (
+      await rest<{ messages: Message[] }>(
+        l,
+        "GET",
+        `/conversations/${channelConversation(l.app.db, channelId)}/messages`,
+      )
+    ).body.messages;
 
   it("11a 사람 이미지 → message.created 에 artifact:// 첨부, 인바운드에 같은 것, 브리지 받기가 같은 바이트", async () => {
     const l = await boot();
@@ -145,6 +152,7 @@ describe("통합 시나리오 11 — 첨부", () => {
     for (const id of [theirs.id, elsewhere.id, uuid()]) {
       const res = await log.socket.emitWithAck("message.send", {
         channelId: setup.channel.id,
+        ...sendTarget(l.app.db, setup.channel.id),
         clientMsgId: uuid(),
         bodyMd: "x",
         attachments: [id],

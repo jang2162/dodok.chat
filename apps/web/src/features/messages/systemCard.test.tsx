@@ -68,7 +68,7 @@ describe("run_limit 카드", () => {
     renderCard(message, "owner");
     const note = screen.getByRole("note");
     const link = within(note).getByRole("link", { name: "채널 설정에서 한도 바꾸기" });
-    expect(link).toHaveAttribute("href", `/c/${message.channelId}/settings`);
+    expect(link).toHaveAttribute("href", `/c/${message.channelId}/s/${message.channelId}/settings`);
     expect(within(note).queryByRole("link", { name: "운영에서 한도 바꾸기" })).not.toBeInTheDocument();
   });
 

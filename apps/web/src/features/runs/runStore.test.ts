@@ -131,7 +131,7 @@ describe("런의 스레드 소속(판정 R3′)", () => {
     useRunStore.getState().applyState(state({ id: R1, status: "streaming" }));
     useRunStore.getState().applyState(state({ id: R1, status: "done" }));
     expect(useRunStore.getState().runs[R1]?.threadRootId).toBe(ROOT);
-    expect(selectScopeRuns(C1)(useRunStore.getState())).toEqual([]);
+    expect(selectScopeRuns(C1, C1)(useRunStore.getState())).toEqual([]);
   });
 
   it("selectScopeRuns: 채널 범위는 스레드 런을, 스레드 범위는 채널 런·다른 스레드 런을 뺀다", () => {
@@ -140,10 +140,23 @@ describe("런의 스레드 소속(판정 R3′)", () => {
     s.applyState(state({ id: R2, threadRootId: ROOT }));
     s.applyState(state({ id: R3, threadRootId: id(501) }));
     const now = useRunStore.getState();
-    expect(selectScopeRuns(C1)(now).map((v) => v.state.id)).toEqual([R1]);
-    expect(selectScopeRuns(C1, ROOT)(now).map((v) => v.state.id)).toEqual([R2]);
+    expect(selectScopeRuns(C1, C1)(now).map((v) => v.state.id)).toEqual([R1]);
+    expect(selectScopeRuns(C1, C1, ROOT)(now).map((v) => v.state.id)).toEqual([R2]);
     // 활동 탭·재동기화는 여전히 채널의 전부를 본다
     expect(selectChannelRuns(C1)(now)).toHaveLength(3);
+  });
+
+  it("selectScopeRuns: 같은 채널의 다른 세션 런은 빼다 — 버블·/stop 이 세션을 넘지 않는다(채널 세션 계획 판정 PS7)", () => {
+    const other = id(601);
+    const s = useRunStore.getState();
+    s.applyState(state({ id: R1 }));
+    s.applyState(state({ id: R2, conversationId: other }));
+    s.applyState(state({ id: R3, conversationId: other, threadRootId: ROOT }));
+    const now = useRunStore.getState();
+    expect(selectScopeRuns(C1, C1)(now).map((v) => v.state.id)).toEqual([R1]);
+    expect(selectScopeRuns(C1, other)(now).map((v) => v.state.id)).toEqual([R2]);
+    expect(selectScopeRuns(C1, C1, ROOT)(now)).toEqual([]);
+    expect(selectScopeRuns(C1, other, ROOT)(now).map((v) => v.state.id)).toEqual([R3]);
   });
 
   it("런을 스토어에서 지워도 스레드 소속은 남는다 — 확정된 승인 카드가 채널로 새지 않게", () => {

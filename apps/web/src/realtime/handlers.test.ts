@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type AdapterStatusResponse, qk } from "@/api/queries";
 import { createQueryClient } from "@/app/queryClient";
 import { fromLatest, jumpAround, threadFromPage } from "@/features/messages/timeline";
+import { conversationTimelineQuery } from "@/features/messages/useTimeline";
 import { threadQuery } from "@/features/threads/queries";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
 import { notifyApproval, resetApprovalNotices } from "@/features/approvals/notify";
@@ -37,15 +38,24 @@ import {
 } from "../../test/fixtures";
 import { attachHandlers, NOTICE_DURATION_MS } from "./handlers";
 import { createSubscriptions } from "./subscriptions";
-import { getThread, getTimeline, updateTimeline } from "./timelineCache";
+import { getChannelSeq, getThread, getTimeline, setChannelSeq, updateTimeline } from "./timelineCache";
 import { typingActors, useTypingStore } from "./typing";
 
 vi.mock("sonner", () => ({ toast: { info: vi.fn(), warning: vi.fn(), error: vi.fn() } }));
 
 const ok = <T>(data: T): Result<T> => ({ ok: true, data });
-const seqs = (qc: QueryClient, channelId = CH) => getTimeline(qc, channelId)?.items.map((m) => m.seq);
-const seed = (qc: QueryClient, messages = [msg(1), msg(2)], channelId = CH) =>
-  updateTimeline(qc, channelId, (t) => fromLatest(t, messages, false));
+const seqs = (qc: QueryClient, channelId = CH) =>
+  getTimeline(qc, channelId, channelId)?.items.map((m) => m.seq);
+/** 구독해 둔 채널의 받아 둔 세션 — 캐시와 함께 채널 커서(본 가장 큰 seq)를 세운다(채널 세션 계획 판정 PS6) */
+const seed = (qc: QueryClient, messages = [msg(1), msg(2)], channelId = CH, conversationId = channelId) => {
+  updateTimeline(qc, channelId, conversationId, (t) => fromLatest(t, messages, false));
+  const seen = getChannelSeq(qc, channelId) ?? 0;
+  setChannelSeq(
+    qc,
+    channelId,
+    messages.reduce((n, m) => Math.max(n, m.seq), seen),
+  );
+};
 
 const channel = (over: Partial<Channel> = {}): Channel =>
   Channel.parse({
@@ -62,14 +72,17 @@ const channel = (over: Partial<Channel> = {}): Channel =>
 
 const detachers: Array<() => void> = [];
 
-/** 알림이 보는 화면 사정 — 테스트가 「지금 보고 있는 채널」을 정하고 「눌러서 연 채널」을 받아 본다 */
-const screenNow: { channelId: string | undefined; opened: string[] } = {
-  channelId: undefined,
-  opened: [],
-};
+/** 알림이 보는 화면 사정 — 테스트가 「지금 보고 있는 채널·세션」을 정하고 「눌러서 연 채널」을 받아 본다 */
+const screenNow: {
+  channelId: string | undefined;
+  conversationId: string | undefined;
+  opened: string[];
+} = { channelId: undefined, conversationId: undefined, opened: [] };
 const notify = {
   currentChannelId: () => screenNow.channelId,
-  openActivity: (channelId: string) => screenNow.opened.push(channelId),
+  currentConversationId: () => screenNow.conversationId,
+  openActivity: (channelId: string, conversationId: string) =>
+    screenNow.opened.push(`${channelId}/${conversationId}`),
 };
 
 /** 실제 QueryClient(createQueryClient)·구독 관리자 위에 핸들러를 붙인다. onUnauthorized 는 앱과 같은 하나 */
@@ -80,7 +93,7 @@ function setup() {
   fake.onAck("channel.unsubscribe", () => ok(null));
   const onUnauthorized = vi.fn();
   const queryClient = createQueryClient(onUnauthorized);
-  const subscriptions = createSubscriptions({ socket: fake.wire, queryClient, fetchPage: vi.fn() });
+  const subscriptions = createSubscriptions({ socket: fake.wire, queryClient });
   const detach = attachHandlers(fake.wire, { queryClient, subscriptions, onUnauthorized, notify });
   detachers.push(detach);
   return { fake, queryClient, subscriptions, onUnauthorized, detach };
@@ -91,8 +104,9 @@ beforeEach(() => {
   useApprovalStore.getState().reset();
   resetApprovalNotices();
   screenNow.channelId = undefined;
+  screenNow.conversationId = undefined;
   screenNow.opened = [];
-  useTypingStore.setState({ byChannel: {} });
+  useTypingStore.setState({ byConversation: {} });
   vi.clearAllMocks();
 });
 afterEach(() => {
@@ -108,7 +122,55 @@ describe("타임라인 이벤트", () => {
     fake.serverEmit("message.created", { message: msg(1, { channelId: CH2, id: uid(20_001) }) });
 
     expect(seqs(queryClient)).toEqual([1, 2, 3]);
-    expect(getTimeline(queryClient, CH2)).toBeUndefined();
+    expect(getTimeline(queryClient, CH2, CH2)).toBeUndefined();
+  });
+
+  it("message.created(세션 B)는 B 의 캐시가 있을 때만 넣는다 — 보고 있는 세션 A 에 섞이지 않고, 받은 적 없는 B 는 만들지 않되 채널 커서는 올린다(판정 PS6)", () => {
+    const { fake, queryClient, subscriptions } = setup();
+    const catchUp = vi.spyOn(subscriptions, "catchUp").mockResolvedValue();
+    const B = uid(3_001);
+    const inB = (seq: number) => msg(seq, { conversationId: B, id: uid(30_000 + seq) });
+    seed(queryClient);
+
+    fake.serverEmit("message.created", { message: inB(3) });
+    expect(seqs(queryClient)).toEqual([1, 2]);
+    expect(getTimeline(queryClient, CH, B)).toBeUndefined();
+    expect(getChannelSeq(queryClient, CH)).toBe(3);
+
+    // 다음 A 의 글(seq 4)은 빈틈이 아니다 — B 의 글도 채널 번호를 같이 쓴다
+    fake.serverEmit("message.created", { message: msg(4) });
+    expect(seqs(queryClient)).toEqual([1, 2, 4]);
+    expect(catchUp).not.toHaveBeenCalled();
+
+    // B 를 받아 두었으면 B 에만 들어간다
+    seed(queryClient, [inB(3)], CH, B);
+    fake.serverEmit("message.created", { message: inB(5) });
+    expect(getTimeline(queryClient, CH, B)?.items.map((m) => m.seq)).toEqual([3, 5]);
+    expect(seqs(queryClient)).toEqual([1, 2, 4]);
+  });
+
+  it("세션 B 의 첫 페이지를 받는 사이 온 B 의 글은 받은 결과에 얹힌다 — 캐시가 없다고 버리지 않는다", async () => {
+    const { fake, queryClient } = setup();
+    const B = uid(3_001);
+    const inB = (seq: number) => msg(seq, { conversationId: B, id: uid(30_000 + seq) });
+    seed(queryClient);
+    let open = () => {};
+    const gate = new Promise<void>((resolve) => (open = resolve));
+    const fetchMock = vi.fn(async () => {
+      await gate;
+      // 요청 때의 스냅숏 — 그 뒤에 온 B 의 글(seq 3)은 없다
+      return new Response(JSON.stringify({ messages: [], hasMore: false }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const loading = queryClient.fetchQuery(conversationTimelineQuery(queryClient, CH, B));
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    fake.serverEmit("message.created", { message: inB(3) });
+    open();
+    await loading;
+    vi.unstubAllGlobals();
+
+    expect(getTimeline(queryClient, CH, B)?.items.map((m) => m.seq)).toEqual([3]);
+    expect(seqs(queryClient)).toEqual([1, 2]);
   });
 
   it("message.created 가 빈틈(lastSeq + 1 보다 큼)이면 넣지 않고 catchUp 한다", () => {
@@ -146,11 +208,11 @@ describe("타임라인 이벤트", () => {
     fake.serverEmit("message.updated", { message: msg(3, { bodyMd: "옛것" }) });
     fake.serverEmit("message.updated", { message: msg(1, { channelId: CH2, id: uid(20_001) }) });
 
-    expect(getTimeline(queryClient, CH)?.items.map((m) => [m.seq, m.bodyMd])).toEqual([
+    expect(getTimeline(queryClient, CH, CH)?.items.map((m) => [m.seq, m.bodyMd])).toEqual([
       [10, "m10"],
       [11, "고침"],
     ]);
-    expect(getTimeline(queryClient, CH2)).toBeUndefined();
+    expect(getTimeline(queryClient, CH2, CH2)).toBeUndefined();
   });
 });
 
@@ -161,8 +223,9 @@ describe("결과로 가기(around)로 갈아 끼운 뒤의 wire 이벤트", () =
   function jumped(hasMoreAfter = true) {
     const t = setup();
     seed(t.queryClient, [msg(40), msg(44)]);
-    updateTimeline(t.queryClient, CH, (x) => ({ ...x, lastSeq: 46 }));
-    updateTimeline(t.queryClient, CH, (x) =>
+    updateTimeline(t.queryClient, CH, CH, (x) => ({ ...x, lastSeq: 46 }));
+    setChannelSeq(t.queryClient, CH, 46);
+    updateTimeline(t.queryClient, CH, CH, (x) =>
       jumpAround(x, { messages: [msg(5), msg(9), msg(12)], hasMore: true, hasMoreAfter }),
     );
     return { ...t, catchUp: vi.spyOn(t.subscriptions, "catchUp").mockResolvedValue() };
@@ -176,13 +239,13 @@ describe("결과로 가기(around)로 갈아 끼운 뒤의 wire 이벤트", () =
 
     expect(catchUp).not.toHaveBeenCalled();
     expect(seqs(queryClient)).toEqual([5, 9, 12]);
-    expect(getTimeline(queryClient, CH)?.lastSeq).toBe(49);
+    expect(getTimeline(queryClient, CH, CH)?.lastSeq).toBe(49);
   });
 
   it("창 안 루트의 수정(message.updated)은 그대로 반영한다", () => {
     const { fake, queryClient } = jumped();
     fake.serverEmit("message.updated", { message: msg(9, { bodyMd: "고침" }) });
-    expect(getTimeline(queryClient, CH)?.items[1]?.bodyMd).toBe("고침");
+    expect(getTimeline(queryClient, CH, CH)?.items[1]?.bodyMd).toBe("고침");
   });
 
   it("진짜 빈틈(채널의 끝 + 1 보다 큼)은 여전히 catchUp — 기준은 창의 끝이 아니라 채널의 끝", () => {
@@ -199,15 +262,16 @@ describe("결과로 가기(around)로 갈아 끼운 뒤의 wire 이벤트", () =
       ok<ChannelSubscribeResult>({
         messages: [msg(47), reply(48)],
         hasMore: false,
+        latestSeq: 48,
         activeRuns: [],
         pendingApprovals: [],
       }),
     );
     fake.serverEmit("message.created", { message: msg(50) });
-    await vi.waitFor(() => expect(getTimeline(queryClient, CH)?.lastSeq).toBe(48));
+    await vi.waitFor(() => expect(getTimeline(queryClient, CH, CH)?.lastSeq).toBe(48));
     expect(fake.sentOf("channel.subscribe")).toEqual([{ channelId: CH, lastSeq: 46 }]);
     expect(seqs(queryClient)).toEqual([5, 9, 12]);
-    expect(getTimeline(queryClient, CH)?.hasNewer).toBe(true);
+    expect(getTimeline(queryClient, CH, CH)?.hasNewer).toBe(true);
   });
 
   it("페이지가 끝까지 닿았으면(hasMoreAfter 없음) 새 루트는 끝에 붙는다", () => {
@@ -225,8 +289,8 @@ describe("스레드 답글 이벤트(스레드·검색 스펙 4.1 — 채널 룸
   const summary = (count: number) => ({ count, lastAt: msg(9).createdAt, agentIds: [] });
   /** 연 스레드(REST 로 받은 첫 페이지) */
   const openThread = (qc: QueryClient, messages = [ROOT, reply(2)]) =>
-    qc.setQueryData(qk.thread(CH, ROOT.id), threadFromPage(undefined, ROOT, messages, false));
-  const threadSeqs = (qc: QueryClient) => getThread(qc, CH, ROOT.id)?.items.map((m) => m.seq);
+    qc.setQueryData(qk.thread(CH, CH, ROOT.id), threadFromPage(undefined, ROOT, messages, false));
+  const threadSeqs = (qc: QueryClient) => getThread(qc, CH, CH, ROOT.id)?.items.map((m) => m.seq);
 
   it("답글은 채널 타임라인에 넣지 않고 lastSeq 만 올린다 — 연 스레드 캐시에 넣는다", () => {
     const { fake, queryClient, subscriptions } = setup();
@@ -241,7 +305,7 @@ describe("스레드 답글 이벤트(스레드·검색 스펙 4.1 — 채널 룸
     fake.serverEmit("message.created", { message: reply(3) });
 
     expect(seqs(queryClient)).toEqual([1]);
-    expect(getTimeline(queryClient, CH)?.lastSeq).toBe(3);
+    expect(getTimeline(queryClient, CH, CH)?.lastSeq).toBe(3);
     expect(threadSeqs(queryClient)).toEqual([1, 2, 3]);
     expect(catchUp).not.toHaveBeenCalled();
   });
@@ -275,7 +339,7 @@ describe("스레드 답글 이벤트(스레드·검색 스펙 4.1 — 채널 룸
     const { fake, queryClient } = setup();
     seed(queryClient, [ROOT]);
     fake.serverEmit("message.created", { message: reply(2) });
-    expect(getThread(queryClient, CH, ROOT.id)).toBeUndefined();
+    expect(getThread(queryClient, CH, CH, ROOT.id)).toBeUndefined();
   });
 
   it("루트 message.updated(요약)는 채널 캐시의 루트를, 연 스레드의 루트도 바꾼다", () => {
@@ -284,8 +348,8 @@ describe("스레드 답글 이벤트(스레드·검색 스펙 4.1 — 채널 룸
     openThread(queryClient);
     fake.serverEmit("message.updated", { message: msg(1, { threadSummary: summary(2) }) });
 
-    expect(getTimeline(queryClient, CH)?.items[0]?.threadSummary).toEqual(summary(2));
-    expect(getThread(queryClient, CH, ROOT.id)?.items[0]?.threadSummary).toEqual(summary(2));
+    expect(getTimeline(queryClient, CH, CH)?.items[0]?.threadSummary).toEqual(summary(2));
+    expect(getThread(queryClient, CH, CH, ROOT.id)?.items[0]?.threadSummary).toEqual(summary(2));
   });
 
   it("적재 범위 밖의 루트 수정도 연 스레드의 루트는 바꾼다(채널 목록에는 넣지 않는다)", () => {
@@ -295,26 +359,26 @@ describe("스레드 답글 이벤트(스레드·검색 스펙 4.1 — 채널 룸
     fake.serverEmit("message.updated", { message: msg(1, { bodyMd: "고침" }) });
 
     expect(seqs(queryClient)).toEqual([10, 11]);
-    expect(getThread(queryClient, CH, ROOT.id)?.items[0]?.bodyMd).toBe("고침");
+    expect(getThread(queryClient, CH, CH, ROOT.id)?.items[0]?.bodyMd).toBe("고침");
   });
 
   it("답글 message.updated(카드 상호작용)는 스레드 캐시의 그 답글을 바꾼다 — 채널 목록은 그대로", () => {
     const { fake, queryClient } = setup();
     seed(queryClient, [ROOT]);
-    updateTimeline(queryClient, CH, (t) => ({ ...t, lastSeq: 2 }));
+    setChannelSeq(queryClient, CH, 2);
     openThread(queryClient);
     fake.serverEmit("message.updated", { message: reply(2, { bodyMd: "고친 답글" }) });
 
     expect(seqs(queryClient)).toEqual([1]);
-    expect(getThread(queryClient, CH, ROOT.id)?.items[1]?.bodyMd).toBe("고친 답글");
+    expect(getThread(queryClient, CH, CH, ROOT.id)?.items[1]?.bodyMd).toBe("고친 답글");
   });
 
   it("과거가 남은 스레드에서 가장 옛 답글보다 앞 답글의 수정은 넣지 않는다 — 범위 안 수정은 넣는다", () => {
     const { fake, queryClient } = setup();
     seed(queryClient, [ROOT]);
-    updateTimeline(queryClient, CH, (t) => ({ ...t, lastSeq: 11 }));
+    setChannelSeq(queryClient, CH, 11);
     queryClient.setQueryData(
-      qk.thread(CH, ROOT.id),
+      qk.thread(CH, CH, ROOT.id),
       threadFromPage(undefined, ROOT, [reply(10), reply(11)], true),
     );
 
@@ -322,7 +386,7 @@ describe("스레드 답글 이벤트(스레드·검색 스펙 4.1 — 채널 룸
     expect(threadSeqs(queryClient)).toEqual([1, 10, 11]);
 
     fake.serverEmit("message.updated", { message: reply(11, { bodyMd: "고친 답글" }) });
-    expect(getThread(queryClient, CH, ROOT.id)?.items[2]?.bodyMd).toBe("고친 답글");
+    expect(getThread(queryClient, CH, CH, ROOT.id)?.items[2]?.bodyMd).toBe("고친 답글");
   });
 
   describe("스레드 REST 가 도는 사이 온 답글이 스레드에 남는다(p4t-t6 리뷰 I1)", () => {
@@ -352,10 +416,10 @@ describe("스레드 답글 이벤트(스레드·검색 스펙 4.1 — 채널 룸
       const { fake, queryClient, subscriptions } = setup();
       const catchUp = vi.spyOn(subscriptions, "catchUp").mockResolvedValue();
       seed(queryClient, [ROOT]);
-      updateTimeline(queryClient, CH, (t) => ({ ...t, lastSeq: 2 }));
+      setChannelSeq(queryClient, CH, 2);
       const rest = gateThreadRest();
 
-      const loading = queryClient.fetchQuery(threadQuery(queryClient, CH, ROOT.id));
+      const loading = queryClient.fetchQuery(threadQuery(queryClient, CH, CH, ROOT.id));
       await vi.waitFor(() => expect(rest.calls).toHaveLength(1));
       fake.serverEmit("message.created", { message: reply(3) });
       rest.open();
@@ -368,14 +432,14 @@ describe("스레드 답글 이벤트(스레드·검색 스펙 4.1 — 채널 룸
     it("다시 받기(invalidate) — 옛 캐시에 들어간 답글을 새 페이지가 지우지 않는다", async () => {
       const { fake, queryClient } = setup();
       seed(queryClient, [ROOT]);
-      updateTimeline(queryClient, CH, (t) => ({ ...t, lastSeq: 2 }));
+      setChannelSeq(queryClient, CH, 2);
       const first = gateThreadRest();
       first.open();
-      await queryClient.fetchQuery(threadQuery(queryClient, CH, ROOT.id));
+      await queryClient.fetchQuery(threadQuery(queryClient, CH, CH, ROOT.id));
       expect(threadSeqs(queryClient)).toEqual([1, 2]);
 
       const rest = gateThreadRest();
-      const again = queryClient.invalidateQueries({ queryKey: qk.threads(CH), refetchType: "all" });
+      const again = queryClient.invalidateQueries({ queryKey: qk.threads(CH, CH), refetchType: "all" });
       await vi.waitFor(() => expect(rest.calls).toHaveLength(1));
       fake.serverEmit("message.created", { message: reply(3) });
       expect(threadSeqs(queryClient)).toEqual([1, 2, 3]);
@@ -388,16 +452,16 @@ describe("스레드 답글 이벤트(스레드·검색 스펙 4.1 — 채널 룸
     it("받는 중 온 수정도 순서대로 얹는다 — 스냅숏의 옛 본문이 이기지 않는다", async () => {
       const { fake, queryClient } = setup();
       seed(queryClient, [ROOT]);
-      updateTimeline(queryClient, CH, (t) => ({ ...t, lastSeq: 2 }));
+      setChannelSeq(queryClient, CH, 2);
       const rest = gateThreadRest();
 
-      const loading = queryClient.fetchQuery(threadQuery(queryClient, CH, ROOT.id));
+      const loading = queryClient.fetchQuery(threadQuery(queryClient, CH, CH, ROOT.id));
       await vi.waitFor(() => expect(rest.calls).toHaveLength(1));
       fake.serverEmit("message.updated", { message: reply(2, { bodyMd: "고친 답글" }) });
       rest.open();
       await loading;
 
-      expect(getThread(queryClient, CH, ROOT.id)?.items[1]?.bodyMd).toBe("고친 답글");
+      expect(getThread(queryClient, CH, CH, ROOT.id)?.items[1]?.bodyMd).toBe("고친 답글");
     });
   });
 });
@@ -440,6 +504,7 @@ describe("런 이벤트", () => {
       ok<ChannelSubscribeResult>({
         messages: [],
         hasMore: false,
+        latestSeq: 0,
         activeRuns: [runState()],
         pendingApprovals: [],
       }),
@@ -464,6 +529,7 @@ describe("런 이벤트", () => {
       ok<ChannelSubscribeResult>({
         messages: [],
         hasMore: false,
+        latestSeq: 0,
         activeRuns: [runState()],
         pendingApprovals: [],
       }),
@@ -532,9 +598,10 @@ describe("승인 알림", () => {
     vi.restoreAllMocks();
   });
 
-  it("다른 채널을 보고 있으면 알림을 띄우고, 누르면 그 채널 활동 탭으로 간다", () => {
+  it("다른 채널을 보고 있으면 알림을 띄우고, 누르면 그 승인의 세션 활동 탭으로 간다", () => {
     const { fake } = armed();
     screenNow.channelId = CH2;
+    screenNow.conversationId = CH2;
 
     fake.serverEmit("approval.requested", { approval: approval() });
 
@@ -544,7 +611,7 @@ describe("승인 알림", () => {
     // jsdom 에는 창을 앞으로 내는 동작이 없다 — 가짜로 둬야 「구현되지 않음」 잡음이 나지 않는다
     vi.spyOn(window, "focus").mockImplementation(() => {});
     stub.made[0]?.click();
-    expect(screenNow.opened).toEqual([CH]);
+    expect(screenNow.opened).toEqual([`${CH}/${CH}`]);
   });
 
   /**
@@ -617,18 +684,28 @@ describe("승인 알림", () => {
     }
   });
 
-  it("보고 있는 채널의 승인은 알리지 않는다 — 카드가 이미 화면에 있다", () => {
+  it("보고 있는 세션의 승인은 알리지 않는다 — 카드가 이미 화면에 있다", () => {
     const { fake } = armed();
     screenNow.channelId = CH;
+    screenNow.conversationId = CH;
     fake.serverEmit("approval.requested", { approval: approval() });
     expect(stub.made).toHaveLength(0);
     // 스토어에는 그대로 들어간다
     expect(useApprovalStore.getState().byChannel[CH]?.[APPROVAL]).toBeDefined();
   });
 
-  it("탭이 숨겨져 있으면 보고 있는 채널이어도 알린다", () => {
+  it("같은 채널의 다른 세션을 보고 있으면 알린다 — 카드는 그 승인의 세션에만 있다(채널 세션 계획 판정 PS7)", () => {
     const { fake } = armed();
     screenNow.channelId = CH;
+    screenNow.conversationId = uid(3_001);
+    fake.serverEmit("approval.requested", { approval: approval() });
+    expect(stub.made).toHaveLength(1);
+  });
+
+  it("탭이 숨겨져 있으면 보고 있는 세션이어도 알린다", () => {
+    const { fake } = armed();
+    screenNow.channelId = CH;
+    screenNow.conversationId = CH;
     vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
     fake.serverEmit("approval.requested", { approval: approval() });
     expect(stub.made).toHaveLength(1);
@@ -948,12 +1025,13 @@ describe("캐시 패치", () => {
 });
 
 describe("작성 중·알림", () => {
-  it("typing 은 작성 중 저장소에 기록한다", () => {
+  it("typing 은 그 세션의 작성 중 저장소에 기록한다 — 같은 채널의 다른 세션에는 보이지 않는다(판정 PS7)", () => {
     const { fake } = setup();
-    fake.serverEmit("typing", { channelId: CH, actorType: "agent", actorId: AGENT });
+    fake.serverEmit("typing", { channelId: CH, conversationId: CH, actorType: "agent", actorId: AGENT });
     expect(typingActors(useTypingStore.getState(), CH, Date.now())).toEqual([
       { actorType: "agent", actorId: AGENT },
     ]);
+    expect(typingActors(useTypingStore.getState(), uid(3_001), Date.now())).toEqual([]);
   });
 
   it("system.notice 는 수준별 토스트 — info 4초·warn 6초·error 유지", () => {

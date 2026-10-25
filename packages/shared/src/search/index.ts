@@ -17,6 +17,8 @@ export type SearchQuery = z.infer<typeof SearchQuery>;
 export const SearchHit = z.object({
   messageId: Id,
   channelId: Id,
+  /** 그 메시지의 세션 — 결과로 가기가 `/c/<channelId>/s/<conversationId>` 로 간다 */
+  conversationId: Id,
   /** 결과로 가기가 `?around=<seq>` 로 그 자리를 받는다 — 답글이면 채널 타임라인은 서버가 그 루트를 가운데로 둔다 */
   seq: z.number().int().min(1),
   threadRootId: Id.optional(),
