@@ -26,7 +26,7 @@ import { testEnv } from "./helpers/env";
 import { FAKE_GATEWAY_ID, fakeGatewayStatus } from "./helpers/gateways";
 import { connectWire, openWire, type WireClient, waitFor } from "./helpers/wire";
 import { openclawOf, soleGateway } from "./helpers/openclaw";
-import { channelConversation } from "./helpers/seed";
+import { channelConversation, seedAgentSession } from "./helpers/seed";
 
 type Method = "GET" | "POST" | "PATCH";
 
@@ -649,6 +649,8 @@ describe("실제 어댑터(createOpenClawAdapter) 부팅", () => {
       });
 
       const { agentId, channelId } = seedAgentChannel(app, "real", undefined, gatewayId);
+      // 런 없는 정본은 서버가 만든 세션의 키로만 받는다 — dev 가 이 채널 세션에서 불린 적이 있다
+      seedAgentSession(app.db, { conversationId: channelConversation(app.db, channelId), agentId });
       const plugin = connectSocket(`${app.url}/bridge`, {
         transports: ["websocket"],
         auth: { token: bridgeToken },
@@ -687,7 +689,7 @@ describe("실제 어댑터(createOpenClawAdapter) 부팅", () => {
       expect(stored).toEqual([
         expect.objectContaining({ id: ack.data?.messageId, authorId: agentId, bodyMd: "정본" }),
       ]);
-      // 다른 채널 세션이 보관한 채널에 쓰는 새 글 — 저장의 계약 오류 코드가 플러그인 ack 까지 간다
+      // 다른 채널 세션이 보관한 채널에 쓰는 새 글 — 대화 밖 전송 거절(FORBIDDEN)의 오류 코드가 플러그인 ack 까지 간다
       const archived = seedAgentChannel(app, "archived", agentId, gatewayId).channelId;
       const archivedRes = await app.fastify.inject({
         method: "POST",
@@ -704,7 +706,10 @@ describe("실제 어댑터(createOpenClawAdapter) 부팅", () => {
         attachmentIds: [],
         ts: new Date().toISOString(),
       });
-      expect(refused).toMatchObject({ ok: false, error: { code: "CHANNEL_ARCHIVED" } });
+      expect(refused).toMatchObject({
+        ok: false,
+        error: { code: "FORBIDDEN", message: "이 대화에만 보낼 수 있습니다" },
+      });
       expect(listMessages(app.db, archived, { limit: 10 }).messages).toEqual([]);
 
       const notice = new Promise((resolve) => plugin.once("system.notice", resolve));

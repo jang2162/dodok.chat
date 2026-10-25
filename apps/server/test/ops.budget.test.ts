@@ -15,7 +15,7 @@ import type { Orchestrator } from "../src/modules/runs/orchestrator";
 import { countRunsTodayInWorkspace, insertRun } from "../src/modules/runs/store";
 import { ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
-import { channelConversation, seedWorkspace } from "./helpers/seed";
+import { channelConversation, seedConversation, seedWorkspace } from "./helpers/seed";
 
 // 「하루」는 서버 현지 자정이다 — 현지 시각 생성자로 TZ 와 무관하게 경계를 만든다
 const ROOT = uuid();
@@ -180,6 +180,24 @@ describe("RunGate", () => {
     gate.check(channelConversation(db, b.id));
     gate.check(channelConversation(db, a.id));
     expect(limitMessages().map((m) => m.channelId)).toEqual([a.id, b.id]);
+  });
+
+  it("같은 채널의 두 세션 — 세션 A 에서 막힌 뒤 세션 B 에서 막히면 알림이 A·B 에 하나씩, 같은 세션에서 다시 막히면 더 없다", () => {
+    const c = channel({ dailyRunLimit: 1 });
+    const a = seedConversation(db, c.id, { title: "A" });
+    const b = seedConversation(db, c.id, { title: "B" });
+    fill(c.id, 1);
+    expect(gate.check(a)).toEqual({ scope: "channel", limit: 1 });
+    clock = DAY(13);
+    expect(gate.check(b)).toEqual({ scope: "channel", limit: 1 });
+    expect(gate.check(a)).toEqual({ scope: "channel", limit: 1 });
+    expect(gate.check(b)).toEqual({ scope: "channel", limit: 1 });
+    expect(limitMessages().map((m) => [m.channelId, m.conversationId])).toEqual([
+      [c.id, a],
+      [c.id, b],
+    ]);
+    // 사건은 채널 단위 한 줄 그대로
+    expect(events().map((r) => [r.key, r.count])).toEqual([[`channel:${c.id}`, 4]]);
   });
 
   it("없는 대화 id 면 NOT_FOUND — 한도 안으로 통과시키지 않는다", () => {

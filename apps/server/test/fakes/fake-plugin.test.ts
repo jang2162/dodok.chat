@@ -20,6 +20,7 @@ function sampleDelivery(overrides: Partial<InboundDeliver> = {}): InboundDeliver
     kind: "message",
     channelId: CHANNEL_ID,
     conversationId: CHANNEL_ID,
+    conversationTitle: "배포 점검",
     agentId: "dev",
     sessionKey: SESSION_KEY,
     runId: RUN_ID,

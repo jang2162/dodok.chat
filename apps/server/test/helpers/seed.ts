@@ -1,10 +1,12 @@
+import { dodokSessionKey } from "@dodok/shared";
 import { v7 as uuid } from "uuid";
 import { session, user } from "../../src/db/auth-schema";
-import type { DbOrTx } from "../../src/db/client";
+import type { Db, DbOrTx } from "../../src/db/client";
 import { eq } from "drizzle-orm";
 import { agents, channelMembers, channels, gateways, users, workspaces } from "../../src/db/schema.sqlite";
 import { FAKE_GATEWAY_ID, insertGateway } from "./gateways";
 import { createConversation, latestOpenConversation } from "../../src/modules/conversations/store";
+import { ensureSession } from "../../src/modules/sessions/service";
 
 /** workspace·user 만 삽입한다 — 채널·에이전트는 서비스로 만드는 테스트용 */
 export function seedWorkspace(
@@ -147,4 +149,15 @@ export function seedSession(
  */
 export function channelConversation(db: DbOrTx, channelId: string): string {
   return latestOpenConversation(db, channelId) ?? seedConversation(db, channelId);
+}
+
+/**
+ * 그 에이전트의 세션 행(디스패치가 만드는 것과 같은 키) — 런 없는 정본은 서버가 만든 세션의 키로 와야 받는다(orchestrator
+ * `isOwnSession`). 인바운드 없이 정본부터 보내는 테스트가 「이 세션에서 불린 적이 있다」를 먼저 둔다
+ */
+export function seedAgentSession(
+  db: Db,
+  input: { conversationId: string; agentId: string; threadRootId?: string },
+): void {
+  ensureSession(db, { sessionKeyFor: dodokSessionKey }, input);
 }

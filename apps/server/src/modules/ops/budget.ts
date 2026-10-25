@@ -21,8 +21,8 @@ export type LimitHit = { scope: "channel" | "workspace"; limit: number };
  */
 export interface RunGate {
   /**
-   * 한도 안이면 null. 넘으면 LimitHit — 그 대화의 채널에 오늘 같은 scope 의 run_limit 시스템 메시지가 없으면 그 대화에 남기고 사건
-   * run_limit 을 기록한다. 한도는 채널·워크스페이스 단위다. 스레드에서 막혔으면 알림은 그 스레드에 남는다(하루 한 번은 채널 단위 그대로).
+   * 한도 안이면 null. 넘으면 LimitHit — 그 대화에 오늘 같은 scope 의 run_limit 시스템 메시지가 없으면 그 대화에 남기고 사건
+   * run_limit 을 기록한다. 한도는 채널·워크스페이스 단위다. 스레드에서 막혔으면 알림은 그 스레드에 남는다(하루 한 번은 대화 단위).
    * 대화가 없으면 NOT_FOUND 를 던진다
    */
   check(conversationId: string, threadRootId?: string): LimitHit | null;
@@ -60,14 +60,18 @@ export function createRunGate(deps: {
     return null;
   }
 
-  function announcedToday(channelId: string, scope: LimitHit["scope"], at: Date): boolean {
+  /**
+   * 「하루 한 번」은 대화(세션)마다다(채널 세션 스펙 「누가 답하나」 절) — 채널 단위로 세면 처음 막힌 세션에만 남고 다른 세션은
+   * 말없이 막힌다. 스레드 알림도 그 대화의 것으로 센다
+   */
+  function announcedToday(conversationId: string, scope: LimitHit["scope"], at: Date): boolean {
     const midnight = new Date(at.getFullYear(), at.getMonth(), at.getDate());
     const row = db
       .select({ id: messages.id })
       .from(messages)
       .where(
         and(
-          eq(messages.channelId, channelId),
+          eq(messages.conversationId, conversationId),
           gte(messages.createdAt, midnight),
           sql`json_extract(${messages.systemMeta}, '$.kind') = 'run_limit'`,
           sql`json_extract(${messages.systemMeta}, '$.limit.scope') = ${scope}`,
@@ -89,7 +93,7 @@ export function createRunGate(deps: {
     if (channelId === undefined) throw apiError("NOT_FOUND", "conversation not found");
     const hit = hitOf(channelId, at);
     if (!hit) return null;
-    if (!announcedToday(channelId, hit.scope, at)) {
+    if (!announcedToday(conversationId, hit.scope, at)) {
       const prefix = hit.scope === "channel" ? "이 채널의 " : "";
       createSystemMessage(db, bus, {
         conversationId,

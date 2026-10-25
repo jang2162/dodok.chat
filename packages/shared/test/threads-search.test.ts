@@ -130,6 +130,7 @@ describe("브리지 스레드 계약", () => {
       kind: "message",
       channelId: ID(2),
       conversationId: ID(2),
+      conversationTitle: "배포 점검",
       agentId: "dev",
       sessionKey: `agent:dev:dodok:channel:${ID(2)}:thread:${ID(5)}`,
       runId: ID(3),

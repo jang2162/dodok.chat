@@ -38,19 +38,21 @@ export function newChannel(app: App, opts: { name?: string; members?: string[] }
 export function openRun(
   app: App,
   requestedBy: string | null,
-  opts: { channel?: ChannelRecord; agent?: Agent } = {},
+  opts: { channel?: ChannelRecord; agent?: Agent; conversationId?: string } = {},
 ): { channel: ChannelRecord; agent: Agent; run: Run; principal: Principal } {
   const channel = opts.channel ?? newChannel(app);
   const agent = opts.agent ?? newAgent(app);
   if (!opts.agent) addMember(app.db, channel.id, { memberType: "agent", memberId: agent.id }, app.logger);
+  // 대화를 주지 않으면 그 채널의 열린 세션(없으면 하나 연다)
+  const conversationId = opts.conversationId ?? channelConversation(app.db, channel.id);
   const queued = insertRun(app.db, {
     channelId: channel.id,
-    conversationId: channelConversation(app.db, channel.id), // 채널을 만들면 id 가 같은 「이전 대화」가 생긴다
+    conversationId,
     agentId: agent.id,
     triggerKind: "mention",
     rootMessageId: uuid(),
     relayDepth: 0,
-    sessionKey: `agent:${agent.providerAgentId}:dodok:channel:${channelConversation(app.db, channel.id)}`,
+    sessionKey: `agent:${agent.providerAgentId}:dodok:channel:${conversationId}`,
     connectionId: FAKE_GATEWAY_ID,
     requestedBy,
     createdAt: new Date(),

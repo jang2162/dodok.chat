@@ -1,4 +1,4 @@
-import { formatReactionFacts, type InboundDeliver } from "@dodok/shared";
+import { formatReactionFacts, formatSessionLine, type InboundDeliver } from "@dodok/shared";
 
 export type ContextFormatOptions = {
   /** 최근 대화 시각 표기 시간대 (IANA). 기본 UTC */
@@ -22,6 +22,7 @@ export function formatInboundContext(d: InboundDeliver, opts: ContextFormatOptio
   const thread = d.context.thread;
   const threadPart = d.threadId ? ` thread=${d.threadId}` : "";
   lines.push(`[dodok context] channel=${d.channelId}${threadPart} you=@${self?.handle ?? d.agentId}`);
+  lines.push(formatSessionLine(d.conversationTitle));
   lines.push(
     `참여자: ${d.context.participants
       .map((p) => `@${p.handle}(${p.type === "user" ? "사람" : "에이전트"}${p.isSelf ? ", 나" : ""})`)

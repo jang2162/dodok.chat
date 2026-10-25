@@ -45,6 +45,7 @@ const DELIVER = {
   kind: "message",
   channelId: CH,
   conversationId: CH,
+  conversationTitle: "배포 점검",
   agentId: "coder",
   sessionKey: `agent:coder:dodok:channel:${CH}`,
   runId: ID,

@@ -470,6 +470,7 @@ function deliverFor(params: { channelId: string; sessionKey: string; text: strin
     kind: "message",
     channelId: params.channelId,
     conversationId: params.channelId,
+    conversationTitle: "spike",
     agentId: AGENT,
     sessionKey: params.sessionKey,
     runId: randomUUID(),

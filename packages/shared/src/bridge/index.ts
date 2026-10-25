@@ -3,7 +3,7 @@ import type { Ack } from "../common";
 import { BRIDGE_PROTOCOL, Id, IsoDateTime } from "../common";
 import { ComponentsV1 } from "../components";
 import type { BridgeControlCall, ControlResult } from "../control";
-import { ATTACHMENT_LIMITS, Attachment, ReactionEmoji } from "../domain";
+import { ATTACHMENT_LIMITS, Attachment, ConversationTitle, ReactionEmoji } from "../domain";
 import { parseDodokSessionKey } from "../session-key";
 import { Sha256Hex } from "../setup";
 
@@ -87,6 +87,7 @@ export const InboundDeliver = z.object({
   kind: z.enum(["message", "interaction", "continue"]),
   channelId: Id, // 채널 설정(ConfigSet)·프롬프트 조회 — 채널 단위
   conversationId: Id, // OpenClaw 피어 id(`channel:<id>`)·세션 키의 대화
+  conversationTitle: ConversationTitle, // 헤더 `세션:` 줄 — formatSessionLine 으로만 싣는다(사람이 쓴 글이다)
   agentId: z.string(), // providerAgentId (OpenClaw agentId)
   sessionKey: z.string(), // dodokSessionKey(agentId, conversationId, threadId)
   threadId: Id.optional(), // 스레드 루트 id — threadMatchesSessionKey 로 키와 대조한다
@@ -142,6 +143,19 @@ export function threadMatchesSessionKey(sessionKey: string, threadId: string | u
   // 우리 모양이 아닌 키는 스레드인지 알 수 없으므로 맞다고 하지 않는다
   if (!parsed) return false;
   return parsed.threadRootId === threadId?.toLowerCase();
+}
+
+/**
+ * 에이전트 헤더의 `세션: <제목>` 줄 — 플러그인 헤더(`packages/openclaw-plugin/src/context.ts`)와 러너 턴 사실(`runner/prompt.ts`)이 같이 쓴다.
+ * 제목은 사람이 쓴 글이라 헤더 안에서 줄을 바꾸지 못하게 한 줄로 접는다 — 줄바꿈이 남으면 제목에 쓴 `---`·`참여자:` 가 헤더의 끝이나
+ * 서버가 붙인 사실처럼 읽힌다. 줄 경계(제어 문자·U+2028/2029 포함)는 공백 하나로, 보이지 않는 서식 글자는 지운다
+ */
+export function formatSessionLine(title: string): string {
+  const line = title
+    .replace(/\p{Cf}/gu, "")
+    .replace(/[\s\p{Cc}\p{Zl}\p{Zp}]+/gu, " ")
+    .trim();
+  return `세션: ${line === "" ? "새 세션" : line}`;
 }
 
 export const BridgeStatus = z.object({

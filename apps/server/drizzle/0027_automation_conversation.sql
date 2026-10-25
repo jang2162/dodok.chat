@@ -1,0 +1,1 @@
+ALTER TABLE `automations` ADD `conversation_id` text REFERENCES conversations(id);

@@ -20,6 +20,7 @@ import {
 } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
 import { channelParticipants, getChannel } from "../channels/service";
+import { getConversation } from "../conversations/store";
 import type { AgentSessionRow } from "../sessions/service";
 
 /** InboundContext.recentMessages 상한(계약 스펙 8.2) — 스레드 최근 메시지도 같은 상한 */
@@ -49,13 +50,15 @@ type AuthorRef = { authorType: string; authorId?: string | null | undefined };
 
 /**
  * 스펙 7장 — 서버가 채우는 인바운드. 메시지 트리거면 그 메시지 이전, 상호작용 트리거(interaction·continue)면 컴포넌트가
- * 달린 메시지까지의 normal 메시지를 싣는다 — 채널 런은 채널 최상위만 recentMessages 로, 스레드 런은 그 스레드 답글만
+ * 달린 메시지까지의 그 대화의 normal 메시지를 싣는다 — 대화 런은 그 대화 최상위만 recentMessages 로, 스레드 런은 그 스레드 답글만
  * context.thread 로(루트 따로, recentMessages 는 빈 배열 — 스펙 2.3). 계약을 어기면 InboundDeliver.parse 가 던진다.
  */
 export function buildInboundDeliver(db: DbOrTx, input: BuildInboundInput): InboundDeliver {
   const { run, trigger, session } = input;
   const channel = getChannel(db, run.channelId);
   if (!channel) throw apiError("NOT_FOUND", "channel not found");
+  const conversation = getConversation(db, run.conversationId);
+  if (!conversation) throw apiError("NOT_FOUND", "conversation not found");
   const agent = db
     .select({ providerAgentId: agents.providerAgentId })
     .from(agents)
@@ -83,7 +86,9 @@ export function buildInboundDeliver(db: DbOrTx, input: BuildInboundInput): Inbou
     const target = db
       .select({ seq: messages.seq })
       .from(messages)
-      .where(and(eq(messages.id, trigger.interactionMessageId), eq(messages.channelId, run.channelId)))
+      .where(
+        and(eq(messages.id, trigger.interactionMessageId), eq(messages.conversationId, run.conversationId)),
+      )
       .get();
     if (!target) throw apiError("NOT_FOUND", "interaction message not found");
     message = {
@@ -109,7 +114,8 @@ export function buildInboundDeliver(db: DbOrTx, input: BuildInboundInput): Inbou
     .from(messages)
     .where(
       and(
-        eq(messages.channelId, run.channelId),
+        // 그 세션(대화)의 글만 — 같은 채널의 다른 세션은 에이전트 맥락에 섞이지 않는다(채널 세션 스펙 「에이전트가 받는 것」 절)
+        eq(messages.conversationId, run.conversationId),
         eq(messages.kind, "normal"),
         run.threadRootId === undefined
           ? isNull(messages.threadRootId)
@@ -147,6 +153,7 @@ export function buildInboundDeliver(db: DbOrTx, input: BuildInboundInput): Inbou
     kind: run.triggerKind === "continue" ? "continue" : trigger.message ? "message" : "interaction",
     channelId: run.channelId,
     conversationId: run.conversationId,
+    conversationTitle: conversation.title,
     agentId: agent.providerAgentId,
     sessionKey: session.sessionKey,
     ...(run.threadRootId === undefined ? {} : { threadId: run.threadRootId }),

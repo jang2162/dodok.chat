@@ -677,6 +677,8 @@ export const automations = sqliteTable(
     channelId: text("channel_id")
       .notNull()
       .references(() => channels.id),
+    // 자동화가 게시하는 자기 세션(채널 세션 스펙 「자동화」 절) — 첫 게시가 만든다. 닫혔거나 다른 채널의 것이면 게시가 새 세션으로 바꿔 단다(automations/post.ts)
+    conversationId: text("conversation_id").references(() => conversations.id),
     kind: text("kind").$type<AutomationKind>().notNull(),
     // 평문 `@핸들` — 게시할 때 토큰화한다(계획 판정 PA1)
     bodyMd: text("body_md").notNull(),

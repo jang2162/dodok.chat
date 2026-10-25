@@ -143,6 +143,7 @@ function delivery(runId: string = f.RUN_ID): InboundDeliver {
     kind: "message",
     channelId: CH,
     conversationId: CH,
+    conversationTitle: "배포 점검",
     agentId: f.PROVIDER_AGENT_ID,
     sessionKey: f.SESSION_KEY,
     runId,

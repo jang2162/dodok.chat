@@ -208,6 +208,7 @@ function deliver(over: Partial<InboundDeliver> = {}): InboundDeliver {
     kind: "message",
     channelId: CH,
     conversationId: over.channelId ?? CH,
+    conversationTitle: "배포 점검",
     agentId,
     sessionKey: dodokSessionKey(agentId, CH),
     runId: randomUUID(),
@@ -480,6 +481,8 @@ describe("send", () => {
     expect(start?.channelRulesAppend).toContain("릴레이는 세 번까지");
     expect(start?.turnFacts).toContain("@mia(사람)");
     expect(start?.turnFacts).toContain("@coder(에이전트, 나)");
+    // 세션(대화) 제목은 둘째 줄 — 러너 설치본을 바꾸지 않고 서버가 만드는 턴 사실에 실린다
+    expect(start?.turnFacts?.split("\n")[1]).toBe(`세션: ${input.conversationTitle}`);
     expect(start?.sessionTitle).toBe("general · Coder");
     await until(() => runEvents(h, input.runId).length > 0, "RUN_QUEUED");
     expect(runEvents(h, input.runId)).toEqual([{ type: "RUN_QUEUED", runId: input.runId, position: 2 }]);

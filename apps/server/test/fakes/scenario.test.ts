@@ -26,6 +26,7 @@ function delivery(agentId: string, text: string): InboundDeliver {
     kind: "message",
     channelId: CHANNEL_ID,
     conversationId: CHANNEL_ID,
+    conversationTitle: "배포 점검",
     agentId,
     sessionKey: `agent:${agentId}:dodok:channel:${CHANNEL_ID}`,
     runId: randomUUID(),

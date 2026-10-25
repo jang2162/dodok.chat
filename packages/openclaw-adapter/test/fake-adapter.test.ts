@@ -20,6 +20,7 @@ function deliver(overrides: Partial<InboundDeliver> = {}): InboundDeliver {
     kind: "message",
     channelId: CH,
     conversationId: CH,
+    conversationTitle: "배포 점검",
     agentId: "dev",
     sessionKey: `agent:dev:dodok:channel:${CH}`,
     runId: RUN,

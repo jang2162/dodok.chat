@@ -102,3 +102,8 @@ export function claimRun(db: DbOrTx, id: string, seen: Date, next: Date | null, 
     .run();
   return result.changes === 1;
 }
+
+/** 자동화의 자기 세션을 바꿔 단다 — 게시가 대화를 새로 만든 트랜잭션 안에서 부른다(automations/post.ts) */
+export function setAutomationConversation(db: DbOrTx, id: string, conversationId: string): void {
+  db.update(automations).set({ conversationId }).where(eq(automations.id, id)).run();
+}

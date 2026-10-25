@@ -3,13 +3,21 @@
  * 조건부 UPDATE(계획 판정 PA3), 놓친 예약은 10분 안이면 한 번·넘으면 skipped, 게시 실패는 그 자동화만 error 로 남기고 틱은 이어 간다.
  */
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
-import { type AutomationSchedule, type Message, parseMentions } from "@dodok/shared";
+import { AutomationName, type AutomationSchedule, type Message, parseMentions } from "@dodok/shared";
 import { and, eq } from "drizzle-orm";
 import { v7 as uuid } from "uuid";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { App } from "../src/app";
 import type { Db } from "../src/db/client";
-import { channelMembers, channels, memberships, messages, runs, users } from "../src/db/schema.sqlite";
+import {
+  channelMembers,
+  channels,
+  conversations,
+  memberships,
+  messages,
+  runs,
+  users,
+} from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
 import { addMember, createChannel } from "../src/modules/channels/service";
 import { createUserMessage, listMessages } from "../src/modules/messages/service";
@@ -19,6 +27,7 @@ import { targetsForMessage } from "../src/modules/push/triggers";
 import { countRunsTodayInWorkspace } from "../src/modules/runs/store";
 import type { Logger } from "../src/logger";
 import { postAutomationMessage } from "../src/modules/automations/post";
+import { getConversation } from "../src/modules/conversations/store";
 import {
   MISSED_GRACE_MS,
   rescheduleAll,
@@ -103,6 +112,9 @@ function setup() {
     },
   };
 }
+
+const channelConversations = (db: Db, channelId: string) =>
+  db.select({ id: conversations.id }).from(conversations).where(eq(conversations.channelId, channelId)).all();
 
 const archive = (db: Db, channelId: string) =>
   db.update(channels).set({ archivedAt: NOW }).where(eq(channels.id, channelId)).run();
@@ -461,9 +473,10 @@ describe("postAutomationMessage", () => {
     expect(parseMentions(message.bodyMd)).toEqual(message.mentions);
   });
 
-  it("보관한 채널이면 CHANNEL_ARCHIVED 로 던지고 저장·라우팅이 없다", async () => {
+  it("보관한 채널이면 CHANNEL_ARCHIVED 로 던지고 저장·라우팅이 없다 — 자기 세션도 만들지 않는다", async () => {
     const t = setup();
     const a = t.add();
+    const before = channelConversations(t.db, t.seed.channelId);
     archive(t.db, t.seed.channelId);
     await expect(postAutomationMessage(t.deps, a)).rejects.toMatchObject({
       status: 409,
@@ -471,6 +484,113 @@ describe("postAutomationMessage", () => {
     });
     expect(t.posted(a.id)).toHaveLength(0);
     expect(t.route).not.toHaveBeenCalled();
+    expect(channelConversations(t.db, t.seed.channelId)).toEqual(before);
+    expect(t.row(a.id)?.conversationId).toBeNull();
+  });
+
+  describe("자기 세션(채널 세션 스펙 「자동화」 절)", () => {
+    const events = (bus: ServerBus) => {
+      const seen: string[] = [];
+      bus.on("conversation.created", ({ conversation }) => seen.push(`conversation:${conversation.id}`));
+      bus.on("message.created", ({ message }) => seen.push(`message:${message.conversationId}`));
+      return seen;
+    };
+
+    it("첫 게시가 「⚙ <이름>」 세션을 만들어 달고 conversation.created 를 메시지 앞에 낸다 — 채널의 최근 세션이 아니라 그 세션에 이어 쓴다", async () => {
+      const t = setup();
+      const seen = events(t.bus);
+      const a = t.add({ name: "아침 점검" });
+      const first = await postAutomationMessage(t.deps, a);
+      const own = t.row(a.id)?.conversationId;
+      expect(own).toBe(first.conversationId);
+      expect(own).not.toBe(t.seed.conversationId);
+      expect(
+        t.db
+          .select()
+          .from(conversations)
+          .where(eq(conversations.id, own ?? ""))
+          .get(),
+      ).toMatchObject({
+        channelId: t.seed.channelId,
+        title: "⚙ 아침 점검",
+        titleSource: "user",
+        createdByType: "automation",
+        createdById: a.id,
+        closedAt: null,
+      });
+      expect(seen).toEqual([`conversation:${own}`, `message:${own}`]);
+
+      // 사람이 채널의 다른 세션에서 더 최근에 말해도 자동화는 자기 세션에 — 새 세션을 또 만들지 않는다
+      createUserMessage(t.db, t.bus, {
+        conversationId: t.seed.conversationId,
+        authorId: t.seed.userId,
+        bodyMd: "사람의 글",
+        clientMsgId: uuid(),
+      });
+      const second = await postAutomationMessage(t.deps, (t.row(a.id) ?? a) as typeof a);
+      expect(second.conversationId).toBe(own);
+      // 옛 행(conversation_id 가 비어 있던 스냅숏)을 넘겨도 트랜잭션 안에서 다시 읽는다
+      const third = await postAutomationMessage(t.deps, a);
+      expect(third.conversationId).toBe(own);
+      expect(seen.filter((e) => e.startsWith("conversation:"))).toHaveLength(1);
+      expect(channelConversations(t.db, t.seed.channelId)).toHaveLength(2);
+    });
+
+    it("세션 제목은 UTF-16 80 단위 안 — 이모지가 든 40자 이름(「⚙ 」를 붙이면 81)은 서로게이트 쌍을 가르지 않고 자른다", async () => {
+      const t = setup();
+      // 「⚙ a」 3 단위 + 이모지 39개 78 단위 = 81 — 80 에서 자르면 마지막 이모지의 쌍이 갈린다
+      const name = `a${"😀".repeat(39)}`;
+      expect(AutomationName.safeParse(name).success).toBe(true);
+      const a = t.add({ name });
+      const first = await postAutomationMessage(t.deps, a);
+      const title = getConversation(t.db, first.conversationId)?.title ?? "";
+      expect(title).toBe(`⚙ a${"😀".repeat(38)}`);
+      expect(title.length).toBe(79);
+    });
+
+    it("자기 세션이 닫혀 있으면 새 세션을 만들어 바꿔 단다", async () => {
+      const t = setup();
+      const a = t.add({ name: "주간" });
+      const first = await postAutomationMessage(t.deps, a);
+      t.db
+        .update(conversations)
+        .set({ closedAt: NOW, closedBy: t.seed.userId })
+        .where(eq(conversations.id, first.conversationId))
+        .run();
+      const seen = events(t.bus);
+      const next = await postAutomationMessage(t.deps, a);
+      expect(next.conversationId).not.toBe(first.conversationId);
+      expect(t.row(a.id)?.conversationId).toBe(next.conversationId);
+      expect(seen).toEqual([`conversation:${next.conversationId}`, `message:${next.conversationId}`]);
+    });
+
+    it("채널을 바꾼 자동화는 새 채널에 자기 세션을 새로 만든다 — 옛 채널의 세션에 쓰지 않는다", async () => {
+      const t = setup();
+      const a = t.add();
+      const first = await postAutomationMessage(t.deps, a);
+      const other = createChannel(t.db, {
+        workspaceId: t.seed.workspaceId,
+        createdBy: t.seed.userId,
+        name: "other",
+      });
+      const moved = updateAutomation(t.db, t.seed.workspaceId, a.id, { channelId: other.id });
+      const next = await postAutomationMessage(t.deps, moved);
+      expect(next.channelId).toBe(other.id);
+      expect(next.conversationId).not.toBe(first.conversationId);
+      expect(t.row(a.id)?.conversationId).toBe(next.conversationId);
+    });
+
+    it("세션 정책이 「세션 관리자만」인 채널에도 게시한다 — 정책은 자동화에 걸지 않는다", async () => {
+      const t = setup();
+      t.db
+        .update(channels)
+        .set({ sessionPolicy: { create: "managers" } })
+        .where(eq(channels.id, t.seed.channelId))
+        .run();
+      const a = t.add();
+      const message = await postAutomationMessage(t.deps, a);
+      expect(t.row(a.id)?.conversationId).toBe(message.conversationId);
+    });
   });
 });
 

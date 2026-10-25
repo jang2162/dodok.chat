@@ -164,6 +164,7 @@ describe("buildInboundDeliver", () => {
       kind: "message",
       channelId,
       conversationId: trigger.conversationId,
+      conversationTitle: "테스트 세션",
       agentId: "dev-main",
       sessionKey: `agent:dev-main:dodok:channel:${trigger.conversationId}`,
       runId: run.id,
