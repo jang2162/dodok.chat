@@ -24,7 +24,7 @@ import { attachmentsDirOf, bootTestApp, login } from "./helpers/app";
 import { testEnv } from "./helpers/env";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
 import { makePng, PDF_BYTES } from "./helpers/png";
-import { createLegacyConversation } from "../src/modules/conversations/store";
+import { channelConversation, seedConversation } from "./helpers/seed";
 
 /** 그 테스트의 앱 가짜 Gateway 에 발급한 브리지 토큰 — beforeEach 가 채운다 */
 let BRIDGE_TOKEN: string;
@@ -94,7 +94,7 @@ describe("첨부 HTTP (스펙 4.3)", () => {
       url: "/bridge/attachments",
       headers: {
         authorization: `Bearer ${BRIDGE_TOKEN}`,
-        "x-dodok-conversation-id": ch,
+        "x-dodok-conversation-id": channelConversation(app.db, ch),
         "content-type": "application/octet-stream",
         ...headers,
       },
@@ -103,7 +103,7 @@ describe("첨부 HTTP (스펙 4.3)", () => {
   /** 메시지 하나를 만들어 ids 를 묶는다 */
   const bind = (ids: string[], channelId = ch) => {
     const m = createUserMessage(app.db, app.bus, {
-      conversationId: channelId,
+      conversationId: channelConversation(app.db, channelId),
       authorId: app.ownerUserId,
       bodyMd: "첨부",
       clientMsgId: `att-${++seq}`,
@@ -218,7 +218,7 @@ describe("첨부 HTTP (스펙 4.3)", () => {
         createdAt: new Date(),
       })
       .run();
-    createLegacyConversation(app.db, { id: other, createdBy: app.ownerUserId, createdAt: new Date() });
+    seedConversation(app.db, other, { createdBy: app.ownerUserId, createdAt: new Date() });
     expect((await upload(makePng(1, 1), {}, other)).statusCode).toBe(404);
     // 다른 워크스페이스 채널 메시지에 묶인 첨부도 이 워크스페이스 사람에게는 없는 것이다
     const foreign = await uploadAttachment(
@@ -233,7 +233,9 @@ describe("첨부 HTTP (스펙 4.3)", () => {
     });
     expect(foreignGet.statusCode).toBe(404);
     expect(foreignGet.json()).toMatchObject({ code: "NOT_FOUND" });
-    const viaBridge = await bridgeUpload(PDF_BYTES, { "x-dodok-conversation-id": other });
+    const viaBridge = await bridgeUpload(PDF_BYTES, {
+      "x-dodok-conversation-id": channelConversation(app.db, other),
+    });
     expect(viaBridge.statusCode).toBe(404);
 
     expect((await upload(makePng(1, 1), {}, "not-a-uuid")).statusCode).toBe(400);
@@ -344,7 +346,7 @@ describe("첨부 HTTP (스펙 4.3)", () => {
     const noToken = await app.fastify.inject({
       method: "POST",
       url: "/bridge/attachments",
-      headers: { "x-dodok-conversation-id": ch },
+      headers: { "x-dodok-conversation-id": channelConversation(app.db, ch) },
       payload: PDF_BYTES,
     });
     expect(noToken.statusCode).toBe(401);

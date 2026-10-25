@@ -11,6 +11,7 @@ import { bootLiveApp, type LiveApp, type LiveAppOptions } from "../helpers/live-
 import { makePng } from "../helpers/png";
 import { openChannelWire, sendMessage, setupRelayChannel } from "../helpers/scenario-steps";
 import { connectWire, waitFor, type WireClient } from "../helpers/wire";
+import { channelConversation } from "../helpers/seed";
 
 vi.setConfig({ testTimeout: 30_000, hookTimeout: 20_000 });
 
@@ -195,7 +196,7 @@ describe("운영 안정성 — 끊김·실패한 런·Gateway 버전·디스크"
 
     await expect(
       l.plugin.uploadAttachment({
-        conversationId: setup.channel.id,
+        conversationId: channelConversation(l.app.db, setup.channel.id),
         bytes: makePng(2, 2),
         mime: "image/png",
       }),

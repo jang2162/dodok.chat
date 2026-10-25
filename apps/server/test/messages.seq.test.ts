@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { createDb } from "../src/db/client";
 import { channels, messages, users, workspaces } from "../src/db/schema.sqlite";
 import { allocateSeq } from "../src/modules/messages/seq";
-import { createLegacyConversation } from "../src/modules/conversations/store";
+import { channelConversation, seedConversation } from "./helpers/seed";
 
 function seed() {
   const db = createDb(":memory:");
@@ -32,7 +32,7 @@ function seed() {
       createdAt: new Date(),
     })
     .run();
-  createLegacyConversation(db, { id: ch, createdBy: user, createdAt: new Date() });
+  seedConversation(db, ch, { createdBy: user, createdAt: new Date() });
   return { db, ch };
 }
 
@@ -47,7 +47,7 @@ describe("allocateSeq", () => {
           .values({
             id: uuid(),
             channelId: ch,
-            conversationId: ch,
+            conversationId: channelConversation(db, ch),
             seq,
             kind: "normal",
             authorType: "user",

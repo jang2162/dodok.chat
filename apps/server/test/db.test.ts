@@ -71,7 +71,7 @@ function seed(db: Db) {
       createdAt: new Date(),
     })
     .run();
-  // 채널 만들기(createChannel)처럼 id 가 채널 id 인 「이전 대화」 — 메시지는 대화 FK 를 갖는다
+  // 메시지는 대화 FK 를 갖는다 — 대화 하나를 넣고 id 를 채널 id 와 같게 둬 msg 가 채널 id 하나로 두 열을 채운다
   db.insert(schema.conversations)
     .values({
       id: ch,
@@ -948,6 +948,61 @@ describe("message_reactions 마이그레이션", () => {
         add("👎");
         db.delete(messages).where(eq(messages.id, msgId)).run();
         expect(db.select().from(schema.messageReactions).all()).toEqual([]);
+      } finally {
+        sqlite.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("세션 정책 마이그레이션", () => {
+  it("_channel_conversations 까지 적용된 DB 에 얹으면 옛 채널은 정책 members, 사람 멤버는 member·에이전트 멤버는 null — 표를 다시 만들지 않아 행 id 가 그대로다", () => {
+    const dir = mkdtempSync(join(tmpdir(), "dodok-db-mig-"));
+    try {
+      const older = migrationsUpTo(dir, "_channel_conversations");
+      const sqlite = new Database(join(dir, "app.db"));
+      try {
+        const db = drizzle(sqlite, { schema: { ...schema, ...authSchema } });
+        migrate(db, { migrationsFolder: older });
+        const ws = uuid();
+        const user = uuid();
+        const ch = uuid();
+        const [userRow, agentRow] = [uuid(), uuid()];
+        const t = new Date("2026-10-24T00:00:00.000Z").getTime();
+        sqlite.prepare("INSERT INTO workspaces (id, name, created_at) VALUES (?, 'w', ?)").run(ws, t);
+        sqlite
+          .prepare(
+            "INSERT INTO users (id, workspace_id, handle, display_name, auth_provider, created_at) VALUES (?, ?, 'jang', '장', 'local', ?)",
+          )
+          .run(user, ws, t);
+        sqlite
+          .prepare(
+            "INSERT INTO channels (id, workspace_id, name, relay_policy_json, visibility, created_by, created_at) VALUES (?, ?, 'general', '{\"maxRelayTurns\":4,\"allowPairs\":\"all\"}', 'public', ?, ?)",
+          )
+          .run(ch, ws, user, t);
+        const member = sqlite.prepare(
+          "INSERT INTO channel_members (id, channel_id, member_type, member_id, joined_at) VALUES (?, ?, ?, ?, ?)",
+        );
+        member.run(userRow, ch, "user", user, t);
+        member.run(agentRow, ch, "agent", uuid(), t);
+
+        migrate(db, { migrationsFolder: migrationsFolder() });
+
+        expect(db.select({ p: channels.sessionPolicy }).from(channels).all()).toEqual([
+          { p: { create: "members" } },
+        ]);
+        expect(
+          db
+            .select({ id: schema.channelMembers.id, role: schema.channelMembers.role })
+            .from(schema.channelMembers)
+            .orderBy(schema.channelMembers.memberType)
+            .all(),
+        ).toEqual([
+          { id: agentRow, role: null },
+          { id: userRow, role: "member" },
+        ]);
       } finally {
         sqlite.close();
       }

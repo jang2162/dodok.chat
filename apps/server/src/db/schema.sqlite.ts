@@ -11,6 +11,7 @@ import type {
   OpsEventKind,
   OpsSeverity,
   RelayPolicy,
+  SessionPolicy,
   RunEvent,
   RunUsage,
   SystemMeta,
@@ -155,6 +156,8 @@ export const channels = sqliteTable("channels", {
   createdAt: ts("created_at").notNull(),
   // 보관한 시각 — null 이면 살아 있다. 보관해도 메시지·스레드·런·멤버·세션·첨부는 남아 보관 해제하면 그대로 돌아온다
   archivedAt: ts("archived_at"),
+  // 누가 새 세션을 만드나(채널 세션 스펙 「권한」 장) — 세션 관리자는 channel_members.role
+  sessionPolicy: json<SessionPolicy>("session_policy_json").notNull().default({ create: "members" }),
 });
 
 /**
@@ -227,6 +230,8 @@ export const channelMembers = sqliteTable(
     promptOverride: text("prompt_override"),
     autoRespond: integer("auto_respond", { mode: "boolean" }).notNull().default(false),
     aliases: json<string[]>("aliases_json").notNull().default([]),
+    // 사람 행만 — "member" | "manager"(그 채널의 세션 관리자, 채널 세션 스펙 「권한」 장). 에이전트 행은 null
+    role: text("role"),
     joinedAt: ts("joined_at").notNull(),
   },
   (t) => [uniqueIndex("channel_members_unique").on(t.channelId, t.memberType, t.memberId)],

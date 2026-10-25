@@ -8,7 +8,7 @@ import * as readable from "../src/modules/search/readable";
 import { MAX_SNIPPET_WINDOWS, searchMessages } from "../src/modules/search/service";
 import { ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
-import { seedWorkspace } from "./helpers/seed";
+import { channelConversation, seedWorkspace } from "./helpers/seed";
 
 // 변환(readableGlyphs)은 여는 표시마다 줄 끝까지 닫는 짝을 찾아 한 줄 안에서 길이의 제곱으로 느려진다 —
 // 그래서 스니펫은 본문 전체가 아니라 일치 주변 창만 변환해야 한다. 시간 대신 변환에 넘긴 창의 길이를 잰다
@@ -28,7 +28,7 @@ describe("스니펫 변환 창", () => {
     const channel = createChannel(db, { workspaceId, createdBy: userId, name: "general" });
     const say = (bodyMd: string, n: number) => {
       const m = createUserMessage(db, bus, {
-        conversationId: channel.id,
+        conversationId: channelConversation(db, channel.id),
         authorId: userId,
         bodyMd: "임시",
         clientMsgId: `c${n}`,
@@ -58,7 +58,7 @@ describe("스니펫 변환 창", () => {
     const { workspaceId, userId } = seedWorkspace(db);
     const channel = createChannel(db, { workspaceId, createdBy: userId, name: "general" });
     const m = createUserMessage(db, bus, {
-      conversationId: channel.id,
+      conversationId: channelConversation(db, channel.id),
       authorId: userId,
       bodyMd: "임시",
       clientMsgId: "c0",
@@ -81,7 +81,7 @@ describe("스니펫 변환 창", () => {
     const { workspaceId, userId } = seedWorkspace(db);
     const channel = createChannel(db, { workspaceId, createdBy: userId, name: "general" });
     const m = createUserMessage(db, bus, {
-      conversationId: channel.id,
+      conversationId: channelConversation(db, channel.id),
       authorId: userId,
       bodyMd: "임시",
       clientMsgId: "c0",

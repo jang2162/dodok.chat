@@ -1,5 +1,6 @@
 import {
   ComponentsV1,
+  type Conversation,
   INTERACTIONS_MAX,
   Message,
   type MessageInteraction,
@@ -25,13 +26,12 @@ import {
   type UploadedBy,
 } from "../attachments/service";
 import {
-  assertChannelWritable,
   channelParticipants,
   joinChannelIfAbsent,
   listMembers,
   userMessageParticipants,
 } from "../channels/service";
-import { touchConversation } from "../conversations/store";
+import { assertConversationWritable, getConversation, touchConversation } from "../conversations/store";
 import { withReactions } from "../reactions/service";
 import { allocateSeq } from "./seq";
 
@@ -41,9 +41,14 @@ export const MESSAGE_PAGE_MAX = 200;
 type MessageRow = typeof messages.$inferSelect;
 type MessageFields = Omit<typeof messages.$inferInsert, "id" | "channelId" | "conversationId" | "seq">;
 
+/**
+ * 사람 보내기의 대화 고르기 — 저장과 같은 트랜잭션에서 부른다. created 는 이번에 새로 만든 대화(새 세션의 첫 메시지 — 채널 세션 스펙 「세션 만들기·닫기」 절)
+ */
+export type PickConversation = (tx: DbOrTx) => { conversationId: string; created?: Conversation };
+
 export type CreateUserMessageInput = {
-  /** 채널은 대화에서 찾는다 */
-  conversationId: string;
+  /** 채널은 대화에서 찾는다. 함수면 같은 트랜잭션에서 대화를 고르거나 만든다(재전송이면 부르지 않는다) */
+  conversationId: string | PickConversation;
   authorId: string;
   /** 평문 @handle 이 섞인 본문 — 저장 전에 채널 참가자와 채널 밖 워크스페이스 사람으로 토큰화한다(userMessageParticipants) */
   bodyMd: string;
@@ -108,6 +113,8 @@ export type ListMessagesOptions = {
   aroundSeq?: number;
   /** 기본 "roots" */
   scope?: MessageScope;
+  /** 있으면 그 대화의 메시지만(대화 경로 REST — 채널 세션 스펙 「wire·REST」 장). seq 는 채널 번호 그대로라 커서는 채널 경로와 같다 */
+  conversationId?: string;
 };
 
 /** hasMore = 더 옛것이 있다(afterSeq 로 읽었으면 더 새것). hasMoreAfter 는 around 페이지에만 — 더 새것이 있다 */
@@ -282,12 +289,23 @@ function summarizeThreads(db: DbOrTx, channelId: string, rootIds: string[]): Map
   return out;
 }
 
+/** createUserMessage 의 메시지만 */
+export function createUserMessage(db: Db, bus: ServerBus, input: CreateUserMessageInput): Message {
+  return sendUserMessage(db, bus, input).message;
+}
+
 /**
- * (authorId, clientMsgId) 가 이미 있으면 그 메시지를 돌려준다(이벤트 없음). 새로 저장했을 때만 커밋 뒤 message.created.
+ * (authorId, clientMsgId) 가 이미 있으면 그 메시지를 돌려준다(이벤트 없음 — 대화도 고르지 않는다: 새 세션 첫 메시지의 재전송이 세션을
+ * 또 만들지 않게, 채널 세션 계획 판정 PS9). 새로 저장했을 때만 커밋 뒤 message.created. 고른 대화는 쓰기 검사를 지난다(보관 채널
+ * CHANNEL_ARCHIVED → 닫힌 대화 CONVERSATION_CLOSED). 대화를 새로 만들었으면 message.created 앞에 conversation.created.
  * 쓴 사람과 멘션된 사람은 같은 트랜잭션에서 채널에 들어온다(자동 참여, 팀 스펙 「채널 참여」 절) — 누가 새로 들어왔으면
  * message.created 뒤에 channel.member.changed 한 번
  */
-export function createUserMessage(db: Db, bus: ServerBus, input: CreateUserMessageInput): Message {
+export function sendUserMessage(
+  db: Db,
+  bus: ServerBus,
+  input: CreateUserMessageInput,
+): { message: Message; created: boolean; conversation?: Conversation } {
   const result = db.transaction((tx) => {
     const existing = tx
       .select()
@@ -296,7 +314,11 @@ export function createUserMessage(db: Db, bus: ServerBus, input: CreateUserMessa
       .get();
     // 재전송(ack 유실)은 잡기 전에 돌아간다 — 처음 메시지가 이미 묶은 첨부를 「쓸 수 없는 첨부」로 거절하지 않게
     if (existing) return { message: rowToMessage(existing), created: false, root: undefined, joined: false };
-    const conversation = requireConversation(tx, input.conversationId);
+    const picked =
+      typeof input.conversationId === "string"
+        ? { conversationId: input.conversationId }
+        : input.conversationId(tx);
+    const conversation = assertConversationWritable(tx, picked.conversationId);
     const { channelId } = conversation;
     const claimed = claimUserAttachments(tx, {
       ids: input.attachments ?? [],
@@ -327,8 +349,11 @@ export function createUserMessage(db: Db, bus: ServerBus, input: CreateUserMessa
     const joined = [input.authorId, ...message.mentions.users]
       .map((userId) => joinChannelIfAbsent(tx, channelId, userId, now))
       .includes(true);
-    return { message, created: true, root: updatedRoot(tx, message), joined };
+    // 새 대화는 첫 메시지를 담은 뒤의 행(last_seq·last_message_at)으로 알린다
+    const newConversation = picked.created && getConversation(tx, picked.created.id);
+    return { message, created: true, root: updatedRoot(tx, message), joined, newConversation };
   });
+  if (result.newConversation) bus.emit("conversation.created", { conversation: result.newConversation });
   if (result.created) emitCreated(bus, result.message, result.root);
   if (result.joined) {
     bus.emit("channel.member.changed", {
@@ -336,7 +361,11 @@ export function createUserMessage(db: Db, bus: ServerBus, input: CreateUserMessa
       members: listMembers(db, result.message.channelId),
     });
   }
-  return result.message;
+  return {
+    message: result.message,
+    created: result.created,
+    ...(result.newConversation ? { conversation: result.newConversation } : {}),
+  };
 }
 
 /**
@@ -391,7 +420,7 @@ export function createAgentMessage(
 
 /**
  * 자동화가 채널 최상위에 게시하는 보통 메시지(자동화 스펙 「게시」 절) — 작성자 automation·authorId 는 자동화 id. 보관한 채널이면
- * CHANNEL_ARCHIVED(같은 트랜잭션에서 본다 — 보관과 엇갈려도 쓰지 않게). 멘션된 사람은 사람 멘션처럼 채널에 들어온다(팀 스펙
+ * CHANNEL_ARCHIVED, 닫힌 대화면 CONVERSATION_CLOSED(같은 트랜잭션에서 본다 — 보관·닫기와 엇갈려도 쓰지 않게). 멘션된 사람은 사람 멘션처럼 채널에 들어온다(팀 스펙
  * 「채널 참여·멘션·알림」 절). 런은 부르는 쪽이 라우터에 넘겨 만든다
  */
 export function createAutomationMessage(
@@ -400,9 +429,8 @@ export function createAutomationMessage(
   input: CreateAutomationMessageInput,
 ): Message {
   const result = db.transaction((tx) => {
-    const conversation = requireConversation(tx, input.conversationId);
+    const conversation = assertConversationWritable(tx, input.conversationId);
     const { channelId } = conversation;
-    assertChannelWritable(tx, channelId);
     const message = storeMessage(tx, conversation, undefined, () => {
       const text = tokenize(input.bodyMd, userMessageParticipants(tx, channelId)).bodyMd;
       const bodyMd =
@@ -475,7 +503,14 @@ export function listMessages(db: DbOrTx, channelId: string, opts: ListMessagesOp
     db
       .select()
       .from(messages)
-      .where(and(eq(messages.channelId, channelId), scopeFilter(scope), cond))
+      .where(
+        and(
+          eq(messages.channelId, channelId),
+          opts.conversationId === undefined ? undefined : eq(messages.conversationId, opts.conversationId),
+          scopeFilter(scope),
+          cond,
+        ),
+      )
       .orderBy(oldestFirst ? asc(messages.seq) : desc(messages.seq))
       .limit(n + 1)
       .all();

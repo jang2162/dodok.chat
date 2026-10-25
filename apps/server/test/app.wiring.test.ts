@@ -26,6 +26,7 @@ import { testEnv } from "./helpers/env";
 import { FAKE_GATEWAY_ID, fakeGatewayStatus } from "./helpers/gateways";
 import { connectWire, openWire, type WireClient, waitFor } from "./helpers/wire";
 import { openclawOf, soleGateway } from "./helpers/openclaw";
+import { channelConversation } from "./helpers/seed";
 
 type Method = "GET" | "POST" | "PATCH";
 
@@ -72,7 +73,7 @@ function seedAgentChannel(app: App, name: string, agentId?: string, gatewayId = 
 /** threadRootId 를 주면 그 스레드의 답글로 스레드 런 */
 async function startRun(app: App, channelId: string, agentId: string, threadRootId?: string) {
   const message = createUserMessage(app.db, app.bus, {
-    conversationId: channelId,
+    conversationId: channelConversation(app.db, channelId),
     authorId: app.ownerUserId,
     bodyMd: "@dev 안녕",
     clientMsgId: uuid(),
@@ -82,7 +83,7 @@ async function startRun(app: App, channelId: string, agentId: string, threadRoot
     {
       agentId,
       channelId,
-      conversationId: channelId,
+      conversationId: channelConversation(app.db, channelId),
       triggerKind: "mention",
       rootMessageId: message.id,
       relayDepth: 0,
@@ -268,8 +269,14 @@ describe("부팅 정리 — 파일 DB 로 두 번 부팅", () => {
       addMember(app.db, channelId, { memberType: "agent", memberId: other.id }, app.logger);
       expect(sessionRecoverTargets(app.db).size).toBe(0);
 
-      ensureSession(app.db, openclawOf(app), { conversationId: channelId, agentId });
-      ensureSession(app.db, openclawOf(app), { conversationId: channelId, agentId: other.id });
+      ensureSession(app.db, openclawOf(app), {
+        conversationId: channelConversation(app.db, channelId),
+        agentId,
+      });
+      ensureSession(app.db, openclawOf(app), {
+        conversationId: channelConversation(app.db, channelId),
+        agentId: other.id,
+      });
       app.db
         .update(agentSessions)
         .set({ historyCursor: "cursor-1" })
@@ -281,9 +288,9 @@ describe("부팅 정리 — 파일 DB 로 두 번 부팅", () => {
       expect([...targets.keys()]).toEqual([FAKE_GATEWAY_ID]);
       expect(targets.get(FAKE_GATEWAY_ID)).toEqual(
         expect.arrayContaining([
-          { sessionKey: `agent:dev:dodok:channel:${channelId}`, agentId: "dev" },
+          { sessionKey: `agent:dev:dodok:channel:${channelConversation(app.db, channelId)}`, agentId: "dev" },
           {
-            sessionKey: `agent:fin-provider:dodok:channel:${channelId}`,
+            sessionKey: `agent:fin-provider:dodok:channel:${channelConversation(app.db, channelId)}`,
             agentId: "fin-provider",
             cursor: "cursor-1",
           },
@@ -295,7 +302,15 @@ describe("부팅 정리 — 파일 DB 로 두 번 부팅", () => {
       app.db.update(agents).set({ provider: "claude" }).where(eq(agents.id, other.id)).run();
       expect(sessionRecoverTargets(app.db)).toEqual(
         new Map([
-          [FAKE_GATEWAY_ID, [{ sessionKey: `agent:dev:dodok:channel:${channelId}`, agentId: "dev" }]],
+          [
+            FAKE_GATEWAY_ID,
+            [
+              {
+                sessionKey: `agent:dev:dodok:channel:${channelConversation(app.db, channelId)}`,
+                agentId: "dev",
+              },
+            ],
+          ],
         ]),
       );
     } finally {
@@ -660,9 +675,9 @@ describe("실제 어댑터(createOpenClawAdapter) 부팅", () => {
       // 브리지 정본 → orchestrator.onCanonical → 에이전트 메시지 저장, 그 id 로 ack
       const ack = (await plugin.emitWithAck("outbound.message", {
         outboundId: "out-real-1",
-        conversationId: channelId,
+        conversationId: channelConversation(app.db, channelId),
         agentId: "dev",
-        sessionKey: `agent:dev:dodok:channel:${channelId}`,
+        sessionKey: `agent:dev:dodok:channel:${channelConversation(app.db, channelId)}`,
         text: "정본",
         attachmentIds: [],
         ts: new Date().toISOString(),
@@ -682,9 +697,9 @@ describe("실제 어댑터(createOpenClawAdapter) 부팅", () => {
       expect(archivedRes.statusCode).toBe(200);
       const refused = await plugin.emitWithAck("outbound.message", {
         outboundId: "out-real-archived",
-        conversationId: archived,
+        conversationId: channelConversation(app.db, archived),
         agentId: "dev",
-        sessionKey: `agent:dev:dodok:channel:${channelId}`,
+        sessionKey: `agent:dev:dodok:channel:${channelConversation(app.db, channelId)}`,
         text: "보관한 채널에",
         attachmentIds: [],
         ts: new Date().toISOString(),

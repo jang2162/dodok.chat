@@ -11,6 +11,7 @@ import type { BusEvents } from "../src/realtime/bus";
 import { bootTestApp, login } from "./helpers/app";
 import { createAgent } from "../src/modules/agents/service";
 import { FAKE_GATEWAY_ID, insertGateway } from "./helpers/gateways";
+import { channelConversation } from "./helpers/seed";
 
 type Method = "GET" | "POST" | "PATCH" | "DELETE";
 
@@ -375,7 +376,7 @@ describe("REST /api/v1 (FakeAdapter)", () => {
     const channel = await newChannel("rest-messages");
     for (let i = 1; i <= 3; i++) {
       createUserMessage(app.db, app.bus, {
-        conversationId: channel.id,
+        conversationId: channelConversation(app.db, channel.id),
         authorId: app.ownerUserId,
         bodyMd: `m${i}`,
         clientMsgId: `rest-${i}`,

@@ -1,8 +1,11 @@
 import { Conversation } from "@dodok/shared";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { v7 as uuidv7 } from "uuid";
 import type { DbOrTx } from "../../db/client";
 import { channels, conversations } from "../../db/schema.sqlite";
+import { apiError } from "../../http/errors";
 import { parseStored } from "../../http/validate";
+import { assertChannelWritable } from "../channels/service";
 
 export type ConversationRow = typeof conversations.$inferSelect;
 
@@ -66,23 +69,63 @@ export function touchConversation(tx: DbOrTx, conversationId: string, seq: numbe
     .run();
 }
 
-/**
- * 채널 만들기가 같은 트랜잭션에서 부른다 — id 가 채널 id 인 「이전 대화」. 채널마다 대화가 하나이고 그 id 가 채널 id 인 동안
- * 세션 키·OpenClaw 피어 id 값이 대화 이전과 같다(채널 세션 계획 판정 PS1). 세션 만들기가 들어오면 걷는다(스펙 결정 7)
- */
-export function createLegacyConversation(
-  tx: DbOrTx,
-  channel: { id: string; createdBy: string; createdAt: Date },
-): void {
-  tx.insert(conversations)
+export type NewConversationRow = {
+  channelId: string;
+  title: string;
+  titleSource: Conversation["titleSource"];
+  createdBy: Conversation["createdBy"];
+  createdAt: Date;
+};
+
+/** 대화 한 행을 만든다 — 권한은 부르는 쪽이 본다(conversations/service.ts resolveSendConversation) */
+export function createConversation(tx: DbOrTx, input: NewConversationRow): Conversation {
+  const row = tx
+    .insert(conversations)
     .values({
-      id: channel.id,
-      channelId: channel.id,
-      title: "이전 대화",
-      titleSource: "user",
-      createdByType: "user",
-      createdById: channel.createdBy,
-      createdAt: channel.createdAt,
+      id: uuidv7(),
+      channelId: input.channelId,
+      title: input.title,
+      titleSource: input.titleSource,
+      createdByType: input.createdBy.type,
+      createdById: input.createdBy.id,
+      createdAt: input.createdAt,
     })
+    .returning()
+    .get();
+  return rowToConversation(row);
+}
+
+/** 첫 메시지로 지은 자동 제목을 쓴다 — title_source auto 인 행만 바꾼다(사람이 지은 제목은 덮지 않는다) */
+export function setAutoTitle(tx: DbOrTx, conversationId: string, title: string): void {
+  tx.update(conversations)
+    .set({ title })
+    .where(and(eq(conversations.id, conversationId), eq(conversations.titleSource, "auto")))
     .run();
+}
+
+/** 닫힌 대화인가 — 늦은 정본·디스패치처럼 던지지 않고 가르는 자리가 쓴다. 없는 대화는 false */
+export function isConversationClosed(db: DbOrTx, conversationId: string): boolean {
+  const row = db
+    .select({ closedAt: conversations.closedAt })
+    .from(conversations)
+    .where(eq(conversations.id, conversationId))
+    .get();
+  return row?.closedAt != null;
+}
+
+/**
+ * 쓰기 전에 부르는 대화 검사(채널 세션 스펙 「세션 만들기·닫기」 절) — 없거나 다른 워크스페이스면 404, 채널을 보관했으면 409 CHANNEL_ARCHIVED, 닫혔으면 409
+ * CONVERSATION_CLOSED(이 순서 — 채널 세션 계획 Global Constraints). 사람 보내기·카드 상호작용·리액션·첨부 묶기가 이 한 함수를 지난다.
+ * 에이전트 정본·시스템 메시지는 닫힌 대화에도 저장되므로 부르지 않는다
+ */
+export function assertConversationWritable(
+  db: DbOrTx,
+  conversationId: string,
+  workspaceId?: string,
+): Conversation {
+  const conversation = getConversation(db, conversationId, workspaceId);
+  if (!conversation) throw apiError("NOT_FOUND", "conversation not found");
+  assertChannelWritable(db, conversation.channelId, workspaceId);
+  if (conversation.closedAt !== undefined) throw apiError("CONVERSATION_CLOSED", "닫힌 세션입니다");
+  return conversation;
 }

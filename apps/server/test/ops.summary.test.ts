@@ -12,7 +12,7 @@ import { runsSummary, USAGE_TRUSTED_PROVIDERS } from "../src/modules/ops/summary
 import { insertRun } from "../src/modules/runs/store";
 import { ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
-import { seedWorkspace } from "./helpers/seed";
+import { channelConversation, seedWorkspace } from "./helpers/seed";
 
 // 「하루」는 서버 현지 자정 — 현지 시각 생성자로 TZ 와 무관하게 경계를 만든다
 const DAY = (d: number, h = 12, m = 0, s = 0, ms = 0) => new Date(2026, 8, d, h, m, s, ms);
@@ -55,7 +55,7 @@ function run(
 ): void {
   const { id } = insertRun(db, {
     channelId,
-    conversationId: channelId,
+    conversationId: channelConversation(db, channelId),
     agentId,
     triggerKind: "mention",
     rootMessageId: ROOT,

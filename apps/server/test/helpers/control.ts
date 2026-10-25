@@ -7,6 +7,7 @@ import type { Principal } from "../../src/modules/control/principal";
 import { insertRun, updateRun } from "../../src/modules/runs/store";
 import type { BusEvents } from "../../src/realtime/bus";
 import { FAKE_GATEWAY_ID } from "./gateways";
+import { channelConversation } from "./seed";
 
 // 제어 서비스 테스트의 무대 — 채널 하나에 에이전트 하나, 그 에이전트의 열린 런(시킨 사람을 정해서)
 
@@ -44,12 +45,12 @@ export function openRun(
   if (!opts.agent) addMember(app.db, channel.id, { memberType: "agent", memberId: agent.id }, app.logger);
   const queued = insertRun(app.db, {
     channelId: channel.id,
-    conversationId: channel.id, // 채널을 만들면 id 가 같은 「이전 대화」가 생긴다
+    conversationId: channelConversation(app.db, channel.id), // 채널을 만들면 id 가 같은 「이전 대화」가 생긴다
     agentId: agent.id,
     triggerKind: "mention",
     rootMessageId: uuid(),
     relayDepth: 0,
-    sessionKey: `agent:${agent.providerAgentId}:dodok:channel:${channel.id}`,
+    sessionKey: `agent:${agent.providerAgentId}:dodok:channel:${channelConversation(app.db, channel.id)}`,
     connectionId: FAKE_GATEWAY_ID,
     requestedBy,
     createdAt: new Date(),

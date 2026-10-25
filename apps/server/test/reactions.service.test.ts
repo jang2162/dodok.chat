@@ -27,8 +27,7 @@ import {
 } from "../src/modules/reactions/service";
 import { ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
-import { seedChannelWithAgent } from "./helpers/seed";
-import { createLegacyConversation } from "../src/modules/conversations/store";
+import { channelConversation, seedChannelWithAgent, seedConversation } from "./helpers/seed";
 
 const T0 = new Date("2026-10-07T00:00:00.000Z");
 const at = (sec: number) => new Date(T0.getTime() + sec * 1000);
@@ -73,7 +72,7 @@ function post(db: Db, p: Post): string {
       .values({
         id,
         channelId: p.channelId,
-        conversationId: p.channelId,
+        conversationId: channelConversation(tx, p.channelId),
         seq: allocateSeq(tx, p.channelId),
         kind: p.authorType === "system" ? "system" : "normal",
         authorType: p.authorType ?? "agent",
@@ -227,7 +226,7 @@ describe("withReactions", () => {
     const c = setup();
     const automationId = uuid();
     const m = createAutomationMessage(c.db, c.bus, {
-      conversationId: c.channelId,
+      conversationId: c.conversationId,
       automationId,
       bodyMd: "알림",
     });
@@ -416,7 +415,7 @@ describe("advanceReactionCursor", () => {
       .values({
         id: sessionId,
         channelId: c.channelId,
-        conversationId: c.channelId,
+        conversationId: c.conversationId,
         agentId: c.agentId,
         sessionKey: "k",
         promptRevisionAtStart: 1,
@@ -440,7 +439,7 @@ describe("advanceReactionCursor", () => {
       .values({
         id: sessionId,
         channelId: c.channelId,
-        conversationId: c.channelId,
+        conversationId: c.conversationId,
         agentId: c.agentId,
         sessionKey: "k",
         promptRevisionAtStart: 1,
@@ -466,6 +465,6 @@ function seedChannelOf(c: Ctx): string {
       createdAt: T0,
     })
     .run();
-  createLegacyConversation(c.db, { id, createdBy: c.userId, createdAt: T0 });
+  seedConversation(c.db, id, { createdBy: c.userId, createdAt: T0 });
   return id;
 }

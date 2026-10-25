@@ -3,8 +3,7 @@ import type { Message } from "@dodok/shared";
 import type { Db } from "../../db/client";
 import type { Logger } from "../../logger";
 import type { ServerBus } from "../../realtime/bus";
-import { apiError } from "../../http/errors";
-import { latestOpenConversation } from "../conversations/store";
+import { createConversation, latestOpenConversation } from "../conversations/store";
 import { createAutomationMessage } from "../messages/service";
 import type { AutomationRow } from "./store";
 
@@ -25,9 +24,17 @@ export async function postAutomationMessage(
   automation: AutomationRow,
   extraMd?: string,
 ): Promise<Message> {
-  // 채널의 열린 대화(계획 판정 PS3) — 채널마다 대화가 하나인 동안은 늘 있다
-  const conversationId = latestOpenConversation(deps.db, automation.channelId);
-  if (conversationId === undefined) throw apiError("NOT_FOUND", "conversation not found");
+  // 채널의 최근 열린 대화, 없으면 「⚙ <이름>」 새 대화(세션 정책은 걸지 않는다 — 자동화를 만든 것이 이미 admin 이상, 채널 세션 스펙
+  // 「자동화」 절). 자동화마다 자기 세션에 이어 쓰는 것은 채널 세션 계획 태스크 4 가 automations.conversation_id 로 한다
+  const conversationId =
+    latestOpenConversation(deps.db, automation.channelId) ??
+    createConversation(deps.db, {
+      channelId: automation.channelId,
+      title: `⚙ ${automation.name}`.slice(0, 80),
+      titleSource: "user",
+      createdBy: { type: "automation", id: automation.id },
+      createdAt: new Date(),
+    }).id;
   const message = createAutomationMessage(deps.db, deps.bus, {
     conversationId,
     automationId: automation.id,

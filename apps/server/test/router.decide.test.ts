@@ -46,6 +46,7 @@ const channel = (relayPolicy: Partial<Channel["relayPolicy"]> = {}): Channel => 
   createdBy: USER,
   createdAt: NOW,
   archivedAt: null,
+  sessionPolicy: { create: "members" },
 });
 const userMsg = (agents: string[], bodyMd = "hi"): Message => ({
   id: ID(30),

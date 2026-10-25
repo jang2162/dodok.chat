@@ -28,6 +28,7 @@ import type { ServerBus } from "../../realtime/bus";
 import { josa } from "../../util/josa";
 import { getAgent, providerAgentIdIs } from "../agents/service";
 import { isChannelArchived } from "../channels/service";
+import { isConversationClosed } from "../conversations/store";
 import {
   consumeComponentItem,
   createAgentMessage,
@@ -130,6 +131,8 @@ export interface Orchestrator {
   /** 델타 코얼레싱·run_events 저장·팬아웃. seq·ts 는 여기서 붙인다 */
   applyRunEvent(runId: string, event: RunEventBody): Promise<void>;
   abort(runId: string): Promise<void>;
+  /** 그 대화의 열린 런을 모두 abort 와 같은 길로 멈춘다(세션 닫기 — 채널 세션 스펙 「세션 만들기·닫기」 절). 걸린 승인은 cancelled 로 닫힌다 */
+  abortConversation(conversationId: string): Promise<void>;
   /**
    * 에이전트 최종 메시지 도착(OpenClaw 는 브리지 정본). 돌려준 messageId 를 어댑터가 ack 로 쓴다.
    * provider·connectionId 는 보낸 어댑터와 그 연결 — msg.agentId(제공자 쪽 id)를 그 연결의 에이전트로 푼다. 틀리면 replyTo 상관·런
@@ -752,9 +755,16 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     }
   }
 
-  /** 보관한 에이전트의 런이거나 보관한 채널의 런 — 보내지 않고, 늦은 정본은 저장만 한다(채널 보관 계획 판정 PC2) */
-  function archivedTarget(run: Pick<Run, "agentId" | "channelId">): boolean {
-    return getAgent(db, run.agentId)?.archivedAt != null || isChannelArchived(db, run.channelId);
+  /**
+   * 보관한 에이전트의 런이거나 보관한 채널의 런이거나 닫힌 세션의 런 — 보내지 않고, 늦은 정본은 저장만 한다(채널 보관 계획 판정 PC2,
+   * 채널 세션 스펙 「오류 처리」 장)
+   */
+  function archivedTarget(run: Pick<Run, "agentId" | "channelId" | "conversationId">): boolean {
+    return (
+      getAgent(db, run.agentId)?.archivedAt != null ||
+      isChannelArchived(db, run.channelId) ||
+      isConversationClosed(db, run.conversationId)
+    );
   }
 
   // ── 직렬화·디스패치 ─────────────────────────────────────────
@@ -1320,11 +1330,12 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
           logger.warn({ ...where, providerAgentId: msg.agentId }, "canonical message from unknown agent");
           throw apiError("NOT_FOUND", "agent not found");
         }
-        // 런 없는 정본은 라우팅하지 않지만 푸시는 간다 — 보관한 채널이면 그것도 하지 않는다
-        const silent = isChannelArchived(db, channelId);
+        // 런 없는 정본은 라우팅하지 않지만 푸시는 간다 — 보관한 채널이나 닫힌 세션이면 그것도 하지 않는다
+        const archived = isChannelArchived(db, channelId);
+        const silent = archived || isConversationClosed(db, msg.conversationId);
         // 보관한 채널의 예외는 그 대화 세션의 늦은 답뿐이다. 다른 세션이 message 툴로 쓰는 새 글은 거절해 에이전트가 실패를 받게 한다
         if (
-          silent &&
+          archived &&
           parseDodokSessionKey(msg.sessionKey)?.conversationId !== msg.conversationId.toLowerCase()
         ) {
           logger.warn(
@@ -1349,12 +1360,12 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         return { messageId: message.id };
       }
       if (archivedTarget(run)) {
-        // 보관한 에이전트나 보관한 채널의 답 — 채널에는 남기되(웹은 「삭제됨」·「보관됨」으로 그린다) 릴레이·푸시는 하지 않는다. 보관 뒤
-        // 그 에이전트가 다른 에이전트를 깨우거나 사람을 부르지 않게
+        // 보관한 에이전트·보관한 채널·닫힌 세션의 답 — 채널에는 남기되(웹은 「삭제됨」·「보관됨」으로 그린다) 릴레이·푸시는 하지 않는다.
+        // 보관·닫기 뒤 그 에이전트가 다른 에이전트를 깨우거나 사람을 부르지 않게
         const message = storeAgentMessage(msg, uploadedBy, run.agentId, run.id, threadRootId, true);
         logger.info(
           { runId: run.id, messageId: message.id, outboundId: msg.outboundId, agentId: run.agentId },
-          "late canonical from archived agent or channel — stored without relay",
+          "late canonical from archived agent or channel or closed session — stored without relay",
         );
         await api.signal(run.id, { kind: "canonical_received" });
         return { messageId: message.id };
@@ -1363,6 +1374,12 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       await routeAgentMessage(message, run);
       await api.signal(run.id, { kind: "canonical_received" }); // 종료된 런이면 ignored — 저장·라우팅만
       return { messageId: message.id };
+    },
+
+    async abortConversation(conversationId) {
+      // 대기 런(뒤)부터 거꾸로 — 앞 런을 멈추는 사이 pump 가 뒤 런을 꺼내지 않게(channels/service.ts archiveChannel 과 같다)
+      const open = store.listOpenRuns(db).filter((run) => run.conversationId === conversationId);
+      for (const run of open.reverse()) await api.abort(run.id);
     },
 
     activeRuns(channelId) {

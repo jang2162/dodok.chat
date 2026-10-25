@@ -19,7 +19,7 @@ import { type InboundTrigger, attachmentPlaceholder, buildInboundDeliver } from 
 import { ensureSession } from "../src/modules/sessions/service";
 import { ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
-import { seedChannelWithAgent } from "./helpers/seed";
+import { channelConversation, seedChannelWithAgent } from "./helpers/seed";
 
 /** 서술 속 @핸들도 릴레이가 된다(live-smoke 5.4-5) — 부를 때만 @ 를 쓰게 한다 */
 const rule = (turns: number) =>
@@ -76,7 +76,7 @@ function setup() {
   let n = 0;
   const say = (bodyMd: string, threadRootId?: string) =>
     createUserMessage(db, bus, {
-      conversationId: channelId,
+      conversationId: channelConversation(db, channelId),
       authorId: userId,
       bodyMd,
       clientMsgId: `c${++n}`,
@@ -84,7 +84,7 @@ function setup() {
     });
   const agentSays = (agentId: string, bodyMd: string, threadRootId?: string) =>
     createAgentMessage(db, bus, {
-      conversationId: channelId,
+      conversationId: channelConversation(db, channelId),
       agentId,
       externalId: `o${++n}`,
       bodyMd,
@@ -97,14 +97,14 @@ function setup() {
   ) => {
     const agentId = opts.run?.agentId ?? devId;
     const { session } = ensureSession(db, adapter, {
-      conversationId: channelId,
+      conversationId: channelConversation(db, channelId),
       agentId,
       threadRootId: opts.run?.threadRootId,
     });
     const run: Run = {
       id: uuid(),
       channelId,
-      conversationId: channelId,
+      conversationId: channelConversation(db, channelId),
       agentId,
       triggerKind: "mention",
       triggerMessageId: trigger.message?.id,
@@ -143,6 +143,7 @@ function setup() {
     devId,
     finId: fin.id,
     channelId,
+    conversationId: channelConversation(db, channelId),
     say,
     agentSays,
     deliver,
@@ -162,9 +163,9 @@ describe("buildInboundDeliver", () => {
       deliveryId: inbound.deliveryId,
       kind: "message",
       channelId,
-      conversationId: channelId,
+      conversationId: trigger.conversationId,
       agentId: "dev-main",
-      sessionKey: `agent:dev-main:dodok:channel:${channelId}`,
+      sessionKey: `agent:dev-main:dodok:channel:${trigger.conversationId}`,
       runId: run.id,
       message: {
         id: trigger.id,
@@ -189,7 +190,7 @@ describe("buildInboundDeliver", () => {
     expect(toFin).toMatchObject({
       kind: "message",
       agentId: "fin",
-      sessionKey: `agent:fin:dodok:channel:${channelId}`,
+      sessionKey: `agent:fin:dodok:channel:${relay.conversationId}`,
       message: {
         id: relay.id,
         author: { type: "agent", handle: "dev", displayName: "Dev" },
@@ -201,7 +202,11 @@ describe("buildInboundDeliver", () => {
   it("recentMessages 는 트리거 이전 normal 메시지 최근 20개 — 시스템·트리거·이후 메시지 제외, 오름차순, renderForAgent", () => {
     const { db, bus, channelId, devId, say, agentSays, deliver } = setup();
     for (let i = 1; i <= 20; i++) say(`m${i}`);
-    createSystemMessage(db, bus, { conversationId: channelId, kind: "info", bodyMd: "시스템 안내" });
+    createSystemMessage(db, bus, {
+      conversationId: channelConversation(db, channelId),
+      kind: "info",
+      bodyMd: "시스템 안내",
+    });
     const fromDev = agentSays(devId, "@fin @owner 확인해 줘");
     const last = say("@dev 한 줄 더");
     const trigger = say("@dev 요약해");
@@ -230,7 +235,7 @@ describe("buildInboundDeliver", () => {
       const { db, bus, channelId, userId, devId, finId, deliver } = setup();
       const img = insertAttachment(db, { channelId, uploaderId: userId });
       const mine = createUserMessage(db, bus, {
-        conversationId: channelId,
+        conversationId: channelConversation(db, channelId),
         authorId: userId,
         bodyMd: "",
         clientMsgId: "img",
@@ -243,7 +248,7 @@ describe("buildInboundDeliver", () => {
 
       const chart = insertAttachment(db, { channelId, uploaderType: "bridge", name: "chart.png" });
       const relay = createAgentMessage(db, bus, {
-        conversationId: channelId,
+        conversationId: channelConversation(db, channelId),
         agentId: devId,
         externalId: "o-chart",
         bodyMd: "@fin 이 차트 봐",
@@ -260,7 +265,7 @@ describe("buildInboundDeliver", () => {
     it("이전 메시지 줄은 자리표시로만 — 「본문\n[이미지 2장] [파일: a.pdf]」, 본문이 비면 자리표시만, 경로·URL 은 어디에도 없다", () => {
       const { db, bus, channelId, userId, devId, say, deliver } = setup();
       const withBody = createAgentMessage(db, bus, {
-        conversationId: channelId,
+        conversationId: channelConversation(db, channelId),
         agentId: devId,
         externalId: "o1",
         bodyMd: "본문",
@@ -273,7 +278,7 @@ describe("buildInboundDeliver", () => {
       });
       expect(withBody.attachments).toHaveLength(3);
       createAgentMessage(db, bus, {
-        conversationId: channelId,
+        conversationId: channelConversation(db, channelId),
         agentId: devId,
         externalId: "o2",
         bodyMd: "",
@@ -287,7 +292,7 @@ describe("buildInboundDeliver", () => {
       say("글만");
       const img = insertAttachment(db, { channelId, uploaderId: userId });
       const trigger = createUserMessage(db, bus, {
-        conversationId: channelId,
+        conversationId: channelConversation(db, channelId),
         authorId: userId,
         bodyMd: "@dev 봐 줘",
         clientMsgId: "t",
@@ -410,7 +415,7 @@ describe("buildInboundDeliver", () => {
     const { db, bus, channelId, devId, finId, say, deliver, interactionOn } = setup();
     say("m1");
     const card = createAgentMessage(db, bus, {
-      conversationId: channelId,
+      conversationId: channelConversation(db, channelId),
       agentId: devId,
       externalId: "o-card",
       bodyMd: "@owner 골라 주세요",
@@ -447,7 +452,7 @@ describe("buildInboundDeliver", () => {
 
     // relay_limit 카드의 이어가기 — 카드 자체는 시스템 메시지라 recentMessages 에 없다
     const limit = createSystemMessage(db, bus, {
-      conversationId: channelId,
+      conversationId: channelConversation(db, channelId),
       kind: "relay_limit",
       bodyMd: "릴레이 한도(4턴)에 도달했습니다.",
       components: {
@@ -491,7 +496,7 @@ describe("buildInboundDeliver", () => {
       say("답 1", root.id);
       agentSays(devId, "답 2", root.id);
       createSystemMessage(db, bus, {
-        conversationId: channelId,
+        conversationId: channelConversation(db, channelId),
         kind: "info",
         bodyMd: "시스템",
         threadRootId: root.id,
@@ -503,7 +508,9 @@ describe("buildInboundDeliver", () => {
       const { inbound } = deliver({ message: trigger }, { run: { threadRootId: root.id } });
       expect(InboundDeliver.safeParse(inbound).success).toBe(true);
       expect(inbound.threadId).toBe(root.id);
-      expect(inbound.sessionKey).toBe(`agent:dev-main:dodok:channel:${channelId}:thread:${root.id}`);
+      expect(inbound.sessionKey).toBe(
+        `agent:dev-main:dodok:channel:${channelConversation(db, channelId)}:thread:${root.id}`,
+      );
       expect(inbound.context.recentMessages).toEqual([]);
       expect(inbound.context.thread).toEqual({
         root: {
@@ -536,7 +543,7 @@ describe("buildInboundDeliver", () => {
       const root = say("루트");
       say("앞 답", root.id);
       const card = createAgentMessage(db, bus, {
-        conversationId: channelId,
+        conversationId: channelConversation(db, channelId),
         agentId: devId,
         externalId: "o-thread-card",
         bodyMd: "골라 주세요",
@@ -593,12 +600,12 @@ describe("buildInboundDeliver", () => {
       const morning = automationIn(t, "아침 점검");
       const deploy = automationIn(t, "배포 알림");
       const earlier = createAutomationMessage(t.db, t.bus, {
-        conversationId: t.channelId,
+        conversationId: t.conversationId,
         automationId: deploy.id,
         bodyMd: "배포 끝",
       });
       const trigger = createAutomationMessage(t.db, t.bus, {
-        conversationId: t.channelId,
+        conversationId: t.conversationId,
         automationId: morning.id,
         bodyMd: "@dev 점검해 줘",
       });
@@ -622,7 +629,7 @@ describe("buildInboundDeliver", () => {
       const t = setup();
       const gone = automationIn(t, "지울 것");
       const old = createAutomationMessage(t.db, t.bus, {
-        conversationId: t.channelId,
+        conversationId: t.conversationId,
         automationId: gone.id,
         bodyMd: "옛 알림",
       });

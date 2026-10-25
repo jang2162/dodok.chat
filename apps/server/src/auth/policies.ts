@@ -1,4 +1,4 @@
-import { roleAtLeast, type TeamRole } from "@dodok/shared";
+import { roleAtLeast, type SessionPolicy, type TeamRole } from "@dodok/shared";
 import { apiError } from "../http/errors";
 
 // 역할 정책 — 제어 도구에 대응하는 REST 경로마다 하나. REST 라우트(requirePolicy·핸들러)와 제어 서비스가 같은 함수를 불러
@@ -40,7 +40,8 @@ function requireFields(role: TeamRole | undefined, body: unknown, allowed: Reado
 
 /**
  * 워크스페이스 멤버면 누구나 — GET /channels·/channels/:id·/channels/:id/members·/agents·/people·/search·
- * /channels/:id/messages·/channels/:id/threads/:rootId/messages·/runs/:id
+ * /channels/:id/messages·/channels/:id/threads/:rootId/messages·/runs/:id·/channels/:id/conversations·
+ * /conversations/:id/messages·/conversations/:id/threads/:rootId/messages
  */
 export function authorizeRead(role: TeamRole | undefined): void {
   requireAtLeast(role, "member");
@@ -88,6 +89,34 @@ export function authorizeChannelArchive(role: TeamRole | undefined): void {
 
 /** POST /channels/:id/unarchive(admin 이상) */
 export function authorizeChannelUnarchive(role: TeamRole | undefined): void {
+  requireAtLeast(role, "admin");
+}
+
+// ── 세션(채널 세션 스펙 「권한」 장) ──────────────────────────────────
+
+/** 새 세션(wire message.send 의 newConversation) — 정책 members 면 누구나, managers 면 그 채널의 세션 관리자와 admin 이상 */
+export function authorizeConversationCreate(
+  role: TeamRole | undefined,
+  policy: SessionPolicy,
+  isManager: boolean,
+): void {
+  requireAtLeast(role, "member");
+  if (policy.create === "members" || isManager || roleAtLeast(role, "admin")) return;
+  throw apiError("FORBIDDEN", "이 채널은 세션 관리자만 새 세션을 만들 수 있다");
+}
+
+/** PATCH /conversations/:id — 제목·닫기·다시 열기. 만든 사람(자기 세션), 세션 관리자, admin 이상 */
+export function authorizeConversationManage(
+  role: TeamRole | undefined,
+  actor: { isCreator: boolean; isManager: boolean },
+): void {
+  requireAtLeast(role, "member");
+  if (actor.isCreator || actor.isManager || roleAtLeast(role, "admin")) return;
+  throw apiError("FORBIDDEN", "만든 사람·세션 관리자·admin 이상만 이 세션을 바꿀 수 있다");
+}
+
+/** PUT·DELETE /channels/:id/session-managers/:userId(admin 이상). 세션 정책은 PATCH /channels/:id 의 필드 가르기가 본다(admin) */
+export function authorizeSessionManagers(role: TeamRole | undefined): void {
   requireAtLeast(role, "admin");
 }
 

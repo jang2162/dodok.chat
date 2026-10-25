@@ -33,6 +33,7 @@ import { bootLiveApp, type LiveApp, type LiveAppOptions } from "../helpers/live-
 import { makePng } from "../helpers/png";
 import { openChannelWire, rest, sendMessage, uploadImage, type WireLog } from "../helpers/scenario-steps";
 import type { WireClient } from "../helpers/wire";
+import { channelConversation } from "../helpers/seed";
 
 vi.setConfig({ testTimeout: 30_000, hookTimeout: 20_000 });
 
@@ -184,7 +185,7 @@ describe("Claude 러너 통합 시나리오", () => {
       runId: run.id,
       channelId: channel.id,
       agentId: "coder",
-      sessionKey: dodokSessionKey("coder", channel.id),
+      sessionKey: dodokSessionKey("coder", channelConversation(live.app.db, channel.id)),
       message: { id: human.id },
     });
     expect(startFrame?.providerSessionId).toMatch(/^[0-9a-f-]{36}$/);
@@ -206,7 +207,7 @@ describe("Claude 러너 통합 시나리오", () => {
     const run = await runOf(log, coder.id);
     expect((await log.terminal(run.id)).status).toBe("done");
     expect(runner.runStarts[0]?.deliver).toMatchObject({
-      sessionKey: dodokSessionKey("coder", channel.id, root.id),
+      sessionKey: dodokSessionKey("coder", channelConversation(live.app.db, channel.id), root.id),
       threadId: root.id,
     });
     const answer = await agentMessage(log, run.id);
@@ -446,7 +447,9 @@ describe("Claude 러너 통합 시나리오", () => {
     expect((await log.terminal((await runOf(log, coder.id, 3)).id)).status).toBe("done");
 
     const [chan1, thread1, thread2, chan2] = runner.runStarts;
-    expect(thread2?.deliver.sessionKey).toBe(dodokSessionKey("coder", channel.id, root.id));
+    expect(thread2?.deliver.sessionKey).toBe(
+      dodokSessionKey("coder", channelConversation(live.app.db, channel.id), root.id),
+    );
     expect(thread2?.providerSessionId).not.toBe(thread1?.providerSessionId);
     expect(chan2?.providerSessionId).not.toBe(chan1?.providerSessionId);
     expect(chan2?.providerSessionId).not.toBe(thread2?.providerSessionId);

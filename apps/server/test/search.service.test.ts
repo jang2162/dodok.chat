@@ -30,7 +30,7 @@ import { searchMessages } from "../src/modules/search/service";
 import { ServerBus } from "../src/realtime/bus";
 import { migrationsFolder } from "../src/runtime";
 import { newTestDb } from "./helpers/db";
-import { seedWorkspace } from "./helpers/seed";
+import { seedConversation, seedWorkspace } from "./helpers/seed";
 
 const NOW = new Date("2026-09-25T12:00:00+09:00");
 const DAY = 86_400_000;
@@ -43,10 +43,15 @@ function setup() {
   const other = createChannel(db, { workspaceId, createdBy: userId, name: "random" });
   const dev = createAgent(db, { workspaceId, providerAgentId: "dev", handle: "dev", name: "Dev" });
   addMember(db, channel.id, { memberType: "agent", memberId: dev.id }, { warn: () => {} });
+  // 채널마다 세션 하나
+  const conversationOf: Record<string, string> = {
+    [channel.id]: seedConversation(db, channel.id),
+    [other.id]: seedConversation(db, other.id),
+  };
   let n = 0;
   const say = (bodyMd: string, opts: { channelId?: string; at?: Date } = {}) => {
     const m = createUserMessage(db, bus, {
-      conversationId: opts.channelId ?? channel.id,
+      conversationId: conversationOf[opts.channelId ?? channel.id] ?? "",
       authorId: userId,
       bodyMd,
       clientMsgId: `c${n++}`,
@@ -56,7 +61,7 @@ function setup() {
   };
   const agentSays = (bodyMd: string, opts: { at?: Date } = {}) => {
     const m = createAgentMessage(db, bus, {
-      conversationId: channel.id,
+      conversationId: conversationOf[channel.id] ?? "",
       agentId: dev.id,
       externalId: `e${n++}`,
       bodyMd,
@@ -72,6 +77,7 @@ function setup() {
     workspaceId,
     userId,
     channelId: channel.id,
+    conversationId: conversationOf[channel.id] ?? "",
     otherId: other.id,
     devId: dev.id,
     say,
@@ -135,11 +141,11 @@ describe("색인 트리거 (스펙 5.1)", () => {
     t.say("사람 메시지 하나");
     t.agentSays("에이전트 메시지 하나");
     const sys = createSystemMessage(t.db, t.bus, {
-      conversationId: t.channelId,
+      conversationId: t.conversationId,
       kind: "info",
       bodyMd: "시스템 공지",
     });
-    createSystemMessage(t.db, t.bus, { conversationId: t.channelId, kind: "info", bodyMd: "또 공지" });
+    createSystemMessage(t.db, t.bus, { conversationId: t.conversationId, kind: "info", bodyMd: "또 공지" });
     t.db.update(messages).set({ bodyMd: "고친 시스템 공지" }).where(eq(messages.id, sys.id)).run();
     const normal = t.db.get<{ n: number }>(sql`SELECT count(*) AS n FROM messages WHERE kind = 'normal'`)?.n;
     expect(normal).toBe(2);
@@ -160,7 +166,7 @@ describe("색인 트리거 (스펙 5.1)", () => {
   it("시스템 메시지는 찾지 않는다", () => {
     const t = setup();
     createSystemMessage(t.db, t.bus, {
-      conversationId: t.channelId,
+      conversationId: t.conversationId,
       kind: "info",
       bodyMd: "시스템 공지 배포를 알림",
     });
@@ -255,7 +261,7 @@ describe("3글자 이상 — MATCH", () => {
     const w2 = seedWorkspace(t.db, { userHandle: "other" });
     const ch2 = createChannel(t.db, { workspaceId: w2.workspaceId, createdBy: w2.userId, name: "x" });
     createUserMessage(t.db, t.bus, {
-      conversationId: ch2.id,
+      conversationId: seedConversation(t.db, ch2.id),
       authorId: w2.userId,
       bodyMd: "워크스페이스경계",
       clientMsgId: "z",
@@ -298,7 +304,7 @@ describe("자동화 글", () => {
     const t = setup();
     const automationId = uuid();
     const posted = createAutomationMessage(t.db, t.bus, {
-      conversationId: t.channelId,
+      conversationId: t.conversationId,
       automationId,
       bodyMd: "배포 점검 결과",
     });
@@ -322,7 +328,7 @@ describe("2글자 — LIKE", () => {
     const t = setup();
     const inside = t.say("배포 완료", { at: new Date(NOW.getTime() - 89 * DAY) });
     t.say("배포 옛날", { at: new Date(NOW.getTime() - 91 * DAY) });
-    createSystemMessage(t.db, t.bus, { conversationId: t.channelId, kind: "info", bodyMd: "배포 공지" });
+    createSystemMessage(t.db, t.bus, { conversationId: t.conversationId, kind: "info", bodyMd: "배포 공지" });
     const r = t.search("배포");
     expect(r.limited).toBe(true);
     expect(ids(r)).toEqual([inside.id]);
@@ -799,7 +805,7 @@ describe("결과 모양", () => {
     const t = setup();
     const root = t.say("스레드루트 본문");
     const reply = createUserMessage(t.db, t.bus, {
-      conversationId: t.channelId,
+      conversationId: t.conversationId,
       authorId: t.userId,
       bodyMd: "스레드답글 본문",
       clientMsgId: "reply",

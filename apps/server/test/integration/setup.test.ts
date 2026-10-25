@@ -25,6 +25,7 @@ import { bootLiveApp, type LiveApp } from "../helpers/live-app";
 import { makePng } from "../helpers/png";
 import { connectWire, recordEvents, waitFor, type WireClient, type WirePayload } from "../helpers/wire";
 import { openclawOf, soleGateway } from "../helpers/openclaw";
+import { channelConversation } from "../helpers/seed";
 
 vi.setConfig({ testTimeout: 20_000, hookTimeout: 20_000 });
 
@@ -154,7 +155,7 @@ describe("설정 마법사 통합 — 브리지 토큰 겹침 교체·폐기", (
     });
     const { channel } = createdChannel.json() as { channel: Channel };
     const uploaded: Attachment = await pluginB.uploadAttachment({
-      conversationId: channel.id,
+      conversationId: channelConversation(app.db, channel.id),
       bytes: makePng(2, 2),
       name: "a.png",
       mime: "image/png",
@@ -167,7 +168,7 @@ describe("설정 마법사 통합 — 브리지 토큰 겹침 교체·폐기", (
     expect((await pluginB.downloadAttachment(uploaded.id, { token: TOKEN_A })).status).toBe(401);
     expect((await pluginB.downloadAttachment(uploaded.id)).status).toBe(200);
     await pluginB.uploadAttachment({
-      conversationId: channel.id,
+      conversationId: channelConversation(app.db, channel.id),
       bytes: makePng(3, 3),
       name: "b.png",
       mime: "image/png",

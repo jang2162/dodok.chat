@@ -15,6 +15,7 @@ import { RETRY_RUN_ITEM } from "../src/modules/router/service";
 import { getRun } from "../src/modules/runs/store";
 import { bootTestApp } from "./helpers/app";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
+import { channelConversation } from "./helpers/seed";
 
 const apps: App[] = [];
 afterEach(async () => {
@@ -40,7 +41,7 @@ async function setup() {
   let n = 0;
   const say = async (bodyMd: string, threadRootId?: string) => {
     const message = createUserMessage(app.db, app.bus, {
-      conversationId: channel.id,
+      conversationId: channelConversation(app.db, channel.id),
       authorId: app.ownerUserId,
       bodyMd,
       clientMsgId: `orphan-${++n}`,
@@ -78,7 +79,7 @@ describe("Gateway 가 빈 OpenClaw 에이전트", () => {
   it("스레드 멘션도 같은 사유다 — 붙은 플러그인이 스레드를 알아도 재설치 안내(PLUGIN_OUTDATED)가 아니다", async () => {
     const { app, channel, say } = await setup();
     const root = createUserMessage(app.db, app.bus, {
-      conversationId: channel.id,
+      conversationId: channelConversation(app.db, channel.id),
       authorId: app.ownerUserId,
       bodyMd: "루트",
       clientMsgId: "orphan-root",

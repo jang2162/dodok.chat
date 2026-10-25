@@ -10,9 +10,14 @@ import { createAgent } from "../src/modules/agents/service";
 import { insertAutomation } from "../src/modules/automations/store";
 import { issueWebhookToken } from "../src/modules/automations/tokens";
 import * as approvalStore from "../src/modules/approvals/store";
-import { addMember, type ChannelRecord, createChannel } from "../src/modules/channels/service";
+import {
+  addMember,
+  type ChannelRecord,
+  createChannel,
+  setSessionManager,
+} from "../src/modules/channels/service";
 import { createGateway } from "../src/modules/gateways/service";
-import { createAgentMessage } from "../src/modules/messages/service";
+import { createAgentMessage, createUserMessage } from "../src/modules/messages/service";
 import { createTriggerLookups } from "../src/modules/push/service";
 import { targetsForApproval } from "../src/modules/push/triggers";
 import { issueBridgeToken } from "../src/modules/setup/tokens";
@@ -20,6 +25,7 @@ import { issuePersonalToken, verifyPersonalToken } from "../src/modules/tokens/s
 import { bootTestApp, login, noExternalTransport, userWithRole } from "./helpers/app";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
 import { connectWire, openWire, type WireClient } from "./helpers/wire";
+import { channelConversation, seedConversation } from "./helpers/seed";
 
 // 역할 매트릭스(팀 스펙 2장 표) — owner·admin·member 세 세션으로 경로마다 허용·거부를 본다.
 // 거부는 REST 403 FORBIDDEN·wire ack FORBIDDEN, membership 이 없는 세션은 어디서나 401
@@ -136,12 +142,24 @@ describe("역할 매트릭스(스펙 2장)", () => {
       updatedAt: new Date(),
     }).id;
   };
+  /** owner 가 만든 세션과 그 루트 메시지 */
+  const ownerConversation = () => {
+    const channel = newChannel();
+    const conversationId = seedConversation(app.db, channel.id);
+    const root = createUserMessage(app.db, app.bus, {
+      conversationId,
+      authorId: app.ownerUserId,
+      bodyMd: "루트",
+      clientMsgId: `root-${++n}`,
+    });
+    return { channel, conversationId, root };
+  };
   const channelRow = (id: string) => app.db.select().from(channels).where(eq(channels.id, id)).get();
   /** 에이전트가 들어간 새 채널의 에이전트 답 하나 */
   const agentAnswer = () => {
     const { channel, agent } = channelWithAgent();
     return createAgentMessage(app.db, app.bus, {
-      conversationId: channel.id,
+      conversationId: channelConversation(app.db, channel.id),
       agentId: agent.id,
       bodyMd: "답",
       externalId: `answer-${++n}`,
@@ -246,6 +264,7 @@ describe("역할 매트릭스(스펙 2장)", () => {
         ["{prompt}", "admin", { prompt: "새 프롬프트" }],
         ["{relayPolicy}", "admin", { relayPolicy: { maxRelayTurns: 2, allowPairs: "all" } }],
         ["{visibility}", "admin", { visibility: "private" }],
+        ["{sessionPolicy}", "admin", { sessionPolicy: { create: "managers" } }],
       ] as const
     ).map(([label, min, payload]): Case => ({
       name: `PATCH /channels/:id ${label}`,
@@ -331,6 +350,69 @@ describe("역할 매트릭스(스펙 2장)", () => {
       min: "admin",
       ok: 200,
       request: () => ({ method: "POST", url: `/api/v1/channels/${newChannel().id}/unarchive` }),
+    },
+    {
+      name: "GET /channels/:id/conversations",
+      min: "member",
+      ok: 200,
+      request: () => ({
+        method: "GET",
+        url: `/api/v1/channels/${ownerConversation().channel.id}/conversations`,
+      }),
+    },
+    {
+      name: "GET /conversations/:id/messages",
+      min: "member",
+      ok: 200,
+      request: () => ({
+        method: "GET",
+        url: `/api/v1/conversations/${ownerConversation().conversationId}/messages`,
+      }),
+    },
+    {
+      name: "GET /conversations/:id/threads/:rootId/messages",
+      min: "member",
+      ok: 200,
+      request: () => {
+        const { conversationId, root } = ownerConversation();
+        return { method: "GET", url: `/api/v1/conversations/${conversationId}/threads/${root.id}/messages` };
+      },
+    },
+    // 남(owner)이 만든 세션 — member 는 만든 사람·세션 관리자가 아니라 거절, 자기 세션은 conversations.routes.test.ts
+    ...(
+      [
+        ["{title} (남의 세션)", { title: "바뀐 제목" }],
+        ["{closed} (남의 세션)", { closed: true }],
+      ] as const
+    ).map(([label, payload]): Case => ({
+      name: `PATCH /conversations/:id ${label}`,
+      min: "admin",
+      ok: 200,
+      request: () => ({
+        method: "PATCH",
+        url: `/api/v1/conversations/${ownerConversation().conversationId}`,
+        payload,
+      }),
+    })),
+    {
+      name: "PUT /channels/:id/session-managers/:userId",
+      min: "admin",
+      ok: 200,
+      request: () => ({
+        method: "PUT",
+        url: `/api/v1/channels/${newChannel().id}/session-managers/${newMember(null)}`,
+      }),
+    },
+    {
+      name: "DELETE /channels/:id/session-managers/:userId",
+      min: "admin",
+      ok: 200,
+      request: () => {
+        const channel = newChannel();
+        const userId = newMember(null);
+        setSessionManager(app.db, channel.id, userId, true);
+        return { method: "DELETE", url: `/api/v1/channels/${channel.id}/session-managers/${userId}` };
+      },
     },
     {
       name: "GET /ops/status",
@@ -761,9 +843,9 @@ describe("역할 매트릭스(스펙 2장)", () => {
       const frame: ProviderApproval = {
         providerApprovalId: `plugin:${uuid()}`,
         kind: "plugin",
-        sessionKey: adapter.sessionKeyFor(agent.providerAgentId, channel.id),
+        sessionKey: adapter.sessionKeyFor(agent.providerAgentId, channelConversation(app.db, channel.id)),
         providerAgentId: agent.providerAgentId,
-        conversationId: channel.id,
+        conversationId: channelConversation(app.db, channel.id),
         toolCallId: `toolu_${++n}`,
         toolName: "Write",
         pluginId: "fs",

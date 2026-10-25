@@ -15,6 +15,7 @@ import { insertRun } from "../src/modules/runs/store";
 import packageJson from "../package.json" with { type: "json" };
 import { bootTestApp, login, userWithRole } from "./helpers/app";
 import { FAKE_GATEWAY_ID, fakeGatewayStatus } from "./helpers/gateways";
+import { channelConversation } from "./helpers/seed";
 
 type Method = "GET" | "POST" | "PATCH";
 
@@ -163,7 +164,7 @@ describe("운영 API /api/v1/ops", () => {
       for (let i = 0; i < 2; i++)
         insertRun(app.db, {
           channelId: channel.id,
-          conversationId: channel.id,
+          conversationId: channelConversation(app.db, channel.id),
           agentId: agent.id,
           triggerKind: "mention",
           rootMessageId: uuid(),
@@ -175,7 +176,7 @@ describe("운영 API /api/v1/ops", () => {
       app.ops.record({ kind: "run_limit", key: "workspace", severity: "warn", detail: { limit: 1 } });
       app.ops.record({
         kind: "run_limit",
-        key: `channel:${channel.id}`,
+        key: `channel:${channelConversation(app.db, channel.id)}`,
         severity: "warn",
         detail: { limit: 1 },
       });
@@ -445,7 +446,7 @@ describe("운영 API /api/v1/ops", () => {
       });
       insertRun(app.db, {
         channelId: channel.id,
-        conversationId: channel.id,
+        conversationId: channelConversation(app.db, channel.id),
         agentId: agent.id,
         triggerKind: "mention",
         rootMessageId: uuid(),

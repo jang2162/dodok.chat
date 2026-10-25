@@ -15,7 +15,7 @@ describe("principalForRunner·principalForBridge", () => {
   let db: Db;
   let seed: ReturnType<typeof seedChannelWithAgent>;
   const GATEWAY = "gw-1";
-  const sessionKey = () => `agent:dev:dodok:channel:${seed.channelId}`;
+  const sessionKey = () => `agent:dev:dodok:channel:${seed.conversationId}`;
 
   beforeEach(() => {
     db = newTestDb();
@@ -29,7 +29,7 @@ describe("principalForRunner·principalForBridge", () => {
   ) => {
     const queued = insertRun(db, {
       channelId: seed.channelId,
-      conversationId: seed.channelId,
+      conversationId: seed.conversationId,
       agentId: seed.agentId,
       triggerKind: "mention",
       rootMessageId: uuid(),

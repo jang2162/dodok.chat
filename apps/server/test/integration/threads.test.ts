@@ -19,6 +19,7 @@ import {
   type WireLog,
 } from "../helpers/scenario-steps";
 import type { WireClient } from "../helpers/wire";
+import { channelConversation } from "../helpers/seed";
 
 vi.setConfig({ testTimeout: 20_000, hookTimeout: 20_000 });
 
@@ -77,7 +78,7 @@ describe("통합 — 스레드 런", () => {
     expect(answer).toMatchObject({ threadRootId: root.id, bodyMd: "스레드 답" });
     const delivery = scenario.turns[0]?.delivery;
     expect(delivery).toMatchObject({
-      sessionKey: `agent:dev:dodok:channel:${channel.id}:thread:${root.id}`,
+      sessionKey: `agent:dev:dodok:channel:${channelConversation(live.app.db, channel.id)}:thread:${root.id}`,
       threadId: root.id,
       message: { id: reply.id },
       context: {
@@ -203,9 +204,21 @@ describe("통합 — 스레드 런", () => {
     await scenario.idle();
     const keys = scenario.turns.map((t) => [t.agentId, t.delivery.sessionKey, t.delivery.threadId]);
     expect(keys).toEqual([
-      ["dev", `agent:dev:dodok:channel:${channel.id}:thread:${root.id}`, root.id],
-      ["fin", `agent:fin:dodok:channel:${channel.id}:thread:${root.id}`, root.id],
-      ["dev", `agent:dev:dodok:channel:${channel.id}:thread:${root.id}`, root.id],
+      [
+        "dev",
+        `agent:dev:dodok:channel:${channelConversation(live.app.db, channel.id)}:thread:${root.id}`,
+        root.id,
+      ],
+      [
+        "fin",
+        `agent:fin:dodok:channel:${channelConversation(live.app.db, channel.id)}:thread:${root.id}`,
+        root.id,
+      ],
+      [
+        "dev",
+        `agent:dev:dodok:channel:${channelConversation(live.app.db, channel.id)}:thread:${root.id}`,
+        root.id,
+      ],
     ]); // dev 의 둘째 「@fin 넘길게」 는 같은 사슬의 반복이라 막힌다
     expect(log.created.filter((m) => m.authorType === "agent").every((m) => m.threadRootId === root.id)).toBe(
       true,
@@ -284,9 +297,9 @@ describe("통합 — 스레드 런", () => {
     const other = await sendMessage(log.socket, channel.id, "다른 루트");
     await sendMessage(log.socket, channel.id, "@dev 스레드", { threadRootId: root.id });
     const run = await runOf(log, dev.id, root.id);
-    const threadKey = `agent:dev:dodok:channel:${channel.id}:thread:${root.id}`;
+    const threadKey = `agent:dev:dodok:channel:${channelConversation(live.app.db, channel.id)}:thread:${root.id}`;
     const base = {
-      conversationId: channel.id,
+      conversationId: channelConversation(live.app.db, channel.id),
       agentId: "dev",
       runId: run.id,
       text: "새면 안 된다",
@@ -298,7 +311,10 @@ describe("통합 — 스레드 런", () => {
       live.plugin.sendOutbound({ ...base, sessionKey: threadKey, threadId: other.id }),
     ).rejects.toThrow(mismatch);
     await expect(
-      live.plugin.sendOutbound({ ...base, sessionKey: `agent:dev:dodok:channel:${channel.id}` }),
+      live.plugin.sendOutbound({
+        ...base,
+        sessionKey: `agent:dev:dodok:channel:${channelConversation(live.app.db, channel.id)}`,
+      }),
     ).rejects.toThrow(mismatch);
     expect(log.created.filter((m) => m.authorType === "agent")).toEqual([]);
   });
@@ -332,7 +348,7 @@ describe("통합 — 스레드 런", () => {
     expect(scenario.turns[1]?.delivery).toMatchObject({
       kind: "interaction",
       threadId: root.id,
-      sessionKey: `agent:dev:dodok:channel:${channel.id}:thread:${root.id}`,
+      sessionKey: `agent:dev:dodok:channel:${channelConversation(live.app.db, channel.id)}:thread:${root.id}`,
     });
   });
 

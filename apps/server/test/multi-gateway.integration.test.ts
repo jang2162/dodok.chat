@@ -12,6 +12,7 @@ import { bootLiveApp, type LiveApp, type LiveGateway } from "./helpers/live-app"
 import { PDF_BYTES } from "./helpers/png";
 import { openChannelWire, resolveApproval, sendMessage, type WireLog } from "./helpers/scenario-steps";
 import type { WireClient } from "./helpers/wire";
+import { channelConversation } from "./helpers/seed";
 
 vi.setConfig({ testTimeout: 20_000, hookTimeout: 20_000 });
 
@@ -315,7 +316,7 @@ describe("멀티 Gateway 통합 — 가짜 Gateway·플러그인 둘", () => {
   it("첨부 범위 — 집 플러그인이 올린 첨부는 사무실 토큰이 못 읽고, 사무실 정본에도 묶이지 않는다", async () => {
     const { channel, mainOffice, log } = await twoMains();
     const homeUpload = await home.plugin.uploadAttachment({
-      conversationId: channel.id,
+      conversationId: channelConversation(live.app.db, channel.id),
       bytes: PDF_BYTES,
       name: "home.pdf",
       mime: "application/pdf",

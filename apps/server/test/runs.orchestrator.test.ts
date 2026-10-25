@@ -36,7 +36,7 @@ import { ensureSession } from "../src/modules/sessions/service";
 import { ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
 import { FAKE_GATEWAY_ID, fakeGatewayStatus, insertGateway } from "./helpers/gateways";
-import { seedChannelWithAgent } from "./helpers/seed";
+import { seedChannelWithAgent, seedConversation } from "./helpers/seed";
 
 type Ids = ReturnType<typeof seedChannelWithAgent>;
 
@@ -92,7 +92,7 @@ function setup(opts: { timeouts?: Partial<RunTimeouts>; approvals?: Orchestrator
   let n = 0;
   const say = (bodyMd = "@dev 안녕", at: Ids = ids, threadRootId?: string) =>
     createUserMessage(db, bus, {
-      conversationId: at.channelId,
+      conversationId: at.conversationId,
       authorId: at.userId,
       bodyMd,
       clientMsgId: `c${++n}`,
@@ -103,7 +103,7 @@ function setup(opts: { timeouts?: Partial<RunTimeouts>; approvals?: Orchestrator
       {
         agentId: ids.agentId,
         channelId: message.channelId,
-        conversationId: message.channelId,
+        conversationId: message.conversationId,
         triggerKind: "mention",
         rootMessageId: message.id,
         relayDepth: 0,
@@ -111,10 +111,10 @@ function setup(opts: { timeouts?: Partial<RunTimeouts>; approvals?: Orchestrator
       },
       { message },
     );
-  const sessionKey = `agent:dev:dodok:channel:${ids.channelId}`;
+  const sessionKey = `agent:dev:dodok:channel:${ids.conversationId}`;
   const outbound = (over: Partial<OutboundMessage> = {}): OutboundMessage => ({
     outboundId: `out-${++n}`,
-    conversationId: ids.channelId,
+    conversationId: ids.conversationId,
     agentId: "dev",
     sessionKey,
     text: "답입니다",
@@ -1214,7 +1214,7 @@ describe("orchestrator", () => {
       {
         agentId: t.agentId,
         channelId: t.channelId,
-        conversationId: t.channelId,
+        conversationId: t.conversationId,
         triggerKind: "interaction",
         rootMessageId: card.id,
         relayDepth: 0,
@@ -1234,7 +1234,7 @@ describe("orchestrator", () => {
       {
         agentId: t.agentId,
         channelId: t.channelId,
-        conversationId: t.channelId,
+        conversationId: t.conversationId,
         triggerKind: "interaction",
         rootMessageId: card.id,
         relayDepth: 0,
@@ -1346,7 +1346,7 @@ describe("orchestrator", () => {
     const make = (status: Run["status"]) => {
       const run = insertRun(t.db, {
         channelId: t.channelId,
-        conversationId: t.channelId,
+        conversationId: t.conversationId,
         agentId: t.agentId,
         triggerKind: "mention",
         rootMessageId: uuid(),
@@ -1468,7 +1468,7 @@ describe("orchestrator", () => {
     await t.flush();
     expect(t.runOf(run.id).status).toBe("queued");
     expect(t.adapter.calls.send).toEqual([
-      expect.objectContaining({ runId: run.id, sessionKey: `agent:Dev:dodok:channel:${t.channelId}` }),
+      expect.objectContaining({ runId: run.id, sessionKey: `agent:Dev:dodok:channel:${t.conversationId}` }),
     ]);
 
     const ack = await t.orch.onCanonical(
@@ -1500,11 +1500,12 @@ describe("orchestrator", () => {
     // 다른 채널의 런 id 를 달고 와도 그 런에 붙이지 않는다
     const second = createChannel(t.db, { workspaceId: t.workspaceId, createdBy: t.userId, name: "second" });
     addMember(t.db, second.id, { memberType: "agent", memberId: t.agentId }, t.logger);
+    const secondConversation = seedConversation(t.db, second.id);
     const crossed = await t.orch.onCanonical(
       t.outbound({
-        conversationId: second.id,
+        conversationId: secondConversation,
         runId: run.id,
-        sessionKey: `agent:dev:dodok:channel:${second.id}`,
+        sessionKey: `agent:dev:dodok:channel:${secondConversation}`,
       }),
       "openclaw",
       FAKE_GATEWAY_ID,
@@ -2247,11 +2248,11 @@ describe("리액션 — 다음 런에 싣고, send 가 받아들여졌을 때만
       })
       .run();
     const session = ensureSession(t.db, t.adapter, {
-      conversationId: t.channelId,
+      conversationId: t.conversationId,
       agentId: t.agentId,
     }).session;
     const answer = createAgentMessage(t.db, new ServerBus(), {
-      conversationId: t.channelId,
+      conversationId: t.conversationId,
       agentId: t.agentId,
       bodyMd: "배포 순서는 먼저 DB 마이그레이션",
       externalId: "ext-answer",

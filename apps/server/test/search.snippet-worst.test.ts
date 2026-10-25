@@ -7,7 +7,7 @@ import { createUserMessage } from "../src/modules/messages/service";
 import { searchMessages } from "../src/modules/search/service";
 import { ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
-import { seedWorkspace } from "./helpers/seed";
+import { channelConversation, seedWorkspace } from "./helpers/seed";
 
 // 스니펫 변환(readable.ts)이 특별히 다루는 표시마다 본문 상한(100 000) 가까이 되풀이한 최악 입력 — 정규식 하나가 줄 끝까지 훑고
 // 실패한 뒤 몇 글자만 먹는 꼴이 또 숨으면 행 하나에 몇 초가 된다(줄머리 `- ` 되풀이가 그랬다). 목록은 readable.ts 의 정규식·
@@ -95,7 +95,7 @@ describe("스니펫 최악 입력 — 표시마다 100 KB 되풀이", () => {
   const { workspaceId, userId } = seedWorkspace(db);
   const channel = createChannel(db, { workspaceId, createdBy: userId, name: "general" });
   const m = createUserMessage(db, bus, {
-    conversationId: channel.id,
+    conversationId: channelConversation(db, channel.id),
     authorId: userId,
     bodyMd: "임시",
     clientMsgId: "c0",

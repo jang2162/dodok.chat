@@ -19,7 +19,7 @@ import { createServices } from "../src/wiring";
 import { bootTestApp, login, userWithRole } from "./helpers/app";
 import { newTestDb } from "./helpers/db";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
-import { seedChannelWithAgent } from "./helpers/seed";
+import { channelConversation, seedChannelWithAgent } from "./helpers/seed";
 import { connectWire, recordEvents, type WireClient, waitFor } from "./helpers/wire";
 
 const MINUTE = 60_000;
@@ -110,7 +110,7 @@ describe("승인 저장·런 상관·wire 중계 (앱 부팅, FakeAdapter)", () 
   });
 
   const sessionKeyOf = (providerAgentId: string, channelId: string) =>
-    adapter.sessionKeyFor(providerAgentId, channelId);
+    adapter.sessionKeyFor(providerAgentId, channelConversation(app.db, channelId));
 
   function newChannel(): ChannelRecord {
     const created = createChannel(app.db, {
@@ -286,7 +286,7 @@ describe("승인 저장·런 상관·wire 중계 (앱 부팅, FakeAdapter)", () 
 
     const foreign = providerApproval(`agent:dev:discord:channel:${channel.id}`);
     adapter.emitApproval(foreign);
-    const unknownChannel = providerApproval(sessionKeyOf("dev", uuid()));
+    const unknownChannel = providerApproval(adapter.sessionKeyFor("dev", uuid()));
     adapter.emitApproval(unknownChannel);
     const unknownAgent = providerApproval(sessionKeyOf("nobody", channel.id));
     adapter.emitApproval(unknownAgent);
@@ -671,7 +671,7 @@ describe("승인 저장·런 상관·wire 중계 (앱 부팅, FakeAdapter)", () 
       providerApprovalId: `plugin:${uuid()}`,
       kind: "plugin",
       channelId: other.channelId,
-      conversationId: other.channelId,
+      conversationId: other.conversationId,
       agentId: other.agentId,
       title: "남의 워크스페이스",
       severity: "warning",
@@ -1040,7 +1040,7 @@ describe("승인 store (메모리 DB)", () => {
     const db = newTestDb();
     const { channelId, agentId, userId } = seedChannelWithAgent(db);
     const input = (patch: Partial<approvalStore.ApprovalRowInput> = {}) =>
-      base({ channelId, conversationId: channelId, agentId, ...patch });
+      base({ channelId, conversationId: channelConversation(db, channelId), agentId, ...patch });
     return { db, channelId, agentId, userId, input };
   }
 
@@ -1185,12 +1185,12 @@ describe("승인 store (메모리 DB)", () => {
     const { db, input, channelId, agentId } = setup();
     const run = insertRun(db, {
       channelId,
-      conversationId: channelId,
+      conversationId: channelConversation(db, channelId),
       agentId,
       triggerKind: "mention",
       rootMessageId: uuid(),
       relayDepth: 0,
-      sessionKey: `agent:dev:dodok:channel:${channelId}`,
+      sessionKey: `agent:dev:dodok:channel:${channelConversation(db, channelId)}`,
       createdAt: new Date("2026-09-20T00:00:00.000Z"),
     });
     const live = approvalStore.upsertApproval(db, input({ runId: run.id })).approval;
@@ -1311,7 +1311,7 @@ describe("승인 대기 중 런 시계 (가짜 타이머, 메모리 DB)", () => 
       workspaceId: ids.workspaceId,
       timeouts: { runMs: RUN_MS, ...timeouts },
     });
-    const sessionKey = adapter.sessionKeyFor("dev", ids.channelId);
+    const sessionKey = adapter.sessionKeyFor("dev", channelConversation(db, ids.channelId));
     const runOf = (runId: string) => {
       const run = getRun(db, runId);
       if (!run) throw new Error(`run ${runId} missing`);
@@ -1321,7 +1321,7 @@ describe("승인 대기 중 런 시계 (가짜 타이머, 메모리 DB)", () => 
     /** 멘션 런 하나를 띄워 툴을 연 뒤(= tool), 승인 하나를 요구해 awaiting_approval 로 만든다 */
     async function awaitingApproval(patch: Partial<ProviderApproval> = {}) {
       const message = createUserMessage(db, bus, {
-        conversationId: ids.channelId,
+        conversationId: ids.conversationId,
         authorId: ids.userId,
         bodyMd: "@dev 파일 써줘",
         clientMsgId: `c-${++seq}`,
@@ -1330,7 +1330,7 @@ describe("승인 대기 중 런 시계 (가짜 타이머, 메모리 DB)", () => 
         {
           agentId: ids.agentId,
           channelId: ids.channelId,
-          conversationId: ids.channelId,
+          conversationId: ids.conversationId,
           triggerKind: "mention",
           rootMessageId: message.id,
           relayDepth: 0,
