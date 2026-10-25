@@ -40,6 +40,7 @@ import { listPersonalTokens, verifyPersonalToken } from "../src/modules/tokens/s
 import { bootTestApp, login, userWithRole } from "./helpers/app";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
 import { connectWire, openWire, recordEvents, type WireClient } from "./helpers/wire";
+import { channelConversation } from "./helpers/seed";
 
 describe("멤버 비활성화·다시 활성화", () => {
   let app: App;
@@ -194,7 +195,7 @@ describe("멤버 비활성화·다시 활성화", () => {
       const member = await person("member");
       const ch = channel("deact");
       const said = createUserMessage(app.db, app.bus, {
-        conversationId: ch.id,
+        conversationId: channelConversation(app.db, ch.id),
         authorId: target.id,
         bodyMd: "남는 말",
         clientMsgId: `c${++n}`,
@@ -480,7 +481,7 @@ describe("멤버 비활성화·다시 활성화", () => {
       });
       addMember(app.db, ch.id, { memberType: "agent", memberId: dev.id }, app.logger);
       const said = createUserMessage(app.db, app.bus, {
-        conversationId: ch.id,
+        conversationId: channelConversation(app.db, ch.id),
         authorId: member.id,
         bodyMd: "들어왔다",
         clientMsgId: `c${++n}`,
@@ -500,7 +501,7 @@ describe("멤버 비활성화·다시 활성화", () => {
 
       // 사람이 @그 사람 을 부르면 멘션이 되지 않는다 — 푸시 대상도 없다
       const mention = createUserMessage(app.db, app.bus, {
-        conversationId: ch.id,
+        conversationId: channelConversation(app.db, ch.id),
         authorId: app.ownerUserId,
         bodyMd: `@${member.handle} @${dev.handle} 확인`,
         clientMsgId: `c${++n}`,
@@ -508,8 +509,14 @@ describe("멤버 비활성화·다시 활성화", () => {
       expect(mention.mentions.users).not.toContain(member.id);
       expect(targetsForMessage(mention, lookups).map((t) => t.userId)).not.toContain(member.id);
       await app.services.router.routeMessage(mention);
-      await vi.waitFor(() => expect(adapter.calls.send.some((s) => s.sessionKey.includes(ch.id))).toBe(true));
-      const sent = adapter.calls.send.filter((s) => s.sessionKey.includes(ch.id)).at(-1);
+      await vi.waitFor(() =>
+        expect(
+          adapter.calls.send.some((s) => s.sessionKey.includes(channelConversation(app.db, ch.id))),
+        ).toBe(true),
+      );
+      const sent = adapter.calls.send
+        .filter((s) => s.sessionKey.includes(channelConversation(app.db, ch.id)))
+        .at(-1);
       expect(sent?.context.participants.map((p) => p.handle)).not.toContain(member.handle);
       // 옛 메시지는 에이전트에게도 그 사람 이름으로 남는다(작성자)
       expect(sent?.context.recentMessages.find((m) => m.text === said.bodyMd)?.author).toMatchObject({
@@ -536,7 +543,7 @@ describe("멤버 비활성화·다시 활성화", () => {
       expect((await members()).some((m) => m.memberId === member.id)).toBe(true);
       expect(createTriggerLookups(app.db, app.workspaceId).humanMembers(ch.id)).toContain(member.id);
       const again = createUserMessage(app.db, app.bus, {
-        conversationId: ch.id,
+        conversationId: channelConversation(app.db, ch.id),
         authorId: app.ownerUserId,
         bodyMd: `@${member.handle} 돌아왔네`,
         clientMsgId: `c${++n}`,
@@ -558,7 +565,7 @@ describe("멤버 비활성화·다시 활성화", () => {
       });
       addMember(app.db, ch.id, { memberType: "agent", memberId: dev.id }, app.logger);
       const before = createUserMessage(app.db, app.bus, {
-        conversationId: ch.id,
+        conversationId: channelConversation(app.db, ch.id),
         authorId: app.ownerUserId,
         bodyMd: `@${member.handle} 이거 맡아 줘`,
         clientMsgId: `c${++n}`,
@@ -567,14 +574,20 @@ describe("멤버 비활성화·다시 활성화", () => {
       expect((await deactivate(ownerToken, member.id)).statusCode).toBe(200);
 
       const ask = createUserMessage(app.db, app.bus, {
-        conversationId: ch.id,
+        conversationId: channelConversation(app.db, ch.id),
         authorId: app.ownerUserId,
         bodyMd: `@${dev.handle} 누가 맡았지?`,
         clientMsgId: `c${++n}`,
       });
       await app.services.router.routeMessage(ask);
-      await vi.waitFor(() => expect(adapter.calls.send.some((s) => s.sessionKey.includes(ch.id))).toBe(true));
-      const sent = adapter.calls.send.filter((s) => s.sessionKey.includes(ch.id)).at(-1);
+      await vi.waitFor(() =>
+        expect(
+          adapter.calls.send.some((s) => s.sessionKey.includes(channelConversation(app.db, ch.id))),
+        ).toBe(true),
+      );
+      const sent = adapter.calls.send
+        .filter((s) => s.sessionKey.includes(channelConversation(app.db, ch.id)))
+        .at(-1);
       expect(sent?.context.recentMessages.map((m) => m.text)).toContain(`@${member.handle} 이거 맡아 줘`);
       expect(sent?.context.participants.map((p) => p.handle)).not.toContain(member.handle);
     });
@@ -584,7 +597,7 @@ describe("멤버 비활성화·다시 활성화", () => {
       const ch = channel("outside");
       expect((await deactivate(ownerToken, member.id)).statusCode).toBe(200);
       const msg = createUserMessage(app.db, app.bus, {
-        conversationId: ch.id,
+        conversationId: channelConversation(app.db, ch.id),
         authorId: app.ownerUserId,
         bodyMd: `@${member.handle} 와 봐`,
         clientMsgId: `c${++n}`,
@@ -636,7 +649,7 @@ describe("멤버 비활성화·다시 활성화", () => {
       const member = await joined();
       const ch = channel("back");
       createUserMessage(app.db, app.bus, {
-        conversationId: ch.id,
+        conversationId: channelConversation(app.db, ch.id),
         authorId: member.id,
         bodyMd: "참여",
         clientMsgId: `c${++n}`,
@@ -721,7 +734,7 @@ describe("멤버 비활성화·다시 활성화", () => {
       const ch = channel("reads-keep");
       for (const clientMsgId of ["k1", "k2", "k3"])
         createUserMessage(app.db, app.bus, {
-          conversationId: ch.id,
+          conversationId: channelConversation(app.db, ch.id),
           authorId: app.ownerUserId,
           bodyMd: "hi",
           clientMsgId,

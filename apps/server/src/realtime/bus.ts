@@ -19,6 +19,9 @@ export type BusEvents = {
   "channel.created": Payload<"channel.created">;
   "channel.updated": Payload<"channel.updated">;
   "channel.member.changed": Payload<"channel.member.changed">;
+  // 세션 만들기·제목·닫기·다시 열기 — 그 채널 룸으로(events.ts)
+  "conversation.created": Payload<"conversation.created">;
+  "conversation.updated": Payload<"conversation.updated">;
   // 사람 목록 — 워크스페이스 방으로(가입·역할·표시 이름·비활성화·다시 활성화 뒤, members/people.ts broadcastPeople)
   "people.changed": Payload<"people.changed">;
   // 에이전트가 바뀌었다(등록·수정·옮기기·보관·되살리기) — 워크스페이스 방으로, 본문 없음(agents/routes.ts)

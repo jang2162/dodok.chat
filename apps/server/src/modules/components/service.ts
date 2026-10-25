@@ -6,7 +6,8 @@ import { componentInteractions, users } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
 import type { ServerBus } from "../../realtime/bus";
 import { getAgent, isAgentActive } from "../agents/service";
-import { assertChannelWritable, getChannel, listMembers } from "../channels/service";
+import { getChannel, listMembers } from "../channels/service";
+import { assertConversationWritable } from "../conversations/store";
 import { consumeComponentItem, getMessage } from "../messages/service";
 import type { RunGate } from "../ops/budget";
 import { isPairAllowed } from "../router/decide";
@@ -135,14 +136,15 @@ function withThread(threadRootId: string | undefined): { threadRootId?: string }
 
 /**
  * 저장 없이 검사만 — 통과하면 메시지·검사 결과·대상을 돌려주고, 아니면 그 사유의 apiError 를 던진다. 보관한 채널의 카드는 다른 사유보다
- * 먼저 409 CHANNEL_ARCHIVED 다(계획 판정 PC1) — 저장·소비 전이라 보관 해제하면 같은 카드를 다시 누른다
+ * 먼저 409 CHANNEL_ARCHIVED, 닫힌 세션의 카드는 409 CONVERSATION_CLOSED 다(계획 판정 PC1·채널 세션 스펙 「세션 만들기·닫기」 절) — 저장·소비 전이라 보관
+ * 해제하거나 다시 열면 같은 카드를 다시 누른다
  */
 function checkInteraction(tx: DbOrTx, workspaceId: string, input: InteractInput, now: Date): Checked {
   const message = getMessage(tx, input.messageId);
   if (!message || !getChannel(tx, message.channelId, workspaceId)) {
     throw apiError("NOT_FOUND", "message not found");
   }
-  assertChannelWritable(tx, message.channelId, workspaceId);
+  assertConversationWritable(tx, message.conversationId, workspaceId);
   const checked = validateInteraction({
     message,
     componentId: input.componentId,

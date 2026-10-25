@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { App, AppDeps } from "../src/app";
 import { createAgent } from "../src/modules/agents/service";
 import { addMember, createChannel } from "../src/modules/channels/service";
+import { setConversationClosed } from "../src/modules/conversations/service";
 import { createUserMessage, getMessage, runErrorMessages } from "../src/modules/messages/service";
 import { RETRY_RUN_ITEM } from "../src/modules/router/service";
 import { getRun } from "../src/modules/runs/store";
@@ -20,6 +21,7 @@ import { eq } from "drizzle-orm";
 import { bootTestApp, login } from "./helpers/app";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
 import { connectWire, waitFor, type WireClient } from "./helpers/wire";
+import { channelConversation, seedConversation } from "./helpers/seed";
 
 const KEYS = {
   p256dh: "BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCA_0QTpQtUbVlUls0VJXg7A8u-Ts1XbjhazAkj7I99e8QcYP7DkM",
@@ -31,6 +33,7 @@ type Setup = {
   adapter: FakeAdapter;
   pushes: unknown[];
   channelId: string;
+  conversationId: string;
   sessionKey: string;
 };
 
@@ -56,7 +59,7 @@ async function boot(overrides: Record<string, string> = {}) {
 }
 
 /** dev·fin 이 든 채널, owner 의 푸시 구독 하나 */
-async function seed(app: App): Promise<{ channelId: string; sessionKey: string }> {
+async function seed(app: App): Promise<{ channelId: string; conversationId: string; sessionKey: string }> {
   const agent = (handle: string) =>
     createAgent(app.db, {
       workspaceId: app.workspaceId,
@@ -81,13 +84,14 @@ async function seed(app: App): Promise<{ channelId: string; sessionKey: string }
     payload: { endpoint: "https://push.invalid/late", keys: KEYS },
   });
   expect(subscribed.statusCode).toBe(204);
-  return { channelId: channel.id, sessionKey: dodokSessionKey("dev", channel.id) };
+  const conversationId = seedConversation(app.db, channel.id);
+  return { channelId: channel.id, conversationId, sessionKey: dodokSessionKey("dev", conversationId) };
 }
 
 /** @dev 멘션 → 런이 어댑터로 나간다 → 어댑터가 연결을 닫으며 그 런을 끝낸다(connectionClosed 를 주면) */
 async function closedRun(s: Setup, connectionClosed: boolean): Promise<string> {
   const message = createUserMessage(s.app.db, s.app.bus, {
-    conversationId: s.channelId,
+    conversationId: s.conversationId,
     authorId: s.app.ownerUserId,
     bodyMd: "@dev 정리해 줘",
     clientMsgId: `late-${Math.random()}`,
@@ -109,9 +113,9 @@ async function closedRun(s: Setup, connectionClosed: boolean): Promise<string> {
   return runId;
 }
 
-const late = (s: Pick<Setup, "channelId" | "sessionKey">, runId: string): OutboundMessage => ({
+const late = (s: Pick<Setup, "conversationId" | "sessionKey">, runId: string): OutboundMessage => ({
   outboundId: `late-${runId}`,
-  conversationId: s.channelId,
+  conversationId: s.conversationId,
   agentId: "dev",
   sessionKey: s.sessionKey,
   runId,
@@ -238,6 +242,52 @@ describe("연결을 닫으며 끝낸 런에 늦게 온 정본", () => {
     expect(getMessage(app.db, cardId)?.componentState?.consumed).toEqual([RETRY_RUN_ITEM]);
   });
 
+  it("[중간 2] 닫힌 세션 키로 온 런 없는 정본(message 툴) — 저장하고 silent(푸시 없음). 열린 세션이면 같은 글이 푸시된다", async () => {
+    const { app, adapter, pushes } = await boot();
+    const s = { app, adapter, pushes, ...(await seed(app)) };
+    const created: Array<{ message: Message; silent?: true }> = [];
+    app.bus.on("message.created", (p) => created.push(p));
+    await setConversationClosed(
+      { db: app.db, bus: app.bus },
+      { conversationId: s.conversationId, byUserId: app.ownerUserId, closed: true },
+    );
+    // runId 없이 그 세션 키로 — 세션에 열린 런도 없어 런 없는 정본이 된다. 본문은 릴레이(@fin)·푸시(@owner)가 날 수 있는 꼴
+    const runless = (conversationId: string, outboundId: string): OutboundMessage => ({
+      outboundId,
+      conversationId,
+      agentId: "dev",
+      sessionKey: dodokSessionKey("dev", conversationId),
+      text: "@fin @owner 세션에 남깁니다",
+      attachmentIds: [],
+      ts: new Date().toISOString(),
+    });
+
+    const ack = await app.orchestrator.onCanonical(
+      runless(s.conversationId, "runless-closed"),
+      "openclaw",
+      FAKE_GATEWAY_ID,
+    );
+    await settle();
+    expect(getMessage(app.db, ack.messageId ?? "")).toMatchObject({
+      conversationId: s.conversationId,
+      authorType: "agent",
+    });
+    expect(getMessage(app.db, ack.messageId ?? "")?.runId).toBeUndefined();
+    expect(created.find((p) => p.message.id === ack.messageId)?.silent).toBe(true);
+    expect(pushes).toEqual([]);
+    expect(runIdsIn(app, s.channelId)).toEqual([]);
+
+    // 대조 — 같은 채널의 열린 세션이면 런 없는 정본도 푸시된다(이 사례가 푸시 경로를 실제로 탄다)
+    const open = seedConversation(app.db, s.channelId);
+    const openAck = await app.orchestrator.onCanonical(
+      runless(open, "runless-open"),
+      "openclaw",
+      FAKE_GATEWAY_ID,
+    );
+    expect(created.find((p) => p.message.id === openAck.messageId)?.silent).toBeUndefined();
+    await vi.waitFor(() => expect(pushes).toHaveLength(1));
+  });
+
   it("표지가 없는 실패 런(연결을 닫지 않은 ADAPTER_UNAVAILABLE)의 늦은 정본은 지금처럼 릴레이·푸시하고 카드는 그대로", async () => {
     const { app, adapter, pushes } = await boot();
     const s = { app, adapter, pushes, ...(await seed(app)) };
@@ -246,7 +296,9 @@ describe("연결을 닫으며 끝낸 런에 늦게 온 정본", () => {
     await app.orchestrator.onCanonical(late(s, runId), "openclaw", FAKE_GATEWAY_ID);
     await vi.waitFor(() => expect(adapter.calls.send).toHaveLength(2));
     await vi.waitFor(() => expect(pushes).toHaveLength(1));
-    expect(adapter.calls.send[1]?.sessionKey).toBe(dodokSessionKey("fin", s.channelId));
+    expect(adapter.calls.send[1]?.sessionKey).toBe(
+      dodokSessionKey("fin", channelConversation(app.db, s.channelId)),
+    );
     expect(getMessage(app.db, card.id)?.componentState?.consumed).toEqual([]);
   });
 });

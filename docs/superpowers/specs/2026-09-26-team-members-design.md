@@ -56,10 +56,13 @@
 | 읽지 않음 현황(`GET /api/v1/me/unread`) — 자기 것만 | ✅ | ✅ | ✅ |
 | 읽음 위치 올리기(wire `channel.read`) — 자기 것만, 보관한 채널도 | ✅ | ✅ | ✅ |
 | 반응 켜기·끄기(wire `reaction.set`) — 자기 것만, 보관한 채널은 409 `CHANNEL_ARCHIVED` | ✅ | ✅ | ✅ |
+| 세션 목록·세션 메시지 읽기(`GET /channels/:id/conversations`·`/conversations/:id/messages`·`/conversations/:id/threads/:rootId/messages`), 새 세션(wire `message.send` 의 `newConversation`, 채널에 열린 세션이 없을 때의 보내기) — 채널 세션 정책이 「세션 관리자만」(`managers`)이면 그 채널의 세션 관리자와 admin 이상만(채널 세션 스펙 「권한」 장) | ✅ | ✅ | ✅ |
+| 자기가 만든 세션의 제목 바꾸기·닫기·다시 열기(`PATCH /conversations/:id`) — 남이 만든 세션은 그 채널의 세션 관리자와 admin 이상. 닫힌 세션에 보내기·카드·리액션·첨부 묶기는 409 `CONVERSATION_CLOSED` | ✅ | ✅ | ✅ |
 | 채널에 에이전트 넣기·빼기(`POST/DELETE /channels/:id/members`) | ✅ | ✅ | ✅ |
 | 채널에 사람 넣기·빼기(같은 경로, `memberType: "user"`) — 나간 사람(membership 없음)은 404 | ✅ | ✅ | ✅ |
 | 채널의 에이전트 동작·비용 설정 — 채널 프롬프트, 에이전트별 프롬프트(`PATCH /channels/:id/members/:memberId`), 릴레이 정책, 자동 응답, 일일 한도 | — | ✅ | ✅ |
 | 「새 대화」(`POST /channels/:id/agents/:agentId/reset`), 도구 실행 승인·거절(wire `approval.resolve`) | — | ✅ | ✅ |
+| 세션 관리자 지정·해제(`PUT/DELETE /channels/:id/session-managers/:userId` — 지정하면 채널에 참여시킨다), 세션 정책(`PATCH /channels/:id` 의 `sessionPolicy`) | — | ✅ | ✅ |
 | 확인 카드(`ApprovalKind "dodok_control"` — 채널 안 에이전트가 제어 도구로 설정을 바꾸려 할 때) 허용·거절(wire `approval.resolve`) — **그 런을 시킨 사람 본인만**(`approvals.requested_by`), 역할과 무관. 남이 결정하면 `FORBIDDEN`. 허용 때 그 사람의 지금 역할로 그 일을 다시 판정한다 | 본인 | 본인 | 본인 |
 | 개인 토큰(MCP 토큰) 발급·목록·폐기(`GET/POST /api/v1/me/tokens`, `DELETE /api/v1/me/tokens/:id`) — 자기 것만(남의 것 404), 사람마다 10개. 그 토큰으로 `/mcp` 에서 부르는 제어 도구는 이 표의 같은 REST 경로 판정을 토큰 주인의 지금 역할로 받는다 | ✅ | ✅ | ✅ |
 | 에이전트 등록·수정(`POST/PATCH /agents`), Gateway 에이전트 찾기(`GET /agents/discover`) | — | ✅ | ✅ |

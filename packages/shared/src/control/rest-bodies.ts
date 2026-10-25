@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { Id } from "../common";
-import { Agent, Channel, ChannelMember } from "../domain";
+import { Agent, Channel, ChannelMember, SessionPolicy } from "../domain";
 import { isRegistrableAgentId } from "../session-key";
 
 // 채널·에이전트 REST 본문 — 서버 라우트와 제어 도구(`./tools`)가 같은 스키마로 파싱한다. 한쪽에만 필드를 더하면 웹에서 되는 일이
@@ -21,6 +21,7 @@ export const UpdateChannelBody = Channel.pick({ name: true, relayPolicy: true, v
   .extend({
     topic: Channel.shape.topic.unwrap().nullable().optional(),
     prompt: Channel.shape.prompt.unwrap().nullable().optional(),
+    sessionPolicy: SessionPolicy.optional(),
   });
 export type UpdateChannelBody = z.infer<typeof UpdateChannelBody>;
 

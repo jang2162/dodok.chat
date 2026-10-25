@@ -26,7 +26,7 @@ import { ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
 import { insertGateway } from "./helpers/gateways";
 import { makePng, PDF_BYTES, SVG_BYTES } from "./helpers/png";
-import { seedWorkspace } from "./helpers/seed";
+import { channelConversation, seedWorkspace } from "./helpers/seed";
 
 const RUNNER = "runner-token-1";
 const sha256Of = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
@@ -61,7 +61,7 @@ describe("attachments service", () => {
     chA = createChannel(db, { workspaceId: ws, createdBy: alice, name: "a" }).id;
     chB = createChannel(db, { workspaceId: ws, createdBy: alice, name: "b" }).id;
     msgInA = createUserMessage(db, new ServerBus(), {
-      conversationId: chA,
+      conversationId: channelConversation(db, chA),
       authorId: alice,
       bodyMd: "hi",
       clientMsgId: "c1",

@@ -24,6 +24,17 @@ describe("wire schemas", () => {
       MessageSend.safeParse({ channelId: ID, clientMsgId: "c1", bodyMd: "hi", attachments: [ID] }).success,
     ).toBe(true);
   });
+  it("MessageSend: conversationId·newConversation 은 함께 못 쓴다 — 둘 다 없음은 받는다(채널 세션 계획 판정 PS4)", () => {
+    const base = { channelId: ID, clientMsgId: "c1", bodyMd: "hi" };
+    expect(MessageSend.safeParse(base).success).toBe(true);
+    expect(MessageSend.safeParse({ ...base, conversationId: ID }).success).toBe(true);
+    expect(MessageSend.safeParse({ ...base, newConversation: {} }).success).toBe(true);
+    expect(MessageSend.safeParse({ ...base, newConversation: { title: "배포" } }).success).toBe(true);
+    expect(MessageSend.safeParse({ ...base, newConversation: { title: "가".repeat(81) } }).success).toBe(
+      false,
+    );
+    expect(MessageSend.safeParse({ ...base, conversationId: ID, newConversation: {} }).success).toBe(false);
+  });
   it("RunEventsReplay: afterSeq 기본값 0", () => {
     expect(RunEventsReplay.parse({ runId: ID })).toEqual({ runId: ID, afterSeq: 0 });
   });

@@ -18,6 +18,7 @@ import { createUserMessage } from "../../src/modules/messages/service";
 import { type FakeApns, startFakeApns } from "../fakes/fake-apns";
 import { bootTestApp, login, userWithRole } from "../helpers/app";
 import { connectWire, type WireClient } from "../helpers/wire";
+import { channelConversation } from "../helpers/seed";
 
 vi.setConfig({ testTimeout: 20_000, hookTimeout: 20_000 });
 
@@ -52,7 +53,7 @@ async function bootNative(env: Record<string, string>, logger?: Logger): Promise
     mention: (count = 1) => {
       for (let i = 0; i < count; i++)
         createUserMessage(app.db, app.bus, {
-          conversationId: channel.id,
+          conversationId: channelConversation(app.db, channel.id),
           authorId: mia.id,
           bodyMd: "@owner 봐줘",
           clientMsgId: `native-${++n}`,
@@ -229,7 +230,7 @@ describe("웹 푸시 통로 — 거부 사유 로그", () => {
       });
       expect(sub.statusCode).toBe(204);
       createUserMessage(app.db, app.bus, {
-        conversationId: channel.id,
+        conversationId: channelConversation(app.db, channel.id),
         authorId: mia.id,
         bodyMd: "@owner 봐줘",
         clientMsgId: "web-1",

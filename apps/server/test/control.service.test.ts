@@ -17,6 +17,7 @@ import { josa } from "../src/util/josa";
 import { bootTestApp, login, userWithRole } from "./helpers/app";
 import { errorOf, expectOk, newAgent, newChannel, openRun, pat, recordBus } from "./helpers/control";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
+import { channelConversation } from "./helpers/seed";
 
 describe("제어 서비스", () => {
   let app: App;
@@ -72,14 +73,14 @@ describe("제어 서비스", () => {
       const { channel, agent } = openRun(app, owner);
       addMember(app.db, channel.id, { memberType: "user", memberId: mia.id }, app.logger);
       const root = createUserMessage(app.db, app.bus, {
-        conversationId: channel.id,
+        conversationId: channelConversation(app.db, channel.id),
         authorId: mia.id,
         bodyMd: `@${agent.handle} 안녕 **굵게**`,
         clientMsgId: `c-${channel.id}`,
       });
       createAgentMessage(app.db, app.bus, {
         externalId: `o-${channel.id}`,
-        conversationId: channel.id,
+        conversationId: channelConversation(app.db, channel.id),
         agentId: agent.id,
         bodyMd: "답글",
         threadRootId: root.id,
@@ -102,7 +103,7 @@ describe("제어 서비스", () => {
     it("search_messages·get_run·ops_status·discover_agents", async () => {
       const { channel, run } = openRun(app, owner);
       createUserMessage(app.db, app.bus, {
-        conversationId: channel.id,
+        conversationId: channelConversation(app.db, channel.id),
         authorId: owner,
         bodyMd: "제어검색어 하나",
         clientMsgId: `s-${channel.id}`,
@@ -398,6 +399,8 @@ describe("제어 서비스", () => {
   describe("쓰기 뒤 — 운영 사건 control_change·시스템 메시지", () => {
     it("개인 토큰: 「@owner 가 MCP 로 …」, 사건 detail 에 바꾼 값(프롬프트 원문)이 없다", async () => {
       const channel = newChannel(app);
+      // 대화가 정해지지 않은 제어 메시지는 그 채널의 열린 세션에 남는다(채널 세션 계획 판정 PS3) — 세션 하나를 연다
+      channelConversation(app.db, channel.id);
       const secret = "아주-비밀스러운-프롬프트-원문";
       expectOk(await call(pat(owner), "set_channel_prompt", { channelId: channel.id, prompt: secret }));
       const notice = app.db

@@ -156,6 +156,12 @@ export function attachWireFanout(io: WireServer, bus: ServerBus, opts: WireFanou
     // 노출은 늘지 않는다: channel.created 와 목록 REST 가 이미 워크스페이스의 모든 채널을 준다
     on("channel.updated", (p) => io.to(workspaceRoom(p.channel.workspaceId)).emit("channel.updated", p)),
     on("channel.member.changed", (p) => io.to(channelRoom(p.channelId)).emit("channel.member.changed", p)),
+    on("conversation.created", (p) =>
+      io.to(channelRoom(p.conversation.channelId)).emit("conversation.created", p),
+    ),
+    on("conversation.updated", (p) =>
+      io.to(channelRoom(p.conversation.channelId)).emit("conversation.updated", p),
+    ),
     on("people.changed", (p) => io.to(workspaceRoom(opts.workspaceId)).emit("people.changed", p)),
     on("agents.changed", (p) => io.to(workspaceRoom(opts.workspaceId)).emit("agents.changed", p)),
     on("typing", (p) => io.to(channelRoom(p.channelId)).emit("typing", p)),

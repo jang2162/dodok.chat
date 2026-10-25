@@ -19,17 +19,17 @@ import {
 } from "../src/modules/runs/store";
 import { ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
-import { seedChannelWithAgent } from "./helpers/seed";
+import { channelConversation, seedChannelWithAgent } from "./helpers/seed";
 
 function setup() {
   const db = newTestDb();
   const bus = new ServerBus();
   const ids = seedChannelWithAgent(db);
-  const sessionKey = `agent:dev:dodok:channel:${ids.channelId}`;
+  const sessionKey = `agent:dev:dodok:channel:${ids.conversationId}`;
   const newRun = (over: Partial<Parameters<typeof insertRun>[1]> = {}) =>
     insertRun(db, {
       channelId: ids.channelId,
-      conversationId: ids.channelId,
+      conversationId: ids.conversationId,
       agentId: ids.agentId,
       triggerKind: "mention",
       rootMessageId: uuid(),
@@ -59,7 +59,7 @@ describe("runs store", () => {
     expect(run).toEqual({
       id: run.id,
       channelId,
-      conversationId: channelId,
+      conversationId: channelConversation(db, channelId),
       agentId,
       triggerKind: "interaction",
       triggerInteractionId,
@@ -142,7 +142,7 @@ describe("runs store", () => {
   it("findRunByTriggerMessage 는 트리거 메시지(와 에이전트)로 가장 최근 런을 찾는다", () => {
     const { db, bus, newRun, channelId, userId, agentId } = setup();
     const m = createUserMessage(db, bus, {
-      conversationId: channelId,
+      conversationId: channelConversation(db, channelId),
       authorId: userId,
       bodyMd: "@dev hi",
       clientMsgId: "c1",
@@ -180,15 +180,20 @@ describe("runs store", () => {
     const { db, bus, newRun, channelId, agentId } = setup();
     const run = newRun();
     const m1 = createAgentMessage(db, bus, {
-      conversationId: channelId,
+      conversationId: channelConversation(db, channelId),
       agentId,
       runId: run.id,
       externalId: "o1",
       bodyMd: "a",
     });
-    createAgentMessage(db, bus, { conversationId: channelId, agentId, externalId: "o2", bodyMd: "b" });
+    createAgentMessage(db, bus, {
+      conversationId: channelConversation(db, channelId),
+      agentId,
+      externalId: "o2",
+      bodyMd: "b",
+    });
     const m3 = createAgentMessage(db, bus, {
-      conversationId: channelId,
+      conversationId: channelConversation(db, channelId),
       agentId,
       runId: run.id,
       externalId: "o3",

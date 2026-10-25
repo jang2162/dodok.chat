@@ -1,0 +1,66 @@
+import { ConversationPatch, Id } from "@dodok/shared";
+import type { FastifyInstance } from "fastify";
+import { z } from "zod";
+import type { Auth } from "../../auth";
+import { authorizeConversationManage, authorizeRead } from "../../auth/policies";
+import { requirePolicy } from "../../auth/roles";
+import { requireSession, sessionUser } from "../../auth/routes";
+import type { Db } from "../../db/client";
+import { apiError } from "../../http/errors";
+import { parseBody, parseParams, parseQuery } from "../../http/validate";
+import type { ServerBus } from "../../realtime/bus";
+import { getChannel } from "../channels/service";
+import type { Orchestrator } from "../runs/orchestrator";
+import { conversationActor, listConversations, renameConversation, setConversationClosed } from "./service";
+import { getConversation } from "./store";
+
+export type ConversationRouteContext = {
+  auth: Auth;
+  db: Db;
+  bus: ServerBus;
+  workspaceId: string;
+  /** 닫기가 그 대화의 열린 런을 멈출 때 */
+  orchestrator: Pick<Orchestrator, "abortConversation">;
+};
+
+const ChannelParams = z.object({ id: Id });
+const ConversationParams = z.object({ id: Id });
+const ListQuery = z.object({
+  status: z.enum(["open", "closed", "all"]).default("open"),
+  q: z.string().max(80).optional(),
+  cursor: z.string().max(64).optional(),
+});
+
+/** 세션 목록·제목·닫기(채널 세션 스펙 「wire·REST」 장). 만들기 REST 는 없다 — 첫 message.send 가 만든다(결정 7). 메시지 목록은 messages/routes.ts */
+export function registerConversationRoutes(fastify: FastifyInstance, ctx: ConversationRouteContext): void {
+  fastify.get(
+    "/api/v1/channels/:id/conversations",
+    { preHandler: requirePolicy(ctx, authorizeRead) },
+    async (request) => {
+      const { id } = parseParams(ChannelParams, request.params);
+      const query = parseQuery(ListQuery, request.query);
+      if (!getChannel(ctx.db, id, sessionUser(request).workspaceId))
+        throw apiError("NOT_FOUND", "channel not found");
+      return listConversations(ctx.db, id, query);
+    },
+  );
+
+  /** 제목 바꾸기·닫기·다시 열기 — 만든 사람·세션 관리자·admin 이상(authorizeConversationManage). 둘 다 오면 제목부터 */
+  fastify.patch("/api/v1/conversations/:id", { preHandler: requireSession(ctx) }, async (request) => {
+    const user = sessionUser(request);
+    const { id } = parseParams(ConversationParams, request.params);
+    const patch = parseBody(ConversationPatch, request.body);
+    const current = getConversation(ctx.db, id, user.workspaceId);
+    if (!current) throw apiError("NOT_FOUND", "conversation not found");
+    authorizeConversationManage(user.role, conversationActor(ctx.db, current, user.id));
+    let conversation = current;
+    if (patch.title !== undefined) conversation = renameConversation(ctx.db, ctx.bus, id, patch.title);
+    if (patch.closed !== undefined) {
+      conversation = await setConversationClosed(
+        { db: ctx.db, bus: ctx.bus, runs: ctx.orchestrator },
+        { conversationId: id, byUserId: user.id, closed: patch.closed },
+      );
+    }
+    return { conversation };
+  });
+}

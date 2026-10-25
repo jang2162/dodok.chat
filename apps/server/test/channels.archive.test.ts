@@ -30,6 +30,7 @@ import { bootTestApp, login, userWithRole } from "./helpers/app";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
 import { connectWire, waitFor } from "./helpers/wire";
 import { makePng } from "./helpers/png";
+import { channelConversation } from "./helpers/seed";
 
 const apps: App[] = [];
 afterEach(async () => {
@@ -68,7 +69,7 @@ async function setup(deps: Pick<AppDeps, "pushSend"> = {}) {
   let n = 0;
   const say = async (bodyMd: string, threadRootId?: string) => {
     const message = createUserMessage(app.db, app.bus, {
-      conversationId: channel.id,
+      conversationId: channelConversation(app.db, channel.id),
       authorId: app.ownerUserId,
       bodyMd,
       clientMsgId: `archive-${++n}`,
@@ -256,7 +257,7 @@ describe("보관한 채널의 쓰기 — 409 CHANNEL_ARCHIVED(계획 판정 PC1)
   it("카드 버튼·셀렉트·모달은 409, 상호작용은 저장·소비되지 않고 런도 없다 — 보관 해제 뒤 다시 누를 수 있다", async () => {
     const { app, dev, channel, runs, archive, unarchive } = await setup();
     const card = createAgentMessage(app.db, app.bus, {
-      conversationId: channel.id,
+      conversationId: channelConversation(app.db, channel.id),
       agentId: dev.id,
       externalId: "card-1",
       bodyMd: "골라 주세요",
@@ -349,7 +350,7 @@ describe("보관한 채널의 쓰기 — 409 CHANNEL_ARCHIVED(계획 판정 PC1)
   it("릴레이 한도 카드의 「이어가기」는 409", async () => {
     const { app, dev, fin, channel, runs, archive } = await setup();
     const card = createSystemMessage(app.db, app.bus, {
-      conversationId: channel.id,
+      conversationId: channelConversation(app.db, channel.id),
       kind: "relay_limit",
       bodyMd: "한도",
       systemMeta: {
@@ -445,7 +446,7 @@ describe("[Review Focus 4] 보관한 채널 읽기", () => {
     const root = await say("배포 일정 정리");
     await say("배포 답글", root.id);
     createUserMessage(app.db, app.bus, {
-      conversationId: live.id,
+      conversationId: channelConversation(app.db, live.id),
       authorId: app.ownerUserId,
       bodyMd: "배포 살아 있는 채널",
       clientMsgId: "live-1",
@@ -503,9 +504,9 @@ describe("보관과 런(계획 판정 PC2)", () => {
     const approval: ProviderApproval = {
       providerApprovalId: `plugin:${uuid()}`,
       kind: "plugin",
-      sessionKey: adapter.sessionKeyFor("dev", channel.id),
+      sessionKey: adapter.sessionKeyFor("dev", channelConversation(app.db, channel.id)),
       providerAgentId: "dev",
-      conversationId: channel.id,
+      conversationId: channelConversation(app.db, channel.id),
       toolCallId: "toolu_channel_archive",
       toolName: "Write",
       pluginId: "fs",
@@ -542,7 +543,7 @@ describe("보관과 런(계획 판정 PC2)", () => {
       {
         agentId: dev.id,
         channelId: channel.id,
-        conversationId: channel.id,
+        conversationId: channelConversation(app.db, channel.id),
         triggerKind: "mention",
         rootMessageId: uuid(),
         relayDepth: 0,
@@ -600,7 +601,7 @@ describe("보관과 런(계획 판정 PC2)", () => {
     app.bus.on("message.created", (p) => created.push(p));
     const late = (outboundId: string, runId: string | undefined = run?.id): OutboundMessage => ({
       outboundId,
-      conversationId: channel.id,
+      conversationId: channelConversation(app.db, channel.id),
       agentId: "dev",
       sessionKey: run?.sessionKey ?? "",
       runId: runId ?? "",
@@ -642,7 +643,7 @@ describe("보관과 런(계획 판정 PC2)", () => {
     app.bus.on("message.created", (p) => created.push(p));
     const post = (outboundId: string, sessionKey: string, threadId?: string): OutboundMessage => ({
       outboundId,
-      conversationId: channel.id,
+      conversationId: channelConversation(app.db, channel.id),
       ...(threadId === undefined ? {} : { threadId }),
       agentId: "dev",
       sessionKey,
@@ -658,7 +659,7 @@ describe("보관과 런(계획 판정 PC2)", () => {
 
     await expect(
       app.orchestrator.onCanonical(
-        post("cross-channel", dodokSessionKey("dev", other.id)),
+        post("cross-channel", dodokSessionKey("dev", channelConversation(app.db, other.id))),
         "openclaw",
         FAKE_GATEWAY_ID,
       ),
@@ -672,7 +673,7 @@ describe("보관과 런(계획 판정 PC2)", () => {
     expect(created).toEqual([]);
 
     await app.orchestrator.onCanonical(
-      post("same-thread", dodokSessionKey("dev", channel.id, root.id), root.id),
+      post("same-thread", dodokSessionKey("dev", channelConversation(app.db, channel.id), root.id), root.id),
       "openclaw",
       FAKE_GATEWAY_ID,
     );
@@ -708,7 +709,7 @@ describe("보관과 런(계획 판정 PC2)", () => {
           providerApprovalId: `plugin:${uuid()}`,
           runId: uuid(),
           channelId: channel.id,
-          conversationId: channel.id,
+          conversationId: channelConversation(app.db, channel.id),
           agentId: uuid(),
           kind: "plugin",
           toolName: "Write",

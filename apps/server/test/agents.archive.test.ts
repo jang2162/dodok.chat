@@ -18,6 +18,7 @@ import { bootTestApp, login, userWithRole } from "./helpers/app";
 import { FAKE_GATEWAY_ID, insertGateway } from "./helpers/gateways";
 import { connectWire, waitFor } from "./helpers/wire";
 import { type FakeRunner, startFakeRunner } from "./fakes/fake-runner";
+import { channelConversation } from "./helpers/seed";
 
 const apps: App[] = [];
 const runners: FakeRunner[] = [];
@@ -58,7 +59,7 @@ async function setup(deps: Pick<AppDeps, "runnerAdapter" | "pushSend"> = {}) {
   let n = 0;
   const say = async (bodyMd: string) => {
     const message = createUserMessage(app.db, app.bus, {
-      conversationId: channel.id,
+      conversationId: channelConversation(app.db, channel.id),
       authorId: app.ownerUserId,
       bodyMd,
       clientMsgId: `archive-${++n}`,
@@ -254,7 +255,7 @@ describe("보관과 런", () => {
       {
         agentId: dev.id,
         channelId: channel.id,
-        conversationId: channel.id,
+        conversationId: channelConversation(app.db, channel.id),
         triggerKind: "mention",
         rootMessageId: uuid(),
         relayDepth: 0,
@@ -309,9 +310,9 @@ describe("보관과 런", () => {
     const approval: ProviderApproval = {
       providerApprovalId: `plugin:${uuid()}`,
       kind: "plugin",
-      sessionKey: adapter.sessionKeyFor("dev", channel.id),
+      sessionKey: adapter.sessionKeyFor("dev", channelConversation(app.db, channel.id)),
       providerAgentId: "dev",
-      conversationId: channel.id,
+      conversationId: channelConversation(app.db, channel.id),
       toolCallId: "toolu_archive",
       toolName: "Write",
       pluginId: "fs",
@@ -403,7 +404,7 @@ describe("보관과 런", () => {
     app.bus.on("message.created", (p) => created.push(p));
     const late = (outboundId: string): OutboundMessage => ({
       outboundId,
-      conversationId: channel.id,
+      conversationId: channelConversation(app.db, channel.id),
       agentId: "dev",
       sessionKey: run?.sessionKey ?? "",
       runId: run?.id ?? "",
@@ -427,7 +428,9 @@ describe("보관과 런", () => {
     await app.orchestrator.onCanonical(late("late-restored"), "openclaw", FAKE_GATEWAY_ID);
     await vi.waitFor(() => expect(adapter.calls.send).toHaveLength(2));
     await vi.waitFor(() => expect(pushes).toHaveLength(1));
-    expect(adapter.calls.send[1]?.sessionKey).toBe(adapter.sessionKeyFor("fin", channel.id));
+    expect(adapter.calls.send[1]?.sessionKey).toBe(
+      adapter.sessionKeyFor("fin", channelConversation(app.db, channel.id)),
+    );
   });
 
   it("[Review Focus 2] 보관 → 되살리기 → 멘션은 같은 agent_sessions 행·세션 키로 런을 만든다", async () => {
@@ -666,7 +669,7 @@ describe("보관과 러너", () => {
       ).t;
     expect(bound()).toBeNull();
     const message = createUserMessage(app.db, app.bus, {
-      conversationId: channel.id,
+      conversationId: channelConversation(app.db, channel.id),
       authorId: app.ownerUserId,
       bodyMd: "@coder 해 줘",
       clientMsgId: "runner-1",
@@ -679,7 +682,7 @@ describe("보관과 러너", () => {
 
     await restore(coder.id);
     const again = createUserMessage(app.db, app.bus, {
-      conversationId: channel.id,
+      conversationId: channelConversation(app.db, channel.id),
       authorId: app.ownerUserId,
       bodyMd: "@coder 이제 해 줘",
       clientMsgId: "runner-2",

@@ -30,6 +30,7 @@ import { bootTestApp, login, userWithRole } from "./helpers/app";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
 import { type FakeRunner, startFakeRunner } from "./fakes/fake-runner";
 import { makePng } from "./helpers/png";
+import { channelConversation } from "./helpers/seed";
 
 /** 그 앱의 가짜 Gateway(bootTestApp 이 넣는다)에 브리지 토큰 하나 — 원문 */
 const bridgeTokenOf = (app: App) => issueBridgeToken(app.db, app.workspaceId, FAKE_GATEWAY_ID, "gw").token;
@@ -393,7 +394,7 @@ describe("연결 페이지 러너 API /api/v1/setup/runner-*", () => {
         headers: {
           authorization: `Bearer ${token}`,
           "content-type": "image/png",
-          [BRIDGE_ATTACHMENT_HEADERS.conversationId]: channelId,
+          [BRIDGE_ATTACHMENT_HEADERS.conversationId]: channelConversation(app.db, channelId),
           [BRIDGE_ATTACHMENT_HEADERS.fileName]: encodeURIComponent("shot.png"),
         },
         payload: Buffer.from(makePng(4, 4)),
@@ -441,7 +442,7 @@ describe("연결 페이지 러너 API /api/v1/setup/runner-*", () => {
       });
       const attachment = Attachment.parse(human.json());
       const message = createUserMessage(app.db, app.bus, {
-        conversationId: secretId,
+        conversationId: channelConversation(app.db, secretId),
         authorId: app.ownerUserId,
         bodyMd: "비밀",
         clientMsgId: "runner-scope-human",
@@ -468,7 +469,7 @@ describe("연결 페이지 러너 API /api/v1/setup/runner-*", () => {
       expect((await download(other.token, own.id)).statusCode).toBe(404);
 
       const message = createUserMessage(app.db, app.bus, {
-        conversationId: channelId,
+        conversationId: channelConversation(app.db, channelId),
         authorId: app.ownerUserId,
         bodyMd: "묶음",
         clientMsgId: "runner-scope-mine",
@@ -483,7 +484,7 @@ describe("연결 페이지 러너 API /api/v1/setup/runner-*", () => {
         headers: {
           authorization: `Bearer ${bridgeTokenOf(app)}`,
           "content-type": "image/png",
-          [BRIDGE_ATTACHMENT_HEADERS.conversationId]: channelId,
+          [BRIDGE_ATTACHMENT_HEADERS.conversationId]: channelConversation(app.db, channelId),
         },
         payload: Buffer.from(makePng(5, 5)),
       });

@@ -6,6 +6,7 @@ import { opsEvents } from "../src/db/schema.sqlite";
 import { LIMITS } from "../src/modules/ops/limits";
 import { createUserMessage } from "../src/modules/messages/service";
 import { bootTestApp, login } from "./helpers/app";
+import { channelConversation } from "./helpers/seed";
 
 describe("GET /api/v1/search (스펙 5.2)", () => {
   let app: App | undefined;
@@ -27,7 +28,7 @@ describe("GET /api/v1/search (스펙 5.2)", () => {
     let n = 0;
     const say = (bodyMd: string) =>
       createUserMessage((app as App).db, (app as App).bus, {
-        conversationId: channelId,
+        conversationId: channelConversation((app as App).db, channelId),
         authorId: (app as App).ownerUserId,
         bodyMd,
         clientMsgId: `s${n++}`,

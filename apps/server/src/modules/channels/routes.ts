@@ -19,6 +19,7 @@ import {
   authorizeChannelPatch,
   authorizeChannelUnarchive,
   authorizeRead,
+  authorizeSessionManagers,
 } from "../../auth/policies";
 import { requirePolicy } from "../../auth/roles";
 import { requireSession, sessionUser } from "../../auth/routes";
@@ -37,7 +38,14 @@ import {
   unarchiveChannelAndNotify,
   updateChannelAgentAndNotify,
 } from "./actions";
-import { assertChannelWritable, type ChannelRecord, getChannel, listChannels, listMembers } from "./service";
+import {
+  assertChannelWritable,
+  type ChannelRecord,
+  getChannel,
+  listChannels,
+  listMembers,
+  setSessionManager,
+} from "./service";
 
 export type ChannelRouteContext = {
   auth: Auth;
@@ -53,6 +61,7 @@ export type ChannelRouteContext = {
 
 const ChannelParams = z.object({ id: Id });
 const MemberParams = z.object({ id: Id, memberId: Id });
+const ManagerParams = z.object({ id: Id, userId: Id });
 /** 기본은 살아 있는 채널, archived=1 이면 보관한 채널(누구나 — 읽기는 막지 않는다) */
 const ListQuery = z.object({ archived: z.literal("1").optional() });
 
@@ -155,4 +164,25 @@ export function registerChannelRoutes(fastify: FastifyInstance, ctx: ChannelRout
       return { channel: unarchiveChannelAndNotify(ctx, id, sessionUser(request).workspaceId) };
     },
   );
+
+  /**
+   * 세션 관리자 지정·해제(admin — 채널 세션 계획 판정 PS8). 지정은 채널에 없는 사람이면 참여시킨다, 해제는 역할만 member 로(채널에는
+   * 남는다). 보관한 채널이면 409
+   */
+  for (const [method, on] of [
+    ["put", true],
+    ["delete", false],
+  ] as const) {
+    fastify[method](
+      "/api/v1/channels/:id/session-managers/:userId",
+      { preHandler: requirePolicy(ctx, authorizeSessionManagers) },
+      async (request) => {
+        const { id, userId } = parseParams(ManagerParams, request.params);
+        loadWritable(sessionUser(request).workspaceId, id);
+        const member = setSessionManager(ctx.db, id, userId, on);
+        ctx.bus.emit("channel.member.changed", { channelId: id, members: listMembers(ctx.db, id) });
+        return { member };
+      },
+    );
+  }
 }

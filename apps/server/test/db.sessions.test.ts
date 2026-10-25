@@ -2,7 +2,7 @@ import { eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { agentSessions, agents, channelMembers, channels, users, workspaces } from "../src/db/schema.sqlite";
 import { newTestDb } from "./helpers/db";
-import { seedChannelWithAgent } from "./helpers/seed";
+import { channelConversation, seedChannelWithAgent } from "./helpers/seed";
 
 describe("agent_sessions", () => {
   it("채널·에이전트당 한 행이고 promptRevision 기본값은 1", () => {
@@ -13,7 +13,7 @@ describe("agent_sessions", () => {
       .values({
         id: "01",
         channelId,
-        conversationId: channelId,
+        conversationId: channelConversation(db, channelId),
         agentId,
         sessionKey: "k",
         promptRevisionAtStart: 1,
@@ -25,7 +25,7 @@ describe("agent_sessions", () => {
         .values({
           id: "02",
           channelId,
-          conversationId: channelId,
+          conversationId: channelConversation(db, channelId),
           agentId,
           sessionKey: "k",
           promptRevisionAtStart: 1,

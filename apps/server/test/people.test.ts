@@ -14,7 +14,7 @@ import { ensureSession } from "../src/modules/sessions/service";
 import { type BusEvents, ServerBus } from "../src/realtime/bus";
 import { bootTestApp, login, userWithRole } from "./helpers/app";
 import { newTestDb } from "./helpers/db";
-import { seedChannelWithAgent } from "./helpers/seed";
+import { channelConversation, seedChannelWithAgent } from "./helpers/seed";
 
 // 사람 목록(GET /people·people.changed)과 채널 자동 참여(팀 스펙 「채널 참여·멘션·알림」 절)
 
@@ -136,7 +136,7 @@ function setup() {
   let n = 0;
   const say = (authorId: string, bodyMd: string, threadRootId?: string) =>
     createUserMessage(db, bus, {
-      conversationId: seed.channelId,
+      conversationId: seed.conversationId,
       authorId,
       bodyMd,
       clientMsgId: `c${++n}`,
@@ -284,7 +284,7 @@ describe("채널 자동 참여", () => {
   it("에이전트의 사람 멘션은 채널 참여자로만 풀고 참여시키지 않는다", () => {
     const { db, bus, channelId, agentId, bob, changes } = setup();
     const message = createAgentMessage(db, bus, {
-      conversationId: channelId,
+      conversationId: channelConversation(db, channelId),
       agentId,
       externalId: "o1",
       bodyMd: "@bob 확인해 주세요",
@@ -297,11 +297,14 @@ describe("채널 자동 참여", () => {
   it("에이전트 헤더 「참여자:」에는 실제로 온 사람만", () => {
     const { db, channelId, agentId, alice, say } = setup();
     const trigger = say(alice, "@dev 안녕");
-    const { session } = ensureSession(db, new FakeAdapter(), { conversationId: channelId, agentId });
+    const { session } = ensureSession(db, new FakeAdapter(), {
+      conversationId: channelConversation(db, channelId),
+      agentId,
+    });
     const run: Run = {
       id: uuid(),
       channelId,
-      conversationId: channelId,
+      conversationId: channelConversation(db, channelId),
       agentId,
       triggerKind: "mention",
       triggerMessageId: trigger.id,

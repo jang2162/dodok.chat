@@ -17,6 +17,7 @@ import { createAgentMessage, createSystemMessage, createUserMessage } from "../s
 import { getRunRequestedBy, insertRun, updateRun } from "../src/modules/runs/store";
 import { bootTestApp, userWithRole } from "./helpers/app";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
+import { channelConversation } from "./helpers/seed";
 
 describe("runs.requested_by", () => {
   let app: App;
@@ -67,7 +68,7 @@ describe("runs.requested_by", () => {
   const route = (message: Message) => app.services.router.routeMessage(message);
   const say = async (channel: ChannelRecord, authorId: string, bodyMd: string) => {
     const message = createUserMessage(app.db, app.bus, {
-      conversationId: channel.id,
+      conversationId: channelConversation(app.db, channel.id),
       authorId,
       bodyMd,
       clientMsgId: `c-${++n}`,
@@ -80,7 +81,7 @@ describe("runs.requested_by", () => {
     const run = app.db.select().from(runs).where(eq(runs.id, runId)).get();
     if (!run) throw new Error("런이 없다");
     const message = createAgentMessage(app.db, app.bus, {
-      conversationId: run.channelId,
+      conversationId: run.conversationId,
       agentId: run.agentId,
       runId,
       externalId: `out-${++n}`,
@@ -155,7 +156,7 @@ describe("runs.requested_by", () => {
     const { channel, a } = room();
     const human = await say(channel, mia, `@${a.handle} 골라 줘`);
     const card = createAgentMessage(app.db, app.bus, {
-      conversationId: channel.id,
+      conversationId: channelConversation(app.db, channel.id),
       agentId: a.id,
       runId: onlyRun("triggerMessageId", human.id).id,
       externalId: `out-${++n}`,
@@ -200,27 +201,27 @@ describe("runs.requested_by", () => {
   const failed = (stored: string | null) => {
     const { channel, a } = room();
     const trigger = createUserMessage(app.db, app.bus, {
-      conversationId: channel.id,
+      conversationId: channelConversation(app.db, channel.id),
       authorId: mia,
       bodyMd: `@${a.handle} 해 줘`,
       clientMsgId: `c-${++n}`,
     });
     const run = insertRun(app.db, {
       channelId: channel.id,
-      conversationId: channel.id,
+      conversationId: channelConversation(app.db, channel.id),
       agentId: a.id,
       triggerKind: "mention",
       triggerMessageId: trigger.id,
       rootMessageId: trigger.id,
       relayDepth: 0,
-      sessionKey: `agent:${a.providerAgentId}:dodok:channel:${channel.id}`,
+      sessionKey: `agent:${a.providerAgentId}:dodok:channel:${channelConversation(app.db, channel.id)}`,
       connectionId: FAKE_GATEWAY_ID,
       requestedBy: stored,
       createdAt: new Date(),
     });
     updateRun(app.db, run.id, { status: "error", error: { code: "TIMEOUT", message: "t" } });
     const notice = createSystemMessage(app.db, app.bus, {
-      conversationId: channel.id,
+      conversationId: channelConversation(app.db, channel.id),
       kind: "run_error",
       bodyMd: `@${a.handle} 실행이 실패했습니다: TIMEOUT`,
       systemMeta: { kind: "run_error", runId: run.id },

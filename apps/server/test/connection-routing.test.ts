@@ -12,7 +12,7 @@ import { getRun } from "../src/modules/runs/store";
 import { ServerBus } from "../src/realtime/bus";
 import { createServices, sessionRecoverTargets } from "../src/wiring";
 import { newTestDb } from "./helpers/db";
-import { seedWorkspace } from "./helpers/seed";
+import { channelConversation, seedWorkspace } from "./helpers/seed";
 
 // 멀티 Gateway 계획 태스크 1 — 런·정본·승인·대기열을 「연결 id + 세션 키」로 가른다. 두 Gateway 의 main 은 세션 키가 같다
 
@@ -65,7 +65,7 @@ function setup() {
   let n = 0;
   const say = (): Message =>
     createUserMessage(db, bus, {
-      conversationId: channel.id,
+      conversationId: channelConversation(db, channel.id),
       authorId: userId,
       bodyMd: "안녕",
       clientMsgId: `c${++n}`,
@@ -76,7 +76,7 @@ function setup() {
       {
         agentId,
         channelId: channel.id,
-        conversationId: channel.id,
+        conversationId: channelConversation(db, channel.id),
         triggerKind: "mention",
         rootMessageId: message.id,
         relayDepth: 0,
@@ -86,10 +86,10 @@ function setup() {
   };
   const connectionOf = (runId: string) =>
     db.select({ c: runs.connectionId }).from(runs).where(eq(runs.id, runId)).get()?.c;
-  const sessionKey = `agent:main:dodok:channel:${channel.id}`;
+  const sessionKey = `agent:main:dodok:channel:${channelConversation(db, channel.id)}`;
   const outbound = (over: Partial<OutboundMessage> = {}): OutboundMessage => ({
     outboundId: `out-${++n}`,
-    conversationId: channel.id,
+    conversationId: channelConversation(db, channel.id),
     agentId: "main",
     sessionKey,
     text: "답입니다",
@@ -102,7 +102,7 @@ function setup() {
     kind: "plugin",
     sessionKey,
     providerAgentId: "main",
-    conversationId: channel.id,
+    conversationId: channelConversation(db, channel.id),
     title: "Write 실행",
     severity: "warning",
     allowedDecisions: ["allow-once", "deny"],
@@ -132,6 +132,7 @@ function setup() {
     claude,
     services,
     channelId: channel.id,
+    conversationId: channelConversation(db, channel.id),
     userId,
     office,
     home,
@@ -332,7 +333,7 @@ describe("연결 단위 대조", () => {
     const { messageId } = await t.services.orchestrator.onCanonical(
       t.outbound({
         agentId: "coder",
-        sessionKey: `agent:coder:dodok:channel:${t.channelId}`,
+        sessionKey: `agent:coder:dodok:channel:${t.conversationId}`,
         runId: run.id,
       }),
       "claude",
@@ -368,7 +369,7 @@ describe("연결 단위 대조", () => {
     t.claude.emitApproval(
       t.approval({
         providerApprovalId: "runner:b",
-        sessionKey: `agent:coder:dodok:channel:${t.channelId}`,
+        sessionKey: `agent:coder:dodok:channel:${t.conversationId}`,
         providerAgentId: "coder",
       }),
       "tok-laptop",
@@ -380,7 +381,7 @@ describe("연결 단위 대조", () => {
   });
 
   it("묶임 없는 러너 에이전트의 승인·런 없는 정본은 어느 러너 토큰 연결로 와도 그 에이전트에 붙는다", async () => {
-    const coderKey = `agent:coder:dodok:channel:${t.channelId}`;
+    const coderKey = `agent:coder:dodok:channel:${t.conversationId}`;
     t.claude.emitApproval(
       t.approval({ providerApprovalId: "runner:x", sessionKey: coderKey, providerAgentId: "coder" }),
       "tok-other",

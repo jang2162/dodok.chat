@@ -20,6 +20,7 @@ import { type FakeRunner, type FakeRunnerRun, startFakeRunner } from "../fakes/f
 import { bootLiveApp, type LiveApp } from "../helpers/live-app";
 import { openChannelWire, resolveApproval, rest, sendMessage, type WireLog } from "../helpers/scenario-steps";
 import type { WireClient } from "../helpers/wire";
+import { channelConversation } from "../helpers/seed";
 
 describe("제어 도구 통로", () => {
   let live: LiveApp;
@@ -151,7 +152,7 @@ describe("제어 도구 통로", () => {
       }),
     );
     const channel = await channelWith(dev);
-    const sessionKey = dodokSessionKey("dev", channel.id);
+    const sessionKey = dodokSessionKey("dev", channelConversation(live.app.db, channel.id));
     const log = await openChannelWire(live, channel.id, sockets);
 
     await sendMessage(log.socket, channel.id, "@dev 채널 이름 바꿔 줘");
@@ -180,7 +181,7 @@ describe("제어 도구 통로", () => {
     // 다른 세션 키·다른 Gateway 의 이름으로는 같은 runId 도 받지 않는다
     expect(
       await live.plugin.control({
-        sessionKey: dodokSessionKey("fin", channel.id),
+        sessionKey: dodokSessionKey("fin", channelConversation(live.app.db, channel.id)),
         runId: first.id,
         tool: "get_channel",
         args: { channelId: channel.id },

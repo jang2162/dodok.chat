@@ -9,7 +9,7 @@ import { createAgentMessage } from "../src/modules/messages/service";
 import { getRun, insertRun, listOpenRuns } from "../src/modules/runs/store";
 import { bootTestApp, login } from "./helpers/app";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
-import { seedWorkspace } from "./helpers/seed";
+import { channelConversation, seedWorkspace } from "./helpers/seed";
 import { connectWire, type WireClient, waitFor } from "./helpers/wire";
 
 describe("wire 런 핸들러·REST 런 조회 (앱 부팅, FakeAdapter 배선)", () => {
@@ -83,7 +83,7 @@ describe("wire 런 핸들러·REST 런 조회 (앱 부팅, FakeAdapter 배선)",
     expect(await socket.emitWithAck("run.abort", { runId: run.id })).toEqual({ ok: true, data: null });
     expect(adapter.calls.abort).toContainEqual({
       runId: run.id,
-      sessionKey: `agent:dev:dodok:channel:${channel.id}`,
+      sessionKey: `agent:dev:dodok:channel:${channelConversation(app.db, channel.id)}`,
     });
     await aborted;
     expect(getRun(app.db, run.id)?.status).toBe("aborted");
@@ -135,16 +135,16 @@ describe("wire 런 핸들러·REST 런 조회 (앱 부팅, FakeAdapter 배선)",
     const socket = await connect();
     const source = insertRun(app.db, {
       channelId: channel.id,
-      conversationId: channel.id,
+      conversationId: channelConversation(app.db, channel.id),
       agentId: dev.id,
       triggerKind: "mention",
       rootMessageId: uuid(),
       relayDepth: 0,
-      sessionKey: `agent:dev:dodok:channel:${channel.id}`,
+      sessionKey: `agent:dev:dodok:channel:${channelConversation(app.db, channel.id)}`,
       createdAt: new Date(),
     });
     const card = createAgentMessage(app.db, app.bus, {
-      conversationId: channel.id,
+      conversationId: channelConversation(app.db, channel.id),
       agentId: dev.id,
       runId: source.id,
       externalId: `card-${++n}`,
@@ -202,18 +202,18 @@ describe("wire 런 핸들러·REST 런 조회 (앱 부팅, FakeAdapter 배선)",
     const socket = await connect();
     const source = insertRun(app.db, {
       channelId: channel.id,
-      conversationId: channel.id,
+      conversationId: channelConversation(app.db, channel.id),
       agentId: dev.id,
       triggerKind: "mention",
       rootMessageId: uuid(),
       relayDepth: 0,
-      sessionKey: `agent:dev:dodok:channel:${channel.id}`,
+      sessionKey: `agent:dev:dodok:channel:${channelConversation(app.db, channel.id)}`,
       createdAt: new Date(),
     });
     const externalId = `card-${++n}`;
     const created = waitFor(socket, "message.created", (p) => p.message.externalId === externalId);
     const card = createAgentMessage(app.db, app.bus, {
-      conversationId: channel.id,
+      conversationId: channelConversation(app.db, channel.id),
       agentId: dev.id,
       runId: source.id,
       externalId,
@@ -341,7 +341,7 @@ describe("wire 런 핸들러·REST 런 조회 (앱 부팅, FakeAdapter 배선)",
     });
     const otherRun = insertRun(app.db, {
       channelId: otherChannel.id,
-      conversationId: otherChannel.id,
+      conversationId: channelConversation(app.db, otherChannel.id),
       agentId: otherAgent.id,
       triggerKind: "mention",
       rootMessageId: uuid(),
@@ -383,12 +383,12 @@ describe("app.close — 배선된 오케스트레이터", () => {
     });
     const run = insertRun(app.db, {
       channelId: channel.id,
-      conversationId: channel.id,
+      conversationId: channelConversation(app.db, channel.id),
       agentId: agent.id,
       triggerKind: "mention",
       rootMessageId: uuid(),
       relayDepth: 0,
-      sessionKey: `agent:dev:dodok:channel:${channel.id}`,
+      sessionKey: `agent:dev:dodok:channel:${channelConversation(app.db, channel.id)}`,
       createdAt: new Date(),
     });
     // 닫기 전에는 배선되어 있다 — 신호가 런에 반영된다

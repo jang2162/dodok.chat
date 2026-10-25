@@ -7,7 +7,9 @@ import {
   ApprovalDecision,
   type Channel,
   type ChannelMember,
+  type Conversation,
   Message,
+  NewConversation,
   ReactionEmoji,
   RunState,
 } from "../domain";
@@ -39,10 +41,18 @@ export const MessageSend = z
     attachments: z.array(Id).max(ATTACHMENT_LIMITS.perMessage).optional(), // 업로드 API로 먼저 올린 첨부 id
     replyTo: Id.optional(),
     threadRootId: Id.optional(), // 답글을 가리키면 서버가 VALIDATION 으로 거절한다 — 웹이 루트를 보낸다
+    // 그 채널의 세션 — 스레드 답글이면 루트의 세션과 같아야 한다. newConversation 이면 서버가 세션을 만들어 거기에 쓴다.
+    // 둘 다 없으면 서버가 채널의 최근 열린 세션(없으면 새 세션)으로 받는다 — 웹이 세션 경로로 옮기기 전까지의 다리(채널 세션 계획 판정 PS4)
+    conversationId: Id.optional(),
+    newConversation: NewConversation.optional(),
   })
   .refine((v) => v.bodyMd.trim() !== "" || (v.attachments?.length ?? 0) > 0, {
     message: "본문이나 첨부 중 하나는 있어야 한다",
     path: ["bodyMd"],
+  })
+  .refine((v) => v.conversationId === undefined || v.newConversation === undefined, {
+    message: "conversationId 와 newConversation 은 함께 쓸 수 없다",
+    path: ["newConversation"],
   });
 export type MessageSend = z.infer<typeof MessageSend>;
 
@@ -82,7 +92,8 @@ export type ReactionSet = z.infer<typeof ReactionSet>;
 export interface ClientToServerEvents {
   "channel.subscribe": (p: ChannelSubscribe, ack: Ack<ChannelSubscribeResult>) => void;
   "channel.unsubscribe": (p: { channelId: Id }, ack: Ack<null>) => void;
-  "message.send": (p: MessageSend, ack: Ack<{ message: Message }>) => void;
+  // conversation 은 conversationId 를 주지 않았을 때만(newConversation·다리) — 서버가 고른 그 메시지의 세션(재전송이면 처음 고른 세션)
+  "message.send": (p: MessageSend, ack: Ack<{ message: Message; conversation?: Conversation }>) => void;
   "run.abort": (p: RunAbort, ack: Ack<null>) => void;
   "run.events.replay": (p: RunEventsReplay, ack: Ack<RunEventsReplayResult>) => void;
   "component.interact": (p: ComponentInteract, ack: Ack<{ interactionId: Id }>) => void;
@@ -136,6 +147,8 @@ export interface ServerToClientEvents {
   "channel.created": (p: { channel: Channel }) => void; // workspace 룸 — 채널 룸에는 아직 아무도 없다
   "channel.updated": (p: { channel: Channel }) => void; // workspace 룸 — 보관·보관 해제가 다른 탭의 사이드바에도 닿게
   "channel.member.changed": (p: { channelId: Id; members: ChannelMember[] }) => void;
+  "conversation.created": (p: { conversation: Conversation }) => void; // 채널 룸
+  "conversation.updated": (p: { conversation: Conversation }) => void; // 채널 룸 — 제목·닫기·다시 열기
   "channel.read": (p: ChannelReadUpdate) => void; // user 룸 — 같은 사용자의 다른 기기·탭이 읽음을 맞춘다(보낸 소켓도 받는다)
   "channel.activity": (p: ChannelActivity) => void; // workspace 룸 — 본문 없음, 구독하지 않은 채널의 새 글을 사이드바가 안다
   "people.changed": (p: { people: Person[] }) => void; // workspace 룸 — 가입·역할·표시 이름·비활성화·다시 활성화 뒤 전체 목록

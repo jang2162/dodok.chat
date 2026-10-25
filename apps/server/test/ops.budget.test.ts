@@ -15,7 +15,7 @@ import type { Orchestrator } from "../src/modules/runs/orchestrator";
 import { countRunsTodayInWorkspace, insertRun } from "../src/modules/runs/store";
 import { ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
-import { seedWorkspace } from "./helpers/seed";
+import { channelConversation, seedWorkspace } from "./helpers/seed";
 
 // 「하루」는 서버 현지 자정이다 — 현지 시각 생성자로 TZ 와 무관하게 경계를 만든다
 const ROOT = uuid();
@@ -55,7 +55,7 @@ function fill(channelId: string, n: number, at = clock) {
   for (let i = 0; i < n; i++) {
     insertRun(db, {
       channelId,
-      conversationId: channelId,
+      conversationId: channelConversation(db, channelId),
       agentId,
       triggerKind: "mention",
       rootMessageId: ROOT,
@@ -69,7 +69,7 @@ function fill(channelId: string, n: number, at = clock) {
 const plan = (channelId: string) => ({
   agentId,
   channelId,
-  conversationId: channelId, // 채널을 만들면 id 가 같은 「이전 대화」가 생긴다
+  conversationId: channelConversation(db, channelId),
   triggerKind: "mention" as const,
   rootMessageId: ROOT,
   relayDepth: 0,
@@ -93,10 +93,10 @@ describe("RunGate", () => {
   it("키 없는 설정이면 300 — 오늘 299개면 통과, 300개면 막힌다", async () => {
     const c = channel();
     fill(c.id, 299);
-    expect(gate.check(c.id)).toBeNull();
+    expect(gate.check(channelConversation(db, c.id))).toBeNull();
     const run = await gate.enqueue(plan(c.id), {});
     expect(run).not.toBeNull();
-    expect(gate.check(c.id)).toEqual({ scope: "workspace", limit: 300 });
+    expect(gate.check(channelConversation(db, c.id))).toEqual({ scope: "workspace", limit: 300 });
     expect(await gate.enqueue(plan(c.id), {})).toBeNull();
     expect(db.select().from(runs).all()).toHaveLength(300);
   });
@@ -105,7 +105,7 @@ describe("RunGate", () => {
     patchOpsSettings(db, workspaceId, { dailyRunLimit: null });
     const c = channel();
     fill(c.id, 1000);
-    expect(gate.check(c.id)).toBeNull();
+    expect(gate.check(channelConversation(db, c.id))).toBeNull();
     expect(limitMessages()).toEqual([]);
   });
 
@@ -113,19 +113,19 @@ describe("RunGate", () => {
     patchOpsSettings(db, workspaceId, { dailyRunLimit: 3 });
     const c = channel({ dailyRunLimit: 2 });
     fill(c.id, 3);
-    expect(gate.check(c.id)).toEqual({ scope: "workspace", limit: 3 });
+    expect(gate.check(channelConversation(db, c.id))).toEqual({ scope: "workspace", limit: 3 });
   });
 
   it("같은 날 두 번 막히면 시스템 메시지는 scope 마다 1개, 사건은 1줄 count 2", () => {
     patchOpsSettings(db, workspaceId, { dailyRunLimit: 3 });
     const c = channel({ dailyRunLimit: 2 });
     fill(c.id, 2);
-    expect(gate.check(c.id)).toEqual({ scope: "channel", limit: 2 });
+    expect(gate.check(channelConversation(db, c.id))).toEqual({ scope: "channel", limit: 2 });
     clock = DAY(13);
-    expect(gate.check(c.id)).toEqual({ scope: "channel", limit: 2 });
+    expect(gate.check(channelConversation(db, c.id))).toEqual({ scope: "channel", limit: 2 });
     fill(c.id, 1);
-    expect(gate.check(c.id)).toEqual({ scope: "workspace", limit: 3 });
-    expect(gate.check(c.id)).toEqual({ scope: "workspace", limit: 3 });
+    expect(gate.check(channelConversation(db, c.id))).toEqual({ scope: "workspace", limit: 3 });
+    expect(gate.check(channelConversation(db, c.id))).toEqual({ scope: "workspace", limit: 3 });
 
     expect(limitMessages().map((m) => [m.channelId, m.bodyMd, m.systemMeta?.limit])).toEqual([
       [
@@ -150,13 +150,13 @@ describe("RunGate", () => {
     const c = channel();
     clock = DAY(23, 59, 59);
     fill(c.id, 1);
-    expect(gate.check(c.id)).toEqual({ scope: "workspace", limit: 1 });
+    expect(gate.check(channelConversation(db, c.id))).toEqual({ scope: "workspace", limit: 1 });
     expect(limitMessages()).toHaveLength(1);
 
     clock = NEXT_DAY(0, 0, 0);
-    expect(gate.check(c.id)).toBeNull();
+    expect(gate.check(channelConversation(db, c.id))).toBeNull();
     expect(await gate.enqueue(plan(c.id), {})).not.toBeNull();
-    expect(gate.check(c.id)).toEqual({ scope: "workspace", limit: 1 });
+    expect(gate.check(channelConversation(db, c.id))).toEqual({ scope: "workspace", limit: 1 });
     expect(limitMessages()).toHaveLength(2);
     expect(limitMessages()[1]?.createdAt).toBe(NEXT_DAY(0, 0, 0).toISOString());
   });
@@ -166,8 +166,8 @@ describe("RunGate", () => {
     const b = channel();
     fill(a.id, 1);
     fill(b.id, 5);
-    expect(gate.check(a.id)).toEqual({ scope: "channel", limit: 1 });
-    expect(gate.check(b.id)).toBeNull();
+    expect(gate.check(channelConversation(db, a.id))).toEqual({ scope: "channel", limit: 1 });
+    expect(gate.check(channelConversation(db, b.id))).toBeNull();
     expect(limitMessages().map((m) => m.channelId)).toEqual([a.id]);
   });
 
@@ -176,9 +176,9 @@ describe("RunGate", () => {
     const a = channel();
     const b = channel();
     fill(a.id, 1);
-    gate.check(a.id);
-    gate.check(b.id);
-    gate.check(a.id);
+    gate.check(channelConversation(db, a.id));
+    gate.check(channelConversation(db, b.id));
+    gate.check(channelConversation(db, a.id));
     expect(limitMessages().map((m) => m.channelId)).toEqual([a.id, b.id]);
   });
 

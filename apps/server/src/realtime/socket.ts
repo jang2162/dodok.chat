@@ -1,6 +1,7 @@
 import {
   type ApiError,
   ApprovalResolve,
+  type Conversation,
   ChannelRead,
   ChannelSubscribe,
   ComponentInteract,
@@ -27,7 +28,8 @@ import { parsePayload } from "../http/validate";
 import type { Logger } from "../logger";
 import { getApproval } from "../modules/approvals/store";
 import { assertChannelWritable, getChannel } from "../modules/channels/service";
-import { latestOpenConversation } from "../modules/conversations/store";
+import { resolveSendConversation } from "../modules/conversations/service";
+import { getConversation } from "../modules/conversations/store";
 import { ipPrefix } from "../modules/ops/ip";
 import { LIMITS, type Limits } from "../modules/ops/limits";
 import { monotonicNow, TokenBucket } from "../modules/ops/ratelimit";
@@ -36,10 +38,10 @@ import type { Presence } from "../modules/push/presence";
 import { setReaction } from "../modules/reactions/service";
 import { markRead } from "../modules/reads/store";
 import {
-  createUserMessage,
   findUserMessage,
   listMessages,
   MESSAGE_PAGE_MAX,
+  sendUserMessage,
   threadRootsOf,
 } from "../modules/messages/service";
 import type { ServerBus } from "./bus";
@@ -258,7 +260,18 @@ export function attachWire(io: WireServer, ctx: WireContext): void {
       // 저장·라우팅 전에 막는다 — 같은 clientMsgId 로 다시 보내면 그때 한 번 저장된다
       if (limited("message.send")) return reply(ack, RATE_LIMITED);
       const res = await settle(ctx.logger, "message.send", () => sendMessage(ctx, userId, raw));
-      reply(ack, res.ok ? { ok: true, data: { message: res.data.message } } : res);
+      reply(
+        ack,
+        res.ok
+          ? {
+              ok: true,
+              data: {
+                message: res.data.message,
+                ...(res.data.conversation ? { conversation: res.data.conversation } : {}),
+              },
+            }
+          : res,
+      );
       // 멱등 재전송은 다시 라우팅하지 않는다(에이전트 런이 두 번 뜬다)
       if (!res.ok || !res.data.created) return;
       // 최상위를 보내면 작성자 읽음이 그 seq 까지 오른다 — 스레드 답글은 채널 끝을 보지 않고도 쓸 수 있어 올리지 않는다
@@ -367,19 +380,44 @@ export function attachWire(io: WireServer, ctx: WireContext): void {
   });
 }
 
-function sendMessage(ctx: WireContext, userId: string, raw: unknown): { message: Message; created: boolean } {
+/**
+ * 사람 보내기 — 재전송(같은 clientMsgId)은 대화를 고르기 전에 그 메시지로 답한다(채널 세션 계획 판정 PS9 — 새 세션 첫 메시지의 재전송이
+ * 세션을 또 만들지 않는다). conversationId 를 주지 않은 보내기(newConversation·다리)는 서버가 고른 그 메시지의 세션을 ack 에 함께
+ * 싣는다 — 재전송이면 처음 고른 세션이라 ack 를 잃은 탭도 같은 세션으로 옮겨 간다
+ */
+function sendMessage(
+  ctx: WireContext,
+  userId: string,
+  raw: unknown,
+): { message: Message; created: boolean; conversation?: Conversation } {
   const input = parsePayload(MessageSend, raw);
   if (!getChannel(ctx.db, input.channelId, ctx.workspaceId)) throw apiError("NOT_FOUND", "channel not found");
   const existing = findUserMessage(ctx.db, userId, input.clientMsgId);
   // 보관 전에 이미 저장된 메시지의 재전송(ack 를 잃은 탭)은 그 메시지로 답한다 — 새로 쓰는 것만 막는다(계획 판정 PC1)
-  if (existing) return { message: existing, created: false };
+  if (existing) {
+    const conversation =
+      input.conversationId === undefined ? getConversation(ctx.db, existing.conversationId) : undefined;
+    return { message: existing, created: false, ...(conversation ? { conversation } : {}) };
+  }
   assertChannelWritable(ctx.db, input.channelId, ctx.workspaceId);
-  // 채널의 열린 대화(계획 판정 PS3) — 채널마다 대화가 하나인 동안은 늘 있다
-  const conversationId = latestOpenConversation(ctx.db, input.channelId);
-  if (conversationId === undefined) throw apiError("NOT_FOUND", "conversation not found");
+  const role = roleOf(ctx.db, ctx.workspaceId, userId);
+  const now = new Date();
   // 첨부는 서비스가 같은 트랜잭션에서 검사하고 묶는다(스펙 4.4) — 버리고 저장하면 「본문 없음 + 첨부」가 빈 메시지로 남는다
-  const message = createUserMessage(ctx.db, ctx.bus, {
-    conversationId,
+  const sent = sendUserMessage(ctx.db, ctx.bus, {
+    conversationId: (tx) =>
+      resolveSendConversation(
+        tx,
+        {
+          channelId: input.channelId,
+          userId,
+          role,
+          bodyMd: input.bodyMd,
+          conversationId: input.conversationId,
+          newConversation: input.newConversation,
+          threadRootId: input.threadRootId,
+        },
+        now,
+      ),
     authorId: userId,
     bodyMd: input.bodyMd,
     clientMsgId: input.clientMsgId,
@@ -387,7 +425,10 @@ function sendMessage(ctx: WireContext, userId: string, raw: unknown): { message:
     replyTo: input.replyTo,
     threadRootId: input.threadRootId,
   });
-  return { message, created: true };
+  const conversation =
+    sent.conversation ??
+    (input.conversationId === undefined ? getConversation(ctx.db, sent.message.conversationId) : undefined);
+  return { message: sent.message, created: sent.created, ...(conversation ? { conversation } : {}) };
 }
 
 function connectError(code: ApiError["code"], message: string): Error & { data: ApiError } {

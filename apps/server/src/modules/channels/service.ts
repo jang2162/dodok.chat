@@ -1,4 +1,11 @@
-import { Channel, ChannelMember, type Participant, RelayPolicy, TeamRole } from "@dodok/shared";
+import {
+  Channel,
+  ChannelMember,
+  type Participant,
+  RelayPolicy,
+  type SessionPolicy,
+  TeamRole,
+} from "@dodok/shared";
 import { and, asc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import type { SQLiteUpdateSetSource } from "drizzle-orm/sqlite-core";
 import { v7 as uuidv7 } from "uuid";
@@ -10,7 +17,6 @@ import { apiError } from "../../http/errors";
 import { parseStored } from "../../http/validate";
 import type { Logger } from "../../logger";
 import { agentNotArchived } from "../agents/service";
-import { createLegacyConversation } from "../conversations/store";
 import type { Orchestrator } from "../runs/orchestrator";
 
 type ChannelRow = typeof channels.$inferSelect;
@@ -42,6 +48,7 @@ export type ChannelPatch = {
   prompt?: string | null;
   relayPolicy?: z.input<typeof RelayPolicy>;
   visibility?: Channel["visibility"];
+  sessionPolicy?: SessionPolicy;
 };
 
 export type AddMemberInput = {
@@ -69,6 +76,7 @@ export function rowToChannel(row: ChannelRow): ChannelRecord {
       createdBy: row.createdBy,
       createdAt: row.createdAt.toISOString(),
       archivedAt: row.archivedAt?.toISOString() ?? null,
+      sessionPolicy: row.sessionPolicy,
       promptRevision: row.promptRevision,
     },
     "channel",
@@ -86,13 +94,18 @@ export function rowToMember(row: MemberRow): ChannelMember {
       promptOverride: row.promptOverride ?? undefined,
       autoRespond: row.autoRespond,
       aliases: row.aliases,
+      // 사람 행만 — 0026 이전에 들어온 행이나 역할을 쓰지 않은 행(null)은 member 다
+      role: row.memberType === "user" ? (row.role === "manager" ? "manager" : "member") : undefined,
       joinedAt: row.joinedAt.toISOString(),
     },
     "channel member",
   );
 }
 
-/** 채널을 만들고 만든 사람을 첫 멤버로 넣는다. relayPolicy 는 계약 기본값 { maxRelayTurns: 4, allowPairs: "all" }. */
+/**
+ * 채널을 만들고 만든 사람을 첫 멤버로 넣는다. relayPolicy 는 계약 기본값 { maxRelayTurns: 4, allowPairs: "all" }. 세션은 만들지 않는다 —
+ * 첫 메시지가 만든다(채널 세션 스펙 결정 7)
+ */
 export function createChannel(db: Db, input: CreateChannelInput): ChannelRecord {
   const now = new Date();
   return db.transaction((tx) => {
@@ -117,10 +130,10 @@ export function createChannel(db: Db, input: CreateChannelInput): ChannelRecord 
         channelId: row.id,
         memberType: "user",
         memberId: input.createdBy,
+        role: "member",
         joinedAt: now,
       })
       .run();
-    createLegacyConversation(tx, { id: row.id, createdBy: input.createdBy, createdAt: now });
     return rowToChannel(row);
   });
 }
@@ -139,6 +152,7 @@ export function updateChannel(
     if (patch.name !== undefined) set.name = patch.name;
     if (patch.topic !== undefined) set.topic = patch.topic;
     if (patch.visibility !== undefined) set.visibility = patch.visibility;
+    if (patch.sessionPolicy !== undefined) set.sessionPolicy = patch.sessionPolicy;
     if (patch.prompt !== undefined) {
       set.prompt = patch.prompt;
       if (patch.prompt !== current.prompt) promptChanged = true;
@@ -311,6 +325,7 @@ export function addMember(
         promptOverride: input.promptOverride ?? null,
         autoRespond: input.autoRespond ?? false,
         aliases: input.aliases ?? [],
+        role: input.memberType === "user" ? "member" : null,
         joinedAt: new Date(),
       })
       .returning()
@@ -374,13 +389,69 @@ export function removeMember(db: DbOrTx, channelId: string, memberId: string): v
 export function joinChannelIfAbsent(tx: DbOrTx, channelId: string, userId: string, now: Date): boolean {
   const inserted = tx
     .insert(channelMembers)
-    .values({ id: uuidv7(), channelId, memberType: "user", memberId: userId, joinedAt: now })
+    .values({ id: uuidv7(), channelId, memberType: "user", memberId: userId, role: "member", joinedAt: now })
     .onConflictDoNothing({
       target: [channelMembers.channelId, channelMembers.memberType, channelMembers.memberId],
     })
     .returning({ id: channelMembers.id })
     .all();
   return inserted.length > 0;
+}
+
+/**
+ * 그 사람이 그 채널의 세션 관리자인가(channel_members.role = manager — 채널 세션 계획 판정 PS8). 비활성 멤버는 부르는 쪽의 역할 판정
+ * (roleOf)이 먼저 막는다
+ */
+export function isSessionManager(db: DbOrTx, channelId: string, userId: string): boolean {
+  return !!db
+    .select({ id: channelMembers.id })
+    .from(channelMembers)
+    .where(
+      and(
+        eq(channelMembers.channelId, channelId),
+        eq(channelMembers.memberType, "user"),
+        eq(channelMembers.memberId, userId),
+        eq(channelMembers.role, "manager"),
+      ),
+    )
+    .get();
+}
+
+/**
+ * 세션 관리자 지정(on)·해제(off). 지정은 채널에 없는 사람이면 참여시키고 역할을 올린다(채널 세션 스펙 「권한」 장 — 세션 관리자는 채널
+ * 멤버다), 해제는 역할을 member 로 내린다(채널에는 남는다). 사람은 이 워크스페이스의 활성 멤버여야 한다(roleOf) — 아니면 NOT_FOUND.
+ * 해제할 사람이 채널에 없으면 NOT_FOUND
+ */
+export function setSessionManager(db: Db, channelId: string, userId: string, on: boolean): ChannelMember {
+  return db.transaction((tx) => {
+    const channel = tx
+      .select({ workspaceId: channels.workspaceId })
+      .from(channels)
+      .where(eq(channels.id, channelId))
+      .get();
+    if (!channel) throw apiError("NOT_FOUND", "channel not found");
+    const user = tx
+      .select({ id: users.id })
+      .from(users)
+      .where(and(eq(users.id, userId), eq(users.workspaceId, channel.workspaceId)))
+      .get();
+    if (!user || !roleOf(tx, channel.workspaceId, userId)) throw apiError("NOT_FOUND", "user not found");
+    if (on) joinChannelIfAbsent(tx, channelId, userId, new Date());
+    const row = tx
+      .update(channelMembers)
+      .set({ role: on ? "manager" : "member" })
+      .where(
+        and(
+          eq(channelMembers.channelId, channelId),
+          eq(channelMembers.memberType, "user"),
+          eq(channelMembers.memberId, userId),
+        ),
+      )
+      .returning()
+      .get();
+    if (!row) throw apiError("NOT_FOUND", "member not found");
+    return rowToMember(row);
+  });
 }
 
 /**

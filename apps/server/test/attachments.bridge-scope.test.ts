@@ -22,6 +22,7 @@ import { issueBridgeToken } from "../src/modules/setup/tokens";
 import { bootTestApp, login } from "./helpers/app";
 import { FAKE_GATEWAY_ID, insertGateway } from "./helpers/gateways";
 import { makePng, PDF_BYTES } from "./helpers/png";
+import { channelConversation } from "./helpers/seed";
 
 const HOME_ID = "00000000-0000-4000-8000-0000000000b2";
 
@@ -77,7 +78,7 @@ async function setup() {
       url: "/bridge/attachments",
       headers: {
         authorization: `Bearer ${token}`,
-        "x-dodok-conversation-id": channel.id,
+        "x-dodok-conversation-id": channelConversation(app.db, channel.id),
         "content-type": "application/octet-stream",
       },
       payload: PDF_BYTES,
@@ -97,7 +98,7 @@ async function setup() {
   const mentionWithImage = async (handle: string) => {
     const image = await userUpload();
     const message = createUserMessage(app.db, app.bus, {
-      conversationId: channel.id,
+      conversationId: channelConversation(app.db, channel.id),
       authorId: app.ownerUserId,
       bodyMd: `@${handle} 이 그림`,
       clientMsgId: `img-${handle}-${image.id}`,
@@ -114,9 +115,9 @@ async function setup() {
   const canonical = async (connectionId: string, attachmentIds: string[]) => {
     const message: OutboundMessage = {
       outboundId: `out-${connectionId}-${attachmentIds.join(",")}`,
-      conversationId: channel.id,
+      conversationId: channelConversation(app.db, channel.id),
       agentId: "main",
-      sessionKey: `agent:main:dodok:channel:${channel.id}`,
+      sessionKey: `agent:main:dodok:channel:${channelConversation(app.db, channel.id)}`,
       text: "파일입니다",
       attachmentIds,
       ts: new Date().toISOString(),
@@ -205,9 +206,9 @@ describe("브리지 첨부 범위 — 토큰의 Gateway 로", () => {
     const [own, others] = [await upload(runner), await upload(other)];
     const message: OutboundMessage = {
       outboundId: "out-runner",
-      conversationId: channel.id,
+      conversationId: channelConversation(app.db, channel.id),
       agentId: "coder",
-      sessionKey: `agent:coder:dodok:channel:${channel.id}`,
+      sessionKey: `agent:coder:dodok:channel:${channelConversation(app.db, channel.id)}`,
       text: "파일입니다",
       attachmentIds: [orphan.id, others.id, own.id],
       ts: new Date().toISOString(),
@@ -234,7 +235,7 @@ describe("브리지 첨부 범위 — 토큰의 Gateway 로", () => {
         url: "/bridge/attachments",
         headers: {
           authorization: `Bearer ${token}`,
-          "x-dodok-conversation-id": channel.id,
+          "x-dodok-conversation-id": channelConversation(app.db, channel.id),
           "content-type": "application/octet-stream",
         },
         payload: PDF_BYTES,

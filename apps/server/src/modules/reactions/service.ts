@@ -10,7 +10,7 @@ import type { Db, DbOrTx } from "../../db/client";
 import { agents, agentSessions, channels, messageReactions, messages, users } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
 import type { ServerBus } from "../../realtime/bus";
-import { assertChannelWritable } from "../channels/service";
+import { assertConversationWritable } from "../conversations/store";
 import { rowToMessage } from "../messages/service";
 import { type HandleOf, readableGlyphs, readableWindow } from "../search/readable";
 
@@ -48,7 +48,7 @@ export function setReaction(
   // 다른 워크스페이스의 메시지는 존재 자체를 알리지 않는다
   if (!row || row.workspaceId !== workspaceId) throw apiError("NOT_FOUND", "message not found");
   if (row.message.kind !== "normal") throw apiError("VALIDATION", "system messages cannot be reacted to");
-  assertChannelWritable(db, row.message.channelId, workspaceId);
+  assertConversationWritable(db, row.message.conversationId, workspaceId);
 
   const changed = on
     ? db

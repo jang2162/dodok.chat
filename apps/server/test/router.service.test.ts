@@ -18,7 +18,7 @@ import { ServerBus } from "../src/realtime/bus";
 import { createAdapterRegistry } from "../src/adapters/registry";
 import { createServices } from "../src/wiring";
 import { newTestDb } from "./helpers/db";
-import { seedWorkspace } from "./helpers/seed";
+import { channelConversation, seedWorkspace } from "./helpers/seed";
 
 const CONTINUE_COMPONENTS = {
   blocks: [
@@ -61,7 +61,7 @@ function setup(relayPolicy?: z.input<typeof RelayPolicy>) {
   let n = 0;
   const human = (bodyMd: string) =>
     createUserMessage(db, bus, {
-      conversationId: channel.id,
+      conversationId: channelConversation(db, channel.id),
       authorId: userId,
       bodyMd,
       clientMsgId: `c${++n}`,
@@ -72,18 +72,18 @@ function setup(relayPolicy?: z.input<typeof RelayPolicy>) {
   ) =>
     insertRun(db, {
       channelId: channel.id,
-      conversationId: channel.id,
+      conversationId: channelConversation(db, channel.id),
       agentId: agent.id,
       triggerKind: "mention",
       rootMessageId: over.rootMessageId ?? uuid(),
       relayDepth: over.relayDepth ?? 0,
       relayHash: over.relayHash,
-      sessionKey: `agent:${agent.providerAgentId}:dodok:channel:${channel.id}`,
+      sessionKey: `agent:${agent.providerAgentId}:dodok:channel:${channelConversation(db, channel.id)}`,
       createdAt: new Date(),
     });
   const said = (agent: Agent, run: Run | undefined, bodyMd: string) =>
     createAgentMessage(db, bus, {
-      conversationId: channel.id,
+      conversationId: channelConversation(db, channel.id),
       agentId: agent.id,
       runId: run?.id,
       externalId: `out-${++n}`,
@@ -126,7 +126,7 @@ describe("router service", () => {
       {
         agentId: t.dev.id,
         channelId: t.channel.id,
-        conversationId: t.channel.id,
+        conversationId: channelConversation(t.db, t.channel.id),
         triggerKind: "mention",
         rootMessageId: message.id,
         relayDepth: 0,
@@ -156,7 +156,7 @@ describe("router service", () => {
       {
         agentId: t.fin.id,
         channelId: t.channel.id,
-        conversationId: t.channel.id,
+        conversationId: channelConversation(t.db, t.channel.id),
         triggerKind: "relay",
         rootMessageId: root,
         relayDepth: 1,
@@ -341,7 +341,7 @@ describe("router service — 스레드", () => {
     let n = 0;
     const reply = (rootId: string, bodyMd: string) =>
       createUserMessage(t.db, t.bus, {
-        conversationId: t.channel.id,
+        conversationId: channelConversation(t.db, t.channel.id),
         authorId: t.userId,
         bodyMd,
         clientMsgId: `t${++n}`,
@@ -349,7 +349,7 @@ describe("router service — 스레드", () => {
       });
     const agentReply = (agent: Agent, run: Run, rootId: string, bodyMd: string) =>
       createAgentMessage(t.db, t.bus, {
-        conversationId: t.channel.id,
+        conversationId: channelConversation(t.db, t.channel.id),
         agentId: agent.id,
         runId: run.id,
         externalId: `tr-${++n}`,
@@ -368,7 +368,7 @@ describe("router service — 스레드", () => {
       {
         agentId: t.dev.id,
         channelId: t.channel.id,
-        conversationId: t.channel.id,
+        conversationId: channelConversation(t.db, t.channel.id),
         triggerKind: "mention",
         rootMessageId: message.id,
         relayDepth: 0,
@@ -442,7 +442,7 @@ describe("createServices — 라우터·오케스트레이터 상호 참조", ()
       await t.services.orchestrator.onCanonical(
         {
           outboundId: "out-dev-1",
-          conversationId: t.channel.id,
+          conversationId: channelConversation(t.db, t.channel.id),
           agentId: "dev",
           sessionKey: devRun?.sessionKey ?? "",
           runId: devRun?.id,

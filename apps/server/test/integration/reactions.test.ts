@@ -32,6 +32,7 @@ import {
   type WireLog,
 } from "../helpers/scenario-steps";
 import { connectWire, type WireClient } from "../helpers/wire";
+import { channelConversation } from "../helpers/seed";
 
 vi.setConfig({ testTimeout: 20_000, hookTimeout: 20_000 });
 
@@ -318,7 +319,7 @@ describe("통합 — 리액션", () => {
       const { answer } = await turn(t, "@dev 처음");
       if (!answer) throw new Error("답이 없다");
       const notice = createSystemMessage(live.app.db, live.app.bus, {
-        conversationId: t.channel.id,
+        conversationId: channelConversation(live.app.db, t.channel.id),
         bodyMd: "공지",
         kind: "info",
       });

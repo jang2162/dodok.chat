@@ -34,6 +34,7 @@ describe("common", () => {
       "MEMBER_DEACTIVATED",
       "CHANNEL_ARCHIVED",
       "PUSH_UNAVAILABLE",
+      "CONVERSATION_CLOSED",
       "INTERNAL",
     ]);
     expect(ErrorCode.safeParse("NOPE").success).toBe(false);

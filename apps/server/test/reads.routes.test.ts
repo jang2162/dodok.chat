@@ -8,6 +8,7 @@ import { createChannel } from "../src/modules/channels/service";
 import { createUserMessage } from "../src/modules/messages/service";
 import { markRead } from "../src/modules/reads/store";
 import { bootTestApp, login, userWithRole } from "./helpers/app";
+import { channelConversation } from "./helpers/seed";
 
 describe("GET /api/v1/me/unread", () => {
   let app: App;
@@ -28,7 +29,7 @@ describe("GET /api/v1/me/unread", () => {
     }).id;
     for (const n of [1, 2]) {
       createUserMessage(app.db, app.bus, {
-        conversationId: channelId,
+        conversationId: channelConversation(app.db, channelId),
         authorId: app.ownerUserId,
         bodyMd: `m${n}`,
         clientMsgId: `r-${n}`,

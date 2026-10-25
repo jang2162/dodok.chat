@@ -4,7 +4,7 @@ import type { DbOrTx } from "../../src/db/client";
 import { eq } from "drizzle-orm";
 import { agents, channelMembers, channels, gateways, users, workspaces } from "../../src/db/schema.sqlite";
 import { FAKE_GATEWAY_ID, insertGateway } from "./gateways";
-import { createLegacyConversation } from "../../src/modules/conversations/store";
+import { createConversation, latestOpenConversation } from "../../src/modules/conversations/store";
 
 /** workspace·user 만 삽입한다 — 채널·에이전트는 서비스로 만드는 테스트용 */
 export function seedWorkspace(
@@ -29,7 +29,7 @@ export function seedWorkspace(
 export function seedChannelWithAgent(
   db: DbOrTx,
   opts: { agentHandle?: string; channelName?: string; gatewayId?: string | null } = {},
-): { workspaceId: string; userId: string; agentId: string; channelId: string } {
+): { workspaceId: string; userId: string; agentId: string; channelId: string; conversationId: string } {
   const agentHandle = opts.agentHandle ?? "dev";
   const now = new Date();
   const workspaceId = uuid();
@@ -73,7 +73,7 @@ export function seedChannelWithAgent(
       createdAt: now,
     })
     .run();
-  createLegacyConversation(db, { id: channelId, createdBy: userId, createdAt: now });
+  const conversationId = seedConversation(db, channelId, { createdBy: userId, createdAt: now });
   db.insert(channelMembers)
     .values([
       { id: uuid(), channelId, memberType: "user", memberId: userId, joinedAt: now },
@@ -81,7 +81,30 @@ export function seedChannelWithAgent(
     ])
     .run();
 
-  return { workspaceId, userId, agentId, channelId };
+  return { workspaceId, userId, agentId, channelId, conversationId };
+}
+
+/**
+ * 채널에 열린 대화(세션) 하나를 넣고 그 id 를 돌려준다. id 는 채널 id 와 다르다 — 채널 id 를 대화 id 로 잘못 넘기는 코드가 테스트에서
+ * 드러나게(0025 의 「이전 대화」만 id 가 채널 id 와 같다). createdBy 를 안 주면 채널을 만든 사람
+ */
+export function seedConversation(
+  db: DbOrTx,
+  channelId: string,
+  opts: { createdBy?: string; createdAt?: Date; title?: string } = {},
+): string {
+  const createdBy =
+    opts.createdBy ??
+    db.select({ createdBy: channels.createdBy }).from(channels).where(eq(channels.id, channelId)).get()
+      ?.createdBy;
+  if (createdBy === undefined) throw new Error(`seedConversation: no channel ${channelId}`);
+  return createConversation(db, {
+    channelId,
+    title: opts.title ?? "테스트 세션",
+    titleSource: "user",
+    createdBy: { type: "user", id: createdBy },
+    createdAt: opts.createdAt ?? new Date(),
+  }).id;
 }
 
 /**
@@ -116,4 +139,12 @@ export function seedSession(
     .values({ id: sessionId, token: uuid(), userId, expiresAt, createdAt: now, updatedAt: now })
     .run();
   return { userId, sessionId };
+}
+
+/**
+ * 그 채널의 열린 세션 id — 없으면 seedConversation 으로 하나 만든다. 채널 하나에 세션 하나만 쓰는 테스트가 「이 채널의 세션」을 얻는
+ * 길이다(채널을 만들어도 세션은 생기지 않는다 — 채널 세션 스펙 결정 7). 세션을 둘 이상 쓰는 테스트는 seedConversation 을 직접 쓴다
+ */
+export function channelConversation(db: DbOrTx, channelId: string): string {
+  return latestOpenConversation(db, channelId) ?? seedConversation(db, channelId);
 }

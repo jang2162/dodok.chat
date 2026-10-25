@@ -16,6 +16,7 @@ import {
 } from "../../src/modules/messages/service";
 import { bootTestApp, userWithRole } from "../helpers/app";
 import { connectWire, recordEvents, type WireClient, waitFor } from "../helpers/wire";
+import { channelConversation } from "../helpers/seed";
 
 describe("통합 — 읽지 않음 팬아웃", () => {
   let app: App;
@@ -132,7 +133,11 @@ describe("통합 — 읽지 않음 팬아웃", () => {
       await ready();
       const ch = channel();
       const seen = recordEvents(a1, ["channel.activity"]);
-      createSystemMessage(app.db, app.bus, { conversationId: ch.id, bodyMd: "공지", kind: "info" });
+      createSystemMessage(app.db, app.bus, {
+        conversationId: channelConversation(app.db, ch.id),
+        bodyMd: "공지",
+        kind: "info",
+      });
       const controlId = await control(ch.id);
       expect(authorsOf(seen)).toEqual([controlId]);
     });
@@ -242,7 +247,7 @@ describe("통합 — 읽지 않음 팬아웃", () => {
       const automationId = uuid();
       const seen = waitFor(a1, "channel.activity", (p) => p.channelId === ch.id);
       const message = createAutomationMessage(app.db, app.bus, {
-        conversationId: ch.id,
+        conversationId: channelConversation(app.db, ch.id),
         automationId,
         bodyMd: "@reads-a 확인해 주세요",
       });
@@ -322,7 +327,7 @@ describe("통합 — 읽지 않음 팬아웃", () => {
       await ready();
       const ch = channel();
       createUserMessage(app.db, app.bus, {
-        conversationId: ch.id,
+        conversationId: channelConversation(app.db, ch.id),
         authorId: b.id,
         bodyMd: "old",
         clientMsgId: `arch-${++n}`,

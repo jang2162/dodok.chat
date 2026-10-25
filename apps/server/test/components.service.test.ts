@@ -24,7 +24,7 @@ import type { EnqueueTrigger } from "../src/modules/runs/orchestrator";
 import { insertRun, updateRun } from "../src/modules/runs/store";
 import { ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
-import { seedWorkspace } from "./helpers/seed";
+import { channelConversation, seedWorkspace } from "./helpers/seed";
 
 type CardComponents = Parameters<typeof createAgentMessage>[2]["components"];
 
@@ -96,17 +96,17 @@ function setup(relayPolicy?: z.input<typeof RelayPolicy>) {
   const runOf = (agent: Agent, relayDepth = 0) =>
     insertRun(db, {
       channelId: channel.id,
-      conversationId: channel.id,
+      conversationId: channelConversation(db, channel.id),
       agentId: agent.id,
       triggerKind: "mention",
       rootMessageId: uuid(),
       relayDepth,
-      sessionKey: `agent:${agent.providerAgentId}:dodok:channel:${channel.id}`,
+      sessionKey: `agent:${agent.providerAgentId}:dodok:channel:${channelConversation(db, channel.id)}`,
       createdAt: new Date(),
     });
   const card = (agent: Agent, components: CardComponents = PICKER, run: Run | null = runOf(agent)) =>
     createAgentMessage(db, bus, {
-      conversationId: channel.id,
+      conversationId: channelConversation(db, channel.id),
       agentId: agent.id,
       runId: run?.id,
       externalId: `out-${++n}`,
@@ -145,7 +145,7 @@ function setup(relayPolicy?: z.input<typeof RelayPolicy>) {
 /** 오케스트레이터가 남기는 run_error 카드와 같은 모양 */
 function retryNotice(t: ReturnType<typeof setup>, runId: string): Message {
   return createSystemMessage(t.db, t.bus, {
-    conversationId: t.channel.id,
+    conversationId: channelConversation(t.db, t.channel.id),
     kind: "run_error",
     bodyMd: "@dev 실행이 실패했습니다: TIMEOUT",
     systemMeta: { kind: "run_error", runId },
@@ -162,20 +162,20 @@ function failedRun(
 ): { run: Run; notice: Message } {
   const trigger = opts.fromAgent
     ? createAgentMessage(t.db, t.bus, {
-        conversationId: t.channel.id,
+        conversationId: channelConversation(t.db, t.channel.id),
         agentId: opts.fromAgent.id,
         externalId: `out-trigger-${uuid()}`,
         bodyMd: `@${opts.agent.handle} 넘길게`,
       })
     : createUserMessage(t.db, t.bus, {
-        conversationId: t.channel.id,
+        conversationId: channelConversation(t.db, t.channel.id),
         authorId: t.userId,
         bodyMd: `@${opts.agent.handle} 해줘`,
         clientMsgId: `c-${uuid()}`,
       });
   const run = insertRun(t.db, {
     channelId: t.channel.id,
-    conversationId: t.channel.id,
+    conversationId: channelConversation(t.db, t.channel.id),
     agentId: opts.agent.id,
     triggerKind: opts.triggerKind,
     triggerMessageId: trigger.id,
@@ -197,7 +197,7 @@ describe("components service — interact", () => {
     const source = t.runOf(t.dev, 1);
     await router.routeMessage(
       createAgentMessage(t.db, t.bus, {
-        conversationId: t.channel.id,
+        conversationId: channelConversation(t.db, t.channel.id),
         agentId: t.dev.id,
         runId: source.id,
         externalId: "out-relay",
@@ -240,7 +240,7 @@ describe("components service — interact", () => {
     const source = t.runOf(t.dev, 1);
     await router.routeMessage(
       createAgentMessage(t.db, t.bus, {
-        conversationId: t.channel.id,
+        conversationId: channelConversation(t.db, t.channel.id),
         agentId: t.dev.id,
         runId: source.id,
         externalId: "out-relay",
@@ -259,7 +259,7 @@ describe("components service — interact", () => {
       {
         agentId: t.fin.id,
         channelId: t.channel.id,
-        conversationId: t.channel.id,
+        conversationId: channelConversation(t.db, t.channel.id),
         triggerKind: "continue",
         rootMessageId: system.id,
         relayDepth: 0,
@@ -299,7 +299,7 @@ describe("components service — interact", () => {
       {
         agentId: t.fin.id,
         channelId: t.channel.id,
-        conversationId: t.channel.id,
+        conversationId: channelConversation(t.db, t.channel.id),
         triggerKind: "interaction",
         rootMessageId: message.id,
         relayDepth: 0,
@@ -382,13 +382,13 @@ describe("components service — interact", () => {
   it("components 없는 메시지는 질의 0회, interactions 는 []", () => {
     const t = setup();
     createUserMessage(t.db, t.bus, {
-      conversationId: t.channel.id,
+      conversationId: channelConversation(t.db, t.channel.id),
       authorId: t.userId,
       bodyMd: "안녕",
       clientMsgId: "c1",
     });
     createAgentMessage(t.db, t.bus, {
-      conversationId: t.channel.id,
+      conversationId: channelConversation(t.db, t.channel.id),
       agentId: t.dev.id,
       externalId: "p",
       bodyMd: "네",
@@ -447,7 +447,7 @@ describe("components service — interact", () => {
       {
         agentId: t.dev.id,
         channelId: t.channel.id,
-        conversationId: t.channel.id,
+        conversationId: channelConversation(t.db, t.channel.id),
         triggerKind: "relay",
         rootMessageId: failed.rootMessageId,
         relayDepth: 2,
@@ -466,7 +466,7 @@ describe("components service — interact", () => {
     const t = setup();
     const base = {
       channelId: t.channel.id,
-      conversationId: t.channel.id,
+      conversationId: channelConversation(t.db, t.channel.id),
       agentId: t.dev.id,
       rootMessageId: uuid(),
       relayDepth: 0,
@@ -604,7 +604,7 @@ describe("components service — interact", () => {
 
     // 컴포넌트가 없는 메시지
     const plain = createAgentMessage(t.db, t.bus, {
-      conversationId: t.channel.id,
+      conversationId: channelConversation(t.db, t.channel.id),
       agentId: t.dev.id,
       externalId: "plain",
       bodyMd: "그냥 글",
@@ -629,7 +629,7 @@ describe("components service — interact", () => {
       name: "ext",
     });
     const message = createAgentMessage(t.db, t.bus, {
-      conversationId: channel.id,
+      conversationId: channelConversation(t.db, channel.id),
       agentId: agent.id,
       externalId: "other-ws",
       bodyMd: "남의 카드",
@@ -646,7 +646,7 @@ describe("components service — 스레드 안의 카드(스펙 2.2)", () => {
   function threadSetup() {
     const t = setup();
     const root = createUserMessage(t.db, t.bus, {
-      conversationId: t.channel.id,
+      conversationId: channelConversation(t.db, t.channel.id),
       authorId: t.userId,
       bodyMd: "루트",
       clientMsgId: "root",
@@ -657,7 +657,7 @@ describe("components service — 스레드 안의 카드(스펙 2.2)", () => {
   it("스레드 안 에이전트 카드 → 그 스레드의 interaction 런", async () => {
     const t = threadSetup();
     const card = createAgentMessage(t.db, t.bus, {
-      conversationId: t.channel.id,
+      conversationId: channelConversation(t.db, t.channel.id),
       agentId: t.dev.id,
       runId: t.runOf(t.dev).id,
       externalId: "thread-card",
@@ -676,7 +676,7 @@ describe("components service — 스레드 안의 카드(스펙 2.2)", () => {
   it("스레드 안 relay_limit 의 이어가기 → 그 스레드의 continue 런", async () => {
     const t = threadSetup();
     const limit = createSystemMessage(t.db, t.bus, {
-      conversationId: t.channel.id,
+      conversationId: channelConversation(t.db, t.channel.id),
       threadRootId: t.root.id,
       kind: "relay_limit",
       bodyMd: "한도",
@@ -699,7 +699,7 @@ describe("components service — 스레드 안의 카드(스펙 2.2)", () => {
   it("스레드 런의 다시 실행 → 원래 런의 스레드", async () => {
     const t = threadSetup();
     const trigger = createUserMessage(t.db, t.bus, {
-      conversationId: t.channel.id,
+      conversationId: channelConversation(t.db, t.channel.id),
       authorId: t.userId,
       bodyMd: "@dev 해줘",
       clientMsgId: "t1",
@@ -707,7 +707,7 @@ describe("components service — 스레드 안의 카드(스펙 2.2)", () => {
     });
     const run = insertRun(t.db, {
       channelId: t.channel.id,
-      conversationId: t.channel.id,
+      conversationId: channelConversation(t.db, t.channel.id),
       agentId: t.dev.id,
       triggerKind: "mention",
       triggerMessageId: trigger.id,
@@ -719,7 +719,7 @@ describe("components service — 스레드 안의 카드(스펙 2.2)", () => {
     });
     updateRun(t.db, run.id, { status: "error", error: { code: "PLUGIN_OUTDATED", message: "p" } });
     const notice = createSystemMessage(t.db, t.bus, {
-      conversationId: t.channel.id,
+      conversationId: channelConversation(t.db, t.channel.id),
       threadRootId: t.root.id,
       kind: "run_error",
       bodyMd: "실패",
@@ -740,7 +740,7 @@ describe("components service — 스레드 안의 카드(스펙 2.2)", () => {
     const t = threadSetup();
     patchOpsSettings(t.db, t.workspaceId, { dailyRunLimit: 1 });
     const card = createAgentMessage(t.db, t.bus, {
-      conversationId: t.channel.id,
+      conversationId: channelConversation(t.db, t.channel.id),
       agentId: t.dev.id,
       runId: t.runOf(t.dev).id, // 오늘 런 1개
       externalId: "thread-card-2",

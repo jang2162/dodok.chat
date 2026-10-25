@@ -26,7 +26,7 @@ import { attachWire, type WireContext } from "../src/realtime/socket";
 import type { RunsFacade, WireServer } from "../src/realtime/types";
 import { bootTestApp, login } from "./helpers/app";
 import { fakeGatewayStatus } from "./helpers/gateways";
-import { seedWorkspace } from "./helpers/seed";
+import { channelConversation, seedWorkspace } from "./helpers/seed";
 import { connectWire, openWire, recordEvents, type WireClient, waitFor } from "./helpers/wire";
 
 async function listen(app: App): Promise<void> {
@@ -50,7 +50,7 @@ function runState(channelId: string, patch: Partial<RunState> = {}): RunState {
   return {
     id: uuid(),
     channelId,
-    conversationId: channelId,
+    conversationId: uuid(),
     agentId: uuid(),
     status: "streaming",
     relayDepth: 0,
@@ -65,7 +65,7 @@ function pendingApproval(channelId: string): Approval {
     providerApprovalId: `plugin:${uuid()}`,
     kind: "plugin",
     channelId,
-    conversationId: channelId,
+    conversationId: uuid(),
     agentId: uuid(),
     title: "Write 실행",
     severity: "warning",
@@ -258,7 +258,7 @@ describe("wire (앱 부팅, FakeAdapter)", () => {
     const channel = newChannel("wire-d");
     for (const n of [1, 2]) {
       createUserMessage(app.db, app.bus, {
-        conversationId: channel.id,
+        conversationId: channelConversation(app.db, channel.id),
         authorId: app.ownerUserId,
         bodyMd: `m${n}`,
         clientMsgId: `d-${n}`,
@@ -275,7 +275,7 @@ describe("wire (앱 부팅, FakeAdapter)", () => {
     const channel = newChannel("wire-d-many");
     for (let n = 1; n <= 201; n++) {
       createUserMessage(app.db, app.bus, {
-        conversationId: channel.id,
+        conversationId: channelConversation(app.db, channel.id),
         authorId: app.ownerUserId,
         bodyMd: `m${n}`,
         clientMsgId: `dm-${n}`,
@@ -349,7 +349,7 @@ describe("wire (앱 부팅, FakeAdapter)", () => {
     const run = runState(channel.id);
     const event = textDelta(run.id, 1);
     const message = createUserMessage(app.db, app.bus, {
-      conversationId: channel.id,
+      conversationId: channelConversation(app.db, channel.id),
       authorId: app.ownerUserId,
       bodyMd: "fan",
       clientMsgId: "f-1",
@@ -357,7 +357,7 @@ describe("wire (앱 부팅, FakeAdapter)", () => {
     // 기록이 이미 있는 카드 — 지금 서버의 message.created 는 모두 새 메시지라 이런 페이로드를 내지 않지만,
     // 팬아웃이 하이드레이션하므로 앞으로 생길 emit 자리도 결과 줄이 실린다(Ruling 1). 저장은 앱 bus 밖에서.
     const card = createSystemMessage(app.db, new ServerBus(), {
-      conversationId: channel.id,
+      conversationId: channelConversation(app.db, channel.id),
       kind: "info",
       bodyMd: "card",
       components: { blocks: [{ type: "actions", items: [{ type: "button", id: "ok", label: "OK" }] }] },
@@ -440,7 +440,7 @@ describe("wire (앱 부팅, FakeAdapter)", () => {
     await subscribe(member, channel.id);
     // 지금 서버의 message.created 는 새 메시지라 리액션이 없다 — 표에 미리 넣어 팬아웃이 표를 읽는지 본다. 저장은 앱 bus 밖에서
     const message = createUserMessage(app.db, new ServerBus(), {
-      conversationId: channel.id,
+      conversationId: channelConversation(app.db, channel.id),
       authorId: app.ownerUserId,
       bodyMd: "반응",
       clientMsgId: "r-1",

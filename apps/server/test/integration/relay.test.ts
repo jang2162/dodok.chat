@@ -17,6 +17,7 @@ import {
   type WireLog,
 } from "../helpers/scenario-steps";
 import type { WireClient } from "../helpers/wire";
+import { channelConversation } from "../helpers/seed";
 
 vi.setConfig({ testTimeout: 20_000, hookTimeout: 20_000 });
 
@@ -173,7 +174,7 @@ describe("통합 시나리오 1~5 — 릴레이·상한·이어가기·차단", 
       kind: "message",
       agentId: "dev",
       runId: queued.id,
-      sessionKey: `agent:dev:dodok:channel:${channel.id}`,
+      sessionKey: `agent:dev:dodok:channel:${channelConversation(live.app.db, channel.id)}`,
       message: { id: human.id, text: "@dev 안녕" },
     });
     expect(await getRunRest(live, queued.id)).toMatchObject({
