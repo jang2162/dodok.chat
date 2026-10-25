@@ -265,7 +265,7 @@ export function listConversations(db: DbOrTx, channelId: string, q: { status: "o
 
 **Interfaces:**
 - Consumes: 태스크 3 의 REST·wire·이벤트.
-- Produces(웹): 경로 `/c/$channelId`(→ 열린 세션 가운데 최근 활동으로 `replace` 넘김, 없으면 `/c/$channelId/s/new`) · `/c/$channelId/s/$conversationId`(`new` 는 빈 새 세션 창 — 첫 보내기가 `newConversation` 을 싣고 ack 의 대화로 `replace` 넘김) · 그 아래 `settings`·`activity`·`t/$rootId`. `qk.timeline(channelId, conversationId)`·`qk.thread(channelId, conversationId, rootId)`·`qk.threads(channelId, conversationId)`·`qk.channelSeq(channelId)`·`qk.conversations(channelId, status)`. `useSendMessage(channelId, conversationId | "new")`. `PendingFailReason` 에 `"conversation_closed"`.
+- Produces(웹): 경로 `/c/$channelId`(→ 열린 세션 가운데 최근 활동으로 `replace` 넘김, 없으면 `/c/$channelId/s/new`) · `/c/$channelId/s/$conversationId`(`new` 는 빈 새 세션 창 — 첫 보내기가 `newConversation` 을 싣고 ack 의 대화로 `replace` 넘김) · 그 아래 `settings`·`activity`·`t/$rootId`. `qk.timeline(channelId, conversationId)`·`qk.thread(channelId, conversationId, rootId)`·`qk.threads(channelId, conversationId)`·`qk.channelSeq(channelId)`·`qk.conversations(channelId, status)`. `useSendMessage(channelId, conversationId | "new")`. `/c/$channelId` 넘김은 목록을 받을 수 없으면(오프라인·네트워크·5xx) `qk.recentConversations[channelId]` 로, 없으면 `ChannelRedirect` 가 오프라인·오류 화면을 그린다(4xx 는 사본으로 가리지 않는다 — 태스크 5 수정). 새 세션 창의 첫 글이 결과 불명(`TIMEOUT`)이면 다음 보내기가 그 글을 먼저 같은 `clientMsgId` 로 다시 보내 세션 하나를 지킨다. `PendingFailReason` 에 `"conversation_closed"`.
 - Produces(서버): 처음 `channel.subscribe` 는 `messages: []`(PS5). `ChannelSubscribeResult.latestSeq` — 읽은 순간 그 채널의 마지막 seq(처음 구독·재동기화 모두, 웹의 빈틈 커서가 여기서 시작 — 태스크 5 에서 더함). `MessageSend` 는 `conversationId` 와 `newConversation` 가운데 정확히 하나. `Typing`·`PresenceUpdate` 에 `conversationId`(서버 중계·푸시 거름이 대화 단위 — 거름 자체는 태스크 7).
 
 - [ ] **Step 1: 실패하는 테스트.**
@@ -293,6 +293,7 @@ export function listConversations(db: DbOrTx, channelId: string, q: { status: "o
 - Consumes: 태스크 3 의 REST·이벤트, 태스크 5 의 경로·`qk.conversations`.
 - Produces: 세션 목록(넓은 화면 타임라인 왼쪽 접히는 칸, 좁은 화면 시트 — 배치는 빌더 판단, 스펙 6장): 제목·마지막 활동·(태스크 7 이 채울) 읽지 않음 점·멘션 배지 자리, 「열림/닫힘」 필터, 제목 검색, 「새 세션」(정책·역할로 숨김). 머리의 지금 세션 제목(권한이 있으면 눌러 이름 바꾸기). 닫힌 세션은 작성기 자리에 「닫힌 세션입니다」와 (권한이 있으면) 「다시 열기」. 채널 설정 「세션」 칸: 정책(누구나 / 세션 관리자만)·세션 관리자 목록(admin 이상만 바꿈).
 - 태스크 5 리뷰가 넘긴 것: ① 닫힌 세션의 카드는 보관 채널처럼 비활성 사유 「닫힌 세션입니다」로 잠근다(`features/components/useInteract.ts` 의 오류 표에 `CONVERSATION_CLOSED`) ② 정책 `managers` 의 member 가 세션 없는 채널(`/s/new`)에 들어가면 작성기 대신 안내, `FORBIDDEN` 실패 항목에는 「다시 보내기」를 두지 않는다 ③ 주소의 채널과 세션의 채널이 다르면(`/c/<A>/s/<B 채널의 세션>`) 세션 머리가 받은 세션의 `channelId` 로 `/c/<그 채널>/s/<conv>` 에 `replace` — 지금은 A 의 머리 아래 B 의 글이 그려진다(태스크 5 리뷰 L1).
+- ④ 새 세션 창(`new`)에서 첫 ack 를 기다리는 사이 작성기에 쓰던 초안·첨부 칩은 주소가 그 세션으로 바뀌는 순간 비워진다(`draftKey`·첨부 비우기가 `new` → 세션 전환도 세션 전환으로 본다). `new` → 확정 세션 전환만은 초안·칩을 들고 간다(태스크 5 수정 보고 5장).
 
 - [ ] **Step 1: 실패하는 테스트.** 목록이 최근 활동순·필터·검색으로 바뀐다 · `conversation.created`(다른 탭이 만든 세션)가 목록 맨 위에 든다 · `conversation.updated`(닫힘)를 받으면 그 세션을 보고 있던 화면의 작성기가 「닫힌 세션입니다」로 바뀌고 보내는 중 항목은 Review Focus 2 대로 · 정책 `managers` 의 member 에게 「새 세션」이 없다 · member 는 남의 세션 제목을 못 바꾼다(제목이 버튼이 아니다) · 설정 「세션」 칸은 admin 이상만 바꾼다(member 는 읽기) · 390px 에서 시트로 열리고 닫으면 초점이 여는 버튼으로 돌아온다.
 - [ ] **Step 2: 실패 확인.**
