@@ -31,7 +31,7 @@ const ListQuery = z.object({
   cursor: z.string().max(64).optional(),
 });
 
-/** 세션 목록·제목·닫기(채널 세션 스펙 「wire·REST」 장). 만들기 REST 는 없다 — 첫 message.send 가 만든다(결정 7). 메시지 목록은 messages/routes.ts */
+/** 세션 목록·하나·제목·닫기(채널 세션 스펙 「wire·REST」 장). 만들기 REST 는 없다 — 첫 message.send 가 만든다(결정 7). 메시지 목록은 messages/routes.ts */
 export function registerConversationRoutes(fastify: FastifyInstance, ctx: ConversationRouteContext): void {
   fastify.get(
     "/api/v1/channels/:id/conversations",
@@ -42,6 +42,18 @@ export function registerConversationRoutes(fastify: FastifyInstance, ctx: Conver
       if (!getChannel(ctx.db, id, sessionUser(request).workspaceId))
         throw apiError("NOT_FOUND", "channel not found");
       return listConversations(ctx.db, id, query);
+    },
+  );
+
+  /** 세션 하나 — 웹의 세션 머리(제목·닫힘)와 주소의 채널 대조가 읽는다. 다른 워크스페이스의 세션은 404 */
+  fastify.get(
+    "/api/v1/conversations/:id",
+    { preHandler: requirePolicy(ctx, authorizeRead) },
+    async (request) => {
+      const { id } = parseParams(ConversationParams, request.params);
+      const conversation = getConversation(ctx.db, id, sessionUser(request).workspaceId);
+      if (!conversation) throw apiError("NOT_FOUND", "conversation not found");
+      return { conversation };
     },
   );
 

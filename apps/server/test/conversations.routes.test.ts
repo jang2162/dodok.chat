@@ -246,6 +246,21 @@ describe("세션 REST·wire", () => {
     expect((await call(member.token, "GET", `/api/v1/channels/${channel.id}/messages`)).statusCode).toBe(404);
   });
 
+  it("세션 하나 GET — 누구나 읽고 닫힌 세션도 closedAt 과 함께, 없는 세션 404, id 가 UUID 가 아니면 400", async () => {
+    const channel = newChannel();
+    const a = await open(channel.id, member.token, "A");
+    const read = async () => {
+      const res = await call(other.token, "GET", `/api/v1/conversations/${a.conversation.id}`);
+      expect(res.statusCode).toBe(200);
+      return (res.json() as { conversation: Conversation }).conversation;
+    };
+    expect(await read()).toMatchObject({ id: a.conversation.id, channelId: channel.id, title: "A" });
+    await call(member.token, "PATCH", `/api/v1/conversations/${a.conversation.id}`, { closed: true });
+    expect((await read()).closedAt).toBeDefined();
+    expect((await call(other.token, "GET", `/api/v1/conversations/${uuid()}`)).statusCode).toBe(404);
+    expect((await call(other.token, "GET", "/api/v1/conversations/nope")).statusCode).toBe(400);
+  });
+
   it("세션 관리자 PUT 은 채널에 없는 사람을 참여시키고 channel.member.changed, DELETE 는 역할만 member 로. member 는 403", async () => {
     const channel = newChannel();
     const watcher = await wire(owner, channel.id);

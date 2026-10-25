@@ -361,6 +361,12 @@ describe("역할 매트릭스(스펙 2장)", () => {
       }),
     },
     {
+      name: "GET /conversations/:id",
+      min: "member",
+      ok: 200,
+      request: () => ({ method: "GET", url: `/api/v1/conversations/${ownerConversation().conversationId}` }),
+    },
+    {
       name: "GET /conversations/:id/messages",
       min: "member",
       ok: 200,

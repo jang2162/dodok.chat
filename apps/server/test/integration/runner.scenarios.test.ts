@@ -427,7 +427,7 @@ describe("Claude 러너 통합 시나리오", () => {
     expect(c?.providerSessionId).toBe(b?.providerSessionId);
     expect(b?.deliver.sessionKey).toBe(a?.deliver.sessionKey);
     const notices = ruleNotices(log);
-    expect(notices.map((m) => m.bodyMd)).toEqual(["채널 규칙이 바뀌어 @coder 의 대화를 새로 시작했습니다"]);
+    expect(notices.map((m) => m.bodyMd)).toEqual(["채널 규칙이 바뀌어 @coder 의 앞 맥락을 비웠습니다"]);
     expect(notices[0]?.threadRootId).toBeUndefined();
   });
 

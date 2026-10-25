@@ -674,7 +674,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         conversationId: run.conversationId,
         ...(run.threadRootId === undefined ? {} : { threadRootId: run.threadRootId }),
         kind: "info",
-        bodyMd: `채널 규칙이 바뀌어 @${handle} 의 대화를 새로 시작했습니다`,
+        bodyMd: `채널 규칙이 바뀌어 @${handle} 의 앞 맥락을 비웠습니다`,
         systemMeta: { kind: "info" },
       });
     } catch (err) {
