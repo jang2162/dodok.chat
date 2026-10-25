@@ -4,6 +4,7 @@
  */
 import {
   ComponentsV1,
+  CONVERSATION_ONLY_REASON,
   dodokSessionKey,
   Id,
   parseDodokSessionKey,
@@ -12,12 +13,6 @@ import {
 } from "@dodok/shared";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/**
- * 에이전트가 자기 세션 키의 대화가 아닌 곳(같은 채널의 다른 세션·채널 id·다른 채널)으로 보내려 할 때 모델에게 돌려주는 고정 사유
- * (채널 세션 스펙 「에이전트가 받는 것」 절). 서버도 같은 문구로 저장을 거절한다(`assertCanonicalConversation`). 대상을 되읊지 않는다
- */
-export const CONVERSATION_ONLY_REASON = "이 대화에만 보낼 수 있습니다";
 
 /**
  * 스레드 세션의 에이전트가 같은 대화의 최상위나 다른 스레드로 보내려 할 때 모델에게 돌려주는 고정 사유(스레드 스펙 결정 6).

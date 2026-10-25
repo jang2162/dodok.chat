@@ -1,11 +1,10 @@
-import { OutboundMessage } from "@dodok/shared";
+import { CONVERSATION_ONLY_REASON, OutboundMessage } from "@dodok/shared";
 import { describe, expect, it } from "vitest";
 import {
   buildOutboundMessage,
   conversationIdFromSessionKey,
   formatDodokTarget,
   messageToolSendToOutbound,
-  CONVERSATION_ONLY_REASON,
   parseDodokTarget,
   THREAD_ONLY_REASON,
   toolInputError,

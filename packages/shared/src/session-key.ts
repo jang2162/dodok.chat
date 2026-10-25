@@ -60,3 +60,9 @@ export function parseDodokSessionKey(key: string | undefined): ParsedDodokSessio
     ? { providerAgentId, conversationId: conversationId.toLowerCase(), threadRootId }
     : { providerAgentId, conversationId: conversationId.toLowerCase() };
 }
+
+/**
+ * 에이전트가 자기 세션 키의 대화가 아닌 곳(같은 채널의 다른 세션·채널 id·다른 채널)으로 보내려 할 때 돌려주는 고정 사유(채널 세션
+ * 스펙 「에이전트가 받는 것」 절). 플러그인의 message 툴 거절과 서버의 정본 거절이 같은 문구를 쓴다. 대상을 되읊지 않는다
+ */
+export const CONVERSATION_ONLY_REASON = "이 대화에만 보낼 수 있습니다";

@@ -1,10 +1,10 @@
 // channel.ts 는 SDK 를 import 한다 — 여기서는 핀 SDK(openclaw 2026.9.4)의 실제 route 빌더를 그대로 부른다
-import type { OutboundMessage } from "@dodok/shared";
+import { CONVERSATION_ONLY_REASON, type OutboundMessage } from "@dodok/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BridgeClient } from "../src/bridge-client";
 import { registerBridge, releaseBridge } from "../src/bridge-registry";
 import { DODOK_BRIDGE_CAPABILITIES, dodokChannelPlugin } from "../src/channel";
-import { CONVERSATION_ONLY_REASON, THREAD_ONLY_REASON } from "../src/outbound";
+import { THREAD_ONLY_REASON } from "../src/outbound";
 
 const CH = "01a09fc9-d204-7551-89d6-38544d07a102";
 const OTHER_CH = "01a09fc9-d204-7551-89d6-38544d07a1cc";
