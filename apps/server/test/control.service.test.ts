@@ -17,7 +17,7 @@ import { josa } from "../src/util/josa";
 import { bootTestApp, login, userWithRole } from "./helpers/app";
 import { errorOf, expectOk, newAgent, newChannel, openRun, pat, recordBus } from "./helpers/control";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
-import { channelConversation, seedConversation } from "./helpers/seed";
+import { channelConversation, seedChannelWithAgent, seedConversation } from "./helpers/seed";
 
 describe("제어 서비스", () => {
   let app: App;
@@ -133,6 +133,66 @@ describe("제어 서비스", () => {
           await call(pat(owner), "read_messages", { conversationId: "0199a000-0000-7000-8000-00000000dead" }),
         ),
       ).toMatchObject({ code: "NOT_FOUND" });
+    });
+
+    it("list_conversations — 그 채널의 세션만 최근 활동순, status 기본 open·closed, q 는 제목, REST 와 같은 쪽", async () => {
+      const channel = newChannel(app);
+      const other = newChannel(app);
+      const at = (ms: number) => new Date(Date.UTC(2026, 9, 1) + ms);
+      const old = seedConversation(app.db, channel.id, { title: "옛 기획", createdAt: at(1_000) });
+      const recent = seedConversation(app.db, channel.id, { title: "새 기획", createdAt: at(2_000) });
+      const closed = seedConversation(app.db, channel.id, { title: "닫은 회의", createdAt: at(3_000) });
+      seedConversation(app.db, other.id, { title: "다른 채널", createdAt: at(4_000) });
+      app.db.$client
+        .prepare("UPDATE conversations SET closed_at = ?, closed_by = ? WHERE id = ?")
+        .run(Date.now(), owner, closed);
+      const ids = async (args: object) =>
+        (
+          expectOk(await call(pat(owner), "list_conversations", { channelId: channel.id, ...args })) as {
+            conversations: Array<{ id: string }>;
+          }
+        ).conversations.map((c) => c.id);
+      expect(await ids({})).toEqual([recent, old]);
+      expect(await ids({ status: "closed" })).toEqual([closed]);
+      expect(await ids({ q: "기획" })).toEqual([recent, old]);
+      expect(await ids({ q: "옛" })).toEqual([old]);
+      // REST 와 같은 결과 — 같은 함수·같은 쪽
+      const rest = await app.fastify.inject({
+        method: "GET",
+        url: `/api/v1/channels/${channel.id}/conversations`,
+        headers,
+      });
+      expect(expectOk(await call(pat(owner), "list_conversations", { channelId: channel.id }))).toEqual(
+        rest.json(),
+      );
+      // read_messages 가 그 id 를 받는다
+      expectOk(await call(pat(owner), "read_messages", { conversationId: recent }));
+    });
+
+    it("list_conversations — 다른 워크스페이스·없는 채널은 NOT_FOUND, 비활성 멤버는 FORBIDDEN, 시킨 사람 없는 런은 읽는다", async () => {
+      const foreign = seedChannelWithAgent(app.db, { agentHandle: "ext", channelName: "밖" });
+      expect(
+        errorOf(await call(pat(owner), "list_conversations", { channelId: foreign.channelId })).code,
+      ).toBe("NOT_FOUND");
+      expect(
+        errorOf(
+          await call(pat(owner), "list_conversations", { channelId: "0199a000-0000-7000-8000-00000000dead" }),
+        ).code,
+      ).toBe("NOT_FOUND");
+      const channel = newChannel(app);
+      const gone = await userWithRole(app, "gone-conv", "member");
+      expectOk(await call(pat(gone.id), "list_conversations", { channelId: channel.id }));
+      app.db.$client
+        .prepare("UPDATE memberships SET deactivated_at = ? WHERE user_id = ?")
+        .run(Date.now(), gone.id);
+      expect(errorOf(await call(pat(gone.id), "list_conversations", { channelId: channel.id })).code).toBe(
+        "FORBIDDEN",
+      );
+      const { channel: runChannel, principal } = openRun(app, null);
+      const listed = expectOk(await call(principal, "list_conversations", { channelId: runChannel.id })) as {
+        conversations: Array<{ id: string }>;
+      };
+      expect(listed.conversations.map((c) => c.id)).toEqual([channelConversation(app.db, runChannel.id)]);
     });
 
     it("search_messages·get_run·ops_status·discover_agents", async () => {

@@ -43,6 +43,7 @@ import {
   listChannels,
   listMembers,
 } from "../channels/service";
+import { listConversations } from "../conversations/service";
 import { getConversation } from "../conversations/store";
 import { listPeople } from "../members/people";
 import { getThreadRoot, listMessages, withThreadSummaries } from "../messages/service";
@@ -186,6 +187,16 @@ export const HANDLERS: Handlers = {
     // 검색 결과의 가시 범위는 지금 사람과 무관하다(워크스페이스의 모든 채널) — 시킨 사람이 없는 런도 같은 범위다
     run: (ctx, input, principal) =>
       searchMessages(ctx.db, ctx.workspaceId, principal.userId ?? "", input, ctx.now()),
+  },
+  list_conversations: {
+    authorize: (role) => authorizeRead(role),
+    // REST GET /channels/:id/conversations 와 같은 함수·같은 쪽 — read_messages 의 conversationId 를 얻는 길이다
+    run: (ctx, input) =>
+      listConversations(ctx.db, channelOf(ctx, input.channelId).id, {
+        status: input.status,
+        ...(input.q === undefined ? {} : { q: input.q }),
+        ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+      }),
   },
   read_messages: {
     authorize: (role) => authorizeRead(role),
