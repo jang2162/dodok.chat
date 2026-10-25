@@ -28,6 +28,9 @@
  * 그 러너가 알리는 에이전트 `coder`(provider claude)를 등록해 둔다(처음 붙은 러너 토큰에 묶인다). 가짜 러너는 스스로 다시 붙지 않는다 —
  * 폐기·끊기 뒤에는 훅으로 붙인다. 폐기 뒤 새 토큰으로 붙이면 coder 는 폐기된 토큰에 묶인 채라 연결 페이지 「이 러너로 묶기」로 옮긴다.
  * 끊김 사건 임계는 DODOK_DEVFAKE_DISCONNECT_MS(기본 운영과 같은 60초)로 줄인다. 종료 표지는 <dataDir>/dev-fake-run/ 에 둔다.
+ * 시작 때 보관하지 않은 채널마다 세션 둘을 보장한다(채널 세션 계획 태스크 8) — 마이그레이션이 만드는 꼴의 「이전 대화」(id = 채널 id)와
+ * 새 세션 하나(`DEV_FAKE_SESSION_TITLE`), 이번에 만든 세션에는 owner 글 하나씩. 채널이 하나도 없으면(새 DB) 씨앗 채널
+ * `DEV_FAKE_CHANNEL_NAME`(에이전트 dev·coder)을 먼저 만든다. `--keep` 이면 이미 있는 세션은 그대로 둔다.
  */
 import {
   type AdapterStatus,
@@ -41,7 +44,7 @@ import {
   OpsEventKind,
   OpsSeverity,
 } from "@dodok/shared";
-import { and, eq, or } from "drizzle-orm";
+import { and, eq, isNull, or } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { mkdirSync, rmSync } from "node:fs";
 import { statfs as fsStatfs } from "node:fs/promises";
@@ -53,7 +56,18 @@ import { z } from "zod";
 import { type App, type AppDeps, createApp, ensureWorkspace } from "../src/app";
 import { loadConfig } from "../src/config";
 import { createDb, type DbOrTx } from "../src/db/client";
-import { agents, bridgeTokens, gateways, runnerTokens, users } from "../src/db/schema.sqlite";
+import {
+  agents,
+  bridgeTokens,
+  channels,
+  conversations,
+  gateways,
+  runnerTokens,
+  users,
+} from "../src/db/schema.sqlite";
+import { addMember, createChannel } from "../src/modules/channels/service";
+import { createConversation } from "../src/modules/conversations/store";
+import { createUserMessage } from "../src/modules/messages/service";
 import { createAgent, providerAgentIdIs } from "../src/modules/agents/service";
 import { hasGateways } from "../src/adapters/types";
 import { getGatewayRow } from "../src/modules/gateways/service";
@@ -124,6 +138,12 @@ export const DEV_FAKE_MEMBER_EMAIL = "member@dodok.local";
 export const DEV_FAKE_MEMBER_PASSWORD = "dev-fake-member-password";
 export const DEV_FAKE_MEMBER_HANDLE = "mia";
 export const DEV_FAKE_MEMBER_DISPLAY_NAME = "미아";
+/** 새 DB 의 씨앗 채널 — 세션 둘을 들고 시작한다(`ensureDevFakeSessions`) */
+export const DEV_FAKE_CHANNEL_NAME = "세션";
+export const DEV_FAKE_CHANNEL_AGENTS = ["dev", "coder"] as const;
+/** 마이그레이션(0025)이 기존 채널에 만든 대화와 같은 제목 */
+export const DEV_FAKE_LEGACY_TITLE = "이전 대화";
+export const DEV_FAKE_SESSION_TITLE = "dev:fake 새 세션";
 /** 실제 클라이언트는 hello 의 tickIntervalMs(30s)×2 동안 프레임이 없으면 끊는다 */
 const TICK_INTERVAL_MS = 15_000;
 const DELTA_PARTS = 4;
@@ -1166,6 +1186,65 @@ function ensureDevFakeAgents(app: App): void {
 }
 
 /**
+ * 보관하지 않은 채널마다 「이전 대화」(id = 채널 id, 0025 가 만드는 꼴 — 옛 세션 키·옛 푸시 링크 `/c/<ch>/t/<root>` 가 그대로 맞는 자리)와
+ * 다른 세션 하나를 보장한다. 이번에 만든 세션에는 owner 글을 하나씩 남긴다(서버 저장 경로 그대로 — 멘션이 없어 런은 없다).
+ * 채널이 하나도 없으면 씨앗 채널을 먼저 만든다
+ */
+function ensureDevFakeSessions(app: App): void {
+  const { db, workspaceId, ownerUserId } = app;
+  const listed = () =>
+    db
+      .select()
+      .from(channels)
+      .where(and(eq(channels.workspaceId, workspaceId), isNull(channels.archivedAt)))
+      .all();
+  if (listed().length === 0) {
+    const channel = createChannel(db, { workspaceId, createdBy: ownerUserId, name: DEV_FAKE_CHANNEL_NAME });
+    for (const handle of DEV_FAKE_CHANNEL_AGENTS) {
+      const agent = db
+        .select({ id: agents.id })
+        .from(agents)
+        .where(and(eq(agents.workspaceId, workspaceId), eq(agents.handle, handle)))
+        .get();
+      if (agent) addMember(db, channel.id, { memberType: "agent", memberId: agent.id }, app.logger);
+    }
+  }
+  const seed = (conversationId: string, bodyMd: string) =>
+    createUserMessage(db, app.bus, { conversationId, authorId: ownerUserId, bodyMd, clientMsgId: uuidv7() });
+  for (const channel of listed()) {
+    const sessions = db
+      .select({ id: conversations.id })
+      .from(conversations)
+      .where(eq(conversations.channelId, channel.id))
+      .all();
+    if (!sessions.some((c) => c.id === channel.id)) {
+      db.insert(conversations)
+        .values({
+          id: channel.id,
+          channelId: channel.id,
+          title: DEV_FAKE_LEGACY_TITLE,
+          titleSource: "user",
+          createdByType: "user",
+          createdById: channel.createdBy,
+          createdAt: channel.createdAt,
+        })
+        .run();
+      seed(channel.id, "세션 기능 전에 이 채널에서 나눈 대화가 여기에 남습니다.");
+    }
+    if (!sessions.some((c) => c.id !== channel.id)) {
+      const created = createConversation(db, {
+        channelId: channel.id,
+        title: DEV_FAKE_SESSION_TITLE,
+        titleSource: "user",
+        createdBy: { type: "user", id: ownerUserId },
+        createdAt: new Date(),
+      });
+      seed(created.id, "새 주제는 새 세션에서 — 이 세션의 에이전트는 「이전 대화」를 모릅니다.");
+    }
+  }
+}
+
+/**
  * 고정 member 계정을 보장한다(팀 스펙 태스크 7a) — 사람을 만드는 서버 경로(members/accept.ts 의 `acceptInvite`)를 그대로 쓴다:
  * 초대를 하나 내부에서 내 곧바로 그 초대로 수락한다(따로 흉내 내지 않는다). 이미 있으면(`--keep` 으로 이어받은 DB) 그대로 둔다
  */
@@ -1277,6 +1356,7 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
     await ensureDevFakeMember(app);
     ensureDevFakeRunner(app);
     ensureDevFakeAgents(app);
+    ensureDevFakeSessions(app);
     const live: App = app;
     /** 훅의 gatewayId 로 짝을 고른다 — 사무실·집이 아니면 undefined(400) */
     const pairOf = (gatewayId: string) => pairs.find((p) => p.spec.id === gatewayId);
