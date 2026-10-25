@@ -240,6 +240,7 @@ function baseDeliver(params: {
     kind: "message",
     channelId: CHANNEL_ID,
     conversationId: CHANNEL_ID,
+    conversationTitle: "spike",
     agentId: params.agentId,
     sessionKey: `agent:${params.agentId}:dodok:channel:${CHANNEL_ID}`,
     runId: randomUUID(),

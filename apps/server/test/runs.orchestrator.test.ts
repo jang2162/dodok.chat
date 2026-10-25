@@ -1491,7 +1491,8 @@ describe("orchestrator", () => {
     await t.orch.signal(run.id, { kind: "gateway_final" });
     expect(t.runOf(run.id).status).toBe("done");
     const byReply = await t.orch.onCanonical(
-      t.outbound({ sessionKey: "agent:dev:dodok:channel:other", replyToInboundId: trigger.id }),
+      // 런이 끝나 세션으로는 못 찾는다 — replyToInboundId 로 찾는다(세션 키는 그 대화의 것이어야 한다 — assertCanonicalConversation)
+      t.outbound({ replyToInboundId: trigger.id }),
       "openclaw",
       FAKE_GATEWAY_ID,
     );

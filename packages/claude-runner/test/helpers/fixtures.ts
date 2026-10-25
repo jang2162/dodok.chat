@@ -26,6 +26,7 @@ export function runStart(
       kind: "message",
       channelId: CHANNEL_ID,
       conversationId: CHANNEL_ID,
+      conversationTitle: "배포 점검",
       agentId,
       sessionKey: dodokSessionKey(agentId, CHANNEL_ID),
       runId: overrides.runId ?? RUN_ID,

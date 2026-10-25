@@ -21,6 +21,7 @@ import { createSystemMessage } from "../messages/service";
 import type { Limits } from "../ops/limits";
 import { KeyedLimiter, monotonicNow } from "../ops/ratelimit";
 import type { OpsService } from "../ops/service";
+import { getRun } from "../runs/store";
 import { type Confirmations, createConfirmations, userHandle } from "./confirm";
 import { type AnyHandler, type HandlerContext, handlerFor } from "./handlers";
 import type { Principal } from "./principal";
@@ -187,6 +188,16 @@ export function createControlService(deps: ControlDeps): ControlService {
     }
   }
 
+  /**
+   * 바꾼 채널의 시스템 메시지 자리(채널 세션 스펙 「누가 답하나」 절) — 그 런의 대화가 같은 채널이면 그 대화, 아니면(바깥 /mcp·다른 채널을
+   * 바꾼 호출) 그 채널에서 최근 활동한 열린 대화, 열린 대화가 없으면 undefined(남기지 않는다 — 운영 사건은 남는다)
+   */
+  function changeNoticeConversation(p: Principal, channelId: string): string | undefined {
+    const run = p.runId === undefined ? undefined : getRun(db, p.runId);
+    if (run?.channelId === channelId) return run.conversationId;
+    return latestOpenConversation(db, channelId);
+  }
+
   /** 쓰기 뒤 — 운영 사건과(채널 설정이면) 그 채널의 시스템 메시지. 실패해도 바꾼 것은 그대로다(로그만) */
   function recordChange(
     p: Principal,
@@ -218,8 +229,7 @@ export function createControlService(deps: ControlDeps): ControlService {
         agent === undefined
           ? `@${who} ${josa(who, "이", "가")} MCP 로 ${done}`
           : `@${who} 의 요청으로 @${agent} ${josa(agent, "이", "가")} ${done}`;
-      // 대화가 정해지지 않은 시스템 메시지 — 그 채널의 열린 대화에, 없으면 남기지 않는다(계획 판정 PS3)
-      const conversationId = latestOpenConversation(db, channelId);
+      const conversationId = changeNoticeConversation(p, channelId);
       if (conversationId === undefined) return;
       createSystemMessage(db, deps.bus, {
         conversationId,

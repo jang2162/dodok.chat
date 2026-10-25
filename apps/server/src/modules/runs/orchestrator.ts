@@ -121,6 +121,23 @@ function requesterOf(db: DbOrTx, trigger: EnqueueTrigger): string | null {
   return null;
 }
 
+/** 대화 밖 전송을 거절할 때 에이전트(툴 결과)에 가는 고정 사유 — 플러그인 `CONVERSATION_ONLY_REASON` 과 같은 문구 */
+export const CONVERSATION_ONLY_REASON = "이 대화에만 보낼 수 있습니다";
+
+/**
+ * 에이전트의 글은 그 세션 키의 대화에만 저장한다(채널 세션 스펙 「에이전트가 받는 것」 절, Review Focus 4) — 런이 있든 없든 정본의
+ * conversationId 가 세션 키에서 푼 대화와 다르면(같은 채널의 다른 세션·채널 id·다른 채널) FORBIDDEN 으로 거절하고 저장하지 않는다.
+ * 세션 키를 풀 수 없으면 어느 세션의 글인지 모르니 같이 거절한다. 이 검사가 없으면 런과 짝지어지지 않는 정본(런 없는 정본)이
+ * message 툴의 `to` 로 아무 대화에나 저장된다. 맞으면 그 대화 id(소문자)를 돌려준다
+ */
+export function assertCanonicalConversation(msg: OutboundMessage): string {
+  const keyConversation = parseDodokSessionKey(msg.sessionKey)?.conversationId;
+  if (keyConversation === undefined || keyConversation !== msg.conversationId.toLowerCase()) {
+    throw new AdapterError("FORBIDDEN", CONVERSATION_ONLY_REASON);
+  }
+  return keyConversation;
+}
+
 export interface Orchestrator {
   enqueueRun(
     plan: RunPlan & { channelId: string; conversationId: string },
@@ -1308,6 +1325,20 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         .where(eq(messages.externalId, msg.outboundId))
         .get();
       if (existing) return { messageId: existing.id };
+      try {
+        assertCanonicalConversation(msg);
+      } catch (err) {
+        logger.warn(
+          {
+            outboundId: msg.outboundId,
+            conversationId: msg.conversationId,
+            sessionKey: msg.sessionKey,
+            runId: msg.runId,
+          },
+          "canonical message outside its session conversation — refused",
+        );
+        throw err;
+      }
 
       const run = correlate(msg, provider, connectionId);
       const threadRootId = canonicalThread(msg, run);
@@ -1330,20 +1361,9 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
           logger.warn({ ...where, providerAgentId: msg.agentId }, "canonical message from unknown agent");
           throw apiError("NOT_FOUND", "agent not found");
         }
-        // 런 없는 정본은 라우팅하지 않지만 푸시는 간다 — 보관한 채널이나 닫힌 세션이면 그것도 하지 않는다
-        const archived = isChannelArchived(db, channelId);
-        const silent = archived || isConversationClosed(db, msg.conversationId);
-        // 보관한 채널의 예외는 그 대화 세션의 늦은 답뿐이다. 다른 세션이 message 툴로 쓰는 새 글은 거절해 에이전트가 실패를 받게 한다
-        if (
-          archived &&
-          parseDodokSessionKey(msg.sessionKey)?.conversationId !== msg.conversationId.toLowerCase()
-        ) {
-          logger.warn(
-            { ...where, agentId },
-            "canonical message to archived channel from another session refused",
-          );
-          throw new AdapterError("CHANNEL_ARCHIVED", "channel is archived");
-        }
+        // 런 없는 정본은 라우팅하지 않지만 푸시는 간다 — 보관한 채널이나 닫힌 세션이면 그것도 하지 않는다. 여기 오는 것은 그 세션
+        // 대화의 글뿐이다(assertCanonicalConversation) — 다른 세션이 message 툴로 쓰는 새 글은 위에서 이미 거절했다
+        const silent = isChannelArchived(db, channelId) || isConversationClosed(db, msg.conversationId);
         const message = storeAgentMessage(msg, uploadedBy, agentId, undefined, threadRootId, silent);
         logger.warn({ ...where, runId: msg.runId, messageId: message.id }, "canonical message without run");
         return { messageId: message.id };

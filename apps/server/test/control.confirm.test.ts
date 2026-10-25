@@ -19,7 +19,7 @@ import { bootTestApp, login, userWithRole } from "./helpers/app";
 import { errorOf, expectOk, newAgent, newChannel, openRun, pat } from "./helpers/control";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
 import { connectWire, type WireClient } from "./helpers/wire";
-import { channelConversation } from "./helpers/seed";
+import { channelConversation, seedConversation } from "./helpers/seed";
 
 type Pending = { result: Promise<ControlResult>; settled(): boolean };
 
@@ -483,6 +483,64 @@ describe("확인 카드", () => {
       tool: "update_channel",
       channelId: c.id,
       targetAgentId: null,
+    });
+  });
+
+  describe("제어 변경 메시지의 자리 — 세션(채널 세션 스펙 「누가 답하나」 절)", () => {
+    const ago = (ms: number) => new Date(Date.now() - ms);
+    const noticesIn = (conversationId: string) =>
+      app.db
+        .select({ bodyMd: messages.bodyMd })
+        .from(messages)
+        .where(and(eq(messages.conversationId, conversationId), eq(messages.kind, "system")))
+        .all()
+        .map((m) => m.bodyMd);
+    const allowed = async (run: { id: string }, result: Promise<ControlResult>) => {
+      const card = await cardOf(app, run.id);
+      expect(await decide(ownerToken, card.id, "allow-once")).toMatchObject({ ok: true });
+      return expectOk(await result);
+    };
+
+    it("채널 X 의 런(세션 A)이 X 를 바꾸면 메시지는 A — 더 최근에 활동한 세션 B 가 아니라", async () => {
+      const channel = newChannel(app);
+      const a = seedConversation(app.db, channel.id, { title: "A", createdAt: ago(60_000) });
+      const b = seedConversation(app.db, channel.id, { title: "B" });
+      const { run, principal } = openRun(app, owner, { channel, conversationId: a });
+      await allowed(
+        run,
+        app.control.call(principal, "update_channel", { channelId: channel.id, name: "x-새" }),
+      );
+      expect(noticesIn(a)).toEqual([expect.stringContaining("채널 이름·주제를 바꿨습니다")]);
+      expect(noticesIn(b)).toEqual([]);
+    });
+
+    it("다른 채널 Y 를 바꾸면 Y 의 최근 열린 세션, Y 에 열린 세션이 없으면 메시지 없이 운영 사건만", async () => {
+      const { run, principal, channel: x } = openRun(app, owner);
+      const y = newChannel(app);
+      const older = seedConversation(app.db, y.id, { title: "옛", createdAt: ago(60_000) });
+      const recent = seedConversation(app.db, y.id, { title: "새" });
+      await allowed(run, app.control.call(principal, "update_channel", { channelId: y.id, name: "y-새" }));
+      expect(noticesIn(recent)).toEqual([expect.stringContaining("채널 이름·주제를 바꿨습니다")]);
+      expect(noticesIn(older)).toEqual([]);
+      expect(noticesIn(channelConversation(app.db, x.id))).toEqual([]);
+
+      // cardOf 는 그 런의 첫 카드를 찾는다 — 둘째 변경은 다른 런으로
+      const second = openRun(app, owner);
+      const z = newChannel(app);
+      await allowed(
+        second.run,
+        app.control.call(second.principal, "update_channel", { channelId: z.id, name: "z-새" }),
+      );
+      expect(app.db.select().from(messages).where(eq(messages.channelId, z.id)).all()).toEqual([]);
+      expect(
+        app.db
+          .select()
+          .from(opsEvents)
+          .where(
+            and(eq(opsEvents.kind, "control_change"), eq(opsEvents.key, `control:update_channel:${owner}`)),
+          )
+          .get()?.detail,
+      ).toMatchObject({ channelId: z.id });
     });
   });
 });

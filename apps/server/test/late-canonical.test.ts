@@ -16,7 +16,7 @@ import { setConversationClosed } from "../src/modules/conversations/service";
 import { createUserMessage, getMessage, runErrorMessages } from "../src/modules/messages/service";
 import { RETRY_RUN_ITEM } from "../src/modules/router/service";
 import { getRun } from "../src/modules/runs/store";
-import { runs } from "../src/db/schema.sqlite";
+import { messages, runs } from "../src/db/schema.sqlite";
 import { eq } from "drizzle-orm";
 import { bootTestApp, login } from "./helpers/app";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
@@ -286,6 +286,38 @@ describe("연결을 닫으며 끝낸 런에 늦게 온 정본", () => {
     );
     expect(created.find((p) => p.message.id === openAck.messageId)?.silent).toBeUndefined();
     await vi.waitFor(() => expect(pushes).toHaveLength(1));
+  });
+
+  it("[Review Focus 4] 대화 밖 정본은 닫힌 세션의 「저장만」보다 먼저 거절한다 — 다른 세션 키로 닫힌 세션에 쓰거나, 닫힌 세션 키로 다른 세션에 쓰면 FORBIDDEN", async () => {
+    const { app, adapter, pushes } = await boot();
+    const s = { app, adapter, pushes, ...(await seed(app)) };
+    const open = seedConversation(app.db, s.channelId);
+    await setConversationClosed(
+      { db: app.db, bus: app.bus },
+      { conversationId: s.conversationId, byUserId: app.ownerUserId, closed: true },
+    );
+    const post = (conversationId: string, keyConversation: string, outboundId: string): OutboundMessage => ({
+      outboundId,
+      conversationId,
+      agentId: "dev",
+      sessionKey: dodokSessionKey("dev", keyConversation),
+      text: "다른 세션에 씁니다",
+      attachmentIds: [],
+      ts: new Date().toISOString(),
+    });
+    for (const [conversationId, keyConversation, outboundId] of [
+      [s.conversationId, open, "into-closed"],
+      [open, s.conversationId, "from-closed"],
+    ] as const) {
+      await expect(
+        app.orchestrator.onCanonical(
+          post(conversationId, keyConversation, outboundId),
+          "openclaw",
+          FAKE_GATEWAY_ID,
+        ),
+      ).rejects.toMatchObject({ code: "FORBIDDEN", message: "이 대화에만 보낼 수 있습니다" });
+      expect(app.db.select().from(messages).where(eq(messages.externalId, outboundId)).all()).toEqual([]);
+    }
   });
 
   it("표지가 없는 실패 런(연결을 닫지 않은 ADAPTER_UNAVAILABLE)의 늦은 정본은 지금처럼 릴레이·푸시하고 카드는 그대로", async () => {

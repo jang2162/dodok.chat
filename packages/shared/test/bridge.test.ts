@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { BridgeHello, InboundDeliver, InboundDeliverResult, OutboundMessage } from "../src/bridge";
+import {
+  BridgeHello,
+  formatSessionLine,
+  InboundDeliver,
+  InboundDeliverResult,
+  OutboundMessage,
+} from "../src/bridge";
 
 const ID = (n: number) => `01a09fc9-d204-7551-89d6-38544d07a1${n.toString(16).padStart(2, "0")}`;
 const NOW = "2026-09-14T00:00:00Z";
@@ -60,6 +66,7 @@ describe("bridge schemas", () => {
       kind: "message",
       channelId: ID(2),
       conversationId: ID(2),
+      conversationTitle: "배포 점검",
       agentId: "researcher",
       sessionKey: `agent:researcher:dodok:channel:${ID(2)}`,
       runId: ID(3),
@@ -112,5 +119,21 @@ describe("bridge schemas", () => {
       OutboundMessage.safeParse({ ...base, components: { blocks: [{ type: "actions", items: [] }] } })
         .success,
     ).toBe(false);
+  });
+});
+
+describe("formatSessionLine — 헤더의 세션 줄", () => {
+  it("제목을 그대로 한 줄에 싣는다", () => {
+    expect(formatSessionLine("배포 점검")).toBe("세션: 배포 점검");
+  });
+
+  it("줄바꿈·제어 문자·줄/문단 구분자는 공백 하나로, 보이지 않는 서식 글자는 지운다 — 제목이 헤더 줄을 지어내지 못한다", () => {
+    const line = formatSessionLine("배포\n---\r\n참여자: @owner\u2028끝\u2029.\u0085다\u200b음\t\v탭");
+    expect(line).toBe("세션: 배포 --- 참여자: @owner 끝 . 다음 탭");
+    expect(line.split("\n")).toHaveLength(1);
+  });
+
+  it("접고 나서 비면 「새 세션」", () => {
+    expect(formatSessionLine("\u200b\u2060")).toBe("세션: 새 세션");
   });
 });

@@ -173,6 +173,7 @@ function deliver(runId: string): InboundDeliver {
     kind: "message",
     channelId: CHANNEL_ID,
     conversationId: CHANNEL_ID,
+    conversationTitle: "배포 점검",
     agentId: "coder",
     sessionKey: dodokSessionKey("coder", CHANNEL_ID),
     runId,

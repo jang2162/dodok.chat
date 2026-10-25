@@ -78,7 +78,8 @@ export type CreateAgentMessageInput = {
 };
 
 export type CreateAutomationMessageInput = {
-  conversationId: string;
+  /** 함수면 같은 트랜잭션에서 대화를 고르거나 만든다 — 자동화 자기 세션(automations/post.ts) */
+  conversationId: string | PickConversation;
   automationId: string;
   /** 자동화에 저장된 평문 @handle 문구 — 사람 메시지와 같은 참가자 집합으로 토큰화한다(계획 판정 PA1) */
   bodyMd: string;
@@ -420,8 +421,9 @@ export function createAgentMessage(
 
 /**
  * 자동화가 채널 최상위에 게시하는 보통 메시지(자동화 스펙 「게시」 절) — 작성자 automation·authorId 는 자동화 id. 보관한 채널이면
- * CHANNEL_ARCHIVED, 닫힌 대화면 CONVERSATION_CLOSED(같은 트랜잭션에서 본다 — 보관·닫기와 엇갈려도 쓰지 않게). 멘션된 사람은 사람 멘션처럼 채널에 들어온다(팀 스펙
- * 「채널 참여·멘션·알림」 절). 런은 부르는 쪽이 라우터에 넘겨 만든다
+ * CHANNEL_ARCHIVED, 닫힌 대화면 CONVERSATION_CLOSED(같은 트랜잭션에서 본다 — 보관·닫기와 엇갈려도 쓰지 않게). 대화를 고르는 함수가 새로
+ * 만들었으면 같은 트랜잭션이라 실패하면 함께 걷히고, 커밋 뒤 message.created 앞에 conversation.created. 멘션된 사람은 사람 멘션처럼 채널에
+ * 들어온다(팀 스펙 「채널 참여·멘션·알림」 절). 런은 부르는 쪽이 라우터에 넘겨 만든다
  */
 export function createAutomationMessage(
   db: Db,
@@ -429,7 +431,11 @@ export function createAutomationMessage(
   input: CreateAutomationMessageInput,
 ): Message {
   const result = db.transaction((tx) => {
-    const conversation = assertConversationWritable(tx, input.conversationId);
+    const picked =
+      typeof input.conversationId === "string"
+        ? { conversationId: input.conversationId }
+        : input.conversationId(tx);
+    const conversation = assertConversationWritable(tx, picked.conversationId);
     const { channelId } = conversation;
     const message = storeMessage(tx, conversation, undefined, () => {
       const text = tokenize(input.bodyMd, userMessageParticipants(tx, channelId)).bodyMd;
@@ -449,8 +455,11 @@ export function createAutomationMessage(
     const joined = message.mentions.users
       .map((userId) => joinChannelIfAbsent(tx, channelId, userId, now))
       .includes(true);
-    return { message, joined };
+    // 새 대화는 첫 메시지를 담은 뒤의 행으로 알린다(sendUserMessage 와 같다)
+    const newConversation = picked.created && getConversation(tx, picked.created.id);
+    return { message, joined, newConversation };
   });
+  if (result.newConversation) bus.emit("conversation.created", { conversation: result.newConversation });
   emitCreated(bus, result.message, undefined);
   if (result.joined) {
     bus.emit("channel.member.changed", {

@@ -1012,6 +1012,58 @@ describe("세션 정책 마이그레이션", () => {
   });
 });
 
+describe("자동화 세션 마이그레이션", () => {
+  it("_session_policy 까지 적용된 DB 에 얹으면 옛 자동화의 conversation_id 는 비어 있고(첫 게시가 단다) 행은 그대로, 없는 대화 id 는 FK 가 거절한다", () => {
+    const dir = mkdtempSync(join(tmpdir(), "dodok-db-mig-"));
+    try {
+      const older = migrationsUpTo(dir, "_session_policy");
+      const sqlite = new Database(join(dir, "app.db"));
+      try {
+        const db = drizzle(sqlite, { schema: { ...schema, ...authSchema } });
+        migrate(db, { migrationsFolder: older });
+        const [ws, user, ch, auto] = [uuid(), uuid(), uuid(), uuid()];
+        const t = new Date("2026-10-25T00:00:00.000Z").getTime();
+        sqlite.prepare("INSERT INTO workspaces (id, name, created_at) VALUES (?, 'w', ?)").run(ws, t);
+        sqlite
+          .prepare(
+            "INSERT INTO users (id, workspace_id, handle, display_name, auth_provider, created_at) VALUES (?, ?, 'jang', '장', 'local', ?)",
+          )
+          .run(user, ws, t);
+        sqlite
+          .prepare(
+            "INSERT INTO channels (id, workspace_id, name, relay_policy_json, visibility, created_by, created_at) VALUES (?, ?, 'general', '{\"maxRelayTurns\":4,\"allowPairs\":\"all\"}', 'public', ?, ?)",
+          )
+          .run(ch, ws, user, t);
+        sqlite
+          .prepare(
+            "INSERT INTO automations (id, workspace_id, name, channel_id, kind, body_md, enabled, created_by, created_at, updated_at) VALUES (?, ?, '아침', ?, 'webhook', '@dev 점검', 1, ?, ?, ?)",
+          )
+          .run(auto, ws, ch, user, t, t);
+
+        migrate(db, { migrationsFolder: migrationsFolder() });
+
+        expect(
+          db
+            .select({ id: schema.automations.id, c: schema.automations.conversationId })
+            .from(schema.automations)
+            .all(),
+        ).toEqual([{ id: auto, c: null }]);
+        expect(() =>
+          db
+            .update(schema.automations)
+            .set({ conversationId: uuid() })
+            .where(eq(schema.automations.id, auto))
+            .run(),
+        ).toThrow(/FOREIGN KEY/);
+      } finally {
+        sqlite.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("conversations 마이그레이션", () => {
   it("_approval_requested_by 까지 적용된 DB 에 얹으면 채널마다 id 가 채널 id 인 「이전 대화」가 생기고 모든 행이 그리로 옮겨진다 — 자식 행·FTS 는 그대로", () => {
     const dir = mkdtempSync(join(tmpdir(), "dodok-db-mig-"));

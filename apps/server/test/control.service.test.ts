@@ -17,7 +17,7 @@ import { josa } from "../src/util/josa";
 import { bootTestApp, login, userWithRole } from "./helpers/app";
 import { errorOf, expectOk, newAgent, newChannel, openRun, pat, recordBus } from "./helpers/control";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
-import { channelConversation } from "./helpers/seed";
+import { channelConversation, seedConversation } from "./helpers/seed";
 
 describe("제어 서비스", () => {
   let app: App;
@@ -428,6 +428,34 @@ describe("제어 서비스", () => {
         targetAgentId: null,
       });
       expect(JSON.stringify(event)).not.toContain(secret);
+    });
+
+    it("개인 토큰(바깥 /mcp — 런 없음): 그 채널의 최근 열린 세션에 남고, 열린 세션이 없으면 메시지 없이 운영 사건만", async () => {
+      const notices = (conversationId: string) =>
+        app.db
+          .select()
+          .from(messages)
+          .where(and(eq(messages.conversationId, conversationId), eq(messages.kind, "system")))
+          .all();
+      const channel = newChannel(app);
+      const older = seedConversation(app.db, channel.id, { createdAt: new Date(Date.now() - 60_000) });
+      const recent = seedConversation(app.db, channel.id);
+      expectOk(await call(pat(owner), "update_channel", { channelId: channel.id, name: "mcp-새" }));
+      expect(notices(recent)).toHaveLength(1);
+      expect(notices(older)).toHaveLength(0);
+
+      const empty = newChannel(app);
+      expectOk(await call(pat(owner), "update_channel", { channelId: empty.id, name: "mcp-빈" }));
+      expect(app.db.select().from(messages).where(eq(messages.channelId, empty.id)).all()).toEqual([]);
+      expect(
+        app.db
+          .select()
+          .from(opsEvents)
+          .where(
+            and(eq(opsEvents.kind, "control_change"), eq(opsEvents.key, `control:update_channel:${owner}`)),
+          )
+          .get()?.detail,
+      ).toMatchObject({ channelId: empty.id });
     });
 
     it("에이전트 쓰기의 사건 detail 에 agentId·targetAgentId, 채널이 없는 도구는 시스템 메시지 없음", async () => {

@@ -68,6 +68,7 @@ function toDelivery(line: string): InboundDeliver | null {
     kind: "message",
     channelId: CHANNEL_ID,
     conversationId: CHANNEL_ID,
+    conversationTitle: "spike",
     agentId,
     sessionKey: `agent:${agentId}:dodok:channel:${CHANNEL_ID}`,
     runId: randomUUID(),
