@@ -4,7 +4,7 @@
 **범위**:
 - 초대: owner·admin 이 1회용 초대 링크를 발급하고, 받은 사람이 핸들·이메일·비밀번호로 가입한다(메일 서버 없음)
 - 로그인: 멤버는 이메일·비밀번호, owner 는 지금의 로컬 토큰
-- 역할: owner·admin·member — 대화는 누구나, 관리(에이전트·채널 동작 설정·세션 리셋·도구 승인·멤버)는 admin 이상
+- 역할: owner·admin·member — 대화는 누구나, 관리(에이전트·채널 동작 설정·도구 승인·멤버)는 admin 이상
 - 멤버 관리: 역할 바꾸기·비밀번호 재설정 링크·내보내기, 「내 계정」(표시 이름·비밀번호)
 
 **앞선 근거**:
@@ -56,7 +56,7 @@
 | 읽지 않음 현황(`GET /api/v1/me/unread`) — 자기 것만 | ✅ | ✅ | ✅ |
 | 읽음 위치 올리기(wire `channel.read`) — 자기 것만, 보관한 채널도 | ✅ | ✅ | ✅ |
 | 반응 켜기·끄기(wire `reaction.set`) — 자기 것만, 보관한 채널은 409 `CHANNEL_ARCHIVED` | ✅ | ✅ | ✅ |
-| 세션 목록·세션·세션 메시지 읽기(`GET /channels/:id/conversations`·`/conversations/:id`·`/conversations/:id/messages`·`/conversations/:id/threads/:rootId/messages`), 새 세션(wire `message.send` 의 `newConversation`, 채널에 열린 세션이 없을 때의 보내기) — 채널 세션 정책이 「세션 관리자만」(`managers`)이면 그 채널의 세션 관리자와 admin 이상만(채널 세션 스펙 「권한」 장) | ✅ | ✅ | ✅ |
+| 세션 목록·세션·세션 메시지 읽기(`GET /channels/:id/conversations`·`/conversations/:id`·`/conversations/:id/messages`·`/conversations/:id/threads/:rootId/messages`), 새 세션(wire `message.send` 의 `newConversation`) — 채널 세션 정책이 「세션 관리자만」(`managers`)이면 그 채널의 세션 관리자와 admin 이상만(채널 세션 스펙 「권한」 장) | ✅ | ✅ | ✅ |
 | 자기가 만든 세션의 제목 바꾸기·닫기·다시 열기(`PATCH /conversations/:id`) — 남이 만든 세션은 그 채널의 세션 관리자와 admin 이상. 닫힌 세션에 보내기·카드·리액션·첨부 묶기는 409 `CONVERSATION_CLOSED` | ✅ | ✅ | ✅ |
 | 채널에 에이전트 넣기·빼기(`POST/DELETE /channels/:id/members`) | ✅ | ✅ | ✅ |
 | 채널에 사람 넣기·빼기(같은 경로, `memberType: "user"`) — 나간 사람(membership 없음)은 404 | ✅ | ✅ | ✅ |

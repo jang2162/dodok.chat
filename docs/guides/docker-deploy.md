@@ -470,7 +470,7 @@ Claude 러너(`@dodok/claude-runner`, 명령 `dodok-runner`)는 **사람의 머�
 
 ## 멤버 초대·비밀번호 재설정·비활성화
 
-사람은 초대 링크로 들인다 — 공개 가입은 없고 메일도 보내지 않는다. 역할은 셋이다: **owner**(한 명 — `LOCAL_AUTH_TOKEN` 으로 로그인하는 계정), **admin**(에이전트 동작·비용 설정·「새 대화」·도구 승인·에이전트 등록·member 관리·운영 화면), **member**(채널에서 대화하기·채널 만들기·이름·설명·에이전트 넣기·빼기). 무엇을 누가 하는지의 표는 팀 스펙 `docs/superpowers/specs/2026-09-26-team-members-design.md` 「역할과 권한」 절이고, 서버가 요청마다 막는다(화면에서 숨기는 것은 편의다). 화면은 사이드바 하단 「설정」 → 「멤버」 탭(`/settings/members`, owner·admin).
+사람은 초대 링크로 들인다 — 공개 가입은 없고 메일도 보내지 않는다. 역할은 셋이다: **owner**(한 명 — `LOCAL_AUTH_TOKEN` 으로 로그인하는 계정), **admin**(에이전트 동작·비용 설정·채널의 세션 정책·세션 관리자·도구 승인·에이전트 등록·member 관리·운영 화면), **member**(채널에서 대화하기·채널 만들기·이름·설명·에이전트 넣기·빼기). 무엇을 누가 하는지의 표는 팀 스펙 `docs/superpowers/specs/2026-09-26-team-members-design.md` 「역할과 권한」 절이고, 서버가 요청마다 막는다(화면에서 숨기는 것은 편의다). 화면은 사이드바 하단 「설정」 → 「멤버」 탭(`/settings/members`, owner·admin).
 
 **초대**
 
@@ -719,6 +719,8 @@ docker compose ps                               # app (healthy)
 
 **제어 MCP 가 있는 판으로 올릴 때는 플러그인과 러너를 모두 다시 설치해야 채널 안 에이전트가 제어 도구를 쓴다.** 옛 플러그인·옛 `dodok-runner` 는 도구가 없을 뿐 런은 그대로 돈다(옛 플러그인은 hello 에 `control` 을 싣지 않아 서버가 그 Gateway 의 제어 호출을 받지 않는다). 연결 페이지는 그 Gateway·러너 카드에 「다른 빌드입니다 — 받아서 다시 설치하세요」를 보인다 — 플러그인은 체크리스트 4 의 받기·설치, 러너는 위 「Claude 러너 설치」 절의 「업데이트」. 바깥 클라이언트의 `/mcp` 는 서버 라우트라 `up -d --build` 로 함께 올라간다. 마이그레이션(`0022_run_requested_by`·`0023_personal_tokens`·`0024_approval_requested_by`)은 열·표만 더한다 — 올리기 전의 런은 「시킨 사람」이 비어 있어, 그 런의 「다시 실행」으로 생긴 런도 읽기 도구만 쓴다.
 
+**채널 세션이 있는 판으로 올릴 때는 플러그인과 `dodok-runner` 를 모두 다시 설치해야 한다 — 안 하면 에이전트 답이 저장되지 않는다.** 이 판부터 에이전트가 보내는 글(플러그인 `OutboundMessage`·러너 `RunnerOutboundPost`)은 채널 id 대신 세션(대화) id(`conversationId`)를 싣고, 첨부 올리기 헤더도 `x-dodok-channel-id` 가 아니라 `x-dodok-conversation-id` 다 — 옛 플러그인·옛 러너의 답 글·첨부는 서버 Zod 에서 거절된다. 제어 도구도 바뀌었다: 옛 판은 `read_messages` 에 `channelId` 를 보내 `VALIDATION` 이 되고 새 읽기 도구 `list_conversations` 가 없다. 연결 페이지는 그 Gateway·러너 카드에 「다른 빌드입니다 — 받아서 다시 설치하세요」를 보인다 — 플러그인은 체크리스트 4 의 받기·설치, 러너는 위 「Claude 러너 설치」 절의 「업데이트」. 마이그레이션(`0025_channel_conversations`~`0028_conversation_reads`)은 채널마다 「이전 대화」 세션 하나(id = 그 채널 id)를 만들어 그 채널의 메시지·런·에이전트 세션·읽음을 모두 옮긴다 — 저장된 세션 키가 그대로라 에이전트는 「이전 대화」에서 전 대화를 이어 간다(`docs/guides/live-smoke.md` 「채널 세션 실연」 절 기준 4). 이 마이그레이션은 `messages` 등 네 표를 다시 만들므로 올리기 전 백업(위 첫 줄)을 꼭 남긴다.
+
 ### 되돌리기
 
 부팅에 실패하면(`app` 이 unhealthy·재시작 반복 — `docker compose logs app`):
@@ -752,6 +754,8 @@ docker compose ps     # app (healthy)
 | --- | --- | --- |
 | 모르는 hello capability 를 버리는 서버(Phase 4 ① 이후) | 새 판(`threads` 를 싣는다) | 붙는다 — 서버가 모르는 값만 버린다 |
 | Phase 4 ① 이후 서버 | 옛 판(`threads` 없음) | 채널만 돈다 — 스레드 멘션은 `PLUGIN_OUTDATED` 카드 |
+| 채널 세션 전 서버 | 채널 세션 판 | 에이전트에게 인바운드가 닿지 않는다 — 새 플러그인은 `InboundDeliver.conversationTitle` 을 필수로 읽어 옛 서버의 인바운드를 거절한다(이 롤백 경로는 지키지 않는다). 플러그인도 옛 커밋의 것으로 다시 설치한다 |
+| 채널 세션 판 서버 | 채널 세션 전 판 | 붙지만 에이전트 답·첨부가 서버 Zod 에서 거절돼 저장되지 않는다(위 「업데이트」) |
 
 ⚠ **되돌릴 때는 반드시 업데이트 직전 백업으로 복원한다.** 마이그레이션은 앞으로만 간다 — 새 코드가 이미 올린 스키마를 옛 코드가 읽지 못한다. 더 오래된 백업이면 그 뒤의 데이터를 잃고, 더 새 백업(업데이트 뒤)이면 옛 코드가 못 연다. 백업 뒤 업데이트 사이에 쓰인 것은 잃는다.
 고친 뒤 돌아올 때는 `git checkout main && git pull --ff-only` 부터 업데이트를 다시 한다(`checkout <커밋>` 은 detached HEAD 라 `pull` 이 안 된다).
