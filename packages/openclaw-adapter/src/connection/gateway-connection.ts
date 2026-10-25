@@ -53,7 +53,6 @@ import {
 } from "../gateway/connection-manager";
 import { createGatewayEventMapper } from "../gateway/events";
 import { type FrameDump, openFrameDump } from "../gateway/frame-dump";
-import { parseSessionsReset } from "../gateway/sessions";
 
 export type GatewayConnectionConfig = {
   id: string;
@@ -139,7 +138,6 @@ export type GatewayConnection = {
   setupEntry(): GatewaySetupEntry;
   send(input: InboundDeliver): Promise<AdapterSendResult>;
   abort(runId: string, sessionKey: string): Promise<void>;
-  resetSession(sessionKey: string): Promise<{ sessionStartedAt?: string; lifecycleRevision?: string }>;
   listAgents(): Promise<Array<{ providerAgentId: string; name?: string }>>;
   resolveApproval(
     providerApprovalId: string,
@@ -591,15 +589,6 @@ export function createGatewayConnection(deps: GatewayConnectionDeps): GatewayCon
 
     async abort(runId, sessionKey) {
       await ws.request("chat.abort", { sessionKey, runId });
-    },
-
-    async resetSession(sessionKey) {
-      try {
-        return parseSessionsReset(await ws.request("sessions.reset", { key: sessionKey }));
-      } catch (error) {
-        if (error instanceof AdapterError && error.code === "FORBIDDEN") deps.onForbidden("sessionReset");
-        throw error;
-      }
     },
 
     async listAgents() {

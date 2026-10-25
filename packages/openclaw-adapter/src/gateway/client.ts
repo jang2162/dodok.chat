@@ -111,7 +111,10 @@ export function createGatewayHostDeps(params: {
   };
 }
 
-/** 서버 코어 스펙 6.2(계획서 #15). sessions.reset 은 operator.admin 이 필요하다. */
+/**
+ * 서버 코어 스펙 6.2(계획서 #15). 어댑터가 부르는 메서드 가운데 operator.admin 이 필요한 것은 확인되지 않았다(그 스코프를 쓰던
+ * sessions.reset 은 부르지 않는다) — 빼기 전에 ADR 0003 의 `originating*` 거절 조건과 ADR 0001 의 스코프 표를 다시 잰다.
+ */
 export const DEFAULT_GATEWAY_SCOPES = [
   "operator.read",
   "operator.write",

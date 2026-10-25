@@ -44,14 +44,12 @@ describe("서버 통합 스모크 — 실제 OpenClawAdapter + 가짜 Gateway + 
       ],
       capabilities: {
         openclaw: {
-          sessionReset: true,
           agentsList: true,
           configSet: true,
           promptEveryRun: false,
           serverSessionIds: false,
         },
         claude: {
-          sessionReset: true,
           agentsList: true,
           configSet: true,
           promptEveryRun: true,

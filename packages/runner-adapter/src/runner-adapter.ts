@@ -259,7 +259,6 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
   let closed = false;
   // 러너는 매 런 채널 규칙을 싣고(판정 P3) 세션 UUID 는 서버가 정한다(판정 P4)
   const capabilities: AdapterCapabilities = {
-    sessionReset: true,
     agentsList: true,
     configSet: true,
     promptEveryRun: true,
@@ -1098,11 +1097,6 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
       if (!run) return;
       run.aborted = true;
       if (isLive(run.runner)) run.runner.socket.emit("run.abort", { runId });
-    },
-
-    // 러너에 할 일이 없다 — 「새 대화」는 서버가 세션 행의 UUID 를 비우는 것으로 끝난다(판정 P4)
-    async resetSession(_sessionKey, _connectionId) {
-      return {};
     },
 
     // 러너는 채널 규칙을 매 런 run.start 에 싣는다 — 따로 밀어 넣을 설정이 없다

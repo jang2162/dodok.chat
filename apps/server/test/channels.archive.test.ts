@@ -374,7 +374,7 @@ describe("보관한 채널의 쓰기 — 409 CHANNEL_ARCHIVED(계획 판정 PC1)
     expect(runs()).toHaveLength(0);
   });
 
-  it("채널 수정·멤버 넣기·빼기·멤버 설정·「새 대화」는 409 — 아무것도 바뀌지 않는다", async () => {
+  it("채널 수정·멤버 넣기·빼기·멤버 설정은 409 — 아무것도 바뀌지 않는다", async () => {
     const { app, dev, fin, channel, inject, archive } = await setup();
     const ops = createAgent(app.db, {
       workspaceId: app.workspaceId,
@@ -391,7 +391,6 @@ describe("보관한 채널의 쓰기 — 409 CHANNEL_ARCHIVED(계획 판정 PC1)
       inject("POST", `/api/v1/channels/${channel.id}/members`, { memberType: "user", memberId: bee.id }),
       inject("DELETE", `/api/v1/channels/${channel.id}/members/${fin.id}`),
       inject("PATCH", `/api/v1/channels/${channel.id}/members/${dev.id}`, { autoRespond: true }),
-      inject("POST", `/api/v1/channels/${channel.id}/agents/${dev.id}/reset`),
     ];
     for (const res of await Promise.all(cases)) {
       expect(res.statusCode).toBe(409);

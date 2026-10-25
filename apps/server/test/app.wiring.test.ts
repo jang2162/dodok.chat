@@ -1,8 +1,7 @@
-import { AdapterError } from "@dodok/openclaw-adapter";
 import { FakeAdapter, type FakeGatewayState } from "@dodok/openclaw-adapter/fake";
-import { type AdapterStatus, BRIDGE_PROTOCOL, type Message, WIRE_PROTOCOL } from "@dodok/shared";
+import { type AdapterStatus, BRIDGE_PROTOCOL, WIRE_PROTOCOL } from "@dodok/shared";
 import Database from "better-sqlite3";
-import { and, eq, isNull } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -91,27 +90,6 @@ async function startRun(app: App, channelId: string, agentId: string, threadRoot
     },
     { message },
   );
-}
-
-/** threadRootId 가 없으면 채널 세션 행 */
-function sessionRow(app: App, channelId: string, agentId: string, threadRootId?: string) {
-  return app.db
-    .select()
-    .from(agentSessions)
-    .where(
-      and(
-        eq(agentSessions.channelId, channelId),
-        eq(agentSessions.agentId, agentId),
-        threadRootId === undefined
-          ? isNull(agentSessions.threadRootId)
-          : eq(agentSessions.threadRootId, threadRootId),
-      ),
-    )
-    .get();
-}
-
-function systemMessages(app: App, channelId: string): Message[] {
-  return listMessages(app.db, channelId, { limit: 200 }).messages.filter((m) => m.kind === "system");
 }
 
 describe("부팅 정리 — 파일 DB 로 두 번 부팅", () => {
@@ -351,7 +329,6 @@ describe("REST·wire 배선 (FakeAdapter)", () => {
     vi.restoreAllMocks();
     adapter.setGatewayState({ gateway: "connected", bridge: "connected" });
     adapter.setCapabilities({
-      sessionReset: true,
       agentsList: true,
       configSet: true,
       promptEveryRun: false,
@@ -383,235 +360,9 @@ describe("REST·wire 배선 (FakeAdapter)", () => {
     ]);
   });
 
-  it("POST /channels/:id/agents/:agentId/reset — 진행 런 abort → resetSession(ensureSession 키) → 세션 리비전·시작 시각 갱신 → info 시스템 메시지", async () => {
-    const { channelId } = seedAgentChannel(app, "reset-ok", dev);
-    const fin = createAgent(app.db, {
-      gatewayId: FAKE_GATEWAY_ID,
-      workspaceId: app.workspaceId,
-      providerAgentId: "fin",
-      handle: "fin",
-      name: "Fin",
-    });
-    addMember(app.db, channelId, { memberType: "agent", memberId: fin.id }, app.logger);
-    const run = await startRun(app, channelId, dev);
-    const otherRun = await startRun(app, channelId, fin.id); // 같은 채널, 다른 에이전트 세션
-    await vi.waitFor(() => expect(adapter.calls.send.some((s) => s.runId === run.id)).toBe(true));
-    const session = sessionRow(app, channelId, dev);
-    expect(session).toMatchObject({ promptRevisionAtStart: 1, sessionStartedAt: null });
-    expect(
-      (await api("PATCH", `/channels/${channelId}`, { prompt: "새 규칙" })).json().channel.promptRevision,
-    ).toBe(2);
-    const abortSpy = vi.spyOn(adapter, "abort");
-    const resetSpy = vi.spyOn(adapter, "resetSession");
-    const resetsBefore = adapter.calls.reset.length;
-
-    const res = await api("POST", `/channels/${channelId}/agents/${dev}/reset`);
-
-    expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ ok: true });
-    expect(adapter.calls.reset.slice(resetsBefore)).toEqual([session?.sessionKey]);
-    expect(abortSpy).toHaveBeenCalledTimes(1);
-    expect(abortSpy).toHaveBeenCalledWith(run.id, session?.sessionKey, FAKE_GATEWAY_ID);
-    expect(getRun(app.db, otherRun.id)?.status).toBe("queued");
-    expect(abortSpy.mock.invocationCallOrder[0]).toBeLessThan(resetSpy.mock.invocationCallOrder[0] ?? 0);
-    expect(getRun(app.db, run.id)?.status).toBe("aborted");
-    expect(sessionRow(app, channelId, dev)).toMatchObject({
-      sessionKey: session?.sessionKey,
-      promptRevisionAtStart: 2,
-      sessionStartedAt: expect.any(Date),
-      lifecycleRevision: "fake-1",
-    });
-    expect(systemMessages(app, channelId)).toEqual([
-      expect.objectContaining({
-        authorType: "system",
-        bodyMd: "@dev 의 대화를 새로 시작했습니다",
-        systemMeta: { kind: "info" },
-      }),
-    ]);
-
-    // 진행 런이 없으면 abort 하지 않는다
-    abortSpy.mockClear();
-    expect((await api("POST", `/channels/${channelId}/agents/${dev}/reset`)).statusCode).toBe(200);
-    expect(abortSpy).not.toHaveBeenCalled();
-    expect(systemMessages(app, channelId)).toHaveLength(2);
-  });
-
-  it("reset — 같은 에이전트의 대기 런은 진행 런보다 먼저 닫아 Gateway 로 나가지 않는다(대기 런은 adapter.abort 없이)", async () => {
-    const { channelId } = seedAgentChannel(app, "reset-queue", dev);
-    const first = await startRun(app, channelId, dev);
-    const second = await startRun(app, channelId, dev); // 같은 세션 — 대기
-    await vi.waitFor(() => expect(adapter.calls.send.some((s) => s.runId === first.id)).toBe(true));
-    expect(adapter.calls.send.some((s) => s.runId === second.id)).toBe(false);
-    const abortSpy = vi.spyOn(adapter, "abort");
-    const sendsBefore = adapter.calls.send.length;
-
-    expect((await api("POST", `/channels/${channelId}/agents/${dev}/reset`)).statusCode).toBe(200);
-
-    expect(adapter.calls.send).toHaveLength(sendsBefore); // 대기 런이 Gateway 로 나가지 않았다
-    expect(getRun(app.db, first.id)?.status).toBe("aborted");
-    expect(getRun(app.db, second.id)?.status).toBe("aborted");
-    expect(abortSpy).toHaveBeenCalledTimes(1);
-    expect(abortSpy).toHaveBeenCalledWith(first.id, expect.any(String), FAKE_GATEWAY_ID);
-  });
-
-  it("reset — sessionReset capability 가 없으면 409 CONFLICT(ADAPTER_CAPABILITY_MISSING), 어댑터·세션·메시지를 건드리지 않는다", async () => {
-    const { channelId } = seedAgentChannel(app, "reset-cap", dev);
-    adapter.setCapabilities({
-      sessionReset: false,
-      agentsList: true,
-      configSet: true,
-      promptEveryRun: false,
-      serverSessionIds: false,
-    });
-    const resetsBefore = adapter.calls.reset.length;
-
-    const res = await api("POST", `/channels/${channelId}/agents/${dev}/reset`);
-
-    expect(res.statusCode).toBe(409);
-    expect(res.json()).toEqual({
-      code: "CONFLICT",
-      message: "ADAPTER_CAPABILITY_MISSING: sessions.reset 권한 없음",
-    });
-    expect(adapter.calls.reset).toHaveLength(resetsBefore);
-    expect(systemMessages(app, channelId)).toEqual([]);
-  });
-
-  it("reset — AdapterError 는 코드대로(ADAPTER_UNAVAILABLE 503), Gateway FORBIDDEN 은 409 ADAPTER_CAPABILITY_MISSING, 멤버가 아니면 404", async () => {
-    const { channelId } = seedAgentChannel(app, "reset-err", dev);
-    vi.spyOn(adapter, "resetSession")
-      .mockRejectedValueOnce(new AdapterError("ADAPTER_UNAVAILABLE", "sessions.reset: gateway not connected"))
-      .mockRejectedValueOnce(new AdapterError("FORBIDDEN", "sessions.reset: missing scope operator.admin"));
-
-    const unavailable = await api("POST", `/channels/${channelId}/agents/${dev}/reset`);
-    expect(unavailable.statusCode).toBe(503);
-    expect(unavailable.json()).toEqual({
-      code: "ADAPTER_UNAVAILABLE",
-      message: "sessions.reset: gateway not connected",
-    });
-
-    const forbidden = await api("POST", `/channels/${channelId}/agents/${dev}/reset`);
-    expect(forbidden.statusCode).toBe(409);
-    expect(forbidden.json()).toMatchObject({
-      code: "CONFLICT",
-      message: expect.stringMatching(/^ADAPTER_CAPABILITY_MISSING/),
-    });
-
-    expect(sessionRow(app, channelId, dev)?.sessionStartedAt).toBeNull();
-    expect(systemMessages(app, channelId)).toEqual([]);
-
-    const outsider = createAgent(app.db, {
-      gatewayId: FAKE_GATEWAY_ID,
-      workspaceId: app.workspaceId,
-      providerAgentId: "ops",
-      handle: "ops",
-      name: "Ops",
-    });
-    expect((await api("POST", `/channels/${channelId}/agents/${outsider.id}/reset`)).statusCode).toBe(404);
-    expect((await api("POST", `/channels/${uuid()}/agents/${dev}/reset`)).statusCode).toBe(404);
-    expect((await api("POST", `/channels/${channelId}/agents/not-an-id/reset`)).statusCode).toBe(400);
-  });
-
-  it("reset — 저장된 providerAgentId 가 세션 키 규칙 밖이면 500 이 아니라 400 VALIDATION(런 경로와 같은 사유), 어댑터를 건드리지 않는다", async () => {
-    const bad = createAgent(app.db, {
-      gatewayId: FAKE_GATEWAY_ID,
-      workspaceId: app.workspaceId,
-      providerAgentId: "bad:id",
-      handle: "badid",
-      name: "Bad",
-    }).id;
-    const { channelId } = seedAgentChannel(app, "reset-badid", bad);
-    const resetsBefore = adapter.calls.reset.length;
-
-    const res = await api("POST", `/channels/${channelId}/agents/${bad}/reset`);
-
-    expect(res.statusCode).toBe(400);
-    expect(res.json()).toEqual({
-      code: "VALIDATION",
-      message:
-        "OpenClaw 에이전트 id 가 세션 키 규칙(영문·숫자·_·-)에 맞지 않습니다 — 올바른 id 로 에이전트를 다시 등록하세요",
-    });
-    expect(adapter.calls.reset).toHaveLength(resetsBefore);
-    expect(systemMessages(app, channelId)).toEqual([]);
-  });
-
-  it("reset?threadRootId — 그 스레드 세션만: 스레드 런만 abort·스레드 키로 resetSession·스레드 행 갱신·info 는 스레드에", async () => {
-    const { channelId } = seedAgentChannel(app, "reset-thread", dev);
-    const root = createUserMessage(app.db, app.bus, {
-      conversationId: channelId,
-      authorId: app.ownerUserId,
-      bodyMd: "루트",
-      clientMsgId: uuid(),
-    });
-    const channelRun = await startRun(app, channelId, dev);
-    const threadRun = await startRun(app, channelId, dev, root.id);
-    await vi.waitFor(() =>
-      expect(adapter.calls.send.filter((s) => [channelRun.id, threadRun.id].includes(s.runId))).toHaveLength(
-        2,
-      ),
-    );
-    const channelSession = sessionRow(app, channelId, dev);
-    const threadSession = sessionRow(app, channelId, dev, root.id);
-    expect(threadSession?.sessionKey).toBe(`agent:dev:dodok:channel:${channelId}:thread:${root.id}`);
-    const abortSpy = vi.spyOn(adapter, "abort");
-    const resetsBefore = adapter.calls.reset.length;
-
-    const res = await api("POST", `/channels/${channelId}/agents/${dev}/reset?threadRootId=${root.id}`);
-
-    expect(res.statusCode).toBe(200);
-    expect(adapter.calls.reset.slice(resetsBefore)).toEqual([threadSession?.sessionKey]);
-    expect(abortSpy.mock.calls).toEqual([[threadRun.id, threadSession?.sessionKey, FAKE_GATEWAY_ID]]);
-    expect(getRun(app.db, threadRun.id)?.status).toBe("aborted");
-    expect(getRun(app.db, channelRun.id)?.status).toBe("queued");
-    expect(sessionRow(app, channelId, dev, root.id)).toMatchObject({ lifecycleRevision: "fake-1" });
-    expect(sessionRow(app, channelId, dev)).toMatchObject({
-      lifecycleRevision: channelSession?.lifecycleRevision,
-    });
-    const info = listMessages(app.db, channelId, {
-      limit: 50,
-      scope: { threadRootId: root.id },
-    }).messages.filter((m) => m.kind === "system");
-    expect(info).toEqual([
-      expect.objectContaining({ bodyMd: "@dev 의 대화를 새로 시작했습니다", threadRootId: root.id }),
-    ]);
-    expect(systemMessages(app, channelId)).toEqual([]); // 채널 타임라인(루트만)에는 없다
-
-    // 채널 리셋은 스레드 런을 건드리지 않는다
-    const again = await startRun(app, channelId, dev, root.id);
-    abortSpy.mockClear();
-    expect((await api("POST", `/channels/${channelId}/agents/${dev}/reset`)).statusCode).toBe(200);
-    expect(abortSpy.mock.calls.map(([runId]) => runId)).toEqual([channelRun.id]);
-    expect(getRun(app.db, again.id)?.status).not.toBe("aborted");
-  });
-
-  it("reset?threadRootId — 답글·다른 채널 루트·없는 id 는 404, UUID 가 아니면 400", async () => {
-    const { channelId } = seedAgentChannel(app, "reset-thread-bad", dev);
-    const other = seedAgentChannel(app, "reset-thread-other", dev);
-    const say = (at: string, threadRootId?: string) =>
-      createUserMessage(app.db, app.bus, {
-        conversationId: at,
-        authorId: app.ownerUserId,
-        bodyMd: "m",
-        clientMsgId: uuid(),
-        threadRootId,
-      });
-    const root = say(channelId);
-    const reply = say(channelId, root.id);
-    const foreign = say(other.channelId);
-    const resetsBefore = adapter.calls.reset.length;
-    for (const id of [reply.id, foreign.id, uuid()]) {
-      const res = await api("POST", `/channels/${channelId}/agents/${dev}/reset?threadRootId=${id}`);
-      expect(res.statusCode).toBe(404);
-    }
-    expect((await api("POST", `/channels/${channelId}/agents/${dev}/reset?threadRootId=x`)).statusCode).toBe(
-      400,
-    );
-    expect(adapter.calls.reset).toHaveLength(resetsBefore);
-  });
-
   it("GET /adapter/status 는 어댑터마다 AdapterStatus 와 provider 별 capabilities, 인증이 필요하다", async () => {
     adapter.setGatewayState({ gateway: "reconnecting" });
     adapter.setCapabilities({
-      sessionReset: false,
       agentsList: true,
       configSet: true,
       promptEveryRun: false,
@@ -623,7 +374,6 @@ describe("REST·wire 배선 (FakeAdapter)", () => {
       statuses: [{ provider: "openclaw", gateways: [fakeGatewayStatus({ gateway: "reconnecting" })] }],
       capabilities: {
         openclaw: {
-          sessionReset: false,
           agentsList: true,
           configSet: true,
           promptEveryRun: false,

@@ -21,7 +21,7 @@ export type AdapterStatusList = {
 export function registerAdapterRoutes(fastify: FastifyInstance, ctx: AdapterRouteContext): void {
   const authed = { preHandler: requireSession(ctx) };
 
-  /** 스펙 4장 — 연결 상태와 쓸 수 있는 기능(sessionReset 등). Gateway hello 요약(버전)은 어댑터가 아직 내놓지 않는다. */
+  /** 스펙 4장 — 연결 상태와 쓸 수 있는 기능(agentsList 등). Gateway hello 요약(버전)은 어댑터가 아직 내놓지 않는다. */
   fastify.get("/api/v1/adapter/status", authed, async (): Promise<AdapterStatusList> => {
     const adapters = ctx.registry.all();
     return {

@@ -333,15 +333,6 @@ describe("역할 매트릭스(스펙 2장)", () => {
       request: () => ({ method: "POST", url: `/api/v1/channels/${newChannel().id}/unarchive` }),
     },
     {
-      name: "POST /channels/:id/agents/:agentId/reset",
-      min: "admin",
-      ok: 200,
-      request: () => {
-        const { channel, agent } = channelWithAgent();
-        return { method: "POST", url: `/api/v1/channels/${channel.id}/agents/${agent.id}/reset` };
-      },
-    },
-    {
       name: "GET /ops/status",
       min: "admin",
       ok: 200,
@@ -545,6 +536,15 @@ describe("역할 매트릭스(스펙 2장)", () => {
       }
     },
   );
+
+  it.each(ROLES)("POST /channels/:id/agents/:agentId/reset 은 없다 — %s 도 404", async (role) => {
+    const { channel, agent } = channelWithAgent();
+    const res = await call(tokens[role], {
+      method: "POST",
+      url: `/api/v1/channels/${channel.id}/agents/${agent.id}/reset`,
+    });
+    expect(res.statusCode, res.body).toBe(404);
+  });
 
   it("세션이 없으면 역할 경로도 401", async () => {
     for (const c of CASES) expect((await call(undefined, c.request())).statusCode, c.name).toBe(401);

@@ -221,7 +221,6 @@ describe("createOpenClawAdapter — 상태", () => {
   it("connect() 는 Gateway 루프를 시작해 gateway connected 를 알리고, close() 는 down 으로 내린다", async () => {
     expect(adapter.status()).toEqual(oneGateway("down", "down"));
     expect(adapter.capabilities()).toEqual({
-      sessionReset: true,
       agentsList: true,
       configSet: true,
       promptEveryRun: false,
@@ -233,7 +232,6 @@ describe("createOpenClawAdapter — 상태", () => {
       kind: "status",
       status: oneGateway("connected", "down"),
       capabilities: {
-        sessionReset: true,
         agentsList: true,
         configSet: true,
         promptEveryRun: false,
@@ -1076,51 +1074,6 @@ describe("createOpenClawAdapter — Gateway 이벤트", () => {
 });
 
 describe("createOpenClawAdapter — Gateway 요청·브리지 설정", () => {
-  it("resetSession: sessions.reset → sessionStartedAt(ISO)·lifecycleRevision", async () => {
-    await connectedGateway();
-    gatewayResponses["sessions.reset"] = () => ({
-      ok: true,
-      key: f.SESSION_KEY,
-      entry: { sessionStartedAt: 1_789_399_629_480, lifecycleRevision: "rev-2" },
-    });
-
-    await expect(adapter.resetSession(f.SESSION_KEY, CONNECTION_ID)).resolves.toEqual({
-      sessionStartedAt: new Date(1_789_399_629_480).toISOString(),
-      lifecycleRevision: "rev-2",
-    });
-    expect(gatewayCalls.at(-1)).toEqual({ method: "sessions.reset", params: { key: f.SESSION_KEY } });
-  });
-
-  it("resetSession 이 MISSING_SCOPE 면 AdapterError(FORBIDDEN), sessionReset=false 로 내리고 status 를 알린다", async () => {
-    await connectedGateway();
-    gatewayResponses["sessions.reset"] = () => {
-      throw Object.assign(new Error("missing scope: operator.admin"), {
-        code: "FORBIDDEN",
-        details: { code: "MISSING_SCOPE", missingScope: "operator.admin" },
-      });
-    };
-    events = [];
-
-    await expect(adapter.resetSession(f.SESSION_KEY, CONNECTION_ID)).rejects.toMatchObject({
-      code: "FORBIDDEN",
-    });
-
-    expect(adapter.capabilities().sessionReset).toBe(false);
-    expect(ofKind("status")).toEqual([
-      {
-        kind: "status",
-        status: oneGateway("connected", "down"),
-        capabilities: {
-          sessionReset: false,
-          agentsList: true,
-          configSet: true,
-          promptEveryRun: false,
-          serverSessionIds: false,
-        },
-      },
-    ]);
-  });
-
   it("Gateway 가 붙기 전 요청은 AdapterError(ADAPTER_UNAVAILABLE)", async () => {
     await expect(adapter.abort(f.RUN_ID, f.SESSION_KEY, CONNECTION_ID)).rejects.toMatchObject({
       code: "ADAPTER_UNAVAILABLE",

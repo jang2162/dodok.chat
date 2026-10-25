@@ -20,7 +20,7 @@ import {
   authorizeChannelUnarchive,
   authorizeRead,
 } from "../../auth/policies";
-import { requirePolicy, requireRole } from "../../auth/roles";
+import { requirePolicy } from "../../auth/roles";
 import { requireSession, sessionUser } from "../../auth/routes";
 import type { Db } from "../../db/client";
 import { apiError } from "../../http/errors";
@@ -37,14 +37,7 @@ import {
   unarchiveChannelAndNotify,
   updateChannelAgentAndNotify,
 } from "./actions";
-import {
-  assertChannelWritable,
-  type ChannelRecord,
-  getChannel,
-  listChannels,
-  listMembers,
-  resetAgentSession,
-} from "./service";
+import { assertChannelWritable, type ChannelRecord, getChannel, listChannels, listMembers } from "./service";
 
 export type ChannelRouteContext = {
   auth: Auth;
@@ -52,25 +45,21 @@ export type ChannelRouteContext = {
   bus: ServerBus;
   logger: Logger;
   workspaceId: string;
-  /** 「새 대화」는 그 에이전트의 어댑터로, 채널 프롬프트 동기화는 OpenClaw 어댑터로 */
-  registry: Pick<AdapterRegistry, "forAgent" | "forProvider">;
-  /** 「새 대화」가 그 세션의 진행 런을 멈출 때 */
+  /** 채널 프롬프트 동기화는 OpenClaw 어댑터로 */
+  registry: Pick<AdapterRegistry, "forProvider">;
+  /** 보관이 그 채널의 열린 런을 멈출 때 */
   orchestrator: Pick<Orchestrator, "activeRuns" | "abort">;
 };
 
 const ChannelParams = z.object({ id: Id });
 const MemberParams = z.object({ id: Id, memberId: Id });
-const AgentParams = z.object({ id: Id, agentId: Id });
 /** 기본은 살아 있는 채널, archived=1 이면 보관한 채널(누구나 — 읽기는 막지 않는다) */
 const ListQuery = z.object({ archived: z.literal("1").optional() });
-/** 「새 대화」 — 스레드 루트를 주면 그 스레드 세션만(스펙 2.4) */
-const ResetQuery = z.object({ threadRootId: Id.optional() });
 
 export function registerChannelRoutes(fastify: FastifyInstance, ctx: ChannelRouteContext): void {
   const read = { preHandler: requirePolicy(ctx, authorizeRead) };
   /** 본문을 보는 정책은 파싱 뒤 핸들러가 부른다(authorizeBody) */
   const authed = { preHandler: requireSession(ctx) };
-  const admin = { preHandler: requireRole(ctx, "admin") };
   /** 필드별 역할 검사 — 파싱 뒤, 어떤 쓰기보다 먼저 부른다(403 이면 아무 필드도 안 바뀐다). 모르는 키도 세도록 원래 본문을 넘긴다 */
   const authorizeBody = (request: FastifyRequest, policy: (role: TeamRole, body: unknown) => void) =>
     policy(sessionUser(request).role, request.body);
@@ -166,13 +155,4 @@ export function registerChannelRoutes(fastify: FastifyInstance, ctx: ChannelRout
       return { channel: unarchiveChannelAndNotify(ctx, id, sessionUser(request).workspaceId) };
     },
   );
-
-  /** 「새 대화」(스펙 3.4) — 409 CONFLICT(ADAPTER_CAPABILITY_MISSING)·503 ADAPTER_UNAVAILABLE 등은 서비스가 정한다 */
-  fastify.post("/api/v1/channels/:id/agents/:agentId/reset", admin, async (request) => {
-    const { id, agentId } = parseParams(AgentParams, request.params);
-    const { threadRootId } = parseQuery(ResetQuery, request.query);
-    loadWritable(sessionUser(request).workspaceId, id);
-    await resetAgentSession(ctx, { channelId: id, agentId, threadRootId });
-    return { ok: true };
-  });
 }

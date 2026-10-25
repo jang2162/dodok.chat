@@ -229,18 +229,6 @@ describe("통합 — 리액션", () => {
     expect((await turn(t, "@dev 채널 셋째")).delivery?.context.reactions).toBeUndefined();
   });
 
-  it("「새 대화」 뒤 첫 런에는 그 전에 달린 리액션이 실리지 않는다", async () => {
-    const t = await start();
-    const { answer } = await turn(t, "@dev 처음");
-    if (!answer) throw new Error("답이 없다");
-    expect(await react(t.mia, answer.id, "👍")).toEqual(OK);
-    expect(await rest(live, "POST", `/channels/${t.channel.id}/agents/${t.dev.id}/reset`)).toEqual({
-      status: 200,
-      body: { ok: true },
-    });
-    expect((await turn(t, "@dev 새 대화에서")).delivery?.context.reactions).toBeUndefined();
-  });
-
   it("채널에서 뺐다가 다시 넣은 에이전트 — 빠진 동안 쌓인 25개는 첫 런에 최근 20개 + reactionsOmitted 5(Review Focus 4)", async () => {
     const t = await start();
     const first = (await turn(t, "@dev 하나")).answer;

@@ -41,14 +41,13 @@ describe("가짜 Gateway — 실제 connectGateway 로 붙는다", () => {
 
   async function connect(
     opts: {
-      grantAdmin?: boolean;
       scopes?: string[];
       onClose?: (info: { code: number }) => void;
       /** 기본 true — 실물처럼 세션 이벤트는 구독한 연결에만 오므로 SESSION_KEY 를 구독한다 */
       subscribe?: boolean;
     } = {},
   ) {
-    gateway ??= await startFakeGateway(opts.grantAdmin === undefined ? {} : { grantAdmin: opts.grantAdmin });
+    gateway ??= await startFakeGateway();
     const frames: Frame[] = [];
     const connection = await connectGateway({
       url: gateway.url,
@@ -265,26 +264,8 @@ describe("가짜 Gateway — 실제 connectGateway 로 붙는다", () => {
     });
   });
 
-  it("sessions.reset 은 grantAdmin(기본 true)이면 entry 를, 같은 키의 sessionId 는 그대로 준다", async () => {
+  it("모르는 메서드는 실물처럼 FORBIDDEN/MISSING_SCOPE — 어댑터가 부르지 않는 sessions.reset 도", async () => {
     const { connection } = await connect();
-    const history = await connection.request<{ sessionId: string }>("chat.history", {
-      sessionKey: SESSION_KEY,
-      agentId: "dev",
-    });
-    const reset = await connection.request("sessions.reset", { key: SESSION_KEY });
-    expect(reset).toEqual({
-      ok: true,
-      key: SESSION_KEY,
-      entry: {
-        sessionId: history.sessionId,
-        lifecycleRevision: expect.any(String),
-        sessionStartedAt: expect.any(Number),
-      },
-    });
-  });
-
-  it("grantAdmin: false 면 sessions.reset 은 FORBIDDEN/MISSING_SCOPE, 모르는 메서드는 grantAdmin 과 무관하게 같은 오류", async () => {
-    const { connection } = await connect({ grantAdmin: false });
     const missingScope = {
       code: "FORBIDDEN",
       details: { code: "MISSING_SCOPE", missingScope: "operator.admin" },
