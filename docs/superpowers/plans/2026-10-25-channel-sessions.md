@@ -42,7 +42,7 @@
 - **PS7 — `RunState`·`Approval`·`ChannelActivity`·`Typing`·`PresenceUpdate`·`SearchHit` 에 `conversationId`.** 스트리밍 버블·승인 카드·입력 중 표시는 그 대화에서만 보이고, 푸시 거름(「보고 있으면 안 보냄」)은 대화 단위다 — 같은 채널의 다른 세션을 보고 있으면 멘션 푸시가 간다.
 - **PS8 — 세션 관리자는 `channel_members.role = 'manager'`.** 경로 `PUT /api/v1/channels/:id/session-managers/:userId`(채널에 없으면 참여시키고 역할을 올린다)·`DELETE …`(역할을 `member` 로), 둘 다 admin 이상. `ChannelMember` 의 사람 행에 `role`, `Channel` 에 `sessionPolicy`. 정책은 `PATCH /api/v1/channels/:id { sessionPolicy }`(admin 이상 — `MEMBER_EDITABLE_CHANNEL_FIELDS` 밖).
 - **PS9 — 새 세션 첫 메시지의 멱등.** `newConversation` 을 실은 재전송(ack 유실)은 `(authorId, clientMsgId)` 가 이미 있으면 대화를 만들지 않고 그 메시지·그 대화로 답한다(지금 `findUserMessage` 가 먼저 보는 순서 그대로).
-- **PS10 — 「새 대화」 걷기 범위.** REST `POST /api/v1/channels/:id/agents/:agentId/reset`·`resetAgentSession`·`markSessionReset`·`AgentAdapter.resetSession`(shared 계약과 OpenClaw·러너·가짜 어댑터)·웹 `ResetSessionDialog`·`resetSession.ts`·`/new` 슬래시. `agent_sessions` 의 `sessionStartedAt`·`lifecycleRevision` 열은 남긴다(Gateway 가 스스로 리셋한 것을 가르는 데 쓴다). 채널 설정의 「프롬프트를 바꾸면 「새 대화」부터 반영」류 안내는 「새 세션부터 반영됩니다」로.
+- **PS10 — 「새 대화」 걷기 범위.** REST `POST /api/v1/channels/:id/agents/:agentId/reset`·`resetAgentSession`·`markSessionReset`·`AgentAdapter.resetSession`(shared 계약과 OpenClaw·러너·가짜 어댑터)·웹 `ResetSessionDialog`·`resetSession.ts`·`/new` 슬래시. `agent_sessions` 의 `sessionStartedAt`·`lifecycleRevision` 열은 남긴다 — 지금은 읽는 코드가 없고, 「새 대화」를 걷은 뒤에는 늘 null 이다(Gateway 가 스스로 리셋한 것을 가를 때를 위해 남긴다 — 태스크 2 리뷰 S1). 능력 `AdapterCapabilities.sessionReset` 도 걷는다(읽던 곳·내리던 곳이 리셋뿐 — 웹 `api/queries.ts` 의 같은 이름 타입도). 손 점검 도구 `scripts/wire-cli.ts` 의 `reset` 명령도 걷는다. 채널 설정의 「프롬프트를 바꾸면 「새 대화」부터 반영」류 안내는 「새 세션부터 반영됩니다」로.
 
 ## Review Focus
 
@@ -165,7 +165,7 @@ export function createLegacyConversation(tx: DbOrTx, channel: { id: string; crea
 
 - [ ] **Step 1: 실패하는 테스트.** `roles.matrix.test.ts`: `POST /api/v1/channels/:id/agents/:agentId/reset` → 404(라우트 없음). `Composer.slash.test.tsx`: `/new @dev` 를 보내면 보통 메시지로 나간다(대화상자 없음).
 - [ ] **Step 2: 실패 확인.**
-- [ ] **Step 3: 구현.** PS10 의 목록을 걷는다. `grep -rnE 'resetSession|markSessionReset|resetAgentSession|ResetSessionDialog|kind: "new"'`(소스·테스트 둘 다)가 OpenClaw 스파이크(`packages/openclaw-adapter/src/spike/`)와 Gateway 연결의 `sessions.reset` 원시 호출 말고는 비어야 한다 — 원시 호출은 `gateway-connection.ts` 에서도 걷는다(부를 곳이 없다). 프롬프트 칸의 안내 문구를 PS10 대로.
+- [ ] **Step 3: 구현.** PS10 의 목록을 걷는다. `grep -rnE 'resetSession|markSessionReset|resetAgentSession|ResetSessionDialog|kind: "new"|agents/[^ "]*/reset'`(소스·테스트·`scripts/` 모두)가 OpenClaw 스파이크(`packages/openclaw-adapter/src/spike/`)와 브리지 dedupe 결과(`bridge/session.ts` `acceptOutbound` 의 `{ kind: "new" }` 와 그 테스트 — 리셋과 무관) 말고는 비어야 한다. Gateway `sessions.reset` 원시 호출은 `gateway-connection.ts` 에서도 걷는다(부를 곳이 없다). 프롬프트 칸의 안내 문구를 PS10 대로.
 - [ ] **Step 4: 통과 확인 + 끝내기 검사 + 서버 번들 스모크 + 웹 빌드.**
 - [ ] **Step 5: 커밋** — `refactor(server): drop the agent session reset`, `refactor(web): drop the new-conversation command`.
 
@@ -292,7 +292,7 @@ export function listConversations(db: DbOrTx, channelId: string, q: { status: "o
 
 - [ ] **Step 1: 실패하는 테스트.** 목록이 최근 활동순·필터·검색으로 바뀐다 · `conversation.created`(다른 탭이 만든 세션)가 목록 맨 위에 든다 · `conversation.updated`(닫힘)를 받으면 그 세션을 보고 있던 화면의 작성기가 「닫힌 세션입니다」로 바뀌고 보내는 중 항목은 Review Focus 2 대로 · 정책 `managers` 의 member 에게 「새 세션」이 없다 · member 는 남의 세션 제목을 못 바꾼다(제목이 버튼이 아니다) · 설정 「세션」 칸은 admin 이상만 바꾼다(member 는 읽기) · 390px 에서 시트로 열리고 닫으면 초점이 여는 버튼으로 돌아온다.
 - [ ] **Step 2: 실패 확인.**
-- [ ] **Step 3: 구현.** 기존 공용 UI(`@/ui/*`·설정의 `Section`)를 쓴다. 「새 세션」 단축키는 빌더 판단(있으면 `docs/manual/user-guide.md` 에 적는 것은 태스크 9).
+- [ ] **Step 3: 구현.** 기존 공용 UI(`@/ui/*`·설정의 `Section`)를 쓴다. 채널 설정 프롬프트 칸의 저장 안내(`PROMPT_SAVED_NOTICE` — 앞 문장 `RUNNER_RENEW_NOTICE`)와 서버 info 메시지(`notifyRenewed`)가 러너가 세션을 새로 여는 것을 「새 대화」라고 부른다 — 한 문장 안에 「새 대화」와 「새 세션」이 섞이므로, 이 기능의 「세션」(dodok 대화)과 헷갈리지 않는 말로 맞춘다(태스크 2 리뷰 7-4). 「새 세션」 단축키는 빌더 판단(있으면 `docs/manual/user-guide.md` 에 적는 것은 태스크 9).
 - [ ] **Step 4: 통과 확인 + 끝내기 검사 + 웹 빌드.**
 - [ ] **Step 5: 커밋** — `feat(web): list, rename and close sessions in a channel`.
 
@@ -339,6 +339,7 @@ export function listConversations(db: DbOrTx, channelId: string, q: { status: "o
 
 - [ ] **Step 1: 런 0회 실연.** `docs/guides/live-smoke.md` 「Claude 러너 런 0회 하네스」와 dev Gateway 가짜 claude CLI 절차로, 실물 dev Gateway(2026.9.5)에서 대화 id 키의 세션 둘이 따로 맥락을 갖는지 본다 — OpenClaw 가 대화 id 를 피어로 받는다는 것이 이 기능의 유일한 가정이다(스펙 8장). 같은 것을 러너 하네스로. 마이그레이션 뒤 「이전 대화」에서 기존 OpenClaw 세션이 이어지는지(같은 키)도 본다. 모델 런 0.
 - [ ] **Step 2: 문서.** 위 파일들. 사본(`docs/guideline/`·`.ruler/<스택>/`)은 고치지 않는다. 함께 넣을 것:
+  - `docs/guides/plan.md` 8장 「이월」 — `packages/openclaw-adapter/src/gateway/client.ts` `DEFAULT_GATEWAY_SCOPES` 의 `operator.admin`: 「새 대화」(`sessions.reset`)를 걷어 어댑터가 부르는 메서드(`chat.abort`·`agents.list`·`sessions.messages.subscribe`·`approval.resolve`) 가운데 admin 이 필요한 것이 확인되지 않는다. 빼면 페어링된 디바이스의 스코프가 달라져 다시 승인이 필요할 수 있고, Gateway 는 없는 메서드도 `MISSING_SCOPE operator.admin` 으로 답하므로(ADR 0001) 빼기 전에 실물 Gateway 에서 다시 잰다. 태스크 2 보고·리뷰.
   - `docs/guides/docker-deploy.md` 「업데이트」 — 이 판부터 플러그인·`dodok-runner` 를 다시 설치해야 한다(나가는 글의 `conversationId`·첨부 헤더 `x-dodok-conversation-id` — 옛 것은 에이전트 답·첨부가 서버 Zod 에서 거절돼 저장되지 않는다). 태스크 1 리뷰 N-a.
   - `docs/guides/project-structure.md` DB 절에 두 줄. ① 마이그레이터는 트랜잭션 안에서 돌고 서버는 `foreign_keys = ON` 으로 열어 생성 SQL 의 `PRAGMA foreign_keys=OFF` 가 듣지 않는다 — 자식 행이 있는 표를 다시 만들면 ON DELETE no action 자식은 `FOREIGN KEY constraint failed` 로 마이그레이션이 죽고 cascade 자식(`message_reactions`)은 조용히 지워지므로, 자식 행을 TEMP 표로 옮겨 두고 다시 만든 뒤 되돌린다(0025 — `defer_foreign_keys`·`legacy_alter_table` 은 실측에서 커밋이 실패했다, 가드 `test/db.test.ts` 「conversations 마이그레이션」). ② 기존 표에 NOT NULL FK 열을 더하면 drizzle-kit 은 `ALTER TABLE … ADD … NOT NULL REFERENCES …` 를 내고 SQLite 가 받지 않으니 SQL 본문을 손으로 쓴다(0010·0025, 스냅숏은 생성기 출력 그대로).
 - [ ] **Step 3: `pnpm exec ruler apply` 뒤 `git status` — 추적 파일은 소스만 바뀐다.**
