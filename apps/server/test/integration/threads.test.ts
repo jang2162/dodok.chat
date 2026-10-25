@@ -385,7 +385,7 @@ describe("통합 — 스레드 런", () => {
       expect.objectContaining({
         kind: "mention",
         body: "@dev가 #relay 스레드에서 불렀습니다",
-        url: `/c/${channel.id}/t/${root.id}`,
+        url: `/c/${channel.id}/s/${root.conversationId}/t/${root.id}`,
       }),
     ]);
   });

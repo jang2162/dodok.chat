@@ -18,7 +18,7 @@ import type { App } from "../src/app";
 import * as authSchema from "../src/db/auth-schema";
 import {
   channelMembers,
-  channelReads,
+  conversationReads,
   invites,
   memberships,
   messages,
@@ -732,24 +732,28 @@ describe("멤버 비활성화·다시 활성화", () => {
     it("읽음 행은 비활성화에도 남고 다시 활성화한 뒤 /me/unread 가 비활성화 전과 같다(읽지 않음 스펙 「오류 처리」 장)", async () => {
       const target = await joined();
       const ch = channel("reads-keep");
+      const conversationId = channelConversation(app.db, ch.id);
       for (const clientMsgId of ["k1", "k2", "k3"])
         createUserMessage(app.db, app.bus, {
-          conversationId: channelConversation(app.db, ch.id),
+          conversationId,
           authorId: app.ownerUserId,
           bodyMd: "hi",
           clientMsgId,
         });
-      markRead(app.db, app.workspaceId, target.id, ch.id, 2, new Date());
+      markRead(app.db, app.workspaceId, target.id, conversationId, 2, new Date());
+      const pick = (body: unknown) =>
+        (body as { conversations: { conversationId: string }[] }).conversations.find(
+          (c) => c.conversationId === conversationId,
+        );
       const unread = async () => {
         const res = await call(target.token, "GET", "/api/v1/me/unread");
         expect(res.statusCode).toBe(200);
-        return (res.json() as { channels: { channelId: string }[] }).channels.find(
-          (c) => c.channelId === ch.id,
-        );
+        return pick(res.json());
       };
       const before = await unread();
       expect(before).toMatchObject({ lastReadSeq: 2, unread: true });
-      const rows = () => app.db.select().from(channelReads).where(eq(channelReads.userId, target.id)).all();
+      const rows = () =>
+        app.db.select().from(conversationReads).where(eq(conversationReads.userId, target.id)).all();
       const rowsBefore = rows();
       expect((await deactivate(ownerToken, target.id)).statusCode).toBe(200);
       expect(rows()).toEqual(rowsBefore);
@@ -759,9 +763,7 @@ describe("멤버 비활성화·다시 활성화", () => {
       expect(relogin.statusCode).toBe(200);
       const token = (relogin.json() as { sessionToken: string }).sessionToken;
       const after = await call(token, "GET", "/api/v1/me/unread");
-      expect(
-        (after.json() as { channels: { channelId: string }[] }).channels.find((c) => c.channelId === ch.id),
-      ).toEqual(before);
+      expect(pick(after.json())).toEqual(before);
     });
 
     it("비활성화·다시 활성화마다 people.changed 가 한 번씩", async () => {

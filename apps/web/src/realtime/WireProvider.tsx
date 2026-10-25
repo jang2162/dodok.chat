@@ -96,7 +96,7 @@ export function WireProvider({
       },
     });
     const detachPresence = attachPresence(socket, notify);
-    const readSender = createReadSender((p) => emitAck(socket, "channel.read", p));
+    const readSender = createReadSender((p) => emitAck(socket, "conversation.read", p));
     const unregister = registerSessionReset(() => {
       // 세션이 끝났다(로그아웃은 그 전에 서버 해지까지 마쳤다 — useLogout). 401 이면 서버에 물을 수 없으니 기기 구독만
       // 해지한다 — 다음에 이 브라우저를 쓰는 사람에게 앞 사람의 알림이 오지 않게(Review Focus 1)

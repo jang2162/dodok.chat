@@ -1,4 +1,4 @@
-import type { Channel, ChannelUnread } from "@dodok/shared";
+import type { Channel, ConversationUnread } from "@dodok/shared";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
@@ -78,7 +78,9 @@ describe("ChannelList 읽지 않음", () => {
   const C = channelOf("c", { name: "dev" });
   /** 열어 둘 채널 — 「/」 는 첫 채널로 넘어가 그 채널이 보고 있는 채널이 된다 */
   const D = channelOf("d", { name: "lobby" });
-  const unreadRow = (channelId: string, over: Partial<ChannelUnread> = {}): ChannelUnread => ({
+  /** 채널마다 세션 하나(따로 주지 않으면) — 사이드바 한 줄은 그 채널 세션들의 합이다 */
+  const unreadRow = (channelId: string, over: Partial<ConversationUnread> = {}): ConversationUnread => ({
+    conversationId: `conv-${channelId}`,
     channelId,
     lastReadSeq: 0,
     latestSeq: 0,
@@ -86,9 +88,12 @@ describe("ChannelList 읽지 않음", () => {
     mentions: 0,
     ...over,
   });
-  const snapshot = (...channels: ChannelUnread[]) => {
+  const snapshot = (...conversations: ConversationUnread[]) => {
     useUnread.getState().beginSnapshot();
-    useUnread.getState().applySnapshot({ channels });
+    useUnread.getState().applySnapshot({
+      conversations,
+      channels: [...new Set(conversations.map((c) => c.channelId))],
+    });
   };
   const link = async (name: RegExp) => within(await channelNav()).findByRole("link", { name });
   /** 링크 안의 보이는 배지(숨긴 글 말고) */
@@ -123,6 +128,23 @@ describe("ChannelList 읽지 않음", () => {
     expect(bold(dev, "dev")).toBe(false);
     expect(badge(dev)).toHaveTextContent(/^99\+$/);
     expect(dev).toHaveAccessibleName(/^dev\s*\(멘션 99개 이상\)$/);
+  });
+
+  it("한 채널의 세션이 여럿이면 굵게는 하나라도, 배지는 세션 배지의 합(99 에서 자름) — 다른 세션의 글이 사이드바를 굵게 한다", async () => {
+    stubServer({ channels: [A, B, D] });
+    snapshot(
+      unreadRow("a", { conversationId: "a-1", unread: false, mentions: 2 }),
+      unreadRow("a", { conversationId: "a-2", unread: true, mentions: 4 }),
+      unreadRow("b", { conversationId: "b-1", mentions: 60 }),
+      unreadRow("b", { conversationId: "b-2", mentions: 60 }),
+    );
+    renderRoute("/c/d");
+    const general = await link(/general/);
+    expect(bold(general, "general")).toBe(true);
+    expect(badge(general)).toHaveTextContent(/^6$/);
+    const random = await link(/random/);
+    expect(bold(random, "random")).toBe(false);
+    expect(badge(random)).toHaveTextContent(/^99\+$/);
   });
 
   it("현황을 받기 전·실패·끊긴 뒤에는 굵게·배지를 그리지 않는다 — 가진 값이 있어도", async () => {

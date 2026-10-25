@@ -43,6 +43,8 @@ import {
   listChannels,
   listMembers,
 } from "../channels/service";
+import { listConversations } from "../conversations/service";
+import { getConversation } from "../conversations/store";
 import { listPeople } from "../members/people";
 import { getThreadRoot, listMessages, withThreadSummaries } from "../messages/service";
 import { getRunInWorkspace } from "../runs/store";
@@ -186,13 +188,30 @@ export const HANDLERS: Handlers = {
     run: (ctx, input, principal) =>
       searchMessages(ctx.db, ctx.workspaceId, principal.userId ?? "", input, ctx.now()),
   },
+  list_conversations: {
+    authorize: (role) => authorizeRead(role),
+    // REST GET /channels/:id/conversations 와 같은 함수·같은 쪽 — read_messages 의 conversationId 를 얻는 길이다
+    run: (ctx, input) =>
+      listConversations(ctx.db, channelOf(ctx, input.channelId).id, {
+        status: input.status,
+        ...(input.q === undefined ? {} : { q: input.q }),
+        ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+      }),
+  },
   read_messages: {
     authorize: (role) => authorizeRead(role),
+    // 한 세션 안만 읽는다 — 채널 경로로 읽으면 세션이 섞인다(웹 REST /conversations/:id/messages 와 같은 규칙).
+    // 읽기 범위는 채널 단위 그대로다: 채널 안 에이전트도 같은 채널의 다른 세션을 읽을 수 있다(채널 세션 스펙 「wire·REST」 장 —
+    // 막는 것은 세션 밖으로 보내기뿐이다)
     run: (ctx, input) => {
-      channelOf(ctx, input.channelId);
-      if (input.threadRootId !== undefined && !getThreadRoot(ctx.db, input.channelId, input.threadRootId))
-        throw apiError("NOT_FOUND", "thread not found");
-      const page = listMessages(ctx.db, input.channelId, {
+      const conversation = getConversation(ctx.db, input.conversationId, ctx.workspaceId);
+      if (!conversation) throw apiError("NOT_FOUND", "conversation not found");
+      if (input.threadRootId !== undefined) {
+        const root = getThreadRoot(ctx.db, conversation.channelId, input.threadRootId);
+        if (!root || root.conversationId !== conversation.id) throw apiError("NOT_FOUND", "thread not found");
+      }
+      const page = listMessages(ctx.db, conversation.channelId, {
+        conversationId: conversation.id,
         limit: input.limit,
         ...(input.beforeSeq === undefined ? {} : { beforeSeq: input.beforeSeq }),
         ...(input.afterSeq === undefined ? {} : { afterSeq: input.afterSeq }),

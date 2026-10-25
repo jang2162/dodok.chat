@@ -14,6 +14,7 @@
       "dodok_list_agents",
       "dodok_list_people",
       "dodok_search_messages",
+      "dodok_list_conversations",
       "dodok_read_messages",
       "dodok_get_run",
       "dodok_ops_status",

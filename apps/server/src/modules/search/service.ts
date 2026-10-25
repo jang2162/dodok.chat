@@ -45,6 +45,7 @@ type HitRow = {
   id: string;
   channelId: string;
   conversationId: string;
+  conversationTitle: string;
   seq: number;
   authorType: string;
   authorId: string | null;
@@ -60,7 +61,9 @@ type HitRow = {
 const MatchCursor = z.object({ rank: z.number(), createdAt: z.int(), id: z.string() });
 type MatchCursor = z.infer<typeof MatchCursor>;
 
-const SELECT_HIT = sql`m.id AS id, m.channel_id AS channelId, m.conversation_id AS conversationId, m.seq AS seq, m.author_type AS authorType, m.author_id AS authorId,
+const SELECT_HIT = sql`m.id AS id, m.channel_id AS channelId, m.conversation_id AS conversationId,
+  (SELECT v.title FROM conversations v WHERE v.id = m.conversation_id) AS conversationTitle,
+  m.seq AS seq, m.author_type AS authorType, m.author_id AS authorId,
   m.created_at AS createdAt, m.body_md AS bodyMd, m.attachments_json AS attachmentsJson,
   m.thread_root_id AS threadRootId,
   (SELECT c.archived_at IS NOT NULL FROM channels c WHERE c.id = m.channel_id) AS channelArchived`;
@@ -207,6 +210,7 @@ function readableChannels(workspaceId: string, _userId: string): SQL {
 function filters(q: SearchQuery): SQL[] {
   const out: SQL[] = [];
   if (q.channelId) out.push(sql`m.channel_id = ${q.channelId}`);
+  if (q.conversationId) out.push(sql`m.conversation_id = ${q.conversationId}`);
   if (q.authorType) out.push(sql`m.author_type = ${q.authorType}`);
   if (q.authorId) out.push(sql`m.author_id = ${q.authorId}`);
   // from·to 는 서버 현지 날짜 — to 는 그날 끝까지(다음 날 자정 미만)
@@ -259,6 +263,7 @@ function toHit(row: HitRow, needles: string[], handleOf: HandleOf): SearchHit {
       messageId: row.id,
       channelId: row.channelId,
       conversationId: row.conversationId,
+      conversationTitle: row.conversationTitle,
       seq: row.seq,
       authorType: row.authorType,
       authorId: row.authorId ?? undefined,

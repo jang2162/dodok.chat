@@ -4,12 +4,14 @@ import { PushPayload } from "@dodok/shared";
 
 const UUID = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
 /**
- * 알림이 열 수 있는 자리 — 같은 출처 상대 경로 `/c/<uuid>`·`/c/<uuid>/activity`·`/c/<uuid>/t/<uuid>`(스레드) 뿐
- * (스펙 3장, 스레드·검색 스펙 4.2)
+ * 알림이 열 수 있는 자리 — 같은 출처 상대 경로. 서버가 지금 내는 꼴은 세션 아래 `/c/<uuid>/s/<uuid>`·`…/activity`·`…/t/<uuid>`(스레드)다
+ * (apps/server/src/modules/push/triggers.ts `sessionUrl` — 채널 세션 계획 태스크 7). 세션 없는 옛 꼴 `/c/<uuid>`·`/c/<uuid>/activity`·
+ * `/c/<uuid>/t/<uuid>` 도 받는다: 이 판 앞의 서버가 보내 아직 안 누른 알림이 기기에 남아 있고, 웹 라우터가 셋 다 넘긴다(옛 스레드 꼴은
+ * 대화 id = 채널 id 로 두어 「이전 대화」의 스레드만 맞다 — 그 밖은 「세션을 찾을 수 없습니다」 화면이지 다른 곳으로 가지 않는다)
  */
-const SAFE_URL = new RegExp(`^/c/${UUID}(?:/activity|/t/${UUID})?$`);
+const SAFE_URL = new RegExp(`^/c/${UUID}(?:/s/${UUID})?(?:/activity|/t/${UUID})?$`);
 
-/** 알림 누르기가 갈 곳. 위 세 꼴이 아니면(다른 출처·`//`·`..`·쿼리·다른 값) 모두 `/` */
+/** 알림 누르기가 갈 곳. 위 꼴이 아니면(다른 출처·`//`·`..`·쿼리·다른 값) 모두 `/` */
 export function safeNotificationUrl(url: unknown): string {
   return typeof url === "string" && SAFE_URL.test(url) ? url : "/";
 }

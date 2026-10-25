@@ -70,6 +70,8 @@ describe("제어 도구 팩토리 — dodok 세션에서만", () => {
       }
     }
     expect(CONTROL_PLUGIN_TOOL_NAMES).toEqual(CONTROL_TOOLS.map((t) => `dodok_${t.name}`));
+    // 세션 대화 id 를 얻는 길 — read_messages 가 conversationId 를 요구한다
+    expect(CONTROL_PLUGIN_TOOL_NAMES).toContain("dodok_list_conversations");
   });
 
   it("매니페스트 contracts.tools 가 도구 이름과 같다 — 선언하지 않은 이름은 Gateway 가 등록을 거절한다", () => {

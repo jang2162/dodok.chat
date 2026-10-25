@@ -35,7 +35,7 @@ type AckEvent =
   | "run.abort"
   | "run.events.replay"
   | "approval.resolve"
-  | "channel.read"
+  | "conversation.read"
   | "reaction.set";
 const ACK_EVENTS: AckEvent[] = [
   "message.send",
@@ -43,7 +43,7 @@ const ACK_EVENTS: AckEvent[] = [
   "run.abort",
   "run.events.replay",
   "approval.resolve",
-  "channel.read",
+  "conversation.read",
   "reaction.set",
 ];
 
@@ -125,7 +125,7 @@ describe("wire 레이트리밋 (attachWire 단독)", () => {
       "approval.resolve": "approval",
       typing: "chatter",
       "presence.update": "chatter",
-      "channel.read": "chatter",
+      "conversation.read": "chatter",
       "reaction.set": "chatter",
     });
   });

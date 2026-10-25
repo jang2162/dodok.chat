@@ -2,7 +2,7 @@ import { describe, expectTypeOf, it } from "vitest";
 import type { Ack } from "../src/common";
 import type { Conversation, Message } from "../src/domain";
 import type { OpsEvent, OpsUnacked } from "../src/ops";
-import type { ChannelActivity, ChannelRead, ChannelReadUpdate } from "../src/reads";
+import type { ChannelActivity, ConversationRead, ConversationReadUpdate } from "../src/reads";
 import type { SetupStatus } from "../src/setup";
 import type { ClientToServerEvents, MessageSend, ServerToClientEvents } from "../src/wire";
 
@@ -18,7 +18,7 @@ describe("wire event maps", () => {
       | "approval.resolve"
       | "typing"
       | "presence.update"
-      | "channel.read"
+      | "conversation.read"
       | "reaction.set"
     >();
   });
@@ -35,7 +35,7 @@ describe("wire event maps", () => {
       | "channel.member.changed"
       | "conversation.created"
       | "conversation.updated"
-      | "channel.read"
+      | "conversation.read"
       | "channel.activity"
       | "people.changed"
       | "agents.changed"
@@ -62,12 +62,16 @@ describe("wire event maps", () => {
       unacked: OpsUnacked;
     }>();
   });
-  it("channel.read — 클라이언트는 seq 를 보내고 ack 으로 읽음 위치를, 서버는 그 사용자의 다른 소켓에 읽음 위치를", () => {
-    expectTypeOf<Parameters<ClientToServerEvents["channel.read"]>[0]>().toEqualTypeOf<ChannelRead>();
-    expectTypeOf<Parameters<ClientToServerEvents["channel.read"]>[1]>().toEqualTypeOf<
+  it("conversation.read — 클라이언트는 seq 를 보내고 ack 으로 읽음 위치를, 서버는 그 사용자의 다른 소켓에 읽음 위치를", () => {
+    expectTypeOf<
+      Parameters<ClientToServerEvents["conversation.read"]>[0]
+    >().toEqualTypeOf<ConversationRead>();
+    expectTypeOf<Parameters<ClientToServerEvents["conversation.read"]>[1]>().toEqualTypeOf<
       Ack<{ lastReadSeq: number }>
     >();
-    expectTypeOf<Parameters<ServerToClientEvents["channel.read"]>[0]>().toEqualTypeOf<ChannelReadUpdate>();
+    expectTypeOf<
+      Parameters<ServerToClientEvents["conversation.read"]>[0]
+    >().toEqualTypeOf<ConversationReadUpdate>();
   });
   it("channel.activity 페이로드는 본문 없는 ChannelActivity", () => {
     expectTypeOf<Parameters<ServerToClientEvents["channel.activity"]>[0]>().toEqualTypeOf<ChannelActivity>();

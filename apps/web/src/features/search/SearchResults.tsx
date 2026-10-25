@@ -77,6 +77,9 @@ export function SearchResults({
                   <span className="font-medium text-foreground">
                     #{nameOf.get(hit.channelId) ?? "알 수 없는 채널"}
                   </span>
+                  <span className="max-w-48 truncate" title={hit.conversationTitle}>
+                    {hit.conversationTitle}
+                  </span>
                   <span>{author(hit).name}</span>
                   <time dateTime={hit.createdAt}>{WHEN.format(new Date(hit.createdAt))}</time>
                   {hit.channelArchived && <span className="rounded-sm bg-muted px-1">보관됨</span>}

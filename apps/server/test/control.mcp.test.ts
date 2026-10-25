@@ -341,6 +341,7 @@ describe("/mcp", () => {
       await client.connect(transport);
       const { tools } = await client.listTools();
       expect(tools).toHaveLength(CONTROL_TOOLS.length);
+      expect(tools.map((t) => t.name)).toContain("list_conversations");
       const result = await client.callTool({ name: "list_people", arguments: {} });
       expect(result.isError).not.toBe(true);
     } finally {

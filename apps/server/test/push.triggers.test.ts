@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { type TriggerLookups, targetsForApproval, targetsForMessage } from "../src/modules/push/triggers";
 
 const CH = "0199a000-0000-7000-8000-000000000001";
+/** CH 의 세션 — 채널 id 와 다르게 둬 링크·tag 가 세션을 가리키는지 보인다 */
+const CONV = "0199a000-0000-7000-8000-000000000c01";
 const ALICE = "0199a000-0000-7000-8000-00000000a11c";
 const BOB = "0199a000-0000-7000-8000-000000000b0b";
 const SAM = "0199a000-0000-7000-8000-000000005a70";
@@ -27,7 +29,7 @@ function msg(over: Partial<Message>): Message {
   return {
     id: "0199a000-0000-7000-8000-0000000000ff",
     channelId: CH,
-    conversationId: CH,
+    conversationId: CONV,
     seq: 1,
     kind: "normal",
     authorType: "user",
@@ -48,7 +50,7 @@ function approval(over: Partial<Approval>): Approval {
     providerApprovalId: "plugin:x",
     kind: "plugin",
     channelId: CH,
-    conversationId: CH,
+    conversationId: CONV,
     agentId: DEV,
     title: "t",
     severity: "warning",
@@ -72,19 +74,39 @@ describe("targetsForMessage — 멘션(스펙 5.2 첫 줄)", () => {
     expect(t).toEqual([
       {
         userId: ALICE,
+        conversationId: CONV,
         payload: {
           kind: "mention",
           channelId: CH,
           title: "dodok",
           body: "@dev가 #프로젝트에서 불렀습니다",
-          url: `/c/${CH}`,
-          tag: `mention:${CH}`,
+          url: `/c/${CH}/s/${CONV}`,
+          tag: `mention:${CONV}`,
         },
       },
     ]);
     expect(JSON.stringify(t)).not.toContain("비밀");
     // 계약 스키마를 통과한다(상한 포함)
     for (const x of t) expect(PushPayload.safeParse(x.payload).success).toBe(true);
+  });
+
+  it("[판정 PS7] 같은 채널의 다른 세션 멘션은 그 세션을 가리킨다 — 링크·tag·거르기 세션이 메시지의 세션", () => {
+    const OTHER_CONV = "0199a000-0000-7000-8000-000000000c02";
+    const t = targetsForMessage(
+      msg({
+        authorType: "agent",
+        authorId: DEV,
+        conversationId: OTHER_CONV,
+        mentions: { users: [ALICE], agents: [] },
+      }),
+      L,
+    );
+    expect(t).toEqual([
+      expect.objectContaining({
+        conversationId: OTHER_CONV,
+        payload: expect.objectContaining({ url: `/c/${CH}/s/${OTHER_CONV}`, tag: `mention:${OTHER_CONV}` }),
+      }),
+    ]);
   });
 
   it("[Review Focus 3] 자기 멘션은 없다, 사람이 사람을 멘션하면 있다(josa(alice) = 「가」 — 끝 묵음 e 앞 c)", () => {
@@ -114,8 +136,8 @@ describe("targetsForMessage — 멘션(스펙 5.2 첫 줄)", () => {
       channelId: CH,
       title: "dodok",
       body: "자동화 새벽 배포가 #프로젝트에서 불렀습니다",
-      url: `/c/${CH}`,
-      tag: `mention:${CH}`,
+      url: `/c/${CH}/s/${CONV}`,
+      tag: `mention:${CONV}`,
     });
     for (const x of dawn) expect(PushPayload.safeParse(x.payload).success).toBe(true);
     expect(by(MORNING)[0]?.payload.body).toBe("자동화 아침 점검이 #프로젝트에서 불렀습니다");
@@ -141,12 +163,13 @@ describe("targetsForMessage — 멘션(스펙 5.2 첫 줄)", () => {
         authorType: "agent",
         authorId: GHOST,
         channelId: GHOST,
+        conversationId: GHOST,
         mentions: { users: [ALICE], agents: [] },
       }),
       L,
     );
     expect(t[0]?.payload.body).toBe("누군가가 #채널에서 불렀습니다");
-    expect(t[0]?.payload).toMatchObject({ url: `/c/${GHOST}`, tag: `mention:${GHOST}` });
+    expect(t[0]?.payload).toMatchObject({ url: `/c/${GHOST}/s/${GHOST}`, tag: `mention:${GHOST}` });
   });
 
   it("에이전트 id 와 같은 사람 id 가 멘션돼도 에이전트 작성자는 자기 멘션이 아니다 — 작성자 = 사람일 때만 뺀다", () => {
@@ -183,9 +206,23 @@ describe("targetsForMessage — 시스템 메시지(스펙 5.2 셋째 줄)", () 
     });
     const t = targetsForMessage(m, L);
     expect(t.map((x) => [x.userId, x.payload.kind, x.payload.body, x.payload.url, x.payload.tag])).toEqual([
-      [ALICE, "relay_limit", "#프로젝트의 에이전트 대화가 한도에 닿았습니다", `/c/${CH}`, `relay:${CH}`],
-      [BOB, "relay_limit", "#프로젝트의 에이전트 대화가 한도에 닿았습니다", `/c/${CH}`, `relay:${CH}`],
+      [
+        ALICE,
+        "relay_limit",
+        "#프로젝트의 에이전트 대화가 한도에 닿았습니다",
+        `/c/${CH}/s/${CONV}`,
+        `relay:${CONV}`,
+      ],
+      [
+        BOB,
+        "relay_limit",
+        "#프로젝트의 에이전트 대화가 한도에 닿았습니다",
+        `/c/${CH}/s/${CONV}`,
+        `relay:${CONV}`,
+      ],
     ]);
+    // 거르기는 그 세션으로(채널 세션 계획 판정 PS7)
+    expect(t.map((x) => x.conversationId)).toEqual([CONV, CONV]);
     expect(t[0]?.payload.title).toBe("dodok");
     expect(JSON.stringify(t)).not.toContain("상한 2");
   });
@@ -222,11 +259,13 @@ describe("targetsForApproval (스펙 5.2 둘째 줄)", () => {
         channelId: CH,
         title: "dodok",
         body: "#프로젝트에 승인 요청이 있습니다",
-        url: `/c/${CH}/activity`,
+        url: `/c/${CH}/s/${CONV}/activity`,
         tag: `approval:${AP}`,
       },
       expect.objectContaining({ tag: `approval:${AP}` }),
     ]);
+    expect(t.map((x) => x.conversationId)).toEqual([CONV, CONV]);
+    for (const x of t) expect(PushPayload.safeParse(x.payload).success).toBe(true);
     expect(JSON.stringify(t)).not.toMatch(/rm -rf|비밀|기밀|Bash/);
   });
 
@@ -258,16 +297,19 @@ describe("targetsForMessage — 스레드(스펙 4.2 푸시)", () => {
     expect(t).toEqual([
       {
         userId: ALICE,
+        conversationId: CONV,
         payload: {
           kind: "mention",
           channelId: CH,
           title: "dodok",
           body: "@dev가 #프로젝트 스레드에서 불렀습니다",
-          url: `/c/${CH}/t/${ROOT}`,
+          url: `/c/${CH}/s/${CONV}/t/${ROOT}`,
           tag: `mention:t:${ROOT}`,
         },
       },
     ]);
+    // tag 상한 80 — 스레드 꼴이 가장 길다
+    expect(`mention:t:${ROOT}`.length).toBeLessThanOrEqual(80);
     for (const x of t) expect(PushPayload.safeParse(x.payload).success).toBe(true);
   });
 
@@ -283,8 +325,8 @@ describe("targetsForMessage — 스레드(스펙 4.2 푸시)", () => {
       L,
     );
     expect(t.map((x) => [x.payload.body, x.payload.url])).toEqual([
-      ["#프로젝트 스레드의 에이전트 대화가 한도에 닿았습니다", `/c/${CH}/t/${ROOT}`],
-      ["#프로젝트 스레드의 에이전트 대화가 한도에 닿았습니다", `/c/${CH}/t/${ROOT}`],
+      ["#프로젝트 스레드의 에이전트 대화가 한도에 닿았습니다", `/c/${CH}/s/${CONV}/t/${ROOT}`],
+      ["#프로젝트 스레드의 에이전트 대화가 한도에 닿았습니다", `/c/${CH}/s/${CONV}/t/${ROOT}`],
     ]);
     for (const x of t) expect(PushPayload.safeParse(x.payload).success).toBe(true);
   });

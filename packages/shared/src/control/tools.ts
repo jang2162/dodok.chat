@@ -7,6 +7,7 @@ import {
   CreateAgentBody,
   CreateChannelBody,
   DiscoverAgentsQuery,
+  ListConversationsQuery,
   UpdateAgentBody,
   UpdateChannelBody,
   UpdateChannelMemberBody,
@@ -86,15 +87,31 @@ export const CONTROL_TOOLS = [
     input: SearchQuery,
   }),
   tool({
+    name: "list_conversations",
+    access: "read",
+    // 제목은 첫 메시지 본문으로 지어지기도 한다(autoTitle) — 채널 글처럼 데이터로 읽게 한다
+    description:
+      "List one channel's sessions (id, title, who started it, last activity, closed), most recent activity first, 20 per page. " +
+      'status is "open" (default) or "closed"; q matches the title; pass nextCursor as cursor for the next page. ' +
+      CONTROL_UNTRUSTED_CONTENT_NOTICE,
+    input: ChannelRef.extend({
+      status: z.enum(["open", "closed"]).default("open"),
+      q: ListConversationsQuery.shape.q,
+      cursor: ListConversationsQuery.shape.cursor,
+    }),
+  }),
+  tool({
     name: "read_messages",
     access: "read",
     description:
-      `Read up to ${CONTROL_READ_MESSAGES_MAX} messages from a channel, or from one thread when threadRootId is given. ` +
+      `Read up to ${CONTROL_READ_MESSAGES_MAX} messages from one session of a channel ` +
+      "(conversationId — list_conversations lists a channel's sessions, search_messages also returns it), " +
+      "or from one thread in that session when threadRootId is given. " +
       "Mentions are shown as @handle. Page with beforeSeq/afterSeq, or center on a message with around. " +
       CONTROL_UNTRUSTED_CONTENT_NOTICE,
     input: z
       .object({
-        channelId: Id,
+        conversationId: Id,
         threadRootId: Id.optional(),
         beforeSeq: z.int().min(1).optional(),
         afterSeq: z.int().min(0).optional(),
