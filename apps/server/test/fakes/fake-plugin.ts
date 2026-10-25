@@ -59,7 +59,7 @@ export type FakePlugin = {
   control(call: Omit<BridgeControlCall, "callId"> & { callId?: string }): Promise<ControlResult>;
   /** 브리지 HTTP 로 첨부를 올린다(실제 플러그인 `uploadMedia` 와 같은 헤더). 2xx 가 아니면 상태·본문을 싣고 던진다 */
   uploadAttachment(input: {
-    channelId: string;
+    conversationId: string;
     bytes: Uint8Array;
     name?: string;
     mime?: string;
@@ -205,12 +205,12 @@ export async function startFakePlugin(opts: FakePluginOptions): Promise<FakePlug
         callId: call.callId ?? randomUUID(),
       })) as ControlResult;
     },
-    async uploadAttachment({ channelId, bytes, name, mime }) {
+    async uploadAttachment({ conversationId, bytes, name, mime }) {
       const res = await fetch(`${opts.bridgeUrl}${BRIDGE_ATTACHMENTS_PATH}`, {
         method: "POST",
         headers: {
           authorization: `Bearer ${token}`,
-          [BRIDGE_ATTACHMENT_HEADERS.channelId]: channelId,
+          [BRIDGE_ATTACHMENT_HEADERS.conversationId]: conversationId,
           ...(name === undefined ? {} : { [BRIDGE_ATTACHMENT_HEADERS.fileName]: encodeURIComponent(name) }),
           "content-type": mime ?? "application/octet-stream",
         },

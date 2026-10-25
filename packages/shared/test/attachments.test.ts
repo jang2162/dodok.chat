@@ -60,7 +60,7 @@ describe("첨부 계약", () => {
   it("OutboundMessage 는 attachmentIds 를 받고 옛 attachments 는 버린다", () => {
     const m = OutboundMessage.parse({
       outboundId: "o1",
-      channelId: ID,
+      conversationId: ID,
       agentId: "dev",
       sessionKey: `agent:dev:dodok:channel:${ID}`,
       text: "",
@@ -74,7 +74,7 @@ describe("첨부 계약", () => {
   it("OutboundMessage.attachmentIds 는 10개까지", () => {
     const base = {
       outboundId: "o1",
-      channelId: ID,
+      conversationId: ID,
       agentId: "dev",
       sessionKey: `agent:dev:dodok:channel:${ID}`,
       text: "",

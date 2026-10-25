@@ -29,6 +29,7 @@ describe("principalForRunner·principalForBridge", () => {
   ) => {
     const queued = insertRun(db, {
       channelId: seed.channelId,
+      conversationId: seed.channelId,
       agentId: seed.agentId,
       triggerKind: "mention",
       rootMessageId: uuid(),

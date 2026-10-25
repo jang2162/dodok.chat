@@ -38,7 +38,7 @@ function providerApproval(sessionKey: string, patch: Partial<ProviderApproval> =
     kind: "plugin",
     sessionKey,
     providerAgentId: parts[1] ?? "dev",
-    channelId: parts[4] ?? uuid(),
+    conversationId: parts[4] ?? uuid(),
     toolCallId: `toolu_${++seq}`,
     toolName: "Write",
     pluginId: "fs",
@@ -310,7 +310,7 @@ describe("승인 저장·런 상관·wire 중계 (앱 부팅, FakeAdapter)", () 
 
     adapter.emitApproval(
       providerApproval(sessionKeyOf("dev", channel.id), {
-        channelId: newChannel().id,
+        conversationId: newChannel().id,
         providerAgentId: "nobody",
       }),
     );
@@ -671,6 +671,7 @@ describe("승인 저장·런 상관·wire 중계 (앱 부팅, FakeAdapter)", () 
       providerApprovalId: `plugin:${uuid()}`,
       kind: "plugin",
       channelId: other.channelId,
+      conversationId: other.channelId,
       agentId: other.agentId,
       title: "남의 워크스페이스",
       severity: "warning",
@@ -1024,6 +1025,7 @@ describe("승인 store (메모리 DB)", () => {
     providerApprovalId: `plugin:${uuid()}`,
     kind: "plugin",
     channelId: "",
+    conversationId: "",
     agentId: "",
     title: "Write 실행",
     severity: "warning",
@@ -1038,7 +1040,7 @@ describe("승인 store (메모리 DB)", () => {
     const db = newTestDb();
     const { channelId, agentId, userId } = seedChannelWithAgent(db);
     const input = (patch: Partial<approvalStore.ApprovalRowInput> = {}) =>
-      base({ channelId, agentId, ...patch });
+      base({ channelId, conversationId: channelId, agentId, ...patch });
     return { db, channelId, agentId, userId, input };
   }
 
@@ -1183,6 +1185,7 @@ describe("승인 store (메모리 DB)", () => {
     const { db, input, channelId, agentId } = setup();
     const run = insertRun(db, {
       channelId,
+      conversationId: channelId,
       agentId,
       triggerKind: "mention",
       rootMessageId: uuid(),
@@ -1318,7 +1321,7 @@ describe("승인 대기 중 런 시계 (가짜 타이머, 메모리 DB)", () => 
     /** 멘션 런 하나를 띄워 툴을 연 뒤(= tool), 승인 하나를 요구해 awaiting_approval 로 만든다 */
     async function awaitingApproval(patch: Partial<ProviderApproval> = {}) {
       const message = createUserMessage(db, bus, {
-        channelId: ids.channelId,
+        conversationId: ids.channelId,
         authorId: ids.userId,
         bodyMd: "@dev 파일 써줘",
         clientMsgId: `c-${++seq}`,
@@ -1327,6 +1330,7 @@ describe("승인 대기 중 런 시계 (가짜 타이머, 메모리 DB)", () => 
         {
           agentId: ids.agentId,
           channelId: ids.channelId,
+          conversationId: ids.channelId,
           triggerKind: "mention",
           rootMessageId: message.id,
           relayDepth: 0,

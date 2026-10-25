@@ -6,6 +6,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { v7 as uuid } from "uuid";
+import { dodokSessionKey } from "@dodok/shared";
 import { describe, expect, it } from "vitest";
 import * as authSchema from "../src/db/auth-schema";
 import { createDb, type Db } from "../src/db/client";
@@ -70,12 +71,25 @@ function seed(db: Db) {
       createdAt: new Date(),
     })
     .run();
+  // 채널 만들기(createChannel)처럼 id 가 채널 id 인 「이전 대화」 — 메시지는 대화 FK 를 갖는다
+  db.insert(schema.conversations)
+    .values({
+      id: ch,
+      channelId: ch,
+      title: "이전 대화",
+      titleSource: "user",
+      createdByType: "user",
+      createdById: user,
+      createdAt: new Date(),
+    })
+    .run();
   return { ws, user, ch };
 }
 
 const msg = (ch: string, seq: number, extra: Partial<typeof messages.$inferInsert> = {}) => ({
   id: uuid(),
   channelId: ch,
+  conversationId: ch,
   seq,
   kind: "normal",
   authorType: "user",
@@ -86,7 +100,7 @@ const msg = (ch: string, seq: number, extra: Partial<typeof messages.$inferInser
 });
 
 describe("db", () => {
-  it("마이그레이션이 29개 테이블을 만든다(FTS5 그림자 테이블 제외)", () => {
+  it("마이그레이션이 30개 테이블을 만든다(FTS5 그림자 테이블 제외)", () => {
     const db = createDb(":memory:");
     const rows = db.all<{ name: string }>(sql`select name from sqlite_master where type = 'table'`);
     const names = rows
@@ -105,6 +119,7 @@ describe("db", () => {
       "channel_reads",
       "channels",
       "component_interactions",
+      "conversations",
       "gateways",
       "invites",
       "memberships",
@@ -775,6 +790,8 @@ describe("db", () => {
         .values({ userId: uuid(), channelId: ch, lastReadSeq: 0, updatedAt: new Date() })
         .run(),
     ).toThrow(/FOREIGN KEY/);
+    // 채널의 대화가 채널을 가리킨다(cascade 없음) — 채널을 지우려면 대화부터
+    db.delete(schema.conversations).where(eq(schema.conversations.channelId, ch)).run();
     db.delete(channels).where(eq(channels.id, ch)).run();
     expect(db.select().from(channelReads).all()).toEqual([]);
   });
@@ -800,6 +817,7 @@ describe("db", () => {
         .values({
           id: uuid(),
           channelId: ch,
+          conversationId: ch,
           agentId,
           triggerKind: "mention",
           rootMessageId: uuid(),
@@ -821,6 +839,7 @@ describe("db", () => {
           providerApprovalId: "plugin:same",
           kind: "plugin",
           channelId: ch,
+          conversationId: ch,
           agentId,
           title: "t",
           severity: "warning",
@@ -897,10 +916,22 @@ describe("message_reactions 마이그레이션", () => {
             createdAt,
           })
           .run();
+        db.insert(schema.conversations)
+          .values({
+            id: ch,
+            channelId: ch,
+            title: "이전 대화",
+            titleSource: "user",
+            createdByType: "user",
+            createdById: userId,
+            createdAt,
+          })
+          .run();
         db.insert(messages)
           .values({
             id: msgId,
             channelId: ch,
+            conversationId: ch,
             seq: 1,
             kind: "normal",
             authorType: "user",
@@ -917,6 +948,212 @@ describe("message_reactions 마이그레이션", () => {
         add("👎");
         db.delete(messages).where(eq(messages.id, msgId)).run();
         expect(db.select().from(schema.messageReactions).all()).toEqual([]);
+      } finally {
+        sqlite.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("conversations 마이그레이션", () => {
+  it("_approval_requested_by 까지 적용된 DB 에 얹으면 채널마다 id 가 채널 id 인 「이전 대화」가 생기고 모든 행이 그리로 옮겨진다 — 자식 행·FTS 는 그대로", () => {
+    const dir = mkdtempSync(join(tmpdir(), "dodok-db-mig-"));
+    try {
+      const older = migrationsUpTo(dir, "_approval_requested_by");
+      const sqlite = new Database(join(dir, "app.db"));
+      // 서버(createDb)처럼 FK 를 켠 채로 — 마이그레이터 트랜잭션 안의 PRAGMA foreign_keys=OFF 는 아무 일도 하지 않는다
+      sqlite.pragma("foreign_keys = ON");
+      try {
+        const db = drizzle(sqlite, { schema: { ...schema, ...authSchema } });
+        migrate(db, { migrationsFolder: older });
+        const t0 = Date.parse("2026-10-20T00:00:00.000Z");
+        const ws = uuid();
+        const user = uuid();
+        const agent = uuid();
+        const busy = uuid();
+        const quiet = uuid();
+        const [m1, m2, m3] = [uuid(), uuid(), uuid()];
+        const run = uuid();
+        // 옛 스키마에는 conversation_id 가 없다 — 스키마 객체 대신 SQL 로 넣는다
+        sqlite.prepare("INSERT INTO workspaces (id, name, created_at) VALUES (?, 'w', ?)").run(ws, t0);
+        sqlite
+          .prepare(
+            "INSERT INTO users (id, workspace_id, handle, display_name, auth_provider, created_at) VALUES (?, ?, 'mia', 'Mia', 'local', ?)",
+          )
+          .run(user, ws, t0);
+        sqlite
+          .prepare(
+            "INSERT INTO agents (id, workspace_id, provider, provider_agent_id, handle, name, created_at) VALUES (?, ?, 'openclaw', 'dev', 'dev', 'Dev', ?)",
+          )
+          .run(agent, ws, t0);
+        const insertChannel = sqlite.prepare(
+          'INSERT INTO channels (id, workspace_id, name, relay_policy_json, visibility, created_by, created_at, last_seq) VALUES (?, ?, ?, \'{"maxRelayTurns":4,"allowPairs":"all"}\', \'public\', ?, ?, ?)',
+        );
+        insertChannel.run(busy, ws, "busy", user, t0, 3);
+        insertChannel.run(quiet, ws, "quiet", user, t0 + 1000, 0);
+        const insertMessage = sqlite.prepare(
+          "INSERT INTO messages (id, channel_id, seq, kind, author_type, author_id, body_md, mentions_json, attachments_json, thread_root_id, created_at) VALUES (?, ?, ?, 'normal', 'user', ?, ?, '{\"agents\":[],\"users\":[]}', ?, ?, ?)",
+        );
+        insertMessage.run(
+          m1,
+          busy,
+          1,
+          user,
+          "배포 절차를 정리합니다",
+          '[{"id":"' +
+            uuid() +
+            '","kind":"file","url":"artifact://x","name":"plan.txt","mime":"text/plain","size":1}]',
+          null,
+          t0 + 1,
+        );
+        insertMessage.run(m2, busy, 2, user, "두 번째", "[]", null, t0 + 2);
+        insertMessage.run(m3, busy, 3, user, "답글", "[]", m1, t0 + 3);
+        sqlite
+          .prepare(
+            "INSERT INTO attachments (id, channel_id, uploader_type, uploader_id, kind, name, mime, size, sha256, message_id, created_at) VALUES (?, ?, 'user', ?, 'file', 'plan.txt', 'text/plain', 1, 'ab', ?, ?)",
+          )
+          .run(uuid(), busy, user, m1, t0);
+        sqlite
+          .prepare(
+            "INSERT INTO message_reactions (message_id, user_id, emoji, created_at) VALUES (?, ?, '👍', ?)",
+          )
+          .run(m1, user, t0);
+        sqlite
+          .prepare(
+            "INSERT INTO component_interactions (id, message_id, component_id, user_id, item_id, values_json, created_at) VALUES (?, ?, 'cmp_1', ?, 'ok', '{}', ?)",
+          )
+          .run(uuid(), m2, user, t0);
+        sqlite
+          .prepare(
+            "INSERT INTO runs (id, channel_id, agent_id, trigger_kind, trigger_message_id, root_message_id, session_key, status, created_at) VALUES (?, ?, ?, 'mention', ?, ?, ?, 'done', ?)",
+          )
+          .run(run, busy, agent, m1, m1, `agent:dev:dodok:channel:${busy}`, t0);
+        sqlite
+          .prepare(
+            "INSERT INTO run_events (id, run_id, seq, type, payload_json, created_at) VALUES (?, ?, 1, 'RUN_STARTED', '{}', ?)",
+          )
+          .run(uuid(), run, t0);
+        sqlite
+          .prepare(
+            "INSERT INTO approvals (id, provider_approval_id, kind, channel_id, agent_id, run_id, title, severity, allowed_decisions_json, status, expires_at, created_at) VALUES (?, 'plugin:1', 'plugin', ?, ?, ?, 't', 'warning', '[\"deny\"]', 'pending', ?, ?)",
+          )
+          .run(uuid(), busy, agent, run, t0, t0);
+        const insertSession = sqlite.prepare(
+          "INSERT INTO agent_sessions (id, channel_id, agent_id, session_key, prompt_revision_at_start, thread_root_id) VALUES (?, ?, ?, ?, 1, ?)",
+        );
+        insertSession.run(uuid(), busy, agent, `agent:dev:dodok:channel:${busy}`, null);
+        insertSession.run(uuid(), busy, agent, `agent:dev:dodok:channel:${busy}:thread:${m1}`, m1);
+
+        migrate(db, { migrationsFolder: migrationsFolder() });
+
+        const convs = db.select().from(schema.conversations).all();
+        expect(convs.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())).toEqual([
+          {
+            id: busy,
+            channelId: busy,
+            title: "이전 대화",
+            titleSource: "user",
+            createdByType: "user",
+            createdById: user,
+            createdAt: new Date(t0),
+            lastMessageAt: new Date(t0 + 3),
+            lastSeq: 3,
+            closedAt: null,
+            closedBy: null,
+          },
+          {
+            id: quiet,
+            channelId: quiet,
+            title: "이전 대화",
+            titleSource: "user",
+            createdByType: "user",
+            createdById: user,
+            createdAt: new Date(t0 + 1000),
+            lastMessageAt: null,
+            lastSeq: 0,
+            closedAt: null,
+            closedBy: null,
+          },
+        ]);
+        const msgs = db.select().from(messages).all();
+        expect(msgs).toHaveLength(3);
+        for (const m of msgs) expect(m.conversationId).toBe(busy);
+        expect(
+          db
+            .select()
+            .from(schema.runs)
+            .all()
+            .map((r) => r.conversationId),
+        ).toEqual([busy]);
+        expect(
+          db
+            .select()
+            .from(schema.approvals)
+            .all()
+            .map((a) => a.conversationId),
+        ).toEqual([busy]);
+        const sessions = db.select().from(schema.agentSessions).all();
+        expect(sessions).toHaveLength(2);
+        for (const s of sessions) {
+          expect(s.conversationId).toBe(busy);
+          expect(s.sessionKey).toBe(dodokSessionKey("dev", s.conversationId, s.threadRootId ?? undefined));
+        }
+        // 잠시 옮겨 둔 자식 행이 그대로 돌아왔다(리액션은 cascade 라 옮기지 않으면 조용히 지워진다)
+        expect(
+          db
+            .select()
+            .from(schema.attachments)
+            .all()
+            .map((a) => a.messageId),
+        ).toEqual([m1]);
+        expect(
+          db
+            .select()
+            .from(schema.messageReactions)
+            .all()
+            .map((r) => r.messageId),
+        ).toEqual([m1]);
+        expect(
+          db
+            .select()
+            .from(schema.componentInteractions)
+            .all()
+            .map((r) => r.messageId),
+        ).toEqual([m2]);
+        expect(
+          db
+            .select()
+            .from(schema.runEvents)
+            .all()
+            .map((r) => r.runId),
+        ).toEqual([run]);
+        expect(sqlite.pragma("foreign_key_check")).toEqual([]);
+        expect(
+          sqlite.prepare("SELECT name FROM sqlite_temp_master WHERE name LIKE '__park_%'").all(),
+        ).toEqual([]);
+        // FTS — 다시 만든 표의 rowid 로 색인했고 트리거가 다시 있다
+        const hit = (q: string) =>
+          sqlite
+            .prepare(
+              "SELECT m.id FROM messages_fts f JOIN messages m ON m.rowid = f.rowid WHERE messages_fts MATCH ?",
+            )
+            .all(`"${q}"`)
+            .map((r) => (r as { id: string }).id);
+        expect(hit("배포 절차")).toEqual([m1]);
+        expect(hit("plan.txt")).toEqual([m1]);
+        expect(hit("두 번째")).toEqual([m2]);
+        const triggers = sqlite
+          .prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'messages' ORDER BY name",
+          )
+          .all();
+        expect(triggers).toEqual([
+          { name: "messages_fts_ad" },
+          { name: "messages_fts_ai" },
+          { name: "messages_fts_au" },
+        ]);
       } finally {
         sqlite.close();
       }

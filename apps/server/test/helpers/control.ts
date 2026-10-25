@@ -44,6 +44,7 @@ export function openRun(
   if (!opts.agent) addMember(app.db, channel.id, { memberType: "agent", memberId: agent.id }, app.logger);
   const queued = insertRun(app.db, {
     channelId: channel.id,
+    conversationId: channel.id, // 채널을 만들면 id 가 같은 「이전 대화」가 생긴다
     agentId: agent.id,
     triggerKind: "mention",
     rootMessageId: uuid(),

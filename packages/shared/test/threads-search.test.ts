@@ -47,6 +47,7 @@ describe("ThreadSummary·Message", () => {
     const base = {
       id: ID(2),
       channelId: ID(3),
+      conversationId: ID(3),
       seq: 1,
       kind: "normal",
       authorType: "user",
@@ -81,6 +82,7 @@ describe("ChannelSubscribeResult.threadRoots", () => {
     const rootMsg = {
       id: ID(2),
       channelId: ID(3),
+      conversationId: ID(3),
       seq: 1,
       kind: "normal",
       authorType: "user",
@@ -127,6 +129,7 @@ describe("브리지 스레드 계약", () => {
       deliveryId: ID(1),
       kind: "message",
       channelId: ID(2),
+      conversationId: ID(2),
       agentId: "dev",
       sessionKey: `agent:dev:dodok:channel:${ID(2)}:thread:${ID(5)}`,
       runId: ID(3),
@@ -139,7 +142,7 @@ describe("브리지 스레드 계약", () => {
 
     const outbound = {
       outboundId: "o1",
-      channelId: ID(2),
+      conversationId: ID(2),
       agentId: "dev",
       sessionKey: deliver.sessionKey,
       text: "답",

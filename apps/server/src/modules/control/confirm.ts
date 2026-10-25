@@ -87,6 +87,7 @@ export function createConfirmations(deps: ConfirmDeps): Confirmations {
       const approval = deps.approvals.openControl({
         runId: run.id,
         channelId: run.channelId,
+        conversationId: run.conversationId,
         agentId: run.agentId,
         requestedBy: req.requestedBy,
         toolName: req.toolName,

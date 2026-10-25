@@ -19,7 +19,7 @@ const hello = {
 
 const outbound = {
   outboundId: "dodok-reply-1",
-  channelId: CH,
+  conversationId: CH,
   agentId: "main",
   sessionKey: `agent:main:dodok:channel:${CH}`,
   text: "PONG",
@@ -51,11 +51,11 @@ describe("parseBridgeClientEvent", () => {
   });
 
   it("검증 실패는 VALIDATION 과 이슈 경로", () => {
-    const res = parseBridgeClientEvent("outbound.message", { ...outbound, channelId: "c1" });
+    const res = parseBridgeClientEvent("outbound.message", { ...outbound, conversationId: "c1" });
     expect(res.ok).toBe(false);
     if (res.ok) return;
     expect(res.error.code).toBe("VALIDATION");
-    expect(res.error.message).toContain("channelId");
+    expect(res.error.message).toContain("conversationId");
   });
 
   it("status·outbound.typing", () => {

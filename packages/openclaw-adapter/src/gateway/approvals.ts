@@ -228,7 +228,7 @@ export function mergeApproval(previous: ProviderApproval, next: ProviderApproval
     kind: previous.kind,
     sessionKey: previous.sessionKey,
     providerAgentId: previous.providerAgentId,
-    channelId: previous.channelId,
+    conversationId: previous.conversationId,
     title: previous.title,
     severity: previous.severity,
     allowedDecisions: previous.allowedDecisions,
@@ -332,7 +332,7 @@ function normalize(input: Normalizable): ProviderApproval | undefined {
     kind,
     sessionKey: input.sessionKey,
     providerAgentId: session.providerAgentId,
-    channelId: session.channelId,
+    conversationId: session.conversationId,
     ...opt("threadRootId", session.threadRootId),
     // 상관 키라 자르면 안 된다(자른 id 는 어느 툴 호출과도 안 맞는다) — 상한을 넘으면 없는 셈 치고 채널 수준 승인이 된다
     ...opt("toolCallId", keyWithin(nonEmpty(details?.toolCallId), MAX.toolCallId)),

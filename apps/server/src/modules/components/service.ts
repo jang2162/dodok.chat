@@ -50,7 +50,7 @@ export async function interact(deps: InteractDeps, input: InteractInput): Promis
   // 관문은 저장·소비 전에 본다 — 막히면 버튼이 살아 있어 한도가 풀린 뒤 다시 누른다(Review Focus 5).
   // 검사를 먼저 한 번 돌려 누를 수 없는 아이템(만료·소비·대상 없음)은 한도보다 그 사유로 거절한다
   const pre = checkInteraction(db, deps.workspaceId, input, now);
-  if (deps.gate.check(pre.message.channelId, threadOf(pre.target, pre.message))) {
+  if (deps.gate.check(pre.message.conversationId, threadOf(pre.target, pre.message))) {
     throw apiError("RUN_LIMIT", "daily run limit reached");
   }
 
@@ -95,6 +95,7 @@ export async function interact(deps: InteractDeps, input: InteractInput): Promis
       {
         agentId: run.agentId,
         channelId: run.channelId,
+        conversationId: run.conversationId,
         triggerKind: run.triggerKind,
         rootMessageId: run.rootMessageId,
         relayDepth: run.relayDepth,
@@ -109,6 +110,7 @@ export async function interact(deps: InteractDeps, input: InteractInput): Promis
     {
       agentId: target.agentId,
       channelId: message.channelId,
+      conversationId: message.conversationId,
       triggerKind: target.triggerKind,
       rootMessageId: message.id,
       relayDepth: 0,

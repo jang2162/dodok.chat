@@ -87,7 +87,7 @@ async function seed(app: App): Promise<{ channelId: string; sessionKey: string }
 /** @dev 멘션 → 런이 어댑터로 나간다 → 어댑터가 연결을 닫으며 그 런을 끝낸다(connectionClosed 를 주면) */
 async function closedRun(s: Setup, connectionClosed: boolean): Promise<string> {
   const message = createUserMessage(s.app.db, s.app.bus, {
-    channelId: s.channelId,
+    conversationId: s.channelId,
     authorId: s.app.ownerUserId,
     bodyMd: "@dev 정리해 줘",
     clientMsgId: `late-${Math.random()}`,
@@ -111,7 +111,7 @@ async function closedRun(s: Setup, connectionClosed: boolean): Promise<string> {
 
 const late = (s: Pick<Setup, "channelId" | "sessionKey">, runId: string): OutboundMessage => ({
   outboundId: `late-${runId}`,
-  channelId: s.channelId,
+  conversationId: s.channelId,
   agentId: "dev",
   sessionKey: s.sessionKey,
   runId,

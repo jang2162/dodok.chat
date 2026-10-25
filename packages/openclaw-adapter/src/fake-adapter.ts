@@ -359,8 +359,8 @@ export class FakeAdapter<P extends AdapterProvider = "openclaw"> implements Agen
     return [{ providerAgentId: "dev", name: "dev" }, { providerAgentId: "fin" }];
   }
 
-  sessionKeyFor(providerAgentId: string, channelId: string, threadRootId?: string): string {
-    return dodokSessionKey(providerAgentId, channelId, threadRootId);
+  sessionKeyFor(providerAgentId: string, conversationId: string, threadRootId?: string): string {
+    return dodokSessionKey(providerAgentId, conversationId, threadRootId);
   }
 
   /** 실물과 같이 에이전트를 가리지 않고, 붙은 플러그인(setupDetail 의 bridge.plugin)이 없으면 false. claude 흉내는 늘 안다 */

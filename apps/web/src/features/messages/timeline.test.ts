@@ -28,6 +28,7 @@ const msg = (seq: number, over: Partial<Message> = {}): Message =>
   Message.parse({
     id: `01a00000-0000-7000-8000-${String(1000 + seq).padStart(12, "0")}`,
     channelId: CH,
+    conversationId: over.channelId ?? CH,
     seq,
     kind: "normal",
     authorType: "user",

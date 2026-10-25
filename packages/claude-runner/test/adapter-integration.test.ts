@@ -172,6 +172,7 @@ function deliver(runId: string): InboundDeliver {
     deliveryId: runId.replace(/a1(\d\d)$/, "d1$1"),
     kind: "message",
     channelId: CHANNEL_ID,
+    conversationId: CHANNEL_ID,
     agentId: "coder",
     sessionKey: dodokSessionKey("coder", CHANNEL_ID),
     runId,
@@ -293,7 +294,7 @@ describe("러너 ↔ 실제 러너 어댑터", () => {
     expect(runner.uploads).toEqual(["report.md"]);
     const [post, final] = server.outbound;
     expect(post!.message).toMatchObject({
-      channelId: CHANNEL_ID,
+      conversationId: CHANNEL_ID,
       agentId: "coder",
       sessionKey: dodokSessionKey("coder", CHANNEL_ID),
       runId: RUN_1,

@@ -55,7 +55,7 @@ describe.each(["constructor", "__proto__"])("옛 카드 id %s", (bad) => {
     });
     addMember(app.db, channel.id, { memberType: "agent", memberId: agent.id }, logger);
     const created = createAgentMessage(app.db, app.bus, {
-      channelId: channel.id,
+      conversationId: channel.id,
       agentId: agent.id,
       externalId: `legacy-out-${n}`,
       bodyMd: "옛 카드",
@@ -100,7 +100,7 @@ describe.each(["constructor", "__proto__"])("옛 카드 id %s", (bad) => {
   it("채널·스레드 목록은 200 이고 그 카드를 그대로 싣는다", async () => {
     const { channel, message } = legacyCard(buttons, { old: bad }, [bad]);
     createUserMessage(app.db, app.bus, {
-      channelId: channel.id,
+      conversationId: channel.id,
       authorId: app.ownerUserId,
       bodyMd: "스레드 답글",
       clientMsgId: `legacy-reply-${n}`,
@@ -167,7 +167,7 @@ describe.each(["constructor", "__proto__"])("옛 카드 id %s", (bad) => {
     });
     expect(() =>
       createAgentMessage(app.db, app.bus, {
-        channelId: channel.id,
+        conversationId: channel.id,
         agentId: agent.id,
         externalId: `fresh-out-${n}`,
         bodyMd: "새 카드",

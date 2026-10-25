@@ -58,7 +58,7 @@ async function setup(deps: Pick<AppDeps, "runnerAdapter" | "pushSend"> = {}) {
   let n = 0;
   const say = async (bodyMd: string) => {
     const message = createUserMessage(app.db, app.bus, {
-      channelId: channel.id,
+      conversationId: channel.id,
       authorId: app.ownerUserId,
       bodyMd,
       clientMsgId: `archive-${++n}`,
@@ -254,6 +254,7 @@ describe("보관과 런", () => {
       {
         agentId: dev.id,
         channelId: channel.id,
+        conversationId: channel.id,
         triggerKind: "mention",
         rootMessageId: uuid(),
         relayDepth: 0,
@@ -310,7 +311,7 @@ describe("보관과 런", () => {
       kind: "plugin",
       sessionKey: adapter.sessionKeyFor("dev", channel.id),
       providerAgentId: "dev",
-      channelId: channel.id,
+      conversationId: channel.id,
       toolCallId: "toolu_archive",
       toolName: "Write",
       pluginId: "fs",
@@ -402,7 +403,7 @@ describe("보관과 런", () => {
     app.bus.on("message.created", (p) => created.push(p));
     const late = (outboundId: string): OutboundMessage => ({
       outboundId,
-      channelId: channel.id,
+      conversationId: channel.id,
       agentId: "dev",
       sessionKey: run?.sessionKey ?? "",
       runId: run?.id ?? "",
@@ -665,7 +666,7 @@ describe("보관과 러너", () => {
       ).t;
     expect(bound()).toBeNull();
     const message = createUserMessage(app.db, app.bus, {
-      channelId: channel.id,
+      conversationId: channel.id,
       authorId: app.ownerUserId,
       bodyMd: "@coder 해 줘",
       clientMsgId: "runner-1",
@@ -678,7 +679,7 @@ describe("보관과 러너", () => {
 
     await restore(coder.id);
     const again = createUserMessage(app.db, app.bus, {
-      channelId: channel.id,
+      conversationId: channel.id,
       authorId: app.ownerUserId,
       bodyMd: "@coder 이제 해 줘",
       clientMsgId: "runner-2",

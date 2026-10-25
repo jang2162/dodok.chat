@@ -595,7 +595,7 @@ describe("runOnce — dodok post 도구·도구 승인·이미지(태스크 6)",
     const d = start.deliver;
     expect(bridge.posts).toHaveLength(1);
     expect(bridge.posts[0]).toMatchObject({
-      channelId: d.channelId,
+      conversationId: d.conversationId,
       agentId: d.agentId,
       sessionKey: d.sessionKey,
       runId: d.runId,

@@ -77,7 +77,7 @@ async function setup() {
       url: "/bridge/attachments",
       headers: {
         authorization: `Bearer ${token}`,
-        "x-dodok-channel-id": channel.id,
+        "x-dodok-conversation-id": channel.id,
         "content-type": "application/octet-stream",
       },
       payload: PDF_BYTES,
@@ -97,7 +97,7 @@ async function setup() {
   const mentionWithImage = async (handle: string) => {
     const image = await userUpload();
     const message = createUserMessage(app.db, app.bus, {
-      channelId: channel.id,
+      conversationId: channel.id,
       authorId: app.ownerUserId,
       bodyMd: `@${handle} 이 그림`,
       clientMsgId: `img-${handle}-${image.id}`,
@@ -114,7 +114,7 @@ async function setup() {
   const canonical = async (connectionId: string, attachmentIds: string[]) => {
     const message: OutboundMessage = {
       outboundId: `out-${connectionId}-${attachmentIds.join(",")}`,
-      channelId: channel.id,
+      conversationId: channel.id,
       agentId: "main",
       sessionKey: `agent:main:dodok:channel:${channel.id}`,
       text: "파일입니다",
@@ -205,7 +205,7 @@ describe("브리지 첨부 범위 — 토큰의 Gateway 로", () => {
     const [own, others] = [await upload(runner), await upload(other)];
     const message: OutboundMessage = {
       outboundId: "out-runner",
-      channelId: channel.id,
+      conversationId: channel.id,
       agentId: "coder",
       sessionKey: `agent:coder:dodok:channel:${channel.id}`,
       text: "파일입니다",
@@ -234,7 +234,7 @@ describe("브리지 첨부 범위 — 토큰의 Gateway 로", () => {
         url: "/bridge/attachments",
         headers: {
           authorization: `Bearer ${token}`,
-          "x-dodok-channel-id": channel.id,
+          "x-dodok-conversation-id": channel.id,
           "content-type": "application/octet-stream",
         },
         payload: PDF_BYTES,

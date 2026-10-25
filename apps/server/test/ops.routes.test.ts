@@ -163,6 +163,7 @@ describe("운영 API /api/v1/ops", () => {
       for (let i = 0; i < 2; i++)
         insertRun(app.db, {
           channelId: channel.id,
+          conversationId: channel.id,
           agentId: agent.id,
           triggerKind: "mention",
           rootMessageId: uuid(),
@@ -444,6 +445,7 @@ describe("운영 API /api/v1/ops", () => {
       });
       insertRun(app.db, {
         channelId: channel.id,
+        conversationId: channel.id,
         agentId: agent.id,
         triggerKind: "mention",
         rootMessageId: uuid(),

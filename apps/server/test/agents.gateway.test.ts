@@ -180,7 +180,7 @@ describe("Gateway 옮기기 — PUT /api/v1/agents/:id/gateway", () => {
     let n = 0;
     const say = async (bodyMd: string) => {
       const message = createUserMessage(s.app.db, s.app.bus, {
-        channelId: channel.id,
+        conversationId: channel.id,
         authorId: s.app.ownerUserId,
         bodyMd,
         clientMsgId: `move-${++n}`,

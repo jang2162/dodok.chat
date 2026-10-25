@@ -40,14 +40,14 @@ export async function downloadAttachment(
 
 /** 파일 하나를 올린다. 네트워크 오류만 `retries`(기본 1)번 다시 하고, HTTP 오류(`MediaHttpError`)는 바로 던진다 */
 export async function uploadAttachment(
-  o: Common & { channelId: string; bytes: Uint8Array; name: string; mime?: string; retries?: number },
+  o: Common & { conversationId: string; bytes: Uint8Array; name: string; mime?: string; retries?: number },
 ): Promise<Attachment> {
   const attempt = async (): Promise<Attachment> => {
     const res = await (o.fetch ?? fetch)(`${o.origin}${BRIDGE_ATTACHMENTS_PATH}`, {
       method: "POST",
       headers: {
         authorization: `Bearer ${o.token}`,
-        [H.channelId]: o.channelId,
+        [H.conversationId]: o.conversationId,
         [H.fileName]: encodeURIComponent(o.name),
         "content-type": o.mime ?? "application/octet-stream",
       },

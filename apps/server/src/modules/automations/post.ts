@@ -3,6 +3,8 @@ import type { Message } from "@dodok/shared";
 import type { Db } from "../../db/client";
 import type { Logger } from "../../logger";
 import type { ServerBus } from "../../realtime/bus";
+import { apiError } from "../../http/errors";
+import { latestOpenConversation } from "../conversations/store";
 import { createAutomationMessage } from "../messages/service";
 import type { AutomationRow } from "./store";
 
@@ -23,8 +25,11 @@ export async function postAutomationMessage(
   automation: AutomationRow,
   extraMd?: string,
 ): Promise<Message> {
+  // 채널의 열린 대화(계획 판정 PS3) — 채널마다 대화가 하나인 동안은 늘 있다
+  const conversationId = latestOpenConversation(deps.db, automation.channelId);
+  if (conversationId === undefined) throw apiError("NOT_FOUND", "conversation not found");
   const message = createAutomationMessage(deps.db, deps.bus, {
-    channelId: automation.channelId,
+    conversationId,
     automationId: automation.id,
     bodyMd: automation.bodyMd,
     ...(extraMd === undefined ? {} : { extraMd }),

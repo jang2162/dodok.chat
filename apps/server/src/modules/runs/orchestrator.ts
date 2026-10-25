@@ -21,7 +21,7 @@ import {
   type RunEventBody,
 } from "../../adapters/types";
 import type { Db, DbOrTx } from "../../db/client";
-import { agents, channels, componentInteractions, messages } from "../../db/schema.sqlite";
+import { agents, channels, componentInteractions, conversations, messages } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
 import type { Logger } from "../../logger";
 import type { ServerBus } from "../../realtime/bus";
@@ -121,7 +121,10 @@ function requesterOf(db: DbOrTx, trigger: EnqueueTrigger): string | null {
 }
 
 export interface Orchestrator {
-  enqueueRun(plan: RunPlan & { channelId: string }, trigger: EnqueueTrigger): Promise<Run>;
+  enqueueRun(
+    plan: RunPlan & { channelId: string; conversationId: string },
+    trigger: EnqueueTrigger,
+  ): Promise<Run>;
   /** 어댑터·타이머·사용자가 부른다. ctx.message 는 gateway_final 의 WS 스냅샷 본문 */
   signal(runId: string, s: RunSignal, ctx?: { message?: string }): Promise<void>;
   /** 델타 코얼레싱·run_events 저장·팬아웃. seq·ts 는 여기서 붙인다 */
@@ -643,7 +646,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     try {
       const handle = getAgent(db, run.agentId)?.handle ?? "unknown";
       createSystemMessage(db, bus, {
-        channelId: run.channelId,
+        conversationId: run.conversationId,
         ...(run.threadRootId === undefined ? {} : { threadRootId: run.threadRootId }),
         kind: "info",
         bodyMd: `채널 규칙이 바뀌어 @${handle} 의 대화를 새로 시작했습니다`,
@@ -661,7 +664,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     try {
       const handle = getAgent(db, run.agentId)?.handle ?? "unknown";
       createSystemMessage(db, bus, {
-        channelId: run.channelId,
+        conversationId: run.conversationId,
         ...(run.threadRootId === undefined ? {} : { threadRootId: run.threadRootId }),
         kind: "run_error",
         bodyMd: runErrorBody(code, handle),
@@ -813,7 +816,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         return;
       }
       const { session, needsPromptContext } = ensureSession(db, adapter, {
-        channelId: run.channelId,
+        conversationId: run.conversationId,
         agentId: run.agentId,
         threadRootId: run.threadRootId,
       });
@@ -954,7 +957,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       logger.warn(
         {
           outboundId: msg.outboundId,
-          channelId: msg.channelId,
+          conversationId: msg.conversationId,
           sessionKey: msg.sessionKey,
           threadId: msg.threadId,
           ...(run ? { runId: run.id, runThreadRootId: run.threadRootId } : {}),
@@ -976,9 +979,10 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       .select({ id: agents.id })
       .from(agents)
       .innerJoin(channels, eq(channels.workspaceId, agents.workspaceId))
+      .innerJoin(conversations, eq(conversations.channelId, channels.id))
       .where(
         and(
-          eq(channels.id, msg.channelId),
+          eq(conversations.id, msg.conversationId),
           eq(agents.provider, provider),
           agentOnConnection(provider, connectionId),
           providerAgentIdIs(msg.agentId),
@@ -988,23 +992,24 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
   }
 
   /**
-   * 계약 스펙 5.1: runId → 연결·sessionKey 의 미종료 런 → replyToInboundId 가 트리거한 런. 다른 채널 런은 쓰지 않는다.
+   * 계약 스펙 5.1: runId → 연결·sessionKey 의 미종료 런 → replyToInboundId 가 트리거한 런. 다른 대화의 런은 쓰지 않는다.
    * runId 가 다른 연결의 런을 가리키면 쓰지 않는다(fromRunConnection 과 같은 까닭)
    */
   function correlate(msg: OutboundMessage, provider: AdapterProvider, connectionId: string): Run | undefined {
-    const inChannel = (run: Run | undefined) => (run?.channelId === msg.channelId ? run : undefined);
+    const inConversation = (run: Run | undefined) =>
+      run?.conversationId === msg.conversationId ? run : undefined;
     const ours = (run: Run | undefined) => {
       const owner = run === undefined ? null : store.getRunConnectionId(db, run.id);
       return owner === null || owner === connectionId ? run : undefined;
     };
-    const byRunId = msg.runId === undefined ? undefined : ours(inChannel(store.getRun(db, msg.runId)));
+    const byRunId = msg.runId === undefined ? undefined : ours(inConversation(store.getRun(db, msg.runId)));
     if (byRunId) return byRunId;
-    const bySession = inChannel(store.findOpenRunBySession(db, connectionId, msg.sessionKey));
+    const bySession = inConversation(store.findOpenRunBySession(db, connectionId, msg.sessionKey));
     if (bySession) return bySession;
     if (msg.replyToInboundId === undefined) return undefined;
     const agentId = agentIdFor(msg, provider, connectionId);
     if (agentId === undefined) return undefined;
-    return inChannel(store.findRunByTriggerMessage(db, msg.replyToInboundId, agentId));
+    return inConversation(store.findRunByTriggerMessage(db, msg.replyToInboundId, agentId));
   }
 
   /** uploadedBy 는 정본을 낸 연결 — 그 Gateway·러너 토큰이 올린 첨부만 묶인다 */
@@ -1020,7 +1025,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       db,
       bus,
       {
-        channelId: msg.channelId,
+        conversationId: msg.conversationId,
         threadRootId,
         agentId,
         runId,
@@ -1123,7 +1128,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     ) {
       try {
         message = createAgentMessage(db, bus, {
-          channelId: run.channelId,
+          conversationId: run.conversationId,
           threadRootId: run.threadRootId,
           agentId: run.agentId,
           runId,
@@ -1155,7 +1160,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       const sessionKey =
         refusal === undefined
           ? ensureSession(db, adapterForAgent(plan.agentId), {
-              channelId: plan.channelId,
+              conversationId: plan.conversationId,
               agentId: plan.agentId,
               threadRootId: plan.threadRootId,
             }).session.sessionKey
@@ -1166,6 +1171,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
       const { run, event } = db.transaction((tx) => {
         const run = store.insertRun(tx, {
           channelId: plan.channelId,
+          conversationId: plan.conversationId,
           agentId: plan.agentId,
           triggerKind: plan.triggerKind,
           triggerMessageId: trigger.message?.id,
@@ -1299,15 +1305,28 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         provider === "openclaw" ? { gatewayId: connectionId } : { runnerTokenId: connectionId };
       if (!run) {
         const agentId = agentIdFor(msg, provider, connectionId);
-        const where = { outboundId: msg.outboundId, channelId: msg.channelId, sessionKey: msg.sessionKey };
-        if (agentId === undefined) {
+        const where = {
+          outboundId: msg.outboundId,
+          conversationId: msg.conversationId,
+          sessionKey: msg.sessionKey,
+        };
+        // agentIdFor 가 그 대화의 채널로 찾았다 — 대화가 없으면 여기서 undefined 다
+        const channelId = db
+          .select({ channelId: conversations.channelId })
+          .from(conversations)
+          .where(eq(conversations.id, msg.conversationId))
+          .get()?.channelId;
+        if (agentId === undefined || channelId === undefined) {
           logger.warn({ ...where, providerAgentId: msg.agentId }, "canonical message from unknown agent");
           throw apiError("NOT_FOUND", "agent not found");
         }
         // 런 없는 정본은 라우팅하지 않지만 푸시는 간다 — 보관한 채널이면 그것도 하지 않는다
-        const silent = isChannelArchived(db, msg.channelId);
-        // 보관한 채널의 예외는 그 채널 세션의 늦은 답뿐이다. 다른 채널 세션이 message 툴로 쓰는 새 글은 거절해 에이전트가 실패를 받게 한다
-        if (silent && parseDodokSessionKey(msg.sessionKey)?.channelId !== msg.channelId.toLowerCase()) {
+        const silent = isChannelArchived(db, channelId);
+        // 보관한 채널의 예외는 그 대화 세션의 늦은 답뿐이다. 다른 세션이 message 툴로 쓰는 새 글은 거절해 에이전트가 실패를 받게 한다
+        if (
+          silent &&
+          parseDodokSessionKey(msg.sessionKey)?.conversationId !== msg.conversationId.toLowerCase()
+        ) {
           logger.warn(
             { ...where, agentId },
             "canonical message to archived channel from another session refused",

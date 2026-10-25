@@ -20,6 +20,7 @@ const state = (over: Partial<RunState> = {}): RunState =>
   RunState.parse({
     id: R1,
     channelId: C1,
+    conversationId: over.channelId ?? C1,
     agentId: A1,
     status: "streaming",
     relayDepth: 0,

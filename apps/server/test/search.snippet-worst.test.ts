@@ -95,7 +95,7 @@ describe("스니펫 최악 입력 — 표시마다 100 KB 되풀이", () => {
   const { workspaceId, userId } = seedWorkspace(db);
   const channel = createChannel(db, { workspaceId, createdBy: userId, name: "general" });
   const m = createUserMessage(db, bus, {
-    channelId: channel.id,
+    conversationId: channel.id,
     authorId: userId,
     bodyMd: "임시",
     clientMsgId: "c0",

@@ -52,7 +52,7 @@ async function bootNative(env: Record<string, string>, logger?: Logger): Promise
     mention: (count = 1) => {
       for (let i = 0; i < count; i++)
         createUserMessage(app.db, app.bus, {
-          channelId: channel.id,
+          conversationId: channel.id,
           authorId: mia.id,
           bodyMd: "@owner 봐줘",
           clientMsgId: `native-${++n}`,
@@ -229,7 +229,7 @@ describe("웹 푸시 통로 — 거부 사유 로그", () => {
       });
       expect(sub.statusCode).toBe(204);
       createUserMessage(app.db, app.bus, {
-        channelId: channel.id,
+        conversationId: channel.id,
         authorId: mia.id,
         bodyMd: "@owner 봐줘",
         clientMsgId: "web-1",

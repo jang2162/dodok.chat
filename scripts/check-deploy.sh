@@ -349,7 +349,7 @@ EOF
       fail "20 MiB 첨부 업로드" "준비 실패 gateway='$gateway' channel='$channel' 토큰 $([[ -n "$bridge" ]] && echo 있음 || echo 없음) — 마지막 본문 '$(body_head)'"
     else
       head -c $((20 * 1024 * 1024)) /dev/urandom >"$tmp/big.bin"
-      code="$(req /bridge/attachments -X POST -H "Authorization: Bearer $bridge" -H "x-dodok-channel-id: $channel" \
+      code="$(req /bridge/attachments -X POST -H "Authorization: Bearer $bridge" -H "x-dodok-conversation-id: $channel" \
         -H 'x-dodok-file-name: big.bin' -H 'Content-Type: application/octet-stream' --data-binary "@$tmp/big.bin")"
       if [[ "$code" == 200 ]] && grep -qF '"size":20971520' "$tmp/b"; then
         pass "20 MiB 첨부 업로드(프록시 → 앱 저장)"

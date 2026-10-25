@@ -50,7 +50,7 @@ function setup() {
   let n = 0;
   const human = (bodyMd: string, over: { threadRootId?: string; channelId?: string } = {}) =>
     createUserMessage(db, bus, {
-      channelId: over.channelId ?? channel.id,
+      conversationId: over.channelId ?? channel.id,
       authorId: userId,
       bodyMd,
       clientMsgId: `c${++n}`,
@@ -58,7 +58,7 @@ function setup() {
     });
   const agentSays = (agentId: string, bodyMd: string, threadRootId?: string) =>
     createAgentMessage(db, bus, {
-      channelId: channel.id,
+      conversationId: channel.id,
       agentId,
       externalId: `out-${++n}`,
       bodyMd,
@@ -116,7 +116,7 @@ describe("스레드 답글 저장·요약", () => {
     const t = setup();
     const root = t.human("루트");
     const notice = createSystemMessage(t.db, t.bus, {
-      channelId: t.channel.id,
+      conversationId: t.channel.id,
       kind: "run_error",
       bodyMd: "실패",
       threadRootId: root.id,
@@ -157,7 +157,7 @@ describe("스레드 답글 저장·요약", () => {
       expect(() => t.agentSays(dev.id, "x", threadRootId)).toThrow(invalid);
       expect(() =>
         createSystemMessage(t.db, t.bus, {
-          channelId: t.channel.id,
+          conversationId: t.channel.id,
           kind: "run_error",
           bodyMd: "x",
           threadRootId,
@@ -172,7 +172,7 @@ describe("스레드 답글 저장·요약", () => {
     const t = setup();
     const root = t.human("루트");
     const first = createUserMessage(t.db, t.bus, {
-      channelId: t.channel.id,
+      conversationId: t.channel.id,
       authorId: t.userId,
       bodyMd: "답",
       clientMsgId: "same",
@@ -180,7 +180,7 @@ describe("스레드 답글 저장·요약", () => {
     });
     const events = t.order.length;
     const again = createUserMessage(t.db, t.bus, {
-      channelId: t.channel.id,
+      conversationId: t.channel.id,
       authorId: t.userId,
       bodyMd: "답",
       clientMsgId: "same",
@@ -338,6 +338,7 @@ describe("DB — 스레드 열·세션 유일성", () => {
     const row = (id: string, threadRootId: string | null) => ({
       id,
       channelId: t.channel.id,
+      conversationId: t.channel.id,
       agentId: dev.id,
       sessionKey: `k-${id}`,
       promptRevisionAtStart: 1,
@@ -359,6 +360,7 @@ describe("DB — 스레드 열·세션 유일성", () => {
       .values({
         id: "thread-row",
         channelId: t.channel.id,
+        conversationId: t.channel.id,
         agentId: dev.id,
         sessionKey: "thread-key",
         promptRevisionAtStart: 1,
@@ -366,7 +368,7 @@ describe("DB — 스레드 열·세션 유일성", () => {
       })
       .run();
     const adapter = { sessionKeyFor: dodokSessionKey };
-    const { session } = ensureSession(t.db, adapter, { channelId: t.channel.id, agentId: dev.id });
+    const { session } = ensureSession(t.db, adapter, { conversationId: t.channel.id, agentId: dev.id });
     expect(session).toMatchObject({
       threadRootId: null,
       sessionKey: `agent:dev:dodok:channel:${t.channel.id}`,
@@ -417,7 +419,7 @@ describe("wire·REST — 스레드", () => {
   let n = 0;
   const post = (channelId: string, bodyMd: string, threadRootId?: string) =>
     createUserMessage(app.db, app.bus, {
-      channelId,
+      conversationId: channelId,
       authorId: app.ownerUserId,
       bodyMd,
       clientMsgId: `seed-${++n}`,
@@ -570,7 +572,7 @@ describe("wire·REST — 스레드", () => {
       name: "foreign",
     });
     const foreignRoot = createUserMessage(app.db, app.bus, {
-      channelId: foreignChannel.id,
+      conversationId: foreignChannel.id,
       authorId: stranger.userId,
       bodyMd: "남의 워크스페이스",
       clientMsgId: "foreign-1",

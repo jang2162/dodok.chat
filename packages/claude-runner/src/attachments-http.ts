@@ -16,7 +16,8 @@ export class AttachmentsHttpError extends Error {
 /** signal 은 런의 것 — 멈춘 런은 제한 시간까지 기다리지 않는다 */
 export type AttachmentsHttp = {
   upload(o: {
-    channelId: string;
+    /** 서버가 그 대화의 채널로 묶는다 */
+    conversationId: string;
     bytes: Uint8Array;
     name: string;
     mime?: string;
@@ -61,14 +62,14 @@ export function createAttachmentsHttp(o: {
   }
 
   return {
-    async upload({ channelId, bytes, name, mime, signal }) {
+    async upload({ conversationId, bytes, name, mime, signal }) {
       const res = await request(
         base,
         {
           method: "POST",
           headers: {
             authorization: `Bearer ${o.token}`,
-            [H.channelId]: channelId,
+            [H.conversationId]: conversationId,
             [H.fileName]: encodeURIComponent(name),
             "content-type": mime ?? "application/octet-stream",
           },

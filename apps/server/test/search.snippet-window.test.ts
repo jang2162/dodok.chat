@@ -28,7 +28,7 @@ describe("스니펫 변환 창", () => {
     const channel = createChannel(db, { workspaceId, createdBy: userId, name: "general" });
     const say = (bodyMd: string, n: number) => {
       const m = createUserMessage(db, bus, {
-        channelId: channel.id,
+        conversationId: channel.id,
         authorId: userId,
         bodyMd: "임시",
         clientMsgId: `c${n}`,
@@ -58,7 +58,7 @@ describe("스니펫 변환 창", () => {
     const { workspaceId, userId } = seedWorkspace(db);
     const channel = createChannel(db, { workspaceId, createdBy: userId, name: "general" });
     const m = createUserMessage(db, bus, {
-      channelId: channel.id,
+      conversationId: channel.id,
       authorId: userId,
       bodyMd: "임시",
       clientMsgId: "c0",
@@ -81,7 +81,7 @@ describe("스니펫 변환 창", () => {
     const { workspaceId, userId } = seedWorkspace(db);
     const channel = createChannel(db, { workspaceId, createdBy: userId, name: "general" });
     const m = createUserMessage(db, bus, {
-      channelId: channel.id,
+      conversationId: channel.id,
       authorId: userId,
       bodyMd: "임시",
       clientMsgId: "c0",

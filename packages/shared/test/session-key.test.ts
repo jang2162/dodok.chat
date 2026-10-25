@@ -15,32 +15,36 @@ describe("dodokSessionKey·parseDodokSessionKey", () => {
   it("채널 키 왕복", () => {
     const key = dodokSessionKey("dev", CH);
     expect(key).toBe(`agent:dev:dodok:channel:${CH}`);
-    expect(parseDodokSessionKey(key)).toEqual({ providerAgentId: "dev", channelId: CH });
+    expect(parseDodokSessionKey(key)).toEqual({ providerAgentId: "dev", conversationId: CH });
   });
 
   it("스레드 키 왕복 — 대문자 rootId 는 소문자로 만들고 소문자로 풀린다", () => {
     const key = dodokSessionKey("dev", CH, ROOT_UPPER);
     expect(key).toBe(`agent:dev:dodok:channel:${CH}:thread:${ROOT}`);
-    expect(parseDodokSessionKey(key)).toEqual({ providerAgentId: "dev", channelId: CH, threadRootId: ROOT });
+    expect(parseDodokSessionKey(key)).toEqual({
+      providerAgentId: "dev",
+      conversationId: CH,
+      threadRootId: ROOT,
+    });
   });
 
   it("대문자 UUID 가 든 키도 소문자로 돌려준다", () => {
     const parsed = parseDodokSessionKey(`agent:dev:dodok:channel:${CH.toUpperCase()}:thread:${ROOT_UPPER}`);
-    expect(parsed).toEqual({ providerAgentId: "dev", channelId: CH, threadRootId: ROOT });
+    expect(parsed).toEqual({ providerAgentId: "dev", conversationId: CH, threadRootId: ROOT });
   });
 
-  it("스레드 없는 채널 키의 대문자 channelId 도 소문자로 돌려준다", () => {
+  it("스레드 없는 대화 키의 대문자 conversationId 도 소문자로 돌려준다", () => {
     expect(parseDodokSessionKey(`agent:dev:dodok:channel:${CH.toUpperCase()}`)).toEqual({
       providerAgentId: "dev",
-      channelId: CH,
+      conversationId: CH,
     });
   });
 
-  it("빌더는 channelId 도 소문자로 만든다 — 코어가 키 전체를 소문자로 접으므로 build∘parse 가 항등이다", () => {
+  it("빌더는 conversationId 도 소문자로 만든다 — 코어가 키 전체를 소문자로 접으므로 build∘parse 가 항등이다", () => {
     expect(dodokSessionKey("dev", CH.toUpperCase())).toBe(`agent:dev:dodok:channel:${CH}`);
     const key = dodokSessionKey("dev", CH.toUpperCase(), ROOT_UPPER);
     const parsed = parseDodokSessionKey(key)!;
-    expect(dodokSessionKey(parsed.providerAgentId, parsed.channelId, parsed.threadRootId)).toBe(key);
+    expect(dodokSessionKey(parsed.providerAgentId, parsed.conversationId, parsed.threadRootId)).toBe(key);
   });
 
   it("에이전트 id 의 대소문자는 그대로 둔다 — 서버가 저장한 providerAgentId 로 에이전트를 찾는다", () => {

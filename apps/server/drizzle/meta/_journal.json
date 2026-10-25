@@ -176,6 +176,13 @@
       "when": 1791862476956,
       "tag": "0024_approval_requested_by",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1792873637968,
+      "tag": "0025_channel_conversations",
+      "breakpoints": true
     }
   ]
 }

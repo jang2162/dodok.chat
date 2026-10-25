@@ -141,7 +141,7 @@ export function createPoster(deps: PosterDeps): (input: PostInput) => Promise<Po
           try {
             const mime = MIME_HINTS[extname(name).toLowerCase()];
             const att = await deps.http.upload({
-              channelId: deps.deliver.channelId,
+              conversationId: deps.deliver.conversationId,
               bytes,
               name,
               ...(mime ? { mime } : {}),
@@ -163,7 +163,7 @@ export function createPoster(deps: PosterDeps): (input: PostInput) => Promise<Po
     const d = deps.deliver;
     const ack = await deps.send({
       outboundId: `${RUNNER_POST_ID_PREFIX}${(deps.newId ?? randomUUID)()}`,
-      channelId: d.channelId,
+      conversationId: d.conversationId,
       agentId: d.agentId,
       sessionKey: d.sessionKey,
       ...(d.threadId === undefined ? {} : { threadId: d.threadId }),

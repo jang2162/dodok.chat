@@ -97,7 +97,7 @@ describe("handleAction — 스레드 세션", () => {
     await act({ to: `channel:${CH}`, message: "스레드 답" });
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({
-      channelId: CH,
+      conversationId: CH,
       threadId: ROOT,
       sessionKey: THREAD_KEY,
       text: "스레드 답",
@@ -141,7 +141,7 @@ describe("sendText — 코어 일반 전송", () => {
       threadId: ROOT,
     });
     expect(sent[0]).toMatchObject({
-      channelId: CH,
+      conversationId: CH,
       threadId: ROOT,
       sessionKey: `agent:unknown:dodok:channel:${CH}:thread:${ROOT}`,
     });

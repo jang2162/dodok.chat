@@ -81,6 +81,26 @@ export const Channel = z.object({
 });
 export type Channel = z.infer<typeof Channel>;
 
+/** 세션 제목(채널 세션 스펙 2.1) — 1~80자 */
+export const ConversationTitle = z.string().trim().min(1).max(80);
+/**
+ * 채널 아래의 대화(세션). 채널의 메시지·런·에이전트 세션은 모두 대화 하나에 속한다(채널 세션 스펙 결정 1).
+ * 기존 채널마다 마이그레이션이 만든 「이전 대화」는 id 가 그 채널 id 와 같다 — 저장된 세션 키가 그대로 맞는다
+ */
+export const Conversation = z.object({
+  id: Id,
+  channelId: Id,
+  title: ConversationTitle,
+  titleSource: z.enum(["user", "auto"]),
+  createdBy: z.object({ type: z.enum(["user", "automation"]), id: Id }),
+  createdAt: IsoDateTime,
+  lastMessageAt: IsoDateTime.optional(),
+  lastSeq: z.int().min(0),
+  closedAt: IsoDateTime.optional(),
+  closedBy: Id.optional(),
+});
+export type Conversation = z.infer<typeof Conversation>;
+
 export const ChannelMember = z.object({
   id: Id,
   channelId: Id,
@@ -191,6 +211,7 @@ export type ThreadSummary = z.infer<typeof ThreadSummary>;
 export const Message = z.object({
   id: Id,
   channelId: Id,
+  conversationId: Id,
   seq: z.int().min(1),
   kind: z.enum(["normal", "system"]),
   authorType: z.enum(["user", "agent", "system", "automation"]),
@@ -246,6 +267,7 @@ export type RunUsage = z.infer<typeof RunUsage>;
 export const Run = z.object({
   id: Id,
   channelId: Id,
+  conversationId: Id,
   agentId: Id,
   triggerKind: RunTriggerKind,
   triggerMessageId: Id.optional(), // interaction이면 없음
@@ -274,6 +296,7 @@ export type Run = z.infer<typeof Run>;
 export const RunState = Run.pick({
   id: true,
   channelId: true,
+  conversationId: true,
   threadRootId: true,
   agentId: true,
   status: true,
@@ -329,7 +352,8 @@ export const Approval = z.object({
   id: Id,
   providerApprovalId: z.string().min(1).max(200), // "plugin:<uuid>" — 유일 인덱스
   kind: ApprovalKind,
-  channelId: Id, // sessionKey 에서 푼다
+  channelId: Id, // 대화의 채널
+  conversationId: Id, // sessionKey 에서 푼다
   agentId: Id,
   runId: Id.optional(), // 승인 페이로드에 runId 가 없다 — sessionKey + toolCallId 로 런에 붙인다(스파이크 3.2)
   toolCallId: z.string().max(200).optional(),

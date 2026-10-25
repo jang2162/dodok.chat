@@ -72,14 +72,14 @@ describe("제어 서비스", () => {
       const { channel, agent } = openRun(app, owner);
       addMember(app.db, channel.id, { memberType: "user", memberId: mia.id }, app.logger);
       const root = createUserMessage(app.db, app.bus, {
-        channelId: channel.id,
+        conversationId: channel.id,
         authorId: mia.id,
         bodyMd: `@${agent.handle} 안녕 **굵게**`,
         clientMsgId: `c-${channel.id}`,
       });
       createAgentMessage(app.db, app.bus, {
         externalId: `o-${channel.id}`,
-        channelId: channel.id,
+        conversationId: channel.id,
         agentId: agent.id,
         bodyMd: "답글",
         threadRootId: root.id,
@@ -102,7 +102,7 @@ describe("제어 서비스", () => {
     it("search_messages·get_run·ops_status·discover_agents", async () => {
       const { channel, run } = openRun(app, owner);
       createUserMessage(app.db, app.bus, {
-        channelId: channel.id,
+        conversationId: channel.id,
         authorId: owner,
         bodyMd: "제어검색어 하나",
         clientMsgId: `s-${channel.id}`,

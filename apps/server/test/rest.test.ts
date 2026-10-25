@@ -375,7 +375,7 @@ describe("REST /api/v1 (FakeAdapter)", () => {
     const channel = await newChannel("rest-messages");
     for (let i = 1; i <= 3; i++) {
       createUserMessage(app.db, app.bus, {
-        channelId: channel.id,
+        conversationId: channel.id,
         authorId: app.ownerUserId,
         bodyMd: `m${i}`,
         clientMsgId: `rest-${i}`,

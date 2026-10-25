@@ -281,7 +281,7 @@ describe("확인 카드", () => {
     for (const agent of [a, ops])
       addMember(app.db, channel.id, { memberType: "agent", memberId: agent.id }, app.logger);
     const origin = createUserMessage(app.db, app.bus, {
-      channelId: channel.id,
+      conversationId: channel.id,
       authorId: mia.id,
       bodyMd: `@${a.handle} 채널 주제 좀 정리해 줘`,
       clientMsgId: `l2-${channel.id}`,
@@ -289,6 +289,7 @@ describe("확인 카드", () => {
     const runOf = (agentId: string, triggerMessageId: string, requestedBy: string) =>
       insertRun(app.db, {
         channelId: channel.id,
+        conversationId: channel.id,
         agentId,
         triggerKind: "mention",
         triggerMessageId,
@@ -303,7 +304,7 @@ describe("확인 카드", () => {
     const first = runOf(a.id, origin.id, mia.id);
     updateRun(app.db, first.id, { status: "done", endedAt: new Date(Date.now() - 60_000) });
     const relayed = createAgentMessage(app.db, app.bus, {
-      channelId: channel.id,
+      conversationId: channel.id,
       agentId: a.id,
       runId: first.id,
       externalId: `o-${first.id}`,
@@ -335,7 +336,7 @@ describe("확인 카드", () => {
     for (const agent of [a, ops])
       addMember(app.db, channel.id, { memberType: "agent", memberId: agent.id }, app.logger);
     const origin = createUserMessage(app.db, app.bus, {
-      channelId: channel.id,
+      conversationId: channel.id,
       authorId: mia.id,
       bodyMd: `@${a.handle} 주제 정리 부탁`,
       clientMsgId: `relay-ok-${channel.id}`,
@@ -343,6 +344,7 @@ describe("확인 카드", () => {
     const runOf = (agentId: string, triggerMessageId: string) =>
       insertRun(app.db, {
         channelId: channel.id,
+        conversationId: channel.id,
         agentId,
         triggerKind: "mention",
         triggerMessageId,
@@ -356,7 +358,7 @@ describe("확인 카드", () => {
     // a 의 런이 열려 있을 때 글을 쓰고, 그 뒤에 끝났다
     const first = updateRun(app.db, runOf(a.id, origin.id).id, { status: "tool" });
     const relayed = createAgentMessage(app.db, app.bus, {
-      channelId: channel.id,
+      conversationId: channel.id,
       agentId: a.id,
       runId: first.id,
       externalId: `o-${first.id}`,
@@ -525,6 +527,7 @@ describe("확인 카드 — 재시작", () => {
     const card = app.services.approvals.openControl({
       runId: run.id,
       channelId: channel.id,
+      conversationId: channel.id,
       agentId: agent.id,
       requestedBy: app.ownerUserId,
       toolName: "update_channel",

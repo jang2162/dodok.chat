@@ -207,6 +207,7 @@ function deliver(over: Partial<InboundDeliver> = {}): InboundDeliver {
     deliveryId: randomUUID(),
     kind: "message",
     channelId: CH,
+    conversationId: over.channelId ?? CH,
     agentId,
     sessionKey: dodokSessionKey(agentId, CH),
     runId: randomUUID(),
@@ -733,7 +734,7 @@ describe("런 이벤트", () => {
     await until(() => signals(h, runId).includes("gateway_final"), "final");
     expect(h.outbound).toHaveLength(1);
     expect(h.outbound[0]).toMatchObject({
-      channelId: CH,
+      conversationId: CH,
       agentId: "coder",
       sessionKey: input.sessionKey,
       runId,
@@ -987,7 +988,7 @@ describe("런 이벤트", () => {
     const r = await readyRunner(h);
     const { runId, sessionKey } = await startRun(h, r);
     const post = {
-      channelId: CH,
+      conversationId: CH,
       agentId: "coder",
       sessionKey,
       runId,
@@ -1012,7 +1013,7 @@ describe("런 이벤트", () => {
     const { runId, sessionKey } = await startRun(h, r);
     const post = {
       outboundId: "runner-post:1",
-      channelId: CH,
+      conversationId: CH,
       agentId: "coder",
       sessionKey,
       runId,
@@ -1040,7 +1041,7 @@ describe("outbound.post 는 그 러너의 열린 런에 묶인다", () => {
   function postFor(input: InboundDeliver, over: Record<string, unknown> = {}) {
     return {
       outboundId: `runner-post:${randomUUID()}`,
-      channelId: input.channelId,
+      conversationId: input.conversationId,
       agentId: input.agentId,
       sessionKey: input.sessionKey,
       runId: input.runId,
@@ -1054,15 +1055,15 @@ describe("outbound.post 는 그 러너의 열린 런에 묶인다", () => {
     expect(await r.post(post)).toMatchObject({ ok: false, code: "FORBIDDEN" });
   }
 
-  it("런의 채널·에이전트·세션 키·스레드·runId 중 하나라도 다르면 거절하고 저장하지 않는다", async () => {
+  it("런의 대화·에이전트·세션 키·스레드·runId 중 하나라도 다르면 거절하고 저장하지 않는다", async () => {
     const h = await setup();
     const r = await readyRunner(h, TOKEN_A, [runnerAgent("coder"), runnerAgent("fin")]);
     const input = await startRun(h, r);
     const root = randomUUID();
     const { runId: _runId, ...withoutRunId } = postFor(input);
     const variants: object[] = [
-      // PROBE-1: 다른 채널
-      postFor(input, { channelId: CH2 }),
+      // PROBE-1: 다른 대화
+      postFor(input, { conversationId: CH2 }),
       // PROBE-3: 같은 러너가 맡은 다른 에이전트 이름
       postFor(input, { agentId: "fin" }),
       postFor(input, { sessionKey: dodokSessionKey("coder", CH, root) }),
@@ -1158,7 +1159,7 @@ describe("승인", () => {
       kind: "tool",
       sessionKey,
       providerAgentId: "coder",
-      channelId: CH,
+      conversationId: CH,
       toolCallId: "toolu_9",
       toolName: "Write",
       title: "Write",
@@ -1449,7 +1450,7 @@ describe("러너 프레임 속도 제한 — 소켓마다 버킷, 넘치면 버�
     const input = await startRun(h, r);
     const ack = await r.post({
       outboundId: `runner-post:${randomUUID()}`,
-      channelId: input.channelId,
+      conversationId: input.conversationId,
       agentId: input.agentId,
       sessionKey: input.sessionKey,
       runId: input.runId,
@@ -1472,7 +1473,7 @@ describe("러너 프레임 속도 제한 — 소켓마다 버킷, 넘치면 버�
     const input = await startRun(h, r);
     const ack = await r.post({
       outboundId: `runner-post:${randomUUID()}`,
-      channelId: input.channelId,
+      conversationId: input.conversationId,
       agentId: input.agentId,
       sessionKey: input.sessionKey,
       runId: input.runId,
@@ -1659,7 +1660,7 @@ describe("러너 프레임 속도 제한 — 소켓마다 버킷, 넘치면 버�
     await until(() => signals(h, second.runId).includes("gateway_error"), "error");
     const ack = await r.post({
       outboundId: `runner-post:${randomUUID()}`,
-      channelId: input.channelId,
+      conversationId: input.conversationId,
       agentId: input.agentId,
       sessionKey: input.sessionKey,
       runId: input.runId,

@@ -55,6 +55,7 @@ function fill(channelId: string, n: number, at = clock) {
   for (let i = 0; i < n; i++) {
     insertRun(db, {
       channelId,
+      conversationId: channelId,
       agentId,
       triggerKind: "mention",
       rootMessageId: ROOT,
@@ -68,6 +69,7 @@ function fill(channelId: string, n: number, at = clock) {
 const plan = (channelId: string) => ({
   agentId,
   channelId,
+  conversationId: channelId, // 채널을 만들면 id 가 같은 「이전 대화」가 생긴다
   triggerKind: "mention" as const,
   rootMessageId: ROOT,
   relayDepth: 0,
@@ -178,5 +180,11 @@ describe("RunGate", () => {
     gate.check(b.id);
     gate.check(a.id);
     expect(limitMessages().map((m) => m.channelId)).toEqual([a.id, b.id]);
+  });
+
+  it("없는 대화 id 면 NOT_FOUND — 한도 안으로 통과시키지 않는다", () => {
+    expect(() => gate.check(uuid())).toThrow(
+      expect.objectContaining({ body: expect.objectContaining({ code: "NOT_FOUND" }) }),
+    );
   });
 });

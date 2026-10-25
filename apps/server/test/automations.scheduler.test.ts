@@ -585,7 +585,7 @@ describe("실제 라우터·런 관문으로 (FakeAdapter)", () => {
     try {
       // 다른 채널의 사람 멘션 하나로 한도를 채운다 — 이 채널의 한도 알림은 자동화 글의 멘션이 막혀서만 생긴다
       const human = createUserMessage(app.db, app.bus, {
-        channelId: filler.channelId,
+        conversationId: filler.channelId,
         authorId: app.ownerUserId,
         bodyMd: "@dev 먼저",
         clientMsgId: uuid(),

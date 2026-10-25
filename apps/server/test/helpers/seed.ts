@@ -4,6 +4,7 @@ import type { DbOrTx } from "../../src/db/client";
 import { eq } from "drizzle-orm";
 import { agents, channelMembers, channels, gateways, users, workspaces } from "../../src/db/schema.sqlite";
 import { FAKE_GATEWAY_ID, insertGateway } from "./gateways";
+import { createLegacyConversation } from "../../src/modules/conversations/store";
 
 /** workspace·user 만 삽입한다 — 채널·에이전트는 서비스로 만드는 테스트용 */
 export function seedWorkspace(
@@ -72,6 +73,7 @@ export function seedChannelWithAgent(
       createdAt: now,
     })
     .run();
+  createLegacyConversation(db, { id: channelId, createdBy: userId, createdAt: now });
   db.insert(channelMembers)
     .values([
       { id: uuid(), channelId, memberType: "user", memberId: userId, joinedAt: now },

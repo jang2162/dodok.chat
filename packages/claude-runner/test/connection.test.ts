@@ -497,7 +497,7 @@ describe("startRunnerConnection", () => {
     expect(server.posts).toHaveLength(1);
     expect(server.posts[0]).toMatchObject({
       runId: RUN_ID,
-      channelId: start.deliver.channelId,
+      conversationId: start.deliver.conversationId,
       agentId: start.deliver.agentId,
       sessionKey: start.deliver.sessionKey,
       text: "카드",
@@ -636,7 +636,7 @@ describe("createRunBridge — 런을 시작한 연결 세대가 끊겼으면 보
   };
   const post = {
     outboundId: "runner-post:x",
-    channelId: runStart().deliver.channelId,
+    conversationId: runStart().deliver.conversationId,
     agentId: "coder",
     sessionKey: runStart().deliver.sessionKey,
     runId: RUN_ID,

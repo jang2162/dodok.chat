@@ -25,6 +25,7 @@ function delivery(agentId: string, text: string): InboundDeliver {
     deliveryId: randomUUID(),
     kind: "message",
     channelId: CHANNEL_ID,
+    conversationId: CHANNEL_ID,
     agentId,
     sessionKey: `agent:${agentId}:dodok:channel:${CHANNEL_ID}`,
     runId: randomUUID(),
@@ -138,7 +139,7 @@ describe("시나리오 — 인바운드 대본을 Gateway 이벤트와 플러그
     });
 
     expect(outbound[0]).toMatchObject({
-      channelId: CHANNEL_ID,
+      conversationId: CHANNEL_ID,
       agentId: "dev",
       sessionKey: d.sessionKey,
       runId: d.runId,

@@ -44,6 +44,7 @@ const DELIVER = {
   deliveryId: ID,
   kind: "message",
   channelId: CH,
+  conversationId: CH,
   agentId: "coder",
   sessionKey: `agent:coder:dodok:channel:${CH}`,
   runId: ID,
@@ -124,7 +125,7 @@ describe("/runner 프레임 — 유효 예 왕복", () => {
       RunnerOutboundPost,
       {
         outboundId: "runner-post:o-1",
-        channelId: CH,
+        conversationId: CH,
         agentId: "coder",
         sessionKey: `agent:coder:dodok:channel:${CH}`,
         runId: ID,
@@ -202,7 +203,7 @@ describe("/runner 프레임 — 거절", () => {
 
   it("RunnerOutboundPost — outboundId 는 runner-post: 접두사 뒤에 한 글자 이상 [최종 리뷰 M4]", () => {
     const post = {
-      channelId: CH,
+      conversationId: CH,
       agentId: "coder",
       sessionKey: `agent:coder:dodok:channel:${CH}`,
       runId: ID,

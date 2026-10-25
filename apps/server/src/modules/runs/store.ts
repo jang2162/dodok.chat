@@ -13,6 +13,8 @@ type RunInsert = typeof runs.$inferInsert;
 
 export type InsertRunInput = {
   channelId: string;
+  /** 트리거 메시지·상호작용 메시지의 대화 — 세션 키도 이 대화로 만든다 */
+  conversationId: string;
   agentId: string;
   triggerKind: RunTriggerKind;
   triggerMessageId?: string | undefined;
@@ -55,6 +57,7 @@ export function rowToRun(row: RunRow): Run {
     {
       id: row.id,
       channelId: row.channelId,
+      conversationId: row.conversationId,
       agentId: row.agentId,
       triggerKind: row.triggerKind,
       triggerMessageId: row.triggerMessageId ?? undefined,
@@ -89,6 +92,7 @@ export function insertRun(db: DbOrTx, input: InsertRunInput): Run {
     .values({
       id: uuidv7(),
       channelId: input.channelId,
+      conversationId: input.conversationId,
       agentId: input.agentId,
       triggerKind: input.triggerKind,
       triggerMessageId: input.triggerMessageId ?? null,

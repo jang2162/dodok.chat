@@ -312,7 +312,7 @@ describe("통합 — 스레드 런", () => {
     const run = await runOf(log, dev.id, root.id);
     const threadKey = `agent:dev:dodok:channel:${channel.id}:thread:${root.id}`;
     const base = {
-      channelId: channel.id,
+      conversationId: channel.id,
       agentId: "dev",
       runId: run.id,
       text: "새면 안 된다",

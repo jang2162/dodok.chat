@@ -86,12 +86,13 @@ export function createRouter(deps: RouterDeps): Router {
     }
   }
 
-  /** 알림은 막힌 멘션이 있던 곳(채널 또는 스레드)에 남긴다(스펙 2.1) */
+  /** 알림은 막힌 멘션이 있던 곳(그 대화 또는 스레드)에 남긴다(스펙 2.1) */
   function announceBlocked(
     channel: ChannelRecord,
     sourceRun: Run,
     blocked: Blocked[],
     byId: Map<string, Agent>,
+    conversationId: string,
     threadRootId: string | undefined,
   ) {
     const groups = new Map<BlockedReason, Blocked[]>();
@@ -102,7 +103,7 @@ export function createRouter(deps: RouterDeps): Router {
       const first = items[0] as Blocked;
       const targets = items.map((b) => `@${handleOf(byId, b.agentId)}`);
       createSystemMessage(db, bus, {
-        channelId: channel.id,
+        conversationId,
         ...(threadRootId === undefined ? {} : { threadRootId }),
         kind,
         bodyMd: bodyFor(reason, channel, from, targets),
@@ -162,7 +163,10 @@ export function createRouter(deps: RouterDeps): Router {
       // 관문이 막으면(null) 알림은 관문이 이미 남겼다 — 여기서는 넘어간다
       for (const plan of decision.runs) {
         try {
-          await deps.enqueue({ ...plan, channelId: channel.id }, { message });
+          await deps.enqueue(
+            { ...plan, channelId: channel.id, conversationId: message.conversationId },
+            { message },
+          );
         } catch (err) {
           logger.error({ err, messageId: message.id, agentId: plan.agentId }, "route: enqueue failed");
         }
@@ -173,6 +177,7 @@ export function createRouter(deps: RouterDeps): Router {
           sourceRun,
           decision.blocked,
           new Map(agentList.map((a) => [a.id, a])),
+          message.conversationId,
           message.threadRootId,
         );
       }

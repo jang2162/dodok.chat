@@ -141,7 +141,7 @@ describe("역할 매트릭스(스펙 2장)", () => {
   const agentAnswer = () => {
     const { channel, agent } = channelWithAgent();
     return createAgentMessage(app.db, app.bus, {
-      channelId: channel.id,
+      conversationId: channel.id,
       agentId: agent.id,
       bodyMd: "답",
       externalId: `answer-${++n}`,
@@ -763,7 +763,7 @@ describe("역할 매트릭스(스펙 2장)", () => {
         kind: "plugin",
         sessionKey: adapter.sessionKeyFor(agent.providerAgentId, channel.id),
         providerAgentId: agent.providerAgentId,
-        channelId: channel.id,
+        conversationId: channel.id,
         toolCallId: `toolu_${++n}`,
         toolName: "Write",
         pluginId: "fs",

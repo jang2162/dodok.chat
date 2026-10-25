@@ -929,6 +929,7 @@ describe("attachPushTriggers — 버스 배선", () => {
   const message = {
     id: uuid(),
     channelId: CH_ID,
+    conversationId: CH_ID,
     seq: 1,
     kind: "normal" as const,
     authorType: "agent" as const,
@@ -945,6 +946,7 @@ describe("attachPushTriggers — 버스 배선", () => {
     providerApprovalId: "plugin:x",
     kind: "plugin" as const,
     channelId: CH_ID,
+    conversationId: CH_ID,
     agentId: DEV_ID,
     title: "t",
     severity: "warning" as const,

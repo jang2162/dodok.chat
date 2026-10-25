@@ -135,6 +135,7 @@ describe("wire 런 핸들러·REST 런 조회 (앱 부팅, FakeAdapter 배선)",
     const socket = await connect();
     const source = insertRun(app.db, {
       channelId: channel.id,
+      conversationId: channel.id,
       agentId: dev.id,
       triggerKind: "mention",
       rootMessageId: uuid(),
@@ -143,7 +144,7 @@ describe("wire 런 핸들러·REST 런 조회 (앱 부팅, FakeAdapter 배선)",
       createdAt: new Date(),
     });
     const card = createAgentMessage(app.db, app.bus, {
-      channelId: channel.id,
+      conversationId: channel.id,
       agentId: dev.id,
       runId: source.id,
       externalId: `card-${++n}`,
@@ -201,6 +202,7 @@ describe("wire 런 핸들러·REST 런 조회 (앱 부팅, FakeAdapter 배선)",
     const socket = await connect();
     const source = insertRun(app.db, {
       channelId: channel.id,
+      conversationId: channel.id,
       agentId: dev.id,
       triggerKind: "mention",
       rootMessageId: uuid(),
@@ -211,7 +213,7 @@ describe("wire 런 핸들러·REST 런 조회 (앱 부팅, FakeAdapter 배선)",
     const externalId = `card-${++n}`;
     const created = waitFor(socket, "message.created", (p) => p.message.externalId === externalId);
     const card = createAgentMessage(app.db, app.bus, {
-      channelId: channel.id,
+      conversationId: channel.id,
       agentId: dev.id,
       runId: source.id,
       externalId,
@@ -339,6 +341,7 @@ describe("wire 런 핸들러·REST 런 조회 (앱 부팅, FakeAdapter 배선)",
     });
     const otherRun = insertRun(app.db, {
       channelId: otherChannel.id,
+      conversationId: otherChannel.id,
       agentId: otherAgent.id,
       triggerKind: "mention",
       rootMessageId: uuid(),
@@ -380,6 +383,7 @@ describe("app.close — 배선된 오케스트레이터", () => {
     });
     const run = insertRun(app.db, {
       channelId: channel.id,
+      conversationId: channel.id,
       agentId: agent.id,
       triggerKind: "mention",
       rootMessageId: uuid(),

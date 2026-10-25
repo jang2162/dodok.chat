@@ -27,6 +27,7 @@ function msg(over: Partial<Message>): Message {
   return {
     id: "0199a000-0000-7000-8000-0000000000ff",
     channelId: CH,
+    conversationId: CH,
     seq: 1,
     kind: "normal",
     authorType: "user",
@@ -47,6 +48,7 @@ function approval(over: Partial<Approval>): Approval {
     providerApprovalId: "plugin:x",
     kind: "plugin",
     channelId: CH,
+    conversationId: CH,
     agentId: DEV,
     title: "t",
     severity: "warning",

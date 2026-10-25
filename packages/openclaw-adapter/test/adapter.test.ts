@@ -142,6 +142,7 @@ function delivery(runId: string = f.RUN_ID): InboundDeliver {
     deliveryId: randomUUID(),
     kind: "message",
     channelId: CH,
+    conversationId: CH,
     agentId: f.PROVIDER_AGENT_ID,
     sessionKey: f.SESSION_KEY,
     runId,
@@ -885,7 +886,7 @@ describe("createOpenClawAdapter — 정본 훅", () => {
     const socket = await plugin();
     const message = {
       outboundId: "dodok-reply-1",
-      channelId: CH,
+      conversationId: CH,
       agentId: f.PROVIDER_AGENT_ID,
       sessionKey: f.SESSION_KEY,
       runId: f.RUN_ID,
@@ -908,7 +909,7 @@ describe("createOpenClawAdapter — 정본 훅", () => {
 
     const ack = await socket.emitWithAck("outbound.message", {
       outboundId: "dodok-reply-2",
-      channelId: CH,
+      conversationId: CH,
       agentId: f.PROVIDER_AGENT_ID,
       sessionKey: f.SESSION_KEY,
       text: "PONG",
@@ -1326,7 +1327,7 @@ describe("승인 — 수신·병합·해결 RPC", () => {
       kind: "plugin",
       status: "pending",
       toolCallId: f.APPROVAL_TOOL_CALL_ID,
-      channelId: CH,
+      conversationId: CH,
     });
     expect(ofKind("approval")[0]?.approval.urlPath).toBeUndefined();
 
@@ -1435,7 +1436,7 @@ describe("승인 — 수신·병합·해결 RPC", () => {
       status: "allowed",
       decision: "allow-once",
       reason: "user",
-      channelId: CH,
+      conversationId: CH,
     });
     expect(gatewayCalls.filter((c) => c.method === "approval.resolve")).toEqual([
       { method: "approval.resolve", params: { id: f.APPROVAL_ID, kind: "plugin", decision: "allow-once" } },

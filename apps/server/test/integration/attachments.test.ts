@@ -27,6 +27,7 @@ import {
   uploadImage,
 } from "../helpers/scenario-steps";
 import type { WireClient } from "../helpers/wire";
+import { createLegacyConversation } from "../../src/modules/conversations/store";
 
 vi.setConfig({ testTimeout: 20_000, hookTimeout: 20_000 });
 
@@ -168,13 +169,18 @@ describe("통합 시나리오 11 — 첨부", () => {
         createdAt: new Date(),
       })
       .run();
+    createLegacyConversation(l.app.db, {
+      id: foreignChannel,
+      createdBy: l.app.ownerUserId,
+      createdAt: new Date(),
+    });
     const foreign = await uploadAttachment(depsOf(l), {
       channelId: foreignChannel,
       uploader: { type: "bridge", runnerTokenId: "runner-token-1" },
       bytes: makePng(4, 4),
     });
     const bound = createAgentMessage(l.app.db, l.app.bus, {
-      channelId: foreignChannel,
+      conversationId: foreignChannel,
       agentId: setup.dev.id,
       externalId: uuid(),
       bodyMd: "",
@@ -200,7 +206,7 @@ describe("통합 시나리오 11 — 첨부", () => {
     const setup = await setupRelayChannel(l, RELAY_POLICY);
     for (const bytes of [HTML_BYTES, SVG_BYTES]) {
       const viaBridge = await l.plugin.uploadAttachment({
-        channelId: setup.channel.id,
+        conversationId: setup.channel.id,
         bytes,
         name: "x.png",
         mime: "image/png",
@@ -222,17 +228,17 @@ describe("통합 시나리오 11 — 첨부", () => {
       .channel;
     const log = await openChannelWire(l, setup.channel.id, sockets);
     const second = await l.plugin.uploadAttachment({
-      channelId: setup.channel.id,
+      conversationId: setup.channel.id,
       bytes: PDF_BYTES,
       name: "2.pdf",
     });
     const stray = await l.plugin.uploadAttachment({
-      channelId: otherChannel.id,
+      conversationId: otherChannel.id,
       bytes: PDF_BYTES,
       name: "x.pdf",
     });
     const first = await l.plugin.uploadAttachment({
-      channelId: setup.channel.id,
+      conversationId: setup.channel.id,
       bytes: makePng(5, 5),
       name: "1.png",
     });

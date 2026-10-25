@@ -14,7 +14,7 @@ import { and, asc, desc, eq, gt, inArray, isNull, lt, lte, or, type SQL, sql } f
 import { v7 as uuidv7 } from "uuid";
 import type { z } from "zod";
 import type { Db, DbOrTx } from "../../db/client";
-import { channels, componentInteractions, messages } from "../../db/schema.sqlite";
+import { channels, componentInteractions, conversations, messages } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
 import { parseStored } from "../../http/validate";
 import type { ServerBus } from "../../realtime/bus";
@@ -31,6 +31,7 @@ import {
   listMembers,
   userMessageParticipants,
 } from "../channels/service";
+import { touchConversation } from "../conversations/store";
 import { withReactions } from "../reactions/service";
 import { allocateSeq } from "./seq";
 
@@ -38,10 +39,11 @@ import { allocateSeq } from "./seq";
 export const MESSAGE_PAGE_MAX = 200;
 
 type MessageRow = typeof messages.$inferSelect;
-type MessageFields = Omit<typeof messages.$inferInsert, "id" | "channelId" | "seq">;
+type MessageFields = Omit<typeof messages.$inferInsert, "id" | "channelId" | "conversationId" | "seq">;
 
 export type CreateUserMessageInput = {
-  channelId: string;
+  /** 채널은 대화에서 찾는다 */
+  conversationId: string;
   authorId: string;
   /** 평문 @handle 이 섞인 본문 — 저장 전에 채널 참가자와 채널 밖 워크스페이스 사람으로 토큰화한다(userMessageParticipants) */
   bodyMd: string;
@@ -49,12 +51,12 @@ export type CreateUserMessageInput = {
   /** 올린 사람 = 보내는 사람·같은 채널·미묶음이어야 한다 — 하나라도 틀리면 메시지 전체가 VALIDATION(스펙 4.4) */
   attachments?: string[];
   replyTo?: string;
-  /** 같은 채널의 루트만 — 답글·다른 채널·없는 id 면 VALIDATION(스레드 안의 스레드 없음) */
+  /** 같은 대화의 루트만 — 답글·다른 대화·없는 id 면 VALIDATION(스레드 안의 스레드 없음) */
   threadRootId?: string;
 };
 
 export type CreateAgentMessageInput = {
-  channelId: string;
+  conversationId: string;
   agentId: string;
   runId?: string;
   /** 브리지 outboundId — 중복 제거 키 */
@@ -71,7 +73,7 @@ export type CreateAgentMessageInput = {
 };
 
 export type CreateAutomationMessageInput = {
-  channelId: string;
+  conversationId: string;
   automationId: string;
   /** 자동화에 저장된 평문 @handle 문구 — 사람 메시지와 같은 참가자 집합으로 토큰화한다(계획 판정 PA1) */
   bodyMd: string;
@@ -83,7 +85,7 @@ export type CreateAutomationMessageInput = {
 };
 
 export type CreateSystemMessageInput = {
-  channelId: string;
+  conversationId: string;
   kind: SystemKind;
   bodyMd: string;
   /** kind 는 인자 kind 로 채운다 */
@@ -121,6 +123,7 @@ export function rowToMessage(row: MessageRow): Message {
     {
       id: row.id,
       channelId: row.channelId,
+      conversationId: row.conversationId,
       seq: row.seq,
       kind: row.kind,
       authorType: row.authorType,
@@ -293,13 +296,15 @@ export function createUserMessage(db: Db, bus: ServerBus, input: CreateUserMessa
       .get();
     // 재전송(ack 유실)은 잡기 전에 돌아간다 — 처음 메시지가 이미 묶은 첨부를 「쓸 수 없는 첨부」로 거절하지 않게
     if (existing) return { message: rowToMessage(existing), created: false, root: undefined, joined: false };
+    const conversation = requireConversation(tx, input.conversationId);
+    const { channelId } = conversation;
     const claimed = claimUserAttachments(tx, {
       ids: input.attachments ?? [],
-      channelId: input.channelId,
+      channelId,
       userId: input.authorId,
     });
-    const message = storeMessage(tx, input.channelId, input.threadRootId, () => {
-      const { bodyMd, mentions } = tokenize(input.bodyMd, userMessageParticipants(tx, input.channelId));
+    const message = storeMessage(tx, conversation, input.threadRootId, () => {
+      const { bodyMd, mentions } = tokenize(input.bodyMd, userMessageParticipants(tx, channelId));
       return {
         kind: "normal",
         authorType: "user",
@@ -320,15 +325,15 @@ export function createUserMessage(db: Db, bus: ServerBus, input: CreateUserMessa
     const now = new Date();
     // 모두 부른다 — some 이면 앞에서 true 가 나올 때 뒤 사람을 건너뛴다
     const joined = [input.authorId, ...message.mentions.users]
-      .map((userId) => joinChannelIfAbsent(tx, input.channelId, userId, now))
+      .map((userId) => joinChannelIfAbsent(tx, channelId, userId, now))
       .includes(true);
     return { message, created: true, root: updatedRoot(tx, message), joined };
   });
   if (result.created) emitCreated(bus, result.message, result.root);
   if (result.joined) {
     bus.emit("channel.member.changed", {
-      channelId: input.channelId,
-      members: listMembers(db, input.channelId),
+      channelId: result.message.channelId,
+      members: listMembers(db, result.message.channelId),
     });
   }
   return result.message;
@@ -347,14 +352,16 @@ export function createAgentMessage(
   const result = db.transaction((tx) => {
     const existing = tx.select().from(messages).where(eq(messages.externalId, input.externalId)).get();
     if (existing) return { message: rowToMessage(existing), created: false, dropped: [], root: undefined };
+    const conversation = requireConversation(tx, input.conversationId);
+    const { channelId } = conversation;
     const { accepted, dropped } = claimBridgeAttachments(tx, {
       ids: input.attachmentIds ?? [],
-      channelId: input.channelId,
+      channelId,
       by: input.uploadedBy,
     });
-    const message = storeMessage(tx, input.channelId, input.threadRootId, () => {
+    const message = storeMessage(tx, conversation, input.threadRootId, () => {
       const now = new Date();
-      const { bodyMd, mentions } = tokenize(input.bodyMd, channelParticipants(tx, input.channelId));
+      const { bodyMd, mentions } = tokenize(input.bodyMd, channelParticipants(tx, channelId));
       return {
         kind: "normal",
         authorType: "agent",
@@ -393,9 +400,11 @@ export function createAutomationMessage(
   input: CreateAutomationMessageInput,
 ): Message {
   const result = db.transaction((tx) => {
-    assertChannelWritable(tx, input.channelId);
-    const message = storeMessage(tx, input.channelId, undefined, () => {
-      const text = tokenize(input.bodyMd, userMessageParticipants(tx, input.channelId)).bodyMd;
+    const conversation = requireConversation(tx, input.conversationId);
+    const { channelId } = conversation;
+    assertChannelWritable(tx, channelId);
+    const message = storeMessage(tx, conversation, undefined, () => {
+      const text = tokenize(input.bodyMd, userMessageParticipants(tx, channelId)).bodyMd;
       const bodyMd =
         input.extraMd === undefined ? text : `${text}\n\n${neutralizeMentionTokens(input.extraMd)}`;
       return {
@@ -410,15 +419,15 @@ export function createAutomationMessage(
     });
     const now = new Date();
     const joined = message.mentions.users
-      .map((userId) => joinChannelIfAbsent(tx, input.channelId, userId, now))
+      .map((userId) => joinChannelIfAbsent(tx, channelId, userId, now))
       .includes(true);
     return { message, joined };
   });
   emitCreated(bus, result.message, undefined);
   if (result.joined) {
     bus.emit("channel.member.changed", {
-      channelId: input.channelId,
-      members: listMembers(db, input.channelId),
+      channelId: result.message.channelId,
+      members: listMembers(db, result.message.channelId),
     });
   }
   return result.message;
@@ -427,19 +436,24 @@ export function createAutomationMessage(
 /** 본문은 토큰화하지 않고 mentions 는 비운다 — 시스템 메시지는 라우팅 대상이 아니다. */
 export function createSystemMessage(db: Db, bus: ServerBus, input: CreateSystemMessageInput): Message {
   const result = db.transaction((tx) => {
-    const message = storeMessage(tx, input.channelId, input.threadRootId, () => {
-      const now = input.createdAt ?? new Date();
-      return {
-        kind: "system",
-        authorType: "system",
-        authorId: null,
-        bodyMd: input.bodyMd,
-        mentions: { agents: [], users: [] },
-        ...componentFields(input.components, now),
-        systemMeta: { ...input.systemMeta, kind: input.kind },
-        createdAt: now,
-      };
-    });
+    const message = storeMessage(
+      tx,
+      requireConversation(tx, input.conversationId),
+      input.threadRootId,
+      () => {
+        const now = input.createdAt ?? new Date();
+        return {
+          kind: "system",
+          authorType: "system",
+          authorId: null,
+          bodyMd: input.bodyMd,
+          mentions: { agents: [], users: [] },
+          ...componentFields(input.components, now),
+          systemMeta: { ...input.systemMeta, kind: input.kind },
+          createdAt: now,
+        };
+      },
+    );
     return { message, root: updatedRoot(tx, message) };
   });
   emitCreated(bus, result.message, result.root);
@@ -571,27 +585,44 @@ export function findUserMessage(db: DbOrTx, authorId: string, clientMsgId: strin
   return row ? rowToMessage(row) : undefined;
 }
 
+/** 그 대화와 채널. 대화나 채널이 없으면 NOT_FOUND */
+function requireConversation(tx: DbOrTx, conversationId: string): { id: string; channelId: string } {
+  const row = tx
+    .select({ id: conversations.id, channelId: conversations.channelId })
+    .from(conversations)
+    .innerJoin(channels, eq(channels.id, conversations.channelId))
+    .where(eq(conversations.id, conversationId))
+    .get();
+  if (!row) throw apiError("NOT_FOUND", "conversation not found");
+  return row;
+}
+
 /**
- * 채널 확인 → 스레드 루트 확인 → allocateSeq → 본문 조립(토큰화) → INSERT. 호출자의 트랜잭션 안에서. 계약 위반이면 throw 해
- * 롤백된다. 답글을 루트로 가리키면 그 루트로 바꾸지 않고 거절한다 — 웹이 루트를 보낸다(스펙 4.1).
+ * 스레드 루트 확인 → allocateSeq → 본문 조립(토큰화) → INSERT → 대화의 last_seq·last_message_at. 호출자의 트랜잭션 안에서.
+ * 계약 위반이면 throw 해 롤백된다. 답글을 루트로 가리키면 그 루트로 바꾸지 않고 거절한다 — 웹이 루트를 보낸다(스펙 4.1).
+ * 답글의 대화는 루트의 대화와 같아야 한다(채널 세션 스펙 2.2) — seq 는 채널을 같이 쓰므로 루트를 채널로만 찾으면 다른 대화의 루트에
+ * 답글이 붙는다
  */
 function storeMessage(
   tx: DbOrTx,
-  channelId: string,
+  conversation: { id: string; channelId: string },
   threadRootId: string | undefined,
   build: () => MessageFields,
 ): Message {
-  const channel = tx.select({ id: channels.id }).from(channels).where(eq(channels.id, channelId)).get();
-  if (!channel) throw apiError("NOT_FOUND", "channel not found");
-  if (threadRootId !== undefined && !getThreadRoot(tx, channelId, threadRootId)) {
-    throw apiError("VALIDATION", "threadRootId 는 이 채널의 루트 메시지여야 한다");
+  const { id: conversationId, channelId } = conversation;
+  if (
+    threadRootId !== undefined &&
+    getThreadRoot(tx, channelId, threadRootId)?.conversationId !== conversationId
+  ) {
+    throw apiError("VALIDATION", "threadRootId 는 이 대화의 루트 메시지여야 한다");
   }
   const seq = allocateSeq(tx, channelId);
   const row = tx
     .insert(messages)
-    .values({ id: uuidv7(), channelId, seq, ...build(), threadRootId: threadRootId ?? null })
+    .values({ id: uuidv7(), channelId, conversationId, seq, ...build(), threadRootId: threadRootId ?? null })
     .returning()
     .get();
+  touchConversation(tx, conversationId, row.seq, row.createdAt);
   return rowToMessage(row);
 }
 

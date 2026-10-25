@@ -330,7 +330,7 @@ describe("통합 — 리액션", () => {
       const { answer } = await turn(t, "@dev 처음");
       if (!answer) throw new Error("답이 없다");
       const notice = createSystemMessage(live.app.db, live.app.bus, {
-        channelId: t.channel.id,
+        conversationId: t.channel.id,
         bodyMd: "공지",
         kind: "info",
       });

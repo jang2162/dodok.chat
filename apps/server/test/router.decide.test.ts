@@ -50,6 +50,7 @@ const channel = (relayPolicy: Partial<Channel["relayPolicy"]> = {}): Channel => 
 const userMsg = (agents: string[], bodyMd = "hi"): Message => ({
   id: ID(30),
   channelId: CH,
+  conversationId: CH,
   seq: 1,
   kind: "normal",
   authorType: "user",
@@ -64,6 +65,7 @@ const userMsg = (agents: string[], bodyMd = "hi"): Message => ({
 const agentMsg = (author: string, agents: string[], bodyMd = "reply"): Message => ({
   id: ID(31),
   channelId: CH,
+  conversationId: CH,
   seq: 2,
   kind: "normal",
   authorType: "agent",
@@ -79,6 +81,7 @@ const agentMsg = (author: string, agents: string[], bodyMd = "reply"): Message =
 const run = (agentId: string, relayDepth: number): Run => ({
   id: ID(40),
   channelId: CH,
+  conversationId: CH,
   agentId,
   triggerKind: "mention",
   triggerMessageId: ID(30),
@@ -285,6 +288,7 @@ const ROOT = ID(50);
 const rootMsg = (authorType: "user" | "agent", authorId: string): Message => ({
   id: ROOT,
   channelId: CH,
+  conversationId: CH,
   seq: 1,
   kind: "normal",
   authorType,

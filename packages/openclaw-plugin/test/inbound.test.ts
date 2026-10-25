@@ -12,6 +12,7 @@ function deliver(overrides: Partial<InboundDeliver> = {}): InboundDeliver {
     deliveryId: "01a09fc9-d204-7551-89d6-38544d07a101",
     kind: "message",
     channelId: CH,
+    conversationId: CH,
     agentId: "main",
     sessionKey: `agent:main:dodok:channel:${CH}`,
     runId: "01a09fc9-d204-7551-89d6-38544d07a103",
@@ -43,7 +44,7 @@ describe("toInboundFacts", () => {
       ok: true,
       facts: {
         accountId: "default",
-        channelId: CH,
+        conversationId: CH,
         agentId: "main",
         sessionKey: `agent:main:dodok:channel:${CH}`,
         target: `channel:${CH}`,
@@ -161,7 +162,7 @@ describe("toInboundFacts", () => {
     });
   });
 
-  it("세션 키가 agentId·channelId 와 어긋나면 거부한다", () => {
+  it("세션 키가 agentId·conversationId 와 어긋나면 거부한다", () => {
     const res = toInboundFacts(deliver({ sessionKey: `agent:other:dodok:channel:${CH}` }), {
       accountId: "default",
     });
