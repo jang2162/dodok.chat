@@ -37,6 +37,18 @@ vi.mock("@/realtime/WireProvider", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/realtime/WireProvider")>()),
   useWire: () => ({ socket: wire.socket, subscriptions: undefined }),
 }));
+// 세션 화면(`ChannelPage`)이 그려진 횟수 — 그 화면만 부르는 훅을 세어 본다(스레드 패널을 열지 않은 테스트에서). 동작은 그대로
+const pageRenders = vi.hoisted(() => ({ count: 0 }));
+vi.mock("@/features/runs/useChannelBubbles", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/features/runs/useChannelBubbles")>();
+  return {
+    ...actual,
+    useChannelBubbles: (...args: Parameters<typeof actual.useChannelBubbles>) => {
+      pageRenders.count += 1;
+      return actual.useChannelBubbles(...args);
+    },
+  };
+});
 
 const OTHER = "other";
 const A = uid(5_001);
@@ -365,27 +377,32 @@ describe("세션 목록 칸", () => {
     live.detach();
   });
 
-  it("읽지 않음 자리 — 값을 주면 굵게·점, 멘션 수 배지(99+), 주지 않으면 그리지 않는다", async () => {
+  it("읽지 않음 자리 — 현황이 있으면 굵게·점, 멘션 수 배지(99+), 항목이 없는 세션은 그리지 않는다", async () => {
     const { ConversationList } = await import("./ConversationList");
     stubServer({ conversations: [conv(A, { lastMessageAt: at(5) }), conv(B), conv(C)] });
-    const marks = new Map([
-      [B, { unread: true, mentions: 0 }],
-      [C, { unread: true, mentions: 120 }],
-    ]);
-    const qc = createQueryClient(() => {});
-    qc.setQueryData(qk.me, { ...ME });
-    const { renderWithClient } = await import("../../../test/messages");
-    renderWithClient(
-      <ConversationList channelId={CH} conversationId={A} unreadOf={(id) => marks.get(id)} />,
-      qc,
-    );
-    const b = await screen.findByRole("link", { name: /세션-2/ });
-    expect(b).toHaveAttribute("data-unread", "true");
-    expect(within(b).getByText("읽지 않음")).toBeInTheDocument();
-    const c = screen.getByRole("link", { name: /세션-3/ });
-    expect(within(c).getByText("99+")).toBeInTheDocument();
-    expect(within(c).getByText("나를 멘션한 글 120개")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /세션-1/ })).not.toHaveAttribute("data-unread");
+    const entry = (unread: boolean, mentions: number) => ({
+      channelId: CH,
+      lastReadSeq: 0,
+      seenSeq: 3,
+      unread,
+      mentions,
+    });
+    useUnread.setState({ ready: true, byConversation: { [B]: entry(true, 0), [C]: entry(true, 120) } });
+    try {
+      const qc = createQueryClient(() => {});
+      qc.setQueryData(qk.me, { ...ME });
+      const { renderWithClient } = await import("../../../test/messages");
+      renderWithClient(<ConversationList channelId={CH} conversationId={A} />, qc);
+      const b = await screen.findByRole("link", { name: /세션-2/ });
+      expect(b).toHaveAttribute("data-unread", "true");
+      expect(within(b).getByText("읽지 않음")).toBeInTheDocument();
+      const c = screen.getByRole("link", { name: /세션-3/ });
+      expect(within(c).getByText("99+")).toBeInTheDocument();
+      expect(within(c).getByText("나를 멘션한 글 120개")).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: /세션-1/ })).not.toHaveAttribute("data-unread");
+    } finally {
+      useUnread.getState().reset();
+    }
   });
 
   it("[태스크 8 Step 0] 세션 화면의 목록 칸은 대화별 읽지 않음 현황으로 점·배지를 그린다 — 두 세션 중 안 읽은 쪽만", async () => {
@@ -415,6 +432,52 @@ describe("세션 목록 칸", () => {
       act(() => useUnread.setState({ byConversation: { [B]: entry(false, 0), [C]: entry(false, 0) } }));
       await waitFor(() => expect(b).not.toHaveAttribute("data-unread"));
       expect(b.querySelector('[data-slot="mention-badge"]')).toBeNull();
+      // [태스크 8 리뷰 L2] 스냅숏 전·실패·끊김(ready false)이면 값이 남아 있어도 그리지 않는다 — 끊김·실패의 `failSnapshot` 은 ready 만
+      // 내리고 byConversation 을 남긴다(낡은 점·배지)
+      act(() => useUnread.setState({ byConversation: { [B]: entry(true, 2), [C]: entry(true, 0) } }));
+      await waitFor(() => expect(within(b).getByText("나를 멘션한 글 2개")).toBeInTheDocument());
+      act(() => useUnread.setState({ ready: false }));
+      await waitFor(() => expect(b).not.toHaveAttribute("data-unread"));
+      expect(b.querySelector('[data-slot="unread-dot"], [data-slot="mention-badge"]')).toBeNull();
+      expect(c).not.toHaveAttribute("data-unread");
+      expect(c.querySelector('[data-slot="unread-dot"], [data-slot="mention-badge"]')).toBeNull();
+    } finally {
+      useUnread.getState().reset();
+    }
+  });
+
+  it("[태스크 8 리뷰 L1] 읽지 않음 현황이 바뀌어도 세션 화면은 다시 그리지 않는다 — 다시 그리기는 목록의 그 줄에 갇힌다", async () => {
+    stubServer({ conversations: [conv(A, { lastMessageAt: at(9) }), conv(B, { lastMessageAt: at(5) })] });
+    const entry = (channelId: string, unread: boolean, mentions: number) => ({
+      channelId,
+      lastReadSeq: 0,
+      seenSeq: 3,
+      unread,
+      mentions,
+    });
+    useUnread.setState({ ready: true, byConversation: { [B]: entry(CH, false, 0) } });
+    try {
+      renderRoute(`/c/${CH}/s/${A}`);
+      const b = await within(await pane()).findByRole("link", { name: /세션-2/ });
+      await screen.findByRole("textbox", { name: "메시지 입력" });
+      // 첫 그리기가 가라앉은 뒤부터 센다
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 50));
+      });
+      const settled = pageRenders.count;
+      expect(settled).toBeGreaterThan(0);
+      // 다른 채널 세션의 남의 글 — 이 화면의 어느 줄 값도 안 바뀐다
+      act(() =>
+        useUnread.setState((s) => ({
+          byConversation: { ...s.byConversation, [uid(5_900)]: entry(CH2, true, 1) },
+        })),
+      );
+      // 이 채널 B 세션의 남의 글 — B 줄만 바뀐다
+      act(() =>
+        useUnread.setState((s) => ({ byConversation: { ...s.byConversation, [B]: entry(CH, true, 0) } })),
+      );
+      await waitFor(() => expect(b).toHaveAttribute("data-unread", "true"));
+      expect(pageRenders.count).toBe(settled);
     } finally {
       useUnread.getState().reset();
     }
@@ -745,6 +808,37 @@ describe("닫힌 세션 — 권한·스레드·리액션·카드", () => {
     view.unmount();
     release();
     await waitFor(() => expect(onReopened).toHaveBeenCalledTimes(1));
+  });
+
+  it("[태스크 8 리뷰 L5] 「다시 열기」가 실패(403)하면 onReopened 를 부르지 않고(초점이 숨은 작성기로 가지 않는다) 토스트로 알린다", async () => {
+    const { ClosedNotice } = await import("./ClosedNotice");
+    const { renderWithClient } = await import("../../../test/messages");
+    const { toast } = await import("sonner");
+    const toasted = vi.spyOn(toast, "error");
+    const closedA = conv(A, { closedAt: at(3), closedBy: ME.user.id });
+    const server = stubServer({ conversations: [closedA] });
+    const base = globalThis.fetch;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof globalThis.fetch>(async (input, init) =>
+        (init?.method ?? "GET") === "PATCH"
+          ? json(403, { code: "FORBIDDEN", message: "세션을 바꿀 권한이 없다" })
+          : base(input, init),
+      ),
+    );
+    const qc = createQueryClient(() => {});
+    qc.setQueryData(qk.me, { ...ME });
+    const onReopened = vi.fn();
+    renderWithClient(
+      <ClosedNotice channelId={CH} conversation={closedA} reopen onReopened={onReopened} />,
+      qc,
+    );
+    const button = await screen.findByRole("button", { name: "다시 열기" });
+    await userEvent.click(button);
+    await waitFor(() => expect(toasted).toHaveBeenCalledWith("권한이 없습니다", { id: "forbidden" }));
+    await waitFor(() => expect(button).toBeEnabled());
+    expect(onReopened).not.toHaveBeenCalled();
+    expect(server.state.conversations[0]?.closedAt).toBeDefined();
   });
 
   it("member 는 남의 닫힌 세션에서 「다시 열기」를 보지 않는다", async () => {

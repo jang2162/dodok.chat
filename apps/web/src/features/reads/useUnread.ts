@@ -1,5 +1,4 @@
 import type { Channel, ChannelActivity, ConversationReadUpdate, UnreadSnapshot } from "@dodok/shared";
-import { useCallback } from "react";
 import { create } from "zustand";
 import { useShallow } from "zustand/react/shallow";
 import { isChannelArchived } from "@/features/channels/archived";
@@ -193,19 +192,11 @@ export function useChannelUnread(channelId: string): UnreadView | null {
 
 /**
  * 세션 목록 한 줄이 그리는 값(그 세션의 점·배지). 규칙은 `useChannelUnread` 와 같다 — 스냅숏 전·실패·끊김이면 null, 항목이 없는 세션
- * (받은 적 없는 세션·새 세션 창)은 안 읽은 것이 없다
+ * (받은 적 없는 세션·새 세션 창)은 안 읽은 것이 없다. 줄(`ConversationItem`)이 직접 부른다 — 다른 채널·다른 세션의 활동·읽음은 이 줄도,
+ * 세션 화면도 다시 그리지 않는다(값이 같으면 `useShallow` 가 막는다)
  */
 export function useConversationUnread(conversationId: string): UnreadView | null {
   return useUnread(useShallow((s) => (s.ready ? viewOf(s.byConversation, conversationId) : null)));
-}
-
-/**
- * 세션 목록 칸이 줄마다 부르는 조회(`ConversationList` 의 `unreadOf`) — 값은 `useConversationUnread` 와 같다. 줄마다 훅을 부를 수 없는
- * 목록이라 함수로 준다. 스냅숏 전·실패·끊김이면 늘 undefined
- */
-export function useConversationUnreadOf(): (conversationId: string) => UnreadView | undefined {
-  const entries = useUnread((s) => (s.ready ? s.byConversation : null));
-  return useCallback((id: string) => (entries ? viewOf(entries, id) : undefined), [entries]);
 }
 
 const viewOf = (entries: Record<string, UnreadEntry>, conversationId: string): UnreadView => ({

@@ -16,7 +16,6 @@ import { ConversationList } from "@/features/conversations/ConversationList";
 import { useConversationPermissions } from "@/features/conversations/permissions";
 import { useConversation, useSessionChannelGuard } from "@/features/conversations/queries";
 import { captureEntryRead } from "@/features/reads/entryRead";
-import { useConversationUnreadOf } from "@/features/reads/useUnread";
 import { StreamingBubble } from "@/features/runs/StreamingBubble";
 import { useChannelBubbles } from "@/features/runs/useChannelBubbles";
 import { type ThreadOpener, ThreadOpenerContext } from "@/features/threads/threadOpener";
@@ -100,7 +99,6 @@ export function ChannelPage() {
     if (known && sessionKnown && belongs) touchRecentConversation(qc, channelId, conversationId);
   }, [known, sessionKnown, belongs, qc, channelId, conversationId]);
   const bubbleRunIds = useChannelBubbles(channelId, conversationId);
-  const unreadOf = useConversationUnreadOf();
   const { retry, discard } = useSendMessage(channelId, conversationId);
   // 보내는 중 항목의 「다시 보내기」·「삭제」(태스크 7 PendingItem 이 읽는다). 실패는 항목 상태(failed)로 보인다
   const pendingActions = useMemo<PendingActions>(
@@ -134,7 +132,6 @@ export function ChannelPage() {
       channelId={channelId}
       conversationId={conversationId}
       onPick={onPick}
-      unreadOf={unreadOf}
       inSheet={onPick !== undefined}
     />
   );

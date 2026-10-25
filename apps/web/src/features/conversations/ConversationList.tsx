@@ -6,14 +6,9 @@ import { cn } from "@/lib/utils";
 import { NEW_CONVERSATION } from "@/features/messages/timeline";
 import { Button } from "@/ui/button";
 import { Input } from "@/ui/input";
+import { useConversationUnread } from "@/features/reads/useUnread";
 import { useConversationPermissions } from "./permissions";
 import { useConversationActivity, useConversationList } from "./queries";
-
-/**
- * 세션 하나의 읽지 않음 표시 — 굵게(점)와 나를 멘션한 수(배지). 값은 읽음 쪽(features/reads)이 세션마다 낸다. 목록은 받은 대로 그릴 뿐이고,
- * 값이 없으면(현황 전·실패·아직 잇지 않음) 아무것도 그리지 않는다
- */
-export type ConversationUnreadMark = { unread: boolean; mentions: number };
 
 /** 제목 검색을 서버에 묻기 전에 기다리는 시간 — 글자마다 요청이 나가지 않게 */
 export const SEARCH_DEBOUNCE_MS = 250;
@@ -36,19 +31,17 @@ function ActivityTime({ iso }: { iso: string }) {
 /**
  * 채널의 세션 목록(채널 세션 스펙 「웹」 장) — 넓은 화면은 타임라인 왼쪽 칸, 좁은 화면은 시트 안에 같은 것을 그린다(배치는 부르는 쪽).
  * 「열림/닫힘」 필터, 제목 검색(서버 `q`), 최근 활동순, 지금 세션은 `aria-current`. 「새 세션」은 만들 수 있는 사람에게만(정책·역할 —
- * `useConversationPermissions`). 읽지 않음 점·멘션 배지는 `unreadOf` 가 주는 값으로만 그린다. `onPick` 은 항목·「새 세션」을 눌렀을 때 —
+ * `useConversationPermissions`). 읽지 않음 점·멘션 배지는 줄마다 읽음 쪽(features/reads)의 그 세션 값을 듣는다 — 현황 전·실패·끊김이면 그리지 않는다. `onPick` 은 항목·「새 세션」을 눌렀을 때 —
  * 시트를 닫으려고. 칸이 떠 있는 동안 새 글로 순서를 올린다(`useConversationActivity`)
  */
 export function ConversationList({
   channelId,
   conversationId,
-  unreadOf,
   onPick,
   inSheet = false,
 }: {
   channelId: string;
   conversationId: string;
-  unreadOf?: (conversationId: string) => ConversationUnreadMark | undefined;
   onPick?: () => void;
   /** 좁은 화면 시트 안 — 머리 오른쪽을 시트의 닫기 단추 자리만큼 비운다(패널 시트 머리 `PanelTabs` 와 같은 pr-12) */
   inSheet?: boolean;
@@ -118,7 +111,6 @@ export function ConversationList({
           searching={q !== ""}
           channelId={channelId}
           conversationId={conversationId}
-          unreadOf={unreadOf}
           onPick={onPick}
         />
       </div>
@@ -132,7 +124,6 @@ function ListBody({
   searching,
   channelId,
   conversationId,
-  unreadOf,
   onPick,
 }: {
   list: ReturnType<typeof useConversationList>;
@@ -140,7 +131,6 @@ function ListBody({
   searching: boolean;
   channelId: string;
   conversationId: string;
-  unreadOf?: (conversationId: string) => ConversationUnreadMark | undefined;
   onPick?: () => void;
 }) {
   if (list.data === undefined) {
@@ -177,7 +167,6 @@ function ListBody({
             channelId={channelId}
             conversation={c}
             current={c.id === conversationId}
-            mark={unreadOf?.(c.id)}
             onPick={onPick}
           />
         ))}
@@ -201,15 +190,14 @@ function ConversationItem({
   channelId,
   conversation,
   current,
-  mark,
   onPick,
 }: {
   channelId: string;
   conversation: Conversation;
   current: boolean;
-  mark: ConversationUnreadMark | undefined;
   onPick?: () => void;
 }) {
+  const mark = useConversationUnread(conversation.id);
   const unread = mark?.unread === true && !current;
   const mentions = mark?.mentions ?? 0;
   return (
