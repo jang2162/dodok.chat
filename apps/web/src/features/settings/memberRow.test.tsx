@@ -182,7 +182,7 @@ describe("채널 프롬프트 오버라이드", () => {
     expect(within(list).queryByRole("textbox")).not.toBeInTheDocument();
     // 채널 지시가 바뀌면 러너 세션이 새로 시작한다(ADR 0007) — 저장 안내가 그 대가를 알린다
     expect(within(list).getByRole("status")).toHaveTextContent(
-      "다음 턴부터 반영됩니다. Claude 러너 에이전트는 다음 런에서 앞 맥락을 비웁니다",
+      "다음 턴부터 반영됩니다. Claude 러너 에이전트는 다음 런부터 앞 작업 맥락(도구 결과·긴 작업)을 이어 가지 않습니다 — 채널의 최근 글은 그대로 봅니다",
     );
 
     // 다시 펼치면 안내를 내린다 — 취소로 접어도 다시 뜨지 않는다
@@ -257,11 +257,13 @@ describe("에이전트 제거 확인", () => {
   it("열린 채 채널이 바뀌면 닫는다 — 돌아와도 다시 열리지 않고 요청도 없다", async () => {
     const server = stubSettingsServer({
       members: members([DEV]),
+      // 채널·멤버만 — 세션 목록(`/conversations?…`)은 셸 기본이 답한다
       override: ({ method, url }) => {
-        if (method !== "GET" || !url.startsWith(`/api/v1/channels/${CH2}`)) return undefined;
-        return url.endsWith("/members")
-          ? json(200, { members: [] })
-          : json(200, { channel: channelOf(CH2, { name: "random" }) });
+        if (method !== "GET") return undefined;
+        if (url === `/api/v1/channels/${CH2}/members`) return json(200, { members: [] });
+        if (url === `/api/v1/channels/${CH2}`)
+          return json(200, { channel: channelOf(CH2, { name: "random" }) });
+        return undefined;
       },
     });
     const queryClient = createQueryClient(() => {});
