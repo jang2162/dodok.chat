@@ -192,20 +192,17 @@ export function useChannelUnread(channelId: string): UnreadView | null {
 
 /**
  * 세션 목록 한 줄이 그리는 값(그 세션의 점·배지). 규칙은 `useChannelUnread` 와 같다 — 스냅숏 전·실패·끊김이면 null, 항목이 없는 세션
- * (받은 적 없는 세션·새 세션 창)은 안 읽은 것이 없다
+ * (받은 적 없는 세션·새 세션 창)은 안 읽은 것이 없다. 줄(`ConversationItem`)이 직접 부른다 — 다른 채널·다른 세션의 활동·읽음은 이 줄도,
+ * 세션 화면도 다시 그리지 않는다(값이 같으면 `useShallow` 가 막는다)
  */
 export function useConversationUnread(conversationId: string): UnreadView | null {
-  return useUnread(
-    useShallow((s) =>
-      s.ready
-        ? {
-            unread: s.byConversation[conversationId]?.unread ?? false,
-            mentions: s.byConversation[conversationId]?.mentions ?? 0,
-          }
-        : null,
-    ),
-  );
+  return useUnread(useShallow((s) => (s.ready ? viewOf(s.byConversation, conversationId) : null)));
 }
+
+const viewOf = (entries: Record<string, UnreadEntry>, conversationId: string): UnreadView => ({
+  unread: entries[conversationId]?.unread ?? false,
+  mentions: entries[conversationId]?.mentions ?? 0,
+});
 
 /** 타임라인의 끝이 보이고 탭이 보이는 세션(없으면 undefined) — 세션 목록이 알리고 activity 처리가 읽는다 */
 let viewingAtEnd: string | undefined;

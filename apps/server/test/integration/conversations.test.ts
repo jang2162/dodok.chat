@@ -5,16 +5,31 @@
  * 한 채널의 두 세션은 세션 키·맥락이 따로이고 병렬로 돌며, 릴레이는 그 세션 안에서만 잇고, 세션 키의 대화 밖으로 온 정본은 저장하지 않는다
  */
 import { randomUUID } from "node:crypto";
-import { type Conversation, dodokSessionKey, formatSessionLine, type Message } from "@dodok/shared";
+import {
+  type Channel,
+  type ChannelMember,
+  type Conversation,
+  dodokSessionKey,
+  formatSessionLine,
+  type Message,
+  PushPayload,
+  REACTION_EMOJIS,
+} from "@dodok/shared";
 import { and, eq } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { conversations, messages, runs } from "../../src/db/schema.sqlite";
 import { getRun } from "../../src/modules/runs/store";
 import { createScenario } from "../fakes/scenario";
 import { bootLiveApp, type LiveApp } from "../helpers/live-app";
-import { openChannelWire, rest, sendMessage, setupRelayChannel } from "../helpers/scenario-steps";
+import { userWithRole } from "../helpers/app";
+import { openChannelWire, rest, sendMessage, setupRelayChannel, WAIT_MS } from "../helpers/scenario-steps";
 import { channelConversation } from "../helpers/seed";
-import type { WireClient } from "../helpers/wire";
+import { connectWire, type WireClient } from "../helpers/wire";
+
+const PUSH_KEYS = {
+  p256dh: "BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCA_0QTpQtUbVlUls0VJXg7A8u-Ts1XbjhazAkj7I99e8QcYP7DkM",
+  auth: "tBHItJI5svbpez7KI4CCXg",
+};
 
 vi.setConfig({ testTimeout: 20_000, hookTimeout: 20_000 });
 
@@ -515,5 +530,317 @@ describe("통합 — 런과 에이전트가 세션 단위로", () => {
       sessionKey: dodokSessionKey("dev", b.id),
     });
     expect(created.find((p) => p.message.id === inArchived.messageId)?.silent).toBe(true);
+  });
+});
+
+/** 사람 하나의 REST(세션 토큰) — `rest` 는 owner 만 */
+async function restAs<T = unknown>(
+  live: LiveApp,
+  token: string,
+  method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE",
+  url: string,
+  payload?: object,
+): Promise<{ status: number; body: T }> {
+  const res = await live.app.fastify.inject({
+    method,
+    url: `/api/v1${url}`,
+    headers: { authorization: `Bearer ${token}` },
+    ...(payload === undefined ? {} : { payload }),
+  });
+  return { status: res.statusCode, body: (res.body === "" ? undefined : res.json()) as T };
+}
+
+type Listed = { conversations: Conversation[] };
+const bodiesOf = (page: { messages: Message[] }) => page.messages.map((m) => m.bodyMd);
+
+describe("통합 — 완료 기준(스펙 9장)", () => {
+  let live: LiveApp;
+  const sockets: WireClient[] = [];
+  type Sent = { payload: PushPayload };
+  let pushed: Sent[] = [];
+
+  afterEach(async () => {
+    for (const socket of sockets.splice(0)) socket.close();
+    await live.close();
+  });
+
+  /** 가짜 발송기는 wire 이벤트가 아니다 — 짧게 되풀이해 본다(상한은 실패를 드러내는 용도) */
+  async function untilMentions(n: number): Promise<void> {
+    const deadline = Date.now() + WAIT_MS;
+    while (pushed.filter((p) => p.payload.kind === "mention").length < n) {
+      if (Date.now() > deadline) throw new Error(`멘션 푸시 ${n}건을 기다렸는데 ${pushed.length}건`);
+      await new Promise((r) => setTimeout(r, 10));
+    }
+  }
+
+  it("[완료 기준 1] 한 채널의 세션 여럿 — 메시지가 세션마다 따로 쌓이고, 같은 에이전트가 세션마다 그 세션 글만 맥락으로 답한다", async () => {
+    live = await bootLiveApp();
+    const { channel, dev } = await setupRelayChannel(live, { maxRelayTurns: 3, allowPairs: "all" });
+    const log = await openChannelWire(live, channel.id, sockets);
+    // 답에 받은 맥락을 그대로 싣는다 — 다른 세션 글이 섞이면 답 본문에 보인다
+    const scenario = createScenario({
+      gateway: live.gateway,
+      plugin: live.plugin,
+      agents: {
+        dev: ({ delivery }) => ({
+          reply: `맥락: ${delivery.context.recentMessages.map((m) => m.text).join(" / ")}`,
+        }),
+        fin: () => ({ reply: "fin" }),
+      },
+    });
+
+    const opened = [
+      { title: "배포", first: "배포는 금요일", ask: "@dev 배포 언제?" },
+      { title: "휴가", first: "휴가는 다음 주", ask: "@dev 휴가 언제?" },
+      { title: "점심", first: "점심은 국수", ask: "@dev 점심 뭐?" },
+    ];
+    const ids: string[] = [];
+    for (const s of opened) {
+      const made = await sendIn(log.socket, channel.id, s.first, { newConversation: { title: s.title } });
+      if (!made.conversation) throw new Error("세션이 없다");
+      ids.push(made.conversation.id);
+    }
+    for (const [i, s] of opened.entries())
+      await sendIn(log.socket, channel.id, s.ask, { conversationId: ids[i] as string });
+    const replies = await log.until(() => {
+      const got = log.created.filter((m) => m.authorType === "agent" && m.authorId === dev.id);
+      return got.length === opened.length && got;
+    }, "dev 답 셋");
+    await scenario.idle();
+
+    const listed = await rest<Listed>(live, "GET", `/channels/${channel.id}/conversations?status=open`);
+    expect(listed.body.conversations.map((c) => c.title).sort()).toEqual(["배포", "점심", "휴가"]);
+    for (const [i, s] of opened.entries()) {
+      const id = ids[i] as string;
+      const reply = replies.find((m) => m.conversationId === id);
+      // 그 세션의 첫 글만 맥락 — 다른 두 세션의 글은 없다
+      expect(reply?.bodyMd).toBe(`맥락: ${s.first}`);
+      const page = await rest<{ messages: Message[] }>(live, "GET", `/conversations/${id}/messages`);
+      expect(page.status).toBe(200);
+      // 멘션은 저장 때 토큰이 된다(`<@a:<id>>`)
+      expect(bodiesOf(page.body)).toEqual([
+        s.first,
+        s.ask.replace("@dev", `<@a:${dev.id}>`),
+        `맥락: ${s.first}`,
+      ]);
+      expect(page.body.messages.every((m) => m.conversationId === id)).toBe(true);
+    }
+    // 같은 에이전트의 세션 키가 세션마다 따로
+    const keys = scenario.turns.map((t) => t.delivery.sessionKey);
+    expect(new Set(keys).size).toBe(opened.length);
+    expect(keys.sort()).toEqual(ids.map((id) => dodokSessionKey("dev", id)).sort());
+    expect(scenario.errors).toEqual([]);
+  });
+
+  it("[완료 기준 2] 닫힌 세션은 읽기만(보내기·리액션 409) 되고 다시 열 수 있다 — 목록의 열림·닫힘 필터와 제목 검색으로 찾는다", async () => {
+    live = await bootLiveApp();
+    const { channel } = await setupRelayChannel(live, { maxRelayTurns: 3, allowPairs: "all" });
+    const log = await openChannelWire(live, channel.id, sockets);
+    const retro = await sendIn(log.socket, channel.id, "회고 첫 글", {
+      newConversation: { title: "배포 회고" },
+    });
+    const lunch = await sendIn(log.socket, channel.id, "국수?", { newConversation: { title: "점심 메뉴" } });
+    const retroId = retro.conversation?.id as string;
+    const lunchId = lunch.conversation?.id as string;
+    const list = (query: string) =>
+      rest<Listed>(live, "GET", `/channels/${channel.id}/conversations?${query}`).then((r) =>
+        r.body.conversations.map((c) => c.id),
+      );
+
+    const closed = await rest(live, "PATCH", `/conversations/${retroId}`, { closed: true });
+    expect(closed.status).toBe(200);
+    expect(await list("status=open")).toEqual([lunchId]);
+    expect(await list("status=closed")).toEqual([retroId]);
+    // 제목 부분 일치·대소문자 무시는 목록 q — 닫힌 세션도 그 필터로 찾는다
+    expect(await list("status=closed&q=회고")).toEqual([retroId]);
+    expect(await list("status=closed&q=점심")).toEqual([]);
+    expect(await list("status=all&q=메뉴")).toEqual([lunchId]);
+
+    // 읽기는 된다 — 첫 글과 닫기 시스템 메시지
+    const page = await rest<{ messages: Message[] }>(live, "GET", `/conversations/${retroId}/messages`);
+    expect(page.status).toBe(200);
+    expect(bodiesOf(page.body)[0]).toBe("회고 첫 글");
+    expect(page.body.messages.at(-1)?.bodyMd).toMatch(/이 세션을 닫았습니다$/);
+    // 쓰기는 409 — 보내기·리액션
+    const send = await log.socket.emitWithAck("message.send", {
+      channelId: channel.id,
+      conversationId: retroId,
+      clientMsgId: randomUUID(),
+      bodyMd: "닫힌 뒤 글",
+    });
+    expect(send).toMatchObject({ ok: false, error: { code: "CONVERSATION_CLOSED" } });
+    const react = await log.socket.emitWithAck("reaction.set", {
+      messageId: retro.message.id,
+      emoji: REACTION_EMOJIS[0],
+      on: true,
+    });
+    expect(react).toMatchObject({ ok: false, error: { code: "CONVERSATION_CLOSED" } });
+
+    // 다시 열면 열림 목록에 돌아오고 쓸 수 있다
+    expect((await rest(live, "PATCH", `/conversations/${retroId}`, { closed: false })).status).toBe(200);
+    expect((await list("status=open")).sort()).toEqual([lunchId, retroId].sort());
+    expect(await list("status=closed")).toEqual([]);
+    const after = await sendIn(log.socket, channel.id, "다시 연 뒤 글", { conversationId: retroId });
+    expect(after.message.conversationId).toBe(retroId);
+    const reopened = await rest<{ messages: Message[] }>(live, "GET", `/conversations/${retroId}/messages`);
+    expect(bodiesOf(reopened.body).slice(-2)).toEqual([
+      expect.stringMatching(/이 세션을 다시 열었습니다$/),
+      "다시 연 뒤 글",
+    ]);
+  });
+
+  it("[완료 기준 3] 정책 「세션 관리자만」 — member 는 새 세션을 못 만들고, 세션 관리자는 만들고 남의 세션도 닫는다. 해제하면 다시 못 만든다", async () => {
+    live = await bootLiveApp();
+    const { channel } = await setupRelayChannel(live, { maxRelayTurns: 3, allowPairs: "all" });
+    const owner = await openChannelWire(live, channel.id, sockets);
+    const mia = await userWithRole(live.app, "mia", "member");
+    const noa = await userWithRole(live.app, "noa", "member");
+    const miaWire = await connectWire(live.app, mia.token);
+    sockets.push(miaWire);
+    const newSession = (socket: WireClient, title: string) =>
+      socket.emitWithAck("message.send", {
+        channelId: channel.id,
+        newConversation: { title },
+        clientMsgId: randomUUID(),
+        bodyMd: `${title} 첫 글`,
+      });
+
+    const ownerSession = (
+      await sendIn(owner.socket, channel.id, "owner 의 글", { newConversation: { title: "owner 세션" } })
+    ).conversation?.id as string;
+    const policy = await rest<{ channel: Channel }>(live, "PATCH", `/channels/${channel.id}`, {
+      sessionPolicy: { create: "managers" },
+    });
+    expect(policy.body.channel.sessionPolicy).toEqual({ create: "managers" });
+
+    expect(await newSession(miaWire, "mia 시도")).toMatchObject({ ok: false, error: { code: "FORBIDDEN" } });
+    // 열린 세션에 쓰는 것은 정책과 무관하다
+    expect(
+      (await sendIn(miaWire, channel.id, "mia 의 답", { conversationId: ownerSession })).message.authorId,
+    ).toBe(mia.id);
+
+    const promoted = await restAs<{ member: ChannelMember }>(
+      live,
+      live.auth.token,
+      "PUT",
+      `/channels/${channel.id}/session-managers/${mia.id}`,
+    );
+    expect(promoted.body.member).toMatchObject({ memberId: mia.id, role: "manager" });
+    const made = await newSession(miaWire, "mia 세션");
+    if (!made.ok) throw new Error(`세션 관리자 새 세션 실패: ${made.error.code}`);
+    const miaSession = made.data.conversation?.id as string;
+    expect(made.data.conversation).toMatchObject({
+      title: "mia 세션",
+      createdBy: { type: "user", id: mia.id },
+    });
+    // 남의 세션 — 세션 관리자는 닫고, 그냥 member 는 못 닫는다
+    expect(
+      (await restAs(live, noa.token, "PATCH", `/conversations/${ownerSession}`, { closed: true })).status,
+    ).toBe(403);
+    expect(
+      (await restAs(live, mia.token, "PATCH", `/conversations/${ownerSession}`, { closed: true })).status,
+    ).toBe(200);
+    expect(
+      (await restAs(live, mia.token, "PATCH", `/conversations/${miaSession}`, { closed: true })).status,
+    ).toBe(200);
+    // member 는 세션 관리자를 못 정한다(admin 이상)
+    expect(
+      (await restAs(live, noa.token, "PUT", `/channels/${channel.id}/session-managers/${noa.id}`)).status,
+    ).toBe(403);
+
+    expect(
+      (await restAs(live, live.auth.token, "DELETE", `/channels/${channel.id}/session-managers/${mia.id}`))
+        .status,
+    ).toBe(200);
+    expect(await newSession(miaWire, "해제 뒤")).toMatchObject({ ok: false, error: { code: "FORBIDDEN" } });
+    const titles = (
+      await rest<Listed>(live, "GET", `/channels/${channel.id}/conversations?status=all`)
+    ).body.conversations.map((c) => c.title);
+    expect(titles.sort()).toEqual(["mia 세션", "owner 세션"]);
+  });
+
+  it("[완료 기준 4] 읽지 않음·검색·푸시 링크가 세션을 가리킨다 — 같은 채널 두 세션의 현황이 따로, 결과·알림 URL 은 그 세션", async () => {
+    pushed = [];
+    live = await bootLiveApp({
+      deps: {
+        pushSend: async (_sub, body) => {
+          pushed.push({ payload: PushPayload.parse(JSON.parse(body)) });
+          return { statusCode: 201 };
+        },
+      },
+    });
+    const { channel } = await setupRelayChannel(live, { maxRelayTurns: 3, allowPairs: "all" });
+    const log = await openChannelWire(live, channel.id, sockets);
+    const subscribed = await live.app.fastify.inject({
+      method: "POST",
+      url: "/api/v1/push/subscriptions",
+      headers: live.auth.headers,
+      payload: { endpoint: "https://push.invalid/sessions-owner", keys: PUSH_KEYS },
+    });
+    expect(subscribed.statusCode).toBe(204);
+    const scenario = createScenario({
+      gateway: live.gateway,
+      plugin: live.plugin,
+      agents: { dev: () => ({ reply: "@owner 확인했습니다" }), fin: () => ({ reply: "fin" }) },
+    });
+    const mia = await userWithRole(live.app, "mia", "member");
+    const a = (await sendIn(log.socket, channel.id, "세션 A 의 공지", { newConversation: { title: "공지" } }))
+      .conversation?.id as string;
+    const bConv = await sendIn(log.socket, channel.id, "@mia 견적서 검토 부탁", {
+      newConversation: { title: "견적" },
+    });
+    const b = bConv.conversation?.id as string;
+
+    // 읽지 않음 — 세션마다 따로(A 는 굵게만, B 는 mia 멘션 배지)
+    type Snapshot = {
+      conversations: Array<{ conversationId: string; channelId: string; unread: boolean; mentions: number }>;
+    };
+    const unread = async () =>
+      (await restAs<Snapshot>(live, mia.token, "GET", "/me/unread")).body.conversations.filter(
+        (c) => c.channelId === channel.id,
+      );
+    expect((await unread()).sort((x, y) => x.conversationId.localeCompare(y.conversationId))).toEqual(
+      [
+        { conversationId: a, channelId: channel.id, unread: true, mentions: 0 },
+        { conversationId: b, channelId: channel.id, unread: true, mentions: 1 },
+      ]
+        .sort((x, y) => x.conversationId.localeCompare(y.conversationId))
+        .map((e) => expect.objectContaining(e)),
+    );
+    // A 끝까지 읽어도 B 는 남는다(seq 는 채널 하나의 번호 — B 의 글이 A 의 글보다 뒤다)
+    const miaWire = await connectWire(live.app, mia.token);
+    sockets.push(miaWire);
+    const lastSeq = Math.max(...log.created.map((m) => m.seq));
+    const read = await miaWire.emitWithAck("conversation.read", { conversationId: a, seq: lastSeq });
+    expect(read.ok).toBe(true);
+    expect(await unread()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ conversationId: a, unread: false, mentions: 0 }),
+        expect.objectContaining({ conversationId: b, unread: true, mentions: 1 }),
+      ]),
+    );
+
+    // 검색 — 결과가 세션과 그 제목을 싣고, 세션으로 거른다
+    const search = (query: string) =>
+      rest<{ hits: Array<{ messageId: string; conversationId: string; conversationTitle: string }> }>(
+        live,
+        "GET",
+        `/search?${query}`,
+      ).then((r) => r.body.hits);
+    expect(await search("q=견적서")).toEqual([
+      expect.objectContaining({ messageId: bConv.message.id, conversationId: b, conversationTitle: "견적" }),
+    ]);
+    expect(await search(`q=견적서&conversationId=${a}`)).toEqual([]);
+
+    // 푸시 링크 — 세션 B 의 최상위 답은 /s/<B>, 그 세션 스레드의 답은 /s/<B>/t/<root>
+    await sendIn(log.socket, channel.id, "@dev 봐줘", { conversationId: b });
+    await untilMentions(1);
+    await sendIn(log.socket, channel.id, "@dev 스레드에서", { conversationId: b }, bConv.message.id);
+    await untilMentions(2);
+    await scenario.idle();
+    expect(pushed.filter((p) => p.payload.kind === "mention").map((p) => p.payload.url)).toEqual([
+      `/c/${channel.id}/s/${b}`,
+      `/c/${channel.id}/s/${b}/t/${bConv.message.id}`,
+    ]);
   });
 });

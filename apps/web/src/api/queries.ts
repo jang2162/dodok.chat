@@ -121,8 +121,12 @@ export const qk = {
     ["conversationList", channelId, status, q] as const,
   /** 한 채널의 세션 목록 칸 전부(실시간 반영·무효화용 앞머리) */
   channelConversationLists: (channelId: string) => ["conversationList", channelId] as const,
+  /** 모든 채널의 세션 목록 칸(무효화용 앞머리) */
+  conversationListAll: ["conversationList"] as const,
   /** 세션 하나(`GET /conversations/:id`) — 세션 머리의 제목·닫힘과 주소의 채널 대조 */
   conversation: (conversationId: string) => ["conversation", conversationId] as const,
+  /** 모든 세션 하나 쿼리(무효화용 앞머리) */
+  conversationAll: ["conversation"] as const,
   channelRuns: (channelId: string) => ["channels", channelId, "runs"] as const,
   runEvents: (runId: string) => ["runs", runId, "events"] as const,
   /** 최근 본 채널 id(앞이 최근) — 서버 조회가 아니라 오프라인 사본이 무엇을 담을지 정하는 목록(pwa/persist) */

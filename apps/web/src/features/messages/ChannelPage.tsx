@@ -128,7 +128,12 @@ export function ChannelPage() {
   // 세션이 없다(주소가 틀렸다·다른 워크스페이스) — 목록·작성기 대신 안내. 그 밖의 실패는 「다시 시도」
   const sessionError = session.timeline === undefined ? session.error : null;
   const list = (onPick?: () => void) => (
-    <ConversationList channelId={channelId} conversationId={conversationId} onPick={onPick} />
+    <ConversationList
+      channelId={channelId}
+      conversationId={conversationId}
+      onPick={onPick}
+      inSheet={onPick !== undefined}
+    />
   );
   // 작성기 자리의 안내 — 보관 → 닫힘 → 만들 수 없음 순. 안내가 있으면 작성기는 숨긴다(초안을 잃지 않게 — 위 주석)
   const notice = archived ? (

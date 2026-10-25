@@ -23,6 +23,7 @@ import { join } from "node:path";
 import { io, type Socket } from "socket.io-client";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
+  DEV_FAKE_CHANNEL_NAME,
   DEV_FAKE_DISK_PATH,
   DEV_FAKE_GATEWAY_PATH,
   DEV_FAKE_LOCAL_TOKEN,
@@ -37,6 +38,8 @@ import {
   DEV_FAKE_RUNNER_LABEL,
   DEV_FAKE_RUNNER_PATH,
   DEV_FAKE_RUNNER_TOKEN,
+  DEV_FAKE_LEGACY_TITLE,
+  DEV_FAKE_SESSION_TITLE,
   type DevFake,
   devFakeCliOptions,
   fakeAgentScript,
@@ -53,7 +56,7 @@ import {
 import { hasGateways } from "../src/adapters/types";
 import type { App } from "../src/app";
 import { findItem, formatInteractionText } from "../src/modules/components/interact";
-import { agents, runnerTokens, runs, users } from "../src/db/schema.sqlite";
+import { agents, messages, runnerTokens, runs, users } from "../src/db/schema.sqlite";
 import { normalizeEmail } from "../src/modules/members/accept";
 import { DISCONNECT_EVENT_MS } from "../src/modules/ops/health";
 import type { FakeRunnerRun } from "./fakes/fake-runner";
@@ -1834,6 +1837,97 @@ describe("startDevFake 종료 표지 — 운영 화면 「직전 종료」", () 
       await second.close();
     }
   }, 30_000);
+});
+
+describe("startDevFake 세션 — 씨앗 채널에 「이전 대화」와 새 세션(채널 세션 계획 태스크 8)", () => {
+  let dir: string;
+  let dev: DevFake | undefined;
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), "dodok-dev-fake-sessions-"));
+  });
+
+  afterAll(async () => {
+    await dev?.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  type Listed = { conversations: Array<{ id: string; title: string; lastMessageAt?: string }> };
+  const sessionsOf = (url: string, cookie: string, channelId: string) =>
+    restAs<Listed>(url, cookie, "GET", `/channels/${channelId}/conversations?status=open`);
+
+  it("새 DB 는 씨앗 채널(dev·coder)에 세션 둘 — 하나는 id 가 채널 id 인 「이전 대화」, 둘 다 글 하나. --keep 은 이어받은 채널(씨앗·UI 로 만든 것·보관한 것)을 건드리지 않는다", async () => {
+    dev = await startDevFake({ port: 0, dataDir: dir, logLevel: "warn" });
+    const owner = await loginOwner(dev.url);
+    const { channels } = await restAs<{ channels: Array<{ id: string; name: string }> }>(
+      dev.url,
+      owner.cookie,
+      "GET",
+      "/channels",
+    );
+    const seed = channels.find((c) => c.name === DEV_FAKE_CHANNEL_NAME);
+    if (!seed) throw new Error("no seed channel");
+    const first = await sessionsOf(dev.url, owner.cookie, seed.id);
+    // 최근 활동순 — 새 세션이 나중에 글을 받아 맨 위(/c/<ch> 가 그리로 넘긴다)
+    expect(first.conversations.map((c) => c.title)).toEqual([DEV_FAKE_SESSION_TITLE, DEV_FAKE_LEGACY_TITLE]);
+    expect(first.conversations[1]?.id).toBe(seed.id);
+    expect(first.conversations.every((c) => c.lastMessageAt !== undefined)).toBe(true);
+    const { members } = await restAs<{ members: Array<{ memberType: string; memberId: string }> }>(
+      dev.url,
+      owner.cookie,
+      "GET",
+      `/channels/${seed.id}/members`,
+    );
+    const handles = dev.app.db
+      .select({ id: agents.id, handle: agents.handle })
+      .from(agents)
+      .all()
+      .filter((a) => members.some((m) => m.memberType === "agent" && m.memberId === a.id))
+      .map((a) => a.handle)
+      .sort();
+    expect(handles).toEqual(["coder", "dev"]);
+    // UI 로 만든 채널(채널 만들기는 세션을 만들지 않는다)과 보관한 채널 — 실제 서버처럼 「이전 대화」가 없다
+    const url = dev.url;
+    const create = async (name: string) =>
+      (await restAs<{ channel: { id: string } }>(url, owner.cookie, "POST", "/channels", { name })).channel;
+    const bare = await create("빈 채널");
+    const shelved = await create("보관한 채널");
+    await restAs(url, owner.cookie, "POST", `/channels/${shelved.id}/archive`);
+    const messageCount = (app: App) => app.db.select({ id: messages.id }).from(messages).all().length;
+    const before = messageCount(dev.app);
+    await dev.close();
+    dev = undefined;
+
+    // 보관한 채널에 세션·글을 넣으려 들면 CHANNEL_ARCHIVED 로 시작이 죽는다 — 시작이 되고 아무것도 더하지 않는다
+    dev = await startDevFake({ port: 0, dataDir: dir, keep: true, logLevel: "error" });
+    const again = await loginOwner(dev.url);
+    expect((await sessionsOf(dev.url, again.cookie, seed.id)).conversations.map((c) => c.id)).toEqual(
+      first.conversations.map((c) => c.id),
+    );
+    expect((await sessionsOf(dev.url, again.cookie, bare.id)).conversations).toEqual([]);
+    expect((await sessionsOf(dev.url, again.cookie, shelved.id)).conversations).toEqual([]);
+    expect(messageCount(dev.app)).toBe(before);
+    const live = await restAs<{ channels: Array<{ id: string }> }>(dev.url, again.cookie, "GET", "/channels");
+    expect(live.channels.map((c) => c.id).sort()).toEqual([seed.id, bare.id].sort());
+    // 살아 있는 채널을 모두 보관하면 다음 시작이 새 씨앗 채널을 만든다 — 보관한 채널은 「살아 있는 채널」로 치지 않는다
+    for (const id of [seed.id, bare.id])
+      await restAs(dev.url, again.cookie, "POST", `/channels/${id}/archive`);
+    await dev.close();
+    dev = undefined;
+
+    dev = await startDevFake({ port: 0, dataDir: dir, keep: true, logLevel: "error" });
+    const third = await loginOwner(dev.url);
+    const { channels: reseeded } = await restAs<{ channels: Array<{ id: string; name: string }> }>(
+      dev.url,
+      third.cookie,
+      "GET",
+      "/channels",
+    );
+    expect(reseeded).toHaveLength(1);
+    expect(reseeded[0]?.name).toBe(DEV_FAKE_CHANNEL_NAME);
+    expect(reseeded[0]?.id).not.toBe(seed.id);
+    expect((await sessionsOf(dev.url, third.cookie, shelved.id)).conversations).toEqual([]);
+  }, 45_000);
 });
 
 describe("startDevFake --keep — 고정 Gateway 를 지우고 같은 이름을 쓴 뒤(태스크 8 리뷰 Minor 2)", () => {
