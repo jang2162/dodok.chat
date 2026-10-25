@@ -845,6 +845,14 @@ describe("MessageList 「새 메시지」 구분선·페이지 밖 배너", () =
     expect(separator()).toBeNull();
   });
 
+  it("세션을 처음부터 다 불러왔으면(옛 쪽 없음) 가장 옛 seq 앞의 빈틈(다른 세션 몫)에 배너가 없다 — 구분선이 그 목록 안에 선다", async () => {
+    setupEntry(timelineOf(range(51, 55)), 11);
+    await screen.findByText("본문 51");
+    expect(banner()).toBeNull();
+    const line = await screen.findByRole("separator", { name: "새 메시지" });
+    expect(line.closest("[data-index]")?.nextElementSibling).toHaveTextContent("본문 51");
+  });
+
   it("구독 전(채널 커서 없음 — 사본에서 복원한 타임라인)에는 배너가 없다 — 구독하면 뜬다", async () => {
     const { qc } = setupEntry(timelineOf(range(51, 100), true), 11, { subscribed: false });
     await screen.findByText("본문 100");

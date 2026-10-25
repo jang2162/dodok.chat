@@ -451,12 +451,14 @@ function ChannelMessages({
   };
 
   // 처음 안 읽은 곳이 불러온 가장 옛 메시지보다 앞이면 불러온 목록에 없다 — 그곳을 가운데 둔 창을 받는다.
-  // 받은 것이 지금 것이 되기 전(사본에서 복원했거나 다시 받는 중)에는 띄우지 않는다: 받은 창을 뒤이은 다시 받기가 최신 쪽으로 덮는다(`useJump` 와 같다)
+  // 받은 것이 지금 것이 되기 전(사본에서 복원했거나 다시 받는 중)에는 띄우지 않는다: 받은 창을 뒤이은 다시 받기가 최신 쪽으로 덮는다(`useJump` 와 같다).
+  // 옛 쪽이 남았을 때만 — seq 는 채널의 세션들이 같이 써서, 세션을 처음부터 다 불러왔어도 가장 옛 seq 앞에 다른 세션 몫의 빈틈이 있다
   const oldestSeq = timeline?.items[0]?.seq;
   const showBanner =
     entryReadSeq !== undefined &&
     !bannerGone &&
     ready &&
+    timeline?.hasOlder === true &&
     oldestSeq !== undefined &&
     entryReadSeq + 1 < oldestSeq;
   const toFirstUnread = async () => {
