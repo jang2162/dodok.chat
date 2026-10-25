@@ -33,7 +33,7 @@
 
 조사한 코드에 맞춰 스펙을 구체화한 것. 태스크 9 가 스펙에 「구현과 맞춘 것」 장을 만들어 옮긴다.
 
-- **PS1 — 태스크 1 은 동작을 바꾸지 않는다.** 태스크 1 동안은 「채널마다 대화 하나, id = 채널 id」가 불변이다 — 채널을 만들면 같은 트랜잭션에서 id 가 채널 id 인 「이전 대화」를 만든다. 그래서 세션 키·OpenClaw 피어 id 값이 지금과 같고 기존 테스트가 이름 바꾸기만으로 통과한다. 태스크 3 이 채널 만들기에서 이 대화를 걷는다(스펙 결정 7 — 빈 세션은 만들지 않는다).
+- **PS1 — 태스크 1 은 동작을 바꾸지 않는다.** 태스크 1 동안은 「채널마다 대화 하나, id = 채널 id」가 불변이다 — 채널을 만들면 같은 트랜잭션에서 id 가 채널 id 인 「이전 대화」를 만든다. 그래서 세션 키·OpenClaw 피어 id 값이 지금과 같고 기존 테스트가 이름 바꾸기만으로 통과한다. 태스크 3 이 채널 만들기에서 이 대화를 걷는다(스펙 결정 7 — 빈 세션은 만들지 않는다). 걷으면 새 채널의 자동화 게시가 대화를 못 찾으므로, 태스크 3 은 `automations/post.ts` 에 「열린 대화가 없으면 「⚙ <이름>」 대화를 만든다」 다리를 두고 태스크 4 가 자동화 자기 세션으로 바꾼다.
 - **PS2 — 브리지·러너의 나가는 글은 대화 id 하나만 싣는다.** `OutboundMessage` 의 `channelId` 를 `conversationId` 로 바꾼다(서버가 채널을 찾는다). 플러그인의 message 툴 대상 `channel:<id>` 의 id 도 대화 id 다(OpenClaw 피어 id = 대화 id). 브리지·러너의 첨부 올리기 헤더는 `x-dodok-channel-id` 대신 `x-dodok-conversation-id`(서버가 그 대화의 채널로 묶는다). `InboundDeliver` 는 `channelId`(플러그인의 채널 설정·프롬프트 조회 — `ConfigSet` 은 채널 단위 그대로)와 `conversationId` 를 함께 싣는다.
 - **PS3 — 대화가 정해지지 않은 시스템 메시지는 `latestOpenConversation(tx, channelId)` 한 함수로 자리를 찾는다**(스펙 4.2 — 최근 활동한 열린 대화, 없으면 undefined = 남기지 않음). 영구 함수다. 런·트리거 메시지가 있는 자리(라우터 차단, 런 오류, 런 한도, 이어가기)는 그 대화를 쓴다.
 - **PS4 — wire `message.send` 의 전환 다리.** 태스크 3 에서 `MessageSend` 에 `conversationId?`·`newConversation?` 를 더하고, 둘 다 없으면 서버가 `latestOpenConversation` → 없으면 자동 제목 새 세션으로 받는다(태스크 3·4 동안 웹이 지금 꼴로 보내도 앱이 돈다). 태스크 5 가 웹을 바꾸면서 다리를 걷고 스키마를 「둘 중 정확히 하나」로 조인다.
@@ -175,7 +175,7 @@ export function createLegacyConversation(tx: DbOrTx, channel: { id: string; crea
 
 **Files:**
 - Create: `apps/server/src/modules/conversations/{service,routes}.ts`
-- Modify: `apps/server/src/modules/conversations/store.ts`·`db/schema.sqlite.ts`(+ 새 마이그레이션 — `channel_members.role`·`channels.session_policy_json`)·`auth/policies.ts`·`modules/channels/{service,routes}.ts`·`modules/messages/{service,routes}.ts`·`modules/components/*`·`modules/reactions/*`·`modules/attachments/*`·`realtime/{socket,events,bus}.ts`·`app.ts`
+- Modify: `apps/server/src/modules/conversations/store.ts`·`db/schema.sqlite.ts`(+ 새 마이그레이션 — `channel_members.role`·`channels.session_policy_json`)·`auth/policies.ts`·`modules/channels/{service,routes}.ts`·`modules/messages/{service,routes}.ts`·`modules/components/*`·`modules/reactions/*`·`modules/attachments/*`·`modules/runs/orchestrator.ts`(`abortConversation`·닫힌 세션의 늦은 정본)·`realtime/{socket,events,bus}.ts`·`app.ts`
 - Modify: `packages/shared/src/{domain,wire,common}/…`(`ErrorCode`·`Channel.sessionPolicy`·`ChannelMember.role`·`MessageSend`·wire 이벤트)
 - Test: `apps/server/test/conversations.service.test.ts`(새), `conversations.routes.test.ts`(새), `roles.matrix.test.ts`, `apps/server/test/integration/conversations.test.ts`(새, 가짜 Gateway·플러그인)
 
@@ -189,7 +189,7 @@ export const SessionPolicy = z.object({ create: z.enum(["members", "managers"]) 
 // ErrorCode 에 "CONVERSATION_CLOSED"
 export const NewConversation = z.object({ title: ConversationTitle.optional() });
 // MessageSend 에 conversationId: Id.optional(), newConversation: NewConversation.optional() — refine: 둘 다 있으면 안 된다(PS4 — 둘 다 없음은 태스크 5 까지 받는다)
-// message.send ack: { message: Message; conversation?: Conversation } — 새로 만들었을 때만 conversation
+// message.send ack: { message: Message; conversation?: Conversation } — conversationId 를 주지 않은 보내기(newConversation·다리)면 그 메시지의 세션, 재전송도 같다(태스크 3 판정 — Review Focus 1)
 export const ConversationPatch = z.object({ title: ConversationTitle.optional(), closed: z.boolean().optional() })
   .refine((p) => p.title !== undefined || p.closed !== undefined);
 export const ConversationList = z.object({ conversations: z.array(Conversation), nextCursor: z.string().optional() });
