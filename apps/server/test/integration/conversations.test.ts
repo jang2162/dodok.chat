@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import { type Conversation, dodokSessionKey, formatSessionLine, type Message } from "@dodok/shared";
 import { and, eq } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { messages, runs } from "../../src/db/schema.sqlite";
+import { conversations, messages, runs } from "../../src/db/schema.sqlite";
 import { getRun } from "../../src/modules/runs/store";
 import { createScenario } from "../fakes/scenario";
 import { bootLiveApp, type LiveApp } from "../helpers/live-app";
@@ -224,6 +224,43 @@ describe("통합 — 런과 에이전트가 세션 단위로", () => {
     ]);
     // fin 이 받은 트리거는 그 세션의 dev 답이다
     expect(finTurns.map((d) => d.message.text)).toEqual(["@fin 이어서 (세션 A)", "@fin 이어서 (세션 B)"]);
+  });
+
+  it("릴레이 대상은 답 메시지의 세션 — 다른 세션의 활동 시각이 더 늦어도(시계가 뒤로 감) 릴레이 런은 답이 난 세션에 생긴다", async () => {
+    live = await bootLiveApp();
+    const { channel, fin } = await setupRelayChannel(live, { maxRelayTurns: 3, allowPairs: "all" });
+    const log = await openChannelWire(live, channel.id, sockets);
+    const scenario = createScenario({
+      gateway: live.gateway,
+      plugin: live.plugin,
+      agents: {
+        dev: () => ({ reply: "@fin 이어서" }),
+        fin: () => ({ reply: "받았습니다" }),
+      },
+    });
+    const b = (await sendIn(log.socket, channel.id, "B 의 글", { newConversation: { title: "세션 B" } }))
+      .conversation;
+    if (!b) throw new Error("세션이 없다");
+    // B 가 「최근 열린 대화」 1순위가 되게 — 릴레이가 그 함수로 자리를 고르면 fin 런이 B 로 간다
+    live.app.db
+      .update(conversations)
+      .set({ lastMessageAt: new Date(Date.now() + 3600_000) })
+      .where(eq(conversations.id, b.id))
+      .run();
+    const a = (await sendIn(log.socket, channel.id, "@dev A 부탁", { newConversation: { title: "세션 A" } }))
+      .conversation;
+    if (!a) throw new Error("세션이 없다");
+    const finRun = await log.until(
+      () => log.states.find((s) => s.agentId === fin.id && s.status === "done"),
+      "fin 릴레이 런 done",
+    );
+    await scenario.idle();
+    expect(finRun.conversationId).toBe(a.id);
+    expect(log.states.some((s) => s.conversationId === b.id)).toBe(false);
+    expect(scenario.turns.map((t) => [t.agentId, t.delivery.conversationId])).toEqual([
+      ["dev", a.id],
+      ["fin", a.id],
+    ]);
   });
 
   it("리액션 사실은 그 세션 몫만 — 세션 A 의 에이전트 답에 단 리액션은 B 런에 실리지 않고 A 의 다음 런에 실린다", async () => {
