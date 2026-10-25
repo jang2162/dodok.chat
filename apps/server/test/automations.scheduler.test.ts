@@ -3,7 +3,7 @@
  * 조건부 UPDATE(계획 판정 PA3), 놓친 예약은 10분 안이면 한 번·넘으면 skipped, 게시 실패는 그 자동화만 error 로 남기고 틱은 이어 간다.
  */
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
-import { type AutomationSchedule, type Message, parseMentions } from "@dodok/shared";
+import { AutomationName, type AutomationSchedule, type Message, parseMentions } from "@dodok/shared";
 import { and, eq } from "drizzle-orm";
 import { v7 as uuid } from "uuid";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -27,6 +27,7 @@ import { targetsForMessage } from "../src/modules/push/triggers";
 import { countRunsTodayInWorkspace } from "../src/modules/runs/store";
 import type { Logger } from "../src/logger";
 import { postAutomationMessage } from "../src/modules/automations/post";
+import { getConversation } from "../src/modules/conversations/store";
 import {
   MISSED_GRACE_MS,
   rescheduleAll,
@@ -533,6 +534,18 @@ describe("postAutomationMessage", () => {
       expect(third.conversationId).toBe(own);
       expect(seen.filter((e) => e.startsWith("conversation:"))).toHaveLength(1);
       expect(channelConversations(t.db, t.seed.channelId)).toHaveLength(2);
+    });
+
+    it("세션 제목은 UTF-16 80 단위 안 — 이모지가 든 40자 이름(「⚙ 」를 붙이면 81)은 서로게이트 쌍을 가르지 않고 자른다", async () => {
+      const t = setup();
+      // 「⚙ a」 3 단위 + 이모지 39개 78 단위 = 81 — 80 에서 자르면 마지막 이모지의 쌍이 갈린다
+      const name = `a${"😀".repeat(39)}`;
+      expect(AutomationName.safeParse(name).success).toBe(true);
+      const a = t.add({ name });
+      const first = await postAutomationMessage(t.deps, a);
+      const title = getConversation(t.db, first.conversationId)?.title ?? "";
+      expect(title).toBe(`⚙ a${"😀".repeat(38)}`);
+      expect(title.length).toBe(79);
     });
 
     it("자기 세션이 닫혀 있으면 새 세션을 만들어 바꿔 단다", async () => {

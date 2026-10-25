@@ -18,8 +18,22 @@ export type PostDeps = {
   logger: Logger;
 };
 
-/** 세션 제목 상한(shared ConversationTitle) — 자동화 이름(1~80자)에 「⚙ 」를 붙이면 넘을 수 있다 */
+/**
+ * 세션 제목 상한(shared ConversationTitle `max(80)`) — UTF-16 단위로 센다. string.max 는 zod 판본마다 세는 법이 달라(reactions
+ * EXCERPT_MAX 주석) UTF-16 으로 80 이내여야 어느 쪽으로도 넘지 않는다. 자동화 이름(AutomationName, 1~40자 — 핀한 zod 는 코드
+ * 포인트로 센다)이 이모지 40개면 「⚙ 」를 붙여 82 단위라 자르기에 닿는다. 넘으면 그 세션의 모든 런에서 InboundDeliver 파싱이 던진다
+ */
 const TITLE_MAX = 80;
+
+/** UTF-16 으로 max 이내가 되게 앞에서부터 글자(코드 포인트) 단위로 채운다 — 서로게이트 쌍을 가르지 않는다 */
+function clipUtf16(text: string, max: number): string {
+  let out = "";
+  for (const ch of text) {
+    if (out.length + ch.length > max) break;
+    out += ch;
+  }
+  return out;
+}
 
 /**
  * 자동화의 자기 세션(채널 세션 스펙 「자동화」 절) — automations.conversation_id 가 그 채널의 열린 대화면 거기, 아니면(첫 게시·닫힘·
@@ -42,7 +56,7 @@ function ownSession(automation: AutomationRow): PickConversation {
     }
     const created = createConversation(tx, {
       channelId: current.channelId,
-      title: Array.from(`⚙ ${automation.name}`).slice(0, TITLE_MAX).join(""),
+      title: clipUtf16(`⚙ ${automation.name}`, TITLE_MAX),
       titleSource: "user",
       createdBy: { type: "automation", id: automation.id },
       createdAt: new Date(),
