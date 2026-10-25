@@ -9,7 +9,8 @@ import {
   redirect,
 } from "@tanstack/react-router";
 import { ApiRequestError } from "@/api/http";
-import { meQuery } from "@/api/queries";
+import { conversationsQuery, meQuery } from "@/api/queries";
+import { NEW_CONVERSATION } from "@/features/messages/timeline";
 import { SETTINGS_SCROLL_ID, SettingsIndex, SettingsLayout } from "@/features/settings-shell/SettingsLayout";
 import { NotFound } from "./NotFound";
 import { RouteError } from "./RouteError";
@@ -32,10 +33,17 @@ export function safeNext(value: unknown): string | undefined {
 }
 
 /**
- * 지금 보고 있는 채널 — `/c/<id>` 와 그 아래(설정·활동·스레드 탭). 승인 알림이 「같은 채널을 보고 있는가」를
- * 가릴 때 쓴다(설계 5.4). 라우터 바깥(realtime)에서 부르므로 경로 모양만 본다
+ * 지금 보고 있는 채널 — `/c/<id>` 와 그 아래(세션·설정·활동·스레드 탭). presence 가 「어느 채널을 보고 있는가」를
+ * 알릴 때 쓴다(스펙 5.3). 라우터 바깥(realtime)에서 부르므로 경로 모양만 본다
  */
 export const channelIdOf = (pathname: string): string | undefined => /^\/c\/([^/]+)/.exec(pathname)?.[1];
+
+/**
+ * 지금 보고 있는 세션 — `/c/<채널>/s/<대화>` 와 그 아래. 새 세션 창이면 `NEW_CONVERSATION`("new"). 승인 알림이 「같은 세션을 보고
+ * 있는가」를 가릴 때 쓴다(채널 세션 계획 판정 PS7)
+ */
+export const conversationIdOf = (pathname: string): string | undefined =>
+  /^\/c\/[^/]+\/s\/([^/]+)/.exec(pathname)?.[1];
 
 /**
  * 화면은 라우트 단위로 나눠 받는다 — 첫 화면(로그인)이 작성기(Tiptap)·마크다운 렌더러(Streamdown)까지 내려받지 않게.
@@ -100,29 +108,99 @@ export const indexRoute = createRoute({
   path: "/",
   component: lazyPage(() => import("@/features/channels/HomeRedirect"), "HomeRedirect"),
 });
+/**
+ * 채널 주소를 세션으로 넘긴다(채널 세션 스펙 「웹」 장) — 열린 세션 가운데 최근 활동한 것(목록 REST 는 최근 활동순), 열린 세션이 없으면
+ * 새 세션 창. 기록을 바꿔 쓴다(뒤로 가기가 채널 주소에 걸려 다시 넘겨지지 않게). 화면을 그리기 전에 넘긴다 — 사이드바에서 채널을 옮길 때
+ * 세션 화면이 그대로 남아 머리·작성기·초점이 갈아 끼워지지 않게. 목록을 받지 못하면(없는 채널·네트워크) 넘기지 않고 화면이 그 사정을
+ * 그린다(`ChannelRedirect`). `tail` 은 세션 전의 채널 탭 주소의 탭
+ */
+async function toLatestSession(qc: QueryClient, channelId: string, tail?: "settings" | "activity") {
+  let first: string | undefined;
+  try {
+    first = (await qc.fetchQuery({ ...conversationsQuery(channelId, "open"), staleTime: 0 })).conversations[0]
+      ?.id;
+  } catch {
+    return;
+  }
+  const params = { channelId, conversationId: first ?? NEW_CONVERSATION };
+  if (tail === "settings")
+    throw redirect({ to: "/c/$channelId/s/$conversationId/settings", params, replace: true });
+  if (tail === "activity")
+    throw redirect({ to: "/c/$channelId/s/$conversationId/activity", params, replace: true });
+  throw redirect({ to: "/c/$channelId/s/$conversationId", params, replace: true });
+}
+
+/** 채널 — 화면은 세션(`s/$conversationId`) 아래에 있다. 채널 주소 자체는 최근 세션으로 넘긴다(`channelIndexRoute`) */
 export const channelRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/c/$channelId",
+  component: Outlet,
+});
+/** `/c/<채널>` — 최근 세션으로 넘긴다(`toLatestSession`). 화면은 넘기지 못했을 때의 사정만 그린다 */
+export const channelIndexRoute = createRoute({
+  getParentRoute: () => channelRoute,
+  path: "/",
+  beforeLoad: ({ context, params }) => toLatestSession(context.queryClient, params.channelId),
+  component: lazyPage(() => import("@/features/messages/ChannelRedirect"), "ChannelRedirect"),
+});
+/**
+ * 세션 화면(채널 세션 계획 판정 PS6): 헤더 · 그 세션의 메시지 목록 · 작성기 · 오른쪽 패널. `new` 는 아직 대화가 없는 새 세션 창 —
+ * 첫 보내기가 세션을 만들고 그 세션 주소로 바꿔 간다(`useSendMessage`)
+ */
+export const conversationRoute = createRoute({
+  getParentRoute: () => channelRoute,
+  path: "s/$conversationId",
   component: lazyPage(() => import("@/features/messages/ChannelPage"), "ChannelPage"),
 });
 export const channelSettingsRoute = createRoute({
-  getParentRoute: () => channelRoute,
+  getParentRoute: () => conversationRoute,
   path: "settings",
   component: lazyPage(() => import("@/features/settings/ChannelSettingsPanel"), "ChannelSettingsPanel"),
 });
 export const channelActivityRoute = createRoute({
-  getParentRoute: () => channelRoute,
+  getParentRoute: () => conversationRoute,
   path: "activity",
   component: lazyPage(() => import("@/features/activity/ActivityPanel"), "ActivityPanel"),
 });
 /**
  * 스레드 패널(스레드·검색 스펙 4.2) — 설정·활동과 같은 오른쪽 패널 자리의 탭 하나. 새로고침·푸시 링크로 바로 열린다.
- * `rootId` 는 루트 메시지 id — 답글 id 면 서버가 없는 스레드로 답한다(패널이 「찾을 수 없습니다」)
+ * `rootId` 는 그 세션의 루트 메시지 id — 답글 id·다른 세션의 루트면 서버가 없는 스레드로 답한다(패널이 「찾을 수 없습니다」)
  */
 export const channelThreadRoute = createRoute({
-  getParentRoute: () => channelRoute,
+  getParentRoute: () => conversationRoute,
   path: "t/$rootId",
   component: lazyPage(() => import("@/features/threads/ThreadPanel"), "ThreadPanel"),
+});
+/**
+ * 세션 전의 채널 주소(즐겨찾기·옛 알림 링크·채널 만들기 뒤의 설정) — 최근 세션의 같은 탭으로 넘긴다. 기록을 바꿔 쓴다(뒤로 가기가
+ * 이 주소로 돌아와 다시 넘겨지지 않게)
+ */
+export const legacyChannelSettingsRoute = createRoute({
+  getParentRoute: () => channelRoute,
+  path: "settings",
+  beforeLoad: ({ context, params }) => toLatestSession(context.queryClient, params.channelId, "settings"),
+  component: lazyPage(() => import("@/features/messages/ChannelRedirect"), "ChannelSettingsRedirect"),
+});
+export const legacyChannelActivityRoute = createRoute({
+  getParentRoute: () => channelRoute,
+  path: "activity",
+  beforeLoad: ({ context, params }) => toLatestSession(context.queryClient, params.channelId, "activity"),
+  component: lazyPage(() => import("@/features/messages/ChannelRedirect"), "ChannelActivityRedirect"),
+});
+/**
+ * 세션 전의 스레드 주소(`/c/<채널>/t/<루트>`) — 그때의 글은 마이그레이션이 채널마다 만든 「이전 대화」에 있고 그 대화의 id 는 채널 id 다
+ * (채널 세션 계획 Global Constraints). 그래서 세션을 찾지 않고 바로 그 대화로 넘긴다
+ */
+export const legacyChannelThreadRoute = createRoute({
+  getParentRoute: () => channelRoute,
+  path: "t/$rootId",
+  beforeLoad: ({ params }) => {
+    throw redirect({
+      to: "/c/$channelId/s/$conversationId/t/$rootId",
+      params: { channelId: params.channelId, conversationId: params.channelId, rootId: params.rootId },
+      replace: true,
+    });
+  },
 });
 /**
  * 설정(설정 통합 스펙 「설정 통합」 장, 계획 판정 PS5) — 레이아웃 라우트 하나 아래 탭 라우트. 넓은 화면의 탭 목록은 레이아웃이
@@ -204,7 +282,13 @@ const routeTree = rootRoute.addChildren([
   resetRoute,
   appRoute.addChildren([
     indexRoute,
-    channelRoute.addChildren([channelSettingsRoute, channelActivityRoute, channelThreadRoute]),
+    channelRoute.addChildren([
+      channelIndexRoute,
+      conversationRoute.addChildren([channelSettingsRoute, channelActivityRoute, channelThreadRoute]),
+      legacyChannelSettingsRoute,
+      legacyChannelActivityRoute,
+      legacyChannelThreadRoute,
+    ]),
     settingsRoute.addChildren([
       settingsIndexRoute,
       accountRoute,

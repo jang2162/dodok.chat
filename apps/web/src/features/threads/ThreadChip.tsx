@@ -33,8 +33,8 @@ export function ThreadChip({ message, summary }: { message: Message; summary: Th
   const noteOpener = useNoteThreadOpener(message.id);
   return (
     <Link
-      to="/c/$channelId/t/$rootId"
-      params={{ channelId: message.channelId, rootId: message.id }}
+      to="/c/$channelId/s/$conversationId/t/$rootId"
+      params={{ channelId: message.channelId, conversationId: message.conversationId, rootId: message.id }}
       onClick={noteOpener}
       data-slot="thread-chip"
       className="mt-1 inline-flex max-w-full items-center gap-2 rounded-md border border-transparent px-1.5 py-0.5 text-xs hover:border-border hover:bg-background focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
@@ -74,8 +74,8 @@ export function ReplyInThread({ message }: { message: Message }) {
   const noteOpener = useNoteThreadOpener(rootId);
   return (
     <Link
-      to="/c/$channelId/t/$rootId"
-      params={{ channelId: message.channelId, rootId }}
+      to="/c/$channelId/s/$conversationId/t/$rootId"
+      params={{ channelId: message.channelId, conversationId: message.conversationId, rootId }}
       onClick={noteOpener}
       aria-label="스레드에서 답하기"
       title="스레드에서 답하기"

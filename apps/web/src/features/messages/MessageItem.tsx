@@ -102,7 +102,7 @@ export function MessageItem({
   const me = useMe().data?.user.id;
   const archived = useChannelArchived();
   // 채널 타임라인의 루트도 스레드를 넘긴다 — 나란히 열린 스레드 패널의 같은 루트가 곧바로 바뀐다(연 적 없는 스레드면 updateThread 가 그냥 지나간다)
-  const setReaction = useSetReaction(message.channelId, threadRootOf(message));
+  const setReaction = useSetReaction(message.channelId, message.conversationId, threadRootOf(message));
   // 시스템 메시지에는 달 수 없다(보내는 중 항목은 PendingItem 이라 여기에 오지 않는다)
   const reactable = message.kind === "normal";
   return (

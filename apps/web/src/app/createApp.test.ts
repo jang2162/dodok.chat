@@ -55,7 +55,10 @@ it("notify.onLocationChange 는 경로가 바뀔 때마다 부르고, 해제하�
   const app = createApp(history);
   const seen: Array<string | undefined> = [];
   const off = app.notify.onLocationChange?.(() => seen.push(app.notify.currentChannelId()));
-  await app.router.navigate({ to: "/c/$channelId", params: { channelId: CH } });
+  await app.router.navigate({
+    to: "/c/$channelId/s/$conversationId",
+    params: { channelId: CH, conversationId: CH },
+  });
   await vi.waitFor(() => expect(seen.at(-1)).toBe(CH));
   off?.();
   const n = seen.length;

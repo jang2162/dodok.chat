@@ -100,7 +100,7 @@ describe("(f) /new 는 명령이 아니다", () => {
     setDoc(editor, doc(p(t("/new "), mention(`a:${AGENT}`, "dev"))));
     fireEvent.keyDown(box, { key: "Enter" });
     expect(fake.sentOf("message.send")).toEqual([
-      { channelId: CH, clientMsgId: expect.any(String), bodyMd: `/new <@a:${AGENT}>` },
+      { channelId: CH, conversationId: CH, clientMsgId: expect.any(String), bodyMd: `/new <@a:${AGENT}>` },
     ]);
     await waitFor(() => expect(editor.isEmpty).toBe(true));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();

@@ -5,7 +5,7 @@ import { ApiRequestError, NetworkError } from "@/api/http";
 import { notifyUnauthorized } from "@/app/session";
 import { fetchThreadPage } from "@/features/threads/queries";
 import { restFetchPage } from "@/realtime/subscriptions";
-import { getThread, getTimeline, updateThread, updateTimeline } from "@/realtime/timelineCache";
+import { getThread, getTimeline, patchTimeline, updateThread } from "@/realtime/timelineCache";
 import { type Timeline, prependOlder } from "./timeline";
 
 /**
@@ -27,7 +27,7 @@ const OLDER_PAGE = 50;
  * 실패는 `reportPageError` 로 알리고, 같은 자리에서 되풀이하지 않게 맨 위 구역을 벗어났다 돌아올 때까지 멈춘다.
  * 스레드(`threadRootId`)면 스레드 REST 로 받고 기준은 가장 옛 **답글**이다 — 루트는 늘 맨 앞에 있지만 페이지의 경계가 아니다
  */
-export function useOlderPages(channelId: string, threadRootId?: string) {
+export function useOlderPages(channelId: string, conversationId: string, threadRootId?: string) {
   const qc = useQueryClient();
   const [loading, setLoading] = useState(false);
   const busy = useRef(false);
@@ -38,7 +38,9 @@ export function useOlderPages(channelId: string, threadRootId?: string) {
 
   async function load() {
     const t =
-      threadRootId === undefined ? getTimeline(qc, channelId) : getThread(qc, channelId, threadRootId);
+      threadRootId === undefined
+        ? getTimeline(qc, channelId, conversationId)
+        : getThread(qc, channelId, conversationId, threadRootId);
     const first = t && oldest(t);
     if (!t?.hasOlder || !first || busy.current) return;
     busy.current = true;
@@ -47,13 +49,13 @@ export function useOlderPages(channelId: string, threadRootId?: string) {
       const q = { beforeSeq: first.seq, limit: OLDER_PAGE };
       const page =
         threadRootId === undefined
-          ? await restFetchPage(channelId, q)
-          : await fetchThreadPage(channelId, threadRootId, q);
+          ? await restFetchPage(conversationId, q)
+          : await fetchThreadPage(conversationId, threadRootId, q);
       // 그 사이 타임라인이 새로 시작됐으면(빈틈 복구·스레드 다시 받기) 붙이지 않는다
       const prepend = (cur: Timeline) =>
         oldest(cur)?.seq === first.seq ? prependOlder(cur, page.messages, page.hasMore) : cur;
-      if (threadRootId === undefined) updateTimeline(qc, channelId, prepend);
-      else updateThread(qc, channelId, threadRootId, prepend);
+      if (threadRootId === undefined) patchTimeline(qc, channelId, conversationId, prepend);
+      else updateThread(qc, channelId, conversationId, threadRootId, prepend);
     } catch (e) {
       armed.current = false;
       reportPageError(e);

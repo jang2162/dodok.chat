@@ -6,7 +6,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { qk } from "@/api/queries";
 import { emptyTimeline, upsert } from "@/features/messages/timeline";
 import { updateTimeline } from "@/realtime/timelineCache";
-import { AGENT, CH, CH2, msg, RUN, RUN2, runState, textDelta } from "../../../test/fixtures";
+import { AGENT, CH, CH2, msg, RUN, RUN2, runState, textDelta, uid } from "../../../test/fixtures";
 import { authorsClient } from "../../../test/messages";
 import { useRunStore } from "./runStore";
 import { useChannelBubbles } from "./useChannelBubbles";
@@ -17,7 +17,7 @@ beforeEach(() => {
   qc = authorsClient();
   // 쿼리 gc 타이머가 타이머 수 단언에 섞이지 않게
   qc.setDefaultOptions({ queries: { ...qc.getDefaultOptions().queries, gcTime: Infinity } });
-  qc.setQueryData(qk.timeline(CH), emptyTimeline());
+  qc.setQueryData(qk.timeline(CH, CH), emptyTimeline());
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -32,7 +32,7 @@ const run = (over: Parameters<typeof runState>[0]) =>
 /** 같은 runId 의 에이전트 메시지(확정 답)가 타임라인에 들어온다 */
 const answer = (seq: number, runId = RUN) =>
   act(() =>
-    updateTimeline(qc, CH, (t) =>
+    updateTimeline(qc, CH, CH, (t) =>
       upsert(t, msg(seq, { authorType: "agent", authorId: AGENT, runId, bodyMd: "답" })),
     ),
   );
@@ -44,7 +44,7 @@ function setup(channelId = CH) {
   const hook = renderHook(
     ({ ch }) => {
       renders += 1;
-      return useChannelBubbles(ch);
+      return useChannelBubbles(ch, ch);
     },
     { wrapper, initialProps: { ch: channelId } },
   );
@@ -68,6 +68,15 @@ it("진행 중인 런은 버블 — 다른 채널 런은 빼고, 델타가 와�
   // 부모가 다시 그려도(rerender) 새 배열을 만들지 않는다 — MessageList 가 groupRows 를 다시 돌지 않게
   rerender({ ch: CH });
   expect(result.current).toBe(first);
+});
+
+it("같은 채널의 다른 세션 런은 버블이 아니다 — 보는 세션의 런만(채널 세션 계획 판정 PS7)", () => {
+  const other = uid(3_001);
+  run({ id: RUN, status: "streaming" });
+  run({ id: RUN2, conversationId: other, status: "streaming" });
+  expect(setup().result.current).toEqual([RUN]);
+  const inOther = renderHook(() => useChannelBubbles(CH, other), { wrapper });
+  expect(inOther.result.current).toEqual([RUN2]);
 });
 
 it("done: 같은 runId 의 에이전트 메시지가 오면 곧바로 빠지고 런 스토어에서도 지운다", async () => {

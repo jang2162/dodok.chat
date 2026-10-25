@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { stubNotification } from "../../../test/domStubs";
-import { APPROVAL2, CH, CH2, approval } from "../../../test/fixtures";
+import { APPROVAL2, CH, CH2, approval, uid } from "../../../test/fixtures";
 import {
   approvalNotifyTitle,
   forgetApproval,
@@ -14,7 +14,7 @@ const noop = () => {};
 /** 다른 채널을 보고 있는, 알림이 떠야 하는 상황 */
 const away = (over: Partial<Parameters<typeof notifyApproval>[1]> = {}) => ({
   visible: true,
-  currentChannelId: CH2,
+  currentConversationId: CH2,
   onClick: noop,
   handle: "dev",
   ...over,
@@ -55,15 +55,21 @@ it("[결정 8] 이 기기에 푸시가 켜져 있으면 탭 안 알림은 쉰다
   expect(notifyApproval(approval(), away())).toBe(true);
 });
 
-it("같은 채널을 보고 있고 탭이 보이면 띄우지 않는다", () => {
+it("같은 세션을 보고 있고 탭이 보이면 띄우지 않는다", () => {
   const { made } = notifications("granted");
-  expect(notifyApproval(approval(), away({ currentChannelId: CH }))).toBe(false);
+  expect(notifyApproval(approval(), away({ currentConversationId: CH }))).toBe(false);
   expect(made).toHaveLength(0);
 });
 
-it("탭이 숨겨져 있으면 같은 채널이어도 띄운다", () => {
+it("같은 채널의 다른 세션을 보고 있으면 띄운다 — 카드는 그 승인의 세션에만 보인다(채널 세션 계획 판정 PS7)", () => {
   const { made } = notifications("granted");
-  expect(notifyApproval(approval(), away({ visible: false, currentChannelId: CH }))).toBe(true);
+  expect(notifyApproval(approval(), away({ currentConversationId: uid(77) }))).toBe(true);
+  expect(made).toHaveLength(1);
+});
+
+it("탭이 숨겨져 있으면 같은 세션이어도 띄운다", () => {
+  const { made } = notifications("granted");
+  expect(notifyApproval(approval(), away({ visible: false, currentConversationId: CH }))).toBe(true);
   expect(made).toHaveLength(1);
 });
 

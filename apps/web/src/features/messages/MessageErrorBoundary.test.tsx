@@ -33,8 +33,11 @@ it("한 메시지의 렌더 예외는 그 행만 「표시할 수 없는 메시�
     msg(2, { bodyMd: "터지는 본문" }),
     msg(3, { bodyMd: "뒤 메시지" }),
   ];
-  qc.setQueryData(qk.timeline(CH), { ...emptyTimeline(), items, lastSeq: 3 });
-  renderWithClient(<MessageList channelId={CH} initialRect={{ width: 800, height: 600 }} />, qc);
+  qc.setQueryData(qk.timeline(CH, CH), { ...emptyTimeline(), items, lastSeq: 3 });
+  renderWithClient(
+    <MessageList channelId={CH} conversationId={CH} initialRect={{ width: 800, height: 600 }} />,
+    qc,
+  );
 
   expect(await screen.findByText("표시할 수 없는 메시지")).toBeInTheDocument();
   expect(screen.getAllByText("표시할 수 없는 메시지")).toHaveLength(1);

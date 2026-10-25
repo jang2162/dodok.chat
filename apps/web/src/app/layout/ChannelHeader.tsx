@@ -20,16 +20,20 @@ const MAX_AVATARS = 4;
  */
 export function ChannelHeader({
   channelId,
+  conversationId,
   settingsRef,
 }: {
   channelId: string;
+  /** 보고 있는 세션 — 설정 패널을 여닫아도 그 세션에 머문다 */
+  conversationId: string;
   settingsRef?: RefObject<HTMLAnchorElement | null>;
 }) {
   const channel = useChannel(channelId);
   const members = useMembers(channelId);
   const agents = useAgents();
   const matchRoute = useMatchRoute();
-  const settingsOpen = Boolean(matchRoute({ to: "/c/$channelId/settings", params: { channelId } }));
+  const params = { channelId, conversationId };
+  const settingsOpen = Boolean(matchRoute({ to: "/c/$channelId/s/$conversationId/settings", params }));
 
   const byId = new Map((agents.data ?? []).map((a) => [a.id, a]));
   const channelAgents = (members.data ?? []).flatMap((m): Agent[] => {
@@ -83,8 +87,8 @@ export function ChannelHeader({
       <Button asChild variant="ghost" size="icon-sm">
         <Link
           ref={settingsRef}
-          to={settingsOpen ? "/c/$channelId" : "/c/$channelId/settings"}
-          params={{ channelId }}
+          to={settingsOpen ? "/c/$channelId/s/$conversationId" : "/c/$channelId/s/$conversationId/settings"}
+          params={params}
           activeOptions={{ exact: true }}
           aria-label="채널 설정"
           aria-expanded={settingsOpen}

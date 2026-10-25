@@ -180,7 +180,7 @@ describe("CreateChannelDialog", () => {
     await userEvent.type(within(dialog).getByLabelText("주제"), "개발 이야기");
     await userEvent.click(within(dialog).getByRole("button", { name: "만들기" }));
 
-    await waitFor(() => expect(router.state.location.pathname).toBe("/c/new-2/settings"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/c/new-2/s/new/settings"));
     expect(server.bodies("POST", "/api/v1/channels")).toEqual([{ name: "dev-talk", topic: "개발 이야기" }]);
     expect(screen.queryByRole("dialog", { name: "채널 만들기" })).not.toBeInTheDocument();
     expect(queryClient.getQueryData<Channel[]>(qk.channels)?.map((c) => c.name)).toEqual([
@@ -254,14 +254,15 @@ describe("CreateChannelDialog", () => {
 });
 
 describe("HomeRedirect", () => {
-  it("채널이 있으면 첫 채널로 replace 이동한다", async () => {
+  it("채널이 있으면 첫 채널로 replace 이동한다 — 채널 주소는 그 채널의 최근 세션으로 다시 replace", async () => {
     stubServer({ channels: [A, B] });
     const { router, history } = renderRoute("/");
     const actions: string[] = [];
     history.subscribe(({ action }) => actions.push(action.type));
     expect(await screen.findByTestId("page-channel")).toBeInTheDocument();
-    expect(router.state.location.pathname).toBe("/c/a");
-    expect(actions).toEqual(["REPLACE"]);
+    await waitFor(() => expect(router.state.location.pathname).toBe("/c/a/s/a"));
+    expect(actions.every((a) => a === "REPLACE")).toBe(true);
+    expect(history.length).toBe(1);
   });
 
   it("빈 상태에서 만들면 /c/<id>/settings 에 도착해 머문다(첫 채널로 가는 이동이 덮지 않는다)", async () => {
@@ -275,8 +276,8 @@ describe("HomeRedirect", () => {
     await userEvent.type(within(dialog).getByLabelText("이름"), "general{Enter}");
 
     expect(await screen.findByTestId("page-channel-panel")).toBeInTheDocument();
-    expect(router.state.location.pathname).toBe("/c/new-1/settings");
-    expect(moves).toEqual(["PUSH /c/new-1/settings"]);
+    expect(router.state.location.pathname).toBe("/c/new-1/s/new/settings");
+    expect(moves).toEqual(["PUSH /c/new-1/s/new/settings"]);
   });
 
   it("머무는 동안 목록에 채널이 생겨도 이동하지 않는다 — 「만들기」가 보낸 /settings 를 덮지 않게", async () => {

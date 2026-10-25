@@ -321,7 +321,7 @@ describe("JoinPage", () => {
     const { history } = renderRoute(`/join/${TOKEN}`);
     await fillForm({ 이메일: "  mia@example.com  " });
     await userEvent.click(screen.getByRole("button", { name: "가입" }));
-    await waitFor(() => expect(history.location.pathname).toBe("/c/ch1"));
+    await waitFor(() => expect(history.location.pathname).toBe("/c/ch1/s/ch1"));
     expect(JSON.parse(String(callsTo(fetch, "/invites/accept")[0]?.[1]?.body))).toMatchObject({
       email: "mia@example.com",
     });
@@ -353,7 +353,7 @@ describe("JoinPage", () => {
     await fillForm();
     await userEvent.click(screen.getByRole("button", { name: "가입" }));
 
-    await waitFor(() => expect(history.location.pathname).toBe("/c/ch1"));
+    await waitFor(() => expect(history.location.pathname).toBe("/c/ch1/s/ch1"));
     expect(history.location.href).not.toContain(TOKEN);
     // 가입 화면 항목을 갈아 끼웠다 — 뒤로 가기로 토큰 주소에 돌아가지 않는다
     expect(router.history.canGoBack()).toBe(false);
@@ -382,7 +382,7 @@ describe("JoinPage", () => {
     await fillForm();
     await userEvent.click(screen.getByRole("button", { name: "가입" }));
 
-    await waitFor(() => expect(history.location.pathname).toBe("/c/ch1"));
+    await waitFor(() => expect(history.location.pathname).toBe("/c/ch1/s/ch1"));
     expect(reset).toHaveBeenCalledTimes(1);
     expect(queryClient.getQueryData<{ user: { id: string } }>(qk.me)?.user.id).toBe("u2");
   });

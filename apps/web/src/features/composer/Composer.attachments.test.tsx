@@ -91,7 +91,13 @@ it("첨부 버튼으로 PNG → 칩·진행 → 끝나면 보내기가 켜지고
   await userEvent.click(sendButton());
 
   expect(fake.sentOf("message.send")).toEqual([
-    { channelId: CH, clientMsgId: expect.any(String), bodyMd: `<@a:${AGENT}> 봐 줘`, attachments: [a.id] },
+    {
+      channelId: CH,
+      conversationId: CH,
+      clientMsgId: expect.any(String),
+      bodyMd: `<@a:${AGENT}> 봐 줘`,
+      attachments: [a.id],
+    },
   ]);
   expect(chips()).toBeNull();
   expect(editor.isEmpty).toBe(true);
@@ -107,7 +113,13 @@ it("[Review Focus 3] 글 없이 이미지만 — 보내기가 켜지고 bodyMd �
   expect(sendButton()).toBeEnabled();
   fireEvent.keyDown(box, { key: "Enter" });
   expect(fake.sentOf("message.send")).toEqual([
-    { channelId: CH, clientMsgId: expect.any(String), bodyMd: "", attachments: [uploaded(1).id] },
+    {
+      channelId: CH,
+      conversationId: CH,
+      clientMsgId: expect.any(String),
+      bodyMd: "",
+      attachments: [uploaded(1).id],
+    },
   ]);
 });
 

@@ -4,11 +4,11 @@ import { useCallback } from "react";
 import { toast } from "sonner";
 import { useMe } from "@/api/queries";
 import { refreshArchivedChannel } from "@/features/channels/archived";
-import { CHANNEL_ARCHIVED_TEXT } from "@/api/formErrors";
+import { CHANNEL_ARCHIVED_TEXT, CONVERSATION_CLOSED_TEXT } from "@/api/formErrors";
 import type { Timeline } from "@/features/messages/timeline";
 import { useWire } from "@/realtime/WireProvider";
 import { emitAck, WireAckError } from "@/realtime/wire";
-import { getThread, getTimeline, updateThread, updateTimeline } from "@/realtime/timelineCache";
+import { getThread, getTimeline, patchTimeline, updateThread } from "@/realtime/timelineCache";
 
 const FAILED_TEXT = "반응을 저장하지 못했습니다";
 
@@ -67,11 +67,12 @@ function inflightOf(qc: QueryClient): Map<string, Inflight> {
  * 이모지를 빠르게 두 번 누름」). 마지막 요청이 실패하면 「반대로」가 아니라 **이 탭이 서버에게서 마지막으로 들은 상태**로 되돌린다 —
  * 첫 요청 직전의 캐시, 그 뒤로는 성공한 ack·받은 `message.updated`. 켜기·끄기가 둘 다 실패하면 서버 상태가 그대로라
  * `message.updated` 가 오지 않으므로, 「반대로」는 서버에 없는 칩을 새로고침 전까지 남긴다.
- * 서버의 `message.updated` 는 `applyMessage`(`realtime/handlers.ts`)가 캐시에 덮는다. 채널 타임라인 캐시는 들어간 적이 있을 때만
+ * 서버의 `message.updated` 는 `applyMessage`(`realtime/handlers.ts`)가 캐시에 덮는다. 세션 타임라인 캐시는 받은 적이 있을 때만
  * 고친다 — 없는 것을 빈 목록으로 만들지 않는다
  */
 export function useSetReaction(
   channelId: string,
+  conversationId: string,
   threadRootId?: string,
 ): (messageId: string, emoji: ReactionEmoji, on: boolean) => void {
   const qc = useQueryClient();
@@ -86,14 +87,14 @@ export function useSetReaction(
       const apply = (value: boolean) => {
         if (!me) return;
         const fn = editMessage(messageId, emoji, me, value);
-        if (getTimeline(qc, channelId)) updateTimeline(qc, channelId, fn);
-        if (threadRootId) updateThread(qc, channelId, threadRootId, fn);
+        patchTimeline(qc, channelId, conversationId, fn);
+        if (threadRootId) updateThread(qc, channelId, conversationId, threadRootId, fn);
       };
       const start = (): Inflight => {
         const cached =
-          getTimeline(qc, channelId)?.items.find((m) => m.id === messageId) ??
+          getTimeline(qc, channelId, conversationId)?.items.find((m) => m.id === messageId) ??
           (threadRootId
-            ? getThread(qc, channelId, threadRootId)?.items.find((m) => m.id === messageId)
+            ? getThread(qc, channelId, conversationId, threadRootId)?.items.find((m) => m.id === messageId)
             : undefined);
         // 이 탭 어느 행에서도 나가 있는 요청이 없으면 지금 캐시가 서버에게서 들은 상태다 — 낙관값을 얹기 전에 잡는다
         const r: Inflight = { seq, open: 0, server: me ? mineIn(cached, emoji, me) : false, stop: () => {} };
@@ -128,12 +129,17 @@ export function useSetReaction(
           toast.error(CHANNEL_ARCHIVED_TEXT, { id: "channel-archived" });
           return;
         }
+        // 다른 탭이 이 세션을 닫았다 — 다시 눌러도 같은 409 다
+        if (e instanceof WireAckError && e.code === "CONVERSATION_CLOSED") {
+          toast.error(CONVERSATION_CLOSED_TEXT, { id: "conversation-closed" });
+          return;
+        }
         toast.error(FAILED_TEXT, { id: "reaction-failed" });
       };
       apply(on);
       if (!socket) return fail(new Error("no socket"));
       emitAck(socket, "reaction.set", { messageId, emoji, on }).then(ok, fail);
     },
-    [qc, socket, me, channelId, threadRootId],
+    [qc, socket, me, channelId, conversationId, threadRootId],
   );
 }

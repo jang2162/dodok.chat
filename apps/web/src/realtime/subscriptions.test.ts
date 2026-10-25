@@ -1,11 +1,12 @@
 import type { ChannelSubscribeResult, Message, Result } from "@dodok/shared";
-import { QueryClient } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { renderHook, waitFor } from "@testing-library/react";
+import { createElement, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fromLatest, threadFromPage } from "@/features/messages/timeline";
 import { qk } from "@/api/queries";
-import { ApiRequestError } from "@/api/http";
-import { registerUnauthorized } from "@/app/session";
 import { useApprovalStore } from "@/features/approvals/approvalStore";
+import { fromLatest, threadFromPage } from "@/features/messages/timeline";
+import { useTimelineState } from "@/features/messages/useTimeline";
 import { useRunStore } from "@/features/runs/runStore";
 import { createFakeSocket } from "../../test/fakeSocket";
 import {
@@ -21,39 +22,71 @@ import {
   textDelta,
   uid,
 } from "../../test/fixtures";
-import { createSubscriptions, type FetchPage, restFetchPage } from "./subscriptions";
-import { getThread, getTimeline, updateTimeline } from "./timelineCache";
+import { createSubscriptions, restFetchPage } from "./subscriptions";
+import { getChannelSeq, getThread, getTimeline, setChannelSeq, updateTimeline } from "./timelineCache";
 
 const ok = <T>(data: T): Result<T> => ({ ok: true, data });
 const subscribed = (messages: Message[], over: Partial<ChannelSubscribeResult> = {}) =>
-  ok<ChannelSubscribeResult>({ messages, hasMore: false, activeRuns: [], pendingApprovals: [], ...over });
-const seqs = (qc: QueryClient, channelId = CH) => getTimeline(qc, channelId)?.items.map((m) => m.seq);
+  ok<ChannelSubscribeResult>({
+    messages,
+    hasMore: false,
+    latestSeq: messages.reduce((n, m) => Math.max(n, m.seq), 0),
+    activeRuns: [],
+    pendingApprovals: [],
+    ...over,
+  });
+/** 같은 채널의 둘째 세션 — 픽스처의 기본 세션은 채널 id 와 같은 「이전 대화」다 */
+const B = uid(3_001);
+const inB = (seq: number, over: Partial<Message> = {}) =>
+  msg(seq, { conversationId: B, id: uid(30_000 + seq), ...over });
+const seqs = (qc: QueryClient, conversationId = CH, channelId = CH) =>
+  getTimeline(qc, channelId, conversationId)?.items.map((m) => m.seq);
 
 function setup() {
   const fake = createFakeSocket();
-  const queryClient = new QueryClient();
-  const fetchPage = vi.fn<FetchPage>();
-  const subs = createSubscriptions({ socket: fake.wire, queryClient, fetchPage });
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const subs = createSubscriptions({ socket: fake.wire, queryClient });
   fake.onAck("channel.unsubscribe", () => ok(null));
   fake.socket.connected = true;
-  return { fake, queryClient, fetchPage, subs };
+  return { fake, queryClient, subs };
 }
 
-/** 캐시에 이미 적재된 채널(앞서 들어갔던 채널) */
-const seed = (qc: QueryClient, messages: Message[], channelId = CH) =>
-  updateTimeline(qc, channelId, (t) => fromLatest(t, messages, false));
+/** 캐시에 이미 받아 둔 세션(앞서 본 세션) */
+const seed = (qc: QueryClient, messages: Message[], channelId = CH, conversationId = channelId) =>
+  updateTimeline(qc, channelId, conversationId, (t) => fromLatest(t, messages, false));
+
+/** 세션 REST(`GET /conversations/:id/messages`)를 가짜로 — 세션 id 마다 그 쪽 */
+function stubConversationRest(pages: Record<string, Message[]>) {
+  const calls: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn<typeof fetch>(async (input) => {
+      const url = String(input);
+      calls.push(url);
+      const id = /\/conversations\/([^/]+)\/messages/.exec(url)?.[1] ?? "";
+      return new Response(JSON.stringify({ messages: pages[id] ?? [], hasMore: false }), { status: 200 });
+    }),
+  );
+  return calls;
+}
+
+const wrapper =
+  (qc: QueryClient) =>
+  ({ children }: { children: ReactNode }) =>
+    createElement(QueryClientProvider, { client: qc }, children);
 
 beforeEach(() => {
   useRunStore.getState().reset();
   useApprovalStore.getState().reset();
 });
+afterEach(() => vi.unstubAllGlobals());
 
 describe("createSubscriptions", () => {
-  it("처음 들어가면 lastSeq 없이 구독해 최근 페이지로 시작하고, 진행 중 런은 처음부터 재생해 텍스트를 쌓는다", async () => {
+  it("처음 들어가면 lastSeq 없이 구독해 메시지 없이 채널 커서만 세운다(판정 PS5) — 진행 중 런은 처음부터 재생해 텍스트를 쌓는다", async () => {
     const { fake, queryClient, subs } = setup();
     fake.onAck("channel.subscribe", () =>
-      subscribed([msg(2), msg(1)], {
-        hasMore: true,
+      subscribed([], {
+        latestSeq: 41,
         activeRuns: [runState({ id: RUN, status: "streaming" }), runState({ id: RUN2, status: "queued" })],
       }),
     );
@@ -64,8 +97,9 @@ describe("createSubscriptions", () => {
     await subs.enter(CH);
 
     expect(fake.sentOf("channel.subscribe")).toEqual([{ channelId: CH }]);
-    expect(seqs(queryClient)).toEqual([1, 2]);
-    expect(getTimeline(queryClient, CH)).toMatchObject({ lastSeq: 2, hasOlder: true });
+    expect(getChannelSeq(queryClient, CH)).toBe(41);
+    // 세션 타임라인은 구독이 만들지 않는다 — 그 세션의 쿼리가 REST 로 받는다
+    expect(getTimeline(queryClient, CH, CH)).toBeUndefined();
     // queued 런은 쌓인 텍스트가 없다 — 재생하지 않는다
     expect(fake.sentOf("run.events.replay")).toEqual([{ runId: RUN, afterSeq: 0 }]);
     expect(useRunStore.getState().runs[RUN]).toMatchObject({ text: "안녕", lastEventSeq: 2 });
@@ -73,84 +107,134 @@ describe("createSubscriptions", () => {
     expect(subs.active()).toBe(CH);
   });
 
-  it("캐시가 있는 채널에 다시 들어가면 lastSeq 로 구독해 병합한다(처음부터 다시 쌓지 않는다)", async () => {
+  it("세션의 첫 페이지는 구독이 커서를 세운 뒤에야 세션 REST 로 받는다 — 룸에 들어가기 전에 읽은 페이지는 그 사이 글이 빠진다", async () => {
+    const { fake, queryClient, subs } = setup();
+    const calls = stubConversationRest({ [B]: [inB(5), inB(9)] });
+    fake.onAck("channel.subscribe", () => subscribed([], { latestSeq: 9 }));
+    const { result } = renderHook(() => useTimelineState(CH, B), { wrapper: wrapper(queryClient) });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(calls).toEqual([]);
+    expect(result.current.timeline).toBeUndefined();
+
+    await subs.enter(CH);
+
+    await waitFor(() => expect(result.current.ready).toBe(true));
+    expect(calls).toEqual([`/api/v1/conversations/${B}/messages?limit=200`]);
+    expect(result.current.timeline?.items.map((m) => m.seq)).toEqual([5, 9]);
+    // 다른 세션(채널의 「이전 대화」)은 받지 않았다
+    expect(getTimeline(queryClient, CH, CH)).toBeUndefined();
+  });
+
+  it("커서가 있는 채널에 다시 들어가면 그 커서로 구독하고, 응답을 세션별 캐시로 나눈다 — 받은 적 없는 세션은 만들지 않는다", async () => {
     const { fake, queryClient, subs } = setup();
     seed(queryClient, [msg(1), msg(2)]);
-    fake.onAck("channel.subscribe", () => subscribed([msg(3)]));
+    setChannelSeq(queryClient, CH, 2);
+    fake.onAck("channel.subscribe", () => subscribed([inB(3), msg(4)], { latestSeq: 6 }));
 
     await subs.enter(CH);
 
     expect(fake.sentOf("channel.subscribe")).toEqual([{ channelId: CH, lastSeq: 2 }]);
-    expect(seqs(queryClient)).toEqual([1, 2, 3]);
-    expect(getTimeline(queryClient, CH)?.lastSeq).toBe(3);
+    expect(seqs(queryClient)).toEqual([1, 2, 4]);
+    expect(getTimeline(queryClient, CH, B)).toBeUndefined();
+    // 커서는 서버가 아는 끝까지 — 읽은 뒤의 글은 룸 이벤트로 온다
+    expect(getChannelSeq(queryClient, CH)).toBe(6);
   });
 
-  it("catchUp: 구독 응답이 hasMore 면 hasMore 가 끝날 때까지 REST afterSeq 로 200개씩 이어 받는다", async () => {
-    const { fake, queryClient, fetchPage, subs } = setup();
-    seed(queryClient, [msg(1), msg(2)]);
-    fake.onAck("channel.subscribe", () => subscribed([msg(3)], { hasMore: true }));
-    fetchPage
-      .mockResolvedValueOnce({ messages: [msg(4)], hasMore: true })
-      .mockResolvedValueOnce({ messages: [msg(5)], hasMore: false });
-
-    await subs.catchUp(CH);
-
-    expect(fetchPage.mock.calls).toEqual([
-      [CH, { afterSeq: 3, limit: 200 }],
-      [CH, { afterSeq: 4, limit: 200 }],
-    ]);
-    expect(seqs(queryClient)).toEqual([1, 2, 3, 4, 5]);
-  });
-
-  it("catchUp: REST 이어 받기가 401 이면 앱의 401 처리(로그인)를 한 번 부르고 실패로 끝난다", async () => {
-    const { fake, queryClient, fetchPage, subs } = setup();
-    const onUnauthorized = vi.fn();
-    const unregister = registerUnauthorized(onUnauthorized);
-    seed(queryClient, [msg(1), msg(2)]);
-    fake.onAck("channel.subscribe", () => subscribed([msg(3)], { hasMore: true }));
-    fetchPage.mockRejectedValue(new ApiRequestError(401, "UNAUTHORIZED", "로그인이 필요하다"));
-
-    await expect(subs.catchUp(CH)).rejects.toBeInstanceOf(ApiRequestError);
-
-    expect(onUnauthorized).toHaveBeenCalledTimes(1);
-    unregister();
-  });
-
-  it("catchUp: 5쪽(구독 1 + REST 4)을 넘기면 타임라인을 버리고 lastSeq 없이 처음부터 다시 구독한다", async () => {
-    const { fake, queryClient, fetchPage, subs } = setup();
-    seed(queryClient, [msg(1), msg(2)]);
-    fake.onAck("channel.subscribe", (p) =>
-      (p as { lastSeq?: number }).lastSeq === undefined
-        ? subscribed([msg(1500), msg(1501)], { hasMore: true })
-        : subscribed([msg(3)], { hasMore: true }),
-    );
-    let next = 4;
-    fetchPage.mockImplementation(async () => ({ messages: [msg(next++)], hasMore: true }));
-
-    await subs.catchUp(CH);
-
-    expect(fetchPage).toHaveBeenCalledTimes(4);
-    expect(fake.sentOf("channel.subscribe")).toEqual([{ channelId: CH, lastSeq: 2 }, { channelId: CH }]);
-    expect(seqs(queryClient)).toEqual([1500, 1501]);
-    expect(getTimeline(queryClient, CH)).toMatchObject({ lastSeq: 1501, hasOlder: true });
-  });
-
-  it("leave: channel.unsubscribe 를 보내고 캐시는 남기며 active 는 비운다", async () => {
+  it("재동기화 응답을 세션별로 나눈다 — 받아 둔 두 세션에 각자의 글만", async () => {
     const { fake, queryClient, subs } = setup();
-    fake.onAck("channel.subscribe", () => subscribed([msg(1)]));
+    seed(queryClient, [msg(1)]);
+    seed(queryClient, [inB(2)], CH, B);
+    setChannelSeq(queryClient, CH, 2);
+    fake.onAck("channel.subscribe", () => subscribed([msg(3), inB(4), msg(5), inB(6)]));
+
+    await subs.catchUp(CH);
+
+    expect(seqs(queryClient)).toEqual([1, 3, 5]);
+    expect(seqs(queryClient, B)).toEqual([2, 4, 6]);
+  });
+
+  it("[Review Focus 5] 재동기화가 hasMore 면 그 채널의 세션·스레드 캐시를 모두 버리고 지금 세션만 다시 받는다 — 커서는 서버가 아는 끝, 다른 채널은 그대로", async () => {
+    const { fake, queryClient, subs } = setup();
+    const calls = stubConversationRest({ [CH]: [msg(1), msg(250)] });
+    seed(queryClient, [msg(1)]);
+    seed(queryClient, [inB(2)], CH, B);
+    queryClient.setQueryData(qk.thread(CH, B, inB(2).id), threadFromPage(undefined, inB(2), [], false));
+    seed(queryClient, [msg(1, { channelId: CH2, id: uid(20_001) })], CH2);
+    setChannelSeq(queryClient, CH, 2);
+    fake.onAck("channel.subscribe", () => subscribed([inB(3), msg(4)], { hasMore: true, latestSeq: 250 }));
+    // 지금 보는 세션(CH 의 「이전 대화」) — 구독한 채널이라 받기가 켜져 있다
+    const { result } = renderHook(() => useTimelineState(CH, CH), { wrapper: wrapper(queryClient) });
+
+    await subs.catchUp(CH);
+
+    expect(getTimeline(queryClient, CH, B)).toBeUndefined();
+    expect(getThread(queryClient, CH, B, inB(2).id)).toBeUndefined();
+    await waitFor(() => expect(result.current.timeline?.items.map((m) => m.seq)).toEqual([1, 250]));
+    expect(calls).toEqual([`/api/v1/conversations/${CH}/messages?limit=200`]);
+    expect(getChannelSeq(queryClient, CH)).toBe(250);
+    expect(seqs(queryClient, CH2, CH2)).toEqual([1]);
+    // 채널 경로 이어 받기(옛 MAX_PAGES)는 없다 — 구독은 한 번
+    expect(fake.sentOf("channel.subscribe")).toEqual([{ channelId: CH, lastSeq: 2 }]);
+  });
+
+  it("[Review Focus 5] 버릴 때도 보내는 중 항목이 든 세션은 지우지 않고 낡은 것으로만 둔다 — ack 를 기다리는 항목이 사라지지 않게", async () => {
+    const { fake, queryClient, subs } = setup();
+    seed(queryClient, [inB(2)], CH, B);
+    updateTimeline(queryClient, CH, B, (t) => ({
+      ...t,
+      pending: [
+        {
+          clientMsgId: "c1",
+          channelId: CH,
+          bodyMd: "보내는 중",
+          createdAt: msg(2).createdAt,
+          state: "sending",
+        },
+      ],
+    }));
+    setChannelSeq(queryClient, CH, 2);
+    fake.onAck("channel.subscribe", () => subscribed([msg(3)], { hasMore: true, latestSeq: 300 }));
+
+    await subs.catchUp(CH);
+
+    expect(getTimeline(queryClient, CH, B)?.pending.map((p) => p.clientMsgId)).toEqual(["c1"]);
+    expect(queryClient.getQueryState(qk.timeline(CH, B))?.isInvalidated).toBe(true);
+  });
+
+  it("처음 구독(커서 없음)은 그 채널에 받아 둔 세션·스레드 캐시를 낡은 것으로 둔다 — 사본에서 복원한 캐시는 그 사이 글을 모른다", async () => {
+    const { fake, queryClient, subs } = setup();
+    seed(queryClient, [msg(1)]);
+    seed(queryClient, [inB(2)], CH, B);
+    queryClient.setQueryData(qk.thread(CH, CH, msg(1).id), threadFromPage(undefined, msg(1), [], false));
+    seed(queryClient, [msg(1, { channelId: CH2, id: uid(20_001) })], CH2);
+    fake.onAck("channel.subscribe", () => subscribed([], { latestSeq: 7 }));
+
+    await subs.enter(CH);
+
+    expect(queryClient.getQueryState(qk.timeline(CH, CH))?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(qk.timeline(CH, B))?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(qk.thread(CH, CH, msg(1).id))?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(qk.timeline(CH2, CH2))?.isInvalidated).toBe(false);
+  });
+
+  it("leave: channel.unsubscribe 를 보내고 캐시·커서는 남기며 active 는 비운다", async () => {
+    const { fake, queryClient, subs } = setup();
+    seed(queryClient, [msg(1)]);
+    fake.onAck("channel.subscribe", () => subscribed([], { latestSeq: 1 }));
     await subs.enter(CH);
 
     subs.leave(CH);
 
     expect(fake.sentOf("channel.unsubscribe")).toEqual([{ channelId: CH }]);
     expect(seqs(queryClient)).toEqual([1]);
+    expect(getChannelSeq(queryClient, CH)).toBe(1);
     expect(subs.active()).toBeUndefined();
   });
 
   it("연결 전(또는 끊긴 동안) enter·leave 는 보내지 않고 채널만 기억한다 — 붙으면 resubscribeAll 이 구독한다", async () => {
     const { fake, queryClient, subs } = setup();
     fake.socket.connected = false;
-    fake.onAck("channel.subscribe", () => subscribed([msg(1)]));
+    fake.onAck("channel.subscribe", () => subscribed([], { latestSeq: 1 }));
 
     await subs.enter(CH2);
     subs.leave(CH2);
@@ -161,13 +245,14 @@ describe("createSubscriptions", () => {
     fake.socket.connected = true;
     await subs.resubscribeAll();
     expect(fake.sentOf("channel.subscribe")).toEqual([{ channelId: CH }]);
-    expect(seqs(queryClient)).toEqual([1]);
+    expect(getChannelSeq(queryClient, CH)).toBe(1);
+    expect(getChannelSeq(queryClient, CH2)).toBeUndefined();
   });
 
-  it("resubscribeAll: 지금 보고 있는 채널만 lastSeq 로 다시 맞춘다 — 떠난 채널은 건드리지 않는다", async () => {
+  it("resubscribeAll: 지금 보고 있는 채널만 커서로 다시 맞춘다 — 떠난 채널은 건드리지 않는다", async () => {
     const { fake, queryClient, subs } = setup();
-    seed(queryClient, [msg(1)], CH);
-    seed(queryClient, [msg(1, { channelId: CH2, id: uid(20_001) })], CH2);
+    setChannelSeq(queryClient, CH, 1);
+    setChannelSeq(queryClient, CH2, 1);
     fake.onAck("channel.subscribe", () => subscribed([]));
     await subs.enter(CH2);
     subs.leave(CH2);
@@ -252,7 +337,7 @@ describe("createSubscriptions", () => {
    */
   it("이어 받기에서도 ack 을 기다리는 사이에 온 승인은 남고, 끊긴 동안 확정된 옛 카드는 닫힌다", async () => {
     const { fake, queryClient, subs } = setup();
-    seed(queryClient, [msg(1)]);
+    setChannelSeq(queryClient, CH, 1);
     // 끊기기 전에 보고 있던 미해결 카드 — 그 사이 확정됐고 ack 에는 오지 않는다
     useApprovalStore.getState().apply(approval());
     fake.onAck("channel.subscribe", () => {
@@ -267,7 +352,7 @@ describe("createSubscriptions", () => {
 
   it("이어 받기(lastSeq) 구독에서도 pendingApprovals 를 반영한다 — 끊긴 사이 온 승인", async () => {
     const { fake, queryClient, subs } = setup();
-    seed(queryClient, [msg(1)]);
+    setChannelSeq(queryClient, CH, 1);
     fake.onAck("channel.subscribe", () => subscribed([msg(2)], { pendingApprovals: [approval()] }));
 
     await subs.enter(CH);
@@ -283,12 +368,12 @@ describe("재동기화의 스레드(Review Focus 3 — 끊긴 사이 온 스레�
   const reply = (seq: number, root = ROOT) => msg(seq, { threadRootId: root.id });
   const summary = (count: number, at: number) => ({ count, lastAt: msg(at).createdAt, agentIds: [] });
   const openThread = (qc: QueryClient) =>
-    qc.setQueryData(qk.thread(CH, ROOT.id), threadFromPage(undefined, ROOT, [reply(3)], false));
+    qc.setQueryData(qk.thread(CH, CH, ROOT.id), threadFromPage(undefined, ROOT, [reply(3)], false));
 
-  it("답글은 연 스레드 캐시에, 닫힌 스레드의 답글은 버리고 요약(threadRoots)만 채널 캐시의 루트에", async () => {
+  it("답글은 연 스레드 캐시에, 닫힌 스레드의 답글은 버리고 요약(threadRoots)만 세션 캐시의 루트에", async () => {
     const { fake, queryClient, subs } = setup();
     seed(queryClient, [ROOT, OTHER]);
-    updateTimeline(queryClient, CH, (t) => ({ ...t, lastSeq: 3 }));
+    setChannelSeq(queryClient, CH, 3);
     openThread(queryClient);
     const root = msg(1, { threadSummary: summary(2, 5) });
     const other = msg(2, { threadSummary: summary(1, 6) });
@@ -299,79 +384,47 @@ describe("재동기화의 스레드(Review Focus 3 — 끊긴 사이 온 스레�
     await subs.catchUp(CH);
 
     expect(fake.sentOf("channel.subscribe")).toEqual([{ channelId: CH, lastSeq: 3 }]);
-    // 채널: 루트만, 요약은 새것, lastSeq 는 답글까지
-    const t = getTimeline(queryClient, CH);
+    // 세션: 루트만, 요약은 새것, lastSeq 는 답글까지
+    const t = getTimeline(queryClient, CH, CH);
     expect(t?.items.map((m) => m.seq)).toEqual([1, 2, 7]);
     expect(t?.items[0]?.threadSummary).toEqual(summary(2, 5));
     expect(t?.items[1]?.threadSummary).toEqual(summary(1, 6));
     expect(t?.lastSeq).toBe(7);
     // 연 스레드: 답글이 들어오고 루트의 요약도 맞다
-    const thread = getThread(queryClient, CH, ROOT.id);
+    const thread = getThread(queryClient, CH, CH, ROOT.id);
     expect(thread?.items.map((m) => m.seq)).toEqual([1, 3, 5]);
     expect(thread?.items[0]?.threadSummary).toEqual(summary(2, 5));
     // 닫힌 스레드는 캐시를 만들지 않는다
-    expect(getThread(queryClient, CH, OTHER.id)).toBeUndefined();
+    expect(getThread(queryClient, CH, CH, OTHER.id)).toBeUndefined();
   });
 
-  it("구독 한 쪽을 넘겨 REST(루트만)로 이어 받았으면 연 스레드는 다시 받게 낡은 것으로 둔다", async () => {
-    const { fake, queryClient, fetchPage, subs } = setup();
+  it("다른 세션의 답글·요약은 그 세션의 캐시로만 — 같은 루트 id 자리가 아니라 그 세션의 연 스레드에", async () => {
+    const { fake, queryClient, subs } = setup();
+    const rootB = inB(2);
     seed(queryClient, [ROOT]);
+    seed(queryClient, [rootB], CH, B);
+    setChannelSeq(queryClient, CH, 3);
     openThread(queryClient);
-    fake.onAck("channel.subscribe", () => subscribed([reply(4)], { hasMore: true }));
-    fetchPage.mockResolvedValueOnce({ messages: [msg(9)], hasMore: false });
-
-    await subs.catchUp(CH);
-
-    expect(seqs(queryClient)).toEqual([1, 9]);
-    expect(queryClient.getQueryState(qk.thread(CH, ROOT.id))?.isInvalidated).toBe(true);
-  });
-
-  it("다시 새로 시작(fresh)하면 연 스레드도 낡은 것으로 둔다 — 루트만 받는 구독은 답글을 싣지 않는다", async () => {
-    const { fake, queryClient, fetchPage, subs } = setup();
-    seed(queryClient, [ROOT]);
-    openThread(queryClient);
-    fake.onAck("channel.subscribe", (p) =>
-      (p as { lastSeq?: number }).lastSeq === undefined
-        ? subscribed([msg(1500)])
-        : subscribed([msg(3)], { hasMore: true }),
+    queryClient.setQueryData(qk.thread(CH, B, rootB.id), threadFromPage(undefined, rootB, [], false));
+    const replyB = inB(4, { threadRootId: rootB.id });
+    fake.onAck("channel.subscribe", () =>
+      subscribed([replyB], { threadRoots: [inB(2, { threadSummary: summary(1, 4) })] }),
     );
-    fetchPage.mockImplementation(async () => ({ messages: [], hasMore: true }));
 
     await subs.catchUp(CH);
 
-    expect(seqs(queryClient)).toEqual([1500]);
-    expect(queryClient.getQueryState(qk.thread(CH, ROOT.id))?.isInvalidated).toBe(true);
-  });
-
-  it("복원한 타임라인(lastSeq 0)의 첫 구독(fresh)도 연 스레드를 낡은 것으로 둔다 — hasMore 없이", async () => {
-    const { fake, queryClient, subs } = setup();
-    seed(queryClient, [ROOT]);
-    updateTimeline(queryClient, CH, (t) => ({ ...t, lastSeq: 0 }));
-    openThread(queryClient);
-    fake.onAck("channel.subscribe", () => subscribed([ROOT, msg(7)]));
-
-    await subs.catchUp(CH);
-
-    expect(fake.sentOf("channel.subscribe")).toEqual([{ channelId: CH }]);
-    expect(queryClient.getQueryState(qk.thread(CH, ROOT.id))?.isInvalidated).toBe(true);
-  });
-
-  it("타임라인 캐시가 없던 채널의 첫 구독은 스레드를 무효화하지 않는다 — 그 스레드는 방금 REST 로 받는 중이다", async () => {
-    const { fake, queryClient, subs } = setup();
-    openThread(queryClient);
-    fake.onAck("channel.subscribe", () => subscribed([ROOT, msg(7)]));
-
-    await subs.catchUp(CH);
-
-    expect(seqs(queryClient)).toEqual([1, 7]);
-    expect(queryClient.getQueryState(qk.thread(CH, ROOT.id))?.isInvalidated).toBe(false);
+    expect(getThread(queryClient, CH, B, rootB.id)?.items.map((m) => m.seq)).toEqual([2, 4]);
+    expect(getThread(queryClient, CH, CH, ROOT.id)?.items.map((m) => m.seq)).toEqual([1, 3]);
+    expect(getTimeline(queryClient, CH, B)?.items[0]?.threadSummary).toEqual(summary(1, 4));
+    expect(getTimeline(queryClient, CH, B)?.lastSeq).toBe(4);
+    expect(getTimeline(queryClient, CH, CH)?.lastSeq).toBe(1);
   });
 });
 
 describe("restFetchPage", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it("REST /channels/:id/messages 에 limit·afterSeq·beforeSeq 를 싣는다", async () => {
+  it("REST /conversations/:id/messages 에 limit·afterSeq·beforeSeq 를 싣는다", async () => {
     const fetchMock = vi.fn<typeof fetch>(
       async () => new Response(JSON.stringify({ messages: [], hasMore: false }), { status: 200 }),
     );
@@ -384,8 +437,8 @@ describe("restFetchPage", () => {
     await restFetchPage(CH, { beforeSeq: 9, limit: 50 });
 
     expect(fetchMock.mock.calls.map((c) => String(c[0]))).toEqual([
-      `/api/v1/channels/${CH}/messages?limit=200&afterSeq=5`,
-      `/api/v1/channels/${CH}/messages?limit=50&beforeSeq=9`,
+      `/api/v1/conversations/${CH}/messages?limit=200&afterSeq=5`,
+      `/api/v1/conversations/${CH}/messages?limit=50&beforeSeq=9`,
     ]);
   });
 });

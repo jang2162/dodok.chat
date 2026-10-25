@@ -10,7 +10,12 @@ const NEWER_PX = 200;
  * 떨어진 창(`hasNewer`, 결과로 가기)의 아래로 이어 받기 — 맨 아래 근처에 닿으면 가장 새 항목 뒤를 한 쪽 붙인다.
  * 과거 페이지(`useOlderPages`)의 거울이다: 실패하면 알리고 맨 아래 구역을 벗어났다 돌아올 때까지 멈춘다
  */
-export function useNewerPages(channelId: string, threadRootId: string | undefined, hasNewer: boolean) {
+export function useNewerPages(
+  channelId: string,
+  conversationId: string,
+  threadRootId: string | undefined,
+  hasNewer: boolean,
+) {
   const qc = useQueryClient();
   const [loading, setLoading] = useState(false);
   const busy = useRef(false);
@@ -20,7 +25,7 @@ export function useNewerPages(channelId: string, threadRootId: string | undefine
     busy.current = true;
     setLoading(true);
     try {
-      await loadNewer(qc, channelId, threadRootId);
+      await loadNewer(qc, channelId, conversationId, threadRootId);
     } catch (e) {
       armed.current = false;
       reportPageError(e);

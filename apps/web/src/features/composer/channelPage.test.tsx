@@ -25,7 +25,7 @@ vi.mock("@/app/layout/ChannelHeader", async () => {
     ChannelHeader: ({ channelId }: { channelId: string }) => {
       const actions = usePendingActions();
       const qc = useQueryClient();
-      const first = () => timeline.getTimeline(qc, channelId)?.pending[0]?.clientMsgId ?? "";
+      const first = () => timeline.getTimeline(qc, channelId, channelId)?.pending[0]?.clientMsgId ?? "";
       return (
         <div>
           <button type="button" onClick={() => actions?.retry(first())}>
@@ -78,7 +78,7 @@ async function sendFailing(text: string) {
 }
 
 it("작성기 자리: 작성 중 표시 + 작성기", async () => {
-  renderRoute(`/c/${CH}`);
+  renderRoute(`/c/${CH}/s/${CH}`);
   const box = await screen.findByRole("textbox", { name: "메시지 입력" });
   const slot = box.closest('[data-slot="composer"]');
   expect(slot).not.toBeNull();
@@ -86,24 +86,26 @@ it("작성기 자리: 작성 중 표시 + 작성기", async () => {
 });
 
 it("PendingActions: 다시 보내기는 같은 clientMsgId 로 다시 보내 확정, 삭제는 캐시에서만", async () => {
-  const { queryClient } = renderRoute(`/c/${CH}`);
+  const { queryClient } = renderRoute(`/c/${CH}/s/${CH}`);
   await sendFailing("실패할 글");
-  await waitFor(() => expect(getTimeline(queryClient, CH)?.pending.map((p) => p.state)).toEqual(["failed"]));
-  const id = getTimeline(queryClient, CH)?.pending[0]?.clientMsgId;
+  await waitFor(() =>
+    expect(getTimeline(queryClient, CH, CH)?.pending.map((p) => p.state)).toEqual(["failed"]),
+  );
+  const id = getTimeline(queryClient, CH, CH)?.pending[0]?.clientMsgId;
 
   fake.onAck("message.send", confirmed);
   await userEvent.click(screen.getByRole("button", { name: "탐침 다시 보내기" }));
-  await waitFor(() => expect(getTimeline(queryClient, CH)?.pending).toEqual([]));
-  expect(getTimeline(queryClient, CH)?.items.map((m) => m.clientMsgId)).toEqual([id]);
+  await waitFor(() => expect(getTimeline(queryClient, CH, CH)?.pending).toEqual([]));
+  expect(getTimeline(queryClient, CH, CH)?.items.map((m) => m.clientMsgId)).toEqual([id]);
   expect(fake.sentOf("message.send").map((p) => (p as { clientMsgId: string }).clientMsgId)).toEqual([
     id,
     id,
   ]);
 
   await sendFailing("버릴 글");
-  await waitFor(() => expect(getTimeline(queryClient, CH)?.pending).toHaveLength(1));
+  await waitFor(() => expect(getTimeline(queryClient, CH, CH)?.pending).toHaveLength(1));
   const sent = fake.sent.length;
   await userEvent.click(screen.getByRole("button", { name: "탐침 삭제" }));
-  expect(getTimeline(queryClient, CH)?.pending).toEqual([]);
+  expect(getTimeline(queryClient, CH, CH)?.pending).toEqual([]);
   expect(fake.sent).toHaveLength(sent);
 });

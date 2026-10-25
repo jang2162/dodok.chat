@@ -1,14 +1,14 @@
 import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
 import { RouterProvider, createMemoryHistory, createRootRoute, createRouter } from "@tanstack/react-router";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { qk } from "@/api/queries";
 import { TooltipProvider } from "@/ui/tooltip";
-import { shellGet } from "../../test/shellApi";
+import { conversationOf, shellGet } from "../../test/shellApi";
 import { RouteError } from "./RouteError";
 import { createQueryClient } from "./queryClient";
-import { channelIdOf, createAppRouter, isPublicPath, safeNext } from "./router";
+import { channelIdOf, conversationIdOf, createAppRouter, isPublicPath, safeNext } from "./router";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -53,15 +53,79 @@ it("로그인돼 있으면 앱 레이아웃 안의 페이지가 뜬다", async (
   expect(screen.getByTestId("app-shell")).toContainElement(screen.getByTestId("page-agents"));
 });
 
-it("/c/$channelId/settings 는 채널 화면의 Outlet 자리에 설정 패널을 둔다", async () => {
+it("/c/$channelId/s/$conversationId/settings 는 세션 화면의 Outlet 자리에 설정 패널을 둔다", async () => {
   vi.stubGlobal(
     "fetch",
     // 셸(사이드바·배너·채널 헤더)이 부르는 조회는 기본 응답, 그 밖은 me
     vi.fn<typeof fetch>(async (input, init) => shellGet(input, init) ?? json(200, ME)),
   );
-  renderAt("/c/abc/settings");
+  renderAt("/c/abc/s/abc/settings");
   const settings = await screen.findByTestId("page-channel-panel");
   expect(screen.getByTestId("page-channel")).toContainElement(settings);
+});
+
+describe("채널 주소 — 세션으로 넘긴다(채널 세션 스펙 「웹」 장)", () => {
+  const SESSION = "01a00000-0000-7000-8000-000000003001";
+  /** 셸 기본 응답 + 그 채널의 열린 세션 목록(최근 활동순) — 목록 조회 주소를 모은다 */
+  function serve(sessions: Array<{ id: string }>) {
+    const lists: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input, init) => {
+        const url = String(input);
+        if (/\/channels\/abc\/conversations/.test(url)) {
+          lists.push(url);
+          return json(200, { conversations: sessions.map((c) => conversationOf("abc", c)) });
+        }
+        return shellGet(input, init) ?? json(200, ME);
+      }),
+    );
+    return lists;
+  }
+
+  it("/c/<ch> 는 열린 세션 가운데 최근 활동한 것으로 바꿔 간다(replace — 뒤로 가기가 채널 주소에 걸리지 않게)", async () => {
+    const lists = serve([{ id: SESSION }, { id: "abc" }]);
+    const router = renderAt("/c/abc");
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/abc/s/${SESSION}`));
+    expect(lists).toEqual(["/api/v1/channels/abc/conversations?status=open"]);
+    expect(router.history.length).toBe(1);
+  });
+
+  it("열린 세션이 없으면 새 세션 창(/s/new)으로", async () => {
+    serve([]);
+    const router = renderAt("/c/abc");
+    await waitFor(() => expect(router.state.location.pathname).toBe("/c/abc/s/new"));
+    expect(await screen.findByTestId("page-channel")).toBeInTheDocument();
+  });
+
+  it("세션 전의 채널 탭 주소(/c/<ch>/settings·activity)는 최근 세션의 같은 탭으로", async () => {
+    serve([{ id: SESSION }]);
+    const router = renderAt("/c/abc/settings");
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/abc/s/${SESSION}/settings`));
+    expect(await screen.findByTestId("page-channel-panel")).toBeInTheDocument();
+  });
+
+  it("세션 전의 스레드 주소(/c/<ch>/t/<root>)는 그 채널의 「이전 대화」(id = 채널 id)의 스레드로 — 목록을 묻지 않는다", async () => {
+    const lists = serve([{ id: SESSION }]);
+    const router = renderAt("/c/abc/t/root1");
+    await waitFor(() => expect(router.state.location.pathname).toBe("/c/abc/s/abc/t/root1"));
+    expect(lists).toEqual([]);
+  });
+
+  it("/c/<ch>/s/<conv>/t/<root> 새로고침은 그 세션과 그 스레드 패널을 연다", async () => {
+    serve([{ id: SESSION }]);
+    const router = renderAt(`/c/abc/s/${SESSION}/t/root1`);
+    const panel = await screen.findByTestId("page-channel-panel");
+    expect(panel).toHaveAttribute("data-panel-tab", "thread");
+    expect(router.state.location.pathname).toBe(`/c/abc/s/${SESSION}/t/root1`);
+  });
+
+  it("conversationIdOf — 세션 주소의 대화 id(새 세션 창이면 new), 채널 주소·설정이면 없다", () => {
+    expect(conversationIdOf(`/c/abc/s/${SESSION}/t/x`)).toBe(SESSION);
+    expect(conversationIdOf("/c/abc/s/new")).toBe("new");
+    expect(conversationIdOf("/c/abc")).toBeUndefined();
+    expect(conversationIdOf("/settings/account")).toBeUndefined();
+  });
 });
 
 it("/auth/me 가 네트워크 실패면 재시도 뒤 오류 화면 — 「다시 시도」로 복구한다", async () => {

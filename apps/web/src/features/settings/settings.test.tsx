@@ -27,7 +27,7 @@ afterEach(() => {
 describe("패널", () => {
   it("넓은 화면: 채널 화면 오른쪽에 섹션 넷, 「설정 닫기」 → /c/:id", async () => {
     stubSettingsServer();
-    const { router } = renderRoute(`/c/${CH}/settings`);
+    const { router } = renderRoute(`/c/${CH}/s/${CH}/settings`);
     const panel = await screen.findByTestId("page-channel-panel");
     expect(screen.getByTestId("page-channel")).toContainElement(panel);
     expect(within(panel).getByRole("heading", { name: "채널 설정" })).toBeInTheDocument();
@@ -35,7 +35,7 @@ describe("패널", () => {
       expect(await within(panel).findByRole("region", { name })).toBeInTheDocument();
     }
     await userEvent.click(within(panel).getByRole("link", { name: "설정 닫기" }));
-    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}`));
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}`));
     expect(screen.queryByTestId("page-channel-panel")).not.toBeInTheDocument();
   });
 
@@ -46,21 +46,21 @@ describe("패널", () => {
   it("넓은 화면: 「설정 닫기」를 누르면 초점이 헤더의 「채널 설정」 링크로 간다 — <body> 가 아니다", async () => {
     stubMedia(false);
     stubSettingsServer();
-    const { router } = renderRoute(`/c/${CH}/settings`);
+    const { router } = renderRoute(`/c/${CH}/s/${CH}/settings`);
     const header = await screen.findByTestId("channel-header");
     const opener = within(header).getByRole("link", { name: "채널 설정" });
 
     await userEvent.click(
       within(await screen.findByTestId("page-channel-panel")).getByRole("link", { name: "설정 닫기" }),
     );
-    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}`));
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}`));
     await waitFor(() => expect(screen.queryByTestId("page-channel-panel")).not.toBeInTheDocument());
     expect(document.activeElement).not.toBe(document.body);
     expect(opener).toHaveFocus();
 
     // 다시 열어 키보드로 닫아도 같다
     await userEvent.keyboard("{Enter}");
-    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/settings`));
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}/settings`));
     within(await screen.findByTestId("page-channel-panel"))
       .getByRole("link", { name: "설정 닫기" })
       .focus();
@@ -72,7 +72,7 @@ describe("패널", () => {
   it("폭이 바뀌어도(오른쪽 패널 ↔ 전체 화면 시트) 고치던 초안은 그대로다", async () => {
     const media = stubMedia(false);
     stubSettingsServer();
-    renderRoute(`/c/${CH}/settings`);
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
     const basic = await region("기본");
     await userEvent.type(within(basic).getByLabelText("이름"), "-고침");
     await userEvent.type(within(await region("채널 프롬프트")).getByLabelText("채널 프롬프트"), "짧게");
@@ -101,13 +101,13 @@ describe("패널", () => {
       dispatchEvent: () => false,
     }));
     stubSettingsServer();
-    const { router } = renderRoute(`/c/${CH}/settings`);
+    const { router } = renderRoute(`/c/${CH}/s/${CH}/settings`);
     const sheet = await screen.findByRole("dialog", { name: "채널 설정" });
     expect(sheet).toHaveAttribute("data-testid", "page-channel-panel");
     expect(sheet).toHaveClass("w-full");
     expect(await within(sheet).findByRole("region", { name: "기본" })).toBeInTheDocument();
     await userEvent.click(within(sheet).getByRole("button", { name: "닫기" }));
-    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}`));
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}`));
     expect(screen.queryByRole("dialog", { name: "채널 설정" })).not.toBeInTheDocument();
   });
 
@@ -122,12 +122,15 @@ describe("패널", () => {
     });
     const queryClient = createQueryClient(() => {});
     queryClient.setQueryData<Channel>(qk.channel(CH2), channelOf(CH2, { name: "random" }));
-    const { router } = renderRoute(`/c/${CH}/settings`, queryClient);
+    const { router } = renderRoute(`/c/${CH}/s/${CH}/settings`, queryClient);
     const basic = await region("기본");
     await userEvent.type(within(basic).getByLabelText("이름"), "-초안");
     const panel = screen.getByTestId("page-channel-panel");
 
-    await router.navigate({ to: "/c/$channelId/settings", params: { channelId: CH2 } });
+    await router.navigate({
+      to: "/c/$channelId/s/$conversationId/settings",
+      params: { channelId: CH2, conversationId: CH2 },
+    });
     await waitFor(() =>
       expect(within(screen.getByTestId("page-channel-panel")).getByLabelText("이름")).toHaveValue("random"),
     );
@@ -148,7 +151,7 @@ describe("패널", () => {
     });
     const queryClient = createQueryClient(() => {});
     queryClient.setQueryData<Channel[]>(qk.channels, [channelOf(CH, { name: "목록 이름" })]);
-    renderRoute(`/c/${CH}/settings`, queryClient);
+    renderRoute(`/c/${CH}/s/${CH}/settings`, queryClient);
     const panel = await screen.findByTestId("page-channel-panel");
     // 헤더는 자리값으로 곧바로 그리지만, 패널은 기다린다
     expect(await within(screen.getByTestId("channel-header")).findByText("목록 이름")).toBeInTheDocument();
@@ -165,7 +168,7 @@ describe("기본", () => {
   it("이름·주제 저장 → PATCH, 주제를 비우면 null, 캐시(상세·목록)를 응답으로 — 다시 부르지 않는다", async () => {
     const server = stubSettingsServer({ channel: { topic: "옛 주제" } });
     const queryClient = createQueryClient(() => {});
-    renderRoute(`/c/${CH}/settings`, queryClient);
+    renderRoute(`/c/${CH}/s/${CH}/settings`, queryClient);
     const basic = await region("기본");
     const name = within(basic).getByLabelText("이름");
     const topic = within(basic).getByLabelText("주제");
@@ -207,7 +210,7 @@ describe("기본", () => {
   it("VALIDATION·CONFLICT 는 섹션 안(토스트 없음), 그 밖(500)은 전역 토스트(섹션 안 없음)", async () => {
     let reply = apiErr(400, "VALIDATION", "body — name: 이상하다");
     stubSettingsServer({ override: ({ method }) => (method === "PATCH" ? reply : undefined) });
-    renderRoute(`/c/${CH}/settings`);
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
     const basic = await region("기본");
     await userEvent.type(within(basic).getByLabelText("이름"), "!");
     await userEvent.click(within(basic).getByRole("button", { name: "저장" }));
@@ -228,7 +231,7 @@ describe("기본", () => {
 describe("채널 프롬프트", () => {
   it("남은 글자 수, 저장 → PATCH { prompt } 와 반영 안내, 비우면 null", async () => {
     const server = stubSettingsServer();
-    renderRoute(`/c/${CH}/settings`);
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
     const section = await region("채널 프롬프트");
     const box = within(section).getByRole("textbox", { name: "채널 프롬프트" });
     expect(box).toHaveAttribute("maxLength", "20000");
@@ -261,7 +264,7 @@ describe("릴레이 정책", () => {
 
   it("검증 오류는 섹션 안 + 그 칸에 표시(aria-invalid·설명) — 요청하지 않는다", async () => {
     const server = stubSettingsServer();
-    renderRoute(`/c/${CH}/settings`);
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
     const section = await region("릴레이 정책");
     const turns = within(section).getByLabelText("턴 상한");
     const daily = within(section).getByLabelText("일일 실행 상한");
@@ -289,7 +292,7 @@ describe("릴레이 정책", () => {
 
   it("숫자 칸은 붙여넣기를 자르지 않는다 — 넘치면 검증 문구로 알린다", async () => {
     const server = stubSettingsServer();
-    renderRoute(`/c/${CH}/settings`);
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
     const section = await region("릴레이 정책");
     const turns = within(section).getByLabelText("턴 상한");
     await userEvent.clear(turns);
@@ -312,7 +315,7 @@ describe("릴레이 정책", () => {
   it("「모든 에이전트끼리 허용」을 끄면 from→to 체크 목록(자기 자신 없음) — 고른 쌍·상한으로 PATCH", async () => {
     const server = stubSettingsServer({ members: withAgents() });
     const queryClient = createQueryClient(() => {});
-    renderRoute(`/c/${CH}/settings`, queryClient);
+    renderRoute(`/c/${CH}/s/${CH}/settings`, queryClient);
     const section = await region("릴레이 정책");
     const all = within(section).getByRole("switch", { name: "모든 에이전트끼리 허용" });
     expect(all).toBeChecked();
@@ -360,7 +363,7 @@ describe("릴레이 정책", () => {
       channel: { relayPolicy: { maxRelayTurns: 4, allowPairs: "all", dailyRunLimit: 5 } },
       override: ({ method }) => (method === "PATCH" ? reply : undefined),
     });
-    renderRoute(`/c/${CH}/settings`);
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
     const section = await region("릴레이 정책");
     const daily = within(section).getByLabelText("일일 실행 상한");
     expect(daily).toHaveValue("5");

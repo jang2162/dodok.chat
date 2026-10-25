@@ -64,7 +64,7 @@ const AGENTS = [DEV_AGENT, FIN_AGENT, ...EXTRA];
 /** 채널 화면에 보일 것: 사람·에이전트 메시지(멘션), 「이어가기」 버튼이 있는 시스템 카드, 스트리밍 버블 */
 function seedChannel() {
   const qc = createQueryClient(() => {});
-  qc.setQueryData(qk.timeline(CH), {
+  qc.setQueryData(qk.timeline(CH, CH), {
     ...emptyTimeline(),
     items: [
       msg(1, { bodyMd: `<@a:${AGENT}> 정리해 줘` }),
@@ -115,7 +115,7 @@ describe("앱 셸 + 채널 화면", () => {
       agents: AGENTS,
       members: AGENTS.map((a) => memberOf("agent", a.id)),
     });
-    renderRoute(`/c/${CH}`, seedChannel());
+    renderRoute(`/c/${CH}/s/${CH}`, seedChannel());
     expect(await screen.findByText("답하는 중")).toBeInTheDocument();
     const header = screen.getByTestId("channel-header");
     // 헤더 아바타 묶음: 넷 + 「+2」(이름이 있는 그림)
@@ -131,7 +131,7 @@ describe("앱 셸 + 채널 화면", () => {
   it("좁은 화면: 사이드바 시트는 제목 「채널 목록」인 대화상자, 그 안도 이름이 다 있다", async () => {
     narrow();
     stubSettingsServer();
-    renderRoute(`/c/${CH}`, seedChannel());
+    renderRoute(`/c/${CH}/s/${CH}`, seedChannel());
     const header = await screen.findByTestId("channel-header");
     await userEvent.click(within(header).getByRole("button", { name: "채널 목록 열기" }));
     const sheet = await screen.findByRole("dialog", { name: "채널 목록" });
@@ -140,7 +140,7 @@ describe("앱 셸 + 채널 화면", () => {
 
   it("「채널 만들기」 대화상자에 제목이 있다", async () => {
     stubSettingsServer();
-    renderRoute(`/c/${CH}`);
+    renderRoute(`/c/${CH}/s/${CH}`);
     const nav = await screen.findByRole("navigation", { name: "채널" });
     await userEvent.click(within(nav).getByRole("button", { name: "채널 만들기" }));
     const dialog = await screen.findByRole("dialog", { name: "채널 만들기" });
@@ -154,7 +154,7 @@ describe("채널 설정 패널", () => {
       channel: { relayPolicy: { maxRelayTurns: 4, allowPairs: [] } },
       members: [memberOf("agent", DEV_AGENT.id), memberOf("agent", FIN_AGENT.id)],
     });
-    renderRoute(`/c/${CH}/settings`);
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
     const panel = await screen.findByTestId("page-channel-panel");
     await within(panel).findByRole("list", { name: "채널 에이전트" });
     await userEvent.click(within(panel).getByRole("button", { name: "@dev 채널 프롬프트 편집" }));
@@ -166,7 +166,7 @@ describe("채널 설정 패널", () => {
   it("좁은 화면: 전체 화면 시트는 제목 「채널 설정」인 대화상자", async () => {
     narrow();
     stubSettingsServer();
-    renderRoute(`/c/${CH}/settings`);
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
     const sheet = await screen.findByRole("dialog", { name: "채널 설정" });
     await within(sheet).findByRole("region", { name: "멤버" });
     expect(unnamed(sheet)).toEqual(NONE);
@@ -174,7 +174,7 @@ describe("채널 설정 패널", () => {
 
   it("「에이전트 제거」 확인 대화상자에 제목이 있다", async () => {
     stubSettingsServer({ members: [memberOf("agent", DEV_AGENT.id)] });
-    renderRoute(`/c/${CH}/settings`);
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
     const list = await screen.findByRole("list", { name: "채널 에이전트" });
     await userEvent.click(within(list).getByRole("button", { name: "@dev 제거" }));
     expect(unnamed(await screen.findByRole("dialog", { name: "에이전트 제거" }))).toEqual(NONE);

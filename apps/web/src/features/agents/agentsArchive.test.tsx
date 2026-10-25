@@ -273,13 +273,17 @@ describe("다른 탭", () => {
     const fake = createFakeSocket();
     fake.socket.connected = true;
     fake.socket.active = true;
-    const subscriptions = createSubscriptions({ socket: fake.wire, queryClient: qc, fetchPage: vi.fn() });
+    const subscriptions = createSubscriptions({ socket: fake.wire, queryClient: qc });
     detachers.push(
       attachHandlers(fake.wire, {
         queryClient: qc,
         subscriptions,
         onUnauthorized: () => {},
-        notify: { currentChannelId: () => undefined, openActivity: () => {} },
+        notify: {
+          currentChannelId: () => undefined,
+          currentConversationId: () => undefined,
+          openActivity: () => {},
+        },
       }),
     );
     renderPage(qc, "admin");

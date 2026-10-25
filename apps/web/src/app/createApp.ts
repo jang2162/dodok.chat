@@ -4,7 +4,7 @@ import { captureInstallPrompt } from "@/pwa/install";
 import { safeNotificationUrl } from "@/pwa/sw-logic";
 import type { AppNotifyTarget } from "@/realtime/WireProvider";
 import { createQueryClient } from "./queryClient";
-import { type AppRouter, channelIdOf, createAppRouter, isPublicPath } from "./router";
+import { type AppRouter, channelIdOf, conversationIdOf, createAppRouter, isPublicPath } from "./router";
 import { resetClientState } from "./session";
 
 export type AppClient = {
@@ -40,8 +40,12 @@ export function createApp(history?: RouterHistory): AppClient {
    */
   const notify: AppNotifyTarget = {
     currentChannelId: () => channelIdOf(router.latestLocation.pathname),
-    openActivity: (channelId) => {
-      void router.navigate({ to: "/c/$channelId/activity", params: { channelId } });
+    currentConversationId: () => conversationIdOf(router.latestLocation.pathname),
+    openActivity: (channelId, conversationId) => {
+      void router.navigate({
+        to: "/c/$channelId/s/$conversationId/activity",
+        params: { channelId, conversationId },
+      });
     },
     // 보는 채널이 바뀌면 presence 를 다시 알린다(스펙 5.3) — 화면이 다 옮겨진 뒤(latestLocation 이 새 경로)
     onLocationChange: (fn) => router.subscribe("onResolved", fn),

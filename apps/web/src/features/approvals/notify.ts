@@ -9,9 +9,12 @@ export type NotifyPermission = "unsupported" | "default" | "granted" | "denied";
 export type NotifyContext = {
   /** 탭이 보이는가(`document.visibilityState === "visible"`) */
   visible: boolean;
-  /** 지금 보고 있는 채널 — 같은 채널을 보고 있으면 알리지 않는다 */
-  currentChannelId?: string;
-  /** 알림을 눌렀을 때 — 그 채널의 활동 탭으로 */
+  /**
+   * 지금 보고 있는 세션 — 같은 세션을 보고 있으면 알리지 않는다. 같은 채널의 다른 세션을 보고 있으면 알린다 — 카드는 그 승인의
+   * 세션에서만 보인다(채널 세션 계획 판정 PS7)
+   */
+  currentConversationId?: string;
+  /** 알림을 눌렀을 때 — 그 세션의 활동 탭으로 */
   onClick(): void;
   /** 에이전트 핸들(`@` 없이). 모르면 「에이전트」 */
   handle?: string;
@@ -69,14 +72,14 @@ export function approvalNotifyTitle(a: Pick<Approval, "toolName">, handle?: stri
 }
 
 /**
- * 승인 요구 알림(설계 5.4). 같은 채널을 보고 있고 탭이 보이면 띄우지 않는다 — 카드가 이미 화면에 있다.
+ * 승인 요구 알림(설계 5.4). 같은 세션을 보고 있고 탭이 보이면 띄우지 않는다 — 카드가 이미 화면에 있다.
  * 권한이 `granted` 가 아니면 조용히 넘어간다(카드가 정본이라 앱은 그대로 돈다). 띄웠으면 `true`.
  * 이 기기에 푸시가 켜져 있으면 쉰다 — 서버 푸시가 같은 승인을 알린다(스펙 결정 8)
  */
 export function notifyApproval(a: Approval, ctx: NotifyContext): boolean {
   if (notified.has(a.id)) return false;
   if (pushOnThisDevice()) return false;
-  if (ctx.visible && ctx.currentChannelId === a.channelId) return false;
+  if (ctx.visible && ctx.currentConversationId === a.conversationId) return false;
   const N = api();
   if (!N || notifyPermission() !== "granted") return false;
 

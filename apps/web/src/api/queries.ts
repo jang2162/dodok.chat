@@ -3,6 +3,7 @@ import {
   type AdapterStatus,
   type Channel,
   type ChannelMember,
+  type ConversationList,
   type Person,
   type Run,
   type RunEvent,
@@ -89,16 +90,36 @@ export const qk = {
   adapter: ["adapter"] as const,
   /** Claude 러너 어댑터 줄(운영 화면 연결 줄) — `adapter` 가 앞머리라 그 무효화에 함께 든다 */
   runnerAdapter: ["adapter", "claude"] as const,
-  timeline: (id: string) => ["timeline", id] as const,
-  /** 스레드 하나(루트·답글) — 채널 타임라인은 루트만 든다. `threads` 는 한 채널의 스레드 전부(무효화용 앞머리) */
-  thread: (channelId: string, rootId: string) => ["thread", channelId, rootId] as const,
-  threads: (channelId: string) => ["thread", channelId] as const,
+  /**
+   * 세션 하나의 타임라인(루트만 — 채널 세션 계획 판정 PS6). 키에 채널을 앞에 둔다 — 재동기화가 넘치면(`hasMore`) 그 채널의 세션
+   * 캐시를 모두 버려야 하는데(`channelTimelines`), 빈 세션의 캐시는 내용으로 채널을 알 수 없다. 새 세션 창은 `NEW_CONVERSATION`
+   */
+  timeline: (channelId: string, conversationId: string) => ["timeline", channelId, conversationId] as const,
+  /** 한 채널의 세션 타임라인 전부(무효화·버리기용 앞머리) */
+  channelTimelines: (channelId: string) => ["timeline", channelId] as const,
+  /** 스레드 하나(루트·답글) — 세션 타임라인은 루트만 든다. `threads` 는 한 세션의 스레드 전부(무효화용 앞머리) */
+  thread: (channelId: string, conversationId: string, rootId: string) =>
+    ["thread", channelId, conversationId, rootId] as const,
+  threads: (channelId: string, conversationId: string) => ["thread", channelId, conversationId] as const,
+  /** 한 채널의 스레드 전부(무효화·버리기용 앞머리) */
+  channelThreads: (channelId: string) => ["thread", channelId] as const,
   threadsAll: ["thread"] as const,
+  /**
+   * 채널마다 본 가장 큰 seq — 구독의 빈틈 커서(계획 판정 PS6). seq 는 채널 하나의 번호를 모든 세션이 같이 써서 세션 타임라인으로는
+   * 빈틈을 알 수 없다. 처음 구독 ack 의 `latestSeq` 에서 시작한다 — 값이 없으면 이 연결에서 아직 그 채널을 구독하지 않았다.
+   * 오프라인 사본에 담지 않는다(pwa/persist 의 허용 목록 밖) — 복원한 타임라인을 이어 받은 것처럼 보이게 하면 빈틈이 묻힌다
+   */
+  channelSeq: (channelId: string) => ["channelSeq", channelId] as const,
+  /** 채널의 세션 목록(`GET /channels/:id/conversations?status=`) — 첫 쪽 */
+  conversations: (channelId: string, status: "open" | "closed" | "all") =>
+    ["conversations", channelId, status] as const,
   channelRuns: (channelId: string) => ["channels", channelId, "runs"] as const,
   runEvents: (runId: string) => ["runs", runId, "events"] as const,
   /** 최근 본 채널 id(앞이 최근) — 서버 조회가 아니라 오프라인 사본이 무엇을 담을지 정하는 목록(pwa/persist) */
   recentChannels: ["recentChannels"] as const,
-  /** 채널마다 마지막으로 연 스레드(채널 id → 루트 id) — 오프라인 사본이 채널마다 그 스레드 하나만 담는다(pwa/persist) */
+  /** 채널마다 마지막으로 본 세션(채널 id → 대화 id) — 오프라인 사본이 채널마다 그 세션 하나만 담는다(pwa/persist) */
+  recentConversations: ["recentConversations"] as const,
+  /** 채널마다 마지막으로 연 스레드(채널 id → 그 세션·루트) — 오프라인 사본이 채널마다 그 스레드 하나만 담는다(pwa/persist) */
   recentThreads: ["recentThreads"] as const,
   /** 연결 설정(owner 만) — 오프라인 사본에 담지 않는다(pwa/persist). 발급 원문은 어느 키에도 넣지 않는다 */
   setupStatus: ["setup", "status"] as const,
@@ -188,6 +209,16 @@ export const useChannel = (id: string) => {
     meta: { silent: true },
   });
 };
+/**
+ * 채널의 세션 목록 첫 쪽(최근 활동순 20개 — 채널 세션 스펙 「wire·REST」 장). `/c/<id>` 가 최근 열린 세션으로 넘길 때 쓴다.
+ * 조회 오류는 부르는 화면이 그린다(`silent`)
+ */
+export const conversationsQuery = (channelId: string, status: "open" | "closed" | "all") =>
+  queryOptions({
+    queryKey: qk.conversations(channelId, status),
+    queryFn: () => api<ConversationList>("GET", `/channels/${channelId}/conversations?status=${status}`),
+    meta: { silent: true },
+  });
 /** `enabled` 가 거짓이면 부르지 않는다 — 채널을 아직 고르지 않은 폼(자동화 대화상자의 @ 후보) */
 export const useMembers = (channelId: string, { enabled = true }: { enabled?: boolean } = {}) =>
   useQuery({

@@ -51,8 +51,8 @@ export function SystemCard({ message }: { message: Message }) {
           )}
           {limitScope === "channel" && (
             <Link
-              to="/c/$channelId/settings"
-              params={{ channelId: message.channelId }}
+              to="/c/$channelId/s/$conversationId/settings"
+              params={{ channelId: message.channelId, conversationId: message.conversationId }}
               className={LIMIT_LINK}
             >
               채널 설정에서 한도 바꾸기

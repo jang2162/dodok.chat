@@ -100,10 +100,12 @@ export const selectChannelRuns =
       .sort((a, b) => (a.state.id < b.state.id ? -1 : 1));
 
 /**
- * 한 목록(채널 타임라인 또는 스레드 하나)의 런 — `threadRootId` 가 없으면 채널 런만, 있으면 그 스레드 런만(판정 R3′).
- * 쓰는 법은 `selectChannelRuns` 와 같다(`useShallow` 로)
+ * 한 목록(세션 타임라인 또는 그 세션의 스레드 하나)의 런 — 그 세션의 것만(채널 세션 계획 판정 PS7), 그 가운데 `threadRootId` 가 없으면
+ * 세션 런만, 있으면 그 스레드 런만(판정 R3′). 쓰는 법은 `selectChannelRuns` 와 같다(`useShallow` 로)
  */
 export const selectScopeRuns =
-  (channelId: string, threadRootId?: string) =>
+  (channelId: string, conversationId: string, threadRootId?: string) =>
   (s: RunStore): RunView[] =>
-    selectChannelRuns(channelId)(s).filter((v) => v.threadRootId === threadRootId);
+    selectChannelRuns(channelId)(s).filter(
+      (v) => v.state.conversationId === conversationId && v.threadRootId === threadRootId,
+    );

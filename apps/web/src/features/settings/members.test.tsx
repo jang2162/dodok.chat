@@ -33,7 +33,7 @@ afterEach(() => {
 describe("추가·제거", () => {
   it("등록됐고 아직 멤버가 아닌 에이전트만 고른다 → POST { memberType: agent, memberId } → 행이 생긴다", async () => {
     const server = stubSettingsServer({ members: members([DEV]) });
-    renderRoute(`/c/${CH}/settings`);
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
     const section = await membersSection();
     const select = await within(section).findByRole("combobox", { name: "에이전트 추가" });
     await waitFor(() => expect(select).toBeEnabled());
@@ -63,7 +63,7 @@ describe("추가·제거", () => {
 
   it("등록된 에이전트가 없으면 /settings/agents 로 안내", async () => {
     stubSettingsServer({ agents: [] });
-    renderRoute(`/c/${CH}/settings`);
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
     const section = await membersSection();
     expect(
       await within(section).findByRole("link", { name: "에이전트 화면에서 등록하세요" }),
@@ -75,7 +75,7 @@ describe("추가·제거", () => {
     stubSettingsServer({
       override: ({ method }) => (method === "POST" ? apiErr(409, "CONFLICT", "이미 채널 멤버다") : undefined),
     });
-    renderRoute(`/c/${CH}/settings`);
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
     const section = await membersSection();
     const select = await within(section).findByRole("combobox", { name: "에이전트 추가" });
     await waitFor(() => expect(select).toBeEnabled());
@@ -87,7 +87,7 @@ describe("추가·제거", () => {
 
   it("제거는 확인 뒤 DELETE → 행이 빠진다. 취소하면 보내지 않는다", async () => {
     const server = stubSettingsServer({ members: members([DEV], [FIN]) });
-    renderRoute(`/c/${CH}/settings`);
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
     const list = await agentList();
     await userEvent.click(within(list).getByRole("button", { name: "@dev 제거" }));
     let dialog = await screen.findByRole("dialog", { name: "에이전트 제거" });
@@ -114,7 +114,7 @@ describe("제거 실패·초점·목록 상태", () => {
       override: ({ method }) =>
         method === "DELETE" && fail ? apiErr(500, "INTERNAL", "지우지 못했다") : undefined,
     });
-    renderRoute(`/c/${CH}/settings`);
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
     const list = await agentList();
     await userEvent.click(within(list).getByRole("button", { name: "@dev 제거" }));
     const dialog = await screen.findByRole("dialog", { name: "에이전트 제거" });
@@ -133,7 +133,7 @@ describe("제거 실패·초점·목록 상태", () => {
 
   it("제거 뒤 초점은 「에이전트 추가」로, 취소 뒤에는 누른 「제거」 버튼으로 돌아간다", async () => {
     stubSettingsServer({ members: members([DEV]) });
-    renderRoute(`/c/${CH}/settings`);
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
     const section = await membersSection();
     const list = await agentList();
     const removeButton = within(list).getByRole("button", { name: "@dev 제거" });
@@ -164,7 +164,7 @@ describe("제거 실패·초점·목록 상태", () => {
         return fail ? apiErr(500, "INTERNAL", "에이전트를 불러오지 못했다") : undefined;
       },
     });
-    renderRoute(`/c/${CH}/settings`, queryClient);
+    renderRoute(`/c/${CH}/s/${CH}/settings`, queryClient);
     const section = await membersSection();
     expect(await within(section).findByText("에이전트 목록을 불러오는 중…")).toBeInTheDocument();
     expect(within(section).queryByText("아직 에이전트가 없습니다.")).not.toBeInTheDocument();
@@ -189,7 +189,7 @@ describe("제거 실패·초점·목록 상태", () => {
           ? apiErr(500, "INTERNAL", "멤버를 불러오지 못했다")
           : undefined,
     });
-    renderRoute(`/c/${CH}/settings`, queryClient);
+    renderRoute(`/c/${CH}/s/${CH}/settings`, queryClient);
     const section = await membersSection();
     expect(await within(section).findByText("멤버 목록을 불러오지 못했습니다")).toBeInTheDocument();
     await waitFor(() => expect(toastError).toHaveBeenCalledWith("멤버를 불러오지 못했다"));
@@ -201,7 +201,7 @@ describe("제거 실패·초점·목록 상태", () => {
 
   it("꺼진 에이전트는 고를 수 있고 「(꺼짐)」으로 보인다", async () => {
     stubSettingsServer({ agents: [agentOf(FIN, "fin", { enabled: false })], members: members() });
-    renderRoute(`/c/${CH}/settings`);
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
     const section = await membersSection();
     const select = await within(section).findByRole("combobox", { name: "에이전트 추가" });
     await waitFor(() => expect(select).toBeEnabled());
@@ -223,7 +223,7 @@ describe("제거 실패·초점·목록 상태", () => {
       ],
       members: members([DEV], [FIN]),
     });
-    renderRoute(`/c/${CH}/settings`);
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
     const section = await membersSection();
     const list = await agentList();
     expect(await within(list).findByText("@fin")).toBeInTheDocument();
@@ -242,7 +242,7 @@ describe("제거 실패·초점·목록 상태", () => {
       ],
       members: members([DEV]),
     });
-    renderRoute(`/c/${CH}/settings`);
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
     const section = await membersSection();
     const select = await within(section).findByRole("combobox", { name: "에이전트 추가" });
     await waitFor(() => expect(select).toBeEnabled());
@@ -261,7 +261,7 @@ describe("제거 실패·초점·목록 상태", () => {
     stubSettingsServer({
       override: ({ method }) => (method === "POST" ? apiErr(409, "CONFLICT", "이미 채널 멤버다") : undefined),
     });
-    renderRoute(`/c/${CH}/settings`);
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
     const section = await membersSection();
     const select = await within(section).findByRole("combobox", { name: "에이전트 추가" });
     await waitFor(() => expect(select).toBeEnabled());

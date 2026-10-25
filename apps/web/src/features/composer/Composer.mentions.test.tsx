@@ -125,7 +125,7 @@ describe("멘션", () => {
 
     fireEvent.keyDown(box, { key: "Enter" });
     expect(fake.sentOf("message.send")).toEqual([
-      { channelId: CH, clientMsgId: expect.any(String), bodyMd: `<@a:${AGENT}>` },
+      { channelId: CH, conversationId: CH, clientMsgId: expect.any(String), bodyMd: `<@a:${AGENT}>` },
     ]);
   });
 });

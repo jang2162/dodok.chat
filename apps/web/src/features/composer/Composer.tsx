@@ -51,27 +51,39 @@ const EDITOR_CLASS = [
 
 /**
  * 작성기(스펙 5.1·4.4·6.1): Tiptap + @멘션. Enter 전송(토큰 본문 `toBodyMd`), `/stop` 은 메시지로 보내지 않는다.
- * wire 가 connected 가 아니면 입력은 받되 전송은 막는다. 초안은 채널마다 따로 둔다 — 채널을 옮겨도 이 인스턴스가 유지된다.
+ * wire 가 connected 가 아니면 입력은 받되 전송은 막는다. 초안은 세션마다 따로 둔다 — 채널·세션을 옮겨도 이 인스턴스가 유지된다.
  * 이미지는 첨부 버튼·붙여넣기·끌어 놓기로 넣는 즉시 올린다. 올리기가 모두 끝나야(오류 칩 없이) 보낼 수 있고, 글 없이 이미지만도 된다.
+ * 메시지는 그 세션으로(`conversationId` — 새 세션 창이면 첫 보내기가 세션을 만든다, `useSendMessage`), `/stop` 은 그 세션의 런만.
  * `threadRootId` 를 주면 스레드 작성기다(스레드·검색 스펙 4.2) — 메시지는 그 스레드로, `/stop` 은 그 스레드의 런만.
- * 작성 중 알림(`typing`)은 채널 단위라 보내지 않는다 —
- * 스레드에서 쓰는 사람을 채널 작성기 아래에 「입력 중」으로 보이면 어디에 답하는지 틀리게 읽힌다
+ * 작성 중 알림(`typing`)은 세션 단위라 스레드 작성기는 보내지 않는다 —
+ * 스레드에서 쓰는 사람을 세션 작성기 아래에 「입력 중」으로 보이면 어디에 답하는지 틀리게 읽힌다
  */
-export function Composer({ channelId, threadRootId }: { channelId: string; threadRootId?: string }) {
+export function Composer({
+  channelId,
+  conversationId,
+  threadRootId,
+}: {
+  channelId: string;
+  conversationId: string;
+  threadRootId?: string;
+}) {
   const { socket } = useWire();
   const connected = useWireStatus((s) => s.status === "connected");
-  const { send } = useSendMessage(channelId, threadRootId);
+  const { send } = useSendMessage(channelId, conversationId, threadRootId);
   const attachments = useComposerAttachments(channelId);
   const fileInput = useRef<HTMLInputElement>(null);
   const attachButton = useRef<HTMLButtonElement>(null);
-  const typing = useTyping(channelId);
+  const typing = useTyping(channelId, conversationId);
   const members = useMembers(channelId);
   const agents = useAgents();
   const me = useMe();
   const people = usePeople();
   const hintId = useId();
-  // 초안은 채널마다, 스레드 작성기는 스레드마다 — 같은 패널에서 다른 스레드로 옮겨도 이 인스턴스가 유지된다
-  const draftKey = threadRootId === undefined ? channelId : `${channelId}:${threadRootId}`;
+  // 초안은 세션마다, 스레드 작성기는 스레드마다 — 같은 패널에서 다른 스레드로 옮겨도 이 인스턴스가 유지된다
+  const draftKey =
+    threadRootId === undefined
+      ? `${channelId}:${conversationId}`
+      : `${channelId}:${conversationId}:${threadRootId}`;
 
   const candidates = useMemo(
     () => mentionCandidates(members.data, agents.data, me.data, people.data),
@@ -161,7 +173,7 @@ export function Composer({ channelId, threadRootId }: { channelId: string; threa
     // 메시지·/stop 은 wire 로 간다 — 붙어 있을 때만(입력은 그대로 둔다)
     if (!connected || !socket) return;
     if (cmd?.kind === "stop") {
-      stopRuns(socket, channelId, threadRootId);
+      stopRuns(socket, channelId, conversationId, threadRootId);
       editor.commands.clearContent();
       return;
     }
@@ -248,12 +260,13 @@ export function Composer({ channelId, threadRootId }: { channelId: string; threa
 }
 
 /**
- * `/stop`(스펙 5.1): 이 채널(스레드 작성기면 그 스레드)의 끝나지 않은 런마다 `run.abort`. 없으면 알리고,
- * ack 실패는 코드별 토스트(스펙 8장). 채널 작성기의 `/stop` 은 스레드 런을 멈추지 않는다 — 그 버블은 스레드 패널에 있다
+ * `/stop`(스펙 5.1): 이 세션(스레드 작성기면 그 스레드)의 끝나지 않은 런마다 `run.abort`. 없으면 알리고,
+ * ack 실패는 코드별 토스트(스펙 8장). 세션 작성기의 `/stop` 은 스레드 런·다른 세션의 런을 멈추지 않는다 — 그 버블은 거기에 있다
  */
-function stopRuns(socket: WireSocket, channelId: string, threadRootId?: string) {
+function stopRuns(socket: WireSocket, channelId: string, conversationId: string, threadRootId?: string) {
   const running = selectScopeRuns(
     channelId,
+    conversationId,
     threadRootId,
   )(useRunStore.getState()).filter((v) => !TERMINAL.has(v.state.status));
   if (running.length === 0) {

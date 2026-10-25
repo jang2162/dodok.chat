@@ -1,5 +1,11 @@
 import type { Attachment, Message } from "@dodok/shared";
 
+/**
+ * 새 세션 창(`/c/<채널>/s/new`)의 자리 — 아직 대화가 없다. 그 창의 보내는 중 항목은 이 이름의 타임라인 캐시에 두었다가 첫 보내기의
+ * ack 가 알려 준 세션으로 옮긴다(`useSendMessage`). REST 로 받을 것이 없다
+ */
+export const NEW_CONVERSATION = "new";
+
 export type PendingState = "sending" | "failed";
 export type PendingMessage = {
   clientMsgId: string;
@@ -12,12 +18,17 @@ export type PendingMessage = {
   /** `failed` 의 사유 — 레이트리밋(ack RATE_LIMITED)이면 다른 문구를 보인다. 없으면 일반 실패 */
   reason?: PendingFailReason;
 };
-/** `channel_archived` 는 보관한 채널에 보낸 것 — 다시 보내도 같은 409 라 「다시 보내기」를 두지 않는다 */
-export type PendingFailReason = "rate_limited" | "channel_archived";
 /**
- * 확정 메시지(seq 오름차순)와 보내는 중 항목. 보내는 중 항목은 항상 목록 끝에 그린다(스펙 4.3-6).
+ * `channel_archived` 는 보관한 채널에, `conversation_closed` 는 닫힌 세션에 보낸 것 — 다시 보내도 같은 409 라 「다시 보내기」를 두지
+ * 않는다(채널 세션 계획 Review Focus 2)
+ */
+export type PendingFailReason = "rate_limited" | "channel_archived" | "conversation_closed";
+/**
+ * 세션 하나(또는 스레드 하나)의 확정 메시지(seq 오름차순)와 보내는 중 항목. 보내는 중 항목은 항상 목록 끝에 그린다(스펙 4.3-6).
+ * `lastSeq` 는 이 목록이 본 가장 큰 seq — 세션 타임라인은 그 세션의 스레드 답글 seq 도 기록한다(`noteSeq`). seq 는 채널 하나의
+ * 번호라 다른 세션의 글 사이로 번호가 건너뛴다 — 빈틈은 이것이 아니라 채널 커서(`qk.channelSeq`)로 본다(채널 세션 계획 판정 PS6).
  * `hasNewer` 는 결과로 가기(`around`)로 받은 떨어진 창이다 — 창 뒤에 받지 않은 메시지가 있다. 그동안 `lastSeq` 는 창의 끝이
- * 아니라 wire 로 본 채널의 끝이고(빈틈 판단은 그대로), 창보다 새 메시지는 목록에 넣지 않는다(`upsertMany`)
+ * 아니라 wire 로 본 끝이고, 창보다 새 메시지는 목록에 넣지 않는다(`upsertMany`)
  */
 export type Timeline = {
   items: Message[];
@@ -44,7 +55,7 @@ function dropConfirmed(pending: PendingMessage[], incoming: readonly Message[]):
   return done.size === 0 ? pending : pending.filter((p) => !done.has(p.clientMsgId));
 }
 
-/** 입장(lastSeq 없는 channel.subscribe) — 최근 페이지로 새로 시작한다. 보내는 중 항목은 유지 */
+/** 첫 페이지(세션 REST 최신 쪽) — 최근 페이지로 새로 시작한다. 보내는 중 항목은 유지 */
 export function fromLatest(
   prev: Timeline | undefined,
   messages: readonly Message[],
@@ -78,23 +89,20 @@ export function upsertMany(t: Timeline, incoming: readonly Message[]): Timeline 
 export const upsert = (t: Timeline, m: Message): Timeline => upsertMany(t, [m]);
 
 /**
- * 이 메시지 앞에 빠진 seq 가 있는가 — 있으면 lastSeq 로 다시 구독한다. 처음(lastSeq 0)·이미 가진 것은 빈틈이 아니다.
- * 채널 타임라인은 루트만 들지만 답글도 채널 seq 를 같이 쓴다 — 답글이 오면 `noteSeq` 로 lastSeq 를 올려 두어야
- * 다음 루트가 거짓 빈틈이 되지 않는다
+ * 채널 커서(`seen` — 그 채널에서 본 가장 큰 seq) 뒤로 빠진 seq 가 있는가 — 있으면 그 커서로 다시 구독한다. 채널의 모든 세션·스레드
+ * 답글이 한 번호를 같이 쓰므로 어느 세션의 글이든 커서를 올린다(`realtime/handlers`)
  */
-export function hasGap(t: Timeline, m: Message): boolean {
-  return t.lastSeq > 0 && m.seq > t.lastSeq + 1 && !t.items.some((x) => x.id === m.id);
-}
+export const hasChannelGap = (seen: number, m: Pick<Message, "seq">): boolean => m.seq > seen + 1;
 
-/** 채널 타임라인에 넣지 않는 메시지의 seq(스레드 답글)를 본 것으로 기록한다 */
+/** 세션 타임라인에 넣지 않는 메시지의 seq(그 세션의 스레드 답글)를 본 것으로 기록한다 */
 export function noteSeq(t: Timeline, seq: number): Timeline {
   return seq > t.lastSeq ? { ...t, lastSeq: seq } : t;
 }
 
 const isRoot = (m: Message) => m.threadRootId === undefined;
 
-/** 재동기화 응답(루트·답글이 섞였다)을 채널 타임라인에 — 루트는 병합하고 답글은 seq 만 기록한다 */
-export function applyToChannel(t: Timeline, incoming: readonly Message[]): Timeline {
+/** 재동기화 응답 가운데 한 세션의 것(루트·답글이 섞였다)을 그 세션 타임라인에 — 루트는 병합하고 답글은 seq 만 기록한다 */
+export function applyToTimeline(t: Timeline, incoming: readonly Message[]): Timeline {
   return noteSeq(upsertMany(t, incoming.filter(isRoot)), maxSeq(incoming));
 }
 

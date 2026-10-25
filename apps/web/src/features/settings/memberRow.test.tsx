@@ -35,7 +35,7 @@ afterEach(() => {
 describe("자동 응답", () => {
   it("확인 문구의 조사는 핸들 받침을 따른다 — 받침 있는 @fin(핀) 은 「을」", async () => {
     stubSettingsServer({ members: members([DEV, true], [FIN]) });
-    renderRoute(`/c/${CH}/settings`);
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
     const list = await agentList();
     await userEvent.click(within(list).getByRole("switch", { name: "@fin 자동 응답" }));
     const dialog = await screen.findByRole("dialog", { name: "자동 응답 바꾸기" });
@@ -44,7 +44,7 @@ describe("자동 응답", () => {
 
   it("켜진 것이 없으면 확인 없이 그것만 켠다, 끄기도 그것만", async () => {
     const server = stubSettingsServer({ members: members([DEV], [FIN]) });
-    renderRoute(`/c/${CH}/settings`);
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
     const list = await agentList();
     const dev = within(list).getByRole("switch", { name: "@dev 자동 응답" });
     await userEvent.click(dev);
@@ -67,7 +67,7 @@ describe("자동 응답", () => {
         return undefined;
       },
     });
-    renderRoute(`/c/${CH}/settings`);
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
     const list = await agentList();
     const dev = within(list).getByRole("switch", { name: "@dev 자동 응답" });
     const fin = within(list).getByRole("switch", { name: "@fin 자동 응답" });
@@ -115,7 +115,7 @@ describe("자동 응답", () => {
           : undefined,
     });
     const queryClient = createQueryClient(() => {});
-    renderRoute(`/c/${CH}/settings`, queryClient);
+    renderRoute(`/c/${CH}/s/${CH}/settings`, queryClient);
     const list = await agentList();
     const dev = within(list).getByRole("switch", { name: "@dev 자동 응답" });
     await userEvent.click(dev);
@@ -142,7 +142,7 @@ describe("자동 응답", () => {
       members: [...members([DEV], [FIN, true]), memberOf("agent", OPS)],
     });
     const queryClient = createQueryClient(() => {});
-    renderRoute(`/c/${CH}/settings`, queryClient);
+    renderRoute(`/c/${CH}/s/${CH}/settings`, queryClient);
     const list = await agentList();
     await userEvent.click(within(list).getByRole("switch", { name: "@dev 자동 응답" }));
     const dialog = await screen.findByRole("dialog", { name: "자동 응답 바꾸기" });
@@ -170,7 +170,7 @@ describe("채널 프롬프트 오버라이드", () => {
       members: members([DEV]),
       override: ({ method }) => (method === "PATCH" ? reply : undefined),
     });
-    renderRoute(`/c/${CH}/settings`);
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
     const list = await agentList();
     expect(within(list).getByText("채널 프롬프트 오버라이드 없음")).toBeInTheDocument();
     await userEvent.click(within(list).getByRole("button", { name: "@dev 채널 프롬프트 편집" }));
@@ -222,7 +222,7 @@ describe("오버라이드 저장 중·초점", () => {
         return undefined;
       },
     });
-    renderRoute(`/c/${CH}/settings`);
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
     const list = await agentList();
     const editButton = within(list).getByRole("button", { name: "@dev 채널 프롬프트 편집" });
     await userEvent.click(editButton);
@@ -243,7 +243,7 @@ describe("오버라이드 저장 중·초점", () => {
 
   it("취소해도 초점은 편집 버튼으로 돌아간다", async () => {
     stubSettingsServer({ members: members([DEV]) });
-    renderRoute(`/c/${CH}/settings`);
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
     const list = await agentList();
     await userEvent.click(within(list).getByRole("button", { name: "@dev 채널 프롬프트 편집" }));
     await userEvent.click(within(list).getByRole("button", { name: "취소" }));
@@ -267,20 +267,23 @@ describe("에이전트 제거 확인", () => {
     const queryClient = createQueryClient(() => {});
     // 옮겨 간 채널이 이미 캐시에 있어 채널 화면·설정 패널이 내려가지 않는 경우
     queryClient.setQueryData<Channel>(qk.channel(CH2), channelOf(CH2, { name: "random" }));
-    const { router } = renderRoute(`/c/${CH}/settings`, queryClient);
+    const { router } = renderRoute(`/c/${CH}/s/${CH}/settings`, queryClient);
     const list = await agentList();
     await userEvent.click(within(list).getByRole("button", { name: "@dev 제거" }));
     expect(await screen.findByRole("dialog", { name: "에이전트 제거" })).toBeInTheDocument();
 
     const panel = screen.getByTestId("page-channel-panel");
-    await router.navigate({ to: "/c/$channelId/settings", params: { channelId: CH2 } });
+    await router.navigate({
+      to: "/c/$channelId/s/$conversationId/settings",
+      params: { channelId: CH2, conversationId: CH2 },
+    });
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: "에이전트 제거" })).not.toBeInTheDocument(),
     );
     expect(screen.getByTestId("page-channel-panel")).toBe(panel);
 
     router.history.back();
-    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/settings`));
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}/settings`));
     await agentList();
     expect(screen.queryByRole("dialog", { name: "에이전트 제거" })).not.toBeInTheDocument();
     expect(server.writes()).toEqual([]);

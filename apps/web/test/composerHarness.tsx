@@ -61,7 +61,7 @@ export function renderComposer(channelId = CH, me: { role?: string } = ME) {
   qc.setQueryData(qk.members(CH2), []);
   const view = render(
     <QueryClientProvider client={qc}>
-      <Composer channelId={channelId} />
+      <Composer channelId={channelId} conversationId={channelId} />
     </QueryClientProvider>,
   );
   const box = screen.getByRole("textbox", { name: "메시지 입력" });
@@ -69,7 +69,7 @@ export function renderComposer(channelId = CH, me: { role?: string } = ME) {
   const rerender = (ch: string) =>
     view.rerender(
       <QueryClientProvider client={qc}>
-        <Composer channelId={ch} />
+        <Composer channelId={ch} conversationId={ch} />
       </QueryClientProvider>,
     );
   return { box, editor, rerender, qc };

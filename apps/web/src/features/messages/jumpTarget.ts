@@ -6,9 +6,9 @@ export const HIGHLIGHT_MS = 2_000;
 /** 목록 하나가 가야 할 메시지 — `seq` 는 가지지 않았을 때 around 로 받는 자리 */
 export type JumpTarget = { messageId: string; seq: number };
 
-/** 목록 하나의 이름 — 채널 목록이면 채널 id, 스레드 패널이면 채널 id·루트 id(MessageList 의 key 와 같다) */
-export const listKey = (channelId: string, threadRootId?: string): string =>
-  `${channelId}:${threadRootId ?? ""}`;
+/** 목록 하나의 이름 — 세션 목록이면 대화 id, 스레드 패널이면 대화 id·루트 id */
+export const listKey = (conversationId: string, threadRootId?: string): string =>
+  `${conversationId}:${threadRootId ?? ""}`;
 
 type JumpState = { targets: Record<string, JumpTarget> };
 
@@ -19,20 +19,20 @@ type JumpState = { targets: Record<string, JumpTarget> };
 export const useJumpStore = create<JumpState>(() => ({ targets: {} }));
 
 /**
- * 검색 결과로 간다. 답글이면 채널 목록은 그 루트로(서버 around 가 답글 seq 를 루트 가운데로 둔다), 스레드 패널은 그 답글로.
+ * 검색 결과로 간다. 답글이면 세션 목록은 그 루트로(서버 around 가 답글 seq 를 루트 가운데로 둔다), 스레드 패널은 그 답글로.
  * 이전 목표는 버린다 — 마지막으로 누른 결과만 간다
  */
 export function requestJump(hit: {
-  channelId: string;
+  conversationId: string;
   messageId: string;
   seq: number;
   threadRootId?: string;
 }): void {
   const targets: Record<string, JumpTarget> = {
-    [listKey(hit.channelId)]: { messageId: hit.threadRootId ?? hit.messageId, seq: hit.seq },
+    [listKey(hit.conversationId)]: { messageId: hit.threadRootId ?? hit.messageId, seq: hit.seq },
   };
   if (hit.threadRootId !== undefined)
-    targets[listKey(hit.channelId, hit.threadRootId)] = { messageId: hit.messageId, seq: hit.seq };
+    targets[listKey(hit.conversationId, hit.threadRootId)] = { messageId: hit.messageId, seq: hit.seq };
   useJumpStore.setState({ targets });
 }
 

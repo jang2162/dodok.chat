@@ -14,12 +14,13 @@ import {
 import { Input } from "@/ui/input";
 import { Label } from "@/ui/label";
 import { useCreateChannel } from "./mutations";
+import { NEW_CONVERSATION } from "@/features/messages/timeline";
 
 const FIELDS = ["name", "topic"] as const;
 type Field = (typeof FIELDS)[number];
 
 /**
- * 「채널 만들기」(스펙 6.2): 이름(필수)·주제 → `POST /channels` → `/c/<id>/settings`(곧바로 에이전트를 넣을 수 있게).
+ * 「채널 만들기」(스펙 6.2): 이름(필수)·주제 → `POST /channels` → `/c/<id>/s/new/settings`(곧바로 에이전트를 넣을 수 있게 — 새 채널에는 세션이 없다).
  * `children` 이 여는 버튼이다. `onCreated` 는 이동 뒤에 부른다(좁은 화면 시트 닫기)
  */
 export function CreateChannelDialog({
@@ -70,7 +71,11 @@ export function CreateChannelDialog({
         onSuccess: (channel) => {
           setOpen(false);
           clear();
-          void navigate({ to: "/c/$channelId/settings", params: { channelId: channel.id } });
+          // 새 채널에는 세션이 없다 — 새 세션 창의 설정 패널로(첫 보내기가 세션을 만든다)
+          void navigate({
+            to: "/c/$channelId/s/$conversationId/settings",
+            params: { channelId: channel.id, conversationId: NEW_CONVERSATION },
+          });
           onCreated?.();
         },
         onError: (err) => {

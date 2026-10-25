@@ -33,7 +33,7 @@ afterEach(() => {
 describe("member 의 채널 설정", () => {
   it("채널 프롬프트: 값은 보이고 잠겼다 — 저장 없이 「관리자만」", async () => {
     stubSettingsServer({ me: MEMBER, channel: { prompt: "짧게 답해" } });
-    renderRoute(`/c/${CH}/settings`);
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
     const section = await region("채널 프롬프트");
     const box = within(section).getByRole("textbox", { name: "채널 프롬프트" });
     expect(box).toHaveValue("짧게 답해");
@@ -47,7 +47,7 @@ describe("member 의 채널 설정", () => {
       me: MEMBER,
       channel: { relayPolicy: { maxRelayTurns: 3, allowPairs: "all", dailyRunLimit: 20 } },
     });
-    renderRoute(`/c/${CH}/settings`);
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
     const section = await region("릴레이 정책");
     expect(within(section).getByRole("textbox", { name: "턴 상한" })).toHaveValue("3");
     expect(within(section).getByRole("textbox", { name: "턴 상한" })).toBeDisabled();
@@ -59,7 +59,7 @@ describe("member 의 채널 설정", () => {
 
   it("기본(이름·주제)은 열려 있다 — 저장하면 PATCH { name, topic }", async () => {
     const server = stubSettingsServer({ me: MEMBER });
-    renderRoute(`/c/${CH}/settings`);
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
     const section = await region("기본");
     const name = within(section).getByRole("textbox", { name: "이름" });
     expect(name).toBeEnabled();
@@ -75,7 +75,7 @@ describe("member 의 채널 설정", () => {
       me: MEMBER,
       members: [memberOf("agent", DEV, { autoRespond: true, promptOverride: "dev 에게만" })],
     });
-    renderRoute(`/c/${CH}/settings`);
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
     const section = await membersSection();
     const list = await agentList();
     expect(within(list).getByRole("switch", { name: "@dev 자동 응답" })).toBeChecked();
@@ -98,7 +98,7 @@ describe("member 의 채널 설정", () => {
 
   it("에이전트가 모두 채널에 있으면 안내 문구만 — 「에이전트 등록」 링크는 admin 이상에게만(o4)", async () => {
     stubSettingsServer({ me: MEMBER, members: members([DEV], [FIN]) });
-    renderRoute(`/c/${CH}/settings`);
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
     const section = await membersSection();
     expect(await within(section).findByText(/등록된 에이전트가 모두 채널에 있습니다/)).toBeInTheDocument();
     expect(within(section).queryByRole("link", { name: "에이전트 등록" })).toBeNull();
@@ -106,7 +106,7 @@ describe("member 의 채널 설정", () => {
 
   it("등록된 에이전트가 없으면 안내 문구만 — 「에이전트 화면에서 등록하세요」 링크는 admin 이상에게만", async () => {
     stubSettingsServer({ me: MEMBER, agents: [] });
-    renderRoute(`/c/${CH}/settings`);
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
     const section = await membersSection();
     expect(await within(section).findByText(/등록된 에이전트가 없습니다/)).toBeInTheDocument();
     expect(within(section).queryByRole("link", { name: "에이전트 화면에서 등록하세요" })).toBeNull();
@@ -114,7 +114,7 @@ describe("member 의 채널 설정", () => {
 
   it("owner·admin 에게는 잠김이 없다", async () => {
     stubSettingsServer({ me: { ...ME, role: "admin" }, members: members([DEV]) });
-    renderRoute(`/c/${CH}/settings`);
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
     const section = await region("채널 프롬프트");
     expect(within(section).getByRole("textbox", { name: "채널 프롬프트" })).toBeEnabled();
     expect(within(section).getByRole("button", { name: "저장" })).toBeInTheDocument();
@@ -139,7 +139,7 @@ describe("역할이 내려간 직후(Review Focus 5)", () => {
         return undefined;
       },
     });
-    renderRoute(`/c/${CH}/settings`);
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
     const section = await region("채널 프롬프트");
     const box = within(section).getByRole("textbox", { name: "채널 프롬프트" });
     await userEvent.clear(box);
@@ -167,7 +167,7 @@ describe("역할이 내려간 직후(Review Focus 5)", () => {
         return undefined;
       },
     });
-    renderRoute(`/c/${CH}/settings`);
+    renderRoute(`/c/${CH}/s/${CH}/settings`);
     const section = await region("릴레이 정책");
     const turns = within(section).getByRole("textbox", { name: "턴 상한" });
     await userEvent.clear(turns);

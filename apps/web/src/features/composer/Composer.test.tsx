@@ -49,7 +49,7 @@ it("(a) Enter → message.send 의 bodyMd 는 토큰 본문, 보낸 뒤 비운�
   setDoc(editor, doc(p(mention(`a:${AGENT}`, "dev"), t(" 안녕"))));
   fireEvent.keyDown(box, { key: "Enter" });
   expect(fake.sentOf("message.send")).toEqual([
-    { channelId: CH, clientMsgId: expect.any(String), bodyMd: `<@a:${AGENT}> 안녕` },
+    { channelId: CH, conversationId: CH, clientMsgId: expect.any(String), bodyMd: `<@a:${AGENT}> 안녕` },
   ]);
   await waitFor(() => expect(editor.isEmpty).toBe(true));
 });
@@ -67,7 +67,7 @@ it("보내기 버튼도 같은 전송, 비었으면 비활성·공백만이면 �
   setDoc(editor, doc(p(t("버튼으로"))));
   await userEvent.click(button);
   expect(fake.sentOf("message.send")).toEqual([
-    { channelId: CH, clientMsgId: expect.any(String), bodyMd: "버튼으로" },
+    { channelId: CH, conversationId: CH, clientMsgId: expect.any(String), bodyMd: "버튼으로" },
   ]);
 });
 
@@ -104,7 +104,7 @@ it("목록·코드 블록 안에서도 Enter 는 전송(코어 keymap·목록보
   setDoc(editor, doc({ type: "bulletList", content: [{ type: "listItem", content: [p(t("가"))] }] }));
   fireEvent.keyDown(box, { key: "Enter" });
   expect(fake.sentOf("message.send")).toEqual([
-    { channelId: CH, clientMsgId: expect.any(String), bodyMd: "- 가" },
+    { channelId: CH, conversationId: CH, clientMsgId: expect.any(String), bodyMd: "- 가" },
   ]);
 });
 
@@ -163,7 +163,7 @@ it("입력이 바뀌면 typing(3초 스로틀), 비우는 것(보낸 뒤 포함)
   const { box, editor } = renderComposer();
   act(() => editor.commands.insertContent("가"));
   act(() => editor.commands.insertContent("나"));
-  expect(fake.sentOf("typing")).toEqual([{ channelId: CH }]);
+  expect(fake.sentOf("typing")).toEqual([{ channelId: CH, conversationId: CH }]);
 
   now += 3_000; // 스로틀 창 밖
   fireEvent.keyDown(box, { key: "Enter" });

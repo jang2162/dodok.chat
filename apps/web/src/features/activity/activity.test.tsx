@@ -124,7 +124,7 @@ const timelineBox = (aside: HTMLElement) => aside.querySelector('[data-slot="run
 
 it("활동 탭은 런 목록을 보이고 고르면 타임라인을 그린다", async () => {
   stubServer({ runs: [runOf(RUN)], events: TOOL_EVENTS });
-  renderRoute(`/c/${CH}/activity`);
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
 
   const aside = await panel();
   // 탭 둘 — 지금 탭은 aria-current
@@ -144,7 +144,7 @@ it("활동 탭은 런 목록을 보이고 고르면 타임라인을 그린다", 
 
 it("텍스트 델타는 타임라인에 들어가지 않는다", async () => {
   stubServer({ runs: [runOf(RUN)], events: [textDelta(1, "긴 답변"), ...TOOL_EVENTS] });
-  renderRoute(`/c/${CH}/activity`);
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
   const aside = await panel();
   expect(await within(aside).findByText("Read")).toBeInTheDocument();
   expect(within(aside).queryByText("긴 답변")).not.toBeInTheDocument();
@@ -165,14 +165,14 @@ it("잘린 결과에는 잘림 표시가 붙는다", async () => {
       }),
     ],
   });
-  renderRoute(`/c/${CH}/activity`);
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
   const aside = await panel();
   expect(await within(aside).findByText("잘렸습니다")).toBeInTheDocument();
 });
 
 it("진행 중 런은 새 이벤트가 오면 끝에 붙는다", async () => {
   stubServer({ runs: [runOf(RUN, { status: "tool", endedAt: undefined })], events: TOOL_EVENTS });
-  renderRoute(`/c/${CH}/activity`);
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
   const aside = await panel();
   await within(aside).findByText("Read");
   expect(within(aside).queryByText("Bash")).not.toBeInTheDocument();
@@ -189,7 +189,7 @@ it("진행 중 런은 새 이벤트가 오면 끝에 붙는다", async () => {
 
 it("다른 런의 실시간 이벤트는 섞이지 않는다", async () => {
   stubServer({ runs: [runOf(RUN)], events: { [RUN]: TOOL_EVENTS } });
-  renderRoute(`/c/${CH}/activity`);
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
   const aside = await panel();
   await within(aside).findByText("Read");
   act(() => {
@@ -208,7 +208,7 @@ it("다른 런의 실시간 이벤트는 섞이지 않는다", async () => {
 
 it("실시간 run.state 로 시작한 런도 목록에 든다 — 그때 REST 를 다시 부르지는 않는다", async () => {
   const { calls } = stubServer({ runs: [] });
-  renderRoute(`/c/${CH}/activity`);
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
   const aside = await panel();
   await within(aside).findByText("아직 실행 기록이 없습니다.");
   const listCalls = () => calls.filter((c) => /\/runs\?/.test(c)).length;
@@ -249,7 +249,7 @@ it("런 조회 실패는 패널 안에 알리고 「다시 시도」로 되살�
         ? json(500, { code: "INTERNAL", message: "터졌다" })
         : undefined,
   });
-  renderRoute(`/c/${CH}/activity`);
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
   const aside = await panel();
   expect(await within(aside).findByText("런 목록을 불러오지 못했습니다.")).toBeInTheDocument();
   fail = false;
@@ -265,7 +265,7 @@ it("타임라인 조회 실패도 패널 안에 알린다", async () => {
         ? json(500, { code: "INTERNAL", message: "터졌다" })
         : undefined,
   });
-  renderRoute(`/c/${CH}/activity`);
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
   const aside = await panel();
   expect(await within(aside).findByText("활동 기록을 불러오지 못했습니다.")).toBeInTheDocument();
 });
@@ -273,7 +273,7 @@ it("타임라인 조회 실패도 패널 안에 알린다", async () => {
 it("설정 탭으로 가도 같은 틀(패널·시트)이 유지된다", async () => {
   const media = stubMedia(false);
   stubServer({ runs: [runOf(RUN)], events: TOOL_EVENTS });
-  const { router } = renderRoute(`/c/${CH}/activity`);
+  const { router } = renderRoute(`/c/${CH}/s/${CH}/activity`);
 
   const aside = await panel();
   expect(aside.tagName).toBe("ASIDE");
@@ -288,7 +288,7 @@ it("설정 탭으로 가도 같은 틀(패널·시트)이 유지된다", async (
 
   // 설정 탭으로 — 같은 틀, 제목만 바뀐다
   await userEvent.click(within(sheet).getByRole("link", { name: "설정" }));
-  await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/settings`));
+  await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}/settings`));
   expect(await screen.findByRole("dialog", { name: "채널 설정" })).toHaveAttribute(
     "data-testid",
     "page-channel-panel",
@@ -305,12 +305,12 @@ it("설정 탭으로 가도 같은 틀(패널·시트)이 유지된다", async (
  */
 it("탭을 옮겨도 초점이 <body> 로 떨어지지 않는다(D3)", async () => {
   stubServer({ runs: [runOf(RUN)], events: TOOL_EVENTS });
-  const { router } = renderRoute(`/c/${CH}/activity`);
+  const { router } = renderRoute(`/c/${CH}/s/${CH}/activity`);
   const aside = await panel();
 
   const settingsTab = within(aside).getByRole("link", { name: "설정" });
   await userEvent.click(settingsTab);
-  await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/settings`));
+  await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}/settings`));
   // 화면이 실제로 설정 탭을 그린 뒤에 본다 — 주소만 바뀐 사이를 재면 아무것도 잠그지 못한다
   await waitFor(() =>
     expect(screen.getByTestId("page-channel-panel")).toHaveAttribute("data-panel-tab", "settings"),
@@ -323,7 +323,7 @@ it("탭을 옮겨도 초점이 <body> 로 떨어지지 않는다(D3)", async () 
   const activityTab = within(aside).getByRole("link", { name: "활동" });
   activityTab.focus();
   await userEvent.keyboard("{Enter}");
-  await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/activity`));
+  await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}/activity`));
   await waitFor(() =>
     expect(screen.getByTestId("page-channel-panel")).toHaveAttribute("data-panel-tab", "activity"),
   );
@@ -333,10 +333,10 @@ it("탭을 옮겨도 초점이 <body> 로 떨어지지 않는다(D3)", async () 
 
 it("「활동 닫기」는 채널 화면으로 돌아간다", async () => {
   stubServer({ runs: [] });
-  const { router } = renderRoute(`/c/${CH}/activity`);
+  const { router } = renderRoute(`/c/${CH}/s/${CH}/activity`);
   const aside = await panel();
   await userEvent.click(within(aside).getByRole("link", { name: "활동 닫기" }));
-  await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}`));
+  await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}`));
   expect(screen.queryByTestId("page-channel-panel")).not.toBeInTheDocument();
 });
 
@@ -348,13 +348,13 @@ it("「활동 닫기」는 채널 화면으로 돌아간다", async () => {
 it("넓은 화면에서 「활동 닫기」를 누르면 초점이 헤더의 「채널 설정」 링크로 간다 — <body> 가 아니다", async () => {
   stubMedia(false);
   stubServer({ runs: [] });
-  const { router } = renderRoute(`/c/${CH}/activity`);
+  const { router } = renderRoute(`/c/${CH}/s/${CH}/activity`);
   const aside = await panel();
   within(aside).getByRole("link", { name: "활동 닫기" }).focus();
 
   await userEvent.keyboard("{Enter}");
 
-  await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}`));
+  await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}`));
   await waitFor(() => expect(screen.queryByTestId("page-channel-panel")).not.toBeInTheDocument());
   const opener = within(screen.getByTestId("channel-header")).getByRole("link", { name: "채널 설정" });
   expect(document.activeElement).not.toBe(document.body);
@@ -363,7 +363,7 @@ it("넓은 화면에서 「활동 닫기」를 누르면 초점이 헤더의 「
 
 it("미해결 승인이 없으면 카드도 없고, 오면 런 목록보다 위에 뜬다", async () => {
   stubServer({ runs: [runOf(RUN)], events: TOOL_EVENTS });
-  renderRoute(`/c/${CH}/activity`);
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
   const aside = await panel();
   await within(aside).findByText("Read");
   expect(aside.querySelector('[data-slot="approval-card"]')).toBeNull();
@@ -397,9 +397,9 @@ it("승인 카드는 메시지 흐름과 활동 탭 양쪽에 하나씩 뜬다",
   try {
     stubServer({ runs: [runOf(RUN)], events: TOOL_EVENTS });
     const queryClient = createQueryClient(() => {});
-    queryClient.setQueryData(qk.timeline(CH), { ...emptyTimeline(), items: [msg(1)], lastSeq: 1 });
+    queryClient.setQueryData(qk.timeline(CH, CH), { ...emptyTimeline(), items: [msg(1)], lastSeq: 1 });
     act(() => useApprovalStore.getState().apply(approval()));
-    renderRoute(`/c/${CH}/activity`, queryClient);
+    renderRoute(`/c/${CH}/s/${CH}/activity`, queryClient);
 
     const aside = await panel();
     await waitFor(() => expect(screen.getAllByRole("group", { name: /승인 요청/ })).toHaveLength(2));
@@ -415,7 +415,7 @@ it("승인 카드는 메시지 흐름과 활동 탭 양쪽에 하나씩 뜬다",
 it("다른 채널의 승인은 이 채널 활동 탭에 뜨지 않는다", async () => {
   stubServer({ runs: [runOf(RUN)], events: TOOL_EVENTS });
   act(() => useApprovalStore.getState().apply(approval({ channelId: uid(77) })));
-  renderRoute(`/c/${CH}/activity`);
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
   const aside = await panel();
   await within(aside).findByText("Read");
   expect(aside.querySelector('[data-slot="approval-card"]')).toBeNull();
@@ -445,7 +445,7 @@ it("승인 레코드가 이벤트에 없는 toolCallId·제목을 메운다", as
       }),
     ],
   });
-  renderRoute(`/c/${CH}/activity`);
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
   const aside = await panel();
   const list = await within(aside).findByRole("list", { name: "활동 기록" });
   const toolRow = (name: string): HTMLElement => {
@@ -486,7 +486,7 @@ it("승인·오류·단계 행도 타임라인에 그려진다", async () => {
       runEvent({ type: "RUN_ERROR", seq: 5, message: "도구가 실패했습니다" }),
     ],
   });
-  renderRoute(`/c/${CH}/activity`);
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
   const aside = await panel();
   const row = await waitFor(() => {
     const el = aside.querySelector<HTMLElement>(`[data-approval-id="${approvalId}"]`);
@@ -519,7 +519,7 @@ it("승인을 요구한 툴 행에만 「승인」이 붙는다", async () => {
       }),
     ],
   });
-  renderRoute(`/c/${CH}/activity`);
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
   const aside = await panel();
   const list = await within(aside).findByRole("list", { name: "활동 기록" });
   /** 이름으로 툴 행 하나 — 승인 행에도 툴 이름이 있어 그쪽은 뺀다 */
@@ -547,7 +547,7 @@ it("서브에이전트 행은 상태를 글자로도 말한다", async () => {
       runEvent({ type: "SUBAGENT_ERROR", seq: 5, subagentRunId: uid(403), message: "터졌다" }),
     ],
   });
-  renderRoute(`/c/${CH}/activity`);
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
   const aside = await panel();
   const subRow = async (label: string): Promise<HTMLElement> => {
     const el = (await within(aside).findByText(new RegExp(`^서브에이전트.*${label}$`))).closest("li");
@@ -569,7 +569,7 @@ it("도구를 안 쓴 런의 빈 타임라인은 진행 중과 끝남을 다르�
     ],
     events: [],
   });
-  renderRoute(`/c/${CH}/activity`);
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
   const aside = await panel();
   // 기본 선택은 가장 최근 런 — 아직 진행 중이라 기다리는 문구
   expect(await within(aside).findByText("아직 도구를 쓰지 않았습니다.")).toBeInTheDocument();
@@ -593,7 +593,7 @@ it("런을 바꾸면 앞 런에서 펼쳐 둔 인자가 따라오지 않는다",
       ],
     },
   });
-  renderRoute(`/c/${CH}/activity`);
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
   const aside = await panel();
   const runButtons = async () => await within(aside).findAllByRole("button", { name: /@dev/ });
 
@@ -620,7 +620,7 @@ it("고른 런이 바뀌면 그 런의 이벤트만 그린다", async () => {
       ],
     },
   });
-  renderRoute(`/c/${CH}/activity`);
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
   const aside = await panel();
   // 기본 선택은 가장 최근 런(uuid v7 이 큰 쪽)
   expect(await within(aside).findByText("Bash")).toBeInTheDocument();
@@ -633,7 +633,7 @@ it("고른 런이 바뀌면 그 런의 이벤트만 그린다", async () => {
 
 it("실시간 텍스트 델타는 타임라인 행이 되지 않는다", async () => {
   stubServer({ runs: [runOf(RUN, { status: "streaming", endedAt: undefined })], events: TOOL_EVENTS });
-  renderRoute(`/c/${CH}/activity`);
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
   const aside = await panel();
   const rows = await within(aside).findByRole("list", { name: "활동 기록" });
   expect(within(rows).getAllByRole("listitem")).toHaveLength(1);
@@ -654,7 +654,7 @@ it("활동 탭의 버튼·링크·그림에 모두 이름이 있다", async () =
       runEvent({ type: "TOOL_CALL_START", seq: 6, toolCallId: "t2", toolCallName: "Bash" }),
     ],
   });
-  renderRoute(`/c/${CH}/activity`);
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
   const aside = await panel();
   await within(aside).findByText("Read");
   await userEvent.click(within(aside).getByRole("button", { name: "Read 인자 보기" }));
@@ -673,7 +673,7 @@ it("조회 실패를 전역 토스트로 이중 표시하지 않는다(meta.sile
         ? json(500, { code: "INTERNAL", message: "터졌다" })
         : undefined,
   });
-  renderRoute(`/c/${CH}/activity`);
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
   const aside = await panel();
   await within(aside).findByText("런 목록을 불러오지 못했습니다.");
   expect(toastError).not.toHaveBeenCalled();
@@ -681,7 +681,7 @@ it("조회 실패를 전역 토스트로 이중 표시하지 않는다(meta.sile
 
 it("런 목록은 한 번에 50개까지 받는다", async () => {
   const { calls } = stubServer({ runs: [runOf(RUN)], events: TOOL_EVENTS });
-  renderRoute(`/c/${CH}/activity`);
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
   await within(await panel()).findByText("Read");
   expect(calls).toContain(`GET /api/v1/channels/${CH}/runs?limit=50`);
   expect(calls).toContain(`GET /api/v1/runs/${RUN}/events`);
@@ -702,7 +702,7 @@ async function endingRun(opts: ServerOpts = {}, queryClient?: QueryClient) {
     events: { [RUN]: OTHER_RUN, [RUN2]: TOOL_EVENTS },
     ...opts,
   });
-  const { router } = renderRoute(`/c/${CH}/activity`, queryClient);
+  const { router } = renderRoute(`/c/${CH}/s/${CH}/activity`, queryClient);
   const aside = await panel();
   act(() => useRunStore.getState().applyState(runState({ id: RUN2, status: "tool" })));
   await within(aside).findByText("Read");
@@ -758,7 +758,7 @@ it("목록 조회가 실패해도 방금 끝난 런은 목록에서 사라지지
 
 it("아무것도 안 골랐으면 가장 최근 런을 잡는다", async () => {
   stubServer({ runs: [runOf(RUN), runOf(RUN2)], events: { [RUN]: OTHER_RUN, [RUN2]: TOOL_EVENTS } });
-  renderRoute(`/c/${CH}/activity`);
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
   const aside = await panel();
 
   await within(aside).findByText("Read");
@@ -798,7 +798,12 @@ it("채널을 옮기면 선택도 목록도 옮겨 간 채널 것으로 새로 �
   end();
   expect(runIds(aside)).toContain(RUN2);
 
-  await act(() => router.navigate({ to: "/c/$channelId/activity", params: { channelId: CH2 } }));
+  await act(() =>
+    router.navigate({
+      to: "/c/$channelId/s/$conversationId/activity",
+      params: { channelId: CH2, conversationId: CH2 },
+    }),
+  );
 
   const moved = await panel();
   await within(moved).findByText("저쪽도구");
@@ -817,7 +822,7 @@ it("진행 중인 런의 소요는 1초마다 갱신되고 끝나면 고정된�
   vi.useFakeTimers({ shouldAdvanceTime: true, now: START });
   try {
     stubServer({ runs: [runOf(RUN, { status: "tool", startedAt: iso(START), endedAt: undefined })] });
-    renderRoute(`/c/${CH}/activity`);
+    renderRoute(`/c/${CH}/s/${CH}/activity`);
     const aside = await panel();
     const row = () => within(aside).getByRole("button", { name: /@dev/ });
     await waitFor(() => expect(row()).toHaveTextContent("0초"));
@@ -847,7 +852,7 @@ it("진행 중인 런의 소요는 1초마다 갱신되고 끝나면 고정된�
  */
 it("짧은 창에서는 런 목록이 먼저 줄고 타임라인은 최소 높이를 지킨다(D10)", async () => {
   stubServer({ runs: [runOf(RUN)], events: TOOL_EVENTS });
-  renderRoute(`/c/${CH}/activity`);
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
   const aside = await panel();
   await within(aside).findByText("Read");
 
@@ -865,7 +870,7 @@ it("짧은 창에서는 런 목록이 먼저 줄고 타임라인은 최소 높�
  */
 it("끝난 런이 런 스토어에서 빠져도 목록에 남는다 — 끝날 때 REST 목록을 다시 받아 둔다", async () => {
   const { state, calls } = stubServer({ runs: [] });
-  const { queryClient } = renderRoute(`/c/${CH}/activity`);
+  const { queryClient } = renderRoute(`/c/${CH}/s/${CH}/activity`);
   const aside = await panel();
   await within(aside).findByText("아직 실행 기록이 없습니다.");
   const listCalls = () => calls.filter((c) => /\/runs\?/.test(c)).length;
@@ -899,7 +904,7 @@ it("런 목록 조회가 실패해도 실시간으로 아는 런은 그린다", 
         ? json(500, { code: "INTERNAL", message: "터졌다" })
         : undefined,
   });
-  renderRoute(`/c/${CH}/activity`);
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
   const aside = await panel();
   await within(aside).findByText("런 목록을 불러오지 못했습니다.");
 
@@ -918,7 +923,7 @@ it("런 목록 조회가 실패해도 실시간으로 아는 런은 그린다", 
  */
 const subscribeAck = (over: Partial<ChannelSubscribeResult> = {}): Result<ChannelSubscribeResult> => ({
   ok: true,
-  data: { messages: [], hasMore: false, activeRuns: [], pendingApprovals: [], ...over },
+  data: { messages: [], hasMore: false, latestSeq: 0, activeRuns: [], pendingApprovals: [], ...over },
 });
 
 async function reconnect(queryClient: QueryClient, over: Partial<ChannelSubscribeResult> = {}) {
@@ -935,7 +940,7 @@ async function awaitingRun(queryClient?: QueryClient) {
     runs: [runOf(RUN)],
     events: { [RUN]: OTHER_RUN, [RUN2]: TOOL_EVENTS },
   });
-  const rendered = renderRoute(`/c/${CH}/activity`, queryClient);
+  const rendered = renderRoute(`/c/${CH}/s/${CH}/activity`, queryClient);
   const aside = await panel();
   act(() => useRunStore.getState().applyState(runState({ id: RUN2, status: "awaiting_approval" })));
   await within(aside).findByText("Read");
@@ -1021,7 +1026,12 @@ it("채널을 옮기면 「빠진 런」 기억도 버린다(D12 ④)", async ()
 
   // 옮겨 간 채널에는 런이 없다 — 앞 채널에서 빠진 런의 기억이 따라오면 안 된다
   state.runs = [];
-  await act(() => router.navigate({ to: "/c/$channelId/activity", params: { channelId: CH2 } }));
+  await act(() =>
+    router.navigate({
+      to: "/c/$channelId/s/$conversationId/activity",
+      params: { channelId: CH2, conversationId: CH2 },
+    }),
+  );
 
   const moved = await panel();
   expect(moved).toBe(aside);
@@ -1051,7 +1061,7 @@ async function vanishedWhileFailing({ known = false } = {}) {
     runs: known ? [inFlight, runOf(RUN)] : [runOf(RUN)],
     events: { [RUN]: OTHER_RUN, [RUN2]: TOOL_EVENTS },
   });
-  const { queryClient } = renderRoute(`/c/${CH}/activity`);
+  const { queryClient } = renderRoute(`/c/${CH}/s/${CH}/activity`);
   const aside = await panel();
   act(() =>
     useRunStore
@@ -1210,7 +1220,7 @@ it("승인 카드의 남은 초와 런 목록의 소요는 같은 틱에 함께 
 it("좁은 화면에서 시트를 열면 초점이 탭 머리에서 시작한다(D14)", async () => {
   stubMedia(true);
   stubServer({ runs: [runOf(RUN)], events: TOOL_EVENTS });
-  renderRoute(`/c/${CH}/activity`);
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
 
   const sheet = await screen.findByRole("dialog", { name: "활동" });
 
@@ -1223,7 +1233,7 @@ it("좁은 화면에서 시트를 열면 초점이 탭 머리에서 시작한다
 it("넓은 화면 패널은 초점을 옮기지 않는다 — 링크 차례도 그대로다(D14)", async () => {
   stubMedia(false);
   stubServer({ runs: [runOf(RUN)], events: TOOL_EVENTS });
-  renderRoute(`/c/${CH}/activity`);
+  renderRoute(`/c/${CH}/s/${CH}/activity`);
   const aside = await panel();
   await within(aside).findByText("Read");
 
@@ -1235,12 +1245,12 @@ it("넓은 화면 패널은 초점을 옮기지 않는다 — 링크 차례도 �
 it("좁은 화면에서 Esc 로 시트를 닫으면 초점이 「채널 설정」 링크로 돌아간다(D14)", async () => {
   stubMedia(true);
   stubServer({ runs: [] });
-  const { router } = renderRoute(`/c/${CH}/activity`);
+  const { router } = renderRoute(`/c/${CH}/s/${CH}/activity`);
   await screen.findByRole("dialog", { name: "활동" });
 
   await userEvent.keyboard("{Escape}");
 
-  await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}`));
+  await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}`));
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   const header = await screen.findByTestId("channel-header");
   const opener = within(header).getByRole("link", { name: "채널 설정" });

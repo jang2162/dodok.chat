@@ -16,9 +16,27 @@ export type PanelTab = "settings" | "activity" | "thread";
  * 스레드 탭은 스레드를 연 동안에만 머리에 있다 — 어느 스레드인지(`rootId`)는 주소에서 온다(스레드·검색 스펙 4.2)
  */
 const TABS = [
-  { id: "settings", label: "설정", title: "채널 설정", to: "/c/$channelId/settings", scroll: true },
-  { id: "activity", label: "활동", title: "활동", to: "/c/$channelId/activity", scroll: false },
-  { id: "thread", label: "스레드", title: "스레드", to: "/c/$channelId/t/$rootId", scroll: false },
+  {
+    id: "settings",
+    label: "설정",
+    title: "채널 설정",
+    to: "/c/$channelId/s/$conversationId/settings",
+    scroll: true,
+  },
+  {
+    id: "activity",
+    label: "활동",
+    title: "활동",
+    to: "/c/$channelId/s/$conversationId/activity",
+    scroll: false,
+  },
+  {
+    id: "thread",
+    label: "스레드",
+    title: "스레드",
+    to: "/c/$channelId/s/$conversationId/t/$rootId",
+    scroll: false,
+  },
 ] as const satisfies ReadonlyArray<{
   id: PanelTab;
   label: string;
@@ -56,6 +74,7 @@ export function usePanelTab(): PanelTab | undefined {
  */
 export function PanelTabs({
   channelId,
+  conversationId,
   rootId,
   active,
   children,
@@ -63,6 +82,8 @@ export function PanelTabs({
   threadOpenerRef,
 }: {
   channelId: string;
+  /** 보고 있는 세션 — 탭을 옮기거나 닫아도 그 세션에 머문다(채널 머리·설정·활동은 채널 단위 그대로) */
+  conversationId: string;
   /** 연 스레드의 루트(스레드 탭일 때) — 탭 머리의 「스레드」 링크가 쓴다 */
   rootId?: string;
   active: PanelTab;
@@ -116,7 +137,8 @@ export function PanelTabs({
         <Sheet
           open
           onOpenChange={(open) => {
-            if (!open) void navigate({ to: "/c/$channelId", params: { channelId } });
+            if (!open)
+              void navigate({ to: "/c/$channelId/s/$conversationId", params: { channelId, conversationId } });
           }}
         >
           <SheetContent
@@ -151,7 +173,13 @@ export function PanelTabs({
             <div className="flex h-14 shrink-0 items-center border-b px-4 pr-12">
               <SheetTitle>{tab.title}</SheetTitle>
             </div>
-            <TabBar ref={tabsRef} channelId={channelId} rootId={rootId} active={active} />
+            <TabBar
+              ref={tabsRef}
+              channelId={channelId}
+              conversationId={conversationId}
+              rootId={rootId}
+              active={active}
+            />
             <div ref={slot} className={bodyClass} />
           </SheetContent>
         </Sheet>
@@ -179,8 +207,8 @@ export function PanelTabs({
              * 칩·「스레드에서 답하기」로 연 스레드만 그 자리로 돌아간다(`returnTarget`, m5)
              */}
             <Link
-              to="/c/$channelId"
-              params={{ channelId }}
+              to="/c/$channelId/s/$conversationId"
+              params={{ channelId, conversationId }}
               aria-label={`${tab.label} 닫기`}
               onClick={() => returnTarget()?.focus()}
             >
@@ -188,7 +216,7 @@ export function PanelTabs({
             </Link>
           </Button>
         </div>
-        <TabBar channelId={channelId} rootId={rootId} active={active} />
+        <TabBar channelId={channelId} conversationId={conversationId} rootId={rootId} active={active} />
         <div ref={slot} className={bodyClass} />
       </aside>
     </>
@@ -198,11 +226,13 @@ export function PanelTabs({
 /** 탭 머리. 실제 이동이라 링크다 — 지금 탭은 라우터 Link 가 `aria-current="page"` 를 붙인다. 스레드 탭은 연 스레드가 있을 때만 */
 function TabBar({
   channelId,
+  conversationId,
   rootId,
   active,
   ref,
 }: {
   channelId: string;
+  conversationId: string;
   rootId?: string;
   active: PanelTab;
   ref?: RefObject<HTMLElement | null>;
@@ -223,7 +253,7 @@ function TabBar({
               key={tab.id}
               data-tab-id={tab.id}
               to={tab.to}
-              params={{ channelId, rootId }}
+              params={{ channelId, conversationId, rootId }}
               className={className(tab.id)}
             >
               {tab.label}
@@ -234,7 +264,7 @@ function TabBar({
             key={tab.id}
             data-tab-id={tab.id}
             to={tab.to}
-            params={{ channelId }}
+            params={{ channelId, conversationId }}
             className={className(tab.id)}
           >
             {tab.label}
