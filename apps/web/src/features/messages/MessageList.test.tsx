@@ -1385,6 +1385,37 @@ describe("MessageList 첫 안 읽은 곳에서 열기", () => {
     await waitFor(() => expect(sender.request).toHaveBeenCalledWith(CH, 100));
   });
 
+  it("캐시로 연 세션 A — 같은 채널 B 의 seenSeq 가 A 의 lastSeq 보다 커도 이어 받기를 기다리지 않고 끝에서 A 의 읽음을 보낸다", async () => {
+    // seq 는 채널 하나의 번호다 — B 의 최신(100)을 A 가 기다리면 A 의 이어 받기는 끝내 거기 닿지 않아 읽음이 가지 않는다
+    const A = uid(41_000);
+    const B = uid(41_001);
+    useUnread.getState().beginSnapshot();
+    useUnread.getState().applySnapshot({
+      channels: [CH, CH2],
+      conversations: [
+        { conversationId: A, channelId: CH, lastReadSeq: 40, latestSeq: 40, unread: false, mentions: 0 },
+        { conversationId: B, channelId: CH, lastReadSeq: 60, latestSeq: 100, unread: true, mentions: 0 },
+      ],
+    });
+    const sender = { request: vi.fn(), dispose: vi.fn() };
+    const qc = authorsClient();
+    subscribedWith(
+      qc,
+      qk.timeline(CH, A),
+      timelineOf(range(1, 40).map((m) => ({ ...m, conversationId: A }))),
+    );
+    renderWithClient(
+      <ReadSenderContext.Provider value={sender}>
+        <MessageList channelId={CH} conversationId={A} entryReadSeq={40} initialRect={RECT} />
+      </ReadSenderContext.Provider>,
+      qc,
+    );
+    await screen.findByText("본문 40");
+    // 기다림의 끝(AWAIT_UNREAD_MAX_MS 5초)이 대신 보내기 전에 — 기다리지 않았다는 것을 시간으로 가른다
+    await waitFor(() => expect(sender.request).toHaveBeenCalledWith(A, 40), { timeout: 1_500 });
+    expect(sender.request.mock.calls.map(([id]) => id)).not.toContain(B);
+  });
+
   it("읽은 자리가 0 이면(새 멤버가 처음 여는 채널) 구분선이 아니라 끝에서 열고 읽음이 간다", async () => {
     const { sender, fromEnd } = open(timelineOf(range(1, 100)), 0);
     await screen.findByText("본문 100");

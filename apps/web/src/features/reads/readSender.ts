@@ -16,7 +16,7 @@ export type ReadSender = {
  * 세션마다 따로 모으는 까닭: seq 는 채널 하나의 번호라 세션 A 의 seq 로 B 를 읽음 처리하면 B 의 안 읽은 글이 사라진다.
  * 서버가 저장했다고 답한 위치 이하는 다시 보내지 않는다. 실패(레이트 초과 포함)는 버리고 스스로 다시 보내지 않는다 — 다음
  * 요청(조건이 다시 설 때)이 보낸다. 서버 값은 커지기만 하므로 늦게 닿아도 안전하다. 이 규칙을 `docs/guides/docker-deploy.md`
- * 「운영 화면」 레이트리밋 표의 `channel.read` 줄도 가르친다 — 다시 보내는 방식을 바꾸면 그 줄도 고친다
+ * 「운영 화면」 레이트리밋 표의 `conversation.read` 줄도 가르친다 — 다시 보내는 방식을 바꾸면 그 줄도 고친다
  */
 export function createReadSender(
   emit: (p: ConversationRead) => Promise<{ lastReadSeq: number }>,

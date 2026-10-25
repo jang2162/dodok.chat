@@ -764,6 +764,34 @@ describe("채널 진입의 「새 메시지」 구분선", () => {
     expect(await after()).toHaveTextContent("S2 글 7");
   });
 
+  it("「이전 대화」가 아닌 세션 주소로 바로 열면(새로고침·푸시 링크) 첫 마운트부터 그 세션의 읽음 위치로 긋는다", async () => {
+    const S2 = uid(31_000);
+    const others = [5, 6, 7].map((seq) =>
+      msg(seq, { id: uid(31_000 + seq), conversationId: S2, authorId: uid(77), bodyMd: `S2 글 ${seq}` }),
+    );
+    act(() => {
+      useUnread.getState().beginSnapshot();
+      useUnread.getState().applySnapshot({
+        channels: [CH],
+        conversations: [
+          // 세션 id 가 채널 id 와 같은 「이전 대화」의 위치(2)로 잡으면 「S2 글 5」 앞에 선이 선다
+          { conversationId: CH, channelId: CH, lastReadSeq: 2, latestSeq: 4, unread: true, mentions: 0 },
+          { conversationId: S2, channelId: CH, lastReadSeq: 6, latestSeq: 7, unread: true, mentions: 0 },
+        ],
+      });
+    });
+    const qc = channelClient(theirs);
+    qc.setQueryData(qk.timeline(CH, S2), { ...emptyTimeline(), items: others, lastSeq: 7 });
+    renderRoute(`/c/${CH}/s/${S2}`, qc, (children) => (
+      <ReadSenderContext.Provider value={{ request: vi.fn(), dispose: vi.fn() }}>
+        {children}
+      </ReadSenderContext.Provider>
+    ));
+    await screen.findByText("S2 글 7");
+    const separator = await screen.findByRole("separator", { name: "새 메시지" });
+    expect(separator.closest("[data-index]")?.nextElementSibling).toHaveTextContent("S2 글 7");
+  });
+
   it("Review Focus 3 — 들어갈 때 스냅숏이 없으면 구분선을 짐작해 긋지 않고, 스냅숏이 뒤늦게 와도 튀어나오지 않는다", async () => {
     open();
     await screen.findByText("남의 글 4");
