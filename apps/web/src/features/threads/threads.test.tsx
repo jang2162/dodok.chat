@@ -289,6 +289,8 @@ describe("URL 로 열기", () => {
     const tabs = screen.getByRole("navigation", { name: "패널 탭" });
     expect(within(tabs).getByRole("link", { name: "스레드" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("textbox", { name: "스레드 답글 입력" })).toBeInTheDocument();
+    // 「새 대화」는 걷었다 — owner 가 연 패널 머리에도 없다
+    expect(within(view).queryByRole("button", { name: /새 대화/ })).toBeNull();
     // 채널 목록에는 답글이 없다 — 루트와 칩만
     expect(within(channelList()).queryByText("답글 2")).toBeNull();
     expect(within(channelList()).getByText("루트 질문")).toBeInTheDocument();

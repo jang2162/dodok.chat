@@ -119,9 +119,10 @@ describe("member 의 채널 설정", () => {
     expect(within(section).getByRole("textbox", { name: "채널 프롬프트" })).toBeEnabled();
     expect(within(section).getByRole("button", { name: "저장" })).toBeInTheDocument();
     expect(screen.queryByText(LOCKED)).toBeNull();
-    expect(
-      await within(await agentList()).findByRole("button", { name: "@dev 채널 프롬프트 편집" }),
-    ).toBeInTheDocument();
+    const list = await agentList();
+    expect(await within(list).findByRole("button", { name: "@dev 채널 프롬프트 편집" })).toBeInTheDocument();
+    // 「새 대화」는 걷었다 — admin 에게도 없다
+    expect(within(list).queryByRole("button", { name: /새 대화/ })).toBeNull();
   });
 });
 
