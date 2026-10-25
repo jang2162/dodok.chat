@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import { type Conversation, dodokSessionKey, formatSessionLine, type Message } from "@dodok/shared";
 import { and, eq } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { messages } from "../../src/db/schema.sqlite";
+import { messages, runs } from "../../src/db/schema.sqlite";
 import { getRun } from "../../src/modules/runs/store";
 import { createScenario } from "../fakes/scenario";
 import { bootLiveApp, type LiveApp } from "../helpers/live-app";
@@ -350,5 +350,133 @@ describe("통합 — 런과 에이전트가 세션 단위로", () => {
       attachmentIds: [],
     });
     expect(ok.messageId).toBeDefined();
+  });
+
+  it("[Review Focus 4] 런 없는 정본은 서버가 그 에이전트에게 만든 세션의 키로만 — 대상에 맞춘 키·남의 세션 키·코어 sendText 꼴은 FORBIDDEN, 자기 세션의 늦은 글은 받는다", async () => {
+    live = await bootLiveApp();
+    const { channel, dev } = await setupRelayChannel(live, { maxRelayTurns: 3, allowPairs: "all" });
+    // 코어 일반 전송(sendText)은 agentId 「unknown」으로 온다 — 그 id 로 등록된 에이전트가 있어도 세션이 없으면 막힌다
+    const unknown = await rest(live, "POST", "/agents", {
+      providerAgentId: "unknown",
+      handle: "unknown",
+      name: "Unknown",
+      gatewayId: live.gatewayId,
+    });
+    expect(unknown.status).toBe(201);
+    const log = await openChannelWire(live, channel.id, sockets);
+    createScenario({
+      gateway: live.gateway,
+      plugin: live.plugin,
+      agents: {
+        dev: ({ delivery }) =>
+          delivery.message.text.includes("붙잡아")
+            ? { deltas: ["생각 중"], reply: "끝", holdFinal: true }
+            : { reply: "답" },
+        fin: () => ({ reply: "fin" }),
+      },
+    });
+    const created: Array<{ message: Message; silent?: true }> = [];
+    live.app.bus.on("message.created", (p) => created.push(p));
+    const doneRuns = () => log.states.filter((s) => s.agentId === dev.id && s.status === "done");
+    const storedFor = (outboundId: string) =>
+      live.app.db.select().from(messages).where(eq(messages.externalId, outboundId)).all();
+    const runless = (
+      outboundId: string,
+      fields: { conversationId: string; agentId: string; sessionKey: string },
+    ) => live.plugin.sendOutbound({ outboundId, ...fields, text: `${outboundId} 글`, attachmentIds: [] });
+
+    const inA = await sendIn(log.socket, channel.id, "@dev A 질문", { newConversation: { title: "세션 A" } });
+    const a = inA.conversation;
+    if (!a) throw new Error("세션이 없다");
+    await log.until(() => doneRuns().length >= 1 || undefined, "A 런 done");
+    await sendIn(log.socket, channel.id, "@dev 스레드에서", { conversationId: a.id }, inA.message.id);
+    await log.until(() => doneRuns().length >= 2 || undefined, "스레드 런 done");
+    const keyA = dodokSessionKey("dev", a.id);
+    const threadKeyA = dodokSessionKey("dev", a.id, inA.message.id);
+
+    // 막힘 — 리뷰 실측 꼴: dev 가 멤버가 아닌 채널의 대화로, 그 대화로 만든 키(세션 키 없는 툴 호출을 플러그인이 `to` 로 채운 꼴)
+    const otherX = await rest<{ channel: { id: string } }>(live, "POST", "/channels", { name: "other-x" });
+    const otherConversation = channelConversation(live.app.db, otherX.body.channel.id);
+    // 사례마다 결과를 모아 한 번에 견준다 — 하나가 새면 어느 것인지 diff 에 다 보이게
+    const refusals: Array<[string, string, number]> = [];
+    for (const [outboundId, fields] of [
+      [
+        "not-member",
+        {
+          conversationId: otherConversation,
+          agentId: "dev",
+          sessionKey: dodokSessionKey("dev", otherConversation),
+        },
+      ],
+      // 남의 세션 키 — 그 세션 행의 에이전트(dev)가 정본의 에이전트(fin)가 아니다
+      ["others-key", { conversationId: a.id, agentId: "fin", sessionKey: keyA }],
+      [
+        "send-text",
+        { conversationId: a.id, agentId: "unknown", sessionKey: dodokSessionKey("unknown", a.id) },
+      ],
+    ] as const) {
+      const outcome = await runless(outboundId, fields).then(
+        () => "stored",
+        (err: Error) => err.message,
+      );
+      refusals.push([outboundId, outcome, storedFor(outboundId).length]);
+    }
+    const refused = "FORBIDDEN: 이 대화에만 보낼 수 있습니다";
+    expect(refusals).toEqual([
+      ["not-member", refused, 0],
+      ["others-key", refused, 0],
+      ["send-text", refused, 0],
+    ]);
+
+    // 통과 — 런이 끝난 뒤 자기 세션·자기 스레드 하위 세션으로 온 늦은 글
+    const late = await runless("late-own", { conversationId: a.id, agentId: "dev", sessionKey: keyA });
+    expect(storedFor("late-own")).toEqual([
+      expect.objectContaining({ id: late.messageId, conversationId: a.id, authorId: dev.id, runId: null }),
+    ]);
+    const lateThread = await live.plugin.sendOutbound({
+      outboundId: "late-thread",
+      conversationId: a.id,
+      threadId: inA.message.id,
+      agentId: "dev",
+      sessionKey: threadKeyA,
+      text: "스레드에 늦게",
+      attachmentIds: [],
+    });
+    expect(storedFor("late-thread")).toEqual([
+      expect.objectContaining({ id: lateThread.messageId, threadRootId: inA.message.id, runId: null }),
+    ]);
+
+    // 통과 — 런이 열린 동안은 런 갈래(세션의 미종료 런에 붙는다)
+    const hold = await sendIn(log.socket, channel.id, "@dev 붙잡아 둬", { conversationId: a.id });
+    const held = await log.until(() => {
+      const run = live.app.db.select().from(runs).where(eq(runs.triggerMessageId, hold.message.id)).get();
+      return run?.status === "streaming" ? run : undefined;
+    }, "붙잡은 런 streaming");
+    await runless("while-open", { conversationId: a.id, agentId: "dev", sessionKey: keyA });
+    expect(storedFor("while-open")).toEqual([expect.objectContaining({ runId: held.id })]);
+
+    // 통과 — 닫힌 자기 세션의 늦은 글은 저장만(silent)
+    const closed = await rest(live, "PATCH", `/conversations/${a.id}`, { closed: true });
+    expect(closed.status).toBe(200);
+    await log.terminal(held.id);
+    const inClosed = await runless("closed-own", { conversationId: a.id, agentId: "dev", sessionKey: keyA });
+    expect(created.find((p) => p.message.id === inClosed.messageId)?.silent).toBe(true);
+
+    // 통과 — 보관한 채널의 자기 세션 늦은 글도 저장만(silent)
+    const b = (await sendIn(log.socket, channel.id, "@dev B 질문", { newConversation: { title: "세션 B" } }))
+      .conversation;
+    if (!b) throw new Error("세션이 없다");
+    await log.until(
+      () => log.states.find((s) => s.agentId === dev.id && s.conversationId === b.id && s.status === "done"),
+      "B 런 done",
+    );
+    const archived = await rest(live, "POST", `/channels/${channel.id}/archive`);
+    expect(archived.status).toBe(200);
+    const inArchived = await runless("archived-own", {
+      conversationId: b.id,
+      agentId: "dev",
+      sessionKey: dodokSessionKey("dev", b.id),
+    });
+    expect(created.find((p) => p.message.id === inArchived.messageId)?.silent).toBe(true);
   });
 });

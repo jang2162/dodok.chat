@@ -36,7 +36,7 @@ import { ensureSession } from "../src/modules/sessions/service";
 import { ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
 import { FAKE_GATEWAY_ID, fakeGatewayStatus, insertGateway } from "./helpers/gateways";
-import { seedChannelWithAgent, seedConversation } from "./helpers/seed";
+import { seedAgentSession, seedChannelWithAgent, seedConversation } from "./helpers/seed";
 
 type Ids = ReturnType<typeof seedChannelWithAgent>;
 
@@ -1437,8 +1437,19 @@ describe("orchestrator", () => {
     },
   );
 
-  it("런을 못 찾는 정본은 런 없이 저장되고 warn 로그", async () => {
+  it("런을 못 찾는 정본은 런 없이 저장되고 warn 로그 — 서버가 그 에이전트에게 만든 세션의 키일 때만", async () => {
     const t = setup();
+    // 세션 행이 없으면(이 세션에서 불린 적이 없다) 대상에 맞춘 키여도 받지 않는다
+    await expect(
+      t.orch.onCanonical(
+        t.outbound({ outboundId: "no-session", text: "혼잣말" }),
+        "openclaw",
+        FAKE_GATEWAY_ID,
+      ),
+    ).rejects.toMatchObject({ code: "FORBIDDEN", message: "이 대화에만 보낼 수 있습니다" });
+    expect(t.db.select().from(messages).where(eq(messages.externalId, "no-session")).all()).toEqual([]);
+
+    seedAgentSession(t.db, { conversationId: t.conversationId, agentId: t.agentId });
     const ack = await t.orch.onCanonical(
       t.outbound({ text: "혼잣말", replyToInboundId: uuid() }),
       "openclaw",
@@ -1502,6 +1513,7 @@ describe("orchestrator", () => {
     const second = createChannel(t.db, { workspaceId: t.workspaceId, createdBy: t.userId, name: "second" });
     addMember(t.db, second.id, { memberType: "agent", memberId: t.agentId }, t.logger);
     const secondConversation = seedConversation(t.db, second.id);
+    seedAgentSession(t.db, { conversationId: secondConversation, agentId: t.agentId });
     const crossed = await t.orch.onCanonical(
       t.outbound({
         conversationId: secondConversation,
@@ -2082,6 +2094,7 @@ describe("orchestrator", () => {
     it("런 없는 정본은 세션 키의 스레드에 저장하고, 채널 키에 threadId 가 붙으면 거절한다", async () => {
       const t = setup();
       const root = t.say("루트");
+      seedAgentSession(t.db, { conversationId: t.conversationId, agentId: t.agentId, threadRootId: root.id });
       const { messageId } = await t.orch.onCanonical(
         t.outbound({ text: "혼잣말", sessionKey: `${t.sessionKey}:thread:${root.id}`, threadId: root.id }),
         "openclaw",

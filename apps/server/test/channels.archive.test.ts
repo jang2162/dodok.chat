@@ -30,7 +30,7 @@ import { bootTestApp, login, userWithRole } from "./helpers/app";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
 import { connectWire, waitFor } from "./helpers/wire";
 import { makePng } from "./helpers/png";
-import { channelConversation } from "./helpers/seed";
+import { channelConversation, seedAgentSession } from "./helpers/seed";
 
 const apps: App[] = [];
 afterEach(async () => {
@@ -631,8 +631,14 @@ describe("보관과 런(계획 판정 PC2)", () => {
   });
 
   it("다른 채널 세션의 에이전트가 보관한 채널에 쓰는 런 없는 새 글은 거절한다(대화 밖 전송 — FORBIDDEN) — 같은 채널 세션(스레드 포함)의 런 없는 답은 저장만", async () => {
-    const { app, channel, say, archive } = await setup();
+    const { app, channel, dev, say, archive } = await setup();
     const root = await say("스레드 루트");
+    // dev 가 보관 전에 그 스레드에서 불린 적이 있다 — 런 없는 정본은 서버가 만든 세션의 키로만 받는다
+    seedAgentSession(app.db, {
+      conversationId: channelConversation(app.db, channel.id),
+      agentId: dev.id,
+      threadRootId: root.id,
+    });
     const other = createChannel(app.db, {
       workspaceId: app.workspaceId,
       createdBy: app.ownerUserId,

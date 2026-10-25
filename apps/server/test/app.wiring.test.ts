@@ -26,7 +26,7 @@ import { testEnv } from "./helpers/env";
 import { FAKE_GATEWAY_ID, fakeGatewayStatus } from "./helpers/gateways";
 import { connectWire, openWire, type WireClient, waitFor } from "./helpers/wire";
 import { openclawOf, soleGateway } from "./helpers/openclaw";
-import { channelConversation } from "./helpers/seed";
+import { channelConversation, seedAgentSession } from "./helpers/seed";
 
 type Method = "GET" | "POST" | "PATCH";
 
@@ -649,6 +649,8 @@ describe("실제 어댑터(createOpenClawAdapter) 부팅", () => {
       });
 
       const { agentId, channelId } = seedAgentChannel(app, "real", undefined, gatewayId);
+      // 런 없는 정본은 서버가 만든 세션의 키로만 받는다 — dev 가 이 채널 세션에서 불린 적이 있다
+      seedAgentSession(app.db, { conversationId: channelConversation(app.db, channelId), agentId });
       const plugin = connectSocket(`${app.url}/bridge`, {
         transports: ["websocket"],
         auth: { token: bridgeToken },

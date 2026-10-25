@@ -1,4 +1,5 @@
 import {
+  CONVERSATION_ONLY_REASON,
   type InboundDeliver,
   isOpenClawAgentId,
   type Message,
@@ -10,7 +11,7 @@ import {
   type RunStatus,
   RunUsage,
 } from "@dodok/shared";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { agentConnectionId, agentOnConnection } from "../../adapters/connection";
 import type { AdapterRegistry } from "../../adapters/registry";
 import {
@@ -21,7 +22,14 @@ import {
   type RunEventBody,
 } from "../../adapters/types";
 import type { Db, DbOrTx } from "../../db/client";
-import { agents, channels, componentInteractions, conversations, messages } from "../../db/schema.sqlite";
+import {
+  agentSessions,
+  agents,
+  channels,
+  componentInteractions,
+  conversations,
+  messages,
+} from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
 import type { Logger } from "../../logger";
 import type { ServerBus } from "../../realtime/bus";
@@ -120,9 +128,6 @@ function requesterOf(db: DbOrTx, trigger: EnqueueTrigger): string | null {
     return store.getRunRequestedBy(db, message.runId);
   return null;
 }
-
-/** 대화 밖 전송을 거절할 때 에이전트(툴 결과)에 가는 고정 사유 — 플러그인 `CONVERSATION_ONLY_REASON` 과 같은 문구 */
-export const CONVERSATION_ONLY_REASON = "이 대화에만 보낼 수 있습니다";
 
 /**
  * 에이전트의 글은 그 세션 키의 대화에만 저장한다(채널 세션 스펙 「에이전트가 받는 것」 절, Review Focus 4) — 런이 있든 없든 정본의
@@ -1019,6 +1024,27 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
   }
 
   /**
+   * 런 없는 정본이 서버가 그 에이전트에게 만든 세션의 키로 왔나 — 세션 행은 인바운드를 보낼 때 생기므로 자기 세션의 늦은 글·스레드
+   * 하위 세션의 글은 행이 있다. 세션 키를 정본 쪽이 고르는 한 대상 대화에 맞춘 키는 assertCanonicalConversation 을 지나므로, 이 검사가
+   * 없으면 세션 키 없는 툴 호출(플러그인이 `to` 로 키를 만든다)로 그 Gateway 의 에이전트가 멤버가 아닌 채널·보관 채널·닫힌 세션에
+   * 글을 남긴다. 다른 에이전트의 세션 키도 받지 않는다. 키는 대소문자를 접어 견준다(코어가 키를 소문자로 접는다 — 옛 대문자 행)
+   */
+  function isOwnSession(msg: OutboundMessage, agentId: string): boolean {
+    return (
+      db
+        .select({ id: agentSessions.id })
+        .from(agentSessions)
+        .where(
+          and(
+            sql`lower(${agentSessions.sessionKey}) = ${msg.sessionKey.toLowerCase()}`,
+            eq(agentSessions.agentId, agentId),
+          ),
+        )
+        .get() !== undefined
+    );
+  }
+
+  /**
    * 계약 스펙 5.1: runId → 연결·sessionKey 의 미종료 런 → replyToInboundId 가 트리거한 런. 다른 대화의 런은 쓰지 않는다.
    * runId 가 다른 연결의 런을 가리키면 쓰지 않는다(fromRunConnection 과 같은 까닭)
    */
@@ -1361,8 +1387,15 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
           logger.warn({ ...where, providerAgentId: msg.agentId }, "canonical message from unknown agent");
           throw apiError("NOT_FOUND", "agent not found");
         }
-        // 런 없는 정본은 라우팅하지 않지만 푸시는 간다 — 보관한 채널이나 닫힌 세션이면 그것도 하지 않는다. 여기 오는 것은 그 세션
-        // 대화의 글뿐이다(assertCanonicalConversation) — 다른 세션이 message 툴로 쓰는 새 글은 위에서 이미 거절했다
+        if (!isOwnSession(msg, agentId)) {
+          logger.warn(
+            { ...where, providerAgentId: msg.agentId, agentId },
+            "canonical message without run outside the agent's sessions — refused",
+          );
+          throw new AdapterError("FORBIDDEN", CONVERSATION_ONLY_REASON);
+        }
+        // 런 없는 정본은 라우팅하지 않지만 푸시는 간다 — 보관한 채널이나 닫힌 세션이면 그것도 하지 않는다. 여기 오는 것은 그 에이전트
+        // 세션 대화의 글뿐이다(assertCanonicalConversation·isOwnSession) — 다른 세션·다른 대화로 쓰는 새 글은 위에서 이미 거절했다
         const silent = isChannelArchived(db, channelId) || isConversationClosed(db, msg.conversationId);
         const message = storeAgentMessage(msg, uploadedBy, agentId, undefined, threadRootId, silent);
         logger.warn({ ...where, runId: msg.runId, messageId: message.id }, "canonical message without run");

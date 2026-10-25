@@ -22,7 +22,7 @@ import { issueBridgeToken } from "../src/modules/setup/tokens";
 import { bootTestApp, login } from "./helpers/app";
 import { FAKE_GATEWAY_ID, insertGateway } from "./helpers/gateways";
 import { makePng, PDF_BYTES } from "./helpers/png";
-import { channelConversation } from "./helpers/seed";
+import { channelConversation, seedAgentSession } from "./helpers/seed";
 
 const HOME_ID = "00000000-0000-4000-8000-0000000000b2";
 
@@ -113,6 +113,11 @@ async function setup() {
   };
   /** 그 연결의 플러그인이 보낸 정본(어댑터가 onCanonical 을 부르는 길) — 저장된 메시지의 첨부 id */
   const canonical = async (connectionId: string, attachmentIds: string[]) => {
+    // 그 연결의 main 이 이 채널 세션에서 불린 적이 있다 — 런 없는 정본은 서버가 만든 세션의 키로만 받는다
+    const main = app.db.$client
+      .prepare("SELECT id FROM agents WHERE gateway_id = ? AND provider_agent_id = 'main'")
+      .get(connectionId) as { id: string };
+    seedAgentSession(app.db, { conversationId: channelConversation(app.db, channel.id), agentId: main.id });
     const message: OutboundMessage = {
       outboundId: `out-${connectionId}-${attachmentIds.join(",")}`,
       conversationId: channelConversation(app.db, channel.id),
@@ -204,6 +209,7 @@ describe("브리지 첨부 범위 — 토큰의 Gateway 로", () => {
         { channelId: channel.id, uploader: { type: "bridge", runnerTokenId }, bytes: PDF_BYTES },
       );
     const [own, others] = [await upload(runner), await upload(other)];
+    seedAgentSession(app.db, { conversationId: channelConversation(app.db, channel.id), agentId: coder.id });
     const message: OutboundMessage = {
       outboundId: "out-runner",
       conversationId: channelConversation(app.db, channel.id),

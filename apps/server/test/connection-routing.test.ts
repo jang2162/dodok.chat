@@ -12,7 +12,7 @@ import { getRun } from "../src/modules/runs/store";
 import { ServerBus } from "../src/realtime/bus";
 import { createServices, sessionRecoverTargets } from "../src/wiring";
 import { newTestDb } from "./helpers/db";
-import { channelConversation, seedWorkspace } from "./helpers/seed";
+import { channelConversation, seedAgentSession, seedWorkspace } from "./helpers/seed";
 
 // 멀티 Gateway 계획 태스크 1 — 런·정본·승인·대기열을 「연결 id + 세션 키」로 가른다. 두 Gateway 의 main 은 세션 키가 같다
 
@@ -389,6 +389,7 @@ describe("연결 단위 대조", () => {
     await t.flush();
     const row = t.db.select().from(approvals).where(eq(approvals.providerApprovalId, "runner:x")).get();
     expect(row).toMatchObject({ agentId: t.coder, connectionId: "tok-other" });
+    seedAgentSession(t.db, { conversationId: t.conversationId, agentId: t.coder });
     const { messageId } = await t.services.orchestrator.onCanonical(
       t.outbound({ agentId: "coder", sessionKey: coderKey }),
       "claude",
