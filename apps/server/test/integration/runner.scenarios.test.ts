@@ -509,7 +509,7 @@ describe("Claude 러너 통합 시나리오", () => {
     await sendMessage(log.socket, channel.id, "@dev 셋");
     expect((await log.terminal((await runOf(log, dev.id, 2)).id)).status).toBe("done");
 
-    // 이어 간 OpenClaw 세션은 「새 대화」 전까지 매 턴 새 프롬프트를 받는다(ADR 0003) — 리비전을 몰래 맞추면 셋째 턴에서 빠진다
+    // 이어 간 OpenClaw 세션은 매 턴 새 프롬프트를 받는다(ADR 0003) — 리비전을 몰래 맞추면 셋째 턴에서 빠진다
     const delivered = live.plugin.received.filter((d) => d.channelId === channel.id);
     expect(delivered).toHaveLength(3);
     expect(new Set(delivered.map((d) => d.sessionKey)).size).toBe(1);

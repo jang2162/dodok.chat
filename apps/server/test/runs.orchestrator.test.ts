@@ -2201,7 +2201,6 @@ describe("orchestrator", () => {
       kind: "status",
       status,
       capabilities: {
-        sessionReset: true,
         agentsList: true,
         configSet: true,
         promptEveryRun: false,
@@ -2380,7 +2379,6 @@ describe("리액션 — 다음 런에 싣고, send 가 받아들여졌을 때만
   it("러너가 자기 대기열에 세운 런(queued: true)도 받아들여진 것이라 커서를 올린다 — 다음 런에 다시 싣지 않는다", async () => {
     const t = reactionSetup();
     t.adapter.setCapabilities({
-      sessionReset: true,
       agentsList: true,
       configSet: true,
       promptEveryRun: true,
@@ -2415,7 +2413,6 @@ describe("리액션 — 다음 런에 싣고, send 가 받아들여졌을 때만
   it("러너 세션을 새로 여는 런(채널 규칙 리비전 변경)은 그 전에 달린 리액션을 싣지 않는다 — 판정 뒤의 커서로 고른다", async () => {
     const t = reactionSetup();
     t.adapter.setCapabilities({
-      sessionReset: true,
       agentsList: true,
       configSet: true,
       promptEveryRun: true,

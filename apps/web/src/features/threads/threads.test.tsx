@@ -289,6 +289,8 @@ describe("URL 로 열기", () => {
     const tabs = screen.getByRole("navigation", { name: "패널 탭" });
     expect(within(tabs).getByRole("link", { name: "스레드" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("textbox", { name: "스레드 답글 입력" })).toBeInTheDocument();
+    // 「새 대화」는 걷었다 — owner 가 연 패널 머리에도 없다
+    expect(within(view).queryByRole("button", { name: /새 대화/ })).toBeNull();
     // 채널 목록에는 답글이 없다 — 루트와 칩만
     expect(within(channelList()).queryByText("답글 2")).toBeNull();
     expect(within(channelList()).getByText("루트 질문")).toBeInTheDocument();
@@ -391,32 +393,6 @@ describe("스레드 작성기", () => {
     });
     fireEvent.keyDown(box, { key: "Enter" });
     await waitFor(() => expect(fake.sentOf("run.abort")).toEqual([{ runId: RUN2 }]));
-  });
-
-  it("에이전트 줄의 「새 대화」 — 그 스레드의 세션만(?threadRootId=)", async () => {
-    renderRoute(`/c/${CH}/t/${ROOT.id}`, channelClient());
-    const view = await panel();
-    await userEvent.click(await within(view).findByRole("button", { name: "@dev 새 대화" }));
-    const dialog = await screen.findByRole("dialog");
-    expect(dialog).toHaveTextContent("이 스레드에서 @dev 와의 대화 기록을 새로 시작합니다");
-    fetchMock.mockImplementationOnce(async () => json(200, { ok: true }));
-    await userEvent.click(within(dialog).getByRole("button", { name: "새 대화 시작" }));
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    const post = fetchMock.mock.calls.find((c) => c[1]?.method === "POST");
-    expect(String(post?.[0])).toBe(`/api/v1/channels/${CH}/agents/${AGENT}/reset?threadRootId=${ROOT.id}`);
-  });
-});
-
-describe("member 의 스레드 패널", () => {
-  it("에이전트 줄의 「새 대화」가 없다 — admin 이상의 동작이다(팀 스펙 2장)", async () => {
-    const base = fetchMock.getMockImplementation();
-    fetchMock.mockImplementation(async (input, init) =>
-      String(input) === "/api/v1/auth/me" ? json(200, { ...ME, role: "member" }) : base!(input, init),
-    );
-    renderRoute(`/c/${CH}/t/${ROOT.id}`, channelClient());
-    const view = await panel();
-    expect(await within(view).findByText("루트 질문")).toBeInTheDocument();
-    expect(within(view).queryByRole("button", { name: "@dev 새 대화" })).toBeNull();
   });
 });
 

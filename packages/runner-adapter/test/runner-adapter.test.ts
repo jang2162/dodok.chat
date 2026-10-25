@@ -1397,17 +1397,15 @@ describe("러너 끊김", () => {
 });
 
 describe("나머지 계약", () => {
-  it("능력·세션 리셋·채널 설정", async () => {
+  it("능력·채널 설정", async () => {
     const h = await setup();
     expect(h.adapter.provider).toBe("claude");
     expect(h.adapter.capabilities()).toEqual({
-      sessionReset: true,
       agentsList: true,
       configSet: true,
       promptEveryRun: true,
       serverSessionIds: true,
     });
-    expect(await h.adapter.resetSession(dodokSessionKey("coder", CH), null)).toEqual({});
     expect(await h.adapter.syncChannelConfig(CH, { systemPrompt: "x" }, RUNNER_A_CONNECTION)).toEqual({
       applied: "live",
     });

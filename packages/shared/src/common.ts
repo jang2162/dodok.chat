@@ -26,7 +26,7 @@ export const ErrorCode = z.enum([
   "PROVIDER_AUTH", // 러너의 Claude 로그인이 안 됐거나 풀렸다(러너 스펙 8장)
   "AGENT_ARCHIVED", // 보관(삭제)한 에이전트 — 등록 대신 되살리기, 다시 실행은 거절(details.agentId)
   "MEMBER_DEACTIVATED", // 비활성 멤버 — 로그인은 403, 같은 이메일의 가입은 409(details.userId)
-  "CHANNEL_ARCHIVED", // 보관한 채널 — 읽기만 된다. 보내기·상호작용·설정·멤버·「새 대화」·첨부 올리기는 거절
+  "CHANNEL_ARCHIVED", // 보관한 채널 — 읽기만 된다. 보내기·상호작용·설정·멤버·첨부 올리기는 거절
   "PUSH_UNAVAILABLE", // 그 플랫폼의 푸시 통로가 꺼져 있다 — 기기 등록은 거절
   "INTERNAL",
 ]);

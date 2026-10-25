@@ -233,32 +233,6 @@ describe("통합 — 스레드 런", () => {
     expect(log.states.filter((s) => s.threadRootId === undefined)).toEqual([]);
   });
 
-  it("스레드 「새 대화」는 그 스레드 세션만 sessions.reset — 채널 세션은 그대로, info 는 스레드에", async () => {
-    const { setup, log } = await start({ dev: () => ({ reply: "답" }) });
-    const { channel, dev } = setup;
-    await sendMessage(log.socket, channel.id, "@dev 채널");
-    await agentMessage(log, dev.id, 0);
-    const root = await sendMessage(log.socket, channel.id, "루트");
-    await sendMessage(log.socket, channel.id, "@dev 스레드", { threadRootId: root.id });
-    await agentMessage(log, dev.id, 1);
-
-    const res = await rest(
-      live,
-      "POST",
-      `/channels/${channel.id}/agents/${dev.id}/reset?threadRootId=${root.id}`,
-    );
-    expect(res.status).toBe(200);
-    const resets = live.gateway.requests
-      .filter((r) => r.method === "sessions.reset")
-      .map((r) => (r.params as { key?: unknown }).key);
-    expect(resets).toEqual([`agent:dev:dodok:channel:${channel.id}:thread:${root.id}`]);
-    const info = await log.until(
-      () => log.created.find((m) => m.kind === "system" && m.systemMeta?.kind === "info"),
-      "info 시스템 메시지",
-    );
-    expect(info.threadRootId).toBe(root.id);
-  });
-
   it("옛 플러그인(hello 에 threads 없음) → 스레드 멘션은 PLUGIN_OUTDATED 카드, 채널 런은 정상 → 재설치 뒤 다시 실행하면 스레드에서 답한다", async () => {
     const { setup, log, scenario } = await start(
       { dev: ({ delivery }) => ({ reply: delivery.threadId ? "스레드 답" : "채널 답" }) },

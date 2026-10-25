@@ -117,7 +117,6 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
   // 채널 프롬프트는 새 세션에서만(ADR 0003), 세션 id 는 Gateway 가 정한다. 능력은 어댑터 하나에 하나 — 어느 Gateway 든
   // FORBIDDEN 으로 답하면 끈다
   const capabilities: AdapterCapabilities = {
-    sessionReset: true,
     agentsList: true,
     configSet: true,
     promptEveryRun: false,
@@ -297,8 +296,6 @@ export function createOpenClawAdapter(opts: OpenClawAdapterOptions): OpenClawAda
     send: async (input, sendOpts) => live(sendOpts.connectionId).send(input),
 
     abort: async (runId, sessionKey, connectionId) => live(connectionId).abort(runId, sessionKey),
-
-    resetSession: async (sessionKey, connectionId) => live(connectionId).resetSession(sessionKey),
 
     syncChannelConfig: async (
       channelId: string,

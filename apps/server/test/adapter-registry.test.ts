@@ -11,7 +11,7 @@ import { v7 as uuid } from "uuid";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { createAdapterRegistry } from "../src/adapters/registry";
 import type { App } from "../src/app";
-import { agentSessions, agents } from "../src/db/schema.sqlite";
+import { agents } from "../src/db/schema.sqlite";
 import * as approvalStore from "../src/modules/approvals/store";
 import { createAgent } from "../src/modules/agents/service";
 import { addMember, type ChannelRecord, createChannel } from "../src/modules/channels/service";
@@ -160,7 +160,7 @@ describe("어댑터 레지스트리 배선 (앱 부팅, OpenClaw·Claude 가짜 
     await vi.waitFor(() => expect(getRun(app.db, runId)?.status).toBe("aborted"));
   }
 
-  it("claude 에이전트 멘션은 claude 어댑터로만 — 서버가 정한 세션 UUID 를 이어 쓰고, 「새 대화」 뒤에는 새 UUID", async () => {
+  it("claude 에이전트 멘션은 claude 어댑터로만 — 서버가 정한 세션 UUID 를 이어 쓴다", async () => {
     const channel = channelWith([dev, coder]);
     const socket = await connect(channel.id);
     const openclawBefore = openclaw.calls.send.length;
@@ -176,59 +176,7 @@ describe("어댑터 레지스트리 배선 (앱 부팅, OpenClaw·Claude 가짜 
     expect(second.opts?.providerSessionId).toBe(sessionId);
     await finish(second.input.runId);
 
-    const reset = await app.fastify.inject({
-      method: "POST",
-      url: `/api/v1/channels/${channel.id}/agents/${coder.id}/reset`,
-      headers,
-    });
-    expect(reset.statusCode).toBe(200);
-    expect(claude.calls.reset).toContain(first.input.sessionKey);
-    const row = app.db.select().from(agentSessions).where(eq(agentSessions.agentId, coder.id)).all();
-    expect(row.filter((r) => r.channelId === channel.id).map((r) => r.providerSessionId)).toEqual([null]);
-
-    const third = await mention(claude, socket, channel.id, "@coder 새 대화");
-    expect(third.opts?.providerSessionId).toMatch(UUID);
-    expect(third.opts?.providerSessionId).not.toBe(sessionId);
-    await finish(third.input.runId);
     expect(openclaw.calls.send.length).toBe(openclawBefore);
-  });
-
-  it("「새 대화」는 어댑터 리셋을 기다리기 전에 세션 UUID 를 비운다 — 그 사이 나간 런도 새 UUID, 리셋이 끝나도 그 값을 잇는다", async () => {
-    const channel = channelWith([coder]);
-    const socket = await connect(channel.id);
-    const first = await mention(claude, socket, channel.id, "@coder 옛 대화");
-    const oldId = first.opts?.providerSessionId;
-    expect(oldId).toMatch(UUID);
-    await finish(first.input.runId);
-
-    let release!: () => void;
-    const held = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const resetStarted = vi.fn();
-    vi.spyOn(claude, "resetSession").mockImplementationOnce(async () => {
-      resetStarted();
-      await held;
-      return {};
-    });
-    const reset = app.fastify.inject({
-      method: "POST",
-      url: `/api/v1/channels/${channel.id}/agents/${coder.id}/reset`,
-      headers,
-    });
-    await vi.waitFor(() => expect(resetStarted).toHaveBeenCalled());
-
-    const during = await mention(claude, socket, channel.id, "@coder 리셋 중에 보냄");
-    const newId = during.opts?.providerSessionId;
-    expect(newId).toMatch(UUID);
-    expect(newId).not.toBe(oldId);
-    await finish(during.input.runId);
-
-    release();
-    expect((await reset).statusCode).toBe(200);
-    const after = await mention(claude, socket, channel.id, "@coder 리셋 뒤");
-    expect(after.opts?.providerSessionId).toBe(newId);
-    await finish(after.input.runId);
   });
 
   it("OpenClaw 에이전트에는 세션 id 를 넘기지 않는다 — 두 번째 인자 없이 보낸다", async () => {
@@ -504,7 +452,6 @@ describe("어댑터 레지스트리 배선 (앱 부팅, OpenClaw·Claude 가짜 
       capabilities: {
         openclaw: openclaw.capabilities(),
         claude: {
-          sessionReset: true,
           agentsList: true,
           configSet: true,
           promptEveryRun: true,

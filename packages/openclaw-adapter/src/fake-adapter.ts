@@ -70,7 +70,7 @@ type SetupDetailOf<P extends AdapterProvider> = P extends "claude" ? ClaudeSetup
 
 /**
  * 테스트·wire-cli 용 메모리 어댑터. 호출을 기록하고, 이벤트는 emit 으로 밀어 넣는다.
- * 기본은 OpenClaw 흉내 — 실물처럼 연결이 null(Gateway 가 빈 에이전트)이면 send·abort·resetSession·listAgents 가
+ * 기본은 OpenClaw 흉내 — 실물처럼 연결이 null(Gateway 가 빈 에이전트)이면 send·abort·listAgents 가
  * ADAPTER_UNAVAILABLE 을 던지고 supports 는 false 다. 모르는 연결 id 는 막지 않는다(연결 목록 없이도 쓰게).
  * `provider: "claude"` 는 레지스트리 테스트용 최소 러너 흉내 — 상태·상세가 claude 모양이고 capabilities 가
  * promptEveryRun·serverSessionIds, 스레드는 늘 안다. null 연결은 받는다(묶임 없는 러너 에이전트)
@@ -83,7 +83,6 @@ export class FakeAdapter<P extends AdapterProvider = "openclaw"> implements Agen
     /** send 의 providerSessionId(없으면 undefined) — calls.send 와 같은 순서. 연결 id 는 connections.send */
     sendOpts: Array<{ providerSessionId?: string } | undefined>;
     syncChannelConfig: Array<{ channelId: string; config: ConfigSet["config"] }>;
-    reset: string[];
     abort: Array<{ runId: string; sessionKey: string }>;
     forget: string[];
     resolveApproval: Array<{ providerApprovalId: string; kind: ApprovalKind; decision: ApprovalDecision }>;
@@ -98,7 +97,6 @@ export class FakeAdapter<P extends AdapterProvider = "openclaw"> implements Agen
     connections: {
       send: Array<ConnectionId | null>;
       abort: Array<ConnectionId | null>;
-      reset: Array<ConnectionId | null>;
       syncChannelConfig: ConnectionId[];
       resolveApproval: ConnectionId[];
       listAgents: Array<ConnectionId | null>;
@@ -108,7 +106,6 @@ export class FakeAdapter<P extends AdapterProvider = "openclaw"> implements Agen
     send: [],
     sendOpts: [],
     syncChannelConfig: [],
-    reset: [],
     abort: [],
     forget: [],
     resolveApproval: [],
@@ -118,7 +115,6 @@ export class FakeAdapter<P extends AdapterProvider = "openclaw"> implements Agen
     connections: {
       send: [],
       abort: [],
-      reset: [],
       syncChannelConfig: [],
       resolveApproval: [],
       listAgents: [],
@@ -161,7 +157,6 @@ export class FakeAdapter<P extends AdapterProvider = "openclaw"> implements Agen
     const claude = provider === "claude";
     this.currentStatus = { provider: "claude", runners: { connected: 1, tokens: 1 } };
     this.currentCapabilities = {
-      sessionReset: true,
       agentsList: true,
       configSet: true,
       promptEveryRun: claude,
@@ -388,16 +383,6 @@ export class FakeAdapter<P extends AdapterProvider = "openclaw"> implements Agen
     this.calls.abort.push({ runId, sessionKey });
     this.calls.connections.abort.push(connectionId);
     this.requireConnection(connectionId);
-  }
-
-  async resetSession(
-    sessionKey: string,
-    connectionId: ConnectionId | null,
-  ): Promise<{ sessionStartedAt?: string; lifecycleRevision?: string }> {
-    this.calls.reset.push(sessionKey);
-    this.calls.connections.reset.push(connectionId);
-    this.requireConnection(connectionId);
-    return { sessionStartedAt: new Date().toISOString(), lifecycleRevision: "fake-1" };
   }
 
   async syncChannelConfig(

@@ -26,7 +26,6 @@ export { BridgeAuthGuard } from "./guard";
 export type AdapterProvider = Extract<AgentProvider, "openclaw" | "claude">;
 
 export type AdapterCapabilities = {
-  sessionReset: boolean;
   agentsList: boolean;
   configSet: boolean;
   /** 채널 프롬프트를 매 런 싣는다(러너 계획 판정 P3) — false 면 지금처럼 새 세션에서만 */
@@ -170,10 +169,6 @@ export interface AgentAdapter {
   /** ok:false 는 throw AdapterError(code) */
   send(input: InboundDeliver, opts: SendOptions): Promise<AdapterSendResult>;
   abort(runId: string, sessionKey: string, connectionId: ConnectionId | null): Promise<void>;
-  resetSession(
-    sessionKey: string,
-    connectionId: ConnectionId | null,
-  ): Promise<{ sessionStartedAt?: string; lifecycleRevision?: string }>;
   syncChannelConfig(
     channelId: string,
     config: ConfigSet["config"],

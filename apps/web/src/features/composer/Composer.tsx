@@ -5,10 +5,9 @@ import { EditorContent, useEditor, useEditorState } from "@tiptap/react";
 import { StarterKit } from "@tiptap/starter-kit";
 import { isImageMime } from "@dodok/shared";
 import { ImagePlusIcon, SendHorizontalIcon } from "lucide-react";
-import { type DragEvent, useEffect, useId, useMemo, useRef, useState } from "react";
+import { type DragEvent, useEffect, useId, useMemo, useRef } from "react";
 import { toast } from "sonner";
-import { useAgents, useCanManage, useMe, useMembers, usePeople } from "@/api/queries";
-import { ResetSessionDialog } from "@/features/agents/ResetSessionDialog";
+import { useAgents, useMe, useMembers, usePeople } from "@/api/queries";
 import { ONLY_IMAGES } from "@/features/attachments/upload";
 import { useComposerAttachments } from "@/features/attachments/useComposerAttachments";
 import { abortErrorMessage } from "@/features/runs/abortError";
@@ -50,15 +49,12 @@ const EDITOR_CLASS = [
   "[&_pre]:my-1 [&_pre]:rounded [&_pre]:bg-muted [&_pre]:p-2 [&_pre_code]:bg-transparent [&_pre_code]:p-0",
 ].join(" ");
 
-/** 「새 대화」 대상 — 연 채널(스레드)에 묶는다. 열린 채 채널이 바뀌어도 요청은 그 채널로만 간다 */
-type ResetTarget = { channelId: string; threadRootId?: string; agentId: string; handle: string };
-
 /**
- * 작성기(스펙 5.1·4.4·6.1): Tiptap + @멘션. Enter 전송(토큰 본문 `toBodyMd`), `/stop`·`/new @에이전트` 는 메시지로 보내지 않는다.
+ * 작성기(스펙 5.1·4.4·6.1): Tiptap + @멘션. Enter 전송(토큰 본문 `toBodyMd`), `/stop` 은 메시지로 보내지 않는다.
  * wire 가 connected 가 아니면 입력은 받되 전송은 막는다. 초안은 채널마다 따로 둔다 — 채널을 옮겨도 이 인스턴스가 유지된다.
  * 이미지는 첨부 버튼·붙여넣기·끌어 놓기로 넣는 즉시 올린다. 올리기가 모두 끝나야(오류 칩 없이) 보낼 수 있고, 글 없이 이미지만도 된다.
- * `threadRootId` 를 주면 스레드 작성기다(스레드·검색 스펙 4.2) — 메시지는 그 스레드로, `/stop` 은 그 스레드의 런만,
- * `/new @에이전트` 는 그 스레드의 세션만(스펙 2.4). 작성 중 알림(`typing`)은 채널 단위라 보내지 않는다 —
+ * `threadRootId` 를 주면 스레드 작성기다(스레드·검색 스펙 4.2) — 메시지는 그 스레드로, `/stop` 은 그 스레드의 런만.
+ * 작성 중 알림(`typing`)은 채널 단위라 보내지 않는다 —
  * 스레드에서 쓰는 사람을 채널 작성기 아래에 「입력 중」으로 보이면 어디에 답하는지 틀리게 읽힌다
  */
 export function Composer({ channelId, threadRootId }: { channelId: string; threadRootId?: string }) {
@@ -73,11 +69,7 @@ export function Composer({ channelId, threadRootId }: { channelId: string; threa
   const agents = useAgents();
   const me = useMe();
   const people = usePeople();
-  const canManage = useCanManage();
   const hintId = useId();
-  const [reset, setReset] = useState<{ target?: ResetTarget; open: boolean }>({ open: false });
-  // 연 채널을 떠나면(대화상자 너머 뒤로 가기 등) 닫는다 — 되돌릴 수 없는 리셋을 옮겨 간 채널에서 묻지 않게
-  if (reset.open && reset.target?.channelId !== channelId) setReset((r) => ({ ...r, open: false }));
   // 초안은 채널마다, 스레드 작성기는 스레드마다 — 같은 패널에서 다른 스레드로 옮겨도 이 인스턴스가 유지된다
   const draftKey = threadRootId === undefined ? channelId : `${channelId}:${threadRootId}`;
 
@@ -166,22 +158,6 @@ export function Composer({ channelId, threadRootId }: { channelId: string; threa
   live.current.submit = () => {
     const doc: JSONContent = editor.getJSON();
     const cmd = parseSlash(doc);
-    if (cmd?.kind === "invalid") {
-      toast.error(cmd.message, { id: "slash-invalid" });
-      return;
-    }
-    // 「새 대화」는 admin 이상(팀 스펙 2장) — 대화상자를 열지 않고 알린다. 입력은 그대로 둬 고쳐 보낼 수 있게
-    if (cmd?.kind === "new" && !canManage) {
-      toast.error("「새 대화」는 관리자만 시작할 수 있습니다", { id: "slash-invalid" });
-      return;
-    }
-    if (cmd?.kind === "new") {
-      const label = doc.content?.[0]?.content?.find((n) => n.attrs?.id === `a:${cmd.agentId}`)?.attrs?.label;
-      const handle = agents.data?.find((a) => a.id === cmd.agentId)?.handle ?? String(label ?? "");
-      setReset({ target: { channelId, threadRootId, agentId: cmd.agentId, handle }, open: true });
-      editor.commands.clearContent();
-      return;
-    }
     // 메시지·/stop 은 wire 로 간다 — 붙어 있을 때만(입력은 그대로 둔다)
     if (!connected || !socket) return;
     if (cmd?.kind === "stop") {
@@ -266,19 +242,6 @@ export function Composer({ channelId, threadRootId }: { channelId: string; threa
         <p id={hintId} className="mt-1 text-xs text-muted-foreground">
           {blocked}
         </p>
-      )}
-      {reset.target && (
-        <ResetSessionDialog
-          channelId={reset.target.channelId}
-          threadRootId={reset.target.threadRootId}
-          agentId={reset.target.agentId}
-          handle={reset.target.handle}
-          open={reset.open}
-          onOpenChange={(open) => {
-            setReset((r) => ({ ...r, open }));
-            if (!open) editor.commands.focus();
-          }}
-        />
       )}
     </div>
   );

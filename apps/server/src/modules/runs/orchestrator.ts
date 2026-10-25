@@ -641,7 +641,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     if (queue.length === 0) sessionQueues.delete(info.queueKey);
   }
 
-  /** 채널 규칙이 바뀌어 러너 세션을 새로 열었다 — 「새 대화」 info 와 같은 모양으로 그 자리(스레드면 스레드)에 */
+  /** 채널 규칙이 바뀌어 러너 세션을 새로 열었다 — info 시스템 메시지로 그 자리(스레드면 스레드)에 */
   function notifyRenewed(run: Run): void {
     try {
       const handle = getAgent(db, run.agentId)?.handle ?? "unknown";

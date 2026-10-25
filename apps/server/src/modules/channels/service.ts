@@ -3,21 +3,15 @@ import { and, asc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import type { SQLiteUpdateSetSource } from "drizzle-orm/sqlite-core";
 import { v7 as uuidv7 } from "uuid";
 import { z } from "zod";
-import { agentConnectionId } from "../../adapters/connection";
-import type { AdapterRegistry } from "../../adapters/registry";
-import { AdapterError, type AgentAdapter } from "../../adapters/types";
 import { roleOf } from "../../auth/roles";
 import type { Db, DbOrTx } from "../../db/client";
 import { agents, channelMembers, channels, gateways, memberships, users } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
 import { parseStored } from "../../http/validate";
 import type { Logger } from "../../logger";
-import type { ServerBus } from "../../realtime/bus";
-import { agentNotArchived, getAgent } from "../agents/service";
-import { createLegacyConversation, latestOpenConversation } from "../conversations/store";
-import { createSystemMessage, getThreadRoot } from "../messages/service";
+import { agentNotArchived } from "../agents/service";
+import { createLegacyConversation } from "../conversations/store";
 import type { Orchestrator } from "../runs/orchestrator";
-import { clearProviderSessionId, ensureSession, markSessionReset } from "../sessions/service";
 
 type ChannelRow = typeof channels.$inferSelect;
 type MemberRow = typeof channelMembers.$inferSelect;
@@ -197,7 +191,7 @@ export function getChannel(db: DbOrTx, id: string, workspaceId?: string): Channe
 
 /**
  * 쓰기 전에 부르는 채널 검사(계획 판정 PC1) — 없으면 404, 보관했으면 409 CHANNEL_ARCHIVED. 보관한 채널에서 막는 쓰기(보내기·카드
- * 상호작용·채널 수정·멤버·「새 대화」·첨부 올리기)가 모두 이 한 함수를 지난다. workspaceId 를 주면 그 워크스페이스 것만 찾는다
+ * 상호작용·채널 수정·멤버·첨부 올리기)가 모두 이 한 함수를 지난다. workspaceId 를 주면 그 워크스페이스 것만 찾는다
  */
 export function assertChannelWritable(db: DbOrTx, channelId: string, workspaceId?: string): ChannelRecord {
   const channel = getChannel(db, channelId, workspaceId);
@@ -555,89 +549,6 @@ export function userMessageParticipants(db: DbOrTx, channelId: string): Particip
     .filter((p) => !joined.has(p.id))
     .map((p): Participant => ({ type: "user", ...p }));
   return [...others, ...inChannel];
-}
-
-export type ResetAgentSessionDeps = {
-  db: Db;
-  bus: ServerBus;
-  /** 그 에이전트의 provider 어댑터로 리셋한다 */
-  registry: Pick<AdapterRegistry, "forAgent">;
-  orchestrator: Pick<Orchestrator, "activeRuns" | "abort">;
-};
-
-/**
- * 스펙 3.4 「새 대화」 — 채널의 에이전트 멤버만. 그 에이전트의 어댑터 capability 확인 → 그 세션의 진행 런 abort → 어댑터 resetSession
- * (OpenClaw 는 Gateway sessions.reset) → agent_sessions 리비전·시작 시각(서버가 정한 세션 id 는 비움) → info 시스템 메시지. threadRootId 가 있으면 그 스레드 세션만 — 채널 세션·다른 스레드는
- * 그대로이고 info 도 그 스레드에 남는다(스펙 2.4). 이 채널의 루트가 아니면 404. Gateway 리셋은 되돌릴 수 없어서 그 뒤 DB 쓰기가 실패하면 500 이고
- * 세션 행은 옛 리비전으로 남는다(다음 턴이 channelPrompt 를 한 번 더 싣는 정도).
- */
-export async function resetAgentSession(
-  deps: ResetAgentSessionDeps,
-  input: { channelId: string; agentId: string; threadRootId?: string | undefined },
-): Promise<void> {
-  const { db, orchestrator } = deps;
-  const { threadRootId } = input;
-  const root = threadRootId === undefined ? undefined : getThreadRoot(db, input.channelId, threadRootId);
-  if (threadRootId !== undefined && !root) throw apiError("NOT_FOUND", "thread not found");
-  // 스레드면 그 루트의 대화, 아니면 채널의 열린 대화(계획 판정 PS3)
-  const conversationId = root?.conversationId ?? latestOpenConversation(db, input.channelId);
-  if (conversationId === undefined) throw apiError("NOT_FOUND", "conversation not found");
-  const member = listMembers(db, input.channelId).some(
-    (m) => m.memberType === "agent" && m.memberId === input.agentId,
-  );
-  if (!member) throw apiError("NOT_FOUND", "agent member not found");
-  const agent = getAgent(db, input.agentId);
-  if (!agent) throw apiError("NOT_FOUND", "agent not found");
-  const adapter = adapterForAgent(deps.registry, agent);
-  if (!adapter.capabilities().sessionReset) throw capabilityMissing();
-  // markSessionReset 이 행을 만들며 키를 따로 조립하지 않게, 세션 행을 먼저 보장하고 그 키로 리셋한다(sc-t7 걱정 1)
-  const { session } = ensureSession(db, adapter, { conversationId, agentId: input.agentId, threadRootId });
-  // 아래 abort·리셋을 기다리는 동안 디스패치되는 런부터 새 세션 id 를 받는다(clearProviderSessionId). 리셋이 실패해도
-  // 되살리지 않는다 — 다음 런은 새 대화로 간다
-  if (adapter.capabilities().serverSessionIds) clearProviderSessionId(db, session.id);
-  // 세션은 (채널, 에이전트, 스레드)당 하나 — 그 에이전트의 같은 스레드(채널이면 스레드 없음) 미종료 런이 곧 이 세션의 런이다.
-  // 옛 세션에서 먼저 멈춘다. 대기 런(뒤)부터 거꾸로 닫는다 — 진행 런을 먼저 닫으면 pump 가 다음 대기 런을 Gateway 로
-  // 보내 버린다(sc-t12 리뷰 R1)
-  const mine = orchestrator
-    .activeRuns(input.channelId)
-    .filter((run) => run.agentId === input.agentId && run.threadRootId === threadRootId);
-  for (const run of mine.reverse()) await orchestrator.abort(run.id);
-  let reset: Awaited<ReturnType<AgentAdapter["resetSession"]>>;
-  try {
-    reset = await adapter.resetSession(session.sessionKey, agentConnectionId(db, agent.id));
-  } catch (err) {
-    if (!(err instanceof AdapterError)) throw err;
-    // capability 가 아직 true 였던 첫 시도 — 어댑터가 MISSING_SCOPE 를 FORBIDDEN 으로 올리고 capability 를 내린다
-    if (err.code === "FORBIDDEN") throw capabilityMissing();
-    throw apiError(err.code, err.message);
-  }
-  markSessionReset(db, conversationId, input.agentId, reset, threadRootId);
-  const handle = agent.handle;
-  createSystemMessage(db, deps.bus, {
-    conversationId,
-    ...(threadRootId === undefined ? {} : { threadRootId }),
-    kind: "info",
-    bodyMd: `@${handle} 의 대화를 새로 시작했습니다`,
-    systemMeta: { kind: "info" },
-  });
-}
-
-/** 그 provider 의 어댑터가 없으면 ADAPTER_UNAVAILABLE(503) */
-function adapterForAgent(
-  registry: Pick<AdapterRegistry, "forAgent">,
-  agent: { provider: string },
-): AgentAdapter {
-  try {
-    return registry.forAgent(agent);
-  } catch (err) {
-    if (err instanceof AdapterError) throw apiError(err.code, err.message);
-    throw err;
-  }
-}
-
-/** 스펙 8장 — sessions.reset 스코프(operator.admin) 부족. 코드는 CONFLICT, 사유는 message 접두사로 구분한다 */
-function capabilityMissing() {
-  return apiError("CONFLICT", "ADAPTER_CAPABILITY_MISSING: sessions.reset 권한 없음");
 }
 
 function warnIfManyAutoRespond(db: DbOrTx, channelId: string, logger: WarnLogger): void {

@@ -88,8 +88,6 @@ type ApprovalState = FakeApprovalRequest & {
 };
 
 export type FakeGatewayOptions = {
-  /** false 면 `sessions.reset` 이 FORBIDDEN/MISSING_SCOPE(operator.admin 없음). 기본 true */
-  grantAdmin?: boolean;
   /**
    * 주면 이 간격으로 hello 를 받은 모든 연결에 `tick` 이벤트를 보낸다(payload 에 sessionKey 가 없어 구독과 무관).
    * 실제 클라이언트는 프레임 없이 hello 의 `policy.tickIntervalMs`(30s)×2 가 지나면 끊으므로 오래 띄우는 개발 모드에 필요하다
@@ -191,7 +189,6 @@ export const FAKE_GATEWAY_METHODS = [
   "sessions.subscribe",
   "sessions.messages.subscribe",
   "sessions.list",
-  "sessions.reset",
   "agents.list",
   "approval.resolve",
 ] as const;
@@ -264,7 +261,6 @@ function helloOk(connectParams: unknown, serverVersion = "2026.9.4"): HelloOk {
 }
 
 export async function startFakeGateway(opts: FakeGatewayOptions = {}): Promise<FakeGateway> {
-  const grantAdmin = opts.grantAdmin ?? true;
   const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });
   await new Promise<void>((resolve, reject) => {
     wss.once("listening", resolve);
@@ -466,26 +462,6 @@ export async function startFakeGateway(opts: FakeGatewayOptions = {}): Promise<F
     "sessions.subscribe": (_params, reply) => reply({ ok: true, payload: { subscribed: true } }),
     "sessions.messages.subscribe": (_params, reply) => reply({ ok: true, payload: { subscribed: true } }),
     "sessions.list": (_params, reply) => reply({ ok: true, payload: { sessions: [] } }),
-    "sessions.reset": (params, reply) => {
-      if (!grantAdmin) {
-        reply({ ok: false, error: MISSING_ADMIN_SCOPE });
-        return;
-      }
-      const key = str(params.key) ?? "";
-      reply({
-        ok: true,
-        payload: {
-          ok: true,
-          key,
-          // 실물: sessionId 는 리셋 전후 같고 lifecycleRevision·sessionStartedAt 이 바뀐다(ADR 0003 3.4)
-          entry: {
-            sessionId: sessionIdFor(key),
-            lifecycleRevision: randomUUID(),
-            sessionStartedAt: Date.now(),
-          },
-        },
-      });
-    },
     "approval.resolve": (params, reply) => {
       const a = approvals.get(str(params.id) ?? "");
       if (!a) {

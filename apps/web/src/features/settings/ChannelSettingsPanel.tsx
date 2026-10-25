@@ -16,7 +16,7 @@ import { RelayPolicySection } from "./RelayPolicySection";
 export function ChannelSettingsPanel() {
   const { channelId } = useParams({ strict: false }) as { channelId: string };
   // 채널을 옮겨도(뒤로 가기 등) 이 라우트 컴포넌트는 남는다 — 안쪽을 채널마다 새로 그려 초안과 열린 대화상자
-  // (되돌릴 수 없는 「새 대화」·제거 확인)가 옮겨 간 채널로 넘어가지 않게 한다
+  // (제거 확인)가 옮겨 간 채널로 넘어가지 않게 한다
   return <SettingsBody key={channelId} channelId={channelId} />;
 }
 
@@ -60,7 +60,7 @@ function SettingsBody({ channelId }: { channelId: string }) {
 }
 
 /**
- * 보관한 채널의 설정 패널 — 편집 섹션(「새 대화」 포함)을 그리지 않는다(채널 보관 스펙 「웹」 절). 「보관 해제」는 작성기 자리 하나에만 둔다.
+ * 보관한 채널의 설정 패널 — 편집 섹션을 그리지 않는다(채널 보관 스펙 「웹」 절). 「보관 해제」는 작성기 자리 하나에만 둔다.
  * 이 패널에서 보관했으면 누른 단추가 사라져 초점이 body 로 떨어진다 — 그때만 이 안내로 옮긴다(다른 탭의 보관이 초점을 뺏지 않게)
  */
 function ArchivedSettings() {

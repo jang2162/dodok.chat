@@ -17,7 +17,7 @@ import {
   threadRootsOf,
   threadSummaryOf,
 } from "../src/modules/messages/service";
-import { ensureSession, markSessionReset } from "../src/modules/sessions/service";
+import { ensureSession } from "../src/modules/sessions/service";
 import { ServerBus } from "../src/realtime/bus";
 import { bootTestApp, login } from "./helpers/app";
 import { newTestDb } from "./helpers/db";
@@ -351,7 +351,7 @@ describe("DB — 스레드 열·세션 유일성", () => {
     expect(t.db.select().from(agentSessions).all()).toHaveLength(2);
   });
 
-  it("ensureSession·markSessionReset 은 스레드 행이 있어도 채널 세션 행 하나만 쓴다", () => {
+  it("ensureSession 은 스레드 행이 있어도 채널 세션 행을 따로 만든다", () => {
     const t = setup();
     const dev = t.agent("dev");
     const root = t.human("루트");
@@ -373,12 +373,11 @@ describe("DB — 스레드 열·세션 유일성", () => {
       threadRootId: null,
       sessionKey: `agent:dev:dodok:channel:${t.channel.id}`,
     });
-    markSessionReset(t.db, t.channel.id, dev.id, { lifecycleRevision: "r1" });
-    markSessionReset(t.db, t.channel.id, dev.id, { lifecycleRevision: "r2" });
-    const rows = t.db.select().from(agentSessions).all();
-    expect(rows).toHaveLength(2);
-    expect(rows.find((r) => r.id === session.id)?.lifecycleRevision).toBe("r2");
-    expect(rows.find((r) => r.id === "thread-row")?.lifecycleRevision).toBeNull();
+    expect(session.id).not.toBe("thread-row");
+    expect(ensureSession(t.db, adapter, { conversationId: t.channel.id, agentId: dev.id }).session.id).toBe(
+      session.id,
+    );
+    expect(t.db.select().from(agentSessions).all()).toHaveLength(2);
   });
 
   it("runs 에 thread_root_id 열이 있다", () => {

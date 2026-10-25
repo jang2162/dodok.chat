@@ -3,7 +3,6 @@ import { type FormEvent, useId, useRef, useState } from "react";
 import { formError } from "@/api/formErrors";
 import { useCanManage } from "@/api/queries";
 import { gatewaySuffix } from "@/features/agents/gatewaySuffix";
-import { ResetSessionDialog } from "@/features/agents/ResetSessionDialog";
 import { josa } from "@/lib/josa";
 import { cn } from "@/lib/utils";
 import { agentColorVar } from "@/theme/agentColor";
@@ -19,9 +18,9 @@ import { PROMPT_MAX, RUNNER_RENEW_NOTICE } from "./PromptSection";
 import { LockedNotice, Saved } from "./Section";
 
 /**
- * 채널의 에이전트 한 줄(스펙 6.4): 이름·핸들, 자동 응답, 채널 오버라이드 프롬프트(펼침), 「새 대화」, 제거.
+ * 채널의 에이전트 한 줄(스펙 6.4): 이름·핸들, 자동 응답, 채널 오버라이드 프롬프트(펼침), 제거.
  * 자동 응답을 켤 때 다른 에이전트가 켜져 있으면 확인을 받은 뒤 그쪽을 먼저 끈다(`autoRespondPlan`).
- * admin 미만이면 자동 응답·오버라이드는 값만 보이고 「새 대화」는 없다 — 제거는 열려 있다(팀 스펙 2장)
+ * admin 미만이면 자동 응답·오버라이드는 값만 보인다 — 제거는 열려 있다(팀 스펙 2장)
  */
 export function AgentMemberRow({
   channelId,
@@ -48,9 +47,7 @@ export function AgentMemberRow({
   // 확인이 필요한지 판단할 때의 계획 — 확인 때 지금 멤버로 다시 세운다(열린 사이 wire 로 다른 에이전트가 켜질 수 있다)
   const [switching, setSwitching] = useState<AutoRespondStep[]>();
   const [removing, setRemoving] = useState(false);
-  const [resetting, setResetting] = useState(false);
   const autoRef = useRef<HTMLButtonElement>(null);
-  const resetRef = useRef<HTMLButtonElement>(null);
   const removeRef = useRef<HTMLButtonElement>(null);
   const handle = `@${agent.handle}`;
 
@@ -97,17 +94,6 @@ export function AgentMemberRow({
       <OverrideEditor channelId={channelId} member={member} handle={handle} readOnly={!canManage} />
       {!canManage && <LockedNotice />}
       <div className="flex justify-end gap-2">
-        {canManage && (
-          <Button
-            ref={resetRef}
-            variant="outline"
-            size="sm"
-            aria-label={`${handle} 새 대화`}
-            onClick={() => setResetting(true)}
-          >
-            새 대화
-          </Button>
-        )}
         <Button
           ref={removeRef}
           variant="ghost"
@@ -150,14 +136,6 @@ export function AgentMemberRow({
             },
           })
         }
-      />
-      <ResetSessionDialog
-        channelId={channelId}
-        agentId={agent.id}
-        handle={agent.handle}
-        open={resetting}
-        onOpenChange={setResetting}
-        returnFocus={resetRef}
       />
     </li>
   );

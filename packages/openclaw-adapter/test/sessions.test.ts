@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseChatHistory, parseSessionsReset, sessionKeyFor } from "../src/gateway/sessions";
+import { parseChatHistory, sessionKeyFor } from "../src/gateway/sessions";
 
 const CH = "01a09fc9-d204-7551-89d6-38544d07a202";
 
@@ -15,38 +15,6 @@ describe("sessionKeyFor", () => {
 
   it("shared 헬퍼를 쓴다 — OpenClaw agentId 가 아니면 던진다", () => {
     expect(() => sessionKeyFor("a b", CH)).toThrow();
-  });
-});
-
-describe("parseSessionsReset (ADR 0003 3.4 실물)", () => {
-  it("entry.sessionStartedAt(ms)는 ISO 로, lifecycleRevision 은 문자열 그대로", () => {
-    const startedAt = 1_789_399_629_480;
-    const res = {
-      ok: true,
-      key: `agent:dev:dodok:channel:${CH}`,
-      entry: {
-        sessionId: "274820f3-0000-7000-8000-000000000001",
-        lifecycleRevision: "0199a6c0-0000-7000-8000-00000000abcd",
-        sessionStartedAt: startedAt,
-        systemSent: false,
-        compactionCount: 0,
-      },
-    };
-
-    expect(parseSessionsReset(res)).toEqual({
-      sessionStartedAt: new Date(startedAt).toISOString(),
-      lifecycleRevision: "0199a6c0-0000-7000-8000-00000000abcd",
-    });
-  });
-
-  it("문자열 sessionStartedAt 은 그대로, 없는 필드·모양 틀린 응답은 빈 객체", () => {
-    expect(parseSessionsReset({ entry: { sessionStartedAt: "2026-09-15T00:00:00.000Z" } })).toEqual({
-      sessionStartedAt: "2026-09-15T00:00:00.000Z",
-    });
-    expect(parseSessionsReset({ ok: true })).toEqual({});
-    expect(parseSessionsReset(null)).toEqual({});
-    expect(parseSessionsReset({ entry: { sessionStartedAt: Number.NaN, lifecycleRevision: 3 } })).toEqual({});
-    expect(parseSessionsReset({ entry: { sessionStartedAt: 9e15 } })).toEqual({});
   });
 });
 

@@ -113,7 +113,6 @@ export async function bootLiveApp(opts: LiveAppOptions = {}): Promise<LiveApp> {
     for (const spec of specs) {
       fakeGateways.push(
         await startFakeGateway({
-          ...(opts.grantAdmin === undefined ? {} : { grantAdmin: opts.grantAdmin }),
           ...(opts.serverVersion === undefined ? {} : { serverVersion: opts.serverVersion }),
           ...(spec.agents === undefined ? {} : { agents: spec.agents }),
         }),

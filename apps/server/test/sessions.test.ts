@@ -4,10 +4,8 @@ import { describe, expect, it } from "vitest";
 import { agentSessions, agents } from "../src/db/schema.sqlite";
 import { updateChannel } from "../src/modules/channels/service";
 import {
-  clearProviderSessionId,
   ensureProviderSessionId,
   ensureSession,
-  markSessionReset,
   renewSessionOnPromptChange,
 } from "../src/modules/sessions/service";
 import { newTestDb } from "./helpers/db";
@@ -42,7 +40,7 @@ describe("sessions service", () => {
     expect(db.select().from(agentSessions).all()).toHaveLength(1);
   });
 
-  it("세션이 생긴 뒤 채널 promptRevision 이 오르면 needsPromptContext=true, markSessionReset 뒤 false", () => {
+  it("세션이 생긴 뒤 채널 promptRevision 이 오르면 needsPromptContext=true", () => {
     const { db, adapter, channelId, agentId } = setup();
     ensureSession(db, adapter, { conversationId: channelId, agentId });
     updateChannel(db, channelId, { prompt: "짧게 답해" });
@@ -51,45 +49,9 @@ describe("sessions service", () => {
     const stale = ensureSession(db, adapter, { conversationId: channelId, agentId });
     expect(stale.session.promptRevisionAtStart).toBe(1);
     expect(stale.needsPromptContext).toBe(true);
-
-    const reset = markSessionReset(db, channelId, agentId, {
-      sessionStartedAt: "2026-09-15T01:02:03.456Z",
-      lifecycleRevision: "0f7c2b8e-1d2a-4c55-9a51-0b8f3f0d6e11",
-    });
-    expect(reset).toMatchObject({
-      id: stale.session.id,
-      promptRevisionAtStart: 3,
-      sessionStartedAt: new Date("2026-09-15T01:02:03.456Z"),
-      lifecycleRevision: "0f7c2b8e-1d2a-4c55-9a51-0b8f3f0d6e11",
-    });
-    expect(reset.lastSyncedAt).toBeInstanceOf(Date);
-
-    const fresh = ensureSession(db, adapter, { conversationId: channelId, agentId });
-    expect(fresh.session.id).toBe(stale.session.id);
-    expect(fresh.needsPromptContext).toBe(false);
   });
 
-  it("markSessionReset 은 행이 없으면 원형 세션 키로 만든다", () => {
-    const { db, adapter, channelId, agentId } = setup();
-    updateChannel(db, channelId, { prompt: "p" });
-
-    const row = markSessionReset(db, channelId, agentId, {});
-    expect(row).toMatchObject({
-      channelId,
-      agentId,
-      sessionKey: adapter.sessionKeyFor("dev-main", channelId),
-      promptRevisionAtStart: 2,
-      sessionStartedAt: null,
-      lifecycleRevision: null,
-    });
-    expect(row.lastSyncedAt).toBeInstanceOf(Date);
-    expect(ensureSession(db, adapter, { conversationId: channelId, agentId })).toEqual({
-      session: row,
-      needsPromptContext: false,
-    });
-  });
-
-  it("ensureProviderSessionId 는 비었을 때 UUID 를 써 두고 다음에는 같은 값 — 비우는 것은 clearProviderSessionId 만", () => {
+  it("ensureProviderSessionId 는 비었을 때 UUID 를 써 두고 다음에는 같은 값", () => {
     const { db, adapter, channelId, agentId } = setup();
     const { session } = ensureSession(db, adapter, { conversationId: channelId, agentId });
     expect(session.providerSessionId).toBeNull();
@@ -98,14 +60,6 @@ describe("sessions service", () => {
     expect(first).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     expect(ensureProviderSessionId(db, session.id)).toBe(first);
 
-    // 리셋 표시는 그 열을 건드리지 않는다 — 비우는 것은 clearProviderSessionId 만
-    expect(markSessionReset(db, channelId, agentId, {}).providerSessionId).toBe(first);
-    clearProviderSessionId(db, session.id);
-    expect(
-      ensureSession(db, adapter, { conversationId: channelId, agentId }).session.providerSessionId,
-    ).toBeNull();
-    const next = ensureProviderSessionId(db, session.id);
-    expect(next).not.toBe(first);
     expect(() => ensureProviderSessionId(db, "01a09fc9-d204-7551-89d6-38544d07a1ff")).toThrow();
   });
 
@@ -118,14 +72,17 @@ describe("sessions service", () => {
     expect(ensureProviderSessionId(db, session.id)).toBe(id);
   });
 
-  it("renewSessionOnPromptChange — 리비전이 오르면 세션 id 를 비우고 「새 대화」처럼 리비전·시작 표지를 맞춘다, 한 번만 true", () => {
+  it("renewSessionOnPromptChange — 리비전이 오르면 세션 id 를 비우고 리비전·시작 표지를 맞춘다, 한 번만 true", () => {
     const { db, adapter, channelId, agentId } = setup();
     const { session } = ensureSession(db, adapter, { conversationId: channelId, agentId });
     const old = ensureProviderSessionId(db, session.id);
-    markSessionReset(db, channelId, agentId, {
-      sessionStartedAt: "2026-09-15T01:02:03.456Z",
-      lifecycleRevision: "0f7c2b8e-1d2a-4c55-9a51-0b8f3f0d6e11",
-    });
+    db.update(agentSessions)
+      .set({
+        sessionStartedAt: new Date("2026-09-15T01:02:03.456Z"),
+        lifecycleRevision: "0f7c2b8e-1d2a-4c55-9a51-0b8f3f0d6e11",
+      })
+      .where(eq(agentSessions.id, session.id))
+      .run();
     updateChannel(db, channelId, { prompt: "짧게 답해" });
 
     expect(renewSessionOnPromptChange(db, session.id)).toBe(true);
@@ -195,27 +152,6 @@ describe("sessions service", () => {
     expect(db.select().from(agentSessions).all()).toHaveLength(3);
   });
 
-  it("스레드 markSessionReset 은 그 스레드 행만 바꾸고, 없으면 스레드 키로 만든다", () => {
-    const { db, adapter, channelId, agentId } = setup();
-    const ROOT = "01a09fc9-d204-7551-89d6-38544d07a1cc";
-    const channel = ensureSession(db, adapter, { conversationId: channelId, agentId }).session;
-    updateChannel(db, channelId, { prompt: "p" });
-
-    const created = markSessionReset(db, channelId, agentId, { lifecycleRevision: "t1" }, ROOT);
-    expect(created).toMatchObject({
-      threadRootId: ROOT,
-      sessionKey: adapter.sessionKeyFor("dev-main", channelId, ROOT),
-      promptRevisionAtStart: 2,
-      lifecycleRevision: "t1",
-    });
-    const again = markSessionReset(db, channelId, agentId, { lifecycleRevision: "t2" }, ROOT);
-    expect(again.id).toBe(created.id);
-    expect(again.lifecycleRevision).toBe("t2");
-
-    const untouched = db.select().from(agentSessions).where(eq(agentSessions.id, channel.id)).get();
-    expect(untouched).toMatchObject({ promptRevisionAtStart: 1, lifecycleRevision: null });
-  });
-
   describe("리액션 커서(reactions_seen_at) — 새 세션은 그 전에 달린 리액션을 받지 않는다", () => {
     const LONG_AGO = new Date("2000-01-01T00:00:00.000Z");
     const cursorOf = (db: ReturnType<typeof setup>["db"], id: string) =>
@@ -247,33 +183,6 @@ describe("sessions service", () => {
       ).toEqual(LONG_AGO);
     });
 
-    it("markSessionReset 은 있는 행(채널·스레드)을 리셋 시각으로 올리고, 없으면 그 시각으로 만든다", () => {
-      const { db, adapter, channelId, agentId } = setup();
-      const ROOT = "01a09fc9-d204-7551-89d6-38544d07a1ee";
-      const channel = ensureSession(db, adapter, { conversationId: channelId, agentId }).session;
-      const thread = ensureSession(db, adapter, {
-        conversationId: channelId,
-        agentId,
-        threadRootId: ROOT,
-      }).session;
-      rewind(db, channel.id);
-      rewind(db, thread.id);
-
-      const before = Date.now();
-      expect(markSessionReset(db, channelId, agentId, {}).reactionsSeenAt?.getTime()).toBeGreaterThanOrEqual(
-        before,
-      );
-      expect(cursorOf(db, thread.id)).toEqual(LONG_AGO); // 채널 리셋은 스레드 행을 건드리지 않는다
-      expect(
-        markSessionReset(db, channelId, agentId, {}, ROOT).reactionsSeenAt?.getTime(),
-      ).toBeGreaterThanOrEqual(before);
-
-      const { channelId: other, agentId: otherAgent } = seedChannelWithAgent(db, { agentHandle: "fresh" });
-      expect(markSessionReset(db, other, otherAgent, {}).reactionsSeenAt?.getTime()).toBeGreaterThanOrEqual(
-        before,
-      );
-    });
-
     it("renewSessionOnPromptChange 는 리비전이 바뀌었을 때만 지금으로 올린다", () => {
       const { db, adapter, channelId, agentId } = setup();
       const { session } = ensureSession(db, adapter, { conversationId: channelId, agentId });
@@ -294,7 +203,6 @@ describe("sessions service", () => {
     const { db, adapter, channelId, agentId } = setup();
     db.update(agents).set({ providerAgentId: "dev:main" }).where(eq(agents.id, agentId)).run();
     expect(() => ensureSession(db, adapter, { conversationId: channelId, agentId })).toThrow();
-    expect(() => markSessionReset(db, channelId, agentId, {})).toThrow();
     expect(db.select().from(agentSessions).all()).toHaveLength(0);
   });
 });

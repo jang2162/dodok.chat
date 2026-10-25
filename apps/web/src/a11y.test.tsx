@@ -172,16 +172,12 @@ describe("채널 설정 패널", () => {
     expect(unnamed(sheet)).toEqual(NONE);
   });
 
-  it("「에이전트 제거」·「새 대화」 확인 대화상자에 제목이 있다", async () => {
+  it("「에이전트 제거」 확인 대화상자에 제목이 있다", async () => {
     stubSettingsServer({ members: [memberOf("agent", DEV_AGENT.id)] });
     renderRoute(`/c/${CH}/settings`);
     const list = await screen.findByRole("list", { name: "채널 에이전트" });
     await userEvent.click(within(list).getByRole("button", { name: "@dev 제거" }));
     expect(unnamed(await screen.findByRole("dialog", { name: "에이전트 제거" }))).toEqual(NONE);
-    await userEvent.keyboard("{Escape}");
-    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    await userEvent.click(within(list).getByRole("button", { name: "@dev 새 대화" }));
-    expect(unnamed(await screen.findByRole("dialog", { name: "새 대화" }))).toEqual(NONE);
   });
 });
 

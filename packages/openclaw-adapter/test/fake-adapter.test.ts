@@ -161,7 +161,6 @@ describe("FakeAdapter", () => {
     });
     expect(adapter.status()).toEqual(line("connected", "connected"));
     expect(adapter.capabilities()).toEqual({
-      sessionReset: true,
       agentsList: true,
       configSet: true,
       promptEveryRun: false,
@@ -170,8 +169,7 @@ describe("FakeAdapter", () => {
 
     adapter.setGatewayState({ gateway: "down", bridge: "down" });
     adapter.setCapabilities({
-      sessionReset: false,
-      agentsList: true,
+      agentsList: false,
       configSet: true,
       promptEveryRun: false,
       serverSessionIds: false,
@@ -179,8 +177,7 @@ describe("FakeAdapter", () => {
 
     expect(adapter.status()).toEqual(line("down", "down"));
     expect(adapter.capabilities()).toEqual({
-      sessionReset: false,
-      agentsList: true,
+      agentsList: false,
       configSet: true,
       promptEveryRun: false,
       serverSessionIds: false,
@@ -198,10 +195,6 @@ describe("FakeAdapter", () => {
       { providerAgentId: "fin" },
     ]);
 
-    const reset = await adapter.resetSession(key, FAKE_GATEWAY_ID);
-    expect(typeof reset.sessionStartedAt).toBe("string");
-    expect(reset.lifecycleRevision).toBe("fake-1");
-
     await expect(adapter.syncChannelConfig(CH, { requireMention: true }, FAKE_GATEWAY_ID)).resolves.toEqual({
       applied: "live",
     });
@@ -209,7 +202,6 @@ describe("FakeAdapter", () => {
     adapter.forgetRun(RUN);
 
     expect(adapter.calls.forget).toEqual([RUN]);
-    expect(adapter.calls.reset).toEqual([key]);
     expect(adapter.calls.syncChannelConfig).toEqual([{ channelId: CH, config: { requireMention: true } }]);
     expect(adapter.calls.abort).toEqual([{ runId: RUN, sessionKey: key }]);
   });
@@ -332,12 +324,11 @@ describe("FakeAdapter.supports", () => {
 });
 
 describe("FakeAdapter — 연결이 없는 에이전트(OpenClaw 흉내)", () => {
-  it("연결이 null 이면 send·abort·resetSession·listAgents 가 ADAPTER_UNAVAILABLE, supports 는 false", async () => {
+  it("연결이 null 이면 send·abort·listAgents 가 ADAPTER_UNAVAILABLE, supports 는 false", async () => {
     const adapter = new FakeAdapter();
     for (const call of [
       () => adapter.send(deliver(), { connectionId: null }),
       () => adapter.abort(RUN, "agent:dev:dodok:channel:x", null),
-      () => adapter.resetSession("agent:dev:dodok:channel:x", null),
       () => adapter.listAgents(null),
     ]) {
       await expect(call()).rejects.toMatchObject({ name: "AdapterError", code: "ADAPTER_UNAVAILABLE" });
