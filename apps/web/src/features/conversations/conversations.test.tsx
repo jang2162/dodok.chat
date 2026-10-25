@@ -679,6 +679,21 @@ describe("닫기·다시 열기", () => {
     live.detach();
   });
 
+  it("[태스크 8 브라우저] 다른 사람이 닫을 때 작성기에서 쓰던 중이면 초점은 안내로 간다 — 숨은 작성기에 남지 않는다", async () => {
+    stubServer({ conversations: [conv(A)] });
+    const { queryClient } = renderRoute(`/c/${CH}/s/${A}`);
+    const live = liveHandlers(queryClient);
+    const box = await screen.findByRole("textbox", { name: "메시지 입력" });
+    act(() => box.focus());
+    expect(box).toHaveFocus();
+
+    live.emit("conversation.updated", { conversation: conv(A, { closedAt: at(3), closedBy: OTHER }) });
+
+    const notice = await screen.findByTestId("conversation-closed");
+    await waitFor(() => expect(within(notice).getByText("닫힌 세션입니다")).toHaveFocus());
+    live.detach();
+  });
+
   it("[태스크 5 리뷰 ①] 닫힌 세션의 카드는 보관 채널처럼 잠긴다 — 사유 「닫힌 세션입니다」", async () => {
     stubServer({ conversations: [conv(A, { closedAt: at(3) })] });
     const card = msg(1, {
