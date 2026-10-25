@@ -14,7 +14,6 @@ import * as schema from "../src/db/schema.sqlite";
 import {
   agents,
   bridgeTokens,
-  channelReads,
   channels,
   gateways,
   invites,
@@ -116,9 +115,9 @@ describe("db", () => {
       "automations",
       "bridge_tokens",
       "channel_members",
-      "channel_reads",
       "channels",
       "component_interactions",
+      "conversation_reads",
       "conversations",
       "gateways",
       "invites",
@@ -740,9 +739,26 @@ describe("db", () => {
         insertChannel.run(elsewhere, ws2, "elsewhere", stranger, createdAt, 5);
 
         const before = Date.now();
-        migrate(db, { migrationsFolder: migrationsFolder() });
+        // channel_reads 는 conversation_reads 로 옮겨지고 지워진다(_conversation_reads) — 그 앞까지만 얹어 0018 의 시드를 본다
+        migrate(db, { migrationsFolder: migrationsUpTo(dir, "_automation_conversation") });
 
-        const rows = db.select().from(channelReads).all();
+        const rows = sqlite
+          .prepare("SELECT user_id, channel_id, last_read_seq, updated_at FROM channel_reads")
+          .all()
+          .map((r) => {
+            const row = r as {
+              user_id: string;
+              channel_id: string;
+              last_read_seq: number;
+              updated_at: number;
+            };
+            return {
+              userId: row.user_id,
+              channelId: row.channel_id,
+              lastReadSeq: row.last_read_seq,
+              updatedAt: new Date(row.updated_at),
+            };
+          });
         const key = (r: { userId: string; channelId: string }) => `${r.userId}/${r.channelId}`;
         expect(
           rows.map((r) => ({ userId: r.userId, channelId: r.channelId, lastReadSeq: r.lastReadSeq })),
@@ -757,7 +773,7 @@ describe("db", () => {
         );
         expect(rows).toHaveLength(5);
         expect(new Set(rows.map(key)).size).toBe(5);
-        // 시각은 마이그레이션이 돈 때(초 단위) — ts 열로 읽힌다
+        // 시각은 마이그레이션이 돈 때(초 단위, 밀리초 정수)
         for (const r of rows) {
           expect(r.updatedAt).toBeInstanceOf(Date);
           expect(r.updatedAt.getTime()).toBeGreaterThanOrEqual(Math.floor(before / 1000) * 1000);
@@ -765,10 +781,11 @@ describe("db", () => {
         }
         // (user_id, channel_id) 는 한 행 — 같은 짝을 다시 넣으면 거절
         expect(() =>
-          db
-            .insert(channelReads)
-            .values({ userId: active, channelId: busy, lastReadSeq: 1, updatedAt: new Date() })
-            .run(),
+          sqlite
+            .prepare(
+              "INSERT INTO channel_reads (user_id, channel_id, last_read_seq, updated_at) VALUES (?, ?, 1, 0)",
+            )
+            .run(active, busy),
         ).toThrow(/UNIQUE|PRIMARY KEY/);
       } finally {
         sqlite.close();
@@ -778,22 +795,43 @@ describe("db", () => {
     }
   });
 
-  it("channel_reads 는 채널과 함께 지워지고(cascade), 없는 사용자는 FK 가 거절한다", () => {
+  it("conversation_reads 는 대화·사용자와 함께 지워지고(cascade), 없는 사용자·대화는 FK 가 거절한다", () => {
     const db = createDb(":memory:");
-    const { user, ch } = seed(db);
-    db.insert(channelReads)
-      .values({ userId: user, channelId: ch, lastReadSeq: 0, updatedAt: new Date() })
+    const { ws, user, ch } = seed(db);
+    const other = uuid();
+    db.insert(users)
+      .values({
+        id: other,
+        workspaceId: ws,
+        handle: "other",
+        displayName: "O",
+        authProvider: "local",
+        createdAt: new Date(),
+      })
       .run();
-    expect(() =>
+    const row = (userId: string, conversationId: string) => ({
+      userId,
+      conversationId,
+      lastReadSeq: 0,
+      updatedAt: new Date(),
+    });
+    db.insert(schema.conversationReads).values(row(user, ch)).run();
+    db.insert(schema.conversationReads).values(row(other, ch)).run();
+    expect(() => db.insert(schema.conversationReads).values(row(uuid(), ch)).run()).toThrow(/FOREIGN KEY/);
+    expect(() => db.insert(schema.conversationReads).values(row(user, uuid())).run()).toThrow(/FOREIGN KEY/);
+    expect(() => db.insert(schema.conversationReads).values(row(user, ch)).run()).toThrow(
+      /UNIQUE|PRIMARY KEY/,
+    );
+    db.delete(users).where(eq(users.id, other)).run();
+    expect(
       db
-        .insert(channelReads)
-        .values({ userId: uuid(), channelId: ch, lastReadSeq: 0, updatedAt: new Date() })
-        .run(),
-    ).toThrow(/FOREIGN KEY/);
-    // 채널의 대화가 채널을 가리킨다(cascade 없음) — 채널을 지우려면 대화부터
-    db.delete(schema.conversations).where(eq(schema.conversations.channelId, ch)).run();
-    db.delete(channels).where(eq(channels.id, ch)).run();
-    expect(db.select().from(channelReads).all()).toEqual([]);
+        .select()
+        .from(schema.conversationReads)
+        .all()
+        .map((r) => r.userId),
+    ).toEqual([user]);
+    db.delete(schema.conversations).where(eq(schema.conversations.id, ch)).run();
+    expect(db.select().from(schema.conversationReads).all()).toEqual([]);
   });
 
   it("runs·approvals 의 제공자 id 는 연결 안에서만 유일하다", () => {
@@ -1261,6 +1299,107 @@ describe("conversations 마이그레이션", () => {
           { name: "messages_fts_ai" },
           { name: "messages_fts_au" },
         ]);
+      } finally {
+        sqlite.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("conversation_reads 마이그레이션", () => {
+  it("_automation_conversation 까지 적용된 DB 에 얹으면 옛 채널 읽음은 「이전 대화」로(그 대화 끝으로 깎아), 그 밖의 대화는 membership(비활성 포함)마다 끝까지 읽음이고 channel_reads 는 없어진다", () => {
+    const dir = mkdtempSync(join(tmpdir(), "dodok-db-mig-"));
+    try {
+      const older = migrationsUpTo(dir, "_automation_conversation");
+      const sqlite = new Database(join(dir, "app.db"));
+      try {
+        const db = drizzle(sqlite, { schema: { ...schema, ...authSchema } });
+        migrate(db, { migrationsFolder: older });
+        const t = Date.parse("2026-10-25T00:00:00.000Z");
+        const readAt = Date.parse("2026-10-20T00:00:00.000Z");
+        const insertWorkspace = sqlite.prepare(
+          "INSERT INTO workspaces (id, name, created_at) VALUES (?, 'w', ?)",
+        );
+        const insertUser = sqlite.prepare(
+          "INSERT INTO users (id, workspace_id, handle, display_name, auth_provider, created_at) VALUES (?, ?, ?, ?, 'local', ?)",
+        );
+        const insertMembership = sqlite.prepare(
+          "INSERT INTO memberships (id, workspace_id, user_id, role, deactivated_at) VALUES (?, ?, ?, 'member', ?)",
+        );
+        const insertChannel = sqlite.prepare(
+          'INSERT INTO channels (id, workspace_id, name, relay_policy_json, visibility, created_by, created_at, last_seq) VALUES (?, ?, ?, \'{"maxRelayTurns":4,"allowPairs":"all"}\', \'public\', ?, ?, ?)',
+        );
+        const insertConversation = sqlite.prepare(
+          "INSERT INTO conversations (id, channel_id, title, title_source, created_by_type, created_by_id, created_at, last_seq) VALUES (?, ?, ?, 'user', 'user', ?, ?, ?)",
+        );
+        const insertRead = sqlite.prepare(
+          "INSERT INTO channel_reads (user_id, channel_id, last_read_seq, updated_at) VALUES (?, ?, ?, ?)",
+        );
+        const ws = uuid();
+        const [active, deactivated, outsider] = [uuid(), uuid(), uuid()];
+        insertWorkspace.run(ws, t);
+        insertUser.run(active, ws, "active", "Active", t);
+        insertUser.run(deactivated, ws, "gone", "Gone", t);
+        insertUser.run(outsider, ws, "outsider", "Outsider", t);
+        insertMembership.run(uuid(), ws, active, null);
+        insertMembership.run(uuid(), ws, deactivated, t);
+        // X: 0025 가 옮긴 채널 — 「이전 대화」(id = X, 끝 seq 3)와 그 뒤에 만든 세션 B(끝 seq 5). 채널 끝은 5
+        const x = uuid();
+        const b = uuid();
+        insertChannel.run(x, ws, "x", active, t, 5);
+        insertConversation.run(x, x, "이전 대화", active, t, 3);
+        insertConversation.run(b, x, "B", active, t, 5);
+        // Y: 0025 뒤에 만든 채널 — 「이전 대화」가 없다(세션 C 만)
+        const y = uuid();
+        const c = uuid();
+        insertChannel.run(y, ws, "y", active, t, 7);
+        insertConversation.run(c, y, "C", active, t, 7);
+        // 옛 채널 읽음 — active 는 X 끝(5)까지, deactivated 는 2 까지, Y 에도 한 행(옮길 「이전 대화」가 없다)
+        insertRead.run(active, x, 5, readAt);
+        insertRead.run(deactivated, x, 2, readAt);
+        insertRead.run(active, y, 1, readAt);
+        // 다른 워크스페이스 — 워크스페이스를 넘어 짝짓지 않는다
+        const ws2 = uuid();
+        const stranger = uuid();
+        const z = uuid();
+        const d = uuid();
+        insertWorkspace.run(ws2, t);
+        insertUser.run(stranger, ws2, "stranger", "Stranger", t);
+        insertMembership.run(uuid(), ws2, stranger, null);
+        insertChannel.run(z, ws2, "z", stranger, t, 2);
+        insertConversation.run(d, z, "D", stranger, t, 2);
+
+        const before = Date.now();
+        migrate(db, { migrationsFolder: migrationsFolder() });
+
+        const rows = db.select().from(schema.conversationReads).all();
+        const simple = rows.map((r) => ({ u: r.userId, c: r.conversationId, seq: r.lastReadSeq }));
+        expect(simple).toEqual(
+          expect.arrayContaining([
+            // ① 옛 채널 읽음 → 「이전 대화」, 그 대화 끝(3)으로 깎는다
+            { u: active, c: x, seq: 3 },
+            { u: deactivated, c: x, seq: 2 },
+            // ② 그 밖의 대화는 membership 마다 끝까지
+            { u: active, c: b, seq: 5 },
+            { u: deactivated, c: b, seq: 5 },
+            { u: active, c: c, seq: 7 },
+            { u: deactivated, c: c, seq: 7 },
+            { u: stranger, c: d, seq: 2 },
+          ]),
+        );
+        expect(rows).toHaveLength(7);
+        // ① 은 옛 행의 시각을 그대로, ② 는 마이그레이션이 돈 때
+        const at = (u: string, conv: string) =>
+          rows.find((r) => r.userId === u && r.conversationId === conv)!.updatedAt.getTime();
+        expect(at(active, x)).toBe(readAt);
+        expect(at(active, b)).toBeGreaterThanOrEqual(Math.floor(before / 1000) * 1000);
+        expect(
+          sqlite
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'channel_reads'")
+            .all(),
+        ).toEqual([]);
       } finally {
         sqlite.close();
       }

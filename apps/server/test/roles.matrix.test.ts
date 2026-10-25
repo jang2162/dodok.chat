@@ -503,7 +503,7 @@ describe("역할 매트릭스(스펙 2장)", () => {
         return { method: "DELETE", url: `/api/v1/gateways/${gatewayId}/bridge-tokens/${record.id}` };
       },
     },
-    // 읽지 않음(읽지 않음 스펙 「권한」 장) — 누구나, 자기 것만. wire channel.read 는 reads 통합 테스트가 본다
+    // 읽지 않음(읽지 않음 스펙 「권한」 장) — 누구나, 자기 것만. wire conversation.read 는 reads 통합 테스트가 본다
     {
       name: "GET /me/unread",
       min: "member",

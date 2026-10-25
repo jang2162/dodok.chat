@@ -17,7 +17,7 @@ import { useWireStatus } from "@/realtime/wire";
 import { requestJump, useJumpStore } from "./jumpTarget";
 import { MessageList } from "./MessageList";
 import { useTimeline } from "./useTimeline";
-import { addPending, emptyTimeline, type Timeline, upsert } from "./timeline";
+import { addPending, emptyTimeline, NEW_CONVERSATION, type Timeline, upsert } from "./timeline";
 
 const RECT = { width: 800, height: 600 };
 const ROW = 64;
@@ -584,6 +584,39 @@ describe("MessageList 읽음 전송", () => {
   const requested = (sender: { request: ReturnType<typeof vi.fn> }) =>
     sender.request.mock.calls.map(([channelId, seq]) => [channelId, seq]);
 
+  it("읽음은 그 세션 id 로 요청한다 — 채널 id 가 아니라(같은 채널 다른 세션의 글을 읽음으로 만들지 않게)", async () => {
+    const S2 = uid(40_000);
+    const sender = { request: vi.fn(), dispose: vi.fn() };
+    const qc = authorsClient();
+    subscribedWith(qc, qk.timeline(CH, S2), {
+      ...timelineOf(range(1, 5).map((m) => ({ ...m, conversationId: S2 }))),
+      lastSeq: 9,
+    });
+    renderWithClient(
+      <ReadSenderContext.Provider value={sender}>
+        <MessageList channelId={CH} conversationId={S2} initialRect={RECT} />
+      </ReadSenderContext.Provider>,
+      qc,
+    );
+    await waitFor(() => expect(requested(sender)).toEqual([[S2, 9]]));
+    expect(isViewingAtEnd(S2)).toBe(true);
+    expect(isViewingAtEnd(CH)).toBe(false);
+  });
+
+  it("새 세션 창(new)은 읽음을 보내지 않는다 — 아직 세션이 없다", async () => {
+    const sender = { request: vi.fn(), dispose: vi.fn() };
+    const qc = authorsClient();
+    subscribedWith(qc, qk.timeline(CH, NEW_CONVERSATION), { ...timelineOf([]), lastSeq: 3 });
+    renderWithClient(
+      <ReadSenderContext.Provider value={sender}>
+        <MessageList channelId={CH} conversationId={NEW_CONVERSATION} initialRect={RECT} />
+      </ReadSenderContext.Provider>,
+      qc,
+    );
+    await act(() => new Promise((r) => setTimeout(r, 50)));
+    expect(sender.request).not.toHaveBeenCalled();
+  });
+
   it("끝에 붙어 있고 탭이 보이면 타임라인의 lastSeq(답글 seq 포함)를 요청하고, 끝이 보이는 채널로 알린다", async () => {
     // 답글이 채널 seq 를 올렸다 — 가진 마지막 루트(40)가 아니라 lastSeq(42)
     const { sender } = setupRead({ ...timelineOf(range(1, 40)), lastSeq: 42 });
@@ -768,11 +801,18 @@ describe("MessageList 「새 메시지」 구분선·페이지 밖 배너", () =
   it("읽음이 올라가도(applyRead) 구분선은 그 자리에 남는다", async () => {
     useUnread.getState().beginSnapshot();
     useUnread.getState().applySnapshot({
-      channels: [{ channelId: CH, lastReadSeq: 38, latestSeq: 40, unread: true, mentions: 0 }],
+      channels: [CH, CH2],
+      conversations: [
+        { conversationId: CH, channelId: CH, lastReadSeq: 38, latestSeq: 40, unread: true, mentions: 0 },
+      ],
     });
     setupEntry(timelineOf(range(1, 40)), 38);
     await screen.findByRole("separator", { name: "새 메시지" });
-    act(() => useUnread.getState().applyRead({ channelId: CH, lastReadSeq: 40 }, { listed: true }));
+    act(() =>
+      useUnread
+        .getState()
+        .applyRead({ conversationId: CH, channelId: CH, lastReadSeq: 40 }, { listed: true }),
+    );
     await act(() => new Promise((r) => setTimeout(r, 20)));
     expect(separator()).toBeInTheDocument();
   });
@@ -1011,7 +1051,10 @@ describe("MessageList 첫 안 읽은 곳에서 열기", () => {
   const known = (lastReadSeq: number, latestSeq: number) => {
     useUnread.getState().beginSnapshot();
     useUnread.getState().applySnapshot({
-      channels: [{ channelId: CH, lastReadSeq, latestSeq, unread: true, mentions: 0 }],
+      channels: [CH, CH2],
+      conversations: [
+        { conversationId: CH, channelId: CH, lastReadSeq, latestSeq, unread: true, mentions: 0 },
+      ],
     });
   };
   /** 이어 받기 — 가진 목록 뒤에 from..to 를 붙이고 lastSeq 를 to 로 */
@@ -1150,7 +1193,10 @@ describe("MessageList 첫 안 읽은 곳에서 열기", () => {
     // 캐시는 40 까지, 서버가 아는 최신은 100(스냅숏 seenSeq) — 이어 받기가 41..100 을 채운다
     useUnread.getState().beginSnapshot();
     useUnread.getState().applySnapshot({
-      channels: [{ channelId: CH, lastReadSeq: 40, latestSeq: 100, unread: true, mentions: 0 }],
+      channels: [CH, CH2],
+      conversations: [
+        { conversationId: CH, channelId: CH, lastReadSeq: 40, latestSeq: 100, unread: true, mentions: 0 },
+      ],
     });
     const { qc, scroller, sender } = open(timelineOf(range(1, 40)), 40);
     await screen.findByText("본문 40");
@@ -1168,7 +1214,10 @@ describe("MessageList 첫 안 읽은 곳에서 열기", () => {
   it("5. 이어 받은 것에 안 읽은 최상위 글이 없으면(구분선이 안 생김) 붙잡아 둔 읽음을 푼다", async () => {
     useUnread.getState().beginSnapshot();
     useUnread.getState().applySnapshot({
-      channels: [{ channelId: CH, lastReadSeq: 40, latestSeq: 50, unread: false, mentions: 0 }],
+      channels: [CH, CH2],
+      conversations: [
+        { conversationId: CH, channelId: CH, lastReadSeq: 40, latestSeq: 50, unread: false, mentions: 0 },
+      ],
     });
     const { qc, sender } = open(timelineOf(range(1, 40)), 40);
     await screen.findByText("본문 40");
@@ -1334,6 +1383,37 @@ describe("MessageList 첫 안 읽은 곳에서 열기", () => {
     act(() => qc.setQueryData(qk.timeline(CH, CH), timelineOf(range(1, 100))));
     await waitFor(() => expect(fromEnd()).toBe(0));
     await waitFor(() => expect(sender.request).toHaveBeenCalledWith(CH, 100));
+  });
+
+  it("캐시로 연 세션 A — 같은 채널 B 의 seenSeq 가 A 의 lastSeq 보다 커도 이어 받기를 기다리지 않고 끝에서 A 의 읽음을 보낸다", async () => {
+    // seq 는 채널 하나의 번호다 — B 의 최신(100)을 A 가 기다리면 A 의 이어 받기는 끝내 거기 닿지 않아 읽음이 가지 않는다
+    const A = uid(41_000);
+    const B = uid(41_001);
+    useUnread.getState().beginSnapshot();
+    useUnread.getState().applySnapshot({
+      channels: [CH, CH2],
+      conversations: [
+        { conversationId: A, channelId: CH, lastReadSeq: 40, latestSeq: 40, unread: false, mentions: 0 },
+        { conversationId: B, channelId: CH, lastReadSeq: 60, latestSeq: 100, unread: true, mentions: 0 },
+      ],
+    });
+    const sender = { request: vi.fn(), dispose: vi.fn() };
+    const qc = authorsClient();
+    subscribedWith(
+      qc,
+      qk.timeline(CH, A),
+      timelineOf(range(1, 40).map((m) => ({ ...m, conversationId: A }))),
+    );
+    renderWithClient(
+      <ReadSenderContext.Provider value={sender}>
+        <MessageList channelId={CH} conversationId={A} entryReadSeq={40} initialRect={RECT} />
+      </ReadSenderContext.Provider>,
+      qc,
+    );
+    await screen.findByText("본문 40");
+    // 기다림의 끝(AWAIT_UNREAD_MAX_MS 5초)이 대신 보내기 전에 — 기다리지 않았다는 것을 시간으로 가른다
+    await waitFor(() => expect(sender.request).toHaveBeenCalledWith(A, 40), { timeout: 1_500 });
+    expect(sender.request.mock.calls.map(([id]) => id)).not.toContain(B);
   });
 
   it("읽은 자리가 0 이면(새 멤버가 처음 여는 채널) 구분선이 아니라 끝에서 열고 읽음이 간다", async () => {

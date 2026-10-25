@@ -48,6 +48,7 @@ describe("제어 도구 — dodok MCP 서버에 CONTROL_TOOLS 전부", () => {
     const names = fake.servers[0]!.map((t) => t.name);
     expect(names).toEqual(["post", ...CONTROL_TOOLS.map((t) => t.name)]);
     expect(CONTROL_TOOL_FULL_NAMES).toEqual(CONTROL_TOOLS.map((t) => `mcp__dodok__${t.name}`));
+    expect(names).toContain("list_conversations");
     for (const tool of CONTROL_TOOLS) {
       const found = tools.find((t) => t.name === tool.name)!;
       expect(found.description).toBe(tool.description);

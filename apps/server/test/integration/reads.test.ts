@@ -54,14 +54,20 @@ describe("통합 — 읽지 않음 팬아웃", () => {
       createdBy: app.ownerUserId,
       name: `reads-${++n}`,
     });
+  // extra 에 conversationId: undefined 와 newConversation 을 주면 새 세션으로 보낸다(sendTarget 이 고른 세션을 지운다)
   const send = (socket: WireClient, channelId: string, extra: Record<string, unknown> = {}) =>
-    socket.emitWithAck("message.send", {
-      channelId,
-      ...sendTarget(app.db, channelId, extra["threadRootId"] as string | undefined),
-      clientMsgId: `c-${++n}`,
-      bodyMd: "hi",
-      ...extra,
-    });
+    socket.emitWithAck(
+      "message.send",
+      JSON.parse(
+        JSON.stringify({
+          channelId,
+          ...sendTarget(app.db, channelId, extra["threadRootId"] as string | undefined),
+          clientMsgId: `c-${++n}`,
+          bodyMd: "hi",
+          ...extra,
+        }),
+      ),
+    );
   const ready = async () => {
     [a1, a2, bs] = [await wire(a.token), await wire(a.token), await wire(b.token)];
   };
@@ -83,6 +89,7 @@ describe("통합 — 읽지 않음 팬아웃", () => {
         message: {
           id: uuid(),
           channelId,
+          conversationId: channelId,
           seq: 1,
           kind: "normal",
           authorType: "agent",
@@ -106,6 +113,7 @@ describe("통합 — 읽지 않음 팬아웃", () => {
       for (const p of await Promise.all(got)) {
         expect(ChannelActivity.parse(p)).toEqual({
           channelId: ch.id,
+          conversationId: sent.conversationId,
           seq: sent.seq,
           authorType: "user",
           authorId: b.id,
@@ -124,6 +132,7 @@ describe("통합 — 읽지 않음 팬아웃", () => {
       await send(bs, ch.id, { bodyMd: "@reads-a ping", threadRootId: root.id });
       expect(await seen).toMatchObject({
         channelId: ch.id,
+        conversationId: root.conversationId,
         threadRootId: root.id,
         authorId: b.id,
         mentionedUserIds: [a.id],
@@ -152,6 +161,7 @@ describe("통합 — 읽지 않음 팬아웃", () => {
         message: {
           id: uuid(),
           channelId: ch.id,
+          conversationId: ch.id,
           seq: 1,
           kind: "system",
           authorType: "agent",
@@ -174,6 +184,7 @@ describe("통합 — 읽지 않음 팬아웃", () => {
           message: {
             id: uuid(),
             channelId: ch.id,
+            conversationId: ch.id,
             seq: 1,
             kind: "normal",
             authorType,
@@ -200,6 +211,7 @@ describe("통합 — 읽지 않음 팬아웃", () => {
           message: {
             id: uuid(),
             channelId: ch.id,
+            conversationId: ch.id,
             seq: 1,
             kind: "normal",
             authorType: "agent",
@@ -229,6 +241,7 @@ describe("통합 — 읽지 않음 팬아웃", () => {
         message: {
           id: uuid(),
           channelId: ch.id,
+          conversationId: ch.id,
           seq: 1,
           kind: "normal",
           authorType: "agent",
@@ -255,6 +268,7 @@ describe("통합 — 읽지 않음 팬아웃", () => {
       const activity = await seen;
       expect(ChannelActivity.parse(activity)).toEqual({
         channelId: ch.id,
+        conversationId: message.conversationId,
         seq: message.seq,
         authorType: "automation",
         authorId: automationId,
@@ -271,6 +285,7 @@ describe("통합 — 읽지 않음 팬아웃", () => {
         message: {
           id: uuid(),
           channelId: ch.id,
+          conversationId: ch.id,
           seq: 1,
           kind: "normal",
           authorType: "agent",
@@ -284,57 +299,74 @@ describe("통합 — 읽지 않음 팬아웃", () => {
     });
   });
 
-  describe("channel.read", () => {
-    it("A 의 소켓 1 이 보내면 ack 에 저장된 위치, 소켓 2 가 channel.read 를 받는다 — B 는 받지 않는다", async () => {
+  describe("conversation.read", () => {
+    it("A 의 소켓 1 이 보내면 ack 에 저장된 위치, 소켓 2 가 conversation.read 를 받는다 — B 는 받지 않는다", async () => {
       await ready();
       const ch = channel();
       const sent = unwrap(await send(bs, ch.id)).message;
-      const seenB = recordEvents(bs, ["channel.read"]);
-      const got = waitFor(a2, "channel.read");
-      const res = await a1.emitWithAck("channel.read", { channelId: ch.id, seq: sent.seq });
+      const seenB = recordEvents(bs, ["conversation.read"]);
+      const got = waitFor(a2, "conversation.read");
+      const res = await a1.emitWithAck("conversation.read", {
+        conversationId: sent.conversationId,
+        seq: sent.seq,
+      });
       expect(res).toEqual({ ok: true, data: { lastReadSeq: sent.seq } });
-      expect(await got).toEqual({ channelId: ch.id, lastReadSeq: sent.seq });
+      expect(await got).toEqual({
+        conversationId: sent.conversationId,
+        channelId: ch.id,
+        lastReadSeq: sent.seq,
+      });
       await roundTrip(bs);
       expect(seenB).toEqual([]);
     });
 
-    it("last_seq 보다 큰 seq 는 깎이고, 낮은 seq 는 위치를 내리지 않는다", async () => {
+    it("그 대화의 last_seq 보다 큰 seq 는 깎이고(같은 채널 다른 세션의 뒤 글 자리가 아니라), 낮은 seq 는 위치를 내리지 않는다", async () => {
       await ready();
       const ch = channel();
       const sent = unwrap(await send(bs, ch.id)).message;
-      expect(await a1.emitWithAck("channel.read", { channelId: ch.id, seq: 999 })).toEqual({
+      // 같은 채널의 다른 세션에 뒤 글 — 채널 끝(seq 2)은 첫 세션의 읽음 위치가 될 수 없다
+      const other = unwrap(await send(bs, ch.id, { conversationId: undefined, newConversation: {} })).message;
+      expect(other.conversationId).not.toBe(sent.conversationId);
+      expect(
+        await a1.emitWithAck("conversation.read", { conversationId: sent.conversationId, seq: 999 }),
+      ).toEqual({
         ok: true,
         data: { lastReadSeq: sent.seq },
       });
-      expect(await a1.emitWithAck("channel.read", { channelId: ch.id, seq: 0 })).toEqual({
+      expect(
+        await a1.emitWithAck("conversation.read", { conversationId: sent.conversationId, seq: 0 }),
+      ).toEqual({
         ok: true,
         data: { lastReadSeq: sent.seq },
       });
     });
 
-    it("형식이 틀리면 VALIDATION, 없는 채널은 NOT_FOUND", async () => {
+    it("형식이 틀리면 VALIDATION(채널 단위 꼴 포함), 없는 대화는 NOT_FOUND", async () => {
       await ready();
-      expect(await a1.emitWithAck("channel.read", { channelId: "nope", seq: 1 } as never)).toMatchObject({
-        ok: false,
-        error: { code: "VALIDATION" },
-      });
-      expect(await a1.emitWithAck("channel.read", { channelId: uuid(), seq: 1 })).toMatchObject({
+      expect(
+        await a1.emitWithAck("conversation.read", { conversationId: "nope", seq: 1 } as never),
+      ).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
+      expect(
+        await a1.emitWithAck("conversation.read", { channelId: channel().id, seq: 1 } as never),
+      ).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
+      expect(await a1.emitWithAck("conversation.read", { conversationId: uuid(), seq: 1 })).toMatchObject({
         ok: false,
         error: { code: "NOT_FOUND" },
       });
     });
 
-    it("보관한 채널의 channel.read 도 받는다 — 읽기는 막지 않는다", async () => {
+    it("보관한 채널의 conversation.read 도 받는다 — 읽기는 막지 않는다", async () => {
       await ready();
       const ch = channel();
+      const conversationId = channelConversation(app.db, ch.id);
       createUserMessage(app.db, app.bus, {
-        conversationId: channelConversation(app.db, ch.id),
+        conversationId,
         authorId: b.id,
         bodyMd: "old",
         clientMsgId: `arch-${++n}`,
       });
       app.db.update(channels).set({ archivedAt: new Date() }).where(eq(channels.id, ch.id)).run();
-      expect(await a1.emitWithAck("channel.read", { channelId: ch.id, seq: 1 })).toEqual({
+      expect(await a1.emitWithAck("conversation.read", { conversationId, seq: 1 })).toEqual({
         ok: true,
         data: { lastReadSeq: 1 },
       });
@@ -342,19 +374,36 @@ describe("통합 — 읽지 않음 팬아웃", () => {
   });
 
   describe("작성자 읽음", () => {
-    it("A 가 최상위를 보내면 읽음이 그 seq 로 오른다 — 소켓 2 가 channel.read 를 받는다", async () => {
+    it("A 가 최상위를 보내면 그 세션의 읽음이 그 seq 로 오른다 — 소켓 2 가 conversation.read 를 받는다", async () => {
       await ready();
       const ch = channel();
-      const got = waitFor(a2, "channel.read");
+      const got = waitFor(a2, "conversation.read");
       const sent = unwrap(await send(a1, ch.id)).message;
-      expect(await got).toEqual({ channelId: ch.id, lastReadSeq: sent.seq });
+      expect(await got).toEqual({
+        conversationId: sent.conversationId,
+        channelId: ch.id,
+        lastReadSeq: sent.seq,
+      });
+    });
+
+    it("새 세션의 첫 글이면 그 새 세션의 읽음이 오르고, 같은 채널의 다른 세션은 그대로다", async () => {
+      await ready();
+      const ch = channel();
+      const first = unwrap(await send(bs, ch.id)).message;
+      const seen = recordEvents(a2, ["conversation.read"]);
+      const sent = unwrap(await send(a1, ch.id, { conversationId: undefined, newConversation: {} })).message;
+      await roundTrip(a2);
+      expect(sent.conversationId).not.toBe(first.conversationId);
+      expect(seen.map((e) => e.payload)).toEqual([
+        { conversationId: sent.conversationId, channelId: ch.id, lastReadSeq: sent.seq },
+      ]);
     });
 
     it("스레드 답글은 읽음을 올리지 않는다", async () => {
       await ready();
       const ch = channel();
       const root = unwrap(await send(bs, ch.id)).message;
-      const seen = recordEvents(a2, ["channel.read"]);
+      const seen = recordEvents(a2, ["conversation.read"]);
       unwrap(await send(a1, ch.id, { threadRootId: root.id }));
       await roundTrip(a2);
       expect(seen).toEqual([]);
@@ -363,10 +412,10 @@ describe("통합 — 읽지 않음 팬아웃", () => {
     it("같은 clientMsgId 재전송은 다시 내지 않는다", async () => {
       await ready();
       const ch = channel();
-      const first = waitFor(a2, "channel.read");
+      const first = waitFor(a2, "conversation.read");
       unwrap(await send(a1, ch.id, { clientMsgId: "dup-1" }));
       await first;
-      const seen = recordEvents(a2, ["channel.read"]);
+      const seen = recordEvents(a2, ["conversation.read"]);
       unwrap(await send(a1, ch.id, { clientMsgId: "dup-1" }));
       await roundTrip(a2);
       expect(seen).toEqual([]);

@@ -30,7 +30,7 @@ import { SystemCard } from "./SystemCard";
 import { useJump } from "./useJump";
 import { useNewerPages } from "./useNewerPages";
 import { reportPageError, useOlderPages } from "./useOlderPages";
-import type { Timeline } from "./timeline";
+import { NEW_CONVERSATION, type Timeline } from "./timeline";
 import { useTimelineState } from "./useTimeline";
 
 /** 하단에서 이만큼 안이면 「맨 아래에 붙어 있다」 — 새 행을 따라간다(스펙 5.5) */
@@ -56,7 +56,7 @@ export type MessageListProps = {
   threadRootId?: string;
   /** 좁은 화면의 패널 시트가 이 목록을 덮고 있다 — 끝이 보이는 것으로 치지 않는다(읽음을 보내지 않는다) */
   covered?: boolean;
-  /** 채널에 들어갈 때 잡은 읽음 위치(`captureEntryRead`) — 없으면 「새 메시지」 구분선도 배너도 없고 끝에서 연다. 있으면 구분선이 받은 행 안일 때 그 선에서 연다(0 이면 끝에서). 스레드 패널은 넘기지 않는다 */
+  /** 세션에 들어갈 때 잡은 읽음 위치(`captureEntryRead`) — 없으면 「새 메시지」 구분선도 배너도 없고 끝에서 연다. 있으면 구분선이 받은 행 안일 때 그 선에서 연다(0 이면 끝에서). 스레드 패널은 넘기지 않는다 */
   entryReadSeq?: number;
   /** 태스크 8: 보일 스트리밍 버블의 runId(순서대로) 와 그 버블 */
   bubbleRunIds?: readonly string[];
@@ -202,8 +202,8 @@ function ChannelMessages({
   // 떨어진 창의 아래 끝은 진짜 끝이 아니고(`lastSeq` 는 창이 아니라 채널의 끝이라 보내면 받지 않은 메시지까지 읽음이 된다),
   // 목표를 안고 열린 목록은 끝으로 가지 않는다
   useReadAtEnd(
-    channelId,
-    threadRootId === undefined && !covered,
+    conversationId,
+    threadRootId === undefined && !covered && conversationId !== NEW_CONVERSATION,
     stuck && !hasNewer && !jump.pending && !entryHold,
     timeline?.lastSeq ?? 0,
   );
@@ -287,7 +287,7 @@ function ChannelMessages({
   }
   /** 서버는 가진 목록 뒤에도 글이 있다고 안다 — 이어 받기가 거기까지 닿을 때까지 읽음을 붙잡고 끝에 붙지 않은 것으로 둔다. 아니면 곧바로 놓는다 */
   function holdForCatchUp() {
-    const latest = useUnread.getState().byChannel[channelId]?.seenSeq ?? 0;
+    const latest = useUnread.getState().byConversation[conversationId]?.seenSeq ?? 0;
     if (cachedAtMount && latest > (timeline?.lastSeq ?? 0)) {
       setAwaitSeq(latest);
       setStuck(false);

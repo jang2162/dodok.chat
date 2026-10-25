@@ -306,18 +306,19 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
       void qc.invalidateQueries({ queryKey: qk.opsEventsAll });
     },
     /**
-     * 다른 채널의 새 글(본문 없음, 워크스페이스 방) — 보는 채널만 구독하므로 사이드바는 이것으로 안다. 보고 있는 채널의 끝이
-     * 보이면 더하지 않는다(읽음 전송이 맡는다)
+     * 새 글(본문 없음, 워크스페이스 방) — 보는 채널만 구독하므로 사이드바·세션 목록은 이것으로 안다. 보고 있는 세션의 끝이
+     * 보이면 더하지 않는다(읽음 전송이 맡는다) — 같은 채널의 다른 세션 글은 더한다
      */
     "channel.activity": (activity) =>
       useUnread.getState().applyActivity(activity, {
         me: qc.getQueryData<MeResponse>(qk.me)?.user.id,
         viewing: subscriptions.active(),
-        atEnd: isViewingAtEnd(activity.channelId),
+        atEnd: isViewingAtEnd(activity.conversationId),
         listed: listed(activity.channelId),
       }),
-    /** 이 사람의 읽음 위치가 올랐다(user 방) — 이 탭이 보낸 것도, 다른 기기·가려진 탭이 보낸 것도 여기로 온다 */
-    "channel.read": (update) => useUnread.getState().applyRead(update, { listed: listed(update.channelId) }),
+    /** 이 사람의 세션 읽음 위치가 올랐다(user 방) — 이 탭이 보낸 것도, 다른 기기·가려진 탭이 보낸 것도 여기로 온다 */
+    "conversation.read": (update) =>
+      useUnread.getState().applyRead(update, { listed: listed(update.channelId) }),
     typing: (p) => useTypingStore.getState().note(p),
     "system.notice": ({ level, message }) => {
       const opts = { duration: NOTICE_DURATION_MS[level] };

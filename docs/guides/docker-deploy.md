@@ -620,7 +620,7 @@ docker compose logs app | grep '"event":"ops.'
 | wire `run.events.replay` | `wire.replay` | ack `RATE_LIMITED` |
 | wire `approval.resolve` | `wire.approval` | ack `RATE_LIMITED` |
 | wire `typing`·`presence.update` | `wire.chatter` | 조용히 버린다(ack 없음) |
-| wire `channel.read` | `wire.chatter`(typing·presence.update 와 소켓마다 한 버킷) | ack `RATE_LIMITED` — 웹은 버리고 다음 조건이 서면 다시 보낸다(서버 값은 커지기만 한다) |
+| wire `conversation.read` | `wire.chatter`(typing·presence.update 와 소켓마다 한 버킷) | ack `RATE_LIMITED` — 웹은 버리고 다음 조건이 서면 다시 보낸다(서버 값은 커지기만 한다) |
 | wire `reaction.set` | `wire.chatter`(위 셋과 소켓마다 한 버킷) | ack `RATE_LIMITED` — 웹은 그 칩을 서버가 아는 상태로 되돌리고 「반응을 저장하지 못했습니다」 |
 | wire 동시 소켓 | `socketsPerUser`(사용자당) | 새 연결을 핸드셰이크에서 거절 |
 | 러너가 보내는 `run.event` | `runner.events`(러너 소켓마다 토큰 버킷 — 정상 스트리밍이 걸리지 않는 숫자, 근거는 그 키의 주석) | 버린다. 서버 로그 warn `runner frames rate limited — dropped` 와 사건 key `runner:<프레임>` 은 **주소마다 1분에 한 번**, 그사이 버린 수(`dropped`)와 함께 |

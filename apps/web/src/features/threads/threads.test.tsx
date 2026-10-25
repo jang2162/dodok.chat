@@ -614,7 +614,17 @@ describe("채널 진입의 「새 메시지」 구분선", () => {
   const snapshot = (lastReadSeq: number) => {
     useUnread.getState().beginSnapshot();
     useUnread.getState().applySnapshot({
-      channels: [{ channelId: CH, lastReadSeq, latestSeq: 4, unread: lastReadSeq < 4, mentions: 0 }],
+      channels: [CH, CH2],
+      conversations: [
+        {
+          conversationId: CH,
+          channelId: CH,
+          lastReadSeq,
+          latestSeq: 4,
+          unread: lastReadSeq < 4,
+          mentions: 0,
+        },
+      ],
     });
   };
   const open = (path = `/c/${CH}/s/${CH}`) =>
@@ -632,7 +642,9 @@ describe("채널 진입의 「새 메시지」 구분선", () => {
     const { router } = open();
     await screen.findByText("남의 글 4");
     expect(await screen.findByRole("separator", { name: "새 메시지" })).toBeInTheDocument();
-    act(() => useUnread.getState().applyRead({ channelId: CH, lastReadSeq: 4 }, { listed: true }));
+    act(() =>
+      useUnread.getState().applyRead({ conversationId: CH, channelId: CH, lastReadSeq: 4 }, { listed: true }),
+    );
     // 같은 채널에서 패널을 여닫아 채널 페이지가 다시 그려져도 기준은 다시 잡히지 않는다
     await act(() =>
       router.navigate({
@@ -648,7 +660,9 @@ describe("채널 진입의 「새 메시지」 구분선", () => {
     snapshot(2);
     const { router } = open();
     await screen.findByRole("separator", { name: "새 메시지" });
-    act(() => useUnread.getState().applyRead({ channelId: CH, lastReadSeq: 4 }, { listed: true }));
+    act(() =>
+      useUnread.getState().applyRead({ conversationId: CH, channelId: CH, lastReadSeq: 4 }, { listed: true }),
+    );
     await act(() => router.navigate({ to: "/settings/account" }));
     await waitFor(() => expect(screen.queryByText("남의 글 4")).toBeNull());
     await act(() =>
@@ -668,9 +682,10 @@ describe("채널 진입의 「새 메시지」 구분선", () => {
     act(() => {
       useUnread.getState().beginSnapshot();
       useUnread.getState().applySnapshot({
-        channels: [
-          { channelId: CH, lastReadSeq: 2, latestSeq: 4, unread: true, mentions: 0 },
-          { channelId: CH2, lastReadSeq: 1, latestSeq: 3, unread: true, mentions: 0 },
+        channels: [CH, CH2],
+        conversations: [
+          { conversationId: CH, channelId: CH, lastReadSeq: 2, latestSeq: 4, unread: true, mentions: 0 },
+          { conversationId: CH2, channelId: CH2, lastReadSeq: 1, latestSeq: 3, unread: true, mentions: 0 },
         ],
       });
     });
@@ -687,7 +702,9 @@ describe("채널 진입의 「새 메시지」 구분선", () => {
         ?.nextElementSibling;
     await screen.findByText("남의 글 4");
     expect(await after()).toHaveTextContent("남의 글 3");
-    act(() => useUnread.getState().applyRead({ channelId: CH, lastReadSeq: 4 }, { listed: true }));
+    act(() =>
+      useUnread.getState().applyRead({ conversationId: CH, channelId: CH, lastReadSeq: 4 }, { listed: true }),
+    );
 
     await act(() =>
       router.navigate({
@@ -708,6 +725,73 @@ describe("채널 진입의 「새 메시지」 구분선", () => {
     expect(line()).toBeNull();
   });
 
+  it("같은 채널 안에서 세션을 옮겨도 그 세션의 읽음 위치로 다시 잡는다 — 앞 세션의 위치를 쓰지 않는다", async () => {
+    const S2 = uid(30_000);
+    const others = [5, 6, 7].map((seq) =>
+      msg(seq, { id: uid(30_000 + seq), conversationId: S2, authorId: uid(77), bodyMd: `S2 글 ${seq}` }),
+    );
+    act(() => {
+      useUnread.getState().beginSnapshot();
+      useUnread.getState().applySnapshot({
+        channels: [CH],
+        conversations: [
+          { conversationId: CH, channelId: CH, lastReadSeq: 2, latestSeq: 4, unread: true, mentions: 0 },
+          // S2 의 글(5·6·7)은 CH 세션의 읽음 위치(2)보다 모두 뒤다 — 세션 단위로 잡지 않으면 「S2 글 5」 앞에 선이 선다
+          { conversationId: S2, channelId: CH, lastReadSeq: 6, latestSeq: 7, unread: true, mentions: 0 },
+        ],
+      });
+    });
+    const qc = channelClient(theirs);
+    qc.setQueryData(qk.timeline(CH, S2), { ...emptyTimeline(), items: others, lastSeq: 7 });
+    const { router } = renderRoute(`/c/${CH}/s/${CH}`, qc, (children) => (
+      <ReadSenderContext.Provider value={{ request: vi.fn(), dispose: vi.fn() }}>
+        {children}
+      </ReadSenderContext.Provider>
+    ));
+    const after = async () =>
+      (await screen.findByRole("separator", { name: "새 메시지" })).closest("[data-index]")
+        ?.nextElementSibling;
+    await screen.findByText("남의 글 4");
+    expect(await after()).toHaveTextContent("남의 글 3");
+
+    await act(() =>
+      router.navigate({
+        to: "/c/$channelId/s/$conversationId",
+        params: { channelId: CH, conversationId: S2 },
+      }),
+    );
+    await screen.findByText("S2 글 7");
+    expect(await after()).toHaveTextContent("S2 글 7");
+  });
+
+  it("「이전 대화」가 아닌 세션 주소로 바로 열면(새로고침·푸시 링크) 첫 마운트부터 그 세션의 읽음 위치로 긋는다", async () => {
+    const S2 = uid(31_000);
+    const others = [5, 6, 7].map((seq) =>
+      msg(seq, { id: uid(31_000 + seq), conversationId: S2, authorId: uid(77), bodyMd: `S2 글 ${seq}` }),
+    );
+    act(() => {
+      useUnread.getState().beginSnapshot();
+      useUnread.getState().applySnapshot({
+        channels: [CH],
+        conversations: [
+          // 세션 id 가 채널 id 와 같은 「이전 대화」의 위치(2)로 잡으면 「S2 글 5」 앞에 선이 선다
+          { conversationId: CH, channelId: CH, lastReadSeq: 2, latestSeq: 4, unread: true, mentions: 0 },
+          { conversationId: S2, channelId: CH, lastReadSeq: 6, latestSeq: 7, unread: true, mentions: 0 },
+        ],
+      });
+    });
+    const qc = channelClient(theirs);
+    qc.setQueryData(qk.timeline(CH, S2), { ...emptyTimeline(), items: others, lastSeq: 7 });
+    renderRoute(`/c/${CH}/s/${S2}`, qc, (children) => (
+      <ReadSenderContext.Provider value={{ request: vi.fn(), dispose: vi.fn() }}>
+        {children}
+      </ReadSenderContext.Provider>
+    ));
+    await screen.findByText("S2 글 7");
+    const separator = await screen.findByRole("separator", { name: "새 메시지" });
+    expect(separator.closest("[data-index]")?.nextElementSibling).toHaveTextContent("S2 글 7");
+  });
+
   it("Review Focus 3 — 들어갈 때 스냅숏이 없으면 구분선을 짐작해 긋지 않고, 스냅숏이 뒤늦게 와도 튀어나오지 않는다", async () => {
     open();
     await screen.findByText("남의 글 4");
@@ -720,7 +804,7 @@ describe("채널 진입의 「새 메시지」 구분선", () => {
   it("스냅숏에 항목이 없는 채널(보관 해제 직후 등)에서도 맨 앞에 긋지 않는다", async () => {
     act(() => {
       useUnread.getState().beginSnapshot();
-      useUnread.getState().applySnapshot({ channels: [] });
+      useUnread.getState().applySnapshot({ conversations: [], channels: [] });
     });
     open();
     await screen.findByText("남의 글 4");
@@ -735,7 +819,10 @@ describe("채널 진입의 「새 메시지」 구분선", () => {
     act(() => {
       useUnread.getState().beginSnapshot();
       useUnread.getState().applySnapshot({
-        channels: [{ channelId: CH, lastReadSeq: 40, latestSeq: 60, unread: true, mentions: 0 }],
+        channels: [CH, CH2],
+        conversations: [
+          { conversationId: CH, channelId: CH, lastReadSeq: 40, latestSeq: 60, unread: true, mentions: 0 },
+        ],
       });
     });
     const qc = channelClient(long);

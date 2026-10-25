@@ -1080,8 +1080,8 @@ describe("startDevFake 푸시 — 「나 불러」", () => {
         channelId: channel.id,
         title: "dodok",
         body: "@dev가 #push에서 불렀습니다",
-        url: `/c/${channel.id}`,
-        tag: `mention:${channel.id}`,
+        url: `/c/${channel.id}/s/${message.conversationId}`,
+        tag: `mention:${message.conversationId}`,
       },
     });
   }, 20_000);

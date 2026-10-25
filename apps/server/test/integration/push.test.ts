@@ -23,6 +23,7 @@ import {
 } from "../helpers/scenario-steps";
 import type { WireClient } from "../helpers/wire";
 import { connectWire } from "../helpers/wire";
+import { channelConversation, seedConversation } from "../helpers/seed";
 
 vi.setConfig({ testTimeout: 20_000, hookTimeout: 20_000 });
 
@@ -93,16 +94,26 @@ describe("통합 시나리오 12 — 푸시 트리거·거르기·발송", () =>
   }
 
   /** 사람이 `@dev …` 를 보내고 dev 의 n 번째(0부터) 답이 wire 로 올 때까지 */
-  async function devTurn(log: WireLog, setup: RelayChannel, n: number, text = "@dev 봐줘"): Promise<Message> {
-    await sendMessage(log.socket, setup.channel.id, text);
+  async function devTurn(
+    log: WireLog,
+    setup: RelayChannel,
+    n: number,
+    text = "@dev 봐줘",
+    conversationId?: string,
+  ): Promise<Message> {
+    await sendMessage(log.socket, setup.channel.id, text, conversationId ? { conversationId } : {});
     return log.until(
       () => log.created.filter((m) => m.authorType === "agent" && m.authorId === setup.dev.id)[n],
       `dev 답 ${n}`,
     );
   }
 
-  const presence = (socket: WireClient, p: { visible: boolean; channelId?: string }) =>
-    socket.emit("presence.update", p);
+  const presence = (
+    socket: WireClient,
+    p: { visible: boolean; channelId?: string; conversationId?: string },
+  ) => socket.emit("presence.update", p);
+  /** 보내기가 고르는 그 채널의 세션(seed sendTarget) — 링크·거르기가 이 세션을 가리킨다 */
+  const sessionOf = (channelId: string) => channelConversation(live.app.db, channelId);
 
   it("12a — 구독한 사람을 에이전트가 멘션하면 가짜 발송기가 표 5.2 첫 줄 페이로드를 받는다(josa(dev) = 「가」)", async () => {
     await boot();
@@ -114,39 +125,49 @@ describe("통합 시나리오 12 — 푸시 트리거·거르기·발송", () =>
     const [one] = await untilSent(1, "멘션 푸시");
     expect(sent).toHaveLength(1); // 사람의 `@dev` 메시지는 사람 멘션이 없어 보내지 않는다
     expect(one?.endpoint).toBe(EP);
+    const conv = reply.conversationId;
+    expect(conv).toBe(sessionOf(setup.channel.id));
     expect(one?.payload).toEqual({
       kind: "mention",
       channelId: setup.channel.id,
       title: "dodok",
       body: "@dev가 #relay에서 불렀습니다",
-      url: `/c/${setup.channel.id}`,
-      tag: `mention:${setup.channel.id}`,
+      url: `/c/${setup.channel.id}/s/${conv}`,
+      tag: `mention:${conv}`,
     });
     expect(one?.opts).toMatchObject({ TTL: 3600, urgency: "normal" });
     expect(scenario.errors).toEqual([]);
   });
 
-  it("12b — [Review Focus 3] 그 채널을 보이는 탭으로 보고 있으면 안 보냄, 다른 채널·보이지 않음이면 보냄", async () => {
+  it("12b — [Review Focus 3] 그 세션을 보이는 탭으로 보고 있으면 안 보냄, 같은 채널의 다른 세션·다른 채널·보이지 않음이면 보냄", async () => {
     await boot();
     await subscribePush();
     const { setup, log } = await startChannel();
+    const conv = sessionOf(setup.channel.id);
 
     // 같은 소켓의 presence.update → message.send 는 순서대로 처리된다 — 답이 오기 전에 서버가 안다
-    presence(log.socket, { visible: true, channelId: setup.channel.id });
+    presence(log.socket, { visible: true, channelId: setup.channel.id, conversationId: conv });
     await devTurn(log, setup, 0);
     expect(sent).toEqual([]);
+
+    // 판정 PS7 — 같은 채널의 다른 세션을 보고 있으면 이 세션의 멘션은 간다
+    const sideSession = seedConversation(live.app.db, setup.channel.id, { title: "곁 세션" });
+    presence(log.socket, { visible: true, channelId: setup.channel.id, conversationId: sideSession });
+    await devTurn(log, setup, 1, undefined, conv);
+    await untilSent(1, "같은 채널의 다른 세션을 보는 중");
+    expect(sent.map((s) => s.payload.url)).toEqual([`/c/${setup.channel.id}/s/${conv}`]);
 
     const other = (await rest<{ channel: Channel }>(live, "POST", "/channels", { name: "other" })).body
       .channel;
     presence(log.socket, { visible: true, channelId: other.id });
-    await devTurn(log, setup, 1);
-    await untilSent(1, "다른 채널을 보는 중");
-    expect(sent.map((s) => s.payload.channelId)).toEqual([setup.channel.id]);
+    await devTurn(log, setup, 2, undefined, conv);
+    await untilSent(2, "다른 채널을 보는 중");
+    expect(sent.map((s) => s.payload.channelId)).toEqual([setup.channel.id, setup.channel.id]);
 
-    presence(log.socket, { visible: false, channelId: setup.channel.id }); // 백그라운드 탭
-    await devTurn(log, setup, 2);
-    await untilSent(2, "보이지 않는 탭");
-    expect(sent).toHaveLength(2);
+    presence(log.socket, { visible: false, channelId: setup.channel.id, conversationId: conv }); // 백그라운드 탭
+    await devTurn(log, setup, 3, undefined, conv);
+    await untilSent(3, "보이지 않는 탭");
+    expect(sent).toHaveLength(3);
   });
 
   it("12c — 승인 요청 → 채널의 사람 멤버에게, url 은 활동 탭, urgency high, 같은 승인이 두 번 실려도 한 번", async () => {
@@ -171,7 +192,7 @@ describe("통합 시나리오 12 — 푸시 트리거·거르기·발송", () =>
       channelId: setup.channel.id,
       title: "dodok",
       body: "#relay에 승인 요청이 있습니다",
-      url: `/c/${setup.channel.id}/activity`,
+      url: `/c/${setup.channel.id}/s/${sessionOf(setup.channel.id)}/activity`,
       tag: `approval:${card.id}`,
     });
     expect(approvals[0]?.opts).toMatchObject({ urgency: "high", TTL: 3600 });
@@ -203,8 +224,8 @@ describe("통합 시나리오 12 — 푸시 트리거·거르기·발송", () =>
         channelId: setup.channel.id,
         title: "dodok",
         body: "#relay의 에이전트 대화가 한도에 닿았습니다",
-        url: `/c/${setup.channel.id}`,
-        tag: `relay:${setup.channel.id}`,
+        url: `/c/${setup.channel.id}/s/${sessionOf(setup.channel.id)}`,
+        tag: `relay:${sessionOf(setup.channel.id)}`,
       },
     ]);
     // 이 흐름에는 사람 멘션이 없다 — 한도 카드 말고는 보내지 않았다
@@ -274,8 +295,9 @@ describe("통합 시나리오 12 — 푸시 트리거·거르기·발송", () =>
     const { setup, log } = await startChannel();
     const watcher = await connectWire(live.app, live.auth.token);
     sockets.push(watcher);
-    presence(watcher, { visible: true, channelId: setup.channel.id });
-    presence(log.socket, { visible: false, channelId: setup.channel.id }); // 보내는 쪽은 백그라운드
+    const conv = sessionOf(setup.channel.id);
+    presence(watcher, { visible: true, channelId: setup.channel.id, conversationId: conv });
+    presence(log.socket, { visible: false, channelId: setup.channel.id, conversationId: conv }); // 보내는 쪽은 백그라운드
     // watcher 의 presence 가 서버에 닿았는지 ack 왕복으로 확인한다(같은 소켓 순서 보장)
     await watcher.emitWithAck("channel.subscribe", { channelId: setup.channel.id });
     await devTurn(log, setup, 0);

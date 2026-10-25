@@ -11,7 +11,24 @@ import {
 } from "./sw-logic";
 
 describe("safeNotificationUrl", () => {
-  it("같은 출처 상대 채널 경로만", () => {
+  it("세션 경로 — 서버가 지금 내는 꼴(멘션·스레드·승인, 채널 세션 계획 태스크 7)", () => {
+    const S = "01a00000-0000-7000-8000-0000000000c1";
+    expect(safeNotificationUrl(`/c/${CH}/s/${S}`)).toBe(`/c/${CH}/s/${S}`);
+    expect(safeNotificationUrl(`/c/${CH}/s/${S}/t/${CH}`)).toBe(`/c/${CH}/s/${S}/t/${CH}`);
+    expect(safeNotificationUrl(`/c/${CH}/s/${S}/activity`)).toBe(`/c/${CH}/s/${S}/activity`);
+    for (const bad of [
+      `/c/${CH}/s/new`,
+      `/c/${CH}/s/`,
+      `/c/${CH}/s/${S}/settings`,
+      `/c/${CH}/s/${S}?around=3`,
+      `/c/${CH}/s/${S}/t/${CH}/activity`,
+      `/c/${CH}/s/${S}/s/${S}`,
+      `/c/${CH}/t/${CH}/s/${S}`,
+    ])
+      expect(safeNotificationUrl(bad)).toBe("/");
+  });
+
+  it("세션 전의 옛 꼴도 받는다 — 앞 판 서버가 보내 아직 안 누른 알림(웹 라우터가 넘긴다)", () => {
     expect(safeNotificationUrl(`/c/${CH}`)).toBe(`/c/${CH}`);
     expect(safeNotificationUrl(`/c/${CH}/activity`)).toBe(`/c/${CH}/activity`);
     // 스레드 멘션·스레드 안 릴레이 한도(스레드·검색 스펙 4.2) — 누르면 그 스레드

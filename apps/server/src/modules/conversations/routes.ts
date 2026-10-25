@@ -1,4 +1,4 @@
-import { ConversationPatch, Id } from "@dodok/shared";
+import { ConversationPatch, Id, ListConversationsQuery } from "@dodok/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { Auth } from "../../auth";
@@ -25,11 +25,6 @@ export type ConversationRouteContext = {
 
 const ChannelParams = z.object({ id: Id });
 const ConversationParams = z.object({ id: Id });
-const ListQuery = z.object({
-  status: z.enum(["open", "closed", "all"]).default("open"),
-  q: z.string().max(80).optional(),
-  cursor: z.string().max(64).optional(),
-});
 
 /** 세션 목록·하나·제목·닫기(채널 세션 스펙 「wire·REST」 장). 만들기 REST 는 없다 — 첫 message.send 가 만든다(결정 7). 메시지 목록은 messages/routes.ts */
 export function registerConversationRoutes(fastify: FastifyInstance, ctx: ConversationRouteContext): void {
@@ -38,7 +33,7 @@ export function registerConversationRoutes(fastify: FastifyInstance, ctx: Conver
     { preHandler: requirePolicy(ctx, authorizeRead) },
     async (request) => {
       const { id } = parseParams(ChannelParams, request.params);
-      const query = parseQuery(ListQuery, request.query);
+      const query = parseQuery(ListConversationsQuery, request.query);
       if (!getChannel(ctx.db, id, sessionUser(request).workspaceId))
         throw apiError("NOT_FOUND", "channel not found");
       return listConversations(ctx.db, id, query);

@@ -134,23 +134,28 @@ describe("네이티브 푸시 통합 — APNs", () => {
     expect(req?.headers).toMatchObject({ "apns-topic": "chat.dodok.app", "apns-push-type": "alert" });
     expect(req?.body).toMatchObject({
       aps: { alert: { title: "dodok", body: "@mia가 #native에서 불렀습니다" }, "thread-id": b.channelId },
-      dodok: { url: `/c/${b.channelId}`, kind: "mention", channelId: b.channelId },
+      dodok: {
+        url: `/c/${b.channelId}/s/${channelConversation(b.app.db, b.channelId)}`,
+        kind: "mention",
+        channelId: b.channelId,
+      },
     });
   });
 
-  it("받는 사람이 그 채널을 보는 중이면 보내지 않고, 다른 채널을 보면 보낸다", async () => {
+  it("받는 사람이 그 세션을 보는 중이면 보내지 않고, 보이지 않으면 보낸다", async () => {
     await register(b, IOS);
     await b.app.fastify.listen({ host: "127.0.0.1", port: 0 });
     const socket = await connectWire(b.app, b.owner.token);
     sockets.push(socket);
     const settle = () => socket.emitWithAck("channel.subscribe", { channelId: b.channelId });
-    socket.emit("presence.update", { visible: true, channelId: b.channelId });
+    const conversationId = channelConversation(b.app.db, b.channelId);
+    socket.emit("presence.update", { visible: true, channelId: b.channelId, conversationId });
     await settle(); // 같은 소켓의 이벤트는 순서대로 처리된다 — 응답이 오면 presence 는 반영됐다
     b.mention();
     await idle(300);
     expect(fake.requests).toEqual([]);
 
-    socket.emit("presence.update", { visible: false, channelId: b.channelId });
+    socket.emit("presence.update", { visible: false, channelId: b.channelId, conversationId });
     await settle();
     b.mention();
     await untilRequests(1);
