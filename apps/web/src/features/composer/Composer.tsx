@@ -5,11 +5,13 @@ import { EditorContent, useEditor, useEditorState } from "@tiptap/react";
 import { StarterKit } from "@tiptap/starter-kit";
 import { isImageMime } from "@dodok/shared";
 import { ImagePlusIcon, SendHorizontalIcon } from "lucide-react";
-import { type DragEvent, useEffect, useId, useMemo, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { type DragEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useAgents, useMe, useMembers, usePeople } from "@/api/queries";
 import { ONLY_IMAGES } from "@/features/attachments/upload";
 import { useComposerAttachments } from "@/features/attachments/useComposerAttachments";
+import { NEW_CONVERSATION } from "@/features/messages/timeline";
 import { abortErrorMessage } from "@/features/runs/abortError";
 import { selectScopeRuns, TERMINAL, useRunStore } from "@/features/runs/runStore";
 import { emitAck, useWireStatus, type WireSocket } from "@/realtime/wire";
@@ -21,7 +23,7 @@ import { PendingAttachments } from "./PendingAttachments";
 import { toBodyMd } from "./serialize";
 import { parseSlash } from "./slash";
 import { SubmitKeys } from "./submitKeys";
-import { useSendMessage } from "./useSendMessage";
+import { forgetSettled, settledFromNew, useSendMessage } from "./useSendMessage";
 import { useTyping } from "./useTyping";
 
 const PLACEHOLDER = "메시지 보내기 — @로 에이전트 부르기";
@@ -52,6 +54,8 @@ const EDITOR_CLASS = [
 /**
  * 작성기(스펙 5.1·4.4·6.1): Tiptap + @멘션. Enter 전송(토큰 본문 `toBodyMd`), `/stop` 은 메시지로 보내지 않는다.
  * wire 가 connected 가 아니면 입력은 받되 전송은 막는다. 초안은 세션마다 따로 둔다 — 채널·세션을 옮겨도 이 인스턴스가 유지된다.
+ * 다만 새 세션 창의 첫 보내기가 세션을 만들어 주소가 그 세션으로 바뀔 때는 세션 전환이 아니다 — ack 를 기다리는 사이 쓰던 초안·넣은 첨부
+ * 칩을 그대로 들고 간다(`settledFromNew` — 채널 세션 계획 Task 6 의 ④).
  * 이미지는 첨부 버튼·붙여넣기·끌어 놓기로 넣는 즉시 올린다. 올리기가 모두 끝나야(오류 칩 없이) 보낼 수 있고, 글 없이 이미지만도 된다.
  * 메시지는 그 세션으로(`conversationId` — 새 세션 창이면 첫 보내기가 세션을 만든다, `useSendMessage`), `/stop` 은 그 세션의 런만.
  * `threadRootId` 를 주면 스레드 작성기다(스레드·검색 스펙 4.2) — 메시지는 그 스레드로, `/stop` 은 그 스레드의 런만.
@@ -68,9 +72,32 @@ export function Composer({
   threadRootId?: string;
 }) {
   const { socket } = useWire();
+  const qc = useQueryClient();
   const connected = useWireStatus((s) => s.status === "connected");
   const { send } = useSendMessage(channelId, conversationId, threadRootId);
-  const attachments = useComposerAttachments(channelId, conversationId);
+  // 작성 자리 — 채널·세션이 바뀌면 새 자리(첨부를 비운다), 새 세션 창 → 그 창이 만든 세션이면 같은 자리(`carriedFrom` 은 들고 온 초안 키)
+  const [place, setPlace] = useState({
+    channelId,
+    conversationId,
+    n: 0,
+    carriedFrom: undefined as string | undefined,
+  });
+  if (place.channelId !== channelId || place.conversationId !== conversationId) {
+    const carry =
+      threadRootId === undefined &&
+      place.channelId === channelId &&
+      place.conversationId === NEW_CONVERSATION &&
+      conversationId !== NEW_CONVERSATION &&
+      settledFromNew(qc, channelId) === conversationId;
+    setPlace({
+      channelId,
+      conversationId,
+      n: carry ? place.n : place.n + 1,
+      carriedFrom: carry ? `${channelId}:${NEW_CONVERSATION}` : undefined,
+    });
+  }
+  const carriedFrom = place.carriedFrom;
+  const attachments = useComposerAttachments(channelId, String(place.n));
   const fileInput = useRef<HTMLInputElement>(null);
   const attachButton = useRef<HTMLButtonElement>(null);
   const typing = useTyping(channelId, conversationId);
@@ -142,16 +169,26 @@ export function Composer({
   );
   const empty = useEditorState({ editor, selector: ({ editor: ed }) => ed.isEmpty });
 
-  // 채널을 옮기면 지금 초안을 그 채널 몫으로 두고, 옮겨 간 채널의 초안을 꺼낸다(없으면 비움)
+  // 채널을 옮기면 지금 초안을 그 채널 몫으로 두고, 옮겨 간 채널의 초안을 꺼낸다(없으면 비움). 새 세션 창에서 그 창이 만든 세션으로 옮겨
+  // 갔으면 편집기를 그대로 두고 창 몫으로 막 넣어 둔 초안만 지운다 — 다음에 새 세션 창을 열면 빈 작성기다
   useEffect(() => {
-    const saved = drafts.get(draftKey);
-    if (saved) editor.commands.setContent(saved, { emitUpdate: false });
-    else if (!editor.isEmpty) editor.commands.clearContent(false);
+    if (carriedFrom !== undefined) drafts.delete(carriedFrom);
+    else {
+      const saved = drafts.get(draftKey);
+      if (saved) editor.commands.setContent(saved, { emitUpdate: false });
+      else if (!editor.isEmpty) editor.commands.clearContent(false);
+    }
     return () => {
       if (editor.isDestroyed || editor.isEmpty) drafts.delete(draftKey);
       else drafts.set(draftKey, editor.getJSON());
     };
-  }, [editor, draftKey, drafts]);
+  }, [editor, draftKey, drafts, carriedFrom]);
+  // 옮겨 간 표는 새 세션 창을 떠나는 그 한 번만 쓴다(읽기는 위 렌더 중) — 그 세션으로 들고 갔든, 표가 생긴 뒤 주소가 바뀌기 전에 다른
+  // 채널·화면으로 갔든 지운다(태스크 6 리뷰 L4). 남아 있으면 나중에 새 세션 창에서 같은 세션으로 갈 때 창의 초안을 잘못 들고 간다
+  useEffect(() => {
+    if (threadRootId !== undefined || conversationId !== NEW_CONVERSATION) return;
+    return () => forgetSettled(qc, channelId);
+  }, [qc, channelId, conversationId, threadRootId]);
 
   live.current.candidates = candidates;
   live.current.notifyTyping = threadRootId === undefined ? typing.notify : () => {};

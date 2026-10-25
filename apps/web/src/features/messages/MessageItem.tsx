@@ -6,6 +6,7 @@ import { useLoadAutomationAuthors } from "@/features/automations/queries";
 import { referencedAttachmentIds } from "@/features/attachments/resolve";
 import { Components } from "@/features/components/Components";
 import { useChannelArchived } from "@/features/channels/archived";
+import { useConversationClosed } from "@/features/conversations/closed";
 import { ReactionChips } from "@/features/reactions/ReactionChips";
 import { ReactionPicker } from "@/features/reactions/ReactionPicker";
 import { useSetReaction } from "@/features/reactions/useSetReaction";
@@ -100,7 +101,10 @@ export function MessageItem({
   const author = useAuthors().author(message);
   useLoadAutomationAuthors([message]);
   const me = useMe().data?.user.id;
-  const archived = useChannelArchived();
+  // 보관한 채널·닫힌 세션은 반응을 달 수 없다(서버 409) — 칩은 읽기만
+  const channelArchived = useChannelArchived();
+  const closed = useConversationClosed();
+  const archived = channelArchived || closed;
   // 채널 타임라인의 루트도 스레드를 넘긴다 — 나란히 열린 스레드 패널의 같은 루트가 곧바로 바뀐다(연 적 없는 스레드면 updateThread 가 그냥 지나간다)
   const setReaction = useSetReaction(message.channelId, message.conversationId, threadRootOf(message));
   // 시스템 메시지에는 달 수 없다(보내는 중 항목은 PendingItem 이라 여기에 오지 않는다)

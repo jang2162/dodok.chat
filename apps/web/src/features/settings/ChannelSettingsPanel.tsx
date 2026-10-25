@@ -7,6 +7,7 @@ import { BasicSection } from "./BasicSection";
 import { MembersSection, agentMembers } from "./MembersSection";
 import { PromptSection } from "./PromptSection";
 import { RelayPolicySection } from "./RelayPolicySection";
+import { SessionSection } from "./SessionSection";
 
 /**
  * 채널 설정 패널(`/c/$channelId/s/$conversationId/settings`, 스펙 6.3·6.4) — 보관한 채널이면 편집 대신 안내만. 바깥 틀(패널 ↔ 시트·탭 머리·닫기)은 부모인
@@ -45,6 +46,7 @@ function SettingsBody({ channelId }: { channelId: string }) {
         channel={channel.data}
         agents={agentMembers(members.data, agents.data).map((r) => r.agent)}
       />
+      <SessionSection channel={channel.data} members={members.data} />
       <MembersSection
         channelId={channelId}
         members={members.data}

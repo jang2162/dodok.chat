@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Link, Outlet, useParams } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiRequestError, NetworkError } from "@/api/http";
 import { useChannel } from "@/api/queries";
 import { ChannelHeader } from "@/app/layout/ChannelHeader";
@@ -10,6 +10,11 @@ import { ChannelArchivedContext, isChannelArchived } from "@/features/channels/a
 import { Composer } from "@/features/composer/Composer";
 import { TypingIndicator } from "@/features/composer/TypingIndicator";
 import { useSendMessage } from "@/features/composer/useSendMessage";
+import { CannotCreateNotice, ClosedNotice } from "@/features/conversations/ClosedNotice";
+import { ConversationClosedContext } from "@/features/conversations/closed";
+import { ConversationList } from "@/features/conversations/ConversationList";
+import { useConversationPermissions } from "@/features/conversations/permissions";
+import { useConversation, useSessionChannelGuard } from "@/features/conversations/queries";
 import { captureEntryRead } from "@/features/reads/entryRead";
 import { StreamingBubble } from "@/features/runs/StreamingBubble";
 import { useChannelBubbles } from "@/features/runs/useChannelBubbles";
@@ -18,6 +23,7 @@ import { useIsNarrow } from "@/hooks/useIsNarrow";
 import { touchRecentChannel, touchRecentConversation } from "@/pwa/persist";
 import { useChannelSubscription } from "@/realtime/WireProvider";
 import { Button } from "@/ui/button";
+import { Sheet, SheetContent, SheetTitle } from "@/ui/sheet";
 import { ChannelLoading, ChannelUnavailable } from "./ChannelStatus";
 import { MessageList } from "./MessageList";
 import { type PendingActions, PendingActionsContext } from "./pendingActions";
@@ -25,9 +31,11 @@ import { NEW_CONVERSATION } from "./timeline";
 import { useTimelineState } from "./useTimeline";
 
 /**
- * 세션 화면(`/c/<채널>/s/<대화>` — 채널 세션 계획 판정 PS6): 헤더 · 그 세션의 메시지 목록(루트만) · 작성기 · 오른쪽 패널(`PanelTabs` 틀 +
- * 탭 내용 `<Outlet/>` — 설정·활동·스레드). 채널 머리·설정·활동 패널은 채널 단위 그대로다. 새 세션 창(`NEW_CONVERSATION`)은 빈 목록에
- * 작성기만 — 첫 보내기가 세션을 만든다.
+ * 세션 화면(`/c/<채널>/s/<대화>` — 채널 세션 계획 판정 PS6): 헤더 · 세션 목록(넓은 화면은 왼쪽 접히는 칸, 좁은 화면은 시트) · 그 세션의
+ * 메시지 목록(루트만) · 작성기 · 오른쪽 패널(`PanelTabs` 틀 + 탭 내용 `<Outlet/>` — 설정·활동·스레드). 채널 머리·설정·활동 패널은 채널 단위
+ * 그대로다. 새 세션 창(`NEW_CONVERSATION`)은 빈 목록에 작성기만 — 첫 보내기가 세션을 만든다(만들 수 없는 사람에게는 안내).
+ * 닫힌 세션은 작성기 자리에 안내(`ClosedNotice`)를 두고, 그 아래(카드·스레드 패널)에는 `ConversationClosedContext` 로 알린다. 안내를 그리는
+ * 동안에도 작성기는 숨긴 채 남겨 둔다 — 세션마다 든 초안이 이 인스턴스에 있다(닫힌 세션을 둘러보고 돌아와도 다른 세션의 초안이 그대로).
  * 채널이 확인되기 전(목록의 자리값 포함)에는 그 안을 그리지 않는다 — 없는 채널에서 멤버·메시지 조회가 나가
  * 전역 토스트가 화면 안 문구와 겹치지 않게. 불러오지 못하면(없는 채널·없는 세션 등) 화면 안에 알린다(`useChannel` 은 silent)
  */
@@ -55,17 +63,41 @@ export function ChannelPage() {
   useChannelSubscription(channelId);
   const channel = useChannel(channelId);
   const session = useTimelineState(channelId, conversationId);
+  const known = channel.data !== undefined;
+  // 주소의 채널과 세션의 채널이 다르면 그 세션의 채널로 바꿔 간다(태스크 5 리뷰 L1) — 확인되기 전에는 최근 본 세션으로 남기지 않는다.
+  // 세션은 채널과 함께 받는다(닫힘을 카드·작성기가 곧바로 알게) — 아래 자리는 다시 받지 않고 읽는다(`useConversationView`)
+  const conversation = useConversation(conversationId);
+  const belongs = useSessionChannelGuard(channelId, conversationId, conversation.data);
+  const closed = conversation.data !== undefined && conversation.data.closedAt !== undefined;
+  // 멤버는 채널이 확인된 뒤에 부른다 — 위 주석의 까닭에 더해, 먼저 받아 두면 확인 뒤 마운트되는 머리·목록·작성기의 관찰자가 낡은
+  // 값(staleTime 0)을 한 번 더 받는다(태스크 6 리뷰 L1)
+  const { canCreate } = useConversationPermissions(channelId, { enabled: known });
+  const cannotCreate = conversationId === NEW_CONVERSATION && canCreate === false;
+  // 닫힌 안내가 초점을 받는 것은 이 화면에서 열린 채 보던 세션이 닫혔을 때만(`ClosedNotice` 의 focusOnMount)
+  const [seenOpen, setSeenOpen] = useState<string>();
+  if (conversation.data && !closed && seenOpen !== conversationId) setSeenOpen(conversationId);
+  // 세션 목록 — 넓은 화면은 칸(처음엔 펼침), 좁은 화면은 시트(처음엔 닫힘). 닫으면 초점을 헤더의 「세션 목록」으로 돌려준다
+  const narrow = useIsNarrow();
+  const [listWide, setListWide] = useState(true);
+  const [listSheet, setListSheet] = useState(false);
+  const listRef = useRef<HTMLButtonElement>(null);
+  const toggleList = useCallback(() => (narrow ? setListSheet((v) => !v) : setListWide((v) => !v)), [narrow]);
+  const composerSlot = useRef<HTMLDivElement>(null);
+  const focusComposer = useCallback(() => {
+    requestAnimationFrame(() =>
+      composerSlot.current?.querySelector<HTMLElement>('[role="textbox"]')?.focus(),
+    );
+  }, []);
   // 확인된 채널만 최근 본 채널로(오프라인 사본 대상, 스펙 4장) — 없는 채널 주소가 실제 채널을 밀어내지 않게.
   // 세션은 받은 것만 그 채널의 마지막으로 본 세션으로(사본이 채널마다 그 세션 하나만 담는다) — 새 세션 창은 남길 것이 없다
   const qc = useQueryClient();
-  const known = channel.data !== undefined;
   const sessionKnown = conversationId !== NEW_CONVERSATION && session.timeline !== undefined;
   useEffect(() => {
     if (known) touchRecentChannel(qc, channelId);
   }, [known, qc, channelId]);
   useEffect(() => {
-    if (known && sessionKnown) touchRecentConversation(qc, channelId, conversationId);
-  }, [known, sessionKnown, qc, channelId, conversationId]);
+    if (known && sessionKnown && belongs) touchRecentConversation(qc, channelId, conversationId);
+  }, [known, sessionKnown, belongs, qc, channelId, conversationId]);
   const bubbleRunIds = useChannelBubbles(channelId, conversationId);
   const { retry, discard } = useSendMessage(channelId, conversationId);
   // 보내는 중 항목의 「다시 보내기」·「삭제」(태스크 7 PendingItem 이 읽는다). 실패는 항목 상태(failed)로 보인다
@@ -90,64 +122,112 @@ export function ChannelPage() {
     );
   }
   // 보관한 채널은 읽기만(채널 보관 스펙 「웹」 절) — 작성기 자리에 안내, 카드·스레드 패널·설정 패널은 컨텍스트로 안다.
-  // 다른 탭이 보관하면 wire `channel.updated` 가 이 채널 캐시를 바꿔 같은 화면이 그대로 읽기 전용이 된다
+  // 다른 탭이 보관하면 wire `channel.updated` 가 이 채널 캐시를 바꿔 같은 화면이 그대로 읽기 전용이 된다.
+  // 닫힘도 같다 — 다른 탭·다른 사람이 닫으면 wire `conversation.updated` 가 세션 캐시를 바꾼다(Review Focus 2)
   const archived = isChannelArchived(channel.data);
   // 세션이 없다(주소가 틀렸다·다른 워크스페이스) — 목록·작성기 대신 안내. 그 밖의 실패는 「다시 시도」
   const sessionError = session.timeline === undefined ? session.error : null;
+  const list = (onPick?: () => void) => (
+    <ConversationList channelId={channelId} conversationId={conversationId} onPick={onPick} />
+  );
+  // 작성기 자리의 안내 — 보관 → 닫힘 → 만들 수 없음 순. 안내가 있으면 작성기는 숨긴다(초안을 잃지 않게 — 위 주석)
+  const notice = archived ? (
+    <ArchivedNotice channelId={channelId} unarchive />
+  ) : closed && conversation.data ? (
+    <ClosedNotice
+      key={conversationId}
+      channelId={channelId}
+      conversation={conversation.data}
+      reopen
+      focusOnMount={seenOpen === conversationId}
+      onReopened={focusComposer}
+    />
+  ) : cannotCreate ? (
+    <CannotCreateNotice />
+  ) : undefined;
   return (
     <div data-testid="page-channel" className="flex min-h-0 flex-1">
       <ChannelArchivedContext.Provider value={archived}>
-        <PendingActionsContext.Provider value={pendingActions}>
-          <ThreadOpenerContext.Provider value={threadOpenerRef}>
-            <section className="flex min-w-0 flex-1 flex-col">
-              <ChannelHeader
-                channelId={channelId}
-                conversationId={conversationId}
-                settingsRef={settingsRef}
-              />
-              {sessionError ? (
-                <ConversationUnavailable
+        <ConversationClosedContext.Provider value={closed}>
+          <PendingActionsContext.Provider value={pendingActions}>
+            <ThreadOpenerContext.Provider value={threadOpenerRef}>
+              <section className="flex min-w-0 flex-1 flex-col">
+                <ChannelHeader
                   channelId={channelId}
-                  error={sessionError}
-                  onRetry={session.refetch}
+                  conversationId={conversationId}
+                  settingsRef={settingsRef}
+                  listOpen={narrow ? listSheet : listWide}
+                  onToggleList={toggleList}
+                  listRef={listRef}
                 />
-              ) : (
-                <>
-                  <MessageList
-                    channelId={channelId}
-                    conversationId={conversationId}
-                    covered={covered}
-                    entryReadSeq={entryReadSeq}
-                    bubbleRunIds={bubbleRunIds}
-                    bubbles={(runId) => <StreamingBubble runId={runId} />}
-                  />
-                  <div data-slot="composer">
-                    {archived ? (
-                      <ArchivedNotice channelId={channelId} unarchive />
+                <div className="flex min-h-0 flex-1">
+                  {!narrow && listWide && (
+                    <div data-testid="conversation-pane" className="flex w-60 shrink-0 flex-col border-r">
+                      {list()}
+                    </div>
+                  )}
+                  <div className="flex min-w-0 flex-1 flex-col">
+                    {sessionError ? (
+                      <ConversationUnavailable
+                        channelId={channelId}
+                        error={sessionError}
+                        onRetry={session.refetch}
+                      />
                     ) : (
                       <>
-                        <TypingIndicator conversationId={conversationId} />
-                        <Composer channelId={channelId} conversationId={conversationId} />
+                        <MessageList
+                          channelId={channelId}
+                          conversationId={conversationId}
+                          covered={covered || (narrow && listSheet)}
+                          entryReadSeq={entryReadSeq}
+                          bubbleRunIds={bubbleRunIds}
+                          bubbles={(runId) => <StreamingBubble runId={runId} />}
+                        />
+                        <div data-slot="composer" ref={composerSlot}>
+                          {notice}
+                          <div hidden={notice !== undefined}>
+                            <TypingIndicator conversationId={conversationId} />
+                            <Composer channelId={channelId} conversationId={conversationId} />
+                          </div>
+                        </div>
                       </>
                     )}
                   </div>
-                </>
-              )}
-            </section>
-          </ThreadOpenerContext.Provider>
-        </PendingActionsContext.Provider>
-        {tab && (
-          <PanelTabs
-            channelId={channelId}
-            conversationId={conversationId}
-            rootId={tab === "thread" ? rootId : undefined}
-            active={tab}
-            openerRef={settingsRef}
-            threadOpenerRef={threadOpenerRef}
-          >
-            <Outlet />
-          </PanelTabs>
-        )}
+                </div>
+              </section>
+            </ThreadOpenerContext.Provider>
+          </PendingActionsContext.Provider>
+          {narrow && (
+            <Sheet open={listSheet} onOpenChange={setListSheet}>
+              <SheetContent
+                side="left"
+                aria-describedby={undefined}
+                className="w-80 gap-0 p-0"
+                onCloseAutoFocus={(e) => {
+                  // 트리거 없이 연 시트라 Radix 가 돌려줄 곳을 모른다 — 헤더의 「세션 목록」으로(패널 시트와 같은 수법, D14)
+                  if (!listRef.current?.isConnected) return;
+                  e.preventDefault();
+                  listRef.current.focus();
+                }}
+              >
+                <SheetTitle className="sr-only">세션 목록</SheetTitle>
+                {list(() => setListSheet(false))}
+              </SheetContent>
+            </Sheet>
+          )}
+          {tab && (
+            <PanelTabs
+              channelId={channelId}
+              conversationId={conversationId}
+              rootId={tab === "thread" ? rootId : undefined}
+              active={tab}
+              openerRef={settingsRef}
+              threadOpenerRef={threadOpenerRef}
+            >
+              <Outlet />
+            </PanelTabs>
+          )}
+        </ConversationClosedContext.Provider>
       </ChannelArchivedContext.Provider>
     </div>
   );

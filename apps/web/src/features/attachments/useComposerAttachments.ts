@@ -63,11 +63,12 @@ type Held = { url: string; abort?: () => void };
 
 /**
  * 작성기 첨부(스펙 6.1): 넣는 즉시 올리고 칩마다 미리보기·진행·이유를 든다. 형식·크기가 틀리면 올리지 않는다.
- * 메시지당 상한을 넘는 것은 칩을 만들지 않고 한 번 알린다. 채널·세션을 옮기면 모두 끊고 비운다 —
- * 초안과 달리 첨부는 들고 다니지 않는다(계획 판정). 작성기는 세션을 옮겨도 같은 인스턴스라 세션 A 의 칩이 세션 B 로 나가지 않게 세션도
- * 본다(서버의 첨부는 채널에만 묶여 다른 세션으로 보내도 받는다). 언마운트 때도 끊고 URL 을 놓는다
+ * 메시지당 상한을 넘는 것은 칩을 만들지 않고 한 번 알린다. 작성 자리(`place` — 채널·세션)를 옮기면 모두 끊고 비운다 —
+ * 초안과 달리 첨부는 들고 다니지 않는다(계획 판정). 작성기는 세션을 옮겨도 같은 인스턴스라 세션 A 의 칩이 세션 B 로 나가지 않게 자리를
+ * 본다(서버의 첨부는 채널에만 묶여 다른 세션으로 보내도 받는다). 자리는 작성기가 정한다 — 새 세션 창이 만든 세션으로 옮겨 가는 것은 같은
+ * 자리다(Composer). 언마운트 때도 끊고 URL 을 놓는다
  */
-export function useComposerAttachments(channelId: string, conversationId: string): ComposerAttachments {
+export function useComposerAttachments(channelId: string, place: string): ComposerAttachments {
   const [items, dispatch] = useReducer(reducer, []);
   const held = useRef(new Map<string, Held>()).current;
 
@@ -92,7 +93,7 @@ export function useComposerAttachments(channelId: string, conversationId: string
       releaseAll();
       dispatch({ type: "clear" });
     },
-    [channelId, conversationId, releaseAll],
+    [channelId, place, releaseAll],
   );
 
   const add = useCallback(

@@ -1,10 +1,13 @@
 import type { Agent } from "@dodok/shared";
 import { Link, useMatchRoute } from "@tanstack/react-router";
-import { HashIcon, SettingsIcon } from "lucide-react";
+import { HashIcon, ListIcon, SettingsIcon, SquarePenIcon } from "lucide-react";
 import type { RefObject } from "react";
 import { useAgents, useChannel, useMembers } from "@/api/queries";
 import { isArchived } from "@/features/agents/archived";
 import { isChannelArchived } from "@/features/channels/archived";
+import { CloseConversationButton, ConversationTitle } from "@/features/conversations/ConversationTitle";
+import { useConversationPermissions } from "@/features/conversations/permissions";
+import { NEW_CONVERSATION } from "@/features/messages/timeline";
 import { agentColorVar } from "@/theme/agentColor";
 import { Avatar, AvatarFallback, AvatarGroup, AvatarGroupCount, AvatarImage } from "@/ui/avatar";
 import { Button } from "@/ui/button";
@@ -14,20 +17,29 @@ import { OpenSidebarButton } from "./sidebarSheet";
 const MAX_AVATARS = 4;
 
 /**
- * 채널 헤더(스펙 2.4): 이름(보관한 채널이면 「보관됨」)·주제, 참여 에이전트 아바타 묶음(테두리 에이전트 색, 스펙 7.2), 설정 패널 여닫기.
+ * 채널 헤더(스펙 2.4): 이름(보관한 채널이면 「보관됨」), 지금 세션 제목(채널 세션 스펙 「웹」 장 — 권한이 있으면 눌러 이름 바꾸기)·주제,
+ * 참여 에이전트 아바타 묶음(테두리 에이전트 색, 스펙 7.2), 「새 세션」(만들 수 있는 사람에게만)·「세션 닫기」, 설정 패널 여닫기.
  * 좁은 화면이면 왼쪽에 「채널 목록 열기」. `settingsRef` 는 그 설정 링크 — 좁은 화면 시트가 닫히면
- * 초점이 여기로 돌아온다(브라우저 검증 D14)
+ * 초점이 여기로 돌아온다(브라우저 검증 D14). `onToggleList` 를 주면 「세션 목록」 여닫기 단추를 그린다 — `listRef` 는 그 단추(좁은 화면
+ * 시트가 닫히면 초점이 여기로 돌아온다)
  */
 export function ChannelHeader({
   channelId,
   conversationId,
   settingsRef,
+  listOpen = false,
+  onToggleList,
+  listRef,
 }: {
   channelId: string;
   /** 보고 있는 세션 — 설정 패널을 여닫아도 그 세션에 머문다 */
   conversationId: string;
   settingsRef?: RefObject<HTMLAnchorElement | null>;
+  listOpen?: boolean;
+  onToggleList?: () => void;
+  listRef?: RefObject<HTMLButtonElement | null>;
 }) {
+  const { canCreate } = useConversationPermissions(channelId);
   const channel = useChannel(channelId);
   const members = useMembers(channelId);
   const agents = useAgents();
@@ -47,6 +59,18 @@ export function ChannelHeader({
   return (
     <header data-testid="channel-header" className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
       <OpenSidebarButton />
+      {onToggleList && (
+        <Button
+          ref={listRef}
+          variant="ghost"
+          size="icon-sm"
+          aria-label="세션 목록"
+          aria-expanded={listOpen}
+          onClick={onToggleList}
+        >
+          <ListIcon />
+        </Button>
+      )}
       <div className="min-w-0 flex-1">
         <h1 className="flex items-center gap-1 text-base font-semibold">
           <HashIcon className="size-4 shrink-0 opacity-60" aria-hidden />
@@ -57,9 +81,19 @@ export function ChannelHeader({
             </span>
           )}
         </h1>
-        {channel.data?.topic && (
-          <p className="truncate text-xs text-muted-foreground">{channel.data.topic}</p>
-        )}
+        <div className="flex min-w-0 items-center gap-1 text-xs">
+          <ConversationTitle channelId={channelId} conversationId={conversationId} />
+          {channel.data?.topic && (
+            <>
+              <span aria-hidden className="shrink-0 text-muted-foreground">
+                ·
+              </span>
+              <span className="truncate text-muted-foreground" title={channel.data.topic}>
+                {channel.data.topic}
+              </span>
+            </>
+          )}
+        </div>
       </div>
       {shown.length > 0 && (
         <AvatarGroup role="group" aria-label="참여 에이전트">
@@ -84,6 +118,19 @@ export function ChannelHeader({
           )}
         </AvatarGroup>
       )}
+      {canCreate && conversationId !== NEW_CONVERSATION && (
+        <Button asChild variant="ghost" size="icon-sm">
+          <Link
+            to="/c/$channelId/s/$conversationId"
+            params={{ channelId, conversationId: NEW_CONVERSATION }}
+            aria-label="새 세션"
+            title="새 세션"
+          >
+            <SquarePenIcon />
+          </Link>
+        </Button>
+      )}
+      <CloseConversationButton channelId={channelId} conversationId={conversationId} />
       <Button asChild variant="ghost" size="icon-sm">
         <Link
           ref={settingsRef}

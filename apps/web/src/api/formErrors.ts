@@ -6,6 +6,8 @@ export const AGENT_ARCHIVED_TEXT = "삭제된 에이전트입니다";
 export const CHANNEL_ARCHIVED_TEXT = "보관된 채널입니다";
 /** `CONVERSATION_CLOSED`(닫힌 세션에 보내기)의 화면 문구 — 채널 세션 계획 Global Constraints 의 문구 그대로 */
 export const CONVERSATION_CLOSED_TEXT = "닫힌 세션입니다";
+/** 보내기가 `FORBIDDEN` 으로 거절됐다(「세션 관리자만」 채널에서 새 세션 — 채널 세션 스펙 「오류 처리」 장) */
+export const SEND_FORBIDDEN_TEXT = "권한이 없어 보내지 못했습니다";
 
 /** 폼이 그리는 409·400 — 전역 뮤테이션 토스트(app/queryClient)도 이 판정으로 뺀다 */
 export const isFormErrorCode = (code: string): boolean =>

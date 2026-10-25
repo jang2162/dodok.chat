@@ -100,7 +100,8 @@ describe("ResetPage", () => {
     const { router, history } = renderRoute(`/reset/${TOKEN}`);
     await fillPasswords("correct-horse-battery");
     await userEvent.click(screen.getByRole("button", { name: "비밀번호 바꾸기" }));
-    await waitFor(() => expect(history.location.pathname).toBe("/c/ch1"));
+    // 첫 채널 주소는 곧바로 그 채널의 최근 세션으로 넘어간다(app/router toLatestSession) — 기다리는 사이 지나칠 수 있어 둘 다 받는다
+    await waitFor(() => expect(history.location.pathname).toMatch(/^\/c\/ch1(\/s\/ch1)?$/));
     expect(history.location.href).not.toContain(TOKEN);
     expect(router.history.canGoBack()).toBe(false);
     expect(JSON.parse(String(callsTo(fetch, "/invites/reset")[0]?.[1]?.body))).toEqual({

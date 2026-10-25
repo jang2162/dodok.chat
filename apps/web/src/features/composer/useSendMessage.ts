@@ -4,6 +4,7 @@ import { useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 import { qk } from "@/api/queries";
 import { refreshArchivedChannel } from "@/features/channels/archived";
+import { applyConversation } from "@/features/conversations/cache";
 import {
   addPending,
   NEW_CONVERSATION,
@@ -60,11 +61,34 @@ const creatingOf = (qc: QueryClient) => {
 };
 
 /**
+ * 새 세션 창에서 첫 보내기가 확정돼 그 세션 주소로 옮겨 간다는 표(채널 → 세션). 작성기는 주소가 `new` 에서 이 세션으로 바뀔 때만
+ * 쓰던 초안·첨부 칩을 들고 간다(채널 세션 계획 Task 6 의 ④ — 다른 세션으로 옮기는 것은 여전히 세션 전환이다). 작성기가 옮겨 간 뒤 지운다.
+ * 표지와 같은 까닭으로 QueryClient 캐시 안, gc 없음
+ */
+const settledKey = ["composerSettled"] as const;
+const settledOf = (qc: QueryClient) => {
+  const held = qc.getQueryData<Map<string, string>>(settledKey);
+  if (held) return held;
+  const byChannel = new Map<string, string>();
+  qc.setQueryDefaults(settledKey, { gcTime: Infinity });
+  qc.setQueryData(settledKey, byChannel);
+  return byChannel;
+};
+const markSettled = (qc: QueryClient, channelId: string, conversationId: string) =>
+  settledOf(qc).set(channelId, conversationId);
+/** 이 채널의 새 세션 창이 옮겨 간 세션 — 없으면 undefined */
+export const settledFromNew = (qc: QueryClient, channelId: string): string | undefined =>
+  qc.getQueryData<Map<string, string>>(settledKey)?.get(channelId);
+export const forgetSettled = (qc: QueryClient, channelId: string): void => {
+  qc.getQueryData<Map<string, string>>(settledKey)?.delete(channelId);
+};
+
+/**
  * 전송(스펙 4.4·채널 세션 계획 판정 PS4). 보내는 세션은 `conversationId` — 새 세션 창(`NEW_CONVERSATION`)이면 `newConversation` 을 싣고,
  * ack 가 알려 준 세션으로 확정 메시지를 옮긴 뒤 주소를 그 세션으로 바꿔 간다(replace — 뒤로 가기가 빈 창으로 돌아가지 않게). 그 뒤에
  * 창에 남은 항목을 그 세션으로 옮긴다(`settleNew`). 세션을 하나만 만드는 규칙은 `Creation`.
  * ack `{ message }` 면 그 메시지로 확정(같은 메시지가 `message.created` 로도 오지만 한 번만 남는다),
- * ack 오류·10초 무응답이면 `failed`(ack RATE_LIMITED 면 사유 `rate_limited`, 보관한 채널·닫힌 세션이면 다시 보내기 없는 사유).
+ * ack 오류·10초 무응답이면 `failed`(ack RATE_LIMITED 면 사유 `rate_limited`, 보관한 채널·닫힌 세션·권한 거절이면 다시 보내기 없는 사유).
  * wire 가 `connected` 가 아니면 보내지 않고 곧바로 `failed` — socket.io 는 끊긴 동안의 emit 을 버퍼에 두었다가 붙으면 보낸다.
  * 반환하는 함수들은 렌더 사이에 같다.
  * `threadRootId` 를 주면 스레드 작성기다 — 루트를 싣고(답글이 아니라 루트, Review Focus 1) 보내는 중·확정은 스레드 캐시에.
@@ -125,11 +149,24 @@ export function useSendMessage(
         refreshArchivedChannel(qc, channelId);
         return;
       }
-      // 다른 탭이 이 세션을 닫았다(Review Focus 2) — 다시 보내도 같은 409 다. 작성기 자리는 `conversation.updated` 가 바꾼다
-      if (code === "CONVERSATION_CLOSED") return mark("conversation_closed");
+      if (code === "CONVERSATION_CLOSED") {
+        // 다른 탭이 이 세션을 닫았다(Review Focus 2) — 다시 보내도 같은 409 다. 작성기 자리는 보통 `conversation.updated` 가 바꾸지만,
+        // 이 탭이 그 이벤트를 놓쳤으면(끊긴 사이) 세션을 다시 받아야 안내로 바뀐다(카드의 409 와 같다 — 태스크 6 리뷰 M1)
+        mark("conversation_closed");
+        void qc.invalidateQueries({ queryKey: qk.conversation(target ?? conversationId), exact: true });
+        return;
+      }
+      if (code === "FORBIDDEN") {
+        // 「세션 관리자만」 채널에서 새 세션(태스크 5 리뷰가 넘긴 ②) — 이 탭이 정책·역할 변경을 아직 모른다. 채널·멤버를 다시 받으면 새 세션
+        // 창의 작성기가 안내로 바뀐다
+        mark("forbidden");
+        void qc.invalidateQueries({ queryKey: qk.channel(channelId), exact: true });
+        void qc.invalidateQueries({ queryKey: qk.members(channelId), exact: true });
+        return;
+      }
       mark(code === "RATE_LIMITED" ? "rate_limited" : undefined);
     },
-    [qc, channelId, patchPending],
+    [qc, channelId, conversationId, patchPending],
   );
 
   /**
@@ -161,6 +198,8 @@ export function useSendMessage(
       const { pathname, searchStr } = router?.state.location ?? { pathname: "", searchStr: "" };
       if (!router || (pathname !== prefix && !pathname.startsWith(`${prefix}/`))) return forget();
       const href = `/c/${channelId}/s/${target}${pathname.slice(prefix.length)}${searchStr}`;
+      // 이 창에서 그 세션으로 옮겨 간다는 표 — 작성기가 보고 쓰던 초안·첨부 칩을 들고 간다(`settledFromNew`)
+      markSettled(qc, channelId, target);
       void router.navigate({ href, replace: true }).then(forget, forget);
     },
     [qc, channelId, router],
@@ -182,6 +221,8 @@ export function useSendMessage(
         ...(ids.length > 0 ? { attachments: ids } : {}),
       }).then(
         ({ message, conversation }): Created => {
+          // 세션 머리가 곧바로 제목을 그리게(같은 세션이 wire `conversation.created` 로도 온다)
+          if (conversation) applyConversation(qc, conversation);
           settleNew(clientMsgId, message, conversation?.lastSeq, () => {
             if (byChannel.get(channelId) === own) byChannel.delete(channelId);
           });

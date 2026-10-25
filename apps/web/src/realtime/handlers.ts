@@ -16,6 +16,7 @@ import { useApprovalStore } from "@/features/approvals/approvalStore";
 import { canDecideApproval } from "@/features/approvals/decider";
 import { forgetApproval, notifyApproval } from "@/features/approvals/notify";
 import { applyChannel, isChannelArchived } from "@/features/channels/archived";
+import { applyConversation } from "@/features/conversations/cache";
 import { hasChannelGap, noteSeq, type Timeline, upsert } from "@/features/messages/timeline";
 import { isViewingAtEnd, needsResync, useUnread } from "@/features/reads/useUnread";
 import { useRunStore } from "@/features/runs/runStore";
@@ -234,6 +235,12 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
     },
     "channel.member.changed": ({ channelId, members }) => qc.setQueryData(qk.members(channelId), members),
     /**
+     * 세션이 생겼다·바뀌었다(제목·닫기·다시 열기 — 채널 룸, 계획 판정 PS12). 세션 캐시와 그 채널의 목록 칸에 반영한다 — 다른 탭·다른
+     * 사람이 만든 세션이 목록 맨 위에 들고, 보던 세션이 닫히면 작성기 자리가 안내로 바뀐다(Review Focus 2)
+     */
+    "conversation.created": ({ conversation }) => applyConversation(qc, conversation),
+    "conversation.updated": ({ conversation }) => applyConversation(qc, conversation),
+    /**
      * 에이전트가 바뀌었다(등록·수정·옮기기·보관·되살리기 — 본문 없음, 계획 판정 PS4). 목록과 채널 멤버를 다시 받게 낡은 것으로 둔다 —
      * 보관·되살리기는 서버가 channel.member.changed 를 내지 않는다(멤버 응답이 읽을 때 거른다). exact: 찾기 목록도 [agents] 아래라
      * 고르는 중인 등록 대화상자를 다시 부르지 않게(adapter.status 와 같은 까닭)
@@ -339,6 +346,10 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
       void qc.invalidateQueries({ queryKey: qk.agents, exact: true });
       void qc.invalidateQueries({ queryKey: qk.opsStatus });
       void qc.invalidateQueries({ queryKey: qk.opsEventsAll });
+      // 세션의 제목·닫기·다시 열기는 conversation.updated 로만 온다 — lastSeq 이어 받기는 그 시스템 메시지만 메우고 세션 캐시는
+      // 낡은 채 남는다(태스크 6 리뷰 M1). 머리·작성기 자리의 세션 하나와 목록 칸
+      void qc.invalidateQueries({ queryKey: ["conversation"] });
+      void qc.invalidateQueries({ queryKey: ["conversationList"] });
     }
     connectedOnce = true;
   };

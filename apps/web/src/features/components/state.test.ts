@@ -19,6 +19,7 @@ const base: StateInput = {
   allowedUsers: undefined,
   itemId: "ok",
   archived: false,
+  closed: false,
 };
 
 describe("itemState", () => {
@@ -29,6 +30,14 @@ describe("itemState", () => {
     const s = itemState({ ...base, archived: true, connected: false, expired: true });
     expect(s).toEqual({ disabled: true, reason: "archived" });
     expect(DISABLED_REASON_TEXT.archived).toBe("보관된 채널입니다");
+  });
+  it("[태스크 5 리뷰 ①] 닫힌 세션이면 closed — 연결·만료보다 먼저, 보관보다는 뒤(서버 쓰기 막기 순서)", () => {
+    expect(itemState({ ...base, closed: true, connected: false, expired: true })).toEqual({
+      disabled: true,
+      reason: "closed",
+    });
+    expect(itemState({ ...base, closed: true, archived: true }).reason).toBe("archived");
+    expect(DISABLED_REASON_TEXT.closed).toBe("닫힌 세션입니다");
   });
   it("만료되면 expired", () => expect(itemState({ ...base, expired: true }).reason).toBe("expired"));
   it("소비됐으면 consumed", () => {
