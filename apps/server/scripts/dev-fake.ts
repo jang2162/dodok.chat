@@ -28,9 +28,9 @@
  * 그 러너가 알리는 에이전트 `coder`(provider claude)를 등록해 둔다(처음 붙은 러너 토큰에 묶인다). 가짜 러너는 스스로 다시 붙지 않는다 —
  * 폐기·끊기 뒤에는 훅으로 붙인다. 폐기 뒤 새 토큰으로 붙이면 coder 는 폐기된 토큰에 묶인 채라 연결 페이지 「이 러너로 묶기」로 옮긴다.
  * 끊김 사건 임계는 DODOK_DEVFAKE_DISCONNECT_MS(기본 운영과 같은 60초)로 줄인다. 종료 표지는 <dataDir>/dev-fake-run/ 에 둔다.
- * 시작 때 보관하지 않은 채널마다 세션 둘을 보장한다(채널 세션 계획 태스크 8) — 마이그레이션이 만드는 꼴의 「이전 대화」(id = 채널 id)와
- * 새 세션 하나(`DEV_FAKE_SESSION_TITLE`), 이번에 만든 세션에는 owner 글 하나씩. 채널이 하나도 없으면(새 DB) 씨앗 채널
- * `DEV_FAKE_CHANNEL_NAME`(에이전트 dev·coder)을 먼저 만든다. `--keep` 이면 이미 있는 세션은 그대로 둔다.
+ * 보관하지 않은 채널이 하나도 없으면(새 DB) 씨앗 채널 `DEV_FAKE_CHANNEL_NAME`(에이전트 dev·coder)을 만들고 그 채널에만 세션 둘을 넣는다
+ * (채널 세션 계획 태스크 8) — 마이그레이션이 만드는 꼴의 「이전 대화」(id = 채널 id)와 새 세션 하나(`DEV_FAKE_SESSION_TITLE`), owner 글 하나씩.
+ * `--keep` 으로 이어받은 채널(씨앗·UI 로 만든 것·보관한 것)은 건드리지 않는다 — 실제 서버에서도 0025 뒤 만든 채널에는 「이전 대화」가 없다.
  */
 import {
   type AdapterStatus,
@@ -1186,62 +1186,49 @@ function ensureDevFakeAgents(app: App): void {
 }
 
 /**
- * 보관하지 않은 채널마다 「이전 대화」(id = 채널 id, 0025 가 만드는 꼴 — 옛 세션 키·옛 푸시 링크 `/c/<ch>/t/<root>` 가 그대로 맞는 자리)와
- * 다른 세션 하나를 보장한다. 이번에 만든 세션에는 owner 글을 하나씩 남긴다(서버 저장 경로 그대로 — 멘션이 없어 런은 없다).
- * 채널이 하나도 없으면 씨앗 채널을 먼저 만든다
+ * 보관하지 않은 채널이 없을 때만 씨앗 채널을 만들고, 그 채널에 「이전 대화」(id = 채널 id, 0025 가 만드는 꼴 — 옛 세션 키·옛 푸시 링크
+ * `/c/<ch>/t/<root>` 가 그대로 맞는 자리)와 다른 세션 하나를 넣는다. 두 세션에 owner 글을 하나씩 남긴다(서버 저장 경로 그대로 — 멘션이
+ * 없어 런은 없다). 살아 있는 채널이 있으면(`--keep`) 아무것도 더하지 않는다 — 이어받은 채널의 세션·안 읽음을 바꾸지 않게
  */
 function ensureDevFakeSessions(app: App): void {
   const { db, workspaceId, ownerUserId } = app;
-  const listed = () =>
-    db
-      .select()
-      .from(channels)
-      .where(and(eq(channels.workspaceId, workspaceId), isNull(channels.archivedAt)))
-      .all();
-  if (listed().length === 0) {
-    const channel = createChannel(db, { workspaceId, createdBy: ownerUserId, name: DEV_FAKE_CHANNEL_NAME });
-    for (const handle of DEV_FAKE_CHANNEL_AGENTS) {
-      const agent = db
-        .select({ id: agents.id })
-        .from(agents)
-        .where(and(eq(agents.workspaceId, workspaceId), eq(agents.handle, handle)))
-        .get();
-      if (agent) addMember(db, channel.id, { memberType: "agent", memberId: agent.id }, app.logger);
-    }
+  const live = db
+    .select({ id: channels.id })
+    .from(channels)
+    .where(and(eq(channels.workspaceId, workspaceId), isNull(channels.archivedAt)))
+    .get();
+  if (live) return;
+  const channel = createChannel(db, { workspaceId, createdBy: ownerUserId, name: DEV_FAKE_CHANNEL_NAME });
+  for (const handle of DEV_FAKE_CHANNEL_AGENTS) {
+    const agent = db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.workspaceId, workspaceId), eq(agents.handle, handle)))
+      .get();
+    if (agent) addMember(db, channel.id, { memberType: "agent", memberId: agent.id }, app.logger);
   }
   const seed = (conversationId: string, bodyMd: string) =>
     createUserMessage(db, app.bus, { conversationId, authorId: ownerUserId, bodyMd, clientMsgId: uuidv7() });
-  for (const channel of listed()) {
-    const sessions = db
-      .select({ id: conversations.id })
-      .from(conversations)
-      .where(eq(conversations.channelId, channel.id))
-      .all();
-    if (!sessions.some((c) => c.id === channel.id)) {
-      db.insert(conversations)
-        .values({
-          id: channel.id,
-          channelId: channel.id,
-          title: DEV_FAKE_LEGACY_TITLE,
-          titleSource: "user",
-          createdByType: "user",
-          createdById: channel.createdBy,
-          createdAt: channel.createdAt,
-        })
-        .run();
-      seed(channel.id, "세션 기능 전에 이 채널에서 나눈 대화가 여기에 남습니다.");
-    }
-    if (!sessions.some((c) => c.id !== channel.id)) {
-      const created = createConversation(db, {
-        channelId: channel.id,
-        title: DEV_FAKE_SESSION_TITLE,
-        titleSource: "user",
-        createdBy: { type: "user", id: ownerUserId },
-        createdAt: new Date(),
-      });
-      seed(created.id, "새 주제는 새 세션에서 — 이 세션의 에이전트는 「이전 대화」를 모릅니다.");
-    }
-  }
+  db.insert(conversations)
+    .values({
+      id: channel.id,
+      channelId: channel.id,
+      title: DEV_FAKE_LEGACY_TITLE,
+      titleSource: "user",
+      createdByType: "user",
+      createdById: ownerUserId,
+      createdAt: new Date(channel.createdAt),
+    })
+    .run();
+  seed(channel.id, "세션 기능 전에 이 채널에서 나눈 대화가 여기에 남습니다.");
+  const created = createConversation(db, {
+    channelId: channel.id,
+    title: DEV_FAKE_SESSION_TITLE,
+    titleSource: "user",
+    createdBy: { type: "user", id: ownerUserId },
+    createdAt: new Date(),
+  });
+  seed(created.id, "새 주제는 새 세션에서 — 이 세션의 에이전트는 「이전 대화」를 모릅니다.");
 }
 
 /**
