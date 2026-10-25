@@ -38,6 +38,7 @@ const hitOf = (m: Message, over: Partial<SearchHit> = {}): SearchHit => ({
   messageId: m.id,
   channelId: m.channelId,
   conversationId: m.conversationId,
+  conversationTitle: "이전 대화",
   seq: m.seq,
   channelArchived: false,
   authorType: "user",
@@ -355,6 +356,38 @@ describe("결과로 가기", () => {
     expect(router.state.location.pathname).toBe(`/c/${CH}/s/${CH}`);
     await waitFor(() =>
       expect(screen.getByText("본문 10").closest("[data-index]")).toHaveAttribute("data-highlighted", "true"),
+    );
+  });
+
+  it("같은 채널의 다른 세션 결과 — 줄에 세션 제목, 누르면 그 세션의 그 메시지로(지금 세션이 아니라)", async () => {
+    const SIDE = uid(9_001);
+    const hit = msg(12, { conversationId: SIDE, bodyMd: "곁 세션 글" });
+    search = () =>
+      json(200, {
+        hits: [hitOf(hit, { snippet: "곁 세션 글", conversationTitle: "배포 회고" })],
+        limited: false,
+      });
+    const side = (from: number, to: number) => range(from, to).map((m) => ({ ...m, conversationId: SIDE }));
+    routes.set(`/api/v1/conversations/${SIDE}/messages?limit=50&around=12`, () =>
+      json(200, { messages: side(5, 15), hasMore: false, hasMoreAfter: true }),
+    );
+    // 그 세션을 이 탭에서 연 적이 있다 — 최신 창(20~30)에는 그 메시지가 없어 around 로 받는다
+    const qc = subscribedClient();
+    qc.setQueryData<Timeline>(qk.timeline(CH, SIDE), {
+      ...emptyTimeline(),
+      items: side(20, 30),
+      hasOlder: true,
+      lastSeq: 30,
+    });
+    const { router } = renderRoute(`/c/${CH}/s/${CH}`, qc);
+    const dialog = await openWith({ metaKey: true });
+    await typeQuery("곁 세션");
+    const row = await within(dialog).findByRole("button", { name: /곁 세션 글/ });
+    expect(row).toHaveTextContent("배포 회고");
+    await userEvent.click(row);
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/c/${CH}/s/${SIDE}`));
+    await waitFor(() =>
+      expect(screen.getByText("본문 12").closest("[data-index]")).toHaveAttribute("data-highlighted", "true"),
     );
   });
 

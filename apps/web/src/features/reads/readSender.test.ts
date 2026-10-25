@@ -1,13 +1,13 @@
-import type { ChannelRead } from "@dodok/shared";
+import type { ConversationRead } from "@dodok/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CH, CH2 } from "../../../test/fixtures";
 import { createReadSender, READ_DELAY_MS } from "./readSender";
 
 /** 보낸 것을 기록하고 저장된 위치(커지기만 함)를 돌려주는 가짜 서버 */
 function fakeServer() {
-  const sent: ChannelRead[] = [];
+  const sent: ConversationRead[] = [];
   let fail: Error | undefined;
-  const emit = vi.fn(async (p: ChannelRead) => {
+  const emit = vi.fn(async (p: ConversationRead) => {
     sent.push(p);
     if (fail) throw fail;
     return { lastReadSeq: p.seq };
@@ -38,7 +38,7 @@ describe("createReadSender", () => {
     await vi.advanceTimersByTimeAsync(READ_DELAY_MS - 1);
     expect(server.sent).toEqual([]);
     await vi.advanceTimersByTimeAsync(1);
-    expect(server.sent).toEqual([{ channelId: CH, seq: 7 }]);
+    expect(server.sent).toEqual([{ conversationId: CH, seq: 7 }]);
   });
 
   it("첫 요청부터 1초 — 요청이 이어져도 보내기가 밀리지 않는다", async () => {
@@ -48,10 +48,10 @@ describe("createReadSender", () => {
     await vi.advanceTimersByTimeAsync(600);
     sender.request(CH, 2);
     await vi.advanceTimersByTimeAsync(400);
-    expect(server.sent).toEqual([{ channelId: CH, seq: 2 }]);
+    expect(server.sent).toEqual([{ conversationId: CH, seq: 2 }]);
   });
 
-  it("채널마다 따로 — 둘이면 각각 한 번", async () => {
+  it("세션마다 따로(같은 채널의 두 세션도) — 둘이면 각각 한 번", async () => {
     const server = fakeServer();
     const sender = createReadSender(server.emit);
     sender.request(CH, 3);
@@ -60,8 +60,8 @@ describe("createReadSender", () => {
     await vi.advanceTimersByTimeAsync(READ_DELAY_MS);
     expect(server.sent).toEqual(
       expect.arrayContaining([
-        { channelId: CH, seq: 4 },
-        { channelId: CH2, seq: 9 },
+        { conversationId: CH, seq: 4 },
+        { conversationId: CH2, seq: 9 },
       ]),
     );
     expect(server.sent).toHaveLength(2);
@@ -79,10 +79,10 @@ describe("createReadSender", () => {
     sender.request(CH, 10);
     sender.request(CH, 20);
     await vi.advanceTimersByTimeAsync(READ_DELAY_MS);
-    expect(server.sent).toEqual([{ channelId: CH, seq: 10 }]);
+    expect(server.sent).toEqual([{ conversationId: CH, seq: 10 }]);
     sender.request(CH, 21);
     await vi.advanceTimersByTimeAsync(READ_DELAY_MS);
-    expect(server.sent.at(-1)).toEqual({ channelId: CH, seq: 21 });
+    expect(server.sent.at(-1)).toEqual({ conversationId: CH, seq: 21 });
   });
 
   it("실패(레이트 초과 포함)는 밖으로 던지지 않고 버린다 — 다음 요청이 같은 seq 를 다시 보낸다", async () => {
@@ -91,7 +91,7 @@ describe("createReadSender", () => {
     const sender = createReadSender(server.emit);
     sender.request(CH, 8);
     await vi.advanceTimersByTimeAsync(READ_DELAY_MS);
-    expect(server.sent).toEqual([{ channelId: CH, seq: 8 }]);
+    expect(server.sent).toEqual([{ conversationId: CH, seq: 8 }]);
     // 실패한 것을 스스로 다시 보내지 않는다 — 다음 조건이 설 때(다음 요청) 보낸다
     await vi.advanceTimersByTimeAsync(READ_DELAY_MS * 5);
     expect(server.sent).toHaveLength(1);
@@ -100,8 +100,8 @@ describe("createReadSender", () => {
     sender.request(CH, 8);
     await vi.advanceTimersByTimeAsync(READ_DELAY_MS);
     expect(server.sent).toEqual([
-      { channelId: CH, seq: 8 },
-      { channelId: CH, seq: 8 },
+      { conversationId: CH, seq: 8 },
+      { conversationId: CH, seq: 8 },
     ]);
   });
 
@@ -120,6 +120,6 @@ describe("createReadSender", () => {
     const sender = createReadSender(server.emit, { delayMs: 50 });
     sender.request(CH, 1);
     await vi.advanceTimersByTimeAsync(50);
-    expect(server.sent).toEqual([{ channelId: CH, seq: 1 }]);
+    expect(server.sent).toEqual([{ conversationId: CH, seq: 1 }]);
   });
 });

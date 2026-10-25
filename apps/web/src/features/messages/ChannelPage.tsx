@@ -46,11 +46,12 @@ export function ChannelPage() {
   const settingsRef = useRef<HTMLAnchorElement>(null);
   // 칩·「스레드에서 답하기」로 연 스레드는 닫으면 그 자리로 초점을 돌려준다(p4t-c1, m5)
   const threadOpenerRef = useRef<ThreadOpener>(null);
-  // 구분선의 기준을 채널에 들어갈 때 한 번 잡는다(`captureEntryRead`). 채널을 옮겨도 이 페이지는 다시 마운트되지 않는다 —
-  // 그래서 첫 값만 잡지 않고 채널이 바뀌면 렌더 중에 다시 잡는다
-  const [entry, setEntry] = useState(() => ({ channelId, seq: captureEntryRead(channelId) }));
-  if (entry.channelId !== channelId) setEntry({ channelId, seq: captureEntryRead(channelId) });
-  const entryReadSeq = entry.channelId === channelId ? entry.seq : undefined;
+  // 구분선의 기준을 세션에 들어갈 때 한 번 잡는다(`captureEntryRead` — 읽음 위치는 세션마다 따로). 채널·세션을 옮겨도 이 페이지는
+  // 다시 마운트되지 않는다 — 그래서 첫 값만 잡지 않고 세션이 바뀌면 렌더 중에 다시 잡는다(같은 채널 안에서 옮겨도)
+  const [entry, setEntry] = useState(() => ({ conversationId, seq: captureEntryRead(conversationId) }));
+  if (entry.conversationId !== conversationId)
+    setEntry({ conversationId, seq: captureEntryRead(conversationId) });
+  const entryReadSeq = entry.conversationId === conversationId ? entry.seq : undefined;
   useChannelSubscription(channelId);
   const channel = useChannel(channelId);
   const session = useTimelineState(channelId, conversationId);
