@@ -16,6 +16,7 @@ import { createSubscriptions } from "@/realtime/subscriptions";
 import { getTimeline } from "@/realtime/timelineCache";
 import { attachHandlers } from "@/realtime/handlers";
 import { useWireStatus } from "@/realtime/wire";
+import { useUnread } from "@/features/reads/useUnread";
 import { flushEditorFrames } from "../../../test/composerHarness";
 import { stubEditorDom } from "../../../test/domStubs";
 import { stubScrollLayout } from "../../../test/scrollLayout";
@@ -382,6 +383,38 @@ describe("세션 목록 칸", () => {
     expect(within(c).getByText("99+")).toBeInTheDocument();
     expect(within(c).getByText("나를 멘션한 글 120개")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /세션-1/ })).not.toHaveAttribute("data-unread");
+  });
+
+  it("[태스크 8 Step 0] 세션 화면의 목록 칸은 대화별 읽지 않음 현황으로 점·배지를 그린다 — 두 세션 중 안 읽은 쪽만", async () => {
+    stubServer({
+      conversations: [conv(A, { lastMessageAt: at(9) }), conv(B, { lastMessageAt: at(5) }), conv(C)],
+    });
+    const entry = (unread: boolean, mentions: number) => ({
+      channelId: CH,
+      lastReadSeq: 0,
+      seenSeq: 3,
+      unread,
+      mentions,
+    });
+    useUnread.setState({
+      ready: true,
+      byConversation: { [B]: entry(true, 2), [C]: entry(false, 0) },
+    });
+    try {
+      renderRoute(`/c/${CH}/s/${A}`);
+      const b = await within(await pane()).findByRole("link", { name: /세션-2/ });
+      expect(b).toHaveAttribute("data-unread", "true");
+      expect(within(b).getByText("나를 멘션한 글 2개")).toBeInTheDocument();
+      const c = within(await pane()).getByRole("link", { name: /세션-3/ });
+      expect(c).not.toHaveAttribute("data-unread");
+      expect(c.querySelector('[data-slot="unread-dot"], [data-slot="mention-badge"]')).toBeNull();
+      // 다른 탭에서 B 를 읽으면 점·배지가 꺼진다 — 칸이 현황을 듣는다
+      act(() => useUnread.setState({ byConversation: { [B]: entry(false, 0), [C]: entry(false, 0) } }));
+      await waitFor(() => expect(b).not.toHaveAttribute("data-unread"));
+      expect(b.querySelector('[data-slot="mention-badge"]')).toBeNull();
+    } finally {
+      useUnread.getState().reset();
+    }
   });
 });
 

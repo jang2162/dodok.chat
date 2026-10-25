@@ -1,4 +1,5 @@
 import type { Channel, ChannelActivity, ConversationReadUpdate, UnreadSnapshot } from "@dodok/shared";
+import { useCallback } from "react";
 import { create } from "zustand";
 import { useShallow } from "zustand/react/shallow";
 import { isChannelArchived } from "@/features/channels/archived";
@@ -195,17 +196,22 @@ export function useChannelUnread(channelId: string): UnreadView | null {
  * (받은 적 없는 세션·새 세션 창)은 안 읽은 것이 없다
  */
 export function useConversationUnread(conversationId: string): UnreadView | null {
-  return useUnread(
-    useShallow((s) =>
-      s.ready
-        ? {
-            unread: s.byConversation[conversationId]?.unread ?? false,
-            mentions: s.byConversation[conversationId]?.mentions ?? 0,
-          }
-        : null,
-    ),
-  );
+  return useUnread(useShallow((s) => (s.ready ? viewOf(s.byConversation, conversationId) : null)));
 }
+
+/**
+ * 세션 목록 칸이 줄마다 부르는 조회(`ConversationList` 의 `unreadOf`) — 값은 `useConversationUnread` 와 같다. 줄마다 훅을 부를 수 없는
+ * 목록이라 함수로 준다. 스냅숏 전·실패·끊김이면 늘 undefined
+ */
+export function useConversationUnreadOf(): (conversationId: string) => UnreadView | undefined {
+  const entries = useUnread((s) => (s.ready ? s.byConversation : null));
+  return useCallback((id: string) => (entries ? viewOf(entries, id) : undefined), [entries]);
+}
+
+const viewOf = (entries: Record<string, UnreadEntry>, conversationId: string): UnreadView => ({
+  unread: entries[conversationId]?.unread ?? false,
+  mentions: entries[conversationId]?.mentions ?? 0,
+});
 
 /** 타임라인의 끝이 보이고 탭이 보이는 세션(없으면 undefined) — 세션 목록이 알리고 activity 처리가 읽는다 */
 let viewingAtEnd: string | undefined;
