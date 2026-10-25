@@ -1115,8 +1115,19 @@ describe("createOpenClawAdapter — Gateway 요청·브리지 설정", () => {
     gatewayResponses["agents.list"] = () => {
       throw Object.assign(new Error("forbidden"), { code: "FORBIDDEN" });
     };
+    events = [];
     await expect(adapter.listAgents(CONNECTION_ID)).rejects.toMatchObject({ code: "FORBIDDEN" });
     expect(adapter.capabilities().agentsList).toBe(false);
+    const dropped = {
+      kind: "status",
+      status: oneGateway("connected", "down"),
+      capabilities: { agentsList: false, configSet: true, promptEveryRun: false, serverSessionIds: false },
+    };
+    expect(ofKind("status")).toEqual([dropped]);
+
+    // 이미 내린 능력은 다시 알리지 않는다
+    await expect(adapter.listAgents(CONNECTION_ID)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(ofKind("status")).toEqual([dropped]);
   });
 
   it("syncChannelConfig → 브리지 config.set, ok:false 는 AdapterError(code)", async () => {
