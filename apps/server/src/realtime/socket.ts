@@ -36,6 +36,7 @@ import { monotonicNow, TokenBucket } from "../modules/ops/ratelimit";
 import type { OpsService } from "../modules/ops/service";
 import type { Presence } from "../modules/push/presence";
 import { setReaction } from "../modules/reactions/service";
+import { channelLastSeq } from "../modules/messages/seq";
 import { markRead } from "../modules/reads/store";
 import {
   findUserMessage,
@@ -227,17 +228,16 @@ export function attachWire(io: WireServer, ctx: WireContext): void {
         if (!channel) throw apiError("NOT_FOUND", "channel not found");
         // 룸에 먼저 들어간 뒤 읽는다 — 그 사이 메시지는 페이지와 이벤트에 겹칠 수는 있어도 빠지지 않는다
         await socket.join(channelRoom(channel.id));
-        // 처음 구독은 타임라인(루트만), lastSeq 재동기화는 끊긴 사이 답글까지 — 웹이 threadRootId 로 스레드 캐시에 나눈다
-        const page = listMessages(
-          ctx.db,
-          channel.id,
+        // 처음 구독은 이벤트만 — 세션의 첫 페이지는 대화 REST 로 받는다(채널 세션 계획 판정 PS5). lastSeq 재동기화는 끊긴 사이의
+        // 채널 전체(모든 세션·스레드 답글) — 웹이 conversationId·threadRootId 로 캐시를 나눈다
+        const page =
           lastSeq === undefined
-            ? { limit: MESSAGE_PAGE_MAX, scope: "roots" }
-            : { afterSeq: lastSeq, limit: MESSAGE_PAGE_MAX, scope: "all" },
-        );
+            ? { messages: [], hasMore: false }
+            : listMessages(ctx.db, channel.id, { afterSeq: lastSeq, limit: MESSAGE_PAGE_MAX, scope: "all" });
         return {
           messages: page.messages,
           hasMore: page.hasMore,
+          latestSeq: channelLastSeq(ctx.db, channel.id),
           activeRuns: ctx.runs?.activeRuns(channel.id) ?? [],
           pendingApprovals: ctx.runs?.pendingApprovals(channel.id) ?? [],
           // 끊긴 사이 옛 루트에 붙은 답글이면 그 루트의 새 요약 — 루트 message.updated 를 못 받았다
@@ -320,9 +320,9 @@ export function attachWire(io: WireServer, ctx: WireContext): void {
       const room = channelRoom(parsed.data.channelId);
       // 구독(워크스페이스 확인을 거친 룸 참가)한 채널로만 중계한다
       if (!socket.rooms.has(room)) return;
-      socket
-        .to(room)
-        .emit("typing", { channelId: parsed.data.channelId, actorType: "user", actorId: userId });
+      // 대화가 이 채널 것인지는 보지 않는다 — 같은 채널 룸 안의 표시일 뿐이고, 틀린 값은 아무 세션에도 보이지 않는다
+      const { channelId, conversationId } = parsed.data;
+      socket.to(room).emit("typing", { channelId, conversationId, actorType: "user", actorId: userId });
     });
 
     // 채널 id 가 이 워크스페이스 채널인지는 보지 않는다 — 거르기에만 쓰여 틀린 값은 「안 보고 있음」이 될 뿐이다
@@ -382,8 +382,8 @@ export function attachWire(io: WireServer, ctx: WireContext): void {
 
 /**
  * 사람 보내기 — 재전송(같은 clientMsgId)은 대화를 고르기 전에 그 메시지로 답한다(채널 세션 계획 판정 PS9 — 새 세션 첫 메시지의 재전송이
- * 세션을 또 만들지 않는다). conversationId 를 주지 않은 보내기(newConversation·다리)는 서버가 고른 그 메시지의 세션을 ack 에 함께
- * 싣는다 — 재전송이면 처음 고른 세션이라 ack 를 잃은 탭도 같은 세션으로 옮겨 간다
+ * 세션을 또 만들지 않는다). newConversation 보내기는 서버가 만든 그 메시지의 세션을 ack 에 함께 싣는다 — 재전송이면 처음 만든 세션이라
+ * ack 를 잃은 탭도 같은 세션으로 옮겨 간다
  */
 function sendMessage(
   ctx: WireContext,
@@ -396,7 +396,7 @@ function sendMessage(
   // 보관 전에 이미 저장된 메시지의 재전송(ack 를 잃은 탭)은 그 메시지로 답한다 — 새로 쓰는 것만 막는다(계획 판정 PC1)
   if (existing) {
     const conversation =
-      input.conversationId === undefined ? getConversation(ctx.db, existing.conversationId) : undefined;
+      input.newConversation === undefined ? undefined : getConversation(ctx.db, existing.conversationId);
     return { message: existing, created: false, ...(conversation ? { conversation } : {}) };
   }
   assertChannelWritable(ctx.db, input.channelId, ctx.workspaceId);
@@ -427,7 +427,7 @@ function sendMessage(
   });
   const conversation =
     sent.conversation ??
-    (input.conversationId === undefined ? getConversation(ctx.db, sent.message.conversationId) : undefined);
+    (input.newConversation === undefined ? undefined : getConversation(ctx.db, sent.message.conversationId));
   return { message: sent.message, created: sent.created, ...(conversation ? { conversation } : {}) };
 }
 

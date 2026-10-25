@@ -19,7 +19,7 @@ import { createServices } from "../src/wiring";
 import { bootTestApp, login, userWithRole } from "./helpers/app";
 import { newTestDb } from "./helpers/db";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
-import { channelConversation, seedChannelWithAgent } from "./helpers/seed";
+import { channelConversation, seedChannelWithAgent, sendTarget } from "./helpers/seed";
 import { connectWire, recordEvents, type WireClient, waitFor } from "./helpers/wire";
 
 const MINUTE = 60_000;
@@ -141,6 +141,7 @@ describe("승인 저장·런 상관·wire 중계 (앱 부팅, FakeAdapter)", () 
     const leaked = recordEvents(socket, ["message.created"]);
     const sent = await socket.emitWithAck("message.send", {
       channelId,
+      ...sendTarget(app.db, channelId),
       clientMsgId: `outside-${++n}`,
       bodyMd: "구독 밖 확인 — 멘션 없음",
     });
@@ -154,6 +155,7 @@ describe("승인 저장·런 상관·wire 중계 (앱 부팅, FakeAdapter)", () 
     const queued = waitFor(socket, "run.state", (p) => p.run.status === "queued" && p.run.agentId === dev.id);
     const sent = await socket.emitWithAck("message.send", {
       channelId,
+      ...sendTarget(app.db, channelId),
       clientMsgId: `m-${++n}`,
       bodyMd: "@dev 파일 써줘",
     });
@@ -600,6 +602,7 @@ describe("승인 저장·런 상관·wire 중계 (앱 부팅, FakeAdapter)", () 
     );
     const sent = await socket.emitWithAck("message.send", {
       channelId: channel.id,
+      ...sendTarget(app.db, channel.id),
       clientMsgId: `m-${++n}`,
       bodyMd: "@dev 하나 더",
     });

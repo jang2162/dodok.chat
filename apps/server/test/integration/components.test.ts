@@ -105,7 +105,8 @@ describe("통합 시나리오 10 — components 상호작용이 그 에이전트
   async function cardInFreshSubscribe(setup: RelayChannel, card: Message): Promise<Message | undefined> {
     const fresh = await connectWire(live.app, live.auth.token);
     sockets.push(fresh);
-    const page = await subscribe(fresh, setup.channel.id);
+    // 처음 구독은 메시지를 싣지 않는다(판정 PS5) — 끊겼다 다시 붙은 탭의 재동기화(lastSeq 0)로 본다
+    const page = await subscribe(fresh, setup.channel.id, 0);
     return page.messages.find((m) => m.id === card.id);
   }
 
@@ -271,11 +272,11 @@ describe("통합 시나리오 10 — components 상호작용이 그 에이전트
     expect(fresh?.componentState?.consumed).toEqual(["yes"]);
     // ② 누른 자리의 message.updated
     expect(updatesOf(log, card).at(-1)?.interactions).toEqual(expected);
-    // ③ REST 히스토리 재조회(새로고침)
+    // ③ REST 히스토리 재조회(새로고침) — 그 카드의 세션
     const history = await rest<{ messages: Message[] }>(
       live,
       "GET",
-      `/channels/${setup.channel.id}/messages`,
+      `/conversations/${card.conversationId}/messages`,
     );
     expect(history.status).toBe(200);
     expect(history.body.messages.find((m) => m.id === card.id)?.interactions).toEqual(expected);

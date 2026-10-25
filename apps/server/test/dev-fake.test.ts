@@ -1,3 +1,4 @@
+import { sendTarget } from "./helpers/seed";
 import {
   type Attachment,
   type ClientToServerEvents,
@@ -741,6 +742,7 @@ describe("startDevFake", () => {
     });
     const sent = await socket.emitWithAck("message.send", {
       channelId,
+      ...sendTarget(dev.app.db, channelId),
       clientMsgId: "c1",
       bodyMd: `<@a:${devId}> 안녕`,
     });
@@ -808,6 +810,7 @@ describe("startDevFake", () => {
     ] as const) {
       const sent = await socket.emitWithAck("message.send", {
         channelId,
+        ...sendTarget(dev.app.db, channelId),
         clientMsgId: `two-${id}`,
         bodyMd: `<@a:${id}> ${text}`,
       });
@@ -866,6 +869,7 @@ describe("startDevFake", () => {
     });
     const sent = await socket.emitWithAck("message.send", {
       channelId,
+      ...sendTarget(dev.app.db, channelId),
       clientMsgId: "c3",
       bodyMd: `<@a:${devId}> 카드 짧게`,
     });
@@ -892,6 +896,7 @@ describe("startDevFake", () => {
     });
     const sent = await socket.emitWithAck("message.send", {
       channelId,
+      ...sendTarget(dev.app.db, channelId),
       clientMsgId: "c4",
       bodyMd: `<@a:${devId}> 카드에 이미지`,
     });
@@ -923,6 +928,7 @@ describe("startDevFake", () => {
     });
     const sent = await socket.emitWithAck("message.send", {
       channelId,
+      ...sendTarget(dev.app.db, channelId),
       clientMsgId: "c5",
       bodyMd: `<@a:${devId}> 이거 봐`,
       attachments: [id],
@@ -944,6 +950,7 @@ describe("startDevFake", () => {
     });
     const sent = await socket.emitWithAck("message.send", {
       channelId,
+      ...sendTarget(dev.app.db, channelId),
       clientMsgId: "c2",
       bodyMd: "@dev @fin 시작",
     });
@@ -1056,6 +1063,7 @@ describe("startDevFake 푸시 — 「나 불러」", () => {
     });
     const sentMsg = await socket.emitWithAck("message.send", {
       channelId: channel.id,
+      ...sendTarget(dev.app.db, channel.id),
       clientMsgId: "call-me",
       bodyMd: `<@a:${agent.id}> 나 불러`,
     });
@@ -1606,6 +1614,7 @@ describe("startDevFake 스레드 — 스레드 답·스레드 릴레이·동시 
     const send = async (bodyMd: string, threadRootId?: string): Promise<Message> => {
       const sent = await socket.emitWithAck("message.send", {
         channelId: channel.id,
+        ...sendTarget(dev.app.db, channel.id, threadRootId),
         clientMsgId: `${name}-${n++}`,
         bodyMd,
         ...(threadRootId === undefined ? {} : { threadRootId }),
@@ -1944,6 +1953,7 @@ describe("startDevFake — Gateway 를 지우고 다른 Gateway 로 옮긴 에�
     });
     const sent = await socket.emitWithAck("message.send", {
       channelId: channel.id,
+      ...sendTarget(dev.app.db, channel.id),
       clientMsgId: "moved-1",
       bodyMd: `<@a:${finId}> 집에서도`,
     });
@@ -2078,7 +2088,12 @@ describe("startDevFake 가짜 Claude 러너 — 고정 러너 토큰·coder·/__
     const res = await socket.emitWithAck("channel.subscribe", { channelId: channel.id });
     if (!res.ok) throw new Error(`channel.subscribe → ${res.error.code}`);
     const send = (bodyMd: string) =>
-      socket.emitWithAck("message.send", { channelId: channel.id, clientMsgId: bodyMd, bodyMd });
+      socket.emitWithAck("message.send", {
+        channelId: channel.id,
+        ...sendTarget(dev.app.db, channel.id),
+        clientMsgId: bodyMd,
+        bodyMd,
+      });
     return { channelId: channel.id, coderId, socket, created, send };
   }
 

@@ -46,7 +46,7 @@ describe("첨부 계약", () => {
   });
 
   it("MessageSend: 본문이 비면 첨부가 있어야 한다", () => {
-    const base = { channelId: ID, clientMsgId: "c1" };
+    const base = { channelId: ID, clientMsgId: "c1", conversationId: ID };
     expect(MessageSend.safeParse({ ...base, bodyMd: "안녕" }).success).toBe(true);
     expect(MessageSend.safeParse({ ...base, bodyMd: "", attachments: [ID] }).success).toBe(true);
     expect(MessageSend.safeParse({ ...base, bodyMd: "  \n", attachments: [ID] }).success).toBe(true);

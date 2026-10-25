@@ -68,7 +68,7 @@ describe("ThreadSummary·Message", () => {
 
 describe("MessageSend.threadRootId", () => {
   it("선택, UUID 만", () => {
-    const base = { channelId: ID(1), clientMsgId: "c1", bodyMd: "답글" };
+    const base = { channelId: ID(1), conversationId: ID(1), clientMsgId: "c1", bodyMd: "답글" };
     expect(MessageSend.parse({ ...base, threadRootId: ID(2) }).threadRootId).toBe(ID(2));
     expect(MessageSend.safeParse(base).success).toBe(true);
     expect(MessageSend.safeParse({ ...base, threadRootId: "root" }).success).toBe(false);
@@ -77,7 +77,7 @@ describe("MessageSend.threadRootId", () => {
 
 describe("ChannelSubscribeResult.threadRoots", () => {
   it("선택, Message 배열 — 재동기화 페이지 답글의 옛 루트", () => {
-    const base = { messages: [], hasMore: false, activeRuns: [], pendingApprovals: [] };
+    const base = { messages: [], hasMore: false, latestSeq: 0, activeRuns: [], pendingApprovals: [] };
     expect(ChannelSubscribeResult.parse(base)).not.toHaveProperty("threadRoots");
     const rootMsg = {
       id: ID(2),
@@ -185,6 +185,7 @@ describe("검색 계약", () => {
     const hit = {
       messageId: ID(1),
       channelId: ID(2),
+      conversationId: ID(5),
       seq: 7,
       channelArchived: false,
       authorType: "user",

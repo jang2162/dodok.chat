@@ -23,8 +23,12 @@ import type { SetupStatus } from "../setup";
 export const ChannelSubscribe = z.object({ channelId: Id, lastSeq: z.int().min(0).optional() });
 export type ChannelSubscribe = z.infer<typeof ChannelSubscribe>;
 export const ChannelSubscribeResult = z.object({
-  messages: z.array(Message), // lastSeq 이후, 최대 200개. lastSeq 가 있으면 스레드 답글도 들어간다
+  // 처음 구독(lastSeq 없음)은 빈 목록 — 세션의 첫 페이지는 대화 REST 로 받는다(채널 세션 계획 판정 PS5).
+  // lastSeq 재동기화는 그 뒤의 채널 전체(모든 세션·스레드 답글), 최대 200개 — 웹이 conversationId 로 나눈다
+  messages: z.array(Message),
   hasMore: z.boolean(),
+  // 읽은 순간 그 채널의 마지막 seq — 웹의 빈틈 커서가 여기서 시작하고, hasMore 로 버린 뒤에도 여기로 맞춘다
+  latestSeq: z.int().min(0),
   activeRuns: z.array(RunState), // 종료되지 않은 런
   pendingApprovals: z.array(Approval),
   // lastSeq 재동기화만 — messages 의 답글이 가리키는 루트 중 messages 에 없는 것(최신 threadSummary 를 실었다).
@@ -41,8 +45,7 @@ export const MessageSend = z
     attachments: z.array(Id).max(ATTACHMENT_LIMITS.perMessage).optional(), // 업로드 API로 먼저 올린 첨부 id
     replyTo: Id.optional(),
     threadRootId: Id.optional(), // 답글을 가리키면 서버가 VALIDATION 으로 거절한다 — 웹이 루트를 보낸다
-    // 그 채널의 세션 — 스레드 답글이면 루트의 세션과 같아야 한다. newConversation 이면 서버가 세션을 만들어 거기에 쓴다.
-    // 둘 다 없으면 서버가 채널의 최근 열린 세션(없으면 새 세션)으로 받는다 — 웹이 세션 경로로 옮기기 전까지의 다리(채널 세션 계획 판정 PS4)
+    // 둘 중 정확히 하나 — 그 채널의 세션(스레드 답글이면 루트의 세션과 같아야 한다), 또는 서버가 만들 새 세션
     conversationId: Id.optional(),
     newConversation: NewConversation.optional(),
   })
@@ -50,9 +53,9 @@ export const MessageSend = z
     message: "본문이나 첨부 중 하나는 있어야 한다",
     path: ["bodyMd"],
   })
-  .refine((v) => v.conversationId === undefined || v.newConversation === undefined, {
-    message: "conversationId 와 newConversation 은 함께 쓸 수 없다",
-    path: ["newConversation"],
+  .refine((v) => (v.conversationId === undefined) !== (v.newConversation === undefined), {
+    message: "conversationId 와 newConversation 가운데 정확히 하나가 있어야 한다",
+    path: ["conversationId"],
   });
 export type MessageSend = z.infer<typeof MessageSend>;
 
@@ -78,11 +81,16 @@ export type ComponentInteract = z.infer<typeof ComponentInteract>;
 export const ApprovalResolve = z.object({ approvalId: Id, decision: ApprovalDecision });
 export type ApprovalResolve = z.infer<typeof ApprovalResolve>;
 
-export const Typing = z.object({ channelId: Id });
+// 입력 중 표시는 그 세션에서만 보인다(채널 세션 계획 판정 PS7) — 새 세션 창(아직 대화가 없다)은 보내지 않는다
+export const Typing = z.object({ channelId: Id, conversationId: Id });
 export type Typing = z.infer<typeof Typing>;
 
-// 이 소켓의 탭이 보이는가·어느 채널을 보고 있는가 — 서버가 「보고 있으면 푸시 안 보냄」에 쓴다(스펙 5.3)
-export const PresenceUpdate = z.object({ visible: z.boolean(), channelId: Id.optional() });
+// 이 소켓의 탭이 보이는가·어느 채널의 어느 세션을 보고 있는가 — 서버가 「보고 있으면 푸시 안 보냄」에 쓴다(스펙 5.3)
+export const PresenceUpdate = z.object({
+  visible: z.boolean(),
+  channelId: Id.optional(),
+  conversationId: Id.optional(),
+});
 export type PresenceUpdate = z.infer<typeof PresenceUpdate>;
 
 /** 켜기/끄기 — 토글이 아니다. 두 번 보내도 결과가 같다 */
@@ -92,7 +100,7 @@ export type ReactionSet = z.infer<typeof ReactionSet>;
 export interface ClientToServerEvents {
   "channel.subscribe": (p: ChannelSubscribe, ack: Ack<ChannelSubscribeResult>) => void;
   "channel.unsubscribe": (p: { channelId: Id }, ack: Ack<null>) => void;
-  // conversation 은 conversationId 를 주지 않았을 때만(newConversation·다리) — 서버가 고른 그 메시지의 세션(재전송이면 처음 고른 세션)
+  // conversation 은 newConversation 으로 보냈을 때만 — 서버가 만든 그 메시지의 세션(재전송이면 처음 만든 세션)
   "message.send": (p: MessageSend, ack: Ack<{ message: Message; conversation?: Conversation }>) => void;
   "run.abort": (p: RunAbort, ack: Ack<null>) => void;
   "run.events.replay": (p: RunEventsReplay, ack: Ack<RunEventsReplayResult>) => void;
@@ -154,7 +162,7 @@ export interface ServerToClientEvents {
   "people.changed": (p: { people: Person[] }) => void; // workspace 룸 — 가입·역할·표시 이름·비활성화·다시 활성화 뒤 전체 목록
   // workspace 룸 — 에이전트 등록·수정·옮기기·보관·되살리기 뒤. 본문이 없다: 받은 쪽이 에이전트·채널 멤버 목록을 다시 받는다
   "agents.changed": (p: Record<string, never>) => void;
-  typing: (p: { channelId: Id; actorType: "user" | "agent"; actorId: Id }) => void;
+  typing: (p: { channelId: Id; conversationId: Id; actorType: "user" | "agent"; actorId: Id }) => void;
   "adapter.status": (p: AdapterStatus) => void; // user 룸
   "setup.status": (p: { status: SetupStatus }) => void; // owner 사용자 룸에만
   "ops.event": (p: { event: OpsEvent; unacked: OpsUnacked }) => void; // owner·admin 사용자 룸에만

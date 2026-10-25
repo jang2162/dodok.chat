@@ -269,7 +269,7 @@ describe("런 관문·다시 실행", () => {
     });
     expect(log.created.filter((m) => m.systemMeta?.kind === "run_limit")).toHaveLength(1);
     expect((await listRunsRest(live, setup.channel.id)).map((r) => r.id)).toEqual([first.id]);
-    const page = await subscribe(log.socket, setup.channel.id);
+    const page = await subscribe(log.socket, setup.channel.id, 0);
     expect(page.messages.map((m) => m.id)).toEqual(expect.arrayContaining([blocked.id, again.id]));
     expect(runLimitEvents().map((e) => [e.key, e.count, e.detail])).toEqual([["workspace", 2, { limit: 1 }]]);
     expect(scenario.turns).toHaveLength(1);

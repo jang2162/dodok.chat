@@ -3,7 +3,15 @@ import { v7 as uuid } from "uuid";
 import { session, user } from "../../src/db/auth-schema";
 import type { Db, DbOrTx } from "../../src/db/client";
 import { eq } from "drizzle-orm";
-import { agents, channelMembers, channels, gateways, users, workspaces } from "../../src/db/schema.sqlite";
+import {
+  agents,
+  channelMembers,
+  channels,
+  gateways,
+  messages,
+  users,
+  workspaces,
+} from "../../src/db/schema.sqlite";
 import { FAKE_GATEWAY_ID, insertGateway } from "./gateways";
 import { createConversation, latestOpenConversation } from "../../src/modules/conversations/store";
 import { ensureSession } from "../../src/modules/sessions/service";
@@ -149,6 +157,24 @@ export function seedSession(
  */
 export function channelConversation(db: DbOrTx, channelId: string): string {
   return latestOpenConversation(db, channelId) ?? seedConversation(db, channelId);
+}
+
+/**
+ * `message.send` 에 실을 세션 — 답글이면 루트의 세션, 아니면 그 채널의 열린 세션(`channelConversation`). 서버는 둘 중 하나
+ * (conversationId·newConversation)를 꼭 받는다(채널 세션 계획 판정 PS4 — 서버가 고르던 다리를 걷었다). 세션 하나만 쓰는 테스트의
+ * 보내기가 걷기 전 다리와 같은 세션으로 가게 한다
+ */
+export function sendTarget(db: DbOrTx, channelId: string, threadRootId?: string): { conversationId: string } {
+  if (threadRootId !== undefined) {
+    const root = db
+      .select({ conversationId: messages.conversationId })
+      .from(messages)
+      .where(eq(messages.id, threadRootId))
+      .get();
+    // 없는 루트 — 서버가 답할 오류(VALIDATION)를 보게 그 채널의 세션을 싣는다
+    if (root) return { conversationId: root.conversationId };
+  }
+  return { conversationId: channelConversation(db, channelId) };
 }
 
 /**

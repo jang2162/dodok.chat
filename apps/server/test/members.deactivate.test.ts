@@ -40,7 +40,7 @@ import { listPersonalTokens, verifyPersonalToken } from "../src/modules/tokens/s
 import { bootTestApp, login, userWithRole } from "./helpers/app";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
 import { connectWire, openWire, recordEvents, type WireClient } from "./helpers/wire";
-import { channelConversation } from "./helpers/seed";
+import { channelConversation, sendTarget } from "./helpers/seed";
 
 describe("멤버 비활성화·다시 활성화", () => {
   let app: App;
@@ -287,7 +287,7 @@ describe("멤버 비활성화·다시 활성화", () => {
       // 끊긴 소켓의 emit 은 버퍼에 남는다 — 다시 붙으려 해도 핸드셰이크가 막아 버퍼가 나가지 않는다
       victim.emit(
         "message.send",
-        { channelId: ch.id, clientMsgId: `late-${++n}`, bodyMd: "늦은 말" },
+        { channelId: ch.id, ...sendTarget(app.db, ch.id), clientMsgId: `late-${++n}`, bodyMd: "늦은 말" },
         () => {},
       );
       const refused = new Promise<Error & { data?: { code?: string } }>((resolve) =>

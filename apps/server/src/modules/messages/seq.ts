@@ -16,3 +16,11 @@ export function allocateSeq(db: DbOrTx, channelId: string): number {
   if (!row) throw new Error(`channel not found: ${channelId}`);
   return row.seq;
 }
+
+/** 채널에 마지막으로 발급한 seq — 메시지가 없으면 0. 없는 채널도 0(부르는 쪽이 채널을 먼저 확인한다) */
+export function channelLastSeq(db: DbOrTx, channelId: string): number {
+  return (
+    db.select({ lastSeq: channels.lastSeq }).from(channels).where(eq(channels.id, channelId)).get()
+      ?.lastSeq ?? 0
+  );
+}

@@ -30,7 +30,7 @@ import { bootTestApp, login, userWithRole } from "./helpers/app";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
 import { connectWire, waitFor } from "./helpers/wire";
 import { makePng } from "./helpers/png";
-import { channelConversation, seedAgentSession } from "./helpers/seed";
+import { channelConversation, seedAgentSession, sendTarget } from "./helpers/seed";
 
 const apps: App[] = [];
 afterEach(async () => {
@@ -208,12 +208,14 @@ describe("보관한 채널의 쓰기 — 409 CHANNEL_ARCHIVED(계획 판정 PC1)
       await archive();
       const top = await socket.emitWithAck("message.send", {
         channelId: channel.id,
+        ...sendTarget(app.db, channel.id),
         clientMsgId: "after-archive-top",
         bodyMd: "보내 볼게요",
       });
       expect(top).toMatchObject({ ok: false, error: archivedError });
       const reply = await socket.emitWithAck("message.send", {
         channelId: channel.id,
+        ...sendTarget(app.db, channel.id, root.id),
         clientMsgId: "after-archive-thread",
         bodyMd: "답글",
         threadRootId: root.id,
@@ -238,6 +240,7 @@ describe("보관한 채널의 쓰기 — 409 CHANNEL_ARCHIVED(계획 판정 PC1)
       const send = () =>
         socket.emitWithAck("message.send", {
           channelId: channel.id,
+          ...sendTarget(app.db, channel.id),
           clientMsgId: "before-archive",
           bodyMd: "보관 전에 보낸 글",
         });
@@ -454,15 +457,11 @@ describe("[Review Focus 4] 보관한 채널 읽기", () => {
     await archive();
     const member = { authorization: `Bearer ${(await userWithRole(app, "bee", "member")).token}` };
 
-    const list = await inject("GET", `/api/v1/channels/${channel.id}/messages`, undefined, member);
+    const session = `/api/v1/conversations/${root.conversationId}`;
+    const list = await inject("GET", `${session}/messages`, undefined, member);
     expect(list.statusCode).toBe(200);
     expect((list.json().messages as Message[]).map((m) => m.id)).toContain(root.id);
-    const thread = await inject(
-      "GET",
-      `/api/v1/channels/${channel.id}/threads/${root.id}/messages`,
-      undefined,
-      member,
-    );
+    const thread = await inject("GET", `${session}/threads/${root.id}/messages`, undefined, member);
     expect(thread.statusCode).toBe(200);
     expect((thread.json().messages as Message[]).map((m) => m.bodyMd)).toContain("배포 답글");
 

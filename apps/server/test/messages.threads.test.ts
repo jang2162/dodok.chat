@@ -21,7 +21,7 @@ import { ensureSession } from "../src/modules/sessions/service";
 import { ServerBus } from "../src/realtime/bus";
 import { bootTestApp, login } from "./helpers/app";
 import { newTestDb } from "./helpers/db";
-import { channelConversation, seedWorkspace } from "./helpers/seed";
+import { channelConversation, seedWorkspace, sendTarget } from "./helpers/seed";
 import { connectWire, recordEvents, type WireClient, waitFor } from "./helpers/wire";
 
 function setup() {
@@ -444,6 +444,7 @@ describe("wire·REST — 스레드", () => {
     const updated = waitFor(b, "message.updated", (p) => p.message.id === root.id);
     const res = await a.emitWithAck("message.send", {
       channelId: channel.id,
+      ...sendTarget(app.db, channel.id, root.id),
       clientMsgId: "t-1",
       bodyMd: "답글",
       threadRootId: root.id,
@@ -463,6 +464,7 @@ describe("wire·REST — 스레드", () => {
     for (const threadRootId of [reply.id, foreign.id, uuid()]) {
       const res = await socket.emitWithAck("message.send", {
         channelId: channel.id,
+        ...sendTarget(app.db, channel.id, threadRootId),
         clientMsgId: `bad-${threadRootId}`,
         bodyMd: "x",
         threadRootId,
@@ -473,7 +475,7 @@ describe("wire·REST — 스레드", () => {
     expect(all.messages).toHaveLength(2);
   });
 
-  it("channel.subscribe — lastSeq 없으면 루트만(요약 포함), lastSeq 가 있으면 답글까지(Review Focus 3)", async () => {
+  it("channel.subscribe — lastSeq 없으면 메시지 없이(첫 페이지는 세션 REST, 판정 PS5), lastSeq 가 있으면 답글까지(Review Focus 3)", async () => {
     const socket = await connect();
     const channel = newChannel("wire-thread-sub");
     const root = post(channel.id, "루트");
@@ -481,8 +483,7 @@ describe("wire·REST — 스레드", () => {
     post(channel.id, "루트2");
     const fresh = await socket.emitWithAck("channel.subscribe", { channelId: channel.id });
     if (!fresh.ok) throw new Error(fresh.error.code);
-    expect(fresh.data.messages.map((m) => m.seq)).toEqual([1, 3]);
-    expect(fresh.data.messages[0]?.threadSummary?.count).toBe(1);
+    expect(fresh.data).toMatchObject({ messages: [], hasMore: false, latestSeq: 3 });
     // 끊긴 사이 답글이 왔다
     post(channel.id, "끊긴 사이 답", root.id);
     const resync = await socket.emitWithAck("channel.subscribe", { channelId: channel.id, lastSeq: 1 });
@@ -527,44 +528,46 @@ describe("wire·REST — 스레드", () => {
     expect(quiet.data.threadRoots).toEqual([]);
   });
 
-  it("GET /channels/:id/messages?around= — 루트만, 답글 seq 면 그 루트가 가운데", async () => {
+  it("GET /conversations/:id/messages?around= — 루트만, 답글 seq 면 그 루트가 가운데", async () => {
     const channel = newChannel("rest-around");
+    const conversationId = channelConversation(app.db, channel.id);
     const r1 = post(channel.id, "r1");
     for (let i = 0; i < 3; i++) post(channel.id, `r${i + 2}`);
     const reply = post(channel.id, "답", r1.id);
-    const res = await get(`/channels/${channel.id}/messages?around=${reply.seq}&limit=3`);
+    const res = await get(`/conversations/${conversationId}/messages?around=${reply.seq}&limit=3`);
     expect(res.statusCode).toBe(200);
     const body = res.json() as { messages: Message[]; hasMore: boolean; hasMoreAfter: boolean };
     expect(body.messages.map((m) => m.seq)).toEqual([1, 2]);
     expect(body).toMatchObject({ hasMore: false, hasMoreAfter: true });
     expect(body.messages[0]?.threadSummary?.count).toBe(1);
-    const both = await get(`/channels/${channel.id}/messages?around=2&beforeSeq=3`);
+    const both = await get(`/conversations/${conversationId}/messages?around=2&beforeSeq=3`);
     expect(both.statusCode).toBe(400);
     expect(both.json()).toMatchObject({ code: "VALIDATION" });
   });
 
-  it("GET /channels/:id/threads/:rootId/messages — 루트 + 답글 오래된 순, before/after/around", async () => {
+  it("GET /conversations/:id/threads/:rootId/messages — 루트 + 답글 오래된 순, before/after/around", async () => {
     const channel = newChannel("rest-thread");
+    const base = `/conversations/${channelConversation(app.db, channel.id)}/threads`;
     const root = post(channel.id, "루트");
     post(channel.id, "다른 루트");
     const a = post(channel.id, "a", root.id);
     const b = post(channel.id, "b", root.id);
-    const res = await get(`/channels/${channel.id}/threads/${root.id}/messages`);
+    const res = await get(`${base}/${root.id}/messages`);
     expect(res.statusCode).toBe(200);
     const body = res.json() as { root: Message; messages: Message[]; hasMore: boolean };
     expect(body.messages.map((m) => m.id)).toEqual([root.id, a.id, b.id]);
     expect(body.root).toMatchObject({ id: root.id, threadSummary: { count: 2 } });
     expect(body.hasMore).toBe(false);
-    const older = await get(`/channels/${channel.id}/threads/${root.id}/messages?beforeSeq=${b.seq}&limit=1`);
+    const older = await get(`${base}/${root.id}/messages?beforeSeq=${b.seq}&limit=1`);
     expect(older.json()).toMatchObject({ messages: [{ id: a.id }], hasMore: true, root: { id: root.id } });
-    const newer = await get(`/channels/${channel.id}/threads/${root.id}/messages?afterSeq=${root.seq}`);
+    const newer = await get(`${base}/${root.id}/messages?afterSeq=${root.seq}`);
     expect((newer.json() as { messages: Message[] }).messages.map((m) => m.id)).toEqual([a.id, b.id]);
-    const around = await get(`/channels/${channel.id}/threads/${root.id}/messages?around=${a.seq}&limit=2`);
+    const around = await get(`${base}/${root.id}/messages?around=${a.seq}&limit=2`);
     // a 이하 1개, 초과 1개
     expect((around.json() as { messages: Message[] }).messages.map((m) => m.id)).toEqual([a.id, b.id]);
   });
 
-  it("스레드 REST 권한 — 다른 워크스페이스 채널·루트가 아닌 id·다른 채널 루트·없는 id 는 404", async () => {
+  it("스레드 REST 권한 — 다른 워크스페이스 세션·루트가 아닌 id·다른 채널 루트·없는 id 는 404, 걷은 채널 경로 목록도 404(판정 PS5)", async () => {
     const channel = newChannel("rest-thread-auth");
     const other = newChannel("rest-thread-auth-2");
     const root = post(channel.id, "루트");
@@ -582,17 +585,26 @@ describe("wire·REST — 스레드", () => {
       bodyMd: "남의 워크스페이스",
       clientMsgId: "foreign-1",
     });
+    const mine = `/conversations/${channelConversation(app.db, channel.id)}`;
+    const foreign = `/conversations/${foreignRoot.conversationId}`;
     for (const url of [
-      `/channels/${foreignChannel.id}/threads/${foreignRoot.id}/messages`,
-      `/channels/${foreignChannel.id}/messages?around=1`,
-      `/channels/${channel.id}/threads/${reply.id}/messages`,
-      `/channels/${channel.id}/threads/${elsewhere.id}/messages`,
-      `/channels/${channel.id}/threads/${uuid()}/messages`,
+      `${foreign}/threads/${foreignRoot.id}/messages`,
+      `${foreign}/messages?around=1`,
+      `${mine}/threads/${reply.id}/messages`,
+      `${mine}/threads/${elsewhere.id}/messages`,
+      `${mine}/threads/${uuid()}/messages`,
+      `/conversations/${uuid()}/messages`,
     ]) {
       const res = await get(url);
       expect(res.statusCode, url).toBe(404);
       expect(res.json()).toMatchObject({ code: "NOT_FOUND" });
     }
+    // 채널 경로 목록 — 걷었다(라우트가 없어 Fastify 기본 404)
+    for (const url of [
+      `/channels/${channel.id}/messages`,
+      `/channels/${channel.id}/threads/${root.id}/messages`,
+    ])
+      expect((await get(url)).statusCode, url).toBe(404);
   });
 
   it("요약 없이 발행된 루트 message.updated(카드 상호작용 등)도 팬아웃이 요약을 붙인다 — 칩이 사라지지 않게", async () => {
@@ -617,6 +629,7 @@ describe("wire·REST — 스레드", () => {
     const seen = recordEvents(b, ["message.created", "message.updated"]);
     await a.emitWithAck("message.send", {
       channelId: channel.id,
+      ...sendTarget(app.db, channel.id, root.id),
       clientMsgId: "silent-1",
       bodyMd: "답",
       threadRootId: root.id,

@@ -30,9 +30,12 @@ const USAGE = `사용: pnpm wire-cli <origin> [localToken] <명령> …   (local
                                                    그 Gateway 에 에이전트가 없으면 POST /agents, 있으면 재사용 → POST members
                                                    (gatewayId 를 빼면 Gateway 가 하나일 때 그것)
   patch-channel <channelId> <json>                 PATCH /channels/:id
-  send <channelId> <text> [--watch-ms 60000]       구독 → message.send → 서버 이벤트를 시간표로
-  interact <channelId> <messageId> <itemId> [--watch-ms 60000]
+  send <channelId> <text> [--conversation <id> | --new-session] [--watch-ms 60000]
+                                                   구독 → message.send → 서버 이벤트를 시간표로
+                                                   (세션을 안 주면 그 채널의 최근 열린 세션, 없으면 새 세션)
+  interact <channelId> <messageId> <itemId> [--conversation <id>] [--watch-ms 60000]
                                                    component.interact ack → 이벤트 시간표
+                                                   (메시지는 그 세션의 최근 200개에서 — 안 주면 최근 열린 세션)
   watch <channelId> [--watch-ms 60000]             구독만 하고 이벤트 시간표(adapter.status 관찰용)
   runs <channelId>                                 GET /channels/:id/runs 요약`;
 
@@ -69,19 +72,31 @@ type Args = {
   command: string;
   rest: string[];
   watchMs: number;
+  /** --conversation — 보낼·찾을 세션. 없으면 채널의 최근 열린 세션 */
+  conversationId: string | undefined;
+  /** --new-session — send 가 새 세션을 만든다 */
+  newSession: boolean;
 };
 
 function parseArgs(argv: string[]): Args {
   const positional: string[] = [];
   let watchMs = DEFAULT_WATCH_MS;
+  let conversationId: string | undefined;
+  let newSession = false;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i] as string;
     if (arg === "--watch-ms") {
       const value = Number(argv[++i]);
       if (!Number.isInteger(value) || value < 0) fail("USAGE", "--watch-ms 는 0 이상의 정수(ms)");
       watchMs = value;
-    } else positional.push(arg);
+    } else if (arg === "--conversation") {
+      conversationId = argv[++i];
+      if (!conversationId) fail("USAGE", "--conversation 에는 세션 id 가 필요하다");
+    } else if (arg === "--new-session") newSession = true;
+    else positional.push(arg);
   }
+  if (conversationId !== undefined && newSession)
+    fail("USAGE", "--conversation 과 --new-session 은 함께 쓸 수 없다");
   const [origin, second, ...others] = positional;
   if (!origin || !second) fail("USAGE", "origin 과 명령이 필요하다");
   // 토큰은 16자 이상이라 명령 이름과 겹치지 않는다
@@ -94,6 +109,8 @@ function parseArgs(argv: string[]): Args {
     command,
     rest: others,
     watchMs,
+    conversationId,
+    newSession,
   };
 }
 
@@ -375,6 +392,17 @@ function createTimeline(names: Map<string, string>) {
   };
 }
 
+/** 채널의 열린 세션 가운데 최근 활동한 것(목록 REST 는 최근 활동순) — 없으면 undefined */
+async function latestConversation(
+  origin: string,
+  token: string,
+  channelId: string,
+): Promise<string | undefined> {
+  const path = `/channels/${channelId}/conversations?status=open`;
+  const list = ok(`GET ${path}`, await request(origin, "GET", path, { session: token })) as Json;
+  return ((list["conversations"] as Json[])[0]?.["id"] as string | undefined) ?? undefined;
+}
+
 async function openChannel(args: Args, channelId: string) {
   const { session: token, me } = await session(args);
   const names = await loadNames(args, token, me);
@@ -491,15 +519,19 @@ async function run(args: Args): Promise<void> {
     }
     case "send": {
       const [channelId, text] = need(rest, ["channelId", "text"]) as [string, string];
-      const { socket, timeline } = await openChannel(args, channelId);
-      timeline.line("message.send", `emit ${clip(text)}`);
+      const { socket, timeline, token } = await openChannel(args, channelId);
+      const conversationId = args.newSession
+        ? undefined
+        : (args.conversationId ?? (await latestConversation(origin, token, channelId)));
+      timeline.line("message.send", `emit ${clip(text)} → ${conversationId ?? "새 세션"}`);
       const data = (await emitAck(socket, "message.send", {
         channelId,
         clientMsgId: randomUUID(),
         bodyMd: text,
+        ...(conversationId === undefined ? { newConversation: {} } : { conversationId }),
       })) as Json;
       const m = data["message"] as Json;
-      timeline.line("message.send", `ack id=${m["id"]} seq=${m["seq"]}`);
+      timeline.line("message.send", `ack id=${m["id"]} seq=${m["seq"]} conversation=${m["conversationId"]}`);
       await watchFor(args, socket, timeline);
       return;
     }
@@ -510,10 +542,13 @@ async function run(args: Args): Promise<void> {
         string,
       ];
       const { socket, timeline, token } = await openChannel(args, channelId);
-      const path = `/channels/${channelId}/messages?limit=200`;
+      const conversationId = args.conversationId ?? (await latestConversation(origin, token, channelId));
+      if (conversationId === undefined)
+        fail("NOT_FOUND", `채널 ${channelId} 에 열린 세션이 없다 — --conversation 으로 준다`);
+      const path = `/conversations/${conversationId}/messages?limit=200`;
       const page = ok(`GET ${path}`, await request(origin, "GET", path, { session: token })) as Json;
       const message = (page["messages"] as Json[]).find((m) => m["id"] === messageId);
-      if (!message) fail("NOT_FOUND", `최근 200개 메시지에 ${messageId} 가 없다`);
+      if (!message) fail("NOT_FOUND", `세션 ${conversationId} 의 최근 200개 메시지에 ${messageId} 가 없다`);
       const components = message["components"] as Json | undefined;
       if (!components) fail("NOT_FOUND", `메시지 ${messageId} 에 components 가 없다`);
       // 계약 9.3: componentId 는 ComponentsV1.id(cmp_…). blockId 는 서버가 아이템으로 찾는다

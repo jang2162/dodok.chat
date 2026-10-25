@@ -20,7 +20,9 @@ import {
 import { randomUUID } from "node:crypto";
 import { expect } from "vitest";
 import type { LiveApp } from "./live-app";
-import { connectWire, type WireClient } from "./wire";
+import type { DbOrTx } from "../../src/db/client";
+import { sendTarget } from "./seed";
+import { connectWire, type WireClient, wireDb } from "./wire";
 
 export const WAIT_MS = 5_000;
 
@@ -140,10 +142,24 @@ export async function sendMessage(
   socket: WireClient,
   channelId: string,
   bodyMd: string,
-  opts: { attachments?: string[]; clientMsgId?: string; threadRootId?: string } = {},
+  opts: {
+    attachments?: string[];
+    clientMsgId?: string;
+    threadRootId?: string;
+    /** 보낼 세션 — 안 주면 답글은 루트의 세션, 아니면 그 채널의 열린 세션(seed `sendTarget`) */
+    conversationId?: string;
+  } = {},
 ): Promise<Message> {
+  const db = wireDb(socket);
+  if (opts.conversationId === undefined && !db)
+    throw new Error("sendMessage: 앱에 연 소켓이 아니다 — conversationId 를 준다");
+  const target =
+    opts.conversationId !== undefined
+      ? { conversationId: opts.conversationId }
+      : sendTarget(db as DbOrTx, channelId, opts.threadRootId);
   const res = await socket.emitWithAck("message.send", {
     channelId,
+    ...target,
     clientMsgId: opts.clientMsgId ?? randomUUID(),
     bodyMd,
     ...(opts.attachments === undefined ? {} : { attachments: opts.attachments }),
