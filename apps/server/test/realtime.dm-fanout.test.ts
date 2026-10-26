@@ -145,6 +145,54 @@ describe("DM 팬아웃 — 채널 사실은 DM 주인에게만", () => {
     expect(got.plain).toEqual(WHO);
   });
 
+  it("channel.activity — DM 에이전트 글은 mentionedUserIds 가 [주인], 사람 글·일반 채널 에이전트 글은 메시지의 멘션 그대로", async () => {
+    await connectAll();
+    const d = dm();
+    const p = plain();
+    const pConversation = seedConversation(app.db, p.id);
+    const activity = (
+      channelId: string,
+      conversationId: string,
+      authorType: "agent" | "user",
+      authorId: string,
+      users: string[],
+    ) => {
+      const id = uuid();
+      app.bus.emit("message.created", {
+        message: {
+          id,
+          channelId,
+          conversationId,
+          seq: ++n,
+          kind: "normal",
+          authorType,
+          authorId,
+          bodyMd: "x",
+          mentions: { users, agents: [] },
+          reactions: [],
+        } as never,
+      });
+      return n;
+    };
+    const mentionedOf = (who: Who, seq: number) =>
+      (
+        seen[who].find((e) => e.event === "channel.activity" && (e.payload as { seq: number }).seq === seq)
+          ?.payload as { mentionedUserIds: string[] } | undefined
+      )?.mentionedUserIds;
+    const dmAgent = activity(d.channel.id, d.conversationId, "agent", d.agent.id, []);
+    const dmUser = activity(d.channel.id, d.conversationId, "user", ids.mia, []);
+    const plainAgent = activity(p.id, pConversation, "agent", uuid(), [ids.owner]);
+    const plainQuiet = activity(p.id, pConversation, "agent", uuid(), []);
+    // 일반 채널의 마지막 글이 모두에게 닿았으면 앞의 것도 닿아 있다(같은 버스·같은 소켓 — both 와 같은 까닭)
+    await Promise.all(
+      WHO.map((who) => waitFor(sockets[who], "channel.activity", (payload) => payload.seq === plainQuiet)),
+    );
+    expect(mentionedOf("mia", dmAgent)).toEqual([ids.mia]);
+    expect(mentionedOf("mia", dmUser)).toEqual([]);
+    expect(mentionedOf("owner", plainAgent)).toEqual([ids.owner]);
+    expect(mentionedOf("mia", plainQuiet)).toEqual([]);
+  });
+
   it.each(["approval.requested", "approval.resolved"] as const)(
     "%s — DM 의 승인은 주인만, 일반 채널은 모두",
     async (event) => {
