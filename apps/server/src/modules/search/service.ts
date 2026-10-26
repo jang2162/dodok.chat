@@ -10,7 +10,7 @@ import { and, eq, type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { DbOrTx } from "../../db/client";
 import { agents, channelMembers, channels, users } from "../../db/schema.sqlite";
-import { readableChannelSql } from "../../auth/channel-access";
+import { type ChannelReader, readerSql } from "../../auth/channel-access";
 import { apiError } from "../../http/errors";
 import { parseStored } from "../../http/validate";
 import {
@@ -76,14 +76,14 @@ const SELECT_HIT = sql`m.id AS id, m.channel_id AS channelId, m.conversation_id 
 export function searchMessages(
   db: DbOrTx,
   workspaceId: string,
-  userId: string,
+  reader: ChannelReader,
   q: SearchQuery,
   now: Date,
 ): SearchResult {
   // FTS5 쿼리 파서는 NUL 에서 문자열을 끝내 「unterminated string」 500 이 되고, LIKE 는 패턴이 NUL 에서 잘려 더 넓게 찾는다
   if (q.q.includes("\u0000")) throw apiError("VALIDATION", "검색어에 NUL 문자를 쓸 수 없다");
-  const where = [sql`m.kind = 'normal'`, readableChannels(workspaceId, userId), ...filters(q)];
-  const mentions = mentionDirectory(db, workspaceId, userId, q.channelId);
+  const where = [sql`m.kind = 'normal'`, readableChannels(workspaceId, reader), ...filters(q)];
+  const mentions = mentionDirectory(db, workspaceId, reader, q.channelId);
   const needles = expandHandles(q.q, mentions);
   const hit = (r: HitRow) => toHit(r, needles, mentions.handleOf);
   if ([...q.q].length === 2) {
@@ -135,7 +135,7 @@ type MentionDirectory = {
 function mentionDirectory(
   db: DbOrTx,
   workspaceId: string,
-  userId: string,
+  reader: ChannelReader,
   channelId: string | undefined,
 ): MentionDirectory {
   const byId = new Map<string, string>();
@@ -171,7 +171,7 @@ function mentionDirectory(
     .where(
       and(
         eq(channels.workspaceId, workspaceId),
-        readableChannelSql(userId),
+        readerSql(reader),
         eq(channelMembers.memberType, "agent"),
         ...(channelId ? [eq(channelMembers.channelId, channelId)] : []),
       ),
@@ -211,8 +211,8 @@ function expandHandles(q: string, mentions: MentionDirectory): string[] {
  * 사용자가 읽을 수 있는 채널 — 워크스페이스의 일반 채널과 그 사람의 DM(auth/channel-access.ts). SQL 단계에서 거른다: 결과를 뽑은 뒤
  * 거르면 남의 DM 에 걸린 행이 페이지 자리·커서를 먹는다(에이전트 DM 스펙 4장)
  */
-function readableChannels(workspaceId: string, userId: string): SQL {
-  return sql`m.channel_id IN (SELECT ${channels.id} FROM ${channels} WHERE ${channels.workspaceId} = ${workspaceId} AND ${readableChannelSql(userId)})`;
+function readableChannels(workspaceId: string, reader: ChannelReader): SQL {
+  return sql`m.channel_id IN (SELECT ${channels.id} FROM ${channels} WHERE ${channels.workspaceId} = ${workspaceId} AND ${readerSql(reader)})`;
 }
 
 function filters(q: SearchQuery): SQL[] {

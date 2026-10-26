@@ -3,7 +3,7 @@ import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import type { DbOrTx } from "../../db/client";
 import { channels, conversations } from "../../db/schema.sqlite";
-import { readableChannelSql } from "../../auth/channel-access";
+import { type ChannelReader, readerSql } from "../../auth/channel-access";
 import { apiError } from "../../http/errors";
 import { parseStored } from "../../http/validate";
 import { assertChannelWritable } from "../channels/service";
@@ -50,13 +50,13 @@ export function getReadableConversation(
   db: DbOrTx,
   id: string,
   workspaceId: string,
-  readerId: string,
+  reader: ChannelReader,
 ): Conversation | undefined {
   const row = db
     .select({ conversation: conversations })
     .from(conversations)
     .innerJoin(channels, eq(channels.id, conversations.channelId))
-    .where(and(eq(conversations.id, id), eq(channels.workspaceId, workspaceId), readableChannelSql(readerId)))
+    .where(and(eq(conversations.id, id), eq(channels.workspaceId, workspaceId), readerSql(reader)))
     .get();
   return row ? rowToConversation(row.conversation) : undefined;
 }

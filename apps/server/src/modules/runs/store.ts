@@ -4,7 +4,7 @@ import { v7 as uuidv7 } from "uuid";
 import type { RunEventBody } from "../../adapters/types";
 import type { DbOrTx } from "../../db/client";
 import { channels, messages, runEvents, runs } from "../../db/schema.sqlite";
-import { readableChannelSql } from "../../auth/channel-access";
+import { type ChannelReader, readerSql } from "../../auth/channel-access";
 import { apiError } from "../../http/errors";
 import { parseStored } from "../../http/validate";
 import { TERMINAL_STATUSES } from "./machine";
@@ -139,20 +139,20 @@ export function getRunRequestedBy(db: DbOrTx, id: string): string | null {
 }
 
 /**
- * 채널이 그 워크스페이스에 있고 readerId 가 그 채널을 읽을 수 있는 런 — REST·wire·제어 도구가 다른 워크스페이스·남의 DM 의 런을
+ * 채널이 그 워크스페이스에 있고 reader 가 그 채널을 읽을 수 있는 런 — REST·wire·제어 도구가 다른 워크스페이스·남의 DM 의 런을
  * NOT_FOUND 로 가린다(auth/channel-access.ts)
  */
 export function getRunInWorkspace(
   db: DbOrTx,
   id: string,
   workspaceId: string,
-  readerId: string,
+  reader: ChannelReader,
 ): Run | undefined {
   const row = db
     .select({ run: runs })
     .from(runs)
     .innerJoin(channels, eq(channels.id, runs.channelId))
-    .where(and(eq(runs.id, id), eq(channels.workspaceId, workspaceId), readableChannelSql(readerId)))
+    .where(and(eq(runs.id, id), eq(channels.workspaceId, workspaceId), readerSql(reader)))
     .get();
   return row ? rowToRun(row.run) : undefined;
 }

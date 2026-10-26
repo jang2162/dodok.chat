@@ -10,7 +10,7 @@ import { and, asc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import type { SQLiteUpdateSetSource } from "drizzle-orm/sqlite-core";
 import { v7 as uuidv7 } from "uuid";
 import { z } from "zod";
-import { assertChannelReadable, readableChannelSql } from "../../auth/channel-access";
+import { assertChannelReadable, type ChannelReader, readerSql } from "../../auth/channel-access";
 import { roleOf } from "../../auth/roles";
 import type { Db, DbOrTx } from "../../db/client";
 import { agents, channelMembers, channels, gateways, memberships, users } from "../../db/schema.sqlite";
@@ -176,13 +176,13 @@ export function updateChannel(
 }
 
 /**
- * 기본은 살아 있는 채널만, archived 면 보관한 채널만(채널 보관 스펙 「채널 보관」 절의 API). readerId 가 없으면 일반 채널만(REST 채널
- * 목록 — DM 은 따로 받는다), 있으면 그 사람이 읽을 수 있는 채널(일반 채널 + 그 사람의 DM — 제어 도구 list_channels, 에이전트 DM 계획 판정 PD3)
+ * 기본은 살아 있는 채널만, archived 면 보관한 채널만(채널 보관 스펙 「채널 보관」 절의 API). reader 가 없으면 일반 채널만(REST 채널
+ * 목록 — DM 은 따로 받는다), 있으면 그가 읽을 수 있는 채널(제어 도구 list_channels — 주체마다 범위가 다르다, auth/channel-access.ts readableChannelSqlFor)
  */
 export function listChannels(
   db: DbOrTx,
   workspaceId: string,
-  opts: { archived?: boolean; readerId?: string } = {},
+  opts: { archived?: boolean; reader?: ChannelReader } = {},
 ): ChannelRecord[] {
   return db
     .select()
@@ -191,7 +191,7 @@ export function listChannels(
       and(
         eq(channels.workspaceId, workspaceId),
         opts.archived ? isNotNull(channels.archivedAt) : isNull(channels.archivedAt),
-        opts.readerId === undefined ? eq(channels.kind, "channel") : readableChannelSql(opts.readerId),
+        opts.reader === undefined ? eq(channels.kind, "channel") : readerSql(opts.reader),
       ),
     )
     .orderBy(asc(channels.createdAt), asc(channels.id))
@@ -213,17 +213,26 @@ export function getChannel(db: DbOrTx, id: string, workspaceId?: string): Channe
 
 /**
  * 사람(또는 사람이 시킨 일)이 채널 하나를 읽거나 바꾸기 전에 — 없거나 그 사람이 읽을 수 없으면(남의 DM) 같은 404. 역할 정책·
- * assertChannelWritable 보다 먼저 부른다(auth/channel-access.ts)
+ * assertChannelWritable 보다 먼저 부른다(auth/channel-access.ts). 제어 도구 주체는 좁힌 범위(SQL)를 넘긴다 — 조회가 판정한다
  */
 export function loadReadableChannel(
   db: DbOrTx,
   id: string,
   workspaceId: string,
-  userId: string,
+  reader: ChannelReader,
 ): ChannelRecord {
+  if (typeof reader !== "string") {
+    const row = db
+      .select()
+      .from(channels)
+      .where(and(eq(channels.id, id), eq(channels.workspaceId, workspaceId), readerSql(reader)))
+      .get();
+    if (!row) throw apiError("NOT_FOUND", "channel not found");
+    return rowToChannel(row);
+  }
   const channel = getChannel(db, id, workspaceId);
   if (!channel) throw apiError("NOT_FOUND", "channel not found");
-  assertChannelReadable(channel, userId);
+  assertChannelReadable(channel, reader);
   return channel;
 }
 

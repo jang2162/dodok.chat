@@ -1,5 +1,7 @@
 import type { AnyControlTool, ControlToolName, Message, OpsStatus, TeamRole } from "@dodok/shared";
+import type { SQL } from "drizzle-orm";
 import type { z } from "zod";
+import { readableChannelSqlFor } from "../../auth/channel-access";
 import {
   authorizeAgentArchive,
   authorizeAgentDiscover,
@@ -112,8 +114,11 @@ function channelOf(ctx: HandlerContext, channelId: string): ChannelRecord {
   return channel;
 }
 
-/** 주체가 읽는 사람 — 시킨 사람이 없는 자동화 사슬은 빈 id 라 DM 을 읽지 못한다 */
-const readerOf = (p: Principal): string => p.userId ?? "";
+/**
+ * 주체가 읽을 수 있는 채널 — 바깥 MCP 는 주인의 DM 전부, 채널 안 에이전트는 그 런의 DM 하나만(auth/channel-access.ts). 시킨 사람이
+ * 없는 자동화 사슬은 DM 을 읽지 못한다
+ */
+const readerOf = (p: Principal): SQL => readableChannelSqlFor(p);
 
 /** 채널을 받는 도구의 접근 판정 */
 function readableChannel(ctx: HandlerContext, input: { channelId: string }, p: Principal): void {
@@ -172,11 +177,11 @@ export const HANDLERS: Handlers = {
   // ── 읽기 ────────────────────────────────────────────────────
   list_channels: {
     authorize: (role) => authorizeRead(role),
-    // 읽을 수 있는 채널 — 일반 채널 + 주체의 DM(행마다 kind, 에이전트 DM 계획 판정 PD3)
+    // 읽을 수 있는 채널 — 일반 채널 + 주체가 읽을 수 있는 DM(행마다 kind, 에이전트 DM 계획 판정 PD3)
     run: (ctx, input, principal) => ({
       channels: listChannels(ctx.db, ctx.workspaceId, {
         archived: input.archived === true,
-        readerId: readerOf(principal),
+        reader: readerOf(principal),
       }),
     }),
   },
@@ -203,7 +208,7 @@ export const HANDLERS: Handlers = {
   },
   search_messages: {
     authorize: (role) => authorizeRead(role),
-    // 검색 범위는 주체가 읽을 수 있는 채널(일반 채널 + 주체의 DM) — 시킨 사람이 없는 런은 일반 채널만
+    // 검색 범위는 주체가 읽을 수 있는 채널(readerOf) — 시킨 사람이 없는 런은 일반 채널만
     run: (ctx, input, principal) =>
       searchMessages(ctx.db, ctx.workspaceId, readerOf(principal), input, ctx.now()),
   },
