@@ -23,6 +23,7 @@ import {
   channels,
   conversations,
   memberships,
+  messages,
   opsEvents,
   runs,
 } from "../src/db/schema.sqlite";
@@ -364,6 +365,56 @@ describe("에이전트 DM — 만들기·목록·런(서버)", () => {
     expect(await reasonOf()).toBeNull();
     expect(await trySend()).toMatchObject({ ok: true });
   });
+
+  it.each([
+    ["dmAccess 철회", "dm_not_allowed", { dmAccess: "admins" }],
+    ["꺼짐", "agent_disabled", { enabled: false }],
+    ["사유 없음", null, { name: "그대로" }],
+  ] as const)(
+    "읽기 전용 전에 줄 선 런 — %s 뒤 차례가 오면 사유가 있으면 어댑터로 가지 않고 중지로 닫힌다(돌던 런은 그대로)",
+    async (_label, reason, patch) => {
+      const agent = await agentWith("everyone");
+      const dm = await openDm("mia", agent.id);
+      const socket = await wire("mia");
+      const first = await sent1(socket, dm.id);
+      await vi.waitFor(() => expect(runsOf(dm.id)).toHaveLength(1));
+      const running = runsOf(dm.id)[0];
+      if (!running) throw new Error("런이 없다");
+      await vi.waitFor(() => expect(adapter.calls.send.some((c) => c.runId === running.id)).toBe(true));
+      const second = await send(socket, {
+        channelId: dm.id,
+        conversationId: first.message.conversationId,
+        bodyMd: "하나 더",
+      });
+      expect(second).toMatchObject({ ok: true });
+      await vi.waitFor(() => expect(runsOf(dm.id)).toHaveLength(2));
+      const queued = runsOf(dm.id).find((r) => r.id !== running.id);
+      if (!queued) throw new Error("줄 선 런이 없다");
+      expect(queued.status).toBe("queued");
+
+      const res = await rest("owner", "PATCH", `/api/v1/agents/${agent.id}`, patch);
+      expect(res.statusCode, res.body).toBe(200);
+      const statusOf = (id: string) => runsOf(dm.id).find((r) => r.id === id)?.status;
+      // 어댑터로 간 런은 끄기·철회로 멈추지 않는다(ack 전이라 아직 queued)
+      expect(statusOf(running.id)).toBe("queued");
+      adapter.emit({ kind: "run_signal", runId: running.id, signal: { kind: "gateway_aborted" } });
+      if (reason === null) {
+        await vi.waitFor(() => expect(adapter.calls.send.some((c) => c.runId === queued.id)).toBe(true));
+        expect(statusOf(queued.id)).toBe("queued");
+        return;
+      }
+      await vi.waitFor(() => expect(statusOf(queued.id)).toBe("aborted"));
+      expect(adapter.calls.send.some((c) => c.runId === queued.id)).toBe(false);
+      // 닫는 꼴은 보관한 에이전트·닫힌 세션과 같다 — 시스템 메시지(run_error)는 남기지 않는다
+      expect(
+        app.db
+          .select()
+          .from(messages)
+          .where(and(eq(messages.channelId, dm.id), eq(messages.kind, "system")))
+          .all(),
+      ).toEqual([]);
+    },
+  );
 
   it("읽기 전용 DM 의 다른 쓰기 — 리액션·카드·첨부 올리기·지시 바꾸기도 409 DM_READ_ONLY", async () => {
     const agent = await agentWith("everyone");

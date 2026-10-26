@@ -35,8 +35,9 @@ import type { Logger } from "../../logger";
 import type { ServerBus } from "../../realtime/bus";
 import { josa } from "../../util/josa";
 import { getAgent, providerAgentIdIs } from "../agents/service";
-import { isChannelArchived } from "../channels/service";
+import { getChannel, isChannelArchived } from "../channels/service";
 import { isConversationClosed } from "../conversations/store";
+import { dmReadOnlyReason } from "../dms/service";
 import {
   consumeComponentItem,
   createAgentMessage,
@@ -789,6 +790,15 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     );
   }
 
+  /**
+   * 읽기 전용이 된 DM 의 런 — 주인의 지금 역할로 본 사유(dmAccess 철회·꺼짐)가 있으면 보내지 않는다. 철회 전에 줄 선 런도 그 머신에
+   * 일을 시키지 않게(에이전트 DM 스펙 결정 4). 어댑터로 이미 간 런은 보지 않는다 — 일반 채널의 끄기와 같다
+   */
+  function dmClosedTarget(run: Pick<Run, "channelId">): boolean {
+    const channel = getChannel(db, run.channelId);
+    return channel !== undefined && dmReadOnlyReason(db, channel) !== null;
+  }
+
   // ── 직렬화·디스패치 ─────────────────────────────────────────
 
   /** 세션 큐 맨 앞(디스패치 안 된 것) 중 먼저 enqueue 한 것부터, 진행 중 런이 maxInflight 미만인 동안 보낸다. */
@@ -817,8 +827,8 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         return;
       }
       // 대기하는 사이 에이전트나 채널을 보관했다 — 보관의 훑기(agents/service.ts archiveAgent·channels/service.ts archiveChannel)와
-      // 같은 「중지」로 닫고 보내지 않는다
-      if (archivedTarget(run)) {
+      // 같은 「중지」로 닫고 보내지 않는다. DM 이 읽기 전용이 됐어도 같다(dmClosedTarget)
+      if (archivedTarget(run) || dmClosedTarget(run)) {
         applySignal(runId, { kind: "abort_requested" });
         return;
       }
