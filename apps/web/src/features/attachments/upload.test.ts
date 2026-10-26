@@ -2,7 +2,16 @@ import { ATTACHMENT_LIMITS } from "@dodok/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CH } from "../../../test/fixtures";
 import { FakeXhr, makeFakeXhr, pngFile, uploaded } from "../../../test/fakeXhr";
-import { checkImageFile, DISK_FULL, ONLY_IMAGES, TOO_BIG, UPLOAD_FAILED, uploadImage } from "./upload";
+import { DM_READ_ONLY_TEXT } from "@/features/dms/queries";
+import {
+  checkImageFile,
+  DISK_FULL,
+  DM_READ_ONLY_ERROR,
+  ONLY_IMAGES,
+  TOO_BIG,
+  UPLOAD_FAILED,
+  uploadImage,
+} from "./upload";
 
 beforeEach(() => FakeXhr.reset());
 
@@ -77,6 +86,23 @@ describe("uploadImage", () => {
     const { up, xhr } = start();
     xhr.respond(409, { code: "CHANNEL_ARCHIVED", message: "channel is archived" });
     await expect(up.promise).rejects.toThrow("보관된 채널입니다");
+  });
+
+  it("409 DM_READ_ONLY(읽기 전용 DM) → 그 사유 문구, 이름은 DM_READ_ONLY_ERROR — 사유를 못 읽으면 허용 철회 문구", async () => {
+    const a = start();
+    a.xhr.respond(409, {
+      code: "DM_READ_ONLY",
+      message: "dm is read-only",
+      details: { reason: "agent_archived" },
+    });
+    await expect(a.up.promise).rejects.toMatchObject({
+      message: DM_READ_ONLY_TEXT.agent_archived,
+      name: DM_READ_ONLY_ERROR,
+    });
+    FakeXhr.reset();
+    const b = start();
+    b.xhr.respond(409, { code: "DM_READ_ONLY", message: "dm is read-only" });
+    await expect(b.up.promise).rejects.toThrow(DM_READ_ONLY_TEXT.dm_not_allowed);
   });
 
   it("400 → 서버 message", async () => {

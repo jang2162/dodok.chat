@@ -8,6 +8,7 @@ import { MessageItem } from "@/features/messages/MessageItem";
 import { PendingItem } from "@/features/messages/PendingItem";
 import { emptyTimeline, type Timeline, upsert } from "@/features/messages/timeline";
 import { CHANNEL_ARCHIVED_TEXT } from "@/api/formErrors";
+import { DM_READ_ONLY_TEXT } from "@/features/dms/queries";
 import { qk } from "@/api/queries";
 import { getThread, getTimeline } from "@/realtime/timelineCache";
 import { useWireStatus } from "@/realtime/wire";
@@ -369,6 +370,28 @@ describe("MessageItem 안의 리액션", () => {
     expect(getTimeline(qc, CH, CH)?.items[0]?.reactions).toEqual([]);
     expect(qc.getQueryState(qk.channel(CH))?.isInvalidated).toBe(true);
     expect(qc.getQueryState(qk.channels)?.isInvalidated).toBe(true);
+  });
+
+  it("ack DM_READ_ONLY → 되돌리고 그 사유 문구 토스트, DM 목록을 다시 받는다(에이전트 DM 리뷰 L3)", async () => {
+    const qc = authorsClient(undefined, PEOPLE);
+    qc.setQueryData(qk.timeline(CH, CH), timelineWith(ROOT_MSG));
+    qc.setQueryData(qk.dms, []);
+    fake.onAck("reaction.set", () => ({
+      ok: false as const,
+      error: {
+        code: "DM_READ_ONLY" as const,
+        message: "dm is read-only",
+        details: { reason: "agent_disabled" },
+      },
+    }));
+    const user = userEvent.setup();
+    renderWithClient(<MessageItem message={ROOT_MSG} head />, qc);
+    await openPicker(user);
+    await user.click(await screen.findByRole("menuitem", { name: "👍" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledTimes(1));
+    expect(toast.error).toHaveBeenCalledWith(DM_READ_ONLY_TEXT.agent_disabled, { id: "dm-read-only" });
+    expect(getTimeline(qc, CH, CH)?.items[0]?.reactions).toEqual([]);
+    expect(qc.getQueryState(qk.dms)?.isInvalidated).toBe(true);
   });
 
   /** 채널 타임라인과 그 루트의 스레드 패널이 둘 다 열려 있다(넓은 화면에서 나란히 보인다) */

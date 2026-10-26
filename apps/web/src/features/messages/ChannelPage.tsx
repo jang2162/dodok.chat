@@ -109,14 +109,21 @@ export function ChannelPage() {
     );
   }, []);
   // 읽기 전용 DM 이 다시 쓸 수 있게 되면(되살리기·켜기·허용) 사유 줄이 사라진다 — 그 줄에 있던 초점이 body 로 떨어졌으면 돌아온 작성기로.
-  // 다른 곳에 초점이 있으면 뺏지 않는다(`DmReadOnlyNotice` 의 focusOnMount 와 짝)
-  const prevReadOnly = useRef(readOnly);
+  // 다른 곳에 초점이 있으면 뺏지 않는다(`DmReadOnlyNotice` 의 focusOnMount 와 짝). 채널을 옮겨도 이 화면은 그대로라 같은 채널일 때만
+  // 견준다 — 읽기 전용 DM 에서 다른 채널로 옮긴 것은 되살리기가 아니다
+  const prevReadOnly = useRef({ channelId, readOnly });
   useEffect(() => {
     const was = prevReadOnly.current;
-    prevReadOnly.current = readOnly;
+    prevReadOnly.current = { channelId, readOnly };
     const active = document.activeElement;
-    if (was !== null && readOnly === null && (active === null || active === document.body)) focusComposer();
-  }, [readOnly, focusComposer]);
+    if (
+      was.channelId === channelId &&
+      was.readOnly !== null &&
+      readOnly === null &&
+      (active === null || active === document.body)
+    )
+      focusComposer();
+  }, [channelId, readOnly, focusComposer]);
   // 확인된 채널만 최근 본 채널로(오프라인 사본 대상, 스펙 4장) — 없는 채널 주소가 실제 채널을 밀어내지 않게.
   // 세션은 받은 것만 그 채널의 마지막으로 본 세션으로(사본이 채널마다 그 세션 하나만 담는다) — 새 세션 창은 남길 것이 없다
   const qc = useQueryClient();

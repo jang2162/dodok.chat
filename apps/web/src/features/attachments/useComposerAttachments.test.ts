@@ -1,8 +1,12 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook } from "@testing-library/react";
+import { createElement, type ReactNode } from "react";
 import { toast } from "sonner";
 import { afterEach, beforeEach, expect, it, type MockInstance, vi } from "vitest";
 import { CH, CH2 } from "../../../test/fixtures";
 import { FakeXhr, pngFile, stubObjectUrls, uploaded } from "../../../test/fakeXhr";
+import { qk } from "@/api/queries";
+import { DM_READ_ONLY_TEXT } from "@/features/dms/queries";
 import { ONLY_IMAGES, TOO_BIG } from "./upload";
 import { useComposerAttachments } from "./useComposerAttachments";
 
@@ -172,4 +176,22 @@ it("언마운트 때 모두 끊고 놓는다", () => {
   unmount();
   expect(xhrAt(0).aborted).toBe(true);
   expect(urls.revoke.mock.calls.map(([u]) => u).sort()).toEqual(["blob:1", "blob:2"]);
+});
+
+it("409 DM_READ_ONLY — 칩은 그 사유 문구로 오류, DM 목록을 다시 받는다(에이전트 DM 리뷰 L3)", async () => {
+  const qc = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, retry: false } } });
+  qc.setQueryData(qk.dms, []);
+  const wrapper = ({ children }: { children: ReactNode }) =>
+    createElement(QueryClientProvider, { client: qc }, children);
+  const { result } = renderHook(() => useComposerAttachments(CH, CONV), { wrapper });
+  act(() => result.current.add([pngFile("a.png")]));
+  await act(async () =>
+    xhrAt(0).respond(409, {
+      code: "DM_READ_ONLY",
+      message: "dm is read-only",
+      details: { reason: "dm_not_allowed" },
+    }),
+  );
+  expect(result.current.items[0]).toMatchObject({ status: "error", error: DM_READ_ONLY_TEXT.dm_not_allowed });
+  expect(qc.getQueryState(qk.dms)?.isInvalidated).toBe(true);
 });

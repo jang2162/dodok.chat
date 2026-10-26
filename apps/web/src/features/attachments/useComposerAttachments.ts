@@ -1,7 +1,9 @@
 import { ATTACHMENT_LIMITS, type Attachment } from "@dodok/shared";
-import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
+import { QueryClientContext } from "@tanstack/react-query";
+import { useCallback, useContext, useEffect, useMemo, useReducer, useRef } from "react";
 import { toast } from "sonner";
-import { checkImageFile, uploadImage } from "./upload";
+import { invalidateDms } from "@/features/dms/queries";
+import { checkImageFile, DM_READ_ONLY_ERROR, uploadImage } from "./upload";
 
 /** 작성기 칩 하나 — 미리보기는 로컬 object URL, 끝나면 서버가 준 `attachment` */
 export type ComposerAttachment = {
@@ -71,6 +73,8 @@ type Held = { url: string; abort?: () => void };
 export function useComposerAttachments(channelId: string, place: string): ComposerAttachments {
   const [items, dispatch] = useReducer(reducer, []);
   const held = useRef(new Map<string, Held>()).current;
+  // 훅만 띄우는 테스트에는 QueryClient 가 없다 — 그때는 DM 목록을 다시 받지 않는다(`useInteract` 와 같은 수)
+  const qc = useContext(QueryClientContext);
 
   const release = useCallback(
     (key: string) => {
@@ -120,6 +124,8 @@ export function useComposerAttachments(channelId: string, place: string): Compos
             h.abort = undefined;
             // 뺐거나 채널을 옮겨 끊은 것 — 이미 칩이 없다
             if (e instanceof Error && e.name === "AbortError") return;
+            // 이 탭이 DM 이 읽기 전용이 된 것을 아직 모른다 — DM 목록을 다시 받으면 작성기 자리가 사유 줄로 바뀐다
+            if (e instanceof Error && e.name === DM_READ_ONLY_ERROR && qc) void invalidateDms(qc);
             dispatch({ type: "error", key, error: e instanceof Error ? e.message : String(e) });
           },
         );
@@ -127,7 +133,7 @@ export function useComposerAttachments(channelId: string, place: string): Compos
       });
       if (added.length > 0) dispatch({ type: "add", items: added });
     },
-    [channelId, held],
+    [channelId, held, qc],
   );
 
   const remove = useCallback(

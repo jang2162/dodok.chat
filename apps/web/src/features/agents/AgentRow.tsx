@@ -139,6 +139,7 @@ function DmAccessField({ agent, readOnly }: { agent: Agent; readOnly: boolean })
       </p>
       <RadioGroup
         aria-label={`${handle} DM 허용`}
+        aria-describedby={error ? `${id}-error` : undefined}
         value={value}
         onValueChange={choose}
         disabled={save.isPending}

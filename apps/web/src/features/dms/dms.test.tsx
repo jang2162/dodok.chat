@@ -3,7 +3,10 @@ import type { QueryClient } from "@tanstack/react-query";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { qk } from "@/api/queries";
+import { useApprovalStore } from "@/features/approvals/approvalStore";
 import { canDecideApproval } from "@/features/approvals/decider";
+import { resetApprovalNotices } from "@/features/approvals/notify";
 import { DATE_GROUP_LABEL, dateGroupOf } from "@/features/conversations/dateGroups";
 import { MessageItem } from "@/features/messages/MessageItem";
 import { useUnread } from "@/features/reads/useUnread";
@@ -12,9 +15,10 @@ import { createSubscriptions } from "@/realtime/subscriptions";
 import { useWireStatus } from "@/realtime/wire";
 import { flushEditorFrames } from "../../../test/composerHarness";
 import { dmChannelOf, dmOf } from "../../../test/dms";
-import { stubEditorDom } from "../../../test/domStubs";
+import { stubEditorDom, stubNotification } from "../../../test/domStubs";
 import { createFakeSocket, type FakeSocket } from "../../../test/fakeSocket";
-import { AGENT, CH, msg, uid } from "../../../test/fixtures";
+import { AGENT, approval, CH, msg, uid } from "../../../test/fixtures";
+import { stubMedia } from "../../../test/media";
 import { renderWithClient } from "../../../test/messages";
 import { stubScrollLayout } from "../../../test/scrollLayout";
 import { agentOf } from "../../../test/settingsServer";
@@ -254,6 +258,60 @@ describe("사이드바 「다이렉트 메시지」", () => {
   });
 });
 
+describe("DM 목록은 셸이 늘 들고 있다(리뷰 M1)", () => {
+  let notes: ReturnType<typeof stubNotification>;
+  beforeEach(() => {
+    useApprovalStore.getState().reset();
+    resetApprovalNotices();
+    notes = stubNotification("granted");
+  });
+  afterEach(() => notes.restore());
+
+  it.each([
+    ["넓은 화면", false],
+    ["좁은 화면(사이드바 시트를 열지 않음)", true],
+  ])(
+    "%s — 캐시가 빈 채 시작해도 member 주인의 DM 승인은 탭 안 알림(본문 「DM」), DM 새 세션의 첫 글은 읽지 않음 항목, GET /dms 는 한 번",
+    async (_label, narrow) => {
+      stubMedia(narrow);
+      const server = stubServer({ role: "member" });
+      useUnread.getState().applySnapshot({ conversations: [], channels: [CH, DM] });
+      const { queryClient } = renderRoute(`/c/${CH}/s/new`);
+      const live = liveHandlers(queryClient);
+      await screen.findByRole("textbox", { name: "메시지 입력" });
+      await waitFor(() => expect(queryClient.getQueryData(qk.dms)).toBeDefined());
+      // DM 화면을 연 적이 없다 — 상세 캐시가 없어 DM 목록만이 이 채널이 DM 인 것을 안다
+      expect(queryClient.getQueryData(qk.channel(DM))).toBeUndefined();
+      expect(screen.queryByRole("navigation", { name: "다이렉트 메시지" }) === null).toBe(narrow);
+
+      live.emit("approval.requested", { approval: approval({ channelId: DM, conversationId: A }) });
+      expect(notes.made).toHaveLength(1);
+      expect(notes.made[0]?.options?.body).toBe("DM");
+
+      const fresh = uid(5_009);
+      live.emit("channel.activity", {
+        channelId: DM,
+        conversationId: fresh,
+        seq: 7,
+        authorType: "agent",
+        authorId: AGENT,
+        mentionedUserIds: [ME.user.id],
+      });
+      expect(useUnread.getState().byConversation[fresh]).toMatchObject({ unread: true, mentions: 1 });
+
+      // 좁은 화면에서 사이드바 시트를 열어 관찰자가 하나 더 붙어도 다시 부르지 않는다
+      if (narrow) {
+        await userEvent.click(screen.getByRole("button", { name: "채널 목록 열기" }));
+        await within(await screen.findByRole("dialog", { name: "채널 목록" })).findByRole("link", {
+          name: /Dev 봇/,
+        });
+      }
+      expect(server.count("GET", "/dms")).toBe(1);
+      live.detach();
+    },
+  );
+});
+
 describe("DM 열기 — /dm/<에이전트>", () => {
   it("이미 있는 DM 이면 그 채널의 최근 세션으로 넘긴다(기록을 바꿔 쓴다)", async () => {
     stubServer();
@@ -456,6 +514,20 @@ describe("읽기 전용 DM (Review Focus 4)", () => {
       expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "메시지 입력" })),
     );
     live.detach();
+  });
+
+  it("읽기 전용 DM 에서 다른 채널로 옮기는 것은 되살리기가 아니다 — 초점을 새 채널의 작성기로 옮기지 않는다(리뷰 L4)", async () => {
+    stubServer({ dms: [dmOf(dmChannel(), DEV, { readOnlyReason: "agent_archived" })] });
+    const { router } = renderRoute(`/c/${DM}/s/${A}`);
+    await screen.findByTestId("dm-read-only");
+    act(() => (document.activeElement as HTMLElement | null)?.blur());
+    expect(document.activeElement).toBe(document.body);
+
+    await act(() => router.navigate({ to: `/c/${CH}/s/new` }));
+    await screen.findByRole("textbox", { name: "메시지 입력" });
+    await flushEditorFrames();
+    expect(screen.queryByTestId("dm-read-only")).toBeNull();
+    expect(document.activeElement).toBe(document.body);
   });
 
   it("agents.changed 를 받으면 DM 목록을 다시 받는다 — 되살리면 작성기가 돌아온다", async () => {

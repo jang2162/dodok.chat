@@ -4,6 +4,7 @@ import { useCallback } from "react";
 import { toast } from "sonner";
 import { useMe } from "@/api/queries";
 import { refreshArchivedChannel } from "@/features/channels/archived";
+import { DM_READ_ONLY_TEXT, dmReadOnlyReasonOf, invalidateDms } from "@/features/dms/queries";
 import { CHANNEL_ARCHIVED_TEXT, CONVERSATION_CLOSED_TEXT } from "@/api/formErrors";
 import type { Timeline } from "@/features/messages/timeline";
 import { useWire } from "@/realtime/WireProvider";
@@ -132,6 +133,12 @@ export function useSetReaction(
         // 다른 탭이 이 세션을 닫았다 — 다시 눌러도 같은 409 다
         if (e instanceof WireAckError && e.code === "CONVERSATION_CLOSED") {
           toast.error(CONVERSATION_CLOSED_TEXT, { id: "conversation-closed" });
+          return;
+        }
+        // 이 탭이 DM 이 읽기 전용이 된 것을 아직 모른다 — DM 목록을 다시 받으면 피커가 숨고 작성기 자리가 사유 줄로 바뀐다
+        if (e instanceof WireAckError && e.code === "DM_READ_ONLY") {
+          void invalidateDms(qc);
+          toast.error(DM_READ_ONLY_TEXT[dmReadOnlyReasonOf(e.details)], { id: "dm-read-only" });
           return;
         }
         toast.error(FAILED_TEXT, { id: "reaction-failed" });

@@ -1,7 +1,7 @@
 import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { dev, fin, renderPage, stubServer } from "../../../test/agentsPage";
+import { apiErr, dev, fin, renderPage, stubServer } from "../../../test/agentsPage";
 import { DM_ACCESS_EVERYONE_NOTE } from "./AgentRow";
 
 // 에이전트 DM 계획 태스크 5 Step 7 — 에이전트 설정의 DM 허용 범위(`dmAccess`, admin 이상)와 「DM 보내기」
@@ -35,6 +35,19 @@ describe("DM 허용", () => {
     await userEvent.click(within(group).getByRole("radio", { name: "모두" }));
     await waitFor(() => expect(server.bodies("PATCH")).toEqual([{ dmAccess: "everyone" }]));
     await waitFor(() => expect(within(group).getByRole("radio", { name: "모두" })).toBeChecked());
+  });
+
+  it("저장에 실패하면 오류 줄을 묶음이 가리킨다 — 스크린 리더가 묶음과 함께 읽는다(리뷰 참고)", async () => {
+    stubServer({ agents: [dev()], patch: () => apiErr(409, "AGENT_ARCHIVED", "agent archived") });
+    renderPage(undefined, "admin");
+    const group = await screen.findByRole("radiogroup", { name: "@dev DM 허용" });
+    expect(group).not.toHaveAttribute("aria-describedby");
+    await userEvent.click(within(group).getByRole("radio", { name: "끔" }));
+    await waitFor(() => expect(group).toHaveAccessibleDescription("삭제된 에이전트입니다"));
+    expect(document.getElementById(group.getAttribute("aria-describedby") ?? "")).toHaveAttribute(
+      "data-slot",
+      "field-error",
+    );
   });
 
   it("member 는 값만 본다 — 선택지가 없다", async () => {
