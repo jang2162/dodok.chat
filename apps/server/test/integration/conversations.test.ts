@@ -604,6 +604,18 @@ describe("통합 — 런과 에이전트가 세션 단위로", () => {
         "fin dm-key",
         { conversationId: inDm.id, agentId: "fin", sessionKey: dodokSessionKey("fin", inDm.id) },
       ],
+      // 다른 에이전트(fin)가 dev 의 DM 키를 dev 의 DM 런이 열려 있는 동안 댄다 — 열린 런은 그 런의 에이전트 정본만 받는다(t4 보고
+      // 4장 3). runId 까지 대도 같다
+      ["fin others-dm-key open", { conversationId: inDm.id, agentId: "fin", sessionKey: dmKey }],
+      [
+        "fin others-dm-key runId",
+        { conversationId: inDm.id, agentId: "fin", sessionKey: dmKey, runId: dmRun.id },
+      ],
+      // 일반 채널에서도 같은 규칙 — fin 은 그 채널 멤버지만 dev 의 키에는 세션 행이 없다
+      [
+        "fin others-channel-key runId",
+        { conversationId: inChannel.id, agentId: "fin", sessionKey: channelKey, runId: channelRun.id },
+      ],
     ] as const) {
       const outboundId = `dm-boundary-${label}`;
       const outcome = await live.plugin
@@ -621,6 +633,9 @@ describe("통합 — 런과 에이전트가 세션 단위로", () => {
       ["channel→dm run", refused, 0],
       ["channel→dm no-run", refused, 0],
       ["fin dm-key", refused, 0],
+      ["fin others-dm-key open", refused, 0],
+      ["fin others-dm-key runId", refused, 0],
+      ["fin others-channel-key runId", refused, 0],
     ]);
     // 두 런은 그대로 돈다 — 거절은 그 정본만. 자기 DM 세션으로 온 정본은 그 런에 붙는다
     expect(getRun(live.app.db, dmRun.id)?.status).toBe("streaming");
@@ -637,8 +652,7 @@ describe("통합 — 런과 에이전트가 세션 단위로", () => {
       expect.objectContaining({ conversationId: inDm.id, channelId: dm.id, runId: dmRun.id }),
     ]);
 
-    // 런 없는 정본 — DM 의 세션 키를 다른 에이전트(fin)가 댄다. 그 키에 열린 런이 있으면 런 갈래(그 런의 에이전트 글)라 세션 행
-    // 규칙에 닿지 않으므로, DM 세션을 닫아 런을 끝낸 뒤에 본다
+    // 런 없는 정본 — DM 의 세션 키를 다른 에이전트(fin)가 댄다. DM 세션을 닫아 런을 끝낸 뒤에도 같다
     const closed = await rest(live, "PATCH", `/conversations/${inDm.id}`, { closed: true });
     expect(closed.status).toBe(200);
     await dmLog.terminal(dmRun.id);
