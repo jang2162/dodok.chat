@@ -10,6 +10,7 @@ import { and, eq, type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { DbOrTx } from "../../db/client";
 import { agents, channelMembers, channels, users } from "../../db/schema.sqlite";
+import { type ChannelReader, readerSql } from "../../auth/channel-access";
 import { apiError } from "../../http/errors";
 import { parseStored } from "../../http/validate";
 import {
@@ -75,14 +76,14 @@ const SELECT_HIT = sql`m.id AS id, m.channel_id AS channelId, m.conversation_id 
 export function searchMessages(
   db: DbOrTx,
   workspaceId: string,
-  userId: string,
+  reader: ChannelReader,
   q: SearchQuery,
   now: Date,
 ): SearchResult {
   // FTS5 쿼리 파서는 NUL 에서 문자열을 끝내 「unterminated string」 500 이 되고, LIKE 는 패턴이 NUL 에서 잘려 더 넓게 찾는다
   if (q.q.includes("\u0000")) throw apiError("VALIDATION", "검색어에 NUL 문자를 쓸 수 없다");
-  const where = [sql`m.kind = 'normal'`, readableChannels(workspaceId, userId), ...filters(q)];
-  const mentions = mentionDirectory(db, workspaceId, q.channelId);
+  const where = [sql`m.kind = 'normal'`, readableChannels(workspaceId, reader), ...filters(q)];
+  const mentions = mentionDirectory(db, workspaceId, reader, q.channelId);
   const needles = expandHandles(q.q, mentions);
   const hit = (r: HitRow) => toHit(r, needles, mentions.handleOf);
   if ([...q.q].length === 2) {
@@ -116,7 +117,8 @@ export function searchMessages(
 
 /** 멘션 토큰 → 보이는 핸들(스니펫과 같은 규칙) — 제어 도구 read_messages 가 본문을 읽는 글로 바꿀 때 */
 export function mentionHandleOf(db: DbOrTx, workspaceId: string): HandleOf {
-  return mentionDirectory(db, workspaceId, undefined).handleOf;
+  // handleOf 는 워크스페이스의 사람·에이전트만 본다 — 채널 별칭(읽는 사람마다 범위가 다른 것)을 쓰지 않아 읽는 사람이 필요 없다
+  return mentionDirectory(db, workspaceId, "", undefined).handleOf;
 }
 
 type MentionDirectory = {
@@ -128,9 +130,14 @@ type MentionDirectory = {
 /**
  * 멘션 토큰 ↔ 보이는 핸들. 스니펫이 토큰을 푸는 규칙과 검색어 `@핸들` 을 토큰으로 바꾸는 규칙은 서로 역이다 —
  * 스니펫에 보인 「@핸들」 로 다시 찾으면 그 메시지가 나온다. 핸들은 웹 useAuthors 의 mention 과 같게 고른다(비활성 멤버도 그 핸들).
- * 별칭은 검색 범위 채널(channelId 가 없으면 워크스페이스 모든 채널)의 것만 — 별칭은 채널마다 따로 붙는다
+ * 별칭은 검색 범위 채널(channelId 가 없으면 그 사람이 읽을 수 있는 모든 채널)의 것만 — 별칭은 채널마다 따로 붙는다
  */
-function mentionDirectory(db: DbOrTx, workspaceId: string, channelId: string | undefined): MentionDirectory {
+function mentionDirectory(
+  db: DbOrTx,
+  workspaceId: string,
+  reader: ChannelReader,
+  channelId: string | undefined,
+): MentionDirectory {
   const byId = new Map<string, string>();
   const byHandle = new Map<string, Set<string>>();
   const add = (handle: string, token: string) => {
@@ -164,6 +171,7 @@ function mentionDirectory(db: DbOrTx, workspaceId: string, channelId: string | u
     .where(
       and(
         eq(channels.workspaceId, workspaceId),
+        readerSql(reader),
         eq(channelMembers.memberType, "agent"),
         ...(channelId ? [eq(channelMembers.channelId, channelId)] : []),
       ),
@@ -200,11 +208,11 @@ function expandHandles(q: string, mentions: MentionDirectory): string[] {
 }
 
 /**
- * 사용자가 읽을 수 있는 채널. 지금은 워크스페이스의 모든 채널이다(스펙 5.2 「권한」) — 비공개 채널이 생기면 userId 로
- * channel_members 를 거르는 자리가 여기다
+ * 사용자가 읽을 수 있는 채널 — 워크스페이스의 일반 채널과 그 사람의 DM(auth/channel-access.ts). SQL 단계에서 거른다: 결과를 뽑은 뒤
+ * 거르면 남의 DM 에 걸린 행이 페이지 자리·커서를 먹는다(에이전트 DM 스펙 4장)
  */
-function readableChannels(workspaceId: string, _userId: string): SQL {
-  return sql`m.channel_id IN (SELECT c.id FROM channels c WHERE c.workspace_id = ${workspaceId})`;
+function readableChannels(workspaceId: string, reader: ChannelReader): SQL {
+  return sql`m.channel_id IN (SELECT ${channels.id} FROM ${channels} WHERE ${channels.workspaceId} = ${workspaceId} AND ${readerSql(reader)})`;
 }
 
 function filters(q: SearchQuery): SQL[] {

@@ -19,7 +19,9 @@ import {
   RunState,
   RunStatus,
   RunTriggerKind,
+  DmReadOnlyReason,
 } from "../src/domain";
+import { ErrorCode } from "../src/common";
 
 const ID = (n: number) => `01a09fc9-d204-7551-89d6-38544d07a1${n.toString(16).padStart(2, "0")}`;
 const NOW = "2026-09-14T09:12:00+09:00";
@@ -163,6 +165,45 @@ describe("세션 계약(채널 세션 스펙 「데이터」·「권한」·「w
   it("ConversationList — nextCursor 는 선택", () => {
     expect(ConversationList.safeParse({ conversations: [] }).success).toBe(true);
     expect(ConversationList.safeParse({ conversations: [], nextCursor: "1_x" }).success).toBe(true);
+  });
+});
+
+describe("DM 계약(에이전트 DM 스펙 2장·5장)", () => {
+  const channel = {
+    id: ID(1),
+    workspaceId: ID(2),
+    name: "general",
+    relayPolicy: {},
+    visibility: "public",
+    createdBy: ID(3),
+    createdAt: NOW,
+    archivedAt: null,
+  };
+  const agent = {
+    id: ID(1),
+    workspaceId: ID(2),
+    provider: "openclaw",
+    providerAgentId: "dev",
+    handle: "dev",
+    name: "Dev",
+    enabled: true,
+    createdAt: NOW,
+    archivedAt: null,
+  };
+  it("Channel.kind — 없으면 channel·주인·에이전트 없음, dm 이면 둘을 싣는다, 모르는 kind 는 거절", () => {
+    expect(Channel.parse(channel)).toMatchObject({ kind: "channel", dmOwnerId: null, dmAgentId: null });
+    const dm = { ...channel, kind: "dm", dmOwnerId: ID(3), dmAgentId: ID(4) };
+    expect(Channel.parse(dm)).toMatchObject({ kind: "dm", dmOwnerId: ID(3), dmAgentId: ID(4) });
+    expect(Channel.safeParse({ ...channel, kind: "group" }).success).toBe(false);
+  });
+  it("Agent.dmAccess — 없으면 admins, off·admins·everyone 밖은 거절", () => {
+    expect(Agent.parse(agent).dmAccess).toBe("admins");
+    expect(Agent.parse({ ...agent, dmAccess: "everyone" }).dmAccess).toBe("everyone");
+    expect(Agent.safeParse({ ...agent, dmAccess: "members" }).success).toBe(false);
+  });
+  it("읽기 전용 사유 셋과 오류 코드 DM_READ_ONLY", () => {
+    expect(DmReadOnlyReason.options).toEqual(["agent_archived", "agent_disabled", "dm_not_allowed"]);
+    expect(ErrorCode.safeParse("DM_READ_ONLY").success).toBe(true);
   });
 });
 

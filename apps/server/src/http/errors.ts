@@ -30,6 +30,7 @@ const STATUS: Record<ErrorCode, number> = {
   MEMBER_DEACTIVATED: 409, // 비활성 멤버의 이메일로 가입 — 로그인(auth/routes.ts signInMember)은 403 을 직접 준다
   CHANNEL_ARCHIVED: 409, // 보관한 채널에 쓰기 — 지금 상태와 맞지 않는 요청(CONFLICT 와 같은 상태)
   CONVERSATION_CLOSED: 409, // 닫힌 세션에 쓰기 — 다시 열면 되는 일(CHANNEL_ARCHIVED 와 같은 상태)
+  DM_READ_ONLY: 409, // 읽기 전용 DM 에 쓰기 — 에이전트·허용 범위가 돌아오면 되는 일(CHANNEL_ARCHIVED 와 같은 상태)
   PUSH_UNAVAILABLE: 503, // 그 플랫폼 푸시 통로가 꺼져 있다 — 서버 설정이 바뀌면 되는 일(ADAPTER_UNAVAILABLE 과 같은 상태)
   INTERNAL: 500,
 };

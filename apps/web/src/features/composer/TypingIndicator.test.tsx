@@ -28,6 +28,7 @@ const agentOf = (n: number, handle: string): Agent => ({
   enabled: true,
   createdAt: "2026-09-19T00:00:00.000Z",
   archivedAt: null,
+  dmAccess: "admins",
 });
 const DEV = agentOf(21, "dev");
 const personOf = (n: number, handle: string): Person => ({

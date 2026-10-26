@@ -9,10 +9,10 @@ import type { Db } from "../../db/client";
 import { apiError } from "../../http/errors";
 import { parseBody, parseParams, parseQuery } from "../../http/validate";
 import type { ServerBus } from "../../realtime/bus";
-import { getChannel } from "../channels/service";
+import { loadReadableChannel } from "../channels/service";
 import type { Orchestrator } from "../runs/orchestrator";
 import { conversationActor, listConversations, renameConversation, setConversationClosed } from "./service";
-import { getConversation } from "./store";
+import { getReadableConversation } from "./store";
 
 export type ConversationRouteContext = {
   auth: Auth;
@@ -34,19 +34,20 @@ export function registerConversationRoutes(fastify: FastifyInstance, ctx: Conver
     async (request) => {
       const { id } = parseParams(ChannelParams, request.params);
       const query = parseQuery(ListConversationsQuery, request.query);
-      if (!getChannel(ctx.db, id, sessionUser(request).workspaceId))
-        throw apiError("NOT_FOUND", "channel not found");
+      const user = sessionUser(request);
+      loadReadableChannel(ctx.db, id, user.workspaceId, user.id);
       return listConversations(ctx.db, id, query);
     },
   );
 
-  /** 세션 하나 — 웹의 세션 머리(제목·닫힘)와 주소의 채널 대조가 읽는다. 다른 워크스페이스의 세션은 404 */
+  /** 세션 하나 — 웹의 세션 머리(제목·닫힘)와 주소의 채널 대조가 읽는다. 다른 워크스페이스·남의 DM 의 세션은 404 */
   fastify.get(
     "/api/v1/conversations/:id",
     { preHandler: requirePolicy(ctx, authorizeRead) },
     async (request) => {
       const { id } = parseParams(ConversationParams, request.params);
-      const conversation = getConversation(ctx.db, id, sessionUser(request).workspaceId);
+      const user = sessionUser(request);
+      const conversation = getReadableConversation(ctx.db, id, user.workspaceId, user.id);
       if (!conversation) throw apiError("NOT_FOUND", "conversation not found");
       return { conversation };
     },
@@ -57,7 +58,8 @@ export function registerConversationRoutes(fastify: FastifyInstance, ctx: Conver
     const user = sessionUser(request);
     const { id } = parseParams(ConversationParams, request.params);
     const patch = parseBody(ConversationPatch, request.body);
-    const current = getConversation(ctx.db, id, user.workspaceId);
+    // 남의 DM 의 세션은 역할 판정(403)보다 먼저 404 — auth/channel-access.ts
+    const current = getReadableConversation(ctx.db, id, user.workspaceId, user.id);
     if (!current) throw apiError("NOT_FOUND", "conversation not found");
     authorizeConversationManage(user.role, conversationActor(ctx.db, current, user.id));
     let conversation = current;

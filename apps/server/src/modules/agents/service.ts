@@ -66,6 +66,7 @@ export function rowToAgent(row: AgentRow): Agent {
       enabled: row.enabled,
       createdAt: row.createdAt.toISOString(),
       archivedAt: row.archivedAt?.toISOString() ?? null,
+      dmAccess: row.dmAccess,
     },
     "agent",
   );

@@ -14,7 +14,7 @@ export function registerReadRoutes(fastify: FastifyInstance, ctx: ReadRouteConte
     // 한 트랜잭션에서 읽는다 — 사이에 보관이 끼면 대화 목록과 채널 목록이 서로 다른 때의 것이 된다
     return ctx.db.transaction((tx): UnreadSnapshot => ({
       conversations: unreadFor(tx, user.workspaceId, user.id),
-      channels: listedChannelIds(tx, user.workspaceId),
+      channels: listedChannelIds(tx, user.workspaceId, user.id),
     }));
   });
 }

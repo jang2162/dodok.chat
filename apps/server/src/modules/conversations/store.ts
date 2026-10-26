@@ -3,6 +3,7 @@ import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import type { DbOrTx } from "../../db/client";
 import { channels, conversations } from "../../db/schema.sqlite";
+import { type ChannelReader, readerSql } from "../../auth/channel-access";
 import { apiError } from "../../http/errors";
 import { parseStored } from "../../http/validate";
 import { assertChannelWritable } from "../channels/service";
@@ -40,6 +41,22 @@ export function getConversation(db: DbOrTx, id: string, workspaceId?: string): C
         workspaceId === undefined ? undefined : eq(channels.workspaceId, workspaceId),
       ),
     )
+    .get();
+  return row ? rowToConversation(row.conversation) : undefined;
+}
+
+/** getConversation + 접근 판정 — 그 사람이 읽을 수 없는 채널(남의 DM)의 대화도 없는 대화와 같다(auth/channel-access.ts) */
+export function getReadableConversation(
+  db: DbOrTx,
+  id: string,
+  workspaceId: string,
+  reader: ChannelReader,
+): Conversation | undefined {
+  const row = db
+    .select({ conversation: conversations })
+    .from(conversations)
+    .innerJoin(channels, eq(channels.id, conversations.channelId))
+    .where(and(eq(conversations.id, id), eq(channels.workspaceId, workspaceId), readerSql(reader)))
     .get();
   return row ? rowToConversation(row.conversation) : undefined;
 }

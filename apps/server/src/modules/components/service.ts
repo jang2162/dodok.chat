@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import type { Db, DbOrTx } from "../../db/client";
 import { componentInteractions, users } from "../../db/schema.sqlite";
+import { canReadChannel } from "../../auth/channel-access";
 import { apiError } from "../../http/errors";
 import type { ServerBus } from "../../realtime/bus";
 import { getAgent, isAgentActive } from "../agents/service";
@@ -141,7 +142,9 @@ function withThread(threadRootId: string | undefined): { threadRootId?: string }
  */
 function checkInteraction(tx: DbOrTx, workspaceId: string, input: InteractInput, now: Date): Checked {
   const message = getMessage(tx, input.messageId);
-  if (!message || !getChannel(tx, message.channelId, workspaceId)) {
+  const channel = message && getChannel(tx, message.channelId, workspaceId);
+  // 남의 DM 의 카드는 없는 메시지와 같다(auth/channel-access.ts)
+  if (!message || !channel || !canReadChannel({ userId: input.userId }, channel)) {
     throw apiError("NOT_FOUND", "message not found");
   }
   assertConversationWritable(tx, message.conversationId, workspaceId);

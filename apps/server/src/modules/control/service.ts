@@ -148,6 +148,8 @@ export function createControlService(deps: ControlDeps): ControlService {
     const input = parsePayload(tool.input, args);
     const raw = args as Record<string, unknown>;
     const handler = handlerFor(tool);
+    // 접근 판정(남의 DM 은 NOT_FOUND)이 역할 판정보다 먼저다 — auth/channel-access.ts
+    handler.access?.(ctx, input, p);
     authorize(handler, p, roleFor(p, write), raw);
     handler.check?.(ctx, input);
     if (write && p.via === "agent") {

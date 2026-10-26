@@ -1408,3 +1408,81 @@ describe("conversation_reads 마이그레이션", () => {
     }
   });
 });
+
+describe("agent dms 마이그레이션", () => {
+  it("_conversation_reads 까지 적용된 DB 에 얹으면 옛 채널은 channel(주인·에이전트 없음), 옛 에이전트의 dm_access 는 admins — (주인, 에이전트) DM 은 하나뿐이다", () => {
+    const dir = mkdtempSync(join(tmpdir(), "dodok-db-mig-"));
+    try {
+      const older = migrationsUpTo(dir, "_conversation_reads");
+      const sqlite = new Database(join(dir, "app.db"));
+      try {
+        const db = drizzle(sqlite, { schema: { ...schema, ...authSchema } });
+        migrate(db, { migrationsFolder: older });
+        const [ws, user, ch, agent] = [uuid(), uuid(), uuid(), uuid()];
+        const t = new Date("2026-10-26T00:00:00.000Z").getTime();
+        sqlite.prepare("INSERT INTO workspaces (id, name, created_at) VALUES (?, 'w', ?)").run(ws, t);
+        sqlite
+          .prepare(
+            "INSERT INTO users (id, workspace_id, handle, display_name, auth_provider, created_at) VALUES (?, ?, 'jang', '장', 'local', ?)",
+          )
+          .run(user, ws, t);
+        sqlite
+          .prepare(
+            "INSERT INTO channels (id, workspace_id, name, relay_policy_json, visibility, created_by, created_at) VALUES (?, ?, 'general', '{\"maxRelayTurns\":4,\"allowPairs\":\"all\"}', 'public', ?, ?)",
+          )
+          .run(ch, ws, user, t);
+        sqlite
+          .prepare(
+            "INSERT INTO agents (id, workspace_id, provider, provider_agent_id, handle, name, enabled, created_at) VALUES (?, ?, 'claude', 'dev', 'dev', 'Dev', 1, ?)",
+          )
+          .run(agent, ws, t);
+
+        migrate(db, { migrationsFolder: migrationsFolder() });
+
+        expect(
+          db
+            .select({
+              kind: schema.channels.kind,
+              owner: schema.channels.dmOwnerId,
+              agent: schema.channels.dmAgentId,
+            })
+            .from(schema.channels)
+            .all(),
+        ).toEqual([{ kind: "channel", owner: null, agent: null }]);
+        expect(db.select({ dmAccess: schema.agents.dmAccess }).from(schema.agents).all()).toEqual([
+          { dmAccess: "admins" },
+        ]);
+        const dm = (id: string) =>
+          db
+            .insert(schema.channels)
+            .values({
+              id,
+              workspaceId: ws,
+              name: "dm",
+              relayPolicy: { maxRelayTurns: 4, allowPairs: "all" },
+              visibility: "private",
+              createdBy: user,
+              createdAt: new Date(t),
+              kind: "dm",
+              dmOwnerId: user,
+              dmAgentId: agent,
+            })
+            .run();
+        dm(uuid());
+        expect(() => dm(uuid())).toThrow(/UNIQUE/);
+        // 일반 채널은 둘 다 null 이라 몇 개든 된다
+        expect(() =>
+          sqlite
+            .prepare(
+              "INSERT INTO channels (id, workspace_id, name, relay_policy_json, visibility, created_by, created_at) VALUES (?, ?, 'random', '{\"maxRelayTurns\":4,\"allowPairs\":\"all\"}', 'public', ?, ?)",
+            )
+            .run(uuid(), ws, user, t),
+        ).not.toThrow();
+      } finally {
+        sqlite.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

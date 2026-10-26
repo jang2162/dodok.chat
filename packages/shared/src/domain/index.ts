@@ -27,6 +27,9 @@ export const Membership = z.object({ id: Id, workspaceId: Id, userId: Id, role: 
 export type Membership = z.infer<typeof Membership>;
 
 export const AgentProvider = z.enum(["openclaw", "claude", "codex", "hermes"]);
+/** 누가 이 에이전트와 DM 을 여나(에이전트 DM 스펙 결정 4) — off 아무도, admins admin 이상, everyone 모든 활성 멤버 */
+export const DmAccess = z.enum(["off", "admins", "everyone"]);
+export type DmAccess = z.infer<typeof DmAccess>;
 export type AgentProvider = z.infer<typeof AgentProvider>;
 export const Agent = z.object({
   id: Id,
@@ -54,6 +57,7 @@ export const Agent = z.object({
    * (owner 가 다른 Gateway 로 옮기기를 기다린다 — 멀티 Gateway 스펙 「에이전트 API」 절)
    */
   gateway: z.object({ id: Id, name: z.string() }).nullable().optional(),
+  dmAccess: DmAccess.default("admins"),
 });
 export type Agent = z.infer<typeof Agent>;
 
@@ -70,6 +74,9 @@ export type RelayPolicy = z.infer<typeof RelayPolicy>;
 export const SessionPolicy = z.object({ create: z.enum(["members", "managers"]) });
 export type SessionPolicy = z.infer<typeof SessionPolicy>;
 
+export const ChannelKind = z.enum(["channel", "dm"]);
+export type ChannelKind = z.infer<typeof ChannelKind>;
+
 export const Channel = z.object({
   id: Id,
   workspaceId: Id,
@@ -83,8 +90,19 @@ export const Channel = z.object({
   /** 보관한 시각 — null 이면 살아 있다. 보관한 채널은 누구나 읽고 아무도 쓰지 못한다(보관 해제만 받는다) */
   archivedAt: IsoDateTime.nullable(),
   sessionPolicy: SessionPolicy.default({ create: "members" }),
+  /**
+   * dm 이면 주인 사람 하나 + 에이전트 하나의 1:1(에이전트 DM 스펙 2장) — 주인 말고는 owner·admin 도 읽지 못한다(서버 auth/channel-access.ts).
+   * dmOwnerId·dmAgentId 는 dm 일 때만 값이 있다
+   */
+  kind: ChannelKind.default("channel"),
+  dmOwnerId: Id.nullable().default(null),
+  dmAgentId: Id.nullable().default(null),
 });
 export type Channel = z.infer<typeof Channel>;
+
+/** 읽기 전용 DM 의 사유(에이전트 DM 스펙 3.3) — 보관 → 꺼짐 → 허용 범위 순으로 하나 */
+export const DmReadOnlyReason = z.enum(["agent_archived", "agent_disabled", "dm_not_allowed"]);
+export type DmReadOnlyReason = z.infer<typeof DmReadOnlyReason>;
 
 /** 세션 제목(채널 세션 스펙 2.1) — 1~80자 */
 export const ConversationTitle = z.string().trim().min(1).max(80);

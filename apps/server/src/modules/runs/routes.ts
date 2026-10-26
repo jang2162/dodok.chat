@@ -8,7 +8,7 @@ import { requireSession, sessionUser } from "../../auth/routes";
 import type { Db } from "../../db/client";
 import { apiError } from "../../http/errors";
 import { parseParams, parseQuery } from "../../http/validate";
-import { getChannel } from "../channels/service";
+import { loadReadableChannel } from "../channels/service";
 import { getRunInWorkspace, listChannelRuns, listRunEvents } from "./store";
 
 export type RunRouteContext = { auth: Auth; db: Db; workspaceId: string };
@@ -24,8 +24,8 @@ const RunEventsQuery = z.object({ afterSeq: z.coerce.number().int().min(0).defau
 export function registerRunRoutes(fastify: FastifyInstance, ctx: RunRouteContext): void {
   const auth = { preHandler: requireSession(ctx) };
 
-  const visibleRun = (runId: string, workspaceId: string) => {
-    const run = getRunInWorkspace(ctx.db, runId, workspaceId);
+  const visibleRun = (runId: string, user: { id: string; workspaceId: string }) => {
+    const run = getRunInWorkspace(ctx.db, runId, user.workspaceId, user.id);
     if (!run) throw apiError("NOT_FOUND", "run not found");
     return run;
   };
@@ -33,20 +33,20 @@ export function registerRunRoutes(fastify: FastifyInstance, ctx: RunRouteContext
   fastify.get("/api/v1/channels/:id/runs", auth, async (request) => {
     const { id } = parseParams(IdParams, request.params);
     const { limit } = parseQuery(RunListQuery, request.query);
-    if (!getChannel(ctx.db, id, sessionUser(request).workspaceId))
-      throw apiError("NOT_FOUND", "channel not found");
+    const user = sessionUser(request);
+    loadReadableChannel(ctx.db, id, user.workspaceId, user.id);
     return { runs: listChannelRuns(ctx.db, id, limit) };
   });
 
   fastify.get("/api/v1/runs/:id", { preHandler: requirePolicy(ctx, authorizeRead) }, async (request) => {
     const { id } = parseParams(IdParams, request.params);
-    return { run: visibleRun(id, sessionUser(request).workspaceId) };
+    return { run: visibleRun(id, sessionUser(request)) };
   });
 
   fastify.get("/api/v1/runs/:id/events", auth, async (request) => {
     const { id } = parseParams(IdParams, request.params);
     const { afterSeq } = parseQuery(RunEventsQuery, request.query);
-    const run = visibleRun(id, sessionUser(request).workspaceId);
+    const run = visibleRun(id, sessionUser(request));
     return { events: listRunEvents(ctx.db, id, afterSeq), run };
   });
 }

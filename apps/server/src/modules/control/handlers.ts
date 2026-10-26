@@ -1,5 +1,7 @@
 import type { AnyControlTool, ControlToolName, Message, OpsStatus, TeamRole } from "@dodok/shared";
+import type { SQL } from "drizzle-orm";
 import type { z } from "zod";
+import { readableChannelSqlFor } from "../../auth/channel-access";
 import {
   authorizeAgentArchive,
   authorizeAgentDiscover,
@@ -42,9 +44,10 @@ import {
   getChannel,
   listChannels,
   listMembers,
+  loadReadableChannel,
 } from "../channels/service";
 import { listConversations } from "../conversations/service";
-import { getConversation } from "../conversations/store";
+import { getConversation, getReadableConversation } from "../conversations/store";
 import { listPeople } from "../members/people";
 import { getThreadRoot, listMessages, withThreadSummaries } from "../messages/service";
 import { getRunInWorkspace } from "../runs/store";
@@ -70,6 +73,11 @@ type InputOf<N extends ControlToolName> = z.output<Extract<AnyControlTool, { nam
 export type Wording = { want: string; done: string };
 
 export type ControlHandler<N extends ControlToolName> = {
+  /**
+   * 접근 판정 — 이 도구가 닿는 채널·대화·런을 주체가 읽을 수 있는가(auth/channel-access.ts). 없거나 못 읽으면 NOT_FOUND. 서비스가
+   * 역할 판정(authorize)보다 먼저 부른다 — 남의 DM 에 역할 정책이 403 을 내면 있다는 것이 드러난다. 채널·대화·런을 받는 도구는 모두 둔다
+   */
+  access?(ctx: HandlerContext, input: InputOf<N>, principal: Principal): void;
   /**
    * 역할 검사 — 같은 REST 경로의 정책 함수. 본문을 보는 정책에는 REST 본문 꼴로 바꾼 **원래 인자**(raw)를 넘긴다 — 파싱이 채운 기본값
    * (autoRespond:false 등)을 세면 member 가 별칭만 바꿔도 admin 이 필요해진다(REST 도 원래 본문을 넘긴다)
@@ -104,6 +112,17 @@ function channelOf(ctx: HandlerContext, channelId: string): ChannelRecord {
   const channel = getChannel(ctx.db, channelId, ctx.workspaceId);
   if (!channel) throw apiError("NOT_FOUND", "channel not found");
   return channel;
+}
+
+/**
+ * 주체가 읽을 수 있는 채널 — 바깥 MCP 는 주인의 DM 전부, 채널 안 에이전트는 그 런의 DM 하나만(auth/channel-access.ts). 시킨 사람이
+ * 없는 자동화 사슬은 DM 을 읽지 못한다
+ */
+const readerOf = (p: Principal): SQL => readableChannelSqlFor(p);
+
+/** 채널을 받는 도구의 접근 판정 */
+function readableChannel(ctx: HandlerContext, input: { channelId: string }, p: Principal): void {
+  loadReadableChannel(ctx.db, input.channelId, ctx.workspaceId, readerOf(p));
 }
 
 function agentHandle(ctx: HandlerContext, agentId: string): string {
@@ -158,11 +177,16 @@ export const HANDLERS: Handlers = {
   // ── 읽기 ────────────────────────────────────────────────────
   list_channels: {
     authorize: (role) => authorizeRead(role),
-    run: (ctx, input) => ({
-      channels: listChannels(ctx.db, ctx.workspaceId, { archived: input.archived === true }),
+    // 읽을 수 있는 채널 — 일반 채널 + 주체가 읽을 수 있는 DM(행마다 kind, 에이전트 DM 계획 판정 PD3)
+    run: (ctx, input, principal) => ({
+      channels: listChannels(ctx.db, ctx.workspaceId, {
+        archived: input.archived === true,
+        reader: readerOf(principal),
+      }),
     }),
   },
   get_channel: {
+    access: readableChannel,
     authorize: (role) => authorizeRead(role),
     run: (ctx, input) => {
       const channel = channelOf(ctx, input.channelId);
@@ -184,11 +208,12 @@ export const HANDLERS: Handlers = {
   },
   search_messages: {
     authorize: (role) => authorizeRead(role),
-    // 검색 결과의 가시 범위는 지금 사람과 무관하다(워크스페이스의 모든 채널) — 시킨 사람이 없는 런도 같은 범위다
+    // 검색 범위는 주체가 읽을 수 있는 채널(readerOf) — 시킨 사람이 없는 런은 일반 채널만
     run: (ctx, input, principal) =>
-      searchMessages(ctx.db, ctx.workspaceId, principal.userId ?? "", input, ctx.now()),
+      searchMessages(ctx.db, ctx.workspaceId, readerOf(principal), input, ctx.now()),
   },
   list_conversations: {
+    access: readableChannel,
     authorize: (role) => authorizeRead(role),
     // REST GET /channels/:id/conversations 와 같은 함수·같은 쪽 — read_messages 의 conversationId 를 얻는 길이다
     run: (ctx, input) =>
@@ -199,6 +224,10 @@ export const HANDLERS: Handlers = {
       }),
   },
   read_messages: {
+    access: (ctx, input, principal) => {
+      if (!getReadableConversation(ctx.db, input.conversationId, ctx.workspaceId, readerOf(principal)))
+        throw apiError("NOT_FOUND", "conversation not found");
+    },
     authorize: (role) => authorizeRead(role),
     // 한 세션 안만 읽는다 — 채널 경로로 읽으면 세션이 섞인다(웹 REST /conversations/:id/messages 와 같은 규칙).
     // 읽기 범위는 채널 단위 그대로다: 채널 안 에이전트도 같은 채널의 다른 세션을 읽을 수 있다(채널 세션 스펙 「wire·REST」 장 —
@@ -230,8 +259,9 @@ export const HANDLERS: Handlers = {
   },
   get_run: {
     authorize: (role) => authorizeRead(role),
-    run: (ctx, input) => {
-      const run = getRunInWorkspace(ctx.db, input.runId, ctx.workspaceId);
+    // 접근 판정은 조회가 한다 — 남의 DM 의 런은 없는 런과 같다
+    run: (ctx, input, principal) => {
+      const run = getRunInWorkspace(ctx.db, input.runId, ctx.workspaceId, readerOf(principal));
       if (!run) throw apiError("NOT_FOUND", "run not found");
       return { run };
     },
@@ -265,6 +295,7 @@ export const HANDLERS: Handlers = {
     },
   },
   update_channel: {
+    access: readableChannel,
     authorize: (role, raw) => authorizeChannelPatch(role, without(raw, "channelId")),
     check: (ctx, input) => writable(ctx, input.channelId),
     channelId: (input) => input.channelId,
@@ -287,6 +318,7 @@ export const HANDLERS: Handlers = {
     },
   },
   set_channel_prompt: {
+    access: readableChannel,
     authorize: (role, raw) => authorizeChannelPatch(role, without(raw, "channelId")),
     check: (ctx, input) => writable(ctx, input.channelId),
     channelId: (input) => input.channelId,
@@ -306,6 +338,7 @@ export const HANDLERS: Handlers = {
     }),
   },
   add_channel_agent: {
+    access: readableChannel,
     authorize: (role, raw) =>
       authorizeChannelMemberAdd(role, {
         memberType: "agent",
@@ -345,6 +378,7 @@ export const HANDLERS: Handlers = {
     },
   },
   remove_channel_agent: {
+    access: readableChannel,
     authorize: (role) => authorizeChannelMemberRemove(role),
     // 사람 id 를 주면 사람 멤버가 빠진다(removeMember 는 종류를 보지 않는다) — 에이전트인지 먼저 본다
     check: (ctx, input) => {
@@ -365,6 +399,7 @@ export const HANDLERS: Handlers = {
     }),
   },
   update_channel_agent: {
+    access: readableChannel,
     authorize: (role, raw) => authorizeChannelAgentPatch(role, without(raw, "channelId", "agentId")),
     check: (ctx, input) => {
       writable(ctx, input.channelId);
@@ -395,6 +430,7 @@ export const HANDLERS: Handlers = {
     },
   },
   set_relay_policy: {
+    access: readableChannel,
     authorize: (role, raw) => authorizeChannelPatch(role, without(raw, "channelId")),
     check: (ctx, input) => writable(ctx, input.channelId),
     channelId: (input) => input.channelId,
@@ -414,6 +450,7 @@ export const HANDLERS: Handlers = {
     },
   },
   set_channel_run_limit: {
+    access: readableChannel,
     authorize: (role, raw) =>
       authorizeChannelPatch(role, { relayPolicy: { dailyRunLimit: raw.dailyRunLimit } }),
     check: (ctx, input) => writable(ctx, input.channelId),
@@ -436,6 +473,7 @@ export const HANDLERS: Handlers = {
     },
   },
   archive_channel: {
+    access: readableChannel,
     authorize: (role) => authorizeChannelArchive(role),
     // 보관 해제 말고는 보관한 채널의 쓰기를 모두 미리 거절한다 — 이미 보관한 채널을 다시 보관하는 카드도 띄우지 않는다
     check: (ctx, input) => writable(ctx, input.channelId),
@@ -449,6 +487,7 @@ export const HANDLERS: Handlers = {
     }),
   },
   unarchive_channel: {
+    access: readableChannel,
     authorize: (role) => authorizeChannelUnarchive(role),
     check: (ctx, input) => void channelOf(ctx, input.channelId),
     channelId: (input) => input.channelId,
@@ -537,6 +576,7 @@ export const HANDLERS: Handlers = {
 
 /** 입력 타입을 지운 처리기 — 서비스는 그 도구의 Zod 스키마로 파싱한 값만 넘긴다 */
 export type AnyHandler = {
+  access?(ctx: HandlerContext, input: unknown, principal: Principal): void;
   authorize(role: TeamRole | undefined, raw: Record<string, unknown>): void;
   check?(ctx: HandlerContext, input: unknown): void;
   channelId?(input: unknown): string;

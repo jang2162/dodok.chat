@@ -26,6 +26,7 @@ const agent = (id: string, handle: string, enabled = true): Agent => ({
   enabled,
   createdAt: NOW,
   archivedAt: null,
+  dmAccess: "admins",
 });
 const member = (memberId: string, extra: Partial<ChannelMember> = {}): ChannelMember => ({
   id: ID(20),
@@ -47,6 +48,9 @@ const channel = (relayPolicy: Partial<Channel["relayPolicy"]> = {}): Channel => 
   createdAt: NOW,
   archivedAt: null,
   sessionPolicy: { create: "members" },
+  kind: "channel",
+  dmOwnerId: null,
+  dmAgentId: null,
 });
 const userMsg = (agents: string[], bodyMd = "hi"): Message => ({
   id: ID(30),

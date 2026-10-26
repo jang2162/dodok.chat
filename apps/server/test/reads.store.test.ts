@@ -411,6 +411,6 @@ describe("listedChannelIds", () => {
     seedChannelWithAgent(db, { channelName: "elsewhere" });
     await archiveChannel(archiveDeps(db), archived.id, workspaceId);
 
-    expect(listedChannelIds(db, workspaceId).sort()).toEqual([channelId, empty.id].sort());
+    expect(listedChannelIds(db, workspaceId, a).sort()).toEqual([channelId, empty.id].sort());
   });
 });

@@ -27,7 +27,8 @@ import { apiError, HttpError } from "../http/errors";
 import { parsePayload } from "../http/validate";
 import type { Logger } from "../logger";
 import { getApproval } from "../modules/approvals/store";
-import { assertChannelWritable, getChannel } from "../modules/channels/service";
+import { canReadChannel } from "../auth/channel-access";
+import { assertChannelWritable, getChannel, loadReadableChannel } from "../modules/channels/service";
 import { resolveSendConversation } from "../modules/conversations/service";
 import { getConversation } from "../modules/conversations/store";
 import { ipPrefix } from "../modules/ops/ip";
@@ -223,9 +224,9 @@ export function attachWire(io: WireServer, ctx: WireContext): void {
     socket.on("channel.subscribe", async (raw: unknown, ack: unknown) => {
       const res = await settle(ctx.logger, "channel.subscribe", async () => {
         const { channelId, lastSeq } = parsePayload(ChannelSubscribe, raw);
-        // workspaceId 를 꼭 넘긴다 — 빠뜨리면 다른 워크스페이스 채널도 구독된다
-        const channel = getChannel(ctx.db, channelId, ctx.workspaceId);
-        if (!channel) throw apiError("NOT_FOUND", "channel not found");
+        // workspaceId 를 꼭 넘긴다 — 빠뜨리면 다른 워크스페이스 채널도 구독된다. 남의 DM 은 룸에 들이지 않는다 — 채널 룸 팬아웃
+        // (메시지·런·세션)은 이 판정 하나가 지킨다(auth/channel-access.ts)
+        const channel = loadReadableChannel(ctx.db, channelId, ctx.workspaceId, userId);
         // 룸에 먼저 들어간 뒤 읽는다 — 그 사이 메시지는 페이지와 이벤트에 겹칠 수는 있어도 빠지지 않는다
         await socket.join(channelRoom(channel.id));
         // 처음 구독은 이벤트만 — 세션의 첫 페이지는 대화 REST 로 받는다(채널 세션 계획 판정 PS5). lastSeq 재동기화는 끊긴 사이의
@@ -348,7 +349,7 @@ export function attachWire(io: WireServer, ctx: WireContext): void {
       if (limited("run.events.replay")) return reply(ack, RATE_LIMITED);
       const res = await settle(ctx.logger, "run.events.replay", () => {
         const { runId, afterSeq } = parsePayload(RunEventsReplay, raw);
-        return runs().replay(runId, afterSeq);
+        return runs().replay(runId, afterSeq, userId);
       });
       reply(ack, res);
     });
@@ -366,10 +367,16 @@ export function attachWire(io: WireServer, ctx: WireContext): void {
       if (limited("approval.resolve")) return reply(ack, RATE_LIMITED);
       const res = await settle(ctx.logger, "approval.resolve", async () => {
         const { approvalId, decision } = parsePayload(ApprovalResolve, raw);
+        // 없는 승인과 남의 DM 의 승인은 역할 판정(403)보다 먼저 같은 404(승인 서비스와 같은 문구) — member 가 403·404 로 둘을 가르지
+        // 못하게(auth/channel-access.ts). 다른 워크스페이스의 승인은 승인 서비스가 지금처럼 거절한다
+        const approval = getApproval(ctx.db, approvalId);
+        const approvalChannel = approval && getChannel(ctx.db, approval.channelId, ctx.workspaceId);
+        if (!approval || (approvalChannel && !canReadChannel({ userId }, approvalChannel)))
+          throw apiError("NOT_FOUND", "approval not found");
         // wire 에서 역할을 보는 이벤트는 이것 하나다(팀 스펙 「역할과 권한」). 역할은 이벤트마다 다시 읽는다.
         // 확인 카드(dodok_control)는 그 일을 시킨 사람 본인이 결정한다 — 역할은 보지 않고, 본인인지는 승인 서비스가 본다(계획 판정 PC4)
         const role = roleOf(ctx.db, ctx.workspaceId, userId);
-        if (getApproval(ctx.db, approvalId)?.kind === "dodok_control") {
+        if (approval?.kind === "dodok_control") {
           if (!role) throw apiError("FORBIDDEN", "워크스페이스 멤버가 아니다");
         } else if (!roleAtLeast(role, "admin"))
           throw apiError("FORBIDDEN", "승인·거절은 admin 이상만 할 수 있다");
@@ -392,7 +399,8 @@ function sendMessage(
   raw: unknown,
 ): { message: Message; created: boolean; conversation?: Conversation } {
   const input = parsePayload(MessageSend, raw);
-  if (!getChannel(ctx.db, input.channelId, ctx.workspaceId)) throw apiError("NOT_FOUND", "channel not found");
+  // 남의 DM 은 재전송 갈래·보관 검사보다 먼저 없는 채널과 같은 404(auth/channel-access.ts)
+  loadReadableChannel(ctx.db, input.channelId, ctx.workspaceId, userId);
   const existing = findUserMessage(ctx.db, userId, input.clientMsgId);
   // 보관 전에 이미 저장된 메시지의 재전송(ack 를 잃은 탭)은 그 메시지로 답한다 — 새로 쓰는 것만 막는다(계획 판정 PC1)
   if (existing) {

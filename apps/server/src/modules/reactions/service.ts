@@ -8,6 +8,7 @@ import {
 import { and, asc, desc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
 import type { Db, DbOrTx } from "../../db/client";
 import { agents, agentSessions, channels, messageReactions, messages, users } from "../../db/schema.sqlite";
+import { canReadChannel } from "../../auth/channel-access";
 import { apiError } from "../../http/errors";
 import type { ServerBus } from "../../realtime/bus";
 import { assertConversationWritable } from "../conversations/store";
@@ -40,13 +41,19 @@ export function setReaction(
 ): void {
   const { messageId, emoji, on } = input;
   const row = db
-    .select({ message: messages, workspaceId: channels.workspaceId })
+    .select({
+      message: messages,
+      workspaceId: channels.workspaceId,
+      kind: channels.kind,
+      dmOwnerId: channels.dmOwnerId,
+    })
     .from(messages)
     .innerJoin(channels, eq(channels.id, messages.channelId))
     .where(eq(messages.id, messageId))
     .get();
-  // 다른 워크스페이스의 메시지는 존재 자체를 알리지 않는다
-  if (!row || row.workspaceId !== workspaceId) throw apiError("NOT_FOUND", "message not found");
+  // 다른 워크스페이스·남의 DM 의 메시지는 존재 자체를 알리지 않는다(auth/channel-access.ts)
+  if (!row || row.workspaceId !== workspaceId || !canReadChannel({ userId }, row))
+    throw apiError("NOT_FOUND", "message not found");
   if (row.message.kind !== "normal") throw apiError("VALIDATION", "system messages cannot be reacted to");
   assertConversationWritable(db, row.message.conversationId, workspaceId);
 
