@@ -76,7 +76,8 @@ export function DmHeader({
         <h1 className="flex items-baseline gap-2 text-base font-semibold">
           <span className="truncate">{agent?.name ?? "DM"}</span>
           {agent && (
-            <span className="shrink-0 truncate text-xs font-normal text-muted-foreground">
+            // 이름보다 먼저 줄어든다 — 좁은 화면에서 라벨이 자리를 쥐면 이름이 한 글자로 잘린다
+            <span className="min-w-0 shrink-1000 truncate text-xs font-normal text-muted-foreground">
               {providerName(agent.provider)}
               {agent.provider === "claude" && agent.runner && ` · ${agent.runner.label}`}
             </span>
