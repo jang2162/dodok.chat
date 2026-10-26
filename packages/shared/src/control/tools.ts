@@ -236,7 +236,7 @@ export const CONTROL_TOOLS = [
     access: "write",
     description:
       "Change an agent's handle, name, avatar URL or base prompt (null clears avatarUrl and basePrompt). Admin or owner only.",
-    input: AgentRef.extend(UpdateAgentBody.omit({ enabled: true }).shape),
+    input: AgentRef.extend(UpdateAgentBody.omit({ enabled: true, dmAccess: true }).shape),
   }),
   tool({
     name: "set_agent_enabled",
