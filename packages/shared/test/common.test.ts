@@ -35,6 +35,7 @@ describe("common", () => {
       "CHANNEL_ARCHIVED",
       "PUSH_UNAVAILABLE",
       "CONVERSATION_CLOSED",
+      "DM_READ_ONLY",
       "INTERNAL",
     ]);
     expect(ErrorCode.safeParse("NOPE").success).toBe(false);

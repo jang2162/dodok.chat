@@ -5,7 +5,9 @@ import type {
   AutomationSchedule,
   AutomationStatus,
   ComponentState,
+  ChannelKind,
   ComponentsV1,
+  DmAccess,
   MentionSet,
   OpsEvent,
   OpsEventKind,
@@ -124,6 +126,8 @@ export const agents = sqliteTable(
     gatewayId: text("gateway_id").references(() => gateways.id, { onDelete: "set null" }),
     // 보관(삭제)한 시각 — null 이면 살아 있다. 보관해도 행·핸들·채널 참여·세션은 남아 되살리면 그대로 돌아온다
     archivedAt: ts("archived_at"),
+    // 누가 이 에이전트와 DM 을 여나(shared DmAccess) — 기본 admins: 러너 에이전트는 누군가의 머신에서 도구를 돌린다(에이전트 DM 스펙 결정 4)
+    dmAccess: text("dm_access").$type<DmAccess>().notNull().default("admins"),
   },
   (t) => [
     uniqueIndex("agents_ws_handle").on(t.workspaceId, t.handle),
@@ -138,27 +142,40 @@ export const agents = sqliteTable(
   ],
 );
 
-export const channels = sqliteTable("channels", {
-  id: text("id").primaryKey(),
-  workspaceId: text("workspace_id")
-    .notNull()
-    .references(() => workspaces.id),
-  name: text("name").notNull(),
-  topic: text("topic"),
-  prompt: text("prompt"),
-  relayPolicy: json<RelayPolicy>("relay_policy_json").notNull(),
-  visibility: text("visibility").notNull(),
-  createdBy: text("created_by")
-    .notNull()
-    .references(() => users.id),
-  lastSeq: integer("last_seq").notNull().default(0), // 메시지 seq 카운터
-  promptRevision: integer("prompt_revision").notNull().default(1), // prompt·promptOverride·relayPolicy 가 바뀔 때마다 +1
-  createdAt: ts("created_at").notNull(),
-  // 보관한 시각 — null 이면 살아 있다. 보관해도 메시지·스레드·런·멤버·세션·첨부는 남아 보관 해제하면 그대로 돌아온다
-  archivedAt: ts("archived_at"),
-  // 누가 새 세션을 만드나(채널 세션 스펙 「권한」 장) — 세션 관리자는 channel_members.role
-  sessionPolicy: json<SessionPolicy>("session_policy_json").notNull().default({ create: "members" }),
-});
+export const channels = sqliteTable(
+  "channels",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id),
+    name: text("name").notNull(),
+    topic: text("topic"),
+    prompt: text("prompt"),
+    relayPolicy: json<RelayPolicy>("relay_policy_json").notNull(),
+    visibility: text("visibility").notNull(),
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => users.id),
+    lastSeq: integer("last_seq").notNull().default(0), // 메시지 seq 카운터
+    promptRevision: integer("prompt_revision").notNull().default(1), // prompt·promptOverride·relayPolicy 가 바뀔 때마다 +1
+    createdAt: ts("created_at").notNull(),
+    // 보관한 시각 — null 이면 살아 있다. 보관해도 메시지·스레드·런·멤버·세션·첨부는 남아 보관 해제하면 그대로 돌아온다
+    archivedAt: ts("archived_at"),
+    // 누가 새 세션을 만드나(채널 세션 스펙 「권한」 장) — 세션 관리자는 channel_members.role
+    sessionPolicy: json<SessionPolicy>("session_policy_json").notNull().default({ create: "members" }),
+    // dm 이면 주인 사람 하나 + 에이전트 하나의 1:1 — 읽기 판정은 auth/channel-access.ts 한 곳이다. 두 id 는 dm 일 때만 값이 있다
+    kind: text("kind").$type<ChannelKind>().notNull().default("channel"),
+    dmOwnerId: text("dm_owner_id").references(() => users.id),
+    dmAgentId: text("dm_agent_id").references(() => agents.id),
+  },
+  // (주인, 에이전트)마다 DM 하나 — 동시에 두 번 열어도 행은 하나다
+  (t) => [
+    uniqueIndex("channels_dm_pair")
+      .on(t.dmOwnerId, t.dmAgentId)
+      .where(sql`kind = 'dm'`),
+  ],
+);
 
 /**
  * 채널 아래의 대화(세션 — 채널 세션 스펙 2.1). 채널의 메시지·런·에이전트 세션은 모두 대화 하나에 속한다. 0025 가 기존 채널마다

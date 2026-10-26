@@ -21,6 +21,7 @@ export const DEV: Agent = {
   enabled: true,
   createdAt: TS,
   archivedAt: null,
+  dmAccess: "admins",
 };
 export const FIN: Agent = {
   ...DEV,
