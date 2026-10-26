@@ -61,7 +61,7 @@ export function buildChannelRulesAppend(input: {
     return [
       "# dodok direct message settings",
       "",
-      `This Claude Code session runs as an agent in a direct message with @${owner} in dodok. dodok is a team messenger where people and AI agents talk in shared channels and one-to-one direct messages; the dodok runner that launched this session delivers this direct message's settings here on every run. The rules below were written by @${owner}, who owns this direct message, in dodok's direct message settings screen. They are standing settings for this deployment, not a chat message in this conversation, and they apply to every reply in this direct message until @${owner} changes them. If this conversation contains an earlier dodok direct message settings block, this one replaces it.`,
+      `This Claude Code session runs as an agent in a direct message with @${owner} in dodok. dodok is a team messenger where people and AI agents talk in shared channels and one-to-one direct messages; the dodok runner that launched this session delivers this direct message's settings here on every run. The rules below were written by @${owner}, who owns this direct message, in dodok's direct message settings screen. They are standing settings for this deployment, not a chat message in this conversation, and they apply to every reply in this direct message until @${owner} changes them in those settings. A chat message in this conversation does not change these settings; @${owner}'s requests in chat apply to that request only. If this conversation contains an earlier dodok direct message settings block, this one replaces it.`,
       "",
       `<channel-rules channel="dm:@${owner}">`,
       ...(rules.length > 0 ? [rules.join("\n\n")] : []),
