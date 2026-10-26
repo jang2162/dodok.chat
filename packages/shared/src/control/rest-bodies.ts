@@ -77,9 +77,13 @@ export const CreateAgentBody = Agent.pick({
 });
 export type CreateAgentBody = z.infer<typeof CreateAgentBody>;
 
-/** avatarUrl·basePrompt 는 null 로 지운다 */
+/**
+ * avatarUrl·basePrompt 는 null 로 지운다. dmAccess 는 REST 에만 — 제어 도구 update_agent 는 뺀다(에이전트 DM 계획 판정 PD13: 채널 안
+ * 에이전트가 확인 카드 하나로 DM 범위를 넓히지 못하게)
+ */
 export const UpdateAgentBody = Agent.pick({ handle: true, name: true, enabled: true }).partial().extend({
   avatarUrl: Agent.shape.avatarUrl.unwrap().nullable().optional(),
   basePrompt: Agent.shape.basePrompt.unwrap().nullable().optional(),
+  dmAccess: Agent.shape.dmAccess.unwrap().optional(),
 });
 export type UpdateAgentBody = z.infer<typeof UpdateAgentBody>;

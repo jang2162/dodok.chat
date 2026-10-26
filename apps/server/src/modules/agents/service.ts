@@ -1,4 +1,4 @@
-import { Agent } from "@dodok/shared";
+import { Agent, type DmAccess } from "@dodok/shared";
 import { and, asc, eq, inArray, isNotNull, isNull, ne, type SQL, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 import { v7 as uuidv7 } from "uuid";
@@ -49,6 +49,8 @@ export type AgentPatch = {
   avatarUrl?: string | null;
   basePrompt?: string | null;
   enabled?: boolean;
+  /** REST PATCH 만 — 제어 도구는 바꾸지 않는다(에이전트 DM 계획 판정 PD13) */
+  dmAccess?: DmAccess;
 };
 
 export function rowToAgent(row: AgentRow): Agent {
@@ -314,6 +316,7 @@ export function updateAgent(db: Db, id: string, patch: AgentPatch): Agent {
     if (patch.avatarUrl !== undefined) set.avatarUrl = patch.avatarUrl;
     if (patch.basePrompt !== undefined) set.basePrompt = patch.basePrompt;
     if (patch.enabled !== undefined) set.enabled = patch.enabled;
+    if (patch.dmAccess !== undefined) set.dmAccess = patch.dmAccess;
     if (Object.keys(set).length === 0) return apiAgent(tx, current);
     const row = tx.update(agents).set(set).where(eq(agents.id, id)).returning().get();
     if (!row) throw apiError("NOT_FOUND", "agent not found");

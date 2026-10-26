@@ -429,6 +429,44 @@ describe("자동화 관리 API", () => {
       expect(getAutomation(app.db, app.workspaceId, automation.id)?.channelId).toBe(channel.id);
     });
 
+    it("판정 순서 — 보관된 DM(DB 로 직접 — DM 은 보관할 길이 없다)도 남이면 404(409 가 아니다), 내 것이면 VALIDATION(409 보다 먼저)", async () => {
+      const archivedDm = (ownerId: string) => {
+        const id = dmOf(ownerId);
+        app.db.update(channels).set({ archivedAt: new Date() }).where(eq(channels.id, id)).run();
+        return id;
+      };
+      const payload = (channelId: string) => ({
+        kind: "schedule",
+        name: `DM ${++n}`,
+        channelId,
+        bodyMd: "엿보기",
+        schedule: DAILY_NINE,
+      });
+      const unknown = await call({ method: "POST", url: "/automations", payload: payload(missing) });
+      const foreign = await call({
+        method: "POST",
+        url: "/automations",
+        payload: payload(archivedDm(mia.id)),
+      });
+      expect(foreign.statusCode, foreign.body).toBe(404);
+      expect(foreign.json()).toEqual(unknown.json());
+      const own = await call({
+        method: "POST",
+        url: "/automations",
+        payload: payload(archivedDm(app.ownerUserId)),
+      });
+      expect(own.statusCode, own.body).toBe(400);
+      expect(own.json()).toMatchObject({ code: "VALIDATION" });
+      const { automation } = await schedule(newChannel().id);
+      const moved = await call({
+        method: "PATCH",
+        url: `/automations/${automation.id}`,
+        payload: { channelId: archivedDm(mia.id) },
+      });
+      expect(moved.statusCode, moved.body).toBe(404);
+      expect(moved.json()).toEqual(unknown.json());
+    });
+
     it("방어선 — DM 을 가리키게 된 자동화는 「지금 실행」·웹훅이 게시하지 않고, DM 에 세션도 만들지 않는다", async () => {
       const dm = dmOf(app.ownerUserId);
       const sched = (await schedule(newChannel().id)).automation;

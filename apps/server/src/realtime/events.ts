@@ -103,12 +103,14 @@ export function attachWireFanout(io: WireServer, bus: ServerBus, opts: WireFanou
       .map((row) => userRoom(row.userId));
 
   // 채널 사실(존재·이름·활동·승인)을 실을 룸 — 페이로드에 채널 행이 없는 이벤트는 매번 읽는다. 없는 채널이면 아무에게도 안 보낸다
-  const audienceOf = (channelId: string): string | undefined => {
-    const row = opts.db
+  const audienceRow = (channelId: string) =>
+    opts.db
       .select({ workspaceId: channels.workspaceId, kind: channels.kind, dmOwnerId: channels.dmOwnerId })
       .from(channels)
       .where(eq(channels.id, channelId))
       .get();
+  const audienceOf = (channelId: string): string | undefined => {
+    const row = audienceRow(channelId);
     return row ? channelAudience(row) : undefined;
   };
 
@@ -131,16 +133,22 @@ export function attachWireFanout(io: WireServer, bus: ServerBus, opts: WireFanou
       )
         return;
       if (!message.authorId) return;
-      const room = audienceOf(message.channelId);
-      if (room === undefined) return;
-      io.to(room).emit("channel.activity", {
+      const row = audienceRow(message.channelId);
+      if (row === undefined) return;
+      // DM 의 mentions 는 늘 비지만 에이전트의 보통 메시지는 주인을 부른 것으로 센다 — 스냅숏(reads/store.ts unreadFor)과 같은
+      // 규칙이라야 배지가 새로고침 전후로 같다(에이전트 DM 계획 판정 PD10). DM 에는 스레드가 없어 답글 갈래는 따로 두지 않는다
+      const mentionedUserIds =
+        row.kind === "dm" && authorType === "agent" && row.dmOwnerId !== null
+          ? [row.dmOwnerId]
+          : message.mentions.users;
+      io.to(channelAudience(row)).emit("channel.activity", {
         channelId: message.channelId,
         conversationId: message.conversationId,
         seq: message.seq,
         ...(message.threadRootId ? { threadRootId: message.threadRootId } : {}),
         authorType,
         authorId: message.authorId,
-        mentionedUserIds: message.mentions.users,
+        mentionedUserIds,
       });
     }),
     on("conversation.read", ({ userId, ...update }) =>

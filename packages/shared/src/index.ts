@@ -5,6 +5,7 @@ export * from "./common";
 export * from "./components";
 export * from "./control";
 export * from "./domain";
+export * from "./dms";
 export * from "./events";
 export * from "./mention";
 export * from "./members";

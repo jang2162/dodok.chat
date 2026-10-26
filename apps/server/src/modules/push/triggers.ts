@@ -16,6 +16,8 @@ export type TriggerLookups = {
   channelArchived(id: string): boolean;
   /** DM 이면 그 주인 id, 일반 채널·없는 채널이면 null — DM 의 알림은 주인에게만 간다(에이전트 DM 계획 판정 PD7) */
   dmOwner(channelId: string): string | null;
+  /** DM 이면 그 에이전트 id, 일반 채널·없는 채널이면 null — run_error 알림의 「누가」 */
+  dmAgent(channelId: string): string | null;
 };
 /**
  * `conversationId` 는 거르기(「그 세션을 보고 있으면 안 보냄」 — 채널 세션 계획 판정 PS7)에만 쓰고 페이로드에는 싣지 않는다 — 같은 채널의
@@ -52,7 +54,37 @@ function whoOf(m: Message, l: TriggerLookups): string {
   return author ? `@${author}${josa(author, "이", "가")}` : "누군가가";
 }
 
+/**
+ * DM 의 알림 — 에이전트의 최상위 보통 메시지(정본)와 run_error 만, 주인에게(에이전트 DM 계획 판정 PD11). DM 메시지에는 멘션이 없다
+ * (messages/service.ts plainInDm). 제목이 「누가」(`@<핸들>이 답했습니다`), 본문이 「어디」(「DM」) — 본문은 싣지 않는다. tag 는 세션마다
+ */
+function targetsForDm(m: Message, l: TriggerLookups, owner: string): PushTarget[] {
+  if (m.threadRootId !== undefined) return [];
+  const reply = m.kind === "normal" && m.authorType === "agent";
+  const failed = m.kind === "system" && m.systemMeta?.kind === "run_error";
+  if (!reply && !failed) return [];
+  const agentId = reply ? m.authorId : (l.dmAgent(m.channelId) ?? undefined);
+  const handle = agentId === undefined ? undefined : l.agentHandle(agentId);
+  const title = handle ? `@${handle}${josa(handle, "이", "가")} 답했습니다` : "에이전트가 답했습니다";
+  return [
+    {
+      userId: owner,
+      conversationId: m.conversationId,
+      payload: {
+        kind: "mention",
+        channelId: m.channelId,
+        title,
+        body: channelLabel(l, m.channelId),
+        url: sessionUrl(m.channelId, m.conversationId),
+        tag: `dm:${m.conversationId}`,
+      },
+    },
+  ];
+}
+
 export function targetsForMessage(m: Message, l: TriggerLookups): PushTarget[] {
+  const dmOwner = l.dmOwner(m.channelId);
+  if (dmOwner !== null) return targetsForDm(m, l, dmOwner);
   if (m.kind === "system") {
     if (m.systemMeta?.kind !== "relay_limit") return [];
     const place = placeOf(l, m);

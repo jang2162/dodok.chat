@@ -8,6 +8,7 @@ import { apiError } from "../../http/errors";
 import type { ServerBus } from "../../realtime/bus";
 import { getAgent, isAgentActive } from "../agents/service";
 import { getChannel, listMembers } from "../channels/service";
+import { assertDmWritable } from "../dms/service";
 import { assertConversationWritable } from "../conversations/store";
 import { consumeComponentItem, getMessage } from "../messages/service";
 import type { RunGate } from "../ops/budget";
@@ -148,6 +149,7 @@ function checkInteraction(tx: DbOrTx, workspaceId: string, input: InteractInput,
     throw apiError("NOT_FOUND", "message not found");
   }
   assertConversationWritable(tx, message.conversationId, workspaceId);
+  assertDmWritable(tx, channel);
   const checked = validateInteraction({
     message,
     componentId: input.componentId,

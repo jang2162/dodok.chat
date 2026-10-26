@@ -50,6 +50,7 @@ import { listConversations } from "../conversations/service";
 import { getConversation, getReadableConversation } from "../conversations/store";
 import { listPeople } from "../members/people";
 import { getThreadRoot, listMessages, withThreadSummaries } from "../messages/service";
+import { assertNotDm } from "../dms/service";
 import { getRunInWorkspace } from "../runs/store";
 import { type HandleOf, readableMentions } from "../search/readable";
 import { mentionHandleOf, searchMessages } from "../search/service";
@@ -123,6 +124,14 @@ const readerOf = (p: Principal): SQL => readableChannelSqlFor(p);
 /** 채널을 받는 도구의 접근 판정 */
 function readableChannel(ctx: HandlerContext, input: { channelId: string }, p: Principal): void {
   loadReadableChannel(ctx.db, input.channelId, ctx.workspaceId, readerOf(p));
+}
+
+/**
+ * 채널을 바꾸는 도구의 접근 판정 — 읽을 수 있어야 하고(남은 NOT_FOUND), DM 이면 VALIDATION(에이전트 DM 계획 판정 PD9 — 제어 쓰기 도구는
+ * DM 을 바꾸지 않는다). 역할 판정보다 먼저라 member 주인도 FORBIDDEN 이 아니라 VALIDATION 을 받는다
+ */
+function manageableChannel(ctx: HandlerContext, input: { channelId: string }, p: Principal): void {
+  assertNotDm(loadReadableChannel(ctx.db, input.channelId, ctx.workspaceId, readerOf(p)));
 }
 
 function agentHandle(ctx: HandlerContext, agentId: string): string {
@@ -299,7 +308,7 @@ export const HANDLERS: Handlers = {
     },
   },
   update_channel: {
-    access: readableChannel,
+    access: manageableChannel,
     authorize: (role, raw) => authorizeChannelPatch(role, without(raw, "channelId")),
     check: (ctx, input) => writable(ctx, input.channelId),
     channelId: (input) => input.channelId,
@@ -322,7 +331,7 @@ export const HANDLERS: Handlers = {
     },
   },
   set_channel_prompt: {
-    access: readableChannel,
+    access: manageableChannel,
     authorize: (role, raw) => authorizeChannelPatch(role, without(raw, "channelId")),
     check: (ctx, input) => writable(ctx, input.channelId),
     channelId: (input) => input.channelId,
@@ -342,7 +351,7 @@ export const HANDLERS: Handlers = {
     }),
   },
   add_channel_agent: {
-    access: readableChannel,
+    access: manageableChannel,
     authorize: (role, raw) =>
       authorizeChannelMemberAdd(role, {
         memberType: "agent",
@@ -382,7 +391,7 @@ export const HANDLERS: Handlers = {
     },
   },
   remove_channel_agent: {
-    access: readableChannel,
+    access: manageableChannel,
     authorize: (role) => authorizeChannelMemberRemove(role),
     // 사람 id 를 주면 사람 멤버가 빠진다(removeMember 는 종류를 보지 않는다) — 에이전트인지 먼저 본다
     check: (ctx, input) => {
@@ -403,7 +412,7 @@ export const HANDLERS: Handlers = {
     }),
   },
   update_channel_agent: {
-    access: readableChannel,
+    access: manageableChannel,
     authorize: (role, raw) => authorizeChannelAgentPatch(role, without(raw, "channelId", "agentId")),
     check: (ctx, input) => {
       writable(ctx, input.channelId);
@@ -434,7 +443,7 @@ export const HANDLERS: Handlers = {
     },
   },
   set_relay_policy: {
-    access: readableChannel,
+    access: manageableChannel,
     authorize: (role, raw) => authorizeChannelPatch(role, without(raw, "channelId")),
     check: (ctx, input) => writable(ctx, input.channelId),
     channelId: (input) => input.channelId,
@@ -454,7 +463,7 @@ export const HANDLERS: Handlers = {
     },
   },
   set_channel_run_limit: {
-    access: readableChannel,
+    access: manageableChannel,
     authorize: (role, raw) =>
       authorizeChannelPatch(role, { relayPolicy: { dailyRunLimit: raw.dailyRunLimit } }),
     check: (ctx, input) => writable(ctx, input.channelId),
@@ -477,7 +486,7 @@ export const HANDLERS: Handlers = {
     },
   },
   archive_channel: {
-    access: readableChannel,
+    access: manageableChannel,
     authorize: (role) => authorizeChannelArchive(role),
     // 보관 해제 말고는 보관한 채널의 쓰기를 모두 미리 거절한다 — 이미 보관한 채널을 다시 보관하는 카드도 띄우지 않는다
     check: (ctx, input) => writable(ctx, input.channelId),
@@ -491,7 +500,7 @@ export const HANDLERS: Handlers = {
     }),
   },
   unarchive_channel: {
-    access: readableChannel,
+    access: manageableChannel,
     authorize: (role) => authorizeChannelUnarchive(role),
     check: (ctx, input) => void channelOf(ctx, input.channelId),
     channelId: (input) => input.channelId,

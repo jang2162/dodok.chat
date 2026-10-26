@@ -36,6 +36,7 @@ import { registerWebhookRoute } from "./modules/automations/webhook";
 import { watchPluginHellos } from "./modules/channels/prompt-sync";
 import { registerChannelRoutes } from "./modules/channels/routes";
 import { registerConversationRoutes } from "./modules/conversations/routes";
+import { registerDmRoutes } from "./modules/dms/routes";
 import { registerMcpRoute } from "./modules/control/mcp";
 import { type Principal, principalForBridge, principalForRunner } from "./modules/control/principal";
 import { type ControlService, createControlService } from "./modules/control/service";
@@ -488,6 +489,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     });
     registerMessageRoutes(fastify, routeContext);
     registerConversationRoutes(fastify, routeContext);
+    registerDmRoutes(fastify, routeContext);
     registerMemberManageRoutes(fastify, {
       auth,
       db,

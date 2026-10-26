@@ -24,6 +24,7 @@ const L: TriggerLookups = {
   admins: () => [SAM, BOB],
   channelArchived: () => false,
   dmOwner: () => null,
+  dmAgent: () => null,
 };
 
 function msg(over: Partial<Message>): Message {

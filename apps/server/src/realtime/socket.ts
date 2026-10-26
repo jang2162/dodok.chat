@@ -29,6 +29,7 @@ import type { Logger } from "../logger";
 import { getApproval } from "../modules/approvals/store";
 import { canReadChannel } from "../auth/channel-access";
 import { assertChannelWritable, getChannel, loadReadableChannel } from "../modules/channels/service";
+import { assertDmWritable } from "../modules/dms/service";
 import { resolveSendConversation } from "../modules/conversations/service";
 import { getConversation } from "../modules/conversations/store";
 import { ipPrefix } from "../modules/ops/ip";
@@ -374,9 +375,11 @@ export function attachWire(io: WireServer, ctx: WireContext): void {
         if (!approval || (approvalChannel && !canReadChannel({ userId }, approvalChannel)))
           throw apiError("NOT_FOUND", "approval not found");
         // wire 에서 역할을 보는 이벤트는 이것 하나다(팀 스펙 「역할과 권한」). 역할은 이벤트마다 다시 읽는다.
-        // 확인 카드(dodok_control)는 그 일을 시킨 사람 본인이 결정한다 — 역할은 보지 않고, 본인인지는 승인 서비스가 본다(계획 판정 PC4)
+        // 확인 카드(dodok_control)는 그 일을 시킨 사람 본인이 결정한다 — 역할은 보지 않고, 본인인지는 승인 서비스가 본다(계획 판정 PC4).
+        // DM 의 승인은 종류와 무관하게 주인이 결정한다 — 볼 수 있는 사람이 주인뿐이라 member 주인도(에이전트 DM 계획 판정 PD7). 주인인지는
+        // 위 접근 판정이 이미 봤다(남은 NOT_FOUND)
         const role = roleOf(ctx.db, ctx.workspaceId, userId);
-        if (approval?.kind === "dodok_control") {
+        if (approval.kind === "dodok_control" || approvalChannel?.kind === "dm") {
           if (!role) throw apiError("FORBIDDEN", "워크스페이스 멤버가 아니다");
         } else if (!roleAtLeast(role, "admin"))
           throw apiError("FORBIDDEN", "승인·거절은 admin 이상만 할 수 있다");
@@ -408,8 +411,10 @@ function sendMessage(
       input.newConversation === undefined ? undefined : getConversation(ctx.db, existing.conversationId);
     return { message: existing, created: false, ...(conversation ? { conversation } : {}) };
   }
-  assertChannelWritable(ctx.db, input.channelId, ctx.workspaceId);
+  const channel = assertChannelWritable(ctx.db, input.channelId, ctx.workspaceId);
   const role = roleOf(ctx.db, ctx.workspaceId, userId);
+  // 읽기 전용 DM(에이전트 보관·꺼짐·허용 철회)이면 409 DM_READ_ONLY — 주인은 보낸 사람 자신이다(접근 판정이 주인만 들인다)
+  assertDmWritable(ctx.db, channel, role);
   const now = new Date();
   // 첨부는 서비스가 같은 트랜잭션에서 검사하고 묶는다(스펙 4.4) — 버리고 저장하면 「본문 없음 + 첨부」가 빈 메시지로 남는다
   const sent = sendUserMessage(ctx.db, ctx.bus, {

@@ -15,7 +15,8 @@ import {
 import { FAKE_GATEWAY_ID, insertGateway } from "./gateways";
 import { createConversation, latestOpenConversation } from "../../src/modules/conversations/store";
 import { ensureSession } from "../../src/modules/sessions/service";
-import { type ChannelRecord, getChannel } from "../../src/modules/channels/service";
+import type { ChannelRecord } from "../../src/modules/channels/service";
+import { findOrCreateDm } from "../../src/modules/dms/service";
 
 /** workspace·user 만 삽입한다 — 채널·에이전트는 서비스로 만드는 테스트용 */
 export function seedWorkspace(
@@ -119,51 +120,14 @@ export function seedConversation(
 }
 
 /**
- * (주인, 에이전트) DM 채널 — 행 값은 에이전트 DM 계획 Global Constraints 「DM 채널 행」. 대화는 만들지 않는다(첫 보내기가 만든다).
- * DM 을 여는 서비스가 생기기 전에 접근 판정을 시험하려는 자리값이다
+ * (주인, 에이전트) DM 채널 — 실제 서비스(modules/dms/service.ts findOrCreateDm)로 만든다, 허용 검사 없이. 대화는 만들지 않는다(첫
+ * 보내기가 만든다). 이미 있으면 그 DM
  */
 export function createDmChannelForTest(
-  db: DbOrTx,
+  db: Db,
   opts: { workspaceId: string; ownerId: string; agentId: string },
 ): ChannelRecord {
-  const now = new Date();
-  const id = uuid();
-  db.insert(channels)
-    .values({
-      id,
-      workspaceId: opts.workspaceId,
-      name: "dm",
-      relayPolicy: { maxRelayTurns: 4, allowPairs: "all" },
-      visibility: "private",
-      createdBy: opts.ownerId,
-      createdAt: now,
-      sessionPolicy: { create: "members" },
-      kind: "dm",
-      dmOwnerId: opts.ownerId,
-      dmAgentId: opts.agentId,
-    })
-    .run();
-  db.insert(channelMembers)
-    .values([
-      {
-        id: uuid(),
-        channelId: id,
-        memberType: "user",
-        memberId: opts.ownerId,
-        role: "member",
-        joinedAt: now,
-      },
-      {
-        id: uuid(),
-        channelId: id,
-        memberType: "agent",
-        memberId: opts.agentId,
-        autoRespond: true,
-        joinedAt: now,
-      },
-    ])
-    .run();
-  return getChannel(db, id)!;
+  return findOrCreateDm(db, opts).channel;
 }
 
 /**

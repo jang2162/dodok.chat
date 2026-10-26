@@ -145,6 +145,54 @@ describe("DM 팬아웃 — 채널 사실은 DM 주인에게만", () => {
     expect(got.plain).toEqual(WHO);
   });
 
+  it("channel.activity — DM 에이전트 글은 mentionedUserIds 가 [주인], 사람 글·일반 채널 에이전트 글은 메시지의 멘션 그대로", async () => {
+    await connectAll();
+    const d = dm();
+    const p = plain();
+    const pConversation = seedConversation(app.db, p.id);
+    const activity = (
+      channelId: string,
+      conversationId: string,
+      authorType: "agent" | "user",
+      authorId: string,
+      users: string[],
+    ) => {
+      const id = uuid();
+      app.bus.emit("message.created", {
+        message: {
+          id,
+          channelId,
+          conversationId,
+          seq: ++n,
+          kind: "normal",
+          authorType,
+          authorId,
+          bodyMd: "x",
+          mentions: { users, agents: [] },
+          reactions: [],
+        } as never,
+      });
+      return n;
+    };
+    const mentionedOf = (who: Who, seq: number) =>
+      (
+        seen[who].find((e) => e.event === "channel.activity" && (e.payload as { seq: number }).seq === seq)
+          ?.payload as { mentionedUserIds: string[] } | undefined
+      )?.mentionedUserIds;
+    const dmAgent = activity(d.channel.id, d.conversationId, "agent", d.agent.id, []);
+    const dmUser = activity(d.channel.id, d.conversationId, "user", ids.mia, []);
+    const plainAgent = activity(p.id, pConversation, "agent", uuid(), [ids.owner]);
+    const plainQuiet = activity(p.id, pConversation, "agent", uuid(), []);
+    // 일반 채널의 마지막 글이 모두에게 닿았으면 앞의 것도 닿아 있다(같은 버스·같은 소켓 — both 와 같은 까닭)
+    await Promise.all(
+      WHO.map((who) => waitFor(sockets[who], "channel.activity", (payload) => payload.seq === plainQuiet)),
+    );
+    expect(mentionedOf("mia", dmAgent)).toEqual([ids.mia]);
+    expect(mentionedOf("mia", dmUser)).toEqual([]);
+    expect(mentionedOf("owner", plainAgent)).toEqual([ids.owner]);
+    expect(mentionedOf("mia", plainQuiet)).toEqual([]);
+  });
+
   it.each(["approval.requested", "approval.resolved"] as const)(
     "%s — DM 의 승인은 주인만, 일반 채널은 모두",
     async (event) => {
@@ -202,7 +250,7 @@ describe("DM 팬아웃 — 채널 사실은 DM 주인에게만", () => {
     expect(seen.mia.find((e) => e.event === "system.notice")?.payload).not.toHaveProperty("userId");
   });
 
-  it("ops.event control_change — 주인이 바깥 MCP 로 DM 을 바꿔도 owner·admin 이 받는 사건에 그 DM id 가 없다", async () => {
+  it("ops.event control_change — DM 의 제어 쓰기는 VALIDATION 이고 운영 사건이 생기지 않는다(일반 채널은 채널 id 를 싣는다)", async () => {
     await connectAll();
     const d = dm();
     const p = plain();
@@ -212,35 +260,36 @@ describe("DM 팬아웃 — 채널 사실은 DM 주인에게만", () => {
         "ops.event",
         (e) => e.event.kind === "control_change" && e.event.key === `control:update_channel:${userId}`,
       );
-    const mine = [changed("owner", ids.mia), changed("admin", ids.mia)];
     expect(
       await app.control.call({ userId: ids.mia, via: "pat" }, "update_channel", {
         channelId: d.channel.id,
         topic: "주제",
       }),
-    ).toMatchObject({ ok: true });
-    for (const { event } of await Promise.all(mine)) {
-      expect(event.detail).toMatchObject({ tool: "update_channel", channelId: null });
-      expect(JSON.stringify(event)).not.toContain(d.channel.id);
-    }
-    // 일반 채널은 그대로 채널 id 를 싣는다
-    const theirs = changed("owner", ids.owner);
+    ).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
+    // 일반 채널은 그대로 채널 id 를 싣는다 — 이 사건이 닿은 뒤에는 앞의 DM 쪽 사건도 (있었다면) 닿아 있다
+    const theirs = [changed("owner", ids.owner), changed("admin", ids.owner)];
     expect(
       await app.control.call({ userId: ids.owner, via: "pat" }, "update_channel", {
         channelId: p.id,
         topic: "주제",
       }),
     ).toMatchObject({ ok: true });
-    expect((await theirs).event.detail).toMatchObject({ channelId: p.id });
+    for (const { event } of await Promise.all(theirs))
+      expect(event.detail).toMatchObject({ channelId: p.id });
+    for (const who of ["owner", "admin"] as const) {
+      const events = seen[who].filter((e) => e.event === "ops.event").map((e) => JSON.stringify(e.payload));
+      expect(events.filter((e) => e.includes(`control:update_channel:${ids.mia}`))).toEqual([]);
+      expect(events.filter((e) => e.includes(d.channel.id))).toEqual([]);
+    }
   });
 
-  it("확인 카드 — DM 런의 제어 쓰기 카드는 주인만 받고, 제목·출처 줄은 #dm 이 아니라 「DM」", async () => {
+  it("확인 카드 — DM 런의 제어 쓰기 카드는 주인만 받고, 출처 줄은 #dm 이 아니라 「DM」", async () => {
     await connectAll();
     const d = dm();
     const root = createUserMessage(app.db, app.bus, {
       conversationId: d.conversationId,
       authorId: ids.mia,
-      bodyMd: "이름 바꿔 줘",
+      bodyMd: "채널 하나 만들어 줘",
       clientMsgId: `fan-root-${++n}`,
     });
     const queued = insertRun(app.db, {
@@ -258,13 +307,14 @@ describe("DM 팬아웃 — 채널 사실은 DM 주인에게만", () => {
     });
     const run = updateRun(app.db, queued.id, { status: "tool", startedAt: new Date() });
     const requested = waitFor(sockets.mia, "approval.requested", (p) => p.approval.runId === run.id);
+    // DM 을 바꾸는 도구는 VALIDATION(계획 판정 PD9) — DM 에서 뜨는 카드는 채널을 받지 않는 쓰기(member 도 되는 create_channel)다
     const call = app.control.call(
       { userId: ids.mia, via: "agent", agentId: d.agent.id, runId: run.id },
-      "update_channel",
-      { channelId: d.channel.id, name: "새이름" },
+      "create_channel",
+      { name: `fan-new-${++n}` },
     );
     const { approval } = await requested;
-    expect(approval.title).toContain("DM 의 이름·주제를 바꾸려 합니다");
+    expect(approval.title).toContain("만들려 합니다");
     expect(approval.title).not.toContain("#dm");
     expect(approval.detail).toContain(" · DM · ");
     expect(approval.detail).not.toContain("#dm");
