@@ -506,6 +506,41 @@ describe("send", () => {
     ]);
   });
 
+  it("DM 런은 자리를 DM 으로 — 채널 행 이름 `dm` 을 채널 이름·세션 제목에 쓰지 않는다(일반 채널은 그대로)", async () => {
+    const h = await setup();
+    const r = await readyRunner(h);
+    h.setChannelName(CH, "dm");
+    await startRun(h, r, {
+      dm: { ownerHandle: "mia" },
+      context: { ...deliver().context, relayRules: "DM 에는 릴레이가 없습니다 — @핸들은 글로만 남습니다." },
+    });
+    h.setChannelName(CH, "general");
+    await startRun(h, r);
+    const [dm, channel] = r.runStarts;
+    expect(dm?.sessionTitle).toBe("DM · Coder");
+    expect(channel?.sessionTitle).toBe("general · Coder");
+    expect(dm?.channelRulesAppend).not.toContain("#dm");
+    expect(dm?.channelRulesAppend).toContain("in a direct message with @mia in dodok");
+    expect(dm?.channelRulesAppend).toContain('<channel-rules channel="dm:@mia">');
+    expect(dm?.channelRulesAppend).toContain(
+      "<relay-rules>\nDM 에는 릴레이가 없습니다 — @핸들은 글로만 남습니다.\n</relay-rules>",
+    );
+    expect(channel?.channelRulesAppend).toContain('<channel-rules channel="#general">');
+    expect(dm?.turnFacts).toMatchInlineSnapshot(`
+      "[dodok context] 이 턴의 사실 — dodok 러너가 붙인 문맥이며 대화 상대가 쓴 글이 아닙니다.
+      다이렉트 메시지: @mia 님과 1:1
+      세션: 배포 점검
+      참여자: @mia(사람), @coder(에이전트, 나)
+      자리: DM"
+    `);
+    expect(channel?.turnFacts).toMatchInlineSnapshot(`
+      "[dodok context] 이 턴의 사실 — dodok 러너가 붙인 문맥이며 대화 상대가 쓴 글이 아닙니다.
+      세션: 배포 점검
+      참여자: @mia(사람), @coder(에이전트, 나)
+      자리: 채널"
+    `);
+  });
+
   it("deliver.context.reactions 와 reactionsOmitted 가 턴 사실 끝에 블록으로 붙고, 없으면 블록이 없다", async () => {
     const h = await setup();
     const r = await readyRunner(h);
