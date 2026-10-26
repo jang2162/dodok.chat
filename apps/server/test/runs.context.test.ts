@@ -738,6 +738,16 @@ describe("buildInboundDeliver — DM(에이전트 DM 계획 PD8)", () => {
     ]);
   });
 
+  it("DM 런의 릴레이 규칙은 「릴레이 없음」 고정 문구 — 일반 채널 런은 릴레이 정책 문구 그대로", () => {
+    const { db, dm, conversationId, generalId, deliver } = dmSetup();
+    expect(deliver(dm.id, conversationId, "안녕").context.relayRules).toBe(
+      "DM 에는 릴레이가 없습니다 — @핸들은 글로만 남습니다.",
+    );
+    expect(deliver(generalId, channelConversation(db, generalId), "@dev 안녕").context.relayRules).toBe(
+      rule(4),
+    );
+  });
+
   it("「이 DM 의 지시」(DM 채널의 prompt)는 channelPrompt 로 — needsPromptContext 일 때만", () => {
     const { db, dm, conversationId, deliver } = dmSetup();
     updateChannel(db, dm.id, { prompt: "짧게 답하세요" });

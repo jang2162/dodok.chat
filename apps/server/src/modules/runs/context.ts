@@ -29,6 +29,12 @@ export const RECENT_MESSAGES_MAX = 20;
 /** 스레드 문맥에 싣는 루트 본문 상한(스펙 2.3) */
 export const THREAD_ROOT_TEXT_MAX = 4000;
 
+/**
+ * DM 런의 릴레이 규칙 줄 — DM 에는 릴레이가 없다(에이전트 DM 계획 PD6, DM 의 relay_policy 는 쓰지 않는다). 채널 문구를 그대로 실으면
+ * 「@멘션하면 그 에이전트가 이어받습니다」가 거짓이 된다. 러너의 `<relay-rules>` 도 이 값을 받는다(runner-adapter buildChannelRulesAppend)
+ */
+export const DM_RELAY_RULES = "DM 에는 릴레이가 없습니다 — @핸들은 글로만 남습니다.";
+
 export type InboundTrigger = {
   message?: Message;
   /** interaction·continue 런: formatInteractionText 결과 */
@@ -181,7 +187,7 @@ export function buildInboundDeliver(db: DbOrTx, input: BuildInboundInput): Inbou
         displayName: p.displayName,
         isSelf: p.type === "agent" && p.id === run.agentId,
       })),
-      relayRules: relayRulesFor(channel.relayPolicy, run.agentId, participants),
+      relayRules: dmOwner ? DM_RELAY_RULES : relayRulesFor(channel.relayPolicy, run.agentId, participants),
       ...(input.needsPromptContext && channel.prompt ? { channelPrompt: channel.prompt } : {}),
       ...(override ? { promptOverride: override } : {}),
     },
