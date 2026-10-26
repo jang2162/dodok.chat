@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { v7 as uuid, version } from "uuid";
 import { describe, expect, it, vi } from "vitest";
 import type { DbOrTx } from "../src/db/client";
-import { agents, attachments, componentInteractions } from "../src/db/schema.sqlite";
+import { agents, attachments, channelMembers, componentInteractions, users } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
 import { toAttachment } from "../src/modules/attachments/service";
 import { addMember, updateAgentMember, updateChannel } from "../src/modules/channels/service";
@@ -19,7 +19,12 @@ import { type InboundTrigger, attachmentPlaceholder, buildInboundDeliver } from 
 import { ensureSession } from "../src/modules/sessions/service";
 import { ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
-import { channelConversation, seedChannelWithAgent } from "./helpers/seed";
+import {
+  channelConversation,
+  createDmChannelForTest,
+  seedChannelWithAgent,
+  seedConversation,
+} from "./helpers/seed";
 
 /** 서술 속 @핸들도 릴레이가 된다(live-smoke 5.4-5) — 부를 때만 @ 를 쓰게 한다 */
 const rule = (turns: number) =>
@@ -652,5 +657,101 @@ describe("buildInboundDeliver", () => {
         displayName: "자동화",
       });
     });
+  });
+});
+
+describe("buildInboundDeliver — DM(에이전트 DM 계획 PD8)", () => {
+  function dmSetup() {
+    const db = newTestDb();
+    const bus = new ServerBus();
+    const adapter = new FakeAdapter();
+    const { workspaceId, userId, agentId, channelId: generalId } = seedChannelWithAgent(db);
+    db.update(users).set({ handle: "mia" }).where(eq(users.id, userId)).run();
+    const dm = createDmChannelForTest(db, { workspaceId, ownerId: userId, agentId });
+    const conversationId = seedConversation(db, dm.id, { title: "DM 세션" });
+    const deliver = (channelId: string, convId: string, bodyMd: string, needsPromptContext = false) => {
+      const trigger = createUserMessage(db, bus, {
+        conversationId: convId,
+        authorId: userId,
+        bodyMd,
+        clientMsgId: uuid(),
+      });
+      const { session } = ensureSession(db, adapter, { conversationId: convId, agentId });
+      const run: Run = {
+        id: uuid(),
+        channelId,
+        conversationId: convId,
+        agentId,
+        triggerKind: "mention",
+        triggerMessageId: trigger.id,
+        rootMessageId: trigger.id,
+        relayDepth: 0,
+        sessionKey: session.sessionKey,
+        status: "queued",
+        hasCanonical: false,
+        createdAt: new Date().toISOString(),
+      };
+      return buildInboundDeliver(db, { run, trigger: { message: trigger }, session, needsPromptContext });
+    };
+    return { db, workspaceId, userId, agentId, dm, conversationId, generalId, deliver };
+  }
+
+  it("DM 런은 dm.ownerHandle 을 싣고, 참여자는 주인과 나 — 일반 채널 런에는 dm 이 없다", () => {
+    const { db, dm, conversationId, generalId, deliver } = dmSetup();
+    const inbound = deliver(dm.id, conversationId, "안녕 @dev");
+    expect(InboundDeliver.safeParse(inbound).success).toBe(true);
+    expect(inbound.dm).toEqual({ ownerHandle: "mia" });
+    expect(inbound.context.participants).toEqual([
+      { type: "user", handle: "mia", displayName: "owner", isSelf: false },
+      { type: "agent", handle: "dev", displayName: "dev", isSelf: true },
+    ]);
+
+    const general = deliver(generalId, channelConversation(db, generalId), "@dev 안녕");
+    expect(general).not.toHaveProperty("dm");
+  });
+
+  it("DM 멤버 행에 다른 사람·에이전트가 섞여 있어도 헤더 참여자에는 싣지 않는다", () => {
+    const { db, workspaceId, dm, conversationId, deliver } = dmSetup();
+    const other = uuid();
+    db.insert(users)
+      .values({
+        id: other,
+        workspaceId,
+        handle: "kim",
+        displayName: "Kim",
+        authProvider: "local",
+        createdAt: new Date(),
+      })
+      .run();
+    const fin = createAgent(db, { workspaceId, providerAgentId: "fin", handle: "fin", name: "Fin" });
+    for (const [memberType, memberId] of [
+      ["user", other],
+      ["agent", fin.id],
+    ] as const) {
+      db.insert(channelMembers)
+        .values({ id: uuid(), channelId: dm.id, memberType, memberId, joinedAt: new Date() })
+        .run();
+    }
+    expect(deliver(dm.id, conversationId, "안녕").context.participants.map((p) => p.handle)).toEqual([
+      "mia",
+      "dev",
+    ]);
+  });
+
+  it("DM 런의 릴레이 규칙은 「릴레이 없음」 고정 문구 — 일반 채널 런은 릴레이 정책 문구 그대로", () => {
+    const { db, dm, conversationId, generalId, deliver } = dmSetup();
+    expect(deliver(dm.id, conversationId, "안녕").context.relayRules).toBe(
+      "DM 에는 릴레이가 없습니다 — @핸들은 글로만 남습니다.",
+    );
+    expect(deliver(generalId, channelConversation(db, generalId), "@dev 안녕").context.relayRules).toBe(
+      rule(4),
+    );
+  });
+
+  it("「이 DM 의 지시」(DM 채널의 prompt)는 channelPrompt 로 — needsPromptContext 일 때만", () => {
+    const { db, dm, conversationId, deliver } = dmSetup();
+    updateChannel(db, dm.id, { prompt: "짧게 답하세요" });
+    expect(deliver(dm.id, conversationId, "a", true).context.channelPrompt).toBe("짧게 답하세요");
+    expect(deliver(dm.id, conversationId, "b", false).context).not.toHaveProperty("channelPrompt");
   });
 });

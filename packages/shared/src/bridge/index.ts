@@ -88,6 +88,8 @@ export const InboundDeliver = z.object({
   channelId: Id, // 채널 설정(ConfigSet)·프롬프트 조회 — 채널 단위
   conversationId: Id, // OpenClaw 피어 id(`channel:<id>`)·세션 키의 대화
   conversationTitle: ConversationTitle, // 헤더 `세션:` 줄 — formatSessionLine 으로만 싣는다(사람이 쓴 글이다)
+  /** DM 런만 — 헤더 `다이렉트 메시지:` 줄(formatDmLine). 선택 필드라 옛 플러그인도 받는다(DM 줄이 없을 뿐) */
+  dm: z.object({ ownerHandle: z.string() }).optional(),
   agentId: z.string(), // providerAgentId (OpenClaw agentId)
   sessionKey: z.string(), // dodokSessionKey(agentId, conversationId, threadId)
   threadId: Id.optional(), // 스레드 루트 id — threadMatchesSessionKey 로 키와 대조한다
@@ -151,11 +153,23 @@ export function threadMatchesSessionKey(sessionKey: string, threadId: string | u
  * 서버가 붙인 사실처럼 읽힌다. 줄 경계(제어 문자·U+2028/2029 포함)는 공백 하나로, 보이지 않는 서식 글자는 지운다
  */
 export function formatSessionLine(title: string): string {
-  const line = title
+  const line = foldHeaderText(title);
+  return `세션: ${line === "" ? "새 세션" : line}`;
+}
+
+/**
+ * 에이전트 헤더의 DM 줄(에이전트 DM 계획 PD8) — 플러그인 헤더와 러너 턴 사실이 `[dodok context]` 줄 바로 다음, 세션 줄 앞에 싣는다.
+ * 조사를 「님과」로 고정해 핸들의 받침을 가리지 않는다. 핸들은 세션 제목과 같은 규칙으로 한 줄로 접는다(`formatSessionLine` 주석)
+ */
+export function formatDmLine(ownerHandle: string): string {
+  return `다이렉트 메시지: @${foldHeaderText(ownerHandle)} 님과 1:1`;
+}
+
+function foldHeaderText(text: string): string {
+  return text
     .replace(/\p{Cf}/gu, "")
     .replace(/[\s\p{Cc}\p{Zl}\p{Zp}]+/gu, " ")
     .trim();
-  return `세션: ${line === "" ? "새 세션" : line}`;
 }
 
 export const BridgeStatus = z.object({

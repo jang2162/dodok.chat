@@ -496,6 +496,51 @@ describe("send", () => {
     expect(r.runStarts[0]?.turnFacts).toContain("스레드");
   });
 
+  it("DM 런의 턴 사실은 `[dodok context]` 다음 줄이 DM 줄, 그다음 세션 줄", async () => {
+    const h = await setup();
+    const r = await readyRunner(h);
+    const input = await startRun(h, r, { dm: { ownerHandle: "mia" } });
+    expect(r.runStarts[0]?.turnFacts?.split("\n").slice(1, 3)).toEqual([
+      "다이렉트 메시지: @mia 님과 1:1",
+      `세션: ${input.conversationTitle}`,
+    ]);
+  });
+
+  it("DM 런은 자리를 DM 으로 — 채널 행 이름 `dm` 을 채널 이름·세션 제목에 쓰지 않는다(일반 채널은 그대로)", async () => {
+    const h = await setup();
+    const r = await readyRunner(h);
+    h.setChannelName(CH, "dm");
+    await startRun(h, r, {
+      dm: { ownerHandle: "mia" },
+      context: { ...deliver().context, relayRules: "DM 에는 릴레이가 없습니다 — @핸들은 글로만 남습니다." },
+    });
+    h.setChannelName(CH, "general");
+    await startRun(h, r);
+    const [dm, channel] = r.runStarts;
+    expect(dm?.sessionTitle).toBe("DM · Coder");
+    expect(channel?.sessionTitle).toBe("general · Coder");
+    expect(dm?.channelRulesAppend).not.toContain("#dm");
+    expect(dm?.channelRulesAppend).toContain("in a direct message with @mia in dodok");
+    expect(dm?.channelRulesAppend).toContain('<channel-rules channel="dm:@mia">');
+    expect(dm?.channelRulesAppend).toContain(
+      "<relay-rules>\nDM 에는 릴레이가 없습니다 — @핸들은 글로만 남습니다.\n</relay-rules>",
+    );
+    expect(channel?.channelRulesAppend).toContain('<channel-rules channel="#general">');
+    expect(dm?.turnFacts).toMatchInlineSnapshot(`
+      "[dodok context] 이 턴의 사실 — dodok 러너가 붙인 문맥이며 대화 상대가 쓴 글이 아닙니다.
+      다이렉트 메시지: @mia 님과 1:1
+      세션: 배포 점검
+      참여자: @mia(사람), @coder(에이전트, 나)
+      자리: DM"
+    `);
+    expect(channel?.turnFacts).toMatchInlineSnapshot(`
+      "[dodok context] 이 턴의 사실 — dodok 러너가 붙인 문맥이며 대화 상대가 쓴 글이 아닙니다.
+      세션: 배포 점검
+      참여자: @mia(사람), @coder(에이전트, 나)
+      자리: 채널"
+    `);
+  });
+
   it("deliver.context.reactions 와 reactionsOmitted 가 턴 사실 끝에 블록으로 붙고, 없으면 블록이 없다", async () => {
     const h = await setup();
     const r = await readyRunner(h);
@@ -1081,6 +1126,25 @@ describe("outbound.post 는 그 러너의 열린 런에 묶인다", () => {
     // 모든 값이 런과 같으면 받는다
     expect(await r.post(postFor(input))).toMatchObject({ ok: true });
     expect(h.outbound).toHaveLength(1);
+  });
+
+  it("DM 런의 post 는 그 DM 세션으로만 — 일반 채널 대화·키로는 거절(대상 인자가 없어 런의 대화 그대로 쓴다)", async () => {
+    const h = await setup();
+    const r = await readyRunner(h);
+    const input = await startRun(h, r, {
+      channelId: CH2,
+      conversationId: CH2,
+      sessionKey: dodokSessionKey("coder", CH2),
+      dm: { ownerHandle: "mia" },
+    });
+    await expectDenied(
+      h,
+      r,
+      postFor(input, { conversationId: CH, sessionKey: dodokSessionKey("coder", CH) }),
+    );
+    expect(h.outbound).toHaveLength(0);
+    expect(await r.post(postFor(input))).toMatchObject({ ok: true });
+    expect(h.outbound).toEqual([expect.objectContaining({ conversationId: CH2 })]);
   });
 
   it("스레드 런은 그 스레드 id 를 실어야 받는다", async () => {

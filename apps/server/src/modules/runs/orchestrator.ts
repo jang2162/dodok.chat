@@ -1056,23 +1056,33 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
 
   /**
    * 계약 스펙 5.1: runId → 연결·sessionKey 의 미종료 런 → replyToInboundId 가 트리거한 런. 다른 대화의 런은 쓰지 않는다.
-   * runId 가 다른 연결의 런을 가리키면 쓰지 않는다(fromRunConnection 과 같은 까닭)
+   * runId 가 다른 연결의 런을 가리키면 쓰지 않는다(fromRunConnection 과 같은 까닭). 정본의 에이전트가 그 런의 에이전트가 아니어도
+   * 쓰지 않는다 — 같은 Gateway 의 다른 에이전트가 열린 런의 세션 키(남의 DM 키 등)를 대면 그 런 에이전트의 글로 저장됐다. 그런 정본은
+   * 런 없는 정본 갈래로 내려가 세션 행 규칙(isOwnSession)에 막힌다. runId·세션 키 갈래는 그 런의 에이전트 행으로 본다 — 지금의 묶임
+   * (agentIdFor)으로 보면 다시 묶은 러너 에이전트의 런이 옛 러너에서 끝까지 가지 못한다(bindRunnerToken). 연결은 ours·
+   * findOpenRunBySession 이 가른다
    */
   function correlate(msg: OutboundMessage, provider: AdapterProvider, connectionId: string): Run | undefined {
-    const inConversation = (run: Run | undefined) =>
-      run?.conversationId === msg.conversationId ? run : undefined;
+    const runAgentIsSender = (run: Run) => {
+      const agent = getAgent(db, run.agentId);
+      return (
+        agent?.provider === provider && agent.providerAgentId.toLowerCase() === msg.agentId.toLowerCase()
+      );
+    };
+    const usable = (run: Run | undefined) =>
+      run?.conversationId === msg.conversationId && runAgentIsSender(run) ? run : undefined;
     const ours = (run: Run | undefined) => {
       const owner = run === undefined ? null : store.getRunConnectionId(db, run.id);
       return owner === null || owner === connectionId ? run : undefined;
     };
-    const byRunId = msg.runId === undefined ? undefined : ours(inConversation(store.getRun(db, msg.runId)));
+    const byRunId = msg.runId === undefined ? undefined : ours(usable(store.getRun(db, msg.runId)));
     if (byRunId) return byRunId;
-    const bySession = inConversation(store.findOpenRunBySession(db, connectionId, msg.sessionKey));
+    const bySession = usable(store.findOpenRunBySession(db, connectionId, msg.sessionKey));
     if (bySession) return bySession;
     if (msg.replyToInboundId === undefined) return undefined;
     const agentId = agentIdFor(msg, provider, connectionId);
     if (agentId === undefined) return undefined;
-    return inConversation(store.findRunByTriggerMessage(db, msg.replyToInboundId, agentId));
+    return usable(store.findRunByTriggerMessage(db, msg.replyToInboundId, agentId));
   }
 
   /** uploadedBy 는 정본을 낸 연결 — 그 Gateway·러너 토큰이 올린 첨부만 묶인다 */
