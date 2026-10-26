@@ -6,6 +6,7 @@ import { emitAck, useWireStatus, WireAckError } from "@/realtime/wire";
 import { AGENT_ARCHIVED_TEXT, CHANNEL_ARCHIVED_TEXT, CONVERSATION_CLOSED_TEXT } from "@/api/formErrors";
 import { qk } from "@/api/queries";
 import { refreshArchivedChannel, useChannelArchived } from "@/features/channels/archived";
+import { invalidateDms } from "@/features/dms/queries";
 import { useConversationClosed } from "@/features/conversations/closed";
 import { RATE_LIMITED_TEXT } from "@/features/messages/rateLimited";
 import { useWire } from "@/realtime/WireProvider";
@@ -128,6 +129,8 @@ export function useInteract(message: Message): Interact {
         if (opts.toast !== false) toast.error(r.text, { id: "conversation-closed" });
         return r;
       }
+      // 읽기 전용 DM(에이전트 DM 계획 Review Focus 4) — 사유는 서버 문구, DM 목록을 다시 받으면 작성기 자리가 사유 줄로 바뀐다
+      if (r.code === "DM_READ_ONLY" && qc) void invalidateDms(qc);
       if (opts.toast !== false) toast.error(r.text);
       return r;
     };

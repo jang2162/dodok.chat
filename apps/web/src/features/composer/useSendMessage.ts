@@ -5,6 +5,7 @@ import { useCallback, useMemo } from "react";
 import { qk } from "@/api/queries";
 import { refreshArchivedChannel } from "@/features/channels/archived";
 import { applyConversation } from "@/features/conversations/cache";
+import { dmReadOnlyReasonOf, invalidateDms } from "@/features/dms/queries";
 import {
   addPending,
   NEW_CONVERSATION,
@@ -137,10 +138,15 @@ export function useSendMessage(
 
   /**
    * 실패로 둔다. wire ack 오류(TIMEOUT 포함)는 토스트 없이 항목에만 보인다(스펙 8장). 레이트리밋은 사유를 달아 다른 문구로
-   * (운영 보강 스펙 4장) — 다시 보내기는 같은 clientMsgId 라 서버가 멱등으로 받는다
+   * (운영 보강 스펙 4장) — 다시 보내기는 같은 clientMsgId 라 서버가 멱등으로 받는다. `details` 는 ack 오류의 것(`DM_READ_ONLY` 의 사유)
    */
   const fail = useCallback(
-    (clientMsgId: string, code: ErrorCode | undefined, target?: string) => {
+    (
+      clientMsgId: string,
+      code: ErrorCode | undefined,
+      target?: string,
+      details?: Record<string, unknown>,
+    ) => {
       const mark = (reason?: PendingFailReason) =>
         patchPending(clientMsgId, (t) => setPendingState(t, clientMsgId, "failed", reason), target);
       if (code === "CHANNEL_ARCHIVED") {
@@ -162,6 +168,13 @@ export function useSendMessage(
         mark("forbidden");
         void qc.invalidateQueries({ queryKey: qk.channel(channelId), exact: true });
         void qc.invalidateQueries({ queryKey: qk.members(channelId), exact: true });
+        return;
+      }
+      if (code === "DM_READ_ONLY") {
+        // 이 탭이 DM 이 읽기 전용이 된 것을 아직 모른다(다른 탭의 보관·끄기·허용 철회 — 에이전트 DM 계획 Review Focus 4). 항목은 사유로 남고
+        // (「다시 보내기」 없음), DM 목록을 다시 받으면 작성기 자리가 사유 줄로 바뀐다
+        mark(dmReadOnlyReasonOf(details));
+        void invalidateDms(qc);
         return;
       }
       mark(code === "RATE_LIMITED" ? "rate_limited" : undefined);
@@ -230,7 +243,7 @@ export function useSendMessage(
         },
         (e: unknown): Created => {
           const code = e instanceof WireAckError ? e.code : undefined;
-          fail(clientMsgId, code);
+          fail(clientMsgId, code, undefined, e instanceof WireAckError ? e.details : undefined);
           if (byChannel.get(channelId) !== own) return code === "TIMEOUT" ? "unknown" : "rejected";
           if (code === "TIMEOUT") {
             delete own.attempt;
@@ -296,7 +309,8 @@ export function useSendMessage(
         if (isNew) settleNew(clientMsgId, message, conversation?.lastSeq, () => {});
         else update((t) => upsert(t, message));
       } catch (e) {
-        fail(clientMsgId, e instanceof WireAckError ? e.code : undefined, target);
+        if (e instanceof WireAckError) fail(clientMsgId, e.code, target, e.details);
+        else fail(clientMsgId, undefined, target);
       }
     },
     [

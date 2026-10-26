@@ -1,4 +1,4 @@
-import type { AdapterProvider, Agent } from "@dodok/shared";
+import type { AdapterProvider, Agent, DmAccess } from "@dodok/shared";
 import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useRef } from "react";
 import { api } from "@/api/http";
@@ -15,7 +15,14 @@ export type CreateAgentInput = {
   name: string;
 };
 /** `basePrompt: null` 은 지운다 */
-export type AgentPatch = { enabled?: boolean; basePrompt?: string | null; name?: string; handle?: string };
+export type AgentPatch = {
+  enabled?: boolean;
+  basePrompt?: string | null;
+  name?: string;
+  handle?: string;
+  /** 누가 이 에이전트와 DM 을 여나(admin 이상 — 에이전트 DM 계획 판정 PD13: REST 로만) */
+  dmAccess?: DmAccess;
+};
 /**
  * hint — Claude 러너는 `<러너 라벨> · <작업 디렉터리 라벨> · <모델>`. archivedAgentId — 같은 자리의 보관(삭제)한 에이전트(등록 대신 되살린다)
  */

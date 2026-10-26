@@ -107,6 +107,8 @@ export function shellGet(input: RequestInfo | URL, init?: RequestInit): Response
   if (url === "/api/v1/channels") return json(200, { channels: [] });
   if (url === "/api/v1/adapter/status") return json(200, adapterStatusBody(ADAPTER_OK));
   if (url === "/api/v1/agents") return json(200, { agents: [] });
+  // 사이드바 「다이렉트 메시지」 절 — 기본은 DM 없음
+  if (url === "/api/v1/dms") return json(200, { dms: [] });
   // 「내 계정」의 MCP 토큰 목록 — 기본은 하나도 없음
   if (url === "/api/v1/me/tokens") return json(200, { tokens: [] });
   // 사람 목록(작성자·@ 후보) — 기본은 로그인한 owner 한 명

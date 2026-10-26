@@ -28,12 +28,11 @@ import {
   nameProblem,
 } from "./ManualAgentForm";
 import { formError } from "@/api/formErrors";
-import { PROVIDER_ID_LABEL } from "./providerLabels";
+import { PROVIDER_ID_LABEL, PROVIDER_NAME } from "./providerLabels";
 import { isArchived } from "./archived";
 import { type DiscoveredAgent, useCreateAgent, useDiscover, useRestoreAgent } from "./mutations";
 
 /** 제공자 고르기의 이름(러너 스펙 7장) */
-const PROVIDER_LABEL: Record<AdapterProvider, string> = { openclaw: "OpenClaw", claude: "Claude 러너" };
 
 /**
  * 목록을 못 받았을 때의 문구 — 서버 문구는 보이지 않는다. OpenClaw(스펙 6.1): 503 은 Gateway 끊김, 403 은 agents.list 권한 없음.
@@ -257,7 +256,7 @@ export function DiscoverDialog({
               <div key={p} className="flex items-center gap-2">
                 <RadioGroupItem id={`${providerId}-${p}`} value={p} />
                 <Label htmlFor={`${providerId}-${p}`} className="font-normal">
-                  {PROVIDER_LABEL[p]}
+                  {PROVIDER_NAME[p]}
                 </Label>
               </div>
             ))}

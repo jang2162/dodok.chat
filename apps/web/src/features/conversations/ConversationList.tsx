@@ -7,6 +7,7 @@ import { NEW_CONVERSATION } from "@/features/messages/timeline";
 import { Button } from "@/ui/button";
 import { Input } from "@/ui/input";
 import { useConversationUnread } from "@/features/reads/useUnread";
+import { DATE_GROUP_LABEL, groupByDate } from "./dateGroups";
 import { useConversationPermissions } from "./permissions";
 import { useConversationActivity, useConversationList } from "./queries";
 
@@ -32,19 +33,22 @@ function ActivityTime({ iso }: { iso: string }) {
  * 채널의 세션 목록(채널 세션 스펙 「웹」 장) — 넓은 화면은 타임라인 왼쪽 칸, 좁은 화면은 시트 안에 같은 것을 그린다(배치는 부르는 쪽).
  * 「열림/닫힘」 필터, 제목 검색(서버 `q`), 최근 활동순, 지금 세션은 `aria-current`. 「새 세션」은 만들 수 있는 사람에게만(정책·역할 —
  * `useConversationPermissions`). 읽지 않음 점·멘션 배지는 줄마다 읽음 쪽(features/reads)의 그 세션 값을 듣는다 — 현황 전·실패·끊김이면 그리지 않는다. `onPick` 은 항목·「새 세션」을 눌렀을 때 —
- * 시트를 닫으려고. 칸이 떠 있는 동안 새 글로 순서를 올린다(`useConversationActivity`)
+ * 시트를 닫으려고. 칸이 떠 있는 동안 새 글로 순서를 올린다(`useConversationActivity`).
+ * `byDate` 면(DM — 에이전트 DM 스펙 3.2) 줄을 날짜 묶음(오늘·어제·이번 주·이전)으로 나눠 그린다
  */
 export function ConversationList({
   channelId,
   conversationId,
   onPick,
   inSheet = false,
+  byDate = false,
 }: {
   channelId: string;
   conversationId: string;
   onPick?: () => void;
   /** 좁은 화면 시트 안 — 머리 오른쪽을 시트의 닫기 단추 자리만큼 비운다(패널 시트 머리 `PanelTabs` 와 같은 pr-12) */
   inSheet?: boolean;
+  byDate?: boolean;
 }) {
   const [status, setStatus] = useState<"open" | "closed">("open");
   const [input, setInput] = useState("");
@@ -112,6 +116,7 @@ export function ConversationList({
           channelId={channelId}
           conversationId={conversationId}
           onPick={onPick}
+          byDate={byDate}
         />
       </div>
     </nav>
@@ -125,6 +130,7 @@ function ListBody({
   channelId,
   conversationId,
   onPick,
+  byDate,
 }: {
   list: ReturnType<typeof useConversationList>;
   status: "open" | "closed";
@@ -132,6 +138,7 @@ function ListBody({
   channelId: string;
   conversationId: string;
   onPick?: () => void;
+  byDate: boolean;
 }) {
   if (list.data === undefined) {
     return list.isError ? (
@@ -158,19 +165,32 @@ function ListBody({
       </p>
     );
   }
+  const items = (conversations: readonly Conversation[]) => (
+    <ul className="flex flex-col gap-0.5">
+      {conversations.map((c) => (
+        <ConversationItem
+          key={c.id}
+          channelId={channelId}
+          conversation={c}
+          current={c.id === conversationId}
+          onPick={onPick}
+        />
+      ))}
+    </ul>
+  );
   return (
     <>
-      <ul className="flex flex-col gap-0.5">
-        {list.conversations.map((c) => (
-          <ConversationItem
-            key={c.id}
-            channelId={channelId}
-            conversation={c}
-            current={c.id === conversationId}
-            onPick={onPick}
-          />
-        ))}
-      </ul>
+      {byDate
+        ? groupByDate(list.conversations).map(({ group, conversations }, i) => (
+            // 같은 머리가 두 번 나올 수 있다(`groupByDate`) — 자리 번호를 키에 싣는다
+            <div key={`${group}:${i}`} role="group" aria-label={DATE_GROUP_LABEL[group]} className="mb-1">
+              <h3 aria-hidden className="px-1.5 pt-2 pb-1 text-xs font-medium text-muted-foreground">
+                {DATE_GROUP_LABEL[group]}
+              </h3>
+              {items(conversations)}
+            </div>
+          ))
+        : items(list.conversations)}
       {list.hasNextPage && (
         <Button
           variant="ghost"

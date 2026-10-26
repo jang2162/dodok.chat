@@ -72,6 +72,11 @@ export const qk = {
    * 앞머리 무효화에 끌려가지 않게. 오프라인 사본에 담지 않는다(pwa/persist 의 허용 목록 밖)
    */
   archivedChannels: ["archivedChannels"] as const,
+  /**
+   * 내 DM 목록(`GET /dms` — 에이전트 DM 계획 판정 PD3). 채널 목록(`channels`)과 나눈다 — DM 채널은 채널 목록 캐시에 들지 않는다.
+   * 오프라인 사본에 담지 않는다(pwa/persist 의 허용 목록 밖)
+   */
+  dms: ["dms"] as const,
   channel: (id: string) => ["channel", id] as const,
   members: (id: string) => ["members", id] as const,
   /** 모든 채널의 멤버(무효화용 앞머리) */

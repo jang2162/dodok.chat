@@ -17,6 +17,7 @@ import { canDecideApproval } from "@/features/approvals/decider";
 import { forgetApproval, notifyApproval } from "@/features/approvals/notify";
 import { applyChannel, isChannelArchived } from "@/features/channels/archived";
 import { applyConversation } from "@/features/conversations/cache";
+import { bumpDm, cachedDmChannel, invalidateDms, isDmChannel } from "@/features/dms/queries";
 import { hasChannelGap, noteSeq, type Timeline, upsert } from "@/features/messages/timeline";
 import { isViewingAtEnd, needsResync, useUnread } from "@/features/reads/useUnread";
 import { useRunStore } from "@/features/runs/runStore";
@@ -146,10 +147,20 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
     if (current()) useUnread.getState().applySnapshot(snapshot);
   }
 
-  /** 사이드바 목록(보관하지 않은 채널)에 있는가 — 읽지 않음 항목을 새로 만드는 것은 이 채널만 */
+  /**
+   * 사이드바 목록(보관하지 않은 채널·내 DM)에 있는가 — 읽지 않음 항목을 새로 만드는 것은 이 채널만. DM 은 채널 목록이 아니라 DM 목록에
+   * 있다(에이전트 DM 계획 판정 PD3) — 보관이 없다
+   */
   const listed = (channelId: string) =>
-    qc.getQueryData<Channel[]>(qk.channels)?.some((c) => c.id === channelId && !isChannelArchived(c)) ??
-    false;
+    (qc.getQueryData<Channel[]>(qk.channels)?.some((c) => c.id === channelId && !isChannelArchived(c)) ??
+      false) ||
+    cachedDmChannel(qc, channelId) !== undefined;
+
+  /** 캐시가 아는 채널인가 — 채널 목록·보관 목록·DM 목록 가운데 하나에 있다 */
+  const knownChannel = (channelId: string) =>
+    [qk.channels, qk.archivedChannels].some((key) =>
+      qc.getQueryData<Channel[]>(key)?.some((c) => c.id === channelId),
+    ) || cachedDmChannel(qc, channelId) !== undefined;
 
   function retryLater(): void {
     clearTimeout(retryTimer);
@@ -201,14 +212,19 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
       // 이미 답한 승인은 알리지 않는다 — 재접속 되감기·늦게 온 프레임이 확정 뒤에 올 수 있다
       if (approval.status !== "pending") return;
       // 결정할 수 있는 사람에게만 — 카드 버튼과 같은 규칙(`canDecideApproval`). 다른 사람은 카드만 본다
-      if (!canDecideApproval(approval, qc.getQueryData<MeResponse>(qk.me))) return;
+      const dm = cachedDmChannel(qc, approval.channelId);
+      if (!canDecideApproval(approval, qc.getQueryData<MeResponse>(qk.me), dm?.dmOwnerId)) return;
       notifyApproval(approval, {
         visible: document.visibilityState === "visible",
         currentConversationId: notify.currentConversationId(),
         onClick: () => notify.openActivity(approval.channelId, approval.conversationId),
         // 캐시에 없으면(아직 못 받았다) 일반 문구로 — 알림 때문에 REST 를 부르지 않는다
         handle: qc.getQueryData<Agent[]>(qk.agents)?.find((a) => a.id === approval.agentId)?.handle,
-        channelName: qc.getQueryData<Channel[]>(qk.channels)?.find((c) => c.id === approval.channelId)?.name,
+        // DM 은 채널 이름 대신 「DM」(내부 이름 `dm` 을 드러내지 않는다)
+        channelName: dm
+          ? undefined
+          : qc.getQueryData<Channel[]>(qk.channels)?.find((c) => c.id === approval.channelId)?.name,
+        dm: dm !== undefined,
       });
     },
     "approval.resolved": ({ approval }) => {
@@ -218,9 +234,14 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
     /**
      * 새 채널 — 사이드바가 보는 목록 캐시에 덧붙인다(만든 사람은 useCreateChannel 이 먼저 넣는다).
      * 같은 id 가 이미 있으면 그대로 둔다 — 늦게 온 created 가 그새 바뀐 값(channel.updated)을 되돌리지 않게.
-     * 목록을 아직 안 받았으면 만들지 않는다 — 한 채널짜리 목록을 완전한 것처럼 두지 않는다(useCreateChannel 과 같은 규칙)
+     * 목록을 아직 안 받았으면 만들지 않는다 — 한 채널짜리 목록을 완전한 것처럼 두지 않는다(useCreateChannel 과 같은 규칙).
+     * DM 은 채널 목록에 넣지 않고 DM 목록을 다시 받는다(에이전트 DM 계획 판정 PD3 — 서버는 DM 의 것을 주인에게만 보낸다)
      */
     "channel.created": ({ channel }) => {
+      if (isDmChannel(channel)) {
+        void invalidateDms(qc);
+        return;
+      }
       qc.setQueryData<Channel[]>(qk.channels, (list) =>
         list && !list.some((c) => c.id === channel.id) ? [...list, channel] : list,
       );
@@ -229,6 +250,12 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
      * 워크스페이스 방으로 온다 — 구독하지 않은 채널도. 보관하면 사이드바에서 빠지고 열린 화면은 상세 캐시로 읽기 전용이 된다(`applyChannel`)
      */
     "channel.updated": ({ channel }) => {
+      // DM(「이 DM 의 지시」)은 상세만 바꾸고 DM 목록을 다시 받는다 — 채널 목록·보관 목록에 넣지 않는다. DM 에는 보관이 없다
+      if (isDmChannel(channel)) {
+        qc.setQueryData<Channel>(qk.channel(channel.id), channel);
+        void invalidateDms(qc);
+        return;
+      }
       applyChannel(qc, channel);
       // 보관하면 현황에서 빠지고, 보관 해제하면 그동안의 읽음 위치 그대로 돌아와야 한다 — 스냅숏이 그렇게 싣는다
       if (needsResync(channel)) void loadUnread();
@@ -248,6 +275,8 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
     "agents.changed": () => {
       void qc.invalidateQueries({ queryKey: qk.agents, exact: true });
       void qc.invalidateQueries({ queryKey: qk.membersAll });
+      // DM 의 읽기 전용 사유(보관·꺼짐·허용 범위)는 에이전트를 따른다 — 작성기 자리가 사유 줄로 바뀌게(계획 Review Focus 4)
+      void invalidateDms(qc);
     },
     /**
      * 사람 목록(가입·역할·표시 이름·비활성화·다시 활성화 뒤 전체) — 통째로 바꾼다. 내 역할이 바뀌었으면 me 를 다시 받는다: 역할의
@@ -259,8 +288,11 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
       void qc.invalidateQueries({ queryKey: qk.team });
       const me = qc.getQueryData<MeResponse>(qk.me);
       const mine = me && people.find((p) => p.id === me.user.id);
-      if (mine?.role !== undefined && mine.role !== me?.role)
+      if (mine?.role !== undefined && mine.role !== me?.role) {
         void qc.fetchQuery({ ...meQuery, staleTime: 0 }).catch(() => undefined);
+        // DM 허용은 역할을 본다 — 강등되면 `admins` 에이전트와의 DM 이 읽기 전용이 된다(에이전트 DM 계획 Review Focus 3)
+        void invalidateDms(qc);
+      }
     },
     // 어댑터마다 따로 온다(러너 계획 판정 P7) — 연결 점·배너가 보는 캐시는 OpenClaw 의 것만, 러너 줄은 운영 화면 캐시에.
     // 모르는 제공자는 무시한다
@@ -309,13 +341,17 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
      * 새 글(본문 없음, 워크스페이스 방) — 보는 채널만 구독하므로 사이드바·세션 목록은 이것으로 안다. 보고 있는 세션의 끝이
      * 보이면 더하지 않는다(읽음 전송이 맡는다) — 같은 채널의 다른 세션 글은 더한다
      */
-    "channel.activity": (activity) =>
+    "channel.activity": (activity) => {
+      // DM 이면 사이드바 DM 줄을 최근 활동순 맨 위로(모르는 채널이면 DM 목록을 다시 받는다 — 다른 기기에서 처음 쓴 DM)
+      if (!knownChannel(activity.channelId)) void invalidateDms(qc);
+      else bumpDm(qc, activity.channelId);
       useUnread.getState().applyActivity(activity, {
         me: qc.getQueryData<MeResponse>(qk.me)?.user.id,
         viewing: subscriptions.active(),
         atEnd: isViewingAtEnd(activity.conversationId),
         listed: listed(activity.channelId),
-      }),
+      });
+    },
     /** 이 사람의 세션 읽음 위치가 올랐다(user 방) — 이 탭이 보낸 것도, 다른 기기·가려진 탭이 보낸 것도 여기로 온다 */
     "conversation.read": (update) =>
       useUnread.getState().applyRead(update, { listed: listed(update.channelId) }),
@@ -350,6 +386,8 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
       // 낡은 채 남는다(태스크 6 리뷰 M1). 머리·작성기 자리의 세션 하나와 목록 칸
       void qc.invalidateQueries({ queryKey: qk.conversationAll });
       void qc.invalidateQueries({ queryKey: qk.conversationListAll });
+      // DM 목록은 이벤트로만 고친다(`dmsQuery` 는 저절로 낡지 않는다) — 끊긴 사이의 새 DM·읽기 전용 사유를 메운다
+      void invalidateDms(qc);
     }
     connectedOnce = true;
   };

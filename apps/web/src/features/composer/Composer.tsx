@@ -15,6 +15,7 @@ import { NEW_CONVERSATION } from "@/features/messages/timeline";
 import { abortErrorMessage } from "@/features/runs/abortError";
 import { selectScopeRuns, TERMINAL, useRunStore } from "@/features/runs/runStore";
 import { emitAck, useWireStatus, type WireSocket } from "@/realtime/wire";
+import { useDmView } from "@/features/dms/context";
 import { useWire } from "@/realtime/WireProvider";
 import { Button } from "@/ui/button";
 import { mentionCandidates } from "./mentions";
@@ -28,6 +29,8 @@ import { useTyping } from "./useTyping";
 
 const PLACEHOLDER = "메시지 보내기 — @로 에이전트 부르기";
 const THREAD_PLACEHOLDER = "스레드에 답하기 — @로 에이전트 부르기";
+/** DM 에는 멘션이 없다(에이전트 DM 계획 판정 PD6) — 모든 글이 그 에이전트에게 간다 */
+const DM_PLACEHOLDER = "메시지 보내기";
 const IMAGE_ACCEPT = "image/png,image/jpeg,image/gif,image/webp";
 
 /** 보내기를 막는 사유 — 우선순위 순(끊김이 먼저) */
@@ -60,7 +63,9 @@ const EDITOR_CLASS = [
  * 메시지는 그 세션으로(`conversationId` — 새 세션 창이면 첫 보내기가 세션을 만든다, `useSendMessage`), `/stop` 은 그 세션의 런만.
  * `threadRootId` 를 주면 스레드 작성기다(스레드·검색 스펙 4.2) — 메시지는 그 스레드로, `/stop` 은 그 스레드의 런만.
  * 작성 중 알림(`typing`)은 세션 단위라 스레드 작성기는 보내지 않는다 —
- * 스레드에서 쓰는 사람을 세션 작성기 아래에 「입력 중」으로 보이면 어디에 답하는지 틀리게 읽힌다
+ * 스레드에서 쓰는 사람을 세션 작성기 아래에 「입력 중」으로 보이면 어디에 답하는지 틀리게 읽힌다.
+ * DM(`DmViewContext`)에서는 @ 후보를 띄우지 않는다 — DM 은 멘션을 토큰으로 바꾸지 않고(서버가 토큰 꼴을 글로 중화한다, 계획 판정 PD6) 모든 글이
+ * 그 에이전트에게 간다. 후보로 고른 칩이 `<@a:…>` 원문으로 남지 않게 한다. `@핸들` 을 손으로 치면 그대로 글이다
  */
 export function Composer({
   channelId,
@@ -112,13 +117,15 @@ export function Composer({
       ? `${channelId}:${conversationId}`
       : `${channelId}:${conversationId}:${threadRootId}`;
 
+  const dm = useDmView() !== null;
   const candidates = useMemo(
-    () => mentionCandidates(members.data, agents.data, me.data, people.data),
-    [members.data, agents.data, me.data, people.data],
+    () => (dm ? [] : mentionCandidates(members.data, agents.data, me.data, people.data)),
+    [dm, members.data, agents.data, me.data, people.data],
   );
   // 편집기는 한 번만 만든다 — 바뀌는 값은 ref 로 읽는다
   const live = useRef({
     candidates,
+    placeholder: threadRootId === undefined ? PLACEHOLDER : THREAD_PLACEHOLDER,
     submit: () => {},
     notifyTyping: () => {},
     addFiles: (_files: readonly File[]) => {},
@@ -130,7 +137,8 @@ export function Composer({
     {
       extensions: [
         StarterKit.configure({ heading: false, horizontalRule: false, link: false, underline: false }),
-        Placeholder.configure({ placeholder: threadRootId === undefined ? PLACEHOLDER : THREAD_PLACEHOLDER }),
+        // 채널 ↔ DM 을 옮겨도 이 편집기는 그대로다 — 문구는 지금 값을 읽는다(아래 effect 가 다시 그리게 한다)
+        Placeholder.configure({ placeholder: () => live.current.placeholder }),
         Mention.configure({
           HTMLAttributes: { class: "rounded bg-primary/10 px-0.5 font-medium text-primary" },
           renderText: ({ node }) => `@${String(node.attrs.label ?? "")}`,
@@ -183,6 +191,10 @@ export function Composer({
       else drafts.set(draftKey, editor.getJSON());
     };
   }, [editor, draftKey, drafts, carriedFrom]);
+  // 자리표시는 문서가 바뀔 때만 다시 그려진다 — 빈 작성기 그대로 채널 ↔ DM 을 옮기면 옛 문구가 남으므로 빈 트랜잭션으로 다시 그리게 한다
+  useEffect(() => {
+    if (!editor.isDestroyed) editor.view.dispatch(editor.state.tr);
+  }, [editor, dm]);
   // 옮겨 간 표는 새 세션 창을 떠나는 그 한 번만 쓴다(읽기는 위 렌더 중) — 그 세션으로 들고 갔든, 표가 생긴 뒤 주소가 바뀌기 전에 다른
   // 채널·화면으로 갔든 지운다(태스크 6 리뷰 L4). 남아 있으면 나중에 새 세션 창에서 같은 세션으로 갈 때 창의 초안을 잘못 들고 간다
   useEffect(() => {
@@ -191,6 +203,8 @@ export function Composer({
   }, [qc, channelId, conversationId, threadRootId]);
 
   live.current.candidates = candidates;
+  live.current.placeholder =
+    threadRootId !== undefined ? THREAD_PLACEHOLDER : dm ? DM_PLACEHOLDER : PLACEHOLDER;
   live.current.notifyTyping = threadRootId === undefined ? typing.notify : () => {};
   live.current.addFiles = (files) => {
     const images = files.filter((f) => isImageMime(f.type));

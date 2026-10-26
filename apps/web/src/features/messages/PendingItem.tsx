@@ -3,6 +3,7 @@ import { CHANNEL_ARCHIVED_TEXT, CONVERSATION_CLOSED_TEXT, SEND_FORBIDDEN_TEXT } 
 import { useMe } from "@/api/queries";
 import { AttachmentGrid } from "@/features/attachments/AttachmentGrid";
 import { useConversationClosed } from "@/features/conversations/closed";
+import { DM_READ_ONLY_TEXT } from "@/features/dms/queries";
 import { Button } from "@/ui/button";
 import { AuthorAvatar, AuthorLine } from "./MessageItem";
 import { MessageBody } from "./MessageBody";
@@ -13,7 +14,7 @@ import { useAuthors } from "./useAuthors";
 
 /**
  * 보내는 중·실패한 내 메시지(스펙 4.4·5.3): 본문을 흐리게, `sending` 은 스피너, `failed` 는 「다시 보내기」·「삭제」
- * (보관한 채널·닫힌 세션에 보낸 것·권한 거절은 「삭제」만 — 다시 보내도 같은 거절이다, 채널 세션 계획 Review Focus 2. 다른 사유로 실패한
+ * (보관한 채널·닫힌 세션·읽기 전용 DM 에 보낸 것·권한 거절은 「삭제」만 — 다시 보내도 같은 거절이다, 채널 세션 계획 Review Focus 2. 다른 사유로 실패한
  * 뒤 세션이 닫혔어도 「삭제」만).
  * 두 버튼은 ChannelPage 가 넣는 PendingActions 컨텍스트로 잇는다 — 없으면 그리지 않는다.
  * 첨부는 서버 경로로 그린다(올린 사람은 묶이기 전에도 읽는다). 크게 보기는 확정 메시지에서만 — 여기서는 누를 것이 없다
@@ -42,7 +43,9 @@ export function PendingItem({ pending }: { pending: PendingMessage }) {
                     ? CONVERSATION_CLOSED_TEXT
                     : pending.reason === "forbidden"
                       ? SEND_FORBIDDEN_TEXT
-                      : "전송 실패"}
+                      : pending.reason !== undefined && pending.reason in DM_READ_ONLY_TEXT
+                        ? DM_READ_ONLY_TEXT[pending.reason as keyof typeof DM_READ_ONLY_TEXT]
+                        : "전송 실패"}
             </span>
           ) : (
             <LoaderCircleIcon

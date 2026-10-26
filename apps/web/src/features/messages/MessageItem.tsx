@@ -7,6 +7,7 @@ import { referencedAttachmentIds } from "@/features/attachments/resolve";
 import { Components } from "@/features/components/Components";
 import { useChannelArchived } from "@/features/channels/archived";
 import { useConversationClosed } from "@/features/conversations/closed";
+import { useDmView } from "@/features/dms/context";
 import { ReactionChips } from "@/features/reactions/ReactionChips";
 import { ReactionPicker } from "@/features/reactions/ReactionPicker";
 import { useSetReaction } from "@/features/reactions/useSetReaction";
@@ -87,7 +88,8 @@ function touchGutter(inThread: boolean, hasPicker: boolean): string | undefined 
  * 투명도로만 숨겨 스크린 리더는 늘 읽는다(visibility:hidden 은 접근성 트리에서도 빠진다, web-t7 리뷰 m6).
  * 채널 타임라인에서는 루트 아래에 답글 요약 칩과 「스레드에서 답하기」가 붙는다(스레드·검색 스펙 4.2) — 스레드 패널
  * 안(`inThread`)에서는 둘 다 없다: 이미 그 스레드이고, 스레드 안의 스레드는 없다.
- * 반응(리액션 스펙 「웹」 장): 본문·첨부·카드 아래에 칩, 동작 줄에 「반응 추가」(보관한 채널은 숨김·칩은 읽기만, 시스템 메시지는 둘 다 없음)
+ * 반응(리액션 스펙 「웹」 장): 본문·첨부·카드 아래에 칩, 동작 줄에 「반응 추가」(보관한 채널은 숨김·칩은 읽기만, 시스템 메시지는 둘 다 없음).
+ * DM 에는 스레드가 없다(에이전트 DM 스펙 결정 7) — 칩·「스레드에서 답하기」 없이 스레드 패널 안처럼 그린다. 읽기 전용 DM 은 반응을 달 수 없다(서버 409)
  */
 export function MessageItem({
   message,
@@ -104,7 +106,10 @@ export function MessageItem({
   // 보관한 채널·닫힌 세션은 반응을 달 수 없다(서버 409) — 칩은 읽기만
   const channelArchived = useChannelArchived();
   const closed = useConversationClosed();
-  const archived = channelArchived || closed;
+  const dm = useDmView();
+  const archived = channelArchived || closed || (dm !== null && dm.readOnly !== null);
+  // 스레드 행동이 없는 자리 — 스레드 패널 안, 그리고 DM
+  const noThreads = inThread || dm !== null;
   // 채널 타임라인의 루트도 스레드를 넘긴다 — 나란히 열린 스레드 패널의 같은 루트가 곧바로 바뀐다(연 적 없는 스레드면 updateThread 가 그냥 지나간다)
   const setReaction = useSetReaction(message.channelId, message.conversationId, threadRootOf(message));
   // 시스템 메시지에는 달 수 없다(보내는 중 항목은 PendingItem 이라 여기에 오지 않는다)
@@ -130,7 +135,7 @@ export function MessageItem({
         className={cn(
           "min-w-0 flex-1",
           head && "pt-1",
-          head || touchGutter(inThread, reactable && !archived),
+          head || touchGutter(noThreads, reactable && !archived),
         )}
       >
         {head && (
@@ -148,17 +153,17 @@ export function MessageItem({
         {reactable && me && (
           <ReactionChips message={message} me={me} onToggle={(e, on) => setReaction(message.id, e, on)} />
         )}
-        {!inThread && message.threadSummary && (
+        {!noThreads && message.threadSummary && (
           <ThreadChip message={message} summary={message.threadSummary} />
         )}
       </div>
       {reactable && !archived && (
         <ReactionPicker
-          className={inThread ? "right-3" : "right-12"}
+          className={noThreads ? "right-3" : "right-12"}
           onPick={(e) => setReaction(message.id, e, true)}
         />
       )}
-      {!inThread && <ReplyInThread message={message} />}
+      {!noThreads && <ReplyInThread message={message} />}
     </article>
   );
 }

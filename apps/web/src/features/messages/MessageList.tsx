@@ -63,6 +63,8 @@ export type MessageListProps = {
   bubbles?: (runId: string) => ReactNode;
   /** 처음 재기 전의 스크롤 영역 크기(jsdom 테스트용) */
   initialRect?: { width: number; height: number };
+  /** 메시지가 없을 때의 문구 — 없으면 채널의 것(멘션을 권한다). DM 은 멘션이 없어 따로 준다(첫 안내 등) */
+  emptyText?: string;
 };
 
 /** 세션 메시지 목록(스펙 5.5)·스레드 패널의 목록. 스크롤 위치·「새 메시지」 칩은 세션·스레드마다 새로 시작한다 */
@@ -84,6 +86,7 @@ function ChannelMessages({
   bubbleRunIds = NO_RUNS,
   bubbles,
   initialRect,
+  emptyText,
 }: MessageListProps) {
   const { timeline, ready } = useTimelineState(channelId, conversationId, threadRootId);
   const archived = useChannelArchived();
@@ -543,7 +546,9 @@ function ChannelMessages({
         {rows.length === 0 && (
           <p className="p-6 text-center text-sm text-muted-foreground">
             {/* 보관한 채널에는 멘션을 보낼 수 없다 — 부르라는 안내를 빼고 */}
-            {archived ? "메시지가 없습니다." : "아직 메시지가 없습니다. @멘션으로 에이전트를 불러 보세요."}
+            {archived
+              ? "메시지가 없습니다."
+              : (emptyText ?? "아직 메시지가 없습니다. @멘션으로 에이전트를 불러 보세요.")}
           </p>
         )}
       </div>

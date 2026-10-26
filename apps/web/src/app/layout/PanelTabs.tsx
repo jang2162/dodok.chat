@@ -80,6 +80,7 @@ export function PanelTabs({
   children,
   openerRef,
   threadOpenerRef,
+  only,
 }: {
   channelId: string;
   /** 보고 있는 세션 — 탭을 옮기거나 닫아도 그 세션에 머문다(채널 머리·설정·활동은 채널 단위 그대로) */
@@ -92,6 +93,8 @@ export function PanelTabs({
   openerRef?: RefObject<HTMLAnchorElement | null>;
   /** 스레드를 연 자리(칩·「스레드에서 답하기」) — 스레드 탭을 닫으면 그 자리가 아직 화면에 있을 때 `openerRef` 대신 여기로 */
   threadOpenerRef?: RefObject<ThreadOpener | null>;
+  /** 머리에 둘 탭(없으면 전부) — DM 은 활동 탭만(설정·스레드가 없다, 에이전트 DM 계획 판정 PD2) */
+  only?: readonly PanelTab[];
 }) {
   const narrow = useIsNarrow();
   const navigate = useNavigate();
@@ -179,6 +182,7 @@ export function PanelTabs({
               conversationId={conversationId}
               rootId={rootId}
               active={active}
+              only={only}
             />
             <div ref={slot} className={bodyClass} />
           </SheetContent>
@@ -216,7 +220,13 @@ export function PanelTabs({
             </Link>
           </Button>
         </div>
-        <TabBar channelId={channelId} conversationId={conversationId} rootId={rootId} active={active} />
+        <TabBar
+          channelId={channelId}
+          conversationId={conversationId}
+          rootId={rootId}
+          active={active}
+          only={only}
+        />
         <div ref={slot} className={bodyClass} />
       </aside>
     </>
@@ -229,12 +239,14 @@ function TabBar({
   conversationId,
   rootId,
   active,
+  only,
   ref,
 }: {
   channelId: string;
   conversationId: string;
   rootId?: string;
   active: PanelTab;
+  only?: readonly PanelTab[];
   ref?: RefObject<HTMLElement | null>;
 }) {
   const className = (id: PanelTab) =>
@@ -246,7 +258,7 @@ function TabBar({
     );
   return (
     <nav ref={ref} aria-label="패널 탭" className="flex shrink-0 gap-1 border-b px-2">
-      {TABS.map((tab) =>
+      {TABS.filter((tab) => only === undefined || only.includes(tab.id)).map((tab) =>
         tab.id === "thread" ? (
           rootId !== undefined && (
             <Link

@@ -9,3 +9,10 @@ export const PROVIDER_ID_LABEL: Record<AdapterProvider, string> = {
 /** 목록 줄용 — 등록 대상이 아닌 제공자(Agent.provider 에는 있다)는 일반 문구 */
 export const providerIdLabel = (provider: string): string =>
   provider in PROVIDER_ID_LABEL ? PROVIDER_ID_LABEL[provider as AdapterProvider] : "에이전트 id";
+
+/** 제공자 이름 — 등록 대화상자의 제공자 고르기와 DM 머리가 함께 쓴다 */
+export const PROVIDER_NAME: Record<AdapterProvider, string> = { openclaw: "OpenClaw", claude: "Claude 러너" };
+
+/** 등록 대상이 아닌 제공자(Agent.provider 에는 있다)는 값 그대로 */
+export const providerName = (provider: string): string =>
+  provider in PROVIDER_NAME ? PROVIDER_NAME[provider as AdapterProvider] : provider;
