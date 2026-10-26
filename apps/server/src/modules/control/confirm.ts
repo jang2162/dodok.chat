@@ -186,7 +186,9 @@ function originText(db: DbOrTx, workspaceId: string, runId: string, requestedBy:
 }
 
 function messageRef(db: DbOrTx, handleOf: (kind: "a" | "u", id: string) => string | undefined, m: Message) {
-  const channel = getChannel(db, m.channelId)?.name;
+  const found = getChannel(db, m.channelId);
+  // DM 은 이름(내부용 「dm」) 대신 「DM」 — 카드를 보는 것은 주인뿐이지만 일반 채널처럼 #이름을 쓰면 뜻이 없다(계획 판정 PD4)
+  const place = found === undefined ? "#?" : found.kind === "dm" ? "DM" : `#${found.name}`;
   const author =
     m.authorType === "user" && m.authorId !== undefined
       ? `@${handleOf("u", m.authorId) ?? "알 수 없음"}`
@@ -194,5 +196,5 @@ function messageRef(db: DbOrTx, handleOf: (kind: "a" | "u", id: string) => strin
         ? "자동화"
         : m.authorType;
   const excerpt = clip(readableMentions(m.bodyMd, handleOf).replace(/\s+/g, " ").trim(), ORIGIN_EXCERPT_MAX);
-  return `${author} · #${channel ?? "?"} · ${m.seq}번째 글 「${excerpt}」`;
+  return `${author} · ${place} · ${m.seq}번째 글 「${excerpt}」`;
 }

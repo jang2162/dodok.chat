@@ -18,7 +18,7 @@ import { requireRole, sessionUser } from "../../auth/roles";
 import type { Db, DbOrTx } from "../../db/client";
 import { apiError } from "../../http/errors";
 import { parseBody, parseParams } from "../../http/validate";
-import { assertChannelWritable } from "../channels/service";
+import { assertChannelWritable, loadReadableChannel } from "../channels/service";
 import { type PostDeps, postAutomationMessage } from "./post";
 import { rescheduleOne } from "./scheduler";
 import {
@@ -67,6 +67,15 @@ export function registerAutomationRoutes(fastify: FastifyInstance, ctx: Automati
     return row;
   };
   const webhookUrl = (raw: string) => `${ctx.publicOrigin()}/hooks/${raw}`;
+  /**
+   * 게시할 채널 — 남의 DM 은 없는 채널과 같은 404 가 먼저(auth/channel-access.ts), 내 DM 은 VALIDATION(자동화는 DM 에 게시하지
+   * 않는다 — 에이전트 DM 스펙 5장·계획 판정 PD5), 보관했으면 CHANNEL_ARCHIVED, 없으면 NOT_FOUND
+   */
+  const assertTarget = (tx: DbOrTx, channelId: string, userId: string): void => {
+    if (loadReadableChannel(tx, channelId, ctx.workspaceId, userId).kind === "dm")
+      throw apiError("VALIDATION", "자동화는 DM 에 게시할 수 없다", { field: "channelId" });
+    assertChannelWritable(tx, channelId, ctx.workspaceId);
+  };
 
   fastify.get("/api/v1/automations", admin, async () =>
     listAutomations(ctx.db, ctx.workspaceId).map((row) => toAutomationSummary(ctx.db, row)),
@@ -78,8 +87,8 @@ export function registerAutomationRoutes(fastify: FastifyInstance, ctx: Automati
     const at = now();
     const token = body.kind === "webhook" ? issueWebhookToken() : undefined;
     const row = ctx.db.transaction((tx) => {
-      // 보관한 채널은 게시할 수 없다 — 만들 때부터 거절한다(CHANNEL_ARCHIVED), 없는 채널은 NOT_FOUND
-      assertChannelWritable(tx, body.channelId, ctx.workspaceId);
+      // 보관한 채널·DM 은 게시할 수 없다 — 만들 때부터 거절한다
+      assertTarget(tx, body.channelId, createdBy);
       const id = uuidv7();
       insertAutomation(tx, {
         id,
@@ -110,13 +119,14 @@ export function registerAutomationRoutes(fastify: FastifyInstance, ctx: Automati
   fastify.patch("/api/v1/automations/:id", admin, async (request) => {
     const { id } = parseParams(AutomationParams, request.params);
     const patch = parseBody(UpdateAutomationBody, request.body);
+    const userId = sessionUser(request).id;
     const at = now();
     const row = ctx.db.transaction((tx) => {
       const before = requireAutomation(tx, id);
       if (patch.schedule !== undefined && before.kind !== "schedule")
         throw apiError("VALIDATION", "schedule 은 예약 자동화에만 줄 수 있다", { field: "schedule" });
       if (patch.channelId !== undefined && patch.channelId !== before.channelId)
-        assertChannelWritable(tx, patch.channelId, ctx.workspaceId);
+        assertTarget(tx, patch.channelId, userId);
       const after = updateAutomation(tx, ctx.workspaceId, id, {
         name: patch.name,
         channelId: patch.channelId,

@@ -6,7 +6,7 @@
  * - Gateway 의 플러그인이 hello 할 때 — 그 Gateway 에 에이전트를 둔 채널들. 꺼졌던 Gateway 를 다시 켜거나 플러그인이 끊긴 사이
  *   프롬프트가 바뀌었어도 따라온다. 플러그인은 같은 값이면 설정 파일을 바꾸지 않고, 채널 항목은 계정 재시작 없이 읽힌다
  *   (packages/openclaw-plugin/src/config-writer.ts)
- * 채널 변경은 이미 유효하다 — 반영은 비동기, 실패는 system.notice 로만 알린다
+ * 채널 변경은 이미 유효하다 — 반영은 비동기, 실패는 system.notice 로만 알린다(DM 이면 주인에게만)
  */
 import { eq } from "drizzle-orm";
 import type { AdapterRegistry } from "../../adapters/registry";
@@ -32,10 +32,20 @@ function send(ctx: PromptSyncContext, channel: ChannelRecord, gatewayId: string)
     .catch((err: unknown) => {
       ctx.logger.warn({ err, channelId: channel.id, gatewayId }, "syncChannelConfig failed");
       const reason = err instanceof Error ? err.message : String(err);
-      ctx.bus.emit("system.notice", {
-        level: "warn",
-        message: `#${channel.name} 채널 프롬프트를 Gateway 에 반영하지 못했다: ${reason}`,
-      });
+      // DM 은 주인에게만, 이름 대신 「DM」(에이전트 DM 계획 판정 PD4) — 전원에게 가면 그 DM 이 있다는 것이 드러난다
+      ctx.bus.emit(
+        "system.notice",
+        channel.kind === "dm"
+          ? {
+              level: "warn",
+              message: `DM 의 지시를 Gateway 에 반영하지 못했다: ${reason}`,
+              userId: channel.dmOwnerId ?? "",
+            }
+          : {
+              level: "warn",
+              message: `#${channel.name} 채널 프롬프트를 Gateway 에 반영하지 못했다: ${reason}`,
+            },
+      );
     });
 }
 

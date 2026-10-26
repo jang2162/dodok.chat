@@ -273,6 +273,10 @@ export function createTriggerLookups(db: DbOrTx, workspaceId: string): TriggerLo
         .all()
         .map((row) => row.userId),
     channelArchived: (id) => isChannelArchived(db, id),
+    dmOwner: (id) => {
+      const channel = getChannel(db, id, workspaceId);
+      return channel?.kind === "dm" ? (channel.dmOwnerId ?? "") : null;
+    },
   };
 }
 
@@ -290,10 +294,17 @@ export function attachPushTriggers(
   logger: Pick<Logger, "error">,
 ): { close(): void } {
   const seenApprovals = new Set<string>();
-  // 보관한 채널을 겨눈 알림은 트리거마다 따로 보지 않고 여기서 한 번 거른다 — 정본·승인이 보관과 엇갈려 와도 사람을 부르지 않게
+  // 보관한 채널을 겨눈 알림은 트리거마다 따로 보지 않고 여기서 한 번 거른다 — 정본·승인이 보관과 엇갈려 와도 사람을 부르지 않게.
+  // DM 을 겨눈 알림도 여기서 주인 말고는 모두 걷는다 — 어느 트리거 갈래가 받을 사람을 잘못 골라도 남에게 DM 이 드러나지 않게(PD7)
+  const reachable = (t: PushTarget) => {
+    const owner = lookups.dmOwner(t.payload.channelId);
+    return owner === null || owner === t.userId;
+  };
   const guard = (event: string, targets: () => PushTarget[]) => {
     try {
-      void dispatcher.dispatch(targets().filter((t) => !lookups.channelArchived(t.payload.channelId)));
+      void dispatcher.dispatch(
+        targets().filter((t) => !lookups.channelArchived(t.payload.channelId) && reachable(t)),
+      );
     } catch (err) {
       logger.error({ event, reason: shortReason(err) }, "push trigger failed");
     }

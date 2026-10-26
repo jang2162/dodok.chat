@@ -1,5 +1,5 @@
 /** 운영 화면 런 표(운영 보강 스펙 6장 GET /api/v1/ops/runs) — runs 를 채널별·에이전트별로 묶고 채널 한도 차단 수를 붙인다 */
-import type { OpsRunsRow, OpsRunsSummary } from "@dodok/shared";
+import { OPS_DM_ROW_ID, type OpsRunsRow, type OpsRunsSummary } from "@dodok/shared";
 import { and, eq, gte, inArray, sql } from "drizzle-orm";
 import type { Db } from "../../db/client";
 import { agents, channels, runs } from "../../db/schema.sqlite";
@@ -70,10 +70,10 @@ export function runsSummary(
     // 믿는 런 가운데 구독 로그인의 공시 단가 환산값(러너 스펙 7장 「환산값」) — 청구액이 아니다
     estimatedRuns: sql<number>`coalesce(sum(${trusted} and json_extract(${runs.usage}, '$.costKind') = 'subscription_estimate'), 0)`,
   };
-  type Tally = { id: string; name: string } & { [K in keyof typeof tally]: number };
+  type Tally = { id: string; name: string; kind?: string } & { [K in keyof typeof tally]: number };
 
   const channelRows: Tally[] = db
-    .select({ id: channels.id, name: channels.name, ...tally })
+    .select({ id: channels.id, name: channels.name, kind: channels.kind, ...tally })
     .from(runs)
     .innerJoin(channels, eq(runs.channelId, channels.id))
     .innerJoin(agents, eq(runs.agentId, agents.id))
@@ -97,16 +97,30 @@ export function runsSummary(
   if (blockedOnly.length > 0) {
     const zero = { runs: 0, failed: 0, aborted: 0, trustedRuns: 0, tokens: 0, costUsd: 0, estimatedRuns: 0 };
     for (const ch of db
-      .select({ id: channels.id, name: channels.name })
+      .select({ id: channels.id, name: channels.name, kind: channels.kind })
       .from(channels)
       .where(and(eq(channels.workspaceId, workspaceId), inArray(channels.id, blockedOnly)))
       .all())
       channelRows.push({ ...ch, ...zero });
   }
 
+  // DM 은 채널 이름(내부용)·주인 없이 「DM」 한 줄로 합친다 — 운영 화면을 보는 owner·admin 에게 누구의 DM 이 몇 개 있는지 드러내지
+  // 않는다(에이전트 DM 스펙 4장, 계획 판정 PD5). 에이전트별 행은 DM 런도 그 에이전트에 그대로 센다(내용·주인이 없다)
+  const dmRow = channelRows
+    .filter((r) => r.kind === "dm")
+    .reduce<(Tally & { blocked: number }) | undefined>((sum, r) => {
+      const blockedCount = blocked.get(r.id) ?? 0;
+      if (!sum) return { ...r, id: OPS_DM_ROW_ID, name: "DM", blocked: blockedCount };
+      for (const k of Object.keys(tally) as (keyof typeof tally)[]) sum[k] += r[k];
+      sum.blocked += blockedCount;
+      return sum;
+    }, undefined);
+  const plainRows = channelRows.filter((r) => r.kind !== "dm");
+
   const toRow = (r: Tally, blockedCount: number): OpsRunsRow => ({
     id: r.id,
     name: r.name,
+    ...(r.kind === "dm" ? { kind: "dm" as const } : {}),
     runs: r.runs,
     failed: r.failed,
     aborted: r.aborted,
@@ -124,7 +138,10 @@ export function runsSummary(
     b.runs - a.runs || b.blocked - a.blocked || a.name.localeCompare(b.name);
   return {
     days,
-    byChannel: channelRows.map((r) => toRow(r, blocked.get(r.id) ?? 0)).sort(byRuns),
+    byChannel: [
+      ...plainRows.map((r) => toRow(r, blocked.get(r.id) ?? 0)),
+      ...(dmRow ? [toRow(dmRow, dmRow.blocked)] : []),
+    ].sort(byRuns),
     byAgent: agentRows.map((r) => toRow(r, 0)).sort(byRuns),
     usageTrustedProviders: trustedProviders,
   };

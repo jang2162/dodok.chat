@@ -6,13 +6,14 @@ import { type AutomationCreated, type AutomationSchedule, type AutomationSummary
 import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { App } from "../src/app";
-import { agents, automations, channels, messages } from "../src/db/schema.sqlite";
+import { agents, automations, channels, conversations, messages } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
 import { nextRunAt } from "../src/modules/automations/schedule";
 import { getAutomation, updateAutomation } from "../src/modules/automations/store";
 import { addMember, createChannel } from "../src/modules/channels/service";
 import { bootTestApp, login, userWithRole } from "./helpers/app";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
+import { createDmChannelForTest } from "./helpers/seed";
 
 const SEOUL = "Asia/Seoul";
 const PUBLIC_HOST = "hooks.example.test";
@@ -374,6 +375,75 @@ describe("자동화 관리 API", () => {
       expect(res.statusCode).toBe(409);
       expect(res.json()).toMatchObject({ code: "CHANNEL_ARCHIVED" });
       expect(postsOf(automation.id)).toEqual([]);
+    });
+  });
+
+  // 자동화는 DM 에 게시하지 않는다(에이전트 DM 스펙 5장, 계획 판정 PD5) — 남의 DM 은 없는 채널과 같은 404 가 먼저, 내 DM 은 VALIDATION
+  describe("DM", () => {
+    let mia: { id: string; token: string };
+    beforeAll(async () => {
+      mia = await userWithRole(app, "auto-mia", "member");
+    });
+    const dmOf = (ownerId: string) =>
+      createDmChannelForTest(app.db, {
+        workspaceId: app.workspaceId,
+        ownerId,
+        agentId: newAgent(`autodm${++n}`).id,
+      }).id;
+    const missing = "01990000-0000-7000-8000-00000000dead";
+
+    it("만들기 — 남의 DM 은 없는 채널과 같은 404, 내 DM 은 400 VALIDATION, 행이 생기지 않는다", async () => {
+      const before = (await list()).length;
+      const payload = (channelId: string) => ({
+        kind: "schedule",
+        name: `DM ${++n}`,
+        channelId,
+        bodyMd: "엿보기",
+        schedule: DAILY_NINE,
+      });
+      const foreign = await call({ method: "POST", url: "/automations", payload: payload(dmOf(mia.id)) });
+      const unknown = await call({ method: "POST", url: "/automations", payload: payload(missing) });
+      expect(foreign.statusCode).toBe(404);
+      expect(foreign.json()).toEqual(unknown.json());
+      const own = await call({
+        method: "POST",
+        url: "/automations",
+        payload: payload(dmOf(app.ownerUserId)),
+      });
+      expect(own.statusCode, own.body).toBe(400);
+      expect(own.json()).toMatchObject({ code: "VALIDATION" });
+      expect(await list()).toHaveLength(before);
+    });
+
+    it("바꾸기 — 남의 DM 으로 옮기면 404, 내 DM 이면 400 VALIDATION, 채널은 그대로", async () => {
+      const channel = newChannel();
+      const { automation } = await schedule(channel.id);
+      const move = (channelId: string) =>
+        call({ method: "PATCH", url: `/automations/${automation.id}`, payload: { channelId } });
+      const foreign = await move(dmOf(mia.id));
+      expect(foreign.statusCode).toBe(404);
+      expect(foreign.json()).toEqual((await move(missing)).json());
+      const own = await move(dmOf(app.ownerUserId));
+      expect(own.statusCode, own.body).toBe(400);
+      expect(own.json()).toMatchObject({ code: "VALIDATION" });
+      expect(getAutomation(app.db, app.workspaceId, automation.id)?.channelId).toBe(channel.id);
+    });
+
+    it("방어선 — DM 을 가리키게 된 자동화는 「지금 실행」·웹훅이 게시하지 않고, DM 에 세션도 만들지 않는다", async () => {
+      const dm = dmOf(app.ownerUserId);
+      const sched = (await schedule(newChannel().id)).automation;
+      const hooked = await webhook(newChannel().id);
+      for (const id of [sched.id, hooked.automation.id])
+        app.db.update(automations).set({ channelId: dm }).where(eq(automations.id, id)).run();
+      const run = await call({ method: "POST", url: `/automations/${sched.id}/run` });
+      expect(run.statusCode, run.body).toBe(400);
+      expect(run.json()).toMatchObject({ code: "VALIDATION" });
+      const res = await hook(tokenOf(hooked.webhookUrl));
+      expect(res.statusCode, res.body).toBe(400);
+      expect(postsOf(sched.id)).toEqual([]);
+      expect(postsOf(hooked.automation.id)).toEqual([]);
+      expect(app.db.select().from(conversations).where(eq(conversations.channelId, dm)).all()).toEqual([]);
+      expect(getAutomation(app.db, app.workspaceId, hooked.automation.id)?.lastStatus).toBe("error");
     });
   });
 
