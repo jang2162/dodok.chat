@@ -1,10 +1,10 @@
-import { OpsRunsSummary, type RunStatus, type RunUsage } from "@dodok/shared";
+import { OPS_DM_ROW_ID, OpsRunsSummary, type RunStatus, type RunUsage } from "@dodok/shared";
 import { eq } from "drizzle-orm";
 import pino from "pino";
 import { v7 as uuid } from "uuid";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Db } from "../src/db/client";
-import { agents, runs } from "../src/db/schema.sqlite";
+import { agents, runs, users } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
 import { createChannel } from "../src/modules/channels/service";
 import { createOpsService, type OpsService } from "../src/modules/ops/service";
@@ -12,7 +12,7 @@ import { runsSummary, USAGE_TRUSTED_PROVIDERS } from "../src/modules/ops/summary
 import { insertRun } from "../src/modules/runs/store";
 import { ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
-import { channelConversation, seedWorkspace } from "./helpers/seed";
+import { channelConversation, createDmChannelForTest, seedWorkspace } from "./helpers/seed";
 
 // 「하루」는 서버 현지 자정 — 현지 시각 생성자로 TZ 와 무관하게 경계를 만든다
 const DAY = (d: number, h = 12, m = 0, s = 0, ms = 0) => new Date(2026, 8, d, h, m, s, ms);
@@ -172,6 +172,56 @@ describe("runsSummary 합계", () => {
 
   it("행은 런 수 내림차순", () => {
     expect(summary(1).byChannel.map((r) => r.name)).toEqual(["general", "random"]);
+  });
+});
+
+// DM 은 채널 이름·주인 없이 「DM」 한 줄로(에이전트 DM 계획 판정 PD5) — owner·admin 이 누구의 DM 이 몇 개인지 알 수 없게
+describe("runsSummary DM", () => {
+  it("주인이 다른 DM 둘의 런은 「DM」 한 줄로 합쳐진다 — 채널 id·이름·주인 id 가 응답에 없다", () => {
+    const other = uuid();
+    db.insert(users)
+      .values({
+        id: other,
+        workspaceId,
+        handle: "mia",
+        displayName: "mia",
+        authProvider: "local",
+        createdAt: NOW,
+      })
+      .run();
+    const mine = createDmChannelForTest(db, { workspaceId, ownerId: userId, agentId: dev });
+    const theirs = createDmChannelForTest(db, { workspaceId, ownerId: other, agentId: fin });
+    const quiet = createDmChannelForTest(db, { workspaceId, ownerId: other, agentId: dev });
+    run(general, dev, DAY(25, 9));
+    run(mine.id, dev, DAY(25, 9), "done");
+    run(theirs.id, fin, DAY(25, 10), "error");
+    blocked(`channel:${theirs.id}`, DAY(25, 11));
+    blocked(`channel:${quiet.id}`, DAY(25, 11)); // 런 없이 막히기만 한 DM 도 같은 줄로
+    const s = summary(1);
+    expect(OpsRunsSummary.parse(s)).toEqual(s);
+    expect(s.byChannel.filter((r) => r.kind === "dm")).toEqual([
+      { id: OPS_DM_ROW_ID, name: "DM", kind: "dm", runs: 2, failed: 1, aborted: 0, blocked: 2 },
+    ]);
+    expect(row(s.byChannel, general)).toEqual({
+      id: general,
+      name: "general",
+      runs: 1,
+      failed: 0,
+      aborted: 0,
+      blocked: 0,
+    });
+    const text = JSON.stringify(s);
+    for (const secret of [mine.id, theirs.id, quiet.id, other]) expect(text).not.toContain(secret);
+    // DM 채널의 내부 이름(「dm」)도 없다
+    expect(text).not.toContain('"name":"dm"');
+    // 에이전트별 행은 DM 런도 그 에이전트에 센다 — 내용·주인이 없다
+    expect(row(s.byAgent, dev)?.runs).toBe(2);
+    expect(row(s.byAgent, fin)?.runs).toBe(1);
+  });
+
+  it("DM 런이 없으면 「DM」 줄도 없다", () => {
+    run(general, dev, DAY(25, 9));
+    expect(summary(1).byChannel.some((r) => r.kind === "dm")).toBe(false);
   });
 });
 

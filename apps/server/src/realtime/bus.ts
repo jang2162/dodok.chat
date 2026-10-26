@@ -30,7 +30,8 @@ export type BusEvents = {
   "conversation.read": Payload<"conversation.read"> & { userId: Id };
   typing: Payload<"typing">;
   "adapter.status": Payload<"adapter.status">;
-  "system.notice": Payload<"system.notice">;
+  // userId 가 있으면 그 사람의 user 룸으로만(DM 의 알림 — 계획 판정 PD4), 없으면 전체. userId 는 팬아웃이 룸을 고르는 데만 쓴다
+  "system.notice": Payload<"system.notice"> & { userId?: Id };
   // 연결 상태(설정 마법사) — owner 사용자 룸에만 간다(events.ts)
   "setup.status": Payload<"setup.status">;
   // 운영 사건 — owner·admin 사용자 룸으로(events.ts)

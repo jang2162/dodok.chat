@@ -1,3 +1,4 @@
+import { OPS_DM_ROW_ID } from "@dodok/shared";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -323,6 +324,21 @@ describe("런 표", () => {
     ).toEqual(["general", "9", "2", "1", "3"]);
     expect(within(runs).getByRole("table", { name: "에이전트별" })).toHaveTextContent("Dev");
     expect(server.count("GET", "/api/v1/ops/runs?days=1")).toBe(1);
+  });
+
+  it("채널별의 「DM」 묶음 줄은 링크가 아니다 — 갈 채널이 없다", async () => {
+    stubOpsServer({
+      runs: (days) =>
+        runsOf({
+          days,
+          byChannel: [CHANNEL, rowOf(0, { id: OPS_DM_ROW_ID, name: "DM", kind: "dm", runs: 2 })],
+        }),
+    });
+    renderOps();
+    const byChannel = await within(await region("런")).findByRole("table", { name: "채널별" });
+    expect(within(byChannel).getByRole("link", { name: "general" })).toBeInTheDocument();
+    expect(within(byChannel).getByRole("row", { name: /DM/ })).toBeInTheDocument();
+    expect(within(byChannel).queryByRole("link", { name: "DM" })).toBeNull();
   });
 
   it("에이전트별 표는 삭제(보관)한 에이전트도 기록으로 남기고 「삭제됨」을 붙인다", async () => {

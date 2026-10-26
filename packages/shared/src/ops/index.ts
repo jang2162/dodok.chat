@@ -123,10 +123,14 @@ export const OpsStatus = z.object({
 });
 export type OpsStatus = z.infer<typeof OpsStatus>;
 
+/** 런 표의 「DM」 묶음 줄 id — 채널 id 가 아니다(DM 마다 줄을 두면 DM 이 있다는 것과 그 수가 드러난다, 에이전트 DM 계획 판정 PD5) */
+export const OPS_DM_ROW_ID = "00000000-0000-0000-0000-000000000000";
+
 /** 런 표 한 행 — 채널 또는 에이전트. measuredRuns·tokens·costUsd·costEstimated 는 usage 값을 믿을 수 있을 때만(스펙 3.3) */
 export const OpsRunsRow = z.object({
   id: Id,
   name: z.string(),
+  kind: z.literal("dm").optional(), // 채널별의 「DM」 묶음 줄(id OPS_DM_ROW_ID) — 모든 DM 의 런을 한 줄로 합친다. 링크가 없다
   runs: z.int().min(0),
   failed: z.int().min(0), // status error
   aborted: z.int().min(0),

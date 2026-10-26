@@ -14,6 +14,8 @@ export type TriggerLookups = {
   admins(): string[];
   /** 보관한 채널이면 true — 그 채널을 겨눈 알림은 보내지 않는다(채널 보관 스펙 「보관할 때 서버가 하는 일」 절) */
   channelArchived(id: string): boolean;
+  /** DM 이면 그 주인 id, 일반 채널·없는 채널이면 null — DM 의 알림은 주인에게만 간다(에이전트 DM 계획 판정 PD7) */
+  dmOwner(channelId: string): string | null;
 };
 /**
  * `conversationId` 는 거르기(「그 세션을 보고 있으면 안 보냄」 — 채널 세션 계획 판정 PS7)에만 쓰고 페이로드에는 싣지 않는다 — 같은 채널의
@@ -22,15 +24,17 @@ export type TriggerLookups = {
 export type PushTarget = { userId: string; conversationId: string; payload: PushPayload };
 
 const TITLE = "dodok";
-const channelLabel = (l: TriggerLookups, id: string) => l.channelName(id) ?? "채널";
+/** 알림 본문의 자리 — 일반 채널은 「#이름」, DM 은 「DM」(이름은 내부용이다) */
+const channelLabel = (l: TriggerLookups, id: string) =>
+  l.dmOwner(id) === null ? `#${l.channelName(id) ?? "채널"}` : "DM";
 /** 누르면 그 세션(웹 /c/<채널>/s/<세션>) — 꼴을 바꾸면 서비스 워커의 허용 꼴(apps/web/src/pwa/sw-logic.ts SAFE_URL)도 함께 바꾼다 */
 const sessionUrl = (channelId: string, conversationId: string) => `/c/${channelId}/s/${conversationId}`;
 /** 스레드 안 메시지면 「#채널 스레드」, 누르면 그 세션의 그 스레드(…/t/<rootId>) */
 const placeOf = (l: TriggerLookups, m: Message) => {
   const session = sessionUrl(m.channelId, m.conversationId);
   return m.threadRootId === undefined
-    ? { label: `#${channelLabel(l, m.channelId)}`, url: session }
-    : { label: `#${channelLabel(l, m.channelId)} 스레드`, url: `${session}/t/${m.threadRootId}` };
+    ? { label: channelLabel(l, m.channelId), url: session }
+    : { label: `${channelLabel(l, m.channelId)} 스레드`, url: `${session}/t/${m.threadRootId}` };
 };
 
 /** 멘션 알림의 보낸 이 — 사람·에이전트는 「@핸들이」, 자동화는 「자동화 <이름>이」(지웠으면 「자동화가」), 모르면 「누군가가」 */
@@ -91,10 +95,18 @@ export function targetsForMessage(m: Message, l: TriggerLookups): PushTarget[] {
 }
 
 export function targetsForApproval(a: Approval, l: TriggerLookups): PushTarget[] {
-  const body = `#${channelLabel(l, a.channelId)}에 승인 요청이 있습니다`;
-  // 확인 카드(dodok_control)는 그 일을 시킨 사람 본인만 결정한다 — 알림도 그 사람에게만(제어 MCP 스펙 「확인 카드」 장)
+  const body = `${channelLabel(l, a.channelId)}에 승인 요청이 있습니다`;
+  // 확인 카드(dodok_control)는 그 일을 시킨 사람 본인만 결정한다 — 알림도 그 사람에게만(제어 MCP 스펙 「확인 카드」 장).
+  // DM 의 승인은 종류와 무관하게 주인만 결정한다 — owner·admin 은 그 DM 을 볼 수 없다(에이전트 DM 계획 판정 PD7)
+  const dmOwner = l.dmOwner(a.channelId);
   const receivers =
-    a.kind === "dodok_control" ? (a.requestedBy === undefined ? [] : [a.requestedBy]) : l.admins();
+    dmOwner !== null
+      ? [dmOwner]
+      : a.kind === "dodok_control"
+        ? a.requestedBy === undefined
+          ? []
+          : [a.requestedBy]
+        : l.admins();
   return receivers.map((userId) => ({
     userId,
     conversationId: a.conversationId,

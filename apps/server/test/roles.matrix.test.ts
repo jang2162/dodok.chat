@@ -15,7 +15,14 @@ import { v7 as uuid } from "uuid";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { App } from "../src/app";
 import type { Principal } from "../src/modules/control/principal";
-import { channelMembers, channels, memberships, messageReactions, users } from "../src/db/schema.sqlite";
+import {
+  channelMembers,
+  channels,
+  memberships,
+  messageReactions,
+  runs,
+  users,
+} from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
 import { insertAutomation } from "../src/modules/automations/store";
 import { issueWebhookToken } from "../src/modules/automations/tokens";
@@ -1613,5 +1620,32 @@ describe("역할 매트릭스(스펙 2장)", () => {
       expect(hitChannels(await as("search_messages", { q: ownWord }))).toEqual([own.channelId]);
       expect(hitChannels(await as("search_messages", { q: otherWord }))).toEqual([]);
     });
+
+    // 런의 채널이 DM 이어도 시킨 사람이 그 주인이 아니면 열리지 않는다 — readableChannelSqlFor 의 「dm_owner_id = 시킨 사람」(태스크 1
+    // 재리뷰 N1). 지금은 DM 런의 시킨 사람이 늘 주인이라 닿는 길이 없다 — 행을 DB 로 바꿔 심층 방어를 고정한다
+    it.each([
+      ["다른 사람(admin)", (): string | null => ids.admin],
+      ["시킨 사람 없음", (): string | null => null],
+    ] as const)(
+      "제어 — DM 런을 가리켜도 시킨 사람이 주인이 아니면(%s) 그 DM 은 NOT_FOUND·목록 밖",
+      async (_name, who) => {
+        const own = dmFixture();
+        const word = secretIn(own);
+        const userId = who();
+        app.db.update(runs).set({ requestedBy: userId }).where(eq(runs.id, own.runId)).run();
+        const principal: Principal = { userId, via: "agent", agentId: own.agent.id, runId: own.runId };
+        const as = (tool: string, args: object) => app.control.call(principal, tool, args);
+        expect(await as("read_messages", { conversationId: own.conversationId })).toMatchObject({
+          ok: false,
+          error: { code: "NOT_FOUND" },
+        });
+        expect(await as("get_channel", { channelId: own.channelId })).toMatchObject({
+          ok: false,
+          error: { code: "NOT_FOUND" },
+        });
+        expect(channelIds(await as("list_channels", {}))).not.toContain(own.channelId);
+        expect(hitChannels(await as("search_messages", { q: word }))).toEqual([]);
+      },
+    );
   });
 });

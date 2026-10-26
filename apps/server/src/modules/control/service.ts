@@ -16,6 +16,7 @@ import type { AgentActionContext } from "../agents/actions";
 import { getAgent } from "../agents/service";
 import type { ApprovalsService } from "../approvals/service";
 import type { ChannelActionContext } from "../channels/actions";
+import { getChannel } from "../channels/service";
 import { latestOpenConversation } from "../conversations/store";
 import { createSystemMessage } from "../messages/service";
 import type { Limits } from "../ops/limits";
@@ -217,7 +218,8 @@ export function createControlService(deps: ControlDeps): ControlService {
         via: p.via,
         tool: toolName,
         agentId: p.agentId ?? null,
-        channelId: channelId ?? null,
+        // DM 이면 채널 id 를 싣지 않는다 — 운영 사건은 owner·admin 이 보므로 「이 사람의 DM 이 있다」가 드러난다(에이전트 DM 계획 판정 PD5)
+        channelId: channelId === undefined || getChannel(db, channelId)?.kind === "dm" ? null : channelId,
         targetAgentId: targetAgentId ?? null,
       };
       // 행위 단위로 묶는다 — 같은 사람·같은 도구만 한 줄이 된다(다른 사람의 변경이 앞사람 줄을 덮지 않게)

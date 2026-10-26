@@ -23,6 +23,7 @@ const L: TriggerLookups = {
   // SAM 은 채널 밖 admin, ALICE 는 채널 안 member — 승인은 채널 참여와 무관하게 owner·admin 에게만
   admins: () => [SAM, BOB],
   channelArchived: () => false,
+  dmOwner: () => null,
 };
 
 function msg(over: Partial<Message>): Message {

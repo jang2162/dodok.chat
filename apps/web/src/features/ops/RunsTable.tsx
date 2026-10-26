@@ -71,9 +71,13 @@ const USAGE: Column[] = [
   },
 ];
 
-/** 채널 이름은 그 채널로 가는 링크, 에이전트는 이름만 — 보관(삭제)한 에이전트도 기록이라 남기고 「삭제됨」을 붙인다(스펙 「에이전트 보관」 절) */
+/**
+ * 채널 이름은 그 채널로 가는 링크, 에이전트는 이름만 — 보관(삭제)한 에이전트도 기록이라 남기고 「삭제됨」을 붙인다(스펙 「에이전트 보관」 절).
+ * 「DM」 묶음 줄은 모든 DM 을 합친 것이라 갈 채널이 없다(에이전트 DM 계획 판정 PD5)
+ */
 function Name({ row, channel }: { row: OpsRunsRow; channel: boolean }) {
   if (!channel) return <AgentName row={row} />;
+  if (row.kind === "dm") return <>{row.name}</>;
   return (
     <Link to="/c/$channelId" params={{ channelId: row.id }} className="underline-offset-4 hover:underline">
       {row.name}

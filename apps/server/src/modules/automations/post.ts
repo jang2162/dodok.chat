@@ -3,6 +3,7 @@ import type { Message } from "@dodok/shared";
 import { eq } from "drizzle-orm";
 import type { Db, DbOrTx } from "../../db/client";
 import { automations } from "../../db/schema.sqlite";
+import { apiError } from "../../http/errors";
 import type { Logger } from "../../logger";
 import type { ServerBus } from "../../realtime/bus";
 import { assertChannelWritable } from "../channels/service";
@@ -49,7 +50,9 @@ function ownSession(automation: AutomationRow): PickConversation {
         .from(automations)
         .where(eq(automations.id, automation.id))
         .get() ?? automation;
-    assertChannelWritable(tx, current.channelId);
+    // DM 은 게시하지 않는다 — 만들기·바꾸기가 막으므로 여기는 방어선이다(에이전트 DM 계획 판정 PD5). 아무것도 남기지 않고 던진다
+    if (assertChannelWritable(tx, current.channelId).kind === "dm")
+      throw apiError("VALIDATION", "자동화는 DM 에 게시할 수 없다");
     const own = current.conversationId === null ? undefined : getConversation(tx, current.conversationId);
     if (own && own.channelId === current.channelId && own.closedAt === undefined) {
       return { conversationId: own.id };
