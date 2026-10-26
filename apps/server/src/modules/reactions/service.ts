@@ -12,6 +12,7 @@ import { canReadChannel } from "../../auth/channel-access";
 import { apiError } from "../../http/errors";
 import type { ServerBus } from "../../realtime/bus";
 import { assertConversationWritable } from "../conversations/store";
+import { assertDmWritable } from "../dms/service";
 import { rowToMessage } from "../messages/service";
 import { type HandleOf, readableGlyphs, readableWindow } from "../search/readable";
 
@@ -46,6 +47,7 @@ export function setReaction(
       workspaceId: channels.workspaceId,
       kind: channels.kind,
       dmOwnerId: channels.dmOwnerId,
+      dmAgentId: channels.dmAgentId,
     })
     .from(messages)
     .innerJoin(channels, eq(channels.id, messages.channelId))
@@ -56,6 +58,7 @@ export function setReaction(
     throw apiError("NOT_FOUND", "message not found");
   if (row.message.kind !== "normal") throw apiError("VALIDATION", "system messages cannot be reacted to");
   assertConversationWritable(db, row.message.conversationId, workspaceId);
+  assertDmWritable(db, row);
 
   const changed = on
     ? db

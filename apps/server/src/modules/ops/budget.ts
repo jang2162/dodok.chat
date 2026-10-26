@@ -53,7 +53,10 @@ export function createRunGate(deps: {
     if (workspaceLimit !== null && countRunsTodayInWorkspace(db, at) >= workspaceLimit) {
       return { scope: "workspace", limit: workspaceLimit };
     }
-    const channelLimit = getChannel(db, channelId)?.relayPolicy.dailyRunLimit;
+    // DM 에는 채널 한도가 없다 — 워크스페이스 상한만 센다(에이전트 DM 계획 판정 PD6). 그래서 DM 에서 막혀도 운영 사건 key 는
+    // workspace 뿐이라 channel:<DM id> 가 생기지 않는다
+    const channel = getChannel(db, channelId);
+    const channelLimit = channel?.kind === "dm" ? undefined : channel?.relayPolicy.dailyRunLimit;
     if (channelLimit !== undefined && countRunsToday(db, channelId, at) >= channelLimit) {
       return { scope: "channel", limit: channelLimit };
     }

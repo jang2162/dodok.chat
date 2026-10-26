@@ -3,6 +3,7 @@ import type { Approval, ApprovalDecision, ApprovalReason, ApprovalStatus, RunSig
 import { and, eq } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import { agentConnectionId, agentOnConnection } from "../../adapters/connection";
+import { canReadChannel } from "../../auth/channel-access";
 import type { AdapterRegistry } from "../../adapters/registry";
 import {
   type AdapterProvider,
@@ -283,10 +284,14 @@ export function createApprovalsService(deps: ApprovalsDeps): ApprovalsService {
       // 설계 4.4 — 순서대로 검사하고 하나라도 어긋나면 Gateway 로 보내지 않는다.
       // 목록 밖 결정을 보내면 Gateway 가 조용히 거절(malformed-verdict)로 확정한다(스파이크 4.4)
       const approval = store.getApproval(db, approvalId);
-      if (approval && !getChannel(db, approval.channelId, deps.workspaceId)) {
+      const channel = approval && getChannel(db, approval.channelId, deps.workspaceId);
+      if (approval && !channel) {
         throw apiError("FORBIDDEN", "approval is not in this workspace");
       }
       if (!approval) throw apiError("NOT_FOUND", "approval not found");
+      // DM 의 승인은 주인만 결정한다(에이전트 DM 계획 판정 PD7) — 남에게는 없는 승인과 같다. wire 가 앞에서 같은 판정을 하지만 결정자
+      // 규칙은 여기에도 둔다(이 함수를 부르는 다른 길이 생겨도 주인 말고는 결정하지 못하게)
+      if (channel && !canReadChannel({ userId }, channel)) throw apiError("NOT_FOUND", "approval not found");
       if (approval.status !== "pending") throw apiError("CONFLICT", "approval is already resolved");
       if (Date.parse(approval.expiresAt) <= now().getTime()) {
         throw apiError("CONFLICT", "approval has expired");

@@ -27,6 +27,7 @@ import type { Db } from "../../db/client";
 import { parseBody, parseParams, parseQuery } from "../../http/validate";
 import type { Logger } from "../../logger";
 import type { ServerBus } from "../../realtime/bus";
+import { assertDmPatchBody, assertDmWritable, assertNotDm } from "../dms/service";
 import type { Orchestrator } from "../runs/orchestrator";
 import {
   addChannelMemberAndNotify,
@@ -88,6 +89,13 @@ export function registerChannelRoutes(fastify: FastifyInstance, ctx: ChannelRout
     return assertChannelWritable(ctx.db, id, sessionUser(request).workspaceId);
   };
 
+  /** DM 에 맞지 않는 관리 경로 — 접근 판정(남은 404) 다음, 역할 정책보다 먼저 VALIDATION(에이전트 DM 계획 판정 PD9) */
+  const loadManageable = (request: FastifyRequest, id: string): ChannelRecord => {
+    const channel = loadChannel(request, id);
+    assertNotDm(channel);
+    return channel;
+  };
+
   /** preHandler 정책을 접근 판정 뒤로 미룬 경로 — 역할만 보는 정책 */
   const authorizeRole = (request: FastifyRequest, policy: (role: TeamRole) => void) =>
     policy(sessionUser(request).role);
@@ -112,11 +120,17 @@ export function registerChannelRoutes(fastify: FastifyInstance, ctx: ChannelRout
     return { channel: loadChannel(request, id) };
   });
 
+  /**
+   * DM 은 prompt(「이 DM 의 지시」)만, 주인이면 역할과 무관하게(접근 판정이 주인만 들인다 — 에이전트 DM 계획 판정 PD9). 읽기 전용 DM 이면
+   * 409 DM_READ_ONLY
+   */
   fastify.patch("/api/v1/channels/:id", authed, async (request) => {
     const { id } = parseParams(ChannelParams, request.params);
-    loadWritable(request, id);
+    const channel = loadWritable(request, id);
+    if (channel.kind === "dm") assertDmPatchBody(request.body);
     const patch = parseBody(UpdateChannelBody, request.body);
-    authorizeBody(request, authorizeChannelPatch);
+    if (channel.kind === "dm") assertDmWritable(ctx.db, channel, sessionUser(request).role);
+    else authorizeBody(request, authorizeChannelPatch);
     return { channel: patchChannelAndNotify(ctx, id, patch) };
   });
 
@@ -128,7 +142,7 @@ export function registerChannelRoutes(fastify: FastifyInstance, ctx: ChannelRout
 
   fastify.post("/api/v1/channels/:id/members", authed, async (request, reply) => {
     const { id } = parseParams(ChannelParams, request.params);
-    loadWritable(request, id);
+    assertNotDm(loadWritable(request, id));
     const body = parseBody(AddChannelMemberBody, request.body);
     authorizeBody(request, authorizeChannelMemberAdd);
     const member = addChannelMemberAndNotify(ctx, id, body);
@@ -137,7 +151,7 @@ export function registerChannelRoutes(fastify: FastifyInstance, ctx: ChannelRout
 
   fastify.patch("/api/v1/channels/:id/members/:memberId", authed, async (request) => {
     const { id, memberId } = parseParams(MemberParams, request.params);
-    loadWritable(request, id);
+    assertNotDm(loadWritable(request, id));
     const patch = parseBody(UpdateChannelMemberBody, request.body);
     authorizeBody(request, authorizeChannelAgentPatch);
     return { member: updateChannelAgentAndNotify(ctx, id, memberId, patch) };
@@ -145,7 +159,7 @@ export function registerChannelRoutes(fastify: FastifyInstance, ctx: ChannelRout
 
   fastify.delete("/api/v1/channels/:id/members/:memberId", authed, async (request) => {
     const { id, memberId } = parseParams(MemberParams, request.params);
-    loadChannel(request, id);
+    loadManageable(request, id);
     authorizeRole(request, authorizeChannelMemberRemove);
     loadWritable(request, id);
     return { members: removeChannelMemberAndNotify(ctx, id, memberId) };
@@ -154,7 +168,7 @@ export function registerChannelRoutes(fastify: FastifyInstance, ctx: ChannelRout
   /** 보관(admin) — 이미 보관했으면 200 그대로 */
   fastify.post("/api/v1/channels/:id/archive", authed, async (request) => {
     const { id } = parseParams(ChannelParams, request.params);
-    loadChannel(request, id);
+    loadManageable(request, id);
     authorizeRole(request, authorizeChannelArchive);
     return { channel: await archiveChannelAndNotify(ctx, id, sessionUser(request).workspaceId) };
   });
@@ -162,7 +176,7 @@ export function registerChannelRoutes(fastify: FastifyInstance, ctx: ChannelRout
   /** 보관 해제(admin) — 살아 있으면 200 그대로 */
   fastify.post("/api/v1/channels/:id/unarchive", authed, async (request) => {
     const { id } = parseParams(ChannelParams, request.params);
-    loadChannel(request, id);
+    loadManageable(request, id);
     authorizeRole(request, authorizeChannelUnarchive);
     return { channel: unarchiveChannelAndNotify(ctx, id, sessionUser(request).workspaceId) };
   });
@@ -177,7 +191,7 @@ export function registerChannelRoutes(fastify: FastifyInstance, ctx: ChannelRout
   ] as const) {
     fastify[method]("/api/v1/channels/:id/session-managers/:userId", authed, async (request) => {
       const { id, userId } = parseParams(ManagerParams, request.params);
-      loadChannel(request, id);
+      loadManageable(request, id);
       authorizeRole(request, authorizeSessionManagers);
       loadWritable(request, id);
       const member = setSessionManager(ctx.db, id, userId, on);

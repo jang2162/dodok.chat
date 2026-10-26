@@ -277,6 +277,10 @@ export function createTriggerLookups(db: DbOrTx, workspaceId: string): TriggerLo
       const channel = getChannel(db, id, workspaceId);
       return channel?.kind === "dm" ? (channel.dmOwnerId ?? "") : null;
     },
+    dmAgent: (id) => {
+      const channel = getChannel(db, id, workspaceId);
+      return channel?.kind === "dm" ? channel.dmAgentId : null;
+    },
   };
 }
 

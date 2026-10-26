@@ -101,7 +101,7 @@ describe("DM 푸시 — 주인에게만", () => {
     expect(t.got.map((batch) => batch.map((x) => x.userId))).toEqual([[t.mia], [t.mia]]);
   });
 
-  it("DM 을 겨눈 멘션 알림은 발송 직전에 주인 말고는 걷는다 — 트리거가 owner 를 골라도 가지 않는다", () => {
+  it("DM 의 에이전트 글은 멘션과 무관하게 주인에게만 「답했습니다」 알림 — 일반 채널 멘션은 그대로 모두에게", () => {
     const t = setup();
     t.bus.emit("message.created", {
       message: agentMessage({
@@ -113,8 +113,7 @@ describe("DM 푸시 — 주인에게만", () => {
     });
     expect(t.got).toHaveLength(1);
     expect(t.got[0]?.map((x) => x.userId)).toEqual([t.mia]);
-    expect(t.got[0]?.[0]?.payload.body).toBe("@dev가 DM에서 불렀습니다");
-    // 일반 채널 멘션은 그대로 모두에게
+    expect(t.got[0]?.[0]?.payload).toMatchObject({ title: "@dev가 답했습니다", body: "DM" });
     t.bus.emit("message.created", {
       message: agentMessage({
         channelId: t.channelId,
@@ -126,10 +125,49 @@ describe("DM 푸시 — 주인에게만", () => {
     expect(t.got[1]?.map((x) => x.userId).sort()).toEqual([t.userId, t.admin].sort());
   });
 
-  it("dmOwner 풀기 — DM 이면 주인, 일반 채널·없는 채널·다른 워크스페이스면 null", () => {
+  it("발송 직전 거름 — 트리거가 DM 을 일반 채널로 잘못 보고 owner 를 골라도 주인 말고는 가지 않는다", () => {
+    const db = setup();
+    // 트리거 계산 동안에는 DM 이 아니라고 속이고, 거름(보관 확인 → DM 주인 확인 순)에서만 참을 준다 — 어느 갈래가 받을 사람을
+    // 잘못 골라도 남에게 DM 이 드러나지 않는다는 방어선만 본다
+    let filtering = false;
+    const lying = {
+      ...db.lookups,
+      channelArchived: (id: string) => {
+        filtering = true;
+        return db.lookups.channelArchived(id);
+      },
+      dmOwner: (id: string) => (filtering ? db.lookups.dmOwner(id) : null),
+    };
+    const bus = new ServerBus();
+    const got: PushTarget[][] = [];
+    attachPushTriggers(
+      bus,
+      {
+        dispatch: async (x) => {
+          filtering = false;
+          got.push(x);
+        },
+      },
+      lying,
+      pino({ level: "silent" }),
+    );
+    bus.emit("message.created", {
+      message: agentMessage({
+        channelId: db.dm.id,
+        conversationId: db.dmConversation,
+        authorId: db.agentId,
+        mentions: { users: [db.userId, db.admin, db.mia], agents: [] },
+      }),
+    });
+    expect(got.map((batch) => batch.map((x) => x.userId))).toEqual([[db.mia]]);
+  });
+
+  it("dmOwner·dmAgent 풀기 — DM 이면 주인·에이전트, 일반 채널·없는 채널이면 null", () => {
     const t = setup();
     expect(t.lookups.dmOwner(t.dm.id)).toBe(t.mia);
     expect(t.lookups.dmOwner(t.channelId)).toBeNull();
     expect(t.lookups.dmOwner(uuid())).toBeNull();
+    expect(t.lookups.dmAgent(t.dm.id)).toBe(t.agentId);
+    expect(t.lookups.dmAgent(t.channelId)).toBeNull();
   });
 });

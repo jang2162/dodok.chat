@@ -63,7 +63,8 @@ type UnreadRow = {
 /**
  * 워크스페이스의 보관하지 않은, 그 사용자가 읽을 수 있는 채널(남의 DM 제외 — SQL 에서 거른다)의 대화마다(닫힌 대화 포함) 그 사용자의 현황(읽지 않음 스펙 「무엇이 「안 읽음」인가」 장을 대화
  * 단위로) — 행이 없으면 읽음 위치 0. 굵게는 남이 쓴 최상위 보통 메시지만, 배지는 나를 멘션한 보통 메시지를 스레드 답글까지 센다
- * (스레드가 활발한 세션이 늘 굵지 않게, 멘션은 어디서 왔든 놓치지 않게 — 스펙 결정 5).
+ * (스레드가 활발한 세션이 늘 굵지 않게, 멘션은 어디서 왔든 놓치지 않게 — 스펙 결정 5). DM 은 에이전트의 보통 메시지를 모두 배지로
+ * 센다 — DM 에는 멘션 토큰이 없고, 1:1 의 답은 나를 부른 것과 같다(에이전트 DM 계획 판정 PD10).
  * 굵게 하위 질의는 messages_conversation_thread_seq (conversation_id, thread_root_id, seq)를, 배지 하위 질의는 channel_id 를 함께
  * 걸어 messages_channel_seq (channel_id, seq)를 범위로 탄다 — conversation_id 로만 걸면 (conversation_id, thread_root_id, seq) 의
  * 앞머리만 써 그 대화를 처음부터 훑는다. 다시 재려면 마이그레이션을 다 적용한 DB 에서 이 질의 앞에 EXPLAIN QUERY PLAN 을 붙여
@@ -82,7 +83,8 @@ export function unreadFor(db: DbOrTx, workspaceId: string, userId: string): Conv
         WHERE m.channel_id = v.channel_id AND m.seq > COALESCE(r.last_read_seq, 0) AND m.conversation_id = v.id
           AND m.kind = 'normal'
           AND NOT (m.author_type = 'user' AND m.author_id = ${userId})
-          AND EXISTS (SELECT 1 FROM json_each(m.mentions_json, '$.users') j WHERE j.value = ${userId})
+          AND (EXISTS (SELECT 1 FROM json_each(m.mentions_json, '$.users') j WHERE j.value = ${userId})
+            OR (channels.kind = 'dm' AND m.author_type = 'agent'))
         LIMIT ${MENTIONS_CAP})) AS mentions
     FROM conversations v
     JOIN channels ON channels.id = v.channel_id

@@ -958,6 +958,7 @@ describe("attachPushTriggers — 버스 배선", () => {
     admins: () => [ALICE_ID],
     channelArchived: () => false,
     dmOwner: () => null,
+    dmAgent: () => null,
   };
   const message = {
     id: uuid(),

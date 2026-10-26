@@ -16,6 +16,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import type { App } from "../src/app";
 import type { Principal } from "../src/modules/control/principal";
 import {
+  agents,
   channelMembers,
   channels,
   memberships,
@@ -926,7 +927,7 @@ describe("역할 매트릭스(스펙 2장)", () => {
 
   // 남의 DM(에이전트 DM 스펙 4장) — member mia 가 주인인 DM 을 주인이 아닌 owner·admin·member 가 치면 모든 경로가 없는 것과 같은 404
   // (wire 는 ack NOT_FOUND). 역할 판정(403)보다 먼저다 — admin 만 되는 경로에 member 도 403 이 아니라 404 다. 주인 mia 는 케이스마다
-  // 적은 지금 결과(owner)를 정확히 받는다 — 관리 경로를 DM 에 VALIDATION 으로 막는 것은 태스크 3 이 같은 표를 고친다(계획 판정 PD9)
+  // 적은 결과(owner)를 정확히 받는다 — 채널 관리 경로는 DM 에 VALIDATION(400), DM 의 PATCH {prompt} 는 역할과 무관하게 주인만(계획 판정 PD9)
   describe("남의 DM — DM_CASES", () => {
     let mia: { id: string; token: string };
     beforeAll(async () => {
@@ -943,7 +944,9 @@ describe("역할 매트릭스(스펙 2장)", () => {
     };
     /** 경로마다·사람마다 새 DM — 주인의 쓰기(보관·멤버 빼기)가 다음 사람의 조건을 바꾸지 않게 */
     const dmFixture = (): DmFixture => {
+      // mia(member)가 쓰기까지 하도록 dmAccess everyone — 기본 admins 면 주인의 쓰기가 409 DM_READ_ONLY 다(dms.test.ts)
       const agent = newAgent();
+      app.db.update(agents).set({ dmAccess: "everyone" }).where(eq(agents.id, agent.id)).run();
       const dm = createDmChannelForTest(app.db, {
         workspaceId: app.workspaceId,
         ownerId: mia.id,
@@ -1009,11 +1012,8 @@ describe("역할 매트릭스(스펙 2장)", () => {
     };
     type DmCase = {
       name: string;
-      /**
-       * 주인 mia(member)의 지금 상태 코드 — 403 은 역할 정책(admin 이상 경로). 태스크 3 이 DM 관리 경로를 VALIDATION 으로 바꾸면
-       * 같은 표를 고친다(계획 판정 PD9)
-       */
-      owner: 200 | 201 | 403;
+      /** 주인 mia(member)의 상태 코드 — 400 은 DM 에 맞지 않는 채널 관리 경로의 VALIDATION(역할 정책보다 먼저, 계획 판정 PD9) */
+      owner: 200 | 400;
       request: (fx: DmFixture) => DmRequest | Promise<DmRequest>;
     };
     const DM_CASES: DmCase[] = [
@@ -1024,7 +1024,7 @@ describe("역할 매트릭스(스펙 2장)", () => {
       },
       {
         name: "PATCH /channels/:id {name}",
-        owner: 200,
+        owner: 400,
         request: (fx) => ({
           method: "PATCH",
           url: `/api/v1/channels/${fx.channelId}`,
@@ -1032,8 +1032,8 @@ describe("역할 매트릭스(스펙 2장)", () => {
         }),
       },
       {
-        name: "PATCH /channels/:id {prompt} — admin 정책 경로",
-        owner: 403,
+        name: "PATCH /channels/:id {prompt} — 일반 채널은 admin 정책, DM 은 주인",
+        owner: 200,
         request: (fx) => ({
           method: "PATCH",
           url: `/api/v1/channels/${fx.channelId}`,
@@ -1047,7 +1047,7 @@ describe("역할 매트릭스(스펙 2장)", () => {
       },
       {
         name: "POST /channels/:id/members",
-        owner: 201,
+        owner: 400,
         request: (fx) => ({
           method: "POST",
           url: `/api/v1/channels/${fx.channelId}/members`,
@@ -1056,7 +1056,7 @@ describe("역할 매트릭스(스펙 2장)", () => {
       },
       {
         name: "PATCH /channels/:id/members/:memberId {autoRespond} — admin 정책 경로",
-        owner: 403,
+        owner: 400,
         request: (fx) => ({
           method: "PATCH",
           url: `/api/v1/channels/${fx.channelId}/members/${fx.agent.id}`,
@@ -1065,7 +1065,7 @@ describe("역할 매트릭스(스펙 2장)", () => {
       },
       {
         name: "DELETE /channels/:id/members/:memberId",
-        owner: 200,
+        owner: 400,
         request: (fx) => ({
           method: "DELETE",
           url: `/api/v1/channels/${fx.channelId}/members/${fx.agent.id}`,
@@ -1073,17 +1073,17 @@ describe("역할 매트릭스(스펙 2장)", () => {
       },
       {
         name: "POST /channels/:id/archive",
-        owner: 403,
+        owner: 400,
         request: (fx) => ({ method: "POST", url: `/api/v1/channels/${fx.channelId}/archive` }),
       },
       {
         name: "POST /channels/:id/unarchive",
-        owner: 403,
+        owner: 400,
         request: (fx) => ({ method: "POST", url: `/api/v1/channels/${fx.channelId}/unarchive` }),
       },
       {
         name: "PUT /channels/:id/session-managers/:userId",
-        owner: 403,
+        owner: 400,
         request: (fx) => ({
           method: "PUT",
           url: `/api/v1/channels/${fx.channelId}/session-managers/${mia.id}`,
@@ -1091,7 +1091,7 @@ describe("역할 매트릭스(스펙 2장)", () => {
       },
       {
         name: "DELETE /channels/:id/session-managers/:userId",
-        owner: 403,
+        owner: 400,
         request: (fx) => ({
           method: "DELETE",
           url: `/api/v1/channels/${fx.channelId}/session-managers/${mia.id}`,
@@ -1199,6 +1199,7 @@ describe("역할 매트릭스(스펙 2장)", () => {
       async (_name, _owner, c) => {
         const res = await dmCall(mia.token, await c.request(dmFixture()));
         expect(res.statusCode, res.body).toBe(c.owner);
+        if (c.owner === 400) expect(res.json()).toMatchObject({ code: "VALIDATION" });
       },
     );
 
@@ -1403,7 +1404,7 @@ describe("역할 매트릭스(스펙 2장)", () => {
       },
     );
 
-    it("approval.resolve — 주인 mia 는 NOT_FOUND 가 아니다(member 주인의 결정은 태스크 3)", async () => {
+    it("approval.resolve — member 주인 mia 가 결정한다(DM 의 승인은 역할과 무관하게 주인 — 계획 판정 PD7)", async () => {
       const approval = await dmApproval();
       const socket = await connectWire(app, mia.token);
       sockets.push(socket);
@@ -1411,7 +1412,8 @@ describe("역할 매트릭스(스펙 2장)", () => {
         approvalId: approval.id,
         decision: "deny",
       })) as { ok: boolean; error?: { code: string } };
-      expect(res.ok ? "ok" : res.error?.code).not.toBe("NOT_FOUND");
+      expect(res.ok ? "ok" : res.error?.code, JSON.stringify(res)).toBe("ok");
+      expect(approvalStore.getApproval(app.db, approval.id)).toMatchObject({ decidedBy: mia.id });
     });
 
     // ── 목록 ──
@@ -1463,47 +1465,54 @@ describe("역할 매트릭스(스펙 2장)", () => {
     // ── 제어 도구(개인 토큰 주체) — 같은 서비스를 에이전트 주체도 지난다 ──
     const controlAs = (userId: string, tool: string, args: object) =>
       app.control.call(pat(userId), tool, args);
-    /** owner — 주인 mia(member, 개인 토큰)의 지금 결과. FORBIDDEN 은 역할 정책(태스크 3 이 PD9 로 바꾼다) */
-    const CONTROL_CASES: Array<{ tool: string; owner: "ok" | "FORBIDDEN"; args: (fx: DmFixture) => object }> =
-      [
-        { tool: "get_channel", owner: "ok", args: (fx) => ({ channelId: fx.channelId }) },
-        { tool: "list_conversations", owner: "ok", args: (fx) => ({ channelId: fx.channelId }) },
-        { tool: "read_messages", owner: "ok", args: (fx) => ({ conversationId: fx.conversationId }) },
-        { tool: "get_run", owner: "ok", args: (fx) => ({ runId: fx.runId }) },
-        { tool: "update_channel", owner: "ok", args: (fx) => ({ channelId: fx.channelId, name: "엿보기" }) },
-        {
-          tool: "set_channel_prompt",
-          owner: "FORBIDDEN",
-          args: (fx) => ({ channelId: fx.channelId, prompt: "몰래" }),
-        },
-        {
-          tool: "add_channel_agent",
-          owner: "ok",
-          args: (fx) => ({ channelId: fx.channelId, agentId: newAgent().id }),
-        },
-        {
-          tool: "remove_channel_agent",
-          owner: "ok",
-          args: (fx) => ({ channelId: fx.channelId, agentId: fx.agent.id }),
-        },
-        {
-          tool: "update_channel_agent",
-          owner: "FORBIDDEN",
-          args: (fx) => ({ channelId: fx.channelId, agentId: fx.agent.id, autoRespond: false }),
-        },
-        {
-          tool: "set_relay_policy",
-          owner: "FORBIDDEN",
-          args: (fx) => ({ channelId: fx.channelId, relayPolicy: { maxRelayTurns: 1, allowPairs: "all" } }),
-        },
-        {
-          tool: "set_channel_run_limit",
-          owner: "FORBIDDEN",
-          args: (fx) => ({ channelId: fx.channelId, dailyRunLimit: 3 }),
-        },
-        { tool: "archive_channel", owner: "FORBIDDEN", args: (fx) => ({ channelId: fx.channelId }) },
-        { tool: "unarchive_channel", owner: "FORBIDDEN", args: (fx) => ({ channelId: fx.channelId }) },
-      ];
+    /** owner — 주인 mia(member, 개인 토큰)의 결과. 채널 쓰기 도구는 DM 에 VALIDATION(역할 정책보다 먼저 — 계획 판정 PD9) */
+    const CONTROL_CASES: Array<{
+      tool: string;
+      owner: "ok" | "VALIDATION";
+      args: (fx: DmFixture) => object;
+    }> = [
+      { tool: "get_channel", owner: "ok", args: (fx) => ({ channelId: fx.channelId }) },
+      { tool: "list_conversations", owner: "ok", args: (fx) => ({ channelId: fx.channelId }) },
+      { tool: "read_messages", owner: "ok", args: (fx) => ({ conversationId: fx.conversationId }) },
+      { tool: "get_run", owner: "ok", args: (fx) => ({ runId: fx.runId }) },
+      {
+        tool: "update_channel",
+        owner: "VALIDATION",
+        args: (fx) => ({ channelId: fx.channelId, name: "엿보기" }),
+      },
+      {
+        tool: "set_channel_prompt",
+        owner: "VALIDATION",
+        args: (fx) => ({ channelId: fx.channelId, prompt: "몰래" }),
+      },
+      {
+        tool: "add_channel_agent",
+        owner: "VALIDATION",
+        args: (fx) => ({ channelId: fx.channelId, agentId: newAgent().id }),
+      },
+      {
+        tool: "remove_channel_agent",
+        owner: "VALIDATION",
+        args: (fx) => ({ channelId: fx.channelId, agentId: fx.agent.id }),
+      },
+      {
+        tool: "update_channel_agent",
+        owner: "VALIDATION",
+        args: (fx) => ({ channelId: fx.channelId, agentId: fx.agent.id, autoRespond: false }),
+      },
+      {
+        tool: "set_relay_policy",
+        owner: "VALIDATION",
+        args: (fx) => ({ channelId: fx.channelId, relayPolicy: { maxRelayTurns: 1, allowPairs: "all" } }),
+      },
+      {
+        tool: "set_channel_run_limit",
+        owner: "VALIDATION",
+        args: (fx) => ({ channelId: fx.channelId, dailyRunLimit: 3 }),
+      },
+      { tool: "archive_channel", owner: "VALIDATION", args: (fx) => ({ channelId: fx.channelId }) },
+      { tool: "unarchive_channel", owner: "VALIDATION", args: (fx) => ({ channelId: fx.channelId }) },
+    ];
 
     it.each(CONTROL_CASES.flatMap((c) => ROLES.map((role) => [c.tool, role, c] as const)))(
       "제어 %s — 주인 아닌 %s 는 NOT_FOUND",
