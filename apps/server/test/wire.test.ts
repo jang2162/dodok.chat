@@ -18,6 +18,8 @@ import type { App } from "../src/app";
 import { attachments, componentInteractions, messageReactions } from "../src/db/schema.sqlite";
 import { apiError } from "../src/http/errors";
 import type { Logger } from "../src/logger";
+import { createAgent } from "../src/modules/agents/service";
+import { upsertApproval } from "../src/modules/approvals/store";
 import { toAttachment } from "../src/modules/attachments/service";
 import { createChannel, getChannel, listMembers } from "../src/modules/channels/service";
 import { createSystemMessage, createUserMessage, listMessages } from "../src/modules/messages/service";
@@ -536,6 +538,26 @@ describe("wire (attachWire 단독 — route·runs 주입)", () => {
   }
   const newChannel = (name: string) =>
     createChannel(app.db, { workspaceId: app.workspaceId, createdBy: app.ownerUserId, name });
+  /** 저장된 승인 — approval.resolve 는 없는 승인이면 runs 로 가기 전에 NOT_FOUND 로 답한다(남의 DM 승인과 같은 답) */
+  const storedApprovalId = (channelId: string): string =>
+    upsertApproval(app.db, {
+      providerApprovalId: `plugin:${uuid()}`,
+      kind: "plugin",
+      channelId,
+      conversationId: channelConversation(app.db, channelId),
+      agentId: createAgent(app.db, {
+        workspaceId: app.workspaceId,
+        providerAgentId: `ap${uuid().slice(-8)}`,
+        handle: `ap${uuid().slice(-8)}`,
+        name: "ap",
+      }).id,
+      title: "Write 실행",
+      severity: "warning",
+      allowedDecisions: ["allow-once", "deny"],
+      status: "pending",
+      createdAt: new Date(),
+      expiresAt: new Date(Date.now() + 120_000),
+    }).approval.id;
 
   it("런 핸들러 — runs 가 없으면 ADAPTER_UNAVAILABLE, 입력이 틀리면 VALIDATION", async () => {
     const socket = await start({});
@@ -553,7 +575,10 @@ describe("wire (attachWire 단독 — route·runs 주입)", () => {
       }),
     ).toMatchObject(unavailable);
     expect(
-      await socket.emitWithAck("approval.resolve", { approvalId: uuid(), decision: "allow-once" }),
+      await socket.emitWithAck("approval.resolve", {
+        approvalId: storedApprovalId(newChannel("solo-unavailable").id),
+        decision: "allow-once",
+      }),
     ).toMatchObject(unavailable);
     expect(await socket.emitWithAck("run.abort", { runId: "x" } as never)).toMatchObject({
       ok: false,
@@ -727,7 +752,7 @@ describe("wire (attachWire 단독 — route·runs 주입)", () => {
     });
     expect(runs.interact).toHaveBeenCalledWith({ ...interact, userId: app.ownerUserId });
 
-    const approvalId = uuid();
+    const approvalId = storedApprovalId(channel.id);
     expect(await socket.emitWithAck("approval.resolve", { approvalId, decision: "deny" })).toEqual({
       ok: true,
       data: null,

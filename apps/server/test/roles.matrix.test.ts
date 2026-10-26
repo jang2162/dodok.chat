@@ -1198,7 +1198,7 @@ describe("역할 매트릭스(스펙 2장)", () => {
     // wire — 주인이 아니면 ack NOT_FOUND, 주인은 owner 결과(ok 또는 오류 코드)
     type WireCase = {
       name: string;
-      owner: "ok";
+      owner: "ok" | "VALIDATION";
       emit: (socket: WireClient, fx: DmFixture) => Promise<unknown>;
     };
     const WIRE_CASES: WireCase[] = [
@@ -1260,6 +1260,18 @@ describe("역할 매트릭스(스펙 2장)", () => {
             componentId: fx.answer.components?.id ?? "",
             itemId: "go",
             values: {},
+          }),
+      },
+      {
+        // 읽을 수 있는 일반 채널 + 남의 DM 의 대화 — 남에게는 없는 대화와 같고, 주인에게는 다른 채널의 세션이라 VALIDATION
+        name: "message.send {일반 채널 + DM 대화}",
+        owner: "VALIDATION",
+        emit: (socket, fx) =>
+          socket.emitWithAck("message.send", {
+            channelId: newChannel().id,
+            conversationId: fx.conversationId,
+            clientMsgId: `dm-cross-${++n}`,
+            bodyMd: "엿보기",
           }),
       },
     ];
@@ -1367,6 +1379,20 @@ describe("역할 매트릭스(스펙 2장)", () => {
         expect(res).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
         expect(adapter.calls.resolveApproval.length).toBe(sent);
         expect(approvalStore.getApproval(app.db, approval.id)?.status).toBe("pending");
+      },
+    );
+
+    it.each(ROLES)(
+      "approval.resolve — 없는 승인은 %s 에게도 ack NOT_FOUND(남의 DM 승인과 같은 답 — 승인 서비스와 같은 문구)",
+      async (role) => {
+        const socket = await connectWire(app, tokens[role]);
+        sockets.push(socket);
+        expect(
+          await socket.emitWithAck("approval.resolve", { approvalId: uuid(), decision: "deny" }),
+        ).toEqual({
+          ok: false,
+          error: { code: "NOT_FOUND", message: "approval not found" },
+        });
       },
     );
 

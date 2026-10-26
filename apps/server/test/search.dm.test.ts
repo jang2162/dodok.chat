@@ -1,6 +1,7 @@
 import { v7 as uuid } from "uuid";
 import { describe, expect, it } from "vitest";
-import { users } from "../src/db/schema.sqlite";
+import { and, eq } from "drizzle-orm";
+import { channelMembers, messages, users } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
 import { createChannel } from "../src/modules/channels/service";
 import { createUserMessage } from "../src/modules/messages/service";
@@ -50,7 +51,7 @@ function setup() {
     say(dmConversation, mia, 4);
     say(channelConversation, other, 1);
   }
-  return { db, workspaceId, mia, other, dm, channel };
+  return { db, bus, workspaceId, mia, other, agent, dm, channel, channelConversation };
 }
 
 /** 커서를 끝까지 따라가며 모든 페이지를 모은다 */
@@ -90,5 +91,32 @@ describe("검색 — 남의 DM 은 SQL 에서 거른다", () => {
     const res = searchMessages(db, workspaceId, other, { q: "배포" }, NOW);
     expect(res.hits).toHaveLength(30);
     expect(new Set(res.hits.map((h) => h.channelId))).toEqual(new Set([channel.id]));
+  });
+
+  it("남의 DM 에만 붙은 에이전트 별칭은 그 에이전트로 풀리지 않는다 — 주인에게만 풀린다", () => {
+    const { db, bus, workspaceId, mia, other, agent, dm, channel, channelConversation } = setup();
+    // 별칭은 DM 의 에이전트 멤버 행에만(PD9 가 DM 멤버 바꾸기를 막으므로 DB 에 직접 넣는다)
+    db.update(channelMembers)
+      .set({ aliases: ["secretnick"] })
+      .where(and(eq(channelMembers.channelId, dm.id), eq(channelMembers.memberId, agent.id)))
+      .run();
+    // 일반 채널의 그 에이전트 멘션 — 본문에는 토큰만 있어 글자 「@secretnick」 로는 걸리지 않는다
+    const mention = createUserMessage(db, bus, {
+      conversationId: channelConversation,
+      authorId: other,
+      bodyMd: "임시",
+      clientMsgId: "alias-mention",
+    });
+    db.update(messages)
+      .set({ bodyMd: `<@a:${agent.id}> 회의록` })
+      .where(eq(messages.id, mention.id))
+      .run();
+    const hits = (userId: string) =>
+      searchMessages(db, workspaceId, userId, { q: "@secretnick" }, NOW).hits.map((h) => [
+        h.messageId,
+        h.channelId,
+      ]);
+    expect(hits(other)).toEqual([]);
+    expect(hits(mia)).toEqual([[mention.id, channel.id]]);
   });
 });

@@ -10,7 +10,7 @@ import { assertChannelWritable, getChannel, isSessionManager } from "../channels
 import { createSystemMessage } from "../messages/service";
 import { type HandleOf, readableGlyphs, readableWindow } from "../search/readable";
 import { mentionHandleOf } from "../search/service";
-import { createConversation, getConversation, rowToConversation } from "./store";
+import { createConversation, getConversation, getReadableConversation, rowToConversation } from "./store";
 
 /** 자동 제목 길이(코드 포인트) — 채널 세션 계획 Global Constraints */
 const AUTO_TITLE_MAX = 40;
@@ -60,7 +60,8 @@ export function resolveSendConversation(
   if ((input.conversationId === undefined) === (input.newConversation === undefined))
     throw apiError("VALIDATION", "conversationId 와 newConversation 가운데 정확히 하나가 있어야 한다");
   if (input.conversationId !== undefined) {
-    const conversation = getConversation(tx, input.conversationId, channel.workspaceId);
+    // 남의 DM 의 대화는 없는 대화와 같다 — 읽을 수 있는 다른 채널의 대화만 VALIDATION(auth/channel-access.ts)
+    const conversation = getReadableConversation(tx, input.conversationId, channel.workspaceId, input.userId);
     if (!conversation) throw apiError("NOT_FOUND", "conversation not found");
     if (conversation.channelId !== channel.id) throw apiError("VALIDATION", "다른 채널의 세션이다");
     return { conversationId: conversation.id };

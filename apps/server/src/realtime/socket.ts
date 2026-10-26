@@ -367,10 +367,11 @@ export function attachWire(io: WireServer, ctx: WireContext): void {
       if (limited("approval.resolve")) return reply(ack, RATE_LIMITED);
       const res = await settle(ctx.logger, "approval.resolve", async () => {
         const { approvalId, decision } = parsePayload(ApprovalResolve, raw);
-        // 남의 DM 의 승인은 역할 판정(403)보다 먼저 없는 승인과 같은 404 — 있다는 것이 드러나지 않게(auth/channel-access.ts)
+        // 없는 승인과 남의 DM 의 승인은 역할 판정(403)보다 먼저 같은 404(승인 서비스와 같은 문구) — member 가 403·404 로 둘을 가르지
+        // 못하게(auth/channel-access.ts). 다른 워크스페이스의 승인은 승인 서비스가 지금처럼 거절한다
         const approval = getApproval(ctx.db, approvalId);
         const approvalChannel = approval && getChannel(ctx.db, approval.channelId, ctx.workspaceId);
-        if (approvalChannel && !canReadChannel({ userId }, approvalChannel))
+        if (!approval || (approvalChannel && !canReadChannel({ userId }, approvalChannel)))
           throw apiError("NOT_FOUND", "approval not found");
         // wire 에서 역할을 보는 이벤트는 이것 하나다(팀 스펙 「역할과 권한」). 역할은 이벤트마다 다시 읽는다.
         // 확인 카드(dodok_control)는 그 일을 시킨 사람 본인이 결정한다 — 역할은 보지 않고, 본인인지는 승인 서비스가 본다(계획 판정 PC4)
