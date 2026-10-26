@@ -403,6 +403,34 @@ describe("Claude 러너 통합 시나리오", () => {
     expect(other.runStarts.map((s) => s.deliver.runId)).toEqual([moved.id]);
   });
 
+  it("다시 묶어도 도는 런은 옛 러너에서 끝까지 간다 — 묶인 뒤 온 post·최종 답이 그 런의 글로 저장되고 런이 끝난다 [dm-t4 I1]", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const acks: Array<{ ok: boolean; messageId?: string }> = [];
+    const { coder, channel, log } = await start(async (run) => {
+      await gate;
+      acks.push((await run.post({ text: "카드" })) as { ok: boolean; messageId?: string });
+      run.final("최종 답");
+    });
+    await sendMessage(log.socket, channel.id, "@coder 일해");
+    const run = await runOf(log, coder.id);
+    const second = await issueToken("desktop");
+    const res = await live.app.fastify.inject({
+      method: "PUT",
+      url: `/api/v1/setup/runner-tokens/${second.record.id}/agents/coder`,
+      headers: live.auth.headers,
+    });
+    expect(res.statusCode).toBe(200);
+    release();
+
+    expect((await log.terminal(run.id)).status).toBe("done");
+    const mine = log.created.filter((m) => m.authorType === "agent" && m.runId === run.id);
+    expect(mine.map((m) => m.bodyMd)).toEqual(["카드", "최종 답"]);
+    expect(acks).toEqual([{ ok: true, messageId: mine[0]?.id }]);
+  });
+
   const ruleNotices = (log: WireLog) =>
     log.created.filter((m) => m.systemMeta?.kind === "info" && m.bodyMd.startsWith("채널 규칙이 바뀌어"));
 

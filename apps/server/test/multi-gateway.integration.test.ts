@@ -3,10 +3,11 @@
  * 두 Gateway 에 같은 id `main` 을 두고 핸들 main-office·main-home 으로 같은 채널에서 부른다(세션 키가 글자까지 같다).
  * 실제 시계. 기다림은 전부 wire 이벤트(WireLog.until)로 한다.
  */
-import type { Agent, Channel, Message } from "@dodok/shared";
+import { type Agent, type Channel, dodokSessionKey, type Message } from "@dodok/shared";
 import { eq } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { approvals, runs } from "../src/db/schema.sqlite";
+import { approvals, messages, runs } from "../src/db/schema.sqlite";
 import { createScenario, type ScenarioAgent } from "./fakes/scenario";
 import { bootLiveApp, type LiveApp, type LiveGateway } from "./helpers/live-app";
 import { PDF_BYTES } from "./helpers/png";
@@ -228,6 +229,48 @@ describe("멀티 Gateway 통합 — 가짜 Gateway·플러그인 둘", () => {
     expect(runRow(relay.id)?.connectionId).toBe(home.gatewayId);
     expect(sc.office.errors).toEqual([]);
     expect(sc.home.errors).toEqual([]);
+  });
+
+  it("집 dev 가 사무실 dev 의 DM 세션 키·runId 를 대도 저장 0 — 같은 id 라도 런은 그 런의 Gateway 정본만 받는다 [dm-t4 L3]", async () => {
+    const devOffice = await registerAgent(office, "dev", "dev");
+    await registerAgent(home, "dev", "dev-home");
+    const { channel: dm } = await ok(
+      "POST /dms",
+      api<{ channel: Channel }>("POST", "/dms", { agentId: devOffice.id }),
+    );
+    const log = await openChannelWire(live, dm.id, sockets);
+    scenarios({ office: { dev: () => ({ deltas: ["생각 중"], reply: "끝", holdFinal: true }) }, home: {} });
+    const sent = await log.socket.emitWithAck("message.send", {
+      channelId: dm.id,
+      clientMsgId: randomUUID(),
+      bodyMd: "붙잡아 둬",
+      newConversation: { title: "DM 세션" },
+    });
+    if (!sent.ok || !sent.data.conversation) throw new Error("DM 세션이 없다");
+    const conversationId = sent.data.conversation.id;
+    const dmRun = await log.until(
+      () => log.states.find((s) => s.agentId === devOffice.id && s.status === "streaming"),
+      "사무실 dev 의 DM 런 streaming",
+    );
+
+    const outboundId = "home-dev-office-dm-key";
+    const outcome = await home.plugin
+      .sendOutbound({
+        outboundId,
+        conversationId,
+        agentId: "dev",
+        sessionKey: dodokSessionKey("dev", conversationId),
+        runId: dmRun.id,
+        text: "남의 Gateway 의 DM 으로",
+        attachmentIds: [],
+      })
+      .then(
+        () => "stored",
+        (err: Error) => err.message,
+      );
+    const stored = live.app.db.select().from(messages).where(eq(messages.externalId, outboundId)).all();
+    expect([outcome, stored.length]).toEqual(["FORBIDDEN: 이 대화에만 보낼 수 있습니다", 0]);
+    expect(runRow(dmRun.id)?.status).toBe("streaming");
   });
 
   it("Gateway 삭제 → 열린 런 ADAPTER_UNAVAILABLE·에이전트 연결 비움, 같은 id 가 있는 곳으로는 못 옮기고, 옮긴 뒤 「다시 실행」이 새 Gateway 에서 돈다(Review Focus 4)", async () => {
