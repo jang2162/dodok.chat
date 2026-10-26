@@ -3,6 +3,7 @@ import { PlusIcon, SearchIcon, SettingsIcon } from "lucide-react";
 import { useCanManage, useMe } from "@/api/queries";
 import { ChannelList } from "@/features/channels/ChannelList";
 import { CreateChannelDialog } from "@/features/channels/CreateChannelDialog";
+import { DmSection } from "@/features/dms/DmSection";
 import { useOpenSearch } from "@/features/search/openSearch";
 import { OpsBadge } from "@/features/settings-shell/OpsBadge";
 import { Button } from "@/ui/button";
@@ -10,6 +11,7 @@ import { ConnectionDots } from "./ConnectionDots";
 
 /**
  * 왼쪽 사이드바(스펙 2.4): 워크스페이스 이름, 검색 칸(검색 대화상자를 연다 — 스레드·검색 스펙 5.4), 채널 목록·「채널 만들기」,
+ * 「다이렉트 메시지」 절(에이전트 DM 스펙 3.1 — 채널 목록과 같은 스크롤 상자),
  * 하단은 연결 상태와 「설정」 하나(설정 통합 스펙 「사이드바」 절 — 에이전트·멤버·연결·운영·알림·내 계정·로그아웃은 `/settings` 의 탭).
  * 「설정」의 배지는 admin 이상에게만 — 확인 안 한 운영 사건 수(운영 탭과 같은 값).
  * 이름은 `GET /auth/me` 의 `workspace.name` — 아직 못 받았거나 주지 않는 서버면 「dodok」.
@@ -42,16 +44,23 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           </kbd>
         </button>
       </div>
-      <nav aria-label="채널" className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-2 pb-2">
-        <p className="px-2 pt-1 text-xs font-medium text-muted-foreground">채널</p>
-        <ChannelList onNavigate={onNavigate} />
-        <CreateChannelDialog onCreated={onNavigate}>
-          <Button variant="ghost" size="sm" className="justify-start px-2 font-normal text-muted-foreground">
-            <PlusIcon />
-            채널 만들기
-          </Button>
-        </CreateChannelDialog>
-      </nav>
+      <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-2 pb-2">
+        <nav aria-label="채널" className="flex flex-col gap-1">
+          <p className="px-2 pt-1 text-xs font-medium text-muted-foreground">채널</p>
+          <ChannelList onNavigate={onNavigate} />
+          <CreateChannelDialog onCreated={onNavigate}>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="justify-start px-2 font-normal text-muted-foreground"
+            >
+              <PlusIcon />
+              채널 만들기
+            </Button>
+          </CreateChannelDialog>
+        </nav>
+        <DmSection onNavigate={onNavigate} />
+      </div>
       <div className="flex h-11 shrink-0 items-center justify-between gap-2 border-t pr-2 pl-4">
         <ConnectionDots />
         <Link

@@ -3,6 +3,7 @@ import { useMemo } from "react";
 import { ApiRequestError, NetworkError } from "@/api/http";
 import { useArchivedChannels, useChannels } from "@/api/queries";
 import { useLoadAutomationAuthors } from "@/features/automations/queries";
+import { useDms } from "@/features/dms/queries";
 import { useAuthors } from "@/features/messages/useAuthors";
 import { Button } from "@/ui/button";
 import { Snippet } from "./highlight";
@@ -22,7 +23,8 @@ export function searchErrorText(e: unknown): string {
 /**
  * 결과 목록(스레드·검색 스펙 5.4) — 줄마다 채널·작성자·시각·스니펫(일치 부분 강조), 답글이면 「스레드 답글」, 보관한 채널이면 「보관됨」
  * (누르면 읽기 전용 채널 화면으로 간다 — 채널 화면이 상세를 받아 안다).
- * 누르면 `onPick`. 2글자 검색(`limited`)은 「더 보기」 없이 범위 안내 한 줄. 다음 쪽이 실패하면(429 포함) 받은 결과 아래에 한 줄
+ * 누르면 `onPick`. 2글자 검색(`limited`)은 「더 보기」 없이 범위 안내 한 줄. 다음 쪽이 실패하면(429 포함) 받은 결과 아래에 한 줄.
+ * 내 DM 의 결과(서버는 주인에게만 준다 — 에이전트 DM 계획 판정 PD3)는 채널 이름 대신 「DM · <에이전트 이름>」
  */
 export function SearchResults({
   search,
@@ -34,9 +36,14 @@ export function SearchResults({
   const channels = useChannels().data;
   // 보관한 채널은 사이드바 목록에 없다 — 그 결과가 있을 때만 보관 목록을 받아 이름을 찾는다
   const archived = useArchivedChannels({ enabled: search.hits.some((h) => h.channelArchived) }).data;
+  const dms = useDms().data;
   const nameOf = useMemo(
-    () => new Map([...(channels ?? []), ...(archived ?? [])].map((c) => [c.id, c.name])),
-    [channels, archived],
+    () =>
+      new Map([
+        ...[...(channels ?? []), ...(archived ?? [])].map((c): [string, string] => [c.id, `#${c.name}`]),
+        ...(dms ?? []).map((d): [string, string] => [d.channel.id, `DM · ${d.agent.name}`]),
+      ]),
+    [channels, archived, dms],
   );
   const { author } = useAuthors();
   useLoadAutomationAuthors(search.hits);
@@ -75,7 +82,7 @@ export function SearchResults({
               >
                 <span className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
                   <span className="font-medium text-foreground">
-                    #{nameOf.get(hit.channelId) ?? "알 수 없는 채널"}
+                    {nameOf.get(hit.channelId) ?? "#알 수 없는 채널"}
                   </span>
                   <span className="max-w-48 truncate" title={hit.conversationTitle}>
                     {hit.conversationTitle}

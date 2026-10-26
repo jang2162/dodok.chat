@@ -20,6 +20,8 @@ export type NotifyContext = {
   handle?: string;
   /** 채널 이름 — 본문 한 줄 */
   channelName?: string;
+  /** DM 의 승인 — 본문은 「DM」(채널 이름을 싣지 않는다, 에이전트 DM 계획 판정 PD7) */
+  dm?: boolean;
 };
 
 /** 전역이 없는 환경(jsdom·구형 브라우저)에서도 던지지 않게 이름으로 확인한다 */
@@ -87,7 +89,7 @@ export function notifyApproval(a: Approval, ctx: NotifyContext): boolean {
   try {
     made = new N(approvalNotifyTitle(a, ctx.handle), {
       tag: `approval:${a.id}`,
-      ...(ctx.channelName ? { body: `${ctx.channelName} 채널` } : {}),
+      ...(ctx.dm ? { body: "DM" } : ctx.channelName ? { body: `${ctx.channelName} 채널` } : {}),
     });
   } catch {
     // 모바일 크롬은 서비스 워커 밖의 생성자를 막는다(웹 푸시를 켜면 그쪽이 알린다)

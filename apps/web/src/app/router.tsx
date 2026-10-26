@@ -186,6 +186,16 @@ export const channelThreadRoute = createRoute({
   component: lazyPage(() => import("@/features/threads/ThreadPanel"), "ThreadPanel"),
 });
 /**
+ * DM 열기(에이전트 DM 계획 판정 PD2) — 그 에이전트와의 DM 채널을 찾거나 만들어(`POST /dms`) `/c/<DM 채널>` 로 넘긴다. 화면은 DM 채널
+ * 경로가 그린다(채널 화면이 `kind === "dm"` 이면 DM 꼴). 만들기는 POST 라 `beforeLoad` 가 아니라 화면이 한다 — 미리 불러오기·다시 검증이
+ * 요청을 내지 않게
+ */
+export const dmRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/dm/$agentId",
+  component: lazyPage(() => import("@/features/dms/DmRedirect"), "DmRedirect"),
+});
+/**
  * 세션 전의 채널 주소(즐겨찾기·옛 알림 링크·채널 만들기 뒤의 설정) — 최근 세션의 같은 탭으로 넘긴다. 기록을 바꿔 쓴다(뒤로 가기가
  * 이 주소로 돌아와 다시 넘겨지지 않게)
  */
@@ -303,6 +313,7 @@ const routeTree = rootRoute.addChildren([
       legacyChannelActivityRoute,
       legacyChannelThreadRoute,
     ]),
+    dmRoute,
     settingsRoute.addChildren([
       settingsIndexRoute,
       accountRoute,

@@ -1,13 +1,18 @@
-import type { Agent } from "@dodok/shared";
+import type { Agent, DmAccess } from "@dodok/shared";
+import { Link } from "@tanstack/react-router";
+import { MessageCircleIcon } from "lucide-react";
 import { type FormEvent, type Ref, useId, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { agentColorVar } from "@/theme/agentColor";
 import { Button } from "@/ui/button";
 import { Label } from "@/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/ui/radio-group";
 import { Switch } from "@/ui/switch";
 import { Textarea } from "@/ui/textarea";
 import { formError } from "@/api/formErrors";
-import { useIsOwner } from "@/api/queries";
+import { useIsOwner, useRole } from "@/api/queries";
+import { canOpenDm } from "@/features/dms/queries";
+import { FieldError } from "@/ui/field-error";
 import { ConfirmDialog } from "@/features/settings/ConfirmDialog";
 import { josa } from "@/lib/josa";
 import { MoveGatewayDialog } from "./MoveGatewayDialog";
@@ -22,7 +27,9 @@ const PROMPT_MAX = 20_000;
  * OpenClaw 에이전트의 「Gateway 옮기기」는 owner 에게만(멀티 Gateway 스펙 「권한」 절) — 연결이 빈 줄뿐 아니라 어느 줄에서나 옮길 수 있다.
  * 연결이 빈 줄의 안내도 역할에 맞춘다 — 옮길 수 없는 admin·member 에게 옮기라고 권하지 않는다.
  * 「삭제」(보관, admin 이상 — 스펙 「에이전트 보관」 절)는 확인 뒤 보낸다. 보관하면 줄이 목록에서 빠지므로 `onArchived` 가 초점을 옮긴다.
- * `focusRef` 는 사용 토글에 붙는다 — 페이지가 되살린 줄로 초점을 옮기는 자리다
+ * `focusRef` 는 사용 토글에 붙는다 — 페이지가 되살린 줄로 초점을 옮기는 자리다.
+ * 「DM 보내기」는 지금 내 역할로 이 에이전트와 DM 을 열 수 있을 때만(에이전트 DM 스펙 3.1), DM 허용 범위(`dmAccess`)는 admin 이상이 바꾸고
+ * 아래 사람에게는 값만 보인다(스펙 결정 4)
  */
 export function AgentRow({
   agent,
@@ -37,6 +44,7 @@ export function AgentRow({
 }) {
   const toggle = usePatchAgent();
   const owner = useIsOwner();
+  const role = useRole();
   const handle = `@${agent.handle}`;
   const openclaw = agent.provider === "openclaw";
   return (
@@ -67,6 +75,14 @@ export function AgentRow({
             </p>
           )}
         </div>
+        {canOpenDm(agent, role) && (
+          <Button asChild variant="outline" size="sm">
+            <Link to="/dm/$agentId" params={{ agentId: agent.id }} aria-label={`${handle} DM 보내기`}>
+              <MessageCircleIcon />
+              DM 보내기
+            </Link>
+          </Button>
+        )}
         {openclaw && owner && <MoveGatewayDialog agent={agent} />}
         {!readOnly && <ArchiveAgentButton agent={agent} onArchived={onArchived} />}
         <Switch
@@ -78,7 +94,79 @@ export function AgentRow({
         />
       </div>
       <BasePromptEditor agent={agent} readOnly={readOnly} />
+      <DmAccessField agent={agent} readOnly={readOnly} />
     </li>
+  );
+}
+
+/** `dmAccess` 선택지(에이전트 DM 계획 Global Constraints — 글자 그대로) */
+const DM_ACCESS_LABEL: Record<DmAccess, string> = { off: "끔", admins: "admin 이상", everyone: "모두" };
+/** 「모두」 아래 설명 — 「모두」는 member 가 이 에이전트의 도구 승인을 스스로 한다는 뜻이다(에이전트 DM 스펙 결정 5) */
+export const DM_ACCESS_EVERYONE_NOTE =
+  "member 도 이 에이전트와 DM 을 열고, 그 DM 의 도구 승인을 스스로 결정합니다.";
+
+/**
+ * DM 허용 범위(에이전트 DM 스펙 결정 4) — 누가 이 에이전트와 새 DM 을 여나. 고르는 즉시 저장한다(채널의 세션 정책과 같은 방식). 좁히면 그
+ * 범위 밖 사람의 DM 은 읽기 전용이 된다(서버가 판정 — wire `agents.changed` 로 그 사람의 화면이 바뀐다). `readOnly`(admin 미만)면 값만 보인다.
+ * 「모두」의 설명은 고르기 전에도 늘 보인다 — 무엇을 허락하는지 알고 고르게
+ */
+function DmAccessField({ agent, readOnly }: { agent: Agent; readOnly: boolean }) {
+  const save = usePatchAgent();
+  const [error, setError] = useState<string>();
+  const id = useId();
+  const handle = `@${agent.handle}`;
+  const value = agent.dmAccess;
+
+  function choose(next: string) {
+    if (readOnly || save.isPending || next === value || !(next in DM_ACCESS_LABEL)) return;
+    setError(undefined);
+    save.mutate(
+      { id: agent.id, patch: { dmAccess: next as DmAccess } },
+      { onError: (err) => setError(formError(err)) },
+    );
+  }
+
+  if (readOnly)
+    return (
+      <p className="text-sm text-muted-foreground">
+        DM 허용: <span className="text-foreground">{DM_ACCESS_LABEL[value]}</span>
+      </p>
+    );
+  return (
+    <div className="flex flex-col gap-2">
+      <p aria-hidden className="text-sm font-medium">
+        DM 허용
+      </p>
+      <RadioGroup
+        aria-label={`${handle} DM 허용`}
+        aria-describedby={error ? `${id}-error` : undefined}
+        value={value}
+        onValueChange={choose}
+        disabled={save.isPending}
+        className="flex flex-col gap-2"
+      >
+        {(["off", "admins", "everyone"] as const).map((option) => (
+          <div key={option} className="flex flex-col gap-0.5">
+            <div className="flex items-center gap-2">
+              <RadioGroupItem
+                id={`${id}-${option}`}
+                value={option}
+                aria-describedby={option === "everyone" ? `${id}-everyone-note` : undefined}
+              />
+              <Label htmlFor={`${id}-${option}`} className="font-normal">
+                {DM_ACCESS_LABEL[option]}
+              </Label>
+            </div>
+            {option === "everyone" && (
+              <p id={`${id}-everyone-note`} className="pl-6 text-xs text-muted-foreground">
+                {DM_ACCESS_EVERYONE_NOTE}
+              </p>
+            )}
+          </div>
+        ))}
+      </RadioGroup>
+      <FieldError id={`${id}-error`}>{error}</FieldError>
+    </div>
   );
 }
 

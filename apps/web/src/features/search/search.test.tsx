@@ -22,6 +22,7 @@ import { DEV } from "../../../test/messages";
 import { automationOf } from "../../../test/automationsServer";
 import { stubScrollLayout } from "../../../test/scrollLayout";
 import { channelOf, json, ME, renderRoute, shellGet } from "../../../test/shellApi";
+import { dmChannelOf, dmOf } from "../../../test/dms";
 import { SEARCH_DEBOUNCE_MS } from "./useSearch";
 
 const wire = vi.hoisted(() => ({ socket: undefined as unknown }));
@@ -256,6 +257,19 @@ describe("검색하기", () => {
     expect(within(result).getByText("<b>배포</b>").tagName).toBe("MARK");
     // 결과 줄: 채널 이름·작성자
     expect(result).toHaveTextContent("#general");
+  });
+
+  it("내 DM 의 결과는 채널 이름 대신 「DM · <에이전트 이름>」(에이전트 DM 계획 판정 PD3)", async () => {
+    const dm = dmChannelOf(uid(9), ME.user.id, DEV.id);
+    routes.set("/api/v1/dms", () => json(200, { dms: [dmOf(dm, DEV)] }));
+    search = () =>
+      json(200, { hits: [hitOf(msg(70, { channelId: dm.id, conversationId: uid(91) }))], limited: false });
+    renderRoute(`/c/${CH}/s/${CH}`, subscribedClient());
+    const dialog = await openWith({ metaKey: true });
+    await typeQuery("배포");
+    const result = await within(dialog).findByRole("button", { name: /배포/ });
+    await waitFor(() => expect(result).toHaveTextContent(`DM · ${DEV.name}`));
+    expect(result).not.toHaveTextContent("#");
   });
 
   it("필터 — 채널·사람/에이전트·기간이 요청에 실린다", async () => {

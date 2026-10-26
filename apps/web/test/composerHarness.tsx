@@ -2,6 +2,7 @@ import type { Agent, ChannelMember, Message, Result } from "@dodok/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Editor, JSONContent } from "@tiptap/core";
 import { act, render, screen } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { qk } from "@/api/queries";
 import { Composer } from "@/features/composer/Composer";
 import { AGENT, CH, CH2, USER, msg, uid } from "./fixtures";
@@ -53,7 +54,12 @@ export const mention = (id: string, label: string): JSONContent => ({
 export const doc = (...content: JSONContent[]): JSONContent => ({ type: "doc", content });
 
 /** 캐시를 채운 채 띄운다(조회 없음). 편집기는 ProseMirror 요소에 붙은 Tiptap 인스턴스 */
-export function renderComposer(channelId = CH, me: { role?: string } = ME) {
+export function renderComposer(
+  channelId = CH,
+  me: { role?: string } = ME,
+  /** 작성기 바깥에 씌울 컨텍스트(DM 보기 등) */
+  wrap: (children: ReactNode) => ReactNode = (children) => children,
+) {
   const qc = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, retry: false } } });
   qc.setQueryData(qk.me, me);
   qc.setQueryData(qk.people, [{ id: USER, handle: "owner", displayName: "주인", role: "owner" }]);
@@ -62,7 +68,7 @@ export function renderComposer(channelId = CH, me: { role?: string } = ME) {
   qc.setQueryData(qk.members(CH2), []);
   const view = render(
     <QueryClientProvider client={qc}>
-      <Composer channelId={channelId} conversationId={channelId} />
+      {wrap(<Composer channelId={channelId} conversationId={channelId} />)}
     </QueryClientProvider>,
   );
   const box = screen.getByRole("textbox", { name: "메시지 입력" });
@@ -70,7 +76,7 @@ export function renderComposer(channelId = CH, me: { role?: string } = ME) {
   const rerender = (ch: string) =>
     view.rerender(
       <QueryClientProvider client={qc}>
-        <Composer channelId={ch} conversationId={ch} />
+        {wrap(<Composer channelId={ch} conversationId={ch} />)}
       </QueryClientProvider>,
     );
   return { box, editor, rerender, qc };

@@ -10,6 +10,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { type ReactElement, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { meQuery, useCachedMe } from "@/api/queries";
+import { useDmView } from "@/features/dms/context";
 import { useAuthors } from "@/features/messages/useAuthors";
 import { cn } from "@/lib/utils";
 import { emitAck, useWireStatus, WireAckError } from "@/realtime/wire";
@@ -130,6 +131,8 @@ export function ApprovalCard({
   const view = useApprovalStore((s) => s.byChannel[channelId]?.[approvalId]);
   const { author } = useAuthors();
   const me = useCachedMe();
+  // DM 의 승인은 주인만 결정한다(에이전트 DM 계획 판정 PD7) — 채널 화면이 DM 이면 내려 준다
+  const dm = useDmView();
   const pending = view?.approval.status === "pending";
   const { label: remaining, expired } = useRemaining(view?.approval.expiresAt ?? "", pending);
   /**
@@ -157,7 +160,7 @@ export function ApprovalCard({
   if (!view) return null;
 
   const { approval, sending } = view;
-  const canDecide = canDecideApproval(approval, me);
+  const canDecide = canDecideApproval(approval, me, dm?.channel.dmOwnerId);
   const control = approval.kind === "dodok_control";
   const { Icon, label: severityLabel, tone, bar } = LOOK[approval.severity];
   const agent = author({ authorType: "agent", authorId: approval.agentId });

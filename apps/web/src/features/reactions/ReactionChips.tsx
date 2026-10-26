@@ -1,5 +1,6 @@
 import type { Message, ReactionEmoji } from "@dodok/shared";
 import { useChannelArchived } from "@/features/channels/archived";
+import { useDmView } from "@/features/dms/context";
 import { useConversationClosed } from "@/features/conversations/closed";
 import { UNKNOWN_NAME, useAuthors } from "@/features/messages/useAuthors";
 import { cn } from "@/lib/utils";
@@ -23,7 +24,9 @@ export function ReactionChips({
   // 보관한 채널·닫힌 세션은 읽기만(서버 409)
   const channelArchived = useChannelArchived();
   const closed = useConversationClosed();
-  const archived = channelArchived || closed;
+  // 읽기 전용 DM 도 반응을 바꿀 수 없다(서버 409 DM_READ_ONLY)
+  const dm = useDmView();
+  const archived = channelArchived || closed || (dm !== null && dm.readOnly !== null);
   const { mention, deactivatedPerson } = useAuthors();
   if (message.reactions.length === 0) return null;
   const who = (id: string): string => {

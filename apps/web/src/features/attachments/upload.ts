@@ -1,11 +1,14 @@
 import { ApiError, ATTACHMENT_LIMITS, Attachment, isImageMime } from "@dodok/shared";
 import { CHANNEL_ARCHIVED_TEXT } from "@/api/formErrors";
+import { DM_READ_ONLY_TEXT, dmReadOnlyReasonOf } from "@/features/dms/queries";
 
 export const ONLY_IMAGES = "이미지만 올릴 수 있습니다";
 export const TOO_BIG = "5 MB 를 넘습니다";
 export const UPLOAD_FAILED = "올리지 못했습니다";
 /** 서버 디스크 여유가 부족해 거절(507) — 사람이 고칠 수 없는 원인이라 따로 말한다(운영 보강 브라우저 검증 O1) */
 export const DISK_FULL = "서버 디스크 여유가 부족해 올리지 못했습니다";
+/** 읽기 전용 DM 이라 거절(409 DM_READ_ONLY)된 오류의 `name` — 부르는 쪽이 DM 목록을 다시 받아 작성기 자리를 사유 줄로 바꾼다 */
+export const DM_READ_ONLY_ERROR = "DmReadOnlyError";
 
 /** 올리기 전 검사(스펙 6.1) — 틀리면 칩에 쓸 이유, 맞으면 undefined. SVG 는 이미지가 아니다(스펙 결정 8) */
 export function checkImageFile(file: Pick<File, "type" | "size">): string | undefined {
@@ -16,7 +19,8 @@ export function checkImageFile(file: Pick<File, "type" | "size">): string | unde
 
 /**
  * 이미지 한 장을 올린다 — XHR 인 까닭은 `fetch` 가 업로드 진행을 주지 않아서다(스펙 6.1). 쿠키 인증, 같은 출처.
- * 413 은 상한 문구, 400 은 서버 문구, 507 은 디스크 문구, 409 CHANNEL_ARCHIVED 는 보관 문구, 그 밖·네트워크 오류는 「올리지 못했습니다」. `abort()` 는 `AbortError` 로 끝낸다
+ * 413 은 상한 문구, 400 은 서버 문구, 507 은 디스크 문구, 409 CHANNEL_ARCHIVED 는 보관 문구, 409 DM_READ_ONLY 는 그 사유 문구(`name` 은
+ * `DM_READ_ONLY_ERROR`), 그 밖·네트워크 오류는 「올리지 못했습니다」. `abort()` 는 `AbortError` 로 끝낸다
  */
 export function uploadImage(
   file: File,
@@ -42,6 +46,10 @@ export function uploadImage(
       const body = ApiError.safeParse(safeJson(xhr.responseText));
       if (body.success && body.data.code === "CHANNEL_ARCHIVED")
         return reject(new Error(CHANNEL_ARCHIVED_TEXT));
+      if (body.success && body.data.code === "DM_READ_ONLY") {
+        const text = DM_READ_ONLY_TEXT[dmReadOnlyReasonOf(body.data.details)];
+        return reject(Object.assign(new Error(text), { name: DM_READ_ONLY_ERROR }));
+      }
       reject(new Error(body.success && xhr.status === 400 ? body.data.message : UPLOAD_FAILED));
     };
     xhr.onerror = () => reject(new Error(UPLOAD_FAILED));

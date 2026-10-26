@@ -1,4 +1,4 @@
-import type { Attachment, Message } from "@dodok/shared";
+import type { Attachment, DmReadOnlyReason, Message } from "@dodok/shared";
 
 /**
  * 새 세션 창(`/c/<채널>/s/new`)의 자리 — 아직 대화가 없다. 그 창의 보내는 중 항목은 이 이름의 타임라인 캐시에 두었다가 첫 보내기의
@@ -20,15 +20,25 @@ export type PendingMessage = {
 };
 /**
  * `channel_archived` 는 보관한 채널에, `conversation_closed` 는 닫힌 세션에 보낸 것 — 다시 보내도 같은 409 라 「다시 보내기」를 두지
- * 않는다(채널 세션 계획 Review Focus 2). `forbidden` 은 서버가 403 으로 거절한 것(「세션 관리자만」 채널에서 새 세션) — 역시 다시 보내도 같다
+ * 않는다(채널 세션 계획 Review Focus 2). `forbidden` 은 서버가 403 으로 거절한 것(「세션 관리자만」 채널에서 새 세션) — 역시 다시 보내도 같다.
+ * DM 읽기 전용 사유 셋(`agent_archived` 등)은 읽기 전용 DM 에 보낸 것(409 `DM_READ_ONLY` 의 `details.reason`, 에이전트 DM 계획 Review Focus 4) —
+ * 되돌려지기 전에는 다시 보내도 같다
  */
-export type PendingFailReason = "rate_limited" | "channel_archived" | "conversation_closed" | "forbidden";
+export type PendingFailReason =
+  | "rate_limited"
+  | "channel_archived"
+  | "conversation_closed"
+  | "forbidden"
+  | DmReadOnlyReason;
 
 /** 다시 보내도 같은 거절이라 「다시 보내기」를 두지 않는 사유 */
 export const FINAL_FAIL_REASONS: ReadonlySet<PendingFailReason> = new Set([
   "channel_archived",
   "conversation_closed",
   "forbidden",
+  "agent_archived",
+  "agent_disabled",
+  "dm_not_allowed",
 ]);
 /**
  * 세션 하나(또는 스레드 하나)의 확정 메시지(seq 오름차순)와 보내는 중 항목. 보내는 중 항목은 항상 목록 끝에 그린다(스펙 4.3-6).

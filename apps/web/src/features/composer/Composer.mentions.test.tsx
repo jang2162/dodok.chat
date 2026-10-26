@@ -1,9 +1,11 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DmViewContext } from "@/features/dms/context";
 import { useWireStatus } from "@/realtime/wire";
 import { stubEditorDom } from "../../../test/domStubs";
 import { createFakeSocket, type FakeSocket } from "../../../test/fakeSocket";
-import { AGENT, CH } from "../../../test/fixtures";
+import { dmChannelOf } from "../../../test/dms";
+import { AGENT, CH, USER } from "../../../test/fixtures";
 import { confirmed, flushEditorFrames, renderComposer } from "../../../test/composerHarness";
 import { MentionList, mentionSuggestion } from "./MentionList";
 import { type MentionCandidate, mentionCandidates } from "./mentions";
@@ -157,4 +159,30 @@ it("팝업이 열리면 편집기가 목록과 고른 줄을 가리킨다(aria-c
   await waitFor(() => expect(screen.queryByRole("listbox")).not.toBeInTheDocument());
   expect(box).not.toHaveAttribute("aria-controls");
   expect(box).not.toHaveAttribute("aria-activedescendant");
+});
+
+it("DM 작성기에서는 @ 를 쳐도 후보 목록이 없다 — 같은 채널·같은 후보라도 일반 채널이면 있다(에이전트 DM 계획 판정 PD6)", async () => {
+  const typeAt = async (editor: Editor) => {
+    act(() => {
+      editor.commands.focus();
+      editor.commands.insertContent("@");
+    });
+    await flushEditorFrames();
+  };
+  const channel = renderComposer();
+  await typeAt(channel.editor);
+  expect(await screen.findByRole("listbox", { name: "멘션 후보" })).toBeInTheDocument();
+  await flushEditorFrames();
+  cleanup();
+
+  const dm = renderComposer(CH, ME, (children) => (
+    <DmViewContext.Provider value={{ channel: dmChannelOf(CH, USER, AGENT), readOnly: null }}>
+      {children}
+    </DmViewContext.Provider>
+  ));
+  await typeAt(dm.editor);
+  // 후보가 있었다면 열렸을 만큼 기다린 뒤 본다 — 팝업은 suggestion 의 비동기 items 뒤에 그려진다
+  await flushEditorFrames();
+  expect(dm.editor.getText()).toBe("@");
+  expect(screen.queryByRole("listbox")).toBeNull();
 });

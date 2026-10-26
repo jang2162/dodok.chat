@@ -1,9 +1,13 @@
 import { ComponentsV1, type Message } from "@dodok/shared";
+import type { DmSummary } from "@dodok/shared";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook } from "@testing-library/react";
+import { createElement, type ReactNode } from "react";
 import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useWireStatus } from "@/realtime/wire";
 import { createFakeSocket, type FakeSocket } from "../../../test/fakeSocket";
+import { qk } from "@/api/queries";
 import { msg, uid } from "../../../test/fixtures";
 import { RATE_LIMITED_TEXT } from "@/features/messages/rateLimited";
 import { DISABLED_REASON_TEXT } from "./state";
@@ -194,6 +198,25 @@ describe("useInteract — 보관한 채널(409 CHANNEL_ARCHIVED)", () => {
     const r = await sendWith(hook, "ok", {});
     expect(r).toMatchObject({ ok: false, code: "CHANNEL_ARCHIVED", text: "보관된 채널입니다" });
     expect(spy).toHaveBeenCalledWith("보관된 채널입니다", { id: "channel-archived" });
+  });
+});
+
+describe("useInteract — 읽기 전용 DM(409 DM_READ_ONLY)", () => {
+  it("DM 목록을 다시 받는다 — 작성기 자리가 사유 줄로 바뀌게(에이전트 DM 계획 Review Focus 4)", async () => {
+    fake?.onAck("component.interact", () => ({
+      ok: false,
+      error: { code: "DM_READ_ONLY", message: "dm is read-only", details: { reason: "agent_archived" } },
+    }));
+    vi.spyOn(toast, "error");
+    const qc = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, retry: false } } });
+    qc.setQueryData<DmSummary[]>(qk.dms, []);
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: qc }, children);
+    const hook = renderHook(() => useInteract(MESSAGE), { wrapper }).result;
+
+    const r = await sendWith(hook, "ok", {});
+    expect(r).toMatchObject({ ok: false, code: "DM_READ_ONLY" });
+    expect(qc.getQueryState(qk.dms)?.isInvalidated).toBe(true);
   });
 });
 
