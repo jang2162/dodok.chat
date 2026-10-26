@@ -21,7 +21,7 @@ import type { Db } from "../../db/client";
 import { type AgentTokenGuard, requireAgentToken } from "../../http/agent-token";
 import { apiError } from "../../http/errors";
 import { parseParams, parseQuery } from "../../http/validate";
-import { assertChannelWritable } from "../channels/service";
+import { assertChannelWritable, loadReadableChannel } from "../channels/service";
 import { getConversation } from "../conversations/store";
 import { type AttachmentDeps, findReadable, type Uploader, uploadAttachment } from "./service";
 import type { BlobLocks } from "./store";
@@ -171,8 +171,9 @@ export function registerAttachmentRoutes(fastify: FastifyInstance, ctx: Attachme
       async (request) => {
         const { channelId } = parseQuery(UploadQuery, request.query);
         const user = sessionUser(request);
-        // 보관한 채널로는 올리지 않는다(계획 판정 PC1). 에이전트 쪽 경로는 막지 않는다 — 보관 직전에 시작한 런의 늦은 정본이
-        // 파일을 싣고 와도 저장만 하는 규칙(runs/orchestrator.ts onCanonical)을 따른다
+        // 남의 DM 은 없는 채널과 같은 404(auth/channel-access.ts), 보관한 채널로는 올리지 않는다(계획 판정 PC1). 에이전트 쪽 경로는
+        // 막지 않는다 — 보관 직전에 시작한 런의 늦은 정본이 파일을 싣고 와도 저장만 하는 규칙(runs/orchestrator.ts onCanonical)을 따른다
+        loadReadableChannel(ctx.db, channelId, user.workspaceId, user.id);
         assertChannelWritable(ctx.db, channelId, user.workspaceId);
         return uploadAttachment(deps, {
           channelId,

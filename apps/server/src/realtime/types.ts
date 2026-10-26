@@ -34,7 +34,8 @@ export type RunsFacade = {
   pendingApprovals(channelId: string): Approval[];
   /** 승인 카드의 버튼 — 설계 4.4 의 검사를 통과할 때만 Gateway 로 나간다 */
   resolveApproval(input: { approvalId: string; decision: ApprovalDecision; userId: string }): Promise<void>;
+  /** 런이 남의 DM 에 있으면 abort·replay 둘 다 없는 런과 같은 NOT_FOUND(auth/channel-access.ts) */
   abort(runId: string, userId: string): Promise<void>;
-  replay(runId: string, afterSeq: number): Promise<RunEventsReplayResult>;
+  replay(runId: string, afterSeq: number, userId: string): Promise<RunEventsReplayResult>;
   interact(input: ComponentInteract & { userId: string }): Promise<{ interactionId: string }>;
 };

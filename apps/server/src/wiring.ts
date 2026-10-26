@@ -112,8 +112,8 @@ export function createServices(deps: ServicesDeps): Services {
     onRunEnded: (runId) => control?.onRunEnded(runId),
   });
 
-  const visibleRun = (runId: string) => {
-    const run = store.getRunInWorkspace(db, runId, workspaceId);
+  const visibleRun = (runId: string, userId: string) => {
+    const run = store.getRunInWorkspace(db, runId, workspaceId, userId);
     if (!run) throw apiError("NOT_FOUND", "run not found");
     return run;
   };
@@ -126,12 +126,12 @@ export function createServices(deps: ServicesDeps): Services {
       await approvals.resolve({ approvalId, decision, userId });
     },
     async abort(runId, userId) {
-      visibleRun(runId);
+      visibleRun(runId, userId);
       logger.info({ runId, userId }, "run abort requested");
       await orchestrator.abort(runId);
     },
-    async replay(runId, afterSeq) {
-      const run = visibleRun(runId);
+    async replay(runId, afterSeq, userId) {
+      const run = visibleRun(runId, userId);
       return { events: store.listRunEvents(db, runId, afterSeq), run: store.toRunState(run) };
     },
     interact: (input) => interact({ db, bus, workspaceId, gate }, input),

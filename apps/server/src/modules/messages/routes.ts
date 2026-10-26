@@ -8,7 +8,7 @@ import { sessionUser } from "../../auth/routes";
 import type { Db } from "../../db/client";
 import { apiError } from "../../http/errors";
 import { parseParams, parseQuery } from "../../http/validate";
-import { getConversation } from "../conversations/store";
+import { getReadableConversation } from "../conversations/store";
 import { getThreadRoot, hydrateForClient, listMessages, MESSAGE_PAGE_MAX } from "./service";
 
 export type MessageRouteContext = { auth: Auth; db: Db; workspaceId: string };
@@ -38,7 +38,8 @@ export function registerMessageRoutes(fastify: FastifyInstance, ctx: MessageRout
     async (request) => {
       const { id } = parseParams(ConversationParams, request.params);
       const { around, ...query } = parseQuery(HistoryQuery, request.query);
-      const conversation = getConversation(ctx.db, id, sessionUser(request).workspaceId);
+      const user = sessionUser(request);
+      const conversation = getReadableConversation(ctx.db, id, user.workspaceId, user.id);
       if (!conversation) throw apiError("NOT_FOUND", "conversation not found");
       return listMessages(ctx.db, conversation.channelId, {
         ...query,
@@ -55,7 +56,8 @@ export function registerMessageRoutes(fastify: FastifyInstance, ctx: MessageRout
     async (request) => {
       const { id, rootId } = parseParams(ThreadParams, request.params);
       const { around, ...query } = parseQuery(HistoryQuery, request.query);
-      const conversation = getConversation(ctx.db, id, sessionUser(request).workspaceId);
+      const user = sessionUser(request);
+      const conversation = getReadableConversation(ctx.db, id, user.workspaceId, user.id);
       if (!conversation) throw apiError("NOT_FOUND", "conversation not found");
       const root = getThreadRoot(ctx.db, conversation.channelId, rootId);
       if (!root || root.conversationId !== conversation.id) throw apiError("NOT_FOUND", "thread not found");

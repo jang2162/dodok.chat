@@ -1,6 +1,14 @@
 import type { ProviderApproval } from "@dodok/openclaw-adapter";
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
-import { type Agent, type TeamRole, WIRE_PROTOCOL } from "@dodok/shared";
+import {
+  type Agent,
+  type Channel,
+  type Message,
+  type SearchResult,
+  type TeamRole,
+  type UnreadSnapshot,
+  WIRE_PROTOCOL,
+} from "@dodok/shared";
 import { and, eq } from "drizzle-orm";
 import { v7 as uuid } from "uuid";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -19,13 +27,16 @@ import {
 import { createGateway } from "../src/modules/gateways/service";
 import { createAgentMessage, createUserMessage } from "../src/modules/messages/service";
 import { createTriggerLookups } from "../src/modules/push/service";
+import { insertRun } from "../src/modules/runs/store";
 import { targetsForApproval } from "../src/modules/push/triggers";
 import { issueBridgeToken } from "../src/modules/setup/tokens";
 import { issuePersonalToken, verifyPersonalToken } from "../src/modules/tokens/service";
 import { bootTestApp, login, noExternalTransport, userWithRole } from "./helpers/app";
+import { expectOk, pat } from "./helpers/control";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
-import { connectWire, openWire, type WireClient } from "./helpers/wire";
-import { channelConversation, seedConversation } from "./helpers/seed";
+import { makePng } from "./helpers/png";
+import { connectWire, openWire, recordEvents, waitFor, type WireClient } from "./helpers/wire";
+import { channelConversation, createDmChannelForTest, seedConversation } from "./helpers/seed";
 
 // 역할 매트릭스(팀 스펙 2장 표) — owner·admin·member 세 세션으로 경로마다 허용·거부를 본다.
 // 거부는 REST 403 FORBIDDEN·wire ack FORBIDDEN, membership 이 없는 세션은 어디서나 401
@@ -901,6 +912,531 @@ describe("역할 매트릭스(스펙 2장)", () => {
       addMember(app.db, channel.id, { memberType: "user", memberId: ids.member }, app.logger);
       const targets = targetsForApproval(approval, createTriggerLookups(app.db, app.workspaceId));
       expect(targets.map((t) => t.userId).sort()).toEqual([ids.owner, ids.admin].sort());
+    });
+  });
+
+  // 남의 DM(에이전트 DM 스펙 4장) — member mia 가 주인인 DM 을 주인이 아닌 owner·admin·member 가 치면 모든 경로가 없는 것과 같은 404
+  // (wire 는 ack NOT_FOUND). 역할 판정(403)보다 먼저다 — admin 만 되는 경로에 member 도 403 이 아니라 404 다. 주인 mia 는 404 가
+  // 아니다(관리 경로가 DM 에 VALIDATION 을 내는 것은 태스크 3 — 여기서는 「404 가 아님」만 본다)
+  describe("남의 DM — DM_CASES", () => {
+    let mia: { id: string; token: string };
+    beforeAll(async () => {
+      mia = await userWithRole(app, `dm-mia${++n}`, "member");
+    });
+
+    type DmFixture = {
+      channelId: string;
+      agent: Agent;
+      conversationId: string;
+      rootId: string;
+      answer: Message;
+      runId: string;
+    };
+    /** 경로마다·사람마다 새 DM — 주인의 쓰기(보관·멤버 빼기)가 다음 사람의 조건을 바꾸지 않게 */
+    const dmFixture = (): DmFixture => {
+      const agent = newAgent();
+      const dm = createDmChannelForTest(app.db, {
+        workspaceId: app.workspaceId,
+        ownerId: mia.id,
+        agentId: agent.id,
+      });
+      const conversationId = seedConversation(app.db, dm.id, { createdBy: mia.id });
+      const root = createUserMessage(app.db, app.bus, {
+        conversationId,
+        authorId: mia.id,
+        bodyMd: "DM 루트",
+        clientMsgId: `dm-root-${++n}`,
+      });
+      const run = insertRun(app.db, {
+        channelId: dm.id,
+        conversationId,
+        agentId: agent.id,
+        triggerKind: "auto_respond",
+        triggerMessageId: root.id,
+        rootMessageId: root.id,
+        relayDepth: 0,
+        sessionKey: adapter.sessionKeyFor(agent.providerAgentId, conversationId),
+        connectionId: FAKE_GATEWAY_ID,
+        requestedBy: mia.id,
+        createdAt: new Date(),
+      });
+      const answer = createAgentMessage(app.db, app.bus, {
+        conversationId,
+        agentId: agent.id,
+        runId: run.id,
+        bodyMd: "골라 주세요",
+        externalId: `dm-answer-${++n}`,
+        components: {
+          blocks: [{ type: "actions", id: "row", items: [{ type: "button", id: "go", label: "진행" }] }],
+        },
+      });
+      return { channelId: dm.id, agent, conversationId, rootId: root.id, answer, runId: run.id };
+    };
+    /** mia 가 DM 에 올리고 자기 글에 묶은 첨부 */
+    const dmAttachment = async (fx: DmFixture): Promise<string> => {
+      const up = await app.fastify.inject({
+        method: "POST",
+        url: `/api/v1/attachments?channelId=${fx.channelId}`,
+        headers: { authorization: `Bearer ${mia.token}`, "content-type": "image/png" },
+        payload: makePng(2, 2),
+      });
+      expect(up.statusCode, up.body).toBe(200);
+      const id = (up.json() as { id: string }).id;
+      createUserMessage(app.db, app.bus, {
+        conversationId: fx.conversationId,
+        authorId: mia.id,
+        bodyMd: "그림",
+        clientMsgId: `dm-att-${++n}`,
+        attachments: [id],
+      });
+      return id;
+    };
+
+    type DmRequest = {
+      method: Method;
+      url: string;
+      payload?: object | Buffer;
+      headers?: Record<string, string>;
+    };
+    type DmCase = { name: string; request: (fx: DmFixture) => DmRequest | Promise<DmRequest> };
+    const DM_CASES: DmCase[] = [
+      {
+        name: "GET /channels/:id",
+        request: (fx) => ({ method: "GET", url: `/api/v1/channels/${fx.channelId}` }),
+      },
+      {
+        name: "PATCH /channels/:id {name}",
+        request: (fx) => ({
+          method: "PATCH",
+          url: `/api/v1/channels/${fx.channelId}`,
+          payload: { name: "엿보기" },
+        }),
+      },
+      {
+        name: "PATCH /channels/:id {prompt} — admin 정책 경로",
+        request: (fx) => ({
+          method: "PATCH",
+          url: `/api/v1/channels/${fx.channelId}`,
+          payload: { prompt: "몰래" },
+        }),
+      },
+      {
+        name: "GET /channels/:id/members",
+        request: (fx) => ({ method: "GET", url: `/api/v1/channels/${fx.channelId}/members` }),
+      },
+      {
+        name: "POST /channels/:id/members",
+        request: (fx) => ({
+          method: "POST",
+          url: `/api/v1/channels/${fx.channelId}/members`,
+          payload: { memberType: "user", memberId: ids.member },
+        }),
+      },
+      {
+        name: "PATCH /channels/:id/members/:memberId {autoRespond} — admin 정책 경로",
+        request: (fx) => ({
+          method: "PATCH",
+          url: `/api/v1/channels/${fx.channelId}/members/${fx.agent.id}`,
+          payload: { autoRespond: false },
+        }),
+      },
+      {
+        name: "DELETE /channels/:id/members/:memberId",
+        request: (fx) => ({
+          method: "DELETE",
+          url: `/api/v1/channels/${fx.channelId}/members/${fx.agent.id}`,
+        }),
+      },
+      {
+        name: "POST /channels/:id/archive",
+        request: (fx) => ({ method: "POST", url: `/api/v1/channels/${fx.channelId}/archive` }),
+      },
+      {
+        name: "POST /channels/:id/unarchive",
+        request: (fx) => ({ method: "POST", url: `/api/v1/channels/${fx.channelId}/unarchive` }),
+      },
+      {
+        name: "PUT /channels/:id/session-managers/:userId",
+        request: (fx) => ({
+          method: "PUT",
+          url: `/api/v1/channels/${fx.channelId}/session-managers/${mia.id}`,
+        }),
+      },
+      {
+        name: "DELETE /channels/:id/session-managers/:userId",
+        request: (fx) => ({
+          method: "DELETE",
+          url: `/api/v1/channels/${fx.channelId}/session-managers/${mia.id}`,
+        }),
+      },
+      {
+        name: "GET /channels/:id/conversations",
+        request: (fx) => ({ method: "GET", url: `/api/v1/channels/${fx.channelId}/conversations` }),
+      },
+      {
+        name: "GET /conversations/:id",
+        request: (fx) => ({ method: "GET", url: `/api/v1/conversations/${fx.conversationId}` }),
+      },
+      {
+        name: "PATCH /conversations/:id {title}",
+        request: (fx) => ({
+          method: "PATCH",
+          url: `/api/v1/conversations/${fx.conversationId}`,
+          payload: { title: "엿보기" },
+        }),
+      },
+      {
+        name: "PATCH /conversations/:id {closed}",
+        request: (fx) => ({
+          method: "PATCH",
+          url: `/api/v1/conversations/${fx.conversationId}`,
+          payload: { closed: true },
+        }),
+      },
+      {
+        name: "GET /conversations/:id/messages",
+        request: (fx) => ({ method: "GET", url: `/api/v1/conversations/${fx.conversationId}/messages` }),
+      },
+      {
+        name: "GET /conversations/:id/messages?around",
+        request: (fx) => ({
+          method: "GET",
+          url: `/api/v1/conversations/${fx.conversationId}/messages?around=1`,
+        }),
+      },
+      {
+        name: "GET /conversations/:id/threads/:rootId/messages",
+        request: (fx) => ({
+          method: "GET",
+          url: `/api/v1/conversations/${fx.conversationId}/threads/${fx.rootId}/messages`,
+        }),
+      },
+      {
+        name: "GET /channels/:id/runs",
+        request: (fx) => ({ method: "GET", url: `/api/v1/channels/${fx.channelId}/runs` }),
+      },
+      { name: "GET /runs/:id", request: (fx) => ({ method: "GET", url: `/api/v1/runs/${fx.runId}` }) },
+      {
+        name: "GET /runs/:id/events",
+        request: (fx) => ({ method: "GET", url: `/api/v1/runs/${fx.runId}/events` }),
+      },
+      {
+        name: "POST /attachments?channelId=",
+        request: (fx) => ({
+          method: "POST",
+          url: `/api/v1/attachments?channelId=${fx.channelId}`,
+          headers: { "content-type": "image/png" },
+          payload: makePng(2, 2),
+        }),
+      },
+      {
+        name: "GET /attachments/:id(DM 메시지에 묶인 첨부)",
+        request: async (fx) => ({ method: "GET", url: `/api/v1/attachments/${await dmAttachment(fx)}` }),
+      },
+    ];
+    const dmCall = (token: string, req: DmRequest) =>
+      app.fastify.inject({
+        method: req.method,
+        url: req.url,
+        headers: { authorization: `Bearer ${token}`, ...req.headers },
+        ...(req.payload === undefined ? {} : { payload: req.payload }),
+      });
+
+    it.each(DM_CASES.flatMap((c) => ROLES.map((role) => [c.name, role, c] as const)))(
+      "%s — 주인 아닌 %s 는 404",
+      async (_name, role, c) => {
+        const res = await dmCall(tokens[role], await c.request(dmFixture()));
+        expect(res.statusCode, res.body).toBe(404);
+        expect(res.json()).toMatchObject({ code: "NOT_FOUND" });
+      },
+    );
+
+    it.each(DM_CASES.map((c) => [c.name, c] as const))("%s — 주인 mia 는 404 가 아니다", async (_name, c) => {
+      const res = await dmCall(mia.token, await c.request(dmFixture()));
+      expect(res.statusCode, res.body).not.toBe(404);
+    });
+
+    // wire — 주인이 아니면 ack NOT_FOUND, 주인은 NOT_FOUND 가 아니다
+    type WireCase = { name: string; emit: (socket: WireClient, fx: DmFixture) => Promise<unknown> };
+    const WIRE_CASES: WireCase[] = [
+      {
+        name: "channel.subscribe",
+        emit: (socket, fx) => socket.emitWithAck("channel.subscribe", { channelId: fx.channelId }),
+      },
+      {
+        name: "message.send",
+        emit: (socket, fx) =>
+          socket.emitWithAck("message.send", {
+            channelId: fx.channelId,
+            conversationId: fx.conversationId,
+            clientMsgId: `dm-send-${++n}`,
+            bodyMd: "엿보기",
+          }),
+      },
+      {
+        name: "message.send {newConversation}",
+        emit: (socket, fx) =>
+          socket.emitWithAck("message.send", {
+            channelId: fx.channelId,
+            newConversation: {},
+            clientMsgId: `dm-new-${++n}`,
+            bodyMd: "엿보기",
+          }),
+      },
+      {
+        name: "conversation.read",
+        emit: (socket, fx) =>
+          socket.emitWithAck("conversation.read", { conversationId: fx.conversationId, seq: 99 }),
+      },
+      {
+        name: "reaction.set",
+        emit: (socket, fx) =>
+          socket.emitWithAck("reaction.set", { messageId: fx.answer.id, emoji: "👍", on: true }),
+      },
+      { name: "run.abort", emit: (socket, fx) => socket.emitWithAck("run.abort", { runId: fx.runId }) },
+      {
+        name: "run.events.replay",
+        emit: (socket, fx) => socket.emitWithAck("run.events.replay", { runId: fx.runId, afterSeq: 0 }),
+      },
+      {
+        name: "component.interact",
+        emit: (socket, fx) =>
+          socket.emitWithAck("component.interact", {
+            messageId: fx.answer.id,
+            componentId: fx.answer.components?.id ?? "",
+            itemId: "go",
+            values: {},
+          }),
+      },
+    ];
+
+    it.each(WIRE_CASES.flatMap((c) => ROLES.map((role) => [c.name, role, c] as const)))(
+      "wire %s — 주인 아닌 %s 는 ack NOT_FOUND",
+      async (_name, role, c) => {
+        const fx = dmFixture();
+        const socket = await connectWire(app, tokens[role]);
+        sockets.push(socket);
+        expect(await c.emit(socket, fx)).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
+      },
+    );
+
+    it.each(WIRE_CASES.map((c) => [c.name, c] as const))(
+      "wire %s — 주인 mia 는 NOT_FOUND 가 아니다",
+      async (_name, c) => {
+        const fx = dmFixture();
+        const socket = await connectWire(app, mia.token);
+        sockets.push(socket);
+        const res = (await c.emit(socket, fx)) as { ok: boolean; error?: { code: string } };
+        expect(res.ok ? "ok" : res.error?.code).not.toBe("NOT_FOUND");
+      },
+    );
+
+    it.each(ROLES)(
+      "channel.subscribe 를 거절당한 %s 는 그 DM 의 message.created 를 받지 않는다 — 룸에 들지 않았다",
+      async (role) => {
+        const fx = dmFixture();
+        const socket = await connectWire(app, tokens[role]);
+        sockets.push(socket);
+        const seen = recordEvents(socket, ["message.created"]);
+        await socket.emitWithAck("channel.subscribe", { channelId: fx.channelId });
+        createUserMessage(app.db, app.bus, {
+          conversationId: fx.conversationId,
+          authorId: mia.id,
+          bodyMd: "구독 뒤 새 글",
+          clientMsgId: `dm-after-${++n}`,
+        });
+        // 같은 연결의 ack 왕복 뒤에 본다 — 팬아웃이 먼저 도착했어야 한다
+        await socket.emitWithAck("channel.unsubscribe", { channelId: fx.channelId });
+        expect(
+          seen.filter((e) => (e.payload as { message: Message }).message.channelId === fx.channelId),
+        ).toEqual([]);
+      },
+    );
+
+    it("주인 mia 는 구독 뒤 그 DM 의 message.created 를 받는다(위 단언의 대조)", async () => {
+      const fx = dmFixture();
+      const socket = await connectWire(app, mia.token);
+      sockets.push(socket);
+      await socket.emitWithAck("channel.subscribe", { channelId: fx.channelId });
+      const created = waitFor(socket, "message.created", (p) => p.message.channelId === fx.channelId);
+      createUserMessage(app.db, app.bus, {
+        conversationId: fx.conversationId,
+        authorId: mia.id,
+        bodyMd: "구독 뒤 새 글",
+        clientMsgId: `dm-after-${++n}`,
+      });
+      await expect(created).resolves.toBeDefined();
+    });
+
+    /** DM 런의 도구 승인 — owner·admin 은 지금 「admin 이상이면 결정」 갈래라 404 가 먼저인지가 핵심이다(Review Focus 1) */
+    const dmApproval = async () => {
+      const fx = dmFixture();
+      const frame: ProviderApproval = {
+        providerApprovalId: `plugin:${uuid()}`,
+        kind: "plugin",
+        sessionKey: adapter.sessionKeyFor(fx.agent.providerAgentId, fx.conversationId),
+        providerAgentId: fx.agent.providerAgentId,
+        conversationId: fx.conversationId,
+        toolCallId: `toolu_${++n}`,
+        toolName: "Write",
+        pluginId: "fs",
+        title: "Write 실행",
+        severity: "warning",
+        allowedDecisions: ["allow-once", "deny"],
+        status: "pending",
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 120_000).toISOString(),
+      };
+      adapter.emitApproval(frame);
+      await vi.waitFor(() =>
+        expect(approvalStore.getApprovalByProviderId(app.db, frame.providerApprovalId)?.status).toBe(
+          "pending",
+        ),
+      );
+      const approval = approvalStore.getApprovalByProviderId(app.db, frame.providerApprovalId);
+      if (!approval) throw new Error("승인이 저장되지 않았다");
+      expect(approval.channelId).toBe(fx.channelId);
+      return approval;
+    };
+
+    it.each(ROLES)(
+      "approval.resolve — 주인 아닌 %s 는 ack NOT_FOUND, Gateway 로 안 가고 pending 그대로",
+      async (role) => {
+        const approval = await dmApproval();
+        const socket = await connectWire(app, tokens[role]);
+        sockets.push(socket);
+        const sent = adapter.calls.resolveApproval.length;
+        const res = await socket.emitWithAck("approval.resolve", {
+          approvalId: approval.id,
+          decision: "allow-once",
+        });
+        expect(res).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
+        expect(adapter.calls.resolveApproval.length).toBe(sent);
+        expect(approvalStore.getApproval(app.db, approval.id)?.status).toBe("pending");
+      },
+    );
+
+    it("approval.resolve — 주인 mia 는 NOT_FOUND 가 아니다(member 주인의 결정은 태스크 3)", async () => {
+      const approval = await dmApproval();
+      const socket = await connectWire(app, mia.token);
+      sockets.push(socket);
+      const res = (await socket.emitWithAck("approval.resolve", {
+        approvalId: approval.id,
+        decision: "deny",
+      })) as { ok: boolean; error?: { code: string } };
+      expect(res.ok ? "ok" : res.error?.code).not.toBe("NOT_FOUND");
+    });
+
+    // ── 목록 ──
+    it("GET /channels 에는 DM 이 없다 — 주인 mia 에게도(DM 은 따로 받는다, 계획 판정 PD3)", async () => {
+      const fx = dmFixture();
+      for (const token of [...ROLES.map((r) => tokens[r]), mia.token]) {
+        const res = await dmCall(token, { method: "GET", url: "/api/v1/channels" });
+        expect(res.statusCode).toBe(200);
+        const listed = (res.json() as { channels: Channel[] }).channels;
+        expect(listed.map((c) => c.id)).not.toContain(fx.channelId);
+        expect(listed.every((c) => c.kind === "channel")).toBe(true);
+      }
+    });
+
+    it("GET /search — DM 본문 단어는 주인에게만 걸린다", async () => {
+      const fx = dmFixture();
+      const word = `dmsecret${++n}word`;
+      createUserMessage(app.db, app.bus, {
+        conversationId: fx.conversationId,
+        authorId: mia.id,
+        bodyMd: `비밀 ${word}`,
+        clientMsgId: `dm-word-${n}`,
+      });
+      const search = (token: string) => dmCall(token, { method: "GET", url: `/api/v1/search?q=${word}` });
+      for (const role of ROLES) {
+        const res = await search(tokens[role]);
+        expect(res.statusCode, res.body).toBe(200);
+        expect((res.json() as SearchResult).hits).toEqual([]);
+      }
+      const own = await search(mia.token);
+      expect((own.json() as SearchResult).hits.map((h) => h.channelId)).toEqual([fx.channelId]);
+    });
+
+    it("GET /me/unread — 그 DM 의 대화·채널은 주인의 스냅숏에만", async () => {
+      const fx = dmFixture();
+      for (const role of ROLES) {
+        const res = await dmCall(tokens[role], { method: "GET", url: "/api/v1/me/unread" });
+        const snap = res.json() as UnreadSnapshot;
+        expect(snap.conversations.map((c) => c.conversationId)).not.toContain(fx.conversationId);
+        expect(snap.channels).not.toContain(fx.channelId);
+      }
+      const own = (
+        await dmCall(mia.token, { method: "GET", url: "/api/v1/me/unread" })
+      ).json() as UnreadSnapshot;
+      expect(own.conversations.map((c) => c.conversationId)).toContain(fx.conversationId);
+      expect(own.channels).toContain(fx.channelId);
+    });
+
+    // ── 제어 도구(개인 토큰 주체) — 같은 서비스를 에이전트 주체도 지난다 ──
+    const controlAs = (userId: string, tool: string, args: object) =>
+      app.control.call(pat(userId), tool, args);
+    const CONTROL_CASES: Array<{ tool: string; args: (fx: DmFixture) => object }> = [
+      { tool: "get_channel", args: (fx) => ({ channelId: fx.channelId }) },
+      { tool: "list_conversations", args: (fx) => ({ channelId: fx.channelId }) },
+      { tool: "read_messages", args: (fx) => ({ conversationId: fx.conversationId }) },
+      { tool: "get_run", args: (fx) => ({ runId: fx.runId }) },
+      { tool: "update_channel", args: (fx) => ({ channelId: fx.channelId, name: "엿보기" }) },
+      { tool: "set_channel_prompt", args: (fx) => ({ channelId: fx.channelId, prompt: "몰래" }) },
+      { tool: "add_channel_agent", args: (fx) => ({ channelId: fx.channelId, agentId: newAgent().id }) },
+      { tool: "remove_channel_agent", args: (fx) => ({ channelId: fx.channelId, agentId: fx.agent.id }) },
+      {
+        tool: "update_channel_agent",
+        args: (fx) => ({ channelId: fx.channelId, agentId: fx.agent.id, autoRespond: false }),
+      },
+      {
+        tool: "set_relay_policy",
+        args: (fx) => ({ channelId: fx.channelId, relayPolicy: { maxRelayTurns: 1, allowPairs: "all" } }),
+      },
+      { tool: "set_channel_run_limit", args: (fx) => ({ channelId: fx.channelId, dailyRunLimit: 3 }) },
+      { tool: "archive_channel", args: (fx) => ({ channelId: fx.channelId }) },
+      { tool: "unarchive_channel", args: (fx) => ({ channelId: fx.channelId }) },
+    ];
+
+    it.each(CONTROL_CASES.flatMap((c) => ROLES.map((role) => [c.tool, role, c] as const)))(
+      "제어 %s — 주인 아닌 %s 는 NOT_FOUND",
+      async (_tool, role, c) => {
+        const res = await controlAs(ids[role], c.tool, c.args(dmFixture()));
+        expect(res).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
+      },
+    );
+
+    it.each(CONTROL_CASES.map((c) => [c.tool, c] as const))(
+      "제어 %s — 주인 mia 는 NOT_FOUND 가 아니다",
+      async (_tool, c) => {
+        const res = await controlAs(mia.id, c.tool, c.args(dmFixture()));
+        expect(res.ok ? "ok" : res.error.code).not.toBe("NOT_FOUND");
+      },
+    );
+
+    it("제어 list_channels·search_messages — DM 은 주인에게만 나온다", async () => {
+      const fx = dmFixture();
+      const word = `dmctl${++n}word`;
+      createUserMessage(app.db, app.bus, {
+        conversationId: fx.conversationId,
+        authorId: mia.id,
+        bodyMd: `비밀 ${word}`,
+        clientMsgId: `dm-ctl-${n}`,
+      });
+      const listed = async (userId: string) =>
+        (expectOk(await controlAs(userId, "list_channels", {})) as { channels: Channel[] }).channels.map(
+          (c) => c.id,
+        );
+      const found = async (userId: string) =>
+        (expectOk(await controlAs(userId, "search_messages", { q: word })) as SearchResult).hits.map(
+          (h) => h.channelId,
+        );
+      for (const role of ROLES) {
+        expect(await listed(ids[role])).not.toContain(fx.channelId);
+        expect(await found(ids[role])).toEqual([]);
+      }
+      expect(await listed(mia.id)).toContain(fx.channelId);
+      expect(await found(mia.id)).toEqual([fx.channelId]);
     });
   });
 });

@@ -701,7 +701,7 @@ describe("wire (attachWire 단독 — route·runs 주입)", () => {
         async (_input: { approvalId: string; decision: ApprovalDecision; userId: string }) => {},
       ),
       abort: vi.fn(async (_runId: string, _userId: string) => {}),
-      replay: vi.fn(async (_runId: string, _afterSeq: number) => replay),
+      replay: vi.fn(async (_runId: string, _afterSeq: number, _userId: string) => replay),
       interact: vi.fn(async () => ({ interactionId })),
     } satisfies RunsFacade;
     const socket = await start({ runs, logger: logger as unknown as Logger });
@@ -718,7 +718,7 @@ describe("wire (attachWire 단독 — route·runs 주입)", () => {
       ok: true,
       data: replay,
     });
-    expect(runs.replay).toHaveBeenCalledWith(run.id, 0);
+    expect(runs.replay).toHaveBeenCalledWith(run.id, 0, app.ownerUserId);
 
     const interact = { messageId: uuid(), componentId: "cmp_1", itemId: "ok", values: { a: 1 } };
     expect(await socket.emitWithAck("component.interact", interact)).toEqual({

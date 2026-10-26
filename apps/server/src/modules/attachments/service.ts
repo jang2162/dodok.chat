@@ -9,6 +9,7 @@ import { and, eq, inArray, isNull, lt, notInArray, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import type { Db, DbOrTx } from "../../db/client";
 import { attachments, runs } from "../../db/schema.sqlite";
+import { canReadChannel } from "../../auth/channel-access";
 import { apiError } from "../../http/errors";
 import { getChannel } from "../channels/service";
 import { TERMINAL_STATUSES } from "../runs/machine";
@@ -199,8 +200,16 @@ export function findReadable(
           (row.messageId !== null && triggersOpenRun(deps.db, row.messageId, viewer.gatewayId))
         : row.messageId === null
           ? row.uploaderType === "user" && row.uploaderId === viewer.userId
-          : getChannel(deps.db, row.channelId, viewer.workspaceId) !== undefined;
+          : readableBy(getChannel(deps.db, row.channelId, viewer.workspaceId), viewer.userId);
   return ok ? { attachment: toAttachment(row), path: blobPath(deps.dir, row.sha256) } : undefined;
+}
+
+/** 묶인 첨부는 그 메시지의 채널을 읽을 수 있는 사람만 — 남의 DM 의 첨부는 없는 id 와 같은 404(auth/channel-access.ts) */
+function readableBy(
+  channel: { kind: string; dmOwnerId: string | null } | undefined,
+  userId: string,
+): boolean {
+  return channel !== undefined && canReadChannel({ userId }, channel);
 }
 
 /** 그 메시지를 트리거로 그 연결에서 열린 런이 있는가 — 런의 연결은 맡을 때 정해져 플러그인이 deliver 를 받기 전에 있다 */
