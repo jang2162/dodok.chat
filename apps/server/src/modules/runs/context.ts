@@ -65,7 +65,12 @@ export function buildInboundDeliver(db: DbOrTx, input: BuildInboundInput): Inbou
     .where(eq(agents.id, run.agentId))
     .get();
   if (!agent) throw apiError("NOT_FOUND", "agent not found");
-  const participants = channelParticipants(db, run.channelId);
+  const dmOwner = channel.kind === "dm" ? dmOwnerOf(db, channel.dmOwnerId) : undefined;
+  // DM 의 참여자는 주인과 이 에이전트뿐이다(계획 PD8). DM 멤버 행은 그 둘만 만들지만(dms/service.ts findOrCreateDm) 헤더가 그 불변에
+  // 기대지 않게 여기서도 거른다 — 다른 사람이 실리면 에이전트가 DM 을 여럿이 보는 자리로 읽는다
+  const participants = channelParticipants(db, run.channelId).filter(
+    (p) => dmOwner === undefined || (p.type === "user" ? p.id === dmOwner.id : p.id === run.agentId),
+  );
   // 글 풀기는 보관한 에이전트·비활성 멤버까지 — 옛 멘션이 @unknown 이 되지 않게. 헤더 「참여자:」·릴레이 규칙은 participants 만
   const renderable = channelParticipants(db, run.channelId, { includeInactive: true });
 
@@ -154,6 +159,7 @@ export function buildInboundDeliver(db: DbOrTx, input: BuildInboundInput): Inbou
     channelId: run.channelId,
     conversationId: run.conversationId,
     conversationTitle: conversation.title,
+    ...(dmOwner ? { dm: { ownerHandle: dmOwner.handle } } : {}),
     agentId: agent.providerAgentId,
     sessionKey: session.sessionKey,
     ...(run.threadRootId === undefined ? {} : { threadId: run.threadRootId }),
@@ -181,6 +187,15 @@ export function buildInboundDeliver(db: DbOrTx, input: BuildInboundInput): Inbou
     },
     options: {},
   });
+}
+
+function dmOwnerOf(db: DbOrTx, ownerId: string | null): { id: string; handle: string } {
+  const owner =
+    ownerId === null
+      ? undefined
+      : db.select({ id: users.id, handle: users.handle }).from(users).where(eq(users.id, ownerId)).get();
+  if (!owner) throw apiError("INTERNAL", "dm channel without an owner");
+  return owner;
 }
 
 function threadRootRow(db: DbOrTx, run: Run) {

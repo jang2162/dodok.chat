@@ -496,6 +496,16 @@ describe("send", () => {
     expect(r.runStarts[0]?.turnFacts).toContain("스레드");
   });
 
+  it("DM 런의 턴 사실은 `[dodok context]` 다음 줄이 DM 줄, 그다음 세션 줄", async () => {
+    const h = await setup();
+    const r = await readyRunner(h);
+    const input = await startRun(h, r, { dm: { ownerHandle: "mia" } });
+    expect(r.runStarts[0]?.turnFacts?.split("\n").slice(1, 3)).toEqual([
+      "다이렉트 메시지: @mia 님과 1:1",
+      `세션: ${input.conversationTitle}`,
+    ]);
+  });
+
   it("deliver.context.reactions 와 reactionsOmitted 가 턴 사실 끝에 블록으로 붙고, 없으면 블록이 없다", async () => {
     const h = await setup();
     const r = await readyRunner(h);
@@ -1081,6 +1091,25 @@ describe("outbound.post 는 그 러너의 열린 런에 묶인다", () => {
     // 모든 값이 런과 같으면 받는다
     expect(await r.post(postFor(input))).toMatchObject({ ok: true });
     expect(h.outbound).toHaveLength(1);
+  });
+
+  it("DM 런의 post 는 그 DM 세션으로만 — 일반 채널 대화·키로는 거절(대상 인자가 없어 런의 대화 그대로 쓴다)", async () => {
+    const h = await setup();
+    const r = await readyRunner(h);
+    const input = await startRun(h, r, {
+      channelId: CH2,
+      conversationId: CH2,
+      sessionKey: dodokSessionKey("coder", CH2),
+      dm: { ownerHandle: "mia" },
+    });
+    await expectDenied(
+      h,
+      r,
+      postFor(input, { conversationId: CH, sessionKey: dodokSessionKey("coder", CH) }),
+    );
+    expect(h.outbound).toHaveLength(0);
+    expect(await r.post(postFor(input))).toMatchObject({ ok: true });
+    expect(h.outbound).toEqual([expect.objectContaining({ conversationId: CH2 })]);
   });
 
   it("스레드 런은 그 스레드 id 를 실어야 받는다", async () => {

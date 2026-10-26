@@ -1015,6 +1015,7 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
         turnFacts: buildTurnFacts({
           conversationTitle: input.conversationTitle,
           participants: input.context.participants,
+          ...(input.dm ? { dm: input.dm } : {}),
           thread: input.threadId !== undefined,
           reactions: input.context.reactions,
           reactionsOmitted: input.context.reactionsOmitted,

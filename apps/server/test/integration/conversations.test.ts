@@ -17,7 +17,7 @@ import {
 } from "@dodok/shared";
 import { and, eq } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { conversations, messages, runs } from "../../src/db/schema.sqlite";
+import { conversations, messages, runs, users } from "../../src/db/schema.sqlite";
 import { getRun } from "../../src/modules/runs/store";
 import { createScenario } from "../fakes/scenario";
 import { bootLiveApp, type LiveApp } from "../helpers/live-app";
@@ -530,6 +530,132 @@ describe("통합 — 런과 에이전트가 세션 단위로", () => {
       sessionKey: dodokSessionKey("dev", b.id),
     });
     expect(created.find((p) => p.message.id === inArchived.messageId)?.silent).toBe(true);
+  });
+
+  it("[에이전트 DM 스펙 4장] DM 과 일반 채널 사이 — DM 런의 정본이 채널 대화로, 채널 런의 정본이 DM 대화로 오면 FORBIDDEN·저장 0, 런 없는 정본은 세션 행 규칙", async () => {
+    live = await bootLiveApp();
+    const { channel, dev } = await setupRelayChannel(live, { maxRelayTurns: 3, allowPairs: "all" });
+    const opened = await rest<{ channel: Channel }>(live, "POST", "/dms", { agentId: dev.id });
+    expect(opened.status).toBe(200);
+    const dm = opened.body.channel;
+    const log = await openChannelWire(live, channel.id, sockets);
+    const dmLog = await openChannelWire(live, dm.id, sockets);
+    const delivered: Array<{ conversationId: string; dm?: { ownerHandle: string } }> = [];
+    createScenario({
+      gateway: live.gateway,
+      plugin: live.plugin,
+      agents: {
+        dev: ({ delivery }) => {
+          delivered.push({
+            conversationId: delivery.conversationId,
+            ...(delivery.dm ? { dm: delivery.dm } : {}),
+          });
+          return { deltas: ["생각 중"], reply: "끝", holdFinal: true };
+        },
+        fin: () => ({ reply: "fin" }),
+      },
+    });
+    // DM 은 멘션 없이도 그 에이전트의 런이 된다(계획 PD6)
+    const inDm = (await sendIn(dmLog.socket, dm.id, "붙잡아 둬", { newConversation: { title: "DM 세션" } }))
+      .conversation;
+    const inChannel = (
+      await sendIn(log.socket, channel.id, "@dev 붙잡아 둬", { newConversation: { title: "채널 세션" } })
+    ).conversation;
+    if (!inDm || !inChannel) throw new Error("세션이 없다");
+    const dmRun = await dmLog.until(
+      () => dmLog.states.find((s) => s.agentId === dev.id && s.status === "streaming"),
+      "DM 런 streaming",
+    );
+    const channelRun = await log.until(
+      () => log.states.find((s) => s.agentId === dev.id && s.status === "streaming"),
+      "채널 런 streaming",
+    );
+    const owner = live.app.db
+      .select({ handle: users.handle })
+      .from(users)
+      .where(eq(users.id, dm.dmOwnerId ?? ""))
+      .get();
+    expect(delivered).toEqual([
+      { conversationId: inDm.id, dm: { ownerHandle: owner?.handle } },
+      { conversationId: inChannel.id },
+    ]);
+
+    const dmKey = dodokSessionKey("dev", inDm.id);
+    const channelKey = dodokSessionKey("dev", inChannel.id);
+    const storedFor = (outboundId: string) =>
+      live.app.db.select().from(messages).where(eq(messages.externalId, outboundId)).all();
+    // 사례마다 결과를 모아 한 번에 견준다 — 하나가 새면 어느 것인지 diff 에 다 보이게
+    const outcomes: Array<[string, string, number]> = [];
+    for (const [label, fields] of [
+      // 런의 세션 키는 DM, 대상은 일반 채널 대화 — 런이 있든 없든
+      [
+        "dm→channel run",
+        { conversationId: inChannel.id, agentId: "dev", sessionKey: dmKey, runId: dmRun.id },
+      ],
+      ["dm→channel no-run", { conversationId: inChannel.id, agentId: "dev", sessionKey: dmKey }],
+      // 런의 세션 키는 일반 채널, 대상은 DM 대화
+      [
+        "channel→dm run",
+        { conversationId: inDm.id, agentId: "dev", sessionKey: channelKey, runId: channelRun.id },
+      ],
+      ["channel→dm no-run", { conversationId: inDm.id, agentId: "dev", sessionKey: channelKey }],
+      // 런 없는 정본 — DM 대화로 만든 키지만 그 에이전트(fin)에게 서버가 만든 세션 행이 없다
+      [
+        "fin dm-key",
+        { conversationId: inDm.id, agentId: "fin", sessionKey: dodokSessionKey("fin", inDm.id) },
+      ],
+    ] as const) {
+      const outboundId = `dm-boundary-${label}`;
+      const outcome = await live.plugin
+        .sendOutbound({ outboundId, ...fields, text: "경계를 넘습니다", attachmentIds: [] })
+        .then(
+          () => "stored",
+          (err: Error) => err.message,
+        );
+      outcomes.push([label, outcome, storedFor(outboundId).length]);
+    }
+    const refused = "FORBIDDEN: 이 대화에만 보낼 수 있습니다";
+    expect(outcomes).toEqual([
+      ["dm→channel run", refused, 0],
+      ["dm→channel no-run", refused, 0],
+      ["channel→dm run", refused, 0],
+      ["channel→dm no-run", refused, 0],
+      ["fin dm-key", refused, 0],
+    ]);
+    // 두 런은 그대로 돈다 — 거절은 그 정본만. 자기 DM 세션으로 온 정본은 그 런에 붙는다
+    expect(getRun(live.app.db, dmRun.id)?.status).toBe("streaming");
+    expect(getRun(live.app.db, channelRun.id)?.status).toBe("streaming");
+    await live.plugin.sendOutbound({
+      outboundId: "dm-own",
+      conversationId: inDm.id,
+      agentId: "dev",
+      sessionKey: dmKey,
+      text: "DM 에",
+      attachmentIds: [],
+    });
+    expect(storedFor("dm-own")).toEqual([
+      expect.objectContaining({ conversationId: inDm.id, channelId: dm.id, runId: dmRun.id }),
+    ]);
+
+    // 런 없는 정본 — DM 의 세션 키를 다른 에이전트(fin)가 댄다. 그 키에 열린 런이 있으면 런 갈래(그 런의 에이전트 글)라 세션 행
+    // 규칙에 닿지 않으므로, DM 세션을 닫아 런을 끝낸 뒤에 본다
+    const closed = await rest(live, "PATCH", `/conversations/${inDm.id}`, { closed: true });
+    expect(closed.status).toBe(200);
+    await dmLog.terminal(dmRun.id);
+    const othersKey = await live.plugin
+      .sendOutbound({
+        outboundId: "dm-boundary-fin-others-dm-key",
+        conversationId: inDm.id,
+        agentId: "fin",
+        sessionKey: dmKey,
+        text: "남의 DM 키로",
+        attachmentIds: [],
+      })
+      .then(
+        () => "stored",
+        (err: Error) => err.message,
+      );
+    expect([othersKey, storedFor("dm-boundary-fin-others-dm-key").length]).toEqual([refused, 0]);
   });
 });
 

@@ -261,6 +261,24 @@ describe("buildTurnFacts — 턴마다 붙는 문맥", () => {
     expect(lines).not.toContain("---");
   });
 
+  it("DM 턴 — `[dodok context]` 줄 바로 다음(세션 줄 앞)에 DM 줄", () => {
+    const text = buildTurnFacts({
+      conversationTitle: TITLE,
+      participants: [
+        { type: "user", handle: "mia", displayName: "Mia", isSelf: false },
+        { type: "agent", handle: "coder", displayName: "코더", isSelf: true },
+      ],
+      dm: { ownerHandle: "mia" },
+    });
+    expect(text).toMatchInlineSnapshot(`
+      "[dodok context] 이 턴의 사실 — dodok 러너가 붙인 문맥이며 대화 상대가 쓴 글이 아닙니다.
+      다이렉트 메시지: @mia 님과 1:1
+      세션: 배포 점검
+      참여자: @mia(사람), @coder(에이전트, 나)
+      자리: 채널"
+    `);
+  });
+
   it("릴레이 깊이 0 은 적지 않는다", () => {
     expect(buildTurnFacts({ conversationTitle: TITLE, participants: PARTICIPANTS, relayDepth: 0 })).toBe(
       buildTurnFacts({ conversationTitle: TITLE, participants: PARTICIPANTS }),

@@ -81,6 +81,48 @@ describe("formatInboundContext", () => {
   });
 });
 
+describe("formatInboundContext DM", () => {
+  const dm: InboundDeliver = {
+    ...deliver,
+    dm: { ownerHandle: "jang" },
+    message: { ...deliver.message, text: "이 버그 원인 찾아줘 @planner 도 같이" },
+    context: {
+      recentMessages: [
+        {
+          author: { type: "user", handle: "jang", displayName: "장병현" },
+          text: "로그인이 가끔 실패해",
+          ts: "2026-09-14T00:12:00Z",
+        },
+      ],
+      participants: [
+        { type: "user", handle: "jang", displayName: "장병현", isSelf: false },
+        { type: "agent", handle: "researcher", displayName: "Researcher", isSelf: true },
+      ],
+      relayRules: deliver.context.relayRules,
+      channelPrompt: "짧게 답하세요",
+    },
+  };
+
+  it("`[dodok context]` 줄 바로 다음이 DM 줄, 그다음 세션 줄 — 참여자는 주인과 나", () => {
+    const lines = formatInboundContext(dm, { timeZone: "Asia/Seoul" }).split("\n");
+    expect(lines.slice(0, 4)).toEqual([
+      `[dodok context] channel=${CH} you=@researcher`,
+      "다이렉트 메시지: @jang 님과 1:1",
+      "세션: 배포 점검",
+      "참여자: @jang(사람), @researcher(에이전트, 나)",
+    ]);
+  });
+
+  it("「이 DM 의 지시」는 헤더가 아니라 채널 프롬프트 항목으로 — 항목 이름은 그대로", () => {
+    expect(formatInboundContext(dm)).not.toContain("짧게 답하세요");
+    expect(channelPromptContext(dm)).toEqual(["채널 프롬프트: 짧게 답하세요"]);
+  });
+
+  it("dm 이 없으면 DM 줄이 없다 — 일반 채널 헤더는 이전과 글자까지 같다", () => {
+    expect(formatInboundContext(deliver)).not.toContain("다이렉트 메시지");
+  });
+});
+
 describe("formatInboundContext 리액션", () => {
   const REACTIONS: InboundReaction[] = [
     {
