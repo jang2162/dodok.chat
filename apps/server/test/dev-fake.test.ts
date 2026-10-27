@@ -57,7 +57,7 @@ import {
 import { hasGateways } from "../src/adapters/types";
 import type { App } from "../src/app";
 import { findItem, formatInteractionText } from "../src/modules/components/interact";
-import { agents, messages, runnerTokens, runs, users } from "../src/db/schema.sqlite";
+import { agents, channels, messages, runnerTokens, runs, users } from "../src/db/schema.sqlite";
 import { normalizeEmail } from "../src/modules/members/accept";
 import { DISCONNECT_EVENT_MS } from "../src/modules/ops/health";
 import type { FakeRunnerRun } from "./fakes/fake-runner";
@@ -2128,6 +2128,9 @@ describe("startDevFake 고정 member 계정 — mia", () => {
   }, 20_000);
 });
 
+/** dev:fake 가 DM 씨앗의 답을 기다리는 상한(scripts/dev-fake.ts DM_SEED_TIMEOUT_MS) — 막히면 이만큼 걸린 뒤 던진다 */
+const DM_SEED_WAIT_MS = 10_000;
+
 describe("startDevFake DM — dev 는 모두에게 열리고 새 DB 는 mia ↔ dev DM 에 세션 하나(에이전트 DM 계획 태스크 6)", () => {
   let dir: string;
   let dev: DevFake | undefined;
@@ -2286,6 +2289,33 @@ describe("startDevFake DM — dev 는 모두에게 열리고 새 DB 는 mia ↔ 
     expect((await restAs<Dms>(dev.url, again.cookie, "GET", "/dms")).dms.map((d) => d.channel.id)).toEqual([
       dmId,
     ]);
+  }, 45_000);
+
+  it("--keep 으로 채널을 모두 보관한 DB(씨앗 조건)는 DM 이 아직 없고 dev 가 보관됐어도 시작이 막히지 않고 DM 을 만들지 않는다", async () => {
+    const keepDir = mkdtempSync(join(tmpdir(), "dodok-dev-fake-dm-keep-"));
+    let kept: DevFake | undefined;
+    try {
+      kept = await startDevFake({ port: 0, dataDir: keepDir, logLevel: "error" });
+      const { db } = kept.app;
+      const devId = db.select({ id: agents.id }).from(agents).where(eq(agents.handle, "dev")).get()?.id ?? "";
+      const finId = db.select({ id: agents.id }).from(agents).where(eq(agents.handle, "fin")).get()?.id ?? "";
+      // 이 판 이전 DB 흉내 — mia ↔ dev DM 이 없다(씨앗 DM 을 fin 의 것으로 돌려 둔다). 사람이 채널을 모두 보관하고 dev 를 보관했다
+      db.update(channels).set({ dmAgentId: finId }).where(eq(channels.dmAgentId, devId)).run();
+      db.update(channels).set({ archivedAt: new Date() }).where(eq(channels.kind, "channel")).run();
+      db.update(agents).set({ archivedAt: new Date() }).where(eq(agents.id, devId)).run();
+      await kept.close();
+      kept = undefined;
+
+      const started = Date.now();
+      kept = await startDevFake({ port: 0, dataDir: keepDir, keep: true, logLevel: "error" });
+      expect(Date.now() - started).toBeLessThan(DM_SEED_WAIT_MS);
+      expect(
+        kept.app.db.select({ id: channels.id }).from(channels).where(eq(channels.dmAgentId, devId)).all(),
+      ).toEqual([]);
+    } finally {
+      await kept?.close();
+      rmSync(keepDir, { recursive: true, force: true });
+    }
   }, 45_000);
 });
 

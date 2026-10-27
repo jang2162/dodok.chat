@@ -76,7 +76,13 @@ import { createConversation } from "../src/modules/conversations/store";
 import { resolveSendConversation } from "../src/modules/conversations/service";
 import { findOrCreateDm } from "../src/modules/dms/service";
 import { createUserMessage, sendUserMessage } from "../src/modules/messages/service";
-import { createAgent, providerAgentIdIs, updateAgent } from "../src/modules/agents/service";
+import {
+  agentNotArchived,
+  createAgent,
+  isAgentActive,
+  providerAgentIdIs,
+  updateAgent,
+} from "../src/modules/agents/service";
 import { hasGateways } from "../src/adapters/types";
 import { getGatewayRow } from "../src/modules/gateways/service";
 import { acceptInvite, normalizeEmail } from "../src/modules/members/accept";
@@ -1223,10 +1229,11 @@ function ensureDevFakeSessions(app: App): boolean {
   if (live) return false;
   const channel = createChannel(db, { workspaceId, createdBy: ownerUserId, name: DEV_FAKE_CHANNEL_NAME });
   for (const handle of DEV_FAKE_CHANNEL_AGENTS) {
+    // 보관한 에이전트는 채널에 넣을 수 없다(addMember 가 던진다) — `--keep` 으로 이어받은 DB 에서 사람이 보관했으면 빼고 뜬다
     const agent = db
       .select({ id: agents.id })
       .from(agents)
-      .where(and(eq(agents.workspaceId, workspaceId), eq(agents.handle, handle)))
+      .where(and(eq(agents.workspaceId, workspaceId), eq(agents.handle, handle), agentNotArchived))
       .get();
     if (agent) addMember(db, channel.id, { memberType: "agent", memberId: agent.id }, app.logger);
   }
@@ -1258,18 +1265,28 @@ function ensureDevFakeSessions(app: App): boolean {
 /**
  * mia ↔ 사무실 dev DM 에 세션 하나 — 웹이 지나는 길 그대로(`POST /dms` 의 findOrCreateDm → message.send newConversation 의
  * sendUserMessage + resolveSendConversation → 라우터)로 mia 글을 보내고 가짜 대본의 답이 저장될 때까지 기다린다. 플러그인이 붙은 뒤에
- * 부른다(앞이면 런이 ADAPTER_UNAVAILABLE 로 끝난다). 이미 세션이 있는 DM(사람이 mia 계정으로 먼저 쓴 `--keep` DB)은 건드리지 않는다.
- * 답이 안 오면 던진다 — 새 DB 에서 DM 런이 안 도는 것은 회귀라 브라우저 검증이 앱 결함으로 오인하지 않게
+ * 부른다(앞이면 런이 ADAPTER_UNAVAILABLE 로 끝난다). 이미 세션이 있는 DM 은 건드리지 않는다.
+ * `--keep`(채널을 모두 보관한 DB 도 씨앗 조건에 든다)·사무실 플러그인이 못 붙음·dev 가 보관·꺼짐이면 경고만 남기고 건너뛴다 — 사람 손이
+ * 닿은 DB 는 그대로 뜬다(플러그인 갈래와 같다). 새 DB 에서 답이 안 오면 던진다 — DM 런이 안 도는 것은 회귀라 브라우저 검증이 앱 결함으로
+ * 오인하지 않게
  */
-async function ensureDevFakeDm(app: App): Promise<void> {
+async function ensureDevFakeDm(app: App, opts: { keep: boolean; officeConnected: boolean }): Promise<void> {
   const { db, workspaceId } = app;
+  if (opts.keep) {
+    app.logger.warn("dev:fake dm seed skipped — --keep keeps the inherited DB as it is");
+    return;
+  }
+  if (!opts.officeConnected) {
+    app.logger.warn("dev:fake dm seed skipped — the office plugin is not connected");
+    return;
+  }
   const mia = db
     .select({ id: users.id })
     .from(users)
     .where(and(eq(users.workspaceId, workspaceId), eq(users.handle, DEV_FAKE_MEMBER_HANDLE)))
     .get();
   const agent = db
-    .select({ id: agents.id })
+    .select({ id: agents.id, enabled: agents.enabled, archivedAt: agents.archivedAt })
     .from(agents)
     .where(
       and(
@@ -1284,6 +1301,10 @@ async function ensureDevFakeDm(app: App): Promise<void> {
       { mia: !!mia, agent: !!agent },
       "dev:fake dm seed skipped — mia or office dev is missing",
     );
+    return;
+  }
+  if (!isAgentActive({ enabled: agent.enabled, archivedAt: agent.archivedAt?.toISOString() ?? null })) {
+    app.logger.warn("dev:fake dm seed skipped — office dev is archived or disabled");
     return;
   }
   const { channel } = findOrCreateDm(db, { workspaceId, ownerId: mia.id, agentId: agent.id });
@@ -1655,7 +1676,11 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
       app,
       pairs.filter((p) => p.plugin).map((p) => p.spec.id),
     );
-    if (seeded) await ensureDevFakeDm(app);
+    if (seeded)
+      await ensureDevFakeDm(app, {
+        keep: opts.keep === true,
+        officeConnected: pairs.some((p) => p.spec.id === DEV_FAKE_OFFICE_GATEWAY_ID && p.plugin),
+      });
     return { app, url: app.url, spareGateway: { url: spare.url, token: spare.token }, close };
   } catch (error) {
     await close().catch(() => undefined);
