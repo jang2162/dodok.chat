@@ -136,7 +136,7 @@ src/
 │                 UnreadSnapshot({ conversations, channels } — channels 는 보관하지 않은 채널 id 전부, 대화가 없는 빈 채널도)·ConversationRead({ conversationId, seq } — 클라이언트 → 서버)·
 │                 ConversationReadUpdate({ conversationId, channelId, lastReadSeq } — 서버 → 그 사용자의 user 룸)·
 │                 ChannelActivity({ channelId, conversationId, seq, threadRootId?, authorType user|agent|automation(자동화면 authorId 는 자동화 id), authorId, mentionedUserIds } — 본문 없음, workspace 룸). 이벤트 이름은 `wire/` 에.
-│                 공용 `Channel` 에는 읽음 값을 넣지 않는다 — `channel.updated` 는 워크스페이스 전원에게 가서 사람마다 다른 값을 실을 수 없다
+│                 공용 `Channel` 에는 읽음 값을 넣지 않는다 — `channel.updated` 는 워크스페이스 전원(DM 이면 주인)에게 가서 사람마다 다른 값을 실을 수 없다
 ├─ reactions/     리액션. `formatReactionFacts(reactions, omitted?)` — 에이전트가 받는 「반응(지난 턴 뒤 네 메시지에 달린 것):」 블록을 만드는 **유일한** 자리
 │                 (플러그인 헤더와 러너 턴 사실이 같이 쓴다 — 두 어댑터 문구가 갈라지지 않게, 비면 "", 줄은 at 오름차순·끝에 「(외 n개)」)
 ├─ automations/   자동화. AutomationSchedule(repeat daily·weekdays·weekly(weekday 0 = 일요일)·hourly(minute), time `HH:MM`)·AutomationKind(schedule·webhook)·AutomationStatus(ok·skipped·error)·
@@ -212,7 +212,7 @@ src/
 │                         `client error` 줄 하나로 서버가 죽던 자리. err 밖의 키에는 Buffer 를 싣지 않는다 — 머리 주석)
 ├─ wiring.ts              createServices(라우터 ⇄ 오케스트레이터 상호 참조, RunsFacade), sessionRecoverTargets(재접속 복구 대상 — 연결 id 별 Map, OpenClaw 에이전트 세션만)
 ├─ db/
-│  ├─ schema.sqlite.ts    Drizzle 스키마 (계획서 6장 테이블 + agent_sessions + approvals + attachments + bridge_tokens + ops_events + invites + runner_tokens + gateways + message_reactions + automations + push_devices + personal_tokens + conversations + conversation_reads — 마이그레이션 0000~0028,
+│  ├─ schema.sqlite.ts    Drizzle 스키마 (계획서 6장 테이블 + agent_sessions + approvals + attachments + bridge_tokens + ops_events + invites + runner_tokens + gateways + message_reactions + automations + push_devices + personal_tokens + conversations + conversation_reads — 마이그레이션 0000~0029,
 │  │                      FK ON DELETE 는 push_subscriptions.session_id·bridge_tokens.gateway_id·conversation_reads.user_id·conversation_reads.conversation_id·message_reactions.message_id·message_reactions.user_id·push_devices.session_id(cascade)와 agents.gateway_id·attachments.gateway_id(set null)뿐).
 │  │                      ⚠ drizzle-kit 은 기존 표에 FK 열을 더하는 `ALTER TABLE … ADD … REFERENCES` 에서 스냅숏의 ON DELETE 를 빠뜨린다 — SQLite 가 받아도 조용히 다르게 동작하므로,
 │  │                      FK 열을 더하면 생성 SQL 의 ON DELETE 를 스냅숏과 대조하고 다르면 그 줄만 손으로 고친 뒤(SQLite 가 ALTER 를 받지 않으면 표를 다시 만든다) 머리 주석에
@@ -251,6 +251,9 @@ src/
 │  │                      enabled·owner_user_id·last_version·created_at·updated_at. agents.gateway_id(OpenClaw 에이전트의 Gateway, null 이면 연결이 빈 에이전트)·
 │  │                      runs.connection_id·approvals.connection_id(그 런·승인의 연결 — 공유 Run·Approval 에 싣지 않고 store 의 getRunConnectionId·getApprovalConnectionId 로 읽는다).
 │  │                      에이전트 보관(0015): agents.archived_at(보관한 시각, null 이면 살아 있음 — FK·인덱스 없음). 보관해도 행·핸들·채널 참여·세션 행은 남는다.
+│  │                      에이전트 DM(0029 — 생성기 출력 그대로): channels.kind(`channel`·`dm`, NOT NULL 기본 `channel`)·dm_owner_id(users)·dm_agent_id(agents — 둘 다 nullable FK, cascade 없음 —
+│  │                      「DM 이면 둘 다 있다」는 modules/dms/service.ts findOrCreateDm 이 지킨다), 유일 channels_dm_pair (dm_owner_id, dm_agent_id) WHERE kind = 'dm', agents.dm_access(`off`·`admins`·
+│  │                      `everyone`, 기본 `admins`). DM 행은 name `dm`·visibility private·session_policy { create: members }, channel_members 는 주인 사람 행 + 에이전트 행(autoRespond) 둘뿐.
 │  │                      멤버 비활성화(0016): memberships.deactivated_at(비활성화한 시각, null 이면 활성)·users.left_handle 삭제. 채널 보관(0017): channels.archived_at(보관한 시각, null 이면 살아 있음).
 │  │                      두 열 모두 FK·인덱스 없음 — 행·핸들·이메일·채널 참여·메시지는 남고 읽는 자리가 거른다(채널 멤버는 channels/service.ts memberNotDeactivated, 쓰기는 assertChannelWritable).
 │  │                      읽지 않음(0028): conversation_reads — user_id·conversation_id(기본 키 (user_id, conversation_id), 둘 다 FK ON DELETE CASCADE)·last_read_seq(커지기만 한다 —
@@ -287,6 +290,11 @@ src/
 │  └─ fts.ts              assertTrigramSupport(sqlite) — temp 탐침 테이블로 FTS5 trigram 을 확인, 없으면 한 줄 오류(cause 보존). 마이그레이션 **전**이어야 한다 —
 │                         뒤면 0007 이 여러 줄 drizzle 오류로 먼저 죽는다
 ├─ auth/
+│  ├─ channel-access.ts   에이전트 DM. 채널 접근 판정의 유일한 자리 — canReadChannel(행 하나: DM 이면 주인만)·readableChannelSql(목록 WHERE 에 and — 결과를 뽑은 뒤 거르면
+│  │                      페이지·커서·개수가 남의 DM 을 센다)·assertChannelReadable(못 읽으면 없는 채널과 같은 404)·readableChannelSqlFor(제어 도구 주체 — 바깥 MCP 는 사람과 같은 범위,
+│  │                      채널 안 에이전트는 일반 채널 + 그 런의 DM 하나)·ChannelReader(사람 id 또는 이미 좁힌 SQL — 저장소·검색 함수가 받는다)·readerSql. **역할 판정(403)보다 먼저** 부른다 —
+│  │                      역할 정책이 requirePolicy preHandler 에 있는 경로는 preHandler 를 requireSession 으로 바꾸고 핸들러에서 접근 다음에 정책을 부른다. 대화·런 id 로 닿는 자리는
+│  │                      조회 WHERE 에 readableChannelSql 를 붙인 도우미(conversations/store.ts getReadableConversation·runs/store.ts getRunInWorkspace 의 readerId)로 같은 404
 │  ├─ index.ts            Better Auth(이메일 로그인·가입·비밀번호 변경·세션 폐기·로그아웃 HTTP 경로 비활성 — disabledPaths, routes.ts 허용 목록 밑의 겹 방어), 세션 토큰 검증(userId·sessionId)
 │  ├─ owner.ts            부팅 때 owner 보장 — LOCAL_AUTH_TOKEN 이 owner 비밀번호, 바뀌면 기존 세션을 끊는다
 │  ├─ roles.ts            Phase 4 ② 팀. 역할 검사의 유일한 자리(매트릭스의 정본은 팀 스펙 「역할과 권한」 절 표) — requireSession(세션 + 활성 membership, 없거나 비활성이거나 모르는 역할이면 401,
@@ -343,6 +351,11 @@ src/
 │  │                      쓰기 검사는 assertChannelWritable 한 함수(없으면 404, 보관이면 409 CHANNEL_ARCHIVED — PATCH·멤버 넣기·빼기·설정·세션 만들기·이름·닫기·wire message.send·카드 checkInteraction·사람 첨부 올리기 — 그다음 세션 쪽은 conversations/ 의 assertConversationWritable),
 │  │                      던지지 않는 판정은 isChannelArchived(런 관문·늦은 정본·푸시). 사람 멤버의 비활성 거름은 SQL 조건 memberNotDeactivated 한 곳 — listMembers·channelParticipants
 │  │                      (includeInactive 면 옛 글의 멘션 풀기용으로 비활성 멤버·보관한 에이전트도 싣는다)·userMessageParticipants 가 쓴다
+│  ├─ dms/                에이전트 DM. service.ts(findOrCreateDm — 유일 인덱스 + onConflictDoNothing 뒤 다시 읽기, 대화는 만들지 않는다·openDm(이미 있는 DM 은 허용 검사 없이,
+│  │                      새로 만들 때만 403)·canStartDm·dmAccessAllows(off 아무도·admins admin 이상·everyone 모든 활성 멤버)·dmReadOnlyReason(agent_archived·agent_disabled·dm_not_allowed)·
+│  │                      assertDmWritable(409 DM_READ_ONLY)·assertNotDm(채널 관리 경로의 VALIDATION)·assertDmPatchBody(DM 의 PATCH 는 prompt 만)·listDms(최근 활동순, 글 없는 DM 도)·isDmChannel),
+│  │                      routes.ts(`GET`·`POST /api/v1/dms` — 사람 버킷). DM 의 런·알림 갈래는 각 모듈 자리에 있다 — 멘션 중화 messages/service.ts plainInDm, 줄 선 런 닫기
+│  │                      runs/orchestrator.ts dmClosedTarget, 헤더 runs/context.ts(dm·DM_RELAY_RULES·참여자 주인 + 나), 푸시 push/triggers.ts(tag dm:<대화>)
 │  ├─ conversations/      채널 세션. store.ts(행 읽기 rowToConversation·getConversation(워크스페이스 거름 선택)·latestOpenConversation(최근 활동한 열린 대화 — 대화가 정해지지 않은
 │  │                      시스템 메시지의 자리, 없으면 undefined = 남기지 않는다)·touchConversation(메시지를 저장할 때 last_seq·last_message_at — 시스템 메시지는 last_seq 만)·createConversation·
 │  │                      isConversationClosed·assertConversationWritable(닫혔으면 409 CONVERSATION_CLOSED — assertChannelWritable 다음, messages/service.ts 가 부르므로 순환을 피해 store 에 둔다)) ·
@@ -381,7 +394,7 @@ src/
 │  │                      threadRootsOf — lastSeq 재동기화 때 페이지 밖 옛 루트를 질의 한 번으로(구독 ack `threadRoots`)
 │  ├─ search/             Phase 4 ①. service.ts(searchMessages — 3글자 이상은 `messages_fts MATCH` 에 사용자 입력을 따옴표 구절 하나로, bm25 다음 최신순, 페이지 20·커서.
 │  │                      2글자(코드 포인트)는 `body_md LIKE … ESCAPE '\'` 최근 90일·최대 50개, 커서 없이 `limited: true`. NUL 이 든 검색어는 400.
-│  │                      워크스페이스의 모든 채널(`channels.visibility` 는 아직 거르지 않는다 — 비공개 채널이 생기면 `readableChannels` 와 별칭 표 `mentionDirectory` 가 함께 거른다), kind normal 만.
+│  │                      읽을 수 있는 채널만(`auth/channel-access.ts` — 사람이면 일반 채널 + 내 DM, 제어 도구면 주체의 범위. `readableChannels` 와 별칭 표 `mentionDirectory` 가 같은 `ChannelReader` 로 SQL 단계에서 거른다 — 결과를 뽑은 뒤 거르면 페이지·커서가 남의 DM 을 센다. `channels.visibility` 는 보지 않는다), kind normal 만.
 │  │                      검색어 안 `@핸들`(shared PLAIN_MENTION_RE)은 아는 에이전트·사람(나갔으면 옛 핸들)·범위 채널 별칭이면 멘션 토큰으로 바꾼 대체 검색어로도 찾는다 —
 │  │                      색인은 원문 그대로, 원래 검색어(글자로 남은 `@핸들`)와 대체 검색어를 OR(합쳐 최대 8, 원래 검색어 몫은 늘 남긴다). 스니펫은 readable.ts 의 읽는 글(멘션 → @핸들,
 │  │                      모르면 「@알 수 없음」, 마크다운 표시 걷음, 글자마다 원문 범위)에서 앞뒤 64 글자 — 일치는 원문에서 찾고 강조는 그 범위를 낳은 글자에, 보이지 않는 자리(링크 주소 등)의
@@ -433,7 +446,7 @@ src/
 │  │                      지금 allowPairs 로 다시 본다(턴 상한·반복은 안 본다))
 │  ├─ push/               Phase 2 ④. vapid.ts(키: VAPID_PUBLIC_KEY·VAPID_PRIVATE_KEY 둘 다 있으면 그것, 아니면 `<DATA_DIR>/vapid.json`(없으면 만들고 0600,
 │  │                      망가졌으면 덮어쓰지 않고 던진다)) · presence.ts(소켓별 「보이는가·보는 채널·세션」, 메모리뿐 — isWatching 은 세션 단위: 같은 채널의 다른 세션을 보고 있으면 보낸다) ·
-│  │                      triggers.ts(순수: message.created·approval.requested → 받을 사람·알림 내용 — 멘션(자기 멘션은 작성자가 사람일 때만 뺀다)·승인 요청(워크스페이스의 활성 owner·admin 전원 — `TriggerLookups.admins`)·relay_limit,
+│  │                      triggers.ts(순수: message.created·approval.requested → 받을 사람·알림 내용 — 멘션(자기 멘션은 작성자가 사람일 때만 뺀다)·승인 요청(워크스페이스의 활성 owner·admin 전원 — `TriggerLookups.admins`, DM 이면 그 DM 의 주인만)·relay_limit·DM(에이전트의 최상위 보통 정본과 run_error → 주인, 제목 `@<핸들><이/가> 답했습니다`·본문 「DM」·tag `dm:<conversationId>` — 발송 직전 거름 `attachPushTriggers` 도 DM 을 겨눈 알림을 주인 말고 걷는다),
 │  │                      제목 늘 `dodok`, 본문은 누가·어디·무엇만. url 은 세션 `/c/<채널>/s/<세션>`(승인은 `…/activity`), 받는 사람마다의 PushTarget.conversationId 는 거르기에만(페이로드에 없다). 멘션 tag `mention:<conversationId>`, 릴레이 한도 tag `relay:<conversationId>`. 스레드 멘션은 「@dev가 #채널 스레드에서 불렀습니다」·url `/c/<채널>/s/<세션>/t/<rootId>`·tag `mention:t:<rootId>`
 │  │                      (`mention:<id>:<rootId>` 는 81자로 상한 80 을 넘는다), 스레드 안 relay_limit 은 tag 는 세션 그대로·문구와 링크만 스레드.
 │  │                      자동화 글의 멘션은 보낸 이 「자동화 <이름>이/가」(그 워크스페이스의 자동화에서 찾는다 — `TriggerLookups.automationName`, 지웠으면 「자동화가」)) ·
@@ -582,8 +595,8 @@ src/
    │                      reaction.set(버킷 chatter — 넘으면 ack RATE_LIMITED)은 ReactionSet 으로 파싱해 setReaction → ack null(역할을 다시 읽지 않는다 — membership 은 핸드셰이크가 본다) ·
    │                      message.send 가 새 최상위 메시지를 저장하면 ack 뒤에 작성자 읽음을 그 seq 로 올린다 — 스레드 답글·같은 clientMsgId 재전송은 올리지 않고, 실패는 warn 만)
    ├─ cookie-auth.ts      wire 핸드셰이크의 dodok.session 쿠키 파싱(웹은 토큰을 다루지 않는다) — Origin 이 `isAllowedOrigin`(http/origins.ts)일 때만 쿠키를 읽는다
-   ├─ events.ts           bus → 룸 팬아웃(`setup.status` 는 owner, `ops.event` 는 owner·admin 사용자 룸에만 — roleRooms 가 보낼 때마다 membership 을 다시 읽어 역할 변경을 따르고 비활성 membership 은 거른다, `people.changed`·`agents.changed`·`channel.updated` 는 워크스페이스 룸), 소켓별 미전송 500 초과 시 run.event 버림 + run.state { resync }.
-   │                      읽지 않음: message.created 가 kind normal 이고 작성자가 user·agent·automation 이면 본문 없는 `channel.activity` 를 워크스페이스 룸으로(silent — 늦게 온 정본 — 도 낸다,
+   ├─ events.ts           bus → 룸 팬아웃(`setup.status` 는 owner, `ops.event` 는 owner·admin 사용자 룸에만 — roleRooms 가 보낼 때마다 membership 을 다시 읽어 역할 변경을 따르고 비활성 membership 은 거른다, `people.changed`·`agents.changed` 는 워크스페이스 룸, 채널 사실(`channel.created`·`channel.updated`·`channel.activity`·`approval.requested`·`approval.resolved`)은 `channelAudience`(일반 채널은 워크스페이스 룸, DM 은 주인의 user 룸 — 페이로드에 채널 행이 없으면 채널을 읽어 고르고 없는 채널이면 보내지 않는다), `system.notice` 는 `userId` 가 있으면 그 사람의 user 룸), 소켓별 미전송 500 초과 시 run.event 버림 + run.state { resync }.
+   │                      읽지 않음: message.created 가 kind normal 이고 작성자가 user·agent·automation 이면 본문 없는 `channel.activity` 를 `channelAudience` 로(DM 에이전트의 보통 메시지면 `mentionedUserIds` 가 `[dmOwnerId]`, silent — 늦게 온 정본 — 도 낸다,
    │                      버스 message.created 에 채널 룸 팬아웃과 **따로 등록한** 처리기다 — 하이드레이션 질의가 던져도 읽지 않음 신호는 나간다, 등록 순서가 호출 순서,
    │                      허용 목록이라 새 authorType 은 넣을 때까지 막힌다 — conversationId 를 싣는다), 버스 `conversation.read`(userId 를 더 싣는다)는 그 사용자의 user 룸으로 `{ conversationId, channelId, lastReadSeq }` 만.
    │                      conversation.created·conversation.updated 는 채널 룸으로.
@@ -634,7 +647,7 @@ Gateway 0개 부팅, 검증 함수가 던지면 거절, 거절 로그 주소(TRU
 Gateway 마다 토큰 행·가짜 플러그인·대본을 하나씩 둔다. 시작은 가짜 플러그인이 붙은 고정 짝만 기다린다 — 사람이 더한 Gateway 는 닿지 않아도 되고, 사람이 끈 고정 Gateway·폐기한 고정 토큰이면 그 짝의 플러그인은 warn 만 남기고 붙지 않는다. 그 밖의 원인(사람 손이 닿지 않은 새 DB 등)으로 고정 짝이 못 붙으면 시작이 실패한다. OpenClaw 에이전트도 시작 때 등록한다 — 핸들 `dev`·`fin`(사무실)·`main`·`dev-home`(집), 그 핸들이나 그 Gateway 의 같은 id 가 이미 있으면 그대로 둔다.
 대본의 이름표는 핸들이라(`**dev-home**: …`) 답만 보고 어느 Gateway 가 답했는지 안다. 그 Gateway 에 없는 id(다른 Gateway 에서 옮겨 온 에이전트)도 같은 기본 대본으로 답한다 — 「Gateway 삭제 → 옮기기 → 다시 실행 → 답」을 끝까지 본다. DB 에 넣지 않은 셋째 가짜 Gateway 도 하나 연다 — 시작 로그 `spareGateway` 의 주소·토큰(가짜는 토큰을 검사하지 않는다)을 연결 페이지 「Gateway 추가」에 넣어 붙여 본다(플러그인 없이 Gateway 줄만 붙는다). `.env` 를 읽지 않고 개발 전용 고정값을 쓴다(로그인 토큰 `dev-fake-local-token` — 시크릿이 아니라 로그에 찍는다),
 DB 는 `data/dev-fake.sqlite`(시작마다 새로, `--keep` 이면 유지), 기본 포트 3000(Vite 프록시 대상). 운영 코드(`src/`)는 건드리지 않는다.
-보관하지 않은 채널이 하나도 없으면(새 DB, 또는 `--keep` DB 의 채널이 모두 보관됨) 씨앗 채널 「세션」(`DEV_FAKE_CHANNEL_NAME`, 에이전트 `dev`·`coder`)을 만들고 그 채널에만 「이전 대화」(`DEV_FAKE_LEGACY_TITLE`, id = 채널 id — 0025 가 만드는 꼴)와 「dev:fake 새 세션」(`DEV_FAKE_SESSION_TITLE`)을 owner 글 하나씩과 함께 넣는다(`ensureDevFakeSessions`). 살아 있는 채널이 하나라도 있으면 아무것도 더하지 않는다 — `--keep` 으로 이어받은 채널(씨앗·UI 로 만든 것·보관한 것)은 그대로다(실제 서버처럼 세션 기능 뒤 만든 채널에는 「이전 대화」가 없다). 가짜 Gateway·플러그인·러너 대본은 서버가 실은 `delivery.sessionKey`·`conversationId` 를 그대로 쓴다.
+보관하지 않은 채널이 하나도 없으면(새 DB, 또는 `--keep` DB 의 채널이 모두 보관됨) 씨앗 채널 「세션」(`DEV_FAKE_CHANNEL_NAME`, 에이전트 `dev`·`coder`)을 만들고 그 채널에만 「이전 대화」(`DEV_FAKE_LEGACY_TITLE`, id = 채널 id — 0025 가 만드는 꼴)와 「dev:fake 새 세션」(`DEV_FAKE_SESSION_TITLE`)을 owner 글 하나씩과 함께 넣는다(`ensureDevFakeSessions`). 살아 있는 채널이 하나라도 있으면 아무것도 더하지 않는다 — `--keep` 으로 이어받은 채널(씨앗·UI 로 만든 것·보관한 것)은 그대로다(실제 서버처럼 세션 기능 뒤 만든 채널에는 「이전 대화」가 없다). 새 DB(`--keep` 없이)에서는 사무실 `dev` 를 처음 등록할 때 `dmAccess: everyone` 으로 두고(나머지는 기본 `admins` — mia 는 dev 와만 DM 을 연다), mia ↔ dev DM 에 세션 하나(mia 글 + 대본 답)를 만든다(`ensureDevFakeDm` — `--keep`·사무실 플러그인이 못 붙음·dev 보관·꺼짐이면 경고만 남기고 건너뛴다, 씨앗 채널 조건은 DM 을 세지 않고 씨앗 채널은 보관한 에이전트를 빼고 만든다). 인바운드 로그 줄 `dev:fake inbound reactions` 은 DM 런이면 `dm`(헤더 DM 줄)과 `session`·`participants` 를 싣는다. 가짜 Gateway·플러그인·러너 대본은 서버가 실은 `delivery.sessionKey`·`conversationId` 를 그대로 쓴다.
 부팅 때 고정 member 계정(이메일 `member@dodok.local`, 비밀번호 `dev-fake-member-password`, 핸들 `mia`, 표시 이름 「미아」)도 owner 와 같은 자리에서 보장한다 —
 사람을 만드는 서버 경로(`members/accept.ts` 의 `acceptInvite`)를 그대로 써 초대를 내부에서 하나 내 곧바로 수락한다, `--keep` 이면 이미 있을 때 그대로, 운영 `createApp` 에는 없다.
 받은 글의 키워드로 대본을 고른다 — 드롭·실패·느리게·오래(답 길이와 무관하게 약 15초 스트리밍 — 채널과 스레드에 연달아 부르면 두 버블이 함께 흐른다)·도구·승인(승인 둘·승인 항상), components 는 「폼」(모달 필드 5종)·「폼 둘」(checkbox·radio + 필수 text — 둘이 합쳐 필드 7종)·
@@ -867,7 +880,8 @@ src/
 │  └─ layout/
 │     ├─ AppShell.tsx      사이드바 + 배너 + 페이지. 페이지는 셸 안 스크롤 상자(`PAGE_SCROLL_ID` — 화면이 바뀌면 라우터 `scrollToTopSelectors` 가 맨 위로)에서만
 │     │                    스크롤해 사이드바·배너는 제자리에 있다(채널 화면은 그 높이에 맞추고 목록이 스스로 스크롤). 768px 미만은 사이드바를 왼쪽 시트로, 닫히면 초점 복귀. 검색 대화상자(`⌘K`/`Ctrl+K` — 다른 대화상자가 열려 있으면 무시,
-│     │                    `preventDefault`)와 그것을 여는 컨텍스트 `OpenSearchContext`
+│     │                    `preventDefault`)와 그것을 여는 컨텍스트 `OpenSearchContext`. DM 목록(`features/dms` 의 useDms)을 늘 들고 있다 — 좁은 화면은 사이드바를 시트를 열 때만 그리는데
+│     │                    실시간 처리기가 그 캐시로 DM 의 승인 알림·읽지 않음 항목을 정한다
 │     ├─ Sidebar.tsx       워크스페이스 이름·검색 칸(누르면 검색 대화상자, `⌘K` 표시)·채널 목록·「채널 만들기」·하단 연결 상태와 「설정」(lucide 톱니 + 글자 — `/settings`).
 │     │                    admin 이상이면 「설정」에 확인 안 한 운영 사건 배지(features/settings-shell OpsBadge — ops/status 의 unacked warn + error, 0 이면 없음, 100 이상 「99+」,
 │     │                    sr-only 「(확인 안 한 사건 n건)」, `ops.event` 로 실시간, 주기 재조회는 없다). 에이전트·멤버·연결·운영·알림·내 계정·로그아웃은 설정 탭에 있다
@@ -909,7 +923,7 @@ src/
 │  │                       `people.changed` → 사람 목록을 통째로 바꾸고 `team`(멤버 표·대기 초대) 무효화, 목록의 내 역할이 me 와 다르면 me 를 곧바로 다시 받는다(정본은 `/auth/me`).
 │  │                       `agents.changed` → `qk.agents`(exact — 가져오기의 찾기 목록은 그대로)·채널 멤버(`qk.membersAll`) 무효화 — 보관은 `channel.member.changed` 를 내지 않는다.
 │  │                       `channel.updated` → applyChannel(상세·사이드바 목록·보관 목록 캐시 셋 — workspace 룸이라 구독하지 않은 채널의 것도 온다).
-│  │                       탭 안 승인 알림은 admin 이상에게만(`notifyApproval` 을 부르기 전에 여기서 거른다)
+│  │                       탭 안 승인 알림은 결정할 수 있는 사람에게만 — admin 이상, DM 이면 그 DM 의 주인(`canDecideApproval` — DM 목록 캐시로 가른다, `notifyApproval` 을 부르기 전에 여기서 거른다)
 │  │                       첫 연결이 아닌 재연결이면 adapter·opsStatus·opsEventsAll 과 세션 하나·세션 목록(`qk.conversationAll`·`qk.conversationListAll` 앞머리 — 떠 있는 것만 다시 받는다)을 무효화한다 — 끊긴 사이의 변화는 팬아웃으로 다시 오지 않는다.
 │  │                       읽지 않음: 붙을 때마다 `GET /me/unread` 스냅숏(401 이면 앱의 401 처리, 그 밖의 실패는 토스트 없이 끈다), 끊기면 끄고 나가 있던 응답을 버린다.
 │  │                       `channel.activity`·`conversation.read` → useUnread(내 id·보는 세션·끝 보임·사이드바 목록에 있는가를 함께 넘긴다),
@@ -1000,6 +1014,11 @@ src/
 │  │                       같은 메시지를 그리는 행이 둘이거나 다시 마운트돼도 한 줄로 센다. 마지막 요청만 실패를 되돌리고, 되돌리는 값은 「반대로」가 아니라 이 탭이 서버에게서 마지막으로 들은 내 표
 │  │                       (첫 요청 직전 캐시 → 성공한 ack → 그동안 받은 message.updated). 채널 캐시는 있을 때만, 루트면 스레드 캐시도 고친다. CHANNEL_ARCHIVED 면 보관 토스트·채널 다시 받기,
 │  │                       그 밖은 「반응을 저장하지 못했습니다」). 테스트의 Radix 메뉴 열기는 키보드로 — 까닭은 reactions.test.tsx 의 openPicker 주석
+│  ├─ dms/                 에이전트 DM. queries.ts(useDms — `GET /dms`, `staleTime: Infinity` + 이벤트 무효화 invalidateDms·bumpDm, useDm·canOpenDm(서버 판정 흉내 — 숨기기는 편의)·
+│  │                       DM_READ_ONLY_TEXT(사유 셋의 문구))·DmSection.tsx(사이드바 「다이렉트 메시지」 절 — 글 있는 DM + 지금 연 DM, 「+」 「DM 할 에이전트」 고르기)·DmRedirect.tsx(`/dm/<에이전트 id>`
+│  │                       → `POST /dms` → 그 채널 주소로, 403·404 안내)·DmHeader.tsx(에이전트 이름·제공자·러너 라벨, 세션 제목·닫기, 「이 DM 의 지시」 대화상자, 「새 세션」, 「활동」)·
+│  │                       DmNotices.tsx(첫 안내·작성기 자리의 읽기 전용 사유 줄 — 초점 규칙은 ClosedNotice 와 같다)·context.ts. 채널 화면이 `channel.kind === "dm"` 이면 DM 꼴(세션 목록 날짜 묶음
+│  │                       `conversations/dateGroups.ts` — 브라우저 시간대, 스레드·설정 패널·@ 후보 없음)
 │  ├─ conversations/       채널 세션. ConversationList.tsx(세션 목록 칸·좁은 화면 시트 — 「열림」·「닫힘」, 제목 검색은 서버 q, 「더 보기」, 줄마다 읽지 않음 점·멘션 배지)·ConversationTitle.tsx
 │  │                       (머리의 세션 제목 — 권한이 있으면 「세션 이름 바꾸기」 대화상자, 「세션 닫기」 확인)·ClosedNotice.tsx(작성기 자리 「닫힌 세션입니다」·「다시 열기」, 「세션 관리자만」 정책의
 │  │                       새 세션 창 안내 CannotCreateNotice)·closed.ts(지금 세션이 닫혔는가 — 목록·카드·스레드 패널에 내린다)·permissions.ts(서버 auth/policies.ts 의 세션 쪽 판정을 흉내 — 숨기기는 편의)·

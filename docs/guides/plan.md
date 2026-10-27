@@ -566,6 +566,12 @@ SQLite(WAL)로 시작, Drizzle ORM으로 스키마 정의해 Postgres 전환 시
   **에이전트** — 세션 키 `agent:<agentId>:dodok:channel:<conversationId>`(모양 그대로 — 기존 채널의 「이전 대화」는 id = 채널 id 라 저장된 키·OpenClaw 이력이 이어진다), 헤더 `세션: <제목>` 줄, 최근 대화는 그 세션 것만. 에이전트의 글은 세션 키의 세션에만 저장된다(서버·플러그인 두 겹, 「이 대화에만 보낼 수 있습니다」). 이 판부터 플러그인·`dodok-runner` 를 다시 설치한다.
   **웹** — `/c/<채널>/s/<세션>`, 세션 목록 칸·시트(열림/닫힘·제목 검색·읽지 않음 점·배지), 머리의 제목·「새 세션」·「세션 닫기」, 채널 설정 「세션」 칸. 읽지 않음·검색·푸시 링크·오프라인 사본이 세션 단위.
   **확인 방법**: shared·서버 단위·통합(`apps/server/test/integration/conversations.test.ts` — 두 세션의 키·맥락·병렬·닫기·대화 밖 정본·완료 기준 1~4, `db.test.ts` 「conversations 마이그레이션」, 역할 매트릭스의 세션 경로) · 태스크마다 독립 리뷰(변이)·수정·범위 재리뷰 · `dev:fake` 브라우저(독립 Chromium, owner·mia, 1280·390px — 결함 D1~D4 고침) · 실연 `docs/guides/live-smoke.md` 「채널 세션 실연」 절(실물 dev Gateway 2026.9.5·가짜 claude CLI·Claude 러너 하네스, 5/5, 모델 런 0 — 세션 기능 전 커밋의 서버로 만든 DB·Gateway 세션이 올린 뒤 「이전 대화」로 같은 키·같은 OpenClaw 세션에 이어졌다).
+- 에이전트 DM → **완료(실연까지, 2026-10-27 — 모델 런 0회)** — 스펙 `docs/superpowers/specs/2026-10-25-agent-dm-design.md`(구현과 달라진 것은 스펙 「구현과 맞춘 것」 장 — 계획 판정 PD1~PD13 포함), 계획 `docs/superpowers/plans/2026-10-26-agent-dm.md`(태스크 1~7), 로드맵 `docs/superpowers/specs/2026-10-25-sessions-dm-runner-roadmap.md`(하위 프로젝트 B), 사용법 `docs/manual/user-guide.md` 「다이렉트 메시지」 절, 에이전트 쪽 `docs/guides/agent-guide.md` 「DM — 주인과 1:1」 절.
+  **DM** — 등록된 에이전트와 채널 없이 1:1 로 대화한다. DM 은 `channels.kind = 'dm'` 인 채널(주인 사람 + 에이전트, (주인, 에이전트)마다 하나 — 마이그레이션 0029)이고 그 안에 세션이 쌓인다 — 메시지·세션·첨부·카드·런·검색·읽지 않음·푸시는 채널 세션의 것을 그대로 쓴다. 에이전트마다 `dmAccess`(`off`·`admins` 기본·`everyone`, admin 이상이 REST 로만), DM 의 승인은 주인이 결정한다(역할 무관). DM 에서는 그 에이전트만 답하고(멘션 없이 모든 글), 멘션은 평문(토큰 꼴도 중화)·릴레이·스레드·채널 한도가 없다. 에이전트 보관·꺼짐·허용 밖이면 읽기 전용(409 `DM_READ_ONLY`, 줄 선 런은 닫는다).
+  **접근** — 주인 말고는 owner·admin 도 화면·API·검색·알림·운영 표·제어 도구 어디에서도 볼 수 없다 — 남의 DM 은 404, 판정은 서버 `auth/channel-access.ts` 한 파일이 역할 판정보다 먼저(당겨 가는 진입점은 WHERE 거름, 밀어 내는 팬아웃은 `realtime/events.ts channelAudience` — 주인의 user 룸). 채널 안 에이전트의 제어 도구는 일반 채널 + 그 런의 DM 하나만 읽는다. 서버 운영자는 DB 로 볼 수 있고, 에이전트 자신의 기억은 막지 못한다(매뉴얼·첫 안내).
+  **에이전트** — 헤더 `다이렉트 메시지: @<주인> 님과 1:1`(shared `formatDmLine`)·참여자 주인 + 나·「DM 에는 릴레이가 없습니다 — @핸들은 글로만 남습니다.」, 「이 DM 의 지시」는 채널 프롬프트 자리, 러너는 DM 틀·턴 사실 `자리: DM`. 이 판은 플러그인 재설치(DM 줄), `dodok-runner` 는 그대로.
+  **웹** — 사이드바 「다이렉트 메시지」 절·「DM 할 에이전트」 고르기·「DM 보내기」, `/dm/<에이전트 id>` → DM 채널 주소, DM 머리(「이 DM 의 지시」·「활동」), 세션 목록 날짜 묶음(브라우저 시간대), @ 후보 없음, 읽기 전용 사유 셋, 에이전트 설정 「DM 허용」.
+  **확인 방법**: 서버 단위·통합(`apps/server/test/roles.matrix.test.ts` 의 남의 DM 사례 — 경로마다 404, `apps/server/test/integration/dms.test.ts` — 완료 기준 1~4, `conversations.test.ts` 의 DM ↔ 일반 채널 정본) · 태스크마다 독립 리뷰(변이)·수정·범위 재리뷰 · `dev:fake` 브라우저(독립 Chromium, owner·mia, 1280·390px — 결함 D1 고침) · 실연 `docs/guides/live-smoke.md` 「DM 실연」 절(실물 dev Gateway 2026.9.5·가짜 claude CLI·Claude 러너 하네스, 4/4, 모델 런 0).
 - 에이전트 내부 위임 결과 요약 게시, 채널 템플릿.
 
 ### 다음 순서 — 실사용 (2026-10-19 결정)
@@ -576,9 +582,9 @@ Phase 4 의 남은 확장(Codex·Hermes 어댑터 등)보다 실제로 써 보�
 2. **쓰면서 나온 수정·기능을 구현한다.** 원인이 분명한 결함은 바로 고치고, 설계가 필요한 기능은 브레인스토밍·스펙을 거친다. 미루는 것은 아래 「이월」에 적는다.
 3. **데스크톱·모바일 앱을 만들고 배포한다.** 로드맵 `docs/superpowers/specs/2026-10-06-native-apps-roadmap.md` 의 스파이크·데스크톱·모바일 하위 프로젝트다. 앱은 배포된 웹을 감싸므로 1·2 로 웹이 안정된 뒤에 시작한다. Xcode·실기기·스토어 계정처럼 사람이 가진 도구가 필요하다.
 
-### 이월 — 남은 문제(채널 세션 뒤 시점, 2026-10-26)
+### 이월 — 남은 문제(에이전트 DM 뒤 시점, 2026-10-27)
 
-Phase 1 ①·②, Phase 2 ①·②·③·④, Phase 3 ①·②·③·④, Phase 4 ①·②·③·멀티 Gateway·설정 통합·채널 보관·읽지 않음·리액션·자동화·서버 네이티브 푸시·제어 MCP·채널 세션을 돌면서 「고치지 않고 알고 넘긴 것」을 한곳에 모았다. 상세 근거는 각 줄에 적은 문서에 있다. 위 Phase 2·3 항목과 겹치면 그쪽을 가리킨다.
+Phase 1 ①·②, Phase 2 ①·②·③·④, Phase 3 ①·②·③·④, Phase 4 ①·②·③·멀티 Gateway·설정 통합·채널 보관·읽지 않음·리액션·자동화·서버 네이티브 푸시·제어 MCP·채널 세션·에이전트 DM 을 돌면서 「고치지 않고 알고 넘긴 것」을 한곳에 모았다. 상세 근거는 각 줄에 적은 문서에 있다. 위 Phase 2·3 항목과 겹치면 그쪽을 가리킨다.
 Phase 1 이 남긴 아홉(서버 넷·웹 넷·`wire-cli` typecheck)은 Phase 2 ① 태스크 0·1 에서, Phase 2 ① 이 남긴 초점·타이머 셋(D6 카운트다운 어긋남 · 자리값 소요가 계속 흐름 · 넓은 화면 「설정 닫기」 초점)은 Phase 2 ② 태스크 8 에서 정리해 지웠다.
 Phase 2 ② 가 남긴 「`media` 이미지를 크게 볼 수 없다」·「`media`·`file` 문구 비대칭」은 Phase 2 ③ 이 닫아 지웠다(크게 보기 `ImageViewer`, 세 블록이 해석기 하나로 「첨부를 찾을 수 없습니다」·「열 수 없는 링크입니다」를 같이 쓴다).
 Phase 2 ② 가 남긴 「`infra/` 가 없는데 두 문서가 있다고 말한다」는 Phase 3 ① 이 `infra/` 를 만들고 `docs/guides/project-structure.md` 를 고쳐 지웠다(`CLAUDE.md` 「명령」 줄은 조율자가 고친다).
@@ -894,11 +900,28 @@ Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-comp
 - **`packages/openclaw-adapter/test/bridge-server.socket.test.ts` 「처리 중인 outboundId 가 다른 연결로 다시 오면 …」이 흔들린다** — main 에서도 단독 실행 다섯 번에 두 번 실패한다. 저장을 100ms 늦춘 사이 새 연결의 hello 가 늦으면 옛 연결이 정상 ack 를 먼저 받는다. 시간 대신 새 연결 hello 뒤에 풀리는 문으로 막으면 결정적이다. 출처: t8 보고 4장 2.
 - **`apps/web/src/features/messages/MessageList.test.tsx` 「이어 받기가 끝내 안 오면 5초 뒤 가진 것으로 판정한다 …」가 루트 `pnpm test` 하나만 돌려도 깨질 수 있다** — 실제 4.5초를 기다린 뒤 「아직 안 보냄」을 단언하는 사례라, Turbo 가 서버·웹 테스트를 함께 돌리는 부하에서 `expected "vi.fn()" to not be called at all, but actually been called 1 times` 로 한 번 실패했다(그 파일만 다시 86/86, 전체 다시 exit 0). 다른 검사와 동시에 돌리지 않는 것(`AGENTS.md` 「명령」)으로는 다 막히지 않는다 — 가짜 타이머로 바꾸거나 그 사례만 따로 돌린다. 출처: t8 보고 4장 1, t9 끝내기 검사.
 - **`apps/server/test/backup.test.ts` 「쓰는 중에도 온전한 사본을 만든다」가 병렬 부하에서 한 번 실패했다**(`expected 0 to be greater than 0`, 단독 3회 통과) — 동시에 쓰는 횟수에 기대는 단언이다. 출처: t4 재리뷰.
-- **채널 안 에이전트의 읽기 범위는 채널 단위다** — 같은 채널의 다른 세션·다른 채널을 `read_messages`·`search_messages` 로 읽는다(스펙이 막는 것은 보내기뿐). DM(로드맵 하위 프로젝트 B)의 「주인만 본다」는 `search/service.ts readableChannels`·`control/handlers.ts read_messages` 에 주인 검사를 더해야 선다. 출처: t7 보고 「읽기 범위」.
+- **채널 안 에이전트의 읽기 범위는 채널 단위다** — 같은 채널의 다른 세션·다른 채널을 `read_messages`·`search_messages` 로 읽는다(스펙이 막는 것은 보내기뿐). DM 은 따로 막는다 — 채널 안 에이전트는 일반 채널 + 그 런의 DM 하나만 읽는다(`auth/channel-access.ts readableChannelSqlFor`, 아래 「에이전트 DM」). 출처: t7 보고 「읽기 범위」.
 - **실물로 못 본 것** — 실제 모델(진짜 claude 세션 전사·`--resume`)로 두 세션이 섞이지 않는지, 원격 Gateway 판에서 「이전 대화」가 같은 키로 이어지는지(`docs/guides/live-smoke.md` 「채널 세션 실연」 절 「사람이 볼 것」).
+
+**에이전트 DM(2026-10-27)** — 스펙 `docs/superpowers/specs/2026-10-25-agent-dm-design.md` 「구현과 맞춘 것」 장. 아래 출처의 보고서·리뷰(t1~t7)는 `.superpowers/sdd/2026-10-26-agent-dm/`, 브라우저 기록은 `.superpowers/sdd/2026-10-26-agent-dm-browser/report.md` 다(git 제외).
+
+- **러너 DM 틀을 모델이 따르는지 모른다** — DM 틀은 ADR 0007 채널 틀의 셋째 요소(「대화 상대가 쓴 글이 아니다」)를 「주인이 설정 화면에서 정해 둔 설정 — 채팅 글은 설정을 바꾸지 않는다」로 바꿨다(지시를 대화 상대인 주인이 쓴다). 모델이 그 지시를 주입으로 읽지 않고 따르는지는 모델 런으로 보지 않았다 — 실연(`docs/guides/live-smoke.md` 「DM 실연」 절)은 요청에 실리는 자리·글까지. 출처: t4 추가 보고 1장.
+- **OpenClaw(9.5)는 DM 을 그룹 채널로 모델에게 소개한다** — 모델 입력 `Conversation info` 의 `is_group_chat: true`, 시스템 프롬프트의 `chat_type: "channel"`·「You are in a Dodok channel」·「Activation: trigger-only (you are invoked only when explicitly mentioned …)」. DM 에서는 멘션 없이 모든 글이 런인데 모델은 「멘션될 때만 불린다」를 받고, DM 이라는 사실은 dodok 헤더의 DM 줄로만 간다. 플러그인이 인바운드를 `conversation: { kind: "channel" }` 로 넣는 자리(`packages/openclaw-plugin/src/channel.ts`)를 DM 에서 바꿀지는 OpenClaw SDK 의 다른 종류가 무엇을 바꾸는지(활성화·세션 키) 재고 판단한다. 모델이 지금 꼴을 어떻게 읽는지도 모른다. 출처: t7 실연.
+- **`RUN_STARTED` 의 `providerRunId` 가 비는 런이 있다(판정 못 함)** — 실연에서 일반 채널의 첫 OpenClaw 런에는 런 id 와 같은 값이, 그 뒤 OpenClaw 런 다섯(모두 DM)에는 빈 값이 왔다(러너 런은 늘 찼다). 런은 모두 `done`·`finalSource=plugin` 이고 정본이 붙었다. DM 때문인지 「Gateway 의 둘째 런부터」인지 그 순서로는 가르지 못했다 — 같은 Gateway 에서 일반 채널 런을 둘 잇달아 돌려 견준다. 출처: t7 실연(`docs/guides/live-smoke.md` 「DM 실연」 절 「새로 찾은 것」).
+- **`correlate` 의 `ours` 는 `connection_id` 가 null 인 옛 런(0012 이전)을 통과시킨다** — 그런 런이 열려 있으면 다른 Gateway 의 같은 id 가 붙을 수 있다(사실상 없음 — 열린 옛 런). 출처: t4 재리뷰 N1.
+- **replyTo 갈래는 지금의 묶임을 본다** — 러너 에이전트를 다시 묶은 뒤 runId·세션 키 없이 replyTo 만 오는 정본은 붙지 않는다(플러그인·러너는 늘 runId 를 싣는다 — 실제 영향 없음). 출처: t4 재리뷰 N2.
+- **세션 목록의 날짜 묶음은 렌더 시각으로만 정한다** — 자정을 넘겨도 다시 그리기 전까지 「오늘」이다. 출처: t5 리뷰 L5.
+- **읽기 전용 DM 의 카드는 잠금 사유 없이 눌리고 서버 문구 토스트로 거절된다**(DM 목록은 다시 받는다 — 반응은 잠근다). 반응·첨부처럼 사유 문구로 바꿀지는 판단 거리. 출처: t5 보고 2장 7, t5 수정 보고 2장 2.
+- **오프라인 사본에 DM 목록(`qk.dms`)을 담지 않는다** — 오프라인 사이드바의 「다이렉트 메시지」 절이 비고, DM 채널·마지막 세션은 최근 채널 사본으로 열린다. 출처: t5 보고 6장.
+- **검색 대화상자의 채널 거름에 DM 이 없다** — 결과에는 「DM · <에이전트 이름>」으로 나온다(「모든 채널」). 출처: t5 보고 6장.
+- **「이 DM 의 지시」 저장 중 버튼·글 칸이 disabled 라 초점이 body 로 떨어진다(O1)** — 채널 설정 `PromptSection` 도 같은 꼴이라 DM 고유가 아니다. 저장 뒤 초점 자리는 설계 판단. 출처: t6 보고 3장.
+- **⌘K 결과로 가기 뒤 초점이 검색을 열기 전 자리로 간다(O2)** — DM 결과로 본 것이고, 일반 채널 결과로는 확인하지 않았다(공통 동작으로 보인다). 출처: t6 보고 3장.
+- **390px 사이드바 시트의 DM 절이 실제로 스크롤되는지는 못 봤다** — DM 5줄이 390×500 안에 다 들어가 넘침을 못 만들었다. DM nav 가 채널 nav 와 같은 스크롤 상자 안인 것만 확인했다. 출처: t6 보고 3장.
+- **실물로 못 본 것** — 실제 모델로 DM 의 헤더·DM 틀을 어떻게 읽는지(위 첫 두 줄), 원격 Gateway 판의 DM(`docs/guides/live-smoke.md` 「DM 실연」 절 「사람이 볼 것」).
 
 **실물 확인**
 
+- **에이전트 DM 을 실물 dev Gateway(2026.9.5)로 본 것은 실연(`docs/guides/live-smoke.md` 「DM 실연」 절 — 가짜 claude CLI·Claude 러너 하네스, 모델 런 0회)이다.** OpenClaw·러너 에이전트가 받는 DM 줄·참여자·릴레이 줄·「이 DM 의 지시」의 자리, 러너의 DM 틀·턴 사실, DM 런의 대화 밖 전송 거절을 그 절이 본다. 원격 Gateway 판과 실제 모델로는 아직 안 봤다.
 - **채널 세션을 실물 dev Gateway(2026.9.5)로 본 것은 실연(`docs/guides/live-smoke.md` 「채널 세션 실연」 절 — 가짜 claude CLI·Claude 러너 하네스, 모델 런 0회)이다.** 대화 id 키의 두 세션이 따로 맥락을 갖는 것·message 툴 호출의 세션 키·대화 밖 전송 거절·마이그레이션 뒤 「이전 대화」 이어짐을 그 절이 본다. 원격 Gateway 판과 실제 모델로는 아직 안 봤다.
 - 네이티브 푸시를 실제 APNs·FCM·기기로 본 적은 없다(위 이월). 서버 쪽 통로·자격 증명 읽기·기기 등록·운영 사건은 가짜 APNs·FCM 통합 테스트까지만 안다.
 
