@@ -47,6 +47,7 @@
 - ⚠ **에이전트 자신이 시크릿을 읽을 수 있다.** dev 에이전트의 exec 는 기본 `security: "full"`(8절)이라, 일이 막히면 모델이 스스로 Bash 로 `~/.openclaw-dev/*.json` 을 뒤진다(2026-09-23 런 2).
   그 툴 결과는 **런 이벤트(`run_events.payload_json`)·프레임 덤프·claude-cli 전사**에 그대로 남고 활동 탭에도 보인다 — 브리지 토큰 값이 셋에 1회씩 들어간 적이 있다(10.6).
   그래서 개수 확인은 **로그만이 아니라 `data/*.sqlite`·`data/frames-*.jsonl` 까지** 한다. 들어갔으면 DB 는 가리고(값을 인자로 넘기지 않게 SQL 을 표준 입력으로) 덤프는 지운다.
+- ⚠ **Gateway 가 띄우는 claude CLI 는 Gateway 의 환경을 물려받는다** — `OPENCLAW_GATEWAY_TOKEN` 도 CLI 환경에 있다(가짜 CLI 의 `envKeys`, 「DM 실연」 절). exec 를 가진 에이전트는 그 값을 명령으로 읽을 수 있으므로 실연 Gateway 의 공유 토큰은 실연 뒤 버린다(스크래치에서 새로 만든 것만 쓴다). 에이전트 세션의 셸에서 Gateway·서버를 띄울 때는 `CLAUDE_CODE_*`·`CLAUDECODE` 같은 세션 변수도 `env -u` 로 뺀다.
 
 ## 3. 절차
 
@@ -59,6 +60,8 @@ OCBIN=$OCDIR/node_modules/.bin   # openclaw → openclaw.mjs(#!/usr/bin/env node
 oc() { env PATH="$OCBIN:$PATH" openclaw "$@"; }
 oc --version                     # OpenClaw 2026.9.5 (ec9c1a1)
 ```
+
+zsh 에서 Gateway id 를 셸 변수에 담을 때는 `GID`·`UID`·`EUID` 대신 `GWID` 같은 이름을 쓴다 — 셋은 읽기 전용 특수 변수라 `bad math expression` 으로 명령이 깨진다(「DM 실연」 절에서 겪었다).
 
 `--ignore-scripts` 로 설치해도 `--dev` 의 `plugins`·`config`·`gateway run` 이 돈다. 설치가 `~/.openclaw`·`~/.openclaw-dev` 를 건드리지 않는지는 두 디렉터리의 `ls -la` 를 설치 전후로 떠서 `diff` 로 본다.
 아래 절들의 `PATH="$OCBIN:$PATH" openclaw …` 는 이 `OCBIN` 을 그대로 쓴다.
@@ -2236,6 +2239,8 @@ env HOME=<스크래치>/home CLAUDE_CONFIG_DIR=<스크래치>/cfg claude mcp lis
 | 채널 | `legacy-smoke` — 옛 서버가 만든 채널(올린 뒤 「이전 대화」 하나) · `sessions-smoke` — 새 서버가 만든 채널, 세션 A(제목 「@main 세션 A 첫 질문 ALPHA-1」)·B(「@main 세션 B 첫 질문 BRAVO-1」)·C(사람 글만), `@main`·`@hx` |
 
 ### 26.2 절차 — 「멀티 Gateway 실연」·「리액션 실연」 절에 더한 것
+
+> 시스템 프롬프트를 잴 때는 「DM 실연」 절 27.2 처럼 가짜 CLI 가 받은 `appendSystemPrompt` 를 따로 파일로 남긴다 — 3만 자를 넘고 채널 프롬프트는 그 안(그룹 소개 문단 뒤)에 실려, 기록 한 줄에 잘라 적으면 지시를 못 찾는다.
 
 **가짜 claude CLI.** 「리액션 실연」 절 23.2 의 프롬프트를 적는 CLI 에 둘을 더했다. ① `invoke` 줄에 argv(인자마다 6,000자까지)와 `--session-id`·`--resume` 값, `prompt` 줄에 첫 `user` 레코드 원문(8,000자까지)을 적는다. ② `-p` 런이면 `<스크래치>/fake/calls.json`(배열 `{label, name, arguments}`)이 있을 때 읽고 지운 뒤, 11.4 처럼 `--mcp-config` 의 루프백 `/mcp` 에 `tools/call` 을 차례로 부르고 결과 원문을 적는다. 최종 답은 `FAKE_CLI_DONE sid=<세션 id 앞 8자> <label>=ok|error …`.
 ⚠ 9.5 의 `user` 레코드 `content` 는 문자열 하나이고, 앞에 OpenClaw 가 붙인 `Conversation info: ⟦openclaw:ctx⟧` JSON 블록(`chat_id` 등), 그 뒤에 플러그인 헤더·`---`·사람 글이 온다. `jq -r .text … | tail -1` 처럼 줄로 자르면 사람 글 줄만 남아 「헤더가 없다」로 오판한다 — `capture` 로 꺼낸다.

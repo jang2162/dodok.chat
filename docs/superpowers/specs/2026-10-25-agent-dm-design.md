@@ -159,6 +159,7 @@ DM URL 에 핸들을 쓸지 id 를 쓸지, 날짜 묶음 경계(워크스페이�
 - 운영: 「DM」 줄은 `OpsRunsRow { id: OPS_DM_ROW_ID, kind: "dm" }`(nil uuid)이고 웹은 링크로 만들지 않는다. 제어 쓰기의 운영 사건 `control_change` 는 DM 이면 `detail.channelId` 를 null 로 싣는다 — PD9 로 DM 의 채널 쓰기 도구가 모두 `VALIDATION` 이라 지금은 그 사건이 생기지 않는다. PD6 으로 DM 에 채널 한도가 없어 `run_limit` 의 `channel:<DM id>` key 도 생기지 않는다(t2 보고 2장).
 - 자동화 만들기·바꾸기는 남의 DM 404 → 내 DM `VALIDATION` → 보관 409 순, 게시(지금 실행·웹훅·예약)도 DM 이면 `VALIDATION` 으로 아무것도 남기지 않는다(웹훅은 400, 사건 `automation_failed { code: VALIDATION }`)(t2 보고 2장 6).
 - 푸시는 두 겹이다: 트리거 갈래(승인 → 주인) 말고도 발송 직전 거름(`push/service.ts attachPushTriggers`)이 DM 을 겨눈 알림을 주인 말고 모두 걷는다. 본문의 자리 이름은 「DM」(t2 보고 2장 5).
+- 리뷰가 남긴 테스트 빈칸 둘은 뒤 태스크가 닫았다 — `readableChannelSqlFor` 의 「시킨 사람 = DM 주인」 조건은 태스크 2 가 매트릭스 사례(DM 런을 가리키되 시킨 사람이 admin·null)로 덮었고(t1 재리뷰 N1), 보관한 남의 DM 으로 자동화를 만들 때의 판정 순서는 태스크 3 이 테스트로 고정했다 — PD9 로 DM 은 보관할 수 없게 됐다(t2 리뷰 L1).
 
 **DM 만들기·런 (태스크 3)**
 
