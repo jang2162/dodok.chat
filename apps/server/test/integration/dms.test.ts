@@ -258,6 +258,13 @@ describe("에이전트 DM 통합 — 완료 기준 1~4", () => {
     for (const [name, who] of Object.entries({ ...others, mia }))
       await subscribePush(who, `https://push.invalid/${name}`);
     const othersLogs = await Promise.all(Object.values(others).map((who) => wireOf(who)));
+    // DM 을 만들기 전부터 셋이 받은 이벤트를 모두 담는다 — channel.created·conversation.created 도 창 안에 든다.
+    // 무엇이 DM 것인지는 id 가 정해진 뒤 끝에서 거른다
+    const heard: Array<{ event: string; text: string }> = [];
+    for (const other of othersLogs)
+      other.socket.onAny((event: string, payload: unknown) => {
+        heard.push({ event, text: JSON.stringify(payload ?? null) });
+      });
 
     const dm = await openDm(mia);
     const log = await wireOf(mia);
@@ -313,8 +320,10 @@ describe("에이전트 DM 통합 — 완료 기준 1~4", () => {
       expect(unread.body.channels, ctx).not.toContain(dm.id);
       // 제어 도구(바깥 MCP) — 목록·검색에 없고 id 로 읽으면 NOT_FOUND
       const listed = await mcpTool(who, "list_channels", {});
+      expect(listed.isError, `${ctx} list_channels`).toBe(false);
       expect(JSON.stringify(listed.value), ctx).not.toContain(dm.id);
       const searched = await mcpTool(who, "search_messages", { q: "오로라" });
+      expect(searched.isError, `${ctx} search_messages`).toBe(false);
       expect(JSON.stringify(searched.value), ctx).not.toContain("오로라");
       for (const [tool, args] of [
         ["get_channel", { channelId: dm.id }],
@@ -335,16 +344,24 @@ describe("에이전트 DM 통합 — 완료 기준 1~4", () => {
       const sub = await other.socket.emitWithAck("channel.subscribe", { channelId: dm.id });
       expect(sub.ok ? "ok" : sub.error.code).toBe("NOT_FOUND");
     }
-    const seen: string[] = [];
-    for (const other of othersLogs)
-      other.socket.onAny((event: string, payload: unknown) => {
-        if (JSON.stringify(payload ?? null).includes(dm.id)) seen.push(event);
-      });
     expect((await sendIn(log, dm, session.id, "오로라 2단계")).ok).toBe(true);
     await agentReplyIn(log, session.id, 1);
+    // 새 세션을 하나 더 — conversation.created·updated 와 새 런도 창 안에 든다
+    const later = await newSession(log, dm, "오로라 후속 회의");
+    // 대조 — 창 끝에 일반 채널을 만든다. 그 channel.created 는 셋 모두에게 간다
+    const control = await as<{ channel: Channel }>(ada, "POST", "/channels", { name: "dm-control" });
+    expect(control.status).toBe(201);
     // 같은 연결의 ack 왕복 뒤에 본다 — 그 사이 온 이벤트는 이미 기록됐다
     for (const other of othersLogs) await other.socket.emitWithAck("channel.subscribe", { channelId: dm.id });
-    expect(seen).toEqual([]);
+    const runIds = [
+      ...new Set(log.created.filter((m) => m.channelId === dm.id && m.runId).map((m) => m.runId as string)),
+    ];
+    expect(runIds).toHaveLength(3);
+    const marks = [dm.id, session.id, later.id, ...runIds, "오로라"];
+    expect(heard.filter((h) => marks.some((mark) => h.text.includes(mark))).map((h) => h.event)).toEqual([]);
+    expect(
+      heard.filter((h) => h.event === "channel.created" && h.text.includes(control.body.channel.id)),
+    ).toHaveLength(othersLogs.length);
     for (const other of othersLogs) {
       expect(other.created.filter((m) => m.channelId === dm.id)).toEqual([]);
       expect(other.states.filter((s) => s.channelId === dm.id)).toEqual([]);
@@ -355,9 +372,9 @@ describe("에이전트 DM 통합 — 완료 기준 1~4", () => {
       const ops = await as<OpsRunsSummary>(who, "GET", "/ops/runs?days=1");
       expect(ops.status).toBe(200);
       const row = ops.body.byChannel.find((r) => r.id === OPS_DM_ROW_ID);
-      expect(row).toMatchObject({ name: "DM", kind: "dm", runs: 2 });
+      expect(row).toMatchObject({ name: "DM", kind: "dm", runs: 3 });
       const text = JSON.stringify(ops.body);
-      for (const secret of [dm.id, mia.id, session.id, session.title, "오로라"])
+      for (const secret of [dm.id, mia.id, session.id, later.id, session.title, "오로라"])
         expect(text).not.toContain(secret);
     }
 
@@ -367,6 +384,14 @@ describe("에이전트 DM 통합 — 완료 기준 1~4", () => {
     const myRead = await mcpTool(mia, "read_messages", { conversationId: session.id });
     expect(myRead.isError).toBe(false);
     expect(JSON.stringify(myRead.value)).toContain("오로라");
+    // 대조 — 남에게 0 건인 같은 검색이 주인에게는 그 DM 의 글을 찾는다
+    const mySearch = await as<SearchResult>(mia, "GET", `/search?q=${encodeURIComponent("오로라")}`);
+    expect(mySearch.body.hits.some((h) => h.channelId === dm.id && h.conversationId === session.id)).toBe(
+      true,
+    );
+    const myMcpSearch = await mcpTool(mia, "search_messages", { q: "오로라" });
+    expect(myMcpSearch.isError).toBe(false);
+    expect(JSON.stringify(myMcpSearch.value)).toContain(session.id);
   });
 
   it("기준 3 — DM 의 도구 승인은 member 주인이 결정한다: owner·admin 은 카드를 못 받고 결정하려 하면 NOT_FOUND", async () => {

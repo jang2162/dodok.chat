@@ -27,6 +27,8 @@ const EVENTS: (keyof ServerToClientEvents)[] = [
   "approval.resolved",
   "system.notice",
   "ops.event",
+  "conversation.created",
+  "conversation.updated",
 ];
 
 describe("DM 팬아웃 — 채널 사실은 DM 주인에게만", () => {
@@ -117,6 +119,32 @@ describe("DM 팬아웃 — 채널 사실은 DM 주인에게만", () => {
       );
       app.bus.emit(event, { channel: d.channel });
       app.bus.emit(event, { channel: p });
+      await Promise.all(arrived);
+      expect(receivers(event, d.channel.id)).toEqual(["mia"]);
+      expect(receivers(event, p.id)).toEqual(WHO);
+    },
+  );
+
+  it.each(["conversation.created", "conversation.updated"] as const)(
+    "%s — 채널 룸 이벤트라 DM 은 주인 말고 아무도 받지 않는다(제목이 첫 글로 지어지므로 새면 본문이 샌다)",
+    async (event) => {
+      await connectAll();
+      const d = dm();
+      const p = plain();
+      const pConversation = seedConversation(app.db, p.id);
+      // 모두 일반 채널을 구독하고 DM 도 구독하려 한다 — 주인만 붙고 나머지는 NOT_FOUND
+      for (const who of WHO) {
+        expect((await sockets[who].emitWithAck("channel.subscribe", { channelId: p.id })).ok).toBe(true);
+        const sub = await sockets[who].emitWithAck("channel.subscribe", { channelId: d.channel.id });
+        expect(sub.ok ? "ok" : sub.error.code, who).toBe(who === "mia" ? "ok" : "NOT_FOUND");
+      }
+      const arrived = WHO.map((who) =>
+        waitFor(sockets[who], event, (payload) => payload.conversation.channelId === p.id),
+      );
+      const conversation = (channelId: string, id: string) =>
+        ({ id, channelId, title: "오로라 이야기", status: "open" }) as never;
+      app.bus.emit(event, { conversation: conversation(d.channel.id, d.conversationId) });
+      app.bus.emit(event, { conversation: conversation(p.id, pConversation) });
       await Promise.all(arrived);
       expect(receivers(event, d.channel.id)).toEqual(["mia"]);
       expect(receivers(event, p.id)).toEqual(WHO);
