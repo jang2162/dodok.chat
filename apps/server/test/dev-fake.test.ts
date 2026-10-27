@@ -25,6 +25,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   DEV_FAKE_CHANNEL_NAME,
   DEV_FAKE_DISK_PATH,
+  DEV_FAKE_DM_TEXT,
   DEV_FAKE_GATEWAY_PATH,
   DEV_FAKE_LOCAL_TOKEN,
   DEV_FAKE_KEYWORDS,
@@ -56,7 +57,7 @@ import {
 import { hasGateways } from "../src/adapters/types";
 import type { App } from "../src/app";
 import { findItem, formatInteractionText } from "../src/modules/components/interact";
-import { agents, messages, runnerTokens, runs, users } from "../src/db/schema.sqlite";
+import { agents, channels, messages, runnerTokens, runs, users } from "../src/db/schema.sqlite";
 import { normalizeEmail } from "../src/modules/members/accept";
 import { DISCONNECT_EVENT_MS } from "../src/modules/ops/health";
 import type { FakeRunnerRun } from "./fakes/fake-runner";
@@ -2125,6 +2126,197 @@ describe("startDevFake 고정 member 계정 — mia", () => {
     expect(miaAfter).toHaveLength(1);
     expect(miaAfter[0]?.id).toBe(miaBefore[0]?.id);
   }, 20_000);
+});
+
+/** dev:fake 가 DM 씨앗의 답을 기다리는 상한(scripts/dev-fake.ts DM_SEED_TIMEOUT_MS) — 막히면 이만큼 걸린 뒤 던진다 */
+const DM_SEED_WAIT_MS = 10_000;
+
+describe("startDevFake DM — dev 는 모두에게 열리고 새 DB 는 mia ↔ dev DM 에 세션 하나(에이전트 DM 계획 태스크 6)", () => {
+  let dir: string;
+  let dev: DevFake | undefined;
+  let socket: WireSocket | undefined;
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), "dodok-dev-fake-dm-"));
+  });
+
+  afterAll(async () => {
+    socket?.close();
+    await dev?.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const loginMia = async (url: string) => {
+    const res = await fetch(`${url}/api/v1/auth/local`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: DEV_FAKE_MEMBER_EMAIL, password: DEV_FAKE_MEMBER_PASSWORD }),
+    });
+    expect(res.status).toBe(200);
+    const { sessionToken } = (await res.json()) as { sessionToken: string };
+    return { sessionToken, cookie: `dodok.session=${sessionToken}` };
+  };
+  type Dms = {
+    dms: Array<{ channel: { id: string }; agent: { handle: string }; lastMessageAt: string | null }>;
+  };
+  type Listed = { messages: Array<{ authorType: string; bodyMd: string; conversationId: string }> };
+
+  it("dmAccess 는 dev 만 everyone · mia 의 DM 목록에 dev 하나, 그 세션에 mia 글과 대본 답 · owner 에게는 없음 · --keep 은 더하지 않는다", async () => {
+    dev = await startDevFake({ port: 0, dataDir: dir, logLevel: "warn" });
+    const owner = await loginOwner(dev.url);
+    const { agents: list } = await restAs<{ agents: Array<{ handle: string; dmAccess: string }> }>(
+      dev.url,
+      owner.cookie,
+      "GET",
+      "/agents",
+    );
+    expect(Object.fromEntries(list.map((a) => [a.handle, a.dmAccess]))).toEqual({
+      dev: "everyone",
+      fin: "admins",
+      main: "admins",
+      "dev-home": "admins",
+      coder: "admins",
+    });
+
+    const mia = await loginMia(dev.url);
+    const { dms } = await restAs<Dms>(dev.url, mia.cookie, "GET", "/dms");
+    expect(dms.map((d) => d.agent.handle)).toEqual(["dev"]);
+    expect(dms[0]?.lastMessageAt).not.toBeNull();
+    const dmId = dms[0]?.channel.id ?? "";
+    const { conversations: sessions } = await restAs<{ conversations: Array<{ id: string; title: string }> }>(
+      dev.url,
+      mia.cookie,
+      "GET",
+      `/channels/${dmId}/conversations?status=open`,
+    );
+    expect(sessions).toHaveLength(1);
+    const { messages: seeded } = await restAs<Listed>(
+      dev.url,
+      mia.cookie,
+      "GET",
+      `/conversations/${sessions[0]?.id}/messages`,
+    );
+    expect(seeded.map((m) => m.authorType)).toEqual(["user", "agent"]);
+    expect(seeded[0]?.bodyMd).toBe(DEV_FAKE_DM_TEXT);
+    expect(seeded[1]?.bodyMd).toContain("잘 받았어요");
+
+    // owner 는 mia 의 DM 을 목록·REST 어디에서도 못 본다
+    expect((await restAs<Dms>(dev.url, owner.cookie, "GET", "/dms")).dms).toEqual([]);
+    const ownerGet = await fetch(`${dev.url}/api/v1/channels/${dmId}`, { headers: { cookie: owner.cookie } });
+    expect(ownerGet.status).toBe(404);
+
+    // 다음 런의 인바운드 로그 줄 — 헤더의 DM 줄·세션 줄·참여자(주인 + 나)
+    const info = vi.spyOn(dev.app.logger, "info");
+    socket = io(dev.url, {
+      transports: ["websocket"],
+      reconnection: false,
+      forceNew: true,
+      auth: { protocol: WIRE_PROTOCOL, token: mia.sessionToken },
+    });
+    const sub = await socket.emitWithAck("channel.subscribe", { channelId: dmId });
+    expect(sub.ok).toBe(true);
+    const replied = new Promise<void>((resolve) => {
+      socket?.on("message.created", ({ message }) => {
+        if (message.channelId === dmId && message.authorType === "agent") resolve();
+      });
+    });
+    const sent = await socket.emitWithAck("message.send", {
+      channelId: dmId,
+      conversationId: sessions[0]?.id ?? "",
+      bodyMd: "한 번 더",
+      clientMsgId: "019a0000-0000-7000-8000-0000000dd001",
+    });
+    expect(sent.ok).toBe(true);
+    await replied;
+    const line = info.mock.calls.find((c) => c[1] === "dev:fake inbound reactions")?.[0] as
+      | { dm?: string; session?: string; participants?: string[]; sender?: string }
+      | undefined;
+    expect(line).toMatchObject({
+      dm: "다이렉트 메시지: @mia 님과 1:1",
+      session: `세션: ${sessions[0]?.title}`,
+      sender: "user:mia",
+    });
+    expect([...(line?.participants ?? [])].sort()).toEqual(["dev", "mia"]);
+    socket.close();
+    socket = undefined;
+
+    // 러너 대본도 DM 에 답한다 — coder 는 admins 라 owner 가 연다
+    const coderId = await agentIdByHandle(dev.url, owner.cookie, "coder");
+    const { channel: coderDm } = await restAs<{ channel: { id: string } }>(
+      dev.url,
+      owner.cookie,
+      "POST",
+      "/dms",
+      {
+        agentId: coderId,
+      },
+    );
+    socket = io(dev.url, {
+      transports: ["websocket"],
+      reconnection: false,
+      forceNew: true,
+      auth: { protocol: WIRE_PROTOCOL, token: owner.sessionToken },
+    });
+    expect((await socket.emitWithAck("channel.subscribe", { channelId: coderDm.id })).ok).toBe(true);
+    const coderReplied = new Promise<void>((resolve) => {
+      socket?.on("message.created", ({ message }) => {
+        if (message.channelId === coderDm.id && message.authorType === "agent") resolve();
+      });
+    });
+    const toCoder = await socket.emitWithAck("message.send", {
+      channelId: coderDm.id,
+      newConversation: {},
+      bodyMd: "러너도 DM 받아요?",
+      clientMsgId: "019a0000-0000-7000-8000-0000000dd002",
+    });
+    expect(toCoder.ok).toBe(true);
+    await coderReplied;
+    const runnerLine = info.mock.calls.find(
+      (c) =>
+        c[1] === "dev:fake inbound reactions" && (c[0] as { connection?: string }).connection === "runner",
+    )?.[0] as { dm?: string } | undefined;
+    expect(runnerLine?.dm).toMatch(/^다이렉트 메시지: @\S+ 님과 1:1$/);
+    info.mockRestore();
+    socket.close();
+    socket = undefined;
+    const count = dev.app.db.select({ id: messages.id }).from(messages).all().length;
+    await dev.close();
+    dev = undefined;
+
+    dev = await startDevFake({ port: 0, dataDir: dir, keep: true, logLevel: "error" });
+    expect(dev.app.db.select({ id: messages.id }).from(messages).all().length).toBe(count);
+    const again = await loginMia(dev.url);
+    expect((await restAs<Dms>(dev.url, again.cookie, "GET", "/dms")).dms.map((d) => d.channel.id)).toEqual([
+      dmId,
+    ]);
+  }, 45_000);
+
+  it("--keep 으로 채널을 모두 보관한 DB(씨앗 조건)는 DM 이 아직 없고 dev 가 보관됐어도 시작이 막히지 않고 DM 을 만들지 않는다", async () => {
+    const keepDir = mkdtempSync(join(tmpdir(), "dodok-dev-fake-dm-keep-"));
+    let kept: DevFake | undefined;
+    try {
+      kept = await startDevFake({ port: 0, dataDir: keepDir, logLevel: "error" });
+      const { db } = kept.app;
+      const devId = db.select({ id: agents.id }).from(agents).where(eq(agents.handle, "dev")).get()?.id ?? "";
+      const finId = db.select({ id: agents.id }).from(agents).where(eq(agents.handle, "fin")).get()?.id ?? "";
+      // 이 판 이전 DB 흉내 — mia ↔ dev DM 이 없다(씨앗 DM 을 fin 의 것으로 돌려 둔다). 사람이 채널을 모두 보관하고 dev 를 보관했다
+      db.update(channels).set({ dmAgentId: finId }).where(eq(channels.dmAgentId, devId)).run();
+      db.update(channels).set({ archivedAt: new Date() }).where(eq(channels.kind, "channel")).run();
+      db.update(agents).set({ archivedAt: new Date() }).where(eq(agents.id, devId)).run();
+      await kept.close();
+      kept = undefined;
+
+      const started = Date.now();
+      kept = await startDevFake({ port: 0, dataDir: keepDir, keep: true, logLevel: "error" });
+      expect(Date.now() - started).toBeLessThan(DM_SEED_WAIT_MS);
+      expect(
+        kept.app.db.select({ id: channels.id }).from(channels).where(eq(channels.dmAgentId, devId)).all(),
+      ).toEqual([]);
+    } finally {
+      await kept?.close();
+      rmSync(keepDir, { recursive: true, force: true });
+    }
+  }, 45_000);
 });
 
 describe("startDevFake 가짜 Claude 러너 — 고정 러너 토큰·coder·/__devfake/runner", () => {

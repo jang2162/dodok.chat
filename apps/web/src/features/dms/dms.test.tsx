@@ -350,6 +350,17 @@ describe("DM 화면", () => {
     expect(screen.queryByTestId("channel-header")).toBeNull();
   });
 
+  it("좁은 머리에서는 제공자 라벨이 이름보다 먼저 줄어든다 — 390px 에서 「dev」가 「d…」로 잘리지 않게", async () => {
+    stubServer();
+    renderRoute(`/c/${DM}/s/${A}`);
+    const heading = await within(await screen.findByTestId("dm-header")).findByRole("heading", {
+      name: /Dev 봇/,
+    });
+    const provider = within(heading).getByText("OpenClaw");
+    expect(provider).not.toHaveClass("shrink-0");
+    expect(provider).toHaveClass("min-w-0", "shrink-1000", "truncate");
+  });
+
   it("「이 DM 의 지시」 를 저장하면 PATCH { prompt } 하나", async () => {
     const server = stubServer();
     renderRoute(`/c/${DM}/s/${A}`);

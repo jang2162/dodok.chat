@@ -31,12 +31,18 @@
  * 보관하지 않은 채널이 하나도 없으면(새 DB) 씨앗 채널 `DEV_FAKE_CHANNEL_NAME`(에이전트 dev·coder)을 만들고 그 채널에만 세션 둘을 넣는다
  * (채널 세션 계획 태스크 8) — 마이그레이션이 만드는 꼴의 「이전 대화」(id = 채널 id)와 새 세션 하나(`DEV_FAKE_SESSION_TITLE`), owner 글 하나씩.
  * `--keep` 으로 이어받은 채널(씨앗·UI 로 만든 것·보관한 것)은 건드리지 않는다 — 실제 서버에서도 0025 뒤 만든 채널에는 「이전 대화」가 없다.
+ * 사무실 에이전트 dev 는 처음 등록할 때 dmAccess `everyone`(member mia 도 DM 을 연다), 나머지는 기본(admins). 씨앗 채널을 만든 시작에서만
+ * mia ↔ dev DM 에 세션 하나를 둔다 — mia 글 하나(`DEV_FAKE_DM_TEXT`)를 서버 저장·라우터 경로로 보내고 가짜 대본의 답이 올 때까지 기다린다.
+ * 인바운드 로그 줄(`dev:fake inbound reactions`)은 DM 런이면 헤더의 DM 줄(`dm`)과 세션 줄(`session`)도 싣는다.
  */
 import {
   type AdapterStatus,
   type AgentAdapter,
   type ApprovalDecision,
   BridgeHello,
+  type DmAccess,
+  formatDmLine,
+  formatSessionLine,
   type GatewayLinkState,
   type InboundDeliver,
   type OpenClawGatewayStatus,
@@ -67,8 +73,16 @@ import {
 } from "../src/db/schema.sqlite";
 import { addMember, createChannel } from "../src/modules/channels/service";
 import { createConversation } from "../src/modules/conversations/store";
-import { createUserMessage } from "../src/modules/messages/service";
-import { createAgent, providerAgentIdIs } from "../src/modules/agents/service";
+import { resolveSendConversation } from "../src/modules/conversations/service";
+import { findOrCreateDm } from "../src/modules/dms/service";
+import { createUserMessage, sendUserMessage } from "../src/modules/messages/service";
+import {
+  agentNotArchived,
+  createAgent,
+  isAgentActive,
+  providerAgentIdIs,
+  updateAgent,
+} from "../src/modules/agents/service";
 import { hasGateways } from "../src/adapters/types";
 import { getGatewayRow } from "../src/modules/gateways/service";
 import { acceptInvite, normalizeEmail } from "../src/modules/members/accept";
@@ -108,8 +122,8 @@ export type DevFakeGatewaySpec = {
   id: string;
   name: string;
   bridgeToken: string;
-  /** 가짜 Gateway `agents.list` 의 id 와 시작 때 등록할 핸들 — 이 id 마다 대본을 건다 */
-  agents: ReadonlyArray<{ id: string; handle: string }>;
+  /** 가짜 Gateway `agents.list` 의 id 와 시작 때 등록할 핸들 — 이 id 마다 대본을 건다. dmAccess 는 처음 등록할 때만(없으면 기본) */
+  agents: ReadonlyArray<{ id: string; handle: string; dmAccess?: DmAccess }>;
 };
 
 /** 「사무실」·「집」 — 같은 id dev 가 두 Gateway 에 있다(집 dev 의 핸들은 dev-home) */
@@ -119,7 +133,7 @@ export const DEV_FAKE_GATEWAYS: readonly DevFakeGatewaySpec[] = [
     name: "사무실",
     bridgeToken: DEV_FAKE_OFFICE_BRIDGE_TOKEN,
     agents: [
-      { id: "dev", handle: "dev" },
+      { id: "dev", handle: "dev", dmAccess: "everyone" },
       { id: "fin", handle: "fin" },
     ],
   },
@@ -144,6 +158,11 @@ export const DEV_FAKE_CHANNEL_AGENTS = ["dev", "coder"] as const;
 /** 마이그레이션(0025)이 기존 채널에 만든 대화와 같은 제목 */
 export const DEV_FAKE_LEGACY_TITLE = "이전 대화";
 export const DEV_FAKE_SESSION_TITLE = "dev:fake 새 세션";
+/** 씨앗 DM(mia ↔ 사무실 dev)의 첫 글 — 키워드가 없어 대본은 기본 답(인용)을 낸다. 세션 제목은 이 글의 자동 제목 */
+export const DEV_FAKE_DM_AGENT = "dev";
+export const DEV_FAKE_DM_TEXT = "DM 은 처음이에요 — 이 세션은 나만 보죠?";
+/** 씨앗 DM 의 답을 기다리는 상한 — 대본 답은 델타 넷(150ms 간격)이라 보통 1초 안이다 */
+const DM_SEED_TIMEOUT_MS = 10_000;
 /** 실제 클라이언트는 hello 의 tickIntervalMs(30s)×2 동안 프레임이 없으면 끊는다 */
 const TICK_INTERVAL_MS = 15_000;
 const DELTA_PARTS = 4;
@@ -759,6 +778,10 @@ function logInboundReactions(app: App, connection: string, d: InboundDeliver): v
       senderName: d.message.author.displayName,
       reactions: (d.context.reactions ?? []).map((r) => `@${r.by} ${r.emoji} ${r.messageId} "${r.excerpt}"`),
       reactionsOmitted: d.context.reactionsOmitted,
+      // 헤더에 실릴 줄 — 가짜 플러그인·러너는 헤더를 만들지 않으므로 같은 shared 함수로 그 줄을 찍는다(DM 런만 dm)
+      ...(d.dm ? { dm: formatDmLine(d.dm.ownerHandle) } : {}),
+      session: formatSessionLine(d.conversationTitle),
+      participants: d.context.participants.map((p) => p.handle),
     },
     "dev:fake inbound reactions",
   );
@@ -1169,7 +1192,7 @@ function ensureDevFakeAgents(app: App): void {
         .get();
       if (taken) continue;
       try {
-        createAgent(db, {
+        const created = createAgent(db, {
           workspaceId,
           provider: "openclaw",
           providerAgentId: agent.id,
@@ -1177,6 +1200,8 @@ function ensureDevFakeAgents(app: App): void {
           name: agent.handle,
           gatewayId: spec.id,
         });
+        // createAgent 는 dmAccess 를 받지 않는다(REST 등록과 같다 — 바꾸는 길은 PATCH 하나)
+        if (agent.dmAccess) updateAgent(db, created.id, { dmAccess: agent.dmAccess });
       } catch (err) {
         // 사람 핸들과 겹치는 등 — 서버는 그대로 뜬다
         app.logger.warn({ err, handle: agent.handle }, "dev:fake agent not registered");
@@ -1188,22 +1213,27 @@ function ensureDevFakeAgents(app: App): void {
 /**
  * 보관하지 않은 채널이 없을 때만 씨앗 채널을 만들고, 그 채널에 「이전 대화」(id = 채널 id, 0025 가 만드는 꼴 — 옛 세션 키·옛 푸시 링크
  * `/c/<ch>/t/<root>` 가 그대로 맞는 자리)와 다른 세션 하나를 넣는다. 두 세션에 owner 글을 하나씩 남긴다(서버 저장 경로 그대로 — 멘션이
- * 없어 런은 없다). 살아 있는 채널이 있으면(`--keep`) 아무것도 더하지 않는다 — 이어받은 채널의 세션·안 읽음을 바꾸지 않게
+ * 없어 런은 없다). 살아 있는 채널이 있으면(`--keep`) 아무것도 더하지 않는다 — 이어받은 채널의 세션·안 읽음을 바꾸지 않게.
+ * DM 은 「살아 있는 채널」로 치지 않는다 — 보관할 길이 없어, 치면 채널을 모두 보관해도 씨앗이 다시 생기지 않는다.
+ * 씨앗을 만들었으면 true — 같은 시작이 DM 씨앗도 둔다(`ensureDevFakeDm`)
  */
-function ensureDevFakeSessions(app: App): void {
+function ensureDevFakeSessions(app: App): boolean {
   const { db, workspaceId, ownerUserId } = app;
   const live = db
     .select({ id: channels.id })
     .from(channels)
-    .where(and(eq(channels.workspaceId, workspaceId), isNull(channels.archivedAt)))
+    .where(
+      and(eq(channels.workspaceId, workspaceId), eq(channels.kind, "channel"), isNull(channels.archivedAt)),
+    )
     .get();
-  if (live) return;
+  if (live) return false;
   const channel = createChannel(db, { workspaceId, createdBy: ownerUserId, name: DEV_FAKE_CHANNEL_NAME });
   for (const handle of DEV_FAKE_CHANNEL_AGENTS) {
+    // 보관한 에이전트는 채널에 넣을 수 없다(addMember 가 던진다) — `--keep` 으로 이어받은 DB 에서 사람이 보관했으면 빼고 뜬다
     const agent = db
       .select({ id: agents.id })
       .from(agents)
-      .where(and(eq(agents.workspaceId, workspaceId), eq(agents.handle, handle)))
+      .where(and(eq(agents.workspaceId, workspaceId), eq(agents.handle, handle), agentNotArchived))
       .get();
     if (agent) addMember(db, channel.id, { memberType: "agent", memberId: agent.id }, app.logger);
   }
@@ -1229,6 +1259,104 @@ function ensureDevFakeSessions(app: App): void {
     createdAt: new Date(),
   });
   seed(created.id, "새 주제는 새 세션에서 — 이 세션의 에이전트는 「이전 대화」를 모릅니다.");
+  return true;
+}
+
+/**
+ * mia ↔ 사무실 dev DM 에 세션 하나 — 웹이 지나는 길 그대로(`POST /dms` 의 findOrCreateDm → message.send newConversation 의
+ * sendUserMessage + resolveSendConversation → 라우터)로 mia 글을 보내고 가짜 대본의 답이 저장될 때까지 기다린다. 플러그인이 붙은 뒤에
+ * 부른다(앞이면 런이 ADAPTER_UNAVAILABLE 로 끝난다). 이미 세션이 있는 DM 은 건드리지 않는다.
+ * `--keep`(채널을 모두 보관한 DB 도 씨앗 조건에 든다)·사무실 플러그인이 못 붙음·dev 가 보관·꺼짐이면 경고만 남기고 건너뛴다 — 사람 손이
+ * 닿은 DB 는 그대로 뜬다(플러그인 갈래와 같다). 새 DB 에서 답이 안 오면 던진다 — DM 런이 안 도는 것은 회귀라 브라우저 검증이 앱 결함으로
+ * 오인하지 않게
+ */
+async function ensureDevFakeDm(app: App, opts: { keep: boolean; officeConnected: boolean }): Promise<void> {
+  const { db, workspaceId } = app;
+  if (opts.keep) {
+    app.logger.warn("dev:fake dm seed skipped — --keep keeps the inherited DB as it is");
+    return;
+  }
+  if (!opts.officeConnected) {
+    app.logger.warn("dev:fake dm seed skipped — the office plugin is not connected");
+    return;
+  }
+  const mia = db
+    .select({ id: users.id })
+    .from(users)
+    .where(and(eq(users.workspaceId, workspaceId), eq(users.handle, DEV_FAKE_MEMBER_HANDLE)))
+    .get();
+  const agent = db
+    .select({ id: agents.id, enabled: agents.enabled, archivedAt: agents.archivedAt })
+    .from(agents)
+    .where(
+      and(
+        eq(agents.workspaceId, workspaceId),
+        eq(agents.handle, DEV_FAKE_DM_AGENT),
+        eq(agents.gatewayId, DEV_FAKE_OFFICE_GATEWAY_ID),
+      ),
+    )
+    .get();
+  if (!mia || !agent) {
+    app.logger.warn(
+      { mia: !!mia, agent: !!agent },
+      "dev:fake dm seed skipped — mia or office dev is missing",
+    );
+    return;
+  }
+  if (!isAgentActive({ enabled: agent.enabled, archivedAt: agent.archivedAt?.toISOString() ?? null })) {
+    app.logger.warn("dev:fake dm seed skipped — office dev is archived or disabled");
+    return;
+  }
+  const { channel } = findOrCreateDm(db, { workspaceId, ownerId: mia.id, agentId: agent.id });
+  if (
+    db
+      .select({ id: conversations.id })
+      .from(conversations)
+      .where(eq(conversations.channelId, channel.id))
+      .get()
+  )
+    return;
+  let off: (() => void) | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const replied = new Promise<void>((resolve, reject) => {
+      off = app.bus.on("message.created", ({ message }) => {
+        if (message.channelId === channel.id && message.authorType === "agent") resolve();
+      });
+      timer = setTimeout(
+        () =>
+          reject(
+            new Error(`dev:fake dm seed: no reply from @${DEV_FAKE_DM_AGENT} within ${DM_SEED_TIMEOUT_MS}ms`),
+          ),
+        DM_SEED_TIMEOUT_MS,
+      );
+    });
+    // 라우터를 기다리는 사이 시간이 다 되면 아직 받는 쪽이 없다 — 처리 안 된 거절로 프로세스가 죽지 않게(아래 await 가 다시 던진다)
+    replied.catch(() => undefined);
+    const now = new Date();
+    const sent = sendUserMessage(db, app.bus, {
+      conversationId: (tx) =>
+        resolveSendConversation(
+          tx,
+          {
+            channelId: channel.id,
+            userId: mia.id,
+            role: "member",
+            bodyMd: DEV_FAKE_DM_TEXT,
+            newConversation: {},
+          },
+          now,
+        ),
+      authorId: mia.id,
+      bodyMd: DEV_FAKE_DM_TEXT,
+      clientMsgId: uuidv7(),
+    }).message;
+    await app.services.router.routeMessage(sent);
+    await replied;
+  } finally {
+    off?.();
+    clearTimeout(timer);
+  }
 }
 
 /**
@@ -1343,7 +1471,7 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
     await ensureDevFakeMember(app);
     ensureDevFakeRunner(app);
     ensureDevFakeAgents(app);
-    ensureDevFakeSessions(app);
+    const seeded = ensureDevFakeSessions(app);
     const live: App = app;
     /** 훅의 gatewayId 로 짝을 고른다 — 사무실·집이 아니면 undefined(400) */
     const pairOf = (gatewayId: string) => pairs.find((p) => p.spec.id === gatewayId);
@@ -1548,6 +1676,11 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
       app,
       pairs.filter((p) => p.plugin).map((p) => p.spec.id),
     );
+    if (seeded)
+      await ensureDevFakeDm(app, {
+        keep: opts.keep === true,
+        officeConnected: pairs.some((p) => p.spec.id === DEV_FAKE_OFFICE_GATEWAY_ID && p.plugin),
+      });
     return { app, url: app.url, spareGateway: { url: spare.url, token: spare.token }, close };
   } catch (error) {
     await close().catch(() => undefined);

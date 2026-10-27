@@ -517,6 +517,8 @@ describe("에이전트 DM — 만들기·목록·런(서버)", () => {
     await app.services.router.routeMessage(answer);
     expect(runsOf(dm.id)).toHaveLength(1);
     expect(membersOf(dm.id)).toHaveLength(2);
+    // 발송은 비동기다 — 같은 정본의 주인 푸시가 나간 뒤에 bob 몫을 센다
+    await vi.waitFor(() => expect(sent.filter((s) => s.endpoint === endpointOf("mia"))).toHaveLength(1));
     expect(sent.filter((s) => s.endpoint === endpointOf("bob"))).toEqual([]);
   });
 
