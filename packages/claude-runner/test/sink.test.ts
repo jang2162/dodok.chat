@@ -1,4 +1,6 @@
+import { RunnerApprovalRequested } from "@dodok/shared";
 import { describe, expect, it } from "vitest";
+import { summarizeToolInput } from "../src/drivers/claude/approvals";
 import { OUTSIDE_WORKDIR } from "../src/mask";
 import { createRunSink, type RunEmitter } from "../src/sink";
 import { createFakeBridge } from "./helpers/fake-bridge";
@@ -75,7 +77,7 @@ describe("createRunSink", () => {
     expect(error.message).toHaveLength(2000);
   });
 
-  it("post 글·카드와 승인 요약도 가린다, 세션 id 는 그대로 넘긴다", async () => {
+  it("post 글·카드를 가린다, 승인 요약·세션 id 는 그대로 넘긴다", async () => {
     const { out, bridge, sink } = harness();
     const deliver = runStart().deliver;
     await sink.post({
@@ -94,7 +96,7 @@ describe("createRunSink", () => {
       sessionKey: deliver.sessionKey,
       toolCallId: "a",
       toolName: "Bash",
-      summary: `cat ${WORKDIR}/k`,
+      summary: "cat k",
       canAllowAlways: false,
     });
     sink.session("thread_1");
@@ -106,6 +108,33 @@ describe("createRunSink", () => {
     expect(out).toEqual([["session", "thread_1"]]);
   });
 
+  // 드라이버가 가린 뒤 가운데를 줄인 요약 — 생략 표시(끝이 공백) 뒤 꼬리의 `/…` 는 다시 가리면 절대 경로로 보인다(태스크 2 리뷰 H1)
+  it.each([
+    [
+      "꼬리 숨김",
+      "cat " + "a".repeat(350) + " src/b" + "/c".repeat(10) + "/dd".repeat(7) + "/e f" + " z".repeat(40),
+    ],
+    ["400자 넘김", "cat " + "a".repeat(351) + " q/e f" + " z".repeat(61) + "z"],
+  ])("승인 요약은 드라이버가 줄인 그대로 — %s", (_, command) => {
+    const { bridge, sink } = harness();
+    const summary = summarizeToolInput("Bash", { command }, WORKDIR);
+    expect(summary).toContain("자 생략)… /");
+    // 이 입력이 실제로 다시 가림에 바뀌는 꼴인가 — 아니면 아래 단언은 아무것도 재지 않는다
+    expect(sink.mask(summary)).not.toBe(summary);
+    sink.requestApproval({
+      providerApprovalId: "a",
+      runId: RUN_ID,
+      sessionKey: runStart().deliver.sessionKey,
+      toolCallId: "a",
+      toolName: "Bash",
+      summary,
+      canAllowAlways: false,
+    });
+    expect(bridge.requested[0]!.summary).toBe(summary);
+    expect(RunnerApprovalRequested.safeParse(bridge.requested[0]).success).toBe(true);
+  });
+
+  // 줄이지 않은 글에서만 선다 — 가운데를 줄인 승인 요약은 아니라서 sink 가 보지 않는다(위 「드라이버가 줄인 그대로」)
   it("가림은 두 번 해도 같은 글이다 — 드라이버가 먼저 가린 글을 sink 가 다시 가려도 바뀌지 않는다", () => {
     const { sink } = harness();
     for (const text of [`a ${WORKDIR}/x /etc/y`, `${WORKDIR}`, `see ../up and ./here`, `"${WORKDIR}/q"`]) {
