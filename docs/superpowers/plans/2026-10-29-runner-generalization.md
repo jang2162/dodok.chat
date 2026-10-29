@@ -118,6 +118,7 @@
 
 - [ ] **Step 1: 마이그레이션 0031**(PR6·PR2·PR4) → `db.test.ts` 「0031 뒤 프로젝트 없는 러너 에이전트는 보관됨」.
 - [ ] **Step 2: 실패하는 테스트 — 어댑터.** hello V2 를 받고 `PROTOCOL 1` 은 `PROTOCOL_MISMATCH`, `send` 가 `run.start.agent` 를 에이전트 행과 프로젝트 행 그대로 싣는다, `fsList`·`projectCheck` 왕복과 끊긴 러너 `ADAPTER_UNAVAILABLE`, `run.session` 이 세션 행에 저장(`serverSessionIds` 없는 프로그램 — 가짜 러너가 `codex` 를 그렇게 알린다), `RUNNER_CEILING` 은 그대로 런 오류.
+  서버는 `run.start.agent` 를 shared `RunnerRunAgent` 그대로의 스키마로 만든다 — 러너는 runId 를 못 읽는 형식 오류면 drop 하므로(카드 없음) 서버 쪽 상한이 넓으면 런이 흔적 없이 사라진다(태스크 2 리뷰 M3).
 - [ ] **Step 3: 구현** — runner-adapter·가짜 러너를 V2 로, V1 이름 지우기(PR5), `claimUnbound`·`conflicts` 걷기(PR9 의 어댑터 몫).
 - [ ] **Step 4: 실패하는 테스트 — 지시(Review Focus 4).** shared: 지시 틀이 채널 규칙 앞, `</agent-instructions>`·`<channel-rules>` 를 넣어도 틀이 하나씩, 빈 지시면 틀 없음. 서버: `base_prompt` 를 바꾸면 `instructions_revision` +1, 다음 러너 런이 새 세션(`providerSessionId` 새 값)이고 append 에 새 지시가 있다. 이름만 바꾸면 리비전 그대로.
 - [ ] **Step 5: 구현** — PR1·PR2(`sessions/service.ts renewSessionOnPromptChange`·`ensureSession`).
@@ -142,7 +143,7 @@
   - `POST /api/v1/setup/runner-tokens/:id/reissue`(PR7).
 
 - [ ] **Step 1: 실패하는 테스트 — 경로들.** 위 Produces 의 성공·실패 꼴, 둘러보기 61번째 요청 429, 운영 로그 줄에 `relPath` 가 없음, 끊긴 러너의 둘러보기·프로젝트 더하기 `ADAPTER_UNAVAILABLE`, 프로젝트 없는(0031 이 보관한) 러너 에이전트 되살리기 `VALIDATION`, 보관한 프로젝트의 기존 에이전트는 런이 돈다(스펙 8장).
-- [ ] **Step 2: 구현.**
+- [ ] **Step 2: 구현.** 러너 에이전트 본문의 `allowedTools`·`disallowedTools`·`model`·`permissionMode` 는 shared `RunnerRunAgent` 의 필드 스키마를 다시 쓴다(따로 정의 금지 — 태스크 2 리뷰).
 - [ ] **Step 3: 실패하는 테스트 — 다시 발급(Review Focus 5).** 열린 런이 있는 러너의 토큰을 다시 발급 → 옛 토큰 핸드셰이크 401, 옛 소켓 끊김, 열린 런 `ADAPTER_UNAVAILABLE` 카드 + 「다시 실행」, 프로젝트·에이전트 행 그대로, 새 토큰으로 붙은 가짜 러너에서 「다시 실행」이 돈다. 옮기기(PR8) 세 꼴(끊긴 대상·check 실패·성공 뒤 세션 id 비움).
 - [ ] **Step 4: 구현** — PR7·PR8. PR9 의 서버 몫(discover 러너 갈래·묶기 경로·`bindings.ts`·`SetupStatus.runners[].agents`)을 걷는다.
 - [ ] **Step 5: 실패하는 테스트 — 권한·제어 도구.** `roles.matrix.test.ts` 에 새 경로 전부(admin 이상·발급/다시 발급 owner), 제어 `update_agent` 가 러너 에이전트의 `basePrompt`·`model` 등을 받으면 `VALIDATION`·`name` 은 성공, `register_agent { provider: "runner" }`·`discover_agents { provider: "runner" }` 는 `VALIDATION`.
@@ -176,5 +177,5 @@
 ### Task 7: 런 0회 실연·문서
 
 - [ ] **Step 1: 실연** — 실제 러너 설치본 + 번들 CLI + 가짜 Messages API(`docs/guides/live-smoke.md` 「Claude 러너 런 0회 하네스」). 스크래치 디렉터리를 루트로 두고 앱에서 프로젝트·에이전트를 만든다. 기준: ① 그 디렉터리에서 돈다(CLI `cwd`) ② 지시가 요청 본문의 `<agent-instructions>` 틀 안 ③ 루트 밖 프로젝트·상한 넘는 권한이 `RUNNER_CEILING` 카드 ④ 옛 `agents` 키 설정은 문구와 함께 끝남 ⑤ DB·서버 로그에 스크래치 루트의 절대 경로 없음 ⑥ 시크릿 0·모델 런 0(공통 조건).
-- [ ] **Step 2: 문서** — 스펙에 「구현과 맞춘 것」 장(PR1~PR9 와 구현 판단). `docs/manual/user-guide.md` 의 에이전트 가져오기 라디오 이름(「러너」)·DM 머리 제공자 줄(태스크 5 가 정한 꼴)과 `docs/guides/live-smoke.md` 의 응답 예시 `{"provider":"claude",…}`(태스크 1 리뷰 L3). 옛 제공자 이름이 남은 현재 가이드: `grep -nE 'provider claude|provider=claude|usageTrustedProviders|agents_claude_ws_agent' docs/guides/project-structure.md docs/guides/live-smoke.md` 의 줄을 `runner`·`program claude`·`usageTrustedPrograms` 로(과거 계획·스펙은 그대로 둔다 — 태스크 1 보고). `docs/guides/docker-deploy.md` 「Claude 러너 설치」 → 「러너 설치」(로컬 설정 `roots`·`programs`, 루트 id 를 바꾸면 그 프로젝트가 「루트 없음」, 다시 발급, 드러나는 것 넷), 「업데이트」에 이 판은 `dodok-runner` 재설치와 기존 러너 에이전트 보관. `docs/guides/agent-guide.md` 「Claude 러너 에이전트」(지시 틀). `docs/manual/user-guide.md`(러너 탭·프로젝트·에이전트 추가·역할 표). `docs/guides/project-structure.md`(드라이버 구조·`runner_projects`·0030·0031). `.ruler/AGENTS.md` 의 구조 줄·러너 명령 줄·dev:fake 괄호(가짜 러너 루트·프로젝트, 「이 러너로 묶기」 걷음)·「현재 단계」 → `pnpm exec ruler apply`. `docs/guides/plan.md` 완료 항목·이월. `docs/guides/live-smoke.md` 「러너 일반화 실연」 절.
+- [ ] **Step 2: 문서** — 스펙에 「구현과 맞춘 것」 장(PR1~PR9 와 구현 판단). `docs/manual/user-guide.md` 의 에이전트 가져오기 라디오 이름(「러너」)·DM 머리 제공자 줄(태스크 5 가 정한 꼴)과 `docs/guides/live-smoke.md` 의 응답 예시 `{"provider":"claude",…}`(태스크 1 리뷰 L3). 옛 제공자 이름이 남은 현재 가이드: `grep -nE 'provider claude|provider=claude|usageTrustedProviders|agents_claude_ws_agent' docs/guides/project-structure.md docs/guides/live-smoke.md` 의 줄을 `runner`·`program claude`·`usageTrustedPrograms` 로(과거 계획·스펙은 그대로 둔다 — 태스크 1 보고). `docs/guides/docker-deploy.md` 「Claude 러너 설치」 → 「러너 설치」(로컬 설정 `roots`·`programs`, 루트 `label` 을 꼭 적는다 — 안 적으면 디렉터리 이름(홈이면 계정 이름)이 서버로 간다, 루트 안이면 숨김 디렉터리도 경로를 적어 프로젝트로 만들 수 있다 — 경계는 루트다(태스크 2 리뷰 L4·L5), 루트 id 를 바꾸면 그 프로젝트가 「루트 없음」, 다시 발급, 드러나는 것 넷), 「업데이트」에 이 판은 `dodok-runner` 재설치와 기존 러너 에이전트 보관. `docs/guides/agent-guide.md` 「Claude 러너 에이전트」(지시 틀). `docs/manual/user-guide.md`(러너 탭·프로젝트·에이전트 추가·역할 표). `docs/guides/project-structure.md`(드라이버 구조·`runner_projects`·0030·0031). `.ruler/AGENTS.md` 의 구조 줄·러너 명령 줄·dev:fake 괄호(가짜 러너 루트·프로젝트, 「이 러너로 묶기」 걷음)·「현재 단계」 → `pnpm exec ruler apply`. `docs/guides/plan.md` 완료 항목·이월. `docs/guides/live-smoke.md` 「러너 일반화 실연」 절.
 - [ ] **Step 3: 끝내기 검사** → 커밋 `docs: record runner generalization and its live smoke`.
