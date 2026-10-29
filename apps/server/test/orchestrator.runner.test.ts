@@ -266,6 +266,42 @@ describe("러너 런타임 — run.start.agent·지시·천장 카드·run.sessi
     expect(startOf(runner, second.id).providerSessionId).toBe("thread_codex_1");
   });
 
+  it("세션 id 를 스스로 짓는 프로그램도 지시가 바뀌면 다음 런이 id 없이 새 세션으로 — 갱신 알림 한 번 [태스크 3 리뷰 L1]", async () => {
+    let n = 0;
+    const { runner, coder, log, channel } = await start({
+      agent: { program: "codex", basePrompt: "하나" },
+      hello: { programs: [FAKE_CODEX_PROGRAM] },
+      script: (run) => {
+        if (run.start.providerSessionId === undefined) run.session(`thread_codex_${++n}`);
+        run.final("ok");
+      },
+    });
+    await sendMessage(log.socket, channel.id, "@coder 하나");
+    const first = await runOf(log, coder.id, 0);
+    expect((await log.terminal(first.id)).status).toBe("done");
+    await sendMessage(log.socket, channel.id, "@coder 둘");
+    const second = await runOf(log, coder.id, 1);
+    expect((await log.terminal(second.id)).status).toBe("done");
+    expect(startOf(runner, second.id).providerSessionId).toBe("thread_codex_1");
+
+    expect((await rest(live, "PATCH", `/agents/${coder.id}`, { basePrompt: "둘" })).status).toBe(200);
+    await sendMessage(log.socket, channel.id, "@coder 셋");
+    const third = await runOf(log, coder.id, 2);
+    expect((await log.terminal(third.id)).status).toBe("done");
+    expect(startOf(runner, third.id)).not.toHaveProperty("providerSessionId");
+    expect(startOf(runner, third.id).channelRulesAppend).toContain(
+      "<agent-instructions>\n둘\n</agent-instructions>",
+    );
+    await sendMessage(log.socket, channel.id, "@coder 넷");
+    const fourth = await runOf(log, coder.id, 3);
+    expect((await log.terminal(fourth.id)).status).toBe("done");
+    expect(startOf(runner, fourth.id).providerSessionId).toBe("thread_codex_2");
+    const notices = log.created.filter(
+      (m) => m.systemMeta?.kind === "info" && m.bodyMd.startsWith("채널 규칙이나 에이전트 지시가 바뀌어"),
+    );
+    expect(notices).toHaveLength(1);
+  });
+
   it("서버가 세션 id 를 정한 런(claude)의 run.session 은 세션 행을 바꾸지 않는다", async () => {
     const { runner, coder, log, channel } = await start({
       script: (run) => {

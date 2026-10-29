@@ -90,9 +90,15 @@ export function getSessionRow(db: DbOrTx, sessionId: string): AgentSessionRow | 
   return db.select().from(agentSessions).where(eq(agentSessions.id, sessionId)).get();
 }
 
+/** 서버가 짓는 세션 id 꼴 — randomUUID 가 내는 소문자 UUID */
+const SERVER_SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
  * 서버가 정하는 제공자 세션 id(러너 계획 판정 P4 — serverSessionIds 어댑터만 부른다). 비었으면 새 UUID 를 써 두고 돌려준다 —
- * 같은 세션 행의 다음 런은 같은 값을 받는다. renewSessionOnPromptChange 가 비우면 다음 런이 새 값을 쓴다
+ * 같은 세션 행의 다음 런은 같은 값을 받는다. renewSessionOnPromptChange 가 비우면 다음 런이 새 값을 쓴다.
+ * 저장된 값이 UUID 가 아니면(세션 id 를 스스로 짓는 프로그램이 run.session 으로 알린 값 — 러너가 그 뒤 같은 프로그램을
+ * serverSessionIds 로 알렸을 때) 새로 짓는다 — Claude 드라이버는 UUID 가 아니면 VALIDATION 으로 닫고, 그 코드는 카드가 없어 런이
+ * 소리 없이 끝난다(태스크 3 리뷰 L3)
  */
 export function ensureProviderSessionId(db: Db, sessionId: string): string {
   return db.transaction((tx) => {
@@ -102,7 +108,8 @@ export function ensureProviderSessionId(db: Db, sessionId: string): string {
       .where(eq(agentSessions.id, sessionId))
       .get();
     if (!row) throw apiError("NOT_FOUND", "agent session not found");
-    if (row.providerSessionId !== null) return row.providerSessionId;
+    if (row.providerSessionId !== null && SERVER_SESSION_ID.test(row.providerSessionId))
+      return row.providerSessionId;
     const providerSessionId = randomUUID();
     tx.update(agentSessions).set({ providerSessionId }).where(eq(agentSessions.id, sessionId)).run();
     return providerSessionId;

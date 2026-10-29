@@ -62,7 +62,8 @@ const HOOK_SHOWN = "whk_".length + 6;
  * 로그에 싣는 요청 URL — 웹훅 토큰을 앞부분만 남기고 「…」로 가린다. 대상은 셋: /hooks/ 다음 경로 조각(대소문자 무관, 퍼센트
  * 인코딩한 조각도 앞 10자만)과 그 밖 어디든 whk_ 토큰 꼴(/hooks%2F…·쿼리 — 라우트에 안 맞아 404 여도 요청 줄은 남는다), 그리고
  * 개인 토큰 dpt_ 꼴(/mcp 는 Authorization 머리로만 받지만 URL 만 받는 MCP 클라이언트에 ?token= 으로 넣어 보는 오설정이 있다 —
- * 401 이어도 토큰은 유효한 채다. dpt_ 뒤 6자는 토큰 목록의 prefix). 다른 경로·쿼리는 그대로다
+ * 401 이어도 토큰은 유효한 채다. dpt_ 뒤 6자는 토큰 목록의 prefix). 넷째로 쿼리 relPath 의 값(러너 디렉터리 둘러보기 — 사람
+ * 머신의 디렉터리 구조라 운영 로그에 남기지 않는다, 러너 일반화 스펙 6장)은 통째로 「…」. 다른 경로·쿼리는 그대로다
  */
 export function redactUrl(url: string): string {
   return url
@@ -70,7 +71,8 @@ export function redactUrl(url: string): string {
       segment.length > HOOK_SHOWN ? `${head}${segment.slice(0, HOOK_SHOWN)}…` : `${head}${segment}`,
     )
     .replace(/whk_([\w-]{6})[\w-]+/g, "whk_$1…")
-    .replace(/dpt_([\w-]{6})[\w-]+/g, "dpt_$1…");
+    .replace(/dpt_([\w-]{6})[\w-]+/g, "dpt_$1…")
+    .replace(/([?&]relPath=)[^&#]*/gi, "$1…");
 }
 
 /**

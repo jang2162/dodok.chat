@@ -80,6 +80,7 @@ import type { PushTransports } from "./modules/push/transports/types";
 import { type PushSend, webPushSender, webPushTransport } from "./modules/push/transports/webpush";
 import { loadVapidKeys } from "./modules/push/vapid";
 import type { Orchestrator, RunTimeouts } from "./modules/runs/orchestrator";
+import { registerRunnerAdminRoutes } from "./modules/runners/projects.routes";
 import { registerRunnerRoutes, runnerServerUrl } from "./modules/runners/routes";
 import { runnerAgentDefinition } from "./modules/runners/definition";
 import { readRunnerFile, runnerDirCandidates } from "./modules/runners/runner-file";
@@ -478,6 +479,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       workspaceId,
       registry,
       orchestrator: services.orchestrator,
+      runners: runnerAdapter ?? null,
     };
     registerChannelRoutes(fastify, routeContext);
     registerAgentRoutes(fastify, routeContext);
@@ -695,7 +697,17 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
         route: "installer",
       }),
       changed: emitSetupStatus,
-      agentsChanged: () => bus.emit("agents.changed", {}),
+    });
+    registerRunnerAdminRoutes(fastify, {
+      auth,
+      db,
+      logger,
+      workspaceId,
+      bus,
+      runners: runnerAdapter ?? null,
+      limits,
+      ops,
+      now: limitClock,
     });
     // 자동화(자동화 스펙): 예약 틱·웹훅·「지금 실행」이 같은 게시(라우터로 멘션 런)와 같은 워크스페이스 시간대를 쓴다
     const automationPost: PostDeps = {

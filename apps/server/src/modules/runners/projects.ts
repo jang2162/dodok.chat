@@ -4,10 +4,10 @@
  * 러너 어댑터 projectCheck 를 부르고, 러너는 런마다 천장 검사로 다시 본다
  */
 import { RunnerRelPath, RunnerRootId } from "@dodok/shared";
-import { and, asc, eq, isNull } from "drizzle-orm";
+import { and, asc, count, eq, inArray, isNull, ne } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import type { Db, DbOrTx } from "../../db/client";
-import { runnerProjects, runnerTokens } from "../../db/schema.sqlite";
+import { agents, agentSessions, runnerProjects, runnerTokens } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
 
 export type RunnerProjectRow = typeof runnerProjects.$inferSelect;
@@ -154,4 +154,86 @@ export function archiveProject(
       .get() ?? getProject(db, input.workspaceId, input.id);
   if (!row) throw apiError("NOT_FOUND", "runner project not found");
   return row;
+}
+
+/**
+ * 다른 러너로 옮긴다(러너 일반화 계획 판정 PR8) — 프로젝트와 그 에이전트의 러너 토큰을 한 트랜잭션에서 함께 바꾸고(둘이 어긋나면 런의
+ * 정의가 없다 — definition.ts), 그 에이전트들의 러너 세션 id 를 비운다(세션 전사는 옛 머신에 있다 — 다음 런은 새 세션). 옮길 러너가
+ * 붙어 있고 그 자리가 project.check 를 지나는지는 호출자 몫이다. 대상 토큰은 같은 워크스페이스의 폐기되지 않은 것(아니면 VALIDATION),
+ * 대상 러너에 같은 루트·경로의 보관 안 된 다른 프로젝트가 있으면 CONFLICT. 이미 그 러너면 그대로. 도는 런은 맡은 연결에서 끝까지 간다
+ */
+export function moveProject(
+  db: Db,
+  input: { workspaceId: string; id: string; runnerTokenId: string },
+): { project: RunnerProjectRow; agentIds: string[] } {
+  return db.transaction((tx) => {
+    const project = getProject(tx, input.workspaceId, input.id);
+    if (!project) throw apiError("NOT_FOUND", "runner project not found");
+    const token = tx
+      .select({ revokedAt: runnerTokens.revokedAt })
+      .from(runnerTokens)
+      .where(and(eq(runnerTokens.id, input.runnerTokenId), eq(runnerTokens.workspaceId, input.workspaceId)))
+      .get();
+    if (!token || token.revokedAt !== null)
+      throw apiError("VALIDATION", "runner not found", { field: "runnerId" });
+    if (project.runnerTokenId === input.runnerTokenId) return { project, agentIds: [] };
+    const taken = tx
+      .select({ id: runnerProjects.id })
+      .from(runnerProjects)
+      .where(
+        and(
+          eq(runnerProjects.runnerTokenId, input.runnerTokenId),
+          eq(runnerProjects.rootId, project.rootId),
+          eq(runnerProjects.relPath, project.relPath),
+          isNull(runnerProjects.archivedAt),
+          ne(runnerProjects.id, project.id),
+        ),
+      )
+      .get();
+    if (taken)
+      throw apiError("CONFLICT", "옮길 러너에 같은 자리의 프로젝트가 이미 있다", { projectId: taken.id });
+    const moved = tx
+      .update(runnerProjects)
+      .set({ runnerTokenId: input.runnerTokenId })
+      .where(eq(runnerProjects.id, project.id))
+      .returning()
+      .get();
+    if (!moved) throw apiError("NOT_FOUND", "runner project not found");
+    const agentIds = tx
+      .update(agents)
+      .set({ runnerTokenId: input.runnerTokenId })
+      .where(and(eq(agents.workspaceId, input.workspaceId), eq(agents.runnerProjectId, project.id)))
+      .returning({ id: agents.id })
+      .all()
+      .map((r) => r.id);
+    if (agentIds.length > 0)
+      tx.update(agentSessions)
+        .set({ providerSessionId: null })
+        .where(inArray(agentSessions.agentId, agentIds))
+        .run();
+    return { project: moved, agentIds };
+  });
+}
+
+/** 프로젝트마다 보관하지 않은 에이전트 수 — 없는 프로젝트는 0 */
+export function activeAgentCounts(db: DbOrTx, projectIds: string[]): Map<string, number> {
+  if (projectIds.length === 0) return new Map();
+  const rows = db
+    .select({ projectId: agents.runnerProjectId, n: count() })
+    .from(agents)
+    .where(and(inArray(agents.runnerProjectId, projectIds), isNull(agents.archivedAt)))
+    .groupBy(agents.runnerProjectId)
+    .all();
+  return new Map(rows.flatMap((r) => (r.projectId === null ? [] : [[r.projectId, r.n] as const])));
+}
+
+/** 러너(토큰)마다 보관하지 않은 프로젝트 수 */
+export function activeProjectCounts(db: DbOrTx, workspaceId: string): Map<string, number> {
+  const rows = db
+    .select({ runnerTokenId: runnerProjects.runnerTokenId, n: count() })
+    .from(runnerProjects)
+    .where(and(eq(runnerProjects.workspaceId, workspaceId), isNull(runnerProjects.archivedAt)))
+    .groupBy(runnerProjects.runnerTokenId)
+    .all();
+  return new Map(rows.map((r) => [r.runnerTokenId, r.n]));
 }

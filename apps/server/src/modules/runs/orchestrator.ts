@@ -1080,7 +1080,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
    * runId 가 다른 연결의 런을 가리키면 쓰지 않는다(fromRunConnection 과 같은 까닭). 정본의 에이전트가 그 런의 에이전트가 아니어도
    * 쓰지 않는다 — 같은 Gateway 의 다른 에이전트가 열린 런의 세션 키(남의 DM 키 등)를 대면 그 런 에이전트의 글로 저장됐다. 그런 정본은
    * 런 없는 정본 갈래로 내려가 세션 행 규칙(isOwnSession)에 막힌다. runId·세션 키 갈래는 그 런의 에이전트 행으로 본다 — 지금의 묶임
-   * (agentIdFor)으로 보면 다시 묶은 러너 에이전트의 런이 옛 러너에서 끝까지 가지 못한다(bindRunnerToken). 연결은 ours·
+   * (agentIdFor)으로 보면 다른 러너로 옮긴 러너 에이전트의 런이 옛 러너에서 끝까지 가지 못한다(runners/projects.ts moveProject). 연결은 ours·
    * findOpenRunBySession 이 가른다
    */
   function correlate(msg: OutboundMessage, provider: AdapterProvider, connectionId: string): Run | undefined {

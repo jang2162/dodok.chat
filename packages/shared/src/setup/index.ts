@@ -51,10 +51,13 @@ export const IssueRunnerTokenResult = z.object({
 });
 export type IssueRunnerTokenResult = z.infer<typeof IssueRunnerTokenResult>;
 
+/** POST /api/v1/setup/runner-tokens/:id/reissue 응답 — 발급과 같은 모양, 원문은 여기에만(같은 행·같은 러너, 옛 원문은 곧바로 안 통한다) */
+export const ReissueRunnerTokenResult = IssueRunnerTokenResult;
+export type ReissueRunnerTokenResult = z.infer<typeof ReissueRunnerTokenResult>;
+
 /**
  * 지금 붙은 러너 하나(러너 스펙 5장) — 어댑터 `setupDetail()` 의 runner 변형과 연결 페이지 러너 블록이 같은 모양을 쓴다.
- * claudeCodeVersion 은 hello 의 claude 프로그램 판본(없으면 빈 문자열). agents 는 늘 비어 있다 — 러너는 에이전트를 알리지 않고
- * 에이전트는 앱에서 러너 프로젝트로 만든다(러너 일반화 계획 판정 PR9 — 이 칸은 연결 페이지와 함께 걷는다)
+ * claudeCodeVersion 은 hello 의 claude 프로그램 판본(없으면 빈 문자열). 러너의 프로젝트·에이전트는 「러너」 탭 REST(GET /api/v1/runners)
  */
 export const RunnerConnection = z.object({
   tokenId: Id,
@@ -65,16 +68,6 @@ export const RunnerConnection = z.object({
   bundleSha256: Sha256Hex.nullable(),
   capabilities: z.array(z.string()),
   connectedAt: IsoDateTime,
-  agents: z.array(
-    z.object({
-      id: z.string(),
-      name: z.string(),
-      model: z.string(),
-      workdirLabel: z.string(),
-      conflict: z.boolean(),
-      boundTokenId: Id.nullable(),
-    }),
-  ),
 });
 export type RunnerConnection = z.infer<typeof RunnerConnection>;
 

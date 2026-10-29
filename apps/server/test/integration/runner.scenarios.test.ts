@@ -88,7 +88,7 @@ describe("러너 통합 시나리오", () => {
     live = await bootLiveApp(opts);
     const issued = await issueToken("macbook");
     const runner = await connectRunner(issued.token, script);
-    const { agent: coder } = createRunnerAgentForTest(live.app.db, {
+    const { agent: coder, projectId } = createRunnerAgentForTest(live.app.db, {
       workspaceId: live.app.workspaceId,
       handle: "coder",
       name: "Coder",
@@ -97,7 +97,7 @@ describe("러너 통합 시나리오", () => {
     });
     const channel = await channelWith([coder]);
     const log = await openChannelWire(live, channel.id, sockets);
-    return { issued, runner, coder, channel, log };
+    return { issued, runner, coder, projectId, channel, log };
   }
 
   const runOf = (log: WireLog, agentId: string, n = 0) =>
@@ -339,10 +339,7 @@ describe("러너 통합 시나리오", () => {
     const second = await issueToken("desktop");
     const other = await connectRunner(second.token);
     expect(other.helloResult).toEqual({ ok: true, serverVersion: expect.any(String) });
-    expect((await setupStatus()).runners.list.map((r) => [r.label, r.agents])).toEqual([
-      ["macbook", []],
-      ["desktop", []],
-    ]);
+    expect((await setupStatus()).runners.list.map((r) => r.label)).toEqual(["macbook", "desktop"]);
 
     await sendMessage(log.socket, channel.id, "@coder 누구야");
     const run = await runOf(log, coder.id);
@@ -351,8 +348,8 @@ describe("러너 통합 시나리오", () => {
     expect(other.runStarts).toHaveLength(0);
   });
 
-  it("시나리오 6′ — coder 의 러너가 끊기면 다른 토큰 러너가 붙어 있어도 맡지 않고, 연결 페이지에서 다시 묶으면 그 러너가 맡는다", async () => {
-    const { runner, coder, channel, log } = await start();
+  it("시나리오 6′ — coder 의 러너가 끊기면 다른 토큰 러너가 붙어 있어도 맡지 않고, 프로젝트를 그 러너로 옮기면 그 러너가 맡는다 [PR8]", async () => {
+    const { runner, coder, projectId, channel, log } = await start();
     const listed = async () =>
       ok("GET /agents", await rest<{ agents: Agent[] }>(live, "GET", "/agents")).agents.find(
         (a) => a.id === coder.id,
@@ -370,12 +367,11 @@ describe("러너 통합 시나리오", () => {
     });
     expect(other.runStarts).toHaveLength(0);
 
-    const res = await live.app.fastify.inject({
-      method: "PUT",
-      url: `/api/v1/setup/runner-tokens/${second.record.id}/agents/${coder.providerAgentId}`,
-      headers: live.auth.headers,
+    const res = await rest(live, "POST", `/runner-projects/${projectId}/move`, {
+      runnerId: second.record.id,
     });
-    expect(res.statusCode).toBe(200);
+    expect(res.status).toBe(200);
+    expect(other.fsRequests).toEqual([["project.check", { rootId: "src", relPath: "dodok" }]]);
     expect((await listed())?.runner).toMatchObject({ tokenId: second.record.id, label: "desktop" });
     await sendMessage(log.socket, channel.id, "@coder 이제는?");
     const moved = await runOf(log, coder.id, 1);
@@ -383,13 +379,13 @@ describe("러너 통합 시나리오", () => {
     expect(other.runStarts.map((s) => s.deliver.runId)).toEqual([moved.id]);
   });
 
-  it("다시 묶어도 도는 런은 옛 러너에서 끝까지 간다 — 묶인 뒤 온 post·최종 답이 그 런의 글로 저장되고 런이 끝난다 [dm-t4 I1]", async () => {
+  it("프로젝트를 옮겨도 도는 런은 옛 러너에서 끝까지 간다 — 옮긴 뒤 온 post·최종 답이 그 런의 글로 저장되고 런이 끝난다 [dm-t4 I1·PR8]", async () => {
     let release: () => void = () => {};
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
     const acks: Array<{ ok: boolean; messageId?: string }> = [];
-    const { coder, channel, log } = await start(async (run) => {
+    const { coder, projectId, channel, log } = await start(async (run) => {
       await gate;
       acks.push((await run.post({ text: "카드" })) as { ok: boolean; messageId?: string });
       run.final("최종 답");
@@ -397,18 +393,18 @@ describe("러너 통합 시나리오", () => {
     await sendMessage(log.socket, channel.id, "@coder 일해");
     const run = await runOf(log, coder.id);
     const second = await issueToken("desktop");
-    const res = await live.app.fastify.inject({
-      method: "PUT",
-      url: `/api/v1/setup/runner-tokens/${second.record.id}/agents/${coder.providerAgentId}`,
-      headers: live.auth.headers,
+    const other = await connectRunner(second.token);
+    const res = await rest(live, "POST", `/runner-projects/${projectId}/move`, {
+      runnerId: second.record.id,
     });
-    expect(res.statusCode).toBe(200);
+    expect(res.status).toBe(200);
     release();
 
     expect((await log.terminal(run.id)).status).toBe("done");
     const mine = log.created.filter((m) => m.authorType === "agent" && m.runId === run.id);
     expect(mine.map((m) => m.bodyMd)).toEqual(["카드", "최종 답"]);
     expect(acks).toEqual([{ ok: true, messageId: mine[0]?.id }]);
+    expect(other.runStarts).toHaveLength(0);
   });
 
   const ruleNotices = (log: WireLog) =>

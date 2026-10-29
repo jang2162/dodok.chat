@@ -1,9 +1,14 @@
 /**
- * 연결 페이지 러너 API(러너 스펙 5장) — owner 세션만(러너 tgz 만 owner 세션 또는 러너 토큰 — 설정 통합 스펙 「토큰으로 설치 파일
- * 받기」 절). 토큰 원문은 발급 응답에만 싣고 그 응답은 `Cache-Control: no-store`.
+ * 연결 페이지 러너 API(러너 스펙 5장) — 토큰 발급·다시 발급·폐기, owner 세션만(러너 tgz 만 owner 세션 또는 러너 토큰 — 설정 통합 스펙 「토큰으로 설치 파일
+ * 받기」 절). 토큰 원문은 발급·다시 발급 응답에만 싣고 그 응답은 `Cache-Control: no-store`.
  * 목록·상태·로그·wire 어디에도 원문은 없다(브리지 토큰 API — setup/routes.ts — 와 같은 규칙)
  */
-import { Id, IssueRunnerTokenInput, type IssueRunnerTokenResult } from "@dodok/shared";
+import {
+  Id,
+  IssueRunnerTokenInput,
+  type IssueRunnerTokenResult,
+  type ReissueRunnerTokenResult,
+} from "@dodok/shared";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { AdapterRegistry } from "../../adapters/registry";
@@ -17,8 +22,7 @@ import type { OpsService } from "../ops/service";
 import { requireOwnerOrToken } from "../setup/installer-auth";
 import { sendPackedFile } from "../setup/routes";
 import type { RunnerFile } from "./runner-file";
-import { bindRunnerToken } from "./bindings";
-import { issueRunnerToken, listRunnerTokens, revokeRunnerToken } from "./tokens";
+import { issueRunnerToken, listRunnerTokens, reissueRunnerToken, revokeRunnerToken } from "./tokens";
 
 /** 러너 설정 파일의 tokenFile 권장 자리 — 원문은 설정 파일이 아니라 이 파일에 둔다 */
 export const RUNNER_TOKEN_FILE = "~/.dodok-runner/token";
@@ -44,14 +48,11 @@ export type RunnerRouteContext = {
   serverUrl: string;
   /** 러너 토큰 인증(requireAgentToken — 첨부 HTTP·핸드셰이크와 같은 실패 카운터) */
   runnerToken: (request: FastifyRequest) => Promise<void>;
-  /** 토큰 발급·폐기·다시 묶기 뒤 — setup.status 를 다시 알린다 */
+  /** 토큰 발급·다시 발급·폐기 뒤 — setup.status 를 다시 알린다 */
   changed(): void;
-  /** 다시 묶기 뒤 — 에이전트의 묶인 러너가 바뀌었다(wire agents.changed) */
-  agentsChanged(): void;
 };
 
 const TokenParams = z.object({ id: Id });
-const BindParams = z.object({ id: Id, agentId: z.string().min(1).max(64) });
 
 /** 파일이 없을 때의 404 — 웹이 받기 대신 만드는 법을 보인다 */
 const runnerFileMissing = () => apiError("NOT_FOUND", "RUNNER_FILE_MISSING");
@@ -101,15 +102,26 @@ export function registerRunnerRoutes(fastify: FastifyInstance, ctx: RunnerRouteC
     return reply.status(204).send();
   });
 
-  /** 다시 묶기 — 등록 러너 에이전트를 이 활성 토큰의 러너에 묶는다(토큰을 폐기했거나 머신을 바꿨을 때) */
-  fastify.put("/api/v1/setup/runner-tokens/:id/agents/:agentId", owner, async (request) => {
-    const { id, agentId } = parseParams(BindParams, request.params);
-    const agent = bindRunnerToken(ctx.db, ctx.workspaceId, id, agentId);
-    ctx.logger.info({ tokenId: id, agentId: agent.providerAgentId }, "runner agent rebound");
-    // 배정은 러너 어댑터가 묶임(DB)에서 매번 계산한다 — 다음 런부터 새 러너로 가고, 연결 페이지의 충돌 표시만 다시 알린다
+  /**
+   * 다시 발급(러너 일반화 계획 판정 PR7) — 같은 러너(행)에 새 원문. 옛 원문의 연결은 폐기와 같은 길로 끊는다(러너는 종료 2, 열린 런은
+   * 어댑터가 ADAPTER_UNAVAILABLE 로 닫는다). 프로젝트·에이전트는 그 러너에 남는다 — 머신에 새 토큰을 넣고 다시 띄우면 이어진다
+   */
+  fastify.post("/api/v1/setup/runner-tokens/:id/reissue", owner, async (request, reply) => {
+    const { id } = parseParams(TokenParams, request.params);
+    const { token, record } = reissueRunnerToken(ctx.db, ctx.workspaceId, id);
+    try {
+      ctx.registry.forProvider("runner")?.revokeTokenSessions(id);
+    } catch (err) {
+      ctx.logger.warn({ err, tokenId: id }, "runner session revoke on reissue failed");
+    }
+    ctx.logger.info({ tokenId: id }, "runner token reissued");
     ctx.changed();
-    ctx.agentsChanged();
-    return { agent };
+    const result: ReissueRunnerTokenResult = {
+      token,
+      record,
+      runnerConfig: { serverUrl: ctx.serverUrl, tokenFile: RUNNER_TOKEN_FILE },
+    };
+    return reply.header("cache-control", "no-store").send(result);
   });
 
   fastify.get(

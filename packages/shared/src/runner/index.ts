@@ -2,14 +2,21 @@ import { z } from "zod";
 import { ErrorCode, Id } from "../common";
 import { InboundDeliver, OutboundMessage } from "../bridge";
 import type { ControlResult, RunnerControlCall } from "../control";
-import { ApprovalDecision, RunnerProgram } from "../domain";
+import {
+  ApprovalDecision,
+  permissionModeRank,
+  RUNNER_PERMISSION_MODES,
+  RunnerPermissionMode,
+  RunnerProgram,
+  RunnerToolNames,
+} from "../domain";
 import { RunEvent } from "../events";
 
 // `/runner` 계약(러너 스펙 3장, 계획 판정 P1) — Socket.IO 네임스페이스, 프레임은 이벤트 이름 + ack. 경계에서 이 Zod 로 파싱한다.
 // 하트비트는 Socket.IO 가 한다 — ping/pong 프레임은 두지 않는다
 
 export * from "./prompt";
-export { RunnerProgram };
+export { permissionModeRank, RUNNER_PERMISSION_MODES, RunnerPermissionMode, RunnerProgram };
 
 export const RUNNER_NAMESPACE = "/runner";
 /** 첨부 바이트 HTTP(GET·POST, 러너 토큰) — 브리지의 /bridge/attachments 와 같은 모양 */
@@ -159,16 +166,6 @@ export type RunnerRelPath = z.infer<typeof RunnerRelPath>;
 export const RunnerProjectRef = z.object({ rootId: RunnerRootId, relPath: RunnerRelPath });
 export type RunnerProjectRef = z.infer<typeof RunnerProjectRef>;
 
-/**
- * 권한 모드 — 배열 순서가 「묻지 않고 돌 수 있는 것이 많은 순」의 정본이다(스펙 2장). bypassPermissions 는 승인 카드가 아예
- * 뜨지 않아 「쓰기 도구는 승인 카드」 원칙이 깨지므로 어느 스키마도 받지 않는다
- */
-export const RUNNER_PERMISSION_MODES = ["plan", "dontAsk", "default", "acceptEdits"] as const;
-export const RunnerPermissionMode = z.enum(RUNNER_PERMISSION_MODES);
-export type RunnerPermissionMode = z.infer<typeof RunnerPermissionMode>;
-export const permissionModeRank = (mode: RunnerPermissionMode): number =>
-  RUNNER_PERMISSION_MODES.indexOf(mode);
-
 /** 프로그램 드라이버가 할 수 있는 것(계획 판정 PR3) — 서버가 그 러너·그 프로그램의 값으로 런 전에 가른다 */
 export const RunnerProgramCapability = z.enum([
   "serverSessionIds",
@@ -179,8 +176,6 @@ export const RunnerProgramCapability = z.enum([
   "costs",
 ]);
 export type RunnerProgramCapability = z.infer<typeof RunnerProgramCapability>;
-
-const ToolNames = z.array(z.string().min(1).max(200)).max(100);
 
 export const RunnerProgramStatus = z.object({
   program: RunnerProgram,
@@ -195,7 +190,7 @@ export const RunnerProgramStatus = z.object({
   ceiling: z.object({
     maxPermissionMode: RunnerPermissionMode,
     /** 배열이면 에이전트의 allowedTools 는 그 부분집합이어야 한다. null 이면 상한 없음 */
-    allowedToolsCeiling: ToolNames.nullable(),
+    allowedToolsCeiling: RunnerToolNames.nullable(),
   }),
 });
 export type RunnerProgramStatus = z.infer<typeof RunnerProgramStatus>;
@@ -234,8 +229,8 @@ export const RunnerRunAgent = z.object({
   model: z.string().min(1).max(128).nullable(),
   permissionMode: RunnerPermissionMode,
   /** 묻지 않고 허용하는 도구. null 이면 미리 허용한 도구가 없다(상한 안에서 프로그램 기본) */
-  allowedTools: ToolNames.nullable(),
-  disallowedTools: ToolNames,
+  allowedTools: RunnerToolNames.nullable(),
+  disallowedTools: RunnerToolNames,
 });
 export type RunnerRunAgent = z.infer<typeof RunnerRunAgent>;
 

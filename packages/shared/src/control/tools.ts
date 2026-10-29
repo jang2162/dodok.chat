@@ -4,7 +4,7 @@ import { Agent, RelayPolicy } from "../domain";
 import { SearchQuery } from "../search";
 import {
   AddChannelMemberBody,
-  CreateAgentBody,
+  CreateOpenClawAgentBody,
   CreateChannelBody,
   DiscoverAgentsQuery,
   ListConversationsQuery,
@@ -221,22 +221,24 @@ export const CONTROL_TOOLS = [
     name: "discover_agents",
     access: "read",
     description:
-      'List agents that can be registered: provider "openclaw" asks one Gateway (gatewayId required), "runner" asks the connected runners. Admin or owner only.',
+      "List OpenClaw agents that can be registered from one Gateway (gatewayId required). Runner agents are created in the dodok web app, not with these tools. Admin or owner only.",
     input: DiscoverAgentsQuery,
   }),
   tool({
     name: "register_agent",
     access: "write",
     description:
-      "Register an agent from discover_agents under a workspace-unique handle. OpenClaw agents need gatewayId. Admin or owner only.",
-    input: CreateAgentBody,
+      "Register an OpenClaw agent from discover_agents under a workspace-unique handle (gatewayId required). Admin or owner only.",
+    input: CreateOpenClawAgentBody,
   }),
   tool({
     name: "update_agent",
     access: "write",
     description:
-      "Change an agent's handle, name, avatar URL or base prompt (null clears avatarUrl and basePrompt). Admin or owner only.",
-    input: AgentRef.extend(UpdateAgentBody.omit({ enabled: true, dmAccess: true }).shape),
+      "Change an agent's handle, name, avatar URL or base prompt (null clears avatarUrl and basePrompt). For runner agents only name and avatarUrl can change. Admin or owner only.",
+    input: AgentRef.extend(
+      UpdateAgentBody.pick({ handle: true, name: true, avatarUrl: true, basePrompt: true }).shape,
+    ),
   }),
   tool({
     name: "set_agent_enabled",

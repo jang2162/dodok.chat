@@ -115,20 +115,19 @@ export function usePatchAgent() {
 }
 
 /**
- * 제공자의 등록 후보 — OpenClaw 는 고른 Gateway 의 agents.list(멀티 Gateway 스펙 「에이전트 API」 절), Claude 러너는 붙은 러너들이 알린 에이전트
- * (러너 계획 판정 P9). 대화상자가 열렸을 때만(`enabled`, OpenClaw 는 Gateway 를 골랐을 때만), 열 때마다 새로(`staleTime: 0`).
+ * 제공자의 등록 후보 — OpenClaw 는 고른 Gateway 의 agents.list(멀티 Gateway 스펙 「에이전트 API」 절). 러너는 알린 에이전트가 없어 서버에
+ * 묻지 않고 빈 목록이다(러너 에이전트는 러너 프로젝트에서 만든다 — 러너 일반화 계획 판정 PR9, 화면은 계획 태스크 5). 대화상자가 열렸을 때만(`enabled`, OpenClaw 는 Gateway 를 골랐을 때만), 열 때마다 새로(`staleTime: 0`).
  * 503·403 은 대화상자 안에 그리므로 전역 토스트를 끄고(`silent`), 재시도하지 않는다 — 다시 부르기는 사용자가 누른다.
  * 네트워크가 돌아와도 다시 부르지 않는다 — 열려 있는 동안엔 고르고 고치는 중이다
  */
 export function useDiscover(enabled: boolean, provider: AdapterProvider, gatewayId: string | undefined) {
   const openclaw = provider === "openclaw";
-  const path = openclaw
-    ? `/agents/discover?provider=openclaw&gatewayId=${encodeURIComponent(gatewayId ?? "")}`
-    : `/agents/discover?provider=${provider}`;
+  const path = `/agents/discover?provider=openclaw&gatewayId=${encodeURIComponent(gatewayId ?? "")}`;
   return useQuery({
     // 제공자 키 아래 Gateway 마다 — 제공자 키로 초기화하면 그 Gateway 들이 함께 지워진다
     queryKey: openclaw ? [...qk.discoverOf(provider), gatewayId ?? ""] : qk.discoverOf(provider),
-    queryFn: async () => (await api<{ agents: DiscoveredAgent[] }>("GET", path)).agents,
+    queryFn: async (): Promise<DiscoveredAgent[]> =>
+      openclaw ? (await api<{ agents: DiscoveredAgent[] }>("GET", path)).agents : [],
     enabled: enabled && (!openclaw || gatewayId !== undefined),
     staleTime: 0,
     retry: false,

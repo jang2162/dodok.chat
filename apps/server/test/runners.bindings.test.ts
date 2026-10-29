@@ -1,9 +1,10 @@
+import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Db } from "../src/db/client";
 import { agents } from "../src/db/schema.sqlite";
 import { createAgent } from "../src/modules/agents/service";
-import { bindRunnerToken } from "../src/modules/runners/bindings";
-import { issueRunnerToken, revokeRunnerToken } from "../src/modules/runners/tokens";
+import { runnerAgentDefinition } from "../src/modules/runners/definition";
+import { issueRunnerToken } from "../src/modules/runners/tokens";
 import { newTestDb } from "./helpers/db";
 import { createRunnerAgentForTest, seedWorkspace } from "./helpers/seed";
 
@@ -32,27 +33,22 @@ describe("에이전트↔러너 토큰 묶임 저장소", () => {
     ).toEqual([a, null].sort());
   });
 
-  it("bind 는 폐기되지 않은 토큰으로 옮긴다 — 폐기된 토큰은 CONFLICT, 다른 워크스페이스 토큰은 NOT_FOUND", () => {
+  it("에이전트의 러너 토큰만 다른 러너를 가리키면 정의가 없다 — 프로젝트도 그 러너의 것이어야 한다 [태스크 3 리뷰 D1]", () => {
     const a = issueRunnerToken(db, ws, "a").record.id;
     const b = issueRunnerToken(db, ws, "b").record.id;
-    const { providerAgentId } = createRunnerAgentForTest(db, {
+    const { agent } = createRunnerAgentForTest(db, {
       workspaceId: ws,
       handle: "coder",
       runnerTokenId: a,
-    }).agent;
-    expect(bindRunnerToken(db, ws, b, providerAgentId).runner).toEqual({
-      tokenId: b,
-      label: "b",
-      revoked: false,
+      relPath: "proj-a",
     });
-    revokeRunnerToken(db, ws, a);
-    expect(() => bindRunnerToken(db, ws, a, providerAgentId)).toThrow(
-      expect.objectContaining({ status: 409 }),
-    );
-    const other = seedWorkspace(db, { userHandle: "other" }).workspaceId;
-    const foreign = issueRunnerToken(db, other, "x").record.id;
-    expect(() => bindRunnerToken(db, ws, foreign, providerAgentId)).toThrow(
-      expect.objectContaining({ status: 404 }),
-    );
+    expect(runnerAgentDefinition(db, ws, agent.providerAgentId, a)?.agent.project).toEqual({
+      rootId: "src",
+      relPath: "proj-a",
+    });
+    // 옛 「이 러너로 묶기」가 하던 것 — 에이전트 토큰만 바꾼다. b 로 가면 b 머신의 같은 이름 루트에서 돌았다
+    db.update(agents).set({ runnerTokenId: b }).where(eq(agents.id, agent.id)).run();
+    expect(runnerAgentDefinition(db, ws, agent.providerAgentId, b)).toBeNull();
+    expect(runnerAgentDefinition(db, ws, agent.providerAgentId, a)).toBeNull();
   });
 });

@@ -1,10 +1,17 @@
-import type { Agent, CreateAgentBody, DiscoverAgentsQuery } from "@dodok/shared";
+import type {
+  Agent,
+  CreateOpenClawAgentBody,
+  CreateRunnerAgentBody,
+  DiscoverAgentsQuery,
+} from "@dodok/shared";
 import type { AdapterRegistry } from "../../adapters/registry";
 import { AdapterError } from "../../adapters/types";
 import type { Db } from "../../db/client";
 import { apiError } from "../../http/errors";
 import type { ServerBus } from "../../realtime/bus";
 import { getGatewayRow } from "../gateways/service";
+import { assertWithinCeiling, liveRunner, type RunnerLiveApi } from "../runners/live";
+import { getProject } from "../runners/projects";
 import type { Orchestrator } from "../runs/orchestrator";
 import {
   type AgentPatch,
@@ -34,18 +41,42 @@ function changed(ctx: AgentActionContext): void {
   ctx.bus.emit("agents.changed", {});
 }
 
+/** OpenClaw 에이전트 등록 — REST 와 제어 도구 register_agent. 러너 에이전트는 createRunnerAgentAndNotify(REST 만) */
 export function registerAgentAndNotify(
   ctx: AgentActionContext,
-  body: CreateAgentBody,
+  body: CreateOpenClawAgentBody,
   workspaceId: string,
 ): Agent {
-  // 러너 에이전트는 러너 프로젝트에서 만든다 — 러너가 알린 id 를 가져오는 등록은 없다(러너 일반화 계획 판정 PR9)
-  if (body.provider === "runner")
-    throw apiError("VALIDATION", "runner agents are created from a runner project", { field: "provider" });
   if (body.gatewayId === undefined)
     throw apiError("VALIDATION", "gatewayId is required for OpenClaw", { field: "gatewayId" });
   const { provider: _, ...rest } = body;
   const agent = createAgent(ctx.db, { ...rest, provider: "openclaw", workspaceId });
+  changed(ctx);
+  return agent;
+}
+
+/**
+ * 러너 에이전트 만들기(러너 일반화 스펙 7장, REST 만 — 제어 도구는 러너 구성을 바꾸지 못한다). 프로젝트가 보관됐으면 붙은 러너를
+ * 묻기 전에 VALIDATION, 그 프로젝트의 러너가 붙어 있어야 하고(아니면 503 — 프로그램 목록이 없다) 프로그램·권한 모드·허용 도구가 그
+ * 러너의 천장 안이어야 한다(VALIDATION + 항목 이름). 런마다 러너가 다시 본다
+ */
+export function createRunnerAgentAndNotify(
+  ctx: AgentActionContext & { runners: RunnerLiveApi | null },
+  body: CreateRunnerAgentBody,
+  workspaceId: string,
+): Agent {
+  const project = getProject(ctx.db, workspaceId, body.runnerProjectId);
+  if (!project) throw apiError("VALIDATION", "runner project not found", { field: "runnerProjectId" });
+  if (project.archivedAt !== null)
+    throw apiError("VALIDATION", "runner project is archived", { field: "runnerProjectId" });
+  assertWithinCeiling(
+    liveRunner(ctx.runners, project.runnerTokenId),
+    body.program,
+    { permissionMode: body.permissionMode ?? "default", allowedTools: body.allowedTools ?? null },
+    { requireAvailable: true },
+  );
+  const { provider: _, ...rest } = body;
+  const agent = createAgent(ctx.db, { ...rest, provider: "runner", workspaceId });
   changed(ctx);
   return agent;
 }
@@ -75,35 +106,33 @@ export async function archiveAgentAndNotify(
 }
 
 /**
- * 그 제공자 어댑터의 listAgents 를 그대로 — 등록 화면(admin)의 선택지. OpenClaw 는 Gateway agents.list, 러너는 붙은
- * 러너들이 hello 로 알린 에이전트(충돌 빼고). 자동 동기화는 하지 않는다(스펙 3.5). 같은 자리의 보관한 에이전트가 있으면
- * archivedAgentId 를 싣는다 — 웹은 등록 대신 되살리기를 보인다
+ * OpenClaw Gateway 의 agents.list 를 그대로 — 등록 화면(admin)의 선택지. 러너 에이전트는 알린 목록이 없다(러너 프로젝트에서 만든다 —
+ * 러너 일반화 계획 판정 PR9). 자동 동기화는 하지 않는다(스펙 3.5). 같은 자리의 보관한 에이전트가 있으면 archivedAgentId 를 싣는다 —
+ * 웹은 등록 대신 되살리기를 보인다
  */
 export async function discoverAgents(
   ctx: Pick<AgentActionContext, "db" | "registry">,
   query: DiscoverAgentsQuery,
   workspaceId: string,
 ): Promise<{ agents: Array<DiscoveredAgent & { archivedAgentId?: string }> }> {
-  const { provider, gatewayId } = query;
-  if (provider === "openclaw") {
-    if (gatewayId === undefined)
-      throw apiError("VALIDATION", "gatewayId is required for OpenClaw", { field: "gatewayId" });
-    // 등록·옮기기와 같이 워크스페이스의 Gateway 만. 꺼진 Gateway 는 어댑터에 묻지 않는다(연결이 없다)
-    const gateway = getGatewayRow(ctx.db, workspaceId, gatewayId);
-    if (!gateway) throw apiError("VALIDATION", "gateway not found", { field: "gatewayId" });
-    if (!gateway.enabled) throw apiError("ADAPTER_UNAVAILABLE", "gateway is disabled");
-  }
-  const adapter = ctx.registry.forProvider(provider);
+  const { gatewayId } = query;
+  if (gatewayId === undefined)
+    throw apiError("VALIDATION", "gatewayId is required for OpenClaw", { field: "gatewayId" });
+  // 등록·옮기기와 같이 워크스페이스의 Gateway 만. 꺼진 Gateway 는 어댑터에 묻지 않는다(연결이 없다)
+  const gateway = getGatewayRow(ctx.db, workspaceId, gatewayId);
+  if (!gateway) throw apiError("VALIDATION", "gateway not found", { field: "gatewayId" });
+  if (!gateway.enabled) throw apiError("ADAPTER_UNAVAILABLE", "gateway is disabled");
+  const adapter = ctx.registry.forProvider("openclaw");
   if (!adapter) throw apiError("ADAPTER_UNAVAILABLE", "adapter not configured");
   try {
-    const found = await adapter.listAgents(provider === "openclaw" ? (gatewayId ?? null) : null);
+    const found = await adapter.listAgents(gatewayId);
     return {
       agents: found.map((entry) => {
         const archivedAgentId = findArchivedAgent(ctx.db, {
           workspaceId,
-          provider,
+          provider: "openclaw",
           providerAgentId: entry.providerAgentId,
-          gatewayId: provider === "openclaw" ? (gatewayId ?? null) : null,
+          gatewayId,
         });
         return archivedAgentId === undefined ? entry : { ...entry, archivedAgentId };
       }),

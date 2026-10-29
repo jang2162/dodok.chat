@@ -35,6 +35,8 @@ import {
   setSessionManager,
 } from "../src/modules/channels/service";
 import { createGateway } from "../src/modules/gateways/service";
+import { createProject } from "../src/modules/runners/projects";
+import { issueRunnerToken } from "../src/modules/runners/tokens";
 import { createAgentMessage, createUserMessage } from "../src/modules/messages/service";
 import { createTriggerLookups } from "../src/modules/push/service";
 import { insertRun } from "../src/modules/runs/store";
@@ -43,6 +45,7 @@ import { issueBridgeToken } from "../src/modules/setup/tokens";
 import { issuePersonalToken, verifyPersonalToken } from "../src/modules/tokens/service";
 import { bootTestApp, login, noExternalTransport, userWithRole } from "./helpers/app";
 import { expectOk, openRun as openControlRun, pat } from "./helpers/control";
+import { type FakeRunner, startFakeRunner } from "./fakes/fake-runner";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
 import { makePng } from "./helpers/png";
 import { connectWire, openWire, recordEvents, waitFor, type WireClient } from "./helpers/wire";
@@ -70,6 +73,9 @@ describe("역할 매트릭스(스펙 2장)", () => {
   const tokens = {} as Record<TeamRole, string>;
   const ids = {} as Record<TeamRole, string>;
   const sockets: WireClient[] = [];
+  const fakeRunners: FakeRunner[] = [];
+  /** 붙은 가짜 러너 둘의 토큰 id — [0] 에 프로젝트를 만들고 [1] 로 옮긴다 */
+  const runnerIds: string[] = [];
   let n = 0;
 
   beforeAll(async () => {
@@ -78,10 +84,17 @@ describe("역할 매트릭스(스펙 2장)", () => {
       {},
       {
         adapters: [adapter],
+        runnerAdapter: true,
         pushTransports: { apns: noExternalTransport("apns"), fcm: noExternalTransport("fcm") },
       },
     );
     await app.fastify.listen({ host: "127.0.0.1", port: 0 });
+    // 「러너」 탭 경로가 붙은 러너에 묻는다 — 프로젝트는 runnerA 에 만들고 옮기기는 runnerB 로
+    for (const label of ["matrix-a", "matrix-b"] as const) {
+      const issued = issueRunnerToken(app.db, app.workspaceId, label);
+      fakeRunners.push(await startFakeRunner({ url: app.url, token: issued.token }));
+      runnerIds.push(issued.record.id);
+    }
     tokens.owner = (await login(app)).token;
     ids.owner = app.ownerUserId;
     for (const role of ["admin", "member"] as const) {
@@ -94,6 +107,7 @@ describe("역할 매트릭스(스펙 2장)", () => {
     for (const socket of sockets.splice(0)) socket.close();
   });
   afterAll(async () => {
+    for (const runner of fakeRunners.splice(0)) runner.close();
     await app.close();
   });
 
@@ -113,6 +127,16 @@ describe("역할 매트릭스(스펙 2장)", () => {
       handle: `ag${n}`,
       name: `ag${n}`,
     });
+  const runnerA = () => runnerIds[0] ?? "";
+  const newRunnerProject = () =>
+    createProject(app.db, {
+      workspaceId: app.workspaceId,
+      runnerTokenId: runnerA(),
+      rootId: "src",
+      relPath: `matrix-${++n}`,
+    });
+  /** 붙지 않은 새 러너 토큰 — 폐기·다시 발급이 붙은 러너를 끊지 않게 */
+  const newRunnerToken = () => issueRunnerToken(app.db, app.workspaceId, `t${++n}`).record.id;
   const newGateway = (): string =>
     createGateway(app.db, app.workspaceId, { name: `gw${++n}`, url: "ws://127.0.0.1:1", token: "t" }).id;
   const newChannel = (): ChannelRecord =>
@@ -252,6 +276,124 @@ describe("역할 매트릭스(스펙 2장)", () => {
       min: "admin",
       ok: 200,
       request: () => ({ method: "GET", url: `/api/v1/agents/discover?gatewayId=${FAKE_GATEWAY_ID}` }),
+    },
+    {
+      name: "POST /agents {provider: runner}",
+      min: "admin",
+      ok: 201,
+      request: () => ({
+        method: "POST",
+        url: "/api/v1/agents",
+        payload: {
+          provider: "runner",
+          runnerProjectId: newRunnerProject().id,
+          program: "claude",
+          handle: `run${++n}`,
+          name: "러너 에이전트",
+          permissionMode: "acceptEdits",
+        },
+      }),
+    },
+    {
+      name: "PATCH /agents/:id {permissionMode} (러너 에이전트)",
+      min: "admin",
+      ok: 200,
+      request: () => {
+        const project = newRunnerProject();
+        const agent = createAgent(app.db, {
+          workspaceId: app.workspaceId,
+          provider: "runner",
+          runnerProjectId: project.id,
+          program: "claude",
+          handle: `rpa${++n}`,
+          name: "러너",
+        });
+        return { method: "PATCH", url: `/api/v1/agents/${agent.id}`, payload: { permissionMode: "plan" } };
+      },
+    },
+    {
+      name: "GET /runners",
+      min: "admin",
+      ok: 200,
+      request: () => ({ method: "GET", url: "/api/v1/runners" }),
+    },
+    {
+      name: "GET /runners/:id/fs",
+      min: "admin",
+      ok: 200,
+      request: () => ({ method: "GET", url: `/api/v1/runners/${runnerA()}/fs?rootId=src` }),
+    },
+    {
+      name: "GET /runners/:id/projects",
+      min: "admin",
+      ok: 200,
+      request: () => ({ method: "GET", url: `/api/v1/runners/${runnerA()}/projects` }),
+    },
+    {
+      name: "POST /runners/:id/projects",
+      min: "admin",
+      ok: 201,
+      request: () => ({
+        method: "POST",
+        url: `/api/v1/runners/${runnerA()}/projects`,
+        payload: { rootId: "src", relPath: `added-${++n}` },
+      }),
+    },
+    {
+      name: "PATCH /runner-projects/:id",
+      min: "admin",
+      ok: 200,
+      request: () => ({
+        method: "PATCH",
+        url: `/api/v1/runner-projects/${newRunnerProject().id}`,
+        payload: { label: "새 라벨" },
+      }),
+    },
+    {
+      name: "POST /runner-projects/:id/archive",
+      min: "admin",
+      ok: 200,
+      request: () => ({ method: "POST", url: `/api/v1/runner-projects/${newRunnerProject().id}/archive` }),
+    },
+    {
+      name: "POST /runner-projects/:id/check",
+      min: "admin",
+      ok: 200,
+      request: () => ({ method: "POST", url: `/api/v1/runner-projects/${newRunnerProject().id}/check` }),
+    },
+    {
+      name: "POST /runner-projects/:id/move",
+      min: "admin",
+      ok: 200,
+      request: () => ({
+        method: "POST",
+        url: `/api/v1/runner-projects/${newRunnerProject().id}/move`,
+        payload: { runnerId: runnerIds[1] },
+      }),
+    },
+    {
+      name: "GET /setup/runner-tokens",
+      min: "owner",
+      ok: 200,
+      request: () => ({ method: "GET", url: "/api/v1/setup/runner-tokens" }),
+    },
+    {
+      name: "POST /setup/runner-tokens",
+      min: "owner",
+      ok: 201,
+      request: () => ({ method: "POST", url: "/api/v1/setup/runner-tokens", payload: { label: `m${++n}` } }),
+    },
+    {
+      name: "POST /setup/runner-tokens/:id/reissue",
+      min: "owner",
+      ok: 200,
+      request: () => ({ method: "POST", url: `/api/v1/setup/runner-tokens/${newRunnerToken()}/reissue` }),
+    },
+    {
+      name: "DELETE /setup/runner-tokens/:id",
+      min: "owner",
+      ok: 204,
+      request: () => ({ method: "DELETE", url: `/api/v1/setup/runner-tokens/${newRunnerToken()}` }),
     },
     {
       name: "PUT /agents/:id/gateway",

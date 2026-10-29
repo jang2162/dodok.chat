@@ -10,7 +10,9 @@ import { providerAgentIdIs } from "../agents/service";
 
 /**
  * 그 러너 토큰에 묶인 러너 에이전트의 정의. 그 토큰의 러너 에이전트가 아니거나 프로젝트가 없으면 null. 보관한 프로젝트의 에이전트도
- * 정의가 있다 — 프로젝트 보관은 목록 정리일 뿐 런은 돈다(스펙 8장)
+ * 정의가 있다 — 프로젝트 보관은 목록 정리일 뿐 런은 돈다(스펙 8장).
+ * 에이전트와 프로젝트가 둘 다 그 토큰의 것이어야 한다 — (rootId, relPath) 는 러너 머신 하나 안에서만 뜻이 있어, 에이전트 토큰만 다른
+ * 러너를 가리키면 그 러너의 같은 이름 루트에서 돈다(태스크 3 리뷰 D1). 둘을 함께 바꾸는 길은 프로젝트 옮기기(projects.ts moveProject) 하나다
  */
 export function runnerAgentDefinition(
   db: DbOrTx,
@@ -28,6 +30,7 @@ export function runnerAgentDefinition(
         eq(agents.provider, "runner"),
         providerAgentIdIs(providerAgentId),
         eq(agents.runnerTokenId, runnerTokenId),
+        eq(runnerProjects.runnerTokenId, runnerTokenId),
       ),
     )
     .get();

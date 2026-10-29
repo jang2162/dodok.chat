@@ -19,6 +19,7 @@ describe("LIMITS — 스펙 4장 숫자", () => {
       uploadPerMin: 30,
       inviteIssuePerMin: 20,
       searchPerMin: 60,
+      runnerBrowsePerMin: 60,
       // 자동화 스펙 「웹훅」 장 — 토큰마다
       webhookPerMin: 30,
       // 제어 MCP 스펙 「실행 흐름」 장 — 주체마다

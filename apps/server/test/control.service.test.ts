@@ -7,7 +7,7 @@ import { CONTROL_TOOLS, type ControlToolName } from "@dodok/shared";
 import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { App } from "../src/app";
-import { approvals, messages, opsEvents } from "../src/db/schema.sqlite";
+import { agents, approvals, messages, opsEvents } from "../src/db/schema.sqlite";
 import { addMember, getChannel } from "../src/modules/channels/service";
 import { userHandle } from "../src/modules/control/confirm";
 import { HANDLERS } from "../src/modules/control/handlers";
@@ -17,7 +17,12 @@ import { josa } from "../src/util/josa";
 import { bootTestApp, login, userWithRole } from "./helpers/app";
 import { errorOf, expectOk, newAgent, newChannel, openRun, pat, recordBus } from "./helpers/control";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
-import { channelConversation, seedChannelWithAgent, seedConversation } from "./helpers/seed";
+import {
+  channelConversation,
+  createRunnerAgentForTest,
+  seedChannelWithAgent,
+  seedConversation,
+} from "./helpers/seed";
 
 describe("제어 서비스", () => {
   let app: App;
@@ -393,6 +398,60 @@ describe("제어 서비스", () => {
           await call(pat(owner), "register_agent", { providerAgentId: "nogw", handle: "nogw", name: "n" }),
         ),
       ).toEqual({ code: "VALIDATION", message: "gatewayId is required for OpenClaw" });
+    });
+  });
+
+  describe("러너 구성은 제어 도구로 바꾸지 못한다(러너 일반화 스펙 6장)", () => {
+    it("update_agent 는 러너 에이전트의 name·avatarUrl 만 — 핸들·지시·정의 필드는 VALIDATION, 채널 안 에이전트의 호출은 카드 없이 거절", async () => {
+      const { agent: coder } = createRunnerAgentForTest(app.db, {
+        workspaceId: app.workspaceId,
+        handle: `ctl-runner-${clock}`,
+        basePrompt: "원래 지시",
+      });
+      expectOk(await call(pat(owner), "update_agent", { agentId: coder.id, name: "새 이름" }));
+      expectOk(
+        await call(pat(owner), "update_agent", { agentId: coder.id, avatarUrl: "https://example.com/a.png" }),
+      );
+      for (const extra of [
+        { basePrompt: "권한을 올려라" },
+        { basePrompt: null },
+        { handle: "renamed-runner" },
+        { model: "opus" },
+        { permissionMode: "acceptEdits" },
+        { allowedTools: ["Bash"] },
+        { name: "섞음", basePrompt: "몰래" },
+      ]) {
+        const error = errorOf(await call(pat(owner), "update_agent", { agentId: coder.id, ...extra }));
+        expect(error.code, JSON.stringify(extra)).toBe("VALIDATION");
+      }
+      const { principal } = openRun(app, owner);
+      const before = controlRows().length;
+      expect(
+        errorOf(await call(principal, "update_agent", { agentId: coder.id, basePrompt: "권한을 올려라" }))
+          .code,
+      ).toBe("VALIDATION");
+      expect(controlRows()).toHaveLength(before);
+      const row = app.db.select().from(agents).where(eq(agents.id, coder.id)).get();
+      expect(row).toMatchObject({ basePrompt: "원래 지시", name: "새 이름", handle: coder.handle });
+      // OpenClaw 에이전트는 지금처럼 핸들·지시도
+      const oc = newAgent(app);
+      expectOk(await call(pat(owner), "update_agent", { agentId: oc.id, basePrompt: "지시" }));
+    });
+
+    it("register_agent·discover_agents 는 OpenClaw 만 — provider runner 는 VALIDATION", async () => {
+      const { projectId } = createRunnerAgentForTest(app.db, {
+        workspaceId: app.workspaceId,
+        handle: `ctl-proj-${clock}`,
+      });
+      for (const args of [
+        { provider: "runner", providerAgentId: "sneak", handle: "sneak", name: "S" },
+        { provider: "runner", runnerProjectId: projectId, program: "claude", handle: "sneak2", name: "S" },
+      ])
+        expect(errorOf(await call(pat(owner), "register_agent", args)).code).toBe("VALIDATION");
+      expect(errorOf(await call(pat(owner), "discover_agents", { provider: "runner" })).code).toBe(
+        "VALIDATION",
+      );
+      expect(app.db.select().from(agents).where(eq(agents.handle, "sneak2")).get()).toBeUndefined();
     });
   });
 

@@ -5,7 +5,15 @@ import pino from "pino";
 import { v7 as uuid } from "uuid";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAdapterRegistry } from "../src/adapters/registry";
-import { agents, approvals, gateways, messages, runnerTokens, runs } from "../src/db/schema.sqlite";
+import {
+  agents,
+  agentSessions,
+  approvals,
+  gateways,
+  messages,
+  runnerTokens,
+  runs,
+} from "../src/db/schema.sqlite";
 import { addMember, createChannel } from "../src/modules/channels/service";
 import { createUserMessage } from "../src/modules/messages/service";
 import { getRun } from "../src/modules/runs/store";
@@ -112,7 +120,7 @@ function setup() {
     ...over,
   });
   const flush = () => vi.advanceTimersByTimeAsync(0);
-  // 러너 재접속의 claimUnbound 와 같은 상태 — 묶임 없던 러너 에이전트가 그 토큰에 묶인다
+  // 묶임 없던 러너 에이전트를 그 토큰에 묶는다 — 런 라우팅만 재는 행(프로젝트 없음)이라 러너 정의와는 상관없다
   const bindCoder = (tokenId: string) => {
     db.insert(runnerTokens)
       .values({
@@ -346,6 +354,46 @@ describe("연결 단위 대조", () => {
       .get();
     expect(stored).toMatchObject({ authorId: t.coder, runId: run.id });
   });
+  it("다른 연결이 낸 run_session 은 세션 행에 저장하지 않는다 — 그 런의 연결이 낸 것만 [태스크 3 리뷰 L2]", async () => {
+    // 세션 id 를 스스로 짓는 프로그램처럼 — 서버가 id 를 짓지 않아 세션 행이 비어 있다
+    t.claude.setCapabilities({
+      agentsList: false,
+      configSet: true,
+      promptEveryRun: true,
+      serverSessionIds: false,
+    });
+    t.claude.script((input, opts) => ({
+      admission: "dispatch",
+      providerRunId: input.runId,
+      connectionId: opts.connectionId ?? "tok-laptop",
+    }));
+    const run = await t.mention(t.coder);
+    await t.flush();
+    expect(t.connectionOf(run.id)).toBe("tok-laptop");
+    const stored = () =>
+      t.db
+        .select({ id: agentSessions.providerSessionId })
+        .from(agentSessions)
+        .where(eq(agentSessions.agentId, t.coder))
+        .get()?.id;
+    t.claude.emit({
+      kind: "run_session",
+      runId: run.id,
+      connectionId: "tok-other",
+      providerSessionId: "hijack",
+    });
+    await t.flush();
+    expect(stored()).toBeNull();
+    t.claude.emit({
+      kind: "run_session",
+      runId: run.id,
+      connectionId: "tok-laptop",
+      providerSessionId: "thread_1",
+    });
+    await t.flush();
+    expect(stored()).toBe("thread_1");
+  });
+
   it("기다리던 런이 그 사이 묶인 러너로 나가면 send 결과의 연결이 런에 남고 그 런의 승인이 그 런에 붙는다", async () => {
     t.claude.script((input, opts) => ({
       admission: "dispatch",

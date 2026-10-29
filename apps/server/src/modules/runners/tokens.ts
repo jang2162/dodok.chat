@@ -70,6 +70,33 @@ export function issueRunnerToken(
 }
 
 /**
+ * 다시 발급(러너 일반화 계획 판정 PR7) — 같은 행의 해시·접두사만 바꾼다. 러너의 정체는 행 id 라 프로젝트·에이전트·세션은 그대로
+ * 남고, 옛 원문은 곧바로 안 통한다(그 연결을 끊는 것은 호출자 — 폐기와 같은 길). 행이 없으면 NOT_FOUND, 폐기한 러너는 CONFLICT —
+ * 폐기는 되돌리지 않는다
+ */
+export function reissueRunnerToken(
+  db: Db,
+  workspaceId: string,
+  id: string,
+): { token: string; record: RunnerTokenRecord } {
+  const token = `${TOKEN_PREFIX}${randomBytes(32).toString("base64url")}`;
+  const where = and(eq(runnerTokens.id, id), eq(runnerTokens.workspaceId, workspaceId));
+  return db.transaction((tx) => {
+    const row = tx.select().from(runnerTokens).where(where).get();
+    if (!row) throw apiError("NOT_FOUND", "runner token not found");
+    if (row.revokedAt !== null) throw apiError("CONFLICT", "runner token is revoked");
+    const next = tx
+      .update(runnerTokens)
+      .set({ hash: hashOf(token), prefix: token.slice(TOKEN_PREFIX.length, TOKEN_PREFIX.length + 6) })
+      .where(where)
+      .returning()
+      .get();
+    if (!next) throw apiError("NOT_FOUND", "runner token not found");
+    return { token, record: toRecord(next, false) };
+  });
+}
+
+/**
  * 핸드셰이크·첨부 HTTP 의 검증 함수. 활성 토큰이면 그 id·라벨(러너 연결의 이름), 아니면 null.
  * 통과하면 lastUsedAt 을 채운다(1분에 한 번까지). DB 오류는 던진다 — 부르는 쪽이 거절로 본다
  */

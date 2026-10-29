@@ -140,6 +140,27 @@ function agentHandle(ctx: HandlerContext, agentId: string): string {
   return agent.handle;
 }
 
+/**
+ * 러너 에이전트는 이름·아바타만 — 핸들·지시는 받지 않는다(러너 일반화 스펙 6장 「제어 도구는 러너 구성을 바꾸지 못한다」: 채널 안
+ * 에이전트가 확인 카드 하나로 자기 지시를 바꾸는 길을 닫는다). 정의 필드(model 등)는 도구 입력 스키마에 없어 strict 파싱이 막는다.
+ * 러너 구성은 웹의 「러너」 탭·REST PATCH 에서만 바꾼다
+ */
+const RUNNER_AGENT_CONTROL_KEYS: ReadonlySet<string> = new Set(["agentId", "name", "avatarUrl"]);
+function assertControlPatchable(ctx: HandlerContext, input: Record<string, unknown>, agentId: string): void {
+  const agent = getAgent(ctx.db, agentId, ctx.workspaceId);
+  if (!agent) throw apiError("NOT_FOUND", "agent not found");
+  if (agent.provider !== "runner") return;
+  const field = Object.keys(input).find((key) => !RUNNER_AGENT_CONTROL_KEYS.has(key));
+  if (field !== undefined)
+    throw apiError(
+      "VALIDATION",
+      "runner agents can only change name and avatarUrl here — use the dodok web app",
+      {
+        field,
+      },
+    );
+}
+
 /** 채널 쓰기 — 없으면 NOT_FOUND, 보관했으면 CHANNEL_ARCHIVED(REST 쓰기 경로와 같은 함수) */
 function writable(ctx: HandlerContext, channelId: string): void {
   assertChannelWritable(ctx.db, channelId, ctx.workspaceId);
@@ -525,7 +546,7 @@ export const HANDLERS: Handlers = {
   },
   update_agent: {
     authorize: (role) => authorizeAgentPatch(role),
-    check: (ctx, input) => void agentHandle(ctx, input.agentId),
+    check: (ctx, input) => assertControlPatchable(ctx, input, input.agentId),
     targetAgentId: (input) => input.agentId,
     wording: (ctx, input) => {
       const handle = agentHandle(ctx, input.agentId);
