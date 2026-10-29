@@ -30,6 +30,7 @@ export const ErrorCode = z.enum([
   "PUSH_UNAVAILABLE", // 그 플랫폼의 푸시 통로가 꺼져 있다 — 기기 등록은 거절
   "CONVERSATION_CLOSED", // 닫힌 세션 — 읽기만 된다. 보내기·카드·리액션·첨부 묶기는 거절(다시 열면 된다)
   "DM_READ_ONLY", // 읽기 전용 DM — 에이전트 보관·꺼짐·DM 허용 철회(details.reason 은 DmReadOnlyReason). 되돌리면 이어 쓴다
+  "RUNNER_CEILING", // 러너 로컬 설정(천장)이 이 에이전트 정의를 허용하지 않는다 — message 는 항목 이름 하나(러너 일반화 스펙 3장)
   "INTERNAL",
 ]);
 export type ErrorCode = z.infer<typeof ErrorCode>;

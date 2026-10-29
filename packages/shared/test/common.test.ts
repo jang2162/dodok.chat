@@ -36,6 +36,7 @@ describe("common", () => {
       "PUSH_UNAVAILABLE",
       "CONVERSATION_CLOSED",
       "DM_READ_ONLY",
+      "RUNNER_CEILING",
       "INTERNAL",
     ]);
     expect(ErrorCode.safeParse("NOPE").success).toBe(false);
