@@ -40,15 +40,18 @@ const PROMPT_MAX = 20_000;
 export const CEILING_REFUSED = "러너 설정이 허용하지 않습니다 — 러너 머신의 설정(상한)을 확인하세요";
 /** 고른 프로젝트가 보관됐거나 없다(서버 400 `details.field === "runnerProjectId"`, 또는 고른 뒤 보관·옮기기) */
 export const PROJECT_GONE = "보관됐거나 없는 프로젝트입니다 — 다른 프로젝트를 고르세요";
-/** 고른 러너가 만드는 동안 끊겼다 — 다른 러너로 바꾸지 않고 만들기를 잠근다 */
-export const PICKED_RUNNER_OFFLINE = "고른 러너가 끊겼습니다 — 러너를 다시 띄우거나 다른 러너를 고르세요";
-/** 고른 러너의 토큰이 만드는 동안 폐기됐다 */
-export const PICKED_RUNNER_REVOKED = "고른 러너의 토큰이 폐기됐습니다 — 다른 러너를 고르세요";
+/**
+ * 고른 러너가 만드는 동안 끊겼다 — 다른 러너로 바꾸지 않고 만들기를 잠근다. 폼이 처음 고른 러너(사람이 고르지 않았다 — 열 때 캐시가
+ * 낡아 붙은 줄 알았던 것)일 수도 있어 「고른」이라 하지 않는다
+ */
+export const PICKED_RUNNER_OFFLINE = "선택된 러너가 끊겼습니다 — 러너를 다시 띄우거나 다른 러너를 고르세요";
+/** 고른 러너의 토큰이 만드는 동안 폐기됐다 — 목록에서 빠져 고른 칸이 보이지 않는다 */
+export const PICKED_RUNNER_REVOKED = "선택돼 있던 러너의 토큰이 폐기됐습니다 — 다른 러너를 고르세요";
 /** 고른 프로젝트의 루트를 붙은 러너가 알리지 않는다(머신 주인이 루트 id 를 바꾸거나 지움) */
 export const PICKED_PROJECT_ROOT_MISSING =
   "러너가 이 프로젝트의 루트를 알리지 않습니다 — 다른 프로젝트를 고르세요";
 /** 고른 프로그램을 러너가 못 쓴다고 알렸다 */
-export const PICKED_PROGRAM_UNAVAILABLE = "고른 프로그램을 지금 쓸 수 없습니다 — 다른 프로그램을 고르세요";
+export const PICKED_PROGRAM_UNAVAILABLE = "선택된 프로그램을 지금 쓸 수 없습니다 — 다른 프로그램을 고르세요";
 /** 만들기 실패 가운데 칸·충돌·러너 연결로 가르지 못한 것 — 전역 토스트를 끄므로 폼 아래 이 한 줄 */
 export const CREATE_FAILED = "에이전트를 만들지 못했습니다 — 다시 시도하세요";
 

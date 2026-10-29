@@ -12,6 +12,7 @@ import {
   CEILING_REFUSED,
   PICKED_PROGRAM_UNAVAILABLE,
   PICKED_RUNNER_OFFLINE,
+  PICKED_RUNNER_REVOKED,
   PROJECT_GONE,
 } from "./RunnerAgentForm";
 
@@ -326,6 +327,29 @@ describe("러너 갈래 — 고른 것을 쥔다", () => {
     await userEvent.click(within(dialog).getByRole("button", { name: "만들기" }));
     await waitFor(() => expect(server.bodies("POST")).toHaveLength(1));
     expect(server.bodies("POST")[0]).toMatchObject({ runnerProjectId: projectOf(2).id });
+  });
+
+  // 태스크 5 재리뷰 5-3 — 폐기된 러너는 목록에서 빠진다. 다른 러너로 바꾸지 않고 사유를 보이며 잠근다
+  it("고른 러너의 토큰이 폐기되면 다른 러너로 바꾸지 않는다 — 사유를 보이고 「만들기」를 잠근다", async () => {
+    const { runners, routes } = twoRunners();
+    const server = stubServer({ runners: routes.handle });
+    const qc = createQueryClient(() => {});
+    renderPage(qc);
+    const dialog = await openDiscover();
+    await pickRunner(dialog);
+    await userEvent.click(await within(dialog).findByRole("radio", { name: "B" }));
+    await within(dialog).findByRole("option", { name: /pb/ });
+    await userEvent.type(within(dialog).getByLabelText("핸들"), "coder");
+
+    runners[1] = runnerOf(2, { label: "B", revoked: true });
+    await act(() => qc.invalidateQueries({ queryKey: qk.runners() }));
+    expect(await within(dialog).findByText(PICKED_RUNNER_REVOKED)).toBeInTheDocument();
+    expect(within(dialog).queryByRole("radio", { name: /^B/ })).toBeNull();
+    expect(within(dialog).getByRole("radio", { name: "A" })).not.toBeChecked();
+    const create = within(dialog).getByRole("button", { name: "만들기" });
+    expect(create).toBeDisabled();
+    await userEvent.click(create);
+    expect(server.bodies("POST")).toEqual([]);
   });
 
   it("고른 프로젝트가 보관되면 첫 프로젝트로 바꾸지 않는다 — 「보관됐거나 없는 프로젝트」, 만들기 잠김", async () => {
