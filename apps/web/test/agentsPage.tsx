@@ -46,6 +46,7 @@ export function makeAgent(
     createdAt: "2026-09-19T00:00:00.000Z",
     archivedAt: null,
     dmAccess: "admins",
+    program: provider === "runner" ? "claude" : null,
     ...(provider === "openclaw" ? { gateway: { id: TEST_GATEWAY.id, name: TEST_GATEWAY.name } } : {}),
     ...fields,
   };
@@ -67,7 +68,7 @@ export function stubServer(
     list?: (fallback: () => Reply) => Reply;
     /** OpenClaw 찾기 — 고른 Gateway id 를 받는다 */
     discover?: (gatewayId: string) => Reply;
-    /** `GET /agents/discover?provider=claude` — 기본은 빈 목록(붙은 러너 없음) */
+    /** `GET /agents/discover?provider=runner` — 기본은 빈 목록(붙은 러너 없음) */
     discoverClaude?: () => Reply;
     create?: (body: Body, fallback: (body: Body) => Reply) => Reply;
     patch?: (id: string, body: Body, fallback: (id: string, body: Body) => Reply) => Reply;
@@ -136,7 +137,7 @@ export function stubServer(
     const discover = /^\/api\/v1\/agents\/discover\?provider=openclaw&gatewayId=([^&]+)$/.exec(url);
     if (method === "GET" && discover?.[1])
       return (opts.discover ?? (() => json(200, { agents: [] })))(discover[1]);
-    if (method === "GET" && url === "/api/v1/agents/discover?provider=claude")
+    if (method === "GET" && url === "/api/v1/agents/discover?provider=runner")
       return (opts.discoverClaude ?? (() => json(200, { agents: [] })))();
     if (method === "POST" && url === "/api/v1/agents")
       return (opts.create ?? ((b, f) => f(b)))(body ?? {}, createDefault);

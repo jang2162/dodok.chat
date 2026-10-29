@@ -31,11 +31,11 @@ describe("목록", () => {
     expect(screen.getByTestId("page-agents")).toBeInTheDocument();
   });
 
-  it("제공자별 id 라벨 — claude 에이전트는 「Claude 러너 에이전트 id」, openclaw 는 「OpenClaw id」", async () => {
+  it("제공자별 id 라벨 — 러너 에이전트는 「Claude 러너 에이전트 id」, openclaw 는 「OpenClaw id」", async () => {
     stubServer({
       agents: [
         dev(),
-        { ...fin(), provider: "claude", providerAgentId: "coder", handle: "coder", name: "Coder" },
+        { ...fin(), provider: "runner", providerAgentId: "coder", handle: "coder", name: "Coder" },
       ],
     });
     renderPage();
@@ -44,11 +44,11 @@ describe("목록", () => {
     expect(screen.getAllByText(/^OpenClaw id/)).toHaveLength(1);
   });
 
-  it("claude 에이전트는 묶인 러너 라벨 — 폐기됐으면 다시 묶으라는 안내, 묶임 없으면 「러너 미정」. openclaw 는 러너 줄이 없다", async () => {
+  it("러너 에이전트는 묶인 러너 라벨 — 폐기됐으면 다시 묶으라는 안내, 묶임 없으면 「러너 미정」. openclaw 는 러너 줄이 없다", async () => {
     const claude = (n: number, runner?: Agent["runner"]): Agent => ({
       ...fin(),
       id: `0190b000-0000-7000-8000-00000000000${n}`,
-      provider: "claude",
+      provider: "runner",
       providerAgentId: `coder${n}`,
       handle: `coder${n}`,
       name: `Coder${n}`,

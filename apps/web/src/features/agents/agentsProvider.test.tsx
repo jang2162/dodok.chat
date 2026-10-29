@@ -17,11 +17,11 @@ const runnerAgents = [
 ];
 
 async function pickClaude(dialog: HTMLElement) {
-  await userEvent.click(within(dialog).getByRole("radio", { name: "Claude 러너" }));
+  await userEvent.click(within(dialog).getByRole("radio", { name: "러너" }));
 }
 
 describe("에이전트 가져오기 — 제공자", () => {
-  it("열면 OpenClaw — Claude 러너로 바꾸면 러너 목록(러너 라벨·작업 디렉터리 라벨·모델)으로 바뀐다", async () => {
+  it("열면 OpenClaw — 러너로 바꾸면 러너 목록(러너 라벨·작업 디렉터리 라벨·모델)으로 바뀐다", async () => {
     const server = stubServer({
       discover: () => json(200, { agents: [{ providerAgentId: "ops", name: "Ops" }] }),
       discoverClaude: () => json(200, { agents: runnerAgents }),
@@ -30,7 +30,7 @@ describe("에이전트 가져오기 — 제공자", () => {
     const dialog = await openDiscover();
     expect(within(dialog).getByRole("radio", { name: "OpenClaw" })).toBeChecked();
     expect(await within(dialog).findByRole("checkbox", { name: "Ops" })).toBeInTheDocument();
-    expect(server.count("GET", "/api/v1/agents/discover?provider=claude")).toBe(0);
+    expect(server.count("GET", "/api/v1/agents/discover?provider=runner")).toBe(0);
 
     await pickClaude(dialog);
     expect(await within(dialog).findByRole("checkbox", { name: "코더" })).toBeInTheDocument();
@@ -41,7 +41,7 @@ describe("에이전트 가져오기 — 제공자", () => {
     expect(dialog).toHaveTextContent(
       "등록하면 지금 그 id 를 알린 러너(줄 맨 앞 이름)에 묶여, 그 러너만 이 에이전트를 맡습니다",
     );
-    expect(server.count("GET", "/api/v1/agents/discover?provider=claude")).toBe(1);
+    expect(server.count("GET", "/api/v1/agents/discover?provider=runner")).toBe(1);
 
     // 되돌리면 OpenClaw 목록
     await userEvent.click(within(dialog).getByRole("radio", { name: "OpenClaw" }));
@@ -50,7 +50,7 @@ describe("에이전트 가져오기 — 제공자", () => {
     expect(within(dialog).queryByRole("checkbox", { name: "코더" })).not.toBeInTheDocument();
   });
 
-  it("Claude 러너 목록에서 고른 것은 provider claude 로 등록한다", async () => {
+  it("러너 목록에서 고른 것은 provider runner 로 등록한다", async () => {
     const server = stubServer({ agents: [dev()], discoverClaude: () => json(200, { agents: runnerAgents }) });
     renderPage();
     const dialog = await openDiscover();
@@ -59,7 +59,7 @@ describe("에이전트 가져오기 — 제공자", () => {
     await userEvent.click(within(dialog).getByRole("button", { name: "1개 등록" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(server.bodies("POST")).toEqual([
-      { provider: "claude", providerAgentId: "coder", handle: "coder", name: "코더" },
+      { provider: "runner", providerAgentId: "coder", handle: "coder", name: "코더" },
     ]);
   });
 
@@ -85,7 +85,7 @@ describe("에이전트 가져오기 — 제공자", () => {
     expect(within(dialog).queryByRole("link")).not.toBeInTheDocument();
   });
 
-  it("러너 목록을 못 받으면 서버 문구 대신 고정 문구, 직접 입력은 Claude 러너 id 로 provider claude 를 보낸다", async () => {
+  it("러너 목록을 못 받으면 서버 문구 대신 고정 문구, 직접 입력은 Claude 러너 id 로 provider runner 를 보낸다", async () => {
     const server = stubServer({
       discoverClaude: () => apiErr(503, "ADAPTER_UNAVAILABLE", "adapter not configured"),
     });
@@ -98,7 +98,7 @@ describe("에이전트 가져오기 — 제공자", () => {
     await userEvent.click(within(dialog).getByRole("button", { name: "등록" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(server.bodies("POST")).toEqual([
-      { provider: "claude", providerAgentId: "coder", handle: "coder", name: "coder" },
+      { provider: "runner", providerAgentId: "coder", handle: "coder", name: "coder" },
     ]);
   });
 
@@ -119,7 +119,7 @@ describe("에이전트 가져오기 — 제공자", () => {
     const id = await within(dialog).findByRole("textbox", { name: "Claude 러너 에이전트 id" });
     await userEvent.type(id, "coder");
     await userEvent.click(within(dialog).getByRole("button", { name: "등록" }));
-    await waitFor(() => expect(id).toHaveAccessibleDescription(ID_TAKEN.claude));
+    await waitFor(() => expect(id).toHaveAccessibleDescription(ID_TAKEN.runner));
     expect(id).toHaveAttribute("aria-invalid", "true");
     expect(dialog).not.toHaveTextContent("이미 등록돼 있다");
   });

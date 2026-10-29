@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { Id, IsoDateTime } from "../common";
+import { RunnerProgram } from "../domain";
 import { AdapterStatus, GatewayLinkState, OpenClawGatewayStatus } from "../wire";
 
 // 운영 보강 계약(스펙 2026-09-25-ops-hardening-design.md 2.3·3.1·6장). 사건 detail 에는 id·코드·수치와 Gateway 이름(owner 가 붙인 이름)만 싣는다(8장)
@@ -147,7 +148,7 @@ export const OpsRunsSummary = z.object({
   days: z.union([z.literal(1), z.literal(7)]),
   byChannel: z.array(OpsRunsRow),
   byAgent: z.array(OpsRunsRow),
-  /** usage 를 믿는 제공자(러너 계획 판정 P8) — 그 제공자의 런만 행의 tokens·costUsd 에 더한다. 비었으면 화면은 「측정 불가」 */
-  usageTrustedProviders: z.array(z.string()),
+  /** usage 를 믿는 러너 프로그램(러너 계획 판정 P8, 러너 일반화 스펙 결정 6) — 그 프로그램의 런만 행의 tokens·costUsd 에 더한다. 비었으면 화면은 「측정 불가」 */
+  usageTrustedPrograms: z.array(RunnerProgram),
 });
 export type OpsRunsSummary = z.infer<typeof OpsRunsSummary>;

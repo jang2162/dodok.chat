@@ -55,7 +55,7 @@ type Harness = {
   failOutbound(on: boolean): void;
   /** frameLimit.onLimited 가 받은 것 — [주소, 프레임, 버린 수] */
   limited: Array<[string, string, number]>;
-  /** 등록된 claude 에이전트의 묶인 토큰 id(null 이면 묶임 없음) — bindings 옵션이 읽고 claim 이 쓴다 */
+  /** 등록된 러너 에이전트의 묶인 토큰 id(null 이면 묶임 없음) — bindings 옵션이 읽고 claim 이 쓴다 */
   bound: Map<string, string | null>;
   /** onControlCall 이 받은 것 — [연결 id, 호출] */
   controlCalls: Array<[string, RunnerControlCall]>;
@@ -325,9 +325,9 @@ describe("핸드셰이크", () => {
     const r = await h.runner(TOKEN_A);
     const res = await r.hello({ bundleSha256: "not-a-sha" });
     expect(res).toEqual({ ok: true, serverVersion: "test-server", conflicts: [] });
-    expect(h.adapter.status()).toEqual({ provider: "claude", runners: { connected: 1, tokens: 2 } });
+    expect(h.adapter.status()).toEqual({ provider: "runner", runners: { connected: 1, tokens: 2 } });
     const detail = h.adapter.setupDetail();
-    expect(detail.provider).toBe("claude");
+    expect(detail.provider).toBe("runner");
     const [conn] = detail.runners;
     expect(conn).toMatchObject({
       tokenId: TOKENS[TOKEN_A]?.tokenId,
@@ -1454,7 +1454,7 @@ describe("러너 끊김", () => {
     expect(h.events).toContainEqual(
       expect.objectContaining({
         kind: "status",
-        status: { provider: "claude", runners: { connected: 0, tokens: 2 } },
+        status: { provider: "runner", runners: { connected: 0, tokens: 2 } },
       }),
     );
     expect(h.events.some((e) => e.kind === "setup")).toBe(true);
@@ -1466,7 +1466,7 @@ describe("러너 끊김", () => {
 describe("나머지 계약", () => {
   it("능력·채널 설정", async () => {
     const h = await setup();
-    expect(h.adapter.provider).toBe("claude");
+    expect(h.adapter.provider).toBe("runner");
     expect(h.adapter.capabilities()).toEqual({
       agentsList: true,
       configSet: true,
@@ -1477,7 +1477,7 @@ describe("나머지 계약", () => {
       applied: "live",
     });
     expect(h.adapter.sessionKeyFor("coder", CH)).toBe(dodokSessionKey("coder", CH));
-    expect(h.adapter.status()).toEqual({ provider: "claude", runners: { connected: 0, tokens: 2 } });
+    expect(h.adapter.status()).toEqual({ provider: "runner", runners: { connected: 0, tokens: 2 } });
   });
 });
 

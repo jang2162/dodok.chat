@@ -88,7 +88,7 @@ describe("Claude 러너 통합 시나리오", () => {
     return channel;
   }
 
-  /** 러너 토큰 발급 → 가짜 러너 접속 → discover?provider=claude 에서 coder 를 골라 등록 → 채널 */
+  /** 러너 토큰 발급 → 가짜 러너 접속 → discover?provider=runner 에서 coder 를 골라 등록 → 채널 */
   async function start(script?: FakeRunnerScript, opts: LiveAppOptions = {}) {
     live = await bootLiveApp(opts);
     const issued = await issueToken("macbook");
@@ -98,7 +98,7 @@ describe("Claude 러너 통합 시나리오", () => {
       await rest<{ agents: Array<{ providerAgentId: string; name?: string; hint?: string }> }>(
         live,
         "GET",
-        "/agents/discover?provider=claude",
+        "/agents/discover?provider=runner",
       ),
     );
     expect(discovered.agents).toEqual([
@@ -107,7 +107,7 @@ describe("Claude 러너 통합 시나리오", () => {
     const { agent: coder } = ok(
       "POST /agents coder",
       await rest<{ agent: Agent }>(live, "POST", "/agents", {
-        provider: "claude",
+        provider: "runner",
         providerAgentId: "coder",
         handle: "coder",
         name: "Coder",
@@ -153,7 +153,7 @@ describe("Claude 러너 통합 시나리오", () => {
   const setupStatus = async () =>
     SetupStatus.parse(ok("GET setup/status", await rest(live, "GET", "/setup/status")));
 
-  it("시나리오 1 — claude 에이전트 멘션 → 스트리밍 → 최종 답 메시지, 활동 탭에 도구 타임라인, run.start 에 세션 UUID·채널 규칙", async () => {
+  it("시나리오 1 — 러너 에이전트 멘션 → 스트리밍 → 최종 답 메시지, 활동 탭에 도구 타임라인, run.start 에 세션 UUID·채널 규칙", async () => {
     const { runner, coder, channel, log } = await start((run) => {
       run.text("살펴보");
       run.tool("Read", { file_path: "README.md" }, "# dodok");
@@ -709,13 +709,13 @@ describe("Claude 러너 통합 시나리오", () => {
     }
   });
 
-  it("시나리오 10 — 운영 요약에 러너 런 비용이 합쳐진다(usageTrustedProviders claude)", async () => {
+  it("시나리오 10 — 운영 요약에 러너 런 비용이 합쳐진다(usageTrustedPrograms claude)", async () => {
     const { coder, channel, log } = await start();
     await sendMessage(log.socket, channel.id, "@coder 하나");
     const run = await runOf(log, coder.id);
     expect((await log.terminal(run.id)).status).toBe("done");
     const summary = OpsRunsSummary.parse(ok("GET /ops/runs", await rest(live, "GET", "/ops/runs?days=1")));
-    expect(summary.usageTrustedProviders).toEqual(["claude"]);
+    expect(summary.usageTrustedPrograms).toEqual(["claude"]);
     expect(summary.byAgent.find((r) => r.id === coder.id)).toMatchObject({
       runs: 1,
       tokens: 15,

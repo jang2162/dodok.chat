@@ -35,7 +35,7 @@ export type RunnerRouteContext = {
   db: Db;
   logger: Logger;
   workspaceId: string;
-  /** 러너 어댑터(claude) — 목록의 connected·폐기 때 그 토큰의 연결 끊기. 붙지 않았으면 둘 다 할 일이 없다 */
+  /** 러너 어댑터(runner) — 목록의 connected·폐기 때 그 토큰의 연결 끊기. 붙지 않았으면 둘 다 할 일이 없다 */
   registry: Pick<AdapterRegistry, "forProvider">;
   /** 폐기 때 그 토큰의 열린 runner_down 을 닫는다 — 폐기된 토큰은 다시 붙지 못해 붙음으로 닫힐 일이 없다(리뷰 M2) */
   ops: Pick<OpsService, "resolve">;
@@ -59,8 +59,8 @@ const runnerFileMissing = () => apiError("NOT_FOUND", "RUNNER_FILE_MISSING");
 export function registerRunnerRoutes(fastify: FastifyInstance, ctx: RunnerRouteContext): void {
   const owner = { preHandler: requireOwner(ctx) };
   const connectedTokenIds = (): ReadonlySet<string> => {
-    const detail = ctx.registry.forProvider("claude")?.setupDetail();
-    return new Set(detail?.provider === "claude" ? detail.runners.map((r) => r.tokenId) : []);
+    const detail = ctx.registry.forProvider("runner")?.setupDetail();
+    return new Set(detail?.provider === "runner" ? detail.runners.map((r) => r.tokenId) : []);
   };
 
   fastify.get("/api/v1/setup/runner-tokens", owner, async () => ({
@@ -87,7 +87,7 @@ export function registerRunnerRoutes(fastify: FastifyInstance, ctx: RunnerRouteC
       throw apiError("NOT_FOUND", "runner token not found");
     // 폐기는 이미 됐다 — 끊기가 실패해도 다음 핸드셰이크부터 거절된다. 끊긴 러너의 런은 어댑터가 ADAPTER_UNAVAILABLE 로 닫는다
     try {
-      ctx.registry.forProvider("claude")?.revokeTokenSessions(id);
+      ctx.registry.forProvider("runner")?.revokeTokenSessions(id);
     } catch (err) {
       ctx.logger.warn({ err, tokenId: id }, "runner session revoke failed");
     }
@@ -101,7 +101,7 @@ export function registerRunnerRoutes(fastify: FastifyInstance, ctx: RunnerRouteC
     return reply.status(204).send();
   });
 
-  /** 다시 묶기 — 등록 claude 에이전트를 이 활성 토큰의 러너에 묶는다(토큰을 폐기했거나 머신을 바꿨을 때) */
+  /** 다시 묶기 — 등록 러너 에이전트를 이 활성 토큰의 러너에 묶는다(토큰을 폐기했거나 머신을 바꿨을 때) */
   fastify.put("/api/v1/setup/runner-tokens/:id/agents/:agentId", owner, async (request) => {
     const { id, agentId } = parseParams(BindParams, request.params);
     const agent = bindRunnerToken(ctx.db, ctx.workspaceId, id, agentId);

@@ -22,8 +22,8 @@ import type { AdapterStatus, GatewayLinkState, OpenClawGatewayStatus } from "../
 
 export { BridgeAuthGuard } from "./guard";
 
-/** 서버가 어댑터를 고르는 제공자 — `AgentProvider` 중 어댑터가 있는 것 */
-export type AdapterProvider = Extract<AgentProvider, "openclaw" | "claude">;
+/** 서버가 어댑터를 고르는 제공자 — 제공자마다 어댑터가 하나다 */
+export type AdapterProvider = AgentProvider;
 
 export type AdapterCapabilities = {
   agentsList: boolean;
@@ -71,12 +71,12 @@ export type ProviderApproval = {
 };
 
 export type OpenClawAdapterStatus = Extract<AdapterStatus, { provider: "openclaw" }>;
-export type ClaudeAdapterStatus = Extract<AdapterStatus, { provider: "claude" }>;
+export type RunnerAdapterStatus = Extract<AdapterStatus, { provider: "runner" }>;
 
 /**
  * 설정 마법사(`SetupStatus`)의 재료 — 어댑터 내부 상세. 소비자는 provider 로 좁혀 읽는다.
  * openclaw: Gateway 토큰·URL 원문은 없다(`host` 는 `호스트:포트` 만). `tokenId` 는 플러그인이 핸드셰이크에서 통과한 브리지 토큰의 id.
- * claude: 지금 붙은 러너들
+ * runner: 지금 붙은 러너들
  */
 export type AdapterSetupDetail =
   | {
@@ -99,9 +99,9 @@ export type AdapterSetupDetail =
         } | null;
       };
     }
-  | { provider: "claude"; runners: RunnerConnection[] };
+  | { provider: "runner"; runners: RunnerConnection[] };
 export type OpenClawSetupDetail = Extract<AdapterSetupDetail, { provider: "openclaw" }>;
-export type ClaudeSetupDetail = Extract<AdapterSetupDetail, { provider: "claude" }>;
+export type RunnerSetupDetail = Extract<AdapterSetupDetail, { provider: "runner" }>;
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 /** seq·ts 는 오케스트레이터가 부여한다. 판별 유니온이라 Omit 을 변형마다 분배한다. */

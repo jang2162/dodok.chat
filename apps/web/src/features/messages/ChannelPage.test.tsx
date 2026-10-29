@@ -29,6 +29,7 @@ const agentOf = (id: string, handle: string): Agent => ({
   createdAt: "2026-09-19T00:00:00.000Z",
   archivedAt: null,
   dmAccess: "admins",
+  program: null,
 });
 const memberOf = (memberType: ChannelMember["memberType"], memberId: string): ChannelMember => ({
   id: `m-${memberId}`,

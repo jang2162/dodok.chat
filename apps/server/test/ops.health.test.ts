@@ -195,10 +195,10 @@ describe("watchRunners — 토큰별 runner_down(러너 스펙 5장)", () => {
     agents: [],
   });
   function setup(active = new Set([A, B])) {
-    const adapter = new FakeAdapter({ provider: "claude" });
+    const adapter = new FakeAdapter({ provider: "runner" });
     const connect = (...tokenIds: string[]) => {
-      adapter.setSetupDetail({ provider: "claude", runners: tokenIds.map(runner) });
-      adapter.setStatus({ provider: "claude", runners: { connected: tokenIds.length, tokens: active.size } });
+      adapter.setSetupDetail({ provider: "runner", runners: tokenIds.map(runner) });
+      adapter.setStatus({ provider: "runner", runners: { connected: tokenIds.length, tokens: active.size } });
       adapter.emit({ kind: "status", status: adapter.status(), capabilities: adapter.capabilities() });
       adapter.emit({ kind: "setup" });
     };

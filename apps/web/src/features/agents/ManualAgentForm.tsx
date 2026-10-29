@@ -102,7 +102,7 @@ export function AgentFields(props: AgentFieldsProps) {
  */
 export const ID_TAKEN: Record<AdapterProvider, string> = {
   openclaw: "이 Gateway 에 이미 등록된 id 입니다",
-  claude: "이미 등록된 러너 에이전트 id 입니다",
+  runner: "이미 등록된 러너 에이전트 id 입니다",
 };
 /** 핸들 겹침 — 클라이언트가 아는 에이전트 핸들과 겹치거나 서버가 409 로 막을 때(멀티 Gateway 스펙 「웹」 절). 서버 문구는 보이지 않는다 */
 export const HANDLE_TAKEN = "이미 쓰이는 핸들입니다 — 다른 핸들을 입력하세요";

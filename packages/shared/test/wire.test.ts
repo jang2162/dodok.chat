@@ -59,19 +59,19 @@ describe("wire schemas", () => {
 });
 
 describe("AdapterStatus — provider 판별 유니온(러너 계획 판정 P7)", () => {
-  it("openclaw 는 Gateway 마다 한 줄(없으면 빈 목록, 꺼진 Gateway 는 disabled), claude 는 러너 수", () => {
+  it("openclaw 는 Gateway 마다 한 줄(없으면 빈 목록, 꺼진 Gateway 는 disabled), runner 는 러너 수", () => {
     const line = { id: ID, name: "집", enabled: true, gateway: "reconnecting", bridge: "down" };
     const openclaw = {
       provider: "openclaw",
       gateways: [line, { ...line, enabled: false, gateway: "disabled" }],
     };
-    const claude = { provider: "claude", runners: { connected: 1, tokens: 2 } };
+    const runner = { provider: "runner", runners: { connected: 1, tokens: 2 } };
     expect(AdapterStatus.parse(openclaw)).toEqual(openclaw);
     expect(AdapterStatus.parse({ provider: "openclaw", gateways: [] })).toEqual({
       provider: "openclaw",
       gateways: [],
     });
-    expect(AdapterStatus.parse(claude)).toEqual(claude);
+    expect(AdapterStatus.parse(runner)).toEqual(runner);
     // 옛 단수 모양·모르는 상태는 거절
     expect(
       AdapterStatus.safeParse({ provider: "openclaw", gateway: "connected", bridge: "connected" }).success,
@@ -85,13 +85,17 @@ describe("AdapterStatus — provider 판별 유니온(러너 계획 판정 P7)",
       AdapterStatus.safeParse({ provider: "openclaw", runners: { connected: 0, tokens: 0 } }).success,
     ).toBe(false);
     expect(
-      AdapterStatus.safeParse({ provider: "claude", gateway: "connected", bridge: "connected" }).success,
+      AdapterStatus.safeParse({ provider: "runner", gateway: "connected", bridge: "connected" }).success,
     ).toBe(false);
     expect(
       AdapterStatus.safeParse({ provider: "codex", gateway: "connected", bridge: "connected" }).success,
     ).toBe(false);
     expect(
-      AdapterStatus.safeParse({ provider: "claude", runners: { connected: -1, tokens: 0 } }).success,
+      AdapterStatus.safeParse({ provider: "runner", runners: { connected: -1, tokens: 0 } }).success,
+    ).toBe(false);
+    // 옛 제공자 이름은 받지 않는다
+    expect(
+      AdapterStatus.safeParse({ provider: "claude", runners: { connected: 1, tokens: 1 } }).success,
     ).toBe(false);
   });
 });

@@ -66,7 +66,7 @@ export function AgentRow({
           <p className="text-xs text-muted-foreground">
             {providerIdLabel(agent.provider)} <code className="font-mono">{agent.providerAgentId}</code>
           </p>
-          {agent.provider === "claude" && <RunnerLine runner={agent.runner} />}
+          {agent.provider === "runner" && <RunnerLine runner={agent.runner} />}
           {openclaw && agent.gateway === null && (
             <p className="text-xs font-medium text-destructive">
               {owner

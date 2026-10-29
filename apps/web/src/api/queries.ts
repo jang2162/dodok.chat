@@ -56,12 +56,12 @@ export function openclawAdapterStatus(list: AdapterStatusList): AdapterStatusRes
 }
 
 /** 러너 어댑터의 붙은 러너 수 / 폐기되지 않은 토큰 수(러너 계획 판정 P7) */
-export type RunnerAdapterStatus = Extract<AdapterStatus, { provider: "claude" }>["runners"];
+export type RunnerAdapterStatus = Extract<AdapterStatus, { provider: "runner" }>["runners"];
 
-/** 목록 응답에서 Claude 러너 줄을 고른다 — 서버에 러너 어댑터가 없으면 null */
+/** 목록 응답에서 러너 줄을 고른다 — 서버에 러너 어댑터가 없으면 null */
 export function runnerAdapterStatus(list: AdapterStatusList): RunnerAdapterStatus | null {
-  const status = list.statuses.find((s) => s.provider === "claude");
-  return status?.provider === "claude" ? status.runners : null;
+  const status = list.statuses.find((s) => s.provider === "runner");
+  return status?.provider === "runner" ? status.runners : null;
 }
 
 export const qk = {
@@ -93,8 +93,8 @@ export const qk = {
   discover: ["agents", "discover"] as const,
   discoverOf: (provider: string) => ["agents", "discover", provider] as const,
   adapter: ["adapter"] as const,
-  /** Claude 러너 어댑터 줄(운영 화면 연결 줄) — `adapter` 가 앞머리라 그 무효화에 함께 든다 */
-  runnerAdapter: ["adapter", "claude"] as const,
+  /** 러너 어댑터 줄(운영 화면 연결 줄) — `adapter` 가 앞머리라 그 무효화에 함께 든다 */
+  runnerAdapter: ["adapter", "runner"] as const,
   /**
    * 세션 하나의 타임라인(루트만 — 채널 세션 계획 판정 PS6). 키에 채널을 앞에 둔다 — 재동기화가 넘치면(`hasMore`) 그 채널의 세션
    * 캐시를 모두 버려야 하는데(`channelTimelines`), 빈 세션의 캐시는 내용으로 채널을 알 수 없다. 새 세션 창은 `NEW_CONVERSATION`

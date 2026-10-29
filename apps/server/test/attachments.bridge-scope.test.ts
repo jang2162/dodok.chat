@@ -193,7 +193,7 @@ describe("브리지 첨부 범위 — 토큰의 Gateway 로", () => {
     const other = issueRunnerToken(app.db, app.workspaceId, "desktop").record.id;
     const coder = createAgent(app.db, {
       workspaceId: app.workspaceId,
-      provider: "claude",
+      provider: "runner",
       providerAgentId: "coder",
       handle: "coder",
       name: "coder",
@@ -219,7 +219,7 @@ describe("브리지 첨부 범위 — 토큰의 Gateway 로", () => {
       attachmentIds: [orphan.id, others.id, own.id],
       ts: new Date().toISOString(),
     };
-    const { messageId } = await app.orchestrator.onCanonical(message, "claude", runner);
+    const { messageId } = await app.orchestrator.onCanonical(message, "runner", runner);
     expect(getMessage(app.db, messageId ?? "")?.attachments.map((a) => a.id)).toEqual([own.id]);
   });
 

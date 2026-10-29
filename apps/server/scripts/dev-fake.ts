@@ -1012,7 +1012,7 @@ function waitForFakePairs(
 
 /** dev:fake 는 실제 러너 어댑터 하나로도 뜬다(`createApp` 이 만든다) */
 function claudeOf(app: App): AgentAdapter {
-  const adapter = app.registry.forProvider("claude");
+  const adapter = app.registry.forProvider("runner");
   if (!adapter) throw new Error("dev:fake app has no Claude runner adapter");
   return adapter;
 }
@@ -1020,7 +1020,7 @@ function claudeOf(app: App): AgentAdapter {
 /** 러너 어댑터에 붙은 러너 수 */
 function runnersConnected(app: App): number {
   const status = claudeOf(app).status();
-  return status.provider === "claude" ? status.runners.connected : 0;
+  return status.provider === "runner" ? status.runners.connected : 0;
 }
 
 /** 붙은 러너 수가 want 를 만족할 때까지 기다린다 — timeoutMs 가 지나면 false */
@@ -1032,7 +1032,7 @@ function waitForRunners(app: App, want: (connected: number) => boolean, timeoutM
       resolve(false);
     }, timeoutMs);
     const off = claudeOf(app).onEvent((e) => {
-      if (e.kind !== "status" || e.status.provider !== "claude" || !want(e.status.runners.connected)) return;
+      if (e.kind !== "status" || e.status.provider !== "runner" || !want(e.status.runners.connected)) return;
       clearTimeout(timer);
       off();
       resolve(true);
@@ -1070,7 +1070,7 @@ function ensureDevFakeRunner(app: App): void {
   if (!agent) {
     createAgent(db, {
       workspaceId,
-      provider: "claude",
+      provider: "runner",
       providerAgentId: FAKE_RUNNER_AGENT.id,
       handle: FAKE_RUNNER_AGENT.id,
       name: FAKE_RUNNER_AGENT.name,

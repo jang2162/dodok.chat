@@ -20,7 +20,7 @@ function setup() {
   const db = newTestDb();
   const bus = new ServerBus();
   const openclaw = new FakeAdapter();
-  const claude = new FakeAdapter({ provider: "claude" });
+  const claude = new FakeAdapter({ provider: "runner" });
   const { workspaceId, userId } = seedWorkspace(db);
   const now = new Date();
   for (const [id, name] of [
@@ -49,7 +49,7 @@ function setup() {
   };
   const office = agent("main-office", "openclaw", "main", "g1");
   const home = agent("main-home", "openclaw", "main", "g2");
-  const coder = agent("coder", "claude", "coder", null);
+  const coder = agent("coder", "runner", "coder", null);
   const logger = pino({ level: "silent" });
   const channel = createChannel(db, { workspaceId, createdBy: userId, name: "general" });
   for (const memberId of [office, home, coder])
@@ -336,7 +336,7 @@ describe("연결 단위 대조", () => {
         sessionKey: `agent:coder:dodok:channel:${t.conversationId}`,
         runId: run.id,
       }),
-      "claude",
+      "runner",
       "tok-laptop",
     );
     const stored = t.db
@@ -392,7 +392,7 @@ describe("연결 단위 대조", () => {
     seedAgentSession(t.db, { conversationId: t.conversationId, agentId: t.coder });
     const { messageId } = await t.services.orchestrator.onCanonical(
       t.outbound({ agentId: "coder", sessionKey: coderKey }),
-      "claude",
+      "runner",
       "tok-other",
     );
     const stored = t.db

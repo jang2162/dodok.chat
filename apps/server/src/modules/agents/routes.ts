@@ -37,7 +37,7 @@ export type AgentRouteContext = {
   registry: Pick<AdapterRegistry, "forProvider">;
   /** 보관이 그 에이전트의 열린 런을 사람 「중지」와 같은 길로 멈춘다 */
   orchestrator: Pick<Orchestrator, "abort">;
-  /** claude 에이전트 등록이 묶을 러너 토큰 — 그 id 를 지금 맡는 러너의 토큰(러너 어댑터 servingTokenId). 없으면 묶임 없이 등록 */
+  /** 러너 에이전트 등록이 묶을 러너 토큰 — 그 id 를 지금 맡는 러너의 토큰(러너 어댑터 servingTokenId). 없으면 묶임 없이 등록 */
   runnerTokenFor?: (providerAgentId: string) => string | undefined;
 };
 

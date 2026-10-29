@@ -52,7 +52,7 @@ export type ListConversationsQuery = z.infer<typeof ListConversationsQuery>;
 
 // OpenClaw 는 그 Gateway 의 agents.list — gatewayId 가 있어야 한다. 러너는 붙은 러너 전부(연결을 고르지 않는다)
 export const DiscoverAgentsQuery = z.object({
-  provider: z.enum(["openclaw", "claude"]).default("openclaw"),
+  provider: z.enum(["openclaw", "runner"]).default("openclaw"),
   gatewayId: Id.optional(),
 });
 export type DiscoverAgentsQuery = z.infer<typeof DiscoverAgentsQuery>;
@@ -70,7 +70,7 @@ export const CreateAgentBody = Agent.pick({
       "providerAgentId 는 OpenClaw 에이전트 id(영문 소문자·숫자로 시작, 영문 소문자·숫자·_·-, 64자 이하)여야 한다",
   }),
   // 판정 P9 — 서버는 목록 검사를 하지 않는다(OpenClaw 와 같다). 웹이 discover?provider= 목록에서 고른다
-  provider: z.enum(["openclaw", "claude"]).default("openclaw"),
+  provider: z.enum(["openclaw", "runner"]).default("openclaw"),
   enabled: Agent.shape.enabled.default(true),
   // OpenClaw 에이전트의 Gateway — OpenClaw 면 필수(서버 라우트가 400), 러너 에이전트는 무시한다
   gatewayId: Id.optional(),

@@ -18,7 +18,7 @@ beforeEach(() => {
 const claude = (providerAgentId: string, runnerTokenId?: string) =>
   createAgent(db, {
     workspaceId: ws,
-    provider: "claude",
+    provider: "runner",
     providerAgentId,
     handle: providerAgentId,
     name: providerAgentId,
@@ -26,7 +26,7 @@ const claude = (providerAgentId: string, runnerTokenId?: string) =>
   });
 
 describe("에이전트↔러너 토큰 묶임 저장소", () => {
-  it("claim 은 묶임 없는 등록 claude 에이전트만 묶는다 — 이미 묶인 행을 덮지 않고, 미등록·openclaw id 는 false", () => {
+  it("claim 은 묶임 없는 등록 러너 에이전트만 묶는다 — 이미 묶인 행을 덮지 않고, 미등록·openclaw id 는 false", () => {
     const a = issueRunnerToken(db, ws, "a").record.id;
     const b = issueRunnerToken(db, ws, "b").record.id;
     claude("coder");

@@ -27,7 +27,7 @@ export type AgentActionContext = {
   registry: Pick<AdapterRegistry, "forProvider">;
   /** 보관이 그 에이전트의 열린 런을 사람 「중지」와 같은 길로 멈춘다 */
   orchestrator: Pick<Orchestrator, "abort">;
-  /** claude 에이전트 등록이 묶을 러너 토큰 — 그 id 를 지금 맡는 러너의 토큰(러너 어댑터 servingTokenId). 없으면 묶임 없이 등록 */
+  /** 러너 에이전트 등록이 묶을 러너 토큰 — 그 id 를 지금 맡는 러너의 토큰(러너 어댑터 servingTokenId). 없으면 묶임 없이 등록 */
   runnerTokenFor?: (providerAgentId: string) => string | undefined;
 };
 
@@ -43,7 +43,7 @@ export function registerAgentAndNotify(
 ): Agent {
   if (body.provider === "openclaw" && body.gatewayId === undefined)
     throw apiError("VALIDATION", "gatewayId is required for OpenClaw", { field: "gatewayId" });
-  const runnerTokenId = body.provider === "claude" ? ctx.runnerTokenFor?.(body.providerAgentId) : undefined;
+  const runnerTokenId = body.provider === "runner" ? ctx.runnerTokenFor?.(body.providerAgentId) : undefined;
   const agent = createAgent(ctx.db, {
     ...body,
     workspaceId,
@@ -78,7 +78,7 @@ export async function archiveAgentAndNotify(
 }
 
 /**
- * 그 제공자 어댑터의 listAgents 를 그대로 — 등록 화면(admin)의 선택지. OpenClaw 는 Gateway agents.list, Claude 러너는 붙은
+ * 그 제공자 어댑터의 listAgents 를 그대로 — 등록 화면(admin)의 선택지. OpenClaw 는 Gateway agents.list, 러너는 붙은
  * 러너들이 hello 로 알린 에이전트(충돌 빼고). 자동 동기화는 하지 않는다(스펙 3.5). 같은 자리의 보관한 에이전트가 있으면
  * archivedAgentId 를 싣는다 — 웹은 등록 대신 되살리기를 보인다
  */

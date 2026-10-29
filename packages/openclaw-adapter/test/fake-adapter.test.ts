@@ -140,7 +140,7 @@ describe("FakeAdapter", () => {
       connectionId: "g1",
     });
     expect(adapter.calls.connections.send).toEqual(["g1"]);
-    expect(new FakeAdapter({ provider: "claude" }).connectionId).toBe("fake-runner");
+    expect(new FakeAdapter({ provider: "runner" }).connectionId).toBe("fake-runner");
   });
 
   it("RunEventBody 는 판별 유니온에 분배된다 — 변형별 필드를 받고 누락은 잡는다", () => {
@@ -338,7 +338,7 @@ describe("FakeAdapter — 연결이 없는 에이전트(OpenClaw 흉내)", () =>
     expect(adapter.supports("dev", FAKE_GATEWAY_ID, "threads")).toBe(true);
   });
   it("러너 흉내는 null 연결을 받는다(묶임 없는 러너 에이전트)", async () => {
-    const adapter = new FakeAdapter({ provider: "claude" });
+    const adapter = new FakeAdapter({ provider: "runner" });
     await expect(adapter.send(deliver(), { connectionId: null })).resolves.toMatchObject({
       connectionId: "fake-runner",
     });

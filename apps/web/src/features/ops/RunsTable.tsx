@@ -204,7 +204,7 @@ export function RunsTable() {
   const narrow = useIsNarrow();
   const data = runs.data;
   // 믿는 제공자가 하나라도 있으면 열을 둔다 — 그 제공자의 런이 없는 행은 「측정 불가」
-  const usageTrusted = (data?.usageTrustedProviders.length ?? 0) > 0;
+  const usageTrusted = (data?.usageTrustedPrograms.length ?? 0) > 0;
   const rows = data ? [...data.byChannel, ...data.byAgent] : [];
   const estimated = rows.some((r) => r.costEstimated);
   const partial = usageTrusted && rows.some(isPartial);

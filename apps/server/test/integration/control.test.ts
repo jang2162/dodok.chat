@@ -104,7 +104,7 @@ describe("제어 도구 통로", () => {
     const { agent: coder } = ok(
       "POST /agents coder",
       await rest<{ agent: Agent }>(live, "POST", "/agents", {
-        provider: "claude",
+        provider: "runner",
         providerAgentId: "coder",
         handle: "coder",
         name: "Coder",

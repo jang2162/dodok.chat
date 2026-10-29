@@ -280,7 +280,7 @@ describe("통합 — 리액션", () => {
     runners.push(runner);
     const coder = (
       await rest<{ agent: Agent }>(live, "POST", "/agents", {
-        provider: "claude",
+        provider: "runner",
         providerAgentId: "coder",
         handle: "coder",
         name: "Coder",

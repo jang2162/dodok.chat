@@ -200,7 +200,7 @@ describe("에이전트를 바꾸는 다른 동작의 agents.changed", () => {
 
     createAgent(app.db, {
       workspaceId: app.workspaceId,
-      provider: "claude",
+      provider: "runner",
       providerAgentId: "coder",
       handle: "coder",
       name: "coder",
@@ -642,7 +642,7 @@ describe("보관과 러너", () => {
     await app.fastify.listen({ host: "127.0.0.1", port: 0 });
     const coder = createAgent(app.db, {
       workspaceId: app.workspaceId,
-      provider: "claude",
+      provider: "runner",
       providerAgentId: "coder",
       handle: "coder",
       name: "coder",

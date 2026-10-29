@@ -14,7 +14,7 @@ export function connectionIdOf(agent: {
   runnerTokenId: string | null;
 }): string | null {
   if (agent.provider === "openclaw") return agent.gatewayId;
-  if (agent.provider === "claude") return agent.runnerTokenId;
+  if (agent.provider === "runner") return agent.runnerTokenId;
   return null;
 }
 

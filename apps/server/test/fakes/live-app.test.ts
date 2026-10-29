@@ -40,7 +40,7 @@ describe("서버 통합 스모크 — 실제 OpenClawAdapter + 가짜 Gateway + 
             },
           ],
         },
-        { provider: "claude", runners: { connected: 0, tokens: 0 } },
+        { provider: "runner", runners: { connected: 0, tokens: 0 } },
       ],
       capabilities: {
         openclaw: {
@@ -49,7 +49,7 @@ describe("서버 통합 스모크 — 실제 OpenClawAdapter + 가짜 Gateway + 
           promptEveryRun: false,
           serverSessionIds: false,
         },
-        claude: {
+        runner: {
           agentsList: true,
           configSet: true,
           promptEveryRun: true,

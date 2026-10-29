@@ -14,8 +14,8 @@ import {
   buildChannelRulesAppend,
   type ControlResult,
   buildTurnFacts,
-  type ClaudeAdapterStatus,
-  type ClaudeSetupDetail,
+  type RunnerAdapterStatus,
+  type RunnerSetupDetail,
   dodokSessionKey,
   parseDodokSessionKey,
   ErrorCode,
@@ -116,9 +116,9 @@ export type RunnerAdapterOptions = {
 };
 
 export interface RunnerAdapter extends AgentAdapter {
-  readonly provider: "claude";
-  status(): ClaudeAdapterStatus;
-  setupDetail(): ClaudeSetupDetail;
+  readonly provider: "runner";
+  status(): RunnerAdapterStatus;
+  setupDetail(): RunnerSetupDetail;
   /**
    * 러너 첨부 GET 의 읽기 범위(조율자 판정 R5) — 그 토큰의 러너에 지금 열린 런의 deliver 로 보낸 첨부면 true. 런이 끝나거나
    * 러너가 끊기면 곧바로 false 다(열린 런 추적에서 빠진다)
@@ -280,11 +280,11 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
   const emitSignal = (connectionId: string, runId: string, signal: RunSignal) =>
     emit({ kind: "run_signal", runId, connectionId, signal });
 
-  const status = (): ClaudeAdapterStatus => ({
-    provider: "claude",
+  const status = (): RunnerAdapterStatus => ({
+    provider: "runner",
     runners: { connected: registry.size, tokens: opts.tokenCount() },
   });
-  const setupDetail = (): ClaudeSetupDetail => ({ provider: "claude", runners: registry.connections() });
+  const setupDetail = (): RunnerSetupDetail => ({ provider: "runner", runners: registry.connections() });
   function announceRunners() {
     emit({ kind: "status", status: status(), capabilities: { ...capabilities } });
     emit({ kind: "setup" });
@@ -926,7 +926,7 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
   });
 
   return {
-    provider: "claude",
+    provider: "runner",
 
     async connect() {
       // 네임스페이스는 만들 때 붙였다 — 러너가 먼저 붙어 오므로 기다릴 연결이 없다

@@ -2349,8 +2349,8 @@ describe("startDevFake 가짜 Claude 러너 — 고정 러너 토큰·coder·/__
     return { status: res.status, body: (await res.json()) as Record<string, unknown> };
   };
   const runnersConnected = () => {
-    const status = dev.app.registry.forProvider("claude")?.status();
-    return status?.provider === "claude" ? status.runners.connected : -1;
+    const status = dev.app.registry.forProvider("runner")?.status();
+    return status?.provider === "runner" ? status.runners.connected : -1;
   };
 
   /** coder 가 멤버인 채널을 만들고 wire 로 구독한다 — 받은 이벤트를 모은다 */
@@ -2383,7 +2383,7 @@ describe("startDevFake 가짜 Claude 러너 — 고정 러너 토큰·coder·/__
     return { channelId: channel.id, coderId, socket, created, send };
   }
 
-  it("시작하면 고정 러너 토큰(라벨 dev-fake) 행으로 가짜 러너가 붙어 있고, coder 는 claude 에이전트로 등록돼 discover 에 hint 와 함께 보인다", async () => {
+  it("시작하면 고정 러너 토큰(라벨 dev-fake) 행으로 가짜 러너가 붙어 있고, coder 는 러너 에이전트로 등록돼 discover 에 hint 와 함께 보인다", async () => {
     const row = dev.app.db
       .select()
       .from(runnerTokens)
@@ -2400,10 +2400,10 @@ describe("startDevFake 가짜 Claude 러너 — 고정 러너 토큰·coder·/__
       "/agents",
     );
     // OpenClaw 에이전트 넷(사무실·집)과 함께 — 러너 에이전트는 coder 하나
-    expect(list.filter((a) => a.provider === "claude")).toEqual([
-      expect.objectContaining({ provider: "claude", providerAgentId: "coder", handle: "coder" }),
+    expect(list.filter((a) => a.provider === "runner")).toEqual([
+      expect.objectContaining({ provider: "runner", providerAgentId: "coder", handle: "coder" }),
     ]);
-    const { agents: found } = await rest<{ agents: unknown[] }>("GET", "/agents/discover?provider=claude");
+    const { agents: found } = await rest<{ agents: unknown[] }>("GET", "/agents/discover?provider=runner");
     expect(found).toEqual([{ providerAgentId: "coder", name: "Coder", hint: "dev-fake · dodok · sonnet" }]);
   });
 

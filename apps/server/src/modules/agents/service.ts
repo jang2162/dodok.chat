@@ -1,4 +1,4 @@
-import { Agent, type DmAccess } from "@dodok/shared";
+import { Agent, type DmAccess, type RunnerProgram } from "@dodok/shared";
 import { and, asc, eq, inArray, isNotNull, isNull, ne, type SQL, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 import { v7 as uuidv7 } from "uuid";
@@ -21,8 +21,8 @@ export function providerAgentIdIs(providerAgentId: string): SQL {
   return sql`lower(${agents.providerAgentId}) = ${providerAgentId.toLowerCase()}`;
 }
 
-/** 등록할 수 있는 제공자 — 어댑터가 있는 것(OpenClaw·Claude 러너) */
-export type RegistrableProvider = "openclaw" | "claude";
+/** 등록할 수 있는 제공자 — 어댑터가 있는 것(OpenClaw·러너) */
+export type RegistrableProvider = "openclaw" | "runner";
 
 export type CreateAgentInput = {
   workspaceId: string;
@@ -33,7 +33,9 @@ export type CreateAgentInput = {
   avatarUrl?: string;
   basePrompt?: string;
   enabled?: boolean;
-  /** provider claude 일 때 묶을 러너 토큰 — 지금 그 id 를 맡는 러너의 토큰. 없으면 처음 알리는 러너에 묶인다 */
+  /** provider runner 일 때 러너가 돌리는 프로그램 — 없으면 claude(드라이버가 있는 것은 그것뿐이다). OpenClaw 는 무시한다 */
+  program?: RunnerProgram;
+  /** provider runner 일 때 묶을 러너 토큰 — 지금 그 id 를 맡는 러너의 토큰. 없으면 처음 알리는 러너에 묶인다 */
   runnerTokenId?: string;
   /**
    * provider openclaw 일 때 그 에이전트의 Gateway(같은 워크스페이스). REST 등록은 늘 준다(routes.ts) — 없으면 연결이 빈 에이전트(런은
@@ -69,6 +71,7 @@ export function rowToAgent(row: AgentRow): Agent {
       createdAt: row.createdAt.toISOString(),
       archivedAt: row.archivedAt?.toISOString() ?? null,
       dmAccess: row.dmAccess,
+      program: row.program,
     },
     "agent",
   );
@@ -256,7 +259,8 @@ export function createAgent(db: Db, input: CreateAgentInput): Agent {
         basePrompt: input.basePrompt ?? null,
         enabled: input.enabled ?? true,
         createdAt: new Date(),
-        runnerTokenId: provider === "claude" ? (input.runnerTokenId ?? null) : null,
+        runnerTokenId: provider === "runner" ? (input.runnerTokenId ?? null) : null,
+        program: provider === "runner" ? (input.program ?? "claude") : null,
         gatewayId,
       })
       .returning()

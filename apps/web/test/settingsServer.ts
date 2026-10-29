@@ -22,6 +22,7 @@ export const agentOf = (id: string, handle: string, over: Partial<Agent> = {}): 
   createdAt: "2026-09-19T00:00:00.000Z",
   archivedAt: null,
   dmAccess: "admins",
+  program: null,
   ...over,
 });
 

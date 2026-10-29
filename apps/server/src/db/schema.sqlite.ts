@@ -13,6 +13,7 @@ import type {
   OpsEventKind,
   OpsSeverity,
   RelayPolicy,
+  RunnerProgram,
   SessionPolicy,
   RunEvent,
   RunUsage,
@@ -120,7 +121,7 @@ export const agents = sqliteTable(
     basePrompt: text("base_prompt"),
     enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
     createdAt: ts("created_at").notNull(),
-    // Claude 러너 에이전트가 묶인 러너 토큰 — 그 토큰의 러너만 맡는다. null 이면 처음 알린 러너에 묶인다. 폐기돼도 남는다
+    // 러너 에이전트가 묶인 러너 토큰 — 그 토큰의 러너만 맡는다. null 이면 처음 알린 러너에 묶인다. 폐기돼도 남는다
     runnerTokenId: text("runner_token_id").references((): AnySQLiteColumn => runnerTokens.id),
     // OpenClaw 에이전트를 맡은 Gateway — null 이면 연결이 빈 에이전트(Gateway 를 지웠다 — 옮기기를 기다린다)
     gatewayId: text("gateway_id").references(() => gateways.id, { onDelete: "set null" }),
@@ -128,6 +129,8 @@ export const agents = sqliteTable(
     archivedAt: ts("archived_at"),
     // 누가 이 에이전트와 DM 을 여나(shared DmAccess) — 기본 admins: 러너 에이전트는 누군가의 머신에서 도구를 돌린다(에이전트 DM 스펙 결정 4)
     dmAccess: text("dm_access").$type<DmAccess>().notNull().default("admins"),
+    // 러너 에이전트가 돌리는 프로그램 — 러너면 값(서비스가 지킨다), OpenClaw 면 null
+    program: text("program").$type<RunnerProgram>(),
   },
   (t) => [
     uniqueIndex("agents_ws_handle").on(t.workspaceId, t.handle),
@@ -136,9 +139,9 @@ export const agents = sqliteTable(
     uniqueIndex("agents_openclaw_gateway_agent")
       .on(t.gatewayId, t.providerAgentId)
       .where(sql`provider = 'openclaw'`),
-    uniqueIndex("agents_claude_ws_agent")
+    uniqueIndex("agents_runner_ws_agent")
       .on(t.workspaceId, t.provider, t.providerAgentId)
-      .where(sql`provider = 'claude'`),
+      .where(sql`provider = 'runner'`),
   ],
 );
 

@@ -27,21 +27,21 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 describe("createAdapterRegistry", () => {
   it("provider 로 고르고, 에이전트 행의 provider 로 고른다 — 없으면 ADAPTER_UNAVAILABLE", () => {
     const openclaw = new FakeAdapter();
-    const claude = new FakeAdapter({ provider: "claude" });
+    const claude = new FakeAdapter({ provider: "runner" });
     const registry = createAdapterRegistry([openclaw, claude]);
 
     expect(registry.all()).toEqual([openclaw, claude]);
     expect(registry.forProvider("openclaw")).toBe(openclaw);
-    expect(registry.forProvider("claude")).toBe(claude);
-    expect(registry.forAgent({ provider: "claude" })).toBe(claude);
+    expect(registry.forProvider("runner")).toBe(claude);
+    expect(registry.forAgent({ provider: "runner" })).toBe(claude);
     expect(registry.forAgent({ provider: "openclaw" })).toBe(openclaw);
-    expect(() => registry.forAgent({ provider: "codex" })).toThrow(AdapterError);
+    expect(() => createAdapterRegistry([openclaw]).forAgent({ provider: "runner" })).toThrow(AdapterError);
     try {
-      registry.forAgent({ provider: "codex" });
+      createAdapterRegistry([openclaw]).forAgent({ provider: "runner" });
     } catch (err) {
       expect((err as AdapterError).code).toBe("ADAPTER_UNAVAILABLE");
     }
-    expect(createAdapterRegistry([openclaw]).forProvider("claude")).toBeUndefined();
+    expect(createAdapterRegistry([openclaw]).forProvider("runner")).toBeUndefined();
   });
 
   it("같은 provider 가 둘이면 만들지 않는다", () => {
@@ -50,7 +50,7 @@ describe("createAdapterRegistry", () => {
 
   it("onEvent 는 모든 어댑터의 이벤트를 어느 어댑터에서 왔는지와 함께 넘기고, 해제하면 전부 끊는다", () => {
     const openclaw = new FakeAdapter();
-    const claude = new FakeAdapter({ provider: "claude" });
+    const claude = new FakeAdapter({ provider: "runner" });
     const registry = createAdapterRegistry([openclaw, claude]);
     const seen: Array<[string, string]> = [];
     const off = registry.onEvent((e, from) => seen.push([e.kind, from.provider]));
@@ -63,7 +63,7 @@ describe("createAdapterRegistry", () => {
 
     expect(seen).toEqual([
       ["setup", "openclaw"],
-      ["setup", "claude"],
+      ["setup", "runner"],
     ]);
   });
 });
@@ -71,24 +71,22 @@ describe("createAdapterRegistry", () => {
 describe("어댑터 레지스트리 배선 (앱 부팅, OpenClaw·Claude 가짜 둘)", () => {
   let app: App;
   let openclaw: FakeAdapter;
-  let claude: FakeAdapter<"claude">;
+  let claude: FakeAdapter<"runner">;
   let token: string;
   let headers: { authorization: string };
   let dev: Agent;
   let coder: Agent;
-  let codexer: Agent;
   const sockets: WireClient[] = [];
   let n = 0;
 
   beforeAll(async () => {
     openclaw = new FakeAdapter();
-    claude = new FakeAdapter({ provider: "claude" });
+    claude = new FakeAdapter({ provider: "runner" });
     app = await bootTestApp({}, { adapters: [openclaw, claude] });
     await app.fastify.listen({ host: "127.0.0.1", port: 0 });
     ({ token, headers } = await login(app));
     dev = agentOf("openclaw", "dev");
-    coder = agentOf("claude", "coder");
-    codexer = agentOf("codex", "codexer");
+    coder = agentOf("runner", "coder");
   });
   afterEach(() => {
     for (const socket of sockets.splice(0)) socket.close();
@@ -106,8 +104,9 @@ describe("어댑터 레지스트리 배선 (앱 부팅, OpenClaw·Claude 가짜 
       name: providerAgentId,
       ...(provider === "openclaw" ? { gatewayId: FAKE_GATEWAY_ID } : {}),
     });
-    app.db.update(agents).set({ provider }).where(eq(agents.id, agent.id)).run();
-    return { ...agent, provider };
+    const program = provider === "runner" ? "claude" : null;
+    app.db.update(agents).set({ provider, program }).where(eq(agents.id, agent.id)).run();
+    return { ...agent, provider, program };
   }
 
   function channelWith(members: Agent[], prompt?: string): ChannelRecord {
@@ -142,7 +141,7 @@ describe("어댑터 레지스트리 배선 (앱 부팅, OpenClaw·Claude 가짜 
 
   /** 말하고 그 어댑터에 새로 보낸 런 하나를 기다린다 — 센 수는 말하기 전에 잡는다(ack 전에 보낼 수 있다) */
   async function mention(
-    adapter: FakeAdapter<"openclaw" | "claude">,
+    adapter: FakeAdapter<"openclaw" | "runner">,
     socket: WireClient,
     channelId: string,
     bodyMd: string,
@@ -153,7 +152,7 @@ describe("어댑터 레지스트리 배선 (앱 부팅, OpenClaw·Claude 가짜 
   }
 
   /** 그 어댑터에 새로 보낸 런 하나를 기다려 send 인자·옵션을 돌려준다 */
-  async function nextSend(adapter: FakeAdapter<"openclaw" | "claude">, before: number) {
+  async function nextSend(adapter: FakeAdapter<"openclaw" | "runner">, before: number) {
     await vi.waitFor(() => expect(adapter.calls.send.length).toBe(before + 1));
     const input = adapter.calls.send[before];
     if (!input) throw new Error("no send");
@@ -166,7 +165,7 @@ describe("어댑터 레지스트리 배선 (앱 부팅, OpenClaw·Claude 가짜 
     await vi.waitFor(() => expect(getRun(app.db, runId)?.status).toBe("aborted"));
   }
 
-  it("claude 에이전트 멘션은 claude 어댑터로만 — 서버가 정한 세션 UUID 를 이어 쓴다", async () => {
+  it("러너 에이전트 멘션은 러너 어댑터로만 — 서버가 정한 세션 UUID 를 이어 쓴다", async () => {
     const channel = channelWith([dev, coder]);
     const socket = await connect(channel.id);
     const openclawBefore = openclaw.calls.send.length;
@@ -270,7 +269,7 @@ describe("어댑터 레지스트리 배선 (앱 부팅, OpenClaw·Claude 가짜 
         attachmentIds: [],
         ts: new Date().toISOString(),
       },
-      "claude",
+      "runner",
       "fake-runner",
     );
     const back = await nextSend(openclaw, openclawBefore);
@@ -300,7 +299,7 @@ describe("어댑터 레지스트리 배선 (앱 부팅, OpenClaw·Claude 가짜 
         attachmentIds: [],
         ts: new Date().toISOString(),
       },
-      "claude",
+      "runner",
       "fake-runner",
     );
     const orphan = await app.orchestrator.onCanonical(
@@ -313,7 +312,7 @@ describe("어댑터 레지스트리 배선 (앱 부팅, OpenClaw·Claude 가짜 
         attachmentIds: [],
         ts: new Date().toISOString(),
       },
-      "claude",
+      "runner",
       "fake-runner",
     );
 
@@ -327,7 +326,7 @@ describe("어댑터 레지스트리 배선 (앱 부팅, OpenClaw·Claude 가짜 
     expect(alone?.runId).toBeUndefined();
   });
 
-  it("claude 어댑터의 승인은 claude 에이전트로 — resolveApproval 이 ADAPTER_UNAVAILABLE 을 던지면 ack 도 그 코드, 승인은 pending", async () => {
+  it("러너 어댑터의 승인은 러너 에이전트로 — resolveApproval 이 ADAPTER_UNAVAILABLE 을 던지면 ack 도 그 코드, 승인은 pending", async () => {
     const channel = channelWith([coder]);
     const socket = await connect(channel.id);
     const sent = await mention(claude, socket, channel.id, "@coder 파일 써줘");
@@ -418,11 +417,11 @@ describe("어댑터 레지스트리 배선 (앱 부팅, OpenClaw·Claude 가짜 
     const res = await app.fastify.inject({ method: "GET", url: "/api/v1/ops/runs?days=1", headers });
     expect(res.statusCode).toBe(200);
     const summary = res.json() as {
-      usageTrustedProviders: string[];
+      usageTrustedPrograms: string[];
       byChannel: Array<{ id: string; tokens?: number; costUsd?: number }>;
       byAgent: Array<{ id: string; tokens?: number; costUsd?: number }>;
     };
-    expect(summary.usageTrustedProviders).toEqual(["claude"]);
+    expect(summary.usageTrustedPrograms).toEqual(["claude"]);
     expect(summary.byChannel.find((r) => r.id === channel.id)).toMatchObject({ tokens: 120, costUsd: 0.25 });
     expect(summary.byAgent.find((r) => r.id === coder.id)).toMatchObject({ tokens: 120, costUsd: 0.25 });
     const devRow = summary.byAgent.find((r) => r.id === dev.id);
@@ -431,20 +430,50 @@ describe("어댑터 레지스트리 배선 (앱 부팅, OpenClaw·Claude 가짜 
     expect(devRow).not.toHaveProperty("costUsd");
   });
 
-  it("어댑터가 없는 provider(codex) 에이전트 멘션은 ADAPTER_UNAVAILABLE run_error 카드로 닫힌다", async () => {
-    const channel = channelWith([codexer]);
-    const socket = await connect(channel.id);
-    const sends = openclaw.calls.send.length + claude.calls.send.length;
+  it("어댑터가 없는 provider 에이전트 멘션은 ADAPTER_UNAVAILABLE run_error 카드로 닫힌다 — 러너 어댑터 없이 띄운 앱의 러너 에이전트", async () => {
+    const only = new FakeAdapter();
+    const bare = await bootTestApp({}, { adapters: [only] });
+    try {
+      await bare.fastify.listen({ host: "127.0.0.1", port: 0 });
+      const { token: bareToken } = await login(bare);
+      const loner = createAgent(bare.db, {
+        workspaceId: bare.workspaceId,
+        provider: "runner",
+        providerAgentId: "loner",
+        handle: "loner",
+        name: "loner",
+      });
+      const channel = createChannel(bare.db, {
+        workspaceId: bare.workspaceId,
+        createdBy: bare.ownerUserId,
+        name: "no-runner",
+      });
+      addMember(bare.db, channel.id, { memberType: "agent", memberId: loner.id }, bare.logger);
+      const socket = await connectWire(bare, bareToken);
+      try {
+        const sub = await socket.emitWithAck("channel.subscribe", { channelId: channel.id });
+        if (!sub.ok) throw new Error(sub.error.code);
+        const sent = await socket.emitWithAck("message.send", {
+          channelId: channel.id,
+          ...sendTarget(bare.db, channel.id),
+          clientMsgId: "m-loner",
+          bodyMd: "@loner 부탁",
+        });
+        if (!sent.ok) throw new Error(sent.error.code);
 
-    await say(socket, channel.id, "@codexer 부탁");
-
-    await vi.waitFor(() => {
-      const card = listMessages(app.db, channel.id, { limit: 50 }).messages.find(
-        (m) => m.systemMeta?.kind === "run_error",
-      );
-      expect(card?.bodyMd).toContain("ADAPTER_UNAVAILABLE");
-    });
-    expect(openclaw.calls.send.length + claude.calls.send.length).toBe(sends);
+        await vi.waitFor(() => {
+          const card = listMessages(bare.db, channel.id, { limit: 50 }).messages.find(
+            (m) => m.systemMeta?.kind === "run_error",
+          );
+          expect(card?.bodyMd).toContain("ADAPTER_UNAVAILABLE");
+        });
+        expect(only.calls.send).toHaveLength(0);
+      } finally {
+        socket.close();
+      }
+    } finally {
+      await bare.close();
+    }
   });
 
   it("GET /adapter/status 는 어댑터마다 상태와 capabilities 를 싣는다", async () => {
@@ -453,11 +482,11 @@ describe("어댑터 레지스트리 배선 (앱 부팅, OpenClaw·Claude 가짜 
     expect(res.json()).toEqual({
       statuses: [
         { provider: "openclaw", gateways: [fakeGatewayStatus()] },
-        { provider: "claude", runners: { connected: 1, tokens: 1 } },
+        { provider: "runner", runners: { connected: 1, tokens: 1 } },
       ],
       capabilities: {
         openclaw: openclaw.capabilities(),
-        claude: {
+        runner: {
           agentsList: true,
           configSet: true,
           promptEveryRun: true,
@@ -476,7 +505,7 @@ describe("어댑터 레지스트리 배선 (앱 부팅, OpenClaw·Claude 가짜 
       provider: "openclaw",
       gateways: [fakeGatewayStatus({ gateway: "reconnecting" })],
     };
-    const claudeStatus = { provider: "claude", runners: { connected: 0, tokens: 1 } } as const;
+    const claudeStatus = { provider: "runner", runners: { connected: 0, tokens: 1 } } as const;
     openclaw.emit({ kind: "status", status: openclawStatus, capabilities: openclaw.capabilities() });
     claude.emit({ kind: "status", status: claudeStatus, capabilities: claude.capabilities() });
     await vi.waitFor(() => expect(seen).toEqual([openclawStatus, claudeStatus]));

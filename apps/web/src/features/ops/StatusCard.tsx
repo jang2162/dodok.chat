@@ -92,7 +92,7 @@ function useGatewayLines(status: OpsStatus): GatewayLine[] {
 }
 
 /**
- * 러너 줄의 값(러너 스펙 5장) — 운영 상태 응답에는 러너가 없어 어댑터 목록의 claude 줄을 본다. wire `adapter.status` 가 곧바로
+ * 러너 줄의 값(러너 스펙 5장) — 운영 상태 응답에는 러너가 없어 어댑터 목록의 runner 줄을 본다. wire `adapter.status` 가 곧바로
  * 고치고, wire 가 끊긴 동안은 운영 상태와 같은 주기로 다시 받는다. 러너 어댑터가 없는 서버면 null(줄을 그리지 않는다)
  */
 function useRunners() {
