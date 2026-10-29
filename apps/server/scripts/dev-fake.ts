@@ -29,7 +29,7 @@
  * 가짜 러너(`test/fakes/fake-runner.ts`) 둘도 붙는다(`DEV_FAKE_RUNNERS`). 「dev-fake」(고정 토큰 `dev-fake-runner-token`)는 루트
  * src·work, Claude Code(상한 acceptEdits)와 「설치되지 않음」 Codex 를 알리고 둘러보기에 고정 나무(`devFakeRunnerTree`)를 낸다 —
  * 그 러너의 프로젝트 `src/dodok` 와 러너 에이전트 `coder`(프로그램 claude)를 만들어 둔다. 「dev-fake 제한」(`dev-fake-runner-token-limited`)
- * 은 루트 sandbox·Claude Code 상한 plan·둘러보기 꺼짐이고 프로젝트 `sandbox/demo` 만 둔다. 두 러너 모두 실제 러너처럼 런마다 천장을
+ * 은 루트 sandbox·src(첫 러너와 같은 자리 dodok·notes — 옮기기), Claude Code 상한 plan·둘러보기 꺼짐이고 프로젝트 `sandbox/demo` 만 둔다. 두 러너 모두 실제 러너처럼 런마다 천장을
  * 본다(걸리면 RUNNER_CEILING 카드). 토큰 행은 고정 id 로 찾는다 — 연결 페이지에서 「다시 발급」하면 그 자리에서는 새 원문을 훅 token
  * 으로 주어 붙이고, `--keep` 으로 다시 띄우면 고정 토큰으로 되돌아 붙는다(프로젝트·coder 는 그 러너에 남는다). 가짜 러너는 스스로 다시
  * 붙지 않는다 — 끊기 뒤에는 훅으로 붙인다. 폐기한 러너 토큰은 되살리지 않는다(그 러너의 런은 ADAPTER_UNAVAILABLE).
@@ -224,7 +224,10 @@ export const DEV_FAKE_RUNNER_AGENT = { handle: "coder", name: "Coder", relPath: 
  * 고정 토큰으로 돌아와(해시·접두사만 되돌린다) 프로젝트·coder 가 그 러너에 남는다
  */
 export const DEV_FAKE_RUNNER_ID = "00000000-0000-4000-8000-00000000fa01";
-/** 둘째 가짜 러너(「dev-fake 제한」) — Claude Code 상한 plan·허용 도구 상한 셋·둘러보기 꺼짐. 상한 아래 처음 값과 직접 입력을 본다 */
+/**
+ * 둘째 가짜 러너(「dev-fake 제한」) — Claude Code 상한 plan·허용 도구 상한 셋·둘러보기 꺼짐. 상한 아래 처음 값과 직접 입력을 본다.
+ * 루트 src 에 첫 러너와 같은 자리(dodok·notes)가 있어 프로젝트 「옮기기」가 된다(coder 는 상한 plan 밖이라 dodok 은 400)
+ */
 export const DEV_FAKE_LIMITED_RUNNER_TOKEN = "dev-fake-runner-token-limited";
 export const DEV_FAKE_LIMITED_RUNNER_LABEL = "dev-fake 제한";
 export const DEV_FAKE_LIMITED_RUNNER_ID = "00000000-0000-4000-8000-00000000fa02";
@@ -307,7 +310,10 @@ export const DEV_FAKE_RUNNERS: readonly DevFakeRunnerSpec[] = [
     token: DEV_FAKE_LIMITED_RUNNER_TOKEN,
     label: DEV_FAKE_LIMITED_RUNNER_LABEL,
     hello: {
-      roots: [{ id: "sandbox", label: "샌드박스" }],
+      roots: [
+        { id: "sandbox", label: "샌드박스" },
+        { id: "src", label: "내 저장소들" },
+      ],
       browse: false,
       programs: [
         {
@@ -316,7 +322,10 @@ export const DEV_FAKE_RUNNERS: readonly DevFakeRunnerSpec[] = [
         },
       ],
     },
-    tree: () => ({ sandbox: { children: { demo: { git: true }, scratch: {} } } }),
+    tree: () => ({
+      sandbox: { children: { demo: { git: true }, scratch: {} } },
+      src: { children: { dodok: { git: true }, notes: {} } },
+    }),
     seedProject: { rootId: "sandbox", relPath: "demo" },
   },
 ];

@@ -2493,7 +2493,10 @@ describe("startDevFake 가짜 러너 — 고정 러너 토큰·coder·/__devfake
     expect(limited).toMatchObject({
       connected: true,
       browse: false,
-      roots: [{ id: "sandbox", label: "샌드박스" }],
+      roots: [
+        { id: "sandbox", label: "샌드박스" },
+        { id: "src", label: "내 저장소들" },
+      ],
     });
     expect(limited?.programs).toEqual([
       expect.objectContaining({
