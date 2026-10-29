@@ -72,6 +72,7 @@
 
 **Interfaces:**
 - Produces: `AgentProvider = "openclaw" | "runner"`, `Agent.program: RunnerProgram | null`(러너면 값, OpenClaw 면 null), `RunnerProgram` 은 이 태스크가 shared `domain/index.ts` 에 둔다(태스크 2 가 `runner/index.ts` 에서 다시 내보낸다). 이름표 `PROVIDER_NAME.runner = "러너"`, 프로그램 이름표 `PROGRAM_NAME = { claude: "Claude Code", codex: "Codex", opencode: "OpenCode" }`(웹 `providerLabels.ts`).
+  - 운영 wire 필드 `OpsRunsSummary.usageTrustedProviders` → `usageTrustedPrograms: RunnerProgram[]`, `OpsRouteContext.programsInUse`(태스크 1 이 이름을 바꿨다 — 태스크 5·7 이 이 이름을 쓴다).
 
 - [ ] **Step 1: 실패하는 테스트.** `apps/server/test/db.test.ts` 「0030 뒤 claude 에이전트는 provider runner·program claude, 부분 유일 색인은 runner 행에 걸린다」. `ops.summary` 테스트에 「USAGE_TRUSTED 는 program claude 런만」.
 - [ ] **Step 2: 마이그레이션·스키마·shared enum.** PR6 의 0030.
@@ -172,5 +173,5 @@
 ### Task 7: 런 0회 실연·문서
 
 - [ ] **Step 1: 실연** — 실제 러너 설치본 + 번들 CLI + 가짜 Messages API(`docs/guides/live-smoke.md` 「Claude 러너 런 0회 하네스」). 스크래치 디렉터리를 루트로 두고 앱에서 프로젝트·에이전트를 만든다. 기준: ① 그 디렉터리에서 돈다(CLI `cwd`) ② 지시가 요청 본문의 `<agent-instructions>` 틀 안 ③ 루트 밖 프로젝트·상한 넘는 권한이 `RUNNER_CEILING` 카드 ④ 옛 `agents` 키 설정은 문구와 함께 끝남 ⑤ DB·서버 로그에 스크래치 루트의 절대 경로 없음 ⑥ 시크릿 0·모델 런 0(공통 조건).
-- [ ] **Step 2: 문서** — 스펙에 「구현과 맞춘 것」 장(PR1~PR9 와 구현 판단). `docs/guides/docker-deploy.md` 「Claude 러너 설치」 → 「러너 설치」(로컬 설정 `roots`·`programs`, 루트 id 를 바꾸면 그 프로젝트가 「루트 없음」, 다시 발급, 드러나는 것 넷), 「업데이트」에 이 판은 `dodok-runner` 재설치와 기존 러너 에이전트 보관. `docs/guides/agent-guide.md` 「Claude 러너 에이전트」(지시 틀). `docs/manual/user-guide.md`(러너 탭·프로젝트·에이전트 추가·역할 표). `docs/guides/project-structure.md`(드라이버 구조·`runner_projects`·0030·0031). `.ruler/AGENTS.md` 의 구조 줄·러너 명령 줄·dev:fake 괄호(가짜 러너 루트·프로젝트, 「이 러너로 묶기」 걷음)·「현재 단계」 → `pnpm exec ruler apply`. `docs/guides/plan.md` 완료 항목·이월. `docs/guides/live-smoke.md` 「러너 일반화 실연」 절.
+- [ ] **Step 2: 문서** — 스펙에 「구현과 맞춘 것」 장(PR1~PR9 와 구현 판단). 옛 제공자 이름이 남은 현재 가이드: `grep -nE 'provider claude|provider=claude|usageTrustedProviders|agents_claude_ws_agent' docs/guides/project-structure.md docs/guides/live-smoke.md` 의 줄을 `runner`·`program claude`·`usageTrustedPrograms` 로(과거 계획·스펙은 그대로 둔다 — 태스크 1 보고). `docs/guides/docker-deploy.md` 「Claude 러너 설치」 → 「러너 설치」(로컬 설정 `roots`·`programs`, 루트 id 를 바꾸면 그 프로젝트가 「루트 없음」, 다시 발급, 드러나는 것 넷), 「업데이트」에 이 판은 `dodok-runner` 재설치와 기존 러너 에이전트 보관. `docs/guides/agent-guide.md` 「Claude 러너 에이전트」(지시 틀). `docs/manual/user-guide.md`(러너 탭·프로젝트·에이전트 추가·역할 표). `docs/guides/project-structure.md`(드라이버 구조·`runner_projects`·0030·0031). `.ruler/AGENTS.md` 의 구조 줄·러너 명령 줄·dev:fake 괄호(가짜 러너 루트·프로젝트, 「이 러너로 묶기」 걷음)·「현재 단계」 → `pnpm exec ruler apply`. `docs/guides/plan.md` 완료 항목·이월. `docs/guides/live-smoke.md` 「러너 일반화 실연」 절.
 - [ ] **Step 3: 끝내기 검사** → 커밋 `docs: record runner generalization and its live smoke`.
