@@ -73,6 +73,7 @@ export function MoveProjectDialog({
   const [error, setError] = useState<string>();
   const sending = useRef(false);
   const trigger = useRef<HTMLButtonElement>(null);
+  const submitButton = useRef<HTMLButtonElement>(null);
   const moved = useRef(false);
   const id = useId();
   const others = runners.filter((r) => r.id !== runner.id && !r.revoked);
@@ -93,17 +94,19 @@ export function MoveProjectDialog({
     if (!picked || sending.current) return;
     sending.current = true;
     setError(undefined);
-    move.mutate(
-      { id: project.id, runnerId: picked.id },
-      {
-        onSuccess: () => {
-          moved.current = true;
-          setOpen(false);
-        },
-        onError: (err) => setError(moveError(err, agents)),
-        onSettled: () => {
-          sending.current = false;
-        },
+    // 옮긴 목록이 다시 오면 이 줄(과 대화상자)이 먼저 사라진다 — 언마운트된 컴포넌트에는 mutate 의 콜백이 불리지 않으므로
+    // mutateAsync 로 이어 초점을 직접 옮긴다. 실패면 누른 「옮기기」가 기다리는 동안 잠겨 초점이 body 로 떨어졌으니 그 버튼으로 되돌린다
+    move.mutateAsync({ id: project.id, runnerId: picked.id }).then(
+      () => {
+        sending.current = false;
+        moved.current = true;
+        setOpen(false);
+        requestAnimationFrame(() => afterMove()?.focus());
+      },
+      (err: unknown) => {
+        sending.current = false;
+        setError(moveError(err, agents));
+        requestAnimationFrame(() => submitButton.current?.focus());
       },
     );
   }
@@ -169,7 +172,7 @@ export function MoveProjectDialog({
             </Alert>
           )}
           <DialogFooter>
-            <Button type="submit" disabled={!picked || move.isPending}>
+            <Button ref={submitButton} type="submit" disabled={!picked || move.isPending}>
               {move.isPending ? "옮기는 중…" : "옮기기"}
             </Button>
           </DialogFooter>

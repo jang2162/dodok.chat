@@ -238,15 +238,19 @@ function ArchiveProjectButton({
   function confirm() {
     if (sending.current) return;
     sending.current = true;
-    archive.mutate(project.id, {
-      onSuccess: () => {
+    // 보관을 받은 목록이 다시 오면 이 줄(과 확인 대화상자)이 먼저 사라진다 — 언마운트된 컴포넌트에는 mutate 의 콜백이 불리지 않아
+    // 대화상자의 초점 되돌리기도 돌지 않으므로, mutateAsync 로 이어 초점을 직접 옮긴다(실패는 전역 토스트)
+    archive.mutateAsync(project.id).then(
+      () => {
+        sending.current = false;
         returnFocus.current = afterArchive();
         setOpen(false);
+        requestAnimationFrame(() => afterArchive()?.focus());
       },
-      onSettled: () => {
+      () => {
         sending.current = false;
       },
-    });
+    );
   }
 
   return (
