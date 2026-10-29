@@ -5,13 +5,12 @@ import { qk } from "@/api/queries";
 
 /**
  * 「러너」 탭의 서버 상태(러너 일반화 스펙 7장, admin 이상) — 러너는 runner_tokens 행 하나다. 연결·hello 내용은 서버 메모리에만
- * 있어 끊긴 러너는 판본·루트·프로그램이 비어 온다. wire `adapter.status`(러너)가 오면 `qk.runnersAll` 이 낡는다(realtime/handlers)
+ * 있어 끊긴 러너는 판본·루트·프로그램이 비어 온다. wire `adapter.status`(러너)가 오면 러너 목록·프로젝트가 낡는다(realtime/handlers — 둘러보기는 빼고)
  */
-export const useRunners = ({ enabled = true }: { enabled?: boolean } = {}) =>
+export const useRunners = () =>
   useQuery({
     queryKey: qk.runners(),
     queryFn: async () => (await api<{ runners: RunnerSummary[] }>("GET", "/runners")).runners,
-    enabled,
   });
 
 /** 그 러너의 프로젝트 — 보관한 것도 함께 온다(더한 차례) */

@@ -1,4 +1,4 @@
-import type { Agent, DmAccess } from "@dodok/shared";
+import { type Agent, type DmAccess, RUNNER_PROGRAM_NAME } from "@dodok/shared";
 import { Link } from "@tanstack/react-router";
 import { MessageCircleIcon } from "lucide-react";
 import { type FormEvent, type Ref, useId, useRef, useState } from "react";
@@ -17,7 +17,7 @@ import { ConfirmDialog } from "@/features/settings/ConfirmDialog";
 import { josa } from "@/lib/josa";
 import { MoveGatewayDialog } from "./MoveGatewayDialog";
 import { useArchiveAgent, usePatchAgent } from "./mutations";
-import { PROGRAM_NAME, providerIdLabel } from "./providerLabels";
+import { providerIdLabel } from "./providerLabels";
 import { RunnerDefinitionForm } from "./RunnerAgentForm";
 
 const PROMPT_MAX = 20_000;
@@ -229,7 +229,7 @@ function ArchiveAgentButton({ agent, onArchived }: { agent: Agent; onArchived?: 
  * 탭에서 다른 러너로 옮긴다(러너 일반화 계획 판정 PR8)
  */
 function RunnerLine({ agent }: { agent: Agent }) {
-  const program = agent.program ? `${PROGRAM_NAME[agent.program]} · ` : "";
+  const program = agent.program ? `${RUNNER_PROGRAM_NAME[agent.program]} · ` : "";
   const runner = agent.runner;
   if (!runner) return <p className="text-xs text-muted-foreground">{program}맡을 러너가 없습니다</p>;
   if (!runner.revoked)
@@ -300,7 +300,8 @@ function RunnerDefinition({
     <div className="flex items-start justify-between gap-3">
       <p className="min-w-0 text-sm break-words text-muted-foreground">
         권한 <code className="font-mono text-xs">{definition.permissionMode}</code> · 모델{" "}
-        {definition.model ?? "기본"} · 허용 도구 {tools === null ? "없음" : tools.join(", ")}
+        {definition.model ?? "기본"} · 허용 도구{" "}
+        {tools === null || tools.length === 0 ? "없음" : tools.join(", ")}
       </p>
       <Button
         variant="outline"

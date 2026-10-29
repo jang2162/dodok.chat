@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -9,8 +9,9 @@ import {
   runnerOf,
   stubRunners,
 } from "../../../test/runnersServer";
-import { REL_PATH_RULE, TRUNCATED_NOTE } from "./AddProjectDialog";
-import { BROWSE_OFF, CHECK_REASON } from "./copy";
+import { qk } from "@/api/queries";
+import { BROWSE_RATE_LIMITED, REL_PATH_RULE, TRUNCATED_NOTE, UNUSABLE_NAME } from "./AddProjectDialog";
+import { BROWSE_OFF, CHECK_REASON, PROJECT_LABEL_RULE, RUNNER_OFFLINE, RUNNER_TIMEOUT } from "./copy";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -150,7 +151,7 @@ describe("프로젝트 추가 — 직접 입력·확인", () => {
     ]);
   });
 
-  it.each(["/Users/me/src", "../etc", "a//b", "a\\b", "./a"])(
+  it.each(["/Users/me/src", "/", "///", "../etc", "a//b", "a\\b", "./a"])(
     "루트 밖을 가리키는 꼴(%s)은 보내지 않는다",
     async (path) => {
       const server = stub();
@@ -186,5 +187,117 @@ describe("프로젝트 추가 — 직접 입력·확인", () => {
     await typePath(dialog, "x");
     await userEvent.click(within(dialog).getByRole("button", { name: "확인하고 추가" }));
     expect(await within(dialog).findByText(/같은 자리의 프로젝트가 이미 있거나/)).toBeInTheDocument();
+  });
+});
+
+describe("프로젝트 추가 — 둘러보기 경계", () => {
+  it("특수 문자가 든 디렉터리 이름은 쿼리에 인코딩해 싣는다", async () => {
+    const server = stub({
+      fs: (_id, _root, rel) =>
+        json(200, { entries: rel === "" ? [{ name: "a&b #50%+", isGitRepo: false }] : [], truncated: false }),
+    });
+    renderRunnersPage();
+    const dialog = await openAdd();
+    await userEvent.click(await within(dialog).findByRole("button", { name: /a&b #50%\+/ }));
+    await within(dialog).findByText("하위 디렉터리가 없습니다.");
+    expect(fsCalls(server).at(-1)?.url).toBe(
+      `/api/v1/runners/${runnerId(1)}/fs?rootId=src&relPath=a%26b%20%2350%25%2B`,
+    );
+  });
+
+  it("서버가 받지 않을 이름(\\ 가 든 것)은 잠그고 까닭을 보인다 — 눌러도 요청하지 않는다", async () => {
+    const server = stub({
+      fs: () =>
+        json(200, {
+          entries: [
+            { name: "a\\b", isGitRepo: false },
+            { name: "ok", isGitRepo: false },
+          ],
+          truncated: false,
+        }),
+    });
+    renderRunnersPage();
+    const dialog = await openAdd();
+    const bad = await within(dialog).findByRole("button", { name: /a\\b/ });
+    expect(bad).toBeDisabled();
+    expect(bad).toHaveTextContent(UNUSABLE_NAME);
+    expect(within(dialog).getByRole("button", { name: "ok" })).toBeEnabled();
+    await userEvent.click(bad);
+    expect(fsCalls(server)).toHaveLength(1);
+  });
+
+  it("429 는 「잠시 뒤 다시 시도하세요 — 둘러보기는 1분에 60번까지입니다」, 504 는 「러너가 제때 답하지 않았습니다」", async () => {
+    let reply = () => apiErr(429, "RATE_LIMITED", "too many");
+    stub({ fs: () => reply() });
+    renderRunnersPage();
+    const dialog = await openAdd();
+    expect(await within(dialog).findByText(BROWSE_RATE_LIMITED)).toBeInTheDocument();
+    reply = () => apiErr(504, "TIMEOUT", "runner timed out");
+    await userEvent.click(within(dialog).getByRole("button", { name: "다시 시도" }));
+    expect(await within(dialog).findByText(RUNNER_TIMEOUT)).toBeInTheDocument();
+    expect(dialog).not.toHaveTextContent("runner timed out");
+  });
+
+  it("닫았다 다시 열면 지난 목록을 버리고 새로 받는다 — 열린 동안 빵 부스러기로 돌아와도 다시 받지 않는다", async () => {
+    const server = stub({
+      fs: (_id, _root, rel) => json(200, { entries: TREE[rel] ?? [], truncated: false }),
+    });
+    renderRunnersPage();
+    let dialog = await openAdd();
+    await userEvent.click(await within(dialog).findByRole("button", { name: /dodok/ }));
+    await within(dialog).findByRole("button", { name: /apps/ });
+    await userEvent.click(
+      within(within(dialog).getByRole("navigation", { name: "경로" })).getByRole("button", {
+        name: "내 저장소들",
+      }),
+    );
+    await within(dialog).findByRole("button", { name: /notes/ });
+    expect(fsCalls(server)).toHaveLength(2);
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    dialog = await openAdd();
+    await within(dialog).findByRole("button", { name: /notes/ });
+    expect(fsCalls(server).map((c) => c.url.split("relPath=")[1])).toEqual(["", "dodok", ""]);
+  });
+});
+
+// 러너 일반화 태스크 5 리뷰 L1 — 열어 둔 사이 러너가 끊기면 대화상자가 머리만 남고 비었다
+describe("프로젝트 추가 — 열린 채 러너가 끊김", () => {
+  it.each(["둘러보기", "확인"])(
+    "%s 단계에서 끊기면 「러너가 연결되어 있지 않습니다 — …」, 다시 붙으면 돌아온다",
+    async (step) => {
+      const server = stub();
+      const qc = renderRunnersPage();
+      const dialog = await openAdd();
+      if (step === "확인") {
+        await userEvent.click(within(dialog).getByRole("button", { name: "직접 입력" }));
+        await userEvent.type(within(dialog).getByLabelText("루트 안의 경로"), "work");
+        await userEvent.click(within(dialog).getByRole("button", { name: "다음" }));
+        await within(dialog).findByRole("button", { name: "확인하고 추가" });
+      }
+      server.runners[0] = runnerOf(1, { connected: false });
+      await act(() => qc.invalidateQueries({ queryKey: qk.runners() }));
+      expect(await within(dialog).findByText(RUNNER_OFFLINE)).toBeInTheDocument();
+      expect(within(dialog).queryByRole("button", { name: "확인하고 추가" })).toBeNull();
+      server.runners[0] = runnerOf(1);
+      await act(() => qc.invalidateQueries({ queryKey: qk.runners() }));
+      await waitFor(() => expect(within(dialog).queryByText(RUNNER_OFFLINE)).toBeNull());
+      if (step === "확인") expect(dialog).toHaveTextContent("내 저장소들/work");
+    },
+  );
+});
+
+describe("프로젝트 추가 — 이름 거절", () => {
+  it("서버가 이름을 거절하면(400 field: label) 이름 규칙 문구 — 경로 문구가 아니다", async () => {
+    stub({ create: () => apiErr(400, "VALIDATION", "label too long", { field: "label" }) });
+    renderRunnersPage();
+    const dialog = await openAdd();
+    await userEvent.click(within(dialog).getByRole("button", { name: "직접 입력" }));
+    await userEvent.type(within(dialog).getByLabelText("루트 안의 경로"), "x");
+    await userEvent.click(within(dialog).getByRole("button", { name: "다음" }));
+    await userEvent.type(within(dialog).getByLabelText("이름"), "이름");
+    await userEvent.click(within(dialog).getByRole("button", { name: "확인하고 추가" }));
+    expect(await within(dialog).findByText(PROJECT_LABEL_RULE)).toBeInTheDocument();
+    expect(dialog).not.toHaveTextContent(REL_PATH_RULE);
   });
 });

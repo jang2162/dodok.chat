@@ -64,12 +64,16 @@ function putAgent(qc: QueryClient, agent: Agent) {
   });
 }
 
-/** 러너 에이전트를 만들면 그 프로젝트의 에이전트 수가 바뀐다 — 「러너」 탭의 프로젝트 목록을 낡게 한다 */
-export function useCreateAgent() {
+/**
+ * 러너 에이전트를 만들면 그 프로젝트의 에이전트 수가 바뀐다 — 「러너」 탭의 프로젝트 목록을 낡게 한다. `silent` 면 전역 토스트를 끈다 —
+ * 실패를 모두 폼 안에 그리는 곳(러너 에이전트 만들기)이 쓴다
+ */
+export function useCreateAgent({ silent = false }: { silent?: boolean } = {}) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: CreateAgentInput) =>
       (await api<{ agent: Agent }>("POST", "/agents", input)).agent,
+    meta: { silent },
     onSuccess: (agent) => {
       putAgent(qc, agent);
       if (agent.provider === "runner") void qc.invalidateQueries({ queryKey: qk.runnerProjectsAll });

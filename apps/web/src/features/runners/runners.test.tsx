@@ -239,3 +239,40 @@ describe("다른 러너로 옮기기", () => {
     expect(server.calls.find((c) => c.url.endsWith("/move"))?.body).toEqual({ runnerId: runnerId(2) });
   });
 });
+
+// 러너 일반화 태스크 5 리뷰 M2 — 끊긴·폐기한 러너 카드의 「프로젝트 추가」는 잠겨 있어 focus() 가 아무것도 하지 않았다(초점이 body)
+describe("줄이 빠진 뒤 초점 — 「프로젝트 추가」가 잠긴 카드", () => {
+  it("폐기한 러너에서 옮기면 초점은 그 카드 머리", async () => {
+    stub({
+      runners: [
+        runnerOf(1, { label: "옛것", connected: false, revoked: true }),
+        runnerOf(2, { label: "새것" }),
+      ],
+      projects: [projectOf(1, { label: "dodok" })],
+    });
+    renderRunnersPage();
+    const old = await card("옛것");
+    const row = await within(old).findByRole("listitem", { name: "dodok" });
+    await userEvent.click(within(row).getByRole("button", { name: "dodok 옮기기" }));
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.click(within(dialog).getByRole("radio", { name: "새것" }));
+    await userEvent.click(within(dialog).getByRole("button", { name: "옮기기" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(within(old).getByRole("button", { name: "프로젝트 추가" })).toBeDisabled();
+    await waitFor(() => expect(within(old).getByRole("heading", { name: "옛것" })).toHaveFocus());
+  });
+
+  it("끊긴 러너에서 보관하면 초점은 그 카드 머리", async () => {
+    stub({
+      runners: [runnerOf(1, { label: "집", connected: false })],
+      projects: [projectOf(1, { label: "dodok" })],
+    });
+    renderRunnersPage();
+    const home = await card("집");
+    const row = await within(home).findByRole("listitem", { name: "dodok" });
+    await userEvent.click(within(row).getByRole("button", { name: "dodok 보관" }));
+    await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "보관" }));
+    await waitFor(() => expect(within(home).queryByRole("listitem", { name: "dodok" })).toBeNull());
+    await waitFor(() => expect(within(home).getByRole("heading", { name: "집" })).toHaveFocus());
+  });
+});

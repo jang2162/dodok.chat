@@ -1,5 +1,5 @@
 import type { Agent, RunnerProject, RunnerSummary } from "@dodok/shared";
-import { type FormEvent, type RefObject, useId, useRef, useState } from "react";
+import { type FormEvent, useId, useRef, useState } from "react";
 import { ApiRequestError } from "@/api/http";
 import { useAgents } from "@/api/queries";
 import { Alert, AlertDescription } from "@/ui/alert";
@@ -53,7 +53,7 @@ function moveError(e: unknown, agents: readonly Agent[] | undefined): string {
 /**
  * 「다른 러너로 옮기기」(러너 일반화 계획 판정 PR8) — 프로젝트와 그 에이전트(보관한 것도)가 함께 가고, 러너 세션은 새로 열린다(세션
  * 전사는 옛 머신에 있다). 옮길 러너는 폐기하지 않은 다른 러너 가운데 붙어 있는 것만 고른다 — 서버가 그 러너에 같은 자리를 확인한다.
- * 옮기면 이 줄이 카드에서 빠지므로 초점을 `afterMove` 로 옮긴다
+ * 옮기면 이 줄이 카드에서 빠지므로 초점을 `afterMove()` 로 옮긴다
  */
 export function MoveProjectDialog({
   project,
@@ -64,7 +64,7 @@ export function MoveProjectDialog({
   project: RunnerProject;
   runner: RunnerSummary;
   runners: readonly RunnerSummary[];
-  afterMove: RefObject<HTMLButtonElement | null>;
+  afterMove: () => HTMLElement | null;
 }) {
   const move = useMoveRunnerProject();
   const agents = useAgents().data;
@@ -124,7 +124,7 @@ export function MoveProjectDialog({
         closeDisabled={move.isPending}
         onCloseAutoFocus={(e) => {
           e.preventDefault();
-          (moved.current ? afterMove.current : trigger.current)?.focus();
+          (moved.current ? afterMove() : trigger.current)?.focus();
         }}
       >
         <form onSubmit={submit} className="grid gap-4">

@@ -1014,7 +1014,7 @@ describe("캐시 패치", () => {
     expect(queryClient.getQueryData(qk.adapter)).toEqual(cached);
   });
 
-  it("adapter.status(runner): 「러너」 탭의 러너·프로젝트·둘러보기를 낡게 한다 — 붙고 끊길 때마다 온다. OpenClaw 것은 아니다", () => {
+  it("adapter.status(runner): 「러너」 탭의 러너·프로젝트를 낡게 한다 — 붙고 끊길 때마다 온다. 둘러보기(분당 60번)·OpenClaw 것은 아니다", () => {
     const { fake, queryClient } = setup();
     queryClient.setQueryData(qk.runners(), []);
     queryClient.setQueryData(qk.runnerProjects("r1"), []);
@@ -1025,7 +1025,7 @@ describe("캐시 패치", () => {
     fake.serverEmit("adapter.status", { provider: "runner", runners: { connected: 1, tokens: 1 } });
     expect(queryClient.getQueryState(qk.runners())?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(qk.runnerProjects("r1"))?.isInvalidated).toBe(true);
-    expect(queryClient.getQueryState(qk.runnerFs("r1", "src", ""))?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(qk.runnerFs("r1", "src", ""))?.isInvalidated).toBe(false);
     expect(queryClient.getQueryState(qk.discoverOf("openclaw"))?.isInvalidated).toBe(false);
   });
 

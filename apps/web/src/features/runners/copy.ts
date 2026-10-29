@@ -23,13 +23,17 @@ export function checkText(result: RunnerProjectCheck): string {
   return result.isGitRepo ? "확인됨 · git 저장소" : "확인됨";
 }
 
+/** 러너가 끊김(503 ADAPTER_UNAVAILABLE, 또는 열린 대화상자의 러너가 끊김) */
+export const RUNNER_OFFLINE = "러너가 연결되어 있지 않습니다 — 러너를 띄운 뒤 다시 시도하세요";
+/** 러너가 제때 답하지 않음(504 TIMEOUT) */
+export const RUNNER_TIMEOUT = "러너가 제때 답하지 않았습니다 — 다시 시도하세요";
+
 /** 러너에 묻는 요청(둘러보기·확인·더하기·옮기기)의 실패 — 끊김·제한시간·네트워크. 그 밖은 undefined(부르는 쪽이 가른다) */
 export function runnerRequestError(e: unknown): string | undefined {
   if (e instanceof NetworkError) return "서버에 연결할 수 없습니다";
   if (!(e instanceof ApiRequestError)) return undefined;
-  if (e.code === "ADAPTER_UNAVAILABLE")
-    return "러너가 연결되어 있지 않습니다 — 러너를 띄운 뒤 다시 시도하세요";
-  if (e.code === "TIMEOUT") return "러너가 제때 답하지 않았습니다 — 다시 시도하세요";
+  if (e.code === "ADAPTER_UNAVAILABLE") return RUNNER_OFFLINE;
+  if (e.code === "TIMEOUT") return RUNNER_TIMEOUT;
   return undefined;
 }
 

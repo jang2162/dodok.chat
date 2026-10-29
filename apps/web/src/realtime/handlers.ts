@@ -310,8 +310,10 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
       } else if (status.provider === "runner") {
         qc.setQueryData(qk.runnerAdapter, status.runners);
         // 러너가 붙거나 떨어질 때마다 온다(어댑터의 announce) — 「러너」 탭·러너 에이전트 만들기가 보는 연결·루트·프로그램이 그때
-        // 바뀐다. 그 화면이 admin 이상 몫이라도 이 이벤트는 모두에게 온다(setup.status 는 owner 에게만) — 붙은 수만 싣고 내용은 없다
-        void qc.invalidateQueries({ queryKey: qk.runnersAll });
+        // 바뀐다. 그 화면이 admin 이상 몫이라도 이 이벤트는 모두에게 온다(setup.status 는 owner 에게만) — 붙은 수만 싣고 내용은 없다.
+        // 둘러보기는 낡게 하지 않는다 — 열린 목록을 다시 받으면 분당 60번 상한을 쓴다(「프로젝트 추가」를 열 때 버리고 새로 받는다)
+        void qc.invalidateQueries({ queryKey: qk.runners() });
+        void qc.invalidateQueries({ queryKey: qk.runnerProjectsAll });
       }
     },
     /**

@@ -86,11 +86,20 @@ function RunnerList() {
  */
 function RunnerCard({ runner, runners }: { runner: RunnerSummary; runners: readonly RunnerSummary[] }) {
   const addButton = useRef<HTMLButtonElement>(null);
+  const heading = useRef<HTMLHeadingElement>(null);
   const live = runner.connected && !runner.revoked;
+  // 보관·옮기기로 줄이 빠진 뒤의 초점 — 「프로젝트 추가」, 그것이 잠겨 있으면(끊김·폐기) 카드 머리. 잠긴 버튼의 focus() 는 아무것도
+  // 하지 않아 초점이 body 로 떨어진다
+  const afterRemove = () => {
+    const add = addButton.current;
+    return add && !add.disabled ? add : heading.current;
+  };
   return (
     <article aria-label={runner.label} className="flex flex-col gap-3 rounded-lg border p-4">
       <div className="flex flex-wrap items-center gap-2">
-        <h2 className="font-medium break-all">{runner.label}</h2>
+        <h2 ref={heading} tabIndex={-1} className="font-medium break-all outline-none">
+          {runner.label}
+        </h2>
         {runner.revoked ? (
           <Badge variant="outline">폐기됨</Badge>
         ) : runner.connected ? (
@@ -110,7 +119,7 @@ function RunnerCard({ runner, runners }: { runner: RunnerSummary; runners: reado
           <h3 className="text-sm font-medium">프로젝트</h3>
           <AddProjectDialog runner={runner} triggerRef={addButton} />
         </div>
-        <ProjectList runner={runner} runners={runners} afterRemove={addButton} />
+        <ProjectList runner={runner} runners={runners} afterRemove={afterRemove} />
       </div>
     </article>
   );

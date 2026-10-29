@@ -1,4 +1,4 @@
-import type { Agent, Channel } from "@dodok/shared";
+import { type Agent, type Channel, RUNNER_PROGRAM_NAME } from "@dodok/shared";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link, useMatchRoute } from "@tanstack/react-router";
 import { ActivityIcon, ListIcon, NotebookPenIcon, SquarePenIcon } from "lucide-react";
@@ -6,7 +6,7 @@ import { type FormEvent, type RefObject, useId, useState } from "react";
 import { ApiRequestError } from "@/api/http";
 import { useAgents } from "@/api/queries";
 import { OpenSidebarButton } from "@/app/layout/sidebarSheet";
-import { PROGRAM_NAME, providerName } from "@/features/agents/providerLabels";
+import { providerName } from "@/features/agents/providerLabels";
 import { CloseConversationButton, ConversationTitle } from "@/features/conversations/ConversationTitle";
 import { NEW_CONVERSATION } from "@/features/messages/timeline";
 import { usePatchChannel } from "@/features/settings/mutations";
@@ -35,7 +35,11 @@ export const DM_INSTRUCTION_LABEL = "이 DM 의 지시";
  */
 export function dmProviderLine(agent: Agent): string {
   if (agent.provider !== "runner") return providerName(agent.provider);
-  return [providerName(agent.provider), agent.program && PROGRAM_NAME[agent.program], agent.runner?.label]
+  return [
+    providerName(agent.provider),
+    agent.program && RUNNER_PROGRAM_NAME[agent.program],
+    agent.runner?.label,
+  ]
     .filter(Boolean)
     .join(" · ");
 }

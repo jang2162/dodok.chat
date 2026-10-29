@@ -5,15 +5,11 @@ import type { ReactNode } from "react";
 import { useRef } from "react";
 import { ApiRequestError } from "@/api/http";
 import { Button } from "@/ui/button";
-import {
-  IssueRunnerTokenDialog,
-  RUNNER_CLAUDE_DIR,
-  RUNNER_CONFIG_PATH,
-  runnerConfigExample,
-} from "./IssueRunnerTokenDialog";
+import { IssueRunnerTokenDialog } from "./IssueRunnerTokenDialog";
 import { publicOriginOf } from "./llms";
 import { useDownloadRunner } from "./mutations";
 import { useRunnerTokens } from "./queries";
+import { RUNNER_CLAUDE_DIR, RUNNER_CONFIG_PATH, runnerConfigExample } from "./runnerConfig";
 import { RunnerTokenList } from "./RunnerTokenList";
 import { CopyBlock, Section } from "./sections";
 

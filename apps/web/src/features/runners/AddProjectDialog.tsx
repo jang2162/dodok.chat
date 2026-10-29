@@ -20,7 +20,14 @@ import { FieldError } from "@/ui/field-error";
 import { Input } from "@/ui/input";
 import { Label } from "@/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/ui/radio-group";
-import { BROWSE_OFF, CHECK_REASON, PROJECT_LABEL_MAX, PROJECT_LABEL_RULE, runnerRequestError } from "./copy";
+import {
+  BROWSE_OFF,
+  CHECK_REASON,
+  PROJECT_LABEL_MAX,
+  PROJECT_LABEL_RULE,
+  RUNNER_OFFLINE,
+  runnerRequestError,
+} from "./copy";
 import { useCreateRunnerProject } from "./mutations";
 import { useRunnerFs } from "./queries";
 
@@ -28,6 +35,12 @@ import { useRunnerFs } from "./queries";
 export const TRUNCATED_NOTE = "500개까지만 보입니다 — 찾는 디렉터리가 없으면 경로를 직접 입력하세요";
 /** 직접 입력한 경로가 shared `RunnerRelPath` 밖 */
 export const REL_PATH_RULE = "루트 안의 상대 경로로 적으세요 — 앞의 /, .., \\ 없이 / 로 나눕니다";
+/** 둘러보기 429 — 서버가 사용자당 분당 60번으로 막는다(`LIMITS.runnerBrowsePerMin`) */
+export const BROWSE_RATE_LIMITED = "잠시 뒤 다시 시도하세요 — 둘러보기는 1분에 60번까지입니다";
+/** 둘러보기 줄의 이름이 `RunnerRelPath` 를 못 지난다(\·NUL 이 든 이름 — macOS·Linux 에서는 쓸 수 있다) */
+export const UNUSABLE_NAME = "고를 수 없는 이름입니다(\\ 등이 들어 있음) — 디렉터리 이름을 바꾸세요";
+/** 열린 대화상자의 러너가 붙어 있지만 루트를 하나도 알리지 않는다 */
+const NO_ROOTS = "러너가 알린 루트가 없습니다 — 러너 머신의 설정에서 루트를 확인하세요";
 
 /** 고른 자리 — `git` 은 둘러보기에서 고른 디렉터리만 안다(직접 입력·루트 자신은 모른다) */
 type Picked = { rootId: string; relPath: string; git?: boolean };
@@ -105,86 +118,92 @@ export function AddProjectDialog({
             디렉터리로 씁니다.
           </DialogDescription>
         </DialogHeader>
-        {root &&
-          (picked ? (
-            <ConfirmStep
-              picked={picked}
-              rootLabel={root.label}
-              pending={create.isPending}
-              error={create.isError ? createError(create.error) : undefined}
-              onBack={() => {
-                create.reset();
-                setPicked(undefined);
-              }}
-              onSubmit={(label) =>
-                create.mutate(
-                  { rootId: picked.rootId, relPath: picked.relPath, ...(label ? { label } : {}) },
-                  { onSuccess: () => setOpen(false) },
-                )
-              }
-            />
-          ) : (
-            <div className="flex min-w-0 flex-col gap-4">
-              {runner.roots.length > 1 && (
-                <fieldset className="grid gap-2">
-                  <legend className="mb-1 text-sm font-medium">루트</legend>
-                  <RadioGroup value={root.id} onValueChange={setRootId} className="flex flex-wrap gap-4">
-                    {runner.roots.map((r) => (
-                      <div key={r.id} className="flex items-center gap-2">
-                        <RadioGroupItem id={`${rootFieldId}-${r.id}`} value={r.id} />
-                        <Label htmlFor={`${rootFieldId}-${r.id}`} className="font-normal">
-                          {r.label}
-                        </Label>
-                      </div>
-                    ))}
-                  </RadioGroup>
-                </fieldset>
-              )}
-              {browseOff ? (
-                <p role="note" className="text-sm text-muted-foreground">
-                  {BROWSE_OFF}
-                </p>
-              ) : (
-                <div className="flex gap-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={mode === "browse" ? "secondary" : "ghost"}
-                    aria-pressed={mode === "browse"}
-                    onClick={() => setMode("browse")}
-                  >
-                    둘러보기
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={mode === "type" ? "secondary" : "ghost"}
-                    aria-pressed={mode === "type"}
-                    onClick={() => setMode("type")}
-                  >
-                    직접 입력
-                  </Button>
-                </div>
-              )}
-              {typing ? (
-                <TypedPath
-                  key={root.id}
-                  rootLabel={root.label}
-                  onPick={(relPath) => setPicked({ rootId: root.id, relPath })}
-                />
-              ) : (
-                <DirectoryBrowser
-                  key={root.id}
-                  runnerId={runner.id}
-                  root={root}
-                  onDenied={() => setDenied(true)}
-                  onPick={(relPath, git) =>
-                    setPicked({ rootId: root.id, relPath, ...(git === undefined ? {} : { git }) })
-                  }
-                />
-              )}
-            </div>
-          ))}
+        {!runner.connected || runner.revoked ? (
+          // 열어 둔 사이에 러너가 끊겼다(둘러보기·확인 어느 단계든) — 다시 붙으면 고른 자리 그대로 돌아온다
+          <Alert variant="destructive">
+            <AlertDescription>{RUNNER_OFFLINE}</AlertDescription>
+          </Alert>
+        ) : !root ? (
+          <p className="text-sm text-muted-foreground">{NO_ROOTS}</p>
+        ) : picked ? (
+          <ConfirmStep
+            picked={picked}
+            rootLabel={root.label}
+            pending={create.isPending}
+            error={create.isError ? createError(create.error) : undefined}
+            onBack={() => {
+              create.reset();
+              setPicked(undefined);
+            }}
+            onSubmit={(label) =>
+              create.mutate(
+                { rootId: picked.rootId, relPath: picked.relPath, ...(label ? { label } : {}) },
+                { onSuccess: () => setOpen(false) },
+              )
+            }
+          />
+        ) : (
+          <div className="flex min-w-0 flex-col gap-4">
+            {runner.roots.length > 1 && (
+              <fieldset className="grid gap-2">
+                <legend className="mb-1 text-sm font-medium">루트</legend>
+                <RadioGroup value={root.id} onValueChange={setRootId} className="flex flex-wrap gap-4">
+                  {runner.roots.map((r) => (
+                    <div key={r.id} className="flex items-center gap-2">
+                      <RadioGroupItem id={`${rootFieldId}-${r.id}`} value={r.id} />
+                      <Label htmlFor={`${rootFieldId}-${r.id}`} className="font-normal">
+                        {r.label}
+                      </Label>
+                    </div>
+                  ))}
+                </RadioGroup>
+              </fieldset>
+            )}
+            {browseOff ? (
+              <p role="note" className="text-sm text-muted-foreground">
+                {BROWSE_OFF}
+              </p>
+            ) : (
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={mode === "browse" ? "secondary" : "ghost"}
+                  aria-pressed={mode === "browse"}
+                  onClick={() => setMode("browse")}
+                >
+                  둘러보기
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={mode === "type" ? "secondary" : "ghost"}
+                  aria-pressed={mode === "type"}
+                  onClick={() => setMode("type")}
+                >
+                  직접 입력
+                </Button>
+              </div>
+            )}
+            {typing ? (
+              <TypedPath
+                key={root.id}
+                rootLabel={root.label}
+                onPick={(relPath) => setPicked({ rootId: root.id, relPath })}
+              />
+            ) : (
+              <DirectoryBrowser
+                key={root.id}
+                runnerId={runner.id}
+                root={root}
+                onDenied={() => setDenied(true)}
+                onPick={(relPath, git) =>
+                  setPicked({ rootId: root.id, relPath, ...(git === undefined ? {} : { git }) })
+                }
+              />
+            )}
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );
@@ -201,8 +220,10 @@ function TypedPath({ rootLabel, onPick }: { rootLabel: string; onPick: (relPath:
 
   function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    const relPath = raw.trim().replace(/\/+$/, "");
-    if (!RunnerRelPath.safeParse(relPath).success) {
+    const trimmed = raw.trim();
+    // 앞 / 는 뒤 / 를 걷기 전에 본다 — 「/」·「///」 가 걷혀 루트 자신이 되지 않게
+    const relPath = trimmed.startsWith("/") ? trimmed : trimmed.replace(/\/+$/, "");
+    if (trimmed.startsWith("/") || !RunnerRelPath.safeParse(relPath).success) {
       setError(REL_PATH_RULE);
       return;
     }
@@ -242,7 +263,8 @@ function TypedPath({ rootLabel, onPick }: { rootLabel: string; onPick: (relPath:
 
 /**
  * 디렉터리 둘러보기 — 빵 부스러기로 위로, 줄을 눌러 아래로. git 저장소는 표시. 403 이면 둘러보기를 접고 직접 입력으로(`onDenied`),
- * 404·끊김은 이 칸 안에 문구와 「다시 시도」. 서버가 분당 60번으로 막으므로 한 번 받은 목록은 이 대화상자가 열린 동안 다시 받지 않는다
+ * 404·끊김·429 는 이 칸 안에 문구와 「다시 시도」. 서버가 분당 60번으로 막으므로 한 번 받은 목록은 이 대화상자가 열린 동안 다시 받지 않는다
+ * (wire 러너 상태도 둘러보기는 낡게 하지 않는다)
  */
 function DirectoryBrowser({
   runnerId,
@@ -276,35 +298,45 @@ function DirectoryBrowser({
         <p className="text-sm text-muted-foreground">하위 디렉터리가 없습니다.</p>
       ) : (
         <ul aria-label="하위 디렉터리" className="flex max-h-64 flex-col overflow-y-auto rounded-md border">
-          {fs.data.entries.map((entry) => (
-            <li key={entry.name}>
-              <button
-                type="button"
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm outline-none hover:bg-accent focus-visible:bg-accent"
-                onClick={() => setTrail([...trail, { name: entry.name, git: entry.isGitRepo }])}
-              >
-                <FolderIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
-                <span className="min-w-0 flex-1 truncate">{entry.name}</span>
-                {entry.isGitRepo && (
-                  <Badge variant="outline">
-                    <GitBranchIcon aria-hidden />
-                    git
-                  </Badge>
-                )}
-              </button>
-            </li>
-          ))}
+          {fs.data.entries.map((entry) => {
+            // 서버가 받지 않을 경로(\·NUL 이 든 이름)는 눌러 봐야 400 이 되풀이된다 — 잠그고 까닭을 보인다
+            const usable = RunnerRelPath.safeParse(
+              relPath === "" ? entry.name : `${relPath}/${entry.name}`,
+            ).success;
+            return (
+              <li key={entry.name}>
+                <button
+                  type="button"
+                  disabled={!usable}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm outline-none hover:bg-accent focus-visible:bg-accent disabled:text-muted-foreground disabled:hover:bg-transparent"
+                  onClick={() => setTrail([...trail, { name: entry.name, git: entry.isGitRepo }])}
+                >
+                  <FolderIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 flex-1 truncate">{entry.name}</span>
+                  {!usable && <span className="shrink-0 text-xs">{UNUSABLE_NAME}</span>}
+                  {entry.isGitRepo && (
+                    <Badge variant="outline">
+                      <GitBranchIcon aria-hidden />
+                      git
+                    </Badge>
+                  )}
+                </button>
+              </li>
+            );
+          })}
         </ul>
       );
   } else if (!forbidden) {
-    const notFound = fs.error instanceof ApiRequestError && fs.error.code === "NOT_FOUND";
+    const code = fs.error instanceof ApiRequestError ? fs.error.code : undefined;
     listing = (
       <div className="flex flex-col items-start gap-2">
         <Alert variant="destructive">
           <AlertDescription>
-            {notFound
+            {code === "NOT_FOUND"
               ? "디렉터리를 찾지 못했습니다 — 위로 올라가거나 경로를 직접 입력하세요"
-              : (runnerRequestError(fs.error) ?? "목록을 받지 못했습니다 — 다시 시도하세요")}
+              : code === "RATE_LIMITED"
+                ? BROWSE_RATE_LIMITED
+                : (runnerRequestError(fs.error) ?? "목록을 받지 못했습니다 — 다시 시도하세요")}
           </AlertDescription>
         </Alert>
         <Button type="button" size="sm" variant="outline" onClick={() => void fs.refetch()}>

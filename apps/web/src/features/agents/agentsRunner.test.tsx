@@ -203,6 +203,46 @@ describe("러너 에이전트 고치기 — 만들기와 같은 칸", () => {
   });
 });
 
+describe("러너 에이전트 고치기 — 기다림·빈 도구 [리뷰 L8]", () => {
+  it("러너 목록을 받는 동안은 「끊겨 있어 상한을 모릅니다」가 아니라 기다림 — 권한 모드는 잠긴다", async () => {
+    const handle = routes("default");
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    stubServer({
+      agents: [coder()],
+      runners: (method, url, body) =>
+        method === "GET" && url === "/api/v1/runners"
+          ? gate.then(() => handle(method, url, body) as Response)
+          : handle(method, url, body),
+    });
+    renderPage();
+    const row = await openEdit();
+    const mode = within(row).getByRole("combobox", { name: "권한 모드" });
+    expect(mode).toHaveAccessibleDescription("러너 상한을 불러오는 중…");
+    expect(mode).toBeDisabled();
+    expect(row).not.toHaveTextContent("러너가 끊겨 있어 상한을 모릅니다");
+    release();
+    await waitFor(() => expect(mode).toHaveAccessibleDescription(/러너 상한은 default/));
+    expect(mode).toBeEnabled();
+  });
+
+  it("allowedTools: [] 는 요약에 「없음」, 다른 칸만 바꾼 저장은 [] 를 null 로 바꾸지 않는다", async () => {
+    const server = stubServer({ agents: [coder({ allowedTools: [] })], runners: routes() });
+    renderPage();
+    const summary = (await screen.findByText("@coder")).closest("li") as HTMLElement;
+    expect(summary).toHaveTextContent("허용 도구 없음");
+    const row = await openEdit();
+    await waitFor(() => expect(modeOptions(row)).toHaveLength(4));
+    const model = within(row).getByLabelText("모델");
+    await userEvent.clear(model);
+    await userEvent.type(model, "opus");
+    await userEvent.click(within(row).getByRole("button", { name: "저장" }));
+    await waitFor(() => expect(server.bodies("PATCH")).toEqual([{ model: "opus" }]));
+  });
+});
+
 describe("보관한 러너 에이전트", () => {
   it("프로젝트가 없는 것(0031 이 보관)은 「되살리기」 대신 「프로젝트가 없어 되살릴 수 없습니다 — 새로 만드세요」", async () => {
     const orphan: Agent = { ...coder({ projectId: null }), archivedAt: ARCHIVED_AT };

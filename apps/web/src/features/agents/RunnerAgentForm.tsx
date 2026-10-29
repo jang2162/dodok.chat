@@ -14,7 +14,12 @@ import { type FormEvent, type ReactNode, useId, useMemo, useState } from "react"
 import { ApiRequestError } from "@/api/http";
 import { detailField, formError } from "@/api/formErrors";
 import { useIsOwner } from "@/api/queries";
-import { PERMISSION_MODE_LABEL, projectPlace, runnerRequestError } from "@/features/runners/copy";
+import {
+  PERMISSION_MODE_LABEL,
+  ROOT_MISSING,
+  projectPlace,
+  runnerRequestError,
+} from "@/features/runners/copy";
 import { useRunnerProjects, useRunners } from "@/features/runners/queries";
 import { Alert, AlertDescription } from "@/ui/alert";
 import { Button } from "@/ui/button";
@@ -33,8 +38,19 @@ const PROMPT_MAX = 20_000;
 
 /** 러너 천장에 걸린 칸(서버 400 `details.field` — program·permissionMode·allowedTools) */
 export const CEILING_REFUSED = "러너 설정이 허용하지 않습니다 — 러너 머신의 설정(상한)을 확인하세요";
-/** 고른 프로젝트가 보관됐거나 없다(서버 400 `details.field === "runnerProjectId"`) */
+/** 고른 프로젝트가 보관됐거나 없다(서버 400 `details.field === "runnerProjectId"`, 또는 고른 뒤 보관·옮기기) */
 export const PROJECT_GONE = "보관됐거나 없는 프로젝트입니다 — 다른 프로젝트를 고르세요";
+/** 고른 러너가 만드는 동안 끊겼다 — 다른 러너로 바꾸지 않고 만들기를 잠근다 */
+export const PICKED_RUNNER_OFFLINE = "고른 러너가 끊겼습니다 — 러너를 다시 띄우거나 다른 러너를 고르세요";
+/** 고른 러너의 토큰이 만드는 동안 폐기됐다 */
+export const PICKED_RUNNER_REVOKED = "고른 러너의 토큰이 폐기됐습니다 — 다른 러너를 고르세요";
+/** 고른 프로젝트의 루트를 붙은 러너가 알리지 않는다(머신 주인이 루트 id 를 바꾸거나 지움) */
+export const PICKED_PROJECT_ROOT_MISSING =
+  "러너가 이 프로젝트의 루트를 알리지 않습니다 — 다른 프로젝트를 고르세요";
+/** 고른 프로그램을 러너가 못 쓴다고 알렸다 */
+export const PICKED_PROGRAM_UNAVAILABLE = "고른 프로그램을 지금 쓸 수 없습니다 — 다른 프로그램을 고르세요";
+/** 만들기 실패 가운데 칸·충돌·러너 연결로 가르지 못한 것 — 전역 토스트를 끄므로 폼 아래 이 한 줄 */
+export const CREATE_FAILED = "에이전트를 만들지 못했습니다 — 다시 시도하세요";
 
 /** DM 허용 선택지 — 에이전트 줄의 `DmAccessField` 와 같은 글 */
 const DM_ACCESS_LABEL: Record<DmAccess, string> = { off: "끔", admins: "admin 이상", everyone: "모두" };
@@ -55,6 +71,21 @@ export function permissionOptions(
     return mode === current ? [{ mode, disabled: true }] : [];
   });
 }
+
+/**
+ * 상한 안으로 내린 권한 모드 — 상한 위면 상한 자신, 상한을 모르면 그대로. 선택지 밖 값을 상태로 두면 React 가 첫 option 을 고른 것처럼
+ * 보이고 그 option 은 다시 고를 수 없다(change 가 나지 않는다)
+ */
+export function fitPermissionMode(
+  mode: RunnerPermissionMode,
+  ceiling: RunnerPermissionMode | undefined,
+): RunnerPermissionMode {
+  return ceiling !== undefined && permissionModeRank(mode) > permissionModeRank(ceiling) ? ceiling : mode;
+}
+
+/** 저장된 허용 도구와 칸의 목록이 같은가 — `[]` 와 null 은 둘 다 「미리 허용한 도구 없음」이라 같게 본다 */
+const sameTools = (a: readonly string[] | null, b: readonly string[] | null) =>
+  JSON.stringify(a ?? []) === JSON.stringify(b ?? []);
 
 /** 허용 도구 칸의 글 → 목록. 쉼표·공백으로 나눈다. 비우면 null(미리 허용한 도구 없음 — 상한 안에서 프로그램 기본) */
 export function parseTools(text: string): string[] | null {
@@ -109,6 +140,7 @@ function DefinitionFields({
   draft,
   onChange,
   ceiling,
+  ceilingPending = false,
   current,
   errors,
   disabled,
@@ -117,6 +149,8 @@ function DefinitionFields({
   onChange: (patch: Partial<DefinitionDraft>) => void;
   /** 그 러너·그 프로그램의 천장 — 러너가 끊겼으면 undefined(모른다) */
   ceiling: RunnerProgramStatus["ceiling"] | undefined;
+  /** 러너 목록을 받는 중 — 상한을 아직 모른다(끊김이 아니다). 그동안 권한 모드는 잠근다 */
+  ceilingPending?: boolean;
   /** 고치기의 저장된 권한 모드 */
   current?: RunnerPermissionMode;
   errors: DefinitionErrors;
@@ -148,11 +182,13 @@ function DefinitionFields({
       <Row
         label="권한 모드"
         hint={
-          overCeiling
-            ? `지금 값이 러너 상한(${ceiling?.maxPermissionMode})보다 높습니다 — 낮추지 않으면 런이 거절됩니다`
-            : ceiling
-              ? `러너 상한은 ${ceiling.maxPermissionMode} 입니다 — 그 위는 고를 수 없습니다`
-              : "러너가 끊겨 있어 상한을 모릅니다 — 다음 런에서 러너가 다시 봅니다"
+          ceilingPending
+            ? "러너 상한을 불러오는 중…"
+            : overCeiling
+              ? `지금 값이 러너 상한(${ceiling?.maxPermissionMode})보다 높습니다 — 낮추지 않으면 런이 거절됩니다`
+              : ceiling
+                ? `러너 상한은 ${ceiling.maxPermissionMode} 입니다 — 그 위는 고를 수 없습니다`
+                : "러너가 끊겨 있어 상한을 모릅니다 — 다음 런에서 러너가 다시 봅니다"
         }
         error={errors.permissionMode}
       >
@@ -163,7 +199,7 @@ function DefinitionFields({
             value={draft.permissionMode}
             aria-invalid={errors.permissionMode !== undefined}
             aria-describedby={describedBy}
-            disabled={disabled}
+            disabled={disabled || ceilingPending}
             onChange={(e) => onChange({ permissionMode: e.target.value as RunnerPermissionMode })}
           >
             {options.map(({ mode, disabled: above }) => (
@@ -249,7 +285,9 @@ const firstLive = (runners: readonly RunnerSummary[]) => runners.find((r) => r.c
 /**
  * 러너 에이전트 만들기(러너 일반화 스펙 7장 — 에이전트 추가의 「러너」 갈래): 러너 → 프로젝트 → 프로그램 → 이름·핸들·모델·권한 모드·
  * 허용 도구·지시·DM 허용. 끊긴 러너는 고를 수 없다(프로그램 목록이 없다). 프로그램은 그 러너가 알린 것만, 못 쓰는 것은 흐리게 사유와
- * 함께. 권한 모드는 그 프로그램의 상한까지만 고른다. 서버 400 의 천장 칸은 그 칸 아래, 핸들 409 는 핸들 칸 아래, 그 밖은 폼 아래
+ * 함께. 권한 모드는 그 프로그램의 상한까지만 고른다. 서버 400 의 천장 칸은 그 칸 아래, 핸들 409 는 핸들 칸 아래, 그 밖은 폼 아래.
+ * 러너·프로젝트·프로그램은 처음 한 번만 첫 것을 고르고 그 뒤로는 고른 것을 쥔다 — 고른 것이 끊기거나 보관되거나 못 쓰게 되면 다른
+ * 것으로 바꾸지 않고 그 칸에 사유를 보이며 「만들기」를 잠근다(에이전트가 어느 머신에서 돌지가 모르는 사이에 바뀌지 않게)
  */
 export function RunnerAgentForm({
   takenHandles,
@@ -259,7 +297,7 @@ export function RunnerAgentForm({
   onCreated: () => void;
 }) {
   const runners = useRunners();
-  const create = useCreateAgent();
+  const create = useCreateAgent({ silent: true });
   const [runnerPick, setRunnerPick] = useState<string>();
   const [projectPick, setProjectPick] = useState<string>();
   const [programPick, setProgramPick] = useState<RunnerProgram>();
@@ -276,14 +314,44 @@ export function RunnerAgentForm({
   const ids = useId();
 
   const list = useMemo(() => (runners.data ?? []).filter((r) => !r.revoked), [runners.data]);
-  const runner =
-    list.find((r) => r.id === runnerPick && r.connected) ?? list.find((r) => r.id === firstLive(list));
+  // 처음 고르는 것만 렌더 중에 정한다(앞 렌더에서 온 정보로 상태 맞추기) — 한 번 정한 뒤로는 바꾸지 않는다
+  const firstRunner = runnerPick === undefined ? firstLive(list) : undefined;
+  if (firstRunner !== undefined) setRunnerPick(firstRunner);
+  const runner = list.find((r) => r.id === runnerPick);
+  const live = runner?.connected === true;
+  const runnerIssue =
+    runnerPick === undefined
+      ? undefined
+      : runner === undefined
+        ? PICKED_RUNNER_REVOKED
+        : live
+          ? undefined
+          : PICKED_RUNNER_OFFLINE;
   const projects = useRunnerProjects(runner?.id);
   const activeProjects = (projects.data ?? []).filter((p) => p.archivedAt === null);
-  const project = activeProjects.find((p) => p.id === projectPick) ?? activeProjects[0];
-  const usable = (runner?.programs ?? []).filter((p) => p.available);
-  const program = usable.find((p) => p.program === programPick) ?? usable[0];
+  // 붙은 러너가 그 루트를 알리지 않는 프로젝트 — 보이되 고를 수 없다(거기 만든 에이전트는 첫 런부터 천장 밖이다)
+  const rootMissing = (p: { rootLabel: string | null }) => live && p.rootLabel === null;
+  const selectable = activeProjects.filter((p) => !rootMissing(p));
+  const firstProject = projectPick === undefined && projects.data ? selectable[0]?.id : undefined;
+  if (firstProject !== undefined) setProjectPick(firstProject);
+  const project = selectable.find((p) => p.id === projectPick);
+  const projectIssue =
+    projectPick === undefined || project !== undefined || projects.data === undefined
+      ? undefined
+      : activeProjects.some((p) => p.id === projectPick)
+        ? PICKED_PROJECT_ROOT_MISSING
+        : PROJECT_GONE;
+  const usable = live ? runner.programs.filter((p) => p.available) : [];
+  const firstProgram = live && programPick === undefined ? usable[0]?.program : undefined;
+  if (firstProgram !== undefined) setProgramPick(firstProgram);
+  const program = usable.find((p) => p.program === programPick);
+  const programIssue =
+    live && programPick !== undefined && program === undefined ? PICKED_PROGRAM_UNAVAILABLE : undefined;
   const ceiling = program?.ceiling;
+  // 권한 모드는 늘 그 프로그램의 상한 안이다 — 처음 값 default 가 상한(plan·dontAsk) 위이거나, 러너·프로그램을 바꿔(또는 러너가
+  // 다시 붙어) 상한이 내려가면 상한으로 내린다
+  const fitted = fitPermissionMode(definition.permissionMode, ceiling?.maxPermissionMode);
+  if (fitted !== definition.permissionMode) setDefinition((d) => ({ ...d, permissionMode: fitted }));
   const currentName = name ?? handle;
   const clientErrors = definitionErrors(definition, ceiling);
   const pending = create.isPending;
@@ -303,6 +371,7 @@ export function RunnerAgentForm({
   };
   const ready =
     runner !== undefined &&
+    runnerIssue === undefined &&
     project !== undefined &&
     program !== undefined &&
     handle !== "" &&
@@ -337,8 +406,10 @@ export function RunnerAgentForm({
         if (field) return setServerError(field);
         if (err instanceof ApiRequestError && err.code === "CONFLICT")
           return setServerError({ field: "handle", message: HANDLE_TAKEN });
-        const message = runnerRequestError(err) ?? formError(err);
-        if (message !== undefined) setServerError({ field: "form", message });
+        setServerError({
+          field: "form",
+          message: runnerRequestError(err) ?? formError(err) ?? CREATE_FAILED,
+        });
       },
     });
   }
@@ -365,7 +436,7 @@ export function RunnerAgentForm({
       <fieldset className="grid gap-2" disabled={pending}>
         <legend className="mb-1 text-sm font-medium">러너</legend>
         <RadioGroup
-          value={runner?.id ?? ""}
+          value={runnerPick ?? ""}
           onValueChange={(v) => {
             clear();
             setRunnerPick(v);
@@ -376,7 +447,12 @@ export function RunnerAgentForm({
         >
           {list.map((r) => (
             <div key={r.id} className="flex items-center gap-2">
-              <RadioGroupItem id={`${ids}-runner-${r.id}`} value={r.id} disabled={!r.connected} />
+              <RadioGroupItem
+                id={`${ids}-runner-${r.id}`}
+                value={r.id}
+                disabled={!r.connected}
+                aria-describedby={r.id === runnerPick && runnerIssue ? `${ids}-runner-error` : undefined}
+              />
               <Label
                 htmlFor={`${ids}-runner-${r.id}`}
                 className={r.connected ? "font-normal" : "font-normal text-muted-foreground"}
@@ -387,20 +463,23 @@ export function RunnerAgentForm({
             </div>
           ))}
         </RadioGroup>
+        <FieldError id={`${ids}-runner-error`}>{runnerIssue}</FieldError>
       </fieldset>
-      {runner === undefined ? (
+      {runnerPick === undefined ? (
         <p className="text-sm text-muted-foreground">
           붙어 있는 러너가 없습니다 — 러너를 띄운 뒤 다시 여세요.
         </p>
-      ) : (
+      ) : runner === undefined ? null : (
         <>
           <Row
             label="프로젝트"
-            error={serverError?.field === "runnerProjectId" ? serverError.message : undefined}
+            error={
+              projectIssue ?? (serverError?.field === "runnerProjectId" ? serverError.message : undefined)
+            }
             hint={
-              activeProjects.length === 0 && !projects.isPending ? (
+              selectable.length === 0 && !projects.isPending ? (
                 <>
-                  이 러너에 프로젝트가 없습니다 —{" "}
+                  이 러너에 고를 수 있는 프로젝트가 없습니다 —{" "}
                   <Link to="/settings/runners" className="underline underline-offset-4">
                     러너 탭
                   </Link>
@@ -413,8 +492,8 @@ export function RunnerAgentForm({
               <select
                 id={id}
                 className={SELECT}
-                value={project?.id ?? ""}
-                aria-invalid={serverError?.field === "runnerProjectId"}
+                value={projectPick ?? ""}
+                aria-invalid={projectIssue !== undefined || serverError?.field === "runnerProjectId"}
                 aria-describedby={describedBy}
                 disabled={pending || activeProjects.length === 0}
                 onChange={(e) => {
@@ -422,9 +501,21 @@ export function RunnerAgentForm({
                   setProjectPick(e.target.value);
                 }}
               >
+                {projectPick === undefined && activeProjects.length > 0 && (
+                  <option value="" disabled>
+                    프로젝트 고르기
+                  </option>
+                )}
+                {projectPick !== undefined && !activeProjects.some((p) => p.id === projectPick) && (
+                  // 고른 뒤 보관·옮기기로 빠진 것 — 고를 수 없는 줄로 남겨 지금 상태가 보이게 한다
+                  <option value={projectPick} disabled>
+                    고른 프로젝트(보관됐거나 없음)
+                  </option>
+                )}
                 {activeProjects.map((p) => (
-                  <option key={p.id} value={p.id}>
+                  <option key={p.id} value={p.id} disabled={rootMissing(p)}>
                     {p.label} — {projectPlace(p)}
+                    {rootMissing(p) ? ` (${ROOT_MISSING})` : ""}
                   </option>
                 ))}
               </select>
@@ -432,11 +523,13 @@ export function RunnerAgentForm({
           </Row>
           <fieldset className="grid gap-2" disabled={pending}>
             <legend className="mb-1 text-sm font-medium">프로그램</legend>
-            {runner.programs.length === 0 ? (
+            {!live ? (
+              <p className="text-sm text-muted-foreground">러너가 끊겨 있어 프로그램을 모릅니다.</p>
+            ) : runner.programs.length === 0 ? (
               <p className="text-sm text-muted-foreground">이 러너에 켜진 프로그램이 없습니다.</p>
             ) : (
               <RadioGroup
-                value={program?.program ?? ""}
+                value={programPick ?? ""}
                 onValueChange={(v) => {
                   clear();
                   setProgramPick(v as RunnerProgram);
@@ -473,7 +566,7 @@ export function RunnerAgentForm({
               </RadioGroup>
             )}
             <FieldError id={`${ids}-program-error`}>
-              {serverError?.field === "program" ? serverError.message : undefined}
+              {programIssue ?? (serverError?.field === "program" ? serverError.message : undefined)}
             </FieldError>
           </fieldset>
           <div className="grid gap-3 sm:grid-cols-2">
@@ -581,6 +674,7 @@ export function RunnerDefinitionForm({
   const project = projects.data?.find((p) => p.id === definition.projectId);
   const program = agent.program ?? "claude";
   const ceiling = runner?.connected ? runner.programs.find((p) => p.program === program)?.ceiling : undefined;
+  const ceilingPending = tokenId !== undefined && runners.isPending;
   const [draft, setDraft] = useState<DefinitionDraft>({
     model: definition.model ?? "",
     permissionMode: definition.permissionMode,
@@ -589,7 +683,7 @@ export function RunnerDefinitionForm({
   const model = draft.model.trim() === "" ? null : draft.model.trim();
   const tools = parseTools(draft.tools);
   const permissionChanged = draft.permissionMode !== definition.permissionMode;
-  const toolsChanged = JSON.stringify(tools) !== JSON.stringify(definition.allowedTools);
+  const toolsChanged = !sameTools(tools, definition.allowedTools);
   // 상한이 낮아져 저장된 값이 상한 위인 것(Review Focus 3)은 고칠 거리일 뿐 다른 칸의 저장을 막지 않는다 — 서버도 바꾸는 칸만 본다
   const client = definitionErrors(draft, ceiling);
   const errors: DefinitionErrors = {
@@ -638,6 +732,7 @@ export function RunnerDefinitionForm({
         draft={draft}
         onChange={(patch) => setDraft((d) => ({ ...d, ...patch }))}
         ceiling={ceiling}
+        ceilingPending={ceilingPending}
         current={definition.permissionMode}
         errors={errors}
         disabled={pending}

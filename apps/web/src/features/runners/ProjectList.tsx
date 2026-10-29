@@ -1,6 +1,6 @@
 import type { RunnerProject, RunnerProjectCheck, RunnerSummary } from "@dodok/shared";
 import { ChevronRightIcon } from "lucide-react";
-import { type FormEvent, type RefObject, useId, useRef, useState } from "react";
+import { type FormEvent, useId, useRef, useState } from "react";
 import { ApiRequestError } from "@/api/http";
 import { ConfirmDialog } from "@/features/settings/ConfirmDialog";
 import { cn } from "@/lib/utils";
@@ -22,7 +22,7 @@ import { useRunnerProjects } from "./queries";
 
 /**
  * 러너 카드 안의 프로젝트 목록 — 보관하지 않은 것은 줄마다 라벨·자리·에이전트 수와 「확인」·이름 바꾸기·옮기기·보관, 보관한 것은 아래
- * 접힌 묶음에 이름만. 보관·옮기기로 줄이 빠지면 초점을 `afterRemove`(그 카드의 「프로젝트 추가」)로 옮긴다
+ * 접힌 묶음에 이름만. 보관·옮기기로 줄이 빠지면 초점을 `afterRemove()`(그 카드의 「프로젝트 추가」, 잠겼으면 카드 머리)로 옮긴다
  */
 export function ProjectList({
   runner,
@@ -31,7 +31,7 @@ export function ProjectList({
 }: {
   runner: RunnerSummary;
   runners: readonly RunnerSummary[];
-  afterRemove: RefObject<HTMLButtonElement | null>;
+  afterRemove: () => HTMLElement | null;
 }) {
   const projects = useRunnerProjects(runner.id);
   if (projects.isPending)
@@ -87,7 +87,7 @@ function ProjectRow({
   project: RunnerProject;
   runner: RunnerSummary;
   runners: readonly RunnerSummary[];
-  afterRemove: RefObject<HTMLButtonElement | null>;
+  afterRemove: () => HTMLElement | null;
 }) {
   const check = useCheckRunnerProject();
   const [result, setResult] = useState<{ ok: boolean; text: string }>();
@@ -226,13 +226,13 @@ function ArchiveProjectButton({
   afterArchive,
 }: {
   project: RunnerProject;
-  afterArchive: RefObject<HTMLButtonElement | null>;
+  afterArchive: () => HTMLElement | null;
 }) {
   const archive = useArchiveRunnerProject();
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const sending = useRef(false);
-  // 보관에 성공하면 줄과 이 버튼이 사라진다 — 초점은 카드의 「프로젝트 추가」로
+  // 보관에 성공하면 줄과 이 버튼이 사라진다 — 초점은 카드의 「프로젝트 추가」(잠겼으면 카드 머리)로
   const returnFocus = useRef<HTMLElement | null>(null);
 
   function confirm() {
@@ -240,7 +240,7 @@ function ArchiveProjectButton({
     sending.current = true;
     archive.mutate(project.id, {
       onSuccess: () => {
-        returnFocus.current = afterArchive.current;
+        returnFocus.current = afterArchive();
         setOpen(false);
       },
       onSettled: () => {

@@ -1,11 +1,19 @@
+import type { RunnerPermissionMode } from "@dodok/shared";
 import { createQueryClient } from "@/app/queryClient";
 import { qk } from "@/api/queries";
-import { screen, waitFor, within } from "@testing-library/react";
+import { RUNNER_OFFLINE } from "@/features/runners/copy";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { toast } from "sonner";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { json, openDiscover, renderPage, stubServer } from "../../../test/agentsPage";
-import { apiErr, programOf, projectOf, runnerOf, runnersRoutes } from "../../../test/runnersServer";
-import { CEILING_REFUSED } from "./RunnerAgentForm";
+import { apiErr, programOf, projectOf, runnerId, runnerOf, runnersRoutes } from "../../../test/runnersServer";
+import {
+  CEILING_REFUSED,
+  PICKED_PROGRAM_UNAVAILABLE,
+  PICKED_RUNNER_OFFLINE,
+  PROJECT_GONE,
+} from "./RunnerAgentForm";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -211,5 +219,197 @@ describe("에이전트 가져오기 — 러너 갈래", () => {
     expect(within(dialog).getByRole("radio", { name: "OpenClaw" })).toBeChecked();
     expect(qc.getQueryData(qk.agents)).toBeDefined();
     expect(qc.getQueryData(qk.runners())).toBeDefined();
+  });
+});
+
+/** 상한을 정한 Claude Code */
+const claudeUpTo = (max: RunnerPermissionMode) =>
+  programOf({ ceiling: { maxPermissionMode: max, allowedToolsCeiling: null } });
+
+const modeOf = (dialog: HTMLElement) =>
+  within(dialog).getByRole("combobox", { name: "권한 모드" }) as HTMLSelectElement;
+
+// 러너 일반화 태스크 5 리뷰 H1 — 처음 값 default 가 상한 밖이면 select 는 첫 option 을 보이는데 상태는 default 라 만들 수 없었다
+describe("러너 갈래 — 권한 모드는 늘 상한 안", () => {
+  it.each(["plan", "dontAsk"] as const)(
+    "상한이 %s 인 프로그램이면 처음 값이 상한 자신이고 바로 만들 수 있다",
+    async (max) => {
+      const server = stubServer({
+        runners: runnersRoutes({
+          runners: [runnerOf(1, { programs: [claudeUpTo(max)] })],
+          projects: [projectOf(1)],
+        }).handle,
+      });
+      renderPage();
+      const dialog = await openDiscover();
+      await pickRunner(dialog);
+      await within(dialog).findByRole("option", { name: /app1/ });
+      await userEvent.type(within(dialog).getByLabelText("핸들"), "coder");
+      const mode = modeOf(dialog);
+      expect(mode.value).toBe(max);
+      expect(mode).not.toHaveAttribute("aria-invalid", "true");
+      await userEvent.click(within(dialog).getByRole("button", { name: "만들기" }));
+      await waitFor(() => expect(server.bodies("POST")).toHaveLength(1));
+      expect(server.bodies("POST")[0]).toMatchObject({ permissionMode: max });
+    },
+  );
+
+  it("상한이 높은 러너에서 acceptEdits 를 고른 뒤 상한 default 러너로 바꾸면 default 가 된다", async () => {
+    const server = stubServer({
+      runners: runnersRoutes({
+        runners: [
+          runnerOf(1, { label: "A", programs: [claudeUpTo("acceptEdits")] }),
+          runnerOf(2, { label: "B", programs: [claudeUpTo("default")] }),
+        ],
+        projects: [
+          projectOf(1, { label: "pa", runnerId: runnerId(1) }),
+          projectOf(2, { label: "pb", runnerId: runnerId(2) }),
+        ],
+      }).handle,
+    });
+    renderPage();
+    const dialog = await openDiscover();
+    await pickRunner(dialog);
+    await within(dialog).findByRole("option", { name: /pa/ });
+    await userEvent.selectOptions(modeOf(dialog), "acceptEdits");
+    await userEvent.click(within(dialog).getByRole("radio", { name: "B" }));
+    await within(dialog).findByRole("option", { name: /pb/ });
+    await waitFor(() => expect(modeOf(dialog).value).toBe("default"));
+    await userEvent.type(within(dialog).getByLabelText("핸들"), "coder");
+    await userEvent.click(within(dialog).getByRole("button", { name: "만들기" }));
+    await waitFor(() => expect(server.bodies("POST")).toHaveLength(1));
+    expect(server.bodies("POST")[0]).toMatchObject({
+      permissionMode: "default",
+      runnerProjectId: projectOf(2).id,
+    });
+  });
+});
+
+// 러너 일반화 태스크 5 리뷰 M1 — 고른 러너가 끊기면 첫 붙은 러너로 조용히 바뀌어 거기에 만들었다
+describe("러너 갈래 — 고른 것을 쥔다", () => {
+  function twoRunners() {
+    const runners = [runnerOf(1, { label: "A" }), runnerOf(2, { label: "B" })];
+    const routes = runnersRoutes({
+      runners,
+      projects: [
+        projectOf(1, { label: "pa", runnerId: runnerId(1) }),
+        projectOf(2, { label: "pb", runnerId: runnerId(2) }),
+      ],
+    });
+    return { runners, routes };
+  }
+
+  it("고른 러너가 끊기면 다른 러너로 바꾸지 않는다 — 사유를 보이고 「만들기」를 잠근다, 다시 붙으면 풀린다", async () => {
+    const { runners, routes } = twoRunners();
+    const server = stubServer({ runners: routes.handle });
+    const qc = createQueryClient(() => {});
+    renderPage(qc);
+    const dialog = await openDiscover();
+    await pickRunner(dialog);
+    await userEvent.click(await within(dialog).findByRole("radio", { name: "B" }));
+    await within(dialog).findByRole("option", { name: /pb/ });
+    await userEvent.type(within(dialog).getByLabelText("핸들"), "coder");
+
+    runners[1] = runnerOf(2, { label: "B", connected: false });
+    await act(() => qc.invalidateQueries({ queryKey: qk.runners() }));
+    expect(await within(dialog).findByText(PICKED_RUNNER_OFFLINE)).toBeInTheDocument();
+    expect(within(dialog).getByRole("radio", { name: "B (끊김)" })).toBeChecked();
+    expect(within(dialog).getByRole("radio", { name: "A" })).not.toBeChecked();
+    const create = within(dialog).getByRole("button", { name: "만들기" });
+    expect(create).toBeDisabled();
+    await userEvent.click(create);
+    expect(server.bodies("POST")).toEqual([]);
+
+    runners[1] = runnerOf(2, { label: "B" });
+    await act(() => qc.invalidateQueries({ queryKey: qk.runners() }));
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "만들기" })).toBeEnabled());
+    await userEvent.click(within(dialog).getByRole("button", { name: "만들기" }));
+    await waitFor(() => expect(server.bodies("POST")).toHaveLength(1));
+    expect(server.bodies("POST")[0]).toMatchObject({ runnerProjectId: projectOf(2).id });
+  });
+
+  it("고른 프로젝트가 보관되면 첫 프로젝트로 바꾸지 않는다 — 「보관됐거나 없는 프로젝트」, 만들기 잠김", async () => {
+    const routes = runnersRoutes({
+      projects: [projectOf(1, { label: "pa" }), projectOf(2, { label: "pb" })],
+    });
+    const server = stubServer({ runners: routes.handle });
+    const qc = createQueryClient(() => {});
+    renderPage(qc);
+    const dialog = await openDiscover();
+    await pickRunner(dialog);
+    const select = await within(dialog).findByRole("combobox", { name: "프로젝트" });
+    await within(dialog).findByRole("option", { name: /pb/ });
+    await userEvent.selectOptions(select, projectOf(2).id);
+    await userEvent.type(within(dialog).getByLabelText("핸들"), "coder");
+
+    routes.projects[1] = projectOf(2, { label: "pb", archivedAt: "2026-10-29T00:00:00.000Z" });
+    await act(() => qc.invalidateQueries({ queryKey: qk.runnerProjectsAll }));
+    await waitFor(() => expect(select).toHaveAccessibleDescription(PROJECT_GONE));
+    expect((select as HTMLSelectElement).value).toBe(projectOf(2).id);
+    expect(within(dialog).getByRole("button", { name: "만들기" })).toBeDisabled();
+    await userEvent.selectOptions(select, projectOf(1).id);
+    expect(within(dialog).getByRole("button", { name: "만들기" })).toBeEnabled();
+    expect(server.bodies("POST")).toEqual([]);
+  });
+
+  it("고른 프로그램을 러너가 못 쓴다고 알리면 그 칸에 사유, 만들기 잠김", async () => {
+    const runners = [
+      runnerOf(1, { programs: [programOf(), programOf({ program: "codex", version: "0.1.0" })] }),
+    ];
+    const routes = runnersRoutes({ runners, projects: [projectOf(1)] });
+    stubServer({ runners: routes.handle });
+    const qc = createQueryClient(() => {});
+    renderPage(qc);
+    const dialog = await openDiscover();
+    await pickRunner(dialog);
+    await within(dialog).findByRole("option", { name: /app1/ });
+    await userEvent.click(within(dialog).getByRole("radio", { name: /Codex/ }));
+    await userEvent.type(within(dialog).getByLabelText("핸들"), "coder");
+
+    runners[0] = runnerOf(1, {
+      programs: [programOf(), programOf({ program: "codex", available: false, reason: "로그인 안 됨" })],
+    });
+    await act(() => qc.invalidateQueries({ queryKey: qk.runners() }));
+    expect(await within(dialog).findByText(PICKED_PROGRAM_UNAVAILABLE)).toBeInTheDocument();
+    expect(within(dialog).getByRole("radio", { name: /Claude Code/ })).not.toBeChecked();
+    expect(within(dialog).getByRole("button", { name: "만들기" })).toBeDisabled();
+  });
+});
+
+describe("러너 갈래 — 루트 없는 프로젝트·실패 문구", () => {
+  it("붙은 러너가 루트를 알리지 않는 프로젝트는 「(루트 없음)」으로 보이되 고를 수 없다 — 처음 값은 고를 수 있는 것", async () => {
+    stubServer({
+      runners: runnersRoutes({
+        projects: [
+          projectOf(1, { label: "gone", rootId: "old", rootLabel: null }),
+          projectOf(2, { label: "ok" }),
+        ],
+      }).handle,
+    });
+    renderPage();
+    const dialog = await openDiscover();
+    await pickRunner(dialog);
+    const select = (await within(dialog).findByRole("combobox", { name: "프로젝트" })) as HTMLSelectElement;
+    const gone = await within(dialog).findByRole("option", { name: /gone/ });
+    expect(gone).toHaveTextContent("gone — old/app1 (루트 없음)");
+    expect(gone).toBeDisabled();
+    await waitFor(() => expect(select.value).toBe(projectOf(2).id));
+  });
+
+  it("러너가 끊겨 만들지 못하면(503) 폼 아래 한 번만 — 전역 토스트는 뜨지 않는다", async () => {
+    const toastError = vi.spyOn(toast, "error");
+    stubServer({
+      runners: runnersRoutes({ projects: [projectOf(1)] }).handle,
+      create: () => apiErr(503, "ADAPTER_UNAVAILABLE", "runner is not connected"),
+    });
+    renderPage();
+    const dialog = await openDiscover();
+    await pickRunner(dialog);
+    await within(dialog).findByRole("option", { name: /app1/ });
+    await userEvent.type(within(dialog).getByLabelText("핸들"), "coder");
+    await userEvent.click(within(dialog).getByRole("button", { name: "만들기" }));
+    expect(await within(dialog).findByText(RUNNER_OFFLINE)).toBeInTheDocument();
+    expect(within(dialog).getAllByText(RUNNER_OFFLINE)).toHaveLength(1);
+    expect(toastError).not.toHaveBeenCalled();
   });
 });

@@ -161,10 +161,10 @@ export const qk = {
    */
   personalTokens: ["personalTokens"] as const,
   /**
-   * 「러너」 탭(admin 이상, 러너 일반화 스펙 7장) — 러너 목록·러너마다 프로젝트·둘러보기. `runnersAll` 앞머리 하나로 wire 러너 상태가
-   * 바뀔 때 함께 낡게 한다(루트 라벨·프로그램은 연결에 달려 있다). 오프라인 사본에 담지 않는다(pwa/persist 의 허용 목록 밖)
+   * 「러너」 탭(admin 이상, 러너 일반화 스펙 7장) — 러너 목록·러너마다 프로젝트·둘러보기. wire 러너 상태가 바뀌면 목록·프로젝트를
+   * 낡게 한다(루트 라벨·프로그램은 연결에 달려 있다) — 둘러보기는 빼고(분당 60번 상한). 오프라인 사본에 담지 않는다(pwa/persist 의 허용
+   * 목록 밖)
    */
-  runnersAll: ["runners"] as const,
   runners: () => ["runners", "list"] as const,
   /** 모든 러너의 프로젝트 목록(무효화용 앞머리) — 에이전트 수가 에이전트 변화를 따른다 */
   runnerProjectsAll: ["runners", "projects"] as const,
