@@ -18,6 +18,7 @@ import {
   tokenOf,
 } from "../../../test/setupServer";
 import { ME } from "../../../test/shellApi";
+import { llmsHandoffLine } from "./llms";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -209,6 +210,10 @@ describe("러너 토큰 다시 발급", () => {
     expect(await within(dialog).findByText(RAW_REISSUED_TOKEN)).toBeInTheDocument();
     expect(dialog).toHaveTextContent("「맥북」 토큰을 다시 발급했습니다");
     expect(dialog).toHaveTextContent("~/.dodok-runner/token");
+    // 「AI 에게 맡기기」는 설치가 아니라 토큰 교체·다시 띄우기(태스크 5 리뷰 L10)
+    expect(within(dialog).getByTestId("llms-handoff")).toHaveTextContent(
+      llmsHandoffLine("runner-reissue", RUNNER_SERVER_URL, RAW_REISSUED_TOKEN),
+    );
     expect(cacheDump(qc)).not.toContain(RAW_REISSUED_TOKEN);
     // 원문이 보이는 동안은 Esc 로 닫히지 않는다
     await userEvent.keyboard("{Escape}");

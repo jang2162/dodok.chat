@@ -3,12 +3,22 @@
  * 대화상자」 절). 절 이름은 서버 템플릿(`apps/server/src/modules/setup/llms.ts`)의 절 제목과 같아야 AI 가 찾는다 — 서버
  * `test/setup.llms.test.ts` 가 이 함수를 불러 대조한다
  */
-const SECTION = { bridge: "OpenClaw Gateway 호스트", runner: "Claude 러너 머신" } as const;
+const SECTION = { bridge: "OpenClaw Gateway 호스트", runner: "러너 머신" } as const;
 
-export function llmsHandoffLine(kind: "bridge" | "runner", origin: string, token: string): string {
-  return kind === "bridge"
-    ? `${origin}/llms.txt 를 읽고 「${SECTION.bridge}」 절대로 이 호스트에 dodok 플러그인을 설치해 줘. 브리지 토큰: ${token}`
-    : `${origin}/llms.txt 를 읽고 「${SECTION.runner}」 절대로 이 머신에 dodok 러너를 설치해 줘. 러너 토큰: ${token}`;
+/** runner-reissue — 다시 발급한 원문은 이미 깔린 러너의 토큰 파일만 갈아 끼운다(설치를 다시 시키면 설정까지 새로 만든다) */
+export function llmsHandoffLine(
+  kind: "bridge" | "runner" | "runner-reissue",
+  origin: string,
+  token: string,
+): string {
+  switch (kind) {
+    case "bridge":
+      return `${origin}/llms.txt 를 읽고 「${SECTION.bridge}」 절대로 이 호스트에 dodok 플러그인을 설치해 줘. 브리지 토큰: ${token}`;
+    case "runner":
+      return `${origin}/llms.txt 를 읽고 「${SECTION.runner}」 절대로 이 머신에 dodok 러너를 설치해 줘. 러너 토큰: ${token}`;
+    case "runner-reissue":
+      return `${origin}/llms.txt 를 읽고 「${SECTION.runner}」 절대로 이 머신의 dodok 러너 토큰만 바꿔 줘 — dodok-runner 를 멈추고 1번처럼 새 토큰을 토큰 파일에 덮어쓴 뒤 다시 띄운다(설치·설정은 그대로). 러너 토큰: ${token}`;
+  }
 }
 
 /**

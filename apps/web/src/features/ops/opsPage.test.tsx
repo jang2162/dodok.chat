@@ -232,12 +232,10 @@ describe("상태 카드 — 실시간(브라우저 검증 D1)", () => {
     expect(server.count("GET", "/api/v1/ops/status")).toBe(1);
   });
 
-  it("Claude 러너 줄 — 붙은 수 / 토큰 수, wire adapter.status(runner)가 바로 고친다", async () => {
+  it("러너 줄 — 붙은 수 / 토큰 수, wire adapter.status(runner)가 바로 고친다", async () => {
     const server = stubOpsServer({ adapter: withRunners(1, 2) });
     const { fake, qc } = renderLive();
-    await waitFor(async () =>
-      expect(await statusRow("Claude 러너")).toHaveTextContent("1대 붙음 / 토큰 2개"),
-    );
+    await waitFor(async () => expect(await statusRow("러너")).toHaveTextContent("1대 붙음 / 토큰 2개"));
     expect(await statusRow("Gateway 「사무실」")).toHaveTextContent("연결됨");
     expect(server.count("GET", "/api/v1/adapter/status")).toBe(1);
     // 재연결 때처럼 `adapter` 앞머리를 무효화하면 두 줄이 함께 다시 받되 요청은 하나
@@ -246,19 +244,17 @@ describe("상태 카드 — 실시간(브라우저 검증 D1)", () => {
     act(() =>
       fake.serverEmit("adapter.status", { provider: "runner", runners: { connected: 2, tokens: 2 } }),
     );
-    await waitFor(async () =>
-      expect(await statusRow("Claude 러너")).toHaveTextContent("2대 붙음 / 토큰 2개"),
-    );
+    await waitFor(async () => expect(await statusRow("러너")).toHaveTextContent("2대 붙음 / 토큰 2개"));
     // OpenClaw 줄은 그대로
     expect(await statusRow("Gateway 「사무실」")).toHaveTextContent("연결됨");
   });
 
-  it("러너 어댑터가 없는 서버면 Claude 러너 줄이 없다", async () => {
+  it("러너 어댑터가 없는 서버면 러너 줄이 없다", async () => {
     stubOpsServer();
     renderOps();
     const card = await region("상태");
     await within(card).findByText("Gateway 「사무실」", { selector: "dt" });
-    await waitFor(() => expect(within(card).queryByText("Claude 러너", { selector: "dt" })).toBeNull());
+    await waitFor(() => expect(within(card).queryByText("러너", { selector: "dt" })).toBeNull());
   });
 
   it("wire 가 끊겨 있으면 연결 줄은 운영 상태 응답의 값 — 멈춘 어댑터 캐시를 믿지 않는다", async () => {

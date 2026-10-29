@@ -67,7 +67,7 @@ export function eventOf(n: number, over: Partial<OpsEvent> = {}): OpsEvent {
   });
 }
 
-/** OpenClaw 줄에 Claude 러너 줄(붙은 수 / 토큰 수)을 더한 GET /adapter/status 응답 */
+/** OpenClaw 줄에 러너 줄(붙은 수 / 토큰 수)을 더한 GET /adapter/status 응답 */
 export function withRunners(connected: number, tokens: number): AdapterStatusList {
   const body = adapterStatusBody(ADAPTER_OK);
   return {
