@@ -6,7 +6,7 @@ import { type FormEvent, type RefObject, useId, useState } from "react";
 import { ApiRequestError } from "@/api/http";
 import { useAgents } from "@/api/queries";
 import { OpenSidebarButton } from "@/app/layout/sidebarSheet";
-import { providerName } from "@/features/agents/providerLabels";
+import { PROGRAM_NAME, providerName } from "@/features/agents/providerLabels";
 import { CloseConversationButton, ConversationTitle } from "@/features/conversations/ConversationTitle";
 import { NEW_CONVERSATION } from "@/features/messages/timeline";
 import { usePatchChannel } from "@/features/settings/mutations";
@@ -29,7 +29,19 @@ import { DM_READ_ONLY_TEXT, invalidateDms, useDm } from "./queries";
 export const DM_INSTRUCTION_LABEL = "이 DM 의 지시";
 
 /**
- * DM 머리(에이전트 DM 스펙 3.2): 에이전트 아바타·이름·제공자(러너면 맡은 러너), 지금 세션 제목(바꾸기·닫기는 채널과 같은 것), 「이 DM 의 지시」,
+ * DM 머리의 제공자 줄 — OpenClaw 는 「OpenClaw」, 러너 에이전트는 「러너 · <프로그램> · <러너 라벨>」(러너 일반화 계획 Task 5 Step 3b).
+ * 프로그램을 붙이는 까닭: 한 러너가 프로그램 여럿을 돌린다 — 러너 라벨만으로는 무엇과 말하는지 모른다. 정의(모델·권한)는 싣지 않는다
+ * (member 의 Agent 에는 없다 — 계획 판정 PR11)
+ */
+export function dmProviderLine(agent: Agent): string {
+  if (agent.provider !== "runner") return providerName(agent.provider);
+  return [providerName(agent.provider), agent.program && PROGRAM_NAME[agent.program], agent.runner?.label]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+/**
+ * DM 머리(에이전트 DM 스펙 3.2): 에이전트 아바타·이름·제공자 줄(`dmProviderLine`), 지금 세션 제목(바꾸기·닫기는 채널과 같은 것), 「이 DM 의 지시」,
  * 「새 세션」, 「활동」 패널 여닫기. 채널 머리의 참여 에이전트 묶음·채널 설정은 없다 — DM 에서는 채널 관리를 하지 않는다(서버 VALIDATION, 계획 판정 PD9).
  * `activityRef` 는 「활동」 링크 — 패널을 닫으면 초점이 여기로 돌아온다(채널 머리의 설정 링크 자리). 읽기 전용이면 「새 세션」을 두지 않고
  * 지시는 읽기만 한다
@@ -78,8 +90,7 @@ export function DmHeader({
           {agent && (
             // 이름보다 먼저 줄어든다 — 좁은 화면에서 라벨이 자리를 쥐면 이름이 한 글자로 잘린다
             <span className="min-w-0 shrink-1000 truncate text-xs font-normal text-muted-foreground">
-              {providerName(agent.provider)}
-              {agent.provider === "runner" && agent.runner && ` · ${agent.runner.label}`}
+              {dmProviderLine(agent)}
             </span>
           )}
         </h1>

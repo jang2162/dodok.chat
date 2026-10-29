@@ -1,9 +1,10 @@
-import type { RunnerTokenRecord, SetupStatus } from "@dodok/shared";
+import type { RunnerConnection, RunnerTokenRecord, SetupStatus } from "@dodok/shared";
 import { type RefObject, useRef, useState } from "react";
 import { ConfirmDialog } from "@/features/settings/ConfirmDialog";
 import { Badge } from "@/ui/badge";
 import { Button } from "@/ui/button";
 import { useRevokeRunnerToken } from "./mutations";
+import { ReissueRunnerTokenDialog } from "./ReissueRunnerTokenDialog";
 import { when } from "./TokenList";
 
 /**
@@ -19,7 +20,28 @@ export function connectedRunnerTokenIds(
 }
 
 /**
- * 러너 토큰 목록(러너 스펙 5장) — 라벨·`drn_` + 앞 6자·만든 때·마지막 사용·「지금 접속 중」·폐기됨. 폐기는 확인을 거친다 — 붙어 있으면
+ * 붙은 러너가 서버가 품은 러너 파일과 같은 빌드인가(러너 스펙 5장 「같은 빌드」) — hello 의 bundleSha256 으로 가른다. 붙어 있지 않으면 없다
+ */
+function RunnerBuild({
+  runner,
+  file,
+}: {
+  runner: RunnerConnection;
+  file: SetupStatus["runners"]["runnerFile"];
+}) {
+  if (runner.bundleSha256 === null || !file.available) return null;
+  if (runner.bundleSha256 === file.bundleSha256)
+    return <p className="text-xs text-muted-foreground">서버와 같은 빌드입니다</p>;
+  return (
+    <p role="alert" className="text-xs font-medium text-destructive">
+      다른 빌드입니다 — 러너를 받아서 다시 설치하세요
+    </p>
+  );
+}
+
+/**
+ * 러너 토큰 목록(러너 스펙 5장) — 라벨·`drn_` + 앞 6자·만든 때·마지막 사용·「지금 접속 중」(붙어 있으면 같은 빌드인지)·폐기됨과
+ * 「다시 발급」·「폐기」. 러너의 연결 상태·프로젝트는 「러너」 탭이 맡는다(러너 일반화 스펙 7장). 폐기는 확인을 거친다 — 붙어 있으면
  * 그 러너가 곧바로 끊긴다고 알린다. 러너는 서로 대신하지 않으므로 브리지 토큰의 「마지막 활성 토큰」 한 번 더 묻기는 없다.
  * 폐기한 줄에는 「폐기」 버튼이 없어 초점을 돌려줄 자리가 사라진다 — 아래 줄의 「폐기」, 없으면 `issueButton` 으로 옮긴다
  */
@@ -65,6 +87,7 @@ export function RunnerTokenList({
       <ul className="flex flex-col divide-y rounded-md border">
         {tokens.map((token) => {
           const revoked = token.revokedAt !== null;
+          const live = status?.runners.list.find((r) => r.tokenId === token.id);
           return (
             <li
               key={token.id}
@@ -86,22 +109,26 @@ export function RunnerTokenList({
                   만든 때 {when(token.createdAt)} · 마지막 사용{" "}
                   {token.lastUsedAt ? when(token.lastUsedAt) : "없음"}
                 </p>
+                {live && status && <RunnerBuild runner={live} file={status.runners.runnerFile} />}
               </div>
               {!revoked && (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  aria-label={`${token.label} 폐기`}
-                  disabled={revoke.isPending}
-                  ref={(el) => {
-                    if (el) revokeButtons.current.set(token.id, el);
-                    else revokeButtons.current.delete(token.id);
-                  }}
-                  onClick={(e) => start(token, e.currentTarget)}
-                >
-                  폐기
-                </Button>
+                <div className="flex flex-wrap gap-1.5">
+                  <ReissueRunnerTokenDialog token={token} connected={connectedIds.has(token.id)} />
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    aria-label={`${token.label} 폐기`}
+                    disabled={revoke.isPending}
+                    ref={(el) => {
+                      if (el) revokeButtons.current.set(token.id, el);
+                      else revokeButtons.current.delete(token.id);
+                    }}
+                    onClick={(e) => start(token, e.currentTarget)}
+                  >
+                    폐기
+                  </Button>
+                </div>
               )}
             </li>
           );

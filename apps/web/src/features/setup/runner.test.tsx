@@ -1,8 +1,9 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { json } from "../../../test/shellApi";
 import {
+  RAW_REISSUED_TOKEN,
   RAW_RUNNER_TOKEN,
   RUNNER_SERVER_URL,
   SHA_B,
@@ -23,43 +24,52 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const runnerRegion = () => screen.findByRole("region", { name: "Claude 러너" });
+const runnerRegion = () => screen.findByRole("region", { name: "러너" });
 
 describe("러너 블록 — 권한", () => {
   it("owner 가 아니면 러너 블록이 없고 러너 API 를 부르지 않는다", async () => {
     const server = stubSetupServer();
     renderConnection({ ...ME, role: "admin" });
     expect(await screen.findByText(/권한이 없습니다/)).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Claude 러너" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "러너" })).not.toBeInTheDocument();
     expect(server.calls.filter((c) => c.url.includes("runner"))).toEqual([]);
   });
 
-  it("owner 는 러너 블록과 드러나는 것 셋을 본다 [최종 리뷰 M5]", async () => {
+  it("owner 는 러너 블록과 드러나는 것 넷을 본다 [최종 리뷰 M5·러너 일반화 스펙 7장]", async () => {
     stubSetupServer();
     renderConnection();
     const block = await runnerRegion();
-    expect(block).toHaveTextContent("러너 계정의 이메일이 에이전트 문맥에 들어갑니다");
-    expect(block).toHaveTextContent("끌 방법이 없습니다");
-    expect(block).toHaveTextContent("러너 전용 계정을 권합니다");
-    expect(block).toHaveTextContent(
+    const note = within(block).getByRole("note");
+    expect(within(note).getAllByRole("listitem")).toHaveLength(4);
+    expect(note).toHaveTextContent("러너 계정의 이메일이 에이전트 문맥에 들어갑니다");
+    expect(note).toHaveTextContent("끌 방법이 없습니다");
+    expect(note).toHaveTextContent(
       "채널 멤버는 에이전트를 통해 러너 작업 디렉터리 안의 파일을 읽을 수 있습니다",
     );
-    expect(block).toHaveTextContent("어느 채널에 둘지는 admin 이 판단합니다");
-    expect(block).toHaveTextContent(
-      "에이전트는 러너 토큰에 묶여 그 토큰의 러너만 맡습니다 — 등록할 때 그 id 를 알리던 러너, 그때 없었으면 처음 알리는 러너에 묶입니다",
+    expect(note).toHaveTextContent("토큰 하나가 그 러너의 모든 에이전트를 맡습니다");
+    expect(note).toHaveTextContent(
+      "서버 쪽 admin(과 서버를 손에 넣은 사람)은 루트 안 아무 디렉터리에서, 권한 상한까지의 도구로 에이전트를 돌릴 수 있습니다. 루트는 좁게, 상한은 낮게 둡니다.",
     );
-    expect(block).toHaveTextContent("토큰은 믿는 머신에만 주십시오");
+    expect(note).not.toHaveTextContent("이 러너로 묶기");
   });
 });
 
-describe("러너 블록 — 붙은 러너", () => {
-  it("러너가 0대면 「연결된 러너가 없습니다」", async () => {
-    stubSetupServer();
+describe("러너 블록 — 토큰·설치 안내만", () => {
+  it("러너 카드(판본·에이전트)·「이 러너로 묶기」가 없고, 상태·프로젝트는 러너 탭 링크로", async () => {
+    stubSetupServer({
+      status: statusOf({ runners: { list: [runnerOf(1, { label: "맥북" })] } }),
+      runnerTokens: [tokenOf(1, { label: "맥북", prefix: "mac123", connected: true })],
+    });
     renderConnection();
-    expect(await within(await runnerRegion()).findByText(/연결된 러너가 없습니다/)).toBeInTheDocument();
+    const block = await runnerRegion();
+    await within(block).findByRole("listitem", { name: "맥북" });
+    expect(within(block).queryByRole("article")).not.toBeInTheDocument();
+    expect(block).not.toHaveTextContent("2.1.283");
+    expect(within(block).queryByRole("button", { name: /이 러너로 묶기/ })).not.toBeInTheDocument();
+    expect(within(block).getByRole("link", { name: "러너 탭" })).toHaveAttribute("href", "/settings/runners");
   });
 
-  it("러너 카드 — 라벨·러너/SDK/CLI 판본·같은 빌드, 에이전트 목록은 없다(러너 탭 몫)", async () => {
+  it("붙은 토큰 줄에 같은 빌드인지 — 다른 빌드면 다시 설치하라는 경고", async () => {
     stubSetupServer({
       status: statusOf({
         runners: {
@@ -67,28 +77,19 @@ describe("러너 블록 — 붙은 러너", () => {
           runnerFile: { available: true, sha256: SHA_FILE, bundleSha256: SHA_A, bytes: 2048 },
         },
       }),
+      runnerTokens: [
+        tokenOf(1, { label: "맥북" }),
+        tokenOf(2, { label: "데스크톱" }),
+        tokenOf(3, { label: "끊긴" }),
+      ],
     });
     renderConnection();
     const block = await runnerRegion();
-    const mac = await within(block).findByRole("article", { name: "맥북" });
-    expect(mac).toHaveTextContent("0.0.0");
-    expect(mac).toHaveTextContent("0.3.283");
-    expect(mac).toHaveTextContent("2.1.283");
-    expect(mac).toHaveTextContent("서버와 같은 빌드입니다");
-    expect(within(mac).queryByRole("listitem")).not.toBeInTheDocument();
-    expect(within(block).queryByRole("button", { name: /이 러너로 묶기/ })).not.toBeInTheDocument();
-
-    const desk = within(block).getByRole("article", { name: "데스크톱" });
-    expect(desk).toHaveTextContent("다른 빌드입니다");
-  });
-
-  it("번들 sha 를 모르거나 서버에 러너 파일이 없으면 「같은 빌드인지 알 수 없습니다」", async () => {
-    stubSetupServer({
-      status: statusOf({ runners: { list: [runnerOf(1, { bundleSha256: null })] } }),
-    });
-    renderConnection();
-    const card = await within(await runnerRegion()).findByRole("article", { name: "러너-1" });
-    expect(card).toHaveTextContent("같은 빌드인지 알 수 없습니다");
+    expect(await within(block).findByRole("listitem", { name: "맥북" })).toHaveTextContent(
+      "서버와 같은 빌드입니다",
+    );
+    expect(within(block).getByRole("listitem", { name: "데스크톱" })).toHaveTextContent("다른 빌드입니다");
+    expect(within(block).getByRole("listitem", { name: "끊긴" })).not.toHaveTextContent("빌드");
   });
 });
 
@@ -132,10 +133,21 @@ describe("러너 토큰", () => {
       body: { label: "맥북" },
     });
     const config = JSON.parse(within(dialog).getByTestId("runner-config").textContent ?? "");
-    expect(config).toMatchObject({
+    // 러너 RunnerConfig 꼴 — 에이전트는 앱에서 만든다(agents 키가 있으면 러너가 거절한다), 루트 label 을 적는 예
+    expect(config).toEqual({
       serverUrl: RUNNER_SERVER_URL,
       tokenFile: "~/.dodok-runner/token",
-      claudeConfigDir: "~/.dodok-runner/claude",
+      maxConcurrentRuns: 3,
+      roots: [{ id: "src", path: "~/src", label: "내 저장소들" }],
+      browse: true,
+      programs: {
+        claude: {
+          configDir: "~/.dodok-runner/claude",
+          maxPermissionMode: "default",
+          disallowedTools: [],
+          allowedToolsCeiling: null,
+        },
+      },
     });
     // 설정 파일에는 원문을 두지 않는다 — tokenFile 에 둔다
     expect(JSON.stringify(config)).not.toContain("drn_");
@@ -175,6 +187,105 @@ describe("러너 토큰", () => {
     await userEvent.click(within(confirm).getByRole("button", { name: "폐기" }));
     await waitFor(() => expect(server.count("DELETE", `/api/v1/setup/runner-tokens/${tokenId(1)}`)).toBe(1));
     expect(await within(block).findByText("폐기됨")).toBeInTheDocument();
+  });
+});
+
+describe("러너 토큰 다시 발급", () => {
+  it("확인을 거쳐 새 원문을 한 번 — 붙어 있으면 끊긴다고, 프로젝트·에이전트는 남는다고 알린다. 캐시에 원문이 없다", async () => {
+    const server = stubSetupServer({
+      status: statusOf({ runners: { list: [runnerOf(1, { label: "맥북" })] } }),
+      runnerTokens: [tokenOf(1, { label: "맥북", prefix: "mac123" })],
+    });
+    const qc = renderConnection();
+    const block = await runnerRegion();
+    const row = await within(block).findByRole("listitem", { name: "맥북" });
+    await userEvent.click(within(row).getByRole("button", { name: "맥북 다시 발급" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("지금 이 토큰으로 러너가 붙어 있습니다");
+    expect(dialog).toHaveTextContent("프로젝트·에이전트는 그대로 남습니다");
+    expect(server.count("POST", `/api/v1/setup/runner-tokens/${tokenId(1)}/reissue`)).toBe(0);
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "다시 발급" }));
+    expect(await within(dialog).findByText(RAW_REISSUED_TOKEN)).toBeInTheDocument();
+    expect(dialog).toHaveTextContent("「맥북」 토큰을 다시 발급했습니다");
+    expect(dialog).toHaveTextContent("~/.dodok-runner/token");
+    expect(cacheDump(qc)).not.toContain(RAW_REISSUED_TOKEN);
+    // 원문이 보이는 동안은 Esc 로 닫히지 않는다
+    await userEvent.keyboard("{Escape}");
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole("button", { name: "복사했습니다" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(document.body).not.toHaveTextContent(RAW_REISSUED_TOKEN);
+    expect(await within(block).findByText(`drn_${RAW_REISSUED_TOKEN.slice(4, 10)}…`)).toBeInTheDocument();
+    expect(server.count("POST", `/api/v1/setup/runner-tokens/${tokenId(1)}/reissue`)).toBe(1);
+  });
+
+  it("요청이 나가 있는 동안 막는다 — 두 번 눌러도 한 번만 보낸다 [태스크 4 리뷰 L5]", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    const server = stubSetupServer({
+      runnerTokens: [tokenOf(1, { label: "맥북" })],
+      reissue: async () => {
+        await held;
+        return json(200, {
+          token: RAW_REISSUED_TOKEN,
+          record: tokenOf(1, { label: "맥북" }),
+          runnerConfig: { serverUrl: RUNNER_SERVER_URL, tokenFile: "~/.dodok-runner/token" },
+        });
+      },
+    });
+    renderConnection();
+    const row = await within(await runnerRegion()).findByRole("listitem", { name: "맥북" });
+    await userEvent.click(within(row).getByRole("button", { name: "맥북 다시 발급" }));
+    const dialog = await screen.findByRole("dialog");
+    const confirm = within(dialog).getByRole("button", { name: "다시 발급" });
+    await userEvent.dblClick(confirm);
+    expect(await within(dialog).findByRole("button", { name: "발급하는 중…" })).toBeDisabled();
+    await userEvent.keyboard("{Escape}");
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    release();
+    expect(await within(dialog).findByText(RAW_REISSUED_TOKEN)).toBeInTheDocument();
+    expect(server.count("POST", `/api/v1/setup/runner-tokens/${tokenId(1)}/reissue`)).toBe(1);
+  });
+
+  it("같은 틱의 두 번 누름도 한 번만 보낸다 — 버튼이 잠기기 전(다시 그리기 전)의 두 번째 클릭", async () => {
+    const server = stubSetupServer({ runnerTokens: [tokenOf(1, { label: "맥북" })] });
+    renderConnection();
+    const row = await within(await runnerRegion()).findByRole("listitem", { name: "맥북" });
+    await userEvent.click(within(row).getByRole("button", { name: "맥북 다시 발급" }));
+    const dialog = await screen.findByRole("dialog");
+    const confirm = within(dialog).getByRole("button", { name: "다시 발급" });
+    act(() => {
+      confirm.click();
+      confirm.click();
+    });
+    expect(await within(dialog).findByText(RAW_REISSUED_TOKEN)).toBeInTheDocument();
+    expect(server.count("POST", `/api/v1/setup/runner-tokens/${tokenId(1)}/reissue`)).toBe(1);
+  });
+
+  it("폐기된 토큰(409)이면 대화상자에 고정 문구", async () => {
+    stubSetupServer({
+      runnerTokens: [tokenOf(1, { label: "맥북" })],
+      reissue: () => json(409, { code: "CONFLICT", message: "runner token revoked" }),
+    });
+    renderConnection();
+    const row = await within(await runnerRegion()).findByRole("listitem", { name: "맥북" });
+    await userEvent.click(within(row).getByRole("button", { name: "맥북 다시 발급" }));
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.click(within(dialog).getByRole("button", { name: "다시 발급" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "폐기한 토큰은 다시 발급할 수 없습니다",
+    );
+    expect(dialog).not.toHaveTextContent("runner token revoked");
+  });
+
+  it("폐기한 줄에는 「다시 발급」이 없다", async () => {
+    stubSetupServer({ runnerTokens: [tokenOf(1, { label: "옛것", revokedAt: "2026-09-24T00:00:00.000Z" })] });
+    renderConnection();
+    const row = await within(await runnerRegion()).findByRole("listitem", { name: "옛것" });
+    expect(within(row).queryByRole("button", { name: /다시 발급/ })).not.toBeInTheDocument();
   });
 });
 

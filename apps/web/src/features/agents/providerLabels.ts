@@ -3,7 +3,7 @@ import { type AdapterProvider, RUNNER_PROGRAM_NAME, type RunnerProgram } from "@
 /** 제공자마다 에이전트 id 의 이름 — 등록 폼과 목록 줄이 함께 쓴다 */
 export const PROVIDER_ID_LABEL: Record<AdapterProvider, string> = {
   openclaw: "OpenClaw id",
-  runner: "Claude 러너 에이전트 id",
+  runner: "러너 에이전트 id",
 };
 
 /** 목록 줄용 — 등록 대상이 아닌 제공자(Agent.provider 에는 있다)는 일반 문구 */

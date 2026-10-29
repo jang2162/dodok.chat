@@ -1,9 +1,9 @@
-import type { RunnerConnection, SetupStatus } from "@dodok/shared";
+import type { SetupStatus } from "@dodok/shared";
+import { Link } from "@tanstack/react-router";
 import { DownloadIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { useRef } from "react";
 import { ApiRequestError } from "@/api/http";
-import { Badge } from "@/ui/badge";
 import { Button } from "@/ui/button";
 import {
   IssueRunnerTokenDialog,
@@ -16,7 +16,6 @@ import { useDownloadRunner } from "./mutations";
 import { useRunnerTokens } from "./queries";
 import { RunnerTokenList } from "./RunnerTokenList";
 import { CopyBlock, Section } from "./sections";
-import { when } from "./TokenList";
 
 /** 러너 tgz 를 만드는 명령 — 서버에 파일이 없을 때 */
 export const RUNNER_PACK_COMMAND = "pnpm -F @dodok/claude-runner run pack:runner";
@@ -32,53 +31,6 @@ function Field({ name, children }: { name: string; children: ReactNode }) {
       <dt className="text-muted-foreground">{name}</dt>
       <dd className="min-w-0 break-all">{children}</dd>
     </div>
-  );
-}
-
-/** 붙은 러너가 서버가 품은 러너 파일과 같은 빌드인가(러너 스펙 5장 「같은 빌드」) — hello 의 bundleSha256 으로 가른다 */
-function RunnerBuild({
-  runner,
-  file,
-}: {
-  runner: RunnerConnection;
-  file: SetupStatus["runners"]["runnerFile"];
-}) {
-  if (runner.bundleSha256 === null || !file.available)
-    return <p className="text-sm text-muted-foreground">같은 빌드인지 알 수 없습니다</p>;
-  if (runner.bundleSha256 === file.bundleSha256)
-    return <p className="text-sm text-muted-foreground">서버와 같은 빌드입니다</p>;
-  return (
-    <p role="alert" className="text-sm font-medium text-destructive">
-      다른 빌드입니다 — 러너를 받아서 다시 설치하세요
-    </p>
-  );
-}
-
-/**
- * 러너 하나 — 판본·붙은 시각·같은 빌드. 러너의 프로젝트·에이전트는 설정의 「러너」 탭이 맡는다(러너 일반화 스펙 7장 — 이 카드의
- * 정리는 러너 일반화 계획 태스크 5)
- */
-function RunnerCard({
-  runner,
-  file,
-}: {
-  runner: RunnerConnection;
-  file: SetupStatus["runners"]["runnerFile"];
-}) {
-  return (
-    <article aria-label={runner.label} className="flex flex-col gap-2 rounded-md border p-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="font-medium break-all">{runner.label}</span>
-        <Badge>연결됨</Badge>
-      </div>
-      <dl className="flex flex-col gap-1">
-        <Field name="러너">{runner.runnerVersion}</Field>
-        <Field name="SDK">{runner.sdkVersion}</Field>
-        <Field name="Claude Code">{runner.claudeCodeVersion}</Field>
-        <Field name="붙은 시각">{when(runner.connectedAt)}</Field>
-      </dl>
-      <RunnerBuild runner={runner} file={file} />
-    </article>
   );
 }
 
@@ -152,12 +104,19 @@ function InstallSteps({ status }: { status: SetupStatus }) {
         <li className="flex flex-col gap-1.5">
           <p>
             위에서 러너 토큰을 발급해 <code className="font-mono">{RUNNER_TOKEN_FILE}</code> 에 저장하고, 설정
-            파일을 <code className="font-mono">{RUNNER_CONFIG_PATH}</code> 에 둡니다. 예시:
+            파일을 <code className="font-mono">{RUNNER_CONFIG_PATH}</code> 에 둡니다.{" "}
+            <code className="font-mono">roots</code> 는 에이전트가 돌 수 있는 디렉터리(좁게)이고, 루트의{" "}
+            <code className="font-mono">label</code> 을 꼭 적습니다 — 안 적으면 디렉터리 이름이 서버로 갑니다.{" "}
+            <code className="font-mono">programs</code> 의 권한 상한(
+            <code className="font-mono">maxPermissionMode</code>) 위로는 앱에서도 고를 수 없습니다. 예시:
           </p>
           <CopyBlock text={config} label="설정 예시 복사" />
         </li>
         <li className="flex flex-col gap-1.5">
-          <p>러너를 실행합니다. 붙으면 위 목록에 나타납니다.</p>
+          <p>
+            러너를 실행합니다. 붙으면 토큰 줄에 「지금 접속 중」이 붙고, 러너 탭에서 프로젝트를 더할 수
+            있습니다.
+          </p>
           <CopyBlock text="dodok-runner" label="실행 명령 복사" />
         </li>
       </ol>
@@ -166,16 +125,22 @@ function InstallSteps({ status }: { status: SetupStatus }) {
 }
 
 /**
- * 연결 페이지 러너 블록(러너 스펙 5장·7장, owner): 붙은 러너, 러너 토큰(목록·발급·폐기), 설치 안내, 그리고 드러나는 것 셋.
- * 연결 여부·러너 목록은 `setup.status` 를 믿는다 — 토큰 수 같은 wire `adapter.status` 는 발급·폐기 때 바로 안 나갈 수 있다
+ * 연결 페이지 러너 블록(러너 일반화 스펙 7장, owner): 러너 토큰(목록·발급·다시 발급·폐기), 설치 안내, 드러나는 것 넷. 러너의 연결 상태·
+ * 프로그램·프로젝트는 설정의 「러너」 탭(admin 이상)이 맡는다. 토큰 줄의 「지금 접속 중」은 `setup.status` 를 믿는다 — 토큰 수 같은
+ * wire `adapter.status` 는 발급·폐기 때 바로 안 나갈 수 있다
  */
 export function RunnerSection({ status }: { status: SetupStatus | undefined }) {
   const tokens = useRunnerTokens();
   const issueButton = useRef<HTMLButtonElement>(null);
   return (
-    <Section title="Claude 러너">
+    <Section title="러너">
       <p className="text-sm text-muted-foreground">
-        러너는 사람의 PC 에서 Claude Code 에이전트를 돌리고, 이 서버로 나가는 연결 하나로 붙습니다.
+        러너는 사람의 머신에서 에이전트(지금은 Claude Code)를 돌리고, 이 서버로 나가는 연결 하나로 붙습니다.
+        러너의 상태와 프로젝트는{" "}
+        <Link to="/settings/runners" className="underline underline-offset-4">
+          러너 탭
+        </Link>
+        에서 봅니다.
       </p>
       <div role="note" className="flex flex-col gap-1 rounded-md border border-amber-600/40 p-3 text-sm">
         <p className="font-medium">러너를 붙이면 드러나는 것</p>
@@ -188,23 +153,15 @@ export function RunnerSection({ status }: { status: SetupStatus | undefined }) {
             채널에 둘지는 admin 이 판단합니다.
           </li>
           <li>
-            에이전트는 러너 토큰에 묶여 그 토큰의 러너만 맡습니다 — 등록할 때 그 id 를 알리던 러너, 그때
-            없었으면 처음 알리는 러너에 묶입니다. 러너 없이 등록한 에이전트는 먼저 붙은 러너가 가져가니 토큰은
-            믿는 머신에만 주십시오. 토큰을 폐기해도 묶임은 남습니다 — 새 러너로 옮길 때는 그 러너 카드의 「이
-            러너로 묶기」를 누릅니다.
+            토큰 하나가 그 러너의 모든 에이전트를 맡습니다. 토큰은 믿는 머신에만 주십시오 — 새는 것이 걱정되면
+            「다시 발급」으로 원문을 바꿉니다(프로젝트·에이전트는 그대로).
+          </li>
+          <li>
+            서버 쪽 admin(과 서버를 손에 넣은 사람)은 루트 안 아무 디렉터리에서, 권한 상한까지의 도구로
+            에이전트를 돌릴 수 있습니다. 루트는 좁게, 상한은 낮게 둡니다.
           </li>
         </ul>
       </div>
-      {status &&
-        (status.runners.list.length === 0 ? (
-          <p className="text-sm">연결된 러너가 없습니다.</p>
-        ) : (
-          <div className="flex flex-col gap-2">
-            {status.runners.list.map((runner) => (
-              <RunnerCard key={runner.tokenId} runner={runner} file={status.runners.runnerFile} />
-            ))}
-          </div>
-        ))}
       <div className="flex flex-col gap-2">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h3 className="text-sm font-medium">러너 토큰</h3>

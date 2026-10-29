@@ -5,6 +5,7 @@ import type {
   GatewaySetup,
   IssueBridgeTokenResult,
   IssueRunnerTokenResult,
+  ReissueRunnerTokenResult,
   RunnerConnection,
   RunnerTokenRecord,
   SetupStatus,
@@ -147,6 +148,8 @@ export function gatewayOf(
 
 export const RAW_TOKEN = `dbt_${"Z".repeat(43)}`;
 export const RAW_RUNNER_TOKEN = `drn_${"Q".repeat(43)}`;
+/** 다시 발급의 새 원문 */
+export const RAW_REISSUED_TOKEN = `drn_${"R".repeat(43)}`;
 export const RUNNER_SERVER_URL = "https://chat.example.com";
 
 export type Call = { method: string; url: string; body: unknown };
@@ -172,6 +175,8 @@ export function stubSetupServer(
     runnerTokens?: RunnerTokenRecord[];
     me?: unknown;
     issue?: (label: string) => Reply;
+    /** POST /setup/runner-tokens/:id/reissue — 기본은 200 과 새 원문(`RAW_REISSUED_TOKEN`)·같은 줄 */
+    reissue?: (id: string) => Reply;
     plugin?: () => Reply;
     runner?: () => Reply;
   } = {},
@@ -262,6 +267,20 @@ export function stubSetupServer(
         runnerConfig: { serverUrl: RUNNER_SERVER_URL, tokenFile: "~/.dodok-runner/token" },
       };
       return json(201, result);
+    }
+    const reissue = /^\/api\/v1\/setup\/runner-tokens\/([^/]+)\/reissue$/.exec(url);
+    if (method === "POST" && reissue) {
+      const id = reissue[1] ?? "";
+      if (opts.reissue) return opts.reissue(id);
+      const t = runnerTokens.find((x) => x.id === id);
+      if (!t) return json(404, { code: "NOT_FOUND", message: "x" });
+      t.prefix = RAW_REISSUED_TOKEN.slice(4, 10);
+      const result: ReissueRunnerTokenResult = {
+        token: RAW_REISSUED_TOKEN,
+        record: t,
+        runnerConfig: { serverUrl: RUNNER_SERVER_URL, tokenFile: "~/.dodok-runner/token" },
+      };
+      return json(200, result);
     }
     const delRunner = /^\/api\/v1\/setup\/runner-tokens\/([^/]+)$/.exec(url);
     if (method === "DELETE" && delRunner) {

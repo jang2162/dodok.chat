@@ -1014,13 +1014,30 @@ describe("캐시 패치", () => {
     expect(queryClient.getQueryData(qk.adapter)).toEqual(cached);
   });
 
-  it("adapter.status(runner): 등록 화면의 러너 목록(discover)을 낡게 한다 — OpenClaw 것은 아니다", () => {
+  it("adapter.status(runner): 「러너」 탭의 러너·프로젝트·둘러보기를 낡게 한다 — 붙고 끊길 때마다 온다. OpenClaw 것은 아니다", () => {
     const { fake, queryClient } = setup();
-    queryClient.setQueryData(qk.discoverOf("runner"), []);
+    queryClient.setQueryData(qk.runners(), []);
+    queryClient.setQueryData(qk.runnerProjects("r1"), []);
+    queryClient.setQueryData(qk.runnerFs("r1", "src", ""), { entries: [], truncated: false });
     queryClient.setQueryData(qk.discoverOf("openclaw"), []);
+    fake.serverEmit("adapter.status", { provider: "openclaw", gateways: [] });
+    expect(queryClient.getQueryState(qk.runners())?.isInvalidated).toBe(false);
     fake.serverEmit("adapter.status", { provider: "runner", runners: { connected: 1, tokens: 1 } });
-    expect(queryClient.getQueryState(qk.discoverOf("runner"))?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(qk.runners())?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(qk.runnerProjects("r1"))?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(qk.runnerFs("r1", "src", ""))?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(qk.discoverOf("openclaw"))?.isInvalidated).toBe(false);
+  });
+
+  it("agents.changed: 「러너」 탭 프로젝트 줄(에이전트 수)을 낡게 한다 — 러너 목록·둘러보기는 그대로", () => {
+    const { fake, queryClient } = setup();
+    queryClient.setQueryData(qk.runners(), []);
+    queryClient.setQueryData(qk.runnerProjects("r1"), []);
+    queryClient.setQueryData(qk.runnerFs("r1", "src", ""), { entries: [], truncated: false });
+    fake.serverEmit("agents.changed", {});
+    expect(queryClient.getQueryState(qk.runnerProjects("r1"))?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(qk.runners())?.isInvalidated).toBe(false);
+    expect(queryClient.getQueryState(qk.runnerFs("r1", "src", ""))?.isInvalidated).toBe(false);
   });
 });
 

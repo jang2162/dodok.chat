@@ -17,7 +17,8 @@ import { ConfirmDialog } from "@/features/settings/ConfirmDialog";
 import { josa } from "@/lib/josa";
 import { MoveGatewayDialog } from "./MoveGatewayDialog";
 import { useArchiveAgent, usePatchAgent } from "./mutations";
-import { providerIdLabel } from "./providerLabels";
+import { PROGRAM_NAME, providerIdLabel } from "./providerLabels";
+import { RunnerDefinitionForm } from "./RunnerAgentForm";
 
 const PROMPT_MAX = 20_000;
 
@@ -66,7 +67,7 @@ export function AgentRow({
           <p className="text-xs text-muted-foreground">
             {providerIdLabel(agent.provider)} <code className="font-mono">{agent.providerAgentId}</code>
           </p>
-          {agent.provider === "runner" && <RunnerLine runner={agent.runner} />}
+          {agent.provider === "runner" && <RunnerLine agent={agent} />}
           {openclaw && agent.gateway === null && (
             <p className="text-xs font-medium text-destructive">
               {owner
@@ -93,6 +94,7 @@ export function AgentRow({
           onCheckedChange={(enabled) => toggle.mutate({ id: agent.id, patch: { enabled } })}
         />
       </div>
+      {!readOnly && agent.runnerAgent && <RunnerDefinition agent={agent} definition={agent.runnerAgent} />}
       <BasePromptEditor agent={agent} readOnly={readOnly} />
       <DmAccessField agent={agent} readOnly={readOnly} />
     </li>
@@ -222,15 +224,97 @@ function ArchiveAgentButton({ agent, onArchived }: { agent: Agent; onArchived?: 
   );
 }
 
-/** Claude 러너 에이전트를 맡는 러너(묶인 러너 토큰의 라벨) — 다시 묶기는 연결 페이지(owner)에서 한다 */
-function RunnerLine({ runner }: { runner: Agent["runner"] }) {
-  if (!runner)
-    return <p className="text-xs text-muted-foreground">러너 미정 — 처음 알리는 러너에 묶입니다</p>;
-  if (!runner.revoked) return <p className="text-xs text-muted-foreground">러너 {runner.label}</p>;
+/**
+ * 러너 에이전트의 프로그램과 맡은 러너(묶인 러너 토큰의 라벨) — 누구나 본다. 토큰이 폐기됐으면 맡을 러너가 없다: 그 프로젝트를 「러너」
+ * 탭에서 다른 러너로 옮긴다(러너 일반화 계획 판정 PR8)
+ */
+function RunnerLine({ agent }: { agent: Agent }) {
+  const program = agent.program ? `${PROGRAM_NAME[agent.program]} · ` : "";
+  const runner = agent.runner;
+  if (!runner) return <p className="text-xs text-muted-foreground">{program}맡을 러너가 없습니다</p>;
+  if (!runner.revoked)
+    return (
+      <p className="text-xs text-muted-foreground">
+        {program}러너 {runner.label}
+      </p>
+    );
   return (
     <p className="text-xs font-medium text-destructive">
-      러너 {runner.label} — 토큰이 폐기돼 맡을 러너가 없습니다. 연결 페이지에서 다시 묶으세요
+      {program}러너 {runner.label} — 토큰이 폐기돼 맡을 러너가 없습니다. 「러너」 탭에서 프로젝트를 다른
+      러너로 옮기세요
     </p>
+  );
+}
+
+/**
+ * 러너 에이전트의 정의(admin 이상 — 서버가 아래 역할에는 `runnerAgent` 를 싣지 않는다, 러너 일반화 계획 판정 PR11): 요약 한 줄과
+ * 「러너 설정 고치기」. 고치기는 만들기와 같은 칸이고 프로그램·프로젝트는 읽기만(`RunnerDefinitionForm`)
+ */
+function RunnerDefinition({
+  agent,
+  definition,
+}: {
+  agent: Agent;
+  definition: NonNullable<Agent["runnerAgent"]>;
+}) {
+  const save = usePatchAgent();
+  const [editing, setEditing] = useState(false);
+  const [refocus, setRefocus] = useState(false);
+  const handle = `@${agent.handle}`;
+  const tools = definition.allowedTools;
+
+  if (editing)
+    return (
+      <div className="flex flex-col gap-2 rounded-md border p-3">
+        <p className="text-sm font-medium">러너 설정</p>
+        <RunnerDefinitionForm
+          agent={agent}
+          definition={definition}
+          pending={save.isPending}
+          serverError={save.error ?? undefined}
+          onCancel={() => {
+            save.reset();
+            setEditing(false);
+            setRefocus(true);
+          }}
+          onSave={(patch) => {
+            if (Object.keys(patch).length === 0) {
+              setEditing(false);
+              setRefocus(true);
+              return;
+            }
+            save.mutate(
+              { id: agent.id, patch },
+              {
+                onSuccess: () => {
+                  setEditing(false);
+                  setRefocus(true);
+                },
+              },
+            );
+          }}
+        />
+      </div>
+    );
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <p className="min-w-0 text-sm break-words text-muted-foreground">
+        권한 <code className="font-mono text-xs">{definition.permissionMode}</code> · 모델{" "}
+        {definition.model ?? "기본"} · 허용 도구 {tools === null ? "없음" : tools.join(", ")}
+      </p>
+      <Button
+        variant="outline"
+        size="sm"
+        aria-label={`${handle} 러너 설정 고치기`}
+        autoFocus={refocus}
+        onClick={() => {
+          save.reset();
+          setEditing(true);
+        }}
+      >
+        러너 설정 고치기
+      </Button>
+    </div>
   );
 }
 

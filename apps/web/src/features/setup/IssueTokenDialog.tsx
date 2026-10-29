@@ -121,51 +121,14 @@ export function IssueDialog<T extends Issued>({
       </DialogTrigger>
       <DialogContent showCloseButton={!issued} closeDisabled={issue.isPending}>
         {issued ? (
-          <div className="grid min-w-0 gap-4">
-            <DialogHeader>
-              <DialogTitle>「{issued.record.label}」 토큰을 발급했습니다</DialogTitle>
-              <DialogDescription>
-                원문은 지금 한 번만 보입니다. 닫으면 다시 볼 수 없으니 복사해 두세요.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="grid min-w-0 gap-1.5">
-              <p className="text-sm font-medium">토큰</p>
-              <CopyBlock text={issued.token} label="토큰 복사" wrap />
-            </div>
-            {handoff && (
-              <div className="grid min-w-0 gap-1.5">
-                <p className="text-sm font-medium">AI 에게 맡기기</p>
-                <p className="text-xs text-muted-foreground">
-                  설치할 머신에서 도는 AI 에게 이 한 줄을 건네면 안내서대로 설치합니다. 토큰이 들어 있으니
-                  원문처럼 다루세요.
-                </p>
-                <CopyBlock text={handoff(issued)} label="AI 에게 맡기기 복사" wrap testId="llms-handoff" />
-              </div>
-            )}
-            {config(issued)}
-            {leave.status === "blocked" && (
-              <div
-                role="alert"
-                className="flex flex-col gap-2 rounded-md border border-destructive bg-destructive/10 p-3 text-sm"
-              >
-                <p className="font-medium">이 페이지를 떠나면 토큰 원문을 다시 볼 수 없습니다.</p>
-                <p>복사를 마쳤다면 「복사했습니다」를 누르세요. 닫고 이어서 이동합니다.</p>
-                <div className="flex flex-wrap gap-2">
-                  <Button ref={stayRef} type="button" size="sm" variant="outline" onClick={leave.reset}>
-                    머무르기
-                  </Button>
-                  <Button type="button" size="sm" variant="destructive" onClick={done}>
-                    원문을 버리고 떠나기
-                  </Button>
-                </div>
-              </div>
-            )}
-            <DialogFooter>
-              <Button type="button" onClick={done}>
-                복사했습니다
-              </Button>
-            </DialogFooter>
-          </div>
+          <IssuedToken
+            issued={issued}
+            handoff={handoff}
+            config={config}
+            leave={leave}
+            stayRef={stayRef}
+            onDone={done}
+          />
         ) : (
           <form onSubmit={submit} className="grid gap-4">
             <DialogHeader>
@@ -201,6 +164,77 @@ export function IssueDialog<T extends Issued>({
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * 발급·다시 발급 결과 — 원문·「AI 에게 맡기기」·설정 조각을 한 번 보이고 「복사했습니다」로만 닫는다. 떠나기 막기(`useLeaveGuard`)는 부르는
+ * 대화상자가 든다 — 이 화면이 사라져도 막힌 이동을 이어 보내는 것은 그쪽이다. `onDone` 은 원문을 버리고 막아 둔 이동이 있으면 이어 보낸다
+ */
+export function IssuedToken<T extends Issued>({
+  issued,
+  title,
+  handoff,
+  config,
+  leave,
+  stayRef,
+  onDone,
+}: {
+  issued: T;
+  /** 머리 — 기본은 「「라벨」 토큰을 발급했습니다」 */
+  title?: string;
+  handoff?: (issued: T) => string;
+  config: (issued: T) => ReactNode;
+  leave: ReturnType<typeof useLeaveGuard>;
+  stayRef: RefObject<HTMLButtonElement | null>;
+  onDone: () => void;
+}) {
+  return (
+    <div className="grid min-w-0 gap-4">
+      <DialogHeader>
+        <DialogTitle>{title ?? `「${issued.record.label}」 토큰을 발급했습니다`}</DialogTitle>
+        <DialogDescription>
+          원문은 지금 한 번만 보입니다. 닫으면 다시 볼 수 없으니 복사해 두세요.
+        </DialogDescription>
+      </DialogHeader>
+      <div className="grid min-w-0 gap-1.5">
+        <p className="text-sm font-medium">토큰</p>
+        <CopyBlock text={issued.token} label="토큰 복사" wrap />
+      </div>
+      {handoff && (
+        <div className="grid min-w-0 gap-1.5">
+          <p className="text-sm font-medium">AI 에게 맡기기</p>
+          <p className="text-xs text-muted-foreground">
+            설치할 머신에서 도는 AI 에게 이 한 줄을 건네면 안내서대로 설치합니다. 토큰이 들어 있으니 원문처럼
+            다루세요.
+          </p>
+          <CopyBlock text={handoff(issued)} label="AI 에게 맡기기 복사" wrap testId="llms-handoff" />
+        </div>
+      )}
+      {config(issued)}
+      {leave.status === "blocked" && (
+        <div
+          role="alert"
+          className="flex flex-col gap-2 rounded-md border border-destructive bg-destructive/10 p-3 text-sm"
+        >
+          <p className="font-medium">이 페이지를 떠나면 토큰 원문을 다시 볼 수 없습니다.</p>
+          <p>복사를 마쳤다면 「복사했습니다」를 누르세요. 닫고 이어서 이동합니다.</p>
+          <div className="flex flex-wrap gap-2">
+            <Button ref={stayRef} type="button" size="sm" variant="outline" onClick={leave.reset}>
+              머무르기
+            </Button>
+            <Button type="button" size="sm" variant="destructive" onClick={onDone}>
+              원문을 버리고 떠나기
+            </Button>
+          </div>
+        </div>
+      )}
+      <DialogFooter>
+        <Button type="button" onClick={onDone}>
+          복사했습니다
+        </Button>
+      </DialogFooter>
+    </div>
   );
 }
 

@@ -160,6 +160,19 @@ export const qk = {
    * (pwa/persist 의 허용 목록 밖). 발급 원문은 어느 키에도 넣지 않는다 — 목록에는 앞 6자(`prefix`)뿐이다
    */
   personalTokens: ["personalTokens"] as const,
+  /**
+   * 「러너」 탭(admin 이상, 러너 일반화 스펙 7장) — 러너 목록·러너마다 프로젝트·둘러보기. `runnersAll` 앞머리 하나로 wire 러너 상태가
+   * 바뀔 때 함께 낡게 한다(루트 라벨·프로그램은 연결에 달려 있다). 오프라인 사본에 담지 않는다(pwa/persist 의 허용 목록 밖)
+   */
+  runnersAll: ["runners"] as const,
+  runners: () => ["runners", "list"] as const,
+  /** 모든 러너의 프로젝트 목록(무효화용 앞머리) — 에이전트 수가 에이전트 변화를 따른다 */
+  runnerProjectsAll: ["runners", "projects"] as const,
+  runnerProjects: (runnerId: string) => ["runners", "projects", runnerId] as const,
+  runnerFs: (runnerId: string, rootId: string, relPath: string) =>
+    ["runners", "fs", runnerId, rootId, relPath] as const,
+  /** 한 러너의 둘러보기 전부 — 「프로젝트 추가」를 열 때 버린다 */
+  runnerFsOf: (runnerId: string) => ["runners", "fs", runnerId] as const,
 };
 
 /** 활동 패널이 한 번에 받는 런 수(REST 상한 200) */
