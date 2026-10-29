@@ -3,17 +3,17 @@ import {
   ErrorCode,
   permissionModeRank,
   RUNNER_PERMISSION_MODES,
-  RUNNER_PROTOCOL_V2,
+  RUNNER_PROTOCOL,
   RunnerFsListResult,
-  RunnerHelloResultV2,
-  RunnerHelloV2,
+  RunnerHelloResult,
+  RunnerHello,
   RunnerProgram,
   RunnerProjectCheckResult,
   RunnerProjectRef,
   RunnerRelPath,
   RunnerRootId,
   RunnerRunSession,
-  RunnerRunStartV2,
+  RunnerRunStart,
 } from "../src";
 
 const ID = "01a09fc9-d204-7551-89d6-38544d07a101";
@@ -22,7 +22,7 @@ const MSG = "01a09fc9-d204-7551-89d6-38544d07a103";
 const SESSION = "5d3c1c2e-7f0a-4b8e-9c1d-2a3b4c5d6e7f";
 
 const HELLO = {
-  runnerProtocol: RUNNER_PROTOCOL_V2,
+  runnerProtocol: RUNNER_PROTOCOL,
   runnerVersion: "0.0.0",
   sdkVersion: "0.3.283",
   bundleSha256: null,
@@ -119,34 +119,34 @@ describe("권한 모드 순서 — 묻지 않고 돌 수 있는 것이 많은 �
     expect(permissionModeRank("dontAsk")).toBeLessThan(permissionModeRank("default"));
     expect(permissionModeRank("default")).toBeLessThan(permissionModeRank("acceptEdits"));
     expect(
-      RunnerRunStartV2.safeParse({ ...START, agent: { ...AGENT, permissionMode: "bypassPermissions" } })
+      RunnerRunStart.safeParse({ ...START, agent: { ...AGENT, permissionMode: "bypassPermissions" } })
         .success,
     ).toBe(false);
   });
 });
 
-describe("RunnerHelloV2", () => {
+describe("RunnerHello", () => {
   it("roots·browse·programs 를 받는다", () => {
-    expect(RunnerHelloV2.parse(HELLO)).toEqual(HELLO);
+    expect(RunnerHello.parse(HELLO)).toEqual(HELLO);
     expect(RunnerProgram.options).toEqual(["claude", "codex", "opencode"]);
   });
 
   it("옛 키(agents·claudeCodeVersion)가 있으면 거절한다 — strict", () => {
-    expect(RunnerHelloV2.safeParse({ ...HELLO, agents: [] }).success).toBe(false);
-    expect(RunnerHelloV2.safeParse({ ...HELLO, claudeCodeVersion: "2.1.283" }).success).toBe(false);
+    expect(RunnerHello.safeParse({ ...HELLO, agents: [] }).success).toBe(false);
+    expect(RunnerHello.safeParse({ ...HELLO, claudeCodeVersion: "2.1.283" }).success).toBe(false);
   });
 
   it("루트는 id·label 뿐 — path 를 실으면 거절, 17개도 거절", () => {
     expect(
-      RunnerHelloV2.safeParse({ ...HELLO, roots: [{ id: "src", label: "x", path: "/home/u/src" }] }).success,
+      RunnerHello.safeParse({ ...HELLO, roots: [{ id: "src", label: "x", path: "/home/u/src" }] }).success,
     ).toBe(false);
     const roots = Array.from({ length: 17 }, (_, i) => ({ id: `r${i}`, label: `r${i}` }));
-    expect(RunnerHelloV2.safeParse({ ...HELLO, roots }).success).toBe(false);
+    expect(RunnerHello.safeParse({ ...HELLO, roots }).success).toBe(false);
   });
 
   it("프로그램 능력은 문자열이면 받는다 — 모르는 값은 서버가 버린다", () => {
     const programs = [{ ...HELLO.programs[0], capabilities: ["future-cap"] }];
-    expect(RunnerHelloV2.safeParse({ ...HELLO, programs }).success).toBe(true);
+    expect(RunnerHello.safeParse({ ...HELLO, programs }).success).toBe(true);
   });
 
   it("상한 권한 모드에 bypassPermissions 는 없다", () => {
@@ -156,33 +156,33 @@ describe("RunnerHelloV2", () => {
         ceiling: { maxPermissionMode: "bypassPermissions", allowedToolsCeiling: null },
       },
     ];
-    expect(RunnerHelloV2.safeParse({ ...HELLO, programs }).success).toBe(false);
+    expect(RunnerHello.safeParse({ ...HELLO, programs }).success).toBe(false);
   });
 
   it("hello 결과 — 받음·판본 불일치", () => {
-    expect(RunnerHelloResultV2.parse({ ok: true, serverVersion: "x" })).toEqual({
+    expect(RunnerHelloResult.parse({ ok: true, serverVersion: "x" })).toEqual({
       ok: true,
       serverVersion: "x",
     });
-    expect(
-      RunnerHelloResultV2.safeParse({ ok: false, code: "PROTOCOL_MISMATCH", message: "m" }).success,
-    ).toBe(true);
-    expect(RunnerHelloResultV2.safeParse({ ok: false, code: "RATE_LIMITED", message: "m" }).success).toBe(
+    expect(RunnerHelloResult.safeParse({ ok: false, code: "PROTOCOL_MISMATCH", message: "m" }).success).toBe(
+      true,
+    );
+    expect(RunnerHelloResult.safeParse({ ok: false, code: "RATE_LIMITED", message: "m" }).success).toBe(
       false,
     );
   });
 });
 
-describe("RunnerRunStartV2", () => {
+describe("RunnerRunStart", () => {
   it("지금 것 + agent, providerSessionId 는 선택", () => {
-    expect(RunnerRunStartV2.parse(START).agent).toEqual(AGENT);
+    expect(RunnerRunStart.parse(START).agent).toEqual(AGENT);
     const { providerSessionId: _, ...noSession } = START;
-    expect(RunnerRunStartV2.safeParse(noSession).success).toBe(true);
+    expect(RunnerRunStart.safeParse(noSession).success).toBe(true);
   });
 
   it("agent 의 relPath·rootId 는 같은 스키마로 거른다", () => {
     const bad = (project: object) =>
-      RunnerRunStartV2.safeParse({ ...START, agent: { ...AGENT, project } }).success;
+      RunnerRunStart.safeParse({ ...START, agent: { ...AGENT, project } }).success;
     expect(bad({ rootId: "src", relPath: "../etc" })).toBe(false);
     expect(bad({ rootId: "Src", relPath: "a" })).toBe(false);
     expect(bad({ rootId: "src", relPath: "" })).toBe(true);
@@ -190,7 +190,7 @@ describe("RunnerRunStartV2", () => {
 
   it("agent 가 없으면 거절 — 서버가 에이전트 정의를 통째로 싣는다", () => {
     const { agent: _, ...v1 } = START;
-    expect(RunnerRunStartV2.safeParse(v1).success).toBe(false);
+    expect(RunnerRunStart.safeParse(v1).success).toBe(false);
   });
 });
 

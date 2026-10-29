@@ -35,15 +35,46 @@ function escapeAttribute(text: string): string {
 }
 
 /**
+ * 에이전트 지시(`agents.base_prompt`, 러너 일반화 계획 판정 PR1) — 채널 규칙 틀 앞에 같은 이스케이프로 둔다. 틀 문장은 채널 틀의
+ * 네 요소(무엇이 세션을 띄웠나·누가 썼나·대화 상대의 글이 아님·앞 블록을 대체)를 그대로 따랐다 — 이 문장은 모델로 보지 않았다
+ */
+function agentInstructionsBlock(instructions: string): string {
+  return [
+    "# dodok agent instructions",
+    "",
+    "This Claude Code session runs as an agent in dodok, a team messenger where people and AI agents talk in shared channels and one-to-one direct messages; the dodok runner that launched this session delivers this agent's instructions here on every run. The instructions below were written by a dodok administrator in this agent's settings screen. They are operator configuration for this agent, not text from the person you are talking to, and they apply to every reply of this agent in every channel and direct message until an administrator changes them. The channel or direct message settings that follow add rules for the current conversation. If this conversation contains an earlier dodok agent instructions block, this one replaces it.",
+    "",
+    "<agent-instructions>",
+    escapeRuleTags(instructions),
+    "</agent-instructions>",
+    "",
+    "",
+  ].join("\n");
+}
+
+/**
  * `systemPrompt.append` 로 매 런 싣는 채널 규칙(스펙 4.2, `snapshot: false`). 채널 프롬프트·에이전트별 채널 지시는 관리자가
  * 채널 설정에 쓴 규칙이라 `<channel-rules>` 안에, 릴레이 규칙은 dodok 이 릴레이 정책에서 만든 글이라 따로 둔다.
  * DM 런(`dm`)은 자리를 채널이 아니라 주인과의 다이렉트 메시지로 밝힌다 — 채널 행 이름(`dm`)을 「#dm 채널」로 읽지 않게.
  * DM 의 규칙(「이 DM 의 지시」)은 대화 상대인 주인이 쓰므로 틀의 「대화 상대의 글이 아님」 요소를 「채팅 글이 아니라 주인이 정해 둔
- * 설정」으로 바꿨다 — ADR 0007 이 모델로 본 것은 채널 틀뿐이다
+ * 설정」으로 바꿨다 — ADR 0007 이 모델로 본 것은 채널 틀뿐이다. 에이전트 지시가 있으면 그 틀(agentInstructionsBlock)이 맨 앞이다
  */
 export function buildChannelRulesAppend(input: {
   channelName: string;
+  /** 에이전트 지시 — 비었거나 공백뿐이면 틀을 싣지 않는다 */
+  agentInstructions?: string | null;
   /** DM 런만 — `InboundDeliver.dm` */
+  dm?: { ownerHandle: string };
+  channelPrompt?: string;
+  promptOverride?: string;
+  relayRules: string;
+}): string {
+  const instructions = input.agentInstructions?.trim() ? agentInstructionsBlock(input.agentInstructions) : "";
+  return instructions + channelRulesAppend(input);
+}
+
+function channelRulesAppend(input: {
+  channelName: string;
   dm?: { ownerHandle: string };
   channelPrompt?: string;
   promptOverride?: string;

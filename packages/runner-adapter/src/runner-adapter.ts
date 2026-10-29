@@ -1,7 +1,8 @@
 /**
- * `AgentAdapter` 의 Claude 러너 구현 — 러너 스펙 3·4.5·5·6·8장.
+ * `AgentAdapter` 의 러너 구현 — 러너 스펙 3·4.5·5·6·8장, 러너 일반화 스펙 3·4·5장.
  *
- * 러너가 사람 머신에서 `/runner` 네임스페이스로 붙는다(판정 P1). 런 하나 = `run.start` 하나, 러너가 정규화한 `run.event` 를 받아
+ * 러너가 사람 머신에서 `/runner` 네임스페이스로 붙는다(판정 P1). 러너는 천장(루트·프로그램·권한 상한)만 쥐고, 런 하나 = `run.start`
+ * 하나에 서버가 에이전트 정의(프로젝트·프로그램·권한·도구 — agentDefinition)를 통째로 싣는다. 러너가 정규화한 `run.event` 를 받아
  * 오케스트레이터 신호로 옮기고, `run.final` 의 최종 답은 `onOutbound` 로 채널 메시지를 만든다 — OpenClaw 의 정본(`onCanonical`)과 같은 자리
  */
 import {
@@ -26,35 +27,41 @@ import {
   RUNNER_NAMESPACE,
   RUNNER_PROTOCOL,
   RUNNER_SHUTDOWN_STOP_REASON,
-  type RunnerAgent,
   RunnerApprovalRequested,
   RunnerApprovalWithdrawn,
   type RunnerClientToServerEvents,
   RunnerControlCall,
+  RunnerFsListResult,
   RunnerHello,
   type RunnerHelloResult,
   RunnerOutboundPost,
   type RunnerOutboundAck,
+  RunnerProjectCheckResult,
+  RunnerProjectRef,
   RunnerRunAck,
+  type RunnerRunAgent,
   RunnerRunError,
   RunnerRunEvent,
   RunnerRunFinal,
+  RunnerRunSession,
   RunnerRunStart,
   type RunnerServerToClientEvents,
   type RunSignal,
   type RunUsage,
 } from "@dodok/shared";
 import type { Namespace, Server, Socket } from "socket.io";
+import type { z } from "zod";
 import { RUNNER_APPROVAL_TTL_MS, RunnerApprovals } from "./approvals";
 import {
   createRunner,
   type Runner,
+  type RunnerLive,
   RunnerRegistry,
   type RunnerSocket,
-  UNREADABLE_BINDING,
+  runnerLive,
 } from "./connections";
 
-export { RUNNER_APPROVAL_TTL_MS };
+export { RUNNER_APPROVAL_TTL_MS, type RunnerLive };
 
 /** 핸드셰이크 `auth.token`(외부 입력 그대로)을 보고 통과면 그 토큰의 id·라벨, 아니면 null */
 export type RunnerTokenVerifier = (presented: unknown) => { tokenId: string; label: string } | null;
@@ -76,14 +83,18 @@ export type RunnerFrameLimit = {
 };
 
 /**
- * 등록된 Claude 에이전트와 러너 토큰의 묶임(정본은 서버 DB — agents.runner_token_id). 묶인 에이전트는 그 토큰의 러너만 맡는다
+ * run.start 에 실을 러너 에이전트 정의 — 서버가 에이전트 행·프로젝트 행에서 만든다(러너 일반화 스펙 3장). agent 는 shared
+ * RunnerRunAgent 그대로다 — 러너는 runId 를 못 읽는 형식 오류면 카드 없이 버리므로 서버가 더 넓은 상한을 두면 런이 흔적 없이
+ * 사라진다(태스크 2 리뷰 M3). instructions 는 에이전트 지시(agents.base_prompt) — 채널 규칙 틀 앞에 싣는다(계획 판정 PR1)
  */
-export type RunnerAgentBindings = {
-  /** 그 id 의 등록 에이전트가 묶인 토큰 id. 묶이지 않았거나 등록되지 않았으면 null */
-  boundToken(agentId: string): string | null;
-  /** 묶이지 않은 등록 에이전트를 그 토큰에 묶는다(첫 연결). 묶었으면 true — 등록되지 않았거나 이미 묶였으면 false */
-  claim(agentId: string, tokenId: string): boolean;
+export type RunnerAgentDefinition = {
+  name: string;
+  instructions: string | null;
+  agent: RunnerRunAgent;
 };
+
+/** fs.list·project.check 의 ack 상한 — 러너가 디렉터리 하나를 읽는 시간 */
+export const RUNNER_FS_ACK_TIMEOUT_MS = 10_000;
 
 export type RunnerAdapterOptions = {
   /** 서버의 Socket.IO — 이 어댑터가 `io.of(RUNNER_NAMESPACE)` 를 맡는다 */
@@ -111,7 +122,11 @@ export type RunnerAdapterOptions = {
    */
   onControlCall?: (connectionId: string, call: RunnerControlCall) => Promise<ControlResult>;
   approvalTtlMs?: number;
-  bindings: RunnerAgentBindings;
+  /**
+   * 그 토큰의 러너가 맡는 러너 에이전트(providerAgentId)의 정의. 없으면(그 토큰의 러너 에이전트가 아니다·프로젝트가 없다) null.
+   * 던지지 않는다
+   */
+  agentDefinition: (providerAgentId: string, tokenId: string) => RunnerAgentDefinition | null;
   frameLimit: RunnerFrameLimit;
 };
 
@@ -124,8 +139,16 @@ export interface RunnerAdapter extends AgentAdapter {
    * 러너가 끊기면 곧바로 false 다(열린 런 추적에서 빠진다)
    */
   mayReadAttachment(tokenId: string, attachmentId: string): boolean;
-  /** 그 id 를 지금 맡을 러너의 토큰 id — 에이전트 등록이 이 토큰에 묶는다. 맡을 러너가 없으면 undefined */
-  servingTokenId(agentId: string): string | undefined;
+  /** 그 토큰으로 지금 붙은 러너가 hello 로 알린 것. 붙어 있지 않으면 null */
+  runnerInfo(tokenId: string): RunnerLive | null;
+  /**
+   * 그 러너의 디렉터리 하나(러너 일반화 스펙 3장 fs.list). 러너가 붙어 있지 않으면 ADAPTER_UNAVAILABLE, ack 가
+   * RUNNER_FS_ACK_TIMEOUT_MS 안에 없으면 TIMEOUT, 요청이 RunnerProjectRef 밖이면 VALIDATION — 모두 AdapterError
+   */
+  fsList(tokenId: string, ref: RunnerProjectRef): Promise<RunnerFsListResult>;
+  /** 그 러너에서 프로젝트 자리가 쓸 만한가(project.check) — 오류는 fsList 와 같다 */
+  projectCheck(tokenId: string, ref: RunnerProjectRef): Promise<RunnerProjectCheckResult>;
+  capabilitiesFor(providerAgentId: string, connectionId: string | null): AdapterCapabilities;
 }
 
 const HELLO_TIMEOUT_MS = 10_000;
@@ -146,6 +169,7 @@ const FINAL_TRUNCATED_TAIL = "\n\n(길어서 잘렸습니다)";
 // 러너가 보낼 수 있는 프레임 이름 — 나머지는 Socket.IO 가 조용히 버리므로 따로 warn 한다
 const RUNNER_FRAMES: ReadonlySet<string> = new Set<keyof RunnerClientToServerEvents>([
   "hello",
+  "run.session",
   "run.event",
   "run.final",
   "run.error",
@@ -159,6 +183,7 @@ const RUNNER_FRAMES: ReadonlySet<string> = new Set<keyof RunnerClientToServerEve
 // — namesOpenWork)
 export const FRAME_BUCKET: Record<keyof RunnerClientToServerEvents, RunnerFrameBucket> = {
   hello: "control",
+  "run.session": "control",
   "run.event": "events",
   "run.final": "control",
   "run.error": "control",
@@ -192,7 +217,10 @@ type RunTrack = {
   runId: string;
   runner: Runner;
   deliver: InboundDeliver;
-  agent: RunnerAgent;
+  /** 비용 이벤트의 모델 — 에이전트 정의의 모델(null 이면 프로그램 기본이라 싣지 않는다) */
+  model: string | null;
+  /** 서버가 세션 id 를 정한 런 — 그러면 run.session 을 받지 않는다 */
+  serverSessionIds: boolean;
   started: boolean;
   openTools: Set<string>;
   aborted: boolean;
@@ -241,14 +269,7 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
     RunnerServerToClientEvents
   >;
   const handlers = new Set<(e: AdapterEvent) => void>();
-  const registry = new RunnerRegistry((agentId) => {
-    try {
-      return opts.bindings.boundToken(agentId);
-    } catch (error) {
-      logger.error({ err: error, agentId }, "runner agent binding lookup failed");
-      return UNREADABLE_BINDING;
-    }
-  });
+  const registry = new RunnerRegistry();
   const runs = new Map<string, RunTrack>();
   // hello 전 연결까지 — 폐기는 hello 여부와 무관하게 그 토큰의 연결을 전부 끊는다
   const sockets = new Map<string, { socket: RunnerSocket; tokenId: string }>();
@@ -257,9 +278,11 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
   const limitLog = new Map<string, { at: number; suppressed: number }>();
   const inflightPosts = new Map<string, Promise<{ messageId: string }>>();
   let closed = false;
-  // 러너는 매 런 채널 규칙을 싣고(판정 P3) 세션 UUID 는 서버가 정한다(판정 P4)
+  // 러너는 매 런 채널 규칙을 싣고(판정 P3) 세션 id 는 프로그램마다 다르다 — 어댑터 전체 값은 Claude 처럼 서버가 정하는 쪽이고
+  // 런은 capabilitiesFor 가 그 러너·그 프로그램의 값으로 가른다(러너 일반화 계획 판정 PR3). agentsList 는 false — 러너는 에이전트를
+  // 알리지 않는다(앱에서 러너 프로젝트로 만든다)
   const capabilities: AdapterCapabilities = {
-    agentsList: true,
+    agentsList: false,
     configSet: true,
     promptEveryRun: true,
     serverSessionIds: true,
@@ -290,19 +313,29 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
     emit({ kind: "setup" });
   }
 
-  /**
-   * 첫 연결 묶기 — 지금 맡는 러너가 있는데 묶임이 없는 등록 에이전트를 그 러너 토큰에 묶는다. 묶임 없는 기존 행(묶임이 생기기
-   * 전에 등록된 것)도, 맡을 러너 없이 등록된 것도 이 길로 묶인다. 미등록 id 는 claim 이 false 라 그대로다
-   */
-  function claimUnbound() {
-    for (const { agentId, runner } of registry.unboundOwned()) {
-      try {
-        if (opts.bindings.claim(agentId, runner.tokenId))
-          logger.info({ agentId, tokenId: runner.tokenId, label: runner.label }, "runner agent bound");
-      } catch (error) {
-        logger.error({ err: error, agentId, tokenId: runner.tokenId }, "runner agent bind failed");
-      }
+  /** 정의를 읽다 던지면 없는 것으로 — 런은 send 가 닫고, 능력은 어댑터 전체 값으로 */
+  function definitionOf(providerAgentId: string, tokenId: string): RunnerAgentDefinition | null {
+    try {
+      return opts.agentDefinition(providerAgentId, tokenId);
+    } catch (error) {
+      logger.error(
+        { err: error, agentId: providerAgentId, tokenId },
+        "runner agent definition lookup failed",
+      );
+      return null;
     }
+  }
+
+  /**
+   * 그 에이전트 몫의 능력(계획 판정 PR3) — 그 러너가 그 프로그램에 대해 hello 로 알린 capabilities. 러너가 끊겼거나 프로그램을
+   * 알리지 않았으면 어댑터 전체 값이다 — 그 런은 어차피 send 가 ADAPTER_UNAVAILABLE 로, 또는 러너가 RUNNER_CEILING(program)으로 닫는다
+   */
+  function capabilitiesFor(providerAgentId: string, connectionId: string | null): AdapterCapabilities {
+    const runner = connectionId === null ? undefined : registry.byToken(connectionId);
+    const definition = runner ? definitionOf(providerAgentId, runner.tokenId) : null;
+    const program = definition && runner?.programs.find((p) => p.program === definition.agent.program);
+    if (!program) return { ...capabilities };
+    return { ...capabilities, serverSessionIds: program.capabilities.includes("serverSessionIds") };
   }
 
   const isLive = (runner: Runner) => registry.get(runner.socket.id) === runner;
@@ -387,17 +420,10 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
 
   /** 러너를 빼고 그 러너에 걸린 런·승인을 닫는다. 교체와 disconnect 가 겹쳐 두 번 불려도 한 번만 한다 */
   function dropRunner(runner: Runner, reason: string) {
-    const owned = runner.agents.filter((a) => registry.owner(a.id) === runner).map((a) => a.id);
     if (!registry.remove(runner.socket.id)) return;
     logger.info({ tokenId: runner.tokenId, label: runner.label, reason }, "runner disconnected");
     if (closed) return;
     releaseRunner(runner);
-    // 묶인 에이전트는 이어받지 않는다 — 이어받는 것은 묶임 없는 id 뿐이고, 그중 등록된 것은 여기서 새 러너에 묶인다
-    for (const agentId of owned) {
-      const next = registry.owner(agentId);
-      if (next) logger.info({ agentId, tokenId: next.tokenId, label: next.label }, "runner agent taken over");
-    }
-    claimUnbound();
     announceRunners();
   }
 
@@ -431,24 +457,24 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
     const reply = (r: RunnerHelloResult) => {
       if (typeof ack === "function") ack(r);
     };
-    const existing = registry.get(socket.id);
-    if (existing) {
+    if (registry.get(socket.id)) {
       logger.warn({ tokenId: auth.tokenId }, "runner hello repeated — ignored");
-      return reply({ ok: true, serverVersion: opts.serverVersion, conflicts: registry.conflicts(existing) });
+      return reply({ ok: true, serverVersion: opts.serverVersion });
     }
     const reject = (message: string, detail: object) => {
       logger.warn({ tokenId: auth.tokenId, ...detail }, "runner hello rejected");
       reply({ ok: false, code: "PROTOCOL_MISMATCH", message });
       socket.disconnect(true);
     };
+    // 판본부터 본다 — 옛 러너(1)의 hello 는 모양도 다르다(agents·claudeCodeVersion). 모양 오류보다 판본 불일치를 알려야 머신
+    // 주인이 할 일(러너 다시 설치)을 안다
+    const protocol = (payload as { runnerProtocol?: unknown } | null)?.runnerProtocol;
+    if (typeof protocol === "number" && protocol !== RUNNER_PROTOCOL) {
+      return reject(`server speaks runner protocol ${RUNNER_PROTOCOL}`, { runnerProtocol: protocol });
+    }
     const parsed = RunnerHello.safeParse(payload);
     if (!parsed.success)
       return reject("hello does not match the runner protocol", { issues: issues(parsed.error) });
-    if (parsed.data.runnerProtocol !== RUNNER_PROTOCOL) {
-      return reject(`server speaks runner protocol ${RUNNER_PROTOCOL}`, {
-        runnerProtocol: parsed.data.runnerProtocol,
-      });
-    }
     const runner = createRunner({
       socket,
       tokenId: auth.tokenId,
@@ -470,26 +496,25 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
     } else {
       registry.add(runner);
     }
-    claimUnbound();
-    const conflicts = registry.conflicts(runner);
-    if (conflicts.length > 0) {
-      logger.warn(
-        { tokenId: runner.tokenId, label: runner.label, conflicts },
-        "runner agent ids not assigned to this runner (bound to another token or announced first by another runner)",
-      );
-    }
+    // 루트는 id 만 — 라벨은 머신 주인이 적은 글이라 로그에 싣지 않는다(라벨을 안 적으면 디렉터리 이름이 온다)
     logger.info(
       {
         tokenId: runner.tokenId,
         label: runner.label,
         runnerVersion: runner.hello.runnerVersion,
         sdkVersion: runner.hello.sdkVersion,
-        claudeCodeVersion: runner.hello.claudeCodeVersion,
-        agents: runner.agents.map((a) => a.id),
+        roots: runner.hello.roots.map((r) => r.id),
+        browse: runner.hello.browse,
+        programs: runner.programs.map((p) => ({
+          program: p.program,
+          available: p.available,
+          version: p.version,
+          auth: p.auth,
+        })),
       },
       "runner hello",
     );
-    reply({ ok: true, serverVersion: opts.serverVersion, conflicts });
+    reply({ ok: true, serverVersion: opts.serverVersion });
     announceRunners();
   }
 
@@ -563,7 +588,7 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
     if (!run) return;
     runs.delete(run.runId);
     approvals.cancelForRun(run.runId);
-    const usage: RunUsage = { costKind: final.costKind, model: run.agent.model };
+    const usage: RunUsage = { costKind: final.costKind, ...(run.model === null ? {} : { model: run.model }) };
     if (final.usage?.inputTokens !== undefined) usage.inputTokens = final.usage.inputTokens;
     if (final.usage?.outputTokens !== undefined) usage.outputTokens = final.usage.outputTokens;
     if (final.costUsd !== undefined) usage.costUsd = final.costUsd;
@@ -656,6 +681,36 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
     approvals.cancelForRun(runId);
     emitEvent(runner.tokenId, runId, { type: "RUN_ERROR", runId, code, message });
     emitSignal(runner.tokenId, runId, { kind: "gateway_error", code, message });
+  }
+
+  /**
+   * 프로그램이 스스로 지은 세션 id(계획 판정 PR3) — 서버가 그 런의 세션 행에 저장해 다음 런에 싣는다. 서버가 세션 id 를 정한 런이
+   * 보내면 버린다 — 서버가 정한 id 를 러너가 바꿔 다른 세션 전사로 잇지 못하게
+   */
+  function onRunSession(runner: Runner, payload: unknown) {
+    const parsed = RunnerRunSession.safeParse(payload);
+    if (!parsed.success) {
+      logger.warn(
+        { tokenId: runner.tokenId, issues: issues(parsed.error) },
+        "runner run.session violates contract",
+      );
+      return;
+    }
+    const run = ownRun(runner, parsed.data.runId, "run.session");
+    if (!run) return;
+    if (run.serverSessionIds) {
+      logger.warn(
+        { tokenId: runner.tokenId, runId: run.runId },
+        "runner run.session for a server-chosen session — dropped",
+      );
+      return;
+    }
+    emit({
+      kind: "run_session",
+      runId: run.runId,
+      connectionId: runner.tokenId,
+      providerSessionId: parsed.data.providerSessionId,
+    });
   }
 
   async function onOutboundPost(runner: Runner, payload: unknown, ack: unknown) {
@@ -837,6 +892,34 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
     }
   }
 
+  /** 서버 → 러너 ack 요청(fs.list·project.check) — 답은 계약 스키마로 거른다 */
+  async function askRunner<R>(
+    tokenId: string,
+    event: "fs.list" | "project.check",
+    ref: RunnerProjectRef,
+    schema: z.ZodType<R>,
+  ): Promise<R> {
+    const request = RunnerProjectRef.safeParse(ref);
+    if (!request.success) throw new AdapterError("VALIDATION", issues(request.error));
+    const runner = registry.byToken(tokenId);
+    if (closed || !runner) throw new AdapterError("ADAPTER_UNAVAILABLE", "runner is not connected");
+    let raw: unknown;
+    try {
+      raw = await runner.socket.timeout(RUNNER_FS_ACK_TIMEOUT_MS).emitWithAck(event, request.data);
+    } catch {
+      // 기다리는 사이 끊긴 것과 늦은 것을 가른다 — 끊김은 다시 붙으면 되고, 늦음은 러너 쪽 디스크가 느린 것이다
+      throw isLive(runner)
+        ? new AdapterError("TIMEOUT", `runner did not ack ${event} in time`)
+        : new AdapterError("ADAPTER_UNAVAILABLE", "runner disconnected");
+    }
+    const parsed = schema.safeParse(raw);
+    if (!parsed.success) {
+      logger.warn({ tokenId, event, issues: issues(parsed.error) }, "runner ack violates contract");
+      throw new AdapterError("INTERNAL", `ADAPTER_PROTOCOL: ${event} ack invalid`);
+    }
+    return parsed.data;
+  }
+
   namespace.on("connection", (socket) => {
     const { tokenId, label } = socket.data as SocketAuth;
     if (tokenId === undefined || label === undefined) {
@@ -909,6 +992,7 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
       }
       onHello(socket, auth, payload, ack);
     });
+    on("run.session", onRunSession);
     on("run.event", onRunEvent);
     on("run.final", onRunFinal);
     on("run.error", onRunError);
@@ -955,7 +1039,14 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
       return false;
     },
 
-    servingTokenId: (agentId) => registry.owner(agentId)?.tokenId,
+    runnerInfo(tokenId) {
+      const runner = registry.byToken(tokenId);
+      return runner ? runnerLive(runner) : null;
+    },
+
+    fsList: (tokenId, ref) => askRunner(tokenId, "fs.list", ref, RunnerFsListResult),
+    projectCheck: (tokenId, ref) => askRunner(tokenId, "project.check", ref, RunnerProjectCheckResult),
+    capabilitiesFor,
 
     revokeTokenSessions(tokenId) {
       let count = 0;
@@ -969,44 +1060,39 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
       return count;
     },
 
-    // 연결을 주면 그 토큰의 러너가 알린 것만, null 이면 붙은 러너 전부
-    async listAgents(connectionId) {
-      return registry.all().flatMap((runner) =>
-        connectionId !== null && runner.tokenId !== connectionId
-          ? []
-          : runner.agents
-              .filter((a) => registry.owner(a.id) === runner)
-              .map((a) => ({
-                providerAgentId: a.id,
-                name: a.name,
-                hint: `${runner.label} · ${a.workdirLabel} · ${a.model}`,
-              })),
-      );
+    // 러너는 에이전트를 알리지 않는다 — 러너 에이전트는 앱에서 러너 프로젝트로 만든다(러너 일반화 계획 판정 PR9)
+    async listAgents() {
+      return [];
     },
 
     sessionKeyFor: dodokSessionKey,
 
-    // 모른다고 할 수 있는 것은 그 에이전트를 가진 러너가 알리지 않았을 때뿐이다 — 러너가 없으면 오케스트레이터가 옛 러너로
+    // 러너 능력(threads 등)은 그 에이전트가 묶인 러너 토큰의 연결이 hello 로 알린 것. 러너가 없으면 오케스트레이터가 옛 러너로
     // 닫지 않고 send 가 ADAPTER_UNAVAILABLE 로 닫게 true
-    supports: (providerAgentId, _connectionId, capability) =>
-      registry.owner(providerAgentId)?.capabilities.includes(capability) ?? true,
+    supports: (_providerAgentId, connectionId, capability) =>
+      (connectionId === null ? undefined : registry.byToken(connectionId))?.capabilities.includes(
+        capability,
+      ) ?? true,
 
     async send(input, sendOpts) {
       if (closed) throw new AdapterError("ADAPTER_UNAVAILABLE", "adapter closed");
-      if (sendOpts?.providerSessionId === undefined) {
-        throw new AdapterError("INTERNAL", "runner adapter needs a server-chosen providerSessionId");
+      // 러너 에이전트는 만들 때부터 러너 토큰에 묶인다 — 그 토큰의 러너만 맡는다
+      const runner = sendOpts.connectionId === null ? undefined : registry.byToken(sendOpts.connectionId);
+      if (!runner) throw new AdapterError("ADAPTER_UNAVAILABLE", "the agent's runner is not connected");
+      const definition = definitionOf(input.agentId, runner.tokenId);
+      if (!definition) throw new AdapterError("NOT_FOUND", "no runner agent with a project for this runner");
+      const serverSessionIds = capabilitiesFor(input.agentId, runner.tokenId).serverSessionIds;
+      if (serverSessionIds && sendOpts.providerSessionId === undefined) {
+        throw new AdapterError("INTERNAL", "this runner program needs a server-chosen providerSessionId");
       }
-      // 연결이 null 이면 묶임 없는 에이전트 — 먼저 알린 러너가 맡는다(registry.owner). 연결을 주면 그 토큰의 러너만 맡는다
-      const runner = registry.owner(input.agentId);
-      const agent = runner?.agents.find((a) => a.id === input.agentId);
-      if (!runner || !agent) throw new AdapterError("ADAPTER_UNAVAILABLE", "no runner serves this agent");
-      if (sendOpts.connectionId !== null && runner.tokenId !== sendOpts.connectionId)
-        throw new AdapterError("ADAPTER_UNAVAILABLE", "the bound runner does not serve this agent");
       const channelName = opts.channelName(input.channelId) ?? input.channelId;
       const start = RunnerRunStart.safeParse({
         deliver: input,
-        providerSessionId: sendOpts.providerSessionId,
+        ...(sendOpts.providerSessionId === undefined
+          ? {}
+          : { providerSessionId: sendOpts.providerSessionId }),
         channelRulesAppend: buildChannelRulesAppend({
+          agentInstructions: definition.instructions,
           channelName,
           ...(input.dm ? { dm: input.dm } : {}),
           channelPrompt: input.context.channelPrompt,
@@ -1022,7 +1108,8 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
           reactionsOmitted: input.context.reactionsOmitted,
         }),
         // DM 채널 행의 이름은 `dm` 이라 그대로 쓰면 「dm · …」 — DM 은 「DM」으로
-        sessionTitle: clip(`${input.dm ? "DM" : channelName} · ${agent.name}`, SESSION_TITLE_MAX),
+        sessionTitle: clip(`${input.dm ? "DM" : channelName} · ${definition.name}`, SESSION_TITLE_MAX),
+        agent: definition.agent,
       });
       if (!start.success) throw new AdapterError("INTERNAL", `run.start invalid: ${issues(start.error)}`);
 
@@ -1031,7 +1118,8 @@ export function createRunnerAdapter(opts: RunnerAdapterOptions): RunnerAdapter {
         runId: input.runId,
         runner,
         deliver: input,
-        agent,
+        model: definition.agent.model,
+        serverSessionIds,
         started: false,
         openTools: new Set(),
         aborted: false,

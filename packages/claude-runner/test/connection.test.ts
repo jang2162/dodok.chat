@@ -7,12 +7,12 @@ import {
   CONTROL_RESULT_UNKNOWN_MESSAGE,
   type ControlResult,
   RUNNER_NAMESPACE,
-  RUNNER_PROTOCOL_V2,
+  RUNNER_PROTOCOL,
   RunnerApprovalRequested,
   RunnerApprovalWithdrawn,
   RunnerControlCall,
   RunnerFsListResult,
-  RunnerHelloV2,
+  RunnerHello,
   RunnerOutboundPost,
   type RunnerOutboundAck,
   RunnerProjectCheckResult,
@@ -21,16 +21,17 @@ import {
   RunnerRunEvent,
   RunnerRunFinal,
   RunnerRunSession,
-  type RunnerClientToServerEventsV2,
-  type RunnerHelloResultV2,
+  type RunnerClientToServerEvents,
+  type RunnerHelloResult,
   type RunnerRunAgent,
-  type RunnerServerToClientEventsV2,
+  type RunnerServerToClientEvents,
 } from "@dodok/shared";
 import { Server, type Socket } from "socket.io";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ProgramCeiling, ResolvedRunnerConfig } from "../src/config";
 import {
   createRunBridge,
+  invalidFields,
   NO_DRIVER_REASON,
   startRunnerConnection,
   type RunnerConnection,
@@ -47,11 +48,11 @@ const TOKEN = "drn_test_token_value_0123456789abcdefghijklmn";
 const RUN_2 = "0192f000-0000-7000-8000-00000000a002";
 const SESSION_2 = "0192f000-0000-4000-8000-00000000e002";
 
-type ServerSocket = Socket<RunnerClientToServerEventsV2, RunnerServerToClientEventsV2>;
+type ServerSocket = Socket<RunnerClientToServerEvents, RunnerServerToClientEvents>;
 
 type FakeServer = {
   url: string;
-  hellos: RunnerHelloV2[];
+  hellos: RunnerHello[];
   sessions: RunnerRunSession[];
   events: RunnerRunEvent[];
   finals: RunnerRunFinal[];
@@ -64,7 +65,9 @@ type FakeServer = {
   onControl?: (socket: ServerSocket, ack: (r: ControlResult) => void) => void;
   postAck: RunnerOutboundAck;
   sockets: ServerSocket[];
-  helloResult: RunnerHelloResultV2;
+  helloResult: RunnerHelloResult;
+  /** 거절 ack 를 보낸 같은 틱에 연결을 끊는다 — 실제 러너 어댑터(hello 거절 → disconnect(true))와 같게 */
+  disconnectAfterReject?: boolean;
   /** n 번째(0부터) 핸드셰이크를 미들웨어에서 거절할 사유 — 없으면 토큰만 본다 */
   reject?: (attempt: number) => string | undefined;
   handshakes: number;
@@ -73,7 +76,7 @@ type FakeServer = {
 
 async function startFakeServer(): Promise<FakeServer> {
   const http: HttpServer = createServer();
-  const io = new Server<RunnerClientToServerEventsV2, RunnerServerToClientEventsV2>(http);
+  const io = new Server<RunnerClientToServerEvents, RunnerServerToClientEvents>(http);
   const server: FakeServer = {
     url: "",
     hellos: [],
@@ -103,8 +106,9 @@ async function startFakeServer(): Promise<FakeServer> {
   ns.on("connection", (socket) => {
     server.sockets.push(socket);
     socket.on("hello", (p, ack) => {
-      server.hellos.push(RunnerHelloV2.parse(p));
+      server.hellos.push(RunnerHello.parse(p));
       ack(server.helloResult);
+      if (!server.helloResult.ok && server.disconnectAfterReject) socket.disconnect(true);
     });
     socket.on("run.event", (p) => void server.events.push(RunnerRunEvent.parse(p)));
     socket.on("run.final", (p) => void server.finals.push(RunnerRunFinal.parse(p)));
@@ -228,7 +232,7 @@ describe("startRunnerConnection", () => {
     await waitFor(() => server.hellos.length === 1);
     const hello = server.hellos[0]!;
     expect(hello).toEqual({
-      runnerProtocol: RUNNER_PROTOCOL_V2,
+      runnerProtocol: RUNNER_PROTOCOL,
       runnerVersion: "0.0.0",
       sdkVersion: "0.3.283",
       bundleSha256: null,
@@ -346,13 +350,49 @@ describe("startRunnerConnection", () => {
     expect(server.hellos).toHaveLength(1);
   });
 
+  it("hello 거절 ack 와 같은 틱에 서버가 끊어도 첫 문구는 판본 불일치이고 종료는 한 번 [태스크 2 보고 7-5]", async () => {
+    const server = await startFakeServer();
+    cleanups.push(() => server.close());
+    server.helloResult = { ok: false, code: "PROTOCOL_MISMATCH", message: "server speaks runner protocol 3" };
+    server.disconnectAfterReject = true;
+    const logs: Array<[string, string]> = [];
+    const fatal: number[] = [];
+    const conn = startRunnerConnection({
+      config: {
+        serverUrl: server.url,
+        maxConcurrentRuns: 1,
+        roots: [{ id: "src", path: tempRoot().root, label: "src" }],
+        browse: true,
+        programs: { claude: CLAUDE_CEILING },
+      },
+      token: TOKEN,
+      drivers: [createClaudeDriver({ sdk: createFakeSdk(), claudeCodeVersion: "y" })],
+      versions: { runnerVersion: "0.0.0", sdkVersion: "x", bundleSha256: null },
+      logger: {
+        info: (m) => logs.push(["info", m]),
+        warn: (m) => logs.push(["warn", m]),
+        error: (m) => logs.push(["error", m]),
+      },
+      onFatal: (code) => fatal.push(code),
+      backoff: { minMs: 10, maxMs: 20 },
+    });
+    cleanups.push(() => conn.stop());
+    await waitFor(() => fatal.length === 1);
+    await new Promise((r) => setTimeout(r, 80));
+    expect(fatal).toEqual([2]);
+    const errors = logs.filter(([level]) => level === "error").map(([, m]) => m);
+    expect(errors[0]).toMatch(/PROTOCOL_MISMATCH/);
+    expect(errors[0]).toMatch(/판본/);
+    expect(server.hellos).toHaveLength(1);
+  });
+
   it("계약 밖 hello 거절 코드(RATE_LIMITED 등)는 끝내지 않고 백오프로 다시 붙는다 — hello 거절은 판본 불일치뿐 [최종 리뷰 M3]", async () => {
     const { server, fatal, logs } = await setup();
     server.helloResult = {
       ok: false,
       code: "RATE_LIMITED",
       message: "slow down",
-    } as unknown as RunnerHelloResultV2;
+    } as unknown as RunnerHelloResult;
     await waitFor(() => server.hellos.length >= 2);
     expect(fatal).toEqual([]);
     expect(logs.join("\n")).toMatch(/hello 실패/);
@@ -963,5 +1003,22 @@ describe("createRunBridge — 런을 시작한 연결 세대가 끊겼으면 보
     expect(f.emitted).toEqual([]);
     // 기다림은 세대와 상관없이 거둔다
     expect(decisions.size).toBe(0);
+  });
+});
+
+describe("invalidFields — 형식 오류 문구는 스키마의 이름만 [태스크 2 재리뷰 N2]", () => {
+  it("이름 꼴이 아닌 경로 성분(보낸 쪽이 정한 맵 키·경로 글자)은 ? 로, 숫자는 [n], 같은 경로는 한 번, 5개 넘으면 「외 N개」", () => {
+    expect(
+      invalidFields([
+        { path: ["agent", "/Users/someone/secret", 0] },
+        { path: ["deliver", "options", "has space"] },
+        { path: ["agent", "allowedTools", 2] },
+        { path: ["agent", "allowedTools", 2] },
+        { path: [] },
+      ]),
+    ).toBe("agent.?[0], deliver.options.?, agent.allowedTools[2], (최상위)");
+    expect(invalidFields([{ path: [Symbol("s")] }])).toBe("?");
+    const many = Array.from({ length: 7 }, (_, i) => ({ path: [`f${i}`] }));
+    expect(invalidFields(many)).toBe("f0, f1, f2, f3, f4 외 2개");
   });
 });

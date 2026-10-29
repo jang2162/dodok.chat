@@ -30,7 +30,10 @@ export type AdapterCapabilities = {
   configSet: boolean;
   /** 채널 프롬프트를 매 런 싣는다(러너 계획 판정 P3) — false 면 지금처럼 새 세션에서만 */
   promptEveryRun: boolean;
-  /** 서버가 providerSessionId 를 정해 send 에 넘긴다(판정 P4) */
+  /**
+   * 서버가 providerSessionId 를 정해 send 에 넘긴다(판정 P4). false 인 러너 프로그램은 첫 런의 run_session 으로 알린 id 를 서버가
+   * 세션 행에 저장해 다음 런에 넘긴다(러너 일반화 계획 판정 PR3)
+   */
   serverSessionIds: boolean;
 };
 
@@ -114,8 +117,8 @@ export type RunEventBody = DistributiveOmit<RunEvent, "seq" | "ts">;
 export type ConnectionId = string;
 
 /**
- * send 의 두 번째 인자. `connectionId` 는 서버가 에이전트 행에서 꺼낸 값이다 — null 이면 OpenClaw 는 ADAPTER_UNAVAILABLE,
- * 러너는 묶임 없는 에이전트를 먼저 알린 러너에 보낸다. providerSessionId 는 serverSessionIds 어댑터에만 넘긴다
+ * send 의 두 번째 인자. `connectionId` 는 서버가 에이전트 행에서 꺼낸 값이다 — null 이면 ADAPTER_UNAVAILABLE. providerSessionId 는
+ * serverSessionIds 면 서버가 정한 값, 아니면 그 프로그램이 run_session 으로 알려 저장한 값이 있을 때만 넘긴다
  */
 export type SendOptions = { connectionId: ConnectionId | null; providerSessionId?: string };
 
@@ -130,6 +133,8 @@ export type AdapterEvent =
       snapshotText?: string;
     }
   | { kind: "canonical"; connectionId: ConnectionId; message: OutboundMessage }
+  // 프로그램이 스스로 지은 세션 id(러너 run.session) — serverSessionIds 가 없는 러너 프로그램만. 서버가 그 런의 세션 행에 저장한다
+  | { kind: "run_session"; runId: string; connectionId: ConnectionId; providerSessionId: string }
   | { kind: "status"; status: AdapterStatus; capabilities: AdapterCapabilities }
   // 승인은 런 이벤트가 아니다 — 런 상관(연결 id + sessionKey + toolCallId)은 서버가 한다(설계 4.1·4.2)
   | { kind: "approval"; connectionId: ConnectionId; approval: ProviderApproval }
@@ -155,6 +160,10 @@ export interface AgentAdapter {
   close(): Promise<void>;
   status(): AdapterStatus;
   capabilities(): AdapterCapabilities;
+  /**
+   * 그 에이전트 몫의 능력 — 러너는 프로그램마다 다르다(러너 일반화 계획 판정 PR3). 없으면 capabilities() 가 어댑터 전체의 값이다
+   */
+  capabilitiesFor?(providerAgentId: string, connectionId: ConnectionId | null): AdapterCapabilities;
   setupDetail(): AdapterSetupDetail;
   /** 그 토큰(브리지 토큰·러너 토큰 — 어댑터마다 자기 종류)으로 붙은 연결을 끊고 끊은 수를 돌려준다 — 토큰 폐기 때 */
   revokeTokenSessions(tokenId: string): number;

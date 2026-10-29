@@ -1,4 +1,4 @@
-import { renderRunnerPrompt, type ErrorCode, type RunnerRunFinal } from "@dodok/shared";
+import { renderRunnerPrompt, RUNNER_PROGRAM_NAME, type ErrorCode, type RunnerRunFinal } from "@dodok/shared";
 import { CONTROL_TOOL_FULL_NAMES, createControlTools } from "../../control-tools";
 import type { RunSpec } from "../../driver";
 import { imageFailureNote, loadImageBlocks, type SdkImageBlock } from "../../images";
@@ -16,8 +16,8 @@ import type {
 } from "./sdk";
 import { createStreamMapper, isAuthFailureText } from "./stream-map";
 
-/** 오류 문구의 프로그램 이름(「러너의 Claude Code 로그인을 확인하세요」) — 웹 PROGRAM_NAME.claude 와 같은 글 */
-export const CLAUDE_CODE_LABEL = "Claude Code";
+/** 오류 문구의 프로그램 이름(「러너의 Claude Code 로그인을 확인하세요」) */
+export const CLAUDE_CODE_LABEL = RUNNER_PROGRAM_NAME.claude;
 
 /** Claude 는 서버가 정한 세션 UUID 로 연다(serverSessionIds) — providerSessionId 가 있는 런만 이 드라이버에 온다 */
 export type ClaudeRunSpec = RunSpec & { start: RunSpec["start"] & { providerSessionId: string } };

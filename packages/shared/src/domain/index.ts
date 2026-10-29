@@ -35,6 +35,12 @@ export type AgentProvider = z.infer<typeof AgentProvider>;
 /** 러너가 돌리는 프로그램 — 드라이버가 있는 것은 claude 뿐이다 */
 export const RunnerProgram = z.enum(["claude", "codex", "opencode"]);
 export type RunnerProgram = z.infer<typeof RunnerProgram>;
+/** 프로그램 이름표 — 서버 카드 문구(PROVIDER_AUTH 등)·러너 오류 문구·웹이 같은 글을 쓴다 */
+export const RUNNER_PROGRAM_NAME: Record<RunnerProgram, string> = {
+  claude: "Claude Code",
+  codex: "Codex",
+  opencode: "OpenCode",
+};
 export const Agent = z.object({
   id: Id,
   workspaceId: Id,
