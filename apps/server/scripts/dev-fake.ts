@@ -23,11 +23,16 @@
  * - `POST /__devfake/disk { freeBytes, totalBytes } | { reset: true }` — 디스크 감시가 그 값을 보게 하고 곧바로 다시 잰다
  * - `POST /__devfake/plugin-capabilities { gatewayId, threads: boolean }` — false 면 그 Gateway 플러그인이 threads 없는 hello 로 다시
  *   붙는다(옛 플러그인 흉내), true 면 되돌린다
- * - `POST /__devfake/runner { connected: boolean, token? }` — 가짜 러너를 끊고(false) 붙인다(true, token 을 주면 그 러너 토큰으로)
- * 가짜 러너(`test/fakes/fake-runner.ts`)도 붙는다 — 고정 러너 토큰 `dev-fake-runner-token`(라벨 dev-fake) 행을 시작 때 넣고, 그 러너의
- * 프로젝트 `src/dodok`(루트는 가짜 러너의 `FAKE_RUNNER_ROOT`)와 그 프로젝트의 러너 에이전트 `coder`(프로그램 claude)를 만들어 둔다 —
- * 에이전트는 만들 때부터 그 러너 토큰에 묶인다. 가짜 러너는 스스로 다시 붙지 않는다 — 폐기·끊기 뒤에는 훅으로 붙인다. 폐기 뒤 새 토큰으로
- * 붙여도 coder 는 폐기된 토큰에 묶인 채라 런은 ADAPTER_UNAVAILABLE 이다.
+ * - `POST /__devfake/runner { connected: boolean, token?, runner?: "main" | "limited", maxPermissionMode?, roots? }` — 가짜 러너를
+ *   끊고(false) 붙인다(true, token 을 주면 그 러너 토큰으로). runner 는 기본 main. roots(그 러너의 고정 루트 id 가운데 알릴 것)·
+ *   maxPermissionMode(Claude Code 상한)를 주면 그 hello 로 다시 붙는다 — 머신 주인이 설정을 바꾼 것처럼(다음 바꿈까지 남는다)
+ * 가짜 러너(`test/fakes/fake-runner.ts`) 둘도 붙는다(`DEV_FAKE_RUNNERS`). 「dev-fake」(고정 토큰 `dev-fake-runner-token`)는 루트
+ * src·work, Claude Code(상한 acceptEdits)와 「설치되지 않음」 Codex 를 알리고 둘러보기에 고정 나무(`devFakeRunnerTree`)를 낸다 —
+ * 그 러너의 프로젝트 `src/dodok` 와 러너 에이전트 `coder`(프로그램 claude)를 만들어 둔다. 「dev-fake 제한」(`dev-fake-runner-token-limited`)
+ * 은 루트 sandbox·src(첫 러너와 같은 자리 dodok·notes — 옮기기), Claude Code 상한 plan·둘러보기 꺼짐이고 프로젝트 `sandbox/demo` 만 둔다. 두 러너 모두 실제 러너처럼 런마다 천장을
+ * 본다(걸리면 RUNNER_CEILING 카드). 토큰 행은 고정 id 로 찾는다 — 연결 페이지에서 「다시 발급」하면 그 자리에서는 새 원문을 훅 token
+ * 으로 주어 붙이고, `--keep` 으로 다시 띄우면 고정 토큰으로 되돌아 붙는다(프로젝트·coder 는 그 러너에 남는다). 가짜 러너는 스스로 다시
+ * 붙지 않는다 — 끊기 뒤에는 훅으로 붙인다. 폐기한 러너 토큰은 되살리지 않는다(그 러너의 런은 ADAPTER_UNAVAILABLE).
  * 끊김 사건 임계는 DODOK_DEVFAKE_DISCONNECT_MS(기본 운영과 같은 60초)로 줄인다. 종료 표지는 <dataDir>/dev-fake-run/ 에 둔다.
  * 보관하지 않은 채널이 하나도 없으면(새 DB) 씨앗 채널 `DEV_FAKE_CHANNEL_NAME`(에이전트 dev·coder)을 만들고 그 채널에만 세션 둘을 넣는다
  * (채널 세션 계획 태스크 8) — 마이그레이션이 만드는 꼴의 「이전 대화」(id = 채널 id)와 새 세션 하나(`DEV_FAKE_SESSION_TITLE`), owner 글 하나씩.
@@ -50,6 +55,11 @@ import {
   OpsEvent,
   OpsEventKind,
   OpsSeverity,
+  type RunnerHello,
+  RunnerPermissionMode,
+  type RunnerProgramStatus,
+  type RunnerProjectRef,
+  RunnerRootId,
 } from "@dodok/shared";
 import { and, eq, isNull, or } from "drizzle-orm";
 import { createHash } from "node:crypto";
@@ -93,9 +103,12 @@ import { DISCONNECT_EVENT_MS, startRunState } from "../src/modules/ops/health";
 import { type FakeGateway, startFakeGateway } from "../test/fakes/fake-gateway";
 import { FAKE_PLUGIN_HELLO, type FakePlugin, startFakePlugin } from "../test/fakes/fake-plugin";
 import {
+  FAKE_CLAUDE_PROGRAM,
   FAKE_RUNNER_ROOT,
+  type FakeNode,
   type FakeRunner,
   type FakeRunnerRun,
+  type FakeTree,
   startFakeRunner,
 } from "../test/fakes/fake-runner";
 import {
@@ -206,6 +219,116 @@ export const DEV_FAKE_RUNNER_TOKEN = "dev-fake-runner-token";
 export const DEV_FAKE_RUNNER_LABEL = "dev-fake";
 /** 가짜 러너의 에이전트 — providerAgentId 는 서버가 짓는다(r-…). 씨앗 채널·로그는 핸들로 찾는다 */
 export const DEV_FAKE_RUNNER_AGENT = { handle: "coder", name: "Coder", relPath: "dodok" } as const;
+/**
+ * 러너 토큰 행의 고정 id — 행은 해시가 아니라 이 id 로 찾는다. 연결 페이지에서 「다시 발급」한 뒤 `--keep` 으로 다시 띄워도 같은 행이
+ * 고정 토큰으로 돌아와(해시·접두사만 되돌린다) 프로젝트·coder 가 그 러너에 남는다
+ */
+export const DEV_FAKE_RUNNER_ID = "00000000-0000-4000-8000-00000000fa01";
+/**
+ * 둘째 가짜 러너(「dev-fake 제한」) — Claude Code 상한 plan·허용 도구 상한 셋·둘러보기 꺼짐. 상한 아래 처음 값과 직접 입력을 본다.
+ * 루트 src 에 첫 러너와 같은 자리(dodok·notes)가 있어 프로젝트 「옮기기」가 된다(coder 는 상한 plan 밖이라 dodok 은 400)
+ */
+export const DEV_FAKE_LIMITED_RUNNER_TOKEN = "dev-fake-runner-token-limited";
+export const DEV_FAKE_LIMITED_RUNNER_LABEL = "dev-fake 제한";
+export const DEV_FAKE_LIMITED_RUNNER_ID = "00000000-0000-4000-8000-00000000fa02";
+
+/** 「설치되지 않음」 Codex 줄 — 에이전트 추가에서 흐리게 보인다 */
+const DEV_FAKE_CODEX_MISSING: RunnerProgramStatus = {
+  program: "codex",
+  available: false,
+  auth: "unknown",
+  reason: "설치되지 않음",
+  capabilities: [],
+  ceiling: { maxPermissionMode: "default", allowedToolsCeiling: null },
+};
+
+/** 이름에 `&`·`#`·`%`·공백·`\` 가 든 디렉터리 — 둘러보기 주소 인코딩을 본다. `\` 는 relPath 규칙 밖이라 고르면 거절된다 */
+export const DEV_FAKE_SPECIAL_DIRS = ["a&b", "#x", "50%", "a b", "a\\b"] as const;
+/** 둘러보기 상한(500)을 넘는 디렉터리의 하위 수 — truncated 안내를 본다 */
+const DEV_FAKE_MANY_DIRS = 600;
+
+/**
+ * 가짜 러너 「dev-fake」의 디렉터리 나무 — git 저장소(dodok·website·client-a)·일반 디렉터리(notes)·하위가 500 넘는 many·특수 문자
+ * 이름·숨김(.config — 둘러보기에 없고 경로를 적으면 된다)·루트 밖 링크(escape — 둘러보기에 없고 확인은 outside_root)·파일(README.md)
+ */
+export function devFakeRunnerTree(): FakeTree {
+  const many: Record<string, FakeNode> = {};
+  for (let i = 1; i <= DEV_FAKE_MANY_DIRS; i++) many[`dir-${String(i).padStart(3, "0")}`] = {};
+  const special: Record<string, FakeNode> = {};
+  for (const name of DEV_FAKE_SPECIAL_DIRS) special[name] = { children: { inner: {} } };
+  return {
+    src: {
+      children: {
+        dodok: { git: true, children: { apps: {}, packages: {}, docs: {}, ".github": {} } },
+        website: { git: true },
+        notes: { children: { "2026": {}, ideas: {} } },
+        many: { children: many },
+        ...special,
+        ".config": { children: { dodok: {} } },
+        escape: "outside",
+        "README.md": "file",
+      },
+    },
+    work: {
+      children: {
+        "client-a": { git: true, children: { api: {}, web: {} } },
+        "client-b": {},
+        archive: {},
+      },
+    },
+  };
+}
+
+/** 가짜 러너 하나 — 훅 `runner` 로 고른다 */
+export type DevFakeRunnerSpec = {
+  key: "main" | "limited";
+  id: string;
+  token: string;
+  label: string;
+  hello: Partial<RunnerHello>;
+  tree: () => FakeTree;
+  /** 행을 처음 만들 때 함께 만드는 프로젝트(에이전트 없음) — coder 의 프로젝트는 `ensureDevFakeRunner` 가 따로 */
+  seedProject?: RunnerProjectRef;
+};
+
+export const DEV_FAKE_RUNNERS: readonly DevFakeRunnerSpec[] = [
+  {
+    key: "main",
+    id: DEV_FAKE_RUNNER_ID,
+    token: DEV_FAKE_RUNNER_TOKEN,
+    label: DEV_FAKE_RUNNER_LABEL,
+    hello: {
+      roots: [{ ...FAKE_RUNNER_ROOT }, { id: "work", label: "회사" }],
+      browse: true,
+      programs: [FAKE_CLAUDE_PROGRAM, DEV_FAKE_CODEX_MISSING],
+    },
+    tree: devFakeRunnerTree,
+  },
+  {
+    key: "limited",
+    id: DEV_FAKE_LIMITED_RUNNER_ID,
+    token: DEV_FAKE_LIMITED_RUNNER_TOKEN,
+    label: DEV_FAKE_LIMITED_RUNNER_LABEL,
+    hello: {
+      roots: [
+        { id: "sandbox", label: "샌드박스" },
+        { id: "src", label: "내 저장소들" },
+      ],
+      browse: false,
+      programs: [
+        {
+          ...FAKE_CLAUDE_PROGRAM,
+          ceiling: { maxPermissionMode: "plan", allowedToolsCeiling: ["Read", "Grep", "Glob"] },
+        },
+      ],
+    },
+    tree: () => ({
+      sandbox: { children: { demo: { git: true }, scratch: {} } },
+      src: { children: { dodok: { git: true }, notes: {} } },
+    }),
+    seedProject: { rootId: "sandbox", relPath: "demo" },
+  },
+];
 /** runner 훅이 어댑터의 붙은 러너 수가 바뀌기를 기다리는 상한 */
 const RUNNER_HOOK_TIMEOUT_MS = 5_000;
 /** 스레드를 모르는 옛 플러그인의 hello — 스레드 멘션은 PLUGIN_OUTDATED 로 끝난다 */
@@ -617,6 +740,7 @@ export const DEV_FAKE_KEYWORDS: readonly string[] = [
   "게시",
   "제어",
   "구독",
+  "천장",
   CALL_ME,
   ...COMPONENT_CARDS.map(([keyword]) => keyword),
   ...ATTACHMENT_REPLIES.map(([keyword]) => keyword),
@@ -707,7 +831,8 @@ const pauseOrAbort = (run: FakeRunnerRun, ms: number) =>
 
 /**
  * 가짜 러너(에이전트 coder)의 대본. 답 글·델타·간격·릴레이 꼬리는 `fakeAgentScript` 와 같다(「오래」·「느리게」도 그대로) —
- * 늘 도구 하나(Read)를 먼저 부르고, 러너 키워드: 승인(도구 승인 카드 — 허용이면 Bash 도구가 돈다)·게시(post 로 글 + 카드)·
+ * 늘 도구 하나(Read)를 먼저 부르고, 러너 키워드: 천장(도구 없이 run.error RUNNER_CEILING permissionMode — 천장 카드)·
+ * 승인(도구 승인 카드 — 허용이면 Bash 도구가 돈다)·게시(post 로 글 + 카드)·
  * 제어(제어 도구 update_channel 로 채널 주제를 바꾼다 — 시킨 사람에게 확인 카드, 「제어 프롬프트」면 admin 이상만 되는 set_channel_prompt)·
  * 구독(비용을 subscription_estimate 로)·실패(run.error). 그 밖의 키워드(카드·첨부·드롭 등)는 OpenClaw 가짜 에이전트 몫이다.
  * 중지되면 더 보내지 않는다 — 가짜 러너가 `stopReason: "aborted"` 로 끝낸다
@@ -716,6 +841,11 @@ export async function fakeRunnerScript(run: FakeRunnerRun): Promise<void> {
   const d = run.start.deliver;
   const { text } = d.message;
   const script = fakeAgentScript(DEV_FAKE_RUNNER_AGENT.handle, d);
+  // 실제 러너는 천장에 걸리면 아무것도 돌리지 않고 항목 이름만 보낸다 — 도구보다 먼저
+  if (text.includes("천장")) {
+    run.error("RUNNER_CEILING", "permissionMode");
+    return;
+  }
   run.tool("Read", { file_path: "README.md" }, "# dodok");
   if (text.includes("실패")) {
     run.error("INTERNAL", "fake runner failure");
@@ -841,7 +971,14 @@ const OpsEventInput = z.strictObject({
   detail: OpsEvent.shape.detail.optional(),
 });
 const GatewayInput = z.strictObject({ gatewayId: GatewayIdInput, state: z.enum(["down", "connected"]) });
-const RunnerInput = z.strictObject({ connected: z.boolean(), token: z.string().min(1).optional() });
+const RunnerInput = z.strictObject({
+  connected: z.boolean(),
+  token: z.string().min(1).optional(),
+  runner: z.enum(["main", "limited"]).optional(),
+  maxPermissionMode: RunnerPermissionMode.optional(),
+  roots: z.array(RunnerRootId).optional(),
+});
+type RunnerInput = z.infer<typeof RunnerInput>;
 const Bytes = z.int().min(0).max(Number.MAX_SAFE_INTEGER);
 const DiskInput = z.union([
   z.strictObject({ reset: z.literal(true) }),
@@ -1017,7 +1154,7 @@ function waitForFakePairs(
 /** dev:fake 는 실제 러너 어댑터 하나로도 뜬다(`createApp` 이 만든다) */
 function claudeOf(app: App): AgentAdapter {
   const adapter = app.registry.forProvider("runner");
-  if (!adapter) throw new Error("dev:fake app has no Claude runner adapter");
+  if (!adapter) throw new Error("dev:fake app has no runner adapter");
   return adapter;
 }
 
@@ -1045,34 +1182,57 @@ function waitForRunners(app: App, want: (connected: number) => boolean, timeoutM
 }
 
 /**
- * 고정 러너 토큰 행과 가짜 러너의 프로젝트·에이전트 coder 를 보장한다. 해시가 같은 행이 이미 있으면(`--keep`) 폐기됐어도 그대로 둔다 —
- * 폐기된 채로 이어받으면 가짜 러너는 못 붙고 프로젝트·에이전트도 새로 만들지 않는다. 핸들 coder 인 에이전트가 이미 있으면(사람이 바꿨거나,
- * 0031 이 보관한 옛 러너 에이전트) 건드리지 않는다
+ * 가짜 러너 하나의 토큰 행을 보장하고 그 id 를 돌려준다(폐기된 행이면 null — 가짜 러너는 못 붙고 씨앗도 만들지 않는다).
+ * 행은 고정 id 로 찾고, 없으면 해시로 찾는다(고정 id 전에 만든 `--keep` DB). 「다시 발급」으로 해시가 바뀐 행은 고정 토큰으로 되돌린다 —
+ * 프로젝트·에이전트가 그 러너에 남은 채 가짜 러너가 다시 붙는다(실제 러너에서 새 토큰을 넣고 다시 띄우는 것과 같은 결과)
  */
-function ensureDevFakeRunner(app: App): void {
+function ensureDevFakeRunnerRow(app: App, spec: DevFakeRunnerSpec): string | null {
   const { db, workspaceId } = app;
-  const hash = createHash("sha256").update(DEV_FAKE_RUNNER_TOKEN).digest("hex");
-  let token = db
-    .select({ id: runnerTokens.id, revokedAt: runnerTokens.revokedAt })
-    .from(runnerTokens)
-    .where(eq(runnerTokens.hash, hash))
-    .get();
-  if (!token) {
-    token = { id: uuidv7(), revokedAt: null };
+  const hash = createHash("sha256").update(spec.token).digest("hex");
+  const prefix = spec.token.slice(0, 6);
+  const columns = { id: runnerTokens.id, hash: runnerTokens.hash, revokedAt: runnerTokens.revokedAt };
+  const row =
+    db.select(columns).from(runnerTokens).where(eq(runnerTokens.id, spec.id)).get() ??
+    db.select(columns).from(runnerTokens).where(eq(runnerTokens.hash, hash)).get();
+  if (!row) {
     db.insert(runnerTokens)
       .values({
-        id: token.id,
+        id: spec.id,
         workspaceId,
-        label: DEV_FAKE_RUNNER_LABEL,
+        label: spec.label,
         hash,
-        prefix: DEV_FAKE_RUNNER_TOKEN.slice(0, 6),
+        prefix,
         createdAt: new Date(),
         lastUsedAt: null,
         revokedAt: null,
       })
       .run();
+    if (spec.seedProject) createProject(db, { workspaceId, runnerTokenId: spec.id, ...spec.seedProject });
+    return spec.id;
   }
-  if (token.revokedAt !== null) return;
+  if (row.revokedAt !== null) return null;
+  if (row.hash !== hash) {
+    db.update(runnerTokens).set({ hash, prefix }).where(eq(runnerTokens.id, row.id)).run();
+    app.logger.warn(
+      { runnerTokenId: row.id, label: spec.label },
+      "dev:fake runner token was reissued — restored the fixed token so the fake runner reconnects",
+    );
+  }
+  return row.id;
+}
+
+/**
+ * 가짜 러너들의 토큰 행과, 첫 러너의 프로젝트 `src/dodok`·에이전트 coder 를 보장한다. 핸들 coder 인 에이전트가 이미 있으면(사람이
+ * 바꿨거나, 0031 이 보관한 옛 러너 에이전트) 건드리지 않는다
+ */
+function ensureDevFakeRunner(app: App): void {
+  const { db, workspaceId } = app;
+  const [main, ...rest] = DEV_FAKE_RUNNERS;
+  for (const spec of rest) ensureDevFakeRunnerRow(app, spec);
+  if (!main) return;
+  const tokenId = ensureDevFakeRunnerRow(app, main);
+  if (tokenId === null) return;
+  const token = { id: tokenId };
   const taken = db
     .select({ id: agents.id })
     .from(agents)
@@ -1440,7 +1600,18 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
   const pairs: Pair[] = [];
   const fakeGateways: FakeGateway[] = [];
   let app: App | undefined;
-  let runner: FakeRunner | undefined;
+  /** 가짜 러너마다 — 지금 알리는 hello 바꿈(훅 roots·maxPermissionMode)과 다시 붙이기 줄 */
+  type RunnerSlot = {
+    spec: DevFakeRunnerSpec;
+    runner?: FakeRunner;
+    hello: Partial<RunnerHello>;
+    swapping: Promise<unknown>;
+  };
+  const runnerSlots: RunnerSlot[] = DEV_FAKE_RUNNERS.map((spec) => ({
+    spec,
+    hello: spec.hello,
+    swapping: Promise.resolve(),
+  }));
   let runState: ReturnType<typeof startRunState> | undefined;
   let closing: Promise<void> | undefined;
   // 앱이 먼저 닫혀야 플러그인이 shutdown notice 를 받고, 어댑터가 Gateway 연결을 스스로 끊는다
@@ -1449,7 +1620,7 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
       await app?.close();
       runState?.markClean(); // main.ts 처럼 닫힌 뒤에 — 강제 종료(kill -9)면 다음 시작이 unclean_shutdown 을 남긴다
       for (const pair of pairs) pair.plugin?.close();
-      runner?.close();
+      for (const slot of runnerSlots) slot.runner?.close();
       await Promise.all(fakeGateways.map((gateway) => gateway.close()));
     })();
     return closing;
@@ -1524,43 +1695,87 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
       pair.swapping = run;
       return run;
     };
-    const connectRunner = (token: string) =>
+    const connectRunner = (spec: DevFakeRunnerSpec, hello: Partial<RunnerHello>, token: string) =>
       startFakeRunner({
         url: live.url,
         token,
+        hello,
+        tree: spec.tree(),
         script: (run) => {
           logInboundReactions(live, "runner", run.start.deliver);
           return fakeRunnerScript(run);
         },
       });
-    // 러너 끊기·붙이기도 한 번에 하나씩
-    let runnerSwapping: Promise<unknown> = Promise.resolve();
-    const setRunner = (input: { connected: boolean; token?: string | undefined }): Promise<unknown> => {
-      const run = runnerSwapping.then(async () => {
+    /** 훅의 roots·maxPermissionMode 를 그 러너의 기본 hello 위에 — 루트는 고정 목록 안의 id 만, 상한은 Claude Code 줄에 */
+    const helloFor = (slot: RunnerSlot, input: RunnerInput): Partial<RunnerHello> | Rejected => {
+      const roots = slot.spec.hello.roots ?? [];
+      const unknown = input.roots?.filter((id) => !roots.some((r) => r.id === id)) ?? [];
+      if (unknown.length > 0)
+        return new Rejected(
+          `unknown root ids for ${slot.spec.key}: ${unknown.join(", ")} (fixed: ${roots.map((r) => r.id).join(", ")})`,
+        );
+      const current = slot.hello;
+      return {
+        ...current,
+        ...(input.roots === undefined ? {} : { roots: roots.filter((r) => input.roots?.includes(r.id)) }),
+        ...(input.maxPermissionMode === undefined
+          ? {}
+          : {
+              programs: (current.programs ?? []).map((p) =>
+                p.program === "claude"
+                  ? {
+                      ...p,
+                      ceiling: {
+                        ...p.ceiling,
+                        maxPermissionMode: input.maxPermissionMode ?? p.ceiling.maxPermissionMode,
+                      },
+                    }
+                  : p,
+              ),
+            }),
+      };
+    };
+    // 러너 끊기·붙이기는 러너마다 한 번에 하나씩
+    const setRunner = (input: RunnerInput): Promise<unknown> => {
+      const slot = runnerSlots.find((s) => s.spec.key === (input.runner ?? "main"));
+      if (!slot) return Promise.resolve(invalid);
+      const changesHello = input.roots !== undefined || input.maxPermissionMode !== undefined;
+      if (!input.connected && changesHello)
+        return Promise.resolve(new Rejected("roots·maxPermissionMode go with connected: true"));
+      const run = slot.swapping.then(async () => {
         if (!input.connected) {
-          if (!runner?.connected) return { ok: true, status: claudeOf(live).status() };
+          if (!slot.runner?.connected) return { ok: true, status: claudeOf(live).status() };
           const before = runnersConnected(live);
-          runner.disconnect();
+          slot.runner.disconnect();
           const reached = await waitForRunners(live, (n) => n < before, RUNNER_HOOK_TIMEOUT_MS);
-          live.logger.info({ reached }, "dev:fake runner disconnected");
+          live.logger.info({ reached, runner: slot.spec.key }, "dev:fake runner disconnected");
           return reached
             ? { ok: true, status: claudeOf(live).status() }
             : { ok: false, reason: "timeout", status: claudeOf(live).status() };
         }
-        if (runner?.connected && input.token === undefined)
+        const hello = helloFor(slot, input);
+        if (hello instanceof Rejected) return hello;
+        if (slot.runner?.connected && input.token === undefined && !changesHello)
           return { ok: true, status: claudeOf(live).status() };
         try {
-          if (runner) await runner.reconnect(input.token === undefined ? {} : { token: input.token });
-          else runner = await connectRunner(input.token ?? DEV_FAKE_RUNNER_TOKEN);
+          if (slot.runner)
+            await slot.runner.reconnect({
+              hello,
+              ...(input.token === undefined ? {} : { token: input.token }),
+            });
+          else slot.runner = await connectRunner(slot.spec, hello, input.token ?? slot.spec.token);
         } catch (error) {
           const reason = error instanceof Error ? error.message : String(error);
-          live.logger.warn({ reason }, "dev:fake runner connect rejected");
+          live.logger.warn({ reason, runner: slot.spec.key }, "dev:fake runner connect rejected");
           return { ok: false, reason };
+        } finally {
+          // 붙지 못해도 다음 붙이기는 이 hello 로 — 가짜 러너도 reconnect 에서 이미 바꿔 쥐었다
+          slot.hello = hello;
         }
-        live.logger.info("dev:fake runner connected");
+        live.logger.info({ runner: slot.spec.key }, "dev:fake runner connected");
         return { ok: true, status: claudeOf(live).status() };
       });
-      runnerSwapping = run;
+      slot.swapping = run;
       return run;
     };
     interceptDevFakeRoutes(
@@ -1629,7 +1844,14 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
             },
           ),
         ],
-        [DEV_FAKE_RUNNER_PATH, route(RunnerInput, "{ connected: boolean, token?: string }", setRunner)],
+        [
+          DEV_FAKE_RUNNER_PATH,
+          route(
+            RunnerInput,
+            '{ connected: boolean, token?: string, runner?: "main" | "limited", maxPermissionMode?, roots?: string[] }',
+            setRunner,
+          ),
+        ],
         [
           DEV_FAKE_DISK_PATH,
           route(DiskInput, "{ freeBytes, totalBytes } | { reset: true }", async (input) => {
@@ -1685,15 +1907,17 @@ export async function startDevFake(opts: DevFakeOptions = {}): Promise<DevFake> 
         },
       });
     }
-    try {
-      runner = await connectRunner(DEV_FAKE_RUNNER_TOKEN);
-    } catch (error) {
-      // --keep 으로 폐기된 고정 토큰을 이어받았으면 여기 — 서버는 그대로 뜬다
-      const reason = error instanceof Error ? error.message : String(error);
-      app.logger.warn(
-        { reason },
-        "dev:fake runner could not connect — POST /__devfake/runner { connected: true, token }",
-      );
+    for (const slot of runnerSlots) {
+      try {
+        slot.runner = await connectRunner(slot.spec, slot.hello, slot.spec.token);
+      } catch (error) {
+        // --keep 으로 폐기된 고정 토큰을 이어받았으면 여기 — 서버는 그대로 뜬다
+        const reason = error instanceof Error ? error.message : String(error);
+        app.logger.warn(
+          { reason, runner: slot.spec.key },
+          "dev:fake runner could not connect — POST /__devfake/runner { connected: true, token }",
+        );
+      }
     }
     // adapter.connect() 는 기다리지 않는다 — 돌려주자마자 discover·전송이 되게
     await waitForFakePairs(
@@ -1723,6 +1947,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
       memberEmail: DEV_FAKE_MEMBER_EMAIL,
       memberPassword: DEV_FAKE_MEMBER_PASSWORD,
       runnerToken: DEV_FAKE_RUNNER_TOKEN,
+      limitedRunnerToken: DEV_FAKE_LIMITED_RUNNER_TOKEN,
       gateways: DEV_FAKE_GATEWAYS.map((g) => ({
         id: g.id,
         name: g.name,

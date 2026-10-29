@@ -10,12 +10,15 @@
 import {
   type ComponentsV1,
   type ControlResult,
+  permissionModeRank,
+  RUNNER_FS_LIST_MAX,
   RUNNER_NAMESPACE,
   RUNNER_POST_ID_PREFIX,
   RUNNER_PROTOCOL,
   type RunEventBody,
   type RunnerApprovalRequested,
   type RunnerApprovalResolve,
+  type RunnerCeilingItem,
   type RunnerHello,
   RunnerHelloResult,
   type RunnerOutboundAck,
@@ -26,6 +29,7 @@ import {
   type RunnerFsListResult,
   type RunnerRunAbort,
   type RunnerRunAck,
+  type RunnerRunAgent,
   type RunnerRunFinal,
   RunnerRunStart,
 } from "@dodok/shared";
@@ -82,7 +86,80 @@ export type FakeRunnerOptions = {
    * minMs·2^n(상한 maxMs) 뒤 다시 붙어 hello 까지 한다. 붙지 못하면(서버가 아직 없음) 같은 규칙으로 또. 없으면 스스로 다시 붙지 않는다
    */
   autoReconnect?: { minMs: number; maxMs: number };
+  /**
+   * 이 러너 머신의 디렉터리 나무(루트 id 마다). 주면 실제 러너처럼 fs.list·project.check 를 나무로 답하고, run.start 마다 지금
+   * hello(루트·프로그램·상한)와 나무로 천장을 본다 — 걸리면 dispatch 뒤 run.error RUNNER_CEILING <항목>(대본은 돌지 않는다)
+   */
+  tree?: FakeTree;
 };
+
+/** 가짜 러너 머신의 디렉터리 — git 이면 `.git` 이 있는 것처럼 */
+export type FakeDir = { git?: boolean; children?: Record<string, FakeNode> };
+/** 디렉터리, 파일, 또는 루트 밖을 가리키는 심볼릭 링크 */
+export type FakeNode = FakeDir | "file" | "outside";
+/** 루트 id → 그 루트 디렉터리. hello 가 알리지 않는 루트는 나무에 있어도 「없음」이다(러너 설정에서 지운 루트) */
+export type FakeTree = Record<string, FakeDir>;
+
+type Resolved =
+  | { ok: true; dir: FakeDir }
+  | { ok: false; reason: Exclude<RunnerProjectCheckResult, { ok: true }>["reason"] };
+
+/** 실제 러너 ceiling.ts `resolveProject` 와 같은 갈래 — 루트 없음·없음·루트 밖·파일 */
+function resolveFake(hello: RunnerHello, tree: FakeTree, ref: RunnerProjectRef): Resolved {
+  const root = tree[ref.rootId];
+  if (!root || !hello.roots.some((r) => r.id === ref.rootId)) return { ok: false, reason: "root_missing" };
+  let node: FakeNode = root;
+  for (const part of ref.relPath === "" ? [] : ref.relPath.split("/")) {
+    if (typeof node === "string") return { ok: false, reason: "not_found" };
+    const next: FakeNode | undefined = node.children?.[part];
+    if (next === undefined) return { ok: false, reason: "not_found" };
+    if (next === "outside") return { ok: false, reason: "outside_root" };
+    node = next;
+  }
+  return typeof node === "string" ? { ok: false, reason: "not_directory" } : { ok: true, dir: node };
+}
+
+/** 실제 러너 fs-browse.ts `listDirectory` 처럼 — 디렉터리만, 숨김·루트 밖 링크 제외, 코드 포인트 순 500개 */
+export function fakeFsList(hello: RunnerHello, tree: FakeTree, ref: RunnerProjectRef): RunnerFsListResult {
+  if (!hello.browse) return { ok: false, code: "FORBIDDEN" };
+  const resolved = resolveFake(hello, tree, ref);
+  if (!resolved.ok) return { ok: false, code: "NOT_FOUND" };
+  const dirs = Object.entries(resolved.dir.children ?? {})
+    .filter(([name, node]) => !name.startsWith(".") && typeof node !== "string")
+    .map(([name, node]) => ({ name, isGitRepo: (node as FakeDir).git === true }))
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  return {
+    ok: true,
+    entries: dirs.slice(0, RUNNER_FS_LIST_MAX),
+    truncated: dirs.length > RUNNER_FS_LIST_MAX,
+  };
+}
+
+export function fakeProjectCheck(
+  hello: RunnerHello,
+  tree: FakeTree,
+  ref: RunnerProjectRef,
+): RunnerProjectCheckResult {
+  const resolved = resolveFake(hello, tree, ref);
+  return resolved.ok ? { ok: true, isGitRepo: resolved.dir.git === true } : resolved;
+}
+
+/** 실제 러너 `checkCeiling` 의 순서 root → path → program → permissionMode → allowedTools. 통과면 null */
+export function fakeCeilingItem(
+  hello: RunnerHello,
+  tree: FakeTree,
+  agent: RunnerRunAgent,
+): RunnerCeilingItem | null {
+  const resolved = resolveFake(hello, tree, agent.project);
+  if (!resolved.ok) return resolved.reason === "root_missing" ? "root" : "path";
+  const program = hello.programs.find((p) => p.program === agent.program);
+  if (!program?.available) return "program";
+  if (permissionModeRank(agent.permissionMode) > permissionModeRank(program.ceiling.maxPermissionMode))
+    return "permissionMode";
+  const allowed = program.ceiling.allowedToolsCeiling;
+  if (allowed !== null && agent.allowedTools?.some((t) => !allowed.includes(t))) return "allowedTools";
+  return null;
+}
 
 export type FakeRunner = {
   /** 바꿔 끼울 수 있다 — run.start 를 받은 시점의 값을 쓴다 */
@@ -98,6 +175,10 @@ export type FakeRunner = {
   readonly runStarts: RunnerRunStart[];
   readonly aborts: RunnerRunAbort[];
   readonly resolves: RunnerApprovalResolve[];
+  /** 지금 알리는 hello(기본 위에 덮은 것) — reconnect 의 hello 로 바뀐다 */
+  readonly hello: RunnerHello;
+  /** 옵션 tree 그대로(같은 객체) — 시험이 고쳐 「디렉터리가 나중에 링크로 바뀜」 따위를 만든다 */
+  readonly tree: FakeTree | undefined;
   readonly helloResult: RunnerHelloResult | undefined;
   /** 성공한 hello 수 — 처음 붙은 것 포함. autoReconnect 가 다시 붙으면 는다 */
   readonly helloCount: number;
@@ -178,12 +259,19 @@ export async function startFakeRunner(opts: FakeRunnerOptions): Promise<FakeRunn
   const abortHandlers = new Map<string, () => void>();
   const resolveWaiters = new Map<string, (r: RunnerApprovalResolve) => void>();
 
+  const tree = opts.tree;
   const runner: FakeRunner = {
     script: opts.script ?? echoScript,
     onRunStart: (start) => ({ runId: start.deliver.runId, admission: "dispatch" }),
-    onFsList: () => ({ ok: true, entries: [], truncated: false }),
-    onProjectCheck: () => ({ ok: true, isGitRepo: false }),
+    onFsList: (ref) =>
+      tree ? fakeFsList(fakeRunnerHello(hello), tree, ref) : { ok: true, entries: [], truncated: false },
+    onProjectCheck: (ref) =>
+      tree ? fakeProjectCheck(fakeRunnerHello(hello), tree, ref) : { ok: true, isGitRepo: false },
     fsRequests,
+    tree,
+    get hello() {
+      return fakeRunnerHello(hello);
+    },
     runStarts,
     aborts,
     resolves,
@@ -365,7 +453,12 @@ export async function startFakeRunner(opts: FakeRunnerOptions): Promise<FakeRunn
       const res = runner.onRunStart(parsed.data);
       if (!res) return;
       ack(res);
-      if (res.admission === "dispatch") handleRun(s, parsed.data);
+      if (res.admission !== "dispatch") return;
+      // 실제 러너처럼 dispatch 뒤에 천장을 본다 — 걸린 항목 이름만 보낸다(경로 원문 없음)
+      const item = tree ? fakeCeilingItem(fakeRunnerHello(hello), tree, parsed.data.agent) : null;
+      if (item !== null)
+        s.emit("run.error", { runId: parsed.data.deliver.runId, code: "RUNNER_CEILING", message: item });
+      else handleRun(s, parsed.data);
     });
     for (const event of ["fs.list", "project.check"] as const) {
       s.on(event, (ref: RunnerProjectRef, ack: (r: unknown) => void) => {

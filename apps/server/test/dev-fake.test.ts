@@ -36,9 +36,14 @@ import {
   DEV_FAKE_OPS_EVENT_PATH,
   DEV_FAKE_PLUGIN_CAPABILITIES_PATH,
   DEV_FAKE_PLUGIN_TOKEN_PATH,
+  DEV_FAKE_LIMITED_RUNNER_ID,
+  DEV_FAKE_LIMITED_RUNNER_LABEL,
+  DEV_FAKE_LIMITED_RUNNER_TOKEN,
+  DEV_FAKE_RUNNER_ID,
   DEV_FAKE_RUNNER_LABEL,
   DEV_FAKE_RUNNER_PATH,
   DEV_FAKE_RUNNER_TOKEN,
+  DEV_FAKE_SPECIAL_DIRS,
   DEV_FAKE_LEGACY_TITLE,
   DEV_FAKE_SESSION_TITLE,
   type DevFake,
@@ -580,6 +585,10 @@ describe("fakeRunnerScript", () => {
 
     const failed = await runRunnerScript("@coder 실패");
     expect(failed.calls.map((c) => c.kind)).toEqual(["tool", "error"]);
+
+    // 천장 — 실제 러너처럼 아무것도 돌리지 않고 항목 이름만
+    const ceiling = await runRunnerScript("@coder 천장");
+    expect(ceiling.calls).toEqual([{ kind: "error", code: "RUNNER_CEILING" }]);
   });
 
   it("제어 → 그 채널의 주제를 update_channel 로, 「제어 프롬프트」 → set_channel_prompt, 거절이면 코드와 서버 문구를 답에", async () => {
@@ -2361,7 +2370,7 @@ describe("startDevFake 가짜 러너 — 고정 러너 토큰·coder·/__devfake
     return status?.provider === "runner" ? status.runners.connected : -1;
   };
 
-  /** coder 가 멤버인 채널을 만들고 wire 로 구독한다 — 받은 이벤트를 모은다 */
+  /** coder 가 멤버인 채널을 만들고 wire 로 구독한다 — 받은 이벤트를 모은다. send 의 clientMsgId 는 글 그대로라 시험마다 글을 다르게 쓴다 */
   async function coderChannel(name: string) {
     const { agents: list } = await rest<{ agents: Array<{ id: string; handle: string }> }>("GET", "/agents");
     const coderId = list.find((a) => a.handle === "coder")?.id ?? "";
@@ -2388,18 +2397,35 @@ describe("startDevFake 가짜 러너 — 고정 러너 토큰·coder·/__devfake
     return { channelId: channel.id, coderId, socket, created, send };
   }
 
-  it("시작하면 고정 러너 토큰(라벨 dev-fake) 행으로 가짜 러너가 붙어 있고, coder 는 그 러너의 프로젝트 src/dodok 의 러너 에이전트다", async () => {
+  it("시작하면 고정 러너 토큰 둘(고정 id — dev-fake·dev-fake 제한)로 가짜 러너 둘이 붙어 있고, coder 는 첫 러너의 프로젝트 src/dodok 의 러너 에이전트다", async () => {
     const row = dev.app.db
       .select()
       .from(runnerTokens)
       .where(eq(runnerTokens.hash, sha256(DEV_FAKE_RUNNER_TOKEN)))
       .get();
-    expect(row).toMatchObject({ label: DEV_FAKE_RUNNER_LABEL, revokedAt: null });
+    expect(row).toMatchObject({ id: DEV_FAKE_RUNNER_ID, label: DEV_FAKE_RUNNER_LABEL, revokedAt: null });
+    expect(
+      dev.app.db
+        .select()
+        .from(runnerTokens)
+        .where(eq(runnerTokens.hash, sha256(DEV_FAKE_LIMITED_RUNNER_TOKEN)))
+        .get(),
+    ).toMatchObject({
+      id: DEV_FAKE_LIMITED_RUNNER_ID,
+      label: DEV_FAKE_LIMITED_RUNNER_LABEL,
+      revokedAt: null,
+    });
     const { tokens } = await rest<{ tokens: Array<{ id: string; connected: boolean }> }>(
       "GET",
       "/setup/runner-tokens",
     );
-    expect(tokens).toEqual([expect.objectContaining({ id: row?.id, connected: true })]);
+    expect(tokens).toHaveLength(2);
+    expect(tokens).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: DEV_FAKE_RUNNER_ID, connected: true }),
+        expect.objectContaining({ id: DEV_FAKE_LIMITED_RUNNER_ID, connected: true }),
+      ]),
+    );
     const { agents: list } = await rest<{
       agents: Array<{ id: string; provider: string; providerAgentId: string; runner?: { tokenId: string } }>;
     }>("GET", "/agents");
@@ -2422,7 +2448,161 @@ describe("startDevFake 가짜 러너 — 고정 러너 토큰·coder·/__devfake
     expect(project).toEqual([
       expect.objectContaining({ rootId: "src", relPath: "dodok", label: "dodok", archivedAt: null }),
     ]);
+    // 제한 러너는 프로젝트 sandbox/demo 만(에이전트 없음)
+    expect(
+      dev.app.db
+        .select()
+        .from(runnerProjects)
+        .where(eq(runnerProjects.runnerTokenId, DEV_FAKE_LIMITED_RUNNER_ID))
+        .all(),
+    ).toEqual([expect.objectContaining({ rootId: "sandbox", relPath: "demo", archivedAt: null })]);
   });
+
+  it("러너 탭 — dev-fake 는 루트 src·work, Claude Code(상한 acceptEdits)와 「설치되지 않음」 Codex, 제한 러너는 둘러보기 꺼짐·상한 plan", async () => {
+    type Summary = {
+      id: string;
+      connected: boolean;
+      browse: boolean | null;
+      roots: Array<{ id: string; label: string }>;
+      programs: Array<{
+        program: string;
+        available: boolean;
+        reason?: string;
+        ceiling: { maxPermissionMode: string; allowedToolsCeiling: string[] | null };
+      }>;
+    };
+    const { runners } = await rest<{ runners: Summary[] }>("GET", "/runners");
+    const main = runners.find((r) => r.id === DEV_FAKE_RUNNER_ID);
+    const limited = runners.find((r) => r.id === DEV_FAKE_LIMITED_RUNNER_ID);
+    expect(main).toMatchObject({
+      connected: true,
+      browse: true,
+      roots: [
+        { id: "src", label: "내 저장소들" },
+        { id: "work", label: "회사" },
+      ],
+    });
+    expect(main?.programs).toEqual([
+      expect.objectContaining({
+        program: "claude",
+        available: true,
+        ceiling: expect.objectContaining({ maxPermissionMode: "acceptEdits" }),
+      }),
+      expect.objectContaining({ program: "codex", available: false, reason: "설치되지 않음" }),
+    ]);
+    expect(limited).toMatchObject({
+      connected: true,
+      browse: false,
+      roots: [
+        { id: "sandbox", label: "샌드박스" },
+        { id: "src", label: "내 저장소들" },
+      ],
+    });
+    expect(limited?.programs).toEqual([
+      expect.objectContaining({
+        program: "claude",
+        available: true,
+        ceiling: { maxPermissionMode: "plan", allowedToolsCeiling: ["Read", "Grep", "Glob"] },
+      }),
+    ]);
+  });
+
+  it("둘러보기 — 고정 나무: 숨김·루트 밖 링크·파일은 없고 git·특수 문자 이름이 있다, many 는 500개 + truncated, 제한 러너는 403", async () => {
+    type Listing = { entries: Array<{ name: string; isGitRepo: boolean }>; truncated: boolean };
+    const fs = (runnerId: string, rootId: string, relPath: string) =>
+      restAs<Listing & { code?: string }>(
+        dev.url,
+        owner.cookie,
+        "GET",
+        `/runners/${runnerId}/fs?rootId=${encodeURIComponent(rootId)}&relPath=${encodeURIComponent(relPath)}`,
+      );
+    const top = await fs(DEV_FAKE_RUNNER_ID, "src", "");
+    const names = top.entries.map((e) => e.name);
+    expect(names).toEqual(
+      expect.arrayContaining(["dodok", "website", "notes", "many", ...DEV_FAKE_SPECIAL_DIRS]),
+    );
+    for (const hidden of [".config", "escape", "README.md"]) expect(names).not.toContain(hidden);
+    expect(top.entries.find((e) => e.name === "dodok")).toEqual({ name: "dodok", isGitRepo: true });
+    expect(top.entries.find((e) => e.name === "notes")).toEqual({ name: "notes", isGitRepo: false });
+    expect(top.truncated).toBe(false);
+    const many = await fs(DEV_FAKE_RUNNER_ID, "src", "many");
+    expect(many.entries).toHaveLength(500);
+    expect(many.truncated).toBe(true);
+    // 특수 문자 이름 아래로도 들어간다 — 쿼리 인코딩이 이름을 바꾸지 않는다
+    for (const name of ["a&b", "#x", "50%", "a b"])
+      expect((await fs(DEV_FAKE_RUNNER_ID, "src", name)).entries).toEqual([
+        { name: "inner", isGitRepo: false },
+      ]);
+    expect((await fs(DEV_FAKE_RUNNER_ID, "work", "")).entries.map((e) => e.name)).toEqual([
+      "archive",
+      "client-a",
+      "client-b",
+    ]);
+    const res = await fetch(
+      `${dev.url}/api/v1/runners/${DEV_FAKE_LIMITED_RUNNER_ID}/fs?rootId=sandbox&relPath=`,
+      {
+        headers: { cookie: owner.cookie },
+      },
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it("「천장」 → 천장 카드(permissionMode)와 「다시 실행」, roots 훅으로 루트를 빼면 root 카드·「루트 없음」, 되돌리면 답한다", async () => {
+    const ch = await coderChannel("runner-ceiling");
+    const ceilingCard = (item: string) =>
+      vi.waitFor(
+        () => {
+          const card = ch.created.find(
+            (m) => m.systemMeta?.kind === "run_error" && m.bodyMd.includes(`허용하지 않습니다(${item})`),
+          );
+          expect(card?.components?.blocks).toBeDefined();
+          return card;
+        },
+        { timeout: 10_000 },
+      );
+    expect((await ch.send(`<@a:${ch.coderId}> 천장`)).ok).toBe(true);
+    await ceilingCard("permissionMode");
+
+    expect(await hook({ connected: true, roots: ["nope"] })).toMatchObject({ status: 400 });
+    expect(await hook({ connected: false, roots: ["work"] })).toMatchObject({ status: 400 });
+    expect(await hook({ connected: true, roots: ["work"] })).toMatchObject({
+      status: 200,
+      body: { ok: true },
+    });
+    const { projects } = await rest<{ projects: Array<{ relPath: string; rootLabel: string | null }> }>(
+      "GET",
+      `/runners/${DEV_FAKE_RUNNER_ID}/projects`,
+    );
+    expect(projects.find((p) => p.relPath === "dodok")?.rootLabel).toBeNull();
+    expect((await ch.send(`<@a:${ch.coderId}> 루트 빼고`)).ok).toBe(true);
+    await ceilingCard("root");
+
+    // 상한을 coder 의 권한(default) 아래로 — 실제 러너처럼 permissionMode 로 거절
+    expect(await hook({ connected: true, roots: ["src", "work"], maxPermissionMode: "plan" })).toMatchObject({
+      status: 200,
+      body: { ok: true },
+    });
+    const before = ch.created.filter((m) => m.systemMeta?.kind === "run_error").length;
+    expect((await ch.send(`<@a:${ch.coderId}> 상한 낮추고`)).ok).toBe(true);
+    await vi.waitFor(
+      () => {
+        const cards = ch.created.filter((m) => m.systemMeta?.kind === "run_error");
+        expect(cards).toHaveLength(before + 1);
+        expect(cards.at(-1)?.bodyMd).toContain("허용하지 않습니다(permissionMode)");
+      },
+      { timeout: 10_000 },
+    );
+
+    expect(await hook({ connected: true, maxPermissionMode: "acceptEdits" })).toMatchObject({ status: 200 });
+    expect((await ch.send(`<@a:${ch.coderId}> 상한 되돌리고`)).ok).toBe(true);
+    await vi.waitFor(
+      () =>
+        expect(ch.created.some((m) => m.authorType === "agent" && m.bodyMd.includes("잘 받았어요"))).toBe(
+          true,
+        ),
+      { timeout: 10_000 },
+    );
+  }, 40_000);
 
   it("@coder 「승인 게시」 → 승인 카드를 허용하면 post 카드 메시지와 최종 답이 오고, 런 usage 는 api 비용이다", async () => {
     const ch = await coderChannel("runner-approve");
@@ -2484,7 +2664,7 @@ describe("startDevFake 가짜 러너 — 고정 러너 토큰·coder·/__devfake
     expect(await hook({ connected: "yes" })).toMatchObject({ status: 400 });
     const off = await hook({ connected: false });
     expect(off).toMatchObject({ status: 200, body: { ok: true } });
-    expect(runnersConnected()).toBe(0);
+    expect(runnersConnected()).toBe(1); // 제한 러너는 그대로
 
     expect((await ch.send(`<@a:${ch.coderId}> 안녕`)).ok).toBe(true);
     await vi.waitFor(() => expect(ch.created.some((m) => m.systemMeta?.kind === "run_error")).toBe(true), {
@@ -2493,11 +2673,11 @@ describe("startDevFake 가짜 러너 — 고정 러너 토큰·coder·/__devfake
 
     const wrong = await hook({ connected: true, token: "nope" });
     expect(wrong).toMatchObject({ status: 200, body: { ok: false } });
-    expect(runnersConnected()).toBe(0);
+    expect(runnersConnected()).toBe(1); // 제한 러너는 그대로
 
     const on = await hook({ connected: true, token: DEV_FAKE_RUNNER_TOKEN });
     expect(on).toMatchObject({ status: 200, body: { ok: true } });
-    expect(runnersConnected()).toBe(1);
+    expect(runnersConnected()).toBe(2);
     expect((await ch.send(`<@a:${ch.coderId}> 다시`)).ok).toBe(true);
     await vi.waitFor(
       () =>
@@ -2507,6 +2687,55 @@ describe("startDevFake 가짜 러너 — 고정 러너 토큰·coder·/__devfake
       { timeout: 10_000 },
     );
   }, 30_000);
+});
+
+describe("startDevFake 가짜 러너 — 다시 발급 뒤 --keep", () => {
+  let dir: string;
+  let dev: DevFake | undefined;
+  const sha256 = (v: string) => createHash("sha256").update(v).digest("hex");
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), "dodok-dev-fake-reissue-"));
+  });
+  afterAll(async () => {
+    await dev?.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const connectedRunners = (d: DevFake) => {
+    const status = d.app.registry.forProvider("runner")?.status();
+    return status?.provider === "runner" ? status.runners.connected : -1;
+  };
+
+  it("연결 페이지에서 다시 발급하면 그 자리에서는 새 원문으로 붙고, --keep 으로 다시 띄우면 같은 행이 고정 토큰으로 돌아와 coder 가 그 러너에 남는다", async () => {
+    dev = await startDevFake({ port: 0, dataDir: dir, logLevel: "error" });
+    const owner = await loginOwner(dev.url);
+    const reissued = await restAs<{ token: string; record: { id: string } }>(
+      dev.url,
+      owner.cookie,
+      "POST",
+      `/setup/runner-tokens/${DEV_FAKE_RUNNER_ID}/reissue`,
+    );
+    expect(reissued.record.id).toBe(DEV_FAKE_RUNNER_ID);
+    const live = dev;
+    await vi.waitFor(() => expect(connectedRunners(live)).toBe(1), { timeout: 5_000 });
+    const res = await fetch(`${dev.url}${DEV_FAKE_RUNNER_PATH}`, {
+      method: "POST",
+      headers: { cookie: owner.cookie, "content-type": "application/json" },
+      body: JSON.stringify({ connected: true, token: reissued.token }),
+    });
+    expect(await res.json()).toMatchObject({ ok: true });
+    expect(connectedRunners(dev)).toBe(2);
+    await dev.close();
+
+    dev = await startDevFake({ port: 0, dataDir: dir, keep: true, logLevel: "error" });
+    const rows = dev.app.db.select().from(runnerTokens).all();
+    expect(rows.map((r) => r.id).sort()).toEqual([DEV_FAKE_RUNNER_ID, DEV_FAKE_LIMITED_RUNNER_ID].sort());
+    expect(rows.find((r) => r.id === DEV_FAKE_RUNNER_ID)?.hash).toBe(sha256(DEV_FAKE_RUNNER_TOKEN));
+    expect(connectedRunners(dev)).toBe(2);
+    const coder = dev.app.db.select().from(agents).where(eq(agents.handle, "coder")).get();
+    expect(coder).toMatchObject({ runnerTokenId: DEV_FAKE_RUNNER_ID, archivedAt: null });
+  }, 45_000);
 });
 
 describe("운영 createApp 에는 dev:fake 경로가 없다", () => {
