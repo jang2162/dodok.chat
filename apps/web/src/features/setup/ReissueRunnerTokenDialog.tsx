@@ -84,7 +84,7 @@ export function ReissueRunnerTokenDialog({
           <IssuedToken
             issued={issued}
             title={`「${issued.record.label}」 토큰을 다시 발급했습니다`}
-            handoff={(r) => llmsHandoffLine("runner", r.runnerConfig.serverUrl, r.token)}
+            handoff={(r) => llmsHandoffLine("runner-reissue", r.runnerConfig.serverUrl, r.token)}
             config={(r) => <RunnerTokenFile tokenFile={r.runnerConfig.tokenFile} />}
             leave={leave}
             stayRef={stayRef}

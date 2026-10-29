@@ -1,7 +1,7 @@
 /**
  * `GET /llms.txt` — 노드(Gateway 호스트·러너 머신)에서 도는 AI 가 설치를 대신하는 안내서(설정 통합 스펙 「`llms.txt`」 절).
  * 본문 틀은 이 파일의 템플릿 한곳이고(계획 판정 PS6) 서버가 채우는 값은 인자로만 받는다 — 토큰·Gateway 목록·사람 이름은
- * 인자에 없으므로 실릴 길이 없다. 명령은 `docs/guides/docker-deploy.md` 「[웹 → B] 플러그인 설치·브리지 토큰」·「Claude 러너 설치」 절과
+ * 인자에 없으므로 실릴 길이 없다. 명령은 `docs/guides/docker-deploy.md` 「[웹 → B] 플러그인 설치·브리지 토큰」·「러너 설치」 절과
  * 같은 순서이고, 계정 설정 키·러너 설정은 `test/setup.llms.test.ts` 가 플러그인 설정 스키마·`RunnerConfig` 로 파싱해 대조한다.
  *
  * ⚠ 토큰은 어떤 외부 명령의 인자에도 나오지 않게 쓴다 — `curl` 은 `-K -`(표준 입력의 설정)로 머리를 받고, 패치 파일은 셸 내장
@@ -115,7 +115,7 @@ function runnerSection(input: LlmsInput, file: LlmsFileInfo): string {
       },
     },
   };
-  return `설치할 것: dodok Claude 러너(명령 dodok-runner). 이 머신에서 Claude Code 에이전트를 돌려 dodok 서버로 나가는 연결 하나를 연다(머신 쪽 포트는 열지 않는다). 필요한 것: macOS 또는 Linux, Node 24, npm 레지스트리에 닿는 네트워크.
+  return `설치할 것: dodok 러너(명령 dodok-runner). 이 머신의 허용 루트 안에서 dodok 앱이 만든 에이전트(Claude Code)를 돌려 dodok 서버로 나가는 연결 하나를 연다(머신 쪽 포트는 열지 않는다). 필요한 것: macOS 또는 Linux, Node 24, npm 레지스트리에 닿는 네트워크.
 
 - 파일 sha256: ${file.sha256}
 - 번들 sha256(설치한 뒤 dist/main.js): ${file.bundleSha256}
@@ -150,7 +150,7 @@ function runnerSection(input: LlmsInput, file: LlmsFileInfo): string {
    ${JSON.stringify(config, null, 2).replaceAll("\n", "\n   ")}
    \`\`\`
 
-5. dodok-runner 를 실행한다. 이 명령은 끝나지 않고 전경에 머문다 — 출력에 \`연결됨\` 이 보이면 사람에게 넘기고(끄려면 Ctrl+C) 이 명령이 끝나기를 기다리지 않는다. 사람에게 dodok 연결 페이지(${origin}/settings/connection)의 「Claude 러너」에 이 머신의 카드가 생겼는지 확인받는다.
+5. dodok-runner 를 실행한다. 이 명령은 끝나지 않고 전경에 머문다 — 출력에 \`연결됨\` 이 보이면 사람에게 넘기고(끄려면 Ctrl+C) 이 명령이 끝나기를 기다리지 않는다. 사람에게 dodok 설정의 「러너」 탭(${origin}/settings/runners)에 이 머신이 「연결됨」으로 보이는지 확인받는다.
 
    \`\`\`bash
    dodok-runner
@@ -162,7 +162,7 @@ export function renderLlmsTxt(input: LlmsInput): string {
   const { origin } = input;
   return `# dodok — 노드 설치 안내서
 
-이 문서는 dodok 서버(${origin})가 내주는 설치 안내서다. dodok 은 사람과 AI 에이전트가 같은 채널에서 대화하는 메신저이고, 에이전트는 OpenClaw Gateway 호스트의 dodok 플러그인이나 사람 머신의 Claude 러너를 거쳐 이 서버에 붙는다. 이 문서를 읽는 AI 는 사람에게 받은 토큰 하나로 그 노드를 설치한다. 사람이 고른 절 하나만 따른다.
+이 문서는 dodok 서버(${origin})가 내주는 설치 안내서다. dodok 은 사람과 AI 에이전트가 같은 채널에서 대화하는 메신저이고, 에이전트는 OpenClaw Gateway 호스트의 dodok 플러그인이나 사람 머신의 러너를 거쳐 이 서버에 붙는다. 이 문서를 읽는 AI 는 사람에게 받은 토큰 하나로 그 노드를 설치한다. 사람이 고른 절 하나만 따른다.
 
 ## AI 가 지킬 규칙
 
@@ -174,7 +174,7 @@ export function renderLlmsTxt(input: LlmsInput): string {
 ## OpenClaw Gateway 호스트
 
 ${input.plugin ? gatewaySection(input, input.plugin) : `${NO_FILE}\n`}
-## Claude 러너 머신
+## 러너 머신
 
 ${input.runner ? runnerSection(input, input.runner) : `${NO_FILE}\n`}`;
 }

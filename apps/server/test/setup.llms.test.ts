@@ -126,7 +126,7 @@ describe("GET /llms.txt — 노드 설치 안내서", () => {
     expect(body).toContain(sha(runnerTgz));
     expect(body).toContain(sha(RUNNER_BUNDLE));
     expect(body).toContain("\n## OpenClaw Gateway 호스트\n");
-    expect(body).toContain("\n## Claude 러너 머신\n");
+    expect(body).toContain("\n## 러너 머신\n");
     for (const rule of [
       "토큰을 화면·로그·명령 줄 인자에 찍지 않는다 — 파일(0600)이나 표준 입력으로 넘긴다.",
       "토큰은 이 안내서가 지정한 자리에만 둔다.",
@@ -172,7 +172,7 @@ describe("GET /llms.txt — 노드 설치 안내서", () => {
     );
     expect(gateway).toContain("https://chat.example.com/api/v1/setup/plugin.tgz");
 
-    const runner = section(body, "Claude 러너 머신");
+    const runner = section(body, "러너 머신");
     const [config] = jsonBlocks(runner);
     const parsed = RunnerConfig.safeParse(config);
     expect(parsed.success, JSON.stringify(parsed.error?.issues)).toBe(true);
@@ -185,7 +185,7 @@ describe("GET /llms.txt — 노드 설치 안내서", () => {
 
   it("대조: 웹 발급 대화상자의 「AI 에게 맡기기」 줄이 부르는 주소·절 제목이 본문에 있다", async () => {
     const body = (await get("10.0.0.4")).body;
-    for (const kind of ["bridge", "runner"] as const) {
+    for (const kind of ["bridge", "runner", "runner-reissue"] as const) {
       const line = llmsHandoffLine(kind, "https://chat.example.com", "<토큰>");
       expect(line.startsWith("https://chat.example.com/llms.txt ")).toBe(true);
       const title = /「([^」]+)」 절대로/.exec(line)?.[1];
@@ -213,8 +213,8 @@ describe("renderLlmsTxt — 파일이 없을 때", () => {
     });
     expect(section(noPlugin, "OpenClaw Gateway 호스트")).toContain("서버에 파일이 없습니다");
     expect(section(noPlugin, "OpenClaw Gateway 호스트")).not.toContain("plugin.tgz");
-    expect(section(noPlugin, "Claude 러너 머신")).not.toContain("서버에 파일이 없습니다");
-    expect(section(noPlugin, "Claude 러너 머신")).toContain("a".repeat(64));
+    expect(section(noPlugin, "러너 머신")).not.toContain("서버에 파일이 없습니다");
+    expect(section(noPlugin, "러너 머신")).toContain("a".repeat(64));
 
     const noRunner = renderLlmsTxt({
       origin: "https://x.example",
@@ -222,7 +222,7 @@ describe("renderLlmsTxt — 파일이 없을 때", () => {
       plugin: file,
       runner: null,
     });
-    expect(section(noRunner, "Claude 러너 머신")).toContain("서버에 파일이 없습니다");
+    expect(section(noRunner, "러너 머신")).toContain("서버에 파일이 없습니다");
     expect(section(noRunner, "OpenClaw Gateway 호스트")).toContain("b".repeat(64));
   });
 });
@@ -237,9 +237,9 @@ describe("renderLlmsTxt — 안내서 명령이 기대는 것", () => {
     runner: { sha256: "c".repeat(64), bundleSha256: "d".repeat(64) },
   });
   const gateway = section(body, "OpenClaw Gateway 호스트");
-  const runner = section(body, "Claude 러너 머신");
+  const runner = section(body, "러너 머신");
 
-  it("러너 3번 — claude 가 없는 머신의 번들 CLI 줄은 docker-deploy.md 「Claude 러너 설치」와 같고 경로 성분이 러너 패키지와 맞다", () => {
+  it("러너 3번 — claude 가 없는 머신의 번들 CLI 줄은 docker-deploy.md 「러너 설치」와 같고 경로 성분이 러너 패키지와 맞다", () => {
     const runnerSteps = bashBlocks(runner);
     expect(blockWith(runnerSteps, "CLAUDE_CONFIG_DIR=")).toContain(
       "CLAUDE_CONFIG_DIR=~/.dodok-runner/claude claude\n",

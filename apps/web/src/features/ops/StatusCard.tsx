@@ -101,7 +101,7 @@ function useRunners() {
 }
 
 /**
- * 상태 카드(스펙 7장): 연결(켜진 OpenClaw Gateway 마다 Gateway·플러그인·버전 줄, Claude 러너), 디스크 여유, 직전 종료. 문제가 있는
+ * 상태 카드(스펙 7장): 연결(켜진 OpenClaw Gateway 마다 Gateway·플러그인·버전 줄, 러너), 디스크 여유, 직전 종료. 문제가 있는
  * 줄만 강조한다 — 모르는 값(디스크를 못 잼·종료 표지 없음)은 문제로 보지 않는다. Gateway 가 없거나 모두 꺼졌으면 Gateway 줄이 없다
  * (멀티 Gateway 스펙 「웹」 절 — 끊긴 연결이 없다). 러너가 덜 붙은 것은 문제로 보지 않는다 — 러너는 사람의 PC 라 꺼져 있을 수 있고,
  * 60초 넘는 끊김은 사건(runner_down)이 알린다
@@ -117,7 +117,7 @@ export function StatusCard({ status }: { status: OpsStatus }) {
           <GatewayRows key={g.id} line={g} />
         ))}
         {runners && (
-          <Row name="Claude 러너">
+          <Row name="러너">
             {runners.connected}대 붙음 / 토큰 {runners.tokens}개
           </Row>
         )}

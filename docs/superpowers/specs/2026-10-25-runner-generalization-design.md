@@ -170,3 +170,69 @@ interface ProgramDriver {
 - **OpenCode 드라이버** — 후보는 `opencode serve` 의 HTTP·이벤트 스트림과 그 SDK. 같은 질문 + 모델 공급자 키를 어디서 읽는가(env 허용 목록과 부딪힌다).
 - 두 프로그램의 위 사실은 이 스펙을 쓰며 확인하지 않았다 — 각 스파이크가 판본을 정확 핀하고 ADR 로 남긴다.
 - 개인 러너(member 가 자기 머신을 붙이고 그 러너의 에이전트를 자기만 DM 으로 쓰는 것), 앱에서 디렉터리 만들기·clone, 러너를 OS 서비스로.
+
+## 구현과 맞춘 것
+
+계획 `docs/superpowers/plans/2026-10-29-runner-generalization.md`(태스크 1~7)를 구현하며 이 스펙과 달라졌거나 스펙이 정하지 않은 것을 정한 자리. 본문은 승인한 설계 그대로 두고 여기에만 적는다. 실물 확인은 `docs/guides/live-smoke.md` 「러너 일반화 실연」 절(모델 런 0회) — 그 절의 CLI `cwd`·절대 경로 기준이 10장 완료 기준 1·4 의 유일한 실물 근거다(통합 시나리오는 가짜 러너라 서버 경계까지만 증명한다).
+
+### 계획 판정
+
+- **PR1 — 에이전트 지시는 서버가 틀을 입힌다.** 3장 표의 `run.start.agent.instructions` 는 싣지 않는다. runner-adapter 가 `buildChannelRulesAppend` 에 `agentInstructions`(= `agents.base_prompt`)를 넘기고, shared 가 채널 규칙 틀 **앞**에 `# dodok agent instructions` 머리와 `<agent-instructions>` 틀을 채널 규칙과 같은 이스케이프(`escapeRuleTags`)로 붙인다. 비었거나 공백뿐이면 틀이 없다. 채널 규칙을 서버가 짓는 구조와 같은 자리라 다음 드라이버도 그대로 받는다. 틀 문장은 지금 「This Claude Code session …」으로 고정이다(다음 드라이버 때 프로그램 이름으로 — `docs/guides/plan.md` 8장 이월).
+- **PR2 — 지시 리비전.** `agents.instructions_revision`(`base_prompt` 가 바뀔 때만 +1 — 이름·아바타만 바꾸면 그대로)과 `agent_sessions.instructions_revision_at_start`. `renewSessionOnPromptChange` 는 채널 리비전 **또는** 지시 리비전이 다르면 러너 세션을 새로 연다.
+- **PR3 — 프로그램 능력은 hello 의 `programs[].capabilities`**(`serverSessionIds`·`approvals`·`images`·`interrupt`·`mcpTools`·`costs`). 어댑터 전체 능력 대신 `capabilitiesFor(agent)` 가 그 러너·그 프로그램의 값을 돌려준다. `serverSessionIds` 가 없는 프로그램은 `providerSessionId` 없이 보내고 `run.session` 으로 받은 값을 세션 행에 저장한다(이번 드라이버는 쓰지 않는다 — 서버 갈래와 시험은 가짜 러너의 `codex` 로).
+- **PR4 — 러너 에이전트 필드.** `agents.program`(러너면 값 — 서비스가 지킨다)·`runner_project_id`(nullable FK — 「보관되지 않은 러너 에이전트는 프로젝트가 있다」는 서비스 불변)·`model`(nullable)·`permission_mode`(기본 `default`)·`allowed_tools_json`(null = 상한 안에서 SDK 기본)·`disallowed_tools_json`(`[]`). 지시는 새 열 없이 `base_prompt`. `providerAgentId` 는 서버가 `r-` + 소문자 hex 10 으로 짓는다(워크스페이스 유일, 부딪히면 다시 짓기).
+- **PR5 — 계약은 V2 를 나란히 더했다가 V1 을 지웠다.** 지금 이름은 원래대로(`RunnerHello`·`RunnerRunStart` …), `RUNNER_PROTOCOL` 2.
+- **PR6 — 마이그레이션 둘.** `0030_runner_provider`: `provider` `claude` → `runner`, `program` 열(옛 행은 `claude`), 부분 유일 색인 `agents_runner_ws_agent`. `0031_runner_projects`: `runner_projects`, PR2·PR4 열, **프로젝트가 없는 러너 에이전트를 모두 보관** — 화면은 「프로젝트가 없어 되살릴 수 없습니다 — 새로 만드세요」, 되살리기 REST 는 `VALIDATION`. 데이터 옮기기는 생성 SQL 에 손으로 덧붙였다.
+- **PR7 — 토큰 다시 발급** `POST /api/v1/setup/runner-tokens/:id/reissue`(owner). 같은 행의 해시·접두사만 바꾸고 그 토큰의 러너 연결을 폐기와 같은 순서로 끊는다(러너는 종료 2). 응답은 발급과 같은 모양 `ReissueRunnerTokenResult`(`token`·`record`·`runnerConfig`), 폐기한 러너는 409.
+- **PR8 — 프로젝트 옮기기** `POST /api/v1/runner-projects/:id/move { runnerId }`(admin 이상): 대상 러너가 붙어 있고 `project.check` 가 `ok` 일 때만, 프로젝트와 그 에이전트(보관한 것 포함)의 `runner_token_id` 를 한 트랜잭션에서 바꾸고 `agent_sessions.provider_session_id` 를 비운다. 같은 자리 프로젝트가 대상에 있으면 409, 대상 천장 밖 에이전트(보관 안 된 것 — 프로그램·권한·도구)가 하나라도 있으면 400 `VALIDATION`(`details.agentIds`, `item` 은 첫 에이전트의 항목)이고 아무것도 옮기지 않는다.
+- **PR9 — 걷은 것.** `GET /agents/discover?provider=runner` 갈래(400), `PUT /setup/runner-tokens/:id/agents/:agentId`(「이 러너로 묶기」), `modules/runners/bindings.ts`, 어댑터의 `claimUnbound`·충돌 판정, 웹 `useBindRunnerAgent`·`AgentConflict`, `SetupStatus.runners[].agents`. 러너 에이전트는 만들 때 그 프로젝트의 러너 토큰에 묶인다.
+- **PR10 — 프로그램·프로젝트는 PATCH 로 바꾸지 않는다**(6장 「고치기(프로그램…)」를 좁힘). 프로젝트는 PR8 옮기기 하나로만 바뀌어 프로젝트와 에이전트 토큰이 어긋나지 않는다 — 정의를 만드는 `runners/definition.ts runnerAgentDefinition` 도 프로젝트 토큰이 에이전트 토큰과 다르면 `null`(런이 그 러너로 가지 않는다). 프로그램을 바꾸면 세션 전사가 다른 프로그램 것이 되므로 새 에이전트를 만든다. PATCH 에 `program`·`runnerProjectId` 가 오면 400.
+- **PR11 — 러너 에이전트 정의(`Agent.runnerAgent` — 프로젝트 id·모델·권한·도구)는 admin 이상에게만 싣는다**(REST·wire·제어 `list_agents`). member 의 에이전트 줄·DM 머리는 프로그램과 러너 이름까지만 보인다(`Agent.program` 은 누구나).
+
+### 러너(`packages/claude-runner`)
+
+- `checkCeiling` 은 셋째 인자로 그 연결의 detect 결과(`available`)를 받는다 — 「프로그램이 켜져 있고 쓸 수 있다」는 설정이 아니라 연결 상태라서다. 항목 순서 root → path → program → permissionMode → allowedTools. 루트 id 가 설정에 없으면 `root`, 루트 디렉터리 자체가 사라졌으면 realpath 실패라 `path`. `allowedTools` 상한은 글자 그대로의 부분집합(`Bash(git status)` 는 상한 `Bash` 에 들지 않는다), `null` 은 어느 상한에도 든다.
+- 드라이버는 팩토리 `createClaudeDriver({ sdk, claudeCodeVersion, … })`, `ProgramDriver` 에 오류 문구용 `label` 을 더했다. `detect` 는 자격 증명을 읽지 않는다 — 로그인 디렉터리가 없으면 `auth: "missing"`, 있으면 `unknown`(그래서 러너 탭은 로그인한 머신에서도 「로그인 모름」이다). 설정에 적었지만 드라이버가 없는 프로그램은 `available: false`·「이 러너 판본에는 이 프로그램의 드라이버가 없습니다」, detect 가 던지면 「상태를 확인하지 못했습니다」.
+- 경로 가림의 뿌리는 `sink.ts` 의 `workdirMasker` 하나이고, sink 가 `run.event`·`run.final`·`run.error`·`outbound.post` 의 글 칸을 내보내기 직전에 한 번 더 가린다. 승인 요약은 드라이버가 가린 뒤 줄인 글이라 sink 가 다시 가리지 않는다(다시 가리면 꼬리가 표지로 숨거나 상한을 넘는다).
+- `providerSessionId` 없는 Claude Code 런은 `run.error VALIDATION`, 형식이 틀린 `run.start` 는 runId 를 읽을 수 있으면 dispatch 뒤 `run.error VALIDATION`(필드 경로만 — 보낸 쪽이 정한 키는 `?`), 못 읽으면 drop. 스케줄러의 겹침 키는 `providerSessionId ?? sessionKey`.
+- `fs.list` 의 루트 밖·없음·파일은 모두 `NOT_FOUND`(루트 밖에 무엇이 있는지 알리지 않는다), 정렬은 코드 포인트 순, `.git` 이 파일이어도 git 저장소. `browse` 기본값은 `true`, hello 의 `programs` 는 설정에 적은 것만, 루트 `label` 이 없으면 디렉터리 이름. realpath 는 `realpathSync.native`(대소문자 무시 볼륨에서 디스크의 이름으로) — 루트·작업 디렉터리·둘러보기 링크 풀이가 같은 함수를 쓴다(`post` 의 `files.ts` 는 아직 JS 판 — 이월).
+- 서버가 hello 거절 ack 와 끊김을 한 조각으로 보내면 끊김 처리기가 먼저 돌아 「서버가 끊었다」가 먼저 찍히던 것을 — hello 를 기다리는 중의 끊김은 `setImmediate` 로 미루고 `fatal` 은 이미 끝나는 중이면 사유만 남긴다 — 첫 문구가 판본 불일치가 되게 했다.
+
+### 서버 런타임·데이터
+
+- 에이전트 정의는 어댑터 계약(shared)을 넓히지 않고 어댑터 옵션 `agentDefinition` 콜백으로 받는다(`runners/definition.ts`). 정의가 없으면 `NOT_FOUND`, 정의가 `RunnerRunStart` 밖이면 보내지 않고 `INTERNAL` — 러너는 runId 를 못 읽는 형식 오류면 drop 하므로 서버가 먼저 같은 스키마로 거른다.
+- `RunnerRunStart.providerSessionId` 는 UUID 가 아니라 string 1~128 선택이다(`run.session` 이 받은 id 를 그대로 싣는다). UUID 검사는 Claude Code 드라이버가 하고, 서버 `ensureProviderSessionId` 는 `serverSessionIds` 프로그램이면 저장 값이 UUID 꼴이 아닐 때 새로 짓는다.
+- 러너 세션 갱신 조건은 어댑터 능력 `promptEveryRun`(옛 `serverSessionIds`) — 세션 id 를 프로그램이 짓는 드라이버도 규칙·지시가 바뀌면 새로 열려야 한다. 갱신 알림 문구는 「채널 규칙이나 에이전트 지시가 바뀌어 @<핸들> 이 앞 작업 맥락(도구 결과·긴 작업)을 이어 가지 않습니다 — 채널의 최근 글은 그대로 봅니다」. 다른 연결이 보낸 `run.session` 은 저장하지 않는다.
+- `runner_projects` 에 `workspace_id` 를 더했다(5장 목록에 없음 — 다른 표와 같이 워크스페이스로 가른다, `runner_tokens.workspace_id` 와 늘 같다).
+- 천장 카드는 다른 카드처럼 `@<핸들> 실행이 실패했습니다: ` 뒤에 「러너 설정이 이 에이전트를 허용하지 않습니다(<항목>) — 러너 머신의 설정을 확인하세요」. 런 오류 `message` 가 다섯 항목 밖이면 괄호 없이 낸다(러너가 보낸 아무 글이 카드에 오르지 않게). 「다시 실행」을 막는 코드에는 넣지 않았다. `PROVIDER_AUTH` 카드는 「러너의 <프로그램 이름> 로그인을 확인하세요」(`RUNNER_PROGRAM_NAME`, 지금 「Claude Code」).
+- hello 는 판본부터 본다 — 옛 러너의 hello 는 모양도 달라 모양 오류가 아니라 판본 불일치로 답해야 머신 주인이 무엇을 할지 안다. hello 로그에는 루트 id 만 싣는다(라벨을 안 적으면 계정 이름이 올 수 있다). 러너 어댑터 능력 `agentsList: false`(러너는 에이전트를 알리지 않는다).
+- 옛 REST 「id 로 러너 에이전트 등록」(`POST /agents { provider: "runner", providerAgentId }`)·제어 `register_agent { provider: "runner" }` 는 400 `VALIDATION` — 프로젝트 없이 만들 수 없다.
+- 서버는 러너가 보낸 `run.error.message`·도구 인자·루트 라벨·프로그램 사유를 다시 가리지 않는다 — 경로 가림은 러너 sink 한 겹이다(이월).
+
+### REST·권한·제어 도구
+
+- 경로·응답 꼴은 `docs/guides/project-structure.md` 의 `modules/runners/` 줄이 정본이다. 어댑터 `fsList`·`projectCheck` 의 `AdapterError` 코드는 그대로 API 코드로(`ADAPTER_UNAVAILABLE` 503·`TIMEOUT` 504·`VALIDATION` 400·`INTERNAL` 500), 폐기한 러너에 프로젝트 더하기·옮기기는 409(503 이면 「다시 붙이면 된다」로 읽힌다).
+- 권한 모드 enum·순서·도구 목록 스키마는 `domain` 으로 옮겼다(`Agent.runnerAgent` 가 써야 하고, `runner` 가 `domain` 을 값으로 import 해 반대 방향은 순환). `runner/index.ts` 가 다시 내보낸다.
+- PATCH 의 천장 대조는 **바꾸는 필드만**이고 프로그램 available 은 만들 때만 본다 — 상한이 낮아진 뒤 권한을 낮추는 PATCH·이름만 바꾸는 PATCH 가 막히지 않게. 러너가 끊겨 있으면 대조를 건너뛴다(런에서 러너가 거절한다).
+- 제어 `update_agent` 는 러너 에이전트의 `name`·`avatarUrl` 만 받고 `handle` 도 거절한다(처리기 `check` 라 채널 안 에이전트의 호출도 확인 카드 없이 거절). 정의 필드는 도구 입력 스키마에서 아예 뺐다.
+- 둘러보기 요청의 `relPath` 쿼리는 운영 로그 한 줄뿐 아니라 Fastify 요청 로그에서도 가린다(`logger.ts redactUrl` — 쿼리 키를 퍼센트 디코드해서 본다). 프록시 접근 로그는 서버가 못 가린다(`docs/guides/docker-deploy.md` 「프록시 접근 로그」 절).
+- 러너에 묻기·천장 대조는 `modules/runners/live.ts`, 「러너」 탭 라우트는 `projects.routes.ts`, 정책은 `authorizeRunnerManage`. 팀 스펙 「역할과 권한」 표에 러너 줄을 더했다.
+
+### 웹
+
+- 「확인 결과를 보고 저장」은 저장이 곧 확인이다 — 저장 전 자리를 묻는 REST 가 없고 `POST /runners/:id/projects` 가 먼저 `project.check` 한다. 화면은 자리·이름을 보이고 「확인하고 추가」, 실패면 `details.reason` 의 네 문구. 프로젝트 줄의 git 여부는 「확인」 결과에서만 안다(`RunnerProject` 에 없다 — 줄마다 러너 왕복을 하지 않는다).
+- 「루트 없음」은 붙은 러너일 때만 — `rootLabel === null` 은 끊김에서도 오는데 끊긴 러너는 카드가 「끊김」이라 줄마다 달면 틀린 말이 된다.
+- DM 머리는 「러너 · <프로그램> · <러너 라벨>」 — 한 러너가 프로그램 여럿을 돌리니 라벨만으로는 무엇과 말하는지 모른다.
+- 버튼 이름은 「에이전트 가져오기」 그대로(7장의 「에이전트 추가」 자리) — 러너 갈래는 가져오지 않고 새로 만든다. 만들 때의 칸 이름은 「지시」, 에이전트 줄의 편집은 기존 「기본 프롬프트 편집」이 같은 값(`base_prompt`)을 고친다. 러너 에이전트 고치기는 줄 안 폼(「러너 설정 고치기」). `disallowedTools` 칸은 만들기·고치기 어디에도 없다(서버 기본 `[]` — REST 로 넣은 값이 화면에 안 보이는 것은 이월).
+- 러너 탭의 실시간은 wire `adapter.status`(러너 어댑터가 hello 뒤·끊길 때마다 모두에게 낸다 — `setup.status` 는 owner 에게만 가서 admin 의 탭이 못 받는다). `agents.changed` 는 프로젝트 목록(에이전트 수)만 낡게 한다.
+- 상한 아래로 내려간 저장 값은 고치기에서 「(상한 초과)」로 고를 수 없는 줄로 남기고 경고를 단다 — 다른 칸만 바꾸는 저장은 막지 않는다. 끊긴 러너의 고치기는 권한 모드 넷 다 고를 수 있다.
+- 둘러보기 목록은 대화상자가 열린 동안 다시 받지 않는다(분당 60 상한), 직접 입력의 앞 `/` 는 거절(호스트 절대 경로를 서버로 보내지 않는다)·뒤 `/` 는 걷는다. 「서버와 같은 빌드입니다」 줄은 연결 페이지 토큰 줄로 옮겼다(러너 탭의 `RunnerSummary` 에는 번들 sha 가 없다). 보관한 프로젝트는 되돌리지 않는다(API 없음).
+- 폼을 연 뒤 고른 것이 바뀌면 처음 고른 것을 쥔 채 잠근다 — 「선택된 러너가 끊겼습니다 …」·「선택돼 있던 러너의 토큰이 폐기됐습니다 …」·「선택된 프로그램을 지금 쓸 수 없습니다 …」(사람이 직접 고르지 않은 처음 값일 수 있어 「고른」이라 하지 않는다).
+- 다시 발급 대화상자의 「AI 에게 맡기기」 한 줄은 설치가 아니라 토큰 교체다 — `llmsHandoffLine("runner-reissue", …)` 「「러너 머신」 절대로 이 머신의 dodok 러너 토큰만 바꿔 줘 — dodok-runner 를 멈추고 1번처럼 새 토큰을 토큰 파일에 덮어쓴 뒤 다시 띄운다(설치·설정은 그대로)」. 안내서 절 이름은 「러너 머신」, 운영 화면 연결 줄·채널 설정 저장 안내의 옛 「Claude 러너」는 「러너」.
+
+### dev:fake·통합
+
+- 천장은 가짜 러너가 실제로 본다(`test/fakes/fake-runner.ts` 옵션 `tree` — 실제 러너 `fs-browse.ts`·`ceiling.ts` 와 같은 갈래, 판정 기준은 그때 알리는 hello). 대본 키워드 「천장」도 둔다.
+- 상한 `plan` 은 둘째 가짜 러너(「dev-fake 제한」 — 한 머신 설정 안에서 프로그램 하나에 상한 둘을 둘 수 없다), `dontAsk` 는 훅 `maxPermissionMode`. 둘째 러너에 루트 `src` 를 더했다 — 옮기기 성공은 대상에 같은 루트 id·경로가 있어야 한다.
+- `--keep` 의 러너 토큰 행은 고정 id 로 찾고, 「다시 발급」으로 해시가 바뀐 행은 시작 때 고정 토큰으로 되돌린다(warn 한 줄) — 프로젝트·`coder` 가 그 러너에 남은 채 붙는다.
+- 통합 `apps/server/test/integration/runner-projects.test.ts` 는 완료 기준 1~4 를 흐름마다 보고, 흐름마다 끝에 DB(+WAL)·서버 로그·REST 응답·wire 에 비밀 루트가 없는지 본다 — 비밀 루트는 가짜 러너 안에만 있어 이 검사는 「프로토콜에 경로 칸이 없고 서버가 경로를 만들어 내지 않는다」까지만 증명한다(맨 위 문단).

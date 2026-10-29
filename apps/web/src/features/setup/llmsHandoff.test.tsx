@@ -24,8 +24,16 @@ describe("llmsHandoffLine", () => {
       `${ORIGIN}/llms.txt 를 읽고 「OpenClaw Gateway 호스트」 절대로 이 호스트에 dodok 플러그인을 설치해 줘. 브리지 토큰: ${RAW_TOKEN}`,
     );
     expect(llmsHandoffLine("runner", ORIGIN, RAW_RUNNER_TOKEN)).toBe(
-      `${ORIGIN}/llms.txt 를 읽고 「Claude 러너 머신」 절대로 이 머신에 dodok 러너를 설치해 줘. 러너 토큰: ${RAW_RUNNER_TOKEN}`,
+      `${ORIGIN}/llms.txt 를 읽고 「러너 머신」 절대로 이 머신에 dodok 러너를 설치해 줘. 러너 토큰: ${RAW_RUNNER_TOKEN}`,
     );
+  });
+
+  it("다시 발급 — 설치가 아니라 깔린 러너의 토큰만 바꾸고 다시 띄우게 한다", () => {
+    const line = llmsHandoffLine("runner-reissue", ORIGIN, RAW_RUNNER_TOKEN);
+    expect(line).toBe(
+      `${ORIGIN}/llms.txt 를 읽고 「러너 머신」 절대로 이 머신의 dodok 러너 토큰만 바꿔 줘 — dodok-runner 를 멈추고 1번처럼 새 토큰을 토큰 파일에 덮어쓴 뒤 다시 띄운다(설치·설정은 그대로). 러너 토큰: ${RAW_RUNNER_TOKEN}`,
+    );
+    expect(line).not.toContain("설치해 줘");
   });
 
   it("공개 오리진은 브리지 공개 주소에서 — 서버 runnerServerUrl 과 같은 규칙", () => {
@@ -74,7 +82,7 @@ describe("발급 대화상자의 「AI 에게 맡기기」", () => {
     await expectHandoff(dialog, llmsHandoffLine("bridge", ORIGIN, RAW_TOKEN));
   });
 
-  it("러너 — 서버가 준 serverUrl 의 /llms.txt, 「Claude 러너 머신」 절", async () => {
+  it("러너 — 서버가 준 serverUrl 의 /llms.txt, 「러너 머신」 절", async () => {
     stubSetupServer();
     stubClipboard();
     renderConnection();
