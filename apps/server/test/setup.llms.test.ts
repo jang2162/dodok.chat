@@ -21,6 +21,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { RunnerConfig } from "../../../packages/claude-runner/src/config";
 import { DodokAccountConfig } from "../../../packages/openclaw-plugin/src/config";
 import { llmsHandoffLine } from "../../web/src/features/setup/llms";
+import { runnerConfigExample } from "../../web/src/features/setup/runnerConfig";
 import type { App } from "../src/app";
 import { RUNNER_BUNDLE_ENTRY } from "../src/modules/runners/runner-file";
 import { issueRunnerToken, revokeRunnerToken } from "../src/modules/runners/tokens";
@@ -491,5 +492,17 @@ describe("설치 파일을 발급 토큰으로 받기 [Review Focus 5]", () => {
     const ip = freshIp();
     for (let i = 0; i < 3; i++) expect((await download("plugin.tgz", undefined, ip)).statusCode).toBe(401);
     expect((await download("plugin.tgz", bridge().token, ip)).statusCode).toBe(200);
+  });
+});
+
+// 웹 연결 페이지·발급 대화상자의 설정 예시도 같은 스키마를 지나야 한다 — 러너 스키마(strict)가 바뀌면 조용히 어긋나지 않게
+describe("웹 러너 설정 예시", () => {
+  it("runnerConfigExample 의 결과가 러너 RunnerConfig 를 그대로 지난다", () => {
+    const config: unknown = JSON.parse(
+      runnerConfigExample({ serverUrl: "https://chat.example.com", tokenFile: "~/.dodok-runner/token" }),
+    );
+    const parsed = RunnerConfig.safeParse(config);
+    expect(parsed.success, JSON.stringify(parsed.error?.issues)).toBe(true);
+    expect(parsed.data?.roots[0]?.label).toBe("내 저장소들");
   });
 });
