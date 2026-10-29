@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
-import type { RunnerApprovalRequested, RunnerApprovalResolve } from "@dodok/shared";
-import { createPathMasker, workdirRoots } from "./mask";
+import type { RunnerApprovalRequested } from "@dodok/shared";
+import { type ApprovalOutcome, workdirMasker } from "../../sink";
 import type { CanUseTool } from "./sdk";
 
 // 도구 승인(러너 스펙 6장). CLI 가 canUseTool 로 묻는 것을 approval.requested 로 사람에게 전하고 결정을 기다린다 —
@@ -24,7 +24,7 @@ const FILE_TOOL_PATH_KEY: Record<string, string> = {
   NotebookEdit: "notebook_path",
 };
 
-export type ApprovalOutcome = Pick<RunnerApprovalResolve, "decision" | "reason">;
+export type { ApprovalOutcome };
 
 export type CanUseToolDeps = {
   runId: string;
@@ -97,7 +97,7 @@ function revealHidden(text: string): string {
  * 숨기는 글자를 보이게 바꾼 뒤(revealHidden), 길면 가운데를 줄인다
  */
 export function summarizeToolInput(toolName: string, input: unknown, workdir: string): string {
-  const mask = createPathMasker(workdirRoots(workdir));
+  const mask = workdirMasker(workdir);
   const record = input !== null && typeof input === "object" ? (input as Record<string, unknown>) : {};
   const pathKey = FILE_TOOL_PATH_KEY[toolName];
   let summary: string;

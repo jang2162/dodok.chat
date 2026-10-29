@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { tool } from "@anthropic-ai/claude-agent-sdk";
 import { CONTROL_TOOLS, renderRunnerPrompt, type ErrorCode, type RunEventBody } from "@dodok/shared";
 import { describe, expect, it } from "vitest";
@@ -10,13 +13,14 @@ import {
   runOnce,
   RUNNER_DISALLOWED_TOOLS,
   type RunContext,
-} from "../src/run";
+} from "../src/drivers/claude/run";
 import { CONTROL_TOOL_FULL_NAMES } from "../src/control-tools";
-import { POST_STOPPED_MESSAGE } from "../src/post-tool";
-import { realSdk, type SdkMcpServer } from "../src/sdk";
+import { POST_STOPPED_MESSAGE, POST_TOOL_FULL_NAME } from "../src/post-tool";
+import { realSdk, type SdkMcpServer } from "../src/drivers/claude/sdk";
+import { createRunSink } from "../src/sink";
 import { createFakeBridge, type FakeBridge } from "./helpers/fake-bridge";
 import { createFakeSdk, script, type FakeSdk } from "./helpers/fake-query";
-import { AGENT, runStart, SESSION_ID } from "./helpers/fixtures";
+import { AGENT, runSpec, runStart, SESSION_ID } from "./helpers/fixtures";
 
 const BASE_ENV = {
   PATH: "/usr/bin:/bin",
@@ -36,13 +40,19 @@ const BASE_ENV = {
 const MCP = { type: "sdk", name: "dodok", instance: { id: 1 } } as unknown as SdkMcpServer;
 
 function deps(resume: boolean) {
-  return { claudeConfigDir: "/home/u/.dodok-runner/claude", baseEnv: BASE_ENV, mcpServer: MCP, resume };
+  return { baseEnv: BASE_ENV, mcpServer: MCP, resume };
 }
+
+/** run.start 를 고친 런 — 작업 디렉터리 등은 runSpec 그대로 */
+const specOf = (start: ReturnType<typeof runStart>) => ({
+  ...runSpec(),
+  start: { ...start, providerSessionId: start.providerSessionId! },
+});
 
 describe("buildQueryOptions", () => {
   it("새 세션 — sessionId·title, 스펙 4.2 기본값", () => {
     const start = runStart();
-    const o = buildQueryOptions(AGENT, start, deps(false));
+    const o = buildQueryOptions(specOf(start), deps(false));
     expect(o).toMatchObject({
       cwd: AGENT.workdir,
       model: "sonnet",
@@ -76,23 +86,24 @@ describe("buildQueryOptions", () => {
       "CronList",
       "RemoteTrigger",
     ]);
-    const o = buildQueryOptions(
-      { ...AGENT, disallowedTools: ["AskUserQuestion", "WebFetch"] },
-      runStart(),
-      deps(false),
-    );
+    const o = buildQueryOptions(runSpec({ disallowedTools: ["AskUserQuestion", "WebFetch"] }), deps(false));
     expect(o.disallowedTools).toEqual([...RUNNER_DISALLOWED_TOOLS, "WebFetch"]);
   });
 
+  it("allowedTools null — 미리 허용한 도구 없음, dodok 도구만(태스크 2 리뷰 M2)", () => {
+    const o = buildQueryOptions(runSpec({ allowedTools: null }), deps(false));
+    expect(o.allowedTools).toEqual([POST_TOOL_FULL_NAME, ...CONTROL_TOOL_FULL_NAMES]);
+  });
+
   it("resume — sessionId·title 없이 resume 만(판정 P2)", () => {
-    const o = buildQueryOptions(AGENT, runStart(), deps(true));
+    const o = buildQueryOptions(runSpec(), deps(true));
     expect(o.resume).toBe(SESSION_ID);
     expect(o.sessionId).toBeUndefined();
     expect(o.title).toBeUndefined();
   });
 
   it("dodok MCP 서버 하나만 싣는다 — 받은 인스턴스 그대로", () => {
-    const o = buildQueryOptions(AGENT, runStart(), deps(false));
+    const o = buildQueryOptions(runSpec(), deps(false));
     expect(o.mcpServers?.dodok).toBe(MCP);
     expect(Object.keys(o.mcpServers ?? {})).toEqual(["dodok"]);
   });
@@ -109,7 +120,7 @@ describe("buildQueryOptions", () => {
   });
 
   it("env 는 허용 목록 + CLAUDE_CONFIG_DIR + 자동 메모리 끔 — 러너 env 의 비밀은 CLI 로 가지 않는다", () => {
-    const o = buildQueryOptions(AGENT, runStart(), deps(false));
+    const o = buildQueryOptions(runSpec(), deps(false));
     expect(o.env).toEqual({
       PATH: "/usr/bin:/bin",
       HOME: "/home/u",
@@ -150,7 +161,7 @@ describe("buildQueryOptions", () => {
 
   it("UserPromptSubmit 훅이 turnFacts 를 additionalContext 로 돌려준다", async () => {
     const start = runStart();
-    const o = buildQueryOptions(AGENT, start, deps(false));
+    const o = buildQueryOptions(specOf(start), deps(false));
     const hook = o.hooks?.UserPromptSubmit?.[0]?.hooks[0];
     const out = await hook?.({} as never, undefined, { signal: new AbortController().signal });
     expect(out).toEqual({
@@ -160,8 +171,8 @@ describe("buildQueryOptions", () => {
 
   it("canUseTool 은 주면 싣고 안 주면 뺀다", () => {
     const canUseTool = async () => ({ behavior: "deny" as const, message: "no" });
-    expect(buildQueryOptions(AGENT, runStart(), { ...deps(false), canUseTool }).canUseTool).toBe(canUseTool);
-    expect("canUseTool" in buildQueryOptions(AGENT, runStart(), deps(false))).toBe(false);
+    expect(buildQueryOptions(runSpec(), { ...deps(false), canUseTool }).canUseTool).toBe(canUseTool);
+    expect("canUseTool" in buildQueryOptions(runSpec(), deps(false))).toBe(false);
   });
 });
 
@@ -170,25 +181,30 @@ type Emitted =
   | { kind: "final"; final: Record<string, unknown> }
   | { kind: "error"; code: ErrorCode; message: string };
 
-function harness(fake: FakeSdk = createFakeSdk(), opts: Partial<RunContext> = {}) {
+function harness(
+  fake: FakeSdk = createFakeSdk(),
+  opts: Partial<Omit<RunContext, "sink">> & { bridge?: FakeBridge } = {},
+) {
   const emitted: Emitted[] = [];
   const controller = new AbortController();
-  const bridge: FakeBridge = createFakeBridge();
+  const { bridge = createFakeBridge(), ...rest } = opts;
   const ctx: RunContext = {
     sdk: fake,
-    bridge,
-    agent: AGENT,
-    claudeConfigDir: "/home/u/.dodok-runner/claude",
+    sink: createRunSink({
+      workdir: AGENT.workdir,
+      bridge,
+      emit: {
+        event: (event) => emitted.push({ kind: "event", event }),
+        final: (final) => emitted.push({ kind: "final", final }),
+        error: (code, message) => emitted.push({ kind: "error", code, message }),
+        session: () => {},
+      },
+    }),
     baseEnv: BASE_ENV,
     costs: new Map(),
     signal: controller.signal,
     closeGraceMs: 30,
-    emit: {
-      event: (event) => emitted.push({ kind: "event", event }),
-      final: (final) => emitted.push({ kind: "final", final }),
-      error: (code, message) => emitted.push({ kind: "error", code, message }),
-    },
-    ...opts,
+    ...rest,
   };
   return { fake, ctx, emitted, controller, bridge };
 }
@@ -201,7 +217,7 @@ describe("runOnce", () => {
     const { fake, ctx, emitted } = harness();
     fake.script(script.init(), ...script.textTurn("msg_1", ["안녕 ", "하세요"]));
     const start = runStart();
-    await runOnce(start, ctx);
+    await runOnce(specOf(start), ctx);
     expect(fake.calls).toHaveLength(1);
     expect(fake.calls[0]!.prompt).toMatchObject({
       type: "user",
@@ -232,7 +248,7 @@ describe("runOnce", () => {
     const { fake, ctx } = harness();
     fake.sessions.add(SESSION_ID);
     fake.script(...script.textTurn("msg_1", ["x"]));
-    await runOnce(runStart(), ctx);
+    await runOnce(runSpec(), ctx);
     expect(fake.calls[0]!.options.resume).toBe(SESSION_ID);
     expect(fake.calls[0]!.options.sessionId).toBeUndefined();
   });
@@ -241,7 +257,7 @@ describe("runOnce", () => {
     const { fake, ctx, emitted } = harness();
     fake.sessions.add(SESSION_ID);
     fake.script(script.success("", { num_turns: 0 }), ...script.textTurn("msg_1", ["진짜 답"]));
-    await runOnce(runStart(), ctx);
+    await runOnce(runSpec(), ctx);
     expect(finals(emitted)).toHaveLength(1);
     expect(finals(emitted)[0]).toMatchObject({ final: { text: "진짜 답" } });
   });
@@ -251,7 +267,7 @@ describe("runOnce", () => {
     fake.script(...script.textTurn("msg_1", ["답"]), {
       throw: new Error("Claude Code process exited with code 1"),
     });
-    await runOnce(runStart(), ctx);
+    await runOnce(runSpec(), ctx);
     expect(finals(emitted)).toHaveLength(1);
     expect(errors(emitted)).toEqual([]);
   });
@@ -261,14 +277,14 @@ describe("runOnce", () => {
     auth.fake.script(script.init(), {
       throw: new Error("authentication_failed: Not logged in · Please run /login"),
     });
-    await runOnce(runStart(), auth.ctx);
+    await runOnce(runSpec(), auth.ctx);
     expect(errors(auth.emitted)).toEqual([
       { kind: "error", code: "PROVIDER_AUTH", message: expect.any(String) },
     ]);
 
     const other = harness();
     other.fake.script({ throw: new Error("spawn failed at /home/u/src/my-repo/x and /opt/claude") });
-    await runOnce(runStart(), other.ctx);
+    await runOnce(runSpec(), other.ctx);
     const [err] = errors(other.emitted);
     expect(err).toMatchObject({ code: "INTERNAL" });
     expect(err?.kind === "error" && err.message).not.toMatch(/\/home|\/opt/);
@@ -283,7 +299,7 @@ describe("runOnce", () => {
         throw new Error("Claude Code executable not found at /opt/x/claude");
       },
     });
-    await runOnce(runStart(), ctx);
+    await runOnce(runSpec(), ctx);
     expect(errors(emitted)).toMatchObject([{ code: "INTERNAL" }]);
     expect(JSON.stringify(emitted)).not.toContain("/opt");
   });
@@ -291,24 +307,24 @@ describe("runOnce", () => {
   it("result 없이 끝나면 INTERNAL", async () => {
     const { fake, ctx, emitted } = harness();
     fake.script(script.init(), { exit: true });
-    await runOnce(runStart(), ctx);
+    await runOnce(runSpec(), ctx);
     expect(errors(emitted)).toMatchObject([{ code: "INTERNAL" }]);
   });
 
   it("result 의 error_* 는 run.error 로 한 번만", async () => {
     const { fake, ctx, emitted } = harness();
     fake.script(script.errorResult("error_max_turns", ["턴 초과"]));
-    await runOnce(runStart(), ctx);
+    await runOnce(runSpec(), ctx);
     expect(errors(emitted)).toEqual([{ kind: "error", code: "INTERNAL", message: "턴 초과" }]);
   });
 
   it("세션 누적 비용 — 새 세션은 그대로, 이어 간 런은 직전 누적값과의 차이", async () => {
     const { fake, ctx, emitted } = harness();
     fake.script(...script.textTurn("msg_1", ["a"], "a", { total_cost_usd: 0.3 }));
-    await runOnce(runStart(), ctx);
+    await runOnce(runSpec(), ctx);
     fake.sessions.add(SESSION_ID);
     fake.script(...script.textTurn("msg_2", ["b"], "b", { total_cost_usd: 0.5 }));
-    await runOnce(runStart(), ctx);
+    await runOnce(runSpec(), ctx);
     const [first, second] = finals(emitted);
     expect(first?.kind === "final" && first.final.costUsd).toBeCloseTo(0.3);
     expect(second?.kind === "final" && second.final.costUsd).toBeCloseTo(0.2);
@@ -318,7 +334,7 @@ describe("runOnce", () => {
     const { fake, ctx, emitted } = harness();
     fake.sessions.add(SESSION_ID);
     fake.script(...script.textTurn("msg_1", ["a"], "a", { total_cost_usd: 1.25 }));
-    await runOnce(runStart(), ctx);
+    await runOnce(runSpec(), ctx);
     const [f] = finals(emitted);
     expect(f?.kind === "final" && "costUsd" in f.final).toBe(false);
     expect(f).toMatchObject({ final: { usage: { inputTokens: 10, outputTokens: 5 } } });
@@ -328,7 +344,7 @@ describe("runOnce", () => {
   it("costKind — API 키 로그인이면 api", async () => {
     const { fake, ctx, emitted } = harness();
     fake.script(script.init("ANTHROPIC_API_KEY"), ...script.textTurn("msg_1", ["a"]));
-    await runOnce(runStart(), ctx);
+    await runOnce(runSpec(), ctx);
     expect(finals(emitted)[0]).toMatchObject({ final: { costKind: "api" } });
   });
 
@@ -342,7 +358,7 @@ describe("runOnce", () => {
     fake.script(script.messageStart("msg_1"), {
       waitInterrupt: [script.errorResult("error_during_execution", ["[ede_diagnostic] stop_reason=null"])],
     });
-    const done = runOnce(runStart(), ctx);
+    const done = runOnce(runSpec(), ctx);
     await new Promise((r) => setTimeout(r, 5));
     controller.abort();
     await done;
@@ -368,7 +384,7 @@ describe("runOnce", () => {
     fake.script(script.messageStart("msg_1"), {
       waitInterrupt: [script.errorResult("error_during_execution", ["x"], { total_cost_usd: 0.62 })],
     });
-    const done = runOnce(runStart(), ctx);
+    const done = runOnce(runSpec(), ctx);
     await new Promise((r) => setTimeout(r, 5));
     controller.abort();
     await done;
@@ -381,7 +397,7 @@ describe("runOnce", () => {
   it("중지에 반응하지 않으면 유예 뒤 close() — 그래도 final aborted 로 닫는다", async () => {
     const { fake, ctx, emitted, controller } = harness();
     fake.script(script.messageStart("msg_1"), { hang: true });
-    const done = runOnce(runStart(), ctx);
+    const done = runOnce(runSpec(), ctx);
     await new Promise((r) => setTimeout(r, 5));
     controller.abort();
     await new Promise((r) => setTimeout(r, 5));
@@ -399,7 +415,7 @@ describe("runOnce", () => {
       { waitInterrupt: [] },
       { throw: new Error("exited with code 143") },
     );
-    const done = runOnce(runStart(), ctx);
+    const done = runOnce(runSpec(), ctx);
     await new Promise((r) => setTimeout(r, 5));
     controller.abort();
     await done;
@@ -415,7 +431,7 @@ describe("runOnce", () => {
         { waitInterrupt: [] },
         tail,
       );
-      const done = runOnce(runStart(), ctx);
+      const done = runOnce(runSpec(), ctx);
       await new Promise((r) => setTimeout(r, 5));
       controller.abort();
       await done;
@@ -434,7 +450,7 @@ describe("runOnce", () => {
     for (const tail of tails) {
       const { fake, ctx, emitted, controller } = harness();
       fake.script(script.messageStart("msg_1"), { waitInterrupt: [] }, ...tail);
-      const done = runOnce(runStart(), ctx);
+      const done = runOnce(runSpec(), ctx);
       await new Promise((r) => setTimeout(r, 5));
       controller.abort("runner_shutdown");
       await done;
@@ -446,7 +462,7 @@ describe("runOnce", () => {
     }
     const { fake, ctx, emitted, controller } = harness();
     controller.abort("runner_shutdown");
-    await runOnce(runStart(), ctx);
+    await runOnce(runSpec(), ctx);
     expect(fake.calls).toEqual([]);
     expect(emitted).toEqual([{ ...ABORTED, final: { ...ABORTED.final, stopReason: "runner_shutdown" } }]);
   });
@@ -454,7 +470,7 @@ describe("runOnce", () => {
   it("시작 전에 중지됐으면 CLI 를 띄우지 않고 final aborted", async () => {
     const { fake, ctx, emitted, controller } = harness();
     controller.abort();
-    await runOnce(runStart(), ctx);
+    await runOnce(runSpec(), ctx);
     expect(fake.calls).toEqual([]);
     expect(emitted).toEqual([ABORTED]);
   });
@@ -470,7 +486,7 @@ describe("runOnce", () => {
         return false;
       },
     });
-    const done = runOnce(runStart(), ctx);
+    const done = runOnce(runSpec(), ctx);
     controller.abort();
     release();
     await done;
@@ -486,7 +502,7 @@ describe("runOnce — 전사가 없다고 봤는데 CLI 가 「이미 있는 세
     const { fake, ctx, emitted } = harness();
     fake.script({ throw: new Error(IN_USE) });
     fake.script(script.init(), ...script.textTurn("msg_1", ["이어서"]));
-    await runOnce(runStart(), ctx);
+    await runOnce(runSpec(), ctx);
     expect(fake.calls).toHaveLength(2);
     expect(fake.calls[0]!.options.sessionId).toBe(SESSION_ID);
     expect(fake.calls[1]!.options.resume).toBe(SESSION_ID);
@@ -507,7 +523,7 @@ describe("runOnce — 전사가 없다고 봤는데 CLI 가 「이미 있는 세
         return fake.query(args);
       },
     });
-    await runOnce(runStart(), ctx);
+    await runOnce(runSpec(), ctx);
     expect(calls).toBe(2);
     expect(fake.calls[0]!.options.resume).toBe(SESSION_ID);
     expect(errors(emitted)).toEqual([]);
@@ -531,7 +547,7 @@ describe("runOnce — 전사가 없다고 봤는데 CLI 가 「이미 있는 세
       },
       { signal: controller.signal },
     );
-    await runOnce(runStart(), ctx);
+    await runOnce(runSpec(), ctx);
     expect(calls).toBe(1);
     expect(emitted).toEqual([
       { kind: "final", final: { text: "", stopReason: "aborted", costKind: "subscription_estimate" } },
@@ -542,7 +558,7 @@ describe("runOnce — 전사가 없다고 봤는데 CLI 가 「이미 있는 세
     const { fake, ctx, emitted } = harness();
     fake.script({ throw: new Error(IN_USE) });
     fake.script({ throw: new Error(IN_USE) });
-    await runOnce(runStart(), ctx);
+    await runOnce(runSpec(), ctx);
     expect(fake.calls).toHaveLength(2);
     expect(errors(emitted)).toMatchObject([{ code: "INTERNAL" }]);
   });
@@ -551,17 +567,17 @@ describe("runOnce — 전사가 없다고 봤는데 CLI 가 「이미 있는 세
     const resumed = harness();
     resumed.fake.sessions.add(SESSION_ID);
     resumed.fake.script({ throw: new Error(IN_USE) });
-    await runOnce(runStart(), resumed.ctx);
+    await runOnce(runSpec(), resumed.ctx);
     expect(resumed.fake.calls).toHaveLength(1);
 
     const other = harness();
     other.fake.script({ throw: new Error("Claude Code process exited with code 1\nError: boom") });
-    await runOnce(runStart(), other.ctx);
+    await runOnce(runSpec(), other.ctx);
     expect(other.fake.calls).toHaveLength(1);
 
     const late = harness();
     late.fake.script(script.messageStart("msg_1"), { throw: new Error(IN_USE) });
-    await runOnce(runStart(), late.ctx);
+    await runOnce(runSpec(), late.ctx);
     expect(late.fake.calls).toHaveLength(1);
     expect(errors(late.emitted)).toHaveLength(1);
   });
@@ -591,7 +607,7 @@ describe("runOnce — dodok post 도구·도구 승인·이미지(태스크 6)",
       ...script.textTurn("msg_1", ["끝"]),
     );
     const start = runStart();
-    await runOnce(start, ctx);
+    await runOnce(specOf(start), ctx);
     const d = start.deliver;
     expect(bridge.posts).toHaveLength(1);
     expect(bridge.posts[0]).toMatchObject({
@@ -609,6 +625,38 @@ describe("runOnce — dodok post 도구·도구 승인·이미지(태스크 6)",
     expect(finals(emitted)).toHaveLength(1);
   });
 
+  it("post 도구의 파일은 그 런의 작업 디렉터리 안만 — 상대 경로는 작업 디렉터리에서 푼다(태스크 2 리뷰 L2)", async () => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), "dodok-run-post-")));
+    try {
+      const workdir = join(base, "repo");
+      mkdirSync(workdir);
+      writeFileSync(join(workdir, "a.txt"), "aa");
+      writeFileSync(join(base, "secret.txt"), "ss");
+      const uploads: string[] = [];
+      const fake = createFakeSdk();
+      const { ctx } = harness(fake, {
+        bridge: createFakeBridge({
+          upload: (name) => {
+            uploads.push(name);
+            const id = "0192f000-0000-7000-8000-0000000000f1";
+            return { id, kind: "file", url: `artifact://${id}`, name, mime: "text/plain", size: 2 };
+          },
+        }),
+      });
+      fake.script(
+        { callTool: { name: "post", input: { files: ["a.txt"] } } },
+        { callTool: { name: "post", input: { files: [join(base, "secret.txt")] } } },
+        ...script.textTurn("msg_1", ["끝"]),
+      );
+      await runOnce(runSpec({ workdir }), ctx);
+      expect(uploads).toEqual(["a.txt"]);
+      expect(fake.calls[0]!.toolResults[1]).toMatchObject({ isError: true });
+      expect(JSON.stringify(fake.calls[0]!.toolResults[1])).toContain("작업 디렉터리 밖");
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
   it("서버가 post 를 거절해도(중지된 런 FORBIDDEN) 도구 결과 오류로 돌려주고 런은 계속된다", async () => {
     const fake = createFakeSdk();
     const { ctx, emitted } = harness(fake, {
@@ -617,7 +665,7 @@ describe("runOnce — dodok post 도구·도구 승인·이미지(태스크 6)",
       }),
     });
     fake.script({ callTool: { name: "post", input: { text: "x" } } }, ...script.textTurn("msg_1", ["끝"]));
-    await runOnce(runStart(), ctx);
+    await runOnce(runSpec(), ctx);
     expect(fake.calls[0]!.toolResults[0]).toMatchObject({
       isError: true,
       content: [{ text: "보내지 못했습니다(FORBIDDEN): post must belong to an open run" }],
@@ -640,7 +688,7 @@ describe("runOnce — dodok post 도구·도구 승인·이미지(태스크 6)",
       ...script.textTurn("msg_1", ["끝"]),
     );
     const start = runStart();
-    const done = runOnce(start, ctx);
+    const done = runOnce(specOf(start), ctx);
     await bridge.decide("toolu_01", { decision: "allow-always" });
     await done;
     expect(bridge.requested).toEqual([
@@ -669,7 +717,7 @@ describe("runOnce — dodok post 도구·도구 승인·이미지(태스크 6)",
       { askPermission: { toolName: "Write", input: { file_path: "/etc/hosts" }, toolUseID: "toolu_01" } },
       ...script.textTurn("msg_1", ["거절돼서 멈춥니다"]),
     );
-    const done = runOnce(runStart(), ctx);
+    const done = runOnce(runSpec(), ctx);
     await bridge.decide("toolu_01", { decision: "deny", reason: "expired" });
     await done;
     expect(bridge.requested[0]!.summary).toBe("<작업 디렉터리 밖>");
@@ -684,7 +732,7 @@ describe("runOnce — dodok post 도구·도구 승인·이미지(태스크 6)",
       { askPermission: { toolName: "Bash", input: { command: "make" }, toolUseID: "toolu_01" } },
       { waitInterrupt: [script.errorResult("error_during_execution", ["interrupted"])] },
     );
-    const done = runOnce(runStart(), ctx);
+    const done = runOnce(runSpec(), ctx);
     while (bridge.requested.length === 0) await new Promise((r) => setTimeout(r, 2));
     controller.abort();
     await done;
@@ -703,7 +751,7 @@ describe("runOnce — dodok post 도구·도구 승인·이미지(태스크 6)",
       { askPermission: { toolName: "Bash", input: { command: "make" }, toolUseID: "toolu_01" } },
       { waitInterrupt: [script.errorResult("error_during_execution", ["interrupted"])] },
     );
-    const done = runOnce(runStart(), ctx);
+    const done = runOnce(runSpec(), ctx);
     while (bridge.requested.length === 0) await new Promise((r) => setTimeout(r, 2));
     const stoppedAt = Date.now();
     controller.abort();
@@ -723,7 +771,7 @@ describe("runOnce — dodok post 도구·도구 승인·이미지(태스크 6)",
       { callTool: { name: "post", input: { text: "늦은 카드" } } },
       script.errorResult("error_during_execution", ["interrupted"]),
     );
-    const done = runOnce(runStart(), ctx);
+    const done = runOnce(runSpec(), ctx);
     while (fake.calls.length === 0) await new Promise((r) => setTimeout(r, 2));
     controller.abort();
     await done;
@@ -753,7 +801,10 @@ describe("runOnce — dodok post 도구·도구 승인·이미지(태스크 6)",
       size: 1,
     };
     const done = runOnce(
-      { ...base, deliver: { ...base.deliver, message: { ...base.deliver.message, attachments: [att] } } },
+      specOf({
+        ...base,
+        deliver: { ...base.deliver, message: { ...base.deliver.message, attachments: [att] } },
+      }),
       ctx,
     );
     await new Promise((r) => setTimeout(r, 5));
@@ -788,7 +839,7 @@ describe("runOnce — dodok post 도구·도구 승인·이미지(태스크 6)",
         message: { ...base.deliver.message, attachments: [img(ok), img(missing)] },
       },
     };
-    await runOnce(start, ctx);
+    await runOnce(specOf(start), ctx);
     expect(bridge.downloads.sort()).toEqual([ok, missing]);
     expect(fake.calls[0]!.prompt!.message.content).toEqual([
       { type: "image", source: { type: "base64", media_type: "image/png", data: "AQID" } },
@@ -817,7 +868,10 @@ describe("runOnce — dodok post 도구·도구 승인·이미지(태스크 6)",
       size: 1,
     };
     const done = runOnce(
-      { ...base, deliver: { ...base.deliver, message: { ...base.deliver.message, attachments: [att] } } },
+      specOf({
+        ...base,
+        deliver: { ...base.deliver, message: { ...base.deliver.message, attachments: [att] } },
+      }),
       ctx,
     );
     await new Promise((r) => setTimeout(r, 5));

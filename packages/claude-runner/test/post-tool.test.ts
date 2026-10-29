@@ -27,7 +27,7 @@ import {
   type PostInput,
   type PostResult,
 } from "../src/post-tool";
-import type { SdkMcpTool } from "../src/sdk";
+import type { SdkMcpTool } from "../src/drivers/claude/sdk";
 import { createFakeSdk } from "./helpers/fake-query";
 import { RUN_ID, runStart } from "./helpers/fixtures";
 

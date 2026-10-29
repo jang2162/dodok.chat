@@ -1,33 +1,38 @@
 import {
   CONTROL_CALL_TIMEOUT_MS,
   ControlResult,
+  Id,
   RUNNER_NAMESPACE,
-  RUNNER_PROTOCOL,
+  RUNNER_PROTOCOL_V2,
   RUNNER_SHUTDOWN_STOP_REASON,
   RunnerApprovalResolve,
-  RunnerHelloResult,
+  RunnerHelloResultV2,
   RunnerOutboundAck,
+  RunnerProjectRef,
   RunnerRunAbort,
-  RunnerRunStart,
+  RunnerRunStartV2,
   type RunnerCapability,
-  type RunnerClientToServerEvents,
-  type RunnerHello,
-  type RunnerServerToClientEvents,
+  type RunnerClientToServerEventsV2,
+  type RunnerHelloV2,
+  type RunnerProgram,
+  type RunnerProgramStatus,
+  type RunnerServerToClientEventsV2,
 } from "@dodok/shared";
 import { io, type Socket } from "socket.io-client";
-import type { ApprovalOutcome } from "./approvals";
 import { type AttachmentsHttp, createAttachmentsHttp } from "./attachments-http";
-import type { ResolvedAgent, ResolvedRunnerConfig } from "./config";
-import { abortedFinal, runOnce, type RunBridge, type RunEmitter } from "./run";
+import { checkCeiling } from "./ceiling";
+import type { ProgramCeiling, ResolvedRunnerConfig } from "./config";
+import { capabilityList, type ProgramDriver, type RunSpec } from "./driver";
+import { checkProject, listDirectory } from "./fs-browse";
 import { createScheduler } from "./scheduler";
-import type { SdkPort } from "./sdk";
+import { abortedFinal, type ApprovalOutcome, createRunSink, type RunBridge, type RunEmitter } from "./sink";
 
 export type RunnerLogger = { info(msg: string): void; warn(msg: string): void; error(msg: string): void };
 
-export type RunnerVersions = Pick<
-  RunnerHello,
-  "runnerVersion" | "sdkVersion" | "claudeCodeVersion" | "bundleSha256"
->;
+export type RunnerVersions = Pick<RunnerHelloV2, "runnerVersion" | "sdkVersion" | "bundleSha256">;
+
+/** 드라이버가 없는 프로그램을 설정에 적었다 — 꺼진 것과 같지만 hello 에 사유와 함께 알린다 */
+export const NO_DRIVER_REASON = "이 러너 판본에는 이 프로그램의 드라이버가 없습니다";
 
 const CAPABILITIES: RunnerCapability[] = ["threads", "interrupt", "approvals", "attachments"];
 const HELLO_TIMEOUT_MS = 15_000;
@@ -48,26 +53,48 @@ const SERVER_DISCONNECT_MESSAGE =
 export type RunnerConnectionOptions = {
   config: ResolvedRunnerConfig;
   token: string;
-  sdk: SdkPort;
+  /** 프로그램마다 하나 — 설정에 켠 프로그램 중 드라이버가 있는 것만 돈다 */
+  drivers: ProgramDriver[];
   versions: RunnerVersions;
   logger: RunnerLogger;
   /** 서버가 러너를 받지 않는다(hello 판본 거절·UNAUTHORIZED·서버가 끊음) — 러너는 도는 런을 멈추고(최대 stopWaitMs) 사유를 출력한 뒤 이 코드로 끝난다 */
   onFatal: (exitCode: number) => void;
-  baseEnv?: NodeJS.ProcessEnv;
   backoff?: { minMs: number; maxMs: number };
-  closeGraceMs?: number;
   stopWaitMs?: number;
   /** 없으면 serverUrl·토큰으로 러너 첨부 HTTP 를 만든다 */
   attachmentsHttp?: AttachmentsHttp;
   postAckTimeoutMs?: number;
 };
 
-type RunnerSocket = Socket<RunnerServerToClientEvents, RunnerClientToServerEvents>;
+type RunnerSocket = Socket<RunnerServerToClientEventsV2, RunnerClientToServerEventsV2>;
 
 /**
  * 런 하나가 서버와 주고받는 길. live() 는 그 런을 시작한 연결 세대가 아직 붙어 있는가 — 끊겼거나 다시 붙은 연결로는
  * 보내지 않는다(서버는 그 런을 이미 닫았다). 끊기면 연결이 런을 먼저 멈추므로 대개는 런 signal 이 앞에서 막는다
  */
+const FIELD_NAME = /^[A-Za-z_]\w{0,63}$/;
+const INVALID_FIELDS_MAX = 5;
+
+/** 틀린 필드의 이름 경로(`agent.allowedTools[0]`) — 스키마의 키만 싣고, 이름 꼴이 아닌 성분(맵 키 등 보낸 쪽의 값)은 `?` 로 */
+function invalidFields(issues: readonly { path: readonly PropertyKey[] }[]): string {
+  const names = [
+    ...new Set(
+      issues.map(
+        (i) =>
+          i.path
+            .map((k, n) =>
+              typeof k === "number"
+                ? `[${k}]`
+                : `${n === 0 ? "" : "."}${typeof k === "string" && FIELD_NAME.test(k) ? k : "?"}`,
+            )
+            .join("") || "(최상위)",
+      ),
+    ),
+  ];
+  const shown = names.slice(0, INVALID_FIELDS_MAX).join(", ");
+  return names.length > INVALID_FIELDS_MAX ? `${shown} 외 ${names.length - INVALID_FIELDS_MAX}개` : shown;
+}
+
 export function createRunBridge(o: {
   socket: Pick<RunnerSocket, "emit" | "timeout">;
   live: () => boolean;
@@ -143,9 +170,10 @@ export function createRunBridge(o: {
 export function startRunnerConnection(opts: RunnerConnectionOptions) {
   const { config, logger } = opts;
   const backoff = opts.backoff ?? DEFAULT_BACKOFF;
-  const agents = new Map<string, ResolvedAgent>(config.agents.map((a) => [a.id, a]));
+  const drivers = new Map<RunnerProgram, ProgramDriver>(opts.drivers.map((d) => [d.program, d]));
   const scheduler = createScheduler(config.maxConcurrentRuns);
-  const costs = new Map<string, number>();
+  // 마지막 hello 때 detect 한 프로그램 상태 — 천장 검사의 「프로그램을 쓸 수 있나」
+  const available = new Map<RunnerProgram, boolean>();
   let stopped = false;
   let attempt = 0;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -156,18 +184,50 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
   // 결정을 기다리는 승인(id 는 toolUseID). 런이 멈추면 그 런의 signal 이 기다림을 거둔다
   const decisions = new Map<string, (outcome: ApprovalOutcome) => void>();
 
-  const hello: RunnerHello = {
-    runnerProtocol: RUNNER_PROTOCOL,
+  /** 설정에 켠 프로그램마다 — 드라이버가 없으면 사유와 함께 못 씀. detect 는 연결마다 다시 한다(그 사이 로그인했을 수 있다) */
+  async function detectPrograms(): Promise<RunnerProgramStatus[]> {
+    const entries = Object.entries(config.programs) as Array<[RunnerProgram, ProgramCeiling | undefined]>;
+    const statuses = await Promise.all(
+      entries.flatMap(([program, ceiling]) => (ceiling ? [statusOf(program, ceiling)] : [])),
+    );
+    available.clear();
+    for (const s of statuses) available.set(s.program, s.available);
+    return statuses;
+  }
+
+  async function statusOf(program: RunnerProgram, ceiling: ProgramCeiling): Promise<RunnerProgramStatus> {
+    const base = {
+      program,
+      ceiling: {
+        maxPermissionMode: ceiling.maxPermissionMode,
+        allowedToolsCeiling: ceiling.allowedToolsCeiling,
+      },
+    };
+    const driver = drivers.get(program);
+    if (!driver)
+      return { ...base, available: false, auth: "unknown", reason: NO_DRIVER_REASON, capabilities: [] };
+    try {
+      return { ...base, ...(await driver.detect(ceiling)), capabilities: capabilityList(driver) };
+    } catch {
+      return {
+        ...base,
+        available: false,
+        auth: "unknown",
+        reason: "상태를 확인하지 못했습니다",
+        capabilities: [],
+      };
+    }
+  }
+
+  // 루트는 id·라벨만 — 경로 원문은 서버로 보내지 않는다(러너 일반화 스펙 결정 3)
+  const helloOf = (programs: RunnerProgramStatus[]): RunnerHelloV2 => ({
+    runnerProtocol: RUNNER_PROTOCOL_V2,
     ...opts.versions,
     capabilities: CAPABILITIES,
-    // 작업 디렉터리는 라벨만 — 경로 원문은 서버로 보내지 않는다
-    agents: config.agents.map((a) => ({
-      id: a.id,
-      name: a.name,
-      model: a.model,
-      workdirLabel: a.workdirLabel,
-    })),
-  };
+    roots: config.roots.map((r) => ({ id: r.id, label: r.label })),
+    browse: config.browse,
+    programs,
+  });
 
   // 재연결은 socket.io-client 옵션이 아니라 여기서 한다 — 미들웨어 거절(RATE_LIMITED)에는 socket.io-client 가
   // 다시 붙지 않는다(openclaw-plugin bridge-client 와 같은 까닭). UNAUTHORIZED·서버가 끊은 연결은 끝낸다(fatal)
@@ -243,6 +303,9 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
       error: (code, message) => {
         if (live()) socket.emit("run.error", { runId, code, message });
       },
+      session: (providerSessionId) => {
+        if (live()) socket.emit("run.session", { runId, providerSessionId });
+      },
     };
   }
 
@@ -259,8 +322,9 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
     generation += 1;
     void (async () => {
       try {
+        const hello = helloOf(await detectPrograms());
         const raw: unknown = await socket.timeout(HELLO_TIMEOUT_MS).emitWithAck("hello", hello);
-        const result = RunnerHelloResult.parse(raw);
+        const result = RunnerHelloResultV2.parse(raw);
         // hello 거절은 판본 불일치뿐이다(최종 리뷰 M3) — 다른 코드는 파싱에서 떨어져 아래 catch 가 백오프로 다시 붙는다
         if (!result.ok) {
           fatal(
@@ -270,11 +334,6 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
         }
         attempt = 0;
         logger.info(`dodok-runner: 연결됨(서버 ${result.serverVersion})`);
-        if (result.conflicts.length > 0) {
-          logger.warn(
-            `dodok-runner: 이 러너에 배정되지 않는 에이전트(다른 러너 토큰에 묶였거나 다른 러너가 먼저 알림 — 연결 페이지에서 「이 러너로 묶기」): ${result.conflicts.join(", ")}`,
-          );
-        }
       } catch (error) {
         if (stopped) return;
         logger.warn(`dodok-runner: hello 실패 — ${error instanceof Error ? error.message : String(error)}`);
@@ -314,43 +373,59 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
   });
 
   socket.on("run.start", (payload, ack) => {
-    const parsed = RunnerRunStart.safeParse(payload);
+    const parsed = RunnerRunStartV2.safeParse(payload);
     if (!parsed.success) {
-      const runId = String((payload as { deliver?: { runId?: unknown } })?.deliver?.runId ?? "");
-      logger.warn(`dodok-runner: run.start 형식이 틀려 버립니다(런 ${runId})`);
-      ack({ runId, admission: "drop", reason: "invalid-run-start" });
+      const rawRunId = (payload as { deliver?: { runId?: unknown } } | undefined)?.deliver?.runId;
+      const runId = Id.safeParse(rawRunId);
+      // 런 id 를 읽을 수 있으면 dispatch 뒤 VALIDATION — drop 이면 어댑터가 런을 놓아 멘션이 흔적 없이 사라진다(태스크 2 리뷰 M3,
+      // 스펙 3장 「서버·러너 둘 다 VALIDATION」). 문구는 틀린 필드 이름만 — 값은 싣지 않는다
+      if (runId.success) {
+        const fields = invalidFields(parsed.error.issues);
+        logger.warn(`dodok-runner: run.start 형식이 틀려 거절합니다(런 ${runId.data} — ${fields})`);
+        ack({ runId: runId.data, admission: "dispatch" });
+        emitterFor(runId.data, generation).error("VALIDATION", `run.start 형식이 틀렸습니다 — ${fields}`);
+        return;
+      }
+      logger.warn("dodok-runner: run.start 형식이 틀리고 런 id 도 읽을 수 없어 버립니다");
+      ack({ runId: String(rawRunId ?? ""), admission: "drop", reason: "invalid-run-start" });
       return;
     }
     const start = parsed.data;
+    const { agent } = start;
     const runId = start.deliver.runId;
     const emit = emitterFor(runId, generation);
-    const bridge = bridgeFor(generation);
-    const agent = agents.get(start.deliver.agentId);
-    if (!agent) {
+    // 거절도 dispatch 뒤 run.error 로 — drop 이면 어댑터가 런을 놓아 오류 카드가 사라진다(리뷰 M1)
+    const ceiling = checkCeiling(config, agent, (program) => available.get(program) === true);
+    if (!ceiling.ok) {
+      logger.warn(`dodok-runner: 천장에 걸려 거절 ${runId}(${ceiling.item})`);
       ack({ runId, admission: "dispatch" });
-      emit.error("NOT_FOUND", `이 러너의 설정 파일에 없는 에이전트입니다(${start.deliver.agentId})`);
+      emit.error("RUNNER_CEILING", ceiling.item);
       return;
     }
+    // 천장 검사가 그 프로그램이 켜져 있고 드라이버가 있음을 확인했다
+    const driver = drivers.get(agent.program)!;
+    const programCeiling = config.programs[agent.program]!;
+    const spec: RunSpec = {
+      start,
+      workdir: ceiling.workdir,
+      configDir: programCeiling.configDir,
+      model: agent.model,
+      permissionMode: agent.permissionMode,
+      allowedTools: agent.allowedTools,
+      disallowedTools: [...new Set([...programCeiling.disallowedTools, ...agent.disallowedTools])],
+    };
+    const sink = createRunSink({ workdir: ceiling.workdir, emit, bridge: bridgeFor(generation) });
     const submitted = scheduler.submit(
       runId,
-      start.providerSessionId,
+      // 세션 id 를 프로그램이 짓는 드라이버면 첫 런에는 id 가 없다 — dodok 세션 키로 같은 세션의 겹침을 막는다
+      start.providerSessionId ?? start.deliver.sessionKey,
       async (signal) => {
-        logger.info(`dodok-runner: 런 시작 ${runId}(${agent.id})`);
-        await runOnce(start, {
-          sdk: opts.sdk,
-          bridge,
-          agent,
-          claudeConfigDir: config.claudeConfigDir,
-          baseEnv: opts.baseEnv ?? process.env,
-          costs,
-          signal,
-          emit,
-          ...(opts.closeGraceMs === undefined ? {} : { closeGraceMs: opts.closeGraceMs }),
-        });
-        logger.info(`dodok-runner: 런 끝 ${runId}(${agent.id})`);
+        logger.info(`dodok-runner: 런 시작 ${runId}(${start.deliver.agentId})`);
+        await driver.startRun(spec, sink, signal);
+        logger.info(`dodok-runner: 런 끝 ${runId}(${start.deliver.agentId})`);
       },
       // 대기열에서 중지된 런 — 어댑터가 dispatch 뒤 추적하던 런을 놓게 final 로 닫는다(판정 R1)
-      (reason) => emit.final(abortedFinal(undefined, reason)),
+      (reason) => sink.final(abortedFinal(undefined, reason)),
     );
     if ("busy" in submitted) {
       ack({ runId, admission: "dispatch" });
@@ -358,6 +433,17 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
       return;
     }
     ack({ runId, admission: "dispatch", ...submitted });
+  });
+
+  // 둘러보기·프로젝트 확인 — 형식이 틀린 요청은 없는 자리로 답한다(서버가 같은 스키마로 거른 뒤 보낸다)
+  socket.on("fs.list", (payload, ack) => {
+    const parsed = RunnerProjectRef.safeParse(payload);
+    ack(parsed.success ? listDirectory(config, parsed.data) : { ok: false, code: "NOT_FOUND" });
+  });
+
+  socket.on("project.check", (payload, ack) => {
+    const parsed = RunnerProjectRef.safeParse(payload);
+    ack(parsed.success ? checkProject(config, parsed.data) : { ok: false, reason: "not_found" });
   });
 
   socket.on("run.abort", (payload) => {

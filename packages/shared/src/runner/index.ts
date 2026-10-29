@@ -2,7 +2,7 @@ import { z } from "zod";
 import { ErrorCode, Id } from "../common";
 import { InboundDeliver, OutboundMessage } from "../bridge";
 import type { ControlResult, RunnerControlCall } from "../control";
-import { ApprovalDecision } from "../domain";
+import { ApprovalDecision, RunnerProgram } from "../domain";
 import { RunEvent } from "../events";
 import { isRegistrableAgentId } from "../session-key";
 
@@ -10,6 +10,7 @@ import { isRegistrableAgentId } from "../session-key";
 // 하트비트는 Socket.IO 가 한다 — ping/pong 프레임은 두지 않는다
 
 export * from "./prompt";
+export { RunnerProgram };
 
 export const RUNNER_NAMESPACE = "/runner";
 /** 첨부 바이트 HTTP(GET·POST, 러너 토큰) — 브리지의 /bridge/attachments 와 같은 모양 */
@@ -170,4 +171,165 @@ export interface RunnerServerToClientEvents {
   "run.start": (p: RunnerRunStart, ack: (r: RunnerRunAck) => void) => void;
   "run.abort": (p: RunnerRunAbort) => void;
   "approval.resolve": (p: RunnerApprovalResolve) => void;
+}
+
+// ── V2 계약(러너 일반화 스펙 3장) ──────────────────────────────────────────────────────────────────────────────
+// 러너는 천장(루트·프로그램·권한 상한)만 쥐고, 서버가 run.start 에 에이전트 정의를 통째로 싣는다. 서버와 러너를 따로 옮기려고
+// V1 옆에 나란히 둔다(계획 판정 PR5) — 서버 쪽이 V2 로 옮기면 V1 이름을 지우고 V2 를 원래 이름으로 되돌린다
+
+export const RUNNER_PROTOCOL_V2 = 2;
+
+/** 러너 로컬 설정의 루트 id — 바꾸면 그 루트의 프로젝트가 「루트 없음」이 된다 */
+export const RunnerRootId = z.string().regex(/^[a-z0-9-]{1,32}$/, "root id must match [a-z0-9-]{1,32}");
+export type RunnerRootId = z.infer<typeof RunnerRootId>;
+
+/**
+ * 루트 안의 상대 경로 — 서버·러너가 같은 스키마로 거른다. 빈 문자열은 루트 자신. `/` 로만 나누고 `..`·`.`·빈 성분·NUL·`\`·앞 `/`
+ * 는 거절한다. 러너는 이 검사를 믿지 않고 realpath 로 루트 안인지 다시 본다(심볼릭 링크는 글자로 못 거른다)
+ */
+export const RunnerRelPath = z
+  .string()
+  .max(512)
+  .refine(
+    (p) =>
+      p === "" ||
+      (!p.includes("\0") &&
+        !p.includes("\\") &&
+        p.split("/").every((part) => part !== "" && part !== "." && part !== "..")),
+    "relPath must be a relative path inside the root",
+  );
+export type RunnerRelPath = z.infer<typeof RunnerRelPath>;
+
+/** 루트 하나 안의 디렉터리 — 프로젝트의 자리이자 fs.list·project.check 요청 */
+export const RunnerProjectRef = z.object({ rootId: RunnerRootId, relPath: RunnerRelPath });
+export type RunnerProjectRef = z.infer<typeof RunnerProjectRef>;
+
+/**
+ * 권한 모드 — 배열 순서가 「묻지 않고 돌 수 있는 것이 많은 순」의 정본이다(스펙 2장). bypassPermissions 는 승인 카드가 아예
+ * 뜨지 않아 「쓰기 도구는 승인 카드」 원칙이 깨지므로 어느 스키마도 받지 않는다
+ */
+export const RUNNER_PERMISSION_MODES = ["plan", "dontAsk", "default", "acceptEdits"] as const;
+export const RunnerPermissionMode = z.enum(RUNNER_PERMISSION_MODES);
+export type RunnerPermissionMode = z.infer<typeof RunnerPermissionMode>;
+export const permissionModeRank = (mode: RunnerPermissionMode): number =>
+  RUNNER_PERMISSION_MODES.indexOf(mode);
+
+/** 프로그램 드라이버가 할 수 있는 것(계획 판정 PR3) — 서버가 그 러너·그 프로그램의 값으로 런 전에 가른다 */
+export const RunnerProgramCapability = z.enum([
+  "serverSessionIds",
+  "approvals",
+  "images",
+  "interrupt",
+  "mcpTools",
+  "costs",
+]);
+export type RunnerProgramCapability = z.infer<typeof RunnerProgramCapability>;
+
+const ToolNames = z.array(z.string().min(1).max(200)).max(100);
+
+export const RunnerProgramStatus = z.object({
+  program: RunnerProgram,
+  /** 이 러너가 그 프로그램을 돌릴 수 있나 — 드라이버가 있고 설치돼 있다 */
+  available: z.boolean(),
+  version: z.string().max(64).optional(),
+  auth: z.enum(["ok", "missing", "unknown"]),
+  /** 못 쓰는 까닭·로그인 안내 — 경로 원문은 싣지 않는다 */
+  reason: z.string().max(200).optional(),
+  // 문자열이면 받는다 — 모르는 값은 서버가 버린다(hello capabilities 와 같은 까닭)
+  capabilities: z.array(z.string()),
+  ceiling: z.object({
+    maxPermissionMode: RunnerPermissionMode,
+    /** 배열이면 에이전트의 allowedTools 는 그 부분집합이어야 한다. null 이면 상한 없음 */
+    allowedToolsCeiling: ToolNames.nullable(),
+  }),
+});
+export type RunnerProgramStatus = z.infer<typeof RunnerProgramStatus>;
+
+/**
+ * 러너 → 서버 hello. 루트는 id·라벨뿐이다 — 호스트 경로는 서버로 가지 않는다(스펙 결정 3). strict 라 옛 hello 의 agents·
+ * claudeCodeVersion(과 루트의 path)이 실리면 거절한다
+ */
+export const RunnerHelloV2 = z.strictObject({
+  runnerProtocol: z.int(),
+  runnerVersion: z.string(),
+  sdkVersion: z.string(),
+  bundleSha256: z.string().nullable(),
+  capabilities: z.array(z.string()),
+  roots: z.array(z.strictObject({ id: RunnerRootId, label: z.string().min(1).max(64) })).max(16),
+  browse: z.boolean(),
+  programs: z.array(RunnerProgramStatus).max(8),
+});
+export type RunnerHelloV2 = z.infer<typeof RunnerHelloV2>;
+
+/** V1 결과에서 conflicts 를 걷었다 — 에이전트는 처음부터 러너 토큰에 묶인다(계획 판정 PR9) */
+export const RunnerHelloResultV2 = z.discriminatedUnion("ok", [
+  z.object({ ok: z.literal(true), serverVersion: z.string() }),
+  z.object({ ok: z.literal(false), code: z.literal("PROTOCOL_MISMATCH"), message: z.string() }),
+]);
+export type RunnerHelloResultV2 = z.infer<typeof RunnerHelloResultV2>;
+
+/** 서버가 정한 에이전트 정의 — 러너는 런마다 천장(로컬 설정)과 견주고 넘으면 RUNNER_CEILING 으로 거절한다 */
+export const RunnerRunAgent = z.object({
+  program: RunnerProgram,
+  project: RunnerProjectRef,
+  /** null 이면 프로그램 기본 모델 */
+  model: z.string().min(1).max(128).nullable(),
+  permissionMode: RunnerPermissionMode,
+  /** 묻지 않고 허용하는 도구. null 이면 미리 허용한 도구가 없다(상한 안에서 프로그램 기본) */
+  allowedTools: ToolNames.nullable(),
+  disallowedTools: ToolNames,
+});
+export type RunnerRunAgent = z.infer<typeof RunnerRunAgent>;
+
+/**
+ * V1 run.start + agent. providerSessionId 는 서버가 세션 id 를 정할 수 있는 프로그램(serverSessionIds)에만 싣는다 — 아니면
+ * 드라이버가 첫 런에서 run.session 으로 알린다
+ */
+export const RunnerRunStartV2 = RunnerRunStart.extend({
+  providerSessionId: z.uuid().optional(),
+  agent: RunnerRunAgent,
+});
+export type RunnerRunStartV2 = z.infer<typeof RunnerRunStartV2>;
+
+/** 프로그램이 스스로 지은 세션 id — 서버가 세션 행에 저장해 다음 런에 싣는다 */
+export const RunnerRunSession = z.object({ runId: Id, providerSessionId: z.string().min(1).max(128) });
+export type RunnerRunSession = z.infer<typeof RunnerRunSession>;
+
+/** fs.list — 디렉터리만, 숨김(`.` 시작) 빼고, 루트 밖을 가리키는 링크 빼고, 이름순 500개 */
+export const RUNNER_FS_LIST_MAX = 500;
+export const RunnerFsEntry = z.object({ name: z.string().min(1).max(255), isGitRepo: z.boolean() });
+export type RunnerFsEntry = z.infer<typeof RunnerFsEntry>;
+export const RunnerFsListResult = z.discriminatedUnion("ok", [
+  z.object({
+    ok: z.literal(true),
+    entries: z.array(RunnerFsEntry).max(RUNNER_FS_LIST_MAX),
+    truncated: z.boolean(),
+  }),
+  // FORBIDDEN — 러너가 둘러보기를 껐다(browse: false). NOT_FOUND — 루트·디렉터리가 없거나 루트 밖
+  z.object({ ok: z.literal(false), code: z.enum(["FORBIDDEN", "NOT_FOUND"]) }),
+]);
+export type RunnerFsListResult = z.infer<typeof RunnerFsListResult>;
+
+export const RunnerProjectCheckResult = z.discriminatedUnion("ok", [
+  z.object({ ok: z.literal(true), isGitRepo: z.boolean() }),
+  z.object({
+    ok: z.literal(false),
+    reason: z.enum(["root_missing", "not_found", "not_directory", "outside_root"]),
+  }),
+]);
+export type RunnerProjectCheckResult = z.infer<typeof RunnerProjectCheckResult>;
+
+/** 천장 검사가 걸린 항목 — run.error RUNNER_CEILING 의 message 가 이 이름 하나다 */
+export const RunnerCeilingItem = z.enum(["root", "path", "program", "permissionMode", "allowedTools"]);
+export type RunnerCeilingItem = z.infer<typeof RunnerCeilingItem>;
+
+export interface RunnerClientToServerEventsV2 extends Omit<RunnerClientToServerEvents, "hello"> {
+  hello: (p: RunnerHelloV2, ack: (r: RunnerHelloResultV2) => void) => void;
+  "run.session": (p: RunnerRunSession) => void;
+}
+
+export interface RunnerServerToClientEventsV2 extends Omit<RunnerServerToClientEvents, "run.start"> {
+  "run.start": (p: RunnerRunStartV2, ack: (r: RunnerRunAck) => void) => void;
+  "fs.list": (p: RunnerProjectRef, ack: (r: RunnerFsListResult) => void) => void;
+  "project.check": (p: RunnerProjectRef, ack: (r: RunnerProjectCheckResult) => void) => void;
 }

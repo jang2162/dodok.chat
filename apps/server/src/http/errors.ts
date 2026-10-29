@@ -31,6 +31,7 @@ const STATUS: Record<ErrorCode, number> = {
   CHANNEL_ARCHIVED: 409, // 보관한 채널에 쓰기 — 지금 상태와 맞지 않는 요청(CONFLICT 와 같은 상태)
   CONVERSATION_CLOSED: 409, // 닫힌 세션에 쓰기 — 다시 열면 되는 일(CHANNEL_ARCHIVED 와 같은 상태)
   DM_READ_ONLY: 409, // 읽기 전용 DM 에 쓰기 — 에이전트·허용 범위가 돌아오면 되는 일(CHANNEL_ARCHIVED 와 같은 상태)
+  RUNNER_CEILING: 502, // 러너가 천장을 넘는 에이전트 정의를 거절했다 — 서버 앞의 러너가 거절한 것(PROVIDER_AUTH 와 같은 상태)
   PUSH_UNAVAILABLE: 503, // 그 플랫폼 푸시 통로가 꺼져 있다 — 서버 설정이 바뀌면 되는 일(ADAPTER_UNAVAILABLE 과 같은 상태)
   INTERNAL: 500,
 };

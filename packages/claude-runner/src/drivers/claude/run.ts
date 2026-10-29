@@ -1,22 +1,10 @@
-import {
-  renderRunnerPrompt,
-  RUNNER_SHUTDOWN_STOP_REASON,
-  type ErrorCode,
-  type RunEventBody,
-  type RunnerApprovalRequested,
-  type RunnerControlCall,
-  type RunnerOutboundAck,
-  type RunnerOutboundPost,
-  type RunnerRunFinal,
-  type RunnerRunStart,
-} from "@dodok/shared";
-import { type ApprovalOutcome, createCanUseTool } from "./approvals";
-import type { AttachmentsHttp } from "./attachments-http";
-import type { ResolvedAgent } from "./config";
-import { CONTROL_TOOL_FULL_NAMES, type ControlCallOutcome, createControlTools } from "./control-tools";
-import { imageFailureNote, loadImageBlocks, type SdkImageBlock } from "./images";
-import { createPathMasker, workdirRoots } from "./mask";
-import { createDodokMcpServer, createPoster, POST_TOOL_FULL_NAME } from "./post-tool";
+import { renderRunnerPrompt, type ErrorCode, type RunnerRunFinal } from "@dodok/shared";
+import { CONTROL_TOOL_FULL_NAMES, createControlTools } from "../../control-tools";
+import type { RunSpec } from "../../driver";
+import { imageFailureNote, loadImageBlocks, type SdkImageBlock } from "../../images";
+import { createDodokMcpServer, createPoster, POST_TOOL_FULL_NAME } from "../../post-tool";
+import { abortedFinal, abortStopReason, type RunSink } from "../../sink";
+import { createCanUseTool } from "./approvals";
 import type {
   CanUseTool,
   SdkMcpServer,
@@ -26,7 +14,13 @@ import type {
   SdkQuery,
   SdkUserMessage,
 } from "./sdk";
-import { ABORTED_STOP_REASON, createStreamMapper, isAuthFailureText } from "./stream-map";
+import { createStreamMapper, isAuthFailureText } from "./stream-map";
+
+/** 오류 문구의 프로그램 이름(「러너의 Claude Code 로그인을 확인하세요」) — 웹 PROGRAM_NAME.claude 와 같은 글 */
+export const CLAUDE_CODE_LABEL = "Claude Code";
+
+/** Claude 는 서버가 정한 세션 UUID 로 연다(serverSessionIds) — providerSessionId 가 있는 런만 이 드라이버에 온다 */
+export type ClaudeRunSpec = RunSpec & { start: RunSpec["start"] & { providerSessionId: string } };
 
 /**
  * CLI(와 그 도구가 여는 셸)로 넘기는 러너 env — SDK 기본값은 러너 env 전부라 러너 토큰·API 키가 샌다(ADR 0007 5.4).
@@ -53,7 +47,6 @@ export const ENV_ALLOWLIST: readonly string[] = [
 ];
 /** run.abort 뒤 interrupt 에 턴이 끝나지 않으면 close() 까지 기다리는 시간(스펙 4.5) */
 export const ABORT_CLOSE_MS = 5000;
-const ERROR_MESSAGE_MAX = 2000;
 
 // system/init 의 apiKeySource — 'none' 은 claude.ai 로그인(구독)이다. 구독의 달러는 청구액이 아니라 공시 단가 환산(ADR 0007 4.8)
 const API_KEY_SOURCES = new Set(["ANTHROPIC_API_KEY", "apiKeyHelper", "/login managed key"]);
@@ -76,10 +69,8 @@ export const RUNNER_DISALLOWED_TOOLS: readonly string[] = [
 ];
 
 export function buildQueryOptions(
-  agent: ResolvedAgent,
-  start: RunnerRunStart,
+  spec: ClaudeRunSpec,
   deps: {
-    claudeConfigDir: string;
     baseEnv: NodeJS.ProcessEnv;
     mcpServer: unknown;
     canUseTool?: CanUseTool;
@@ -91,18 +82,22 @@ export function buildQueryOptions(
     const value = deps.baseEnv[key];
     if (value !== undefined) env[key] = value;
   }
-  env.CLAUDE_CONFIG_DIR = deps.claudeConfigDir;
+  env.CLAUDE_CONFIG_DIR = spec.configDir;
   // 켜 두면 메모리 자리가 cwd 로 정해져 작업 디렉터리가 같은 채널·스레드가 한 메모리를 나눠 쓴다(ADR 0007 5.10)
   env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = "1";
 
+  const { start } = spec;
   return {
-    cwd: agent.workdir,
-    model: agent.model,
-    permissionMode: agent.permissionMode,
+    cwd: spec.workdir,
+    // null 이면 CLI 기본 모델
+    ...(spec.model === null ? {} : { model: spec.model }),
+    permissionMode: spec.permissionMode,
     // dodok 도구는 늘 허용 — 승인 콜백은 입력 검증보다 먼저 와서 틀린 입력에도 카드가 뜬다(ADR 0007 4.2). 제어 도구의 쓰기는
     // 서버의 확인 카드가 묻는다(CONTROL_TOOL_FULL_NAMES)
-    allowedTools: [...new Set([...agent.allowedTools, POST_TOOL_FULL_NAME, ...CONTROL_TOOL_FULL_NAMES])],
-    disallowedTools: [...new Set([...RUNNER_DISALLOWED_TOOLS, ...agent.disallowedTools])],
+    allowedTools: [
+      ...new Set([...(spec.allowedTools ?? []), POST_TOOL_FULL_NAME, ...CONTROL_TOOL_FULL_NAMES]),
+    ],
+    disallowedTools: [...new Set([...RUNNER_DISALLOWED_TOOLS, ...spec.disallowedTools])],
     // sessionId 와 resume 은 함께 못 쓴다. title 을 주면 새 세션 제목을 짓는 보조 모델 호출이 없어진다(ADR 0007 4.8)
     ...(deps.resume
       ? { resume: start.providerSessionId }
@@ -143,49 +138,14 @@ export function buildQueryOptions(
 const SESSION_IN_USE = /\bsession\b[^\n]{0,120}?\balready (?:in use|exists)/i;
 export const isSessionInUseText = (text: string): boolean => SESSION_IN_USE.test(text);
 
-/**
- * 중지로 끝난 런 — 메시지 없는 final(조율자 판정 R1). 러너는 수명 이벤트를 run.event 로 내지 않는다.
- * reason 은 중지 signal 의 reason — 러너를 끄느라 멈췄으면 stopReason 이 runner_shutdown 이다
- */
-export function abortedFinal(
-  costKind: RunnerRunFinal["costKind"] = "subscription_estimate",
-  reason?: unknown,
-): Omit<RunnerRunFinal, "runId"> {
-  return { text: "", stopReason: abortStopReason(reason), costKind };
-}
-
-function abortStopReason(reason: unknown): string {
-  return reason === RUNNER_SHUTDOWN_STOP_REASON ? RUNNER_SHUTDOWN_STOP_REASON : ABORTED_STOP_REASON;
-}
-
-export type RunEmitter = {
-  event(event: RunEventBody): void;
-  final(final: Omit<RunnerRunFinal, "runId">): void;
-  error(code: ErrorCode, message: string): void;
-};
-
-/** 런이 서버와 주고받는 길 — 연결이 연결 세대에 묶어 만든다(끊긴 연결의 런은 새 연결로 보내지 않는다) */
-export type RunBridge = {
-  http: AttachmentsHttp;
-  post(message: RunnerOutboundPost): Promise<RunnerOutboundAck>;
-  /** 제어 도구 호출 — 던지지 않는다. 보낸 뒤 답을 못 받으면 unknown(서버가 실행했을 수 있다) */
-  control(call: RunnerControlCall): Promise<ControlCallOutcome>;
-  requestApproval(request: RunnerApprovalRequested): void;
-  withdrawApproval(providerApprovalId: string): void;
-  /** approval.resolve 가 오면 풀리고 signal 이 끊기면 거절된다 */
-  waitDecision(providerApprovalId: string, signal: AbortSignal): Promise<ApprovalOutcome>;
-};
-
 export type RunContext = {
   sdk: SdkPort;
-  bridge: RunBridge;
-  agent: ResolvedAgent;
-  claudeConfigDir: string;
+  /** 결과·도구·승인이 나가는 한 자리 — 경로 가림도 sink 가 맡는다 */
+  sink: RunSink;
   baseEnv: NodeJS.ProcessEnv;
   /** 세션별 마지막 total_cost_usd(세션 누적값 — ADR 0007 5.9). 러너 프로세스 메모리에만 있다 */
   costs: Map<string, number>;
   signal: AbortSignal;
-  emit: RunEmitter;
   now?: () => number;
   closeGraceMs?: number;
 };
@@ -193,33 +153,34 @@ export type RunContext = {
 /**
  * 런 하나 = query() 하나 = CLI 프로세스 하나, 프롬프트도 하나(ADR 0007 6의 1). 턴 사실은 훅 문맥에만 있으므로
  * 훅 문맥이 요청에서 빠지는 두 경우(앞 턴 처리 중 보낸 프롬프트·interrupt 직후 프롬프트 — 4.5)를 만들지 않도록
- * 이 query() 에 프롬프트를 더 보내지 않는다. 결과는 ctx.emit 으로 한 번만 나간다(final·error 중 하나) — 던지지 않는다.
+ * 이 query() 에 프롬프트를 더 보내지 않는다. 결과는 ctx.sink 로 한 번만 나간다(final·error 중 하나) — 던지지 않는다.
  * 예외 하나: 새 세션으로 연 CLI 가 「이미 있는 세션」으로 거절하면 resume 으로 한 번 다시 연다(첫 query 는 스트림 전에 죽었다)
  */
-export async function runOnce(start: RunnerRunStart, ctx: RunContext): Promise<void> {
+export async function runOnce(spec: ClaudeRunSpec, ctx: RunContext): Promise<void> {
+  const { start } = spec;
   // 중지로 끝난 런도 final 로 닫는다 — 어댑터가 dispatch 뒤 추적하던 런을 놓아준다(판정 R1)
-  if (ctx.signal.aborted) return void ctx.emit.final(abortedFinal(undefined, ctx.signal.reason));
+  if (ctx.signal.aborted) return void ctx.sink.final(abortedFinal(undefined, ctx.signal.reason));
   const sessionId = start.providerSessionId;
   let resume = false;
   try {
     // SDK 는 요약을 뽑을 수 없는 세션도 undefined 로 돌려준다 — 그러면 아래 재시도가 받친다
-    resume = await ctx.sdk.sessionExists(sessionId, ctx.agent.workdir);
+    resume = await ctx.sdk.sessionExists(sessionId, spec.workdir);
   } catch {
     // 전사를 못 읽으면 새 세션으로 연다 — 같은 id 의 전사가 실제로 있으면 CLI 가 거절하고 아래 재시도가 받친다
   }
-  if (ctx.signal.aborted) return void ctx.emit.final(abortedFinal(undefined, ctx.signal.reason));
+  if (ctx.signal.aborted) return void ctx.sink.final(abortedFinal(undefined, ctx.signal.reason));
   // 받기 실패는 그 이미지만 뺀다 — loadImageBlocks 는 던지지 않는다
-  const images = await loadImageBlocks(start.deliver, ctx.bridge.http, ctx.signal);
-  if (ctx.signal.aborted) return void ctx.emit.final(abortedFinal(undefined, ctx.signal.reason));
-  const outcome = await attempt(start, ctx, resume, images);
+  const images = await loadImageBlocks(start.deliver, ctx.sink.http, ctx.signal);
+  if (ctx.signal.aborted) return void ctx.sink.final(abortedFinal(undefined, ctx.signal.reason));
+  const outcome = await attempt(spec, ctx, resume, images);
   if (outcome !== "session-in-use") return;
-  if (ctx.signal.aborted) return void ctx.emit.final(abortedFinal(undefined, ctx.signal.reason));
-  await attempt(start, ctx, true, images);
+  if (ctx.signal.aborted) return void ctx.sink.final(abortedFinal(undefined, ctx.signal.reason));
+  await attempt(spec, ctx, true, images);
 }
 
 /** 이미지가 있으면 이미지 블록 뒤에 글(이미지를 글보다 앞에 두기를 Messages API 문서가 권한다), 못 불러온 수는 글 끝 한 줄 */
 function promptContent(
-  start: RunnerRunStart,
+  start: ClaudeRunSpec["start"],
   images: { blocks: SdkImageBlock[]; failed: number },
 ): SdkUserMessage["message"]["content"] {
   const text =
@@ -229,14 +190,15 @@ function promptContent(
 
 /** query() 하나. 새 세션으로 열었는데 스트림 전에 「이미 있는 세션」으로 거절됐으면 아무것도 내지 않고 알린다 */
 async function attempt(
-  start: RunnerRunStart,
+  spec: ClaudeRunSpec,
   ctx: RunContext,
   resume: boolean,
   images: { blocks: SdkImageBlock[]; failed: number },
 ): Promise<"done" | "session-in-use"> {
+  const { start } = spec;
   const sessionId = start.providerSessionId;
   const now = ctx.now ?? Date.now;
-  const mask = createPathMasker(workdirRoots(ctx.agent.workdir));
+  const mask = ctx.sink.mask;
   const mapper = createStreamMapper(now, { runId: start.deliver.runId, mask });
 
   let finishInput!: () => void;
@@ -255,8 +217,10 @@ async function attempt(
   const failed = (error: unknown) => {
     const text = error instanceof Error ? error.message : String(error);
     const code: ErrorCode = isAuthFailureText(text) ? "PROVIDER_AUTH" : "INTERNAL";
-    const head = code === "PROVIDER_AUTH" ? "러너의 Claude 로그인을 확인하세요" : "Claude Code 실행 실패";
-    ctx.emit.error(code, `${head}: ${mask(text)}`.slice(0, ERROR_MESSAGE_MAX));
+    const head =
+      code === "PROVIDER_AUTH" ? `러너의 ${CLAUDE_CODE_LABEL} 로그인을 확인하세요` : "Claude Code 실행 실패";
+    // 가림·길이 자르기는 sink 가 한다
+    ctx.sink.error(code, `${head}: ${text}`);
   };
   const retryable = (error: unknown) =>
     !resume && isSessionInUseText(error instanceof Error ? error.message : String(error));
@@ -265,32 +229,31 @@ async function attempt(
   try {
     q = ctx.sdk.query({
       prompt: prompt(),
-      options: buildQueryOptions(ctx.agent, start, {
-        claudeConfigDir: ctx.claudeConfigDir,
+      options: buildQueryOptions(spec, {
         baseEnv: ctx.baseEnv,
         mcpServer: createDodokMcpServer({
           sdk: ctx.sdk,
           post: createPoster({
-            workdir: ctx.agent.workdir,
+            workdir: spec.workdir,
             deliver: start.deliver,
-            http: ctx.bridge.http,
-            send: (m) => ctx.bridge.post(m),
+            http: ctx.sink.http,
+            send: (m) => ctx.sink.post(m),
             mask,
             signal: ctx.signal,
             now,
           }),
           tools: createControlTools({
             runId: start.deliver.runId,
-            call: (call) => ctx.bridge.control(call),
+            call: (call) => ctx.sink.control(call),
           }),
         }),
         canUseTool: createCanUseTool({
           runId: start.deliver.runId,
           sessionKey: start.deliver.sessionKey,
-          workdir: ctx.agent.workdir,
-          emit: (p) => ctx.bridge.requestApproval(p),
-          withdraw: (id) => ctx.bridge.withdrawApproval(id),
-          waitDecision: (id, signal) => ctx.bridge.waitDecision(id, signal),
+          workdir: spec.workdir,
+          emit: (p) => ctx.sink.requestApproval(p),
+          withdraw: (id) => ctx.sink.withdrawApproval(id),
+          waitDecision: (id, signal) => ctx.sink.waitDecision(id, signal),
           signal: ctx.signal,
         }),
         resume,
@@ -348,14 +311,14 @@ async function attempt(
       }
       for (const item of mapper.map(m)) {
         if (item.event) {
-          ctx.emit.event(item.event);
+          ctx.sink.event(item.event);
         } else if (item.final) {
           const { totalCostUsd, ...rest } = item.final;
           const costUsd = recordCost(totalCostUsd);
-          ctx.emit.final({ ...rest, ...(costUsd === undefined ? {} : { costUsd }), costKind });
+          ctx.sink.final({ ...rest, ...(costUsd === undefined ? {} : { costUsd }), costKind });
           end();
         } else if (item.error) {
-          ctx.emit.error(item.error.code, item.error.message);
+          ctx.sink.error(item.error.code, item.error.message);
           end();
         }
       }
@@ -363,13 +326,13 @@ async function attempt(
       if (ended && raw.type === "result" && !costRecorded) recordCost(raw.total_cost_usd);
     }
     if (!ended) {
-      if (interrupted) ctx.emit.final(abortedFinal(costKind, ctx.signal.reason));
-      else ctx.emit.error("INTERNAL", "Claude Code 가 결과 없이 끝났습니다");
+      if (interrupted) ctx.sink.final(abortedFinal(costKind, ctx.signal.reason));
+      else ctx.sink.error("INTERNAL", "Claude Code 가 결과 없이 끝났습니다");
     }
   } catch (error) {
     // 마지막 result 뒤에 CLI 가 exit 1 로 끝나 반복자가 던질 수 있다(ADR 0007 4.4) — 런은 이미 끝났다
     if (!ended) {
-      if (interrupted) ctx.emit.final(abortedFinal(costKind, ctx.signal.reason));
+      if (interrupted) ctx.sink.final(abortedFinal(costKind, ctx.signal.reason));
       else if (!sawMessage && retryable(error)) return "session-in-use";
       else failed(error);
     }

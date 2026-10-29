@@ -176,7 +176,7 @@ describe("GET /llms.txt — 노드 설치 안내서", () => {
     const parsed = RunnerConfig.safeParse(config);
     expect(parsed.success, JSON.stringify(parsed.error?.issues)).toBe(true);
     expect(Object.keys(config as object)).toEqual(
-      expect.arrayContaining(["serverUrl", "tokenFile", "claudeConfigDir", "agents"]),
+      expect.arrayContaining(["serverUrl", "tokenFile", "roots", "programs"]),
     );
     expect((config as { serverUrl: string }).serverUrl).toBe("https://chat.example.com");
     expect(runner).toContain("https://chat.example.com/api/v1/setup/runner.tgz");

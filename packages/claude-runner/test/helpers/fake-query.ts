@@ -7,7 +7,7 @@ import type {
   SdkPort,
   SdkQuery,
   SdkUserMessage,
-} from "../../src/sdk";
+} from "../../src/drivers/claude/sdk";
 
 /**
  * 대본 한 줄 — SDK 메시지이거나 흐름 제어.

@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   expandHome,
+  LEGACY_AGENTS_MESSAGE,
   loadRunnerConfig,
   resolveConfigPath,
   RunnerConfigError,
@@ -11,8 +12,11 @@ import {
 const HOME = "/home/u";
 const TOKEN = "drn_abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG";
 
-function memFs(files: Record<string, { content?: string; mode?: number; dir?: boolean }>): FsLike {
+function memFs(
+  files: Record<string, { content?: string; mode?: number; dir?: boolean; realpath?: string }>,
+): FsLike {
   return {
+    realpath: (p) => files[p]?.realpath ?? p,
     readFile: (p) => {
       const f = files[p];
       if (!f || f.dir || f.content === undefined)
@@ -28,14 +32,14 @@ function memFs(files: Record<string, { content?: string; mode?: number; dir?: bo
 
 const baseConfig = {
   serverUrl: "https://chat.example.com",
-  claudeConfigDir: "~/.dodok-runner/claude",
-  agents: [{ id: "coder", name: "코더", workdir: "~/src/my-repo", model: "sonnet" }],
+  roots: [{ id: "src", path: "~/src" }],
+  programs: { claude: { configDir: "~/.dodok-runner/claude" } },
 };
 
 function load(config: unknown, opts: { env?: NodeJS.ProcessEnv; extra?: Parameters<typeof memFs>[0] } = {}) {
   const fs = memFs({
     "/cfg/config.json": { content: typeof config === "string" ? config : JSON.stringify(config) },
-    "/home/u/src/my-repo": { dir: true },
+    "/home/u/src": { dir: true },
     ...opts.extra,
   });
   return loadRunnerConfig("/cfg/config.json", { HOME, ...(opts.env ?? { DODOK_RUNNER_TOKEN: TOKEN }) }, fs);
@@ -56,16 +60,93 @@ describe("loadRunnerConfig", () => {
     const { config, token, warnings } = load(baseConfig);
     expect(token).toBe(TOKEN);
     expect(warnings).toEqual([]);
-    expect(config.claudeConfigDir).toBe("/home/u/.dodok-runner/claude");
     expect(config.maxConcurrentRuns).toBe(3);
-    expect(config.agents[0]).toMatchObject({
-      id: "coder",
-      workdir: "/home/u/src/my-repo",
-      workdirLabel: "my-repo",
-      permissionMode: "default",
-      allowedTools: [],
-      disallowedTools: [],
+    expect(config.browse).toBe(true);
+    expect(config.roots).toEqual([{ id: "src", path: "/home/u/src", label: "src" }]);
+    expect(config.programs).toEqual({
+      claude: {
+        configDir: "/home/u/.dodok-runner/claude",
+        maxPermissionMode: "default",
+        disallowedTools: [],
+        allowedToolsCeiling: null,
+      },
     });
+  });
+
+  it("스펙 2장 예시 설정이 그대로 풀린다", () => {
+    const { config } = load(
+      {
+        serverUrl: "https://chat.example.com",
+        tokenFile: "~/.dodok-runner/token",
+        maxConcurrentRuns: 3,
+        roots: [{ id: "src", path: "~/src", label: "내 저장소들" }],
+        browse: true,
+        programs: {
+          claude: {
+            configDir: "~/.dodok-runner/claude",
+            maxPermissionMode: "acceptEdits",
+            disallowedTools: [],
+            allowedToolsCeiling: null,
+          },
+        },
+      },
+      { env: {}, extra: { "/home/u/.dodok-runner/token": { content: TOKEN, mode: 0o100600 } } },
+    );
+    expect(config.roots).toEqual([{ id: "src", path: "/home/u/src", label: "내 저장소들" }]);
+    expect(config.programs.claude?.maxPermissionMode).toBe("acceptEdits");
+  });
+
+  it("루트 path 는 realpath 로 쥔다 — 천장 검사가 풀린 경로끼리 견준다", () => {
+    const { config } = load(baseConfig, {
+      extra: { "/home/u/src": { dir: true, realpath: "/Volumes/data/src" } },
+    });
+    expect(config.roots[0]!.path).toBe("/Volumes/data/src");
+  });
+
+  it("옛 설정의 agents 키 — 정해진 문구로 거절한다(다른 오류보다 먼저)", () => {
+    const e = errorOf(() =>
+      load({
+        serverUrl: "https://chat.example.com",
+        claudeConfigDir: "~/.dodok-runner/claude",
+        agents: [{ id: "coder", name: "코더", workdir: "~/src/my-repo", model: "sonnet" }],
+      }),
+    );
+    expect(e.message).toBe("에이전트는 이제 앱에서 만듭니다 — 설정에서 agents 를 지우고 roots 를 적으세요");
+    expect(LEGACY_AGENTS_MESSAGE).toBe(e.message);
+  });
+
+  it("권한 상한에 bypassPermissions 는 받지 않는다", () => {
+    const e = errorOf(() =>
+      load({
+        ...baseConfig,
+        programs: { claude: { configDir: "~/c", maxPermissionMode: "bypassPermissions" } },
+      }),
+    );
+    expect(e.message).toContain("programs.claude.maxPermissionMode");
+  });
+
+  it("programs 에 적지 않은 프로그램은 꺼진 것이다 — 모르는 프로그램 키는 거절", () => {
+    const { config } = load({ ...baseConfig, programs: {} });
+    expect(config.programs).toEqual({});
+    const e = errorOf(() => load({ ...baseConfig, programs: { gemini: { configDir: "~/g" } } }));
+    expect(e.message).toContain("programs");
+  });
+
+  it("상한 도구 목록·늘 막는 도구를 받는다", () => {
+    const { config } = load({
+      ...baseConfig,
+      programs: {
+        claude: { configDir: "~/c", disallowedTools: ["WebFetch"], allowedToolsCeiling: ["Read", "Grep"] },
+      },
+    });
+    expect(config.programs.claude).toMatchObject({
+      disallowedTools: ["WebFetch"],
+      allowedToolsCeiling: ["Read", "Grep"],
+    });
+  });
+
+  it("roots 가 비면 거절한다", () => {
+    expect(errorOf(() => load({ ...baseConfig, roots: [] })).message).toContain("roots");
   });
 
   it("tokenFile 이 있으면 그 파일에서 읽고 끝 줄바꿈을 걷는다", () => {
@@ -94,9 +175,9 @@ describe("loadRunnerConfig", () => {
     expect(e.message).not.toContain("\n");
   });
 
-  it("대문자 에이전트 id — 키 경로가 든 한 줄, 토큰 값은 싣지 않는다", () => {
-    const e = errorOf(() => load({ ...baseConfig, agents: [{ ...baseConfig.agents[0], id: "Coder" }] }));
-    expect(e.message).toContain("agents[0].id");
+  it("대문자 루트 id — 키 경로가 든 한 줄, 토큰 값은 싣지 않는다", () => {
+    const e = errorOf(() => load({ ...baseConfig, roots: [{ ...baseConfig.roots[0], id: "Src" }] }));
+    expect(e.message).toContain("roots[0].id");
     expect(e.message).not.toContain("\n");
     expect(e.message).not.toContain(TOKEN);
   });
@@ -108,27 +189,24 @@ describe("loadRunnerConfig", () => {
     expect(e.message).not.toContain("\n");
   });
 
-  it("없는 workdir — 키 경로와 라벨만, 경로 원문은 싣지 않는다", () => {
+  it("없는 루트 path — 키 경로와 라벨만, 경로 원문은 싣지 않는다", () => {
     const e = errorOf(() =>
-      load({
-        ...baseConfig,
-        agents: [{ ...baseConfig.agents[0], workdir: "~/src/gone", workdirLabel: "gone-repo" }],
-      }),
+      load({ ...baseConfig, roots: [{ id: "src", path: "~/src/gone", label: "gone-repo" }] }),
     );
-    expect(e.message).toContain("agents[0].workdir");
+    expect(e.message).toContain("roots[0].path");
     expect(e.message).toContain("gone-repo");
     expect(e.message).not.toContain("/home/u");
     expect(e.message).not.toContain("~/src/gone");
   });
 
-  it("workdir 가 파일이면 디렉터리가 아니라고 알린다", () => {
+  it("루트 path 가 파일이면 디렉터리가 아니라고 알린다", () => {
     const e = errorOf(() =>
       load(
-        { ...baseConfig, agents: [{ ...baseConfig.agents[0], workdir: "/srv/file.txt" }] },
+        { ...baseConfig, roots: [{ id: "src", path: "/srv/file.txt" }] },
         { extra: { "/srv/file.txt": { content: "x" } } },
       ),
     );
-    expect(e.message).toContain("agents[0].workdir");
+    expect(e.message).toContain("roots[0].path");
     expect(e.message).not.toContain("/srv");
   });
 
@@ -144,9 +222,9 @@ describe("loadRunnerConfig", () => {
     expect(e.message).not.toContain("/home/u");
   });
 
-  it("같은 에이전트 id 가 둘이면 거절한다", () => {
-    const e = errorOf(() => load({ ...baseConfig, agents: [baseConfig.agents[0], baseConfig.agents[0]] }));
-    expect(e.message).toContain("agents[1].id");
+  it("같은 루트 id 가 둘이면 거절한다", () => {
+    const e = errorOf(() => load({ ...baseConfig, roots: [baseConfig.roots[0], baseConfig.roots[0]] }));
+    expect(e.message).toContain("roots[1].id");
   });
 
   it("설정 파일 본문에 토큰 키를 두면 거절한다 — 토큰은 tokenFile·env 에만", () => {

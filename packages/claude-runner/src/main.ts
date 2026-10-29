@@ -3,7 +3,8 @@ import { parseArgs } from "node:util";
 import { computeBundleSha256 } from "./bundle-hash";
 import { DEFAULT_CONFIG_PATH, loadRunnerConfig, resolveConfigPath, RunnerConfigError } from "./config";
 import { startRunnerConnection, STOP_WAIT_MS, type RunnerLogger } from "./connection";
-import { realSdk } from "./sdk";
+import { createClaudeDriver } from "./drivers/claude";
+import { realSdk } from "./drivers/claude/sdk";
 
 // 빌드(scripts/build.mjs)가 채운다. tsx 로 소스를 돌리면 dev 로 보인다
 declare const __DODOK_RUNNER_VERSION__: string;
@@ -66,22 +67,23 @@ function main(): void {
   for (const w of warnings) logger.warn(`dodok-runner: ${w}`);
 
   // SDK 세션 도우미(getSessionInfo)는 CLI env 가 아니라 러너 프로세스의 CLAUDE_CONFIG_DIR 을 읽는다(ADR 0007 5.2).
-  // CLI 에 넘기는 env 는 run.ts buildQueryOptions 가 따로 만든다 — 러너 env 전부가 가지 않는다
-  process.env.CLAUDE_CONFIG_DIR = config.claudeConfigDir;
+  // CLI 에 넘기는 env 는 drivers/claude/run.ts buildQueryOptions 가 따로 만든다 — 러너 env 전부가 가지 않는다
+  if (config.programs.claude) process.env.CLAUDE_CONFIG_DIR = config.programs.claude.configDir;
 
+  // 루트는 라벨만 찍는다 — 로그를 남에게 보여 줄 수 있다
   logger.info(
     `dodok-runner ${RUNNER_VERSION} · Claude Agent SDK ${SDK_VERSION} · Claude Code ${CLAUDE_CODE_VERSION} · ` +
-      `에이전트 ${config.agents.map((a) => `${a.id}(${a.workdirLabel})`).join(", ")} · 동시 ${config.maxConcurrentRuns}`,
+      `루트 ${config.roots.map((r) => `${r.id}(${r.label})`).join(", ")} · ` +
+      `프로그램 ${Object.keys(config.programs).join(", ") || "없음"} · 동시 ${config.maxConcurrentRuns}`,
   );
 
   const connection = startRunnerConnection({
     config,
     token,
-    sdk: realSdk,
+    drivers: [createClaudeDriver({ sdk: realSdk, claudeCodeVersion: CLAUDE_CODE_VERSION })],
     versions: {
       runnerVersion: RUNNER_VERSION,
       sdkVersion: SDK_VERSION,
-      claudeCodeVersion: CLAUDE_CODE_VERSION,
       bundleSha256: BUNDLE_SHA256,
     },
     logger,

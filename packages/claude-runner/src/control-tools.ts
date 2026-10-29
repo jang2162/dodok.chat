@@ -6,7 +6,7 @@ import {
   controlResultText,
   type RunnerControlCall,
 } from "@dodok/shared";
-import { defineSdkTool, type SdkMcpTool } from "./sdk";
+import { defineSdkTool, type SdkMcpTool } from "./drivers/claude/sdk";
 
 // 제어 도구(제어 MCP 스펙 「Claude 러너」 절) — shared CONTROL_TOOLS 를 dodok MCP 서버에 그대로 싣는다. 처리기는 `/runner` 의
 // control.call 로 서버에 묻고 그 ack 를 도구 결과로 돌려준다. 역할·확인 카드·입력 검사는 서버가 한다(여기서 막지 않는다)

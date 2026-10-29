@@ -1,5 +1,6 @@
 import type { ErrorCode, RunEventBody } from "@dodok/shared";
-import { NO_MASK, type PathMasker } from "./mask";
+import { NO_MASK, type PathMasker } from "../../mask";
+import { ABORTED_STOP_REASON } from "../../sink";
 import type { SdkMessage } from "./sdk";
 
 // SDK 스트림 → RunEvent. 대응표의 정본은 ADR 0007 「설계에 주는 제약과 추천」 4 의 `RunEvent` 대응 표 —
@@ -12,8 +13,7 @@ import type { SdkMessage } from "./sdk";
 //   이어 붙여야 한다(mask.ts safeCut)
 // - 서브에이전트 안(parent_tool_use_id 가 있는) 스트림은 본 답 버블에 섞이지 않게 버린다
 
-/** interrupt 로 끝난 런의 final — 어댑터가 메시지 없는 중지로 닫는다(판정 R1) */
-export const ABORTED_STOP_REASON = "aborted";
+export { ABORTED_STOP_REASON };
 
 /** 도구 결과는 OpenClaw 경로(openclaw-adapter gateway/events.ts TOOL_RESULT_MAX)와 같은 길이로 자른다 */
 export const TOOL_RESULT_MAX = 2000;

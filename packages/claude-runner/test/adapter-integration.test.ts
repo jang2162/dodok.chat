@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server as HttpServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -16,8 +16,8 @@ import { createRunnerAdapter, type RunnerAdapter } from "@dodok/runner-adapter";
 import { Server } from "socket.io";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AttachmentsHttp } from "../src/attachments-http";
-import type { ResolvedAgent } from "../src/config";
 import { startRunnerConnection, type RunnerConnection } from "../src/connection";
+import { createClaudeDriver } from "../src/drivers/claude";
 import { POST_STOPPED_MESSAGE } from "../src/post-tool";
 import { createFakeSdk, script, type FakeSdk } from "./helpers/fake-query";
 import { AGENT, CHANNEL_ID } from "./helpers/fixtures";
@@ -145,22 +145,35 @@ function startRunner(server: { url: string }, fake: FakeSdk, opts: { uploadGate?
       throw new Error("not used");
     },
   };
-  const agent: ResolvedAgent = { ...AGENT, workdir };
+  // 루트 src 가 곧 작업 디렉터리 — 서버가 run.start.agent.project 로 { rootId: "src", relPath: "" } 를 싣는다
   const conn: RunnerConnection = startRunnerConnection({
-    config: { serverUrl: server.url, claudeConfigDir: "/c", maxConcurrentRuns: 3, agents: [agent] },
-    token: TOKEN,
-    sdk: fake,
-    versions: {
-      runnerVersion: "0.0.0",
-      sdkVersion: "0.3.283",
-      claudeCodeVersion: "2.1.283",
-      bundleSha256: null,
+    config: {
+      serverUrl: server.url,
+      maxConcurrentRuns: 3,
+      roots: [{ id: "src", path: realpathSync(workdir), label: "my-repo" }],
+      browse: true,
+      programs: {
+        claude: {
+          configDir: AGENT.configDir,
+          maxPermissionMode: "acceptEdits",
+          disallowedTools: [],
+          allowedToolsCeiling: null,
+        },
+      },
     },
+    token: TOKEN,
+    drivers: [
+      createClaudeDriver({
+        sdk: fake,
+        claudeCodeVersion: "2.1.283",
+        baseEnv: { PATH: "/usr/bin" },
+        closeGraceMs: 30,
+      }),
+    ],
+    versions: { runnerVersion: "0.0.0", sdkVersion: "0.3.283", bundleSha256: null },
     logger: { info: (m) => logs.push(m), warn: (m) => logs.push(m), error: (m) => logs.push(m) },
     onFatal: (code) => fatal.push(code),
-    baseEnv: { PATH: "/usr/bin" },
     backoff: { minMs: 20, maxMs: 50 },
-    closeGraceMs: 30,
     attachmentsHttp,
   });
   cleanups.push(() => conn.stop());
@@ -209,7 +222,23 @@ async function ready(server: ServerSide) {
   );
 }
 
-describe("러너 ↔ 실제 러너 어댑터", () => {
+// 러너는 V2 계약을 말하고 러너 어댑터는 아직 V1 이다(러너 일반화 계획 판정 PR5 — 태스크 2·3 사이). 두 판본이 맞물리지 않는
+// 것을 아래 한 시험이 고정하고, 왕복 시험들은 어댑터가 V2 로 옮길 때(태스크 3) 어댑터 쪽 기대값을 V2 로 고쳐 되살린다
+describe("태스크 2·3 사이 — V1 러너 어댑터와 V2 러너", () => {
+  it("어댑터가 hello 를 PROTOCOL_MISMATCH 로 거절하고 러너는 종료 코드 2 로 끝난다 — 다시 붙지 않는다", async () => {
+    const server = await startServer();
+    cleanups.push(() => server.close());
+    const runner = startRunner(server, createFakeSdk());
+    // 어댑터는 거절 ack 와 함께 연결을 끊는다 — 러너는 두 사유를 모두 찍고 종료 2 를 두 번 부를 수 있다(main 은 첫 번에 끝난다)
+    await waitFor(() => runner.fatal.length >= 1, "러너 종료");
+    expect(new Set(runner.fatal)).toEqual(new Set([2]));
+    expect(runner.logs.join("\n")).toMatch(/PROTOCOL_MISMATCH/);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(server.adapter.status().runners.connected).toBe(0);
+  });
+});
+
+describe.skip("러너 ↔ 실제 러너 어댑터 — 어댑터가 V2 로 옮기면(태스크 3) 되살린다", () => {
   it("hello — 에이전트가 목록에 오르고 approvals·attachments 능력을 알린다", async () => {
     const server = await startServer();
     cleanups.push(() => server.close());
