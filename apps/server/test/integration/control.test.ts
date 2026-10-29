@@ -20,7 +20,7 @@ import { type FakeRunner, type FakeRunnerRun, startFakeRunner } from "../fakes/f
 import { bootLiveApp, type LiveApp } from "../helpers/live-app";
 import { openChannelWire, resolveApproval, rest, sendMessage, type WireLog } from "../helpers/scenario-steps";
 import type { WireClient } from "../helpers/wire";
-import { channelConversation } from "../helpers/seed";
+import { channelConversation, createRunnerAgentForTest } from "../helpers/seed";
 
 describe("제어 도구 통로", () => {
   let live: LiveApp;
@@ -101,15 +101,12 @@ describe("제어 도구 통로", () => {
       },
     });
     runners.push(runner);
-    const { agent: coder } = ok(
-      "POST /agents coder",
-      await rest<{ agent: Agent }>(live, "POST", "/agents", {
-        provider: "runner",
-        providerAgentId: "coder",
-        handle: "coder",
-        name: "Coder",
-      }),
-    );
+    const { agent: coder } = createRunnerAgentForTest(live.app.db, {
+      workspaceId: live.app.workspaceId,
+      handle: "coder",
+      name: "Coder",
+      runnerTokenId: issued.record.id,
+    });
     const channel = await channelWith(coder);
     channelId = channel.id;
     const log = await openChannelWire(live, channel.id, sockets);

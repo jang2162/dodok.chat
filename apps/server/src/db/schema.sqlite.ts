@@ -13,6 +13,7 @@ import type {
   OpsEventKind,
   OpsSeverity,
   RelayPolicy,
+  RunnerPermissionMode,
   RunnerProgram,
   SessionPolicy,
   RunEvent,
@@ -121,7 +122,7 @@ export const agents = sqliteTable(
     basePrompt: text("base_prompt"),
     enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
     createdAt: ts("created_at").notNull(),
-    // 러너 에이전트가 묶인 러너 토큰 — 그 토큰의 러너만 맡는다. null 이면 처음 알린 러너에 묶인다. 폐기돼도 남는다
+    // 러너 에이전트가 묶인 러너 토큰 — 그 토큰의 러너만 맡는다(만들 때 프로젝트의 러너로 정한다). 폐기돼도 남는다
     runnerTokenId: text("runner_token_id").references((): AnySQLiteColumn => runnerTokens.id),
     // OpenClaw 에이전트를 맡은 Gateway — null 이면 연결이 빈 에이전트(Gateway 를 지웠다 — 옮기기를 기다린다)
     gatewayId: text("gateway_id").references(() => gateways.id, { onDelete: "set null" }),
@@ -131,6 +132,17 @@ export const agents = sqliteTable(
     dmAccess: text("dm_access").$type<DmAccess>().notNull().default("admins"),
     // 러너 에이전트가 돌리는 프로그램 — 러너면 값(서비스가 지킨다), OpenClaw 면 null
     program: text("program").$type<RunnerProgram>(),
+    // 러너 에이전트의 프로젝트(러너 일반화 계획 판정 PR4). DB 는 nullable — 「보관되지 않은 러너 에이전트는 프로젝트가 있다」는 서비스가
+    // 지킨다(0031 이 프로젝트 없는 옛 러너 에이전트를 보관했다). 아래 넷과 함께 run.start.agent 의 정본
+    runnerProjectId: text("runner_project_id").references((): AnySQLiteColumn => runnerProjects.id),
+    // null 이면 프로그램 기본 모델
+    model: text("model"),
+    permissionMode: text("permission_mode").$type<RunnerPermissionMode>().notNull().default("default"),
+    // null 이면 미리 허용한 도구 없음(러너 천장 안에서 프로그램 기본)
+    allowedToolsJson: json<string[]>("allowed_tools_json"),
+    disallowedToolsJson: json<string[]>("disallowed_tools_json").notNull().default([]),
+    // base_prompt(에이전트 지시)가 바뀔 때만 +1 — 러너 세션이 이 값과 다르게 시작했으면 새로 연다(계획 판정 PR2)
+    instructionsRevision: integer("instructions_revision").notNull().default(0),
   },
   (t) => [
     uniqueIndex("agents_ws_handle").on(t.workspaceId, t.handle),
@@ -219,6 +231,7 @@ export const agentSessions = sqliteTable(
       .references(() => agents.id),
     sessionKey: text("session_key").notNull(), // agent:<providerAgentId>:dodok:channel:<conversationId>[:thread:<rootId>] — shared dodokSessionKey
     promptRevisionAtStart: integer("prompt_revision_at_start").notNull(), // 세션이 마지막으로 새로 시작됐을 때(첫 턴·리셋 뒤)의 채널 프롬프트 리비전
+    instructionsRevisionAtStart: integer("instructions_revision_at_start").notNull().default(0), // 같은 때의 에이전트 지시 리비전(agents.instructions_revision)
     sessionStartedAt: ts("session_started_at"), // Gateway sessions.list 의 sessionStartedAt (리셋 판별)
     lifecycleRevision: text("lifecycle_revision"), // 실측값은 uuid 문자열 (sessions.reset 응답 entry)
     providerSessionId: text("provider_session_id"), // sessionId (리셋 뒤에도 유지되므로 식별용으로만)
@@ -599,6 +612,34 @@ export const runnerTokens = sqliteTable(
   (t) => [
     uniqueIndex("runner_tokens_hash").on(t.hash),
     index("runner_tokens_ws_created").on(t.workspaceId, t.createdAt),
+  ],
+);
+
+/**
+ * 러너 프로젝트(러너 일반화 스펙 5장) — 러너 하나(토큰 행)의 루트 안 디렉터리. 호스트 경로는 저장하지 않는다: 루트 id 와 그 안의
+ * 상대 경로뿐이고, 러너가 런마다 realpath 로 루트 안인지 다시 본다. 보관해도 행과 그 에이전트는 남는다(런도 돈다 — 스펙 8장)
+ */
+export const runnerProjects = sqliteTable(
+  "runner_projects",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id),
+    runnerTokenId: text("runner_token_id")
+      .notNull()
+      .references(() => runnerTokens.id),
+    rootId: text("root_id").notNull(),
+    relPath: text("rel_path").notNull(),
+    label: text("label").notNull(),
+    createdBy: text("created_by").references(() => users.id),
+    createdAt: ts("created_at").notNull(),
+    archivedAt: ts("archived_at"),
+  },
+  (t) => [
+    uniqueIndex("runner_projects_runner_root_path")
+      .on(t.runnerTokenId, t.rootId, t.relPath)
+      .where(sql`archived_at IS NULL`),
   ],
 );
 

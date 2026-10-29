@@ -1,4 +1,4 @@
-import type { AdapterProvider, RunnerProgram } from "@dodok/shared";
+import { type AdapterProvider, RUNNER_PROGRAM_NAME, type RunnerProgram } from "@dodok/shared";
 
 /** 제공자마다 에이전트 id 의 이름 — 등록 폼과 목록 줄이 함께 쓴다 */
 export const PROVIDER_ID_LABEL: Record<AdapterProvider, string> = {
@@ -17,9 +17,5 @@ export const PROVIDER_NAME: Record<AdapterProvider, string> = { openclaw: "OpenC
 export const providerName = (provider: string): string =>
   provider in PROVIDER_NAME ? PROVIDER_NAME[provider as AdapterProvider] : provider;
 
-/** 러너 에이전트의 프로그램 이름(Agent.program) */
-export const PROGRAM_NAME: Record<RunnerProgram, string> = {
-  claude: "Claude Code",
-  codex: "Codex",
-  opencode: "OpenCode",
-};
+/** 러너 에이전트의 프로그램 이름(Agent.program) — 정본은 shared RUNNER_PROGRAM_NAME */
+export const PROGRAM_NAME: Record<RunnerProgram, string> = RUNNER_PROGRAM_NAME;

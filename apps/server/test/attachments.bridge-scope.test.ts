@@ -4,7 +4,7 @@
  * id 와 같은 404 다.
  */
 import { FakeAdapter } from "@dodok/openclaw-adapter/fake";
-import type { Attachment, OutboundMessage } from "@dodok/shared";
+import { type Attachment, dodokSessionKey, type OutboundMessage } from "@dodok/shared";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -22,7 +22,7 @@ import { issueBridgeToken } from "../src/modules/setup/tokens";
 import { bootTestApp, login } from "./helpers/app";
 import { FAKE_GATEWAY_ID, insertGateway } from "./helpers/gateways";
 import { makePng, PDF_BYTES } from "./helpers/png";
-import { channelConversation, seedAgentSession } from "./helpers/seed";
+import { channelConversation, createRunnerAgentForTest, seedAgentSession } from "./helpers/seed";
 
 const HOME_ID = "00000000-0000-4000-8000-0000000000b2";
 
@@ -191,12 +191,9 @@ describe("브리지 첨부 범위 — 토큰의 Gateway 로", () => {
 
     const runner = issueRunnerToken(app.db, app.workspaceId, "laptop").record.id;
     const other = issueRunnerToken(app.db, app.workspaceId, "desktop").record.id;
-    const coder = createAgent(app.db, {
+    const { agent: coder } = createRunnerAgentForTest(app.db, {
       workspaceId: app.workspaceId,
-      provider: "runner",
-      providerAgentId: "coder",
       handle: "coder",
-      name: "coder",
       runnerTokenId: runner,
     });
     addMember(app.db, channel.id, { memberType: "agent", memberId: coder.id }, app.logger);
@@ -213,8 +210,8 @@ describe("브리지 첨부 범위 — 토큰의 Gateway 로", () => {
     const message: OutboundMessage = {
       outboundId: "out-runner",
       conversationId: channelConversation(app.db, channel.id),
-      agentId: "coder",
-      sessionKey: `agent:coder:dodok:channel:${channelConversation(app.db, channel.id)}`,
+      agentId: coder.providerAgentId,
+      sessionKey: dodokSessionKey(coder.providerAgentId, channelConversation(app.db, channel.id)),
       text: "파일입니다",
       attachmentIds: [orphan.id, others.id, own.id],
       ts: new Date().toISOString(),

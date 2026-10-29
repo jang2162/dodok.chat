@@ -27,8 +27,6 @@ export type AgentActionContext = {
   registry: Pick<AdapterRegistry, "forProvider">;
   /** 보관이 그 에이전트의 열린 런을 사람 「중지」와 같은 길로 멈춘다 */
   orchestrator: Pick<Orchestrator, "abort">;
-  /** 러너 에이전트 등록이 묶을 러너 토큰 — 그 id 를 지금 맡는 러너의 토큰(러너 어댑터 servingTokenId). 없으면 묶임 없이 등록 */
-  runnerTokenFor?: (providerAgentId: string) => string | undefined;
 };
 
 /** 다른 탭·사람의 화면이 에이전트·채널 멤버 목록을 다시 받게 — 본문이 없다(계획 판정 PS4) */
@@ -41,14 +39,13 @@ export function registerAgentAndNotify(
   body: CreateAgentBody,
   workspaceId: string,
 ): Agent {
-  if (body.provider === "openclaw" && body.gatewayId === undefined)
+  // 러너 에이전트는 러너 프로젝트에서 만든다 — 러너가 알린 id 를 가져오는 등록은 없다(러너 일반화 계획 판정 PR9)
+  if (body.provider === "runner")
+    throw apiError("VALIDATION", "runner agents are created from a runner project", { field: "provider" });
+  if (body.gatewayId === undefined)
     throw apiError("VALIDATION", "gatewayId is required for OpenClaw", { field: "gatewayId" });
-  const runnerTokenId = body.provider === "runner" ? ctx.runnerTokenFor?.(body.providerAgentId) : undefined;
-  const agent = createAgent(ctx.db, {
-    ...body,
-    workspaceId,
-    ...(runnerTokenId === undefined ? {} : { runnerTokenId }),
-  });
+  const { provider: _, ...rest } = body;
+  const agent = createAgent(ctx.db, { ...rest, provider: "openclaw", workspaceId });
   changed(ctx);
   return agent;
 }

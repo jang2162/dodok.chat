@@ -16,7 +16,7 @@ import { RETRY_RUN_ITEM } from "../src/modules/router/service";
 import { getRun } from "../src/modules/runs/store";
 import { bootTestApp, login, userWithRole } from "./helpers/app";
 import { FAKE_GATEWAY_ID, insertGateway } from "./helpers/gateways";
-import { channelConversation } from "./helpers/seed";
+import { channelConversation, createRunnerAgentForTest } from "./helpers/seed";
 
 const HOME_ID = "00000000-0000-4000-8000-0000000000b2";
 
@@ -243,12 +243,9 @@ describe("Gateway 옮기기 — PUT /api/v1/agents/:id/gateway", () => {
     expect(clash.statusCode).toBe(409);
     expect(clash.json()).toMatchObject({ code: "CONFLICT", details: { field: "providerAgentId" } });
 
-    const runner = createAgent(app.db, {
+    const { agent: runner } = createRunnerAgentForTest(app.db, {
       workspaceId: app.workspaceId,
-      provider: "runner",
-      providerAgentId: "coder",
       handle: "coder",
-      name: "coder",
     });
     const runnerMove = await inject("PUT", `/api/v1/agents/${runner.id}/gateway`, { gatewayId: HOME_ID });
     expect(runnerMove.statusCode).toBe(400);

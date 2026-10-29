@@ -18,7 +18,12 @@ import { runsSummary, USAGE_TRUSTED_PROGRAMS } from "../src/modules/ops/summary"
 import { insertRun } from "../src/modules/runs/store";
 import { ServerBus } from "../src/realtime/bus";
 import { newTestDb } from "./helpers/db";
-import { channelConversation, createDmChannelForTest, seedWorkspace } from "./helpers/seed";
+import {
+  channelConversation,
+  createDmChannelForTest,
+  createRunnerAgentForTest,
+  seedWorkspace,
+} from "./helpers/seed";
 
 // 「하루」는 서버 현지 자정 — 현지 시각 생성자로 TZ 와 무관하게 경계를 만든다
 const DAY = (d: number, h = 12, m = 0, s = 0, ms = 0) => new Date(2026, 8, d, h, m, s, ms);
@@ -267,14 +272,7 @@ describe("runsSummary usage", () => {
   });
 
   it("USAGE_TRUSTED 는 program claude 런만 — 같은 러너 제공자라도 다른 프로그램의 런은 더하지 않는다", () => {
-    const other = createAgent(db, {
-      workspaceId,
-      provider: "runner",
-      program: "codex",
-      providerAgentId: "other",
-      handle: "other",
-      name: "Other",
-    }).id;
+    const other = createRunnerAgentForTest(db, { workspaceId, handle: "other", program: "codex" }).agent.id;
     run(general, other, DAY(25, 10), "done", { inputTokens: 40, outputTokens: 2, costUsd: 4 });
     run(general, coder, DAY(25, 10), "done", { inputTokens: 7, outputTokens: 3, costUsd: 0.125 });
     const s = summary(1);

@@ -32,7 +32,7 @@ import {
   type WireLog,
 } from "../helpers/scenario-steps";
 import { connectWire, type WireClient } from "../helpers/wire";
-import { channelConversation } from "../helpers/seed";
+import { channelConversation, createRunnerAgentForTest } from "../helpers/seed";
 
 vi.setConfig({ testTimeout: 20_000, hookTimeout: 20_000 });
 
@@ -278,14 +278,12 @@ describe("통합 — 리액션", () => {
     );
     const runner = await startFakeRunner({ url: live.app.url, token: issued.token });
     runners.push(runner);
-    const coder = (
-      await rest<{ agent: Agent }>(live, "POST", "/agents", {
-        provider: "runner",
-        providerAgentId: "coder",
-        handle: "coder",
-        name: "Coder",
-      })
-    ).body.agent;
+    const { agent: coder } = createRunnerAgentForTest(live.app.db, {
+      workspaceId: live.app.workspaceId,
+      handle: "coder",
+      name: "Coder",
+      runnerTokenId: issued.record.id,
+    });
     const channel = (await rest<{ channel: Channel }>(live, "POST", "/channels", { name: "runner" })).body
       .channel;
     expect(

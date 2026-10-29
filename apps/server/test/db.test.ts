@@ -99,7 +99,7 @@ const msg = (ch: string, seq: number, extra: Partial<typeof messages.$inferInser
 });
 
 describe("db", () => {
-  it("마이그레이션이 30개 테이블을 만든다(FTS5 그림자 테이블 제외)", () => {
+  it("마이그레이션이 31개 테이블을 만든다(FTS5 그림자 테이블 제외)", () => {
     const db = createDb(":memory:");
     const rows = db.all<{ name: string }>(sql`select name from sqlite_master where type = 'table'`);
     const names = rows
@@ -130,6 +130,7 @@ describe("db", () => {
       "push_devices",
       "push_subscriptions",
       "run_events",
+      "runner_projects",
       "runner_tokens",
       "runs",
       "session",
@@ -1531,6 +1532,90 @@ describe("러너 제공자 마이그레이션(0030)", () => {
         // 옮긴 행과 같은 id 의 러너 에이전트는 둘이 될 수 없다. 색인은 runner 행에만 걸린다 — 같은 id 의 OpenClaw 행은 막지 않는다
         expect(() => insertAgent("coder-2", "runner", "coder")).toThrow(/UNIQUE/);
         expect(() => insertAgent("coder-oc", "openclaw", "coder")).not.toThrow();
+      } finally {
+        sqlite.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("러너 프로젝트 마이그레이션(0031)", () => {
+  it("_runner_provider 까지 적용된 DB 에 얹으면 프로젝트 없는 러너 에이전트는 보관된다 — 이미 보관한 것·OpenClaw 는 그대로, 새 열은 기본값", () => {
+    const dir = mkdtempSync(join(tmpdir(), "dodok-db-mig-"));
+    try {
+      const older = migrationsUpTo(dir, "_runner_provider");
+      const sqlite = new Database(join(dir, "app.db"));
+      try {
+        const db = drizzle(sqlite, { schema: { ...schema, ...authSchema } });
+        migrate(db, { migrationsFolder: older });
+        const ws = uuid();
+        const t = new Date("2026-10-29T00:00:00.000Z").getTime();
+        const archivedBefore = new Date("2026-10-01T00:00:00.000Z").getTime();
+        sqlite.prepare("INSERT INTO workspaces (id, name, created_at) VALUES (?, 'w', ?)").run(ws, t);
+        const insertAgent = (handle: string, provider: string, archivedAt: number | null) => {
+          const id = uuid();
+          sqlite
+            .prepare(
+              "INSERT INTO agents (id, workspace_id, provider, provider_agent_id, handle, name, enabled, created_at, archived_at, program) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)",
+            )
+            .run(
+              id,
+              ws,
+              provider,
+              handle,
+              handle,
+              handle,
+              t,
+              archivedAt,
+              provider === "runner" ? "claude" : null,
+            );
+          return id;
+        };
+        const coder = insertAgent("coder", "runner", null);
+        const old = insertAgent("old", "runner", archivedBefore);
+        const dev = insertAgent("dev", "openclaw", null);
+
+        const before = Date.now();
+        migrate(db, { migrationsFolder: migrationsFolder() });
+
+        const rows = new Map(
+          db
+            .select()
+            .from(agents)
+            .all()
+            .map((r) => [r.id, r]),
+        );
+        const archivedAt = rows.get(coder)?.archivedAt?.getTime() ?? 0;
+        expect(archivedAt).toBeGreaterThanOrEqual(before - 1_000);
+        expect(archivedAt).toBeLessThanOrEqual(Date.now() + 1_000);
+        expect(rows.get(old)?.archivedAt?.getTime()).toBe(archivedBefore);
+        expect(rows.get(dev)?.archivedAt).toBeNull();
+        expect(rows.get(coder)).toMatchObject({
+          runnerProjectId: null,
+          model: null,
+          permissionMode: "default",
+          allowedToolsJson: null,
+          disallowedToolsJson: [],
+          instructionsRevision: 0,
+        });
+        // 같은 러너·루트·경로의 보관 안 된 프로젝트는 하나 — 보관한 것은 겹쳐도 된다
+        const token = uuid();
+        sqlite
+          .prepare(
+            "INSERT INTO runner_tokens (id, workspace_id, label, hash, prefix, created_at) VALUES (?, ?, 'laptop', ?, 'abcdef', ?)",
+          )
+          .run(token, ws, "h".repeat(64), t);
+        const insertProject = (archived: number | null) =>
+          sqlite
+            .prepare(
+              "INSERT INTO runner_projects (id, workspace_id, runner_token_id, root_id, rel_path, label, created_at, archived_at) VALUES (?, ?, ?, 'src', 'dodok', 'dodok', ?, ?)",
+            )
+            .run(uuid(), ws, token, t, archived);
+        insertProject(t);
+        insertProject(null);
+        expect(() => insertProject(null)).toThrow(/UNIQUE/);
       } finally {
         sqlite.close();
       }

@@ -57,7 +57,15 @@ import {
 import { hasGateways } from "../src/adapters/types";
 import type { App } from "../src/app";
 import { findItem, formatInteractionText } from "../src/modules/components/interact";
-import { agents, channels, messages, runnerTokens, runs, users } from "../src/db/schema.sqlite";
+import {
+  agents,
+  channels,
+  messages,
+  runnerProjects,
+  runnerTokens,
+  runs,
+  users,
+} from "../src/db/schema.sqlite";
 import { normalizeEmail } from "../src/modules/members/accept";
 import { DISCONNECT_EVENT_MS } from "../src/modules/ops/health";
 import type { FakeRunnerRun } from "./fakes/fake-runner";
@@ -2319,7 +2327,7 @@ describe("startDevFake DM — dev 는 모두에게 열리고 새 DB 는 mia ↔ 
   }, 45_000);
 });
 
-describe("startDevFake 가짜 Claude 러너 — 고정 러너 토큰·coder·/__devfake/runner", () => {
+describe("startDevFake 가짜 러너 — 고정 러너 토큰·coder·/__devfake/runner", () => {
   let dir: string;
   let dev: DevFake;
   let owner: { sessionToken: string; cookie: string };
@@ -2355,11 +2363,8 @@ describe("startDevFake 가짜 Claude 러너 — 고정 러너 토큰·coder·/__
 
   /** coder 가 멤버인 채널을 만들고 wire 로 구독한다 — 받은 이벤트를 모은다 */
   async function coderChannel(name: string) {
-    const { agents: list } = await rest<{ agents: Array<{ id: string; providerAgentId: string }> }>(
-      "GET",
-      "/agents",
-    );
-    const coderId = list.find((a) => a.providerAgentId === "coder")?.id ?? "";
+    const { agents: list } = await rest<{ agents: Array<{ id: string; handle: string }> }>("GET", "/agents");
+    const coderId = list.find((a) => a.handle === "coder")?.id ?? "";
     const { channel } = await rest<{ channel: { id: string } }>("POST", "/channels", { name });
     await rest("POST", `/channels/${channel.id}/members`, { memberType: "agent", memberId: coderId });
     const socket: WireSocket = io(dev.url, {
@@ -2383,7 +2388,7 @@ describe("startDevFake 가짜 Claude 러너 — 고정 러너 토큰·coder·/__
     return { channelId: channel.id, coderId, socket, created, send };
   }
 
-  it("시작하면 고정 러너 토큰(라벨 dev-fake) 행으로 가짜 러너가 붙어 있고, coder 는 러너 에이전트로 등록돼 discover 에 hint 와 함께 보인다", async () => {
+  it("시작하면 고정 러너 토큰(라벨 dev-fake) 행으로 가짜 러너가 붙어 있고, coder 는 그 러너의 프로젝트 src/dodok 의 러너 에이전트다", async () => {
     const row = dev.app.db
       .select()
       .from(runnerTokens)
@@ -2395,16 +2400,28 @@ describe("startDevFake 가짜 Claude 러너 — 고정 러너 토큰·coder·/__
       "/setup/runner-tokens",
     );
     expect(tokens).toEqual([expect.objectContaining({ id: row?.id, connected: true })]);
-    const { agents: list } = await rest<{ agents: Array<{ provider: string; providerAgentId: string }> }>(
-      "GET",
-      "/agents",
-    );
-    // OpenClaw 에이전트 넷(사무실·집)과 함께 — 러너 에이전트는 coder 하나
-    expect(list.filter((a) => a.provider === "runner")).toEqual([
-      expect.objectContaining({ provider: "runner", providerAgentId: "coder", handle: "coder" }),
+    const { agents: list } = await rest<{
+      agents: Array<{ id: string; provider: string; providerAgentId: string; runner?: { tokenId: string } }>;
+    }>("GET", "/agents");
+    // OpenClaw 에이전트 넷(사무실·집)과 함께 — 러너 에이전트는 coder 하나, id 는 서버가 지었다
+    const runnerAgents = list.filter((a) => a.provider === "runner");
+    expect(runnerAgents).toEqual([
+      expect.objectContaining({
+        provider: "runner",
+        handle: "coder",
+        program: "claude",
+        runner: expect.objectContaining({ tokenId: row?.id }),
+      }),
     ]);
-    const { agents: found } = await rest<{ agents: unknown[] }>("GET", "/agents/discover?provider=runner");
-    expect(found).toEqual([{ providerAgentId: "coder", name: "Coder", hint: "dev-fake · dodok · sonnet" }]);
+    expect(runnerAgents[0]?.providerAgentId).toMatch(/^r-[0-9a-f]{10}$/);
+    const project = dev.app.db
+      .select()
+      .from(runnerProjects)
+      .where(eq(runnerProjects.runnerTokenId, row?.id ?? ""))
+      .all();
+    expect(project).toEqual([
+      expect.objectContaining({ rootId: "src", relPath: "dodok", label: "dodok", archivedAt: null }),
+    ]);
   });
 
   it("@coder 「승인 게시」 → 승인 카드를 허용하면 post 카드 메시지와 최종 답이 오고, 런 usage 는 api 비용이다", async () => {

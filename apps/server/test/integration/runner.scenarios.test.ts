@@ -23,17 +23,12 @@ import { io } from "socket.io-client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { opsEvents, runs } from "../../src/db/schema.sqlite";
 import { createScenario } from "../fakes/scenario";
-import {
-  FAKE_RUNNER_AGENT,
-  type FakeRunner,
-  type FakeRunnerScript,
-  startFakeRunner,
-} from "../fakes/fake-runner";
+import { type FakeRunner, type FakeRunnerScript, startFakeRunner } from "../fakes/fake-runner";
 import { bootLiveApp, type LiveApp, type LiveAppOptions } from "../helpers/live-app";
 import { makePng } from "../helpers/png";
 import { openChannelWire, rest, sendMessage, uploadImage, type WireLog } from "../helpers/scenario-steps";
 import type { WireClient } from "../helpers/wire";
-import { channelConversation } from "../helpers/seed";
+import { channelConversation, createRunnerAgentForTest } from "../helpers/seed";
 
 vi.setConfig({ testTimeout: 30_000, hookTimeout: 20_000 });
 
@@ -43,7 +38,7 @@ const RETRY_COMPONENTS = {
   ],
 };
 
-describe("Claude 러너 통합 시나리오", () => {
+describe("러너 통합 시나리오", () => {
   let live: LiveApp;
   const sockets: WireClient[] = [];
   const runners: FakeRunner[] = [];
@@ -88,31 +83,18 @@ describe("Claude 러너 통합 시나리오", () => {
     return channel;
   }
 
-  /** 러너 토큰 발급 → 가짜 러너 접속 → discover?provider=runner 에서 coder 를 골라 등록 → 채널 */
+  /** 러너 토큰 발급 → 가짜 러너 접속 → 그 러너의 프로젝트 src/dodok 와 러너 에이전트 coder → 채널 */
   async function start(script?: FakeRunnerScript, opts: LiveAppOptions = {}) {
     live = await bootLiveApp(opts);
     const issued = await issueToken("macbook");
     const runner = await connectRunner(issued.token, script);
-    const discovered = ok(
-      "discover",
-      await rest<{ agents: Array<{ providerAgentId: string; name?: string; hint?: string }> }>(
-        live,
-        "GET",
-        "/agents/discover?provider=runner",
-      ),
-    );
-    expect(discovered.agents).toEqual([
-      { providerAgentId: "coder", name: "Coder", hint: "macbook · dodok · sonnet" },
-    ]);
-    const { agent: coder } = ok(
-      "POST /agents coder",
-      await rest<{ agent: Agent }>(live, "POST", "/agents", {
-        provider: "runner",
-        providerAgentId: "coder",
-        handle: "coder",
-        name: "Coder",
-      }),
-    );
+    const { agent: coder } = createRunnerAgentForTest(live.app.db, {
+      workspaceId: live.app.workspaceId,
+      handle: "coder",
+      name: "Coder",
+      runnerTokenId: issued.record.id,
+      relPath: "dodok",
+    });
     const channel = await channelWith([coder]);
     const log = await openChannelWire(live, channel.id, sockets);
     return { issued, runner, coder, channel, log };
@@ -184,8 +166,8 @@ describe("Claude 러너 통합 시나리오", () => {
     expect(startFrame?.deliver).toMatchObject({
       runId: run.id,
       channelId: channel.id,
-      agentId: "coder",
-      sessionKey: dodokSessionKey("coder", channelConversation(live.app.db, channel.id)),
+      agentId: coder.providerAgentId,
+      sessionKey: dodokSessionKey(coder.providerAgentId, channelConversation(live.app.db, channel.id)),
       message: { id: human.id },
     });
     expect(startFrame?.providerSessionId).toMatch(/^[0-9a-f-]{36}$/);
@@ -207,7 +189,11 @@ describe("Claude 러너 통합 시나리오", () => {
     const run = await runOf(log, coder.id);
     expect((await log.terminal(run.id)).status).toBe("done");
     expect(runner.runStarts[0]?.deliver).toMatchObject({
-      sessionKey: dodokSessionKey("coder", channelConversation(live.app.db, channel.id), root.id),
+      sessionKey: dodokSessionKey(
+        coder.providerAgentId,
+        channelConversation(live.app.db, channel.id),
+        root.id,
+      ),
       threadId: root.id,
     });
     const answer = await agentMessage(log, run.id);
@@ -301,7 +287,7 @@ describe("Claude 러너 통합 시나리오", () => {
     expect(notice.components).toMatchObject(RETRY_COMPONENTS);
 
     const again = await runner.reconnect({ token: issued.token });
-    expect(again).toMatchObject({ ok: true, conflicts: [] });
+    expect(again).toEqual({ ok: true, serverVersion: expect.any(String) });
     const retried = await pressRetry(log.socket, notice);
     if (!retried.ok) throw new Error(`다시 실행 실패: ${retried.error.code}`);
     const second = await runOf(log, coder.id, 1);
@@ -348,16 +334,14 @@ describe("Claude 러너 통합 시나리오", () => {
     await expect(runner.reconnect()).rejects.toThrow(/UNAUTHORIZED/);
   });
 
-  it("시나리오 6 — 두 러너가 coder 를 알림 → 뒤 러너의 coder 만 충돌로 표시, 런은 먼저 붙은 러너로", async () => {
+  it("시나리오 6 — 러너가 둘 붙어 있어도 coder 의 런은 coder 가 묶인 러너로만 간다", async () => {
     const { runner, coder, channel, log } = await start();
     const second = await issueToken("desktop");
     const other = await connectRunner(second.token);
-    expect(other.helloResult).toMatchObject({ ok: true, conflicts: ["coder"] });
-
-    const status = await setupStatus();
-    expect(status.runners.list.map((r) => [r.label, r.agents.map((a) => [a.id, a.conflict])])).toEqual([
-      ["macbook", [["coder", false]]],
-      ["desktop", [["coder", true]]],
+    expect(other.helloResult).toEqual({ ok: true, serverVersion: expect.any(String) });
+    expect((await setupStatus()).runners.list.map((r) => [r.label, r.agents])).toEqual([
+      ["macbook", []],
+      ["desktop", []],
     ]);
 
     await sendMessage(log.socket, channel.id, "@coder 누구야");
@@ -367,7 +351,7 @@ describe("Claude 러너 통합 시나리오", () => {
     expect(other.runStarts).toHaveLength(0);
   });
 
-  it("시나리오 6′ — coder 는 등록 때 붙어 있던 러너 토큰에 묶인다: 그 러너가 끊기면 다른 토큰 러너가 알려도 맡지 않고, 연결 페이지에서 다시 묶으면 그 러너가 맡는다", async () => {
+  it("시나리오 6′ — coder 의 러너가 끊기면 다른 토큰 러너가 붙어 있어도 맡지 않고, 연결 페이지에서 다시 묶으면 그 러너가 맡는다", async () => {
     const { runner, coder, channel, log } = await start();
     const listed = async () =>
       ok("GET /agents", await rest<{ agents: Agent[] }>(live, "GET", "/agents")).agents.find(
@@ -378,7 +362,6 @@ describe("Claude 러너 통합 시나리오", () => {
     runner.close();
     const second = await issueToken("desktop");
     const other = await connectRunner(second.token);
-    expect(other.helloResult).toMatchObject({ ok: true, conflicts: ["coder"] });
     await sendMessage(log.socket, channel.id, "@coder 거기 있어?");
     const lost = await runOf(log, coder.id);
     expect(await log.terminal(lost.id)).toMatchObject({
@@ -389,14 +372,11 @@ describe("Claude 러너 통합 시나리오", () => {
 
     const res = await live.app.fastify.inject({
       method: "PUT",
-      url: `/api/v1/setup/runner-tokens/${second.record.id}/agents/coder`,
+      url: `/api/v1/setup/runner-tokens/${second.record.id}/agents/${coder.providerAgentId}`,
       headers: live.auth.headers,
     });
     expect(res.statusCode).toBe(200);
     expect((await listed())?.runner).toMatchObject({ tokenId: second.record.id, label: "desktop" });
-    expect((await setupStatus()).runners.list.map((r) => [r.label, r.agents[0]?.conflict])).toEqual([
-      ["desktop", false],
-    ]);
     await sendMessage(log.socket, channel.id, "@coder 이제는?");
     const moved = await runOf(log, coder.id, 1);
     expect((await log.terminal(moved.id)).status).toBe("done");
@@ -419,7 +399,7 @@ describe("Claude 러너 통합 시나리오", () => {
     const second = await issueToken("desktop");
     const res = await live.app.fastify.inject({
       method: "PUT",
-      url: `/api/v1/setup/runner-tokens/${second.record.id}/agents/coder`,
+      url: `/api/v1/setup/runner-tokens/${second.record.id}/agents/${coder.providerAgentId}`,
       headers: live.auth.headers,
     });
     expect(res.statusCode).toBe(200);
@@ -432,7 +412,9 @@ describe("Claude 러너 통합 시나리오", () => {
   });
 
   const ruleNotices = (log: WireLog) =>
-    log.created.filter((m) => m.systemMeta?.kind === "info" && m.bodyMd.startsWith("채널 규칙이 바뀌어"));
+    log.created.filter(
+      (m) => m.systemMeta?.kind === "info" && m.bodyMd.startsWith("채널 규칙이나 에이전트 지시가 바뀌어"),
+    );
 
   const patchPrompt = async (channelId: string, prompt: string) =>
     ok("PATCH prompt", await rest(live, "PATCH", `/channels/${channelId}`, { prompt }));
@@ -456,7 +438,7 @@ describe("Claude 러너 통합 시나리오", () => {
     expect(b?.deliver.sessionKey).toBe(a?.deliver.sessionKey);
     const notices = ruleNotices(log);
     expect(notices.map((m) => m.bodyMd)).toEqual([
-      "채널 규칙이 바뀌어 @coder 이 앞 작업 맥락(도구 결과·긴 작업)을 이어 가지 않습니다 — 채널의 최근 글은 그대로 봅니다",
+      "채널 규칙이나 에이전트 지시가 바뀌어 @coder 이 앞 작업 맥락(도구 결과·긴 작업)을 이어 가지 않습니다 — 채널의 최근 글은 그대로 봅니다",
     ]);
     expect(notices[0]?.threadRootId).toBeUndefined();
   });
@@ -478,7 +460,7 @@ describe("Claude 러너 통합 시나리오", () => {
 
     const [chan1, thread1, thread2, chan2] = runner.runStarts;
     expect(thread2?.deliver.sessionKey).toBe(
-      dodokSessionKey("coder", channelConversation(live.app.db, channel.id), root.id),
+      dodokSessionKey(coder.providerAgentId, channelConversation(live.app.db, channel.id), root.id),
     );
     expect(thread2?.providerSessionId).not.toBe(thread1?.providerSessionId);
     expect(chan2?.providerSessionId).not.toBe(chan1?.providerSessionId);
@@ -661,7 +643,6 @@ describe("Claude 러너 통합 시나리오", () => {
         const runner = await startFakeRunner({
           url: live.app.url,
           token: (await issueToken(label)).token,
-          agents: [{ ...FAKE_RUNNER_AGENT, id: label }],
           autoReconnect,
         });
         runners.push(runner);
@@ -696,7 +677,7 @@ describe("Claude 러너 통합 시나리오", () => {
         },
         { timeout: 10_000 },
       );
-      expect(macbook.helloResult).toMatchObject({ ok: true, conflicts: [] });
+      expect(macbook.helloResult).toEqual({ ok: true, serverVersion: expect.any(String) });
       expect(macbook.connected).toBe(true);
       const status = await setupStatus();
       expect(status.runners.list.map((r) => r.label).sort()).toEqual(["desktop", "macbook"]);

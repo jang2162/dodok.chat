@@ -232,7 +232,7 @@ describe("상태 카드 — 실시간(브라우저 검증 D1)", () => {
     expect(server.count("GET", "/api/v1/ops/status")).toBe(1);
   });
 
-  it("Claude 러너 줄 — 붙은 수 / 토큰 수, wire adapter.status(claude)가 바로 고친다", async () => {
+  it("Claude 러너 줄 — 붙은 수 / 토큰 수, wire adapter.status(runner)가 바로 고친다", async () => {
     const server = stubOpsServer({ adapter: withRunners(1, 2) });
     const { fake, qc } = renderLive();
     await waitFor(async () =>
@@ -408,7 +408,7 @@ describe("런 표", () => {
     expect(within(runs).queryByText(/측정 불가/)).not.toBeInTheDocument();
   });
 
-  it("믿는 제공자(claude)의 에이전트 행은 금액을 — 구독 환산이 들었으면 「환산 포함」, 그 밖의 행은 「측정 불가」", async () => {
+  it("믿는 프로그램(claude)의 에이전트 행은 금액을 — 구독 환산이 들었으면 「환산 포함」, 그 밖의 행은 「측정 불가」", async () => {
     stubOpsServer({
       runs: (days) =>
         runsOf({

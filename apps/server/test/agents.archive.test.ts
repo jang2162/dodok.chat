@@ -18,7 +18,7 @@ import { bootTestApp, login, userWithRole } from "./helpers/app";
 import { FAKE_GATEWAY_ID, insertGateway } from "./helpers/gateways";
 import { connectWire, waitFor } from "./helpers/wire";
 import { type FakeRunner, startFakeRunner } from "./fakes/fake-runner";
-import { channelConversation } from "./helpers/seed";
+import { channelConversation, createRunnerAgentForTest } from "./helpers/seed";
 
 const apps: App[] = [];
 const runners: FakeRunner[] = [];
@@ -198,17 +198,17 @@ describe("에이전트를 바꾸는 다른 동작의 agents.changed", () => {
     const seen: unknown[] = [];
     app.bus.on("agents.changed", (p) => seen.push(p));
 
-    createAgent(app.db, {
+    const { agent: coder } = createRunnerAgentForTest(app.db, {
       workspaceId: app.workspaceId,
-      provider: "runner",
-      providerAgentId: "coder",
       handle: "coder",
-      name: "coder",
     });
     const issued = await inject("POST", "/api/v1/setup/runner-tokens", { label: "laptop" });
     expect(issued.statusCode).toBe(201);
     const tokenId = issued.json().record.id as string;
-    expect((await inject("PUT", `/api/v1/setup/runner-tokens/${tokenId}/agents/coder`)).statusCode).toBe(200);
+    expect(
+      (await inject("PUT", `/api/v1/setup/runner-tokens/${tokenId}/agents/${coder.providerAgentId}`))
+        .statusCode,
+    ).toBe(200);
     expect(seen).toEqual([{}]);
 
     const home = insertGateway(app.db, app.workspaceId, { id: uuid(), name: "집" });
@@ -637,15 +637,15 @@ describe("보관과 채널 멤버(계획 판정 PS3)", () => {
 });
 
 describe("보관과 러너", () => {
-  it("러너 에이전트를 보관하면 러너가 hello 로 알려도 묶지 않고 런을 보내지 않는다 — 되살리면 다시 받는다", async () => {
+  it("러너 에이전트를 보관하면 그 러너가 붙어 있어도 런을 보내지 않는다 — 되살리면 다시 받는다", async () => {
     const { app, archive, restore, headers, inject } = await setup({ runnerAdapter: true });
     await app.fastify.listen({ host: "127.0.0.1", port: 0 });
-    const coder = createAgent(app.db, {
+    const issued = await inject("POST", "/api/v1/setup/runner-tokens", { label: "laptop" }, headers);
+    expect(issued.statusCode).toBe(201);
+    const { agent: coder } = createRunnerAgentForTest(app.db, {
       workspaceId: app.workspaceId,
-      provider: "runner",
-      providerAgentId: "coder",
       handle: "coder",
-      name: "coder",
+      runnerTokenId: issued.json().record.id as string,
     });
     const channel = createChannel(app.db, {
       workspaceId: app.workspaceId,
@@ -655,19 +655,10 @@ describe("보관과 러너", () => {
     addMember(app.db, channel.id, { memberType: "agent", memberId: coder.id }, app.logger);
     await archive(coder.id);
 
-    const issued = await inject("POST", "/api/v1/setup/runner-tokens", { label: "laptop" }, headers);
-    expect(issued.statusCode).toBe(201);
     const runner = await startFakeRunner({ url: app.url, token: issued.json().token as string });
     runners.push(runner);
     await vi.waitFor(() => expect(runner.helloResult).toBeDefined());
 
-    const bound = () =>
-      (
-        app.db.$client.prepare("SELECT runner_token_id AS t FROM agents WHERE id = ?").get(coder.id) as {
-          t: string | null;
-        }
-      ).t;
-    expect(bound()).toBeNull();
     const message = createUserMessage(app.db, app.bus, {
       conversationId: channelConversation(app.db, channel.id),
       authorId: app.ownerUserId,

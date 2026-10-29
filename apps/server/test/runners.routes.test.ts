@@ -30,7 +30,7 @@ import { bootTestApp, login, userWithRole } from "./helpers/app";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
 import { type FakeRunner, startFakeRunner } from "./fakes/fake-runner";
 import { makePng } from "./helpers/png";
-import { channelConversation } from "./helpers/seed";
+import { channelConversation, createRunnerAgentForTest } from "./helpers/seed";
 
 /** 그 앱의 가짜 Gateway(bootTestApp 이 넣는다)에 브리지 토큰 하나 — 원문 */
 const bridgeTokenOf = (app: App) => issueBridgeToken(app.db, app.workspaceId, FAKE_GATEWAY_ID, "gw").token;
@@ -195,13 +195,7 @@ describe("연결 페이지 러너 API /api/v1/setup/runner-*", () => {
       ).usageTrustedPrograms;
     // OpenClaw 만 쓰는 배포와 같다 — 웹은 「측정 불가」
     expect(await usage()).toEqual([]);
-    const created = await app.fastify.inject({
-      method: "POST",
-      url: "/api/v1/agents",
-      headers: owner,
-      payload: { provider: "runner", providerAgentId: "usage-coder", handle: "usage-coder", name: "U" },
-    });
-    expect(created.statusCode).toBe(201);
+    createRunnerAgentForTest(app.db, { workspaceId: app.workspaceId, handle: "usage-coder" });
     expect(await usage()).toEqual(["claude"]);
   });
 
@@ -214,14 +208,15 @@ describe("연결 페이지 러너 API /api/v1/setup/runner-*", () => {
   it("붙은 러너는 목록 connected·SetupStatus.runners.list 에 보이고, 폐기하면 그 소켓이 곧바로 끊기고 빠진다", async () => {
     const issued = await issue("desk");
     const runner = await connect(issued.token);
-    expect(runner.helloResult).toMatchObject({ ok: true, conflicts: [] });
+    expect(runner.helloResult).toEqual({ ok: true, serverVersion: expect.any(String) });
     const listed = (await call(owner, "GET", "/runner-tokens")).json() as { tokens: RunnerTokenRecord[] };
     expect(listed.tokens.find((t) => t.id === issued.record.id)?.connected).toBe(true);
     expect((await status()).runners.list).toEqual([
       expect.objectContaining({
         tokenId: issued.record.id,
         label: "desk",
-        agents: [expect.objectContaining({ id: "coder", conflict: false })],
+        claudeCodeVersion: "2.1.283",
+        agents: [],
       }),
     ]);
 
@@ -241,54 +236,26 @@ describe("연결 페이지 러너 API /api/v1/setup/runner-*", () => {
   });
 
   describe("에이전트↔러너 토큰 묶임", () => {
-    const agentsApi = (method: "GET" | "POST", payload?: object) =>
-      app.fastify.inject({
-        method,
-        url: "/api/v1/agents",
-        headers: owner,
-        ...(payload === undefined ? {} : { payload }),
-      });
-    const register = async (providerAgentId: string, provider: "runner" | "openclaw" = "runner") => {
-      const res = await agentsApi("POST", {
-        provider,
-        providerAgentId,
-        handle: providerAgentId,
-        name: providerAgentId,
-        ...(provider === "openclaw" ? { gatewayId: FAKE_GATEWAY_ID } : {}),
-      });
-      expect(res.statusCode).toBe(201);
-      return (res.json() as { agent: Agent }).agent;
-    };
-    const listed = async (providerAgentId: string) =>
-      ((await agentsApi("GET")).json() as { agents: Agent[] }).agents.find(
-        (a) => a.providerAgentId === providerAgentId,
-      );
-    const connectWith = async (token: string, id: string) => {
-      const runner = await startFakeRunner({
-        url: app.url,
-        token,
-        agents: [{ id, name: id, model: "sonnet", workdirLabel: "repo" }],
-      });
-      runners.push(runner);
-      return runner;
-    };
+    const listed = async (id: string) =>
+      (
+        (await app.fastify.inject({ method: "GET", url: "/api/v1/agents", headers: owner })).json() as {
+          agents: Agent[];
+        }
+      ).agents.find((a) => a.id === id);
 
-    it("등록 때 그 id 를 알린 러너 토큰에 묶이고, 다른 토큰 러너는 충돌 — PUT 으로 그 러너에 다시 묶는다", async () => {
+    it("러너 에이전트는 만들 때 프로젝트의 러너에 묶이고, PUT 으로 다른 러너에 다시 묶는다", async () => {
       const a = await issue("bind-a");
       const b = await issue("bind-b");
-      await connectWith(a.token, "binder");
-      const agent = await register("binder");
+      const agent = createRunnerAgentForTest(app.db, {
+        workspaceId: app.workspaceId,
+        handle: "binder",
+        runnerTokenId: a.record.id,
+      }).agent;
       expect(agent.runner).toEqual({ tokenId: a.record.id, label: "bind-a", revoked: false });
-      const other = await connectWith(b.token, "binder");
-      expect(other.helloResult).toMatchObject({ ok: true, conflicts: ["binder"] });
-      const card = (label: string) => status().then((s) => s.runners.list.find((r) => r.label === label));
-      expect((await card("bind-b"))?.agents).toEqual([
-        expect.objectContaining({ id: "binder", conflict: true, boundTokenId: a.record.id }),
-      ]);
 
       const setupEvents: unknown[] = [];
       const off = app.bus.on("setup.status", (p) => setupEvents.push(p));
-      const res = await call(owner, "PUT", `/runner-tokens/${b.record.id}/agents/binder`);
+      const res = await call(owner, "PUT", `/runner-tokens/${b.record.id}/agents/${agent.providerAgentId}`);
       off();
       expect(res.statusCode).toBe(200);
       expect((res.json() as { agent: Agent }).agent.runner).toEqual({
@@ -297,44 +264,47 @@ describe("연결 페이지 러너 API /api/v1/setup/runner-*", () => {
         revoked: false,
       });
       expect(setupEvents.length).toBeGreaterThan(0);
-      expect((await card("bind-b"))?.agents[0]).toMatchObject({ conflict: false, boundTokenId: b.record.id });
-      expect((await card("bind-a"))?.agents[0]).toMatchObject({ conflict: true, boundTokenId: b.record.id });
-      expect((await listed("binder"))?.runner).toMatchObject({ tokenId: b.record.id, label: "bind-b" });
+      expect((await listed(agent.id))?.runner).toMatchObject({ tokenId: b.record.id, label: "bind-b" });
     });
 
     it("폐기해도 묶임은 남는다 — 목록에 revoked, 폐기된 토큰으로 다시 묶기는 409, 없는 에이전트·openclaw 에이전트·없는 토큰은 404", async () => {
       const a = await issue("gone");
-      await connectWith(a.token, "keeper");
-      await register("keeper");
+      const keeper = createRunnerAgentForTest(app.db, {
+        workspaceId: app.workspaceId,
+        handle: "keeper",
+        runnerTokenId: a.record.id,
+      }).agent;
       expect((await call(owner, "DELETE", `/runner-tokens/${a.record.id}`)).statusCode).toBe(204);
-      expect((await listed("keeper"))?.runner).toEqual({
+      expect((await listed(keeper.id))?.runner).toEqual({
         tokenId: a.record.id,
         label: "gone",
         revoked: true,
       });
 
-      const again = await call(owner, "PUT", `/runner-tokens/${a.record.id}/agents/keeper`);
+      const again = await call(
+        owner,
+        "PUT",
+        `/runner-tokens/${a.record.id}/agents/${keeper.providerAgentId}`,
+      );
       expect(again.statusCode).toBe(409);
       expect(again.json().code).toBe("CONFLICT");
       const live = await issue("live");
-      await register("oc-agent", "openclaw");
+      const oc = await app.fastify.inject({
+        method: "POST",
+        url: "/api/v1/agents",
+        headers: owner,
+        payload: { providerAgentId: "oc-agent", handle: "oc-agent", name: "oc", gatewayId: FAKE_GATEWAY_ID },
+      });
+      expect(oc.statusCode).toBe(201);
       for (const url of [
         `/runner-tokens/${live.record.id}/agents/nobody`,
         `/runner-tokens/${live.record.id}/agents/oc-agent`,
-        `/runner-tokens/${uuid()}/agents/keeper`,
+        `/runner-tokens/${uuid()}/agents/${keeper.providerAgentId}`,
       ]) {
         const res = await call(owner, "PUT", url);
         expect(res.statusCode, url).toBe(404);
       }
-      expect((await listed("oc-agent"))?.runner).toBeUndefined();
-    });
-
-    it("알리는 러너 없이 등록한 러너 에이전트는 묶임 없음 — 처음 알린 러너에 묶인다", async () => {
-      const agent = await register("latecomer");
-      expect(agent.runner).toBeUndefined();
-      const a = await issue("late");
-      await connectWith(a.token, "latecomer");
-      await vi.waitFor(async () => expect((await listed("latecomer"))?.runner?.tokenId).toBe(a.record.id));
+      expect((await listed((oc.json() as { agent: Agent }).agent.id))?.runner).toBeUndefined();
     });
   });
 

@@ -61,12 +61,28 @@ export function ensureSession(
             input.threadRootId,
           ),
           promptRevisionAtStart: promptRevision,
+          instructionsRevisionAtStart: currentInstructionsRevision(tx, input.agentId),
           reactionsSeenAt: new Date(),
         })
         .returning()
         .get();
     return { session, needsPromptContext: session.promptRevisionAtStart !== promptRevision };
   });
+}
+
+/** 대화·에이전트·스레드의 세션 행 — 없으면 undefined(ensureSession 과 달리 만들지 않는다) */
+export function findSessionRow(db: DbOrTx, input: EnsureSessionInput): AgentSessionRow | undefined {
+  return db
+    .select()
+    .from(agentSessions)
+    .where(
+      and(
+        eq(agentSessions.conversationId, input.conversationId),
+        eq(agentSessions.agentId, input.agentId),
+        sameThread(input.threadRootId),
+      ),
+    )
+    .get();
 }
 
 /** id 로 세션 행 하나 — 디스패치가 갱신 판정 뒤의 리액션 커서를 다시 읽는다 */
@@ -94,9 +110,10 @@ export function ensureProviderSessionId(db: Db, sessionId: string): string {
 }
 
 /**
- * 서버가 세션 id 를 정하는 어댑터(러너)의 디스패치 직전 — 세션 시작 뒤 채널 리비전이 올랐으면 세션을 새로 연다:
- * 세션 id 를 비우고(다음 ensureProviderSessionId 가 새 UUID) 리비전·시작 표지를 맞춘다. 이어 간 세션은 자기 앞 답의 옛 형식을
- * 따른다(ADR 0007 「규칙이 바뀐 뒤 이어 간 세션」). 리비전은 채널 하나라 promptOverride 가 바뀌어도 그 채널의 모든 행이 해당한다.
+ * 매 런 규칙을 싣는 어댑터(러너)의 디스패치 직전 — 세션 시작 뒤 채널 리비전이나 에이전트 지시 리비전(러너 일반화 계획 판정 PR2)이
+ * 올랐으면 세션을 새로 연다: 세션 id 를 비우고(다음 ensureProviderSessionId 가 새 UUID, 세션 id 를 스스로 짓는 프로그램은 id 없이
+ * 새로 연다) 리비전·시작 표지를 맞춘다. 이어 간 세션은 자기 앞 답의 옛 형식을 따른다(ADR 0007 「규칙이 바뀐 뒤 이어 간 세션」).
+ * 채널 리비전은 채널 하나라 promptOverride 가 바뀌어도 그 채널의 모든 행이 해당한다.
  * 리액션 커서도 지금으로 올린다 — 새 세션은 옛 메시지를 모른다.
  * 버린 대화가 있었을 때만 true — 세션 id 가 아직 없으면 리비전만 맞춘다. 한 트랜잭션이라 같은 리비전 변화에 두 번 true 가 없다
  */
@@ -105,7 +122,9 @@ export function renewSessionOnPromptChange(db: Db, sessionId: string): boolean {
     const row = tx
       .select({
         channelId: agentSessions.channelId,
+        agentId: agentSessions.agentId,
         promptRevisionAtStart: agentSessions.promptRevisionAtStart,
+        instructionsRevisionAtStart: agentSessions.instructionsRevisionAtStart,
         providerSessionId: agentSessions.providerSessionId,
       })
       .from(agentSessions)
@@ -113,12 +132,18 @@ export function renewSessionOnPromptChange(db: Db, sessionId: string): boolean {
       .get();
     if (!row) throw apiError("NOT_FOUND", "agent session not found");
     const promptRevision = currentPromptRevision(tx, row.channelId);
-    if (row.promptRevisionAtStart === promptRevision) return false;
+    const instructionsRevision = currentInstructionsRevision(tx, row.agentId);
+    if (
+      row.promptRevisionAtStart === promptRevision &&
+      row.instructionsRevisionAtStart === instructionsRevision
+    )
+      return false;
     const now = new Date();
     tx.update(agentSessions)
       .set({
         providerSessionId: null,
         promptRevisionAtStart: promptRevision,
+        instructionsRevisionAtStart: instructionsRevision,
         sessionStartedAt: null,
         lifecycleRevision: null,
         lastSyncedAt: now,
@@ -154,6 +179,30 @@ function currentPromptRevision(db: DbOrTx, channelId: string): number {
     .get();
   if (!channel) throw apiError("NOT_FOUND", "channel not found");
   return channel.promptRevision;
+}
+
+function currentInstructionsRevision(db: DbOrTx, agentId: string): number {
+  const agent = db
+    .select({ instructionsRevision: agents.instructionsRevision })
+    .from(agents)
+    .where(eq(agents.id, agentId))
+    .get();
+  if (!agent) throw apiError("NOT_FOUND", "agent not found");
+  return agent.instructionsRevision;
+}
+
+/**
+ * 프로그램이 스스로 지은 세션 id(러너 run.session — 계획 판정 PR3)를 그 세션 행에 저장한다. 이미 값이 있으면 덮지 않는다 — 한
+ * 세션 행은 세션 하나이고, 비우는 것은 renewSessionOnPromptChange 뿐이다. 저장했으면 true
+ */
+export function storeProgramSessionId(db: Db, sessionId: string, providerSessionId: string): boolean {
+  return (
+    db
+      .update(agentSessions)
+      .set({ providerSessionId })
+      .where(and(eq(agentSessions.id, sessionId), isNull(agentSessions.providerSessionId)))
+      .run().changes > 0
+  );
 }
 
 function providerAgentIdOf(db: DbOrTx, agentId: string): string {

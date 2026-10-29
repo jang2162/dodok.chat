@@ -1014,7 +1014,7 @@ describe("캐시 패치", () => {
     expect(queryClient.getQueryData(qk.adapter)).toEqual(cached);
   });
 
-  it("adapter.status(claude): 등록 화면의 러너 목록(discover)을 낡게 한다 — OpenClaw 것은 아니다", () => {
+  it("adapter.status(runner): 등록 화면의 러너 목록(discover)을 낡게 한다 — OpenClaw 것은 아니다", () => {
     const { fake, queryClient } = setup();
     queryClient.setQueryData(qk.discoverOf("runner"), []);
     queryClient.setQueryData(qk.discoverOf("openclaw"), []);
