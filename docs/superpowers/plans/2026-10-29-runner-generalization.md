@@ -124,6 +124,7 @@
 - [ ] **Step 6: 실패하는 테스트 — 카드(Review Focus 2·3).** 가짜 러너가 `RUNNER_CEILING` 을 내면 채널에 Global Constraints 문구 카드 + 「다시 실행」, 루트를 되돌리고 「다시 실행」하면 돈다.
 - [ ] **Step 7: 구현** — `orchestrator.ts` `NOTIFY_CODES`·`runErrorBody`(「다시 실행」을 막는 `NO_RETRY_CODES` 에는 넣지 않는다).
 - [ ] **Step 8: 호스트 경로 검사.** 통합 테스트 하나가 가짜 러너의 루트 경로를 고유 문자열(`/tmp/dodok-secret-root-<uuid>`)로 두고 프로젝트·에이전트·런 하나를 돈 뒤 DB 파일 바이트와 서버 로그 출력에 그 문자열이 없음을 본다(완료 기준 4).
+- [ ] **Step 8b: 남은 옛 이름(태스크 1 리뷰 L1).** 제공자 뜻의 `claude` 가 남은 주석·테스트 이름 — `apps/web/src/api/queries.ts`(러너 줄 고르기 주석)·`apps/server/scripts/dev-fake.ts` 머리 주석·`packages/openclaw-adapter/src/fake-adapter.ts`(「claude 흉내」)·`packages/shared/src/setup/index.ts`(「claude 변형」)·`apps/web/src/realtime/handlers.test.ts`·`apps/web/src/features/ops/opsPage.test.tsx`·`apps/server/test/agents.provider.test.ts` 의 테스트 이름 — 를 `runner` 로.
 - [ ] **Step 9: 끝내기 검사**(서버 번들 포함) → 커밋 둘 `feat(runner-adapter): speak the v2 runner contract`, `feat(server): run runner agents from their project and instructions`.
 
 ### Task 4: REST·권한·제어 도구
@@ -158,6 +159,7 @@
 - [ ] **Step 1: 실패하는 테스트 — 탭.** 「러너」 탭이 admin 이상에게만(member 는 탭 없음, 주소로 오면 지금 권한 없는 탭 꼴). 러너 카드: 이름·연결 상태·판본·프로그램(설치·판본·로그인·권한 상한, 못 쓰는 것은 사유)·루트 라벨, 끊김이면 「끊김」 하나. 프로젝트 줄: 라벨·`루트 라벨/relPath`·git·에이전트 수·「확인」 결과, `rootLabel` null 이면 「루트 없음」(Review Focus 2).
 - [ ] **Step 2: 실패하는 테스트 — 프로젝트 추가.** 루트 고르기 → 둘러보기(빵 부스러기·git 표시·`truncated` 안내) 또는 상대 경로 직접 입력 → 확인 결과를 보고 저장. 둘러보기 403 이면 「이 러너는 둘러보기를 끄고 있습니다 — 경로를 직접 입력하세요」, 확인 실패 사유는 네 문구(빌더가 짓고 보고에 적는다).
 - [ ] **Step 3: 실패하는 테스트 — 에이전트 추가(스펙 7장).** 제공자 「러너」: 러너 → 프로젝트 → 프로그램(못 쓰는 것은 흐리게 + 사유) → 이름·핸들·모델·권한 모드(상한 위는 선택지에 없음 — Review Focus 3)·허용 도구·지시·DM 허용. 끊긴 러너는 고를 수 없다. 에이전트 고치기도 같은 칸. 보관된 프로젝트 없는 러너 에이전트는 「프로젝트가 없어 되살릴 수 없습니다 — 새로 만드세요」.
+- [ ] **Step 3b: DM 머리의 러너 줄(태스크 1 리뷰 L2).** 지금 「러너 · <러너 라벨>」을 고정하는 테스트가 없다 — 프로그램 이름(`PROGRAM_NAME`)을 붙일지 정하고 그 꼴을 테스트로 고정한다.
 - [ ] **Step 4: 실패하는 테스트 — 연결 페이지.** 러너 블록에 토큰 발급·「다시 발급」(원문 한 번)·폐기·설치 안내(로컬 설정 예시에 `roots`·`programs`, 「드러나는 것」 넷째 문장 — 스펙 7장)만, 상태·에이전트 목록·「이 러너로 묶기」 없음.
 - [ ] **Step 5: 구현** → 통과. **Step 6: 끝내기 검사**(웹 빌드 포함) → 커밋 `feat(web): add runner projects and runner agents`.
 
@@ -173,5 +175,5 @@
 ### Task 7: 런 0회 실연·문서
 
 - [ ] **Step 1: 실연** — 실제 러너 설치본 + 번들 CLI + 가짜 Messages API(`docs/guides/live-smoke.md` 「Claude 러너 런 0회 하네스」). 스크래치 디렉터리를 루트로 두고 앱에서 프로젝트·에이전트를 만든다. 기준: ① 그 디렉터리에서 돈다(CLI `cwd`) ② 지시가 요청 본문의 `<agent-instructions>` 틀 안 ③ 루트 밖 프로젝트·상한 넘는 권한이 `RUNNER_CEILING` 카드 ④ 옛 `agents` 키 설정은 문구와 함께 끝남 ⑤ DB·서버 로그에 스크래치 루트의 절대 경로 없음 ⑥ 시크릿 0·모델 런 0(공통 조건).
-- [ ] **Step 2: 문서** — 스펙에 「구현과 맞춘 것」 장(PR1~PR9 와 구현 판단). 옛 제공자 이름이 남은 현재 가이드: `grep -nE 'provider claude|provider=claude|usageTrustedProviders|agents_claude_ws_agent' docs/guides/project-structure.md docs/guides/live-smoke.md` 의 줄을 `runner`·`program claude`·`usageTrustedPrograms` 로(과거 계획·스펙은 그대로 둔다 — 태스크 1 보고). `docs/guides/docker-deploy.md` 「Claude 러너 설치」 → 「러너 설치」(로컬 설정 `roots`·`programs`, 루트 id 를 바꾸면 그 프로젝트가 「루트 없음」, 다시 발급, 드러나는 것 넷), 「업데이트」에 이 판은 `dodok-runner` 재설치와 기존 러너 에이전트 보관. `docs/guides/agent-guide.md` 「Claude 러너 에이전트」(지시 틀). `docs/manual/user-guide.md`(러너 탭·프로젝트·에이전트 추가·역할 표). `docs/guides/project-structure.md`(드라이버 구조·`runner_projects`·0030·0031). `.ruler/AGENTS.md` 의 구조 줄·러너 명령 줄·dev:fake 괄호(가짜 러너 루트·프로젝트, 「이 러너로 묶기」 걷음)·「현재 단계」 → `pnpm exec ruler apply`. `docs/guides/plan.md` 완료 항목·이월. `docs/guides/live-smoke.md` 「러너 일반화 실연」 절.
+- [ ] **Step 2: 문서** — 스펙에 「구현과 맞춘 것」 장(PR1~PR9 와 구현 판단). `docs/manual/user-guide.md` 의 에이전트 가져오기 라디오 이름(「러너」)·DM 머리 제공자 줄(태스크 5 가 정한 꼴)과 `docs/guides/live-smoke.md` 의 응답 예시 `{"provider":"claude",…}`(태스크 1 리뷰 L3). 옛 제공자 이름이 남은 현재 가이드: `grep -nE 'provider claude|provider=claude|usageTrustedProviders|agents_claude_ws_agent' docs/guides/project-structure.md docs/guides/live-smoke.md` 의 줄을 `runner`·`program claude`·`usageTrustedPrograms` 로(과거 계획·스펙은 그대로 둔다 — 태스크 1 보고). `docs/guides/docker-deploy.md` 「Claude 러너 설치」 → 「러너 설치」(로컬 설정 `roots`·`programs`, 루트 id 를 바꾸면 그 프로젝트가 「루트 없음」, 다시 발급, 드러나는 것 넷), 「업데이트」에 이 판은 `dodok-runner` 재설치와 기존 러너 에이전트 보관. `docs/guides/agent-guide.md` 「Claude 러너 에이전트」(지시 틀). `docs/manual/user-guide.md`(러너 탭·프로젝트·에이전트 추가·역할 표). `docs/guides/project-structure.md`(드라이버 구조·`runner_projects`·0030·0031). `.ruler/AGENTS.md` 의 구조 줄·러너 명령 줄·dev:fake 괄호(가짜 러너 루트·프로젝트, 「이 러너로 묶기」 걷음)·「현재 단계」 → `pnpm exec ruler apply`. `docs/guides/plan.md` 완료 항목·이월. `docs/guides/live-smoke.md` 「러너 일반화 실연」 절.
 - [ ] **Step 3: 끝내기 검사** → 커밋 `docs: record runner generalization and its live smoke`.
