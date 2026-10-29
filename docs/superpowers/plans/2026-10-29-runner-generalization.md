@@ -81,7 +81,7 @@
 
 ### Task 2: 계약 V2 와 러너(천장·둘러보기·드라이버)
 
-**Files:** 위 표의 태스크 2 줄. 테스트: `packages/shared/test/runner-v2.test.ts`(새), `packages/claude-runner/test/{config,ceiling,fs-browse,connection}.test.ts`, 옮긴 드라이버 테스트(지금 러너 테스트 전부).
+**Files:** 위 표의 태스크 2 줄 + 서버 `http/errors.ts`(`RUNNER_CEILING` 상태)·`modules/setup/llms.ts` 의 러너 설정 예시와 그 대조 시험 `test/setup.llms.test.ts`. 테스트: `packages/shared/test/runner-v2.test.ts`(새), `packages/claude-runner/test/{config,ceiling,fs-browse,connection}.test.ts`, 옮긴 드라이버 테스트(지금 러너 테스트 전부).
 
 **Interfaces:**
 - Produces (shared `runner/index.ts`, PR5 이름):
@@ -107,7 +107,7 @@
 
 ### Task 3: 서버 런타임 — hello V2·에이전트 정의·지시·데이터
 
-**Files:** 위 표의 태스크 3 줄. 테스트: `packages/runner-adapter/test/*`, `apps/server/test/{runner-projects.service,sessions.renew,orchestrator.runner}.test.ts`, `db.test.ts`.
+**Files:** 위 표의 태스크 3 줄. 테스트: `packages/runner-adapter/test/*`, `apps/server/test/{runner-projects.service,sessions.renew,orchestrator.runner}.test.ts`, `db.test.ts`, `packages/claude-runner/test/adapter-integration.test.ts`(태스크 2 가 `describe.skip` 한 왕복 시험 7개를 어댑터 V2 기대값으로 되살리고 「V1 어댑터 PROTOCOL_MISMATCH」 시험을 걷는다).
 
 **Interfaces:**
 - Consumes: 태스크 2 의 V2 계약.
@@ -124,6 +124,7 @@
 - [ ] **Step 6: 실패하는 테스트 — 카드(Review Focus 2·3).** 가짜 러너가 `RUNNER_CEILING` 을 내면 채널에 Global Constraints 문구 카드 + 「다시 실행」, 루트를 되돌리고 「다시 실행」하면 돈다.
 - [ ] **Step 7: 구현** — `orchestrator.ts` `NOTIFY_CODES`·`runErrorBody`(「다시 실행」을 막는 `NO_RETRY_CODES` 에는 넣지 않는다).
 - [ ] **Step 8: 호스트 경로 검사.** 통합 테스트 하나가 가짜 러너의 루트 경로를 고유 문자열(`/tmp/dodok-secret-root-<uuid>`)로 두고 프로젝트·에이전트·런 하나를 돈 뒤 DB 파일 바이트와 서버 로그 출력에 그 문자열이 없음을 본다(완료 기준 4).
+- [ ] **Step 8a: 러너 hello 거절 문구(태스크 2 보고 7-5).** 서버가 hello 거절 ack 와 함께 끊으면 러너 `connection.ts fatal()` 이 두 번 불려 「서버가 끊었다」가 먼저 찍힌다 — 이미 끝나는 중이면 사유만 찍고 돌아가게 해 첫 문구가 판본 불일치가 되게 한다(테스트로 고정).
 - [ ] **Step 8b: 남은 옛 이름(태스크 1 리뷰 L1).** 제공자 뜻의 `claude` 가 남은 주석·테스트 이름 — `apps/web/src/api/queries.ts`(러너 줄 고르기 주석)·`apps/server/scripts/dev-fake.ts` 머리 주석·`packages/openclaw-adapter/src/fake-adapter.ts`(「claude 흉내」)·`packages/shared/src/setup/index.ts`(「claude 변형」)·`apps/web/src/realtime/handlers.test.ts`·`apps/web/src/features/ops/opsPage.test.tsx`·`apps/server/test/agents.provider.test.ts` 의 테스트 이름 — 를 `runner` 로.
 - [ ] **Step 9: 끝내기 검사**(서버 번들 포함) → 커밋 둘 `feat(runner-adapter): speak the v2 runner contract`, `feat(server): run runner agents from their project and instructions`.
 
@@ -150,7 +151,7 @@
 
 ### Task 5: 웹 — 「러너」 탭·프로젝트·에이전트 추가
 
-**Files:** 위 표의 태스크 5 줄(`features/runners/{queries,mutations,RunnersPage,RunnerCard,ProjectList,AddProjectDialog,DirectoryBrowser}.tsx` 등 이름은 빌더 판단), `features/agents/{DiscoverDialog,AgentRow,AgentsPage}.tsx`·새 `RunnerAgentForm.tsx`, `features/setup/RunnerSection.tsx`. 테스트: 각 폴더.
+**Files:** 위 표의 태스크 5 줄(`features/runners/{queries,mutations,RunnersPage,RunnerCard,ProjectList,AddProjectDialog,DirectoryBrowser}.tsx` 등 이름은 빌더 판단), `features/agents/{DiscoverDialog,AgentRow,AgentsPage}.tsx`·새 `RunnerAgentForm.tsx`, `features/setup/RunnerSection.tsx`·`features/setup/IssueRunnerTokenDialog.tsx`(설정 예시 — 러너 `RunnerConfig` 꼴과 맞춘다, 서버 `llms.ts` 예시는 태스크 2 가 바꿨다). 테스트: 각 폴더.
 
 **Interfaces:**
 - Consumes: 태스크 4 의 REST.
