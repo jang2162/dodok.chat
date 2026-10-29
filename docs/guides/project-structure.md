@@ -15,8 +15,8 @@ dodok.chat/
 │  ├─ shared/                 # @dodok/shared — 도메인 타입·Zod 스키마·components v1 규약·RunEvent(AG-UI 매핑)·wire 계약
 │  ├─ openclaw-plugin/        # @dodok/openclaw-plugin — OpenClaw 채널 플러그인 (원격 Gateway 안에서 실행)
 │  ├─ openclaw-adapter/       # @dodok/openclaw-adapter — 서버 측 OpenClaw 어댑터 (브리지 서버 + Gateway WS 클라이언트)
-│  ├─ runner-adapter/         # @dodok/runner-adapter — 서버 측 Claude 러너 어댑터 (/runner 네임스페이스·러너 연결·승인 기한·AgentAdapter 구현)
-│  └─ claude-runner/          # @dodok/claude-runner — 사람의 머신에서 도는 러너 CLI dodok-runner (Claude Agent SDK, 설정·재접속·런·post 도구·승인·첨부)
+│  ├─ runner-adapter/         # @dodok/runner-adapter — 서버 측 러너 어댑터 (/runner 네임스페이스·러너 hello 메모리·둘러보기·승인 기한·AgentAdapter 구현)
+│  └─ claude-runner/          # @dodok/claude-runner — 사람의 머신에서 도는 러너 CLI dodok-runner (천장 설정·둘러보기·재접속·프로그램 드라이버 — 지금 Claude Code·post 도구·승인·첨부)
 ├─ Dockerfile                # 배포 이미지(앱 컨테이너 하나) — 단계 source(pnpm fetch·소스) → build(서버 번들) → deploy(런타임 의존성 닫힘) ·
 │                            # plugin(pack:plugin — 플러그인 tgz, openclaw devDependency 는 이 단계에만) · runner(pack:runner) · web(웹 빌드, ARG VITE_BUILD_ID —
 │                            # 비면 웹 빌드 입력의 내용 해시, 끝에 precompress-web 으로 .br·.gz) → runtime(node:24.21.0-bookworm-slim, 비루트 —
@@ -267,7 +267,14 @@ src/
 │  │                      token_hash(sha256 hex, 유일 automations_token_hash)·token_prefix(`whk_` 뒤 6자)·last_run_at·last_status(ok·skipped·error)·created_by·created_at·updated_at,
 │  │                      인덱스 automations_due (enabled, kind, next_run_at). FK 는 workspace_id·channel_id·created_by(cascade 없음 — 채널은 보관만 된다). messages.author_id 는 FK 가 아니라
 │  │                      자동화를 지워도 그 글이 남는다(「⚙ 지운 자동화」).
-│  │                      유일: OpenClaw 에이전트 agents_openclaw_gateway_agent (gateway_id, provider_agent_id) · 러너 에이전트 agents_claude_ws_agent (workspace_id, provider, provider_agent_id) ·
+│  │                      러너 일반화(0030·0031 — 데이터 옮기기는 생성 SQL 에 손으로 덧붙였다): 0030 은 제공자를 연결 방식으로 — agents.provider `claude` → `runner`,
+│  │                      agents.program(러너면 `claude`·`codex`·`opencode` 중 하나 — 서비스가 지킨다, OpenClaw 면 null), 부분 유일 색인 agents_runner_ws_agent.
+│  │                      0031: runner_projects — id·workspace_id·runner_token_id(러너 = 토큰 행)·root_id·rel_path(루트 안 상대 경로 — 호스트 절대 경로는 저장하지 않는다)·label·created_by·
+│  │                      created_at·archived_at, 유일 runner_projects_runner_root_path (runner_token_id, root_id, rel_path) WHERE archived_at IS NULL. agents 에 runner_project_id(nullable FK —
+│  │                      「보관하지 않은 러너 에이전트는 프로젝트가 있다」는 서비스 불변)·model·permission_mode(기본 `default`)·allowed_tools_json(null = 러너 상한 안에서 SDK 기본)·
+│  │                      disallowed_tools_json(`[]`)·instructions_revision(base_prompt 가 바뀔 때만 +1), agent_sessions.instructions_revision_at_start. 0031 은 프로젝트 없는 러너 에이전트를
+│  │                      모두 보관한다(옛 러너 설정의 작업 디렉터리를 서버가 모른다 — 되살리기는 VALIDATION).
+│  │                      유일: OpenClaw 에이전트 agents_openclaw_gateway_agent (gateway_id, provider_agent_id) · 러너 에이전트 agents_runner_ws_agent (workspace_id, provider, provider_agent_id) WHERE provider = 'runner' ·
 │  │                      runs_connection_provider_run (connection_id, provider_run_id) · approvals_connection_provider (connection_id, provider_approval_id) — 제공자 id 는 연결 안에서만 유일하다.
 │  │                      attachments.gateway_id(0014 — 플러그인이 올린 첨부의 Gateway. 그 Gateway 만 읽고 정본에 묶는다, Gateway 를 지우면 비어 아무도 묶지 못한다 — 러너 정본은 uploader_id 가 자기 러너 토큰인 것만 묶는다).
 │  │                      `drizzle/0012_multi_gateway.sql`·`0014_attachment_gateway.sql` 의 `ADD gateway_id … REFERENCES` 줄은 ON DELETE 를 손으로 붙였다(생성기가 빠뜨린다 — 그 파일 머리 주석).
@@ -365,16 +372,19 @@ src/
 │  │                      (최근 활동순 CONVERSATION_PAGE 20, status open|closed|all, q 는 LIKE — `%`·`_`·`\` 는 글자, cursor `<활동 ms>_<id>`)) ·
 │  │                      routes.ts(`GET /channels/:id/conversations`·`GET`·`PATCH /conversations/:id { title?, closed? }` — 만들기 REST 는 없다(빈 세션을 만들지 않는다), 정책은 auth/policies.ts).
 │  │                      wire `conversation.created`·`conversation.updated`(제목·닫기·다시 열기만)는 realtime/events.ts 가 채널 룸으로
-│  ├─ agents/             에이전트 등록·수정(admin 이상, 핸들은 members/handles.ts 의 assertHandleFree), GET /agents/discover(Gateway agents.list, admin 이상). 등록은 providerAgentId 를 shared `isRegistrableAgentId`(소문자)로 400 VALIDATION,
+│  ├─ agents/             에이전트 등록·수정(admin 이상, 핸들은 members/handles.ts 의 assertHandleFree), GET /agents/discover(Gateway agents.list, admin 이상 — OpenClaw 만, provider=runner 는 400).
+│  │                      러너 에이전트는 가져오지 않고 만든다: `POST /agents { provider: "runner", runnerProjectId, program, … }`(프로젝트의 러너가 붙어 있고 프로그램이 available·권한 모드·허용 도구가
+│  │                      그 러너 천장 안 — 아니면 400 field program·permissionMode·allowedTools, 끊김 503), providerAgentId 는 서버가 `r-` + hex 10 으로 짓는다. PATCH 의 러너 필드(모델·권한·도구)는
+│  │                      바꾸는 필드만 붙은 러너 천장과 대조(끊겼으면 건너뛰고 런에서 러너가 거절), program·runnerProjectId 는 400(프로젝트는 runners 의 옮기기로만). 응답의 Agent.runnerAgent(정의)는 admin 이상에게만. 등록은 providerAgentId 를 shared `isRegistrableAgentId`(소문자)로 400 VALIDATION,
 │  │                      OpenClaw 는 등록·찾기 모두 gatewayId 필수(워크스페이스의 Gateway 가 아니면 400, 찾기는 꺼진 Gateway 면 ADAPTER_UNAVAILABLE), 같은 Gateway 에 같은 id 면 409.
 │  │                      `PUT /agents/:id/gateway`(owner) — 다른 Gateway 로 옮기기(대상에 같은 id 409, 러너 에이전트 400). 응답 Agent 에 OpenClaw 면 gateway({id,name} 또는 null),
 │  │                      조회는 `providerAgentIdIs`(lower() 비교 — 승인 findAgentId·런 없는 정본 agentIdFor 가 같이 쓴다: 코어가 세션 키를 소문자로 접는다).
 │  │                      보관(삭제)·되살리기(admin 이상): `DELETE /agents/:id`(archived_at 을 쓰고 열린 런을 사람 「중지」와 같은 orchestrator.abort 로 닫은 뒤 응답, 멱등)·
 │  │                      `POST /agents/:id/restore`(되살린 쪽의 자동 응답이 같은 채널의 살아 있는 다른 자동 응답과 겹치면 되살린 쪽을 끄고 그 채널에 `channel.member.changed`).
 │  │                      「활성」 판정은 isAgentActive(enabled && 보관 안 됨) 한 함수 — router/decide.ts·components assertDeliverable·런 관문(ops/budget.ts)이 쓴다. SQL 조건 agentNotArchived 는
-│  │                      채널 멤버 조회·러너 묶기(claimRunnerToken — 끈 에이전트는 묶는다)·되살리기 겹침 검사(clearContestedAutoRespond)가 쓴다. 목록 `GET /agents` 는 보관한 것도 archivedAt 과 함께 준다(기록의 작성자·멘션 칩).
+│  │                      채널 멤버 조회·되살리기 겹침 검사(clearContestedAutoRespond)가 쓴다. 목록 `GET /agents` 는 보관한 것도 archivedAt 과 함께 준다(기록의 작성자·멘션 칩).
 │  │                      discover 는 같은 자리의 보관한 에이전트에 archivedAgentId, 같은 자리 등록·보관한 에이전트를 채널에 넣기는 409 AGENT_ARCHIVED(「삭제된 에이전트입니다」).
-│  │                      등록·수정·옮기기·보관·되살리기·러너 「이 러너로 묶기」·에이전트가 묶인 Gateway 삭제 뒤 wire `agents.changed`(본문 없음)
+│  │                      등록·수정·옮기기·보관·되살리기·러너 프로젝트 옮기기·에이전트가 묶인 Gateway 삭제 뒤 wire `agents.changed`(본문 없음)
 │  ├─ messages/           seq 발급(seq.ts)·사람/에이전트/시스템 메시지 저장·bus 통지·히스토리 페이징. 저장과 같은 트랜잭션에서 첨부를 묶는다
 │  │                      (사람 메시지는 같은 트랜잭션에서 쓴 사람·멘션된 사람을 채널에 참여시키고 커밋 뒤 `channel.member.changed` 한 번 — 에이전트 메시지는 아무도 참여시키지 않는다)
 │  │                      자동화 글 createAutomationMessage — 작성자 automation·최상위·kind normal, 문구만 사람 메시지와 같은 참가자(userMessageParticipants)로 토큰화하고
@@ -484,16 +494,21 @@ src/
 │  │                      부팅 때 한 번 렌더. 명령·계정 키·RunnerConfig 는 `test/setup.llms.test.ts` 가 코드와 대조한다 — 토큰은 명령 인자에 싣지 않는다(curl `-K -`), 머리 주석) ·
 │  │                      installer-auth.ts(requireOwnerOrToken — 살아 있는 세션이면 owner 규칙 그대로(아니면 403), 세션이 없을 때만 Bearer 를 http/agent-token.ts 에 넘긴다.
 │  │                      Bearer 가 없으면 세지 않는 401. plugin.tgz 는 브리지 토큰(꺼진 Gateway 면 세지 않는 401), runner.tgz 는 러너 토큰 — 다른 종류는 센 401)
-│  ├─ runners/            Phase 4 ③. 연결 페이지 러너 블록 — 전부 owner 세션.
+│  ├─ runners/            러너(runner_tokens 행 하나 = 러너 하나) — 연결 페이지 러너 블록(owner)과 「러너」 탭(admin 이상).
 │  │                      tokens.ts(runner_tokens 저장소 — bridge_tokens 와 같은 규칙, 원문 `drn_`, `.env` 이어받기 없음 · verifyRunnerTokenDb 는 id·라벨 ·
-│  │                      activeRunnerTokenCount(어댑터 상태 runners.tokens) · isActiveRunnerTokenId(runner_down 이 폐기된 토큰에 사건을 남기지 않게)) ·
+│  │                      activeRunnerTokenCount(어댑터 상태 runners.tokens) · isActiveRunnerTokenId(runner_down 이 폐기된 토큰에 사건을 남기지 않게) · 다시 발급은 같은 행의 해시·접두사만) ·
 │  │                      runner-file.ts(runnerDirCandidates — DODOK_RUNNER_DIR(이미지 /app/runner), 소스 실행이면 packages/claude-runner/dist ·
 │  │                      readRunnerFile — tgz 안 `package/dist/main.js` sha256, 몸통은 plugin-file.ts readBundledTgz) ·
-│  │                      routes.ts(`GET`·`POST /api/v1/setup/runner-tokens`(201 no-store, runnerConfig{serverUrl — 브리지 공개 주소의 오리진을 http(s) 로, tokenFile}) ·
-│  │                      `DELETE /api/v1/setup/runner-tokens/:id`(폐기 → 러너 어댑터 revokeTokenSessions — 묶임은 남는다) ·
-│  │                      `PUT /api/v1/setup/runner-tokens/:id/agents/:agentId`(다시 묶기 — 활성 토큰만, 폐기면 409) · `GET /api/v1/setup/runner.tgz`(owner 세션 또는 러너 토큰 — setup/installer-auth.ts, 없으면 404 `RUNNER_FILE_MISSING`)) ·
-│  │                      bindings.ts(agents.runner_token_id — boundRunnerToken·claimRunnerToken(묶임 없는 등록 claude 행만, 조건부 UPDATE)·bindRunnerToken.
-│  │                      러너 어댑터의 bindings 옵션이 앞의 둘을 부르고, 에이전트 등록은 그 id 를 맡는 러너의 토큰(servingTokenId)을 INSERT 에 싣는다).
+│  │                      routes.ts(owner — `GET`·`POST /api/v1/setup/runner-tokens`(201 no-store, runnerConfig{serverUrl — 브리지 공개 주소의 오리진을 http(s) 로, tokenFile}) ·
+│  │                      `POST /api/v1/setup/runner-tokens/:id/reissue`(같은 응답 꼴 ReissueRunnerTokenResult, 그 토큰의 소켓을 폐기와 같은 길로 끊는다, 폐기한 토큰 409) ·
+│  │                      `DELETE /api/v1/setup/runner-tokens/:id`(폐기 → 러너 어댑터 revokeTokenSessions — 프로젝트·에이전트는 남는다) · `GET /api/v1/setup/runner.tgz`(owner 세션 또는 러너 토큰 — setup/installer-auth.ts, 없으면 404 `RUNNER_FILE_MISSING`)) ·
+│  │                      projects.ts(runner_projects — createProject·listProjects·getProject·renameProject·archiveProject, label 기본은 relPath 마지막 성분(빈 relPath 면 루트 라벨)) ·
+│  │                      projects.routes.ts(admin 이상, authorizeRunnerManage — `GET /api/v1/runners`(RunnerSummary — 끊김이면 runnerVersion·browse null, roots·programs [])·
+│  │                      `GET /api/v1/runners/:id/fs`(LIMITS.runnerBrowsePerMin 사용자당 60 + 운영 로그 한 줄 — relPath 원문 없음, 요청 로그의 relPath 쿼리는 logger.ts redactUrl 이 가린다)·
+│  │                      `GET`·`POST /api/v1/runners/:id/projects`(더하기 전에 러너 project.check — 실패 400 details.reason, 같은 자리 409)·`PATCH /api/v1/runner-projects/:id`·`POST …/archive`·`…/check`·
+│  │                      `…/move { runnerId }`(대상 러너가 붙어 있고 check 가 ok·천장 밖 에이전트 없음(400 details.agentIds)일 때만, 프로젝트·에이전트 runner_token_id 를 한 트랜잭션에서, 그 에이전트들의
+│  │                      agent_sessions.provider_session_id 를 비운다)) · live.ts(askRunner·liveRunner·assertWithinCeiling — 어댑터 AdapterError 코드를 그대로 API 코드로) ·
+│  │                      definition.ts(runnerAgentDefinition — run.start.agent 를 에이전트 행·프로젝트 행 그대로, 프로젝트 토큰이 에이전트 토큰과 다르면 null — 어댑터 옵션 agentDefinition).
 │  │                      러너 어댑터(@dodok/runner-adapter)는 app.ts 가 만든다(deps.adapters 를 안 주면 늘 — 테스트는 runnerAdapter: true). 러너 첨부 HTTP
 │  │                      (`/runner/attachments`)는 attachments/routes.ts 가 브리지와 같은 가드·같은 제한으로 연다(업로더는 bridge — 에이전트 쪽)
 │  ├─ ops/                Phase 3 ③. 운영 사건·런 수 상한·레이트리밋·안정성 — API 는 전부 admin 이상(`requireRole(ctx, "admin")`, 아니면 403).
@@ -666,7 +681,8 @@ Gateway 를 고르는 훅(`plugin-token`·`plugin-capabilities`·`gateway`)은 �
 - `POST /__devfake/ops/event { kind, key, severity, detail? }`(`DEV_FAKE_OPS_EVENT_PATH`) — `app.ops.record` 만 부른다(ops_events 를 직접 쓰지 않아 unacked 캐시·`ops.event`·로그가 함께 돈다). 200 `{ ok: true, event }`.
 - `POST /__devfake/gateway { gatewayId, state: "down" | "connected" }`(`DEV_FAKE_GATEWAY_PATH`) — down 이면 그 가짜 Gateway 가 연결을 끊고 그 뒤 `connect` 를 `UNAVAILABLE` 로 거절한다(끊기만 하면 `@openclaw/gateway-client` 가 자기 백오프로 속에서 재시도해 어댑터가 모른다). dev:fake 만 어댑터 재접속 백오프 상한을 1초로 준다(`AppDeps.gatewayBackoff`). 플러그인(브리지)과 다른 Gateway 는 그대로. 200 `{ ok: true, status }`(`status` 는 그 Gateway 한 줄), 10초 안에 안 바뀌면 `{ ok: false, reason: "timeout", status }`.
 - `POST /__devfake/disk { freeBytes, totalBytes } | { reset: true }`(`DEV_FAKE_DISK_PATH`) — 디스크 감시의 statfs 를 그 값으로 바꾸고 곧바로 다시 잰다(error 면 응답 전에 `disk_low`·첨부 507 이 반영된다). reset 이면 실제 statfs. 값은 메모리에만 있어 다시 띄우면 실제로 돌아간다.
-- `POST /__devfake/runner { connected: boolean, token?: string }`(`DEV_FAKE_RUNNER_PATH`) — false 면 가짜 Claude 러너를 끊고 어댑터의 붙은 러너 수가 줄 때까지(5초) 기다린다, true 면 다시 붙는다(`token` 을 주면 그 러너 토큰으로 — 연결 페이지에서 발급한 토큰). 가짜 러너는 스스로 다시 붙지 않는다(토큰 폐기 뒤 포함). 200 `{ ok: true, status }` 또는 `{ ok: false, reason }`. 고정 러너 토큰 `dev-fake-runner-token`(라벨 dev-fake)·에이전트 `coder`(provider claude)는 시작 때 넣어 둔다.
+- `POST /__devfake/runner { connected: boolean, token?: string, runner?: "main" | "limited", maxPermissionMode?, roots? }`(`DEV_FAKE_RUNNER_PATH`) — false 면 그 가짜 러너(`runner` 기본 `main`)를 끊고 어댑터의 붙은 러너 수가 줄 때까지(5초) 기다린다, true 면 다시 붙는다(`token` 을 주면 그 러너 토큰으로 — 연결 페이지에서 발급·다시 발급한 토큰). `roots`(그 러너의 고정 루트 id 가운데 알릴 것 — 밖이면 400)·`maxPermissionMode`(Claude Code 상한)는 `connected: true` 와만(아니면 400) — 그 hello 로 다시 붙고 다음 바꿈까지 남는다(머신 주인이 설정을 바꾼 흉내 — 루트를 빼면 그 프로젝트가 「루트 없음」). 가짜 러너는 스스로 다시 붙지 않는다(토큰 폐기 뒤 포함). 200 `{ ok: true, status }` 또는 `{ ok: false, reason }`.
+  가짜 러너는 둘(`DEV_FAKE_RUNNERS`, 고정 토큰 행 id 로 찾는다 — 「다시 발급」으로 해시가 바뀐 행은 시작 때 고정 토큰으로 되돌리고 warn, 폐기한 행은 되살리지 않는다): 「dev-fake」(`dev-fake-runner-token`, 루트 `src` 「내 저장소들」·`work` 「회사」, 둘러보기 켬, Claude Code 상한 `acceptEdits`·`available: false` 인 Codex 「설치되지 않음」, 고정 나무 `devFakeRunnerTree()` — git 저장소·하위 600개 `src/many`·특수 문자 이름·숨김·루트 밖 링크·파일)와 「dev-fake 제한」(`dev-fake-runner-token-limited`, 루트 `sandbox`·`src`, 둘러보기 끔, Claude Code 상한 `plan`·허용 도구 상한 `Read`·`Grep`·`Glob`, 처음 만들 때 프로젝트 `sandbox/demo`). 둘 다 실제 러너처럼 런마다 천장을 본다(`test/fakes/fake-runner.ts` 의 `tree` 옵션). 에이전트 `coder`(provider runner·program claude)는 새 DB 에서 「dev-fake」의 프로젝트 `src/dodok` 로 만든다. 대본 키워드 「천장」은 `RUNNER_CEILING(permissionMode)` 카드.
 
 여섯 훅 공통: owner 세션(쿠키 또는 Bearer) — 판정은 같은 헤더로 앱의 `GET /api/v1/setup/status` 를 inject 해 그 401·403 을 그대로 돌려준다, 본문은 판정 뒤에 읽는다, `content-type` 이 `application/json` 이 아니면 415(단순 요청으로 못 부르게), 경로는 쿼리 앞까지 정확히 일치(아니면 원래 리스너 → 앱 404), 본문 16 KB 상한, 모양이 틀리면 400 `VALIDATION`.
 서버 오리진으로 직접 부른다 — 웹 페이지 안 `fetch` 는 CORS 와 415 에 걸린다. Playwright 면 `context.cookies()` 의 `dodok.session` 을 `request.post(…, { headers: { cookie }, data })` 로 싣는다.
@@ -680,6 +696,7 @@ curl -s -b $J -X POST $O/__devfake/gateway   -H 'content-type: application/json'
 curl -s -b $J -X POST $O/__devfake/disk      -H 'content-type: application/json' -d '{"freeBytes":104857600,"totalBytes":10737418240}'
 curl -s -b $J -X POST $O/__devfake/plugin-capabilities -H 'content-type: application/json' -d '{"gatewayId":"00000000-0000-4000-8000-00000000def1","threads":false}'
 curl -s -b $J -X POST $O/__devfake/runner -H 'content-type: application/json' -d '{"connected":false}'
+curl -s -b $J -X POST $O/__devfake/runner -H 'content-type: application/json' -d '{"connected":true,"runner":"limited","maxPermissionMode":"dontAsk"}'
 ```
 `createApp` 은 ready 뒤라 경로를 더할 수 없어 HTTP 서버의 request 리스너를 감싼다(이 경로들만 받고 나머지는 engine.io → Fastify). 운영 `createApp`·번들에는 이 경로가 없다(404).
 **`DODOK_DEVFAKE_DISCONNECT_MS`**(dev:fake 전용, 양의 정수 ms — 없거나 비면 운영과 같은 60000, 그 밖이면 시작하지 않는다) — 끊김 사건 임계(`AppDeps.disconnectEventMs`). 사건 `detail.thresholdMs` 에 실린다.
@@ -809,19 +826,21 @@ SDK import 경로: `openclaw/plugin-sdk/plugin-entry`, `openclaw/plugin-sdk/chan
 
 ### 2.4a `packages/runner-adapter` (서버 프로세스 안에서 실행)
 
-서버 측 Claude 러너 어댑터 — `AgentAdapter` 의 `provider: "claude"` 구현. 설계는 `docs/superpowers/specs/2026-09-27-claude-runner-design.md`(구현과 달라진 것은 그 스펙의 「구현과 맞춘 것」 장).
-- `src/runner-adapter.ts` — `/runner` 네임스페이스(러너 토큰 핸드셰이크·hello·같은 토큰 교체는 옛 자리를 잇는다), `send`→`run.start`(채널 규칙 틀·턴 사실은 여기서 만든다 — 인바운드의 `conversationTitle`(턴 사실 둘째 줄 `세션:`)·`reactions`·`reactionsOmitted` 를 `buildTurnFacts` 에 넘긴다), `run.event` 허용 목록·runId 대조, `run.final`→정본·usage(`dodok.usage`), 중지(`run.final aborted` → 메시지 없는 `RUN_ABORTED`, 러너 종료 `run.final runner_shutdown` → `ADAPTER_UNAVAILABLE`), `outbound.post` 를 열린 런에 묶기(그 런의 대화·에이전트·세션 키·스레드가 다르면 거절 — `post` 에는 대상 인자가 없다), `mayReadAttachment`(러너 토큰 첨부 읽기 범위 — 열린 런의 트리거 첨부만), `supports`(러너가 없으면 true), 서버 종료·hello 타임아웃은 전송만 닫고 교체·폐기만 `disconnect(true)`.
-- `src/connections.ts` — 붙은 러너와 에이전트 배정(러너 토큰에 묶인 등록 에이전트는 그 토큰의 러너만, 묶임이 없으면 먼저 알린 러너가 맡고 뒤 러너의 같은 id 는 「충돌」, 교체는 자리 잇기). 묶임 없는 등록 에이전트는 hello·러너가 빠진 뒤 지금 맡는 러너 토큰에 묶는다(`claimUnbound`).
+서버 측 러너 어댑터 — `AgentAdapter` 의 `provider: "runner"` 구현(러너 안에서 돌리는 프로그램은 `agents.program`). 설계는 `docs/superpowers/specs/2026-09-27-claude-runner-design.md`·`docs/superpowers/specs/2026-10-25-runner-generalization-design.md`(구현과 달라진 것은 각 스펙의 「구현과 맞춘 것」 장).
+- `src/runner-adapter.ts` — `/runner` 네임스페이스(러너 토큰 핸드셰이크·hello — 판본(`RUNNER_PROTOCOL` 2)부터 보고 옛 러너는 `PROTOCOL_MISMATCH`, 같은 토큰 교체는 옛 자리를 잇는다), `fsList`·`projectCheck`(ack 10초, 끊겼으면 `ADAPTER_UNAVAILABLE`)·`runnerInfo`·`capabilitiesFor`(그 러너·그 프로그램의 hello 능력), `send`→`run.start`(에이전트 정의는 옵션 `agentDefinition` — 서버 runners/definition.ts, 에이전트 지시(`agents.base_prompt`)는 채널 규칙 틀 앞의 `<agent-instructions>` 틀로 `buildChannelRulesAppend` 에, 채널 규칙 틀·턴 사실은 여기서 만든다 — 인바운드의 `conversationTitle`(턴 사실 둘째 줄 `세션:`)·`reactions`·`reactionsOmitted` 를 `buildTurnFacts` 에 넘긴다), `run.event` 허용 목록·runId 대조, `run.final`→정본·usage(`dodok.usage`), 중지(`run.final aborted` → 메시지 없는 `RUN_ABORTED`, 러너 종료 `run.final runner_shutdown` → `ADAPTER_UNAVAILABLE`), `outbound.post` 를 열린 런에 묶기(그 런의 대화·에이전트·세션 키·스레드가 다르면 거절 — `post` 에는 대상 인자가 없다), `mayReadAttachment`(러너 토큰 첨부 읽기 범위 — 열린 런의 트리거 첨부만), `supports`(러너가 없으면 true), 서버 종료·hello 타임아웃은 전송만 닫고 교체·폐기만 `disconnect(true)`.
+- `src/connections.ts` — 붙은 러너가 hello 로 알린 것(루트 `{ id, label }`·`browse`·프로그램 — 메모리에만, 끊기면 없어진다). 러너 에이전트는 만들 때부터 그 프로젝트의 러너 토큰에 묶이고(`agents.runner_token_id`), 런은 그 토큰의 러너로만 간다.
 - 러너 프레임 속도 제한 — 소켓마다 버킷 둘(`run.event` 와 나머지, 숫자는 서버 `LIMITS.runner`, 옵션 `frameLimit` 로 받는다). 넘친 프레임은 버리고 warn·`onLimited`(운영 사건)는 주소별 1분에 한 번. 열린 런·기다리는 승인을 가리키는 종결·승인 프레임 가운데 처리기가 받아들일 것은 버킷을 거치지 않는다(승인 요청은 런마다 누계 32개까지 — `namesOpenWork`, 까닭과 상한은 그 머리 주석).
 - `src/approvals.ts` — 러너 승인 정규화(서버 쪽 id `runner:<토큰 id>:<러너 id>`)와 10분 기한 타이머(지나면 러너에 `deny`, `expired`).
 - `control.call`(제어 MCP) — `runner.control` 버킷을 세고, 이 러너의 열린 런(aborted 아님)이 아니면 콜백 없이 `NOT_FOUND`, 아니면 옵션 `onControlCall(러너 토큰 id, call)` 의 결과로 ack 를 미룬다(카드 대기 — 상한 없음).
 
 ### 2.4b `packages/claude-runner` (사람의 머신에서 실행 — CLI `dodok-runner`)
 
-Claude Agent SDK 로 Claude Code 에이전트를 돌려 서버 `/runner` 에 붙는 러너. 서버 이미지가 같은 커밋의 tgz 를 품고(`/app/runner`, `pack:runner`) 연결 페이지가 내려준다 — SDK 는 번들에 넣지 않고 설치 때 npm 에서 받는다. 설치·운영은 `docs/guides/docker-deploy.md` 「Claude 러너 설치」 절.
-- `src/main.ts` — 인자·설정 읽기·SIGINT/SIGTERM(도는 런을 멈추고 최대 5초). `src/config.ts` — 설정 파일 `RunnerConfig`(strict)·토큰 파일 0600 경고. `src/connection.ts` — 연결·hello·재접속 백오프(1~30초)·서버가 끊으면 종료 2·연결 세대. `src/scheduler.ts` — 동시 상한·대기.
-- `src/run.ts` — 런 하나(`query()` 하나, `buildQueryOptions` — preset·`append`·`snapshot: false`·훅·`strictMcpConfig`·`settingSources: []`·env 허용 목록, 「이미 있는 세션」이면 `resume` 재시도, 런 비용 차이). `src/stream-map.ts` — SDK 스트림 → `RunEvent`. `src/sdk.ts` — SDK 를 import 하는 유일한 파일(`SdkPort`).
-- `src/post-tool.ts`·`src/files.ts` — `mcp__dodok__post`(카드·파일, 작업 디렉터리 경계, macOS `O_NOFOLLOW_ANY`·Linux `/proc/self/fd`). `src/approvals.ts` — `canUseTool` → 승인 프레임·요약 이스케이프. `src/images.ts`·`src/attachments-http.ts` — 트리거 이미지 받기·파일 올리기(헤더 `x-dodok-conversation-id`). 나가는 글 `RunnerOutboundPost` 는 `conversationId` 를 싣는다. `src/mask.ts` — 호스트 경로 가림(못 알아보는 모양은 머리 주석).
+사람의 머신에서 앱이 만든 에이전트를 돌려 서버 `/runner` 에 붙는 러너. 로컬 설정은 천장(허용 루트·프로그램·권한 상한)만 쥐고, 서버가 `run.start` 에 실은 에이전트 정의를 런마다 천장과 견준 뒤 프로그램 드라이버에 넘긴다(무상태). 지금 드라이버는 Claude Code(Claude Agent SDK) 하나다. 서버 이미지가 같은 커밋의 tgz 를 품고(`/app/runner`, `pack:runner`) 연결 페이지가 내려준다 — SDK 는 번들에 넣지 않고 설치 때 npm 에서 받는다. 설치·운영은 `docs/guides/docker-deploy.md` 「러너 설치」 절.
+- `src/main.ts` — 인자·설정 읽기·SIGINT/SIGTERM(도는 런을 멈추고 최대 5초). `src/config.ts` — 설정 파일 `RunnerConfig`(strict — `roots`·`browse`·`programs`, 옛 `agents` 키는 `LEGACY_AGENTS_MESSAGE` 로 거절, 루트는 realpath)·토큰 파일 0600 경고. `src/connection.ts` — 연결·hello(루트는 `{ id, label }` 뿐 — 경로 원문 없음)·`fs.list`·`project.check` 응답·`run.start` 마다 천장 검사(걸리면 ack `dispatch` 뒤 `run.error RUNNER_CEILING <항목>`)·재접속 백오프(1~30초)·서버가 끊으면 종료 2·연결 세대. `src/scheduler.ts` — 동시 상한·대기.
+- `src/ceiling.ts` — `checkCeiling`(root → path → program → permissionMode → allowedTools, realpath 로 루트 안 디렉터리인지). `src/fs-browse.ts` — 둘러보기(디렉터리만·숨김 제외·루트 밖 링크 제외·코드 포인트 순 500 + truncated, `browse: false` 면 FORBIDDEN)·프로젝트 확인(네 사유).
+- `src/driver.ts` — 드라이버 계약 `ProgramDriver`·`RunSpec`(작업 디렉터리는 러너 안에서만 쓰는 풀린 경로). `src/sink.ts` — `RunSink`(서버로 내보내는 한 자리 — 호스트 경로 가림을 맡는다, `src/mask.ts` 의 가림 규칙·못 알아보는 모양은 그 머리 주석).
+- `src/drivers/claude/` — Claude Code 드라이버: `index.ts`(detect·능력·세션 id UUID 검사), `run.ts`(런 하나 = `query()` 하나, `buildQueryOptions` — preset·`append`·`snapshot: false`·훅·`strictMcpConfig`·`settingSources: []`·env 허용 목록·늘 막는 도구 `RUNNER_DISALLOWED_TOOLS`, 「이미 있는 세션」이면 `resume` 재시도, 런 비용 차이), `stream-map.ts`(SDK 스트림 → `RunEvent`), `sdk.ts`(SDK 를 import 하는 유일한 파일 — `SdkPort`), `approvals.ts`(`canUseTool` → 승인 프레임·요약 이스케이프).
+- `src/post-tool.ts`·`src/files.ts` — `mcp__dodok__post`(카드·파일, 작업 디렉터리 경계, macOS `O_NOFOLLOW_ANY`·Linux `/proc/self/fd`). `src/images.ts`·`src/attachments-http.ts` — 트리거 이미지 받기·파일 올리기(헤더 `x-dodok-conversation-id`). 나가는 글 `RunnerOutboundPost` 는 `conversationId` 를 싣는다.
 - `src/control-tools.ts` — 제어 도구 24개를 `mcp__dodok__<tool>` 로(런마다 그 런의 runId 에 묶는다, `allowedTools` 에 늘 — 러너 도구 승인과 확인 카드로 두 번 묻지 않게). 실행은 `connection.ts` 의 `RunBridge.control` — 그 런을 시작한 연결 세대가 끊겼으면 `ADAPTER_UNAVAILABLE`, 아니면 `emitWithAck("control.call")` 을 `CONTROL_CALL_TIMEOUT_MS` 까지(끊김·초과는 「결과를 모른다」).
 - `scripts/build.mjs` — esbuild 단일 번들 `dist/main.js`(SDK external, 정확 핀 확인). `scripts/fake-messages-api.ts` — 런 0회 하네스의 로컬 가짜 Messages API(`docs/guides/live-smoke.md` 「Claude 러너 런 0회 하네스」 절).
 
@@ -1083,7 +1102,7 @@ src/
 │  │                       `threadRootId` 면 루트를 싣고 보내는 중·확정은 스레드 캐시에) · useTyping·TypingIndicator(스레드 작성기는 typing 을 보내지 않는다 — wire Typing 이 세션 단위) ·
 │  │                       PendingAttachments.tsx(칩 — 미리보기·진행 막대·사유·「<이름> 빼기」, 빼면 초점을 옆 칩·「이미지 첨부」로). Composer 는 「이미지 첨부」 버튼·붙여넣기·
 │  │                       작성기 상자 전체의 끌어다 놓기로 칩을 넣고, 올리기가 끝나야 보낸다(사유: 끊김 → 「이미지를 올리는 중입니다」 → 「올리지 못한 이미지를 빼 주세요」). 글 없이 이미지만 보낼 수 있다
-│  ├─ agents/              AgentsPage·AgentRow(사용 토글·기본 프롬프트 — member 에게는 값만, 등록 버튼 없음 · claude 면 묶인 러너 라벨, 폐기됐으면 다시 묶으라는 안내 — 다시 묶기는 연결 페이지 러너 카드) · DiscoverDialog(「에이전트 가져오기」 — 제공자, OpenClaw 면 Gateway 고르기(Gateway 목록은 어댑터 상태 — admin 도 읽는다, `GET /gateways` 는 owner 전용), 같은 Gateway·같은 id 만 숨김,
+│  ├─ agents/              AgentsPage·AgentRow(사용 토글·기본 프롬프트 — member 에게는 값만, 등록 버튼 없음 · 러너면 RunnerLine 「<프로그램> · 러너 <라벨>」(폐기됐으면 「러너」 탭에서 옮기라는 안내), admin 이상이면 RunnerDefinition(정의 요약 + 「러너 설정 고치기」 → RunnerAgentForm.tsx RunnerDefinitionForm — 프로그램·프로젝트는 읽기만)) · DiscoverDialog(「에이전트 가져오기」 — 제공자, 러너면 RunnerAgentForm(러너 → 프로젝트 → 프로그램 → 핸들·이름·모델·권한 모드(상한까지)·허용 도구(상한 부분집합)·지시·DM 허용, 폼을 연 뒤 고른 러너가 끊기거나 폐기되면 잠김), OpenClaw 면 Gateway 고르기(Gateway 목록은 어댑터 상태 — admin 도 읽는다, `GET /gateways` 는 owner 전용), 같은 Gateway·같은 id 만 숨김,
 │  │                       핸들 겹침은 「이미 쓰이는 핸들입니다 — 다른 핸들을 입력하세요」) · MoveGatewayDialog(「Gateway 옮기기」 — owner, OpenClaw 줄마다) ·
 │  │                       gatewaySuffix(「 · <Gateway 이름>」 — 에이전트 줄·멘션 후보·채널 설정이 같이 쓴다) · AgentRow 의 연결이 빈 줄 안내(owner 「…다른 Gateway 로 옮기세요」,
 │  │                       admin·member 「…owner 가 다른 Gateway 로 옮길 때까지 답하지 못합니다」) · ManualAgentForm·handleFrom ·
@@ -1092,13 +1111,17 @@ src/
 │  │                       (「에이전트 삭제」). 고르는 자리의 거름은 archived.ts isArchived(`Boolean(archivedAt)` — 보관 열 이전 오프라인 사본에는 키가 없다) 한곳 —
 │  │                       멘션 후보·채널 멤버 줄·「에이전트 추가」 셀렉트·채널 머리 아바타가 쓴다. 가져오기의 archivedAgentId 항목은 「삭제됨 — 되살리기」, 직접 입력·409 AGENT_ARCHIVED 는
 │  │                       id 칸 「삭제된 에이전트입니다」+「되살리기」. ArchivedTag(멘션 칩·운영 표 이름 뒤 「삭제됨」 — 보이는 글자는 aria-hidden, 스크린 리더에는 「 (삭제됨)」)
+│  ├─ runners/             「러너」 탭 `/settings/runners` — admin 이상(아니면 러너 API 를 부르지 않고 「권한이 없습니다 — 러너는 관리자만 볼 수 있습니다.」). RunnersPage.tsx(러너 카드 — 연결 배지·판본·루트·프로그램 줄,
+│  │                       끊기면 「끊김」 하나)·ProjectList.tsx(프로젝트 줄 — 확인·이름 바꾸기·옮기기·보관, 붙은 러너가 그 루트를 안 알리면 「루트 없음」, 줄을 빼는 mutation 뒤 초점은 `.then` 에서)·
+│  │                       AddProjectDialog.tsx(루트 → 둘러보기(빵 부스러기·git·truncated, 열린 동안 다시 받지 않는다)/직접 입력 → 「확인하고 추가」)·MoveProjectDialog.tsx·copy.ts(확인 실패 사유 넷 등 문구)·
+│  │                       queries.ts·mutations.ts(키는 `src/api/queries.ts` 의 `qk.runners()`·`qk.runnerProjects(id)`·`qk.runnerFs(id, root, rel)`, 무효화 앞머리 `runnersAll`(wire `adapter.status` runner)·`runnerProjectsAll`(agents.changed)·`runnerFsOf`).
 │  ├─ search/              Phase 4 ①. SearchDialog.tsx(`⌘K` 대화상자 — 390px 전체 시트, 필터 채널·사람/에이전트·기간, 결과를 누르면 requestJump 뒤 그 세션(지금 세션이 아니어도)·스레드로, 닫으면 연 자리로 초점 —
 │  │                       Trigger 없이 여는 대화상자라 `onOpenAutoFocus` 에서 기억한 요소로 돌려준다) · SearchResults.tsx(결과 줄에 세션 제목, 보관한 채널 결과는 「보관됨」 — 채널 이름은 그런 결과가 있을 때만 받는 보관 목록에서 · 2글자면 「2글자는 최근 90일에서 50개까지만 찾습니다」·「더 보기」 없음,
 │  │                       429·오류는 대화상자 안 한 줄, 다음 쪽 실패는 받은 결과를 두고 목록 아래 한 줄, 입력이 2글자 미만이면 옛 결과를 곧바로 숨긴다) ·
 │  │                       useSearch.ts(useInfiniteQuery, 디바운스 300ms, 재시도·전역 토스트 없음) · highlight.tsx(STX·ETX 스니펫 → 강조 조각) ·
 │  │                       openSearch.ts(isSearchShortcut — `e.code === "KeyK"` 도 받는다(한글 입력기), otherModalOpen — 검색 표지가 없는 열린 대화상자가 있으면 ⌘K 무시)
 │  ├─ setup/               Phase 3 ②. 연결 페이지 `/settings/connection` — owner 만(아니면 setup API 를 부르지 않고 「권한이 없습니다」).
-│  │                       ConnectionPage.tsx(서버 · OpenClaw Gateway 블록 · Claude 러너 블록. OpenClaw 블록 머리에 「Gateway 추가」(GatewayForm)와 PluginDownload 한 번,
+│  │                       ConnectionPage.tsx(서버 · OpenClaw Gateway 블록 · 러너 블록(RunnerSection — 토큰 목록·발급·다시 발급(ReissueRunnerTokenDialog)·폐기, 드러나는 것 넷, 설치 안내 — 상태·프로젝트는 「러너」 탭). OpenClaw 블록 머리에 「Gateway 추가」(GatewayForm)와 PluginDownload 한 번,
 │  │                       그 아래 Gateway 카드 목록 — Gateway 가 없으면 빈 상태 한 줄 NO_GATEWAY) ·
 │  │                       GatewayCard.tsx(Gateway 하나 — 상태 배지(gatewayStateLabel: 연결됨·재연결 중·페어링 대기·꺼짐·연결 안 됨)·버튼 셋 「수정」·「끄기」/「켜기」·「삭제」
 │  │                       (접근 이름 「<이름> 수정」 등 — 드롭다운 메뉴가 아니다)·주소·호스트·버전(drift 문구)·페어링 대기면 `openclaw devices approve <requestId>`,

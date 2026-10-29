@@ -35,6 +35,7 @@
 | v0.29 | **서버 네이티브 푸시 종료**(2026-10-12, 실기기 발송은 사람 몫) — 8장 Phase 4 「앱」 줄에 서버 하위 프로젝트 완료 표시·구성 요약·확인 방법, 「이월」 머리를 이 시점으로, 새 묶음 「네이티브 푸시(서버)」, 「실물 확인」에 실기기 줄 |
 | v0.30 | **실사용 순서 결정**(2026-10-19) — 8장 Phase 4 뒤에 「다음 순서 — 실사용」(① Komodo 로 서버 배포·웹 확인 ② 쓰면서 나온 수정·기능 ③ 데스크톱·모바일 앱), 배포는 기존 리버스 프록시 뒤 Komodo Git Repo Stack |
 | v0.31 | **채널 세션 종료**(2026-10-26, 실연까지 — 모델 런 0회) — 8장 Phase 4 에 「채널 세션」 완료 표시·구성 요약·확인 방법, 5.8 세션 키 단위·10장 #3·#15·#19·#22 를 대화 단위·「새 대화」 없음으로, 「이월」 머리를 이 시점으로, 새 묶음 「채널 세션」, 「실물 확인」에 실연 줄 |
+| v0.32 | **러너 일반화 종료**(2026-10-30, 실연까지 — 모델 런 0회) — 8장 Phase 4 에 「러너 일반화」 완료 표시·구성 요약·확인 방법, 5.1 Agent 의 제공자를 openclaw·runner 와 `program` 으로, 「이월」 머리를 이 시점으로, 새 묶음 「러너 일반화」, 「Claude 러너」 묶음에서 걷은 묶기(`claimUnbound`) 줄을 지움, 「실물 확인」에 실연 줄 |
 
 ---
 
@@ -244,7 +245,7 @@ A와 B가 같은 호스트여도 된다 — Gateway 는 Compose 밖에서 따로
 
 - **Workspace**: 최상위 컨테이너. MVP는 1개 자동 생성. 팀 전환 시 다수.
 - **User / Membership**: owner 1명(로컬 토큰 계정) + 초대로 들인 admin·member(Phase 4 ②). `role` 에는 guest 도 있지만 쓰지 않는다 — 역할과 권한은 팀 스펙 `docs/superpowers/specs/2026-09-26-team-members-design.md` 「역할과 권한」 절, 10장 #22.
-- **Agent**: 워크스페이스에 등록된 에이전트 프로필. `provider`(openclaw/claude/codex/hermes), `providerAgentId`(OpenClaw `agentId`), 표시 이름, 아바타, 기본 프롬프트, 활성 여부.
+- **Agent**: 워크스페이스에 등록된 에이전트 프로필. `provider`(openclaw/runner — 러너면 러너 안에서 돌릴 `program` claude/codex/opencode 와 프로젝트·모델·권한·도구, 러너 일반화 스펙), `providerAgentId`(OpenClaw `agentId`), 표시 이름, 아바타, 기본 프롬프트, 활성 여부.
 - **Channel**: 주제 단위. `prompt`(채널 프롬프트), `relayPolicy`(최대 릴레이 턴, 허용 에이전트 쌍), `visibility`.
 - **ChannelMember**: 사람 또는 에이전트의 채널 참여. 에이전트인 경우 `promptOverride`, `mentionAliases`, `autoRespond`(멘션 없이도 응답할지, 기본 false).
 - **Message**: `author`(user|agent|system), 본문(마크다운), 첨부, `components`(렌더용 JSON), `replyTo`, `runId`(에이전트 메시지일 때), `seq`.
@@ -519,7 +520,7 @@ SQLite(WAL)로 시작, Drizzle ORM으로 스키마 정의해 Postgres 전환 시
   **구성** — OpenClaw 연결은 `.env` 가 아니라 owner 연결 페이지의 Gateway 카드에서 만든다(이름·주소·공유 토큰, 켜기/끄기, 삭제). Gateway 마다 WS·디바이스 아이덴티티(`DATA_DIR/gateways/<id>/`)·브리지 토큰이 따로고, 모든 플러그인은 같은 `/bridge` 주소로 붙어 토큰으로 갈린다. 어댑터 계약은 연결 id 를 싣고(OpenClaw 는 에이전트의 Gateway, 러너는 러너 토큰) 서버는 런·정본·승인·대기열을 「연결 id + 세션 키」로 가른다 — 세션 키 꼴은 그대로다.
   **에이전트** — 정체는 「Gateway + Gateway 안 id」라 Gateway 마다 `main` 이 있어도 되고, 채널에서 부르는 핸들은 워크스페이스에서 유일하다. 가져오기는 Gateway 를 고르고, Gateway 를 지우면 그 에이전트는 남아 owner 가 「Gateway 옮기기」로 다른 Gateway 에 묶는다. 닫힌 연결의 열린 런은 `ADAPTER_UNAVAILABLE` 카드와 「다시 실행」으로 끝난다. 연결 점·배너·멘션 후보·운영 화면이 Gateway 이름을 단다.
   **확인 방법**: 서버 통합 `apps/server/test/multi-gateway.integration.test.ts`(가짜 Gateway·플러그인 둘 — 같은 id 두 에이전트·같은 승인 id·대기열 독립·두 Gateway 사이 릴레이·삭제 → 옮기기 → 다시 실행·첨부 범위·프롬프트 동기화·끄기/켜기) · 어댑터 연결 관리자 단위 · 웹 단위 · 태스크마다 독립 리뷰(변이)·수정·범위 재리뷰 · `dev:fake`(가짜 Gateway 둘) 위 브라우저 7항목 — 결함 넷은 고쳐 다시 봤다 · 실연 `docs/guides/live-smoke.md` 「멀티 Gateway 실연」 절(실물 dev Gateway 둘을 `OPENCLAW_HOME` 으로 갈라 띄움, 런 0회 하네스 12/12).
-- 어댑터: Claude Agent SDK 러너 → **완료(실연까지, 2026-09-29 — 모델 런 3회)** — 스펙 `docs/superpowers/specs/2026-09-27-claude-runner-design.md`(구현과 달라진 것은 스펙 「구현과 맞춘 것」 장), 계획 `docs/superpowers/plans/2026-09-27-claude-runner.md`(태스크 1~9), 실측 `docs/adr/0007-claude-agent-sdk-spike.md`, 설치 `docs/guides/docker-deploy.md` 「Claude 러너 설치」 절, 에이전트 쪽 `docs/guides/agent-guide.md` 「Claude 러너 에이전트」 절. → Codex app-server 러너 → Hermes(API 서버 경로).
+- 어댑터: Claude Agent SDK 러너 → **완료(실연까지, 2026-09-29 — 모델 런 3회)** — 스펙 `docs/superpowers/specs/2026-09-27-claude-runner-design.md`(구현과 달라진 것은 스펙 「구현과 맞춘 것」 장), 계획 `docs/superpowers/plans/2026-09-27-claude-runner.md`(태스크 1~9), 실측 `docs/adr/0007-claude-agent-sdk-spike.md`, 설치 `docs/guides/docker-deploy.md` 「러너 설치」 절, 에이전트 쪽 `docs/guides/agent-guide.md` 「Claude 러너 에이전트」 절. → Codex app-server 러너 → Hermes(API 서버 경로).
   **러너** — 사람의 머신에서 `dodok-runner`(`packages/claude-runner`)가 Claude Agent SDK 로 Claude Code 를 그 머신의 작업 디렉터리에서 돌리고, 서버 `/runner`(Socket.IO 네임스페이스, 러너 토큰 `drn_`)로 나가는 연결 하나로 붙는다. 서버는 에이전트의 `provider`(`openclaw`·`claude`)로 어댑터를 고르고(`AdapterRegistry`), 한 채널에서 두 종류 에이전트가 서로 @멘션 릴레이한다. 런 하나 = `query()` 하나, 채널 규칙은 틀을 입힌 `systemPrompt.append`(`snapshot: false` — 매 런), 턴 사실은 `UserPromptSubmit` 훅, 카드·파일은 `mcp__dodok__post`(작업 디렉터리 안만, 파일은 macOS·Linux), 쓰기 도구는 도구 승인 카드(10분 기한). 운영 화면은 러너 런의 토큰·금액을 보인다(구독이면 「환산 포함」).
   **확인 방법**: 패키지 테스트(가짜 `query`), 서버 통합 러너 시나리오(가짜 러너 WS), dev:fake 가짜 러너 위 브라우저 11/11, 런 0회 하네스 12/12(`docs/guides/live-smoke.md` 「Claude 러너 런 0회 하네스」 절 — 실제 서버·러너 설치본·번들 CLI + 로컬 가짜 Messages API), 전체 브랜치 최종 리뷰, 실연(같은 문서 「Claude 러너(Phase 4 ③) 실연」 절 — 모델 런 3회: 멘션·도구·스트리밍·운영 비용 통과, 채널 규칙을 바꾼 뒤 이어 간 세션은 옛 형식으로 답함 — 아래 이월 첫 줄).
 - 앱: Tauri 데스크톱(트레이·알림), Capacitor 모바일 또는 네이티브. 로드맵 `docs/superpowers/specs/2026-10-06-native-apps-roadmap.md` — 하위 프로젝트 넷 가운데 **서버: 네이티브 푸시와 기기 등록**은 아래대로 끝났고, 스파이크·데스크톱·모바일은 아직 스펙 전이다.
@@ -572,6 +573,11 @@ SQLite(WAL)로 시작, Drizzle ORM으로 스키마 정의해 Postgres 전환 시
   **에이전트** — 헤더 `다이렉트 메시지: @<주인> 님과 1:1`(shared `formatDmLine`)·참여자 주인 + 나·「DM 에는 릴레이가 없습니다 — @핸들은 글로만 남습니다.」, 「이 DM 의 지시」는 채널 프롬프트 자리, 러너는 DM 틀·턴 사실 `자리: DM`. 이 판은 플러그인 재설치(DM 줄), `dodok-runner` 는 그대로.
   **웹** — 사이드바 「다이렉트 메시지」 절·「DM 할 에이전트」 고르기·「DM 보내기」, `/dm/<에이전트 id>` → DM 채널 주소, DM 머리(「이 DM 의 지시」·「활동」), 세션 목록 날짜 묶음(브라우저 시간대), @ 후보 없음, 읽기 전용 사유 셋, 에이전트 설정 「DM 허용」.
   **확인 방법**: 서버 단위·통합(`apps/server/test/roles.matrix.test.ts` 의 남의 DM 사례 — 경로마다 404, `apps/server/test/integration/dms.test.ts` — 완료 기준 1~4, `conversations.test.ts` 의 DM ↔ 일반 채널 정본) · 태스크마다 독립 리뷰(변이)·수정·범위 재리뷰 · `dev:fake` 브라우저(독립 Chromium, owner·mia, 1280·390px — 결함 D1 고침) · 실연 `docs/guides/live-smoke.md` 「DM 실연」 절(실물 dev Gateway 2026.9.5·가짜 claude CLI·Claude 러너 하네스, 4/4, 모델 런 0).
+- 러너 일반화 → **완료(실연까지, 2026-10-30 — 모델 런 0회)** — 스펙 `docs/superpowers/specs/2026-10-25-runner-generalization-design.md`(구현과 달라진 것은 스펙 「구현과 맞춘 것」 장 — 계획 판정 PR1~PR11 포함), 계획 `docs/superpowers/plans/2026-10-29-runner-generalization.md`(태스크 1~7), 로드맵 `docs/superpowers/specs/2026-10-25-sessions-dm-runner-roadmap.md`(하위 프로젝트 C), 설치 `docs/guides/docker-deploy.md` 「러너 설치」 절, 사용법 `docs/manual/user-guide.md` 「러너 (admin 이상)」 절, 에이전트 쪽 `docs/guides/agent-guide.md` 「러너 에이전트」 절.
+  **천장과 앱** — 사람 머신의 `dodok-runner` 는 로컬 설정에 천장만 쥔다(허용 루트 `roots`·켜 둘 프로그램 `programs`·권한 상한 `maxPermissionMode`·허용 도구 상한·늘 막는 도구, 옛 `agents` 키는 「에이전트는 이제 앱에서 만듭니다 …」로 거절). 그 루트 안의 프로젝트(`runner_projects` — 루트 id·상대 경로만, 0031)와 러너 에이전트(프로그램·모델·권한 모드·허용 도구·지시)는 admin 이상이 설정 → 「러너」 탭·「에이전트」 탭에서 만든다. 러너는 무상태 — 서버가 `run.start` 에 에이전트 정의를 통째로 싣고 러너가 런마다 천장과 견준다, 어긋나면 `RUNNER_CEILING` 카드(`root`·`path`·`program`·`permissionMode`·`allowedTools`) + 「다시 실행」. 호스트 절대 경로는 서버로 가는 어떤 프레임·DB·로그·화면에도 없다(hello 의 루트는 `{ id, label }` 뿐).
+  **서버** — 제공자는 `openclaw`·`runner` 둘, 러너 안 프로그램은 `agents.program`(0030, 지금 드라이버는 `claude` — Claude Code 하나). 러너 프로토콜 2(옛 러너 `PROTOCOL_MISMATCH`), 둘러보기 `fs.list`·`project.check`(사용자당 분당 60), 에이전트 지시는 채널 규칙 앞 `<agent-instructions>` 틀로 매 런, 지시가 바뀌면(`instructions_revision`) 러너 세션을 새로 연다, 토큰 「다시 발급」(owner — 같은 러너의 원문만 바꾼다), 프로젝트 「옮기기」(다른 러너로 — 같은 루트 id·경로, 대상 천장 안). 「이 러너로 묶기」·러너 discover 는 걷었다 — 러너 에이전트는 만들 때부터 그 러너에 묶인다. 제어 도구는 러너 구성을 바꾸지 못한다(`update_agent` 는 러너 에이전트의 이름·아바타만). 0031 은 프로젝트 없는 옛 러너 에이전트를 보관한다 — 이 판은 `dodok-runner` 재설치·설정 바꾸기·에이전트 새로 만들기(`docs/guides/docker-deploy.md` 「업데이트」).
+  **웹** — 설정 「러너」 탭(러너 카드·프로젝트 줄·「프로젝트 추가」 둘러보기/직접 입력·옮기기·보관), 「에이전트 가져오기」의 「러너」 갈래(새로 만들기 — 상한까지의 권한 모드·상한 안의 허용 도구), 에이전트 줄의 「러너 설정 고치기」(admin 이상), DM 머리 「러너 · <프로그램> · <러너 라벨>」, 연결 페이지 러너 블록은 토큰(발급·다시 발급·폐기)·드러나는 것 넷·설치 안내만.
+  **확인 방법**: 서버 단위·통합(`apps/server/test/integration/runner-projects.test.ts` — 완료 기준 1~4 의 서버 쪽, `roles.matrix.test.ts` 의 러너 경로) · 러너 단위(천장·둘러보기·hello 에 경로 없음) · 태스크마다 독립 리뷰(변이)·수정·범위 재리뷰 · `dev:fake` 브라우저(독립 Chromium, owner·mia, 1280·390px — 결함 D1·D2 고침) · 실연 `docs/guides/live-smoke.md` 「러너 일반화 실연」 절(실제 러너 설치본·번들 CLI·가짜 Messages API, 6/6, 모델 런 0 — 그 절의 CLI `cwd`·절대 경로 기준이 완료 기준 1·4 의 유일한 실물 근거). 테스트 6765(web 2158·server 3176·shared 540·openclaw-adapter 317·claude-runner 299·plugin 178·runner-adapter 97).
 - 에이전트 내부 위임 결과 요약 게시, 채널 템플릿.
 
 ### 다음 순서 — 실사용 (2026-10-19 결정)
@@ -582,9 +588,9 @@ Phase 4 의 남은 확장(Codex·Hermes 어댑터 등)보다 실제로 써 보�
 2. **쓰면서 나온 수정·기능을 구현한다.** 원인이 분명한 결함은 바로 고치고, 설계가 필요한 기능은 브레인스토밍·스펙을 거친다. 미루는 것은 아래 「이월」에 적는다.
 3. **데스크톱·모바일 앱을 만들고 배포한다.** 로드맵 `docs/superpowers/specs/2026-10-06-native-apps-roadmap.md` 의 스파이크·데스크톱·모바일 하위 프로젝트다. 앱은 배포된 웹을 감싸므로 1·2 로 웹이 안정된 뒤에 시작한다. Xcode·실기기·스토어 계정처럼 사람이 가진 도구가 필요하다.
 
-### 이월 — 남은 문제(에이전트 DM 뒤 시점, 2026-10-27)
+### 이월 — 남은 문제(러너 일반화 뒤 시점, 2026-10-30)
 
-Phase 1 ①·②, Phase 2 ①·②·③·④, Phase 3 ①·②·③·④, Phase 4 ①·②·③·멀티 Gateway·설정 통합·채널 보관·읽지 않음·리액션·자동화·서버 네이티브 푸시·제어 MCP·채널 세션·에이전트 DM 을 돌면서 「고치지 않고 알고 넘긴 것」을 한곳에 모았다. 상세 근거는 각 줄에 적은 문서에 있다. 위 Phase 2·3 항목과 겹치면 그쪽을 가리킨다.
+Phase 1 ①·②, Phase 2 ①·②·③·④, Phase 3 ①·②·③·④, Phase 4 ①·②·③·멀티 Gateway·설정 통합·채널 보관·읽지 않음·리액션·자동화·서버 네이티브 푸시·제어 MCP·채널 세션·에이전트 DM·러너 일반화를 돌면서 「고치지 않고 알고 넘긴 것」을 한곳에 모았다. 상세 근거는 각 줄에 적은 문서에 있다. 위 Phase 2·3 항목과 겹치면 그쪽을 가리킨다.
 Phase 1 이 남긴 아홉(서버 넷·웹 넷·`wire-cli` typecheck)은 Phase 2 ① 태스크 0·1 에서, Phase 2 ① 이 남긴 초점·타이머 셋(D6 카운트다운 어긋남 · 자리값 소요가 계속 흐름 · 넓은 화면 「설정 닫기」 초점)은 Phase 2 ② 태스크 8 에서 정리해 지웠다.
 Phase 2 ② 가 남긴 「`media` 이미지를 크게 볼 수 없다」·「`media`·`file` 문구 비대칭」은 Phase 2 ③ 이 닫아 지웠다(크게 보기 `ImageViewer`, 세 블록이 해석기 하나로 「첨부를 찾을 수 없습니다」·「열 수 없는 링크입니다」를 같이 쓴다).
 Phase 2 ② 가 남긴 「`infra/` 가 없는데 두 문서가 있다고 말한다」는 Phase 3 ① 이 `infra/` 를 만들고 `docs/guides/project-structure.md` 를 고쳐 지웠다(`CLAUDE.md` 「명령」 줄은 조율자가 고친다).
@@ -735,7 +741,7 @@ Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-comp
 
 **문서화(Phase 3 ④, 2026-09-25)** — `docs/guides/agent-guide.md`. 아래 출처의 보고서는 `.superpowers/sdd/2026-09-25-docs/`(git 제외)에 있다.
 
-- **에이전트의 「기본 프롬프트」는 에이전트에게 닿지 않는데 화면이 그렇게 말하지 않는다** — `basePrompt` 는 저장·표시만 하고 인바운드에 싣지 않는다(서버 코어 스펙 `docs/superpowers/specs/2026-09-15-server-core-design.md` 의 에이전트 항목 — 의도한 것). 설정 → 에이전트 화면은 「기본 프롬프트 편집」만 보여 규칙을 적는 자리로 읽힌다. 가이드 「채널 프롬프트와 채널 지시」 표와 「흔한 실수」가 적었다. 사람 판단: 화면에 「에이전트에게 전달되지 않는 메모」라고 쓸지, 인바운드에 실을지. 출처: p3d-t1 보고서.
+- **OpenClaw 에이전트의 「기본 프롬프트」는 에이전트에게 닿지 않는데 화면이 그렇게 말하지 않는다** — OpenClaw 에이전트의 `basePrompt` 는 저장·표시만 하고 인바운드에 싣지 않는다(러너 에이전트에게는 지시로 매 런 간다 — 아래 「러너 일반화」 묶음의 칸 이름 줄. 서버 코어 스펙 `docs/superpowers/specs/2026-09-15-server-core-design.md` 의 에이전트 항목 — 의도한 것). 설정 → 에이전트 화면은 「기본 프롬프트 편집」만 보여 규칙을 적는 자리로 읽힌다. 가이드 「채널 프롬프트와 채널 지시」 표와 「흔한 실수」가 적었다. 사람 판단: 화면에 「에이전트에게 전달되지 않는 메모」라고 쓸지, 인바운드에 실을지. 출처: p3d-t1 보고서.
 - **붙여 넣을 블록의 효과를 재지 않았다** — 블록이 모델에게 `ask_user` 대신 `components` 카드를 고르게 하는지(components 실연에서 모델은 `ask_user` 를 먼저 골랐다 — `docs/guides/live-smoke.md` 「components v1(Phase 2 ②) 실물 확인」 절)는 모델 런이 필요하다. 다음 실연 몫. 출처: p3d-t1 보고서.
 - **블록 산문 속 제약 숫자는 테스트 밖이다** — 예시 JSON 은 `agent-guide-examples.test.ts` 가 계약으로 잠그지만, 붙여 넣을 블록과 표의 숫자(버튼 5·옵션 25·칸 5·20 MiB 등)와 모델용 `COMPONENTS_DESCRIPTION` 은 사람이 맞춘다. 계약 숫자를 바꾸면 세 자리(`ComponentsV1`·`COMPONENTS_DESCRIPTION`·가이드)를 함께 고친다. 출처: p3d-t1 보고서.
 - **`AGENTS.md` 를 고친 뒤 새 세션이 필요하다는 것은 문서 근거다** — OpenClaw 문서 「Agent workspace」(세션 시작 때 읽는다)와 claude-cli 가 시스템 프롬프트를 세션 시작 때 고정한다는 ADR 0003 에서 끌어낸 것이고, `AGENTS.md` 로 직접 재지는 않았다. 출처: p3d-t1 보고서.
@@ -784,26 +790,25 @@ Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-comp
   - **실제 멘션 푸시 알림 표시** — dev 웹은 서비스 워커가 꺼져 있어 브라우저 검증은 서버의 발송 시도(가짜 구독으로 `push send failed … ECONNREFUSED` 1건)와 「그 채널을 보고 있으면 거름」까지만 봤다. 서비스 워커가 켜진 빌드본 + 실제 FCM 으로 사람 둘 사이의 멘션 알림이 뜨는지는 `docs/guides/live-smoke.md` 「PWA·푸시(Phase 2 ④) — 푸시 확인 절차」 절의 사람 몫과 함께 본다.
   - **채널 별칭** — 위 「별칭·공개 범위」 줄. UI 가 생기면 member 로 한 번 본다.
 
-**Claude 러너(Phase 4 ③, 2026-09-29)** — 스펙 `docs/superpowers/specs/2026-09-27-claude-runner-design.md` 「열린 문제」·「구현과 맞춘 것」 장, ADR 0007 「확인 못 한 것」, 설치 `docs/guides/docker-deploy.md` 「Claude 러너 설치」 절. 아래 출처의 보고서·리뷰(p4c-t*·p4c-final)와 원장은 `.superpowers/sdd/2026-09-27-claude-runner/`(git 제외)에 있다.
+**Claude 러너(Phase 4 ③, 2026-09-29)** — 스펙 `docs/superpowers/specs/2026-09-27-claude-runner-design.md` 「열린 문제」·「구현과 맞춘 것」 장, ADR 0007 「확인 못 한 것」, 설치 `docs/guides/docker-deploy.md` 「러너 설치」 절. 아래 출처의 보고서·리뷰(p4c-t*·p4c-final)와 원장은 `.superpowers/sdd/2026-09-27-claude-runner/`(git 제외)에 있다.
 
-- **러너 세션은 채널 규칙이 바뀌면 세션 이력을 잃는다** — 서버가 리비전이 바뀐 뒤 첫 런을 새 Claude 세션으로 연다(「최근 대화」 인용 밖의 앞 도구 결과·긴 작업 문맥이 사라진다). 리비전은 채널 하나라 한 에이전트의 채널 지시만 바꿔도 그 채널의 모든 러너 세션이 새로 시작한다. 이력을 살리는 길은 ADR 0007 「규칙이 바뀐 뒤 이어 간 세션」 절의 ⓑ′(규칙이 바뀐 뒤 첫 런에만 시스템 쪽 틀 안에 알림 — 세션 행에 「마지막으로 실은 리비전」 열이 필요하고, 의심 없이 따르는지 모델 런으로 재야 한다), 에이전트만 좁히려면 세션 행이 채널 지시의 리비전을 따로 기억해야 한다. 값을 되돌려 저장해도(A→B→A) 새로 시작한다. 채널 지시·릴레이 정책 변경이 새 세션으로 이어지는 통합 테스트는 없다(채널 프롬프트 변경만 있다 — 코드는 같은 리비전을 본다). 미룬 까닭: 새 세션은 새 규칙을 따른다는 것만 확실하고, ⓑ′ 는 모델 런이 드는 판단이다.
+- **러너 세션은 채널 규칙이나 에이전트 지시가 바뀌면 세션 이력을 잃는다** — 서버가 리비전(채널 리비전 또는 에이전트 지시 리비전)이 바뀐 뒤 첫 런을 새 Claude 세션으로 연다(「최근 대화」 인용 밖의 앞 도구 결과·긴 작업 문맥이 사라진다). 리비전은 채널 하나라 한 에이전트의 채널 지시만 바꿔도 그 채널의 모든 러너 세션이 새로 시작한다. 이력을 살리는 길은 ADR 0007 「규칙이 바뀐 뒤 이어 간 세션」 절의 ⓑ′(규칙이 바뀐 뒤 첫 런에만 시스템 쪽 틀 안에 알림 — 세션 행에 「마지막으로 실은 리비전」 열이 필요하고, 의심 없이 따르는지 모델 런으로 재야 한다), 에이전트만 좁히려면 세션 행이 채널 지시의 리비전을 따로 기억해야 한다. 값을 되돌려 저장해도(A→B→A) 새로 시작한다. 채널 지시·릴레이 정책 변경이 새 세션으로 이어지는 통합 테스트는 없다(채널 프롬프트 변경만 있다 — 코드는 같은 리비전을 본다). 미룬 까닭: 새 세션은 새 규칙을 따른다는 것만 확실하고, ⓑ′ 는 모델 런이 드는 판단이다.
 - **러너를 `SIGKILL` 로 죽이면 CLI 가 고아로 남아 그 턴을 끝까지 돈다** — 러너 프로세스만 죽고 CLI 가 API 스트림을 끝까지 받아 답을 세션 전사에 남긴다. 모델이면 아무도 못 볼 답에 비용이 들고, 「다시 실행」의 `resume` 요청에 채널에 없던 답이 이력으로 실린다. 덮개 닫기·서버 끊김은 러너가 `interrupt()` 하므로 해당하지 않는다. 출처: `docs/guides/live-smoke.md` 「Claude 러너 런 0회 하네스」 절. 미룬 까닭: 러너 프로세스가 갑자기 죽을 때만이다 — 사람이 두기로 정했다. 고칠 길은 CLI 를 러너와 함께 끝나게 묶거나, 다음 런 시작 때 그 세션의 남은 CLI 를 찾아 끝내기.
 - **`runner_down` 은 이 서버 프로세스에서 붙은 적 있는 토큰만 본다** — 서버 재시작 뒤 한 번도 안 붙은 러너는 사건이 없다.
-- **업그레이드 직후 러너 묶임이 재시작 순서로 굳는다** — 러너 토큰 묶기가 들어오기 전의 묶이지 않은 Claude 에이전트는 서버 재시작 뒤 그 id 를 알리며 **먼저 다시 붙은** 러너 토큰에 묶인다(hello 의 `claimUnbound`). 같은 id 를 두 러너가 알리던 배포라면 재시작 전에 맡던 러너와 다른 쪽으로 굳을 수 있다. 연결 페이지 「이 러너로 묶기」로 되돌린다(`docker-deploy.md` 「Claude 러너 설치」 「드러나는 것」). 고칠 길: 그 id 를 알리는 연결 러너가 하나뿐일 때만 묶고, 둘 이상이면 묶지 않은 채 두 카드 모두에 묶기 버튼(웹의 「묶임 없는 충돌엔 버튼 없음」 규칙도 함께 바뀐다). 또 다른 탭·사용자의 에이전트 목록 러너 라벨은 다시 받기 전까지 옛 값이다(에이전트 변경은 wire 로 밀지 않는 기존 관례). 출처: cd-run 리뷰 M2·M5.
 - **경로 가림이 못 알아보는 모양** — `-I/…`, `file://localhost/…`, 잘린 JSON 폴백 안 `\/`, 작업 디렉터리 밖 공백 든 경로의 꼬리, Windows 경로, 가린 키가 겹칠 때 뒤 것만 남음. 목록은 `packages/claude-runner/src/mask.ts` 머리 주석 「보지 않는 것」. 거꾸로 작업 디렉터리 밖 절대 경로는 시스템 경로도 가린다 — 활동 탭 도구 결과에서 셰뱅 `#!/bin/sh` 가 `#!<작업 디렉터리 밖>` 으로 보인다(실연). 모델은 원문을 받는다.
 - **채널 규칙 틀 이스케이프의 닮은꼴 《(U+300A)** 는 `&lt;` 로 바꾸지 않는다.
 - **사람이 중지한 런은 러너가 `run.final` 을 보낼 때까지 그 런 첨부의 읽기 허락이 남는다** — 이미 받은 그 런의 첨부뿐이다. 고칠 길: `mayReadAttachment` 가 중지된 런을 건너뛴다.
 - **`sessionExists` 가 요약 없는 세션을 「없음」으로 본다** — 그때는 CLI 의 「이미 있는 세션」 거절 뒤 `resume` 재시도가 받친다. 실연에서도 실제 모델 세션이 어느 길로 이어졌는지 가리지 못했다 — `sessionExists` 결과도 재시도도 러너 로그에 남지 않는다(하네스 설치본의 `resume` 은 재시도 없이 `--resume` 한 번). 고칠 길: 러너 「런 시작」 줄에 `resume`·재시도 여부(`packages/claude-runner/src/drivers/claude/run.ts` 의 `runOnce`).
 - **승인 요약의 가운데 생략에 명령을 묻을 수 있다** — 생략 표시는 늘 보이지만 카드에서 전체를 볼 길(도구 인자 전체 보기)이 없다. `\p{Mn}`·`\p{Co}`·`\p{Cn}`·외톨이 서로게이트는 이스케이프하지 않는다(효과 없음 확인). 부류 이스케이프 탓에 정당한 전각 공백·NBSP·ZWNJ 도 `\u{…}` 로 보인다.
 - **`artifact://` 이름의 공백** — SDK MCP 층이 핸들러 전에 검사해, 모델이 공백 든 이름을 인코딩하지 않으면 입력 오류다(도구 설명에 「공백은 퍼센트 인코딩」). 모델이 따르는지는 모른다 — 실연은 `post` 를 모델로 보지 않았다.
-- **연결 페이지 로그인 명령이 `claude` 가 PATH 에 있다고 가정한다** — 러너 tgz 는 번들 CLI 를 품지만 PATH 에 두지 않는다. `docker-deploy.md` 「Claude 러너 설치」에 번들 CLI 경로 명령을 적었다. 고칠 길: 웹 안내에 같은 대안 한 줄, 또는 `dodok-runner login` 하위 명령.
-- **러너 로그에 런마다 SDK 경고 `CLAUDE_SDK_CAN_USE_TOOL_SHADOWED`(mcp__dodok__post)** — 의도한 미리 허용이라 해롭지 않다.
+- **연결 페이지 로그인 명령이 `claude` 가 PATH 에 있다고 가정한다** — 러너 tgz 는 번들 CLI 를 품지만 PATH 에 두지 않는다. `docker-deploy.md` 「러너 설치」에 번들 CLI 경로 명령을 적었다. 고칠 길: 웹 안내에 같은 대안 한 줄, 또는 `dodok-runner login` 하위 명령.
+- **러너 로그에 런마다 SDK 경고 `CLAUDE_SDK_CAN_USE_TOOL_SHADOWED`(`mcp__dodok__post` 와 제어 도구 스물다섯을 늘어놓는 한 줄)** — 의도한 미리 허용이라 해롭지 않다.
 - **채널 규칙 변경 뒤 앞 세션 전사가 러너 머신에 남는다** — 서버는 새 UUID 를 정할 뿐 러너에 알리지 않는다(스펙 2장대로). 닫은 dodok 세션의 Claude 세션 전사도 그대로 남는다(세션은 지우지 않는다). 지우려면 러너가 SDK `deleteSession`.
 - **발급 조각·연결 페이지 설정 예시의 `serverUrl` 이 공개 주소 파생**(dev 에서는 웹 오리진) — 기존 이월 「발급 조각 bridgeUrl 이 공개 주소 파생」과 같은 줄기. dev 에서 그 주소로 붙으면 `/runner/attachments` 가 Vite 프록시에 없어 첨부 HTTP 만 실패할 것이다(재지 않음).
-- **웹 몇 가지** — run_error 카드가 서버 코드를 그대로 보인다(OpenClaw 도 같다) · member 에게도 「중지」 버튼(역할 매트릭스상 대화는 누구나) · 390px 에서 설치 명령 `<pre>` 가 자체 가로 스크롤로 파일 이름 끝이 가려진다 · 에이전트 등록의 「러너 없음」 안내는 discover 목록이 비었는지로 가른다 · 러너 토큰 파일 경로·serverUrl 규칙이 웹에 한 번 더 적혀 있다 · `docker-deploy.md` 러너 절과 웹 설치 명령을 대조하는 테스트가 없다.
+- **웹 몇 가지** — run_error 카드가 서버 코드를 그대로 보인다(OpenClaw 도 같다) · member 에게도 「중지」 버튼(역할 매트릭스상 대화는 누구나) · 390px 에서 설치 명령 `<pre>` 가 자체 가로 스크롤로 파일 이름 끝이 가려진다 · 러너 토큰 파일 경로·serverUrl 규칙이 웹에 한 번 더 적혀 있다 · `docker-deploy.md` 러너 절과 웹 설치 명령을 대조하는 테스트가 없다.
 - **테스트 빈틈 몇** — 러너 「자기 업로드」 판정의 `uploaderType` 조건 · 토큰 폐기 시나리오의 「폐기된 러너는 멈춘다」 단언이 러너 규칙이 아니라 서버 인증을 본다 · 스레드 런에서 non-OpenClaw 어댑터의 `supports()` · provider 가 바뀐 에이전트 행은 API 로 만들 수 없어 테스트만 DB 로 바꾼다 · 러너 프레임 버킷 밖 승인 요청의 누계를 무효 요청이 쓰지 않는다는 것(누계 증가 위치, cd-run 재리뷰 3 nit ①) · 웹 테스트 플레이크 — `activity.test.tsx` 에서 tiptap `Editor.destroy` 가 환경 해체 뒤 `window is not defined`(다시 돌리면 통과).
 - **스펙 「열린 문제」** — SDK 라이선스(러너 공개 배포는 법무 판단), 계정 이메일을 문맥에서 빼는 법, 읽기 전용 Bash 자동 허용의 경계·`PreToolUse` 훅, 서버 호스트 안 러너. 미룬 까닭: 이번 범위 밖.
-- **사람이 볼 것** — 실제 러너 머신에서 `npm install -g` 부터 로그인·실행까지(`docker-deploy.md` 「Claude 러너 설치」).
+- **사람이 볼 것** — 실제 러너 머신에서 `npm install -g` 부터 로그인·실행까지(`docker-deploy.md` 「러너 설치」).
 
 **멀티 Gateway(2026-10-05)** — 스펙 `docs/superpowers/specs/2026-10-04-multi-gateway-design.md` 「열린 문제」·「구현과 맞춘 것」 장. 아래 출처의 보고서·리뷰(t*·c*)와 원장은 `.superpowers/sdd/2026-10-04-multi-gateway/`(git 제외)에 있다.
 
@@ -919,8 +924,26 @@ Phase 2 ② 의 출처(c2-t*)는 실행 원장 `.superpowers/sdd/2026-09-21-comp
 - **390px 사이드바 시트의 DM 절이 실제로 스크롤되는지는 못 봤다** — DM 5줄이 390×500 안에 다 들어가 넘침을 못 만들었다. DM nav 가 채널 nav 와 같은 스크롤 상자 안인 것만 확인했다. 출처: t6 보고 3장.
 - **실물로 못 본 것** — 실제 모델로 DM 의 헤더·DM 틀을 어떻게 읽는지(위 첫 두 줄), 원격 Gateway 판의 DM(`docs/guides/live-smoke.md` 「DM 실연」 절 「사람이 볼 것」).
 
+**러너 일반화(2026-10-30)** — 스펙 `docs/superpowers/specs/2026-10-25-runner-generalization-design.md` 「구현과 맞춘 것」·「열린 문제·후속」 장. 아래 출처의 보고서·리뷰(t1~t7)는 `.superpowers/sdd/2026-10-29-runner-generalization/`(git 무시 — 메인 체크아웃에만 있다).
+
+- **REST 로 넣은 러너 에이전트의 `disallowedTools` 는 화면 어디에도 보이지 않는다** — 만들기·고치기에 칸이 없다(서버 기본 `[]`). 출처: t5 보고 3장 6.
+- **서버는 러너가 보낸 글을 다시 가리지 않는다** — `run.error.message`·도구 인자·루트 라벨·프로그램 사유의 호스트 경로 가림은 러너 sink 한 겹이다. 출처: t3 리뷰 L4.
+- **지시 틀 문장이 「This Claude Code session …」으로 고정이다** — 다음 드라이버(Codex·OpenCode) 때 프로그램 이름으로. 자리: `packages/shared/src/runner/prompt.ts` 의 `agentInstructionsBlock`. 출처: t3 리뷰 L5.
+- **`serverSessionIds` 없는 프로그램의 런이 옮기는 순간 옛 러너에서 돌면** 늦은 `run.session` 이 옮기기가 비운 세션 칸을 다시 채운다 — 이번 드라이버는 해당 없음, 다음 드라이버 때. 출처: 태스크 4 리뷰.
+- **JSON 도구 인자의 경로 키 값이 `<작업 디렉터리>/~/…` 이면** sink 의 두 번째 가림이 드라이버가 가린 `~/` 를 「밖」 표지로 바꾼다(활동 탭 표시만 — 경로는 새지 않는다). 출처: t2 재리뷰 N1.
+- **러너 `files.ts`(`post` 의 파일)는 아직 JS `realpathSync`** — 대소문자만 틀린 파일 이름은 안전한 쪽으로 거절한다(루트·작업 디렉터리·둘러보기는 `realpathSync.native`). 출처: t2 수정 보고.
+- **OpenClaw 에이전트 줄이 390px 에서 깨진다(O1, 이 판 전부터)** — 머리 줄의 「DM 보내기·Gateway 옮기기·삭제」 버튼 셋이 폭을 먹어 이름 칸이 한 글자 폭으로 세로로 쌓이고 켜기 스위치가 오른쪽 밖으로 나간다. 출처: t6 보고 5장.
+- **같은 라벨의 프로젝트 둘이면 접근성 이름이 같다(O2)** — `src/dodok` 와 `src/.config/dodok` 가 둘 다 「dodok」이라 줄 `aria-label`·「dodok 확인」 등이 겹친다(화면 글은 자리로 갈린다). 줄·버튼 이름에 자리를 넣을지. 출처: t6 보고 5장.
+- **옮기기 실패(대상 러너 끊김)·보관 실패 뒤 초점이 body 로 떨어질 수 있다** — 옮기기 실패는 잠긴 「옮기기」에 초점을 주는데 대상이 끊겨 `picked` 가 사라지면 버튼이 잠긴 채다, 보관 실패는 초점을 되돌리지 않는다(이 판 전부터). 잠기지 않는 요소(오류 줄·대화상자 내용)로 옮긴다(`docs/guides/browser-verification.md` 「이 저장소에서 달라지는 것」의 초점 항목). D1 고침은 jsdom 시험이 잡지 못한다 — 회귀 시험이 없다. 출처: t6 리뷰 L2·L3.
+- **옛 러너 에이전트의 핸들은 보관된 그 에이전트가 쥔다** — 0031 이 보관한 에이전트의 핸들(`coder` 등)로 새 러너 에이전트를 만들 수 없고 화면에 핸들 바꾸기가 없다(REST `PATCH /agents/:id { handle }` 는 된다). 출처: t7 문서 작업.
+- **러너 탭의 로그인 상태는 로그인한 머신에서도 「로그인 모름」이다** — Claude Code 드라이버의 `detect` 가 자격 증명을 읽지 않고 로그인 디렉터리가 있으면 `unknown` 이다(없으면 「로그인 안 됨」). 출처: t7 실연(`docs/guides/live-smoke.md` 「러너 일반화 실연」 절 「새로 찾은 것」).
+- **러너 에이전트의 지시를 고치는 칸 이름이 둘이다** — 만들 때는 「지시」, 에이전트 줄에서는 OpenClaw 와 같은 「기본 프롬프트 편집」(같은 `base_prompt`). OpenClaw 에이전트에게는 기본 프롬프트가 닿지 않는다는 기존 이월(「에이전트의 「기본 프롬프트」는 에이전트에게 닿지 않는다」)과 함께 화면 안내를 정할 거리. 출처: t7 문서 작업.
+- **러너 코드 주석에 옛 카드 문구가 남았다** — `packages/claude-runner/src/drivers/claude/stream-map.ts` 의 `PROVIDER_AUTH` 주석이 「러너의 Claude 로그인을 확인하세요」(지금 카드는 「러너의 Claude Code 로그인을 확인하세요」). 출처: t7 `git grep`.
+- **실물로 못 본 것** — 실제 모델이 `<agent-instructions>` 틀을 따르는지, 실제 로그인 머신의 hello `auth`, 원격 서버에서의 「러너」 탭(실연은 로컬 서버 소스 실행).
+
 **실물 확인**
 
+- **러너 일반화를 실제 러너 설치본·번들 CLI 로 본 것은 실연(`docs/guides/live-smoke.md` 「러너 일반화 실연」 절 — 가짜 Messages API, 모델 런 0회)이다.** 앱에서 만든 프로젝트 디렉터리에서 CLI 가 도는 것(`cwd` 세 방법)·지시 틀·천장 카드 넷·옛 설정 거절·DB 와 서버 로그에 러너 머신 절대 경로 없음을 그 절이 본다.
 - **에이전트 DM 을 실물 dev Gateway(2026.9.5)로 본 것은 실연(`docs/guides/live-smoke.md` 「DM 실연」 절 — 가짜 claude CLI·Claude 러너 하네스, 모델 런 0회)이다.** OpenClaw·러너 에이전트가 받는 DM 줄·참여자·릴레이 줄·「이 DM 의 지시」의 자리, 러너의 DM 틀·턴 사실, DM 런의 대화 밖 전송 거절을 그 절이 본다. 원격 Gateway 판과 실제 모델로는 아직 안 봤다.
 - **채널 세션을 실물 dev Gateway(2026.9.5)로 본 것은 실연(`docs/guides/live-smoke.md` 「채널 세션 실연」 절 — 가짜 claude CLI·Claude 러너 하네스, 모델 런 0회)이다.** 대화 id 키의 두 세션이 따로 맥락을 갖는 것·message 툴 호출의 세션 키·대화 밖 전송 거절·마이그레이션 뒤 「이전 대화」 이어짐을 그 절이 본다. 원격 Gateway 판과 실제 모델로는 아직 안 봤다.
 - 네이티브 푸시를 실제 APNs·FCM·기기로 본 적은 없다(위 이월). 서버 쪽 통로·자격 증명 읽기·기기 등록·운영 사건은 가짜 APNs·FCM 통합 테스트까지만 안다.
