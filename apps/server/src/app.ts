@@ -62,7 +62,7 @@ import { monotonicNow, TokenBucket } from "./modules/ops/ratelimit";
 import { registerOpsRoutes } from "./modules/ops/routes";
 import { buildOpsStatus, type OpsStatusContext } from "./modules/ops/status";
 import { getOpsSettings } from "./modules/ops/settings";
-import { providersWithAgents } from "./modules/ops/summary";
+import { programsWithAgents } from "./modules/ops/summary";
 import type { OpsService } from "./modules/ops/service";
 import { loadFcmCredentials } from "./modules/push/fcm-credentials";
 import { createPresence } from "./modules/push/presence";
@@ -146,7 +146,7 @@ export type AppDeps = {
   pluginDirs?: string[];
   /**
    * 앱이 실제 러너 어댑터(`/runner`, createRunnerAdapter)를 만들어 레지스트리에 올린다. 기본은 adapters 를 주지 않았을 때만 —
-   * 테스트는 FakeAdapter 곁에 켠다. adapters 에 이미 claude 가 있으면 만들지 않는다
+   * 테스트는 FakeAdapter 곁에 켠다. adapters 에 이미 runner 가 있으면 만들지 않는다
    */
   runnerAdapter?: boolean;
   /** 품은 러너 tgz 를 찾을 디렉터리(기본 runnerDirCandidates) — 테스트가 임시 디렉터리나 []를 준다 */
@@ -334,11 +334,11 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
           }),
         ];
     // Claude 러너(러너 스펙 2장) — 사람 머신의 러너가 /runner 로 붙어 온다. 최종 답·post 는 OpenClaw 정본과 같은 자리로 저장한다
-    // 러너 첨부 GET 의 읽기 범위를 이 어댑터에 묻는다(판정 R5) — 어댑터가 없으면(테스트의 가짜 claude) 열린 런도 없다
+    // 러너 첨부 GET 의 읽기 범위를 이 어댑터에 묻는다(판정 R5) — 어댑터가 없으면(테스트의 가짜 runner) 열린 런도 없다
     let runnerAdapter: RunnerAdapter | undefined;
     if (
       (deps.runnerAdapter ?? deps.adapters === undefined) &&
-      !adapters.some((a) => a.provider === "claude")
+      !adapters.some((a) => a.provider === "runner")
     ) {
       runnerAdapter = createRunnerAdapter({
         io,
@@ -352,7 +352,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
         logger: logger.child({ mod: "runner-adapter" }),
         channelName: (channelId) => getChannel(db, channelId, workspaceId)?.name,
         onOutbound: async (message, connectionId) => {
-          const { messageId } = await orchestrator.onCanonical(message, "claude", connectionId);
+          const { messageId } = await orchestrator.onCanonical(message, "runner", connectionId);
           if (messageId === undefined) throw new Error("canonical store returned no message id");
           return { messageId };
         },
@@ -625,8 +625,8 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       logger.info("runner file not found — build it with pnpm -F @dodok/claude-runner run pack:runner");
     const publicUrl = bridgePublicUrl(config);
     const runnerDetail = () => {
-      const detail = registry.forProvider("claude")?.setupDetail();
-      return detail?.provider === "claude" ? detail.runners : [];
+      const detail = registry.forProvider("runner")?.setupDetail();
+      return detail?.provider === "runner" ? detail.runners : [];
     };
     const setupStatus = () =>
       buildSetupStatus({
@@ -745,9 +745,9 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     registerOpsRoutes(fastify, {
       ...opsStatusContext,
       auth,
-      // 붙어 있고 에이전트가 등록된 제공자 — 러너 어댑터는 늘 붙으므로, claude 에이전트가 없는 배포는 OpenClaw 만 쓰는 배포와 같다
-      providersInUse: () =>
-        providersWithAgents(
+      // 붙은 어댑터에 등록된 에이전트의 프로그램 — 러너 어댑터는 늘 붙으므로, 러너 에이전트가 없는 배포는 OpenClaw 만 쓰는 배포와 같다
+      programsInUse: () =>
+        programsWithAgents(
           db,
           workspaceId,
           adapters.map((adapter) => adapter.provider),
@@ -813,9 +813,9 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
     // 운영 사건(스펙 5.2·5.3·3.1 run_failed) — 위 system.notice 감시와 따로 돈다. 부팅 정리(recoverOnBoot)가 닫는 런도 센다
     const connections = watchConnections(openclaw, ops, deps.disconnectEventMs ?? DISCONNECT_EVENT_MS);
     undo.push({ step: "connections", run: () => connections.close() });
-    const claude = registry.forProvider("claude");
-    const runners = claude
-      ? watchRunners(claude, ops, {
+    const attachedRunner = registry.forProvider("runner");
+    const runners = attachedRunner
+      ? watchRunners(attachedRunner, ops, {
           isActiveToken: (tokenId) => isActiveRunnerTokenId(db, workspaceId, tokenId),
           delayMs: deps.disconnectEventMs ?? DISCONNECT_EVENT_MS,
         })

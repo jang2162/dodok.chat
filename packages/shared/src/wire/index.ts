@@ -138,7 +138,7 @@ export const AdapterStatus = z.discriminatedUnion("provider", [
   }),
   // runners — 지금 붙은 러너 수 / 폐기되지 않은 러너 토큰 수
   z.object({
-    provider: z.literal("claude"),
+    provider: z.literal("runner"),
     runners: z.object({ connected: z.int().min(0), tokens: z.int().min(0) }),
   }),
 ]);

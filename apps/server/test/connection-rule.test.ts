@@ -57,8 +57,8 @@ function seed() {
     agent("main-office", "openclaw", "main", { gatewayId: G1 }),
     agent("main-home", "openclaw", "main", { gatewayId: G2 }),
     agent("main-orphan", "openclaw", "main", {}),
-    agent("coder", "claude", "coder", { runnerTokenId: runner }),
-    agent("loose", "claude", "loose", {}),
+    agent("coder", "runner", "coder", { runnerTokenId: runner }),
+    agent("loose", "runner", "loose", {}),
   ];
   return { db, rows, runner };
 }
@@ -66,7 +66,7 @@ function seed() {
 describe("연결 규칙 — connectionIdOf(TS) 와 agentOnConnection(SQL)", () => {
   it("에이전트 꼴마다 같은 연결을 말한다 — 묶임 없는 러너 에이전트만 SQL 이 어느 러너의 것으로도 받는다", () => {
     const { db, rows, runner } = seed();
-    for (const provider of ["openclaw", "claude"] as const) {
+    for (const provider of ["openclaw", "runner"] as const) {
       for (const connection of [G1, G2, runner, "unknown", ""]) {
         const bySql = db
           .select({ handle: agents.handle })
@@ -78,7 +78,7 @@ describe("연결 규칙 — connectionIdOf(TS) 와 agentOnConnection(SQL)", () =
         const byTs = rows
           .filter((r) => r.provider === provider)
           .filter(
-            (r) => connectionIdOf(r) === connection || (provider === "claude" && r.runnerTokenId === null),
+            (r) => connectionIdOf(r) === connection || (provider === "runner" && r.runnerTokenId === null),
           )
           .map((r) => r.handle)
           .sort();
@@ -113,6 +113,6 @@ describe("연결 규칙 — connectionIdOf(TS) 와 agentOnConnection(SQL)", () =
       loose: null,
     });
     expect(connectionIdOf({ provider: "openclaw", gatewayId: null, runnerTokenId: runner })).toBeNull();
-    expect(connectionIdOf({ provider: "claude", gatewayId: G1, runnerTokenId: null })).toBeNull();
+    expect(connectionIdOf({ provider: "runner", gatewayId: G1, runnerTokenId: null })).toBeNull();
   });
 });

@@ -872,7 +872,7 @@ describe("캐시 패치", () => {
     queryClient.setQueryData(qk.agents, []);
     queryClient.setQueryData(qk.members(CH), []);
     queryClient.setQueryData(qk.members(CH2), []);
-    queryClient.setQueryData(qk.discoverOf("claude"), []);
+    queryClient.setQueryData(qk.discoverOf("runner"), []);
 
     fake.serverEmit("agents.changed", {});
 
@@ -881,7 +881,7 @@ describe("캐시 패치", () => {
     expect(queryClient.getQueryState(qk.members(CH))?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(qk.members(CH2))?.isInvalidated).toBe(true);
     // 고르는 중인 등록 대화상자의 목록을 다시 부르지 않는다(adapter.status 의 exact 와 같은 까닭)
-    expect(queryClient.getQueryState(qk.discoverOf("claude"))?.isInvalidated).toBe(false);
+    expect(queryClient.getQueryState(qk.discoverOf("runner"))?.isInvalidated).toBe(false);
   });
 
   it("people.changed: [people] 를 통째로 바꾼다", () => {
@@ -1010,16 +1010,16 @@ describe("캐시 패치", () => {
     const { fake, queryClient } = setup();
     const cached: AdapterStatusResponse = ADAPTER_OK;
     queryClient.setQueryData(qk.adapter, cached);
-    fake.serverEmit("adapter.status", { provider: "claude", runners: { connected: 0, tokens: 1 } });
+    fake.serverEmit("adapter.status", { provider: "runner", runners: { connected: 0, tokens: 1 } });
     expect(queryClient.getQueryData(qk.adapter)).toEqual(cached);
   });
 
   it("adapter.status(claude): 등록 화면의 러너 목록(discover)을 낡게 한다 — OpenClaw 것은 아니다", () => {
     const { fake, queryClient } = setup();
-    queryClient.setQueryData(qk.discoverOf("claude"), []);
+    queryClient.setQueryData(qk.discoverOf("runner"), []);
     queryClient.setQueryData(qk.discoverOf("openclaw"), []);
-    fake.serverEmit("adapter.status", { provider: "claude", runners: { connected: 1, tokens: 1 } });
-    expect(queryClient.getQueryState(qk.discoverOf("claude"))?.isInvalidated).toBe(true);
+    fake.serverEmit("adapter.status", { provider: "runner", runners: { connected: 1, tokens: 1 } });
+    expect(queryClient.getQueryState(qk.discoverOf("runner"))?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(qk.discoverOf("openclaw"))?.isInvalidated).toBe(false);
   });
 });

@@ -299,7 +299,11 @@ describe("부팅 정리 — 파일 DB 로 두 번 부팅", () => {
       expect(targets.get(FAKE_GATEWAY_ID)).toHaveLength(2);
 
       // OpenClaw 가 아닌 에이전트의 세션은 Gateway 에 없다 — 복구 대상이 아니다
-      app.db.update(agents).set({ provider: "claude" }).where(eq(agents.id, other.id)).run();
+      app.db
+        .update(agents)
+        .set({ provider: "runner", program: "claude" })
+        .where(eq(agents.id, other.id))
+        .run();
       expect(sessionRecoverTargets(app.db)).toEqual(
         new Map([
           [

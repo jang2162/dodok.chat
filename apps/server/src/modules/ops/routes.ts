@@ -9,6 +9,7 @@ import {
   OpsSettings,
   OpsSettingsPatch,
   OpsSeverity,
+  type RunnerProgram,
 } from "@dodok/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -24,8 +25,8 @@ import { runsSummary, usageTrustedAmong } from "./summary";
 
 export type OpsRouteContext = OpsStatusContext & {
   auth: Auth;
-  /** 쓰이는 제공자(붙은 어댑터 가운데 에이전트가 등록된 것) — 런 표의 usage 는 이 가운데 믿는 제공자만 합친다 */
-  providersInUse(): Iterable<string>;
+  /** 쓰이는 프로그램(붙은 어댑터에 등록된 에이전트의 것) — 런 표의 usage 는 이 가운데 믿는 프로그램만 합친다 */
+  programsInUse(): Iterable<RunnerProgram>;
   ops: Pick<OpsService, "list" | "ack" | "unacked" | "countsSince">;
 };
 
@@ -47,7 +48,7 @@ export function registerOpsRoutes(fastify: FastifyInstance, ctx: OpsRouteContext
       now: now(),
       ops: ctx.ops,
       workspaceId: ctx.workspaceId,
-      usageTrustedProviders: usageTrustedAmong(ctx.providersInUse()),
+      usageTrustedPrograms: usageTrustedAmong(ctx.programsInUse()),
     });
     return parseStored(OpsRunsSummary, summary, "ops runs summary");
   });

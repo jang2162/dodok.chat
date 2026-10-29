@@ -26,11 +26,15 @@ export type MembershipRole = z.infer<typeof MembershipRole>;
 export const Membership = z.object({ id: Id, workspaceId: Id, userId: Id, role: MembershipRole });
 export type Membership = z.infer<typeof Membership>;
 
-export const AgentProvider = z.enum(["openclaw", "claude", "codex", "hermes"]);
+/** 연결 방식 — Gateway(OpenClaw) 또는 사람 머신의 러너. 러너 안에서 무엇을 돌리는지는 `Agent.program`(러너 일반화 스펙 결정 6) */
+export const AgentProvider = z.enum(["openclaw", "runner"]);
 /** 누가 이 에이전트와 DM 을 여나(에이전트 DM 스펙 결정 4) — off 아무도, admins admin 이상, everyone 모든 활성 멤버 */
 export const DmAccess = z.enum(["off", "admins", "everyone"]);
 export type DmAccess = z.infer<typeof DmAccess>;
 export type AgentProvider = z.infer<typeof AgentProvider>;
+/** 러너가 돌리는 프로그램 — 드라이버가 있는 것은 claude 뿐이다 */
+export const RunnerProgram = z.enum(["claude", "codex", "opencode"]);
+export type RunnerProgram = z.infer<typeof RunnerProgram>;
 export const Agent = z.object({
   id: Id,
   workspaceId: Id,
@@ -48,7 +52,7 @@ export const Agent = z.object({
    */
   archivedAt: IsoDateTime.nullable(),
   /**
-   * Claude 러너 에이전트가 묶인 러너 토큰 — 그 토큰의 러너만 이 에이전트를 맡는다. REST 에이전트 응답에만 싣는다. 없으면 아직 묶이지
+   * 러너 에이전트가 묶인 러너 토큰 — 그 토큰의 러너만 이 에이전트를 맡는다. REST 에이전트 응답에만 싣는다. 없으면 아직 묶이지
    * 않았다(처음 알리는 러너에 묶인다). revoked 면 맡을 러너가 없다 — 연결 페이지에서 다른 러너에 다시 묶는다
    */
   runner: z.object({ tokenId: Id, label: z.string(), revoked: z.boolean() }).optional(),
@@ -58,6 +62,8 @@ export const Agent = z.object({
    */
   gateway: z.object({ id: Id, name: z.string() }).nullable().optional(),
   dmAccess: DmAccess.default("admins"),
+  /** 러너 에이전트의 프로그램 — 러너면 값, OpenClaw 면 null */
+  program: RunnerProgram.nullable().default(null),
 });
 export type Agent = z.infer<typeof Agent>;
 

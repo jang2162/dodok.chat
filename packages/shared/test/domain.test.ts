@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   Agent,
+  AgentProvider,
   Approval,
   ApprovalDecision,
   ApprovalKind,
@@ -42,6 +43,30 @@ describe("Agent.archivedAt", () => {
     expect(Agent.safeParse({ ...agent, archivedAt: NOW }).success).toBe(true);
     expect(Agent.safeParse(agent).success).toBe(false);
     expect(Agent.safeParse({ ...agent, archivedAt: "어제" }).success).toBe(false);
+  });
+});
+
+describe("Agent.provider·program(러너 일반화 스펙 결정 6)", () => {
+  const agent = {
+    id: ID(1),
+    workspaceId: ID(2),
+    provider: "runner",
+    providerAgentId: "coder",
+    handle: "coder",
+    name: "Coder",
+    enabled: true,
+    createdAt: NOW,
+    archivedAt: null,
+  };
+  it("제공자는 openclaw·runner 둘 — 옛 claude·codex·hermes 는 거절", () => {
+    expect(AgentProvider.options).toEqual(["openclaw", "runner"]);
+    for (const provider of ["claude", "codex", "hermes"])
+      expect(Agent.safeParse({ ...agent, provider }).success).toBe(false);
+  });
+  it("program 은 러너 프로그램 값이거나 null — 없으면 null", () => {
+    expect(Agent.parse({ ...agent, program: "claude" }).program).toBe("claude");
+    expect(Agent.parse({ ...agent, provider: "openclaw" }).program).toBeNull();
+    expect(Agent.safeParse({ ...agent, program: "runner" }).success).toBe(false);
   });
 });
 

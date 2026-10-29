@@ -150,7 +150,7 @@ export function watchConnections(
 }
 
 /**
- * 러너 어댑터(claude)의 붙은 러너를 토큰별로 보고(러너 스펙 5장), 이 프로세스에서 붙은 적이 있는 토큰이 delayMs 넘게 끊겨 있으면
+ * 러너 어댑터(runner)의 붙은 러너를 토큰별로 보고(러너 스펙 5장), 이 프로세스에서 붙은 적이 있는 토큰이 delayMs 넘게 끊겨 있으면
  * runner_down(key 토큰 id)을 열고 다시 붙으면 닫는다. 한 번도 안 붙은 토큰·끊긴 사이 폐기된 토큰은 사건을 남기지 않는다
  */
 export function watchRunners(
@@ -163,7 +163,7 @@ export function watchRunners(
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
   const observe = () => {
     const detail = adapter.setupDetail();
-    if (detail.provider !== "claude") return;
+    if (detail.provider !== "runner") return;
     const next = new Set(detail.runners.map((r) => r.tokenId));
     for (const tokenId of next) {
       if (connected.has(tokenId)) continue;

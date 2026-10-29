@@ -423,7 +423,7 @@ describe("운영 API /api/v1/ops", () => {
         const summary = OpsRunsSummary.parse(res.json());
         expect(summary.days).toBe(days);
         // OpenClaw 어댑터만 붙은 서버 — 믿는 제공자(claude)가 붙어 있지 않아 비고, 웹은 「측정 불가」를 보인다
-        expect(summary.usageTrustedProviders).toEqual([]);
+        expect(summary.usageTrustedPrograms).toEqual([]);
       }
       for (const query of ["?days=3", "", "?days=x", "?days=1.0"]) {
         const res = await call(owner, "GET", `/runs${query}`);

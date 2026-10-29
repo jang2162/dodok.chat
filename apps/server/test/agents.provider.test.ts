@@ -31,8 +31,8 @@ describe("createAgent — providerAgentId 는 같은 제공자 안에서 유일�
     const { db, workspaceId } = setup();
     createAgent(db, { workspaceId, providerAgentId: "dev", handle: "dev", name: "Dev" });
     expect(
-      createAgent(db, { workspaceId, provider: "claude", providerAgentId: "dev", handle: "dev2", name: "x" }),
-    ).toMatchObject({ provider: "claude", providerAgentId: "dev" });
+      createAgent(db, { workspaceId, provider: "runner", providerAgentId: "dev", handle: "dev2", name: "x" }),
+    ).toMatchObject({ provider: "runner", providerAgentId: "dev" });
   });
 
   it("같은 제공자의 같은 id 는 409(providerAgentId) — openclaw(같은 Gateway)·claude 둘 다", () => {
@@ -43,7 +43,7 @@ describe("createAgent — providerAgentId 는 같은 제공자 안에서 유일�
     ).toThrow(conflictOn("providerAgentId"));
     createAgent(db, {
       workspaceId,
-      provider: "claude",
+      provider: "runner",
       providerAgentId: "coder",
       handle: "coder",
       name: "C",
@@ -51,7 +51,7 @@ describe("createAgent — providerAgentId 는 같은 제공자 안에서 유일�
     expect(() =>
       createAgent(db, {
         workspaceId,
-        provider: "claude",
+        provider: "runner",
         providerAgentId: "coder",
         handle: "coder2",
         name: "x",
@@ -88,13 +88,13 @@ describe("createAgent — providerAgentId 는 같은 제공자 안에서 유일�
   });
 });
 
-describe("REST — claude 에이전트 등록과 discover?provider [P9]", () => {
+describe("REST — 러너 에이전트 등록과 discover?provider [P9]", () => {
   let app: App;
-  let claude: FakeAdapter<"claude">;
+  let claude: FakeAdapter<"runner">;
   let headers: { authorization: string };
 
   beforeAll(async () => {
-    claude = new FakeAdapter({ provider: "claude" });
+    claude = new FakeAdapter({ provider: "runner" });
     app = await bootTestApp({}, { adapters: [new FakeAdapter(), claude] });
     headers = (await login(app)).headers;
   });
@@ -110,15 +110,19 @@ describe("REST — claude 에이전트 등록과 discover?provider [P9]", () => 
       ...(payload === undefined ? {} : { payload }),
     });
 
-  it("provider claude 로 201, 빠지면 openclaw, 모르는 provider 는 400", async () => {
+  it("provider runner 로 201, 빠지면 openclaw, 모르는 provider 는 400", async () => {
     const coder = await api("POST", "/agents", {
-      provider: "claude",
+      provider: "runner",
       providerAgentId: "coder",
       handle: "coder",
       name: "Coder",
     });
     expect(coder.statusCode).toBe(201);
-    expect(Agent.parse(coder.json().agent)).toMatchObject({ provider: "claude", providerAgentId: "coder" });
+    expect(Agent.parse(coder.json().agent)).toMatchObject({
+      provider: "runner",
+      providerAgentId: "coder",
+      program: "claude",
+    });
 
     const dev = await api("POST", "/agents", {
       providerAgentId: "dev",
@@ -128,7 +132,8 @@ describe("REST — claude 에이전트 등록과 discover?provider [P9]", () => 
     });
     expect(dev.statusCode).toBe(201);
     expect(dev.json().agent.provider).toBe("openclaw");
-    // claude 에이전트에는 Gateway 키가 없다
+    expect(dev.json().agent.program).toBeNull();
+    // 러너 에이전트에는 Gateway 키가 없다
     expect(coder.json().agent).not.toHaveProperty("gateway");
 
     const codex = await api("POST", "/agents", {
@@ -138,6 +143,14 @@ describe("REST — claude 에이전트 등록과 discover?provider [P9]", () => 
       name: "Cx",
     });
     expect(codex.statusCode).toBe(400);
+    // 옛 제공자 이름(claude)은 runner 로 바뀌었다 — 받지 않는다
+    const old = await api("POST", "/agents", {
+      provider: "claude",
+      providerAgentId: "old",
+      handle: "old",
+      name: "Old",
+    });
+    expect(old.statusCode).toBe(400);
     expect(codex.json().code).toBe("VALIDATION");
   });
 
@@ -149,7 +162,7 @@ describe("REST — claude 에이전트 등록과 discover?provider [P9]", () => 
       gatewayId: FAKE_GATEWAY_ID,
     });
     const res = await api("POST", "/agents", {
-      provider: "claude",
+      provider: "runner",
       providerAgentId: "shared",
       handle: "shared2",
       name: "S2",
@@ -165,11 +178,11 @@ describe("REST — claude 에이전트 등록과 discover?provider [P9]", () => 
     expect(again.json()).toMatchObject({ code: "CONFLICT", details: { field: "providerAgentId" } });
   });
 
-  it("discover?provider=claude 는 claude 어댑터의 listAgents, 빠지면 openclaw(그 Gateway), 모르는 값은 400", async () => {
+  it("discover?provider=runner 는 러너 어댑터의 listAgents, 빠지면 openclaw(그 Gateway), 모르는 값은 400", async () => {
     const listed = [{ providerAgentId: "coder", name: "Coder", hint: "macbook · repo · sonnet" }];
     vi.spyOn(claude, "listAgents").mockResolvedValue(listed);
 
-    const fromClaude = await api("GET", "/agents/discover?provider=claude");
+    const fromClaude = await api("GET", "/agents/discover?provider=runner");
     expect(fromClaude.statusCode).toBe(200);
     expect(fromClaude.json()).toEqual({ agents: listed });
 
@@ -188,14 +201,14 @@ describe("REST — claude 에이전트 등록과 discover?provider [P9]", () => 
   });
 });
 
-describe("REST — claude 어댑터가 없으면 discover?provider=claude 는 503", () => {
+describe("REST — 러너 어댑터가 없으면 discover?provider=runner 는 503", () => {
   it("ADAPTER_UNAVAILABLE", async () => {
     const app = await bootTestApp({}, { adapters: [new FakeAdapter()] });
     try {
       const { headers } = await login(app);
       const res = await app.fastify.inject({
         method: "GET",
-        url: "/api/v1/agents/discover?provider=claude",
+        url: "/api/v1/agents/discover?provider=runner",
         headers,
       });
       expect(res.statusCode).toBe(503);

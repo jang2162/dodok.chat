@@ -221,7 +221,7 @@ export const CONTROL_TOOLS = [
     name: "discover_agents",
     access: "read",
     description:
-      'List agents that can be registered: provider "openclaw" asks one Gateway (gatewayId required), "claude" asks the connected runners. Admin or owner only.',
+      'List agents that can be registered: provider "openclaw" asks one Gateway (gatewayId required), "runner" asks the connected runners. Admin or owner only.',
     input: DiscoverAgentsQuery,
   }),
   tool({

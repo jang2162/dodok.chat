@@ -16,8 +16,8 @@ import {
   type AdapterSetupDetail,
   type AdapterStatus,
   type AgentAdapter,
-  type ClaudeAdapterStatus,
-  type ClaudeSetupDetail,
+  type RunnerAdapterStatus,
+  type RunnerSetupDetail,
   type ConnectionId,
   type OpenClawAdapterStatus,
   type OpenClawSetupDetail,
@@ -56,23 +56,23 @@ export const FAKE_GATEWAY_ID = "00000000-0000-4000-8000-0000000000f1";
 /** 연결 하나짜리 어댑터의 기본 연결 id */
 const DEFAULT_CONNECTION: Record<AdapterProvider, ConnectionId> = {
   openclaw: FAKE_GATEWAY_ID,
-  claude: "fake-runner",
+  runner: "fake-runner",
 };
 
-type StatusOf<P extends AdapterProvider> = P extends "claude" ? ClaudeAdapterStatus : OpenClawAdapterStatus;
+type StatusOf<P extends AdapterProvider> = P extends "runner" ? RunnerAdapterStatus : OpenClawAdapterStatus;
 
 /** 켜진 Gateway 하나가 보이는 상태 — 꺼진 Gateway 는 늘 disabled/down 이다 */
 export type FakeGatewayState = {
   gateway: Exclude<GatewayStatusEntry["gateway"], "disabled">;
   bridge: GatewayStatusEntry["bridge"];
 };
-type SetupDetailOf<P extends AdapterProvider> = P extends "claude" ? ClaudeSetupDetail : OpenClawSetupDetail;
+type SetupDetailOf<P extends AdapterProvider> = P extends "runner" ? RunnerSetupDetail : OpenClawSetupDetail;
 
 /**
  * 테스트·wire-cli 용 메모리 어댑터. 호출을 기록하고, 이벤트는 emit 으로 밀어 넣는다.
  * 기본은 OpenClaw 흉내 — 실물처럼 연결이 null(Gateway 가 빈 에이전트)이면 send·abort·listAgents 가
  * ADAPTER_UNAVAILABLE 을 던지고 supports 는 false 다. 모르는 연결 id 는 막지 않는다(연결 목록 없이도 쓰게).
- * `provider: "claude"` 는 레지스트리 테스트용 최소 러너 흉내 — 상태·상세가 claude 모양이고 capabilities 가
+ * `provider: "runner"` 는 레지스트리 테스트용 최소 러너 흉내 — 상태·상세가 러너 모양이고 capabilities 가
  * promptEveryRun·serverSessionIds, 스레드는 늘 안다. null 연결은 받는다(묶임 없는 러너 에이전트)
  */
 export class FakeAdapter<P extends AdapterProvider = "openclaw"> implements AgentAdapter {
@@ -128,7 +128,7 @@ export class FakeAdapter<P extends AdapterProvider = "openclaw"> implements Agen
   private approvals = new Map<string, ProviderApproval>();
   private handlers = new Set<(e: AdapterEvent) => void>();
   /** claude 흉내의 상태 — OpenClaw 흉내는 Gateway 목록(gateways)과 Gateway 상태(gatewayState·gatewayStates)에서 만든다 */
-  private currentStatus: ClaudeAdapterStatus;
+  private currentStatus: RunnerAdapterStatus;
   /** 켜진 Gateway 의 기본 상태와 Gateway 별 덮어쓰기(setGatewayState) */
   private gatewayState: FakeGatewayState = { gateway: "connected", bridge: "connected" };
   private gatewayStates = new Map<string, FakeGatewayState>();
@@ -154,17 +154,17 @@ export class FakeAdapter<P extends AdapterProvider = "openclaw"> implements Agen
     const provider = opts.provider ?? "openclaw";
     this.provider = provider as P;
     this.eventConnection = opts.connectionId ?? DEFAULT_CONNECTION[provider];
-    const claude = provider === "claude";
-    this.currentStatus = { provider: "claude", runners: { connected: 1, tokens: 1 } };
+    const runner = provider === "runner";
+    this.currentStatus = { provider: "runner", runners: { connected: 1, tokens: 1 } };
     this.currentCapabilities = {
       agentsList: true,
       configSet: true,
-      promptEveryRun: claude,
-      serverSessionIds: claude,
+      promptEveryRun: runner,
+      serverSessionIds: runner,
     };
     this.currentSetupDetail = (
-      claude
-        ? { provider: "claude", runners: [] }
+      runner
+        ? { provider: "runner", runners: [] }
         : {
             provider: "openclaw",
             gateway: { state: "connected", host: "fake-gateway:443", version: null, pairing: null },
@@ -217,7 +217,7 @@ export class FakeAdapter<P extends AdapterProvider = "openclaw"> implements Agen
   }
 
   /** claude 흉내의 상태. OpenClaw 흉내는 setGatewayState 로 */
-  setStatus(status: ClaudeAdapterStatus): void {
+  setStatus(status: RunnerAdapterStatus): void {
     this.currentStatus = status;
   }
 

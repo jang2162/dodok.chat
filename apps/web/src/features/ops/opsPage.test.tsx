@@ -244,7 +244,7 @@ describe("상태 카드 — 실시간(브라우저 검증 D1)", () => {
     await act(() => qc.invalidateQueries({ queryKey: qk.adapter }));
     expect(server.count("GET", "/api/v1/adapter/status")).toBe(2);
     act(() =>
-      fake.serverEmit("adapter.status", { provider: "claude", runners: { connected: 2, tokens: 2 } }),
+      fake.serverEmit("adapter.status", { provider: "runner", runners: { connected: 2, tokens: 2 } }),
     );
     await waitFor(async () =>
       expect(await statusRow("Claude 러너")).toHaveTextContent("2대 붙음 / 토큰 2개"),
@@ -381,7 +381,7 @@ describe("런 표", () => {
   });
 
   it("usage 를 믿는 제공자가 없으면(OpenClaw 만 붙은 서버) 토큰·금액 열이 없고 「측정 불가」 한 줄", async () => {
-    stubOpsServer({ runs: (days) => runsOf({ days, byChannel: [CHANNEL], usageTrustedProviders: [] }) });
+    stubOpsServer({ runs: (days) => runsOf({ days, byChannel: [CHANNEL], usageTrustedPrograms: [] }) });
     renderOps();
     const runs = await region("런");
     const table = await within(runs).findByRole("table", { name: "채널별" });
@@ -394,7 +394,7 @@ describe("런 표", () => {
       runs: (days) =>
         runsOf({
           days,
-          usageTrustedProviders: ["claude"],
+          usageTrustedPrograms: ["claude"],
           byChannel: [{ ...CHANNEL, tokens: 12_345, costUsd: 0.5 }],
         }),
     });
@@ -413,7 +413,7 @@ describe("런 표", () => {
       runs: (days) =>
         runsOf({
           days,
-          usageTrustedProviders: ["claude"],
+          usageTrustedPrograms: ["claude"],
           byAgent: [
             rowOf(21, {
               name: "coder",
@@ -460,7 +460,7 @@ describe("런 표", () => {
       runs: (days) =>
         runsOf({
           days,
-          usageTrustedProviders: ["claude"],
+          usageTrustedPrograms: ["claude"],
           byChannel: [
             rowOf(1, { name: "general", runs: 5, measuredRuns: 2, tokens: 10, costUsd: 0.125 }),
             rowOf(2, { name: "random", runs: 2, measuredRuns: 2, tokens: 4, costUsd: 0.5 }),
@@ -486,7 +486,7 @@ describe("런 표", () => {
       runs: (days) =>
         runsOf({
           days,
-          usageTrustedProviders: ["claude"],
+          usageTrustedPrograms: ["claude"],
           byAgent: [
             rowOf(21, {
               name: "coder",

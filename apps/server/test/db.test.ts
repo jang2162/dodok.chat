@@ -411,8 +411,8 @@ describe("db", () => {
           .from(agents)
           .all();
         expect([...rows].sort((a, b) => a.provider.localeCompare(b.provider))).toEqual([
-          { id: coderId, provider: "claude", runnerTokenId: null },
           { id: devId, provider: "openclaw", runnerTokenId: null },
+          { id: coderId, provider: "runner", runnerTokenId: null },
         ]);
         // 러너 토큰을 가리킬 수 있고, 없는 토큰은 외래 키가 막는다
         const tokenId = uuid();
@@ -1478,6 +1478,59 @@ describe("agent dms 마이그레이션", () => {
             )
             .run(uuid(), ws, user, t),
         ).not.toThrow();
+      } finally {
+        sqlite.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("러너 제공자 마이그레이션(0030)", () => {
+  it("_agent_dms 까지 적용된 DB 에 얹으면 claude 에이전트는 provider runner·program claude, OpenClaw 는 program null — 부분 유일 색인은 runner 행에 걸린다", () => {
+    const dir = mkdtempSync(join(tmpdir(), "dodok-db-mig-"));
+    try {
+      const older = migrationsUpTo(dir, "_agent_dms");
+      const sqlite = new Database(join(dir, "app.db"));
+      try {
+        const db = drizzle(sqlite, { schema: { ...schema, ...authSchema } });
+        migrate(db, { migrationsFolder: older });
+        const ws = uuid();
+        const t = new Date("2026-10-29T00:00:00.000Z").getTime();
+        sqlite.prepare("INSERT INTO workspaces (id, name, created_at) VALUES (?, 'w', ?)").run(ws, t);
+        // 옛 스키마에는 program 이 없다 — SQL 로 넣는다
+        const insertAgent = (handle: string, provider: string, providerAgentId: string) => {
+          const id = uuid();
+          sqlite
+            .prepare(
+              "INSERT INTO agents (id, workspace_id, provider, provider_agent_id, handle, name, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?)",
+            )
+            .run(id, ws, provider, providerAgentId, handle, handle, t);
+          return id;
+        };
+        const coder = insertAgent("coder", "claude", "coder");
+        const dev = insertAgent("dev", "openclaw", "dev");
+
+        migrate(db, { migrationsFolder: migrationsFolder() });
+
+        const rows = db
+          .select({ id: agents.id, provider: agents.provider, program: agents.program })
+          .from(agents)
+          .all();
+        expect([...rows].sort((a, b) => a.provider.localeCompare(b.provider))).toEqual([
+          { id: dev, provider: "openclaw", program: null },
+          { id: coder, provider: "runner", program: "claude" },
+        ]);
+        const indexes = sqlite
+          .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'agents'")
+          .all()
+          .map((r) => (r as { name: string }).name);
+        expect(indexes).toContain("agents_runner_ws_agent");
+        expect(indexes).not.toContain("agents_claude_ws_agent");
+        // 옮긴 행과 같은 id 의 러너 에이전트는 둘이 될 수 없다. 색인은 runner 행에만 걸린다 — 같은 id 의 OpenClaw 행은 막지 않는다
+        expect(() => insertAgent("coder-2", "runner", "coder")).toThrow(/UNIQUE/);
+        expect(() => insertAgent("coder-oc", "openclaw", "coder")).not.toThrow();
       } finally {
         sqlite.close();
       }

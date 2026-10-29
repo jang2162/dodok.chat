@@ -305,10 +305,10 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
         // 지운 Gateway 의 찾기를 다시 부르면 404 가 난다
         if (prev && gatewayNames(prev.gateways) !== gatewayNames(status.gateways))
           void qc.invalidateQueries({ queryKey: qk.agents, exact: true });
-      } else if (status.provider === "claude") {
+      } else if (status.provider === "runner") {
         qc.setQueryData(qk.runnerAdapter, status.runners);
         // 등록 대화상자가 열린 채 러너가 붙거나 떨어져도 그 목록이 낡지 않게
-        void qc.invalidateQueries({ queryKey: qk.discoverOf("claude") });
+        void qc.invalidateQueries({ queryKey: qk.discoverOf("runner") });
       }
     },
     /**

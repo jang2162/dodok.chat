@@ -24,7 +24,7 @@ export function buildSetupStatus(input: {
   /** OpenClaw 어댑터의 gatewaySetupDetails() */
   details: GatewaySetupEntry[];
   pluginFile: PluginFile | null;
-  /** 러너 블록 — 러너 어댑터가 붙인 러너들(setupDetail 의 claude 변형)과 품은 러너 tgz. 러너 어댑터가 없으면 빈 목록 */
+  /** 러너 블록 — 러너 어댑터가 붙인 러너들(setupDetail 의 runner 변형)과 품은 러너 tgz. 러너 어댑터가 없으면 빈 목록 */
   runners: RunnerConnection[];
   runnerFile: PluginFile | null;
   serverVersion: string;

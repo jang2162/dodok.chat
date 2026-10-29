@@ -173,16 +173,16 @@ describe("연결 페이지 러너 API /api/v1/setup/runner-*", () => {
     expect(log.lines.join("\n")).not.toContain(issued.token.slice(4));
   });
 
-  it("어댑터 상태 runners 는 붙은 수·폐기 안 된 토큰 수, 러너 어댑터가 붙어 있어도 claude 에이전트가 없으면 usage 를 믿는 제공자가 없다", async () => {
+  it("어댑터 상태 runners 는 붙은 수·폐기 안 된 토큰 수, 러너 어댑터가 붙어 있어도 러너 에이전트가 없으면 usage 를 믿는 제공자가 없다", async () => {
     type Status = { provider: string; runners?: { connected: number; tokens: number } };
     const claudeStatus = async () => {
       const res = await app.fastify.inject({ method: "GET", url: "/api/v1/adapter/status", headers: owner });
-      return (res.json() as { statuses: Status[] }).statuses.find((s) => s.provider === "claude");
+      return (res.json() as { statuses: Status[] }).statuses.find((s) => s.provider === "runner");
     };
     const before = await claudeStatus();
     await issue("counted");
     const after = await claudeStatus();
-    expect(after).toMatchObject({ provider: "claude", runners: { connected: 0 } });
+    expect(after).toMatchObject({ provider: "runner", runners: { connected: 0 } });
     expect(after?.runners?.tokens).toBe((before?.runners?.tokens ?? -1) + 1);
 
     const usage = async () =>
@@ -190,16 +190,16 @@ describe("연결 페이지 러너 API /api/v1/setup/runner-*", () => {
         (
           await app.fastify.inject({ method: "GET", url: "/api/v1/ops/runs?days=1", headers: owner })
         ).json() as {
-          usageTrustedProviders: string[];
+          usageTrustedPrograms: string[];
         }
-      ).usageTrustedProviders;
+      ).usageTrustedPrograms;
     // OpenClaw 만 쓰는 배포와 같다 — 웹은 「측정 불가」
     expect(await usage()).toEqual([]);
     const created = await app.fastify.inject({
       method: "POST",
       url: "/api/v1/agents",
       headers: owner,
-      payload: { provider: "claude", providerAgentId: "usage-coder", handle: "usage-coder", name: "U" },
+      payload: { provider: "runner", providerAgentId: "usage-coder", handle: "usage-coder", name: "U" },
     });
     expect(created.statusCode).toBe(201);
     expect(await usage()).toEqual(["claude"]);
@@ -248,7 +248,7 @@ describe("연결 페이지 러너 API /api/v1/setup/runner-*", () => {
         headers: owner,
         ...(payload === undefined ? {} : { payload }),
       });
-    const register = async (providerAgentId: string, provider: "claude" | "openclaw" = "claude") => {
+    const register = async (providerAgentId: string, provider: "runner" | "openclaw" = "runner") => {
       const res = await agentsApi("POST", {
         provider,
         providerAgentId,
@@ -329,7 +329,7 @@ describe("연결 페이지 러너 API /api/v1/setup/runner-*", () => {
       expect((await listed("oc-agent"))?.runner).toBeUndefined();
     });
 
-    it("알리는 러너 없이 등록한 claude 에이전트는 묶임 없음 — 처음 알린 러너에 묶인다", async () => {
+    it("알리는 러너 없이 등록한 러너 에이전트는 묶임 없음 — 처음 알린 러너에 묶인다", async () => {
       const agent = await register("latecomer");
       expect(agent.runner).toBeUndefined();
       const a = await issue("late");

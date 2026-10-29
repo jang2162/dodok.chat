@@ -245,7 +245,7 @@ describe("Gateway 옮기기 — PUT /api/v1/agents/:id/gateway", () => {
 
     const runner = createAgent(app.db, {
       workspaceId: app.workspaceId,
-      provider: "claude",
+      provider: "runner",
       providerAgentId: "coder",
       handle: "coder",
       name: "coder",

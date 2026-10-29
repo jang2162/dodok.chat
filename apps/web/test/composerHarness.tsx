@@ -23,6 +23,7 @@ export const DEV: Agent = {
   createdAt: TS,
   archivedAt: null,
   dmAccess: "admins",
+  program: null,
 };
 export const FIN: Agent = {
   ...DEV,

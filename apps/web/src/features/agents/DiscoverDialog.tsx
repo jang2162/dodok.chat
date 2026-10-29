@@ -40,7 +40,7 @@ import { type DiscoveredAgent, useCreateAgent, useDiscover, useRestoreAgent } fr
  */
 function discoverErrorText(e: Error, provider: AdapterProvider): string {
   if (e instanceof NetworkError) return "서버에 연결할 수 없습니다";
-  if (provider === "claude") return "러너 목록을 가져오지 못했습니다";
+  if (provider === "runner") return "러너 목록을 가져오지 못했습니다";
   if (e instanceof ApiRequestError) {
     if (e.code === "ADAPTER_UNAVAILABLE") return "Gateway 에 연결되지 않았습니다";
     if (e.code === "FORBIDDEN") return "Gateway 권한(agents.list)이 없습니다";
@@ -252,7 +252,7 @@ export function DiscoverDialog({
             onValueChange={(v) => pick(v as AdapterProvider)}
             className="flex flex-wrap gap-4"
           >
-            {(["openclaw", "claude"] as const).map((p) => (
+            {(["openclaw", "runner"] as const).map((p) => (
               <div key={p} className="flex items-center gap-2">
                 <RadioGroupItem id={`${providerId}-${p}`} value={p} />
                 <Label htmlFor={`${providerId}-${p}`} className="font-normal">
@@ -383,7 +383,7 @@ function DiscoverList({
   return (
     <form onSubmit={(e) => void register(e)} className="flex flex-col gap-4">
       {candidates.length === 0 ? (
-        discovered.length === 0 && provider === "claude" ? (
+        discovered.length === 0 && provider === "runner" ? (
           <NoRunners />
         ) : (
           <p className="text-sm text-muted-foreground">
@@ -392,7 +392,7 @@ function DiscoverList({
         )
       ) : (
         <div className="flex flex-col gap-2">
-          {provider === "claude" && (
+          {provider === "runner" && (
             <p className="text-xs text-muted-foreground">
               등록하면 지금 그 id 를 알린 러너(줄 맨 앞 이름)에 묶여, 그 러너만 이 에이전트를 맡습니다.
             </p>
@@ -431,7 +431,7 @@ function DiscoverList({
                       </code>
                     )}
                   </div>
-                  {provider === "claude" && c.hint && (
+                  {provider === "runner" && c.hint && (
                     <p className="mt-1 pl-7 text-xs break-words text-muted-foreground">{c.hint}</p>
                   )}
                   {draft && (

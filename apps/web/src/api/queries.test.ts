@@ -16,10 +16,10 @@ describe("openclawAdapterStatus", () => {
     expect(
       openclawAdapterStatus({
         statuses: [
-          { provider: "claude", runners: { connected: 1, tokens: 1 } },
+          { provider: "runner", runners: { connected: 1, tokens: 1 } },
           { provider: "openclaw", gateways: [G1, { ...G2, gateway: "reconnecting", bridge: "down" }] },
         ],
-        capabilities: { claude: { ...CAPS, configSet: false }, openclaw: CAPS },
+        capabilities: { runner: { ...CAPS, configSet: false }, openclaw: CAPS },
       }),
     ).toEqual({
       provider: "openclaw",
@@ -31,8 +31,8 @@ describe("openclawAdapterStatus", () => {
   it("OpenClaw 어댑터가 없으면 null", () => {
     expect(
       openclawAdapterStatus({
-        statuses: [{ provider: "claude", runners: { connected: 0, tokens: 0 } }],
-        capabilities: { claude: CAPS },
+        statuses: [{ provider: "runner", runners: { connected: 0, tokens: 0 } }],
+        capabilities: { runner: CAPS },
       }),
     ).toBeNull();
   });
