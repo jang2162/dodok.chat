@@ -30,15 +30,15 @@ const MSG = "01a09fc9-d204-7551-89d6-38544d07a103";
 const SESSION = "5d3c1c2e-7f0a-4b8e-9c1d-2a3b4c5d6e7f";
 const NOW = "2026-09-27T00:00:00.000Z";
 
-const AGENT = { id: "coder", name: "코더", model: "sonnet", workdirLabel: "my-repo" };
 const HELLO = {
   runnerProtocol: RUNNER_PROTOCOL,
   runnerVersion: "0.0.0",
   sdkVersion: "0.3.283",
-  claudeCodeVersion: "3.1.0",
   bundleSha256: null,
   capabilities: ["threads", "interrupt", "approvals", "attachments"],
-  agents: [AGENT],
+  roots: [{ id: "src", label: "내 저장소들" }],
+  browse: true,
+  programs: [],
 };
 const DELIVER = {
   deliveryId: ID,
@@ -69,6 +69,14 @@ const START = {
   channelRulesAppend: "# dodok channel settings",
   turnFacts: "[dodok context]",
   sessionTitle: "general · 코더",
+  agent: {
+    program: "claude",
+    project: { rootId: "src", relPath: "my-repo" },
+    model: "sonnet",
+    permissionMode: "default",
+    allowedTools: null,
+    disallowedTools: [],
+  },
 };
 const APPROVAL = {
   providerApprovalId: "ap-1",
@@ -97,7 +105,7 @@ describe("/runner 상수(P1)", () => {
   it("네임스페이스·첨부 경로·프로토콜", () => {
     expect(RUNNER_NAMESPACE).toBe("/runner");
     expect(RUNNER_ATTACHMENTS_PATH).toBe("/runner/attachments");
-    expect(RUNNER_PROTOCOL).toBe(1);
+    expect(RUNNER_PROTOCOL).toBe(2);
     expect(RunnerCapability.options).toEqual(["threads", "interrupt", "approvals", "attachments"]);
   });
 });
@@ -105,7 +113,7 @@ describe("/runner 상수(P1)", () => {
 describe("/runner 프레임 — 유효 예 왕복", () => {
   it.each([
     ["RunnerHello", RunnerHello, HELLO],
-    ["RunnerHelloResult ok", RunnerHelloResult, { ok: true, serverVersion: "0.0.0", conflicts: ["coder"] }],
+    ["RunnerHelloResult ok", RunnerHelloResult, { ok: true, serverVersion: "0.0.0" }],
     [
       "RunnerHelloResult 거절",
       RunnerHelloResult,
@@ -155,16 +163,6 @@ describe("/runner 프레임 — 유효 예 왕복", () => {
 });
 
 describe("/runner 프레임 — 거절", () => {
-  it("RunnerHello — 에이전트 id 대문자(키에서 푼 id 와 어긋난다)", () => {
-    expect(RunnerHello.safeParse({ ...HELLO, agents: [{ ...AGENT, id: "Coder" }] }).success).toBe(false);
-  });
-
-  it("RunnerHello — 에이전트 33개", () => {
-    const agents = Array.from({ length: 33 }, (_, i) => ({ ...AGENT, id: `a${i}` }));
-    expect(RunnerHello.safeParse({ ...HELLO, agents }).success).toBe(false);
-    expect(RunnerHello.safeParse({ ...HELLO, agents: agents.slice(0, 32) }).success).toBe(true);
-  });
-
   it("RunnerHello — 모르는 capability 는 문자열이면 받는다(서버가 버린다)", () => {
     expect(RunnerHello.parse({ ...HELLO, capabilities: ["threads", "teleport"] }).capabilities).toEqual([
       "threads",
@@ -172,8 +170,10 @@ describe("/runner 프레임 — 거절", () => {
     ]);
   });
 
-  it("RunnerRunStart — providerSessionId 가 UUID 가 아님", () => {
-    expect(RunnerRunStart.safeParse({ ...START, providerSessionId: "not-a-uuid" }).success).toBe(false);
+  it("RunnerRunStart — providerSessionId 는 프로그램이 지은 id(run.session)도 받는다, 비거나 128자를 넘으면 거절", () => {
+    expect(RunnerRunStart.safeParse({ ...START, providerSessionId: "thread_abc" }).success).toBe(true);
+    expect(RunnerRunStart.safeParse({ ...START, providerSessionId: "" }).success).toBe(false);
+    expect(RunnerRunStart.safeParse({ ...START, providerSessionId: "a".repeat(129) }).success).toBe(false);
   });
 
   it("RunnerRunStart — 제목 121자", () => {

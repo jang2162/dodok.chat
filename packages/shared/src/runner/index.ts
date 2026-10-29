@@ -4,7 +4,6 @@ import { InboundDeliver, OutboundMessage } from "../bridge";
 import type { ControlResult, RunnerControlCall } from "../control";
 import { ApprovalDecision, RunnerProgram } from "../domain";
 import { RunEvent } from "../events";
-import { isRegistrableAgentId } from "../session-key";
 
 // `/runner` 계약(러너 스펙 3장, 계획 판정 P1) — Socket.IO 네임스페이스, 프레임은 이벤트 이름 + ack. 경계에서 이 Zod 로 파싱한다.
 // 하트비트는 Socket.IO 가 한다 — ping/pong 프레임은 두지 않는다
@@ -15,55 +14,11 @@ export { RunnerProgram };
 export const RUNNER_NAMESPACE = "/runner";
 /** 첨부 바이트 HTTP(GET·POST, 러너 토큰) — 브리지의 /bridge/attachments 와 같은 모양 */
 export const RUNNER_ATTACHMENTS_PATH = "/runner/attachments";
-export const RUNNER_PROTOCOL = 1;
+/** 2 — 러너는 천장만 쥐고 서버가 run.start 에 에이전트 정의를 싣는다(러너 일반화 스펙 3장). 옛 러너(1)는 PROTOCOL_MISMATCH */
+export const RUNNER_PROTOCOL = 2;
 
 export const RunnerCapability = z.enum(["threads", "interrupt", "approvals", "attachments"]);
 export type RunnerCapability = z.infer<typeof RunnerCapability>;
-
-/** 러너가 알리는 에이전트 — 작업 디렉터리는 라벨만, 경로 원문은 싣지 않는다. id 는 OpenClaw agentId 규칙 + 소문자(스레드 스펙 R4) */
-export const RunnerAgent = z.object({
-  id: z.string().refine(isRegistrableAgentId, "agent id must be a lowercase OpenClaw agentId"),
-  name: z.string().min(1).max(64),
-  model: z.string().min(1).max(64),
-  workdirLabel: z.string().min(1).max(64),
-});
-export type RunnerAgent = z.infer<typeof RunnerAgent>;
-
-export const RunnerHello = z.object({
-  runnerProtocol: z.int(),
-  runnerVersion: z.string(),
-  sdkVersion: z.string(),
-  claudeCodeVersion: z.string(),
-  bundleSha256: z.string().nullable(),
-  // 문자열이면 받는다 — 모르는 값은 서버가 버린다(거절하면 새 러너가 옛 서버에 못 붙는다 — 스레드 스펙 R1)
-  capabilities: z.array(z.string()),
-  agents: z.array(RunnerAgent).max(32),
-});
-export type RunnerHello = z.infer<typeof RunnerHello>;
-
-/**
- * 거절이면 러너는 사유를 출력하고 종료한다. hello 거절은 판본 불일치뿐이다 — 토큰 틀림(UNAUTHORIZED)·가드 차단(RATE_LIMITED)은
- * 핸드셰이크 미들웨어가 connect_error 로 거절하고, 러너는 거기서 가른다(RATE_LIMITED 는 끝내지 않는다 — 최종 리뷰 M3)
- */
-export const RunnerHelloResult = z.discriminatedUnion("ok", [
-  // conflicts — 이 러너에 배정하지 않는 에이전트 id: 다른 러너 토큰에 묶였거나, 묶임이 없는데 다른 러너가 먼저 알렸다
-  z.object({ ok: z.literal(true), serverVersion: z.string(), conflicts: z.array(z.string()) }),
-  z.object({ ok: z.literal(false), code: z.literal("PROTOCOL_MISMATCH"), message: z.string() }),
-]);
-export type RunnerHelloResult = z.infer<typeof RunnerHelloResult>;
-
-/**
- * 런 하나. resume 은 싣지 않는다 — 러너가 그 providerSessionId 의 전사가 있으면 이어 가고 없으면 새로 연다(판정 P2).
- * channelRulesAppend·turnFacts 는 서버가 `buildChannelRulesAppend`·`buildTurnFacts` 로 만든다(판정 P3)
- */
-export const RunnerRunStart = z.object({
-  deliver: InboundDeliver,
-  providerSessionId: z.uuid(),
-  channelRulesAppend: z.string(),
-  turnFacts: z.string(),
-  sessionTitle: z.string().max(120),
-});
-export type RunnerRunStart = z.infer<typeof RunnerRunStart>;
 
 /** queuedPosition 이 있으면 러너 동시 상한에 걸려 기다린다 — 어댑터가 RUN_QUEUED 를 낸다 */
 export const RunnerRunAck = z.object({
@@ -158,6 +113,7 @@ export type RunnerApprovalResolve = z.infer<typeof RunnerApprovalResolve>;
 
 export interface RunnerClientToServerEvents {
   hello: (p: RunnerHello, ack: (r: RunnerHelloResult) => void) => void;
+  "run.session": (p: RunnerRunSession) => void;
   "run.event": (p: RunnerRunEvent) => void;
   "run.final": (p: RunnerRunFinal) => void;
   "run.error": (p: RunnerRunError) => void;
@@ -171,13 +127,12 @@ export interface RunnerServerToClientEvents {
   "run.start": (p: RunnerRunStart, ack: (r: RunnerRunAck) => void) => void;
   "run.abort": (p: RunnerRunAbort) => void;
   "approval.resolve": (p: RunnerApprovalResolve) => void;
+  "fs.list": (p: RunnerProjectRef, ack: (r: RunnerFsListResult) => void) => void;
+  "project.check": (p: RunnerProjectRef, ack: (r: RunnerProjectCheckResult) => void) => void;
 }
 
-// ── V2 계약(러너 일반화 스펙 3장) ──────────────────────────────────────────────────────────────────────────────
-// 러너는 천장(루트·프로그램·권한 상한)만 쥐고, 서버가 run.start 에 에이전트 정의를 통째로 싣는다. 서버와 러너를 따로 옮기려고
-// V1 옆에 나란히 둔다(계획 판정 PR5) — 서버 쪽이 V2 로 옮기면 V1 이름을 지우고 V2 를 원래 이름으로 되돌린다
-
-export const RUNNER_PROTOCOL_V2 = 2;
+// ── 천장·프로젝트(러너 일반화 스펙 2·3장) — 러너는 천장(루트·프로그램·권한 상한)만 쥐고, 서버가 run.start 에 에이전트 정의를
+// 통째로 싣는다
 
 /** 러너 로컬 설정의 루트 id — 바꾸면 그 루트의 프로젝트가 「루트 없음」이 된다 */
 export const RunnerRootId = z.string().regex(/^[a-z0-9-]{1,32}$/, "root id must match [a-z0-9-]{1,32}");
@@ -249,7 +204,7 @@ export type RunnerProgramStatus = z.infer<typeof RunnerProgramStatus>;
  * 러너 → 서버 hello. 루트는 id·라벨뿐이다 — 호스트 경로는 서버로 가지 않는다(스펙 결정 3). strict 라 옛 hello 의 agents·
  * claudeCodeVersion(과 루트의 path)이 실리면 거절한다
  */
-export const RunnerHelloV2 = z.strictObject({
+export const RunnerHello = z.strictObject({
   runnerProtocol: z.int(),
   runnerVersion: z.string(),
   sdkVersion: z.string(),
@@ -259,14 +214,17 @@ export const RunnerHelloV2 = z.strictObject({
   browse: z.boolean(),
   programs: z.array(RunnerProgramStatus).max(8),
 });
-export type RunnerHelloV2 = z.infer<typeof RunnerHelloV2>;
+export type RunnerHello = z.infer<typeof RunnerHello>;
 
-/** V1 결과에서 conflicts 를 걷었다 — 에이전트는 처음부터 러너 토큰에 묶인다(계획 판정 PR9) */
-export const RunnerHelloResultV2 = z.discriminatedUnion("ok", [
+/**
+ * 거절이면 러너는 사유를 출력하고 종료한다. hello 거절은 판본 불일치뿐이다 — 토큰 틀림(UNAUTHORIZED)·가드 차단(RATE_LIMITED)은
+ * 핸드셰이크 미들웨어가 connect_error 로 거절하고, 러너는 거기서 가른다(RATE_LIMITED 는 끝내지 않는다 — 최종 리뷰 M3)
+ */
+export const RunnerHelloResult = z.discriminatedUnion("ok", [
   z.object({ ok: z.literal(true), serverVersion: z.string() }),
   z.object({ ok: z.literal(false), code: z.literal("PROTOCOL_MISMATCH"), message: z.string() }),
 ]);
-export type RunnerHelloResultV2 = z.infer<typeof RunnerHelloResultV2>;
+export type RunnerHelloResult = z.infer<typeof RunnerHelloResult>;
 
 /** 서버가 정한 에이전트 정의 — 러너는 런마다 천장(로컬 설정)과 견주고 넘으면 RUNNER_CEILING 으로 거절한다 */
 export const RunnerRunAgent = z.object({
@@ -282,14 +240,20 @@ export const RunnerRunAgent = z.object({
 export type RunnerRunAgent = z.infer<typeof RunnerRunAgent>;
 
 /**
- * V1 run.start + agent. providerSessionId 는 서버가 세션 id 를 정할 수 있는 프로그램(serverSessionIds)에만 싣는다 — 아니면
- * 드라이버가 첫 런에서 run.session 으로 알린다
+ * 런 하나. resume 은 싣지 않는다 — 러너가 그 providerSessionId 의 전사가 있으면 이어 가고 없으면 새로 연다(판정 P2).
+ * channelRulesAppend·turnFacts 는 서버가 `buildChannelRulesAppend`·`buildTurnFacts` 로 만든다(판정 P3 — 에이전트 지시도 그 틀 안,
+ * 러너 일반화 계획 판정 PR1). providerSessionId 는 서버가 세션 id 를 정할 수 있는 프로그램(serverSessionIds)이면 늘, 아니면 그
+ * 프로그램이 run.session 으로 알린 값이 있을 때만 싣는다
  */
-export const RunnerRunStartV2 = RunnerRunStart.extend({
-  providerSessionId: z.uuid().optional(),
+export const RunnerRunStart = z.object({
+  deliver: InboundDeliver,
+  providerSessionId: z.string().min(1).max(128).optional(),
+  channelRulesAppend: z.string(),
+  turnFacts: z.string(),
+  sessionTitle: z.string().max(120),
   agent: RunnerRunAgent,
 });
-export type RunnerRunStartV2 = z.infer<typeof RunnerRunStartV2>;
+export type RunnerRunStart = z.infer<typeof RunnerRunStart>;
 
 /** 프로그램이 스스로 지은 세션 id — 서버가 세션 행에 저장해 다음 런에 싣는다 */
 export const RunnerRunSession = z.object({ runId: Id, providerSessionId: z.string().min(1).max(128) });
@@ -322,14 +286,3 @@ export type RunnerProjectCheckResult = z.infer<typeof RunnerProjectCheckResult>;
 /** 천장 검사가 걸린 항목 — run.error RUNNER_CEILING 의 message 가 이 이름 하나다 */
 export const RunnerCeilingItem = z.enum(["root", "path", "program", "permissionMode", "allowedTools"]);
 export type RunnerCeilingItem = z.infer<typeof RunnerCeilingItem>;
-
-export interface RunnerClientToServerEventsV2 extends Omit<RunnerClientToServerEvents, "hello"> {
-  hello: (p: RunnerHelloV2, ack: (r: RunnerHelloResultV2) => void) => void;
-  "run.session": (p: RunnerRunSession) => void;
-}
-
-export interface RunnerServerToClientEventsV2 extends Omit<RunnerServerToClientEvents, "run.start"> {
-  "run.start": (p: RunnerRunStartV2, ack: (r: RunnerRunAck) => void) => void;
-  "fs.list": (p: RunnerProjectRef, ack: (r: RunnerFsListResult) => void) => void;
-  "project.check": (p: RunnerProjectRef, ack: (r: RunnerProjectCheckResult) => void) => void;
-}

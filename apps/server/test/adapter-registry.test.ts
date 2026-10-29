@@ -20,7 +20,7 @@ import { getRun } from "../src/modules/runs/store";
 import { bootTestApp, login } from "./helpers/app";
 import { FAKE_GATEWAY_ID, fakeGatewayStatus } from "./helpers/gateways";
 import { connectWire, type WireClient } from "./helpers/wire";
-import { channelConversation, sendTarget } from "./helpers/seed";
+import { channelConversation, createRunnerAgentForTest, sendTarget } from "./helpers/seed";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -436,12 +436,9 @@ describe("어댑터 레지스트리 배선 (앱 부팅, OpenClaw·Claude 가짜 
     try {
       await bare.fastify.listen({ host: "127.0.0.1", port: 0 });
       const { token: bareToken } = await login(bare);
-      const loner = createAgent(bare.db, {
+      const { agent: loner } = createRunnerAgentForTest(bare.db, {
         workspaceId: bare.workspaceId,
-        provider: "runner",
-        providerAgentId: "loner",
         handle: "loner",
-        name: "loner",
       });
       const channel = createChannel(bare.db, {
         workspaceId: bare.workspaceId,

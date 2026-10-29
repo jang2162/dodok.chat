@@ -1,7 +1,8 @@
 /**
- * 가짜 Claude 러너 — 실제 러너 어댑터(`/runner` 네임스페이스)에 socket.io-client 로 붙는다. 모델·SDK·CLI 는 흉내 내지 않는다.
+ * 가짜 러너 — 실제 러너 어댑터(`/runner` 네임스페이스)에 socket.io-client 로 붙는다. 모델·SDK·CLI 는 흉내 내지 않는다.
  *
- * 실제 러너(`packages/claude-runner`)와 같은 순서·모양: 토큰 handshake → `hello`(RunnerHello) ack → `run.start` 를 받으면 대본(script)
+ * 실제 러너(`packages/claude-runner`)와 같은 순서·모양: 토큰 handshake → `hello`(RunnerHello — 루트·프로그램·천장) ack →
+ * `fs.list`·`project.check` 에 onFsList·onProjectCheck 로 답하고, `run.start` 를 받으면 대본(script)
  * 대로 `run.event`(텍스트·도구) → `run.final`. 대본은 승인 요청(`approval.requested` → `approval.resolve` 대기)·`outbound.post`·
  * 끊기를 부를 수 있다. `run.abort` 를 받으면 실제 러너처럼 `run.final { text: "", stopReason: "aborted" }` 로 끝낸다.
  * 통합 시나리오와 dev:fake 가 함께 쓴다
@@ -13,13 +14,16 @@ import {
   RUNNER_POST_ID_PREFIX,
   RUNNER_PROTOCOL,
   type RunEventBody,
-  type RunnerAgent,
   type RunnerApprovalRequested,
   type RunnerApprovalResolve,
   type RunnerHello,
   RunnerHelloResult,
   type RunnerOutboundAck,
   type RunnerOutboundPost,
+  type RunnerProgramStatus,
+  type RunnerProjectCheckResult,
+  type RunnerProjectRef,
+  type RunnerFsListResult,
   type RunnerRunAbort,
   type RunnerRunAck,
   type RunnerRunFinal,
@@ -55,6 +59,8 @@ export type FakeRunnerRun = {
    * 보낼 수 있다(늦은 호출을 잴 때)
    */
   control(tool: string, args: Record<string, unknown>, opts?: { runId?: string }): Promise<ControlResult>;
+  /** run.session — 세션 id 를 스스로 짓는 프로그램(serverSessionIds 없음)처럼 알린다 */
+  session(providerSessionId: string): void;
   final(text: string, opts?: Partial<Omit<RunnerRunFinal, "runId" | "text">>): void;
   error(code: string, message: string): void;
   /** run.abort 를 받으면 풀린다 */
@@ -68,7 +74,7 @@ export type FakeRunnerOptions = {
   /** 서버 주소(`http://127.0.0.1:<port>`). `/runner` 는 붙여서 접속한다 */
   url: string;
   token: string;
-  agents?: RunnerAgent[];
+  /** 기본 hello(fakeRunnerHello) 위에 덮는다 — 루트·프로그램·둘러보기 */
   hello?: Partial<RunnerHello>;
   script?: FakeRunnerScript;
   /**
@@ -83,6 +89,11 @@ export type FakeRunner = {
   script: FakeRunnerScript;
   /** run.start 에 무엇으로 ack 할지 — 기본은 즉시 dispatch. undefined 면 ack 하지 않는다 */
   onRunStart: (start: RunnerRunStart) => RunnerRunAck | undefined;
+  /** fs.list·project.check 에 무엇으로 답할지 — 기본은 빈 목록·git 아닌 디렉터리. undefined 면 ack 하지 않는다 */
+  onFsList: (ref: RunnerProjectRef) => RunnerFsListResult | undefined;
+  onProjectCheck: (ref: RunnerProjectRef) => RunnerProjectCheckResult | undefined;
+  /** 받은 fs.list·project.check, 도착 순서 */
+  readonly fsRequests: Array<["fs.list" | "project.check", RunnerProjectRef]>;
   /** 스키마를 통과한 run.start, 도착 순서 */
   readonly runStarts: RunnerRunStart[];
   readonly aborts: RunnerRunAbort[];
@@ -98,16 +109,32 @@ export type FakeRunner = {
   readonly disconnectReasons: string[];
   /** 소켓만 끊는다 — 진행 중인 런은 실제 러너처럼 멈춘다(프레임을 더 보내지 않는다) */
   disconnect(): void;
-  /** 다시 붙어 hello ack 까지 기다린다. token·agents 를 주면 그것으로 */
-  reconnect(opts?: { token?: string; agents?: RunnerAgent[] }): Promise<RunnerHelloResult>;
+  /** 다시 붙어 hello ack 까지 기다린다. token·hello 를 주면 그것으로(hello 는 기본 위에 덮는다) */
+  reconnect(opts?: { token?: string; hello?: Partial<RunnerHello> }): Promise<RunnerHelloResult>;
   close(): void;
 };
 
-export const FAKE_RUNNER_AGENT: RunnerAgent = {
-  id: "coder",
-  name: "Coder",
-  model: "sonnet",
-  workdirLabel: "dodok",
+/** 가짜 러너가 알리는 루트 — 프로젝트는 이 루트 안에 만든다 */
+export const FAKE_RUNNER_ROOT = { id: "src", label: "내 저장소들" } as const;
+
+/** 서버가 세션 id 를 정하는 프로그램(Claude 드라이버와 같은 능력) */
+export const FAKE_CLAUDE_PROGRAM: RunnerProgramStatus = {
+  program: "claude",
+  available: true,
+  version: "2.1.283",
+  auth: "ok",
+  capabilities: ["serverSessionIds", "approvals", "images", "interrupt", "mcpTools", "costs"],
+  ceiling: { maxPermissionMode: "acceptEdits", allowedToolsCeiling: null },
+};
+
+/** 세션 id 를 스스로 짓는 프로그램 — run.session 갈래(러너 일반화 계획 판정 PR3)를 잰다. 실제 드라이버는 아직 없다 */
+export const FAKE_CODEX_PROGRAM: RunnerProgramStatus = {
+  program: "codex",
+  available: true,
+  version: "0.0.0-fake",
+  auth: "ok",
+  capabilities: ["approvals", "interrupt", "mcpTools"],
+  ceiling: { maxPermissionMode: "default", allowedToolsCeiling: null },
 };
 
 /** 기본 대본 — 받은 글의 첫 줄을 되돌려 준다 */
@@ -118,15 +145,16 @@ export const echoScript: FakeRunnerScript = (run) => {
   run.final(`받았습니다: ${line}`, { usage: { inputTokens: 10, outputTokens: 5 }, costUsd: 0.01 });
 };
 
-export function fakeRunnerHello(agents: RunnerAgent[], over: Partial<RunnerHello> = {}): RunnerHello {
+export function fakeRunnerHello(over: Partial<RunnerHello> = {}): RunnerHello {
   return {
     runnerProtocol: RUNNER_PROTOCOL,
     runnerVersion: "0.0.0-fake",
     sdkVersion: "0.3.283",
-    claudeCodeVersion: "2.1.283",
     bundleSha256: null,
     capabilities: ["threads", "interrupt", "approvals", "attachments"],
-    agents,
+    roots: [{ ...FAKE_RUNNER_ROOT }],
+    browse: true,
+    programs: [FAKE_CLAUDE_PROGRAM, FAKE_CODEX_PROGRAM],
     ...over,
   };
 }
@@ -135,7 +163,7 @@ const CONNECT_TIMEOUT_MS = 5_000;
 
 export async function startFakeRunner(opts: FakeRunnerOptions): Promise<FakeRunner> {
   let token = opts.token;
-  let agents = opts.agents ?? [FAKE_RUNNER_AGENT];
+  let hello = opts.hello ?? {};
   let socket: Socket | undefined;
   let helloResult: RunnerHelloResult | undefined;
   let helloCount = 0;
@@ -146,12 +174,16 @@ export async function startFakeRunner(opts: FakeRunnerOptions): Promise<FakeRunn
   const aborts: RunnerRunAbort[] = [];
   const resolves: RunnerApprovalResolve[] = [];
   const disconnectReasons: string[] = [];
+  const fsRequests: Array<["fs.list" | "project.check", RunnerProjectRef]> = [];
   const abortHandlers = new Map<string, () => void>();
   const resolveWaiters = new Map<string, (r: RunnerApprovalResolve) => void>();
 
   const runner: FakeRunner = {
     script: opts.script ?? echoScript,
     onRunStart: (start) => ({ runId: start.deliver.runId, admission: "dispatch" }),
+    onFsList: () => ({ ok: true, entries: [], truncated: false }),
+    onProjectCheck: () => ({ ok: true, isGitRepo: false }),
+    fsRequests,
     runStarts,
     aborts,
     resolves,
@@ -171,7 +203,7 @@ export async function startFakeRunner(opts: FakeRunnerOptions): Promise<FakeRunn
     async reconnect(next = {}) {
       socket?.disconnect();
       if (next.token !== undefined) token = next.token;
-      if (next.agents !== undefined) agents = next.agents;
+      if (next.hello !== undefined) hello = next.hello;
       return connect();
     },
     close() {
@@ -291,6 +323,9 @@ export async function startFakeRunner(opts: FakeRunnerOptions): Promise<FakeRunn
           args,
         })) as ControlResult;
       },
+      session(providerSessionId) {
+        if (live()) s.emit("run.session", { runId, providerSessionId });
+      },
       final(text, extra = {}) {
         if (finish()) s.emit("run.final", { runId, text, stopReason: "end_turn", costKind: "api", ...extra });
       },
@@ -332,6 +367,13 @@ export async function startFakeRunner(opts: FakeRunnerOptions): Promise<FakeRunn
       ack(res);
       if (res.admission === "dispatch") handleRun(s, parsed.data);
     });
+    for (const event of ["fs.list", "project.check"] as const) {
+      s.on(event, (ref: RunnerProjectRef, ack: (r: unknown) => void) => {
+        fsRequests.push([event, ref]);
+        const res = event === "fs.list" ? runner.onFsList(ref) : runner.onProjectCheck(ref);
+        if (res !== undefined) ack(res);
+      });
+    }
     s.on("run.abort", (p: RunnerRunAbort) => {
       aborts.push(p);
       abortHandlers.get(p.runId)?.();
@@ -347,7 +389,7 @@ export async function startFakeRunner(opts: FakeRunnerOptions): Promise<FakeRunn
         reject(error);
       });
       s.once("connect", () => {
-        s.emitWithAck("hello", fakeRunnerHello(agents, opts.hello)).then(
+        s.emitWithAck("hello", fakeRunnerHello(hello)).then(
           (raw: unknown) => {
             clearTimeout(timer);
             helloResult = RunnerHelloResult.parse(raw);

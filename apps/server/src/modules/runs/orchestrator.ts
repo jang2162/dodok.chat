@@ -6,6 +6,9 @@ import {
   type OutboundMessage,
   parseDodokSessionKey,
   type Run,
+  RUNNER_PROGRAM_NAME,
+  RunnerCeilingItem,
+  type RunnerProgram,
   type RunSignal,
   type RunState,
   type RunStatus,
@@ -52,9 +55,11 @@ import { RETRY_RUN_ITEM } from "../router/service";
 import {
   ensureProviderSessionId,
   ensureSession,
+  findSessionRow,
   getSessionRow,
   INVALID_AGENT_ID_REASON,
   renewSessionOnPromptChange,
+  storeProgramSessionId,
 } from "../sessions/service";
 import { buildInboundDeliver } from "./context";
 import {
@@ -219,8 +224,13 @@ const RETRY_COMPONENTS = {
 const PLUGIN_OUTDATED = "PLUGIN_OUTDATED";
 /** 저장된 providerAgentId 가 세션 키 규칙 밖 — 키를 못 만들어 런을 보낼 수 없다. 다시 실행해도 같다 */
 const INVALID_AGENT_ID = "INVALID_AGENT_ID";
-/** 러너의 Claude 로그인이 없거나 풀렸다(러너 스펙 8장) — 사람이 러너 머신에서 다시 로그인한 뒤 다시 실행으로 푼다 */
+/** 러너의 프로그램 로그인이 없거나 풀렸다(러너 스펙 8장) — 사람이 러너 머신에서 다시 로그인한 뒤 다시 실행으로 푼다 */
 const PROVIDER_AUTH = "PROVIDER_AUTH";
+/**
+ * 러너 천장(로컬 설정)이 이 에이전트 정의를 허용하지 않는다(러너 일반화 스펙 3·8장) — 머신 주인이 설정을 고치거나 에이전트를 고친 뒤
+ * 다시 실행으로 푼다. 그래서 NO_RETRY_CODES 에 넣지 않는다. 런 오류 message 가 걸린 항목 이름이다
+ */
+const RUNNER_CEILING = "RUNNER_CEILING";
 /**
  * 사람에게 run_error 시스템 메시지로 알리는 코드(디스패치 실패·타임아웃·러너 로그인). SERVER_RESTART·INTERNAL·Gateway 오류는
  * 알리지 않는다
@@ -232,6 +242,7 @@ const NOTIFY_CODES: ReadonlySet<string> = new Set([
   PLUGIN_OUTDATED,
   INVALID_AGENT_ID,
   PROVIDER_AUTH,
+  RUNNER_CEILING,
 ]);
 /** 다시 실행해도 같은 사유로 떨어지는 코드 — 누를 때마다 카드만 는다 */
 const NO_RETRY_CODES: ReadonlySet<string> = new Set(["DROPPED:bot-loop-protection", INVALID_AGENT_ID]);
@@ -667,7 +678,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     if (queue.length === 0) sessionQueues.delete(info.queueKey);
   }
 
-  /** 채널 규칙이 바뀌어 러너 세션을 새로 열었다 — info 시스템 메시지로 그 자리(스레드면 스레드)에 */
+  /** 채널 규칙이나 에이전트 지시가 바뀌어 러너 세션을 새로 열었다 — info 시스템 메시지로 그 자리(스레드면 스레드)에 */
   function notifyRenewed(run: Run): void {
     try {
       const handle = getAgent(db, run.agentId)?.handle ?? "unknown";
@@ -675,7 +686,7 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         conversationId: run.conversationId,
         ...(run.threadRootId === undefined ? {} : { threadRootId: run.threadRootId }),
         kind: "info",
-        bodyMd: `채널 규칙이 바뀌어 @${handle} 이 앞 작업 맥락(도구 결과·긴 작업)을 이어 가지 않습니다 — 채널의 최근 글은 그대로 봅니다`,
+        bodyMd: `채널 규칙이나 에이전트 지시가 바뀌어 @${handle} 이 앞 작업 맥락(도구 결과·긴 작업)을 이어 가지 않습니다 — 채널의 최근 글은 그대로 봅니다`,
         systemMeta: { kind: "info" },
       });
     } catch (err) {
@@ -688,12 +699,16 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     if (run.status !== "error" || code === undefined) return;
     if (!NOTIFY_CODES.has(code) && !code.startsWith("DROPPED:") && !code.startsWith("ADAPTER_ERROR:")) return;
     try {
-      const handle = getAgent(db, run.agentId)?.handle ?? "unknown";
+      const agent = getAgent(db, run.agentId);
       createSystemMessage(db, bus, {
         conversationId: run.conversationId,
         ...(run.threadRootId === undefined ? {} : { threadRootId: run.threadRootId }),
         kind: "run_error",
-        bodyMd: runErrorBody(code, handle),
+        bodyMd: runErrorBody(code, {
+          handle: agent?.handle ?? "unknown",
+          program: agent?.program ?? null,
+          message: run.error?.message ?? "",
+        }),
         systemMeta: { kind: "run_error", runId: run.id },
         ...(run.triggerMessageId === undefined || NO_RETRY_CODES.has(code)
           ? {}
@@ -862,7 +877,10 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         agentId: run.agentId,
         threadRootId: run.threadRootId,
       });
-      const capabilities = adapter.capabilities();
+      // 러너는 프로그램마다 능력이 다르다(러너 일반화 계획 판정 PR3) — 그 에이전트 몫으로 가른다
+      const capabilities =
+        adapter.capabilitiesFor?.(getAgent(db, run.agentId)?.providerAgentId ?? "", connectionId) ??
+        adapter.capabilities();
       // 채널 프롬프트를 매 런 싣는 어댑터(판정 P3)는 리비전과 무관하게 늘 — 바뀐 뒤에는 채널 행의 새 값만 실린다
       const built = buildInboundDeliver(db, {
         run,
@@ -871,9 +889,9 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         needsPromptContext: needsPromptContext || capabilities.promptEveryRun,
         now: now(),
       });
-      // 서버가 세션 id 를 정하는 어댑터(판정 P4)만 두 번째 인자를 받는다. 채널 규칙이 바뀐 뒤면 새 세션으로 연다 — 세션 큐가
-      // 같은 세션의 런을 하나씩 보내므로 같은 리비전 변화에 한 번만 걸린다
-      if (capabilities.serverSessionIds && renewSessionOnPromptChange(db, session.id)) notifyRenewed(run);
+      // 매 런 규칙을 싣는 어댑터(러너)는 채널 규칙이나 에이전트 지시가 바뀐 뒤면 새 세션으로 연다 — 세션 큐가 같은 세션의 런을
+      // 하나씩 보내므로 같은 리비전 변화에 한 번만 걸린다. OpenClaw 는 세션 키로 이어 가고 리셋은 Gateway 가 한다
+      if (capabilities.promptEveryRun && renewSessionOnPromptChange(db, session.id)) notifyRenewed(run);
       // 리액션은 그 판정 뒤에 세션 행을 다시 읽어 고른다(리액션 계획 판정 PR1) — 새 세션으로 열었으면 커서가 지금으로 올라 그 전에
       // 달린 것을 싣지 않는다. ensureSession 이 돌려준 행의 커서는 판정 전 값이다
       const reactionsSince = getSessionRow(db, session.id)?.reactionsSeenAt ?? null;
@@ -884,9 +902,12 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         since: reactionsSince,
       });
       const inbound = withReactionFacts(built, reactions);
+      // 서버가 세션 id 를 정하는 프로그램(판정 P4)은 늘 서버 값, 스스로 짓는 프로그램은 run_session 으로 저장한 값이 있을 때만
       const providerSessionId = capabilities.serverSessionIds
         ? ensureProviderSessionId(db, session.id)
-        : undefined;
+        : capabilities.promptEveryRun
+          ? (getSessionRow(db, session.id)?.providerSessionId ?? undefined)
+          : undefined;
       // ack 전 상한 — 어댑터는 플러그인이 없으면 120s, ack 가 없으면 재시도로 더 기다린다. 그동안에도 런은 queued 이므로
       // queuedMs 안에 전달되지 않으면 닫는다(스펙 8장 「브리지 단절·ack 없음 → ADAPTER_UNAVAILABLE」). ack 뒤에는 아래에서 다시 건다.
       awaitingAck.add(runId);
@@ -1498,6 +1519,28 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
     },
   };
 
+  /** 프로그램이 지은 세션 id(계획 판정 PR3) — 그 런의 세션 행에 둔다. 다음 런이 그 값으로 이어 간다 */
+  function storeRunSession(runId: string, providerSessionId: string): void {
+    try {
+      const run = store.getRun(db, runId);
+      const session =
+        run &&
+        findSessionRow(db, {
+          conversationId: run.conversationId,
+          agentId: run.agentId,
+          threadRootId: run.threadRootId,
+        });
+      if (!session) {
+        logger.warn({ runId }, "run session id for a run without a session — dropped");
+        return;
+      }
+      if (!storeProgramSessionId(db, session.id, providerSessionId))
+        logger.warn({ runId, sessionId: session.id }, "run session id ignored — the session already has one");
+    } catch (err) {
+      logger.error({ err, runId }, "run session id store failed");
+    }
+  }
+
   const unsubscribe = registry.onEvent((e, from) => {
     switch (e.kind) {
       case "run_event":
@@ -1518,6 +1561,9 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
         return;
       case "canonical":
         return; // 저장은 어댑터가 onCanonical 훅으로 직접 부른다 — 이벤트는 알림용
+      case "run_session":
+        if (fromRunConnection(e.runId, e.connectionId, e.kind)) storeRunSession(e.runId, e.providerSessionId);
+        return;
       case "status":
         bus.emit("adapter.status", e.status); // 어댑터마다 자기 상태로(판정 P7)
         return;
@@ -1527,8 +1573,11 @@ export function createOrchestrator(deps: OrchestratorDeps): Orchestrator {
   return api;
 }
 
-/** run_error 카드 본문 — 사람이 할 일이 있는 코드는 사유를 쓴다 */
-function runErrorBody(code: string, handle: string): string {
+/** run_error 카드 본문 — 사람이 할 일이 있는 코드는 사유를 쓴다. message 는 런 오류의 message(RUNNER_CEILING 이면 항목 이름) */
+function runErrorBody(
+  code: string,
+  { handle, program, message }: { handle: string; program: RunnerProgram | null; message: string },
+): string {
   switch (code) {
     case "DROPPED:bot-loop-protection":
       return `@${handle} ${josa(handle, "이", "가")} 봇 루프 보호로 메시지를 받지 않았습니다`;
@@ -1537,7 +1586,12 @@ function runErrorBody(code: string, handle: string): string {
     case INVALID_AGENT_ID:
       return `@${handle} 실행이 실패했습니다: ${INVALID_AGENT_ID_REASON}`;
     case PROVIDER_AUTH:
-      return `@${handle} 실행이 실패했습니다: 러너의 Claude 로그인을 확인하세요`;
+      return `@${handle} 실행이 실패했습니다: 러너의 ${RUNNER_PROGRAM_NAME[program ?? "claude"]} 로그인을 확인하세요`;
+    case RUNNER_CEILING: {
+      // 항목 이름은 러너가 보낸 글이다 — 다섯 이름 밖이면 싣지 않는다(카드에 아무 글이나 오르지 않게)
+      const item = RunnerCeilingItem.safeParse(message);
+      return `@${handle} 실행이 실패했습니다: 러너 설정이 이 에이전트를 허용하지 않습니다${item.success ? `(${item.data})` : ""} — 러너 머신의 설정을 확인하세요`;
+    }
     default:
       return `@${handle} 실행이 실패했습니다: ${code}`;
   }

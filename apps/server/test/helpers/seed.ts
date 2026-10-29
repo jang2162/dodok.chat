@@ -1,4 +1,5 @@
-import { dodokSessionKey } from "@dodok/shared";
+import { type Agent, dodokSessionKey, type RunnerPermissionMode, type RunnerProgram } from "@dodok/shared";
+import { randomBytes } from "node:crypto";
 import { v7 as uuid } from "uuid";
 import { session, user } from "../../src/db/auth-schema";
 import type { Db, DbOrTx } from "../../src/db/client";
@@ -9,9 +10,12 @@ import {
   channels,
   gateways,
   messages,
+  runnerTokens,
   users,
   workspaces,
 } from "../../src/db/schema.sqlite";
+import { createAgent } from "../../src/modules/agents/service";
+import { createProject, listProjects } from "../../src/modules/runners/projects";
 import { FAKE_GATEWAY_ID, insertGateway } from "./gateways";
 import { createConversation, latestOpenConversation } from "../../src/modules/conversations/store";
 import { ensureSession } from "../../src/modules/sessions/service";
@@ -199,4 +203,74 @@ export function seedAgentSession(
   input: { conversationId: string; agentId: string; threadRootId?: string },
 ): void {
   ensureSession(db, { sessionKeyFor: dodokSessionKey }, input);
+}
+
+/**
+ * 러너 에이전트를 실제 흐름(러너 토큰 → 프로젝트 → 에이전트)으로 만든다. runnerTokenId 를 주지 않으면 그 워크스페이스에 토큰 행을
+ * 하나 넣는다. providerAgentId 는 서버가 짓는다(r-…) — 세션 키가 필요하면 돌려준 agent.providerAgentId 를 쓴다
+ */
+export function createRunnerAgentForTest(
+  db: Db,
+  opts: {
+    workspaceId: string;
+    handle: string;
+    name?: string;
+    runnerTokenId?: string;
+    rootId?: string;
+    relPath?: string;
+    program?: RunnerProgram;
+    basePrompt?: string;
+    model?: string | null;
+    permissionMode?: RunnerPermissionMode;
+    allowedTools?: string[] | null;
+    disallowedTools?: string[];
+    enabled?: boolean;
+  },
+): { agent: Agent; runnerTokenId: string; projectId: string } {
+  const runnerTokenId = opts.runnerTokenId ?? insertRunnerToken(db, opts.workspaceId);
+  const relPath = opts.relPath ?? opts.handle;
+  const existing = listProjects(db, runnerTokenId).find(
+    (p) => p.archivedAt === null && p.rootId === (opts.rootId ?? "src") && p.relPath === relPath,
+  );
+  const project =
+    existing ??
+    createProject(db, {
+      workspaceId: opts.workspaceId,
+      runnerTokenId,
+      rootId: opts.rootId ?? "src",
+      relPath,
+    });
+  const agent = createAgent(db, {
+    workspaceId: opts.workspaceId,
+    provider: "runner",
+    runnerProjectId: project.id,
+    program: opts.program ?? "claude",
+    handle: opts.handle,
+    name: opts.name ?? opts.handle,
+    ...(opts.basePrompt === undefined ? {} : { basePrompt: opts.basePrompt }),
+    ...(opts.model === undefined ? {} : { model: opts.model }),
+    ...(opts.permissionMode === undefined ? {} : { permissionMode: opts.permissionMode }),
+    ...(opts.allowedTools === undefined ? {} : { allowedTools: opts.allowedTools }),
+    ...(opts.disallowedTools === undefined ? {} : { disallowedTools: opts.disallowedTools }),
+    ...(opts.enabled === undefined ? {} : { enabled: opts.enabled }),
+  });
+  return { agent, runnerTokenId, projectId: project.id };
+}
+
+/** 러너 토큰 행 하나 — 원문 없이(해시는 임의값). 실제 러너를 붙일 테스트는 issueRunnerToken 으로 만든다 */
+export function insertRunnerToken(db: DbOrTx, workspaceId: string, label = "laptop"): string {
+  const id = uuid();
+  db.insert(runnerTokens)
+    .values({
+      id,
+      workspaceId,
+      label,
+      hash: randomBytes(32).toString("hex"),
+      prefix: "abcdef",
+      createdAt: new Date(),
+      lastUsedAt: null,
+      revokedAt: null,
+    })
+    .run();
+  return id;
 }

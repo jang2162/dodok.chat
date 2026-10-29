@@ -1,9 +1,16 @@
-import { Agent, type DmAccess, type RunnerProgram } from "@dodok/shared";
+import {
+  Agent,
+  type DmAccess,
+  type RunnerPermissionMode,
+  type RunnerProgram,
+  RunnerRunAgent,
+} from "@dodok/shared";
 import { and, asc, eq, inArray, isNotNull, isNull, ne, type SQL, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
+import { randomBytes } from "node:crypto";
 import { v7 as uuidv7 } from "uuid";
 import type { Db, DbOrTx } from "../../db/client";
-import { agents, channelMembers, gateways, runnerTokens } from "../../db/schema.sqlite";
+import { agents, channelMembers, gateways, runnerProjects, runnerTokens } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
 import { getGatewayRow } from "../gateways/service";
 import { parseStored } from "../../http/validate";
@@ -21,28 +28,41 @@ export function providerAgentIdIs(providerAgentId: string): SQL {
   return sql`lower(${agents.providerAgentId}) = ${providerAgentId.toLowerCase()}`;
 }
 
-/** 등록할 수 있는 제공자 — 어댑터가 있는 것(OpenClaw·러너) */
-export type RegistrableProvider = "openclaw" | "runner";
-
-export type CreateAgentInput = {
+type CreateAgentCommon = {
   workspaceId: string;
-  provider?: RegistrableProvider;
-  providerAgentId: string;
   handle: string;
   name: string;
   avatarUrl?: string;
   basePrompt?: string;
   enabled?: boolean;
-  /** provider runner 일 때 러너가 돌리는 프로그램 — 없으면 claude(드라이버가 있는 것은 그것뿐이다). OpenClaw 는 무시한다 */
-  program?: RunnerProgram;
-  /** provider runner 일 때 묶을 러너 토큰 — 지금 그 id 를 맡는 러너의 토큰. 없으면 처음 알리는 러너에 묶인다 */
-  runnerTokenId?: string;
+};
+
+export type CreateOpenClawAgentInput = CreateAgentCommon & {
+  provider?: "openclaw";
+  providerAgentId: string;
   /**
-   * provider openclaw 일 때 그 에이전트의 Gateway(같은 워크스페이스). REST 등록은 늘 준다(routes.ts) — 없으면 연결이 빈 에이전트(런은
+   * 그 에이전트의 Gateway(같은 워크스페이스). REST 등록은 늘 준다(routes.ts) — 없으면 연결이 빈 에이전트(런은
    * ADAPTER_UNAVAILABLE)로, 시드·테스트가 Gateway 를 지운 뒤의 모양을 만들 때만 쓴다
    */
   gatewayId?: string;
 };
+
+/**
+ * 러너 에이전트(러너 일반화 계획 판정 PR4) — 프로젝트의 러너 토큰에 묶이고 providerAgentId 는 서버가 짓는다. 모델·권한·도구는 shared
+ * RunnerRunAgent 의 필드 스키마로 거른다(run.start.agent 와 같은 상한). 러너 천장(권한 상한·도구 상한·프로그램)과의 대조는 붙어
+ * 있는 러너를 아는 호출자(REST) 몫이고, 런마다 러너가 다시 본다
+ */
+export type CreateRunnerAgentInput = CreateAgentCommon & {
+  provider: "runner";
+  runnerProjectId: string;
+  program: RunnerProgram;
+  model?: string | null;
+  permissionMode?: RunnerPermissionMode;
+  allowedTools?: string[] | null;
+  disallowedTools?: string[];
+};
+
+export type CreateAgentInput = CreateOpenClawAgentInput | CreateRunnerAgentInput;
 
 /** null 은 값을 지운다 */
 export type AgentPatch = {
@@ -207,14 +227,14 @@ function assertNotArchived(
 }
 
 export function createAgent(db: Db, input: CreateAgentInput): Agent {
-  const provider = input.provider ?? "openclaw";
+  if (input.provider === "runner") return createRunnerAgent(db, input);
   return db.transaction((tx) => {
-    const gatewayId = provider === "openclaw" ? (input.gatewayId ?? null) : null;
+    const gatewayId = input.gatewayId ?? null;
     // 보관한 에이전트는 핸들도 쥐고 있다 — 같은 자리면 핸들 409 보다 되살리기 안내가 먼저다
-    if (gatewayId !== null || provider !== "openclaw") {
+    if (gatewayId !== null) {
       assertNotArchived(tx, {
         workspaceId: input.workspaceId,
-        provider,
+        provider: "openclaw",
         providerAgentId: input.providerAgentId,
         gatewayId,
       });
@@ -227,41 +247,93 @@ export function createAgent(db: Db, input: CreateAgentInput): Agent {
         gatewayId,
         providerAgentId: input.providerAgentId,
       });
-    } else if (provider !== "openclaw") {
-      // 러너 에이전트는 워크스페이스에서 id 가 하나다 — 러너가 그 id 로 에이전트를 가져간다(러너 스펙 R2 중 제공자 안 규칙)
-      const taken = tx
-        .select({ id: agents.id })
-        .from(agents)
-        .where(
-          and(
-            eq(agents.workspaceId, input.workspaceId),
-            eq(agents.provider, provider),
-            providerAgentIdIs(input.providerAgentId),
-          ),
-        )
-        .get();
-      if (taken) {
-        throw apiError("CONFLICT", `providerAgentId ${input.providerAgentId} 는 이미 등록돼 있다`, {
-          field: "providerAgentId",
-        });
-      }
     }
     const row = tx
       .insert(agents)
       .values({
-        id: uuidv7(),
-        workspaceId: input.workspaceId,
-        provider,
+        ...commonValues(input),
+        provider: "openclaw",
         providerAgentId: input.providerAgentId,
-        handle: input.handle,
-        name: input.name,
-        avatarUrl: input.avatarUrl ?? null,
-        basePrompt: input.basePrompt ?? null,
-        enabled: input.enabled ?? true,
-        createdAt: new Date(),
-        runnerTokenId: provider === "runner" ? (input.runnerTokenId ?? null) : null,
-        program: provider === "runner" ? (input.program ?? "claude") : null,
         gatewayId,
+      })
+      .returning()
+      .get();
+    return apiAgent(tx, row);
+  });
+}
+
+function commonValues(input: CreateAgentCommon) {
+  return {
+    id: uuidv7(),
+    workspaceId: input.workspaceId,
+    handle: input.handle,
+    name: input.name,
+    avatarUrl: input.avatarUrl ?? null,
+    basePrompt: input.basePrompt ?? null,
+    enabled: input.enabled ?? true,
+    createdAt: new Date(),
+  };
+}
+
+const RunnerAgentFields = RunnerRunAgent.pick({
+  model: true,
+  permissionMode: true,
+  allowedTools: true,
+  disallowedTools: true,
+});
+
+/** 러너 에이전트의 서버 쪽 id — `r-` + 소문자 hex 10. 세션 키 규칙(OpenClaw agentId) 안이고 사람이 고르지 않는다 */
+const RUNNER_AGENT_ID_TRIES = 8;
+function newRunnerAgentId(tx: DbOrTx, workspaceId: string): string {
+  for (let i = 0; i < RUNNER_AGENT_ID_TRIES; i += 1) {
+    const id = `r-${randomBytes(5).toString("hex")}`;
+    const taken = tx
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.workspaceId, workspaceId), eq(agents.provider, "runner"), providerAgentIdIs(id)))
+      .get();
+    if (!taken) return id;
+  }
+  throw apiError("INTERNAL", "could not pick a runner agent id");
+}
+
+function createRunnerAgent(db: Db, input: CreateRunnerAgentInput): Agent {
+  const fields = RunnerAgentFields.safeParse({
+    model: input.model ?? null,
+    permissionMode: input.permissionMode ?? "default",
+    allowedTools: input.allowedTools ?? null,
+    disallowedTools: input.disallowedTools ?? [],
+  });
+  if (!fields.success) {
+    const field = String(fields.error.issues[0]?.path[0] ?? "agent");
+    throw apiError("VALIDATION", `invalid runner agent field: ${field}`, { field });
+  }
+  return db.transaction((tx) => {
+    const project = tx
+      .select({ runnerTokenId: runnerProjects.runnerTokenId, archivedAt: runnerProjects.archivedAt })
+      .from(runnerProjects)
+      .where(
+        and(eq(runnerProjects.id, input.runnerProjectId), eq(runnerProjects.workspaceId, input.workspaceId)),
+      )
+      .get();
+    if (!project) throw apiError("VALIDATION", "runner project not found", { field: "runnerProjectId" });
+    // 보관한 프로젝트로는 새 에이전트를 만들지 않는다 — 이미 있는 에이전트는 남고 런도 돈다(스펙 8장)
+    if (project.archivedAt !== null)
+      throw apiError("VALIDATION", "runner project is archived", { field: "runnerProjectId" });
+    assertHandleFree(tx, input.workspaceId, input.handle);
+    const row = tx
+      .insert(agents)
+      .values({
+        ...commonValues(input),
+        provider: "runner",
+        providerAgentId: newRunnerAgentId(tx, input.workspaceId),
+        program: input.program,
+        runnerTokenId: project.runnerTokenId,
+        runnerProjectId: input.runnerProjectId,
+        model: fields.data.model,
+        permissionMode: fields.data.permissionMode,
+        allowedToolsJson: fields.data.allowedTools,
+        disallowedToolsJson: fields.data.disallowedTools,
       })
       .returning()
       .get();
@@ -318,7 +390,12 @@ export function updateAgent(db: Db, id: string, patch: AgentPatch): Agent {
     if (patch.handle !== undefined) set.handle = patch.handle;
     if (patch.name !== undefined) set.name = patch.name;
     if (patch.avatarUrl !== undefined) set.avatarUrl = patch.avatarUrl;
-    if (patch.basePrompt !== undefined) set.basePrompt = patch.basePrompt;
+    if (patch.basePrompt !== undefined) {
+      set.basePrompt = patch.basePrompt;
+      // 지시가 실제로 바뀔 때만 — 러너 세션이 이 값으로 새로 열린다(계획 판정 PR2). 빈 지시는 없는 것과 같다
+      if ((patch.basePrompt ?? null) !== (current.basePrompt ?? null))
+        set.instructionsRevision = current.instructionsRevision + 1;
+    }
     if (patch.enabled !== undefined) set.enabled = patch.enabled;
     if (patch.dmAccess !== undefined) set.dmAccess = patch.dmAccess;
     if (Object.keys(set).length === 0) return apiAgent(tx, current);
@@ -364,6 +441,9 @@ export async function archiveAgent(
   return apiAgent(db, current);
 }
 
+/** 프로젝트가 없는 러너 에이전트(0031 이 보관)를 되살리려 할 때 — 화면 문구와 같다 */
+export const RUNNER_AGENT_WITHOUT_PROJECT = "프로젝트가 없어 되살릴 수 없습니다 — 새로 만드세요";
+
 /**
  * 되살리기 — archived_at 을 비운다. 살아 있으면 그대로. 핸들은 보관 중에도 이 에이전트 몫이라 겹칠 수 없다.
  * 자동 응답은 채널당 하나다 — 보관 중에는 멤버 응답이 이 에이전트를 걸러 웹이 다른 에이전트를 켤 때 이 행을 끌 수 없으므로, 같은
@@ -375,6 +455,14 @@ export function restoreAgent(
   workspaceId: string,
 ): { agent: Agent; autoRespondOffChannelIds: string[] } {
   return db.transaction((tx) => {
+    const archived = tx
+      .select({ provider: agents.provider, runnerProjectId: agents.runnerProjectId })
+      .from(agents)
+      .where(and(eq(agents.id, id), eq(agents.workspaceId, workspaceId), isNotNull(agents.archivedAt)))
+      .get();
+    // 「보관되지 않은 러너 에이전트는 프로젝트가 있다」(계획 판정 PR4) — 0031 이 보관한 옛 러너 에이전트는 되살리지 않는다
+    if (archived?.provider === "runner" && archived.runnerProjectId === null)
+      throw apiError("VALIDATION", RUNNER_AGENT_WITHOUT_PROJECT, { field: "runnerProjectId" });
     const row = tx
       .update(agents)
       .set({ archivedAt: null })

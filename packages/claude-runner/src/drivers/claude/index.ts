@@ -1,3 +1,4 @@
+import { Id } from "@dodok/shared";
 import { existsSync } from "node:fs";
 import type { ProgramDriver } from "../../driver";
 import { CLAUDE_CODE_LABEL, type ClaudeRunSpec, runOnce } from "./run";
@@ -41,8 +42,9 @@ export function createClaudeDriver(opts: ClaudeDriverOptions): ProgramDriver {
           };
     },
     async startRun(spec, sink, signal) {
+      // 계약은 프로그램이 지은 세션 id(run.session)도 받으려고 글자 하나 이상만 본다 — Claude 는 서버가 정한 UUID 만 연다
       const sessionId = spec.start.providerSessionId;
-      if (sessionId === undefined) {
+      if (sessionId === undefined || !Id.safeParse(sessionId).success) {
         sink.error("VALIDATION", "Claude Code 런에는 서버가 정한 세션 id 가 필요합니다");
         return;
       }

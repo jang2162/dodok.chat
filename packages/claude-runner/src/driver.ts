@@ -3,7 +3,7 @@ import type {
   RunnerProgram,
   RunnerProgramCapability,
   RunnerProgramStatus,
-  RunnerRunStartV2,
+  RunnerRunStart,
 } from "@dodok/shared";
 import type { ProgramCeiling } from "./config";
 import type { RunSink } from "./sink";
@@ -13,7 +13,7 @@ import type { RunSink } from "./sink";
 
 /** 천장 검사를 통과한 런 하나 — 경로는 러너 안에서만 쓰는 풀린 절대 경로다 */
 export type RunSpec = {
-  start: RunnerRunStartV2;
+  start: RunnerRunStart;
   /** 프로젝트 디렉터리의 realpath — 루트 안임을 천장 검사가 확인했다 */
   workdir: string;
   /** 그 프로그램의 로그인 디렉터리(설정 programs.<program>.configDir) */

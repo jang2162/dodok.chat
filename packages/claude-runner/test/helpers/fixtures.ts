@@ -1,4 +1,4 @@
-import { dodokSessionKey, type RunnerRunAgent, RunnerRunStartV2 } from "@dodok/shared";
+import { dodokSessionKey, type RunnerRunAgent, RunnerRunStart } from "@dodok/shared";
 import type { ClaudeRunSpec } from "../../src/drivers/claude/run";
 
 export const RUN_ID = "0192f000-0000-7000-8000-00000000a001";
@@ -28,9 +28,9 @@ export const RUN_AGENT: RunnerRunAgent = {
 
 export function runStart(
   overrides: { runId?: string; agentId?: string; sessionId?: string; agent?: Partial<RunnerRunAgent> } = {},
-): RunnerRunStartV2 {
+): RunnerRunStart {
   const agentId = overrides.agentId ?? AGENT.id;
-  return RunnerRunStartV2.parse({
+  return RunnerRunStart.parse({
     deliver: {
       deliveryId: "0192f000-0000-7000-8000-00000000d001",
       kind: "message",

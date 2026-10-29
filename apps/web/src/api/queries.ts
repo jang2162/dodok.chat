@@ -284,7 +284,7 @@ export const useAdapterStatus = () =>
     queryFn: async ({ client }) => openclawAdapterStatus(await fetchAdapterList(client)),
   });
 /**
- * 러너 줄(러너 스펙 5장 「운영 화면 연결 줄」) — 같은 목록 응답에서 claude 줄만. wire `adapter.status`(claude)가 곧바로 덮는다.
+ * 러너 줄(러너 스펙 5장 「운영 화면 연결 줄」) — 같은 목록 응답에서 runner 줄만. wire `adapter.status`(runner)가 곧바로 덮는다.
  * `poll` 이면 주기로 다시 받는다 — wire 가 끊겨 캐시가 멈춘 동안(운영 화면)
  */
 export const useRunnerAdapterStatus = ({ poll }: { poll?: number } = {}) =>

@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { RunnerRunStartV2, type RunnerProgram, type RunnerRunAgent } from "@dodok/shared";
+import { RunnerRunStart, type RunnerProgram, type RunnerRunAgent } from "@dodok/shared";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { checkCeiling } from "../src/ceiling";
 import { loadRunnerConfig, type ResolvedRunnerConfig } from "../src/config";
@@ -152,7 +152,7 @@ describe("checkCeiling", () => {
     const start = runStart();
     for (const relPath of ["..", "repo/../../outside", "/etc"]) {
       expect(
-        RunnerRunStartV2.safeParse({
+        RunnerRunStart.safeParse({
           ...start,
           agent: { ...start.agent, project: { rootId: "src", relPath } },
         }).success,

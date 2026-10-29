@@ -2179,7 +2179,7 @@ describe("orchestrator", () => {
     expect(t.runOf(run.id)).toMatchObject({ status: "error", error: { code: "PROVIDER_AUTH" } });
     expect(systemMessages(t.db)).toEqual([
       expect.objectContaining({
-        bodyMd: "@dev 실행이 실패했습니다: 러너의 Claude 로그인을 확인하세요",
+        bodyMd: "@dev 실행이 실패했습니다: 러너의 Claude Code 로그인을 확인하세요",
         systemMeta: { kind: "run_error", runId: run.id },
         components: expect.objectContaining({
           blocks: [expect.objectContaining({ items: [expect.objectContaining({ id: "retry_run" })] })],

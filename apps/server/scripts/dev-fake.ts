@@ -23,10 +23,11 @@
  * - `POST /__devfake/disk { freeBytes, totalBytes } | { reset: true }` — 디스크 감시가 그 값을 보게 하고 곧바로 다시 잰다
  * - `POST /__devfake/plugin-capabilities { gatewayId, threads: boolean }` — false 면 그 Gateway 플러그인이 threads 없는 hello 로 다시
  *   붙는다(옛 플러그인 흉내), true 면 되돌린다
- * - `POST /__devfake/runner { connected: boolean, token? }` — 가짜 Claude 러너를 끊고(false) 붙인다(true, token 을 주면 그 러너 토큰으로)
- * 가짜 Claude 러너(`test/fakes/fake-runner.ts`)도 붙는다 — 고정 러너 토큰 `dev-fake-runner-token`(라벨 dev-fake) 행을 시작 때 넣고,
- * 그 러너가 알리는 에이전트 `coder`(provider claude)를 등록해 둔다(처음 붙은 러너 토큰에 묶인다). 가짜 러너는 스스로 다시 붙지 않는다 —
- * 폐기·끊기 뒤에는 훅으로 붙인다. 폐기 뒤 새 토큰으로 붙이면 coder 는 폐기된 토큰에 묶인 채라 연결 페이지 「이 러너로 묶기」로 옮긴다.
+ * - `POST /__devfake/runner { connected: boolean, token? }` — 가짜 러너를 끊고(false) 붙인다(true, token 을 주면 그 러너 토큰으로)
+ * 가짜 러너(`test/fakes/fake-runner.ts`)도 붙는다 — 고정 러너 토큰 `dev-fake-runner-token`(라벨 dev-fake) 행을 시작 때 넣고, 그 러너의
+ * 프로젝트 `src/dodok`(루트는 가짜 러너의 `FAKE_RUNNER_ROOT`)와 그 프로젝트의 러너 에이전트 `coder`(프로그램 claude)를 만들어 둔다 —
+ * 에이전트는 만들 때부터 그 러너 토큰에 묶인다. 가짜 러너는 스스로 다시 붙지 않는다 — 폐기·끊기 뒤에는 훅으로 붙인다. 폐기 뒤 새 토큰으로
+ * 붙여도 coder 는 폐기된 토큰에 묶인 채라 런은 ADAPTER_UNAVAILABLE 이다.
  * 끊김 사건 임계는 DODOK_DEVFAKE_DISCONNECT_MS(기본 운영과 같은 60초)로 줄인다. 종료 표지는 <dataDir>/dev-fake-run/ 에 둔다.
  * 보관하지 않은 채널이 하나도 없으면(새 DB) 씨앗 채널 `DEV_FAKE_CHANNEL_NAME`(에이전트 dev·coder)을 만들고 그 채널에만 세션 둘을 넣는다
  * (채널 세션 계획 태스크 8) — 마이그레이션이 만드는 꼴의 「이전 대화」(id = 채널 id)와 새 세션 하나(`DEV_FAKE_SESSION_TITLE`), owner 글 하나씩.
@@ -85,13 +86,14 @@ import {
 } from "../src/modules/agents/service";
 import { hasGateways } from "../src/adapters/types";
 import { getGatewayRow } from "../src/modules/gateways/service";
+import { createProject, listProjects } from "../src/modules/runners/projects";
 import { acceptInvite, normalizeEmail } from "../src/modules/members/accept";
 import { issueInvite } from "../src/modules/members/invites";
 import { DISCONNECT_EVENT_MS, startRunState } from "../src/modules/ops/health";
 import { type FakeGateway, startFakeGateway } from "../test/fakes/fake-gateway";
 import { FAKE_PLUGIN_HELLO, type FakePlugin, startFakePlugin } from "../test/fakes/fake-plugin";
 import {
-  FAKE_RUNNER_AGENT,
+  FAKE_RUNNER_ROOT,
   type FakeRunner,
   type FakeRunnerRun,
   startFakeRunner,
@@ -193,7 +195,7 @@ export const DEV_FAKE_GATEWAY_PATH = "/__devfake/gateway";
 export const DEV_FAKE_DISK_PATH = "/__devfake/disk";
 /** 개발 전용 — 고른 Gateway 의 가짜 플러그인을 끊고 hello capabilities 의 threads 를 빼거나(false, 옛 플러그인) 되돌려(true) 다시 붙인다 */
 export const DEV_FAKE_PLUGIN_CAPABILITIES_PATH = "/__devfake/plugin-capabilities";
-/** 개발 전용 — 가짜 Claude 러너를 끊고(connected false) 붙인다(true — token 을 주면 그 러너 토큰으로 바꿔 붙는다) */
+/** 개발 전용 — 가짜 러너를 끊고(connected false) 붙인다(true — token 을 주면 그 러너 토큰으로 바꿔 붙는다) */
 export const DEV_FAKE_RUNNER_PATH = "/__devfake/runner";
 /**
  * 개발 전용 고정 러너 토큰(시크릿이 아니다 — 로그에 찍는다). 실제 토큰(`drn_` + 43자)과 모양이 달라도 핸드셰이크는 해시만 본다 —
@@ -202,6 +204,8 @@ export const DEV_FAKE_RUNNER_PATH = "/__devfake/runner";
 export const DEV_FAKE_RUNNER_TOKEN = "dev-fake-runner-token";
 /** 고정 러너 토큰의 라벨 — 등록 목록 hint 가 `dev-fake · dodok · sonnet` */
 export const DEV_FAKE_RUNNER_LABEL = "dev-fake";
+/** 가짜 러너의 에이전트 — providerAgentId 는 서버가 짓는다(r-…). 씨앗 채널·로그는 핸들로 찾는다 */
+export const DEV_FAKE_RUNNER_AGENT = { handle: "coder", name: "Coder", relPath: "dodok" } as const;
 /** runner 훅이 어댑터의 붙은 러너 수가 바뀌기를 기다리는 상한 */
 const RUNNER_HOOK_TIMEOUT_MS = 5_000;
 /** 스레드를 모르는 옛 플러그인의 hello — 스레드 멘션은 PLUGIN_OUTDATED 로 끝난다 */
@@ -702,7 +706,7 @@ const pauseOrAbort = (run: FakeRunnerRun, ms: number) =>
   Promise.race([new Promise<void>((resolve) => setTimeout(resolve, ms)), run.aborted]);
 
 /**
- * 가짜 Claude 러너(에이전트 coder)의 대본. 답 글·델타·간격·릴레이 꼬리는 `fakeAgentScript` 와 같다(「오래」·「느리게」도 그대로) —
+ * 가짜 러너(에이전트 coder)의 대본. 답 글·델타·간격·릴레이 꼬리는 `fakeAgentScript` 와 같다(「오래」·「느리게」도 그대로) —
  * 늘 도구 하나(Read)를 먼저 부르고, 러너 키워드: 승인(도구 승인 카드 — 허용이면 Bash 도구가 돈다)·게시(post 로 글 + 카드)·
  * 제어(제어 도구 update_channel 로 채널 주제를 바꾼다 — 시킨 사람에게 확인 카드, 「제어 프롬프트」면 admin 이상만 되는 set_channel_prompt)·
  * 구독(비용을 subscription_estimate 로)·실패(run.error). 그 밖의 키워드(카드·첨부·드롭 등)는 OpenClaw 가짜 에이전트 몫이다.
@@ -711,7 +715,7 @@ const pauseOrAbort = (run: FakeRunnerRun, ms: number) =>
 export async function fakeRunnerScript(run: FakeRunnerRun): Promise<void> {
   const d = run.start.deliver;
   const { text } = d.message;
-  const script = fakeAgentScript(FAKE_RUNNER_AGENT.id, d);
+  const script = fakeAgentScript(DEV_FAKE_RUNNER_AGENT.handle, d);
   run.tool("Read", { file_path: "README.md" }, "# dodok");
   if (text.includes("실패")) {
     run.error("INTERNAL", "fake runner failure");
@@ -1041,17 +1045,23 @@ function waitForRunners(app: App, want: (connected: number) => boolean, timeoutM
 }
 
 /**
- * 고정 러너 토큰 행과 가짜 러너의 에이전트 coder 를 보장한다. 해시가 같은 행이 이미 있으면(`--keep`) 폐기됐어도 그대로 둔다 —
- * 폐기된 채로 이어받으면 가짜 러너는 못 붙고, 연결 페이지에서 새 토큰을 발급해 runner 훅의 token 으로 붙인 뒤 coder 를 그 러너에 다시
- * 묶는다
+ * 고정 러너 토큰 행과 가짜 러너의 프로젝트·에이전트 coder 를 보장한다. 해시가 같은 행이 이미 있으면(`--keep`) 폐기됐어도 그대로 둔다 —
+ * 폐기된 채로 이어받으면 가짜 러너는 못 붙고 프로젝트·에이전트도 새로 만들지 않는다. 핸들 coder 인 에이전트가 이미 있으면(사람이 바꿨거나,
+ * 0031 이 보관한 옛 러너 에이전트) 건드리지 않는다
  */
 function ensureDevFakeRunner(app: App): void {
   const { db, workspaceId } = app;
   const hash = createHash("sha256").update(DEV_FAKE_RUNNER_TOKEN).digest("hex");
-  if (!db.select({ id: runnerTokens.id }).from(runnerTokens).where(eq(runnerTokens.hash, hash)).get()) {
+  let token = db
+    .select({ id: runnerTokens.id, revokedAt: runnerTokens.revokedAt })
+    .from(runnerTokens)
+    .where(eq(runnerTokens.hash, hash))
+    .get();
+  if (!token) {
+    token = { id: uuidv7(), revokedAt: null };
     db.insert(runnerTokens)
       .values({
-        id: uuidv7(),
+        id: token.id,
         workspaceId,
         label: DEV_FAKE_RUNNER_LABEL,
         hash,
@@ -1062,20 +1072,34 @@ function ensureDevFakeRunner(app: App): void {
       })
       .run();
   }
-  const agent = db
+  if (token.revokedAt !== null) return;
+  const taken = db
     .select({ id: agents.id })
     .from(agents)
-    .where(and(eq(agents.workspaceId, workspaceId), providerAgentIdIs(FAKE_RUNNER_AGENT.id)))
+    .where(and(eq(agents.workspaceId, workspaceId), eq(agents.handle, DEV_FAKE_RUNNER_AGENT.handle)))
     .get();
-  if (!agent) {
-    createAgent(db, {
+  if (taken) return;
+  const project =
+    listProjects(db, token.id).find(
+      (p) =>
+        p.archivedAt === null &&
+        p.rootId === FAKE_RUNNER_ROOT.id &&
+        p.relPath === DEV_FAKE_RUNNER_AGENT.relPath,
+    ) ??
+    createProject(db, {
       workspaceId,
-      provider: "runner",
-      providerAgentId: FAKE_RUNNER_AGENT.id,
-      handle: FAKE_RUNNER_AGENT.id,
-      name: FAKE_RUNNER_AGENT.name,
+      runnerTokenId: token.id,
+      rootId: FAKE_RUNNER_ROOT.id,
+      relPath: DEV_FAKE_RUNNER_AGENT.relPath,
     });
-  }
+  createAgent(db, {
+    workspaceId,
+    provider: "runner",
+    runnerProjectId: project.id,
+    program: "claude",
+    handle: DEV_FAKE_RUNNER_AGENT.handle,
+    name: DEV_FAKE_RUNNER_AGENT.name,
+  });
 }
 
 /**
@@ -1707,7 +1731,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
       })),
       // 키 token 은 로거가 가린다 — 가짜 Gateway 는 토큰을 검사하지 않는 고정값이라 이름을 바꿔 그대로 찍는다
       spareGateway: { url: dev.spareGateway.url, gatewayToken: dev.spareGateway.token },
-      runnerAgent: FAKE_RUNNER_AGENT.id,
+      runnerAgent: DEV_FAKE_RUNNER_AGENT.handle,
       web5180:
         "PORT=3100 APP_ORIGIN=http://localhost:5180 pnpm -F @dodok/server dev:fake + DODOK_API_ORIGIN=http://127.0.0.1:3100 pnpm -F @dodok/web dev --port 5180",
     },

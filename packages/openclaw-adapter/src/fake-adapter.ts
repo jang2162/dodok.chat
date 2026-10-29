@@ -127,7 +127,7 @@ export class FakeAdapter<P extends AdapterProvider = "openclaw"> implements Agen
   /** emitApproval 로 흘린 승인 — 기본 resolveApproval 이 이것의 terminal 스냅샷을 돌려준다. */
   private approvals = new Map<string, ProviderApproval>();
   private handlers = new Set<(e: AdapterEvent) => void>();
-  /** claude 흉내의 상태 — OpenClaw 흉내는 Gateway 목록(gateways)과 Gateway 상태(gatewayState·gatewayStates)에서 만든다 */
+  /** 러너 흉내의 상태 — OpenClaw 흉내는 Gateway 목록(gateways)과 Gateway 상태(gatewayState·gatewayStates)에서 만든다 */
   private currentStatus: RunnerAdapterStatus;
   /** 켜진 Gateway 의 기본 상태와 Gateway 별 덮어쓰기(setGatewayState) */
   private gatewayState: FakeGatewayState = { gateway: "connected", bridge: "connected" };
@@ -216,7 +216,7 @@ export class FakeAdapter<P extends AdapterProvider = "openclaw"> implements Agen
     this.emit({ kind: "approval", approval, ...(connectionId === undefined ? {} : { connectionId }) });
   }
 
-  /** claude 흉내의 상태. OpenClaw 흉내는 setGatewayState 로 */
+  /** 러너 흉내의 상태. OpenClaw 흉내는 setGatewayState 로 */
   setStatus(status: RunnerAdapterStatus): void {
     this.currentStatus = status;
   }
@@ -358,7 +358,7 @@ export class FakeAdapter<P extends AdapterProvider = "openclaw"> implements Agen
     return dodokSessionKey(providerAgentId, conversationId, threadRootId);
   }
 
-  /** 실물과 같이 에이전트를 가리지 않고, 붙은 플러그인(setupDetail 의 bridge.plugin)이 없으면 false. claude 흉내는 늘 안다 */
+  /** 실물과 같이 에이전트를 가리지 않고, 붙은 플러그인(setupDetail 의 bridge.plugin)이 없으면 false. 러너 흉내는 늘 안다 */
   supports(_providerAgentId: string, connectionId: ConnectionId | null, capability: "threads"): boolean {
     this.calls.connections.supports.push(connectionId);
     const detail: AdapterSetupDetail = this.currentSetupDetail;

@@ -81,7 +81,7 @@ import { type PushSend, webPushSender, webPushTransport } from "./modules/push/t
 import { loadVapidKeys } from "./modules/push/vapid";
 import type { Orchestrator, RunTimeouts } from "./modules/runs/orchestrator";
 import { registerRunnerRoutes, runnerServerUrl } from "./modules/runners/routes";
-import { boundRunnerToken, claimRunnerToken } from "./modules/runners/bindings";
+import { runnerAgentDefinition } from "./modules/runners/definition";
 import { readRunnerFile, runnerDirCandidates } from "./modules/runners/runner-file";
 import { activeRunnerTokenCount, isActiveRunnerTokenId, verifyRunnerTokenDb } from "./modules/runners/tokens";
 import { registerRunRoutes } from "./modules/runs/routes";
@@ -333,7 +333,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
             ...(deps.gatewayBackoff === undefined ? {} : { backoff: deps.gatewayBackoff }),
           }),
         ];
-    // Claude 러너(러너 스펙 2장) — 사람 머신의 러너가 /runner 로 붙어 온다. 최종 답·post 는 OpenClaw 정본과 같은 자리로 저장한다
+    // 러너(러너 스펙 2장) — 사람 머신의 러너가 /runner 로 붙어 온다. 최종 답·post 는 OpenClaw 정본과 같은 자리로 저장한다
     // 러너 첨부 GET 의 읽기 범위를 이 어댑터에 묻는다(판정 R5) — 어댑터가 없으면(테스트의 가짜 runner) 열린 런도 없다
     let runnerAdapter: RunnerAdapter | undefined;
     if (
@@ -359,10 +359,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
         tokenCount: () => activeRunnerTokenCount(db, workspaceId),
         onControlCall: (connectionId, call) =>
           controlCall(principalForRunner(db, connectionId, call.runId), call),
-        bindings: {
-          boundToken: (agentId) => boundRunnerToken(db, workspaceId, agentId),
-          claim: (agentId, tokenId) => claimRunnerToken(db, workspaceId, agentId, tokenId),
-        },
+        agentDefinition: (agentId, tokenId) => runnerAgentDefinition(db, workspaceId, agentId, tokenId),
         // 러너 소켓마다 버킷(러너 스펙 밖 — 이월 「러너 프레임 속도 제한」). 사건은 어댑터가 주소별 1분에 한 번만 부른다
         frameLimit: {
           buckets: () => ({
@@ -483,10 +480,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       orchestrator: services.orchestrator,
     };
     registerChannelRoutes(fastify, routeContext);
-    registerAgentRoutes(fastify, {
-      ...routeContext,
-      runnerTokenFor: (providerAgentId) => runnerAdapter?.servingTokenId(providerAgentId),
-    });
+    registerAgentRoutes(fastify, routeContext);
     registerMessageRoutes(fastify, routeContext);
     registerConversationRoutes(fastify, routeContext);
     registerDmRoutes(fastify, routeContext);
@@ -766,7 +760,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       now: limitClock,
       approvals: services.approvals,
       channels: routeContext,
-      agents: { ...routeContext, runnerTokenFor: (id) => runnerAdapter?.servingTokenId(id) },
+      agents: routeContext,
       opsStatus: () => buildOpsStatus(opsStatusContext),
       ...(deps.controlConfirmTtlMs === undefined ? {} : { confirmTtlMs: deps.controlConfirmTtlMs }),
     });

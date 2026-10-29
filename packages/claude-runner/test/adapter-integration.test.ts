@@ -1,4 +1,4 @@
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server as HttpServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -20,7 +20,7 @@ import { startRunnerConnection, type RunnerConnection } from "../src/connection"
 import { createClaudeDriver } from "../src/drivers/claude";
 import { POST_STOPPED_MESSAGE } from "../src/post-tool";
 import { createFakeSdk, script, type FakeSdk } from "./helpers/fake-query";
-import { AGENT, CHANNEL_ID } from "./helpers/fixtures";
+import { AGENT, CHANNEL_ID, RUN_AGENT } from "./helpers/fixtures";
 
 // 실제 러너 어댑터(@dodok/runner-adapter, 실제 socket.io 서버)와 러너(연결·런·가짜 query)를 붙인다 — 두 태스크가 따로 맞춘
 // 계약(조율자 판정 R1: 중지는 run.final aborted, outbound.post 는 열린 런에 묶임, 승인 왕복, 교체·재시작)이 실제로 맞물리는지.
@@ -75,8 +75,24 @@ async function startServer(port = 0, opts: { approvalTtlMs?: number } = {}): Pro
       return { messageId };
     },
     tokenCount: () => 1,
-    // 등록 에이전트가 없는 서버 — 옛 규칙(먼저 hello 한 러너), 프레임 제한 없음
-    bindings: { boundToken: () => null, claim: () => false },
+    // 서버 DB 의 러너 에이전트 coder — 그 토큰의 러너, 프로젝트는 루트 src 자신. 프레임 제한 없음
+    agentDefinition: (agentId, tokenId) =>
+      tokenId !== TOKEN_ID
+        ? null
+        : agentId === "coder"
+          ? {
+              name: "코더",
+              instructions: null,
+              agent: { ...RUN_AGENT, project: { rootId: "src", relPath: "" } },
+            }
+          : // 러너 설정에서 지운 루트의 프로젝트(Review Focus 2)
+            agentId === "ghost"
+            ? {
+                name: "유령",
+                instructions: null,
+                agent: { ...RUN_AGENT, project: { rootId: "gone", relPath: "" } },
+              }
+            : null,
     frameLimit: {
       buckets: () => ({ events: { take: () => true }, control: { take: () => true } }),
       onLimited: () => {},
@@ -214,46 +230,68 @@ const approvals = (s: ServerSide) =>
   s.events.flatMap((e): ProviderApproval[] => (e.kind === "approval" ? [e.approval] : []));
 
 async function ready(server: ServerSide) {
-  await waitFor(
-    () =>
-      server.adapter.status().runners.connected === 1 &&
-      server.adapter.setupDetail().runners[0]?.agents.some((a) => a.id === "coder") === true,
-    "러너 hello",
-  );
+  await waitFor(() => server.adapter.status().runners.connected === 1, "러너 hello");
 }
 
-// 러너는 V2 계약을 말하고 러너 어댑터는 아직 V1 이다(러너 일반화 계획 판정 PR5 — 태스크 2·3 사이). 두 판본이 맞물리지 않는
-// 것을 아래 한 시험이 고정하고, 왕복 시험들은 어댑터가 V2 로 옮길 때(태스크 3) 어댑터 쪽 기대값을 V2 로 고쳐 되살린다
-describe("태스크 2·3 사이 — V1 러너 어댑터와 V2 러너", () => {
-  it("어댑터가 hello 를 PROTOCOL_MISMATCH 로 거절하고 러너는 종료 코드 2 로 끝난다 — 다시 붙지 않는다", async () => {
-    const server = await startServer();
-    cleanups.push(() => server.close());
-    const runner = startRunner(server, createFakeSdk());
-    // 어댑터는 거절 ack 와 함께 연결을 끊는다 — 러너는 두 사유를 모두 찍고 종료 2 를 두 번 부를 수 있다(main 은 첫 번에 끝난다)
-    await waitFor(() => runner.fatal.length >= 1, "러너 종료");
-    expect(new Set(runner.fatal)).toEqual(new Set([2]));
-    expect(runner.logs.join("\n")).toMatch(/PROTOCOL_MISMATCH/);
-    await new Promise((r) => setTimeout(r, 100));
-    expect(server.adapter.status().runners.connected).toBe(0);
-  });
-});
-
-describe.skip("러너 ↔ 실제 러너 어댑터 — 어댑터가 V2 로 옮기면(태스크 3) 되살린다", () => {
-  it("hello — 에이전트가 목록에 오르고 approvals·attachments 능력을 알린다", async () => {
+describe("러너 ↔ 실제 러너 어댑터", () => {
+  it("hello — 루트·프로그램·능력을 알리고, 에이전트는 알리지 않으며, 어디에도 작업 디렉터리 경로가 없다", async () => {
     const server = await startServer();
     cleanups.push(() => server.close());
     startRunner(server, createFakeSdk());
     await ready(server);
-    expect(await server.adapter.listAgents(null)).toEqual([
-      { providerAgentId: "coder", name: "코더", hint: "laptop · my-repo · sonnet" },
-    ]);
+    expect(await server.adapter.listAgents(null)).toEqual([]);
     expect(server.adapter.setupDetail().runners[0]!.capabilities).toEqual([
       "threads",
       "interrupt",
       "approvals",
       "attachments",
     ]);
+    const info = server.adapter.runnerInfo(TOKEN_ID);
+    expect(info).toMatchObject({ roots: [{ id: "src", label: "my-repo" }], browse: true });
+    expect(
+      info?.programs.map((p) => [p.program, p.version, p.capabilities.includes("serverSessionIds")]),
+    ).toEqual([["claude", "2.1.283", true]]);
+    expect(server.adapter.capabilitiesFor("coder", TOKEN_ID).serverSessionIds).toBe(true);
     expect(JSON.stringify(server.adapter.setupDetail())).not.toContain(workdir);
+    expect(JSON.stringify(info)).not.toContain(workdir);
+  });
+
+  it("천장에 걸린 에이전트 — 러너가 dispatch 뒤 RUNNER_CEILING(root)으로 닫고 CLI 는 뜨지 않는다 [Review Focus 2]", async () => {
+    const server = await startServer();
+    cleanups.push(() => server.close());
+    const fake = createFakeSdk();
+    startRunner(server, fake);
+    await ready(server);
+    const input = { ...deliver(RUN_1), agentId: "ghost", sessionKey: dodokSessionKey("ghost", CHANNEL_ID) };
+    const sent = await server.adapter.send(input, { connectionId: TOKEN_ID, providerSessionId: SESSION_ID });
+    expect(sent).toMatchObject({ admission: "dispatch" });
+    await waitFor(() => signals(server, RUN_1).includes("gateway_error"), "천장 오류");
+    expect(runEvents(server, RUN_1)).toEqual([
+      { type: "RUN_ERROR", runId: RUN_1, code: "RUNNER_CEILING", message: "root" },
+    ]);
+    expect(fake.calls).toHaveLength(0);
+  });
+
+  it("fs.list·project.check — 어댑터가 묻고 러너가 루트 안에서 답한다", async () => {
+    const server = await startServer();
+    cleanups.push(() => server.close());
+    mkdirSync(join(workdir, "repo", ".git"), { recursive: true });
+    mkdirSync(join(workdir, ".hidden"));
+    startRunner(server, createFakeSdk());
+    await ready(server);
+    expect(await server.adapter.fsList(TOKEN_ID, { rootId: "src", relPath: "" })).toEqual({
+      ok: true,
+      entries: [{ name: "repo", isGitRepo: true }],
+      truncated: false,
+    });
+    expect(await server.adapter.projectCheck(TOKEN_ID, { rootId: "src", relPath: "repo" })).toEqual({
+      ok: true,
+      isGitRepo: true,
+    });
+    expect(await server.adapter.projectCheck(TOKEN_ID, { rootId: "gone", relPath: "" })).toEqual({
+      ok: false,
+      reason: "root_missing",
+    });
   });
 
   it("run.start → 글·도구·승인 왕복·post(파일) → 최종 답 — post 는 열린 런에 묶여 통과한다", async () => {
@@ -286,7 +324,7 @@ describe.skip("러너 ↔ 실제 러너 어댑터 — 어댑터가 V2 로 옮기
     );
 
     const sent = await server.adapter.send(deliver(RUN_1), {
-      connectionId: null,
+      connectionId: TOKEN_ID,
       providerSessionId: SESSION_ID,
     });
     expect(sent).toEqual({ admission: "dispatch", providerRunId: RUN_1, connectionId: TOKEN_ID });
@@ -380,7 +418,7 @@ describe.skip("러너 ↔ 실제 러너 어댑터 — 어댑터가 V2 로 옮기
       { callTool: { name: "post", input: { text: "늦은 글" } } },
       { waitInterrupt: [script.errorResult("error_during_execution", ["interrupted"])] },
     );
-    await server.adapter.send(deliver(RUN_2), { connectionId: null, providerSessionId: SESSION_ID });
+    await server.adapter.send(deliver(RUN_2), { connectionId: TOKEN_ID, providerSessionId: SESSION_ID });
     await waitFor(() => approvals(server).some((a) => a.status === "pending"), "승인 요청");
 
     await server.adapter.abort(RUN_2, dodokSessionKey("coder", CHANNEL_ID), null);
@@ -413,7 +451,7 @@ describe.skip("러너 ↔ 실제 러너 어댑터 — 어댑터가 V2 로 옮기
       { callTool: { name: "post", input: { text: "보고서", files: ["report.md"] } } },
       { waitInterrupt: [script.errorResult("error_during_execution", ["interrupted"])] },
     );
-    await server.adapter.send(deliver(RUN_2), { connectionId: null, providerSessionId: SESSION_ID });
+    await server.adapter.send(deliver(RUN_2), { connectionId: TOKEN_ID, providerSessionId: SESSION_ID });
     await waitFor(() => runner.uploads.length === 1, "올리기 시작");
 
     // 서버는 곧바로 런을 닫는다 — 같은 틱에 올리기를 풀면 러너는 run.abort 를 받기 전에 post 를 보낸다
@@ -445,7 +483,7 @@ describe.skip("러너 ↔ 실제 러너 어댑터 — 어댑터가 V2 로 옮기
       { askPermission: { toolName: "Bash", input: { command: "rm -rf build" }, toolUseID: "toolu_03" } },
       ...script.textTurn("msg_1", ["거절돼서 멈춥니다"]),
     );
-    await server.adapter.send(deliver(RUN_1), { connectionId: null, providerSessionId: SESSION_ID });
+    await server.adapter.send(deliver(RUN_1), { connectionId: TOKEN_ID, providerSessionId: SESSION_ID });
     await waitFor(() => signals(server, RUN_1).includes("gateway_final"), "최종 답");
 
     expect(approvals(server).map((a) => a.status)).toEqual(["pending", "expired"]);
@@ -460,7 +498,7 @@ describe.skip("러너 ↔ 실제 러너 어댑터 — 어댑터가 V2 로 옮기
     const runner = startRunner(first, fake);
     await ready(first);
     fake.script(script.messageStart("msg_1"), { hang: true });
-    await first.adapter.send(deliver(RUN_1), { connectionId: null, providerSessionId: SESSION_ID });
+    await first.adapter.send(deliver(RUN_1), { connectionId: TOKEN_ID, providerSessionId: SESSION_ID });
     await waitFor(() => fake.calls.length === 1, "런 시작");
 
     await first.close();
@@ -491,7 +529,7 @@ describe.skip("러너 ↔ 실제 러너 어댑터 — 어댑터가 V2 로 옮기
     await waitFor(() => b.conn.connected && server.adapter.status().runners.connected === 1, "뒤 러너");
     // 뒤 러너가 그 에이전트를 받는다 — 런이 뒤 러너로 간다
     fakeB.script(...script.textTurn("msg_1", ["뒤 러너"]));
-    await server.adapter.send(deliver(RUN_1), { connectionId: null, providerSessionId: SESSION_ID });
+    await server.adapter.send(deliver(RUN_1), { connectionId: TOKEN_ID, providerSessionId: SESSION_ID });
     await waitFor(() => signals(server, RUN_1).includes("gateway_final"), "뒤 러너의 최종 답");
     expect(server.outbound.map((o) => o.message.text)).toEqual(["뒤 러너"]);
     // 앞 러너는 다시 붙지 않는다

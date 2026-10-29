@@ -50,7 +50,8 @@ describe("서버 통합 스모크 — 실제 OpenClawAdapter + 가짜 Gateway + 
           serverSessionIds: false,
         },
         runner: {
-          agentsList: true,
+          // 러너는 에이전트를 알리지 않는다(러너 일반화 계획 판정 PR9)
+          agentsList: false,
           configSet: true,
           promptEveryRun: true,
           serverSessionIds: true,

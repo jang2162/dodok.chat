@@ -3,20 +3,20 @@ import {
   ControlResult,
   Id,
   RUNNER_NAMESPACE,
-  RUNNER_PROTOCOL_V2,
+  RUNNER_PROTOCOL,
   RUNNER_SHUTDOWN_STOP_REASON,
   RunnerApprovalResolve,
-  RunnerHelloResultV2,
+  RunnerHelloResult,
   RunnerOutboundAck,
   RunnerProjectRef,
   RunnerRunAbort,
-  RunnerRunStartV2,
+  RunnerRunStart,
   type RunnerCapability,
-  type RunnerClientToServerEventsV2,
-  type RunnerHelloV2,
+  type RunnerClientToServerEvents,
+  type RunnerHello,
   type RunnerProgram,
   type RunnerProgramStatus,
-  type RunnerServerToClientEventsV2,
+  type RunnerServerToClientEvents,
 } from "@dodok/shared";
 import { io, type Socket } from "socket.io-client";
 import { type AttachmentsHttp, createAttachmentsHttp } from "./attachments-http";
@@ -29,7 +29,7 @@ import { abortedFinal, type ApprovalOutcome, createRunSink, type RunBridge, type
 
 export type RunnerLogger = { info(msg: string): void; warn(msg: string): void; error(msg: string): void };
 
-export type RunnerVersions = Pick<RunnerHelloV2, "runnerVersion" | "sdkVersion" | "bundleSha256">;
+export type RunnerVersions = Pick<RunnerHello, "runnerVersion" | "sdkVersion" | "bundleSha256">;
 
 /** 드라이버가 없는 프로그램을 설정에 적었다 — 꺼진 것과 같지만 hello 에 사유와 함께 알린다 */
 export const NO_DRIVER_REASON = "이 러너 판본에는 이 프로그램의 드라이버가 없습니다";
@@ -66,7 +66,7 @@ export type RunnerConnectionOptions = {
   postAckTimeoutMs?: number;
 };
 
-type RunnerSocket = Socket<RunnerServerToClientEventsV2, RunnerClientToServerEventsV2>;
+type RunnerSocket = Socket<RunnerServerToClientEvents, RunnerClientToServerEvents>;
 
 /**
  * 런 하나가 서버와 주고받는 길. live() 는 그 런을 시작한 연결 세대가 아직 붙어 있는가 — 끊겼거나 다시 붙은 연결로는
@@ -76,7 +76,7 @@ const FIELD_NAME = /^[A-Za-z_]\w{0,63}$/;
 const INVALID_FIELDS_MAX = 5;
 
 /** 틀린 필드의 이름 경로(`agent.allowedTools[0]`) — 스키마의 키만 싣고, 이름 꼴이 아닌 성분(맵 키 등 보낸 쪽의 값)은 `?` 로 */
-function invalidFields(issues: readonly { path: readonly PropertyKey[] }[]): string {
+export function invalidFields(issues: readonly { path: readonly PropertyKey[] }[]): string {
   const names = [
     ...new Set(
       issues.map(
@@ -179,6 +179,8 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
   // 연결마다 올린다 — 끊긴 연결에서 시작한 런의 이벤트가 다시 붙은 연결로 새지 않게(서버는 그 런을 이미 닫았다)
   let generation = 0;
+  // hello ack 를 기다리는 중 — 서버 끊김과 거절 ack 의 순서를 가린다(disconnect 처리기)
+  let helloInFlight = false;
   const http =
     opts.attachmentsHttp ?? createAttachmentsHttp({ serverUrl: config.serverUrl, token: opts.token });
   // 결정을 기다리는 승인(id 는 toolUseID). 런이 멈추면 그 런의 signal 이 기다림을 거둔다
@@ -220,8 +222,8 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
   }
 
   // 루트는 id·라벨만 — 경로 원문은 서버로 보내지 않는다(러너 일반화 스펙 결정 3)
-  const helloOf = (programs: RunnerProgramStatus[]): RunnerHelloV2 => ({
-    runnerProtocol: RUNNER_PROTOCOL_V2,
+  const helloOf = (programs: RunnerProgramStatus[]): RunnerHello => ({
+    runnerProtocol: RUNNER_PROTOCOL,
     ...opts.versions,
     capabilities: CAPABILITIES,
     roots: config.roots.map((r) => ({ id: r.id, label: r.label })),
@@ -281,6 +283,11 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
   }
 
   function fatal(message: string): void {
+    // 이미 끝나는 중이면(앞 사유의 fatal·stop) 사유만 남긴다 — onFatal 은 한 번
+    if (stopped) {
+      logger.warn(`dodok-runner: ${message}`);
+      return;
+    }
     logger.error(`dodok-runner: ${message}`);
     stopped = true;
     if (retryTimer) clearTimeout(retryTimer);
@@ -323,8 +330,14 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
     void (async () => {
       try {
         const hello = helloOf(await detectPrograms());
-        const raw: unknown = await socket.timeout(HELLO_TIMEOUT_MS).emitWithAck("hello", hello);
-        const result = RunnerHelloResultV2.parse(raw);
+        helloInFlight = true;
+        const raw: unknown = await socket
+          .timeout(HELLO_TIMEOUT_MS)
+          .emitWithAck("hello", hello)
+          .finally(() => {
+            helloInFlight = false;
+          });
+        const result = RunnerHelloResult.parse(raw);
         // hello 거절은 판본 불일치뿐이다(최종 리뷰 M3) — 다른 코드는 파싱에서 떨어져 아래 catch 가 백오프로 다시 붙는다
         if (!result.ok) {
           fatal(
@@ -364,7 +377,10 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
     scheduler.abortAll();
     if (stopped) return;
     if (reason === SERVER_DISCONNECT) {
-      fatal(SERVER_DISCONNECT_MESSAGE);
+      // hello 거절은 거절 ack 와 끊김이 같은 TCP 조각으로 와서 ws 가 둘을 한 틱에 내보낸다 — ack 를 받은 hello 의 이어짐은
+      // 마이크로태스크라 끊김이 먼저 처리된다. hello 를 기다리는 중이면 다음 틱으로 미뤄 판본 불일치 문구가 먼저 나가게 한다
+      if (helloInFlight) setImmediate(() => fatal(SERVER_DISCONNECT_MESSAGE));
+      else fatal(SERVER_DISCONNECT_MESSAGE);
       return;
     }
     // 전송 끊김(transport close·ping timeout 등 — 서버 재시작·네트워크·덮개 닫힘)은 다시 붙는다
@@ -373,7 +389,7 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
   });
 
   socket.on("run.start", (payload, ack) => {
-    const parsed = RunnerRunStartV2.safeParse(payload);
+    const parsed = RunnerRunStart.safeParse(payload);
     if (!parsed.success) {
       const rawRunId = (payload as { deliver?: { runId?: unknown } } | undefined)?.deliver?.runId;
       const runId = Id.safeParse(rawRunId);

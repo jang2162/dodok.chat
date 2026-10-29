@@ -8,10 +8,11 @@ import { createAgent } from "../src/modules/agents/service";
 import { bootTestApp, login } from "./helpers/app";
 import { newTestDb } from "./helpers/db";
 import { FAKE_GATEWAY_ID, insertGateway } from "./helpers/gateways";
-import { seedWorkspace } from "./helpers/seed";
+import { createRunnerAgentForTest, seedWorkspace } from "./helpers/seed";
 
-// 러너 스펙 2장·판정 P9 — 에이전트 등록의 provider 에 claude 를 연다. providerAgentId 는 같은 제공자·같은 연결 안에서만 유일하다 —
-// 서버가 런·정본·승인을 「연결 id + 세션 키」로 가르므로 제공자를 가로지른 같은 id 는 섞이지 않는다(멀티 Gateway 스펙 「바뀌는 표」 절)
+// 러너 스펙 2장·판정 P9 — 에이전트 제공자는 openclaw·runner. providerAgentId 는 같은 제공자·같은 연결 안에서만 유일하다 — 서버가
+// 런·정본·승인을 「연결 id + 세션 키」로 가르므로 제공자를 가로지른 같은 id 는 섞이지 않는다(멀티 Gateway 스펙 「바뀌는 표」 절).
+// 러너 에이전트의 id 는 서버가 짓는다(러너 일반화 계획 판정 PR4)
 
 const conflictOn = (field: string) =>
   expect.objectContaining({
@@ -27,35 +28,21 @@ describe("createAgent — providerAgentId 는 같은 제공자 안에서 유일�
     return { db, workspaceId, gatewayId: insertGateway(db, workspaceId, { id: uuid() }).id };
   };
 
-  it("openclaw dev 가 있어도 claude dev 는 등록된다 — 제공자를 가로지른 유일 규칙은 없다", () => {
+  it("러너 에이전트의 id 는 서버가 짓는다 — r- + 소문자 hex 10, 에이전트마다 다르고 세션 키 규칙 안", () => {
     const { db, workspaceId } = setup();
-    createAgent(db, { workspaceId, providerAgentId: "dev", handle: "dev", name: "Dev" });
-    expect(
-      createAgent(db, { workspaceId, provider: "runner", providerAgentId: "dev", handle: "dev2", name: "x" }),
-    ).toMatchObject({ provider: "runner", providerAgentId: "dev" });
+    const a = createRunnerAgentForTest(db, { workspaceId, handle: "aa" }).agent;
+    const b = createRunnerAgentForTest(db, { workspaceId, handle: "bb" }).agent;
+    expect(a.providerAgentId).toMatch(/^r-[0-9a-f]{10}$/);
+    expect(b.providerAgentId).toMatch(/^r-[0-9a-f]{10}$/);
+    expect(a.providerAgentId).not.toBe(b.providerAgentId);
+    expect(a).toMatchObject({ provider: "runner", program: "claude" });
   });
 
-  it("같은 제공자의 같은 id 는 409(providerAgentId) — openclaw(같은 Gateway)·claude 둘 다", () => {
+  it("같은 Gateway 의 같은 OpenClaw id 는 409(providerAgentId)", () => {
     const { db, workspaceId, gatewayId } = setup();
     createAgent(db, { workspaceId, providerAgentId: "dev", handle: "dev", name: "Dev", gatewayId });
     expect(() =>
       createAgent(db, { workspaceId, providerAgentId: "dev", handle: "dev2", name: "x", gatewayId }),
-    ).toThrow(conflictOn("providerAgentId"));
-    createAgent(db, {
-      workspaceId,
-      provider: "runner",
-      providerAgentId: "coder",
-      handle: "coder",
-      name: "C",
-    });
-    expect(() =>
-      createAgent(db, {
-        workspaceId,
-        provider: "runner",
-        providerAgentId: "coder",
-        handle: "coder2",
-        name: "x",
-      }),
     ).toThrow(conflictOn("providerAgentId"));
   });
 
@@ -90,12 +77,12 @@ describe("createAgent — providerAgentId 는 같은 제공자 안에서 유일�
 
 describe("REST — 러너 에이전트 등록과 discover?provider [P9]", () => {
   let app: App;
-  let claude: FakeAdapter<"runner">;
+  let runner: FakeAdapter<"runner">;
   let headers: { authorization: string };
 
   beforeAll(async () => {
-    claude = new FakeAdapter({ provider: "runner" });
-    app = await bootTestApp({}, { adapters: [new FakeAdapter(), claude] });
+    runner = new FakeAdapter({ provider: "runner" });
+    app = await bootTestApp({}, { adapters: [new FakeAdapter(), runner] });
     headers = (await login(app)).headers;
   });
   afterAll(async () => {
@@ -110,19 +97,15 @@ describe("REST — 러너 에이전트 등록과 discover?provider [P9]", () => 
       ...(payload === undefined ? {} : { payload }),
     });
 
-  it("provider runner 로 201, 빠지면 openclaw, 모르는 provider 는 400", async () => {
+  it("러너 에이전트를 id 로 가져오는 등록은 400(러너 프로젝트에서 만든다), 빠지면 openclaw, 모르는 provider 는 400", async () => {
     const coder = await api("POST", "/agents", {
       provider: "runner",
       providerAgentId: "coder",
       handle: "coder",
       name: "Coder",
     });
-    expect(coder.statusCode).toBe(201);
-    expect(Agent.parse(coder.json().agent)).toMatchObject({
-      provider: "runner",
-      providerAgentId: "coder",
-      program: "claude",
-    });
+    expect(coder.statusCode).toBe(400);
+    expect(coder.json()).toMatchObject({ code: "VALIDATION", details: { field: "provider" } });
 
     const dev = await api("POST", "/agents", {
       providerAgentId: "dev",
@@ -132,9 +115,7 @@ describe("REST — 러너 에이전트 등록과 discover?provider [P9]", () => 
     });
     expect(dev.statusCode).toBe(201);
     expect(dev.json().agent.provider).toBe("openclaw");
-    expect(dev.json().agent.program).toBeNull();
-    // 러너 에이전트에는 Gateway 키가 없다
-    expect(coder.json().agent).not.toHaveProperty("gateway");
+    expect(Agent.parse(dev.json().agent).program).toBeNull();
 
     const codex = await api("POST", "/agents", {
       provider: "codex",
@@ -154,20 +135,13 @@ describe("REST — 러너 에이전트 등록과 discover?provider [P9]", () => 
     expect(codex.json().code).toBe("VALIDATION");
   });
 
-  it("REST 로도 제공자를 가로지른 같은 id 는 등록되고, 같은 제공자의 같은 id 는 409(providerAgentId)", async () => {
+  it("REST 로도 같은 Gateway 의 같은 id 는 409(providerAgentId)", async () => {
     await api("POST", "/agents", {
       providerAgentId: "shared",
       handle: "shared",
       name: "S",
       gatewayId: FAKE_GATEWAY_ID,
     });
-    const res = await api("POST", "/agents", {
-      provider: "runner",
-      providerAgentId: "shared",
-      handle: "shared2",
-      name: "S2",
-    });
-    expect(res.statusCode).toBe(201);
     const again = await api("POST", "/agents", {
       providerAgentId: "shared",
       handle: "shared3",
@@ -180,11 +154,11 @@ describe("REST — 러너 에이전트 등록과 discover?provider [P9]", () => 
 
   it("discover?provider=runner 는 러너 어댑터의 listAgents, 빠지면 openclaw(그 Gateway), 모르는 값은 400", async () => {
     const listed = [{ providerAgentId: "coder", name: "Coder", hint: "macbook · repo · sonnet" }];
-    vi.spyOn(claude, "listAgents").mockResolvedValue(listed);
+    vi.spyOn(runner, "listAgents").mockResolvedValue(listed);
 
-    const fromClaude = await api("GET", "/agents/discover?provider=runner");
-    expect(fromClaude.statusCode).toBe(200);
-    expect(fromClaude.json()).toEqual({ agents: listed });
+    const fromRunner = await api("GET", "/agents/discover?provider=runner");
+    expect(fromRunner.statusCode).toBe(200);
+    expect(fromRunner.json()).toEqual({ agents: listed });
 
     const fromOpenclaw = await api("GET", `/agents/discover?gatewayId=${FAKE_GATEWAY_ID}`);
     expect(fromOpenclaw.statusCode).toBe(200);

@@ -369,10 +369,11 @@ describe("레이트리밋 통합", () => {
         runnerProtocol: RUNNER_PROTOCOL,
         runnerVersion: "0.0.0",
         sdkVersion: "0.0.0",
-        claudeCodeVersion: "0.0.0",
         bundleSha256: null,
         capabilities: [],
-        agents: [],
+        roots: [],
+        browse: false,
+        programs: [],
       });
       expect(hello).toMatchObject({ ok: true });
       const runId = randomUUID();
