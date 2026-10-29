@@ -4,11 +4,13 @@ import { type RefObject, useId, useState } from "react";
 import { cn } from "@/lib/utils";
 import { agentColorVar } from "@/theme/agentColor";
 import { Button } from "@/ui/button";
+import { NO_PROJECT_RESTORE } from "@/features/runners/copy";
 import { useRestoreAgent } from "./mutations";
 import { providerIdLabel } from "./providerLabels";
 
 /**
- * 「삭제된 에이전트 N」 접힌 묶음(스펙 「에이전트 보관」 절 웹) — 줄마다 이름·핸들·제공자 id, admin 이상이면 「되살리기」.
+ * 「삭제된 에이전트 N」 접힌 묶음(스펙 「에이전트 보관」 절 웹) — 줄마다 이름·핸들·제공자 id, admin 이상이면 「되살리기」. 프로젝트가
+ * 없는 러너 에이전트(마이그레이션 0031 이 보관한 옛 것)는 되살릴 수 없다 — 서버도 VALIDATION 으로 막는다.
  * 되살린 줄은 살아 있는 목록으로 옮겨 가 여기서 빠진다. `toggleRef` 는 페이지가 보관·되살리기 뒤 초점을 옮기는 자리고, 되살린 뒤
  * 초점을 어디로 옮길지는 `onRestored` 를 받은 페이지가 정한다(이 묶음은 마지막 줄을 되살리면 함께 사라진다)
  */
@@ -82,16 +84,20 @@ function ArchivedRow({
           {providerIdLabel(agent.provider)} <code className="font-mono">{agent.providerAgentId}</code>
         </p>
       </div>
-      {!readOnly && (
-        <Button
-          variant="outline"
-          size="sm"
-          aria-label={`${handle} 되살리기`}
-          disabled={isPending}
-          onClick={() => restore(agent.id, () => onRestored(agent.id))}
-        >
-          {isPending ? "되살리는 중…" : "되살리기"}
-        </Button>
+      {!readOnly && agent.runnerAgent?.projectId === null ? (
+        <p className="max-w-56 text-xs text-muted-foreground">{NO_PROJECT_RESTORE}</p>
+      ) : (
+        !readOnly && (
+          <Button
+            variant="outline"
+            size="sm"
+            aria-label={`${handle} 되살리기`}
+            disabled={isPending}
+            onClick={() => restore(agent.id, () => onRestored(agent.id))}
+          >
+            {isPending ? "되살리는 중…" : "되살리기"}
+          </Button>
+        )
       )}
     </li>
   );

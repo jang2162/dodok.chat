@@ -68,8 +68,8 @@ export function stubServer(
     list?: (fallback: () => Reply) => Reply;
     /** OpenClaw 찾기 — 고른 Gateway id 를 받는다 */
     discover?: (gatewayId: string) => Reply;
-    /** `GET /agents/discover?provider=runner` — 기본은 빈 목록(붙은 러너 없음) */
-    discoverClaude?: () => Reply;
+    /** 러너 REST(test/runnersServer `runnersRoutes(...).handle`) — 러너 에이전트 만들기·고치기가 부른다 */
+    runners?: (method: string, url: string, body: unknown) => Reply | undefined;
     create?: (body: Body, fallback: (body: Body) => Reply) => Reply;
     patch?: (id: string, body: Body, fallback: (id: string, body: Body) => Reply) => Reply;
     /** PUT /agents/:id/gateway(owner) — 기본은 서버 상태를 고쳐 `{ agent }` */
@@ -86,7 +86,7 @@ export function stubServer(
   const calls: Call[] = [];
   const listDefault = () => json(200, { agents: state });
   const createDefault = (body: Body) => {
-    const { gatewayId, ...fields } = body;
+    const { gatewayId, runnerProjectId: _project, ...fields } = body;
     const gateway = typeof gatewayId === "string" ? GATEWAY_OF(gatewayId) : undefined;
     const agent = makeAgent({
       ...(fields as Pick<Agent, "providerAgentId" | "handle" | "name">),
@@ -137,8 +137,8 @@ export function stubServer(
     const discover = /^\/api\/v1\/agents\/discover\?provider=openclaw&gatewayId=([^&]+)$/.exec(url);
     if (method === "GET" && discover?.[1])
       return (opts.discover ?? (() => json(200, { agents: [] })))(discover[1]);
-    if (method === "GET" && url === "/api/v1/agents/discover?provider=runner")
-      return (opts.discoverClaude ?? (() => json(200, { agents: [] })))();
+    const runner = opts.runners?.(method, url, body);
+    if (runner) return runner;
     if (method === "POST" && url === "/api/v1/agents")
       return (opts.create ?? ((b, f) => f(b)))(body ?? {}, createDefault);
     const moved = /^\/api\/v1\/agents\/([^/]+)\/gateway$/.exec(url);

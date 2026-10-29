@@ -78,7 +78,7 @@ describe("발급 대화상자의 「AI 에게 맡기기」", () => {
     stubSetupServer();
     stubClipboard();
     renderConnection();
-    const block = await screen.findByRole("region", { name: "Claude 러너" });
+    const block = await screen.findByRole("region", { name: "러너" });
     await userEvent.click(await within(block).findByRole("button", { name: "새 러너 토큰 발급" }));
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).queryByText("AI 에게 맡기기")).not.toBeInTheDocument();

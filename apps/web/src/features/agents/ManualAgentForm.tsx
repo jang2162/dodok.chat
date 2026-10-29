@@ -118,25 +118,23 @@ export const handleIssue = (handle: string, taken: ReadonlySet<string>): string 
   handleProblem(handle) ?? (taken.has(handle) ? HANDLE_TAKEN : undefined);
 
 /**
- * 제공자의 에이전트 id·핸들·이름을 직접 넣어 등록(서버는 목록 검사를 하지 않는다 — 러너 계획 판정 P9). OpenClaw 는 대화상자가 고른
- * Gateway 로 등록한다. 핸들·이름은 손대기 전까지 id 를 따라간다(핸들은 handleFrom).
+ * OpenClaw 에이전트 id·핸들·이름을 직접 넣어 등록(서버는 목록 검사를 하지 않는다 — 러너 계획 판정 P9) — 대화상자가 고른 Gateway 로.
+ * 러너 에이전트는 id 를 서버가 지어 이 폼을 쓰지 않는다(`RunnerAgentForm`). 핸들·이름은 손대기 전까지 id 를 따라간다(핸들은 handleFrom).
  * 서버 CONFLICT 는 핸들 칸 아래 고정 문구(id 중복이면 id 칸 아래 고정 문구), providerAgentId 를 가리킨 VALIDATION 은 id 칸 아래,
  * 그 밖의 VALIDATION 은 폼 아래 — 그 밖은 전역 토스트가 알린다.
  * 같은 자리의 보관(삭제)한 에이전트면(이 화면이 알거나 서버 409 AGENT_ARCHIVED 의 details.agentId) id 칸에 「삭제된 에이전트입니다」와
  * 「되살리기」 — 등록 대신 되살린다(스펙 「오류」 절)
  */
 export function ManualAgentForm({
-  provider,
   gatewayId,
   registeredIds,
   archivedIds = new Map(),
   takenHandles,
   onCreated,
 }: {
-  provider: AdapterProvider;
-  /** OpenClaw 면 등록할 Gateway */
+  /** 등록할 Gateway */
   gatewayId?: string;
-  /** 이미 등록된(살아 있는) providerAgentId(OpenClaw 는 그 Gateway 의 것) — 요청 전에 막는다 */
+  /** 그 Gateway 에 이미 등록된(살아 있는) providerAgentId — 요청 전에 막는다 */
   registeredIds: ReadonlySet<string>;
   /** 같은 자리의 보관한 에이전트 — providerAgentId → 에이전트 id */
   archivedIds?: ReadonlyMap<string, string>;
@@ -167,7 +165,7 @@ export function ManualAgentForm({
       : archivedId !== undefined
         ? AGENT_ARCHIVED_TEXT
         : registeredIds.has(providerAgentId)
-          ? `이미 등록된 ${PROVIDER_ID_LABEL[provider]} 입니다`
+          ? `이미 등록된 ${PROVIDER_ID_LABEL.openclaw} 입니다`
           : undefined;
   const handleError =
     serverError?.field === "handle"
@@ -194,8 +192,8 @@ export function ManualAgentForm({
     setServerError(undefined);
     create.mutate(
       {
-        provider,
-        ...(provider === "openclaw" ? { gatewayId } : {}),
+        provider: "openclaw",
+        gatewayId,
         providerAgentId,
         handle: currentHandle,
         name: currentName.trim(),
@@ -214,7 +212,7 @@ export function ManualAgentForm({
             });
             return;
           }
-          const taken = idTaken(err, provider);
+          const taken = idTaken(err, "openclaw");
           if (taken !== undefined) {
             setServerError({ field: "id", message: taken });
             return;
@@ -233,7 +231,7 @@ export function ManualAgentForm({
   return (
     <form onSubmit={submit} className="flex flex-col gap-3">
       <Field
-        label={PROVIDER_ID_LABEL[provider]}
+        label={PROVIDER_ID_LABEL.openclaw}
         value={rawId}
         onChange={(e) => edit(setRawId)(e.target.value)}
         error={idError}

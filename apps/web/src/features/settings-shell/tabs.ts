@@ -6,6 +6,7 @@ import {
   CableIcon,
   HashIcon,
   type LucideIcon,
+  ServerIcon,
   UserIcon,
   UsersIcon,
   ZapIcon,
@@ -20,7 +21,7 @@ export type SettingsTab = {
 };
 
 /**
- * `/settings` 의 탭(설정 통합 스펙 「주소와 탭」 절 표) — 순서가 곧 탭 목록 순서다. 자동화·멤버·운영은 admin 이상(팀 스펙 「역할과 권한」 표),
+ * `/settings` 의 탭(설정 통합 스펙 「주소와 탭」 절 표) — 순서가 곧 탭 목록 순서다. 자동화·멤버·러너·운영은 admin 이상(팀 스펙 「역할과 권한」 표),
  * 연결은 owner 만(설정 마법사 스펙 「결정」 — setup 은 owner 만). 역할을 모르는 옛 me 는 member 와 같이 본다
  */
 export const SETTINGS_TABS = [
@@ -37,6 +38,13 @@ export const SETTINGS_TABS = [
     visible: (r) => roleAtLeast(r, "admin"),
   },
   { path: "/settings/members", label: "멤버", icon: UsersIcon, visible: (r) => roleAtLeast(r, "admin") },
+  // 러너·프로젝트 보기·고치기(러너 일반화 스펙 6장) — 러너 토큰 발급·폐기는 owner 의 「연결」에 남는다
+  {
+    path: "/settings/runners",
+    label: "러너",
+    icon: ServerIcon,
+    visible: (r) => roleAtLeast(r, "admin"),
+  },
   { path: "/settings/connection", label: "연결", icon: CableIcon, visible: (r) => r === "owner" },
   {
     path: "/settings/operations",

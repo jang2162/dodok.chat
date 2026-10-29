@@ -350,6 +350,37 @@ describe("DM 화면", () => {
     expect(screen.queryByTestId("channel-header")).toBeNull();
   });
 
+  it.each(["owner", "member"])(
+    "러너 에이전트면 「러너 · <프로그램> · <러너 라벨>」 — 정의(모델·권한)는 싣지 않는다(%s) [러너 일반화 Task 5 Step 3b]",
+    async (role) => {
+      const runner: Agent = {
+        ...DEV,
+        provider: "runner",
+        program: "claude",
+        runner: { tokenId: uid(77), label: "맥북", revoked: false },
+        ...(role === "owner"
+          ? {
+              runnerAgent: {
+                projectId: uid(78),
+                model: "opus",
+                permissionMode: "acceptEdits",
+                allowedTools: null,
+                disallowedTools: [],
+              },
+            }
+          : {}),
+      };
+      stubServer({ role, agents: [runner, FIN], dms: [dmOf(dmChannel(), runner)] });
+      renderRoute(`/c/${DM}/s/${A}`);
+      const heading = await within(await screen.findByTestId("dm-header")).findByRole("heading", {
+        name: /Dev 봇/,
+      });
+      expect(within(heading).getByText("러너 · Claude Code · 맥북")).toBeInTheDocument();
+      expect(heading).not.toHaveTextContent("opus");
+      expect(heading).not.toHaveTextContent("acceptEdits");
+    },
+  );
+
   it("좁은 머리에서는 제공자 라벨이 이름보다 먼저 줄어든다 — 390px 에서 「dev」가 「d…」로 잘리지 않게", async () => {
     stubServer();
     renderRoute(`/c/${DM}/s/${A}`);

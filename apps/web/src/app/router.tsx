@@ -275,6 +275,12 @@ export const membersRoute = createRoute({
   path: "members",
   component: lazyPage(() => import("@/features/members/MembersPage"), "MembersPage"),
 });
+/** 러너·러너 프로젝트(admin 이상 — 페이지가 가른다, 러너 일반화 스펙 7장) */
+export const runnersRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: "runners",
+  component: lazyPage(() => import("@/features/runners/RunnersPage"), "RunnersPage"),
+});
 /** 연결 설정(owner 만 — 페이지가 가른다) */
 export const connectionRoute = createRoute({
   getParentRoute: () => settingsRoute,
@@ -322,6 +328,7 @@ const routeTree = rootRoute.addChildren([
       channelsRoute,
       automationsRoute,
       membersRoute,
+      runnersRoute,
       connectionRoute,
       operationsRoute,
     ]),

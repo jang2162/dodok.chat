@@ -3,10 +3,12 @@ import {
   type CreateGatewayBody,
   type DeleteGatewayResult,
   type GatewaySummary,
+  type ReissueRunnerTokenResult,
   type SetupStatus,
   type UpdateGatewayBody,
 } from "@dodok/shared";
 import { type QueryKey, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useRef } from "react";
 import { ApiRequestError, NetworkError, api } from "@/api/http";
 import { qk } from "@/api/queries";
 
@@ -123,6 +125,43 @@ export function useRevokeRunnerToken() {
         qc.invalidateQueries({ queryKey: qk.setupStatus }),
       ]),
   });
+}
+
+/**
+ * 러너 토큰 다시 발급(러너 일반화 계획 판정 PR7) — 같은 러너(행)의 원문만 바꾸고 옛 원문의 러너 연결을 끊는다. 프로젝트·에이전트는 그대로.
+ * 원문은 발급과 같은 규칙으로 `onIssued` 로만 넘긴다(캐시에 넣지 않는다). 요청이 나가 있는 동안 두 번째 요청을 보내지 않는다 — 두 번이
+ * 나가면 먼저 받은 원문은 받자마자 죽어 있다(태스크 4 리뷰 L5). `isPending` 은 다시 그린 뒤에야 참이라 같은 틱의 두 번째 누름은 ref 로 막는다
+ */
+export function useReissueRunnerToken(onIssued: (result: ReissueRunnerTokenResult) => void) {
+  const qc = useQueryClient();
+  const sending = useRef(false);
+  const mutation = useMutation({
+    mutationFn: async (id: string): Promise<void> => {
+      onIssued(await api<ReissueRunnerTokenResult>("POST", `/setup/runner-tokens/${id}/reissue`));
+    },
+    gcTime: 0,
+    onSuccess: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: qk.runnerTokens }),
+        qc.invalidateQueries({ queryKey: qk.setupStatus }),
+        qc.invalidateQueries({ queryKey: qk.runners() }),
+      ]),
+  });
+  const { mutate } = mutation;
+  const reissue = useCallback(
+    (id: string, opts: { onSettled?: () => void } = {}) => {
+      if (sending.current) return;
+      sending.current = true;
+      mutate(id, {
+        onSettled: () => {
+          sending.current = false;
+          opts.onSettled?.();
+        },
+      });
+    },
+    [mutate],
+  );
+  return { reissue, isPending: mutation.isPending, error: mutation.error, reset: mutation.reset };
 }
 
 /** Content-Disposition 의 filename — 없으면 undefined */

@@ -1,4 +1,4 @@
-import type { AdapterProvider, Agent, DmAccess } from "@dodok/shared";
+import type { Agent, DmAccess, RunnerPermissionMode, RunnerProgram } from "@dodok/shared";
 import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useRef } from "react";
 import { api } from "@/api/http";
@@ -6,14 +6,31 @@ import { qk } from "@/api/queries";
 
 /** 에이전트 화면의 서버 상태 — 등록·수정 뮤테이션과 제공자별 목록(discover) 쿼리 */
 
-/** OpenClaw 는 gatewayId 가 있어야 한다(멀티 Gateway 스펙 「에이전트 API」 절) — 러너 에이전트는 싣지 않는다 */
-export type CreateAgentInput = {
-  provider: AdapterProvider;
+/** OpenClaw 는 gatewayId 가 있어야 한다(멀티 Gateway 스펙 「에이전트 API」 절) */
+export type CreateOpenClawAgentInput = {
+  provider: "openclaw";
   gatewayId?: string;
   providerAgentId: string;
   handle: string;
   name: string;
 };
+/**
+ * 러너 에이전트는 러너 프로젝트 안에서 만든다(shared `CreateRunnerAgentBody` — 러너 일반화 스펙 7장). id 는 서버가 짓고, 그 프로젝트의
+ * 러너에 묶인다. model·allowedTools 의 null 은 「프로그램 기본」이다
+ */
+export type CreateRunnerAgentInput = {
+  provider: "runner";
+  runnerProjectId: string;
+  program: RunnerProgram;
+  handle: string;
+  name: string;
+  model?: string | null;
+  permissionMode: RunnerPermissionMode;
+  allowedTools?: string[] | null;
+  basePrompt?: string;
+  dmAccess?: DmAccess;
+};
+export type CreateAgentInput = CreateOpenClawAgentInput | CreateRunnerAgentInput;
 /** `basePrompt: null` 은 지운다 */
 export type AgentPatch = {
   enabled?: boolean;
@@ -22,14 +39,18 @@ export type AgentPatch = {
   handle?: string;
   /** 누가 이 에이전트와 DM 을 여나(admin 이상 — 에이전트 DM 계획 판정 PD13: REST 로만) */
   dmAccess?: DmAccess;
+  /**
+   * 러너 에이전트의 정의(admin 이상, REST 로만). 프로그램·프로젝트는 싣지 않는다 — 서버가 400 으로 거절한다(러너 일반화 계획 판정
+   * PR10: 프로젝트는 「다른 러너로 옮기기」로만, 프로그램을 바꾸려면 새 에이전트)
+   */
+  model?: string | null;
+  permissionMode?: RunnerPermissionMode;
+  allowedTools?: string[] | null;
 };
-/**
- * hint — Claude 러너는 `<러너 라벨> · <작업 디렉터리 라벨> · <모델>`. archivedAgentId — 같은 자리의 보관(삭제)한 에이전트(등록 대신 되살린다)
- */
+/** archivedAgentId — 같은 자리의 보관(삭제)한 에이전트(등록 대신 되살린다) */
 export type DiscoveredAgent = {
   providerAgentId: string;
   name?: string;
-  hint?: string;
   archivedAgentId?: string;
 };
 
@@ -43,12 +64,20 @@ function putAgent(qc: QueryClient, agent: Agent) {
   });
 }
 
-export function useCreateAgent() {
+/**
+ * 러너 에이전트를 만들면 그 프로젝트의 에이전트 수가 바뀐다 — 「러너」 탭의 프로젝트 목록을 낡게 한다. `silent` 면 전역 토스트를 끈다 —
+ * 실패를 모두 폼 안에 그리는 곳(러너 에이전트 만들기)이 쓴다
+ */
+export function useCreateAgent({ silent = false }: { silent?: boolean } = {}) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: CreateAgentInput) =>
       (await api<{ agent: Agent }>("POST", "/agents", input)).agent,
-    onSuccess: (agent) => putAgent(qc, agent),
+    meta: { silent },
+    onSuccess: (agent) => {
+      putAgent(qc, agent);
+      if (agent.provider === "runner") void qc.invalidateQueries({ queryKey: qk.runnerProjectsAll });
+    },
   });
 }
 
@@ -115,20 +144,18 @@ export function usePatchAgent() {
 }
 
 /**
- * 제공자의 등록 후보 — OpenClaw 는 고른 Gateway 의 agents.list(멀티 Gateway 스펙 「에이전트 API」 절). 러너는 알린 에이전트가 없어 서버에
- * 묻지 않고 빈 목록이다(러너 에이전트는 러너 프로젝트에서 만든다 — 러너 일반화 계획 판정 PR9, 화면은 계획 태스크 5). 대화상자가 열렸을 때만(`enabled`, OpenClaw 는 Gateway 를 골랐을 때만), 열 때마다 새로(`staleTime: 0`).
+ * OpenClaw 등록 후보 — 고른 Gateway 의 agents.list(멀티 Gateway 스펙 「에이전트 API」 절). 러너 에이전트는 알린 목록이 없어 찾기가 없다
+ * (러너 프로젝트 안에서 만든다 — `RunnerAgentForm`). 대화상자가 열렸고 Gateway 를 골랐을 때만(`enabled`), 열 때마다 새로(`staleTime: 0`).
  * 503·403 은 대화상자 안에 그리므로 전역 토스트를 끄고(`silent`), 재시도하지 않는다 — 다시 부르기는 사용자가 누른다.
  * 네트워크가 돌아와도 다시 부르지 않는다 — 열려 있는 동안엔 고르고 고치는 중이다
  */
-export function useDiscover(enabled: boolean, provider: AdapterProvider, gatewayId: string | undefined) {
-  const openclaw = provider === "openclaw";
+export function useDiscover(enabled: boolean, gatewayId: string | undefined) {
   const path = `/agents/discover?provider=openclaw&gatewayId=${encodeURIComponent(gatewayId ?? "")}`;
   return useQuery({
     // 제공자 키 아래 Gateway 마다 — 제공자 키로 초기화하면 그 Gateway 들이 함께 지워진다
-    queryKey: openclaw ? [...qk.discoverOf(provider), gatewayId ?? ""] : qk.discoverOf(provider),
-    queryFn: async (): Promise<DiscoveredAgent[]> =>
-      openclaw ? (await api<{ agents: DiscoveredAgent[] }>("GET", path)).agents : [],
-    enabled: enabled && (!openclaw || gatewayId !== undefined),
+    queryKey: [...qk.discoverOf("openclaw"), gatewayId ?? ""],
+    queryFn: async () => (await api<{ agents: DiscoveredAgent[] }>("GET", path)).agents,
+    enabled: enabled && gatewayId !== undefined,
     staleTime: 0,
     retry: false,
     refetchOnReconnect: false,

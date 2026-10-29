@@ -31,7 +31,7 @@ describe("목록", () => {
     expect(screen.getByTestId("page-agents")).toBeInTheDocument();
   });
 
-  it("제공자별 id 라벨 — 러너 에이전트는 「Claude 러너 에이전트 id」, openclaw 는 「OpenClaw id」", async () => {
+  it("제공자별 id 라벨 — 러너 에이전트는 「러너 에이전트 id」, openclaw 는 「OpenClaw id」", async () => {
     stubServer({
       agents: [
         dev(),
@@ -40,15 +40,16 @@ describe("목록", () => {
     });
     renderPage();
     expect(await screen.findByText("@coder")).toBeInTheDocument();
-    expect(screen.getByText(/^Claude 러너 에이전트 id/)).toBeInTheDocument();
+    expect(screen.getByText(/^러너 에이전트 id/)).toBeInTheDocument();
     expect(screen.getAllByText(/^OpenClaw id/)).toHaveLength(1);
   });
 
-  it("러너 에이전트는 묶인 러너 라벨 — 폐기됐으면 다시 묶으라는 안내, 묶임 없으면 「러너 미정」. openclaw 는 러너 줄이 없다", async () => {
+  it("러너 에이전트는 프로그램·묶인 러너 라벨 — 폐기됐으면 「러너」 탭에서 옮기라는 안내, 러너 없으면 그 말. openclaw 는 러너 줄이 없다", async () => {
     const claude = (n: number, runner?: Agent["runner"]): Agent => ({
       ...fin(),
       id: `0190b000-0000-7000-8000-00000000000${n}`,
       provider: "runner",
+      program: "claude",
       providerAgentId: `coder${n}`,
       handle: `coder${n}`,
       name: `Coder${n}`,
@@ -65,11 +66,11 @@ describe("목록", () => {
     });
     renderPage();
     const row = async (handle: string) => (await screen.findByText(handle)).closest("li") as HTMLElement;
-    expect(await row("@coder1")).toHaveTextContent("러너 맥북");
+    expect(await row("@coder1")).toHaveTextContent("Claude Code · 러너 맥북");
     expect(await row("@coder2")).toHaveTextContent(
-      "러너 옛 노트북 — 토큰이 폐기돼 맡을 러너가 없습니다. 연결 페이지에서 다시 묶으세요",
+      "Claude Code · 러너 옛 노트북 — 토큰이 폐기돼 맡을 러너가 없습니다. 「러너」 탭에서 프로젝트를 다른 러너로 옮기세요",
     );
-    expect(await row("@coder3")).toHaveTextContent("러너 미정 — 처음 알리는 러너에 묶입니다");
+    expect(await row("@coder3")).toHaveTextContent("Claude Code · 맡을 러너가 없습니다");
     expect(await row("@dev")).not.toHaveTextContent("러너");
   });
 

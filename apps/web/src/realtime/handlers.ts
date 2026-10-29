@@ -277,6 +277,8 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
       void qc.invalidateQueries({ queryKey: qk.membersAll });
       // DM 의 읽기 전용 사유(보관·꺼짐·허용 범위)는 에이전트를 따른다 — 작성기 자리가 사유 줄로 바뀌게(계획 Review Focus 4)
       void invalidateDms(qc);
+      // 「러너」 탭 프로젝트 줄의 에이전트 수(보관·되살리기·다른 탭에서 만들기)
+      void qc.invalidateQueries({ queryKey: qk.runnerProjectsAll });
     },
     /**
      * 사람 목록(가입·역할·표시 이름·비활성화·다시 활성화 뒤 전체) — 통째로 바꾼다. 내 역할이 바뀌었으면 me 를 다시 받는다: 역할의
@@ -307,8 +309,11 @@ export function attachHandlers(socket: WireSocket, deps: Deps): () => void {
           void qc.invalidateQueries({ queryKey: qk.agents, exact: true });
       } else if (status.provider === "runner") {
         qc.setQueryData(qk.runnerAdapter, status.runners);
-        // 등록 대화상자가 열린 채 러너가 붙거나 떨어져도 그 목록이 낡지 않게
-        void qc.invalidateQueries({ queryKey: qk.discoverOf("runner") });
+        // 러너가 붙거나 떨어질 때마다 온다(어댑터의 announce) — 「러너」 탭·러너 에이전트 만들기가 보는 연결·루트·프로그램이 그때
+        // 바뀐다. 그 화면이 admin 이상 몫이라도 이 이벤트는 모두에게 온다(setup.status 는 owner 에게만) — 붙은 수만 싣고 내용은 없다.
+        // 둘러보기는 낡게 하지 않는다 — 열린 목록을 다시 받으면 분당 60번 상한을 쓴다(「프로젝트 추가」를 열 때 버리고 새로 받는다)
+        void qc.invalidateQueries({ queryKey: qk.runners() });
+        void qc.invalidateQueries({ queryKey: qk.runnerProjectsAll });
       }
     },
     /**
