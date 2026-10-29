@@ -11,9 +11,9 @@ import {
   type ApprovalOutcome,
   elide,
   summarizeToolInput,
-} from "../src/approvals";
+} from "../src/drivers/claude/approvals";
 import { OUTSIDE_WORKDIR } from "../src/mask";
-import type { CanUseTool } from "../src/sdk";
+import type { CanUseTool } from "../src/drivers/claude/sdk";
 
 const RUN = "0192f000-0000-7000-8000-00000000a001";
 const KEY = "agent:coder:dodok:channel:0192f000-0000-7000-8000-00000000c001";

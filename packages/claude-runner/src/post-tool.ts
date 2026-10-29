@@ -19,7 +19,7 @@ import {
   readCheckedFile,
 } from "./files";
 import type { PathMasker } from "./mask";
-import { defineSdkTool, type SdkMcpServer, type SdkMcpTool, type SdkPort } from "./sdk";
+import { defineSdkTool, type SdkMcpServer, type SdkMcpTool, type SdkPort } from "./drivers/claude/sdk";
 
 // dodok 도구 `mcp__dodok__post`(러너 스펙 4.4) — 런의 채널(스레드 런이면 그 스레드)에 카드·파일을 보낸다. 거절은 던지지 않고
 // 도구 결과로 돌려준다(런은 계속된다). 모델에게 가는 글이라 호스트 경로를 싣지 않는다

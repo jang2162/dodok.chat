@@ -1,7 +1,7 @@
 import { RunEventBodySchema } from "@dodok/shared";
 import { describe, expect, it } from "vitest";
 import { createPathMasker, type PathMasker } from "../src/mask";
-import { createStreamMapper } from "../src/stream-map";
+import { createStreamMapper } from "../src/drivers/claude/stream-map";
 import { script, sdkMsg } from "./helpers/fake-query";
 
 const RUN = "0192f000-0000-7000-8000-000000000001";

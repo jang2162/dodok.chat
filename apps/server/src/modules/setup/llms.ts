@@ -25,7 +25,7 @@ export type LlmsInput = {
 
 /** 노드에서 브리지 토큰을 잠깐 두는 자리 — 계정 설정에 넣은 뒤 지운다 */
 const BRIDGE_TOKEN_FILE = "~/.dodok-bridge-token";
-/** 러너 전용 Claude 로그인 디렉터리(러너 스펙 4.1 `claudeConfigDir`) — 사람의 `~/.claude` 와 섞지 않는다 */
+/** 러너 전용 Claude 로그인 디렉터리(러너 설정 `programs.claude.configDir`) — 사람의 `~/.claude` 와 섞지 않는다 */
 const RUNNER_CLAUDE_DIR = "~/.dodok-runner/claude";
 const RUNNER_CONFIG_PATH = "~/.dodok-runner/config.json";
 const NO_FILE =
@@ -99,12 +99,21 @@ function gatewaySection(input: LlmsInput, file: LlmsFileInfo): string {
 function runnerSection(input: LlmsInput, file: LlmsFileInfo): string {
   const { origin } = input;
   const out = "/tmp/dodok-claude-runner.tgz";
+  // 러너는 천장만 쥔다(러너 일반화 스펙 2장) — 에이전트는 앱에서 만든다. 상한은 낮게: 서버 쪽 admin 이 루트 안 어디서든 이 상한까지 돌릴 수 있다
   const config = {
     serverUrl: origin,
     tokenFile: RUNNER_TOKEN_FILE,
-    claudeConfigDir: RUNNER_CLAUDE_DIR,
     maxConcurrentRuns: 3,
-    agents: [{ id: "coder", name: "코더", workdir: "~/src/my-repo", model: "sonnet" }],
+    roots: [{ id: "src", path: "~/src", label: "내 저장소들" }],
+    browse: true,
+    programs: {
+      claude: {
+        configDir: RUNNER_CLAUDE_DIR,
+        maxPermissionMode: "default",
+        disallowedTools: [],
+        allowedToolsCeiling: null,
+      },
+    },
   };
   return `설치할 것: dodok Claude 러너(명령 dodok-runner). 이 머신에서 Claude Code 에이전트를 돌려 dodok 서버로 나가는 연결 하나를 연다(머신 쪽 포트는 열지 않는다). 필요한 것: macOS 또는 Linux, Node 24, npm 레지스트리에 닿는 네트워크.
 
@@ -135,7 +144,7 @@ function runnerSection(input: LlmsInput, file: LlmsFileInfo): string {
    CLAUDE_CONFIG_DIR=${RUNNER_CLAUDE_DIR} "$(npm root -g)/@dodok/claude-runner/node_modules/@anthropic-ai/claude-agent-sdk-$(node -p 'process.platform+"-"+process.arch')/claude"
    \`\`\`
 
-4. 설정 파일 ${RUNNER_CONFIG_PATH} 을 만든다. agents 의 id(영문 소문자로 시작)·이름·작업 디렉터리·모델은 사람에게 묻는다. 토큰은 이 파일에 적지 않는다(적으면 러너가 거절한다).
+4. 설정 파일 ${RUNNER_CONFIG_PATH} 을 만든다. roots 의 경로(에이전트가 돌 수 있는 디렉터리 — 좁게)·라벨과 id(영문 소문자·숫자·-)는 사람에게 묻는다. 에이전트는 이 파일이 아니라 dodok 앱에서 만든다. 토큰은 이 파일에 적지 않는다(적으면 러너가 거절한다).
 
    \`\`\`json
    ${JSON.stringify(config, null, 2).replaceAll("\n", "\n   ")}

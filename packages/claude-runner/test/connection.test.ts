@@ -1,28 +1,42 @@
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { createServer, type Server as HttpServer } from "node:http";
 import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   CONTROL_RESULT_UNKNOWN_MESSAGE,
   type ControlResult,
   RUNNER_NAMESPACE,
-  RUNNER_PROTOCOL,
+  RUNNER_PROTOCOL_V2,
   RunnerApprovalRequested,
   RunnerApprovalWithdrawn,
   RunnerControlCall,
-  RunnerHello,
+  RunnerFsListResult,
+  RunnerHelloV2,
   RunnerOutboundPost,
   type RunnerOutboundAck,
+  RunnerProjectCheckResult,
   RunnerRunAck,
   RunnerRunError,
   RunnerRunEvent,
   RunnerRunFinal,
-  type RunnerClientToServerEvents,
-  type RunnerHelloResult,
-  type RunnerServerToClientEvents,
+  RunnerRunSession,
+  type RunnerClientToServerEventsV2,
+  type RunnerHelloResultV2,
+  type RunnerRunAgent,
+  type RunnerServerToClientEventsV2,
 } from "@dodok/shared";
 import { Server, type Socket } from "socket.io";
 import { afterEach, describe, expect, it } from "vitest";
-import type { ResolvedRunnerConfig } from "../src/config";
-import { createRunBridge, startRunnerConnection, type RunnerConnection } from "../src/connection";
+import type { ProgramCeiling, ResolvedRunnerConfig } from "../src/config";
+import {
+  createRunBridge,
+  NO_DRIVER_REASON,
+  startRunnerConnection,
+  type RunnerConnection,
+} from "../src/connection";
+import { createClaudeDriver } from "../src/drivers/claude";
+import { RUNNER_DISALLOWED_TOOLS } from "../src/drivers/claude/run";
 import { createFakeSdk, script, type FakeSdk } from "./helpers/fake-query";
 import { AGENT, RUN_ID, runStart } from "./helpers/fixtures";
 
@@ -32,11 +46,12 @@ const TOKEN = "drn_test_token_value_0123456789abcdefghijklmn";
 const RUN_2 = "0192f000-0000-7000-8000-00000000a002";
 const SESSION_2 = "0192f000-0000-4000-8000-00000000e002";
 
-type ServerSocket = Socket<RunnerClientToServerEvents, RunnerServerToClientEvents>;
+type ServerSocket = Socket<RunnerClientToServerEventsV2, RunnerServerToClientEventsV2>;
 
 type FakeServer = {
   url: string;
-  hellos: RunnerHello[];
+  hellos: RunnerHelloV2[];
+  sessions: RunnerRunSession[];
   events: RunnerRunEvent[];
   finals: RunnerRunFinal[];
   errors: RunnerRunError[];
@@ -48,7 +63,7 @@ type FakeServer = {
   onControl?: (socket: ServerSocket, ack: (r: ControlResult) => void) => void;
   postAck: RunnerOutboundAck;
   sockets: ServerSocket[];
-  helloResult: RunnerHelloResult;
+  helloResult: RunnerHelloResultV2;
   /** n 번째(0부터) 핸드셰이크를 미들웨어에서 거절할 사유 — 없으면 토큰만 본다 */
   reject?: (attempt: number) => string | undefined;
   handshakes: number;
@@ -57,10 +72,11 @@ type FakeServer = {
 
 async function startFakeServer(): Promise<FakeServer> {
   const http: HttpServer = createServer();
-  const io = new Server<RunnerClientToServerEvents, RunnerServerToClientEvents>(http);
+  const io = new Server<RunnerClientToServerEventsV2, RunnerServerToClientEventsV2>(http);
   const server: FakeServer = {
     url: "",
     hellos: [],
+    sessions: [],
     events: [],
     finals: [],
     errors: [],
@@ -70,7 +86,7 @@ async function startFakeServer(): Promise<FakeServer> {
     controls: [],
     postAck: { ok: true, messageId: "0192f000-0000-7000-8000-0000000000aa" },
     sockets: [],
-    helloResult: { ok: true, serverVersion: "test", conflicts: [] },
+    helloResult: { ok: true, serverVersion: "test" },
     handshakes: 0,
     close: async () => {
       await io.close();
@@ -86,12 +102,13 @@ async function startFakeServer(): Promise<FakeServer> {
   ns.on("connection", (socket) => {
     server.sockets.push(socket);
     socket.on("hello", (p, ack) => {
-      server.hellos.push(RunnerHello.parse(p));
+      server.hellos.push(RunnerHelloV2.parse(p));
       ack(server.helloResult);
     });
     socket.on("run.event", (p) => void server.events.push(RunnerRunEvent.parse(p)));
     socket.on("run.final", (p) => void server.finals.push(RunnerRunFinal.parse(p)));
     socket.on("run.error", (p) => void server.errors.push(RunnerRunError.parse(p)));
+    socket.on("run.session", (p) => void server.sessions.push(RunnerRunSession.parse(p)));
     socket.on("outbound.post", (p, ack) => {
       server.posts.push(RunnerOutboundPost.parse(p));
       ack(server.postAck);
@@ -122,6 +139,24 @@ afterEach(async () => {
   for (const c of cleanups.splice(0).reverse()) await c();
 });
 
+/** 루트 src(라벨 「내 저장소들」) 아래 my-repo — 천장 검사가 실제 디렉터리를 realpath 로 본다 */
+function tempRoot() {
+  const base = realpathSync(mkdtempSync(join(tmpdir(), "dodok-conn-")));
+  const root = join(base, "src");
+  mkdirSync(join(root, "my-repo"), { recursive: true });
+  cleanups.push(() => rmSync(base, { recursive: true, force: true }));
+  return { base, root, workdir: join(root, "my-repo") };
+}
+
+const CLAUDE_CEILING: ProgramCeiling = {
+  configDir: AGENT.configDir,
+  maxPermissionMode: "acceptEdits",
+  disallowedTools: [],
+  allowedToolsCeiling: null,
+};
+
+const VERSIONS = { runnerVersion: "0.0.0", sdkVersion: "0.3.283", bundleSha256: null };
+
 async function setup(
   opts: {
     maxConcurrentRuns?: number;
@@ -130,6 +165,8 @@ async function setup(
     reject?: FakeServer["reject"];
     /** onFatal 이 불린 그 순간을 보려고 — fatal 목록에 넣은 뒤 부른다 */
     onFatal?: (code: number) => void;
+    browse?: boolean;
+    programs?: ResolvedRunnerConfig["programs"];
   } = {},
 ) {
   const server = await startFakeServer();
@@ -138,23 +175,26 @@ async function setup(
   const fake: FakeSdk = createFakeSdk();
   const logs: string[] = [];
   const fatal: number[] = [];
+  const dirs = tempRoot();
   const config: ResolvedRunnerConfig = {
     serverUrl: server.url,
-    claudeConfigDir: "/home/u/.dodok-runner/claude",
     maxConcurrentRuns: opts.maxConcurrentRuns ?? 3,
-    agents: [AGENT],
+    roots: [{ id: "src", path: dirs.root, label: "내 저장소들" }],
+    browse: opts.browse ?? true,
+    programs: opts.programs ?? { claude: CLAUDE_CEILING },
   };
   const conn: RunnerConnection = startRunnerConnection({
     config,
     token: opts.token ?? TOKEN,
-    sdk: fake,
-    versions: {
-      runnerVersion: "0.0.0",
-      sdkVersion: "0.3.283",
-      claudeCodeVersion: "2.1.283",
-      bundleSha256: null,
-    },
-    baseEnv: { PATH: "/usr/bin" },
+    drivers: [
+      createClaudeDriver({
+        sdk: fake,
+        claudeCodeVersion: "2.1.283",
+        baseEnv: { PATH: "/usr/bin" },
+        closeGraceMs: 30,
+      }),
+    ],
+    versions: VERSIONS,
     logger: {
       info: (m) => logs.push(m),
       warn: (m) => logs.push(m),
@@ -165,11 +205,10 @@ async function setup(
       opts.onFatal?.(code);
     },
     backoff: { minMs: 20, maxMs: 50 },
-    closeGraceMs: 30,
     ...(opts.stopWaitMs === undefined ? {} : { stopWaitMs: opts.stopWaitMs }),
   });
   cleanups.push(() => conn.stop());
-  return { server, fake, logs, fatal, conn };
+  return { server, fake, logs, fatal, conn, dirs };
 }
 
 const sendStart = (socket: ServerSocket, start: ReturnType<typeof runStart>) =>
@@ -179,26 +218,77 @@ const sendStart = (socket: ServerSocket, start: ReturnType<typeof runStart>) =>
     .then((a) => RunnerRunAck.parse(a));
 
 describe("startRunnerConnection", () => {
-  it("붙으면 hello — 에이전트는 라벨만, 경로 원문·토큰 없음", async () => {
-    const { server, logs } = await setup();
+  it("붙으면 hello V2 — 루트는 id·라벨만, 프로그램은 detect 결과·상한, 경로 원문·토큰 없음", async () => {
+    const { server, logs, dirs } = await setup();
     await waitFor(() => server.hellos.length === 1);
     const hello = server.hellos[0]!;
-    expect(hello).toMatchObject({
-      runnerProtocol: RUNNER_PROTOCOL,
+    expect(hello).toEqual({
+      runnerProtocol: RUNNER_PROTOCOL_V2,
       runnerVersion: "0.0.0",
       sdkVersion: "0.3.283",
-      claudeCodeVersion: "2.1.283",
       bundleSha256: null,
-      agents: [{ id: "coder", name: "코더", model: "sonnet", workdirLabel: "my-repo" }],
+      capabilities: ["threads", "interrupt", "approvals", "attachments"],
+      roots: [{ id: "src", label: "내 저장소들" }],
+      browse: true,
+      programs: [
+        {
+          program: "claude",
+          available: true,
+          version: "2.1.283",
+          // 로그인 디렉터리(/home/u/…)가 이 머신에 없다
+          auth: "missing",
+          reason: expect.any(String),
+          capabilities: ["serverSessionIds", "approvals", "images", "interrupt", "mcpTools", "costs"],
+          ceiling: { maxPermissionMode: "acceptEdits", allowedToolsCeiling: null },
+        },
+      ],
     });
-    expect(hello.capabilities).toEqual(["threads", "interrupt", "approvals", "attachments"]);
-    expect(JSON.stringify(hello)).not.toContain(AGENT.workdir);
+    // 직렬화한 hello 어디에도 루트·로그인 디렉터리의 절대 경로가 없다(완료 기준 4)
+    const raw = JSON.stringify(hello);
+    for (const path of [dirs.base, dirs.root, AGENT.configDir, "/home/u", tmpdir()]) {
+      expect(raw).not.toContain(path);
+    }
     expect(logs.join("\n")).not.toContain(TOKEN);
-    expect(logs.join("\n")).not.toContain(AGENT.workdir);
+    expect(logs.join("\n")).not.toContain(dirs.base);
+  });
+
+  it("hello — 로그인 디렉터리가 있으면 auth unknown(자격 증명은 읽지 않는다), 드라이버 없는 프로그램은 못 씀과 사유", async () => {
+    const { base } = tempRoot();
+    const { server } = await setup({
+      programs: {
+        claude: {
+          ...CLAUDE_CEILING,
+          configDir: base,
+          maxPermissionMode: "default",
+          allowedToolsCeiling: ["Read"],
+        },
+        codex: { ...CLAUDE_CEILING },
+      },
+    });
+    await waitFor(() => server.hellos.length === 1);
+    expect(server.hellos[0]!.programs).toEqual([
+      {
+        program: "claude",
+        available: true,
+        version: "2.1.283",
+        auth: "unknown",
+        capabilities: ["serverSessionIds", "approvals", "images", "interrupt", "mcpTools", "costs"],
+        ceiling: { maxPermissionMode: "default", allowedToolsCeiling: ["Read"] },
+      },
+      {
+        program: "codex",
+        available: false,
+        auth: "unknown",
+        reason: NO_DRIVER_REASON,
+        capabilities: [],
+        ceiling: { maxPermissionMode: "acceptEdits", allowedToolsCeiling: null },
+      },
+    ]);
+    expect(JSON.stringify(server.hellos[0])).not.toContain(base);
   });
 
   it("run.start → 가짜 query 대본 → 서버가 run.event·run.final 을 받는다", async () => {
-    const { server, fake } = await setup();
+    const { server, fake, dirs } = await setup();
     await waitFor(() => server.sockets.length === 1 && server.hellos.length === 1);
     fake.script(script.init(), ...script.textTurn("msg_1", ["안녕 ", "하세요"]));
     const ack = await sendStart(server.sockets[0]!, runStart());
@@ -216,7 +306,8 @@ describe("startRunnerConnection", () => {
       text: "안녕 하세요",
       costKind: "subscription_estimate",
     });
-    expect(fake.calls[0]!.options.cwd).toBe(AGENT.workdir);
+    // 작업 디렉터리는 루트 + relPath 의 realpath
+    expect(fake.calls[0]!.options.cwd).toBe(dirs.workdir);
   });
 
   it("hello 거절(PROTOCOL_MISMATCH) → 사유를 남기고 종료 코드 2, 다시 붙지 않는다", async () => {
@@ -227,10 +318,16 @@ describe("startRunnerConnection", () => {
     const logs: string[] = [];
     const fatal: number[] = [];
     const conn = startRunnerConnection({
-      config: { serverUrl: server.url, claudeConfigDir: "/c", maxConcurrentRuns: 1, agents: [AGENT] },
+      config: {
+        serverUrl: server.url,
+        maxConcurrentRuns: 1,
+        roots: [{ id: "src", path: tempRoot().root, label: "src" }],
+        browse: true,
+        programs: { claude: CLAUDE_CEILING },
+      },
       token: TOKEN,
-      sdk: fake,
-      versions: { runnerVersion: "0.0.0", sdkVersion: "x", claudeCodeVersion: "y", bundleSha256: null },
+      drivers: [createClaudeDriver({ sdk: fake, claudeCodeVersion: "y" })],
+      versions: { runnerVersion: "0.0.0", sdkVersion: "x", bundleSha256: null },
       logger: { info: (m) => logs.push(m), warn: (m) => logs.push(m), error: (m) => logs.push(m) },
       onFatal: (code) => fatal.push(code),
       backoff: { minMs: 10, maxMs: 20 },
@@ -250,11 +347,11 @@ describe("startRunnerConnection", () => {
       ok: false,
       code: "RATE_LIMITED",
       message: "slow down",
-    } as unknown as RunnerHelloResult;
+    } as unknown as RunnerHelloResultV2;
     await waitFor(() => server.hellos.length >= 2);
     expect(fatal).toEqual([]);
     expect(logs.join("\n")).toMatch(/hello 실패/);
-    server.helloResult = { ok: true, serverVersion: "test", conflicts: [] };
+    server.helloResult = { ok: true, serverVersion: "test" };
     const before = server.hellos.length;
     await waitFor(() => logs.some((l) => l.includes("연결됨")));
     expect(server.hellos.length).toBeGreaterThan(before);
@@ -335,15 +432,105 @@ describe("startRunnerConnection", () => {
     expect(fake.calls[0]!.finished).toBe(false);
   });
 
-  it("설정에 없는 agentId 의 run.start → run.error NOT_FOUND", async () => {
+  it("천장에 걸린 run.start → dispatch 뒤 run.error RUNNER_CEILING(항목 이름만) — CLI 는 띄우지 않는다", async () => {
+    const { server, fake, dirs } = await setup({
+      programs: {
+        claude: { ...CLAUDE_CEILING, maxPermissionMode: "default", allowedToolsCeiling: ["Read"] },
+      },
+    });
+    symlinkSync(dirs.base, join(dirs.root, "escape"));
+    await waitFor(() => server.hellos.length === 1);
+    // 미리 허용한 도구가 없는 에이전트(상한 ["Read"] 에 든다)에서 한 항목씩 어긋나게 한다
+    const cases: Array<[Partial<RunnerRunAgent>, string]> = [
+      [{ project: { rootId: "gone", relPath: "my-repo" } }, "root"],
+      [{ project: { rootId: "src", relPath: "nope" } }, "path"],
+      [{ project: { rootId: "src", relPath: "escape" } }, "path"],
+      [{ program: "codex" }, "program"],
+      [{ permissionMode: "acceptEdits" }, "permissionMode"],
+      [{ allowedTools: ["Read", "Write"] }, "allowedTools"],
+    ];
+    for (const [i, [agent, item]] of cases.entries()) {
+      const runId = `0192f000-0000-7000-8000-00000000b${String(i).padStart(3, "0")}`;
+      // drop 이면 어댑터가 런을 놓아 뒤이은 run.error 를 버린다 — 오류 카드가 사라진다(리뷰 M1)
+      expect(
+        await sendStart(server.sockets[0]!, runStart({ runId, agent: { allowedTools: null, ...agent } })),
+      ).toEqual({
+        runId,
+        admission: "dispatch",
+      });
+      await waitFor(() => server.errors.length === i + 1);
+      expect(server.errors[i]).toEqual({ runId, code: "RUNNER_CEILING", message: item });
+    }
+    expect(fake.calls).toEqual([]);
+    expect(JSON.stringify(server.errors)).not.toContain(dirs.base);
+  });
+
+  it("run.start 의 에이전트 정의가 CLI 옵션으로 — 설정의 늘 막는 도구와 에이전트의 것을 합친다", async () => {
+    const { server, fake, dirs } = await setup({
+      programs: { claude: { ...CLAUDE_CEILING, disallowedTools: ["Bash", "WebFetch"] } },
+    });
+    await waitFor(() => server.hellos.length === 1);
+    fake.script(...script.textTurn("msg_1", ["x"]));
+    await sendStart(server.sockets[0]!, runStart({ agent: { model: null, permissionMode: "plan" } }));
+    await waitFor(() => server.finals.length === 1);
+    const options = fake.calls[0]!.options;
+    expect(options.cwd).toBe(dirs.workdir);
+    expect(options.permissionMode).toBe("plan");
+    expect("model" in options).toBe(false);
+    expect(options.disallowedTools).toEqual([...RUNNER_DISALLOWED_TOOLS, "Bash", "WebFetch"]);
+    expect(options.env?.CLAUDE_CONFIG_DIR).toBe(AGENT.configDir);
+  });
+
+  it("providerSessionId 없는 claude 런은 VALIDATION — 서버가 세션 id 를 정하는 프로그램이다", async () => {
     const { server, fake } = await setup();
     await waitFor(() => server.hellos.length === 1);
-    const ack = await sendStart(server.sockets[0]!, runStart({ agentId: "ghost" }));
-    // drop 이면 어댑터가 런을 놓아 뒤이은 run.error 를 버린다 — 오류 카드가 사라진다(리뷰 M1)
-    expect(ack).toEqual({ runId: RUN_ID, admission: "dispatch" });
+    const { providerSessionId: _, ...start } = runStart();
+    expect(await sendStart(server.sockets[0]!, start as ReturnType<typeof runStart>)).toEqual({
+      runId: RUN_ID,
+      admission: "dispatch",
+    });
     await waitFor(() => server.errors.length === 1);
-    expect(server.errors[0]).toMatchObject({ runId: RUN_ID, code: "NOT_FOUND" });
+    expect(server.errors[0]).toMatchObject({ runId: RUN_ID, code: "VALIDATION" });
     expect(fake.calls).toEqual([]);
+    expect(server.sessions).toEqual([]);
+  });
+
+  it("fs.list·project.check 왕복 — browse 를 끄면 둘러보기만 FORBIDDEN", async () => {
+    const { server, dirs } = await setup();
+    mkdirSync(join(dirs.root, "my-repo", ".git"));
+    mkdirSync(join(dirs.root, ".secret"));
+    symlinkSync(dirs.base, join(dirs.root, "escape"));
+    await waitFor(() => server.hellos.length === 1);
+    const socket = server.sockets[0]!;
+    const list = RunnerFsListResult.parse(
+      await socket.timeout(2000).emitWithAck("fs.list", { rootId: "src", relPath: "" }),
+    );
+    expect(list).toEqual({ ok: true, entries: [{ name: "my-repo", isGitRepo: true }], truncated: false });
+    expect(
+      RunnerProjectCheckResult.parse(
+        await socket.timeout(2000).emitWithAck("project.check", { rootId: "src", relPath: "escape" }),
+      ),
+    ).toEqual({ ok: false, reason: "outside_root" });
+    // 형식이 틀린 요청 — 없는 자리로 답한다
+    expect(await socket.timeout(2000).emitWithAck("fs.list", { rootId: "src", relPath: "../x" })).toEqual({
+      ok: false,
+      code: "NOT_FOUND",
+    });
+
+    const closed = await setup({ browse: false });
+    await waitFor(() => closed.server.hellos.length === 1);
+    expect(closed.server.hellos[0]!.browse).toBe(false);
+    const s2 = closed.server.sockets[0]!;
+    expect(await s2.timeout(2000).emitWithAck("fs.list", { rootId: "src", relPath: "" })).toEqual({
+      ok: false,
+      code: "FORBIDDEN",
+    });
+    expect(
+      await s2.timeout(2000).emitWithAck("project.check", { rootId: "src", relPath: "my-repo" }),
+    ).toEqual({
+      ok: true,
+      isGitRepo: false,
+    });
   });
 
   it("같은 세션이 돌고 있으면 run.error CONFLICT", async () => {

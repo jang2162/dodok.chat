@@ -8,11 +8,17 @@ import { describe, expect, it } from "vitest";
 import { createRunBridge } from "../src/connection";
 import { CONTROL_TOOL_FULL_NAMES, type ControlCallOutcome, createControlTools } from "../src/control-tools";
 import { createDodokMcpServer } from "../src/post-tool";
-import { buildQueryOptions, RUNNER_DISALLOWED_TOOLS, runOnce, type RunContext } from "../src/run";
-import type { SdkMcpServer, SdkMcpTool } from "../src/sdk";
+import {
+  buildQueryOptions,
+  RUNNER_DISALLOWED_TOOLS,
+  runOnce,
+  type RunContext,
+} from "../src/drivers/claude/run";
+import type { SdkMcpServer, SdkMcpTool } from "../src/drivers/claude/sdk";
+import { createRunSink } from "../src/sink";
 import { createFakeBridge, type FakeBridge } from "./helpers/fake-bridge";
 import { createFakeSdk, script, type FakeSdk } from "./helpers/fake-query";
-import { AGENT, RUN_ID, runStart } from "./helpers/fixtures";
+import { AGENT, RUN_ID, runSpec } from "./helpers/fixtures";
 
 const RUN_2 = "0192f000-0000-7000-8000-00000000a002";
 type ToolResult = { content: Array<{ type: string; text: string }>; isError?: boolean };
@@ -29,14 +35,15 @@ function toolsOf(outcome: (c: RunnerControlCall) => ControlCallOutcome = () => (
 function harness(fake: FakeSdk, bridge: FakeBridge): RunContext {
   return {
     sdk: fake,
-    bridge,
-    agent: AGENT,
-    claudeConfigDir: "/home/u/.dodok-runner/claude",
+    sink: createRunSink({
+      workdir: AGENT.workdir,
+      bridge,
+      emit: { event: () => {}, final: () => {}, error: () => {}, session: () => {} },
+    }),
     baseEnv: { PATH: "/usr/bin" },
     costs: new Map(),
     signal: new AbortController().signal,
     closeGraceMs: 30,
-    emit: { event: () => {}, final: () => {}, error: () => {} },
   };
 }
 
@@ -88,8 +95,7 @@ describe("제어 도구 — dodok MCP 서버에 CONTROL_TOOLS 전부", () => {
 
   it("막는 도구 목록에 제어 도구가 없고, 허용 목록에는 전부 있다 — 쓰기는 서버 확인 카드가 묻는다", () => {
     for (const name of CONTROL_TOOL_FULL_NAMES) expect(RUNNER_DISALLOWED_TOOLS).not.toContain(name);
-    const o = buildQueryOptions(AGENT, runStart(), {
-      claudeConfigDir: "/c",
+    const o = buildQueryOptions(runSpec(), {
       baseEnv: {},
       mcpServer: {} as SdkMcpServer,
       resume: false,
@@ -117,9 +123,9 @@ describe("runOnce — 제어 도구는 지금 런의 runId 를 싣는다", () =>
       { callTool: { name: "get_run", input: { runId: RUN_ID } } },
       ...script.textTurn("msg_2", ["끝"]),
     );
-    const first = runOnce(runStart(), harness(fake, bridge));
+    const first = runOnce(runSpec(), harness(fake, bridge));
     await new Promise((r) => setTimeout(r, 10));
-    await runOnce(runStart({ runId: RUN_2 }), harness(fake, bridge));
+    await runOnce(runSpec({ runId: RUN_2 }), harness(fake, bridge));
     await first;
     expect(bridge.controls.map((c) => [c.tool, c.runId])).toEqual([
       ["get_run", RUN_2],

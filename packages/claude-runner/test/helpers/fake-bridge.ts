@@ -5,9 +5,8 @@ import type {
   RunnerOutboundAck,
   RunnerOutboundPost,
 } from "@dodok/shared";
-import type { ApprovalOutcome } from "../../src/approvals";
 import type { ControlCallOutcome } from "../../src/control-tools";
-import type { RunBridge } from "../../src/run";
+import type { ApprovalOutcome, RunBridge } from "../../src/sink";
 
 /** 러너 연결 대신 런이 서버와 주고받는 것을 적어 두는 가짜 — 결정은 decide 로 돌려준다 */
 export type FakeBridge = RunBridge & {

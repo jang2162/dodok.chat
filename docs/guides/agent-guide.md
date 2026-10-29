@@ -750,7 +750,7 @@ admin 이상이 만든 자동화(`docs/manual/user-guide.md` 「자동화 (admin
 
 러너는 작업 디렉터리의 `CLAUDE.md`·`.claude/settings.json` 을 읽지 않고 자동 메모리도 끈다 — 에이전트에게 줄 지시는 **채널 프롬프트나 채널 지시**에 쓴다(에이전트의 「기본 프롬프트」는 가지 않는다 — 아래 「흔한 실수」).
 
-러너는 채널이 아니라 러너 머신에 묻거나 알리는 `AskUserQuestion`·`PushNotification` 과, 턴이 끝난 뒤에 도는 예약·원격 실행 도구(`ScheduleWakeup`·`CronCreate`·`CronDelete`·`CronList`·`RemoteTrigger`)를 에이전트에게 주지 않는다(정본 `packages/claude-runner/src/run.ts` 의 `RUNNER_DISALLOWED_TOOLS`). 사람에게 고르게 할 때는 카드를 쓴다.
+러너는 채널이 아니라 러너 머신에 묻거나 알리는 `AskUserQuestion`·`PushNotification` 과, 턴이 끝난 뒤에 도는 예약·원격 실행 도구(`ScheduleWakeup`·`CronCreate`·`CronDelete`·`CronList`·`RemoteTrigger`)를 에이전트에게 주지 않는다(정본 `packages/claude-runner/src/drivers/claude/run.ts` 의 `RUNNER_DISALLOWED_TOOLS`). 사람에게 고르게 할 때는 카드를 쓴다.
 
 ### 보내는 것 — 글 답은 최종 답, 카드·파일은 `mcp__dodok__post`
 

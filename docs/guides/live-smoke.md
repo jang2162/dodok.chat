@@ -1750,7 +1750,7 @@ Claude 러너 어댑터는 번들 CLI 에 `ANTHROPIC_BASE_URL`(로컬 가짜 Mes
 | 가짜 API | `node packages/claude-runner/scripts/fake-messages-api.ts --port 3197 --out <스크래치>/api` — 대본 키워드는 그 파일 머리 주석의 표. 요청마다 `requests.jsonl` 한 줄과 본문 `NNN.json` |
 | 작업 파일 | 작업 디렉터리 안 `hx-out.txt`, 밖 `<스크래치>/hx-outside.txt`, 사람 이미지 8×8 PNG |
 
-**번들 CLI 감싸개.** 러너의 env 허용 목록(`packages/claude-runner/src/run.ts` 의 `ENV_ALLOWLIST`)은 `ANTHROPIC_*` 를 CLI 로 넘기지 않는다(ADR 0007 「함정」 — 러너 env 가 CLI 로 새지 않게). 그래서 가짜 API 주소는 러너가 아니라 **스크래치 설치본의 번들 CLI 자리**에 얹는다. SDK 는 `@anthropic-ai/claude-agent-sdk-<os>-<arch>/claude` 를 찾아 그대로 spawn 하므로, 진짜 바이너리를 `claude.real` 로 옮기고 그 자리에 셸 조각을 둔다 — **이 설치본의 CLI 는 로컬 주소 없이는 뜨지 않는다.**
+**번들 CLI 감싸개.** 러너의 env 허용 목록(`packages/claude-runner/src/drivers/claude/run.ts` 의 `ENV_ALLOWLIST`)은 `ANTHROPIC_*` 를 CLI 로 넘기지 않는다(ADR 0007 「함정」 — 러너 env 가 CLI 로 새지 않게). 그래서 가짜 API 주소는 러너가 아니라 **스크래치 설치본의 번들 CLI 자리**에 얹는다. SDK 는 `@anthropic-ai/claude-agent-sdk-<os>-<arch>/claude` 를 찾아 그대로 spawn 하므로, 진짜 바이너리를 `claude.real` 로 옮기고 그 자리에 셸 조각을 둔다 — **이 설치본의 CLI 는 로컬 주소 없이는 뜨지 않는다.**
 
 ```sh
 B=<스크래치>/runner/lib/node_modules/@dodok/claude-runner/node_modules/@anthropic-ai/claude-agent-sdk-$(node -p 'process.platform+"-"+process.arch')
@@ -1874,7 +1874,7 @@ OpenClaw 쪽은 실제 dev Gateway 대신 **`dev:fake` 의 가짜 Gateway·가�
 - **로그 위생 — 호스트 경로·러너 토큰·이메일 0.** 스크래치 경로·`/private/tmp`·실제 홈·`.dodok-runner` 를 한 줄씩 담은 파일로 `grep -a -c -F -f <그 파일>`, 러너 토큰 파일로 같게, `drn_`, 이메일 꼴(`grep -a -c -E '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.(com|net|org|io|dev|kr)'`): wire 기록 셋(34·28·20줄)·러너 로그(17줄)·서버 로그(87줄)·DB 덤프(`sqlite3 -json` 으로 `messages`·`run_events`·`runs`·`approvals`·`attachments`·`ops_events`) 전부 0. Python 부분 문자열 세기로 한 번 더 세어 같다. 양성 대조(토큰 파일 자신·러너 설정 파일의 작업 디렉터리) 1.
 - **시스템 경로도 가려진다** — 런 2 의 Read 결과(활동 탭 도구 결과·`run_events`)에서 `fib.sh` 첫 줄 `#!/bin/sh` 가 `#!<작업 디렉터리 밖>` 이 됐다. `!` 뒤는 경로 시작으로 보는 가림 규칙(`packages/claude-runner/src/mask.ts` 의 `PATH_START`)대로다 — 작업 디렉터리 밖 절대 경로는 `/bin/sh`·`/usr/bin/env` 같은 시스템 경로도 가린다. 모델은 가리지 않은 원문을 받는다(가림은 서버로 가는 이벤트에만).
 - **읽기 전용 Bash 자동 허용** — 런 1 의 `find . -maxdepth 1 -iname "README*"` 는 승인 카드 없이 돌았다(ADR 0007 「확인 못 한 것」 3 의 표본 하나).
-- **러너가 세션을 어느 길로 열었는지 로그에 없다** — `sessionExists` 결과도 「이미 있는 세션」 재시도도 찍히지 않아, 감싸개 없는 실제 러너에서는 재시도가 났는지 알 길이 없다(20.2). 러너의 「런 시작」 줄에 `resume`·재시도 여부를 싣는 것이 가장 싸다(자리: `packages/claude-runner/src/run.ts` 의 `runOnce`).
+- **러너가 세션을 어느 길로 열었는지 로그에 없다** — `sessionExists` 결과도 「이미 있는 세션」 재시도도 찍히지 않아, 감싸개 없는 실제 러너에서는 재시도가 났는지 알 길이 없다(20.2). 러너의 「런 시작」 줄에 `resume`·재시도 여부를 싣는 것이 가장 싸다(자리: `packages/claude-runner/src/drivers/claude/run.ts` 의 `runOnce`).
 - 러너 표준 오류는 **런마다** SDK 경고 `[CLAUDE_SDK_CAN_USE_TOOL_SHADOWED] … mcp__dodok__post` 한 줄(+`--trace-warnings` 안내 한 줄)뿐이다 — 한 러너 프로세스에서 두 런이 돌아도 두 번 찍혔다. 그 밖의 경고·오류 줄 0.
 - 가짜 러너를 끊으면 60초 뒤 그 토큰의 `runner_down`(warn) 사건이 운영 화면에 남는다 — 이 절차에서는 늘 생긴다.
 
