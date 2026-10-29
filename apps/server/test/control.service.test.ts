@@ -453,6 +453,28 @@ describe("제어 서비스", () => {
       );
       expect(app.db.select().from(agents).where(eq(agents.handle, "sneak2")).get()).toBeUndefined();
     });
+
+    it("list_agents 의 러너 에이전트 정의(runnerAgent)는 주체의 역할이 admin 이상일 때만 — 채널 안 에이전트는 시킨 사람의 역할, 시킨 사람 없는 런은 빠진다 [태스크 4 리뷰 L2]", async () => {
+      const { agent: coder } = createRunnerAgentForTest(app.db, {
+        workspaceId: app.workspaceId,
+        handle: `ctl-def-${clock}`,
+        permissionMode: "plan",
+      });
+      const definitionFor = async (principal: Parameters<typeof call>[0]) => {
+        const listed = expectOk(await call(principal, "list_agents")) as {
+          agents: Array<{ id: string; runnerAgent?: { permissionMode: string } }>;
+        };
+        const found = listed.agents.find((a) => a.id === coder.id);
+        expect(found).toBeDefined();
+        return found?.runnerAgent;
+      };
+      expect(await definitionFor(pat(ada.id))).toMatchObject({ permissionMode: "plan" });
+      expect(await definitionFor(pat(owner))).toMatchObject({ permissionMode: "plan" });
+      expect(await definitionFor(pat(mia.id))).toBeUndefined();
+      expect(await definitionFor(openRun(app, ada.id).principal)).toMatchObject({ permissionMode: "plan" });
+      expect(await definitionFor(openRun(app, mia.id).principal)).toBeUndefined();
+      expect(await definitionFor(openRun(app, null).principal)).toBeUndefined();
+    });
   });
 
   describe("역할 — 같은 REST 정책 함수로 그때 읽는다", () => {

@@ -17,7 +17,7 @@ import { io } from "socket.io-client";
 import { v7 as uuid } from "uuid";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { App } from "../src/app";
-import { agents, agentSessions, runnerProjects } from "../src/db/schema.sqlite";
+import { agents, agentSessions, runnerProjects, workspaces } from "../src/db/schema.sqlite";
 import { runnerAgentDefinition } from "../src/modules/runners/definition";
 import { RUNNER_TOKEN_FILE } from "../src/modules/runners/routes";
 import {
@@ -31,7 +31,12 @@ import { bootTestApp, login, userWithRole } from "./helpers/app";
 import { FAKE_GATEWAY_ID } from "./helpers/gateways";
 import { bootLiveApp, type LiveApp } from "./helpers/live-app";
 import { openChannelWire, rest, sendMessage, type WireLog } from "./helpers/scenario-steps";
-import { channelConversation, createRunnerAgentForTest, seedAgentSession } from "./helpers/seed";
+import {
+  channelConversation,
+  createRunnerAgentForTest,
+  insertRunnerToken,
+  seedAgentSession,
+} from "./helpers/seed";
 import type { WireClient } from "./helpers/wire";
 
 vi.setConfig({ testTimeout: 30_000, hookTimeout: 20_000 });
@@ -62,6 +67,7 @@ describe("「러너」 탭 REST /api/v1/runners·/runner-projects", () => {
   let app: App;
   let owner: { authorization: string };
   let admin: { authorization: string };
+  let member: { authorization: string };
   const lines: string[] = [];
   const runners: FakeRunner[] = [];
 
@@ -71,6 +77,7 @@ describe("「러너」 탭 REST /api/v1/runners·/runner-projects", () => {
     await app.fastify.listen({ host: "127.0.0.1", port: 0 });
     owner = (await login(app)).headers;
     admin = { authorization: `Bearer ${(await userWithRole(app, "ada", "admin")).token}` };
+    member = { authorization: `Bearer ${(await userWithRole(app, "mo", "member")).token}` };
   });
   afterEach(() => {
     for (const runner of runners.splice(0)) runner.close();
@@ -150,6 +157,24 @@ describe("「러너」 탭 REST /api/v1/runners·/runner-projects", () => {
       projectCount: 0,
     });
     expect(list.find((r) => r.id === revoked.record.id)).toMatchObject({ connected: false, revoked: true });
+  });
+
+  it("다른 워크스페이스의 러너는 없는 것과 같은 404 — 둘러보기·프로젝트 목록·더하기·옮기기 대상 [태스크 4 리뷰 T5]", async () => {
+    const otherWs = uuid();
+    app.db.insert(workspaces).values({ id: otherWs, name: "other", createdAt: new Date() }).run();
+    const foreign = insertRunnerToken(app.db, otherWs, "foreign");
+    const { id } = await runnerWith("ws-home");
+    const project = await projectOf(id, "ws-home");
+    for (const [method, url, body] of [
+      ["GET", `/runners/${foreign}/fs?rootId=src`, undefined],
+      ["GET", `/runners/${foreign}/projects`, undefined],
+      ["POST", `/runners/${foreign}/projects`, { rootId: "src", relPath: "x" }],
+      ["POST", `/runner-projects/${project.id}/move`, { runnerId: foreign }],
+    ] as const) {
+      const res = await call(admin, method, url, body);
+      expect(res.statusCode, url).toBe(404);
+    }
+    expect((await summaries()).map((r) => r.id)).not.toContain(foreign);
   });
 
   describe("둘러보기 GET /runners/:id/fs", () => {
@@ -514,6 +539,83 @@ describe("「러너」 탭 REST /api/v1/runners·/runner-projects", () => {
       expect((oc.json().agent as Agent).runnerAgent).toBeUndefined();
     });
 
+    it("PATCH 는 프로그램·프로젝트를 받지 않는다 — 러너 에이전트면 400(field), 아무것도 바꾸지 않는다 [태스크 4 리뷰 L4]", async () => {
+      const { id } = await runnerWith("patch-fixed");
+      const other = await projectOf(id, "patch-fixed-other");
+      const { agent, projectId } = createRunnerAgentForTest(app.db, {
+        workspaceId: app.workspaceId,
+        handle: "fixed",
+        runnerTokenId: id,
+      });
+      for (const [field, body] of [
+        ["program", { program: "codex" }],
+        ["program", { name: "섞음", program: "claude" }],
+        ["runnerProjectId", { runnerProjectId: other.id }],
+        ["runnerProjectId", { runnerProjectId: null }],
+      ] as const) {
+        const res = await call(admin, "PATCH", `/agents/${agent.id}`, body);
+        expect(res.statusCode, JSON.stringify(body)).toBe(400);
+        expect(res.json()).toMatchObject({ code: "VALIDATION", details: { field } });
+      }
+      expect(app.db.select().from(agents).where(eq(agents.id, agent.id)).get()).toMatchObject({
+        name: agent.name,
+        program: "claude",
+        runnerProjectId: projectId,
+      });
+    });
+
+    it("PATCH 천장 대조는 프로그램 available 을 보지 않는다 — 러너가 그 프로그램을 못 쓴다고 알려도 상한 안의 고치기는 된다 [태스크 4 리뷰 T3]", async () => {
+      const { id } = await runnerWith("patch-unavailable", {
+        programs: [{ ...FAKE_CLAUDE_PROGRAM, available: false, reason: "로그인 필요" }],
+      });
+      const { agent } = createRunnerAgentForTest(app.db, {
+        workspaceId: app.workspaceId,
+        handle: "unavail",
+        runnerTokenId: id,
+        permissionMode: "acceptEdits",
+      });
+      const res = await call(admin, "PATCH", `/agents/${agent.id}`, { permissionMode: "default" });
+      expect(res.statusCode, res.body).toBe(200);
+      expect((res.json().agent as Agent).runnerAgent?.permissionMode).toBe("default");
+    });
+
+    it("러너 에이전트 정의(runnerAgent)는 admin 이상에게만 — GET /agents·GET /dms 에서 member 에게는 빠지고 나머지는 그대로 [태스크 4 리뷰 L2]", async () => {
+      const { id } = await runnerWith("defs");
+      const { agent } = createRunnerAgentForTest(app.db, {
+        workspaceId: app.workspaceId,
+        handle: "defs",
+        runnerTokenId: id,
+        permissionMode: "plan",
+        allowedTools: ["Read"],
+      });
+      expect((await call(admin, "PATCH", `/agents/${agent.id}`, { dmAccess: "everyone" })).statusCode).toBe(
+        200,
+      );
+      const listedBy = async (headers: Record<string, string>) => {
+        const res = await call(headers, "GET", "/agents");
+        expect(res.statusCode).toBe(200);
+        return (res.json().agents as Agent[]).find((a) => a.id === agent.id);
+      };
+      const forMember = await listedBy(member);
+      expect(forMember).toMatchObject({ provider: "runner", program: "claude", runner: { tokenId: id } });
+      expect(forMember).not.toHaveProperty("runnerAgent");
+      expect((await listedBy(admin))?.runnerAgent).toMatchObject({
+        permissionMode: "plan",
+        allowedTools: ["Read"],
+      });
+
+      const dmAgentFor = async (headers: Record<string, string>) => {
+        expect((await call(headers, "POST", "/dms", { agentId: agent.id })).statusCode).toBe(200);
+        const res = await call(headers, "GET", "/dms");
+        expect(res.statusCode).toBe(200);
+        return (res.json().dms as Array<{ agent: Agent }>).find((d) => d.agent.id === agent.id)?.agent;
+      };
+      const dmForMember = await dmAgentFor(member);
+      expect(dmForMember).toMatchObject({ id: agent.id, provider: "runner" });
+      expect(dmForMember).not.toHaveProperty("runnerAgent");
+      expect((await dmAgentFor(admin))?.runnerAgent).toMatchObject({ permissionMode: "plan" });
+    });
+
     it("프로젝트 없는 옛 러너 에이전트(0031 이 보관)는 REST 로 되살릴 수 없다 — 400", async () => {
       const id = uuid();
       app.db
@@ -566,6 +668,14 @@ describe("「러너」 탭 REST /api/v1/runners·/runner-projects", () => {
       expect(
         (await call(admin, "POST", `/runner-projects/${project.id}/move`, { runnerId: uuid() })).statusCode,
       ).toBe(404);
+      // 폐기한 대상은 끊김(503)이 아니라 409 — 다시 붙을 수 없다 [태스크 4 리뷰 T2]
+      const revoked = await issue("move-revoked-1");
+      await call(owner, "DELETE", `/setup/runner-tokens/${revoked.record.id}`);
+      const toRevoked = await call(admin, "POST", `/runner-projects/${project.id}/move`, {
+        runnerId: revoked.record.id,
+      });
+      expect(toRevoked.statusCode).toBe(409);
+      expect(toRevoked.json().code).toBe("CONFLICT");
     });
 
     it("성공 — 프로젝트와 그 에이전트가 함께 옮겨 가고 그 에이전트들의 러너 세션 id 가 비고, 새 러너로 정의가 선다(옛 러너는 없다)", async () => {
@@ -633,10 +743,97 @@ describe("「러너」 탭 REST /api/v1/runners·/runner-projects", () => {
       const from = await runnerWith("move-from-3");
       const to = await runnerWith("move-to-3");
       const project = await projectOf(from.id, "repo3");
-      await projectOf(to.id, "repo3");
+      const taken = await projectOf(to.id, "repo3");
       const res = await call(admin, "POST", `/runner-projects/${project.id}/move`, { runnerId: to.id });
       expect(res.statusCode).toBe(409);
       expect(res.json().code).toBe("CONFLICT");
+      // 보관한 같은 자리 프로젝트는 막지 않는다 [태스크 4 리뷰 T4]
+      expect((await call(admin, "POST", `/runner-projects/${taken.id}/archive`)).statusCode).toBe(200);
+      const moved = await call(admin, "POST", `/runner-projects/${project.id}/move`, { runnerId: to.id });
+      expect(moved.statusCode, moved.body).toBe(200);
+      expect(RunnerProject.parse(moved.json().project).runnerId).toBe(to.id);
+    });
+
+    it("옮길 러너의 천장 밖 에이전트가 있으면 400(field runnerId·agentIds·item) — 러너에 묻지도 옮기지도 않는다, 낮추고 나면 옮겨진다(보관한 에이전트는 대조하지 않는다) [태스크 4 리뷰 L1]", async () => {
+      const from = await runnerWith("move-from-4");
+      const to = await runnerWith("move-to-4", {
+        programs: [
+          {
+            ...FAKE_CLAUDE_PROGRAM,
+            ceiling: { maxPermissionMode: "default", allowedToolsCeiling: ["Read"] },
+          },
+          { ...FAKE_CODEX_PROGRAM, available: false, reason: "설치되지 않음" },
+        ],
+      });
+      const project = await projectOf(from.id, "repo4");
+      const seed = (
+        handle: string,
+        extra: Omit<Parameters<typeof createRunnerAgentForTest>[1], "workspaceId" | "handle">,
+      ) =>
+        createRunnerAgentForTest(app.db, {
+          workspaceId: app.workspaceId,
+          handle,
+          runnerTokenId: from.id,
+          relPath: "repo4",
+          ...extra,
+        }).agent;
+      const ok = seed("ceil-ok", { allowedTools: ["Read"] });
+      const high = seed("ceil-mode", { permissionMode: "acceptEdits" });
+      const tools = seed("ceil-tools", { allowedTools: ["Read", "Bash"] });
+      const codex = seed("ceil-codex", { program: "codex" });
+      const archived = seed("ceil-archived", { permissionMode: "acceptEdits" });
+      app.db.update(agents).set({ archivedAt: new Date() }).where(eq(agents.id, archived.id)).run();
+
+      const move = () => call(admin, "POST", `/runner-projects/${project.id}/move`, { runnerId: to.id });
+      const refused = await move();
+      expect(refused.statusCode).toBe(400);
+      expect(refused.json()).toMatchObject({
+        code: "VALIDATION",
+        details: { field: "runnerId", agentIds: [high.id, tools.id, codex.id], item: "permissionMode" },
+      });
+      expect(to.runner.fsRequests).toEqual([]);
+      expect(
+        app.db.select().from(runnerProjects).where(eq(runnerProjects.id, project.id)).get()?.runnerTokenId,
+      ).toBe(from.id);
+      for (const agent of [ok, high, tools, codex, archived])
+        expect(app.db.select().from(agents).where(eq(agents.id, agent.id)).get()?.runnerTokenId).toBe(
+          from.id,
+        );
+
+      // 사람이 먼저 낮춘다 — 남은 것의 항목이 details.item
+      expect(
+        (await call(admin, "PATCH", `/agents/${high.id}`, { permissionMode: "default" })).statusCode,
+      ).toBe(200);
+      expect((await move()).json()).toMatchObject({
+        details: { agentIds: [tools.id, codex.id], item: "allowedTools" },
+      });
+      expect((await call(admin, "PATCH", `/agents/${tools.id}`, { allowedTools: ["Read"] })).statusCode).toBe(
+        200,
+      );
+      expect((await move()).json()).toMatchObject({ details: { agentIds: [codex.id], item: "program" } });
+      expect((await call(admin, "DELETE", `/agents/${codex.id}`)).statusCode).toBe(200);
+      const moved = await move();
+      expect(moved.statusCode, moved.body).toBe(200);
+      for (const agent of [ok, high, tools, codex, archived])
+        expect(app.db.select().from(agents).where(eq(agents.id, agent.id)).get()?.runnerTokenId).toBe(to.id);
+    });
+
+    it("보관한 에이전트도 함께 옮긴다 — 보관 → 옮기기 → 되살리기 뒤 새 러너로 정의가 선다 [태스크 4 리뷰 T1]", async () => {
+      const from = await runnerWith("move-from-5");
+      const to = await runnerWith("move-to-5");
+      const project = await projectOf(from.id, "repo5");
+      const { agent } = createRunnerAgentForTest(app.db, {
+        workspaceId: app.workspaceId,
+        handle: "sleeper5",
+        runnerTokenId: from.id,
+        relPath: "repo5",
+      });
+      expect((await call(admin, "DELETE", `/agents/${agent.id}`)).statusCode).toBe(200);
+      const moved = await call(admin, "POST", `/runner-projects/${project.id}/move`, { runnerId: to.id });
+      expect(moved.statusCode, moved.body).toBe(200);
+      expect((await call(admin, "POST", `/agents/${agent.id}/restore`)).statusCode).toBe(200);
+      expect(runnerAgentDefinition(app.db, app.workspaceId, agent.providerAgentId, to.id)).not.toBeNull();
+      expect(runnerAgentDefinition(app.db, app.workspaceId, agent.providerAgentId, from.id)).toBeNull();
     });
   });
 
@@ -675,6 +872,16 @@ describe("「러너」 탭 REST /api/v1/runners·/runner-projects", () => {
     const revoked = await call(owner, "POST", `/setup/runner-tokens/${gone.record.id}/reissue`);
     expect(revoked.statusCode).toBe(409);
     expect(revoked.json().code).toBe("CONFLICT");
+
+    // 붙은 러너가 없어도(끊김 알림이 없어도) 연결 페이지가 새 접두사를 받게 setup.status [태스크 4 리뷰 T6]
+    const quiet = await issue("reissue-quiet");
+    const quietEvents: unknown[] = [];
+    const offQuiet = app.bus.on("setup.status", (p) => quietEvents.push(p));
+    expect((await call(owner, "POST", `/setup/runner-tokens/${quiet.record.id}/reissue`)).statusCode).toBe(
+      200,
+    );
+    offQuiet();
+    expect(quietEvents.length).toBeGreaterThan(0);
   });
 });
 

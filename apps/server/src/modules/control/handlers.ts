@@ -17,6 +17,7 @@ import {
   authorizeOpsRead,
   authorizeRead,
 } from "../../auth/policies";
+import { roleOf } from "../../auth/roles";
 import type { Db } from "../../db/client";
 import { apiError } from "../../http/errors";
 import { josa } from "../../util/josa";
@@ -27,7 +28,7 @@ import {
   patchAgentAndNotify,
   registerAgentAndNotify,
 } from "../agents/actions";
-import { getAgent, listAgents } from "../agents/service";
+import { agentForRole, getAgent, listAgents } from "../agents/service";
 import {
   addChannelMemberAndNotify,
   archiveChannelAndNotify,
@@ -234,7 +235,11 @@ export const HANDLERS: Handlers = {
   },
   list_agents: {
     authorize: (role) => authorizeRead(role),
-    run: (ctx) => ({ agents: listAgents(ctx.db, ctx.workspaceId) }),
+    // 러너 에이전트의 정의는 주체(채널 안 에이전트면 시킨 사람)의 지금 역할이 admin 이상일 때만 — 시킨 사람이 없는 런은 member 와 같다
+    run: (ctx, _input, principal) => {
+      const role = principal.userId === null ? undefined : roleOf(ctx.db, ctx.workspaceId, principal.userId);
+      return { agents: listAgents(ctx.db, ctx.workspaceId).map((agent) => agentForRole(agent, role)) };
+    },
   },
   list_people: {
     authorize: (role) => authorizeRead(role),

@@ -3,7 +3,7 @@
  * 경로뿐이다 — 호스트 경로는 서버로 오지 않는다(스펙 결정 3). 그 자리가 실제로 쓸 만한지는 러너가 안다: REST 는 더하기 전에
  * 러너 어댑터 projectCheck 를 부르고, 러너는 런마다 천장 검사로 다시 본다
  */
-import { RunnerRelPath, RunnerRootId } from "@dodok/shared";
+import { RunnerRelPath, RunnerRootId, type RunnerPermissionMode, type RunnerProgram } from "@dodok/shared";
 import { and, asc, count, eq, inArray, isNull, ne } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import type { Db, DbOrTx } from "../../db/client";
@@ -213,6 +213,29 @@ export function moveProject(
         .run();
     return { project: moved, agentIds };
   });
+}
+
+/** 프로젝트의 보관하지 않은 에이전트의 정의 — 옮기기가 옮길 러너의 천장과 대조한다(태스크 4 리뷰 L1) */
+export function activeProjectAgents(
+  db: DbOrTx,
+  projectId: string,
+): {
+  id: string;
+  program: RunnerProgram | null;
+  permissionMode: RunnerPermissionMode;
+  allowedTools: string[] | null;
+}[] {
+  return db
+    .select({
+      id: agents.id,
+      program: agents.program,
+      permissionMode: agents.permissionMode,
+      allowedTools: agents.allowedToolsJson,
+    })
+    .from(agents)
+    .where(and(eq(agents.runnerProjectId, projectId), isNull(agents.archivedAt)))
+    .orderBy(asc(agents.createdAt), asc(agents.id))
+    .all();
 }
 
 /** 프로젝트마다 보관하지 않은 에이전트 수 — 없는 프로젝트는 0 */

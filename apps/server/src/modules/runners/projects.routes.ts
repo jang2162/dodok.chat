@@ -32,9 +32,10 @@ import { recordRateLimit } from "../ops/http-limits";
 import type { Limits } from "../ops/limits";
 import { KeyedLimiter } from "../ops/ratelimit";
 import type { OpsService } from "../ops/service";
-import { askRunner, type RunnerLiveApi } from "./live";
+import { askRunner, ceilingMiss, liveRunner, type RunnerLiveApi } from "./live";
 import {
   activeAgentCounts,
+  activeProjectAgents,
   activeProjectCounts,
   archiveProject,
   createProject,
@@ -220,13 +221,42 @@ export function registerRunnerAdminRoutes(fastify: FastifyInstance, ctx: RunnerA
     );
   });
 
-  /** 다른 러너로 옮기기(계획 판정 PR8) — 옮길 러너가 붙어 있고 같은 자리가 그 러너의 project.check 를 지날 때만 */
+  /**
+   * 다른 러너로 옮기기(계획 판정 PR8) — 옮길 러너가 붙어 있고, 그 프로젝트의 보관 안 된 에이전트가 모두 그 러너의 천장 안이고(태스크
+   * 4 리뷰 L1 — 아니면 옮긴 뒤 런마다 RUNNER_CEILING 카드다. 사람이 에이전트를 먼저 낮추고 옮긴다), 같은 자리가 그 러너의
+   * project.check 를 지날 때만. 천장 밖이면 400 VALIDATION details { field: "runnerId", agentIds, item(첫 에이전트의 항목) } — 아무것도
+   * 옮기지 않는다
+   */
   fastify.post("/api/v1/runner-projects/:id/move", admin, async (request) => {
     const { id } = parseParams(ProjectParams, request.params);
     const { runnerId } = parseBody(MoveRunnerProjectBody, request.body);
     const project = projectOr404(id);
     if (project.runnerTokenId === runnerId) return { project: apiProject(project) };
     activeRunner(runnerId);
+    const target = liveRunner(ctx.runners, runnerId);
+    const misses = activeProjectAgents(ctx.db, id).flatMap((agent) => {
+      const item =
+        agent.program === null
+          ? null
+          : ceilingMiss(
+              target,
+              agent.program,
+              { permissionMode: agent.permissionMode, allowedTools: agent.allowedTools },
+              { requireAvailable: true },
+            );
+      return item ? [{ agentId: agent.id, item }] : [];
+    });
+    const first = misses[0];
+    if (first)
+      throw apiError(
+        "VALIDATION",
+        `옮길 러너의 설정이 이 프로젝트의 에이전트를 허용하지 않습니다(${first.item})`,
+        {
+          field: "runnerId",
+          agentIds: misses.map((m) => m.agentId),
+          item: first.item,
+        },
+      );
     await checkPlace(runnerId, project);
     const { project: moved, agentIds } = moveProject(ctx.db, {
       workspaceId: ctx.workspaceId,

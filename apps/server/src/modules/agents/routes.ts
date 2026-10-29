@@ -34,7 +34,14 @@ import {
   patchAgentAndNotify,
   registerAgentAndNotify,
 } from "./actions";
-import { getAgent, listAgents, moveAgentGateway, restoreAgent, runnerPlacement } from "./service";
+import {
+  agentForRole,
+  getAgent,
+  listAgents,
+  moveAgentGateway,
+  restoreAgent,
+  runnerPlacement,
+} from "./service";
 
 export type AgentRouteContext = {
   auth: Auth;
@@ -76,6 +83,19 @@ function assertRunnerPatchWithinCeiling(
   );
 }
 
+/**
+ * 러너 에이전트의 프로그램·프로젝트는 PATCH 로 바꾸지 않는다(태스크 4 보고 3-4 — 프로젝트는 「다른 러너로 옮기기」 하나로, 프로그램을
+ * 바꾸면 세션 전사가 다른 프로그램 것이 된다). UpdateAgentBody 는 모르는 키를 버리므로 조용히 200 이 되지 않게 원래 본문에서 본다(태스크
+ * 4 리뷰 L4)
+ */
+const FIXED_RUNNER_FIELDS = ["program", "runnerProjectId"] as const;
+
+function assertNoFixedRunnerFields(body: unknown): void {
+  if (typeof body !== "object" || body === null) return;
+  const field = FIXED_RUNNER_FIELDS.find((key) => Object.hasOwn(body, key));
+  if (field) throw apiError("VALIDATION", `러너 에이전트의 ${field} 는 고칠 수 없습니다`, { field });
+}
+
 const AgentParams = z.object({ id: Id });
 const MoveGatewayBody = z.object({ gatewayId: Id });
 
@@ -86,9 +106,10 @@ export function registerAgentRoutes(fastify: FastifyInstance, ctx: AgentRouteCon
   // 다른 탭·사람의 화면이 에이전트·채널 멤버 목록을 다시 받게 — 본문이 없다(계획 판정 PS4)
   const changed = () => ctx.bus.emit("agents.changed", {});
 
-  fastify.get("/api/v1/agents", policy(authorizeRead), async (request) => ({
-    agents: listAgents(ctx.db, sessionUser(request).workspaceId),
-  }));
+  fastify.get("/api/v1/agents", policy(authorizeRead), async (request) => {
+    const user = sessionUser(request);
+    return { agents: listAgents(ctx.db, user.workspaceId).map((agent) => agentForRole(agent, user.role)) };
+  });
 
   /** 등록(admin) — provider 로 갈래를 고르고 그 갈래의 스키마로 파싱한다(오류가 그 갈래의 필드를 가리키게) */
   fastify.post("/api/v1/agents", policy(authorizeAgentRegister), async (request, reply) => {
@@ -103,9 +124,10 @@ export function registerAgentRoutes(fastify: FastifyInstance, ctx: AgentRouteCon
   fastify.patch("/api/v1/agents/:id", policy(authorizeAgentPatch), async (request) => {
     const { id } = parseParams(AgentParams, request.params);
     // 본문보다 먼저 404 — 옛 순서 그대로(patchAgentAndNotify 도 다시 본다)
-    if (!getAgent(ctx.db, id, sessionUser(request).workspaceId))
-      throw apiError("NOT_FOUND", "agent not found");
+    const current = getAgent(ctx.db, id, sessionUser(request).workspaceId);
+    if (!current) throw apiError("NOT_FOUND", "agent not found");
     const patch = parseBody(UpdateAgentBody, request.body);
+    if (current.provider === "runner") assertNoFixedRunnerFields(request.body);
     assertRunnerPatchWithinCeiling(ctx, id, patch, sessionUser(request).workspaceId);
     return { agent: patchAgentAndNotify(ctx, id, patch, sessionUser(request).workspaceId) };
   });

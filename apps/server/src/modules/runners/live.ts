@@ -43,26 +43,38 @@ const beyond = (item: RunnerCeilingItem) =>
   apiError("VALIDATION", `러너 설정이 이 에이전트를 허용하지 않습니다(${item})`, { field: item });
 
 /**
- * 러너 에이전트 정의가 붙은 러너의 천장 안인가(러너 일반화 스펙 2장 — 러너 ceiling.ts checkCeiling 과 같은 규칙). 준 필드만 본다 —
- * 만들기는 기본값을 채워 모두, 고치기(PATCH)는 바꾸는 항목만. 프로그램은 만들기(requireAvailable)면 그 러너가 알리고 쓸 수 있어야
- * 한다 — 고치기는 그 러너가 프로그램을 알리지 않으면 상한을 모르니 건너뛴다(런에서 러너가 거절한다). allowedTools 는 글자 그대로의
- * 부분집합(null 은 미리 허용한 도구가 없다 — 어느 상한에도 든다). 어긋나면 400 VALIDATION, details.field 는 항목 이름
+ * 러너 에이전트 정의가 붙은 러너의 천장 밖이면 그 항목, 안이면 null(러너 일반화 스펙 2장 — 러너 ceiling.ts checkCeiling 과 같은
+ * 규칙). 준 필드만 본다 — 만들기·옮기기는 모두, 고치기(PATCH)는 바꾸는 항목만. 프로그램은 requireAvailable 이면(만들기·옮기기) 그
+ * 러너가 알리고 쓸 수 있어야 한다 — 고치기는 그 러너가 프로그램을 알리지 않으면 상한을 모르니 건너뛴다(런에서 러너가 거절한다).
+ * allowedTools 는 글자 그대로의 부분집합(null 은 미리 허용한 도구가 없다 — 어느 상한에도 든다)
  */
+export function ceilingMiss(
+  live: RunnerLive,
+  program: RunnerProgram,
+  fields: { permissionMode?: RunnerPermissionMode; allowedTools?: string[] | null },
+  opts: { requireAvailable: boolean },
+): RunnerCeilingItem | null {
+  const status = live.programs.find((p) => p.program === program);
+  if (opts.requireAvailable && !status?.available) return "program";
+  if (!status) return null;
+  const { maxPermissionMode, allowedToolsCeiling } = status.ceiling;
+  if (
+    fields.permissionMode !== undefined &&
+    permissionModeRank(fields.permissionMode) > permissionModeRank(maxPermissionMode)
+  )
+    return "permissionMode";
+  if (allowedToolsCeiling !== null && fields.allowedTools?.some((t) => !allowedToolsCeiling.includes(t)))
+    return "allowedTools";
+  return null;
+}
+
+/** ceilingMiss 가 항목을 내면 400 VALIDATION, details.field 는 항목 이름 */
 export function assertWithinCeiling(
   live: RunnerLive,
   program: RunnerProgram,
   fields: { permissionMode?: RunnerPermissionMode; allowedTools?: string[] | null },
   opts: { requireAvailable: boolean },
 ): void {
-  const status = live.programs.find((p) => p.program === program);
-  if (opts.requireAvailable && !status?.available) throw beyond("program");
-  if (!status) return;
-  const { maxPermissionMode, allowedToolsCeiling } = status.ceiling;
-  if (
-    fields.permissionMode !== undefined &&
-    permissionModeRank(fields.permissionMode) > permissionModeRank(maxPermissionMode)
-  )
-    throw beyond("permissionMode");
-  if (allowedToolsCeiling !== null && fields.allowedTools?.some((t) => !allowedToolsCeiling.includes(t)))
-    throw beyond("allowedTools");
+  const item = ceilingMiss(live, program, fields, opts);
+  if (item) throw beyond(item);
 }

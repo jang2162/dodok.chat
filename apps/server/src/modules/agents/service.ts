@@ -5,6 +5,8 @@ import {
   type RunnerPermissionMode,
   type RunnerProgram,
   RunnerRunAgent,
+  roleAtLeast,
+  type TeamRole,
 } from "@dodok/shared";
 import { and, asc, eq, inArray, isNotNull, isNull, ne, type SQL, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
@@ -152,6 +154,18 @@ function toApiAgent(
         }
       : {}),
   };
+}
+
+/**
+ * 보는 사람의 역할에 맞춘 에이전트 — 러너 에이전트의 정의(Agent.runnerAgent — 권한 모드·도구·모델·프로젝트)는 admin 이상에게만
+ * 싣는다(러너 상태·프로그램 보기가 admin 이상이다 — 러너 일반화 스펙 6장, 태스크 4 리뷰 L2). admin 미만에게 Agent 를 내는 자리
+ * (GET /agents·GET /dms·제어 도구 list_agents)가 이 함수를 지난다
+ */
+export function agentForRole(agent: Agent, role: TeamRole | undefined): Agent {
+  if (agent.runnerAgent === undefined || roleAtLeast(role, "admin")) return agent;
+  const shown = { ...agent };
+  delete shown.runnerAgent;
+  return shown;
 }
 
 const runnerTokenColumns = {

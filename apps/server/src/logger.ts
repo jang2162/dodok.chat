@@ -72,7 +72,23 @@ export function redactUrl(url: string): string {
     )
     .replace(/whk_([\w-]{6})[\w-]+/g, "whk_$1…")
     .replace(/dpt_([\w-]{6})[\w-]+/g, "dpt_$1…")
-    .replace(/([?&]relPath=)[^&#]*/gi, "$1…");
+    .replace(/\?[^#]*/, redactRelPath);
+}
+
+/**
+ * 쿼리(「?」부터 「#」 앞까지)에서 키가 relPath 인 값을 「…」로. 키는 디코드해서 본다 — Fastify 쿼리 파서(fast-querystring)가 키도
+ * 퍼센트 디코드하므로 rel%50ath=… 도 relPath 로 받는다(태스크 4 리뷰 L3). 디코드 못 하는 키는 날 글자 그대로 견준다
+ */
+function redactRelPath(query: string): string {
+  return query.replace(/([?&])([^=&]*)=[^&]*/g, (part, sep: string, rawKey: string) => {
+    let key = rawKey.replace(/\+/g, " ");
+    try {
+      key = decodeURIComponent(key);
+    } catch {
+      // 잘못된 퍼센트 인코딩 — 파서도 날 글자로 둔다
+    }
+    return key.toLowerCase() === "relpath" ? `${sep}${rawKey}=…` : part;
+  });
 }
 
 /**
