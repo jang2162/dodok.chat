@@ -1,6 +1,7 @@
 import {
   CONTROL_CALL_TIMEOUT_MS,
   ControlResult,
+  Id,
   RUNNER_NAMESPACE,
   RUNNER_PROTOCOL_V2,
   RUNNER_SHUTDOWN_STOP_REASON,
@@ -71,6 +72,29 @@ type RunnerSocket = Socket<RunnerServerToClientEventsV2, RunnerClientToServerEve
  * 런 하나가 서버와 주고받는 길. live() 는 그 런을 시작한 연결 세대가 아직 붙어 있는가 — 끊겼거나 다시 붙은 연결로는
  * 보내지 않는다(서버는 그 런을 이미 닫았다). 끊기면 연결이 런을 먼저 멈추므로 대개는 런 signal 이 앞에서 막는다
  */
+const FIELD_NAME = /^[A-Za-z_]\w{0,63}$/;
+const INVALID_FIELDS_MAX = 5;
+
+/** 틀린 필드의 이름 경로(`agent.allowedTools[0]`) — 스키마의 키만 싣고, 이름 꼴이 아닌 성분(맵 키 등 보낸 쪽의 값)은 `?` 로 */
+function invalidFields(issues: readonly { path: readonly PropertyKey[] }[]): string {
+  const names = [
+    ...new Set(
+      issues.map(
+        (i) =>
+          i.path
+            .map((k, n) =>
+              typeof k === "number"
+                ? `[${k}]`
+                : `${n === 0 ? "" : "."}${typeof k === "string" && FIELD_NAME.test(k) ? k : "?"}`,
+            )
+            .join("") || "(최상위)",
+      ),
+    ),
+  ];
+  const shown = names.slice(0, INVALID_FIELDS_MAX).join(", ");
+  return names.length > INVALID_FIELDS_MAX ? `${shown} 외 ${names.length - INVALID_FIELDS_MAX}개` : shown;
+}
+
 export function createRunBridge(o: {
   socket: Pick<RunnerSocket, "emit" | "timeout">;
   live: () => boolean;
@@ -351,9 +375,19 @@ export function startRunnerConnection(opts: RunnerConnectionOptions) {
   socket.on("run.start", (payload, ack) => {
     const parsed = RunnerRunStartV2.safeParse(payload);
     if (!parsed.success) {
-      const runId = String((payload as { deliver?: { runId?: unknown } })?.deliver?.runId ?? "");
-      logger.warn(`dodok-runner: run.start 형식이 틀려 버립니다(런 ${runId})`);
-      ack({ runId, admission: "drop", reason: "invalid-run-start" });
+      const rawRunId = (payload as { deliver?: { runId?: unknown } } | undefined)?.deliver?.runId;
+      const runId = Id.safeParse(rawRunId);
+      // 런 id 를 읽을 수 있으면 dispatch 뒤 VALIDATION — drop 이면 어댑터가 런을 놓아 멘션이 흔적 없이 사라진다(태스크 2 리뷰 M3,
+      // 스펙 3장 「서버·러너 둘 다 VALIDATION」). 문구는 틀린 필드 이름만 — 값은 싣지 않는다
+      if (runId.success) {
+        const fields = invalidFields(parsed.error.issues);
+        logger.warn(`dodok-runner: run.start 형식이 틀려 거절합니다(런 ${runId.data} — ${fields})`);
+        ack({ runId: runId.data, admission: "dispatch" });
+        emitterFor(runId.data, generation).error("VALIDATION", `run.start 형식이 틀렸습니다 — ${fields}`);
+        return;
+      }
+      logger.warn("dodok-runner: run.start 형식이 틀리고 런 id 도 읽을 수 없어 버립니다");
+      ack({ runId: String(rawRunId ?? ""), admission: "drop", reason: "invalid-run-start" });
       return;
     }
     const start = parsed.data;

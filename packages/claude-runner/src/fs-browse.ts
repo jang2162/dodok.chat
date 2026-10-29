@@ -22,7 +22,7 @@ function directoryInside(rootPath: string, parent: string, entry: Dirent): strin
   if (entry.isDirectory()) return full;
   if (!entry.isSymbolicLink()) return undefined;
   try {
-    const target = realpathSync(full);
+    const target = realpathSync.native(full);
     return isInside(rootPath, target) && statSync(target).isDirectory() ? target : undefined;
   } catch {
     return undefined;

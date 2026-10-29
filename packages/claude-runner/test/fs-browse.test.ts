@@ -48,6 +48,20 @@ describe("listDirectory (fs.list)", () => {
     expect(RunnerFsListResult.safeParse(result).success).toBe(true);
   });
 
+  it("루트 이름을 접두로 가진 형제(`…/root-secret`)를 가리키는 링크는 목록에 없고 그 안도 NOT_FOUND [태스크 2 리뷰 L1]", () => {
+    mkdirSync(join(base, "root-secret"));
+    symlinkSync(join(base, "root-secret"), join(root, "sib"));
+    const result = listDirectory(cfg(), { rootId: "src", relPath: "" });
+    expect(result.ok && result.entries.map((e) => e.name)).not.toContain("sib");
+    expect(listDirectory(cfg(), { rootId: "src", relPath: "sib" })).toEqual({ ok: false, code: "NOT_FOUND" });
+  });
+
+  it("루트 디렉터리 자신이 밖을 가리키는 링크로 바뀌면 NOT_FOUND [태스크 2 리뷰 L1]", () => {
+    rmSync(root, { recursive: true });
+    symlinkSync(outside, root);
+    expect(listDirectory(cfg(), { rootId: "src", relPath: "" })).toEqual({ ok: false, code: "NOT_FOUND" });
+  });
+
   it("하위 디렉터리", () => {
     expect(listDirectory(cfg(), { rootId: "src", relPath: "alpha" })).toEqual({
       ok: true,

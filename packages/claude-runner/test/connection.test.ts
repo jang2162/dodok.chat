@@ -35,6 +35,7 @@ import {
   startRunnerConnection,
   type RunnerConnection,
 } from "../src/connection";
+import type { ProgramDriver } from "../src/driver";
 import { createClaudeDriver } from "../src/drivers/claude";
 import { RUNNER_DISALLOWED_TOOLS } from "../src/drivers/claude/run";
 import { createFakeSdk, script, type FakeSdk } from "./helpers/fake-query";
@@ -167,6 +168,8 @@ async function setup(
     onFatal?: (code: number) => void;
     browse?: boolean;
     programs?: ResolvedRunnerConfig["programs"];
+    /** 만든 claude 드라이버를 바꿔 끼운다(detect 가 던지는 드라이버 등) */
+    driver?: (claude: ProgramDriver) => ProgramDriver;
   } = {},
 ) {
   const server = await startFakeServer();
@@ -187,12 +190,14 @@ async function setup(
     config,
     token: opts.token ?? TOKEN,
     drivers: [
-      createClaudeDriver({
-        sdk: fake,
-        claudeCodeVersion: "2.1.283",
-        baseEnv: { PATH: "/usr/bin" },
-        closeGraceMs: 30,
-      }),
+      (opts.driver ?? ((d) => d))(
+        createClaudeDriver({
+          sdk: fake,
+          claudeCodeVersion: "2.1.283",
+          baseEnv: { PATH: "/usr/bin" },
+          closeGraceMs: 30,
+        }),
+      ),
     ],
     versions: VERSIONS,
     logger: {
@@ -471,13 +476,17 @@ describe("startRunnerConnection", () => {
     });
     await waitFor(() => server.hellos.length === 1);
     fake.script(...script.textTurn("msg_1", ["x"]));
-    await sendStart(server.sockets[0]!, runStart({ agent: { model: null, permissionMode: "plan" } }));
+    await sendStart(
+      server.sockets[0]!,
+      runStart({ agent: { model: null, permissionMode: "plan", disallowedTools: ["Grep"] } }),
+    );
     await waitFor(() => server.finals.length === 1);
     const options = fake.calls[0]!.options;
     expect(options.cwd).toBe(dirs.workdir);
     expect(options.permissionMode).toBe("plan");
     expect("model" in options).toBe(false);
-    expect(options.disallowedTools).toEqual([...RUNNER_DISALLOWED_TOOLS, "Bash", "WebFetch"]);
+    // 설정 몫(Bash·WebFetch) 뒤에 에이전트 몫(Grep) — 앱에서 정한 막는 도구가 조용히 빠지지 않는다(태스크 2 리뷰 M1)
+    expect(options.disallowedTools).toEqual([...RUNNER_DISALLOWED_TOOLS, "Bash", "WebFetch", "Grep"]);
     expect(options.env?.CLAUDE_CONFIG_DIR).toBe(AGENT.configDir);
   });
 
@@ -493,6 +502,90 @@ describe("startRunnerConnection", () => {
     expect(server.errors[0]).toMatchObject({ runId: RUN_ID, code: "VALIDATION" });
     expect(fake.calls).toEqual([]);
     expect(server.sessions).toEqual([]);
+  });
+
+  it("형식이 틀린 run.start — 런 id 를 읽을 수 있으면 dispatch 뒤 VALIDATION(틀린 필드 이름만, 값 없음) [태스크 2 리뷰 M3]", async () => {
+    const { server, fake } = await setup();
+    await waitFor(() => server.hellos.length === 1);
+    const start = runStart();
+    const secret = `/Users/someone/${"x".repeat(200)}`;
+    const bad = { ...start, agent: { ...start.agent, model: "", allowedTools: [secret] } };
+    expect(await sendStart(server.sockets[0]!, bad as never)).toEqual({
+      runId: RUN_ID,
+      admission: "dispatch",
+    });
+    await waitFor(() => server.errors.length === 1);
+    expect(server.errors[0]).toEqual({
+      runId: RUN_ID,
+      code: "VALIDATION",
+      message: "run.start 형식이 틀렸습니다 — agent.model, agent.allowedTools[0]",
+    });
+    expect(JSON.stringify(server.errors)).not.toContain("/Users/someone");
+    expect(fake.calls).toEqual([]);
+  });
+
+  it("형식이 틀린 run.start — 런 id 도 읽을 수 없으면 drop, run.error 없음 [태스크 2 리뷰 M3]", async () => {
+    const { server, fake } = await setup();
+    await waitFor(() => server.hellos.length === 1);
+    const start = runStart();
+    const bad = { ...start, deliver: { ...start.deliver, runId: "not-a-uuid" }, agent: { program: "x" } };
+    // ack 의 runId 는 받은 글자 그대로라 RunnerRunAck 를 지나지 않는다 — 날것으로 본다
+    expect(await server.sockets[0]!.timeout(2000).emitWithAck("run.start", bad as never)).toEqual({
+      runId: "not-a-uuid",
+      admission: "drop",
+      reason: "invalid-run-start",
+    });
+    // 뒤이은 정상 런이 오류 하나 없이 도는지로 앞 런의 run.error 가 없었음을 본다
+    fake.script(...script.textTurn("msg_1", ["x"]));
+    await sendStart(server.sockets[0]!, runStart());
+    await waitFor(() => server.finals.length === 1);
+    expect(server.errors).toEqual([]);
+  });
+
+  it("드라이버 없는 프로그램을 설정에 적고 그 프로그램으로 run.start → RUNNER_CEILING(program), 연결은 그대로 [태스크 2 리뷰 L1]", async () => {
+    const { server, fake, fatal } = await setup({
+      programs: { claude: CLAUDE_CEILING, codex: { ...CLAUDE_CEILING } },
+    });
+    await waitFor(() => server.hellos.length === 1);
+    expect(await sendStart(server.sockets[0]!, runStart({ agent: { program: "codex" } }))).toEqual({
+      runId: RUN_ID,
+      admission: "dispatch",
+    });
+    await waitFor(() => server.errors.length === 1);
+    expect(server.errors[0]).toEqual({ runId: RUN_ID, code: "RUNNER_CEILING", message: "program" });
+    // 소켓 처리기가 던지지 않았다 — 같은 연결로 다음 런이 돈다
+    fake.script(...script.textTurn("msg_1", ["x"]));
+    await sendStart(server.sockets[0]!, runStart({ runId: RUN_2, sessionId: SESSION_2 }));
+    await waitFor(() => server.finals.length === 1);
+    expect(server.finals[0]!.runId).toBe(RUN_2);
+    expect(fatal).toEqual([]);
+    expect(server.hellos).toHaveLength(1);
+  });
+
+  it("detect 가 던지면 그 프로그램은 available false — 그 프로그램의 run.start 는 RUNNER_CEILING(program) [태스크 2 리뷰 L1]", async () => {
+    const { server, fake } = await setup({
+      driver: (d) => ({
+        ...d,
+        detect: async () => {
+          throw new Error("detect 실패");
+        },
+      }),
+    });
+    await waitFor(() => server.hellos.length === 1);
+    expect(server.hellos[0]!.programs).toEqual([
+      {
+        program: "claude",
+        available: false,
+        auth: "unknown",
+        reason: "상태를 확인하지 못했습니다",
+        capabilities: [],
+        ceiling: { maxPermissionMode: "acceptEdits", allowedToolsCeiling: null },
+      },
+    ]);
+    await sendStart(server.sockets[0]!, runStart());
+    await waitFor(() => server.errors.length === 1);
+    expect(server.errors[0]).toEqual({ runId: RUN_ID, code: "RUNNER_CEILING", message: "program" });
+    expect(fake.calls).toEqual([]);
   });
 
   it("fs.list·project.check 왕복 — browse 를 끄면 둘러보기만 FORBIDDEN", async () => {

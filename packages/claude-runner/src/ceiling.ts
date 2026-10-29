@@ -31,7 +31,8 @@ export function resolveProject(roots: readonly ResolvedRoot[], ref: RunnerProjec
   if (!root) return { ok: false, reason: "root_missing" };
   let path: string;
   try {
-    path = realpathSync(ref.relPath === "" ? root.path : join(root.path, ref.relPath));
+    // native — 설정 루트(config.ts)와 같은 풀이여야 대소문자만 다른 relPath 가 같은 작업 디렉터리가 된다
+    path = realpathSync.native(ref.relPath === "" ? root.path : join(root.path, ref.relPath));
   } catch {
     return { ok: false, reason: "not_found" };
   }

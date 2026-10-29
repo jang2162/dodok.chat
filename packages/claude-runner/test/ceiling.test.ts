@@ -1,10 +1,18 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RunnerRunStartV2, type RunnerProgram, type RunnerRunAgent } from "@dodok/shared";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { checkCeiling } from "../src/ceiling";
-import type { ResolvedRunnerConfig } from "../src/config";
+import { loadRunnerConfig, type ResolvedRunnerConfig } from "../src/config";
 import { runStart } from "./helpers/fixtures";
 
 // 천장 검사(러너 일반화 스펙 3장·Review Focus 1~3) — 실제 디렉터리·심볼릭 링크로 본다
@@ -95,6 +103,49 @@ describe("checkCeiling", () => {
     rmSync(join(root, "repo"), { recursive: true });
     symlinkSync(outside, join(root, "repo"));
     expect(checkCeiling(cfg(), agent(), always)).toEqual({ ok: false, item: "path" });
+  });
+
+  it("path — 루트 이름을 접두로 가진 형제(`…/root` 옆 `…/root-secret`)를 가리키는 링크 [태스크 2 리뷰 L1]", () => {
+    mkdirSync(join(base, "root-secret"));
+    symlinkSync(join(base, "root-secret"), join(root, "sib"));
+    expect(checkCeiling(cfg(), agent({ project: { rootId: "src", relPath: "sib" } }), always)).toEqual({
+      ok: false,
+      item: "path",
+    });
+  });
+
+  it("path — 루트 디렉터리 자신이 나중에 밖을 가리키는 링크로 바뀌었다 [태스크 2 리뷰 L1]", () => {
+    mkdirSync(join(outside, "repo"));
+    expect(checkCeiling(cfg(), agent(), always).ok).toBe(true);
+    rmSync(root, { recursive: true });
+    symlinkSync(outside, root);
+    for (const relPath of ["repo", ""]) {
+      expect(checkCeiling(cfg(), agent({ project: { rootId: "src", relPath } }), always)).toEqual({
+        ok: false,
+        item: "path",
+      });
+    }
+  });
+
+  // 대소문자를 가리지 않는 볼륨(macOS 기본 APFS)에서만 뜻이 있다 — 가리는 볼륨이면 `ROOT` 가 없어 설정이 거절되므로 건너뛴다
+  it("대소문자만 다른 설정 루트·relPath 도 디스크의 이름으로 푼다 — 같은 디렉터리가 하나의 작업 디렉터리 [태스크 2 리뷰 L3]", (ctx) => {
+    mkdirSync(join(base, "Mixed", "repo"), { recursive: true });
+    if (!existsSync(join(base, "MIXED"))) ctx.skip();
+    const configPath = join(base, "config.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        serverUrl: "http://127.0.0.1:1/",
+        roots: [{ id: "src", path: join(base, "MIXED"), label: "src" }],
+        programs: { claude: { configDir: "/c" } },
+      }),
+    );
+    const { config } = loadRunnerConfig(configPath, { HOME: base, DODOK_RUNNER_TOKEN: "drn_x" });
+    expect(config.roots[0]!.path).toBe(join(base, "Mixed"));
+    expect(checkCeiling(config, agent({ project: { rootId: "src", relPath: "REPO" } }), always)).toEqual({
+      ok: true,
+      workdir: join(base, "Mixed", "repo"),
+    });
   });
 
   it("`..` 꼴은 스키마가 먼저 거른다 — run.start 가 파싱되지 않는다", () => {

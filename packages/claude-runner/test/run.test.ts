@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { tool } from "@anthropic-ai/claude-agent-sdk";
 import { CONTROL_TOOLS, renderRunnerPrompt, type ErrorCode, type RunEventBody } from "@dodok/shared";
 import { describe, expect, it } from "vitest";
@@ -12,7 +15,7 @@ import {
   type RunContext,
 } from "../src/drivers/claude/run";
 import { CONTROL_TOOL_FULL_NAMES } from "../src/control-tools";
-import { POST_STOPPED_MESSAGE } from "../src/post-tool";
+import { POST_STOPPED_MESSAGE, POST_TOOL_FULL_NAME } from "../src/post-tool";
 import { realSdk, type SdkMcpServer } from "../src/drivers/claude/sdk";
 import { createRunSink } from "../src/sink";
 import { createFakeBridge, type FakeBridge } from "./helpers/fake-bridge";
@@ -85,6 +88,11 @@ describe("buildQueryOptions", () => {
     ]);
     const o = buildQueryOptions(runSpec({ disallowedTools: ["AskUserQuestion", "WebFetch"] }), deps(false));
     expect(o.disallowedTools).toEqual([...RUNNER_DISALLOWED_TOOLS, "WebFetch"]);
+  });
+
+  it("allowedTools null — 미리 허용한 도구 없음, dodok 도구만(태스크 2 리뷰 M2)", () => {
+    const o = buildQueryOptions(runSpec({ allowedTools: null }), deps(false));
+    expect(o.allowedTools).toEqual([POST_TOOL_FULL_NAME, ...CONTROL_TOOL_FULL_NAMES]);
   });
 
   it("resume — sessionId·title 없이 resume 만(판정 P2)", () => {
@@ -615,6 +623,38 @@ describe("runOnce — dodok post 도구·도구 승인·이미지(태스크 6)",
       { content: [{ type: "text", text: "보냈습니다(메시지 0192f000-0000-7000-8000-0000000000aa)" }] },
     ]);
     expect(finals(emitted)).toHaveLength(1);
+  });
+
+  it("post 도구의 파일은 그 런의 작업 디렉터리 안만 — 상대 경로는 작업 디렉터리에서 푼다(태스크 2 리뷰 L2)", async () => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), "dodok-run-post-")));
+    try {
+      const workdir = join(base, "repo");
+      mkdirSync(workdir);
+      writeFileSync(join(workdir, "a.txt"), "aa");
+      writeFileSync(join(base, "secret.txt"), "ss");
+      const uploads: string[] = [];
+      const fake = createFakeSdk();
+      const { ctx } = harness(fake, {
+        bridge: createFakeBridge({
+          upload: (name) => {
+            uploads.push(name);
+            const id = "0192f000-0000-7000-8000-0000000000f1";
+            return { id, kind: "file", url: `artifact://${id}`, name, mime: "text/plain", size: 2 };
+          },
+        }),
+      });
+      fake.script(
+        { callTool: { name: "post", input: { files: ["a.txt"] } } },
+        { callTool: { name: "post", input: { files: [join(base, "secret.txt")] } } },
+        ...script.textTurn("msg_1", ["끝"]),
+      );
+      await runOnce(runSpec({ workdir }), ctx);
+      expect(uploads).toEqual(["a.txt"]);
+      expect(fake.calls[0]!.toolResults[1]).toMatchObject({ isError: true });
+      expect(JSON.stringify(fake.calls[0]!.toolResults[1])).toContain("작업 디렉터리 밖");
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
   });
 
   it("서버가 post 를 거절해도(중지된 런 FORBIDDEN) 도구 결과 오류로 돌려주고 런은 계속된다", async () => {

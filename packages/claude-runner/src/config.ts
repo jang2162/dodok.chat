@@ -58,7 +58,8 @@ export type FsLike = {
 
 export const nodeFs: FsLike = {
   readFile: (p) => readFileSync(p, "utf8"),
-  realpath: (p) => realpathSync(p),
+  // native — 대소문자만 다른 경로(macOS 의 대소문자 무시 볼륨)를 디스크의 이름으로 바로잡는다. JS 판은 적은 글자 그대로 둔다
+  realpath: (p) => realpathSync.native(p),
   stat: (p) => {
     try {
       return statSync(p);
