@@ -67,17 +67,18 @@
 | 세션 관리자 지정·해제(`PUT/DELETE /channels/:id/session-managers/:userId` — 지정하면 채널에 참여시킨다), 세션 정책(`PATCH /channels/:id` 의 `sessionPolicy`) | — | ✅ | ✅ |
 | 확인 카드(`ApprovalKind "dodok_control"` — 채널 안 에이전트가 제어 도구로 설정을 바꾸려 할 때) 허용·거절(wire `approval.resolve`) — **그 런을 시킨 사람 본인만**(`approvals.requested_by`), 역할과 무관. 남이 결정하면 `FORBIDDEN`. 허용 때 그 사람의 지금 역할로 그 일을 다시 판정한다 | 본인 | 본인 | 본인 |
 | 개인 토큰(MCP 토큰) 발급·목록·폐기(`GET/POST /api/v1/me/tokens`, `DELETE /api/v1/me/tokens/:id`) — 자기 것만(남의 것 404), 사람마다 10개. 그 토큰으로 `/mcp` 에서 부르는 제어 도구는 이 표의 같은 REST 경로 판정을 토큰 주인의 지금 역할로 받는다 | ✅ | ✅ | ✅ |
-| 에이전트 등록·수정(`POST/PATCH /agents`), Gateway 에이전트 찾기(`GET /agents/discover`) | — | ✅ | ✅ |
+| 에이전트 등록·수정(`POST/PATCH /agents`), Gateway 에이전트 찾기(`GET /agents/discover` — OpenClaw 만). 러너 에이전트 만들기·고치기(`POST /agents { provider: "runner" }`·`PATCH /agents/:id` 의 `model`·`permissionMode`·`allowedTools`·`disallowedTools`)도 같은 줄 — 붙은 러너의 천장 밖이면 400 `VALIDATION`(러너 일반화 스펙 `docs/superpowers/specs/2026-10-25-runner-generalization-design.md` 6장) | — | ✅ | ✅ |
+| 「러너」 탭 — 러너 목록(`GET /api/v1/runners`), 디렉터리 둘러보기(`GET /api/v1/runners/:id/fs` — 사용자당 분당 60, 운영 로그에 경로 원문 없음), 프로젝트 목록·더하기(`GET/POST /api/v1/runners/:id/projects`), 이름 바꾸기·보관·확인·다른 러너로 옮기기(`PATCH /api/v1/runner-projects/:id`, `POST /api/v1/runner-projects/:id/archive`·`/check`·`/move`) | — | ✅ | ✅ |
 | member 초대, 재설정 링크 발급, member 내보내기 | — | ✅ | ✅ |
 | admin 초대, 역할 바꾸기(admin ↔ member), admin 내보내기 | — | — | ✅ |
 | 운영 화면(`/api/v1/ops/*` — 사건 확인·한도 설정) | — | ✅ | ✅ |
 | 자동화 목록·만들기·수정·삭제·웹훅 토큰 재발급·지금 실행(`/api/v1/automations/*`) — 웹훅 수신(`POST /hooks/<token>`)은 세션 없이 토큰만 본다 | — | ✅ | ✅ |
-| 연결 페이지(`/api/v1/setup/*` — 브리지 토큰) | — | — | ✅ |
+| 연결 페이지(`/api/v1/setup/*` — 브리지 토큰, 러너 토큰 발급·다시 발급·폐기 `/api/v1/setup/runner-tokens`·`/:id/reissue`) | — | — | ✅ |
 | DM 열기(`POST /api/v1/dms { agentId }` — 찾거나 만든다)·내 DM 목록(`GET /api/v1/dms`) — 자기 것만. 새로 여는 것은 그 에이전트의 `dmAccess` 가 지금 역할을 들일 때(`off` 아무도·`admins` admin 이상·`everyone` 모두)와 에이전트가 보관·꺼짐이 아닐 때만, 아니면 403 | `everyone` 만 | `admins`·`everyone` | `admins`·`everyone` |
 | 「이 DM 의 지시」(DM 의 `PATCH /channels/:id { prompt }` — 다른 키는 400 `VALIDATION`), DM 의 도구 승인·exec 승인·확인 카드 결정(wire `approval.resolve`) — **DM 주인 본인만**, 역할과 무관. 채널 관리(이름·주제·멤버·보관·세션 관리자·세션 정책·한도·제어 쓰기 도구)는 DM 에 400 `VALIDATION`. 읽기 전용 DM(에이전트 보관·꺼짐·`dmAccess` 가 주인의 지금 역할을 들이지 않음)의 쓰기는 409 `DM_READ_ONLY` | 주인 | 주인 | 주인 |
 | 에이전트의 DM 허용 범위 바꾸기(`PATCH /agents/:id { dmAccess }`) — 제어 도구 `update_agent` 로는 바꾸지 않는다 | — | ✅ | ✅ |
 
-- **제어 도구는 이 표를 따로 갖지 않는다.** 바깥 MCP 클라이언트(개인 토큰의 주인)와 채널 안 에이전트(그 런을 시킨 사람)의 도구 호출은 같은 REST 경로의 정책 함수(`apps/server/src/auth/policies.ts`)로 판정한다 — 시킨 사람이 없는 런(자동화 글이 시작한 런)은 읽기만.
+- **제어 도구는 이 표를 따로 갖지 않는다.** 바깥 MCP 클라이언트(개인 토큰의 주인)와 채널 안 에이전트(그 런을 시킨 사람)의 도구 호출은 같은 REST 경로의 정책 함수(`apps/server/src/auth/policies.ts`)로 판정한다 — 시킨 사람이 없는 런(자동화 글이 시작한 런)은 읽기만. 역할과 상관없이 **러너 구성은 제어 도구로 바꾸지 못한다** — `discover_agents`·`register_agent` 는 OpenClaw 만, `update_agent` 는 러너 에이전트의 `name`·`avatarUrl` 만(그 밖은 `VALIDATION`), 러너 프로젝트·둘러보기 도구는 없다(러너 일반화 스펙 6장).
 - **서버가 막는다.** 웹이 숨기는 것은 편의다. REST 는 `requireRole(min)` preHandler(세션 확인 뒤 membership 의 역할을 **요청마다** 읽는다 — 바뀌면 다음 요청부터 따른다). 지금의 `requireOwner` 는 `requireRole("owner")` 가 된다. 모자라면 403 `FORBIDDEN`.
 - **`PATCH /channels/:id` 는 본문 필드로 가른다.** `name`·`topic` 만 있으면 member 도 된다. 그 밖의 필드(`prompt`·`relayPolicy`·자동 응답·`dailyRunLimit` 등)가 하나라도 있으면 admin 이상이어야 한다. 가르는 목록은 서버 한곳에 둔다 — 새 필드는 기본이 admin 이다(목록에 없는 필드는 admin).
 - **wire** 는 `approval.resolve` 만 역할을 본다(ack 오류 `FORBIDDEN`). 확인 카드(`dodok_control`)만은 admin 을 요구하지 않고 멤버인지만 보며, 시킨 사람 본인인지는 승인 서비스가 본다(제어 MCP 스펙 `docs/superpowers/specs/2026-10-06-control-mcp-design.md` 「확인 카드」 장·「구현과 맞춘 것」 장 PC4). `message.send`·`component.interact`·`run.abort` 는 member 에게 열려 있다.

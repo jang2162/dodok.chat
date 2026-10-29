@@ -5,6 +5,7 @@ import { ErrorCode, Id } from "../common";
 // 결과는 따로 프레임을 두지 않고 Socket.IO ack 로 돌려준다(계획 판정 PC2). 확인 카드를 기다리는 동안 ack 가 늦게 온다
 
 export * from "./rest-bodies";
+export * from "./runner-bodies";
 export * from "./tools";
 
 /** tool 은 문자열로 받는다 — 모르는 이름은 서버가 findControlTool 로 가려 오류로 돌려준다(옛 서버·새 러너 조합에서 연결을 끊지 않게) */

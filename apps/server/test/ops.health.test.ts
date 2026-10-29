@@ -192,7 +192,6 @@ describe("watchRunners — 토큰별 runner_down(러너 스펙 5장)", () => {
     bundleSha256: null,
     capabilities: [],
     connectedAt: "2026-09-25T00:00:00.000Z",
-    agents: [],
   });
   function setup(active = new Set([A, B])) {
     const adapter = new FakeAdapter({ provider: "runner" });

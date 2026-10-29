@@ -500,7 +500,8 @@ describe("종료·실패 정리", () => {
 
     // 상한 뒤에도 남은 단계는 이어서 끝난다
     releaseAdapter();
-    await vi.waitFor(() => expect(app.db.$client.open).toBe(false));
+    // 기계가 바쁘면 남은 단계가 기본 1초를 넘긴다(태스크 4 리뷰 5장) — 성질은 「끝난다」뿐이다
+    await vi.waitFor(() => expect(app.db.$client.open).toBe(false), { timeout: 5000 });
   });
 
   it("createApp 도중 실패하면 만든 것(어댑터·DB)을 닫고 그 오류를 다시 던진다", async () => {

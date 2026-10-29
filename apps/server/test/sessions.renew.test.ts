@@ -78,3 +78,19 @@ describe("storeProgramSessionId — 프로그램이 지은 세션 id(run.session
     ).toBe("thread_a");
   });
 });
+
+describe("ensureProviderSessionId — 서버가 짓는 세션 id 는 UUID 다 [태스크 3 리뷰 L3]", () => {
+  it("저장된 값이 UUID 면 그대로, 프로그램이 지은 값(UUID 아님)이면 새 UUID 로 바꿔 둔다", () => {
+    const { db, sessionId } = setup();
+    const first = ensureProviderSessionId(db, sessionId);
+    expect(ensureProviderSessionId(db, sessionId)).toBe(first);
+    db.update(agentSessions)
+      .set({ providerSessionId: "thread_codex_1" })
+      .where(eq(agentSessions.id, sessionId))
+      .run();
+    const fresh = ensureProviderSessionId(db, sessionId);
+    expect(fresh).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    expect(getSessionRow(db, sessionId)?.providerSessionId).toBe(fresh);
+    expect(ensureProviderSessionId(db, sessionId)).toBe(fresh);
+  });
+});

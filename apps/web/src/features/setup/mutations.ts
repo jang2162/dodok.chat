@@ -125,23 +125,6 @@ export function useRevokeRunnerToken() {
   });
 }
 
-/**
- * 다시 묶기 — 그 러너 에이전트를 이 러너 토큰에 묶는다(토큰을 폐기했거나 머신을 바꿨을 때). 다음 런부터 이 러너가 맡는다.
- * 연결 페이지 충돌 표시(setup.status)와 에이전트 목록의 러너 라벨을 다시 받는다
- */
-export function useBindRunnerAgent() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ tokenId, agentId }: { tokenId: string; agentId: string }) =>
-      api<unknown>("PUT", `/setup/runner-tokens/${tokenId}/agents/${encodeURIComponent(agentId)}`),
-    onSuccess: () =>
-      Promise.all([
-        qc.invalidateQueries({ queryKey: qk.setupStatus }),
-        qc.invalidateQueries({ queryKey: qk.agents }),
-      ]),
-  });
-}
-
 /** Content-Disposition 의 filename — 없으면 undefined */
 const fileNameOf = (disposition: string | null): string | undefined =>
   disposition ? /filename="([^"]+)"/.exec(disposition)?.[1] : undefined;

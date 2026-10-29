@@ -126,7 +126,6 @@ export class RunnerRegistry {
         bundleSha256: live.bundleSha256,
         capabilities: [...runner.capabilities],
         connectedAt: live.connectedAt,
-        agents: [],
       };
     });
   }

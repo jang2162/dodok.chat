@@ -131,12 +131,12 @@ describe("연결 페이지 러너 API /api/v1/setup/runner-*", () => {
     return runner;
   };
 
-  it("admin·member 는 네 경로 모두 403, 세션이 없으면 401 — 러너 토큰은 owner 몫", async () => {
+  it("admin·member 는 다섯 경로 모두 403, 세션이 없으면 401 — 러너 토큰은 owner 몫", async () => {
     const routes: Array<["GET" | "POST" | "PUT" | "DELETE", string, object?]> = [
       ["GET", "/runner-tokens"],
       ["POST", "/runner-tokens", { label: "x" }],
       ["DELETE", `/runner-tokens/${uuid()}`],
-      ["PUT", `/runner-tokens/${uuid()}/agents/coder`],
+      ["POST", `/runner-tokens/${uuid()}/reissue`],
       ["GET", "/runner.tgz"],
     ];
     for (const [method, url, body] of routes) {
@@ -216,7 +216,6 @@ describe("연결 페이지 러너 API /api/v1/setup/runner-*", () => {
         tokenId: issued.record.id,
         label: "desk",
         claudeCodeVersion: "2.1.283",
-        agents: [],
       }),
     ]);
 
@@ -243,7 +242,7 @@ describe("연결 페이지 러너 API /api/v1/setup/runner-*", () => {
         }
       ).agents.find((a) => a.id === id);
 
-    it("러너 에이전트는 만들 때 프로젝트의 러너에 묶이고, PUT 으로 다른 러너에 다시 묶는다", async () => {
+    it("러너 에이전트는 만들 때 프로젝트의 러너에 묶이고, 「이 러너로 묶기」 경로는 없다(404) [PR9]", async () => {
       const a = await issue("bind-a");
       const b = await issue("bind-b");
       const agent = createRunnerAgentForTest(app.db, {
@@ -252,22 +251,12 @@ describe("연결 페이지 러너 API /api/v1/setup/runner-*", () => {
         runnerTokenId: a.record.id,
       }).agent;
       expect(agent.runner).toEqual({ tokenId: a.record.id, label: "bind-a", revoked: false });
-
-      const setupEvents: unknown[] = [];
-      const off = app.bus.on("setup.status", (p) => setupEvents.push(p));
       const res = await call(owner, "PUT", `/runner-tokens/${b.record.id}/agents/${agent.providerAgentId}`);
-      off();
-      expect(res.statusCode).toBe(200);
-      expect((res.json() as { agent: Agent }).agent.runner).toEqual({
-        tokenId: b.record.id,
-        label: "bind-b",
-        revoked: false,
-      });
-      expect(setupEvents.length).toBeGreaterThan(0);
-      expect((await listed(agent.id))?.runner).toMatchObject({ tokenId: b.record.id, label: "bind-b" });
+      expect(res.statusCode).toBe(404);
+      expect((await listed(agent.id))?.runner).toMatchObject({ tokenId: a.record.id });
     });
 
-    it("폐기해도 묶임은 남는다 — 목록에 revoked, 폐기된 토큰으로 다시 묶기는 409, 없는 에이전트·openclaw 에이전트·없는 토큰은 404", async () => {
+    it("폐기해도 묶임은 남는다 — 목록에 revoked", async () => {
       const a = await issue("gone");
       const keeper = createRunnerAgentForTest(app.db, {
         workspaceId: app.workspaceId,
@@ -280,31 +269,6 @@ describe("연결 페이지 러너 API /api/v1/setup/runner-*", () => {
         label: "gone",
         revoked: true,
       });
-
-      const again = await call(
-        owner,
-        "PUT",
-        `/runner-tokens/${a.record.id}/agents/${keeper.providerAgentId}`,
-      );
-      expect(again.statusCode).toBe(409);
-      expect(again.json().code).toBe("CONFLICT");
-      const live = await issue("live");
-      const oc = await app.fastify.inject({
-        method: "POST",
-        url: "/api/v1/agents",
-        headers: owner,
-        payload: { providerAgentId: "oc-agent", handle: "oc-agent", name: "oc", gatewayId: FAKE_GATEWAY_ID },
-      });
-      expect(oc.statusCode).toBe(201);
-      for (const url of [
-        `/runner-tokens/${live.record.id}/agents/nobody`,
-        `/runner-tokens/${live.record.id}/agents/oc-agent`,
-        `/runner-tokens/${uuid()}/agents/${keeper.providerAgentId}`,
-      ]) {
-        const res = await call(owner, "PUT", url);
-        expect(res.statusCode, url).toBe(404);
-      }
-      expect((await listed((oc.json() as { agent: Agent }).agent.id))?.runner).toBeUndefined();
     });
   });
 

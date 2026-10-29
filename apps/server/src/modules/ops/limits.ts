@@ -20,6 +20,11 @@ export const LIMITS = {
   /** GET /api/v1/search — 사용자당 분당(REST 상한 위에 한 번 더, 스레드·검색 스펙 5.2) */
   searchPerMin: 60,
   /**
+   * GET /api/v1/runners/:id/fs(디렉터리 둘러보기) — 사용자당 분당(REST 상한 위에 한 번 더, 러너 일반화 스펙 6장). 요청마다 사람
+   * 머신의 러너에 fs.list 를 묻는다
+   */
+  runnerBrowsePerMin: 60,
+  /**
    * POST /hooks/<token>(로그인 없음) — 웹훅 토큰마다 분당. 게시 하나가 멘션 런을 만들 수 있어 런 비용을 바깥 서비스가 정하지 않게
    * 막는다(자동화 스펙 「웹훅」 절). 토큰을 맞혀 보는 것은 상한이 아니라 실패 카운터(bridgeFail)가 막는다
    */
@@ -69,6 +74,7 @@ export type Limits = {
   restPerMin: number;
   uploadPerMin: number;
   searchPerMin: number;
+  runnerBrowsePerMin: number;
   webhookPerMin: number;
   controlPerMin: number;
   controlWritePerMin: number;

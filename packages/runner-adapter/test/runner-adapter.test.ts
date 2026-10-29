@@ -409,8 +409,8 @@ describe("핸드셰이크", () => {
       bundleSha256: null,
       capabilities: ["threads", "interrupt", "approvals"],
       connectedAt: "2026-09-27T00:00:00.000Z",
-      agents: [],
     });
+    expect(conn).not.toHaveProperty("agents");
     expect(h.adapter.runnerInfo(RUNNER_A_CONNECTION)).toEqual({
       tokenId: RUNNER_A_CONNECTION,
       label: "laptop",

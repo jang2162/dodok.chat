@@ -35,6 +35,18 @@ export type AgentProvider = z.infer<typeof AgentProvider>;
 /** 러너가 돌리는 프로그램 — 드라이버가 있는 것은 claude 뿐이다 */
 export const RunnerProgram = z.enum(["claude", "codex", "opencode"]);
 export type RunnerProgram = z.infer<typeof RunnerProgram>;
+/**
+ * 권한 모드 — 배열 순서가 「묻지 않고 돌 수 있는 것이 많은 순」의 정본이다(러너 일반화 스펙 2장). bypassPermissions 는 승인 카드가
+ * 아예 뜨지 않아 「쓰기 도구는 승인 카드」 원칙이 깨지므로 어느 스키마도 받지 않는다. 러너 계약(runner/index.ts)이 다시 내보낸다 —
+ * 여기 두는 까닭은 Agent 응답의 runnerAgent 가 쓰기 때문이다(runner 가 domain 을 값으로 import 한다)
+ */
+export const RUNNER_PERMISSION_MODES = ["plan", "dontAsk", "default", "acceptEdits"] as const;
+export const RunnerPermissionMode = z.enum(RUNNER_PERMISSION_MODES);
+export type RunnerPermissionMode = z.infer<typeof RunnerPermissionMode>;
+export const permissionModeRank = (mode: RunnerPermissionMode): number =>
+  RUNNER_PERMISSION_MODES.indexOf(mode);
+/** 러너 에이전트의 허용·금지 도구 이름 목록 — run.start.agent 와 REST 본문이 같은 상한을 쓴다 */
+export const RunnerToolNames = z.array(z.string().min(1).max(200)).max(100);
 /** 프로그램 이름표 — 서버 카드 문구(PROVIDER_AUTH 등)·러너 오류 문구·웹이 같은 글을 쓴다 */
 export const RUNNER_PROGRAM_NAME: Record<RunnerProgram, string> = {
   claude: "Claude Code",
@@ -70,6 +82,19 @@ export const Agent = z.object({
   dmAccess: DmAccess.default("admins"),
   /** 러너 에이전트의 프로그램 — 러너면 값, OpenClaw 면 null */
   program: RunnerProgram.nullable().default(null),
+  /**
+   * 러너 에이전트의 정의(러너 일반화 스펙 5장) — REST 에이전트 응답에만, 러너 에이전트에만 키가 있다. 고치기 화면이 지금 값을 보인다.
+   * projectId 가 null 이면 프로젝트가 없는 옛 러너 에이전트(보관됨 — 되살릴 수 없다)
+   */
+  runnerAgent: z
+    .object({
+      projectId: Id.nullable(),
+      model: z.string().nullable(),
+      permissionMode: RunnerPermissionMode,
+      allowedTools: RunnerToolNames.nullable(),
+      disallowedTools: RunnerToolNames,
+    })
+    .optional(),
 });
 export type Agent = z.infer<typeof Agent>;
 

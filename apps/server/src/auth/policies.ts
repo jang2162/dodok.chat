@@ -140,3 +140,13 @@ export function authorizeAgentPatch(role: TeamRole | undefined): void {
 export function authorizeAgentArchive(role: TeamRole | undefined): void {
   requireAtLeast(role, "admin");
 }
+
+// ── 러너(러너 일반화 스펙 6장) — 토큰 발급·다시 발급·폐기는 연결 페이지(owner, requireOwner) ────────────────
+
+/**
+ * 「러너」 탭(admin 이상) — GET /runners·/runners/:id/fs·/runners/:id/projects, POST /runners/:id/projects,
+ * PATCH /runner-projects/:id, POST /runner-projects/:id/archive·/check·/move. 러너 에이전트 만들기·고치기는 POST·PATCH /agents 의 정책
+ */
+export function authorizeRunnerManage(role: TeamRole | undefined): void {
+  requireAtLeast(role, "admin");
+}

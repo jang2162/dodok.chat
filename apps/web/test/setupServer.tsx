@@ -61,7 +61,7 @@ type StatusOver = {
   runners?: Partial<SetupStatus["runners"]>;
 };
 
-/** 붙은 러너 하나 — 기본은 같은 빌드(SHA_A)·에이전트 하나 */
+/** 붙은 러너 하나 — 기본은 같은 빌드(SHA_A) */
 export function runnerOf(n: number, over: Partial<RunnerConnection> = {}): RunnerConnection {
   return {
     tokenId: tokenId(n),
@@ -72,16 +72,6 @@ export function runnerOf(n: number, over: Partial<RunnerConnection> = {}): Runne
     bundleSha256: SHA_A,
     capabilities: ["threads", "interrupt", "approvals", "attachments"],
     connectedAt: "2026-09-27T01:00:00.000Z",
-    agents: [
-      {
-        id: `coder${n}`,
-        name: `코더${n}`,
-        model: "sonnet",
-        workdirLabel: "my-repo",
-        conflict: false,
-        boundTokenId: null,
-      },
-    ],
     ...over,
   };
 }
@@ -184,8 +174,6 @@ export function stubSetupServer(
     issue?: (label: string) => Reply;
     plugin?: () => Reply;
     runner?: () => Reply;
-    /** PUT runner-tokens/:id/agents/:agentId — 기본은 200 */
-    bind?: (tokenId: string, agentId: string) => Reply;
   } = {},
 ) {
   const tokens = [...(opts.tokens ?? [])];
@@ -280,11 +268,6 @@ export function stubSetupServer(
       const t = runnerTokens.find((x) => x.id === delRunner[1]);
       if (t) t.revokedAt = "2026-09-27T03:00:00.000Z";
       return new Response(null, { status: 204 });
-    }
-    const bind = /^\/api\/v1\/setup\/runner-tokens\/([^/]+)\/agents\/([^/]+)$/.exec(url);
-    if (method === "PUT" && bind) {
-      if (opts.bind) return opts.bind(bind[1] ?? "", bind[2] ?? "");
-      return json(200, { agent: { providerAgentId: bind[2] } });
     }
     if (method === "GET" && url === "/api/v1/setup/runner.tgz")
       return opts.runner

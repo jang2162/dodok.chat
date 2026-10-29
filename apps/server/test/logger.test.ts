@@ -174,6 +174,42 @@ describe("요청 로그의 URL — 웹훅 토큰 가림", () => {
     expect(redactUrl(url)).toBe(url);
   });
 
+  // 쿼리 파서(fast-querystring)는 키도 디코드한다 — 인코딩한 키도 relPath 로 받아 둘러보기가 되므로 그 값도 가린다 [태스크 4 리뷰 L3]
+  it.each([
+    [
+      "그대로",
+      "/api/v1/runners/r/fs?rootId=src&relPath=secret%2Fdir",
+      "/api/v1/runners/r/fs?rootId=src&relPath=…",
+    ],
+    [
+      "첫 쿼리",
+      "/api/v1/runners/r/fs?relPath=secret%2Fdir&rootId=src",
+      "/api/v1/runners/r/fs?relPath=…&rootId=src",
+    ],
+    [
+      "대문자 인코딩 P",
+      "/api/v1/runners/r/fs?rootId=src&rel%50ath=secret%2Fdir",
+      "/api/v1/runners/r/fs?rootId=src&rel%50ath=…",
+    ],
+    [
+      "소문자 인코딩 p",
+      "/api/v1/runners/r/fs?rootId=src&rel%70ath=secret%2Fdir",
+      "/api/v1/runners/r/fs?rootId=src&rel%70ath=…",
+    ],
+    ["키 전체 인코딩", "/x?%72%65%6C%50%61%74%68=secret", "/x?%72%65%6C%50%61%74%68=…"],
+    ["뒤 조각은 그대로", "/x?relPath=secret#frag", "/x?relPath=…#frag"],
+  ])("쿼리 relPath 값은 키를 디코드해 가린다 — %s", (_label, url, expected) => {
+    expect(redactUrl(url)).toBe(expected);
+    expect(redactUrl(url)).not.toContain("secret");
+  });
+
+  it.each(["/x?relPathX=keep&prelPath=keep", "/x?rel%2550ath=keep", "/x?a=%E0%A4%A&b=keep"])(
+    "relPath 가 아닌 키·잘못된 인코딩은 그대로 — %s",
+    (url) => {
+      expect(redactUrl(url)).toBe(url);
+    },
+  );
+
   it("requestLogSerializer 가 url 을 가린다 — 다른 필드는 그대로", () => {
     expect(
       requestLogSerializer({ method: "POST", url: `/hooks/${token}`, host: "h", ip: "203.0.113.7" }),

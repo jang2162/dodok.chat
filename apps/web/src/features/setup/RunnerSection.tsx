@@ -1,4 +1,4 @@
-import type { RunnerConnection, RunnerTokenRecord, SetupStatus } from "@dodok/shared";
+import type { RunnerConnection, SetupStatus } from "@dodok/shared";
 import { DownloadIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { useRef } from "react";
@@ -12,7 +12,7 @@ import {
   runnerConfigExample,
 } from "./IssueRunnerTokenDialog";
 import { publicOriginOf } from "./llms";
-import { useBindRunnerAgent, useDownloadRunner } from "./mutations";
+import { useDownloadRunner } from "./mutations";
 import { useRunnerTokens } from "./queries";
 import { RunnerTokenList } from "./RunnerTokenList";
 import { CopyBlock, Section } from "./sections";
@@ -55,56 +55,15 @@ function RunnerBuild({
 }
 
 /**
- * 충돌 에이전트 한 줄의 사유 — 다른 토큰에 묶인 등록 에이전트면 그 토큰 이름과 「이 러너로 묶기」, 묶임이 없으면 id 가 겹친 것이다
- * (먼저 붙은 러너가 맡는다)
+ * 러너 하나 — 판본·붙은 시각·같은 빌드. 러너의 프로젝트·에이전트는 설정의 「러너」 탭이 맡는다(러너 일반화 스펙 7장 — 이 카드의
+ * 정리는 러너 일반화 계획 태스크 5)
  */
-function AgentConflict({
-  runner,
-  agent,
-  tokens,
-}: {
-  runner: RunnerConnection;
-  agent: RunnerConnection["agents"][number];
-  tokens: RunnerTokenRecord[] | undefined;
-}) {
-  const bind = useBindRunnerAgent();
-  if (agent.boundTokenId === null || agent.boundTokenId === runner.tokenId)
-    return <p className="text-xs font-medium text-destructive">다른 러너와 id 가 겹쳐 배정되지 않습니다</p>;
-  const token = tokens?.find((t) => t.id === agent.boundTokenId);
-  const name = token ? `${token.label}${token.revokedAt === null ? "" : "(폐기됨)"}` : "다른 러너 토큰";
-  return (
-    <div className="flex flex-col items-start gap-1">
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <p className="text-xs font-medium text-destructive">{name}에 묶여 있어 배정되지 않습니다</p>
-        <Button
-          type="button"
-          variant="outline"
-          size="xs"
-          aria-label={`${agent.name} 이 러너로 묶기`}
-          disabled={bind.isPending}
-          onClick={() => bind.mutate({ tokenId: runner.tokenId, agentId: agent.id })}
-        >
-          이 러너로 묶기
-        </Button>
-      </div>
-      {bind.isError && (
-        <p role="alert" className="text-xs text-destructive">
-          묶지 못했습니다 — 토큰이 폐기됐거나 에이전트가 등록돼 있지 않습니다. 새로고침한 뒤 다시 시도하세요.
-        </p>
-      )}
-    </div>
-  );
-}
-
-/** 러너 하나 — 판본·붙은 시각·같은 빌드·알린 에이전트(충돌이면 배정되지 않는다고, 다른 토큰에 묶였으면 다시 묶기) */
 function RunnerCard({
   runner,
   file,
-  tokens,
 }: {
   runner: RunnerConnection;
   file: SetupStatus["runners"]["runnerFile"];
-  tokens: RunnerTokenRecord[] | undefined;
 }) {
   return (
     <article aria-label={runner.label} className="flex flex-col gap-2 rounded-md border p-3">
@@ -119,26 +78,6 @@ function RunnerCard({
         <Field name="붙은 시각">{when(runner.connectedAt)}</Field>
       </dl>
       <RunnerBuild runner={runner} file={file} />
-      {runner.agents.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
-          알린 에이전트가 없습니다 — 러너 설정의 agents 를 확인하세요.
-        </p>
-      ) : (
-        <ul className="flex flex-col gap-1.5">
-          {runner.agents.map((agent) => (
-            <li key={agent.id} aria-label={agent.name} className="flex flex-col gap-0.5 text-sm">
-              <div className="flex flex-wrap items-center gap-x-2">
-                <span className="font-medium">{agent.name}</span>
-                <code className="font-mono text-xs text-muted-foreground">{agent.id}</code>
-                <span className="text-xs text-muted-foreground">
-                  {agent.workdirLabel} · {agent.model}
-                </span>
-              </div>
-              {agent.conflict && <AgentConflict runner={runner} agent={agent} tokens={tokens} />}
-            </li>
-          ))}
-        </ul>
-      )}
     </article>
   );
 }
@@ -262,12 +201,7 @@ export function RunnerSection({ status }: { status: SetupStatus | undefined }) {
         ) : (
           <div className="flex flex-col gap-2">
             {status.runners.list.map((runner) => (
-              <RunnerCard
-                key={runner.tokenId}
-                runner={runner}
-                file={status.runners.runnerFile}
-                tokens={tokens.data}
-              />
+              <RunnerCard key={runner.tokenId} runner={runner} file={status.runners.runnerFile} />
             ))}
           </div>
         ))}

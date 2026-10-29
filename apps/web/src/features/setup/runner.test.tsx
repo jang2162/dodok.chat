@@ -1,7 +1,6 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { qk } from "@/api/queries";
 import { json } from "../../../test/shellApi";
 import {
   RAW_RUNNER_TOKEN,
@@ -60,35 +59,11 @@ describe("러너 블록 — 붙은 러너", () => {
     expect(await within(await runnerRegion()).findByText(/연결된 러너가 없습니다/)).toBeInTheDocument();
   });
 
-  it("러너 카드 — 라벨·러너/SDK/CLI 판본·같은 빌드·에이전트(작업 디렉터리 라벨·모델), 충돌 에이전트만 「id 가 겹쳐」", async () => {
+  it("러너 카드 — 라벨·러너/SDK/CLI 판본·같은 빌드, 에이전트 목록은 없다(러너 탭 몫)", async () => {
     stubSetupServer({
       status: statusOf({
         runners: {
-          list: [
-            runnerOf(1, { label: "맥북" }),
-            runnerOf(2, {
-              label: "데스크톱",
-              bundleSha256: SHA_B,
-              agents: [
-                {
-                  id: "coder1",
-                  name: "코더 둘",
-                  model: "opus",
-                  workdirLabel: "other",
-                  conflict: true,
-                  boundTokenId: null,
-                },
-                {
-                  id: "writer",
-                  name: "작가",
-                  model: "haiku",
-                  workdirLabel: "docs",
-                  conflict: false,
-                  boundTokenId: null,
-                },
-              ],
-            }),
-          ],
+          list: [runnerOf(1, { label: "맥북" }), runnerOf(2, { label: "데스크톱", bundleSha256: SHA_B })],
           runnerFile: { available: true, sha256: SHA_FILE, bundleSha256: SHA_A, bytes: 2048 },
         },
       }),
@@ -100,16 +75,11 @@ describe("러너 블록 — 붙은 러너", () => {
     expect(mac).toHaveTextContent("0.3.283");
     expect(mac).toHaveTextContent("2.1.283");
     expect(mac).toHaveTextContent("서버와 같은 빌드입니다");
-    expect(mac).toHaveTextContent("코더1");
-    expect(mac).toHaveTextContent("my-repo");
-    expect(mac).toHaveTextContent("sonnet");
-    expect(mac).not.toHaveTextContent("겹쳐");
+    expect(within(mac).queryByRole("listitem")).not.toBeInTheDocument();
+    expect(within(block).queryByRole("button", { name: /이 러너로 묶기/ })).not.toBeInTheDocument();
 
     const desk = within(block).getByRole("article", { name: "데스크톱" });
     expect(desk).toHaveTextContent("다른 빌드입니다");
-    const conflict = within(desk).getByRole("listitem", { name: "코더 둘" });
-    expect(conflict).toHaveTextContent("다른 러너와 id 가 겹쳐 배정되지 않습니다");
-    expect(within(desk).getByRole("listitem", { name: "작가" })).not.toHaveTextContent("겹쳐");
   });
 
   it("번들 sha 를 모르거나 서버에 러너 파일이 없으면 「같은 빌드인지 알 수 없습니다」", async () => {
@@ -205,63 +175,6 @@ describe("러너 토큰", () => {
     await userEvent.click(within(confirm).getByRole("button", { name: "폐기" }));
     await waitFor(() => expect(server.count("DELETE", `/api/v1/setup/runner-tokens/${tokenId(1)}`)).toBe(1));
     expect(await within(block).findByText("폐기됨")).toBeInTheDocument();
-  });
-});
-
-describe("러너 블록 — 에이전트 묶임", () => {
-  const bound = (boundTokenId: string | null) =>
-    runnerOf(2, {
-      label: "데스크톱",
-      agents: [
-        { id: "coder", name: "코더", model: "opus", workdirLabel: "repo", conflict: true, boundTokenId },
-      ],
-    });
-
-  it("다른 토큰에 묶인 충돌 에이전트는 그 토큰 라벨과 「이 러너로 묶기」 — 누르면 PUT 하고 상태와 에이전트 목록을 다시 받는다", async () => {
-    const server = stubSetupServer({
-      status: statusOf({ runners: { list: [bound(tokenId(1))] } }),
-      runnerTokens: [
-        tokenOf(1, { label: "맥북", revokedAt: "2026-09-27T03:00:00.000Z" }),
-        tokenOf(2, { label: "데스크톱" }),
-      ],
-    });
-    const qc = renderConnection();
-    // 에이전트 화면이 받아 둔 목록 — 묶은 뒤 러너 라벨이 옛것으로 남지 않게 무효가 돼야 한다
-    qc.setQueryData(qk.agents, []);
-    const desk = await within(await runnerRegion()).findByRole("article", { name: "데스크톱" });
-    const item = await within(desk).findByRole("listitem", { name: "코더" });
-    await waitFor(() => expect(item).toHaveTextContent("맥북(폐기됨)에 묶여 있어 배정되지 않습니다"));
-    expect(item).not.toHaveTextContent("겹쳐");
-    const statusCalls = () => server.count("GET", "/api/v1/setup/status");
-    const before = statusCalls();
-    await userEvent.click(within(item).getByRole("button", { name: "코더 이 러너로 묶기" }));
-    await waitFor(() =>
-      expect(server.count("PUT", `/api/v1/setup/runner-tokens/${tokenId(2)}/agents/coder`)).toBe(1),
-    );
-    await waitFor(() => expect(statusCalls()).toBeGreaterThan(before));
-    await waitFor(() => expect(qc.getQueryState(qk.agents)?.isInvalidated).toBe(true));
-  });
-
-  it("묶임 없는 충돌(미등록 id 가 겹침)은 옛 문구, 버튼 없음", async () => {
-    stubSetupServer({ status: statusOf({ runners: { list: [bound(null)] } }) });
-    renderConnection();
-    const desk = await within(await runnerRegion()).findByRole("article", { name: "데스크톱" });
-    const item = await within(desk).findByRole("listitem", { name: "코더" });
-    expect(item).toHaveTextContent("다른 러너와 id 가 겹쳐 배정되지 않습니다");
-    expect(within(item).queryByRole("button")).not.toBeInTheDocument();
-  });
-
-  it("묶기가 실패하면 그 줄에 문구", async () => {
-    stubSetupServer({
-      status: statusOf({ runners: { list: [bound(tokenId(1))] } }),
-      runnerTokens: [tokenOf(1, { label: "맥북" }), tokenOf(2, { label: "데스크톱" })],
-      bind: () => json(409, { code: "CONFLICT", message: "runner token is revoked" }),
-    });
-    renderConnection();
-    const desk = await within(await runnerRegion()).findByRole("article", { name: "데스크톱" });
-    const item = await within(desk).findByRole("listitem", { name: "코더" });
-    await userEvent.click(await within(item).findByRole("button", { name: "코더 이 러너로 묶기" }));
-    expect(await within(item).findByRole("alert")).toHaveTextContent("묶지 못했습니다");
   });
 });
 

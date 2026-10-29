@@ -1,4 +1,10 @@
-import { CreateAgentBody, DiscoverAgentsQuery, Id, UpdateAgentBody } from "@dodok/shared";
+import {
+  CreateOpenClawAgentBody,
+  CreateRunnerAgentBody,
+  DiscoverAgentsQuery,
+  Id,
+  UpdateAgentBody,
+} from "@dodok/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { AdapterRegistry } from "../../adapters/registry";
@@ -20,13 +26,22 @@ import type { ServerBus } from "../../realtime/bus";
 import { syncPromptToGateway } from "../channels/prompt-sync";
 import { agentChannelGateways, listMembers } from "../channels/service";
 import type { Orchestrator } from "../runs/orchestrator";
+import { assertWithinCeiling, type RunnerLiveApi } from "../runners/live";
 import {
   archiveAgentAndNotify,
+  createRunnerAgentAndNotify,
   discoverAgents,
   patchAgentAndNotify,
   registerAgentAndNotify,
 } from "./actions";
-import { getAgent, listAgents, moveAgentGateway, restoreAgent } from "./service";
+import {
+  agentForRole,
+  getAgent,
+  listAgents,
+  moveAgentGateway,
+  restoreAgent,
+  runnerPlacement,
+} from "./service";
 
 export type AgentRouteContext = {
   auth: Auth;
@@ -37,7 +52,49 @@ export type AgentRouteContext = {
   registry: Pick<AdapterRegistry, "forProvider">;
   /** 보관이 그 에이전트의 열린 런을 사람 「중지」와 같은 길로 멈춘다 */
   orchestrator: Pick<Orchestrator, "abort">;
+  /** 러너 에이전트 만들기·고치기의 천장 대조 — 러너 어댑터가 없으면 null(러너 에이전트 만들기는 503) */
+  runners: RunnerLiveApi | null;
 };
+
+/**
+ * 러너 에이전트 PATCH 의 권한 모드·허용 도구가 붙은 러너의 천장 안인가 — 러너가 끊겨 있으면 건너뛴다(런에서 러너가 거절한다 — 러너
+ * 일반화 계획 Task 4). OpenClaw 에이전트의 러너 필드는 서비스(updateAgent)가 VALIDATION 으로 막는다
+ */
+function assertRunnerPatchWithinCeiling(
+  ctx: AgentRouteContext,
+  id: string,
+  patch: UpdateAgentBody,
+  workspaceId: string,
+): void {
+  if (patch.permissionMode === undefined && patch.allowedTools === undefined) return;
+  const placement = runnerPlacement(ctx.db, id, workspaceId);
+  if (placement?.provider !== "runner" || placement.runnerTokenId === null || placement.program === null)
+    return;
+  const live = ctx.runners?.runnerInfo(placement.runnerTokenId) ?? null;
+  if (!live) return;
+  assertWithinCeiling(
+    live,
+    placement.program,
+    {
+      ...(patch.permissionMode === undefined ? {} : { permissionMode: patch.permissionMode }),
+      ...(patch.allowedTools === undefined ? {} : { allowedTools: patch.allowedTools }),
+    },
+    { requireAvailable: false },
+  );
+}
+
+/**
+ * 러너 에이전트의 프로그램·프로젝트는 PATCH 로 바꾸지 않는다(태스크 4 보고 3-4 — 프로젝트는 「다른 러너로 옮기기」 하나로, 프로그램을
+ * 바꾸면 세션 전사가 다른 프로그램 것이 된다). UpdateAgentBody 는 모르는 키를 버리므로 조용히 200 이 되지 않게 원래 본문에서 본다(태스크
+ * 4 리뷰 L4)
+ */
+const FIXED_RUNNER_FIELDS = ["program", "runnerProjectId"] as const;
+
+function assertNoFixedRunnerFields(body: unknown): void {
+  if (typeof body !== "object" || body === null) return;
+  const field = FIXED_RUNNER_FIELDS.find((key) => Object.hasOwn(body, key));
+  if (field) throw apiError("VALIDATION", `러너 에이전트의 ${field} 는 고칠 수 없습니다`, { field });
+}
 
 const AgentParams = z.object({ id: Id });
 const MoveGatewayBody = z.object({ gatewayId: Id });
@@ -49,22 +106,29 @@ export function registerAgentRoutes(fastify: FastifyInstance, ctx: AgentRouteCon
   // 다른 탭·사람의 화면이 에이전트·채널 멤버 목록을 다시 받게 — 본문이 없다(계획 판정 PS4)
   const changed = () => ctx.bus.emit("agents.changed", {});
 
-  fastify.get("/api/v1/agents", policy(authorizeRead), async (request) => ({
-    agents: listAgents(ctx.db, sessionUser(request).workspaceId),
-  }));
+  fastify.get("/api/v1/agents", policy(authorizeRead), async (request) => {
+    const user = sessionUser(request);
+    return { agents: listAgents(ctx.db, user.workspaceId).map((agent) => agentForRole(agent, user.role)) };
+  });
 
+  /** 등록(admin) — provider 로 갈래를 고르고 그 갈래의 스키마로 파싱한다(오류가 그 갈래의 필드를 가리키게) */
   fastify.post("/api/v1/agents", policy(authorizeAgentRegister), async (request, reply) => {
-    const body = parseBody(CreateAgentBody, request.body);
-    const agent = registerAgentAndNotify(ctx, body, sessionUser(request).workspaceId);
+    const workspaceId = sessionUser(request).workspaceId;
+    const runner = (request.body as { provider?: unknown } | null)?.provider === "runner";
+    const agent = runner
+      ? createRunnerAgentAndNotify(ctx, parseBody(CreateRunnerAgentBody, request.body), workspaceId)
+      : registerAgentAndNotify(ctx, parseBody(CreateOpenClawAgentBody, request.body), workspaceId);
     return reply.code(201).send({ agent });
   });
 
   fastify.patch("/api/v1/agents/:id", policy(authorizeAgentPatch), async (request) => {
     const { id } = parseParams(AgentParams, request.params);
     // 본문보다 먼저 404 — 옛 순서 그대로(patchAgentAndNotify 도 다시 본다)
-    if (!getAgent(ctx.db, id, sessionUser(request).workspaceId))
-      throw apiError("NOT_FOUND", "agent not found");
+    const current = getAgent(ctx.db, id, sessionUser(request).workspaceId);
+    if (!current) throw apiError("NOT_FOUND", "agent not found");
     const patch = parseBody(UpdateAgentBody, request.body);
+    if (current.provider === "runner") assertNoFixedRunnerFields(request.body);
+    assertRunnerPatchWithinCeiling(ctx, id, patch, sessionUser(request).workspaceId);
     return { agent: patchAgentAndNotify(ctx, id, patch, sessionUser(request).workspaceId) };
   });
 

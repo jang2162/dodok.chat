@@ -193,23 +193,10 @@ describe("보관·되살리기 REST", () => {
 });
 
 describe("에이전트를 바꾸는 다른 동작의 agents.changed", () => {
-  it("러너 「이 러너로 묶기」와 에이전트가 묶인 Gateway 삭제도 한 번씩 보낸다 — 에이전트가 없는 Gateway 삭제는 보내지 않는다", async () => {
+  it("에이전트가 묶인 Gateway 삭제는 한 번 보낸다 — 에이전트가 없는 Gateway 삭제는 보내지 않는다", async () => {
     const { app, inject } = await setup();
     const seen: unknown[] = [];
     app.bus.on("agents.changed", (p) => seen.push(p));
-
-    const { agent: coder } = createRunnerAgentForTest(app.db, {
-      workspaceId: app.workspaceId,
-      handle: "coder",
-    });
-    const issued = await inject("POST", "/api/v1/setup/runner-tokens", { label: "laptop" });
-    expect(issued.statusCode).toBe(201);
-    const tokenId = issued.json().record.id as string;
-    expect(
-      (await inject("PUT", `/api/v1/setup/runner-tokens/${tokenId}/agents/${coder.providerAgentId}`))
-        .statusCode,
-    ).toBe(200);
-    expect(seen).toEqual([{}]);
 
     const home = insertGateway(app.db, app.workspaceId, { id: uuid(), name: "집" });
     createAgent(app.db, {
@@ -222,13 +209,13 @@ describe("에이전트를 바꾸는 다른 동작의 agents.changed", () => {
     const deleted = await inject("DELETE", `/api/v1/gateways/${home.id}`);
     expect(deleted.statusCode).toBe(200);
     expect(deleted.json()).toMatchObject({ unboundAgents: 1 });
-    expect(seen).toEqual([{}, {}]);
+    expect(seen).toEqual([{}]);
 
     const empty = insertGateway(app.db, app.workspaceId, { id: uuid(), name: "빈" });
     expect((await inject("DELETE", `/api/v1/gateways/${empty.id}`)).json()).toMatchObject({
       unboundAgents: 0,
     });
-    expect(seen).toEqual([{}, {}]);
+    expect(seen).toEqual([{}]);
   });
 });
 

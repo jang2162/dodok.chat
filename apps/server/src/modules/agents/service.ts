@@ -1,9 +1,12 @@
 import {
   Agent,
   type DmAccess,
+  RUNNER_AGENT_FIELDS,
   type RunnerPermissionMode,
   type RunnerProgram,
   RunnerRunAgent,
+  roleAtLeast,
+  type TeamRole,
 } from "@dodok/shared";
 import { and, asc, eq, inArray, isNotNull, isNull, ne, type SQL, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
@@ -35,6 +38,8 @@ type CreateAgentCommon = {
   avatarUrl?: string;
   basePrompt?: string;
   enabled?: boolean;
+  /** 없으면 표의 기본(admins) */
+  dmAccess?: DmAccess;
 };
 
 export type CreateOpenClawAgentInput = CreateAgentCommon & {
@@ -73,6 +78,14 @@ export type AgentPatch = {
   enabled?: boolean;
   /** REST PATCH 만 — 제어 도구는 바꾸지 않는다(에이전트 DM 계획 판정 PD13) */
   dmAccess?: DmAccess;
+  /**
+   * 러너 에이전트의 정의 — REST PATCH 만(제어 도구는 러너 구성을 바꾸지 못한다 — 러너 일반화 스펙 6장), OpenClaw 에이전트면 VALIDATION.
+   * 러너 천장과의 대조는 붙은 러너를 아는 REST 라우트 몫이다(만들기와 같다)
+   */
+  model?: string | null;
+  permissionMode?: RunnerPermissionMode;
+  allowedTools?: string[] | null;
+  disallowedTools?: string[];
 };
 
 export function rowToAgent(row: AgentRow): Agent {
@@ -129,7 +142,30 @@ function toApiAgent(
     ...(row.provider === "openclaw"
       ? { gateway: gateway ? { id: gateway.id, name: gateway.name } : null }
       : {}),
+    ...(row.provider === "runner"
+      ? {
+          runnerAgent: {
+            projectId: row.runnerProjectId,
+            model: row.model,
+            permissionMode: row.permissionMode,
+            allowedTools: row.allowedToolsJson,
+            disallowedTools: row.disallowedToolsJson,
+          },
+        }
+      : {}),
   };
+}
+
+/**
+ * 보는 사람의 역할에 맞춘 에이전트 — 러너 에이전트의 정의(Agent.runnerAgent — 권한 모드·도구·모델·프로젝트)는 admin 이상에게만
+ * 싣는다(러너 상태·프로그램 보기가 admin 이상이다 — 러너 일반화 스펙 6장, 태스크 4 리뷰 L2). admin 미만에게 Agent 를 내는 자리
+ * (GET /agents·GET /dms·제어 도구 list_agents)가 이 함수를 지난다
+ */
+export function agentForRole(agent: Agent, role: TeamRole | undefined): Agent {
+  if (agent.runnerAgent === undefined || roleAtLeast(role, "admin")) return agent;
+  const shown = { ...agent };
+  delete shown.runnerAgent;
+  return shown;
 }
 
 const runnerTokenColumns = {
@@ -271,6 +307,7 @@ function commonValues(input: CreateAgentCommon) {
     avatarUrl: input.avatarUrl ?? null,
     basePrompt: input.basePrompt ?? null,
     enabled: input.enabled ?? true,
+    ...(input.dmAccess === undefined ? {} : { dmAccess: input.dmAccess }),
     createdAt: new Date(),
   };
 }
@@ -281,6 +318,11 @@ const RunnerAgentFields = RunnerRunAgent.pick({
   allowedTools: true,
   disallowedTools: true,
 });
+
+function invalidRunnerField(error: { issues: Array<{ path: PropertyKey[] }> }) {
+  const field = String(error.issues[0]?.path[0] ?? "agent");
+  return apiError("VALIDATION", `invalid runner agent field: ${field}`, { field });
+}
 
 /** 러너 에이전트의 서버 쪽 id — `r-` + 소문자 hex 10. 세션 키 규칙(OpenClaw agentId) 안이고 사람이 고르지 않는다 */
 const RUNNER_AGENT_ID_TRIES = 8;
@@ -304,10 +346,7 @@ function createRunnerAgent(db: Db, input: CreateRunnerAgentInput): Agent {
     allowedTools: input.allowedTools ?? null,
     disallowedTools: input.disallowedTools ?? [],
   });
-  if (!fields.success) {
-    const field = String(fields.error.issues[0]?.path[0] ?? "agent");
-    throw apiError("VALIDATION", `invalid runner agent field: ${field}`, { field });
-  }
+  if (!fields.success) throw invalidRunnerField(fields.error);
   return db.transaction((tx) => {
     const project = tx
       .select({ runnerTokenId: runnerProjects.runnerTokenId, archivedAt: runnerProjects.archivedAt })
@@ -398,6 +437,21 @@ export function updateAgent(db: Db, id: string, patch: AgentPatch): Agent {
     }
     if (patch.enabled !== undefined) set.enabled = patch.enabled;
     if (patch.dmAccess !== undefined) set.dmAccess = patch.dmAccess;
+    const runnerFields = RUNNER_AGENT_FIELDS.filter((key) => patch[key] !== undefined);
+    if (runnerFields.length > 0) {
+      if (current.provider !== "runner")
+        throw apiError("VALIDATION", "only runner agents have a program definition", {
+          field: runnerFields[0],
+        });
+      const fields = RunnerAgentFields.partial().safeParse(
+        Object.fromEntries(runnerFields.map((key) => [key, patch[key]])),
+      );
+      if (!fields.success) throw invalidRunnerField(fields.error);
+      if (fields.data.model !== undefined) set.model = fields.data.model;
+      if (fields.data.permissionMode !== undefined) set.permissionMode = fields.data.permissionMode;
+      if (fields.data.allowedTools !== undefined) set.allowedToolsJson = fields.data.allowedTools;
+      if (fields.data.disallowedTools !== undefined) set.disallowedToolsJson = fields.data.disallowedTools;
+    }
     if (Object.keys(set).length === 0) return apiAgent(tx, current);
     const row = tx.update(agents).set(set).where(eq(agents.id, id)).returning().get();
     if (!row) throw apiError("NOT_FOUND", "agent not found");
@@ -532,6 +586,19 @@ export function listAgents(db: DbOrTx, workspaceId: string): Agent[] {
     .orderBy(asc(agents.createdAt), asc(agents.id))
     .all()
     .map(({ agent, token, gateway }) => toApiAgent(agent, token, gateway));
+}
+
+/** 러너 에이전트가 묶인 러너·프로그램 — REST 의 천장 대조가 쓴다. 다른 워크스페이스·없는 에이전트면 undefined */
+export function runnerPlacement(
+  db: DbOrTx,
+  id: string,
+  workspaceId: string,
+): { provider: string; runnerTokenId: string | null; program: RunnerProgram | null } | undefined {
+  return db
+    .select({ provider: agents.provider, runnerTokenId: agents.runnerTokenId, program: agents.program })
+    .from(agents)
+    .where(and(eq(agents.id, id), eq(agents.workspaceId, workspaceId)))
+    .get();
 }
 
 /** workspaceId 를 주면 그 워크스페이스 것만 찾는다(REST 는 항상 준다). */

@@ -104,8 +104,10 @@ describe("REST — 러너 에이전트 등록과 discover?provider [P9]", () => 
       handle: "coder",
       name: "Coder",
     });
+    // 러너 갈래의 스키마로 파싱된다 — 프로젝트 없이는 만들 수 없다
     expect(coder.statusCode).toBe(400);
-    expect(coder.json()).toMatchObject({ code: "VALIDATION", details: { field: "provider" } });
+    expect(coder.json()).toMatchObject({ code: "VALIDATION" });
+    expect(JSON.stringify(coder.json())).toContain("runnerProjectId");
 
     const dev = await api("POST", "/agents", {
       providerAgentId: "dev",
@@ -152,13 +154,12 @@ describe("REST — 러너 에이전트 등록과 discover?provider [P9]", () => 
     expect(again.json()).toMatchObject({ code: "CONFLICT", details: { field: "providerAgentId" } });
   });
 
-  it("discover?provider=runner 는 러너 어댑터의 listAgents, 빠지면 openclaw(그 Gateway), 모르는 값은 400", async () => {
-    const listed = [{ providerAgentId: "coder", name: "Coder", hint: "macbook · repo · sonnet" }];
-    vi.spyOn(runner, "listAgents").mockResolvedValue(listed);
-
+  it("discover 는 OpenClaw 만 — provider=runner 는 400(러너 에이전트는 러너 프로젝트에서 만든다), 빠지면 openclaw(그 Gateway), 모르는 값은 400 [PR9]", async () => {
+    const listAgents = vi.spyOn(runner, "listAgents");
     const fromRunner = await api("GET", "/agents/discover?provider=runner");
-    expect(fromRunner.statusCode).toBe(200);
-    expect(fromRunner.json()).toEqual({ agents: listed });
+    expect(fromRunner.statusCode).toBe(400);
+    expect(fromRunner.json().code).toBe("VALIDATION");
+    expect(listAgents).not.toHaveBeenCalled();
 
     const fromOpenclaw = await api("GET", `/agents/discover?gatewayId=${FAKE_GATEWAY_ID}`);
     expect(fromOpenclaw.statusCode).toBe(200);
@@ -172,23 +173,5 @@ describe("REST — 러너 에이전트 등록과 discover?provider [P9]", () => 
 
     const bogus = await api("GET", "/agents/discover?provider=codex");
     expect(bogus.statusCode).toBe(400);
-  });
-});
-
-describe("REST — 러너 어댑터가 없으면 discover?provider=runner 는 503", () => {
-  it("ADAPTER_UNAVAILABLE", async () => {
-    const app = await bootTestApp({}, { adapters: [new FakeAdapter()] });
-    try {
-      const { headers } = await login(app);
-      const res = await app.fastify.inject({
-        method: "GET",
-        url: "/api/v1/agents/discover?provider=runner",
-        headers,
-      });
-      expect(res.statusCode).toBe(503);
-      expect(res.json().code).toBe("ADAPTER_UNAVAILABLE");
-    } finally {
-      await app.close();
-    }
   });
 });

@@ -13,7 +13,7 @@ import { roleOf } from "../../auth/roles";
 import type { Db, DbOrTx } from "../../db/client";
 import { agents, channelMembers, channels, conversations } from "../../db/schema.sqlite";
 import { apiError } from "../../http/errors";
-import { apiAgent, getAgent, isAgentActive } from "../agents/service";
+import { agentForRole, apiAgent, getAgent, isAgentActive } from "../agents/service";
 import { type ChannelRecord, getChannel, rowToChannel } from "../channels/service";
 
 // 에이전트 DM(에이전트 DM 스펙) — DM 은 kind = 'dm' 인 채널이라 메시지·세션·런은 채널의 것을 그대로 쓰고, 여기는 DM 만의 것만 둔다:
@@ -212,7 +212,7 @@ export function listDms(
     const channel = rowToChannel(row);
     return {
       channel,
-      agent: apiAgent(db, agent),
+      agent: agentForRole(apiAgent(db, agent), role),
       lastMessageAt: at === null ? null : new Date(at).toISOString(),
       readOnlyReason: dmReadOnlyReason(db, channel, role),
     };
