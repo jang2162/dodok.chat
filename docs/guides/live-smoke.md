@@ -70,9 +70,10 @@
 - 로그(`data/dev-gateway.log`·`data/phase1-live-<날짜>.log`)는 커밋하지 않지만, 옮기기 전에 토큰 값이 0번 나오는지 `grep -c -F -- "$TOK"` 로 개수만 확인한다.
 - ⚠ **에이전트 자신이 시크릿을 읽을 수 있다.** dev 에이전트의 exec 는 기본 `security: "full"`(「승인(Phase 2 ①)을 실물에서 보기 — 절차」)이라, 일이 막히면 모델이 스스로 Bash 로 `~/.openclaw-dev/*.json` 을 뒤진다.
   그 툴 결과는 **런 이벤트(`run_events.payload_json`)·프레임 덤프·claude-cli 전사**에 그대로 남고 활동 탭에도 보인다.
-  그래서 개수 확인은 **로그만이 아니라 `data/*.sqlite`·`data/frames-*.jsonl` 까지** 한다. 들어갔으면 DB 는 가리고(값을 인자로 넘기지 않게 SQL 을 표준 입력으로) 덤프는 지운다. claude-cli 전사에 남은 것은 지울 수 없으니(모델 제공자에게도 이미 갔다) 그 토큰을 교체한다.
+  그래서 개수 확인은 로그만이 아니라 `data/*.sqlite*`(`-wal`·`-shm` 포함)·`data/frames-*.jsonl` 까지 한다. 들어갔으면 DB 는 가리고(값을 인자로 넘기지 않게 SQL 을 표준 입력으로) `PRAGMA wal_checkpoint(TRUNCATE)`·`VACUUM` 뒤 파일 바이트로 다시 센다 — 체크포인트 전에는 값이 WAL 에, VACUUM 전에는 빈 페이지에 남는다. 덤프는 지운다. claude-cli 전사에 남은 것은 지울 수 없으니(모델 제공자에게도 이미 갔다) 그 토큰을 교체한다.
 - ⚠ **Gateway 가 띄우는 claude CLI 는 Gateway 의 환경을 물려받는다** — `OPENCLAW_GATEWAY_TOKEN` 도 CLI 환경에 있다(가짜 CLI 의 `envKeys` 로 보인다). exec 를 가진 에이전트는 그 값을 명령으로 읽을 수 있으므로 실연 Gateway 의 공유 토큰은 실연 뒤 버린다(스크래치에서 새로 만든 것만 쓴다). 에이전트 세션의 셸에서 Gateway·서버를 띄울 때는 `CLAUDE_CODE_*`·`CLAUDECODE` 같은 세션 변수도 `env -u` 로 뺀다.
 - 세션 토큰을 `curl` 에 실을 때는 `-K -`(표준 입력의 설정)로 싣는다. `-K -` 와 `-d @-` 는 표준 입력을 함께 쓸 수 없다 — 본문은 0600 파일에서 `-d @<파일>` 로 싣거나 인자로 준다(본문에 시크릿이 없을 때만).
+- `config patch` 는 `~/.openclaw-dev/openclaw.json.bak*` 백업을 남길 수 있다 — 브리지 토큰을 바꾼 뒤 그 백업에 옛 토큰이 있을 수 있으니 열지 말고 지운다(그 토큰은 폐기한다).
 
 ## 3. 절차
 
@@ -191,6 +192,8 @@ oc --dev config unset channels.dodok.channels
 oc --dev plugins inspect dodok --json | jq .plugin.status     # 여전히 "loaded"
 ```
 
+- 「(b) 플러그인 최신 번들 재설치」가 만든 `packages/openclaw-plugin/dist` 는 실연 뒤 지운다 — 남아 있으면 `apps/server/test/control.mcp.test.ts` 「/mcp 의 실패 카운터는 따로다」가 `plugin.tgz` 를 404 대신 200 으로 받아 `pnpm test` 가 깨진다.
+
 ⚠ 「승인(Phase 2 ①)을 실물에서 보기 — 절차」 절로 승인 정책(`agents.entries.<id>.tools.exec.ask`)을 켰다면 **여기서 되돌린다** — 그 절 「되돌리기 — 반드시 한다」.
 
 ## 4. `wire-cli`
@@ -232,6 +235,7 @@ oc --dev plugins inspect dodok --json | jq .plugin.status     # 여전히 "loade
   ② **`tools.fs.workspaceOnly`** — `false`(기본)면 모델이 **호스트에서 읽을 수 있는 아무 파일이나** `message` 툴 `media` 로 채널에 보낼 수 있다(플러그인은 `loadWebMediaRaw` 에 Gateway 의 `mediaAccess` 를 그대로 넘긴다). `true` 면 워크스페이스·미디어 캐시·임시 루트로 좁혀진다. 원격 호스트에서 어느 쪽인지 확인하고 적는다.
   계정 설정 `mediaMaxMb`(선택, 1~20, 기본 20)는 에이전트가 보내는 파일 한 개의 상한이다 — 서버 상한 20 MiB 를 넘을 수 없다.
 - 첨부 바이트는 브리지 WS 가 아니라 **같은 오리진의 HTTP** 로 오간다 — 플러그인이 `bridgeUrl` 의 `wss:`→`https:`(`ws:`→`http:`)로 바꿔 `GET`·`POST /bridge/attachments` 를 부른다(브리지 토큰). 터널·리버스 프록시가 `/bridge` WS 만 통과시키면 첨부만 실패한다. 요청 본문 상한은 20 MiB 보다 크게 둔다. 서버 쪽 블롭은 `ATTACHMENTS_DIR`(기본 `<DATA_DIR>/attachments`)에 쌓인다.
+
 ---
 
 ## 6. 웹을 얹을 때
@@ -278,6 +282,7 @@ DODOK_API_ORIGIN=http://127.0.0.1:$PORT pnpm -F @dodok/web dev      # 5173, stri
 - **모달의 date 칸**: 자동화 도구의 키 입력(`type`·`press`)으로는 세그먼트가 채워지지 않는다(값 `""`). 네이티브 setter 로 넣고 `input`·`change` 를 쏜다(`Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(d,'2026-09-30')` → `validity.badInput=false`). 사람이 칠 때의 롤오버는 사람 몫이다.
 - **작성기에 파일을 넣는 법.** 작성기의 `<input type=file>` 은 `class="hidden"` 이라 BrowserOS neo 스냅샷에 ref 가 없고 `upload` 가 못 잡는다. 이미지를 워크트리 `data/`(ignored) 아래에 복사하고, 페이지 안에서 `fetch('/@fs<워크트리>/data/<폴더>/<파일>')` → `new File([blob], 이름, {type})` → `DataTransfer` 로 `input.files` 를 채운 뒤 `change` 를 쏜다. 칩이 뜨고 「보내기」가 켜진다(파일 선택기와 같은 코드 경로). 멘션은 입력칸에 `@dev` 를 쳐서 뜬 후보를 누른다. `wire-cli` 는 첨부를 보내지 못한다.
 - **캐시가 식으면 런 값이 비싸진다.** 같은 채널이라도 Gateway 를 재기동하면 claude-cli 캐시가 날아가 다음 런이 `cache_creation` 을 다시 쓴다(몇 배가 된다). 실연을 쪼개 돌릴수록 비싸진다 — **한 번 띄웠을 때 볼 것을 다 본다.**
+- 실제 모델 런의 claude-cli 는 사람의 `~/.claude` 설정을 싣는다(argv `--setting-sources user`) — 그 설정의 훅(SessionStart 등)이 턴마다 돌고 첫 턴 캐시 생성이 커진다. 실연 비용·로그를 읽을 때 감안한다.
 - 모델 런 상한이 있는 실연은 **에이전트 답 속 멘션이 런을 더 만들지 않게** 런 앞에서 릴레이 턴 상한을 0 으로 두고(`patch-channel <CH> '{"relayPolicy":{"maxRelayTurns":0,"allowPairs":"all"}}'`), 릴레이를 볼 런 앞에서만 올린다. 상한을 바꾸면 채널 프롬프트 리비전이 오르고 다음 인바운드에 `ChannelPromptContext` 가 실린다(설계대로). 설정 저장·에이전트 등록·채널 만들기는 런을 쓰지 않는다.
 
 ### 릴레이·자동 응답을 볼 때
@@ -353,6 +358,7 @@ oc --dev config unset agents.entries.dev.tools                 # 빈 껍데기�
 `set` → `unset` 은 `exec.ask` 만 지우고 그 위의 빈 객체(`tools.exec`)를 남긴다 — 설정 파일 크기가 시작값과 달라진다. 되돌린 뒤 `~/.openclaw-dev/openclaw.json` 의 **크기**(`stat -f %z`, 내용은 열지 않는다)가 「켜기」 전과 같은지 본다.
 「절차」 절 (f) 정리에 이 줄들을 더한다. 되돌리지 않으면 **다음 실연이 모든 툴에서 멈춰** 서 있게 된다 — 승인을 누르는 사람이 없으면 런이 120초마다 만료로 끝난다.
 `--dev` 프로필만 건드리므로 원격 프로필(`~/.openclaw`)에는 영향이 없다. `Config path not found … Nothing was changed.` 가 나오면 이미 깨끗하다는 뜻이다(정상).
+
 ---
 
 ## 8. 사람이 눈·귀로 확인할 것 (자동 검증이 원리상 못 재는 것)
@@ -431,10 +437,10 @@ oc --version                                   # 적는다
 W() { (set -a; . data/live-smoke.env; set +a; export DODOK_LOCAL_TOKEN="$LOCAL_AUTH_TOKEN"; pnpm -s wire-cli http://127.0.0.1:$PORT "$@"); }
 W create-channel harness-$(date +%m%d%H%M); W channels | tail -n +2      # 첫 줄은 `HTTP 200 GET …` — 새 채널 id 를 CH 에
 W add-agent $CH dev dev
-W send $CH "@dev 하네스 준비" --new-session --watch-ms 15000     # 새 채널에는 첫 글 전에 대화가 없다 — ack 줄의 conversation= 을 CV 에
+W send $CH "하네스 준비" --new-session --watch-ms 3000     # 멘션 없는 글 — 런 없이 대화만 생긴다. ack 줄의 conversation= 을 CV 에
 ```
 
-- **세션 키와 `message` 툴 대상은 채널 id 가 아니라 대화 id 다** — 세션 키 `agent:dev:dodok:channel:$CV`, 대상 `channel:$CV`. 채널 id 를 대상으로 주면 플러그인이 「이 대화에만 보낼 수 있습니다」로 거절한다(채널 id 는 대화가 아니다 — 세션 기능 전부터 있던 채널의 「이전 대화」만 id 가 채널 id 와 같다). 대화 id 는 `W send` ack 줄의 `conversation=` 이나 `GET /api/v1/channels/$CH/conversations` 로 본다. 위 준비 글은 가짜 CLI 를 붙이기 전이면 진짜 모델 런이 된다 — 가짜 CLI 를 띄운 Gateway(「가짜 claude CLI — 결함 1·2 재현·합격 확인(정본)」)에서 보낸다.
+- **세션 키와 `message` 툴 대상은 채널 id 가 아니라 대화 id 다** — 세션 키 `agent:dev:dodok:channel:$CV`, 대상 `channel:$CV`. 채널 id 를 대상으로 주면 플러그인이 「이 대화에만 보낼 수 있습니다」로 거절한다(채널 id 는 대화가 아니다 — 세션 기능 전부터 있던 채널의 「이전 대화」만 id 가 채널 id 와 같다). 대화 id 는 `W send` ack 줄의 `conversation=` 이나 `GET /api/v1/channels/$CH/conversations` 로 본다. 준비 글에는 멘션을 넣지 않는다 — `@dev` 를 넣으면 가짜 CLI 를 붙이기 전의 Gateway 에서 진짜 모델 런이 된다(채널에 자동 응답을 켰어도 같다).
 ⚠ **하네스용 채널은 따로 만든다.** 가짜 CLI 런은 채널 세션에 **가짜 claude 세션 id**(`00000000-0000-4000-8000-00000000c214`)를 남긴다. 같은 채널에서 나중에 진짜 모델 런을 하면 `--resume` 이 그 id 를 찾다 실패할 수 있다.
 `data/args.json` 은 `message` 툴 인자다 — `{"action":"send","target":"channel:<CV>","message":"…","components":{…}}`. 모델이 낸 인자는 서버 `run_events` 의 `TOOL_CALL_ARGS` 에 그대로 있다(카드 예시는 `docs/guides/agent-guide.md` 의 components 예시면 충분하다).
 (선택) **어느 인스턴스에서 돌았는지** 보려면 `packages/openclaw-plugin/src/channel.ts` 모듈 최상위에 probe 를 붙여 재패킹·재설치한다 — **커밋 금지**, 끝나면 `git checkout -- src/channel.ts` → 재패킹 → 재설치 → sha 가 원래 값인지 확인.
@@ -724,6 +730,7 @@ final = "FAKE_CLI_DONE approval=" + (res.response?.behavior ?? res.subtype);   /
 - `Write`·`Read`·`Edit` 에 `file_path` 가 있으면 코어가 경로 규칙을 먼저 본다 — 워크스페이스(`~/.openclaw-dev/workspace`) 안 경로를 준다. 승인은 Gateway 에서 **플러그인 승인**(`plugin.approval.waitDecision`)으로 뜬다.
 - 가짜 CLI 의 대기 상한은 승인 TTL(실물 120초)보다 길게 둔다(예: 300초).
 - 모델 런이 아니라 Gateway 가 기록하는 승인 이벤트·`approval.resolve` RPC·런 재개가 실물 그대로 돈다.
+- 가짜 CLI 의 `fetch`(undici)는 응답 머리를 300초까지만 기다린다(`headersTimeout` 기본값) — 그보다 오래 두는 카드·승인은 `headersTimeout: 0` 인 undici `Agent` 를 주거나 「진짜 번들 CLI 를 Gateway 의 `claude` 로」 꼴로 잰다.
 
 **진짜 번들 CLI 를 Gateway 의 `claude` 로.** 실제 Claude Code CLI 가 OpenClaw 의 툴·제어 요청을 어떻게 다루는지(대기 시간·끊김 등) 보려면 러너 tgz 의 번들 CLI(`claude-agent-sdk-<os>-<arch>/claude.real`)를 Gateway PATH 앞의 감싸개로 둔다 — 감싸개는 「Claude 러너 런 0회 하네스 — 번들 CLI + 가짜 Messages API」 절의 꼴에 `HOME`·`CLAUDE_CONFIG_DIR` 을 스크래치로 주고, `auth status` 에는 감싸개가 `{"loggedIn":true}` 로 답한다. 모델 자리는 `packages/claude-runner/scripts/fake-messages-api.ts` 의 스크래치 사본에 대본을 더해 쓴다 — OpenClaw 프롬프트 모양에 맞게 대본 키를 마지막 user 메시지 전체에서 찾게 한다. 이 CLI 의 런은 **새 채널에서만** 한다(가짜 CLI 의 세션 id 가 남은 채널을 잇지 않게 — 「준비」의 경고).
 
@@ -940,6 +947,17 @@ api POST /api/v1/channels/$CH/members '{"memberType":"agent","memberId":"<에이
 - OpenClaw 모델 런을 0 으로 지키려면 OpenClaw 쪽은 `dev:fake` 의 가짜 Gateway·에이전트로 둔다. 가짜 `dev` 는 부른 에이전트를 늘 되부르므로 채널 `relayPolicy.maxRelayTurns` 를 1 로 둬 러너 런이 더 생기지 않게 한다.
 - 운영 화면의 러너 런 비용(구독이면 「환산 포함」)을 같이 본다.
 
+### 모델 런으로만 재는 것
+
+하네스·`dev:fake` 가 원리상 못 재는 것이라 다음 모델 런 실연 때 같이 본다(각 줄 끝이 근거 자리).
+
+- 실제 모델로 두 `main` 의 대화가 섞이지 않는지 — `docs/superpowers/reports/2026-10-05-multi-gateway-live-smoke-report.md` 「21.6 사람이 볼 것」.
+- 실제 모델이 반응 블록을 요청이 아니라 사실로 읽는지 — `docs/guides/plan.md` 8장 리액션 줄 「실제 모델이 그 블록을 요청이 아니라 사실로 읽는지는 모른다」.
+- 실제 모델이 읽은 글 속 지시를 따르지 않는지, 「결과를 모릅니다」를 받고 같은 요청을 되풀이하지 않는지 — `docs/superpowers/reports/2026-10-13-control-mcp-live-smoke-report.md` 「25.5 사람이 볼 것」.
+- 러너 DM 틀(「주인이 설정 화면에서 정해 둔 설정」)을 모델이 주입으로 읽지 않고 따르는지 — `docs/guides/plan.md` 8장 이월 「러너 DM 틀을 모델이 따르는지 모른다」.
+- 실제 모델이 `<agent-instructions>` 틀을 따르는지 — `docs/guides/plan.md` 8장 이월 「실물로 못 본 것」(러너 일반화 줄).
+- 진짜 claude 세션 전사로 `--resume` 이 이어지는지(같은 스레드 둘째 턴·두 세션이 섞이지 않는지) — `docs/guides/plan.md` 8장 이월 「같은 스레드 둘째 턴의 `--resume` …」·「실물로 못 본 것」(채널 세션 줄).
+
 ---
 
 ## 12. PWA·푸시(Phase 2 ④) — 푸시 확인 절차·VAPID 키 옮기기·사람이 볼 것
@@ -959,7 +977,7 @@ pnpm -F @dodok/web build
 DODOK_API_ORIGIN=http://127.0.0.1:3100 pnpm -F @dodok/web exec vite preview --port 5180 --strictPort
 ```
 
-- **개발 서버(`pnpm -F @dodok/web dev`)에는 서비스 워커가 없다**(스펙 11장 R4). 거기서 보려면 셸에서 `VITE_PWA_DEV=1` 을 준다(`.env` 의 값은 닿지 않는다). 개발 SW 는 미리 저장이 비어 오프라인 탐색 폴백이 없다 — 오프라인 확인은 preview 로만 된다. 같은 오리진에서 preview 와 dev 를 오갈 때의 주의는 `docs/guides/browser-verification.md` 「PWA·서비스 워커를 볼 때」.
+- **개발 서버(`pnpm -F @dodok/web dev`)에는 서비스 워커가 없다**(스펙 11장 R4). 거기서 보려면 셸에서 `VITE_PWA_DEV=1` 을 준다(`.env` 의 값은 닿지 않는다). 개발 SW 는 미리 저장이 비어 오프라인 탐색 폴백이 없다 — 오프라인 확인은 preview 로만 된다. 같은 오리진에서 preview 와 dev 를 오갈 때의 주의는 `docs/guides/browser-verification.md` 「이 저장소에서 달라지는 것」.
 - `dev:fake` 는 VAPID 주체가 기본값이라 시작 때 `VAPID subject is a local placeholder …` warn 한 줄을 찍는다 — 의도한 경고다. 키 `data/vapid.json` 은 재시작해도 그대로다(지우면 그 오리진의 구독이 모두 무효).
 
 **브라우저 — headed 여야 한다.** 헤드리스 Chromium 은 권한을 줘도 `Notification.permission` 이 `"denied"` 로 고정된다(`Notification.requestPermission()` 결과와 `navigator.permissions.query` 는 `granted` 인데 동기 getter 만 `denied`). 앱은 동기 getter 를 보므로 헤드리스에서는 패널이 늘 「거절됨」이다.
@@ -1045,6 +1063,7 @@ await page.evaluate(async () =>
 | 7 | **iOS·안드로이드 실기기** | HTTPS 배포 뒤 | iOS 16.4+ 는 홈 화면에 추가한 앱에서만(패널 「홈 화면에 추가하면 알림을 받을 수 있습니다 — …」). `VAPID_SUBJECT` 가 실제 연락처여야 Apple 이 받는다(「원격 배포에서 VAPID 키 옮기기」) |
 
 「사람이 눈·귀로 확인할 것」 절의 탭 안 승인 알림(「승인 필요 — @dev 가 Write 를 실행하려 합니다」)은 **이 기기에 푸시가 켜져 있으면 쉰다**(결정 8). 빌드본 preview 에서 그 절을 볼 때는 「푸시 알림 켜기」로 권한을 허용한 뒤 「끄기」를 누른다 — 권한은 `granted` 로 남고 플래그가 지워져 탭 안 알림이 돈다. dev 서버(서비스 워커 없음)에서는 「푸시 알림 켜기」가 권한만 받고 10초 뒤 「서비스 워커가 준비되지 않았습니다」로 끝난다 — 「끄기」 버튼은 생기지 않고, 플래그가 없으므로 그대로 탭 안 알림이 돈다. 「알림 켜기」는 「설정」 → 「알림」 탭에 있다(푸시를 지원하지 않는 브라우저에서만 「탭이 열려 있을 때만 알림 켜기」로 남는다).
+
 ---
 
 ## 13. 브리지 토큰 교체 — 사람이 따라 할 절차
@@ -1056,6 +1075,7 @@ dev 는 모든 `openclaw` 에 `--dev` 를 붙이고 상태 디렉터리가 `~/.o
 3. `openclaw config patch --file <파일> && rm <파일>`. 조각에는 `bridgeUrl` 도 들어 있다 — 서버의 `BRIDGE_PUBLIC_URL`(없으면 `APP_ORIGIN` 에서 만든 값)이 그 Gateway 가 서버에 닿는 주소와 다르면 조각 그대로 넣으면 안 된다. 2026.9.5 는 Gateway 재기동 없이 dodok 채널만 다시 띄운다(`Change will apply without restarting the gateway.`) — 브리지가 한 번 끊겼다가 새 토큰으로 곧 붙는다. 출력이 재기동 없이 적용된다고 말하지 않으면 Gateway 를 재기동한다.
 4. 연결 페이지에서 새 토큰 줄에 「지금 접속 중」이 뜨는 것을 본다. 서버 로그로는 가를 수 없다(`"bridge plugin hello"` 에 tokenId 가 없다) — 화면이나 `GET /api/v1/setup/status` 의 `gateways[].bridge.plugin.tokenId` 로 본다.
 5. 옛 토큰 줄 「폐기」. 지금 연결은 끊기지 않는다. 옛 토큰으로 붙는 것은 그 뒤로 `UNAUTHORIZED` 다.
+
 ---
 
 ## 14. 바깥 MCP 클라이언트 손 확인 — `claude mcp`

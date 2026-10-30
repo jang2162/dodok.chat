@@ -1,4 +1,4 @@
-# 실연 — 2026-09-24 결과 (p4-t9, 계획 태스크 9)
+# PWA·푸시 실연 — 2026-09-24 결과 (p4-t9, 계획 태스크 9)
 
 > PWA·푸시(Phase 2 ④)의 멘션 푸시를 실제 dev Gateway·FCM 으로 돌린 실연의 기록 — 계획 `docs/superpowers/plans/2026-09-23-pwa-push.md` 태스크 9, 스펙 `docs/superpowers/specs/2026-09-23-pwa-push-design.md`. 그 시점 기록이라 고치지 않는다 — 지금 절차는 `docs/guides/live-smoke.md` 를 본다. 본문의 절 번호(「3절」·「11.4」 등)는 옮기기 전 live-smoke 의 번호다 — 그 판은 `git show 823d159:docs/guides/live-smoke.md` 로 연다.
 

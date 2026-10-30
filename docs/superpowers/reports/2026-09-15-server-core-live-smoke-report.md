@@ -1,4 +1,4 @@
-# 이번 실연 결과 (2026-09-15, 서버 코어 태스크 15)
+# 서버 코어 실연 — 이번 실연 결과 (2026-09-15, 서버 코어 태스크 15)
 
 > 서버 코어(Phase 1 ①)를 실제 dev Gateway·플러그인·모델로 돌린 실연의 기록 — 계획 `docs/superpowers/plans/2026-09-15-server-core.md` 태스크 15, 스펙 `docs/superpowers/specs/2026-09-15-server-core-design.md`. 그 시점 기록이라 고치지 않는다 — 지금 절차는 `docs/guides/live-smoke.md` 를 본다. 본문의 절 번호(「3절」·「11.4」 등)는 옮기기 전 live-smoke 의 번호다 — 그 판은 `git show 823d159:docs/guides/live-smoke.md` 로 연다.
 

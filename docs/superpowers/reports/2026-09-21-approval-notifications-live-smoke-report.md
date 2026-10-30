@@ -1,4 +1,4 @@
-# 재검증(p2-t13)이 확인한 것과 흉내 낸 방법
+# 승인 알림 재검증 — 재검증(p2-t13)이 확인한 것과 흉내 낸 방법
 
 > 승인 알림 재검증(p2-t13)이 코드가 하는 일까지 잰 것의 기록 — 계획 `docs/superpowers/plans/2026-09-20-activity-approvals.md` 태스크 11, 스펙 `docs/superpowers/specs/2026-09-20-activity-approvals-design.md`. 그 시점 기록이라 고치지 않는다 — 지금 절차는 `docs/guides/live-smoke.md` 를 본다. 본문의 절 번호(「3절」·「11.4」 등)는 옮기기 전 live-smoke 의 번호다 — 그 판은 `git show 823d159:docs/guides/live-smoke.md` 로 연다.
 
