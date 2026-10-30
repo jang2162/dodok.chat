@@ -1,6 +1,6 @@
 # dev Gateway 실연(live smoke) — 실제 Gateway·플러그인·러너·모델로 앱을 돌려 보는 절차
 
-이 문서는 **지금 참인 절차**만 싣는다. 지난 실연의 결과(환경 실물·합격 기준 표·새로 찾은 것)는 `docs/superpowers/reports/*-live-smoke-report.md` 다 — 그 시점 기록이라 절차로 읽지 않는다.
+이 문서는 **지금 참인 절차**만 싣는다. 지난 실연의 결과(환경 실물·합격 기준 표·새로 찾은 것)는 `docs/superpowers/reports/*-live-smoke-report.md` 다 — 그 시점 기록이라 절차로 읽지 않는다. 새 실연의 결과도 이 문서가 아니라 새 리포트 `docs/superpowers/reports/<YYYY-MM-DD>-<주제>-live-smoke-report.md` 에 쓰고(머리에 무엇의 실연인지·계획과 태스크), 그 실연이 찾은 **지금도 참인 절차·함정**만 이 문서의 알맞은 절에 올린다.
 
 ## 1. 목적
 
