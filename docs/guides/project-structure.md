@@ -302,6 +302,7 @@ src/
 │  │                      채널 안 에이전트는 일반 채널 + 그 런의 DM 하나)·ChannelReader(사람 id 또는 이미 좁힌 SQL — 저장소·검색 함수가 받는다)·readerSql. **역할 판정(403)보다 먼저** 부른다 —
 │  │                      역할 정책이 requirePolicy preHandler 에 있는 경로는 preHandler 를 requireSession 으로 바꾸고 핸들러에서 접근 다음에 정책을 부른다. 대화·런 id 로 닿는 자리는
 │  │                      조회 WHERE 에 readableChannelSql 를 붙인 도우미(conversations/store.ts getReadableConversation·runs/store.ts getRunInWorkspace 의 readerId)로 같은 404
+│  │                      ⚠ 채널을 내보내거나 바꾸는 경로를 새로 만들면 이 판정을 지나게 하고 `test/roles.matrix.test.ts` 의 DM_CASES 에 더한다 — 시험은 등록된 경로만 보므로 빠뜨리면 남의 DM 이 그 경로로 오류 없이 샌다.
 │  ├─ index.ts            Better Auth(이메일 로그인·가입·비밀번호 변경·세션 폐기·로그아웃 HTTP 경로 비활성 — disabledPaths, routes.ts 허용 목록 밑의 겹 방어), 세션 토큰 검증(userId·sessionId)
 │  ├─ owner.ts            부팅 때 owner 보장 — LOCAL_AUTH_TOKEN 이 owner 비밀번호, 바뀌면 기존 세션을 끊는다
 │  ├─ roles.ts            Phase 4 ② 팀. 역할 검사의 유일한 자리(매트릭스의 정본은 팀 스펙 「역할과 권한」 절 표) — requireSession(세션 + 활성 membership, 없거나 비활성이거나 모르는 역할이면 401,
@@ -326,6 +327,8 @@ src/
 │  ├─ client-address.ts   parseTrustProxy(TRUST_PROXY — 비었거나 false 면 아무도 안 믿음, IP·CIDR 목록, true·이름 붙은 범위·/0 은 설정 오류)·
 │  │                      fastifyTrustProxy(Fastify trustProxy 값)·clientAddressOf(소켓 핸드셰이크 주소) — REST request.ip 와 소켓이 같은 @fastify/proxy-addr 판정
 │  │                      (믿는 주소에서 온 연결의 X-Forwarded-For 를 오른쪽부터 믿는 주소를 건너뛰어 읽는다, IPv4-mapped 도 같은 IPv4)
+│  │                      레이트리밋·요청 로그·wire·러너 소켓·Better Auth 세션 IP 가 모두 이 판정 하나를 쓴다 — Better Auth 에는 auth/routes.ts betterAuthHeaders 가 들어온 같은 이름을 버리고
+│  │                      내부 헤더 `x-dodok-client-ip`(auth/index.ts CLIENT_IP_HEADER)에 request.ip 만 실어 넘긴다. 클라이언트 IP 를 읽는 자리를 새로 만들면 request.ip·clientAddressOf 를 쓴다 — 헤더를 직접 읽으면 꾸민 X-Forwarded-For 가 통한다.
 │  ├─ web-static.ts       registerWebStatic — DODOK_WEB_DIR 이 있으면 빌드된 웹을 낸다: GET "/*" 하나(Fastify 가 HEAD 도 연다), BACKEND_PREFIXES 는
 │  │                      callNotFound(지금의 JSON 404), /assets/* 는 있는 파일만 immutable·없으면 404, 나머지는 파일 아니면 index.html(no-cache),
 │  │                      미리 압축한 .br·.gz(Accept-Encoding·Vary)·ETag 304, 디코드한 경로의 ..·백슬래시·NUL·밖을 가리키는 링크는 없는 파일.
@@ -601,6 +604,7 @@ src/
    ├─ socket.ts           wire 인증(세션 토큰·프로토콜)·사용자당 동시 소켓 상한(LIMITS.socketsPerUser)·룸(channel:<id> — 그 채널의 모든 세션 이벤트, user:<id>, workspace:<id>, session:<Better Auth session id> — 토큰 원문은 소켓에 두지 않는다)·connection 에서 membership·세션(행과 만료 시각 — sessionAlive)을 다시 본다·
    │                      disconnectUser(비활성화·재설정 수락)·disconnectSessions(me/password — 지운 세션만, 로그아웃 — 이 세션. 빈 목록이면 아무것도 안 한다: `io.in([])` 는 모든 소켓이다)·
    │                      sweepExpiredSessions(만료된 세션 행을 지우고 그 세션 소켓을 끊는다 — app.ts 가 부팅 때 한 번, 그 뒤 SESSION_SWEEP_INTERVAL_MS(1분)마다. 소켓은 핸드셰이크·connection 에서만 세션을 보므로 REST 없이 wire 만 쓰는 탭은 이것이 끊는다)·
+   │                      ⚠ 세션을 지우는 자리를 새로 만들면 세션 행을 먼저 지우고 그 세션 소켓을 끊는다 — 거꾸로 하면 끊긴 클라이언트가 아직 살아 있는 세션으로 곧바로 다시 붙는다(핸드셰이크 틈)·
    │                      소켓마다 토큰 버킷 넷(WIRE_BUCKET — heavy·replay·approval·chatter, 넘으면 ack RATE_LIMITED·ack 없는 이벤트는 버림·사건 ratelimit `wire:<이벤트>`)·
    │                      클라이언트 → 서버 핸들러(subscribe 는 lastSeq 가 없으면 `messages: []`(첫 페이지는 대화 REST), 있으면 lastSeq 이후 그 채널 모든 세션의 루트·답글 ≤200 + 옛 루트 요약 threadRoots,
    │                      둘 다 latestSeq · message.send 는 conversationId 또는 newConversation(resolveSendConversation)·threadRootId 를 넘긴다,
