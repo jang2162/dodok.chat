@@ -1,5 +1,5 @@
 /**
- * wire-cli — 떠 있는 dodok 서버의 REST·wire 를 손으로 두드리는 CLI (서버 코어 스펙 9.3, docs/guides/live-smoke.md).
+ * wire-cli — 떠 있는 dodok 서버의 REST·wire 를 손으로 두드리는 CLI (서버 코어 스펙 9.3, docs/guides/live-smoke.md 「`wire-cli`」 절).
  *
  *   pnpm wire-cli <origin> [localToken] <명령> …
  *

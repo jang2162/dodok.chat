@@ -14,7 +14,7 @@ function readLines(path: string): Array<{ receivedAt: string; frame: { event: st
     .map((line) => JSON.parse(line) as { receivedAt: string; frame: { event: string; seq?: number } });
 }
 
-describe("openFrameDump — Gateway 원본 프레임 JSONL(usage 조사용, live-smoke 5.4)", () => {
+describe("openFrameDump — Gateway 원본 프레임 JSONL(usage 조사용, ADR 0005)", () => {
   let dir: string;
 
   beforeEach(() => {

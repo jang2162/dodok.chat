@@ -26,7 +26,7 @@ import {
   seedConversation,
 } from "./helpers/seed";
 
-/** 서술 속 @핸들도 릴레이가 된다(live-smoke 5.4-5) — 부를 때만 @ 를 쓰게 한다 */
+/** 서술 속 @핸들도 릴레이가 된다(docs/guides/agent-guide.md 「릴레이 — 에이전트가 에이전트를 부를 때」) — 부를 때만 @ 를 쓰게 한다 */
 const rule = (turns: number) =>
   `다른 에이전트에게 일을 넘길 때만 @핸들을 쓰세요 — @멘션하면 그 에이전트가 이어받습니다(최대 ${turns}턴). 언급만 할 때는 @ 없이 이름만 쓰세요.`;
 

@@ -7,7 +7,7 @@ export type BackoffOptions = {
   jitter: number;
 };
 
-// 상한 10s — 서버를 늦게 띄우면 벌어진 백오프만큼 첫 연결이 밀린다(30s 상한일 때 실연 21.5s, live-smoke 5.1)
+// 상한 10s — 서버를 늦게 띄우면 벌어진 백오프만큼 첫 연결이 밀린다(30s 상한일 때 실연 21.5s — docs/superpowers/reports/2026-09-15-server-core-live-smoke-report.md 「5.1 환경 실물」)
 export const DEFAULT_BACKOFF: BackoffOptions = { baseMs: 500, maxMs: 10_000, jitter: 0.2 };
 
 export function backoffDelayMs(

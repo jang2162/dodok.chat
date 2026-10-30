@@ -27,11 +27,11 @@ dodok.chat/
 │                            # 내용은 그 문서 「컨테이너 프록시」)
 ├─ docs/
 │  ├─ guides/                 # 계속 사는 정본 — plan.md(계획서), project-structure.md(이 문서), worktree-workflow.md, browser-verification.md,
-│  │                          #   live-smoke.md, docker-deploy.md — 배포·프록시·백업·복원·업데이트(부록 Komodo Git Repo Stack 설정),
+│  │                          #   live-smoke.md(실연 절차·런 0회 하네스), docker-deploy.md — 배포·프록시·백업·복원·업데이트(부록 Komodo Git Repo Stack 설정),
 │  │                          #   agent-guide.md — 에이전트가 채널에서 받는 것·릴레이·components·파일·승인과 AGENTS.md·채널 프롬프트에 붙여 넣을 블록
 │  ├─ manual/                 # 사용자 매뉴얼 (user-guide.md — 웹 앱을 쓰는 사람)
 │  ├─ guideline/              # 지침 서버에서 받은 참조 지침 사본 — guideline CLI 만 쓴다 (7장)
-│  ├─ superpowers/            # 스펙·구현계획 (specs/, plans/) — 발행 시점 기록
+│  ├─ superpowers/            # 스펙·구현계획·리포트 (specs/, plans/, reports/ — 실연 결과·단계 이력) — 발행 시점 기록
 │  └─ adr/                    # 결정 기록 (스파이크 결과마다 한 장; 0001 = Gateway 클라이언트 스파이크)
 ├─ scripts/
 │  ├─ orca-worker.sh          # Orca 워커 수명주기 (spawn/attach/wait/status/reap/stop/keep/sync-config)
@@ -750,7 +750,7 @@ src/
 │  │                      caps DEFAULT_GATEWAY_CAPS) → hello-ok. 실패(PAIRING_REQUIRED 포함)는 그대로 올리고 재시도는 연결 관리자 몫
 │  ├─ connection-manager.ts  접속 루프·지수 백오프·상태(down/reconnecting/connected)·요청 타임아웃, 페어링 대기(requestId·since — 다음 성공 접속에서 지움, 재시도 5s), 접속마다 복구(sessions.subscribe →
 │  │                      대상 세션별 sessions.messages.subscribe → chat.history, 커서 reset 이면 꼬리 페이지 다시).
-│  │                      subscribeSession: 접속 뒤 새로 생긴 세션은 send 전에 연결당 한 번 구독 — 실물 Gateway 는 구독한 세션의 이벤트만 보낸다(실연에서 발견, live-smoke 5.4).
+│  │                      subscribeSession: 접속 뒤 새로 생긴 세션은 send 전에 연결당 한 번 구독 — 실물 Gateway 는 구독한 세션의 이벤트만 보낸다(실연에서 발견 — `docs/superpowers/reports/2026-09-15-server-core-live-smoke-report.md` 「5.4 틀린 것·고칠 것」).
 │  │                      세션 구독에 includeApprovals: true — 켜야 session.approval 과 응답의 approvalReplay(재접속 되감기)가 온다
 │  ├─ device-identity.ts  Ed25519 아이덴티티 생성·저장(0600)·서명 (스파이크 1에서 확정)
 │  ├─ events.ts           chat(delta/final/error/aborted)·agent(lifecycle·stream:"tool")·session.message(usage) → RunEvent + RunSignal.
@@ -1234,14 +1234,14 @@ OpenClaw Gateway 주소·공유 토큰과 브리지 토큰은 env 가 아니라 
 | `OWNER_HANDLE` | `owner` | owner 핸들 |
 | `LOCAL_AUTH_TOKEN` | (필수, ≥16자) | 로컬 로그인 토큰 = owner 비밀번호. 바꾸면 기존 세션이 끊긴다 |
 | `BETTER_AUTH_SECRET` | (필수, ≥32자) | Better Auth 서명 비밀 |
-| `OPENCLAW_FRAME_DUMP_PATH` | — | 진단용 — 어댑터가 받은 Gateway `chat`·`agent`·`session.message` 프레임을 Gateway 마다 `<이 경로>.<Gateway id>` 파일에 JSONL(`{ receivedAt, frame }`)로 append. 본문이 들어가므로 `data/` 아래에. usage 출처 확인용(live-smoke 5.4) |
+| `OPENCLAW_FRAME_DUMP_PATH` | — | 진단용 — 어댑터가 받은 Gateway `chat`·`agent`·`session.message` 프레임을 Gateway 마다 `<이 경로>.<Gateway id>` 파일에 JSONL(`{ receivedAt, frame }`)로 append. 본문이 들어가므로 `data/` 아래에. usage 출처 확인용(`docs/adr/0005-usage-values.md`) |
 | `BRIDGE_PUBLIC_URL` | `APP_ORIGIN` 의 `https:`→`wss:`(`http:`→`ws:`) + `/bridge` | 플러그인 계정 설정 `bridgeUrl` 에 적을 공개 주소 — 연결 페이지가 보여 주고 발급 결과의 설정 조각에 들어간다(서버는 이 값으로 리슨하지 않는다). 예 `wss://dodok.example.com/bridge` |
 | `VAPID_PUBLIC_KEY` · `VAPID_PRIVATE_KEY` | — | 웹 푸시 VAPID 키 쌍 — **둘 다** 있어야 쓴다. 없으면 `<DATA_DIR>/vapid.json` 을 만들어(0600) 쓴다. 키가 바뀌면 모든 기기의 푸시 구독이 무효가 된다. 비밀 키는 로그에서 가린다 |
 | `APNS_KEY_PATH` · `APNS_KEY_ID` · `APNS_TEAM_ID` | — | iOS 앱 푸시(APNs) 인증 키(.p8) 경로·키 id·팀 id. 없으면 `<DATA_DIR>/apns/key.p8`·`config.json`(`{ keyId, teamId }`)을 읽고, 둘 다 없으면 통로가 꺼진다(부팅은 막지 않는다). 키는 ES256(P-256)만. 발급·배치는 `docs/guides/docker-deploy.md` 「네이티브 푸시 자격 증명」 |
 | `FCM_SERVICE_ACCOUNT_PATH` | — | Android 앱 푸시(FCM) 서비스 계정 JSON 경로. 없으면 `<DATA_DIR>/fcm/service-account.json`, 둘 다 없으면 통로가 꺼진다 |
 | `APNS_HOST` · `APNS_CA_PATH` · `FCM_HOST` · `FCM_TOKEN_URI` | — | **테스트·개발 전용** — 통합 테스트가 로컬 가짜 APNs·FCM 으로 보낼 때 호스트·인증서·토큰 엔드포인트를 덮는다. 운영 문서에는 싣지 않는다 |
 | `PUSH_RELAY_URL` | — | 중앙 푸시 중계 자리 — 아직 구현이 없어 값이 있으면 부팅 때 warn 후 무시한다 |
-| `VAPID_SUBJECT` | `mailto:dodok@localhost` | 푸시 서비스가 연락할 주체 — `mailto:…` 또는 `https://…`. 호스트가 `localhost`·`127.0.0.1`·`*.local` 이면 시작 때 warn(Apple Push 는 `403 BadJwtToken`) — 배포는 실제 연락처로(`docs/guides/live-smoke.md` 14.2) |
+| `VAPID_SUBJECT` | `mailto:dodok@localhost` | 푸시 서비스가 연락할 주체 — `mailto:…` 또는 `https://…`. 호스트가 `localhost`·`127.0.0.1`·`*.local` 이면 시작 때 warn(Apple Push 는 `403 BadJwtToken`) — 배포는 실제 연락처로(`docs/guides/live-smoke.md` 「원격 배포에서 VAPID 키 옮기기」) |
 | `DODOK_MIGRATIONS_DIR` | 소스 `apps/server/drizzle` | drizzle 마이그레이션 폴더. 운영 번들은 **필수**(없으면 설정 오류) — 이미지·compose 가 `/app/drizzle` 로 준다 |
 | `DODOK_PLUGIN_DIR` | — | 연결 페이지가 내려줄 플러그인 tgz 를 찾을 디렉터리(가장 최근 tgz). 소스 실행이면 그 뒤에 `packages/openclaw-plugin/dist` 도 본다. 배포에서는 이미지·compose 가 `/app/plugin` 으로 고정한다(그때 `.env` 의 값은 무시된다) |
 | `DODOK_RUNNER_DIR` | — | 연결 페이지가 내려줄 러너 tgz 를 찾을 디렉터리(가장 최근 tgz). 소스 실행이면 그 뒤에 `packages/claude-runner/dist` 도 본다. 배포에서는 이미지·compose 가 `/app/runner` 로 고정한다(그때 `.env` 의 값은 무시된다) |
@@ -1258,7 +1258,7 @@ Postgres 전환 시 `DB_PATH` 대신 연결 문자열.
 
 ```json5
 {
-  // 첨부(Phase 2 ③)의 attachments.ttlHours·tools.fs.workspaceOnly 는 운영자가 호스트에 맞춰 정한다 — docs/guides/live-smoke.md 6절
+  // 첨부(Phase 2 ③)의 attachments.ttlHours·tools.fs.workspaceOnly 는 운영자가 호스트에 맞춰 정한다 — docs/guides/live-smoke.md 「원격 Gateway 에서 같은 절차를 돌릴 때 다른 점」 절
   tools: { agentToAgent: { enabled: false }, sessions: { visibility: "tree" } },   // 루트 sessions 키는 거부된다 (ADR 0002)
   channels: {
     dodok: {

@@ -1,5 +1,5 @@
 /**
- * Gateway 원본 프레임 덤프 — 실연에서 usage 등 매퍼가 읽는 값의 출처를 가리기 위한 진단 스위치(live-smoke 5.4-2).
+ * Gateway 원본 프레임 덤프 — 실연에서 usage 등 매퍼가 읽는 값의 출처를 가리기 위한 진단 스위치(docs/adr/0005-usage-values.md).
  *
  * 받은 `chat`·`agent`·`session.message`·승인 EventFrame 을 `{ receivedAt, frame }` JSONL 로 append 한다. 쓰기는 스트림이라
  * 이벤트 처리를 막지 않고, 쓰기 오류(디렉터리 없음·디스크 가득)는 warn 한 번 뒤 덤프만 끈다 — 런에는 영향이 없다.

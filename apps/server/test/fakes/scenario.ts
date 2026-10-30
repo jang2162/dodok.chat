@@ -3,7 +3,7 @@
  *
  * 실제 플러그인은 런이 시작될 때 dispatch 를 ack 하고(ADR 0002), 그 뒤 Gateway WS 에 lifecycle·툴·델타·final 이 흐르며,
  * 정본 답은 플러그인 `outbound.message` 로 온다. 여기서는 ack 를 먼저 보낸 뒤(`setImmediate`) 가짜 Gateway 이벤트를 쓰고,
- * 서버가 그 이벤트를 처리한 뒤(`gateway.flush`) 정본을 보낸다 — 실물은 첫 델타와 정본 사이가 수백 ms 이상이다(live-smoke 5.3).
+ * 서버가 그 이벤트를 처리한 뒤(`gateway.flush`) 정본을 보낸다 — 실물은 첫 델타와 정본 사이가 수백 ms 이상이다(docs/superpowers/reports/2026-09-15-server-core-live-smoke-report.md 「5.3 지연 측정」).
  * 재생 중 가짜 Gateway 가 그 런의 `chat.abort` 를 받으면(가짜 Gateway 가 chat aborted 를 낸다) 실물처럼 거기서 멈춘다 — 남은 델타·final·정본 없음.
  * 대본에 `approval` 이 있으면 툴 start 뒤 승인을 띄우고(`plugin.approval.requested`) 결정이 날 때까지 툴 result 를 미룬다(승인 스파이크 4.2).
  * 정본은 실제 플러그인의 `buildOutboundMessage` 로 만든다 — `components` 가 플러그인 검증(`ComponentsV1`)을 실제로 지나고,

@@ -73,7 +73,7 @@ const ctx = await chromium.launchPersistentContext(mkdtempSync(join(tmpdir(), "d
   headless: false, // 알림 권한이 필요하면 headed(창은 화면 밖에 두어도 된다)
   args: ["--ignore-certificate-errors"],
   ignoreHTTPSErrors: true,
-  // 실제 FCM 까지 받으려면: ignoreDefaultArgs: ["--disable-background-networking"] — live-smoke.md 「새로 찾은 것 — 실제 FCM 전달의 타이밍 제약」
+  // 실제 FCM 까지 받으려면: ignoreDefaultArgs: ["--disable-background-networking"] — live-smoke.md 「푸시 확인 절차 (`dev:fake`, 모델 런 0회)」
 });
 ```
 
