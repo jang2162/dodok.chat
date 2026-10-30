@@ -16,7 +16,7 @@ describe("backoffDelayMs", () => {
     expect(backoffDelayMs(10, opts, () => 1)).toBe(12_000);
   });
 
-  it("기본 상한은 10s(지터 포함 12s) — 서버를 늦게 띄워도 첫 연결이 오래 밀리지 않는다(실연 21.5s, live-smoke 5.1)", () => {
+  it("기본 상한은 10s(지터 포함 12s) — 서버를 늦게 띄워도 첫 연결이 오래 밀리지 않는다(30s 상한일 때 실연 21.5s — 서버 코어 실연 리포트)", () => {
     expect(DEFAULT_BACKOFF).toEqual({ baseMs: 500, maxMs: 10_000, jitter: 0.2 });
     expect(backoffDelayMs(20, DEFAULT_BACKOFF, () => 1)).toBe(12_000);
   });

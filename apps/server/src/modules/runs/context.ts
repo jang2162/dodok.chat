@@ -252,7 +252,7 @@ function withPlaceholder(text: string, atts: readonly Attachment[]): string {
 
 /** 사람이 읽는 한 문단. allowPairs 제한이면 이 에이전트가 부를 수 있는 채널 에이전트(자기 자신 제외)만 나열한다. */
 function relayRulesFor(policy: RelayPolicy, agentId: string, participants: Participant[]): string {
-  // 라우터는 멘션 = 호출로 본다(서술 속 @핸들도 릴레이가 된다 — live-smoke 5.4-5). 그래서 부를 때만 @ 를 쓰게 한다
+  // 라우터는 멘션 = 호출로 본다(서술 속 @핸들도 릴레이가 된다 — docs/guides/agent-guide.md 「릴레이 — 에이전트가 에이전트를 부를 때」). 그래서 부를 때만 @ 를 쓰게 한다
   const base = `다른 에이전트에게 일을 넘길 때만 @핸들을 쓰세요 — @멘션하면 그 에이전트가 이어받습니다(최대 ${policy.maxRelayTurns}턴). 언급만 할 때는 @ 없이 이름만 쓰세요.`;
   if (policy.allowPairs === "all") return base;
   const handleOf = new Map(participants.filter((p) => p.type === "agent").map((p) => [p.id, p.handle]));

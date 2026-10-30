@@ -2,14 +2,14 @@
 
 - 상태: 결정·구현·**실물 확인됨**(2026-09-23). 6절 합격 기준 1~6 을 `oc 2026.9.5 (f396007)` 위에서 런 0회 하네스로 통과(c2-t16)
 - 날짜: 2026-09-23
-- 대상: `docs/guides/live-smoke.md` 10.4 결함 1·2, ADR 0002 5.2(`message` 툴 — `handleAction`), 불변 규칙 「OpenClaw 패키지 3종 정확 핀」
+- 대상: `docs/superpowers/reports/2026-09-23-components-v1-live-smoke-report.md` 「10.4 틀린 것·고칠 것」 결함 1·2, ADR 0002 5.2(`message` 툴 — `handleAction`), 불변 규칙 「OpenClaw 패키지 3종 정확 핀」
 - 산출 코드: `packages/openclaw-plugin/src/bridge-registry.ts`(새 순수 모듈)·`channel.ts`(모듈 스코프 Map 둘을 레지스트리로),
   `packages/openclaw-plugin/test/bridge-registry.test.ts`(회귀), `packages/openclaw-adapter/src/{openclaw-adapter.ts,gateway/connection-manager.ts}`(Gateway 버전 로그)
 - 근거 원장(git 제외): `.superpowers/sdd/2026-09-21-components-v1/c2-t14-report.md`(원인 가르기, **모델 런 0회**) · `c2-t15-report.md`(이 결정의 구현)
 
 ## 1. 맥락
 
-components v1 실연(2026-09-23, `live-smoke.md` 10절)에서 **모델 런 안의 `message` 툴 전송이 매번 `dodok: account "default" bridge is not running` 으로 실패**했다.
+components v1 실연(2026-09-23, `docs/superpowers/reports/2026-09-23-components-v1-live-smoke-report.md`)에서 **모델 런 안의 `message` 툴 전송이 매번 `dodok: account "default" bridge is not running` 으로 실패**했다.
 브리지는 붙어 있었고, 같은 인자를 운영자 `tools.invoke` 로 보내면 성공했다. 그날 dev Gateway 는 앱 자동 업데이트로 **`2026.9.5 (f396007)`** 였다(저장소 핀·스파이크는 `2026.9.4`).
 
 c2-t14 가 가짜 claude CLI(모델 0)로 원인을 갈랐다. 확정한 것(F1~F6)과 판단(J1)을 섞지 않는다.
@@ -56,7 +56,7 @@ CHANGELOG 9.5 「Live plugin management: install and reload … without restarti
 | 길 | 버린 이유 |
 | --- | --- |
 | **B. dev Gateway 를 2026.9.4 로 고정** | **반쪽이다.** ① 앱이 스스로 업데이트한다(09-20 에 그랬다 — 끄는 설정은 확인하지 않았다). ② 원격 Gateway 가 9.5 로 오르면 배포에서 같은 결함이 난다. ③ 9.5 의 격리는 되돌아오지 않는다. 불변 규칙(정확 핀)과는 맞으므로 **원격 버전을 확인한 뒤 핀 정책과 함께 따로** 정한다 — A 를 대신하지 못한다 |
-| **C. 인스턴스 무관 전송** — `handleAction`·`sendText` 가 브리지 소켓 대신 서버 HTTP(브리지 오리진 + 토큰)로 아웃바운드를 보내고, 상관은 서버가 세션 키의 활성 런으로 정한다 | 격리가 realm·워커·프로세스로 가도 산다. 플러그인 쪽 `correlations` 가 필요 없어지고, 「운영자가 보낸 카드가 끝난 런에 붙는다」(live-smoke 10.4-5)도 서버에서 정리된다. 그러나 새 엔드포인트·인증·dedupe·스펙 변경이 들고, **브리지 단일 연결 원칙에 두 번째 통로**를 둘지 먼저 정해야 한다. 지금 하기엔 크다 → **이월**(`docs/guides/plan.md` 8장) |
+| **C. 인스턴스 무관 전송** — `handleAction`·`sendText` 가 브리지 소켓 대신 서버 HTTP(브리지 오리진 + 토큰)로 아웃바운드를 보내고, 상관은 서버가 세션 키의 활성 런으로 정한다 | 격리가 realm·워커·프로세스로 가도 산다. 플러그인 쪽 `correlations` 가 필요 없어지고, 「운영자가 보낸 카드가 끝난 런에 붙는다」(`docs/superpowers/reports/2026-09-23-components-v1-live-smoke-report.md` 「10.4 틀린 것·고칠 것」 5)도 서버에서 정리된다. 그러나 새 엔드포인트·인증·dedupe·스펙 변경이 들고, **브리지 단일 연결 원칙에 두 번째 통로**를 둘지 먼저 정해야 한다. 지금 하기엔 크다 → **이월**(`docs/guides/plan.md` 8장) |
 | **D. upstream 보고만** | 우리 일정 밖이고, 버그라는 확신도 없다(J1). A 와 함께 할 수는 있다 — 보류 |
 
 ## 4. 결과·위험
@@ -73,7 +73,7 @@ CHANGELOG 9.5 「Live plugin management: install and reload … without restarti
 
 ## 5. 런 0회 하네스 둘
 
-c2-t14 가 만든 두 하네스는 모델을 부르지 않고 실물 Gateway 의 루프백 `/mcp` 를 두드린다. 명령 단위 절차는 `docs/guides/live-smoke.md` 11절.
+c2-t14 가 만든 두 하네스는 모델을 부르지 않고 실물 Gateway 의 루프백 `/mcp` 를 두드린다. 명령 단위 절차는 `docs/guides/live-smoke.md` 「런 0회 하네스 — 모델 없이 모델 런의 툴 경로를 두드리기」 절.
 
 1. **`attach.grant`** — 모델 런이 쓰는 바로 그 루프백 서버에 세션 grant 로 붙는다. 툴 노출·`components` 스키마 확인용. run 문맥이 없어 **세대 1 로 가므로 결함은 재현하지 않는다**.
 2. **가짜 claude CLI(정본)** — Gateway 가 claude-cli 를 PATH 의 `claude` 로 띄우는 점을 이용한다. 가짜 CLI 가 run grant 로 `message`(와 `ask_user`)를 한 번씩 부르고 끝낸다. **결함 1·2 를 모델 0 으로 그대로 재현했다**.

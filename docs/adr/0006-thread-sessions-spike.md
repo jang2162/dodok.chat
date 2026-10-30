@@ -70,7 +70,7 @@
 - claude-cli 는 시스템 프롬프트를 argv 가 아니라 **stdin `control_request { subtype: "initialize", appendSystemPrompt }`** 로 받는다. 채널 `systemPrompt` 가 채널 세션·스레드 세션 양쪽 `appendSystemPrompt` 에 있었다 — 플러그인이 디스패치마다 채널 항목을 읽어 `GroupSystemPrompt` 로 싣기 때문이다.
 - 스레드 세션의 첫 턴은 새 CLI 세션이라 그때의 채널 프롬프트가 들어간다. 오래 산 스레드는 채널 세션과 같은 문제(ADR 0003 「질문 1 — 채널 프롬프트가 기존 세션에」 절 — 재개된 CLI 세션은 바뀐 프롬프트를 안 받는다)를 **스레드마다 따로** 갖는다.
 - 인바운드 `context.channelPrompt` 를 주면 스레드 프롬프트에도 `ChannelPromptContext` 로 실렸다.
-- `sessions.reset { key: <스레드 키> }` → 응답 `entry` 에 새 `sessionStartedAt`·`lifecycleRevision`(`sessionId` 는 유지 — ADR 0003 과 같다). 채널 세션의 `sessionStartedAt`·전사는 그대로. 반대로 채널 키 리셋도 스레드 세션의 전사를 건드리지 않는다(`docs/guides/live-smoke.md` 「스레드(Phase 4 ①) 실연」 절).
+- `sessions.reset { key: <스레드 키> }` → 응답 `entry` 에 새 `sessionStartedAt`·`lifecycleRevision`(`sessionId` 는 유지 — ADR 0003 과 같다). 채널 세션의 `sessionStartedAt`·전사는 그대로. 반대로 채널 키 리셋도 스레드 세션의 전사를 건드리지 않는다(`docs/superpowers/reports/2026-09-26-threads-live-smoke-report.md`).
 
 ### 3.5 동시성 (질문 5)
 
@@ -120,7 +120,7 @@
 - 승인 이벤트의 `sessionKey` — 가짜 CLI 는 승인을 일으키지 못하고, 모델 런에서도 승인을 켜지 않았다. 코드상 같은 세션 키 경로다.
 - 원격 Gateway 판에서의 동작(SDK 표면은 9.4 타입에도 있다). 아래 실측은 모두 9.5 다.
 
-`docs/guides/live-smoke.md` 「스레드(Phase 4 ①) 실연」 절이 잰 것(dev Gateway 9.5, 새 플러그인):
+`docs/superpowers/reports/2026-09-26-threads-live-smoke-report.md` 가 잰 것(dev Gateway 9.5, 새 플러그인):
 
 - **스레드 세션의 모델이 `message` 툴에 `threadId` 를 스스로 넣었다**(모델 런 1회) — 헤더의 `thread=` 값 그대로. 카드는 그 스레드에 섰고 채널 세션 전사는 생기지도 않았다.
 - **9.5 는 `message` 툴을 쓴 런의 최종 답을 억제하지 않는다** — 채널 최상위·스레드 모두 최종 답이 따로 한 메시지로 올라왔다. ADR 0002 의 억제(`silent`)는 9.4 실측이다.

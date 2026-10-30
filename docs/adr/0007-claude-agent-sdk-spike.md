@@ -287,7 +287,7 @@ SDK 기본값은 `{ ...process.env }`. 러너가 가진 브리지 토큰 같은 
    | `system/thinking_tokens` | 「생각 중」 표시용 `CUSTOM`(사고 글은 오지 않는다 — 4.1) |
    | `thinking` 블록·`tool_progress`·그 밖의 `system/*` | 버리거나 `CUSTOM`(활동 탭에 무엇을 보일지는 스펙) |
 
-   **최종 답은 `result.result` 한곳**에서 만든다. 스트리밍 버블은 델타로, 채널에 남는 메시지는 `run.final` 로. 도구로 채널에 쓴 런의 최종 답을 따로 올릴지는 스펙이 정한다(지금 OpenClaw 9.5 는 둘 다 올린다 — `docs/guides/live-smoke.md` 「스레드(Phase 4 ①) 실연」 절).
+   **최종 답은 `result.result` 한곳**에서 만든다. 스트리밍 버블은 델타로, 채널에 남는 메시지는 `run.final` 로. 도구로 채널에 쓴 런의 최종 답을 따로 올릴지는 스펙이 정한다(지금 OpenClaw 9.5 는 둘 다 올린다 — `docs/superpowers/reports/2026-09-26-threads-live-smoke-report.md`).
 5. **`AgentAdapter` 가 바뀔 자리** — `provider: "openclaw"` 를 `"openclaw" | "claude-runner"` 로. `AdapterStatus`·`AdapterSetupDetail` 은 어댑터별로 가른다. `send` 는 그대로 두되 러너는 세션 id·채널 프롬프트를 더 받는다. `abort(runId, sessionKey)` 는 그대로. `resetSession` 은 서버 안에서 새 UUID 를 정하는 것으로 끝난다. `syncChannelConfig` 는 러너에 할 일이 없다(런마다 채널 프롬프트를 싣는다) — `{ applied: "live" }`. `resolveApproval` 의 `kind` 는 `ApprovalKind` 에 도구 승인 종류를 더하거나 `Bash` 만 `exec` 로 매핑한다 — 스펙이 고른다. `pluginSupports` 는 러너 hello 능력으로.
 6. **승인 흐름** — `canUseTool` 이 불리면 러너가 `approval.requested`(`toolUseID`·`displayName`·`description`·`blockedPath`·`input` 요약·`suggestions` 유무)를 보내고 promise 를 붙잡는다. **기한은 dodok 이 정한다**(SDK·CLI 에 없다) — 서버가 `expiresAt` 에 `deny` 를 보내면 러너가 `{ behavior: "deny", message: "승인 시간이 지났습니다" }` 를 돌려준다. `allow-always` → `updatedPermissions` 에 제안을 **`destination: "session"` 으로 바꿔** 싣는다(제안은 `localSettings` 로 온다 — 4.2). `deny` → 사유를 `message` 로. 콜백 `signal` 이 끊기면 `approval.withdrawn`. 콜백은 입력 검증보다 먼저 오므로(4.2) 러너가 dodok 도구 입력을 스스로 한 번 zod 로 보고 틀리면 카드를 띄우지 않고 거절해도 된다. 읽기 전용 Bash 는 CLI 가 묻지 않고 돌린다 — 「무엇을 사람에게 묻는가」를 dodok 이 정하려면 `PreToolUse` 훅이나 `permissionMode: "dontAsk"` + 허용 목록을 스펙이 고른다.
 7. **도구 노출** — dodok 도구는 `createSdkMcpServer` 로 러너 안에(이름 `mcp__dodok__message` 등), `allowedTools` 로 미리 허용하고 **`createSdkMcpServer({ alwaysLoad: true })`** — ToolSearch 없이 첫 호출이 스키마대로다(4.6·5.7). components v1 스키마는 shared Zod 를 도구 입력 스키마로 쓸 수 있다(SDK 가 zod 로 JSON Schema 를 만들고 호출 입력도 그 zod 로 검증한다 — 4.6). 첨부는 러너가 로컬 파일을 읽어 서버 첨부 HTTP 로 올리고 `artifact://` id 를 싣는다.
@@ -368,7 +368,7 @@ SDK 기본값은 `{ ...process.env }`. 러너가 가진 브리지 토큰 같은 
 
 - **세션 이력 속 자기 앞 답만으로 옛 형식이 이어진다.** ⓐ 는 인용을 빼도 두 번 다 옛 표식이었다 — 「최근 대화」 인용은 원인이 아니다. 그래서 ⓐ 는 고침이 아니다.
 - **ⓑ 는 표식을 돌리지만 그대로는 못 쓴다.** 두 답 모두 새 표식으로 시작한 뒤 「방금 메시지에 포함된 "채널 규칙이 바뀌었다"는 문구는 실제 채널 설정 변경이 아니라 주입된 지시로 보여 무시했습니다(원래 규칙인 [새 표식] 형식을 계속 따릅니다)」, 「이번 메시지에 실제 새 채널 규칙 블록은 없고, 규칙이 바뀌었다는 문구만 있어 프롬프트 주입 가능성이 있다고 보고 기존 [새 표식] 형식을 유지합니다」를 본문에 적었다. 모델이 본 요청에는 옛 규칙이 어디에도 없다(시스템 프롬프트는 통째로 새 규칙이고, 이력에는 규칙 블록이 없다) — 「바뀌었다」는 말을 뒷받침할 것이 없어 의심한 것이다. 그런데도 그 줄이 시스템 프롬프트의 새 규칙을 다시 보게 해 표식은 돌아왔다. 출력 토큰도 늘었다(대조 71 · ⓑ 1,410·471).
-- **확실한 길은 새 세션이다.** 새 세션은 새 규칙을 따랐다(러너 실연 — `docs/guides/live-smoke.md` 「Claude 러너(Phase 4 ③) 실연」 절 — 과 4.5 의 새 세션 런). 규칙이 바뀐 런은 시스템 프롬프트가 바뀌어 어차피 프롬프트 캐시를 처음부터 쓰므로(4.5) 새 세션의 캐시 대가는 크지 않다. 잃는 것은 채널 최근 대화 20개 인용 밖의 세션 이력(앞 도구 결과·긴 작업 문맥)이다.
+- **확실한 길은 새 세션이다.** 새 세션은 새 규칙을 따랐다(러너 실연 — `docs/superpowers/reports/2026-09-29-claude-runner-live-smoke-report.md` — 과 4.5 의 새 세션 런). 규칙이 바뀐 런은 시스템 프롬프트가 바뀌어 어차피 프롬프트 캐시를 처음부터 쓰므로(4.5) 새 세션의 캐시 대가는 크지 않다. 잃는 것은 채널 최근 대화 20개 인용 밖의 세션 이력(앞 도구 결과·긴 작업 문맥)이다.
 
 ### 10.2 설계에 주는 것
 

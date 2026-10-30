@@ -306,9 +306,9 @@ admin 이상이 만든 자동화(`docs/manual/user-guide.md` 「자동화 (admin
 
 - `to` 는 비워 두면 지금 채널이다.
 - `message` 는 카드 위의 본문이다. 비워도 되지만 카드가 무엇을 묻는지 한 줄 적어 둔다 — 다음 턴의 최근 대화에는 메시지 **글만** 실리고 카드 내용은 실리지 않는다.
-- **같은 채널로 `message` 툴을 쓴 런은 최종 텍스트 답이 채널에 올라가지 않을 수 있다** — Gateway 판에 따라 갈린다. OpenClaw 2026.9.4 는 그 답을 억제한다(`docs/adr/0002-channel-plugin-spike.md` 「`message` 툴 — `describeMessageTool` 과 `handleAction`」 절) — 오류가 나지 않아 사라진 줄도 모른다. 2026.9.5 는 억제하지 않아 최종 답이 **따로 한 메시지로** 올라온다(채널·스레드 모두 — `docs/guides/live-smoke.md` 「스레드(Phase 4 ①) 실연」 절). 어느 판이든 맞게: 카드와 함께 전할 말(설명·질문·다음 단계)은 `message` 본문에 다 적고, 최종 답은 짧은 한 줄로 둔다(9.5 에서는 그 줄도 채널에 보인다).
+- **같은 채널로 `message` 툴을 쓴 런은 최종 텍스트 답이 채널에 올라가지 않을 수 있다** — Gateway 판에 따라 갈린다. OpenClaw 2026.9.4 는 그 답을 억제한다(`docs/adr/0002-channel-plugin-spike.md` 「`message` 툴 — `describeMessageTool` 과 `handleAction`」 절) — 오류가 나지 않아 사라진 줄도 모른다. 2026.9.5 는 억제하지 않아 최종 답이 **따로 한 메시지로** 올라온다(채널·스레드 모두 — `docs/adr/0006-thread-sessions-spike.md`). 어느 판이든 맞게: 카드와 함께 전할 말(설명·질문·다음 단계)은 `message` 본문에 다 적고, 최종 답은 짧은 한 줄로 둔다(9.5 에서는 그 줄도 채널에 보인다).
 - 스키마를 어기면 툴 호출이 `components: v1 스키마 위반 — <경로> <사유>` 오류로 돌아온다(앞 다섯 개). 고쳐서 다시 보낸다.
-- **`ask_user` 를 쓰지 않는다.** OpenClaw 의 `ask_user` 는 dodok 채널에서 선택지를 그리지 못하고 전달도 실패한다(`docs/guides/plan.md` 「이월」의 「결함 2(`ask_user`)」). 실측에서 모델은 「셀렉트로 물어봐 줘」 같은 요청에 `ask_user` 를 먼저 골랐다(`docs/guides/live-smoke.md` 「components v1(Phase 2 ②) 실물 확인」 절) — 붙여 넣을 블록이 이것을 막는다.
+- **`ask_user` 를 쓰지 않는다.** OpenClaw 의 `ask_user` 는 dodok 채널에서 선택지를 그리지 못하고 전달도 실패한다(`docs/guides/plan.md` 「이월 — 남은 문제」 절의 굵은 글 「결함 2(`ask_user`)의 뒷 두 층이 남았다」). 실측에서 모델은 「셀렉트로 물어봐 줘」 같은 요청에 `ask_user` 를 먼저 골랐다(`docs/superpowers/reports/2026-09-23-components-v1-live-smoke-report.md`) — 붙여 넣을 블록이 이것을 막는다.
 
 ### 카드의 모양과 제약
 
