@@ -33,7 +33,7 @@ export type MapItem = {
   error?: { code: ErrorCode; message: string };
 };
 
-// 로그인이 안 됐거나 풀린 CLI 가 내는 글. 표지가 있으면 PROVIDER_AUTH(카드 문구 「러너의 Claude 로그인을 확인하세요」)
+// 로그인이 안 됐거나 풀린 CLI 가 내는 글. 표지가 있으면 PROVIDER_AUTH(카드 문구 「러너의 Claude Code 로그인을 확인하세요」)
 const AUTH_FAILURE =
   /authentication[_ ]failed|not logged in|invalid api key|please run \/login|oauth token has expired|\b401\b/i;
 export const isAuthFailureText = (text: string): boolean => AUTH_FAILURE.test(text);
