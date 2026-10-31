@@ -34,7 +34,8 @@ const DESCRIPTION =
   "working directory, and optional text. Your final answer is posted to the channel automatically — use this " +
   "tool for cards and files, not to repeat the answer. files are paths inside the working directory (at most " +
   "10, 20 MiB each). In components, point at a file sent in the same call with artifact://<file name> " +
-  "(percent-encode spaces).";
+  "(percent-encode spaces). A checkbox with required: true must be checked; select minValues ≤ maxValues ≤ " +
+  "options; placeholder non-empty.";
 
 // components 는 shared 스키마 그대로 — 모델이 보는 스키마와 서버가 받는 스키마가 갈라지지 않게
 export const PostInputSchema = z
