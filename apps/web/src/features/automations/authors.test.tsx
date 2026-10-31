@@ -108,6 +108,27 @@ describe("자동화 작성자", () => {
     expect(calls()).toBe(0);
   });
 
+  it("다른 곳에서 이름을 바꾸면 탭이 다시 보일 때 새 이름으로 — 자동화 글이 보일 때만 다시 받는다", async () => {
+    let list = [MORNING];
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => json(200, list));
+    vi.stubGlobal("fetch", fetch);
+    const qc = authorsClient();
+    qc.setQueryData<AutomationSummary[]>(qk.automations, [MORNING]);
+    renderWithClient(<MessageItem message={byAutomation(MORNING.id)} head />, qc);
+    expect(article().getByText("⚙ 자동화 · 아침 점검")).toBeInTheDocument();
+    expect(fetch).not.toHaveBeenCalled();
+
+    list = [{ ...MORNING, name: "저녁 점검" }];
+    const visibility = vi.spyOn(document, "visibilityState", "get");
+    visibility.mockReturnValue("hidden");
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(fetch).not.toHaveBeenCalled();
+    visibility.mockReturnValue("visible");
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(await article().findByText("⚙ 자동화 · 저녁 점검")).toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
   it("자동화 글에도 반응을 단다 — 「반응 추가」가 있다", () => {
     stubList([MORNING]);
     renderWithClient(<MessageItem message={byAutomation(MORNING.id)} head />);
