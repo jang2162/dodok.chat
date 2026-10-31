@@ -12,6 +12,7 @@ import {
 } from "./timeline";
 
 const TIME = new Intl.DateTimeFormat("ko-KR", { hour: "2-digit", minute: "2-digit" });
+const FROZEN_HINT = "멈춤 — 끝난 시각을 모릅니다";
 
 /**
  * 채널의 런 목록(설계 5.2). 한 줄에 에이전트 핸들·상태 배지·시작 시각·소요.
@@ -83,7 +84,16 @@ export function RunList({
                 </Badge>
                 <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
                   {run.startedAt ? TIME.format(new Date(run.startedAt)) : "—"}
-                  {duration !== undefined && ` · ${Math.round(duration / 1000)}초`}
+                  {duration !== undefined &&
+                    (run.frozenAt === undefined ? (
+                      ` · ${Math.round(duration / 1000)}초`
+                    ) : (
+                      // 멈춘 자리값 — 끝난 시각을 몰라 빠진 것을 **안** 시각에서 멈췄다. 실제보다 길 수 있어 흐리게 두고 까닭을 단다
+                      <span data-frozen="true" title={FROZEN_HINT} className="opacity-60">
+                        {` · ${Math.round(duration / 1000)}초`}
+                        <span className="sr-only"> ({FROZEN_HINT})</span>
+                      </span>
+                    ))}
                 </span>
               </button>
             </li>

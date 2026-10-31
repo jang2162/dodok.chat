@@ -1333,3 +1333,35 @@ it("좁은 화면에서 Esc 로 시트를 닫으면 초점이 「채널 설정�
   const opener = within(header).getByRole("link", { name: "채널 설정" });
   await waitFor(() => expect(opener).toHaveFocus());
 });
+
+it("멈춘 자리값 줄의 소요는 흐리게 보이고 「멈춤」 까닭을 툴팁과 화면 읽기 글로 단다 — 흐르는 줄·끝난 줄은 그대로다", () => {
+  const NOW = Date.parse("2027-01-15T08:00:30.000Z");
+  // runState 는 스키마로 걸러 frozenAt 을 버린다 — 활동 줄의 덧칸은 따로 얹는다
+  const frozen: ActivityRun = {
+    ...runState({ id: RUN2, status: "awaiting_approval", startedAt: iso(NOW - 25_000) }),
+    frozenAt: iso(NOW - 5_000),
+  };
+  renderWithClient(
+    <RunList
+      runs={[frozen, runOf(RUN), runState({ id: uid(106), status: "tool", startedAt: iso(NOW - 3_000) })]}
+      selectedId={undefined}
+      onSelect={() => {}}
+      loading={false}
+      error={false}
+      onRetry={() => {}}
+      retrying={false}
+    />,
+  );
+  const row = (id: string) => document.querySelector<HTMLElement>(`[data-run-id="${id}"]`)!;
+  const mark = row(RUN2).querySelector<HTMLElement>('[data-frozen="true"]');
+  expect(mark).not.toBeNull();
+  expect(mark).toHaveAttribute("title", "멈춤 — 끝난 시각을 모릅니다");
+  expect(mark).toHaveClass("opacity-60");
+  expect(within(row(RUN2)).getByText("(멈춤 — 끝난 시각을 모릅니다)", { exact: false })).toHaveClass(
+    "sr-only",
+  );
+  expect(seconds(row(RUN2))).toBe(20);
+  // 끝난 줄과 아직 흐르는 줄에는 표식이 없다
+  expect(row(RUN).querySelector("[data-frozen]")).toBeNull();
+  expect(row(uid(106)).querySelector("[data-frozen]")).toBeNull();
+});
