@@ -1,7 +1,8 @@
 import { ComponentsV1 } from "@dodok/shared";
 import { describe, expect, it } from "vitest";
 import { iso, msg, uid, USER } from "../../../test/fixtures";
-import { DISABLED_REASON_TEXT, itemState, type StateInput } from "./state";
+import { DM_READ_ONLY_TEXT } from "@/features/dms/queries";
+import { DISABLED_REASON_TEXT, itemState, reasonText, type StateInput } from "./state";
 
 const FUTURE = Date.parse("2999-01-01T00:00:00.000Z");
 const CMP = ComponentsV1.parse({
@@ -20,6 +21,7 @@ const base: StateInput = {
   itemId: "ok",
   archived: false,
   closed: false,
+  dmReadOnly: null,
 };
 
 describe("itemState", () => {
@@ -38,6 +40,20 @@ describe("itemState", () => {
     });
     expect(itemState({ ...base, closed: true, archived: true }).reason).toBe("archived");
     expect(DISABLED_REASON_TEXT.closed).toBe("닫힌 세션입니다");
+  });
+  it("읽기 전용 DM 이면 dm_read_only — 보관·닫힘보다 뒤, 연결·만료보다 앞. 문구는 작성기 자리 사유 줄과 같다", () => {
+    const s = itemState({ ...base, dmReadOnly: "agent_archived", connected: false, expired: true });
+    expect(s).toEqual({ disabled: true, reason: "dm_read_only", dmReason: "agent_archived" });
+    expect(reasonText(s)).toBe(DM_READ_ONLY_TEXT.agent_archived);
+    expect(reasonText(itemState({ ...base, dmReadOnly: "agent_disabled" }))).toBe(
+      DM_READ_ONLY_TEXT.agent_disabled,
+    );
+    expect(itemState({ ...base, dmReadOnly: "dm_not_allowed", archived: true }).reason).toBe("archived");
+    expect(itemState({ ...base, dmReadOnly: "dm_not_allowed", closed: true }).reason).toBe("closed");
+  });
+  it("reasonText — 잠기지 않았으면 없고, 그 밖의 사유는 표의 문구", () => {
+    expect(reasonText(itemState(base))).toBeUndefined();
+    expect(reasonText(itemState({ ...base, expired: true }))).toBe(DISABLED_REASON_TEXT.expired);
   });
   it("만료되면 expired", () => expect(itemState({ ...base, expired: true }).reason).toBe("expired"));
   it("소비됐으면 consumed", () => {

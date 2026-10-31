@@ -37,6 +37,7 @@ export function SelectItem({ item, blockId, message, io, expired }: Props) {
     hasSocket: io.hasSocket,
     archived: io.archived,
     closed: io.closed,
+    dmReadOnly: io.dmReadOnly,
     meId,
     expired,
     busy: io.busy,

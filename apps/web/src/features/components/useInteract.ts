@@ -1,4 +1,4 @@
-import type { ErrorCode, Message } from "@dodok/shared";
+import type { DmReadOnlyReason, ErrorCode, Message } from "@dodok/shared";
 import { QueryClientContext } from "@tanstack/react-query";
 import { useCallback, useContext, useState } from "react";
 import { toast } from "sonner";
@@ -6,6 +6,7 @@ import { emitAck, useWireStatus, WireAckError } from "@/realtime/wire";
 import { AGENT_ARCHIVED_TEXT, CHANNEL_ARCHIVED_TEXT, CONVERSATION_CLOSED_TEXT } from "@/api/formErrors";
 import { qk } from "@/api/queries";
 import { refreshArchivedChannel, useChannelArchived } from "@/features/channels/archived";
+import { useDmView } from "@/features/dms/context";
 import { invalidateDms } from "@/features/dms/queries";
 import { useConversationClosed } from "@/features/conversations/closed";
 import { RATE_LIMITED_TEXT } from "@/features/messages/rateLimited";
@@ -74,6 +75,8 @@ export type Interact = {
   archived: boolean;
   /** 카드가 있는 세션이 닫혔다(세션 화면의 `ConversationClosedContext`) — 모든 항목이 비활성 */
   closed: boolean;
+  /** 카드가 있는 DM 이 읽기 전용이면 그 사유(채널 화면의 `DmViewContext`) — 모든 항목이 비활성. 채널·쓸 수 있는 DM 이면 null */
+  dmReadOnly: DmReadOnlyReason | null;
   /**
    * 초점을 옮길 결과 줄 — **내가 보내 성공한** 상호작용의 id(ack 의 interactionId). 카드가 그 줄을 그리면 옮기고 `focusDone`.
    * 다른 사람이 보낸 것·만료는 이 id 가 아니라 초점을 뺏지 않는다
@@ -104,6 +107,8 @@ export function useInteract(message: Message): Interact {
   const connected = useWireStatus((s) => s.status === "connected");
   const archived = useChannelArchived();
   const closed = useConversationClosed();
+  // 반응 칩(`ReactionChips`)이 반응을 잠그는 것과 같은 판정 — DM 목록을 아직 못 받았으면 null(잠그지 않는다)
+  const dmReadOnly = useDmView()?.readOnly ?? null;
   // 채널 화면 밖(카드만 그리는 테스트)에는 QueryClient 가 없다 — 그때는 409 뒤 채널을 다시 받지 않는다
   const qc = useContext(QueryClientContext);
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
@@ -170,6 +175,7 @@ export function useInteract(message: Message): Interact {
     hasSocket: socket !== undefined,
     archived,
     closed,
+    dmReadOnly,
     focusId,
     focusResult: setFocusId,
     focusDone,

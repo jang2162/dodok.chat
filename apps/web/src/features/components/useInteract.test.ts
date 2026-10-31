@@ -8,8 +8,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useWireStatus } from "@/realtime/wire";
 import { createFakeSocket, type FakeSocket } from "../../../test/fakeSocket";
 import { qk } from "@/api/queries";
-import { msg, uid } from "../../../test/fixtures";
+import { CH, msg, uid } from "../../../test/fixtures";
+import { DmViewContext } from "@/features/dms/context";
 import { RATE_LIMITED_TEXT } from "@/features/messages/rateLimited";
+import { channelOf } from "../../../test/shellApi";
 import { DISABLED_REASON_TEXT } from "./state";
 import { type Interact, interactErrorText, type SendResult, useInteract } from "./useInteract";
 
@@ -217,6 +219,26 @@ describe("useInteract — 읽기 전용 DM(409 DM_READ_ONLY)", () => {
     const r = await sendWith(hook, "ok", {});
     expect(r).toMatchObject({ ok: false, code: "DM_READ_ONLY" });
     expect(qc.getQueryState(qk.dms)?.isInvalidated).toBe(true);
+  });
+});
+
+describe("useInteract — 읽기 전용 DM 사유", () => {
+  it("DM 화면이 내려 준 읽기 전용 사유를 dmReadOnly 로 싣는다 — 채널·쓸 수 있는 DM 이면 null", () => {
+    expect(mount(MESSAGE).current.dmReadOnly).toBeNull();
+    const dm =
+      (readOnly: "agent_disabled" | null) =>
+      ({ children }: { children: ReactNode }) =>
+        createElement(
+          DmViewContext.Provider,
+          { value: { channel: channelOf(CH, { kind: "dm" }), readOnly } },
+          children,
+        );
+    expect(
+      renderHook(() => useInteract(MESSAGE), { wrapper: dm("agent_disabled") }).result.current.dmReadOnly,
+    ).toBe("agent_disabled");
+    expect(
+      renderHook(() => useInteract(MESSAGE), { wrapper: dm(null) }).result.current.dmReadOnly,
+    ).toBeNull();
   });
 });
 

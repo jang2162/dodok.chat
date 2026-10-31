@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { DISABLED_REASON_TEXT, type ItemState } from "./state";
+import { type ItemState, reasonText } from "./state";
 
 /**
  * 비활성 사유를 회색으로만 두지 않고 **보이는 글**로 말한다(스펙 5.7) — 버튼·셀렉트·모달이 함께 쓴다.
@@ -34,6 +34,7 @@ export function ReasonHint({ id, text, subject }: { id: string; text: string; su
 }
 
 export function DisabledHint({ state, id }: { state: ItemState; id: string }) {
-  if (!state.reason) return null;
-  return <ReasonHint id={id} text={DISABLED_REASON_TEXT[state.reason]} />;
+  const text = reasonText(state);
+  if (!text) return null;
+  return <ReasonHint id={id} text={text} />;
 }
