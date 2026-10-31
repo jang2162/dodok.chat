@@ -140,6 +140,8 @@ export function WireProvider({
  * `pagehide`(탭 닫기·다른 주소로 이동)에서는 지난번과 같아도 「안 보임」을 보낸다 — 끊기기 직전 마지막 값이 되게.
  * 이때 `visibilityState` 는 아직 "visible" 이라 값을 덮어 쓴다. Chromium 은 pagehide 뒤 소켓이 살아 있는 동안
  * `visibilitychange` hidden 도 와서 측정상 결과가 같다(p4-c1) — 언로드 때 그것이 오지 않는 엔진 대비다.
+ * 그 대칭으로 뒤로 가기 캐시에서 돌아온 탭(`pageshow` persisted)은 지금 값을 늘 보낸다 — pagehide 가 남긴 「안 보임」을
+ * 재연결 강제 전송이나 `visibilitychange` 가 덮을 때까지 기다리지 않게. 첫 로드의 pageshow(persisted 아님)는 연결이 맡는다.
  * 채널·세션 id 는 uuid 일 때만 싣는다 — 서버 스키마가 거르는 값을 보내지 않게(새 세션 창의 `new` 는 싣지 않는다)
  */
 function attachPresence(socket: WireSocket, notify: AppNotifyTarget): () => void {
@@ -167,14 +169,19 @@ function attachPresence(socket: WireSocket, notify: AppNotifyTarget): () => void
   const onConnect = () => send(true);
   const onChange = () => send(false);
   const onPageHide = () => send(true, true);
+  const onPageShow = (e: PageTransitionEvent) => {
+    if (e.persisted) send(true);
+  };
   socket.on("connect", onConnect);
   document.addEventListener("visibilitychange", onChange);
   window.addEventListener("pagehide", onPageHide);
+  window.addEventListener("pageshow", onPageShow);
   const unwatch = notify.onLocationChange?.(onChange);
   return () => {
     socket.off("connect", onConnect);
     document.removeEventListener("visibilitychange", onChange);
     window.removeEventListener("pagehide", onPageHide);
+    window.removeEventListener("pageshow", onPageShow);
     unwatch?.();
   };
 }
