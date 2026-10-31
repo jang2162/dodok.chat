@@ -70,7 +70,9 @@ describe("GET /api/v1/search (스펙 5.2)", () => {
     const q = `q=${encodeURIComponent("점검 알림")}`;
     expect(await ids(`${q}&authorType=automation`)).toEqual([auto.id]);
     expect(await ids(`${q}&authorType=user`)).toEqual([mine.id]);
-    expect((await ids(q)).toSorted()).toEqual([mine.id, auto.id].toSorted());
+    const all = await ids(q);
+    expect(all).toHaveLength(2);
+    expect(new Set(all)).toEqual(new Set([mine.id, auto.id]));
   });
 
   it("q 앞뒤 공백은 걷는다", async () => {
