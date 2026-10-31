@@ -138,6 +138,17 @@ describe("상태 다섯(스펙 6장)", () => {
     expect(within(panel).queryByRole("alert")).not.toBeInTheDocument();
   });
 
+  it("켜기에서 권한 물음을 그냥 닫으면(default 그대로) 「알림 권한을 허용해야 켤 수 있습니다」가 보이고 켜기 버튼이 남는다", async () => {
+    push = stubPush({ permission: "default" });
+    push.notification.answer("default");
+    const panel = renderPanel();
+    await userEvent.click(await within(panel).findByRole("button", { name: "푸시 알림 켜기" }));
+
+    expect(await within(panel).findByRole("alert")).toHaveTextContent("알림 권한을 허용해야 켤 수 있습니다");
+    expect(within(panel).getByRole("button", { name: "푸시 알림 켜기" })).toBeEnabled();
+    expect(pushStub.current).toBeNull();
+  });
+
   it("끄는 동안 「끄기」는 비활성이고 진행 글이 보인다", async () => {
     const sub = fakeSubscription();
     push = stubPush({ permission: "granted", subscription: sub });
