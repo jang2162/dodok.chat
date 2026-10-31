@@ -939,6 +939,7 @@ api POST /api/v1/channels/$CH/members '{"memberType":"agent","memberId":"<에이
 - 러너 표준 오류에 **런마다** SDK 경고 `[CLAUDE_SDK_CAN_USE_TOOL_SHADOWED] canUseTool will not be invoked for: …`(`mcp__dodok__post` 와 제어 도구를 늘어놓는 한 줄)가 찍힌다 — 의도한 미리 허용이라 해롭지 않다.
 - 러너를 `SIGTERM`(또는 `Ctrl+C`)으로 끄면 도는 런을 멈추고 끝난다 — 그 런은 `ADAPTER_UNAVAILABLE` 카드와 「다시 실행」으로 닫힌다(`docs/guides/docker-deploy.md` 「러너 설치」 절의 「끄기」).
 - hello 의 프로그램 `auth` 는 로그인 디렉터리(`configDir`)가 있는지만 본다(자격 증명을 읽지 않는다) — 스크래치 `cfg/` 면 「로그인 모름」(`unknown`)이 정상이다.
+- 런의 세션이 어느 길로 열렸는지는 러너 로그 `dodok-runner: 런 <runId> 세션 resume`·`… 세션 새로 열기`(전사 확인이 실패했으면 `… 세션 새로 열기(전사 확인 실패)`)로 본다. CLI 가 「이미 있는 세션」으로 거절해 다시 열었으면 `… 이미 있는 세션이라 resume 으로 다시 엽니다` 가 함께 남는다. 이 줄을 러너 로거로 잇는 연결(`packages/claude-runner/src/main.ts` 의 `logger`)은 시험이 잡지 않으니 하네스·실연 때 그 줄이 나오는지 눈으로 본다.
 - 러너 전용 로그인(`~/.dodok-runner/claude`)·사람의 `~/.claude` 는 읽지도 쓰지도 않는다 — `HOME` 도 `configDir` 도 스크래치다. 가짜 키라 CLI 의 `apiKeySource` 는 `ANTHROPIC_API_KEY` 이고 런 비용은 `costKind: "api"` 로 온다.
 - **정리** — 러너(SIGTERM)·가짜 API·서버를 자기 PID 로 내리고 포트 LISTEN 0, 남은 `claude.real`·`dodok-runner`·`fake-messages-api` 프로세스 0 을 본다. 스크래치(러너 설치본·감싸개·`HOME`(토큰)·`cfg/`(세션 전사)·루트·요청 본문·로그)와 워크트리 `data/`(드라이버·세션)·`packages/claude-runner/dist` 를 지운다.
 
@@ -948,6 +949,7 @@ api POST /api/v1/channels/$CH/members '{"memberType":"agent","memberId":"<에이
 - **감싸개를 두지 않는다**(실제 API). 프로그램의 `configDir` 는 러너 전용 로그인 `~/.dodok-runner/claude`(`docs/guides/docker-deploy.md` 「러너 설치」 절의 로그인)이고, 러너 env 의 `HOME` 은 실제 홈이다(키체인 로그인을 찾게 — ADR 0007 「질문별」 인증).
 - OpenClaw 모델 런을 0 으로 지키려면 OpenClaw 쪽은 `dev:fake` 의 가짜 Gateway·에이전트로 둔다. 가짜 `dev` 는 부른 에이전트를 늘 되부르므로 채널 `relayPolicy.maxRelayTurns` 를 1 로 둬 러너 런이 더 생기지 않게 한다.
 - 운영 화면의 러너 런 비용(구독이면 「환산 포함」)을 같이 본다.
+- 런마다 러너 로그에 세션 길 줄(`dodok-runner: 런 <runId> 세션 resume|새로 열기`, 재시도면 `… 이미 있는 세션이라 resume 으로 다시 엽니다`)이 나오는지 본다(위 「절차 메모」 — 그 연결은 시험이 잡지 않는다).
 
 ### 모델 런으로만 재는 것
 
@@ -1075,7 +1077,7 @@ dev 는 모든 `openclaw` 에 `--dev` 를 붙이고 상태 디렉터리가 `~/.o
 1. 연결 페이지의 그 Gateway 카드 「브리지 토큰」 → 「새 토큰 발급」 → 라벨. 대화상자의 「설정 복사」로 `pluginConfig` 조각을 복사한다(원문은 이때 한 번만 보인다).
 2. Gateway 호스트에서 조각을 **파일로** 저장한다 — `umask 077` 인 셸에서 편집기로 붙여 넣는다. 셸 인자·`echo` 로 넘기지 않는다(`ps`·셸 기록에 남는다).
 3. `openclaw config patch --file <파일> && rm <파일>`. 조각에는 `bridgeUrl` 도 들어 있다 — 서버의 `BRIDGE_PUBLIC_URL`(없으면 `APP_ORIGIN` 에서 만든 값)이 그 Gateway 가 서버에 닿는 주소와 다르면 조각 그대로 넣으면 안 된다. 2026.9.5 는 Gateway 재기동 없이 dodok 채널만 다시 띄운다(`Change will apply without restarting the gateway.`) — 브리지가 한 번 끊겼다가 새 토큰으로 곧 붙는다. 출력이 재기동 없이 적용된다고 말하지 않으면 Gateway 를 재기동한다.
-4. 연결 페이지에서 새 토큰 줄에 「지금 접속 중」이 뜨는 것을 본다. 서버 로그로는 가를 수 없다(`"bridge plugin hello"` 에 tokenId 가 없다) — 화면이나 `GET /api/v1/setup/status` 의 `gateways[].bridge.plugin.tokenId` 로 본다.
+4. 연결 페이지에서 새 토큰 줄에 「지금 접속 중」이 뜨는 것을 본다. 서버 로그 `"bridge plugin hello"` 의 `tokenId` 가 새 토큰 id 인지 본다(화면이나 `GET /api/v1/setup/status` 의 `gateways[].bridge.plugin.tokenId` 로도 본다).
 5. 옛 토큰 줄 「폐기」. 지금 연결은 끊기지 않는다. 옛 토큰으로 붙는 것은 그 뒤로 `UNAUTHORIZED` 다.
 
 ---
