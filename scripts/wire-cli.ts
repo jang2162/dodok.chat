@@ -30,9 +30,10 @@ const USAGE = `사용: pnpm wire-cli <origin> [localToken] <명령> …   (local
                                                    그 Gateway 에 에이전트가 없으면 POST /agents, 있으면 재사용 → POST members
                                                    (gatewayId 를 빼면 Gateway 가 하나일 때 그것)
   patch-channel <channelId> <json>                 PATCH /channels/:id
-  send <channelId> <text> [--conversation <id> | --new-session] [--watch-ms 60000]
+  send <channelId> <text> [--conversation <id> | --new-session] [--thread <rootId>] [--watch-ms 60000]
                                                    구독 → message.send → 서버 이벤트를 시간표로
-                                                   (세션을 안 주면 그 채널의 최근 열린 세션, 없으면 새 세션)
+                                                   (세션을 안 주면 그 채널의 최근 열린 세션, 없으면 새 세션.
+                                                   --thread 면 그 루트의 스레드 답글 — 세션은 루트의 세션이어야 한다)
   interact <channelId> <messageId> <itemId> [--conversation <id>] [--watch-ms 60000]
                                                    component.interact ack → 이벤트 시간표
                                                    (메시지는 그 세션의 최근 200개에서 — 안 주면 최근 열린 세션)
@@ -76,6 +77,8 @@ type Args = {
   conversationId: string | undefined;
   /** --new-session — send 가 새 세션을 만든다 */
   newSession: boolean;
+  /** --thread — send 가 그 루트의 스레드 답글로 보낸다(threadRootId) */
+  threadRootId: string | undefined;
 };
 
 function parseArgs(argv: string[]): Args {
@@ -83,6 +86,7 @@ function parseArgs(argv: string[]): Args {
   let watchMs = DEFAULT_WATCH_MS;
   let conversationId: string | undefined;
   let newSession = false;
+  let threadRootId: string | undefined;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i] as string;
     if (arg === "--watch-ms") {
@@ -92,11 +96,16 @@ function parseArgs(argv: string[]): Args {
     } else if (arg === "--conversation") {
       conversationId = argv[++i];
       if (!conversationId) fail("USAGE", "--conversation 에는 세션 id 가 필요하다");
+    } else if (arg === "--thread") {
+      threadRootId = argv[++i];
+      if (!threadRootId) fail("USAGE", "--thread 에는 루트 메시지 id 가 필요하다");
     } else if (arg === "--new-session") newSession = true;
     else positional.push(arg);
   }
   if (conversationId !== undefined && newSession)
     fail("USAGE", "--conversation 과 --new-session 은 함께 쓸 수 없다");
+  // 새 세션에는 루트가 있을 수 없다 — 서버가 VALIDATION 으로 거절하기 전에 막는다
+  if (threadRootId !== undefined && newSession) fail("USAGE", "--thread 와 --new-session 은 함께 쓸 수 없다");
   const [origin, second, ...others] = positional;
   if (!origin || !second) fail("USAGE", "origin 과 명령이 필요하다");
   // 토큰은 16자 이상이라 명령 이름과 겹치지 않는다
@@ -111,6 +120,7 @@ function parseArgs(argv: string[]): Args {
     watchMs,
     conversationId,
     newSession,
+    threadRootId,
   };
 }
 
@@ -523,12 +533,14 @@ async function run(args: Args): Promise<void> {
       const conversationId = args.newSession
         ? undefined
         : (args.conversationId ?? (await latestConversation(origin, token, channelId)));
-      timeline.line("message.send", `emit ${clip(text)} → ${conversationId ?? "새 세션"}`);
+      const thread = args.threadRootId === undefined ? "" : ` thread=${args.threadRootId}`;
+      timeline.line("message.send", `emit ${clip(text)} → ${conversationId ?? "새 세션"}${thread}`);
       const data = (await emitAck(socket, "message.send", {
         channelId,
         clientMsgId: randomUUID(),
         bodyMd: text,
         ...(conversationId === undefined ? { newConversation: {} } : { conversationId }),
+        ...(args.threadRootId === undefined ? {} : { threadRootId: args.threadRootId }),
       })) as Json;
       const m = data["message"] as Json;
       timeline.line("message.send", `ack id=${m["id"]} seq=${m["seq"]} conversation=${m["conversationId"]}`);

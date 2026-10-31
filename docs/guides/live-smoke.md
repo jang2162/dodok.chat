@@ -216,7 +216,7 @@ oc --dev plugins inspect dodok --json | jq .plugin.status     # 여전히 "loade
 | `watch <channelId> [--watch-ms 60000]` | 구독만 하고 이벤트(재접속 때 `adapter.status` 관찰용) |
 | `runs <channelId>` | `GET /channels/:id/runs` 를 한 줄씩(상태·트리거·depth·providerRunId·error·usage·시각) |
 
-- **`wire-cli` 는 스레드를 모른다.** `send` 는 `threadRootId` 를 싣지 못하고, `interact` 는 세션 최상위 200개에서만 메시지를 찾아 스레드 안 카드를 못 누른다. 스레드를 재려면 `scripts/wire-cli.ts` 를 `data/`(ignored)에 복사해 고쳐 쓰거나(env 로 루트 id 를 받아 `message.send` 에 `threadRootId` 를 싣고 `interact` 는 `/channels/:id/threads/:rootId/messages` 에서 찾게), 「재는 것별 메모」의 사람 쪽 드라이버를 쓴다 — 고친 사본은 커밋하지 않고 끝나면 지운다.
+- **`wire-cli` 의 스레드는 보내기만이다.** `send … --thread <rootId>` 는 그 루트의 스레드 답글로 보낸다(세션은 루트의 세션이어야 한다 — 최근 열린 세션이 아니면 `--conversation` 으로 준다). `interact` 는 세션 최상위 200개에서만 메시지를 찾아 스레드 안 카드를 못 누른다. 스레드 안 카드를 누르려면 `scripts/wire-cli.ts` 를 `data/`(ignored)에 복사해 고쳐 쓰거나(`interact` 가 `/channels/:id/threads/:rootId/messages` 에서 찾게), 「재는 것별 메모」의 사람 쪽 드라이버를 쓴다 — 고친 사본은 커밋하지 않고 끝나면 지운다.
 - `--conversation <id>` 를 셸 함수에서 한 인자로 묶어 넘기면(`"--conversation $CV"`) 무시되고 「열린 첫 세션」으로 간다 — 두 인자로 넘긴다. 보낸 세션은 ack 줄의 `conversation=` 으로 확인한다.
 - `W send` 두 개를 같이 띄우면 두 연결이 같은 채널을 구독해 **양쪽 시간표에 두 런이 다 찍힌다** — 판정은 `runs` 의 `startedAt`·`endedAt` 으로 한다.
 시간표 형식: 첫 줄 `# t0 <ISO> (epoch <ms>)` — 서버 pino `time`(epoch ms)·Gateway 로그 시각과 맞춰 볼 때 쓴다. `TEXT_MESSAGE_CONTENT` 는 런별 첫 델타만 바로 찍고,
