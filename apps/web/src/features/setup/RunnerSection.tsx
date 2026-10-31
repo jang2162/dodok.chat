@@ -14,14 +14,20 @@ import { RunnerTokenList } from "./RunnerTokenList";
 import { CopyBlock, Section } from "./sections";
 
 /** 러너 tgz 를 만드는 명령 — 서버에 파일이 없을 때 */
-export const RUNNER_PACK_COMMAND = "pnpm -F @dodok/claude-runner run pack:runner";
+export const RUNNER_PACK_COMMAND = "pnpm -F @dodok/runner run pack:runner";
 /** 러너 전용 로그인(러너 스펙 5장 설치 안내) — 사람의 `~/.claude` 와 섞지 않는다 */
 export const RUNNER_LOGIN_COMMAND = `CLAUDE_CONFIG_DIR=${RUNNER_CLAUDE_DIR} claude`;
 /**
  * `claude` 가 PATH 에 없을 때 — 러너가 품은 번들 CLI 로 같은 로그인(docker-deploy.md 「러너 설치」와 같은 명령).
  * 플랫폼별 패키지 디렉터리 이름은 SDK 판에 따라 다를 수 있다 — 그 문서가 확인하는 법을 적는다
  */
-export const RUNNER_LOGIN_BUNDLED_COMMAND = `CLAUDE_CONFIG_DIR=${RUNNER_CLAUDE_DIR} "$(npm root -g)/@dodok/claude-runner/node_modules/@anthropic-ai/claude-agent-sdk-$(node -p 'process.platform+"-"+process.arch')/claude"`;
+export const RUNNER_LOGIN_BUNDLED_COMMAND = `CLAUDE_CONFIG_DIR=${RUNNER_CLAUDE_DIR} "$(npm root -g)/@dodok/runner/node_modules/@anthropic-ai/claude-agent-sdk-$(node -p 'process.platform+"-"+process.arch')/claude"`;
+/**
+ * 받은 tgz 설치 명령. 앞의 uninstall 은 패키지 이름이 `@dodok/claude-runner` → `@dodok/runner` 로 바뀌기 전 설치본을 걷는다 —
+ * 남아 있으면 bin `dodok-runner` 가 겹쳐 설치가 EEXIST 로 실패한다. 없으면 그대로 지나가고(`;`), 옛 판이 남은 머신이 사라지면 걷는다
+ */
+export const runnerInstallCommand = (fileName: string) =>
+  `npm uninstall -g @dodok/claude-runner; npm install -g ./${fileName}`;
 /** 러너 토큰 파일의 권장 자리 — 서버 RUNNER_TOKEN_FILE 과 같다 */
 const RUNNER_TOKEN_FILE = "~/.dodok-runner/token";
 
@@ -87,7 +93,7 @@ function InstallSteps({ status }: { status: SetupStatus }) {
                   </p>
                 )}
               </div>
-              <CopyBlock text={`npm install -g ./${fileName}`} label="설치 명령 복사" />
+              <CopyBlock text={runnerInstallCommand(fileName)} label="설치 명령 복사" />
             </>
           ) : (
             <>

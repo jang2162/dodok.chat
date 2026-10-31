@@ -320,18 +320,15 @@ describe("renderLlmsTxt — 안내서 명령이 기대는 것", () => {
   it("러너 2·3번 — npm root -g 를 쓰지 않고(npm 11.19 가 경로를 가려 찍는다) 설치된 dodok-runner 링크를 풀어 패키지 디렉터리를 찾는다", () => {
     expect(runner).not.toContain("npm root -g");
     expect(readFileSync(join(ROOT, "docs/guides/docker-deploy.md"), "utf8")).not.toContain("npm root -g");
-    // npm -g 설치와 같은 꼴: <prefix>/bin/dodok-runner → ../lib/node_modules/@dodok/claude-runner/dist/main.js
+    // npm -g 설치와 같은 꼴: <prefix>/bin/dodok-runner → ../lib/node_modules/@dodok/runner/dist/main.js
     const prefix = mkdtempSync(join(tmpdir(), "dodok-llms-prefix-"));
     try {
-      const pkgDir = join(prefix, "lib", "node_modules", "@dodok", "claude-runner");
+      const pkgDir = join(prefix, "lib", "node_modules", "@dodok", "runner");
       mkdirSync(join(pkgDir, "dist"), { recursive: true });
       // 실행 권한이 없으면 command -v 가 건너뛰고 PATH 뒤쪽의 다른 설치를 고른다
       writeFileSync(join(pkgDir, "dist", "main.js"), "#!/usr/bin/env node\n", { mode: 0o755 });
       mkdirSync(join(prefix, "bin"));
-      symlinkSync(
-        "../lib/node_modules/@dodok/claude-runner/dist/main.js",
-        join(prefix, "bin", "dodok-runner"),
-      );
+      symlinkSync("../lib/node_modules/@dodok/runner/dist/main.js", join(prefix, "bin", "dodok-runner"));
       const res = spawnSync("bash", ["-c", `printf '%s' "${RUNNER_PKG_DIR}"`], {
         encoding: "utf8",
         env: { PATH: `${join(prefix, "bin")}:${dirname(process.execPath)}:/usr/bin:/bin` },
@@ -400,13 +397,15 @@ describe("renderLlmsTxt — 안내서 명령이 기대는 것", () => {
         '[ "$1 $2" = "plugins install" ] && { [ -f "$3" ] && printf "install %s\\n" "$3" >> "$LOG"; }',
         "exit 0",
       ]);
+      // uninstall 은 실패로 끝낸다 — 옛 패키지가 없거나 npm 이 거절해도 설치가 이어지는지 본다
       fake(bin, "npm", [
+        '[ "$1 $2" = "uninstall -g" ] && { printf "uninstall %s\\n" "$3" >> "$LOG"; exit 1; }',
         '[ "$1 $2" = "install -g" ] && [ -f "$3" ] && printf "install %s\\n" "$3" >> "$LOG"',
       ]);
-      const pkgDir = join(root, "lib", "node_modules", "@dodok", "claude-runner");
+      const pkgDir = join(root, "lib", "node_modules", "@dodok", "runner");
       mkdirSync(join(pkgDir, "dist"), { recursive: true });
       writeFileSync(join(pkgDir, "dist", "main.js"), "", { mode: 0o755 });
-      symlinkSync("../lib/node_modules/@dodok/claude-runner/dist/main.js", join(bin, "dodok-runner"));
+      symlinkSync("../lib/node_modules/@dodok/runner/dist/main.js", join(bin, "dodok-runner"));
       mkdirSync(join(root, "home", ".dodok-runner"), { recursive: true });
       writeFileSync(join(root, "home", ".dodok-bridge-token"), "dbt_secret\n", { mode: 0o600 });
       writeFileSync(join(root, "home", ".dodok-runner", "token"), "drn_secret\n", { mode: 0o600 });
@@ -481,15 +480,16 @@ describe("renderLlmsTxt — 안내서 명령이 기대는 것", () => {
       }
     });
 
-    it("러너 2번 — 받은 파일을 설치한 뒤 지우고, 번들 sha 는 설치된 패키지에서 잰다", () => {
+    it("러너 2번 — 옛 이름을 걷고(실패해도 잇는다) 받은 파일을 설치한 뒤 지우고, 번들 sha 는 설치된 패키지에서 잰다", () => {
       const { bin, pkgDir } = setup();
       try {
         const res = run(bin, blockWith(bashBlocks(runner), "setup/runner.tgz"));
         expect(res.status, res.stderr).toBe(0);
-        const [got = "", sum = "", install = "", bundle = ""] = logLines();
+        const [got = "", sum = "", uninstall = "", install = "", bundle = ""] = logLines();
         const file = got.replace(/^curl /, "");
         expect(file.startsWith(`${tmp}/`), file).toBe(true);
         expect(sum).toBe(`shasum ${file}`);
+        expect(uninstall).toBe("uninstall @dodok/claude-runner");
         expect(install).toBe(`install ${file}`);
         expect(bundle).toBe(`shasum ${realpathSync(pkgDir)}/dist/main.js`);
         expect(readdirSync(tmp)).toEqual([]);

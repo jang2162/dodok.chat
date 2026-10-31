@@ -632,7 +632,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       logger.info("plugin file not found — build it with pnpm -F @dodok/openclaw-plugin run pack:plugin");
     const runnerFile = readRunnerFile(deps.runnerDirs ?? runnerDirCandidates(config));
     if (!runnerFile)
-      logger.info("runner file not found — build it with pnpm -F @dodok/claude-runner run pack:runner");
+      logger.info("runner file not found — build it with pnpm -F @dodok/runner run pack:runner");
     const publicUrl = bridgePublicUrl(config);
     const runnerDetail = () => {
       const detail = registry.forProvider("runner")?.setupDetail();

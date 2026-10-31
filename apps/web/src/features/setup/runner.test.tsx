@@ -317,6 +317,10 @@ describe("러너 설치 안내", () => {
     expect(block).toHaveTextContent("dodok-runner");
     expect(block).toHaveTextContent("~/.dodok-runner/config.json");
     expect(block).toHaveTextContent(SHA_FILE);
+    // 옛 이름(@dodok/claude-runner)을 먼저 걷고 받은 파일 이름 그대로 설치한다 — 앞줄이 실패해도 설치가 이어지게 `;`
+    expect(block).toHaveTextContent(
+      "npm uninstall -g @dodok/claude-runner; npm install -g ./dodok-claude-runner-ffffffffffff.tgz",
+    );
     await userEvent.click(button);
     await waitFor(() => expect(clicks).toEqual(["dodok-claude-runner-ffffffffffff.tgz"]));
     expect(server.count("GET", "/api/v1/setup/runner.tgz")).toBe(1);
@@ -345,9 +349,7 @@ describe("러너 설치 안내", () => {
     stubSetupServer();
     renderConnection();
     const block = await runnerRegion();
-    expect(
-      await within(block).findByText("pnpm -F @dodok/claude-runner run pack:runner"),
-    ).toBeInTheDocument();
+    expect(await within(block).findByText("pnpm -F @dodok/runner run pack:runner")).toBeInTheDocument();
     expect(within(block).queryByRole("button", { name: "러너 받기" })).not.toBeInTheDocument();
   });
 });

@@ -36,7 +36,7 @@ describe("readRunnerFile", () => {
   it("러너 tgz — 파일 sha256·크기와 안의 package/dist/main.js sha256", () => {
     const bundle = Buffer.from("#!/usr/bin/env node\nconsole.log('runner');\n");
     const tgz = tgzOf([
-      ["package/package.json", Buffer.from('{"name":"@dodok/claude-runner"}')],
+      ["package/package.json", Buffer.from('{"name":"@dodok/runner"}')],
       [RUNNER_BUNDLE_ENTRY, bundle],
     ]);
     writeFileSync(join(dir, "dodok-claude-runner-0.0.0.tgz"), tgz);

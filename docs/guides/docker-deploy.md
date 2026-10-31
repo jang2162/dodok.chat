@@ -405,14 +405,14 @@ bash scripts/check-deploy.sh app https://<도메인> "$(docker compose ps -q app
 
 ## 러너 설치
 
-러너(`@dodok/claude-runner`, 명령 `dodok-runner`)는 **사람의 머신에서** 에이전트를 돌려 dodok 채널에 붙인다 — 그 머신의 저장소를 작업 디렉터리로 쓰는 에이전트를 팀 채널에서 부르는 길이다. 지금 돌릴 수 있는 프로그램은 Claude Code 하나(Claude Agent SDK)다. OpenClaw Gateway 는 거치지 않는다. 러너는 **나가는 연결만** 쓴다 — Socket.IO `/runner` 네임스페이스(`/socket.io/`)와 첨부 HTTP `/runner/attachments` 둘 다 [A] 의 공개 도메인 443 으로 간다(둘 다 서버 라우트 — 프록시가 모든 경로를 앱에 넘기면 된다). 머신 쪽 포트는 열지 않는다.
+러너(`@dodok/runner`, 명령 `dodok-runner`)는 **사람의 머신에서** 에이전트를 돌려 dodok 채널에 붙인다 — 그 머신의 저장소를 작업 디렉터리로 쓰는 에이전트를 팀 채널에서 부르는 길이다. 지금 돌릴 수 있는 프로그램은 Claude Code 하나(Claude Agent SDK)다. OpenClaw Gateway 는 거치지 않는다. 러너는 **나가는 연결만** 쓴다 — Socket.IO `/runner` 네임스페이스(`/socket.io/`)와 첨부 HTTP `/runner/attachments` 둘 다 [A] 의 공개 도메인 443 으로 간다(둘 다 서버 라우트 — 프록시가 모든 경로를 앱에 넘기면 된다). 머신 쪽 포트는 열지 않는다.
 
 러너의 로컬 설정은 **천장**만 쥔다 — 에이전트가 돌 수 있는 디렉터리(루트)·켜 둘 프로그램·권한 상한. 그 루트 안의 **프로젝트와 에이전트는 dodok 앱**(설정 → 「러너」·「에이전트」 탭, admin 이상)에서 더하고, 서버가 런마다 에이전트 정의를 실어 보내면 러너가 천장 안인지 보고 돌린다. 설계는 `docs/superpowers/specs/2026-10-25-runner-generalization-design.md`, 바뀌지 않은 러너 동작(승인·`post`·경로 가림·끊김)은 `docs/superpowers/specs/2026-09-27-claude-runner-design.md`(둘 다 구현과 달라진 것은 그 스펙의 「구현과 맞춘 것」 장).
 
 표기: **[R]** 러너를 돌릴 머신(macOS 또는 Linux, Node — 저장소가 재는 판은 24, npm 레지스트리에 닿는 네트워크), **[웹]** owner 로 연 연결 페이지(`/settings/connection`)의 「러너」 블록, **[웹·admin]** admin 이상으로 연 설정의 「러너」 탭(`/settings/runners`)·「에이전트」 탭.
 
 1. **[웹] 러너 토큰** — 「새 러너 토큰 발급」 → 라벨(머신 이름) → 원문 `drn_…` 이 **한 번만** 보인다(서버는 해시만 저장). [R] 에서 `~/.dodok-runner/token` 파일에 원문 한 줄로 두고 `chmod 600 ~/.dodok-runner/token`(0600 이 아니면 러너가 켤 때마다 경고한다). 대화상자 아래의 「러너 설정」 조각은 4번 설정 파일의 뼈대다 — 둘 다 복사한 뒤 「복사했습니다」로 닫는다. 토큰은 설정 파일 본문에 적지 않는다(적으면 러너가 설정 오류로 거절한다) — 파일 대신 env `DODOK_RUNNER_TOKEN` 으로 줘도 된다. env 로 줄 때는 설정 파일에서 `tokenFile` 키를 뺀다 — 키가 있으면 env 는 무시되고 파일을 못 읽으면 끝난다. 토큰 하나 = 러너 하나다.
-2. **[웹 → R] 받기·설치** — 「러너 받기」 → `dodok-claude-runner-<sha 12자>.tgz` 를 [R] 로 옮기고 `npm install -g ./dodok-claude-runner-<sha 12자>.tgz`. 서버 이미지가 같은 커밋의 러너를 품고 내려준다. 러너는 Claude Agent SDK 를 품지 않는다 — 설치할 때 npm 에서 SDK(과 플랫폼별 번들 CLI, 약 225 MB)·`socket.io-client`·`zod` 를 받는다.
+2. **[웹 → R] 받기·설치** — 「러너 받기」 → `dodok-claude-runner-<sha 12자>.tgz` 를 [R] 로 옮기고 `npm uninstall -g @dodok/claude-runner; npm install -g ./dodok-claude-runner-<sha 12자>.tgz`(연결 페이지의 「설치 명령 복사」가 같은 줄이다). 앞의 uninstall 은 패키지 이름이 `@dodok/runner` 로 바뀌기 전의 설치본을 걷는다 — 남아 있으면 같은 명령 `dodok-runner` 가 겹쳐 설치가 `EEXIST` 로 실패한다. 옛 설치본이 없으면 그대로 지나간다. 러너는 npm 패키지 `@dodok/runner` 로도 올라가지만(`docs/guides/runner-release.md`) 서버와 같은 빌드는 이 tgz 다. 서버 이미지가 같은 커밋의 러너를 품고 내려준다. 러너는 Claude Agent SDK 를 품지 않는다 — 설치할 때 npm 에서 SDK(과 플랫폼별 번들 CLI, 약 225 MB)·`socket.io-client`·`zod` 를 받는다.
 3. **[R] 러너 전용 로그인** — 러너는 평소 `~/.claude` 가 아니라 **러너 전용 디렉터리**(4번 `programs.claude.configDir`)의 로그인을 쓴다(세션·메모리·설정이 섞이지 않고, macOS 키체인 항목도 디렉터리마다 따로다 — ADR 0007 「함정」). `/login` 을 마치고 나온다.
    ```bash
    CLAUDE_CONFIG_DIR=~/.dodok-runner/claude claude
@@ -477,7 +477,7 @@ bash scripts/check-deploy.sh app https://<도메인> "$(docker compose ps -q app
 
 **러너 폐기·옮기기** — 토큰 「폐기」는 그 러너를 닫는다 — 프로젝트·에이전트는 남지만 런은 `ADAPTER_UNAVAILABLE` 이다. 다른 머신으로 옮기려면 새 토큰으로 그 머신에 러너를 붙이고, 「러너」 탭의 그 프로젝트 「옮기기」(admin 이상)로 옮길 러너를 고른다 — 옮길 러너가 붙어 있고 **같은 루트 id·같은 상대 경로**에 디렉터리가 있어야 하며, 옮길 러너의 천장(프로그램·권한 상한·도구 상한) 밖인 에이전트가 하나라도 있으면 아무것도 옮기지 않는다. 그 프로젝트의 에이전트가 함께 옮겨 가고 다음 런은 새 세션이다(세션 전사는 옛 머신에 남는다).
 
-**업데이트** — 서버를 올리면(아래 「업데이트」) 새 이미지가 그 커밋의 러너 tgz 를 품는다. 연결 페이지의 토큰 줄이 「다른 빌드입니다 — 러너를 받아서 다시 설치하세요」면 2번 받기·설치를 다시 하고 러너를 다시 띄운다(`npm install -g` 가 같은 이름을 덮는다). 토큰·설정 파일·로그인은 그대로다. SDK 판본은 러너가 정확 핀으로 들고 오므로 [R] 에서 따로 올리지 않는다.
+**업데이트** — 서버를 올리면(아래 「업데이트」) 새 이미지가 그 커밋의 러너 tgz 를 품는다. 연결 페이지의 토큰 줄이 「다른 빌드입니다 — 러너를 받아서 다시 설치하세요」면 2번 받기·설치를 다시 하고 러너를 다시 띄운다(`npm install -g` 가 같은 이름을 덮는다 — 이름이 `@dodok/runner` 로 바뀌기 전 판을 깔아 둔 머신은 2번의 `npm uninstall -g @dodok/claude-runner` 를 먼저 한다). 토큰·설정 파일·로그인은 그대로다. SDK 판본은 러너가 정확 핀으로 들고 오므로 [R] 에서 따로 올리지 않는다.
 
 ## 멤버 초대·비밀번호 재설정·비활성화
 

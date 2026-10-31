@@ -150,7 +150,7 @@ EOF
 - `BRIDGE_PUBLIC_URL` 은 발급 조각의 `bridgeUrl` 이 된다 — 비우면 `APP_ORIGIN`(웹 5173)에서 만들어져, (e) 에서 조각을 patch 하면 플러그인이 Vite 포트로 붙으려다 실패한다.
 - 첫 부팅 로그에 `"url":"http://127.0.0.1:<PORT>"` 와, Gateway 가 아직 없으면 `no OpenClaw gateway configured — add one in the connection page` 한 줄.
 - 디바이스 아이덴티티·디바이스 토큰은 Gateway 마다 `data/gateways/<Gateway id>/` 에 생긴다(`device.json`, Gateway 가 디바이스 토큰을 내주면 `device-tokens.json`) — 환경 변수로 옮기지 않는다. dev Gateway 와 원격 Gateway 는 서로 다른 Gateway 행이라 페어링이 섞이지 않는다. 실연 DB 를 새로 만들면 Gateway 행도 새로 생기므로 그 Gateway 와 처음부터 다시 페어링한다.
-- 스크래치 `DATA_DIR` 로 서버를 새로 띄울 때(사람의 `data/`·`.env` 를 건드리지 않을 때)는 소스 실행 `node --import tsx src/main.ts`(`apps/server`)에 **설정 키를 전부 환경으로** 준다 — 빈 값은 「설정 안 함」이고 루트 `.env` 가 덮지 못한다. 로컬 로그인 토큰·`BETTER_AUTH_SECRET` 은 스크래치에서 새로 만든 0600 파일에서 읽는다. 러너를 붙일 거면 기동 전에 `pnpm -F @dodok/claude-runner pack:runner`, 서버가 내려줄 플러그인을 쓸 거면 `pnpm -F @dodok/openclaw-plugin run pack:plugin`.
+- 스크래치 `DATA_DIR` 로 서버를 새로 띄울 때(사람의 `data/`·`.env` 를 건드리지 않을 때)는 소스 실행 `node --import tsx src/main.ts`(`apps/server`)에 **설정 키를 전부 환경으로** 준다 — 빈 값은 「설정 안 함」이고 루트 `.env` 가 덮지 못한다. 로컬 로그인 토큰·`BETTER_AUTH_SECRET` 은 스크래치에서 새로 만든 0600 파일에서 읽는다. 러너를 붙일 거면 기동 전에 `pnpm -F @dodok/runner pack:runner`, 서버가 내려줄 플러그인을 쓸 거면 `pnpm -F @dodok/openclaw-plugin run pack:plugin`.
 
 ### (e) Gateway 추가·브리지 토큰·연결 확인
 
@@ -843,7 +843,7 @@ gw config patch --file $SP/base.patch.json5          # 위 「새 상태의 Gate
 
 | 항목 | 값 |
 | --- | --- |
-| 서버 | 기동 전에 `pnpm -F @dodok/claude-runner pack:runner` — 서버는 부팅 때 `packages/claude-runner/dist` 의 tgz 를 잰다. `PORT=<포트> APP_ORIGIN=http://localhost:<웹 포트> LOG_LEVEL=debug pnpm -F @dodok/server dev:fake`(웹은 띄우지 않아도 된다) — dev:fake 의 가짜 러너 둘은 `POST /__devfake/runner {"connected":false}`·`{"connected":false,"runner":"limited"}` 로 내린다. 또는 스크래치 `DATA_DIR` 의 소스 실행 서버(「절차」 절 (d) 끝 줄) |
+| 서버 | 기동 전에 `pnpm -F @dodok/runner pack:runner` — 서버는 부팅 때 `packages/claude-runner/dist` 의 tgz 를 잰다. `PORT=<포트> APP_ORIGIN=http://localhost:<웹 포트> LOG_LEVEL=debug pnpm -F @dodok/server dev:fake`(웹은 띄우지 않아도 된다) — dev:fake 의 가짜 러너 둘은 `POST /__devfake/runner {"connected":false}`·`{"connected":false,"runner":"limited"}` 로 내린다. 또는 스크래치 `DATA_DIR` 의 소스 실행 서버(「절차」 절 (d) 끝 줄) |
 | 러너 | owner 로 `POST /api/v1/setup/runner-tokens` → 원문은 스크래치 `home/.dodok-runner/token`(0600)에만, 응답의 토큰 id 가 러너 id 다 → `GET /api/v1/setup/runner.tgz` → `npm install -g --prefix <스크래치>/runner <받은 tgz>` → 아래 감싸개 → `env -i PATH=<스크래치>/runner/bin:<node bin>:/usr/bin:/bin HOME=<스크래치>/home LANG=en_US.UTF-8 TMPDIR=<스크래치>/tmp SHELL=/bin/bash USER=$USER dodok-runner --config <스크래치>/runner-config.json`. 첫 줄 `dodok-runner <판> · Claude Agent SDK <판> · Claude Code <판> · 루트 src(smoke-src) · 프로그램 claude · 동시 1` |
 | 러너 설정 | 아래 JSON. `serverUrl` 은 서버 오리진을 직접 적는다 — 발급 응답의 `runnerConfig.serverUrl` 은 공개 주소(`BRIDGE_PUBLIC_URL`)에서, 없으면 `APP_ORIGIN`(dev 에서는 웹 오리진)에서 만든다. `tokenFile` 은 스크래치 `HOME` 기준 |
 | 루트·작업 파일 | 루트 `<스크래치>/roots/src` 안에 `proj-a`(커밋 하나 있는 git 저장소)·`proj-b`(일반 디렉터리), 루트 밖 `<스크래치>/outside/elsewhere`. `proj-a` 안 `hx-out.txt`, 루트 밖 `<스크래치>/hx-outside.txt`, 사람 이미지 8×8 PNG |
@@ -865,7 +865,7 @@ gw config patch --file $SP/base.patch.json5          # 위 「새 상태의 Gate
 **번들 CLI 감싸개.** 러너의 env 허용 목록(`packages/claude-runner/src/drivers/claude/run.ts` 의 `ENV_ALLOWLIST`)은 `ANTHROPIC_*` 를 CLI 로 넘기지 않는다(ADR 0007 「함정」 — 러너 env 가 CLI 로 새지 않게). 그래서 가짜 API 주소는 러너가 아니라 **스크래치 설치본의 번들 CLI 자리**에 얹는다. SDK 는 `@anthropic-ai/claude-agent-sdk-<os>-<arch>/claude` 를 찾아 그대로 spawn 하므로, 진짜 바이너리를 `claude.real` 로 옮기고 그 자리에 셸 조각을 둔다 — **이 설치본의 CLI 는 로컬 주소 없이는 뜨지 않는다.** 기록 줄의 `cwd` 가 CLI 가 뜬 디렉터리다(합격 기준 1).
 
 ```sh
-B=<스크래치>/runner/lib/node_modules/@dodok/claude-runner/node_modules/@anthropic-ai/claude-agent-sdk-$(node -p 'process.platform+"-"+process.arch')
+B=<스크래치>/runner/lib/node_modules/@dodok/runner/node_modules/@anthropic-ai/claude-agent-sdk-$(node -p 'process.platform+"-"+process.arch')
 mv "$B/claude" "$B/claude.real"
 cat > "$B/claude" <<SH
 #!/bin/sh
