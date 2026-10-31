@@ -665,6 +665,7 @@ export async function createApp(config: ServerConfig, deps: AppDeps = {}): Promi
       // 파일은 부팅 때 한 번 잰다 — 본문도 그때 한 번(다시 빌드된 파일은 재시작해야 내려 주는 것과 같다)
       llmsTxt: renderLlmsTxt({
         origin: serverUrl,
+        webOrigin: config.APP_ORIGIN,
         bridgeUrl: publicUrl,
         plugin: pluginFile,
         runner: runnerFile,

@@ -15,8 +15,10 @@ import { RUNNER_TOKEN_FILE } from "../runners/routes";
 export type LlmsFileInfo = { sha256: string; bundleSha256: string };
 
 export type LlmsInput = {
-  /** 공개 오리진(`https://…`) — 설치 파일·연결 페이지·러너 serverUrl 이 이 위에 선다 */
+  /** 공개 오리진(`https://…`) — 설치 파일·러너 serverUrl 이 이 위에 선다 */
   origin: string;
+  /** 웹 오리진(APP_ORIGIN) — 사람이 확인할 연결 페이지 주소. 배포(한 오리진)는 origin 과 같고 dev 는 웹·서버가 갈린다 */
+  webOrigin: string;
   /** 플러그인 계정 설정의 bridgeUrl — 발급 대화상자의 플러그인 설정 조각과 같은 값 */
   bridgeUrl: string;
   plugin: LlmsFileInfo | null;
@@ -39,7 +41,7 @@ const download = (tokenFile: string, url: string, out: string) =>
   ].join("\n");
 
 function gatewaySection(input: LlmsInput, file: LlmsFileInfo): string {
-  const { origin, bridgeUrl } = input;
+  const { origin, webOrigin, bridgeUrl } = input;
   const out = "/tmp/dodok-openclaw-plugin.tgz";
   return `설치할 것: dodok OpenClaw 채널 플러그인. 이 호스트의 OpenClaw Gateway 안에서 돌며 dodok 서버로 나가는 연결 하나를 연다(호스트 쪽 포트는 열지 않는다).
 
@@ -88,7 +90,7 @@ function gatewaySection(input: LlmsInput, file: LlmsFileInfo): string {
    {"channels":{"dodok":{"accounts":{"default":{"bridgeUrl":"${bridgeUrl}","token":"<브리지 토큰>"}}}}}
    \`\`\`
 
-5. Gateway 를 올린다. 사람에게 dodok 연결 페이지(${origin}/settings/connection)의 그 Gateway 카드 「플러그인」이 「접속됨」이고 「서버와 같은 빌드입니다」인지 확인받는다. 카드에 기기 페어링 대기가 보이면 그 요청 id 를 사람에게 받아 승인한다.
+5. Gateway 를 올린다. 사람에게 dodok 연결 페이지(${webOrigin}/settings/connection)의 그 Gateway 카드 「플러그인」이 「접속됨」이고 「서버와 같은 빌드입니다」인지 확인받는다. 카드에 기기 페어링 대기가 보이면 그 요청 id 를 사람에게 받아 승인한다.
 
    \`\`\`bash
    openclaw devices approve <요청 id>

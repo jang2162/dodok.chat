@@ -202,11 +202,49 @@ describe("GET /llms.txt — 노드 설치 안내서", () => {
   });
 });
 
+describe("renderLlmsTxt — 웹·서버 오리진이 갈릴 때(dev)", () => {
+  it("연결 페이지 확인 주소만 웹 오리진이고, 설치 파일·serverUrl 은 공개 오리진 그대로", () => {
+    const file = { sha256: "a".repeat(64), bundleSha256: "b".repeat(64) };
+    const body = renderLlmsTxt({
+      origin: "http://localhost:3000",
+      webOrigin: "http://localhost:5173",
+      bridgeUrl: "ws://localhost:3000/bridge",
+      plugin: file,
+      runner: file,
+    });
+    const gateway = section(body, "OpenClaw Gateway 호스트");
+    expect(gateway).toContain("dodok 연결 페이지(http://localhost:5173/settings/connection)");
+    expect(gateway).not.toContain("http://localhost:3000/settings/connection");
+    expect(gateway).toContain("http://localhost:3000/api/v1/setup/plugin.tgz");
+    expect(section(body, "러너 머신")).toContain('"serverUrl": "http://localhost:3000"');
+  });
+});
+
+describe("GET /llms.txt — 앱이 웹 오리진(APP_ORIGIN)을 넘긴다", () => {
+  it("BRIDGE_PUBLIC_URL 로 서버가 갈려도 연결 페이지는 APP_ORIGIN 위", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "dodok-llms-web-"));
+    writeFileSync(join(dir, "dodok-openclaw-plugin-0.0.0.tgz"), tinyTgz(PLUGIN_BUNDLE_ENTRY, PLUGIN_BUNDLE));
+    const app = await bootTestApp(
+      { APP_ORIGIN: "http://localhost:5173", BRIDGE_PUBLIC_URL: "ws://localhost:3000/bridge" },
+      { pluginDirs: [dir], runnerDirs: [] },
+    );
+    try {
+      const body = (await app.fastify.inject({ method: "GET", url: "/llms.txt" })).body;
+      expect(body).toContain("dodok 연결 페이지(http://localhost:5173/settings/connection)");
+      expect(body).toContain("http://localhost:3000/api/v1/setup/plugin.tgz");
+    } finally {
+      await app.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("renderLlmsTxt — 파일이 없을 때", () => {
   it("파일이 없는 절은 「서버에 파일이 없습니다」, 있는 절은 sha 를 싣는다", () => {
     const file = { sha256: "a".repeat(64), bundleSha256: "b".repeat(64) };
     const noPlugin = renderLlmsTxt({
       origin: "https://x.example",
+      webOrigin: "https://x.example",
       bridgeUrl: "wss://x.example/bridge",
       plugin: null,
       runner: file,
@@ -218,6 +256,7 @@ describe("renderLlmsTxt — 파일이 없을 때", () => {
 
     const noRunner = renderLlmsTxt({
       origin: "https://x.example",
+      webOrigin: "https://x.example",
       bridgeUrl: "wss://x.example/bridge",
       plugin: file,
       runner: null,
@@ -232,6 +271,7 @@ const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 describe("renderLlmsTxt — 안내서 명령이 기대는 것", () => {
   const body = renderLlmsTxt({
     origin: "https://x.example",
+    webOrigin: "https://x.example",
     bridgeUrl: "wss://x.example/bridge",
     plugin: { sha256: "a".repeat(64), bundleSha256: "b".repeat(64) },
     runner: { sha256: "c".repeat(64), bundleSha256: "d".repeat(64) },
