@@ -89,6 +89,31 @@ describe("러너 에이전트 줄", () => {
   });
 });
 
+describe("러너 에이전트의 지시(basePrompt) — 만들 때와 같은 「지시」", () => {
+  it("줄의 칸 이름은 「지시」 — 편집 버튼·빈 값·편집 칸, 「전달되지 않음」 안내는 없다", async () => {
+    const server = stubServer({
+      agents: [makeAgent({ ...coder(), basePrompt: undefined })],
+      runners: routes(),
+    });
+    renderPage(
+      createQueryClient(() => {}),
+      "admin",
+    );
+    const row = (await screen.findByText("@coder")).closest("li") as HTMLElement;
+    expect(within(row).getByText("지시 없음")).toBeInTheDocument();
+    expect(row).not.toHaveTextContent("전달되지 않음");
+    expect(row).not.toHaveTextContent("메모");
+    await userEvent.click(within(row).getByRole("button", { name: "@coder 지시 편집" }));
+    const box = within(row).getByRole("textbox", { name: "@coder 지시" });
+    expect(within(row).getByText("지시", { selector: "label" })).toBeInTheDocument();
+    expect(box).not.toHaveAccessibleDescription(expect.stringContaining("전달되지 않음"));
+    await userEvent.type(box, "테스트부터");
+    await userEvent.click(within(row).getByRole("button", { name: "저장" }));
+    await waitFor(() => expect(server.bodies("PATCH")).toEqual([{ basePrompt: "테스트부터" }]));
+    expect(row).not.toHaveTextContent("기본 프롬프트");
+  });
+});
+
 describe("러너 에이전트 고치기 — 만들기와 같은 칸", () => {
   it("프로그램·프로젝트는 읽기만, 권한 모드는 붙은 러너의 상한까지", async () => {
     stubServer({ agents: [coder()], runners: routes("default") });

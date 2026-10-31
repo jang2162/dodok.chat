@@ -156,28 +156,31 @@ describe("목록", () => {
   });
 });
 
-describe("기본 프롬프트", () => {
+describe("메모(OpenClaw 에이전트의 basePrompt — 에이전트에게 전달되지 않음)", () => {
   it("편집해 저장하면 PATCH { basePrompt }, 비워 저장하면 null — 남은 글자 수를 보인다", async () => {
     const server = stubServer({ agents: [dev()] });
     renderPage();
-    await userEvent.click(await screen.findByRole("button", { name: "@dev 기본 프롬프트 편집" }));
-    const box = screen.getByRole("textbox", { name: "@dev 기본 프롬프트" });
+    await userEvent.click(await screen.findByRole("button", { name: "@dev 메모 편집" }));
+    const box = screen.getByRole("textbox", { name: "@dev 메모" });
     expect(box).toHaveValue("기존 프롬프트");
+    // 칸 이름은 「메모」, 에이전트에게 가지 않는다는 것을 설명으로 함께 읽는다
+    expect(screen.getByText("메모", { selector: "label" })).toBeInTheDocument();
+    expect(box).toHaveAccessibleDescription(expect.stringContaining("에이전트에게 전달되지 않음"));
     expect(screen.getByText("19,993자 남음")).toBeInTheDocument();
     await userEvent.clear(box);
     await userEvent.type(box, "새 프롬프트");
     await userEvent.click(screen.getByRole("button", { name: "저장" }));
-    await waitFor(() =>
-      expect(screen.queryByRole("textbox", { name: "@dev 기본 프롬프트" })).not.toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.queryByRole("textbox", { name: "@dev 메모" })).not.toBeInTheDocument());
     expect(screen.getByText("새 프롬프트")).toBeInTheDocument();
+    expect(screen.getByText("메모(에이전트에게 전달되지 않음)")).toBeInTheDocument();
+    expect(screen.queryByText(/기본 프롬프트/)).toBeNull();
     // 편집칸이 사라져도 초점은 body 로 떨어지지 않고 다시 편집 버튼으로
-    expect(screen.getByRole("button", { name: "@dev 기본 프롬프트 편집" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: "@dev 메모 편집" })).toHaveFocus();
 
-    await userEvent.click(screen.getByRole("button", { name: "@dev 기본 프롬프트 편집" }));
-    await userEvent.clear(screen.getByRole("textbox", { name: "@dev 기본 프롬프트" }));
+    await userEvent.click(screen.getByRole("button", { name: "@dev 메모 편집" }));
+    await userEvent.clear(screen.getByRole("textbox", { name: "@dev 메모" }));
     await userEvent.click(screen.getByRole("button", { name: "저장" }));
-    expect(await screen.findByText("기본 프롬프트 없음")).toBeInTheDocument();
+    expect(await screen.findByText("메모 없음")).toBeInTheDocument();
     expect(server.bodies("PATCH")).toEqual([{ basePrompt: "새 프롬프트" }, { basePrompt: null }]);
     expect(server.count("GET", "/api/v1/agents")).toBe(1);
   });
@@ -185,25 +188,25 @@ describe("기본 프롬프트", () => {
   it("취소하면 요청 없이 닫힌다", async () => {
     const server = stubServer({ agents: [dev()] });
     renderPage();
-    await userEvent.click(await screen.findByRole("button", { name: "@dev 기본 프롬프트 편집" }));
-    await userEvent.type(screen.getByRole("textbox", { name: "@dev 기본 프롬프트" }), " 덧붙임");
+    await userEvent.click(await screen.findByRole("button", { name: "@dev 메모 편집" }));
+    await userEvent.type(screen.getByRole("textbox", { name: "@dev 메모" }), " 덧붙임");
     await userEvent.click(screen.getByRole("button", { name: "취소" }));
-    expect(screen.queryByRole("textbox", { name: "@dev 기본 프롬프트" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "@dev 메모" })).not.toBeInTheDocument();
     expect(screen.getByText("기존 프롬프트")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "@dev 기본 프롬프트 편집" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: "@dev 메모 편집" })).toHaveFocus();
     expect(server.bodies("PATCH")).toEqual([]);
   });
 });
 
 describe("member 가 보는 에이전트 화면(팀 스펙 2·6장)", () => {
-  it("등록 버튼이 없고, 사용 토글·기본 프롬프트는 값만 — 「관리자만 바꿀 수 있습니다」", async () => {
+  it("등록 버튼이 없고, 사용 토글·메모는 값만 — 「관리자만 바꿀 수 있습니다」", async () => {
     const server = stubServer({ agents: [dev()] });
     renderPage(undefined, "member");
     expect(await screen.findByText("@dev")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "에이전트 가져오기" })).toBeNull();
     expect(screen.getByRole("switch", { name: "@dev 사용" })).toBeDisabled();
     expect(screen.getByText("기존 프롬프트")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "@dev 기본 프롬프트 편집" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "@dev 메모 편집" })).toBeNull();
     expect(screen.getByText("관리자만 바꿀 수 있습니다")).toBeInTheDocument();
     expect(server.count("GET", "/api/v1/agents/discover")).toBe(0);
   });

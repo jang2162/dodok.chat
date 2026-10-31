@@ -8,7 +8,7 @@ import { isArchived } from "./archived";
 import { DiscoverDialog } from "./DiscoverDialog";
 
 /**
- * 에이전트 관리(스펙 6.1): 목록·사용 토글·기본 프롬프트, 「에이전트 가져오기」(OpenClaw 는 Gateway 목록·직접 입력, 러너는 프로젝트 안에서 새로 만들기 — 러너 일반화 스펙 7장).
+ * 에이전트 관리(스펙 6.1): 목록·사용 토글·메모(OpenClaw)·지시(러너), 「에이전트 가져오기」(OpenClaw 는 Gateway 목록·직접 입력, 러너는 프로젝트 안에서 새로 만들기 — 러너 일반화 스펙 7장).
  * 목록 조회 실패의 원인은 전역 토스트가 알린다 — 여기는 받은 목록이 없을 때만 그 자리에 「다시 시도」를 둔다.
  * 이미 받은 목록은 다시 불러오기가 실패해도 그대로 그린다.
  * 등록·수정·삭제·되살리기는 admin 이상(팀 스펙 2장) — 아니면 등록 버튼이 없고 목록은 값만 보인다.
@@ -90,7 +90,8 @@ export function AgentsPage() {
             <h1 className="text-xl font-semibold">에이전트</h1>
           </div>
           <p className="text-sm text-muted-foreground">
-            OpenClaw·러너 에이전트를 등록하고 사용 여부·기본 프롬프트를 정합니다.
+            OpenClaw·러너 에이전트를 등록하고 사용 여부·러너 에이전트의 지시를 정합니다. OpenClaw 에이전트의
+            메모는 에이전트에게 전달되지 않습니다.
           </p>
         </div>
         {canManage && <DiscoverDialog agents={agents.data ?? []} disabled={!agents.data} />}
