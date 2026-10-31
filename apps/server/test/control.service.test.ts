@@ -10,7 +10,7 @@ import type { App } from "../src/app";
 import { agents, approvals, messages, opsEvents } from "../src/db/schema.sqlite";
 import { addMember, getChannel } from "../src/modules/channels/service";
 import { userHandle } from "../src/modules/control/confirm";
-import { HANDLERS } from "../src/modules/control/handlers";
+import { HANDLERS, type HandlerContext } from "../src/modules/control/handlers";
 import { createAgentMessage, createUserMessage } from "../src/modules/messages/service";
 import { LIMITS } from "../src/modules/ops/limits";
 import { josa } from "../src/util/josa";
@@ -438,6 +438,23 @@ describe("제어 서비스", () => {
       // OpenClaw 에이전트는 지금처럼 핸들·지시도
       const oc = newAgent(app);
       expectOk(await call(pat(owner), "update_agent", { agentId: oc.id, basePrompt: "지시" }));
+    });
+
+    it("update_agent 확인 카드 요약 — basePrompt 는 웹과 같은 이름: OpenClaw 「메모」, 러너 「지시」(web-ui 보고 :726·:889)", () => {
+      const ctx = { db: app.db, workspaceId: app.workspaceId } as HandlerContext;
+      const oc = newAgent(app);
+      expect(HANDLERS.update_agent.summary?.(ctx, { agentId: oc.id, basePrompt: "새 메모" })).toBe(
+        "메모: 새 메모",
+      );
+      expect(HANDLERS.update_agent.summary?.(ctx, { agentId: oc.id, basePrompt: null })).toBe("메모: (지움)");
+      // 러너 에이전트의 basePrompt 는 check 가 카드 전에 VALIDATION 으로 막는다 — 요약은 그 앞을 지나도 같은 이름을 쓴다
+      const { agent: coder } = createRunnerAgentForTest(app.db, {
+        workspaceId: app.workspaceId,
+        handle: `ctl-runner-sum-${clock}`,
+      });
+      expect(HANDLERS.update_agent.summary?.(ctx, { agentId: coder.id, basePrompt: "새 지시" })).toBe(
+        "지시: 새 지시",
+      );
     });
 
     it("register_agent·discover_agents 는 OpenClaw 만 — provider runner 는 VALIDATION", async () => {

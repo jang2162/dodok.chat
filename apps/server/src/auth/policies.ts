@@ -131,7 +131,7 @@ export function authorizeAgentRegister(role: TeamRole | undefined): void {
   requireAtLeast(role, "admin");
 }
 
-/** PATCH /agents/:id(admin 이상) — 핸들·이름·아바타·기본 프롬프트·켜기/끄기 */
+/** PATCH /agents/:id(admin 이상) — 핸들·이름·아바타·메모(러너는 지시)·켜기/끄기 */
 export function authorizeAgentPatch(role: TeamRole | undefined): void {
   requireAtLeast(role, "admin");
 }
