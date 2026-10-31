@@ -38,6 +38,7 @@ import {
   listPendingInvites,
   resetLinkUsable,
   revokeInvite,
+  revokePendingResetLinks,
 } from "./invites";
 import { broadcastPeople } from "./people";
 
@@ -203,6 +204,8 @@ export function registerMemberRoutes(fastify: FastifyInstance, ctx: MemberRouteC
       const keep = sessionTokenOf(request);
       if (!keep) throw apiError("UNAUTHORIZED", "로그인이 필요하다");
       await changePassword(ctx.auth, me.id, keep, body, ctx.disconnectSessions);
+      // 본인이 바꿨으면 관리자가 앞서 낸 재설정 링크로 다시 바꾸지 못하게 한다
+      revokePendingResetLinks(ctx.db, { workspaceId: ctx.workspaceId, targetUserId: me.id, now: now() });
       ctx.logger.info({ userId: me.id }, "password changed");
       return reply.status(204).send();
     },
