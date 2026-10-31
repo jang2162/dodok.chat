@@ -2193,6 +2193,38 @@ describe("orchestrator", () => {
     t.orch.stop();
   });
 
+  it("Gateway 의 사유 모를 실패(unknown)는 run_error 카드 + 「다시 실행」, 사유 있는 provider_error 는 카드 없음", async () => {
+    const t = setup();
+    const unknown = await t.enqueue(t.say("@dev 하나"));
+    await t.flush();
+    t.adapter.emit({
+      kind: "run_signal",
+      runId: unknown.id,
+      signal: { kind: "gateway_error", code: "unknown", message: "" },
+    });
+    expect(t.runOf(unknown.id)).toMatchObject({ status: "error", error: { code: "unknown" } });
+    expect(systemMessages(t.db)).toEqual([
+      expect.objectContaining({
+        bodyMd: "@dev 실행이 실패했습니다: unknown",
+        systemMeta: { kind: "run_error", runId: unknown.id },
+        components: expect.objectContaining({
+          blocks: [expect.objectContaining({ items: [expect.objectContaining({ id: "retry_run" })] })],
+        }),
+      }),
+    ]);
+
+    const provider = await t.enqueue(t.say("@dev 둘"));
+    await t.flush();
+    t.adapter.emit({
+      kind: "run_signal",
+      runId: provider.id,
+      signal: { kind: "gateway_error", code: "provider_error", message: "provider failed" },
+    });
+    expect(t.runOf(provider.id)).toMatchObject({ status: "error", error: { code: "provider_error" } });
+    expect(systemMessages(t.db)).toHaveLength(1);
+    t.orch.stop();
+  });
+
   it("러너 로그인 실패(PROVIDER_AUTH)는 사유 있는 run_error 카드 — 코드가 아니라 할 일을 보이고, 다시 로그인한 뒤 「다시 실행」", async () => {
     const t = setup();
     const run = await t.enqueue();

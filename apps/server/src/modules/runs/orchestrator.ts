@@ -232,11 +232,17 @@ const PROVIDER_AUTH = "PROVIDER_AUTH";
  */
 const RUNNER_CEILING = "RUNNER_CEILING";
 /**
- * 사람에게 run_error 시스템 메시지로 알리는 코드(디스패치 실패·타임아웃·러너 로그인). SERVER_RESTART·INTERNAL·Gateway 오류는
- * 알리지 않는다
+ * Gateway 가 `errorKind` 없이 실패를 알릴 때 어댑터가 붙이는 코드(openclaw-adapter gateway/events). 실제 CLI 가 인증 만료·한도 초과로
+ * 죽어도 이 코드로 올 수 있어 「다시 실행」을 둔다
+ */
+const GATEWAY_UNKNOWN = "unknown";
+/**
+ * 사람에게 run_error 시스템 메시지로 알리는 코드(디스패치 실패·타임아웃·러너 로그인·사유 모를 Gateway 실패). SERVER_RESTART·INTERNAL·
+ * 사유 있는 Gateway 오류(provider_error 등 — 런 버블로 보인다)는 알리지 않는다
  */
 const NOTIFY_CODES: ReadonlySet<string> = new Set([
   "TIMEOUT",
+  GATEWAY_UNKNOWN,
   "ADAPTER_UNAVAILABLE",
   "ADAPTER_PROTOCOL",
   PLUGIN_OUTDATED,
