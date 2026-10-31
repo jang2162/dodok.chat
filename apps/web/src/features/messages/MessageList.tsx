@@ -1,6 +1,7 @@
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { defaultRangeExtractor, type Range, useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDownIcon } from "lucide-react";
 import {
+  type FocusEvent,
   memo,
   type ReactNode,
   useCallback,
@@ -19,14 +20,16 @@ import { selectChannelApprovals, useApprovalStore } from "@/features/approvals/a
 import { useReadAtEnd } from "@/features/reads/readSender";
 import { useUnread } from "@/features/reads/useUnread";
 import { useRunStore } from "@/features/runs/runStore";
+import { SEARCH_DIALOG_ATTR } from "@/features/search/openSearch";
 import { cn } from "@/lib/utils";
 import { Button } from "@/ui/button";
 import { groupRows, type Row } from "./groupRows";
-import { jumpToFirstRootAfter, loadLatest } from "./jump";
+import { firstRootAfter, jumpToFirstRootAfter, loadLatest } from "./jump";
 import { MessageErrorBoundary } from "./MessageErrorBoundary";
 import { MessageItem } from "./MessageItem";
 import { PendingItem } from "./PendingItem";
 import { SystemCard } from "./SystemCard";
+import { HIGHLIGHT_MS } from "./jumpTarget";
 import { useJump } from "./useJump";
 import { useNewerPages } from "./useNewerPages";
 import { reportPageError, useOlderPages } from "./useOlderPages";
@@ -67,6 +70,23 @@ export type MessageListProps = {
   emptyText?: string;
 };
 
+/**
+ * 결과로 가기가 초점을 가져와도 되는가 — 초점이 떨어졌거나(닫힌 대화상자와 함께 사라졌다) 닫히는 검색 대화상자 안이거나, 이 목록을
+ * 품은 시트(좁은 화면의 스레드 패널)가 열리며 준 자리(탭 링크 — 입력 칸은 아니다)일 때. 받는 동안 사람이 작성기 등으로 옮긴 초점은
+ * 가져오지 않는다
+ */
+function focusIsFree(doc: Document, list: HTMLElement): boolean {
+  const active = doc.activeElement;
+  if (active === null || active === doc.body || active.closest(`[${SEARCH_DIALOG_ATTR}]`)) return true;
+  if (
+    active.matches(
+      'input, textarea, select, [role="textbox"], [contenteditable]:not([contenteditable="false"])',
+    )
+  )
+    return false;
+  return active.closest('[role="dialog"]')?.contains(list) === true;
+}
+
 /** 세션 메시지 목록(스펙 5.5)·스레드 패널의 목록. 스크롤 위치·「새 메시지」 칩은 세션·스레드마다 새로 시작한다 */
 export function MessageList(props: MessageListProps) {
   return (
@@ -106,9 +126,20 @@ function ChannelMessages({
     [approvals, runThreads, conversationId, threadRootId],
   );
   const me = useMe().data?.user.id;
+  /**
+   * 처음 열 때 받은 목록의 맨 앞이 읽음 위치보다 뒤면(배너 조건) 그 맨 앞이 바로 첫 안 읽은 루트인지 서버에 묻는다(`firstRootAfter`) —
+   * 페이지 경계가 우연히 맞았으면 배너 대신 구분선에서 연다. `done` 이 되기 전에는 첫 위치를 잡지 않고 자리표시를 그린다.
+   * `first` 는 답의 seq(없음·실패·시간 초과면 undefined)
+   */
+  const [probe, setProbe] = useState<{ done: boolean; first?: number }>({ done: false });
+  const firstSeq = timeline?.items[0]?.seq;
+  const settledReadSeq = probe.first !== undefined && probe.first === firstSeq ? probe.first - 1 : undefined;
   const rows = useMemo(
-    () => (timeline ? groupRows(timeline, bubbleRunIds, approvalFacts, undefined, { entryReadSeq, me }) : []),
-    [timeline, bubbleRunIds, approvalFacts, entryReadSeq, me],
+    () =>
+      timeline
+        ? groupRows(timeline, bubbleRunIds, approvalFacts, undefined, { entryReadSeq, me, settledReadSeq })
+        : [],
+    [timeline, bubbleRunIds, approvalFacts, entryReadSeq, me, settledReadSeq],
   );
   // 구분선이 있는 채널은 처음 위치를 정하기 전까지 끝 보임으로 치지 않는다 — 첫 렌더의 `stuck`(true) 가 읽음 요청을 먼저 내보내지 않게.
   // 읽은 자리가 0 인 채널(새 멤버가 처음 여는 채널 등)은 끝에서 연다(사용자 결정) — 기록 전체가 안 읽음이라 구분선에서 열면
@@ -138,12 +169,28 @@ function ChannelMessages({
   // 결과로 가기로 받은 떨어진 창(timeline.ts `Timeline` 의 `hasNewer`)
   const hasNewer = timeline?.hasNewer === true;
   const getItemKey = useCallback((i: number) => rows[i]?.key ?? i, [rows]);
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
+  /**
+   * 초점이 든 행의 key — 범위 밖으로 밀려나도 그 행은 늘 그린다. 지우면 그 안의 초점이 body 로 떨어진다(새 글이 몰려 들어오거나
+   * 스크롤해도). 행은 절대 위치라 범위 밖에 하나 더 그려도 자리가 맞다
+   */
+  const focusedKey = useRef<string | undefined>(undefined);
+  const rangeExtractor = useCallback((range: Range) => {
+    const indexes = defaultRangeExtractor(range);
+    const key = focusedKey.current;
+    if (key === undefined) return indexes;
+    const index = rowsRef.current.findIndex((r) => r.key === key);
+    if (index < 0 || indexes.includes(index)) return indexes;
+    return [...indexes, index].sort((a, b) => a - b);
+  }, []);
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
     estimateSize: () => 64,
     overscan: 8,
     getItemKey,
+    rangeExtractor,
     // 채팅 모드: 앞에 붙는 행(과거 페이지)은 보던 행을 기준으로 자리를 지키고, 끝에 붙어 있으면 새 행·자라는 행을 따라간다
     anchorTo: "end",
     // 떨어진 창에서는 따라가지 않는다 — 아래로 이어 받은 행을 따라 내려가면 또 아래 끝이라 다음 쪽이 연달아 불린다.
@@ -174,8 +221,6 @@ function ChannelMessages({
   const aimUnread = useRef(false);
   /** 다시 겨눌 때 올린다 — 행 수가 그대로여도(이어 받기 기다림이 시간으로 끝날 때) 첫 붙임 효과를 다시 돌린다 */
   const [aimNonce, setAimNonce] = useState(0);
-  const rowsRef = useRef(rows);
-  rowsRef.current = rows;
 
   const positioned = useRef(false);
   /** 첫 붙임을 놓을 시각(performance.now 기준). 0 이면 끝났거나 사용자가 잡았다 — 효과가 다시 돌아도 되살아나지 않는다 */
@@ -191,6 +236,61 @@ function ChannelMessages({
     [setStuck, virtualizer],
   );
   const jump = useJump(channelId, conversationId, threadRootId, timeline, ready, rows, arrive);
+  // 묻는 것은 처음 위치를 잡기 전 한 번 — 배너가 뜰 경계(`showBanner` 와 같은 조건)이고 받은 목록에 구분선이 없을 때만.
+  // 결과로 가기 목표를 안고 열렸으면 그리로 가므로 묻지 않는다
+  const probing =
+    !probe.done &&
+    !positioned.current &&
+    entryTracked &&
+    !jump.pending &&
+    timeline?.hasOlder === true &&
+    firstSeq !== undefined &&
+    entryReadSeq !== undefined &&
+    entryReadSeq + 1 < firstSeq &&
+    !rows.some((r) => r.kind === "unread");
+  const probeStarted = useRef(false);
+  useEffect(() => {
+    if (!probing || probeStarted.current || entryReadSeq === undefined) return;
+    probeStarted.current = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // 오류·시간 초과면 지금처럼 끝에서 열고 배너 — 오류 토스트는 내지 않는다(배너가 대신한다).
+    // 한 번만 묻는다 — 기다리는 동안 목록이 바뀌어도 다시 묻지 않는다(답은 그릴 때의 맨 앞과 견준다)
+    const late = new Promise<undefined>((resolve) => {
+      timer = setTimeout(() => resolve(undefined), AWAIT_UNREAD_MAX_MS);
+    });
+    void Promise.race([firstRootAfter(conversationId, entryReadSeq).then((m) => m?.seq), late])
+      .then(
+        (first) => setProbe({ done: true, first }),
+        () => setProbe({ done: true }),
+      )
+      .finally(() => clearTimeout(timer));
+  }, [probing, conversationId, entryReadSeq]);
+  // 검색에서 골라 도착한 행으로 초점을 옮긴다 — 대화상자가 닫히기 전에는 그 초점 가두기가 도로 가져가므로 붙을 때까지 프레임마다
+  // 다시 해 본다(강조가 풀릴 때까지). 행은 초점을 받은 뒤에도 `tabIndex` 를 지닌다(`landed`) — 떼면 초점이 body 로 떨어진다
+  const [landed, setLanded] = useState<string>();
+  const { focus: focusId, focused } = jump;
+  useEffect(() => {
+    const el = scrollRef.current;
+    const win = el?.ownerDocument.defaultView;
+    if (focusId === undefined || !el || !win) return;
+    setLanded(focusId);
+    const until = win.performance.now() + HIGHLIGHT_MS;
+    let raf = 0;
+    const doc = el.ownerDocument;
+    const tick = () => {
+      const index = rowsRef.current.findIndex((r) => r.kind === "message" && r.message.id === focusId);
+      const row = el.querySelector<HTMLElement>(`[data-index="${index}"]`);
+      if (doc.activeElement !== row && !focusIsFree(doc, el)) {
+        focused();
+        return;
+      }
+      row?.focus({ preventScroll: true });
+      if ((row && doc.activeElement === row) || win.performance.now() > until) focused();
+      else raf = win.requestAnimationFrame(tick);
+    };
+    tick();
+    return () => win.cancelAnimationFrame(raf);
+  }, [focusId, focused]);
   // 배너로 받은 창에서 첫 안 읽은 곳(구분선 행)으로 — 행은 받은 창이 목록에 반영된 뒤에야 생긴다. 받은 창에서 한 번만 찾는다:
   // 없다고 남겨 두면 나중에 다른 창(이어 받기·과거 페이지)에 구분선이 생기는 순간 보던 자리를 그리로 끌고 간다.
   // 구분선이 없으면(그 창의 안 읽은 글이 다 내 글 등) 배너가 물은 첫 루트 행으로 간다 — 이동을 거두면 들어갈 때의 끝 맞추기
@@ -369,7 +469,8 @@ function ChannelMessages({
     raf = win.requestAnimationFrame(tick);
     for (const type of HANDS_ON) el.addEventListener(type, handsOn, { passive: true });
     return stop;
-  }, [rows.length, virtualizer, jumpPending, aimNonce]);
+    // 질의가 끝나면 스크롤 영역이 붙는다 — 행 수가 그대로여도(경계가 안 맞았다) 다시 돌아 첫 위치를 잡는다
+  }, [rows.length, virtualizer, jumpPending, aimNonce, probing]);
 
   // 내가 보낸 항목이 붙으면 위를 보고 있었어도 끝으로. 떨어진 창이면 먼저 최신으로 — 보내는 중 항목은 늘 목록 끝이라
   // 창 뒤에 곧바로 붙으면 그 사이의 받지 않은 메시지가 보이지 않은 채 이어진 것처럼 보인다
@@ -405,8 +506,8 @@ function ChannelMessages({
   // 뷰포트가 줄면(연결 배너가 생기거나 창이 작아지면) 브라우저는 scrollTop 을 그대로 둬 끝에서 그만큼 떨어진다 —
   // 붙어 있는 동안에만 다시 겨눈다. 스스로 위로 올린 사람은 끌어내리지 않는다(스펙 5.5, 태스크 13 수정 라운드 규칙).
   // 반영은 한 프레임 미룬다 — ResizeObserver 콜백 안에서 배치를 또 바꾸면 「loop completed with undelivered notifications」 가 난다
-  // 타임라인을 받기 전에는 스크롤 영역 대신 자리표시를 그린다 — 붙을 때 다시 건다
-  const mounted = timeline !== undefined;
+  // 타임라인을 받기 전(과 처음 안 읽은 곳을 묻는 동안)에는 스크롤 영역 대신 자리표시를 그린다 — 붙을 때 다시 건다
+  const mounted = timeline !== undefined && !probing;
   useEffect(() => {
     const el = scrollRef.current;
     const win = el?.ownerDocument.defaultView;
@@ -439,6 +540,20 @@ function ChannelMessages({
     newer.onScrollBottom(fromBottom);
   };
 
+  // 초점이 든 행을 기억한다(`rangeExtractor`). 영역을 떠나면 잊는다 — 떠나는 순간(focusout)에는 아직 새 자리가 정해지지 않았으므로
+  // 한 틱 뒤에 본다. 창이 초점을 잃을 때(다른 앱·탭)는 초점이 그 요소에 그대로 남으므로 잊지 않는다
+  const onFocusCapture = (e: FocusEvent) => {
+    const row = (e.target as Element).closest<HTMLElement>("[data-index]");
+    const key = row ? rowsRef.current[Number(row.dataset.index)]?.key : undefined;
+    focusedKey.current = key;
+  };
+  const onBlurCapture = () => {
+    queueMicrotask(() => {
+      const el = scrollRef.current;
+      if (!el?.contains(el.ownerDocument.activeElement)) focusedKey.current = undefined;
+    });
+  };
+
   // 칩은 누르면 사라진다 — 초점을 목록으로 옮겨 잃지 않게
   const toEnd = () => {
     // 첫 붙임이 아직 구분선을 겨누고 있어도 그만둔다 — 끝으로 간 사람을 되끌지 않는다
@@ -467,7 +582,8 @@ function ChannelMessages({
     ready &&
     timeline?.hasOlder === true &&
     oldestSeq !== undefined &&
-    entryReadSeq + 1 < oldestSeq;
+    entryReadSeq + 1 < oldestSeq &&
+    settledReadSeq === undefined;
   const toFirstUnread = async () => {
     if (entryReadSeq === undefined) return;
     let found: boolean;
@@ -482,7 +598,8 @@ function ChannelMessages({
     else toEnd();
   };
 
-  if (!timeline) return <Skeleton />;
+  // 질의가 끝날 때까지는 타임라인이 없을 때와 같은 자리표시 — 스크롤 영역이 없으니 첫 위치도 잡지 않는다
+  if (!timeline || probing) return <Skeleton />;
   const items = virtualizer.getVirtualItems();
   return (
     <div data-slot="messages" className="relative flex min-h-0 flex-1 flex-col">
@@ -515,6 +632,8 @@ function ChannelMessages({
         aria-label={threadRootId === undefined ? "메시지" : "스레드 메시지"}
         tabIndex={0}
         onScroll={onScroll}
+        onFocus={onFocusCapture}
+        onBlur={onBlurCapture}
         className="min-h-0 flex-1 overflow-y-auto overscroll-contain outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset"
       >
         <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
@@ -528,6 +647,7 @@ function ChannelMessages({
                 key={v.key}
                 data-index={v.index}
                 data-highlighted={lit || undefined}
+                tabIndex={row.kind === "message" && row.message.id === landed ? -1 : undefined}
                 ref={virtualizer.measureElement}
                 className={cn(
                   "absolute top-0 left-0 w-full transition-colors duration-700 motion-reduce:transition-none",

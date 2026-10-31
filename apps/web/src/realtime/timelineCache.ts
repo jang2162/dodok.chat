@@ -143,6 +143,18 @@ export function staleChannelCaches(qc: QueryClient, channelId: string): void {
 }
 
 /**
+ * 그 채널에서 지금 보고 있는(관찰자가 있는) 세션 타임라인의 세션 id — 새 세션 창은 뺀다(받을 것이 없다). 재구독이 그 세션의 최신 한
+ * 쪽으로 가진 메시지를 갈아 끼울 때 쓴다(`subscriptions` 의 `refreshWatched`)
+ */
+export function watchedConversations(qc: QueryClient, channelId: string): string[] {
+  return qc
+    .getQueryCache()
+    .findAll({ queryKey: qk.channelTimelines(channelId) })
+    .filter((q) => !isNewWindow(q) && q.getObserversCount() > 0 && q.state.data !== undefined)
+    .map((q) => String(q.queryKey[2]));
+}
+
+/**
  * 재동기화가 넘쳤다(`hasMore` — 채널 세션 계획 Review Focus 5): 끊긴 사이의 글이 여러 세션에 흩어져 200 을 넘었다. 그 채널의 세션
  * 타임라인·스레드 캐시를 모두 버린다 — 보고 있는 것(관찰자가 있다)만 곧바로 다시 받고, 다른 세션은 열 때 받는다.
  * 보내는 중 항목이 있는 캐시는 지우지 않고 낡은 것으로만 둔다 — 지우면 아직 ack 를 기다리는 항목이 화면에서 사라진다

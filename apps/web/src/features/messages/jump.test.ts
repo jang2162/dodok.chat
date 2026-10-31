@@ -5,7 +5,7 @@ import { createQueryClient } from "@/app/queryClient";
 import { getThread, getTimeline, updateThread, updateTimeline } from "@/realtime/timelineCache";
 import { CH, msg } from "../../../test/fixtures";
 import { json } from "../../../test/shellApi";
-import { jumpToSeq, loadLatest, loadNewer } from "./jump";
+import { firstRootAfter, jumpToSeq, loadLatest, loadNewer } from "./jump";
 import { emptyTimeline, noteSeq, type Timeline, threadFromPage, upsert } from "./timeline";
 
 const ROOT = msg(1, { bodyMd: "루트" });
@@ -73,6 +73,25 @@ describe("채널 — around 로 갈아 끼우기", () => {
     expect(seqs(t)).toEqual([5, 9, 12]);
     expect(t?.items[1]?.bodyMd).toBe("고친 본문");
     expect(t?.lastSeq).toBe(48);
+  });
+});
+
+describe("firstRootAfter — 읽음 위치 뒤 첫 루트를 묻기만 한다", () => {
+  it("afterSeq·limit 1 로 묻고 그 메시지를 돌려준다 — 캐시는 건드리지 않는다", async () => {
+    const qc = subscribed();
+    const before = getTimeline(qc, CH, CH);
+    routes.set(`/api/v1/conversations/${CH}/messages?limit=1&afterSeq=11`, () =>
+      json(200, { messages: [msg(14)], hasMore: true }),
+    );
+    expect((await firstRootAfter(CH, 11))?.seq).toBe(14);
+    expect(getTimeline(qc, CH, CH)).toBe(before);
+  });
+
+  it("뒤에 루트가 없으면 undefined", async () => {
+    routes.set(`/api/v1/conversations/${CH}/messages?limit=1&afterSeq=11`, () =>
+      json(200, { messages: [], hasMore: false }),
+    );
+    expect(await firstRootAfter(CH, 11)).toBeUndefined();
   });
 });
 

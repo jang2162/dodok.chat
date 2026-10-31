@@ -1,5 +1,5 @@
 import type { Message } from "@dodok/shared";
-import { act, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { useMemo } from "react";
@@ -411,6 +411,48 @@ describe("MessageList", () => {
     await waitFor(() => expect(screen.queryByRole("status", { name: "보내는 중" })).toBeNull());
     // 이 경로는 jsdom 에서 고치기 전에도 0 이다 — 회귀 방지용(실물 확인은 태스크 13)
     await waitFor(() => expect(gap()).toBe(0));
+  });
+
+  it("초점이 든 행은 새 글에 밀려 범위 밖으로 나가도 그대로 그린다 — 초점이 body 로 떨어지지 않는다", async () => {
+    const { qc, atEnd, container } = setup(timelineOf(range(1, 40)));
+    await waitFor(() => expect(atEnd()).toBe(true));
+    const row = () =>
+      [...container.querySelectorAll<HTMLElement>("[data-index]")].find((el) =>
+        el.textContent?.includes("본문 40"),
+      );
+    const button = within(row() as HTMLElement).getByRole("button", { name: "반응 추가" });
+    act(() => button.focus());
+    expect(document.activeElement).toBe(button);
+
+    // 끝에 붙은 채 새 글 40개가 몰려 들어온다 — 따라 내려가면 「본문 40」 은 보이는 범위·overscan 밖이다
+    act(() => updateTimeline(qc, CH, CH, (t) => range(41, 80).reduce((acc, m) => upsert(acc, m), t)));
+    await waitFor(() => expect(screen.getByText("본문 80")).toBeInTheDocument());
+    await waitFor(() => expect(atEnd()).toBe(true));
+    // 범위 밖 다른 행(본문 39)은 그리지 않는다 — 초점 행 하나만 더 그린다
+    expect(screen.queryByText("본문 39")).toBeNull();
+    expect(row()).toBeDefined();
+    expect(document.activeElement).toBe(button);
+    expect(button.isConnected).toBe(true);
+  });
+
+  it("초점이 목록을 떠나면 그 행을 더 붙잡지 않는다", async () => {
+    const { qc, atEnd, container } = setup(timelineOf(range(1, 40)));
+    await waitFor(() => expect(atEnd()).toBe(true));
+    const row = [...container.querySelectorAll<HTMLElement>("[data-index]")].find((el) =>
+      el.textContent?.includes("본문 40"),
+    ) as HTMLElement;
+    const outside = document.createElement("button");
+    document.body.append(outside);
+    onTestFinished(() => outside.remove());
+    act(() => within(row).getByRole("button", { name: "반응 추가" }).focus());
+    await act(async () => {
+      outside.focus();
+      await Promise.resolve();
+    });
+
+    act(() => updateTimeline(qc, CH, CH, (t) => range(41, 80).reduce((acc, m) => upsert(acc, m), t)));
+    await waitFor(() => expect(screen.getByText("본문 80")).toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText("본문 40")).toBeNull());
   });
 
   it("채널을 옮기면 칩·스크롤 상태를 새로 시작한다", async () => {
@@ -866,7 +908,9 @@ describe("MessageList 「새 메시지」 구분선·페이지 밖 배너", () =
     const gate = new Promise<void>((r) => (release = r));
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => {
+      vi.fn(async (input: RequestInfo | URL) => {
+        // 처음 열 때의 질의(받은 맨 앞이 첫 안 읽은 루트인가) — 답(14)이 맨 앞(51)보다 앞이라 배너 경로다
+        if (String(input) === firstRootUrl(11)) return ok({ messages: range(14, 14), hasMore: true });
         await gate;
         return new Response(JSON.stringify({ messages: range(51, 100), hasMore: true }), { status: 200 });
       }),
@@ -890,7 +934,8 @@ describe("MessageList 「새 메시지」 구분선·페이지 밖 배너", () =
     await screen.findByText("본문 100");
     await userEvent.click(banner() as HTMLElement);
     await waitFor(() => expect(items(qc)?.[0]?.seq).toBe(1));
-    expect(urls()).toEqual([firstRootUrl(11), aroundUrl(14)]);
+    // 처음 열 때 한 번(받은 맨 앞 51 이 그 루트인가 — 아니다), 배너를 눌러 한 번
+    expect(urls()).toEqual([firstRootUrl(11), firstRootUrl(11), aroundUrl(14)]);
     const line = await screen.findByRole("separator", { name: "새 메시지" });
     expect(line.closest("[data-index]")?.nextElementSibling).toHaveTextContent("본문 14");
     expect(banner()).toBeNull();
@@ -1144,6 +1189,107 @@ describe("MessageList 첫 안 읽은 곳에서 열기", () => {
     })();
     await screen.findByRole("button", { name: /안 읽은 메시지가 더 있어요/ });
     await waitFor(() => expect(atEnd()).toBe(true));
+  });
+
+  describe("2′. 배너 경계에서 처음 열 때 — 받은 맨 앞이 첫 안 읽은 루트인지 묻는다", () => {
+    const firstRootUrl = `/api/v1/conversations/${CH}/messages?limit=1&afterSeq=11`;
+    /** 처음 안 읽은 루트를 묻는 질의에 답한다 — `first` 가 없으면 빈 답, "fail" 이면 500 */
+    const answer = (first: number | undefined | "fail", gate?: Promise<void>) =>
+      fetchMock.mockImplementation(async (input) => {
+        if (String(input) !== firstRootUrl) return new Response("{}", { status: 500 });
+        await gate;
+        if (first === "fail") return new Response("{}", { status: 500 });
+        const messages = first === undefined ? [] : range(first, first);
+        return new Response(JSON.stringify({ messages, hasMore: false }), { status: 200 });
+      });
+    const banner = () => screen.queryByRole("button", { name: /안 읽은 메시지가 더 있어요/ });
+
+    it("① 경계가 맞으면(답 = 받은 맨 앞 루트) 배너 없이 구분선에서 열고 읽음을 보내지 않는다", async () => {
+      // 12~50 은 답글뿐(세션 페이지에 없다) — 받은 맨 앞 51 이 바로 첫 안 읽은 루트다
+      answer(51);
+      const { scroller, sender, fromEnd } = open(timelineOf(range(51, 100), true), 11);
+      const line = await screen.findByRole("separator", { name: "새 메시지" });
+      expect(line.closest("[data-index]")?.nextElementSibling).toHaveTextContent("본문 51");
+      await settle();
+      expect(banner()).toBeNull();
+      // 구분선은 맨 앞 행이라 위쪽 여유 없이 맨 위에서 연다
+      expect(scroller().scrollTop).toBe(0);
+      expect(fromEnd()).toBeGreaterThan(0);
+      expect(sender.request).not.toHaveBeenCalled();
+      expect(screen.getByRole("button", { name: /새 메시지 50개/ })).toBeInTheDocument();
+      expect(fetchMock.mock.calls.map((c) => String(c[0]))).toEqual([firstRootUrl]);
+    });
+
+    it("② 답이 받은 맨 앞보다 앞이면(그 사이 루트가 있다) 지금처럼 끝에서 열고 배너", async () => {
+      answer(14);
+      const { sender, fromEnd } = open(timelineOf(range(51, 100), true), 11);
+      await screen.findByRole("button", { name: /안 읽은 메시지가 더 있어요/ });
+      await waitFor(() => expect(fromEnd()).toBe(0));
+      expect(separator()).toBeNull();
+      await waitFor(() => expect(sender.request).toHaveBeenCalledWith(CH, 100));
+    });
+
+    it("② 답이 없으면(뒤에 루트가 없다) 끝에서 열고 배너", async () => {
+      answer(undefined);
+      const { fromEnd } = open(timelineOf(range(51, 100), true), 11);
+      await screen.findByRole("button", { name: /안 읽은 메시지가 더 있어요/ });
+      await waitFor(() => expect(fromEnd()).toBe(0));
+      expect(separator()).toBeNull();
+    });
+
+    it("③ 질의가 실패하면 끝에서 열고 배너 — 오류 토스트는 내지 않는다", async () => {
+      const error = vi.spyOn(toast, "error");
+      answer("fail");
+      const { fromEnd, sender } = open(timelineOf(range(51, 100), true), 11);
+      await screen.findByRole("button", { name: /안 읽은 메시지가 더 있어요/ });
+      await waitFor(() => expect(fromEnd()).toBe(0));
+      await waitFor(() => expect(sender.request).toHaveBeenCalledWith(CH, 100));
+      expect(error).not.toHaveBeenCalled();
+    });
+
+    it("④ 묻는 동안은 자리표시를 그리고 읽음이 나가지 않는다 — 답이 오면 그때 연다", async () => {
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      answer(51, gate);
+      const { sender } = open(timelineOf(range(51, 100), true), 11);
+      expect(screen.getByRole("status", { name: "메시지를 불러오는 중" })).toBeInTheDocument();
+      await act(() => new Promise((r) => setTimeout(r, 100)));
+      expect(screen.getByRole("status", { name: "메시지를 불러오는 중" })).toBeInTheDocument();
+      expect(screen.queryByText("본문 100")).toBeNull();
+      expect(sender.request).not.toHaveBeenCalled();
+      expect(isViewingAtEnd(CH)).toBe(false);
+
+      release();
+      await screen.findByRole("separator", { name: "새 메시지" });
+      expect(screen.queryByRole("status", { name: "메시지를 불러오는 중" })).toBeNull();
+      await settle();
+      expect(sender.request).not.toHaveBeenCalled();
+    });
+
+    it("결과로 가기 목표를 안고 열리면 묻지 않고 그 메시지로 간다 — 구분선·끝으로 가지 않는다", async () => {
+      answer(51);
+      onTestFinished(() => useJumpStore.setState({ targets: {} }));
+      requestJump({ conversationId: CH, messageId: msg(70).id, seq: 70 });
+      const { scroller, sender } = open(timelineOf(range(51, 100), true), 11);
+      const row = () => screen.getByText("본문 70").closest("[data-index]");
+      await waitFor(() => expect(row()).toHaveAttribute("data-highlighted", "true"));
+      await settle();
+      expect(fetchMock.mock.calls.map((c) => String(c[0]))).not.toContain(firstRootUrl);
+      // 본문 70 행이 뷰포트 가운데에 온다
+      expect(scroller().scrollTop).toBe(
+        Number(row()?.getAttribute("data-index")) * ROW + ROW / 2 - RECT.height / 2,
+      );
+      expect(separator()).toBeNull();
+      expect(sender.request).not.toHaveBeenCalled();
+    });
+
+    it("받은 목록에 구분선이 있으면 묻지 않는다", async () => {
+      answer(51);
+      open(timelineOf(range(1, 100), true), 11);
+      await screen.findByRole("separator", { name: "새 메시지" });
+      await settle();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
   });
 
   it("2. 배너를 누른 뒤의 구분선 이동은 그대로다(처음 위치 규칙이 끼어들지 않는다)", async () => {

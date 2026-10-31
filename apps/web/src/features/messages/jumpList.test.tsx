@@ -71,6 +71,60 @@ describe("결과로 가기 — 채널 목록", () => {
     });
   });
 
+  it("초점을 바라는 목표(검색에서 골랐다)면 도착한 행이 초점을 받는다 — 강조가 풀려도 그대로", async () => {
+    const { row } = setup(timelineOf(range(1, 100)));
+    await waitFor(() => expect(screen.queryByText("본문 10")).toBeNull());
+    act(() => requestJump({ conversationId: CH, messageId: msg(10).id, seq: 10 }, { focus: true }));
+    await waitFor(() => expect(row("본문 10")).toHaveFocus());
+    expect(row("본문 10")).toHaveAttribute("tabindex", "-1");
+    await waitFor(() => expect(row("본문 10")).not.toHaveAttribute("data-highlighted"), {
+      timeout: HIGHLIGHT_MS + 1_000,
+    });
+    expect(row("본문 10")).toHaveFocus();
+  });
+
+  it("초점을 바라지 않는 목표는 초점을 옮기지 않는다", async () => {
+    const { row } = setup(timelineOf(range(1, 100)));
+    await waitFor(() => expect(screen.queryByText("본문 10")).toBeNull());
+    jumpTo(10);
+    await waitFor(() => expect(row("본문 10")).toHaveAttribute("data-highlighted", "true"));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    expect(row("본문 10")).not.toHaveFocus();
+    expect(row("본문 10")).not.toHaveAttribute("tabindex");
+  });
+
+  it("가지지 않은 메시지도 around 로 받은 뒤 도착하면 초점을 받는다", async () => {
+    routes.set(url("limit=50&around=10"), () =>
+      json(200, { messages: range(1, 20), hasMore: false, hasMoreAfter: true }),
+    );
+    const { row } = setup(timelineOf(range(60, 100)));
+    act(() => requestJump({ conversationId: CH, messageId: msg(10).id, seq: 10 }, { focus: true }));
+    await waitFor(() => expect(row("본문 10")).toHaveFocus());
+  });
+
+  it("받는 동안 사람이 다른 곳(작성기 등)으로 옮긴 초점은 도착해도 그대로 둔다", async () => {
+    let answer: (r: Response) => void = () => {};
+    fetchMock.mockImplementationOnce(() => new Promise<Response>((r) => (answer = r)));
+    const { row } = setup(timelineOf(range(60, 100)));
+    const input = document.createElement("input");
+    document.body.append(input);
+    try {
+      act(() => requestJump({ conversationId: CH, messageId: msg(10).id, seq: 10 }, { focus: true }));
+      await waitFor(() => expect(fetched()).toContain(url("limit=50&around=10")));
+      input.focus();
+      answer(json(200, { messages: range(1, 20), hasMore: false, hasMoreAfter: true }));
+      await waitFor(() => expect(row("본문 10")).toHaveAttribute("data-highlighted", "true"));
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 50));
+      });
+      expect(input).toHaveFocus();
+    } finally {
+      input.remove();
+    }
+  });
+
   it("강조는 색만 바꾸고 움직임은 prefers-reduced-motion 이면 끈다", async () => {
     const { row } = setup(timelineOf(range(1, 30)));
     jumpTo(5);

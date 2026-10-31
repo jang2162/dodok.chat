@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { getThread, getTimeline } from "@/realtime/timelineCache";
 import type { Row } from "./groupRows";
@@ -12,7 +12,8 @@ import { reportPageError } from "./useOlderPages";
  * 이 목록의 결과로 가기(`jumpTarget`) — 그 메시지 행이 있으면 `arrive(행 번호)` 로 보내고 2초 강조, 없으면 around 로 받아
  * 갈아 끼운 뒤 다시 본다. 받은 것이 지금 것일 때만(`ready` — `useTimelineState`) 받는다: 그 전에 갈아 끼우면 뒤이은 다시 받기
  * (처음 구독·오프라인 사본 복원 뒤)가 최신 페이지로 덮는다.
- * `pending` 이면 목표가 남아 있다 — 목록은 첫 붙임(맨 아래로)을 하지 않는다
+ * `pending` 이면 목표가 남아 있다 — 목록은 첫 붙임(맨 아래로)을 하지 않는다. 목표가 초점을 바라면(`JumpTarget.focus`) 도착한 뒤
+ * `focus` 에 그 메시지 id 를 내놓는다 — 목록이 그 행으로 초점을 옮기고 `focused()` 로 거둔다
  */
 export function useJump(
   channelId: string,
@@ -22,11 +23,13 @@ export function useJump(
   ready: boolean,
   rows: readonly Row[],
   arrive: (index: number) => void,
-): { highlighted: string | undefined; pending: boolean } {
+): { highlighted: string | undefined; pending: boolean; focus: string | undefined; focused: () => void } {
   const qc = useQueryClient();
   const key = listKey(conversationId, threadRootId);
   const target = useJumpStore((s) => s.targets[key]);
   const [highlighted, setHighlighted] = useState<string>();
+  const [focus, setFocus] = useState<string>();
+  const focused = useCallback(() => setFocus(undefined), []);
   /** 이미 around 로 받은 목표 — 받은 뒤에도 행이 없으면 되풀이하지 않는다 */
   const requested = useRef<JumpTarget | undefined>(undefined);
 
@@ -36,6 +39,7 @@ export function useJump(
     if (index >= 0) {
       arrive(index);
       setHighlighted(target.messageId);
+      if (target.focus) setFocus(target.messageId);
       clearJump(key, target);
       return;
     }
@@ -64,5 +68,5 @@ export function useJump(
     return () => clearTimeout(id);
   }, [highlighted]);
 
-  return { highlighted, pending: target !== undefined };
+  return { highlighted, pending: target !== undefined, focus, focused };
 }

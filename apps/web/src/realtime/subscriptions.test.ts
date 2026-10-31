@@ -1,4 +1,4 @@
-import type { ChannelSubscribeResult, Message, Result } from "@dodok/shared";
+import { type ChannelSubscribeResult, ComponentsV1, type Message, type Result } from "@dodok/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderHook, waitFor } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
@@ -22,8 +22,16 @@ import {
   textDelta,
   uid,
 } from "../../test/fixtures";
+import { attachHandlers } from "./handlers";
 import { createSubscriptions, restFetchPage } from "./subscriptions";
-import { getChannelSeq, getThread, getTimeline, setChannelSeq, updateTimeline } from "./timelineCache";
+import {
+  dropChannelCaches,
+  getChannelSeq,
+  getThread,
+  getTimeline,
+  setChannelSeq,
+  updateTimeline,
+} from "./timelineCache";
 
 const ok = <T>(data: T): Result<T> => ({ ok: true, data });
 const subscribed = (messages: Message[], over: Partial<ChannelSubscribeResult> = {}) =>
@@ -418,6 +426,216 @@ describe("재동기화의 스레드(Review Focus 3 — 끊긴 사이 온 스레�
     expect(getTimeline(queryClient, CH, B)?.items[0]?.threadSummary).toEqual(summary(1, 4));
     expect(getTimeline(queryClient, CH, B)?.lastSeq).toBe(4);
     expect(getTimeline(queryClient, CH, CH)?.lastSeq).toBe(1);
+  });
+});
+
+describe("재진입 때 보이는 세션의 최신 한 쪽으로 가진 메시지를 갈아 끼운다(plan.md 이월 「lastSeq 재구독이 옛 카드의 결과 줄을 갱신하지 않는다」)", () => {
+  const FUTURE = "2099-01-01T00:00:00.000Z";
+  /** 버튼 하나짜리 카드 — 떠나 있는 사이 다른 탭이 눌러 결과 줄(interactions)·소비(consumed)가 생긴다 */
+  const card = (pressed: boolean): Message =>
+    msg(2, {
+      bodyMd: "배포할까요?",
+      components: ComponentsV1.parse({
+        id: "cmp_1",
+        blocks: [{ type: "actions", items: [{ type: "button", id: "ok", label: "배포" }] }],
+      }),
+      componentState: { expiresAt: FUTURE, consumed: pressed ? ["ok"] : [] },
+      interactions: pressed
+        ? [
+            {
+              id: uid(9_001),
+              componentId: "ok",
+              userId: uid(9_002),
+              itemId: "ok",
+              values: {},
+              createdAt: "2027-01-15T08:01:00.000Z",
+            },
+          ]
+        : [],
+    });
+  /** 그 세션을 보고 있다(관찰자) — 캐시를 채운 뒤 훅으로 붙는다 */
+  async function watching(qc: QueryClient, conversationId = CH) {
+    const view = renderHook(() => useTimelineState(CH, conversationId), { wrapper: wrapper(qc) });
+    await waitFor(() => expect(view.result.current.timeline).toBeDefined());
+    return view;
+  }
+  const latest = (id: string) => `/api/v1/conversations/${id}/messages?limit=200`;
+
+  it("떠난 사이 다른 탭이 누른 카드 — 재진입하면 결과 줄·consumed 가 맞는다", async () => {
+    const { fake, queryClient, subs } = setup();
+    seed(queryClient, [msg(1), card(false)]);
+    setChannelSeq(queryClient, CH, 2);
+    const calls = stubConversationRest({ [CH]: [msg(1), card(true)] });
+    await watching(queryClient);
+    fake.onAck("channel.subscribe", () => subscribed([], { latestSeq: 2 }));
+
+    await subs.enter(CH);
+
+    await waitFor(() =>
+      expect(getTimeline(queryClient, CH, CH)?.items[1]?.componentState?.consumed).toEqual(["ok"]),
+    );
+    expect(getTimeline(queryClient, CH, CH)?.items[1]?.interactions).toHaveLength(1);
+    expect(calls).toEqual([latest(CH)]);
+  });
+
+  it("반응·본문 고침도 함께 갈아 끼운다 — 같은 응답에 실린, 이미 가진 메시지면 카드가 아니어도", async () => {
+    const { fake, queryClient, subs } = setup();
+    seed(queryClient, [msg(1, { bodyMd: "옛 본문" }), msg(2)]);
+    setChannelSeq(queryClient, CH, 2);
+    stubConversationRest({
+      [CH]: [
+        msg(1, { bodyMd: "고친 본문" }),
+        msg(2, { reactions: [{ emoji: "👍", count: 1, userIds: [uid(9_002)] }] }),
+      ],
+    });
+    await watching(queryClient);
+    fake.onAck("channel.subscribe", () => subscribed([], { latestSeq: 2 }));
+
+    await subs.enter(CH);
+
+    await waitFor(() => expect(getTimeline(queryClient, CH, CH)?.items[0]?.bodyMd).toBe("고친 본문"));
+    expect(getTimeline(queryClient, CH, CH)?.items[1]?.reactions).toEqual([
+      { emoji: "👍", count: 1, userIds: [uid(9_002)] },
+    ]);
+  });
+
+  it("캐시에 없는 메시지는 넣지 않는다 — 이어 받기의 몫이다", async () => {
+    const { fake, queryClient, subs } = setup();
+    seed(queryClient, [msg(5), msg(6)]);
+    setChannelSeq(queryClient, CH, 6);
+    const calls = stubConversationRest({ [CH]: [msg(3), msg(4), msg(5, { bodyMd: "새 본문" }), msg(6)] });
+    await watching(queryClient);
+    fake.onAck("channel.subscribe", () => subscribed([], { latestSeq: 6 }));
+
+    await subs.enter(CH);
+
+    await waitFor(() => expect(calls).toEqual([latest(CH)]));
+    await waitFor(() => expect(getTimeline(queryClient, CH, CH)?.items[0]?.bodyMd).toBe("새 본문"));
+    expect(seqs(queryClient)).toEqual([5, 6]);
+  });
+
+  it("관찰자 없는 세션(받아 둔 다른 세션)은 부르지 않는다", async () => {
+    const { fake, queryClient, subs } = setup();
+    seed(queryClient, [msg(1)]);
+    seed(queryClient, [inB(2)], CH, B);
+    setChannelSeq(queryClient, CH, 2);
+    const calls = stubConversationRest({ [CH]: [msg(1)], [B]: [inB(2, { bodyMd: "바뀜" })] });
+    await watching(queryClient);
+    fake.onAck("channel.subscribe", () => subscribed([], { latestSeq: 2 }));
+
+    await subs.enter(CH);
+
+    await waitFor(() => expect(calls).toEqual([latest(CH)]));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(calls).toEqual([latest(CH)]);
+    expect(getTimeline(queryClient, CH, B)?.items[0]?.bodyMd).not.toBe("바뀜");
+  });
+
+  it("처음 입장(커서 없음)과 넘친 재동기화(hasMore)에서는 부르지 않는다 — 그때는 캐시를 새로 받는다", async () => {
+    const { fake, queryClient, subs } = setup();
+    seed(queryClient, [msg(1), card(false)]);
+    const calls = stubConversationRest({ [CH]: [msg(1), card(true)] });
+    await watching(queryClient);
+
+    fake.onAck("channel.subscribe", () => subscribed([], { latestSeq: 2 }));
+    await subs.enter(CH);
+    // 처음 입장 — 낡은 것으로 둔 지금 세션을 첫 페이지 쿼리가 다시 받는다(그 한 번뿐)
+    await waitFor(() => expect(calls).toEqual([latest(CH)]));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(calls).toEqual([latest(CH)]);
+
+    calls.length = 0;
+    fake.onAck("channel.subscribe", () => subscribed([], { latestSeq: 900, hasMore: true }));
+    await subs.resubscribeAll();
+    // 넘친 재동기화 — 지금 세션을 다시 받는 것(첫 페이지 쿼리) 한 번뿐이다
+    await waitFor(() => expect(calls).toEqual([latest(CH)]));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(calls).toEqual([latest(CH)]);
+  });
+
+  /** 세션 REST 를 `release` 를 부를 때까지 붙잡는다 — 받는 사이에 일어나는 일을 끼워 넣는다 */
+  function gatedRest(pages: Record<string, Message[]>) {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input) => {
+        const url = String(input);
+        calls.push(url);
+        await gate;
+        const id = /\/conversations\/([^/]+)\/messages/.exec(url)?.[1] ?? "";
+        return new Response(JSON.stringify({ messages: pages[id] ?? [], hasMore: false }), { status: 200 });
+      }),
+    );
+    return { calls, release };
+  }
+
+  it("받는 사이 룸 이벤트로 온 고침(message.updated)은 받은 옛 판에 덮이지 않는다", async () => {
+    const { fake, queryClient, subs } = setup();
+    const detach = attachHandlers(fake.wire, {
+      queryClient,
+      subscriptions: subs,
+      onUnauthorized: vi.fn(),
+      notify: { currentChannelId: () => CH, currentConversationId: () => CH, openActivity: () => {} },
+    });
+    try {
+      seed(queryClient, [msg(1, { bodyMd: "옛 본문" }), msg(2)]);
+      setChannelSeq(queryClient, CH, 2);
+      // REST 는 고치기 전에 읽었다 — 1 은 옛 판, 2 는 떠난 사이 붙은 반응
+      const thumbs = [{ emoji: "👍" as const, count: 1, userIds: [uid(9_002)] }];
+      const rest = gatedRest({ [CH]: [msg(1, { bodyMd: "옛 본문" }), msg(2, { reactions: thumbs })] });
+      await watching(queryClient);
+      fake.onAck("channel.subscribe", () => subscribed([], { latestSeq: 2 }));
+
+      await subs.enter(CH);
+      await waitFor(() => expect(rest.calls).toEqual([latest(CH)]));
+      fake.serverEmit("message.updated", { message: msg(1, { bodyMd: "새 본문" }) });
+      expect(getTimeline(queryClient, CH, CH)?.items[0]?.bodyMd).toBe("새 본문");
+      rest.release();
+
+      // 받은 쪽이 반영됐다(반응) — 그래도 1 은 받는 사이 온 새 판이다
+      await waitFor(() => expect(getTimeline(queryClient, CH, CH)?.items[1]?.reactions).toEqual(thumbs));
+      expect(getTimeline(queryClient, CH, CH)?.items[0]?.bodyMd).toBe("새 본문");
+    } finally {
+      detach();
+    }
+  });
+
+  it("받는 사이 그 세션의 캐시가 버려졌으면(넘친 재동기화) 받은 것으로 되살리지 않는다", async () => {
+    const { fake, queryClient, subs } = setup();
+    seed(queryClient, [msg(1), card(false)]);
+    setChannelSeq(queryClient, CH, 2);
+    const rest = gatedRest({ [CH]: [msg(1), card(true)] });
+    const view = await watching(queryClient);
+    fake.onAck("channel.subscribe", () => subscribed([], { latestSeq: 2 }));
+
+    await subs.enter(CH);
+    await waitFor(() => expect(rest.calls).toEqual([latest(CH)]));
+    // 그 세션을 떠났고(관찰자 없음) 넘친 재동기화가 채널 캐시를 버렸다
+    view.unmount();
+    dropChannelCaches(queryClient, CH);
+    expect(getTimeline(queryClient, CH, CH)).toBeUndefined();
+    rest.release();
+
+    await new Promise((r) => setTimeout(r, 20));
+    expect(getTimeline(queryClient, CH, CH)).toBeUndefined();
+  });
+
+  it("받다가 실패하면 조용히 둔다 — 캐시는 그대로", async () => {
+    const { fake, queryClient, subs } = setup();
+    seed(queryClient, [msg(1), card(false)]);
+    setChannelSeq(queryClient, CH, 2);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async () => new Response("{}", { status: 500 })),
+    );
+    await watching(queryClient);
+    fake.onAck("channel.subscribe", () => subscribed([], { latestSeq: 2 }));
+
+    await expect(subs.enter(CH)).resolves.toBeUndefined();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(getTimeline(queryClient, CH, CH)?.items[1]?.componentState?.consumed).toEqual([]);
   });
 });
 

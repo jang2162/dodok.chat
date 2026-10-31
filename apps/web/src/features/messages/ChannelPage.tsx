@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Link, Outlet, useParams } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type FocusEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiRequestError, NetworkError } from "@/api/http";
 import { useChannel } from "@/api/queries";
 import { ChannelHeader } from "@/app/layout/ChannelHeader";
@@ -12,7 +12,11 @@ import { Composer } from "@/features/composer/Composer";
 import { TypingIndicator } from "@/features/composer/TypingIndicator";
 import { useSendMessage } from "@/features/composer/useSendMessage";
 import { CannotCreateNotice, ClosedNotice } from "@/features/conversations/ClosedNotice";
-import { ConversationClosedContext } from "@/features/conversations/closed";
+import {
+  ClosedFocusContext,
+  type ClosedZone,
+  ConversationClosedContext,
+} from "@/features/conversations/closed";
 import { ConversationList } from "@/features/conversations/ConversationList";
 import { useConversationPermissions } from "@/features/conversations/permissions";
 import { useConversation, useSessionChannelGuard } from "@/features/conversations/queries";
@@ -99,6 +103,16 @@ export function ChannelPage() {
   // 닫힌 안내가 초점을 받는 것은 이 화면에서 열린 채 보던 세션이 닫혔을 때만(`ClosedNotice` 의 focusOnMount)
   const [seenOpen, setSeenOpen] = useState<string>();
   if (conversation.data && !closed && seenOpen !== conversationId) setSeenOpen(conversationId);
+  // 두 안내(세션 작성기·스레드 패널) 가운데 어느 쪽이 초점을 가져갈지 — 마지막으로 초점을 가졌던 자리(`ClosedFocusContext`).
+  // 패널은 좁은 화면에서 포털(시트)이지만 React 이벤트는 컴포넌트 나무를 따라 올라와 여기서 함께 잡힌다
+  const focusZone = useRef<ClosedZone>("main");
+  const onFocusZone = (e: FocusEvent) => {
+    focusZone.current = (e.target as Element).closest('[data-testid="thread-panel"]') ? "thread" : "main";
+  };
+  const closedFocus = useMemo(
+    () => ({ zone: focusZone, seenOpen: seenOpen === conversationId }),
+    [seenOpen, conversationId],
+  );
   // 세션 목록 — 넓은 화면은 칸(처음엔 펼침), 좁은 화면은 시트(처음엔 닫힘). 닫으면 초점을 헤더의 「세션 목록」으로 돌려준다
   const narrow = useIsNarrow();
   const [listWide, setListWide] = useState(true);
@@ -187,113 +201,123 @@ export function ChannelPage() {
       conversation={conversation.data}
       reopen
       focusOnMount={seenOpen === conversationId}
+      zone="main"
       onReopened={focusComposer}
     />
   ) : cannotCreate ? (
     <CannotCreateNotice />
   ) : undefined;
   return (
-    <div data-testid="page-channel" data-kind={dmChannel ? "dm" : undefined} className="flex min-h-0 flex-1">
+    <div
+      data-testid="page-channel"
+      data-kind={dmChannel ? "dm" : undefined}
+      className="flex min-h-0 flex-1"
+      onFocusCapture={onFocusZone}
+    >
       <DmViewContext.Provider value={dmView}>
         <ChannelArchivedContext.Provider value={archived}>
           <ConversationClosedContext.Provider value={closed}>
-            <PendingActionsContext.Provider value={pendingActions}>
-              <ThreadOpenerContext.Provider value={threadOpenerRef}>
-                <section className="flex min-w-0 flex-1 flex-col">
-                  {dmChannel ? (
-                    <DmHeader
-                      channel={dmChannel}
-                      conversationId={conversationId}
-                      activityRef={settingsRef}
-                      listOpen={narrow ? listSheet : listWide}
-                      onToggleList={toggleList}
-                      listRef={listRef}
-                    />
-                  ) : (
-                    <ChannelHeader
-                      channelId={channelId}
-                      conversationId={conversationId}
-                      settingsRef={settingsRef}
-                      listOpen={narrow ? listSheet : listWide}
-                      onToggleList={toggleList}
-                      listRef={listRef}
-                    />
-                  )}
-                  <div className="flex min-h-0 flex-1">
-                    {!narrow && listWide && (
-                      <div data-testid="conversation-pane" className="flex w-60 shrink-0 flex-col border-r">
-                        {list()}
-                      </div>
+            <ClosedFocusContext.Provider value={closedFocus}>
+              <PendingActionsContext.Provider value={pendingActions}>
+                <ThreadOpenerContext.Provider value={threadOpenerRef}>
+                  <section className="flex min-w-0 flex-1 flex-col">
+                    {dmChannel ? (
+                      <DmHeader
+                        channel={dmChannel}
+                        conversationId={conversationId}
+                        activityRef={settingsRef}
+                        listOpen={narrow ? listSheet : listWide}
+                        onToggleList={toggleList}
+                        listRef={listRef}
+                      />
+                    ) : (
+                      <ChannelHeader
+                        channelId={channelId}
+                        conversationId={conversationId}
+                        settingsRef={settingsRef}
+                        listOpen={narrow ? listSheet : listWide}
+                        onToggleList={toggleList}
+                        listRef={listRef}
+                      />
                     )}
-                    <div className="flex min-w-0 flex-1 flex-col">
-                      {sessionError ? (
-                        <ConversationUnavailable
-                          channelId={channelId}
-                          error={sessionError}
-                          onRetry={session.refetch}
-                        />
-                      ) : (
-                        <>
-                          <MessageList
-                            channelId={channelId}
-                            conversationId={conversationId}
-                            covered={covered || (narrow && listSheet)}
-                            entryReadSeq={entryReadSeq}
-                            bubbleRunIds={bubbleRunIds}
-                            bubbles={(runId) => <StreamingBubble runId={runId} />}
-                            {...(dmChannel
-                              ? {
-                                  // 빈 DM(세션이 하나도 없다 — 빈 세션은 만들지 않으니 글이 없다)은 첫 안내, 그 밖의 빈 창은 멘션을 권하지 않는다
-                                  emptyText:
-                                    dm?.lastMessageAt === null ? DM_FIRST_NOTICE : "아직 메시지가 없습니다.",
-                                }
-                              : {})}
-                          />
-                          <div data-slot="composer" ref={composerSlot}>
-                            {notice}
-                            <div hidden={notice !== undefined}>
-                              <TypingIndicator conversationId={conversationId} />
-                              <Composer channelId={channelId} conversationId={conversationId} />
-                            </div>
-                          </div>
-                        </>
+                    <div className="flex min-h-0 flex-1">
+                      {!narrow && listWide && (
+                        <div data-testid="conversation-pane" className="flex w-60 shrink-0 flex-col border-r">
+                          {list()}
+                        </div>
                       )}
+                      <div className="flex min-w-0 flex-1 flex-col">
+                        {sessionError ? (
+                          <ConversationUnavailable
+                            channelId={channelId}
+                            error={sessionError}
+                            onRetry={session.refetch}
+                          />
+                        ) : (
+                          <>
+                            <MessageList
+                              channelId={channelId}
+                              conversationId={conversationId}
+                              covered={covered || (narrow && listSheet)}
+                              entryReadSeq={entryReadSeq}
+                              bubbleRunIds={bubbleRunIds}
+                              bubbles={(runId) => <StreamingBubble runId={runId} />}
+                              {...(dmChannel
+                                ? {
+                                    // 빈 DM(세션이 하나도 없다 — 빈 세션은 만들지 않으니 글이 없다)은 첫 안내, 그 밖의 빈 창은 멘션을 권하지 않는다
+                                    emptyText:
+                                      dm?.lastMessageAt === null
+                                        ? DM_FIRST_NOTICE
+                                        : "아직 메시지가 없습니다.",
+                                  }
+                                : {})}
+                            />
+                            <div data-slot="composer" ref={composerSlot}>
+                              {notice}
+                              <div hidden={notice !== undefined}>
+                                <TypingIndicator conversationId={conversationId} />
+                                <Composer channelId={channelId} conversationId={conversationId} />
+                              </div>
+                            </div>
+                          </>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                </section>
-              </ThreadOpenerContext.Provider>
-            </PendingActionsContext.Provider>
-            {narrow && (
-              <Sheet open={listSheet} onOpenChange={setListSheet}>
-                <SheetContent
-                  side="left"
-                  aria-describedby={undefined}
-                  className="w-80 gap-0 p-0"
-                  onCloseAutoFocus={(e) => {
-                    // 트리거 없이 연 시트라 Radix 가 돌려줄 곳을 모른다 — 헤더의 「세션 목록」으로(패널 시트와 같은 수법, D14)
-                    if (!listRef.current?.isConnected) return;
-                    e.preventDefault();
-                    listRef.current.focus();
-                  }}
+                  </section>
+                </ThreadOpenerContext.Provider>
+              </PendingActionsContext.Provider>
+              {narrow && (
+                <Sheet open={listSheet} onOpenChange={setListSheet}>
+                  <SheetContent
+                    side="left"
+                    aria-describedby={undefined}
+                    className="w-80 gap-0 p-0"
+                    onCloseAutoFocus={(e) => {
+                      // 트리거 없이 연 시트라 Radix 가 돌려줄 곳을 모른다 — 헤더의 「세션 목록」으로(패널 시트와 같은 수법, D14)
+                      if (!listRef.current?.isConnected) return;
+                      e.preventDefault();
+                      listRef.current.focus();
+                    }}
+                  >
+                    <SheetTitle className="sr-only">세션 목록</SheetTitle>
+                    {list(() => setListSheet(false))}
+                  </SheetContent>
+                </Sheet>
+              )}
+              {tab && (
+                <PanelTabs
+                  channelId={channelId}
+                  conversationId={conversationId}
+                  rootId={tab === "thread" ? rootId : undefined}
+                  active={tab}
+                  openerRef={settingsRef}
+                  threadOpenerRef={threadOpenerRef}
+                  only={dmChannel ? ["activity"] : undefined}
                 >
-                  <SheetTitle className="sr-only">세션 목록</SheetTitle>
-                  {list(() => setListSheet(false))}
-                </SheetContent>
-              </Sheet>
-            )}
-            {tab && (
-              <PanelTabs
-                channelId={channelId}
-                conversationId={conversationId}
-                rootId={tab === "thread" ? rootId : undefined}
-                active={tab}
-                openerRef={settingsRef}
-                threadOpenerRef={threadOpenerRef}
-                only={dmChannel ? ["activity"] : undefined}
-              >
-                <Outlet />
-              </PanelTabs>
-            )}
+                  <Outlet />
+                </PanelTabs>
+              )}
+            </ClosedFocusContext.Provider>
           </ConversationClosedContext.Provider>
         </ChannelArchivedContext.Provider>
       </DmViewContext.Provider>

@@ -308,6 +308,24 @@ describe("groupRows 「새 메시지」 구분선", () => {
       const rows = partial(5, 4);
       expect(kinds(rows)).toEqual(["unread", "message", "message"]);
     });
+
+    const probed = (first: number, entryReadSeq: number, settledReadSeq: number | undefined) =>
+      groupRows(
+        timeline({ items: [theirs(first), theirs(first + 1, "2027-01-15T08:00:10Z")], hasOlder: true }),
+        [],
+        [],
+        TZ,
+        { entryReadSeq, me: USER, settledReadSeq },
+      );
+
+    it("확정한 진입 위치(settledReadSeq = 맨 앞 seq − 1)가 있으면 맨 앞이 entryReadSeq + 1 보다 뒤여도 그 앞에 선다", () => {
+      // 읽음 위치 3, 4 는 답글뿐 — 서버가 첫 루트가 5 라고 확정했다
+      expect(kinds(probed(5, 3, 4))).toEqual(["unread", "message", "message"]);
+    });
+
+    it("확정한 진입 위치가 맨 앞보다 더 앞이면(그 사이 루트가 안 불러온 쪽에 있다) 행이 없다", () => {
+      expect(unreadAt(probed(5, 2, 3))).toBe(-1);
+    });
   });
 
   it("다 불러온 목록(hasOlder 아님)이면 맨 앞이 entryReadSeq + 1 보다 뒤여도 자리가 정해졌다", () => {
