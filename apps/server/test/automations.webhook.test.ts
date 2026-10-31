@@ -422,15 +422,32 @@ describe("웹훅 POST /hooks/<token>", () => {
       expect(postsOf(row.id)).toHaveLength(1);
     });
 
-    it("게시하는 동안 지워지고 라우터가 던지면 그 오류 그대로(500) — 결과 쓰기의 NOT_FOUND 로 바뀌지 않는다", async () => {
+    it("게시하는 동안 지워지고 라우터가 던져도 202 — 결과 쓰기의 NOT_FOUND 로도, 500 으로도 바뀌지 않는다", async () => {
       const { row, token } = addWebhook();
       vi.spyOn(app.services.router, "routeMessage").mockImplementationOnce(async () => {
         deleteAutomation(app.db, app.workspaceId, row.id);
         throw new Error("route failed");
       });
       const res = await hook(token, { payload: "x", contentType: "text/plain" });
-      expect(res.statusCode, res.body).toBe(500);
+      expect(res.statusCode, res.body).toBe(202);
       expect(postsOf(row.id)).toHaveLength(1);
+    });
+
+    it("라우터가 던지면(글은 저장된 뒤) 202 {messageId} 와 결과 error·사건 — 보낸 쪽이 다시 보내 같은 글이 두 번 오르지 않게", async () => {
+      const record = vi.spyOn(app.ops, "record");
+      const { row, token } = addWebhook();
+      vi.spyOn(app.services.router, "routeMessage").mockImplementationOnce(async () => {
+        throw new Error("route failed");
+      });
+      const res = await hook(token, { payload: "x", contentType: "text/plain" });
+      expect(res.statusCode, res.body).toBe(202);
+      const { messageId } = res.json() as { messageId: string };
+      expect(app.db.select().from(messages).where(eq(messages.id, messageId)).get()?.authorId).toBe(row.id);
+      expect(postsOf(row.id)).toHaveLength(1);
+      expect(getAutomation(app.db, app.workspaceId, row.id)?.lastStatus).toBe("error");
+      expect(recorded(record, "automation_failed")).toEqual([
+        expect.objectContaining({ key: `automation:${row.id}`, detail: { automationId: row.id } }),
+      ]);
     });
 
     it("바뀐 것이 없으면 그대로 게시한다", async () => {

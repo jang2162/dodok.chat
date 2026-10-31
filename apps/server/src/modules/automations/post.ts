@@ -70,20 +70,32 @@ function ownSession(automation: AutomationRow): PickConversation {
 }
 
 /**
- * 자동화 문구(웹훅이면 아래에 원문 블록)를 자기 세션 최상위에 게시하고 라우터에 넘긴다. 보관한 채널이면 CHANNEL_ARCHIVED 로 던지고
- * 아무것도 남기지 않는다. 라우터가 던지면 메시지는 이미 저장된 채로 그 오류를 다시 던진다 — 부르는 쪽이 결과를 error 로 남긴다
+ * 자동화 문구(웹훅이면 아래에 원문 블록)를 자기 세션 최상위에 저장만 한다 — 라우터에는 넘기지 않는다. 보관한 채널이면
+ * CHANNEL_ARCHIVED 로 던지고 아무것도 남기지 않는다. 저장과 라우팅의 실패를 갈라 다뤄야 하는 웹훅이 쓴다
+ */
+export function storeAutomationMessage(
+  deps: Pick<PostDeps, "db" | "bus">,
+  automation: AutomationRow,
+  extraMd?: string,
+): Message {
+  return createAutomationMessage(deps.db, deps.bus, {
+    conversationId: ownSession(automation),
+    automationId: automation.id,
+    bodyMd: automation.bodyMd,
+    ...(extraMd === undefined ? {} : { extraMd }),
+  });
+}
+
+/**
+ * 자동화 문구를 저장하고(storeAutomationMessage) 라우터에 넘긴다. 라우터가 던지면 메시지는 이미 저장된 채로 그 오류를 다시
+ * 던진다 — 부르는 쪽이 결과를 error 로 남긴다
  */
 export async function postAutomationMessage(
   deps: PostDeps,
   automation: AutomationRow,
   extraMd?: string,
 ): Promise<Message> {
-  const message = createAutomationMessage(deps.db, deps.bus, {
-    conversationId: ownSession(automation),
-    automationId: automation.id,
-    bodyMd: automation.bodyMd,
-    ...(extraMd === undefined ? {} : { extraMd }),
-  });
+  const message = storeAutomationMessage(deps, automation, extraMd);
   await deps.route(message);
   return message;
 }
