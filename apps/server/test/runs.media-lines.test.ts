@@ -3,6 +3,7 @@ import {
   createMediaLineFilter,
   endMediaLineFilter,
   feedMediaLineFilter,
+  isProseMediaLine,
   stripMediaLines,
 } from "../src/modules/runs/media-lines";
 
@@ -124,5 +125,60 @@ describe("미디어 줄 필터 — 스트리밍 델타의 MEDIA: 줄을 걷는�
     const r = stream(["가\nMEDIA:/a\n나\n  MEDIA: https://e.com/b.png\n다"]);
     expect(r.out).toEqual(["가\n나\n다"]);
     expect(r.dropped).toBe(2);
+  });
+});
+
+describe("산문 MEDIA: 줄 — 코어처럼 페이로드가 경로·URL·파일 이름이 아니면 남긴다(plan.md 이월 N-1)", () => {
+  const prose = ["Media: coverage was positive", "Media: 이번 주 보도 요약입니다", "MEDIA: 설명 문장"];
+  const media = [
+    "MEDIA:/tmp/a b.png",
+    "MEDIA: https://x.test/y z",
+    "MEDIA: report final.pdf",
+    "MEDIA:./out.png",
+    "Media:foo",
+  ];
+
+  it("판정 — 공백을 품고 경로·URL·확장자 꼴이 아닌 페이로드만 산문", () => {
+    for (const line of prose) expect(isProseMediaLine(line), line).toBe(true);
+    for (const line of media) expect(isProseMediaLine(line), line).toBe(false);
+    expect(isProseMediaLine("MEDIA:")).toBe(false);
+    expect(isProseMediaLine('MEDIA: "~/my dir/a"')).toBe(false);
+    expect(isProseMediaLine("MEDIA: C:\\Users\\x y")).toBe(false);
+    expect(isProseMediaLine("MEDIA: file:my notes")).toBe(false);
+  });
+  it("폴백 stripMediaLines — 산문 줄은 남고 미디어 줄만 걷힌다", () => {
+    for (const line of prose)
+      expect(stripMediaLines(`가\n${line}\n나`), line).toEqual({ text: `가\n${line}\n나`, dropped: 0 });
+    for (const line of media)
+      expect(stripMediaLines(`가\n${line}\n나`), line).toEqual({ text: "가\n나", dropped: 1 });
+  });
+  it("스트리밍 — 델타로 쪼개져도 산문 줄은 내보내고 미디어 줄은 걷는다(줄바꿈으로 끝날 때)", () => {
+    for (const line of prose) {
+      const r = stream(["가\n", line.slice(0, 4), line.slice(4, 9), `${line.slice(9)}\n`, "나"]);
+      expect(joined(r), line).toBe(`가\n${line}\n나`);
+      expect(r.dropped).toBe(0);
+    }
+    for (const line of media) {
+      const r = stream(["가\n", line.slice(0, 4), line.slice(4, 9), `${line.slice(9)}\n`, "나"]);
+      expect(joined(r), line).toBe("가\n나");
+      expect(r.dropped).toBe(1);
+    }
+  });
+  it("스트리밍 — 런이 그 줄로 끝날 때(endMediaLineFilter)도 같은 판정", () => {
+    for (const line of prose) {
+      const r = stream(["가\n", line.slice(0, 7), line.slice(7)]);
+      expect(joined(r), line).toBe(`가\n${line}`);
+      expect(r.dropped).toBe(0);
+    }
+    for (const line of media) {
+      const r = stream(["가\n", line.slice(0, 7), line.slice(7)]);
+      expect(joined(r), line).toBe("가\n");
+      expect(r.dropped).toBe(1);
+    }
+  });
+  it("산문처럼 시작해도 끝에 확장자가 붙으면 걷는다 — 줄이 끝날 때까지 붙잡는다", () => {
+    const r = stream(["MEDIA: 이번 주 보고서", " final", ".pdf\n"]);
+    expect(r.out).toEqual(["", "", ""]);
+    expect(r.dropped).toBe(1);
   });
 });
