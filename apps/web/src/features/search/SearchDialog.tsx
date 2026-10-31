@@ -124,6 +124,7 @@ function SearchPanel({ onDone }: { onDone: () => void }) {
           <option value="">모두</option>
           <option value="user">사람</option>
           <option value="agent">에이전트</option>
+          <option value="automation">자동화</option>
         </select>
         <input
           type="date"

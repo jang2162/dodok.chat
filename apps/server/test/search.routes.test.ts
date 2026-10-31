@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { App } from "../src/app";
 import { opsEvents } from "../src/db/schema.sqlite";
 import { LIMITS } from "../src/modules/ops/limits";
-import { createUserMessage } from "../src/modules/messages/service";
+import { createAutomationMessage, createUserMessage } from "../src/modules/messages/service";
 import { bootTestApp, login } from "./helpers/app";
 import { channelConversation } from "./helpers/seed";
 
@@ -55,6 +55,22 @@ describe("GET /api/v1/search (스펙 5.2)", () => {
       ],
       limited: false,
     });
+  });
+
+  it("authorType=automation 이면 자동화 글만 나온다", async () => {
+    const t = await boot();
+    const mine = t.say("점검 알림 사람");
+    const auto = createAutomationMessage(t.app.db, t.app.bus, {
+      conversationId: channelConversation(t.app.db, t.channelId),
+      automationId: "01a09fc9-d204-7551-89d6-38544d07a1f1",
+      bodyMd: "점검 알림 자동화",
+    });
+    const ids = async (query: string) =>
+      SearchResult.parse((await t.search(query)).json()).hits.map((h) => h.messageId);
+    const q = `q=${encodeURIComponent("점검 알림")}`;
+    expect(await ids(`${q}&authorType=automation`)).toEqual([auto.id]);
+    expect(await ids(`${q}&authorType=user`)).toEqual([mine.id]);
+    expect((await ids(q)).toSorted()).toEqual([mine.id, auto.id].toSorted());
   });
 
   it("q 앞뒤 공백은 걷는다", async () => {
