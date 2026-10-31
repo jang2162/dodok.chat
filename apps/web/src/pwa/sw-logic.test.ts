@@ -3,6 +3,7 @@ import { NavigationRoute } from "workbox-routing";
 import { CH } from "../../test/fixtures";
 import {
   focusAndNavigate,
+  isSkipWaitingMessage,
   NAVIGATION_DENYLIST,
   notificationFromPush,
   pickClient,
@@ -269,5 +270,21 @@ describe("NAVIGATION_DENYLIST", () => {
       "/socket.iox",
     ])
       expect(toIndex(path), path).toBe(true);
+  });
+});
+
+describe("isSkipWaitingMessage", () => {
+  it("「새로고침」이 보내는 { type: SKIP_WAITING } 만 넘긴다", () => {
+    expect(isSkipWaitingMessage({ type: "SKIP_WAITING" })).toBe(true);
+    for (const data of [
+      undefined,
+      null,
+      "SKIP_WAITING",
+      {},
+      { type: "skip_waiting" },
+      { type: "navigate" },
+      1,
+    ])
+      expect(isSkipWaitingMessage(data), JSON.stringify(data)).toBe(false);
   });
 });

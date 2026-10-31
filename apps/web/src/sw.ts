@@ -4,6 +4,7 @@ import { cleanupOutdatedCaches, createHandlerBoundToURL, precacheAndRoute } from
 import { NavigationRoute, registerRoute } from "workbox-routing";
 import {
   focusAndNavigate,
+  isSkipWaitingMessage,
   NAVIGATION_DENYLIST,
   notificationFromPush,
   pickClient,
@@ -31,7 +32,7 @@ if (manifest.some((e) => (typeof e === "string" ? e : e.url) === "index.html")) 
 
 // 새 버전은 웹이 「새로고침」을 누를 때만 넘어간다(스펙 결정 7)
 self.addEventListener("message", (event) => {
-  if ((event.data as { type?: unknown } | null)?.type === "SKIP_WAITING") void self.skipWaiting();
+  if (isSkipWaitingMessage(event.data)) void self.skipWaiting();
 });
 
 // ── 푸시(스펙 3장) ──

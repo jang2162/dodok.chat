@@ -22,6 +22,11 @@ export function safeNotificationUrl(url: unknown): string {
  */
 export const NAVIGATION_DENYLIST: RegExp[] = [/^\/api\//, /^\/socket\.io\//, /^\/llms\.txt(\?|$)/];
 
+/** 대기 중인 새 서비스 워커를 넘길 메시지인가 — 앱이 「새로고침」을 누를 때만 `{ type: "SKIP_WAITING" }` 을 보낸다(스펙 결정 7) */
+export function isSkipWaitingMessage(data: unknown): boolean {
+  return (data as { type?: unknown } | null | undefined)?.type === "SKIP_WAITING";
+}
+
 export type PushNotification = {
   title: string;
   options: { body: string; tag?: string; data: { url: string }; renotify?: boolean };
